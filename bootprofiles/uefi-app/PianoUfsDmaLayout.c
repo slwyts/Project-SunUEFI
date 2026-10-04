@@ -39,6 +39,11 @@ EFI_STATUS PianoUfsBuildReadPowerMode(VOID *Trd,UINTN TrdBytes,VOID *Ucd,UINTN U
   EFI_STATUS Status=Init(Trd,TrdBytes,Ucd,UcdBytes,Iova,32);if(EFI_ERROR(Status))return Status;
   UINT8 *R=Ucd;R[0]=0x16;R[3]=Tag;R[5]=1;R[12]=3;R[13]=2;return EFI_SUCCESS;
 }
+EFI_STATUS PianoUfsBuildReadWriteProtectFlag(VOID *Trd,UINTN TrdBytes,VOID *Ucd,UINTN UcdBytes,UINT64 Iova,UINT8 Tag,UINT8 Idn) {
+  if(Idn!=2 && Idn!=3)return EFI_INVALID_PARAMETER;
+  EFI_STATUS Status=Init(Trd,TrdBytes,Ucd,UcdBytes,Iova,32);if(EFI_ERROR(Status))return Status;
+  UINT8 *R=Ucd;R[0]=0x16;R[3]=Tag;R[5]=1;R[12]=5;R[13]=Idn;return EFI_SUCCESS;
+}
 EFI_STATUS PianoUfsBuildResumeActive(VOID *Trd,UINTN TrdBytes,VOID *Ucd,UINTN UcdBytes,UINT64 Iova,UINT8 Tag) {
   EFI_STATUS Status=Init(Trd,TrdBytes,Ucd,UcdBytes,Iova,64);if(EFI_ERROR(Status))return Status;
   UINT8 *R=Ucd;R[0]=1;R[2]=0xD0;R[3]=Tag;R[16]=0x1B;R[20]=0x10;return EFI_SUCCESS;
@@ -80,7 +85,7 @@ EFI_STATUS PianoUfsBuildReadCommand(VOID *Trd,UINTN TrdBytes,VOID *Ucd,UINTN Ucd
                                   UINT64 UcdIova,UINT64 DataIova,UINT32 DataBytes,
                                   UINT8 Tag,UINT8 Lun,PIANO_UFS_READ_COMMAND Cmd,UINT32 Lba,UINT16 Blocks) {
   if((DataIova&3) || DataBytes==0 || DataBytes>4096 || DataIova>MAX_UINT64-DataBytes || Lun>7 ||
-     Cmd>PianoUfsReadLba10 || (Cmd==PianoUfsReadCapacity16 && DataBytes!=32) ||
+     Cmd>PianoUfsModeSense10 || (Cmd==PianoUfsReadCapacity16 && DataBytes!=32) ||
      (Cmd==PianoUfsReadLba10 && (!Blocks || (DataBytes!=512U*Blocks && DataBytes!=4096U*Blocks))))
     return EFI_INVALID_PARAMETER;
   EFI_STATUS Status=Init(Trd,TrdBytes,Ucd,UcdBytes,UcdIova,64);if(EFI_ERROR(Status))return Status;
@@ -90,7 +95,23 @@ EFI_STATUS PianoUfsBuildReadCommand(VOID *Trd,UINTN TrdBytes,VOID *Ucd,UINTN Ucd
   UINT8 *Cdb=R+16;
   if(Cmd==PianoUfsReportLuns){Cdb[0]=0xA0;Be32(Cdb+6,DataBytes);}
   else if(Cmd==PianoUfsReadCapacity16){Cdb[0]=0x9E;Cdb[1]=0x10;Be32(Cdb+10,32);}
+  else if(Cmd==PianoUfsModeSense10){Cdb[0]=0x5A;Cdb[1]=0x08;Cdb[2]=0x08;Be16(Cdb+7,(UINT16)DataBytes);}
   else {Cdb[0]=0x28;Be32(Cdb+2,Lba);Be16(Cdb+7,Blocks);}
   UINT8 *Prdt=R+256;Le32(Prdt,(UINT32)DataIova);Le32(Prdt+4,(UINT32)(DataIova>>32));
   Le32(Prdt+12,DataBytes-1);return EFI_SUCCESS;
+}
+EFI_STATUS PianoUfsParseCacheMode(CONST VOID *Data,UINTN Bytes,BOOLEAN *WriteProtected,BOOLEAN *Fua,BOOLEAN *WriteCache,BOOLEAN *ReadCacheDisabled) {
+  if(Data==NULL || WriteProtected==NULL || Fua==NULL || WriteCache==NULL || ReadCacheDisabled==NULL)return EFI_INVALID_PARAMETER;
+  *WriteProtected=*Fua=*WriteCache=*ReadCacheDisabled=FALSE;
+  if(Bytes<8)return EFI_COMPROMISED_DATA;
+  CONST UINT8 *P=Data;UINTN Total=(((UINTN)P[0]<<8)|P[1])+2;
+  UINTN DescriptorBytes=((UINTN)P[6]<<8)|P[7],Page=8+DescriptorBytes;
+  if(Total<8 || Total>Bytes || Page>Total || Total-Page<3)return EFI_COMPROMISED_DATA;
+  // PC=0, page 08 (current caching), DBD=1. Do not turn an unsupported or
+  // truncated page into a claim that writes/FUA are safe.
+  if((P[Page]&0x3F)!=8 || (P[Page]&0x40))return EFI_UNSUPPORTED;
+  if(P[Page+1]<0x12 || (UINTN)P[Page+1]+2>Total-Page)return EFI_COMPROMISED_DATA;
+  *WriteProtected=(P[3]&0x80)!=0;*Fua=(P[3]&0x10)!=0;
+  *WriteCache=(P[Page+2]&4)!=0;*ReadCacheDisabled=(P[Page+2]&1)!=0;
+  return EFI_SUCCESS;
 }

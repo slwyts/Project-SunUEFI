@@ -28,6 +28,7 @@ STATIC UINT16 mPonApid, mGpioApid;
 STATIC UINT8 mCandidate, mStable, mSamples;
 STATIC UINTN mPowerTicks;
 STATIC BOOLEAN mFailed;
+STATIC BOOLEAN mStandardNavigation,mEscapeChord;
 STATIC struct {
   VENDOR_DEVICE_PATH Vendor;
   EFI_DEVICE_PATH_PROTOCOL End;
@@ -117,6 +118,12 @@ STATIC VOID Push (UINT16 Scan,CHAR16 Unicode) {
   gBS->SignalEvent(mInput.WaitForKey);
 }
 
+BOOLEAN PianoSetStandardKeyNavigation(BOOLEAN Enable) {
+  EFI_TPL Old=gBS->RaiseTPL(TPL_NOTIFY);BOOLEAN Previous=mStandardNavigation;
+  mStandardNavigation=Enable;mEscapeChord=FALSE;mHead=mTail=0;
+  gBS->RestoreTPL(Old);return Previous;
+}
+
 STATIC VOID EFIAPI Poll (EFI_EVENT Event,VOID *Context) {
   UINT8 Now;EFI_STATUS Status=Sample(&Now);
   if(EFI_ERROR(Status)) {
@@ -129,12 +136,20 @@ STATIC VOID EFIAPI Poll (EFI_EVENT Event,VOID *Context) {
   if(mSamples<2 || Now==mStable)return;
   UINT8 Pressed=Now&~mStable,Released=mStable&~Now;
   DEBUG((DEBUG_WARN,"SUNUEFI_KEYS_STATE previous=%u current=%u\n",mStable,Now));
-  if(Pressed&KEY_UP)Push(SCAN_VOLUME_UP,0);
-  if(Pressed&KEY_DOWN)Push(SCAN_VOLUME_DOWN,0);
+  if(mStandardNavigation && (Now&(KEY_UP|KEY_DOWN))==(KEY_UP|KEY_DOWN)) {
+    if(!mEscapeChord)Push(SCAN_ESC,0);
+    mEscapeChord=TRUE;
+  } else if(mStandardNavigation && mEscapeChord) {
+    // Do not emit a direction when releasing half of the Escape chord.
+    if(!(Now&(KEY_UP|KEY_DOWN)))mEscapeChord=FALSE;
+  } else {
+    if(Pressed&KEY_UP)Push(mStandardNavigation?SCAN_UP:SCAN_VOLUME_UP,0);
+    if(Pressed&KEY_DOWN)Push(mStandardNavigation?SCAN_DOWN:SCAN_VOLUME_DOWN,0);
+  }
   if(Pressed&KEY_POWER)mPowerTicks=0;
   // Emit Enter on a short power-key release. Holding power remains available
   // for hardware recovery without a menu activation just before reset.
-  if((Released&KEY_POWER) && mPowerTicks<50)Push(0,CHAR_CARRIAGE_RETURN);
+  if((Released&KEY_POWER) && mPowerTicks<50 && !mEscapeChord)Push(0,CHAR_CARRIAGE_RETURN);
   mStable=Now;
 }
 
@@ -176,6 +191,7 @@ EFI_STATUS PianoStartKeys (CONST VOID *Fdt) {
   Status=FindApid(0x18D,Count,&mGpioApid);if(EFI_ERROR(Status))return Status;
   Status=Sample(&mStable);if(EFI_ERROR(Status))return Status;
   mCandidate=mStable;mSamples=2;mHead=mTail=0;mPowerTicks=0;mFailed=FALSE;
+  mStandardNavigation=mEscapeChord=FALSE;
   DEBUG((DEBUG_WARN,"SUNUEFI_KEYS_INITIAL state=%u pon_apid=%u gpio_apid=%u\n",mStable,mPonApid,mGpioApid));
   mInput.Reset=Reset;mInput.ReadKeyStroke=Read;
   Status=gBS->CreateEvent(EVT_NOTIFY_WAIT,TPL_NOTIFY,Wait,NULL,&mInput.WaitForKey);

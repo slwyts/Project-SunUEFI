@@ -27,6 +27,9 @@ int main(void){
   assert(sizeof(reference)==32 && memcmp(ucd,&reference,sizeof(reference))==0);
   assert(PianoUfsBuildReadPowerMode(trd,32,ucd,1024,0x40001000,6)==EFI_SUCCESS);
   assert(ucd[12]==3 && ucd[13]==2 && ucd[5]==1 && ucd[18]==0 && ucd[19]==0 && ReadLe32(trd+24)==0x00100008);
+  assert(PianoUfsBuildReadWriteProtectFlag(trd,32,ucd,1024,0x40001000,30,3)==EFI_SUCCESS);
+  assert(ucd[0]==0x16 && ucd[3]==30 && ucd[5]==1 && ucd[12]==5 && ucd[13]==3 && ReadLe32(trd+28)==0);
+  assert(PianoUfsBuildReadWriteProtectFlag(trd,32,ucd,1024,0x40001000,30,1)==EFI_INVALID_PARAMETER);
   assert(PianoUfsBuildResumeActive(trd,32,ucd,1024,0x40001000,7)==EFI_SUCCESS);
   assert(ReadLe32(trd)==0x11000000 && ReadLe32(trd+28)==0 && ucd[1]==0 && ucd[2]==0xd0 && ReadBe32(ucd+12)==0);
   assert(ucd[16]==0x1b && ucd[20]==0x10);
@@ -56,5 +59,14 @@ int main(void){
   UINT64 last;UINT32 block;ZeroMem(data,32);Be32(data+4,0x3000000);Be32(data+8,4096);
   assert(PianoUfsParseCapacity(data,32,&last,&block)==EFI_SUCCESS && last==0x3000000 && block==4096);
   Be32(data+8,1024);assert(PianoUfsParseCapacity(data,32,&last,&block)==EFI_UNSUPPORTED);
+  assert(PianoUfsBuildReadCommand(trd,32,ucd,1024,0x40001000,0x40002000,4096,12,4,PianoUfsModeSense10,0,0)==EFI_SUCCESS);
+  assert(ucd[16]==0x5a && ucd[17]==8 && ucd[18]==8 && ucd[23]==0x10 && ucd[24]==0);
+  BOOLEAN wp,fua,wce,rcd;ZeroMem(data,32);data[1]=26;data[3]=0x90;data[8]=8;data[9]=0x12;data[10]=5;
+  assert(PianoUfsParseCacheMode(data,28,&wp,&fua,&wce,&rcd)==EFI_SUCCESS && wp && fua && wce && rcd);
+  assert(PianoUfsParseCacheMode(data,27,&wp,&fua,&wce,&rcd)==EFI_COMPROMISED_DATA && !fua);
+  data[7]=24;assert(PianoUfsParseCacheMode(data,28,&wp,&fua,&wce,&rcd)==EFI_COMPROMISED_DATA);data[7]=0;
+  data[9]=0x13;assert(PianoUfsParseCacheMode(data,28,&wp,&fua,&wce,&rcd)==EFI_COMPROMISED_DATA);data[9]=0x12;
+  data[8]=0x48;assert(PianoUfsParseCacheMode(data,28,&wp,&fua,&wce,&rcd)==EFI_UNSUPPORTED);
+  assert(PianoUfsParseCacheMode(data,7,&wp,&fua,&wce,&rcd)==EFI_COMPROMISED_DATA);
   puts("UTRD/UCD/UPIU layouts: exact byte order, offsets, NOP IN tag/OCS checks and read-descriptor-only query construction passed.");return 0;
 }

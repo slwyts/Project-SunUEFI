@@ -4,6 +4,8 @@
 
 第 57 次已实机发布 6 个只读 LUN 父设备；标准 DiskIoDxe / PartitionDxe 连接后形成 133 个 GPT 分区子设备，共 139 个 BlockIO 句柄。6 个父设备的标准 ReadBlocks 多块测试成功，GPT signature 正确，所有 WriteBlocks 测试返回 EFI_WRITE_PROTECTED。设备端实际发生 900 次 4 KiB 只读块传输。恢复后全部 26 个启动分区哈希一致，6 份 GPT 与 Android 只读对照一致。
 
+第 67 次加入 EnhancedFatDxe 和真实 SFS 检查后，仍有 139 个 BlockIO 句柄，识别到 7 个 UFS 文件系统卷（1 个属于 LUN0、6 个属于 LUN4）。全部 OpenVolume/GetInfo/目录读取成功且 ReadOnly=1；LUN0 卷中一个普通文件通过 EFI_FILE_PROTOCOL 读取 4096 bytes，CRC32=7C5D9A17。其余卷的 file=Not Started 不代表普通文件读取成功。本次 1358 次 4 KiB 只读传输，所有 6 份 GPT CRC 验证成功，返回 Android 后 26 个启动分区 SHA-256 一致。Shell 已编译打包，但本轮完整 Shell 输出被日志环覆盖，尚不据此声明命令执行验收。
+
 `PianoReadOnlyBlock.c/.h` 是独立只读适配器，未使用早期带写入功能的 `PianoUfsBlockIo.c`。IoAlign=1，通过统一 DMA bounce buffer 支持调用者未对齐的 buffer。检查 MediaId、长度倍数、64 位 LBA 范围与错误传播；当前硬件 transport 为 READ(10)，超出其 32 位 LBA 范围会拒绝，当前 6 个 LUN 均在范围内。
 
 控制器、时钟和 owned SMMU 保持到消费者停止。正常卸载先 DisconnectController / 卸载协议，再停止队列、解除映射和关闭时钟。自动恢复路径通过 shutdown protocol 先 halt UFS，不在 timer 回调里释放消费者或其 page tables；之后 cold reset。同步读操作串行，重入返回 NotReady。
@@ -14,11 +16,17 @@
 
 第 58 次在保留原 PHY / Type-C 状态下开启 USB GDSC 和 7 项已核对时钟。真实读回 DWC3 ID=33313130、GCTL=00102005、GUSB2PHYCFG=00102400；controller halt 成功。USB SID40 对应 native HAL 的 USB0，owned stage-1 CB0 创建及 PA→IOVA 查询通过。native attach 使用参数 03000000；detach 参数 0 返回成功却未解除流，读回检查因此保留了表内存。使用匹配参数解除后，59–64 次实机读回确认 USB 流已消失、其他流未改变，表内存才释放。
 
-`PianoDwc3Device.c` 实现隔离的 USB2 EP0 实验：事件环、TRB、setup / IN payload 全部使用共享 DMA 分配、映射与缓存生命周期；active event ring 通过 PianoDmaSyncForCpu 只读同步，不假装 DMA 已停止。endpoint START / END、controller halt 失败时不释放硬件仍可能访问的内存。
+`PianoDwc3Device.c` 实现隔离的 USB EP0 实验：事件环、TRB、setup / IN payload 全部使用共享 DMA 分配、映射与缓存生命周期；active event ring 通过 PianoDmaSyncForCpu 只读同步，不假装 DMA 已停止。endpoint START / END、controller halt 失败时不释放硬件仍可能访问的内存。
 
-`PianoUsbControl.c` 支持 Device / Configuration / String / Qualifier 描述符、GetStatus、GetConfiguration、SetAddress 和 SetConfiguration。地址和配置在 status completion 后生效；未知或非法请求 stall。配置完成后只读 vendor IN 5A 返回 SUNUEFI1 诊断信息，不提供写入命令。
+`PianoUsbControl.c` 支持 Device / Configuration / String / Qualifier 描述符、GetStatus、GetConfiguration、SetAddress 和 SetConfiguration。DWC3 的 DCFG.DevAddr 在 SET_ADDRESS 的 SETUP 阶段、启动 status TRB 之前写入；软件地址/配置状态仍在 status completion 后提交。未知或非法请求 stall。配置完成后只读 vendor IN 5A 返回 SUNUEFI1 诊断信息，不提供写入命令。
 
 第 59–64 次 EP0 实机观察均未收到连接 / SETUP 事件，电脑未枚举；62 次已确认在 90 秒运行窗口内拔插。HS / SS、核心软复位、事件缓冲区中断屏蔽清除和 Run / START 顺序均做过隔离测试；不能声明 USB 已枚举或 PC 调试往返成功。电脑端 `watch_usb_ep0.py` 只观察 1209:8750，读取标准描述符 / 配置和只读诊断请求，保存原始描述符及结果。
+
+第 65 次按同机原生代码启用 QSCRATCH HS session/VBUS 和 SS power-present 后，首次收到 RESET、CONNECTDONE、SETUP。第 66 次同时修正 DWC3 SET_ADDRESS 时序，电脑实际枚举为 **1209:8750、5000 Mb/s、configuration=1、serial=SunUEFI-piano**；固件处理了 Device/BOS/Configuration/String 描述符、SET_ADDRESS 和 SET_CONFIGURATION。正常 halt 后 QSCRATCH 原值恢复、owned SMMU 清理读回通过，返回 Android 后 26 个启动分区哈希一致。PC vendor IN 往返尚未通过：此轮 libusb 无权限打开设备，不能把成功枚举等同于 debug_verified。
+
+第 72 次 PC vendor IN 已通过实机验收：兼容 5A 与扩展 5B 状态/快照/分页，debug_verified=true、log_verified=true，128 页共 65536 bytes，每页及总 CRC32=C15D667A 校验通过，132 次请求，accepted_replies 从1增长至131。软件/硬件地址均为1，configuration=1，SuperSpeed连接成立。该快照仅为末尾64 KiB，current_session_marker=false，不能充当完整启动日志；ring轮询日志降噪另行处理。正常 halt 后 QSCRATCH 恢复原0/0、USB SID40解除且其他stream不变，返回 Android 后26启动分区哈希一致。没有bulk OUT、文件上传或flash写入。
+
+第 70 次最终 Shell 摘要已实机确认 map-r、dh-simplefilesystem、drivers 三条命令均真实 Load/Start 并返回 Success；正常应用返回后的显式 UnloadImage 为 Invalid Parameter，与核心自动卸载相符。7个真实SFS卷再次识别，全部只读。MODE SENSE(10)读取所有LUN的缓存页成功，均DPOFUA=1；LUN4为WCE=1、mode WP=0、unit bLUWriteProtect=1。LU配置值需结合真实 fPowerOnWPEn/fPermanentWPEn 标志解释，尚不能据此直接宣称可写。
 
 USB 枚举实验仍独立于 UFS；没有启用 native UsbConfigDxe / UsbfnDwc3Dxe 的缺依赖路径，也没有把 UFS 的 IOVA 或 context bank 直接共享给 USB。成功后再考虑 bulk fastboot。
 

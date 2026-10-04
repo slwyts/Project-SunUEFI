@@ -88,6 +88,8 @@ EFI_STATUS PianoDmaComplete(PIANO_DMA_BUFFER *Buffer,EFI_STATUS Status,BOOLEAN Q
   Buffer->Active=FALSE;++completions;return EFI_SUCCESS;
 }
 EFI_STATUS PianoDmaSyncForCpu(PIANO_DMA_BUFFER *Buffer){assert(FALSE);return EFI_DEVICE_ERROR;}
+EFI_STATUS PianoDmaSyncForCpuQuiet(PIANO_DMA_BUFFER *Buffer){return PianoDmaSyncForCpu(Buffer);}
+EFI_STATUS PianoDmaReportQuietSync(PIANO_DMA_BUFFER *Buffer){(void)Buffer;return EFI_SUCCESS;}
 EFI_STATUS PianoDmaFree(PIANO_DMA_BUFFER *Buffer) {
   assert(!Buffer->Active);free(Buffer->Cpu);ZeroMem(Buffer,sizeof(*Buffer));return EFI_SUCCESS;
 }

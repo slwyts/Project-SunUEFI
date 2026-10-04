@@ -6,7 +6,7 @@
 #include "../bootprofiles/uefi-app/PianoUfsDmaLayout.c"
 #include "../bootprofiles/uefi-app/PianoUfsReadOnlyDma.c"
 EFI_BOOT_SERVICES *gBS;EFI_RUNTIME_SERVICES *gRT;
-static EFI_BOOT_SERVICES bs;static UINT8 trl[1024],ucd[1024],data[4096];static UINT32 bell,run;
+static EFI_BOOT_SERVICES bs;static UINT8 trl[1024],ucd[1024],data[4096];static UINT32 bell,run,task_run;
 static unsigned begins,completes;static int timeout,bad_ocs;
 static UINT32 uic_is,uic_result,tx_state=1,mem_config;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
@@ -14,12 +14,16 @@ BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 VOID EFIAPI MemoryFence(VOID){ }
+VOID EFIAPI CpuPause(VOID){ }
+VOID EFIAPI CpuDeadLoop(VOID){assert(!"Unexpected reset fallthrough");}
 VOID PianoSmmuLogFaults(CONST PIANO_SMMU_SNAPSHOT *S){ }
 EFI_STATUS PianoDmaBegin(PIANO_DMA_BUFFER *B,CONST CHAR8 *Name){assert(!B->Active);B->Active=TRUE;++begins;return EFI_SUCCESS;}
 EFI_STATUS PianoDmaComplete(PIANO_DMA_BUFFER *B,EFI_STATUS Status,BOOLEAN Quiet){assert(B->Active && Quiet);B->Active=FALSE;++completes;return Status;}
 UINT32 EFIAPI MmioRead32(UINTN A){
   if(A==HCI+0x58)return bell;
   if(A==HCI+0x78)return 0;
+  if(A==HCI+0x60)return run;
+  if(A==HCI+0x80)return task_run;
   if(A==HCI+0x34)return 1;
   if(A==HCI+0x30)return 15;
   if(A==HCI+0x20)return uic_is?uic_is:1;
@@ -33,6 +37,7 @@ UINT32 EFIAPI MmioWrite32(UINTN A,UINT32 Value){
   if(A==HCI+0x94 || A==HCI+0x98 || A==HCI+0x9c)return Value;
   if(A==HCI+0x90){assert(Value==1 || Value==0x18);uic_is=Value==1?0x400:0x420;if(Value==0x18)tx_state=2;return Value;}
   if(A==HCI+0x60){run=Value;return Value;}
+  if(A==HCI+0x80){task_run=Value;return Value;}
   if(A==HCI+0x5c){assert(Value==~1U);bell=0;return Value;}
   assert(A==HCI+0x58 && Value==1 && run==1);bell=1;
   assert(ucd[0]==0 || ucd[0]==1 || (ucd[0]==0x16 && ucd[5]==1 && (ucd[12]==1 || ucd[12]==3)));

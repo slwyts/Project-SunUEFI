@@ -83,6 +83,20 @@ int main(void) {
   assert(Read(&mInput,&Key)==EFI_SUCCESS && Key.ScanCode==SCAN_VOLUME_DOWN);
   assert(Read(&mInput,&Key)==EFI_SUCCESS && Key.UnicodeChar==CHAR_CARRIAGE_RETURN);
   assert(Read(&mInput,&Key)==EFI_DEVICE_ERROR);
+  ReadStatus=1;mFailed=FALSE;PonValue=0;GpioValue=1;
+  mStable=mCandidate=0;mSamples=2;
+  assert(PianoSetStandardKeyNavigation(TRUE)==FALSE);
+  GpioValue=0;Poll(NULL,NULL);Poll(NULL,NULL);
+  assert(Read(&mInput,&Key)==EFI_SUCCESS && Key.ScanCode==SCAN_UP);
+  GpioValue=1;Poll(NULL,NULL);Poll(NULL,NULL);
+  PonValue=0x40;Poll(NULL,NULL);Poll(NULL,NULL);
+  assert(Read(&mInput,&Key)==EFI_SUCCESS && Key.ScanCode==SCAN_DOWN);
+  GpioValue=0;Poll(NULL,NULL);Poll(NULL,NULL);
+  assert(Read(&mInput,&Key)==EFI_SUCCESS && Key.ScanCode==SCAN_ESC);
+  Poll(NULL,NULL);assert(Read(&mInput,&Key)==EFI_NOT_READY);
+  GpioValue=1;Poll(NULL,NULL);Poll(NULL,NULL);assert(Read(&mInput,&Key)==EFI_NOT_READY);
+  PonValue=0;Poll(NULL,NULL);Poll(NULL,NULL);
+  assert(PianoSetStandardKeyNavigation(FALSE)==TRUE);
   printf("Read-only MMIO, APID ownership, errors/timeouts, debounce and key mapping passed (%lu read commands).\n",(unsigned long)Writes);
   return 0;
 }

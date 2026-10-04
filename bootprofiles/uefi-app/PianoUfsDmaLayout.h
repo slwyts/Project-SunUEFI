@@ -13,10 +13,12 @@ EFI_STATUS PianoUfsBuildReadPowerMode(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN
 // Resume prerequisite only: START STOP UNIT Active on device WLUN D0,
 // expected length zero, no PRDT and no DATA OUT. Not a block write interface.
 EFI_STATUS PianoUfsBuildResumeActive(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN UcdBytes,UINT64 UcdIova,UINT8 Tag);
-typedef enum {PianoUfsReportLuns,PianoUfsReadCapacity16,PianoUfsReadLba10} PIANO_UFS_READ_COMMAND;
+typedef enum {PianoUfsReportLuns,PianoUfsReadCapacity16,PianoUfsReadLba10,PianoUfsModeSense10} PIANO_UFS_READ_COMMAND;
 EFI_STATUS PianoUfsBuildReadCommand(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN UcdBytes,
                                   UINT64 UcdIova,UINT64 DataIova,UINT32 DataBytes,
                                   UINT8 Tag,UINT8 Lun,PIANO_UFS_READ_COMMAND Command,UINT32 Lba,UINT16 Blocks);
 EFI_STATUS PianoUfsCheckReadResponse(CONST VOID *Utrd,CONST VOID *Ucd,UINT8 Tag,UINT32 Requested,UINT32 *Transferred);
+EFI_STATUS PianoUfsParseCacheMode(CONST VOID *Data,UINTN Bytes,BOOLEAN *WriteProtected,BOOLEAN *Fua,BOOLEAN *WriteCache,BOOLEAN *ReadCacheDisabled);
+EFI_STATUS PianoUfsBuildReadWriteProtectFlag(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN UcdBytes,UINT64 UcdIova,UINT8 Tag,UINT8 Idn);
 EFI_STATUS PianoUfsParseLuns(CONST VOID *Data,UINTN Bytes,UINT8 Luns[8],UINTN *Count);
 EFI_STATUS PianoUfsParseCapacity(CONST VOID *Data,UINTN Bytes,UINT64 *LastLba,UINT32 *BlockBytes);

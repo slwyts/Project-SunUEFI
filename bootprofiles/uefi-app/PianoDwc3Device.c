@@ -272,7 +272,7 @@ EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *De
     Count=Dr(0xC40C)&0xFFFF;
     if(Count) {
       if(Count>4096 || (Count&3)){Status=EFI_COMPROMISED_DATA;break;}
-      Status=PianoDmaSyncForCpu(&mRing);if(EFI_ERROR(Status))break;
+      Status=PianoDmaSyncForCpuQuiet(&mRing);if(EFI_ERROR(Status))break;
       for(UINT32 N=0;N<Count;N+=4) {
         UINT32 E=((UINT32 *)mRing.Cpu)[mRingPosition/4];mRingPosition=(mRingPosition+4)%4096;
         Status=Event(E);if(EFI_ERROR(Status))break;
@@ -282,6 +282,7 @@ EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *De
     gBS->Stall(1000);
   }
   if(!mConfigured && !EFI_ERROR(Status))Status=EFI_NOT_READY;
+  PianoDmaReportQuietSync(&mRing);
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_EP0_RESULT status=%r configured=%u address=%u configuration=%u\n",Status,mConfigured,mControl.Address,mControl.Configuration));
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_FINAL_REGS gctl=%08x dcfg=%08x dctl=%08x dsts=%08x gevntcount=%08x usb2phy=%08x usb3pipe=%08x\n",
     Dr(0xC110),Dr(0xC700),Dr(0xC704),Dr(0xC70C),Dr(0xC40C),Dr(0xC200),Dr(0xC2C0)));

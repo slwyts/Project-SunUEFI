@@ -17,6 +17,8 @@ struct PIANO_DMA_DEVICE {
   PIANO_DMA_MAP Map;
   PIANO_DMA_UNMAP Unmap;
   PIANO_DMA_FAULT Fault;
+  // Choose Reserved at allocation time; never change the final EBS map key.
+  BOOLEAN ReserveAcrossExit;
 };
 struct PIANO_DMA_BUFFER {
   UINT32 Signature;
@@ -27,8 +29,10 @@ struct PIANO_DMA_BUFFER {
   CONST CHAR8 *Command;
   UINTN AllocationPages,Bytes,ReservedBytes,Alignment;
   UINT64 MemoryAttributes;
+  EFI_MEMORY_TYPE MemoryType;
+  UINT64 QuietSyncs,QuietSyncReported;
   PIANO_DMA_DIRECTION Direction;
-  BOOLEAN Mapped,Active,Quarantined;
+  BOOLEAN Mapped,Active,Quarantined,ExitRetained;
 };
 EFI_STATUS PianoDmaAllocate(PIANO_DMA_DEVICE *Device,UINTN Bytes,UINTN Alignment,
                            UINT8 PhysicalBits,PIANO_DMA_DIRECTION Direction,PIANO_DMA_BUFFER *Buffer);
@@ -37,8 +41,15 @@ EFI_STATUS PianoDmaBegin(PIANO_DMA_BUFFER *Buffer,CONST CHAR8 *Command);
 EFI_STATUS PianoDmaComplete(PIANO_DMA_BUFFER *Buffer,EFI_STATUS Status,BOOLEAN HardwareQuiesced);
 // Polling a device-owned event ring/TRB: CPU must not write while active.
 EFI_STATUS PianoDmaSyncForCpu(PIANO_DMA_BUFFER *Buffer);
+// Identical cache/fence work on every active poll, with no per-poll logs.
+// Event/stop paths can report cumulative and delta counts explicitly.
+EFI_STATUS PianoDmaSyncForCpuQuiet(PIANO_DMA_BUFFER *Buffer);
+EFI_STATUS PianoDmaReportQuietSync(PIANO_DMA_BUFFER *Buffer);
 EFI_STATUS PianoDmaUnmap(PIANO_DMA_BUFFER *Buffer);
 EFI_STATUS PianoDmaFree(PIANO_DMA_BUFFER *Buffer);
+// Allocation-free EBS fence. Only already-Reserved, idle, non-quarantined pages
+// may be retained; normal pre-EBS Stop can still free Reserved allocations.
+EFI_STATUS PianoDmaRetainForExit(PIANO_DMA_BUFFER *Buffer);
 EFI_STATUS PianoDmaPhysicalAddress(CONST VOID *Cpu,EFI_PHYSICAL_ADDRESS *Physical);
 // Translation is bounded to the caller-owned mapped buffer, never a guessed
 // global identity relationship. Bytes may not extend into page padding.

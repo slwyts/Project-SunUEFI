@@ -7,7 +7,7 @@
 #include "../bootprofiles/uefi-app/PianoIoPageTable.c"
 #include "../bootprofiles/uefi-app/PianoOwnedSmmu.c"
 static unsigned sync_calls;static int sync_fail;
-static unsigned detaches,destroys,releases;static int retained_stream,changed_other;
+static unsigned detaches,destroys,releases,exit_retains;static int retained_stream,changed_other;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
@@ -18,6 +18,10 @@ static UINT32 sync(VOID *Domain){assert(Domain==(void *)123);++sync_calls;return
 static UINT32 detach(VOID *Domain,CONST CHAR8 *Name,UINT32 Arid,UINT32 Flags){assert(Domain==(void *)123 && !strcmp(Name,"UFS_MEM"));++detaches;return 0;}
 static UINT32 destroy(VOID *Domain){assert(Domain==(void *)123);++destroys;return 0;}
 EFI_STATUS PianoDmaFree(PIANO_DMA_BUFFER *B){assert(!B->Quarantined);++releases;B->Signature=0;return EFI_SUCCESS;}
+EFI_STATUS PianoDmaRetainForExit(PIANO_DMA_BUFFER *B){
+  if(B->MemoryType!=EfiReservedMemoryType || B->Quarantined)return EFI_ACCESS_DENIED;
+  ++exit_retains;B->ExitRetained=TRUE;return EFI_SUCCESS;
+}
 EFI_STATUS PianoSmmuCapture(CONST VOID *Fdt,CONST CHAR8 *Phase,PIANO_SMMU_SNAPSHOT *S){
   memset(S,0,sizeof(*S));S->Valid=TRUE;S->Groups=2;S->Device[0].Present=retained_stream;
   S->RawSmr[1]=changed_other?124:123;return EFI_SUCCESS;
@@ -53,5 +57,14 @@ int main(void){
   assert(PianoOwnedSmmuClose(c)==EFI_SUCCESS && destroys==1 && releases==1);
   c->Domain=(void *)123;c->Attached=TRUE;c->TableMemory.Signature=123;changed_other=1;
   assert(PianoOwnedSmmuClose(c)==EFI_COMPROMISED_DATA && c->TableMemory.Quarantined && releases==1);
+  c->TableMemory.Quarantined=FALSE;c->Attached=c->Verified=TRUE;c->TableMemory.Device=&d;
+  c->TableMemory.MemoryType=EfiBootServicesData;
+  assert(PianoOwnedSmmuRetainForExit(c)==EFI_ACCESS_DENIED && !c->ExitRetained);
+  c->TableMemory.MemoryType=EfiReservedMemoryType;
+  unsigned old_detaches=detaches,old_destroys=destroys,old_releases=releases;
+  assert(PianoOwnedSmmuRetainForExit(c)==EFI_SUCCESS && c->ExitRetained && exit_retains==1);
+  assert(PianoOwnedSmmuClose(c)==EFI_ACCESS_DENIED && detaches==old_detaches && destroys==old_destroys && releases==old_releases);
+  assert(Map(&d,0xc0000000,4096,PianoDmaFromDevice,4096,&a,&x)==EFI_NOT_READY);
+  assert(Unmap(&d,x)==EFI_ACCESS_DENIED);
   free(memory);free(c);puts("Owned SMMU backend: nonidentity arena, alignment, per-direction PTEs, unmap and retained rollback failure passed.");return 0;
 }

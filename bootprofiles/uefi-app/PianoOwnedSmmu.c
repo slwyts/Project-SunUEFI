@@ -56,7 +56,7 @@ STATIC EFI_STATUS Map(PIANO_DMA_DEVICE *D,EFI_PHYSICAL_ADDRESS Pa,UINTN Bytes,
   // width are separate; reject addresses the SMMU cannot actually translate.
   if(Pa>0xFFFFFFFFFULL || Bytes-1>0xFFFFFFFFFULL-Pa)return EFI_BAD_BUFFER_SIZE;
   PIANO_OWNED_SMMU *C=D->Context;
-  if(C==NULL || !C->Verified || !C->Attached)return EFI_NOT_READY;
+  if(C==NULL || !C->Verified || !C->Attached || C->ExitRetained)return EFI_NOT_READY;
   UINT32 Pages=(UINT32)(Bytes/4096),First=0,Run=0;
   for(UINT32 I=0;I<ARRAY_SIZE(C->Used);++I) {
     if(C->Used[I])Run=0;
@@ -91,6 +91,7 @@ STATIC EFI_STATUS Map(PIANO_DMA_DEVICE *D,EFI_PHYSICAL_ADDRESS Pa,UINTN Bytes,
 STATIC EFI_STATUS Unmap(PIANO_DMA_DEVICE *D,VOID *Token) {
   PIANO_OWNED_SMMU *C=D->Context;
   if(C==NULL)return EFI_INVALID_PARAMETER;
+  if(C->ExitRetained)return EFI_ACCESS_DENIED;
   UINTN Slot=0;while(Slot<ARRAY_SIZE(C->Mapping) && Token!=&C->Mapping[Slot])++Slot;
   if(Slot==ARRAY_SIZE(C->Mapping) || !C->Mapping[Slot].Used)return EFI_INVALID_PARAMETER;
   UINT32 First=C->Mapping[Slot].First,Pages=C->Mapping[Slot].Pages;
@@ -116,7 +117,7 @@ STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEV
   HAL_PROTOCOL *Protocol=NULL;Status=gBS->LocateProtocol(&mGuid,NULL,(VOID **)&Protocol);
   if(EFI_ERROR(Status))return Status;
   Status=Validate(Protocol,&C->Api);if(EFI_ERROR(Status))return Status;
-  PIANO_DMA_DEVICE Tables={.Name="smmu-tables",.StreamId=Sid,.AddressBits=64,.CacheLine=64};
+  PIANO_DMA_DEVICE Tables={.Name="smmu-tables",.StreamId=Sid,.AddressBits=64,.CacheLine=64,.ReserveAcrossExit=TRUE};
   Status=PianoDmaAllocate(&Tables,PIANO_IO_PT_BYTES,4096,32,PianoDmaToDevice,&C->TableMemory);
   if(EFI_ERROR(Status))return Status;
   // The table-memory device description must have driver lifetime.
@@ -154,7 +155,8 @@ STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEV
     UINTN Bank=C->After.Base+C->After.ContextBase+((UINTN)U->ContextBank<<C->After.PageShift);
     MmioWrite32(Bank+0x58,U->Fsr);MemoryFence();
   }
-  *D=(PIANO_DMA_DEVICE){.Name=Index==0?"ufs":"usb",.StreamId=Sid,.AddressBits=32,.CacheLine=64,.Context=C,.Map=Map,.Unmap=Unmap,.Fault=Fault};
+  BOOLEAN Reserve=Index==0 || D->ReserveAcrossExit;
+  *D=(PIANO_DMA_DEVICE){.Name=Index==0?"ufs":"usb",.StreamId=Sid,.AddressBits=32,.CacheLine=64,.Context=C,.Map=Map,.Unmap=Unmap,.Fault=Fault,.ReserveAcrossExit=Reserve};
   C->Verified=TRUE;DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_OWNED_READY sid=%x bank=%u root=%lx other_streams_unchanged=1\n",Sid,U->ContextBank,C->TableMemory.Physical));
   return EFI_SUCCESS;
 }
@@ -162,7 +164,7 @@ EFI_STATUS PianoOwnedSmmuOpen(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVI
 EFI_STATUS PianoOwnedSmmuOpenUsb(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D){return OpenResource(Fdt,C,D,1);}
 EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C) {
   if(C==NULL)return EFI_INVALID_PARAMETER;
-  if(C->TableMemory.Quarantined)return EFI_ACCESS_DENIED;
+  if(C->ExitRetained || C->TableMemory.Quarantined)return EFI_ACCESS_DENIED;
   for(UINTN I=0;I<ARRAY_SIZE(C->Mapping);++I)if(C->Mapping[I].Used)return EFI_ACCESS_DENIED;
   if(C->Attached) {
     UINT32 Native=((ATTACH)Functions(C)[3])(C->Domain,C->ResourceName==NULL?"UFS_MEM":C->ResourceName,
@@ -190,6 +192,16 @@ EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C) {
     C->Domain=NULL;
   }
   if(C->TableMemory.Signature)return PianoDmaFree(&C->TableMemory);
+  return EFI_SUCCESS;
+}
+EFI_STATUS PianoOwnedSmmuRetainForExit(PIANO_OWNED_SMMU *C) {
+  if(C==NULL)return EFI_INVALID_PARAMETER;
+  if(!C->Attached || !C->Verified)return EFI_NOT_READY;
+  EFI_STATUS Status=PianoDmaRetainForExit(&C->TableMemory);
+  if(EFI_ERROR(Status))return Status;
+  C->ExitRetained=TRUE;
+  DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_EXIT_RETAIN sid=%x table_pa=%lx bytes=%lu attached=1 native_hal_called=0\n",
+    C->TableMemory.Device->StreamId,C->TableMemory.Physical,(UINT64)C->TableMemory.ReservedBytes));
   return EFI_SUCCESS;
 }
 EFI_STATUS PianoOwnedSmmuMemoryExperiment(CONST VOID *Fdt) {

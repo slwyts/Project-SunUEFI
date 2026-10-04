@@ -85,7 +85,8 @@ EFI_STATUS PianoDmaAllocate(PIANO_DMA_DEVICE *D,UINTN Bytes,UINTN Align,UINT8 Bi
   EFI_PHYSICAL_ADDRESS Base,Address,Pa;UINT64 Length;
   EFI_STATUS Status=Heap(&Base,&Length);if(EFI_ERROR(Status))return Status;
   Address=Base+Length-1;if(Bits==32)Address=MIN(Address,(EFI_PHYSICAL_ADDRESS)MAX_UINT32);
-  Status=gBS->AllocatePages(AllocateMaxAddress,EfiBootServicesData,Pages,&Address);
+  EFI_MEMORY_TYPE Type=D->ReserveAcrossExit?EfiReservedMemoryType:EfiBootServicesData;
+  Status=gBS->AllocatePages(AllocateMaxAddress,Type,Pages,&Address);
   if(EFI_ERROR(Status))return Status;
   UINT64 PhysicalLimit=Bits==32?MAX_UINT32:MAX_UINT64;
   if(Address<Base || Address-Base>=Length || EFI_PAGES_TO_SIZE(Pages)>Length-(Address-Base) ||
@@ -111,10 +112,13 @@ EFI_STATUS PianoDmaAllocate(PIANO_DMA_DEVICE *D,UINTN Bytes,UINTN Align,UINT8 Bi
   B->Signature=DMA_SIGNATURE;B->Device=D;B->Allocation=Address;B->AllocationPages=Pages;
   B->Physical=Pa;B->Cpu=(VOID *)(UINTN)Aligned;B->Bytes=Bytes;B->ReservedBytes=Rounded;
   B->Alignment=Align;B->Direction=Dir;B->MemoryAttributes=Descriptor.Attributes;
+  B->MemoryType=Type;
+  if(Type==EfiReservedMemoryType)DEBUG((DEBUG_WARN,"SUNUEFI_DMA_RESERVED dev=%a allocation=%lx pages=%lu efi_map_required=1 raw_dtb_reservation_verified=0\n",
+    D->Name,Address,(UINT64)Pages));
   ZeroMem(B->Cpu,Rounded);Log(B,"allocate","none",EFI_SUCCESS);return EFI_SUCCESS;
 }
 EFI_STATUS PianoDmaMap(PIANO_DMA_BUFFER *B) {
-  if(!Valid(B) || B->Mapped || B->Active || B->Quarantined)return EFI_INVALID_PARAMETER;
+  if(!Valid(B) || B->Mapped || B->Active || B->Quarantined || B->ExitRetained)return EFI_INVALID_PARAMETER;
   if(B->Device->Map==NULL || B->Device->Unmap==NULL){Log(B,"map","none",EFI_NOT_READY);return EFI_NOT_READY;}
   EFI_PHYSICAL_ADDRESS Iova=0;VOID *Mapping=NULL;
   EFI_STATUS Status=B->Device->Map(B->Device,B->Physical,B->ReservedBytes,B->Direction,B->Alignment,&Iova,&Mapping);
@@ -134,7 +138,7 @@ EFI_STATUS PianoDmaMap(PIANO_DMA_BUFFER *B) {
   B->Mapping=Mapping;B->DeviceAddress=Iova;B->Mapped=TRUE;Log(B,"map","none",EFI_SUCCESS);return EFI_SUCCESS;
 }
 EFI_STATUS PianoDmaBegin(PIANO_DMA_BUFFER *B,CONST CHAR8 *Command) {
-  if(!Valid(B) || Command==NULL || !B->Mapped || B->Active || B->Quarantined)return EFI_NOT_READY;
+  if(!Valid(B) || Command==NULL || !B->Mapped || B->Active || B->Quarantined || B->ExitRetained)return EFI_NOT_READY;
   CONST CHAR8 *Cache;
   if(B->Direction==PianoDmaToDevice){WriteBackDataCacheRange(B->Cpu,B->ReservedBytes);Cache="clean";}
   else {WriteBackInvalidateDataCacheRange(B->Cpu,B->ReservedBytes);Cache="clean-invalidate";}
@@ -155,15 +159,31 @@ EFI_STATUS PianoDmaComplete(PIANO_DMA_BUFFER *B,EFI_STATUS Status,BOOLEAN Quiesc
   if(EFI_ERROR(Status) && B->Device->Fault!=NULL)B->Device->Fault(B->Device);
   return Status;
 }
-EFI_STATUS PianoDmaSyncForCpu(PIANO_DMA_BUFFER *B) {
-  if(!Valid(B) || !B->Mapped || !B->Active || B->Quarantined)return EFI_NOT_READY;
+STATIC EFI_STATUS SyncForCpu(PIANO_DMA_BUFFER *B,BOOLEAN Quiet) {
+  if(!Valid(B) || !B->Mapped || !B->Active || B->Quarantined || B->ExitRetained)return EFI_NOT_READY;
   if(B->Direction==PianoDmaToDevice)return EFI_ACCESS_DENIED;
   InvalidateDataCacheRange(B->Cpu,B->ReservedBytes);MemoryFence();
-  Log(B,"sync-cpu","invalidate-active",EFI_SUCCESS);return EFI_SUCCESS;
+  if(Quiet){if(B->QuietSyncs!=MAX_UINT64)++B->QuietSyncs;}
+  else Log(B,"sync-cpu","invalidate-active",EFI_SUCCESS);
+  return EFI_SUCCESS;
+}
+EFI_STATUS PianoDmaSyncForCpu(PIANO_DMA_BUFFER *B){return SyncForCpu(B,FALSE);}
+EFI_STATUS PianoDmaSyncForCpuQuiet(PIANO_DMA_BUFFER *B){return SyncForCpu(B,TRUE);}
+EFI_STATUS PianoDmaReportQuietSync(PIANO_DMA_BUFFER *B) {
+  if(!Valid(B))return EFI_INVALID_PARAMETER;
+  if(B->QuietSyncs==B->QuietSyncReported || !DebugPrintEnabled() || !DebugPrintLevelEnabled(DEBUG_WARN))return EFI_SUCCESS;
+  CHAR8 Body[384];UINTN Bytes=AsciiSPrint(Body,sizeof(Body),
+    "phase=sync-cpu-quiet-summary seq=%u dev=%a sid=%x pa=%lx iova=%lx bytes=%lu reserved=%lu dir=%a align=%lu attrs=%lx cache=invalidate-active status=Success cmd=%a polls=%lu delta=%lu active=%u",
+    mRecordSequence++,B->Device->Name,B->Device->StreamId,B->Physical,B->DeviceAddress,(UINT64)B->Bytes,
+    (UINT64)B->ReservedBytes,Direction(B->Direction),(UINT64)B->Alignment,B->MemoryAttributes,
+    B->Command==NULL?"-":B->Command,B->QuietSyncs,B->QuietSyncs-B->QuietSyncReported,B->Active);
+  DEBUG((DEBUG_WARN,"SUNUEFI_DMA %a crc32=%08x\n",Body,RecordCrc(Body,Bytes)));
+  DEBUG((DEBUG_WARN,"SUNUEFI_DMA_COPY %a crc32=%08x\n",Body,RecordCrc(Body,Bytes)));
+  B->QuietSyncReported=B->QuietSyncs;return EFI_SUCCESS;
 }
 EFI_STATUS PianoDmaUnmap(PIANO_DMA_BUFFER *B) {
   if(!Valid(B))return EFI_INVALID_PARAMETER;
-  if(B->Active || B->Quarantined)return EFI_ACCESS_DENIED;
+  if(B->Active || B->Quarantined || B->ExitRetained)return EFI_ACCESS_DENIED;
   if(!B->Mapped)return EFI_SUCCESS;
   EFI_STATUS Status=B->Device->Unmap(B->Device,B->Mapping);
   if(EFI_ERROR(Status)){Log(B,"unmap","none",Status);return Status;}
@@ -171,10 +191,18 @@ EFI_STATUS PianoDmaUnmap(PIANO_DMA_BUFFER *B) {
 }
 EFI_STATUS PianoDmaFree(PIANO_DMA_BUFFER *B) {
   if(!Valid(B))return EFI_INVALID_PARAMETER;
-  if(B->Active || B->Quarantined)return EFI_ACCESS_DENIED;
+  if(B->Active || B->Quarantined || B->ExitRetained)return EFI_ACCESS_DENIED;
   EFI_STATUS Status=PianoDmaUnmap(B);if(EFI_ERROR(Status))return Status;
   ZeroMem(B->Cpu,B->ReservedBytes);WriteBackDataCacheRange(B->Cpu,B->ReservedBytes);MemoryFence();
   Status=gBS->FreePages(B->Allocation,B->AllocationPages);
   if(!EFI_ERROR(Status))ZeroMem(B,sizeof(*B));
   return Status;
+}
+EFI_STATUS PianoDmaRetainForExit(PIANO_DMA_BUFFER *B) {
+  if(!Valid(B) || !B->AllocationPages)return EFI_INVALID_PARAMETER;
+  if(B->MemoryType!=EfiReservedMemoryType || B->Active || B->Quarantined)return EFI_ACCESS_DENIED;
+  B->ExitRetained=TRUE;
+  DEBUG((DEBUG_WARN,"SUNUEFI_DMA_EXIT_RETAIN dev=%a allocation=%lx pages=%lu memory_type=reserved efi_map_required=1 raw_dtb_reservation_verified=0\n",
+    B->Device->Name,B->Allocation,(UINT64)B->AllocationPages));
+  return EFI_SUCCESS;
 }

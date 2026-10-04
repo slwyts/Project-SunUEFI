@@ -4,6 +4,34 @@ from pathlib import Path
 import shutil
 import argparse
 
+# Fixed Mu_Basecore standard browser/display engine; no OEM/MsDisplayEngine UI.
+# SetupBrowserDxe already has a Component entry in SiliciumPkg.dsc.inc.
+SETUP_FV_MODULES = (
+    'MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf',
+    'MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf',
+    'MdeModulePkg/Application/UiApp/UiApp.inf',
+)
+SETUP_DSC_ADDITIONS = '''
+[PcdsFixedAtBuild]
+  gEfiMdeModulePkgTokenSpaceGuid.PcdEmuVariableNvModeEnable|TRUE
+[PcdsDynamicDefault]
+  gEfiMdeModulePkgTokenSpaceGuid.PcdSetupVideoHorizontalResolution|3200
+  gEfiMdeModulePkgTokenSpaceGuid.PcdSetupVideoVerticalResolution|2136
+  gEfiMdeModulePkgTokenSpaceGuid.PcdConOutColumn|80
+  gEfiMdeModulePkgTokenSpaceGuid.PcdConOutRow|25
+[LibraryClasses]
+  CustomizedDisplayLib|MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLib.inf
+  FileExplorerLib|MdeModulePkg/Library/FileExplorerLib/FileExplorerLib.inf
+[Components]
+  MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf
+  MdeModulePkg/Application/UiApp/UiApp.inf {
+    <LibraryClasses>
+      NULL|MdeModulePkg/Library/DeviceManagerUiLib/DeviceManagerUiLib.inf
+      NULL|MdeModulePkg/Library/BootManagerUiLib/BootManagerUiLib.inf
+      NULL|MdeModulePkg/Library/BootMaintenanceManagerUiLib/BootMaintenanceManagerUiLib.inf
+  }
+'''
+
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -22,10 +50,18 @@ def main():
     parser.add_argument('--dma-owned',action='store_true',help='UFS-only owned SMMU tables and map/unmap experiment, no controller DMA submission')
     parser.add_argument('--ufs-dma-nop',action='store_true',help='Read-only NOP then QUERY descriptor using unified DMA; requires verified owned SMMU')
     parser.add_argument('--ufs-blockio',action='store_true',help='Publish persistent read-only UFS BlockIO using the verified DMA transport')
+    parser.add_argument('--ufs-filesystems',action='store_true',help='Connect standard FAT/EnglishDxe and inspect real UFS SimpleFileSystem volumes without writing')
+    parser.add_argument('--ufs-shell',action='store_true',help='Run firmware-volume UEFI Shell read-only enumeration before RAM simple-init; implies ufs-filesystems')
+    parser.add_argument('--ufs-shell-interactive',action='store_true',help='Remain in UEFI Shell after automatic enumeration until exit or the recovery timer; implies ufs-shell')
+    parser.add_argument('--ufs-setup',action='store_true',help='Launch the pinned standard TianoCore UiApp/HII Setup with temporary RAM settings; implies ufs-filesystems')
     parser.add_argument('--usb-controller',action='store_true',help='Isolated DWC3 clocks/registers and owned USB0 SMMU context')
     parser.add_argument('--usb-ep0',action='store_true',help='USB2 device EP0 enumeration using shared DMA and USB0 owned context')
     parser.add_argument('--return-seconds',type=int,default=75,help='Diagnostic cold-reboot timer, 30 to 120 seconds (default 75)')
     args=parser.parse_args()
+    if args.ufs_shell_interactive:args.ufs_shell=True
+    if args.ufs_shell:args.ufs_filesystems=True
+    if args.ufs_setup:args.ufs_filesystems=True
+    if args.ufs_filesystems:args.ufs_blockio=True
     if args.usb_ep0:args.usb_controller=True
     if args.usb_controller:
         if args.ufs_blockio or args.ufs_probe or args.dma_probe or args.usb_debug or args.touch_probe:parser.error('USB controller experiment must be isolated')
@@ -251,6 +287,45 @@ def main():
         text+='  gEfiDevicePathProtocolGuid\n';text=text.replace('[Protocols]','[Guids]\n  gEfiEventExitBootServicesGuid\n\n[Protocols]');path.write_text(text)
         path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)','VOID PianoUfsBlockIoStop(VOID);\n#pragma pack(1)',1)
         text=text.replace('PianoStopFaultRecovery();','PianoUfsBlockIoStop(); PianoStopFaultRecovery();');path.write_text(text)
+    if args.ufs_filesystems:
+        shutil.copyfile(root/'bootprofiles/uefi-app/PianoUfsFileSystemProbe.c',app/'PianoUfsFileSystemProbe.c')
+        path=app/'PianoUfsReadOnlyDma.c';path.write_text('#define PIANO_UFS_FILESYSTEMS 1\n'+path.read_text())
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoUfsFileSystemProbe.c')
+        text=text.replace('  gEfiEventExitBootServicesGuid','  gEfiEventExitBootServicesGuid\n  gEfiFileInfoGuid\n  gEfiFileSystemInfoGuid')
+        text+='  gEfiSimpleFileSystemProtocolGuid\n';path.write_text(text)
+    if args.ufs_shell:
+        shutil.copyfile(root/'bootprofiles/uefi-app/PianoLaunchShell.c',app/'PianoLaunchShell.c')
+        path=app/'PianoUfsReadOnlyDma.c';path.write_text('#define PIANO_UFS_SHELL 1\n'+path.read_text())
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoLaunchShell.c')
+        text=text.replace('  DebugLib','  DebugLib\n  DevicePathLib')
+        text+='  gEfiFirmwareVolume2ProtocolGuid\n';path.write_text(text)
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
+            'EFI_STATUS PianoRunShellDiagnostics(EFI_HANDLE Parent,BOOLEAN Interactive);\n#pragma pack(1)',1)
+        text=text.replace('  Status=gBS->LoadImage (FALSE,ImageHandle',
+            '  Status=PianoRunShellDiagnostics(ImageHandle,'+('TRUE' if args.ufs_shell_interactive else 'FALSE')+');\n'
+            '  DEBUG((DEBUG_WARN,"SUNUEFI_SHELL_DIAGNOSTICS_RETURN %r\\n",Status));\n'
+            '  Status=gBS->LoadImage (FALSE,ImageHandle')
+        path.write_text(text)
+    if args.ufs_setup:
+        shutil.copyfile(root/'bootprofiles/uefi-app/PianoLaunchSetup.c',app/'PianoLaunchSetup.c')
+        path=app/'PianoUfsReadOnlyDma.c';path.write_text('#define PIANO_UFS_SETUP 1\n'+path.read_text())
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoLaunchSetup.c')
+        text=text.replace('  MdePkg/MdePkg.dec','  MdePkg/MdePkg.dec\n  MdeModulePkg/MdeModulePkg.dec')
+        for library in ('DevicePathLib','PcdLib'):
+            if '  '+library+'\n' not in text:text=text.replace('  DebugLib','  DebugLib\n  '+library)
+        for protocol in ('gEfiFirmwareVolume2ProtocolGuid','gEfiHiiDatabaseProtocolGuid','gEfiHiiStringProtocolGuid',
+                         'gEfiHiiFontProtocolGuid','gEfiHiiConfigRoutingProtocolGuid','gEfiFormBrowser2ProtocolGuid',
+                         'gEdkiiFormDisplayEngineProtocolGuid','gEfiVariableArchProtocolGuid','gEfiVariableWriteArchProtocolGuid'):
+            if '  '+protocol+'\n' not in text:text+='  '+protocol+'\n'
+        text+='\n[Pcd]\n  gEfiMdeModulePkgTokenSpaceGuid.PcdEmuVariableNvModeEnable\n'
+        path.write_text(text)
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
+            'EFI_STATUS PianoLaunchSetup(EFI_HANDLE Parent);\n#pragma pack(1)',1)
+        text=text.replace('  Status=gBS->LoadImage (FALSE,ImageHandle',
+            '  Status=PianoLaunchSetup(ImageHandle);\n'
+            '  DEBUG((DEBUG_WARN,"SUNUEFI_SETUP_DIAGNOSTICS_RETURN %r\\n",Status));\n'
+            '  Status=gBS->LoadImage (FALSE,ImageHandle')
+        path.write_text(text)
     if args.usb_controller:
         for name in ('PianoUsbController.c','PianoDma.c','PianoDma.h','PianoSmmu.c','PianoSmmu.h',
                      'PianoOwnedSmmu.c','PianoOwnedSmmu.h','PianoIoPageTable.c','PianoIoPageTable.h'):
@@ -289,6 +364,31 @@ def main():
   }
 '''
     dsc.write_text(text)
+    if args.ufs_shell:
+        # Match the pinned ShellPkg, rather than importing an unrelated binary.
+        # No debug1 memory-write, install1/bcfg or network command libraries.
+        dsc.write_text(dsc.read_text()+'''
+[LibraryClasses]
+  ShellLib|ShellPkg/Library/UefiShellLib/UefiShellLib.inf
+  ShellCommandLib|ShellPkg/Library/UefiShellCommandLib/UefiShellCommandLib.inf
+  HandleParsingLib|ShellPkg/Library/UefiHandleParsingLib/UefiHandleParsingLib.inf
+  OrderedCollectionLib|MdePkg/Library/BaseOrderedCollectionRedBlackTreeLib/BaseOrderedCollectionRedBlackTreeLib.inf
+[Components]
+  ShellPkg/Application/Shell/Shell.inf {
+    <PcdsFixedAtBuild>
+      gEfiShellPkgTokenSpaceGuid.PcdShellLibAutoInitialize|FALSE
+      gEfiShellPkgTokenSpaceGuid.PcdShellSupportLevel|3
+      gEfiShellPkgTokenSpaceGuid.PcdShellProfileMask|0x01
+      gEfiShellPkgTokenSpaceGuid.PcdShellPageBreakDefault|FALSE
+    <LibraryClasses>
+      NULL|ShellPkg/Library/UefiShellLevel1CommandsLib/UefiShellLevel1CommandsLib.inf
+      NULL|ShellPkg/Library/UefiShellLevel2CommandsLib/UefiShellLevel2CommandsLib.inf
+      NULL|ShellPkg/Library/UefiShellLevel3CommandsLib/UefiShellLevel3CommandsLib.inf
+      NULL|ShellPkg/Library/UefiShellDriver1CommandsLib/UefiShellDriver1CommandsLib.inf
+  }
+''')
+    if args.ufs_setup:
+        dsc.write_text(dsc.read_text()+SETUP_DSC_ADDITIONS)
     if args.pmic_metadata:
         dsc.write_text(dsc.read_text()+'\n[Components]\n  pianoGuiPkg/Drivers/PianoPmicMetadata/PianoPmicMetadata.inf\n')
     fdf = target / 'pianoGui.fdf'
@@ -303,6 +403,16 @@ def main():
         text=text.replace('!include SiliciumPkg/Common.fdf.inc',
             '  INF MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf\n'
             '  INF MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf\n!include SiliciumPkg/Common.fdf.inc')
+    if args.ufs_filesystems:
+        text=text.replace('!include SiliciumPkg/Common.fdf.inc',
+            '  INF MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf\n'
+            '  INF FatPkg/EnhancedFatDxe/Fat.inf\n!include SiliciumPkg/Common.fdf.inc')
+    if args.ufs_shell:
+        text=text.replace('!include SiliciumPkg/Common.fdf.inc',
+            '  INF ShellPkg/Application/Shell/Shell.inf\n!include SiliciumPkg/Common.fdf.inc')
+    if args.ufs_setup:
+        text=text.replace('!include SiliciumPkg/Common.fdf.inc',
+            ''.join('  INF '+module+'\n' for module in SETUP_FV_MODULES)+'!include SiliciumPkg/Common.fdf.inc')
     if args.usb_debug:
         # Real EDK2 SDT service; no invented USB AML or fake success protocol.
         text=text.replace('!include SiliciumPkg/Common.fdf.inc',

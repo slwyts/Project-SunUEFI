@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #undef NULL
 #define PIANO_DMA_HOST_TEST 1
 #include "../bootprofiles/uefi-app/PianoDma.c"
@@ -11,10 +12,19 @@ static EFI_BOOT_SERVICES bs;static EFI_DXE_SERVICES ds;
 static void *allocation;static size_t allocation_bytes;static unsigned frees,clean,invalid,both,unmaps,faults;
 static UINT64 attributes=EFI_MEMORY_WB;static EFI_PHYSICAL_ADDRESS fake_iova=0x40000000;
 static int map_fail,unmap_fail;
-BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
-BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
-VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
-UINTN EFIAPI AsciiSPrint(CHAR8 *Buffer,UINTN Size,CONST CHAR8 *Format,...){assert(!"Disabled debug must not format records");return 0;}
+static EFI_MEMORY_TYPE expected_type=EfiBootServicesData;
+static BOOLEAN debug_enabled;
+static unsigned debug_calls,format_calls;
+static char formatted_phase[64];
+BOOLEAN EFIAPI DebugPrintEnabled(VOID){return debug_enabled;}
+BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return debug_enabled;}
+VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){++debug_calls;}
+UINTN EFIAPI AsciiSPrint(CHAR8 *Buffer,UINTN Size,CONST CHAR8 *Format,...){
+  assert(debug_enabled);++format_calls;va_list args;va_start(args,Format);
+  if(strncmp(Format,"phase=sync-cpu-quiet-summary",27)==0)strcpy(formatted_phase,"quiet-summary");
+  else {assert(strncmp(Format,"phase=%a seq=",13)==0);strcpy(formatted_phase,va_arg(args,const char *));}
+  va_end(args);strcpy(Buffer,"host formatted record fixture");return strlen(Buffer);
+}
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
 VOID EFIAPI MemoryFence(VOID){ }
@@ -25,7 +35,7 @@ VOID *EFIAPI WriteBackDataCacheRange(VOID *P,UINTN N){++clean;assert(!(N&63));re
 VOID *EFIAPI InvalidateDataCacheRange(VOID *P,UINTN N){++invalid;assert(!(N&63));return P;}
 VOID *EFIAPI WriteBackInvalidateDataCacheRange(VOID *P,UINTN N){++both;assert(!(N&63));return P;}
 static EFI_STATUS EFIAPI alloc(EFI_ALLOCATE_TYPE T,EFI_MEMORY_TYPE M,UINTN Pages,EFI_PHYSICAL_ADDRESS *A){
-  assert(T==AllocateMaxAddress && M==EfiBootServicesData && !allocation);
+  assert(T==AllocateMaxAddress && M==expected_type && !allocation);
   allocation_bytes=EFI_PAGES_TO_SIZE(Pages);assert(posix_memalign(&allocation,4096,allocation_bytes)==0);
   region.Address=(UINTN)allocation;region.Length=allocation_bytes+0x100000;
   *A=(UINTN)allocation;return EFI_SUCCESS;
@@ -51,6 +61,8 @@ int main(void){
   gBS=&bs;gDS=&ds;bs.AllocatePages=alloc;bs.FreePages=free_pages;ds.GetMemorySpaceDescriptor=descriptor;
   PIANO_DMA_DEVICE d={.Name="ufs",.StreamId=0x60,.AddressBits=32,.CacheLine=64,.Fault=fault};PIANO_DMA_BUFFER b;
   assert(PianoDmaAllocate(&d,1000,128,64,PianoDmaFromDevice,&b)==EFI_SUCCESS);
+  assert(b.MemoryType==EfiBootServicesData && !b.ExitRetained);
+  assert(PianoDmaRetainForExit(&b)==EFI_ACCESS_DENIED && !b.ExitRetained);
   assert(b.Bytes==1000 && b.ReservedBytes==4096 && !(b.Physical&4095));
   assert(PianoDmaMap(&b)==EFI_NOT_READY && !b.Mapped);
   EFI_PHYSICAL_ADDRESS translated=0;
@@ -86,6 +98,35 @@ int main(void){
   region.Address=0;region.Length=MAX_UINT64;attributes=EFI_MEMORY_UC;
   assert(PianoDmaAllocate(&d,4096,128,64,PianoDmaBidirectional,&b)==EFI_UNSUPPORTED && !allocation);
   assert(PianoDmaAllocate(&d,4096,3,64,PianoDmaBidirectional,&b)==EFI_INVALID_PARAMETER);
+  attributes=EFI_MEMORY_WB;region.Address=0;region.Length=MAX_UINT64;
+  d.ReserveAcrossExit=TRUE;expected_type=EfiReservedMemoryType;
+  assert(PianoDmaAllocate(&d,4096,4096,64,PianoDmaFromDevice,&b)==EFI_SUCCESS && b.MemoryType==EfiReservedMemoryType);
+  assert(PianoDmaFree(&b)==EFI_SUCCESS); // Reserved remains reclaimable before EBS.
+  region.Address=0;region.Length=MAX_UINT64;
+  assert(PianoDmaAllocate(&d,4096,4096,64,PianoDmaFromDevice,&b)==EFI_SUCCESS);
+  b.Active=TRUE;assert(PianoDmaRetainForExit(&b)==EFI_ACCESS_DENIED);b.Active=FALSE;
+  b.Quarantined=TRUE;assert(PianoDmaRetainForExit(&b)==EFI_ACCESS_DENIED);b.Quarantined=FALSE;
+  assert(PianoDmaRetainForExit(&b)==EFI_SUCCESS && b.ExitRetained);
+  unsigned old_frees=frees;
+  assert(PianoDmaFree(&b)==EFI_ACCESS_DENIED && PianoDmaUnmap(&b)==EFI_ACCESS_DENIED && frees==old_frees);
+  assert(PianoDmaMap(&b)==EFI_INVALID_PARAMETER);
+  b.ExitRetained=FALSE;assert(PianoDmaFree(&b)==EFI_SUCCESS); // Host reset simulation only.
+  region.Address=0;region.Length=MAX_UINT64;fake_iova=0x40000000;
+  assert(PianoDmaAllocate(&d,4096,4096,64,PianoDmaFromDevice,&b)==EFI_SUCCESS && PianoDmaMap(&b)==EFI_SUCCESS);
+  assert(PianoDmaBegin(&b,"active-poll") == EFI_SUCCESS);
+  unsigned old_invalid=invalid;debug_enabled=TRUE;debug_calls=format_calls=0;
+  for(unsigned i=0;i<5;++i)assert(PianoDmaSyncForCpuQuiet(&b)==EFI_SUCCESS);
+  assert(invalid==old_invalid+5 && b.Active && b.QuietSyncs==5 && !debug_calls && !format_calls);
+  assert(PianoDmaReportQuietSync(&b)==EFI_SUCCESS && debug_calls==2 && format_calls==1 && !strcmp(formatted_phase,"quiet-summary") && b.QuietSyncReported==5);
+  assert(PianoDmaReportQuietSync(&b)==EFI_SUCCESS && debug_calls==2 && format_calls==1);
+  assert(PianoDmaSyncForCpu(&b)==EFI_SUCCESS && debug_calls==4 && format_calls==2 && !strcmp(formatted_phase,"sync-cpu") && b.QuietSyncs==5);
+  b.Direction=PianoDmaToDevice;unsigned before_reject=invalid;
+  assert(PianoDmaSyncForCpuQuiet(&b)==EFI_ACCESS_DENIED && invalid==before_reject && b.QuietSyncs==5);
+  b.Direction=PianoDmaFromDevice;b.Quarantined=TRUE;
+  assert(PianoDmaSyncForCpuQuiet(&b)==EFI_NOT_READY && invalid==before_reject && b.QuietSyncs==5);b.Quarantined=FALSE;
+  assert(PianoDmaSyncForCpuQuiet(&b)==EFI_SUCCESS && b.QuietSyncs==6 && invalid==before_reject+1);
+  debug_enabled=FALSE;
+  assert(PianoDmaComplete(&b,EFI_SUCCESS,TRUE)==EFI_SUCCESS && PianoDmaFree(&b)==EFI_SUCCESS);
   puts("Unified DMA: allocation bounds, absent-backend rejection, nonidentity IOVA, cache direction, address width, active/unquiesced retention and failed-unmap handling passed.");
   return 0;
 }
