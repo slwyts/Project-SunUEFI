@@ -3,6 +3,7 @@
 #include <Uefi.h>
 #include <Guid/Fdt.h>
 #include <Guid/LinuxEfiInitrdMedia.h>
+#include <Guid/EventGroup.h>
 #include <Protocol/DevicePath.h>
 #include <Protocol/LoadFile2.h>
 #include <Protocol/LoadedImage.h>
@@ -52,6 +53,27 @@ STATIC CONST CHAR8 mCommandAscii[] =
 STATIC CONST CHAR16 mCommand[] =
   L"rdinit=/init ro nokaslr efi=novamap console=ttyGS0,115200 loglevel=7 panic=15 "
   L"hwid.hwid_value=589824 hwid.project=9 hwid.build_adc=51282 hwid.project_adc=39406";
+
+VOID PianoStopFaultRecovery(VOID);
+EFI_STATUS PianoStartFaultRecovery(VOID);
+STATIC EFI_TEXT_STRING mOriginalOutput;
+STATIC BOOLEAN mOutputGuard;
+STATIC EFI_STATUS EFIAPI MirrorEfiOutput(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,CHAR16 *String) {
+  if(String!=NULL && !mOutputGuard) {
+    mOutputGuard=TRUE;
+    UINTN Offset=0;
+    while(Offset<4096 && String[Offset]) {
+      CHAR16 Part[128];UINTN Count=0;
+      while(Count<ARRAY_SIZE(Part)-1 && Offset<4096 && String[Offset])Part[Count++]=String[Offset++];
+      Part[Count]=0;DEBUG((DEBUG_WARN,"SUNUEFI_EFI_STUB_OUTPUT %s\n",Part));
+    }
+    mOutputGuard=FALSE;
+  }
+  return mOriginalOutput==NULL?EFI_NOT_READY:mOriginalOutput(This,String);
+}
+STATIC VOID EFIAPI EfiHandoffMarker(EFI_EVENT Event,VOID *Context) {
+  DEBUG((DEBUG_WARN,"SUNUEFI_EFI_HANDOFF_EVENT %a\n",(CONST CHAR8 *)Context));
+}
 
 STATIC BOOLEAN KnownRam (UINT64 Address, UINT64 Length)
 {
@@ -212,6 +234,8 @@ EFI_STATUS EFIAPI LinuxRamBootEntry (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *S
   EFI_STATUS Status;
   EFI_HANDLE InitrdHandle = NULL, KernelHandle = NULL;
   EFI_LOADED_IMAGE_PROTOCOL *Loaded;
+  EFI_EVENT BeforeExit=NULL,OnExit=NULL;
+  BOOLEAN FaultRecovery=FALSE;
 
   Print (L"\r\nSunUEFI Linux RAM loader\r\n");
   DEBUG ((DEBUG_WARN, "PIANO_LINUX_RAM_LOADER_START\n"));
@@ -303,7 +327,17 @@ EFI_STATUS EFIAPI LinuxRamBootEntry (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *S
   DEBUG ((DEBUG_WARN, "SUNUEFI_KERNEL_IMAGE base=%p size=%lu\n", Loaded->ImageBase, Loaded->ImageSize));
   Print (L"Starting ARM64 Linux EFI-stub from RAM...\r\n");
   DEBUG ((DEBUG_WARN, "PIANO_LINUX_EFI_START_IMAGE\n"));
+  Status=PianoStartFaultRecovery();FaultRecovery=!EFI_ERROR(Status);
+  DEBUG((DEBUG_WARN,"SUNUEFI_EFI_FAULT_HANDLER %r\n",Status));
+  gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_CALLBACK,EfiHandoffMarker,"before-exit-boot-services",&gEfiEventBeforeExitBootServicesGuid,&BeforeExit);
+  gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_CALLBACK,EfiHandoffMarker,"exit-boot-services",&gEfiEventExitBootServicesGuid,&OnExit);
+  if(gST->ConOut!=NULL){mOriginalOutput=gST->ConOut->OutputString;gST->ConOut->OutputString=MirrorEfiOutput;}
   Status = gBS->StartImage (KernelHandle, NULL, NULL);
+  if(gST->ConOut!=NULL && mOriginalOutput!=NULL)gST->ConOut->OutputString=mOriginalOutput;
+  mOriginalOutput=NULL;
+  if(BeforeExit!=NULL)gBS->CloseEvent(BeforeExit);
+  if(OnExit!=NULL)gBS->CloseEvent(OnExit);
+  if(FaultRecovery)PianoStopFaultRecovery();
   Print (L"Linux EFI-stub returned: %r\r\n", Status);
 Unload:
   gBS->UnloadImage (KernelHandle);

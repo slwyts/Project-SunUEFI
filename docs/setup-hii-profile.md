@@ -1,6 +1,8 @@
 # 标准 TianoCore Setup / HII 可选 profile
 
-2026-10-05 主机准备完成。该新增 profile **尚未完整链接/实机启动 Setup**，显示、键盘导航、表单变更、退出和恢复 timer 均未通过设备验收。第 67 次 Shell/FAT 镜像不含本次 Setup 改动。
+2026-10-05：标准模块已完整链接。test77 实机最终报告确认 services=Success、load=Success、image=Success、start_called=1、start_returned=0；随后120秒恢复 timer 重启Android，26启动分区校验一致。这证明 UiApp 确实加载并被启动，尚不证明页面布局、按键导航、表单变更或正常退出。变量仍只在 RAM 中。
+
+Setup 期间临时将音量键转换为标准 SCAN_UP/SCAN_DOWN，短按电源释放为 Enter，同时按两音量键为 Escape；返回后恢复 SimpleInit 的既有键码。源码和主机实际输入测试通过，Setup 内实际手动操作仍待验收。
 
 使用入口：`prepare_gui_profile.py --ufs-setup`，隐含标准只读 Filesystems/BlockIO。可另加 `--ufs-shell` 先跑既有自动 Shell 枚举，再启动 Setup；UiApp 的 Continue/退出返回后，RamApp 继续加载原有 RAM SimpleInit。所有启动都发生在 RamApp 的 UFS/DMA/按键 provider 仍存活时。
 

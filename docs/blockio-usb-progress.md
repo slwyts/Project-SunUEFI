@@ -28,6 +28,8 @@
 
 第 70 次最终 Shell 摘要已实机确认 map-r、dh-simplefilesystem、drivers 三条命令均真实 Load/Start 并返回 Success；正常应用返回后的显式 UnloadImage 为 Invalid Parameter，与核心自动卸载相符。7个真实SFS卷再次识别，全部只读。MODE SENSE(10)读取所有LUN的缓存页成功，均DPOFUA=1；LUN4为WCE=1、mode WP=0、unit bLUWriteProtect=1。LU配置值需结合真实 fPowerOnWPEn/fPermanentWPEn 标志解释，尚不能据此直接宣称可写。
 
+第76/77次进一步只读查询确认 fPermanentWPEn=0、fPowerOnWPEn=0。LUN4 的 bLUWriteProtect=1 是配置支持，上电保护当前未启用。仍没有WRITE或cache-sync实机命令。第77次队列最终TR/TMR doorbell和两个run、IRQ读回全0；标准Setup服务/FV LoadImage成功且StartImage被调用，等待输入期间由原120秒timer自动恢复，所有26分区SHA一致。
+
 USB 枚举实验仍独立于 UFS；没有启用 native UsbConfigDxe / UsbfnDwc3Dxe 的缺依赖路径，也没有把 UFS 的 IOVA 或 context bank 直接共享给 USB。成功后再考虑 bulk fastboot。
 
 第 63 / 64 次只读 SPMI：SID7 FD08=80、FD46=80（ready / enable），FD51=0A、FD54=03、FD55=03、FD57=03 与同机 XBL tuning 一致。M31 PHY CTRL0=01、COMMON0=6B、HS_CTRL2=07，SS COM=01。设备没有收到新的连接事件，当前优先排查 WCD9390 / Type-C mux / VBUS-session-valid 的传递，不能仅凭这些寄存器宣称模拟链路完全正常。没有修改 PMIC 电压或 repeater 配置。

@@ -2,7 +2,9 @@
 
 当前状态（2026-10-05）：stable 的独立 7.2.6 内核已在电脑编译，38 MiB Image 带 ARM64 EFI stub。test71 已实机完成 raw ARM64 RAM smoke：PID 1/BusyBox 运行，CPU_ONLINE=0-7，MemTotal=15520788 kB，DIAGNOSTICS_READY，180 秒后自动重启 Android；实际 /proc/config.gz 解压 SHA256=1cbb6541bdd94231db305fbc6ff79658ed45e8af888d32351d6fbbbbfb06c211，与构建 config 完全一致，恢复后26启动分区 SHA 一致。console 不可用时通过 kmsg 记录，不再退出 PID 1。此前 test68 的 console 退出问题和 test69 的嵌入 DTB 地址对齐问题均已修复。
 
-这个结果只验证 raw 交接、CPU/RAM、静态 initramfs 和恢复闭环；日志 efi: UEFI not found / EFI_SYSFS absent，因此不是 Linux EFI-stub/运行时服务验收。完整发行版、原生显示、USB 交互、触摸、音频、休眠和日常使用均未因此得到验证。官方 next 7.3-rc5 的 RAM Image/initramfs也已在电脑构建，仍待对应实机验收。
+官方 next 7.3-rc5（7704c4c5bb127673b4f0ead839919db573559e38）也已在 test73 完成同样 RAM smoke：PID1、8 CPU、DIAGNOSTICS_READY、180 秒恢复、26启动分区校验全部通过；runtime config SHA=85c048d4f361802c204be5cae880bbfd9d961e170730ede9cba9198b2153fb31 与该 next build 相符。两条 profile 的具体验收保存在各自 artifacts/kernels/{profile}/ram/ram-validation-test-*.json，构建 manifest 保留构建时状态。
+
+这些结果只验证 raw 交接、CPU/RAM、静态 initramfs 和恢复闭环；日志 efi: UEFI not found / EFI_SYSFS absent，因此不是 Linux EFI-stub/运行时服务验收。完整发行版、原生显示、USB 交互、触摸、音频、休眠和日常使用均未因此得到验证。
 
 ## 当前源码组织
 
@@ -18,7 +20,7 @@
 | 分支/来源 | 固定提交 | 当前用途 |
 | --- | --- | --- |
 | `piano-stable` / `blu-sharky:piano-7.2.6` | `7a33c60fd6eda8a9c20dfda636d4e0a4efa4cbb8` | 设备移植基线，60 个补丁提交接在 vanilla 7.2.6 后 |
-| `piano-next` / `torvalds:master` | `7704c4c5bb127673b4f0ead839919db573559e38` | 主线移植目标，当前还没有完整 piano 板级支持或已验收的 Image |
+| `piano-next` / `torvalds:master` | `7704c4c5bb127673b4f0ead839919db573559e38` | test73 已验收 raw RAM smoke；完整 piano 板级功能仍需 topic commits 和实机验证 |
 | `stable:linux-7.2.y` | `5fce161649b4d779d1b76d9fcd52dc77779774b8` | 已观察到的 kernel.org 7.2.9 更新来源；尚未成为本项目 stable pin |
 
 内核源码由独立仓库维护。更新 pin 时，分支、Gitlink 和 `kernel-profiles.json` 应明确指向选定版本，并保留可恢复的 stable 产物和来源；不要依靠移动 remote ref 隐式改变既有构建。
