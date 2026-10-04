@@ -1,0 +1,63 @@
+{
+  "locates": {
+    "piano": {"by_file": "\\EFI\\Piano\\BootManifest.json"}
+  },
+  "boot": {
+    "title": "Piano UEFI",
+    "default": "simple-init",
+    "current": "simple-init",
+    "timeout": -1,
+    "uefi_bootmenu": false,
+    "uefi_probe": false,
+    "console_log": true,
+    "configs": {
+      "piano-stable": {
+        "mode": "linux", "desc": "Piano Stable (rescue candidate; not staged)",
+        "show": true, "enabled": false,
+        "extra": {
+          "kernel": "locate://piano/EFI/Piano/Stable/Image.efi",
+          "dtb": "locate://piano/EFI/Piano/Stable/piano.dtb",
+          "initrd": "locate://piano/EFI/Piano/Stable/initramfs.cpio.gz",
+          "cmdline": "rdinit=/init panic=30 loglevel=7 efi=noruntime",
+          "use_uefi": true, "skip_kernel_fdt_cmdline": true,
+          "skip_dtb_after_kernel": true, "skip_dtbo": true,
+          "add_uefi_runtime": false, "load_custom_address": false
+        }
+      },
+      "piano-next": {
+        "mode": "linux", "desc": "Piano Next (experimental; not staged)",
+        "show": true, "enabled": false,
+        "extra": {
+          "kernel": "locate://piano/EFI/Piano/Next/Image.efi",
+          "dtb": "locate://piano/EFI/Piano/Next/piano.dtb",
+          "initrd": "locate://piano/EFI/Piano/Next/initramfs.cpio.gz",
+          "cmdline": "rdinit=/init panic=30 loglevel=7 efi=noruntime",
+          "use_uefi": true, "skip_kernel_fdt_cmdline": true,
+          "skip_dtb_after_kernel": true, "skip_dtbo": true,
+          "add_uefi_runtime": false, "load_custom_address": false
+        }
+      },
+      "android": {
+        "mode": "none", "desc": "Android (inactive: handoff contract pending)",
+        "show": true, "enabled": false
+      },
+      "recovery": {
+        "mode": "none", "desc": "Android Recovery (inactive: handoff contract pending)",
+        "show": true, "enabled": false
+      },
+      "shell": {
+        "mode": "efi", "desc": "UEFI Shell (inactive: external file not staged)",
+        "show": true, "enabled": false,
+        "extra": {
+          "efi_file": "locate://piano/EFI/Piano/Shell.efi",
+          "options": "Shell.efi -nostartup -nointerrupt",
+          "options_widechar": true
+        }
+      },
+      "simple-init": {
+        "mode": "simple-init", "desc": "SimpleInit diagnostics",
+        "show": true, "enabled": true
+      }
+    }
+  }
+}

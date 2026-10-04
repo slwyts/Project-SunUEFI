@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "scope": "disabled-display-topology-only",
+  "base_sha256": "a4b55dd3b77e69be451aaf2263c76f5496c93325767e49f748ee49570611e8d7",
+  "overlay_source": "arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano-display-topology.dtso",
+  "overlay_commit": "1c2655ef4a94912fae39a14b943ba3d10b6847ce",
+  "overlay_sha256": "3af5a6743c7c9879b1ecd69d0792e5c1cb9c6c9201b42b75b9ab8e98152c8638",
+  "gpio_header_sha256": "5423b3866877ead0920ec978b5b072f06087443033a72445b39faed8f288ddc1",
+  "base_aliases": {
+    "piano_stock_tlmm": "/soc/pinctrl@f000000",
+    "piano_stock_vddio": "/soc/rsc@16500000/drv@2/rpmh-regulator-ldob12/regulator-pm-humu-l12",
+    "piano_stock_avdd": "/soc/display_gpio_regulator_vsp",
+    "piano_stock_avee": "/soc/display_gpio_regulator_vsn"
+  },
+  "new_nodes": [
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/panel@0",
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/panel@0/ports",
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/panel@0/ports/port@0",
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/panel@0/ports/port@0/endpoint",
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/panel@0/ports/port@1",
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/panel@0/ports/port@1/endpoint",
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/ports",
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/ports/port@1",
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/ports/port@1/endpoint",
+    "/soc/qcom,mdss_dsi_ctrl1@ae96000/ports",
+    "/soc/qcom,mdss_dsi_ctrl1@ae96000/ports/port@1",
+    "/soc/qcom,mdss_dsi_ctrl1@ae96000/ports/port@1/endpoint",
+    "/soc/qcom,qupv3_i2c_geni_se@9c0000/i2c@98c000/backlight@11",
+    "/soc/qcom,qupv3_2_geni_se@8c0000/i2c@880000/backlight@11"
+  ],
+  "reference_nodes": [
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/panel@0",
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/panel@0/ports/port@0/endpoint",
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/panel@0/ports/port@1/endpoint",
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/ports/port@1/endpoint",
+    "/soc/qcom,mdss_dsi_ctrl1@ae96000/ports/port@1/endpoint",
+    "/soc/qcom,qupv3_i2c_geni_se@9c0000/i2c@98c000/backlight@11",
+    "/soc/qcom,qupv3_2_geni_se@8c0000/i2c@880000/backlight@11"
+  ],
+  "disabled_nodes": [
+    "/soc/qcom,mdss_dsi_ctrl0@ae94000/panel@0",
+    "/soc/qcom,qupv3_i2c_geni_se@9c0000/i2c@98c000/backlight@11",
+    "/soc/qcom,qupv3_2_geni_se@8c0000/i2c@880000/backlight@11",
+    "/soc/qcom,qupv3_i2c_geni_se@9c0000/i2c@98c000/ktz8866@11",
+    "/soc/qcom,qupv3_2_geni_se@8c0000/i2c@880000/ktz8866@11"
+  ],
+  "allowed_property_changes": [
+    [
+      "/soc/qcom,mdss_dsi_ctrl0@ae94000",
+      "#address-cells"
+    ],
+    [
+      "/soc/qcom,mdss_dsi_ctrl0@ae94000",
+      "#size-cells"
+    ],
+    [
+      "/soc/qcom,qupv3_i2c_geni_se@9c0000/i2c@98c000/ktz8866@11",
+      "status"
+    ],
+    [
+      "/soc/qcom,qupv3_2_geni_se@8c0000/i2c@880000/ktz8866@11",
+      "status"
+    ]
+  ],
+  "overlay_symbols": [
+    "piano_panel",
+    "piano_panel_in0",
+    "piano_panel_in1",
+    "piano_dsi0_out",
+    "piano_dsi1_out",
+    "piano_backlight_primary",
+    "piano_backlight_secondary"
+  ],
+  "reference_sources": [
+    {
+      "url": "https://raw.githubusercontent.com/blu-sharky/debian-piano/e4004f5d5f08f79433b61a892c8b4f783c4c2e37/boot/dtbo-piano-display.dts",
+      "sha256": "5e10ca384e837bc139bfab4c6d1ade211547301f44f3ced58c7dad93b1095847",
+      "used_as": "review source only; never compiled as an include"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/blu-sharky/debian-piano/e4004f5d5f08f79433b61a892c8b4f783c4c2e37/boot/dtbo-piano-video.dts",
+      "sha256": "5e517e31057002aac7c6fa7cf14b2058d089a34775b942e4b8c3ce5bc4397218",
+      "used_as": "review source only; never compiled as an include"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/blu-sharky/debian-piano/e4004f5d5f08f79433b61a892c8b4f783c4c2e37/boot/dtbo-piano-touch-v2.dts",
+      "sha256": "23a99aa5a110d265bfea9f19034713fbcd03370aa4ad8eac55066ed2ad4ad3b4",
+      "used_as": "review source only; never compiled as an include"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/blu-sharky/debian-piano/e4004f5d5f08f79433b61a892c8b4f783c4c2e37/boot/dtbo-piano-usb-nopd9.dts",
+      "sha256": "8cbd39e196fd4b319db87a1ebe960a448337b1ac4bd4a5133b44cb899049956c",
+      "used_as": "review source only; never compiled as an include"
+    }
+  ],
+  "capture_panel_selector": "msm_drm.dsi_display0=qcom,mdss_dsi_p81_35_02_0b_dualdsi_dsc_vid:",
+  "known_supply_voltages_uv": {
+    "vddio": 1900000,
+    "avdd": 5800000,
+    "avee_magnitude": 5800000
+  },
+  "unresolved_integration": [
+    {
+      "component": "MDSS/DPU/DSI/PHY",
+      "status": "unknown",
+      "reason": "stock vendor compatibles and register/IRQ/clock interfaces retained; host port0/DPU input graph not created; renaming compatible alone is insufficient"
+    },
+    {
+      "component": "TLMM/regulators",
+      "status": "unknown",
+      "reason": "stock qcom,sun-tlmm and RPMh provider topology does not match mainline; existing 1.9V/5.8V providers referenced without voltage or GPIO writes"
+    },
+    {
+      "component": "SMMU",
+      "status": "unknown",
+      "reason": "display SID0x800/mask2 and inherited hypervisor routes need owned handover; no new SMMU or bypass script added"
+    },
+    {
+      "component": "clock/power/interconnect",
+      "status": "unknown",
+      "reason": "stock GCC/dispcc/RPMh/NoC dependencies are not converted; no fake fixed clock or rpmhpd hold consumer added"
+    },
+    {
+      "component": "I2C/backlight buses",
+      "status": "unknown",
+      "reason": "hub SE3 and QUP2 SE8 retain downstream bus bindings; native GENI clock/pinctrl/DMA integration still missing"
+    },
+    {
+      "component": "full stock tree",
+      "status": "unknown",
+      "reason": "baseline stock USB/touch/video/UFS/audio nodes are preserved but not re-certified as mainline support"
+    }
+  ]
+}
