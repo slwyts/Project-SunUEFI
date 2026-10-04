@@ -64,6 +64,10 @@ def main():
     archive.mkdir(parents=True, exist_ok=False)
     for name in (image.name, 'piano-stage0.fd', 'manifest.json'):
         shutil.copyfile(out / name, archive / name)
+    if manifest.get('linux_payload'):
+        # Save the exact provenance before another stable/next packaging run
+        # replaces the shared linux-ram payload output.
+        (archive/'linux-payload-manifest.json').write_text(json.dumps(manifest['linux_payload'],indent=2)+'\n')
     record = {'operation': 'explicit RAM-only diagnostic test', 'profile': args.profile, 'image_sha256': digest,
               'result': 'pending screen and Android recovery observation', 'flash_commands_performed': False}
     try:

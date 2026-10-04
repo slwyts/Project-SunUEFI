@@ -63,9 +63,14 @@ def main():
     if rs != ramdisk.stat().st_size or boot[ramdisk_offset:ramdisk_offset+rs] != ramdisk.read_bytes():
         raise SystemExit('Ramdisk packaging mismatch')
     linux_mode = None
+    linux_payload = None
     if args.profile == 'linux':
         app = ws / 'Platforms/Xiaomi/pianoLinuxPkg/Applications/LinuxRamBoot/LinuxRamBoot.c'
         linux_mode = 'raw-arm64' if app.read_text().startswith('#define SUNUEFI_RAW_HANDOFF 1') else 'efi-stub'
+        if ramdisk.read_bytes()[:16] == b'SUNUEFI-LINUXv2\0':
+            linux_payload = json.loads((ramdisk.parent/'payload-manifest.json').read_text())
+            if linux_payload['payload_sha256'] != hashlib.sha256(ramdisk.read_bytes()).hexdigest() or linux_payload['payload_bytes'] != rs:
+                raise SystemExit('Pinned Linux payload provenance does not match packaged bytes')
     checks = {
         'build_id':build_record['build_id'],
         'build_inputs':build_record['inputs'],
@@ -76,11 +81,12 @@ def main():
         'safety_limit': 'Native blob side effects and bootloader handoff are not hardware verified',
         'android_header_version': args.header_version, 'kernel_size': ks, 'ramdisk_size': rs,
         'linux_handoff_mode': linux_mode,
+        'linux_payload': linux_payload,
+        'ramdisk_sha256': hashlib.sha256(ramdisk.read_bytes()).hexdigest(),
         'fd_base': '0xA7100000', 'fd_size': len(fd),
         'files': {p.name: {'bytes': p.stat().st_size,
                            'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
                   for p in (image, out / 'piano-stage0.fd', out / 'BootShim.bin')},
-        'excluded_fv_components': ['UFS', 'PartitionDxe', 'DiskIoDxe', 'USB mass storage', 'UFPLoader', 'UFP'],
         'capsule_policy': 'PianoCapsuleArchNullDxe provides the required protocol; UpdateCapsule and QueryCapsuleCapabilities always return EFI_UNSUPPORTED',
         'device_boot_performed': False, 'os_boot_performed': False,
     }

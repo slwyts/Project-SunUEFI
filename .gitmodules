@@ -1,0 +1,4 @@
+[submodule "kernels/linux-piano"]
+	path = kernels/linux-piano
+	url = ../linux-piano
+	branch = piano-stable

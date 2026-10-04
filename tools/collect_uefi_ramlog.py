@@ -44,19 +44,21 @@ def main():
     segment = text[index:] if index >= 0 else ''
     (out/'uefi.txt').write_text(segment)
     linux = 'rdinit=/init ro nokaslr efi=novamap console=ttyGS0,115200' in text
+    independent_init = 'PIANO_KERNEL_RAM BEGIN pid=1' in text
     (out/'linux.txt').write_text(text if linux else '')
     summary = {'test_id':args.test_id,'console_bytes':len(p.stdout),'uefi_marker_found':index>=0,
                'uefi_bytes':len(segment.encode()),'path':str(out/'uefi.txt'),
                'linux_ram_command_line_found':linux,
                'linux_init_process_started':linux and 'Run /init as init process' in text,
-               'linux_ram_userland_marker':linux and 'SUNUEFI_RAM_INIT BEGIN pid=1' in text}
+               'linux_ram_userland_marker':linux and 'SUNUEFI_RAM_INIT BEGIN pid=1' in text,
+               'independent_kernel_ram_userland_marker':linux and independent_init}
     (out/'manifest.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))
     if segment: print(segment[-18000:])
     if linux:
         for line in text.splitlines():
             if any(key in line for key in ('Linux version', 'Kernel command line',
-                   'Run /init as init process', 'SUNUEFI_RAM_INIT', 'reboot: Restarting')):
+                   'Run /init as init process', 'SUNUEFI_RAM_INIT', 'PIANO_KERNEL_RAM', 'reboot: Restarting')):
                 print(line)
 
 if __name__ == '__main__': main()

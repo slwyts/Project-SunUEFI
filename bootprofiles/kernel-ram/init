@@ -1,0 +1,102 @@
+#!/bin/sh
+# Independent mainline RAM smoke init. No modules or persistent disk mounts.
+export PATH=/bin:/sbin
+mkdir -p /dev /proc /sys /tmp
+mount -t devtmpfs devtmpfs /dev
+[ -c /dev/console ] || mknod /dev/console c 5 1
+[ -c /dev/null ] || mknod /dev/null c 1 3
+[ -c /dev/kmsg ] || mknod /dev/kmsg c 1 11
+
+log() { printf '<6>PIANO_KERNEL_RAM %s\n' "$*" >/dev/kmsg; }
+log "BEGIN pid=$$ kernel=$(uname -r)"
+
+# Start recovery before diagnostics. It cannot recover a failure before PID 1.
+(
+    sleep 180
+    log 'TIMEOUT seconds=180 rebooting'
+    reboot -f
+    log 'REBOOT_RETURNED attempting_sysrq'
+    [ ! -w /proc/sysrq-trigger ] || printf b >/proc/sysrq-trigger
+) &
+
+# A console node can exist while its configured tty has no usable driver.
+# Failed redirection of the exec special builtin would terminate PID 1, so
+# probe in a disposable subshell after the log sink and timer are active.
+if (exec </dev/console >/dev/console 2>&1) 2>/dev/null; then
+    exec </dev/console >/dev/console 2>&1
+    log 'CONSOLE available'
+else
+    exec </dev/null >/dev/null 2>&1
+    log 'CONSOLE unavailable continuing_with_kmsg'
+fi
+
+mount -t proc proc /proc || log 'MOUNT_FAILED proc'
+mount -t sysfs sysfs /sys || log 'MOUNT_FAILED sysfs'
+mount -t tmpfs -o mode=0755 tmpfs /tmp || log 'MOUNT_FAILED tmpfs'
+
+emit_file() {
+    label=$1 file=$2 limit=$3 count=0
+    if [ ! -r "$file" ]; then log "$label UNAVAILABLE"; return; fi
+    while IFS= read -r line; do
+        log "$label $line"
+        count=$((count + 1))
+        if [ "$count" -ge "$limit" ]; then log "$label LIMIT=$limit"; break; fi
+    done <"$file"
+}
+
+log "UNAME $(uname -a)"
+emit_file BUILD /etc/piano/kernel-build 16
+emit_file CMDLINE /proc/cmdline 2
+emit_file CPU_ONLINE /sys/devices/system/cpu/online 2
+emit_file CPU_PRESENT /sys/devices/system/cpu/present 2
+emit_file CPUINFO /proc/cpuinfo 160
+emit_file MEMINFO /proc/meminfo 48
+emit_file MOUNT /proc/mounts 64
+emit_file CONFIG_EXPECTED /etc/piano/config-summary 96
+for property in model compatible; do
+    file=/sys/firmware/devicetree/base/$property
+    if [ -r "$file" ]; then
+        log "BOARD_$property $(tr '\000' ' ' <"$file")"
+    else
+        log "BOARD_$property UNAVAILABLE"
+    fi
+done
+if [ -d /sys/firmware/efi ]; then log 'EFI_SYSFS present'; else log 'EFI_SYSFS absent'; fi
+
+if [ -r /proc/config.gz ] && gzip -dc /proc/config.gz >/tmp/kernel-config; then
+    log "CONFIG_RUNTIME_SHA256 $(sha256sum /tmp/kernel-config)"
+    while IFS= read -r line; do
+        case "$line" in
+            CONFIG_ARM64=*|CONFIG_ARCH_QCOM=*|CONFIG_EFI=*|CONFIG_EFI_STUB=*|\
+            CONFIG_BLK_DEV_INITRD=*|CONFIG_CMDLINE=*|CONFIG_CMDLINE_FORCE=*|\
+            CONFIG_EXPERT=*|CONFIG_BLOCK=*|CONFIG_MODULES=*|CONFIG_PSTORE=*|\
+            CONFIG_PSTORE_RAM=*|CONFIG_PSTORE_CONSOLE=*|CONFIG_DRM_SIMPLEDRM=*|\
+            CONFIG_ARM_SMMU=*|CONFIG_USB_DWC3=*|CONFIG_USB_DWC3_QCOM=*|\
+            CONFIG_USB_GADGET=*|CONFIG_SCSI_UFSHCD=*|CONFIG_SCSI_UFS_QCOM=*|\
+            '# CONFIG_BLOCK is not set'|'# CONFIG_CMDLINE_FORCE is not set'|\
+            '# CONFIG_SCSI_UFSHCD is not set') log "CONFIG_RUNTIME $line" ;;
+        esac
+    done </tmp/kernel-config
+else
+    log 'CONFIG_RUNTIME_UNAVAILABLE'
+fi
+
+usb_snapshot() {
+    controllers=0 devices=0
+    for controller in /sys/class/udc/*; do
+        [ -e "$controller" ] || continue
+        controllers=$((controllers + 1))
+        log "USB_UDC name=${controller##*/} state=$(cat "$controller/state" 2>/dev/null)"
+    done
+    for device in /sys/bus/usb/devices/*; do
+        [ -r "$device/idVendor" ] || continue
+        devices=$((devices + 1))
+        log "USB_DEVICE name=${device##*/} vid=$(cat "$device/idVendor") pid=$(cat "$device/idProduct")"
+        [ "$devices" -lt 64 ] || break
+    done
+    log "USB_SNAPSHOT udc_count=$controllers device_count=$devices"
+}
+
+usb_snapshot
+log 'DIAGNOSTICS_READY no_modules_loaded_by_init'
+while :; do sleep 10; usb_snapshot; done

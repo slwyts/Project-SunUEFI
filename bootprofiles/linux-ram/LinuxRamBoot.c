@@ -29,6 +29,7 @@ typedef struct {
   UINT8 KernelHash[32];
   UINT8 InitrdHash[32];
 } LINUX_RAM_HEADER;
+typedef struct {LINUX_RAM_HEADER Base;UINT64 DtbSize;UINT8 DtbHash[32];} LINUX_RAM_HEADER_V2;
 typedef struct {
   VENDOR_DEVICE_PATH Vendor;
   EFI_DEVICE_PATH_PROTOCOL End;
@@ -36,6 +37,7 @@ typedef struct {
 #pragma pack()
 
 STATIC CONST UINT8 mMagic[16] = "SUNUEFI-LINUXv1";
+STATIC CONST UINT8 mMagicV2[16] = "SUNUEFI-LINUXv2";
 STATIC VOID *mInitrd;
 STATIC UINTN mInitrdSize;
 STATIC INITRD_PATH mPath = {
@@ -204,6 +206,7 @@ EFI_STATUS EFIAPI LinuxRamBootEntry (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *S
   CONST UINT8 *Kernel;
   UINT8 Hash[32];
   VOID *NewFdt = NULL;
+  VOID *AlignedDtb = NULL;
   VOID *OldFdt = NULL;
   UINTN FdtSize;
   EFI_STATUS Status;
@@ -226,16 +229,20 @@ EFI_STATUS EFIAPI LinuxRamBootEntry (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *S
   for (UINT64 Offset = 0; Offset + sizeof (LINUX_RAM_HEADER) <= End - Start; ++Offset) {
     UINT64 Left = End - Start - Offset;
     CONST UINT8 *P = (CONST UINT8 *)(UINTN)(Start + Offset);
-    if (Left < sizeof (LINUX_RAM_HEADER) || CompareMem (P, mMagic, sizeof (mMagic))) { continue; }
+    if (Left < sizeof (LINUX_RAM_HEADER) ||
+        (CompareMem (P, mMagic, sizeof (mMagic)) && CompareMem(P,mMagicV2,sizeof(mMagicV2)))) { continue; }
     Header = (CONST LINUX_RAM_HEADER *)P;
     break;
   }
   if (Header == NULL) { Print (L"Linux payload was not found in boot RAM.\r\n"); DEBUG ((DEBUG_WARN, "SUNUEFI_LINUX_PAYLOAD_NOT_FOUND\n")); return EFI_NOT_FOUND; }
-  if (Header->Version != 1 || Header->HeaderSize != sizeof (*Header) ||
+  BOOLEAN V2=Header->Version==2;
+  UINTN HeaderBytes=V2?sizeof(LINUX_RAM_HEADER_V2):sizeof(*Header);
+  if ((Header->Version != 1 && !V2) || Header->HeaderSize != HeaderBytes ||
+      HeaderBytes>End-(UINTN)Header ||
       Header->KernelSize < 4096 || Header->KernelSize > 0x4000000 ||
       Header->InitrdSize == 0 || Header->InitrdSize > 0x2000000 ||
-      Header->KernelSize + Header->InitrdSize > End - (UINTN)Header - sizeof (*Header)) { return EFI_COMPROMISED_DATA; }
-  Kernel = (CONST UINT8 *)Header + sizeof (*Header);
+      Header->KernelSize + Header->InitrdSize > End - (UINTN)Header - HeaderBytes) { return EFI_COMPROMISED_DATA; }
+  Kernel = (CONST UINT8 *)Header + HeaderBytes;
   mInitrd = (VOID *)(Kernel + Header->KernelSize);
   mInitrdSize = (UINTN)Header->InitrdSize;
   if (!Sha256HashAll (Kernel, (UINTN)Header->KernelSize, Hash) || CompareMem (Hash, Header->KernelHash, sizeof (Hash)) ||
@@ -244,12 +251,35 @@ EFI_STATUS EFIAPI LinuxRamBootEntry (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *S
   }
   Print (L"Kernel and initramfs hashes verified: %lu / %lu bytes\r\n", Header->KernelSize, Header->InitrdSize);
   DEBUG ((DEBUG_WARN, "SUNUEFI_LINUX_HASHES_OK kernel=%lu initrd=%lu\n", Header->KernelSize, Header->InitrdSize));
+  if(V2) {
+    CONST LINUX_RAM_HEADER_V2 *Extended=(CONST LINUX_RAM_HEADER_V2 *)Header;
+    CONST UINT8 *PinnedDtb=(CONST UINT8 *)mInitrd+mInitrdSize;
+    UINT64 Left=End-(UINTN)PinnedDtb;
+    if(Extended->DtbSize<40 || Extended->DtbSize>0x200000 || Extended->DtbSize>Left)return EFI_COMPROMISED_DATA;
+    if(!Sha256HashAll(PinnedDtb,(UINTN)Extended->DtbSize,Hash) || CompareMem(Hash,Extended->DtbHash,32)) {
+      DEBUG((DEBUG_WARN,"SUNUEFI_LINUX_PINNED_DTB_HASH_FAILED\n"));return EFI_SECURITY_VIOLATION;
+    }
+    // CPIO gzip length and the enclosing Android ramdisk prefix need not
+    // align the following blob. libfdt requires an 8-byte-aligned address.
+    AlignedDtb=AllocatePool((UINTN)Extended->DtbSize);
+    if(AlignedDtb==NULL)return EFI_OUT_OF_RESOURCES;
+    CopyMem(AlignedDtb,PinnedDtb,(UINTN)Extended->DtbSize);
+    INT32 DtbStatus=FdtCheckHeader(AlignedDtb);
+    if(DtbStatus || FdtTotalSize(AlignedDtb)!=Extended->DtbSize) {
+      DEBUG((DEBUG_WARN,"SUNUEFI_LINUX_PINNED_DTB_INVALID fdt_status=%d\n",DtbStatus));
+      FreePool(AlignedDtb);return EFI_COMPROMISED_DATA;
+    }
+    Fdt=AlignedDtb;
+    DEBUG((DEBUG_WARN,"SUNUEFI_LINUX_PINNED_DTB bytes=%lu sha256_verified=1 source=payload\n",Extended->DtbSize));
+  }
 #ifdef SUNUEFI_RAW_HANDOFF
-  return RawBoot (ImageHandle, Kernel, (UINTN)Header->KernelSize, Fdt);
+  Status=RawBoot (ImageHandle, Kernel, (UINTN)Header->KernelSize, Fdt);
+  if(AlignedDtb!=NULL)FreePool(AlignedDtb);
+  return Status;
 #endif
   FdtSize = FdtTotalSize (Fdt) + 0x10000;
   NewFdt = AllocatePool (FdtSize);
-  if (NewFdt == NULL) { return EFI_OUT_OF_RESOURCES; }
+  if (NewFdt == NULL) { if(AlignedDtb!=NULL)FreePool(AlignedDtb);return EFI_OUT_OF_RESOURCES; }
   if (FdtOpenInto (Fdt, NewFdt, (INT32)FdtSize)) { Status = EFI_COMPROMISED_DATA; goto Cleanup; }
   Chosen = FdtPathOffset (NewFdt, "/chosen");
   FdtDelProp (NewFdt, Chosen, "linux,initrd-start");
@@ -284,5 +314,6 @@ RestoreFdt:
   gBS->InstallConfigurationTable (&gFdtTableGuid, OldFdt);
 Cleanup:
   if (NewFdt != NULL) { FreePool (NewFdt); }
+  if (AlignedDtb != NULL) { FreePool (AlignedDtb); }
   return Status;
 }
