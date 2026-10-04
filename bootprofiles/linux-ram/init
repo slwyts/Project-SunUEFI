@@ -1,0 +1,78 @@
+#!/bin/sh
+# Minimal RAM-only Linux environment. No persistent filesystem is mounted.
+export PATH=/bin:/sbin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs -o mode=0755 tmpfs /dev
+mknod /dev/null c 1 3
+mknod /dev/console c 5 1
+mknod /dev/kmsg c 1 11
+mkdir -p /dev/pts /sys/kernel/config /tmp
+mount -t devpts devpts /dev/pts
+mount -t tmpfs tmpfs /tmp
+mount -t configfs configfs /sys/kernel/config
+exec </dev/console >/dev/console 2>&1
+log() { echo "<6>SUNUEFI_RAM_INIT $*" >/dev/kmsg; }
+log "BEGIN pid=$$ kernel=$(uname -r)"
+while read -r device point type options rest; do
+    log "MOUNT $device $point $type $options"
+done </proc/mounts
+echo "SunUEFI Linux RAM init: $(uname -r)"
+echo "Root is an initramfs; persistent filesystems are not mounted."
+
+# Return to the existing Android boot chain after a bounded diagnostic window.
+(sleep 180; log 'TIMEOUT rebooting'; reboot -f) &
+
+while read -r module; do
+    [ -n "$module" ] || continue
+    set --
+    # Unlike Android's module loader, plain insmod does not import hwid.*
+    # options from /proc/cmdline. These values are from this piano capture.
+    if [ "$module" = hwid.ko ]; then
+        set -- hwid_value=589824 project=9 build_adc=51282 project_adc=39406
+    fi
+    if insmod "/lib/modules/$module" "$@" >/tmp/insmod.log 2>&1; then
+        log "MODULE $module OK"
+    else
+        log "MODULE $module FAILED"
+        while read -r line; do log "INSMOD $line"; done </tmp/insmod.log
+    fi
+    if [ "$module" = hwid.ko ]; then
+        for parameter in hwid_value project build_adc project_adc; do
+            value=$(cat "/sys/module/hwid/parameters/$parameter" 2>/dev/null)
+            log "HWID $parameter=$value"
+        done
+    fi
+done </lib/module-order
+
+# Offer only a USB ACM serial console; no USB storage function is created.
+g=/sys/kernel/config/usb_gadget/sunuefi
+mkdir -p "$g"
+echo 0x1d6b >"$g/idVendor"
+echo 0x0104 >"$g/idProduct"
+mkdir -p "$g/strings/0x409"
+echo SunUEFI >"$g/strings/0x409/manufacturer"
+echo 'Linux RAM serial console' >"$g/strings/0x409/product"
+echo SunUEFI-RAM >"$g/strings/0x409/serialnumber"
+mkdir -p "$g/configs/c.1/strings/0x409"
+echo 'ACM only' >"$g/configs/c.1/strings/0x409/configuration"
+echo 120 >"$g/configs/c.1/MaxPower"
+mkdir -p "$g/functions/acm.usb0"
+ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0"
+
+for attempt in $(seq 1 30); do
+    udc=$(ls /sys/class/udc 2>/dev/null | head -1)
+    [ -z "$udc" ] || break
+    sleep 1
+done
+if [ -n "$udc" ]; then
+    echo "$udc" >"$g/UDC"
+    log "USB_BIND controller=$udc"
+    mdev -s
+    echo "USB serial ready on $udc; waiting for host connection"
+    while [ ! -c /dev/ttyGS0 ]; do mdev -s; sleep 1; done
+    exec /bin/busybox getty -L -n -l /bin/sh 115200 ttyGS0 vt100
+fi
+echo 'USB controller did not enumerate. Waiting for diagnostic timeout.'
+log 'USB_NO_CONTROLLER'
+while :; do sleep 5; done

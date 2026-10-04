@@ -1,0 +1,31 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = PianoRamApp
+  FILE_GUID = A2610F94-834D-4E8D-B512-22503821FDB9
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 0.1
+  ENTRY_POINT = RamAppEntry
+[Sources]
+  RamApp.c
+[Packages]
+  MdePkg/MdePkg.dec
+  CryptoPkg/CryptoPkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiLib
+  UefiBootServicesTableLib
+  MemoryMapLib
+  BaseMemoryLib
+  BaseLib
+  BaseCryptLib
+  FdtLib
+  DebugLib
+  MemoryAllocationLib
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid
+  gEfiAbsolutePointerProtocolGuid
+  gEfiSerialIoProtocolGuid
+  gEfiUsb2HcProtocolGuid
+  gEfiUsbIoProtocolGuid
+  gEfiBlockIoProtocolGuid

@@ -1,0 +1,29 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = FrameBufferSerialPortLib
+  FILE_GUID                      = 33220897-2430-1CD5-EA89-CB01B138CF39
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = SerialPortLib
+
+[Sources]
+  FrameBufferSerialPortLib.c
+  RamLog.c
+
+[Packages]
+  ArmPkg/ArmPkg.dec
+  MdePkg/MdePkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+
+[LibraryClasses]
+  ArmLib
+  BaseMemoryLib
+  CacheMaintenanceLib
+  MemoryMapHelperLib
+  TimerLib
+
+[FixedPcd]
+  gSiliciumPkgTokenSpaceGuid.PcdFrameBufferWidth
+  gSiliciumPkgTokenSpaceGuid.PcdFrameBufferHeight
+  gSiliciumPkgTokenSpaceGuid.PcdFrameBufferColorDepth
+  gSiliciumPkgTokenSpaceGuid.PcdFrameBufferDelay

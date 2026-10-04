@@ -1,0 +1,19 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = PianoCapsuleArchNullDxe
+  FILE_GUID = 8D13FCB9-CF4F-4A38-B76E-C34C6D5F4BAF
+  MODULE_TYPE = DXE_RUNTIME_DRIVER
+  VERSION_STRING = 0.1
+  ENTRY_POINT = CapsuleArchNullEntry
+[Sources]
+  CapsuleArchNullDxe.c
+[Packages]
+  MdePkg/MdePkg.dec
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+[Protocols]
+  gEfiCapsuleArchProtocolGuid
+[Depex]
+  TRUE

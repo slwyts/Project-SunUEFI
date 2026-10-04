@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Read ramoops after an explicit RAM boot; never writes device files."""
+import argparse
+import json
+from pathlib import Path
+import subprocess
+import time
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--serial', required=True)
+    ap.add_argument('--test-id', type=int, required=True)
+    ap.add_argument('--wait-seconds', type=int, default=100)
+    args = ap.parse_args()
+    adb = ['adb','-s',args.serial]
+    root = Path(__file__).resolve().parent.parent
+    record_path=root/'private/analysis'/f'stage0-test-{args.test_id}.json'
+    deadline = time.monotonic() + args.wait_seconds
+    # Do not mistake Android before adb reboot/fastboot boot has completed for
+    # recovery from this test. The boot runner writes this record only after
+    # the fastboot boot command has returned.
+    while time.monotonic()<deadline:
+        if record_path.exists():
+            record=json.loads(record_path.read_text())
+            if record.get('error') or record.get('fastboot_boot',{}).get('exit_code')!=0:
+                raise SystemExit('Test did not complete a successful fastboot RAM boot')
+            break
+        time.sleep(1)
+    else: raise SystemExit('RAM boot has not completed; refusing to collect old Android logs')
+    while time.monotonic() < deadline:
+        p = subprocess.run(adb+['shell','getprop','sys.boot_completed'],capture_output=True,text=True,timeout=5)
+        if p.returncode == 0 and p.stdout.strip() == '1': break
+        time.sleep(2)
+    else: raise SystemExit('Android has not returned; manual recovery may be needed')
+    p = subprocess.run(adb+['exec-out',"su -c 'cat /sys/fs/pstore/console-ramoops-0'"],capture_output=True,timeout=20)
+    if p.returncode or not p.stdout or p.stdout.startswith(b'cat:'):
+        raise SystemExit('Cannot read ramoops console')
+    out = root/'private/analysis'/f'ramlog-test-{args.test_id}'
+    out.mkdir(exist_ok=False)
+    (out/'console.txt').write_bytes(p.stdout)
+    text = p.stdout.decode(errors='replace')
+    marker = 'SUNUEFI_RAMLOG_BEGIN'
+    index = max(text.rfind(marker),text.rfind('SUNUEFI_BLOCKIO_REPORT_BEGIN'))
+    segment = text[index:] if index >= 0 else ''
+    (out/'uefi.txt').write_text(segment)
+    linux = 'rdinit=/init ro nokaslr efi=novamap console=ttyGS0,115200' in text
+    (out/'linux.txt').write_text(text if linux else '')
+    summary = {'test_id':args.test_id,'console_bytes':len(p.stdout),'uefi_marker_found':index>=0,
+               'uefi_bytes':len(segment.encode()),'path':str(out/'uefi.txt'),
+               'linux_ram_command_line_found':linux,
+               'linux_init_process_started':linux and 'Run /init as init process' in text,
+               'linux_ram_userland_marker':linux and 'SUNUEFI_RAM_INIT BEGIN pid=1' in text}
+    (out/'manifest.json').write_text(json.dumps(summary,indent=2)+'\n')
+    print(json.dumps(summary,indent=2))
+    if segment: print(segment[-18000:])
+    if linux:
+        for line in text.splitlines():
+            if any(key in line for key in ('Linux version', 'Kernel command line',
+                   'Run /init as init process', 'SUNUEFI_RAM_INIT', 'reboot: Restarting')):
+                print(line)
+
+if __name__ == '__main__': main()

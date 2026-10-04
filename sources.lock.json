@@ -1,0 +1,30 @@
+{
+  "Mu-Silicium": {
+    "commit": "66e7bd1e7bcb757d4b28629bd6409d7209d3b242",
+    "url": "https://github.com/Project-Silicium/Mu-Silicium.git"
+  },
+  "Mu-Silicium/Mu_Basecore": {
+    "commit": "bb557081f80f4883ed832e34ab36bdca6ede1e10",
+    "url": "https://github.com/microsoft/mu_basecore.git"
+  },
+  "Mu-Silicium/Common/Mu": {
+    "commit": "b8d46c71610318e36a661819e1e3c0b8bdda413a",
+    "url": "https://github.com/microsoft/mu_plus.git"
+  },
+  "Mu-Silicium/Common/Mu_OEM_Sample": {
+    "commit": "b70b4b7bb02c43bf9db2172dfb3ed0457e2361d6",
+    "url": "https://github.com/microsoft/mu_oem_sample.git"
+  },
+  "Mu-Silicium/Binaries": {
+    "commit": "203fb36bf7bf560989ca6b6848bfa07c79a5a04a",
+    "url": "https://github.com/Project-Silicium/Device-Binaries.git"
+  },
+  "Mu-Silicium/Silicium-ACPI": {
+    "commit": "9abca7f95eb185cf97cb2d16b4a504324941aa23",
+    "url": "https://github.com/Project-Silicium/Silicium-ACPI.git"
+  },
+  "dtc": {
+    "commit": "7a1e017926004ecff5fce62d62d42ce9f3e00082",
+    "url": "https://github.com/dgibson/dtc.git"
+  }
+}

@@ -1,0 +1,11 @@
+# NOT hardware validated. Stage-0 only.
+[boot_shim]
+requires_kernel_header = true
+[uefi_fd]
+base = 0xA7100000
+size = 0x300000
+[boot_image_kernel]
+kernel_compression = "gzip"
+append_dtb = true
+[boot_image]
+header_version = 4

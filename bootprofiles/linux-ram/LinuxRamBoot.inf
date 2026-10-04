@@ -1,0 +1,34 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = LinuxRamBoot
+  FILE_GUID = 9EAD13AC-A4EC-47D4-B99E-2D17979DC8EF
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 0.1
+  ENTRY_POINT = LinuxRamBootEntry
+[Sources]
+  LinuxRamBoot.c
+[Packages]
+  MdePkg/MdePkg.dec
+  CryptoPkg/CryptoPkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiLib
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  MemoryAllocationLib
+  BaseMemoryLib
+  BaseLib
+  BaseCryptLib
+  FdtLib
+  MemoryMapLib
+  DebugLib
+  ArmLib
+  CacheMaintenanceLib
+[Guids]
+  gFdtTableGuid
+  gLinuxEfiInitrdMediaGuid
+[Protocols]
+  gEfiLoadedImageProtocolGuid
+  gEfiLoadFile2ProtocolGuid
+  gEfiDevicePathProtocolGuid

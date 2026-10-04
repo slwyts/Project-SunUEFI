@@ -1,0 +1,11 @@
+private/
+upstream/
+.venv/
+build/
+artifacts/
+platforms/pianoGuiPkg/
+platforms/pianoLinuxPkg/
+__pycache__/
+*.pyc
+bootprofiles/handoff/BootShim.bin
+bootprofiles/handoff/BootShim.elf

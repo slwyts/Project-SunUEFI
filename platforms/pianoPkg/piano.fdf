@@ -1,0 +1,103 @@
+# Host-only stage-0 diagnostic; NOT hardware validated.
+[FD.SILICIUM_UEFI]
+BaseAddress = $(FD_BASE)|gArmTokenSpaceGuid.PcdFdBaseAddress
+Size = $(FD_SIZE)|gArmTokenSpaceGuid.PcdFdSize
+ErasePolarity = 1
+BlockSize = 0x1000
+NumBlocks = $(FD_BLOCKS)
+0x00000000|$(FD_SIZE)
+gArmTokenSpaceGuid.PcdFvBaseAddress|gArmTokenSpaceGuid.PcdFvSize
+FV = FVMAIN_COMPACT
+[FV.FVMAIN_COMPACT]
+FvAlignment = 8
+ERASE_POLARITY = 1
+MEMORY_MAPPED = TRUE
+READ_ENABLED_CAP = TRUE
+READ_STATUS = TRUE
+  INF SiliciumPkg/Sec/Sec.inf
+  FILE FV_IMAGE = 9E21FD93-9C72-4C15-8C4B-E77F1DB2D792 {
+    SECTION GUIDED EE4E5898-3914-4259-9D6E-DC7BD79403CF PROCESSING_REQUIRED = TRUE {
+      SECTION FV_IMAGE = FVMAIN
+    }
+  }
+[FV.FVMAIN]
+FvNameGuid = CD8D4C84-20AD-4073-8A28-3400FAE05941
+BlockSize = 0x1000
+NumBlocks = 0
+FvAlignment = 8
+ERASE_POLARITY = 1
+MEMORY_MAPPED = TRUE
+READ_ENABLED_CAP = TRUE
+READ_STATUS = TRUE
+  APRIORI DXE {
+    INF MdeModulePkg/Core/Dxe/DxeMain.inf
+    INF MdeModulePkg/Universal/PCD/Dxe/Pcd.inf
+    INF Binaries/piano/Stage0/EnvDxeEnhanced/EnvDxeEnhanced.inf
+    INF MdeModulePkg/Core/RuntimeDxe/RuntimeDxe.inf
+    INF MdeModulePkg/Universal/ReportStatusCodeRouter/RuntimeDxe/ReportStatusCodeRouterRuntimeDxe.inf
+    INF MdeModulePkg/Universal/StatusCodeHandler/RuntimeDxe/StatusCodeHandlerRuntimeDxe.inf
+    INF ArmPkg/Drivers/CpuDxe/CpuDxe.inf
+    INF ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.inf
+    INF ArmPkg/Drivers/TimerDxe/TimerDxe.inf
+    INF EmbeddedPkg/MetronomeDxe/MetronomeDxe.inf
+    INF MdeModulePkg/Universal/SecurityStubDxe/SecurityStubDxe.inf
+    INF MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
+    INF MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystemRuntimeDxe.inf
+    INF MdeModulePkg/Universal/WatchdogTimerDxe/WatchdogTimer.inf
+    INF pianoPkg/Drivers/CapsuleArchNullDxe/CapsuleArchNullDxe.inf
+    INF EmbeddedPkg/EmbeddedMonotonicCounter/EmbeddedMonotonicCounter.inf
+    INF EmbeddedPkg/RealTimeClockRuntimeDxe/RealTimeClockRuntimeDxe.inf
+    INF MdeModulePkg/Universal/DevicePathDxe/DevicePathDxe.inf
+    INF Binaries/piano/Stage0/ShmBridgeDxeLA/ShmBridgeDxeLA.inf
+    INF Binaries/piano/Stage0/ScmDxeCompat/ScmDxeCompat.inf
+    INF Binaries/piano/Stage0/TzDxeLA/TzDxeLA.inf
+    INF Binaries/piano/Stage0/ChipInfo/ChipInfo.inf
+    INF Binaries/piano/Stage0/PlatformInfoDxeDriver/PlatformInfoDxeDriver.inf
+    INF Binaries/piano/Stage0/DALSys/DALSys.inf
+    INF Binaries/piano/Stage0/HWIODxeDriver/HWIODxeDriver.inf
+    INF Binaries/piano/Stage0/HALIOMMU/HALIOMMU.inf
+    INF Binaries/piano/Stage0/SmemDxe/SmemDxe.inf
+    INF MdeModulePkg/Universal/PrintDxe/PrintDxe.inf
+    INF MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
+    INF MdeModulePkg/Universal/Console/ConPlatformDxe/ConPlatformDxe.inf
+    INF MdeModulePkg/Universal/Console/ConSplitterDxe/ConSplitterDxe.inf
+    INF MdeModulePkg/Universal/Console/GraphicsConsoleDxe/GraphicsConsoleDxe.inf
+    INF SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf
+    INF MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
+  }
+  INF MdeModulePkg/Core/Dxe/DxeMain.inf
+  INF MdeModulePkg/Universal/PCD/Dxe/Pcd.inf
+  INF Binaries/piano/Stage0/EnvDxeEnhanced/EnvDxeEnhanced.inf
+  INF MdeModulePkg/Core/RuntimeDxe/RuntimeDxe.inf
+  INF MdeModulePkg/Universal/ReportStatusCodeRouter/RuntimeDxe/ReportStatusCodeRouterRuntimeDxe.inf
+  INF MdeModulePkg/Universal/StatusCodeHandler/RuntimeDxe/StatusCodeHandlerRuntimeDxe.inf
+  INF ArmPkg/Drivers/CpuDxe/CpuDxe.inf
+  INF ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.inf
+  INF ArmPkg/Drivers/TimerDxe/TimerDxe.inf
+  INF EmbeddedPkg/MetronomeDxe/MetronomeDxe.inf
+  INF MdeModulePkg/Universal/SecurityStubDxe/SecurityStubDxe.inf
+  INF MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
+  INF MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystemRuntimeDxe.inf
+  INF MdeModulePkg/Universal/WatchdogTimerDxe/WatchdogTimer.inf
+  INF pianoPkg/Drivers/CapsuleArchNullDxe/CapsuleArchNullDxe.inf
+  INF EmbeddedPkg/EmbeddedMonotonicCounter/EmbeddedMonotonicCounter.inf
+  INF EmbeddedPkg/RealTimeClockRuntimeDxe/RealTimeClockRuntimeDxe.inf
+  INF MdeModulePkg/Universal/DevicePathDxe/DevicePathDxe.inf
+  INF Binaries/piano/Stage0/ShmBridgeDxeLA/ShmBridgeDxeLA.inf
+  INF Binaries/piano/Stage0/ScmDxeCompat/ScmDxeCompat.inf
+  INF Binaries/piano/Stage0/TzDxeLA/TzDxeLA.inf
+  INF Binaries/piano/Stage0/ChipInfo/ChipInfo.inf
+  INF Binaries/piano/Stage0/PlatformInfoDxeDriver/PlatformInfoDxeDriver.inf
+  INF Binaries/piano/Stage0/DALSys/DALSys.inf
+  INF Binaries/piano/Stage0/HWIODxeDriver/HWIODxeDriver.inf
+  INF Binaries/piano/Stage0/HALIOMMU/HALIOMMU.inf
+  INF Binaries/piano/Stage0/SmemDxe/SmemDxe.inf
+  INF MdeModulePkg/Universal/PrintDxe/PrintDxe.inf
+  INF MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
+  INF MdeModulePkg/Universal/Console/ConPlatformDxe/ConPlatformDxe.inf
+  INF MdeModulePkg/Universal/Console/ConSplitterDxe/ConSplitterDxe.inf
+  INF MdeModulePkg/Universal/Console/GraphicsConsoleDxe/GraphicsConsoleDxe.inf
+  INF SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf
+  INF MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
+
+!include SiliciumPkg/Common.fdf.inc

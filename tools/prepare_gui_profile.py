@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+"""Create a separate GOP/simple-init RAM target, without contacting a device."""
+from pathlib import Path
+import shutil
+import argparse
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--foundation',action='store_true',help='Gate the prepared native support modules by original DEPEX after console timer starts')
+    parser.add_argument('--keys',action='store_true',help='Use the standalone read-only piano key transport; excludes native PMIC bring-up')
+    parser.add_argument('--touch-probe',action='store_true',help='SPI identity probe with the explicitly staged spi support group')
+    parser.add_argument('--gpi-probe',action='store_true',help='Initialize and inspect GPI with clocks held; never register channels or issue DMA')
+    parser.add_argument('--ram-qupfw',action='store_true',help='Expose only the hash-verified active-slot QUP firmware through an in-memory read interface')
+    parser.add_argument('--qupfw-disk',action='store_true',help='Expose immutable QUP firmware RAM partition via standard BlockIO')
+    parser.add_argument('--usb-debug',action='store_true',help='Native USB protocol inventory plus RAM-only fastboot transport; requires usb group')
+    parser.add_argument('--fault-recovery',action='store_true',help='Log synchronous/SError exceptions to reserved RAM then cold reboot')
+    parser.add_argument('--fault-recovery-test',action='store_true',help='Trigger one undefined instruction after installing recovery; no hardware MMIO probe')
+    parser.add_argument('--pmic-metadata',action='store_true',help='Independent read-only version provider before USB config; requires usb-debug and fault-recovery')
+    parser.add_argument('--ufs-probe',action='store_true',help='Clock/GDSC and HCI register probe only; no DMA/LUN/disk access')
+    parser.add_argument('--dma-probe',action='store_true',help='Read-only SMMU snapshot before/after foundation plus DMA memory diagnostics')
+    parser.add_argument('--dma-owned',action='store_true',help='UFS-only owned SMMU tables and map/unmap experiment, no controller DMA submission')
+    parser.add_argument('--ufs-dma-nop',action='store_true',help='Read-only NOP then QUERY descriptor using unified DMA; requires verified owned SMMU')
+    parser.add_argument('--ufs-blockio',action='store_true',help='Publish persistent read-only UFS BlockIO using the verified DMA transport')
+    parser.add_argument('--usb-controller',action='store_true',help='Isolated DWC3 clocks/registers and owned USB0 SMMU context')
+    parser.add_argument('--usb-ep0',action='store_true',help='USB2 device EP0 enumeration using shared DMA and USB0 owned context')
+    parser.add_argument('--return-seconds',type=int,default=75,help='Diagnostic cold-reboot timer, 30 to 120 seconds (default 75)')
+    args=parser.parse_args()
+    if args.usb_ep0:args.usb_controller=True
+    if args.usb_controller:
+        if args.ufs_blockio or args.ufs_probe or args.dma_probe or args.usb_debug or args.touch_probe:parser.error('USB controller experiment must be isolated')
+        args.foundation=True;args.keys=True;args.fault_recovery=True
+    if args.ufs_blockio:args.ufs_dma_nop=True
+    if args.ufs_dma_nop:args.dma_owned=True
+    if args.dma_owned:args.dma_probe=True
+    if args.dma_probe:args.ufs_probe=True
+    if args.fault_recovery_test:
+        args.fault_recovery=True
+    if args.pmic_metadata and (not args.usb_debug or not args.fault_recovery or args.fault_recovery_test):
+        parser.error('--pmic-metadata requires --usb-debug --fault-recovery without the synthetic fault test')
+    if args.ufs_probe:
+        if args.usb_debug or args.touch_probe or args.gpi_probe or args.fault_recovery_test:
+            parser.error('UFS controller probe requires an isolated hardware profile')
+        args.foundation=True;args.keys=True;args.fault_recovery=True
+        import json
+        selection=Path(__file__).resolve().parent.parent/'build/native-probe-selection.json'
+        if json.loads(selection.read_text())['group']!='ufs':
+            parser.error('--ufs-probe requires prepare_native_probe.py --group ufs')
+    if not 30<=args.return_seconds<=120:
+        parser.error('--return-seconds must be between 30 and 120')
+    if args.gpi_probe:
+        args.touch_probe=True
+    if args.qupfw_disk:
+        args.ram_qupfw=True
+    if args.ram_qupfw and not args.gpi_probe:
+        parser.error('--ram-qupfw requires --gpi-probe')
+    if args.usb_debug:
+        if args.touch_probe or args.gpi_probe:
+            parser.error('USB and touch hardware isolation profiles must be tested separately')
+        args.foundation=True;args.keys=True
+        import json
+        selection=Path(__file__).resolve().parent.parent/'build/native-probe-selection.json'
+        if json.loads(selection.read_text())['group']!='usb':
+            parser.error('--usb-debug requires prepare_native_probe.py --group usb')
+    if args.touch_probe:
+        args.keys=True;args.foundation=True
+        selection=Path(__file__).resolve().parent.parent/'build/native-probe-selection.json'
+        import json
+        expected='gpi' if args.gpi_probe else 'spi'
+        if json.loads(selection.read_text())['group']!=expected:
+            parser.error('Probe requires prepare_native_probe.py --group '+expected)
+    if args.keys and args.foundation and not args.touch_probe and not args.usb_debug and not args.ufs_probe and not args.usb_controller:
+        parser.error('--keys and --foundation must be tested separately')
+    root = Path(__file__).resolve().parent.parent
+    source = root / 'platforms/pianoProbePkg'
+    target = root / 'platforms/pianoGuiPkg'
+    shutil.copytree(source, target, dirs_exist_ok=True)
+    for path in target.rglob('*'):
+        if path.is_file() and path.suffix in ('.c','.h','.inf','.dsc','.dec','.fdf','.py'):
+            path.write_text(path.read_text().replace('pianoProbe','pianoGui'))
+    for suffix in ('dsc','dec','fdf'):
+        (target / f'pianoProbe.{suffix}').rename(target / f'pianoGui.{suffix}')
+    app = target / 'Applications/RamApp'
+    app.mkdir(parents=True, exist_ok=True)
+    for name in ('RamApp.c','RamApp.inf'):
+        shutil.copyfile(root / 'bootprofiles/uefi-app' / name, app / name)
+    if args.foundation:
+        for name in ('NativeProbe.c','NativeProbeTable.h'):
+            shutil.copyfile(root / 'bootprofiles/uefi-app' / name,app / name)
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  NativeProbe.c').replace('  DebugLib','  DebugLib\n  DxeServicesLib');path.write_text(text)
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)','VOID PianoProbeFoundation (VOID);\n#pragma pack(1)',1).replace('  ProbeGop ();','  PianoProbeFoundation ();\n  ProbeGop ();');path.write_text(text)
+    if args.keys:
+        shutil.copyfile(root/'bootprofiles/uefi-app/PianoKeys.c',app/'PianoKeys.c')
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoKeys.c').replace('  DebugLib','  DebugLib\n  IoLib')
+        text+='  gEfiSimpleTextInProtocolGuid\n  gEfiDevicePathProtocolGuid\n';path.write_text(text)
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
+            'EFI_STATUS PianoStartKeys (CONST VOID *Fdt);\nVOID PianoStopKeys (VOID);\n#pragma pack(1)',1)
+        text=text.replace('  Status=gBS->LoadImage (FALSE,ImageHandle',
+            '  Status=PianoStartKeys(Fdt);\n  DEBUG((DEBUG_WARN,"SUNUEFI_KEYS_START %r\\n",Status));\n  Status=gBS->LoadImage (FALSE,ImageHandle')
+        text=text.replace('  if (EFI_ERROR (Status)) { return Status; }\n  Status=gBS->StartImage (App',
+            '  if (EFI_ERROR (Status)) { PianoStopKeys(); return Status; }\n  Status=gBS->StartImage (App')
+        text=text.replace('  gBS->UnloadImage (App); return Status;',
+            '  gBS->UnloadImage (App); PianoStopKeys(); return Status;')
+        path.write_text(text)
+    if args.touch_probe:
+        shutil.copyfile(root/'bootprofiles/uefi-app/PianoTouchProbe.c',app/'PianoTouchProbe.c')
+        if args.gpi_probe:
+            path=app/'PianoTouchProbe.c';path.write_text('#define PIANO_GPI_PROBE 1\n'+path.read_text())
+        if args.ram_qupfw:
+            shutil.copyfile(root/'bootprofiles/uefi-app/PianoQupFwRam.c',app/'PianoQupFwRam.c')
+            path=app/'PianoTouchProbe.c';text=path.read_text().replace('STATIC VOID ProbeGpiLibrary(VOID) {',
+                'EFI_STATUS PianoInstallQupFwRam(VOID);\nSTATIC VOID ProbeGpiLibrary(VOID) {\n  EFI_STATUS Firmware=PianoInstallQupFwRam();\n  if(EFI_ERROR(Firmware)) {DEBUG((DEBUG_WARN,"SUNUEFI_QUPFW_PROVIDER_ERROR %r\\n",Firmware));return;}')
+            path.write_text(text)
+            if args.qupfw_disk:
+                shutil.copyfile(root/'bootprofiles/uefi-app/PianoQupFwDisk.c',app/'PianoQupFwDisk.c')
+                path.write_text(path.read_text().replace('PianoInstallQupFwRam','PianoInstallQupFwDisk'))
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoTouchProbe.c').replace('  DebugLib','  DebugLib\n  CacheMaintenanceLib\n  ArmSmcLib')
+        text=text.replace('  MdePkg/MdePkg.dec','  MdePkg/MdePkg.dec\n  QcomPkg/QcomPkg.dec')
+        text+='  gEfiLoadedImageProtocolGuid\n';path.write_text(text)
+        if args.ram_qupfw:
+            text=path.read_text().replace('  PianoTouchProbe.c','  PianoTouchProbe.c\n  PianoQupFwRam.c');path.write_text(text)
+            if args.qupfw_disk:
+                path.write_text(path.read_text().replace('  PianoQupFwRam.c','  PianoQupFwDisk.c'))
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
+            'EFI_STATUS PianoPrepareTouch (VOID);\nVOID PianoProbeTouch (VOID);\n#pragma pack(1)',1)
+        text=text.replace('  PianoProbeFoundation ();',
+            '  EFI_STATUS TouchConfig=PianoPrepareTouch();\n  DEBUG((DEBUG_WARN,"SUNUEFI_TOUCH_CONFIG %r\\n",TouchConfig));\n  if(!EFI_ERROR(TouchConfig))PianoProbeFoundation();')
+        text=text.replace('  Status=PianoStartKeys(Fdt);',
+            '  PianoProbeTouch();\n  Status=PianoStartKeys(Fdt);')
+        path.write_text(text)
+    if args.usb_debug:
+        path=app/'PianoKeys.c';path.write_text('#define PIANO_USB_POWER_PROBE 1\n'+path.read_text())
+        for name in ('PianoFastboot.h','PianoFastboot.c','PianoUsbDebug.c'):
+            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+        path=app/'RamApp.inf'
+        text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFastboot.c\n  PianoUsbDebug.c')
+        text=text.replace('  MdePkg/MdePkg.dec','  MdePkg/MdePkg.dec\n  QcomPkg/QcomPkg.dec')
+        text=text.replace('  UefiLib','  UefiLib\n  UefiRuntimeServicesTableLib')
+        text+='  gEfiLoadedImageProtocolGuid\n'
+        path.write_text(text)
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
+            '#include "PianoFastboot.h"\nVOID PianoProbeUsbPower(CONST VOID *Fdt);\n#pragma pack(1)',1)
+        text=text.replace('  Status=PianoStartKeys(Fdt);',
+            '  PianoProbeUsbPower(Fdt);\n  Status=PianoStartUsbDebug();\n  DEBUG((DEBUG_WARN,"SUNUEFI_USB_DEBUG_START %r\\n",Status));\n  Status=PianoStartKeys(Fdt);')
+        text=text.replace('PianoStopKeys();','PianoStopKeys(); PianoStopUsbDebug();')
+        path.write_text(text)
+    if args.ufs_probe:
+        mapping=target/'Library/MemoryMapLib/MemoryMapLib.c'
+        text=mapping.read_text();anchor='  {"CRYPTO0_CRYPTO",'
+        if text.count(anchor)!=1:raise SystemExit('Unexpected piano MMIO map')
+        text=text.replace(anchor,'  {"UFS_HCI", 0x1D84000, 0x3000, AddDev, 1, 0x400, 11, NS_DEVICE},\n'+anchor)
+        # Linux owns the first 4 MiB of this inherited XBL reservation as
+        # ramoops. Isolate its CPU cache attribute without changing the total
+        # reserved interval or any DMA heap / framebuffer / SMMU mapping.
+        old='  {"Display_Demura", 0xA3500000, 0x2C80000, AddMem, 5, 0x703C07, 0, WRITE_THROUGH_XN},'
+        if text.count(old)!=1:raise SystemExit('Unexpected ramoops parent reservation')
+        text=text.replace(old,'  {"Piano_Ramoops", 0xA3500000, 0x400000, AddMem, 5, 0x703C07, 0, UNCACHED_UNBUFFERED_XN},\n'
+                             '  {"Display_Demura_Tail", 0xA3900000, 0x2880000, AddMem, 5, 0x703C07, 0, WRITE_THROUGH_XN},')
+        mapping.write_text(text)
+        shutil.copyfile(root/'bootprofiles/uefi-app/PianoUfsProbe.c',app/'PianoUfsProbe.c')
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoUfsProbe.c')
+        text=text.replace('  MdePkg/MdePkg.dec','  MdePkg/MdePkg.dec\n  QcomPkg/QcomPkg.dec');path.write_text(text)
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
+            'VOID PianoProbeUfs(CONST VOID *Fdt);\n#pragma pack(1)',1)
+        text=text.replace('  Status=PianoStartKeys(Fdt);','  PianoProbeUfs(Fdt);\n  Status=PianoStartKeys(Fdt);');path.write_text(text)
+    if args.fault_recovery:
+        shutil.copyfile(root/'bootprofiles/uefi-app/PianoFaultRecovery.c',app/'PianoFaultRecovery.c')
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFaultRecovery.c')
+        if '  ArmSmcLib\n' not in text:text=text.replace('  DebugLib','  DebugLib\n  ArmSmcLib')
+        if '  UefiRuntimeServicesTableLib\n' not in text:text=text.replace('  UefiLib','  UefiLib\n  UefiRuntimeServicesTableLib')
+        text=text.replace('  DebugLib','  DebugLib\n  SerialPortLib\n  PrintLib')
+        text+='  gEfiCpuArchProtocolGuid\n';path.write_text(text)
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
+            'EFI_STATUS PianoStartFaultRecovery(VOID);\nVOID PianoStopFaultRecovery(VOID);\nEFI_STATUS PianoTestFaultRecovery(VOID);\n#pragma pack(1)',1)
+        anchor='  DEBUG ((DEBUG_WARN, "SUNUEFI_RAM_APP_LOADER\\n"));'
+        setup='\n  Status=PianoStartFaultRecovery();\n  DEBUG((DEBUG_WARN,"SUNUEFI_FAULT_RECOVERY_START %r\\n",Status));'
+        if args.pmic_metadata or args.ufs_probe:setup+='\n  if(EFI_ERROR(Status)){return Status;}'
+        if args.fault_recovery_test:setup+='\n  if(!EFI_ERROR(Status))return PianoTestFaultRecovery();'
+        text=text.replace(anchor,anchor+setup)
+        # App code is unloaded after return; remove our exception callbacks.
+        text=text.replace('return Status;','PianoStopFaultRecovery(); return Status;')
+        text=text.replace('return EFI_NOT_FOUND;','PianoStopFaultRecovery(); return EFI_NOT_FOUND;')
+        text=text.replace('return EFI_COMPROMISED_DATA;','PianoStopFaultRecovery(); return EFI_COMPROMISED_DATA;')
+        text=text.replace('return EFI_BAD_BUFFER_SIZE;','PianoStopFaultRecovery(); return EFI_BAD_BUFFER_SIZE;')
+        text=text.replace('return EFI_SECURITY_VIOLATION;','PianoStopFaultRecovery(); return EFI_SECURITY_VIOLATION;')
+        if args.fault_recovery_test:
+            text=text.replace('if(!EFI_ERROR(Status))return PianoTestFaultRecovery();',
+                'if(!EFI_ERROR(Status)){Status=PianoTestFaultRecovery();PianoStopFaultRecovery();return Status;}')
+        path.write_text(text)
+    if args.pmic_metadata:
+        driver=target/'Drivers/PianoPmicMetadata';driver.mkdir(parents=True,exist_ok=True)
+        for name in ('PianoPmicMetadata.c','PianoPmicMetadata.inf'):
+            shutil.copyfile(root/'bootprofiles/uefi-app'/name,driver/name)
+        path=app/'RamApp.c';text=path.read_text()
+        helper='''STATIC EFI_STATUS LoadPmicMetadata(VOID) {
+  EFI_GUID Guid={0x7BA3F20C,0x2A18,0x4F68,{0x85,0x40,0x0E,0x12,0x4B,0x6A,0x51,0xBD}};
+  VOID *Source=NULL;UINTN Bytes=0;EFI_HANDLE Driver=NULL;
+  EFI_STATUS Status=GetSectionFromAnyFv(&Guid,EFI_SECTION_PE32,0,&Source,&Bytes);
+  if(!EFI_ERROR(Status)) {
+    Status=gBS->LoadImage(FALSE,gImageHandle,NULL,Source,Bytes,&Driver);FreePool(Source);
+    if(!EFI_ERROR(Status)) {
+      Status=gBS->StartImage(Driver,NULL,NULL);
+      if(EFI_ERROR(Status))gBS->UnloadImage(Driver);
+    }
+  }
+  DEBUG((DEBUG_WARN,"SUNUEFI_PMIC_METADATA_LOAD %r\\n",Status));return Status;
+}
+'''
+        text=text.replace('#include <Uefi.h>','#include <Uefi.h>\n#include <PiDxe.h>\n#include <Library/DxeServicesLib.h>')
+        text=text.replace('#pragma pack(1)',helper+'\n#pragma pack(1)',1)
+        # Hardware metadata is validated using the real handoff DT after its
+        # bounds and app payload are verified; then the dependency graph starts.
+        text=text.replace('  PianoProbeFoundation ();','')
+        text=text.replace('  PianoProbeUsbPower(Fdt);',
+            '  Status=LoadPmicMetadata();\n  if(EFI_ERROR(Status)){PianoStopFaultRecovery();return Status;}\n  PianoProbeFoundation();\n  PianoProbeUsbPower(Fdt);')
+        path.write_text(text)
+    if args.dma_probe:
+        for name in ('PianoSmmu.c','PianoSmmu.h','PianoDma.c','PianoDma.h','PianoDmaSelfTest.c'):
+            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoSmmu.c\n  PianoDma.c\n  PianoDmaSelfTest.c')
+        text=text.replace('  DebugLib','  DebugLib\n  DxeServicesTableLib\n  CacheMaintenanceLib');path.write_text(text)
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
+            '#include "PianoSmmu.h"\nSTATIC PIANO_SMMU_SNAPSHOT mBefore,mAfter;\nVOID PianoDmaMemoryTest(VOID);\nVOID PianoFaultSetDiagnostic(VOID (*Diagnostic)(VOID));\nSTATIC VOID DmaFaultDiagnostic(VOID){PianoSmmuLogFaults(mAfter.Valid?&mAfter:&mBefore);}\n#pragma pack(1)',1)
+        text=text.replace('  PianoProbeFoundation ();','')
+        text=text.replace('  PianoProbeUfs(Fdt);',
+            '  Status=PianoSmmuCapture(Fdt,"before-foundation",&mBefore);\n  DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_BEFORE %r\\n",Status));\n  PianoProbeFoundation();\n  Status=PianoSmmuCapture(Fdt,"after-foundation",&mAfter);\n  DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_AFTER %r\\n",Status));\n  PianoFaultSetDiagnostic(DmaFaultDiagnostic);\n  PianoDmaMemoryTest();\n  PianoProbeUfs(Fdt);')
+        path.write_text(text)
+    if args.dma_owned:
+        for name in ('PianoOwnedSmmu.c','PianoOwnedSmmu.h','PianoIoPageTable.c','PianoIoPageTable.h'):
+            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoOwnedSmmu.c\n  PianoIoPageTable.c')
+        text+='  gEfiLoadedImageProtocolGuid\n';path.write_text(text)
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
+            '#include "PianoOwnedSmmu.h"\nVOID PianoUfsSetProbeAction(EFI_STATUS (*Action)(CONST VOID *Fdt));\n#pragma pack(1)',1)
+        text=text.replace('  PianoProbeUfs(Fdt);','  PianoUfsSetProbeAction(PianoOwnedSmmuMemoryExperiment);\n  PianoProbeUfs(Fdt);');path.write_text(text)
+    if args.ufs_dma_nop:
+        for name in ('PianoUfsReadOnlyDma.c','PianoUfsDmaLayout.c','PianoUfsDmaLayout.h','PianoGpt.c','PianoGpt.h'):
+            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoUfsReadOnlyDma.c\n  PianoUfsDmaLayout.c\n  PianoGpt.c')
+        if '  PrintLib\n' not in text:text=text.replace('  DebugLib','  DebugLib\n  PrintLib')
+        path.write_text(text)
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
+            'EFI_STATUS PianoUfsReadOnlyDmaExperiment(CONST VOID *Fdt);\n#pragma pack(1)',1)
+        text=text.replace('PianoUfsSetProbeAction(PianoOwnedSmmuMemoryExperiment)',
+            'PianoUfsSetProbeAction(PianoUfsReadOnlyDmaExperiment)');path.write_text(text)
+    if args.ufs_blockio:
+        for name in ('PianoReadOnlyBlock.c','PianoReadOnlyBlock.h','PianoUfsShutdown.h'):
+            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+        path=app/'PianoUfsReadOnlyDma.c';path.write_text('#define PIANO_UFS_BLOCKIO 1\n'+path.read_text())
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoReadOnlyBlock.c')
+        text+='  gEfiDevicePathProtocolGuid\n';text=text.replace('[Protocols]','[Guids]\n  gEfiEventExitBootServicesGuid\n\n[Protocols]');path.write_text(text)
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)','VOID PianoUfsBlockIoStop(VOID);\n#pragma pack(1)',1)
+        text=text.replace('PianoStopFaultRecovery();','PianoUfsBlockIoStop(); PianoStopFaultRecovery();');path.write_text(text)
+    if args.usb_controller:
+        for name in ('PianoUsbController.c','PianoDma.c','PianoDma.h','PianoSmmu.c','PianoSmmu.h',
+                     'PianoOwnedSmmu.c','PianoOwnedSmmu.h','PianoIoPageTable.c','PianoIoPageTable.h'):
+            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+        path=app/'PianoKeys.c';path.write_text('#define PIANO_USB_POWER_PROBE 1\n'+path.read_text())
+        mapping=target/'Library/MemoryMapLib/MemoryMapLib.c';text=mapping.read_text()
+        anchor='  {"CRYPTO0_CRYPTO",'
+        if text.count(anchor)!=1:raise SystemExit('Unexpected USB PHY mapping anchor')
+        text=text.replace(anchor,'  {"Piano_USB2_PHY", 0x88E3000, 0x1000, AddDev, 1, 0x400, 11, NS_DEVICE},\n'
+                                 '  {"Piano_USB3_PHY", 0x88E8000, 0x3000, AddDev, 1, 0x400, 11, NS_DEVICE},\n'+anchor)
+        mapping.write_text(text)
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoUsbController.c\n  PianoDma.c\n  PianoSmmu.c\n  PianoOwnedSmmu.c\n  PianoIoPageTable.c')
+        text=text.replace('  DebugLib','  DebugLib\n  PrintLib\n  IoLib\n  CacheMaintenanceLib\n  DxeServicesTableLib')
+        text=text.replace('  MdePkg/MdePkg.dec','  MdePkg/MdePkg.dec\n  QcomPkg/QcomPkg.dec')
+        text+='  gEfiLoadedImageProtocolGuid\n';path.write_text(text)
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)','EFI_STATUS PianoUsbControllerExperiment(CONST VOID *Fdt);\n#pragma pack(1)',1)
+        text=text.replace('  PianoProbeFoundation ();','')
+        text=text.replace('  Status=PianoStartKeys(Fdt);','  PianoProbeFoundation();\n  Status=PianoUsbControllerExperiment(Fdt);\n  DEBUG((DEBUG_WARN,"SUNUEFI_USB_CONTROLLER_ACTION %r\\n",Status));\n  Status=PianoStartKeys(Fdt);');path.write_text(text)
+        if args.usb_ep0:
+            for name in ('PianoDwc3Device.c','PianoUsbControl.c','PianoUsbControl.h'):
+                shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+            path=app/'PianoUsbController.c';path.write_text('#define PIANO_USB_EP0 1\n'+path.read_text())
+            path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoDwc3Device.c\n  PianoUsbControl.c'))
+    dsc = target / 'pianoGui.dsc'
+    text = dsc.read_text().replace('pianoGuiPkg/Library/RamLogSerialPortLib/FrameBufferSerialPortLib.inf',
+                                  'pianoGuiPkg/Library/RamOnlySerialPortLib/RamOnlySerialPortLib.inf')
+    text += '''
+[Components]
+  pianoGuiPkg/Drivers/PianoGopDxe/PianoGopDxe.inf
+  pianoGuiPkg/Applications/RamApp/RamApp.inf {
+    <LibraryClasses>
+      BaseCryptLib|OpensslPkg/Library/BaseCryptLib/BaseCryptLib.inf
+      OpensslLib|OpensslPkg/Library/OpensslLib/OpensslLib.inf
+      IntrinsicLib|CryptoPkg/Library/IntrinsicLib/IntrinsicLib.inf
+      RngLib|MdePkg/Library/BaseRngLibNull/BaseRngLibNull.inf
+  }
+'''
+    dsc.write_text(text)
+    if args.pmic_metadata:
+        dsc.write_text(dsc.read_text()+'\n[Components]\n  pianoGuiPkg/Drivers/PianoPmicMetadata/PianoPmicMetadata.inf\n')
+    fdf = target / 'pianoGui.fdf'
+    text = fdf.read_text().replace('SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf',
+                                  'pianoGuiPkg/Drivers/PianoGopDxe/PianoGopDxe.inf')
+    text = text.replace('!include SiliciumPkg/Common.fdf.inc',
+                        '  INF pianoGuiPkg/Applications/RamApp/RamApp.inf\n!include SiliciumPkg/Common.fdf.inc')
+    if args.foundation:
+        text=text.replace('!include SiliciumPkg/Common.fdf.inc',
+                          (root/'build/native-foundation.fdf.inc').read_text()+'\n!include SiliciumPkg/Common.fdf.inc')
+    if args.ufs_blockio:
+        text=text.replace('!include SiliciumPkg/Common.fdf.inc',
+            '  INF MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf\n'
+            '  INF MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf\n!include SiliciumPkg/Common.fdf.inc')
+    if args.usb_debug:
+        # Real EDK2 SDT service; no invented USB AML or fake success protocol.
+        text=text.replace('!include SiliciumPkg/Common.fdf.inc',
+            '  INF MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf\n!include SiliciumPkg/Common.fdf.inc')
+    if args.pmic_metadata:
+        text=text.replace('!include SiliciumPkg/Common.fdf.inc',
+            '  INF pianoGuiPkg/Drivers/PianoPmicMetadata/PianoPmicMetadata.inf\n!include SiliciumPkg/Common.fdf.inc')
+    if args.ram_qupfw:
+        import hashlib
+        firmware=(root/'private/captures/qupfw-test28/qupfw_a.img').read_bytes()
+        if hashlib.sha256(firmware).hexdigest()!='b648516e1fde83a1b6a0d6a3c1bc3084adc63aecc34f7756c31850ab4ad4b4e9':
+            raise SystemExit('QUP active-slot firmware hash mismatch')
+        folder=root/'upstream/Mu-Silicium/Binaries/piano/QupFw';folder.mkdir(parents=True,exist_ok=True)
+        (folder/'qupfw_a.bin').write_bytes(firmware)
+        text=text.replace('!include SiliciumPkg/Common.fdf.inc',
+            '  FILE FREEFORM = 77997A49-2795-457B-95B3-409BAC124CA3 {\n    SECTION RAW = Binaries/piano/QupFw/qupfw_a.bin\n  }\n!include SiliciumPkg/Common.fdf.inc')
+    fdf.write_text(text)
+    lib = target / 'Library/Stage0BootManagerLib'
+    inf = lib / 'Stage0BootManagerLib.inf'
+    inf.write_text(inf.read_text().replace('  FdtLib','  FdtLib\n  DxeServicesLib\n  MemoryAllocationLib'))
+    c = lib / 'Stage0BootManagerLib.c'
+    text = c.read_text().replace('#include <Library/DebugLib.h>',
+        '#include <Library/DebugLib.h>\n#include <Library/DxeServicesLib.h>\n#include <Library/MemoryAllocationLib.h>')
+    if args.ufs_blockio:
+        shutil.copyfile(root/'bootprofiles/uefi-app/PianoUfsShutdown.h',lib/'PianoUfsShutdown.h')
+        text=text.replace('#include <Protocol/GraphicsOutput.h>','#include <Protocol/GraphicsOutput.h>\n#include "PianoUfsShutdown.h"')
+        text=text.replace('  gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);',
+            '  EFI_GUID ShutdownGuid=PIANO_UFS_SHUTDOWN_GUID; PIANO_UFS_SHUTDOWN *Shutdown=NULL;\n'
+            '  if(!EFI_ERROR(gBS->LocateProtocol(&ShutdownGuid,NULL,(VOID **)&Shutdown)) && Shutdown->Revision==1)\n'
+            '    Shutdown->Halt();\n  gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);')
+    text = text.replace('Internal storage and USB mass-storage drivers are excluded.',
+                        'Piano UEFI GOP/simple-init diagnostic.')
+    text = text.replace('Linux and Windows PE boot are not implemented in this image.',
+                        'Simple-init is loaded from temporary boot RAM.')
+    text = text.replace('45ULL * 10000000ULL',f'{args.return_seconds}ULL * 10000000ULL').replace('in 45 seconds',f'in {args.return_seconds} seconds')
+    text = text.replace('VOID EFIAPI DeviceBootManagerUnableToBoot (VOID) { }','''VOID EFIAPI DeviceBootManagerUnableToBoot (VOID) {
+  EFI_GUID Guid = {0xA2610F94,0x834D,0x4E8D,{0xB5,0x12,0x22,0x50,0x38,0x21,0xFD,0xB9}};
+  VOID *Source = NULL; UINTN Size = 0; EFI_HANDLE App; EFI_STATUS Status;
+  Status = GetSectionFromAnyFv (&Guid,EFI_SECTION_PE32,0,&Source,&Size);
+  if (!EFI_ERROR (Status)) {
+    Status = gBS->LoadImage (FALSE,gImageHandle,NULL,Source,Size,&App);
+    FreePool (Source);
+    if (!EFI_ERROR (Status)) {
+      Status = gBS->StartImage (App,NULL,NULL);
+      gBS->UnloadImage (App);
+    }
+  }
+  DEBUG ((DEBUG_WARN,"SUNUEFI_GUI_LOADER_RETURN %r\\n",Status));
+  // Retain logs until the existing 75-second recovery timer fires.
+  while (TRUE) { gBS->Stall (100000); }
+}''')
+    c.write_text(text.replace('existing 75-second recovery timer',f'existing {args.return_seconds}-second recovery timer'))
+    generated=(app/'RamApp.c').read_text()
+    for enabled,symbol in ((args.usb_debug,'PianoStartUsbDebug'),
+                           (args.ufs_probe,'PianoProbeUfs'),
+                           (args.touch_probe,'PianoProbeTouch')):
+        if not enabled and symbol in generated:
+            raise SystemExit('Generated profile contains an unexpected feature: '+symbol)
+    import json
+    (root/'build/gui-profile.json').write_text(json.dumps(vars(args),indent=2)+'\n')
+    shutil.copytree(target,root / 'upstream/Mu-Silicium/Platforms/Xiaomi/pianoGuiPkg',dirs_exist_ok=True)
+    print('Separate pianoGuiPkg prepared; tested Linux/probe targets retained')
+
+
+if __name__ == '__main__':
+    main()

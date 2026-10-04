@@ -1,0 +1,25 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = PianoStage0BootManagerLib
+  FILE_GUID = 4A5FA4CD-485E-419E-8266-CCF96F52C616
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 0.1
+  LIBRARY_CLASS = DeviceBootManagerLib|DXE_DRIVER
+[Sources]
+  Stage0BootManagerLib.c
+  Probe.c
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  MsCorePkg/MsCorePkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+[LibraryClasses]
+  UefiLib
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  DebugLib
+  FdtLib
+  MemoryMapLib
+  BaseLib
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid

@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+// Minimal USB2 EP0 Chapter 9 plus read-only configured-device diagnostics.
+#include "PianoUsbControl.h"
+#include <Library/BaseMemoryLib.h>
+STATIC CONST UINT8 Device[]={18,1,0,2,0,0,0,64,0x09,0x12,0x50,0x87,0,1,1,2,3,1};
+STATIC CONST UINT8 Config[]={9,2,18,0,1,1,0,0x80,50,9,4,0,0,0,0xFF,0,0,0};
+STATIC UINT16 Le16(CONST UINT8 *P){return P[0]|((UINT16)P[1]<<8);}
+EFI_STATUS PianoUsbControlSetup(PIANO_USB_CONTROL *S,CONST UINT8 U[8],UINT8 *Data,UINTN Capacity,UINTN *Bytes,PIANO_USB_CONTROL_ACTION *A) {
+  if(S==NULL || U==NULL || Data==NULL || Bytes==NULL || A==NULL || Capacity<64)return EFI_INVALID_PARAMETER;
+  *Bytes=0;*A=PianoUsbStall;S->SetAddress=S->SetConfiguration=FALSE;
+  UINT16 Value=Le16(U+2),Index=Le16(U+4),Length=Le16(U+6);UINTN Size=0;
+  if(U[0]==0x80 && U[1]==6 && Length) {
+    UINT8 Type=(UINT8)(Value>>8),Id=(UINT8)Value;
+    if(Type==1 && Id==0 && Index==0){CopyMem(Data,Device,sizeof(Device));if(S->SuperSpeed){Data[3]=3;Data[7]=9;}Size=sizeof(Device);}
+    else if((Type==2 || Type==7) && Id==0 && Index==0){CopyMem(Data,Config,sizeof(Config));Data[1]=Type;Size=sizeof(Config);}
+    else if(Type==6 && Id==0 && Index==0){UINT8 Q[]={10,6,0,2,0,0,0,64,1,0};CopyMem(Data,Q,sizeof(Q));Size=sizeof(Q);}
+    else if(Type==15 && Id==0 && Index==0 && S->SuperSpeed){UINT8 Bos[]={5,15,22,0,2,7,16,2,0,0,0,0,10,16,3,0,8,0,3,10,0,2};CopyMem(Data,Bos,sizeof(Bos));Size=sizeof(Bos);}
+    else if(Type==3 && Id==0){UINT8 L[]={4,3,9,4};CopyMem(Data,L,sizeof(L));Size=sizeof(L);}
+    else if(Type==3 && Id<=3 && Index==0x0409) {
+      CONST CHAR8 *Text=Id==1?"SunUEFI":Id==2?"piano EP0 debug":"SunUEFI-piano";
+      Size=2;while(*Text && Size+2<=Capacity){Data[Size++]=(UINT8)*Text++;Data[Size++]=0;}
+      Data[0]=(UINT8)Size;Data[1]=3;
+    } else return EFI_UNSUPPORTED;
+  } else if(U[0]==0 && U[1]==5 && Index==0 && Length==0 && Value<=127) {
+    S->PendingAddress=(UINT8)Value;S->SetAddress=TRUE;*A=PianoUsbStatusIn;return EFI_SUCCESS;
+  } else if(U[0]==0 && U[1]==9 && Index==0 && Length==0 && Value<=1 && S->Address!=0) {
+    S->PendingConfiguration=(UINT8)Value;S->SetConfiguration=TRUE;*A=PianoUsbStatusIn;return EFI_SUCCESS;
+  } else if(U[0]==0x80 && U[1]==8 && Value==0 && Index==0 && Length==1) {Data[0]=S->Configuration;Size=1;}
+  else if((U[0]==0x80 || U[0]==0x81 || U[0]==0x82) && U[1]==0 && Value==0 && Length==2 &&
+          ((U[0]==0x80 && Index==0) || (U[0]==0x81 && Index==0 && S->Configuration) || (U[0]==0x82 && (Index==0 || Index==0x80)))) {
+    Data[0]=Data[1]=0;Size=2;
+  } else if(U[0]==0xC0 && U[1]==0x5A && Value==0 && Index==0 && Length && S->Configuration==1) {
+    CopyMem(Data,"SUNUEFI1",8);Data[8]=S->Address;Data[9]=S->Configuration;Data[10]=1;Data[11]=0x40;Size=12;
+  } else return EFI_UNSUPPORTED;
+  *Bytes=MIN(Size,(UINTN)Length);if(*Bytes>Capacity)return EFI_BAD_BUFFER_SIZE;
+  *A=PianoUsbDataIn;return EFI_SUCCESS;
+}
+VOID PianoUsbControlStatusComplete(PIANO_USB_CONTROL *S) {
+  if(S->SetAddress){S->Address=S->PendingAddress;S->Configuration=0;}
+  if(S->SetConfiguration)S->Configuration=S->PendingConfiguration;
+  S->SetAddress=S->SetConfiguration=FALSE;
+}

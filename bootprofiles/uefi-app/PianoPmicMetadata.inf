@@ -1,0 +1,23 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = PianoPmicMetadata
+  FILE_GUID = 7BA3F20C-2A18-4F68-8540-0E124B6A51BD
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 0.1
+  ENTRY_POINT = PianoPmicMetadataEntry
+[Sources]
+  PianoPmicMetadata.c
+[Packages]
+  MdePkg/MdePkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  BaseMemoryLib
+  BaseLib
+  MemoryMapLib
+  FdtLib
+  IoLib
+  DebugLib
+[Depex]
+  FALSE
