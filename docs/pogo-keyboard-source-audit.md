@@ -44,6 +44,8 @@ sleep恢复的第一IRQ在参考驱动中只清suspended，第二IRQ才携带连
 
 认证包含vendor24/31/32和外部token提供者；Android已有devauth service连接状态证据。当前parser只通知AuthRequired/UidAvailable/ChallengeAvailable阶段，不复制或记录UID/challenge/token、不回复、不认定认证成功。是否需要认证才能持续输入、原生MCU与cover独立寿命/电源、token合法提供方式仍需真实链路确认；不对现有keys文件或服务作任何修改。
 
+2026-10-05 再次只读核对当前 Android HID producer，并保存四份静态 report descriptor 到 `private/analysis/pogo-hid-2026-10-05/`。真实 keyboard input 为 ID05/9bytes，mouse 为 ID02/8bytes，touchpad 为 ID19/27bytes；三个触点的 X/Y logical maximum 都是3199/2135，与当前 parser 一致。Android consumer HID 是 ID06/3bytes；它是软件提交给 HID 的长度，不能用来把参考 I2C packed frame 的5bytes解释为3bytes，尾部两字节仍未知。descriptor 只能验证 Android 软件输入格式，不是 UEFI I2C 实际收包或认证成功的证据，也未读取实时按键或认证材料。
+
 ## Native EFI I2C/FIFO路径
 
 本机Mu-Silicium commit `66e7bd1e7bcb757d4b28629bd6409d7209d3b242`包含PI标准I2cMaster/I2cIo headers。标准master GUID为cd72881f-45b5-4feb-98c8-313da8117462；IO GUID为b60a3e6b-18c4-46e5-a29a-c9a10665a28e。`EFI_I2C_REQUEST_PACKET`的operation之间是repeated START，末尾STOP。新`PianoPogoI2c`只构造write1(register4c)+read68的2-operation请求，没有LocateProtocol/StartRequest或任何硬件调用；异步请求要求buffer保持有效到completion，不能把stack packet交给异步服务后返回。

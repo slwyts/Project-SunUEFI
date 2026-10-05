@@ -6,6 +6,8 @@
 
 **唯一产品候选已完成构建：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成实际TianoCore Logo、默认SimpleInit、F12 Setup、标准Shell和驻留fastboot调度；产品没有诊断自动重启计时器。209项主机测试通过，产品实机联合验收尚未执行。原UFS卷仍只读、变量仍在RAM中，触摸、官方键盘触控板、USB Host、通用OS启动及1GiB下载后端尚未完成。开发诊断镜像仅保留为实验记录，不是额外产品功能集。构建与后端状态见 [唯一产品构建](docs/piano-product-build.md)，联合关闭证据见 [第91次验收](docs/ufs-usb-retirement-test-91.md)。
 
+当前产品修订已包含SimpleInit的“固件设置（BIOS）”“进入 UEFI Shell”菜单及 `fastboot oem setup/shell/simpleinit` 导航。应用正常返回父核心后切换界面，导航不关闭驻留USB/UFS；Shell普通cold reset也走统一退休。完整构建通过，导航修订SHA256为 `cc1d5373453ffaa996e4b995e8890de42341c9199900c31395be2f371a675004`，仍待实机验收；命令与证据边界见 [产品验收](docs/piano-product-acceptance.md)。
+
 详见 [BlockIO / USB进展](docs/blockio-usb-progress.md)、[受控UFS写入证据](docs/ufs-controlled-write-transport.md) 和 [Linux EFI交接审查](docs/linux-efi-handoff-audit.md)。stable/next独立内核已分别通过第71/73次原生ARM64 RAM启动；第85次标准EFI路径启动8CPU并完成MM/console，抓到固定TrustUI CMA缺失vmemmap导致panic；第88次补入两个占用CMA区域后越过原故障，但因普通可分配内存不足在内核初始化时OOM。EFI路径RAM用户态PID1尚未成功。
 
 全部功能仍是目标，按下表分别记录实测状态。驱动加载成功不等于硬件传输成功。

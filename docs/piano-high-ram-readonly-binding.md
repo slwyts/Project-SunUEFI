@@ -1,5 +1,7 @@
 # 下一次high-RAM AT-only profile的实际绑定审核
 
+**2026-10-05后续实证：**第91次已回收四个高地址 `A00000000`、`A00001000`、`A3FFFF000`、`A3FFFFFFF` 的实际 AT 记录，均为 `PAR=80B`、`translated=0`，没有解引用目标内存。当前产品不能使用该1GiB arena。新 Android 只读快照位于 `private/analysis/android-memory-2026-10-05/`；虽然整份 DTB 摘要变化，16个非零memory tuples、47个fixed reservations、14个dynamic constraints、zero placeholders与FDT memreserve均和原捕获完全一致，比较结果另存 `dt-memory-comparison.json`。Android高RAM可用不能替代UEFI阶段所有权证明。后续工作使用唯一产品核心的DDR/HOB/MMU/GCD接入，不再把本文件早期独立诊断profile建议当成最终功能分支。
+
 本轮只读审查，没有改helper、prepare、当前源码/表、设备或build。目标为下一次独立采集AT/EFI/GCD；不apply high prototype、不pattern、不公告1GiB容量。现helper冻结SHA仍：C `8d6826d417791d80b14dd54a422afdaac5ae80d6b0d6efd20735f0a0fcb8aa4d`、H `74542850cbd89943073fc4e1fc1545503aa7307f5d9986707321c4c235ffd106`。
 
 ## MemoryAttribute producer存在于源码，但下一次不调用Get

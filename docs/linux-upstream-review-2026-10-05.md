@@ -43,3 +43,11 @@ stable从vanilla7.2.6至7.2.9的可见64commit、1437files变更，与fork115pat
 test71/73记录分别在`artifacts/kernels/stable/ram/ram-validation-test-71.json`与next对应73文件：exact源/config/live DTB、PID1、CPU0-7、180秒自动恢复、26分区匹配。验证限于原pin raw handoff；rc6即使只改版本也未实机验收，完整发行版/display/GPU/network/touch/audio/EFI-runtime目标仍未完成。
 
 机器可复核产物位于`artifacts/kernel-research/2026-10-05/`：upstream-review.json、panel-upstream-audit.json和panel/DTB/memory-debug临时index apply-check JSON。shallow负查询保持unknown，不自动删除patch。下一步候选worktree/build需Root授权，本轮proposal未执行。
+
+## 后续执行：rc6显示候选已建立并编译对象
+
+Root 已在独立仓库建立 `codex/piano-panel-7.3rc6`，工作树位于 meta-repo 的 `build/kernel-worktrees/piano-panel-7.3rc6`。基线为上述官方 rc6 commit，按原顺序 cherry-pick 四个显示/backlight canonical commits，候选 HEAD 为 `ef43c0a879d3a82cf9f865bffee1035775b3b7d5`，工作树 clean。
+
+新提交依次为 `52f4ab5b7ddd0d8086e8c25658503efdabb0bcac`、`fa710d90c233d2ad6df06cea9b745063408d6ffe`、`6b4f65880bdb257b7a84f91e6674776df73c4770`、`ef43c0a879d3a82cf9f865bffee1035775b3b7d5`。没有搬入仅用于诊断的 printk/ramoops topics 或 disabled board overlay。
+
+使用独立 O=`build/kernel-topics/piano-panel-rc6`、实际 LLVM 23.1.1 和原 panel config，经 `olddefconfig` 后真实编译 `panel-novatek-nt36532.o` 与 `ktz8866.o`，进程 exit 0。对象、最终 config 和精确 manifest 保存于 `artifacts/kernel-topics/piano-panel-rc6/`，日志为 `build/logs/piano-panel-rc6-build.log`。这是两个驱动对象的编译验证，尚未构建完整 Image、接入可用板级 DTS 或实机显示；stable/next 已验分支、meta gitlink 和 profile pins 没有改变。
