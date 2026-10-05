@@ -215,6 +215,13 @@ hook(SI+'src/boot/reboot_uefi.c', '\tadv_reboot(cmd,data);\n\ttlog_warn("reset s
 
 # Visible product top-level entries use the existing boot menu's real focus
 # group/input path, but are dispatched by the resident parent, not nested EFI.
+hook(SI+'src/gui/drivers/uefi_gop.c', '\tuefigop_apply_mode();\n',
+     '\tuefigop_apply_mode();\n'
+     '\tif(gop->Mode&&gop->Mode->Info)tlog_notice("PIANO_GUI_GOP_SELECTED interface=%p blt=%p mode=%u base=%llx bytes=%llu width=%u height=%u stride=%u format=%u",\n'
+     '\t\t(void*)gop,(void*)gop->Blt,gop->Mode->Mode,\n'
+     '\t\t(unsigned long long)gop->Mode->FrameBufferBase,(unsigned long long)gop->Mode->FrameBufferSize,\n'
+     '\t\tgop->Mode->Info->HorizontalResolution,gop->Mode->Info->VerticalResolution,\n'
+     '\t\tgop->Mode->Info->PixelsPerScanLine,(unsigned)gop->Mode->Info->PixelFormat);\n')
 include(SI+'src/boot/bootdef.c', '#include<Library/BaseLib.h>\n')
 hook(SI+'src/boot/SimpleInitBoot.inf', '[LibraryClasses]\n', '[LibraryClasses]\n  PianoProductPumpLib\n')
 hook(SI+'src/boot/bootdef.c', '\tgui_splash_set_text(true,_("Loading UEFI boot options..."));',

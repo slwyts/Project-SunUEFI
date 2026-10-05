@@ -10,6 +10,7 @@
 #include "PianoProductStorageBaseline.h"
 #include "PianoProductSmem.h"
 #include "PianoProductBootLog.h"
+#include "PianoProductDisplayObserve.h"
 #include "LateHandoff/PianoLateHandoff.h"
 #include <Guid/EventGroup.h>
 #include <Library/UefiBootServicesTableLib.h>
@@ -36,6 +37,7 @@ STATIC BOOLEAN mBootLogEnabled,mBootLogCounterDown;
 STATIC UINT64 mBootLogStart;
 STATIC CONST CHAR8 *mBootLogStage="PAYLOAD";
 STATIC VOID BootLogReturned(VOID);
+STATIC VOID FailStop(EFI_STATUS Status);
 STATIC BOOLEAN EFIAPI BootLogAlive(VOID) {
   return !mBootLogExited && !mOwners.Report.ServicesLost && gST!=NULL && gST->BootServices==gBS;
 }
@@ -82,6 +84,21 @@ STATIC VOID BootLogReturned(VOID) {
     if(Status!=EFI_SUCCESS)CpuDeadLoop();
     mBootLogExitEvent=NULL;
   }
+}
+STATIC EFI_STATUS ProductDebugReplay(VOID *Context) {
+  if(Context!=NULL)return EFI_INVALID_PARAMETER;
+  EFI_STATUS Memory=PianoProductSmemReemit(NULL);
+  EFI_STATUS Display=PianoProductDisplayReemit(BootLogAlive);
+  if(!BootLogAlive())return EFI_ABORTED;
+  if(PianoProductDisplayRetained())return Display==EFI_SUCCESS?EFI_COMPROMISED_DATA:Display;
+  // Unavailable GOP inventory remains diagnostic output. It must not prevent
+  // export of a valid saved memory report or create a readiness claim.
+  return Memory;
+}
+STATIC VOID ObserveDisplay(CONST CHAR8 *Phase) {
+  EFI_STATUS Status=PianoProductDisplayObserve(Phase,BootLogAlive);
+  if(!BootLogAlive())FailStop(EFI_ABORTED);
+  if(PianoProductDisplayRetained())FailStop(Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status);
 }
 STATIC VOID ReportRequiredBackends(VOID) {
   // Required remains true. Missing real hardware/startup is visible rather
@@ -166,7 +183,10 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   BootLogStage("PAYLOAD",Status);
   if(Status!=EFI_SUCCESS){BootLogReturned();return Status;}
   ReportRequiredBackends();
+  ObserveDisplay("before-foundation");
   PianoProbeFoundation();
+  if(!BootLogAlive())FailStop(EFI_ABORTED);
+  ObserveDisplay("after-foundation");
   // Real protected SMEM observations precede product DMA owners. Failure with
   // exact handler cleanup leaves data unknown; retained ownership cannot be
   // carried into UFS/USB bring-up. DXE evidence never changes the early map.
@@ -201,6 +221,7 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   // action. Product never relies on an inherited ABL clock being sufficient.
   BootLogStage("UFS",EFI_NOT_STARTED);
   PianoUfsSetProbeAction(InitUfs);PianoProbeUfs(Fdt);BootLogStage("UFS",mUfsStatus);
+  ObserveDisplay("after-ufs");
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_UFS_START attempted=%u status=%r started=%u original_media_readonly=1\n",mUfsAttempted,mUfsStatus,mUfsStarted));
   if(!mUfsAttempted || !mUfsStarted)FailStop(mUfsStatus);
   PIANO_UFS_WINDOW_IO ProductStorageIo={0};
@@ -225,11 +246,12 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   mCounterFrequency=GetPerformanceCounterProperties(&mCounterStart,&mCounterEnd);
   if(!mCounterFrequency || mCounterStart==mCounterEnd)FailStop(EFI_UNSUPPORTED);
   PIANO_DWC3_SERVICE_CONFIG UsbConfig={.Context=NULL,.NowUs=NowUs,.Storage=Storage,
-    .BeforeRamlog=PianoProductSmemReemit};
+    .BeforeRamlog=ProductDebugReplay};
   BootLogStage("USB",EFI_NOT_STARTED);
   Status=PianoUsbControllerServiceStart(Fdt,&UsbConfig);BootLogStage("USB",Status);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_USB_START status=%r resident_service=1 foreground_loop=0\n",Status));
   if(Status!=EFI_SUCCESS)FailStop(Status);
+  ObserveDisplay("after-usb");
   BootLogStage("MENU",EFI_NOT_STARTED);
   Status=PianoBootPolicyInitialize(Image);if(Status!=EFI_SUCCESS)FailStop(Status);
   EFI_GUID Guid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime=NULL;

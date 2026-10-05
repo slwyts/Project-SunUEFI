@@ -92,7 +92,7 @@ class ProductUiTests(unittest.TestCase):
             root=self.fixture(out);first=prepare.prepare(root,apply=True,check_pins=False)
             self.assertEqual(first,prepare.prepare(root,apply=True,check_pins=False))
             self.assertEqual(first,prepare.prepare(root,apply=False,check_pins=False))
-            self.assertEqual(len(first['files']),28)
+            self.assertEqual(len(first['files']),29)
             self.assertEqual(first['default_binding'],'PianoProductPumpLibNull')
     def test_modified_or_duplicate_patch_refused_before_mutations(self):
         for mutation in('modified','duplicate'):
