@@ -121,6 +121,20 @@ total924,295,439 bytes before transport headers, below the1GiB target. This is
 a sizing/build result: hardware helpers and the final kernel/DTB binding remain
 pending, and the current firmware64MiB allocator cannot download this bundle.
 
+The current package now includes all five actually built runtime additions
+(touch viewer, camera bridge, PD locator, AudioReach topology and the matching
+v4l2loopback module). It is sealed under
+`artifacts/linux-full-rootfs/gnome-20261006-runtime-complete/`:33,367 members,
+2,482,005,684 unique regular-file bytes,2,547,318,784 estimated page bytes and
+877,465,635 compressed bytes, SHA256
+`86bb3e5cf0dda93aafe6ce13e25189e151c22c57c72b185fd4512993eb2f2ab4`.
+All members and file contents were verified against the frozen source tree.
+The current bootstrap is882,173,440 bytes, SHA256
+`a274db38f96c3cf7d026a3d0d5c7e777b0f7ed6a46ceaf059d7001b1f1c66ca3`.
+Kernel+DTB+bootstrap total925,295,375 bytes before transport headers. The source
+tree still deliberately lacks a fabricated hardware-ready preparation script;
+the independent SMMU attach/readback integration is required before boot.
+
 The ceiling is distinct from the compressed fastboot payload limit. Firmware's
 actual current limit remains64MiB and its planned download capacity remains1GiB
 pending the validated DDR allocator. Standard fastboot uses an8-hex-digit DATA
