@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <setjmp.h>
 #undef NULL
 #include "../bootprofiles/uefi-app/PianoDwc3Device.c"
 #include "../bootprofiles/uefi-app/PianoUsbControl.c"
@@ -16,12 +17,14 @@ static UINT32 regs[0x100000/4];
 static UINTN session_writes,allocations,completions,resets;
 static UINTN address_writes,address_status_starts;
 static BOOLEAN ran,failed_halt,reject_session,fail_setup,fail_allocate;
+static jmp_buf failed_reset_return;
 static CONST UINT32 original_hs=0x405a55a5,original_ss=0x8055a55a;
 
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
 VOID EFIAPI MemoryFence(VOID){__sync_synchronize();}
+VOID EFIAPI CpuDeadLoop(VOID){assert(resets==1 && failed_halt);longjmp(failed_reset_return,1);}
 VOID *EFIAPI ZeroMem(VOID *Buffer,UINTN Bytes){return memset(Buffer,0,Bytes);}
 VOID *EFIAPI CopyMem(VOID *Dest,CONST VOID *Source,UINTN Bytes){return memmove(Dest,Source,Bytes);}
 INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN Bytes){return memcmp(A,B,Bytes);}
@@ -58,7 +61,7 @@ UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value) {
     }
     Value&=~BIT30; // Device reset completes immediately in the model.
   }
-  if(Offset>=0xC80C && Offset<=0xC81C && (Offset&15)==12) {
+  if(Offset>=0xC80C && Offset<=0xC83C && (Offset&15)==12) {
     if(Offset==0xC81C && (Value&15)==6 && mPhase==3 && mControl.SetAddress) {
       // Replays test 65: the core samples DevAddr before starting STATUS.
       assert(((regs[0xC700/4]>>3)&127)==mControl.PendingAddress);
@@ -157,7 +160,7 @@ int main(void) {
   assert(PianoDwc3Ep0Experiment(&context,&device)==EFI_OUT_OF_RESOURCES);
   assert(session_writes==0 && allocations==0 && !ran);
   init();failed_halt=TRUE;
-  assert(PianoDwc3Ep0Experiment(&context,&device)==EFI_TIMEOUT);
+  if(!setjmp(failed_reset_return)){PianoDwc3Ep0Experiment(&context,&device);assert(FALSE);}
   assert(resets==1 && session_writes==2 && completions==0);
   assert(regs[USB_SESSION_HS/4]==(original_hs|USB_SESSION_HS_VALID));
   assert(regs[USB_SESSION_SS/4]==(original_ss|USB_SESSION_SS_PRESENT));

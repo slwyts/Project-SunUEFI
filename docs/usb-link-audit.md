@@ -137,3 +137,49 @@ python tools/test_usb_diagnostic_host.py
 只改变上述 session 步骤，保持已验证的时钟、SMMU、PHY 和 EP0 参数。先比较 SAVED 与 SET 的完整读回，再检查 DSTS 是否离开 SS_DIS、事件环是否产生 RESET/CONNECT_DONE，以及 SETUP/地址/配置是否推进。最后确认 RESTORE 的读回等于 SAVED。电脑侧实际枚举结果与上述固件证据都应留存。
 
 65 已满足 session 设置后产生连接事件的验收，66 已满足枚举验收。后续仍以具体请求/响应和 CRC 作为电脑诊断通道证据，不用命令接受、旧 sticky SMMU fault 或 repeater ready 替代实测结果。
+
+## 标准 fastboot 调试通道（源码已实现，bulk 实机待验收）
+
+`PIANO_USB_FASTBOOT` 默认 **0**。0 保留此前测试过的 18-byte、无 bulk endpoint 的 EP0-only configuration；1 必须同时应用于 `PianoDwc3Device.c` 和 `PianoUsbControl.c`，同一 `PianoDwc3Ep0Experiment` 入口启用 FF/42/03 interface、logical 01 OUT / 81 IN（DWC physical EP2/3）。VID/PID 仍为 1209:8750，serial 为 **SunUEFI-piano**。EP0 已在 test72 实机枚举成功，新增 bulk、shared-DMA quiet 改动仍需新 RAM 测试，不能据 host mock 声称实机可用。
+
+本机 `/usr/bin/fastboot` 为 37.0.0-android-tools，`--help` 有 `stage`、`get_staged`、`fetch`。AOSP [fastboot 协议](https://android.googlesource.com/platform/system/core/+/refs/heads/main/fastboot/README.md) 明确两条 bulk endpoint，FS/HS/SS MPS 分别 64/512/1024，以及 `upload` 的 DATA-size → 原始数据 → OKAY 顺序。[官方 CLI 源码](https://android.googlesource.com/platform/system/core/+/refs/heads/main/fastboot/fastboot.cpp) 的 `get_staged` 调用 Upload，实际命令为 `upload`；`stage` 调用 Download。当前采用较保守的 64-byte command / response 上限，超限输入明确 FAIL，不截断；新版协议的 4096/256 上限尚未全部实现，验收命令均小于 64 字节。没有伪造 `fetch` 的 partition 内容，也没有自定义 USB 宿主工具参与新验收。
+
+| 标准 CLI 用法 | 固件实际行为 |
+| --- | --- |
+| `getvar product/version/all/max-download-size` | 标识、协议 0.4、RAM 上限 64 MiB、持久存储写禁止策略 |
+| `oem status` | INFO 返回策略、shared-DMA transport、DCFG/DSTS |
+| `getvar SunUEFI:usb-state` | 当前配置的 S/H/F speed 标识 |
+| `stage FILE` | 仅下载到上限 64 MiB 的 RAM pool，完成后成为可 upload 的数据 |
+| `oem sha256` | 对完整 RAM download 输出两条各 32 hex 的 INFO，再 OKAY |
+| `get_staged FILE` | 标准 `upload`，回传当前 staged RAM 数据，随后 OKAY |
+| `oem ramlog` | 固定 console 捕获至多 64 KiB、最新 session marker 开始的尾部，复制到独立 frozen staged pool |
+| `getvar SunUEFI:log-size/log-crc32/log-generation` | 实际 CLI 分别查询三个完整变量名；固定 8 hex metadata 描述 frozen log |
+| `oem discard` | 清零并释放 RAM download / frozen staged 数据 |
+
+`flash`、`erase`、`set_active`、unlock、EDL、任意 OEM、未知命令均 FAIL；`boot` 明确未实现。下载与 log upload 不调用 UFS、BlockIO、变量写入或 partition API。`reboot` / `continue` 保留现有 RAM command-layer 行为，必须待全部 IN response 被完成事件确认后才退出 USB 循环；验收脚本不发送它们。
+
+Bulk MPS 来自 CONNECTDONE 时 DSTS.ConnectSpd，区分 FS1/3、HS0、SS4/5。配置描述符同时包含 SuperSpeed endpoint companion。Physical EP3 使用 FIFO1、EP2 FIFO0；初始 DEPSTARTCFG(0) 后分别配置四个 transfer resource，遵循本机 Linux `dwc3_gadget_start_config` 的持久资源方式。配置 1 在 status ACK 之前完成 endpoint programming，ACK 完成后才发布第一条 OUT TRB；配置 0 禁用 DALEPENA bulk bits、清理 CPU 队列，并等待活跃 bulk END 完成后再完成 control status。
+
+只有 4 KiB 独立 RX/TX bounce 和 TRB / event ring 进入统一 DMA/SMMU。CPU response frame 队列最多 16 项、64 MiB+1024 bytes；Send callback 在返回前复制数据，不把 upload / console pool 直接交给 DMA。一条 IN 未完成时不发布下一条 command OUT，不允许 host 的下一条命令覆盖 response 队列。DATA、原始 upload 与 OKAY 按队列顺序发送。RAM 数据 phase 接受 short / zero packets，以声明的总长度结束。
+
+Reset / disconnect 清 configured、software address/config、download、frozen upload、log metadata 与 CPU response 副本；当前硬件 IN bounce 不会被这些 zero/free 操作覆盖。DWC USB3.1 ENDTRANSFER 用 ForceRM+CMDIOC，**保留 active mapping 直到 EPCMDCMPLT**；event parameters 的 command 位为整个 DWORD 的 [27:24]。Linux [gadget.c](https://github.com/torvalds/linux/blob/master/drivers/usb/dwc3/gadget.c) 的 `__dwc3_stop_active_transfer` / `dwc3_gadget_endpoint_command_complete` 及当前 [core.h](https://github.com/torvalds/linux/blob/master/drivers/usb/dwc3/core.h) 提供这一依据。失败 START/END、错误完成或未知 ownership 进入全局 Halt cleanup；Halt 失败保留 DMA/session，冷重启若返回进入 CpuDeadLoop，绝不 fallthrough 让 caller 关闭时钟/SMMU。
+
+Console 检查现已包括 signature、Start < capacity、Size <= capacity、**Start <= Size**。快照前后 header 必须一致。Metadata 从独立 frozen staged log 获取，后续现场输出或旧 5B snapshot 请求不会改写正在 upload 的内容。Reset/disconnect/discard 后 staged pool 清零释放；成功 Halt 后统一回收 DMA，保留既有 quiet event-ring cache sync。
+
+Host-only 全测试入口：
+
+```sh
+bash tools/test_usb_fastboot.sh
+```
+
+它把实际 C 源编译为 `/tmp` host binary，覆盖默认 EP0/session/5B、command allowlist、SHA256、download overflow、frozen upload zero/free，以及 gate=1 的 65,553-byte binary roundtrip、FS/HS/SS 描述符/FIFO、状态 ACK 时序、config0 异步 END、reset/disconnect、Start>Size 拒绝。新 bulk 测试含 ASan+UBSan 与 leak detection；它没有调用设备，也没有运行 prepare 或固件构建。
+
+Root 的 staging 需要复制 `PianoFastboot.c/.h`、新增 INF Sources 的 `PianoFastboot.c` 并为上述两个源打开 gate；BaseCryptLib（SHA256）、BaseLib、BaseMemoryLib、MemoryAllocationLib 在当前 RamApp 已存在。USB controller/owned SMMU 初始化、关机及既有 PHY/session 步骤继续由原路径负责，没有安装 native Usbfn transport。
+
+新 RAM boot 前在电脑启动 root 提供的 CLI-only 验收脚本（82 为当前预定编号）：
+
+```sh
+python tools/check_fastboot_debug.py --test-id 82 --wait-seconds 180
+```
+
+脚本只选择 SunUEFI-piano，使用标准 fastboot：查询身份和状态、stage 65,553-byte 固定非零 pattern、核对 SHA256、get_staged 逐字节比较、oem ramlog 后读取 frozen metadata 并 get_staged 核对长度/CRC32/generation，最后 discard。电脑结果保存于 `private/analysis/fastboot-debug-host-test-82/`；需要 manifest 的 `VERIFIED_FASTBOOT_RAM_AND_LOG_ROUNDTRIP` / `debug_verified=true`，固件 `SUNUEFI_FASTBOOT_BULK_READY`、command/bytes 计数与正常 Halt/session restore 才能称 bulk 调试实机验证完成。节点枚举本身不是 roundtrip 验收。

@@ -19,6 +19,8 @@ STATIC VOID Hex32(UINT32 Value, CHAR8 *Out) {
 }
 VOID PianoFastbootReset(PIANO_FASTBOOT *S) {
   if(S==NULL)return;
+  if(S->Upload!=NULL && !S->UploadBorrowed){ZeroMem(S->Upload,S->UploadBytes);FreePool(S->Upload);}
+  S->Upload=NULL;S->UploadBytes=0;S->UploadBorrowed=FALSE;
   if(S->Download!=NULL) {
     // Received data can include private diagnostic payloads; clear on release.
     ZeroMem(S->Download,S->Expected);FreePool(S->Download);
@@ -26,6 +28,13 @@ VOID PianoFastbootReset(PIANO_FASTBOOT *S) {
   S->Download=NULL;S->Expected=0;S->Received=0;
   S->Receiving=FALSE;S->Complete=FALSE;
   S->RebootRequested=FALSE;S->ExitRequested=FALSE;
+}
+EFI_STATUS PianoFastbootStageCopy(PIANO_FASTBOOT *S,CONST VOID *Data,UINTN Bytes) {
+  if(S==NULL || Data==NULL || Bytes==0 || Bytes>PIANO_FASTBOOT_MAX_DOWNLOAD || S->Receiving)return EFI_INVALID_PARAMETER;
+  UINT8 *Copy=AllocateZeroPool(Bytes);if(Copy==NULL)return EFI_OUT_OF_RESOURCES;
+  CopyMem(Copy,Data,Bytes);
+  if(S->Upload!=NULL && !S->UploadBorrowed){ZeroMem(S->Upload,S->UploadBytes);FreePool(S->Upload);}
+  S->Upload=Copy;S->UploadBytes=Bytes;S->UploadBorrowed=FALSE;return EFI_SUCCESS;
 }
 EFI_STATUS PianoFastbootInit(PIANO_FASTBOOT *S, VOID *Context,
                             PIANO_FB_SEND Send, PIANO_FB_LOG Log) {
@@ -52,6 +61,12 @@ STATIC EFI_STATUS GetVar(PIANO_FASTBOOT *S, CONST CHAR8 *Name) {
       EFI_STATUS Status=Reply(S,Rows[I]);if(EFI_ERROR(Status))return Status;
     }
     return Reply(S,"OKAY");
+  }
+  if(S->Query!=NULL) {
+    CHAR8 Result[65]="OKAY";ZeroMem(Result+4,61);
+    EFI_STATUS Status=S->Query(S->Context,Name,Result+4);
+    if(!EFI_ERROR(Status))return Reply(S,Result);
+    if(Status!=EFI_UNSUPPORTED)return Status;
   }
   return Reply(S,"FAILunknown variable");
 }
@@ -100,7 +115,9 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes)
     }
     CopyMem(S->Download+S->Received,Data,Bytes);S->Received+=Bytes;
     if(S->Received==S->Expected) {
-      S->Receiving=FALSE;S->Complete=TRUE;return Reply(S,"OKAY");
+      S->Receiving=FALSE;S->Complete=TRUE;
+      S->Upload=S->Download;S->UploadBytes=S->Received;S->UploadBorrowed=TRUE;
+      return Reply(S,"OKAY");
     }
     return EFI_SUCCESS;
   }
@@ -112,8 +129,19 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes)
   CHAR8 Cmd[65];CopyMem(Cmd,Data,Bytes);Cmd[Bytes]=0;
   if(!AsciiStrnCmp(Cmd,"getvar:",7))return GetVar(S,Cmd+7);
   if(!AsciiStrnCmp(Cmd,"download:",9))return Download(S,Cmd+9);
+  if(Equal(Cmd,"upload")) {
+    if(S->Upload==NULL || !S->UploadBytes)return Reply(S,"FAILno staged RAM payload");
+    CHAR8 Result[13]="DATA";Hex32((UINT32)S->UploadBytes,Result+4);
+    EFI_STATUS Status=Reply(S,Result);if(EFI_ERROR(Status))return Status;
+    Status=S->Send(S->Context,S->Upload,S->UploadBytes);if(EFI_ERROR(Status))return Status;
+    return Reply(S,"OKAY");
+  }
   if(Equal(Cmd,"oem sha256"))return HashDownload(S);
   if(Equal(Cmd,"oem discard")){PianoFastbootReset(S);return Reply(S,"OKAY");}
+  if(Equal(Cmd,"oem status") || Equal(Cmd,"oem ramlog")) {
+    if(S->Diagnostic==NULL)return Reply(S,"FAILdiagnostic service unavailable");
+    return S->Diagnostic(S->Context,S,Cmd);
+  }
   if(Equal(Cmd,"oem log")) {
     if(S->Log==NULL)return Reply(S,"FAILlog service unavailable");
     EFI_STATUS Status=S->Log(S->Context,S->Send);
