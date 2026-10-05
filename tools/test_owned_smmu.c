@@ -6,6 +6,7 @@
 #undef NULL
 #include "../bootprofiles/uefi-app/PianoIoPageTable.c"
 #include "../bootprofiles/uefi-app/PianoOwnedSmmu.c"
+static unsigned fsr_writes;static UINT32 fsr_clear_value;
 static unsigned sync_calls;static int sync_fail;
 static unsigned detaches,destroys,releases,exit_retains;static int retained_stream,changed_other;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
@@ -13,6 +14,7 @@ BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
 UINTN EFIAPI AsciiSPrint(CHAR8 *Buffer,UINTN Size,CONST CHAR8 *Format,...){abort();return 0;}
 UINT32 EFIAPI MmioRead32(UINTN Address){abort();return 0;}
+UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value){assert(Address==0x15080058);++fsr_writes;fsr_clear_value=Value;return Value;}
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 VOID *EFIAPI WriteBackDataCacheRange(VOID *P,UINTN N){return P;}
 VOID EFIAPI MemoryFence(VOID){ }
@@ -68,5 +70,8 @@ int main(void){
   assert(PianoOwnedSmmuClose(c)==EFI_ACCESS_DENIED && detaches==old_detaches && destroys==old_destroys && releases==old_releases);
   assert(Map(&d,0xc0000000,4096,PianoDmaFromDevice,4096,&a,&x)==EFI_NOT_READY);
   assert(Unmap(&d,x)==EFI_ACCESS_DENIED);
+  c->DeviceIndex=0;c->After.Base=0x15000000;c->After.ContextBase=0x80000;c->After.PageShift=12;c->After.Device[0].ContextBank=0;
+  c->After.Device[0].Fsr=0x400;ClearOwnedStickyFault(c);assert(!fsr_writes && c->After.Device[0].Fsr==0x400);
+  c->After.Device[0].Fsr=0x402;ClearOwnedStickyFault(c);assert(fsr_writes==1 && fsr_clear_value==2 && c->After.Device[0].Fsr==0x402);
   free(memory);free(c);puts("Owned SMMU backend: nonidentity arena, alignment, per-direction PTEs, unmap and retained rollback failure passed.");return 0;
 }

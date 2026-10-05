@@ -4,9 +4,9 @@
 
 **最新实机结果（截至第91次）：UFS 已完成统一 DMA/SMMU、6个LUN和GPT读取、139个只读BlockIO句柄及7个只读SFS卷；标准Shell三条枚举命令真实执行成功。第80次固定块和第86次限定14MiB窗口FAT写入试验均完成备份、写入、校验、完整恢复及独立复核，原分区BlockIO仍只读，未改GPT。USB已实测SuperSpeed枚举、标准fastboot RAM/日志传输、正常重启和3200×2136 GOP BMP导出。第91次标准fetch读取xbl_config_a的524288 bytes与原备份一致，USB/UFS联合关闭通过，固件主动恢复Android；26启动分区SHA全部一致。触摸尚无真实触点验收。**
 
-**唯一产品候选已完成构建：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成实际TianoCore Logo、默认SimpleInit、F12 Setup、标准Shell和驻留fastboot调度；产品没有诊断自动重启计时器。224项主机测试通过，产品实机联合验收尚未执行。原UFS卷仍只读，新增专用可写卷后端已接入发现流程，但设备尚未配置永久保留区；变量仍在RAM中。触摸、官方键盘触控板、USB Host、通用OS启动及1GiB下载后端尚未完成。开发诊断镜像仅保留为实验记录，不是额外产品功能集。构建与后端状态见 [唯一产品构建](docs/piano-product-build.md)，联合关闭证据见 [第91次验收](docs/ufs-usb-retirement-test-91.md)。
+**唯一产品候选已完成构建：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成实际TianoCore Logo、默认SimpleInit、F12 Setup、标准Shell和驻留fastboot调度；产品没有诊断自动重启计时器。227项主机测试通过，产品实机联合验收尚未执行。原UFS卷仍只读，新增专用可写卷后端已接入发现流程，但设备尚未配置永久保留区；变量仍在RAM中。触摸、官方键盘触控板、USB Host、通用OS启动及1GiB下载后端尚未完成。开发诊断镜像仅保留为实验记录，不是额外产品功能集。构建与后端状态见 [唯一产品构建](docs/piano-product-build.md)，联合关闭证据见 [第91次验收](docs/ufs-usb-retirement-test-91.md)。
 
-当前产品修订已包含SimpleInit的“固件设置（BIOS）”“进入 UEFI Shell”菜单及 `fastboot oem setup/shell/simpleinit` 导航。应用正常返回父核心后切换界面，导航不关闭驻留USB/UFS；Shell普通cold reset也走统一退休。另已接入本机Env映像/ABI校验后的有界RAM-partition查询，不映射或分配高RAM；旧头文件的preloaded接口与本机不同，见 [原生RAM接口审计](docs/piano-native-ram-partition.md)。本次冷构建还排除ADSP/HWFence与DXE堆的两个已知冲突，保留上方47MiB资源，见 [内存契约](docs/piano-platform-memory-contract.md)。完整构建通过，当前修订SHA256为 `cd2a845bb05e61c55dd2f29fa00406cc7d47cec1236f0c7a9f1a5849ec0b6cf2`，仍待实机验收；命令与证据边界见 [产品验收](docs/piano-product-acceptance.md)。
+当前产品修订已包含SimpleInit的“固件设置（BIOS）”“进入 UEFI Shell”菜单及 `fastboot oem setup/shell/simpleinit` 导航。应用正常返回父核心后切换界面，导航不关闭驻留USB/UFS；Shell普通cold reset也走统一退休。另已接入本机Env映像/ABI校验后的有界RAM-partition查询，不映射或分配高RAM；旧头文件的preloaded接口与本机不同，见 [原生RAM接口审计](docs/piano-native-ram-partition.md)。本次冷构建还排除ADSP/HWFence与DXE堆的两个已知冲突，保留上方47MiB资源，见 [内存契约](docs/piano-platform-memory-contract.md)。完整构建通过，当前修订SHA256为 `8b533e834434337832502af9adb649430b50bf31824d6a5f7a685345cf13f76b`，仍待实机验收；命令与证据边界见 [产品验收](docs/piano-product-acceptance.md)。
 
 已准备 [专用存储提案](docs/piano-product-storage-proposal.md) 和 [标准NV后端](docs/piano-persistent-nv-backend.md)：固定14MiB容器提供有边界的FAT与双槽日志，PC提案与实际C provider互操作通过。未写介质、未改GPT；正式长期保留区与标准变量驱动早期初始化仍未完成，不能把后端源码和断电模拟当作实机持久化。
 

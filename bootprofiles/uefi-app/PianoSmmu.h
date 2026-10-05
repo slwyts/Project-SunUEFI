@@ -2,6 +2,11 @@
 #pragma once
 #include <Uefi.h>
 #define PIANO_SMMU_DEVICE_COUNT 4
+// ARM SMMUv2 FSR bits10:9 describe the translation format; they are not faults.
+// Keep them as captured metadata. Only architectural fault/status bits below
+// authorize own-bank W1C clearing or fence a healthy DMA context.
+#define PIANO_SMMU_FSR_FORMAT_MASK (BIT10|BIT9)
+#define PIANO_SMMU_FSR_FAULT_MASK  (BIT31|BIT30|0x000001FEU)
 typedef struct {
   CONST CHAR8 *Name;
   UINT16 Sid,Mask;

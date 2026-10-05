@@ -21,8 +21,9 @@ STATIC EFI_STATUS ProductSmmuGuard(BOOLEAN Establish){
   PIANO_SMMU_SNAPSHOT Current;EFI_STATUS S=PianoSmmuCapture(mContext.Fdt,"product-volume-lease",&Current);
   if(S!=EFI_SUCCESS)return ProductRetain(S);
   if(!Current.Valid || Current.Base!=0x15000000 || Current.Window!=0x100000 || !Current.Groups || Current.Groups>256 ||
-     Current.GlobalFault || !Current.Device[0].Present || !Current.Device[0].Enabled || Current.Device[0].Fsr)return ProductRetain(EFI_COMPROMISED_DATA);
-  PIANO_SMMU_DEVICE Expected=mContext.AttachedSnapshot.Device[0];Expected.Fsr=0;
+     Current.GlobalFault || !Current.Device[0].Present || !Current.Device[0].Enabled ||
+     (Current.Device[0].Fsr&PIANO_SMMU_FSR_FAULT_MASK))return ProductRetain(EFI_COMPROMISED_DATA);
+  PIANO_SMMU_DEVICE Expected=mContext.AttachedSnapshot.Device[0];Expected.Fsr&=~PIANO_SMMU_FSR_FAULT_MASK;
   if(!ProductSameContext(&Expected,&Current.Device[0]) || (Current.Device[0].Ttbr0&0x0000FFFFFFFFF000ULL)!=mContext.TableMemory.Physical)return ProductRetain(EFI_COMPROMISED_DATA);
   PIANO_DMA_BUFFER *Buffers[]={&mUcd,&mTrl,&mData};CONST UINTN Sizes[]={PIANO_UFS_UCD_BYTES,1024,4096};
   for(UINTN I=0;I<3;++I){PIANO_DMA_BUFFER *B=Buffers[I];UINT64 First=0,Last=0;

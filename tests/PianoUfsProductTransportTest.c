@@ -90,7 +90,12 @@ static VOID native_fresh(BOOLEAN Provisioned){
 }
 static VOID native_open(void){assert(PianoUfsProductVolumeOpen(&volume,&original,&io)==EFI_SUCCESS && !NativeWrites && !NativeSyncs && !Allocations && CurrentTpl==TPL_APPLICATION && DmaBegins==DmaCompletes);}
 int main(void){
+  assert(PIANO_SMMU_FSR_FORMAT_MASK==0x600 && PIANO_SMMU_FSR_FAULT_MASK==0xC00001FE);
   native_fresh(FALSE);assert(PianoUfsProductVolumeOpen(&volume,&original,&io)==EFI_NOT_FOUND && !NativeWrites && !NativeSyncs && !Allocations && !Installs && !mProductRetained && CurrentTpl==TPL_APPLICATION);
+  native_fresh(TRUE);Hardware.Device[0].Fsr=0x400;mContext.AttachedSnapshot.Device[0].Fsr=0x400;native_open();
+  assert(volume.Block.WriteBlocks(&volume.Block,1,0,4096,pattern)==EFI_SUCCESS && NativeWrites==1 && Hardware.Device[0].Fsr==0x400);
+  native_fresh(TRUE);Hardware.Device[0].Fsr=0x402;mContext.AttachedSnapshot.Device[0].Fsr=0x400;
+  assert(PianoUfsProductVolumeOpen(&volume,&original,&io)!=EFI_SUCCESS && !Doorbells && mProductRetained && !NativeWrites && !NativeSyncs);
   native_fresh(TRUE);native_open();assert(volume.Block.WriteBlocks(&volume.Block,1,0,4096,pattern)==EFI_SUCCESS && NativeWrites==1 && NativeSyncs==1 && volume.State.VerifiedWrites==1 && !volume.State.NeedsRecovery && CurrentTpl==TPL_APPLICATION);
   CurrentTpl=TPL_CALLBACK;assert(volume.Block.WriteBlocks(&volume.Block,1,1,4096,pattern)==EFI_SUCCESS && CurrentTpl==TPL_CALLBACK && NativeWrites==2 && NativeSyncs==2);CurrentTpl=TPL_APPLICATION;
   const PIANO_UFS_PRODUCT_NV_IO *Nv=PianoUfsProductVolumeNvIo(&volume);assert(Nv);CurrentTpl=TPL_NOTIFY;

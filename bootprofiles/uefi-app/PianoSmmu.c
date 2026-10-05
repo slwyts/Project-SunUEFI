@@ -96,8 +96,8 @@ VOID PianoSmmuLogFaults(CONST PIANO_SMMU_SNAPSHOT *S) {
   DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_FAULT global=%08x\n",Global));
   for(UINTN I=0;I<PIANO_SMMU_DEVICE_COUNT;++I) {
     CONST PIANO_SMMU_DEVICE *D=&S->Device[I];if(!D->Present || D->Type!=0)continue;
-    UINTN B=S->ContextBase+((UINTN)D->ContextBank<<S->PageShift);
-    DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_FAULT dev=%a sid=%x cb=%u fsr=%08x far=%lx fsynr=%08x\n",
-      D->Name,D->Sid,D->ContextBank,Read(B+0x58),Read64(B+0x60),Read(B+0x68)));
+    UINTN B=S->ContextBase+((UINTN)D->ContextBank<<S->PageShift);UINT32 Fsr=Read(B+0x58);
+    DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_FAULT dev=%a sid=%x cb=%u fsr=%08x far=%lx fsynr=%08x format=%x fault_bits=%08x\n",
+      D->Name,D->Sid,D->ContextBank,Fsr,Read64(B+0x60),Read(B+0x68),Fsr&PIANO_SMMU_FSR_FORMAT_MASK,Fsr&PIANO_SMMU_FSR_FAULT_MASK));
   }
 }

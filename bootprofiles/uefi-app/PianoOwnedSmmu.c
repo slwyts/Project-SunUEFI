@@ -203,6 +203,14 @@ STATIC EFI_STATUS Unmap(PIANO_DMA_DEVICE *D,VOID *Token) {
   for(UINT32 I=0;I<Pages;++I)C->Used[First+I]=0;
   C->Mapping[Slot].Used=FALSE;return EFI_SUCCESS;
 }
+STATIC VOID ClearOwnedStickyFault(CONST PIANO_OWNED_SMMU *C) {
+  CONST PIANO_SMMU_DEVICE *U=&C->After.Device[C->DeviceIndex];
+  if(U->Fsr&PIANO_SMMU_FSR_FAULT_MASK) {
+    DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_OWNED_STICKY_FAULT bank=%u fsr=%08x far=%lx fsynr=%08x\n",U->ContextBank,U->Fsr,U->Far,U->Fsynr));
+    UINTN Bank=C->After.Base+C->After.ContextBase+((UINTN)U->ContextBank<<C->After.PageShift);
+    MmioWrite32(Bank+0x58,U->Fsr&PIANO_SMMU_FSR_FAULT_MASK);MemoryFence();
+  }
+}
 STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D,UINT8 Index) {
   if(C==NULL || D==NULL)return EFI_INVALID_PARAMETER;
   UINT16 Sid=Index==0?0x60:0x40;
@@ -253,11 +261,7 @@ STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEV
   }
   // Log before clearing sticky faults, and clear only the bank this newly
   // created UFS domain owns. TTBCR2 bits 5/6 read as RES1 on this hardware.
-  if(U->Fsr) {
-    DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_OWNED_STICKY_FAULT bank=%u fsr=%08x far=%lx fsynr=%08x\n",U->ContextBank,U->Fsr,U->Far,U->Fsynr));
-    UINTN Bank=C->After.Base+C->After.ContextBase+((UINTN)U->ContextBank<<C->After.PageShift);
-    MmioWrite32(Bank+0x58,U->Fsr);MemoryFence();
-  }
+  ClearOwnedStickyFault(C);
   BOOLEAN Reserve=Index==0 || D->ReserveAcrossExit;
   *D=(PIANO_DMA_DEVICE){.Name=Index==0?"ufs":"usb",.StreamId=Sid,.AddressBits=32,.CacheLine=64,.Context=C,.Map=Map,.Unmap=Unmap,.Fault=Fault,.ReserveAcrossExit=Reserve};
   C->OwnedIdentitySaved=TRUE;C->OwnedTablePhysical=C->TableMemory.Physical;C->AttachedSnapshot=C->After;
