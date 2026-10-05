@@ -33,7 +33,7 @@ SETUP_DSC_ADDITIONS = '''
 '''
 
 
-def main():
+def argument_parser():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--foundation',action='store_true',help='Gate the prepared native support modules by original DEPEX after console timer starts')
     parser.add_argument('--keys',action='store_true',help='Use the standalone read-only piano key transport; excludes native PMIC bring-up')
@@ -54,10 +54,50 @@ def main():
     parser.add_argument('--ufs-shell',action='store_true',help='Run firmware-volume UEFI Shell read-only enumeration before RAM simple-init; implies ufs-filesystems')
     parser.add_argument('--ufs-shell-interactive',action='store_true',help='Remain in UEFI Shell after automatic enumeration until exit or the recovery timer; implies ufs-shell')
     parser.add_argument('--ufs-setup',action='store_true',help='Launch the pinned standard TianoCore UiApp/HII Setup with temporary RAM settings; implies ufs-filesystems')
+    writes=parser.add_mutually_exclusive_group()
+    writes.add_argument('--ufs-write-preflight',action='store_true',help='Isolated fixed LUN4/LBA375040 baseline/live gate and full gap reads only; never WRITE/SYNC or boot SimpleInit')
+    writes.add_argument('--ufs-write-restore-test',action='store_true',help='Explicit isolated fixed one-block FUA write/sync/read/restore/verify transaction; all registered BlockIO remains readonly and no SimpleInit boot')
     parser.add_argument('--usb-controller',action='store_true',help='Isolated DWC3 clocks/registers and owned USB0 SMMU context')
     parser.add_argument('--usb-ep0',action='store_true',help='USB2 device EP0 enumeration using shared DMA and USB0 owned context')
     parser.add_argument('--return-seconds',type=int,default=75,help='Diagnostic cold-reboot timer, 30 to 120 seconds (default 75)')
+    return parser
+
+
+def validate_write_options(parser,args):
+    if args.ufs_write_preflight or args.ufs_write_restore_test:
+        if any((args.ufs_filesystems,args.ufs_shell,args.ufs_shell_interactive,args.ufs_setup,
+                args.usb_controller,args.usb_ep0,args.usb_debug,args.touch_probe,args.gpi_probe,
+                args.fault_recovery_test,args.ram_qupfw,args.qupfw_disk,args.pmic_metadata)):
+            parser.error('UFS write/preflight requires an isolated profile without filesystem/Shell/Setup/USB/touch consumers')
+        args.ufs_blockio=True
+
+
+def write_test_ram_app(text):
+    text=text.replace('UINT8 Hash[32]; EFI_HANDLE App; EFI_STATUS Status;',
+                      'UINT8 Hash[32]; EFI_STATUS Status;')
+    """Keep the app/ledger resident; the explicit diagnostic cannot boot an OS."""
+    anchor='  Status=gBS->LoadImage (FALSE,ImageHandle'
+    if text.count(anchor)!=1:
+        raise ValueError('Unexpected RamApp SimpleInit launch anchor')
+    return text[:text.index(anchor)]+'''  DEBUG((DEBUG_WARN,"SUNUEFI_UFS_WRITE_PROFILE_WAIT boot_blocked=1 readonly_blockio=1\\n"));
+  // RunWriteTransaction holds the recovery timer until restore is verified;
+  // an unsafe result never returns here. A safe result waits for final Halt.
+  while(TRUE){gBS->Stall(100000);}
+}
+'''
+
+
+def load_write_attestation(root):
+    import importlib.util
+    spec=importlib.util.spec_from_file_location('piano_write_attestation',root/'tools/prepare_ufs_write_test.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    return module
+
+
+def main():
+    parser=argument_parser()
     args=parser.parse_args()
+    validate_write_options(parser,args)
     if args.ufs_shell_interactive:args.ufs_shell=True
     if args.ufs_shell:args.ufs_filesystems=True
     if args.ufs_setup:args.ufs_filesystems=True
@@ -108,6 +148,11 @@ def main():
     if args.keys and args.foundation and not args.touch_probe and not args.usb_debug and not args.ufs_probe and not args.usb_controller:
         parser.error('--keys and --foundation must be tested separately')
     root = Path(__file__).resolve().parent.parent
+    write_attestation=None
+    if args.ufs_write_preflight or args.ufs_write_restore_test:
+        write_attestation=load_write_attestation(root)
+        # Refuse an absent/drifted archive before mutating profile staging.
+        write_attestation.verify_capture()
     source = root / 'platforms/pianoProbePkg'
     target = root / 'platforms/pianoGuiPkg'
     shutil.copytree(source, target, dirs_exist_ok=True)
@@ -287,6 +332,15 @@ def main():
         text+='  gEfiDevicePathProtocolGuid\n';text=text.replace('[Protocols]','[Guids]\n  gEfiEventExitBootServicesGuid\n\n[Protocols]');path.write_text(text)
         path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)','VOID PianoUfsBlockIoStop(VOID);\n#pragma pack(1)',1)
         text=text.replace('PianoStopFaultRecovery();','PianoUfsBlockIoStop(); PianoStopFaultRecovery();');path.write_text(text)
+    if args.ufs_write_preflight or args.ufs_write_restore_test:
+        for name in ('PianoUfsWriteTest.c','PianoUfsWriteTest.h'):
+            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+        write_attestation.prepare_ufs_write_test(output=app/'PianoUfsWriteTestBaseline.h')
+        mode='PIANO_UFS_WRITE_PREFLIGHT' if args.ufs_write_preflight else 'PIANO_UFS_WRITE_RESTORE_TEST'
+        path=app/'PianoUfsReadOnlyDma.c'
+        path.write_text('#define PIANO_UFS_WRITE_TEST 1\n#define '+mode+' 1\n'+path.read_text())
+        path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoUfsWriteTest.c'))
+        path=app/'RamApp.c';path.write_text(write_test_ram_app(path.read_text()))
     if args.ufs_filesystems:
         shutil.copyfile(root/'bootprofiles/uefi-app/PianoUfsFileSystemProbe.c',app/'PianoUfsFileSystemProbe.c')
         path=app/'PianoUfsReadOnlyDma.c';path.write_text('#define PIANO_UFS_FILESYSTEMS 1\n'+path.read_text())

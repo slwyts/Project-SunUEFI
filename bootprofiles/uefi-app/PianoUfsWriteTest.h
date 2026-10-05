@@ -29,7 +29,7 @@ typedef struct {
 } PIANO_UFS_WRITE_GUARD;
 typedef struct {
   UINT8 Lun;EFI_LBA Lba;UINTN Bytes;
-  BOOLEAN Authorized; // defaults false; live integration requires its own approval
+  BOOLEAN Authorized; // defaults false; explicit restore-test profile gate
   PIANO_UFS_WRITE_BASELINE Baseline;
 } PIANO_UFS_WRITE_REQUEST;
 typedef EFI_STATUS (*PIANO_UFS_TEST_READ)(VOID *,UINT8,EFI_LBA,UINTN,VOID *,UINTN *);
@@ -65,7 +65,7 @@ typedef struct {
   UINT8 Lun;EFI_LBA Lba;UINTN Bytes,Transferred;
   EFI_STATUS Status;
 } PIANO_UFS_WRITE_ATTEMPT;
-typedef enum {PianoWriteRefused,PianoWriteRestored,PianoWriteTestFailedRestored,PianoWriteRestoreFailed,PianoWriteQuarantined} PIANO_UFS_WRITE_OUTCOME;
+typedef enum {PianoWriteRefused,PianoWriteRestored,PianoWriteTestFailedRestored,PianoWriteRestoreFailed,PianoWriteQuarantined,PianoWritePreflightPassed} PIANO_UFS_WRITE_OUTCOME;
 typedef struct {
   PIANO_UFS_WRITE_OUTCOME Outcome;
   EFI_STATUS GateStatus,FirstFailure,FinalStatus;
@@ -76,14 +76,28 @@ typedef struct {
   UINT8 TestSha256[32],RestoreSha256[32];
 } PIANO_UFS_WRITE_RESULT;
 typedef struct {
+  // Zero-initialize a new workspace. A failed/in-flight transaction cannot be
+  // retried by reusing it; retain it until explicit external recovery/reset.
+  UINT32 StateSignature;
+  BOOLEAN Running,NeedsRecovery;
   UINT8 PrimaryHeader[4096],BackupHeader[4096],PrimaryEntries[12288],BackupEntries[12288];
   UINT8 GapScratch[4096],InitialA[4096],InitialB[4096],Original[4096],TestPattern[4096],TestRead[4096],RestoreRead[4096];
 } PIANO_UFS_WRITE_WORK;
 
+// SafeToContinue concerns this storage transaction, not complete OS handoff.
 // All read buffers are disjoint from TX/rollback bytes. Live adapters must also
-// receive into independent DMA RX storage and invalidate before copying back.
+// clear/reissue an independent READ and invalidate DMA RX before copying back.
 EFI_STATUS PianoUfsWriteTestRun(CONST PIANO_UFS_WRITE_REQUEST *,CONST PIANO_UFS_WRITE_IO *,PIANO_UFS_WRITE_WORK *,PIANO_UFS_WRITE_RESULT *);
+// Same complete baseline/live GPT/capability/gap/current-block gate, with no
+// WRITE or SYNC callback invocation. Authorized may remain false in this mode.
+EFI_STATUS PianoUfsWriteTestPreflight(CONST PIANO_UFS_WRITE_REQUEST *,CONST PIANO_UFS_WRITE_IO *,PIANO_UFS_WRITE_WORK *,PIANO_UFS_WRITE_RESULT *);
 
 // Wire construction only; no controller I/O or generic/arbitrary write target.
 EFI_STATUS PianoUfsWriteTestBuildWrite10(VOID *,UINTN,VOID *,UINTN,UINT64,UINT64,UINT8,UINT8,EFI_LBA,UINTN);
 EFI_STATUS PianoUfsWriteTestBuildSync10(VOID *,UINTN,VOID *,UINTN,UINT64,UINT8,UINT8,EFI_LBA,UINTN);
+
+// Pure shared gates for the separately bounded experimental volume. These do
+// not build/submit WRITE and do not authorize another LUN/window.
+EFI_STATUS PianoUfsWriteTestCheckBaseline(CONST PIANO_UFS_WRITE_BASELINE *);
+EFI_STATUS PianoUfsWriteTestCheckGuard(CONST PIANO_UFS_WRITE_GUARD *);
+EFI_STATUS PianoUfsWriteTestCheckLiveGpt(CONST PIANO_UFS_WRITE_BASELINE *,CONST PIANO_UFS_WRITE_BLOB *,CONST PIANO_UFS_WRITE_BLOB *,CONST PIANO_UFS_WRITE_BLOB *,CONST PIANO_UFS_WRITE_BLOB *);

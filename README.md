@@ -2,9 +2,9 @@
 
 目标是在保留现有 Android 系统和数据的前提下，研究并移植 ARM64 UEFI，随后从 RAM 或外接介质启动 Linux / Windows PE。
 
-**最新实机结果（第 54 / 55 次）：统一 DMA/SMMU 层已驱动真实 UFS 传输，完成 NOP、89 字节 Device Descriptor、6 个普通 LUN / 容量、LBA0，以及全部 6 份 GPT 头和完整条目数组；header / array CRC 均通过。两轮同一镜像各完成 37 个命令、21 个元数据块，并从序号 / CRC / 镜像日志回收完整的 220 条 DMA 生命周期记录；两次 Android 只读对照均一致。UFS SID60 使用自有 CB0 / 页表与非 identity IOVA，解除后核对 UFS 流消失且其他流未改变。26 个启动相关分区哈希一致，root 与 A 槽位正常。原始 ramoops 仍存在字节损坏，CRC 镜像回收解决核心 DMA 记录的可用性，原因尚未查明。当前实机 UFS 块写入关闭；USB 枚举与触摸真实输入仍未完成。**
+**最新实机结果（截至第80次）：UFS 已完成统一 DMA/SMMU、6个LUN和GPT读取、139个只读BlockIO句柄及7个只读SFS卷；标准Shell三条枚举命令真实执行成功。第80次在已备份的LUN4/LBA375040完成4096-byte FUA写入→同步→读回→恢复→同步→读回，Android恢复后完整14MiB测试gap、主备GPT、MBR、邻块均与原备份逐字节一致，26启动分区SHA一致。一般BlockIO仍只读，未修改GPT。USB在第66次成功SuperSpeed枚举，第72次完成PC端状态和64KiB日志读取/CRC校验；标准fastboot bulk仍在实现。触摸尚无真实触点验收。**
 
-**BlockIO / USB 后续进展（第 57–64 次）：第 57 次发布 6 个只读 UFS LUN 和 133 个 GPT 分区，共 139 个 BlockIO 句柄，完成 900 次只读块传输，标准 WriteBlocks 返回 Write Protected；Android GPT 对照和 26 分区哈希一致。USB 已实现独立 USB0 SMMU 后端、共享 DMA 的事件环 / TRB / payload、EP0 标准请求和电脑观察工具；上下文解除实测通过，仍没有设备枚举或 PC 调试往返。状态与限制见 [BlockIO / USB 进展](docs/blockio-usb-progress.md)。**
+详见 [BlockIO / USB进展](docs/blockio-usb-progress.md)、[受控UFS写入证据](docs/ufs-controlled-write-transport.md) 和 [Linux EFI交接审查](docs/linux-efi-handoff-audit.md)。stable/next独立内核已分别通过第71/73次原生ARM64 RAM启动；第78次标准EFI路径确认ExitBootServices返回成功，尚未取得内核PID1成功证据。
 
 全部功能仍是目标，按下表分别记录实测状态。驱动加载成功不等于硬件传输成功。
 
@@ -12,14 +12,14 @@
 | --- | --- | --- |
 | GOP / 中文显示 | 3200×2136 继承显存模式；中文 GUI、字号 72/64、GOP Blt 和 RAM 截图通过 | 更多模式和显示硬件重新初始化；近期部分用户观察为灰屏，RAM 截图不能证明面板正在扫描输出 |
 | 实体按键 | 第 23–24 次实测音量移动焦点，两次短按电源选中并执行，进入工具主界面 | 更多快捷键及长按策略 |
-| USB 设备 / PC 调试 | 命令层与传输适配已编译 / 电脑测试；第 35 次真实 PMIC 元数据和 UsbConfigDxe 启动 | USB NPA 电源节点、SPMI/I²C 中继器和 Type-C 控制，实际枚举与 PC 命令往返 |
-| USB 主机 | 已识别与设备模式共用的 DWC3 / PHY / Type-C 依赖 | 主机角色、XHCI、键鼠和外接存储实测 |
+| USB 设备 / PC 调试 | 第66次1209:8750 SuperSpeed枚举；第72次状态和64KiB日志分页/CRC实测 | 标准fastboot bulk收发、RAM文件传输及完整自主PHY/Type-C管理 |
+| USB 主机 | 标准PCI_IO facade的地址、映射与生命周期主机测试通过 | NC common-buffer后端、主机角色/VBUS、XHCI及外设实测 |
 | 串口调试 | ramoops RAM 日志及重启后 ADB 回收已实测 | 物理 UART 和实时 USB 日志；RAM SerialPortLib 不是物理串口 |
 | 触屏 | NT36532 cascade 的固件、地址表、SPI 引擎与引脚已核对；RAM 固件读取通路实测 | GPI/PAS 与 DMA、真实触点读取、AbsolutePointer 发布；SimpleInit 同坐标抬起和旋转缩放已修复并编译 |
-| DMA / SMMU | 独占 DMA 页、PA ↔ IOVA、缓存同步、自有 SID60 上下文 / 页表；真实 UFS DATA IN 和解除读回验证 | USB / GPI 专用上下文和硬件传输；64 位高 IOVA 尚无实机验证 |
-| UFS | 第 57 次标准只读 BlockIO 实测：6 个 LUN、133 个分区、900 次块读取、写保护；GPT / Android 对照一致 | ExitBootServices hook 后续改动待 OS 交接验证；块写入关闭 |
+| DMA / SMMU | PA↔IOVA、缓存同步、自有SID60/40上下文；UFS读写与USB EP0真实传输/解除读回 | GPI真实传输、NC common-buffer、64位高IOVA实测 |
+| UFS | 139个只读BlockIO、7个SFS卷、Shell枚举；第80次固定块FUA写入及恢复/Android独立读回 | 限定测试窗可写BlockIO/FAT/Shell文件操作、持久自主启动及OS交接 |
 | SimpleInit | 中文放大菜单和工具主界面已由用户确认，RAM 启动 | 与触摸、USB 和只读存储联调 |
-| Linux | 第 13–16 次原机 GKI + RAM initramfs + BusyBox PID 1 实测 | 可交互显示、USB、完整发行版及通用 EFI-stub 启动 |
+| Linux | 原机GKI和独立stable/next RAM initramfs BusyBox PID1；第78次EFI EBS成功 | EFI内核早期启动、完整DRAM map、主线整机驱动及真实发行版 |
 | Windows PE | 未启动 | ARM64 平台 ACPI、存储、USB、显示和启动链验证 |
 
 
@@ -43,9 +43,9 @@
 | 自编译 UEFI | 第 7 次最小版原视频确认 BDS 控制台；第 8 次 ramoops 确认 `PIANO_STAGE0_CONSOLE_READY EL1` |
 | 自动恢复 | 多次临时启动后自动恢复 Android；已核对 ADB 启动完成、root 和 A 槽位。第 7 次 BDS 无 OS 路径约 10 秒后关机，不能与 45 秒计时器混同 |
 | Linux RAM 启动 | 第 13–16 次重复成功；第 16 次明确记录 PID 1、正确 HWID、71 个模块及 RAM 挂载列表 |
-| 实验后分区校验 | 最近一次为第 55 次，26 个启动相关分区 SHA-256 全部一致，root 与 A 槽位正常 |
+| 实验后分区校验 | 最近一次第80次，26个启动分区SHA一致；完整测试gap/GPT/邻块恢复一致，root与A槽正常 |
 
-只读取启动相关分区，没有执行 `flash`、`erase`、格式化、重分区、改槽或 Bootloader 锁定/解锁。Linux 对照实验使用原样启动内核和 RAM initramfs。没有主动写入用户数据、加密元数据、持久化校准或密钥分区，也没有复制其内容；正常 Android 启动仍会自行更新运行数据。分区哈希校验范围为上述 26 个启动相关分区。
+启动分区只读；没有执行 `flash`、`erase`、重分区、改槽或Bootloader锁定/解锁。第80次仅在独立备份且live gate通过的测试gap内进行固定块写入，并完成恢复及Android独立校验。Linux 对照实验使用原样启动内核和 RAM initramfs。没有主动写入用户数据、加密元数据、持久化校准或密钥分区，也没有复制其内容；正常 Android 启动仍会自行更新运行数据。分区哈希校验范围为上述 26 个启动相关分区。
 
 原始证据保存在 `private/`，默认不纳入版本控制。26 个 A/B 启动相关分区逐一通过设备端与电脑端 SHA-256 比对；完整采集为 36 个文件、743,577,789 字节。该备份用于分析和恢复启动固件，不是用户数据备份。
 
@@ -61,7 +61,7 @@
 - 生成 41 项内存描述符和原机配置表，原生 10 个早期 DXE 模块直接从本机 UEFI 提取，保留原始 DEPEX，未使用其他设备的补丁二进制。
 - SimpleFB 候选模式为 `3200×2136`、32 位像素。Android 物理屏幕报告 `2136×3200`，设备树的双 DSI 单链路为 `1600×2136`；文字渲染已由原视频确认；显示协议参数与方向仍需进一步核对。
 - 诊断代码设计为到达 BDS 控制台后打印平台、当前异常级、GOP 和 framebuffer 地址，并请求 45 秒后的冷重启。第 6 次 SCM/TZ 断言发生在此回调前；第 7 次最小版已进入回调，第 8 次读回 EL1 与运行时 DTB/initrd 参数。
-- 固件 FV 中不包含 UFS、磁盘/分区、USB 大容量存储、原版 CapsuleRuntimeDxe 或 UFP 更新组件；必需的 Capsule Architectural Protocol 由本地空驱动提供，两个 Capsule 服务均直接返回 `EFI_UNSUPPORTED`。变量启用 `PcdEmuVariableNvModeEnable=TRUE`。这降低了测试影响范围，**不能据此保证未验证原生模块没有副作用**。
+- 最早stage0固件FV不含UFS/磁盘/分区；后续profile按明确选项加入本地UFS及标准DiskIo/Partition/FAT/Shell/Setup。所有profile仍不含原版CapsuleRuntimeDxe或UFP更新组件；必需的 Capsule Architectural Protocol 由本地空驱动提供，两个 Capsule 服务均直接返回 `EFI_UNSUPPORTED`。变量启用 `PcdEmuVariableNvModeEnable=TRUE`。这降低了测试影响范围，**不能据此保证未验证原生模块没有副作用**。
 - 两个 FV 必须设置 `READ_ENABLED_CAP` 和 `READ_STATUS`。前两次候选遗漏 `READ_STATUS`，DXE 的 `FvReadFile()` 因此返回 `EFI_ACCESS_DENIED`；封装脚本已增加检查。RTC、Monotonic Counter、Capsule 空接口及完整的早期驱动 APRIORI 顺序也已补齐。
 - 启动用 DTB 来自本机完整设备树，并清除了旧 initrd 指针、随机种子和 bootargs。DTBO overlay 只作板级信息验证，不能充当完整 base DTB。下游 Android DTB 不能直接作为主线 Linux 的板级支持。
 
@@ -72,7 +72,7 @@
 - `piano-stage0-UNTESTED.img`：Android boot header v4 的临时启动候选镜像。
 - `manifest.json`：镜像大小、哈希、封装检查与未验证状态。
 
-该镜像目前用于初始化/显示诊断，不包含 Linux 内核、Windows 启动管理器或可用的 OS 启动介质。文件名中的 `UNTESTED` 是封装脚本的保守候选标签；每次实际发送的版本、哈希和结果分别保存在 `artifacts/tests/` 和 `private/analysis/stage0-test-*.json`，不能仅根据文件名或 fastboot 的 `OKAY` 判断移植成功。
+stage0基础profile用于初始化/显示诊断；linux profile按manifest封装明确内核/DTB/initramfs。尚无Windows启动管理器实测。文件名中的 `UNTESTED` 是封装脚本的保守候选标签；每次实际发送的版本、哈希和结果分别保存在 `artifacts/tests/` 和 `private/analysis/stage0-test-*.json`，不能仅根据文件名或 fastboot 的 `OKAY` 判断移植成功。
 
 ## 开发与复现
 

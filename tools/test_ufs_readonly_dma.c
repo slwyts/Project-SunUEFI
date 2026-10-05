@@ -81,5 +81,13 @@ int main(void){
   assert(Submit("BAD_OCS",3,TRUE)==EFI_DEVICE_ERROR);bad_ocs=0;timeout=1;
   PianoUfsBuildNop(trl,1024,ucd,1024,mUcd.DeviceAddress,4);
   assert(Submit("TIMEOUT",4,TRUE)==EFI_TIMEOUT && !bell && !mTrl.Active && !mUcd.Active);
+  before=begins;ZeroMem(ucd,sizeof(ucd));ucd[0]=1;ucd[1]=0x20;ucd[16]=0x2A;
+  assert(Submit("DEFAULT_WRITE_DENIED",9,FALSE)==EFI_ACCESS_DENIED && begins==before);
+  ucd[1]=0;ucd[16]=0x35;
+  assert(Submit("DEFAULT_SYNC_DENIED",9,FALSE)==EFI_ACCESS_DENIED && begins==before);
+  ucd[16]=0x8A;
+  assert(Submit("UNKNOWN_WRITE_CDB_DENIED",9,FALSE)==EFI_ACCESS_DENIED && begins==before);
+  ucd[0]=0x16;ucd[5]=0x81;ucd[12]=2;
+  assert(Submit("WRITE_QUERY_DENIED",9,FALSE)==EFI_ACCESS_DENIED && begins==before);
   puts("Read-only UFS DMA engine: NOP/query layouts, shared lifecycle, response validation and bounded timeout/quiescence passed.");return 0;
 }
