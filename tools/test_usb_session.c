@@ -15,8 +15,11 @@ static EFI_BOOT_SERVICES bs;
 static EFI_RUNTIME_SERVICES rt;
 static UINT32 regs[0x100000/4];
 static UINTN session_writes,allocations,completions,resets;
+static UINTN quiet_syncs;
 static UINTN address_writes,address_status_starts;
 static BOOLEAN ran,failed_halt,reject_session,fail_setup,fail_allocate;
+static BOOLEAN fail_dma_free;
+static VOID (*stall_hook)(UINTN Us);
 static jmp_buf failed_reset_return;
 static CONST UINT32 original_hs=0x405a55a5,original_ss=0x8055a55a;
 
@@ -42,6 +45,7 @@ UINT32 EFIAPI MmioRead32(UINTN Address) {
 UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value) {
   assert(Address>=DW && Address<DW+sizeof(regs) && !(Address&3));
   UINT32 Offset=(UINT32)(Address-DW);
+  if(Offset==0xC40C){assert(Value<=regs[Offset/4]);regs[Offset/4]-=Value;return Value;}
   if(Offset==0xC700)++address_writes;
   if(Offset==USB_SESSION_HS || Offset==USB_SESSION_SS) {
     if(session_writes<2) {
@@ -73,7 +77,7 @@ UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value) {
   regs[Offset/4]=Value;
   return Value;
 }
-static EFI_STATUS EFIAPI stall(UINTN Us){return EFI_SUCCESS;}
+static EFI_STATUS EFIAPI stall(UINTN Us){if(stall_hook!=NULL)stall_hook(Us);return EFI_SUCCESS;}
 static VOID EFIAPI reset(EFI_RESET_TYPE Type,EFI_STATUS Status,UINTN Bytes,VOID *Data) {
   assert(Type==EfiResetCold && Status==EFI_TIMEOUT);++resets;
 }
@@ -87,21 +91,27 @@ EFI_STATUS PianoDmaAllocate(PIANO_DMA_DEVICE *Device,UINTN Bytes,UINTN Alignment
 EFI_STATUS PianoDmaMap(PIANO_DMA_BUFFER *Buffer){Buffer->Mapped=TRUE;return EFI_SUCCESS;}
 EFI_STATUS PianoDmaBegin(PIANO_DMA_BUFFER *Buffer,CONST CHAR8 *Name){Buffer->Active=TRUE;return EFI_SUCCESS;}
 EFI_STATUS PianoDmaComplete(PIANO_DMA_BUFFER *Buffer,EFI_STATUS Status,BOOLEAN Quiet) {
-  assert(Quiet && (MmioRead32(DW+0xC70C)&BIT22));
+  BOOLEAN Proof=(MmioRead32(DW+0xC70C)&BIT22)!=0;
+  for(UINTN Ep=0;Ep<ARRAY_SIZE(mTrbs);++Ep)
+    if(mTrbs[Ep].Cpu!=NULL && (Buffer==&mTrbs[Ep] || Buffer==mPayload[Ep]) && !(((DWC_TRB *)mTrbs[Ep].Cpu)->Control&BIT0))Proof=TRUE;
+  assert(Quiet && Proof);
   Buffer->Active=FALSE;++completions;return EFI_SUCCESS;
 }
 EFI_STATUS PianoDmaSyncForCpu(PIANO_DMA_BUFFER *Buffer){assert(FALSE);return EFI_DEVICE_ERROR;}
-EFI_STATUS PianoDmaSyncForCpuQuiet(PIANO_DMA_BUFFER *Buffer){return PianoDmaSyncForCpu(Buffer);}
+EFI_STATUS PianoDmaSyncForCpuQuiet(PIANO_DMA_BUFFER *Buffer){assert(Buffer==&mRing && Buffer->Active);++Buffer->QuietSyncs;++quiet_syncs;return EFI_SUCCESS;}
 EFI_STATUS PianoDmaReportQuietSync(PIANO_DMA_BUFFER *Buffer){(void)Buffer;return EFI_SUCCESS;}
 EFI_STATUS PianoDmaFree(PIANO_DMA_BUFFER *Buffer) {
+  if(fail_dma_free)return EFI_DEVICE_ERROR;
   assert(!Buffer->Active);free(Buffer->Cpu);ZeroMem(Buffer,sizeof(*Buffer));return EFI_SUCCESS;
 }
 static VOID init(VOID) {
   memset(regs,0,sizeof(regs));regs[0xC704/4]=0x10F00000;
   regs[USB_SESSION_HS/4]=original_hs;regs[USB_SESSION_SS/4]=original_ss;
   session_writes=allocations=completions=resets=0;
+  quiet_syncs=0;
   address_writes=address_status_starts=0;
   ran=failed_halt=reject_session=fail_setup=fail_allocate=FALSE;
+  fail_dma_free=FALSE;stall_hook=NULL;
 }
 static VOID restored(VOID) {
   assert(session_writes==4 && regs[USB_SESSION_HS/4]==original_hs && regs[USB_SESSION_SS/4]==original_ss);

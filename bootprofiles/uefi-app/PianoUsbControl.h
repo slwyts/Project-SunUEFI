@@ -6,3 +6,6 @@ typedef enum {PianoUsbStall,PianoUsbDataIn,PianoUsbStatusIn} PIANO_USB_CONTROL_A
 EFI_STATUS PianoUsbControlSetup(PIANO_USB_CONTROL *State,CONST UINT8 Setup[8],UINT8 *Data,UINTN Capacity,
                                UINTN *Bytes,PIANO_USB_CONTROL_ACTION *Action);
 VOID PianoUsbControlStatusComplete(PIANO_USB_CONTROL *State);
+// One-shot request, published only after IN acknowledgement and DMA cleanup.
+// The controller owns SMMU/clock teardown and performs the final cold reset.
+BOOLEAN PianoDwc3ConsumeRebootRequest(VOID);

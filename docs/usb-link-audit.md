@@ -138,9 +138,9 @@ python tools/test_usb_diagnostic_host.py
 
 65 已满足 session 设置后产生连接事件的验收，66 已满足枚举验收。后续仍以具体请求/响应和 CRC 作为电脑诊断通道证据，不用命令接受、旧 sticky SMMU fault 或 repeater ready 替代实测结果。
 
-## 标准 fastboot 调试通道（源码已实现，bulk 实机待验收）
+## 标准 fastboot 调试通道（test82 已验证 RAM 与日志往返）
 
-`PIANO_USB_FASTBOOT` 默认 **0**。0 保留此前测试过的 18-byte、无 bulk endpoint 的 EP0-only configuration；1 必须同时应用于 `PianoDwc3Device.c` 和 `PianoUsbControl.c`，同一 `PianoDwc3Ep0Experiment` 入口启用 FF/42/03 interface、logical 01 OUT / 81 IN（DWC physical EP2/3）。VID/PID 仍为 1209:8750，serial 为 **SunUEFI-piano**。EP0 已在 test72 实机枚举成功，新增 bulk、shared-DMA quiet 改动仍需新 RAM 测试，不能据 host mock 声称实机可用。
+`PIANO_USB_FASTBOOT` 默认 **0**。0 保留此前测试过的 18-byte、无 bulk endpoint 的 EP0-only configuration；1 必须同时应用于 `PianoDwc3Device.c` 和 `PianoUsbControl.c`，同一 `PianoDwc3Ep0Experiment` 入口启用 FF/42/03 interface、logical 01 OUT / 81 IN（DWC physical EP2/3）。VID/PID 仍为 1209:8750，serial 为 **SunUEFI-piano**。EP0 已在 test72 实机枚举成功；新增 bulk / shared-DMA quiet 已在 test82 满足下述具体 RAM 与日志往返验收，后续新 lifecycle 尚未实机验证。
 
 本机 `/usr/bin/fastboot` 为 37.0.0-android-tools，`--help` 有 `stage`、`get_staged`、`fetch`。AOSP [fastboot 协议](https://android.googlesource.com/platform/system/core/+/refs/heads/main/fastboot/README.md) 明确两条 bulk endpoint，FS/HS/SS MPS 分别 64/512/1024，以及 `upload` 的 DATA-size → 原始数据 → OKAY 顺序。[官方 CLI 源码](https://android.googlesource.com/platform/system/core/+/refs/heads/main/fastboot/fastboot.cpp) 的 `get_staged` 调用 Upload，实际命令为 `upload`；`stage` 调用 Download。当前采用较保守的 64-byte command / response 上限，超限输入明确 FAIL，不截断；新版协议的 4096/256 上限尚未全部实现，验收命令均小于 64 字节。没有伪造 `fetch` 的 partition 内容，也没有自定义 USB 宿主工具参与新验收。
 
@@ -183,3 +183,37 @@ python tools/check_fastboot_debug.py --test-id 82 --wait-seconds 180
 ```
 
 脚本只选择 SunUEFI-piano，使用标准 fastboot：查询身份和状态、stage 65,553-byte 固定非零 pattern、核对 SHA256、get_staged 逐字节比较、oem ramlog 后读取 frozen metadata 并 get_staged 核对长度/CRC32/generation，最后 discard。电脑结果保存于 `private/analysis/fastboot-debug-host-test-82/`；需要 manifest 的 `VERIFIED_FASTBOOT_RAM_AND_LOG_ROUNDTRIP` / `debug_verified=true`，固件 `SUNUEFI_FASTBOOT_BULK_READY`、command/bytes 计数与正常 Halt/session restore 才能称 bulk 调试实机验证完成。节点枚举本身不是 roundtrip 验收。
+
+## test82 实机验收与下一版 reboot lifecycle
+
+test82 已成功，源码基线为 commit `9956710`。[封存验收 JSON](../artifacts/usb-debug/fastboot-validation-test-82.json) 与 [已验证镜像](../artifacts/usb-debug/piano-fastboot-bulk-verified-test-82.img) 保存这次结果；镜像 SHA256 为 `1df2ea003098556f45d179045be83cc22fa896f0c33a18785708377c56e91be7`。Host uid **1000** 使用 stock CLI，manifest 中全部 **14 条 CLI exit=0**。
+
+RAM pattern 为 **65,553 bytes**，SHA256 `adac32e38739c26a99b60a27239bbfb419c69f2ec5aa4a546b5fca6b813ac9a8`，下载摘要和 upload 逐字节比较都匹配。Frozen log 为 **65,536 bytes**、CRC32 **90217DD8**、generation **1**，SHA256 `490f60aa608585dc418f1de714d39aa1cd0c0f4a065cc28116d8d0be46f33df9`。`current_session_marker=false`：这次导出的确为已校验的 console tail，不能称为完整 bootlog。
+
+固件 speed=4、SuperSpeed MPS=1024，结果 Success，OUT **65,761** / IN **131,565** bytes，queue=0；QSCRATCH session 回读恢复 0/0。USB owned stream 解除验证通过，其他 stream 未改变；Android 启动完成，全部 **26** 个 boot partition SHA 仍一致。64 MiB RAM 上限、长时间压力、拔插压力和 UFS+USB 同时运行仍没有由此测试证明。
+
+test82 没有测试 `reboot`；其后新增 lifecycle 属于下一未验证版本，计划由 test83 单独验证。Device 层现在只在收到完整 IN OKAY 完成事件、Halt 成功、全部 DMA buffer 回收成功后，发布一次性的 `PianoDwc3ConsumeRebootRequest()`；普通重启不在 Device cleanup 中直接执行。Controller 消费请求后关闭 owned SMMU，再检查八条 clock 与 GDSC 的 release 返回值，全部成功才执行 `ResetSystem(EfiResetCold)`；reset 若返回则 CpuDeadLoop。`continue` 仍按原行为退出 USB 后返回。
+
+Halt 失败保留活跃 DMA 并按原 fail-stop 分支复位/DeadLoop；DMA free、OwnedClose、clock 或 GDSC 失败不会假装 clean 或执行普通 reboot。日志分别报告 `SUNUEFI_USB_DEVICE_CLEANUP` 的 retained buffer 数、`SUNUEFI_USB_SMMU_CLOSE` 的 attached/table 状态及 `SUNUEFI_USB_CONTROLLER_END` 的 release 失败/未确认状态，并拒绝覆盖仍保留的 Controller context。Close 失败而 DWC3 已 Halt 时可以释放 USB clocks，但 SMMU table 保留和 reboot 取消会明确记录。
+
+`bash tools/test_usb_fastboot.sh` 已覆盖完整实际 Device event-loop 的 SETUP → configuration → reboot → IN ACK → cleanup → 单次消费，以及未 ACK / DMA free 失败不发布请求、continue 返回。独立 `test_usb_reboot_lifecycle.c` 编译实际 Controller，验证 OwnedClose → clocks → GDSC → reset 顺序、ResetSystem 返回后 DeadLoop、Close/clock/GDSC/Halt 失败保留状态与 retry refusal。Bulk/event-loop 测试通过 ASan+UBSan/leak，四个固件源通过 AArch64 freestanding syntax check；这些仍是 host 证据，实机 reboot 以 test83 的新日志为准。没有加入未核实的 `reboot-bootloader` / recovery 重启 reason。
+
+## 标准只读 partition fetch 接口（未连接实机 backend）
+
+`PianoFastboot.h/.c` 已提供可注入 `PIANO_FB_STORAGE`，回调为 `Ready(Context)`、`Info(Context, ExactName, Info)`、`ReadBlocks(Context, Info, Lba, Bytes, Buffer)`。`PIANO_FB_PARTITION_INFO` 包含完整 ASCII `Name[37]`、64-bit partition byte size、block size、ReadOnly、opaque Token。Info 成功必须返回与请求完全相同的名称、非 NULL token、只读标识和合法整块容量；没有 case folding、slot 推导、prefix alias、按名字接管已有分区或 RAM 快照充当 live partition。Backend 独立验证真实句柄、MediaId、GPT/device path 和 IoAlign，协议层不会绕过该检查。
+
+只有三个回调已注册且 Ready 精确返回 EFI_SUCCESS 时，`getvar:max-fetch-size` 才返回 **0x00010000**；否则明确 FAIL backend not ready。`getvar:partition-size:<exact-name>` 返回 `OKAY0x` 后跟 16 hex 的真实 backend 容量。标准 wire 是 `fetch:<exact-name>:0x<offset>:0x<size>`，与 [AOSP FetchToFd](https://android.googlesource.com/platform/system/core/+/refs/heads/main/fastboot/fastboot_driver.cpp) 的三字段请求一致；当前只接受有明确 offset / size 的 bounded 请求。
+
+每次 fetch 非零且最多 **64 KiB**。Offset / size 最多 16 hex digits，用 `Offset <= capacity`、`Size <= capacity - Offset` 验证，避免相加溢出。Unaligned byte head/tail 通过至多一个 block scratch 读取完整块再复制；中段整块读取，backend ReadBlocks 不接收半块请求。整个 bounded chunk 读成功后才发送 **DATA%08x → exact raw bytes → OKAY**，底层读失败直接 FAIL，不能出现 partial DATA 被当成成功。CPU 临时 payload/scratch 在全部 send / read / alloc 失败路径清零释放；send callback 仍遵守立即复制契约。
+
+`test_fastboot_fetch.c` 直接编译实际 command layer，覆盖 Ready 关闭时不公布 max-fetch-size、精确名称/缺失 partition/无 token/非只读 metadata、64 KiB/unaligned 4K/>4 GiB/near-UINT64 ranges、读/分配/各 send 阶段失败、zero/free、以及 `flash` 继续拒绝；它通过 ASan+UBSan/leak。`PianoFastbootBlockRead.c/.h` 的真实 EFI BlockIO adapter 由 root 接入；当前 USB Device 没有注册该 backend，test83 的 USB-only reboot 测试不会宣称或提供 live partition fetch。
+
+后续真实 backend 就绪后的 CLI 用法为 `fastboot -s SunUEFI-piano fetch xbl_config_a FILE`，优先与现有 PC 备份 SHA 比较。UFS + USB 共存仍需新测试；资源清理必须逆序 Open UFS → Open USB → Close USB → Close UFS。Combined reboot 必须在 UFS Stop/Halt/Close 后最终 reset，不能直接复用当前 USB-only Controller 最终 reset 路径，也不能根据 test82 的 USB detach 证明 UFS 共存。没有实现 partition 写入、erase、slot 切换或 flash。
+
+## UEFI 画面标准 upload 路由（默认关闭，未实机验证）
+
+Device 文件的 `PIANO_USB_SCREENSHOT` 默认 **0**，不会引用 `PianoFastbootScreen` helper；此时 `oem screenshot` 明确 FAIL diagnostic command unavailable，原 USB-only profile 仍可工作。打开宏后，`oem screenshot` 调用 root 提供的真实 GOP capture helper，必须实际 `Blt(VideoToBltBuffer)` 成功并 StageCopy 完整 **24-bit BMP** 后才 OKAY。失败没有伪帧或假成功。
+
+成功 capture 的 metadata 为五个 8-hex getvar：`SunUEFI:screen-width`、`screen-height`、`screen-size`、`screen-crc32`、`screen-generation`（每项均使用完整 `SunUEFI:` 前缀）。随后标准 `fastboot -s SunUEFI-piano get_staged uefi.bmp` 使用相同 upload / shared-DMA 路径导出 frozen BMP。Successive screenshot generation 增长；reset / disconnect / discard / 新 download 清零 metadata。新的 ramlog capture 清除 screen metadata，新的 screen capture 清除 log metadata；各自描述当前 staged upload。清理 staged CPU 副本不会改写正在 IN DMA 的独立 bounce buffer。
+
+`test_usb_screenshot_route.c` 直接编译实际 USB router，用 capture-contract mock 验证五 metadata、独立 upload、失败拒绝、generation、reset/discard/download 清除与活跃 IN bounce 保留；ASan+UBSan/leak 通过。真实 GOP → BMP helper 的像素/几何/失败路径另由 root 的实际 helper 测试验证。没有把 capture-contract mock 当成设备画面证据；实机截图、较大 BMP transfer 和新 profile 仍需后续验收。当前调试入口仍是前台 90 秒实验，后台产品调试和大分区导出时长没有由上述协议接口完成。

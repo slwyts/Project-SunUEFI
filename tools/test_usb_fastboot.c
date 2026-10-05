@@ -59,11 +59,64 @@ static VOID descriptors(VOID) {
   }
   mControl.Speed=4;mControl.SuperSpeed=TRUE;
 }
-int main(void) {
+static UINTN lifecycle_stage;
+static BOOLEAN lifecycle_continue,lifecycle_hold_ack;
+static VOID publish(UINT32 EventValue) {
+  assert(mRing.Active && regs[0xC40C/4]==0);
+  ((UINT32 *)mRing.Cpu)[mRingPosition/4]=EventValue;regs[0xC40C/4]=4;
+}
+static VOID lifecycle_events(UINTN Us) {
+  if(Us!=1000 || !mRing.Active || !(regs[0xC704/4]&BIT31) || (lifecycle_stage==0 && !mPending[0]))return;
+  DWC_TRB *T;
+  switch(lifecycle_stage) {
+    case 0:case 3: {
+      assert(mPhase==0);UINT8 U[]={0,lifecycle_stage==0?5:9,1,0,0,0,0,0};CopyMem(mSetup.Cpu,U,8);
+      T=mTrbs[0].Cpu;T->Size=0;T->Control&=~BIT0;publish(0xC040);break;
+    }
+    case 1:case 4:assert(mPhase==2);publish(0x20C2);break;
+    case 2:case 5:
+      assert(mPhase==3 && mPending[1]);T=mTrbs[1].Cpu;T->Size=0;T->Control&=~BIT0;publish(0xC042);break;
+    case 6: {
+      assert(mConfigured && mPending[2]);CONST CHAR8 *Cmd=lifecycle_continue?"continue":"reboot";UINTN Bytes=strlen(Cmd);
+      CopyMem(mBulkRx.Cpu,Cmd,Bytes);T=mTrbs[2].Cpu;T->Size=mPosted[2]-(UINT32)Bytes;T->Control&=~BIT0;publish(0xC044);break;
+    }
+    case 7:
+      assert(mPending[3] && mFrameCount==1 && !mPending[2] && !memcmp(mBulkTx.Cpu,"OKAY",4));
+      assert(!PianoDwc3ConsumeRebootRequest()); // Enqueued OKAY is not an acknowledgement.
+      if(lifecycle_hold_ack)return;
+      T=mTrbs[3].Cpu;T->Size=0;T->Control&=~BIT0;publish(0xC046);break;
+    default:assert(FALSE);
+  }
+  ++lifecycle_stage;
+}
+static VOID device_reboot_lifecycle(VOID) {
+  for(UINTN Case=0;Case<4;++Case) {
+    PIANO_OWNED_SMMU Context={0};PIANO_DMA_DEVICE Device={0};init();
+    lifecycle_stage=0;lifecycle_continue=Case==1;lifecycle_hold_ack=Case==2;fail_dma_free=Case==3;stall_hook=lifecycle_events;
+    EFI_STATUS S=PianoDwc3Ep0Experiment(&Context,&Device);assert(S==(Case==3?EFI_DEVICE_ERROR:EFI_SUCCESS));
+    assert(!resets && quiet_syncs>=7 && session_writes==4); // Device never performs normal reset.
+    assert(PianoDwc3ConsumeRebootRequest()==(Case==0));assert(!PianoDwc3ConsumeRebootRequest());
+    assert(!mFrames && !mFastboot.Download && !mFastboot.Upload);
+    assert(lifecycle_stage==(Case==2?7:8));
+    for(UINTN I=0;I<ARRAY_SIZE(all);++I) {
+      assert(!all[I]->Active);
+      if(Case==3){assert(all[I]->Signature);free(all[I]->Cpu);ZeroMem(all[I],sizeof(*all[I]));}
+      else assert(!all[I]->Signature);
+    }
+  }
+  stall_hook=NULL;fail_dma_free=FALSE;
+}
+#ifndef USB_FASTBOOT_TEST_MAIN
+#define USB_FASTBOOT_TEST_MAIN main
+#endif
+int USB_FASTBOOT_TEST_MAIN(void) {
   model_init();descriptors();configure();
   assert(((regs[0xC838/4]>>17)&31)==1 && ((regs[0xC828/4]>>17)&31)==0);
   cmd("getvar:product","OKAYpiano-sunuefi");cmd("getvar:version","OKAY0.4");
   cmd("getvar:SunUEFI:usb-state","OKAYconfigured-speed-S");
+#if !PIANO_USB_SCREENSHOT
+  cmd("oem screenshot","FAILdiagnostic command unavailable");
+#endif
   cmd("flash:boot_a","FAILcommand disabled by RAM-only policy");
   UINT8 Oversize[65];memset(Oversize,'A',sizeof(Oversize));out(Oversize,sizeof(Oversize));drain();
   assert(wire_bytes==20 && !memcmp(wire,"FAILcommand too long",20));
@@ -101,6 +154,8 @@ int main(void) {
   assert(Event(1)==EFI_SUCCESS);assert(!mConfigured && mEnding[2] && !mBulkLive && !mPending[0]);end(2);
   ClearFastboot();for(UINTN I=0;I<ARRAY_SIZE(all);++I){if(all[I]->Active)assert(PianoDmaComplete(all[I],EFI_SUCCESS,TRUE)==EFI_SUCCESS);assert(PianoDmaFree(all[I])==EFI_SUCCESS);}
   if(mLogSnapshot){ZeroMem(mLogSnapshot,USB_DIAG_LOG_BYTES);FreePool(mLogSnapshot);mLogSnapshot=NULL;}free(Header);test_console=NULL;
+  device_reboot_lifecycle();
   puts("USB fastboot actual source: FS/HS/SS descriptors/FIFO, standard stage/SHA256/upload 65553-byte roundtrip, frozen ramlog, Start<=Size, response serialization, config0 asynchronous DMA retirement, reset/disconnect passed.");
+  puts("USB device reboot actual source: full event-loop SETUP/config/reboot/IN ACK/cleanup, one-shot consumption, continue return, missing ACK and failed DMA free suppress request; no device-layer reset passed.");
   return 0;
 }

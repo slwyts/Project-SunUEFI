@@ -68,6 +68,12 @@ def main():
     text = p.stdout.decode(errors='replace')
     marker = 'SUNUEFI_RAMLOG_BEGIN'
     index = max(text.rfind(marker),text.rfind('SUNUEFI_BLOCKIO_REPORT_BEGIN'))
+    scope = 'session-or-blockio-report' if index >= 0 else 'none'
+    if index < 0:
+        # Large bulk uploads can wrap the session start. Preserve the final
+        # USB/cleanup report, but explicitly avoid claiming a full session log.
+        index = text.rfind('SUNUEFI_FASTBOOT_RESULT')
+        if index >= 0:scope = 'fastboot-final-report-only'
     segment = text[index:] if index >= 0 else ''
     (out/'uefi.txt').write_text(segment)
     linux = 'rdinit=/init ro nokaslr efi=novamap' in text and 'console=ttyGS0,115200' in text
@@ -79,7 +85,7 @@ def main():
                'linux_init_process_started':linux and 'Run /init as init process' in text,
                'linux_ram_userland_marker':linux and 'SUNUEFI_RAM_INIT BEGIN pid=1' in text,
                'independent_kernel_ram_userland_marker':linux and independent_init,
-               'pstore_files':pstore}
+               'pstore_files':pstore,'uefi_log_scope':scope}
     (out/'manifest.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))
     if segment: print(segment[-18000:])

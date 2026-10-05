@@ -11,10 +11,12 @@
 #define USB_BASE 0xA600000U
 VOID PianoProbeUsbPower(CONST VOID *Fdt);
 #ifdef PIANO_USB_EP0
+#include "PianoUsbControl.h"
 EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Device);
 #endif
 STATIC PIANO_OWNED_SMMU mUsbContext;
 STATIC PIANO_DMA_DEVICE mUsbDevice;
+STATIC BOOLEAN mUsbCleanupBlocked;
 STATIC UINT32 UsbRead(UINT32 Offset){return MmioRead32(USB_BASE+Offset);}
 STATIC VOID UsbWrite(UINT32 Offset,UINT32 Value){MmioWrite32(USB_BASE+Offset,Value);MemoryFence();}
 STATIC UINT32 UsbBe32(CONST UINT8 *P){return ((UINT32)P[0]<<24)|((UINT32)P[1]<<16)|((UINT32)P[2]<<8)|P[3];}
@@ -31,6 +33,9 @@ STATIC EFI_STATUS UsbHalt(VOID) {
   return EFI_TIMEOUT;
 }
 EFI_STATUS PianoUsbControllerExperiment(CONST VOID *Fdt) {
+  if(mUsbCleanupBlocked) {
+    DEBUG((DEBUG_WARN,"SUNUEFI_USB_CONTROLLER_RETAINED retry_refused=1\n"));return EFI_ACCESS_DENIED;
+  }
   if(!UsbDt(Fdt))return EFI_UNSUPPORTED;
   PianoProbeUsbPower(Fdt);
   EFI_GUID Guid=EFI_CLOCK_PROTOCOL_GUID;EFI_CLOCK_PROTOCOL *Clock=NULL;
@@ -40,7 +45,8 @@ EFI_STATUS PianoUsbControllerExperiment(CONST VOID *Fdt) {
      (VOID *)Clock->EnableClockPowerDomain!=(VOID *)Clock->EnableClock)return EFI_UNSUPPORTED;
   STATIC CONST CHAR8 *Names[]={"gcc_cfg_noc_usb3_prim_axi_clk","gcc_aggre_usb3_prim_axi_clk", "gcc_usb30_prim_master_clk",
     "gcc_usb30_prim_sleep_clk","gcc_usb30_prim_mock_utmi_clk","gcc_usb3_prim_phy_aux_clk","gcc_usb3_prim_phy_com_aux_clk","gcc_usb3_prim_phy_pipe_clk"};
-  UINTN Ids[ARRAY_SIZE(Names)],Held=0,Domain=0;BOOLEAN DomainHeld=FALSE;
+  UINTN Ids[ARRAY_SIZE(Names)],Held=0,Domain=0,ClockReleaseFailures=0;
+  BOOLEAN DomainHeld=FALSE,SafeToDisable=TRUE,RebootRequested=FALSE;
   Status=Clock->GetClockPowerDomainID(Clock,"gcc_usb30_prim_gdsc",&Domain);
   if(!EFI_ERROR(Status))Status=Clock->EnableClockPowerDomain(Clock,Domain);
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_DOMAIN %r\n",Status));if(EFI_ERROR(Status))return Status;
@@ -57,7 +63,7 @@ EFI_STATUS PianoUsbControllerExperiment(CONST VOID *Fdt) {
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_PHY_STATE utmi_ctrl0=%08x common0=%08x hs_ctrl2=%08x ss_com=%08x\n",
     MmioRead32(0x88E303C),MmioRead32(0x88E3054),MmioRead32(0x88E3064),MmioRead32(0x88E8008)));
   Status=UsbHalt();DEBUG((DEBUG_WARN,"SUNUEFI_USB_HALTED %r dsts=%08x\n",Status,UsbRead(0xC70C)));
-  if(EFI_ERROR(Status))goto Exit;
+  if(EFI_ERROR(Status)){SafeToDisable=FALSE;goto Exit;}
   mUsbDevice=(PIANO_DMA_DEVICE){.Name="usb",.StreamId=0x40,.AddressBits=32,.CacheLine=64};
   Status=PianoOwnedSmmuOpenUsb(Fdt,&mUsbContext,&mUsbDevice);
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_SMMU_OPEN %r\n",Status));
@@ -74,11 +80,37 @@ EFI_STATUS PianoUsbControllerExperiment(CONST VOID *Fdt) {
     }
   }
 #ifdef PIANO_USB_EP0
-  if(!EFI_ERROR(Status))Status=PianoDwc3Ep0Experiment(&mUsbContext,&mUsbDevice);
+  if(!EFI_ERROR(Status)) {
+    Status=PianoDwc3Ep0Experiment(&mUsbContext,&mUsbDevice);
+    RebootRequested=PianoDwc3ConsumeRebootRequest();
+  }
 #endif
-  {EFI_STATUS Close=PianoOwnedSmmuClose(&mUsbContext);if(EFI_ERROR(Close))Status=Close;}
+  {EFI_STATUS Close=PianoOwnedSmmuClose(&mUsbContext);
+    DEBUG((DEBUG_WARN,"SUNUEFI_USB_SMMU_CLOSE status=%r attached=%u table_retained=%u\n",
+      Close,mUsbContext.Attached,mUsbContext.TableMemory.Signature!=0));
+    if(Close!=EFI_SUCCESS){Status=EFI_ERROR(Close)?Close:EFI_DEVICE_ERROR;mUsbCleanupBlocked=TRUE;}}
 Exit:
-  while(Held){--Held;Clock->DisableClock(Clock,Ids[Held]);}
-  if(DomainHeld)Clock->DisableClockPowerDomain(Clock,Domain);
-  DEBUG((DEBUG_WARN,"SUNUEFI_USB_CONTROLLER_END %r\n",Status));return Status;
+  if(!SafeToDisable) {
+    mUsbCleanupBlocked=TRUE;
+    DEBUG((DEBUG_WARN,"SUNUEFI_USB_CONTROLLER_RETAINED status=%r halted=0 clocks_held=%u domain_held=%u reboot_cancelled=%u\n",
+      Status,(UINT32)Held,DomainHeld,RebootRequested));return Status;
+  }
+  while(Held) {
+    --Held;EFI_STATUS Release=Clock->DisableClock(Clock,Ids[Held]);
+    DEBUG((DEBUG_WARN,"SUNUEFI_USB_CLOCK_RELEASE %a %r\n",Names[Held],Release));
+    if(Release!=EFI_SUCCESS){Status=EFI_ERROR(Release)?Release:EFI_DEVICE_ERROR;++ClockReleaseFailures;mUsbCleanupBlocked=TRUE;}
+  }
+  if(DomainHeld && !ClockReleaseFailures) {
+    EFI_STATUS Release=Clock->DisableClockPowerDomain(Clock,Domain);
+    DEBUG((DEBUG_WARN,"SUNUEFI_USB_DOMAIN_RELEASE %r\n",Release));
+    if(Release!=EFI_SUCCESS){Status=EFI_ERROR(Release)?Release:EFI_DEVICE_ERROR;mUsbCleanupBlocked=TRUE;}else DomainHeld=FALSE;
+  }
+  DEBUG((DEBUG_WARN,"SUNUEFI_USB_CONTROLLER_END status=%r clock_release_failures=%u domain_release_unconfirmed=%u retained_context=%u reboot_requested=%u\n",
+    Status,(UINT32)ClockReleaseFailures,DomainHeld,mUsbCleanupBlocked,RebootRequested));
+  if(RebootRequested && Status==EFI_SUCCESS && !mUsbCleanupBlocked) {
+    DEBUG((DEBUG_WARN,"SUNUEFI_FASTBOOT_REBOOT_CLEAN cold_reset=1 usb_dma_freed=1 owned_closed=1 clocks_released=1 domain_released=1\n"));
+    gRT->ResetSystem(EfiResetCold,EFI_SUCCESS,0,NULL);CpuDeadLoop();
+  }
+  if(RebootRequested)DEBUG((DEBUG_WARN,"SUNUEFI_FASTBOOT_REBOOT_CANCELLED status=%r retention=%u\n",Status,mUsbCleanupBlocked));
+  return Status;
 }

@@ -42,7 +42,47 @@ EFI_STATUS PianoFastbootInit(PIANO_FASTBOOT *S, VOID *Context,
   ZeroMem(S,sizeof(*S));S->Context=Context;S->Send=Send;S->Log=Log;
   return EFI_SUCCESS;
 }
+EFI_STATUS PianoFastbootSetStorage(PIANO_FASTBOOT *S,CONST PIANO_FB_STORAGE *Storage) {
+  if(S==NULL)return EFI_INVALID_PARAMETER;
+  if(Storage==NULL){ZeroMem(&S->Storage,sizeof(S->Storage));return EFI_SUCCESS;}
+  if(Storage->Ready==NULL || Storage->Info==NULL || Storage->ReadBlocks==NULL)return EFI_INVALID_PARAMETER;
+  S->Storage=*Storage;return EFI_SUCCESS;
+}
+STATIC BOOLEAN StorageReady(PIANO_FASTBOOT *S) {
+  return S->Storage.Ready!=NULL && S->Storage.Info!=NULL && S->Storage.ReadBlocks!=NULL && S->Storage.Ready(S->Storage.Context)==EFI_SUCCESS;
+}
+STATIC BOOLEAN PartitionName(CONST CHAR8 *Name) {
+  UINTN N=0;
+  for(;Name[N];++N) {
+    CHAR8 C=Name[N];
+    if(N>=PIANO_FASTBOOT_PARTITION_NAME || !((C>='a' && C<='z') || (C>='A' && C<='Z') ||
+      (C>='0' && C<='9') || C=='_' || C=='-' || C=='.'))return FALSE;
+  }
+  return N!=0;
+}
+STATIC EFI_STATUS PartitionInfo(PIANO_FASTBOOT *S,CONST CHAR8 *Name,PIANO_FB_PARTITION_INFO *Info) {
+  if(!PartitionName(Name))return EFI_INVALID_PARAMETER;
+  ZeroMem(Info,sizeof(*Info));EFI_STATUS Status=S->Storage.Info(S->Storage.Context,Name,Info);
+  if(Status!=EFI_SUCCESS)return Status;
+  // Never infer an alias, range, permission or live partition from a name.
+  if(Info->Name[PIANO_FASTBOOT_PARTITION_NAME]!=0 || AsciiStrCmp(Name,Info->Name) || Info->Token==NULL || Info->ReadOnly!=TRUE ||
+     !Info->Bytes || Info->BlockSize<512 || Info->BlockSize>4096 || (Info->BlockSize&(Info->BlockSize-1)) || Info->Bytes%Info->BlockSize)
+    return EFI_COMPROMISED_DATA;
+  return EFI_SUCCESS;
+}
+STATIC VOID Hex64(UINT64 Value,CHAR8 *Out) {
+  STATIC CONST CHAR8 Digits[]="0123456789abcdef";
+  for(UINTN I=0;I<16;++I)Out[I]=Digits[(Value>>((15-I)*4))&15];
+  Out[16]=0;
+}
 STATIC EFI_STATUS GetVar(PIANO_FASTBOOT *S, CONST CHAR8 *Name) {
+  if(Equal(Name,"max-fetch-size"))return Reply(S,StorageReady(S)?"OKAY0x00010000":"FAILstorage backend not ready");
+  if(!AsciiStrnCmp(Name,"partition-size:",15)) {
+    if(!StorageReady(S))return Reply(S,"FAILstorage backend not ready");
+    PIANO_FB_PARTITION_INFO Info;EFI_STATUS Status=PartitionInfo(S,Name+15,&Info);
+    if(Status!=EFI_SUCCESS)return Reply(S,Status==EFI_NOT_FOUND?"FAILunknown partition":"FAILinvalid partition information");
+    CHAR8 Result[23]="OKAY0x";Hex64(Info.Bytes,Result+6);return Reply(S,Result);
+  }
   if(Equal(Name,"version"))return Reply(S,"OKAY0.4");
   if(Equal(Name,"product"))return Reply(S,"OKAYpiano-sunuefi");
   if(Equal(Name,"serialno"))return Reply(S,"OKAYSunUEFI-piano");
@@ -106,6 +146,69 @@ STATIC EFI_STATUS HashDownload(PIANO_FASTBOOT *S) {
   }
   return Reply(S,"OKAY");
 }
+STATIC BOOLEAN ParseFetchHex(CONST CHAR8 *Text,UINT64 *Value) {
+  if(Text[0]!='0' || Text[1]!='x')return FALSE;
+  UINTN N=0;UINT64 V=0;
+  for(Text+=2;*Text;++Text) {
+    UINT8 Digit;CHAR8 C=*Text;
+    if(C>='0' && C<='9')Digit=(UINT8)(C-'0');
+    else if(C>='a' && C<='f')Digit=(UINT8)(C-'a'+10);
+    else if(C>='A' && C<='F')Digit=(UINT8)(C-'A'+10);
+    else return FALSE;
+    if(++N>16)return FALSE;
+    V=(V<<4)|Digit;
+  }
+  if(!N)return FALSE;
+  *Value=V;return TRUE;
+}
+STATIC EFI_STATUS Fetch(PIANO_FASTBOOT *S,CHAR8 *Arg) {
+  if(!StorageReady(S))return Reply(S,"FAILstorage backend not ready");
+  CHAR8 *OffsetArg=NULL,*SizeArg=NULL;
+  for(CHAR8 *P=Arg;*P;++P)if(*P==':') {
+    if(SizeArg!=NULL)return Reply(S,"FAILinvalid fetch arguments");
+    *P=0;if(OffsetArg==NULL)OffsetArg=P+1;else SizeArg=P+1;
+  }
+  UINT64 Offset,Size;
+  if(OffsetArg==NULL || SizeArg==NULL || !PartitionName(Arg) || !ParseFetchHex(OffsetArg,&Offset) ||
+     !ParseFetchHex(SizeArg,&Size) || !Size || Size>PIANO_FASTBOOT_MAX_FETCH)return Reply(S,"FAILinvalid fetch range");
+  PIANO_FB_PARTITION_INFO Info;EFI_STATUS Status=PartitionInfo(S,Arg,&Info);
+  if(Status!=EFI_SUCCESS)return Reply(S,Status==EFI_NOT_FOUND?"FAILunknown partition":"FAILinvalid partition information");
+  if(Offset>Info.Bytes || Size>Info.Bytes-Offset)return Reply(S,"FAILfetch outside partition");
+  UINT8 *Data=AllocateZeroPool((UINTN)Size),*Scratch=NULL;
+  if(Data==NULL)return Reply(S,"FAILnot enough RAM");
+  UINTN Done=0,Block=Info.BlockSize;UINT64 Lba=Offset/Block;UINTN Within=(UINTN)(Offset%Block);
+  // Fetch accepts byte ranges; the backend receives whole blocks only.
+  // Stage the entire bounded chunk before DATA so a read failure cannot emit
+  // a partial partition payload that the host could mistake for success.
+  if(Within || Size%Block) {
+    Scratch=AllocateZeroPool(Block);if(Scratch==NULL){Status=EFI_OUT_OF_RESOURCES;goto Finished;}
+  }
+  if(Within) {
+    Status=S->Storage.ReadBlocks(S->Storage.Context,&Info,Lba,Block,Scratch);if(Status!=EFI_SUCCESS)goto Finished;
+    UINTN Bytes=MIN((UINTN)Size,Block-Within);CopyMem(Data,Scratch+Within,Bytes);Done+=Bytes;++Lba;
+  }
+  UINTN Full=((UINTN)Size-Done)/Block*Block;
+  if(Full) {
+    Status=S->Storage.ReadBlocks(S->Storage.Context,&Info,Lba,Full,Data+Done);if(Status!=EFI_SUCCESS)goto Finished;
+    Done+=Full;Lba+=Full/Block;
+  }
+  if(Done<(UINTN)Size) {
+    // A misaligned head can leave a tail even when Size itself is aligned.
+    if(Scratch==NULL){Scratch=AllocateZeroPool(Block);if(Scratch==NULL){Status=EFI_OUT_OF_RESOURCES;goto Finished;}}
+    Status=S->Storage.ReadBlocks(S->Storage.Context,&Info,Lba,Block,Scratch);if(Status!=EFI_SUCCESS)goto Finished;
+    CopyMem(Data+Done,Scratch,(UINTN)Size-Done);
+  }
+  {CHAR8 Result[13]="DATA";Hex32((UINT32)Size,Result+4);
+    Status=Reply(S,Result);if(Status!=EFI_SUCCESS)goto Released;
+    Status=S->Send(S->Context,Data,(UINTN)Size);if(Status!=EFI_SUCCESS)goto Released;
+    Status=Reply(S,"OKAY");goto Released;}
+Finished:
+  Status=Reply(S,Status==EFI_OUT_OF_RESOURCES?"FAILnot enough RAM":"FAILpartition read failed");
+Released:
+  ZeroMem(Data,(UINTN)Size);FreePool(Data);
+  if(Scratch!=NULL){ZeroMem(Scratch,Block);FreePool(Scratch);}
+  return Status;
+}
 EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes) {
   if(S==NULL || S->Send==NULL || (Data==NULL && Bytes!=0))return EFI_INVALID_PARAMETER;
   if(S->Receiving) {
@@ -129,6 +232,7 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes)
   CHAR8 Cmd[65];CopyMem(Cmd,Data,Bytes);Cmd[Bytes]=0;
   if(!AsciiStrnCmp(Cmd,"getvar:",7))return GetVar(S,Cmd+7);
   if(!AsciiStrnCmp(Cmd,"download:",9))return Download(S,Cmd+9);
+  if(!AsciiStrnCmp(Cmd,"fetch:",6))return Fetch(S,Cmd+6);
   if(Equal(Cmd,"upload")) {
     if(S->Upload==NULL || !S->UploadBytes)return Reply(S,"FAILno staged RAM payload");
     CHAR8 Result[13]="DATA";Hex32((UINT32)S->UploadBytes,Result+4);
@@ -138,9 +242,10 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes)
   }
   if(Equal(Cmd,"oem sha256"))return HashDownload(S);
   if(Equal(Cmd,"oem discard")){PianoFastbootReset(S);return Reply(S,"OKAY");}
-  if(Equal(Cmd,"oem status") || Equal(Cmd,"oem ramlog")) {
+  if(Equal(Cmd,"oem status") || Equal(Cmd,"oem ramlog") || Equal(Cmd,"oem screenshot")) {
     if(S->Diagnostic==NULL)return Reply(S,"FAILdiagnostic service unavailable");
-    return S->Diagnostic(S->Context,S,Cmd);
+    EFI_STATUS Status=S->Diagnostic(S->Context,S,Cmd);
+    return Status==EFI_UNSUPPORTED?Reply(S,"FAILdiagnostic command unavailable"):Status;
   }
   if(Equal(Cmd,"oem log")) {
     if(S->Log==NULL)return Reply(S,"FAILlog service unavailable");

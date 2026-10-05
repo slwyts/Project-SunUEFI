@@ -5,8 +5,14 @@
 #ifndef PIANO_USB_FASTBOOT
 #define PIANO_USB_FASTBOOT 0
 #endif
+#ifndef PIANO_USB_SCREENSHOT
+#define PIANO_USB_SCREENSHOT 0
+#endif
 #if PIANO_USB_FASTBOOT
 #include "PianoFastboot.h"
+#if PIANO_USB_SCREENSHOT
+#include "PianoFastbootScreen.h"
+#endif
 #endif
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
@@ -32,10 +38,18 @@ STATIC UINT32 mPosted[4];
 STATIC UINTN mRingPosition;STATIC UINT8 mPhase,mStatusEp;
 STATIC BOOLEAN mThreeStage,mConfigured;
 STATIC PIANO_USB_CONTROL mControl;
+STATIC BOOLEAN mRebootAfterCleanup;
+BOOLEAN PianoDwc3ConsumeRebootRequest(VOID) {
+  BOOLEAN Request=mRebootAfterCleanup;mRebootAfterCleanup=FALSE;return Request;
+}
 #if PIANO_USB_FASTBOOT
 STATIC PIANO_FASTBOOT mFastboot;
 STATIC BOOLEAN mBulkLive,mBulkPrepared,mConfigWaiting,mStatusWaiting;
 STATIC UINT32 mFastLogBytes,mFastLogCrc,mFastLogGeneration;
+#if PIANO_USB_SCREENSHOT
+STATIC UINT32 mScreenWidth,mScreenHeight,mScreenBytes,mScreenCrc,mScreenGeneration;
+STATIC VOID ClearScreenMetadata(VOID){mScreenWidth=mScreenHeight=mScreenBytes=mScreenCrc=mScreenGeneration=0;}
+#endif
 STATIC UINT64 mBulkOutBytes,mBulkInBytes;
 // Send copies CPU frames immediately. Hardware sees only the separate 4K DMA
 // bounce buffers, so reset can clear staged pools without touching active DMA.
@@ -200,6 +214,9 @@ STATIC VOID ClearFastboot(VOID) {
   ClearFrames();PianoFastbootReset(&mFastboot);
   mFastLogBytes=mFastLogCrc=mFastLogGeneration=0;mLogValid=FALSE;
   if(mLogSnapshot!=NULL)ZeroMem(mLogSnapshot,USB_DIAG_LOG_BYTES);
+#if PIANO_USB_SCREENSHOT
+  ClearScreenMetadata();
+#endif
 }
 STATIC EFI_STATUS FastbootSend(VOID *Context,CONST VOID *Data,UINTN Bytes) {
   (VOID)Context;
@@ -220,6 +237,13 @@ STATIC EFI_STATUS FastbootQuery(VOID *Context,CONST CHAR8 *Name,CHAR8 Value[60])
   if(!AsciiStrCmp(Name,"SunUEFI:log-size"))FastHex(mFastLogBytes,Value);
   else if(!AsciiStrCmp(Name,"SunUEFI:log-crc32"))FastHex(mFastLogCrc,Value);
   else if(!AsciiStrCmp(Name,"SunUEFI:log-generation"))FastHex(mFastLogGeneration,Value);
+#if PIANO_USB_SCREENSHOT
+  else if(!AsciiStrCmp(Name,"SunUEFI:screen-width"))FastHex(mScreenWidth,Value);
+  else if(!AsciiStrCmp(Name,"SunUEFI:screen-height"))FastHex(mScreenHeight,Value);
+  else if(!AsciiStrCmp(Name,"SunUEFI:screen-size"))FastHex(mScreenBytes,Value);
+  else if(!AsciiStrCmp(Name,"SunUEFI:screen-crc32"))FastHex(mScreenCrc,Value);
+  else if(!AsciiStrCmp(Name,"SunUEFI:screen-generation"))FastHex(mScreenGeneration,Value);
+#endif
   else if(!AsciiStrCmp(Name,"SunUEFI:usb-state")) {
     CopyMem(Value,"configured-speed-",17);Value[17]=mControl.SuperSpeed?'S':(BulkMps()==64?'F':'H');Value[18]=0;
   } else return EFI_UNSUPPORTED;
@@ -233,8 +257,25 @@ STATIC EFI_STATUS FastbootDiagnostic(VOID *Context,PIANO_FASTBOOT *State,CONST C
     else if(!EFI_ERROR(S))S=EFI_NOT_FOUND;
     if(EFI_ERROR(S)){mFastLogBytes=mFastLogCrc=mFastLogGeneration=0;return FastbootSend(NULL,"FAILRAM log snapshot unavailable",32);}
     mFastLogBytes=mLogBytes;mFastLogCrc=mLogCrc;mFastLogGeneration=mLogGeneration;
+#if PIANO_USB_SCREENSHOT
+    ClearScreenMetadata();
+#endif
     return FastbootSend(NULL,"OKAY",4);
   }
+#if PIANO_USB_SCREENSHOT
+  if(!AsciiStrCmp(Cmd,"oem screenshot")) {
+    UINT32 W=0,H=0,Bytes=0,Crc=0;
+    EFI_STATUS S=PianoFastbootCaptureScreen(State,&W,&H,&Bytes,&Crc);
+    if(S!=EFI_SUCCESS || !W || !H || !Bytes || State->Upload==NULL || State->UploadBytes!=Bytes || State->UploadBorrowed) {
+      ClearScreenMetadata();CONST CHAR8 *Failure="FAILGOP screenshot unavailable";return FastbootSend(NULL,Failure,AsciiStrLen(Failure));
+    }
+    mScreenWidth=W;mScreenHeight=H;mScreenBytes=Bytes;mScreenCrc=Crc;
+    if(++mScreenGeneration==0)++mScreenGeneration;
+    mFastLogBytes=mFastLogCrc=mFastLogGeneration=0;
+    DEBUG((DEBUG_WARN,"SUNUEFI_FASTBOOT_SCREENSHOT width=%u height=%u bytes=%u crc32=%08x generation=%u\n",W,H,Bytes,Crc,mScreenGeneration));
+    return FastbootSend(NULL,"OKAY",4);
+  }
+#endif
   if(!AsciiStrCmp(Cmd,"oem status")) {
     CONST CHAR8 *Rows[]={"INFOstorage-policy:no-persistent-writes","INFOtransport:owned-DMA-SMMU-bulk","INFOram-upload:download-or-frozen-log"};
     for(UINTN I=0;I<ARRAY_SIZE(Rows);++I){EFI_STATUS S=FastbootSend(NULL,Rows[I],AsciiStrLen(Rows[I]));if(EFI_ERROR(S))return S;}
@@ -313,7 +354,12 @@ STATIC EFI_STATUS BulkComplete(UINT8 Ep,UINT8 EventStatus) {
     BOOLEAN Download=mFastboot.Receiving;
     S=PianoFastbootPacket(&mFastboot,mBulkRx.Cpu,Bytes);if(EFI_ERROR(S))return S;
     if(!Download)DEBUG((DEBUG_WARN,"SUNUEFI_FASTBOOT_COMMAND bytes=%u receiving=%u queued=%u\n",(UINT32)Bytes,mFastboot.Receiving,(UINT32)mFrameCount));
-    if(mFastboot.Receiving || (Download && mFastboot.Complete) || mFastboot.Upload==NULL)mFastLogBytes=mFastLogCrc=mFastLogGeneration=0;
+    if(mFastboot.Receiving || (Download && mFastboot.Complete) || mFastboot.Upload==NULL) {
+      mFastLogBytes=mFastLogCrc=mFastLogGeneration=0;
+#if PIANO_USB_SCREENSHOT
+      ClearScreenMetadata();
+#endif
+    }
   } else {
     if(Residual || mFrames==NULL || Bytes!=mInFlightBytes)return EFI_DEVICE_ERROR;
     mBulkInBytes+=Bytes;mFrames->Offset+=Bytes;mInFlightBytes=0;
@@ -452,7 +498,8 @@ EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *De
 #endif
   UINT32 OldGctl=Dr(0xC110),OldDcfg=Dr(0xC700),OldSize=Dr(0xC408),OldLow=Dr(0xC400),OldHigh=Dr(0xC404),Count=0;
   UINT32 OldSessionHs=Dr(USB_SESSION_HS),OldSessionSs=Dr(USB_SESSION_SS);
-  BOOLEAN SessionSet=FALSE;
+  BOOLEAN SessionSet=FALSE,RebootReady=FALSE;
+  mRebootAfterCleanup=FALSE;
   EFI_STATUS Status=EFI_SUCCESS;mRingPosition=0;mConfigured=FALSE;
   mLogValid=FALSE;mLogBytes=mLogCrc=mLogGeneration=0;mLogFlags=0;
   mDeviceEvents=mSetupEvents=mDiagReplies=0;
@@ -528,6 +575,9 @@ EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *De
     Status,mConfigured,mBulkOutBytes,mBulkInBytes,(UINT32)mFrameCount));
 #endif
 Exit:
+#if PIANO_USB_FASTBOOT
+  RebootReady=mFastboot.RebootRequested && mFrames==NULL && !mPending[3] && !mEnding[3];
+#endif
   {EFI_STATUS Quiet=Halt();
     if(EFI_ERROR(Quiet)) {
       PianoSmmuLogFaults(&Context->After);
@@ -543,16 +593,23 @@ Exit:
       OldSessionHs,OldSessionSs,RestoredHs,RestoredSs,Dr(0xC70C)));
     if(RestoredHs!=OldSessionHs || RestoredSs!=OldSessionSs)Status=EFI_DEVICE_ERROR;
   }
-  for(UINTN I=0;I<ARRAY_SIZE(Buffers);++I)if(Buffers[I]->Active)PianoDmaComplete(Buffers[I],Status,TRUE);
+  for(UINTN I=0;I<ARRAY_SIZE(Buffers);++I)if(Buffers[I]->Active) {
+    EFI_STATUS S=PianoDmaComplete(Buffers[I],Status,TRUE);if(EFI_ERROR(S))Status=S;
+  }
   Dw(0xC708,0);Dw(0xC408,BIT31);Count=Dr(0xC40C)&0xFFFF;if(Count)Dw(0xC40C,Count);
   Dw(0xC400,OldLow);Dw(0xC404,OldHigh);Dw(0xC408,OldSize|BIT31);Dw(0xC700,OldDcfg);Dw(0xC110,OldGctl);
-  for(UINTN I=0;I<ARRAY_SIZE(Buffers);++I)if(Buffers[I]->Signature){EFI_STATUS S=PianoDmaFree(Buffers[I]);if(EFI_ERROR(S))Status=S;}
+  UINTN Retained=0;
+  for(UINTN I=0;I<ARRAY_SIZE(Buffers);++I) {
+    if(Buffers[I]->Signature){EFI_STATUS S=PianoDmaFree(Buffers[I]);if(EFI_ERROR(S))Status=S;}
+    if(Buffers[I]->Signature)++Retained;
+  }
+  if(Retained && !EFI_ERROR(Status))Status=EFI_DEVICE_ERROR;
+  mRebootAfterCleanup=RebootReady && Status==EFI_SUCCESS && Retained==0;
+  DEBUG((DEBUG_WARN,"SUNUEFI_USB_DEVICE_CLEANUP status=%r buffers_retained=%u reboot_acknowledged=%u reboot_ready=%u\n",
+    Status,(UINT32)Retained,RebootReady,mRebootAfterCleanup));
 #if PIANO_USB_FASTBOOT
-  BOOLEAN Reboot=mFastboot.RebootRequested;ClearFastboot();
+  ClearFastboot();
 #endif
   if(mLogSnapshot!=NULL){ZeroMem(mLogSnapshot,USB_DIAG_LOG_BYTES);FreePool(mLogSnapshot);mLogSnapshot=NULL;}mLogValid=FALSE;
-#if PIANO_USB_FASTBOOT
-  if(Reboot && !EFI_ERROR(Status))gRT->ResetSystem(EfiResetCold,EFI_SUCCESS,0,NULL);
-#endif
   return Status;
 }
