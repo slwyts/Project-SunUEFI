@@ -2,7 +2,9 @@
 
 目标是在保留现有 Android 系统和数据的前提下，研究并移植 ARM64 UEFI，随后从 RAM 或外接介质启动 Linux / Windows PE。
 
-**最新实机结果（截至第89次，89待回收日志）：UFS 已完成统一 DMA/SMMU、6个LUN和GPT读取、139个只读BlockIO句柄及7个只读SFS卷；标准Shell三条枚举命令真实执行成功。第80次在已备份的LUN4/LBA375040完成4096-byte FUA写入→同步→读回→恢复→同步→读回，Android恢复后完整14MiB测试gap、主备GPT、MBR、邻块均与原备份逐字节一致，26启动分区SHA一致。原分区BlockIO仍只读，第86次限定14MiB窗口真实FAT文件写入/读回/全gap恢复成功，未改GPT。USB在第66次成功SuperSpeed枚举，第72次完成PC端状态和64KiB日志读取/CRC校验；第82次标准fastboot bulk RAM/日志实测通过，第83次reboot完整清理通过，第84次3200×2136 GOP BMP全帧导出通过；第87/89次标准fetch读取xbl_config_a的524288 bytes与原备份一致，但联合SMMU关闭尚未通过，需手动恢复。触摸尚无真实触点验收。**
+**最新实机结果（截至第91次）：UFS 已完成统一 DMA/SMMU、6个LUN和GPT读取、139个只读BlockIO句柄及7个只读SFS卷；标准Shell三条枚举命令真实执行成功。第80次固定块和第86次限定14MiB窗口FAT写入试验均完成备份、写入、校验、完整恢复及独立复核，原分区BlockIO仍只读，未改GPT。USB已实测SuperSpeed枚举、标准fastboot RAM/日志传输、正常重启和3200×2136 GOP BMP导出。第91次标准fetch读取xbl_config_a的524288 bytes与原备份一致，USB/UFS联合关闭通过，固件主动恢复Android；26启动分区SHA全部一致。触摸尚无真实触点验收。**
+
+**唯一产品候选已完成构建：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成实际TianoCore Logo、默认SimpleInit、F12 Setup、标准Shell和驻留fastboot调度；产品没有诊断自动重启计时器。209项主机测试通过，产品实机联合验收尚未执行。原UFS卷仍只读、变量仍在RAM中，触摸、官方键盘触控板、USB Host、通用OS启动及1GiB下载后端尚未完成。开发诊断镜像仅保留为实验记录，不是额外产品功能集。构建与后端状态见 [唯一产品构建](docs/piano-product-build.md)，联合关闭证据见 [第91次验收](docs/ufs-usb-retirement-test-91.md)。
 
 详见 [BlockIO / USB进展](docs/blockio-usb-progress.md)、[受控UFS写入证据](docs/ufs-controlled-write-transport.md) 和 [Linux EFI交接审查](docs/linux-efi-handoff-audit.md)。stable/next独立内核已分别通过第71/73次原生ARM64 RAM启动；第85次标准EFI路径启动8CPU并完成MM/console，抓到固定TrustUI CMA缺失vmemmap导致panic；第88次补入两个占用CMA区域后越过原故障，但因普通可分配内存不足在内核初始化时OOM。EFI路径RAM用户态PID1尚未成功。
 
@@ -13,13 +15,13 @@
 | GOP / 中文显示 | 3200×2136 继承显存模式；中文 GUI、字号 72/64、GOP Blt 和 RAM 截图通过 | 更多模式和显示硬件重新初始化；近期部分用户观察为灰屏，RAM 截图不能证明面板正在扫描输出 |
 | 实体按键 | 第 23–24 次实测音量移动焦点，两次短按电源选中并执行，进入工具主界面 | 更多快捷键及长按策略 |
 | 官方键盘 / 触控板 | 软件报告与输入层、固定GENI PIO模块及受保护只读SE6快照固件已构建，均未实机验收 | 真实clock/FW/PIO报告、完整键盘与触控板输入 |
-| USB 设备 / PC 调试 | 第82–84次SuperSpeed、RAM/日志、reboot及全帧BMP实测 | 单分区fetch已读回一致，但联合关闭失败；目标重启、受控flash、菜单/后台服务及自主PHY/Type-C管理待做 |
+| USB 设备 / PC 调试 | 第82–84次SuperSpeed、RAM/日志、reboot及全帧BMP实测；第91次只读fetch与联合关闭通过 | 唯一产品已集成驻留服务，跨SimpleInit/Setup/Shell实机验收、目标重启、受控flash及自主PHY/Type-C管理待做 |
 | USB 主机 | 标准PCI_IO facade的地址、映射与生命周期主机测试通过 | NC common-buffer后端、主机角色/VBUS、XHCI及外设实测 |
 | 串口调试 | ramoops RAM 日志及重启后 ADB 回收已实测 | 物理 UART 和实时 USB 日志；RAM SerialPortLib 不是物理串口 |
 | 触屏 | NT36532 cascade 的固件、地址表、SPI 引擎与引脚已核对；RAM 固件读取通路实测 | GPI/PAS 与 DMA、真实触点读取、AbsolutePointer 发布；SimpleInit 同坐标抬起和旋转缩放已修复并编译 |
 | DMA / SMMU | PA↔IOVA、缓存同步、自有SID60/40上下文；UFS读写与USB EP0真实传输/解除读回 | GPI真实传输、NC common-buffer、64位高IOVA实测 |
 | UFS | 139个只读BlockIO、7个SFS卷、Shell枚举；第80次固定块与第86次限定窗口FAT8193-byte文件写入、读回及完整恢复实测 | Shell文件操作、永久测试卷、自主启动及OS交接 |
-| SimpleInit | 中文放大菜单和工具主界面已由用户确认，RAM 启动 | 与触摸、USB 和只读存储联调 |
+| SimpleInit / Setup / Shell | 中文放大菜单和工具主界面已由用户确认；产品集成默认SimpleInit、F12 Setup、标准Shell及共同返回策略 | 产品联合实机验收、真实触摸/键盘和文件维护功能 |
 | Linux | 原机GKI和独立stable/next RAM initramfs BusyBox PID1；第85/88次EFI内核启动且早期故障已定位 | EFI普通内存不足、用户态启动、完整DRAM map、主线整机驱动及真实发行版 |
 | Windows PE | 未启动 | ARM64 平台 ACPI、存储、USB、显示和启动链验证 |
 
@@ -44,7 +46,7 @@
 | 自编译 UEFI | 第 7 次最小版原视频确认 BDS 控制台；第 8 次 ramoops 确认 `PIANO_STAGE0_CONSOLE_READY EL1` |
 | 自动恢复 | 多次临时启动后自动恢复 Android；已核对 ADB 启动完成、root 和 A 槽位。第 7 次 BDS 无 OS 路径约 10 秒后关机，不能与 45 秒计时器混同 |
 | Linux RAM 启动 | 第 13–16 次重复成功；第 16 次明确记录 PID 1、正确 HWID、71 个模块及 RAM 挂载列表 |
-| 实验后分区校验 | 最近一次第88次，26启动分区SHA一致，root与A槽正常；完整测试gap/GPT/邻块在FAT试验后恢复一致 |
+| 实验后分区校验 | 最近一次第91次，26启动分区SHA一致，root与A槽正常；完整测试gap/GPT/邻块在FAT试验后恢复一致 |
 
 启动分区只读；没有执行 `flash`、`erase`、重分区、改槽或Bootloader锁定/解锁。第80次仅在独立备份且live gate通过的测试gap内进行固定块写入，并完成恢复及Android独立校验。Linux 对照实验使用原样启动内核和 RAM initramfs。没有主动写入用户数据、加密元数据、持久化校准或密钥分区，也没有复制其内容；正常 Android 启动仍会自行更新运行数据。分区哈希校验范围为上述 26 个启动相关分区。
 

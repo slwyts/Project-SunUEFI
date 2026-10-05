@@ -29,3 +29,9 @@ actual Mu CoreExitBootServices在DxeMain.c:789发Before事件，797关timer，80
 Exit notify只写CPU flag/已预分配证据。成功后所有clients永久拒cached provider callbacks；普通cleanup/CloseEvent/FreePool/Debug依赖BS的路径不得运行。runtime Reset/time/RT-variable只能在声明支持和正确runtime mappings下使用；boot-only Probe变量在OS后不当作持续service。runtime metadata/map必须保留正确权限/cache，不能给OS尚未证明的full DRAM容量或继续使用native HAL。
 
 返回EFI app且未EBS时可在exact image/unload/options/loan/source释放完成后由supervisor建立下一service session并resume同一product实例；发生EBS则进入不可恢复到UEFI UI的terminal phase，不能按普通StartImage返回处理。現Root+Launch两道EBS fence正是该fail-closed边界，不能因UI action或新入口绕开。
+
+## 当前产品候选的边界
+
+首份产品候选尚未注册 fastboot boot backend；`SunUEFI:ram-boot` 应返回 `disabled`。现有独立 Launch 仅支持 AA64 EFI application，或不带 ramdisk/second/DTBO/DTB 的 AA64 PE Android wrapper。产品不能把编译了 parser、返回 OKAY 或设备退休完成当作通用 `.img` 启动成功。
+
+BootPolicy、UFS 与 Owners 的当前退休账本是一次性的，退休后不能继续使用旧 Runtime 指针或直接回到原来的 UI 循环。后续 boot session 必须有独立于已停止 Policy 的核心 EBS fence、一次性下载 token 和明确的失败/返回处理。普通返回型 EFI 应用仍属于 UEFI 生命周期，应保持同一后台 fastboot 服务；只有真正 OS handoff 才进入上述 PrepareOsExit。提前关闭全部设备再执行一个返回 EFI 的安全验证，不能冒充全生命周期后台服务验收。
