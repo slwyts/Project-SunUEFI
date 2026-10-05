@@ -19,7 +19,7 @@ identity=importlib.util.module_from_spec(spec);spec.loader.exec_module(identity)
 
 
 def function(text,name):
-    match=re.search(r'(?m)^(?:EFI_STATUS\s+EFIAPI\s+|int\s+|void\s+)'+name+r'\s*\(',text)
+    match=re.search(r'(?m)^(?:EFI_STATUS\s+EFIAPI\s+|int\s+|void\s+|uint32_t\s+)'+name+r'\s*\(',text)
     if not match:raise ValueError("actual function absent: "+name)
     begin=text.index("{",match.start());depth=1;end=begin+1
     while depth:
@@ -61,14 +61,16 @@ class ProductPumpTests(unittest.TestCase):
             self.assertNotIn('ReadKeyStroke=',gui)
 
     def test_modified_or_duplicate_hook_refused_before_any_mutation(self):
-        for mutation in ('duplicate','modified'):
+        for mutation in ('duplicate','modified','gui_wait','gui_tick'):
             with self.subTest(mutation=mutation),tempfile.TemporaryDirectory(prefix='product-hook-refuse-')as directory:
                 root=self.checkout_fixture(directory)
                 prepare.prepare(root,apply=True,check_pins=False)
-                event=root/(prepare.BASE+'MdeModulePkg/Core/Dxe/Event/Event.c')
+                event=root/(prepare.SI+'src/gui/gui_init.c')if mutation.startswith('gui_')else root/(prepare.BASE+'MdeModulePkg/Core/Dxe/Event/Event.c')
                 text=event.read_text()
                 if mutation=='duplicate':text+='\n'+prepare.WAIT_HOOK
-                else:text=text.replace('PIANO_PRODUCT_PUMP_WAIT_EVENT, 1000','PIANO_PRODUCT_PUMP_WAIT_EVENT, 1001')
+                elif mutation=='modified':text=text.replace('PIANO_PRODUCT_PUMP_WAIT_EVENT, 1000','PIANO_PRODUCT_PUMP_WAIT_EVENT, 1001')
+                elif mutation=='gui_wait':text=text.replace('piano_product_gui_wait(time)','piano_product_gui_wait(time*10)')
+                else:text=text.replace('return (uint32_t)piano_product_gui_tick();','return (uint32_t)piano_product_gui_tick()+1;')
                 event.write_text(text)
                 library=root/(prepare.BASE+'MdePkg/Library/PianoProductPumpLib/PianoProductPumpLib.c')
                 library.write_text('preserve me')
@@ -106,16 +108,23 @@ class ProductPumpTests(unittest.TestCase):
     def test_actual_client_core_wait_gui_matrix(self):
         event=(BASE/"MdeModulePkg/Core/Dxe/Event/Event.c").read_text()
         gui=(ROOT/"upstream/simple-init/src/gui/gui_init.c").read_text()
-        extracted="\n\n".join((function(event,"CoreWaitForEvent"),function(gui,"gui_main"),function(gui,"gui_run_and_exit")))
+        extracted="\n\n".join((function(event,"CoreWaitForEvent"),function(gui,"gui_main"),function(gui,"gui_run_and_exit"),
+            "#if PIANO_PRODUCT_GUI_PUMP\n"+function(gui,"custom_tick_get")+"\n#endif"))
         include=BASE/"MdePkg/Include"
         with tempfile.TemporaryDirectory(prefix="product-pump-host-")as directory:
             directory=Path(directory);(directory/"PianoActualWaitAndGui.h").write_text(extracted)
             for enabled in(0,1):
                 exe=directory/("pump-"+str(enabled))
                 cmd=["cc","-std=gnu11","-Wall","-Wextra","-Werror","-Wno-unused-function","-g","-fshort-wchar","-fno-pie","-no-pie","-fsanitize=address,undefined","-DENABLE_UEFI",f"-DPIANO_PRODUCT_GUI_PUMP={enabled}",
-                    "-I"+str(include),"-I"+str(include/"X64"),"-I"+str(directory),str(ROOT/"tests/PianoProductPumpTest.c"),str(BASE/"MdePkg/Library/PianoProductPumpLib/PianoProductPumpLib.c"),str(ROOT/"upstream/simple-init/src/gui/piano_product_runtime.c"),"-o",str(exe)]
+                    "-I"+str(include),"-I"+str(include/"X64"),"-I"+str(directory),"-I"+str(ROOT/"upstream/simple-init/src/gui"),str(ROOT/"tests/PianoProductPumpTest.c"),str(BASE/"MdePkg/Library/PianoProductPumpLib/PianoProductPumpLib.c"),str(ROOT/"upstream/simple-init/src/gui/piano_product_runtime.c"),"-o",str(exe)]
                 build=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(build.returncode,0,build.stdout+build.stderr)
                 run=subprocess.run([str(exe)],capture_output=True,text=True,env={**os.environ,"ASAN_OPTIONS":"detect_leaks=1"});self.assertEqual(run.returncode,0,run.stdout+run.stderr);print(run.stdout.strip())
+        for enabled in(0,1):
+            subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc',
+                '-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror',
+                '-DENABLE_UEFI',f'-DPIANO_PRODUCT_GUI_PUMP={enabled}',
+                '-I'+str(include),'-I'+str(include/'AArch64'),
+                str(ROOT/'upstream/simple-init/src/gui/piano_product_runtime.c')],check=True)
 
     def test_default_null_has_no_boot_service_or_provider_dependency(self):
         include=BASE/"MdePkg/Include"

@@ -57,6 +57,16 @@ HOOKS = (
     (SI + "src/gui/gui_init.c", '#include"gui/clipboard.h"\n', '#include"gui/clipboard.h"\n#include"piano_product_runtime.h"\n'),
     (SI + "src/gui/gui_init.c", "\twhile(gui_run){\n\t\t// 10 seconds inactive sleep",
      "\twhile(gui_run){\n\t\t// Explicit APP slice outside gui_lock; Null unless product enables it.\n\t\tpiano_product_gui_pump();\n\t\tif(!gui_run)break;\n\t\t// 10 seconds inactive sleep"),
+    (SI + "src/gui/gui_init.c", "\t\t\ttick_ms+=time;\n\t\t\tgBS->Stall(EFI_TIMER_PERIOD_MILLISECONDS(time));",
+     "\t\t\t// LVGL milliseconds, real elapsed clock and bounded APP service slices.\n\t\t\ttick_ms+=piano_product_gui_wait(time);"),
+    (SI + "src/gui/gui_init.c", "uint32_t custom_tick_get(void){\n",
+     "uint32_t custom_tick_get(void){\n\t#if defined(ENABLE_UEFI) && defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP\n\treturn (uint32_t)piano_product_gui_tick();\n\t#else\n"),
+    (SI + "src/gui/gui_init.c", "\treturn cur_ms-start_ms;\n}",
+     "\treturn cur_ms-start_ms;\n\t#endif\n}"),
+    (SI + "src/gui/gui_init.c", "\tuint32_t time=30;\n\twhile(gui_run){",
+     "\tuint32_t time=30;\n\t#if defined(ENABLE_UEFI) && defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP\n\tuint32_t piano_frame_logs=0;\n\tuint64_t piano_next_log_ms=0;\n\t#endif\n\twhile(gui_run){"),
+    (SI + "src/gui/gui_init.c", "\t\t}else gui_enter_sleep();\n\t\tif(time>0){",
+     "\t\t}else gui_enter_sleep();\n\t\t#if defined(ENABLE_UEFI) && defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP\n\t\t// Eight real loop/opacity observations, outside gui_lock; no readiness claim.\n\t\tuint64_t piano_now_ms=piano_product_gui_tick();\n\t\tif(piano_frame_logs<8&&piano_now_ms>=piano_next_log_ms){\n\t\t\tlv_obj_t*piano_screen=lv_scr_act();\n\t\t\tuint32_t piano_children=piano_screen?lv_obj_get_child_cnt(piano_screen):0;\n\t\t\tlv_obj_t*piano_last=piano_children?lv_obj_get_child(piano_screen,-1):NULL;\n\t\t\tstruct gui_activity*piano_activity=guiact_get_last();\n\t\t\ttlog_notice(\"PIANO_GUI_FRAME tick_ms=%llu wait_ms=%u root_opa=%u last_child_opa=%u children=%u activity=%s\",\n\t\t\t\t(unsigned long long)piano_now_ms,time,\n\t\t\t\tpiano_screen?(unsigned)lv_obj_get_style_opa(piano_screen,0):0,\n\t\t\t\tpiano_last?(unsigned)lv_obj_get_style_opa(piano_last,0):0,\n\t\t\t\tpiano_children,piano_activity?piano_activity->name:\"none\");\n\t\t\tpiano_frame_logs++;piano_next_log_ms=piano_now_ms+250;\n\t\t}\n\t\t#endif\n\t\tif(time>0){"),
     (SI + "src/gui/SimpleInitGUI.inf", "  gui_init.c\n", "  gui_init.c\n  piano_product_runtime.c\n"),
     (SI + "src/gui/SimpleInitGUI.inf", "[LibraryClasses]\n", "[LibraryClasses]\n  PianoProductPumpLib\n"),
 )
@@ -83,6 +93,13 @@ def transform(text, old, new, label):
         if old in without:
             raise ValueError("duplicate hook anchor: " + label)
         return text
+    # An insertion anchor survives at the start of its replacement. If the
+    # inserted first line is present but the complete hook is altered, refuse
+    # it instead of nesting another wrapper around the stale local hook.
+    if new.startswith(old):
+        first_inserted = new[len(old):].splitlines(keepends=True)[0]
+        if old + first_inserted in text:
+            raise ValueError("partial or modified hook source: " + label)
     if new in text or text.count(old) != 1:
         raise ValueError("unexpected or modified hook source: " + label)
     return text.replace(old, new, 1)

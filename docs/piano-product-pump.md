@@ -34,6 +34,30 @@ then reads the pending action. A pending action invokes the existing
 events. The next parent supervisor iteration consumes the action and its
 sequence. F12 routing remains in the supervisor's real key-notify enrollment.
 
+The UEFI GUI loop treats LVGL's wait value as milliseconds. It caps that value
+at 30 ms (including the `UINT32_MAX` no-timer sentinel) and services the shared
+runtime before each 1 ms `Stall(1000)` slice, outside `gui_lock`. Navigation stops
+the remaining wait immediately; an ExitBootServices notification stops before
+another timer, provider, Boot Services call, or ordinary GUI cleanup. The
+disabled diagnostic mode also uses the correct microsecond units, but never
+pumps the product provider. The old EFI timer macro expresses 100 ns periods;
+passing it to `Stall` made a requested 30 ms wait last 300 ms.
+
+Product `custom_tick_get` uses TimerLib's calibrated performance counter,
+advertised direction and wrap, preserving fractional milliseconds. Rendering,
+driver work and service work contribute their actual elapsed time. A frozen
+counter never advances time merely because LVGL requested a large wait. The
+legacy `NO_TIMER` accumulator receives measured waiting time only. Each GUI
+invocation emits at most eight `PIANO_GUI_FRAME` records, at least 250 ms apart:
+actual tick, LVGL's suggested wait, screen opacity, last screen child's opacity,
+child count and current activity name. The boot menu itself is outside the
+activity manager; `activity=none` is expected there, and the last child's opacity
+allows its 500 ms fade to be observed without accessing a private boot-menu
+structure. There is no existing flush-result getter, so these records do not
+claim successful display flush, USB transfer or hardware readiness. The timing
+bug is independently reproducible; it is not proof of the observed white-screen
+cause.
+
 The protocol client creates its ExitBootServices fence lazily during its first
 application-TPL call. A library constructor cannot create that event because
 the DXE Core constructs libraries before Event Services are initialized. It
@@ -91,8 +115,12 @@ device acceptance tests against the single product image.
 `python3 -m unittest discover -s tests -p test_product_pump.py -v` compiles the
 actual client and extracts the actual `CoreWaitForEvent`, `gui_main`, and
 `gui_run_and_exit` source bodies into a host harness. With GUI mode both disabled
-and enabled, 30 fork cases cover application TPL, nonreentry, EBS/cache refusal,
-warning statuses, GUI locking/cooperative exit and event destruction. Additional
+and enabled, 56 fork cases cover application TPL, nonreentry, EBS/cache refusal,
+warning statuses, GUI locking/cooperative exit and event destruction, plus real
+millisecond conversion, sentinel clamping, 1 ms service cadence, navigation during
+waiting, EBS during `Stall`, up/down counter wrap, frozen counters, rendering time,
+the actual product `custom_tick_get` hook and bounded diagnostic records. Strict
+AARCH64 compilation checks both modes of the real GUI helper. Additional
 tests apply the canonical installer to clean pinned source blobs, verify
 idempotence and refuse modified/duplicated hooks before any mutation. The Null
 library test confirms no unresolved BS/provider dependency.
