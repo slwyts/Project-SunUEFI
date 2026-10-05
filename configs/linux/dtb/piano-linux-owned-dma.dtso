@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+/plugin/;
+
+// Exact SID/mask pairs from current Android runtime-graph and selected
+// sm8750.dtsi. Retarget to the real Linux-managed apps SMMU, never copy USB's CB.
+// GPI rings use the DMA controller device; SPI/I2C buffers use the QUP parent.
+/ {
+    fragment@510 {
+        target-path = "/soc/ssusb@a600000";
+        __overlay__ { iommus = <&apps_smmu_ml 0x40 0>; };
+    };
+    fragment@511 {
+        target-path = "/soc/ufshc@1d84000";
+        __overlay__ { iommus = <&apps_smmu_ml 0x60 0>; };
+    };
+    fragment@512 {
+        target-path = "/soc/qcom,gpi-dma@a00000";
+        __overlay__ { iommus = <&apps_smmu_ml 0xb6 0>; };
+    };
+    fragment@513 {
+        target-path = "/soc/qcom,qupv3_1_geni_se@ac0000";
+        __overlay__ { iommus = <&apps_smmu_ml 0xa3 0>; };
+    };
+    fragment@514 {
+        target-path = "/soc/qcom,gpi-dma@800000";
+        __overlay__ { iommus = <&apps_smmu_ml 0x436 0>; };
+    };
+    fragment@515 {
+        target-path = "/soc/qcom,qupv3_2_geni_se@8c0000";
+        __overlay__ { iommus = <&apps_smmu_ml 0x423 0>; };
+    };
+};
