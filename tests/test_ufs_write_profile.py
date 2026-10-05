@@ -15,7 +15,7 @@ RAM_APP = ROOT / 'upstream/Mu-Silicium/Platforms/Xiaomi/pianoGuiPkg/Applications
 WRITE_MODES = ('--ufs-write-preflight', '--ufs-write-restore-test')
 ISOLATED_FROM = (
     '--ufs-filesystems', '--ufs-shell', '--ufs-shell-interactive', '--ufs-setup',
-    '--usb-controller', '--usb-ep0', '--usb-debug', '--touch-probe', '--gpi-probe',
+    '--usb-controller', '--usb-ep0', '--usb-fastboot', '--usb-debug', '--touch-probe', '--gpi-probe',
     '--fault-recovery-test', '--ram-qupfw', '--qupfw-disk', '--pmic-metadata',
 )
 

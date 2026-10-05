@@ -59,6 +59,7 @@ def argument_parser():
     writes.add_argument('--ufs-write-restore-test',action='store_true',help='Explicit isolated fixed one-block FUA write/sync/read/restore/verify transaction; all registered BlockIO remains readonly and no SimpleInit boot')
     parser.add_argument('--usb-controller',action='store_true',help='Isolated DWC3 clocks/registers and owned USB0 SMMU context')
     parser.add_argument('--usb-ep0',action='store_true',help='USB2 device EP0 enumeration using shared DMA and USB0 owned context')
+    parser.add_argument('--usb-fastboot',action='store_true',help='Isolated standard USB fastboot bulk with RAM-only stage/upload and diagnostics; implies usb-ep0')
     parser.add_argument('--return-seconds',type=int,default=75,help='Diagnostic cold-reboot timer, 30 to 120 seconds (default 75)')
     return parser
 
@@ -66,7 +67,7 @@ def argument_parser():
 def validate_write_options(parser,args):
     if args.ufs_write_preflight or args.ufs_write_restore_test:
         if any((args.ufs_filesystems,args.ufs_shell,args.ufs_shell_interactive,args.ufs_setup,
-                args.usb_controller,args.usb_ep0,args.usb_debug,args.touch_probe,args.gpi_probe,
+                args.usb_controller,args.usb_ep0,args.usb_fastboot,args.usb_debug,args.touch_probe,args.gpi_probe,
                 args.fault_recovery_test,args.ram_qupfw,args.qupfw_disk,args.pmic_metadata)):
             parser.error('UFS write/preflight requires an isolated profile without filesystem/Shell/Setup/USB/touch consumers')
         args.ufs_blockio=True
@@ -94,10 +95,23 @@ def load_write_attestation(root):
     return module
 
 
+def validate_usb_fastboot_options(parser,args):
+    if not args.usb_fastboot:
+        return
+    if any((args.ufs_probe,args.dma_probe,args.dma_owned,args.ufs_dma_nop,args.ufs_blockio,
+            args.ufs_filesystems,args.ufs_shell,args.ufs_shell_interactive,args.ufs_setup,
+            args.ufs_write_preflight,args.ufs_write_restore_test,args.usb_debug,
+            args.touch_probe,args.gpi_probe,args.ram_qupfw,args.qupfw_disk,
+            args.pmic_metadata,args.fault_recovery_test)):
+        parser.error('--usb-fastboot requires an isolated profile without UFS/native USB/touch consumers')
+    args.usb_ep0=True
+
+
 def main():
     parser=argument_parser()
     args=parser.parse_args()
     validate_write_options(parser,args)
+    validate_usb_fastboot_options(parser,args)
     if args.ufs_shell_interactive:args.ufs_shell=True
     if args.ufs_shell:args.ufs_filesystems=True
     if args.ufs_setup:args.ufs_filesystems=True
@@ -403,6 +417,12 @@ def main():
                 shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
             path=app/'PianoUsbController.c';path.write_text('#define PIANO_USB_EP0 1\n'+path.read_text())
             path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoDwc3Device.c\n  PianoUsbControl.c'))
+            if args.usb_fastboot:
+                for name in ('PianoFastboot.c','PianoFastboot.h'):
+                    shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+                for name in ('PianoDwc3Device.c','PianoUsbControl.c'):
+                    path=app/name;path.write_text('#define PIANO_USB_FASTBOOT 1\n'+path.read_text())
+                path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFastboot.c'))
     dsc = target / 'pianoGui.dsc'
     text = dsc.read_text().replace('pianoGuiPkg/Library/RamLogSerialPortLib/FrameBufferSerialPortLib.inf',
                                   'pianoGuiPkg/Library/RamOnlySerialPortLib/RamOnlySerialPortLib.inf')
