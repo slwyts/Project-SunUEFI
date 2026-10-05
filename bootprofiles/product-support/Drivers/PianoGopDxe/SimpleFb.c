@@ -1,3 +1,4 @@
+#include <Uefi.h>
 #include <Library/DebugLib.h>
 #include <Library/FrameBufferBltLib.h>
 #include <Library/UefiBootServicesTableLib.h>
@@ -5,6 +6,7 @@
 #include <Library/MemoryMapHelperLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/PcdLib.h>
+#include <Library/CacheMaintenanceLib.h>
 
 #include <Configuration/BootDevices.h>
 
@@ -12,6 +14,47 @@
 // Global Variables
 //
 STATIC FRAME_BUFFER_CONFIGURE *FrameBufferConfiguration;
+STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL mFrameBuffer;
+STATIC UINTN mFrameBase,mFrameBytes,mFrameStride,mFramePixelBytes;
+STATIC UINT32 mFrameWidth,mFrameHeight,mBltErrors;
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL *mRowScratch;
+STATIC BOOLEAN
+CalculateFrameBytes (UINTN Width,UINTN Height,UINTN PixelBytes,UINTN *Bytes)
+{
+  if(!Width || !Height || !PixelBytes || Width>MAX_UINTN/PixelBytes)return FALSE;
+  UINTN Stride=Width*PixelBytes;if(Height>MAX_UINTN/Stride)return FALSE;
+  *Bytes=Stride*Height;return TRUE;
+}
+
+STATIC BOOLEAN
+FrameRectValid (UINTN X,UINTN Y,UINTN Width,UINTN Height)
+{
+  return Width && Height && X<mFrameWidth && Y<mFrameHeight &&
+    Width<=mFrameWidth-X && Height<=mFrameHeight-Y;
+}
+
+STATIC VOID
+PublishFrameRect (UINTN X,UINTN Y,UINTN Width,UINTN Height)
+{
+  UINTN Offset=Y*mFrameStride+X*mFramePixelBytes,Bytes=Width*mFramePixelBytes;
+  // Only the initialized framebuffer allocation is involved. No invalidate,
+  // whole-cache maintenance, MMU change or device-DMA ownership is performed.
+  if(X==0 && Bytes==mFrameStride){
+    WriteBackDataCacheRange((VOID *)(mFrameBase+Offset),Height*mFrameStride);
+  }else for(UINTN Row=0;Row<Height;++Row)
+    WriteBackDataCacheRange((VOID *)(mFrameBase+Offset+Row*mFrameStride),Bytes);
+  // The real ArmCacheMaintenanceLib supplies its required final DSB.
+}
+
+STATIC EFI_STATUS
+BltFailure (EFI_STATUS Status,EFI_GRAPHICS_OUTPUT_BLT_OPERATION Operation,
+            UINTN SourceX,UINTN SourceY,UINTN X,UINTN Y,UINTN Width,UINTN Height)
+{
+  if(mBltErrors<8){++mBltErrors;
+    DEBUG((DEBUG_WARN,"SUNUEFI_GOP_BLT_ERROR index=%u op=%u src=%lu,%lu dst=%lu,%lu rect=%lux%lu status=%r\n",
+      mBltErrors,(UINT32)Operation,(UINT64)SourceX,(UINT64)SourceY,(UINT64)X,(UINT64)Y,(UINT64)Width,(UINT64)Height,Status));}
+  return Status;
+}
 
 EFI_STATUS
 FrameBufferQueryMode (
@@ -72,16 +115,48 @@ FrameBufferGopBlt (
   EFI_STATUS Status;
   EFI_TPL    Tpl;
 
+  if(This!=&mFrameBuffer || !This->Mode || !This->Mode->Info ||
+     !FrameBufferConfiguration || !mFrameBytes || !mRowScratch)
+    return BltFailure(EFI_NOT_READY,BltOperation,SourceX,SourceY,DestinationX,DestinationY,Width,Height);
+  if(This->Mode->FrameBufferBase!=mFrameBase || This->Mode->FrameBufferSize!=mFrameBytes ||
+     This->Mode->Info->HorizontalResolution!=mFrameWidth || This->Mode->Info->VerticalResolution!=mFrameHeight ||
+     This->Mode->Info->PixelsPerScanLine*mFramePixelBytes!=mFrameStride)
+    return BltFailure(EFI_COMPROMISED_DATA,BltOperation,SourceX,SourceY,DestinationX,DestinationY,Width,Height);
+  if(BltOperation>=EfiGraphicsOutputBltOperationMax ||
+     (BltOperation!=EfiBltVideoToVideo && !BltBuffer) ||
+     (BltOperation==EfiBltVideoToBltBuffer ? !FrameRectValid(SourceX,SourceY,Width,Height) :
+      !FrameRectValid(DestinationX,DestinationY,Width,Height)) ||
+     (BltOperation==EfiBltVideoToVideo && !FrameRectValid(SourceX,SourceY,Width,Height)))
+    return BltFailure(EFI_INVALID_PARAMETER,BltOperation,SourceX,SourceY,DestinationX,DestinationY,Width,Height);
+
   // Raise TPL Level
   Tpl = gBS->RaiseTPL (TPL_NOTIFY);
 
   // Draw to Frame Buffer
-  Status = FrameBufferBlt (FrameBufferConfiguration, BltBuffer, BltOperation, SourceX, SourceY, DestinationX, DestinationY, Width, Height, Delta);
+  if(BltOperation==EfiBltVideoToVideo){
+    // The selected library's downward copy starts at Y+Height, one row past
+    // the rectangle. Use its real read/write primitives through one bounded
+    // scratch row, bottom-up for downward overlap and top-down otherwise.
+    Status=EFI_SUCCESS;
+    for(UINTN I=0;I<Height;++I){UINTN Row=DestinationY>SourceY?Height-I-1:I;
+      Status=FrameBufferBlt(FrameBufferConfiguration,mRowScratch,EfiBltVideoToBltBuffer,
+        SourceX,SourceY+Row,0,0,Width,1,0);
+      if(Status!=EFI_SUCCESS)break;
+      Status=FrameBufferBlt(FrameBufferConfiguration,mRowScratch,EfiBltBufferToVideo,
+        0,0,DestinationX,DestinationY+Row,Width,1,0);
+      if(Status!=EFI_SUCCESS)break;
+      PublishFrameRect(DestinationX,DestinationY+Row,Width,1);
+    }
+  }else{
+    Status=FrameBufferBlt(FrameBufferConfiguration,BltBuffer,BltOperation,SourceX,SourceY,DestinationX,DestinationY,Width,Height,Delta);
+    if(Status==EFI_SUCCESS && BltOperation!=EfiBltVideoToBltBuffer)
+      PublishFrameRect(DestinationX,DestinationY,Width,Height);
+  }
 
   // Restore TPL Level
   gBS->RestoreTPL (Tpl);
 
-  return Status;
+  return Status==EFI_SUCCESS?Status:BltFailure(Status,BltOperation,SourceX,SourceY,DestinationX,DestinationY,Width,Height);
 }
 
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL mFrameBuffer = {
@@ -100,6 +175,7 @@ GetFrameBufferInfos (
 {
   EFI_MEMORY_REGION_DESCRIPTOR FrameBufferRegion = {0};
   EFI_STATUS Status;
+  UINTN Bytes;
 
   // Locate "Display Reserved" Memory Region
   Status = LocateMemoryRegionByName ("Display_Reserved", &FrameBufferRegion);
@@ -117,14 +193,17 @@ GetFrameBufferInfos (
   *ColorDepth = FixedPcdGet32 (PcdFrameBufferColorDepth);
 
   // Verify Frame Buffer Resolution
-  if (*Width < 640 || *Height < 475) {
+  if (!*Width || !*Height || *Width < 640 || *Height < 475) {
     DEBUG ((EFI_D_ERROR, "Frame Buffer Resolution is too Small!\n"));
     DEBUG ((EFI_D_ERROR, "Minimal Supported Resolution = 640x475\n"));
 
     return EFI_UNSUPPORTED;
   }
 
-  if (*ColorDepth != 32 || (UINT64)*Width * *Height * 4 > FrameBufferRegion.Length) {
+  if (*ColorDepth != 32 || !CalculateFrameBytes(*Width,*Height,4,&Bytes) ||
+      Bytes > FrameBufferRegion.Length ||
+      FrameBufferRegion.Address>MAX_UINTN ||
+      Bytes>MAX_UINTN-(UINTN)FrameBufferRegion.Address) {
     return EFI_UNSUPPORTED;
   }
   // Pass Frame Buffer Address
@@ -168,6 +247,11 @@ SetFrameBufferModeDetails (
   IN UINT32               Height,
   IN UINT32               ColorDepth)
 {
+  UINTN Bytes;
+  if(!mFrameBuffer.Mode || !mFrameBuffer.Mode->Info || !Width || !Height ||
+     (ColorDepth!=32 && ColorDepth!=24 && ColorDepth!=16) ||
+     !CalculateFrameBytes(Width,Height,ColorDepth/8,&Bytes) || BaseAddress>MAX_UINTN ||
+     Bytes>MAX_UINTN-(UINTN)BaseAddress)return EFI_INVALID_PARAMETER;
   // Set Info Size
   mFrameBuffer.Mode->SizeOfInfo = sizeof (EFI_GRAPHICS_OUTPUT_MODE_INFORMATION);
 
@@ -177,7 +261,7 @@ SetFrameBufferModeDetails (
 
   // Set Frame Buffer Range
   mFrameBuffer.Mode->FrameBufferBase = BaseAddress;
-  mFrameBuffer.Mode->FrameBufferSize = (UINTN)Width * Height * (ColorDepth / 8);
+  mFrameBuffer.Mode->FrameBufferSize = Bytes;
 
   // Set Mode Info Version
   mFrameBuffer.Mode->Info->Version = 0;
@@ -214,6 +298,8 @@ SetFrameBufferModeDetails (
       return EFI_UNSUPPORTED;
   }
 
+  mFrameBase=(UINTN)BaseAddress;mFrameBytes=mFrameBuffer.Mode->FrameBufferSize;
+  mFrameWidth=Width;mFrameHeight=Height;mFramePixelBytes=ColorDepth/8;mFrameStride=(UINTN)Width*mFramePixelBytes;
   return EFI_SUCCESS;
 }
 
@@ -242,6 +328,9 @@ CreateFrameBufferConfig (IN EFI_PHYSICAL_ADDRESS BaseAddress)
     return Status;
   }
 
+  mRowScratch=AllocatePool((UINTN)mFrameWidth*sizeof(*mRowScratch));
+  if(mRowScratch==NULL)return EFI_OUT_OF_RESOURCES;
+
   return EFI_SUCCESS;
 }
 
@@ -262,6 +351,7 @@ FreeMemoryBuffers ()
   if (FrameBufferConfiguration != NULL) {
     FreePool (FrameBufferConfiguration);
   }
+  if(mRowScratch!=NULL){FreePool(mRowScratch);mRowScratch=NULL;}
 }
 
 EFI_STATUS
@@ -275,6 +365,7 @@ RegisterFrameBuffer (
   UINT32               Width;
   UINT32               Height;
   UINT32               ColorDepth;
+  (VOID)SystemTable;
 
   // Get Frame Buffer Infos
   Status = GetFrameBufferInfos (&BaseAddress, &Width, &Height, &ColorDepth);

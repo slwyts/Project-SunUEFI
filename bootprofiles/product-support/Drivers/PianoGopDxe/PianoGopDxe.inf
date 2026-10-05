@@ -24,6 +24,7 @@
   MemoryMapHelperLib
   BaseMemoryLib
   PcdLib
+  CacheMaintenanceLib
 
 [FixedPcd]
   gSiliciumPkgTokenSpaceGuid.PcdFrameBufferWidth
