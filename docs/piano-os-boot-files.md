@@ -59,6 +59,11 @@ export provenance tests. The actual ARM64 sources passed strict compilation.
 The full run is recorded in `build/logs/os-boot-final-host-tests.log`. A direct
 reader-plus-session joint fixture and physical SFS-to-Linux test are still
 missing; separate passing fixtures do not establish those results.
+The interface/lifetime review found the intended ordering compatible, but the
+future `BootServicesAlive` binding must use a genuine BS/EBS fence independent
+of `ProductRuntime.Alive`: policy retirement closes that runtime while Boot
+Services still exist. Using the UI runtime flag would wrongly reject source
+release and normal session cleanup after owner retirement.
 
 The existing unique product build remains fresh at build ID
 `b4b90bee-4a74-48f1-b653-2497aaf002ea`, Image SHA256
