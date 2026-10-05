@@ -1,0 +1,49 @@
+#!/bin/bash
+# Full Debian RAM-root entry. No Android block root, fsck, growfs or remount.
+set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+log() { printf 'piano: %s\n' "$*"; }
+fail() { log "BOOT_REFUSED: $*"; exit 1; }
+root_mode=ram
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in
+        piano.root=*) root_mode=${arg#piano.root=} ;;
+        root=PARTLABEL=userdata|root=/dev/sd*|root=/dev/block/*)
+            fail 'Android block-root arguments are forbidden' ;;
+    esac
+done
+[ "$root_mode" = ram ] || fail 'This entry requires a complete RAM root'
+mkdir -p /dev /proc /sys /run
+mountpoint -q /dev || mount -t devtmpfs devtmpfs /dev
+mountpoint -q /proc || mount -t proc proc /proc
+mountpoint -q /sys || mount -t sysfs sysfs /sys
+root_type=$(awk '$2=="/" { print $3; exit }' /proc/mounts)
+case "$root_type" in rootfs|ramfs|tmpfs) ;; *) fail "root is not RAM: $root_type" ;; esac
+mountpoint -q /run || mount -t tmpfs -o mode=0755 tmpfs /run
+[ -x /usr/lib/systemd/systemd ] || fail 'Real systemd is missing'
+[ -d "/usr/lib/modules/$(uname -r)" ] || fail 'Matching full kernel modules are missing'
+[ ! -f /etc/initrd-release ] || fail 'RAM distro was incorrectly staged as an initrd-only image'
+[ -x /usr/lib/piano/piano-ram-hardware-prepare ] || fail 'Audited hardware preparation is missing'
+printf 'ram\n' > /run/piano-root-mode
+# A 4GiB tmpfs is a size ceiling, not a 4GiB reservation. Copying the original
+# initramfs temporarily needs an additional source-sized allocation; check
+# actual available RAM first. Never pretend the current UEFI low map suffices.
+ram_limit=4294967296
+source_bytes=$(du -sx --block-size=1 / | awk '{print $1}')
+available_kib=$(awk '$1=="MemAvailable:" {print $2; exit}' /proc/meminfo)
+case "$source_bytes:$available_kib" in *[!0-9:]*|:*|*:) fail 'RAM accounting is unavailable' ;; esac
+[ "$source_bytes" -lt "$ram_limit" ] || fail 'Complete rootfs exceeds the 4GiB budget'
+[ "$((available_kib * 1024))" -gt "$((source_bytes + 536870912))" ] || fail 'Insufficient RAM for root migration'
+mkdir -p /sysroot
+mount -t tmpfs -o size="$ram_limit",mode=0755 tmpfs /sysroot
+tar --one-file-system --exclude=./sysroot --exclude=./proc --exclude=./sys \
+    --exclude=./dev --exclude=./run --exclude=./tmp -C / -cf - . | tar -C /sysroot -xf -
+mkdir -p /sysroot/dev /sysroot/proc /sysroot/sys /sysroot/run /sysroot/tmp
+for virtual in dev proc sys run; do mount --move "/$virtual" "/sysroot/$virtual"; done
+# The full published userspace service graph remains installed. Hardware
+# bootstrap is a separate audited script; never claim a SMMU-ready marker just
+# because the RAM root exists. No unvalidated UFS CLKREF/devmem write here.
+[ -x /sysroot/usr/lib/piano/piano-ram-hardware-prepare ] || fail 'Audited hardware preparation is missing'
+chroot /sysroot /usr/lib/piano/piano-ram-hardware-prepare || fail 'Hardware preparation failed'
+log 'RAM_ROOT_READY: handing PID1 to Debian systemd; Android data untouched'
+exec switch_root /sysroot /usr/lib/systemd/systemd

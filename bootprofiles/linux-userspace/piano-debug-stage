@@ -1,0 +1,16 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# Call from an initramfs /init or a RAM-extracted distro after proc/sys/dev/run
+# are ready. Nothing here mounts a block device or loads storage modules.
+set -u
+SCRIPT=${PIANO_DEBUG_SCRIPT:-/usr/local/sbin/piano-debug-bootstrap}
+"$SCRIPT" diagnose
+"$SCRIPT" recover || printf 'PIANO_LINUX_DEBUG status=recovery_setup_failed\n'
+if "$SCRIPT" start; then
+    printf 'PIANO_LINUX_DEBUG status=stage_complete hardware_enumeration_verified=0\n'
+else
+    printf 'PIANO_LINUX_DEBUG status=stage_incomplete gadget_setup_failed=1\n'
+    exit 1
+fi
+# Run ttyGS0 getty under the caller's supervisor; default shell opt-in is off.
+exit 0

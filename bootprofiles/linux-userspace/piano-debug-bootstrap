@@ -1,0 +1,200 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# RAM-root Linux diagnostics; only explicit kernel parameters enable gadgets.
+# No block mounts, insmod/modprobe, role swapping, PHY MMIO or devmem.
+set -eu
+ROOT=${PIANO_DEBUG_FIXTURE_ROOT:-}
+ACTION=${1:-diagnose}
+case "$ROOT" in '') EVIDENCE=linux-runtime;; /*) EVIDENCE=fixture;; *) echo 'invalid fixture root' >&2; exit 2;; esac
+p() { printf '%s%s' "$ROOT" "$1"; }
+log() { printf 'PIANO_LINUX_DEBUG evidence=%s %s\n' "$EVIDENCE" "$*"; }
+fail() { log "status=failed reason=$*"; exit 1; }
+read_value() { [ -r "$1" ] && tr -d '\000\r\n' <"$1" || :; }
+valid_name() { case "$1" in ''|.|..|*[!A-Za-z0-9_.:-]*) return 1;; *) return 0;; esac; }
+USB=off UDC='' ROLE='' SHELL_ENABLED=0 RECOVERY=0 IPV4=''
+[ -r "$(p /proc/cmdline)" ] || fail cmdline_unavailable
+for word in $(cat "$(p /proc/cmdline)"); do
+    case "$word" in
+        piano.debug_usb=*) USB=${word#*=};;
+        piano.debug_udc=*) UDC=${word#*=};;
+        piano.debug_role=*) ROLE=${word#*=};;
+        piano.debug_shell=*) SHELL_ENABLED=${word#*=};;
+        piano.recovery_seconds=*) RECOVERY=${word#*=};;
+        piano.debug_ipv4=*) IPV4=${word#*=};;
+    esac
+done
+case "$USB" in off|acm-ncm) :;; *) fail invalid_usb_mode;; esac
+case "$SHELL_ENABLED" in 0|1) :;; *) fail invalid_shell_flag;; esac
+case "$RECOVERY" in ''|*[!0-9]*) fail invalid_recovery_seconds;; esac
+[ "$RECOVERY" -le 86400 ] || fail recovery_seconds_too_large
+[ -z "$UDC" ] || valid_name "$UDC" || fail invalid_udc_name
+[ -z "$ROLE" ] || valid_name "$ROLE" || fail invalid_role_name
+# This optional link address does not add a default route, forwarding or DHCP.
+case "$IPV4" in ''|192.168.77.1/30) :;; *) fail unsupported_debug_ipv4;; esac
+RUN=$(p /run/piano-debug) CONFIG=$(p /sys/kernel/config)
+G=$CONFIG/usb_gadget/piano-linux-debug
+ROOT_TYPE=''
+[ -r "$(p /proc/mounts)" ] || fail mounts_unavailable
+while read -r dev point type rest; do [ "$point" != / ] || ROOT_TYPE=$type; done <"$(p /proc/mounts)"
+ram_root() { case "$ROOT_TYPE" in rootfs|tmpfs|ramfs) return 0;; *) return 1;; esac; }
+log "action=$ACTION usb=$USB root_type=${ROOT_TYPE:-unknown} recovery_seconds=$RECOVERY shell=$SHELL_ENABLED"
+case "$ACTION" in diagnose|start|stop|serial|recover) :;; *) fail unknown_action;; esac
+if [ "$ACTION" = diagnose ]; then
+    log "kernel=$(uname -r) cpu_online=$(read_value "$(p /sys/devices/system/cpu/online)")"
+    for node in "$(p /sys/class/udc)"/*; do
+        [ -e "$node" ] || continue
+        log "udc=${node##*/} state=$(read_value "$node/state") function=$(read_value "$node/function") current_speed=$(read_value "$node/current_speed")"
+    done
+    for node in "$(p /sys/class/usb_role)"/*; do
+        [ -r "$node/role" ] || continue
+        log "role=${node##*/} value=$(read_value "$node/role")"
+    done
+    log 'status=diagnostics_ready configured=0 no_modules_loaded=1 no_block_mounts=1'
+    exit 0
+fi
+ram_root || fail ram_root_required
+while read -r dev point type rest; do
+    case "$point" in /run|/run/piano-debug)
+        case "$type" in rootfs|tmpfs|ramfs) :;; *) fail ram_state_directory_required;; esac;;
+    esac
+done <"$(p /proc/mounts)"
+[ "$(id -u)" = 0 ] || fail root_required
+[ -d "$(p /run)" ] || fail run_unavailable
+mkdir -p "$RUN"
+BOOT_ID=$(read_value "$(p /proc/sys/kernel/random/boot_id)")
+[ -n "$BOOT_ID" ] || fail boot_id_unavailable
+if [ "$ACTION" = recover ]; then
+    [ "$RECOVERY" -gt 0 ] || { log 'status=recovery_disabled'; exit 0; }
+    [ ! -e "$RUN/recovery.pid" ] || fail recovery_already_armed
+    (
+        sleep "$RECOVERY"
+        log "status=recovery_expired seconds=$RECOVERY"
+        reboot -f || log 'status=recovery_failed reboot_returned=1'
+    ) &
+    printf '%s\n' "$!" >"$RUN/recovery.pid"
+    log "status=recovery_armed seconds=$RECOVERY"
+    exit 0
+fi
+if [ "$ACTION" = serial ]; then
+    [ "$SHELL_ENABLED" = 1 ] || fail serial_shell_not_requested
+    [ -c "$(p /dev/ttyGS0)" ] || fail ttyGS0_unavailable
+    [ -r "$RUN/boot-id" ] && [ "$(read_value "$RUN/boot-id")" = "$BOOT_ID" ] || fail gadget_not_owned_this_boot
+    [ "$(read_value "$G/UDC")" = "$(read_value "$RUN/udc")" ] || fail gadget_binding_changed
+    log 'status=serial_shell_start tty=ttyGS0 explicit_opt_in=1'
+    # Getty opens a real controlling terminal. RAM recovery can use BusyBox;
+    # Debian can use util-linux agetty and its normal login implementation.
+    if command -v agetty >/dev/null 2>&1; then
+        exec agetty --local-line --autologin root 115200 ttyGS0 vt100
+    elif command -v busybox >/dev/null 2>&1; then
+        exec busybox getty -L -n -l /bin/sh 115200 ttyGS0 vt100
+    fi
+    fail no_getty_available
+fi
+cleanup() {
+    # Only the directory created by this invocation may be rolled back. Never
+    # remove foreign gadgets or guess that an unknown bind was successful.
+    [ "${OWNED:-0}" = 1 ] || return 0
+    if [ -r "$G/UDC" ]; then printf '\n' >"$G/UDC" || return 1; fi
+    for link in "$G/configs/c.1/acm.usb0" "$G/configs/c.1/ncm.usb0"; do
+        [ ! -L "$link" ] || rm "$link"
+    done
+    for dir in configs/c.1/strings/0x409 configs/c.1 functions/acm.usb0 functions/ncm.usb0 strings/0x409; do
+        [ ! -d "$G/$dir" ] || rmdir "$G/$dir" || return 1
+    done
+    [ ! -d "$G" ] || rmdir "$G" || return 1
+    rm -f "$RUN/boot-id" "$RUN/udc" "$RUN/ifname"
+}
+if [ "$ACTION" = stop ]; then
+    [ -r "$RUN/boot-id" ] && [ "$(read_value "$RUN/boot-id")" = "$BOOT_ID" ] || fail not_owned_this_boot
+    [ "$(read_value "$G/UDC")" = "$(read_value "$RUN/udc")" ] || fail gadget_binding_changed
+    OWNED=1
+    cleanup || fail cleanup_unknown
+    log 'status=stopped'
+    exit 0
+fi
+[ "$USB" = acm-ncm ] || { log 'status=usb_disabled configured=0'; exit 0; }
+[ -r "$(p /proc/filesystems)" ] && awk '$NF=="configfs" {found=1} END {exit !found}' "$(p /proc/filesystems)" || fail configfs_not_available
+count=0 selected=''
+for node in "$(p /sys/class/udc)"/*; do
+    [ -e "$node" ] || continue
+    count=$((count+1)); selected=${node##*/}
+done
+if [ -z "$UDC" ]; then [ "$count" = 1 ] || fail udc_selection_ambiguous_or_absent; UDC=$selected; fi
+U=$(p /sys/class/udc)/$UDC
+[ -d "$U" ] && [ -r "$U/state" ] && [ -r "$U/function" ] || fail udc_metadata_unavailable
+[ -z "$(read_value "$U/function")" ] || fail udc_already_in_use
+case "$(read_value "$U/state")" in
+    'not attached'|not-attached|attached|powered|reconnecting|unauthenticated|default|addressed) :;;
+    configured|suspended) fail udc_reported_busy;;
+    *) fail udc_state_unknown;;
+esac
+driver=$(readlink -f "$U/device/driver" 2>/dev/null || :)
+[ "${driver##*/}" = dwc3 ] || fail unsupported_udc_driver
+controller=$(readlink -f "$U/device" 2>/dev/null || :)
+[ -n "$controller" ] || fail udc_device_unavailable
+role_count=0 role_path=''
+for node in "$(p /sys/class/usb_role)"/*; do
+    [ -r "$node/role" ] || continue
+    [ -z "$ROLE" ] || [ "${node##*/}" = "$ROLE" ] || continue
+    provider=$(readlink -f "$node/device" 2>/dev/null || :)
+    [ -n "$provider" ] || continue
+    case "$controller/" in "$provider/"*) related=1;; *)
+        case "$provider/" in "$controller/"*) related=1;; *) related=0;; esac;; esac
+    [ "$related" = 1 ] || continue
+    role_count=$((role_count+1)); role_path=$node/role
+done
+[ "$role_count" = 1 ] || fail device_role_unproven_or_ambiguous
+[ "$(read_value "$role_path")" = device ] || fail role_not_device
+# Never request a Type-C/role switch or write UDC soft_connect to compensate.
+mounted=0
+while read -r dev point type rest; do [ "$point" != /sys/kernel/config ] || { [ "$type" != configfs ] || mounted=1; }; done <"$(p /proc/mounts)"
+if [ "$mounted" = 0 ]; then mkdir -p "$CONFIG"; mount -t configfs none "$CONFIG" || fail configfs_mount_failed; fi
+[ -d "$CONFIG/usb_gadget" ] || fail libcomposite_unavailable
+for bind in "$CONFIG/usb_gadget"/*/UDC; do
+    [ ! -r "$bind" ] || [ "$(read_value "$bind")" != "$UDC" ] || fail udc_bound_to_foreign_gadget
+done
+[ ! -e "$G" ] || fail gadget_directory_already_exists
+OWNED=0
+rollback() { status=$?; trap - EXIT; if [ "$status" != 0 ]; then cleanup || log 'status=retained cleanup_unknown=1'; log "status=setup_failed exit=$status"; fi; exit "$status"; }
+trap rollback EXIT
+mkdir "$G"; OWNED=1
+write_attr() { [ -e "$1" ] || fail "attribute_missing ${1##*/}"; printf '%s\n' "$2" >"$1" || fail "attribute_write_failed ${1##*/}"; }
+write_attr "$G/idVendor" 0x1209
+write_attr "$G/idProduct" 0x8751
+write_attr "$G/bcdUSB" 0x0200
+write_attr "$G/bcdDevice" 0x0100
+write_attr "$G/bDeviceClass" 0xEF
+write_attr "$G/bDeviceSubClass" 0x02
+write_attr "$G/bDeviceProtocol" 0x01
+mkdir "$G/strings/0x409"
+write_attr "$G/strings/0x409/manufacturer" PianoUEFI
+write_attr "$G/strings/0x409/product" 'Piano Linux RAM Debug ACM NCM'
+write_attr "$G/strings/0x409/serialnumber" Piano-Linux-RAM
+mkdir "$G/configs/c.1"
+mkdir "$G/configs/c.1/strings/0x409"
+write_attr "$G/configs/c.1/strings/0x409/configuration" 'ACM serial and NCM debug network'
+write_attr "$G/configs/c.1/MaxPower" 120
+mkdir "$G/functions/acm.usb0"
+mkdir "$G/functions/ncm.usb0"
+write_attr "$G/functions/ncm.usb0/dev_addr" 02:87:50:00:00:01
+write_attr "$G/functions/ncm.usb0/host_addr" 02:87:50:00:00:02
+ln -s "$G/functions/acm.usb0" "$G/configs/c.1/acm.usb0"
+ln -s "$G/functions/ncm.usb0" "$G/configs/c.1/ncm.usb0"
+# Recheck kernel-owned role immediately before binding; a hotplug transition
+# must not be silently converted into register/PHY writes by userspace.
+[ "$(read_value "$role_path")" = device ] || fail role_changed_before_bind
+write_attr "$G/UDC" "$UDC"
+[ "$(read_value "$G/UDC")" = "$UDC" ] || fail udc_bind_unconfirmed
+printf '%s\n' "$BOOT_ID" >"$RUN/boot-id"
+printf '%s\n' "$UDC" >"$RUN/udc"
+ifname=$(read_value "$G/functions/ncm.usb0/ifname")
+[ -n "$ifname" ] && valid_name "$ifname" || fail ncm_ifname_unavailable
+printf '%s\n' "$ifname" >"$RUN/ifname"
+if [ -n "$IPV4" ]; then
+    [ -d "$(p /sys/class/net)/$ifname" ] || fail ncm_netdevice_unavailable
+    ip link set dev "$ifname" up || fail ncm_link_failed
+    ip address add "$IPV4" dev "$ifname" || fail ncm_address_failed
+fi
+trap - EXIT
+log "status=gadget_bound udc=$UDC role=device ifname=$ifname configured_observed=$(read_value "$U/state") enumeration_verified=0 no_storage_function=1"
+log "status=ready shell_requested=$SHELL_ENABLED recovery_seconds=$RECOVERY"
