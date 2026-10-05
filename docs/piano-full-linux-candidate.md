@@ -104,6 +104,11 @@ The independent full archive verification checked every retained member and all
 regular bytes, including the capability and both ACL records. Its bootstrap is
 881,173,504 bytes, SHA256
 `4da3dd1b0a07b0cca53426f28aa0afa16ae6c2cb3fe6ee0df20f4bcb0c921eb7`.
+The real ARM64 GNU tar and static gzip then extracted this full package in the
+private namespace. A second complete tree scan found the identical fingerprint
+`eb223c09c1ec19d27953605b55c487aa6d45199df71e0b03f3035d67b567d461`,
+including all file hashes, guest owners, modes, links, capability and ACL bytes.
+This verifies the extraction runtime; it does not validate the Piano kernel/PID1.
 With the current41,912,832-byte kernel and1,209,103-byte DTB, these components
 total924,295,439 bytes before transport headers, below the1GiB target. This is
 a sizing/build result: hardware helpers and the final kernel/DTB binding remain

@@ -194,6 +194,8 @@ def package(root, output):
         raise ValueError('Only an explicit derived workspace distro is accepted')
     if not output.is_relative_to(ROOT / 'artifacts') or output.exists():
         raise ValueError('Output must be a fresh artifact directory')
+    if root.stat().st_uid != 0 or root.stat().st_gid != 0:
+        raise ValueError('Derived guest root ownership was not mapped to guest root')
     before = snapshot(root)
     if before['regular_page_budget_bytes'] >= LIMIT:
         raise ValueError('Unpacked root exceeds the 4GiB tmpfs budget')
