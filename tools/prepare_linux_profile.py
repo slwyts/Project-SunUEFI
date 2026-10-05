@@ -3,12 +3,30 @@
 from pathlib import Path
 import shutil
 import argparse
+import hashlib
+import json
+from piano_cma_contract import create as create_cma_candidate
+
+def clear_generated_cma_manifest(path):
+    if not path.exists(): return
+    try: metadata=json.loads(path.read_text())
+    except (ValueError,OSError): raise SystemExit('Unknown derived CMA snapshot; refusing to remove it')
+    if metadata.get('status')!='HOST_CMA_CANDIDATE_NOT_HARDWARE_VERIFIED' or metadata.get('scope')!='exactly_two_fixed_reusable_CMA_pools':
+        raise SystemExit('Unknown derived CMA snapshot; refusing to remove it')
+    path.unlink()
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--raw', action='store_true')
+    ap.add_argument('--cma-contract-candidate', action='store_true',
+        help='Opt-in pinned two-pool CMA occupied LoaderData/WB-XP candidate; hardware ownership unverified')
     args = ap.parse_args()
     root = Path(__file__).resolve().parent.parent
+    candidate = None
+    if args.cma_contract_candidate:
+        if args.raw: ap.error('--cma-contract-candidate is an EFI contract diagnostic and cannot be combined with --raw')
+        # Complete pin/DT/native/Mu/HOB preflight before creating a derived target.
+        candidate = create_cma_candidate(root)
     src = root / 'platforms/pianoProbePkg'
     dst = root / 'platforms/pianoLinuxPkg'
     shutil.copytree(src, dst, dirs_exist_ok=True)
@@ -80,7 +98,21 @@ def main():
 }'''
     if old not in data: raise SystemExit('Unexpected diagnostic hook')
     c.write_text(data.replace(old,new))
+    if candidate is not None:
+        table=dst/'Library/MemoryMapLib/MemoryMapLib.c'
+        source,metadata=candidate
+        if hashlib.sha256(table.read_bytes()).hexdigest()!=metadata['original_native_sha256']:
+            raise SystemExit('Derived native table differs from pinned source before CMA insertion')
+        table.write_bytes(source)
+        if hashlib.sha256(table.read_bytes()).hexdigest()!=metadata['candidate_table_sha256']:
+            raise SystemExit('Derived CMA descriptor snapshot mismatch')
+        (dst/'cma-contract-candidate.json').write_text(json.dumps(metadata,indent=2)+'\n')
+    else:
+        clear_generated_cma_manifest(dst/'cma-contract-candidate.json')
     shutil.copytree(dst, root/'upstream/Mu-Silicium/Platforms/Xiaomi/pianoLinuxPkg', dirs_exist_ok=True)
-    print('Separate pianoLinuxPkg prepared; minimal diagnostic source retained')
+    if candidate is None:
+        clear_generated_cma_manifest(root/'upstream/Mu-Silicium/Platforms/Xiaomi/pianoLinuxPkg/cma-contract-candidate.json')
+    print('Separate pianoLinuxPkg prepared; minimal diagnostic source retained'+
+          ('; pinned CMA candidate opt-in, not hardware verified' if candidate is not None else ''))
 
 if __name__ == '__main__': main()

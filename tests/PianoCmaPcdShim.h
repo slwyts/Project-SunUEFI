@@ -1,0 +1,9 @@
+// Test-only PCD values normally supplied by Mu AutoGen. Real Mu types/libraries.
+#pragma once
+#define _PCD_VALUE_PcdSystemMemoryBase 0x80000000ULL
+#define _PCD_GET_MODE_BOOL_PcdPrePiProduceMemoryTypeInformationHob FALSE
+#define _PCD_GET_MODE_32_PcdMemoryTypeEfiACPIReclaimMemory 0U
+#define _PCD_GET_MODE_32_PcdMemoryTypeEfiACPIMemoryNVS 0U
+#define _PCD_GET_MODE_32_PcdMemoryTypeEfiReservedMemoryType 0U
+#define _PCD_GET_MODE_32_PcdMemoryTypeEfiRuntimeServicesData 0U
+#define _PCD_GET_MODE_32_PcdMemoryTypeEfiRuntimeServicesCode 0U
