@@ -135,6 +135,39 @@ Kernel+DTB+bootstrap total925,295,375 bytes before transport headers. The source
 tree still deliberately lacks a fabricated hardware-ready preparation script;
 the independent SMMU attach/readback integration is required before boot.
 
+## Shared full Stable and Next root
+
+The current derived tree is `build/distros/debian13-piano-full`. It now contains
+the complete Stable release `7.2.6-piano-gnome-00064-gd42158782b81` (1,637 kernel
+modules) and Next `7.3.0-rc6-piano-gnome-g498569101e34` (1,672 modules), plus a
+separately built ABI-matching v4l2loopback for each. The original GNU root and
+sealed kernel artifacts remain unchanged. Each release's module provenance is
+preserved separately. Kernel staging verifies every original file/hash/index;
+runtime staging rebuilds the additional module's dependency indexes.
+
+The actual v3 hardware adapters are installed: managed TCSR clocks, USB/QUP/GPI,
+GPU/GMU/MDSS stage1, video/camera, GPR/FastRPC/audio and PCIe consumer readbacks.
+Drivers create their normal domains/devices before the required checks. The
+prebind display observation may fail without blocking legitimate driver takeover;
+postbind checks remain mandatory. No global ready file or userspace register
+write substitutes for kernel state. PCI PARF hardware mapping and actual transfers
+remain unverified. The explicit Linux debug config requests ACM/NCM and serial;
+the script still requires actual UDC/device-role evidence and has not enumerated
+on the tablet. The config works despite the forced compiled kernel command line.
+
+The shared root archive is sealed at
+`artifacts/linux-full-rootfs/common-stable-next-20261006/`:35,560 retained members,
+2,574,068,462 unique regular bytes,2,642,870,272 estimated page bytes and
+900,022,057 compressed bytes. Its SHA256 is
+`d796a4e0332ffa44f874b6875a1425dd4a4cd3dd6c9df74f637b4e8d8a8ccc96`.
+The matching bootstrap is904,729,600 bytes, SHA256
+`cf9ae73af00cd96d61354dc429ee48936d8abecf283a0c8639368425c3b05eaf`.
+Actual full archive/member, root/module ABI, streamed CPIO payload and four-stage
+DTB chain checks passed. `tools/assemble_piano_linux.py` materialized one EFI file
+tree at `artifacts/linux-assembled/piano-stable-next-20261006/`, with two kernel
+entries sharing one initramfs. Both entries remain disabled pending live full-DDR,
+native late-EBS admission and device validation; host assembly is not a boot.
+
 The ceiling is distinct from the compressed fastboot payload limit. Firmware's
 actual current limit remains64MiB and its planned download capacity remains1GiB
 pending the validated DDR allocator. Standard fastboot uses an8-hex-digit DATA
