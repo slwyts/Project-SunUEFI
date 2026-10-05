@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+/plugin/;
+#include <dt-bindings/clock/qcom,rpmh.h>
+#include <dt-bindings/clock/qcom,sm8750-gcc.h>
+#include <dt-bindings/clock/qcom,sm8750-tcsr.h>
+
+// Existing stock/live TCSRCC range matches Linux sm8750.dtsi and its regmap.
+// Replace only the two fixed-clock PHY stand-ins and two wrongly based USB
+// clock references. The ordinary PHY drivers vote these clocks themselves.
+/ {
+    fragment@520 {
+        target-path = "/soc/clock-controller@f204008";
+        __overlay__ {
+            compatible = "qcom,sm8750-tcsr", "syscon";
+            clocks = <&rpmhcc_ml RPMH_CXO_CLK>;
+        };
+    };
+    fragment@521 {
+        target-path = "/soc/syscon@1fc0000";
+        __overlay__ { compatible = "syscon"; };
+    };
+    fragment@522 {
+        target-path = "/soc/ufsphy_mem@1d80000";
+        __overlay__ {
+            clocks = <&rpmhcc_ml RPMH_CXO_CLK>,
+                     <&gcc GCC_UFS_PHY_PHY_AUX_CLK>,
+                     <&tcsrcc TCSR_UFS_CLKREF_EN>;
+        };
+    };
+    fragment@523 {
+        target-path = "/soc/phy@1c06000";
+        __overlay__ {
+            clocks = <&gcc GCC_PCIE_0_AUX_CLK>,
+                     <&gcc GCC_PCIE_0_CFG_AHB_CLK>,
+                     <&tcsrcc TCSR_PCIE_0_CLKREF_EN>,
+                     <&gcc GCC_PCIE_0_PHY_RCHNG_CLK>,
+                     <&gcc GCC_PCIE_0_PIPE_CLK>;
+        };
+    };
+    fragment@524 {
+        target-path = "/soc/hsphy@88e3000";
+        __overlay__ { clocks = <&tcsrcc TCSR_USB2_CLKREF_EN>; };
+    };
+    fragment@525 {
+        target-path = "/soc/ssphy@88e8000";
+        __overlay__ {
+            clocks = <&gcc GCC_USB3_PRIM_PHY_AUX_CLK>,
+                     <&tcsrcc TCSR_USB3_CLKREF_EN>,
+                     <&gcc GCC_USB3_PRIM_PHY_COM_AUX_CLK>,
+                     <&gcc GCC_USB3_PRIM_PHY_PIPE_CLK>;
+        };
+    };
+};

@@ -1,0 +1,219 @@
+#!/usr/bin/python3
+"""Scoped, fresh Linux-owned DMA evidence for the Piano RAM-root service chain.
+
+No raw register access, stream programming, block access or cached ready marker.
+The six-master parser is the same reviewed implementation used on the host.
+"""
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import struct
+import sys
+
+CHECKER_SHA256 = '1f2c26329c00b5b791a101d409032cd3d8b1962f83018937807c5cbbb7f5a2e1'
+CHECKER_PATH = Path('/usr/lib/piano/piano_dma_routes.py')
+CONTEXT_CHECKER_SHA256 = 'b8ddab903e003d2af82219a66b36f9a96801b4e717b00ef6abcfadac91d24be8'
+CONTEXT_CHECKER_PATH = Path('/usr/lib/piano/piano_dma_contexts.py')
+QUP = ('a00000.qcom,gpi-dma', 'ac0000.qcom,qupv3_1_geni_se',
+       '800000.qcom,gpi-dma', '8c0000.qcom,qupv3_2_geni_se')
+SCOPES = {'usb': ('a600000.ssusb',), 'qup': QUP, 'touch': QUP,
+          'keyboard': QUP, 'storage': ('1d84000.ufshc',)}
+CONTEXT_SCOPES = {'gpu': ('gpu', 'gmu'), 'gmu': ('gmu',), 'mdss': ('mdss',),
+                  'mdss-prebind': ('mdss-prebind',),
+                  'video': ('video',), 'camera': ('camera',),
+                  'display': ('mdss', 'gpu', 'gmu'),
+                  'display-active': ('mdss', 'gpu', 'gmu')}
+# Explicit missing implementations, not optional hardware omitted from a boot.
+MISSING = {
+    'radio': 'PCIe iommu-map/RID-to-SID binding and SID 1400/mask 7f kernel readback are missing; legacy USB-route cloning is forbidden',
+    'adsp': 'GPR/FastRPC still reference the legacy apps_smmu; ADSP SID/mask consumer attach and shared-memory proof are missing',
+    'audio': 'GPR dais SID 1001/80 and 1041/20 require real Linux consumer attachment and domain readback',
+}
+
+
+class Refused(RuntimeError):
+    pass
+
+
+def load_reviewed(path, pin, name):
+    if hashlib.sha256(path.read_bytes()).hexdigest() != pin:
+        raise Refused('reviewed DMA verifier hash mismatch')
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def checker(path=CHECKER_PATH):
+    return load_reviewed(path, CHECKER_SHA256, 'piano_dma_routes')
+
+
+def context_checker(path=CONTEXT_CHECKER_PATH):
+    return load_reviewed(path, CONTEXT_CHECKER_SHA256, 'piano_dma_contexts')
+
+
+def read_routes(module, devices, sysfs=Path('/sys')):
+    result = {}
+    for device in devices:
+        directory = sysfs / 'bus/platform/devices' / device
+        expected = sysfs / ('firmware/devicetree/base' + module.NODES[device])
+        if (directory / 'of_node').resolve(strict=True) != expected.resolve(strict=True):
+            raise Refused('actual DT master mismatch: ' + device)
+        path = directory / 'piano_dma_route'
+        first, second = path.read_text(), path.read_text()
+        if first != second:
+            raise Refused('route changed across hardware reads: ' + device)
+        result[device] = module.verify(first, module.DEVICES[device])
+    return result
+
+
+def require_ram(proc=Path('/proc'), run=Path('/run')):
+    words = (proc / 'cmdline').read_text().split()
+    if any(word.startswith('root=') for word in words):
+        raise Refused('block-root command line is forbidden for the RAM-root hardware entry')
+    modes = [word[11:] for word in words if word.startswith('piano.root=')]
+    if modes != ['ram'] or (run / 'piano-root-mode').read_text().strip() != 'ram':
+        raise Refused('explicit RAM-root policy is missing')
+    roots = [line.split() for line in (proc / 'mounts').read_text().splitlines()
+             if len(line.split()) >= 3 and line.split()[1] == '/']
+    if len(roots) != 1 or roots[0][2] not in ('tmpfs', 'rootfs', 'ramfs'):
+        raise Refused('actual root is not RAM-backed')
+    if not Path('/usr/lib/modules', os.uname().release).is_dir():
+        raise Refused('matching full kernel module directory is missing')
+
+
+def require_clock(sysfs=Path('/sys')):
+    """The published fixed-clock stand-ins cannot operate the reference gates."""
+    dt = sysfs / 'firmware/devicetree/base/soc/clock-controller@f204008'
+    dev = sysfs / 'bus/platform/devices/f204008.clock-controller'
+    compat = (dt / 'compatible').read_bytes().split(b'\0')
+    if b'qcom,sm8750-tcsr' not in compat:
+        raise Refused('real SM8750 TCSR clock provider is missing')
+    # Captured downstream /soc uses one address and one size cell.
+    if (dt / 'reg').read_bytes() != bytes.fromhex('0f20400800003004'):
+        raise Refused('real TCSR clock register range differs from the reviewed binding')
+    if (dev / 'of_node').resolve(strict=True) != dt.resolve(strict=True):
+        raise Refused('TCSR clock device does not own the expected DT node')
+    if (dev / 'driver').resolve(strict=True).name != 'tcsr_cc-sm8750':
+        raise Refused('normal SM8750 TCSR clock driver is not bound')
+    handle = (dt / 'phandle').read_bytes()
+    if len(handle) != 4 or handle == bytes(4) or (dt / '#clock-cells').read_bytes() != bytes.fromhex('00000001'):
+        raise Refused('TCSR clock provider identity is invalid')
+    node = sysfs / 'firmware/devicetree/base'
+    rpmh = node / 'soc/rsc@16500000/clock-controller-ml'
+    gcc = node / 'soc/clock-controller@100000'
+    rpmh_handle, gcc_handle = (rpmh / 'phandle').read_bytes(), (gcc / 'phandle').read_bytes()
+    if len(rpmh_handle) != 4 or len(gcc_handle) != 4:
+        raise Refused('normal RPMh/GCC clock identities are missing')
+    def encode(*parts):
+        return b''.join(part if isinstance(part, bytes) else struct.pack('>I', part) for part in parts)
+    if (dt / 'clocks').read_bytes() != encode(rpmh_handle, 0):
+        raise Refused('real TCSR XO parent is not the normal RPMh CXO clock')
+    wants = {
+        'soc/ufsphy_mem@1d80000': encode(rpmh_handle, 0, gcc_handle, 0x90, handle, 1),
+        'soc/phy@1c06000': encode(gcc_handle, 0x25, gcc_handle, 0x27, handle, 0,
+                                gcc_handle, 0x29, gcc_handle, 0x2b),
+        'soc/hsphy@88e3000': encode(handle, 2),
+        'soc/ssphy@88e8000': encode(gcc_handle, 0xa2, handle, 3, gcc_handle, 0xa4, gcc_handle, 0xa5),
+    }
+    for path, expected in wants.items():
+        if (node / path / 'clocks').read_bytes() != expected:
+            raise Refused('real PHY clock consumer does not match normal TCSR binding: ' + path)
+    if (node / 'soc/syscon@1fc0000/compatible').read_bytes() != b'syscon\0':
+        raise Refused('wrongly addressed legacy syscon must not bind the SM8750 clock driver')
+    return {'provider': '/soc/clock-controller@f204008', 'driver': 'tcsr_cc-sm8750',
+            'phy_consumers': list(wants), 'verification': 'actual-DT-consumers-and-bound-normal-provider',
+            'clock_enable_or_rate_readback_verified': False}
+
+
+def prove(module, scope, sysfs=Path('/sys'), contexts=None):
+    if scope == 'all':
+        raise Refused('complete hardware proof is unavailable: ' + '; '.join(MISSING.values()))
+    if scope in MISSING:
+        raise Refused(MISSING[scope])
+    if scope in CONTEXT_SCOPES:
+        contexts = contexts or context_checker()
+        result = [contexts.read_scope(item, sysfs) for item in CONTEXT_SCOPES[scope]]
+        return {'schema': 'piano-ram-hardware-v1', 'scope': scope,
+                'status': 'SCOPED_KERNEL_CONTEXT_CONFIGURATION_READBACK_ONLY',
+                'contexts': result, 'dma_transfer_verified': False,
+                'full_hardware_ready': False, 'memory_ownership_authorized': False,
+                'global_ready_marker_written': False}
+    clocks = require_clock(sysfs) if scope in ('clock', 'storage') else None
+    result = read_routes(module, SCOPES[scope], sysfs) if scope != 'clock' else {}
+    return {'schema': 'piano-ram-hardware-v1', 'scope': scope,
+            'status': 'SCOPED_KERNEL_ROUTE_READBACK_ONLY', 'routes': result,
+            'clock_bindings': clocks,
+            'dma_transfer_verified': False, 'full_hardware_ready': False,
+            'memory_ownership_authorized': False, 'global_ready_marker_written': False}
+
+
+def publish(report, run=Path('/run')):
+    # Evidence is diagnostic only. All subsequent service calls reread sysfs.
+    directory = run / 'piano-hardware'
+    directory.mkdir(mode=0o755, exist_ok=True)
+    if directory.is_symlink():
+        raise Refused('evidence directory must not be a symlink')
+    final = directory / (report['scope'] + '.json')
+    temporary = directory / (report['scope'] + '.json.new')
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(json.dumps(report, sort_keys=True) + '\n')
+        os.replace(temporary, final)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def prepare(module, load=subprocess.run, sysfs=Path('/sys')):
+    # Normal kernel IOMMU attach installs/adopts the actual consumer routes.
+    # Do not load GPI/SPI/touch until the consumer+wrapper proofs succeed.
+    clock_proof = prove(module, 'clock', sysfs)
+    result = load(['/usr/sbin/modprobe', 'arm_smmu'], check=False)
+    if result.returncode:
+        raise Refused('normal arm_smmu module load failed')
+    proofs = [clock_proof] + [prove(module, scope, sysfs) for scope in ('usb', 'qup')]
+    return {'schema': 'piano-ram-hardware-v1', 'scope': 'bootstrap',
+            'status': 'COMMON_ROUTES_VERIFIED_FULL_SERVICE_PROOFS_PENDING',
+            'proofs': proofs, 'full_hardware_ready': False,
+            'missing_service_proofs': MISSING, 'ufs_module_loaded': False,
+            'global_ready_marker_written': False, 'memory_ownership_authorized': False}
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument('--require-scope', choices=tuple(SCOPES) + tuple(CONTEXT_SCOPES) + tuple(MISSING) + ('all', 'clock'))
+    mode.add_argument('--observe-scope', choices=('mdss-prebind',),
+                      help='Nonblocking prebind diagnostic; never authorizes a driver or reports readiness')
+    args = ap.parse_args()
+    scope = args.require_scope or args.observe_scope or 'bootstrap'
+    try:
+        require_ram()
+        module = checker()
+        report = prove(module, scope) if (args.require_scope or args.observe_scope) else prepare(module)
+    except (OSError, ValueError, Refused) as error:
+        report = {'schema': 'piano-ram-hardware-v1', 'scope': scope, 'status': 'REFUSED',
+                  'error': str(error), 'full_hardware_ready': False,
+                  'observation_only': bool(args.observe_scope),
+                  'global_ready_marker_written': False, 'memory_ownership_authorized': False}
+        try:
+            publish(report)
+        except (OSError, Refused):
+            pass
+        print(json.dumps(report), file=sys.stderr)
+        return 0 if args.observe_scope else 1
+    if args.observe_scope:
+        report['observation_only'] = True
+        report['status'] = 'NONBLOCKING_PREBIND_OBSERVATION_NOT_READINESS'
+    publish(report)
+    print(json.dumps(report))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
