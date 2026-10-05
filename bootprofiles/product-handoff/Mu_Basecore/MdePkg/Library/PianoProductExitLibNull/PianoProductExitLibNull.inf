@@ -1,0 +1,10 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = PianoProductExitLibNull
+  FILE_GUID = 9713C89B-1232-41C7-8750-455849544E30
+  MODULE_TYPE = BASE
+  LIBRARY_CLASS = PianoProductExitLib|DXE_CORE
+[Sources]
+  PianoProductExitLibNull.c
+[Packages]
+  MdePkg/MdePkg.dec

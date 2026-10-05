@@ -14,6 +14,7 @@ from product_payload_digest import digest_header
 from simpleinit_build_identity import inspect as inspect_simpleinit
 from prepare_gui_profile import SETUP_DSC_ADDITIONS, SETUP_FV_MODULES
 from prepare_product_early_memory import prepare as prepare_early_memory, verify as verify_early_memory
+from prepare_product_handoff import prepare as prepare_handoff, stage_provider, verify_provider
 
 CORE_GUID='35E0D1B5-93CE-4D6A-9A93-6ADAA3F26C40'
 SOURCE_NAMES=(
@@ -28,13 +29,14 @@ SOURCE_NAMES=(
 )
 OS_BOOT_SOURCES=('PianoBootFileSource.c','PianoCpuImageLoan.c','PianoLinuxEfiSession.c','PianoCpuInput.c')
 OS_BOOT_HEADERS=tuple(name[:-2]+'.h' for name in OS_BOOT_SOURCES)
+LATE_HANDOFF_INF_SOURCES=('LateHandoff/PianoLateHandoff.c','LateHandoff/PianoLateHandoff.h')
 OS_BOOT_INF_SOURCES=tuple('OsBoot/'+name for name in (*OS_BOOT_SOURCES,*OS_BOOT_HEADERS))
 OBSERVATION_FAMILIES={'early-memory':('PianoSmemRam.c','PianoSmemRam.h'),
                       'guarded-read':('PianoGuardedRead.c','PianoGuardedRead.h')}
 OBSERVATION_INF_SOURCES=tuple(name for names in OBSERVATION_FAMILIES.values() for name in names)
 PRODUCT_FLAGS=('PIANO_USB_SERVICE=1','PIANO_USB_EP0=1','PIANO_USB_FASTBOOT=1','PIANO_USB_SCREENSHOT=1',
     'PIANO_USB_UFS_FETCH=1','PIANO_USB_RAM_BOOT=1','PIANO_USB_POWER_PROBE=1','PIANO_UFS_BLOCKIO=1',
-    'PIANO_UFS_PRODUCT_STORAGE=1','PIANO_NV_BOOT_ONLY=1')
+    'PIANO_UFS_PRODUCT_STORAGE=1','PIANO_NV_BOOT_ONLY=1','PIANO_PRODUCT_NATIVE_LATE=1')
 NATIVE_NAMES=('SmemDxe','DALSys','ChipInfo','PlatformInfoDxeDriver','HWIODxeDriver','ULogDxe',
     'CmdDbDxe','PwrUtilsDxe','RpmhDxe','NpaDxe','VcsDxe','ClockDxe','HALIOMMU')
 DISK_MODULES=('MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf',
@@ -196,7 +198,7 @@ def backend_status():
       'usb_host':{'status':'NOT_READY','missing':'actual Host PCI_IO/NC common DMA and Type-C/VBUS ownership backend; standard consumers linked'},
       'debug_logs_screenshot':{'status':'IMPLEMENTED_FASTBOOT','physical_evidence':'test82 ramlog and84 screenshot; product UI snapshots untested'},
       'efi_android_linux_boot':{'status':'PARTIAL','shared_os_loader':'COMPILED_PLATFORM_NOT_READY','source_budget_bytes':67108864,'platform_bound':False,'full_ddr_verified':False,'missing':'approved SFS/path source, independent BS fence, actual full-DDR and all-owner EFI handoff binding; generic Android/Recovery/Windows handoff'},
-      'os_exit':{'status':'STRICT_RETIREMENT_INTEGRATED_UNTESTED','missing':'joint controller retirement and full EFI DRAM/OS handoff contract'},
+      'os_exit':{'status':'NATIVE_LATE_APP_HOOK_AND_ROOT_PROVIDER_BOUND_UNTESTED','os_image_armed':False,'full_ddr_verified':False,'missing':'live full-DDR authority, actual selected OS Arm and device acceptance'},
     }
 
 
@@ -230,7 +232,7 @@ def core_inf():
   VERSION_STRING = 0.1
   ENTRY_POINT = PianoProductCoreEntry
 [Sources]
-'''+''.join('  '+name+'\n' for name in (*SOURCE_NAMES,*OS_BOOT_INF_SOURCES,*OBSERVATION_INF_SOURCES))+'''[Packages]
+'''+''.join('  '+name+'\n' for name in (*SOURCE_NAMES,*OS_BOOT_INF_SOURCES,*OBSERVATION_INF_SOURCES,*LATE_HANDOFF_INF_SOURCES))+'''[Packages]
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
   QcomPkg/QcomPkg.dec
@@ -302,6 +304,7 @@ def prepare(root=ROOT):
     if missing:raise ValueError('Actual product core sources missing: '+', '.join(missing))
     os_boot_files(root)
     observation_files(root)
+    handoff_hooks=prepare_handoff(root,apply=True)
     prepare_pump(root,apply=True)
     from prepare_product_ui import prepare as prepare_ui
     ui=prepare_ui(root,apply=True)
@@ -327,6 +330,9 @@ def prepare(root=ROOT):
         if path.is_file() and path.suffix in ('.h','.inc'):shutil.copyfile(path,app/path.name)
     shutil.copytree(source/'Protocol',app/'Protocol')
     os_boot=prepare_os_boot(root,app)
+    late_provider=stage_provider(root,app)
+    late_provider['root_initialization_bound']=True
+    late_provider['os_image_armed']=False
     observation=prepare_observation_families(root,app)
     (app/'PianoProductSimpleInitDigest.h').write_text(header)
     from prepare_ufs_write_test import verify_capture, _c_array
@@ -340,6 +346,7 @@ def prepare(root=ROOT):
     (app/'ProductCore.inf').write_text(core_inf())
     verify_os_boot(root,app,os_boot)
     verify_observation_families(root,app,observation)
+    verify_provider(root,app,late_provider)
     native_fdf,native_id=native_modules(root,app)
     memory=target/'Library/MemoryMapLib/MemoryMapLib.c';text=memory.read_text()
     text,low_memory_contract=fix_product_low_heap(text,(root/'private/captures/2026-10-03-piano/live.dtb').read_bytes())
@@ -360,6 +367,8 @@ def prepare(root=ROOT):
     text+='''
 [LibraryClasses.common.DXE_CORE, LibraryClasses.common.DXE_DRIVER, LibraryClasses.common.UEFI_DRIVER, LibraryClasses.common.UEFI_APPLICATION]
   PianoProductPumpLib|MdePkg/Library/PianoProductPumpLib/PianoProductPumpLib.inf
+[LibraryClasses.common.DXE_CORE]
+  PianoProductExitLib|MdePkg/Library/PianoProductExitLib/PianoProductExitLib.inf
 [LibraryClasses]
   BootLogoLib|MdeModulePkg/Library/BootLogoLib/BootLogoLib.inf
   ShellLib|ShellPkg/Library/UefiShellLib/UefiShellLib.inf
@@ -409,6 +418,7 @@ def prepare(root=ROOT):
     verify_early_memory(root,staged,early_memory)
     verify_os_boot(root,staged/'Applications/ProductCore',os_boot)
     verify_observation_families(root,staged/'Applications/ProductCore',observation)
+    verify_provider(root,staged/'Applications/ProductCore',late_provider)
     manifest={'target':'product','artifact':contract['artifact'],'status':'INCOMPLETE_NOT_RELEASE',
       'features':contract['features'],'shared_core':True,'entry_points':contract['entry_points'],'entry_policy_only':True,
       'fastboot_mode':'resident_background','fastboot_surfaces':contract['fastboot']['available_in'],
@@ -417,6 +427,7 @@ def prepare(root=ROOT):
       'service_compile_flags':list(PRODUCT_FLAGS),'sources':list((*SOURCE_NAMES,*OS_BOOT_INF_SOURCES,*OBSERVATION_INF_SOURCES)),'native_foundation':native_id,'os_boot':os_boot,'dxe_observation':observation,'early_memory':early_memory,
       'simpleinit':simpleinit,'simpleinit_payload':app_identity,'ui_hooks':ui,'pump_hooks':prepare_pump(root,apply=False),
       'low_memory_contract':low_memory_contract,
+      'native_late_handoff':handoff_hooks,'late_provider':late_provider,
       'platform_files':{str(path.relative_to(target)):sha(path)for path in sorted(target.rglob('*'))if path.is_file()},
       'device_boot_performed':False,'permanent_storage_writes':False}
     out=root/'build/product';out.mkdir(parents=True,exist_ok=True)

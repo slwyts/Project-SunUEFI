@@ -10,7 +10,7 @@
 2. Root的实际CheckMemory和ValidateMemory必须确认完整DDR、固定与动态reserved-memory、runtime/cache/ownership以及同一个boot epoch。当前平台合同未ready时返回NOT_READY，没有Start或owner退休。未绑定validator也返回NOT_READY。
 3. 保存实际原FDT config table，安装owned FDT；注册真实Linux initrd vendor device path/LoadFile2。已有该vendor路径的provider会被拒，避免内核取到另一份initrd。
 4. LoadImage到EFI LoaderCode，记录LoadedImage接口、base、size身份，安装独立LoadOptions副本及BeforeEBS/Exit CPU fence。此时设备尚未退休，正常USB后台服务仍可工作。
-5. 最后一个APP service slice后，Root的PrepareHandoff只执行一次真实全owner退休，ValidateRetired核对实际ledger；随后重新采集并验证完整内存合同，epoch必须一致。只有这些精确成功才StartImage。这是明确的OS transition，不是在EBS notify里调用HAL。
+5. `HandoffMode=PianoHandoffNativeLate` 时，Root的NativeLateArm绑定真实LoadedImage身份；不调用旧PrepareHandoff/ValidateRetired，不填Clean proof、不设置OwnersRetired。StartImage中仍保留active service slices，实际native EBS入口完成一次真实全owner退休和最终内存验证。普通pre-EBS返回先NativeLateDisarm，再清理image/table/protocol/source；Disarm非精确成功立即retain/fail-stop。旧default枚举`PianoHandoffLegacyPreStart`仅保持诊断原先pre-Start退休行为。
 
 两个Root validators必须访问实际平台/owner状态，proof字段只是报告与一致性检查，不能由UI传入TRUE位或旧规划snapshot授权启动。Session不发布dummy memory protocol，不广告Linux Ready。Root尚未将此session与完整DDR及owner registry接入产品，不能以主机mock的ready值宣称设备可启动。
 
@@ -36,7 +36,7 @@ ARM64严格语法检查通过。测试不执行ARM内核，不接触平板。仍
 
 Source总实际Bytes必须不超过Root的MaxSourceBytes（零值默认64MiB，绝对最多1GiB）；先用减法边界检查总量，超过单项/总量或UINT64溢出风险在Take前拒绝。大容量预算在Take前必须通过实际CPU policy完整内存验证，Borrow后再验证每份真实source owner/span，后续DT-based memory proof的epoch必须一致。三份Context必须独立且不能落在session对象内，Env/blob描述符同样不能与session别名，避免初始化或后续Take破坏已有状态。
 
-LoadFile2复制使用统一64KiB CPU slices，拒绝Bytes输出或目标buffer与session/任一immutable source别名。但旧PrepareHandoff顺序仍早于StartImage，内核stub复制initrd时USB已经退休，因此该阶段只有CPU检查，不能宣称后台fastboot仍在。具体原生late-APP EBS接入方案见[piano-large-cpu-input.md](piano-large-cpu-input.md)，尚未实现。
+LoadFile2复制使用统一64KiB CPU slices，拒绝Bytes输出或目标buffer与session/任一immutable source别名。NativeLate模式下StartImage内真实保持owners运行，复制initrd不要求OwnersRetired；随后native EBS完成真正退休。平台DDR或实际Arm validator拒绝时仍无Start。原生接入及完整源码联合测试见[piano-native-late-handoff.md](piano-native-late-handoff.md)。
 
 view只能在Borrow后知道其地址；在第一处已知跨源重叠、与session重叠或地址长度回绕时立即retain，不继续取得后面的源，也不调用任何Unborrow/ZeroRelease。Take返回error/warning却给Owner，或Borrow返回error/warning却给view/loan，按未知所有权处理，CPU fail-stop保留整组，不能ordinary cleanup猜测资源已安全归还。
 

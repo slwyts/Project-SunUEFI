@@ -5,7 +5,7 @@
 #include <Library/BaseMemoryLib.h>
 #define LAUNCH_SIGNATURE SIGNATURE_32('P','F','L','1')
 STATIC BOOLEAN Alive(PIANO_FASTBOOT_LAUNCH *S) {
-  return !S->LostServices && S->Env.BootServicesAlive(S->Env.Context)==TRUE;
+  return !S->LostServices && !S->BeforeEbs && S->Env.BootServicesAlive(S->Env.Context)==TRUE;
 }
 STATIC VOID LoseServices(PIANO_FASTBOOT_LAUNCH *S) {
   S->LostServices=TRUE;S->Phase=PianoLaunchServicesLost;S->Result.ResourcesRetained=TRUE;S->Result.Status=EFI_ABORTED;
@@ -15,6 +15,7 @@ STATIC VOID RequireAlive(PIANO_FASTBOOT_LAUNCH *S){if(!Alive(S))LoseServices(S);
 STATIC VOID EFIAPI ExitFence(EFI_EVENT Event,VOID *Context) {
   (VOID)Event;PIANO_FASTBOOT_LAUNCH *S=Context;S->LostServices=TRUE;S->Result.ExitSignalSeen=TRUE;
 }
+STATIC VOID EFIAPI BeforeFence(EFI_EVENT Event,VOID *Context){(VOID)Event;((PIANO_FASTBOOT_LAUNCH *)Context)->BeforeEbs=TRUE;}
 STATIC EFI_STATUS Exact(EFI_STATUS Status){return Status==EFI_SUCCESS?Status:EFI_ERROR(Status)?Status:EFI_DEVICE_ERROR;}
 STATIC EFI_STATUS SourceRead(VOID *Context,UINT64 Offset,UINTN Bytes,VOID *Buffer) {
   PIANO_FASTBOOT_LAUNCH *S=Context;
@@ -42,6 +43,11 @@ STATIC EFI_STATUS RetireImage(PIANO_FASTBOOT_LAUNCH *S) {
   S->Image=NULL;S->Result.ImageUnloaded=TRUE;return EFI_SUCCESS;
 }
 STATIC EFI_STATUS Cleanup(PIANO_FASTBOOT_LAUNCH *S,BOOLEAN Failure) {
+  if(S->LateArmed){
+    RequireAlive(S);EFI_STATUS Disarm=Exact(S->Env.NativeLateDisarm(S->Env.Context,S->Image));RequireAlive(S);
+    if(Disarm!=EFI_SUCCESS){S->Result.ResourcesRetained=TRUE;S->Result.Status=Disarm;S->Env.FailStop(S->Env.Context,Disarm);CpuDeadLoop();return Disarm;}
+    S->LateArmed=FALSE;
+  }
   EFI_STATUS Status=RetireImage(S);if(Status!=EFI_SUCCESS)return Status;
   if(S->ExitData!=NULL) {
     RequireAlive(S);Status=S->Env.Services->FreePool(S->ExitData);RequireAlive(S);
@@ -58,6 +64,7 @@ STATIC EFI_STATUS Cleanup(PIANO_FASTBOOT_LAUNCH *S,BOOLEAN Failure) {
     if(Status!=EFI_SUCCESS)return Exact(Status);
     S->ExitEvent=NULL;
   }
+  if(S->BeforeEvent!=NULL){RequireAlive(S);Status=S->Env.Services->CloseEvent(S->BeforeEvent);RequireAlive(S);if(Status!=EFI_SUCCESS)return Exact(Status);S->BeforeEvent=NULL;}
   if(S->Loan!=NULL) {
     RequireAlive(S);Status=S->Blob.Unborrow(S->Blob.Context,S->Owner,S->Loan);RequireAlive(S);
     if(Status!=EFI_SUCCESS)return Exact(Status);
@@ -86,20 +93,24 @@ EFI_STATUS PianoFastbootLaunchInit(PIANO_FASTBOOT_LAUNCH *S) {
 }
 EFI_STATUS PianoFastbootLaunchRun(PIANO_FASTBOOT_LAUNCH *S,CONST PIANO_LAUNCH_ENV *E,CONST PIANO_LAUNCH_BLOB *B,CONST VOID *Options,UINT32 OptionsBytes) {
   if(S==NULL || S->Signature!=LAUNCH_SIGNATURE || E==NULL || B==NULL || E->Services==NULL || E->ParentImage==NULL ||
-     !E->MaxImageBytes || !E->MaxSourceBytes || E->ShutdownAll==NULL || E->BootServicesAlive==NULL || E->FailStop==NULL || B->Take==NULL ||
+     !E->MaxImageBytes || !E->MaxSourceBytes || E->BootServicesAlive==NULL || E->FailStop==NULL || B->Take==NULL ||
      B->Read==NULL || B->BorrowView==NULL || B->Unborrow==NULL || B->Restore==NULL || B->ZeroRelease==NULL || !B->Bytes ||
      OptionsBytes>4096 || (OptionsBytes && Options==NULL))return EFI_INVALID_PARAMETER;
+  if(E->HandoffMode!=PianoHandoffLegacyPreStart&&E->HandoffMode!=PianoHandoffNativeLate)return EFI_INVALID_PARAMETER;
+  if(PIANO_PRODUCT_NATIVE_LATE && E->HandoffMode!=PianoHandoffNativeLate)return EFI_UNSUPPORTED;
+  if(E->HandoffMode==PianoHandoffNativeLate){if(!E->NativeLateArm||!E->NativeLateDisarm||!E->ServiceSlice)return EFI_NOT_READY;}
+  else if(!E->ShutdownAll)return EFI_INVALID_PARAMETER;
   if(S->Busy || S->Result.ResourcesRetained)return EFI_ALREADY_STARTED;
   ZeroMem(&S->Result,sizeof(S->Result));ZeroMem(&S->Parsed,sizeof(S->Parsed));
   S->Env=*E;S->Blob=*B;if(!Alive(S)){S->Result.Status=EFI_NOT_READY;return EFI_NOT_READY;}
   if(E->Services->CreateEventEx==NULL || E->Services->CloseEvent==NULL || E->Services->LoadImage==NULL || E->Services->StartImage==NULL ||
      E->Services->HandleProtocol==NULL || E->Services->UnloadImage==NULL || E->Services->AllocatePool==NULL || E->Services->FreePool==NULL){S->Result.Status=EFI_UNSUPPORTED;return EFI_UNSUPPORTED;}
   if(B->Bytes>E->MaxSourceBytes){S->Result.Status=EFI_OUT_OF_RESOURCES;return EFI_OUT_OF_RESOURCES;}
-  S->Busy=TRUE;S->UnknownOwnership=FALSE;S->ImageIdentityKnown=FALSE;
+  S->Busy=TRUE;S->UnknownOwnership=FALSE;S->ImageIdentityKnown=FALSE;S->BeforeEbs=FALSE;S->LateArmed=FALSE;
   S->OptionsInstalled=FALSE;S->OriginalOptions=NULL;S->OriginalOptionsBytes=0;
   E=&S->Env;B=&S->Blob;
   EFI_STATUS Status=Exact(B->Take(B->Context,&S->Owner));RequireAlive(S);S->Phase=PianoLaunchOwned;
-  if(Status!=EFI_SUCCESS)goto Done;
+  if(Status!=EFI_SUCCESS){if(S->Owner)S->UnknownOwnership=TRUE;goto Done;}
   if(S->Owner==NULL){S->UnknownOwnership=TRUE;Status=EFI_COMPROMISED_DATA;goto Done;}
   PIANO_BOOT_SOURCE Source={S,SourceRead,B->Bytes};Status=PianoFastbootBootParse(&Source,&S->Parsed);RequireAlive(S);
   if(Status!=EFI_SUCCESS)goto Done;
@@ -110,14 +121,20 @@ EFI_STATUS PianoFastbootLaunchRun(PIANO_FASTBOOT_LAUNCH *S,CONST PIANO_LAUNCH_EN
   } else if(S->Parsed.Kind!=PianoBootArm64Pe){Status=EFI_UNSUPPORTED;goto Done;}
   if(!View.Bytes || View.Bytes>MAX_UINTN || S->Parsed.Pe.ImageBytes>E->MaxImageBytes){Status=EFI_OUT_OF_RESOURCES;goto Done;}
   Status=Exact(B->BorrowView(B->Context,S->Owner,View,&S->View,&S->Loan));RequireAlive(S);
-  if(Status!=EFI_SUCCESS)goto Done;
+  if(Status!=EFI_SUCCESS){if(S->View||S->Loan)S->UnknownOwnership=TRUE;goto Done;}
   if(S->View==NULL || S->Loan==NULL){S->UnknownOwnership=TRUE;Status=EFI_COMPROMISED_DATA;goto Done;}
-  S->Phase=PianoLaunchBorrowed;Status=Exact(E->ShutdownAll(E->Context));RequireAlive(S);
-  if(Status!=EFI_SUCCESS)goto Done;
-  S->Result.ShutdownSucceeded=TRUE;S->Phase=PianoLaunchShutdown;
+  S->Phase=PianoLaunchBorrowed;
+  if(E->HandoffMode==PianoHandoffLegacyPreStart){
+    Status=Exact(E->ShutdownAll(E->Context));RequireAlive(S);if(Status!=EFI_SUCCESS)goto Done;
+    S->Result.ShutdownSucceeded=TRUE;S->Phase=PianoLaunchShutdown;
+  }
   Status=Exact(E->Services->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,ExitFence,S,&gEfiEventExitBootServicesGuid,&S->ExitEvent));RequireAlive(S);
   if(Status!=EFI_SUCCESS)goto Done;
   if(S->ExitEvent==NULL){S->UnknownOwnership=TRUE;Status=EFI_COMPROMISED_DATA;goto Done;}
+  if(E->HandoffMode==PianoHandoffNativeLate){
+    Status=Exact(E->Services->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,BeforeFence,S,&gEfiEventBeforeExitBootServicesGuid,&S->BeforeEvent));RequireAlive(S);
+    if(Status!=EFI_SUCCESS||!S->BeforeEvent){S->UnknownOwnership=TRUE;if(Status==EFI_SUCCESS)Status=EFI_COMPROMISED_DATA;goto Done;}
+  }
   Status=Exact(E->Services->LoadImage(FALSE,E->ParentImage,NULL,(VOID *)S->View,(UINTN)View.Bytes,&S->Image));RequireAlive(S);
   if(Status!=EFI_SUCCESS)goto Done;
   if(S->Image==NULL){S->UnknownOwnership=TRUE;Status=EFI_COMPROMISED_DATA;goto Done;}
@@ -137,10 +154,17 @@ EFI_STATUS PianoFastbootLaunchRun(PIANO_FASTBOOT_LAUNCH *S,CONST PIANO_LAUNCH_EN
     CopyMem(S->OptionsCopy,Options,OptionsBytes);S->OptionsBytes=OptionsBytes;
     Loaded->LoadOptions=S->OptionsCopy;Loaded->LoadOptionsSize=OptionsBytes;S->OptionsInstalled=TRUE;
   }
+  if(E->HandoffMode==PianoHandoffNativeLate){
+    Status=E->NativeLateArm(E->Context,S->Image,Loaded);RequireAlive(S);
+    if(Status!=EFI_SUCCESS){if(!EFI_ERROR(Status)){S->UnknownOwnership=TRUE;S->Result.ResourcesRetained=TRUE;S->Result.Status=EFI_DEVICE_ERROR;S->Env.FailStop(S->Env.Context,EFI_DEVICE_ERROR);CpuDeadLoop();return EFI_DEVICE_ERROR;}goto Done;}
+    S->LateArmed=TRUE;
+    Status=Exact(E->ServiceSlice(E->Context,1000));RequireAlive(S);if(Status!=EFI_SUCCESS)goto Done;
+  }
   S->Result.StartInvoked=TRUE;S->Phase=PianoLaunchStarted;
   Status=Exact(E->Services->StartImage(S->Image,&S->ExitDataBytes,&S->ExitData));RequireAlive(S);
   S->Result.ImageExitStatus=Status;S->Result.AppReturned=TRUE;S->Phase=PianoLaunchReturned;
 Done:
+  if(S->Env.HandoffMode==PianoHandoffNativeLate&&S->UnknownOwnership){S->Result.ResourcesRetained=TRUE;S->Result.Status=Status;S->Env.FailStop(S->Env.Context,Status);CpuDeadLoop();return Status;}
   S->Result.Status=Status;EFI_STATUS Clean=Cleanup(S,Status!=EFI_SUCCESS);S->Result.CleanupStatus=Clean;
   if(Clean!=EFI_SUCCESS){S->Result.ResourcesRetained=TRUE;S->Phase=PianoLaunchRetained;S->Result.Status=Status!=EFI_SUCCESS?Status:Clean;return S->Result.Status;}
   S->Busy=FALSE;S->Phase=PianoLaunchReleased;return Status;

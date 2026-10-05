@@ -13,6 +13,7 @@ sys.path.insert(0,str(ROOT/'tools'))
 import prepare_product as product
 import build_integrity as integrity
 from prepare_product_early_memory import prepare as prepare_early
+from prepare_product_handoff import prepare as prepare_handoff, stage_provider
 
 
 class ProductOsBootWiringTests(unittest.TestCase):
@@ -28,6 +29,11 @@ class ProductOsBootWiringTests(unittest.TestCase):
         for name,path in product.shared_boot_headers(root).items():
             target=app/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
         record=product.prepare_os_boot(root,app)
+        shutil.copytree(ROOT/'bootprofiles/product-handoff',root/'bootprofiles/product-handoff')
+        for relative in prepare_handoff(ROOT,apply=False)['files']:
+            src=ROOT/relative;dst=root/relative;dst.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(src,dst)
+        native=prepare_handoff(root,apply=True)
+        provider=stage_provider(root,app)
         observation=product.prepare_observation_families(root,app)
         (app/'ProductCore.inf').write_text(product.core_inf())
         sec=Path('upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Sec')
@@ -38,9 +44,9 @@ class ProductOsBootWiringTests(unittest.TestCase):
         early=prepare_early(root,target)
         staged=root/'upstream/Mu-Silicium/Platforms/Xiaomi/pianoProductPkg'
         shutil.copytree(app.parent.parent,staged)
-        manifest=root/'build/product/prepared-manifest.json';manifest.parent.mkdir(parents=True);manifest.write_text(json.dumps({'os_boot':record,'dxe_observation':observation,'early_memory':early}))
+        manifest=root/'build/product/prepared-manifest.json';manifest.parent.mkdir(parents=True);manifest.write_text(json.dumps({'os_boot':record,'dxe_observation':observation,'early_memory':early,'native_late_handoff':native,'late_provider':provider}))
         for relative in ('config/piano-product.json','tools/prepare_product.py','tools/build_product.sh','tools/package_product.py',
-                         'tools/prepare_product_pump.py','tools/prepare_product_ui.py','tools/prepare_nv_runtime_guard.py','tools/prepare_product_early_memory.py','tools/simpleinit_build_identity.py',
+                         'tools/prepare_product_pump.py','tools/prepare_product_ui.py','tools/prepare_nv_runtime_guard.py','tools/prepare_product_early_memory.py','tools/prepare_product_handoff.py','tools/simpleinit_build_identity.py',
                          'tools/build_simpleinit.sh','tools/prepare_simpleinit.py','tools/product_payload_digest.py',
                          'artifacts/simpleinit/product/SimpleInit.efi','artifacts/simpleinit/product/app-payload.bin','artifacts/simpleinit/product/build-ok.json'):
             path=root/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('fixture')

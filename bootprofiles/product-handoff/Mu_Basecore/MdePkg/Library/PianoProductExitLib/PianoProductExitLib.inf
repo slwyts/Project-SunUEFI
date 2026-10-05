@@ -1,0 +1,14 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = PianoProductExitLib
+  FILE_GUID = 9713C89B-1232-41C7-8750-455849544C31
+  MODULE_TYPE = DXE_DRIVER
+  LIBRARY_CLASS = PianoProductExitLib|DXE_CORE
+[Sources]
+  PianoProductExitLib.c
+[Packages]
+  MdePkg/MdePkg.dec
+[LibraryClasses]
+  UefiBootServicesTableLib
+  BaseMemoryLib
+  BaseLib

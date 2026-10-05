@@ -510,7 +510,7 @@ def main():
                         path=app/name;path.write_text('#define PIANO_USB_RAM_BOOT 1\n'+path.read_text())
                     path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n'+''.join('  '+name+'\n' for name in (*sources,'PianoCpuInput.c')).rstrip())
                     text=text.replace('  UefiLib','  UefiLib\n  UefiRuntimeServicesTableLib')
-                    text+='\n[Guids]\n  gEfiEventExitBootServicesGuid\n';path.write_text(text)
+                    text+='\n[Guids]\n  gEfiEventExitBootServicesGuid\n  gEfiEventBeforeExitBootServicesGuid\n';path.write_text(text)
                     path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
                         '#include "PianoUsbRamBoot.h"\n#pragma pack(1)',1)
                     text=text.replace('Status=PianoUsbControllerExperiment(Fdt)','Status=PianoRunUsbRamBoot(Fdt,ImageHandle)')

@@ -9,6 +9,7 @@
 #include "PianoUfsProductVolume.h"
 #include "PianoProductStorageBaseline.h"
 #include "PianoProductSmem.h"
+#include "LateHandoff/PianoLateHandoff.h"
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/BaseLib.h>
@@ -21,6 +22,7 @@ VOID PianoUfsSetProbeAction(EFI_STATUS (*Action)(CONST VOID *));
 EFI_STATUS PianoUfsReadOnlyDmaExperiment(CONST VOID *Fdt);
 EFI_STATUS PianoStartKeys(CONST VOID *Fdt);
 STATIC PIANO_PRODUCT_OWNERS mOwners;
+STATIC PIANO_LATE_HANDOFF mLateHandoff;
 STATIC BOOLEAN mUfsAttempted,mUfsStarted,mInputStarted;
 STATIC EFI_STATUS mUfsStatus=EFI_NOT_STARTED;
 STATIC UINT64 mCounterFrequency,mCounterStart,mCounterEnd;
@@ -43,6 +45,42 @@ STATIC VOID FailStop(EFI_STATUS Status) {
   __asm__ volatile("msr daifset, #15" ::: "memory");
 #endif
   CpuDeadLoop();
+}
+STATIC BOOLEAN LateServicesAlive(VOID *Context) {
+  (VOID)Context;
+  return !mOwners.Report.ServicesLost && gST!=NULL && gST->BootServices==gBS;
+}
+STATIC VOID LateFailStop(VOID *Context,EFI_STATUS Status) {
+  (VOID)Context;FailStop(Status);
+}
+STATIC EFI_STATUS LateMemoryUnavailable(VOID *Context,PIANO_LINUX_MEMORY_PROOF *Report) {
+  (VOID)Context;
+  if(Report==NULL)return EFI_INVALID_PARAMETER;
+  ZeroMem(Report,sizeof(*Report));Report->Revision=1;Report->Status=EFI_NOT_READY;
+  // The actual cold observer is bound, but the full-DDR ownership authority
+  // and dynamic-reservation placements have not been established on-device.
+  // A late exit provider cannot turn those diagnostic snapshots into permission.
+  return EFI_NOT_READY;
+}
+STATIC EFI_STATUS LateValidateMemory(VOID *Context,CONST PIANO_LINUX_MEMORY_PROOF *Report) {
+  (VOID)Context;(VOID)Report;return EFI_NOT_READY;
+}
+EFI_STATUS PianoProductLateArm(VOID *Context,EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *Identity) {
+  (VOID)Context;
+  if(Image==NULL || Identity==NULL)return EFI_INVALID_PARAMETER;
+  EFI_STATUS Status=PianoLateHandoffArm(&mLateHandoff,Image);
+  if(Status!=EFI_SUCCESS)return Status;
+  if(mLateHandoff.Identity!=Identity) {
+    Status=PianoLateHandoffDisarm(&mLateHandoff);
+    if(Status!=EFI_SUCCESS)FailStop(Status);
+    return EFI_COMPROMISED_DATA;
+  }
+  return EFI_SUCCESS;
+}
+EFI_STATUS PianoProductLateDisarm(VOID *Context,EFI_HANDLE Image) {
+  (VOID)Context;
+  if(Image==NULL || mLateHandoff.Image!=Image)return EFI_ACCESS_DENIED;
+  return PianoLateHandoffDisarm(&mLateHandoff);
 }
 STATIC UINT64 NowUs(VOID *Context) {
   (VOID)Context;UINT64 Counter=GetPerformanceCounter();
@@ -140,6 +178,11 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
     .StartedOwnerMask=PIANO_OWNER_CORE_MASK,.AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|PIANO_OWNER_POGO,
     .Runtime=Runtime,.InputContext=NULL,.StopInput=StopInput};
   Status=PianoProductOwnersInitialize(&mOwners,&Config);if(Status!=EFI_SUCCESS)FailStop(Status);
+  PIANO_LATE_HANDOFF_ENV Late={.Context=NULL,.Services=gBS,.SystemTable=SystemTable,
+    .ParentImage=Image,.Owners=&mOwners,.BootServicesAlive=LateServicesAlive,
+    .CheckMemory=LateMemoryUnavailable,.ValidateMemory=LateValidateMemory,.FailStop=LateFailStop};
+  Status=PianoLateHandoffInitialize(&mLateHandoff,&Late);if(Status!=EFI_SUCCESS)FailStop(Status);
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_LATE_EXIT provider_bound=1 phase=unarmed full_ddr_ready=0\n"));
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_CORE_READY one_shared_core=1 auto_simpleinit=1 f12_setup=1 usb_background=1\n"));
   for(;;) {
     Status=PianoBootPolicyRun();

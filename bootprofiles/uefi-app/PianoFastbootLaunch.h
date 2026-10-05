@@ -15,6 +15,10 @@ typedef struct {
   EFI_STATUS (*Restore)(VOID *Context,VOID *Owner); // Moves unchanged ownership to caller, not a restarted USB service.
   EFI_STATUS (*ZeroRelease)(VOID *Context,VOID *Owner); // Must zero then consume/free; exact success is the acknowledgement.
 } PIANO_LAUNCH_BLOB;
+typedef enum {PianoHandoffLegacyPreStart=0,PianoHandoffNativeLate=1} PIANO_OS_HANDOFF_MODE;
+#ifndef PIANO_PRODUCT_NATIVE_LATE
+#define PIANO_PRODUCT_NATIVE_LATE 0
+#endif
 typedef struct {
   VOID *Context;
   EFI_BOOT_SERVICES *Services;
@@ -26,6 +30,10 @@ typedef struct {
   VOID (*FailStop)(VOID *Context,EFI_STATUS Status); // Runtime-only, never returns; CpuDeadLoop is fallback.
   BOOLEAN RestoreOnFailure;
   BOOLEAN AllowKnownV4CliHeaderQuirk;
+  PIANO_OS_HANDOFF_MODE HandoffMode;
+  EFI_STATUS (*NativeLateArm)(VOID *,EFI_HANDLE,CONST EFI_LOADED_IMAGE_PROTOCOL *);
+  EFI_STATUS (*NativeLateDisarm)(VOID *,EFI_HANDLE);
+  EFI_STATUS (*ServiceSlice)(VOID *,UINTN BudgetUs); // mandatory native-late path
 } PIANO_LAUNCH_ENV;
 typedef enum {PianoLaunchIdle,PianoLaunchOwned,PianoLaunchParsed,PianoLaunchShutdown,
   PianoLaunchBorrowed,PianoLaunchLoaded,PianoLaunchStarted,PianoLaunchReturned,
@@ -39,7 +47,7 @@ typedef struct {
 // can retain the EBS event/source/image/options, so it must not be overwritten.
 typedef struct {
   UINT32 Signature;
-  BOOLEAN Busy,LostServices,UnknownOwnership;
+  BOOLEAN Busy,LostServices,UnknownOwnership,BeforeEbs,LateArmed;
   PIANO_LAUNCH_PHASE Phase;
   PIANO_LAUNCH_BLOB Blob;
   PIANO_LAUNCH_ENV Env;
@@ -49,6 +57,7 @@ typedef struct {
   CONST VOID *View;
   EFI_HANDLE Image;
   EFI_EVENT ExitEvent;
+  EFI_EVENT BeforeEvent;
   VOID *OptionsCopy,*OriginalOptions;
   UINT32 OptionsBytes,OriginalOptionsBytes;
   UINTN ExitDataBytes;

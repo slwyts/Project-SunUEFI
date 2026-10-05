@@ -9,6 +9,7 @@
 #undef NULL
 #include "../bootprofiles/uefi-app/PianoFastbootDownloadBlob.h"
 #include <Guid/EventGroup.h>
+EFI_GUID gEfiEventBeforeExitBootServicesGuid=EFI_EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES;
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>

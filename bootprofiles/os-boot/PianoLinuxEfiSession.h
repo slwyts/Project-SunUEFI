@@ -33,6 +33,9 @@ typedef struct {
  VOID (*FailStop)(VOID *,EFI_STATUS); // CPU-only, never returns; EBS/unknown only
  UINT64 MaxSourceBytes; // zero defaults64MiB, hard cap1GiB, not transport advert
  CONST PIANO_CPU_INPUT_ENV *Cpu; // required above64MiB; actual source owner checks
+ PIANO_OS_HANDOFF_MODE HandoffMode;
+ EFI_STATUS (*NativeLateArm)(VOID *,EFI_HANDLE,CONST EFI_LOADED_IMAGE_PROTOCOL *);
+ EFI_STATUS (*NativeLateDisarm)(VOID *,EFI_HANDLE);
 } PIANO_LINUX_EFI_ENV;
 typedef struct {VENDOR_DEVICE_PATH Vendor;EFI_DEVICE_PATH_PROTOCOL End;} PIANO_LINUX_INITRD_PATH;
 typedef struct {
@@ -51,6 +54,7 @@ typedef struct {
  UINTN FdtCapacity,ExitBytes;UINT32 OptionsBytes,OldOptionsBytes;
  VOID *LoadedIdentity,*ImageBaseIdentity;UINT64 ImageSizeIdentity;
  PIANO_CPU_INPUT_ENV Cpu;PIANO_LINUX_MEMORY_PROOF SourceMemory;BOOLEAN HasCpu;
+ BOOLEAN LateArmed;
 } PIANO_LINUX_EFI_SESSION;
 // Driver-lifetime zeroed context. Three blobs are validated immutable CPU-file
 // snapshots. Run takes each once, borrows contiguous views, and retains leases

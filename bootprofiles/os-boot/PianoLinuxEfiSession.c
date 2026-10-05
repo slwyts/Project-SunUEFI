@@ -54,7 +54,9 @@ STATIC EFI_STATUS RetireImage(PIANO_LINUX_EFI_SESSION*S){
 }
 STATIC EFI_STATUS Free(PIANO_LINUX_EFI_SESSION*S,VOID**P){if(!*P)return EFI_SUCCESS;Alive(S);EFI_STATUS E=Exact(S->Env.Services->FreePool(*P));Alive(S);if(E==EFI_SUCCESS)*P=NULL;return E;}
 STATIC EFI_STATUS Cleanup(PIANO_LINUX_EFI_SESSION*S){
- Alive(S);EFI_STATUS E=RetireImage(S);if(E!=EFI_SUCCESS)return E;
+ Alive(S);EFI_STATUS E;
+ if(S->LateArmed){E=Exact(S->Env.NativeLateDisarm(S->Env.Context,S->Image));Alive(S);if(E!=EFI_SUCCESS)Halt(S,E);S->LateArmed=FALSE;}
+ E=RetireImage(S);if(E!=EFI_SUCCESS)return E;
  if(S->InitrdInstalled){E=Exact(S->Env.Services->UninstallMultipleProtocolInterfaces(S->InitrdHandle,&gEfiLoadFile2ProtocolGuid,&S->Load,&gEfiDevicePathProtocolGuid,&S->Path,NULL));Alive(S);if(E!=EFI_SUCCESS)return E;S->InitrdInstalled=FALSE;S->InitrdHandle=NULL;}
  if(S->FdtInstalled){VOID*Current=NULL;E=Table(S,&Current);if(E!=EFI_SUCCESS||Current!=S->FdtCopy)return EFI_COMPROMISED_DATA;
  E=Exact(S->Env.Services->InstallConfigurationTable(&gFdtTableGuid,S->OldFdt));Alive(S);if(E!=EFI_SUCCESS)return E;S->FdtInstalled=FALSE;}
@@ -70,8 +72,12 @@ STATIC BOOLEAN Overlap(CONST VOID*A,UINTN An,CONST VOID*B,UINTN Bn){
  return X<Y+Bn&&Y<X+An;
 }
 EFI_STATUS PianoLinuxEfiSessionRun(PIANO_LINUX_EFI_SESSION*S,CONST PIANO_LINUX_EFI_ENV*E,CONST PIANO_LAUNCH_BLOB*K,CONST PIANO_LAUNCH_BLOB*D,CONST PIANO_LAUNCH_BLOB*I){
- if(!S||!E||!E->Services||!E->SystemTable||!E->ParentImage||!E->BootServicesAlive||!E->FailStop||!E->ServiceSlice||!E->PrepareHandoff||!E->CommandLine||!E->ExpectedOwners||!E->ExpectedDramBytes||!E->MaxLoadedBytes)return EFI_INVALID_PARAMETER;
- if(!E->CheckMemory||!E->ValidateMemory||!E->ValidateRetired)return EFI_NOT_READY;
+ if(!S||!E||!E->Services||!E->SystemTable||!E->ParentImage||!E->BootServicesAlive||!E->FailStop||!E->ServiceSlice||!E->CommandLine||!E->ExpectedOwners||!E->ExpectedDramBytes||!E->MaxLoadedBytes)return EFI_INVALID_PARAMETER;
+ if(E->HandoffMode!=PianoHandoffLegacyPreStart&&E->HandoffMode!=PianoHandoffNativeLate)return EFI_INVALID_PARAMETER;
+ if(PIANO_PRODUCT_NATIVE_LATE && E->HandoffMode!=PianoHandoffNativeLate)return EFI_UNSUPPORTED;
+ if(!E->CheckMemory||!E->ValidateMemory)return EFI_NOT_READY;
+ if(E->HandoffMode==PianoHandoffNativeLate){if(!E->NativeLateArm||!E->NativeLateDisarm)return EFI_NOT_READY;}
+ else if(!E->PrepareHandoff||!E->ValidateRetired)return EFI_NOT_READY;
  if(Overlap(E,sizeof(*E),S,sizeof(*S))||Overlap(K,sizeof(*K),S,sizeof(*S))||Overlap(D,sizeof(*D),S,sizeof(*S))||Overlap(I,sizeof(*I),S,sizeof(*S)))return EFI_INVALID_PARAMETER;
  if(!ValidBlob(K,E->MaxKernelBytes)||!ValidBlob(D,E->MaxDtbBytes)||!ValidBlob(I,E->MaxInitrdBytes)||D->Bytes<40||D->Bytes>0x200000)return EFI_BAD_BUFFER_SIZE;
  CONST PIANO_LAUNCH_BLOB*Input[]={K,D,I};UINT64 Total=0;
@@ -140,6 +146,11 @@ EFI_STATUS PianoLinuxEfiSessionRun(PIANO_LINUX_EFI_SESSION*S,CONST PIANO_LINUX_E
  Status=Exact(B->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,Before,S,&gEfiEventBeforeExitBootServicesGuid,&S->BeforeEvent));Alive(S);if(Status!=EFI_SUCCESS||!S->BeforeEvent){S->Retained=TRUE;if(Status==EFI_SUCCESS)Status=EFI_COMPROMISED_DATA;goto Done;}
  Status=Exact(B->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,Exit,S,&gEfiEventExitBootServicesGuid,&S->ExitEvent));Alive(S);if(Status!=EFI_SUCCESS||!S->ExitEvent){S->Retained=TRUE;if(Status==EFI_SUCCESS)Status=EFI_COMPROMISED_DATA;goto Done;}
  Status=Exact(E->ServiceSlice(E->Context,1000));Alive(S);if(Status!=EFI_SUCCESS)goto Done;
+ if(E->HandoffMode==PianoHandoffNativeLate){
+   Status=E->NativeLateArm(E->Context,S->Image,L);Alive(S);
+   if(Status!=EFI_SUCCESS){if(!EFI_ERROR(Status)){S->Retained=TRUE;Status=EFI_DEVICE_ERROR;}goto Done;}
+   S->LateArmed=TRUE;
+ }else{
  Status=Exact(E->PrepareHandoff(E->Context,&S->Memory,&S->Retire));Alive(S);if(Status!=EFI_SUCCESS){S->Retained=TRUE;goto Done;}
  if(S->Retire.Revision!=1||S->Retire.Status!=EFI_SUCCESS||!S->Retire.Clean||S->Retire.Retained||!S->Retire.NoDma||!S->Retire.AtApplication||S->Retire.ExpectedOwners!=E->ExpectedOwners||
     (S->Retire.RetiredOwners&S->Retire.AbsentOwners)||((S->Retire.RetiredOwners|S->Retire.AbsentOwners)!=E->ExpectedOwners)){S->Retained=TRUE;Status=EFI_COMPROMISED_DATA;goto Done;}S->OwnersRetired=TRUE;
@@ -149,6 +160,7 @@ EFI_STATUS PianoLinuxEfiSessionRun(PIANO_LINUX_EFI_SESSION*S,CONST PIANO_LINUX_E
  PIANO_LINUX_MEMORY_PROOF Fresh={0};Status=Exact(E->CheckMemory(E->Context,S->FdtCopy,FdtTotalSize(S->FdtCopy),&Fresh));Alive(S);if(Status!=EFI_SUCCESS)goto Done;
  if(Fresh.Revision!=1||Fresh.Status!=EFI_SUCCESS||Fresh.BootEpoch!=S->Memory.BootEpoch||Fresh.DramBytes!=S->Memory.DramBytes||!Fresh.NormalBytes||Fresh.UnresolvedReservations||!Fresh.FullDdr||!Fresh.FixedReservations||!Fresh.DynamicReservations||!Fresh.RuntimeRegions||!Fresh.CacheVerified||!Fresh.OwnershipVerified){Status=EFI_NOT_READY;goto Done;}
  Status=Exact(E->ValidateMemory(E->Context,&Fresh));Alive(S);if(Status!=EFI_SUCCESS)goto Done;S->Memory=Fresh;
+ }
  S->StartCalled=TRUE;Status=Exact(B->StartImage(S->Image,&S->ExitBytes,(CHAR16**)&S->ExitData));S->StartReturned=TRUE;S->ImageExitStatus=Status;Alive(S);
  // Returning without an EBS handoff is not Linux boot success.
  if(Status==EFI_SUCCESS)Status=EFI_ABORTED;

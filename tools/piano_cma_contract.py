@@ -40,7 +40,22 @@ def snapshot(root=ROOT,pins=PINS):
         path=root/relative
         if path.is_symlink():raise ValueError("Candidate pinned input cannot be a symlink: "+relative)
         data=path.read_bytes()
-        if digest(data)!=expected:raise ValueError("CMA candidate input SHA drift: "+relative)
+        if digest(data)!=expected:
+            # The product adds only a pinned, read-only MapKey getter after
+            # the unchanged allocator body. Accept that exact known transform,
+            # never arbitrary source drift or a new memory initialization.
+            import importlib.util
+            spec=importlib.util.spec_from_file_location('piano_cma_core_transform',Path(__file__).with_name('prepare_product_handoff.py'))
+            core=importlib.util.module_from_spec(spec);spec.loader.exec_module(core)
+            CORE_PINS,KEY_GETTER,transform_core=core.PINS,core.KEY_GETTER,core.transform_core
+            valid=False
+            if relative.endswith('/Dxe/Mem/Page.c')and CORE_PINS.get(relative)==expected:
+                newline=b'\r\n'if b'\r\n'in data else b'\n'
+                text=data.decode().replace('\r\n','\n');suffix='\n'+KEY_GETTER
+                if text.endswith(suffix)and text.count(suffix)==1:
+                    original=text[:-len(suffix)].replace('\n',newline.decode()).encode()
+                    valid=digest(original)==expected and data==transform_core(relative,original)
+            if not valid:raise ValueError("CMA candidate input SHA drift: "+relative)
         inputs[relative]=data
     return inputs
 

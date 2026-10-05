@@ -3,6 +3,7 @@
 set -euo pipefail
 piano_product_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "$piano_product_root/build/logs" "$piano_product_root/artifacts/product"
+python3 "$piano_product_root/tools/prepare_product_handoff.py" apply >/dev/null
 rm -f "$piano_product_root/artifacts/product/build-ok.json" "$piano_product_root/artifacts/product/manifest.json"
 python3 "$piano_product_root/tools/prepare_product_pump.py" apply >/dev/null
 python3 "$piano_product_root/tools/prepare_product_ui.py" apply >/dev/null
