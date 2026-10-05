@@ -82,12 +82,20 @@ def main():
     if index < 0:
         index = text.rfind('SUNUEFI_UFS_WINDOW_GUARD')
         if index >= 0:scope = 'bounded-ufs-final-report-only'
+    if index < 0 and 'SUNUEFI_UFS_DMA_COMPLETE command=BLOCKIO_READ' in text and (
+            'PIANO_KEY_EVENT' in text or 'bootitem-piano-setup' in text):
+        # A busy filesystem probe can overwrite the entire startup prefix.
+        # Preserve this observed firmware/UI tail without inventing a session
+        # marker, CORE_READY record or cold memory authority.
+        index=0
+        scope='wrapped-uefi-tail-with-product-ui-events'
     segment = text[index:] if index >= 0 else ''
     (out/'uefi.txt').write_text(segment)
     linux = 'rdinit=/init ro nokaslr efi=novamap' in text and 'console=ttyGS0,115200' in text
     independent_init = 'PIANO_KERNEL_RAM BEGIN pid=1' in text
     (out/'linux.txt').write_text(text if linux else '')
-    summary = {'test_id':args.test_id,'console_bytes':len(p.stdout),'uefi_marker_found':index>=0,
+    summary = {'test_id':args.test_id,'console_bytes':len(p.stdout),
+               'uefi_marker_found':index>=0 and scope!='wrapped-uefi-tail-with-product-ui-events',
                'uefi_bytes':len(segment.encode()),'path':str(out/'uefi.txt'),
                'linux_ram_command_line_found':linux,
                'linux_init_process_started':linux and 'Run /init as init process' in text,
@@ -96,6 +104,8 @@ def main():
                'pstore_files':pstore,'uefi_log_scope':scope}
     summary['product_core_ready']='PIANO_PRODUCT_CORE_READY' in segment
     summary['product_core_payload_security_violation']='SUNUEFI_PRODUCT_CORE_RETURN status=Security Violation' in segment
+    summary['startup_prefix_overwritten']=scope=='wrapped-uefi-tail-with-product-ui-events'
+    summary['simpleinit_menu_events_found']='PIANO_KEY_EVENT' in segment or 'bootitem-piano-setup' in segment
     (out/'manifest.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))
     if segment: print(segment[-18000:])

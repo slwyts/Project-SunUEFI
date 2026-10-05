@@ -64,7 +64,10 @@ python3 tools/check_product_fastboot.py --test-id TEST_ID --phase final --reboot
 
 An acknowledged reboot is not owner retirement or Android recovery proof. Root
 must subsequently collect the retained console, verify the exact USB/UFS/input
-retirement evidence, and check all 26 boot partition hashes after Android returns.
+retirement evidence. Ordinary RAM-only `fastboot boot` tests do not require a
+routine hash pass after Android returns. At the user's request, partition hash
+verification is reserved for a test involving persistent writes or a concrete
+unexpected partition/state change; the read-only helper remains available.
 
 ## Exact current command surface
 
