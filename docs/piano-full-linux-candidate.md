@@ -75,6 +75,40 @@ boot-tested yet and requires complete memory publication. Root staging records
 the ceiling explicitly. Original userdata and boot-slot mutation services remain
 excluded from the RAM policy.
 
+`tools/package_piano_ram_root.py` now streams a GNU tar/PAX root payload in a
+private subordinate-ID namespace. Numeric owners are the guest account IDs;
+absolute guest symlinks, hard links, set-ID modes, capabilities and ACLs remain
+represented. Root contents are fingerprinted before and after packaging, and
+every archive member, regular-file SHA256, ownership and link is checked by a
+streaming reader. Newc itself cannot represent the root's capability/ACL data.
+Only virtual directory contents, APT caches/indexes and the two host module
+development links are excluded. Nonempty `/opt` or `/mnt` guest content is refused
+instead of silently dropping an application. No runtime kernel module or desktop
+feature is excluded.
+
+`tools/build_piano_ram_bootstrap.py` builds a small real ARM64 runtime with the
+known static BusyBox and the actual GNU tar ELF dependency closure from this
+Debian root. A streamed plain newc embeds the compressed tar without compressing
+it a second time. The bootstrap checks the payload SHA256 and expanded-page
+budget, extracts once to a4GiB tmpfs with GNU tar ownership/permission/xattr/ACL
+restoration, checks matching modules and real systemd, then requires the audited
+hardware preparation before switch_root. The earlier full-unpacked `pianoinit`
+remains available; the compressed bootstrap reduces peak duplicate-root memory.
+
+The first pre-helper package is sealed under
+`artifacts/linux-full-rootfs/gnome-20261006-prehelpers/`:33,360 members,
+2,479,844,422 unique regular-file bytes,2,545,147,904 estimated4KiB-page bytes,
+876,466,087 compressed bytes, SHA256
+`a1d33ef21775c0e2ddcadd84f589f11ed3e396076d641cc3128eebbd1b3fa930`.
+The independent full archive verification checked every retained member and all
+regular bytes, including the capability and both ACL records. Its bootstrap is
+881,173,504 bytes, SHA256
+`4da3dd1b0a07b0cca53426f28aa0afa16ae6c2cb3fe6ee0df20f4bcb0c921eb7`.
+With the current41,912,832-byte kernel and1,209,103-byte DTB, these components
+total924,295,439 bytes before transport headers, below the1GiB target. This is
+a sizing/build result: hardware helpers and the final kernel/DTB binding remain
+pending, and the current firmware64MiB allocator cannot download this bundle.
+
 The ceiling is distinct from the compressed fastboot payload limit. Firmware's
 actual current limit remains64MiB and its planned download capacity remains1GiB
 pending the validated DDR allocator. Standard fastboot uses an8-hex-digit DATA

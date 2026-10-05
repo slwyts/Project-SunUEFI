@@ -1,0 +1,46 @@
+#!/bin/sh
+# Small initramfs: extract the complete GNU root once, preserving its metadata.
+set -eu
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+log() { printf 'piano: %s\n' "$*"; }
+fail() { log "BOOT_REFUSED: $*"; exit 1; }
+root_mode=ram
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in
+        piano.root=*) root_mode=${arg#piano.root=} ;;
+        root=PARTLABEL=userdata|root=/dev/sd*|root=/dev/block/*)
+            fail 'Android block-root arguments are forbidden' ;;
+    esac
+done
+[ "$root_mode" = ram ] || fail 'This entry requires a complete RAM root'
+mkdir -p /dev /proc /sys /run /sysroot
+mountpoint -q /dev || mount -t devtmpfs devtmpfs /dev
+mountpoint -q /proc || mount -t proc proc /proc
+mountpoint -q /sys || mount -t sysfs sysfs /sys
+mountpoint -q /run || mount -t tmpfs -o mode=0755 tmpfs /run
+root_type=$(awk '$2=="/" {print $3; exit}' /proc/mounts)
+case "$root_type" in rootfs|ramfs|tmpfs) ;; *) fail "bootstrap is not RAM: $root_type" ;; esac
+cd /
+sha256sum -c /rootfs.sha256 || fail 'GNU root payload digest mismatch'
+budget=$(cat /rootfs.page-budget)
+available_kib=$(awk '$1=="MemAvailable:" {print $2; exit}' /proc/meminfo)
+case "$budget:$available_kib" in *[!0-9:]*|:*|*:) fail 'RAM accounting is unavailable' ;; esac
+[ "$budget" -lt 4294967296 ] || fail 'GNU root exceeds the 4GiB budget'
+[ "$((available_kib * 1024))" -gt "$((budget + 536870912))" ] || fail 'Insufficient RAM to unpack the GNU root'
+mount -t tmpfs -o size=4294967296,mode=0755 tmpfs /sysroot
+# newc cannot carry xattrs/ACLs. GNU tar handles capabilities, account IDs,
+# hard links and ACLs here; no underlying block device is opened.
+/usr/bin/tar --extract --gzip --same-owner --same-permissions --xattrs \
+    '--xattrs-include=*' --acls --file=/rootfs.tar.gz --directory=/sysroot \
+    || fail 'GNU root extraction failed'
+[ -x /sysroot/usr/lib/systemd/systemd ] || fail 'Real systemd is missing'
+[ -d "/sysroot/usr/lib/modules/$(uname -r)" ] || fail 'Matching full kernel modules are missing'
+[ ! -f /sysroot/etc/initrd-release ] || fail 'Distro was staged as initrd-only'
+[ -x /sysroot/usr/lib/piano/piano-ram-hardware-prepare ] || fail 'Audited hardware preparation is missing'
+mkdir -p /sysroot/dev /sysroot/proc /sysroot/sys /sysroot/run /sysroot/tmp
+chmod 1777 /sysroot/tmp
+printf 'ram\n' > /run/piano-root-mode
+for virtual in dev proc sys run; do mount --move "/$virtual" "/sysroot/$virtual"; done
+chroot /sysroot /usr/lib/piano/piano-ram-hardware-prepare || fail 'Hardware preparation failed'
+log 'RAM_ROOT_READY: starting Debian systemd from a 4GiB-capped tmpfs'
+exec switch_root /sysroot /usr/lib/systemd/systemd
