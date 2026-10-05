@@ -21,13 +21,68 @@ STATIC EFI_GUID mEarlyGuid=PIANO_EARLY_MEMORY_HOB_GUID;
 
 STATIC BOOLEAN EarlySpan(UINT64 Base,UINT64 Bytes){return Bytes&&Base<=MAX_UINT64-Bytes;}
 STATIC BOOLEAN EarlyBoolean(BOOLEAN B){return B==FALSE||B==TRUE;}
+STATIC BOOLEAN EarlyZero(CONST VOID *Bytes,UINTN Count){
+  CONST UINT8 *P=Bytes;for(UINTN I=0;I<Count;++I)if(P[I])return FALSE;return TRUE;
+}
+STATIC BOOLEAN EarlyWindow(UINT64 Address,UINT32 Bytes){
+  return Bytes&&!(Address&3)&&!(Bytes&3)&&Address>=PIANO_SMEM_BASE&&
+    Address-PIANO_SMEM_BASE<PIANO_SMEM_BYTES&&Bytes<=PIANO_SMEM_BYTES-(Address-PIANO_SMEM_BASE);
+}
+STATIC UINT16 Early16(CONST UINT8 *P){return P[0]|((UINT16)P[1]<<8);}
+STATIC UINT32 Early32(CONST UINT8 *P){return Early16(P)|((UINT32)Early16(P+2)<<16);}
+STATIC UINT64 Early64(CONST UINT8 *P){return Early32(P)|((UINT64)Early32(P+4)<<32);}
+STATIC BOOLEAN EarlyRawValid(CONST PIANO_EARLY_MEMORY_REPORT *R){
+  CONST PIANO_SMEM_RAM_REPORT *S=&R->Smem;CONST PIANO_EARLY_SIII_DIAGNOSTIC *D=&R->Descriptor;
+  if(!EarlyBoolean(R->RawPayloadCoherent)||!EarlyBoolean(R->RawDescriptorCoherent)||
+     !EarlyZero(R->RawReserved,sizeof(R->RawReserved))||D->Reserved||
+     !EarlyZero(D->ReservedFlags,sizeof(D->ReservedFlags))||
+     !EarlyBoolean(D->RepeatedEqual)||!EarlyBoolean(D->RegionMatchesKnownWindow)||
+     (D->Status!=EFI_SUCCESS&&!EFI_ERROR(D->Status))||
+     R->RawPayloadBytes>sizeof(R->RawPayload)||R->RawDescriptorBytes>sizeof(R->RawDescriptor))return FALSE;
+  if(!EarlyZero(R->RawPayload+R->RawPayloadBytes,sizeof(R->RawPayload)-R->RawPayloadBytes)||
+     !EarlyZero(R->RawDescriptor+R->RawDescriptorBytes,sizeof(R->RawDescriptor)-R->RawDescriptorBytes))return FALSE;
+  if(R->RawPayloadCoherent){
+    if(!R->ColdStateVerified||!S->RepeatedMetadataEqual||!S->RepeatedPayloadEqual||
+       R->RawPayloadBytes<24||R->RawPayloadBytes!=S->PayloadBytes||
+       R->RawPayloadCrc32!=S->PayloadCrc32||!EarlyWindow(S->PayloadAddress,R->RawPayloadBytes)||
+       PianoEarlyMemoryBytesCrc32(R->RawPayload,R->RawPayloadBytes)!=R->RawPayloadCrc32)return FALSE;
+  }else if(R->RawPayloadBytes||R->RawPayloadCrc32||S->RepeatedPayloadEqual)return FALSE;
+  if(R->RawDescriptorCoherent){
+    UINT32 Bytes=R->RawDescriptorBytes;
+    if(!R->ColdStateVerified||!D->RepeatedEqual||S->CookieStatus!=EFI_SUCCESS||!S->CookieRepeatedEqual||
+       D->Address!=S->CookieValue||Bytes<20||Bytes!=D->SnapshotBytes||
+       R->RawDescriptorCrc32!=D->Crc32||!EarlyWindow(D->Address,Bytes)||
+       PianoEarlyMemoryBytesCrc32(R->RawDescriptor,Bytes)!=D->Crc32||
+       D->TlvCount>64||Early32(R->RawDescriptor)!=0x49494953U||
+       Early32(R->RawDescriptor+4)!=D->SmemBytes||Early64(R->RawDescriptor+8)!=D->SmemBase||
+       Early16(R->RawDescriptor+16)!=D->ItemCount||Early16(R->RawDescriptor+18)!=D->TlvCount||
+       D->RegionMatchesKnownWindow!=(D->SmemBase==PIANO_SMEM_BASE&&D->SmemBytes==PIANO_SMEM_BYTES)||
+       CompareMem(D->Prefix,R->RawDescriptor,MIN((UINT32)sizeof(D->Prefix),Bytes))||
+       !EarlyZero(D->Prefix+MIN((UINT32)sizeof(D->Prefix),Bytes),sizeof(D->Prefix)-MIN((UINT32)sizeof(D->Prefix),Bytes)))return FALSE;
+    // Validate serialized boundaries and report linkage only. The SIII region
+    // contents never replace the fixed address permission above.
+    UINT32 At=20;UINT16 HostBytes=0,Hosts=0;
+    for(UINT16 I=0;I<D->TlvCount;++I){
+      if(At>Bytes||Bytes-At<4)return FALSE;
+      UINT16 Length=Early16(R->RawDescriptor+At+2);
+      if(Length<4||(Length&3)||Length>Bytes-At)return FALSE;
+      if(Early16(R->RawDescriptor+At)==0x4853){if(!Hosts)HostBytes=Length;++Hosts;}
+      At+=Length;
+    }
+    if(At!=Bytes||HostBytes!=D->HostInfoBytes||
+       D->Status!=(Hosts>1?EFI_COMPROMISED_DATA:EFI_SUCCESS))return FALSE;
+  }else if(R->RawDescriptorBytes||R->RawDescriptorCrc32||D->RepeatedEqual||D->SnapshotBytes||D->Crc32||
+    D->SmemBase||D->SmemBytes||D->ItemCount||D->TlvCount||D->HostInfoBytes||
+    D->RegionMatchesKnownWindow||!EarlyZero(D->Prefix,sizeof(D->Prefix)))return FALSE;
+  return TRUE;
+}
 STATIC BOOLEAN EarlyValid(CONST PIANO_EARLY_MEMORY_REPORT *R){
   if(R->Version!=PIANO_EARLY_MEMORY_VERSION||R->Bytes!=sizeof(*R)||R->Reserved||
      R->ReportCrc32!=PianoEarlyMemoryReportCrc32(R)||!R->Attempted||!R->Finished||!R->Published||
      R->PublishStatus!=EFI_SUCCESS||(R->Status!=EFI_SUCCESS&&!EFI_ERROR(R->Status))||
      !EarlyBoolean(R->Attempted)||!EarlyBoolean(R->Finished)||!EarlyBoolean(R->Published)||
      !EarlyBoolean(R->ColdStateVerified)||R->MemoryOwnershipGranted||R->HighDdrPublished||
-     R->LoadCount>PIANO_SMEM_TOTAL_MAX/4||R->RecoveredFaults>R->LoadCount)return FALSE;
+     R->LoadCount>PIANO_SMEM_TOTAL_MAX/4||R->RecoveredFaults>R->LoadCount||!EarlyRawValid(R))return FALSE;
   if(R->ColdStateVerified&&(R->EntryEl!=4||R->EntrySpSel!=1||(R->EntrySctlr&(BIT0|BIT2))||
      !R->EntryVbar||(R->EntryVbar&2047)))return FALSE;
   if(!R->ColdStateVerified&&(R->LoadCount||R->RecoveredFaults||R->Status==EFI_SUCCESS))return FALSE;
@@ -104,6 +159,23 @@ STATIC VOID ReemitEarly(VOID){
       E->SourceIndex,E->RawType,E->Base,E->RawSize));}
   if(mEarly.RecoveredFaults)DEBUG((DEBUG_WARN,"PIANO_PRODUCT_EARLY_RAM_FAULT pc=%lx esr=%lx far=%lx spsr=%lx resume=%lx\n",
     mEarly.LastFault.Elr,mEarly.LastFault.Esr,mEarly.LastFault.Far,mEarly.LastFault.Spsr,mEarly.LastFault.Resume));
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_EARLY_RAW ram_bytes=%u ram_crc32=%08x ram_equal=%u siii_bytes=%u siii_crc32=%08x siii_equal=%u ownership=0 high_ddr=0\n",
+    mEarly.RawPayloadBytes,mEarly.RawPayloadCrc32,mEarly.RawPayloadCoherent,
+    mEarly.RawDescriptorBytes,mEarly.RawDescriptorCrc32,mEarly.RawDescriptorCoherent));
+  if(mEarly.RawPayloadCoherent)for(UINT32 At=0;At<mEarly.RawPayloadBytes;At+=24){
+    UINT32 Words[6]={0};UINT32 Bytes=MIN(24U,mEarly.RawPayloadBytes-At);CopyMem(Words,mEarly.RawPayload+At,Bytes);
+    DEBUG((DEBUG_WARN,"PIANO_PRODUCT_EARLY_RAM402_RAW off=%x bytes=%u words=%08x,%08x,%08x,%08x,%08x,%08x\n",
+      At,Bytes,Words[0],Words[1],Words[2],Words[3],Words[4],Words[5]));
+  }
+  CONST PIANO_EARLY_SIII_DIAGNOSTIC *D=&mEarly.Descriptor;
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_EARLY_SIII status=%r address=%lx base=%lx bytes=%x items=%u tlvs=%u hostlen=%u snapshot=%u crc32=%08x equal=%u window_match=%u ownership=0\n",
+    D->Status,D->Address,D->SmemBase,D->SmemBytes,D->ItemCount,D->TlvCount,D->HostInfoBytes,
+    D->SnapshotBytes,D->Crc32,D->RepeatedEqual,D->RegionMatchesKnownWindow));
+  if(mEarly.RawDescriptorCoherent)for(UINT32 At=0;At<mEarly.RawDescriptorBytes;At+=24){
+    UINT32 Words[6]={0};UINT32 Bytes=MIN(24U,mEarly.RawDescriptorBytes-At);CopyMem(Words,mEarly.RawDescriptor+At,Bytes);
+    DEBUG((DEBUG_WARN,"PIANO_PRODUCT_EARLY_SIII_RAW off=%x bytes=%u words=%08x,%08x,%08x,%08x,%08x,%08x\n",
+      At,Bytes,Words[0],Words[1],Words[2],Words[3],Words[4],Words[5]));
+  }
 }
 EFI_STATUS PianoProductEarlySmemStatus(VOID){return mEarlyStatus;}
 

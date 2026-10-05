@@ -2,7 +2,8 @@
 #pragma once
 #include "PianoSmemRam.h"
 
-#define PIANO_EARLY_MEMORY_VERSION 1U
+#define PIANO_EARLY_MEMORY_VERSION 2U
+#define PIANO_EARLY_SIII_RAW_MAX 2048U
 #define PIANO_EARLY_MEMORY_HOB_GUID \
   {0x495ec035,0x44a5,0x4f17,{0x87,0x50,0x50,0x49,0x41,0x4e,0x4f,0x31}}
 
@@ -11,6 +12,18 @@ typedef struct {
   volatile UINT64 Armed,Faulted,Fatal;
   UINT64 Address,Elr,Esr,Far,Spsr,Resume,OldVbar,OldDaif;
 } PIANO_SEC_READ_STATE;
+// Serialized diagnostic metadata, independent of the descriptor collector's
+// implementation header. Neither the embedded SIII base nor its cookie grants
+// a new read window or any DDR authority.
+typedef struct {
+  EFI_STATUS Status;
+  UINT64 Address,SmemBase;
+  UINT32 SmemBytes;
+  UINT16 ItemCount,TlvCount,HostInfoBytes,Reserved;
+  UINT32 SnapshotBytes,Crc32;
+  BOOLEAN RepeatedEqual,RegionMatchesKnownWindow;
+  UINT8 ReservedFlags[6],Prefix[64];
+} PIANO_EARLY_SIII_DIAGNOSTIC;
 typedef struct {
   UINT32 Version,Bytes;
   UINT32 ReportCrc32,Reserved;
@@ -22,7 +35,21 @@ typedef struct {
   BOOLEAN MemoryOwnershipGranted,HighDdrPublished;
   PIANO_SEC_READ_STATE LastRead,LastFault;
   PIANO_SMEM_RAM_REPORT Smem;
+  PIANO_EARLY_SIII_DIAGNOSTIC Descriptor;
+  UINT32 RawPayloadBytes,RawPayloadCrc32,RawDescriptorBytes,RawDescriptorCrc32;
+  BOOLEAN RawPayloadCoherent,RawDescriptorCoherent;
+  UINT8 RawReserved[6];
+  // Exact complete matching reads, including semantically rejected RAM402.
+  // Unused bytes remain zero. These are evidence, never usable memory claims.
+  UINT8 RawPayload[PIANO_SMEM_PAYLOAD_MAX];
+  UINT8 RawDescriptor[PIANO_EARLY_SIII_RAW_MAX];
 } PIANO_EARLY_MEMORY_REPORT;
+
+STATIC inline UINT32 PianoEarlyMemoryBytesCrc32(CONST VOID *Bytes,UINTN Length){
+  CONST UINT8 *P=Bytes;UINT32 C=0xffffffffU;
+  for(UINTN I=0;I<Length;++I){C^=P[I];for(UINT32 J=0;J<8;++J)C=(C>>1)^((C&1)?0xedb88320U:0);}
+  return ~C;
+}
 
 // Integrity of the exact serialized diagnostic record, with its CRC field
 // treated as zero. This is not authentication or hardware ownership proof.

@@ -25,14 +25,29 @@ static UINTN payload_log,count_log,coherence_log,close_log,bank_log;static UINT3
 static BOOLEAN map_authorized_log,close_retained,debug_lifetime_safe;
 static UINTN snapshot_log,active_rejects;static EFI_STATUS snapshot_status,map_status;static UINT64 map_page,map_par,gcd_attrs;static UINT32 gcd_type,payload_crc;
 static UINTN early_case,early_gets,early_logs;static EFI_STATUS early_log_status;
+static UINT8 raw_payload_log[PIANO_SMEM_PAYLOAD_MAX],raw_descriptor_log[PIANO_EARLY_SIII_RAW_MAX];
+static UINT32 raw_payload_logged,raw_descriptor_logged;
+static BOOLEAN early_copy_change;static UINTN early_copy_count;
 static EFI_GUID early_guid=PIANO_EARLY_MEMORY_HOB_GUID;
 static struct {EFI_HOB_GUID_TYPE Header;PIANO_EARLY_MEMORY_REPORT Report;} early_hob;
 VOID *EFIAPI GetFirstGuidHob(CONST EFI_GUID *Guid){assert(!memcmp(Guid,&early_guid,sizeof(*Guid)));++early_gets;return early_case?&early_hob:NULL;}
 VOID *EFIAPI GetNextGuidHob(CONST EFI_GUID *Guid,CONST VOID *Start){assert(!memcmp(Guid,&early_guid,sizeof(*Guid)));assert(Start==(UINT8 *)&early_hob+early_hob.Header.Header.HobLength);++early_gets;return early_case==4?&early_hob:NULL;}
-VOID *EFIAPI ZeroMem(VOID*p,UINTN n){return memset(p,0,n);}VOID *EFIAPI CopyMem(VOID*a,CONST VOID*b,UINTN n){return memmove(a,b,n);}INTN EFIAPI CompareMem(CONST VOID*a,CONST VOID*b,UINTN n){return memcmp(a,b,n);}
+VOID *EFIAPI ZeroMem(VOID*p,UINTN n){return memset(p,0,n);}VOID *EFIAPI CopyMem(VOID*a,CONST VOID*b,UINTN n){
+ if(early_copy_change&&b==&early_hob.Report&&n==sizeof(early_hob.Report)&&++early_copy_count==2)early_hob.Report.RawPayload[0]^=1;
+ return memmove(a,b,n);}INTN EFIAPI CompareMem(CONST VOID*a,CONST VOID*b,UINTN n){return memcmp(a,b,n);}
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return TRUE;}BOOLEAN EFIAPI DebugPrintLevelEnabled(CONST UINTN Level){return TRUE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8*Format,...){VA_LIST args;VA_START(args,Format);assert(Level==DEBUG_WARN);debug_lifetime_safe=TRUE;
  if(strstr(Format,"EARLY_RAM_HOB")){++early_logs;early_log_status=VA_ARG(args,EFI_STATUS);}
+ if(strstr(Format,"PIANO_PRODUCT_EARLY_RAM402_RAW")||strstr(Format,"PIANO_PRODUCT_EARLY_SIII_RAW")){
+   UINT32 offset=VA_ARG(args,unsigned),bytes=VA_ARG(args,unsigned),words[6];
+   for(UINTN i=0;i<6;++i)words[i]=VA_ARG(args,unsigned);
+   BOOLEAN payload=strstr(Format,"RAM402_RAW")!=NULL;
+   UINT8 *out=payload?raw_payload_log:raw_descriptor_log;UINT32 *written=payload?&raw_payload_logged:&raw_descriptor_logged;
+   UINT32 bound=payload?sizeof(raw_payload_log):sizeof(raw_descriptor_log);
+   if(!offset)*written=0;assert(offset==*written&&bytes&&bytes<=24&&offset<=bound&&bytes<=bound-offset);
+   memcpy(out+offset,words,bytes);*written+=bytes;
+ }
+ if(strncmp(Format,"PIANO_PRODUCT_",14)==0){
  if(strstr(Format,"SMEM_PAYLOAD")||strstr(Format,"SMEM_SNAPSHOT")){if(strstr(Format,"SMEM_SNAPSHOT"))++snapshot_log;else ++payload_log;snapshot_status=VA_ARG(args,EFI_STATUS);parsed=VA_ARG(args,unsigned);major=VA_ARG(args,unsigned);ramver=VA_ARG(args,unsigned);}
  if(strstr(Format,"SMEM_COUNTS")){++count_log;banks=VA_ARG(args,unsigned);preloaded=VA_ARG(args,unsigned);}
  if(strstr(Format,"SMEM_COHERENCE")){++coherence_log;map_authorized_log=strstr(Format,"map_authorized=0")!=NULL;(void)VA_ARG(args,unsigned);(void)VA_ARG(args,unsigned);payload_crc=VA_ARG(args,unsigned);}
@@ -40,6 +55,7 @@ VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8*Format,...){VA_LIST args;VA_START
  if(strstr(Format,"SMEM_CLOSE")){++close_log;(void)VA_ARG(args,EFI_STATUS);(void)VA_ARG(args,unsigned);close_retained=VA_ARG(args,unsigned)!=0;}
  if(strstr(Format,"SMEM_MAP")){map_page=VA_ARG(args,UINT64);map_par=VA_ARG(args,UINT64);map_status=VA_ARG(args,EFI_STATUS);}
  if(strstr(Format,"SMEM_GCD")){gcd_type=VA_ARG(args,unsigned);gcd_attrs=VA_ARG(args,UINT64);}
+ }
  VA_END(args);}
 VOID EFIAPI CpuDeadLoop(VOID){abort();}
 static VOID p32(UINT8*p,UINT32 v){for(UINTN i=0;i<4;i++)p[i]=(UINT8)(v>>(8*i));}static VOID p64(UINT8*p,UINT64 v){p32(p,(UINT32)v);p32(p+4,(UINT32)(v>>32));}
@@ -84,13 +100,18 @@ static VOID EarlySetup(VOID){
  assert(PianoSmemRamParse(smem+0x3000,24+72*2,&r->Smem)==EFI_SUCCESS);
  r->Smem.SmemVersion=0xb0001;r->Smem.RepeatedMetadataEqual=r->Smem.RepeatedPayloadEqual=TRUE;
  r->Smem.PayloadAddress=PIANO_SMEM_BASE+0x3000;r->Smem.PayloadBytes=24+72*2;r->Smem.RawEntryCount=2;
- if(early_case==2)r->Version=2;
+ r->Smem.PayloadCrc32=Crc(smem+0x3000,r->Smem.PayloadBytes);
+ r->RawPayloadBytes=r->Smem.PayloadBytes;r->RawPayloadCrc32=r->Smem.PayloadCrc32;r->RawPayloadCoherent=TRUE;
+ memcpy(r->RawPayload,smem+0x3000,r->RawPayloadBytes);r->Descriptor.Status=EFI_NOT_STARTED;
+ if(early_case==2)r->Version=1;
  if(early_case==3)early_hob.Header.Header.HobLength-=8;
  if(early_case==5)r->MemoryOwnershipGranted=TRUE;
  if(early_case==6)r->Smem.BankCount=65;
  if(early_case==8)r->Smem.Banks[0].AvailableLength=r->Smem.Banks[0].RawSize+1;
- if(early_case==9){r->Status=EFI_UNSUPPORTED;r->ColdStateVerified=FALSE;r->LoadCount=0;memset(&r->Smem,0,sizeof(r->Smem));r->Smem.Status=EFI_NOT_STARTED;}
+ if(early_case==9){r->Status=EFI_UNSUPPORTED;r->ColdStateVerified=FALSE;r->LoadCount=0;memset(&r->Smem,0,sizeof(r->Smem));r->Smem.Status=EFI_NOT_STARTED;
+   memset(r->RawPayload,0,sizeof(r->RawPayload));r->RawPayloadCoherent=FALSE;r->RawPayloadBytes=r->RawPayloadCrc32=0;}
  if(early_case==10||early_case==19){r->Status=EFI_DEVICE_ERROR;r->LoadCount=1;r->RecoveredFaults=1;memset(&r->Smem,0,sizeof(r->Smem));r->Smem.Status=EFI_DEVICE_ERROR;
+  memset(r->RawPayload,0,sizeof(r->RawPayload));r->RawPayloadCoherent=FALSE;r->RawPayloadBytes=r->RawPayloadCrc32=0;
   r->LastFault=(PIANO_SEC_READ_STATE){.Faulted=1,.Address=PIANO_SMEM_BASE+0x5c,.Far=PIANO_SMEM_BASE+0x5c,.Elr=0x1100,.Resume=0x1104,.Esr=0x96000010,.Spsr=0x3c5};
   if(early_case==19)r->LastFault.Far++;}
  if(early_case==11)early_hob.Header.Name.Data1^=1;

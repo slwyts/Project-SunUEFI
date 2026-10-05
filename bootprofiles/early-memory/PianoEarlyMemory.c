@@ -11,6 +11,8 @@
 STATIC_ASSERT(OFFSET_OF(PIANO_SEC_READ_STATE,Address)==24,"SEC ASM address");
 STATIC_ASSERT(OFFSET_OF(PIANO_SEC_READ_STATE,OldDaif)==80,"SEC ASM DAIF");
 STATIC_ASSERT(sizeof(PIANO_SEC_READ_STATE)==88,"SEC ASM state size");
+STATIC_ASSERT(PIANO_EARLY_SIII_RAW_MAX==PIANO_SMEM_DESCRIPTOR_MAX,"SIII bounded snapshot size");
+STATIC_ASSERT(sizeof(PIANO_EARLY_MEMORY_REPORT)+sizeof(EFI_HOB_GUID_TYPE)<0x10000,"diagnostic HOB fits UINT16 length");
 STATIC PIANO_SMEM_RAM_WORK mWork;
 STATIC PIANO_EARLY_MEMORY_REPORT mReport;
 STATIC UINT32 mScratch[PIANO_SMEM_READ_MAX/4];
@@ -18,6 +20,37 @@ STATIC UINT64 mStart,mFrequency;
 STATIC PIANO_SMEM_DESCRIPTOR_WORK mDescriptorWork;
 STATIC PIANO_SMEM_DESCRIPTOR_REPORT mDescriptor;
 STATIC EFI_GUID mHobGuid=PIANO_EARLY_MEMORY_HOB_GUID;
+
+STATIC BOOLEAN RawWindow(UINT64 Address,UINT32 Bytes){
+  return Bytes&&!(Address&3)&&!(Bytes&3)&&Address>=PIANO_SMEM_BASE&&
+    Address-PIANO_SMEM_BASE<PIANO_SMEM_BYTES&&Bytes<=PIANO_SMEM_BYTES-(Address-PIANO_SMEM_BASE);
+}
+STATIC VOID FreezeRaw(VOID){
+  CONST PIANO_SMEM_RAM_REPORT *S=&mReport.Smem;
+  if(mReport.ColdStateVerified&&S->RepeatedMetadataEqual&&S->RepeatedPayloadEqual&&
+     S->PayloadBytes>=24&&S->PayloadBytes<=sizeof(mReport.RawPayload)&&RawWindow(S->PayloadAddress,S->PayloadBytes)&&
+     !CompareMem(mWork.Payload[0],mWork.Payload[1],S->PayloadBytes)&&
+     PianoEarlyMemoryBytesCrc32(mWork.Payload[0],S->PayloadBytes)==S->PayloadCrc32){
+    CopyMem(mReport.RawPayload,mWork.Payload[0],S->PayloadBytes);
+    mReport.RawPayloadBytes=S->PayloadBytes;mReport.RawPayloadCrc32=S->PayloadCrc32;
+    mReport.RawPayloadCoherent=TRUE;
+  }
+  PIANO_EARLY_SIII_DIAGNOSTIC *D=&mReport.Descriptor;
+  D->Status=mDescriptor.Status;D->Address=mDescriptor.Address;D->SmemBase=mDescriptor.SmemBase;
+  D->SmemBytes=mDescriptor.SmemBytes;D->ItemCount=mDescriptor.ItemCount;D->TlvCount=mDescriptor.TlvCount;
+  D->HostInfoBytes=mDescriptor.HostInfoBytes;D->SnapshotBytes=mDescriptor.SnapshotBytes;D->Crc32=mDescriptor.Crc32;
+  D->RepeatedEqual=mDescriptor.RepeatedEqual;D->RegionMatchesKnownWindow=mDescriptor.RegionMatchesKnownWindow;
+  CopyMem(D->Prefix,mDescriptor.Prefix,sizeof(D->Prefix));
+  if(mReport.ColdStateVerified&&S->CookieStatus==EFI_SUCCESS&&S->CookieRepeatedEqual&&
+     D->RepeatedEqual&&D->Address==S->CookieValue&&D->SnapshotBytes>=20&&
+     D->SnapshotBytes<=sizeof(mReport.RawDescriptor)&&RawWindow(D->Address,D->SnapshotBytes)&&
+     !CompareMem(mDescriptorWork.Bytes[0],mDescriptorWork.Bytes[1],D->SnapshotBytes)&&
+     PianoEarlyMemoryBytesCrc32(mDescriptorWork.Bytes[0],D->SnapshotBytes)==D->Crc32){
+    CopyMem(mReport.RawDescriptor,mDescriptorWork.Bytes[0],D->SnapshotBytes);
+    mReport.RawDescriptorBytes=D->SnapshotBytes;mReport.RawDescriptorCrc32=D->Crc32;
+    mReport.RawDescriptorCoherent=TRUE;
+  }
+}
 
 STATIC EFI_STATUS CpuState(UINT64 *El,UINT64 *Sctlr,UINT64 *Vbar,UINT64 *Daif,
   UINT64 *Counter,UINT64 *Frequency,UINT64 *SpSel){
@@ -88,6 +121,8 @@ EFI_STATUS PianoEarlyMemoryObserveCold(VOID){
   ZeroMem(&mReport,sizeof(mReport));mReport.Version=PIANO_EARLY_MEMORY_VERSION;
   mReport.Bytes=sizeof(mReport);mReport.Attempted=TRUE;mReport.PublishStatus=EFI_NOT_READY;
   mReport.Smem.Status=EFI_NOT_STARTED;mReport.Smem.CookieStatus=EFI_NOT_READY;
+  ZeroMem(&mDescriptor,sizeof(mDescriptor));mDescriptor.Status=EFI_NOT_STARTED;
+  ZeroMem(&mDescriptorWork,sizeof(mDescriptorWork));
   EFI_STATUS S=CpuState(&mReport.EntryEl,&mReport.EntrySctlr,&mReport.EntryVbar,
     &mReport.EntryDaif,&mStart,&mFrequency,&mReport.EntrySpSel);
   if(S==EFI_SUCCESS){
@@ -105,7 +140,7 @@ EFI_STATUS PianoEarlyMemoryObserveCold(VOID){
       PianoSmemDescriptorCollect(&Reader,mReport.Smem.CookieValue,&mDescriptorWork,&mDescriptor);
     else{ZeroMem(&mDescriptor,sizeof(mDescriptor));mDescriptor.Status=EFI_NOT_READY;}
   }
-  mReport.Status=S;mReport.Finished=TRUE;
+  FreezeRaw();mReport.Status=S;mReport.Finished=TRUE;
   DEBUG((DEBUG_WARN,"SUNUEFI_EARLY_SMEM status=%r cold=%u loads=%u recovered=%u smem=%x ram=%u banks=%u preloaded=%u cookie=%lx ownership=0 high_ddr=0\n",
     S,mReport.ColdStateVerified,mReport.LoadCount,mReport.RecoveredFaults,
     mReport.Smem.SmemVersion,mReport.Smem.RamVersion,mReport.Smem.BankCount,
