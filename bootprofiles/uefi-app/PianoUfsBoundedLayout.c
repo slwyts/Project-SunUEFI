@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+#include "PianoUfsBoundedLayout.h"
+#include <Library/BaseMemoryLib.h>
+STATIC VOID Le(UINT8 *P,UINT32 V){for(UINTN I=0;I<4;++I)P[I]=(UINT8)(V>>(I*8));}
+STATIC VOID Be(UINT8 *P,UINT32 V){for(UINTN I=0;I<4;++I)P[3-I]=(UINT8)(V>>(I*8));}
+STATIC EFI_STATUS Init(VOID *Trd,UINTN TBytes,VOID *Ucd,UINTN UBytes,UINT64 Iova,UINT8 Tag,UINT8 Lun){
+  UINTN T=(UINTN)Trd,U=(UINTN)Ucd;
+  if(Lun!=4 || !Trd || !Ucd || TBytes<32 || UBytes<1024 || T>MAX_UINTN-32 || U>MAX_UINTN-1024 ||
+    (T<U+1024 && U<T+32) || (Iova&4095) || Iova>MAX_UINT32-1023)return EFI_INVALID_PARAMETER;
+  ZeroMem(Trd,32);ZeroMem(Ucd,1024);UINT8 *R=Ucd;R[0]=1;R[2]=4;R[3]=Tag;
+  Le(Trd,0x11000000);Le((UINT8 *)Trd+8,15);Le((UINT8 *)Trd+16,(UINT32)Iova);Le((UINT8 *)Trd+24,0x00100010);return EFI_SUCCESS;
+}
+EFI_STATUS PianoUfsBoundedBuildWrite10(VOID *T,UINTN TN,VOID *U,UINTN UN,UINT64 Iova,UINT64 Data,UINT8 Tag,UINT8 Lun,EFI_LBA Lba,UINTN Bytes){
+  if(Lba<PIANO_UFS_WINDOW_FIRST || Lba>PIANO_UFS_WINDOW_LAST || Bytes!=4096 || (Data&4095) || Data>MAX_UINT32-4095 || (Data<Iova+4096 && Iova<Data+4096))return EFI_INVALID_PARAMETER;
+  EFI_STATUS S=Init(T,TN,U,UN,Iova,Tag,Lun);if(EFI_ERROR(S))return S;UINT8 *R=U;
+  Le(T,0x13000000);Le((UINT8 *)T+28,0x00400001);R[1]=0x20;Be(R+12,4096);R[16]=0x2A;R[17]=8;Be(R+18,(UINT32)Lba);R[24]=1;
+  Le(R+256,(UINT32)Data);Le(R+268,4095);return EFI_SUCCESS;
+}
+EFI_STATUS PianoUfsBoundedBuildSync10(VOID *T,UINTN TN,VOID *U,UINTN UN,UINT64 Iova,UINT8 Tag,UINT8 Lun,EFI_LBA Lba,UINTN Bytes){
+  if(Lba!=PIANO_UFS_WINDOW_FIRST || Bytes!=PIANO_UFS_WINDOW_BYTES)return EFI_INVALID_PARAMETER;
+  EFI_STATUS S=Init(T,TN,U,UN,Iova,Tag,Lun);if(EFI_ERROR(S))return S;UINT8 *R=U;
+  R[16]=0x35;Be(R+18,PIANO_UFS_WINDOW_FIRST);R[23]=(UINT8)(PIANO_UFS_WINDOW_BLOCKS>>8);R[24]=(UINT8)PIANO_UFS_WINDOW_BLOCKS;return EFI_SUCCESS;
+}

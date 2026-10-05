@@ -5,14 +5,19 @@
 #include "PianoOwnedSmmu.h"
 #include "PianoUfsDmaLayout.h"
 #include "PianoGpt.h"
-#ifdef PIANO_UFS_WRITE_TEST
+#if defined(PIANO_UFS_WRITE_TEST) || defined(PIANO_UFS_BOUNDED_VOLUME)
 #include "PianoUfsWriteTest.h"
 #ifndef PIANO_UFS_WRITE_TEST_BASELINE_HEADER
 #define PIANO_UFS_WRITE_TEST_BASELINE_HEADER "PianoUfsWriteTestBaseline.h"
 #endif
 #include PIANO_UFS_WRITE_TEST_BASELINE_HEADER
+#endif
+#ifdef PIANO_UFS_WRITE_TEST
 #if !defined(PIANO_UFS_BLOCKIO) || (defined(PIANO_UFS_WRITE_PREFLIGHT) == defined(PIANO_UFS_WRITE_RESTORE_TEST))
 #error A write-test profile requires readonly BlockIO and exactly one explicit mode
+#endif
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+#error Fixed test and bounded volume are mutually exclusive
 #endif
 STATIC PIANO_UFS_WRITE_WORK mWriteWork;
 STATIC PIANO_UFS_WRITE_RESULT mWriteResult;
@@ -24,6 +29,22 @@ STATIC UINTN mWriteGuardCount;
 STATIC VOID ReportWriteTransaction(VOID);
 #define UFS_WRITE_EVIDENCE "write_doorbells=%lu"
 #define UFS_WRITE_EVIDENCE_ARG ,(UINT64)mWriteDoorbells
+#elif defined(PIANO_UFS_BOUNDED_VOLUME)
+#include "PianoUfsBoundedTransport.h"
+#include "PianoUfsBoundedLayout.h"
+#ifdef PIANO_UFS_BOUNDED_FS_TEST
+#include "PianoUfsBoundedFileSystemTest.h"
+#endif
+#if !defined(PIANO_UFS_BLOCKIO) || defined(PIANO_UFS_WRITE_TEST) || defined(PIANO_UFS_FILESYSTEMS) || defined(PIANO_UFS_SETUP)
+#error Bounded diagnostic volume requires exclusive BlockIO and excludes original filesystem providers/test mode
+#endif
+STATIC PIANO_UFS_BOUNDED_BLOCK mWindow;
+STATIC BOOLEAN mWindowExecuting,mWindowEntered,mWindowRecovery,mWindowDisconnected;
+STATIC EFI_TPL mWindowOldTpl;
+STATIC UINTN mWindowWriteDoorbells,mWindowSyncDoorbells;
+STATIC EFI_STATUS mWindowTransportStatus=EFI_NOT_STARTED;
+#define UFS_WRITE_EVIDENCE "window_write_doorbells=%lu"
+#define UFS_WRITE_EVIDENCE_ARG ,(UINT64)mWindowWriteDoorbells
 #else
 #define UFS_WRITE_EVIDENCE "physical_ufs_writes=0"
 #define UFS_WRITE_EVIDENCE_ARG
@@ -55,21 +76,31 @@ STATIC struct {UINT8 Id;UINT64 Last;UINT32 Block;} mLuns[8];
 STATIC struct {EFI_STATUS CacheStatus,UnitStatus;BOOLEAN WriteProtected,Fua,WriteCache,ReadCacheDisabled;UINT8 UnitWriteProtect;} mCapabilities[8];
 #ifdef PIANO_UFS_BLOCKIO
 STATIC PIANO_GPT_HEADER mGpts[8];
-STATIC UINTN mPartitions[8],mIoReads[8],mIoBytes[8],mPublishedHandles;
+STATIC UINTN mPartitions[8];
+#ifndef PIANO_UFS_BOUNDED_VOLUME
+STATIC UINTN mPublishedHandles,mIoReads[8],mIoBytes[8];
 STATIC EFI_STATUS mTests[8],mWriteTests[8];
+#endif
 #endif
 STATIC UINTN mLunCount;
 STATIC UINT32 mSavedBase,mSavedUpper,mSavedRun,mSavedTaskRun,mSavedInterrupt;
 STATIC BOOLEAN mInstalled;
 STATIC BOOLEAN mExitRetained;
 #ifdef PIANO_UFS_BLOCKIO
+#ifndef PIANO_UFS_BOUNDED_VOLUME
 STATIC PIANO_READ_ONLY_BLOCK mBlocks[8];
+#endif
 STATIC EFI_HANDLE mBlockHandles[8],mShutdownHandle;
 STATIC EFI_EVENT mExitBootEvent;
+#ifndef PIANO_UFS_BOUNDED_VOLUME
 #pragma pack(1)
 STATIC struct {VENDOR_DEVICE_PATH Vendor;UFS_DEVICE_PATH Ufs;EFI_DEVICE_PATH_PROTOCOL End;} mPaths[8];
 #pragma pack()
-STATIC BOOLEAN mBlockLive,mBlockBusy;
+#endif
+STATIC BOOLEAN mBlockBusy;
+#ifndef PIANO_UFS_BOUNDED_VOLUME
+STATIC BOOLEAN mBlockLive;
+#endif
 STATIC UINT8 mServiceTag=128;
 VOID PianoUfsRetainClocks(VOID);
 VOID PianoUfsStopClocks(VOID);
@@ -91,6 +122,13 @@ STATIC VOID FaultDiagnostic(VOID){
   // The exception recovery hook normally cold-resets. Once a WRITE was
   // attempted, an unverified restore must fence that reset/next boot as well.
   if(mWriteWork.NeedsRecovery || mWriteResult.RequiresRecovery)CpuDeadLoop();
+#endif
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+  PianoUfsBoundedBlockReport(&mWindow);
+#ifdef PIANO_UFS_BOUNDED_FS_TEST
+  PianoReportBoundedFileSystemTest();
+#endif
+  if(mWindow.State.Dirty || mWindow.State.NeedsRecovery || mWindow.State.Quarantined)CpuDeadLoop();
 #endif
   PianoSmmuLogFaults(&mContext.After);
 }
@@ -177,6 +215,13 @@ STATIC EFI_STATUS Submit(CONST CHAR8 *Name,UINT8 Tag,BOOLEAN Nop) {
         mUcd.DeviceAddress,Tag,4,375040,4096);
     }
     if(EFI_ERROR(Gate) || CompareMem(ExpectedTrd,mTrl.Cpu,32) || CompareMem(ExpectedUcd,mUcd.Cpu,1024))return EFI_ACCESS_DENIED;
+#elif defined(PIANO_UFS_BOUNDED_VOLUME)
+    UINT8 ExpectedTrd[32],ExpectedUcd[1024];EFI_STATUS Gate=EFI_ACCESS_DENIED;
+    if(mWindowExecuting && mData.Direction==PianoDmaBidirectional) {
+      if(Request[16]==0x2A)Gate=PianoUfsBoundedBuildWrite10(ExpectedTrd,32,ExpectedUcd,1024,mUcd.DeviceAddress,mData.DeviceAddress,Tag,Request[2],EngineBe32(Request+18),Requested);
+      else if(Request[16]==0x35)Gate=PianoUfsBoundedBuildSync10(ExpectedTrd,32,ExpectedUcd,1024,mUcd.DeviceAddress,Tag,Request[2],EngineBe32(Request+18),PIANO_UFS_WINDOW_BYTES);
+    }
+    if(EFI_ERROR(Gate) || CompareMem(ExpectedTrd,mTrl.Cpu,32) || CompareMem(ExpectedUcd,mUcd.Cpu,1024))return EFI_ACCESS_DENIED;
 #else
     return EFI_ACCESS_DENIED;
 #endif
@@ -200,6 +245,9 @@ STATIC EFI_STATUS Submit(CONST CHAR8 *Name,UINT8 Tag,BOOLEAN Nop) {
 #ifdef PIANO_UFS_WRITE_TEST
   if(Mutation){if(Out)++mWriteDoorbells;else ++mSyncDoorbells;}
 #endif
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+  if(Mutation){if(Out)++mWindowWriteDoorbells;else ++mWindowSyncDoorbells;}
+#endif
   Write(0x58,1);
   DEBUG((DEBUG_WARN,"SUNUEFI_UFS_DMA_DOORBELL command=%a tag=%u trl_iova=%lx ucd_iova=%lx\n",Name,Tag,mTrl.DeviceAddress,mUcd.DeviceAddress));
   BOOLEAN Done=FALSE;
@@ -209,6 +257,9 @@ STATIC EFI_STATUS Submit(CONST CHAR8 *Name,UINT8 Tag,BOOLEAN Nop) {
 #ifdef PIANO_UFS_WRITE_TEST
   mWriteTransportStatus=Status;
 #endif
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+  mWindowTransportStatus=Status;
+#endif
   BOOLEAN Quiet=!EFI_ERROR(Quiesce());
   PianoDmaComplete(&mUcd,Status,Quiet);PianoDmaComplete(&mTrl,Status,Quiet);
   if(HasData)PianoDmaComplete(&mData,Status,Quiet);
@@ -217,6 +268,9 @@ STATIC EFI_STATUS Submit(CONST CHAR8 *Name,UINT8 Tag,BOOLEAN Nop) {
     // Let the helper retain the already-marked attempt and quarantine. A
     // second bounded quiet readback may retire DMA, never blindly reset/retry.
     if(mWriteExecuting)return EFI_ERROR(Status)?Status:EFI_DEVICE_ERROR;
+#endif
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+    if(mWindowExecuting)return EFI_ERROR(Status)?Status:EFI_DEVICE_ERROR;
 #endif
     DmaFaultReset();return EFI_DEVICE_ERROR;
   }
@@ -268,7 +322,7 @@ STATIC EFI_STATUS ReadScsi(CONST CHAR8 *Name,UINT8 Tag,UINT8 Lun,PIANO_UFS_READ_
 }
 STATIC EFI_STATUS ReadLunCapacity(VOID) {
   EFI_STATUS Status=PianoDmaAllocate(&mDevice,4096,4096,32,
-#ifdef PIANO_UFS_WRITE_TEST
+#if defined(PIANO_UFS_WRITE_TEST) || defined(PIANO_UFS_BOUNDED_VOLUME)
     PianoDmaBidirectional,
 #else
     PianoDmaFromDevice,
@@ -333,6 +387,39 @@ STATIC VOID ReadCapabilities(VOID) {
   }
   ReportCapabilities();
 }
+#if defined(PIANO_UFS_WRITE_TEST) || defined(PIANO_UFS_BOUNDED_VOLUME)
+STATIC EFI_STATUS FreshWriteGuard(UINT8 Lun,PIANO_UFS_WRITE_GUARD *G) {
+  if(Lun!=4 || G==NULL)return EFI_ACCESS_DENIED;
+  ZeroMem(G,sizeof(*G));G->Lun=4;
+  G->CapacityStatus=G->ModeSenseStatus=G->UnitStatus=G->PermanentFlagStatus=G->PowerOnFlagStatus=EFI_NOT_STARTED;
+  UINT64 Last=0;UINT32 Block=0;UINT8 Tag=mServiceTag++;
+  EFI_STATUS S=ReadScsi("WRITE_TEST_FRESH_CAPACITY",Tag,4,PianoUfsReadCapacity16,0,32);
+  UINT8 *Response=(UINT8 *)mUcd.Cpu+PIANO_UFS_RESPONSE_OFFSET;
+  if(!EFI_ERROR(S) && (mTransferred!=32 || Response[2]!=4 || (Response[1]&0x60) || EngineBe32(Response+12)))S=EFI_COMPROMISED_DATA;
+  if(!EFI_ERROR(S))S=PianoUfsParseCapacity(mData.Cpu,mTransferred,&Last,&Block);
+  if(!EFI_ERROR(S) && (Block!=4096 || Last!=PIANO_UFS_WRITE_TEST_CAPACITY/4096-1))S=EFI_COMPROMISED_DATA;
+  G->CapacityStatus=S;if(EFI_ERROR(S))return S;G->CapacityBytes=(Last+1)*Block;G->Collected|=1;
+  S=ReadScsi("WRITE_TEST_FRESH_MODE_SENSE",mServiceTag++,4,PianoUfsModeSense10,0,4096);
+  if(!EFI_ERROR(S) && Response[2]!=4)S=EFI_COMPROMISED_DATA;
+  BOOLEAN Wce=FALSE,Rcd=FALSE;
+  if(!EFI_ERROR(S))S=PianoUfsParseCacheMode(mData.Cpu,mTransferred,&G->ModeWriteProtected,&G->Fua,&Wce,&Rcd);
+  G->ModeSenseStatus=S;if(EFI_ERROR(S))return S;G->Collected|=2;
+  Tag=mServiceTag++;S=PianoUfsBuildReadDescriptor(mTrl.Cpu,mTrl.Bytes,mUcd.Cpu,mUcd.Bytes,mUcd.DeviceAddress,Tag,2,4,255);
+  if(!EFI_ERROR(S))S=Submit("WRITE_TEST_FRESH_UNIT_DESCRIPTOR",Tag,FALSE);
+  UINT8 *R=(UINT8 *)mUcd.Cpu+PIANO_UFS_RESPONSE_OFFSET;
+  if(!EFI_ERROR(S) && (R[13]!=2 || R[14]!=4 || R[32]<6 || R[33]!=2 || R[34]!=4 || R[37]>2))S=EFI_COMPROMISED_DATA;
+  G->UnitStatus=S;if(EFI_ERROR(S))return S;G->UnitWriteProtect=R[37];G->Collected|=4;
+  Tag=mServiceTag++;S=PianoUfsBuildReadWriteProtectFlag(mTrl.Cpu,mTrl.Bytes,mUcd.Cpu,mUcd.Bytes,mUcd.DeviceAddress,Tag,2);
+  if(!EFI_ERROR(S))S=Submit("WRITE_TEST_FRESH_PERMANENT_WP_FLAG",Tag,FALSE);
+  G->PermanentFlagStatus=S;if(EFI_ERROR(S))return S;G->PermanentEnabled=mFlagValue!=0;G->Collected|=8;
+  Tag=mServiceTag++;S=PianoUfsBuildReadWriteProtectFlag(mTrl.Cpu,mTrl.Bytes,mUcd.Cpu,mUcd.Bytes,mUcd.DeviceAddress,Tag,3);
+  if(!EFI_ERROR(S))S=Submit("WRITE_TEST_FRESH_POWER_ON_WP_FLAG",Tag,FALSE);
+  G->PowerOnFlagStatus=S;if(EFI_ERROR(S))return S;G->PowerOnEnabled=mFlagValue!=0;G->Collected|=16;
+  DEBUG((DEBUG_WARN,"SUNUEFI_UFS_WRITE_FRESH_GUARD collected=%02x capacity=%lu fua=%u mode_wp=%u unit_wp=%u permanent=%u power_on=%u wce=%u\n",
+    G->Collected,G->CapacityBytes,G->Fua,G->ModeWriteProtected,G->UnitWriteProtect,G->PermanentEnabled,G->PowerOnEnabled,Wce));
+  return EFI_SUCCESS;
+}
+#endif
 #ifdef PIANO_UFS_WRITE_TEST
 // One CPU-owned workspace and shared bidirectional bounce buffer. Every RX
 // clears the bounce, submits a fresh READ, completes/invalidate DMA, then copies
@@ -374,39 +461,9 @@ STATIC EFI_STATUS WriteTestSync(VOID *Context,UINT8 Lun,EFI_LBA Lba,UINTN Bytes)
   return EFI_ACCESS_DENIED;
 #endif
 }
-STATIC EFI_STATUS WriteTestCollectGuard(VOID *Context,UINT8 Lun,PIANO_UFS_WRITE_GUARD *G) {
-  if(!WriteCallbackContext(Context) || Lun!=4 || G==NULL)return EFI_ACCESS_DENIED;
-  ZeroMem(G,sizeof(*G));G->Lun=4;
-  G->CapacityStatus=G->ModeSenseStatus=G->UnitStatus=G->PermanentFlagStatus=G->PowerOnFlagStatus=EFI_NOT_STARTED;
-  UINT64 Last=0;UINT32 Block=0;UINT8 Tag=mServiceTag++;
-  EFI_STATUS S=ReadScsi("WRITE_TEST_FRESH_CAPACITY",Tag,4,PianoUfsReadCapacity16,0,32);
-  UINT8 *Response=(UINT8 *)mUcd.Cpu+PIANO_UFS_RESPONSE_OFFSET;
-  if(!EFI_ERROR(S) && (mTransferred!=32 || Response[2]!=4 || (Response[1]&0x60) || EngineBe32(Response+12)))S=EFI_COMPROMISED_DATA;
-  if(!EFI_ERROR(S))S=PianoUfsParseCapacity(mData.Cpu,mTransferred,&Last,&Block);
-  if(!EFI_ERROR(S) && (Block!=4096 || Last!=PIANO_UFS_WRITE_TEST_CAPACITY/4096-1))S=EFI_COMPROMISED_DATA;
-  G->CapacityStatus=S;if(EFI_ERROR(S))return S;G->CapacityBytes=(Last+1)*Block;G->Collected|=1;
-  S=ReadScsi("WRITE_TEST_FRESH_MODE_SENSE",mServiceTag++,4,PianoUfsModeSense10,0,4096);
-  if(!EFI_ERROR(S) && Response[2]!=4)S=EFI_COMPROMISED_DATA;
-  BOOLEAN Wce=FALSE,Rcd=FALSE;
-  if(!EFI_ERROR(S))S=PianoUfsParseCacheMode(mData.Cpu,mTransferred,&G->ModeWriteProtected,&G->Fua,&Wce,&Rcd);
-  G->ModeSenseStatus=S;if(EFI_ERROR(S))return S;G->Collected|=2;
-  Tag=mServiceTag++;S=PianoUfsBuildReadDescriptor(mTrl.Cpu,mTrl.Bytes,mUcd.Cpu,mUcd.Bytes,mUcd.DeviceAddress,Tag,2,4,255);
-  if(!EFI_ERROR(S))S=Submit("WRITE_TEST_FRESH_UNIT_DESCRIPTOR",Tag,FALSE);
-  UINT8 *R=(UINT8 *)mUcd.Cpu+PIANO_UFS_RESPONSE_OFFSET;
-  if(!EFI_ERROR(S) && (R[13]!=2 || R[14]!=4 || R[32]<6 || R[33]!=2 || R[34]!=4 || R[37]>2))S=EFI_COMPROMISED_DATA;
-  G->UnitStatus=S;if(EFI_ERROR(S))return S;G->UnitWriteProtect=R[37];G->Collected|=4;
-  Tag=mServiceTag++;S=PianoUfsBuildReadWriteProtectFlag(mTrl.Cpu,mTrl.Bytes,mUcd.Cpu,mUcd.Bytes,mUcd.DeviceAddress,Tag,2);
-  if(!EFI_ERROR(S))S=Submit("WRITE_TEST_FRESH_PERMANENT_WP_FLAG",Tag,FALSE);
-  G->PermanentFlagStatus=S;if(EFI_ERROR(S))return S;G->PermanentEnabled=mFlagValue!=0;G->Collected|=8;
-  Tag=mServiceTag++;S=PianoUfsBuildReadWriteProtectFlag(mTrl.Cpu,mTrl.Bytes,mUcd.Cpu,mUcd.Bytes,mUcd.DeviceAddress,Tag,3);
-  if(!EFI_ERROR(S))S=Submit("WRITE_TEST_FRESH_POWER_ON_WP_FLAG",Tag,FALSE);
-  G->PowerOnFlagStatus=S;if(EFI_ERROR(S))return S;G->PowerOnEnabled=mFlagValue!=0;G->Collected|=16;
-  DEBUG((DEBUG_WARN,"SUNUEFI_UFS_WRITE_FRESH_GUARD collected=%02x capacity=%lu fua=%u mode_wp=%u unit_wp=%u permanent=%u power_on=%u wce=%u\n",
-    G->Collected,G->CapacityBytes,G->Fua,G->ModeWriteProtected,G->UnitWriteProtect,G->PermanentEnabled,G->PowerOnEnabled,Wce));
-  return EFI_SUCCESS;
-}
 STATIC EFI_STATUS WriteTestGuard(VOID *Context,UINT8 Lun,PIANO_UFS_WRITE_GUARD *G) {
-  EFI_STATUS S=WriteTestCollectGuard(Context,Lun,G);
+  if(!WriteCallbackContext(Context))return EFI_ACCESS_DENIED;
+  EFI_STATUS S=FreshWriteGuard(Lun,G);
   if(G!=NULL && mWriteGuardCount<ARRAY_SIZE(mWriteGuards))mWriteGuards[mWriteGuardCount++]=*G;
   return S;
 }
@@ -489,6 +546,9 @@ STATIC VOID RunWriteTransaction(VOID) {
   mBlockBusy=FALSE;gBS->RestoreTPL(Old);
 }
 #endif
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+#include "PianoUfsBoundedBindings.inc"
+#endif
 STATIC EFI_STATUS ReadGpts(VOID) {
   UINT8 Tag=64;UINTN Valid=0;
   for(UINTN I=0;I<mLunCount;++I) {
@@ -527,6 +587,9 @@ STATIC EFI_STATUS Cleanup(VOID) {
 #ifdef PIANO_UFS_WRITE_TEST
   if(mWriteWork.NeedsRecovery || mWriteResult.RequiresRecovery || mWriteResult.Quarantined)return EFI_ACCESS_DENIED;
 #endif
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+  if(mWindow.State.Dirty || mWindow.State.NeedsRecovery || mWindow.State.Quarantined)return EFI_ACCESS_DENIED;
+#endif
   BOOLEAN Restore=mInstalled;
   if(mInstalled) {
     EFI_STATUS Status=Quiesce();if(EFI_ERROR(Status)){DmaFaultReset();return Status;}
@@ -547,6 +610,7 @@ STATIC EFI_STATUS Cleanup(VOID) {
   return EFI_SUCCESS;
 }
 #ifdef PIANO_UFS_BLOCKIO
+#ifndef PIANO_UFS_BOUNDED_VOLUME
 STATIC EFI_STATUS ServiceRead(VOID *Context,UINT8 Lun,EFI_LBA Lba,UINTN Bytes,VOID *Buffer) {
   if(!mBlockLive || mBlockBusy)return EFI_NOT_READY;
   UINTN I=0;while(I<mLunCount && mLuns[I].Id!=Lun)++I;
@@ -560,7 +624,20 @@ STATIC EFI_STATUS ServiceRead(VOID *Context,UINT8 Lun,EFI_LBA Lba,UINTN Bytes,VO
   }
   mBlockBusy=FALSE;gBS->RestoreTPL(Old);return Status;
 }
+#endif
 STATIC EFI_STATUS HaltService(VOID) {
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+  PianoUfsBoundedBlockReport(&mWindow);
+#ifdef PIANO_UFS_BOUNDED_FS_TEST
+  PianoReportBoundedFileSystemTest();
+#endif
+#ifdef PIANO_UFS_SHELL
+  PianoReportShellDiagnostics();
+#endif
+  DEBUG((DEBUG_WARN,"SUNUEFI_UFS_WINDOW_DOORBELLS write=%lu sync=%lu original_lun_handles_published=0\n",(UINT64)mWindowWriteDoorbells,(UINT64)mWindowSyncDoorbells));
+  if(mWindow.State.Dirty || mWindow.State.NeedsRecovery || mWindow.State.Quarantined){CpuDeadLoop();return EFI_ACCESS_DENIED;}
+  mWindow.Media.MediaPresent=FALSE;
+#else
   if(mBlockLive) {
     // Re-emit compact final evidence: filesystem probes can wrap the bounded
     // console ring. This marks a report segment without erasing the capture.
@@ -588,7 +665,12 @@ STATIC EFI_STATUS HaltService(VOID) {
   ReportWriteTransaction();
   if(mWriteWork.NeedsRecovery || mWriteResult.RequiresRecovery || mWriteResult.Quarantined){CpuDeadLoop();return EFI_ACCESS_DENIED;}
 #endif
+  #endif
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+  mWindow.Media.MediaPresent=FALSE;
+#else
   mBlockLive=FALSE;for(UINTN I=0;I<mLunCount;++I)mBlocks[I].Media.MediaPresent=FALSE;
+#endif
   if(!mInstalled)return EFI_SUCCESS;
   EFI_STATUS Status=Quiesce();
   if(!EFI_ERROR(Status)){Write(0x24,0);if(Read(0x24)!=0)Status=EFI_DEVICE_ERROR;}
@@ -613,19 +695,31 @@ VOID PianoUfsBlockIoStop(VOID) {
 #ifdef PIANO_UFS_WRITE_TEST
   if(mWriteWork.NeedsRecovery || mWriteResult.RequiresRecovery || mWriteResult.Quarantined){ReportWriteTransaction();CpuDeadLoop();return;}
 #endif
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+  if(mWindow.State.Dirty || mWindow.State.NeedsRecovery || mWindow.State.Quarantined){PianoUfsBoundedBlockReport(&mWindow);CpuDeadLoop();return;}
+#endif
   if(mExitRetained){DmaFaultReset();return;}
   // Normal teardown gives FAT/DiskIo/Partition their Stop callbacks while the
   // parent media is still usable. Timer/EBS recovery uses HaltService directly.
   for(UINTN I=0;I<mLunCount;++I)if(mBlockHandles[I]!=NULL) {
     EFI_STATUS Status=gBS->DisconnectController(mBlockHandles[I],NULL,NULL);
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+    DEBUG((DEBUG_WARN,"SUNUEFI_UFS_WINDOW_DISCONNECT %r\n",Status));
+#else
     DEBUG((DEBUG_WARN,"SUNUEFI_UFS_BLOCKIO_DISCONNECT lun=%u %r\n",mLuns[I].Id,Status));
+#endif
     if(EFI_ERROR(Status)){DmaFaultReset();return;}
   }
   if(EFI_ERROR(HaltService())){DmaFaultReset();return;}
   if(mExitBootEvent!=NULL){gBS->CloseEvent(mExitBootEvent);mExitBootEvent=NULL;}
   for(UINTN I=0;I<mLunCount;++I)if(mBlockHandles[I]!=NULL) {
-    EFI_STATUS Status=gBS->UninstallMultipleProtocolInterfaces(mBlockHandles[I],&gEfiBlockIoProtocolGuid,&mBlocks[I].Block,
-      &gEfiDevicePathProtocolGuid,&mPaths[I],NULL);
+    EFI_STATUS Status=gBS->UninstallMultipleProtocolInterfaces(mBlockHandles[I],&gEfiBlockIoProtocolGuid,
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+      &mWindow.Block,&gEfiDevicePathProtocolGuid,&mWindowPath,
+#else
+      &mBlocks[I].Block,&gEfiDevicePathProtocolGuid,&mPaths[I],
+#endif
+      NULL);
     if(EFI_ERROR(Status)){DmaFaultReset();return;}
     mBlockHandles[I]=NULL;
   }
@@ -637,6 +731,7 @@ VOID PianoUfsBlockIoStop(VOID) {
   EFI_STATUS Status=Cleanup();if(EFI_ERROR(Status)){DmaFaultReset();return;}
   PianoFaultSetDiagnostic(NULL);PianoUfsStopClocks();
 }
+#ifndef PIANO_UFS_BOUNDED_VOLUME
 STATIC EFI_STATUS PublishBlocks(VOID) {
   mBlockLive=TRUE;mBlockBusy=FALSE;
   EFI_GUID Vendor={0xA8675600,0x87D0,0x4A29,{0x9B,0x40,0x60,0,0,0,0,1}};
@@ -683,11 +778,15 @@ STATIC EFI_STATUS PublishBlocks(VOID) {
   return EFI_SUCCESS;
 }
 #endif
+#endif
 EFI_STATUS PianoUfsReadOnlyDmaExperiment(CONST VOID *Fdt) {
   if(mExitRetained)return EFI_ACCESS_DENIED;
 #ifdef PIANO_UFS_WRITE_TEST
   // Never zero the DMA/workspace or ledger on a second call in this image.
   if(mWriteProfileEntered){ReportWriteTransaction();return EFI_ACCESS_DENIED;}mWriteProfileEntered=TRUE;
+#endif
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+  if(mWindowEntered)return EFI_ACCESS_DENIED;mWindowEntered=TRUE;
 #endif
   mDevice=(PIANO_DMA_DEVICE){.Name="ufs",.StreamId=0x60,.AddressBits=32,.CacheLine=64};
   ZeroMem(&mTrl,sizeof(mTrl));ZeroMem(&mUcd,sizeof(mUcd));ZeroMem(&mData,sizeof(mData));mInstalled=FALSE;mPowerMode=MAX_UINT32;mLunCount=0;
@@ -754,11 +853,17 @@ EFI_STATUS PianoUfsReadOnlyDmaExperiment(CONST VOID *Fdt) {
   if(!EFI_ERROR(Status))Status=ReadGpts();
   if(!EFI_ERROR(Status))ReadCapabilities();
 #ifdef PIANO_UFS_BLOCKIO
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+  if(!EFI_ERROR(Status))Status=PublishWindow();
+#else
   if(!EFI_ERROR(Status))Status=PublishBlocks();
+#endif
   if(!EFI_ERROR(Status)) {
 #ifdef PIANO_UFS_WRITE_TEST
     DEBUG((DEBUG_WARN,"SUNUEFI_UFS_BLOCKIO_READY persistent=1 readonly_protocols=1\n"));
     RunWriteTransaction();
+#elif defined(PIANO_UFS_BOUNDED_VOLUME)
+    DEBUG((DEBUG_WARN,"SUNUEFI_UFS_WINDOW_READY only_window=1 bytes=14680064 original_lun_handles_published=0\n"));
 #else
     DEBUG((DEBUG_WARN,"SUNUEFI_UFS_BLOCKIO_READY persistent=1 writes=0\n"));
 #endif

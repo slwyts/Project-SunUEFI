@@ -57,17 +57,19 @@ def argument_parser():
     writes=parser.add_mutually_exclusive_group()
     writes.add_argument('--ufs-write-preflight',action='store_true',help='Isolated fixed LUN4/LBA375040 baseline/live gate and full gap reads only; never WRITE/SYNC or boot SimpleInit')
     writes.add_argument('--ufs-write-restore-test',action='store_true',help='Explicit isolated fixed one-block FUA write/sync/read/restore/verify transaction; all registered BlockIO remains readonly and no SimpleInit boot')
+    writes.add_argument('--ufs-bounded-filesystem-test',action='store_true',help='Isolated gap-only FAT12/SFS format/file test then mandatory whole-gap restore; no original volumes or OS boot')
     parser.add_argument('--usb-controller',action='store_true',help='Isolated DWC3 clocks/registers and owned USB0 SMMU context')
     parser.add_argument('--usb-ep0',action='store_true',help='USB2 device EP0 enumeration using shared DMA and USB0 owned context')
     parser.add_argument('--usb-fastboot',action='store_true',help='Isolated standard USB fastboot bulk with RAM-only stage/upload and diagnostics; implies usb-ep0')
+    parser.add_argument('--usb-screenshot',action='store_true',help='Enable actual GOP BMP capture over the isolated USB fastboot profile')
     parser.add_argument('--return-seconds',type=int,default=75,help='Diagnostic cold-reboot timer, 30 to 120 seconds (default 75)')
     return parser
 
 
 def validate_write_options(parser,args):
-    if args.ufs_write_preflight or args.ufs_write_restore_test:
+    if args.ufs_write_preflight or args.ufs_write_restore_test or args.ufs_bounded_filesystem_test:
         if any((args.ufs_filesystems,args.ufs_shell,args.ufs_shell_interactive,args.ufs_setup,
-                args.usb_controller,args.usb_ep0,args.usb_fastboot,args.usb_debug,args.touch_probe,args.gpi_probe,
+                args.usb_controller,args.usb_ep0,args.usb_fastboot,args.usb_screenshot,args.usb_debug,args.touch_probe,args.gpi_probe,
                 args.fault_recovery_test,args.ram_qupfw,args.qupfw_disk,args.pmic_metadata)):
             parser.error('UFS write/preflight requires an isolated profile without filesystem/Shell/Setup/USB/touch consumers')
         args.ufs_blockio=True
@@ -95,12 +97,27 @@ def load_write_attestation(root):
     return module
 
 
+def load_bounded_format(root):
+    import importlib.util
+    spec=importlib.util.spec_from_file_location('piano_bounded_format',root/'tools/prepare_ufs_bounded_fs_test.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    return module
+
+
+def bounded_fs_ram_app(text):
+    text=write_test_ram_app(text)
+    text=text.replace('#pragma pack(1)','EFI_STATUS PianoUfsRunBoundedFileSystemTest(VOID);\n#pragma pack(1)',1)
+    anchor='  DEBUG((DEBUG_WARN,"SUNUEFI_UFS_WRITE_PROFILE_WAIT'
+    if text.count(anchor)!=1:raise ValueError('Unexpected bounded wait anchor')
+    return text.replace(anchor,'  Status=PianoUfsRunBoundedFileSystemTest();\n  DEBUG((DEBUG_WARN,"SUNUEFI_UFS_FS_SESSION_RETURN %r\\n",Status));\n'+anchor)
+
+
 def validate_usb_fastboot_options(parser,args):
     if not args.usb_fastboot:
         return
     if any((args.ufs_probe,args.dma_probe,args.dma_owned,args.ufs_dma_nop,args.ufs_blockio,
             args.ufs_filesystems,args.ufs_shell,args.ufs_shell_interactive,args.ufs_setup,
-            args.ufs_write_preflight,args.ufs_write_restore_test,args.usb_debug,
+            args.ufs_write_preflight,args.ufs_write_restore_test,args.ufs_bounded_filesystem_test,args.usb_debug,
             args.touch_probe,args.gpi_probe,args.ram_qupfw,args.qupfw_disk,
             args.pmic_metadata,args.fault_recovery_test)):
         parser.error('--usb-fastboot requires an isolated profile without UFS/native USB/touch consumers')
@@ -110,6 +127,7 @@ def validate_usb_fastboot_options(parser,args):
 def main():
     parser=argument_parser()
     args=parser.parse_args()
+    if args.usb_screenshot:args.usb_fastboot=True
     validate_write_options(parser,args)
     validate_usb_fastboot_options(parser,args)
     if args.ufs_shell_interactive:args.ufs_shell=True
@@ -163,10 +181,14 @@ def main():
         parser.error('--keys and --foundation must be tested separately')
     root = Path(__file__).resolve().parent.parent
     write_attestation=None
-    if args.ufs_write_preflight or args.ufs_write_restore_test:
+    bounded_format=None
+    if args.ufs_write_preflight or args.ufs_write_restore_test or args.ufs_bounded_filesystem_test:
         write_attestation=load_write_attestation(root)
         # Refuse an absent/drifted archive before mutating profile staging.
         write_attestation.verify_capture()
+    if args.ufs_bounded_filesystem_test:
+        bounded_format=load_bounded_format(root)
+        bounded_format.verify()
     source = root / 'platforms/pianoProbePkg'
     target = root / 'platforms/pianoGuiPkg'
     shutil.copytree(source, target, dirs_exist_ok=True)
@@ -355,6 +377,20 @@ def main():
         path.write_text('#define PIANO_UFS_WRITE_TEST 1\n#define '+mode+' 1\n'+path.read_text())
         path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoUfsWriteTest.c'))
         path=app/'RamApp.c';path.write_text(write_test_ram_app(path.read_text()))
+    if args.ufs_bounded_filesystem_test:
+        for name in ('PianoUfsWriteTest.c','PianoUfsWriteTest.h','PianoUfsBoundedBlock.c','PianoUfsBoundedBlock.h',
+                     'PianoUfsBoundedLayout.c','PianoUfsBoundedLayout.h','PianoUfsBoundedTransport.h',
+                     'PianoUfsBoundedBindings.inc','PianoUfsBoundedFileSystemTest.c','PianoUfsBoundedFileSystemTest.h'):
+            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+        write_attestation.prepare_ufs_write_test(output=app/'PianoUfsWriteTestBaseline.h')
+        bounded_format.prepare(app/'PianoUfsBoundedFsFormat.h')
+        path=app/'PianoUfsReadOnlyDma.c'
+        path.write_text('#define PIANO_UFS_BOUNDED_VOLUME 1\n#define PIANO_UFS_BOUNDED_FS_TEST 1\n'+path.read_text())
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c',
+            '  RamApp.c\n  PianoUfsWriteTest.c\n  PianoUfsBoundedBlock.c\n  PianoUfsBoundedLayout.c\n  PianoUfsBoundedFileSystemTest.c')
+        text=text.replace('  gEfiEventExitBootServicesGuid','  gEfiEventExitBootServicesGuid\n  gEfiFileInfoGuid')
+        text+='  gEfiSimpleFileSystemProtocolGuid\n';path.write_text(text)
+        path=app/'RamApp.c';path.write_text(bounded_fs_ram_app(path.read_text()))
     if args.ufs_filesystems:
         shutil.copyfile(root/'bootprofiles/uefi-app/PianoUfsFileSystemProbe.c',app/'PianoUfsFileSystemProbe.c')
         path=app/'PianoUfsReadOnlyDma.c';path.write_text('#define PIANO_UFS_FILESYSTEMS 1\n'+path.read_text())
@@ -423,6 +459,11 @@ def main():
                 for name in ('PianoDwc3Device.c','PianoUsbControl.c'):
                     path=app/name;path.write_text('#define PIANO_USB_FASTBOOT 1\n'+path.read_text())
                 path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFastboot.c'))
+                if args.usb_screenshot:
+                    for name in ('PianoFastbootScreen.c','PianoFastbootScreen.h'):
+                        shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+                    path=app/'PianoDwc3Device.c';path.write_text('#define PIANO_USB_SCREENSHOT 1\n'+path.read_text())
+                    path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFastbootScreen.c'))
     dsc = target / 'pianoGui.dsc'
     text = dsc.read_text().replace('pianoGuiPkg/Library/RamLogSerialPortLib/FrameBufferSerialPortLib.inf',
                                   'pianoGuiPkg/Library/RamOnlySerialPortLib/RamOnlySerialPortLib.inf')
@@ -477,7 +518,7 @@ def main():
         text=text.replace('!include SiliciumPkg/Common.fdf.inc',
             '  INF MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf\n'
             '  INF MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf\n!include SiliciumPkg/Common.fdf.inc')
-    if args.ufs_filesystems:
+    if args.ufs_filesystems or args.ufs_bounded_filesystem_test:
         text=text.replace('!include SiliciumPkg/Common.fdf.inc',
             '  INF MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf\n'
             '  INF FatPkg/EnhancedFatDxe/Fat.inf\n!include SiliciumPkg/Common.fdf.inc')
