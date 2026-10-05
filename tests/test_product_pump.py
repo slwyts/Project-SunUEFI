@@ -32,7 +32,7 @@ def function(text,name):
 class ProductPumpTests(unittest.TestCase):
     def test_canonical_sources_are_installed_in_actual_build_checkout(self):
         manifest=prepare.prepare(apply=False)
-        self.assertEqual(len(manifest['files']),15)
+        self.assertEqual(len(manifest['files']),16)
         self.assertEqual(manifest['default_binding'],'PianoProductPumpLibNull')
 
     def checkout_fixture(self, directory):

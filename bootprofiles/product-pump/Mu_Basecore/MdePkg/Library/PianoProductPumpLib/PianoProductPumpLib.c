@@ -7,12 +7,17 @@
 #include <Guid/EventGroup.h>
 STATIC EFI_GUID mGuid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;
 STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL *mRuntime;
+STATIC EFI_GUID mIdleGuid=PIANO_PRODUCT_IDLE_PROTOCOL_GUID;
+STATIC PIANO_PRODUCT_IDLE_PROTOCOL *mIdle;
+STATIC EFI_STATUS (EFIAPI *mIdleRead)(PIANO_PRODUCT_IDLE_PROTOCOL *,CONST PIANO_PRODUCT_RUNTIME_PROTOCOL *,UINT64 *,BOOLEAN *);
+STATIC UINT64 mIdleSample;
+STATIC BOOLEAN mCanIdle;
 STATIC EFI_EVENT mFence;
 STATIC volatile BOOLEAN mExited;
 STATIC BOOLEAN mBusy,mFenceUnknown;
 STATIC EFI_STATUS Exact(EFI_STATUS Status) { return Status==EFI_SUCCESS?Status:EFI_ERROR(Status)?Status:EFI_DEVICE_ERROR; }
 STATIC VOID EFIAPI ExitNotify(EFI_EVENT Event,VOID *Context) {
-  (VOID)Event;(VOID)Context;mExited=TRUE;mRuntime=NULL; // CPU flags only
+  (VOID)Event;(VOID)Context;mExited=TRUE;mRuntime=NULL;mIdle=NULL;mCanIdle=FALSE; // CPU flags only
 }
 BOOLEAN EFIAPI PianoProductPumpBootServicesAlive(VOID) {
   return !mExited && !mFenceUnknown && gST!=NULL && gBS!=NULL &&
@@ -45,12 +50,33 @@ STATIC EFI_STATUS Enter(VOID) {
   if(Alive!=TRUE){mBusy=FALSE;return EFI_NOT_READY;}
   return EFI_SUCCESS;
 }
+BOOLEAN EFIAPI PianoProductPumpShouldIdle(VOID) {
+  BOOLEAN Result=mCanIdle && !mBusy && PianoProductPumpBootServicesAlive();
+  mCanIdle=FALSE; // one use, only immediately after a fresh completed APP pump
+  return Result;
+}
+STATIC VOID ReadIdleSnapshot(VOID){
+  PIANO_PRODUCT_RUNTIME_PROTOCOL *Fresh=NULL;
+  EFI_STATUS S=gBS->LocateProtocol(&mGuid,NULL,(VOID **)&Fresh);
+  if(!PianoProductPumpBootServicesAlive() || S!=EFI_SUCCESS || Fresh!=mRuntime)return;
+  PIANO_PRODUCT_IDLE_PROTOCOL *Hint=NULL;
+  S=gBS->LocateProtocol(&mIdleGuid,NULL,(VOID **)&Hint);
+  if(!PianoProductPumpBootServicesAlive() || S!=EFI_SUCCESS || !Hint || Hint->Revision!=PIANO_PRODUCT_IDLE_REVISION ||
+     Hint->Runtime!=mRuntime || !Hint->Read || (mIdle && (Hint!=mIdle || Hint->Read!=mIdleRead)))return;
+  UINT64 Sample=0;BOOLEAN Active=TRUE;
+  EFI_STATUS (EFIAPI *Read)(PIANO_PRODUCT_IDLE_PROTOCOL *,CONST PIANO_PRODUCT_RUNTIME_PROTOCOL *,UINT64 *,BOOLEAN *)=Hint->Read;
+  S=Read(Hint,mRuntime,&Sample,&Active);
+  if(!PianoProductPumpBootServicesAlive() || S!=EFI_SUCCESS || Hint->Revision!=PIANO_PRODUCT_IDLE_REVISION || Hint->Runtime!=mRuntime || Hint->Read!=Read ||
+     !Sample || Sample<=mIdleSample || (Active!=TRUE && Active!=FALSE))return;
+  mIdle=Hint;mIdleRead=Hint->Read;mIdleSample=Sample;mCanIdle=!Active;
+}
 EFI_STATUS EFIAPI PianoProductPumpApplication(UINT32 Reason,UINTN BudgetUs) {
   if(!(Reason&(PIANO_PRODUCT_PUMP_WAIT_EVENT|PIANO_PRODUCT_PUMP_GUI|PIANO_PRODUCT_PUMP_APP)) ||
      (Reason&~(PIANO_PRODUCT_PUMP_WAIT_EVENT|PIANO_PRODUCT_PUMP_GUI|PIANO_PRODUCT_PUMP_APP)) || !BudgetUs)return EFI_INVALID_PARAMETER;
-  EFI_STATUS Status=Enter();if(Status!=EFI_SUCCESS)return Status;
+  mCanIdle=FALSE;EFI_STATUS Status=Enter();if(Status!=EFI_SUCCESS)return Status;
   Status=mRuntime->Pump(mRuntime,Reason,BudgetUs);
   if(!PianoProductPumpBootServicesAlive())Status=EFI_ABORTED;
+  else if(Status==EFI_SUCCESS || Status==EFI_NOT_READY)ReadIdleSnapshot();
   mBusy=FALSE;return Exact(Status);
 }
 EFI_STATUS EFIAPI PianoProductGetPendingAction(UINT32 *Action,UINT64 *Sequence) {
@@ -161,5 +187,5 @@ EFI_STATUS EFIAPI PianoProductPumpLibDestructor(EFI_HANDLE Image,EFI_SYSTEM_TABL
     if(Status!=EFI_SUCCESS){CpuDeadLoop();return Exact(Status);}
     mFence=NULL;
   }
-  mRuntime=NULL;return EFI_SUCCESS;
+  mRuntime=NULL;mIdle=NULL;mIdleSample=0;mCanIdle=FALSE;return EFI_SUCCESS;
 }

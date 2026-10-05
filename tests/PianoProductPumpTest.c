@@ -20,6 +20,8 @@ EFI_GUID gEfiEventExitBootServicesGuid=EFI_EVENT_GROUP_EXIT_BOOT_SERVICES;
 EFI_STATUS EFIAPI PianoProductPumpLibDestructor(EFI_HANDLE,EFI_SYSTEM_TABLE *);
 STATIC EFI_BOOT_SERVICES Bs;STATIC EFI_SYSTEM_TABLE St;
 STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL Protocol;
+STATIC PIANO_PRODUCT_IDLE_PROTOCOL Idle;
+STATIC UINT64 IdleSequence;
 STATIC EFI_EVENT_NOTIFY ExitCallback;STATIC VOID *ExitContext;
 STATIC UINT32 Scenario,Pumps,AliveCalls,PendingCalls,Acks,Requests,Locates,Creates,Closes,Raises,Restores,Checks,Signals,Tasks,QuitCalls;
 STATIC BOOLEAN FenceLive,Ready,Exited;STATIC jmp_buf DeadJump;
@@ -57,18 +59,26 @@ STATIC EFI_STATUS EFIAPI Create(UINT32 Type,EFI_TPL Tpl,EFI_EVENT_NOTIFY Notify,
   return Scenario==8?EFI_WARN_STALE_DATA:EFI_SUCCESS;
 }
 STATIC EFI_STATUS EFIAPI Close(EFI_EVENT Event){assert(!Exited&&Event==(VOID *)0x77&&FenceLive);Closes++;if(Scenario==15)return EFI_WARN_STALE_DATA;FenceLive=FALSE;return EFI_SUCCESS;}
+STATIC EFI_STATUS EFIAPI IdleRead(PIANO_PRODUCT_IDLE_PROTOCOL *This,CONST PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime,UINT64 *Sequence,BOOLEAN *Active){
+  assert(This==&Idle&&Runtime==&Protocol&&!Exited);*Sequence=Scenario==59?1:IdleSequence;
+  *Active=(Scenario==56||Scenario==57)?Pumps<3:Scenario==61?2:FALSE;
+  if(Scenario==60){ExitCallback((VOID*)0x77,ExitContext);Exited=TRUE;return EFI_SUCCESS;}
+  return Scenario==63?EFI_NOT_READY:EFI_SUCCESS;
+}
 STATIC EFI_STATUS EFIAPI Locate(EFI_GUID *Guid,VOID *Registration,VOID **Value){
-  (VOID)Registration;assert(!Exited);EFI_GUID G=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;assert(!memcmp(Guid,&G,sizeof(G)));Locates++;*Value=&Protocol;
+  (VOID)Registration;assert(!Exited);EFI_GUID G=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID,H=PIANO_PRODUCT_IDLE_PROTOCOL_GUID;
+  if(!memcmp(Guid,&H,sizeof(H))){if(Scenario==58)return EFI_NOT_FOUND;Idle=(PIANO_PRODUCT_IDLE_PROTOCOL){PIANO_PRODUCT_IDLE_REVISION,&Protocol,IdleRead};*Value=&Idle;if(Scenario==62)Idle.Runtime=(VOID*)123;return EFI_SUCCESS;}
+  assert(!memcmp(Guid,&G,sizeof(G)));if(!Pumps || Scenario==7)Locates++;*Value=&Protocol;
   return Scenario==7?EFI_WARN_STALE_DATA:EFI_SUCCESS;
 }
 STATIC VOID SignalExit(VOID){assert(FenceLive&&ExitCallback);ExitCallback((VOID *)0x77,ExitContext);Exited=TRUE;}
 STATIC BOOLEAN EFIAPI ProviderAlive(PIANO_PRODUCT_RUNTIME_PROTOCOL *P){assert(!Exited&&P==&Protocol);AliveCalls++;if(Scenario==4){SignalExit();return TRUE;}return TRUE;}
 STATIC EFI_STATUS EFIAPI ProviderPump(PIANO_PRODUCT_RUNTIME_PROTOCOL *P,UINT32 Reason,UINTN Budget){
-  assert(!Exited&&P==&Protocol&&gEfiCurrentTpl==TPL_APPLICATION&&!gui_lock&&Budget==1000);assert(Reason==PIANO_PRODUCT_PUMP_WAIT_EVENT||Reason==PIANO_PRODUCT_PUMP_GUI||Reason==PIANO_PRODUCT_PUMP_APP);Pumps++;
+  assert(!Exited&&P==&Protocol&&gEfiCurrentTpl==TPL_APPLICATION&&!gui_lock&&Budget==1000);assert(Reason==PIANO_PRODUCT_PUMP_WAIT_EVENT||Reason==PIANO_PRODUCT_PUMP_GUI||Reason==PIANO_PRODUCT_PUMP_APP);Pumps++;++IdleSequence;
   if(Scenario==3)assert(PianoProductPumpApplication(PIANO_PRODUCT_PUMP_APP,1000)==EFI_NOT_READY);
   if(Scenario==5){SignalExit();return EFI_SUCCESS;}
   if(Scenario==52)Advance(50);
-  Ready=TRUE;return Scenario==9?EFI_WARN_STALE_DATA:Scenario==35?EFI_ABORTED:EFI_SUCCESS;
+  Ready=(Scenario==56||Scenario==58)?Pumps>=3:Scenario==57?Pumps>=4:TRUE;return Scenario==9?EFI_WARN_STALE_DATA:Scenario==35?EFI_ABORTED:EFI_SUCCESS;
 }
 STATIC EFI_STATUS EFIAPI Request(PIANO_PRODUCT_RUNTIME_PROTOCOL *P,UINT32 Action){assert(!Exited&&P==&Protocol&&(Action==PIANO_PRODUCT_ACTION_REQUEST_REBOOT||Action==PIANO_PRODUCT_ACTION_REQUEST_CONTINUE||(Action>=1&&Action<=3)));Requests++;if(Scenario==25||Scenario==32||Scenario==40)return EFI_WARN_STALE_DATA;if(Scenario==26||Scenario==37||Scenario==42)SignalExit();if(Scenario==29||Scenario==33||Scenario==41)return EFI_UNSUPPORTED;return EFI_SUCCESS;}
 STATIC EFI_STATUS EFIAPI Pending(PIANO_PRODUCT_RUNTIME_PROTOCOL *P,UINT32 *Action,UINT64 *Sequence){
@@ -163,10 +173,14 @@ STATIC VOID Run(UINT32 Case){
   if(Case==53){if(!setjmp(DeadJump)){piano_product_gui_wait(30);assert(!"warning Stall cannot be success");}assert(Stalls==1&&!QuitCalls&&!Acks);assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);}
   if(Case==54){assert(piano_product_gui_tick()==0);assert(gui_main()==0&&Tasks==2&&QuitCalls==1);assert(piano_product_gui_tick()==(PIANO_PRODUCT_GUI_PUMP?11:12));assert(Stalls==(PIANO_PRODUCT_GUI_PUMP?1:2));assert(Pumps==(PIANO_PRODUCT_GUI_PUMP?3:0));assert(tick_ms==(PIANO_PRODUCT_GUI_PUMP?1:2));assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);}
   if(Case==55){assert(gui_main()==0&&Tasks==100&&QuitCalls==1);assert(FrameLogs==(PIANO_PRODUCT_GUI_PUMP?8:0));assert(Stalls==(PIANO_PRODUCT_GUI_PUMP?2970:3000)&&StallUs==(PIANO_PRODUCT_GUI_PUMP?2970000:3000000));assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);}
+  if(Case==56||Case==57||Case==58){assert(CoreWaitForEvent(1,&Event,&Index)==EFI_SUCCESS&&Pumps==(Case==57?4:3)&&Signals==(Case==57?1:0));assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);}
+  if(Case==59){assert(PianoProductPumpApplication(1,1000)==EFI_SUCCESS&&PianoProductPumpShouldIdle());assert(!PianoProductPumpShouldIdle());assert(PianoProductPumpApplication(1,1000)==EFI_SUCCESS&&!PianoProductPumpShouldIdle());assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);}
+  if(Case==60){assert(PianoProductPumpApplication(1,1000)==EFI_SUCCESS&&!PianoProductPumpShouldIdle()&&!PianoProductPumpBootServicesAlive());}
+  if(Case==61||Case==62||Case==63){assert(PianoProductPumpApplication(1,1000)==EFI_SUCCESS&&!PianoProductPumpShouldIdle());assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);}
   if(Case<=3||Case==7||Case==9||(Case>=10&&Case<=13))assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);
   (VOID)Status;
 }
 int main(void){
-  for(UINT32 I=0;I<56;I++){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"pump case%u failed\n",I);return 1;}}
-  puts("Actual product client + CoreWaitForEvent/gui_main/custom_tick_get: 56 fork cases, measured GUI time/bounded 1ms service/navigation/EBS/8 logs; no fake keys/device");return 0;
+  for(UINT32 I=0;I<64;I++){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"pump case%u failed\n",I);return 1;}}
+  puts("Actual product client + CoreWaitForEvent/gui_main/custom_tick_get: 64 fork cases, measured GUI time/bounded 1ms service/navigation/EBS/8 logs; no fake keys/device");return 0;
 }

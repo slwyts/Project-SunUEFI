@@ -35,6 +35,7 @@ typedef struct {
   PIANO_USB_SERVICE_ACTION Action;
   EFI_STATUS LastStatus;
   BOOLEAN Started,Configured,WorkPending,Busy,Retained,ServicesLost;
+  BOOLEAN BulkActive; // APP snapshot: frames/EP3 in-flight/download, never idle EP2
   BOOLEAN DeviceHalted,DmaFreed;
   UINT32 DmaBuffersFreed,QueuedEvents;
   UINT64 OutBytes,InBytes;

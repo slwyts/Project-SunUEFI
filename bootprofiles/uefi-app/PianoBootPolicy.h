@@ -7,7 +7,8 @@
 typedef struct {
   BOOLEAN Initialized,ProtocolInstalled,ServicesLost,Retained,Pumping,Dispatching;
   UINT32 PendingAction,ActiveAction,KeyboardProviders;
-  UINT64 Sequence,PumpCalls,AppRuns;
+  UINT64 Sequence,PumpCalls,AppRuns,IdleSample;
+  BOOLEAN IdleInstalled,IdleKnown,IdleBulkActive;
   EFI_STATUS LastPump,LastAction,KeyStatus,PayloadStatus;
   // CPU-only trusted UI reason; parent gives this to the unified owner manager.
   // Never a direct reset from a GUI/pump or a fabricated USB worker action.

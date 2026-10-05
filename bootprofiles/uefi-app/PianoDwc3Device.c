@@ -960,7 +960,10 @@ EFI_STATUS PianoDwc3ServicePumpApp(UINT32 Reason,UINTN BudgetUs) {
     if(Now-Start>=BudgetUs)break;
   }
   mService.State.Configured=mConfigured;mService.State.QueuedEvents=(UINT32)mService.Count;
-  mService.State.WorkPending=mService.Count!=0;mService.State.OutBytes=mBulkOutBytes;mService.State.InBytes=mBulkInBytes;
+  mService.State.WorkPending=mService.Count!=0;
+  mService.State.BulkActive=mService.State.Phase==PianoUsbServiceListening && mBulkLive &&
+    (mFrames!=NULL || mPending[3] || mFastboot.Receiving);
+  mService.State.OutBytes=mBulkOutBytes;mService.State.InBytes=mBulkInBytes;
   mService.State.Busy=FALSE;return S;
 }
 EFI_STATUS PianoDwc3ServiceStop(EFI_STATUS Reason) {
@@ -968,7 +971,7 @@ EFI_STATUS PianoDwc3ServiceStop(EFI_STATUS Reason) {
   if(!ServiceAtApp())return EFI_UNSUPPORTED;
   if(!mExperimentRunning)return mService.State.Retained?EFI_ACCESS_DENIED:EFI_NOT_READY;
   if(mService.State.Busy)return EFI_ALREADY_STARTED;
-  mService.State.Busy=TRUE;EFI_STATUS S=Halt();
+  mService.State.Busy=TRUE;mService.State.BulkActive=FALSE;EFI_STATUS S=Halt();
   if(S!=EFI_SUCCESS){mService.State.Retained=TRUE;mService.State.Phase=PianoUsbServiceRetained;mFastboot.BootTransferFrozen=TRUE;mService.State.Busy=FALSE;mService.State.LastStatus=EFI_ERROR(S)?S:EFI_DEVICE_ERROR;return mService.State.LastStatus;}
   mService.State.DeviceHalted=TRUE;mService.State.Started=FALSE;
   EFI_STATUS Status=mService.State.LastStatus!=EFI_SUCCESS?mService.State.LastStatus:Reason;
@@ -1022,7 +1025,7 @@ EFI_STATUS PianoDwc3ServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *Status) {
   return EFI_SUCCESS;
 }
 EFI_STATUS PianoDwc3ServiceFenceExit(VOID) {
-  mService.State.ServicesLost=TRUE;if(!mService.State.Started){mService.State.Phase=PianoUsbServiceExited;return EFI_SUCCESS;}
+  mService.State.ServicesLost=TRUE;mService.State.BulkActive=FALSE;if(!mService.State.Started){mService.State.Phase=PianoUsbServiceExited;return EFI_SUCCESS;}
   Dw(0xC704,Dr(0xC704)&~BIT31);BOOLEAN Halted=FALSE;
   for(UINTN I=0;I<1000000;++I)if((Dr(0xC70C)&BIT22) && !(Dr(0xC704)&BIT31)){Halted=TRUE;break;}
   mService.State.DeviceHalted=Halted;mService.State.Retained=TRUE;mService.State.Started=FALSE;mService.State.Phase=PianoUsbServiceExited;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <Library/PianoProductPumpLib.h>
+BOOLEAN EFIAPI PianoProductPumpShouldIdle(VOID) { return TRUE; }
 EFI_STATUS EFIAPI PianoProductPumpApplication(UINT32 Reason,UINTN BudgetUs) { (VOID)Reason;(VOID)BudgetUs;return EFI_UNSUPPORTED; }
 EFI_STATUS EFIAPI PianoProductGetPendingAction(UINT32 *Action,UINT64 *Sequence) {
   if(Action==NULL || Sequence==NULL)return EFI_INVALID_PARAMETER;

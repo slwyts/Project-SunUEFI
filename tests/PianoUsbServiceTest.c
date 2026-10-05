@@ -339,6 +339,19 @@ static VOID run_ramlog(UINTN Test) {
   PIANO_USB_SERVICE_RETIRE_REPORT R;assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&R)==EFI_SUCCESS && R.Clean);
   free(Header);test_console=NULL;free_cold_model();
 }
+static VOID run_idle_activity(VOID){
+  setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;bs_calls=event_creates=event_closes=clock_calls=proof_calls=0;
+  timer_notify=exit_notify=NULL;bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;bs.SetTimer=set_timer;bs.CloseEvent=close_event;
+  clock.DisableClock=clock.DisableClockPowerDomain=persistent_disable;
+  PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID*)0x55,.NowUs=now_us};assert(PianoUsbControllerServiceStart((VOID*)123,&C)==EFI_SUCCESS);service_enumerate();
+  PIANO_DWC3_SERVICE_STATUS S;assert(PianoUsbControllerServicePumpApp(1,1000)==EFI_SUCCESS);
+  assert(PianoUsbControllerServiceGetStatus(&S)==EFI_SUCCESS&&!S.BulkActive&&!S.WorkPending&&mPending[2]&&!mPending[3]);
+  service_out("getvar:version");assert(PianoUsbControllerServiceGetStatus(&S)==EFI_SUCCESS&&S.BulkActive&&!S.WorkPending&&mPending[3]&&!mService.Count);
+  service_ack();assert(PianoUsbControllerServiceGetStatus(&S)==EFI_SUCCESS&&!S.BulkActive&&!S.WorkPending&&mPending[2]);
+  service_out("download:00000004");service_ack();assert(PianoUsbControllerServiceGetStatus(&S)==EFI_SUCCESS&&S.BulkActive&&mFastboot.Receiving&&mPending[2]&&!mPending[3]);
+  PIANO_USB_SERVICE_RETIRE_REPORT R;assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&R)==EFI_SUCCESS&&R.Clean);
+  assert(PianoUsbControllerServiceGetStatus(&S)==EFI_SUCCESS&&!S.BulkActive);free_cold_model();
+}
 static VOID run_service(UINTN Test) {
   setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;bs_calls=event_creates=event_closes=clock_calls=proof_calls=0;
   timer_notify=exit_notify=NULL;bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;bs.SetTimer=set_timer;bs.CloseEvent=close_event;
@@ -406,8 +419,12 @@ static VOID run_service(UINTN Test) {
   free_cold_model();
 }
 #endif
-int main(void) {
+#ifndef USB_SERVICE_TEST_MAIN
+#define USB_SERVICE_TEST_MAIN main
+#endif
+int USB_SERVICE_TEST_MAIN(void) {
 #if PIANO_USB_SERVICE
+  {pid_t P=fork();assert(P>=0);if(!P){run_idle_activity();_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S))return 1;}
   for(UINTN I=0;I<20;++I){pid_t P=fork();assert(P>=0);if(P==0){run_service(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB persistent service case %llu failed\n",(unsigned long long)I);return 1;}}
   for(UINTN I=0;I<11;++I){pid_t P=fork();assert(P>=0);if(P==0){run_navigation(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB product navigation case %llu failed\n",(unsigned long long)I);return 1;}}
   for(UINTN I=0;I<8;++I){pid_t P=fork();assert(P>=0);if(P==0){run_ramlog(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB before-ramlog case %llu failed\n",(unsigned long long)I);return 1;}}

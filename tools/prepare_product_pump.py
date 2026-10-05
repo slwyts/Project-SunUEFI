@@ -48,6 +48,8 @@ HOOKS = (
      '#include "Event.h"\n#include <Library/PianoProductPumpLib.h>\n'),
     (BASE + "MdeModulePkg/Core/Dxe/Event/Event.c", "  for ( ; ;) {\n    for (Index = 0; Index < NumberOfEvents; Index++) {",
      "  for ( ; ;) {\n" + WAIT_HOOK + "    for (Index = 0; Index < NumberOfEvents; Index++) {"),
+    (BASE + "MdeModulePkg/Core/Dxe/Event/Event.c", "    CoreSignalEvent (gIdleLoopEvent);",
+     "    if (gEfiCurrentTpl != TPL_APPLICATION || PianoProductPumpShouldIdle ()) {\n      CoreSignalEvent (gIdleLoopEvent);\n    }"),
     (BASE + "MdeModulePkg/Core/Dxe/DxeMain.inf", "[LibraryClasses]\n", "[LibraryClasses]\n  PianoProductPumpLib\n"),
     (BASE + "MdePkg/MdePkg.dec", "[LibraryClasses]\n", "[LibraryClasses]\n  PianoProductPumpLib|Include/Library/PianoProductPumpLib.h\n"),
     (BASE + "MdePkg/MdeLibs.dsc.inc", "[LibraryClasses]\n", "[LibraryClasses]\n  PianoProductPumpLib|MdePkg/Library/PianoProductPumpLibNull/PianoProductPumpLibNull.inf\n"),

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #include "PianoBootPolicy.h"
+#include "../product-pump/Mu_Basecore/MdePkg/Include/Protocol/PianoProductIdle.h"
 #include "PianoProductPayload.h"
 #include <Protocol/SimpleTextInEx.h>
 #include <Protocol/HiiDatabase.h>
@@ -16,6 +17,8 @@
 #include <Library/BaseLib.h>
 #include <Library/TimerLib.h>
 
+STATIC EFI_GUID mIdleGuid=PIANO_PRODUCT_IDLE_PROTOCOL_GUID;
+STATIC PIANO_PRODUCT_IDLE_PROTOCOL mIdle;
 STATIC EFI_GUID mRuntimeGuid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;
 STATIC EFI_GUID mSetupGuid={0x462caa21,0x7614,0x4503,{0x83,0x6e,0x8a,0xb6,0xf4,0x66,0x23,0x31}};
 STATIC EFI_GUID mShellGuid={0x7c04a583,0x9e3e,0x4f1c,{0xad,0x65,0xe0,0x52,0x68,0xd0,0xb4,0xd1}};
@@ -110,7 +113,7 @@ STATIC EFI_STATUS RegisterEsc(UINTN I) {
   return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:Exact(S);
 }
 STATIC VOID EFIAPI KeysChanged(EFI_EVENT Event,VOID *Context){(VOID)Event;(VOID)Context;mKeysDirty=TRUE;}
-STATIC VOID EFIAPI Ebs(EFI_EVENT Event,VOID *Context){(VOID)Event;(VOID)Context;mStartupWindow=FALSE;mAlive=FALSE;mReport.ServicesLost=TRUE;}
+STATIC VOID EFIAPI Ebs(EFI_EVENT Event,VOID *Context){(VOID)Event;(VOID)Context;mStartupWindow=FALSE;mAlive=FALSE;mReport.ServicesLost=TRUE;mReport.IdleKnown=FALSE;}
 STATIC EFI_STATUS RefreshKeys(VOID) {
   // Protocol removal does not signal RegisterProtocolNotify. Fresh lookup on
   // every APP slice prevents using a retired or replaced keyboard instance.
@@ -159,12 +162,20 @@ STATIC EFI_STATUS RefreshKeys(VOID) {
   mReport.KeyboardProviders=(UINT32)mKeysCount;
   return mReport.KeyStatus=mReport.Retained?EFI_COMPROMISED_DATA:WindowFailure!=EFI_SUCCESS?WindowFailure:mKeysCount?EFI_SUCCESS:EFI_NOT_READY;
 }
+STATIC EFI_STATUS EFIAPI ReadIdle(PIANO_PRODUCT_IDLE_PROTOCOL *This,CONST PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime,UINT64 *Sample,BOOLEAN *BulkActive){
+  if(This!=&mIdle || Runtime!=&mRuntime || !Sample || !BulkActive)return EFI_INVALID_PARAMETER;
+  UINT64 Mask=Critical();EFI_STATUS S=EFI_NOT_READY;
+  if(mAlive && mReport.ProtocolInstalled && mReport.IdleInstalled && !mReport.Pumping && !mReport.Retained && mReport.IdleKnown && mReport.IdleSample){
+    *Sample=mReport.IdleSample;*BulkActive=mReport.IdleBulkActive;S=EFI_SUCCESS;
+  }
+  EndCritical(Mask);return S;
+}
 STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason,UINTN BudgetUs) {
   if(This!=&mRuntime || !Reason || (Reason&~(PIANO_PRODUCT_PUMP_WAIT_EVENT|PIANO_PRODUCT_PUMP_GUI|PIANO_PRODUCT_PUMP_APP)) || !BudgetUs || BudgetUs>10000)return EFI_INVALID_PARAMETER;
   if(!mAlive)return EFI_ABORTED;
   if(mReport.Pumping)return EFI_NOT_READY;
   EFI_STATUS S=AtApp();if(S!=EFI_SUCCESS)return S;
-  mReport.Pumping=TRUE;++mReport.PumpCalls;
+  mReport.Pumping=TRUE;mReport.IdleKnown=FALSE;++mReport.PumpCalls;
   mReport.KeyStatus=RefreshKeys();RequireAlive();
   if(mReport.Retained){mReport.Pumping=FALSE;return EFI_COMPROMISED_DATA;}
   S=PianoUsbControllerServicePumpApp(Reason,BudgetUs);RequireAlive();
@@ -181,6 +192,11 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
   if((S==EFI_SUCCESS || S==EFI_NOT_READY) && mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE &&
      mReport.PendingAction>=PIANO_PRODUCT_ACTION_SIMPLEINIT && mReport.PendingAction<=PIANO_PRODUCT_ACTION_SHELL &&
      mReport.PendingAction!=mReport.ActiveAction)S=EFI_ABORTED; // cooperative UI yield, not EBS/USB shutdown
+  if((S==EFI_SUCCESS || S==EFI_NOT_READY) && Status==EFI_SUCCESS && Actual.Revision==1 && Actual.Started &&
+     Actual.Phase==PianoUsbServiceListening && !Actual.Retained && !Actual.ServicesLost && !Actual.Busy){
+    if(mReport.IdleSample==MAX_UINT64)S=EFI_OUT_OF_RESOURCES;
+    else {++mReport.IdleSample;mReport.IdleBulkActive=Actual.BulkActive;mReport.IdleKnown=TRUE;}
+  }
   mReport.Pumping=FALSE;return mReport.LastPump=Exact(S);
 }
 STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime={PIANO_PRODUCT_RUNTIME_REVISION,Pump,Alive,Request,Pending,Ack};
@@ -242,13 +258,19 @@ EFI_STATUS PianoBootPolicyInitialize(EFI_HANDLE Parent) {
   if(mReport.Initialized)return EFI_ALREADY_STARTED;
   VOID *Existing=NULL;EFI_STATUS S=gBS->LocateProtocol(&mRuntimeGuid,NULL,&Existing);
   if(S!=EFI_NOT_FOUND)return S==EFI_SUCCESS?EFI_ALREADY_STARTED:Exact(S);
+  Existing=NULL;S=gBS->LocateProtocol(&mIdleGuid,NULL,&Existing);
+  if(S!=EFI_NOT_FOUND)return S==EFI_SUCCESS?EFI_ALREADY_STARTED:Exact(S);
   ZeroMem(&mReport,sizeof(mReport));mReport.Initialized=TRUE;mParent=Parent;mAlive=TRUE;
   S=AtApp();if(S!=EFI_SUCCESS)return S;
-  S=Exact(gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,Ebs,NULL,&gEfiEventExitBootServicesGuid,&mExitEvent));RequireAlive();if(S!=EFI_SUCCESS || !mExitEvent)return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S;
-  S=Exact(gBS->InstallProtocolInterface(&mProtocolHandle,&mRuntimeGuid,EFI_NATIVE_INTERFACE,&mRuntime));RequireAlive();if(S!=EFI_SUCCESS)return S;
+  S=Exact(gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,Ebs,NULL,&gEfiEventExitBootServicesGuid,&mExitEvent));RequireAlive();if(S!=EFI_SUCCESS || !mExitEvent){mReport.Retained=TRUE;return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S;}
+  S=Exact(gBS->InstallProtocolInterface(&mProtocolHandle,&mRuntimeGuid,EFI_NATIVE_INTERFACE,&mRuntime));RequireAlive();if(S!=EFI_SUCCESS || !mProtocolHandle){mReport.Retained=TRUE;return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S;}
   mReport.ProtocolInstalled=TRUE;
-  S=Exact(gBS->CreateEvent(EVT_NOTIFY_SIGNAL,TPL_CALLBACK,KeysChanged,NULL,&mKeyEvent));RequireAlive();if(S!=EFI_SUCCESS || !mKeyEvent)return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S;
-  S=Exact(gBS->RegisterProtocolNotify(&gEfiSimpleTextInputExProtocolGuid,mKeyEvent,&mKeyRegistration));RequireAlive();if(S!=EFI_SUCCESS)return S;
+  mIdle=(PIANO_PRODUCT_IDLE_PROTOCOL){PIANO_PRODUCT_IDLE_REVISION,&mRuntime,ReadIdle};
+  EFI_HANDLE RuntimeHandle=mProtocolHandle;
+  S=gBS->InstallProtocolInterface(&mProtocolHandle,&mIdleGuid,EFI_NATIVE_INTERFACE,&mIdle);RequireAlive();
+  if(S!=EFI_SUCCESS || mProtocolHandle!=RuntimeHandle){mReport.Retained=TRUE;return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:Exact(S);}mReport.IdleInstalled=TRUE;
+  S=Exact(gBS->CreateEvent(EVT_NOTIFY_SIGNAL,TPL_CALLBACK,KeysChanged,NULL,&mKeyEvent));RequireAlive();if(S!=EFI_SUCCESS || !mKeyEvent){mReport.Retained=TRUE;return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S;}
+  S=Exact(gBS->RegisterProtocolNotify(&gEfiSimpleTextInputExProtocolGuid,mKeyEvent,&mKeyRegistration));RequireAlive();if(S!=EFI_SUCCESS || !mKeyRegistration){mReport.Retained=TRUE;return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S;}
   mKeysDirty=TRUE;RefreshKeys();return mReport.Retained?EFI_COMPROMISED_DATA:EFI_SUCCESS;
 }
 EFI_STATUS PianoBootPolicyDispatchPending(VOID) {
@@ -326,6 +348,8 @@ EFI_STATUS PianoBootPolicyStop(VOID) {
     for(UINTN K=2;K>0;--K){if(mKeys[I].Notify[K-1]){S=Fresh->UnregisterKeyNotify(Fresh,mKeys[I].Notify[K-1]);RequireAlive();if(S!=EFI_SUCCESS){mReport.Retained=TRUE;return Exact(S);}mKeys[I].Notify[K-1]=NULL;}}
     --mKeysCount;}
   if(mKeyEvent){S=gBS->CloseEvent(mKeyEvent);RequireAlive();if(S!=EFI_SUCCESS){mReport.Retained=TRUE;return Exact(S);}mKeyEvent=NULL;}
+  mReport.IdleKnown=FALSE;
+  if(mReport.IdleInstalled){S=gBS->UninstallProtocolInterface(mProtocolHandle,&mIdleGuid,&mIdle);RequireAlive();if(S!=EFI_SUCCESS){mReport.Retained=TRUE;return Exact(S);}mReport.IdleInstalled=FALSE;}
   if(mReport.ProtocolInstalled){S=gBS->UninstallProtocolInterface(mProtocolHandle,&mRuntimeGuid,&mRuntime);RequireAlive();if(S!=EFI_SUCCESS){mReport.Retained=TRUE;return Exact(S);}mReport.ProtocolInstalled=FALSE;}
   if(mExitEvent){S=gBS->CloseEvent(mExitEvent);RequireAlive();if(S!=EFI_SUCCESS){mReport.Retained=TRUE;return Exact(S);}mExitEvent=NULL;}
   mAlive=FALSE;return EFI_SUCCESS;

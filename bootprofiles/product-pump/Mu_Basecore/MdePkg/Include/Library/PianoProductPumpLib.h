@@ -3,6 +3,9 @@
 #define PIANO_PRODUCT_PUMP_LIB_H
 #include <Uefi.h>
 #include <Protocol/PianoProductRuntime.h>
+#include <Protocol/PianoProductIdle.h>
+// Exact last APP pump snapshot. Unknown/live bulk stays awake; Null preserves idle.
+BOOLEAN EFIAPI PianoProductPumpShouldIdle(VOID);
 EFI_STATUS EFIAPI PianoProductPumpApplication(UINT32 Reason,UINTN BudgetUs);
 EFI_STATUS EFIAPI PianoProductGetPendingAction(UINT32 *Action,UINT64 *Sequence);
 // Exact pending RETURN_CORE query; no acknowledgement or application dispatch.
