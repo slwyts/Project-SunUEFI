@@ -8,9 +8,11 @@ a power-key restart. Android returned with boot-complete1. The final routine
 26-partition hash check passed; subsequent RAM-only tests omit routine hash
 checks at the user's request.
 
-Host sysfs briefly exposed USB VID/PID1209:8750. A standard fastboot version
-query did not complete before recovery, so this is partial USB observation,
-not proof of complete device enumeration or command operation.
+Host sysfs exposed USB VID/PID1209:8750. The host kernel journal places this
+connection at03:21:18..03:22:16, about58seconds, and records product
+`piano fastboot debug` and serial `SunUEFI-piano`. A standard fastboot version
+query did not complete before recovery. Configuration/interface accessibility
+was not captured, so full enumeration and command operation remain unverified.
 
 The recovered `private/analysis/ramlog-test-93/console.txt` contains2097140bytes.
 Its startup prefix has been overwritten by many UFS/DMA read records. The
