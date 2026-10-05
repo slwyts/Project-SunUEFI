@@ -3,7 +3,6 @@ Description=Explicit Piano ttyGS0 debug shell
 After=piano-linux-debug.service
 Requires=piano-linux-debug.service
 ConditionPathExists=/dev/ttyGS0
-ConditionKernelCommandLine=piano.debug_shell=1
 
 [Service]
 Type=simple

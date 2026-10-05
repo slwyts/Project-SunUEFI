@@ -14,7 +14,22 @@ bootprofiles/linux-userspace 提供可复制到BusyBox initramfs或Debian ARM64 
 
 Debian可选择随附systemd oneshot debug unit与显式serial unit。serial unit还有ConditionKernelCommandLine，不会在默认关shell时反复启动。输出进入journal/console；交互后可用dmesg或journalctl查看Linux日志。initramfs可直接调用stage，并由自己的supervisor管理serial命令。bootstrap不安装/启动SSH，不修改密码或配置host网络。
 
-## 明确 kernel commandline
+## 明确配置与 kernel commandline
+
+完整公开内核保留 `CONFIG_CMDLINE_FORCE=y`。外部 EFI load options 因此不能
+覆盖编译命令行中的调试参数。RAM 发行版可用 `/etc/piano/linux-debug.conf`
+明确配置以下键；脚本逐键读取纯数据，不 source/eval，kernel cmdline 同名项优先：
+
+```
+usb=acm-ncm
+shell=1
+ipv4=192.168.77.1/30
+recovery_seconds=0
+```
+
+`udc` 和 `role` 可设置为实机存在的确切名称，省略时仍必须唯一且关联验证
+成功。serial unit依靠实际脚本检查显式shell选择及当前boot gadget归属，配置
+文件与命令行两种方式均可用。默认没有文件且没有参数时仍只做诊断。
 
 ```
 piano.debug_usb=acm-ncm

@@ -48,6 +48,26 @@ sys.exit(1)
  def run_script(self,action='start',ok=True):
   r=subprocess.run(['sh',str(SCRIPT),action],env=self.env,capture_output=True,text=True);self.assertEqual(r.returncode,0 if ok else 1,r.stdout+r.stderr);self.assertIn('evidence=fixture',r.stdout);return r.stdout
  def commands(self):return self.trace.read_text()if self.trace.exists()else''
+ def config(self,text):
+  path=self.fs/'etc/piano/linux-debug.conf';path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text)
+ def test_real_config_works_with_forced_kernel_cmdline_and_cmdline_overrides(self):
+  self.config('usb=acm-ncm\nshell=1\nipv4=192.168.77.1/30\nrecovery_seconds=0\n')
+  (self.fs/'proc/cmdline').write_text('piano.root=ram')
+  result=self.run_script();self.assertIn('gadget_bound',result);self.assertIn('ip ',self.commands())
+  self.run_script('stop')
+  (self.fs/'proc/cmdline').write_text('piano.root=ram piano.debug_usb=off')
+  result=self.run_script();self.assertIn('usb_disabled',result)
+ def test_config_is_data_and_rejects_unknown_or_executable_values(self):
+  marker=self.base/'never-execute'
+  (self.fs/'proc/cmdline').write_text('piano.root=ram')
+  self.config('usb=$(touch '+str(marker)+')\n')
+  self.run_script(ok=False);self.assertFalse(marker.exists());self.assertNotIn('mkdir ',self.commands())
+  self.config('unknown=value\n');self.run_script(ok=False)
+ def test_config_preserves_unique_real_role_requirement(self):
+  self.config('usb=acm-ncm\nshell=1\n');(self.fs/'proc/cmdline').write_text('piano.root=ram')
+  (self.fs/'sys/class/usb_role/role0/role').write_text('host')
+  result=self.run_script(ok=False);self.assertIn('role_not_device',result)
+  self.assertFalse((self.fs/'sys/kernel/config/usb_gadget/piano-linux-debug').exists())
  def test_default_diagnostics_no_writes_or_timer(self):
   (self.fs/'proc/cmdline').write_text('');s=self.run_script('diagnose');self.assertIn('diagnostics_ready configured=0',s);self.assertFalse(self.trace.exists());s=self.run_script();self.assertIn('usb_disabled',s);self.assertNotIn('sleep',self.commands());self.assertFalse((self.fs/'sys/kernel/config/usb_gadget/piano-linux-debug').exists())
  def test_explicit_acm_ncm_bind_and_owned_stop(self):

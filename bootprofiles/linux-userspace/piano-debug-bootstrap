@@ -12,6 +12,22 @@ fail() { log "status=failed reason=$*"; exit 1; }
 read_value() { [ -r "$1" ] && tr -d '\000\r\n' <"$1" || :; }
 valid_name() { case "$1" in ''|.|..|*[!A-Za-z0-9_.:-]*) return 1;; *) return 0;; esac; }
 USB=off UDC='' ROLE='' SHELL_ENABLED=0 RECOVERY=0 IPV4=''
+# Complete public kernels force their compiled command line. A RAM-distro
+# config supplies explicit debug choices without rebuilding either kernel.
+# This is data, never sourced/evaluated shell code; cmdline takes precedence.
+DEBUG_CONFIG=$(p /etc/piano/linux-debug.conf)
+if [ -r "$DEBUG_CONFIG" ]; then
+    while IFS= read -r entry || [ -n "$entry" ]; do
+        case "$entry" in ''|\#*) continue;; esac
+        key=${entry%%=*} value=${entry#*=}
+        [ "$entry" != "$key" ] || fail malformed_debug_config
+        case "$key" in
+            usb) USB=$value;; udc) UDC=$value;; role) ROLE=$value;;
+            shell) SHELL_ENABLED=$value;; recovery_seconds) RECOVERY=$value;;
+            ipv4) IPV4=$value;; *) fail unknown_debug_config_key;;
+        esac
+    done <"$DEBUG_CONFIG"
+fi
 [ -r "$(p /proc/cmdline)" ] || fail cmdline_unavailable
 for word in $(cat "$(p /proc/cmdline)"); do
     case "$word" in
