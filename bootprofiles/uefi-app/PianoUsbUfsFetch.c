@@ -4,6 +4,7 @@
 #include "PianoFastbootBlockRead.h"
 #include "PianoUsbStorageExperiment.h"
 #include "PianoUfsShutdown.h"
+#include "PianoOwnedSmmu.h"
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/BaseLib.h>
@@ -13,6 +14,7 @@ STATIC EFI_STATUS FetchFailure(EFI_STATUS Status) {
   DEBUG((DEBUG_WARN,"SUNUEFI_FETCH_FAILSTOP status=%r owners_retained=1\n",Status));
   CpuDeadLoop();return Status==EFI_SUCCESS || !EFI_ERROR(Status)?EFI_DEVICE_ERROR:Status;
 }
+STATIC PIANO_SMMU_RETIRED_USB_PROOF mUsbRetiredProof;
 EFI_STATUS PianoRunUsbUfsFetch(CONST VOID *Fdt) {
   EFI_STATUS Status=PianoFastbootBlockReadInit();
   DEBUG((DEBUG_WARN,"SUNUEFI_FETCH_BLOCK_BACKEND_INIT %r\n",Status));
@@ -37,6 +39,10 @@ EFI_STATUS PianoRunUsbUfsFetch(CONST VOID *Fdt) {
   // A failed USB teardown must not free UFS while its snapshot still contains
   // that other stream or accidentally fall through into an OS/automatic reset.
   if(Status!=EFI_SUCCESS)return FetchFailure(Status);
+  EFI_STATUS Peer=PianoUsbControllerMakeRetiredUsbProof(Fdt,&mUsbRetiredProof);
+  if(Peer==EFI_SUCCESS)Peer=PianoUfsAcceptRetiredUsb(&mUsbRetiredProof);
+  DEBUG((DEBUG_WARN,"SUNUEFI_FETCH_RETIRED_USB_CONTRACT status=%r valid=%u slot=%u\n",Peer,mUsbRetiredProof.Valid,mUsbRetiredProof.Slot));
+  if(Peer!=EFI_SUCCESS)return FetchFailure(Peer);
   // USB has already closed. Own an outer lease before typed UFS retirement;
   // its internal CALLBACK lease therefore never releases this caller's lease.
   EFI_TPL Old=gBS->RaiseTPL(TPL_CALLBACK);

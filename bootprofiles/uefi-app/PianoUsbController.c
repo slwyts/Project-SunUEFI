@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Retained DWC3 controller state and USB0 owned DMA context, isolated from UFS.
 #include "PianoOwnedSmmu.h"
+#include "PianoUsbService.h"
 #include <Protocol/EFIClock.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
@@ -9,6 +10,9 @@
 #include <Library/BaseLib.h>
 #include <Library/DebugLib.h>
 #include <Library/BaseMemoryLib.h>
+#if defined(PIANO_USB_SERVICE) && PIANO_USB_SERVICE
+#include <Guid/EventGroup.h>
+#endif
 #ifndef PIANO_USB_UFS_FETCH
 #define PIANO_USB_UFS_FETCH 0
 #endif
@@ -16,6 +20,24 @@
 STATIC PIANO_OWNED_SMMU mUsbContext;
 STATIC PIANO_DMA_DEVICE mUsbDevice;
 STATIC BOOLEAN mUsbCleanupBlocked,mUsbControllerRunning;
+STATIC PIANO_SMMU_USB_RETIRE_EVIDENCE mControllerRetire;
+STATIC BOOLEAN mControllerRetireValid,mRetireProofConsumed;
+STATIC VOID ControllerZero(VOID *Buffer,UINTN Bytes) {
+  for(UINTN I=0;I<Bytes;++I)((volatile UINT8 *)Buffer)[I]=0;
+}
+#if PIANO_USB_SERVICE
+STATIC struct {
+  BOOLEAN Opening,Started,Unknown,ServicesLost;
+  EFI_CLOCK_PROTOCOL *Clock;UINTN Ids[8],Held,Domain;BOOLEAN DomainHeld;
+  EFI_EVENT Timer,ExitEvent;PIANO_DWC3_SERVICE_CONFIG Config;
+  PIANO_DMA_BUFFER ProbeBuffer;
+} mPersistent;
+STATIC EFI_STATUS ServiceExact(EFI_STATUS S,BOOLEAN Mutation) {
+  if(!mPersistent.Opening || S==EFI_SUCCESS)return S;
+  if(Mutation){mPersistent.Unknown=TRUE;mUsbCleanupBlocked=TRUE;}
+  return EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
+}
+#endif
 #include "PianoUsbRamBootExperiment.h"
 #if PIANO_USB_RAM_BOOT
 STATIC BOOLEAN mRamBootMode,mRamClockUnknown,mRamDomainReleased;
@@ -151,7 +173,7 @@ STATIC EFI_STATUS ProxyRead(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info,UI
 }
 STATIC CONST PIANO_FB_STORAGE mProxyStorage={NULL,ProxyReady,ProxyInfo,ProxyRead};
 #endif
-#if PIANO_USB_UFS_FETCH || PIANO_USB_RAM_BOOT
+#if PIANO_USB_UFS_FETCH || PIANO_USB_RAM_BOOT || PIANO_USB_SERVICE
 #if !PIANO_USB_UFS_FETCH
 #include "PianoUsbStorageExperiment.h"
 STATIC BOOLEAN mUsbShutdownLive;
@@ -207,6 +229,7 @@ STATIC EFI_STATUS RunController(CONST VOID *Fdt,BOOLEAN Deferred,BOOLEAN *Reboot
   if(mCombinedBusy && !Deferred)return EFI_NOT_READY;
 #endif
   mUsbControllerRunning=TRUE;
+  mControllerRetireValid=mRetireProofConsumed=FALSE;ControllerZero(&mControllerRetire,sizeof(mControllerRetire));
   if(!UsbDt(Fdt)){mUsbControllerRunning=FALSE;return EFI_UNSUPPORTED;}
   PianoProbeUsbPower(Fdt);
   EFI_GUID Guid=EFI_CLOCK_PROTOCOL_GUID;EFI_CLOCK_PROTOCOL *Clock=NULL;
@@ -223,11 +246,17 @@ STATIC EFI_STATUS RunController(CONST VOID *Fdt,BOOLEAN Deferred,BOOLEAN *Reboot
   if(mRamBootMode){mRamClockReleaseMask=0;mRamDomainReleased=FALSE;mRamClockUnknown=FALSE;mRamOwnedStreamIndex=MAX_UINT16;}
 #endif
   Status=Clock->GetClockPowerDomainID(Clock,"gcc_usb30_prim_gdsc",&Domain);
+#if PIANO_USB_SERVICE
+  Status=ServiceExact(Status,FALSE);
+#endif
 #if PIANO_USB_RAM_BOOT
   Status=RamClockStatus(Status,FALSE);
 #endif
   if(!EFI_ERROR(Status)) {
     Status=Clock->EnableClockPowerDomain(Clock,Domain);
+#if PIANO_USB_SERVICE
+    Status=ServiceExact(Status,TRUE);
+#endif
 #if PIANO_USB_RAM_BOOT
     Status=RamClockStatus(Status,TRUE);
 #endif
@@ -236,18 +265,24 @@ STATIC EFI_STATUS RunController(CONST VOID *Fdt,BOOLEAN Deferred,BOOLEAN *Reboot
   DomainHeld=TRUE;
   for(UINTN I=0;I<ARRAY_SIZE(Names);++I) {
     Status=Clock->GetClockID(Clock,Names[I],&Ids[I]);
+#if PIANO_USB_SERVICE
+    Status=ServiceExact(Status,FALSE);
+#endif
 #if PIANO_USB_RAM_BOOT
     Status=RamClockStatus(Status,FALSE);
 #endif
     if(!EFI_ERROR(Status)) {
       Status=Clock->EnableClock(Clock,Ids[I]);
+#if PIANO_USB_SERVICE
+      Status=ServiceExact(Status,TRUE);
+#endif
 #if PIANO_USB_RAM_BOOT
       Status=RamClockStatus(Status,TRUE);
 #endif
     }
     DEBUG((DEBUG_WARN,"SUNUEFI_USB_CLOCK %a %r\n",Names[I],Status));if(EFI_ERROR(Status))goto Exit;++Held;
   }
-#if PIANO_USB_UFS_FETCH || PIANO_USB_RAM_BOOT
+#if PIANO_USB_UFS_FETCH || PIANO_USB_RAM_BOOT || PIANO_USB_SERVICE
   if(Deferred) {
     Status=InstallShutdown();
     if(Status!=EFI_SUCCESS){if(mUsbShutdownLive){mUsbCleanupBlocked=TRUE;SafeToDisable=FALSE;}goto Exit;}
@@ -264,6 +299,9 @@ STATIC EFI_STATUS RunController(CONST VOID *Fdt,BOOLEAN Deferred,BOOLEAN *Reboot
   if(EFI_ERROR(Status)){SafeToDisable=FALSE;goto Exit;}
   mUsbDevice=(PIANO_DMA_DEVICE){.Name="usb",.StreamId=0x40,.AddressBits=32,.CacheLine=64};
   Status=PianoOwnedSmmuOpenUsb(Fdt,&mUsbContext,&mUsbDevice);
+#if PIANO_USB_SERVICE
+  Status=ServiceExact(Status,TRUE);
+#endif
 #if PIANO_USB_RAM_BOOT
   Status=RamExact(Status);
 #endif
@@ -273,7 +311,11 @@ STATIC EFI_STATUS RunController(CONST VOID *Fdt,BOOLEAN Deferred,BOOLEAN *Reboot
     mRamOwnedStreamIndex=mUsbContext.After.Device[1].StreamIndex;
 #endif
 #if PIANO_USB_UFS_FETCH
-  if(Deferred && Status==EFI_SUCCESS) {
+  if(Deferred && Status==EFI_SUCCESS
+#if PIANO_USB_SERVICE
+     && (!mPersistent.Opening || mCombinedBusy)
+#endif
+  ) {
     mCoexistUfs=mUsbContext.Before.Device[0];
     mCoexistBasis=mUsbContext.After;
     if(!mCoexistUfs.Present || !mCoexistUfs.Enabled || mCoexistUfs.Type!=0 || mCoexistUfs.Sid!=0x60)Status=EFI_NOT_READY;
@@ -286,7 +328,13 @@ STATIC EFI_STATUS RunController(CONST VOID *Fdt,BOOLEAN Deferred,BOOLEAN *Reboot
 #if PIANO_USB_RAM_BOOT
     if(mRamBootMode)Buffer=&mRamProbeBuffer; // retained proof cannot live on the stack
 #endif
+#if PIANO_USB_SERVICE
+    if(mPersistent.Opening)Buffer=&mPersistent.ProbeBuffer;
+#endif
     Status=PianoDmaAllocate(&mUsbDevice,4096,4096,32,PianoDmaBidirectional,Buffer);
+#if PIANO_USB_SERVICE
+    Status=ServiceExact(Status,Buffer->Signature!=0);
+#endif
 #if PIANO_USB_RAM_BOOT
     Status=RamExact(Status);
     if(mRamBootMode && Status!=EFI_SUCCESS && Buffer->Signature) {
@@ -295,6 +343,9 @@ STATIC EFI_STATUS RunController(CONST VOID *Fdt,BOOLEAN Deferred,BOOLEAN *Reboot
 #endif
     if(!EFI_ERROR(Status)) {
       Status=PianoDmaMap(Buffer);
+#if PIANO_USB_SERVICE
+      Status=ServiceExact(Status,TRUE);
+#endif
 #if PIANO_USB_RAM_BOOT
       Status=RamExact(Status);
       if(mRamBootMode && Status!=EFI_SUCCESS) {
@@ -309,8 +360,14 @@ STATIC EFI_STATUS RunController(CONST VOID *Fdt,BOOLEAN Deferred,BOOLEAN *Reboot
 #if PIANO_USB_RAM_BOOT
       if(!mRamBootMode || !mUsbCleanupBlocked)
 #endif
+#if PIANO_USB_SERVICE
+      if(!mPersistent.Opening || !mUsbCleanupBlocked)
+#endif
       {
         EFI_STATUS Free=PianoDmaFree(Buffer);
+#if PIANO_USB_SERVICE
+        Free=ServiceExact(Free,TRUE);
+#endif
 #if PIANO_USB_RAM_BOOT
         Free=RamExact(Free);
         if(mRamBootMode && (Free!=EFI_SUCCESS || Buffer->Signature)) {
@@ -324,11 +381,32 @@ STATIC EFI_STATUS RunController(CONST VOID *Fdt,BOOLEAN Deferred,BOOLEAN *Reboot
   }
 #ifdef PIANO_USB_EP0
 #if PIANO_USB_UFS_FETCH
-  if(Deferred && Status==EFI_SUCCESS)Status=CoexistCheck(Fdt,"coexist-probe-retired",TRUE);
+  if(Deferred && Status==EFI_SUCCESS
+#if PIANO_USB_SERVICE
+     && (!mPersistent.Opening || mCombinedBusy)
+#endif
+  )Status=CoexistCheck(Fdt,"coexist-probe-retired",TRUE);
 #endif
   if(!EFI_ERROR(Status)) {
+#if PIANO_USB_SERVICE
+    if(mPersistent.Opening) {
+      Status=PianoDwc3ServiceStart(&mUsbContext,&mUsbDevice,&mPersistent.Config);
+      if(Status==EFI_SUCCESS) {
+        mPersistent.Clock=Clock;mPersistent.Held=Held;mPersistent.Domain=Domain;mPersistent.DomainHeld=DomainHeld;
+        for(UINTN I=0;I<Held;++I)mPersistent.Ids[I]=Ids[I];
+        mPersistent.Started=TRUE;return EFI_SUCCESS;
+      }
+      PIANO_DWC3_SERVICE_STATUS DeviceState;EFI_STATUS Stop=PianoDwc3ServiceStop(Status);
+      if(PianoDwc3ServiceGetStatus(&DeviceState)!=EFI_SUCCESS || DeviceState.Retained || !DeviceState.DeviceHalted) {
+        mUsbCleanupBlocked=TRUE;SafeToDisable=FALSE;
+      }
+      if(Stop!=EFI_SUCCESS && Status==EFI_SUCCESS)Status=Stop;
+    } else
+#endif
+    {
     Status=PianoDwc3Ep0Experiment(&mUsbContext,&mUsbDevice);
     RebootRequested=PianoDwc3ConsumeRebootRequest();
+    }
   }
 #endif
 #if PIANO_USB_UFS_FETCH
@@ -339,6 +417,10 @@ STATIC EFI_STATUS RunController(CONST VOID *Fdt,BOOLEAN Deferred,BOOLEAN *Reboot
 #endif
   {
     EFI_STATUS Close;
+#if PIANO_USB_SERVICE
+    if(mPersistent.Opening && mUsbCleanupBlocked)Close=EFI_ACCESS_DENIED;
+    else
+#endif
 #if PIANO_USB_RAM_BOOT
     if(mRamBootMode && mUsbCleanupBlocked)Close=EFI_ACCESS_DENIED;
     else
@@ -354,6 +436,11 @@ STATIC EFI_STATUS RunController(CONST VOID *Fdt,BOOLEAN Deferred,BOOLEAN *Reboot
   }
 #endif
 Exit:
+#if PIANO_USB_SERVICE
+  if(mPersistent.Opening && (mPersistent.Unknown || mUsbCleanupBlocked || mPersistent.ProbeBuffer.Signature ||
+    mUsbContext.Attached || mUsbContext.Verified || mUsbContext.Domain!=NULL || mUsbContext.TableMemory.Signature || mUsbContext.TableMemory.Quarantined))SafeToDisable=FALSE;
+  if(mPersistent.Opening)for(UINTN I=0;I<ARRAY_SIZE(mUsbContext.Mapping);++I)if(mUsbContext.Mapping[I].Used)SafeToDisable=FALSE;
+#endif
 #if PIANO_USB_RAM_BOOT
   if(mRamBootMode && (mRamClockUnknown || mUsbCleanupBlocked || mUsbContext.Attached || mUsbContext.Verified ||
      mUsbContext.Domain!=NULL || mUsbContext.TableMemory.Signature || mUsbContext.TableMemory.Quarantined || mRamProbeBuffer.Signature))SafeToDisable=FALSE;
@@ -362,7 +449,7 @@ Exit:
 #if PIANO_USB_UFS_FETCH
   if(Deferred && mUsbCleanupBlocked)SafeToDisable=FALSE;
 #endif
-#if PIANO_USB_UFS_FETCH || PIANO_USB_RAM_BOOT
+#if PIANO_USB_UFS_FETCH || PIANO_USB_RAM_BOOT || PIANO_USB_SERVICE
   if(Deferred && SafeToDisable) {
     EFI_STATUS Remove=RemoveShutdown();
     if(Remove!=EFI_SUCCESS){Status=EFI_ERROR(Remove)?Remove:EFI_DEVICE_ERROR;mUsbCleanupBlocked=TRUE;SafeToDisable=FALSE;}
@@ -377,14 +464,18 @@ Exit:
     --Held;EFI_STATUS Release=Clock->DisableClock(Clock,Ids[Held]);
     DEBUG((DEBUG_WARN,"SUNUEFI_USB_CLOCK_RELEASE %a %r\n",Names[Held],Release));
     if(Release!=EFI_SUCCESS){Status=EFI_ERROR(Release)?Release:EFI_DEVICE_ERROR;++ClockReleaseFailures;mUsbCleanupBlocked=TRUE;}
+    else {
+      mControllerRetire.ClockReleaseMask|=1U<<Held;
 #if PIANO_USB_RAM_BOOT
-    else if(mRamBootMode)mRamClockReleaseMask|=(1U<<Held);
+      if(mRamBootMode)mRamClockReleaseMask|=(1U<<Held);
 #endif
+    }
   }
   if(DomainHeld && !ClockReleaseFailures) {
     EFI_STATUS Release=Clock->DisableClockPowerDomain(Clock,Domain);
     DEBUG((DEBUG_WARN,"SUNUEFI_USB_DOMAIN_RELEASE %r\n",Release));
     if(Release!=EFI_SUCCESS){Status=EFI_ERROR(Release)?Release:EFI_DEVICE_ERROR;mUsbCleanupBlocked=TRUE;}else DomainHeld=FALSE;
+    if(Release==EFI_SUCCESS)mControllerRetire.GdscReleased=TRUE;
 #if PIANO_USB_RAM_BOOT
     if(Release==EFI_SUCCESS && mRamBootMode)mRamDomainReleased=TRUE;
 #endif
@@ -392,6 +483,16 @@ Exit:
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_CONTROLLER_END status=%r clock_release_failures=%u domain_release_unconfirmed=%u retained_context=%u reboot_requested=%u\n",
     Status,(UINT32)ClockReleaseFailures,DomainHeld,mUsbCleanupBlocked,RebootRequested));
   if(!mUsbCleanupBlocked)mUsbControllerRunning=FALSE;
+#if PIANO_USB_UFS_FETCH || PIANO_USB_SERVICE
+  PIANO_SMMU_USB_RETIRE_EVIDENCE DeviceRetire;
+  if(Status==EFI_SUCCESS && !mUsbCleanupBlocked && mControllerRetire.ClockReleaseMask==0xff && mControllerRetire.GdscReleased &&
+     PianoDwc3GetRetireEvidence(&DeviceRetire)==EFI_SUCCESS) {
+    mControllerRetire.Revision=1;mControllerRetire.DeviceCleanupStatus=DeviceRetire.DeviceCleanupStatus;
+    mControllerRetire.ControllerCleanupStatus=Status;mControllerRetire.DeviceHalted=DeviceRetire.DeviceHalted;
+    mControllerRetire.DmaFreed=DeviceRetire.DmaFreed;mControllerRetire.DmaBuffersFreed=DeviceRetire.DmaBuffersFreed;
+    mControllerRetire.ClocksReleased=TRUE;mControllerRetireValid=TRUE;
+  }
+#endif
   if(RebootRequested && Status==EFI_SUCCESS && !mUsbCleanupBlocked) {
     if(Deferred) {
       if(RebootOut!=NULL)*RebootOut=TRUE;
@@ -404,6 +505,159 @@ Exit:
   return Status;
 }
 EFI_STATUS PianoUsbControllerExperiment(CONST VOID *Fdt) {return RunController(Fdt,FALSE,NULL);}
+EFI_STATUS PianoUsbControllerMakeRetiredUsbProof(CONST VOID *Fdt,PIANO_SMMU_RETIRED_USB_PROOF *Proof) {
+  if(Proof==NULL)return EFI_INVALID_PARAMETER;
+  ControllerZero(Proof,sizeof(*Proof));
+#if PIANO_USB_UFS_FETCH || PIANO_USB_SERVICE
+  if(!mControllerRetireValid || mRetireProofConsumed || mUsbControllerRunning || mUsbCleanupBlocked || Fdt!=mUsbContext.Fdt)return EFI_NOT_READY;
+  PIANO_SMMU_SNAPSHOT Current;EFI_STATUS S=PianoSmmuCapture(Fdt,"usb-retired-proof-current",&Current);if(S!=EFI_SUCCESS)return EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
+  S=PianoOwnedSmmuMakeRetiredUsbProof(&mUsbContext,&mControllerRetire,&Current,Proof);
+  if(S==EFI_SUCCESS)mRetireProofConsumed=TRUE;
+  return S;
+#else
+  (VOID)Fdt;return EFI_UNSUPPORTED;
+#endif
+}
+#if PIANO_USB_SERVICE
+STATIC VOID EFIAPI ServiceTimer(EFI_EVENT Event,VOID *Context) {
+  (VOID)Event;(VOID)Context;
+  if(mPersistent.Started && !mPersistent.ServicesLost)PianoDwc3ServicePollBounded(16);
+}
+STATIC VOID EFIAPI ServiceExit(EFI_EVENT Event,VOID *Context) {
+  (VOID)Event;(VOID)Context;mPersistent.ServicesLost=TRUE;mPersistent.Started=FALSE;
+  // No BS/native teardown after the signal. Stop should have happened before
+  // an OS loader; an unexpected EBS retains pages and only halts hardware.
+  if(PianoDwc3ServiceFenceExit()!=EFI_SUCCESS)CpuDeadLoop();
+}
+STATIC BOOLEAN ControllerAtApp(VOID) {
+  if(mPersistent.ServicesLost || gBS==NULL || gBS->RaiseTPL==NULL || gBS->RestoreTPL==NULL)return FALSE;
+  EFI_TPL Old=gBS->RaiseTPL(TPL_HIGH_LEVEL);gBS->RestoreTPL(Old);return Old==TPL_APPLICATION;
+}
+EFI_STATUS PianoUsbControllerServiceStart(CONST VOID *Fdt,CONST PIANO_DWC3_SERVICE_CONFIG *Config) {
+  if(Config==NULL || Config->NowUs==NULL)return EFI_INVALID_PARAMETER;
+  if(Config->Storage!=NULL && (Config->Storage->Ready==NULL || Config->Storage->Info==NULL || Config->Storage->ReadBlocks==NULL))return EFI_INVALID_PARAMETER;
+  if(!ControllerAtApp())return EFI_UNSUPPORTED;
+  if(mPersistent.Opening || mPersistent.Started || mUsbCleanupBlocked || mUsbControllerRunning)return EFI_ALREADY_STARTED;
+  ZeroMem(&mPersistent,sizeof(mPersistent));mPersistent.Opening=TRUE;mPersistent.Config=*Config;
+#if PIANO_USB_UFS_FETCH
+  mCoexistReady=mCoexistFailed=mProxyBusy=FALSE;mCoexistQuietChecks=0;
+  if(Config->Storage!=NULL) {
+    mUnderlyingStorage=*Config->Storage;mCombinedBusy=TRUE;
+    EFI_STATUS Bind=mUnderlyingStorage.Ready(mUnderlyingStorage.Context);
+    if(Bind==EFI_SUCCESS)Bind=PianoDwc3SetStorageForExperiment(&mProxyStorage);
+    if(Bind==EFI_SUCCESS)Bind=PianoDwc3SetStorageCheckForExperiment(CoexistGuard,(VOID *)Fdt);
+    if(Bind!=EFI_SUCCESS) {
+      PianoDwc3SetStorageCheckForExperiment(NULL,NULL);PianoDwc3SetStorageForExperiment(NULL);
+      mCombinedBusy=FALSE;ZeroMem(&mUnderlyingStorage,sizeof(mUnderlyingStorage));mPersistent.Opening=FALSE;
+      return EFI_ERROR(Bind)?Bind:EFI_DEVICE_ERROR;
+    }
+  }
+  // Do not keep a caller-owned callback-struct pointer beyond this call.
+  mPersistent.Config.Storage=NULL;
+#else
+  if(Config->Storage!=NULL){mPersistent.Opening=FALSE;return EFI_UNSUPPORTED;}
+#endif
+  EFI_STATUS S=RunController(Fdt,TRUE,NULL);mPersistent.Opening=FALSE;
+  if(S!=EFI_SUCCESS || !mPersistent.Started) {
+#if PIANO_USB_UFS_FETCH
+    if(!mUsbCleanupBlocked) {
+      PianoDwc3SetStorageCheckForExperiment(NULL,NULL);PianoDwc3SetStorageForExperiment(NULL);
+      mCombinedBusy=FALSE;ZeroMem(&mUnderlyingStorage,sizeof(mUnderlyingStorage));
+    }
+#endif
+    return S==EFI_SUCCESS?EFI_DEVICE_ERROR:S;
+  }
+  S=gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,ServiceExit,NULL,&gEfiEventExitBootServicesGuid,&mPersistent.ExitEvent);
+  if(S==EFI_SUCCESS && mPersistent.ExitEvent!=NULL)
+    S=gBS->CreateEvent(EVT_TIMER|EVT_NOTIFY_SIGNAL,TPL_CALLBACK,ServiceTimer,NULL,&mPersistent.Timer);
+  else if(S==EFI_SUCCESS)S=EFI_COMPROMISED_DATA;
+  if(S==EFI_SUCCESS && mPersistent.Timer!=NULL)S=gBS->SetTimer(mPersistent.Timer,TimerPeriodic,10000);
+  else if(S==EFI_SUCCESS)S=EFI_COMPROMISED_DATA;
+  if(S!=EFI_SUCCESS) {
+    // A warning cannot confirm whether an event object/notification is live.
+    if(!EFI_ERROR(S)){mPersistent.Unknown=TRUE;mUsbCleanupBlocked=TRUE;return EFI_DEVICE_ERROR;}
+    PIANO_USB_SERVICE_RETIRE_REPORT Report;PianoUsbControllerServiceStop(S,&Report);return S;
+  }
+  return EFI_SUCCESS;
+}
+EFI_STATUS PianoUsbControllerServicePumpApp(UINT32 Reason,UINTN BudgetUs) {
+  if(mPersistent.ServicesLost || !mPersistent.Started)return EFI_NOT_READY;
+  if(!ControllerAtApp())return EFI_UNSUPPORTED;
+  return PianoDwc3ServicePumpApp(Reason,BudgetUs);
+}
+EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *Status) {
+  EFI_STATUS S=PianoDwc3ServiceGetStatus(Status);if(S!=EFI_SUCCESS)return S;
+  Status->Started=Status->Started && mPersistent.Started && !mPersistent.ServicesLost && !mUsbCleanupBlocked;
+  Status->Retained=Status->Retained || mUsbCleanupBlocked || mPersistent.Unknown;
+  Status->ServicesLost=Status->ServicesLost || mPersistent.ServicesLost;return EFI_SUCCESS;
+}
+EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RETIRE_REPORT *Report) {
+  if(Report==NULL)return EFI_INVALID_PARAMETER;
+  ZeroMem(Report,sizeof(*Report));Report->Revision=1;
+  if(mPersistent.ServicesLost || mPersistent.Opening || !ControllerAtApp())return Report->Status=EFI_ACCESS_DENIED;
+  if(!mPersistent.Started || mPersistent.Unknown || mUsbCleanupBlocked){Report->Retained=mPersistent.Unknown || mUsbCleanupBlocked;return Report->Status=EFI_NOT_READY;}
+  Report->Attempted=TRUE;mPersistent.Started=FALSE;EFI_STATUS S;
+  if(mPersistent.Timer!=NULL) {
+    S=gBS->SetTimer(mPersistent.Timer,TimerCancel,0);
+    if(S==EFI_SUCCESS)S=gBS->CloseEvent(mPersistent.Timer);
+    Report->TimerCloseStatus=S;
+    if(S!=EFI_SUCCESS){mPersistent.Unknown=TRUE;mUsbCleanupBlocked=TRUE;Report->Retained=TRUE;return Report->Status=EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
+    mPersistent.Timer=NULL;
+  }
+  Report->DeviceStatus=PianoDwc3ServiceStop(Reason);PIANO_DWC3_SERVICE_STATUS DeviceState;
+  S=PianoDwc3ServiceGetStatus(&DeviceState);
+  if(S!=EFI_SUCCESS || DeviceState.Retained || !DeviceState.DeviceHalted || !DeviceState.DmaFreed) {
+    mUsbCleanupBlocked=TRUE;Report->Retained=TRUE;return Report->Status=Report->DeviceStatus==EFI_SUCCESS?EFI_DEVICE_ERROR:Report->DeviceStatus;
+  }
+  Report->DeviceHalted=DeviceState.DeviceHalted;Report->DmaFreed=DeviceState.DmaFreed;Report->DmaBuffersFreed=DeviceState.DmaBuffersFreed;
+#if PIANO_USB_UFS_FETCH
+  if(mCombinedBusy) {
+    S=CoexistCheck(mUsbContext.Fdt,"service-usb-halted",TRUE);
+    if(S==EFI_SUCCESS)S=PianoDwc3SetStorageCheckForExperiment(NULL,NULL);
+    if(S==EFI_SUCCESS)S=PianoDwc3SetStorageForExperiment(NULL);
+    if(S!=EFI_SUCCESS){mUsbCleanupBlocked=TRUE;Report->Retained=TRUE;return Report->Status=EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
+    mCombinedBusy=FALSE;ZeroMem(&mUnderlyingStorage,sizeof(mUnderlyingStorage));
+  }
+#endif
+  Report->OwnedCloseStatus=PianoOwnedSmmuClose(&mUsbContext);
+  Report->DomainFreed=Report->OwnedCloseStatus==EFI_SUCCESS && !mUsbContext.Attached && !mUsbContext.Verified && mUsbContext.Domain==NULL &&
+    !mUsbContext.TableMemory.Signature && !mUsbContext.TableMemory.Quarantined;
+  for(UINTN I=0;I<ARRAY_SIZE(mUsbContext.Mapping);++I)if(mUsbContext.Mapping[I].Used)Report->DomainFreed=FALSE;
+  if(!Report->DomainFreed){mUsbCleanupBlocked=TRUE;Report->Retained=TRUE;return Report->Status=Report->OwnedCloseStatus==EFI_SUCCESS?EFI_DEVICE_ERROR:Report->OwnedCloseStatus;}
+#if PIANO_USB_UFS_FETCH
+  if(mCoexistReady) {
+    S=CoexistCheck(mUsbContext.Fdt,"service-usb-closed",FALSE);
+    if(S!=EFI_SUCCESS){mUsbCleanupBlocked=TRUE;Report->Retained=TRUE;return Report->Status=EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
+  }
+#endif
+  S=RemoveShutdown();if(S!=EFI_SUCCESS){mUsbCleanupBlocked=TRUE;Report->Retained=TRUE;return Report->Status=EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
+  if(mPersistent.ExitEvent!=NULL){S=gBS->CloseEvent(mPersistent.ExitEvent);if(S!=EFI_SUCCESS){mUsbCleanupBlocked=TRUE;Report->Retained=TRUE;return Report->Status=EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}mPersistent.ExitEvent=NULL;}
+  while(mPersistent.Held) {
+    UINTN Index=--mPersistent.Held;S=mPersistent.Clock->DisableClock(mPersistent.Clock,mPersistent.Ids[Index]);
+    if(S!=EFI_SUCCESS){mUsbCleanupBlocked=TRUE;Report->Retained=TRUE;Report->Status=EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
+    else Report->ClockReleaseMask|=1U<<Index;
+  }
+  if(mPersistent.DomainHeld && !mUsbCleanupBlocked) {
+    S=mPersistent.Clock->DisableClockPowerDomain(mPersistent.Clock,mPersistent.Domain);
+    if(S!=EFI_SUCCESS){mUsbCleanupBlocked=TRUE;Report->Retained=TRUE;Report->Status=EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}else mPersistent.DomainHeld=FALSE;
+  }
+  Report->ClocksReleased=Report->ClockReleaseMask==0xff && !mPersistent.DomainHeld;
+  Report->Clean=!Report->Retained && Report->DeviceStatus==EFI_SUCCESS && Report->DomainFreed && Report->ClocksReleased;
+  if(!Report->Retained)mUsbControllerRunning=FALSE;
+  if(Report->Clean) {
+    mControllerRetire=(PIANO_SMMU_USB_RETIRE_EVIDENCE){.Revision=1,.DeviceCleanupStatus=Report->DeviceStatus,.ControllerCleanupStatus=EFI_SUCCESS,
+      .DeviceHalted=Report->DeviceHalted,.DmaFreed=Report->DmaFreed,.ClocksReleased=Report->ClocksReleased,.GdscReleased=TRUE,
+      .DmaBuffersFreed=Report->DmaBuffersFreed,.ClockReleaseMask=Report->ClockReleaseMask};mControllerRetireValid=TRUE;mRetireProofConsumed=FALSE;
+  }
+  if(Report->Status==EFI_SUCCESS && !Report->Clean)Report->Status=Report->DeviceStatus==EFI_SUCCESS?EFI_DEVICE_ERROR:Report->DeviceStatus;
+  return Report->Status;
+}
+#else
+EFI_STATUS PianoUsbControllerServiceStart(CONST VOID *Fdt,CONST PIANO_DWC3_SERVICE_CONFIG *Config){(VOID)Fdt;(VOID)Config;return EFI_UNSUPPORTED;}
+EFI_STATUS PianoUsbControllerServicePumpApp(UINT32 Reason,UINTN BudgetUs){(VOID)Reason;(VOID)BudgetUs;return EFI_UNSUPPORTED;}
+EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){if(S==NULL)return EFI_INVALID_PARAMETER;ControllerZero(S,sizeof(*S));S->Revision=1;return EFI_UNSUPPORTED;}
+EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RETIRE_REPORT *R){(VOID)Reason;if(R==NULL)return EFI_INVALID_PARAMETER;ControllerZero(R,sizeof(*R));R->Revision=1;return R->Status=EFI_UNSUPPORTED;}
+#endif
 EFI_STATUS PianoUsbControllerRunForRamBoot(CONST VOID *Fdt,CONST PIANO_FB_BOOT *Boot,
   PIANO_FB_BOOT_ACTION *Action,PIANO_USB_BOOT_RETIRE_REPORT *Report,BOOLEAN *RebootRequested) {
   if(Report==NULL || Action==NULL || RebootRequested==NULL)return EFI_INVALID_PARAMETER;

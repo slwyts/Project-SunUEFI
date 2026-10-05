@@ -1,0 +1,16 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = PianoRamOnlySerialPortLib
+  FILE_GUID = 463AFCAD-6263-442F-92EB-9A9B2A1E1627
+  MODULE_TYPE = BASE
+  VERSION_STRING = 0.1
+  LIBRARY_CLASS = SerialPortLib
+[Sources]
+  SerialPort.c
+  RamLog.c
+[Packages]
+  MdePkg/MdePkg.dec
+[LibraryClasses]
+  ArmLib
+  CacheMaintenanceLib
+  BaseMemoryLib

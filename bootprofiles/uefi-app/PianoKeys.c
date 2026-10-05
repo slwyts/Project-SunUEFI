@@ -10,6 +10,7 @@
 #include <Library/DebugLib.h>
 #include <Library/FdtLib.h>
 #include <Library/IoLib.h>
+#include "PianoKeysLifecycle.h"
 
 #define ARB_CORE 0x0C400000U
 #define ARB_CFG  0x0C42D000U
@@ -28,6 +29,7 @@ STATIC UINT16 mPonApid, mGpioApid;
 STATIC UINT8 mCandidate, mStable, mSamples;
 STATIC UINTN mPowerTicks;
 STATIC BOOLEAN mFailed;
+STATIC BOOLEAN mProductStopRetained;
 STATIC BOOLEAN mStandardNavigation,mEscapeChord;
 STATIC struct {
   VENDOR_DEVICE_PATH Vendor;
@@ -179,6 +181,30 @@ VOID PianoStopKeys (VOID) {
       &gEfiDevicePathProtocolGuid,&mPath,NULL);mHandle=NULL;
   }
   if(mInput.WaitForKey!=NULL) {gBS->CloseEvent(mInput.WaitForKey);mInput.WaitForKey=NULL;}
+}
+EFI_STATUS PianoStopKeysForProduct(PIANO_KEYS_RETIRE_REPORT *Report) {
+  if(Report==NULL)return EFI_INVALID_PARAMETER;
+  ZeroMem(Report,sizeof(*Report));Report->Started=TRUE;
+  if(mProductStopRetained)return Report->Status=EFI_ACCESS_DENIED;
+  EFI_TPL Old=gBS->RaiseTPL(TPL_HIGH_LEVEL);gBS->RestoreTPL(Old);
+  if(Old!=TPL_APPLICATION)return Report->Status=EFI_UNSUPPORTED;
+  EFI_STATUS Status=EFI_SUCCESS;
+  if(mPoll!=NULL) {
+    Status=Report->TimerCancel=gBS->SetTimer(mPoll,TimerCancel,0);if(Status!=EFI_SUCCESS)goto Failed;
+    Status=Report->TimerClose=gBS->CloseEvent(mPoll);if(Status!=EFI_SUCCESS)goto Failed;mPoll=NULL;
+  }
+  if(mHandle!=NULL) {
+    Status=Report->Disconnect=gBS->DisconnectController(mHandle,NULL,NULL);if(Status!=EFI_SUCCESS)goto Failed;
+    Status=Report->Uninstall=gBS->UninstallMultipleProtocolInterfaces(mHandle,&gEfiSimpleTextInProtocolGuid,&mInput,
+      &gEfiDevicePathProtocolGuid,&mPath,NULL);if(Status!=EFI_SUCCESS)goto Failed;mHandle=NULL;
+  }
+  if(mInput.WaitForKey!=NULL) {
+    Status=Report->WaitClose=gBS->CloseEvent(mInput.WaitForKey);if(Status!=EFI_SUCCESS)goto Failed;mInput.WaitForKey=NULL;
+  }
+  Report->Returned=Report->Clean=TRUE;Report->Status=EFI_SUCCESS;return EFI_SUCCESS;
+Failed:
+  mProductStopRetained=TRUE;Report->Returned=Report->Retained=TRUE;
+  return Report->Status=EFI_ERROR(Status)?Status:EFI_DEVICE_ERROR;
 }
 
 EFI_STATUS PianoStartKeys (CONST VOID *Fdt) {

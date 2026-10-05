@@ -1,0 +1,23 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = PianoProductBootManagerLib
+  FILE_GUID = 4786A22C-69CA-45C3-819B-0E4D8721DC4B
+  MODULE_TYPE = DXE_DRIVER
+  LIBRARY_CLASS = DeviceBootManagerLib|DXE_DRIVER
+[Sources]
+  ProductBootManagerLib.c
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  MsCorePkg/MsCorePkg.dec
+[LibraryClasses]
+  UefiLib
+  UefiBootServicesTableLib
+  DebugLib
+  BaseLib
+  BootLogoLib
+  DxeServicesLib
+  MemoryAllocationLib
+  PianoProductPumpLib
+[Guids]
+  gEfiEventExitBootServicesGuid

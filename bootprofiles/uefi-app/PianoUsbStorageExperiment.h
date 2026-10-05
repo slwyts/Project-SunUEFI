@@ -13,3 +13,5 @@ EFI_STATUS PianoDwc3CheckStorageForExperiment(CONST CHAR8 *Phase,BOOLEAN FullCap
 // Returns after USB teardown. Combined caller shuts UFS before acting on reboot.
 EFI_STATUS PianoUsbControllerRunWithStorage(CONST VOID *Fdt,
                         CONST PIANO_FB_STORAGE *Storage,BOOLEAN *RebootRequested);
+struct PIANO_SMMU_RETIRED_USB_PROOF;
+EFI_STATUS PianoUsbControllerMakeRetiredUsbProof(CONST VOID *Fdt,struct PIANO_SMMU_RETIRED_USB_PROOF *Proof);

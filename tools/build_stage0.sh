@@ -10,8 +10,15 @@ case "$sun_profile" in
   probe) sun_name=pianoProbe; sun_bootshim="$sun_root/bootprofiles/handoff" ;;
   linux) sun_name=pianoLinux; sun_bootshim="$sun_root/bootprofiles/handoff" ;;
   gui) sun_name=pianoGui; sun_bootshim="$sun_root/bootprofiles/handoff" ;;
+  product) sun_name=pianoProduct; sun_bootshim="$sun_root/bootprofiles/handoff" ;;
   *) printf 'Unknown build profile\n' >&2; exit 1 ;;
 esac
+sun_fd_name=piano-stage0.fd
+sun_buildid=SunUEFI-piano-stage0
+if [[ "$sun_profile" == product ]]; then
+  sun_fd_name=PianoUEFI-product.fd
+  sun_buildid=SunUEFI-piano-product
+fi
 rm -f "$sun_root/artifacts/$sun_profile/build-ok.json"
 export PATH="$sun_tools/bin:$sun_root/.venv/bin:$PATH"
 export LD_LIBRARY_PATH="$sun_tools/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -55,12 +62,12 @@ export PYTHONPATH="$EDK_TOOLS_PATH/Source/Python${PYTHONPATH:+:$PYTHONPATH}"
   -a AARCH64 -b DEBUG -t CLANGPDB -p "${sun_name}Pkg/${sun_name}.dsc" -n 8 \
   -D ENABLE_SECUREBOOT=0 -D FD_BASE=0xA7100000 -D FD_SIZE=0x300000 \
   -D FD_BLOCKS=0x300 -D DEVICE_MODEL=0 -D MEMORY_PROTECTION=TRUE -D SHIP_MODE=FALSE \
-  -D BUILDID_STRING=SunUEFI-piano-stage0 \
+  -D BUILDID_STRING="$sun_buildid" \
   -y "$sun_root/build/logs/${sun_name}-build-report.txt"
 make -C "$sun_bootshim" REQUIRES_KERNEL_HEADER=1 FD_BASE=0xA7100000 FD_SIZE=0x300000 \
   OBJCOPY="$sun_tools/bin/aarch64-linux-gnu-objcopy"
 mkdir -p "$sun_root/artifacts/$sun_profile"
-cp "Build/${sun_name}Pkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd" "$sun_root/artifacts/$sun_profile/piano-stage0.fd"
+cp "Build/${sun_name}Pkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd" "$sun_root/artifacts/$sun_profile/$sun_fd_name"
 cp "$sun_bootshim/BootShim.bin" "$sun_root/artifacts/$sun_profile/BootShim.bin"
 "$PYTHON_COMMAND" "$sun_root/tools/build_integrity.py" finish --profile "$sun_profile"
 printf 'Stage-0 FD built on host. Hardware boot and OS boot are unverified.\n'

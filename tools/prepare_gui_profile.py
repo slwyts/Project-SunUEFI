@@ -240,6 +240,7 @@ def main():
         path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)','VOID PianoProbeFoundation (VOID);\n#pragma pack(1)',1).replace('  ProbeGop ();','  PianoProbeFoundation ();\n  ProbeGop ();');path.write_text(text)
     if args.keys:
         shutil.copyfile(root/'bootprofiles/uefi-app/PianoKeys.c',app/'PianoKeys.c')
+        shutil.copyfile(root/'bootprofiles/uefi-app/PianoKeysLifecycle.h',app/'PianoKeysLifecycle.h')
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoKeys.c').replace('  DebugLib','  DebugLib\n  IoLib')
         text+='  gEfiSimpleTextInProtocolGuid\n  gEfiDevicePathProtocolGuid\n';path.write_text(text)
         path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
@@ -463,7 +464,7 @@ def main():
             '  Status=gBS->LoadImage (FALSE,ImageHandle')
         path.write_text(text)
     if args.usb_controller:
-        for name in ('PianoUsbController.c','PianoUsbRamBootExperiment.h','PianoDma.c','PianoDma.h','PianoSmmu.c','PianoSmmu.h',
+        for name in ('PianoUsbController.c','PianoUsbRamBootExperiment.h','PianoUsbService.h','PianoDwc3Service.h','PianoDma.c','PianoDma.h','PianoSmmu.c','PianoSmmu.h',
                      'PianoOwnedSmmu.c','PianoOwnedSmmu.h','PianoIoPageTable.c','PianoIoPageTable.h'):
             shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
         path=app/'PianoKeys.c';path.write_text('#define PIANO_USB_POWER_PROBE 1\n'+path.read_text())
@@ -661,6 +662,7 @@ def main():
     if(Usb==NULL || Usb->Revision!=1 || Usb->Halt==NULL || Usb->Halt()!=EFI_SUCCESS)CpuDeadLoop();
   } else if(UsbLocate!=EFI_NOT_FOUND)CpuDeadLoop();
 '''+anchor)
+            text=text.replace(anchor,anchor+'\n  CpuDeadLoop(); // Reset returning must never resume the halted USB poll loop.')
         else:
             text=text.replace('#include "PianoUfsShutdown.h"',
                 '#include "PianoUfsShutdown.h"\n#include "PianoUsbStorageExperiment.h"\n#include <Library/BaseLib.h>')

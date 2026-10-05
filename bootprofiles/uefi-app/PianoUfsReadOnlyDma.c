@@ -741,6 +741,19 @@ EFI_STATUS PianoUfsBlockIoPrepareForReset(VOID){
   mResetReport.Prepared=TRUE;mResetReport.Result=EFI_SUCCESS;
   DEBUG((DEBUG_WARN,"SUNUEFI_UFS_RESET_PREPARED consumers_disconnected=%lu both_queues_halted=1 irq=0 dma_domain_clocks_retained=1 tpl_held=1\n",(UINT64)mResetReport.Disconnected));return EFI_SUCCESS;
 }
+STATIC PIANO_SMMU_RETIRED_USB_CONTRACT mRetiredUsbContract;
+EFI_STATUS PianoUfsAcceptRetiredUsb(CONST PIANO_SMMU_RETIRED_USB_PROOF *Proof) {
+  if(Proof==NULL || mContext.RetiredUsbContract!=NULL || mRetiredUsbContract.Valid || mResetReport.Started ||
+     !mInstalled || mExitRetained || !mContext.Attached || !mContext.Verified)return EFI_NOT_READY;
+  PIANO_SMMU_SNAPSHOT Current;
+  EFI_STATUS Status=PianoSmmuCapture(mContext.Fdt,"ufs-accept-retired-usb",&Current);
+  if(Status!=EFI_SUCCESS)return EFI_ERROR(Status)?Status:EFI_DEVICE_ERROR;
+  Status=PianoOwnedSmmuPrepareRetiredUsbContract(&mContext,Proof,&Current,&mRetiredUsbContract);
+  if(Status!=EFI_SUCCESS)return Status;
+  mContext.RetiredUsbContract=&mRetiredUsbContract;
+  DEBUG((DEBUG_WARN,"SUNUEFI_UFS_ACCEPT_RETIRED_USB slot=%u usb_domain_freed=1 clocks_released=1 exact_contract=1\n",mRetiredUsbContract.PeerSlot));
+  return EFI_SUCCESS;
+}
 EFI_STATUS PianoUfsBlockIoShutdownForReset(VOID){
   if(mResetReport.Clean)return EFI_SUCCESS;
   EFI_STATUS S=PianoUfsBlockIoPrepareForReset();if(S!=EFI_SUCCESS)return S;

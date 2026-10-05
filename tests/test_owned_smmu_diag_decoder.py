@@ -27,6 +27,13 @@ class DiagnosticDecoderTests(unittest.TestCase):
         result=decoder.decode(record(body)+record(body,True))
         self.assertEqual(result['records'][0]['valid_copies'],2)
 
+    def test_truncated_primary_does_not_swallow_valid_concatenated_mirror(self):
+        body=b'phase=close-after seq=9 group=8 idx=1 smr=00000000 s2cr=00000000'
+        raw=b'SUNUEFI_SMMU_OWNED_DIAG phase=truncated seq=8 '+record(body,True)
+        result=decoder.decode(raw)
+        self.assertEqual(result['unsealed_prefixes'],1)
+        self.assertEqual(result['records'][0]['fields']['phase'],'close-after')
+
     def test_conflicting_valid_body_refused(self):
         with self.assertRaises(ValueError):
             decoder.decode(record(b'phase=close-rejected seq=8 idx=1')+

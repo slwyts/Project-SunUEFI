@@ -1,0 +1,38 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = PianoGopDxe
+  FILE_GUID                      = A303448F-7B47-4F43-BBA9-965BD526937F
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = RegisterFrameBuffer
+
+[Sources]
+  SimpleFb.c
+
+[Packages]
+  ArmPkg/ArmPkg.dec
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+
+[LibraryClasses]
+  DebugLib
+  FrameBufferBltLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+  MemoryAllocationLib
+  MemoryMapHelperLib
+  BaseMemoryLib
+  PcdLib
+
+[FixedPcd]
+  gSiliciumPkgTokenSpaceGuid.PcdFrameBufferWidth
+  gSiliciumPkgTokenSpaceGuid.PcdFrameBufferHeight
+  gSiliciumPkgTokenSpaceGuid.PcdFrameBufferColorDepth
+
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid
+  gEfiDevicePathProtocolGuid
+
+[Depex]
+  TRUE

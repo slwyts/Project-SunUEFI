@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Prepare the pinned simple-init app for the local Mu/LLVM build, host only."""
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -9,9 +10,21 @@ import urllib.request
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--product-gui-pump', action='store_true',
+                        help='bind the real product client and enable cooperative GUI pump')
+    args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     si = root / 'upstream/simple-init'
-    build = root / 'build/simpleinit-edk2'
+    build = root / ('build/simpleinit-product-edk2' if args.product_gui_pump else 'build/simpleinit-edk2')
+    # Every build reproduces the source hooks. Legacy builds retain the Null
+    # library and a disabled GUI wrapper; product changes only DSC binding.
+    from prepare_product_pump import prepare
+    prepare(root, apply=True)
+    ui_hooks=None
+    if args.product_gui_pump:
+        from prepare_product_ui import prepare as prepare_ui
+        ui_hooks=prepare_ui(root,apply=True)
     commit = subprocess.check_output(['git', '-C', str(si), 'rev-parse', 'HEAD'], text=True).strip()
     if commit != '3d66a6e78d519dd050fbebde4db6c5ac933f9aa4':
         raise SystemExit('Unexpected simple-init source commit')
@@ -51,6 +64,18 @@ def main():
     if 'boot.timeout' not in text:
         text=text.replace('\tconfd_set_string("language", "zh_CN.UTF-8");',
           '\tconfd_set_string("language", "zh_CN.UTF-8");\n\tconfd_set_integer("boot.timeout", 150);')
+        main_c.write_text(text)
+    # Product GUI has no diagnostic countdown. Keep the default bring-up
+    # timeout only in the macro-disabled diagnostic build of the same source.
+    text=main_c.read_text()
+    if 'PIANO_PRODUCT_GUI_PUMP' not in text:
+        anchor='\tconfd_set_integer("boot.timeout", 150);'
+        if text.count(anchor)!=1:raise SystemExit('Unexpected SimpleInit timeout source')
+        text=text.replace(anchor,'#if defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP\n'
+            '\tconfd_set_integer("boot.timeout", -1);\n#else\n'+anchor+'\n#endif')
+        main_c.write_text(text)
+    elif '\tconfd_set_integer("boot.timeout", 0);' in text:
+        text=text.replace('\tconfd_set_integer("boot.timeout", 0);','\tconfd_set_integer("boot.timeout", -1);')
         main_c.write_text(text)
     if 'PianoScheduleSnapshot' not in text:
         text=text.replace('int main_retval=0;', 'extern VOID PianoScheduleSnapshot (VOID);\nint main_retval=0;')
@@ -190,6 +215,7 @@ def main():
                       'MdePkg/Library/BaseDebugLibSerialPort/BaseDebugLibSerialPort.inf')
     dsc += '''
 [LibraryClasses]
+  PianoProductPumpLib|MdePkg/Library/PianoProductPumpLibNull/PianoProductPumpLibNull.inf
   SerialPortLib|pianoGuiPkg/Library/RamOnlySerialPortLib/RamOnlySerialPortLib.inf
   MemoryTypeInformationChangeLib|MdeModulePkg/Library/MemoryTypeInformationChangeLibNull/MemoryTypeInformationChangeLibNull.inf
 [PcdsFixedAtBuild]
@@ -200,11 +226,26 @@ def main():
 [BuildOptions]
   GCC:*_CLANGDWARF_AARCH64_CC_FLAGS = -Wno-error -Wno-deprecated-non-prototype -Wno-implicit-function-declaration -Wno-int-conversion
 '''
+    if args.product_gui_pump:
+        dsc += '''
+[LibraryClasses.common.UEFI_APPLICATION, LibraryClasses.common.UEFI_DRIVER, LibraryClasses.common.DXE_DRIVER]
+  PianoProductPumpLib|MdePkg/Library/PianoProductPumpLib/PianoProductPumpLib.inf
+[BuildOptions]
+  GCC:*_CLANGDWARF_AARCH64_CC_FLAGS = -DPIANO_PRODUCT_GUI_PUMP=1
+'''
     build.mkdir(parents=True, exist_ok=True)
     (build / 'SunSimpleInit.dsc').write_text(dsc)
     fonts = {'noto': {'source': str(source_font), 'sha256': hashlib.sha256(target_font.read_bytes()).hexdigest()},
              'fontawesome': {'version': '5.15.4', 'sha256': hashlib.sha256(icons.read_bytes()).hexdigest()}}
-    (build / 'source-manifest.json').write_text(json.dumps({'commit': commit, 'fonts': fonts}, indent=2) + '\n')
+    (build / 'source-manifest.json').write_text(json.dumps({'commit': commit, 'fonts': fonts,
+        'product_gui_pump': args.product_gui_pump,
+        'pump_hooks': prepare(root, apply=False),
+        'ui_hooks': ui_hooks,
+        'owned_sources': {str(path.relative_to(root)):hashlib.sha256(path.read_bytes()).hexdigest()
+          for path in (main_c,exit_c,main_inf,si/'src/main/PianoSnapshot.c',keyboard,menu,touch,
+                       touch.parent/'PianoTouchInput.h',gui_inf,drivers,compat_inf,
+                       si/'libs/compatible/PianoQuadFloatCompat.c',arm,linux_inf,inc)},
+        'dsc_sha256': hashlib.sha256(dsc.encode()).hexdigest()}, indent=2) + '\n')
 
 
 if __name__ == '__main__':

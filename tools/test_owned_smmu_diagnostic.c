@@ -40,6 +40,7 @@ VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){
   assert(records<ARRAY_SIZE(lines));
   va_list marker;va_start(marker,Format);
   const char *body=va_arg(marker,const char *);UINT32 crc=va_arg(marker,UINT32);va_end(marker);
+  assert(strlen(body)+strlen("SUNUEFI_SMMU_OWNED_DIAG_COPY ")+strlen(" crc32=12345678\n")<256);
   const char *prefix=strstr(Format,"_COPY ")?"COPY":"PRIMARY";
   int n=snprintf(lines[records++],sizeof(lines[0]),"%s %s crc32=%08X",prefix,body,crc);
   assert(n>0 && (size_t)n<sizeof(lines[0]));
@@ -115,11 +116,14 @@ int main(void){
   observed.RawSmr[1]=observed.RawS2cr[1]=0;
   rejected(c,1,"other-raw");assert(reads==4 && c->CloseDiagnostic.LiveRead);
   const char *line=record_with("phase=close-rejected");
-  assert(strstr(line,"idx=1 before_valid=1 after_valid=1") && strstr(line,"before_smr=00000540 before_s2cr=00020001"));
-  assert(strstr(line,"after_smr=00000000 after_s2cr=00000000 live_read=1 read1_smr=00000000 read1_s2cr=00000000 read2_smr=00000540 read2_s2cr=00020001"));
+  assert(strstr(line,"idx=1 before_valid=1 after_valid=1") && strstr(line,"strict=1 retained=1"));
+  line=record_with("phase=close-before");assert(strstr(line,"idx=1 smr=00000540 s2cr=00020001"));
+  line=record_with("phase=close-after");assert(strstr(line,"idx=1 smr=00000000 s2cr=00000000"));
+  line=record_with("sample=1 live_read=1");assert(strstr(line,"smr=00000000 s2cr=00000000"));
+  line=record_with("sample=2 live_read=1");assert(strstr(line,"smr=00000540 s2cr=00020001"));
   // A second direct read that exactly matches baseline cannot turn failure into success.
   assert(c->Before.RawSmr[1]==0x540 && c->Before.RawS2cr[1]==0x20001);
-  line=record_with("phase=peer-final");assert(strstr(line,"expected_sid=40") && strstr(line,"after_present=0 after_idx=65535") && strstr(line,"identity_proven=0"));
+  line=record_with("phase=peer-final");assert(strstr(line,"expected_sid=40") && strstr(line,"present=0 idx=65535") && strstr(line,"identity_proven=0"));
   record_with("phase=baseline-final");unsigned old_reads=reads;records=0;
   PianoOwnedSmmuReport(c);assert(reads==old_reads && !destroys && !frees);verify_records();free(c);
 
@@ -161,12 +165,12 @@ int main(void){
   RememberBaseline(c);assert(c->BaselineSlotCount==6 && c->DiagnosticOwnedSlot==7);
   BaselineReport(c,"baseline-open");verify_records();
   record_with("idx=7 before_valid=");record_with("idx=9 before_valid=");record_with("idx=10 before_valid=");
-  records=0;PianoOwnedSmmuReport(c);verify_records();line=record_with("phase=peer-final");assert(strstr(line,"after_idx=10") && strstr(line,"identity_proven=1"));free(c);
+  records=0;PianoOwnedSmmuReport(c);verify_records();line=record_with("phase=peer-final");assert(strstr(line,"idx=10") && strstr(line,"identity_proven=1"));free(c);
 
   c=initial();observed.RawSmr[1]=BIT31|0x40;observed.RawS2cr[1]=1;
   observed.Device[1]=(PIANO_SMMU_DEVICE){.Present=TRUE,.Sid=0x40,.StreamIndex=1,.Smr=BIT31|0x40,.S2cr=1,.Type=0,.ContextBank=1};
   rejected(c,1,"other-raw");line=record_with("phase=peer-final");
-  assert(strstr(line,"after_present=1 after_idx=1 after_sid=40") && strstr(line,"after_type=0 after_cb=1") && strstr(line,"identity_proven=1"));free(c);
+  assert(strstr(line,"present=1 idx=1 sid=40") && strstr(line,"type=0 cb=1") && strstr(line,"identity_proven=1"));free(c);
 
   c=initial();c->Before.Groups=2;RememberBaseline(c);assert(c->BaselineSlotCount==2);free(c);
   c=initial();debug_enabled=FALSE;observed.RawSmr[1]=0;

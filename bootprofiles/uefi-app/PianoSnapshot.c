@@ -46,8 +46,14 @@ STATIC VOID EFIAPI Capture (EFI_EVENT Event, VOID *Context) {
   DEBUG((DEBUG_WARN,"SUNUEFI_PNG_END\n"));free(Png);
 }
 VOID PianoScheduleSnapshot (VOID) {
+#if defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP
+  // Product screenshots are requested through the resident fastboot worker at
+  // application TPL. Do not run the diagnostic PNG encoder in a timer callback.
+  return;
+#else
   EFI_STATUS Status=gBS->CreateEvent(EVT_TIMER|EVT_NOTIFY_SIGNAL,TPL_CALLBACK,Capture,NULL,&mScreenshot);
   if(!EFI_ERROR(Status))gBS->SetTimer(mScreenshot,TimerRelative,15ULL*10000000ULL);
+#endif
 }
 VOID PianoCancelSnapshot (VOID) {
   if(mScreenshot!=NULL) {

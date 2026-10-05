@@ -20,7 +20,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--test-id', type=int, required=True)
     ap.add_argument('--execute', action='store_true', help='Reboot and send the image to RAM; operator must be present')
-    ap.add_argument('--profile', choices=('stage0', 'probe', 'linux', 'gui'), default='stage0')
+    ap.add_argument('--profile', choices=('stage0', 'probe', 'linux', 'gui', 'product'), default='stage0')
     ap.add_argument('--serial', help='Select the piano ADB/fastboot device explicitly')
     args = ap.parse_args()
     if args.test_id <= 0:
@@ -29,10 +29,14 @@ def main():
     out = root / 'artifacts' / args.profile
     manifest = json.loads((out / 'manifest.json').read_text())
     try:
-        validate(root,args.profile,manifest)
+        build_record=validate(root,args.profile,manifest)
+        if args.profile=='product':
+            from product_contract import validate as validate_contract,validate_build_manifest
+            contract=validate_contract(json.loads((root/'config/piano-product.json').read_text()))
+            validate_build_manifest(contract,manifest)
     except (ValueError,OSError,KeyError) as error:
         raise SystemExit(str(error))
-    image = out / 'piano-stage0-UNTESTED.img'
+    image = out / ('PianoUEFI-product.img' if args.profile=='product' else 'piano-stage0-UNTESTED.img')
     digest = hashlib.sha256(image.read_bytes()).hexdigest()
     if digest != manifest['files'][image.name]['sha256']:
         raise SystemExit('Candidate hash mismatch')
@@ -62,7 +66,10 @@ def main():
         raise SystemExit('Test record already exists; choose a new test-id')
     archive = root / f'artifacts/tests/stage0-test-{args.test_id}'
     archive.mkdir(parents=True, exist_ok=False)
-    for name in (image.name, 'piano-stage0.fd', 'manifest.json'):
+    fd_name='PianoUEFI-product.fd' if args.profile=='product' else 'piano-stage0.fd'
+    archive_names=(image.name,fd_name,'manifest.json')
+    if args.profile=='product':archive_names+=('BootShim.bin','build-ok.json')
+    for name in archive_names:
         shutil.copyfile(out / name, archive / name)
     if manifest.get('linux_payload'):
         # Save the exact provenance before another stable/next packaging run
@@ -70,6 +77,12 @@ def main():
         (archive/'linux-payload-manifest.json').write_text(json.dumps(manifest['linux_payload'],indent=2)+'\n')
     record = {'operation': 'explicit RAM-only diagnostic test', 'profile': args.profile, 'image_sha256': digest,
               'result': 'pending screen and Android recovery observation', 'flash_commands_performed': False}
+    if args.profile=='product':
+        record.update({'operation':'explicit RAM-only product integration test',
+            'build_id':build_record['build_id'],'build_inputs':build_record['inputs'],
+            'candidate_status':manifest['status'],'artifact':image.name,
+            'fd_sha256':build_record['outputs'][fd_name],
+            'entry_policy':'fastboot_boot; identical shared product core and feature set'})
     try:
         subprocess.run(adb + ['reboot', 'bootloader'], check=True, timeout=10)
         for _ in range(20):

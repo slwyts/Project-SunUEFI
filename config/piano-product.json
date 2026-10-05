@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "artifact": "PianoUEFI-product.img",
+  "shared_core": true,
+  "entry_points": ["fastboot_boot", "boot", "recovery"],
+  "entry_policy_only": true,
+  "boot_policy": {
+    "splash": "TianoCore",
+    "default_application": "SimpleInit",
+    "setup_key": "F12",
+    "setup_application": "TianoCoreUiApp",
+    "diagnostic_reboot_timer": false
+  },
+  "fastboot": {
+    "mode": "resident_background",
+    "available_in": ["boot_selection", "SimpleInit", "Setup", "Shell"],
+    "start_once": true,
+    "stop_before_os_handoff": true,
+    "download_limit_target_bytes": 1073741824
+  },
+  "features": {
+    "gop": true,
+    "physical_keys": true,
+    "pogo_keyboard_touchpad": true,
+    "touchscreen": true,
+    "dma_smmu": true,
+    "ufs_blockio_read_write": true,
+    "gpt": true,
+    "fat_simplefilesystem": true,
+    "persistent_variables": true,
+    "uefi_shell": true,
+    "setup_hii": true,
+    "simpleinit": true,
+    "usb_device_fastboot": true,
+    "usb_host": true,
+    "debug_logs_screenshot": true,
+    "efi_android_linux_boot": true,
+    "os_exit": true
+  }
+}

@@ -1,0 +1,117 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+// One resident product parent owns all applications and service lifetimes.
+#include "PianoProductCore.h"
+#include "PianoProductPayload.h"
+#include "PianoProductOwners.h"
+#include "PianoFastbootBlockRead.h"
+#include "PianoKeysLifecycle.h"
+#include <Library/UefiBootServicesTableLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
+#include <Library/BaseLib.h>
+#include <Library/BaseMemoryLib.h>
+#include <Library/DebugLib.h>
+#include <Library/TimerLib.h>
+VOID PianoProbeFoundation(VOID);
+VOID PianoProbeUfs(CONST VOID *Fdt);
+VOID PianoUfsSetProbeAction(EFI_STATUS (*Action)(CONST VOID *));
+EFI_STATUS PianoUfsReadOnlyDmaExperiment(CONST VOID *Fdt);
+EFI_STATUS PianoStartKeys(CONST VOID *Fdt);
+STATIC PIANO_PRODUCT_OWNERS mOwners;
+STATIC BOOLEAN mUfsAttempted,mUfsStarted,mInputStarted;
+STATIC EFI_STATUS mUfsStatus=EFI_NOT_STARTED;
+STATIC UINT64 mCounterFrequency,mCounterStart,mCounterEnd;
+STATIC VOID ReportRequiredBackends(VOID) {
+  // Required remains true. Missing real hardware/startup is visible rather
+  // than converted into a silent build-time feature switch or fake Ready.
+  STATIC CONST CHAR8 *Names[]={"touchscreen","pogo_keyboard_touchpad","usb_host","persistent_variables","ufs_blockio_write","download_1GiB","general_os_boot"};
+  for(UINTN I=0;I<ARRAY_SIZE(Names);++I)
+    DEBUG((DEBUG_WARN,"PIANO_PRODUCT_BACKEND name=%a required=1 initialized=0 status=%r release_ready=0\n",Names[I],EFI_NOT_READY));
+}
+STATIC EFI_STATUS InitUfs(CONST VOID *Fdt) {
+  mUfsAttempted=TRUE;mUfsStatus=PianoUfsReadOnlyDmaExperiment(Fdt);
+  mUfsStarted=mUfsStatus==EFI_SUCCESS;return mUfsStatus;
+}
+STATIC VOID FailStop(EFI_STATUS Status) {
+  (VOID)Status;
+#ifdef __aarch64__
+  __asm__ volatile("msr daifset, #15" ::: "memory");
+#endif
+  CpuDeadLoop();
+}
+STATIC UINT64 NowUs(VOID *Context) {
+  (VOID)Context;UINT64 Counter=GetPerformanceCounter();
+  UINT64 Ticks=mCounterEnd>=mCounterStart?Counter-mCounterStart:mCounterStart-Counter;
+  UINT64 Whole=Ticks/mCounterFrequency,Part=Ticks%mCounterFrequency;
+  if(Whole>MAX_UINT64/1000000 || Part>MAX_UINT64/1000000)return MAX_UINT64;
+  return Whole*1000000+Part*1000000/mCounterFrequency;
+}
+STATIC EFI_STATUS StopInput(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Report) {
+  (VOID)Context;if(Report==NULL)return EFI_INVALID_PARAMETER;
+  ZeroMem(Report,sizeof(*Report));Report->Revision=1;Report->Started=mInputStarted;
+  if(!mInputStarted)return Report->Status=EFI_NOT_READY;
+  PIANO_KEYS_RETIRE_REPORT Keys;EFI_STATUS Status=PianoStopKeysForProduct(&Keys);
+  Report->Returned=Keys.Returned;Report->Clean=Keys.Clean;Report->Retained=Keys.Retained;
+  Report->Timer=Keys.TimerCancel!=EFI_SUCCESS?Keys.TimerCancel:Keys.TimerClose;
+  Report->Protocols=Keys.Disconnect!=EFI_SUCCESS?Keys.Disconnect:Keys.Uninstall!=EFI_SUCCESS?Keys.Uninstall:Keys.WaitClose;
+  Report->Status=Status;if(Status==EFI_SUCCESS && Keys.Clean)mInputStarted=FALSE;return Status;
+}
+EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *SystemTable) {
+  if(Image==NULL || SystemTable==NULL)return EFI_INVALID_PARAMETER;
+  // Obtain a genuinely validated handoff, not an application-supplied FDT.
+  PIANO_PRODUCT_PAYLOAD_VIEW Source={0};CONST VOID *Fdt=NULL;
+  EFI_STATUS Status=PianoProductAcquireSimpleInit(&Source);
+  if(Status==EFI_SUCCESS)Status=PianoProductPayloadGetFdt(&Source,&Fdt);
+  if(Source.Lease!=NULL){EFI_STATUS Release=PianoProductReleaseSimpleInit(&Source);if(Release!=EFI_SUCCESS)FailStop(Release);}
+  if(Status!=EFI_SUCCESS || Fdt==NULL)return Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status;
+  ReportRequiredBackends();
+  PianoProbeFoundation();
+  Status=PianoStartKeys(Fdt);mInputStarted=Status==EFI_SUCCESS;
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_INPUT_START status=%r started=%u\n",Status,mInputStarted));
+  if(Status!=EFI_SUCCESS)FailStop(Status);
+  // The actual probe owns the clock/GDSC bring-up before the persistent UFS
+  // action. Product never relies on an inherited ABL clock being sufficient.
+  PianoUfsSetProbeAction(InitUfs);PianoProbeUfs(Fdt);
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_UFS_START attempted=%u status=%r started=%u original_media_readonly=1\n",mUfsAttempted,mUfsStatus,mUfsStarted));
+  if(!mUfsAttempted || !mUfsStarted)FailStop(mUfsStatus);
+  Status=PianoFastbootBlockReadInit();if(Status!=EFI_SUCCESS)FailStop(Status);
+  CONST PIANO_FB_STORAGE *Storage=PianoFastbootBlockReadStorage();
+  if(Storage==NULL || Storage->Ready(Storage->Context)!=EFI_SUCCESS)FailStop(EFI_NOT_READY);
+  mCounterFrequency=GetPerformanceCounterProperties(&mCounterStart,&mCounterEnd);
+  if(!mCounterFrequency || mCounterStart==mCounterEnd)FailStop(EFI_UNSUPPORTED);
+  PIANO_DWC3_SERVICE_CONFIG UsbConfig={.Context=NULL,.NowUs=NowUs,.Storage=Storage};
+  Status=PianoUsbControllerServiceStart(Fdt,&UsbConfig);
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_USB_START status=%r resident_service=1 foreground_loop=0\n",Status));
+  if(Status!=EFI_SUCCESS)FailStop(Status);
+  Status=PianoBootPolicyInitialize(Image);if(Status!=EFI_SUCCESS)FailStop(Status);
+  EFI_GUID Guid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime=NULL;
+  Status=gBS->LocateProtocol(&Guid,NULL,(VOID **)&Runtime);
+  if(Status!=EFI_SUCCESS || Runtime==NULL || Runtime->Revision!=PIANO_PRODUCT_RUNTIME_REVISION)FailStop(EFI_NOT_READY);
+  // Extra owner bits are explicitly unstarted in this integration. Their
+  // hardware backend is still incomplete; the manifest must disclose that.
+  PIANO_PRODUCT_OWNERS_CONFIG Config={.Revision=1,.Fdt=Fdt,.ExpectedOwnerMask=PIANO_OWNER_ALL_MASK,
+    .StartedOwnerMask=PIANO_OWNER_CORE_MASK,.AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|PIANO_OWNER_POGO,
+    .Runtime=Runtime,.InputContext=NULL,.StopInput=StopInput};
+  Status=PianoProductOwnersInitialize(&mOwners,&Config);if(Status!=EFI_SUCCESS)FailStop(Status);
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_CORE_READY one_shared_core=1 auto_simpleinit=1 f12_setup=1 usb_background=1\n"));
+  for(;;) {
+    Status=PianoBootPolicyRun();
+    if(Status==EFI_END_OF_FILE) {
+      CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();
+      Status=Policy!=NULL && Policy->RequestedCoreAction==PianoUsbServiceActionReboot?
+        PianoProductOwnersRequestUiReboot(&mOwners):PianoProductOwnersObserveUsbAction(&mOwners);
+      if(Status!=EFI_SUCCESS)FailStop(Status);
+      Status=PianoProductOwnersRetire(&mOwners);
+      if(Status!=EFI_SUCCESS || !mOwners.Report.Clean)FailStop(Status);
+      if(mOwners.Report.AllowedAction==PianoUsbServiceActionReboot || mOwners.Report.AllowedAction==PianoUsbServiceActionContinue) {
+        gRT->ResetSystem(EfiResetCold,EFI_SUCCESS,0,NULL);FailStop(EFI_ABORTED);
+      }
+      // Boot token handoff needs the generalized OS loader. Never relabel a
+      // retained token or a clean Stop as successful execution of that image.
+      FailStop(EFI_UNSUPPORTED);
+    }
+    if(Status!=EFI_SUCCESS && Status!=EFI_ABORTED)FailStop(Status);
+    Status=Runtime->Pump(Runtime,PIANO_PRODUCT_PUMP_APP,1000);
+    if(Status!=EFI_SUCCESS && Status!=EFI_NOT_READY)FailStop(Status);
+    gBS->Stall(1000);
+  }
+}

@@ -1,0 +1,16 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = PianoProductPumpLib
+  FILE_GUID = 33263D5F-0DD0-4D30-88C8-74CD52D35E8A
+  MODULE_TYPE = DXE_DRIVER
+  LIBRARY_CLASS = PianoProductPumpLib|DXE_CORE DXE_DRIVER UEFI_APPLICATION UEFI_DRIVER
+  DESTRUCTOR = PianoProductPumpLibDestructor
+[Sources]
+  PianoProductPumpLib.c
+[Packages]
+  MdePkg/MdePkg.dec
+[LibraryClasses]
+  UefiBootServicesTableLib
+  BaseLib
+[Guids]
+  gEfiEventExitBootServicesGuid

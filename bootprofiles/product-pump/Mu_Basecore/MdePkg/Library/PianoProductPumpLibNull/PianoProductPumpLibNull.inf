@@ -1,0 +1,10 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = PianoProductPumpLibNull
+  FILE_GUID = 5EDFEF0C-929D-4E38-9B0C-F446CA679B31
+  MODULE_TYPE = BASE
+  LIBRARY_CLASS = PianoProductPumpLib
+[Sources]
+  PianoProductPumpLibNull.c
+[Packages]
+  MdePkg/MdePkg.dec

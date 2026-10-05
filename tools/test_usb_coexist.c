@@ -6,6 +6,10 @@
 #include "test_usb_fastboot.c"
 #include "../bootprofiles/uefi-app/PianoUsbController.c"
 #include <stdarg.h>
+// This existing fixture mocks HAL ownership rather than a real close ledger.
+// The new exporter must not infer retirement from those mock-only contexts.
+EFI_STATUS PianoOwnedSmmuMakeRetiredUsbProof(CONST PIANO_OWNED_SMMU *C,CONST PIANO_SMMU_USB_RETIRE_EVIDENCE *E,
+  CONST PIANO_SMMU_SNAPSHOT *S,PIANO_SMMU_RETIRED_USB_PROOF *P){(VOID)C;(VOID)E;(VOID)S;(VOID)P;return EFI_NOT_READY;}
 static EFI_CLOCK_PROTOCOL clock;
 static UINT32 smmu[0x100000/4];static PIANO_SMMU_SNAPSHOT hardware;
 static UINTN held,next_clock,closes,installs,removes,full_captures,backend_reads,backend_infos,stage;

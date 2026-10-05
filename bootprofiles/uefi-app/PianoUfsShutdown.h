@@ -15,3 +15,7 @@ typedef struct {
   UINT32 TransferDoorbell,TaskDoorbell,TransferRun,TaskRun,Interrupt;
 } PIANO_UFS_RESET_REPORT;
 CONST PIANO_UFS_RESET_REPORT *PianoUfsResetShutdownReport(VOID);
+// Explicitly bind the successfully retired shared USB owner before UFS
+// retirement. A fresh SMMU capture and exact baseline/identity proof are needed.
+struct PIANO_SMMU_RETIRED_USB_PROOF;
+EFI_STATUS PianoUfsAcceptRetiredUsb(CONST struct PIANO_SMMU_RETIRED_USB_PROOF *Proof);
