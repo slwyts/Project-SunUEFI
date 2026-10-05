@@ -7,6 +7,7 @@
 #include <Library/BaseLib.h>
 #include <Library/FdtLib.h>
 #define SIG SIGNATURE_32('P','L','E','S')
+STATIC BOOLEAN Overlap(CONST VOID*,UINTN,CONST VOID*,UINTN);
 STATIC EFI_STATUS Exact(EFI_STATUS E){return E==EFI_SUCCESS?E:EFI_ERROR(E)?E:EFI_DEVICE_ERROR;}
 STATIC VOID Halt(PIANO_LINUX_EFI_SESSION*S,EFI_STATUS E){S->Retained=TRUE;S->Status=E;
 #ifdef __aarch64__
@@ -28,10 +29,18 @@ STATIC EFI_STATUS EFIAPI LoadInitrd(EFI_LOAD_FILE2_PROTOCOL*This,EFI_DEVICE_PATH
  if(S->BeforeEbs||S->Ebs||!S->Env.BootServicesAlive(S->Env.Context))return EFI_ABORTED;
  if(Policy)return EFI_UNSUPPORTED;
  if(!Bytes||!Path||Path->Type!=END_DEVICE_PATH_TYPE||Path->SubType!=END_ENTIRE_DEVICE_PATH_SUBTYPE||Path->Length[0]!=4||Path->Length[1])return EFI_INVALID_PARAMETER;
+ if(Overlap(Bytes,sizeof(*Bytes),S,sizeof(*S)))return EFI_INVALID_PARAMETER;
+ for(UINTN N=0;N<3;++N)if(S->Views[N]&&Overlap(Bytes,sizeof(*Bytes),S->Views[N],(UINTN)S->Sources[N].Bytes))return EFI_INVALID_PARAMETER;
  UINTN Required=(UINTN)S->Sources[2].Bytes;
  if(!Buffer||*Bytes<Required){*Bytes=Required;return EFI_BUFFER_TOO_SMALL;}
  if(!S->Views[2]||!S->Owners[2]||!S->Loans[2])return EFI_NOT_READY;
- CopyMem(Buffer,S->Views[2],Required);*Bytes=Required;return EFI_SUCCESS;
+ if(Overlap(Buffer,Required,S,sizeof(*S)))return EFI_INVALID_PARAMETER;
+ for(UINTN N=0;N<3;++N)if(S->Views[N]&&Overlap(Buffer,Required,S->Views[N],(UINTN)S->Sources[N].Bytes))return EFI_INVALID_PARAMETER;
+ EFI_STATUS Status=PianoCpuInputValidateBuffer(S->HasCpu?&S->Cpu:NULL,&S->SourceMemory,
+   S->Sources[2].Context,S->Owners[2],S->Views[2],S->Sources[2].Bytes);
+ if(Status==EFI_SUCCESS)Status=PianoCpuInputCopy(S->HasCpu?&S->Cpu:NULL,Buffer,S->Views[2],Required);
+ if(S->BeforeEbs||S->Ebs||!S->Env.BootServicesAlive(S->Env.Context))return EFI_ABORTED;
+ if(Status==EFI_SUCCESS)*Bytes=Required;return Status;
 }
 STATIC EFI_STATUS KernelRead(VOID*C,UINT64 At,UINTN Bytes,VOID*Buffer){PIANO_LINUX_EFI_SESSION*S=C;Alive(S);EFI_STATUS E=S->Sources[0].Read(S->Sources[0].Context,S->Owners[0],At,Bytes,Buffer);Alive(S);return E;}
 STATIC BOOLEAN Missing(EFI_STATUS E){return E==EFI_NOT_FOUND||E==EFI_UNSUPPORTED||E==EFI_INVALID_PARAMETER;}
@@ -66,8 +75,11 @@ EFI_STATUS PianoLinuxEfiSessionRun(PIANO_LINUX_EFI_SESSION*S,CONST PIANO_LINUX_E
  if(Overlap(E,sizeof(*E),S,sizeof(*S))||Overlap(K,sizeof(*K),S,sizeof(*S))||Overlap(D,sizeof(*D),S,sizeof(*S))||Overlap(I,sizeof(*I),S,sizeof(*S)))return EFI_INVALID_PARAMETER;
  if(!ValidBlob(K,E->MaxKernelBytes)||!ValidBlob(D,E->MaxDtbBytes)||!ValidBlob(I,E->MaxInitrdBytes)||D->Bytes<40||D->Bytes>0x200000)return EFI_BAD_BUFFER_SIZE;
  CONST PIANO_LAUNCH_BLOB*Input[]={K,D,I};UINT64 Total=0;
+ UINT64 SourceLimit=E->MaxSourceBytes?E->MaxSourceBytes:PIANO_LINUX_LOW_SOURCE_BUDGET;
+ if(!SourceLimit||SourceLimit>PIANO_CPU_INPUT_MAX_BYTES)return EFI_BAD_BUFFER_SIZE;
+ if(E->Cpu&&Overlap(E->Cpu,sizeof(*E->Cpu),S,sizeof(*S)))return EFI_INVALID_PARAMETER;
  for(UINTN N=0;N<3;++N){
-   if(Input[N]->Bytes>PIANO_LINUX_LOW_SOURCE_BUDGET||Total>PIANO_LINUX_LOW_SOURCE_BUDGET-Input[N]->Bytes)return EFI_BAD_BUFFER_SIZE;
+   if(Input[N]->Bytes>SourceLimit||Total>SourceLimit-Input[N]->Bytes)return EFI_BAD_BUFFER_SIZE;
    Total+=Input[N]->Bytes;
    if(Overlap(Input[N]->Context,1,S,sizeof(*S)))return EFI_INVALID_PARAMETER;
    for(UINTN P=0;P<N;++P)if(Input[N]->Context==Input[P]->Context)return EFI_INVALID_PARAMETER;
@@ -77,7 +89,10 @@ EFI_STATUS PianoLinuxEfiSessionRun(PIANO_LINUX_EFI_SESSION*S,CONST PIANO_LINUX_E
  if(!B->RaiseTPL||!B->RestoreTPL||!B->LoadImage||!B->StartImage||!B->HandleProtocol||!B->UnloadImage||!B->AllocatePool||!B->FreePool||!B->InstallConfigurationTable||!B->InstallMultipleProtocolInterfaces||!B->UninstallMultipleProtocolInterfaces||!B->CreateEventEx||!B->CloseEvent||!B->LocateDevicePath)return EFI_UNSUPPORTED;
  if(!E->BootServicesAlive(E->Context))return EFI_ABORTED;
  EFI_TPL T=B->RaiseTPL(TPL_HIGH_LEVEL);B->RestoreTPL(T);if(T!=TPL_APPLICATION)return EFI_UNSUPPORTED;
+ PIANO_LINUX_MEMORY_PROOF SourceMemory;EFI_STATUS Authorized=PianoCpuInputAuthorize(E->Cpu,SourceLimit,&SourceMemory);
+ if(Authorized!=EFI_SUCCESS)return Authorized;
  ZeroMem(S,sizeof(*S));S->Signature=SIG;S->Busy=TRUE;S->Env=*E;S->Sources[0]=*K;S->Sources[1]=*D;S->Sources[2]=*I;
+ S->SourceMemory=SourceMemory;if(E->Cpu){S->Cpu=*E->Cpu;S->HasCpu=TRUE;S->Env.Cpu=&S->Cpu;}
  EFI_STATUS Status=EFI_SUCCESS;
  // Three independent CPU leases remain until all image/table/protocol users end.
  for(UINTN N=0;N<3;++N){Status=Exact(S->Sources[N].Take(S->Sources[N].Context,&S->Owners[N]));Alive(S);
@@ -89,13 +104,17 @@ EFI_STATUS PianoLinuxEfiSessionRun(PIANO_LINUX_EFI_SESSION*S,CONST PIANO_LINUX_E
  // without touching/releasing any possibly shared source storage.
  if(Overlap(S->Views[N],(UINTN)S->Sources[N].Bytes,S,sizeof(*S))){S->Retained=TRUE;Status=EFI_COMPROMISED_DATA;goto Done;}
  for(UINTN P=0;P<N;++P)if(Overlap(S->Views[N],(UINTN)S->Sources[N].Bytes,S->Views[P],(UINTN)S->Sources[P].Bytes)){S->Retained=TRUE;Status=EFI_COMPROMISED_DATA;goto Done;}
+ Status=PianoCpuInputValidateBuffer(S->HasCpu?&S->Cpu:NULL,&S->SourceMemory,
+   S->Sources[N].Context,S->Owners[N],S->Views[N],S->Sources[N].Bytes);
+ Alive(S);if(Status!=EFI_SUCCESS){S->Retained=TRUE;goto Done;}
  }
  PIANO_BOOT_SOURCE Src={S,KernelRead,K->Bytes};Status=PianoFastbootBootParse(&Src,&S->Kernel);if(Status!=EFI_SUCCESS)goto Done;
  if(S->Kernel.Kind!=PianoBootArm64Pe||S->Kernel.Pe.ImageBytes>E->MaxLoadedBytes){Status=EFI_UNSUPPORTED;goto Done;}
  // libfdt needs aligned data. Copy into an owned LoaderData allocation before
  // checking an immutable DTB which may originally follow an unaligned file.
  S->FdtCapacity=(UINTN)D->Bytes+65536;Status=Exact(B->AllocatePool(EfiLoaderData,S->FdtCapacity,&S->FdtCopy));Alive(S);if(Status!=EFI_SUCCESS)goto Done;if(!S->FdtCopy){S->Retained=TRUE;Status=EFI_COMPROMISED_DATA;goto Done;}
- CopyMem(S->FdtCopy,S->Views[1],(UINTN)D->Bytes);
+ Status=PianoCpuInputCopy(S->HasCpu?&S->Cpu:NULL,S->FdtCopy,S->Views[1],(UINTN)D->Bytes);
+ Alive(S);if(Status!=EFI_SUCCESS)goto Done;
  if(FdtCheckHeader(S->FdtCopy)||FdtTotalSize(S->FdtCopy)!=D->Bytes||FdtOpenInto(S->FdtCopy,S->FdtCopy,(INT32)S->FdtCapacity)){Status=EFI_COMPROMISED_DATA;goto Done;}
  INT32 Chosen=FdtPathOffset(S->FdtCopy,"/chosen");if(Chosen<0){Status=EFI_NOT_FOUND;goto Done;}
  CONST CHAR8*Remove[]={"linux,initrd-start","linux,initrd-end","kaslr-seed","rng-seed"};for(UINTN N=0;N<4;++N){INT32 R=FdtDelProp(S->FdtCopy,Chosen,Remove[N]);if(R!=0&&R!=-1){Status=EFI_COMPROMISED_DATA;goto Done;}}
@@ -104,6 +123,8 @@ EFI_STATUS PianoLinuxEfiSessionRun(PIANO_LINUX_EFI_SESSION*S,CONST PIANO_LINUX_E
  S->OptionsBytes=(UINT32)((Chars+1)*sizeof(CHAR16));Status=Exact(B->AllocatePool(EfiLoaderData,S->OptionsBytes,&S->OptionsCopy));Alive(S);if(Status!=EFI_SUCCESS)goto Done;if(!S->OptionsCopy){S->Retained=TRUE;Status=EFI_COMPROMISED_DATA;goto Done;}CopyMem(S->OptionsCopy,E->CommandLine,S->OptionsBytes);
  Status=Exact(E->CheckMemory(E->Context,S->FdtCopy,FdtTotalSize(S->FdtCopy),&S->Memory));Alive(S);if(Status!=EFI_SUCCESS)goto Done;
  if(S->Memory.Revision!=1||S->Memory.Status!=EFI_SUCCESS||!S->Memory.BootEpoch||S->Memory.DramBytes!=E->ExpectedDramBytes||!S->Memory.NormalBytes||S->Memory.UnresolvedReservations||!S->Memory.FullDdr||!S->Memory.FixedReservations||!S->Memory.DynamicReservations||!S->Memory.RuntimeRegions||!S->Memory.CacheVerified||!S->Memory.OwnershipVerified){Status=EFI_NOT_READY;goto Done;}
+ if(S->SourceMemory.BootEpoch&&(S->SourceMemory.BootEpoch!=S->Memory.BootEpoch||
+    S->SourceMemory.DramBytes!=S->Memory.DramBytes)){Status=EFI_NOT_READY;goto Done;}
  Status=Exact(E->ValidateMemory(E->Context,&S->Memory));Alive(S);if(Status!=EFI_SUCCESS)goto Done;
  S->Path=(PIANO_LINUX_INITRD_PATH){{{MEDIA_DEVICE_PATH,MEDIA_VENDOR_DP,{sizeof(VENDOR_DEVICE_PATH),0}},LINUX_EFI_INITRD_MEDIA_GUID},{END_DEVICE_PATH_TYPE,END_ENTIRE_DEVICE_PATH_SUBTYPE,{4,0}}};S->Load.LoadFile=LoadInitrd;
  EFI_DEVICE_PATH_PROTOCOL *ExistingPath=&S->Path.Vendor.Header;EFI_HANDLE ExistingInitrd=NULL;

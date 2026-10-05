@@ -500,12 +500,15 @@ def main():
                     path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFastbootScreen.c'))
                 if args.usb_ram_boot:
                     sources=('PianoFastbootBoot.c','PianoFastbootLaunch.c','PianoFastbootDownloadBlob.c','PianoUsbRamBoot.c')
-                    headers=('PianoFastbootBoot.h','PianoFastbootLaunch.h','PianoFastbootDownloadBlob.h','PianoUsbRamBoot.h',
+                    headers=('PianoFastbootBoot.h','PianoFastbootLaunch.h','PianoFastbootDownloadBlob.h','PianoUsbRamBoot.h','PianoCpuInput.h',
                              'PianoRamBootProbe.h','PianoUsbStorageExperiment.h')
                     for name in sources+headers:shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+                    # Existing ram-boot source now shares the product CPU
+                    # chunks/ownership helper; default transport limit stays64MiB.
+                    shutil.copyfile(root/'bootprofiles/os-boot/PianoCpuInput.c',app/'PianoCpuInput.c')
                     for name in ('PianoFastboot.c','PianoDwc3Device.c','PianoUsbController.c'):
                         path=app/name;path.write_text('#define PIANO_USB_RAM_BOOT 1\n'+path.read_text())
-                    path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n'+''.join('  '+name+'\n' for name in sources).rstrip())
+                    path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n'+''.join('  '+name+'\n' for name in (*sources,'PianoCpuInput.c')).rstrip())
                     text=text.replace('  UefiLib','  UefiLib\n  UefiRuntimeServicesTableLib')
                     text+='\n[Guids]\n  gEfiEventExitBootServicesGuid\n';path.write_text(text)
                     path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',

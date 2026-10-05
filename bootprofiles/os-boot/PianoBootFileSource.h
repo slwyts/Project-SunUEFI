@@ -2,11 +2,13 @@
 #pragma once
 #include "../uefi-app/PianoFastbootLaunch.h"
 #include <Protocol/SimpleFileSystem.h>
-#define PIANO_BOOT_FILE_LOW_BUDGET (64ULL*1024*1024)
+#include "PianoCpuInput.h"
+#define PIANO_BOOT_FILE_LOW_BUDGET PIANO_CPU_INPUT_LOW_BYTES
 #define PIANO_BOOT_FILE_PATH_CHARS 260U
 typedef struct {
   VOID *Context;EFI_BOOT_SERVICES *Services;
   BOOLEAN(*BootServicesAlive)(VOID *); // real caller CPU-only EBS/lifetime fence
+  CONST PIANO_CPU_INPUT_ENV *Cpu; // copied; NULL keeps the legacy64MiB cap
 } PIANO_BOOT_FILE_ENV;
 typedef struct {
   EFI_HANDLE FileSystem;
@@ -26,6 +28,7 @@ typedef struct {
   CHAR16 Path[PIANO_BOOT_FILE_PATH_CHARS];
   UINT64 Info[512],InitialInfo[512],ShaContext[512];UINTN InfoBytes;
   VOID *Owner,*Loan;UINT64 Chunks;
+  PIANO_CPU_INPUT_ENV Cpu;PIANO_LINUX_MEMORY_PROOF Memory;BOOLEAN HasCpu;
 } PIANO_BOOT_FILE_SOURCE;
 // Exactly one CPU allocation, full incremental SHA, files closed before Ready.
 // State is zeroed producer-lifetime storage; retained states are never retried.
@@ -36,6 +39,7 @@ EFI_STATUS PianoBootFileExport(PIANO_BOOT_FILE_SOURCE *,PIANO_BOOT_SOURCE *,PIAN
 // Release untaken snapshot; refuses outstanding Owner/Loan. Blob owner uses
 // ZeroRelease after Unborrow, or Restore to return unchanged source to caller.
 EFI_STATUS PianoBootFileDispose(PIANO_BOOT_FILE_SOURCE *);
-// Same env and explicit paths, sum(MaxBytes)<=Budget<=64MiB. No Start/EBS.
+// Same env and explicit paths, sum(MaxBytes)<=Budget. >64MiB needs the actual
+// validated full-memory and buffer-owner callbacks; absolute cap1GiB. No EBS.
 EFI_STATUS PianoBootFileLoadBundle(PIANO_BOOT_FILE_SOURCE *,UINTN Count,CONST PIANO_BOOT_FILE_ENV *,
   CONST PIANO_BOOT_FILE_SPEC *,UINT64 Budget,PIANO_BOOT_SOURCE *,PIANO_LAUNCH_BLOB *);

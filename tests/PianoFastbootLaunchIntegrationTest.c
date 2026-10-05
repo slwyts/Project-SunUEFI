@@ -61,6 +61,10 @@ VOID EFIAPI FreePool(VOID *P){
   free(P);current->SourceLive=FALSE;++current->Frees;
 }
 BOOLEAN EFIAPI Sha256HashAll(CONST VOID *Data,UINTN Bytes,UINT8 *Digest){return SHA256(Data,Bytes,Digest)!=NULL;}
+UINTN EFIAPI Sha256GetContextSize(VOID){return sizeof(SHA256_CTX);}
+BOOLEAN EFIAPI Sha256Init(VOID *C){return SHA256_Init(C)==1;}
+BOOLEAN EFIAPI Sha256Update(VOID *C,CONST VOID *P,UINTN N){return SHA256_Update(C,P,N)==1;}
+BOOLEAN EFIAPI Sha256Final(VOID *C,UINT8 *D){return SHA256_Final(D,C)==1;}
 VOID EFIAPI CpuDeadLoop(VOID){assert(!"unexpected runtime failstop");abort();}
 
 static EFI_STATUS reply(VOID *Context,CONST VOID *Data,UINTN Bytes){
@@ -136,6 +140,9 @@ static EFI_STATUS EFIAPI release_pool(VOID *Pointer){
   assert(F->Alive && Pointer==F->Source && F->SourceLive && !F->ImageLive && !F->EventLive);
   assert(F->Adapter.ReleaseAttempted && !F->Adapter.ActiveLoan && !F->Launch.Loan);
   for(UINTN I=0;I<sizeof(F->File);++I)assert(((UINT8 *)Pointer)[I]==0);
+  // Count the verified zeroed source, independent of whether the shared
+  // helper uses volatile chunk stores or the transport's old ZeroMem call.
+  if(!F->Zeroes)++F->Zeroes;
   ++F->ReleaseCalls;
   if(F->Scenario==ReleaseError)return EFI_DEVICE_ERROR;
   if(F->Scenario==ReleaseWarning)return EFI_WARN_UNKNOWN_GLYPH;

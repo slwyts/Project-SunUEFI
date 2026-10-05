@@ -28,6 +28,11 @@ VOID EFIAPI FreePool(VOID *P){
   }assert(0);
 }
 BOOLEAN EFIAPI Sha256HashAll(CONST VOID *A,UINTN N,UINT8 *Digest){return SHA256(A,N,Digest)!=NULL;}
+UINTN EFIAPI Sha256GetContextSize(VOID){return sizeof(SHA256_CTX);}
+BOOLEAN EFIAPI Sha256Init(VOID *C){return SHA256_Init(C)==1;}
+BOOLEAN EFIAPI Sha256Update(VOID *C,CONST VOID *P,UINTN N){return SHA256_Update(C,P,N)==1;}
+BOOLEAN EFIAPI Sha256Final(VOID *C,UINT8 *D){return SHA256_Final(D,C)==1;}
+INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
 static EFI_STATUS EFIAPI release_pool(VOID *P){releases++;if(release_status!=EFI_SUCCESS)return release_status;FreePool(P);return EFI_SUCCESS;}
 static EFI_STATUS send_reply(VOID *Context,CONST VOID *Data,UINTN Bytes){(void)Context;(void)Data;assert(Bytes);return EFI_SUCCESS;}
 static EFI_STATUS quiet(VOID *Context){assert(Context==(void*)123);quiet_calls++;if(change_during_quiet){change_during_quiet->Complete=FALSE;change_during_quiet=NULL;}return quiet_status;}

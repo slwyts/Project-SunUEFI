@@ -3,9 +3,12 @@
 #define main prior_download_blob_suite
 #include "../tools/test_fastboot_download_blob.c"
 #undef main
+#define Retain CpuLoanRetain
+#define Overlap CpuLoanOverlap
 #include "../bootprofiles/os-boot/PianoCpuImageLoan.c"
+#undef Overlap
+#undef Retain
 UINT64 EFIAPI InterlockedCompareExchange64(volatile UINT64 *Value,UINT64 Compare,UINT64 Exchange){UINT64 Expected=Compare;__atomic_compare_exchange_n(Value,&Expected,Exchange,FALSE,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST);return Expected;}
-INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN Bytes){return memcmp(A,B,Bytes);}
 static UINTN takes;
 static EFI_STATUS (*real_take)(VOID *,VOID **);
 static EFI_STATUS (*real_unborrow)(VOID *,VOID *,VOID *);

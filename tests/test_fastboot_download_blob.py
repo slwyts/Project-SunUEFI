@@ -14,10 +14,10 @@ class DownloadBlobTests(unittest.TestCase):
             binary = str(Path(out) / "ownership")
             subprocess.run([
                 "cc", "-std=gnu11", "-fshort-wchar", "-Wall", "-Wextra", "-Werror",
-                "-Wno-unused-parameter", "-fsanitize=address,undefined", "-fno-pie", "-no-pie",
+                "-Wno-unused-parameter", "-Wno-misleading-indentation", "-Wno-deprecated-declarations", "-fsanitize=address,undefined", "-fno-pie", "-no-pie",
                 "-I", str(INC), "-I", str(INC / "X64"),
                 "-I", str(ROOT / "upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include"),
-                str(ROOT / "tools/test_fastboot_download_blob.c"), "-lcrypto", "-o", binary
+                str(ROOT / "tools/test_fastboot_download_blob.c"),str(ROOT / "bootprofiles/os-boot/PianoCpuInput.c"), "-lcrypto", "-o", binary
             ], check=True)
             subprocess.run([binary], check=True)
             subprocess.run([

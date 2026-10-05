@@ -70,9 +70,17 @@ STATIC EFI_STATUS CloseFiles(PIANO_BOOT_FILE_SOURCE *S){
   return EFI_SUCCESS;
 }
 STATIC BOOLEAN Valid(PIANO_BOOT_FILE_SOURCE *S){return S&&S->Signature==SIGNATURE&&S->Ready&&!S->Consumed&&!S->Retained&&Live(S);}
-STATIC EFI_STATUS Reader(VOID *Context,UINT64 Offset,UINTN Bytes,VOID *Buffer){PIANO_BOOT_FILE_SOURCE *S=Context;if(!Valid(S)||!Output(S,Buffer,Bytes))return EFI_INVALID_PARAMETER;if(Offset>S->Bytes||Bytes>S->Bytes-Offset)return EFI_BAD_BUFFER_SIZE;CopyMem(Buffer,S->Data+(UINTN)Offset,Bytes);return EFI_SUCCESS;}
-STATIC EFI_STATUS Take(VOID *Context,VOID **Owner){PIANO_BOOT_FILE_SOURCE *S=Context;if(!Output(S,Owner,sizeof(*Owner)))return EFI_INVALID_PARAMETER;*Owner=NULL;if(!Valid(S)||S->Taken)return EFI_NOT_READY;if(mToken==MAX_UINTN)return EFI_OUT_OF_RESOURCES;S->Owner=(VOID *)++mToken;S->Taken=TRUE;*Owner=S->Owner;return EFI_SUCCESS;}
-STATIC BOOLEAN Owned(PIANO_BOOT_FILE_SOURCE *S,VOID *Owner){return Valid(S)&&S->Taken&&Owner&&Owner==S->Owner&&!S->ReleaseAttempted;}
+STATIC CONST PIANO_CPU_INPUT_ENV *Cpu(PIANO_BOOT_FILE_SOURCE *S){return S->HasCpu?&S->Cpu:NULL;}
+STATIC EFI_STATUS Reader(VOID *Context,UINT64 Offset,UINTN Bytes,VOID *Buffer){
+  PIANO_BOOT_FILE_SOURCE *S=Context;if(!Valid(S)||!Output(S,Buffer,Bytes))return EFI_INVALID_PARAMETER;
+  if(Offset>S->Bytes||Bytes>S->Bytes-Offset)return EFI_BAD_BUFFER_SIZE;if(S->Busy)return EFI_ALREADY_STARTED;
+  S->Busy=TRUE;EFI_STATUS E=PianoCpuInputValidateBuffer(Cpu(S),&S->Memory,S,S->Owner,S->Data,S->Bytes);
+  if(E==EFI_SUCCESS)E=PianoCpuInputCopy(Cpu(S),Buffer,S->Data+(UINTN)Offset,Bytes);
+  if(E==EFI_SUCCESS)E=PianoCpuInputValidateBuffer(Cpu(S),&S->Memory,S,S->Owner,S->Data,S->Bytes);
+  S->Busy=FALSE;return Live(S)?E:Retain(S,EFI_ABORTED);
+}
+STATIC EFI_STATUS Take(VOID *Context,VOID **Owner){PIANO_BOOT_FILE_SOURCE *S=Context;if(!Output(S,Owner,sizeof(*Owner)))return EFI_INVALID_PARAMETER;*Owner=NULL;if(!Valid(S)||S->Busy||S->Taken)return EFI_NOT_READY;if(mToken==MAX_UINTN)return EFI_OUT_OF_RESOURCES;S->Owner=(VOID *)++mToken;S->Taken=TRUE;*Owner=S->Owner;return EFI_SUCCESS;}
+STATIC BOOLEAN Owned(PIANO_BOOT_FILE_SOURCE *S,VOID *Owner){return Valid(S)&&!S->Busy&&S->Taken&&Owner&&Owner==S->Owner&&!S->ReleaseAttempted;}
 STATIC EFI_STATUS Read(VOID *Context,VOID *Owner,UINT64 Offset,UINTN Bytes,VOID *Buffer){PIANO_BOOT_FILE_SOURCE *S=Context;return Owned(S,Owner)?Reader(S,Offset,Bytes,Buffer):EFI_ACCESS_DENIED;}
 STATIC EFI_STATUS Borrow(VOID *Context,VOID *Owner,PIANO_BOOT_RANGE Range,CONST VOID **View,VOID **Loan){PIANO_BOOT_FILE_SOURCE *S=Context;if(!Output(S,View,sizeof(*View))||!Output(S,Loan,sizeof(*Loan))||Overlap(View,sizeof(*View),Loan,sizeof(*Loan)))return EFI_INVALID_PARAMETER;*View=NULL;*Loan=NULL;if(!Owned(S,Owner)||S->Loan)return EFI_ACCESS_DENIED;if(!Range.Bytes||Range.Offset>S->Bytes||Range.Bytes>S->Bytes-Range.Offset)return EFI_BAD_BUFFER_SIZE;if(mToken==MAX_UINTN)return EFI_OUT_OF_RESOURCES;S->Loan=(VOID *)++mToken;*Loan=S->Loan;*View=S->Data+(UINTN)Range.Offset;return EFI_SUCCESS;}
 STATIC EFI_STATUS Unborrow(VOID *Context,VOID *Owner,VOID *Loan){PIANO_BOOT_FILE_SOURCE *S=Context;if(!Owned(S,Owner)||!Loan||Loan!=S->Loan)return EFI_INVALID_PARAMETER;S->Loan=NULL;return EFI_SUCCESS;}
@@ -82,20 +90,30 @@ STATIC EFI_STATUS Release(PIANO_BOOT_FILE_SOURCE *S){
   if(S->Retained||S->ReleaseAttempted||S->Loan||S->File||S->Root)return EFI_ACCESS_DENIED;
   S->ReleaseAttempted=TRUE;
   if(S->Exit){EFI_STATUS E=S->Env.Services->CloseEvent(S->Exit);if(!Live(S)||E!=EFI_SUCCESS)return Retain(S,!Live(S)?EFI_ABORTED:E);S->Exit=NULL;}
-  if(S->Data){for(UINTN I=0;I<S->Bytes;++I)((volatile UINT8 *)S->Data)[I]=0;S->Release=S->Env.Services->FreePool(S->Data);if(!Live(S)||S->Release!=EFI_SUCCESS)return Retain(S,!Live(S)?EFI_ABORTED:S->Release);S->Data=NULL;}
+  if(S->Data){
+    EFI_STATUS E=PianoCpuInputValidateBuffer(Cpu(S),&S->Memory,S,S->Owner,S->Data,S->Bytes);
+    if(E==EFI_SUCCESS)E=PianoCpuInputZero(Cpu(S),S->Data,S->Bytes);
+    if(!Live(S)||E!=EFI_SUCCESS)return Retain(S,!Live(S)?EFI_ABORTED:E);
+    S->Release=S->Env.Services->FreePool(S->Data);if(!Live(S)||S->Release!=EFI_SUCCESS)return Retain(S,!Live(S)?EFI_ABORTED:S->Release);S->Data=NULL;
+  }
   S->Ready=FALSE;S->Consumed=TRUE;S->Owner=NULL;S->Taken=FALSE;return EFI_SUCCESS;
 }
 STATIC EFI_STATUS ZeroRelease(VOID *Context,VOID *Owner){PIANO_BOOT_FILE_SOURCE *S=Context;return Owned(S,Owner)?Release(S):EFI_ACCESS_DENIED;}
-EFI_STATUS PianoBootFileDispose(PIANO_BOOT_FILE_SOURCE *S){if(!S||S->Signature!=SIGNATURE)return EFI_INVALID_PARAMETER;if(S->Consumed)return EFI_SUCCESS;if(S->Taken||S->Loan)return EFI_ACCESS_DENIED;return Release(S);}
+EFI_STATUS PianoBootFileDispose(PIANO_BOOT_FILE_SOURCE *S){if(!S||S->Signature!=SIGNATURE)return EFI_INVALID_PARAMETER;if(S->Consumed)return EFI_SUCCESS;if(S->Busy||S->Taken||S->Loan)return EFI_ACCESS_DENIED;return Release(S);}
 EFI_STATUS PianoBootFileExport(PIANO_BOOT_FILE_SOURCE *S,PIANO_BOOT_SOURCE *Source,PIANO_LAUNCH_BLOB *Blob){
-  if(!Exports(S,Source,Blob))return EFI_INVALID_PARAMETER;ZeroMem(Source,sizeof(*Source));ZeroMem(Blob,sizeof(*Blob));if(!Valid(S))return EFI_NOT_READY;
+  if(!Exports(S,Source,Blob))return EFI_INVALID_PARAMETER;ZeroMem(Source,sizeof(*Source));ZeroMem(Blob,sizeof(*Blob));if(!Valid(S)||S->Busy)return EFI_NOT_READY;
   *Source=(PIANO_BOOT_SOURCE){S,Reader,S->Bytes};*Blob=(PIANO_LAUNCH_BLOB){S,S->Bytes,Take,Read,Borrow,Unborrow,Restore,ZeroRelease};return EFI_SUCCESS;
 }
 EFI_STATUS PianoBootFileLoad(PIANO_BOOT_FILE_SOURCE *S,CONST PIANO_BOOT_FILE_ENV *Env,CONST PIANO_BOOT_FILE_SPEC *Spec,PIANO_BOOT_SOURCE *Source,PIANO_LAUNCH_BLOB *Blob){
-  if(!S||!Env||!Spec||!Exports(S,Source,Blob)||!Spec->FileSystem||!Spec->MaxBytes||Spec->MaxBytes>PIANO_BOOT_FILE_LOW_BUDGET)return EFI_INVALID_PARAMETER;
+  if(!S||!Env||!Spec||!Exports(S,Source,Blob)||!Spec->FileSystem||!Spec->MaxBytes||Spec->MaxBytes>PIANO_CPU_INPUT_MAX_BYTES)return EFI_INVALID_PARAMETER;
+  if(Spec->MaxBytes>PIANO_BOOT_FILE_LOW_BUDGET&&!Env->Cpu)return EFI_NOT_READY;
+  if(Env->Cpu&&Overlap(Env->Cpu,sizeof(*Env->Cpu),S,sizeof(*S)))return EFI_INVALID_PARAMETER;
   ZeroMem(Source,sizeof(*Source));ZeroMem(Blob,sizeof(*Blob));if(S->Signature)return EFI_ALREADY_STARTED;
   if(!Env->Services||!Env->BootServicesAlive||!Env->Services->HandleProtocol||!Env->Services->AllocatePool||!Env->Services->FreePool||!Env->Services->RaiseTPL||!Env->Services->RestoreTPL||!Env->Services->CreateEventEx||!Env->Services->CloseEvent)return EFI_UNSUPPORTED;
   S->Env=*Env;if(!Live(S))return EFI_NOT_READY;EFI_TPL T=Env->Services->RaiseTPL(TPL_HIGH_LEVEL);Env->Services->RestoreTPL(T);if(!Live(S))return EFI_ABORTED;if(T!=TPL_APPLICATION)return EFI_UNSUPPORTED;
+  if(Env->Cpu){S->Cpu=*Env->Cpu;S->HasCpu=TRUE;S->Env.Cpu=&S->Cpu;}
+  EFI_STATUS Capacity=PianoCpuInputAuthorize(Cpu(S),Spec->MaxBytes,&S->Memory);
+  if(Capacity!=EFI_SUCCESS)return Capacity;
   EFI_STATUS E=Path(S->Path,Spec->AbsolutePath);if(E!=EFI_SUCCESS)return E;
   S->Signature=SIGNATURE;S->Busy=TRUE;S->FileSystem=Spec->FileSystem;S->HasExpected=Spec->ExpectedSha256!=NULL;if(S->HasExpected)CopyMem(S->ExpectedSha256,Spec->ExpectedSha256,32);
   E=Env->Services->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,ExitNotify,S,&gEfiEventExitBootServicesGuid,&S->Exit);if(!Live(S)||E!=EFI_SUCCESS||!S->Exit){Retain(S,!Live(S)?EFI_ABORTED:E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);goto Done;}
@@ -106,14 +124,23 @@ EFI_STATUS PianoBootFileLoad(PIANO_BOOT_FILE_SOURCE *S,CONST PIANO_BOOT_FILE_ENV
   UINTN Need=0;E=S->InfoFile(S->File,&gEfiFileInfoGuid,&Need,NULL);if(!Live(S)){Retain(S,EFI_ABORTED);goto Done;}if(E!=EFI_BUFFER_TOO_SMALL||Need<SIZE_OF_EFI_FILE_INFO+2||Need>sizeof(S->Info)){E=E==EFI_BUFFER_TOO_SMALL?EFI_BAD_BUFFER_SIZE:E==EFI_SUCCESS?EFI_COMPROMISED_DATA:Exact(E);goto Failure;}
   UINT64 Bytes=0;E=Information(S,TRUE,&Bytes);if(E!=EFI_SUCCESS)goto Failure;if(S->InfoBytes!=Need){E=EFI_MEDIA_CHANGED;goto Failure;}if(Bytes>Spec->MaxBytes||Bytes>MAX_UINTN){E=EFI_BAD_BUFFER_SIZE;goto Failure;}S->Bytes=(UINTN)Bytes;
   E=Env->Services->AllocatePool(EfiLoaderData,S->Bytes,(VOID **)&S->Data);if(!Live(S)||E!=EFI_SUCCESS||!S->Data){Retain(S,!Live(S)?EFI_ABORTED:E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);goto Done;}
+  E=PianoCpuInputValidateBuffer(Cpu(S),&S->Memory,S,NULL,S->Data,S->Bytes);
+  if(E!=EFI_SUCCESS){Retain(S,E);goto Done;}
   if(!Sha256GetContextSize()||Sha256GetContextSize()>sizeof(S->ShaContext)||!Sha256Init(S->ShaContext)){E=EFI_DEVICE_ERROR;goto Failure;}
-  for(UINT64 Offset=0;Offset<Bytes;){UINTN N=(UINTN)MIN(65536ULL,Bytes-Offset);E=DiskRead(S,Offset,N,S->Data+(UINTN)Offset);if(E!=EFI_SUCCESS)goto Failure;if(!Sha256Update(S->ShaContext,S->Data+(UINTN)Offset,N)){E=EFI_DEVICE_ERROR;goto Failure;}Offset+=N;++S->Chunks;}
+  for(UINT64 Offset=0;Offset<Bytes;){
+    E=PianoCpuInputSlice(Cpu(S));if(E!=EFI_SUCCESS)goto Failure;
+    UINTN N=(UINTN)MIN((UINT64)PIANO_CPU_INPUT_CHUNK,Bytes-Offset);E=DiskRead(S,Offset,N,S->Data+(UINTN)Offset);if(E!=EFI_SUCCESS)goto Failure;
+    if(!Sha256Update(S->ShaContext,S->Data+(UINTN)Offset,N)){E=EFI_DEVICE_ERROR;goto Failure;}Offset+=N;++S->Chunks;
+  }
+  E=PianoCpuInputValidateBuffer(Cpu(S),&S->Memory,S,NULL,S->Data,S->Bytes);if(E!=EFI_SUCCESS){Retain(S,E);goto Done;}
   if(!Sha256Final(S->ShaContext,S->Sha256)){E=EFI_DEVICE_ERROR;goto Failure;}
   E=Fresh(S);if(E!=EFI_SUCCESS)goto Failure;E=Information(S,FALSE,&Bytes);if(E!=EFI_SUCCESS)goto Failure;
   UINT64 Position=0;E=S->PositionFile(S->File,&Position);if(!Live(S)){Retain(S,EFI_ABORTED);goto Done;}if(E!=EFI_SUCCESS||Position!=S->Bytes){E=E==EFI_SUCCESS?EFI_COMPROMISED_DATA:Exact(E);goto Failure;}
   UINT8 Extra=0;UINTN N=1;E=S->ReadFile(S->File,&N,&Extra);if(!Live(S)){Retain(S,EFI_ABORTED);goto Done;}if(E!=EFI_SUCCESS||N!=0){E=E==EFI_SUCCESS?EFI_MEDIA_CHANGED:Exact(E);goto Failure;}
   if(S->HasExpected&&CompareMem(S->ExpectedSha256,S->Sha256,32)){E=EFI_SECURITY_VIOLATION;goto Failure;}
-  E=CloseFiles(S);if(E!=EFI_SUCCESS)goto Done;S->Ready=TRUE;S->Status=EFI_SUCCESS;E=PianoBootFileExport(S,Source,Blob);goto Done;
+  E=CloseFiles(S);if(E!=EFI_SUCCESS)goto Done;
+  E=PianoCpuInputValidateBuffer(Cpu(S),&S->Memory,S,NULL,S->Data,S->Bytes);if(E!=EFI_SUCCESS){Retain(S,E);goto Done;}
+  S->Ready=TRUE;S->Status=EFI_SUCCESS;S->Busy=FALSE;E=PianoBootFileExport(S,Source,Blob);goto Done;
 Failure:
   S->Status=Exact(E);if(!S->Retained){EFI_STATUS Close=CloseFiles(S);if(Close==EFI_SUCCESS){S->Cleanup=Release(S);}else S->Cleanup=Close;}
   if(S->Cleanup!=EFI_SUCCESS)E=S->Cleanup;
@@ -121,10 +148,12 @@ Done:
   S->Busy=FALSE;ZeroMem(S->ShaContext,sizeof(S->ShaContext));return S->Retained?S->Status:E;
 }
 EFI_STATUS PianoBootFileLoadBundle(PIANO_BOOT_FILE_SOURCE *States,UINTN Count,CONST PIANO_BOOT_FILE_ENV *E,CONST PIANO_BOOT_FILE_SPEC *Specs,UINT64 Budget,PIANO_BOOT_SOURCE *Readers,PIANO_LAUNCH_BLOB *Blobs){
-  if(!States||!E||!Specs||!Readers||!Blobs||!Count||Count>3||!Budget||Budget>PIANO_BOOT_FILE_LOW_BUDGET)return EFI_INVALID_PARAMETER;
+  if(!States||!E||!Specs||!Readers||!Blobs||!Count||Count>3||!Budget||Budget>PIANO_CPU_INPUT_MAX_BYTES)return EFI_INVALID_PARAMETER;
   if(Overlap(Readers,Count*sizeof(*Readers),Blobs,Count*sizeof(*Blobs)))return EFI_INVALID_PARAMETER;
   for(UINTN I=0;I<Count;++I)if(!Output(&States[I],Readers,Count*sizeof(*Readers))||!Output(&States[I],Blobs,Count*sizeof(*Blobs)))return EFI_INVALID_PARAMETER;
   ZeroMem(Readers,Count*sizeof(*Readers));ZeroMem(Blobs,Count*sizeof(*Blobs));
   UINT64 Sum=0;for(UINTN I=0;I<Count;++I){if(!Specs[I].MaxBytes||Specs[I].MaxBytes>Budget-Sum)return EFI_BAD_BUFFER_SIZE;Sum+=Specs[I].MaxBytes;}
+  PIANO_LINUX_MEMORY_PROOF Memory;EFI_STATUS Capacity=PianoCpuInputAuthorize(E->Cpu,Budget,&Memory);
+  if(Capacity!=EFI_SUCCESS)return Capacity;
   for(UINTN I=0;I<Count;++I){EFI_STATUS S=PianoBootFileLoad(&States[I],E,&Specs[I],&Readers[I],&Blobs[I]);if(S!=EFI_SUCCESS){for(UINTN J=0;J<I;++J){EFI_STATUS F=PianoBootFileDispose(&States[J]);if(F!=EFI_SUCCESS)S=F;}ZeroMem(Readers,Count*sizeof(*Readers));ZeroMem(Blobs,Count*sizeof(*Blobs));return S;}}return EFI_SUCCESS;
 }

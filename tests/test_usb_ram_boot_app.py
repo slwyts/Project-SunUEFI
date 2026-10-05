@@ -24,7 +24,7 @@ class UsbRamBootAppTests(unittest.TestCase):
                 cmd=["cc","-std=gnu11","-fshort-wchar","-Wall","-Wextra","-Werror","-Wno-unused-parameter","-Wno-misleading-indentation",
                     "-g","-fsanitize=address,undefined","-fno-pie","-no-pie",f"-DPIANO_USB_RAM_BOOT={enabled}"]
                 for include in includes:cmd += ["-I",str(include)]
-                cmd += [str(ROOT/"tests/PianoUsbRamBootAppTest.c"),*[str(APP/name)for name in("PianoFastboot.c","PianoFastbootBoot.c","PianoFastbootDownloadBlob.c","PianoFastbootLaunch.c","PianoRamBootProbe.c")],"-lcrypto","-o",str(exe)]
+                cmd += ["-Wno-deprecated-declarations",str(ROOT/"tests/PianoUsbRamBootAppTest.c"),*[str(APP/name)for name in("PianoFastboot.c","PianoFastbootBoot.c","PianoFastbootDownloadBlob.c","PianoFastbootLaunch.c","PianoRamBootProbe.c")],str(ROOT/'bootprofiles/os-boot/PianoCpuInput.c'),"-lcrypto","-o",str(exe)]
                 build=subprocess.run(cmd,text=True,capture_output=True);self.assertEqual(build.returncode,0,build.stdout+build.stderr)
                 run=subprocess.run([str(exe),str(fixture)],text=True,capture_output=True,env={**os.environ,"ASAN_OPTIONS":"detect_leaks=1"})
                 self.assertEqual(run.returncode,0,run.stdout+run.stderr);print(run.stdout.strip())

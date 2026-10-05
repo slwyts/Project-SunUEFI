@@ -38,6 +38,10 @@ VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 VOID *EFIAPI AllocateZeroPool(UINTN N){CheckBs();assert(!F.Source&&N==3584);F.Source=calloc(1,N);assert(F.Source);F.SourceBytes=N;F.SourceLive=TRUE;F.SourceAllocations++;return F.Source;}
 VOID EFIAPI FreePool(VOID *P){CheckBs();assert(P==F.Source&&F.SourceLive);for(UINTN I=0;I<F.SourceBytes;I++)assert(((UINT8 *)P)[I]==0);free(P);F.SourceLive=FALSE;F.SourceFrees++;}
 BOOLEAN EFIAPI Sha256HashAll(CONST VOID *P,UINTN N,UINT8 *Digest){return SHA256(P,N,Digest)!=NULL;}
+UINTN EFIAPI Sha256GetContextSize(VOID){return sizeof(SHA256_CTX);}
+BOOLEAN EFIAPI Sha256Init(VOID *C){return SHA256_Init(C)==1;}
+BOOLEAN EFIAPI Sha256Update(VOID *C,CONST VOID *P,UINTN N){return SHA256_Update(C,P,N)==1;}
+BOOLEAN EFIAPI Sha256Final(VOID *C,UINT8 *D){return SHA256_Final(D,C)==1;}
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){(void)Level;return FALSE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){(void)Level;(void)Format;}

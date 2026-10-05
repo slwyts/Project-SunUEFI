@@ -35,6 +35,7 @@ class NewDiagnosticProfileTests(unittest.TestCase):
                 (repo/'build/native-foundation.fdf.inc').write_text('  // host-only fixture: no native binaries\n')
                 shutil.copytree(ROOT/'platforms/pianoProbePkg',repo/'platforms/pianoProbePkg')
                 shutil.copytree(ROOT/'bootprofiles/uefi-app',repo/'bootprofiles/uefi-app')
+                shutil.copytree(ROOT/'bootprofiles/os-boot',repo/'bootprofiles/os-boot')
                 with patch.object(profile,'__file__',str(repo/'tools/prepare_gui_profile.py')),patch.object(sys,'argv',['prepare',flag,'--return-seconds','120']),contextlib.redirect_stdout(io.StringIO()):
                     profile.main()
                 app=repo/'platforms/pianoGuiPkg/Applications/RamApp'
@@ -57,6 +58,9 @@ class NewDiagnosticProfileTests(unittest.TestCase):
                     self.assertIn('PianoRunUsbRamBoot(Fdt,ImageHandle)',text)
                     self.assertTrue((app/'PianoFastboot.c').read_text().startswith('#define PIANO_USB_RAM_BOOT 1'))
                     self.assertIn('PianoFastbootDownloadBlob.c',inf)
+                    self.assertIn('PianoCpuInput.c',inf)
+                    self.assertEqual((app/'PianoCpuInput.c').read_bytes(),(repo/'bootprofiles/os-boot/PianoCpuInput.c').read_bytes())
+                    self.assertEqual((app/'PianoCpuInput.h').read_bytes(),(repo/'bootprofiles/uefi-app/PianoCpuInput.h').read_bytes())
                     self.assertNotIn('PianoUfsDma.c',inf)
                     timer=(repo/'platforms/pianoGuiPkg/Library/Stage0BootManagerLib/Stage0BootManagerLib.c').read_text()
                     self.assertIn('Usb->Halt()!=EFI_SUCCESS',timer)

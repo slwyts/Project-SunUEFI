@@ -3,14 +3,8 @@
 #include "../uefi-app/PianoFastbootLaunch.h"
 #include <Protocol/LoadFile2.h>
 #include <Protocol/DevicePath.h>
-#define PIANO_LINUX_LOW_SOURCE_BUDGET (64ULL*1024*1024)
-typedef struct {
- UINT32 Revision;
- EFI_STATUS Status;
- UINT64 BootEpoch,DramBytes,NormalBytes;
- UINT32 UnresolvedReservations;
- BOOLEAN FullDdr,FixedReservations,DynamicReservations,RuntimeRegions,CacheVerified,OwnershipVerified;
-} PIANO_LINUX_MEMORY_PROOF;
+#include "PianoCpuInput.h"
+#define PIANO_LINUX_LOW_SOURCE_BUDGET PIANO_CPU_INPUT_LOW_BYTES
 typedef struct {
  UINT32 Revision,ExpectedOwners,RetiredOwners,AbsentOwners;
  EFI_STATUS Status;
@@ -37,6 +31,8 @@ typedef struct {
  EFI_STATUS (*PrepareHandoff)(VOID *,CONST PIANO_LINUX_MEMORY_PROOF *,PIANO_LINUX_RETIRE_PROOF *);
  EFI_STATUS (*ValidateRetired)(VOID *,CONST PIANO_LINUX_RETIRE_PROOF *);
  VOID (*FailStop)(VOID *,EFI_STATUS); // CPU-only, never returns; EBS/unknown only
+ UINT64 MaxSourceBytes; // zero defaults64MiB, hard cap1GiB, not transport advert
+ CONST PIANO_CPU_INPUT_ENV *Cpu; // required above64MiB; actual source owner checks
 } PIANO_LINUX_EFI_ENV;
 typedef struct {VENDOR_DEVICE_PATH Vendor;EFI_DEVICE_PATH_PROTOCOL End;} PIANO_LINUX_INITRD_PATH;
 typedef struct {
@@ -54,6 +50,7 @@ typedef struct {
  VOID *FdtCopy,*OldFdt,*OptionsCopy,*OldOptions,*ExitData;
  UINTN FdtCapacity,ExitBytes;UINT32 OptionsBytes,OldOptionsBytes;
  VOID *LoadedIdentity,*ImageBaseIdentity;UINT64 ImageSizeIdentity;
+ PIANO_CPU_INPUT_ENV Cpu;PIANO_LINUX_MEMORY_PROOF SourceMemory;BOOLEAN HasCpu;
 } PIANO_LINUX_EFI_SESSION;
 // Driver-lifetime zeroed context. Three blobs are validated immutable CPU-file
 // snapshots. Run takes each once, borrows contiguous views, and retains leases

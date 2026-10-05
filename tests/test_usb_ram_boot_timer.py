@@ -125,6 +125,7 @@ class UsbRamBootTimerTests(unittest.TestCase):
                 (repo/'build/native-foundation.fdf.inc').write_text('// host fixture only\n')
                 shutil.copytree(ROOT/'platforms/pianoProbePkg',repo/'platforms/pianoProbePkg')
                 shutil.copytree(ROOT/'bootprofiles/uefi-app',repo/'bootprofiles/uefi-app')
+                shutil.copytree(ROOT/'bootprofiles/os-boot',repo/'bootprofiles/os-boot')
                 spec=importlib.util.spec_from_file_location('timer_prepare',ROOT/'tools/prepare_gui_profile.py')
                 profile=importlib.util.module_from_spec(spec);spec.loader.exec_module(profile)
                 with patch.object(profile,'__file__',str(repo/'tools/prepare_gui_profile.py')),patch.object(sys,'argv',['prepare','--usb-ram-boot','--return-seconds','120']),contextlib.redirect_stdout(io.StringIO()):

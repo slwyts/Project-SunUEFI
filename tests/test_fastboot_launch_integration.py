@@ -14,7 +14,7 @@ class LaunchIntegrationTest(unittest.TestCase):
             binary = str(Path(out) / "integration")
             subprocess.run([
                 "cc", "-std=gnu11", "-fshort-wchar", "-Wall", "-Wextra", "-Werror",
-                "-Wno-unused-parameter", "-g", "-fsanitize=address,undefined",
+                "-Wno-unused-parameter", "-Wno-misleading-indentation", "-Wno-deprecated-declarations", "-g", "-fsanitize=address,undefined",
                 "-fno-pie", "-no-pie", "-fno-omit-frame-pointer",
                 "-I", str(INC), "-I", str(INC / "X64"),
                 "-I", str(ROOT / "upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include"),
@@ -22,7 +22,7 @@ class LaunchIntegrationTest(unittest.TestCase):
                 *[str(APP / name) for name in (
                     "PianoFastboot.c", "PianoFastbootDownloadBlob.c",
                     "PianoFastbootBoot.c", "PianoFastbootLaunch.c")],
-                "-lcrypto", "-o", binary,
+                str(ROOT/'bootprofiles/os-boot/PianoCpuInput.c'),"-lcrypto", "-o", binary,
             ], check=True)
             subprocess.run([binary], check=True)
 

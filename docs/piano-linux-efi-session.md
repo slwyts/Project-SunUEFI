@@ -2,7 +2,7 @@
 
 `bootprofiles/os-boot/PianoLinuxEfiSession.c/.h` 把旧 LinuxRamBoot 中真实标准 EFI 机制提取为可复用 session。它不扫描固定 boot RAM、不写固定 kernel/DTB 地址、不走 raw MMU-off 跳转、不增加 diagnostic profile、不修改 Boot Services 函数表或 console vtable。
 
-输入是 reader 提供的三份已验证 immutable CPU snapshot，直接使用统一 PIANO_LAUNCH_BLOB。Take/Borrow 移交并固定 kernel、DTB、initrd，直到相关 image、LoadFile2 和 config table 已退休才 Unborrow/ZeroRelease。Root配置明确 kernel/loaded/DTB/initrd budget，reader本轮总预算仍64MiB。Session不把文件扩展名当Linux身份，也不在owner退休后访问UFS；内核须通过实际AA64 PE parser，DTB用实际libfdt检查并复制到aligned LoaderData。
+输入是 reader 提供的三份已验证 immutable CPU snapshot，直接使用统一 PIANO_LAUNCH_BLOB。Take/Borrow 移交并固定 kernel、DTB、initrd，直到相关 image、LoadFile2 和 config table 已退休才 Unborrow/ZeroRelease。Root配置明确 kernel/loaded/DTB/initrd budget；默认总预算64MiB，可通过实际统一CPU内存及owner验证路径请求最多1GiB，当前产品平台仍未绑定。Session不把文件扩展名当Linux身份，也不在owner退休后访问UFS；内核须通过实际AA64 PE parser，DTB用实际libfdt检查并复制到aligned LoaderData。
 
 ## 准备与启动顺序
 
@@ -34,7 +34,9 @@ ARM64严格语法检查通过。测试不执行ARM内核，不接触平板。仍
 
 ## source admission 与未知结果保护
 
-Source总实际Bytes必须不超过与reader一致的64MiB；先用减法边界检查总量，超过单项/总量或UINT64溢出风险在Take前拒绝。三份Context必须独立且不能落在session对象内，Env/blob描述符同样不能与session别名，避免初始化或后续Take破坏已有状态。
+Source总实际Bytes必须不超过Root的MaxSourceBytes（零值默认64MiB，绝对最多1GiB）；先用减法边界检查总量，超过单项/总量或UINT64溢出风险在Take前拒绝。大容量预算在Take前必须通过实际CPU policy完整内存验证，Borrow后再验证每份真实source owner/span，后续DT-based memory proof的epoch必须一致。三份Context必须独立且不能落在session对象内，Env/blob描述符同样不能与session别名，避免初始化或后续Take破坏已有状态。
+
+LoadFile2复制使用统一64KiB CPU slices，拒绝Bytes输出或目标buffer与session/任一immutable source别名。但旧PrepareHandoff顺序仍早于StartImage，内核stub复制initrd时USB已经退休，因此该阶段只有CPU检查，不能宣称后台fastboot仍在。具体原生late-APP EBS接入方案见[piano-large-cpu-input.md](piano-large-cpu-input.md)，尚未实现。
 
 view只能在Borrow后知道其地址；在第一处已知跨源重叠、与session重叠或地址长度回绕时立即retain，不继续取得后面的源，也不调用任何Unborrow/ZeroRelease。Take返回error/warning却给Owner，或Borrow返回error/warning却给view/loan，按未知所有权处理，CPU fail-stop保留整组，不能ordinary cleanup猜测资源已安全归还。
 
