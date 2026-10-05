@@ -38,7 +38,8 @@ class ProductBuilderTests(unittest.TestCase):
 
     def test_product_bds_actual_source_has_logo_single_core_and_no_reboot_timer(self):
         source=(ROOT/'bootprofiles/product-support/Library/ProductBootManagerLib/ProductBootManagerLib.c').read_text()
-        self.assertIn('BootLogoEnableLogo()',source)
+        self.assertIn('PianoProductDrawSplash(Gop,SplashAlive,&Report)',source)
+        self.assertIn('gEfiGraphicsOutputProtocolGuid',source)
         self.assertIn('gBS->StartImage(Core',source)
         self.assertIn('35E0D1B5',source)
         for forbidden in ('SetTimer','TimerRelative','ResetSystem','UnloadImage','RamAppEntry'):

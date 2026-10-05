@@ -9,7 +9,9 @@
 #include "PianoUfsProductVolume.h"
 #include "PianoProductStorageBaseline.h"
 #include "PianoProductSmem.h"
+#include "PianoProductBootLog.h"
 #include "LateHandoff/PianoLateHandoff.h"
+#include <Guid/EventGroup.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/BaseLib.h>
@@ -28,6 +30,59 @@ STATIC EFI_STATUS mUfsStatus=EFI_NOT_STARTED;
 STATIC UINT64 mCounterFrequency,mCounterStart,mCounterEnd;
 STATIC PIANO_RAM_PARTITION_REPORT mRamInventory;
 STATIC PIANO_UFS_PRODUCT_VOLUME mProductVolume;
+STATIC volatile BOOLEAN mBootLogExited;
+STATIC EFI_EVENT mBootLogExitEvent;
+STATIC BOOLEAN mBootLogEnabled,mBootLogCounterDown;
+STATIC UINT64 mBootLogStart;
+STATIC CONST CHAR8 *mBootLogStage="PAYLOAD";
+STATIC VOID BootLogReturned(VOID);
+STATIC BOOLEAN EFIAPI BootLogAlive(VOID) {
+  return !mBootLogExited && !mOwners.Report.ServicesLost && gST!=NULL && gST->BootServices==gBS;
+}
+STATIC VOID EFIAPI BootLogExit(EFI_EVENT Event,VOID *Context) {
+  (VOID)Event;(VOID)Context;mBootLogExited=TRUE;
+}
+STATIC VOID BootLogStage(CONST CHAR8 *Name,EFI_STATUS Status) {
+  mBootLogStage=Name;
+  if(!mBootLogEnabled || !BootLogAlive())return;
+  UINT64 Counter=GetPerformanceCounter();
+  UINT64 Delta=mBootLogCounterDown?mBootLogStart-Counter:Counter-mBootLogStart;
+  EFI_STATUS Paint=PianoProductBootLogStage(Name,Status,GetTimeInNanoSecond(Delta)/1000000);
+  if(!BootLogAlive())CpuDeadLoop();
+  if(Paint!=EFI_SUCCESS) {
+    mBootLogEnabled=FALSE;
+    DEBUG((DEBUG_WARN,"PIANO_PRODUCT_BOOTLOG status=%r stage=%a painting_disabled=1\n",Paint,Name));
+  }
+}
+STATIC VOID BootLogStart(VOID) {
+  EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop=NULL;UINT64 First,Last;
+  if(!BootLogAlive())CpuDeadLoop();
+  UINT64 Frequency=GetPerformanceCounterProperties(&First,&Last);
+  if(!Frequency || First==Last)return;
+  mBootLogCounterDown=First>Last;mBootLogStart=GetPerformanceCounter();
+  EFI_STATUS Status=gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,BootLogExit,NULL,
+    &gEfiEventExitBootServicesGuid,&mBootLogExitEvent);
+  if(!BootLogAlive())CpuDeadLoop();
+  if(Status!=EFI_SUCCESS || mBootLogExitEvent==NULL){BootLogReturned();return;}
+  Status=gBS->LocateProtocol(&gEfiGraphicsOutputProtocolGuid,NULL,(VOID **)&Gop);
+  if(!BootLogAlive())CpuDeadLoop();
+  if(Status==EFI_SUCCESS)Status=PianoProductBootLogInitialize(Gop,BootLogAlive);
+  if(!BootLogAlive())CpuDeadLoop();
+  mBootLogEnabled=Status==EFI_SUCCESS;
+  BootLogStage("DISPLAY",Status);BootLogStage("PAYLOAD",EFI_NOT_STARTED);
+}
+STATIC VOID BootLogReturned(VOID) {
+  // A returned application can be unloaded by BDS; its event callback must
+  // not outlive that image. Retained/fail-stop and EBS paths never return.
+  mBootLogEnabled=FALSE;
+  if(mBootLogExitEvent!=NULL) {
+    if(!BootLogAlive())CpuDeadLoop();
+    EFI_STATUS Status=gBS->CloseEvent(mBootLogExitEvent);
+    if(!BootLogAlive())CpuDeadLoop();
+    if(Status!=EFI_SUCCESS)CpuDeadLoop();
+    mBootLogExitEvent=NULL;
+  }
+}
 STATIC VOID ReportRequiredBackends(VOID) {
   // Required remains true. Missing real hardware/startup is visible rather
   // than converted into a silent build-time feature switch or fake Ready.
@@ -40,7 +95,7 @@ STATIC EFI_STATUS InitUfs(CONST VOID *Fdt) {
   mUfsStarted=mUfsStatus==EFI_SUCCESS;return mUfsStatus;
 }
 STATIC VOID FailStop(EFI_STATUS Status) {
-  (VOID)Status;
+  BootLogStage(mBootLogStage,Status);
 #ifdef __aarch64__
   __asm__ volatile("msr daifset, #15" ::: "memory");
 #endif
@@ -101,18 +156,22 @@ STATIC EFI_STATUS StopInput(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Rep
 }
 EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *SystemTable) {
   if(Image==NULL || SystemTable==NULL)return EFI_INVALID_PARAMETER;
+  BootLogStart();
   // Obtain a genuinely validated handoff, not an application-supplied FDT.
   PIANO_PRODUCT_PAYLOAD_VIEW Source={0};CONST VOID *Fdt=NULL;
   EFI_STATUS Status=PianoProductAcquireSimpleInit(&Source);
   if(Status==EFI_SUCCESS)Status=PianoProductPayloadGetFdt(&Source,&Fdt);
   if(Source.Lease!=NULL){EFI_STATUS Release=PianoProductReleaseSimpleInit(&Source);if(Release!=EFI_SUCCESS)FailStop(Release);}
-  if(Status!=EFI_SUCCESS || Fdt==NULL)return Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status;
+  if(Status==EFI_SUCCESS && Fdt==NULL)Status=EFI_COMPROMISED_DATA;
+  BootLogStage("PAYLOAD",Status);
+  if(Status!=EFI_SUCCESS){BootLogReturned();return Status;}
   ReportRequiredBackends();
   PianoProbeFoundation();
   // Real protected SMEM observations precede product DMA owners. Failure with
   // exact handler cleanup leaves data unknown; retained ownership cannot be
   // carried into UFS/USB bring-up. DXE evidence never changes the early map.
-  Status=PianoProductObserveSmem();
+  BootLogStage("SMEM",EFI_NOT_STARTED);
+  Status=PianoProductObserveSmem();BootLogStage("SMEM",Status);
   if(PianoProductSmemRetained())FailStop(Status);
   // Bind the exact native Env implementation before calling its audited ABI.
   // This is a DDR/preloaded inventory, never permission to map or allocate RAM.
@@ -134,12 +193,14 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
           (UINT32)I,mRamInventory.Preloaded[I].Base,mRamInventory.Preloaded[I].Size,mRamInventory.Preloaded[I].RawType));
     }
   }
-  Status=PianoStartKeys(Fdt);mInputStarted=Status==EFI_SUCCESS;
+  BootLogStage("INPUT",EFI_NOT_STARTED);
+  Status=PianoStartKeys(Fdt);mInputStarted=Status==EFI_SUCCESS;BootLogStage("INPUT",Status);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_INPUT_START status=%r started=%u\n",Status,mInputStarted));
   if(Status!=EFI_SUCCESS)FailStop(Status);
   // The actual probe owns the clock/GDSC bring-up before the persistent UFS
   // action. Product never relies on an inherited ABL clock being sufficient.
-  PianoUfsSetProbeAction(InitUfs);PianoProbeUfs(Fdt);
+  BootLogStage("UFS",EFI_NOT_STARTED);
+  PianoUfsSetProbeAction(InitUfs);PianoProbeUfs(Fdt);BootLogStage("UFS",mUfsStatus);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_UFS_START attempted=%u status=%r started=%u original_media_readonly=1\n",mUfsAttempted,mUfsStatus,mUfsStarted));
   if(!mUfsAttempted || !mUfsStarted)FailStop(mUfsStatus);
   PIANO_UFS_WINDOW_IO ProductStorageIo={0};
@@ -165,9 +226,11 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   if(!mCounterFrequency || mCounterStart==mCounterEnd)FailStop(EFI_UNSUPPORTED);
   PIANO_DWC3_SERVICE_CONFIG UsbConfig={.Context=NULL,.NowUs=NowUs,.Storage=Storage,
     .BeforeRamlog=PianoProductSmemReemit};
-  Status=PianoUsbControllerServiceStart(Fdt,&UsbConfig);
+  BootLogStage("USB",EFI_NOT_STARTED);
+  Status=PianoUsbControllerServiceStart(Fdt,&UsbConfig);BootLogStage("USB",Status);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_USB_START status=%r resident_service=1 foreground_loop=0\n",Status));
   if(Status!=EFI_SUCCESS)FailStop(Status);
+  BootLogStage("MENU",EFI_NOT_STARTED);
   Status=PianoBootPolicyInitialize(Image);if(Status!=EFI_SUCCESS)FailStop(Status);
   EFI_GUID Guid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime=NULL;
   Status=gBS->LocateProtocol(&Guid,NULL,(VOID **)&Runtime);
@@ -183,7 +246,11 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
     .CheckMemory=LateMemoryUnavailable,.ValidateMemory=LateValidateMemory,.FailStop=LateFailStop};
   Status=PianoLateHandoffInitialize(&mLateHandoff,&Late);if(Status!=EFI_SUCCESS)FailStop(Status);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_LATE_EXIT provider_bound=1 phase=unarmed full_ddr_ready=0\n"));
+  Status=PianoBootPolicyStartupWindow(3000);
+  if(Status!=EFI_SUCCESS)FailStop(Status);
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_BOOT_WINDOW status=%r budget_ms=3000 f12_setup=1 esc_boot_menu=1 usb_pumped=1\n",Status));
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_CORE_READY one_shared_core=1 auto_simpleinit=1 f12_setup=1 usb_background=1\n"));
+  BootLogStage("MENU",EFI_SUCCESS);
   for(;;) {
     Status=PianoBootPolicyRun();
     if(Status==EFI_END_OF_FILE) {

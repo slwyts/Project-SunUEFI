@@ -6,6 +6,9 @@
   LIBRARY_CLASS = DeviceBootManagerLib|DXE_DRIVER
 [Sources]
   ProductBootManagerLib.c
+  ProductSplash.c
+  ProductSplash.h
+  ProductSplashAssets.h
 [Packages]
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
@@ -15,9 +18,10 @@
   UefiBootServicesTableLib
   DebugLib
   BaseLib
-  BootLogoLib
   DxeServicesLib
   MemoryAllocationLib
   PianoProductPumpLib
 [Guids]
   gEfiEventExitBootServicesGuid
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid

@@ -18,6 +18,10 @@ typedef struct {
 // Shared core starts real USB/UFS/input first; this policy does not create a
 // transport, stop it on UI return, or turn an unbound worker into USB-ready.
 EFI_STATUS PianoBootPolicyInitialize(EFI_HANDLE Parent);
+// One APP-only startup choice window (1..3000ms). Keeps the shared service
+// pump alive; F12 keeps its normal path, Esc requests SimpleInit only here.
+// It only latches an action; the existing Run performs actual dispatch later.
+EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds);
 // Auto SimpleInit from Root's actual APPv1 validated payload registry. Pending
 // actions dispatch only at APP after the preceding child cooperatively exits.
 EFI_STATUS PianoBootPolicyRun(VOID);
