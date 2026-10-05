@@ -36,3 +36,41 @@ EFI_STATUS PianoSmmuIndependentOpen(PIANO_SMMU_INDEPENDENT *,PIANO_SMMU_INDEPEND
   CONST PIANO_SMMU_INDEPENDENT_OPS *,PIANO_IO_PAGE_TABLE *,PIANO_DMA_BUFFER *);
 EFI_STATUS PianoSmmuIndependentSync(PIANO_SMMU_INDEPENDENT *);
 EFI_STATUS PianoSmmuIndependentClose(PIANO_SMMU_INDEPENDENT *);
+
+#define PIANO_SMMU_PROBE_MAX_READS 4096U
+#define PIANO_SMMU_PROBE_MAX_US 1000000U
+typedef enum {PianoProbeRoutesOnly=0,PianoProbeCandidates=1} PIANO_SMMU_PROBE_PHASE;
+typedef enum {
+  PianoProbeObservationOnly=0,PianoProbeMasterBusy,PianoProbeTargetSidExists,
+  PianoProbeAllCbBusy,PianoProbeReadFailed,PianoProbeGlobalGeometry,
+  PianoProbeNoRouteSlot,PianoProbePeerVisible,PianoProbeActlrUnknown,
+  PianoProbeBudgetExceeded,PianoProbeTopologyChanged,PianoProbeInvalidArguments
+} PIANO_SMMU_PROBE_REASON;
+typedef struct {
+  PIANO_SMMU_PROBE_PHASE Phase;
+  UINT32 FirstBank,BankCount,MaxReads,MaxUs;
+} PIANO_SMMU_PROBE_CONFIG;
+typedef struct {
+  UINT32 Revision;
+  EFI_STATUS ReadStatus;
+  PIANO_SMMU_PROBE_REASON Reason;
+  PIANO_SMMU_PROBE_PHASE RequestedPhase;
+  BOOLEAN IdleObserved,RoutesObserved,CandidatesObserved,RecheckObserved;
+  // Observation cannot grant an owner or DMA-ready result.
+  BOOLEAN OwnershipGranted,DmaReady;
+  UINT16 Sid,FirstInvalidSlot;
+  UINT32 ReadAttempts,BanksRead,CandidateCount,TargetMatches,PeerRoutes;
+  UINT32 FirstBank,BankCount;
+  UINTN FailureAddress;
+  UINT64 ElapsedUs;
+  BOOLEAN Referenced[83],CandidateRead[83],Candidate[83];
+  PIANO_SMMU_INDEPENDENT_SNAPSHOT Initial,Recheck;
+} PIANO_SMMU_PROBE_REPORT;
+// Default Config=NULL reads idle+known routes only, no context banks. Explicit
+// candidate range is required to read CBs. Only Read32/Fence/NowUs are needed;
+// Write32/Clean/Pause are never called. Report is caller-supplied (large), so
+// the implementation uses small stack state and no allocation. Return/status
+// describe read completion/errors; Reason describes refusal/unknown evidence.
+EFI_STATUS PianoSmmuIndependentReadOnlyProbe(CONST PIANO_SMMU_INDEPENDENT_OPS *,
+  PIANO_SMMU_INDEPENDENT_MASTER,CONST PIANO_SMMU_PROBE_CONFIG *,PIANO_SMMU_PROBE_REPORT *);
+CONST CHAR8 *PianoSmmuIndependentProbeReasonText(PIANO_SMMU_PROBE_REASON);

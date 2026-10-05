@@ -3,7 +3,8 @@
 This is an offline, injected-register source prototype. Root preserves the
 frozen source separately in bootprofiles/smmu-independent/, outside product
 inputs; no product driver or physical register operations are bound.
-Run `bash build/smmu-independent-prototype/test.sh` for 12 injected-register
+Run `python3 -m unittest discover -s tests -p test_smmu_independent.py -v`
+for the original12 register cases,14 readonly-probe cases, table-bound refusal
 cases, ASan/UBSan and strict AArch64 source compilation. No device was accessed.
 The product still uses the native HAL backend.
 
@@ -41,3 +42,36 @@ integration and early-NV DXE ordering remain to be implemented and tested.
 Exact baseline route restoration also differs from native zero-row detach;
 the retired-peer proof consumer must be adapted deliberately during integration.
 Do not report early DMA or HAL-free product readiness from these host results.
+
+
+## Readonly eligibility API
+
+`PianoSmmuIndependentReadOnlyProbe` needs only status-returning Read32, CPU Fence
+and monotonic NowUs callbacks. It never invokes Write32, Clean or Pause, changes
+the master, allocates a buffer, acquires an owner or enables a bank. A NULL config
+uses routes-only with1024 reads/100000us budgets; it does not access any CB.
+An explicit candidate config names FirstBank/BankCount and bounds every read.
+Referenced peer banks are skipped, not treated as takeover candidates. The
+127 routing rows and selected candidate fields are re-read to detect change.
+
+The function return and Report.ReadStatus describe read completion/failure.
+Successful reads can still carry master-busy, target-SID-exists,
+all-scanned-CBs-busy, global-geometry/state, no-route-slot, peer-visible,
+ACTLR/TBU/secure-ownership-unverified or topology-changed refusal reasons.
+Read errors include the exact failure address. Count/time exhaustion reports
+a bounded budget failure. OwnershipGranted and DmaReady always remain false.
+A structurally unreferenced M=0 candidate is observation, not ownership proof.
+
+Caller supplies the large report storage. AArch64 -O2 stack-usage output reports
+272 bytes for ReadOnlyProbe,176 for BankOp,80 for IdleOp,48 for RoutesOp and48
+for ProbeRead; the largest internal call path totals496 bytes before injected
+callback frames. Read32 itself must be bounded/recoverable: time checks cannot
+preempt a CPU stuck inside unsafe bare MMIO. No live read adapter is bound.
+
+Bank snapshots use an explicit pointer to each actual struct member; arithmetic
+across adjacent struct fields was undefined and has been removed. Writable
+prototype Open now checks the existing shared SDMA signature, Device/CPU
+alignment, exact40KiB PT shape, reserved WB/ToDevice state, allocation containment,
+36bit range without overflow and canonical shared root/L2 descriptors. It does
+not allocate or reimplement DMA. These checks and injected-read tests do not
+prove physical table translation or safe early bank access.
