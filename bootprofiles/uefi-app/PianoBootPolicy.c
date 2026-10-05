@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #include "PianoBootPolicy.h"
-#include "../product-pump/Mu_Basecore/MdePkg/Include/Protocol/PianoProductIdle.h"
+#include <Protocol/PianoProductIdle.h>
 #include "PianoProductPayload.h"
 #include <Protocol/SimpleTextInEx.h>
 #include <Protocol/HiiDatabase.h>
