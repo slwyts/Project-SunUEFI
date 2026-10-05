@@ -48,7 +48,7 @@ sleep恢复的第一IRQ在参考驱动中只清suspended，第二IRQ才携带连
 
 本机Mu-Silicium commit `66e7bd1e7bcb757d4b28629bd6409d7209d3b242`包含PI标准I2cMaster/I2cIo headers。标准master GUID为cd72881f-45b5-4feb-98c8-313da8117462；IO GUID为b60a3e6b-18c4-46e5-a29a-c9a10665a28e。`EFI_I2C_REQUEST_PACKET`的operation之间是repeated START，末尾STOP。新`PianoPogoI2c`只构造write1(register4c)+read68的2-operation请求，没有LocateProtocol/StartRequest或任何硬件调用；异步请求要求buffer保持有效到completion，不能把stack packet交给异步服务后返回。
 
-`Binaries/piano/Bringup/I2C/I2C.efi`为61440bytes、SHA `7edc3c4cc51825530f53e0bd616b046abad66c740b34eafad38e14a25fcf57b0`。binary strings表明有QUP FIFO路径、GPI不支持的分支，以及DTBExtn/HWIO/clock/devcfg依赖；它需要QUP/SE的core_base_addr/common_base/se_index/se_clock等native配置。文件存在不能证明当前pianoProbe已安装此protocol，更不能证明它就是PI ABI。其OEM protocol GUID、函数表/参数布局、QUP1_SE6枚举与native配置仍unknown，不调用猜测接口。
+`Binaries/piano/Bringup/I2C/I2C.efi`为61440bytes、SHA `7edc3c4cc51825530f53e0bd616b046abad66c740b34eafad38e14a25fcf57b0`。binary strings表明有QUP FIFO路径、GPI不支持的分支，以及DTBExtn/HWIO/clock/devcfg依赖；它需要QUP/SE的core_base_addr/common_base/se_index/se_clock等native配置。文件存在不能证明当前pianoProbe已安装此protocol。后续[stage2 ABI审核](pogo-keyboard-native-i2c.md)已从安装指令确认OEM GUID/vtable/RVA与PI不同；完整callable参数语义、QUP1_SE6枚举、native配置和硬件读取仍unknown，不调用猜测接口。
 
 若现有native接口不能证明可用，独立GENI FIFO/PIO方案可以参考固定kernel `i2c-qcom-geni.c`/`geni-se.h`，绕开GPI DMA/IOMMU数据通路。但仍须先确认I2C SE firmware protocol、FIFO enable/depth、source clock、GPIO mux、bus idle。SE offsets包括FW revision68、M_CMD600、IRQ610/clear618、TX700/RX780、FIFO status800/804；不能据这些offset就自运行MMIO。未来PIO所有wait必须有总deadline/iteration cap，NACK/abort/cancel失败必须返回并保留recovery，禁止更换SE microcode或无限bus-reset。本轮未执行这些动作。
 
