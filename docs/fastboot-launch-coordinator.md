@@ -37,3 +37,5 @@ bash tools/test_fastboot_launch.sh
 ASan+UBSan/leak通过；PianoFastbootLaunch.c与Boot.c的AArch64 freestanding -Werror syntax通过。脚本另运行root的actualDownloadBlob adapter tests。上述是纯host证据，不是物理PE执行、全shutdown完成、有效高DRAM映射或1GiB传输验收。
 
 下一步root可让USB boot请求在IN ACK结束后转移blob到持久adapter，绑定可信live BS检查/typed all-owner shutdown/Runtime FailStop与budget，再单独运行可返回的小AA64 EFI app。原版boot是否成功仍以真实日志/画面/返回/回归验收；不要现在把这些callback接口宣称已接线。
+
+联合actual-source测试另通过：`python3 tests/test_fastboot_launch_integration.py -v`。四个生产翻译单元（Fastboot、DownloadBlob、Boot parser、Launch）分别编译链接，使用实际命令层完成valid AA64 PE下载；ShutdownAll调用真实FastbootReset，确认borrowed source没有提前zero/free。四个场景覆盖返回应用成功、Load失败后完整Restore、typed release error和warning后保留及禁止重入。该fixture的EFI函数仍是host mock，未执行ARM64指令或操作设备。
