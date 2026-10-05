@@ -60,7 +60,7 @@ typedef struct {
   UINT8 Metadata[PIANO_SMEM_TRACE_MAX];
 } PIANO_SMEM_RAM_WORK;
 
-// Pure parser. Input/output must not alias. Only RAM402 versions 1/2 accepted;
+// Pure parser. Input/output must not alias. RAM402 exact versions1/2/3 accepted;
 // raw SDRAM claims are preserved, never retagged or published as usable memory.
 EFI_STATUS PianoSmemRamParse(CONST VOID *Payload, UINTN Bytes,
   PIANO_SMEM_RAM_REPORT *Report);

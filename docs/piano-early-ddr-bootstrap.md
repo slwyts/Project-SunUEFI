@@ -29,11 +29,12 @@ The actual payload parser must validate both magic words
 | Supported observed format | Entry stride | Relevant fields |
 | --- | ---: | --- |
 | v1 | 64 | Base64 +0x10, Size64 +0x18, Category32 +0x24, RawType32 +0x2C |
-| v2 | 72 | Same fields, AvailableLength64 +0x40 |
+| v2/v3 | 72 | Same fields, AvailableLength64 +0x40 |
 
 Category14 denotes SDRAM; type1 is the available-bank path. The native preloaded
-path uses types5..8 for v1 and5..9 for v2. No actual live payload version has been
-obtained, so unsupported versions must remain unsupported. The native
+path uses types5..8 for v1 and5..9 for v2/v3. Test92 observed actual version3;
+the remaining real payload contents still need diagnostic capture. Unsupported
+future versions remain unsupported. The native
 1.5GiB fallback `0x80000000..0xE0000000` is not full-DDR evidence.
 
 The [official Linux SMEM implementation](https://github.com/torvalds/linux/blob/v6.16/drivers/soc/qcom/smem.c)
@@ -132,3 +133,45 @@ split. Android's current allocations do not describe firmware owners in a
 future cold UEFI boot. Early SMEM/preloaded records and a complete current-owner
 authority remain required before the typed contract can publish additional DDR
 or the firmware can advertise an actual 1 GiB download buffer.
+
+## Test92 actual v3 and the exact native parser branch
+
+Test92 produced actual cold evidence: SMEM major12 (`0xC0000`), RAM item402
+version3, address`0x81D06AD0`,2328 bytes, CRC32`0x7C271814`, repeated metadata
+and payload equal, stable successful cookie`0x81EFF350`,1762 word loads and
+zero recovered aborts. Its parser rejection was our former v1/v2-only gate,
+not missing physical SMEM access. These observations remain distinct from
+DDR allocation/ownership authority.
+
+The byte-identical captured EnvDxeEnhanced SHA
+`593d9e766c0070e01d4c6684b7bb8050f32f77ea3ca300c6a110ad3903de17e3`
+provides the exact layout: at8b54..8b80 only version1 selects the64-byte path.
+Other versions enter8b90;8ba8 sets cursor=payload+0x30,8bc0 reads type at
+cursor+0x14 (=entry+0x2c),8bd0 reads category at+0xc (=entry+0x24),8bc4 reads
+base at-8 (=entry+0x10),8be8 reads available length at+0x28 (=entry+0x40),
+8c6c reads preloaded size atcursor (=entry+0x18), and8ccc advances0x48 bytes.
+This proves the72-byte v3 branch independently of2328's arithmetic. The new
+parser admits exact versions1/2/3, still rejects4/future versions, and keeps
+every existing range/count/category/type/coherence gate. Product's frozen-HOB
+validator accepts the same exact v3 ABI. No fallback or ready bit is added.
+
+The next product also logs the coherent saved RAM402 header and full bounded
+raw payload in24-byte rows, even when a semantic type/range check refuses it.
+No second physical read or RAM scan is used. This permits exact reconstruction
+of remaining real bank/preloaded data from retained logs without guessing.
+
+`PianoSmemDescriptorCollect` observes native `SIII` only when the stable cookie
+falls entirely inside the existing fixedSMEM window. It parses the actual
+20-byte header and bounded native TLV walk, at most64 TLVs/2KiB, compares two
+complete snapshots, reports raw64-byte prefix, base/size/items/TLV/host tag,
+CRC and fixed-window agreement. Unknown unaligned/oversized encodings remain
+explicit failures. Neither its advertised base nor its size grants external
+address permission. The SEC INF now includes the real descriptor implementation.
+Raw payload/SIII diagnostics are appended to the persistent cold RAM log;
+the existing early HOB version/CRC remains unchanged.
+
+Actual-source tests now cover58 RAM parser cases,44 cold SEC cases and12 fixed
+descriptor cases; a separate check hashes and disassembles the exact native
+v3 branch. Root still needs the next actual payload/descriptor and current-owner
+facts before composing/publishing high DDR. BootShim source and memory-map
+publication have not changed in this v3 repair.

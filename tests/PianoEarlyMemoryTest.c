@@ -68,7 +68,8 @@ int main(void){
   assert(mReport.LastFault.Far==PIANO_SMEM_COOKIE_LOW&&mReport.LastFault.Elr==0x1100);++cases;
   reset_cold();change_cpu=TRUE;result(EFI_DEVICE_ERROR);assert(!mReport.Smem.Parsed);++cases;
   reset_cold();p32(smem_bytes+0x3000,0);result(EFI_COMPROMISED_DATA);++cases;
-  reset_cold();p32(smem_bytes+0x3008,3);result(EFI_UNSUPPORTED);++cases;
+  reset_cold();p32(smem_bytes+0x3008,3);result(EFI_SUCCESS);assert(mReport.Smem.RamVersion==3);++cases;
+  reset_cold();p32(smem_bytes+0x3008,4);result(EFI_UNSUPPORTED);++cases;
   reset_cold();mReport.Attempted=TRUE;mReport.EntrySctlr=cpu_sctlr;mReport.EntryVbar=cpu_vbar;
   mReport.EntryDaif=cpu_daif;mStart=counter;mFrequency=frequency;
   UINT32 output[2]={0xa5a5a5a5,0xa5a5a5a5};failed_pa=PIANO_SMEM_BASE+4;

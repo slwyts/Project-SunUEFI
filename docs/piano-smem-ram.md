@@ -72,7 +72,7 @@ not treated as a usable fallback.
 
 Native Env disassembly identifies magic words `0x9DA5E0A8`, `0xAF9EC4E2`,
 payload version at `+8`, count at `+0x10`, and entries at `+0x18`. Only actual
-version 1 (64-byte stride) and version 2 (72-byte stride) are accepted, with
+version 1 (64-byte stride) and versions 2/3 (72-byte stride) are accepted, with
 1..64 entries and at most 8 KiB of payload. Each SDRAM entry (category 14) has
 Base at `+0x10`, RawSize at `+0x18`, RawType at `+0x2C`; version 2 also has
 AvailableLength at `+0x40`. Version 1's reported AvailableLength is its raw size.

@@ -18,7 +18,7 @@ SEC_FILES={
     'Sec.h':'614b0416843e46abd57e7c9ba72b8ea3a9ded4802e3e07d474c6ea2583a88784',
 }
 EARLY_FILES=('PianoEarlyMemory.c','PianoEarlyMemory.h','PianoSecRead32.S',
-             'PianoSmemRam.c','PianoSmemRam.h')
+             'PianoSmemRam.c','PianoSmemRam.h','PianoSmemDescriptor.c','PianoSmemDescriptor.h')
 
 
 def sha(path):
@@ -30,7 +30,7 @@ def sec_inf(text):
         raise ValueError('SEC INF drift')
     text=text.replace('BASE_NAME                      = Sec','BASE_NAME                      = PianoProductSec')
     text=text.replace('9AFFB503-E643-4141-8B90-17E8588B1D35','892BCA3B-55ED-4F2B-8750-534543504941')
-    text=text.replace('  Sec.c','  Sec.c\n  PianoEarlyMemory.c\n  PianoSmemRam.c',1)
+    text=text.replace('  Sec.c','  Sec.c\n  PianoEarlyMemory.c\n  PianoSmemRam.c\n  PianoSmemDescriptor.c',1)
     return text.replace('  AArch64/ArchSec.c','  PianoSecRead32.S\n  AArch64/ArchSec.c',1)
 
 

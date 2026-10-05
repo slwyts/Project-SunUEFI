@@ -80,7 +80,8 @@ static void parsed(UINT32 Version){
 int main(void){
   UINTN Bytes=payload(1);assert(PianoSmemRamParse(Raw,Bytes,&Report)==EFI_SUCCESS);parsed(1);++Cases;
   Bytes=payload(2);assert(PianoSmemRamParse(Raw,Bytes,&Report)==EFI_SUCCESS);parsed(2);++Cases;
-  p32(Raw+8,3);assert(PianoSmemRamParse(Raw,Bytes,&Report)==EFI_UNSUPPORTED && Report.Reason==PianoSmemReasonRamVersion && !Report.Parsed);++Cases;
+  p32(Raw+8,3);assert(PianoSmemRamParse(Raw,Bytes,&Report)==EFI_SUCCESS&&Report.RamVersion==3);parsed(3);++Cases;
+  p32(Raw+8,4);assert(PianoSmemRamParse(Raw,Bytes,&Report)==EFI_UNSUPPORTED && Report.Reason==PianoSmemReasonRamVersion && !Report.Parsed);++Cases;
   Bytes=payload(1);p32(Raw,0);assert(PianoSmemRamParse(Raw,Bytes,&Report)==EFI_COMPROMISED_DATA);++Cases;
   Bytes=payload(1);p32(Raw+16,65);assert(PianoSmemRamParse(Raw,Bytes,&Report)==EFI_BAD_BUFFER_SIZE);++Cases;
   p32(Raw+16,0);assert(PianoSmemRamParse(Raw,Bytes,&Report)==EFI_BAD_BUFFER_SIZE);++Cases;
@@ -135,6 +136,6 @@ int main(void){
   legacy(1);Reader.MaxReadCalls=0;assert(PianoSmemRamCollect(&Reader,&Work,&Report)==EFI_INVALID_PARAMETER && !Calls);++Cases;
   legacy(1);Work.Busy=TRUE;assert(PianoSmemRamCollect(&Reader,&Work,&Report)==EFI_ALREADY_STARTED && !Calls);++Cases;
   legacy(1);assert(PianoSmemRamCollect(&Reader,&Work,(PIANO_SMEM_RAM_REPORT *)(void *)Work.Payload)==EFI_INVALID_PARAMETER && !Calls);++Cases;
-  printf("Actual SMEM RAM402: %llu cases; strict v1/v2, legacy11/global12 cached+uncached, fixed read bounds/budgets, exact repeated metadata/payload, no allocation/write/native/fallback/memory authority.\n",(unsigned long long)Cases);
+  printf("Actual SMEM RAM402: %llu cases; strict v1/v2/v3, legacy11/global12 cached+uncached, fixed read bounds/budgets, exact repeated metadata/payload, no allocation/write/native/fallback/memory authority.\n",(unsigned long long)Cases);
   return 0;
 }

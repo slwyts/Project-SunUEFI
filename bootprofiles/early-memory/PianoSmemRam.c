@@ -40,7 +40,10 @@ static EFI_STATUS Parse(CONST UINT8 *P, UINTN Bytes, PIANO_SMEM_RAM_REPORT *R) {
   if(Bytes<24 || Bytes>PIANO_SMEM_PAYLOAD_MAX) return Fail(R,EFI_BAD_BUFFER_SIZE,PianoSmemReasonBounds);
   if(U32(P)!=0x9da5e0a8U || U32(P+4)!=0xaf9ec4e2U) return Fail(R,EFI_COMPROMISED_DATA,PianoSmemReasonRamMagic);
   Version=U32(P+8); R->RamVersion=Version;
-  if(Version!=1 && Version!=2) return Fail(R,EFI_UNSUPPORTED,PianoSmemReasonRamVersion);
+  // Native EnvDxeEnhanced8b54 selects64-byte entries only for v1;8b90..8cd4
+  // consumes72-byte entries for non-v1. Test92 observed v3 on this board.
+  // Admit exact audited v1/v2/v3, never future versions by >=2 inference.
+  if(Version!=1 && Version!=2 && Version!=3) return Fail(R,EFI_UNSUPPORTED,PianoSmemReasonRamVersion);
   Count=U32(P+16); R->RawEntryCount=Count; Stride=Version==1?64:72;
   if(!Count || Count>PIANO_SMEM_RAM_MAX || Count>(Bytes-24)/Stride) return Fail(R,EFI_BAD_BUFFER_SIZE,PianoSmemReasonRamCount);
   for(I=0;I<Count;++I) {

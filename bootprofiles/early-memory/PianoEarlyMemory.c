@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Real SEC observer: no BS/DXE service, target write, MMU or DDR publication.
 #include "PianoEarlyMemory.h"
+#include "PianoSmemDescriptor.h"
 #include <PiPei.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/BaseLib.h>
@@ -14,6 +15,8 @@ STATIC PIANO_SMEM_RAM_WORK mWork;
 STATIC PIANO_EARLY_MEMORY_REPORT mReport;
 STATIC UINT32 mScratch[PIANO_SMEM_READ_MAX/4];
 STATIC UINT64 mStart,mFrequency;
+STATIC PIANO_SMEM_DESCRIPTOR_WORK mDescriptorWork;
+STATIC PIANO_SMEM_DESCRIPTOR_REPORT mDescriptor;
 STATIC EFI_GUID mHobGuid=PIANO_EARLY_MEMORY_HOB_GUID;
 
 STATIC EFI_STATUS CpuState(UINT64 *El,UINT64 *Sctlr,UINT64 *Vbar,UINT64 *Daif,
@@ -96,6 +99,11 @@ EFI_STATUS PianoEarlyMemoryObserveCold(VOID){
     mReport.ColdStateVerified=TRUE;
     CONST PIANO_SMEM_READER Reader={&mReport,TryRead,PIANO_SMEM_CALLS_MAX,PIANO_SMEM_TOTAL_MAX};
     S=PianoSmemRamCollect(&Reader,&mWork,&mReport.Smem);
+    // v3 layout/raw data and native SIII description are observations only.
+    // A stable cookie may select a descriptor only inside the fixed window.
+    if(mReport.Smem.CookieStatus==EFI_SUCCESS&&mReport.Smem.CookieRepeatedEqual)
+      PianoSmemDescriptorCollect(&Reader,mReport.Smem.CookieValue,&mDescriptorWork,&mDescriptor);
+    else{ZeroMem(&mDescriptor,sizeof(mDescriptor));mDescriptor.Status=EFI_NOT_READY;}
   }
   mReport.Status=S;mReport.Finished=TRUE;
   DEBUG((DEBUG_WARN,"SUNUEFI_EARLY_SMEM status=%r cold=%u loads=%u recovered=%u smem=%x ram=%u banks=%u preloaded=%u cookie=%lx ownership=0 high_ddr=0\n",
@@ -116,6 +124,21 @@ EFI_STATUS PianoEarlyMemoryObserveCold(VOID){
     DEBUG((DEBUG_WARN,"SUNUEFI_EARLY_SMEM_PRELOADED index=%u base=%lx size=%lx type=%u\n",
       E->SourceIndex,E->Base,E->RawSize,E->RawType));
   }
+  if(mReport.Smem.RepeatedPayloadEqual&&mReport.Smem.PayloadBytes>=24){
+    UINT32 Header[6];CopyMem(Header,mWork.Payload[0],sizeof(Header));
+    DEBUG((DEBUG_WARN,"SUNUEFI_EARLY_RAM402_HEADER words=%08x,%08x,%08x,%08x,%08x,%08x\n",Header[0],Header[1],Header[2],Header[3],Header[4],Header[5]));
+    // Entire bounded payload, independent of semantic parser success. No
+    // scanning or second target read: logs the coherent saved snapshot.
+    for(UINT32 At=24;At<mReport.Smem.PayloadBytes;At+=24){
+      UINT32 V[6]={0};UINT32 N=MIN(24U,mReport.Smem.PayloadBytes-At);CopyMem(V,mWork.Payload[0]+At,N);
+      DEBUG((DEBUG_WARN,"SUNUEFI_EARLY_RAM402_RAW off=%x bytes=%u words=%08x,%08x,%08x,%08x,%08x,%08x\n",At,N,V[0],V[1],V[2],V[3],V[4],V[5]));
+    }
+  }
+  DEBUG((DEBUG_WARN,"SUNUEFI_EARLY_SIII status=%r address=%lx base=%lx bytes=%x items=%u tlvs=%u hostlen=%u snapshot=%u crc32=%08x equal=%u window_match=%u ownership=0\n",
+    mDescriptor.Status,mDescriptor.Address,mDescriptor.SmemBase,mDescriptor.SmemBytes,mDescriptor.ItemCount,mDescriptor.TlvCount,
+    mDescriptor.HostInfoBytes,mDescriptor.SnapshotBytes,mDescriptor.Crc32,mDescriptor.RepeatedEqual,mDescriptor.RegionMatchesKnownWindow));
+  if(mDescriptor.RepeatedEqual){UINT32 V[16];CopyMem(V,mDescriptor.Prefix,sizeof(V));
+    for(UINT32 At=0;At<16;At+=4)DEBUG((DEBUG_WARN,"SUNUEFI_EARLY_SIII_RAW off=%x words=%08x,%08x,%08x,%08x\n",At*4,V[At],V[At+1],V[At+2],V[At+3]));}
   return S;
 }
 EFI_STATUS PianoEarlyMemoryPublishHob(VOID){

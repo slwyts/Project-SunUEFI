@@ -48,7 +48,7 @@ STATIC BOOLEAN EarlyValid(CONST PIANO_EARLY_MEMORY_REPORT *R){
      !EarlyBoolean(S->CookieRepeatedEqual))return FALSE;
   if(!S->Parsed)return R->Status!=EFI_SUCCESS&&S->Status!=EFI_SUCCESS&&!S->BankCount&&!S->PreloadedCount&&!S->OtherCategoryCount;
   if(R->Status!=EFI_SUCCESS||!R->ColdStateVerified||S->Status!=EFI_SUCCESS||
-     S->Reason!=PianoSmemReasonNone||(S->RamVersion!=1&&S->RamVersion!=2)||
+     S->Reason!=PianoSmemReasonNone||(S->RamVersion!=1&&S->RamVersion!=2&&S->RamVersion!=3)||
      !S->BankCount||!S->RepeatedMetadataEqual||!S->RepeatedPayloadEqual||
      S->BankCount+S->PreloadedCount+S->OtherCategoryCount!=S->RawEntryCount||
      (S->SmemVersion>>16!=11&&S->SmemVersion>>16!=12)||

@@ -43,6 +43,7 @@ class EarlyMemoryTests(unittest.TestCase):
                 '-D_PCD_VALUE_PcdCPUCorePrimaryStackSize=0x40000U']
             for include in includes:command+=['-I',str(include)]
             command +=[str(ROOT/'tests/PianoEarlyMemoryTest.c'),str(ROOT/'bootprofiles/early-memory/PianoSmemRam.c'),
+                str(ROOT/'bootprofiles/early-memory/PianoSmemDescriptor.c'),
                 str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),
                 '-Wl,--gc-sections','-o',str(exe)]
             subprocess.run(command,check=True,timeout=60)
@@ -79,7 +80,7 @@ class EarlyMemoryTests(unittest.TestCase):
             rel=subprocess.run([str(ROOT/'build/host-tools/usr/bin/llvm-objdump'),'-r',str(obj)],check=True,capture_output=True,text=True).stdout
             self.assertIn('PianoSecReadActiveState',rel)
             self.assertIn('PianoSecReadFatal',rel)
-            for name in ('PianoEarlyMemory.c','PianoSmemRam.c'):
+            for name in ('PianoEarlyMemory.c','PianoSmemRam.c','PianoSmemDescriptor.c'):
                 subprocess.run([str(clang),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar',
                     '-Wall','-Wextra','-Werror','-I',str(inc),'-I',str(inc/'AArch64'),
                     '-c',str(source/name),'-o',str(Path(directory)/(name+'.obj'))],check=True)
