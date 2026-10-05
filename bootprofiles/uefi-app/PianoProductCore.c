@@ -137,9 +137,9 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   for(;;) {
     Status=PianoBootPolicyRun();
     if(Status==EFI_END_OF_FILE) {
-      CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();
-      Status=Policy!=NULL && Policy->RequestedCoreAction==PianoUsbServiceActionReboot?
-        PianoProductOwnersRequestUiReboot(&mOwners):PianoProductOwnersObserveUsbAction(&mOwners);
+      // An acknowledged host action can arrive while a UI return is pending.
+      // Observe its real service ledger before using an older UI reason.
+      Status=PianoProductOwnersResolveReturnedAction(&mOwners);
       if(Status!=EFI_SUCCESS)FailStop(Status);
       Status=PianoProductOwnersRetire(&mOwners);
       if(Status!=EFI_SUCCESS || !mOwners.Report.Clean)FailStop(Status);

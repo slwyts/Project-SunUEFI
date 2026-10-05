@@ -71,8 +71,13 @@ EFI_STATUS PianoProductOwnersInitialize(PIANO_PRODUCT_OWNERS *Owners,CONST PIANO
 // Observes actual USB action and requests cooperative RETURN_CORE. No cleanup.
 EFI_STATUS PianoProductOwnersObserveUsbAction(PIANO_PRODUCT_OWNERS *Owners);
 // APP-only after a cooperative UI return. Requires the actual BootPolicy
-// report's UI reboot latch; it does not synthesize a USB command or ACK.
+// report's exact UI action latch; it does not synthesize a USB command or ACK.
+EFI_STATUS PianoProductOwnersRequestUiAction(PIANO_PRODUCT_OWNERS *Owners,PIANO_USB_SERVICE_ACTION Action);
+// Compatibility entry for the existing cold reboot UI path.
 EFI_STATUS PianoProductOwnersRequestUiReboot(PIANO_PRODUCT_OWNERS *Owners);
+// After child cleanup, real acknowledged USB requests take precedence over
+// an older UI latch. Never chooses from a caller-supplied status/permission.
+EFI_STATUS PianoProductOwnersResolveReturnedAction(PIANO_PRODUCT_OWNERS *Owners);
 // Caller invokes after the UI returns. No ResetSystem, LoadImage or StartImage.
 // On success the typed report alone permits the selected deferred action.
 // Boot tokens, including partial/error tokens, stay owned by this ledger.

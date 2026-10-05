@@ -221,15 +221,21 @@ hook(SI+'src/boot/bootdef.c', '\tgui_splash_set_text(true,_("Loading UEFI boot o
      '\tif(PianoProductRebootManaged()){\n'
      '\t\tboot_config entries[]={\n'
      '\t\t\t{.mode=BOOT_EXIT,.ident="piano-setup",.desc="固件设置（BIOS）",.save=false,.replace=true,.show=true,.enabled=true},\n'
-     '\t\t\t{.mode=BOOT_EXIT,.ident="piano-shell",.desc="进入 UEFI Shell",.save=false,.replace=true,.show=true,.enabled=true}\n'
+     '\t\t\t{.mode=BOOT_EXIT,.ident="piano-shell",.desc="进入 UEFI Shell",.save=false,.replace=true,.show=true,.enabled=true},\n'
+     '\t\t\t{.mode=BOOT_EXIT,.ident="continue",.desc="返回 Android（重启）",.save=false,.replace=true,.show=true,.enabled=true}\n'
      '\t\t};\n'
      '\t\tfor(size_t n=0;n<sizeof(entries)/sizeof(entries[0]);n++)boot_create_config(&entries[n],NULL);\n'
      '\t}\n\tgui_splash_set_text(true,_("Loading UEFI boot options..."));')
 hook(SI+'src/gui/interface/core/bootmenu.c', '#include"gui/tools.h"\n',
-     '#include"gui/tools.h"\n#ifdef ENABLE_UEFI\n#include<Library/PianoProductPumpLib.h>\n#endif\n')
+     '#include"gui/tools.h"\n#include"gui/msgbox.h"\n#ifdef ENABLE_UEFI\n#include<Library/PianoProductPumpLib.h>\n#endif\n')
 hook(SI+'src/gui/interface/core/bootmenu.c', '\t#ifdef ENABLE_UEFI\n\tif(bi->cfg.mode==BOOT_SIMPLE_INIT){',
      '\t#ifdef ENABLE_UEFI\n'
      '\tif(PianoProductRebootManaged()){\n'
+     '\t\tif(strcmp(bi->cfg.ident,"continue")==0){\n'
+     '\t\t\tEFI_STATUS status=PianoProductRequestContinue();\n'
+     '\t\t\tif(status==EFI_SUCCESS)gui_run_and_exit(NULL);\n'
+     '\t\t\telse msgbox_alert("未能返回 Android，请稍后重试。");\n'
+     '\t\t\treturn;\n\t\t}\n'
      '\t\tUINT32 action=strcmp(bi->cfg.ident,"piano-setup")==0?PIANO_PRODUCT_ACTION_SETUP:\n'
      '\t\t\tstrcmp(bi->cfg.ident,"piano-shell")==0?PIANO_PRODUCT_ACTION_SHELL:PIANO_PRODUCT_ACTION_NONE;\n'
      '\t\tif(action!=PIANO_PRODUCT_ACTION_NONE){\n'
@@ -266,6 +272,18 @@ hook(RESET_LIB+'Reset.c', '  if (ShellCommandLineGetFlag (Package, L"-fwui")) {'
 # Same-current requests are filtered by the real provider. Every outstanding
 # transition is therefore an exit request for any active UI, including dialogs
 # embedded in Shell, where a compile-time "current=Setup" guess would be wrong.
+MENU_MIGRATIONS=[]
+for menu_path,menu_old,menu_new in HOOKS:
+    prior=menu_new
+    if menu_path==SI+'src/boot/bootdef.c' and '.ident="continue"'in prior:
+        prior=prior.replace(',\n\t\t\t{.mode=BOOT_EXIT,.ident="continue",.desc="返回 Android（重启）",.save=false,.replace=true,.show=true,.enabled=true}', '')
+    if menu_path==SI+'src/gui/interface/core/bootmenu.c':
+        prior=prior.replace('#include"gui/msgbox.h"\n','')
+        begin=prior.find('\t\tif(strcmp(bi->cfg.ident,"continue")==0){\n')
+        if begin>=0:
+            end=prior.index('\t\tUINT32 action=',begin)
+            prior=prior[:begin]+prior[end:]
+    if prior!=menu_new:MENU_MIGRATIONS.append((menu_path,prior,menu_new))
 PREVIOUS_HOOKS=tuple(HOOKS)
 HOOKS=[(p,o,n.replace('PianoProductReturnCoreRequested ()','PianoProductUiReturnRequested ()'))
        for p,o,n in HOOKS]
@@ -285,6 +303,9 @@ def prepare(root=ROOT, apply=False, check_pins=True):
             raw=path.read_bytes()
             newline[path]=b'\r\n' if b'\r\n' in raw else b'\n'
             desired[path]=raw.decode().replace('\r\n','\n')
+            for previous_path,previous_menu,current_menu in MENU_MIGRATIONS:
+                if previous_path==relative and desired[path].count(previous_menu)==1:
+                    desired[path]=desired[path].replace(previous_menu,current_menu,1)
             # Exact migration only from the earlier acknowledged local hooks.
             for prior_path,prior_old,previous in PREVIOUS_HOOKS:
                 current=next(candidate for p,o,candidate in HOOKS if p==prior_path and o==prior_old)

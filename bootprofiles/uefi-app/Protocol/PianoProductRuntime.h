@@ -23,6 +23,10 @@
 // Input-only request. Provider records a trusted UI reboot reason and exposes
 // RETURN_CORE (4) through GetPendingAction; consumers never observe action 5.
 #define PIANO_PRODUCT_ACTION_REQUEST_REBOOT 5U
+// Input-only typed Continue. Current parent policy returns to Android via
+// all-owner retirement+cold reboot; a future configured OS loader can resolve
+// this same action explicitly. Pending consumers still observe only 0..4.
+#define PIANO_PRODUCT_ACTION_REQUEST_CONTINUE 6U
 
 typedef struct PIANO_PRODUCT_RUNTIME_PROTOCOL PIANO_PRODUCT_RUNTIME_PROTOCOL;
 struct PIANO_PRODUCT_RUNTIME_PROTOCOL {

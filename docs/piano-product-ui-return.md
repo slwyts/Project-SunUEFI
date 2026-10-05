@@ -93,3 +93,7 @@ Android 恢复。最后仍需唯一产品镜像完成这些实机验收。
 导航动作 1/2/3 使用相同协作退出路径，保留共享 USB/UFS。provider 对当前 ActiveAction 的重复请求成功无操作，父调度器在进入应用前 Ack，因此真实未消费导航是离开当前 UI 的请求。PianoProductUiReturnRequested() 查询实际 pending；CoreWait 仅在真实 APP pump 表示不同活跃界面的 yield 时唤醒，没有跨模块的猜测 UI 缓存。
 
 Shell 实际 reset 命令在产品绑定下将 cold/default 和无数据的 -c 请求交给父核心；参数包正常释放，Shell 再清理退出。warm、shutdown、fwui 和自定义 reset data 目前返回 SHELL_UNSUPPORTED，在 fwui 写变量或任何原生 ResetSystem 前拒绝。产品请求失败返回 SHELL_DEVICE_ERROR，不降级原生 reset；Null 保留原行为。实际源码主机测试覆盖这些分支及参数包归还。
+
+## Continue 的统一请求
+
+产品Continue不是未配置的OS成功宣告。菜单文案「返回 Android（重启）」与现USB continue的已知冷重启策略一致，使用RequestContinue helper（输入动作6→输出pending4、真实reasonContinue1），经GUI正常清理、父核心和OwnerManager退休后执行。失败显示中文提示，旧diagnostic Null无该产品拦截。当前仍需要配置真正的OS boot backend才可把Continue升级为启动选定系统。

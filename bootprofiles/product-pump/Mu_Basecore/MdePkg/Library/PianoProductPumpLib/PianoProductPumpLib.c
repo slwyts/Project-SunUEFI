@@ -127,6 +127,26 @@ EFI_STATUS EFIAPI PianoProductRequestReboot(VOID) {
   // EFI_UNSUPPORTED is reserved for the Null implementation's legacy fallback.
   return Status==EFI_UNSUPPORTED?EFI_ACCESS_DENIED:Exact(Status);
 }
+EFI_STATUS EFIAPI PianoProductRequestContinue(VOID) {
+  EFI_STATUS Status=Enter();
+  if(!PianoProductPumpBootServicesAlive()){
+#ifdef __aarch64__
+    __asm__ volatile("msr daifset, #15":::"memory");
+#endif
+    CpuDeadLoop();return EFI_ABORTED;
+  }
+  if(Status!=EFI_SUCCESS)return Status==EFI_UNSUPPORTED?EFI_ACCESS_DENIED:Status;
+  Status=mRuntime->RequestAction(mRuntime,PIANO_PRODUCT_ACTION_REQUEST_CONTINUE);
+  mBusy=FALSE;
+  if(!PianoProductPumpBootServicesAlive()) {
+#ifdef __aarch64__
+    __asm__ volatile("msr daifset, #15":::"memory");
+#endif
+    CpuDeadLoop();return EFI_ABORTED;
+  }
+  // EFI_UNSUPPORTED is reserved for the Null implementation's legacy fallback.
+  return Status==EFI_UNSUPPORTED?EFI_ACCESS_DENIED:Exact(Status);
+}
 BOOLEAN EFIAPI PianoProductRebootManaged(VOID){return TRUE;}
 EFI_STATUS EFIAPI PianoProductPumpLibDestructor(EFI_HANDLE Image,EFI_SYSTEM_TABLE *SystemTable) {
   (VOID)Image;(VOID)SystemTable;

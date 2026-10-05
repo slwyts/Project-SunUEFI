@@ -96,6 +96,30 @@ int main(void) {
     must_retain();assert(Owners.Report.AllowedAction==PianoUsbServiceActionNone && (I<2?!Calls:!strcmp(Order,"PU")));++Cases;}
   fresh();initialize_action(PianoUsbServiceActionReboot);Policy.RequestedCoreAction=PianoUsbServiceActionReboot;
   assert(PianoProductOwnersRequestUiReboot(&Owners)!=EFI_SUCCESS && Owners.Report.Retained && !Calls && Owners.Report.Origin==PianoProductRequestUsb);++Cases;
+  fresh();assert(PianoProductOwnersInitialize(&Owners,&Config)==EFI_SUCCESS);
+  assert(PianoProductOwnersRequestUiAction(&Owners,PianoUsbServiceActionBoot)==EFI_UNSUPPORTED && !Calls && !Requests);
+  assert(PianoProductOwnersRequestUiAction(&Owners,PianoUsbServiceActionContinue)==EFI_NOT_READY && !Calls);
+  Policy.RequestedCoreAction=PianoUsbServiceActionContinue;
+  assert(PianoProductOwnersRequestUiReboot(&Owners)==EFI_NOT_READY && !Calls);
+  assert(PianoProductOwnersRequestUiAction(&Owners,PianoUsbServiceActionContinue)==EFI_SUCCESS && !Calls && !Requests);
+  assert(PianoProductOwnersRequestUiAction(&Owners,PianoUsbServiceActionContinue)==EFI_SUCCESS && !Calls);
+  assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS && Owners.Report.AllowedAction==PianoUsbServiceActionContinue && !strcmp(Order,"PURXApsIM") && !Owners.Report.BootActionConsumed);++Cases;
+  for(UINTN I=0;I<4;++I){fresh();assert(PianoProductOwnersInitialize(&Owners,&Config)==EFI_SUCCESS);Policy.RequestedCoreAction=PianoUsbServiceActionContinue;
+    assert(PianoProductOwnersRequestUiAction(&Owners,PianoUsbServiceActionContinue)==EFI_SUCCESS);
+    if(I==0)Policy.RequestedCoreAction=PianoUsbServiceActionReboot;
+    if(I==1){UsbState.Phase=PianoUsbServiceStopRequested;UsbState.Action=PianoUsbServiceActionReboot;}
+    if(I==2)UsbStatus=EFI_WARN_STALE_DATA;
+    if(I==3){Policy.RequestedCoreAction=PianoUsbServiceActionReboot;assert(PianoProductOwnersRequestUiAction(&Owners,PianoUsbServiceActionReboot)==EFI_COMPROMISED_DATA);}
+    must_retain();assert(Owners.Report.AllowedAction==PianoUsbServiceActionNone);++Cases;}
+  fresh();assert(PianoProductOwnersInitialize(&Owners,&Config)==EFI_SUCCESS);Policy.RequestedCoreAction=PianoUsbServiceActionContinue;
+  assert(PianoProductOwnersResolveReturnedAction(&Owners)==EFI_SUCCESS && Owners.Report.Origin==PianoProductRequestUi && Owners.Report.RequestedAction==PianoUsbServiceActionContinue);
+  assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS && Owners.Report.AllowedAction==PianoUsbServiceActionContinue);++Cases;
+  for(UINTN I=PianoUsbServiceActionContinue;I<=PianoUsbServiceActionBoot;++I){fresh();assert(PianoProductOwnersInitialize(&Owners,&Config)==EFI_SUCCESS);Policy.RequestedCoreAction=PianoUsbServiceActionContinue;
+    UsbState.Phase=PianoUsbServiceStopRequested;UsbState.Action=(PIANO_USB_SERVICE_ACTION)I;
+    assert(PianoProductOwnersResolveReturnedAction(&Owners)==EFI_SUCCESS && Owners.Report.Origin==PianoProductRequestUsb && Owners.Report.RequestedAction==I && Requests==1);
+    assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS && Owners.Report.AllowedAction==I);++Cases;}
+  fresh();assert(PianoProductOwnersInitialize(&Owners,&Config)==EFI_SUCCESS);Policy.RequestedCoreAction=PianoUsbServiceActionContinue;UsbState.Revision=0;
+  assert(PianoProductOwnersResolveReturnedAction(&Owners)==EFI_COMPROMISED_DATA && Owners.Report.Retained && !Calls);++Cases;
   printf("Actual product owners: %llu cases PASS; full registration, APP cooperative return, Policy/USB/proof/bridge/UFS/input order, strict typed fields, TPL lease, partial boot token retention, warning/EBS fail-stop, trusted UI reboot from listening USB without fabricated ACK, no reset/image execution.\n",(unsigned long long)Cases);
   return 0;
 }

@@ -54,7 +54,7 @@ STATIC EFI_STATUS EFIAPI ProviderPump(PIANO_PRODUCT_RUNTIME_PROTOCOL *P,UINT32 R
   if(Scenario==5){SignalExit();return EFI_SUCCESS;}
   Ready=TRUE;return Scenario==9?EFI_WARN_STALE_DATA:Scenario==35?EFI_ABORTED:EFI_SUCCESS;
 }
-STATIC EFI_STATUS EFIAPI Request(PIANO_PRODUCT_RUNTIME_PROTOCOL *P,UINT32 Action){assert(!Exited&&P==&Protocol&&(Action==PIANO_PRODUCT_ACTION_REQUEST_REBOOT||(Action>=1&&Action<=3)));Requests++;if(Scenario==25||Scenario==32)return EFI_WARN_STALE_DATA;if(Scenario==26||Scenario==37)SignalExit();if(Scenario==29||Scenario==33)return EFI_UNSUPPORTED;return EFI_SUCCESS;}
+STATIC EFI_STATUS EFIAPI Request(PIANO_PRODUCT_RUNTIME_PROTOCOL *P,UINT32 Action){assert(!Exited&&P==&Protocol&&(Action==PIANO_PRODUCT_ACTION_REQUEST_REBOOT||Action==PIANO_PRODUCT_ACTION_REQUEST_CONTINUE||(Action>=1&&Action<=3)));Requests++;if(Scenario==25||Scenario==32||Scenario==40)return EFI_WARN_STALE_DATA;if(Scenario==26||Scenario==37||Scenario==42)SignalExit();if(Scenario==29||Scenario==33||Scenario==41)return EFI_UNSUPPORTED;return EFI_SUCCESS;}
 STATIC EFI_STATUS EFIAPI Pending(PIANO_PRODUCT_RUNTIME_PROTOCOL *P,UINT32 *Action,UINT64 *Sequence){
   assert(!Exited&&P==&Protocol&&gEfiCurrentTpl==TPL_APPLICATION&&!gui_lock);PendingCalls++;
   *Action=Scenario==10?PIANO_PRODUCT_ACTION_SETUP:(Scenario==18||Scenario==20)?PIANO_PRODUCT_ACTION_RETURN_CORE:(Scenario==35||Scenario==36)?PIANO_PRODUCT_ACTION_SHELL:Scenario==13?99:PIANO_PRODUCT_ACTION_NONE;*Sequence=19;
@@ -121,10 +121,14 @@ STATIC VOID Run(UINT32 Case){
   if(Case==36){assert(PianoProductUiReturnRequested()&&!PianoProductReturnCoreRequested()&&!Pumps&&!Acks&&!Requests);assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);}
   if(Case==37){if(!setjmp(DeadJump)){PianoProductRequestNavigation(2);assert(!"navigation EBS must halt before UI cleanup");}assert(Exited&&Requests==1&&!Closes&&!Acks);}
   if(Case==38){if(!setjmp(DeadJump)){PianoProductUiReturnRequested();assert(!"navigation query EBS must halt before UI cleanup");}assert(Exited&&!Closes&&!Acks&&!Requests);}
+  if(Case==39){assert(PianoProductRequestContinue()==EFI_SUCCESS&&Requests==1&&!Pumps&&!Acks);assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);}
+  if(Case==40||Case==41){assert(PianoProductRequestContinue()==(Case==40?EFI_DEVICE_ERROR:EFI_ACCESS_DENIED)&&Requests==1);assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);}
+  if(Case==42){if(!setjmp(DeadJump)){PianoProductRequestContinue();assert(!"continue EBS must halt");}assert(Exited&&Requests==1&&!Closes&&!Acks);}
+  if(Case==43){gEfiCurrentTpl=TPL_CALLBACK;assert(PianoProductRequestContinue()==EFI_ACCESS_DENIED&&!Requests&&!Creates&&!Pumps);}
   if(Case<=3||Case==7||Case==9||(Case>=10&&Case<=13))assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);
   (VOID)Status;
 }
 int main(void){
-  for(UINT32 I=0;I<39;I++){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"pump case%u failed\n",I);return 1;}}
-  puts("Actual product client + CoreWaitForEvent/gui_main: 39 fork cases including navigation request/yield/EBS; no fake keys/device");return 0;
+  for(UINT32 I=0;I<44;I++){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"pump case%u failed\n",I);return 1;}}
+  puts("Actual product client + CoreWaitForEvent/gui_main: 44 fork cases including typed Continue/navigation/EBS; no fake keys/device");return 0;
 }

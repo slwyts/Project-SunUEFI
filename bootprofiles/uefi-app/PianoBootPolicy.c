@@ -60,18 +60,20 @@ STATIC VOID EndCritical(UINT64 Mask) {
 }
 STATIC BOOLEAN EFIAPI Alive(PIANO_PRODUCT_RUNTIME_PROTOCOL *This){return This==&mRuntime && mAlive;}
 STATIC EFI_STATUS EFIAPI Request(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Action) {
-  if(This!=&mRuntime || Action<PIANO_PRODUCT_ACTION_SIMPLEINIT || Action>PIANO_PRODUCT_ACTION_REQUEST_REBOOT)return EFI_INVALID_PARAMETER;
-  BOOLEAN Reboot=Action==PIANO_PRODUCT_ACTION_REQUEST_REBOOT;
-  if(Reboot)Action=PIANO_PRODUCT_ACTION_RETURN_CORE;
+  if(This!=&mRuntime || Action<PIANO_PRODUCT_ACTION_SIMPLEINIT || Action>PIANO_PRODUCT_ACTION_REQUEST_CONTINUE)return EFI_INVALID_PARAMETER;
+  PIANO_USB_SERVICE_ACTION Reason=Action==PIANO_PRODUCT_ACTION_REQUEST_REBOOT?PianoUsbServiceActionReboot:
+    Action==PIANO_PRODUCT_ACTION_REQUEST_CONTINUE?PianoUsbServiceActionContinue:PianoUsbServiceActionNone;
+  BOOLEAN Typed=Reason!=PianoUsbServiceActionNone;
+  if(Typed)Action=PIANO_PRODUCT_ACTION_RETURN_CORE;
   UINT64 Mask=Critical();EFI_STATUS S=EFI_SUCCESS;
   if(!mAlive)S=EFI_ABORTED;
-  else if(Reboot && (mReport.ActiveAction<PIANO_PRODUCT_ACTION_SIMPLEINIT || mReport.ActiveAction>PIANO_PRODUCT_ACTION_SHELL))S=EFI_ACCESS_DENIED;
-  else if(Reboot && mReport.PendingAction==PIANO_PRODUCT_ACTION_RETURN_CORE && mReport.RequestedCoreAction!=PianoUsbServiceActionReboot)S=EFI_ACCESS_DENIED;
+  else if(Typed && (mReport.ActiveAction<PIANO_PRODUCT_ACTION_SIMPLEINIT || mReport.ActiveAction>PIANO_PRODUCT_ACTION_SHELL))S=EFI_ACCESS_DENIED;
+  else if(Typed && mReport.PendingAction==PIANO_PRODUCT_ACTION_RETURN_CORE && mReport.RequestedCoreAction!=Reason)S=EFI_ACCESS_DENIED;
   else if(mReport.PendingAction==PIANO_PRODUCT_ACTION_RETURN_CORE && Action!=PIANO_PRODUCT_ACTION_RETURN_CORE)S=EFI_ACCESS_DENIED;
-  else if(!Reboot && Action<=PIANO_PRODUCT_ACTION_SHELL && mReport.ActiveAction==Action){ /* same UI: successful no-op, preserve any newer pending action */ }
+  else if(!Typed && Action<=PIANO_PRODUCT_ACTION_SHELL && mReport.ActiveAction==Action){ /* same UI: successful no-op, preserve any newer pending action */ }
   else if(mReport.PendingAction!=Action) {
     if(mReport.Sequence==MAX_UINT64)S=EFI_OUT_OF_RESOURCES;
-    else {if(Reboot)mReport.RequestedCoreAction=PianoUsbServiceActionReboot;mReport.PendingAction=Action;++mReport.Sequence;}
+    else {if(Typed)mReport.RequestedCoreAction=Reason;mReport.PendingAction=Action;++mReport.Sequence;}
   }
   EndCritical(Mask);return S;
 }

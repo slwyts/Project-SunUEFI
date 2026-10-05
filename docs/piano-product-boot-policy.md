@@ -95,3 +95,13 @@ Shell/Setup 全程 USB 可发现、任意界面插拔后的 fastboot 命令、�
 provider 对同当前 ActiveAction 的导航成功无操作，不覆盖已有 pending。对不同界面导航 1/2/3，APP pump 返回 EFI_ABORTED 唤醒等待；各 UI 用实际 pending 协作清理，父核心继续服务相同 USB response queue 再派发下一应用。RETURN_CORE 优先级保留；不关闭 USB/UFS。
 
 实际 C 测试覆盖 SimpleInit→Setup→SimpleInit、SimpleInit→Shell→SimpleInit、Setup→Shell→SimpleInit、同界面无操作且保留另一 pending，以及 child EFI_ABORTED 返回后父核心继续 pump 并在下一次正常派发。
+
+## 当前 Continue 语义
+
+当前产品尚未配置可验收的本机 OS loader。原 SimpleInit `continue` 是 BOOT_EXIT，经 bootmenu after_exit 到 `src/boot/exit.c`，直接 gBS Exit(EFI_ABORTED)；父核心没有 pending 目标时会再进入 SimpleInit。这不代表启动了任何 OS。
+
+产品现在把相同条目明确显示为「返回 Android（重启）」。点击它调用 input-only REQUEST_CONTINUE=6，provider 记录 RequestedCoreAction=PianoUsbServiceActionContinue（1），pending仍是RETURN_CORE4。GUI通过正常 gui_run_and_exit(NULL)返回；父核心读取真实UI reason，由统一OwnerManager验证并退休全部owner，随后按当前Continue策略冷重启到原Android。没有直接GUI Exit/Reset，没有把退出应用冒充OS已启动。
+
+重复同reason请求幂等，已有host boot/reboot/core或其他typed核心请求不可被Continue覆盖。请求未接受时显示「未能返回 Android，请稍后重试。」并不执行旧after_exit；Null诊断保留原条目/退出行为。后续真实OS loader完成时应明确升级同一Continue策略和显示文案，不替换产品功能集或增加独立profile。
+
+验证新增Continue真实policy/helper/UI源场景，policy为64个独立C案例，客户端44fork×GUI宏0/1，UI测试覆盖标签、typed提交、失败提示与不调用legacy dispatcher。ARM64语法检查通过；实机重启闭环仍需同一产品验证。

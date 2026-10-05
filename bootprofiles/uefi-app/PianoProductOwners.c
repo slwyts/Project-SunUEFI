@@ -88,16 +88,18 @@ EFI_STATUS PianoProductOwnersObserveUsbAction(PIANO_PRODUCT_OWNERS *Owners) {
   Owners->Report.RequestedAction=Usb.Action;Owners->Report.Origin=PianoProductRequestUsb;Owners->Report.Phase=PianoProductOwnersReturnRequested;
   return Owners->Report.Status=EFI_SUCCESS;
 }
-EFI_STATUS PianoProductOwnersRequestUiReboot(PIANO_PRODUCT_OWNERS *Owners) {
+EFI_STATUS PianoProductOwnersRequestUiAction(PIANO_PRODUCT_OWNERS *Owners,PIANO_USB_SERVICE_ACTION Action) {
   if(!Owners || !Owners->Report.Initialized)return EFI_INVALID_PARAMETER;
+  if(Action!=PianoUsbServiceActionContinue && Action!=PianoUsbServiceActionReboot)return EFI_UNSUPPORTED;
   if(Owners->Report.Retained || Owners->Report.Clean)return EFI_ACCESS_DENIED;
   if(Owners->Report.Busy)return EFI_ALREADY_STARTED;
   EFI_STATUS S=AtApp(Owners);if(S!=EFI_SUCCESS)return S;
   CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();
   if(!PolicyLive(Policy))return Retain(Owners,EFI_ACCESS_DENIED);
   if(Policy->Dispatching || Policy->Pumping || Policy->ActiveAction!=PIANO_PRODUCT_ACTION_NONE)return EFI_NOT_READY;
-  if(Policy->RequestedCoreAction!=PianoUsbServiceActionReboot)return EFI_NOT_READY;
+  if(Policy->RequestedCoreAction!=Action)return EFI_NOT_READY;
   if(Owners->Report.Origin==PianoProductRequestUsb)return Retain(Owners,EFI_COMPROMISED_DATA);
+  if(Owners->Report.Origin==PianoProductRequestUi && Owners->Report.RequestedAction!=Action)return Retain(Owners,EFI_COMPROMISED_DATA);
   S=FreshRuntime(Owners);if(S!=EFI_SUCCESS)return Retain(Owners,S);
   PIANO_DWC3_SERVICE_STATUS Usb;ZeroMem(&Usb,sizeof(Usb));S=PianoUsbControllerServiceGetStatus(&Usb);
   if(S!=EFI_SUCCESS || Usb.Revision!=1 || !Usb.Started || Usb.Retained || Usb.ServicesLost ||
@@ -105,9 +107,25 @@ EFI_STATUS PianoProductOwnersRequestUiReboot(PIANO_PRODUCT_OWNERS *Owners) {
     return Retain(Owners,S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S);
   // The UI request was already latched by actual Runtime RequestAction. Only
   // this trusted report grants UI origin; no host status or caller bool can.
-  Owners->Report.Origin=PianoProductRequestUi;Owners->Report.RequestedAction=PianoUsbServiceActionReboot;
+  Owners->Report.Origin=PianoProductRequestUi;Owners->Report.RequestedAction=Action;
   Owners->Report.Phase=PianoProductOwnersReturnRequested;
   return Owners->Report.Status=EFI_SUCCESS;
+}
+EFI_STATUS PianoProductOwnersRequestUiReboot(PIANO_PRODUCT_OWNERS *Owners) {
+  return PianoProductOwnersRequestUiAction(Owners,PianoUsbServiceActionReboot);
+}
+EFI_STATUS PianoProductOwnersResolveReturnedAction(PIANO_PRODUCT_OWNERS *Owners) {
+  if(!Owners || !Owners->Report.Initialized)return EFI_INVALID_PARAMETER;
+  if(Owners->Report.Retained || Owners->Report.Clean)return EFI_ACCESS_DENIED;
+  EFI_STATUS S=AtApp(Owners);if(S!=EFI_SUCCESS)return S;
+  PIANO_DWC3_SERVICE_STATUS Usb={0};S=PianoUsbControllerServiceGetStatus(&Usb);
+  if(S!=EFI_SUCCESS || Usb.Revision!=1)return Retain(Owners,S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S);
+  if(Usb.Phase==PianoUsbServiceStopRequested)return PianoProductOwnersObserveUsbAction(Owners);
+  CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();
+  if(!PolicyLive(Policy))return Retain(Owners,EFI_ACCESS_DENIED);
+  if(Policy->RequestedCoreAction==PianoUsbServiceActionContinue || Policy->RequestedCoreAction==PianoUsbServiceActionReboot)
+    return PianoProductOwnersRequestUiAction(Owners,Policy->RequestedCoreAction);
+  return EFI_NOT_READY;
 }
 STATIC BOOLEAN UsbClean(CONST PIANO_USB_SERVICE_RETIRE_REPORT *R) {
   return R->Revision==1 && R->Attempted && R->Clean && !R->Retained && R->Status==EFI_SUCCESS &&
@@ -134,7 +152,8 @@ EFI_STATUS PianoProductOwnersRetire(PIANO_PRODUCT_OWNERS *Owners) {
   BOOLEAN OriginReady=Owners->Report.Origin==PianoProductRequestUsb?
     (Usb.Phase==PianoUsbServiceStopRequested && Usb.Action==Owners->Report.RequestedAction):
     Owners->Report.Origin==PianoProductRequestUi?
-    (Owners->Report.RequestedAction==PianoUsbServiceActionReboot && Policy->RequestedCoreAction==PianoUsbServiceActionReboot &&
+    ((Owners->Report.RequestedAction==PianoUsbServiceActionContinue || Owners->Report.RequestedAction==PianoUsbServiceActionReboot) &&
+     Policy->RequestedCoreAction==Owners->Report.RequestedAction &&
      Usb.Started && Usb.Phase==PianoUsbServiceListening && Usb.Action==PianoUsbServiceActionNone):FALSE;
   if(S!=EFI_SUCCESS || Usb.Revision!=1 || !OriginReady || Usb.ServicesLost || Usb.Retained)
     return Retain(Owners,S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S);

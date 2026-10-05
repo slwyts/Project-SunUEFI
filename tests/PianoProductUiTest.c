@@ -56,6 +56,7 @@ static UINTN env_cleanup,param_cleanup,logger_cleanup,cwd_cleanup,envlist_cleanu
 static UINTN processed_input,checked_config;
 static UINTN reboot_requests,native_resets,config_saves,reboot_warnings,navigation_requests,navigation_action,gui_exits,legacy_boots,entry_count;
 static UINTN reset_option,reset_packages;
+static UINTN continue_requests,message_errors;
 static VOID *display_buffer;
 static UINT32 action;
 static UINT64 timeout_value;
@@ -165,6 +166,8 @@ static VOID CreatePopUp(UINTN attr,EFI_INPUT_KEY *Key,...){++reset_reminders;Act
 static VOID EFIAPI ResetSystem(EFI_RESET_TYPE Type,EFI_STATUS Status,UINTN Bytes,VOID *Data){assert(allow_native_reset&&!enabled);++native_resets;}
 static BOOLEAN PianoProductRebootManaged(VOID){return enabled;}
 static EFI_STATUS PianoProductRequestReboot(VOID){++reboot_requests;if(!enabled)return EFI_UNSUPPORTED;if(request_failure)return EFI_ACCESS_DENIED;pending=TRUE;return EFI_SUCCESS;}
+static EFI_STATUS PianoProductRequestContinue(VOID){++continue_requests;if(!enabled)return EFI_UNSUPPORTED;if(request_failure)return EFI_ACCESS_DENIED;pending=TRUE;return EFI_SUCCESS;}
+static VOID msgbox_alert(CONST char *message,...){assert(!strcmp(message,"未能返回 Android，请稍后重试。"));++message_errors;}
 #define MAX_STRING_LEN 100
 #define ERET(e) do{errno=(e);return -1;}while(0)
 enum reboot_cmd{REBOOT_HALT,REBOOT_POWEROFF,REBOOT_RESTART,REBOOT_COLD,REBOOT_WARM,REBOOT_RECOVERY,REBOOT_FASTBOOT,REBOOT_EDL,REBOOT_DATA};
@@ -224,6 +227,7 @@ static VOID reset(BOOLEAN on){
   remote_on_wait=TRUE;allow_native_reset=request_failure=FALSE;reboot_requests=native_resets=config_saves=reboot_warnings=0;
   navigation_requests=navigation_action=gui_exits=legacy_boots=entry_count=0;
   reset_option=reset_packages=0;
+  continue_requests=message_errors=0;
   ZeroMem(&ShellInfoObject,sizeof(ShellInfoObject));
   ShellInfoObject.NewEfiShellProtocol=&template;
   InitializeListHead(&ShellInfoObject.ViewingSettings.CommandHistory.Link);
@@ -265,9 +269,11 @@ int main(VOID){
   for(UINTN cmd=0;cmd<=REBOOT_DATA;++cmd)if(cmd!=REBOOT_COLD&&cmd!=REBOOT_RESTART){reset(TRUE);assert(adv_reboot((enum reboot_cmd)cmd,NULL)==-1&&errno==EOPNOTSUPP&&!reboot_requests&&!native_resets);}
   reset(FALSE);allow_native_reset=TRUE;assert(adv_reboot(REBOOT_COLD,NULL)==-1&&native_resets==1&&!reboot_requests);
   reset(TRUE);boot_config boot={.mode=BOOT_REBOOT};assert(run_boot_reboot(&boot)==0&&pending&&reboot_requests==1&&config_saves==1&&!reboot_warnings&&!native_resets);
-  reset(TRUE);boot_init_configs();assert(entry_count==2&&!strcmp(created_entries[0].ident,"piano-setup")&&!strcmp(created_entries[0].desc,"固件设置（BIOS）")&&!strcmp(created_entries[1].ident,"piano-shell")&&created_entries[0].show&&created_entries[0].enabled&&!created_entries[0].save);
+  reset(TRUE);boot_init_configs();assert(entry_count==3&&!strcmp(created_entries[0].ident,"piano-setup")&&!strcmp(created_entries[0].desc,"固件设置（BIOS）")&&!strcmp(created_entries[1].ident,"piano-shell")&&created_entries[0].show&&created_entries[0].enabled&&!created_entries[0].save&&!strcmp(created_entries[2].ident,"continue")&&!strcmp(created_entries[2].desc,"返回 Android（重启）"));
   struct bootmenu_item item={.cfg=created_entries[0]};struct bootmenu bm={.selected=&item};bootmenu_boot(&bm);assert(navigation_action==2&&navigation_requests==1&&gui_exits==1&&!legacy_boots&&!native_resets);
   item.cfg=created_entries[1];bootmenu_boot(&bm);assert(navigation_action==3&&navigation_requests==2&&gui_exits==2&&!legacy_boots&&!native_resets);
+  item.cfg=created_entries[2];bootmenu_boot(&bm);assert(continue_requests==1&&gui_exits==3&&!legacy_boots&&!native_resets);
+  reset(TRUE);request_failure=TRUE;strcpy(item.cfg.ident,"continue");bootmenu_boot(&bm);assert(continue_requests==1&&message_errors==1&&!gui_exits&&!legacy_boots&&!native_resets);
   reset(TRUE);request_failure=TRUE;strcpy(item.cfg.ident,"piano-setup");bootmenu_boot(&bm);assert(navigation_requests==1&&!gui_exits&&!legacy_boots&&!native_resets);
   reset(FALSE);boot_init_configs();assert(!entry_count);bootmenu_boot(&bm);assert(legacy_boots==1&&!navigation_requests&&!gui_exits);
   reset(TRUE);assert(ShellCommandRunReset(NULL,gST)==SHELL_SUCCESS&&pending&&reboot_requests==1&&!native_resets&&reset_packages==1&&allocated==freed);

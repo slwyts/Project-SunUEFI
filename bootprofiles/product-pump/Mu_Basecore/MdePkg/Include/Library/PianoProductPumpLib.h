@@ -14,6 +14,7 @@ BOOLEAN EFIAPI PianoProductUiReturnRequested(VOID);
 EFI_STATUS EFIAPI PianoProductRequestNavigation(UINT32 Action);
 // Trusted UI asks the parent to perform all-owner retirement before resetting.
 EFI_STATUS EFIAPI PianoProductRequestReboot(VOID);
+EFI_STATUS EFIAPI PianoProductRequestContinue(VOID);
 // CPU-only implementation identity; unsupported targets must not bypass owners.
 BOOLEAN EFIAPI PianoProductRebootManaged(VOID);
 // CPU-only local fence check; never calls a cached provider after EBS.

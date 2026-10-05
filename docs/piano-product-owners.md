@@ -78,3 +78,18 @@ partial boot tokens, and trusted UI reboot without fabricated USB ACK. Strict AA
 These fixtures validate coordinator behavior. Root must bind the production
 input adapter, construct and test the single product image and prove this full
 sequence on hardware before claiming product handoff or complete input support.
+
+
+## UI Continue and acknowledged host priority
+
+The shared manager accepts only the actual Policy Continue/Reboot reason after
+normal child cleanup, at APP with the same live runtime and USB listening. The
+compatibility UI reboot entry remains. A changed UI reason, host transition or
+warning prevents action permission. Continue currently uses the same clean cold
+reset policy to return Android; it is not an OS-loader success result.
+
+ResolveReturnedAction checks the real current USB ledger first. An acknowledged
+host Continue/Reboot/Boot that arrives while a UI return is pending takes the
+host path and its token/ACK proof, rather than using an older UI reason. Tests
+execute the actual manager for these priority and retention cases. No caller
+status, permission boolean or fabricated host ACK selects the path.
