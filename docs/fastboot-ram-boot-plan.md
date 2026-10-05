@@ -1,6 +1,6 @@
 # Fastboot RAM boot / 1024 MiB preparation
 
-本轮只增加纯内容 parser、离线 host 工具与文档。没有实现/调用 LoadImage或StartImage，没有改Device/Controller、现有Fastboot命令状态、prepare/构建脚本、BlockRead/Screen或设备。`PIANO_FASTBOOT_MAX_DOWNLOAD` 仍为 **64 MiB**，`boot` 仍返回未实现，不能把1024MiB作为已可用能力公布。
+最初阶段增加纯内容parser、离线host工具；目前还增加独立EFI启动协调器与现有CPU下载池的所有权适配器，默认未接线，尚无实机LoadImage/StartImage验收。没有改Device/Controller、现有Fastboot命令状态、prepare/构建脚本、BlockRead/Screen或设备。`PIANO_FASTBOOT_MAX_DOWNLOAD` 仍为 **64 MiB**，`boot` 仍返回未实现，不能把1024MiB作为已可用能力公布。
 
 ## 本机37与官方boot封装
 
@@ -61,3 +61,11 @@ python tools/audit_fastboot_ram_pool.py --runtime-reserves PHASE.json --json PHA
 ```
 
 统一入口只编译/tmp host binary、检查本地fixtures、运行loopback CLI与offline interval tests，不操作设备或运行固件build。后续profile注册、arena/MMU变更、MAX调整、boot command执行与实机均留给root审阅后独立实施。
+
+## 下载池所有权适配（默认未接线）
+
+`PianoFastbootDownloadBlob.c/.h` 将当前64MiB内的完整下载池适配到启动协调器的Take/Read/BorrowView/Unborrow/Restore/ZeroRelease回调。Bind与Take都要求调用者确认命令派发已经停止、复制的TX帧已经排空；该确认不是本模块提供的控制器关闭证明。绑定时记录exact source pointer与长度，再次检查完整下载、无receiving/reboot/exit、upload确为同一下载池的borrowed view；独立截图/日志upload或变化的source不能接管。
+
+Take必须在现有Device ClearFastboot/Reset之前执行；如果先清理原状态，源镜像已不存在，本适配器只能拒绝。Take只移动所有权，清空Fastboot状态里的Download和借用Upload，不复制完整镜像。因此正常FastbootReset不会释放已转交的source。Read检查64-bit范围；Borrow只给CPU稳定view和递增opaque loan，不映射给DMA。旧loan和未结束loan拒绝释放/归还；Restore只可交回完全空的Fastboot状态，且不宣称USB服务已重新启动。目标已有新下载时，原镜像保留给显式ZeroRelease；该操作在无loan时全量清零，再调用必需的status-returning `EFI_FREE_POOL`（应绑定实际Boot Services FreePool，不能用VOID library wrapper）。只有exact Success才消费所有权；error/warning均保留原状态，置ReleaseAttempted，禁止进一步Read/Borrow/Restore/再次Free，避免用已清零或释放结果未知的镜像继续启动。适配器为一次绑定的持久ledger，不得覆盖仍bound/owned的实例。
+
+主机actual Fastboot.c + adapter测试已通过ASan/UBSan与AArch64语法检查，覆盖exact-success quiet、quiet回调改变source、Reset后source存活、范围溢出、source替换、stale loan、恢复目标冲突、zero-before-free，以及FreePool error/warning后禁止重试/归还。入口：`python3 -m unittest discover -s tests -p 'test_fastboot_download_blob.py' -v`。没有注册boot命令，也没有增加1GiB广告或高地址分配。
