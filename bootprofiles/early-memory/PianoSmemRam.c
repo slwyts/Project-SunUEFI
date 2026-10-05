@@ -51,6 +51,26 @@ static EFI_STATUS Parse(CONST UINT8 *P, UINTN Bytes, PIANO_SMEM_RAM_REPORT *R) {
     Category=U32(E+0x24); Type=U32(E+0x2c);
     if(Category!=14) { ++R->OtherCategoryCount; continue; }
     Base=U64(E+0x10); Size=U64(E+0x18); Available=Version==1?Size:U64(E+0x40);
+    if(Version==3) {
+      // Pinned Env 8bc0..8c34 exports Base/+40 for category14/type1;
+      // +18 is independent diagnostic data, including zero-sized containers.
+      // Empty current records remain observable, never allocatable ranges.
+      if(Type==1) {
+        if(Available && Base>MAX_UINT64-Available)
+          return Fail(R,EFI_COMPROMISED_DATA,PianoSmemReasonRamRange);
+        for(J=0;J<R->BankCount;++J)
+          if(Available && R->Banks[J].AvailableLength &&
+             Base<R->Banks[J].Base+R->Banks[J].AvailableLength && R->Banks[J].Base<Base+Available)
+            return Fail(R,EFI_COMPROMISED_DATA,PianoSmemReasonRamOverlap);
+        Out=&R->Banks[R->BankCount++];
+      } else if(Type>=5 && Type<=9) {
+        if(!Size || Base>MAX_UINT64-Size)
+          return Fail(R,EFI_COMPROMISED_DATA,PianoSmemReasonRamRange);
+        Out=&R->Preloaded[R->PreloadedCount++];
+      } else { ++R->OtherCategoryCount; continue; }
+      Out->Base=Base;Out->RawSize=Size;Out->AvailableLength=Type==1?Available:0;
+      Out->RawType=Type;Out->SourceIndex=I;continue;
+    }
     if(!Size || Base>MAX_UINT64-Size || (Type==1 && (!Available || Available>Size || Base>MAX_UINT64-Available)))
       return Fail(R,EFI_COMPROMISED_DATA,PianoSmemReasonRamRange);
     if(Type==1) {
@@ -67,7 +87,7 @@ static EFI_STATUS Parse(CONST UINT8 *P, UINTN Bytes, PIANO_SMEM_RAM_REPORT *R) {
     Out->Base=Base; Out->RawSize=Size; Out->AvailableLength=Type==1?Available:0;
     Out->RawType=Type; Out->SourceIndex=I;
   }
-  if(!R->BankCount) return Fail(R,EFI_NOT_FOUND,PianoSmemReasonMissing);
+  if(!R->BankCount && Version!=3) return Fail(R,EFI_NOT_FOUND,PianoSmemReasonMissing);
   R->Parsed=TRUE; R->Status=EFI_SUCCESS; R->Reason=PianoSmemReasonNone;
   return EFI_SUCCESS;
 }

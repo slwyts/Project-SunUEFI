@@ -9,6 +9,7 @@ static UINT32 cold_case,cold_loads,payload_pass,descriptor_pass,cookie_pass;
 static UINT64 cold_counter=1000;
 static BOOLEAN hob_allocation_failed;
 static PIANO_EARLY_MEMORY_REPORT frozen;
+static CONST CHAR8 *physical_ram_path,*physical_siii_path;
 
 VOID *EFIAPI BuildGuidHob(CONST EFI_GUID *Guid,UINTN Bytes){
   assert(!memcmp(Guid,&early_guid,sizeof(*Guid))&&Bytes==sizeof(early_hob.Report));
@@ -38,7 +39,7 @@ UINTN EFIAPI PianoSecRead32(UINT64 Address,UINT32 *Value,PIANO_SEC_READ_STATE *S
     State->Far=Address;State->Spsr=0x3c5;State->Resume=0x1104;return 1;}
   if(cold_case==38&&Address==PIANO_SMEM_BASE+0x3004)return 2;
   if(Address==PIANO_SMEM_COOKIE_LOW){++cookie_pass;
-    *Value=cold_case==6?0x90000000:0x81d08000;
+    *Value=cold_case==50?0x81eff350:cold_case==6?0x90000000:0x81d08000;
     if(cold_case==10&&cookie_pass==2)*Value+=4;
   }else if(Address==PIANO_SMEM_COOKIE_HIGH)*Value=0;
   else{assert(Address>=PIANO_SMEM_BASE&&Address-PIANO_SMEM_BASE<=PIANO_SMEM_BYTES-4);
@@ -52,15 +53,25 @@ static VOID UpdateDescriptorCrc(PIANO_EARLY_MEMORY_REPORT *R){
   R->Descriptor.Crc32=R->RawDescriptorCrc32;memset(R->Descriptor.Prefix,0,sizeof(R->Descriptor.Prefix));
   memcpy(R->Descriptor.Prefix,R->RawDescriptor,MIN(sizeof(R->Descriptor.Prefix),R->RawDescriptorBytes));
 }
+static VOID ReadCaptured(CONST CHAR8 *Path,UINT8 *Destination,UINTN Bytes,UINT32 Crc){
+  FILE *F=fopen(Path,"rb");assert(F);assert(fread(Destination,1,Bytes,F)==Bytes&&fgetc(F)==EOF&&!ferror(F)&&!fclose(F));
+  assert(PianoEarlyMemoryBytesCrc32(Destination,Bytes)==Crc);
+}
 static VOID PrepareCold(VOID){
   scenario=1;early_case=1;Setup();p32(smem+0x3008,3);
   UINT8 *D=smem+0x8000;p32(D,0x49494953);p32(D+4,PIANO_SMEM_BYTES);
   p64(D+8,PIANO_SMEM_BASE);p16(D+16,512);p16(D+18,1);
   p16(D+20,0x4853);p16(D+22,12);p64(D+24,0x1122334455667788ULL);
-  if(cold_case==1)p64(smem+0x3000+24+64,0); // Coherent RamRange failure.
+  if(cold_case==1){p64(smem+0x3000+24+16,MAX_UINT64-3);p64(smem+0x3000+24+64,8);} // Coherent current-span overflow.
   if(cold_case==7){p32(smem+0xd0+402*16+8,8192);p16(D+22,2028);}
   if(cold_case==8){p16(D+18,2);p16(D+32,0x4853);p16(D+34,4);}
   if(cold_case==9)p64(D+8,0x90000000); // Reported region is diagnostic only.
+  if(cold_case==57)p32(smem+0x3000+24+44,2); // Native current list is empty; no memory claim.
+  if(cold_case==50){
+    p32(smem+0xd0+402*16+4,0x6ad0);p32(smem+0xd0+402*16+8,2328);
+    ReadCaptured(physical_ram_path,smem+0x6ad0,2328,0x7c271814);
+    ReadCaptured(physical_siii_path,smem+0x1ff350,20,0x2776a43d);
+  }
   memcpy(before,smem,sizeof(smem));hob_allocation_failed=cold_case==37;
 }
 static VOID Tamper(PIANO_EARLY_MEMORY_REPORT *R){
@@ -98,6 +109,12 @@ static VOID Tamper(PIANO_EARLY_MEMORY_REPORT *R){
   if(cold_case==47)R->RawPayloadCoherent=FALSE;
   if(cold_case==48)R->RawDescriptorCoherent=FALSE;
   if(cold_case==49)R->ColdStateVerified=FALSE;
+  if(cold_case==51)R->Smem.Banks[0].AvailableLength+=4;
+  if(cold_case==52)R->Smem.Banks[0].RawSize+=4;
+  if(cold_case==53){--R->Smem.BankCount;++R->Smem.OtherCategoryCount;}
+  if(cold_case==54)R->Smem.Banks[0].SourceIndex=1;
+  if(cold_case==55){++R->Smem.OtherCategoryCount;++R->Smem.RawEntryCount;}
+  if(cold_case==56)R->Smem.Preloaded[0].RawType=4;
   R->ReportCrc32=PianoEarlyMemoryReportCrc32(R);
 }
 static VOID CheckRaw(BOOLEAN Accepted){
@@ -107,7 +124,8 @@ static VOID CheckRaw(BOOLEAN Accepted){
   assert(!memcmp(raw_descriptor_log,frozen.RawDescriptor,frozen.RawDescriptorBytes));
 }
 int main(int Argc,char **Argv){
-  assert(Argc==2);cold_case=(UINT32)strtoul(Argv[1],NULL,10);assert(cold_case<50);PrepareCold();
+  assert(Argc==2||Argc==4);cold_case=(UINT32)strtoul(Argv[1],NULL,10);assert(cold_case<58);
+  if(cold_case==50){assert(Argc==4);physical_ram_path=Argv[2];physical_siii_path=Argv[3];}PrepareCold();
   EFI_STATUS Observed=PianoEarlyMemoryObserveCold();CONST PIANO_EARLY_MEMORY_REPORT *R=PianoEarlyMemoryReport();
   assert(cold_loads==R->LoadCount&&R->ColdStateVerified&&R->Finished&&
     !R->MemoryOwnershipGranted&&!R->HighDdrPublished&&R->Version==2);
@@ -119,12 +137,21 @@ int main(int Argc,char **Argv){
   if(cold_case==7)assert(R->RawPayloadBytes==8192&&R->RawDescriptorBytes==2048);
   if(cold_case==8)assert(R->Descriptor.Status==EFI_COMPROMISED_DATA&&R->RawDescriptorCoherent);
   if(cold_case==9)assert(R->RawDescriptorCoherent&&!R->Descriptor.RegionMatchesKnownWindow);
+  if(cold_case==50){
+    UINT32 Positive=0;for(UINT32 I=0;I<R->Smem.BankCount;++I)Positive+=R->Smem.Banks[I].AvailableLength!=0;
+    assert(Observed==EFI_SUCCESS&&R->Smem.Parsed&&R->Smem.BankCount==12&&Positive==11&&
+      !R->Smem.PreloadedCount&&R->Smem.OtherCategoryCount==3&&R->Smem.RawEntryCount==15&&
+      R->RawPayloadBytes==2328&&R->RawPayloadCrc32==0x7c271814&&
+      R->RawDescriptorBytes==20&&R->RawDescriptorCrc32==0x2776a43d);
+  }
+  if(cold_case==57)assert(Observed==EFI_SUCCESS&&R->Smem.Parsed&&!R->Smem.BankCount&&
+    R->Smem.PreloadedCount==1&&R->Smem.OtherCategoryCount==1);
   UINT32 ColdBefore=cold_loads;EFI_STATUS Published=PianoEarlyMemoryPublishHob();
   assert(Published==(cold_case==37?EFI_OUT_OF_RESOURCES:EFI_SUCCESS)&&cold_loads==ColdBefore);
   if(cold_case==37)early_case=0;
   else{assert(!memcmp(&early_hob.Report,R,sizeof(*R)));frozen=early_hob.Report;Tamper(&early_hob.Report);}
   assert(!calls&&!loads);assert(PianoProductObserveSmem()==EFI_NOT_READY&&!PianoProductSmemRetained());
-  BOOLEAN Accepted=cold_case<14||cold_case==38;
+  BOOLEAN Accepted=cold_case<14||cold_case==38||cold_case==50||cold_case==57;
   EFI_STATUS Expected=cold_case==37?EFI_NOT_FOUND:Accepted?EFI_SUCCESS:EFI_COMPROMISED_DATA;
   assert(PianoProductEarlySmemStatus()==Expected&&early_log_status==Expected);CheckRaw(Accepted);
   UINTN HobGets=early_gets;memset(&early_hob,0,sizeof(early_hob));memset(smem,0x5a,sizeof(smem));

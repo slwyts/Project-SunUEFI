@@ -35,6 +35,9 @@ typedef struct {
 } PIANO_SMEM_READER;
 
 typedef struct {
+  // v1/v2 retain strict raw-bank interpretation. For v3 RawSize is the
+  // independent +18 diagnostic field; AvailableLength is native +40 current
+  // slice length and may be zero. Neither field grants allocation/map rights.
   UINT64 Base, RawSize, AvailableLength;
   UINT32 RawType, SourceIndex;
 } PIANO_SMEM_RAM_ENTRY;
@@ -49,6 +52,9 @@ typedef struct {
   // These are not an atomic snapshot, hardware ownership or memory-map proof.
   BOOLEAN RepeatedMetadataEqual, RepeatedPayloadEqual, CookieRepeatedEqual;
   BOOLEAN Parsed;
+  // v3 Banks preserves every native category14/type1 current record, including
+  // empty records. OtherCategoryCount also includes unselected v3 types;
+  // their complete original records remain in the coherent raw snapshot.
   PIANO_SMEM_RAM_ENTRY Banks[PIANO_SMEM_RAM_MAX];
   PIANO_SMEM_RAM_ENTRY Preloaded[PIANO_SMEM_RAM_MAX];
 } PIANO_SMEM_RAM_REPORT;
@@ -61,7 +67,8 @@ typedef struct {
 } PIANO_SMEM_RAM_WORK;
 
 // Pure parser. Input/output must not alias. RAM402 exact versions1/2/3 accepted;
-// raw SDRAM claims are preserved, never retagged or published as usable memory.
+// v1/v2 strict banks and v3 native current slices remain separate observation
+// models. Raw claims are preserved, never published as usable memory.
 EFI_STATUS PianoSmemRamParse(CONST VOID *Payload, UINTN Bytes,
   PIANO_SMEM_RAM_REPORT *Report);
 // Fixed-window, no allocation/no write/no native calls. Cookie reads report raw

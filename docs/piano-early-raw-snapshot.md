@@ -41,7 +41,7 @@ publish high DDR, create a reservation ledger or grant any memory/DMA permission
 `MemoryOwnershipGranted` and `HighDdrPublished` remain false.
 
 Validation uses the actual SEC observer, actual RAM/SIII collectors, serialized
-GUID HOB and actual product DXE consumer. Fifty integrated ASAN/UBSAN cases cover
+GUID HOB and actual product DXE consumer. Fifty-eight integrated ASAN/UBSAN cases cover
 semantic failure with coherent raw data, first/second partial reads, drift,
 cookie failure or change, fixed-window rejection, 8192/2048-byte maxima,
 length/CRC/metadata/descriptor/HOB tampering and replay after erasing the fixture
@@ -56,6 +56,7 @@ python3 -m unittest discover -s tests -p test_early_memory.py -v
 python3 -m unittest discover -s tests -p test_product_smem.py -v
 ```
 
-These host fixtures validate retention and integrity boundaries. The revision 2
-snapshot has not yet been collected from the tablet; the next product build and
-physical ramlog capture remain Root's work.
+Test95 physically retrieved RAM402 CRC7C271814 and SIII CRC2776A43D through this
+revision2 retention path. The new exact-v3 current-slice interpretation is
+validated against those unchanged bytes on the host; its adapted firmware has
+not yet been booted. See [the native v3 model](piano-smem-v3-native.md).

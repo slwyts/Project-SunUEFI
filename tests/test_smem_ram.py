@@ -1,5 +1,6 @@
 """Actual early-memory source with byte-addressed injected reads; no device."""
 from pathlib import Path
+import hashlib
 import subprocess
 import tempfile
 import unittest
@@ -10,6 +11,19 @@ INC = ROOT / 'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 
 
 class SmemRamTests(unittest.TestCase):
+    def test_v3_current_slices_synthetic_and_physical_test95(self):
+        captured = ROOT / 'private/analysis/usb-live-test95/ram402.bin'
+        self.assertEqual(hashlib.sha256(captured.read_bytes()).hexdigest(),
+                         '16aed6a815309af4109f34000f43de0058d310e293b2aecc29c6d4d9a7ed828c')
+        with tempfile.TemporaryDirectory(prefix='piano-smem-v3-') as directory:
+            binary = Path(directory) / 'v3'
+            command = ['cc', '-std=gnu11', '-fshort-wchar', '-Wall', '-Wextra',
+                       '-Werror', '-g', '-fsanitize=address,undefined', '-fno-pie', '-no-pie']
+            for path in (SOURCE, INC, INC / 'X64'):
+                command += ['-I', str(path)]
+            command += [str(ROOT / 'tests/PianoSmemRamV3Test.c'), str(SOURCE / 'PianoSmemRam.c'), '-o', str(binary)]
+            subprocess.run(command, check=True, timeout=60)
+            subprocess.run([str(binary), str(captured)], check=True, timeout=60)
     def test_actual_source(self):
         with tempfile.TemporaryDirectory(prefix='piano-smem-ram-') as directory:
             binary = Path(directory) / 'smem'

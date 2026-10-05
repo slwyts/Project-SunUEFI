@@ -16,6 +16,7 @@ STATIC EFI_STATUS mObservationStatus=EFI_NOT_STARTED;
 STATIC EFI_BOOT_SERVICES *mBoot;
 STATIC BOOLEAN mPhase, mAttempted, mRetained;
 STATIC PIANO_EARLY_MEMORY_REPORT mEarly,mEarlyScratch;
+STATIC PIANO_SMEM_RAM_REPORT mV3Check;
 STATIC EFI_STATUS mEarlyStatus=EFI_NOT_STARTED;
 STATIC EFI_GUID mEarlyGuid=PIANO_EARLY_MEMORY_HOB_GUID;
 
@@ -104,11 +105,22 @@ STATIC BOOLEAN EarlyValid(CONST PIANO_EARLY_MEMORY_REPORT *R){
   if(!S->Parsed)return R->Status!=EFI_SUCCESS&&S->Status!=EFI_SUCCESS&&!S->BankCount&&!S->PreloadedCount&&!S->OtherCategoryCount;
   if(R->Status!=EFI_SUCCESS||!R->ColdStateVerified||S->Status!=EFI_SUCCESS||
      S->Reason!=PianoSmemReasonNone||(S->RamVersion!=1&&S->RamVersion!=2&&S->RamVersion!=3)||
-     !S->BankCount||!S->RepeatedMetadataEqual||!S->RepeatedPayloadEqual||
+     (!S->BankCount&&S->RamVersion!=3)||!S->RepeatedMetadataEqual||!S->RepeatedPayloadEqual||
      S->BankCount+S->PreloadedCount+S->OtherCategoryCount!=S->RawEntryCount||
      (S->SmemVersion>>16!=11&&S->SmemVersion>>16!=12)||
      S->PayloadAddress<PIANO_SMEM_BASE||S->PayloadAddress-PIANO_SMEM_BASE>=PIANO_SMEM_BYTES||
      !S->PayloadBytes||S->PayloadBytes>PIANO_SMEM_BYTES-(S->PayloadAddress-PIANO_SMEM_BASE))return FALSE;
+  if(S->RamVersion==3){
+    // Reproduce the exact pure observation model from the already CRC-checked
+    // local bytes. This validates current slices, not DDR/map/allocation rights.
+    EFI_STATUS Parsed=PianoSmemRamParse(R->RawPayload,R->RawPayloadBytes,&mV3Check);
+    BOOLEAN Equal=Parsed==EFI_SUCCESS&&mV3Check.RamVersion==3&&mV3Check.RawEntryCount==S->RawEntryCount&&
+      mV3Check.BankCount==S->BankCount&&mV3Check.PreloadedCount==S->PreloadedCount&&
+      mV3Check.OtherCategoryCount==S->OtherCategoryCount&&
+      !CompareMem(mV3Check.Banks,S->Banks,sizeof(S->Banks))&&
+      !CompareMem(mV3Check.Preloaded,S->Preloaded,sizeof(S->Preloaded));
+    ZeroMem(&mV3Check,sizeof(mV3Check));return Equal;
+  }
   for(UINT32 I=0;I<S->BankCount;++I){CONST PIANO_SMEM_RAM_ENTRY *E=&S->Banks[I];
     if(!EarlySpan(E->Base,E->RawSize)||!E->AvailableLength||E->AvailableLength>E->RawSize||
        E->RawType!=1||E->SourceIndex>=S->RawEntryCount)return FALSE;
@@ -152,8 +164,8 @@ STATIC VOID ReemitEarly(VOID){
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_EARLY_RAM_COOKIE status=%r value=%lx stable=%u metadata_equal=%u payload_equal=%u\n",
     S->CookieStatus,S->CookieValue,S->CookieRepeatedEqual,S->RepeatedMetadataEqual,S->RepeatedPayloadEqual));
   for(UINT32 I=0;I<S->BankCount&&S->Parsed;++I){CONST PIANO_SMEM_RAM_ENTRY *E=&S->Banks[I];
-    DEBUG((DEBUG_WARN,"PIANO_PRODUCT_EARLY_RAM_BANK index=%u category=14 type=%u base=%lx raw_size=%lx available=%lx\n",
-      E->SourceIndex,E->RawType,E->Base,E->RawSize,E->AvailableLength));}
+    DEBUG((DEBUG_WARN,"PIANO_PRODUCT_EARLY_RAM_BANK index=%u category=14 type=%u base=%lx raw_size=%lx available=%lx view=%a authority=0\n",
+      E->SourceIndex,E->RawType,E->Base,E->RawSize,E->AvailableLength,S->RamVersion==3?"native-current":"strict-legacy"));}
   for(UINT32 I=0;I<S->PreloadedCount&&S->Parsed;++I){CONST PIANO_SMEM_RAM_ENTRY *E=&S->Preloaded[I];
     DEBUG((DEBUG_WARN,"PIANO_PRODUCT_EARLY_RAM_PRELOADED index=%u category=14 type=%u base=%lx size=%lx\n",
       E->SourceIndex,E->RawType,E->Base,E->RawSize));}
@@ -220,8 +232,8 @@ EFI_STATUS PianoProductObserveSmem(VOID) {
       mSmem.RepeatedMetadataEqual,mSmem.RepeatedPayloadEqual,mSmem.PayloadCrc32));
     if(Status==EFI_SUCCESS && mSmem.Parsed) {
       for(UINT32 I=0;I<mSmem.BankCount;++I)
-        DEBUG((DEBUG_WARN,"PIANO_PRODUCT_SMEM_BANK i=%u base=%lx size=%lx available=%lx\n",
-          I,mSmem.Banks[I].Base,mSmem.Banks[I].RawSize,mSmem.Banks[I].AvailableLength));
+        DEBUG((DEBUG_WARN,"PIANO_PRODUCT_SMEM_BANK i=%u base=%lx size=%lx available=%lx view=%a authority=0\n",
+          I,mSmem.Banks[I].Base,mSmem.Banks[I].RawSize,mSmem.Banks[I].AvailableLength,mSmem.RamVersion==3?"native-current":"strict-legacy"));
       for(UINT32 I=0;I<mSmem.PreloadedCount;++I)
         DEBUG((DEBUG_WARN,"PIANO_PRODUCT_SMEM_PRELOADED i=%u base=%lx size=%lx type=%u\n",
           I,mSmem.Preloaded[I].Base,mSmem.Preloaded[I].RawSize,mSmem.Preloaded[I].RawType));
@@ -261,8 +273,8 @@ EFI_STATUS PianoProductSmemReemit(VOID *Context) {
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_SMEM_COOKIE status=%r value=%lx stable=%u\n",
     mSmem.CookieStatus,mSmem.CookieValue,mSmem.CookieRepeatedEqual));
   for(UINT32 I=0;I<mSmem.BankCount && mSmem.Parsed;++I)
-    DEBUG((DEBUG_WARN,"PIANO_PRODUCT_SMEM_BANK i=%u base=%lx size=%lx available=%lx\n",
-      I,mSmem.Banks[I].Base,mSmem.Banks[I].RawSize,mSmem.Banks[I].AvailableLength));
+    DEBUG((DEBUG_WARN,"PIANO_PRODUCT_SMEM_BANK i=%u base=%lx size=%lx available=%lx view=%a authority=0\n",
+      I,mSmem.Banks[I].Base,mSmem.Banks[I].RawSize,mSmem.Banks[I].AvailableLength,mSmem.RamVersion==3?"native-current":"strict-legacy"));
   for(UINT32 I=0;I<mSmem.PreloadedCount && mSmem.Parsed;++I)
     DEBUG((DEBUG_WARN,"PIANO_PRODUCT_SMEM_PRELOADED i=%u base=%lx size=%lx type=%u\n",
       I,mSmem.Preloaded[I].Base,mSmem.Preloaded[I].RawSize,mSmem.Preloaded[I].RawType));

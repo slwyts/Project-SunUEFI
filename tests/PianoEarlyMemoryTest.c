@@ -84,11 +84,14 @@ int main(void){
   reset_cold();p32(smem_bytes+0x3008,3);result(EFI_SUCCESS);assert(mReport.Smem.RamVersion==3);++cases;
   reset_cold();p32(smem_bytes+0x3008,4);result(EFI_UNSUPPORTED);++cases;
   assert(mReport.RawPayloadCoherent&&!mReport.Smem.Parsed&&!mReport.Smem.BankCount&&!mReport.Smem.PreloadedCount);++cases;
-  reset_cold();descriptor();p32(smem_bytes+0x3008,3);p64(smem_bytes+0x3000+24+64,0);
+  reset_cold();descriptor();p32(smem_bytes+0x3008,3);p64(smem_bytes+0x3000+24+16,MAX_UINT64-3);p64(smem_bytes+0x3000+24+64,8);
   result(EFI_COMPROMISED_DATA);assert(mReport.Smem.Reason==PianoSmemReasonRamRange&&
     !mReport.Smem.Parsed&&!mReport.Smem.BankCount&&!mReport.Smem.PreloadedCount&&mReport.RawPayloadCoherent&&
     mReport.RawDescriptorCoherent&&mReport.RawDescriptorBytes==32&&mReport.Descriptor.RepeatedEqual&&
     !memcmp(mReport.RawDescriptor,smem_bytes+0x8000,32));++cases;
+  reset_cold();descriptor();p32(smem_bytes+0x3008,3);p64(smem_bytes+0x3000+24+24,0);p64(smem_bytes+0x3000+24+64,0);
+  result(EFI_SUCCESS);assert(mReport.Smem.Parsed&&mReport.Smem.BankCount==1&&!mReport.Smem.Banks[0].RawSize&&
+    !mReport.Smem.Banks[0].AvailableLength&&mReport.RawPayloadCoherent);++cases;
   reset_cold();descriptor();second_payload_fault=TRUE;result(EFI_DEVICE_ERROR);
   assert(mReport.Smem.RepeatedMetadataEqual&&!mReport.Smem.RepeatedPayloadEqual&&!mReport.RawPayloadCoherent&&
     !mReport.RawPayloadBytes&&!mReport.RawPayloadCrc32&&!mReport.RawDescriptorCoherent);++cases;

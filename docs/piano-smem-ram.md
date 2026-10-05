@@ -70,6 +70,15 @@ not treated as a usable fallback.
 
 ## RAM402 interpretation and evidence
 
+Exact version3 uses a separate native current-slice observation model established
+by EnvDxeEnhanced machine code and the complete physical test95 payload. The
+version1/version2 strict rules below remain unchanged; version3 allows zero
+current records and zero declared-container lengths, validates positive current
+ends and their overlaps, and preserves the independent raw length. Its unknown
+types remain ignored diagnostic records rather than named owners. See
+[the native version3 evidence and model](piano-smem-v3-native.md). Parsed does not
+grant memory-map, allocation or DDR ownership rights.
+
 Native Env disassembly identifies magic words `0x9DA5E0A8`, `0xAF9EC4E2`,
 payload version at `+8`, count at `+0x10`, and entries at `+0x18`. Only actual
 version 1 (64-byte stride) and versions 2/3 (72-byte stride) are accepted, with
