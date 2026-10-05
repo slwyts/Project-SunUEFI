@@ -43,7 +43,7 @@ def main():
     index = max(text.rfind(marker),text.rfind('SUNUEFI_BLOCKIO_REPORT_BEGIN'))
     segment = text[index:] if index >= 0 else ''
     (out/'uefi.txt').write_text(segment)
-    linux = 'rdinit=/init ro nokaslr efi=novamap console=ttyGS0,115200' in text
+    linux = 'rdinit=/init ro nokaslr efi=novamap' in text and 'console=ttyGS0,115200' in text
     independent_init = 'PIANO_KERNEL_RAM BEGIN pid=1' in text
     (out/'linux.txt').write_text(text if linux else '')
     summary = {'test_id':args.test_id,'console_bytes':len(p.stdout),'uefi_marker_found':index>=0,

@@ -19,6 +19,7 @@
 #include <Library/DebugLib.h>
 #include <Library/ArmLib.h>
 #include <Library/CacheMaintenanceLib.h>
+#include "PianoEfiHandoffTrace.h"
 
 #pragma pack(1)
 typedef struct {
@@ -48,10 +49,10 @@ STATIC INITRD_PATH mPath = {
 // Board-only parameters from the hash-checked piano cmdline capture. Retain
 // HWID-dependent PHY/PMIC selection without the native disk logging arguments.
 STATIC CONST CHAR8 mCommandAscii[] =
-  "rdinit=/init ro nokaslr efi=novamap console=ttyGS0,115200 loglevel=7 panic=15 "
+  "rdinit=/init ro nokaslr efi=novamap,debug console=ttyGS0,115200 loglevel=7 panic=15 "
   "hwid.hwid_value=589824 hwid.project=9 hwid.build_adc=51282 hwid.project_adc=39406";
 STATIC CONST CHAR16 mCommand[] =
-  L"rdinit=/init ro nokaslr efi=novamap console=ttyGS0,115200 loglevel=7 panic=15 "
+  L"rdinit=/init ro nokaslr efi=novamap,debug console=ttyGS0,115200 loglevel=7 panic=15 "
   L"hwid.hwid_value=589824 hwid.project=9 hwid.build_adc=51282 hwid.project_adc=39406";
 
 VOID PianoStopFaultRecovery(VOID);
@@ -332,7 +333,20 @@ EFI_STATUS EFIAPI LinuxRamBootEntry (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *S
   gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_CALLBACK,EfiHandoffMarker,"before-exit-boot-services",&gEfiEventBeforeExitBootServicesGuid,&BeforeExit);
   gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_CALLBACK,EfiHandoffMarker,"exit-boot-services",&gEfiEventExitBootServicesGuid,&OnExit);
   if(gST->ConOut!=NULL){mOriginalOutput=gST->ConOut->OutputString;gST->ConOut->OutputString=MirrorEfiOutput;}
+  Status=PianoEfiHandoffTraceInstall(gBS);
+  if(EFI_ERROR(Status)) {
+    DEBUG((DEBUG_WARN,"SUNUEFI_EFI_TRACE_INSTALL_FAILED %r\n",Status));
+  } else {
   Status = gBS->StartImage (KernelHandle, NULL, NULL);
+    if(PianoEfiHandoffTraceExited()) {
+      gRT->ResetSystem(EfiResetCold,EFI_ABORTED,0,NULL);CpuDeadLoop();
+    }
+    EFI_STATUS RestoreTrace=PianoEfiHandoffTraceRestore();
+    DEBUG((DEBUG_WARN,"SUNUEFI_EFI_TRACE_RESTORE %r\n",RestoreTrace));
+    if(EFI_ERROR(RestoreTrace)) {
+      gRT->ResetSystem(EfiResetCold,EFI_ABORTED,0,NULL);CpuDeadLoop();
+    }
+  }
   if(gST->ConOut!=NULL && mOriginalOutput!=NULL)gST->ConOut->OutputString=mOriginalOutput;
   mOriginalOutput=NULL;
   if(BeforeExit!=NULL)gBS->CloseEvent(BeforeExit);

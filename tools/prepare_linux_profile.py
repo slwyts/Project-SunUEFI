@@ -22,6 +22,8 @@ def main():
     for name in ('LinuxRamBoot.c','LinuxRamBoot.inf'):
         shutil.copyfile(root/'bootprofiles/linux-ram'/name, app/name)
     shutil.copyfile(root/'bootprofiles/uefi-app/PianoFaultRecovery.c',app/'PianoFaultRecovery.c')
+    for name in ('PianoEfiHandoffTrace.c','PianoEfiHandoffTrace.h'):
+        shutil.copyfile(root/'bootprofiles/linux-ram'/name,app/name)
     if args.raw:
         f=app/'LinuxRamBoot.c';f.write_text('#define SUNUEFI_RAW_HANDOFF 1\n'+f.read_text())
     dsc = dst/'pianoLinux.dsc'

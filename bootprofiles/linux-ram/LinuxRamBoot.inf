@@ -8,6 +8,7 @@
 [Sources]
   LinuxRamBoot.c
   PianoFaultRecovery.c
+  PianoEfiHandoffTrace.c
 [Packages]
   MdePkg/MdePkg.dec
   CryptoPkg/CryptoPkg.dec
