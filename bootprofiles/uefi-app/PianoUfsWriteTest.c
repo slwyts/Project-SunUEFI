@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Pure controlled transaction. No registered protocol and no real transport.
 #include "PianoUfsWriteTest.h"
+#include "PianoUfsWriteGuard.h"
 #include <Library/BaseMemoryLib.h>
 #include <Library/BaseCryptLib.h>
 #include "PianoGpt.h"
@@ -51,12 +52,7 @@ STATIC EFI_STATUS BaselineGate(CONST PIANO_UFS_WRITE_REQUEST *Q,BOOLEAN WriteAut
   return AllZero(B->OriginalBlock.Data,4096)?EFI_SUCCESS:EFI_SECURITY_VIOLATION;
 }
 STATIC EFI_STATUS GuardGate(CONST PIANO_UFS_WRITE_GUARD *G) {
-  if(G->Lun!=4 || G->Collected!=0x1F || G->CapacityBytes!=PIANO_UFS_WRITE_TEST_CAPACITY ||
-     G->CapacityStatus!=EFI_SUCCESS || G->ModeSenseStatus!=EFI_SUCCESS || G->UnitStatus!=EFI_SUCCESS ||
-     G->PermanentFlagStatus!=EFI_SUCCESS || G->PowerOnFlagStatus!=EFI_SUCCESS)return EFI_NOT_READY;
-  if(G->Fua!=TRUE || G->ModeWriteProtected!=FALSE || G->UnitWriteProtect>2 ||
-     G->PermanentEnabled!=FALSE || G->PowerOnEnabled!=FALSE)return EFI_WRITE_PROTECTED;
-  return EFI_SUCCESS;
+  return PianoUfsWriteGuardCheck(G);
 }
 STATIC VOID Quarantine(PIANO_UFS_WRITE_RESULT *R,EFI_STATUS S) {
   R->Quarantined=R->RequiresRecovery=TRUE;R->SafeToContinue=R->DataUnchanged=FALSE;

@@ -1,0 +1,15 @@
+[Defines]
+ INF_VERSION = 0x00010005
+ BASE_NAME = PianoVariableFlashInfoLib
+ FILE_GUID = 5C5803C6-676F-4D54-8B8C-3F47B8D917F0
+ MODULE_TYPE = DXE_RUNTIME_DRIVER
+ LIBRARY_CLASS = VariableFlashInfoLib|DXE_RUNTIME_DRIVER DXE_DRIVER
+[Sources]
+ PianoVariableFlashInfoLib.c
+[Packages]
+ MdePkg/MdePkg.dec
+ MdeModulePkg/MdeModulePkg.dec
+ pianoProductNvPkg/PianoNvPkg.dec
+[LibraryClasses]
+ UefiBootServicesTableLib
+ UefiRuntimeLib

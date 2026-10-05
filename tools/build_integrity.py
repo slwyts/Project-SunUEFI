@@ -32,8 +32,10 @@ def inputs(root,profile):
     if profile=='product':
         from prepare_product_pump import prepare as pump
         from prepare_product_ui import prepare as ui
+        from prepare_nv_runtime_guard import prepare as nv_guard
         pump_record=pump(root,apply=False);ui_record=ui(root,apply=False)
         files.update(root/path for path in (*pump_record['files'],*ui_record['files']))
+        files.update(root/path for path in nv_guard(root,apply=False)['files'])
         from prepare_product import SOURCE_NAMES
         canonical=root/'bootprofiles/uefi-app'
         files.update(canonical/name for name in SOURCE_NAMES)
@@ -42,7 +44,7 @@ def inputs(root,profile):
             files.update(path for path in (root/folder).rglob('*') if path.is_file())
         for relative in ('config/piano-product.json','build/product/prepared-manifest.json',
                          'tools/prepare_product.py','tools/build_product.sh','tools/package_product.py',
-                         'tools/prepare_product_pump.py','tools/prepare_product_ui.py','tools/simpleinit_build_identity.py',
+                         'tools/prepare_product_pump.py','tools/prepare_product_ui.py','tools/prepare_nv_runtime_guard.py','tools/simpleinit_build_identity.py',
                          'tools/build_simpleinit.sh','tools/prepare_simpleinit.py','tools/product_payload_digest.py',
                          'artifacts/simpleinit/product/SimpleInit.efi','artifacts/simpleinit/product/app-payload.bin',
                          'artifacts/simpleinit/product/build-ok.json'):

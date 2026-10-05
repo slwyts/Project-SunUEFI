@@ -1,0 +1,9 @@
+[Defines]
+ DEC_SPECIFICATION = 0x00010005
+ PACKAGE_NAME = PianoNvPkg
+ PACKAGE_GUID = DC2B9A4D-81D0-4DE5-A53B-273916CDF28E
+ PACKAGE_VERSION = 0.1
+[Includes]
+ Include
+[Protocols]
+ gPianoNvReadyProtocolGuid = {0x9565c3ad,0xd53b,0x491f,{0x9e,0x52,0x4c,0xe2,0xd9,0x48,0xee,0x03}}

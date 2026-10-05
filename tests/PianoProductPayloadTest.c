@@ -9,7 +9,7 @@
 #include "../bootprofiles/uefi-app/PianoFastbootBoot.c"
 static UINT64 handoff[2];UINTN PianoProductHostHandoffAddress;
 static UINT8 bank[16384];static UINT8 start_be[8],end_be[8];
-static EFI_MEMORY_REGION_DESCRIPTOR regions[2];
+static EFI_MEMORY_REGION_DESCRIPTOR regions[4];static UINT8 region_count;
 static BOOLEAN bad_fdt,hash_failure;
 UINTN EFIAPI AsciiStrLen(CONST CHAR8 *S){return strlen(S);}
 INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
@@ -17,7 +17,7 @@ VOID *EFIAPI CopyMem(VOID *A,CONST VOID *B,UINTN N){return memcpy(A,B,N);}
 VOID *EFIAPI ZeroMem(VOID *A,UINTN N){return memset(A,0,N);}
 INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
 BOOLEAN EFIAPI Sha256HashAll(CONST VOID *P,UINTN N,UINT8 *D){return !hash_failure && SHA256(P,N,D)!=NULL;}
-VOID GetMemoryMap(EFI_MEMORY_REGION_DESCRIPTOR **Map,UINT8 *Count){*Map=regions;*Count=2;}
+VOID GetMemoryMap(EFI_MEMORY_REGION_DESCRIPTOR **Map,UINT8 *Count){*Map=regions;*Count=region_count;}
 INT32 EFIAPI FdtCheckHeader(CONST VOID *F){assert(F==bank);return bad_fdt?-1:0;}
 UINT32 EFIAPI SwapBytes32(UINT32 V){return __builtin_bswap32(V);}
 UINT32 EFIAPI Fdt32ToCpu(UINT32 V){return __builtin_bswap32(V);}
@@ -28,7 +28,7 @@ static void init(const char *file){
   FILE *f=fopen(file,"rb");assert(f);memset(bank,0,sizeof(bank));assert(fread(bank+4096+64,1,4096,f)==4096);assert(fgetc(f)==EOF);fclose(f);
   bank[7]=64; // Actual FdtTotalSize macro reads the big-endian header word.
   APP_HEADER *h=(APP_HEADER *)(bank+4096);memcpy(h->Magic,mMagic,16);h->Version=1;h->HeaderBytes=64;h->AppBytes=4096;memcpy(h->AppHash,mPianoProductSimpleInitSha256,32);
-  memset(regions,0,sizeof(regions));strcpy(regions[0].Name,"BootHandoff");regions[0].Address=(UINTN)handoff;regions[0].Length=sizeof(handoff);
+  memset(regions,0,sizeof(regions));region_count=2;strcpy(regions[0].Name,"BootHandoff");regions[0].Address=(UINTN)handoff;regions[0].Length=sizeof(handoff);
   strcpy(regions[1].Name,"Kernel");regions[1].Address=(UINTN)bank;regions[1].Length=sizeof(bank);
   handoff[0]=0x534E554546494448ULL;handoff[1]=(UINTN)bank;PianoProductHostHandoffAddress=(UINTN)handoff;
   be(start_be,(UINTN)(bank+4096));be(end_be,(UINTN)(bank+4096+64+4096));bad_fdt=hash_failure=FALSE;
@@ -55,6 +55,14 @@ int main(int argc,char **argv){
   init(argv[1]);((APP_HEADER *)(bank+4096))->AppBytes=8192;assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
   init(argv[1]);((APP_HEADER *)(bank+4096))->AppHash[0]^=1;assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
   init(argv[1]);hash_failure=TRUE;assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
+  init(argv[1]);strcpy(regions[1].Name,"DXE_Heap_Upper");
+  assert(PianoProductAcquireSimpleInit(&v)==EFI_SUCCESS);assert(PianoProductPayloadGetFdt(&v,&fdt)==EFI_SUCCESS&&fdt==bank);assert(PianoProductReleaseSimpleInit(&v)==EFI_SUCCESS);
+  init(argv[1]);strcpy(regions[1].Name,"DXE_Heap");regions[1].Length=8192;region_count=4;
+  strcpy(regions[2].Name,"Piano_HWFence_Reserved");regions[2].Address=(UINTN)(bank+8192);regions[2].Length=4096;
+  strcpy(regions[3].Name,"DXE_Heap_Upper");regions[3].Address=(UINTN)(bank+12288);regions[3].Length=4096;
+  assert(PianoProductAcquireSimpleInit(&v)==EFI_BAD_BUFFER_SIZE); // APP span crosses protected hole
+  init(argv[1]);strcpy(regions[1].Name,"DXE_Heap_Upper");regions[1].Length=32;
+  assert(PianoProductAcquireSimpleInit(&v)==EFI_NOT_FOUND); // DT header cannot cross row boundary
   init(argv[1]);mGeneration=MAX_UINTN;assert(PianoProductAcquireSimpleInit(&v)==EFI_OUT_OF_RESOURCES);
   puts("Product payload actual C: real bounded handoff/FDT/APPv1/digest/PE, stale loans and no-free release passed; no hardware.");return 0;
 }

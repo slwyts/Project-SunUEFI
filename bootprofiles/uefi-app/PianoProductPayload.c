@@ -30,7 +30,8 @@ STATIC BOOLEAN Known(UINT64 Address,UINT64 Bytes,BOOLEAN Handoff) {
   if(Map==NULL || !Bytes || Address>MAX_UINT64-Bytes)return FALSE;
   for(UINTN I=0;I<Count;++I) {
     BOOLEAN Name=Handoff?!AsciiStrCmp(Map[I].Name,"BootHandoff"):
-      (!AsciiStrCmp(Map[I].Name,"Kernel") || !AsciiStrCmp(Map[I].Name,"DXE_Heap"));
+      (!AsciiStrCmp(Map[I].Name,"Kernel") || !AsciiStrCmp(Map[I].Name,"DXE_Heap") ||
+       !AsciiStrCmp(Map[I].Name,"DXE_Heap_Upper"));
     if(Name && Address>=Map[I].Address && Address-Map[I].Address<Map[I].Length &&
        Bytes<=Map[I].Length-(Address-Map[I].Address))return TRUE;
   }

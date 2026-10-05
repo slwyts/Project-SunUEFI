@@ -6,6 +6,8 @@
 #include "PianoFastbootBlockRead.h"
 #include "PianoKeysLifecycle.h"
 #include "PianoRamPartition.h"
+#include "PianoUfsProductVolume.h"
+#include "PianoProductStorageBaseline.h"
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/BaseLib.h>
@@ -22,6 +24,7 @@ STATIC BOOLEAN mUfsAttempted,mUfsStarted,mInputStarted;
 STATIC EFI_STATUS mUfsStatus=EFI_NOT_STARTED;
 STATIC UINT64 mCounterFrequency,mCounterStart,mCounterEnd;
 STATIC PIANO_RAM_PARTITION_REPORT mRamInventory;
+STATIC PIANO_UFS_PRODUCT_VOLUME mProductVolume;
 STATIC VOID ReportRequiredBackends(VOID) {
   // Required remains true. Missing real hardware/startup is visible rather
   // than converted into a silent build-time feature switch or fake Ready.
@@ -95,6 +98,22 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   PianoUfsSetProbeAction(InitUfs);PianoProbeUfs(Fdt);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_UFS_START attempted=%u status=%r started=%u original_media_readonly=1\n",mUfsAttempted,mUfsStatus,mUfsStarted));
   if(!mUfsAttempted || !mUfsStarted)FailStop(mUfsStatus);
+  PIANO_UFS_WINDOW_IO ProductStorageIo={0};
+  Status=PianoUfsProductTransportIo(&mProductVolume,&ProductStorageIo);
+  if(Status!=EFI_SUCCESS)FailStop(Status);
+  CONST PIANO_UFS_PRODUCT_ORIGINAL_GPT Original={
+    {mProductStorageOriginalPrimary,sizeof(mProductStorageOriginalPrimary)},
+    {mProductStorageOriginalEntries,sizeof(mProductStorageOriginalEntries)},
+    {mProductStorageOriginalBackup,sizeof(mProductStorageOriginalBackup)}};
+  Status=PianoUfsProductVolumeOpen(&mProductVolume,&Original,&ProductStorageIo);
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_STORAGE_DISCOVERY status=%r provisioned=%u readonly_originals=1 format_performed=0\n",
+    Status,mProductVolume.State.Provisioned));
+  if(mProductVolume.State.Quarantined || mProductVolume.State.NeedsRecovery)FailStop(Status);
+  if(Status==EFI_SUCCESS) {
+    Status=PianoUfsProductTransportPublish(&mProductVolume);
+    if(Status!=EFI_SUCCESS)FailStop(Status);
+    DEBUG((DEBUG_WARN,"PIANO_PRODUCT_STORAGE_FAT_PUBLISHED writable=1 container_headers_excluded=1 nv_slots_private=1\n"));
+  } else if(Status!=EFI_NOT_FOUND)FailStop(Status);
   Status=PianoFastbootBlockReadInit();if(Status!=EFI_SUCCESS)FailStop(Status);
   CONST PIANO_FB_STORAGE *Storage=PianoFastbootBlockReadStorage();
   if(Storage==NULL || Storage->Ready(Storage->Context)!=EFI_SUCCESS)FailStop(EFI_NOT_READY);

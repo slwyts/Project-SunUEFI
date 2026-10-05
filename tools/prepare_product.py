@@ -20,12 +20,14 @@ SOURCE_NAMES=(
     'NativeProbe.c','PianoKeys.c','PianoFaultRecovery.c',
     'PianoSmmu.c','PianoDma.c','PianoOwnedSmmu.c','PianoIoPageTable.c',
     'PianoUfsProbe.c','PianoUfsReadOnlyDma.c','PianoUfsDmaLayout.c','PianoGpt.c','PianoReadOnlyBlock.c',
+    'PianoUfsProductVolume.c','PianoUfsBoundedLayout.c',
     'PianoFastboot.c','PianoFastbootBlockRead.c','PianoFastbootBoot.c','PianoFastbootLaunch.c','PianoFastbootDownloadBlob.c',
     'PianoFastbootScreen.c','PianoDwc3Device.c','PianoUsbControl.c','PianoUsbController.c',
     'PianoPogoReport.c','PianoPogoInput.c','PianoPogoI2c.c','PianoPogoTransport.c','PianoGeniI2cPio.c','PianoUsbHostPci.c',
 )
 PRODUCT_FLAGS=('PIANO_USB_SERVICE=1','PIANO_USB_EP0=1','PIANO_USB_FASTBOOT=1','PIANO_USB_SCREENSHOT=1',
-    'PIANO_USB_UFS_FETCH=1','PIANO_USB_RAM_BOOT=1','PIANO_USB_POWER_PROBE=1','PIANO_UFS_BLOCKIO=1')
+    'PIANO_USB_UFS_FETCH=1','PIANO_USB_RAM_BOOT=1','PIANO_USB_POWER_PROBE=1','PIANO_UFS_BLOCKIO=1',
+    'PIANO_UFS_PRODUCT_STORAGE=1','PIANO_NV_BOOT_ONLY=1')
 NATIVE_NAMES=('SmemDxe','DALSys','ChipInfo','PlatformInfoDxeDriver','HWIODxeDriver','ULogDxe',
     'CmdDbDxe','PwrUtilsDxe','RpmhDxe','NpaDxe','VcsDxe','ClockDxe','HALIOMMU')
 DISK_MODULES=('MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf',
@@ -39,6 +41,34 @@ HOST_MODULES=('MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf','MdeModulePkg/Bus/Usb/U
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def fix_product_low_heap(text,dtb):
+    """Cold product-only carveout correction; never retag live DXE allocations."""
+    from plan_piano_dram import extract_dt
+    dt=extract_dt(dtb)
+    expected={'/reserved-memory/adspslpi_region@9ee00000':(0xB8200000,0xBD980000),
+              '/reserved-memory/hwfence-shmem':(0xD4E23000,0xD5100000)}
+    for path,bounds in expected.items():
+        rows=[row for row in dt['fixed']if row['path']==path]
+        if len(rows)!=1 or (rows[0]['base'],rows[0]['end'])!=bounds or not rows[0]['no_map']:
+            raise ValueError('Product low heap fixed owner changed: '+path)
+    old='  {"DXE_Heap", 0xBD930000, 0x1A6D0000, AddMem, 0, 0x703C07, 7, WRITE_BACK_XN},'
+    new='''  {"Piano_ADSP_Heap_Conflict", 0xBD930000, 0x50000, HobOnlyNoCacheSetting, 5, 0x703C07, 0, WRITE_BACK_XN},
+  {"DXE_Heap", 0xBD980000, 0x174A3000, AddMem, 0, 0x703C07, 7, WRITE_BACK_XN},
+  {"Piano_HWFence_Reserved", 0xD4E23000, 0x2DD000, HobOnlyNoCacheSetting, 5, 0x703C07, 0, WRITE_BACK_XN},
+  {"DXE_Heap_Upper", 0xD5100000, 0x2F00000, AddMem, 0, 0x703C07, 7, WRITE_BACK_XN},'''
+    if text.count(old)!=1:raise ValueError('Unexpected original product DXE heap row')
+    text=text.replace(old,new)
+    # NoHob already excludes DBI from the allocator; remove its misleading
+    # Conventional token without altering the inherited UC CPU attribute.
+    old='  {"DBI_Dump", 0xB81C0000, 0x5770000, NoHob, 1, 0x2, 7, UNCACHED_UNBUFFERED_XN},'
+    if text.count(old)!=1:raise ValueError('Unexpected original DBI owner row')
+    text=text.replace(old,old.replace('0x2, 7,','0x2, 0,'))
+    return text,{'phase':'COLD_BOOT_ONLY','named_hob_arena':{'base':0xBD980000,'end':0xD4E23000},
+                 'upper_resource':{'base':0xD5100000,'end':0xD8000000},
+                 'excluded_from_phit_allocator_and_cpu_map':[[0xBD930000,0xBD980000],[0xD4E23000,0xD5100000]],
+                 'other_native_cache_attributes_changed':False,'high_ddr_added':False}
+
+
 def backend_status():
     # Integration/validation state is separate from the required enabled set.
     return {
@@ -47,10 +77,10 @@ def backend_status():
       'pogo_keyboard_touchpad':{'status':'NOT_READY','missing':'verified SE6 firmware/clock ownership and live report transport'},
       'touchscreen':{'status':'NOT_READY','missing':'verified GPI/PAS/DMA physical touch reports'},
       'dma_smmu':{'status':'IMPLEMENTED_STRICT_OWNERS','physical_evidence':'test91 readonly fetch and exact combined USB/UFS retirement passed; resident product retirement still untested','ram_partition_inventory':'AUDITED_NATIVE_ABI_LINKED_UNTESTED','high_ram_ownership_verified':False},
-      'ufs_blockio_read_write':{'status':'READ_ONLY_BACKEND','missing':'normal writable provider and permanent explicit test/storage reservation; bounded RW test86 is not product RW'},
+      'ufs_blockio_read_write':{'status':'RESERVED_VOLUME_BACKEND_UNPROVISIONED','original_media':'READ_ONLY','missing':'explicit permanent reservation, provisioning approval and product physical RW acceptance'},
       'gpt':{'status':'IMPLEMENTED_READ','physical_evidence':'real UFS GPT reads; product untested'},
       'fat_simplefilesystem':{'status':'IMPLEMENTED_READ_ONLY_VOLUMES','physical_evidence':'7 read-only SFS, bounded FAT RW test86; product untested'},
-      'persistent_variables':{'status':'RAM_ONLY','missing':'durable NV variable backend; PcdEmuVariableNvModeEnable remains TRUE'},
+      'persistent_variables':{'status':'RAM_ONLY','prepared_backend':'STANDARD_FVB_DUAL_JOURNAL_NOT_ACTIVATED','runtime_nv_set_supported':False,'missing':'early recovered NV before standard variable initialization; HALIOMMU architectural dependency cycle; PcdEmuVariableNvModeEnable remains TRUE'},
       'uefi_shell':{'status':'LINKED_STANDARD_SHELL','missing':'product cooperative exit and UFS file operations acceptance'},
       'setup_hii':{'status':'LINKED_STANDARD_UIAPP','missing':'product navigation/F12/cooperative exit acceptance'},
       'simpleinit':{'status':'LINKED_PRODUCT_GUI','missing':'product APPv1 load, visible Setup/Shell navigation and background service acceptance'},
@@ -181,9 +211,18 @@ def prepare(root=ROOT):
         if path.is_file() and path.suffix in ('.h','.inc'):shutil.copyfile(path,app/path.name)
     shutil.copytree(source/'Protocol',app/'Protocol')
     (app/'PianoProductSimpleInitDigest.h').write_text(header)
+    from prepare_ufs_write_test import verify_capture, _c_array
+    storage_blobs=verify_capture()
+    storage_baseline='// Pinned original GPT bytes; no provisioning or write authorization.\n#include <Uefi.h>\n'
+    for symbol,name in (('mProductStorageOriginalPrimary','primary-header.bin'),
+                        ('mProductStorageOriginalEntries','primary-entries.bin'),
+                        ('mProductStorageOriginalBackup','backup-header.bin')):
+        storage_baseline+=_c_array(symbol,storage_blobs[name])+'\n'
+    (app/'PianoProductStorageBaseline.h').write_text(storage_baseline)
     (app/'ProductCore.inf').write_text(core_inf())
     native_fdf,native_id=native_modules(root,app)
     memory=target/'Library/MemoryMapLib/MemoryMapLib.c';text=memory.read_text()
+    text,low_memory_contract=fix_product_low_heap(text,(root/'private/captures/2026-10-03-piano/live.dtb').read_bytes())
     anchor='  {"CRYPTO0_CRYPTO",'
     if text.count(anchor)!=1:raise ValueError('Unexpected product MMIO map anchor')
     text=text.replace(anchor,'  {"UFS_HCI", 0x1D84000, 0x3000, AddDev, 1, 0x400, 11, NS_DEVICE},\n'
@@ -252,6 +291,7 @@ def prepare(root=ROOT):
       'backend_initialization_required':True,'backends':backend_status(),'runtime_readiness':'NOT_PRODUCT_DEVICE_VALIDATED',
       'service_compile_flags':list(PRODUCT_FLAGS),'sources':list(SOURCE_NAMES),'native_foundation':native_id,
       'simpleinit':simpleinit,'simpleinit_payload':app_identity,'ui_hooks':ui,'pump_hooks':prepare_pump(root,apply=False),
+      'low_memory_contract':low_memory_contract,
       'platform_files':{str(path.relative_to(target)):sha(path)for path in sorted(target.rglob('*'))if path.is_file()},
       'device_boot_performed':False,'permanent_storage_writes':False}
     out=root/'build/product';out.mkdir(parents=True,exist_ok=True)

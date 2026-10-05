@@ -29,7 +29,8 @@ class ProductBuilderTests(unittest.TestCase):
         backends=product.backend_status()
         self.assertEqual(set(contract['features']),set(backends))
         self.assertEqual(backends['persistent_variables']['status'],'RAM_ONLY')
-        self.assertEqual(backends['ufs_blockio_read_write']['status'],'READ_ONLY_BACKEND')
+        self.assertEqual(backends['ufs_blockio_read_write']['status'],'RESERVED_VOLUME_BACKEND_UNPROVISIONED')
+        self.assertEqual(backends['ufs_blockio_read_write']['original_media'],'READ_ONLY')
         for feature in ('pogo_keyboard_touchpad','touchscreen','usb_host'):
             self.assertEqual(backends[feature]['status'],'NOT_READY')
         self.assertEqual(backends['usb_device_fastboot']['current_download_limit_bytes'],64*1024*1024)
