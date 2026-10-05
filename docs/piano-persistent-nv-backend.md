@@ -38,6 +38,10 @@ HALIOMMU 原 DEPEX 同时需要 VariableArch 和 VariableWriteArch，而早期�
 
 Mu EmuNv 初始化不注册真实 FTW notify。RealNv 初始化在 entry 先复制 NV到 mNvVariableCache 并建立 offset/quota/auth 状态；之后 FVB notify并不重新从 late-restored介质构建全部cache。因此晚安装FVB不能证明已恢复保存变量。下一步需要消除该 native HAL依赖，或者经过完整验证的标准变量分阶段初始化；本轮没有实施bootstrap hack或重复安装变量引擎。
 
+2026-10-05进一步审查固定HAL二进制（SHA `98598d11ff42f89534bb6e25fa20a0b99964a152b59df2f379021fb903ea479c`）：12项DEPEX恰为BaseTools GenDepex的整组ArchProtocols，GpiDxe也使用同一组。HAL constructor把RT保存到B210，已审指令/literal引用只发现store；GetApi/Create/Configure/Attach/Sync/Detach/Destroy最小路径没有直接GetVariable/SetVariable调用。外部资源/Kernel callbacks未全审，所以不能声明整个HAL无间接NV依赖，也不因此删除原DEPEX。
+
+实际native Sync经2154→15DC→23F8执行CB+618/TLBIALL、CB+7F0/TLBSYNC并无界轮询CB+7F4。Detach只清路由，不清SCTLR/TTBR；Destroy把CBAR改为1FF00却未证明CB disabled。新的变量无关backend必须有界sync，核全路由引用及SCTLR.M=0，先配置和验证root/attrs再发布stream；不能照搬native弱认领条件或全局reset。当前ACTLR/TBU/secure和早期owner资格仍未知，独立源码尚不作为已验证硬件后端启用。
+
 ## 离线证据及 host seed
 
 实际 journal/FVB C通过ASAN/UBSAN的594个 atomic/torn-write 回调断电边界，验证旧完整/已提交新镜像恢复、flash/erase/range、runtime不访问IO和VA转换。publication测试验证RuntimeCode/RuntimeData及旧VariableArch拒绝；标准入口提取测试证明NV创建和零属性删除在MOR前拒绝，诊断宏0行为保留。ARM64严格语法检查覆盖后端和实际标准 Variable.c 两种宏。
