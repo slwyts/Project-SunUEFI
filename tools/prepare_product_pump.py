@@ -18,7 +18,7 @@ PINS = {
 }
 BASE = "upstream/Mu-Silicium/Mu_Basecore/"
 SI = "upstream/simple-init/"
-WAIT_HOOK = """    // Product library binding is Null for legacy diagnostics. Mu all-TPL
+PREVIOUS_WAIT_HOOK = """    // Product library binding is Null for legacy diagnostics. Mu all-TPL
     // wait behavior stays intact; APP work never runs at CALLBACK/NOTIFY.
     if (gEfiCurrentTpl == TPL_APPLICATION) {
       PianoProductPumpApplication (PIANO_PRODUCT_PUMP_WAIT_EVENT, 1000);
@@ -31,8 +31,14 @@ WAIT_HOOK = """    // Product library binding is Null for legacy diagnostics. Mu
       }
     }
 """
+WAIT_HOOK = PREVIOUS_WAIT_HOOK.replace(
+    "      PianoProductPumpApplication (PIANO_PRODUCT_PUMP_WAIT_EVENT, 1000);",
+    "      EFI_STATUS ProductStatus = PianoProductPumpApplication (PIANO_PRODUCT_PUMP_WAIT_EVENT, 1000);")
+WAIT_HOOK = WAIT_HOOK.replace(
+    "      if (!PianoProductPumpBootServicesAlive () || ReturnCore) {",
+    "      if (!PianoProductPumpBootServicesAlive () || ReturnCore || ProductStatus == EFI_ABORTED) {")
 # One exact migration from the earlier local hook; unknown edits still fail.
-LEGACY_WAIT_HOOK = WAIT_HOOK.replace("""      BOOLEAN ReturnCore = PianoProductReturnCoreRequested ();
+LEGACY_WAIT_HOOK = PREVIOUS_WAIT_HOOK.replace("""      BOOLEAN ReturnCore = PianoProductReturnCoreRequested ();
       if (!PianoProductPumpBootServicesAlive () || ReturnCore) {
         return EFI_ABORTED;
       }
@@ -97,9 +103,10 @@ def prepare(root=ROOT, apply=False, check_pins=True):
             newline[path] = b"\r\n" if b"\r\n" in raw else b"\n"
             desired[path] = raw.decode().replace("\r\n", "\n")
             if relative == BASE + "MdeModulePkg/Core/Dxe/Event/Event.c" and WAIT_HOOK not in desired[path]:
-                legacy = "  for ( ; ;) {\n" + LEGACY_WAIT_HOOK + "    for (Index = 0; Index < NumberOfEvents; Index++) {"
-                if desired[path].count(legacy) == 1:
-                    desired[path] = desired[path].replace(legacy,"  for ( ; ;) {\n    for (Index = 0; Index < NumberOfEvents; Index++) {",1)
+                for prior in (LEGACY_WAIT_HOOK,PREVIOUS_WAIT_HOOK):
+                    legacy = "  for ( ; ;) {\n" + prior + "    for (Index = 0; Index < NumberOfEvents; Index++) {"
+                    if desired[path].count(legacy) == 1:
+                        desired[path] = desired[path].replace(legacy,"  for ( ; ;) {\n    for (Index = 0; Index < NumberOfEvents; Index++) {",1)
         desired[path] = transform(desired[path], old, new, relative)
     for relative, marker in (
         (BASE + "MdeModulePkg/Core/Dxe/Event/Event.c", WAIT_HOOK),

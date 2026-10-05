@@ -14,7 +14,7 @@ import prepare_product_ui as prepare
 BASE=ROOT/prepare.BASE
 
 def function(text,name):
-    m=re.search(r'(?m)^(?:EFI_STATUS|VOID|UI_EVENT_TYPE)\s+(?:EFIAPI\s+)?'+name+r'\s*\(',text)
+    m=re.search(r'(?m)^(?:(?:static|STATIC)\s+)?(?:EFI_STATUS|SHELL_STATUS|VOID|UI_EVENT_TYPE|void|int)\s+(?:EFIAPI\s+)?'+name+r'\s*\(',text)
     if not m:raise ValueError('missing actual function '+name)
     begin=text.index('{',m.start());depth=1;end=begin+1
     while depth:
@@ -31,6 +31,10 @@ def generated():
     console=(ROOT/(prepare.UEFI_LIB+'Console.c')).read_text()
     simple=(ROOT/(prepare.SI+'src/lib/reboot.c')).read_text()
     boot=(ROOT/(prepare.SI+'src/boot/reboot_uefi.c')).read_text()
+    bootdef=(ROOT/(prepare.SI+'src/boot/bootdef.c')).read_text()
+    bootmenu=(ROOT/(prepare.SI+'src/gui/interface/core/bootmenu.c')).read_text()
+    reset=(ROOT/(prepare.RESET_LIB+'Reset.c')).read_text()
+    reset_params=reset[reset.index('STATIC CONST SHELL_PARAM_ITEM'):reset.index('/** Main function')]
     reboot_types=simple[simple.index('typedef enum REBOOT_REASON_TYPE'):simple.index('int adv_reboot(')]
     reboot_begin=simple.index('int adv_reboot(');reboot_end=simple.index('\n}\n',reboot_begin)+2
     popup_begin=console.index('  if (Key != NULL) {\n',console.index('CreatePopUp ('))
@@ -65,11 +69,11 @@ for (;;) {switch(ControlFlag){
     done_begin=browser.index('Done:\n',close_end)
     done_end=browser.index('\n}\n',done_begin)
     close='EFI_STATUS ActualBrowserClose(UI_MENU_SELECTION *Selection) {EFI_STATUS Status;VOID *ConfigAccess=(VOID *)1;VOID *NotifyHandle=(VOID *)2;\n'+browser_hook+browser[close_begin:close_end]+browser[done_begin:done_end]+'\n}\n'
-    input_begin=browser.index('  if (PianoProductReturnCoreRequested ()) {\n',browser.index('DisplayForm ('))
+    input_begin=browser.index('  if (PianoProductUiReturnRequested ()) {\n',browser.index('DisplayForm ('))
     input_end=browser.index('\n}\n',input_begin)
     input_branch='EFI_STATUS ActualInputBranch(USER_INPUT UserInput) {EFI_STATUS Status;\n'+browser[input_begin:input_end]+'\n}\n'
     reboot_boot=boot[boot.index('int run_boot_reboot('):boot.index('\n}\n',boot.index('int run_boot_reboot('))+2]
-    return '\n\n'.join((function(display,'UiWaitForEvent'),function(cdl,'WaitForKeyStroke'),readline,function(shell,'DoShellPrompt'),menu,close,input_branch,popup,function(ui,'UiEntry'),function(ui,'SetupResetReminder'),main,reboot_types,simple[reboot_begin:reboot_end],reboot_boot))
+    return '\n\n'.join((function(display,'UiWaitForEvent'),function(cdl,'WaitForKeyStroke'),readline,function(shell,'DoShellPrompt'),menu,close,input_branch,popup,function(ui,'UiEntry'),function(ui,'SetupResetReminder'),main,reboot_types,simple[reboot_begin:reboot_end],reboot_boot,function(bootdef,'boot_init_configs'),function(bootmenu,'bootmenu_boot'),reset_params,function(reset,'MainCmdReset'),function(reset,'ShellCommandRunReset')))
 
 class ProductUiTests(unittest.TestCase):
     def fixture(self,directory):
@@ -88,7 +92,7 @@ class ProductUiTests(unittest.TestCase):
             root=self.fixture(out);first=prepare.prepare(root,apply=True,check_pins=False)
             self.assertEqual(first,prepare.prepare(root,apply=True,check_pins=False))
             self.assertEqual(first,prepare.prepare(root,apply=False,check_pins=False))
-            self.assertEqual(len(first['files']),22)
+            self.assertEqual(len(first['files']),28)
             self.assertEqual(first['default_binding'],'PianoProductPumpLibNull')
     def test_modified_or_duplicate_patch_refused_before_mutations(self):
         for mutation in('modified','duplicate'):
@@ -106,7 +110,7 @@ class ProductUiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='piano-product-ui-')as out:
             out=Path(out);(out/'PianoActualProductUi.h').write_text(generated())
             exe=out/'ui';include=BASE/'MdePkg/Include'
-            build=subprocess.run(['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-unused-label','-fsanitize=address,undefined','-g','-fno-pie','-no-pie','-I'+str(include),'-I'+str(include/'X64'),'-I'+str(out),str(ROOT/'tests/PianoProductUiTest.c'),'-o',str(exe)],capture_output=True,text=True)
+            build=subprocess.run(['cc','-std=gnu11','-DENABLE_UEFI','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-unused-label','-fsanitize=address,undefined','-g','-fno-pie','-no-pie','-I'+str(include),'-I'+str(include/'X64'),'-I'+str(out),str(ROOT/'tests/PianoProductUiTest.c'),'-o',str(exe)],capture_output=True,text=True)
             self.assertEqual(build.returncode,0,build.stdout+build.stderr)
             run=subprocess.run([str(exe)],capture_output=True,text=True)
             self.assertEqual(run.returncode,0,run.stdout+run.stderr);print(run.stdout.strip())

@@ -227,6 +227,60 @@ static VOID free_cold_model(VOID) {
   while(mFrames){FB_FRAME *F=mFrames;mFrames=F->Next;free(F);}
   for(UINTN I=0;I<ARRAY_SIZE(all);++I){free(all[I]->Cpu);ZeroMem(all[I],sizeof(*all[I]));}
 }
+static PIANO_PRODUCT_RUNTIME_PROTOCOL navigation_runtime,navigation_replacement;
+static UINTN navigation_case,navigation_queries,navigation_requests,navigation_action;
+static BOOLEAN navigation_alive=TRUE;
+static EFI_STATUS EFIAPI navigation_pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason,UINTN Budget){(VOID)This;(VOID)Reason;(VOID)Budget;assert(!"navigation may not recursively pump");return EFI_UNSUPPORTED;}
+static BOOLEAN EFIAPI navigation_is_alive(PIANO_PRODUCT_RUNTIME_PROTOCOL *This){assert(This==&navigation_runtime && current_tpl==TPL_APPLICATION && !in_timer);return navigation_alive;}
+static EFI_STATUS EFIAPI navigation_pending(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 *Action,UINT64 *Seq){(VOID)This;(VOID)Action;(VOID)Seq;assert(!"USB navigation must only latch");return EFI_UNSUPPORTED;}
+static EFI_STATUS EFIAPI navigation_ack(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT64 Seq){(VOID)This;(VOID)Seq;assert(!"USB does not consume UI actions");return EFI_UNSUPPORTED;}
+static EFI_STATUS EFIAPI navigation_request(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Action){
+  assert(This==&navigation_runtime && current_tpl==TPL_APPLICATION && !in_timer && !closes && held==255 && domain && mService.State.Phase==PianoUsbServiceListening);
+  ++navigation_requests;navigation_action=Action;
+  if(navigation_case==4)return EFI_WARN_STALE_DATA;
+  if(navigation_case==5)return EFI_ACCESS_DENIED;
+  return EFI_SUCCESS;
+}
+static EFI_STATUS EFIAPI navigation_changed_request(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Action){(VOID)This;(VOID)Action;assert(!"changed runtime method must never run");return EFI_UNSUPPORTED;}
+static EFI_STATUS EFIAPI navigation_locate(EFI_GUID *Guid,VOID *Registration,VOID **Interface){
+  EFI_GUID UiGuid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;
+  if(memcmp(Guid,&UiGuid,sizeof(UiGuid)))return locate_clock(Guid,Registration,Interface);
+  assert(current_tpl==TPL_APPLICATION && !in_timer);++navigation_queries;
+  if(navigation_case==1){*Interface=NULL;return EFI_NOT_FOUND;}
+  if(navigation_case==9)return EFI_WARN_STALE_DATA;
+  if(navigation_case==10){exit_notify((VOID *)0x102,NULL);*Interface=&navigation_runtime;return EFI_SUCCESS;}
+  *Interface=navigation_case==6 && navigation_queries>1?&navigation_replacement:&navigation_runtime;return EFI_SUCCESS;
+}
+static VOID run_navigation(UINTN Test) {
+  setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;
+  bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;bs.SetTimer=set_timer;bs.CloseEvent=close_event;bs.LocateProtocol=navigation_locate;
+  clock.DisableClock=clock.DisableClockPowerDomain=persistent_disable;
+  navigation_case=Test;navigation_queries=navigation_requests=navigation_action=0;navigation_alive=Test!=3;
+  navigation_runtime=(PIANO_PRODUCT_RUNTIME_PROTOCOL){.Revision=PIANO_PRODUCT_RUNTIME_REVISION,.Pump=navigation_pump,.BootServicesAlive=navigation_is_alive,.RequestAction=navigation_request,.GetPendingAction=navigation_pending,.AckAction=navigation_ack};
+  navigation_replacement=navigation_runtime;
+  if(Test==2)navigation_runtime.Revision=99;
+  if(Test==8)navigation_runtime.GetPendingAction=NULL;
+  PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID *)0x55,.NowUs=now_us,.Storage=&backend};
+  assert(PianoUsbControllerServiceStart((VOID *)123,&C)==EFI_SUCCESS);service_enumerate();
+  if(Test==0){
+    CONST CHAR8 *Commands[]={"oem setup","oem shell","oem simpleinit"};CONST UINT32 Actions[]={PIANO_PRODUCT_ACTION_SETUP,PIANO_PRODUCT_ACTION_SHELL,PIANO_PRODUCT_ACTION_SIMPLEINIT};
+    for(UINTN I=0;I<3;++I){UINTN Alloc=allocations;service_out(Commands[I]);assert(mPending[3] && mPosted[3]==4 && !memcmp(mBulkTx.Cpu,"OKAY",4) && navigation_action==Actions[I]);service_ack();assert(!closes && !clock_calls && allocations==Alloc && mService.State.Phase==PianoUsbServiceListening && mService.State.Action==PianoUsbServiceActionNone);}
+    assert(navigation_queries==3 && navigation_requests==3);service_out("getvar:version");service_ack();
+  } else {
+    if(Test==6 || Test==7){service_out("oem setup");service_ack();assert(navigation_requests==1);if(Test==7)navigation_runtime.RequestAction=navigation_changed_request;}
+    if(Test==10){
+      CopyMem(mBulkRx.Cpu,"oem setup",9);DWC_TRB *T=mTrbs[2].Cpu;T->Size=mPosted[2]-9;T->Control&=~BIT0;
+      publish(0xC044);timer_tick();assert(PianoUsbControllerServicePumpApp(1,5000)==EFI_ABORTED);
+      assert(mService.State.ServicesLost && !navigation_requests && !mFrames && !mPending[3] && !closes && held==255);
+      free_cold_model();return;
+    }
+    service_out("oem shell");CONST CHAR8 *Failure="FAILUI navigation backend unavailable";
+    assert(mPending[3] && mPosted[3]==strlen(Failure) && !memcmp(mBulkTx.Cpu,Failure,strlen(Failure)));service_ack();
+    assert(!closes && !clock_calls && mService.State.Phase==PianoUsbServiceListening && mService.State.Action==PianoUsbServiceActionNone);
+    if(Test!=4 && Test!=5 && Test!=6 && Test!=7)assert(!navigation_requests);
+  }
+  PIANO_USB_SERVICE_RETIRE_REPORT R;assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&R)==EFI_SUCCESS && R.Clean);free_cold_model();
+}
 static VOID run_service(UINTN Test) {
   setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;bs_calls=event_creates=event_closes=clock_calls=proof_calls=0;
   timer_notify=exit_notify=NULL;bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;bs.SetTimer=set_timer;bs.CloseEvent=close_event;
@@ -297,13 +351,16 @@ static VOID run_service(UINTN Test) {
 int main(void) {
 #if PIANO_USB_SERVICE
   for(UINTN I=0;I<20;++I){pid_t P=fork();assert(P>=0);if(P==0){run_service(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB persistent service case %llu failed\n",(unsigned long long)I);return 1;}}
-  puts("Actual Device+Controller persistent USB: 20 cases PASS; timer raw queue only, APP enumeration/commands/fetch, multi-UI lifetime, ACK-before-action, disconnect/reconnect, EBS halt-retain, exact shutdown/warning quarantine; no device.");
+  for(UINTN I=0;I<11;++I){pid_t P=fork();assert(P>=0);if(P==0){run_navigation(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB product navigation case %llu failed\n",(unsigned long long)I);return 1;}}
+  puts("Actual Device+Controller persistent USB: 20 lifecycle + 11 navigation cases PASS; timer raw queue only, APP enumeration/commands/fetch, multi-UI lifetime, ACK-before-action, disconnect/reconnect, EBS halt-retain, exact shutdown/warning quarantine; no device.");
 #else
   (VOID)backend;PIANO_DWC3_SERVICE_STATUS S;PIANO_USB_SERVICE_RETIRE_REPORT R;PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID *)0x55,.NowUs=NULL};
   assert(PianoUsbControllerServiceStart(NULL,&C)==EFI_UNSUPPORTED && PianoDwc3ServiceStart(NULL,NULL,&C)==EFI_UNSUPPORTED);
   assert(PianoUsbControllerServicePumpApp(1,1000)==EFI_UNSUPPORTED && PianoDwc3ServicePollBounded(1)==EFI_UNSUPPORTED);
   assert(PianoUsbControllerServiceGetStatus(&S)==EFI_UNSUPPORTED && PianoUsbControllerServiceStop(EFI_SUCCESS,&R)==EFI_UNSUPPORTED);
-  puts("USB persistent service default-off APIs PASS; no device.");
+  model_init();configure();cmd("oem setup","FAILcommand disabled by RAM-only policy");cmd("oem shell","FAILcommand disabled by RAM-only policy");cmd("oem simpleinit","FAILcommand disabled by RAM-only policy");
+  assert(Halt()==EFI_SUCCESS);for(UINTN I=0;I<ARRAY_SIZE(all);++I){if(all[I]->Active)assert(PianoDmaComplete(all[I],EFI_SUCCESS,TRUE)==EFI_SUCCESS);assert(PianoDmaFree(all[I])==EFI_SUCCESS);}ClearFastboot();
+  puts("USB persistent service default-off APIs and rejected OEM navigation PASS; no device.");
 #endif
   return 0;
 }

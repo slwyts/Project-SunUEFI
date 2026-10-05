@@ -74,7 +74,7 @@ error 时，保留相关资源，拒绝启动下一应用。
 ## 当前证据与待接线
 
 `tests/PianoBootPolicyTest.c` 编译实际策略和 FV 加载器，使用真实 UEFI ABI
-签名进行 55 个隔离场景测试。覆盖默认 SimpleInit、F12 顺序、UI 返回不关闭
+签名进行 59 个隔离场景测试。覆盖默认 SimpleInit、F12 顺序、UI 返回不关闭
 USB、实际 worker 状态、热插拔且旧接口不可访问、Setup 的空标记协议、
 畸形 FV 枚举、自动卸载与显式卸载、异常句柄身份、warning/error 的资源保留，
 以及 EBS 后使 `gBS` 不可访问的返回路径。增加了真实 USB 四种 stop action 的
@@ -87,3 +87,11 @@ worker 接入唯一产品构建并实机验证。键盘 F12 的产品级验收�
 驱动提供 SimpleTextInputEx；主机模拟回调不能证明官方键盘已经可用。
 Shell/Setup 全程 USB 可发现、任意界面插拔后的 fastboot 命令、跨 UI 返回的
 会话连续性及 OS 退出退休仍需同一产品镜像上的实机记录。
+
+## 产品菜单与界面导航
+
+产品 SimpleInit 启动菜单新增「固件设置（BIOS）」和「进入 UEFI Shell」两项，沿用既有 LVGL focus group 和实体音量/电源键输入路径。菜单及工具主界面现有 Shell 入口只请求 runtime 动作 2/3，再通过 gui_run_and_exit(NULL) 正常返回父核心；没有嵌套 Load/Start。Null/旧诊断不创建新项且保留旧快捷入口行为。
+
+provider 对同当前 ActiveAction 的导航成功无操作，不覆盖已有 pending。对不同界面导航 1/2/3，APP pump 返回 EFI_ABORTED 唤醒等待；各 UI 用实际 pending 协作清理，父核心继续服务相同 USB response queue 再派发下一应用。RETURN_CORE 优先级保留；不关闭 USB/UFS。
+
+实际 C 测试覆盖 SimpleInit→Setup→SimpleInit、SimpleInit→Shell→SimpleInit、Setup→Shell→SimpleInit、同界面无操作且保留另一 pending，以及 child EFI_ABORTED 返回后父核心继续 pump 并在下一次正常派发。

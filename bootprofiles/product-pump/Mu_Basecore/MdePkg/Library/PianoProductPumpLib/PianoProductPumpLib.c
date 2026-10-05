@@ -77,6 +77,36 @@ BOOLEAN EFIAPI PianoProductReturnCoreRequested(VOID) {
   }
   return Status==EFI_SUCCESS && Action==PIANO_PRODUCT_ACTION_RETURN_CORE;
 }
+BOOLEAN EFIAPI PianoProductUiReturnRequested(VOID) {
+  UINT32 Action=PIANO_PRODUCT_ACTION_NONE;UINT64 Sequence=0;
+  EFI_STATUS Status=PianoProductGetPendingAction(&Action,&Sequence);
+  if(!PianoProductPumpBootServicesAlive()){
+#ifdef __aarch64__
+    __asm__ volatile("msr daifset, #15" ::: "memory");
+#endif
+    CpuDeadLoop();return FALSE;
+  }
+  return Status==EFI_SUCCESS && Action!=PIANO_PRODUCT_ACTION_NONE;
+}
+EFI_STATUS EFIAPI PianoProductRequestNavigation(UINT32 Action) {
+  if(Action<PIANO_PRODUCT_ACTION_SIMPLEINIT || Action>PIANO_PRODUCT_ACTION_SHELL)return EFI_INVALID_PARAMETER;
+  EFI_STATUS Status=Enter();
+  if(!PianoProductPumpBootServicesAlive()){
+#ifdef __aarch64__
+    __asm__ volatile("msr daifset, #15" ::: "memory");
+#endif
+    CpuDeadLoop();return EFI_ABORTED;
+  }
+  if(Status!=EFI_SUCCESS)return Status==EFI_UNSUPPORTED?EFI_ACCESS_DENIED:Status;
+  Status=mRuntime->RequestAction(mRuntime,Action);mBusy=FALSE;
+  if(!PianoProductPumpBootServicesAlive()){
+#ifdef __aarch64__
+    __asm__ volatile("msr daifset, #15" ::: "memory");
+#endif
+    CpuDeadLoop();return EFI_ABORTED;
+  }
+  return Status==EFI_UNSUPPORTED?EFI_ACCESS_DENIED:Exact(Status);
+}
 EFI_STATUS EFIAPI PianoProductRequestReboot(VOID) {
   EFI_STATUS Status=Enter();
   if(!PianoProductPumpBootServicesAlive()){

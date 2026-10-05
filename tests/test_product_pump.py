@@ -77,12 +77,12 @@ class ProductPumpTests(unittest.TestCase):
 
     def test_build_identity_refuses_wrong_actual_binding_flags_and_output(self):
         hooks=prepare.prepare(apply=False)
-        for mutation in ('none','report','link','gui','output','dsc','sources'):
+        for mutation in ('none','report','link','gui','output','dsc','sources','navigation_sources'):
             with self.subTest(mutation=mutation),tempfile.TemporaryDirectory(prefix='product-si-id-')as directory:
                 base=Path(directory);build=base/'build';output=base/'output';build.mkdir();output.mkdir()
                 dsc=build/'SunSimpleInit.dsc';dsc.write_text('real product DSC')
                 owned=ROOT/'upstream/simple-init/src/main/uefimain.c'
-                source={'product_gui_pump':True,'pump_hooks':hooks,'dsc_sha256':identity.sha(dsc),'owned_sources':{str(owned.relative_to(ROOT)):identity.sha(owned)}}
+                source={'product_gui_pump':True,'pump_hooks':hooks,'dsc_sha256':identity.sha(dsc),'owned_sources':{str(owned.relative_to(ROOT)):identity.sha(owned),**{name:identity.sha(ROOT/name)for name in identity.PRODUCT_NAVIGATION_SOURCES}}}
                 (build/'source-manifest.json').write_text(__import__('json').dumps(source))
                 report=build/'simpleinit-build-report.txt';report.write_text('MdePkg/Library/PianoProductPumpLib/PianoProductPumpLib.inf')
                 target=build/'Build/SimpleInit/NOOPT_CLANGDWARF/AARCH64';target.mkdir(parents=True)
@@ -95,6 +95,7 @@ class ProductPumpTests(unittest.TestCase):
                 if mutation=='output':(output/'SimpleInit.efi').write_bytes(b'old output')
                 if mutation=='dsc':dsc.write_text('changed DSC')
                 if mutation=='sources':source['pump_hooks']={};(build/'source-manifest.json').write_text(__import__('json').dumps(source))
+                if mutation=='navigation_sources':source['owned_sources'].pop(identity.PRODUCT_NAVIGATION_SOURCES[0]);(build/'source-manifest.json').write_text(__import__('json').dumps(source))
                 # This fixture isolates post-compile metadata checks. Actual
                 # installed UI/GUI source verification is covered separately.
                 with patch.dict(sys.modules,{'prepare_product_ui':type('Ui',(),{'prepare':staticmethod(lambda *args,**kwargs:None)})}):

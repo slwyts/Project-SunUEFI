@@ -306,6 +306,15 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes)
   }
   if(Equal(Cmd,"oem sha256"))return HashDownload(S);
   if(Equal(Cmd,"oem discard")){PianoFastbootReset(S);return Reply(S,"OKAY");}
+  if(Equal(Cmd,"oem setup") || Equal(Cmd,"oem shell") || Equal(Cmd,"oem simpleinit")) {
+#if PIANO_USB_SERVICE
+    if(S->Diagnostic==NULL)return Reply(S,"FAILUI navigation backend unavailable");
+    EFI_STATUS Status=S->Diagnostic(S->Context,S,Cmd);
+    return Status==EFI_UNSUPPORTED?Reply(S,"FAILUI navigation backend unavailable"):Status;
+#else
+    return Reply(S,"FAILcommand disabled by RAM-only policy");
+#endif
+  }
   if(Equal(Cmd,"oem status") || Equal(Cmd,"oem ramlog") || Equal(Cmd,"oem screenshot")) {
     if(S->Diagnostic==NULL)return Reply(S,"FAILdiagnostic service unavailable");
     EFI_STATUS Status=S->Diagnostic(S->Context,S,Cmd);

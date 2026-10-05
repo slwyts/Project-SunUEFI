@@ -237,14 +237,18 @@ def main():
     (build / 'SunSimpleInit.dsc').write_text(dsc)
     fonts = {'noto': {'source': str(source_font), 'sha256': hashlib.sha256(target_font.read_bytes()).hexdigest()},
              'fontawesome': {'version': '5.15.4', 'sha256': hashlib.sha256(icons.read_bytes()).hexdigest()}}
+    owned_paths = (main_c,exit_c,main_inf,si/'src/main/PianoSnapshot.c',keyboard,menu,touch,
+                   touch.parent/'PianoTouchInput.h',gui_inf,drivers,compat_inf,
+                   si/'libs/compatible/PianoQuadFloatCompat.c',arm,linux_inf,inc)
+    if args.product_gui_pump:
+        from simpleinit_build_identity import PRODUCT_NAVIGATION_SOURCES
+        owned_paths += tuple(root/relative for relative in PRODUCT_NAVIGATION_SOURCES)
     (build / 'source-manifest.json').write_text(json.dumps({'commit': commit, 'fonts': fonts,
         'product_gui_pump': args.product_gui_pump,
         'pump_hooks': prepare(root, apply=False),
         'ui_hooks': ui_hooks,
         'owned_sources': {str(path.relative_to(root)):hashlib.sha256(path.read_bytes()).hexdigest()
-          for path in (main_c,exit_c,main_inf,si/'src/main/PianoSnapshot.c',keyboard,menu,touch,
-                       touch.parent/'PianoTouchInput.h',gui_inf,drivers,compat_inf,
-                       si/'libs/compatible/PianoQuadFloatCompat.c',arm,linux_inf,inc)},
+          for path in owned_paths},
         'dsc_sha256': hashlib.sha256(dsc.encode()).hexdigest()}, indent=2) + '\n')
 
 

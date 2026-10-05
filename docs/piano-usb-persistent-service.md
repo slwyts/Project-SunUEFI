@@ -43,6 +43,18 @@ Device Stop can move the downloaded image token after a verified boot ACK,
 Halt and exactly nine DMA frees. That token is not execution evidence and must
 remain in the manager's ownership ledger if later owner closure fails.
 
+## Product UI navigation
+
+The three exact stock OEM commands latch runtime actions 2 (Setup), 3 (Shell)
+and 1 (SimpleInit) from the real APP worker. Each request locates the runtime
+protocol afresh, checks its revision and five method identities against the
+first live instance, then checks BootServicesAlive before and after the CPU-only
+RequestAction. No nested application execution, device Stop/reset or synthetic
+keyboard event occurs. The parent dispatches after normal child cleanup; USB
+remains listening. Commands fail when no actual live backend is available, and
+SERVICE-disabled legacy diagnostics reject them. An EBS fence prevents even a
+failure reply from submitting new DMA.
+
 ## Full Stop
 
 APP Stop cancels and closes the raw-event timer, halts DWC3, retires event/TRB
@@ -60,14 +72,17 @@ start. An invalid USB SMR alone never creates a proof.
 ## Validation and remaining device work
 
 `python3 -m unittest discover -s tests -p test_usb_service.py -v` compiles the
-actual Device and Controller source together under ASan/UBSan. Twenty isolated
+actual Device and Controller source together under ASan/UBSan. Twenty lifecycle and eleven navigation isolated
 cases cover APP/TPL/reentry checks, timer-only queueing, overflow/malformed
 rings, standard command and guarded fetch, more than 90 seconds of simulated
 multi-UI lifetime, reconnect enumeration, actual ACK-before-action, RAM boot
 handoff/cancellation/failed Take, EBS retention, and clock/event/DMA warnings.
 The exporter boundary checks fresh capture and replay prevention; the actual
 SMMU ledger/proof matching is covered separately by the owned-peer tests.
-Gate-zero APIs and gate-zero/gate-one AArch64 syntax also pass. The existing
+The navigation cases exercise exact `oem setup`, `oem shell` and
+`oem simpleinit` requests, fresh runtime lookup, method/identity replacement,
+missing/dead/wrong-revision runtime, warnings and EBS without response DMA.
+Gate-zero APIs deny navigation, and gate-zero/gate-one AArch64 syntax also pass. The existing
 USB fastboot and RAM-controller suites remain passing.
 
 This is host-source validation. Persistent product USB still needs one real

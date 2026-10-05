@@ -69,11 +69,26 @@ All direct commands select `-s SunUEFI-piano`:
 | `continue` | Currently the same clean cold reset; it does not start an OS |
 | `boot FILE` | Currently rejects: `RAM boot backend unavailable` |
 | `oem log` | Rejects: `log service unavailable`; use `oem ramlog` |
-| `oem setup` / `oem shell` / `oem simpleinit` | No registered entry; command denied |
+| `oem setup` / `oem shell` / `oem simpleinit` | Resident product only: validate fresh runtime, latch target UI and reply; core dispatches after normal child cleanup |
 | reboot targets / flash / erase / slot commands | No registered backend; command denied |
 
-Setup is requested by the actual F12/runtime input path; Shell and SimpleInit
-are supervised runtime application actions. There is currently no stock OEM
-navigation command, so later multi-UI acceptance requires actual navigation.
-Run the same checker under distinct private phase labels once each UI is reached;
-do not infer Setup/Shell acceptance from a successful SimpleInit capture.
+The resident product also accepts these stock CLI navigation commands:
+
+```bash
+fastboot -s SunUEFI-piano oem setup
+fastboot -s SunUEFI-piano oem shell
+fastboot -s SunUEFI-piano oem simpleinit
+```
+
+They use the existing runtime actions and preserve USB/DMA owners. The current
+child returns through its normal cleanup before the parent dispatches the next
+UI. A command ACK means its request was accepted, not that the target UI has
+already appeared. Check the captured contents and run the same checker under
+separate private phase labels after each transition. A request for the current
+UI is an idempotent success. F12 remains the input path for Setup.
+
+Old diagnostic images with SERVICE disabled still deny these commands. A
+resident service without the actual matching live runtime backend returns a
+failure. Earlier archived product revisions before this navigation change have
+no OEM navigation entry; use the matching new single product revision for this
+acceptance. Do not infer Setup/Shell acceptance from a SimpleInit capture.

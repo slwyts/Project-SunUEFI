@@ -68,6 +68,7 @@ STATIC EFI_STATUS EFIAPI Request(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Act
   else if(Reboot && (mReport.ActiveAction<PIANO_PRODUCT_ACTION_SIMPLEINIT || mReport.ActiveAction>PIANO_PRODUCT_ACTION_SHELL))S=EFI_ACCESS_DENIED;
   else if(Reboot && mReport.PendingAction==PIANO_PRODUCT_ACTION_RETURN_CORE && mReport.RequestedCoreAction!=PianoUsbServiceActionReboot)S=EFI_ACCESS_DENIED;
   else if(mReport.PendingAction==PIANO_PRODUCT_ACTION_RETURN_CORE && Action!=PIANO_PRODUCT_ACTION_RETURN_CORE)S=EFI_ACCESS_DENIED;
+  else if(!Reboot && Action<=PIANO_PRODUCT_ACTION_SHELL && mReport.ActiveAction==Action){ /* same UI: successful no-op, preserve any newer pending action */ }
   else if(mReport.PendingAction!=Action) {
     if(mReport.Sequence==MAX_UINT64)S=EFI_OUT_OF_RESOURCES;
     else {if(Reboot)mReport.RequestedCoreAction=PianoUsbServiceActionReboot;mReport.PendingAction=Action;++mReport.Sequence;}
@@ -157,6 +158,9 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
     EFI_STATUS Latch=Request(&mRuntime,PIANO_PRODUCT_ACTION_RETURN_CORE);if(Latch!=EFI_SUCCESS)S=Latch;
   }
   if(S==EFI_SUCCESS && (!mReport.Usb.Started || mReport.Usb.Retained || mReport.Usb.ServicesLost))S=EFI_NOT_READY;
+  if((S==EFI_SUCCESS || S==EFI_NOT_READY) && mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE &&
+     mReport.PendingAction>=PIANO_PRODUCT_ACTION_SIMPLEINIT && mReport.PendingAction<=PIANO_PRODUCT_ACTION_SHELL &&
+     mReport.PendingAction!=mReport.ActiveAction)S=EFI_ABORTED; // cooperative UI yield, not EBS/USB shutdown
   mReport.Pumping=FALSE;return mReport.LastPump=Exact(S);
 }
 STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime={PIANO_PRODUCT_RUNTIME_REVISION,Pump,Alive,Request,Pending,Ack};
@@ -237,6 +241,10 @@ EFI_STATUS PianoBootPolicyRun(VOID) {
         return PianoBootPolicyDispatchPending();
       return S;
     }
+    // UI navigation does not stop USB. Give its copied response queue an APP
+    // slice between children, preserving the same DMA/service owner instance.
+    EFI_STATUS Service=Pump(&mRuntime,PIANO_PRODUCT_PUMP_APP,1000);
+    if(Service!=EFI_SUCCESS && Service!=EFI_NOT_READY && Service!=EFI_ABORTED)return Service;
     if(Action==PIANO_PRODUCT_ACTION_SETUP || Action==PIANO_PRODUCT_ACTION_SHELL) {
       Get=Pending(&mRuntime,&Action,&Sequence);RequireAlive();if(Get!=EFI_SUCCESS)return Get;
       if(Action==PIANO_PRODUCT_ACTION_NONE){Get=Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT);if(Get!=EFI_SUCCESS)return Get;}

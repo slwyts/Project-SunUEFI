@@ -7,7 +7,7 @@
 `tools/prepare_product_ui.py apply` 在精确固定的 Mu_Basecore commit
 `bb557081f80f4883ed832e34ab36bdca6ede1e10` 上添加协作检查。
 SimpleInit 同时固定 `3d66a6e78d519dd050fbebde4db6c5ac933f9aa4`。
-`verify` 检查实际构建源码；清单包含 22 个文件的 SHA。修改或重复的锚点会在
+`verify` 检查实际构建源码；清单包含 28 个文件的 SHA。修改或重复的锚点会在
 写入任何文件前被拒绝。产品构建必须同时应用 `prepare_product_pump.py`，并
 把这两份清单纳入构建指纹。旧诊断构建仍绑定 `PianoProductPumpLibNull`，其中
 返回核心检查恒为 FALSE；这些检查不会改变旧输入行为。
@@ -83,7 +83,13 @@ Boot Services 与设备模拟，覆盖 Continue/Reboot/Boot 的共同返回条�
 临时输入归还、borrowed 缓冲避免二次释放，以及没有请求时原始按键路径。
 ASAN/UBSAN 通过；清洁源应用、重复应用和拒绝损坏补丁三项测试通过。
 
-实际修改的 14 个 C 源文件均使用现有 EDK2 AutoGen/include/ARM64 编译标志做
+实际修改的 18 个 C 源文件均使用现有 EDK2 AutoGen/include/ARM64 编译标志做
 严格语法检查，通过。这些证据证明了实现和清理顺序；它们不证明平板上已经
 完成 Setup/Shell 界面中的 fastboot 插拔、命令、自动返回、统一设备退休及
 Android 恢复。最后仍需唯一产品镜像完成这些实机验收。
+
+## 导航和 Shell reset
+
+导航动作 1/2/3 使用相同协作退出路径，保留共享 USB/UFS。provider 对当前 ActiveAction 的重复请求成功无操作，父调度器在进入应用前 Ack，因此真实未消费导航是离开当前 UI 的请求。PianoProductUiReturnRequested() 查询实际 pending；CoreWait 仅在真实 APP pump 表示不同活跃界面的 yield 时唤醒，没有跨模块的猜测 UI 缓存。
+
+Shell 实际 reset 命令在产品绑定下将 cold/default 和无数据的 -c 请求交给父核心；参数包正常释放，Shell 再清理退出。warm、shutdown、fwui 和自定义 reset data 目前返回 SHELL_UNSUPPORTED，在 fwui 写变量或任何原生 ResetSystem 前拒绝。产品请求失败返回 SHELL_DEVICE_ERROR，不降级原生 reset；Null 保留原行为。实际源码主机测试覆盖这些分支及参数包归还。

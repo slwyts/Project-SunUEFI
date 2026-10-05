@@ -106,6 +106,20 @@ static EFI_STATUS EFIAPI load(BOOLEAN Policy,EFI_HANDLE Parent,EFI_DEVICE_PATH_P
 static EFI_STATUS EFIAPI start(EFI_HANDLE Handle,UINTN *Bytes,CHAR16 **Data){
   assert(Handle==(VOID *)400 && image_live && runtime && tpl==TPL_APPLICATION);++starts;*Bytes=0;*Data=NULL;
   assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_GUI,1000)==EFI_SUCCESS);
+  if(scenario>=55 && scenario<=58){
+    if(starts==1){
+      UINT32 A;UINT64 Seq,After;
+      assert(runtime->GetPendingAction(runtime,&A,&Seq)==EFI_SUCCESS && A==0);
+      assert(runtime->RequestAction(runtime,current_action)==EFI_SUCCESS && runtime->GetPendingAction(runtime,&A,&After)==EFI_SUCCESS && A==0 && After==Seq);
+      UINT32 Next=scenario==55?2:3;assert(runtime->RequestAction(runtime,Next)==EFI_SUCCESS);
+      assert(runtime->GetPendingAction(runtime,&A,&Seq)==EFI_SUCCESS && A==Next);
+      assert(runtime->RequestAction(runtime,current_action)==EFI_SUCCESS && runtime->GetPendingAction(runtime,&A,&After)==EFI_SUCCESS && A==Next && After==Seq);
+      assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_WAIT_EVENT,1000)==EFI_ABORTED && !stops && PianoBootPolicyReport()->Usb.Started);
+    }else if(starts==2 && scenario!=55){
+      assert(current_action==3 && runtime->RequestAction(runtime,1)==EFI_SUCCESS);
+      assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_WAIT_EVENT,1000)==EFI_ABORTED && !stops && PianoBootPolicyReport()->Usb.Started);
+    }
+  }
   if(scenario==48 || scenario==49 || scenario==52 || scenario==54){
     if(scenario==52){EFI_KEY_DATA Key={0};Key.Key.ScanCode=SCAN_F12;assert(key_callback(&Key)==EFI_SUCCESS);}
     if(scenario==54)tpl=TPL_CALLBACK;
@@ -125,7 +139,7 @@ static EFI_STATUS EFIAPI start(EFI_HANDLE Handle,UINTN *Bytes,CHAR16 **Data){
   if(scenario==7){for(UINTN I=0;I<16;++I)if(events[I].Live && events[I].Group)events[I].Notify(&events[I],events[I].Context);alive=FALSE;assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_REQUEST_REBOOT)==EFI_ABORTED);assert(mprotect(gBS,4096,PROT_NONE)==0);return EFI_SUCCESS;}
   if(scenario==32){replacement_loaded=loaded;return EFI_SUCCESS;}
   if(scenario>=28 && scenario<=30)return EFI_SUCCESS;
-  free(image_base);image_base=NULL;image_live=FALSE;return scenario==33?EFI_WARN_UNKNOWN_GLYPH:scenario==39?EFI_ABORTED:EFI_SUCCESS;
+  free(image_base);image_base=NULL;image_live=FALSE;return scenario==33?EFI_WARN_UNKNOWN_GLYPH:scenario==39 || (scenario==58 && starts==1)?EFI_ABORTED:EFI_SUCCESS;
 }
 static EFI_STATUS EFIAPI unload(EFI_HANDLE Handle){assert(Handle==(VOID *)400 && image_live);++unloads;assert(!loaded.LoadOptions && !loaded.LoadOptionsSize);if(scenario==29)return EFI_WARN_UNKNOWN_GLYPH;if(scenario==30)return EFI_DEVICE_ERROR;free(image_base);image_base=NULL;image_live=FALSE;return EFI_SUCCESS;}
 EFI_STATUS PianoProductAcquireSimpleInit(PIANO_PRODUCT_PAYLOAD_VIEW *V){++acquires;memset(V,0,sizeof(*V));if(scenario==2)return EFI_SECURITY_VIOLATION;assert(!loan);loan=TRUE;V->Image=payload;V->Bytes=sizeof(payload);V->Lease=(VOID *)123;return EFI_SUCCESS;}
@@ -139,7 +153,7 @@ EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){
 }
 EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RETIRE_REPORT *Report){(void)Reason;(void)Report;++stops;assert(!"UI return must not stop shared USB");return EFI_DEVICE_ERROR;}
 int main(int argc,char **argv){
-  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=54);
+  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=58);
   gBS=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);assert(gBS!=MAP_FAILED);
   *gBS=(EFI_BOOT_SERVICES){.RaiseTPL=raise,.RestoreTPL=restore,.CreateEventEx=create_ex,.CreateEvent=create,.CloseEvent=close_event,
     .RegisterProtocolNotify=notify,.InstallProtocolInterface=install,.UninstallProtocolInterface=uninstall,.LocateProtocol=locate,
@@ -181,8 +195,9 @@ int main(int argc,char **argv){
       if(scenario==45){UINT32 A;UINT64 Seq,After;assert(runtime->GetPendingAction(runtime,&A,&Seq)==EFI_SUCCESS && A==PIANO_PRODUCT_ACTION_RETURN_CORE);
         assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_APP,1000)==EFI_SUCCESS && runtime->GetPendingAction(runtime,&A,&After)==EFI_SUCCESS && After==Seq && A==PIANO_PRODUCT_ACTION_RETURN_CORE);}
     }
-    if(scenario==18 || (scenario>=19 && scenario<=22) || scenario==28 || scenario==34 || scenario==35 || scenario==49){EFI_KEY_DATA Key={0};Key.Key.ScanCode=SCAN_F12;assert(key_callback(&Key)==EFI_SUCCESS);}
+    if(scenario==18 || (scenario>=19 && scenario<=22) || scenario==28 || scenario==34 || scenario==35 || scenario==49 || scenario==57){EFI_KEY_DATA Key={0};Key.Key.ScanCode=SCAN_F12;assert(key_callback(&Key)==EFI_SUCCESS);}
     if(!setjmp(stop))S=PianoBootPolicyRun();else Fatal=TRUE;
+    if(scenario==58){assert(!Fatal && S==EFI_ABORTED && !stops && PianoBootPolicyReport()->Usb.Started);assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_APP,1000)==EFI_SUCCESS);S=PianoBootPolicyRun();}
     if(scenario==4 || scenario==5 || scenario==6 || scenario==7 || (scenario>=29 && scenario<=32)){assert(Fatal && (PianoBootPolicyReport()->Retained || scenario==7));if(scenario==29 || scenario==30)assert(loan && !releases && image_live);goto Done;}
     assert(!Fatal);
     if(scenario==2){assert(S==EFI_SECURITY_VIOLATION && !loads && !releases);}
@@ -193,6 +208,7 @@ int main(int argc,char **argv){
     else if(scenario==34 || scenario==35){assert(S==(scenario==34?EFI_SECURITY_VIOLATION:EFI_NOT_FOUND) && !loads && !starts);}
     else if(scenario>=38 && scenario<=45){assert(S==EFI_END_OF_FILE && starts==(scenario<=41?1:0) && PianoBootPolicyReport()->AppRuns==starts && !loan && releases==acquires && !stops);}
     else if(scenario==48 || scenario==49 || scenario==51 || scenario==52 || scenario==54){assert(S==EFI_END_OF_FILE && starts==1 && PianoBootPolicyReport()->AppRuns==1 && !loan && releases==acquires && !stops && PianoBootPolicyReport()->RequestedCoreAction==(scenario==51?PianoUsbServiceActionNone:PianoUsbServiceActionReboot));}
+    else if(scenario>=55 && scenario<=58){assert(S==EFI_SUCCESS && starts==3 && !loan && releases==acquires && !stops && PianoBootPolicyReport()->Usb.Started && PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionNone);}
     else {assert(S==EFI_SUCCESS && !loan && releases==acquires && unloads==(scenario==28?2:0));assert(starts==(scenario==1 || scenario==37?3:scenario==18 || scenario==22 || scenario==28?2:1));}
     if(scenario==36){
       PIANO_FV_APPLICATION Context={0};UINTN Before=starts;

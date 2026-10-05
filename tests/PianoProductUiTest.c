@@ -6,6 +6,7 @@
 #include <string.h>
 #include <errno.h>
 #include <ctype.h>
+#include <stdbool.h>
 #undef NULL
 #include <Uefi.h>
 #include <Protocol/SimpleTextIn.h>
@@ -29,7 +30,15 @@
 #define PcdShellPageBreakDefault 0
 #define STR_SHELL_CURDIR 0
 #define STR_SHELL_SHELL 0
+#define STR_GEN_TOO_MANY 0
+#define STR_GEN_PROBLEM 0
+#define EFI_OS_INDICATIONS_SUPPORT_VARIABLE_NAME L"OsIndicationsSupported"
+#define EFI_OS_INDICATIONS_VARIABLE_NAME L"OsIndications"
 #define PIANO_PRODUCT_PUMP_APP 4
+#define PIANO_PRODUCT_ACTION_NONE 0
+#define PIANO_PRODUCT_ACTION_SIMPLEINIT 1
+#define PIANO_PRODUCT_ACTION_SETUP 2
+#define PIANO_PRODUCT_ACTION_SHELL 3
 
 EFI_BOOT_SERVICES *gBS;
 EFI_SYSTEM_TABLE *gST;
@@ -45,7 +54,8 @@ static UINTN pumps,waits,reads,allocated,freed,event_close,commands,buffer_resto
 static UINTN front_init,front_free,reset_reminders,callbacks,discards,package_unreg;
 static UINTN env_cleanup,param_cleanup,logger_cleanup,cwd_cleanup,envlist_cleanup;
 static UINTN processed_input,checked_config;
-static UINTN reboot_requests,native_resets,config_saves,reboot_warnings;
+static UINTN reboot_requests,native_resets,config_saves,reboot_warnings,navigation_requests,navigation_action,gui_exits,legacy_boots,entry_count;
+static UINTN reset_option,reset_packages;
 static VOID *display_buffer;
 static UINT32 action;
 static UINT64 timeout_value;
@@ -56,7 +66,7 @@ static VOID ZeroMem(VOID *p,UINTN n){memset(p,0,n);}
 static UINTN StrLen(CONST CHAR16 *s){UINTN n=0;while(s[n])++n;return n;}
 static VOID StrCpyS(CHAR16 *a,UINTN n,CONST CHAR16 *b){assert(n>StrLen(b));do{*a++=*b;}while(*b++);}
 static EFI_STATUS PianoProductPumpApplication(UINT32 r,UINTN b){assert(r==PIANO_PRODUCT_PUMP_APP&&b==1000);++pumps;return enabled?EFI_SUCCESS:EFI_UNSUPPORTED;}
-static BOOLEAN PianoProductReturnCoreRequested(VOID){return enabled&&pending;}
+static BOOLEAN PianoProductUiReturnRequested(VOID){return enabled&&pending;}
 static EFI_STATUS EFIAPI Wait(UINTN n,EFI_EVENT *events,UINTN *index){assert(n&&events&&index);++waits;if(enabled&&remote_on_wait){pending=TRUE;return EFI_ABORTED;}*index=0;key_ready=TRUE;return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI Create(UINT32 t,EFI_TPL tpl,EFI_EVENT_NOTIFY fn,VOID *ctx,EFI_EVENT *out){assert(t==EVT_TIMER&&tpl==0);*out=(VOID *)7;return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI SetTimer(EFI_EVENT e,EFI_TIMER_DELAY t,UINT64 delay){assert(e==(VOID *)7&&t==TimerRelative&&delay==timeout_value);return EFI_SUCCESS;}
@@ -158,13 +168,50 @@ static EFI_STATUS PianoProductRequestReboot(VOID){++reboot_requests;if(!enabled)
 #define MAX_STRING_LEN 100
 #define ERET(e) do{errno=(e);return -1;}while(0)
 enum reboot_cmd{REBOOT_HALT,REBOOT_POWEROFF,REBOOT_RESTART,REBOOT_COLD,REBOOT_WARM,REBOOT_RECOVERY,REBOOT_FASTBOOT,REBOOT_EDL,REBOOT_DATA};
-enum{BOOT_REBOOT,BOOT_HALT,BOOT_POWEROFF};
-typedef struct{UINTN mode;CONST CHAR8 *key;}boot_config;
+enum{BOOT_REBOOT,BOOT_HALT,BOOT_POWEROFF,BOOT_EXIT,BOOT_SIMPLE_INIT};
+typedef struct{UINTN mode;CHAR8 key[256],ident[64],desc[256];bool save,replace,show,enabled;}boot_config;
 static int AsciiStriCmp(CONST char *a,CONST char *b){while(*a&&*b&&tolower((unsigned char)*a)==tolower((unsigned char)*b)){++a;++b;}return tolower((unsigned char)*a)-tolower((unsigned char)*b);}
 static UINTN AsciiStrLen(CONST char *s){return strlen(s);}
 static char *confd_get_string_base(CONST char *key,CONST char *item,VOID *fallback){return NULL;}
 static VOID confd_save_file(VOID *path){++config_saves;}
 static VOID tlog_warn(CONST char *message){++reboot_warnings;}
+static EFI_STATUS PianoProductRequestNavigation(UINT32 a){assert(a>=1&&a<=3);++navigation_requests;navigation_action=a;if(request_failure)return EFI_ACCESS_DENIED;pending=TRUE;return EFI_SUCCESS;}
+static struct initial_cfg{bool valid;boot_config cfg;VOID *args;}initial_cfgs[]={{.valid=false}};
+static boot_config created_entries[4];
+static int boot_create_config(boot_config *cfg,VOID *data){assert(entry_count<4);created_entries[entry_count++]=*cfg;return 0;}
+static VOID gui_splash_set_text(bool b,CONST char *text){}
+static VOID boot_scan_efi(VOID){}
+static VOID load_uefi_boot(VOID){}
+#define _(text) (text)
+#define TYPE_STRING 1
+#define BOOT_DEFAULT "simple-init"
+#define BOOT_SECOND "simple-init"
+static UINTN confd_get_type(CONST char *name){return TYPE_STRING;}
+static VOID confd_set_string(CONST char *name,CONST char *value){}
+static VOID confd_set_save(CONST char *name,bool save){}
+static VOID tlog_notice(CONST char *format,...){ }
+static char target_boot_name[256];
+struct bootmenu_item{boot_config cfg;};
+struct bootmenu{struct bootmenu_item *selected;};
+static bool bootmenu_chdir(struct bootmenu_item *bi){return false;}
+static int after_exit(VOID *arg){++legacy_boots;return 0;}
+static VOID gui_run_and_exit(int (*callback)(VOID *)){if(callback){callback(NULL);}else ++gui_exits;}
+static VOID enter_simple_init(VOID *arg){}
+static VOID lv_async_call(VOID(*fn)(VOID *),VOID *arg){fn(arg);}
+typedef UINTN SHELL_STATUS;
+enum{SHELL_SUCCESS,SHELL_INVALID_PARAMETER,SHELL_UNSUPPORTED,SHELL_DEVICE_ERROR};
+enum{TypeValue,TypeFlag,TypeMax};
+typedef struct{CONST CHAR16 *Name;UINTN Type;}SHELL_PARAM_ITEM;
+static EFI_HII_HANDLE gShellLevel2HiiHandle;
+static BOOLEAN ShellCommandLineGetFlag(LIST_ENTRY *p,CONST CHAR16 *flag){return (reset_option==1&&flag[1]==L'w')||(reset_option==2&&flag[1]==L's')||(reset_option==3&&flag[1]==L'f');}
+static CONST CHAR16 *ShellCommandLineGetRawValue(LIST_ENTRY *p,UINTN n){return NULL;}
+static CONST CHAR16 *ShellCommandLineGetValue(LIST_ENTRY *p,CONST CHAR16 *flag){return reset_option==4&&flag[1]==L'c'?L"unsupported-data":NULL;}
+static UINTN StrSize(CONST CHAR16 *text){return (StrLen(text)+1)*sizeof(CHAR16);}
+static VOID ShellPrintDefaultEx(CONST CHAR16 *text,...){ }
+static EFI_STATUS ShellInitialize(VOID){return EFI_SUCCESS;}
+static EFI_STATUS ShellCommandLineParse(CONST SHELL_PARAM_ITEM *items,LIST_ENTRY **p,CHAR16 **problem,BOOLEAN b){*p=AllocateZeroPool(sizeof(**p));*problem=NULL;return EFI_SUCCESS;}
+static VOID ShellCommandLineFreeVarList(LIST_ENTRY *p){++reset_packages;FreePool(p);}
+static EFI_GUID gEfiGlobalVariableGuid;
 
 #include "PianoActualProductUi.h"
 static MOCK_SHELL_PROTOCOL template={Env,ActualConsoleRead,FreeTab,RootShell,(VOID *)9};
@@ -175,6 +222,8 @@ static VOID reset(BOOLEAN on){
   env_cleanup=param_cleanup=logger_cleanup=cwd_cleanup=envlist_cleanup=0;
   processed_input=checked_config=0;display_buffer=NULL;
   remote_on_wait=TRUE;allow_native_reset=request_failure=FALSE;reboot_requests=native_resets=config_saves=reboot_warnings=0;
+  navigation_requests=navigation_action=gui_exits=legacy_boots=entry_count=0;
+  reset_option=reset_packages=0;
   ZeroMem(&ShellInfoObject,sizeof(ShellInfoObject));
   ShellInfoObject.NewEfiShellProtocol=&template;
   InitializeListHead(&ShellInfoObject.ViewingSettings.CommandHistory.Link);
@@ -216,5 +265,14 @@ int main(VOID){
   for(UINTN cmd=0;cmd<=REBOOT_DATA;++cmd)if(cmd!=REBOOT_COLD&&cmd!=REBOOT_RESTART){reset(TRUE);assert(adv_reboot((enum reboot_cmd)cmd,NULL)==-1&&errno==EOPNOTSUPP&&!reboot_requests&&!native_resets);}
   reset(FALSE);allow_native_reset=TRUE;assert(adv_reboot(REBOOT_COLD,NULL)==-1&&native_resets==1&&!reboot_requests);
   reset(TRUE);boot_config boot={.mode=BOOT_REBOOT};assert(run_boot_reboot(&boot)==0&&pending&&reboot_requests==1&&config_saves==1&&!reboot_warnings&&!native_resets);
+  reset(TRUE);boot_init_configs();assert(entry_count==2&&!strcmp(created_entries[0].ident,"piano-setup")&&!strcmp(created_entries[0].desc,"固件设置（BIOS）")&&!strcmp(created_entries[1].ident,"piano-shell")&&created_entries[0].show&&created_entries[0].enabled&&!created_entries[0].save);
+  struct bootmenu_item item={.cfg=created_entries[0]};struct bootmenu bm={.selected=&item};bootmenu_boot(&bm);assert(navigation_action==2&&navigation_requests==1&&gui_exits==1&&!legacy_boots&&!native_resets);
+  item.cfg=created_entries[1];bootmenu_boot(&bm);assert(navigation_action==3&&navigation_requests==2&&gui_exits==2&&!legacy_boots&&!native_resets);
+  reset(TRUE);request_failure=TRUE;strcpy(item.cfg.ident,"piano-setup");bootmenu_boot(&bm);assert(navigation_requests==1&&!gui_exits&&!legacy_boots&&!native_resets);
+  reset(FALSE);boot_init_configs();assert(!entry_count);bootmenu_boot(&bm);assert(legacy_boots==1&&!navigation_requests&&!gui_exits);
+  reset(TRUE);assert(ShellCommandRunReset(NULL,gST)==SHELL_SUCCESS&&pending&&reboot_requests==1&&!native_resets&&reset_packages==1&&allocated==freed);
+  for(UINTN option=1;option<=4;++option){reset(TRUE);reset_option=option;assert(ShellCommandRunReset(NULL,gST)==SHELL_UNSUPPORTED&&!pending&&!reboot_requests&&!native_resets&&reset_packages==1&&allocated==freed);}
+  reset(TRUE);request_failure=TRUE;assert(ShellCommandRunReset(NULL,gST)==SHELL_DEVICE_ERROR&&!pending&&!native_resets&&reset_packages==1&&allocated==freed);
+  reset(FALSE);allow_native_reset=TRUE;assert(ShellCommandRunReset(NULL,gST)==SHELL_SUCCESS&&native_resets==1&&!reboot_requests&&reset_packages==1&&allocated==freed);
   puts("Actual patched Setup/Shell wait, UI cleanup and shared-core return paths passed for continue/reboot/boot; no reset/stop/Exit/fake keys");return 0;
 }

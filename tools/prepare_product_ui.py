@@ -213,6 +213,63 @@ hook(SI+'src/boot/reboot_uefi.c', '\tadv_reboot(cmd,data);\n\ttlog_warn("reset s
      '\tif(adv_reboot(cmd,data)==0){\n\t\tif(data)free(data);\n\t\treturn 0;\n\t}\n'
      '\ttlog_warn("reset system failed");')
 
+# Visible product top-level entries use the existing boot menu's real focus
+# group/input path, but are dispatched by the resident parent, not nested EFI.
+include(SI+'src/boot/bootdef.c', '#include<Library/BaseLib.h>\n')
+hook(SI+'src/boot/SimpleInitBoot.inf', '[LibraryClasses]\n', '[LibraryClasses]\n  PianoProductPumpLib\n')
+hook(SI+'src/boot/bootdef.c', '\tgui_splash_set_text(true,_("Loading UEFI boot options..."));',
+     '\tif(PianoProductRebootManaged()){\n'
+     '\t\tboot_config entries[]={\n'
+     '\t\t\t{.mode=BOOT_EXIT,.ident="piano-setup",.desc="固件设置（BIOS）",.save=false,.replace=true,.show=true,.enabled=true},\n'
+     '\t\t\t{.mode=BOOT_EXIT,.ident="piano-shell",.desc="进入 UEFI Shell",.save=false,.replace=true,.show=true,.enabled=true}\n'
+     '\t\t};\n'
+     '\t\tfor(size_t n=0;n<sizeof(entries)/sizeof(entries[0]);n++)boot_create_config(&entries[n],NULL);\n'
+     '\t}\n\tgui_splash_set_text(true,_("Loading UEFI boot options..."));')
+hook(SI+'src/gui/interface/core/bootmenu.c', '#include"gui/tools.h"\n',
+     '#include"gui/tools.h"\n#ifdef ENABLE_UEFI\n#include<Library/PianoProductPumpLib.h>\n#endif\n')
+hook(SI+'src/gui/interface/core/bootmenu.c', '\t#ifdef ENABLE_UEFI\n\tif(bi->cfg.mode==BOOT_SIMPLE_INIT){',
+     '\t#ifdef ENABLE_UEFI\n'
+     '\tif(PianoProductRebootManaged()){\n'
+     '\t\tUINT32 action=strcmp(bi->cfg.ident,"piano-setup")==0?PIANO_PRODUCT_ACTION_SETUP:\n'
+     '\t\t\tstrcmp(bi->cfg.ident,"piano-shell")==0?PIANO_PRODUCT_ACTION_SHELL:PIANO_PRODUCT_ACTION_NONE;\n'
+     '\t\tif(action!=PIANO_PRODUCT_ACTION_NONE){\n'
+     '\t\t\tEFI_STATUS status=PianoProductRequestNavigation(action);\n'
+     '\t\t\tif(status==EFI_SUCCESS)gui_run_and_exit(NULL);\n'
+     '\t\t\telse tlog_warn("product navigation request failed");\n'
+     '\t\t\treturn;\n\t\t}\n\t}\n'
+     '\tif(bi->cfg.mode==BOOT_SIMPLE_INIT){')
+hook(SI+'src/gui/interface/apps/uefi_shell.c', '#include<Library/UefiLib.h>\n',
+     '#include<Library/UefiLib.h>\n#include<Library/PianoProductPumpLib.h>\n')
+hook(SI+'src/gui/interface/apps/uefi_shell.c', '\tif(id==0){\n\t\tMEDIA_FW_VOL_FILEPATH_DEVICE_PATH fn;',
+     '\tif(id==0){\n'
+     '\t\tif(PianoProductRebootManaged()){\n'
+     '\t\t\tEFI_STATUS status=PianoProductRequestNavigation(PIANO_PRODUCT_ACTION_SHELL);\n'
+     '\t\t\tif(status==EFI_SUCCESS)gui_run_and_exit(NULL);\n'
+     '\t\t\telse msgbox_alert("product navigation request failed");\n'
+     '\t\t\treturn false;\n\t\t}\n'
+     '\t\tMEDIA_FW_VOL_FILEPATH_DEVICE_PATH fn;')
+
+RESET_LIB=BASE+'ShellPkg/Library/UefiShellLevel2CommandsLib/'
+include(RESET_LIB+'Reset.c', '#include "UefiShellLevel2CommandsLib.h"\n')
+hook(RESET_LIB+'UefiShellLevel2CommandsLib.inf','[LibraryClasses]\n','[LibraryClasses]\n  PianoProductPumpLib\n')
+hook(RESET_LIB+'Reset.c', '  if (ShellCommandLineGetFlag (Package, L"-fwui")) {',
+     '  if (PianoProductRebootManaged ()) {\n'
+     '    if (ShellCommandLineGetFlag (Package, L"-w") ||\n'
+     '        ShellCommandLineGetFlag (Package, L"-s") ||\n'
+     '        ShellCommandLineGetFlag (Package, L"-fwui") ||\n'
+     '        ShellCommandLineGetValue (Package, L"-c") != NULL) {\n'
+     '      return SHELL_UNSUPPORTED;\n    }\n'
+     '    Status = PianoProductRequestReboot ();\n'
+     '    return Status == EFI_SUCCESS ? SHELL_SUCCESS : SHELL_DEVICE_ERROR;\n  }\n\n'
+     '  if (ShellCommandLineGetFlag (Package, L"-fwui")) {')
+
+# Same-current requests are filtered by the real provider. Every outstanding
+# transition is therefore an exit request for any active UI, including dialogs
+# embedded in Shell, where a compile-time "current=Setup" guess would be wrong.
+PREVIOUS_HOOKS=tuple(HOOKS)
+HOOKS=[(p,o,n.replace('PianoProductReturnCoreRequested ()','PianoProductUiReturnRequested ()'))
+       for p,o,n in HOOKS]
+
 def prepare(root=ROOT, apply=False, check_pins=True):
     if check_pins:
         actual = subprocess.check_output(['git', '-C', str(root/BASE), 'rev-parse', 'HEAD'], text=True).strip()
@@ -228,6 +285,11 @@ def prepare(root=ROOT, apply=False, check_pins=True):
             raw=path.read_bytes()
             newline[path]=b'\r\n' if b'\r\n' in raw else b'\n'
             desired[path]=raw.decode().replace('\r\n','\n')
+            # Exact migration only from the earlier acknowledged local hooks.
+            for prior_path,prior_old,previous in PREVIOUS_HOOKS:
+                current=next(candidate for p,o,candidate in HOOKS if p==prior_path and o==prior_old)
+                if prior_path==relative and previous!=current and desired[path].count(previous)==1:
+                    desired[path]=desired[path].replace(previous,current,1)
         desired[path]=transform(desired[path],old,new,relative)
     outputs={path:value.replace('\n',newline[path].decode()).encode() for path,value in desired.items()}
     if not apply:

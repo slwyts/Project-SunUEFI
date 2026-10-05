@@ -7,6 +7,13 @@ from pathlib import Path
 
 from prepare_product_pump import ROOT, prepare
 
+PRODUCT_NAVIGATION_SOURCES = (
+    'upstream/simple-init/src/boot/bootdef.c',
+    'upstream/simple-init/src/boot/SimpleInitBoot.inf',
+    'upstream/simple-init/src/gui/interface/core/bootmenu.c',
+    'upstream/simple-init/src/gui/interface/apps/uefi_shell.c',
+)
+
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -18,6 +25,8 @@ def inspect(build, output, product):
         raise ValueError('wrong SimpleInit product/default build mode')
     sources=manifest.get('owned_sources')
     if not isinstance(sources,dict)or not sources:raise ValueError('SimpleInit owned source fingerprint missing')
+    if product and any(relative not in sources for relative in PRODUCT_NAVIGATION_SOURCES):
+        raise ValueError('SimpleInit product navigation source fingerprint missing')
     for relative,digest in sources.items():
         path=ROOT/relative
         if not path.is_file()or sha(path)!=digest:raise ValueError('SimpleInit actual owned source changed: '+relative)

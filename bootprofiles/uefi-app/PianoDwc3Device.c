@@ -3,6 +3,9 @@
 #include "PianoOwnedSmmu.h"
 #include "PianoUsbControl.h"
 #include "PianoDwc3Service.h"
+#if PIANO_USB_SERVICE
+#include "Protocol/PianoProductRuntime.h"
+#endif
 #ifndef PIANO_USB_FASTBOOT
 #define PIANO_USB_FASTBOOT 0
 #endif
@@ -322,8 +325,24 @@ STATIC EFI_STATUS FastbootQuery(VOID *Context,CONST CHAR8 *Name,CHAR8 Value[60])
   } else return EFI_UNSUPPORTED;
   return EFI_SUCCESS;
 }
+#if PIANO_USB_SERVICE
+STATIC EFI_STATUS ServiceRequestUi(UINT32 Action);
+#endif
 STATIC EFI_STATUS FastbootDiagnostic(VOID *Context,PIANO_FASTBOOT *State,CONST CHAR8 *Cmd) {
   (VOID)Context;
+#if PIANO_USB_SERVICE
+  UINT32 UiAction=!AsciiStrCmp(Cmd,"oem setup")?PIANO_PRODUCT_ACTION_SETUP:
+    !AsciiStrCmp(Cmd,"oem shell")?PIANO_PRODUCT_ACTION_SHELL:
+    !AsciiStrCmp(Cmd,"oem simpleinit")?PIANO_PRODUCT_ACTION_SIMPLEINIT:PIANO_PRODUCT_ACTION_NONE;
+  if(UiAction!=PIANO_PRODUCT_ACTION_NONE) {
+    EFI_STATUS UiStatus=ServiceRequestUi(UiAction);
+    // An actual EBS fence forbids even a FAIL response DMA. Ordinary missing
+    // runtime/backend rejection keeps the resident owner and replies normally.
+    if(UiStatus==EFI_ABORTED)return UiStatus;
+    CONST CHAR8 *Reply=UiStatus==EFI_SUCCESS?"OKAY":"FAILUI navigation backend unavailable";
+    return FastbootSend(NULL,Reply,AsciiStrLen(Reply));
+  }
+#endif
   if(!AsciiStrCmp(Cmd,"oem ramlog")) {
     EFI_STATUS S=SnapshotConsole((CONST volatile UINT32 *)(UINTN)PIANO_USB_CONSOLE_BASE);
     if(!EFI_ERROR(S) && mLogBytes)S=PianoFastbootStageCopy(State,mLogSnapshot,mLogBytes);
@@ -783,11 +802,42 @@ STATIC struct {
   UINT32 Events[SERVICE_EVENTS];UINTN Head,Count;
   UINT32 OldGctl,OldDcfg,OldSize,OldLow,OldHigh,OldSessionHs,OldSessionSs;
   BOOLEAN SessionSet,Uncertain;
+  PIANO_PRODUCT_RUNTIME_PROTOCOL *UiRuntime;
+  PIANO_PRODUCT_RUNTIME_PROTOCOL UiMethods;
 } mService;
 STATIC PIANO_DMA_BUFFER *CONST mServiceBuffers[]={&mRing,&mTrbs[0],&mTrbs[1],&mSetup,&mTx,&mTrbs[2],&mTrbs[3],&mBulkRx,&mBulkTx};
 STATIC BOOLEAN ServiceAtApp(VOID) {
   if(mService.State.ServicesLost || gBS==NULL || gBS->RaiseTPL==NULL || gBS->RestoreTPL==NULL)return FALSE;
   EFI_TPL Old=gBS->RaiseTPL(TPL_HIGH_LEVEL);gBS->RestoreTPL(Old);return Old==TPL_APPLICATION;
+}
+STATIC BOOLEAN SameUiRuntime(CONST PIANO_PRODUCT_RUNTIME_PROTOCOL *A,CONST PIANO_PRODUCT_RUNTIME_PROTOCOL *B) {
+  return A->Revision==B->Revision && A->Pump==B->Pump && A->BootServicesAlive==B->BootServicesAlive &&
+    A->RequestAction==B->RequestAction && A->GetPendingAction==B->GetPendingAction && A->AckAction==B->AckAction;
+}
+STATIC EFI_STATUS ServiceRequestUi(UINT32 Action) {
+  if(mService.State.ServicesLost)return EFI_ABORTED;
+  if(!mService.State.Started || mService.State.Phase!=PianoUsbServiceListening || mService.State.Retained ||
+     !mExperimentRunning || !ServiceAtApp() || gBS->LocateProtocol==NULL)return EFI_NOT_READY;
+  if(Action<PIANO_PRODUCT_ACTION_SIMPLEINIT || Action>PIANO_PRODUCT_ACTION_SHELL)return EFI_INVALID_PARAMETER;
+  EFI_GUID Guid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime=NULL;
+  EFI_STATUS S=gBS->LocateProtocol(&Guid,NULL,(VOID **)&Runtime);
+  if(mService.State.ServicesLost)return EFI_ABORTED;
+  if(S!=EFI_SUCCESS)return EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
+  if(Runtime==NULL || Runtime->Revision!=PIANO_PRODUCT_RUNTIME_REVISION || !Runtime->Pump || !Runtime->BootServicesAlive ||
+     !Runtime->RequestAction || !Runtime->GetPendingAction || !Runtime->AckAction)return EFI_COMPROMISED_DATA;
+  if(mService.UiRuntime!=NULL && (Runtime!=mService.UiRuntime || !SameUiRuntime(Runtime,&mService.UiMethods)))return EFI_COMPROMISED_DATA;
+  PIANO_PRODUCT_RUNTIME_PROTOCOL Methods=*Runtime;
+  BOOLEAN Alive=Methods.BootServicesAlive(Runtime);
+  if(mService.State.ServicesLost)return EFI_ABORTED;
+  if(!Alive || !SameUiRuntime(Runtime,&Methods))return EFI_NOT_READY;
+  if(mService.UiRuntime==NULL){mService.UiRuntime=Runtime;mService.UiMethods=Methods;}
+  S=Methods.RequestAction(Runtime,Action); // CPU latch only; no nested dispatch.
+  if(mService.State.ServicesLost)return EFI_ABORTED;
+  if(S!=EFI_SUCCESS)return EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
+  if(!SameUiRuntime(Runtime,&Methods))return EFI_COMPROMISED_DATA;
+  Alive=Methods.BootServicesAlive(Runtime);
+  if(mService.State.ServicesLost)return EFI_ABORTED;
+  return Alive?EFI_SUCCESS:EFI_NOT_READY;
 }
 STATIC EFI_STATUS ServiceError(EFI_STATUS S) {
   if(S==EFI_SUCCESS)S=EFI_DEVICE_ERROR;
