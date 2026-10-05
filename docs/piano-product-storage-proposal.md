@@ -83,4 +83,15 @@ approval has been received, and this producer cannot apply the proposal.
 # PC-only; output must be a new directory under private.
 python3 tools/prepare_product_storage.py --output private/provisioning/NEW_NAME
 python3 -m unittest discover -s tests -p test_prepare_product_storage.py -v
+python3 tools/check_product_storage_proposal.py \
+  --proposal private/provisioning/piano-storage-v1-final \
+  --readonly-capture private/captures/ufs-test-area-5
 ```
+
+The separate checker regenerates exact permitted GPT bytes, volume headers and
+the actual C NV seed. It validates the embedded FAT and both journal slots,
+checks all input/output files again after compilation, and optionally compares
+the latest readonly capture with the pinned original. Repinning a modified file
+in its manifest does not make it eligible. Its success status remains
+`EXACT_PC_PROPOSAL_VALIDATED_NO_DEVICE_ACTION`; it neither grants write authority
+nor verifies controller power-loss behavior.

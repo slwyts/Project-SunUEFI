@@ -45,3 +45,19 @@ Mu EmuNv 初始化不注册真实 FTW notify。RealNv 初始化在 entry 先复�
 命令 `python3 tools/emit_nv_seed.py --volume-uuid UUID --output EMPTY_DIRECTORY` 调用实际 C formatter/journal，产生 nv-ftw.bin 与A/B各3MiB槽。A sequence1有效commit，B全zero无commit。工具没有设备接口，输出manifest明确 not provisioned；UUID只是host计划输入。真正首次 provisioning 仍必须由Root完成完整区域备份、GPT/volume/CRC校验及可恢复操作，不能用seed文件或用户授权boolean冒认现有介质已保留。
 
 参考标准实现：[TianoCore EmuVariableFvbRuntimeDxe](https://github.com/tianocore/edk2/tree/master/OvmfPkg/EmuVariableFvbRuntimeDxe)；本实现增加同步双槽持久提交并明确限制 runtime NV 写，不把RAM/file emulation计为设备已持久化。
+
+## 标准初始化阶段审查结论（2026-10-05）
+
+审查固定Mu_Basecore `bb557081f80f4883ed832e34ab36bdca6ede1e10`，以下行号对应当前已应用runtime写保护的工作区。
+
+- `RuntimeDxe/VariableDxe.c:580` 的 VariableServiceInitialize 先调用 VariableCommonInitialize，随后才设置gRT四个变量函数与发布 VariableArch。真实read arch不是在NV尚未初始化时提供的独立volatile-only入口。
+- `RuntimeDxe/Variable.c:3880` 的 VariableCommonInitialize 先初始化NV store，再由其AuthFormat决定volatile/HOB格式，分配volatile store和scratch。`VariableNonVolatile.c:134/178` 的Real初始化直接复制当前NvBase镜像；`294/321/353`随后建立mNvVariableCache、AuthFormat、大小累计和NonVolatileLastVariableOffset。
+- `VariableDxe.c:624` 仅在非Emu模式注册FTW notify；Emu直接调用WriteServiceInitializeDxe。`FtwNotificationEvent:448`绑定FVB，并在491将真实NonVolatileVariableBase改为flash/mirror base，在537初始化write service。它没有重载完整NV cache、重扫offset/space并重建所有认证上下文的late-restore合同。
+- `Variable.c:3592/3640` 的WriteServiceInitialize执行reclaim、HOB flush、AuthVariableLibInitialize及属性注册；quota由`InitializeVariableQuota:566`和EndOfDxe/ReadyToBoot路径处理。换掉NV镜像或Pcd值无法同步这些状态。
+- `VariableDxe.c:407/429`最终发布VariableWriteArch。该固定实现遇WriteServiceInitialize错误时只记录日志，随后仍执行安装marker；未来接入真实NV时还需确认错误不会产生写服务ready宣告。本轮没有改这个阶段或用其行为绕过依赖。
+
+产品native HALIOMMU的原DEPEX是12个architecture GUID的AND，其中包括真实VariableArch `1e5668e2-8481-11d4-bcf1-0080c73c8881`与VariableWriteArch `6441f818-6362-4e44-b570-7dba31dd2453`；证据是private inventory中的原始depex bytes/解析。NativeProbe.c:14/48执行原DEPEX，并不会跳过它。当前PianoOwnedSmmu.c:229/234/238仍调用nativeCreate/Configure/Attach，175/202使用nativeSync。
+
+因此“先volatile/read arch、稍后真正NV write arch”不能独自消除当前循环：HAL仍等WriteArch，UFS journal恢复仍等HAL。没有发现可直接使用的标准stage hook。提前发布RAM成功的WriteArch、晚改cache/Pcd、重复安装两份变量runtime函数或绕过DEPEX均没有被实施。
+
+下一条确定路线是变量无关的早期SMMU/IO backend：先恢复实际NV journal到RuntimeData镜像，然后标准Variable/FTW引擎只初始化一次、发布真正写服务。Root和SMMU/storage实现负责该早期backend；此处保持现有journal/FVB接口，不扩展独立profile或bootstrap scaffold。早期NV与物理runtimeNV能力仍未完成。
