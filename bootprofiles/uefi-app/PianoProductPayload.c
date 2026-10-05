@@ -10,6 +10,7 @@
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/BaseCryptLib.h>
+#include <Library/DebugLib.h>
 #pragma pack(1)
 typedef struct {UINT8 Magic[16];UINT32 Version,HeaderBytes;UINT64 AppBytes;UINT8 AppHash[32];} APP_HEADER;
 #pragma pack()
@@ -43,6 +44,13 @@ STATIC UINT64 Prop(CONST VOID *Fdt,INT32 Node,CONST CHAR8 *Name) {
   for(INT32 I=0;I<Length;++I)Value=(Value<<8)|P[I];
   return Value;
 }
+STATIC BOOLEAN HeaderMatches(CONST APP_HEADER *Header,UINT64 Available) {
+  return Available>=sizeof(*Header) && !CompareMem(Header->Magic,mMagic,sizeof(mMagic)) &&
+    Header->Version==1 && Header->HeaderBytes==sizeof(*Header) &&
+    Header->AppBytes==PIANO_PRODUCT_SIMPLEINIT_BYTES && Header->AppBytes>=4096 &&
+    Header->AppBytes<=0x4000000 && Header->AppBytes<=Available-sizeof(*Header) &&
+    !CompareMem(Header->AppHash,mPianoProductSimpleInitSha256,32);
+}
 STATIC EFI_STATUS Reader(VOID *Context,UINT64 Offset,UINTN Bytes,VOID *Buffer) {
   CONST PIANO_PRODUCT_PAYLOAD_VIEW *V=Context;
   if(Buffer==NULL || Offset>V->Bytes || Bytes>V->Bytes-Offset)return EFI_BAD_BUFFER_SIZE;
@@ -60,14 +68,35 @@ STATIC EFI_STATUS Resolve(PIANO_PRODUCT_PAYLOAD_VIEW *View,CONST VOID **Dtb,UINT
   INT32 Chosen=FdtPathOffset(Fdt,"/chosen");if(Chosen<0)return EFI_NOT_FOUND;
   *Start=Prop(Fdt,Chosen,"linux,initrd-start");*End=Prop(Fdt,Chosen,"linux,initrd-end");
   if(*End<=*Start || *End-*Start>0x10000000 || !Known(*Start,*End-*Start,FALSE) || *End-*Start<sizeof(APP_HEADER))return EFI_BAD_BUFFER_SIZE;
-  // Product packaging places APPv1 at the actual ramdisk start. Do not scan
-  // arbitrary RAM for a magic value that could authorize another application.
-  APP_HEADER Header;CopyMem(&Header,(CONST VOID *)(UINTN)*Start,sizeof(Header));
-  if(CompareMem(Header.Magic,mMagic,sizeof(mMagic)) || Header.Version!=1 || Header.HeaderBytes!=sizeof(Header) ||
-     Header.AppBytes!=PIANO_PRODUCT_SIMPLEINIT_BYTES || Header.AppBytes<4096 || Header.AppBytes>0x4000000 ||
-     Header.AppBytes>*End-*Start-sizeof(Header) || CompareMem(Header.AppHash,mPianoProductSimpleInitSha256,32))return EFI_SECURITY_VIOLATION;
-  View->Image=(CONST VOID *)(UINTN)(*Start+sizeof(Header));View->Bytes=(UINTN)Header.AppBytes;
-  if(!Sha256HashAll(View->Image,View->Bytes,View->Sha256) || CompareMem(View->Sha256,mPianoProductSimpleInitSha256,32))return EFI_SECURITY_VIOLATION;
+  // Android v3/v4 ABL concatenates selected vendor ramdisks before the generic
+  // ramdisk and may append bootconfig. The FDT span is the combined initrd,
+  // not the boot.img ramdisk's start. Search ONLY this fully validated mapped
+  // input span; a marker never grants authority without the compiled pin.
+  UINT64 Span=*End-*Start,Found=0;UINTN Matches=0;APP_HEADER Header;
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_PAYLOAD_HANDOFF dtb=%lx initrd=%lx..%lx bytes=%lu expected_app=%lu\n",
+    Address,*Start,*End,Span,(UINT64)PIANO_PRODUCT_SIMPLEINIT_BYTES));
+  CONST UINT8 *Input=(CONST UINT8 *)(UINTN)*Start;
+  for(UINT64 Offset=0;Offset<=Span-sizeof(Header);++Offset) {
+    if(Input[Offset]!=mMagic[0] || CompareMem(Input+(UINTN)Offset,mMagic,sizeof(mMagic)))continue;
+    CopyMem(&Header,Input+(UINTN)Offset,sizeof(Header));
+    if(!HeaderMatches(&Header,Span-Offset))continue;
+    UINT8 Hash[32];CONST VOID *Image=Input+(UINTN)Offset+sizeof(Header);
+    if(!Sha256HashAll(Image,(UINTN)Header.AppBytes,Hash) || CompareMem(Hash,mPianoProductSimpleInitSha256,32))continue;
+    if(++Matches!=1) {
+      DEBUG((DEBUG_ERROR,"PIANO_PRODUCT_PAYLOAD_REJECT duplicate_pinned_app=1\n"));
+      return EFI_SECURITY_VIOLATION;
+    }
+    Found=Offset;CopyMem(View->Sha256,Hash,sizeof(Hash));
+  }
+  if(Matches!=1) {
+    APP_HEADER First;CopyMem(&First,Input,sizeof(First));
+    DEBUG((DEBUG_ERROR,"PIANO_PRODUCT_PAYLOAD_REJECT pinned_app_not_found=1 head=%02x%02x%02x%02x version=%u header=%u app_bytes=%lu\n",
+      First.Magic[0],First.Magic[1],First.Magic[2],First.Magic[3],First.Version,First.HeaderBytes,First.AppBytes));
+    return EFI_SECURITY_VIOLATION;
+  }
+  View->Image=Input+(UINTN)Found+sizeof(Header);View->Bytes=(UINTN)PIANO_PRODUCT_SIMPLEINIT_BYTES;
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_PAYLOAD_PINNED offset=%lu app=%lx bytes=%lu\n",
+    Found,(UINT64)(UINTN)View->Image,(UINT64)View->Bytes));
   PIANO_BOOT_SOURCE Source={View,Reader,View->Bytes};PIANO_BOOT_IMAGE Parsed;
   EFI_STATUS Status=PianoFastbootBootParse(&Source,&Parsed);
   if(Status!=EFI_SUCCESS || Parsed.Kind!=PianoBootArm64Pe || Parsed.Pe.Machine!=0xaa64 || Parsed.Pe.Subsystem!=10)

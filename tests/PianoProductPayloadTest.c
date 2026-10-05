@@ -5,6 +5,7 @@
 #include <openssl/sha.h>
 #undef NULL
 #define PIANO_PRODUCT_PAYLOAD_HOST_TEST 1
+#define MDEPKG_NDEBUG 1
 #include "../bootprofiles/uefi-app/PianoProductPayload.c"
 #include "../bootprofiles/uefi-app/PianoFastbootBoot.c"
 static UINT64 handoff[2];UINTN PianoProductHostHandoffAddress;
@@ -55,6 +56,22 @@ int main(int argc,char **argv){
   init(argv[1]);((APP_HEADER *)(bank+4096))->AppBytes=8192;assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
   init(argv[1]);((APP_HEADER *)(bank+4096))->AppHash[0]^=1;assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
   init(argv[1]);hash_failure=TRUE;assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
+  // Real ABL v3/v4 semantics: vendor prefix before generic APP, bootconfig tail.
+  init(argv[1]);memmove(bank+8192,bank+4096,4160);memset(bank+4096,0xa5,4096);
+  memcpy(bank+12352,"bootconfig-data\n#BOOTCONFIG\n",27);be(end_be,(UINTN)(bank+12400));
+  assert(PianoProductAcquireSimpleInit(&v)==EFI_SUCCESS && v.Image==bank+8256);
+  assert(PianoProductValidateSimpleInit(&v)==EFI_SUCCESS);assert(PianoProductReleaseSimpleInit(&v)==EFI_SUCCESS);
+  // Bogus matching text in vendor bytes cannot bypass version/digest/PE pins.
+  init(argv[1]);memmove(bank+8192,bank+4096,4160);memset(bank+4096,0,4096);
+  memcpy(bank+4096,mMagic,16);be(end_be,(UINTN)(bank+12352));
+  assert(PianoProductAcquireSimpleInit(&v)==EFI_SUCCESS && v.Image==bank+8256);
+  assert(PianoProductReleaseSimpleInit(&v)==EFI_SUCCESS);
+  // Two completely valid copies are ambiguous and rejected.
+  init(argv[1]);memcpy(bank+8448,bank+4096,4160);be(end_be,(UINTN)(bank+12608));
+  assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
+  // A valid APP elsewhere in mapped RAM, outside declared initrd, is ignored.
+  init(argv[1]);be(start_be,(UINTN)(bank+8448));be(end_be,(UINTN)(bank+12608));
+  assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
   init(argv[1]);strcpy(regions[1].Name,"DXE_Heap_Upper");
   assert(PianoProductAcquireSimpleInit(&v)==EFI_SUCCESS);assert(PianoProductPayloadGetFdt(&v,&fdt)==EFI_SUCCESS&&fdt==bank);assert(PianoProductReleaseSimpleInit(&v)==EFI_SUCCESS);
   init(argv[1]);strcpy(regions[1].Name,"DXE_Heap");regions[1].Length=8192;region_count=4;

@@ -69,6 +69,11 @@ def main():
     marker = 'SUNUEFI_RAMLOG_BEGIN'
     index = max(text.rfind(marker),text.rfind('SUNUEFI_BLOCKIO_REPORT_BEGIN'))
     scope = 'session-or-blockio-report' if index >= 0 else 'none'
+    product=text.rfind('SUNUEFI_EARLY_SMEM status=')
+    if product>=0 and product>index:
+        firmware=text.rfind('Firmware Version',0,product)
+        index=firmware if firmware>=0 else product
+        scope='product-cold-session-without-core-ready'
     if index < 0:
         # Large bulk uploads can wrap the session start. Preserve the final
         # USB/cleanup report, but explicitly avoid claiming a full session log.
@@ -89,6 +94,8 @@ def main():
                'linux_ram_userland_marker':linux and 'SUNUEFI_RAM_INIT BEGIN pid=1' in text,
                'independent_kernel_ram_userland_marker':linux and independent_init,
                'pstore_files':pstore,'uefi_log_scope':scope}
+    summary['product_core_ready']='PIANO_PRODUCT_CORE_READY' in segment
+    summary['product_core_payload_security_violation']='SUNUEFI_PRODUCT_CORE_RETURN status=Security Violation' in segment
     (out/'manifest.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))
     if segment: print(segment[-18000:])
