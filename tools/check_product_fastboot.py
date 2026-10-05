@@ -104,16 +104,20 @@ def text_output(value):
 
 
 def run_check(root, test_id, phase='simpleinit', wait_seconds=60, command_timeout=45,
-              reboot_after_check=False):
+              reboot_after_check=False, navigate=None):
     if (test_id < 1 or not re.fullmatch(r'[A-Za-z0-9_-]{1,32}', phase)
-            or not 1 <= wait_seconds <= 60 or not 1 <= command_timeout <= 60):
+            or not 1 <= wait_seconds <= 60 or not 1 <= command_timeout <= 60
+            or navigate not in (None, 'setup', 'shell', 'simpleinit')):
         raise ValueError('Invalid test id, phase or bounded timeout')
     out = root / f'private/analysis/product-fastboot-test-{test_id}' / phase
     out.mkdir(parents=True, exist_ok=False)
     result = {'schema': 1, 'test_id': test_id, 'phase_label': phase,
               'status': 'RUNNING', 'serial': SERIAL, 'transport': 'stock-fastboot-cli',
               'commands': [], 'persistent_write_commands': False,
-              'action_commands_requested': bool(reboot_after_check),
+              'action_commands_requested': bool(reboot_after_check or navigate),
+              'navigation_requested': navigate,
+              'navigation_request_acknowledged': False,
+              'target_ui_proved': False,
               'reboot_command_acknowledged': False, 'owner_retirement_proved': False,
               'android_recovery_proved': False, 'all_ui_acceptance_proved': False}
 
@@ -216,6 +220,17 @@ def run_check(root, test_id, phase='simpleinit', wait_seconds=60, command_timeou
         if any(row not in status_output for row in ('storage-policy:no-persistent-writes', 'transport:owned-DMA-SMMU-bulk')):
             raise CheckFailed('Unexpected product status report')
         result['variables'] = variables
+        if navigate is not None:
+            command('oem', navigate)
+            result['navigation_request_acknowledged'] = True
+            # The request is a cooperative CPU latch. Re-query the real USB
+            # service, then keep the later screenshot for Root inspection;
+            # an ACK or phase label does not attest the target UI.
+            state = variable('SunUEFI:usb-state')
+            if not re.fullmatch(r'configured-speed-[SFH]', state):
+                raise CheckFailed('USB state changed unexpectedly after navigation request')
+            result['usb_state_after_navigation'] = state
+            command('oem', 'status')
         pattern = bytes((index * 73 + index // 251 + 19) & 255 for index in range(PATTERN_BYTES))
         source = out / 'ram-pattern.bin'
         source.write_bytes(pattern)
@@ -274,6 +289,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--test-id', required=True, type=int)
     parser.add_argument('--phase', default='simpleinit', help='Private evidence label; does not navigate the UI')
+    parser.add_argument('--navigate', choices=('setup', 'shell', 'simpleinit'),
+                        help='Request a UI with OEM after identity/read checks; ACK is not UI proof')
     parser.add_argument('--wait-seconds', type=int, default=60)
     parser.add_argument('--command-timeout', type=int, default=45)
     parser.add_argument('--reboot-after-check', action='store_true',
@@ -283,7 +300,7 @@ def main():
         parser.error('Invalid test id, phase or timeout (each timeout must be 1..60 seconds)')
     try:
         result = run_check(ROOT, args.test_id, args.phase, args.wait_seconds,
-                           args.command_timeout, args.reboot_after_check)
+                           args.command_timeout, args.reboot_after_check, args.navigate)
     except Exception as error:
         parser.exit(1, str(error) + '\n')
     print(json.dumps({key: value for key, value in result.items() if key != 'commands'}, indent=2))

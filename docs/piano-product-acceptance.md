@@ -40,6 +40,22 @@ The default sequence has no reboot/boot/continue action and no storage writes:
 - Fetch the complete 524,288-byte `xbl_config_a` and compare it to the verified
   original PC backup. Capture another CRC log and discard the CPU staging data.
 
+To request a target UI and collect a separate acceptance phase from the same
+RAM test, use the optional navigation argument:
+
+```bash
+python3 tools/check_product_fastboot.py --test-id TEST_ID --phase setup --navigate setup
+python3 tools/check_product_fastboot.py --test-id TEST_ID --phase shell --navigate shell
+python3 tools/check_product_fastboot.py --test-id TEST_ID --phase return-simpleinit --navigate simpleinit
+```
+
+The script sends the matching OEM command only after record/build/backup binding,
+enumeration and product getvar/status checks. It records
+`navigation_request_acknowledged`, then re-queries USB state/status and collects
+the remaining RAM/log/screenshot/fetch evidence. `target_ui_proved` remains false:
+Root must inspect the screenshot and related UI evidence. Phase is still only
+an operator label. Default runs do not navigate or send action commands.
+
 To send an ordinary reboot only after all checks pass:
 
 ```bash
