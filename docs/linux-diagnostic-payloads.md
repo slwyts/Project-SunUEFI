@@ -2,7 +2,7 @@
 
 `tools/package_kernel_diagnostic.py` 是独立诊断入口。现有 `make_kernel_initramfs.py`、`package_kernel_payload.py` 的 stable/next CLI 和 pin 行为保持原样；诊断工具不读取或修改 `kernel-profiles.json`，不修改prepare、staging或设备。
 
-当前唯一允许的 topic 为 `piano-efi-entry-debug`：clean branch `topic/piano-efi-entry-debug`，commit `094d0b053f61ca20f584e10faa624cd0bc745db0`，直接parent为官方 `7704c4c5bb127673b4f0ead839919db573559e38`。允许的topic/build-manifest/Image/config/同机captured live.dtb/BusyBox/provenance/PID1各自SHA固定在工具的显式topic policy中。输入或重新构建的Image发生改变时必须经过新诊断review更新该policy，工具不会自动跟随branch、重标旧manifest或移动stable/next pins。
+当前允许两个固定topic。`piano-efi-entry-debug`仍是clean commit `094d0b053f61ca20f584e10faa624cd0bc745db0`，直接parent为官方 `7704c4c5bb127673b4f0ead839919db573559e38`。新增`piano-efi-memory-debug`为commit `c4bbf928f335174f8518831797a94597a530c575`，明确parent_commit=094d，上游base_commit仍为7704；验证HEAD^==parent且base为ancestor，旧policy仍默认HEAD^==base。新topic状态与产物见[EFI memory诊断说明](linux-efi-memory-debug.md)。允许的topic/build-manifest/Image/config/同机captured live.dtb/BusyBox/provenance/PID1各自SHA固定在工具的显式topic policy中。输入或重新构建的Image发生改变时必须经过新诊断review更新该policy，工具不会自动跟随branch、重标旧manifest或移动stable/next pins。
 
 生成及严格验证出口：
 

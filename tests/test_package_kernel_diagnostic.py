@@ -263,6 +263,29 @@ class DiagnosticBundleTests(unittest.TestCase):
         with patch.object(tool, "MAX_INITRD", 1024), self.assertRaisesRegex(ValueError, "CPIO exceeds"):
             tool.unpack_archive(gzip.compress(bytes(2048)))
 
+    def test_multi_commit_topic_preserves_upstream_base_and_requires_explicit_parent(self):
+        parent = self.commit
+        (self.repo / "code.c").write_text("memory diagnostic\n")
+        self.git("add", "code.c")
+        self.git("commit", "-qm", "memory diagnostic")
+        self.commit = self.git("rev-parse", "HEAD")
+        self.policy["commit"] = self.commit
+        self.policy["parent_commit"] = parent
+        self.metadata["source_commit"] = self.commit
+        self.metadata["parent_commit"] = parent
+        self.refresh_manifest()
+        result = self.generate()
+        self.assertEqual(self.base, result["diagnostic_topic"]["base_commit"])
+        self.assertEqual(parent, result["diagnostic_topic"]["parent_commit"])
+        del self.policy["parent_commit"]
+        with self.assertRaisesRegex(ValueError, "parent/base mismatch"):
+            self.generate()
+
+    def test_additional_topic_config_gate_is_required(self):
+        self.policy["additional_config"] = ("CONFIG_PIANO_EFI_MEMORY_DEBUG",)
+        with self.assertRaisesRegex(ValueError, "requires CONFIG_PIANO_EFI_MEMORY_DEBUG"):
+            self.generate()
+
 
 if __name__ == "__main__":
     unittest.main()

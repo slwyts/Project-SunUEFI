@@ -46,6 +46,21 @@ TOPICS = {
         "busybox_provenance_sha256": "c153892fffb695a6af46962fc5a502224e0640c2011ec316fd2659013818db92",
         "init_sha256": "96aa39c200d1acdef712794df241aab93ef17051a06943d654dbfeb21c84dc48",
     },
+    "piano-efi-memory-debug": {
+        "branch": "topic/piano-efi-memory-debug",
+        "commit": "c4bbf928f335174f8518831797a94597a530c575",
+        "base_commit": "7704c4c5bb127673b4f0ead839919db573559e38",
+        "parent_commit": "094d0b053f61ca20f584e10faa624cd0bc745db0",
+        "additional_config": ("CONFIG_PIANO_EFI_MEMORY_DEBUG",),
+        "kernel_manifest_sha256": "eb01f9e7588df2f7fac3fce8d0027338932b31dae4aadf0d76d7fffb641ebbb0",
+        "image_sha256": "1dcb79e2f3cf4c79f0fe7ba3523091369202c5c4f67a84361c4d1cf4a02e288a",
+        "config_sha256": "ec7b9f916b8ec801c218bb7182fa6639d3c84749d516455db9b73cb098004172",
+        "base_config_sha256": "85c048d4f361802c204be5cae880bbfd9d961e170730ede9cba9198b2153fb31",
+        "dtb_sha256": "a4b55dd3b77e69be451aaf2263c76f5496c93325767e49f748ee49570611e8d7",
+        "busybox_sha256": "999cb969d09093a71716cfc747bb53cdada3f332c05eb5046c56e0f66a4d6d22",
+        "busybox_provenance_sha256": "c153892fffb695a6af46962fc5a502224e0640c2011ec316fd2659013818db92",
+        "init_sha256": "96aa39c200d1acdef712794df241aab93ef17051a06943d654dbfeb21c84dc48",
+    },
 }
 
 
@@ -73,8 +88,11 @@ def check_repository(repo: Path, policy: dict) -> None:
         raise ValueError("Diagnostic topic HEAD changed from approved commit")
     if git(repo, "symbolic-ref", "--short", "HEAD") != policy["branch"]:
         raise ValueError("Diagnostic topic branch mismatch")
-    if git(repo, "rev-parse", "HEAD^") != policy["base_commit"]:
+    parent = policy.get("parent_commit", policy["base_commit"])
+    if git(repo, "rev-parse", "HEAD^") != parent:
         raise ValueError("Diagnostic topic parent/base mismatch")
+    if git(repo, "merge-base", policy["base_commit"], policy["commit"]) != policy["base_commit"]:
+        raise ValueError("Diagnostic upstream base is not an ancestor")
     if git(repo, "status", "--porcelain", "--untracked-files=all"):
         raise ValueError("Diagnostic topic worktree is dirty")
 
@@ -105,6 +123,8 @@ def read_inputs(topic: str, policy: dict, kernel_manifest: Path, dtb_path: Path,
             meta.get("base_commit") != policy["base_commit"] or
             meta.get("source_branch") != policy["branch"]):
         raise ValueError("Diagnostic manifest topic/mode/source/base mismatch")
+    if "parent_commit" in policy and meta.get("parent_commit") != policy["parent_commit"]:
+        raise ValueError("Diagnostic manifest parent mismatch")
     if (meta.get("diagnostic_only") is not True or meta.get("hardware_verified") is not False or
             meta.get("source_clean") is not True or
             type(meta.get("build", {}).get("exit_code")) is not int or
@@ -125,7 +145,8 @@ def read_inputs(topic: str, policy: dict, kernel_manifest: Path, dtb_path: Path,
         raise ValueError("Diagnostic Image must fit the loader and have a valid ARM64 EFI stub")
     values = dict(re.findall(r"(?m)^(CONFIG_[A-Z0-9_]+)=(.*)$", config.decode()))
     for key in ("CONFIG_PIANO_EFI_ENTRY_DEBUG", "CONFIG_ARM64", "CONFIG_ARCH_QCOM",
-                "CONFIG_EFI", "CONFIG_EFI_STUB", "CONFIG_ARM64_4K_PAGES", "CONFIG_DEBUG_KERNEL"):
+                "CONFIG_EFI", "CONFIG_EFI_STUB", "CONFIG_ARM64_4K_PAGES", "CONFIG_DEBUG_KERNEL",
+                *policy.get("additional_config", ())):
         if values.get(key) != "y":
             raise ValueError("Diagnostic config requires " + key + "=y")
     ram.config_summary(config)  # also rejects BLOCK/CMDLINE_FORCE and missing RAM dependencies.
@@ -144,10 +165,13 @@ def read_inputs(topic: str, policy: dict, kernel_manifest: Path, dtb_path: Path,
 
 
 def diagnostic_binding(topic: str, policy: dict, inputs: dict) -> dict:
-    return {"topic": topic, "source_commit": policy["commit"], "base_commit": policy["base_commit"],
+    binding = {"topic": topic, "source_commit": policy["commit"], "base_commit": policy["base_commit"],
             "kernel_image_sha256": sha(inputs["image"]), "kernel_config_sha256": sha(inputs["config"]),
             "dtb_sha256": sha(inputs["dtb"]), "kernel_build_manifest_sha256": sha(inputs["raw"]),
             "diagnostic_only": True, "hardware_verified": False}
+    if "parent_commit" in policy:
+        binding["parent_commit"] = policy["parent_commit"]
+    return binding
 
 
 def inspect_payload(payload: bytes) -> tuple[bytes, bytes, bytes]:
@@ -296,6 +320,9 @@ def generate(topic: str, policy: dict, kernel_manifest: Path, dtb_path: Path,
                   "image": {"sha256": sha(inputs["image"]), "bytes": len(inputs["image"]), "efi_stub": True},
                   "config_sha256": sha(inputs["config"]), "diagnostic_topic": binding,
                   "original_topic_build": {"path": str(kernel_manifest.resolve()), "sha256": sha(inputs["raw"])}}
+        if "parent_commit" in policy:
+            kernel["parent_commit"] = policy["parent_commit"]
+            kernel["base_commit"] = policy["base_commit"]
         (stage / "manifest.json").write_bytes(json_bytes(kernel))
         init = ram.generate(topic, stage / "manifest.json", busybox_path, provenance_path, init_path, stage)
         records = ram.inspect_newc(gzip.decompress((stage / "initramfs.cpio.gz").read_bytes()))

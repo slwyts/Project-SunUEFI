@@ -128,3 +128,12 @@ EFI usable与有效固定DT no-map的实际交集是384KiB：ADSP尾部`[BD93000
 额外default-off编译保存于`build/kernel-topics/piano-efi-entry-default-off`，四处关键代码section与官方7704对象逐字节相同：head `.idmap.text`1508bytes、stub `.text`348bytes、setup `.init.text`2176bytes、EFI init `.init.text`1308bytes。证据与hash见产物`default-off-proof.json`。这验证本次未启用marker时这些执行路径的代码没有变化，不是全Image或全部架构的等价证明。
 
 本轮未执行设备操作。marker仍可能因ring拒绝、pstore后续archive/reset或恢复覆盖而缺失，不能把缺marker解释为没有执行。旧next initramfs-manifest的Image/config/source绑定已不匹配此debug topic。现已通过独立严格入口生成新诊断RAM CPIO/V2 payload，绑定094d topic/Image/config/同一captured live.dtb，详见[诊断包装说明](linux-diagnostic-payloads.md)；没有重标旧manifest或移动日常stable/next pins。root需在独立目录验证后显式接入下一次controlled comparison，不引入overlay/rootfs变化。
+
+
+## test81：已测入口和EFI内存重建均完成
+
+固化证据为`artifacts/kernel-topics/piano-efi-entry-debug/efi-validation-test-81.json`，boot image SHA72cef1a8379e71ec7c6bae8badc5be8fa4475ea042d338fbdc0968b5a69086a4。payload/Image/initrd/DTB均与诊断manifest完全匹配，EBS实际success。console按顺序出现全部六个marker：EFI_ENTER_KERNEL → PRIMARY_ENTRY → EFI_INIT_BEFORE → RESERVE_REGIONS_BEFORE → RESERVE_REGIONS_AFTER → EFI_INIT_AFTER。实际entry为D053F0F0、final FDT为CE550000、传入size10EE88，补足test78仅按LoaderData布局推断的地址。
+
+最后map仍49descriptors，严格usable WB为402337792bytes=383.69921875MiB，比test78少8KiB。记录这些差异不代表内存容量是故障原因。六marker证明已进入主线并越过EFI内存重建及efi_init返回；尚未证明随后arm64_memblock_init/paging/ramoops或PID1成功。回收文件仅console-ramoops-0（2097140bytes，SHA1412d98dddad0245da26d9ce7fd41418235a4f574e9762d928744d566918afe0），无dmesg/pmsg。本次主线printk banner/命令行/PID1均缺失；console前面的Call trace来自旧Android历史，不能当成本次主线panic栈。Android自动恢复，26boot hashes/root/A槽正常。
+
+094d入口topic作为已测阶段基线保留。后续独立`topic/piano-efi-memory-debug`从094d追加源码，只增加有限阶段与早期printk/panic回收，硬件仍待root验收；不修改平台完整DRAM map、不移动stable/next/旧094d策略，也不预断RAM不足。
