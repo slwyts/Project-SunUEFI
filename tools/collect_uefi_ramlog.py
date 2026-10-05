@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Read ramoops after an explicit RAM boot; never writes device files."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
+import re
+import shlex
 import subprocess
 import time
 
@@ -38,6 +41,30 @@ def main():
     out = root/'private/analysis'/f'ramlog-test-{args.test_id}'
     out.mkdir(exist_ok=False)
     (out/'console.txt').write_bytes(p.stdout)
+    # A later kernel panic can be in dmesg-ramoops rather than the firmware
+    # console. Preserve every named ramoops object without changing originals.
+    pstore = {'console-ramoops-0': {'bytes': len(p.stdout),
+                                  'sha256': hashlib.sha256(p.stdout).hexdigest(),
+                                  'saved_as': 'console.txt'}}
+    listing = subprocess.run(adb+['shell','ls','-1','/sys/fs/pstore'],
+                             capture_output=True,text=True,timeout=10)
+    if listing.returncode == 0:
+        names = sorted(set(listing.stdout.splitlines()))
+        for name in names:
+            if name == 'console-ramoops-0' or not re.fullmatch(
+                    r'(?:console|dmesg|pmsg|ftrace)-ramoops(?:-\d+)?',name):
+                continue
+            read = subprocess.run(adb+['exec-out','su -c '+shlex.quote('cat /sys/fs/pstore/'+name)],
+                                  capture_output=True,timeout=20)
+            if read.returncode or read.stdout.startswith(b'cat:'):
+                pstore[name] = {'read_error': read.stderr.decode(errors='replace')}
+                continue
+            directory = out/'pstore'
+            directory.mkdir(exist_ok=True)
+            (directory/name).write_bytes(read.stdout)
+            pstore[name] = {'bytes': len(read.stdout),
+                           'sha256': hashlib.sha256(read.stdout).hexdigest(),
+                           'saved_as': 'pstore/'+name}
     text = p.stdout.decode(errors='replace')
     marker = 'SUNUEFI_RAMLOG_BEGIN'
     index = max(text.rfind(marker),text.rfind('SUNUEFI_BLOCKIO_REPORT_BEGIN'))
@@ -51,7 +78,8 @@ def main():
                'linux_ram_command_line_found':linux,
                'linux_init_process_started':linux and 'Run /init as init process' in text,
                'linux_ram_userland_marker':linux and 'SUNUEFI_RAM_INIT BEGIN pid=1' in text,
-               'independent_kernel_ram_userland_marker':linux and independent_init}
+               'independent_kernel_ram_userland_marker':linux and independent_init,
+               'pstore_files':pstore}
     (out/'manifest.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))
     if segment: print(segment[-18000:])

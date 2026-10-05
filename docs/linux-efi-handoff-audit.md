@@ -127,4 +127,4 @@ EFI usable与有效固定DT no-map的实际交集是384KiB：ADSP尾部`[BD93000
 
 额外default-off编译保存于`build/kernel-topics/piano-efi-entry-default-off`，四处关键代码section与官方7704对象逐字节相同：head `.idmap.text`1508bytes、stub `.text`348bytes、setup `.init.text`2176bytes、EFI init `.init.text`1308bytes。证据与hash见产物`default-off-proof.json`。这验证本次未启用marker时这些执行路径的代码没有变化，不是全Image或全部架构的等价证明。
 
-本轮未执行设备操作。marker仍可能因ring拒绝、pstore后续archive/reset或恢复覆盖而缺失，不能把缺marker解释为没有执行。旧next initramfs-manifest的Image/config/source绑定已不匹配此debug topic，需要root明确生成诊断包provenance；不能绕过日常stable/next锁定pins。下一次controlled comparison继续同一captured live.dtb，不引入overlay/rootfs变化。
+本轮未执行设备操作。marker仍可能因ring拒绝、pstore后续archive/reset或恢复覆盖而缺失，不能把缺marker解释为没有执行。旧next initramfs-manifest的Image/config/source绑定已不匹配此debug topic。现已通过独立严格入口生成新诊断RAM CPIO/V2 payload，绑定094d topic/Image/config/同一captured live.dtb，详见[诊断包装说明](linux-diagnostic-payloads.md)；没有重标旧manifest或移动日常stable/next pins。root需在独立目录验证后显式接入下一次controlled comparison，不引入overlay/rootfs变化。
