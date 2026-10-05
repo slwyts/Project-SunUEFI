@@ -26,7 +26,7 @@ The missing link was the full profile and matching DT/userspace/firmware chain.
 
 `tools/build_piano_full_kernel.py` uses the actual public piano_defconfig and
 piano_rootfs.config. The local fragment replaces only userdata-root arguments
-with the RAM-root policy. It checks 47 real configuration requirements, including
+with the RAM-root policy. It checks50 real configuration requirements, including
 MSM/GPU, ADSP/audio, MCA/SC8541, touch, WN8030, wireless and camera; installed
 modules are stripped and verified against the exact kernel release. The public
 BT_LE=n default is disclosed, not silently counted as full BLE support.
@@ -36,6 +36,13 @@ modules totaling84,916,472 bytes. The release is
 `artifacts/kernels/full-integration/manifest.json`, and the build log is
 `build/logs/piano-full-integration-build.log`. This is host build evidence;
 the full candidate has not booted on the tablet.
+
+The same full kernel builder accepts an explicit canonical descendant commit,
+worktree and build/artifact directories. It checks exact HEAD, clean source,
+ancestry and unchanged public full configurations, and records public and local
+patch commits separately. Sealed candidates cannot be overwritten. This enables
+the SMMU fixes in the complete profile while preserving the public candidate and
+the independently pinned rescue kernels. It does not create another feature set.
 
 ## ROM and final device tree
 

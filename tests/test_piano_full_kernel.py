@@ -50,6 +50,10 @@ class PianoFullKernelTests(unittest.TestCase):
                 shutil.copyfile(full.WORK/name,work/name);git('update-index','--no-assume-unchanged',name)
                 (work/'new').write_text('new');git('add','new');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','new head')
                 with self.assertRaisesRegex(ValueError,'HEAD drifted'):full.verify_source(work)
+                descendant=git('rev-parse','HEAD');full.verify_source(work,descendant)
+                disconnected=git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree','HEAD^{tree}','-m','disconnected')
+                git('checkout','--detach',disconnected)
+                with self.assertRaisesRegex(ValueError,'must descend'):full.verify_source(work,disconnected)
 
     def test_real_module_vermagic_hash_and_duplicate_rejection(self):
         source=ROOT/'artifacts/kernels/stable/userspace-debug/modules'

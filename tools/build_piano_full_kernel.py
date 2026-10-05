@@ -67,8 +67,12 @@ def command_line(fragment,public,root_policy):
     return provided.replace('piano.root=ram','piano.root='+root_policy)
 
 
-def verify_source(work=WORK):
-    if text(['git','rev-parse','HEAD'],work)!=COMMIT:raise ValueError('Full candidate source HEAD drifted')
+def verify_source(work=WORK,commit=None):
+    commit=COMMIT if commit is None else commit
+    if not re.fullmatch(r'[0-9a-f]{40}',commit):raise ValueError('Exact canonical full kernel commit required')
+    if text(['git','rev-parse','HEAD'],work)!=commit:raise ValueError('Full candidate source HEAD drifted')
+    if commit!=COMMIT and subprocess.run(['git','merge-base','--is-ancestor',COMMIT,commit],cwd=work,capture_output=True).returncode:
+        raise ValueError('Local full candidate must descend from the frozen public full baseline')
     if text(['git','status','--porcelain=v1','--untracked-files=all'],work):raise ValueError('Full candidate source is dirty')
     for name,pin in SOURCE_PINS.items():
         if sha(work/name)!=pin:raise ValueError('Pinned public full config changed: '+name)
@@ -113,41 +117,50 @@ def seal_modules(folder,release):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--jobs',type=int,default=4);parser.add_argument('--root',default='ram');parser.add_argument('--configure-only',action='store_true')
+    parser.add_argument('--worktree',type=Path,default=WORK)
+    parser.add_argument('--commit',default=COMMIT)
+    parser.add_argument('--build-dir',type=Path,default=OUT)
+    parser.add_argument('--artifacts',type=Path,default=ARTIFACTS)
     args=parser.parse_args()
     if not 1<=args.jobs<=8:raise SystemExit('Full candidate jobs must be 1..8')
-    verify_source();public=WORK/'arch/arm64/configs/piano_rootfs.config';fragment=ROOT/'configs/linux/piano-full.config'
+    work,out,artifacts=(path.resolve()for path in (args.worktree,args.build_dir,args.artifacts));commit=args.commit
+    if not work.is_relative_to(ROOT/'build/kernel-worktrees')or not out.is_relative_to(ROOT/'build/kernels')or not artifacts.is_relative_to(ROOT/'artifacts/kernels'):
+        raise ValueError('Explicit full kernel paths must stay in the workspace build/artifact directories')
+    verify_source(work,commit);public=work/'arch/arm64/configs/piano_rootfs.config';fragment=ROOT/'configs/linux/piano-full.config'
     root_command=command_line(fragment.read_text(),public.read_text(),args.root)
-    env,tools=toolchain();OUT.mkdir(parents=True,exist_ok=True);ARTIFACTS.mkdir(parents=True,exist_ok=True)
-    marker=ARTIFACTS/'manifest.json';marker.unlink(missing_ok=True)
+    env,tools=toolchain();out.mkdir(parents=True,exist_ok=True);artifacts.mkdir(parents=True,exist_ok=True)
+    marker=artifacts/'manifest.json'
+    if marker.exists():raise ValueError('Sealed full candidate exists; choose a new artifact directory')
     hashes={str(path.relative_to(ROOT)):sha(path)for path in (fragment,Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py')}
-    effective=OUT/'piano-full.effective.config';effective.write_text('CONFIG_CMDLINE='+json.dumps(root_command)+'\n')
-    command=['make','-C',WORK,'O='+str(OUT),'ARCH=arm64','LLVM=1','LLVM_IAS=1']
+    effective=out/'piano-full.effective.config';effective.write_text('CONFIG_CMDLINE='+json.dumps(root_command)+'\n')
+    command=['make','-C',work,'O='+str(out),'ARCH=arm64','LLVM=1','LLVM_IAS=1']
     run(command+['piano_defconfig'],env=env)
-    run(['bash',WORK/'scripts/kconfig/merge_config.sh','-m','-O',OUT,OUT/'.config',public,effective],cwd=WORK,env=env)
+    run(['bash',work/'scripts/kconfig/merge_config.sh','-m','-O',out,out/'.config',public,effective],cwd=work,env=env)
     run(command+['olddefconfig'],env=env)
-    requirements=validate_config((OUT/'.config').read_text(),public.read_text(),root_command);config_hash=sha(OUT/'.config')
+    requirements=validate_config((out/'.config').read_text(),public.read_text(),root_command);config_hash=sha(out/'.config')
     def fresh():
-        verify_source()
-        if any(sha(ROOT/name)!=value for name,value in hashes.items())or sha(OUT/'.config')!=config_hash or effective.read_text()!='CONFIG_CMDLINE='+json.dumps(root_command)+'\n':raise ValueError('Full candidate source/config/tool inputs drifted')
+        verify_source(work,commit)
+        if any(sha(ROOT/name)!=value for name,value in hashes.items())or sha(out/'.config')!=config_hash or effective.read_text()!='CONFIG_CMDLINE='+json.dumps(root_command)+'\n':raise ValueError('Full candidate source/config/tool inputs drifted')
         if any(sha(Path(tools['paths'][name]))!=value for name,value in tools['sha256'].items()):raise ValueError('Full candidate build tool changed during compilation')
-    fresh();state={'profile':'full-integration','mode':'complete-public-hardware','build_id':str(uuid.uuid4()),'source_commit':COMMIT,'source_worktree':str(WORK),'source_clean':True,
-      'source_branch':text(['git','branch','--show-current'],WORK),'base_commit':BASE_COMMIT,
-      'public_patch_commits':text(['git','rev-list','--reverse',BASE_COMMIT+'..'+COMMIT],WORK).splitlines(),
+    fresh();state={'profile':'full-integration','mode':'complete-public-hardware','build_id':str(uuid.uuid4()),'source_commit':commit,'source_worktree':str(work),'source_clean':True,
+      'source_branch':text(['git','branch','--show-current'],work),'base_commit':BASE_COMMIT,
+      'public_full_baseline':COMMIT,'local_patch_commits':text(['git','rev-list','--reverse',COMMIT+'..'+commit],work).splitlines(),
+      'public_patch_commits':text(['git','rev-list','--reverse',BASE_COMMIT+'..'+COMMIT],work).splitlines(),
       'public_config_sha256':SOURCE_PINS,'inputs':hashes,'config_sha256':config_hash,'toolchain':tools,'root_policy':args.root,'command_line':root_command,
       'full_profile_requirements':requirements,'hardware_verified':False,'device_operation_performed':False,'android_userdata_selected':False,
-      'safe_pianoinit_external_bundle_required':True,'public_bt_le_enabled':config_values((OUT/'.config').read_text()).get('CONFIG_BT_LE')=='y',
+      'safe_pianoinit_external_bundle_required':True,'public_bt_le_enabled':config_values((out/'.config').read_text()).get('CONFIG_BT_LE')=='y',
       'dtb':None,'status':'CONFIGURED_NOT_BUILT'if args.configure_only else 'BUILDING_NOT_BOOTABLE'}
-    shutil.copyfile(OUT/'.config',ARTIFACTS/'config');pending=OUT/'full-build-pending.json';pending.write_text(json.dumps(state,indent=2)+'\n')
+    shutil.copyfile(out/'.config',artifacts/'config');pending=out/'full-build-pending.json';pending.write_text(json.dumps(state,indent=2)+'\n')
     if args.configure_only:print(json.dumps({'status':state['status'],'config_sha256':config_hash,'requirements':len(requirements)}));return
     run(command+[f'-j{args.jobs}','Image','modules'],env=env);fresh()
-    image=OUT/'arch/arm64/boot/Image';state['image']=image_info(image)
+    image=out/'arch/arm64/boot/Image';state['image']=image_info(image)
     if not state['image']['efi_stub']:raise ValueError('Complete public candidate has no EFI stub')
-    state['kernel_release']=(OUT/'include/config/kernel.release').read_text().strip()
-    install=ARTIFACTS/'modules'
+    state['kernel_release']=(out/'include/config/kernel.release').read_text().strip()
+    install=artifacts/'modules'
     if install.exists():shutil.rmtree(install)
     run(command+[f'INSTALL_MOD_PATH={install}','INSTALL_MOD_STRIP=1','modules_install'],env=env);fresh()
     state['modules'],state['module_summary']=seal_modules(install,state['kernel_release'])
-    for name,source in (('Image',image),('System.map',OUT/'System.map')):shutil.copyfile(source,ARTIFACTS/name)
+    for name,source in (('Image',image),('System.map',out/'System.map')):shutil.copyfile(source,artifacts/name)
     fresh();state['status']='HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED';marker.write_text(json.dumps(state,indent=2)+'\n');pending.unlink()
     print(json.dumps({'status':state['status'],'build_id':state['build_id'],'image':state['image'],'kernel_release':state['kernel_release'],'module_summary':state['module_summary']},indent=2))
 
