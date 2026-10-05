@@ -39,4 +39,13 @@ bash tools/test_ufs_bounded_block.sh
 
 actual C harness 26个memory-only场景通过ASan/UBSan，包含成功与format/Connect/SFS/OpenVolume/CREATE/short write/flush/close/GetInfo/read/EOF错误后同session恢复；恢复Acquire/WP/read/WRITE/short WRITE/unknown quiet/sync/whole verify/release不明均fence。10个纯profile/PC image tests通过，涵盖默认关闭、全部隔离（含USB screenshot）、无OS路径、pinned image/size/manifest类型/extent/symlink/PC archive漂移；测试仅临时render/header，不运行main/prepare或改变staging。production bounded+harness宏下AArch64语法通过。
 
-源码入口为PianoUfsBoundedFileSystemTest.c/.h；profile将两宏PIANO_UFS_BOUNDED_VOLUME/PIANO_UFS_BOUNDED_FS_TEST只加到复制的UfsDma，Sources包括harness/core/layout/helper，新增gEfiFileInfoGuid及真实SFS协议依赖。实际标准EnhancedFatDxe在设备上的格式识别、8193-byte文件行为、完整恢复与26启动分区复核仍待root后续构建和实机验收。
+源码入口为PianoUfsBoundedFileSystemTest.c/.h；profile将两宏PIANO_UFS_BOUNDED_VOLUME/PIANO_UFS_BOUNDED_FS_TEST只加到复制的UfsDma，Sources包括harness/core/layout/helper，新增gEfiFileInfoGuid及真实SFS协议依赖。这些主机检查之后，标准EnhancedFatDxe实机验收结果见下一节。
+# 第86次实机验收
+
+第86次已经完成真实限定窗口BlockIO与EnhancedFatDxe/SimpleFileSystem闭环。25个步骤全部Success：4个格式块、OpenVolume/Create `SUNTEST.BIN`、Write8193/Flush/Close、重新Open/GetInfo/Read8193逐字节匹配/EOF、Disconnect、关闭public IO、恢复与整段验证。provider累计18个请求、9次WriteBlocks、11个经过FUA/sync/独立DMA读回的写块、8次Flush、0失败。文件重新打开使用标准FAT缓存语义，物理持久数据的独立证据来自每次底层写块校验。
+
+恢复扫描3584块，发现并恢复7个非零块；最终完整14MiB读取匹配原始全零基线。18次真实WRITE门铃（11次格式/文件块+7次恢复）、27次SYNC门铃，原LUN句柄发布数0。最终Dirty/NeedsRecovery/quarantine均0、restore_verified/whole_verified均1、消费者已断开且public IO已关闭。
+
+Android恢复后capture4重新读取完整gap、MBR、主备GPT头/数组和相邻块，九份对象逐字节匹配原capture1及本次执行前capture3；26启动分区SHA一致，A槽位/root正常。封存证据为 `artifacts/ufs/bounded-fs-validation-test-86.json`，镜像SHA `0445da01dc9078b7b5d550c234679cbf5d5420d675f888f0ac627936ad2f8ad5`，build_id `7174ffe0-633b-41df-b2e5-968c6de83854`。大量传输使session开头被RAM环覆盖，完整raw console保留最终guard/provider/harness报告，不冒称完整启动日志。
+
+本次是临时测试卷，未改GPT、未保留新文件系统。持续可写ESP、Shell文件复制、持久变量与自主OS加载仍需后续独立验证。

@@ -74,6 +74,9 @@ def main():
         # USB/cleanup report, but explicitly avoid claiming a full session log.
         index = text.rfind('SUNUEFI_FASTBOOT_RESULT')
         if index >= 0:scope = 'fastboot-final-report-only'
+    if index < 0:
+        index = text.rfind('SUNUEFI_UFS_WINDOW_GUARD')
+        if index >= 0:scope = 'bounded-ufs-final-report-only'
     segment = text[index:] if index >= 0 else ''
     (out/'uefi.txt').write_text(segment)
     linux = 'rdinit=/init ro nokaslr efi=novamap' in text and 'console=ttyGS0,115200' in text

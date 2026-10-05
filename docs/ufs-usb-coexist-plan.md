@@ -1,6 +1,6 @@
 # UFS + USB readonly fastboot coexist integration
 
-2026-10-05：本次只审计/修复 `PianoFastbootBlockRead.c/.h` 并增加 host tests，没有修改 Dwc3/Controller 注册、prepare、UFS busy 文件或设备。USB test82 的标准 RAM/log roundtrip 是已测基线；本文件中的 combined owner、setter、finalizer 均是待实施建议，不代表同时运行 UFS/USB 已实测。
+2026-10-05 更新：本文下方保留第87次之前的设计审查，标为建议的段落描述当时状态。现有 `--usb-ufs-fetch` 已实现copied setter、checked UFS shutdown和独立SID/CB检查；第87/89次标准fetch实机读回匹配，但联合retirement仍被严格SMMU检查拒绝。USB-only第82–84次完整成功不能代替联合关闭验收。当前事实见[BlockIO/USB状态](blockio-usb-progress.md)。
 
 ## 真实 readonly EFI bridge 的边界与修复
 
@@ -20,13 +20,13 @@ HD 的 PartitionStart/PartitionSize/Signature 现在分别核对 GPT StartingLBA
 bash tools/test_usb_fastboot.sh
 ```
 
-桥没有进行 BlockIO/设备实测，也未被注册到 Dwc3 的 private mFastboot。首次 live acceptance 仍应只用 exact `xbl_config_a`，与已存在的 PC 原始备份核对长度/SHA；`max-fetch-size` / `partition-size:<name>` 只有真实 Ready 后才可成功。
+以下是实现前的验收要求；第87/89次已按exact `xbl_config_a`完成桥接和原备份比对。`max-fetch-size` / `partition-size:<name>` 只有真实 Ready 后才可成功。
 
 ## SMMU 真实源码与 native 依据
 
 `PianoOwnedSmmu` 每个 context 单独拥有 Domain、TableMemory、PageTable、Used[4096]、Mapping[64]、Before/After snapshot。UFS static mContext/mDevice 与 USB static mUsbContext/mUsbDevice 分离。每个 arena 可以使用相同的 0x40000000..0x40ffffff IOVA，但必须由 SID60/USB SID40 的不同 stage-1 CB 和不同 TTBR root 解释。不能共享 mapping token 或把 UFS buffer 的 DeviceAddress直接交给USB。
 
-`build/HALIOMMU.disasm` 中 Create RVA1644为每个Domain分配0x40-byte对象；Attach RVA1744维护该Domain的resource list；RVA1940–19a8从0开始扫描可用CB、1aa4把选定bank写入domain-resource field，1aa8之后以该bank配置寄存器。因此接口并非强制CB0。`PianoOwnedSmmu.c` 把Type0/TTBR配置交给HAL，再从实际S2CR取得ContextBank，未写死CB编号。这个证据只支持多domain可行，仍需combined实机验证分配出的两个bank。
+`build/HALIOMMU.disasm` 中 Create RVA1644为每个Domain分配0x40-byte对象；Attach RVA1744维护该Domain的resource list；RVA1940–19a8从0开始扫描可用CB、1aa4把选定bank写入domain-resource field，1aa8之后以该bank配置寄存器。因此接口并非强制CB0。`PianoOwnedSmmu.c` 把Type0/TTBR配置交给HAL，再从实际S2CR取得ContextBank，未写死CB编号。第87次实机进一步确认UFS/USB分别取得CB0/1，root不同；联合关闭仍待修复。
 
 现有 Open/Close 的“其他stream未改变”主要比较 RawSMR/RawS2CR。它**不能独自证明其他CB的TTBR/TCR/MAIR没有被修改**。最小combined验收应增加：
 
@@ -35,7 +35,7 @@ bash tools/test_usb_fastboot.sh
 3. USB bulk持续可响应时读取exact `xbl_config_a`，标准CLI fetch到PC并核对既有原始SHA；之后再次读取RAM/log upload，防止把“两个独立测试都成功”误认为共存。
 4. USB Close/Destroy后SID40消失、SID60依然存在且CB/root/config完全不变；再由UFS真实read证明它仍可工作。最后关闭UFS后SID60消失，所有其他stream及其相关CB寄存器保持 baseline。
 
-## 最小 setter / result API 建议（未实现）
+## 最小 setter / result API 原设计（现已实现，关闭验收未通过）
 
 建议将现有USB-only wrapper保留，新增一个**返回 action、不执行 ResetSystem**的combined entry，而非新增全局外部指向private fastboot state：
 
@@ -62,4 +62,4 @@ EFI_STATUS PianoUsbControllerRunWithStorage(
 
 正常进入OS前应在Boot Services仍可用时完成所有owner normal Stop，并取得最后memory map。若无法正常关闭而必须由EBS fence保留，USB也必须具备Halt/active-DMA retirement与预先Reserved的全部buffer/table；当前UFS EBS handler只处理UFS，shared DMA没有全owner registry，USB bulk buffer默认非Reserved，不能用UFS的一次成功Halt替代USB关闭。EBS callback只允许allocation-free halt/cache/retain，不能native HAL detach/free或改变final map。当前83的前台USB-only实验不存在这种后台EBS实现。
 
-本轮没有修改任何setter/注册/finalizer源、UFS源、Dwc3/Controller或设备状态。这些集成条件仍应由后续combined profile和实机日志逐项证明。
+本节是实现前审查。当前setter/桥和typed shutdown已实装；第87次最后UFS owned-domain释放未通过，第89次正收集CRC诊断。后续仍须逐项证明联合关闭、OS交接和后台服务，不能仅凭接口存在认定通过。
