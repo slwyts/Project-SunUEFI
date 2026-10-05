@@ -13,6 +13,7 @@ from prepare_product_pump import prepare as prepare_pump
 from product_payload_digest import digest_header
 from simpleinit_build_identity import inspect as inspect_simpleinit
 from prepare_gui_profile import SETUP_DSC_ADDITIONS, SETUP_FV_MODULES
+from prepare_product_early_memory import prepare as prepare_early_memory, verify as verify_early_memory
 
 CORE_GUID='35E0D1B5-93CE-4D6A-9A93-6ADAA3F26C40'
 SOURCE_NAMES=(
@@ -183,7 +184,7 @@ def backend_status():
       'physical_keys':{'status':'IMPLEMENTED_PMIC_READONLY','physical_evidence':'tests23/24; product input retirement untested'},
       'pogo_keyboard_touchpad':{'status':'NOT_READY','missing':'verified SE6 firmware/clock ownership and live report transport'},
       'touchscreen':{'status':'NOT_READY','missing':'verified GPI/PAS/DMA physical touch reports'},
-      'dma_smmu':{'status':'IMPLEMENTED_STRICT_OWNERS','physical_evidence':'test91 readonly fetch and exact combined USB/UFS retirement passed; resident product retirement still untested','ram_partition_inventory':'AUDITED_NATIVE_ABI_LINKED_UNTESTED','smem_observation':'READ_ONLY_DXE_BOUND_UNTESTED','sec_early_ready':False,'high_ddr_mapped':False,'high_ram_ownership_verified':False},
+      'dma_smmu':{'status':'IMPLEMENTED_STRICT_OWNERS','physical_evidence':'test91 readonly fetch and exact combined USB/UFS retirement passed; resident product retirement still untested','ram_partition_inventory':'AUDITED_NATIVE_ABI_LINKED_UNTESTED','smem_observation':'READ_ONLY_COLD_SEC_AND_DXE_BOUND_UNTESTED','sec_early_ready':False,'high_ddr_mapped':False,'high_ram_ownership_verified':False},
       'ufs_blockio_read_write':{'status':'RESERVED_VOLUME_BACKEND_UNPROVISIONED','original_media':'READ_ONLY','missing':'explicit permanent reservation, provisioning approval and product physical RW acceptance'},
       'gpt':{'status':'IMPLEMENTED_READ','physical_evidence':'real UFS GPT reads; product untested'},
       'fat_simplefilesystem':{'status':'IMPLEMENTED_READ_ONLY_VOLUMES','physical_evidence':'7 read-only SFS, bounded FAT RW test86; product untested'},
@@ -259,6 +260,7 @@ def core_inf():
   PcdLib
   PianoProductPumpLib
   SynchronizationLib
+  HobLib
 [Guids]
   gEfiEventExitBootServicesGuid
   gEfiEventBeforeExitBootServicesGuid
@@ -399,9 +401,12 @@ def prepare(root=ROOT):
     modules=DISK_MODULES+HOST_MODULES+SETUP_FV_MODULES+('MdeModulePkg/Logo/LogoDxe.inf','ShellPkg/Application/Shell/Shell.inf','pianoProductPkg/Applications/ProductCore/ProductCore.inf')
     text=text.replace('!include SiliciumPkg/Common.fdf.inc',''.join('  INF '+module+'\n' for module in modules)+native_fdf+'\n!include SiliciumPkg/Common.fdf.inc')
     fdf.write_text(text)
+    early_memory=prepare_early_memory(root,target)
+    verify_early_memory(root,target,early_memory)
     staged=root/'upstream/Mu-Silicium/Platforms/Xiaomi/pianoProductPkg'
     if staged.exists():shutil.rmtree(staged)
     shutil.copytree(target,staged)
+    verify_early_memory(root,staged,early_memory)
     verify_os_boot(root,staged/'Applications/ProductCore',os_boot)
     verify_observation_families(root,staged/'Applications/ProductCore',observation)
     manifest={'target':'product','artifact':contract['artifact'],'status':'INCOMPLETE_NOT_RELEASE',
@@ -409,7 +414,7 @@ def prepare(root=ROOT):
       'fastboot_mode':'resident_background','fastboot_surfaces':contract['fastboot']['available_in'],
       'default_application':'SimpleInit','setup_key':'F12','diagnostic_reboot_timer':False,
       'backend_initialization_required':True,'backends':backend_status(),'runtime_readiness':'NOT_PRODUCT_DEVICE_VALIDATED',
-      'service_compile_flags':list(PRODUCT_FLAGS),'sources':list((*SOURCE_NAMES,*OS_BOOT_INF_SOURCES,*OBSERVATION_INF_SOURCES)),'native_foundation':native_id,'os_boot':os_boot,'dxe_observation':observation,
+      'service_compile_flags':list(PRODUCT_FLAGS),'sources':list((*SOURCE_NAMES,*OS_BOOT_INF_SOURCES,*OBSERVATION_INF_SOURCES)),'native_foundation':native_id,'os_boot':os_boot,'dxe_observation':observation,'early_memory':early_memory,
       'simpleinit':simpleinit,'simpleinit_payload':app_identity,'ui_hooks':ui,'pump_hooks':prepare_pump(root,apply=False),
       'low_memory_contract':low_memory_contract,
       'platform_files':{str(path.relative_to(target)):sha(path)for path in sorted(target.rglob('*'))if path.is_file()},

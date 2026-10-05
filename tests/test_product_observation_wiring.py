@@ -54,13 +54,14 @@ class ProductObservationWiringTests(unittest.TestCase):
                 path=root/'bootprofiles'/family/names[0];path.write_text(path.read_text()+'\n// updated canonical source\n')
                 record=product.prepare_observation_families(root,app);shutil.rmtree(staged);shutil.copytree(app,staged)
                 manifest=root/'build/product/prepared-manifest.json';prepared=json.loads(manifest.read_text());prepared['dxe_observation']=record;manifest.write_text(json.dumps(prepared))
+                fixture.refresh_early(root,app)
                 self.assertNotEqual(before['sha256'],fixture.fingerprint(root)['sha256'])
 
     def test_metadata_does_not_promote_observation_to_memory_permission(self):
         with tempfile.TemporaryDirectory(prefix='product-observe-status-')as tmp:
             _,_,_,record=self.fixture(Path(tmp));self.assertTrue(record['platform_bound']);self.assertFalse(record['device_validated'])
             for key in ('sec_early_ready','high_ddr_mapped','memory_ownership_granted'):self.assertFalse(record[key])
-            status=product.backend_status()['dma_smmu'];self.assertEqual(status['smem_observation'],'READ_ONLY_DXE_BOUND_UNTESTED')
+            status=product.backend_status()['dma_smmu'];self.assertEqual(status['smem_observation'],'READ_ONLY_COLD_SEC_AND_DXE_BOUND_UNTESTED')
             self.assertFalse(status['sec_early_ready']);self.assertFalse(status['high_ddr_mapped']);self.assertFalse(status['high_ram_ownership_verified'])
 
 

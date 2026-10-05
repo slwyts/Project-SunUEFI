@@ -9,6 +9,8 @@
 #include "../bootprofiles/uefi-app/PianoProductSmem.h"
 #include "../bootprofiles/guarded-read/PianoGuardedRead.h"
 #include "../bootprofiles/early-memory/PianoSmemRam.h"
+#include "../bootprofiles/early-memory/PianoEarlyMemory.h"
+#include <Library/HobLib.h>
 #include <Protocol/Cpu.h>
 #include <Guid/EventGroup.h>
 #include <Library/DebugLib.h>
@@ -22,9 +24,15 @@ static UINT8 smem[PIANO_SMEM_BYTES],before[PIANO_SMEM_BYTES];
 static UINTN payload_log,count_log,coherence_log,close_log,bank_log;static UINT32 parsed,major,ramver,banks,preloaded;static UINT64 bank_base,bank_size,available;
 static BOOLEAN map_authorized_log,close_retained,debug_lifetime_safe;
 static UINTN snapshot_log,active_rejects;static EFI_STATUS snapshot_status,map_status;static UINT64 map_page,map_par,gcd_attrs;static UINT32 gcd_type,payload_crc;
+static UINTN early_case,early_gets,early_logs;static EFI_STATUS early_log_status;
+static EFI_GUID early_guid=PIANO_EARLY_MEMORY_HOB_GUID;
+static struct {EFI_HOB_GUID_TYPE Header;PIANO_EARLY_MEMORY_REPORT Report;} early_hob;
+VOID *EFIAPI GetFirstGuidHob(CONST EFI_GUID *Guid){assert(!memcmp(Guid,&early_guid,sizeof(*Guid)));++early_gets;return early_case?&early_hob:NULL;}
+VOID *EFIAPI GetNextGuidHob(CONST EFI_GUID *Guid,CONST VOID *Start){assert(!memcmp(Guid,&early_guid,sizeof(*Guid)));assert(Start==(UINT8 *)&early_hob+early_hob.Header.Header.HobLength);++early_gets;return early_case==4?&early_hob:NULL;}
 VOID *EFIAPI ZeroMem(VOID*p,UINTN n){return memset(p,0,n);}VOID *EFIAPI CopyMem(VOID*a,CONST VOID*b,UINTN n){return memmove(a,b,n);}INTN EFIAPI CompareMem(CONST VOID*a,CONST VOID*b,UINTN n){return memcmp(a,b,n);}
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return TRUE;}BOOLEAN EFIAPI DebugPrintLevelEnabled(CONST UINTN Level){return TRUE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8*Format,...){VA_LIST args;VA_START(args,Format);assert(Level==DEBUG_WARN);debug_lifetime_safe=TRUE;
+ if(strstr(Format,"EARLY_RAM_HOB")){++early_logs;early_log_status=VA_ARG(args,EFI_STATUS);}
  if(strstr(Format,"SMEM_PAYLOAD")||strstr(Format,"SMEM_SNAPSHOT")){if(strstr(Format,"SMEM_SNAPSHOT"))++snapshot_log;else ++payload_log;snapshot_status=VA_ARG(args,EFI_STATUS);parsed=VA_ARG(args,unsigned);major=VA_ARG(args,unsigned);ramver=VA_ARG(args,unsigned);}
  if(strstr(Format,"SMEM_COUNTS")){++count_log;banks=VA_ARG(args,unsigned);preloaded=VA_ARG(args,unsigned);}
  if(strstr(Format,"SMEM_COHERENCE")){++coherence_log;map_authorized_log=strstr(Format,"map_authorized=0")!=NULL;(void)VA_ARG(args,unsigned);(void)VA_ARG(args,unsigned);payload_crc=VA_ARG(args,unsigned);}
@@ -66,8 +74,41 @@ static VOID Setup(VOID){
 }
 static BOOLEAN NewLive(VOID*c){return c==&bs&&gBS==&bs&&gST&&gST->BootServices==&bs;}
 static UINT32 Crc(CONST UINT8*p,UINTN n){UINT32 c=MAX_UINT32;for(UINTN i=0;i<n;i++){c^=p[i];for(UINTN b=0;b<8;b++)c=c&1?(c>>1)^0xedb88320U:c>>1;}return ~c;}
+static VOID EarlySetup(VOID){
+ if(!early_case)return;
+ early_hob.Header=(EFI_HOB_GUID_TYPE){.Header={.HobType=EFI_HOB_TYPE_GUID_EXTENSION,.HobLength=sizeof(early_hob)},.Name=early_guid};
+ PIANO_EARLY_MEMORY_REPORT *r=&early_hob.Report;
+ *r=(PIANO_EARLY_MEMORY_REPORT){.Version=PIANO_EARLY_MEMORY_VERSION,.Bytes=sizeof(*r),.Status=EFI_SUCCESS,.PublishStatus=EFI_SUCCESS,
+   .EntryEl=4,.EntrySctlr=0,.EntrySpSel=1,.EntryVbar=0x2000,.EntryDaif=0x3c0,.LoadCount=20,
+   .Attempted=TRUE,.Finished=TRUE,.Published=TRUE,.ColdStateVerified=TRUE};
+ assert(PianoSmemRamParse(smem+0x3000,24+72*2,&r->Smem)==EFI_SUCCESS);
+ r->Smem.SmemVersion=0xb0001;r->Smem.RepeatedMetadataEqual=r->Smem.RepeatedPayloadEqual=TRUE;
+ r->Smem.PayloadAddress=PIANO_SMEM_BASE+0x3000;r->Smem.PayloadBytes=24+72*2;r->Smem.RawEntryCount=2;
+ if(early_case==2)r->Version=2;
+ if(early_case==3)early_hob.Header.Header.HobLength-=8;
+ if(early_case==5)r->MemoryOwnershipGranted=TRUE;
+ if(early_case==6)r->Smem.BankCount=65;
+ if(early_case==8)r->Smem.Banks[0].AvailableLength=r->Smem.Banks[0].RawSize+1;
+ if(early_case==9){r->Status=EFI_UNSUPPORTED;r->ColdStateVerified=FALSE;r->LoadCount=0;memset(&r->Smem,0,sizeof(r->Smem));r->Smem.Status=EFI_NOT_STARTED;}
+ if(early_case==10||early_case==19){r->Status=EFI_DEVICE_ERROR;r->LoadCount=1;r->RecoveredFaults=1;memset(&r->Smem,0,sizeof(r->Smem));r->Smem.Status=EFI_DEVICE_ERROR;
+  r->LastFault=(PIANO_SEC_READ_STATE){.Faulted=1,.Address=PIANO_SMEM_BASE+0x5c,.Far=PIANO_SMEM_BASE+0x5c,.Elr=0x1100,.Resume=0x1104,.Esr=0x96000010,.Spsr=0x3c5};
+  if(early_case==19)r->LastFault.Far++;}
+ if(early_case==11)early_hob.Header.Name.Data1^=1;
+ if(early_case==12)r->Status=EFI_DEVICE_ERROR;
+ if(early_case==13)r->Smem.RepeatedPayloadEqual=FALSE;
+ if(early_case==14)r->Smem.Banks[0].SourceIndex=65;
+ if(early_case==15)early_hob.Header.Header.HobType=EFI_HOB_TYPE_RESOURCE_DESCRIPTOR;
+ if(early_case==16)r->Bytes=0x200000;
+ if(early_case==17)r->ColdStateVerified=2;
+ if(early_case==18)r->EntrySctlr=1;
+ r->ReportCrc32=PianoEarlyMemoryReportCrc32(r);
+ if(early_case==7)r->ReportCrc32^=1;
+}
 static VOID Replay(EFI_STATUS Expected){UINTN oldcalls=calls,oldloads=loads,oldregs=unregisters,oldcloses=closes,oldat=at_calls,oldgcd=gcd_calls;assert(PianoProductSmemReemit(NULL)==Expected);assert(calls==oldcalls&&loads==oldloads&&unregisters==oldregs&&closes==oldcloses&&at_calls==oldat&&gcd_calls==oldgcd);}
-int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);assert(scenario<13);Setup();assert(PianoProductSmemReemit(NULL)==EFI_NOT_READY&&PianoProductSmemReemit((VOID*)1)==EFI_INVALID_PARAMETER&&!calls&&!loads&&!snapshot_log);EFI_STATUS result=PianoProductObserveSmem();CONST PIANO_GUARDED_REPORT*r=PianoGuardedReadReport();assert(!r->MemoryOwnershipGranted&&!memcmp(smem,before,sizeof(smem))&&debug_lifetime_safe);
+int main(int argc,char**argv){assert(argc==2||argc==3);scenario=strtoul(argv[1],NULL,10);assert(scenario<13);early_case=argc==3?strtoul(argv[2],NULL,10):0;assert(early_case<20);Setup();EarlySetup();assert(PianoProductSmemReemit(NULL)==EFI_NOT_READY&&PianoProductSmemReemit((VOID*)1)==EFI_INVALID_PARAMETER&&!calls&&!loads&&!snapshot_log);EFI_STATUS result=PianoProductObserveSmem();CONST PIANO_GUARDED_REPORT*r=PianoGuardedReadReport();assert(!r->MemoryOwnershipGranted&&!memcmp(smem,before,sizeof(smem))&&debug_lifetime_safe);
+ EFI_STATUS expected_early=early_case==0?EFI_NOT_FOUND:early_case==1||early_case==9||early_case==10?EFI_SUCCESS:EFI_COMPROMISED_DATA;
+ assert(PianoProductEarlySmemStatus()==expected_early&&early_log_status==expected_early&&early_logs==1);
+ UINTN original_early_gets=early_gets;memset(&early_hob,0,sizeof(early_hob));
  if(scenario==0){assert(result==EFI_SUCCESS&&!PianoProductSmemRetained()&&r->PagesValidated==513&&r->Reads==loads&&loads>0&&parsed==1&&major==11&&ramver==2&&banks==1&&preloaded==1&&bank_log==1&&bank_base==0x80000000&&bank_size==0x200000000ULL&&available==0x1ff000000ULL&&coherence_log==1&&map_authorized_log&&unregisters==2&&closes==1&&!handlers[0]&&!handlers[3]);}
  else if(scenario==1||scenario==2){assert(result==EFI_NOT_READY&&!PianoProductSmemRetained()&&!loads&&unregisters==2&&closes==1&&!handlers[0]&&!handlers[3]&&!payload_log);}
  else if(scenario==3){assert(result!=EFI_SUCCESS&&PianoProductSmemRetained()&&!loads&&!unregisters&&!closes&&handlers[0]);}
@@ -86,4 +127,6 @@ int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);
    }else if(scenario==6||scenario==11)assert(parsed==0&&banks==0&&preloaded==0&&snapshot_status==EFI_ALREADY_STARTED);
  }
  UINTN logbefore=snapshot_log,callbefore=calls;assert(PianoProductSmemReemit((VOID*)1)==EFI_INVALID_PARAMETER&&snapshot_log==logbefore&&calls==callbefore);
- UINTN oldcalls=calls,oldloads=loads;assert(PianoProductObserveSmem()==EFI_ALREADY_STARTED&&calls==oldcalls&&loads==oldloads);printf("Actual ProductSmem+GuardedRead+SmemRam case%lu passed; zero writes/map authority\n",(unsigned long)scenario);return 0;}
+ UINTN oldcalls=calls,oldloads=loads;assert(PianoProductObserveSmem()==EFI_ALREADY_STARTED&&calls==oldcalls&&loads==oldloads);
+ assert(early_gets==original_early_gets&&PianoProductEarlySmemStatus()==expected_early&&early_log_status==expected_early);
+ printf("Actual ProductSmem+GuardedRead+SmemRam case%lu early%lu passed; immutable HOB capture; zero writes/map authority\n",(unsigned long)scenario,(unsigned long)early_case);return 0;}

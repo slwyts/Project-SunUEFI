@@ -10,6 +10,8 @@ class ProductSmemTests(unittest.TestCase):
    build=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(build.returncode,0,build.stdout+build.stderr)
    for case in range(13):
     run=subprocess.run([str(exe),str(case)],capture_output=True,text=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'});self.assertEqual(run.returncode,0,f'case{case}\n'+run.stdout+run.stderr)
+   for early_case in range(1,20):
+    run=subprocess.run([str(exe),'0',str(early_case)],capture_output=True,text=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'});self.assertEqual(run.returncode,0,f'early{early_case}\n'+run.stdout+run.stderr)
  def test_wrapper_actual_aarch64_syntax_and_root_order(self):
   inc=BASE/'MdePkg/Include';flags=['-I'+str(inc),'-I'+str(inc/'AArch64'),'-I'+str(ROOT/'bootprofiles/guarded-read'),'-I'+str(ROOT/'bootprofiles/early-memory')]
   subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror',*flags,str(ROOT/'bootprofiles/uefi-app/PianoProductSmem.c')],check=True)

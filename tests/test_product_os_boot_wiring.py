@@ -12,6 +12,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tools'))
 import prepare_product as product
 import build_integrity as integrity
+from prepare_product_early_memory import prepare as prepare_early
 
 
 class ProductOsBootWiringTests(unittest.TestCase):
@@ -29,15 +30,32 @@ class ProductOsBootWiringTests(unittest.TestCase):
         record=product.prepare_os_boot(root,app)
         observation=product.prepare_observation_families(root,app)
         (app/'ProductCore.inf').write_text(product.core_inf())
+        sec=Path('upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Sec')
+        shutil.copytree(ROOT/sec,root/sec)
+        target=app.parent.parent
+        (target/'pianoProduct.dsc').write_text('[Components]\n')
+        (target/'pianoProduct.fdf').write_text('[FV]\n  INF SiliciumPkg/Sec/Sec.inf\n')
+        early=prepare_early(root,target)
         staged=root/'upstream/Mu-Silicium/Platforms/Xiaomi/pianoProductPkg'
         shutil.copytree(app.parent.parent,staged)
-        manifest=root/'build/product/prepared-manifest.json';manifest.parent.mkdir(parents=True);manifest.write_text(json.dumps({'os_boot':record,'dxe_observation':observation}))
+        manifest=root/'build/product/prepared-manifest.json';manifest.parent.mkdir(parents=True);manifest.write_text(json.dumps({'os_boot':record,'dxe_observation':observation,'early_memory':early}))
         for relative in ('config/piano-product.json','tools/prepare_product.py','tools/build_product.sh','tools/package_product.py',
-                         'tools/prepare_product_pump.py','tools/prepare_product_ui.py','tools/prepare_nv_runtime_guard.py','tools/simpleinit_build_identity.py',
+                         'tools/prepare_product_pump.py','tools/prepare_product_ui.py','tools/prepare_nv_runtime_guard.py','tools/prepare_product_early_memory.py','tools/simpleinit_build_identity.py',
                          'tools/build_simpleinit.sh','tools/prepare_simpleinit.py','tools/product_payload_digest.py',
                          'artifacts/simpleinit/product/SimpleInit.efi','artifacts/simpleinit/product/app-payload.bin','artifacts/simpleinit/product/build-ok.json'):
             path=root/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('fixture')
         return app,record,staged/'Applications/ProductCore'
+
+    def refresh_early(self,root,app):
+        target=app.parent.parent
+        shutil.rmtree(target/'Sec')
+        (target/'pianoProduct.dsc').write_text('[Components]\n')
+        (target/'pianoProduct.fdf').write_text('[FV]\n  INF SiliciumPkg/Sec/Sec.inf\n')
+        record=prepare_early(root,target)
+        staged=root/'upstream/Mu-Silicium/Platforms/Xiaomi/pianoProductPkg'
+        shutil.rmtree(staged/'Sec');shutil.copytree(target/'Sec',staged/'Sec')
+        for name in ('pianoProduct.dsc','pianoProduct.fdf'):shutil.copyfile(target/name,staged/name)
+        path=root/'build/product/prepared-manifest.json';manifest=json.loads(path.read_text());manifest['early_memory']=record;path.write_text(json.dumps(manifest))
 
     def fingerprint(self,root):
         with patch('prepare_product_pump.prepare',return_value={'files':{}}),patch('prepare_product_ui.prepare',return_value={'files':{}}),patch('prepare_nv_runtime_guard.prepare',return_value={'files':{}}):
