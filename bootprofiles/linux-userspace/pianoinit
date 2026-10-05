@@ -39,6 +39,7 @@ mount -t tmpfs -o size="$ram_limit",mode=0755 tmpfs /sysroot
 tar --one-file-system --exclude=./sysroot --exclude=./proc --exclude=./sys \
     --exclude=./dev --exclude=./run --exclude=./tmp -C / -cf - . | tar -C /sysroot -xf -
 mkdir -p /sysroot/dev /sysroot/proc /sysroot/sys /sysroot/run /sysroot/tmp
+chmod 1777 /sysroot/tmp
 for virtual in dev proc sys run; do mount --move "/$virtual" "/sysroot/$virtual"; done
 # The full published userspace service graph remains installed. Hardware
 # bootstrap is a separate audited script; never claim a SMMU-ready marker just

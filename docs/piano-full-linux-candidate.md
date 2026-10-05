@@ -30,9 +30,12 @@ with the RAM-root policy. It checks 47 real configuration requirements, includin
 MSM/GPU, ADSP/audio, MCA/SC8541, touch, WN8030, wireless and camera; installed
 modules are stripped and verified against the exact kernel release. The public
 BT_LE=n default is disclosed, not silently counted as full BLE support.
-Its current process/build completion must be checked through the live process
-and final manifest, not inferred from a pending file. The build log is
-`build/logs/piano-full-integration-build.log`.
+The full build completed: Image is41,912,832 bytes, with1,637 matching stripped
+modules totaling84,916,472 bytes. The release is
+`7.2.6-piano-gnome-00061-g352508459733`; the final manifest is
+`artifacts/kernels/full-integration/manifest.json`, and the build log is
+`build/logs/piano-full-integration-build.log`. This is host build evidence;
+the full candidate has not booted on the tablet.
 
 ## ROM and final device tree
 
@@ -83,12 +86,17 @@ and memory contracts are ready.
 The official Debian13.7 ARM64 OCI layer and uncompressed diff ID were verified;
 real ARM64 Bash/dpkg/glibc/child-exec run under workspace QEMU. QEMU user-mode
 does not validate PID1 or a Piano kernel boot. The derived systemd installation
-encountered a PRoot path assertion and remains incomplete; this is being repaired
-with a private user-namespace runtime. GNOME, patched Mesa and full dependency
-configuration are required before the candidate may be called assembled.
+encountered a PRoot path assertion; package configuration was completed through a
+private user namespace and private binfmt mount without host-global registration.
+The final software audit has922 packages in the configured state, including
+GNOME/GDM, PipeWire, English/Chinese locales and the Piano Mesa packages.
+Runtime helpers, topology and audited hardware preparation still need completion
+before the candidate can boot; software configuration does not prove desktop or
+GPU operation on the tablet.
 
 Firmware's99 files total55,387,076 bytes and all SHA256SUMS passed locally.
-The source release is stockOS3.0.308, while this device is309; device-specific
-calibration and changed firmware must still be matched, not guessed. The
+The source release is stockOS3.0.308, while this device is309. Readonly comparison
+found the GPU signed image and VPU firmware differ; both were captured from the
+current device, hash-checked and staged as explicit derived overrides. The
 published hardware success statements are reference evidence, not our device's
 acceptance. No full Linux candidate has yet been booted on this tablet.

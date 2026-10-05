@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+/plugin/;
+#include <dt-bindings/interconnect/qcom,icc.h>
+#include <dt-bindings/interconnect/qcom,sm8750-rpmh.h>
+
+// SM8750 uart7 at a9c000: exact ICC paths from selected sm8750.dtsi
+// (352508459733d3e6d349ea5581a8dd2fd8bb4180, lines 2023..2028).
+// GENI debug UART uses qup-core/config and no mandatory DDR DMA path.
+// Do not change provider #cells, pins, clocks, status, physical regs or DMA.
+/ {
+    fragment@500 {
+        target-path = "/soc/qcom,qupv3_1_geni_se@ac0000/qcom,qup_uart@a9c000";
+        __overlay__ {
+            interconnects = <&clk_virt MASTER_QUP_CORE_1 QCOM_ICC_TAG_ALWAYS
+                             &clk_virt SLAVE_QUP_CORE_1 QCOM_ICC_TAG_ALWAYS>,
+                            <&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ALWAYS
+                             &config_noc SLAVE_QUP_1 QCOM_ICC_TAG_ALWAYS>;
+            interconnect-names = "qup-core", "qup-config";
+        };
+    };
+};
