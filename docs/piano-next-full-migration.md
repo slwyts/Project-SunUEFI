@@ -55,7 +55,7 @@ turned into an upstream claim.
 | WLAN/BT | Peach/WCN7861 pwrseq/QCA/ATH12K device residual units | Firmware/board data, AOSS/PDC/PMU sequencing and RF clock; current PCIe/MSI/PHY APIs need review |
 | GPU/display core | A830/GMU/DPU/DSC device residual unit | Do not duplicate upstream multi-slice support or discard current MSM APIs |
 | USB/providers | Empty-extcon overlay handling and QCOM ICC policy as separately reviewed hunks | These local behavior changes are not proven upstream; preserve correct ACPI behavior and provider error semantics |
-| IOMMU/ownership | Rebase the independently reviewed1fd91/74c517 stack after required3525 adoption residual | No USB-ancestor cloning, fake marker or global disable; not copied from the older unsafe last-CB probe |
+| IOMMU/ownership | Carry reviewed1fd91/74c517/d421 stack after required3525 adoption residual | No USB-ancestor cloning, fake marker or global disable; not copied from the older unsafe last-CB probe |
 | Camera |352508 CAMSS/Gen4/TFE/OV32D40 additions as one dependency-aware unit | Camera commit changes20 files/over7k added lines; not a tiny board-only addition. Preserve current upstream CAMSS resources/APIs |
 | Complete profile/DT | Full public piano_rootfs profile plus explicit RAM-root override and independently folded board DT | Same complete source/services/firmware scope; no Android userdata/growfs policy and no RAM-smoke fallback |
 
@@ -113,16 +113,100 @@ extensions coexist with those changes. Already-upstream DSI multi-slice and
 q6v5 handover hunks were not replayed. The audio base patch shrank from2301 added
 lines to1078 retained device lines after upstream deduplication.
 
-Source HEAD is `1bab7e13a85f7ae02b80333bd7602ccd4bde4551`, clean. Full
+Source HEAD is `498569101e34cbb6ec9c27ebe609949279a59bce`, clean. Full
 `piano_defconfig + piano_rootfs.config + existing RAM CMDLINE override` passes
 all50 actual complete-profile requirements, including MCA/SC8541/FS19xx/input/
 wireless/MSM/camera. No function was disabled to pass an object build. Public
 BT_LE=n remains its disclosed default, not an introduced workaround.
 
-Full `Image modules` compilation is running in independent
-`build/kernel-topics/piano-next-full-audit` with four jobs; log
-`build/logs/piano-next-full-image-modules.log`. Until the process exits and module
-link/install checks finish, it is **incomplete**, not a full build result. Root
-owns the new translated-domain/SMMU ownership stack, which will be ported as a
-separate group after it freezes. This build does not certify SMMU handoff,
-full DDR, a distribution boot or hardware functionality.
+The SMMU group is now included in this same source stack:
+
+| Next commit | Original source | Purpose |
+| --- | --- | --- |
+|528407f983b|352508 residual|Preserve firmware boot rows and referenced context banks|
+|5ba08e83ba3|1fd91b90a72|Snapshot before bypass probing; preserve occupied rows/banks|
+|e291990b363|74c517825a9|Serialized per-master readback|
+|498569101e3|d42158782b8|Real stage1 register comparison and nonblocking group observation|
+
+All canonical patches applied through Git three-way merge without a conflict.
+The current upstream IOMMU core differs only by the small locked-iteration
+refactor and added trylock API; its other current changes remain intact.
+Actual AArch64 `iommu.o`, `arm-smmu.o`, and `arm-smmu-qcom.o` compiled exit0,
+and the shared source assertions passed with ASAN/UBSAN. Log:
+`build/logs/piano-next-smmu-object.log`.
+
+The earlier pre-SMMU full build was deliberately stopped (exit143) before
+changing its source inputs. Its object cache was retained. The final combined
+`Image modules` build and `modules_install` both completed **exit0**, with no
+warnings/errors in the final build log. The full configuration was retained;
+no driver was disabled to obtain this result.
+
+Sealed candidate: `artifacts/kernels/next-full/498569101e34/manifest.json`.
+The ARM64 EFI-stub Image is 42,969,600 bytes, SHA256
+`e4900688c89c9b63dfbfb1465ad0a471e660ae43f15c3d69986b77b1e703d82e`.
+Release: `7.3.0-rc6-piano-gnome-g498569101e34`. All 1,672 installed modules
+(88,104,256 stripped bytes) passed ARM64 ELF/vermagic/name checks, all .modinfo
+dependencies resolve within that same set, and depmod produced the checked
+indexes. Eighteen key panel/input/power/audio/radio/MSM/camera/UFS/PAS/SMMU
+module names were explicitly found. Source/config/tools were checked against
+the frozen input hashes after build and installation.
+
+Logs: `build/logs/piano-next-full-image-modules.log` and
+`build/logs/piano-next-full-modules-install.log`. The reference skeleton DTB
+is deliberately not packaged as the runtime board graph; the next consumer
+must select a separately audited complete folded DTB explicitly. Neither
+compile nor injected-source tests certify SMMU hardware handoff, full DDR,
+distribution boot or any hardware function. No device operation was performed.
+
+The final134-path reconciliation is saved in
+`next-full-residual-audit.json`:111 carried/adapted paths,18 exact upstream
+paths preserved, four retained current-upstream paths, and one CI workflow
+omitted. Of those four, DSI multi-slice, AudioReach UAPI tokens and Q6AFE INT0..6
+MI2S maps/cases already exist upstream. The serial residual only promotes a
+debug line-rate log to `dev_info`; current upstream logging is retained. All
+new driver, binding, UAPI, config and DTS files are present.
+
+## Canonical single build/check entry
+
+`tools/build_piano_next_full.py` is the reproducible host entry for this full
+Next family. It leaves the stable full builder's source/lineage constraints and
+all old rescue pins/gitlinks unchanged. Default source is the exact frozen
+`498569101e34cbb6ec9c27ebe609949279a59bce`; an explicitly reviewed later commit
+must descend from it. The tool verifies official base67f0943, every tracked
+source file's real Git blob bytes/mode, clean state, both public config hashes,
+and positive ancestry of the eight generic patches already upstream. The
+manifest records canonical retained device commits and upstream omissions.
+
+Run from the project root:
+
+```sh
+python tools/build_piano_next_full.py --check-only artifacts/kernels/next-full/498569101e34
+python tools/build_piano_next_full.py --configure-only
+python tools/build_piano_next_full.py --jobs 4
+```
+
+The default configure/build commands create fresh named output and artifact
+directories. Optional `--build-dir` and `--artifacts` must name new directories
+beneath `build/kernels/next-full` and `artifacts/kernels/next-full`; an existing
+folder is rejected before any replacement. `--check-only` is read-only and
+cannot be combined with configure/build destinations. Every operation remains
+host-only. `--root` defaults to RAM; any external root is subject to the same
+explicit UUID/PIANO-label restriction as the stable full builder.
+
+Configuration preserves the complete public flags with only the controlled
+RAM-root command-line substitution and verifies all50 requirements. Build
+success is followed by actual Image EFI checks, stripped `modules_install`,
+all module ELF/name/vermagic checks, .modinfo dependency closure, complete
+`modules.dep` path/dependency coverage and the18 required hardware module names.
+Tracked source/config/tool inputs are revalidated between phases. A failure
+retains `pending.json` and the log with `FAILED_NOT_SEALED`; it cannot create a
+successful manifest. Runtime DTB selection and real hardware validation remain
+separate required steps.
+
+The canonical configure-only run in
+`artifacts/kernels/next-full/canonical-configure-20261006` completed exit0 with
+all50 requirements and exactly the existing full config SHA256
+`d12466d2c7cc600e6aec1826ec30a39e883a38e6db7f2f0085d2920df8ed795a`.
+Five actual-source/file tests and the read-only sealed-candidate command passed;
+no second full Image build was performed. The existing candidate manifest and
+all its files remain unchanged.
