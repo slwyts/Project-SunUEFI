@@ -8,6 +8,7 @@
 #include "PianoRamPartition.h"
 #include "PianoUfsProductVolume.h"
 #include "PianoProductStorageBaseline.h"
+#include "PianoProductSmem.h"
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/BaseLib.h>
@@ -70,6 +71,11 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   if(Status!=EFI_SUCCESS || Fdt==NULL)return Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status;
   ReportRequiredBackends();
   PianoProbeFoundation();
+  // Real protected SMEM observations precede product DMA owners. Failure with
+  // exact handler cleanup leaves data unknown; retained ownership cannot be
+  // carried into UFS/USB bring-up. DXE evidence never changes the early map.
+  Status=PianoProductObserveSmem();
+  if(PianoProductSmemRetained())FailStop(Status);
   // Bind the exact native Env implementation before calling its audited ABI.
   // This is a DDR/preloaded inventory, never permission to map or allocate RAM.
   Status=PianoRamPartitionInventory(FALSE,&mRamInventory);
@@ -119,7 +125,8 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   if(Storage==NULL || Storage->Ready(Storage->Context)!=EFI_SUCCESS)FailStop(EFI_NOT_READY);
   mCounterFrequency=GetPerformanceCounterProperties(&mCounterStart,&mCounterEnd);
   if(!mCounterFrequency || mCounterStart==mCounterEnd)FailStop(EFI_UNSUPPORTED);
-  PIANO_DWC3_SERVICE_CONFIG UsbConfig={.Context=NULL,.NowUs=NowUs,.Storage=Storage};
+  PIANO_DWC3_SERVICE_CONFIG UsbConfig={.Context=NULL,.NowUs=NowUs,.Storage=Storage,
+    .BeforeRamlog=PianoProductSmemReemit};
   Status=PianoUsbControllerServiceStart(Fdt,&UsbConfig);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_USB_START status=%r resident_service=1 foreground_loop=0\n",Status));
   if(Status!=EFI_SUCCESS)FailStop(Status);

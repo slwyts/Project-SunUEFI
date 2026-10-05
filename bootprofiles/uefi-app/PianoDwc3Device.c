@@ -327,6 +327,7 @@ STATIC EFI_STATUS FastbootQuery(VOID *Context,CONST CHAR8 *Name,CHAR8 Value[60])
 }
 #if PIANO_USB_SERVICE
 STATIC EFI_STATUS ServiceRequestUi(UINT32 Action);
+STATIC EFI_STATUS ServiceBeforeRamlog(BOOLEAN *ServicesLost);
 #endif
 STATIC EFI_STATUS FastbootDiagnostic(VOID *Context,PIANO_FASTBOOT *State,CONST CHAR8 *Cmd) {
   (VOID)Context;
@@ -344,10 +345,15 @@ STATIC EFI_STATUS FastbootDiagnostic(VOID *Context,PIANO_FASTBOOT *State,CONST C
   }
 #endif
   if(!AsciiStrCmp(Cmd,"oem ramlog")) {
-    EFI_STATUS S=SnapshotConsole((CONST volatile UINT32 *)(UINTN)PIANO_USB_CONSOLE_BASE);
+    EFI_STATUS S=EFI_SUCCESS;
+#if PIANO_USB_SERVICE
+    BOOLEAN ServicesLost=FALSE;S=ServiceBeforeRamlog(&ServicesLost);
+    if(ServicesLost)return EFI_ABORTED; // EBS forbids snapshot allocation/FAIL DMA.
+#endif
+    if(S==EFI_SUCCESS)S=SnapshotConsole((CONST volatile UINT32 *)(UINTN)PIANO_USB_CONSOLE_BASE);
     if(!EFI_ERROR(S) && mLogBytes)S=PianoFastbootStageCopy(State,mLogSnapshot,mLogBytes);
     else if(!EFI_ERROR(S))S=EFI_NOT_FOUND;
-    if(EFI_ERROR(S)){mFastLogBytes=mFastLogCrc=mFastLogGeneration=0;return FastbootSend(NULL,"FAILRAM log snapshot unavailable",32);}
+    if(EFI_ERROR(S)){mFastLogBytes=mFastLogCrc=mFastLogGeneration=0;mLogValid=FALSE;return FastbootSend(NULL,"FAILRAM log snapshot unavailable",32);}
     mFastLogBytes=mLogBytes;mFastLogCrc=mLogCrc;mFastLogGeneration=mLogGeneration;
 #if PIANO_USB_SCREENSHOT
     ClearScreenMetadata();
@@ -809,6 +815,17 @@ STATIC PIANO_DMA_BUFFER *CONST mServiceBuffers[]={&mRing,&mTrbs[0],&mTrbs[1],&mS
 STATIC BOOLEAN ServiceAtApp(VOID) {
   if(mService.State.ServicesLost || gBS==NULL || gBS->RaiseTPL==NULL || gBS->RestoreTPL==NULL)return FALSE;
   EFI_TPL Old=gBS->RaiseTPL(TPL_HIGH_LEVEL);gBS->RestoreTPL(Old);return Old==TPL_APPLICATION;
+}
+STATIC EFI_STATUS ServiceBeforeRamlog(BOOLEAN *ServicesLost) {
+  *ServicesLost=mService.State.ServicesLost;if(*ServicesLost)return EFI_ABORTED;
+  EFI_STATUS (*Callback)(VOID *)=mService.Config.BeforeRamlog;
+  if(Callback==NULL)return EFI_SUCCESS; // Preserve unbound/legacy diagnostics.
+  if(!mService.State.Started || mService.State.Phase!=PianoUsbServiceListening || mService.State.Retained || !mExperimentRunning)return EFI_NOT_READY;
+  if(!ServiceAtApp())return EFI_UNSUPPORTED;
+  *ServicesLost=mService.State.ServicesLost;if(*ServicesLost)return EFI_ABORTED;
+  EFI_STATUS S=Callback(mService.Config.Context); // Once per command, before snapshot.
+  *ServicesLost=mService.State.ServicesLost;if(*ServicesLost)return EFI_ABORTED;
+  return S==EFI_SUCCESS?EFI_SUCCESS:EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
 }
 STATIC BOOLEAN SameUiRuntime(CONST PIANO_PRODUCT_RUNTIME_PROTOCOL *A,CONST PIANO_PRODUCT_RUNTIME_PROTOCOL *B) {
   return A->Revision==B->Revision && A->Pump==B->Pump && A->BootServicesAlive==B->BootServicesAlive &&

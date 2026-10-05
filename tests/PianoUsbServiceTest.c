@@ -281,6 +281,64 @@ static VOID run_navigation(UINTN Test) {
   }
   PIANO_USB_SERVICE_RETIRE_REPORT R;assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&R)==EFI_SUCCESS && R.Clean);free_cold_model();
 }
+static UINTN ramlog_case,ramlog_calls,ramlog_generation,ramlog_calls_at_loss;
+static EFI_STATUS ramlog_result;
+static EFI_STATUS ramlog_poison(VOID *Context){(VOID)Context;assert(!"caller configuration must be copied");return EFI_DEVICE_ERROR;}
+static EFI_STATUS before_ramlog(VOID *Context) {
+  assert(Context==(VOID *)0x55 && current_tpl==TPL_APPLICATION && !in_timer);
+  assert(mService.State.Busy && mService.State.Phase==PianoUsbServiceListening && mLogGeneration==ramlog_generation);
+  ++ramlog_calls;
+  if(ramlog_case==5){ // Emulate asynchronous EBS while the callback runs.
+    exit_notify((VOID *)0x102,NULL);ramlog_calls_at_loss=bs_calls;return EFI_SUCCESS;
+  }
+  if(ramlog_result!=EFI_SUCCESS)return ramlog_result;
+  if(ramlog_case!=4){
+    UINT32 *Header=test_console;CONST CHAR8 *Text="SMEM immutable reemit before freeze\n";UINTN Bytes=strlen(Text);
+    assert(Header && Header[0]==0x43474244 && Header[1]==Header[2]);
+    CopyMem((UINT8 *)(Header+3)+Header[1],Text,Bytes);Header[1]+=Bytes;Header[2]+=Bytes;
+  }
+  return EFI_SUCCESS;
+}
+static VOID run_ramlog(UINTN Test) {
+  setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;ramlog_case=Test;ramlog_calls=0;
+  bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;bs.SetTimer=set_timer;bs.CloseEvent=close_event;
+  clock.DisableClock=clock.DisableClockPowerDomain=persistent_disable;
+  ramlog_result=Test==1?EFI_DEVICE_ERROR:Test==2?EFI_WARN_STALE_DATA:Test==6?EFI_UNSUPPORTED:Test==7?EFI_ABORTED:EFI_SUCCESS;
+  PIANO_DWC3_SERVICE_CONFIG Config={.Context=(VOID *)0x55,.NowUs=now_us,.Storage=&backend,.BeforeRamlog=Test==3?NULL:before_ramlog};
+  assert(PianoUsbControllerServiceStart((VOID *)123,&Config)==EFI_SUCCESS);service_enumerate();
+  assert(mPersistent.Config.BeforeRamlog==Config.BeforeRamlog && mService.Config.BeforeRamlog==Config.BeforeRamlog);
+  Config.BeforeRamlog=ramlog_poison;Config.Context=NULL; // Both actual owners must retain their copied config.
+  UINT32 *Header=calloc(1,0x200000);assert(Header);test_console=Header;CONST CHAR8 *Initial="SUNUEFI_RAMLOG_BEGIN\ninitial console\n";
+  Header[0]=0x43474244;Header[1]=Header[2]=(UINT32)strlen(Initial);CopyMem(Header+3,Initial,strlen(Initial));
+  if(Test==4)Header[1]=Header[2]+1;
+  if(Test==1||Test==2||Test==6||Test==7)test_console=NULL; // Any attempted freeze after rejection would fault.
+  ramlog_generation=mLogGeneration;
+  if(Test==5){
+    CopyMem(mBulkRx.Cpu,"oem ramlog",10);DWC_TRB *T=mTrbs[2].Cpu;T->Size=mPosted[2]-10;T->Control&=~BIT0;publish(0xC044);timer_tick();
+    assert(PianoUsbControllerServicePumpApp(1,5000)==EFI_ABORTED && ramlog_calls==1 && bs_calls==ramlog_calls_at_loss);
+    assert(mService.State.ServicesLost && !mLogSnapshot && !mFastboot.Upload && !mFrames && !mPending[3]);
+    free(Header);test_console=NULL;free_cold_model();return;
+  }
+  service_out("oem ramlog");assert(ramlog_calls==(Test==3?0:1));
+  if(Test==0||Test==3){
+    assert(mPending[3] && mPosted[3]==4 && !memcmp(mBulkTx.Cpu,"OKAY",4));
+    assert(mLogGeneration>ramlog_generation && mFastLogBytes==Header[2] && mFastboot.UploadBytes==Header[2]);
+    assert(!memcmp(mFastboot.Upload,Header+3,Header[2]));
+    if(Test==0){CONST CHAR8 *Text="SMEM immutable reemit before freeze\n";assert(!memcmp(mLogSnapshot+strlen(Initial),Text,strlen(Text)));}
+    UINT8 Saved[256];UINTN Bytes=mFastboot.UploadBytes;assert(Bytes<=sizeof(Saved));CopyMem(Saved,mFastboot.Upload,Bytes);
+    memset(Header+3,'X',Bytes);assert(!memcmp(mFastboot.Upload,Saved,Bytes));service_ack();
+    if(Test==0){ // Exactly one invocation for each additional ramlog command.
+      ramlog_generation=mLogGeneration;service_out("oem ramlog");assert(ramlog_calls==2 && mLogGeneration>ramlog_generation);service_ack();
+    }
+  }else{
+    CONST CHAR8 *Failure="FAILRAM log snapshot unavailable";assert(mPending[3] && mPosted[3]==32 && !memcmp(mBulkTx.Cpu,Failure,32));
+    assert(mLogGeneration==ramlog_generation && !mFastLogBytes && !mFastLogCrc && !mFastLogGeneration && !mLogValid && !mFastboot.Upload);
+    if(Test!=4)assert(!mLogSnapshot);service_ack();
+  }
+  assert(mService.State.Phase==PianoUsbServiceListening && !mService.State.Retained);
+  PIANO_USB_SERVICE_RETIRE_REPORT R;assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&R)==EFI_SUCCESS && R.Clean);
+  free(Header);test_console=NULL;free_cold_model();
+}
 static VOID run_service(UINTN Test) {
   setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;bs_calls=event_creates=event_closes=clock_calls=proof_calls=0;
   timer_notify=exit_notify=NULL;bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;bs.SetTimer=set_timer;bs.CloseEvent=close_event;
@@ -352,7 +410,8 @@ int main(void) {
 #if PIANO_USB_SERVICE
   for(UINTN I=0;I<20;++I){pid_t P=fork();assert(P>=0);if(P==0){run_service(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB persistent service case %llu failed\n",(unsigned long long)I);return 1;}}
   for(UINTN I=0;I<11;++I){pid_t P=fork();assert(P>=0);if(P==0){run_navigation(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB product navigation case %llu failed\n",(unsigned long long)I);return 1;}}
-  puts("Actual Device+Controller persistent USB: 20 lifecycle + 11 navigation cases PASS; timer raw queue only, APP enumeration/commands/fetch, multi-UI lifetime, ACK-before-action, disconnect/reconnect, EBS halt-retain, exact shutdown/warning quarantine; no device.");
+  for(UINTN I=0;I<8;++I){pid_t P=fork();assert(P>=0);if(P==0){run_ramlog(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB before-ramlog case %llu failed\n",(unsigned long long)I);return 1;}}
+  puts("Actual Device+Controller persistent USB: 20 lifecycle + 11 navigation + 8 before-ramlog cases PASS; timer raw queue only, APP enumeration/commands/fetch, exact callback before immutable freeze, copied config, warning/error rejection, default unbound, EBS halt-retain; no device.");
 #else
   (VOID)backend;PIANO_DWC3_SERVICE_STATUS S;PIANO_USB_SERVICE_RETIRE_REPORT R;PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID *)0x55,.NowUs=NULL};
   assert(PianoUsbControllerServiceStart(NULL,&C)==EFI_UNSUPPORTED && PianoDwc3ServiceStart(NULL,NULL,&C)==EFI_UNSUPPORTED);

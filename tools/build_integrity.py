@@ -36,14 +36,16 @@ def inputs(root,profile):
         pump_record=pump(root,apply=False);ui_record=ui(root,apply=False)
         files.update(root/path for path in (*pump_record['files'],*ui_record['files']))
         files.update(root/path for path in nv_guard(root,apply=False)['files'])
-        from prepare_product import SOURCE_NAMES, os_boot_files, verify_os_boot
+        from prepare_product import SOURCE_NAMES, os_boot_files, verify_os_boot, observation_files, verify_observation_families
         canonical=root/'bootprofiles/uefi-app'
         files.update(canonical/name for name in SOURCE_NAMES)
         files.update(path for path in canonical.iterdir() if path.is_file() and path.suffix in ('.h','.inc'))
         files.update(os_boot_files(root).values())
-        os_boot=json.loads((root/'build/product/prepared-manifest.json').read_text()).get('os_boot',{})
+        prepared=json.loads((root/'build/product/prepared-manifest.json').read_text());os_boot=prepared.get('os_boot',{})
+        for rows in observation_files(root).values():files.update(rows.values())
         for app in (platform/'Applications/ProductCore',root/'platforms/pianoProductPkg/Applications/ProductCore'):
             verify_os_boot(root,app,os_boot)
+            verify_observation_families(root,app,prepared.get('dxe_observation',{}))
         for folder in ('bootprofiles/product-pump','bootprofiles/product-support'):
             files.update(path for path in (root/folder).rglob('*') if path.is_file())
         for relative in ('config/piano-product.json','build/product/prepared-manifest.json',

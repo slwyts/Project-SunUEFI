@@ -17,18 +17,21 @@ import build_integrity as integrity
 class ProductOsBootWiringTests(unittest.TestCase):
     def fixture(self,root):
         shutil.copytree(ROOT/'bootprofiles/os-boot',root/'bootprofiles/os-boot')
+        for family in product.OBSERVATION_FAMILIES:shutil.copytree(ROOT/'bootprofiles'/family,root/'bootprofiles'/family)
         shared=root/'bootprofiles/uefi-app';shared.mkdir(parents=True)
         for name,path in product.shared_boot_headers(ROOT).items():
             target=shared/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
         for name in product.SOURCE_NAMES:(shared/name).write_bytes((ROOT/'bootprofiles/uefi-app'/name).read_bytes())
         app=root/'platforms/pianoProductPkg/Applications/ProductCore';app.mkdir(parents=True)
+        for name in product.SOURCE_NAMES:shutil.copyfile(shared/name,app/name)
         for name,path in product.shared_boot_headers(root).items():
             target=app/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
         record=product.prepare_os_boot(root,app)
+        observation=product.prepare_observation_families(root,app)
         (app/'ProductCore.inf').write_text(product.core_inf())
         staged=root/'upstream/Mu-Silicium/Platforms/Xiaomi/pianoProductPkg'
         shutil.copytree(app.parent.parent,staged)
-        manifest=root/'build/product/prepared-manifest.json';manifest.parent.mkdir(parents=True);manifest.write_text(json.dumps({'os_boot':record}))
+        manifest=root/'build/product/prepared-manifest.json';manifest.parent.mkdir(parents=True);manifest.write_text(json.dumps({'os_boot':record,'dxe_observation':observation}))
         for relative in ('config/piano-product.json','tools/prepare_product.py','tools/build_product.sh','tools/package_product.py',
                          'tools/prepare_product_pump.py','tools/prepare_product_ui.py','tools/prepare_nv_runtime_guard.py','tools/simpleinit_build_identity.py',
                          'tools/build_simpleinit.sh','tools/prepare_simpleinit.py','tools/product_payload_digest.py',
@@ -83,7 +86,7 @@ class ProductOsBootWiringTests(unittest.TestCase):
             path=root/'bootprofiles/os-boot/PianoCpuImageLoan.c';path.write_text(path.read_text()+'\n// new canonical source\n')
             shutil.rmtree(app/'OsBoot');shutil.rmtree(app/'uefi-app');record=product.prepare_os_boot(root,app)
             shutil.rmtree(staged);shutil.copytree(app,staged)
-            (root/'build/product/prepared-manifest.json').write_text(json.dumps({'os_boot':record}))
+            manifest=root/'build/product/prepared-manifest.json';prepared=json.loads(manifest.read_text());prepared['os_boot']=record;manifest.write_text(json.dumps(prepared))
             after=self.fingerprint(root);self.assertNotEqual(before['sha256'],after['sha256'])
             self.assertEqual(before['file_count'],after['file_count'])
 

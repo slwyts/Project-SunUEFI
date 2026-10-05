@@ -16,6 +16,10 @@ typedef struct {
   // Context must outlive the service; public partition reads use the shared
   // UFS/USB SMMU guard rather than directly calling these callbacks.
   CONST PIANO_FB_STORAGE *Storage;
+  // Optional APP-only immutable snapshot reemit. CPU/RAM only: no MMIO,
+  // allocation, BS, device access or recursive service work. Copied at Start.
+  // Exact success is required before oem ramlog freezes the RAM console.
+  EFI_STATUS (*BeforeRamlog)(VOID *Context);
 } PIANO_DWC3_SERVICE_CONFIG;
 typedef enum {
   PianoUsbServiceOff=0,PianoUsbServiceListening,PianoUsbServiceStopRequested,

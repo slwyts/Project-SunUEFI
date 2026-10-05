@@ -16,7 +16,7 @@ from prepare_gui_profile import SETUP_DSC_ADDITIONS, SETUP_FV_MODULES
 
 CORE_GUID='35E0D1B5-93CE-4D6A-9A93-6ADAA3F26C40'
 SOURCE_NAMES=(
-    'PianoProductCore.c','PianoBootPolicy.c','PianoFvApplication.c','PianoProductPayload.c','PianoProductOwners.c','PianoRamPartition.c',
+    'PianoProductCore.c','PianoBootPolicy.c','PianoFvApplication.c','PianoProductPayload.c','PianoProductOwners.c','PianoRamPartition.c','PianoProductSmem.c',
     'NativeProbe.c','PianoKeys.c','PianoFaultRecovery.c',
     'PianoSmmu.c','PianoDma.c','PianoOwnedSmmu.c','PianoIoPageTable.c',
     'PianoUfsProbe.c','PianoUfsReadOnlyDma.c','PianoUfsDmaLayout.c','PianoGpt.c','PianoReadOnlyBlock.c',
@@ -28,6 +28,9 @@ SOURCE_NAMES=(
 OS_BOOT_SOURCES=('PianoBootFileSource.c','PianoCpuImageLoan.c','PianoLinuxEfiSession.c')
 OS_BOOT_HEADERS=tuple(name[:-2]+'.h' for name in OS_BOOT_SOURCES)
 OS_BOOT_INF_SOURCES=tuple('OsBoot/'+name for name in (*OS_BOOT_SOURCES,*OS_BOOT_HEADERS))
+OBSERVATION_FAMILIES={'early-memory':('PianoSmemRam.c','PianoSmemRam.h'),
+                      'guarded-read':('PianoGuardedRead.c','PianoGuardedRead.h')}
+OBSERVATION_INF_SOURCES=tuple(name for names in OBSERVATION_FAMILIES.values() for name in names)
 PRODUCT_FLAGS=('PIANO_USB_SERVICE=1','PIANO_USB_EP0=1','PIANO_USB_FASTBOOT=1','PIANO_USB_SCREENSHOT=1',
     'PIANO_USB_UFS_FETCH=1','PIANO_USB_RAM_BOOT=1','PIANO_USB_POWER_PROBE=1','PIANO_UFS_BLOCKIO=1',
     'PIANO_UFS_PRODUCT_STORAGE=1','PIANO_NV_BOOT_ONLY=1')
@@ -42,6 +45,46 @@ HOST_MODULES=('MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf','MdeModulePkg/Bus/Usb/U
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def observation_files(root):
+    files={family:{name:root/'bootprofiles'/family/name for name in names}
+           for family,names in OBSERVATION_FAMILIES.items()}
+    for family,rows in files.items():
+        for name,path in rows.items():
+            if not path.is_file() or path.is_symlink():raise ValueError('Canonical DXE observation input missing or unowned: '+family+'/'+name)
+    return files
+
+
+def prepare_observation_families(root,app):
+    families=observation_files(root)
+    for rows in families.values():
+        for name,path in rows.items():
+            if (root/'bootprofiles/uefi-app'/name).exists():raise ValueError('Flat DXE observation name conflicts with core source: '+name)
+            shutil.copyfile(path,app/name)
+    return {'status':'READ_ONLY_DXE_OBSERVATION_BOUND_UNTESTED','phase':'DXE_AFTER_FOUNDATION_BEFORE_RAM_INVENTORY_UFS_USB',
+            'platform_bound':True,'device_validated':False,'sec_early_ready':False,
+            'high_ddr_mapped':False,'memory_ownership_granted':False,
+            'sources':list(OBSERVATION_INF_SOURCES),
+            'families':{family:{name:sha(path)for name,path in sorted(rows.items())}for family,rows in families.items()}}
+
+
+def verify_observation_families(root,app,record):
+    expected={family:{name:sha(path)for name,path in sorted(rows.items())}for family,rows in observation_files(root).items()}
+    if record.get('families')!=expected or record.get('sources')!=list(OBSERVATION_INF_SOURCES):
+        raise ValueError('Prepared DXE observation families differ from canonical sources')
+    for rows in expected.values():
+        for name,digest in rows.items():
+            path=app/name
+            if not path.is_file() or sha(path)!=digest:raise ValueError('ProductCore DXE observation compiled copy stale or missing: '+name)
+    inf=(app/'ProductCore.inf').read_text();sources=inf.split('[Sources]\n',1)[1].split('[Packages]',1)[0].splitlines()
+    if not set((*OBSERVATION_INF_SOURCES,'PianoProductSmem.c'))<={line.strip()for line in sources}:
+        raise ValueError('ProductCore INF omits actual DXE observation source binding')
+    guids=inf.split('[Guids]\n',1)[1].split('[Protocols]',1)[0].splitlines()
+    protocols=inf.split('[Protocols]\n',1)[1].splitlines()
+    if 'gEfiEventExitBootServicesGuid' not in {line.strip()for line in guids} or 'gEfiCpuArchProtocolGuid' not in {line.strip()for line in protocols}:
+        raise ValueError('ProductCore INF omits actual DXE observation event or CPU protocol declaration')
+    return True
 
 
 def os_boot_files(root):
@@ -140,7 +183,7 @@ def backend_status():
       'physical_keys':{'status':'IMPLEMENTED_PMIC_READONLY','physical_evidence':'tests23/24; product input retirement untested'},
       'pogo_keyboard_touchpad':{'status':'NOT_READY','missing':'verified SE6 firmware/clock ownership and live report transport'},
       'touchscreen':{'status':'NOT_READY','missing':'verified GPI/PAS/DMA physical touch reports'},
-      'dma_smmu':{'status':'IMPLEMENTED_STRICT_OWNERS','physical_evidence':'test91 readonly fetch and exact combined USB/UFS retirement passed; resident product retirement still untested','ram_partition_inventory':'AUDITED_NATIVE_ABI_LINKED_UNTESTED','high_ram_ownership_verified':False},
+      'dma_smmu':{'status':'IMPLEMENTED_STRICT_OWNERS','physical_evidence':'test91 readonly fetch and exact combined USB/UFS retirement passed; resident product retirement still untested','ram_partition_inventory':'AUDITED_NATIVE_ABI_LINKED_UNTESTED','smem_observation':'READ_ONLY_DXE_BOUND_UNTESTED','sec_early_ready':False,'high_ddr_mapped':False,'high_ram_ownership_verified':False},
       'ufs_blockio_read_write':{'status':'RESERVED_VOLUME_BACKEND_UNPROVISIONED','original_media':'READ_ONLY','missing':'explicit permanent reservation, provisioning approval and product physical RW acceptance'},
       'gpt':{'status':'IMPLEMENTED_READ','physical_evidence':'real UFS GPT reads; product untested'},
       'fat_simplefilesystem':{'status':'IMPLEMENTED_READ_ONLY_VOLUMES','physical_evidence':'7 read-only SFS, bounded FAT RW test86; product untested'},
@@ -186,7 +229,7 @@ def core_inf():
   VERSION_STRING = 0.1
   ENTRY_POINT = PianoProductCoreEntry
 [Sources]
-'''+''.join('  '+name+'\n' for name in (*SOURCE_NAMES,*OS_BOOT_INF_SOURCES))+'''[Packages]
+'''+''.join('  '+name+'\n' for name in (*SOURCE_NAMES,*OS_BOOT_INF_SOURCES,*OBSERVATION_INF_SOURCES))+'''[Packages]
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
   QcomPkg/QcomPkg.dec
@@ -256,6 +299,7 @@ def prepare(root=ROOT):
     source=root/'bootprofiles/uefi-app';missing=[name for name in SOURCE_NAMES if not(source/name).is_file()]
     if missing:raise ValueError('Actual product core sources missing: '+', '.join(missing))
     os_boot_files(root)
+    observation_files(root)
     prepare_pump(root,apply=True)
     from prepare_product_ui import prepare as prepare_ui
     ui=prepare_ui(root,apply=True)
@@ -281,6 +325,7 @@ def prepare(root=ROOT):
         if path.is_file() and path.suffix in ('.h','.inc'):shutil.copyfile(path,app/path.name)
     shutil.copytree(source/'Protocol',app/'Protocol')
     os_boot=prepare_os_boot(root,app)
+    observation=prepare_observation_families(root,app)
     (app/'PianoProductSimpleInitDigest.h').write_text(header)
     from prepare_ufs_write_test import verify_capture, _c_array
     storage_blobs=verify_capture()
@@ -292,6 +337,7 @@ def prepare(root=ROOT):
     (app/'PianoProductStorageBaseline.h').write_text(storage_baseline)
     (app/'ProductCore.inf').write_text(core_inf())
     verify_os_boot(root,app,os_boot)
+    verify_observation_families(root,app,observation)
     native_fdf,native_id=native_modules(root,app)
     memory=target/'Library/MemoryMapLib/MemoryMapLib.c';text=memory.read_text()
     text,low_memory_contract=fix_product_low_heap(text,(root/'private/captures/2026-10-03-piano/live.dtb').read_bytes())
@@ -357,12 +403,13 @@ def prepare(root=ROOT):
     if staged.exists():shutil.rmtree(staged)
     shutil.copytree(target,staged)
     verify_os_boot(root,staged/'Applications/ProductCore',os_boot)
+    verify_observation_families(root,staged/'Applications/ProductCore',observation)
     manifest={'target':'product','artifact':contract['artifact'],'status':'INCOMPLETE_NOT_RELEASE',
       'features':contract['features'],'shared_core':True,'entry_points':contract['entry_points'],'entry_policy_only':True,
       'fastboot_mode':'resident_background','fastboot_surfaces':contract['fastboot']['available_in'],
       'default_application':'SimpleInit','setup_key':'F12','diagnostic_reboot_timer':False,
       'backend_initialization_required':True,'backends':backend_status(),'runtime_readiness':'NOT_PRODUCT_DEVICE_VALIDATED',
-      'service_compile_flags':list(PRODUCT_FLAGS),'sources':list((*SOURCE_NAMES,*OS_BOOT_INF_SOURCES)),'native_foundation':native_id,'os_boot':os_boot,
+      'service_compile_flags':list(PRODUCT_FLAGS),'sources':list((*SOURCE_NAMES,*OS_BOOT_INF_SOURCES,*OBSERVATION_INF_SOURCES)),'native_foundation':native_id,'os_boot':os_boot,'dxe_observation':observation,
       'simpleinit':simpleinit,'simpleinit_payload':app_identity,'ui_hooks':ui,'pump_hooks':prepare_pump(root,apply=False),
       'low_memory_contract':low_memory_contract,
       'platform_files':{str(path.relative_to(target)):sha(path)for path in sorted(target.rglob('*'))if path.is_file()},
