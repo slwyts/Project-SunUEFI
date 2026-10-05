@@ -42,7 +42,7 @@ sun_transport_arm_includes=(
   -I upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include
   -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include
 )
-build/host-tools/usr/bin/clang --target=aarch64-windows-msvc -fshort-wchar -ffreestanding -fsyntax-only -Werror \
+build/host-tools/usr/bin/clang --target=aarch64-windows-msvc -fshort-wchar -ffreestanding -fsyntax-only -Wall -Wextra -Werror -Wno-unused-parameter \
   -DPIANO_UFS_BLOCKIO=1 -DPIANO_UFS_BOUNDED_VOLUME=1 -DPIANO_UFS_BOUNDED_FS_TEST=1 \
   "${sun_transport_arm_includes[@]}" bootprofiles/uefi-app/PianoUfsReadOnlyDma.c \
   bootprofiles/uefi-app/PianoUfsBoundedBlock.c bootprofiles/uefi-app/PianoUfsBoundedLayout.c bootprofiles/uefi-app/PianoUfsBoundedFileSystemTest.c

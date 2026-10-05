@@ -85,6 +85,7 @@ STATIC EFI_STATUS mTests[8],mWriteTests[8];
 STATIC UINTN mLunCount;
 STATIC UINT32 mSavedBase,mSavedUpper,mSavedRun,mSavedTaskRun,mSavedInterrupt;
 STATIC BOOLEAN mInstalled;
+STATIC BOOLEAN mEverInstalled;
 STATIC BOOLEAN mExitRetained;
 #ifdef PIANO_UFS_BLOCKIO
 #ifndef PIANO_UFS_BOUNDED_VOLUME
@@ -102,6 +103,7 @@ STATIC BOOLEAN mBlockBusy;
 STATIC BOOLEAN mBlockLive;
 #endif
 STATIC UINT8 mServiceTag=128;
+STATIC PIANO_UFS_RESET_REPORT mResetReport;
 VOID PianoUfsRetainClocks(VOID);
 VOID PianoUfsStopClocks(VOID);
 #ifdef PIANO_UFS_FILESYSTEMS
@@ -117,6 +119,9 @@ VOID PianoReportSetupDiagnostics(VOID);
 #endif
 VOID PianoFaultSetDiagnostic(VOID (*Diagnostic)(VOID));
 STATIC VOID FaultDiagnostic(VOID){
+#ifdef PIANO_UFS_BLOCKIO
+  if(mResetReport.Started && !mResetReport.Clean){DEBUG((DEBUG_WARN,"SUNUEFI_UFS_RESET_EXCEPTION retained=1 status=%r\n",mResetReport.Result));CpuDeadLoop();}
+#endif
 #ifdef PIANO_UFS_WRITE_TEST
   if(mWriteStarted)ReportWriteTransaction();
   // The exception recovery hook normally cold-resets. Once a WRITE was
@@ -613,6 +618,7 @@ STATIC EFI_STATUS Cleanup(VOID) {
 #ifndef PIANO_UFS_BOUNDED_VOLUME
 STATIC EFI_STATUS ServiceRead(VOID *Context,UINT8 Lun,EFI_LBA Lba,UINTN Bytes,VOID *Buffer) {
   if(!mBlockLive || mBlockBusy)return EFI_NOT_READY;
+  if(mResetReport.Prepared || mResetReport.Failed)return EFI_ACCESS_DENIED;
   UINTN I=0;while(I<mLunCount && mLuns[I].Id!=Lun)++I;
   if(I==mLunCount || Lba>MAX_UINT32 || Bytes/mLuns[I].Block-1>MAX_UINT32-Lba)return EFI_UNSUPPORTED;
   EFI_TPL Old=gBS->RaiseTPL(TPL_CALLBACK);mBlockBusy=TRUE;EFI_STATUS Status=EFI_SUCCESS;
@@ -691,7 +697,95 @@ STATIC VOID EFIAPI PianoUfsExitBoot(EFI_EVENT Event,VOID *Context) {
   mExitRetained=TRUE;
   DEBUG((DEBUG_WARN,"SUNUEFI_UFS_EBS_RETAIN success=1 efi_map_required=1 raw_dtb_reservation_verified=0 os_handoff_verified=0\n"));
 }
+// Reset-only path never restarts inherited queues and never calls ResetSystem.
+// A successful Prepare intentionally holds CALLBACK across the USB retirement
+// gap; the all-owner finalizer must reset or fail-stop, not resume normal IO.
+STATIC EFI_STATUS ResetExact(EFI_STATUS S){return S==EFI_SUCCESS?S:EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
+STATIC EFI_STATUS ResetFailure(EFI_STATUS S){
+  mResetReport.Failed=TRUE;mResetReport.Returned=TRUE;mResetReport.Clean=FALSE;mResetReport.Result=ResetExact(S);
+  DEBUG((DEBUG_WARN,"SUNUEFI_UFS_RESET_SHUTDOWN clean=0 retained=1 phase_failed=1 status=%r tpl_held=%u\n",mResetReport.Result,mResetReport.TplHeld));
+  return mResetReport.Result;
+}
+CONST PIANO_UFS_RESET_REPORT *PianoUfsResetShutdownReport(VOID){return &mResetReport;}
+EFI_STATUS PianoUfsBlockIoPrepareForReset(VOID){
+  if(mResetReport.Failed)return mResetReport.Result;
+  if(mResetReport.Prepared || mResetReport.Clean)return EFI_SUCCESS;
+  if(mResetReport.Started)return EFI_NOT_READY;
+  if(mExitRetained || gBS==NULL)return EFI_ACCESS_DENIED;
+  if(mBlockBusy)return EFI_NOT_READY;
+#ifdef PIANO_UFS_WRITE_TEST
+  if(mWriteWork.Running || mWriteWork.NeedsRecovery || mWriteResult.RequiresRecovery || mWriteResult.Quarantined)return EFI_ACCESS_DENIED;
+#endif
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+  // This API never flushes/writes/restores the private experimental gap.
+  if(mWindow.State.Busy || mWindow.State.Dirty || mWindow.State.NeedsRecovery || mWindow.State.Quarantined ||
+     (mWindow.State.Opened && (!mWindow.State.Closed || !mWindow.State.RestoreVerified)))return EFI_ACCESS_DENIED;
+#endif
+  mResetReport.Started=TRUE;mResetReport.Disconnect=mResetReport.Halt=mResetReport.Bases=mResetReport.Dma=
+    mResetReport.Domain=mResetReport.Protocols=mResetReport.Clocks=mResetReport.Result=EFI_NOT_STARTED;
+  gBS->RaiseTPL(TPL_CALLBACK);mResetReport.TplHeld=TRUE;
+  if(!mInstalled)return ResetFailure(mEverInstalled?EFI_NOT_READY:EFI_NOT_STARTED);
+  if(Read(0x50)!=(UINT32)mTrl.DeviceAddress || Read(0x54)!=(UINT32)(mTrl.DeviceAddress>>32))return ResetFailure(EFI_COMPROMISED_DATA);
+#ifndef PIANO_UFS_BOUNDED_VOLUME
+  if(!mBlockLive)return ResetFailure(EFI_NOT_READY); // Must disconnect while media is live.
+#endif
+  for(UINTN I=0;I<ARRAY_SIZE(mBlockHandles);++I)if(mBlockHandles[I]!=NULL){
+    EFI_STATUS S=ResetExact(gBS->DisconnectController(mBlockHandles[I],NULL,NULL));mResetReport.Disconnect=S;
+    if(S!=EFI_SUCCESS)return ResetFailure(S);++mResetReport.Disconnected;
+  }
+  mResetReport.Disconnect=EFI_SUCCESS;
+  mResetReport.Halt=ResetExact(HaltService());if(mResetReport.Halt!=EFI_SUCCESS)return ResetFailure(mResetReport.Halt);
+  mResetReport.TransferDoorbell=Read(0x58);mResetReport.TaskDoorbell=Read(0x78);
+  mResetReport.TransferRun=Read(0x60);mResetReport.TaskRun=Read(0x80);mResetReport.Interrupt=Read(0x24);
+  if(mResetReport.TransferDoorbell || mResetReport.TaskDoorbell || mResetReport.TransferRun || mResetReport.TaskRun || mResetReport.Interrupt)return ResetFailure(EFI_DEVICE_ERROR);
+  mResetReport.Prepared=TRUE;mResetReport.Result=EFI_SUCCESS;
+  DEBUG((DEBUG_WARN,"SUNUEFI_UFS_RESET_PREPARED consumers_disconnected=%lu both_queues_halted=1 irq=0 dma_domain_clocks_retained=1 tpl_held=1\n",(UINT64)mResetReport.Disconnected));return EFI_SUCCESS;
+}
+EFI_STATUS PianoUfsBlockIoShutdownForReset(VOID){
+  if(mResetReport.Clean)return EFI_SUCCESS;
+  EFI_STATUS S=PianoUfsBlockIoPrepareForReset();if(S!=EFI_SUCCESS)return S;
+  if(mInstalled){
+    S=ResetExact(Quiesce());if(S!=EFI_SUCCESS)return ResetFailure(S);
+    Write(0x24,0);Write(0x50,mSavedBase);Write(0x54,mSavedUpper);
+    mResetReport.Bases=(Read(0x50)==mSavedBase && Read(0x54)==mSavedUpper && Read(0x24)==0 && QueuesStopped())?EFI_SUCCESS:EFI_DEVICE_ERROR;
+    if(mResetReport.Bases!=EFI_SUCCESS)return ResetFailure(mResetReport.Bases);
+  }else mResetReport.Bases=EFI_SUCCESS;
+  PIANO_DMA_BUFFER *Buffers[]={&mUcd,&mTrl,&mData};
+  for(UINTN I=0;I<ARRAY_SIZE(Buffers);++I)
+    if(Buffers[I]->Active || Buffers[I]->Quarantined || Buffers[I]->ExitRetained)return ResetFailure(EFI_ACCESS_DENIED);
+  for(UINTN I=0;I<ARRAY_SIZE(Buffers);++I){
+    if(Buffers[I]->Active || Buffers[I]->Quarantined || Buffers[I]->ExitRetained)return ResetFailure(EFI_ACCESS_DENIED);
+    if(Buffers[I]->Signature){S=ResetExact(PianoDmaFree(Buffers[I]));if(S!=EFI_SUCCESS){mResetReport.Dma=S;return ResetFailure(S);}++mResetReport.DmaFreed;}
+    if(Buffers[I]->Signature || Buffers[I]->Mapped || Buffers[I]->Active)return ResetFailure(EFI_COMPROMISED_DATA);
+  }
+  mResetReport.Dma=EFI_SUCCESS;S=ResetExact(PianoOwnedSmmuClose(&mContext));mResetReport.Domain=S;
+  if(S!=EFI_SUCCESS)return ResetFailure(S);
+  if(mContext.Attached || mContext.Domain || mContext.TableMemory.Signature)return ResetFailure(EFI_COMPROMISED_DATA);
+  for(UINTN I=0;I<ARRAY_SIZE(mContext.Mapping);++I)if(mContext.Mapping[I].Used)return ResetFailure(EFI_COMPROMISED_DATA);
+  // No queue restart after restoring bases, unmapping or detaching the domain.
+  if(mInstalled && (!QueuesStopped() || Read(0x24)!=0))return ResetFailure(EFI_DEVICE_ERROR);
+  if(mExitBootEvent!=NULL){S=ResetExact(gBS->CloseEvent(mExitBootEvent));if(S!=EFI_SUCCESS){mResetReport.Protocols=S;return ResetFailure(S);}mExitBootEvent=NULL;}
+  for(UINTN I=0;I<ARRAY_SIZE(mBlockHandles);++I)if(mBlockHandles[I]!=NULL){
+    S=ResetExact(gBS->UninstallMultipleProtocolInterfaces(mBlockHandles[I],&gEfiBlockIoProtocolGuid,
+#ifdef PIANO_UFS_BOUNDED_VOLUME
+      &mWindow.Block,&gEfiDevicePathProtocolGuid,&mWindowPath,
+#else
+      &mBlocks[I].Block,&gEfiDevicePathProtocolGuid,&mPaths[I],
+#endif
+      NULL));if(S!=EFI_SUCCESS){mResetReport.Protocols=S;return ResetFailure(S);}mBlockHandles[I]=NULL;++mResetReport.ProtocolsRemoved;
+  }
+  if(mShutdownHandle!=NULL){EFI_GUID Guid=PIANO_UFS_SHUTDOWN_GUID;S=ResetExact(gBS->UninstallMultipleProtocolInterfaces(mShutdownHandle,&Guid,&mShutdown,NULL));if(S!=EFI_SUCCESS){mResetReport.Protocols=S;return ResetFailure(S);}mShutdownHandle=NULL;++mResetReport.ProtocolsRemoved;}
+  mResetReport.Protocols=EFI_SUCCESS;
+  // Cache the final MMIO evidence before releasing the clocks/GDSC. Never
+  // probe a potentially unclocked HCI register after this boundary.
+  if(mInstalled){mResetReport.TransferDoorbell=Read(0x58);mResetReport.TaskDoorbell=Read(0x78);mResetReport.TransferRun=Read(0x60);mResetReport.TaskRun=Read(0x80);mResetReport.Interrupt=Read(0x24);}
+  if(mResetReport.TransferDoorbell || mResetReport.TaskDoorbell || mResetReport.TransferRun || mResetReport.TaskRun || mResetReport.Interrupt)return ResetFailure(EFI_DEVICE_ERROR);
+  S=ResetExact(PianoUfsStopClocksForReset());mResetReport.Clocks=S;if(S!=EFI_SUCCESS)return ResetFailure(S);
+  mInstalled=FALSE;mResetReport.Clean=mResetReport.Returned=TRUE;mResetReport.Result=EFI_SUCCESS;PianoFaultSetDiagnostic(NULL);
+  DEBUG((DEBUG_WARN,"SUNUEFI_UFS_RESET_SHUTDOWN clean=1 queues_run=0 irq=0 inherited_run_restarted=0 dma_freed=%lu domain_closed=1 protocols_removed=%lu clocks_released=1 tpl_held=1 other_owner_quiescence_verified=0\n",(UINT64)mResetReport.DmaFreed,(UINT64)mResetReport.ProtocolsRemoved));return EFI_SUCCESS;
+}
 VOID PianoUfsBlockIoStop(VOID) {
+  if(mResetReport.Started){CpuDeadLoop();return;}
 #ifdef PIANO_UFS_WRITE_TEST
   if(mWriteWork.NeedsRecovery || mWriteResult.RequiresRecovery || mWriteResult.Quarantined){ReportWriteTransaction();CpuDeadLoop();return;}
 #endif
@@ -781,6 +875,9 @@ STATIC EFI_STATUS PublishBlocks(VOID) {
 #endif
 EFI_STATUS PianoUfsReadOnlyDmaExperiment(CONST VOID *Fdt) {
   if(mExitRetained)return EFI_ACCESS_DENIED;
+#ifdef PIANO_UFS_BLOCKIO
+  if(mResetReport.Started)return EFI_ACCESS_DENIED;
+#endif
 #ifdef PIANO_UFS_WRITE_TEST
   // Never zero the DMA/workspace or ledger on a second call in this image.
   if(mWriteProfileEntered){ReportWriteTransaction();return EFI_ACCESS_DENIED;}mWriteProfileEntered=TRUE;
@@ -805,7 +902,7 @@ EFI_STATUS PianoUfsReadOnlyDmaExperiment(CONST VOID *Fdt) {
   if(Read(0x58) || Read(0x78)){Status=EFI_NOT_READY;goto Exit;}
   mSavedBase=Read(0x50);mSavedUpper=Read(0x54);mSavedRun=Read(0x60);mSavedTaskRun=Read(0x80);mSavedInterrupt=Read(0x24);
   Write(0x60,0);Write(0x24,0);Write(0x50,(UINT32)mTrl.DeviceAddress);Write(0x54,(UINT32)(mTrl.DeviceAddress>>32));
-  mInstalled=TRUE;
+  mInstalled=TRUE;mEverInstalled=TRUE;
   DEBUG((DEBUG_WARN,"SUNUEFI_UFS_DMA_LAYOUT trl_pa=%lx trl_iova=%lx ucd_pa=%lx ucd_iova=%lx utrd_bytes=32 response_offset=%u\n",
     mTrl.Physical,mTrl.DeviceAddress,mUcd.Physical,mUcd.DeviceAddress,PIANO_UFS_RESPONSE_OFFSET));
   Status=PianoUfsBuildNop(mTrl.Cpu,mTrl.Bytes,mUcd.Cpu,mUcd.Bytes,mUcd.DeviceAddress,1);

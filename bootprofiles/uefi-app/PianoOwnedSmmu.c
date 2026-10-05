@@ -10,6 +10,7 @@
 #include <Library/IoLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/DebugLib.h>
+#include <Library/PrintLib.h>
 
 typedef UINT32 (*CREATE)(VOID **);
 typedef UINT32 (*DESTROY)(VOID *);
@@ -24,6 +25,91 @@ typedef struct {UINT64 Revision;VOID (*GetApi)(VOID **);VOID (*Reserved)(VOID);}
 STATIC EFI_GUID mGuid={0x54B6D3B4,0x5D33,0x4F91,{0x86,0,0x6C,0x41,0xD5,0xDE,0xB1,0x9A}};
 STATIC PIANO_OWNED_SMMU mExperiment;
 STATIC PIANO_DMA_DEVICE mDevice;
+STATIC UINT32 mDiagnosticSequence;
+STATIC UINT32 DiagnosticCrc(CONST CHAR8 *Body,UINTN Bytes) {
+  UINT32 C=MAX_UINT32;
+  for(UINTN I=0;I<Bytes;++I){C^=(UINT8)Body[I];for(UINTN J=0;J<8;++J)C=(C>>1)^((C&1)?0xEDB88320U:0);}
+  return ~C;
+}
+STATIC VOID DiagnosticEmit(CONST CHAR8 *Body,UINTN Bytes) {
+  UINT32 Crc=DiagnosticCrc(Body,Bytes);
+  DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_OWNED_DIAG %a crc32=%08x\n",Body,Crc));
+  DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_OWNED_DIAG_COPY %a crc32=%08x\n",Body,Crc));
+}
+STATIC VOID RememberSlot(PIANO_OWNED_SMMU *C,UINT32 Index) {
+  if(Index>=C->Before.Groups || Index>=ARRAY_SIZE(C->Before.RawSmr))return;
+  for(UINTN I=0;I<C->BaselineSlotCount;++I)if(C->BaselineSlots[I]==Index)return;
+  if(C->BaselineSlotCount<ARRAY_SIZE(C->BaselineSlots))C->BaselineSlots[C->BaselineSlotCount++]=(UINT16)Index;
+}
+STATIC VOID RememberBaseline(PIANO_OWNED_SMMU *C) {
+  if(!C->Before.Valid)return;
+  if(!C->BaselineSaved) {
+    C->BaselineSaved=TRUE;C->DiagnosticOwnedSlot=MAX_UINT16;
+    RememberSlot(C,0);RememberSlot(C,1);RememberSlot(C,113);
+  }
+  if(C->DeviceIndex>=PIANO_SMMU_DEVICE_COUNT)return;
+  UINTN Peer=C->DeviceIndex==0?1:0;
+  if(C->Before.Device[Peer].Present)RememberSlot(C,C->Before.Device[Peer].StreamIndex);
+  if(C->After.Valid && C->After.Device[C->DeviceIndex].Present) {
+    C->DiagnosticOwnedSlot=C->After.Device[C->DeviceIndex].StreamIndex;
+    RememberSlot(C,C->DiagnosticOwnedSlot);
+  }
+  if(C->After.Valid && C->After.Device[Peer].Present)RememberSlot(C,C->After.Device[Peer].StreamIndex);
+}
+STATIC VOID BaselineReport(CONST PIANO_OWNED_SMMU *C,CONST CHAR8 *Phase) {
+  if(!C->BaselineSaved || !DebugPrintEnabled() || !DebugPrintLevelEnabled(DEBUG_WARN))return;
+  CHAR8 Body[512];UINTN Bytes;
+  for(UINTN I=0;I<C->BaselineSlotCount;++I) {
+    UINT32 Slot=C->BaselineSlots[I];
+    Bytes=AsciiSPrint(Body,sizeof(Body),
+      "phase=%a seq=%u owner=%u idx=%u before_valid=%u groups=%u base=%lx window=%lx smr=%08x s2cr=%08x owned_idx=%u",
+      Phase,mDiagnosticSequence++,C->DeviceIndex,Slot,C->Before.Valid,C->Before.Groups,(UINT64)C->Before.Base,
+      (UINT64)C->Before.Window,C->Before.RawSmr[Slot],C->Before.RawS2cr[Slot],C->DiagnosticOwnedSlot);
+    DiagnosticEmit(Body,Bytes);
+  }
+}
+VOID PianoOwnedSmmuReport(CONST PIANO_OWNED_SMMU *C) {
+  if(C==NULL || !DebugPrintEnabled() || !DebugPrintLevelEnabled(DEBUG_WARN))return;
+  BaselineReport(C,"baseline-final");
+  CHAR8 Body[640];UINTN Bytes;
+  if(C->DeviceIndex<2) {
+    UINTN Peer=C->DeviceIndex==0?1:0;
+    CONST PIANO_SMMU_DEVICE *B=&C->Before.Device[Peer],*A=&C->After.Device[Peer];
+    Bytes=AsciiSPrint(Body,sizeof(Body),
+      "phase=peer-final seq=%u owner=%u expected_sid=%x before_valid=%u after_valid=%u before_present=%u before_idx=%u before_sid=%x before_smr=%08x before_s2cr=%08x after_present=%u after_idx=%u after_sid=%x after_smr=%08x after_s2cr=%08x after_type=%u after_cb=%u diagnostic_slot1=1 identity_proven=%u",
+      mDiagnosticSequence++,C->DeviceIndex,Peer==1?0x40:0x60,C->Before.Valid,C->After.Valid,
+      B->Present,B->Present?B->StreamIndex:MAX_UINT16,B->Sid,B->Smr,B->S2cr,
+      A->Present,A->Present?A->StreamIndex:MAX_UINT16,A->Sid,A->Smr,A->S2cr,A->Type,A->ContextBank,
+      C->After.Valid && A->Present);
+    DiagnosticEmit(Body,Bytes);
+  }
+  CONST PIANO_SMMU_CLOSE_DIAGNOSTIC *D=&C->CloseDiagnostic;
+  if(!D->Valid)return;
+  Bytes=AsciiSPrint(Body,sizeof(Body),
+    "phase=close-rejected seq=%u owner=%u reason=%a idx=%u before_valid=%u after_valid=%u capture=%lx before_smr=%08x before_s2cr=%08x after_smr=%08x after_s2cr=%08x live_read=%u read1_smr=%08x read1_s2cr=%08x read2_smr=%08x read2_s2cr=%08x strict=1 retained=1",
+    mDiagnosticSequence++,C->DeviceIndex,D->Reason,D->Index,C->Before.Valid,C->After.Valid,(UINT64)D->CaptureStatus,
+    D->BeforeSmr,D->BeforeS2cr,D->AfterSmr,D->AfterS2cr,D->LiveRead,D->LiveSmr[0],D->LiveS2cr[0],D->LiveSmr[1],D->LiveS2cr[1]);
+  DiagnosticEmit(Body,Bytes);
+}
+STATIC EFI_STATUS CloseRejected(PIANO_OWNED_SMMU *C,CONST CHAR8 *Reason,UINT32 Index,EFI_STATUS Capture) {
+  PIANO_SMMU_CLOSE_DIAGNOSTIC *D=&C->CloseDiagnostic;
+  *D=(PIANO_SMMU_CLOSE_DIAGNOSTIC){.Valid=TRUE,.Reason=Reason,.Index=Index,.CaptureStatus=Capture};
+  if(Index<ARRAY_SIZE(C->Before.RawSmr)) {
+    D->BeforeSmr=C->Before.RawSmr[Index];D->BeforeS2cr=C->Before.RawS2cr[Index];
+    D->AfterSmr=C->After.RawSmr[Index];D->AfterS2cr=C->After.RawS2cr[Index];
+  }
+  // Only the validated, exact apps-SMMU window permits these additional reads.
+  // Neither stable nor corrected live values relax the snapshot rejection.
+  if(C->Before.Valid && C->Before.Base==0x15000000U && C->Before.Window==0x100000U &&
+     Index<C->Before.Groups && Index<ARRAY_SIZE(C->Before.RawSmr)) {
+    D->LiveRead=TRUE;
+    for(UINTN I=0;I<2;++I) {
+      MemoryFence();D->LiveSmr[I]=MmioRead32(C->Before.Base+0x800+4*Index);
+      D->LiveS2cr[I]=MmioRead32(C->Before.Base+0xC00+4*Index);MemoryFence();
+    }
+  }
+  PianoOwnedSmmuReport(C);return EFI_COMPROMISED_DATA;
+}
 STATIC UINTN *Functions(PIANO_OWNED_SMMU *C){return C->Api;}
 STATIC EFI_STATUS Validate(HAL_PROTOCOL *P,VOID **Api) {
   EFI_HANDLE *Handles=NULL;UINTN Count=0;
@@ -110,6 +196,7 @@ STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEV
   C->DeviceIndex=Index;C->ResourceName=Index==0?"UFS_MEM":"USB0";
   EFI_STATUS Status=PianoSmmuCapture(Fdt,"owned-before",&C->Before);
   if(EFI_ERROR(Status))return Status;
+  RememberBaseline(C);BaselineReport(C,"baseline-open");
   if(C->Before.Device[Index].Present)return EFI_ALREADY_STARTED;
   // Quiescence is checked before attaching a new UFS context. No disk command.
   if(Index==0 && (MmioRead32(0x1D84058) || MmioRead32(0x1D84078)))return EFI_NOT_READY;
@@ -139,6 +226,7 @@ STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEV
   C->Attached=TRUE;
   DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DOMAIN_ATTACH name=%a code=%u\n",C->ResourceName,Native));if(Native)return EFI_DEVICE_ERROR;
   Status=PianoSmmuCapture(Fdt,"owned-after",&C->After);if(EFI_ERROR(Status))return Status;
+  RememberBaseline(C);BaselineReport(C,"baseline-owned");
   PIANO_SMMU_DEVICE *U=&C->After.Device[Index];
   if(!U->Present || U->Type!=0 || !U->Enabled || !(U->Cba2r&1) ||
      (U->Ttbr0&0x0000FFFFFFFFF000ULL)!=C->TableMemory.Physical || U->Tcr!=Config.Tcr ||
@@ -166,21 +254,23 @@ EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C) {
   if(C==NULL)return EFI_INVALID_PARAMETER;
   if(C->ExitRetained || C->TableMemory.Quarantined)return EFI_ACCESS_DENIED;
   for(UINTN I=0;I<ARRAY_SIZE(C->Mapping);++I)if(C->Mapping[I].Used)return EFI_ACCESS_DENIED;
+  RememberBaseline(C);
   if(C->Attached) {
     UINT32 Native=((ATTACH)Functions(C)[3])(C->Domain,C->ResourceName==NULL?"UFS_MEM":C->ResourceName,
       C->DeviceIndex==1?0x03000000:0,0);
-    DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DOMAIN_DETACH code=%u\n",Native));if(Native)return EFI_DEVICE_ERROR;
+    DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DOMAIN_DETACH code=%u\n",Native));if(Native){PianoOwnedSmmuReport(C);return EFI_DEVICE_ERROR;}
     C->Attached=FALSE;C->Verified=FALSE;
     C->TableMemory.Quarantined=TRUE;
     UINT16 OwnedSlot=C->After.Device[C->DeviceIndex].StreamIndex;
     // Read back the detached stream before freeing its page tables. A native
     // success code alone must not release memory still reachable by a device.
     EFI_STATUS Status=PianoSmmuCapture(C->Fdt,"owned-detached",&C->After);
-    if(EFI_ERROR(Status) || C->After.Device[C->DeviceIndex].Present)return EFI_COMPROMISED_DATA;
-    if(C->Before.Groups!=C->After.Groups)return EFI_COMPROMISED_DATA;
+    if(EFI_ERROR(Status) || C->After.Device[C->DeviceIndex].Present)
+      return CloseRejected(C,EFI_ERROR(Status)?"capture-error":"owned-still-present",OwnedSlot,Status);
+    if(C->Before.Groups!=C->After.Groups)return CloseRejected(C,"group-count",OwnedSlot,Status);
     for(UINTN I=0;I<C->Before.Groups;++I) {
       if(I==OwnedSlot)continue;
-      if(C->Before.RawSmr[I]!=C->After.RawSmr[I] || C->Before.RawS2cr[I]!=C->After.RawS2cr[I])return EFI_COMPROMISED_DATA;
+      if(C->Before.RawSmr[I]!=C->After.RawSmr[I] || C->Before.RawS2cr[I]!=C->After.RawS2cr[I])return CloseRejected(C,"other-raw",(UINT32)I,Status);
     }
     if(C->DeviceIndex==0)DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DETACH_VERIFIED ufs_stream_absent=1 other_streams_unchanged=1 tables_retained_until_verified=1\n"));
     else DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DETACH_VERIFIED usb_stream_absent=1 other_streams_unchanged=1 tables_retained_until_verified=1\n"));
@@ -188,11 +278,11 @@ EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C) {
   }
   if(C->Domain) {
     UINT32 Native=((DESTROY)Functions(C)[1])(C->Domain);
-    DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DOMAIN_DESTROY code=%u\n",Native));if(Native)return EFI_DEVICE_ERROR;
+    DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DOMAIN_DESTROY code=%u\n",Native));if(Native){PianoOwnedSmmuReport(C);return EFI_DEVICE_ERROR;}
     C->Domain=NULL;
   }
-  if(C->TableMemory.Signature)return PianoDmaFree(&C->TableMemory);
-  return EFI_SUCCESS;
+  EFI_STATUS Status=C->TableMemory.Signature?PianoDmaFree(&C->TableMemory):EFI_SUCCESS;
+  PianoOwnedSmmuReport(C);return Status;
 }
 EFI_STATUS PianoOwnedSmmuRetainForExit(PIANO_OWNED_SMMU *C) {
   if(C==NULL)return EFI_INVALID_PARAMETER;

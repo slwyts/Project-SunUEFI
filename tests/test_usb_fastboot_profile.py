@@ -33,5 +33,19 @@ class FastbootProfileTests(unittest.TestCase):
                 profile.validate_usb_fastboot_options(parser,args)
             self.assertFalse(args.usb_ep0)
 
+    def test_explicit_fetch_implies_readonly_ufs_and_fastboot(self):
+        parser=profile.argument_parser();args=parser.parse_args(['--usb-ufs-fetch'])
+        profile.validate_usb_fastboot_options(parser,args)
+        self.assertTrue(args.usb_fastboot and args.usb_ep0 and args.ufs_blockio)
+        self.assertFalse(args.ufs_filesystems or args.ufs_write_restore_test or args.usb_screenshot)
+
+    def test_fetch_rejects_write_and_unrelated_consumers(self):
+        for conflict in ('--ufs-filesystems','--ufs-shell','--ufs-setup','--ufs-write-preflight',
+                         '--ufs-write-restore-test','--ufs-bounded-filesystem-test','--usb-screenshot',
+                         '--usb-debug','--touch-probe','--gpi-probe'):
+            parser=profile.argument_parser();args=parser.parse_args(['--usb-ufs-fetch',conflict])
+            with self.subTest(conflict=conflict),contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
+                profile.validate_usb_fastboot_options(parser,args)
+
 
 if __name__=='__main__':unittest.main()

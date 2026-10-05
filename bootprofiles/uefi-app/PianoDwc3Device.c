@@ -10,6 +10,11 @@
 #endif
 #if PIANO_USB_FASTBOOT
 #include "PianoFastboot.h"
+#if defined(PIANO_USB_UFS_FETCH) && PIANO_USB_UFS_FETCH
+#include "PianoUsbStorageExperiment.h"
+#else
+typedef EFI_STATUS (*PIANO_USB_STORAGE_CHECK)(VOID *Context,CONST CHAR8 *Phase,BOOLEAN FullCapture);
+#endif
 #if PIANO_USB_SCREENSHOT
 #include "PianoFastbootScreen.h"
 #endif
@@ -44,6 +49,11 @@ BOOLEAN PianoDwc3ConsumeRebootRequest(VOID) {
 }
 #if PIANO_USB_FASTBOOT
 STATIC PIANO_FASTBOOT mFastboot;
+STATIC PIANO_FB_STORAGE mExperimentStorage;
+STATIC BOOLEAN mExperimentHasStorage,mExperimentContractFailed;
+STATIC PIANO_USB_STORAGE_CHECK mExperimentCheck;
+STATIC VOID *mExperimentCheckContext;
+STATIC BOOLEAN mExperimentRunning;
 STATIC BOOLEAN mBulkLive,mBulkPrepared,mConfigWaiting,mStatusWaiting;
 STATIC UINT32 mFastLogBytes,mFastLogCrc,mFastLogGeneration;
 #if PIANO_USB_SCREENSHOT
@@ -58,6 +68,25 @@ STATIC FB_FRAME *mFrames,*mFramesTail;
 STATIC UINTN mFrameCount,mFrameBytes,mInFlightBytes;
 #define FB_QUEUE_FRAMES 16U
 #define FB_QUEUE_BYTES (PIANO_FASTBOOT_MAX_DOWNLOAD+1024U)
+EFI_STATUS PianoDwc3SetStorageForExperiment(CONST PIANO_FB_STORAGE *Storage) {
+  if(mExperimentRunning)return EFI_NOT_READY;
+  if(Storage!=NULL && (Storage->Ready==NULL || Storage->Info==NULL || Storage->ReadBlocks==NULL))return EFI_INVALID_PARAMETER;
+  if(Storage!=NULL)mExperimentStorage=*Storage;else ZeroMem(&mExperimentStorage,sizeof(mExperimentStorage));
+  mExperimentHasStorage=Storage!=NULL;return EFI_SUCCESS;
+}
+EFI_STATUS PianoDwc3SetStorageCheckForExperiment(PIANO_USB_STORAGE_CHECK Check,VOID *Context) {
+  if(mExperimentRunning)return EFI_NOT_READY;
+  if(Check==NULL && Context!=NULL)return EFI_INVALID_PARAMETER;
+  mExperimentCheck=Check;mExperimentCheckContext=Context;return EFI_SUCCESS;
+}
+EFI_STATUS PianoDwc3CheckStorageForExperiment(CONST CHAR8 *Phase,BOOLEAN FullCapture) {
+  if(mExperimentContractFailed)return EFI_DEVICE_ERROR;
+  if(mExperimentCheck==NULL)return EFI_SUCCESS;
+  if(!mExperimentRunning || Phase==NULL)return EFI_NOT_READY;
+  EFI_STATUS S=mExperimentCheck(mExperimentCheckContext,Phase,FullCapture);
+  if(S!=EFI_SUCCESS){mExperimentContractFailed=TRUE;return EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
+  return EFI_SUCCESS;
+}
 #endif
 // Vendor IN 5B exposes only fixed status registers and a bounded console copy.
 // Snapshot storage is CPU-only; every reply uses the existing mapped mTx.
@@ -353,6 +382,7 @@ STATIC EFI_STATUS BulkComplete(UINT8 Ep,UINT8 EventStatus) {
     if(mFrames!=NULL || mPending[3])return EFI_COMPROMISED_DATA;
     BOOLEAN Download=mFastboot.Receiving;
     S=PianoFastbootPacket(&mFastboot,mBulkRx.Cpu,Bytes);if(EFI_ERROR(S))return S;
+    if(mExperimentContractFailed)return EFI_DEVICE_ERROR; // Never start reply DMA after a failed CB contract.
     if(!Download)DEBUG((DEBUG_WARN,"SUNUEFI_FASTBOOT_COMMAND bytes=%u receiving=%u queued=%u\n",(UINT32)Bytes,mFastboot.Receiving,(UINT32)mFrameCount));
     if(mFastboot.Receiving || (Download && mFastboot.Complete) || mFastboot.Upload==NULL) {
       mFastLogBytes=mFastLogCrc=mFastLogGeneration=0;
@@ -489,6 +519,10 @@ STATIC EFI_STATUS Event(UINT32 E) {
 }
 EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Device) {
 #if PIANO_USB_FASTBOOT
+  if(mExperimentRunning)return EFI_ALREADY_STARTED;
+  mExperimentRunning=TRUE;mExperimentContractFailed=FALSE;
+#endif
+#if PIANO_USB_FASTBOOT
   PIANO_DMA_BUFFER *Buffers[]={&mRing,&mTrbs[0],&mTrbs[1],&mSetup,&mTx,&mTrbs[2],&mTrbs[3],&mBulkRx,&mBulkTx};
   PIANO_DMA_DIRECTION Directions[]={PianoDmaFromDevice,PianoDmaBidirectional,PianoDmaBidirectional,PianoDmaFromDevice,PianoDmaToDevice,
     PianoDmaBidirectional,PianoDmaBidirectional,PianoDmaFromDevice,PianoDmaToDevice};
@@ -509,6 +543,10 @@ EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *De
 #if PIANO_USB_FASTBOOT
   mBulkLive=mBulkPrepared=mConfigWaiting=mStatusWaiting=FALSE;
   ClearFastboot();PianoFastbootInit(&mFastboot,NULL,FastbootSend,NULL);
+  if(mExperimentHasStorage) {
+    Status=PianoFastbootSetStorage(&mFastboot,&mExperimentStorage);
+    if(EFI_ERROR(Status))goto Exit;
+  }
   mFastboot.Query=FastbootQuery;mFastboot.Diagnostic=FastbootDiagnostic;
   mBulkOutBytes=mBulkInBytes=0;
 #endif
@@ -523,6 +561,9 @@ EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *De
     Status=PianoDmaAllocate(Device,4096,4096,32,Directions[I],Buffers[I]);if(EFI_ERROR(Status))goto Exit;
     Status=PianoDmaMap(Buffers[I]);if(EFI_ERROR(Status))goto Exit;
   }
+#if PIANO_USB_FASTBOOT
+  Status=PianoDwc3CheckStorageForExperiment("coexist-dwc-mapped",TRUE);if(Status!=EFI_SUCCESS)goto Exit;
+#endif
   Dw(0xC110,(OldGctl&~(3U<<12))|(2U<<12)|BIT0); // Device role, retain PHY configuration.
   Dw(0xC700,(OldDcfg&~(7U|(0x7FU<<3)|(31U<<17)))|4U|(16U<<17)); // Retained SS path, address zero.
   Dw(0xC400,(UINT32)mRing.DeviceAddress);Dw(0xC404,(UINT32)(mRing.DeviceAddress>>32));
@@ -544,6 +585,9 @@ EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *De
   if(SessionHs!=(OldSessionHs|USB_SESSION_HS_VALID) || SessionSs!=(OldSessionSs|USB_SESSION_SS_PRESENT)) {
     Status=EFI_DEVICE_ERROR;goto Exit;
   }
+#if PIANO_USB_FASTBOOT
+  Status=PianoDwc3CheckStorageForExperiment("coexist-before-run",TRUE);if(Status!=EFI_SUCCESS)goto Exit;
+#endif
   Dw(0xC704,(Dr(0xC704)&~(BIT9|BIT10|BIT11|BIT12))|BIT31);
   gBS->Stall(1000);
   Status=ArmSetup();if(EFI_ERROR(Status))goto Exit;
@@ -600,6 +644,9 @@ Exit:
   Dw(0xC400,OldLow);Dw(0xC404,OldHigh);Dw(0xC408,OldSize|BIT31);Dw(0xC700,OldDcfg);Dw(0xC110,OldGctl);
   UINTN Retained=0;
   for(UINTN I=0;I<ARRAY_SIZE(Buffers);++I) {
+#if PIANO_USB_FASTBOOT
+    if(mExperimentContractFailed && Buffers[I]->Signature)Buffers[I]->Quarantined=TRUE;
+#endif
     if(Buffers[I]->Signature){EFI_STATUS S=PianoDmaFree(Buffers[I]);if(EFI_ERROR(S))Status=S;}
     if(Buffers[I]->Signature)++Retained;
   }
@@ -609,6 +656,7 @@ Exit:
     Status,(UINT32)Retained,RebootReady,mRebootAfterCleanup));
 #if PIANO_USB_FASTBOOT
   ClearFastboot();
+  if(Retained==0)mExperimentRunning=FALSE; // Clean Halt errors/NOTREADY may be retried; retained ownership may not.
 #endif
   if(mLogSnapshot!=NULL){ZeroMem(mLogSnapshot,USB_DIAG_LOG_BYTES);FreePool(mLogSnapshot);mLogSnapshot=NULL;}mLogValid=FALSE;
   return Status;

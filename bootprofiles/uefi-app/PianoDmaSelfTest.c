@@ -5,6 +5,17 @@
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/DebugLib.h>
 VOID PianoDmaMemoryTest(VOID) {
+#ifdef __aarch64__
+  // Translation instructions do not read/write the target memory. This is an
+  // opt-in diagnostic through existing DMA-probe profiles, not a RAM allocator.
+  STATIC CONST UINT64 Candidates[]={0xA00000000ULL,0xA00001000ULL,0xA3FFFF000ULL,0xA3FFFFFFFULL};
+  for(UINTN I=0;I<ARRAY_SIZE(Candidates);++I) {
+    UINT64 Par;
+    __asm__ volatile("at s1e1r, %1\n\tisb\n\tmrs %0, par_el1":"=r"(Par):"r"(Candidates[I]):"memory");
+    DEBUG((DEBUG_WARN,"SUNUEFI_DRAM_AT_READ_ONLY va=%lx par=%lx translated=%u target_dereferenced=0 hardware_ram_owned_verified=0\n",
+      Candidates[I],Par,(UINT32)((Par&1)==0)));
+  }
+#endif
   EFI_CPU_ARCH_PROTOCOL *Cpu=NULL;
   EFI_STATUS Status=gBS->LocateProtocol(&gEfiCpuArchProtocolGuid,NULL,(VOID **)&Cpu);
   if(EFI_ERROR(Status))return;

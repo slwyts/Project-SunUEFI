@@ -22,9 +22,9 @@ sun_fs_arm_includes=(
   -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include
 )
 build/host-tools/usr/bin/clang --target=aarch64-windows-msvc -fshort-wchar \
-  -ffreestanding -fsyntax-only -Werror "${sun_fs_arm_includes[@]}" \
+  -ffreestanding -fsyntax-only -Wall -Wextra -Werror -Wno-unused-parameter "${sun_fs_arm_includes[@]}" \
   bootprofiles/uefi-app/PianoUfsFileSystemProbe.c bootprofiles/uefi-app/PianoLaunchShell.c
 build/host-tools/usr/bin/clang --target=aarch64-windows-msvc -fshort-wchar \
-  -ffreestanding -fsyntax-only -Werror -DPIANO_UFS_BLOCKIO -DPIANO_UFS_FILESYSTEMS -DPIANO_UFS_SHELL \
+  -ffreestanding -fsyntax-only -Wall -Wextra -Werror -Wno-unused-parameter -DPIANO_UFS_BLOCKIO -DPIANO_UFS_FILESYSTEMS -DPIANO_UFS_SHELL \
   "${sun_fs_arm_includes[@]}" bootprofiles/uefi-app/PianoUfsReadOnlyDma.c
 python3 -m py_compile tools/prepare_gui_profile.py

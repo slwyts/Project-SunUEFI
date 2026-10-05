@@ -12,12 +12,43 @@ STATIC EFI_STATUS (*mProbeAction)(CONST VOID *Fdt);
 STATIC EFI_CLOCK_PROTOCOL *mHeldClock;
 STATIC UINTN mHeldDomain,mHeldIds[10],mHeldCount;
 STATIC BOOLEAN mDomainHeld,mRetain;
+STATIC BOOLEAN mResetClockStarted,mResetClockClean;
+STATIC EFI_STATUS mResetClockStatus=EFI_NOT_STARTED;
 VOID PianoUfsRetainClocks(VOID){mRetain=TRUE;}
 VOID PianoUfsStopClocks(VOID) {
+  if(mResetClockStarted && !mResetClockClean){DEBUG((DEBUG_WARN,"SUNUEFI_UFS_RESET_CLOCK_LEGACY_DENIED retained=1 status=%r\n",mResetClockStatus));return;}
   if(mHeldClock==NULL)return;
   while(mHeldCount){--mHeldCount;mHeldClock->DisableClock(mHeldClock,mHeldIds[mHeldCount]);}
   if(mDomainHeld)mHeldClock->DisableClockPowerDomain(mHeldClock,mHeldDomain);
   mDomainHeld=FALSE;mHeldClock=NULL;mRetain=FALSE;
+}
+EFI_STATUS PianoUfsStopClocksForReset(VOID) {
+  if(mResetClockStarted)return mResetClockClean?EFI_SUCCESS:mResetClockStatus;
+  mResetClockStarted=TRUE;
+  if(mHeldClock==NULL) {
+    mResetClockStatus=(mHeldCount || mDomainHeld)?EFI_NOT_READY:EFI_SUCCESS;
+    mResetClockClean=mResetClockStatus==EFI_SUCCESS;return mResetClockStatus;
+  }
+  if(mHeldClock->Version!=0x1000b || mHeldClock->DisableClock==NULL ||
+     (VOID *)mHeldClock->DisableClockPowerDomain!=(VOID *)mHeldClock->DisableClock) {
+    mResetClockStatus=EFI_UNSUPPORTED;return mResetClockStatus;
+  }
+  while(mHeldCount) {
+    UINTN Index=mHeldCount-1;
+    EFI_STATUS S=mHeldClock->DisableClock(mHeldClock,mHeldIds[Index]);
+    DEBUG((DEBUG_WARN,"SUNUEFI_UFS_RESET_CLOCK index=%u id=%lu native=%r remaining=%u\n",(UINT32)Index,(UINT64)mHeldIds[Index],S,(UINT32)mHeldCount));
+    if(S!=EFI_SUCCESS){mResetClockStatus=EFI_ERROR(S)?S:EFI_DEVICE_ERROR;return mResetClockStatus;}
+    --mHeldCount; // Only proven exact-success releases leave the ledger.
+  }
+  if(mDomainHeld) {
+    EFI_STATUS S=mHeldClock->DisableClockPowerDomain(mHeldClock,mHeldDomain);
+    DEBUG((DEBUG_WARN,"SUNUEFI_UFS_RESET_GDSC id=%lu native=%r\n",(UINT64)mHeldDomain,S));
+    if(S!=EFI_SUCCESS){mResetClockStatus=EFI_ERROR(S)?S:EFI_DEVICE_ERROR;return mResetClockStatus;}
+    mDomainHeld=FALSE;
+  }
+  mHeldClock=NULL;mRetain=FALSE;mResetClockClean=TRUE;mResetClockStatus=EFI_SUCCESS;
+  DEBUG((DEBUG_WARN,"SUNUEFI_UFS_RESET_CLOCKS owner_refs_released=1 remaining=0 gdsc_released=1 global_clock_off_verified=0\n"));
+  return EFI_SUCCESS;
 }
 VOID PianoUfsSetProbeAction(EFI_STATUS (*Action)(CONST VOID *Fdt)){mProbeAction=Action;}
 STATIC UINT32 Be32(CONST UINT8 *P){return ((UINT32)P[0]<<24)|((UINT32)P[1]<<16)|((UINT32)P[2]<<8)|P[3];}

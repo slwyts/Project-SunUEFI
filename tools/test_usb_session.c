@@ -20,6 +20,7 @@ static UINTN address_writes,address_status_starts;
 static BOOLEAN ran,failed_halt,reject_session,fail_setup,fail_allocate;
 static BOOLEAN fail_dma_free;
 static VOID (*stall_hook)(UINTN Us);
+static UINT32 (*extra_mmio_read)(UINTN Address);
 static jmp_buf failed_reset_return;
 static CONST UINT32 original_hs=0x405a55a5,original_ss=0x8055a55a;
 
@@ -36,6 +37,7 @@ VOID EFIAPI FreePool(VOID *Buffer){free(Buffer);}
 VOID PianoSmmuLogFaults(CONST PIANO_SMMU_SNAPSHOT *Snapshot){ }
 
 UINT32 EFIAPI MmioRead32(UINTN Address) {
+  if((Address<DW || Address>=DW+sizeof(regs)) && extra_mmio_read!=NULL)return extra_mmio_read(Address);
   assert(Address>=DW && Address<DW+sizeof(regs) && !(Address&3));
   UINT32 Offset=(UINT32)(Address-DW);
   if(Offset==0xC70C)
@@ -85,7 +87,7 @@ EFI_STATUS PianoDmaAllocate(PIANO_DMA_DEVICE *Device,UINTN Bytes,UINTN Alignment
                            UINT8 Bits,PIANO_DMA_DIRECTION Direction,PIANO_DMA_BUFFER *Buffer) {
   if(fail_allocate)return EFI_OUT_OF_RESOURCES;
   *Buffer=(PIANO_DMA_BUFFER){.Signature=1,.Cpu=calloc(1,Bytes),.Bytes=Bytes,
-    .DeviceAddress=0x40000000+allocations*4096};
+    .Device=Device,.Physical=0x81000000+allocations*4096,.DeviceAddress=0x40000000+allocations*4096};
   assert(Buffer->Cpu);++allocations;return EFI_SUCCESS;
 }
 EFI_STATUS PianoDmaMap(PIANO_DMA_BUFFER *Buffer){Buffer->Mapped=TRUE;return EFI_SUCCESS;}
@@ -101,6 +103,7 @@ EFI_STATUS PianoDmaSyncForCpu(PIANO_DMA_BUFFER *Buffer){assert(FALSE);return EFI
 EFI_STATUS PianoDmaSyncForCpuQuiet(PIANO_DMA_BUFFER *Buffer){assert(Buffer==&mRing && Buffer->Active);++Buffer->QuietSyncs;++quiet_syncs;return EFI_SUCCESS;}
 EFI_STATUS PianoDmaReportQuietSync(PIANO_DMA_BUFFER *Buffer){(void)Buffer;return EFI_SUCCESS;}
 EFI_STATUS PianoDmaFree(PIANO_DMA_BUFFER *Buffer) {
+  if(Buffer->Quarantined || Buffer->ExitRetained)return EFI_ACCESS_DENIED;
   if(fail_dma_free)return EFI_DEVICE_ERROR;
   assert(!Buffer->Active);free(Buffer->Cpu);ZeroMem(Buffer,sizeof(*Buffer));return EFI_SUCCESS;
 }
@@ -111,7 +114,7 @@ static VOID init(VOID) {
   quiet_syncs=0;
   address_writes=address_status_starts=0;
   ran=failed_halt=reject_session=fail_setup=fail_allocate=FALSE;
-  fail_dma_free=FALSE;stall_hook=NULL;
+  fail_dma_free=FALSE;stall_hook=NULL;extra_mmio_read=NULL;
 }
 static VOID restored(VOID) {
   assert(session_writes==4 && regs[USB_SESSION_HS/4]==original_hs && regs[USB_SESSION_SS/4]==original_ss);

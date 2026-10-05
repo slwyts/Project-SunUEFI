@@ -5,7 +5,7 @@
 #undef NULL
 #include "../bootprofiles/uefi-app/PianoUfsProbe.c"
 EFI_BOOT_SERVICES *gBS;static EFI_BOOT_SERVICES bs;static EFI_CLOCK_PROTOCOL clock;
-static unsigned reads,enables,disables,ids;static int fail_ice,valid_dt=1;
+static unsigned reads,enables,disables,ids;static int reset_failure;static UINTN fail_resource;static int fail_ice,valid_dt=1;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
@@ -24,7 +24,7 @@ static EFI_STATUS EFIAPI id(EFI_CLOCK_PROTOCOL *C,CONST CHAR8 *Name,UINTN *Id){
   *Id=++ids;return EFI_SUCCESS;
 }
 static EFI_STATUS EFIAPI enable(EFI_CLOCK_PROTOCOL *C,UINTN Id){++enables;return EFI_SUCCESS;}
-static EFI_STATUS EFIAPI disable(EFI_CLOCK_PROTOCOL *C,UINTN Id){++disables;return EFI_SUCCESS;}
+static EFI_STATUS EFIAPI disable(EFI_CLOCK_PROTOCOL *C,UINTN Id){++disables;return reset_failure && (!fail_resource || Id==fail_resource)?reset_failure==1?EFI_DEVICE_ERROR:EFI_WARN_UNKNOWN_GLYPH:EFI_SUCCESS;}
 int main(void){
   gBS=&bs;bs.LocateProtocol=locate;clock.Version=0x1000b;
   clock.GetClockID=id;clock.EnableClock=enable;clock.DisableClock=disable;
@@ -36,6 +36,20 @@ int main(void){
   PianoProbeUfs(NULL);assert(!reads && enables==5 && disables==5);
   fail_ice=0;valid_dt=0;enables=disables=0;
   PianoProbeUfs(NULL);assert(!reads && !enables && !disables);
+  valid_dt=1;fail_ice=0;reads=enables=disables=ids=0;
+  mHeldClock=&clock;mHeldDomain=10;mDomainHeld=TRUE;mHeldCount=2;mHeldIds[0]=11;mHeldIds[1]=12;
+  assert(PianoUfsStopClocksForReset()==EFI_SUCCESS && !mHeldClock && !mDomainHeld && !mHeldCount && disables==3);
+  assert(PianoUfsStopClocksForReset()==EFI_SUCCESS && disables==3);
+  mResetClockStarted=mResetClockClean=FALSE;mHeldClock=&clock;mDomainHeld=TRUE;mHeldCount=2;reset_failure=1;
+  assert(PianoUfsStopClocksForReset()==EFI_DEVICE_ERROR && mHeldClock && mDomainHeld && mHeldCount==2);
+  unsigned before=disables;assert(PianoUfsStopClocksForReset()==EFI_DEVICE_ERROR && disables==before);
+  mResetClockStarted=mResetClockClean=FALSE;reset_failure=2;
+  assert(PianoUfsStopClocksForReset()==EFI_DEVICE_ERROR && mHeldCount==2 && mDomainHeld);
+  mResetClockStarted=mResetClockClean=FALSE;reset_failure=1;fail_resource=mHeldIds[0];
+  assert(PianoUfsStopClocksForReset()==EFI_DEVICE_ERROR && mHeldCount==1 && mDomainHeld);
+  before=disables;PianoUfsStopClocks();assert(disables==before && mHeldCount==1 && mHeldClock);
+  mResetClockStarted=mResetClockClean=FALSE;mHeldCount=0;fail_resource=mHeldDomain;
+  assert(PianoUfsStopClocksForReset()==EFI_DEVICE_ERROR && mHeldCount==0 && mDomainHeld && mHeldClock);
   puts("UFS controller probe: exact DT/SID, read-only HCI register allowlist and balanced clock/domain cleanup passed.");
   return 0;
 }

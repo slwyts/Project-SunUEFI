@@ -85,7 +85,7 @@ static VOID init(VOID) {
   clock.Version=0x1000b;clock.GetClockID=clock.GetClockPowerDomainID=get_id;
   clock.EnableClock=clock.EnableClockPowerDomain=enable;clock.DisableClock=clock.DisableClockPowerDomain=disable;
   next_id=enabled_clocks=release_calls=reset_calls=dead_loops=close_calls=consume_calls=dwc_calls=0;
-  domain_enabled=reboot_request=fail_close=fail_domain=fail_halt=mUsbCleanupBlocked=FALSE;fail_clock=-1;dwc_status=EFI_SUCCESS;dctl=BIT31;
+  domain_enabled=reboot_request=fail_close=fail_domain=fail_halt=mUsbCleanupBlocked=mUsbControllerRunning=FALSE;fail_clock=-1;dwc_status=EFI_SUCCESS;dctl=BIT31;
 }
 int main(void) {
   init();reboot_request=TRUE;

@@ -40,7 +40,7 @@ sun_transport_arm_includes=(
   -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include
 )
 for sun_transport_mode in PIANO_UFS_WRITE_PREFLIGHT PIANO_UFS_WRITE_RESTORE_TEST; do
-  build/host-tools/usr/bin/clang --target=aarch64-windows-msvc -fshort-wchar -ffreestanding -fsyntax-only -Werror \
+  build/host-tools/usr/bin/clang --target=aarch64-windows-msvc -fshort-wchar -ffreestanding -fsyntax-only -Wall -Wextra -Werror -Wno-unused-parameter \
     -DPIANO_UFS_BLOCKIO=1 -DPIANO_UFS_WRITE_TEST=1 -D"$sun_transport_mode"=1 \
     "${sun_transport_arm_includes[@]}" bootprofiles/uefi-app/PianoUfsReadOnlyDma.c
 done

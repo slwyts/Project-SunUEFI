@@ -11,6 +11,8 @@ static unsigned detaches,destroys,releases,exit_retains;static int retained_stre
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
+UINTN EFIAPI AsciiSPrint(CHAR8 *Buffer,UINTN Size,CONST CHAR8 *Format,...){abort();return 0;}
+UINT32 EFIAPI MmioRead32(UINTN Address){abort();return 0;}
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 VOID *EFIAPI WriteBackDataCacheRange(VOID *P,UINTN N){return P;}
 VOID EFIAPI MemoryFence(VOID){ }

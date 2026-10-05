@@ -8,6 +8,7 @@
 #include <Library/PrintLib.h>
 #include <Library/ArmSmcLib.h>
 #include <Library/BaseMemoryLib.h>
+#include <Library/BaseLib.h>
 
 STATIC EFI_CPU_ARCH_PROTOCOL *mCpu;
 STATIC BOOLEAN mSync,mSError;
@@ -26,6 +27,11 @@ STATIC VOID EFIAPI Recover(EFI_EXCEPTION_TYPE Type,EFI_SYSTEM_CONTEXT Context) {
     // recursive fault skips this hook and resets, preserving the first log.
     if(mDiagnostic!=NULL)mDiagnostic();
   }
+#ifdef PIANO_USB_UFS_FETCH
+  // Exception context cannot safely locate protocols or perform BS/native
+  // teardown. Combined DMA ownership is retained; no unverified reset.
+  CpuDeadLoop();
+#endif
   // The standard recovery timer cannot run if a fault/ASSERT disabled IRQs.
   // Reset directly, retaining the cache-flushed ramoops log for Android.
   gRT->ResetSystem(EfiResetCold,EFI_ABORTED,0,NULL);

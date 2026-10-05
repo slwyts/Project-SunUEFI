@@ -62,6 +62,7 @@ def argument_parser():
     parser.add_argument('--usb-ep0',action='store_true',help='USB2 device EP0 enumeration using shared DMA and USB0 owned context')
     parser.add_argument('--usb-fastboot',action='store_true',help='Isolated standard USB fastboot bulk with RAM-only stage/upload and diagnostics; implies usb-ep0')
     parser.add_argument('--usb-screenshot',action='store_true',help='Enable actual GOP BMP capture over the isolated USB fastboot profile')
+    parser.add_argument('--usb-ufs-fetch',action='store_true',help='Explicit read-only UFS/USB coexistence profile with standard partition fetch')
     parser.add_argument('--return-seconds',type=int,default=75,help='Diagnostic cold-reboot timer, 30 to 120 seconds (default 75)')
     return parser
 
@@ -69,7 +70,7 @@ def argument_parser():
 def validate_write_options(parser,args):
     if args.ufs_write_preflight or args.ufs_write_restore_test or args.ufs_bounded_filesystem_test:
         if any((args.ufs_filesystems,args.ufs_shell,args.ufs_shell_interactive,args.ufs_setup,
-                args.usb_controller,args.usb_ep0,args.usb_fastboot,args.usb_screenshot,args.usb_debug,args.touch_probe,args.gpi_probe,
+                args.usb_controller,args.usb_ep0,args.usb_fastboot,args.usb_screenshot,args.usb_ufs_fetch,args.usb_debug,args.touch_probe,args.gpi_probe,
                 args.fault_recovery_test,args.ram_qupfw,args.qupfw_disk,args.pmic_metadata)):
             parser.error('UFS write/preflight requires an isolated profile without filesystem/Shell/Setup/USB/touch consumers')
         args.ufs_blockio=True
@@ -113,6 +114,14 @@ def bounded_fs_ram_app(text):
 
 
 def validate_usb_fastboot_options(parser,args):
+    if args.usb_ufs_fetch:
+        if any((args.ufs_filesystems,args.ufs_shell,args.ufs_shell_interactive,args.ufs_setup,
+                args.ufs_write_preflight,args.ufs_write_restore_test,args.ufs_bounded_filesystem_test,
+                args.usb_screenshot,args.usb_debug,args.touch_probe,args.gpi_probe,args.ram_qupfw,
+                args.qupfw_disk,args.pmic_metadata,args.fault_recovery_test)):
+            parser.error('--usb-ufs-fetch requires readonly UFS and USB only')
+        args.usb_fastboot=True;args.usb_ep0=True;args.ufs_blockio=True
+        return
     if not args.usb_fastboot:
         return
     if any((args.ufs_probe,args.dma_probe,args.dma_owned,args.ufs_dma_nop,args.ufs_blockio,
@@ -136,7 +145,7 @@ def main():
     if args.ufs_filesystems:args.ufs_blockio=True
     if args.usb_ep0:args.usb_controller=True
     if args.usb_controller:
-        if args.ufs_blockio or args.ufs_probe or args.dma_probe or args.usb_debug or args.touch_probe:parser.error('USB controller experiment must be isolated')
+        if not args.usb_ufs_fetch and (args.ufs_blockio or args.ufs_probe or args.dma_probe or args.usb_debug or args.touch_probe):parser.error('USB controller experiment must be isolated')
         args.foundation=True;args.keys=True;args.fault_recovery=True
     if args.ufs_blockio:args.ufs_dma_nop=True
     if args.ufs_dma_nop:args.dma_owned=True
@@ -447,7 +456,8 @@ def main():
         text+='  gEfiLoadedImageProtocolGuid\n';path.write_text(text)
         path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)','EFI_STATUS PianoUsbControllerExperiment(CONST VOID *Fdt);\n#pragma pack(1)',1)
         text=text.replace('  PianoProbeFoundation ();','')
-        text=text.replace('  Status=PianoStartKeys(Fdt);','  PianoProbeFoundation();\n  Status=PianoUsbControllerExperiment(Fdt);\n  DEBUG((DEBUG_WARN,"SUNUEFI_USB_CONTROLLER_ACTION %r\\n",Status));\n  Status=PianoStartKeys(Fdt);');path.write_text(text)
+        foundation='' if args.usb_ufs_fetch else '  PianoProbeFoundation();\n'
+        text=text.replace('  Status=PianoStartKeys(Fdt);',foundation+'  Status=PianoUsbControllerExperiment(Fdt);\n  DEBUG((DEBUG_WARN,"SUNUEFI_USB_CONTROLLER_ACTION %r\\n",Status));\n  Status=PianoStartKeys(Fdt);');path.write_text(text)
         if args.usb_ep0:
             for name in ('PianoDwc3Device.c','PianoUsbControl.c','PianoUsbControl.h'):
                 shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
@@ -464,6 +474,21 @@ def main():
                         shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
                     path=app/'PianoDwc3Device.c';path.write_text('#define PIANO_USB_SCREENSHOT 1\n'+path.read_text())
                     path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFastbootScreen.c'))
+                if args.usb_ufs_fetch:
+                    for name in ('PianoUsbStorageExperiment.h','PianoFastbootBlockRead.c','PianoFastbootBlockRead.h',
+                                 'PianoUsbUfsFetch.c','PianoUsbUfsFetch.h'):
+                        shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+                    for name in ('PianoUsbController.c','PianoDwc3Device.c'):
+                        path=app/name;path.write_text('#define PIANO_USB_UFS_FETCH 1\n'+path.read_text())
+                    path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFastbootBlockRead.c\n  PianoUsbUfsFetch.c')
+                    text+='  gEfiPartitionInfoProtocolGuid\n';path.write_text(text)
+                    path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
+                        '#include "PianoUsbUfsFetch.h"\n#pragma pack(1)',1)
+                    text=text.replace('Status=PianoUsbControllerExperiment(Fdt)','Status=PianoRunUsbUfsFetch(Fdt)')
+                    text=write_test_ram_app(text).replace('SUNUEFI_UFS_WRITE_PROFILE_WAIT boot_blocked=1 readonly_blockio=1',
+                        'SUNUEFI_FETCH_PROFILE_WAIT boot_blocked=1 readonly=1')
+                    path.write_text(text)
+                    path=app/'PianoFaultRecovery.c';path.write_text('#define PIANO_USB_UFS_FETCH 1\n'+path.read_text())
     dsc = target / 'pianoGui.dsc'
     text = dsc.read_text().replace('pianoGuiPkg/Library/RamLogSerialPortLib/FrameBufferSerialPortLib.inf',
                                   'pianoGuiPkg/Library/RamOnlySerialPortLib/RamOnlySerialPortLib.inf')
@@ -558,6 +583,28 @@ def main():
             '  EFI_GUID ShutdownGuid=PIANO_UFS_SHUTDOWN_GUID; PIANO_UFS_SHUTDOWN *Shutdown=NULL;\n'
             '  if(!EFI_ERROR(gBS->LocateProtocol(&ShutdownGuid,NULL,(VOID **)&Shutdown)) && Shutdown->Revision==1)\n'
             '    Shutdown->Halt();\n  gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);')
+    if args.usb_ufs_fetch:
+        for name in ('PianoUsbStorageExperiment.h','PianoFastboot.h'):
+            shutil.copyfile(root/'bootprofiles/uefi-app'/name,lib/name)
+        text=text.replace('#include "PianoUfsShutdown.h"',
+            '#include "PianoUfsShutdown.h"\n#include "PianoUsbStorageExperiment.h"\n#include <Library/BaseLib.h>')
+        before='  EFI_GUID ShutdownGuid=PIANO_UFS_SHUTDOWN_GUID; PIANO_UFS_SHUTDOWN *Shutdown=NULL;'
+        replacement='''  EFI_GUID UsbGuid=PIANO_USB_SHUTDOWN_GUID; PIANO_USB_SHUTDOWN *Usb=NULL;
+  EFI_STATUS UsbLocate=gBS->LocateProtocol(&UsbGuid,NULL,(VOID **)&Usb);
+  if(UsbLocate==EFI_SUCCESS) {
+    if(Usb==NULL || Usb->Revision!=1 || Usb->Halt==NULL || Usb->Halt()!=EFI_SUCCESS)CpuDeadLoop();
+  } else if(UsbLocate!=EFI_NOT_FOUND)CpuDeadLoop();
+  EFI_GUID ShutdownGuid=PIANO_UFS_SHUTDOWN_GUID; PIANO_UFS_SHUTDOWN *Shutdown=NULL;'''
+        if text.count(before)!=1:raise ValueError('Unexpected combined timer UFS shutdown anchor')
+        text=text.replace(before,replacement)
+        old='''  if(!EFI_ERROR(gBS->LocateProtocol(&ShutdownGuid,NULL,(VOID **)&Shutdown)) && Shutdown->Revision==1)
+    Shutdown->Halt();'''
+        new='''  EFI_STATUS UfsLocate=gBS->LocateProtocol(&ShutdownGuid,NULL,(VOID **)&Shutdown);
+  if(UfsLocate==EFI_SUCCESS) {
+    if(Shutdown==NULL || Shutdown->Revision!=1 || Shutdown->Halt==NULL || Shutdown->Halt()!=EFI_SUCCESS)CpuDeadLoop();
+  } else if(UfsLocate!=EFI_NOT_FOUND)CpuDeadLoop();'''
+        if text.count(old)!=1:raise ValueError('Unexpected combined timer halt anchor')
+        text=text.replace(old,new)
     text = text.replace('Internal storage and USB mass-storage drivers are excluded.',
                         'Piano UEFI GOP/simple-init diagnostic.')
     text = text.replace('Linux and Windows PE boot are not implemented in this image.',

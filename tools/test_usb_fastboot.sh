@@ -14,7 +14,7 @@ for sun_test in test_usb_control test_usb_session test_usb_diagnostic test_fastb
   "${CC:-cc}" "${sun_flags[@]}" "tools/$sun_test.c" -lcrypto -o "$sun_test_dir/$sun_test"
   "$sun_test_dir/$sun_test"
 done
-for sun_test in test_fastboot_fetch test_fastboot_block_read test_usb_fastboot test_usb_screenshot_route; do
+for sun_test in test_fastboot_fetch test_fastboot_block_read test_usb_fastboot test_usb_screenshot_route test_usb_coexist; do
   "${CC:-cc}" "${sun_flags[@]}" -fsanitize=address,undefined -fno-omit-frame-pointer \
     "tools/$sun_test.c" -lcrypto -o "$sun_test_dir/$sun_test"
   ASAN_OPTIONS=detect_leaks=1 "$sun_test_dir/$sun_test"
