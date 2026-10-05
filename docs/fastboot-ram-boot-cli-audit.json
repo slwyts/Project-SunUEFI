@@ -1,0 +1,58 @@
+{
+  "status": "VERIFIED_LOCAL_CLI_FRAMING_ONLY",
+  "version": "fastboot version 37.0.0-android-tools\nInstalled as /usr/bin/fastboot",
+  "transport": "loopback TCP fake server",
+  "usb_used": false,
+  "execution": false,
+  "raw_efi_boot": {
+    "download_is_android_container": true,
+    "kernel_equals_raw_fixture": true,
+    "page_bytes": 2048,
+    "bytes": 10240,
+    "commands": [
+      "download:00002800",
+      "boot"
+    ]
+  },
+  "raw_efi_stage": {
+    "download_is_raw": true,
+    "bytes": 8192,
+    "commands": [
+      "download:00002000"
+    ]
+  },
+  "android_img_boot": {
+    "download_is_byte_identical": true,
+    "bytes": 10240,
+    "commands": [
+      "download:00002800",
+      "boot"
+    ]
+  },
+  "explicit_header_versions": [
+    {
+      "version": 1,
+      "declared_header_size": 1648,
+      "signature_size": null
+    },
+    {
+      "version": 2,
+      "declared_header_size": 1660,
+      "signature_size": null
+    },
+    {
+      "version": 3,
+      "declared_header_size": 1580,
+      "signature_size": null
+    },
+    {
+      "version": 4,
+      "declared_header_size": 1580,
+      "signature_size": 0
+    }
+  ],
+  "short_efi_boot": {
+    "rejected_before_download": true,
+    "bytes": 512
+  }
+}

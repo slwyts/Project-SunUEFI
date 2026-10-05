@@ -1,0 +1,873 @@
+{
+  "status": "OFFLINE_CANDIDATES_ONLY_NO_ALLOCATOR_CHANGE",
+  "declared_dram": [
+    {
+      "start": "0x81960000",
+      "end": "0x81a00000",
+      "bytes": 655360
+    },
+    {
+      "start": "0x81a40000",
+      "end": "0x81c00000",
+      "bytes": 1835008
+    },
+    {
+      "start": "0x81cf4800",
+      "end": "0x81d00000",
+      "bytes": 47104
+    },
+    {
+      "start": "0x82460000",
+      "end": "0x824a0000",
+      "bytes": 262144
+    },
+    {
+      "start": "0x82800000",
+      "end": "0x84a00000",
+      "bytes": 35651584
+    },
+    {
+      "start": "0x89d80000",
+      "end": "0x9b000000",
+      "bytes": 287834112
+    },
+    {
+      "start": "0x9ee00000",
+      "end": "0xb8000000",
+      "bytes": 421527552
+    },
+    {
+      "start": "0xbd980000",
+      "end": "0xd4e23000",
+      "bytes": 390737920
+    },
+    {
+      "start": "0xd5100000",
+      "end": "0xd8000000",
+      "bytes": 49283072
+    },
+    {
+      "start": "0xe3720000",
+      "end": "0xf8800000",
+      "bytes": 353239040
+    },
+    {
+      "start": "0xfc400000",
+      "end": "0xff800000",
+      "bytes": 54525952
+    },
+    {
+      "start": "0x880000000",
+      "end": "0x8af6fd000",
+      "bytes": 795856896
+    },
+    {
+      "start": "0x8b0000000",
+      "end": "0x8b5500000",
+      "bytes": 89128960
+    },
+    {
+      "start": "0x8b5700000",
+      "end": "0x8b7500000",
+      "bytes": 31457280
+    },
+    {
+      "start": "0x8c0000000",
+      "end": "0xc00000000",
+      "bytes": 13958643712
+    }
+  ],
+  "declared_dram_bytes": 16470685696,
+  "fixed_and_existing_owner_exclusions": [
+    {
+      "start": "0x400000",
+      "end": "0x500000",
+      "bytes": 1048576
+    },
+    {
+      "start": "0x780000",
+      "end": "0x787000",
+      "bytes": 28672
+    },
+    {
+      "start": "0x800000",
+      "end": "0xb00000",
+      "bytes": 3145728
+    },
+    {
+      "start": "0x10c0000",
+      "end": "0x10cc000",
+      "bytes": 49152
+    },
+    {
+      "start": "0x1dc0000",
+      "end": "0x1e00000",
+      "bytes": 262144
+    },
+    {
+      "start": "0x1f00000",
+      "end": "0x2000000",
+      "bytes": 1048576
+    },
+    {
+      "start": "0x8800000",
+      "end": "0x8900000",
+      "bytes": 1048576
+    },
+    {
+      "start": "0xa600000",
+      "end": "0xa800000",
+      "bytes": 2097152
+    },
+    {
+      "start": "0xb000000",
+      "end": "0x10000000",
+      "bytes": 83886080
+    },
+    {
+      "start": "0x14680000",
+      "end": "0x146c0000",
+      "bytes": 262144
+    },
+    {
+      "start": "0x15000000",
+      "end": "0x15200000",
+      "bytes": 2097152
+    },
+    {
+      "start": "0x16000000",
+      "end": "0x1c000000",
+      "bytes": 100663296
+    },
+    {
+      "start": "0x80000000",
+      "end": "0x81400000",
+      "bytes": 20971520
+    },
+    {
+      "start": "0x81960000",
+      "end": "0x81a40000",
+      "bytes": 917504
+    },
+    {
+      "start": "0x81c00000",
+      "end": "0x81cf4800",
+      "bytes": 1001472
+    },
+    {
+      "start": "0x81d00000",
+      "end": "0x82460000",
+      "bytes": 7733248
+    },
+    {
+      "start": "0x824a0000",
+      "end": "0x825a0000",
+      "bytes": 1048576
+    },
+    {
+      "start": "0x82600000",
+      "end": "0x84800000",
+      "bytes": 35651584
+    },
+    {
+      "start": "0x84a00000",
+      "end": "0x89d80000",
+      "bytes": 87556096
+    },
+    {
+      "start": "0x89e00000",
+      "end": "0xa6180000",
+      "bytes": 473432064
+    },
+    {
+      "start": "0xa7000000",
+      "end": "0xd8600000",
+      "bytes": 828375040
+    },
+    {
+      "start": "0xf3800000",
+      "end": "0xfc400000",
+      "bytes": 146800640
+    },
+    {
+      "start": "0xfc800000",
+      "end": "0xff300000",
+      "bytes": 45088768
+    },
+    {
+      "start": "0xff800000",
+      "end": "0x100000000",
+      "bytes": 8388608
+    }
+  ],
+  "fixed_free_ranges": [
+    {
+      "start": "0x81a40000",
+      "end": "0x81c00000",
+      "bytes": 1835008
+    },
+    {
+      "start": "0x81cf4800",
+      "end": "0x81d00000",
+      "bytes": 47104
+    },
+    {
+      "start": "0x82460000",
+      "end": "0x824a0000",
+      "bytes": 262144
+    },
+    {
+      "start": "0x84800000",
+      "end": "0x84a00000",
+      "bytes": 2097152
+    },
+    {
+      "start": "0x89d80000",
+      "end": "0x89e00000",
+      "bytes": 524288
+    },
+    {
+      "start": "0xa6180000",
+      "end": "0xa7000000",
+      "bytes": 15204352
+    },
+    {
+      "start": "0xe3720000",
+      "end": "0xf3800000",
+      "bytes": 269352960
+    },
+    {
+      "start": "0xfc400000",
+      "end": "0xfc800000",
+      "bytes": 4194304
+    },
+    {
+      "start": "0xff300000",
+      "end": "0xff800000",
+      "bytes": 5242880
+    },
+    {
+      "start": "0x880000000",
+      "end": "0x8af6fd000",
+      "bytes": 795856896
+    },
+    {
+      "start": "0x8b0000000",
+      "end": "0x8b5500000",
+      "bytes": 89128960
+    },
+    {
+      "start": "0x8b5700000",
+      "end": "0x8b7500000",
+      "bytes": 31457280
+    },
+    {
+      "start": "0x8c0000000",
+      "end": "0xc00000000",
+      "bytes": 13958643712
+    }
+  ],
+  "one_gib_candidates": [
+    {
+      "start": "0x8c0000000",
+      "end": "0x900000000",
+      "bytes": 1073741824,
+      "fixed_exclusions_clear": true,
+      "unresolved_dynamic_owners": [
+        "/reserved-memory/debug_kinfo_region",
+        "/reserved-memory/dump_mem_region"
+      ],
+      "observed_phase_conflicts": [],
+      "efi_ram_descriptor_cover": false,
+      "cpu_translation": "UNKNOWN_NOT_PROBED",
+      "safe_to_use": false
+    },
+    {
+      "start": "0x900000000",
+      "end": "0x940000000",
+      "bytes": 1073741824,
+      "fixed_exclusions_clear": true,
+      "unresolved_dynamic_owners": [
+        "/reserved-memory/debug_kinfo_region",
+        "/reserved-memory/dump_mem_region"
+      ],
+      "observed_phase_conflicts": [],
+      "efi_ram_descriptor_cover": false,
+      "cpu_translation": "UNKNOWN_NOT_PROBED",
+      "safe_to_use": false
+    },
+    {
+      "start": "0x940000000",
+      "end": "0x980000000",
+      "bytes": 1073741824,
+      "fixed_exclusions_clear": true,
+      "unresolved_dynamic_owners": [
+        "/reserved-memory/debug_kinfo_region",
+        "/reserved-memory/dump_mem_region"
+      ],
+      "observed_phase_conflicts": [],
+      "efi_ram_descriptor_cover": false,
+      "cpu_translation": "UNKNOWN_NOT_PROBED",
+      "safe_to_use": false
+    },
+    {
+      "start": "0x980000000",
+      "end": "0x9c0000000",
+      "bytes": 1073741824,
+      "fixed_exclusions_clear": true,
+      "unresolved_dynamic_owners": [
+        "/reserved-memory/debug_kinfo_region",
+        "/reserved-memory/dump_mem_region"
+      ],
+      "observed_phase_conflicts": [],
+      "efi_ram_descriptor_cover": false,
+      "cpu_translation": "UNKNOWN_NOT_PROBED",
+      "safe_to_use": false
+    },
+    {
+      "start": "0x9c0000000",
+      "end": "0xa00000000",
+      "bytes": 1073741824,
+      "fixed_exclusions_clear": true,
+      "unresolved_dynamic_owners": [
+        "/reserved-memory/debug_kinfo_region",
+        "/reserved-memory/dump_mem_region"
+      ],
+      "observed_phase_conflicts": [],
+      "efi_ram_descriptor_cover": false,
+      "cpu_translation": "UNKNOWN_NOT_PROBED",
+      "safe_to_use": false
+    },
+    {
+      "start": "0xa00000000",
+      "end": "0xa40000000",
+      "bytes": 1073741824,
+      "fixed_exclusions_clear": true,
+      "unresolved_dynamic_owners": [
+        "/reserved-memory/debug_kinfo_region",
+        "/reserved-memory/dump_mem_region"
+      ],
+      "observed_phase_conflicts": [],
+      "efi_ram_descriptor_cover": false,
+      "cpu_translation": "UNKNOWN_NOT_PROBED",
+      "safe_to_use": false
+    },
+    {
+      "start": "0xa40000000",
+      "end": "0xa80000000",
+      "bytes": 1073741824,
+      "fixed_exclusions_clear": true,
+      "unresolved_dynamic_owners": [
+        "/reserved-memory/debug_kinfo_region",
+        "/reserved-memory/dump_mem_region"
+      ],
+      "observed_phase_conflicts": [],
+      "efi_ram_descriptor_cover": false,
+      "cpu_translation": "UNKNOWN_NOT_PROBED",
+      "safe_to_use": false
+    },
+    {
+      "start": "0xa80000000",
+      "end": "0xac0000000",
+      "bytes": 1073741824,
+      "fixed_exclusions_clear": true,
+      "unresolved_dynamic_owners": [
+        "/reserved-memory/debug_kinfo_region",
+        "/reserved-memory/dump_mem_region"
+      ],
+      "observed_phase_conflicts": [],
+      "efi_ram_descriptor_cover": false,
+      "cpu_translation": "UNKNOWN_NOT_PROBED",
+      "safe_to_use": false
+    },
+    {
+      "start": "0xac0000000",
+      "end": "0xb00000000",
+      "bytes": 1073741824,
+      "fixed_exclusions_clear": true,
+      "unresolved_dynamic_owners": [
+        "/reserved-memory/debug_kinfo_region",
+        "/reserved-memory/dump_mem_region"
+      ],
+      "observed_phase_conflicts": [],
+      "efi_ram_descriptor_cover": false,
+      "cpu_translation": "UNKNOWN_NOT_PROBED",
+      "safe_to_use": false
+    },
+    {
+      "start": "0xb00000000",
+      "end": "0xb40000000",
+      "bytes": 1073741824,
+      "fixed_exclusions_clear": true,
+      "unresolved_dynamic_owners": [
+        "/reserved-memory/debug_kinfo_region",
+        "/reserved-memory/dump_mem_region"
+      ],
+      "observed_phase_conflicts": [],
+      "efi_ram_descriptor_cover": false,
+      "cpu_translation": "UNKNOWN_NOT_PROBED",
+      "safe_to_use": false
+    },
+    {
+      "start": "0xb40000000",
+      "end": "0xb80000000",
+      "bytes": 1073741824,
+      "fixed_exclusions_clear": true,
+      "unresolved_dynamic_owners": [
+        "/reserved-memory/debug_kinfo_region",
+        "/reserved-memory/dump_mem_region"
+      ],
+      "observed_phase_conflicts": [],
+      "efi_ram_descriptor_cover": false,
+      "cpu_translation": "UNKNOWN_NOT_PROBED",
+      "safe_to_use": false
+    },
+    {
+      "start": "0xb80000000",
+      "end": "0xbc0000000",
+      "bytes": 1073741824,
+      "fixed_exclusions_clear": true,
+      "unresolved_dynamic_owners": [
+        "/reserved-memory/debug_kinfo_region",
+        "/reserved-memory/dump_mem_region"
+      ],
+      "observed_phase_conflicts": [],
+      "efi_ram_descriptor_cover": false,
+      "cpu_translation": "UNKNOWN_NOT_PROBED",
+      "safe_to_use": false
+    },
+    {
+      "start": "0xbc0000000",
+      "end": "0xc00000000",
+      "bytes": 1073741824,
+      "fixed_exclusions_clear": true,
+      "unresolved_dynamic_owners": [
+        "/reserved-memory/debug_kinfo_region",
+        "/reserved-memory/dump_mem_region"
+      ],
+      "observed_phase_conflicts": [
+        "/reserved-memory/debug_kinfo_region"
+      ],
+      "efi_ram_descriptor_cover": false,
+      "cpu_translation": "UNKNOWN_NOT_PROBED",
+      "safe_to_use": false
+    }
+  ],
+  "unresolved_dynamic_pools": [
+    {
+      "node": "/reserved-memory/sp_region",
+      "requested_bytes": 16777216,
+      "alloc_ranges": [
+        {
+          "start": "0x0",
+          "end": "0xffffffff",
+          "bytes": 4294967295
+        }
+      ],
+      "reusable": true,
+      "no_map": false
+    },
+    {
+      "node": "/reserved-memory/qseecom_region",
+      "requested_bytes": 67108864,
+      "alloc_ranges": [
+        {
+          "start": "0x0",
+          "end": "0xffffffff",
+          "bytes": 4294967295
+        }
+      ],
+      "reusable": true,
+      "no_map": false
+    },
+    {
+      "node": "/reserved-memory/qseecom_ta_region",
+      "requested_bytes": 58720256,
+      "alloc_ranges": [
+        {
+          "start": "0x0",
+          "end": "0xffffffff",
+          "bytes": 4294967295
+        }
+      ],
+      "reusable": true,
+      "no_map": false
+    },
+    {
+      "node": "/reserved-memory/vm_comm_mem_region",
+      "requested_bytes": 8388608,
+      "alloc_ranges": [
+        {
+          "start": "0x0",
+          "end": "0xffffffff",
+          "bytes": 4294967295
+        }
+      ],
+      "reusable": true,
+      "no_map": false
+    },
+    {
+      "node": "/reserved-memory/linux,cma",
+      "requested_bytes": 37748736,
+      "alloc_ranges": [
+        {
+          "start": "0x0",
+          "end": "0xffffffff",
+          "bytes": 4294967295
+        }
+      ],
+      "reusable": true,
+      "no_map": false
+    },
+    {
+      "node": "/reserved-memory/cdsp_eva_region",
+      "requested_bytes": 4194304,
+      "alloc_ranges": [
+        {
+          "start": "0x0",
+          "end": "0xffffffff",
+          "bytes": 4294967295
+        }
+      ],
+      "reusable": true,
+      "no_map": false
+    },
+    {
+      "node": "/reserved-memory/adsp_heap_region",
+      "requested_bytes": 12582912,
+      "alloc_ranges": [
+        {
+          "start": "0x0",
+          "end": "0xffffffff",
+          "bytes": 4294967295
+        }
+      ],
+      "reusable": true,
+      "no_map": false
+    },
+    {
+      "node": "/reserved-memory/non_secure_display_region",
+      "requested_bytes": 264241152,
+      "alloc_ranges": [
+        {
+          "start": "0x0",
+          "end": "0xffffffff",
+          "bytes": 4294967295
+        }
+      ],
+      "reusable": true,
+      "no_map": false
+    },
+    {
+      "node": "/reserved-memory/debug_kinfo_region",
+      "requested_bytes": 4096,
+      "alloc_ranges": [
+        {
+          "start": "0x0",
+          "end": "0xffffffffffffffff",
+          "bytes": 18446744073709551615
+        }
+      ],
+      "reusable": false,
+      "no_map": true
+    },
+    {
+      "node": "/reserved-memory/va_md_mem_region",
+      "requested_bytes": 16777216,
+      "alloc_ranges": [
+        {
+          "start": "0x0",
+          "end": "0xffffffff",
+          "bytes": 4294967295
+        }
+      ],
+      "reusable": true,
+      "no_map": false
+    },
+    {
+      "node": "/reserved-memory/qmc_dma_region",
+      "requested_bytes": 16777216,
+      "alloc_ranges": [
+        {
+          "start": "0x0",
+          "end": "0xffffffff",
+          "bytes": 4294967295
+        }
+      ],
+      "reusable": true,
+      "no_map": false
+    },
+    {
+      "node": "/reserved-memory/secure_cdsp_region",
+      "requested_bytes": 75497472,
+      "alloc_ranges": [
+        {
+          "start": "0x0",
+          "end": "0xffffffff",
+          "bytes": 4294967295
+        }
+      ],
+      "reusable": true,
+      "no_map": false
+    },
+    {
+      "node": "/reserved-memory/dump_mem_region",
+      "requested_bytes": 94371840,
+      "alloc_ranges": [
+        {
+          "start": "0x100000000",
+          "end": "0xffffffffffffffff",
+          "bytes": 18446744069414584319
+        }
+      ],
+      "reusable": false,
+      "no_map": false
+    },
+    {
+      "node": "/reserved-memory/cnss_wlan_region",
+      "requested_bytes": 33554432,
+      "alloc_ranges": [
+        {
+          "start": "0x0",
+          "end": "0xffffffff",
+          "bytes": 4294967295
+        }
+      ],
+      "reusable": true,
+      "no_map": false
+    }
+  ],
+  "strict_free_after_all_dynamic_alloc_windows": [],
+  "dynamic_alloc_window_note": "Allowed placement windows are uncertainty bounds, not actual occupied bytes.",
+  "runtime_reserve_evidence": [
+    {
+      "node": "/reserved-memory/debug_kinfo_region",
+      "phase": "android-runtime-test-86",
+      "ranges": [
+        {
+          "start": "0xbfffff000",
+          "end": "0xc00000000",
+          "bytes": 4096
+        }
+      ]
+    },
+    {
+      "node": "/reserved-memory/dump_mem_region",
+      "phase": "android-runtime-test-86",
+      "ranges": [
+        {
+          "start": "0x880000000",
+          "end": "0x885a00000",
+          "bytes": 94371840
+        }
+      ]
+    }
+  ],
+  "free_after_observed_phase_reserves": [
+    {
+      "start": "0x81a40000",
+      "end": "0x81c00000",
+      "bytes": 1835008
+    },
+    {
+      "start": "0x81cf4800",
+      "end": "0x81d00000",
+      "bytes": 47104
+    },
+    {
+      "start": "0x82460000",
+      "end": "0x824a0000",
+      "bytes": 262144
+    },
+    {
+      "start": "0x84800000",
+      "end": "0x84a00000",
+      "bytes": 2097152
+    },
+    {
+      "start": "0x89d80000",
+      "end": "0x89e00000",
+      "bytes": 524288
+    },
+    {
+      "start": "0xa6180000",
+      "end": "0xa7000000",
+      "bytes": 15204352
+    },
+    {
+      "start": "0xe3720000",
+      "end": "0xf3800000",
+      "bytes": 269352960
+    },
+    {
+      "start": "0xfc400000",
+      "end": "0xfc800000",
+      "bytes": 4194304
+    },
+    {
+      "start": "0xff300000",
+      "end": "0xff800000",
+      "bytes": 5242880
+    },
+    {
+      "start": "0x885a00000",
+      "end": "0x8af6fd000",
+      "bytes": 701485056
+    },
+    {
+      "start": "0x8b0000000",
+      "end": "0x8b5500000",
+      "bytes": 89128960
+    },
+    {
+      "start": "0x8b5700000",
+      "end": "0x8b7500000",
+      "bytes": 31457280
+    },
+    {
+      "start": "0x8c0000000",
+      "end": "0xbfffff000",
+      "bytes": 13958639616
+    }
+  ],
+  "runtime_phase_note": "Observed ranges apply only to their labelled boot phase; they do not verify UEFI ownership or mapping.",
+  "fixed_reusable_cma_contract": [
+    {
+      "node": "/reserved-memory/sp_region",
+      "status": "okay",
+      "ranges": [],
+      "no_map": false,
+      "outside_efi_linux_usable": []
+    },
+    {
+      "node": "/reserved-memory/qseecom_region",
+      "status": "okay",
+      "ranges": [],
+      "no_map": false,
+      "outside_efi_linux_usable": []
+    },
+    {
+      "node": "/reserved-memory/qseecom_ta_region",
+      "status": "okay",
+      "ranges": [],
+      "no_map": false,
+      "outside_efi_linux_usable": []
+    },
+    {
+      "node": "/reserved-memory/qdss_apps_region@82800000",
+      "status": "okay",
+      "ranges": [
+        {
+          "start": "0x82800000",
+          "end": "0x84800000",
+          "bytes": 33554432
+        }
+      ],
+      "no_map": false,
+      "outside_efi_linux_usable": [
+        {
+          "start": "0x82800000",
+          "end": "0x84800000",
+          "bytes": 33554432
+        }
+      ]
+    },
+    {
+      "node": "/reserved-memory/trust_ui_vm_region@f3800000",
+      "status": "okay",
+      "ranges": [
+        {
+          "start": "0xf3800000",
+          "end": "0xf8800000",
+          "bytes": 83886080
+        }
+      ],
+      "no_map": false,
+      "outside_efi_linux_usable": [
+        {
+          "start": "0xf3800000",
+          "end": "0xf8800000",
+          "bytes": 83886080
+        }
+      ]
+    },
+    {
+      "node": "/reserved-memory/vm_comm_mem_region",
+      "status": "okay",
+      "ranges": [],
+      "no_map": false,
+      "outside_efi_linux_usable": []
+    },
+    {
+      "node": "/reserved-memory/linux,cma",
+      "status": "okay",
+      "ranges": [],
+      "no_map": false,
+      "outside_efi_linux_usable": []
+    },
+    {
+      "node": "/reserved-memory/cdsp_eva_region",
+      "status": "okay",
+      "ranges": [],
+      "no_map": false,
+      "outside_efi_linux_usable": []
+    },
+    {
+      "node": "/reserved-memory/adsp_heap_region",
+      "status": "okay",
+      "ranges": [],
+      "no_map": false,
+      "outside_efi_linux_usable": []
+    },
+    {
+      "node": "/reserved-memory/non_secure_display_region",
+      "status": "okay",
+      "ranges": [],
+      "no_map": false,
+      "outside_efi_linux_usable": []
+    },
+    {
+      "node": "/reserved-memory/va_md_mem_region",
+      "status": "okay",
+      "ranges": [],
+      "no_map": false,
+      "outside_efi_linux_usable": []
+    },
+    {
+      "node": "/reserved-memory/qmc_dma_region",
+      "status": "okay",
+      "ranges": [],
+      "no_map": false,
+      "outside_efi_linux_usable": []
+    },
+    {
+      "node": "/reserved-memory/secure_cdsp_region",
+      "status": "okay",
+      "ranges": [],
+      "no_map": false,
+      "outside_efi_linux_usable": []
+    },
+    {
+      "node": "/reserved-memory/cnss_wlan_region",
+      "status": "okay",
+      "ranges": [],
+      "no_map": false,
+      "outside_efi_linux_usable": []
+    }
+  ],
+  "efi_descriptor_count": 49,
+  "efi_linux_usable_bytes": 402345984,
+  "efi_conventional_bytes": 282222592,
+  "largest_efi_conventional_bytes": 281149440,
+  "cpu_snapshot": "PIANO_EFI_TRACE CPU el=0x4 daif=0x200 sctlr=0x30D0198D tcr=0x480803514 ttbr0=0xD7FFF000 ttbr1=0x0 vbar=0xD6129000 cntv=0x1\r",
+  "cpu_va_bits": 44,
+  "cpu_pa_bits": 44,
+  "mapping_claim": "TCR width permits addresses; no page tables/AT probe captured. Missing EFI descriptors do not prove unmapped DRAM.",
+  "linux_contract_note": "Fixed reusable CMA is excluded from download ownership but must retain valid System RAM/vmemmap at Linux handoff; no-map/secure exclusions differ.",
+  "inputs_sha256": {
+    "private/captures/2026-10-03-piano/live.dtb": "a4b55dd3b77e69be451aaf2263c76f5496c93325767e49f748ee49570611e8d7",
+    "platforms/pianoPkg/native-memory-map.json": "b7f5e824e309e639e7cc9227cdca10396bb9e91054ebabd2f07172c0fe79ad9c",
+    "private/analysis/ramlog-test-85/console.txt": "6c6c5de09aafb185c6fbd4c491b6e745a5559c263a64cd63e34e60fd20fcf83c",
+    "private/analysis/dram-runtime-android-after-test-86.json": "0be847850c90d7ba46fb5266e2e032680dc7da4ff05797a0602f75a07cd74aa1"
+  }
+}
