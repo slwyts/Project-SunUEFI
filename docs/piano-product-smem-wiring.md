@@ -46,6 +46,14 @@ real exception/mapping behavior still require Root's build and physical validati
 
 ## Snapshot retrieval through resident fastboot
 
+The cold diagnostic GUID HOB now uses revision 2 and retains bounded coherent
+RAM402 and SIII raw snapshots. The product consumer verifies and caches their
+exact size, CRC and fixed-window metadata, and BeforeRamlog regenerates complete
+raw words even after the early print prefix wraps. Parser failures keep their
+original status and empty parsed lists; memory ownership and high-DDR publication
+remain false. See [the revision 2 snapshot contract](piano-early-raw-snapshot.md)
+for the source boundaries and actual producer-to-consumer tests.
+
 Root stores its own immutable guard/SMEM reports before the temporary reader
 session ends. The saved report is independent of the singleton guard's later
 sessions. `PIANO_DWC3_SERVICE_CONFIG.BeforeRamlog` is bound to
