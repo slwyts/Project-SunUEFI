@@ -6,6 +6,7 @@ registers to its own live domain and serialized group/context state before
 exposing this read-only ABI. This is configuration evidence, not a DMA test.
 """
 import argparse
+import errno
 import json
 from pathlib import Path
 import re
@@ -17,6 +18,11 @@ SCOPES = {
     'gmu': ('3d6c000.gmu', '/soc/gmu@3d6c000', 'stage1', [(5, 0)]),
     'video': ('aa00000.video-codec-ml', '/soc/video-codec-ml@aa00000', 'stage1', [(0x1940, 0), (0x1947, 0)]),
     'camera': ('ad27000.isp-ml', '/soc/isp-ml@ad27000', 'stage1', [(0x1c00, 0)]),
+    'audio': (None, '/soc/remoteproc-adsp@03000000/glink-edge/qcom,gpr/service@3/dais', 'managed', [(0x1001, 0x80), (0x1041, 0x20)]),
+    **{f'fastrpc-{i}': (None, '/soc/remoteproc-adsp@03000000/glink-edge/qcom,fastrpc/compute-cb@' + str(i),
+       'managed', [(0x1007, 0x40), (0x1067, 0), (0x1087, 0)] if i == 5 else
+       [(0x1002 + i, 0x80), (0x1042 + i, 0x20)]) for i in range(1, 7)},
+    'radio': ('0000:01:00.0', '/soc/pcie@1c00000/pcie0_rp/wifi@0', 'managed', [(0x1401, 0)]),
 }
 BASE_FIELDS = {'sid', 'mask', 'slot', 'origin', 'smr', 's2cr', 'expected', 'cb', 'sctlr', 'cbar', 'fsr'}
 CONTEXT_FIELDS = {'ttbr0', 'ttbr1', 'tcr', 'tcr2', 'mair0', 'mair1'}
@@ -87,25 +93,88 @@ def verify(text, mode, pairs):
     return result
 
 
+def platform_consumer(sysfs, expected, driver):
+    """Names of GPR/RPMsg-created platform children depend on real parent buses."""
+    found = []
+    for number, directory in enumerate((sysfs / 'bus/platform/devices').iterdir()):
+        if number >= 4096:
+            raise ValueError('platform inventory exceeds its bounded scope')
+        try:
+            matches = (directory / 'of_node').resolve(strict=True) == expected.resolve(strict=True)
+        except FileNotFoundError:
+            continue
+        if matches:
+            found.append(directory)
+    if not found:
+        raise FileNotFoundError(errno.ENOENT, 'normal DMA consumer has not been created', str(expected))
+    if len(found) != 1:
+        raise ValueError('DMA consumer must have exactly one actual platform device')
+    directory = found[0]
+    if (directory / 'driver').resolve(strict=True).name != driver:
+        raise ValueError('actual DMA consumer driver is not bound')
+    return directory
+
+
+def pci_consumer(sysfs, device, expected, handle):
+    directory = sysfs / 'bus/pci/devices' / device
+    if (directory / 'of_node').resolve(strict=True) != expected.resolve(strict=True):
+        raise ValueError('PCI endpoint does not match the actual wifi DT node')
+    if (directory / 'vendor').read_text().strip() != '0x17cb' or (directory / 'device').read_text().strip() != '0x110e':
+        raise ValueError('PCI endpoint is not the WCN7861 consumer')
+    host = sysfs / 'firmware/devicetree/base/soc/pcie@1c00000'
+    wanted = b''.join(value.to_bytes(4, 'big') for value in
+                     (0, int.from_bytes(handle, 'big'), 0x1400, 0, 1,
+                      0x100, int.from_bytes(handle, 'big'), 0x1401, 0, 1))
+    if (host / 'iommu-map').read_bytes() != wanted:
+        raise ValueError('normal PCI RID/SID map differs')
+    if (host / 'iommu-map-mask').exists() and (host / 'iommu-map-mask').read_bytes() != b'\xff' * 4:
+        raise ValueError('PCI RID mask differs')
+    if (host / 'linux,pci-domain').read_bytes() != bytes(4):
+        raise ValueError('PCI domain does not identify the selected endpoint')
+    if (expected / 'reg').read_bytes() != bytes.fromhex('0001000000000000000000000000000000000000'):
+        raise ValueError('PCI endpoint DT devfn differs')
+    return directory
+
+
 def read_scope(scope, sysfs=Path('/sys')):
     device, node, mode, pairs = SCOPES[scope]
-    directory = sysfs / 'bus/platform/devices' / device
     expected = sysfs / ('firmware/devicetree/base' + node)
-    if (directory / 'of_node').resolve(strict=True) != expected.resolve(strict=True):
-        raise ValueError('kernel device does not match the exact DT consumer')
     provider_node = '/soc/iommu@3da0000' if scope in ('gpu', 'gmu') else '/soc/iommu@15000000'
     provider = sysfs / ('firmware/devicetree/base' + provider_node)
     handle = (provider / 'phandle').read_bytes()
     if len(handle) != 4 or handle == bytes(4) or (provider / '#iommu-cells').read_bytes() != b'\0\0\0\2':
         raise ValueError('actual IOMMU provider shape differs')
-    wanted = b''.join(handle + sid.to_bytes(4, 'big') + mask.to_bytes(4, 'big') for sid, mask in pairs)
-    if (expected / 'iommus').read_bytes() != wanted:
-        raise ValueError('consumer does not reference the expected real IOMMU provider')
+    if scope == 'radio':
+        directory = pci_consumer(sysfs, device, expected, handle)
+    else:
+        if device is None:
+            directory = platform_consumer(sysfs, expected, 'q6apm-dai' if scope == 'audio' else 'qcom,fastrpc-cb')
+        else:
+            directory = sysfs / 'bus/platform/devices' / device
+            if (directory / 'of_node').resolve(strict=True) != expected.resolve(strict=True):
+                raise ValueError('kernel device does not match the exact DT consumer')
+        wanted = b''.join(handle + sid.to_bytes(4, 'big') + mask.to_bytes(4, 'big') for sid, mask in pairs)
+        if (expected / 'iommus').read_bytes() != wanted:
+            raise ValueError('consumer does not reference the expected real IOMMU provider')
+    if mode == 'managed':
+        # Normal consumer attachment chooses the domain. Never force identity.
+        # Only the getter's exact "not stage1" errno permits identity fallback.
+        try:
+            first = (directory / 'piano_dma_context').read_text()
+            mode = 'stage1'
+        except OSError as error:
+            if error.errno != errno.EAGAIN:
+                raise
+            mode = 'identity'
+            first = (directory / 'piano_dma_route').read_text()
+    else:
+        first = (directory / ('piano_dma_context' if mode == 'stage1' else 'piano_dma_route')).read_text()
     attr = 'piano_dma_context' if mode == 'stage1' else 'piano_dma_route'
-    first, second = (directory / attr).read_text(), (directory / attr).read_text()
+    second = (directory / attr).read_text()
     if first != second:
         raise ValueError('context changed across fresh kernel reads')
-    return {'scope': scope, 'domain': mode, 'routes': verify(first, mode, pairs),
+    return {'scope': scope, 'consumer': directory.name, 'domain': mode, 'routes': verify(first, mode, pairs),
+            'pci_parf_hardware_table_verified': False,
             'marker_written': False, 'memory_ownership_authorized': False, 'dma_transfer_verified': False}
 
 

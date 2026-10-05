@@ -5,6 +5,7 @@ No raw register access, stream programming, block access or cached ready marker.
 The six-master parser is the same reviewed implementation used on the host.
 """
 import argparse
+import errno
 import hashlib
 import importlib.util
 import json
@@ -13,10 +14,11 @@ from pathlib import Path
 import subprocess
 import struct
 import sys
+import time
 
 CHECKER_SHA256 = '1f2c26329c00b5b791a101d409032cd3d8b1962f83018937807c5cbbb7f5a2e1'
 CHECKER_PATH = Path('/usr/lib/piano/piano_dma_routes.py')
-CONTEXT_CHECKER_SHA256 = 'b8ddab903e003d2af82219a66b36f9a96801b4e717b00ef6abcfadac91d24be8'
+CONTEXT_CHECKER_SHA256 = 'ae2c661a7a4eec1a84f5720041550f9cadd5884fd567dbfc3d4211d0be7393fc'
 CONTEXT_CHECKER_PATH = Path('/usr/lib/piano/piano_dma_contexts.py')
 QUP = ('a00000.qcom,gpi-dma', 'ac0000.qcom,qupv3_1_geni_se',
        '800000.qcom,gpi-dma', '8c0000.qcom,qupv3_2_geni_se')
@@ -26,13 +28,9 @@ CONTEXT_SCOPES = {'gpu': ('gpu', 'gmu'), 'gmu': ('gmu',), 'mdss': ('mdss',),
                   'mdss-prebind': ('mdss-prebind',),
                   'video': ('video',), 'camera': ('camera',),
                   'display': ('mdss', 'gpu', 'gmu'),
-                  'display-active': ('mdss', 'gpu', 'gmu')}
-# Explicit missing implementations, not optional hardware omitted from a boot.
-MISSING = {
-    'radio': 'PCIe iommu-map/RID-to-SID binding and SID 1400/mask 7f kernel readback are missing; legacy USB-route cloning is forbidden',
-    'adsp': 'GPR/FastRPC still reference the legacy apps_smmu; ADSP SID/mask consumer attach and shared-memory proof are missing',
-    'audio': 'GPR dais SID 1001/80 and 1041/20 require real Linux consumer attachment and domain readback',
-}
+                  'display-active': ('mdss', 'gpu', 'gmu'),
+                  'adsp': tuple('fastrpc-' + str(i) for i in range(1, 7)),
+                  'audio': ('audio',), 'radio': ('radio',)}
 
 
 class Refused(RuntimeError):
@@ -132,15 +130,20 @@ def require_clock(sysfs=Path('/sys')):
 
 def prove(module, scope, sysfs=Path('/sys'), contexts=None):
     if scope == 'all':
-        raise Refused('complete hardware proof is unavailable: ' + '; '.join(MISSING.values()))
-    if scope in MISSING:
-        raise Refused(MISSING[scope])
+        required = ('clock', 'usb', 'qup', 'storage', 'gpu', 'display-active',
+                    'video', 'camera', 'adsp', 'audio', 'radio')
+        return {'schema': 'piano-ram-hardware-v1', 'scope': scope,
+                'status': 'ALL_SCOPED_CONFIGURATION_READBACK_ONLY',
+                'proofs': [prove(module, item, sysfs, contexts) for item in required],
+                'dma_transfer_verified': False, 'full_hardware_ready': False,
+                'memory_ownership_authorized': False, 'global_ready_marker_written': False}
     if scope in CONTEXT_SCOPES:
         contexts = contexts or context_checker()
         result = [contexts.read_scope(item, sysfs) for item in CONTEXT_SCOPES[scope]]
         return {'schema': 'piano-ram-hardware-v1', 'scope': scope,
                 'status': 'SCOPED_KERNEL_CONTEXT_CONFIGURATION_READBACK_ONLY',
                 'contexts': result, 'dma_transfer_verified': False,
+                'pci_parf_hardware_table_verified': False,
                 'full_hardware_ready': False, 'memory_ownership_authorized': False,
                 'global_ready_marker_written': False}
     clocks = require_clock(sysfs) if scope in ('clock', 'storage') else None
@@ -180,22 +183,36 @@ def prepare(module, load=subprocess.run, sysfs=Path('/sys')):
     return {'schema': 'piano-ram-hardware-v1', 'scope': 'bootstrap',
             'status': 'COMMON_ROUTES_VERIFIED_FULL_SERVICE_PROOFS_PENDING',
             'proofs': proofs, 'full_hardware_ready': False,
-            'missing_service_proofs': MISSING, 'ufs_module_loaded': False,
+            'service_contexts_not_checked_by_bootstrap': ['gpu', 'display-active', 'video', 'camera', 'adsp', 'audio', 'radio'],
+            'ufs_module_loaded': False,
             'global_ready_marker_written': False, 'memory_ownership_authorized': False}
+
+
+def wait_proof(module, scope, seconds, prove_fn=prove, now=time.monotonic, sleep=time.sleep):
+    deadline = now() + seconds
+    while True:
+        try:
+            return prove_fn(module, scope)
+        except OSError as error:
+            if error.errno not in (errno.ENOENT, errno.ENODEV, errno.EAGAIN) or now() >= deadline:
+                raise
+            sleep(min(1, max(0, deadline - now())))
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     mode = ap.add_mutually_exclusive_group()
-    mode.add_argument('--require-scope', choices=tuple(SCOPES) + tuple(CONTEXT_SCOPES) + tuple(MISSING) + ('all', 'clock'))
+    mode.add_argument('--require-scope', choices=tuple(SCOPES) + tuple(CONTEXT_SCOPES) + ('all', 'clock'))
     mode.add_argument('--observe-scope', choices=('mdss-prebind',),
                       help='Nonblocking prebind diagnostic; never authorizes a driver or reports readiness')
+    ap.add_argument('--wait-seconds', type=int, choices=range(31), default=0,
+                    help='Wait only for normal consumer creation or busy getter; faults/drift still fail immediately')
     args = ap.parse_args()
     scope = args.require_scope or args.observe_scope or 'bootstrap'
     try:
         require_ram()
         module = checker()
-        report = prove(module, scope) if (args.require_scope or args.observe_scope) else prepare(module)
+        report = wait_proof(module, scope, args.wait_seconds, prove_fn=prove) if (args.require_scope or args.observe_scope) else prepare(module)
     except (OSError, ValueError, Refused) as error:
         report = {'schema': 'piano-ram-hardware-v1', 'scope': scope, 'status': 'REFUSED',
                   'error': str(error), 'full_hardware_ready': False,

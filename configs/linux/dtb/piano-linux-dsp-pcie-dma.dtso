@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+/plugin/;
+
+// Actual ADSP memory-consumer SID/masks from the current ROM. Each consumer
+// binds the real Linux apps SMMU through ordinary OF/platform DMA setup.
+/ {
+    fragment@530 {
+        target-path = "/soc/remoteproc-adsp@03000000/glink-edge/qcom,gpr/service@3/dais";
+        __overlay__ { iommus = <&apps_smmu_ml 0x1001 0x80>, <&apps_smmu_ml 0x1041 0x20>; };
+    };
+    fragment@531 {
+        target-path = "/soc/remoteproc-adsp@03000000/glink-edge/qcom,fastrpc/compute-cb@1";
+        __overlay__ { iommus = <&apps_smmu_ml 0x1003 0x80>, <&apps_smmu_ml 0x1043 0x20>; };
+    };
+    fragment@532 {
+        target-path = "/soc/remoteproc-adsp@03000000/glink-edge/qcom,fastrpc/compute-cb@2";
+        __overlay__ { iommus = <&apps_smmu_ml 0x1004 0x80>, <&apps_smmu_ml 0x1044 0x20>; };
+    };
+    fragment@533 {
+        target-path = "/soc/remoteproc-adsp@03000000/glink-edge/qcom,fastrpc/compute-cb@3";
+        __overlay__ { iommus = <&apps_smmu_ml 0x1005 0x80>, <&apps_smmu_ml 0x1045 0x20>; };
+    };
+    fragment@534 {
+        target-path = "/soc/remoteproc-adsp@03000000/glink-edge/qcom,fastrpc/compute-cb@4";
+        __overlay__ { iommus = <&apps_smmu_ml 0x1006 0x80>, <&apps_smmu_ml 0x1046 0x20>; };
+    };
+    fragment@535 {
+        target-path = "/soc/remoteproc-adsp@03000000/glink-edge/qcom,fastrpc/compute-cb@5";
+        __overlay__ { iommus = <&apps_smmu_ml 0x1007 0x40>, <&apps_smmu_ml 0x1067 0>, <&apps_smmu_ml 0x1087 0>; };
+    };
+    fragment@536 {
+        target-path = "/soc/remoteproc-adsp@03000000/glink-edge/qcom,fastrpc/compute-cb@6";
+        __overlay__ { iommus = <&apps_smmu_ml 0x1008 0x80>, <&apps_smmu_ml 0x1048 0x20>; };
+    };
+    // ROM RID0/100 map to1400/1401. Linux #iommu-cells=2 requires explicit
+    // mask0 and length1, as in selected sm8750.dtsi/of_map_iommu_id.
+    fragment@537 {
+        target-path = "/soc/pcie@1c00000";
+        __overlay__ {
+            iommu-map = <0 &apps_smmu_ml 0x1400 0 1>,
+                        <0x100 &apps_smmu_ml 0x1401 0 1>;
+        };
+    };
+};

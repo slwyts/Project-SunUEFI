@@ -14,7 +14,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = 'fd6266d73f3442b23362260c3aa0c86782e0b52c'
 CHECKER_SHA = '1f2c26329c00b5b791a101d409032cd3d8b1962f83018937807c5cbbb7f5a2e1'
-CONTEXT_CHECKER_SHA = 'b8ddab903e003d2af82219a66b36f9a96801b4e717b00ef6abcfadac91d24be8'
+CONTEXT_CHECKER_SHA = 'ae2c661a7a4eec1a84f5720041550f9cadd5884fd567dbfc3d4211d0be7393fc'
 PINS = {
     'display-start': 'a371d7cfa526b575f7393eeed60fcc7a6dba85b6971ebd0c977ae880ab60a8ba',
     'touch-start': '77aacb8b37d2513b4a919d568d9b57048ef09ea32df20758babb8c8c1d83acdd',
@@ -44,7 +44,7 @@ def adapt(name, data):
         raise ValueError('pinned public script drift: ' + name)
     text = data.decode()
     if name in ('touch-start', 'radio-start'):
-        text = replace_once(text, LEGACY_GATE, GUARD + ('touch' if name == 'touch-start' else 'radio'))
+        text = replace_once(text, LEGACY_GATE, GUARD + ('touch' if name == 'touch-start' else 'qup'))
     if name == 'radio-start':
         text = replace_once(text,
             '# Only this verified register is safe; do not probe adjacent TLMM windows.\n'
@@ -52,6 +52,10 @@ def adapt(name, data):
             '/usr/lib/piano/busybox devmem 0x0f204008 32 "$((v | 1))"\n',
             '# Reference clocks are enabled by the bound normal PHY clock consumer.\n'
             + GUARD + 'clock\n')
+        text = replace_once(text, 'modprobe --ignore-install phy_qcom_qmp_pcie',
+                            'modprobe --ignore-install phy_qcom_qmp_pcie\n'
+                            '# Normal PHY/host probing enumerates the real PCI endpoint first.\n'
+                            + GUARD + 'radio --wait-seconds 30')
     elif name == 'display-start':
         text = replace_once(text,
             '    # No stream match may be added behind the SMMU driver\'s back once it\n'
@@ -78,12 +82,14 @@ def adapt(name, data):
         scope = name.removesuffix('-start')
         # Before the first hardware operation, after the published disable option.
         anchors = {'keyboard-start': 'n=0\nuntil [ -e "$BUS/driver" ]; do',
-                   'adsp-start': 'say "BEGIN remoteproc"', 'audio-start': "adsp=''",
+                   'adsp-start': 'say "BEGIN power"', 'audio-start': 'say "BEGIN card"',
                    'video-start': 'modprobe videocc_sm8750',
                    'camera-start': 'modprobe system_heap'}
         if name in anchors:
             before = anchors[name]
-            text = replace_once(text, before, GUARD + scope + '\n\n' + before)
+            preparation = 'modprobe fastrpc || { say "FAIL fastrpc"; exit 1; }\n' if name == 'adsp-start' else ''
+            wait = ' --wait-seconds 20' if name in ('adsp-start', 'audio-start') else ''
+            text = replace_once(text, before, preparation + GUARD + scope + wait + '\n\n' + before)
     if name in ('adsp-start', 'audio-start'):
         # A failed oneshot must not be reported successful by systemd.
         text = text.replace('; exit 0; }', '; exit 1; }')
@@ -160,10 +166,12 @@ def build(output, source, rootfs=None):
               'global_ready_marker': False, 'register_programming': False,
               'device_tested': False, 'full_hardware_ready': False,
               'supported_readback_scopes': ['usb', 'qup', 'touch', 'keyboard', 'storage',
-                                            'gpu', 'gmu', 'mdss', 'display', 'display-active', 'video', 'camera'],
+                                            'gpu', 'gmu', 'mdss', 'display', 'display-active', 'video', 'camera', 'adsp', 'audio', 'radio'],
               'clock_scope': 'ACTUAL_DT_CONSUMERS_AND_BOUND_PROVIDER_ONLY_NO_RATE_ENABLE_READBACK',
               'context_scope': 'KERNEL_PRIVATE_AND_HARDWARE_CONFIGURATION_ONLY_NO_DMA_TRANSFER',
-              'pending_scopes': ['radio', 'adsp', 'audio']}
+              'device_transfer_validation_pending': True,
+              'pci_parf_hardware_table_verified': False,
+              'domain_forced': False}
     (output / 'manifest.json').write_text(json.dumps(result, indent=2) + '\n')
     if rootfs:
         for name in files:

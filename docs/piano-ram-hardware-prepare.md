@@ -16,7 +16,7 @@ clone USB's context bank, program stream matches or access raw registers.
 
 The second unchanged shared parser, `tools/check_piano_kernel_contexts.py`, is
 installed as `/usr/lib/piano/piano_dma_contexts.py`, SHA256
-`b8ddab903e003d2af82219a66b36f9a96801b4e717b00ef6abcfadac91d24be8`. It validates the
+`ae2c661a7a4eec1a84f5720041550f9cadd5884fd567dbfc3d4211d0be7393fc`. It validates the
 real selected consumer/provider, fresh kernel-private versus hardware stage1
 context configuration, exact SIDs/masks and fault-free register snapshots. This
 provides configuration evidence; it does not claim a successful DMA transfer.
@@ -90,19 +90,20 @@ paths that returned zero are changed to nonzero failures.
 | touch and keyboard | QUP1 GPI b6, wrapper a3; QUP2 GPI436, wrapper423; all mask0 | Fresh shared six-master parser; retains touch rebind and keyboard firmware/HID chain |
 | native GPU | Adreno GPU SID0/1, GMU5; normal MSM-managed domains | Normal MSM probe and bound-driver wait first, then mandatory GPU+GMU stage1 readback |
 | native display | MDSS800/mask2 plus Adreno proof | Nonblocking prebind diagnostic, then mandatory MDSS+GPU+GMU stage1 readback after DPU binds |
-| radio | PCIe RID-to-SID binding and1400/mask7f; real CLKREF consumer | Refuses exact missing route; removes manual CLKREF write |
-| ADSP | Real GPR/FastRPC consumer attachment and shared-memory proof | Refuses before remoteproc start, leaves all firmware/charging commands available |
-| audio | GPR dais1001/80 and1041/20 | Refuses before AudioReach buffers/card setup |
+| radio | Real WCN7861 RID100→SID1401/mask0 and CLKREF consumer | Normal PHY/host enumeration, fresh endpoint/domain proof, then MHI/ath12k |
+| ADSP | Six real FastRPC consumers, thirteen SID/mask pairs | Normal remoteproc running and FastRPC child creation, fresh proofs, then application/power handoff |
+| audio | Actual GPR dais1001/80 and1041/20 | Normal APM/frontend creation, fresh dais proof, then card/PCM buffers |
 | video | Iris1940 **and1947**, translated DMA domain | Normal group type switch to DMA, then mandatory context readback before module load |
 | camera | CAMSS1c00 translated DMA domain | Normal group type switch to DMA, then mandatory context readback before module load |
 | UFS | SID60/mask0 plus real qref binding | Read-only scope is available; bootstrap does not load storage |
 
 The complete merged DT has two Iris SIDs; the public standalone video overlay
-shows only1940. ADSP FastRPC compute-cb1..6 still point to the legacy apps SMMU:
+shows only1940. The additional DSP/PCI overlay retargets seven real DSP consumers
+from the legacy apps SMMU to the real Linux provider. Their stream pairs are:
 1003..1008/mask80 plus1043..1048/mask20, except cb5 uses1007/40,1067/0,1087/0.
-GPR dais uses1001/80 and1041/20. These must be real consumer bindings, not a list
-programmed by the old USB-route cloning script. PCIe's current `iommu-map` is
-empty, so its RID-to-SID relationship cannot be invented. The existing kernel
+GPR dais uses1001/80 and1041/20. The ROM and Linux source agree RID0→1400 and
+RID100→1401. Linux uses explicit mask0/length1 five-cell tuples for its two-cell
+provider; the old broad1400/mask7f cloned route is never generated. The existing kernel
 already matches `qcom,sun-adsp-pas` to its SM8750 resources; that compatible name
 itself is not a missing driver.
 
@@ -110,8 +111,11 @@ The original six-master identity ABI comes from
 `74c517825a95113f35c121db136e3880d44b9806`. The independent `piano-smmu-context`
 worktree adds the real ADMIN-only `piano_dma_context` getter for both normal DMA
 and MSM-managed stage1 domains. Identity and translated domains use distinct
-interfaces. The complete proof mode (`--require-scope all`) still fails for the
-remaining PCIe/ADSP/audio consumer bindings; they are not relabeled as covered.
+interfaces. DSP/PCI scopes accept the actual normally attached domain without
+forcing it. Only exact stage1 getter EAGAIN permits identity fallback. Faults,
+stale hardware, denied access and missing ABI files fail. `--require-scope all`
+now requires every actual consumer proof; even success still reports
+`dma_transfer_verified=false` and `full_hardware_ready=false`.
 
 Guard placement follows actual Linux ownership acquisition. Video/camera must
 first write `DMA` to their normal IOMMU group `type` interface. That operation
@@ -130,6 +134,15 @@ and returns zero to permit normal driver probe. Every such report has
 real MDSS, GPU **and** GMU stage1 evidence. The observation mode cannot be used
 for other scopes. Historical `ram-hardware-adapters-v1` output remains unchanged;
 new context-enabled adapters must be generated into a new directory.
+
+GPR/FastRPC children only exist after normal remoteproc and module startup.
+The verifier discovers the unique real platform child by its exact OF path and
+checks its bound driver, without inventing a generated bus name. ADSP proof
+follows running/FastRPC creation; audio proof follows frontend creation and
+precedes PCM/card allocation; PCI proof follows normal PHY enumeration and
+precedes MHI/ath12k. Bounded waits only retry normal missing/busy creation states,
+not faults or changed configuration. See `docs/piano-dsp-pcie-dma.md` for actual
+source paths, all fifteen DSP pairs and precise PCI mapping evidence.
 
 ## Canonical generation and staging
 

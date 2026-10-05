@@ -86,11 +86,10 @@ class RamHardwareTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             hardware.prove(self.module, 'touch', self.sysfs)
 
-    def test_unsupported_scopes_have_specific_failure_not_six_master_success(self):
+    def test_all_configuration_requires_real_context_consumers_not_six_master_success(self):
         self.fixture()
-        for scope in (*hardware.MISSING, 'all'):
-            with self.subTest(scope=scope), self.assertRaises(hardware.Refused):
-                hardware.prove(self.module, scope, self.sysfs)
+        with self.assertRaises(OSError):
+            hardware.prove(self.module, 'all', self.sysfs)
         # Real binding proves clocks belong to normal drivers, not their rate.
         proof = hardware.prove(self.module, 'clock', self.sysfs)
         self.assertFalse(proof['clock_bindings']['clock_enable_or_rate_readback_verified'])
@@ -182,7 +181,7 @@ class RamHardwareTests(unittest.TestCase):
 
     def context_fixture(self):
         module = hardware.context_checker(ROOT / 'tools/check_piano_kernel_contexts.py')
-        actual = read_fdt((ROOT / 'private/analysis/piano-linux-managed-clocks-v1/Piano-full-linux-managed-clocks.dtb').read_bytes())['tree']
+        actual = read_fdt((ROOT / 'private/analysis/piano-linux-managed-dsp-pcie-v1/Piano-full-linux-managed-dsp-pcie.dtb').read_bytes())['tree']
         for path in ('/soc/iommu@15000000', '/soc/iommu@3da0000'):
             node = self.sysfs / ('firmware/devicetree/base' + path)
             node.mkdir(parents=True, exist_ok=True)
@@ -191,12 +190,29 @@ class RamHardwareTests(unittest.TestCase):
         for scope, (device, path, mode, pairs) in module.SCOPES.items():
             node = self.sysfs / ('firmware/devicetree/base' + path)
             node.mkdir(parents=True, exist_ok=True)
-            (node / 'iommus').write_bytes(actual[path]['iommus'])
-            dev = self.sysfs / 'bus/platform/devices' / device
+            if 'iommus' in actual[path]:
+                (node / 'iommus').write_bytes(actual[path]['iommus'])
+            else:
+                for key, value in actual[path].items():
+                    (node / key).write_bytes(value)
+            bus = 'pci' if scope == 'radio' else 'platform'
+            dev = self.sysfs / ('bus/' + bus + '/devices') / (device or 'created-child-' + scope)
             dev.mkdir(parents=True, exist_ok=True)
             if not (dev / 'of_node').exists():
                 (dev / 'of_node').symlink_to(node)
-            stage1 = mode == 'stage1'
+            if device is None:
+                driver = self.sysfs / 'bus/platform/drivers' / ('q6apm-dai' if scope == 'audio' else 'qcom,fastrpc-cb')
+                driver.mkdir(parents=True, exist_ok=True)
+                (dev / 'driver').symlink_to(driver)
+            if scope == 'radio':
+                (dev / 'vendor').write_text('0x17cb\n')
+                (dev / 'device').write_text('0x110e\n')
+                host = self.sysfs / 'firmware/devicetree/base/soc/pcie@1c00000'
+                host.mkdir(parents=True, exist_ok=True)
+                for key, value in actual['/soc/pcie@1c00000'].items():
+                    (host / key).write_bytes(value)
+            stage1 = mode in ('stage1', 'managed')
+            mode = 'stage1' if stage1 else 'identity'
             text = f'piano-dma-{"context" if stage1 else "route"}-v1 domain={mode} ids={len(pairs)}\n'
             for i, (sid, mask) in enumerate(pairs):
                 text += (f'sid={sid:x} mask={mask:x} slot={i + 2} origin=kernel-installed '
@@ -213,13 +229,14 @@ class RamHardwareTests(unittest.TestCase):
     def test_actual_shared_context_parser_accepts_initialized_domains_never_dma_transfer(self):
         self.fixture()
         contexts = self.context_fixture()
-        for scope in ('video', 'camera', 'gpu', 'gmu', 'mdss'):
+        for scope in ('video', 'camera', 'gpu', 'gmu', 'mdss', 'adsp', 'audio', 'radio', 'all'):
             with self.subTest(scope=scope):
                 proof = hardware.prove(self.module, scope, self.sysfs, contexts)
                 self.assertFalse(proof['dma_transfer_verified'])
                 self.assertFalse(proof['full_hardware_ready'])
-                self.assertTrue(all(row['configuration_readback_verified']
-                    for context in proof['contexts'] for row in context['routes']))
+                if scope != 'all':
+                    self.assertTrue(all(row['configuration_readback_verified']
+                        for context in proof['contexts'] for row in context['routes']))
         video = self.sysfs / 'bus/platform/devices/aa00000.video-codec-ml/piano_dma_context'
         original = video.read_text()
         video.write_text(original.replace('domain=stage1', 'domain=identity'))
