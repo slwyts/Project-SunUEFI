@@ -19,6 +19,7 @@ static UINTN quiet_syncs;
 static UINTN address_writes,address_status_starts;
 static BOOLEAN ran,failed_halt,reject_session,fail_setup,fail_allocate;
 static BOOLEAN fail_dma_free;
+static EFI_STATUS dma_complete_status,dma_free_status;
 static VOID (*stall_hook)(UINTN Us);
 static UINT32 (*extra_mmio_read)(UINTN Address);
 static jmp_buf failed_reset_return;
@@ -28,7 +29,14 @@ BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
 VOID EFIAPI MemoryFence(VOID){__sync_synchronize();}
-VOID EFIAPI CpuDeadLoop(VOID){assert(resets==1 && failed_halt);longjmp(failed_reset_return,1);}
+VOID EFIAPI CpuDeadLoop(VOID){
+#if PIANO_USB_RAM_BOOT
+  assert(resets==0 && failed_halt);
+#else
+  assert(resets==1 && failed_halt);
+#endif
+  longjmp(failed_reset_return,1);
+}
 VOID *EFIAPI ZeroMem(VOID *Buffer,UINTN Bytes){return memset(Buffer,0,Bytes);}
 VOID *EFIAPI CopyMem(VOID *Dest,CONST VOID *Source,UINTN Bytes){return memmove(Dest,Source,Bytes);}
 INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN Bytes){return memcmp(A,B,Bytes);}
@@ -97,12 +105,13 @@ EFI_STATUS PianoDmaComplete(PIANO_DMA_BUFFER *Buffer,EFI_STATUS Status,BOOLEAN Q
   for(UINTN Ep=0;Ep<ARRAY_SIZE(mTrbs);++Ep)
     if(mTrbs[Ep].Cpu!=NULL && (Buffer==&mTrbs[Ep] || Buffer==mPayload[Ep]) && !(((DWC_TRB *)mTrbs[Ep].Cpu)->Control&BIT0))Proof=TRUE;
   assert(Quiet && Proof);
-  Buffer->Active=FALSE;++completions;return EFI_SUCCESS;
+  Buffer->Active=FALSE;++completions;return dma_complete_status;
 }
 EFI_STATUS PianoDmaSyncForCpu(PIANO_DMA_BUFFER *Buffer){assert(FALSE);return EFI_DEVICE_ERROR;}
 EFI_STATUS PianoDmaSyncForCpuQuiet(PIANO_DMA_BUFFER *Buffer){assert(Buffer==&mRing && Buffer->Active);++Buffer->QuietSyncs;++quiet_syncs;return EFI_SUCCESS;}
 EFI_STATUS PianoDmaReportQuietSync(PIANO_DMA_BUFFER *Buffer){(void)Buffer;return EFI_SUCCESS;}
 EFI_STATUS PianoDmaFree(PIANO_DMA_BUFFER *Buffer) {
+  if(dma_free_status!=EFI_SUCCESS)return dma_free_status;
   if(Buffer->Quarantined || Buffer->ExitRetained)return EFI_ACCESS_DENIED;
   if(fail_dma_free)return EFI_DEVICE_ERROR;
   assert(!Buffer->Active);free(Buffer->Cpu);ZeroMem(Buffer,sizeof(*Buffer));return EFI_SUCCESS;
@@ -114,7 +123,7 @@ static VOID init(VOID) {
   quiet_syncs=0;
   address_writes=address_status_starts=0;
   ran=failed_halt=reject_session=fail_setup=fail_allocate=FALSE;
-  fail_dma_free=FALSE;stall_hook=NULL;extra_mmio_read=NULL;
+  fail_dma_free=FALSE;stall_hook=NULL;extra_mmio_read=NULL;dma_complete_status=dma_free_status=EFI_SUCCESS;
 }
 static VOID restored(VOID) {
   assert(session_writes==4 && regs[USB_SESSION_HS/4]==original_hs && regs[USB_SESSION_SS/4]==original_ss);

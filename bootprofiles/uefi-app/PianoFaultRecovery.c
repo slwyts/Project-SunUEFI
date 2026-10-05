@@ -27,9 +27,12 @@ STATIC VOID EFIAPI Recover(EFI_EXCEPTION_TYPE Type,EFI_SYSTEM_CONTEXT Context) {
     // recursive fault skips this hook and resets, preserving the first log.
     if(mDiagnostic!=NULL)mDiagnostic();
   }
-#ifdef PIANO_USB_UFS_FETCH
+#if (defined(PIANO_USB_UFS_FETCH) && PIANO_USB_UFS_FETCH) || (defined(PIANO_USB_RAM_BOOT) && PIANO_USB_RAM_BOOT)
   // Exception context cannot safely locate protocols or perform BS/native
   // teardown. Combined DMA ownership is retained; no unverified reset.
+#ifdef __aarch64__
+  __asm__ volatile("msr daifset, #15" ::: "memory");
+#endif
   CpuDeadLoop();
 #endif
   // The standard recovery timer cannot run if a fault/ASSERT disabled IRQs.

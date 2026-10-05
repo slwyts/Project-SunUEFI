@@ -63,6 +63,9 @@ def argument_parser():
     parser.add_argument('--usb-fastboot',action='store_true',help='Isolated standard USB fastboot bulk with RAM-only stage/upload and diagnostics; implies usb-ep0')
     parser.add_argument('--usb-screenshot',action='store_true',help='Enable actual GOP BMP capture over the isolated USB fastboot profile')
     parser.add_argument('--usb-ufs-fetch',action='store_true',help='Explicit read-only UFS/USB coexistence profile with standard partition fetch')
+    parser.add_argument('--usb-ram-boot',action='store_true',help='Isolated 64MiB fastboot boot diagnostic; accepts only the pinned returning AA64 probe')
+    parser.add_argument('--pogo-register-probe',action='store_true',help='Isolated protected readonly SE6/wrapper snapshot; no I2C transaction or firmware load')
+    parser.add_argument('--high-ram-readonly',action='store_true',help='Isolated high address AT/EFI/GCD evidence; no table walk, mapping or data access')
     parser.add_argument('--return-seconds',type=int,default=75,help='Diagnostic cold-reboot timer, 30 to 120 seconds (default 75)')
     return parser
 
@@ -70,7 +73,7 @@ def argument_parser():
 def validate_write_options(parser,args):
     if args.ufs_write_preflight or args.ufs_write_restore_test or args.ufs_bounded_filesystem_test:
         if any((args.ufs_filesystems,args.ufs_shell,args.ufs_shell_interactive,args.ufs_setup,
-                args.usb_controller,args.usb_ep0,args.usb_fastboot,args.usb_screenshot,args.usb_ufs_fetch,args.usb_debug,args.touch_probe,args.gpi_probe,
+                args.usb_controller,args.usb_ep0,args.usb_fastboot,args.usb_screenshot,args.usb_ufs_fetch,args.usb_ram_boot,args.pogo_register_probe,args.high_ram_readonly,args.usb_debug,args.touch_probe,args.gpi_probe,
                 args.fault_recovery_test,args.ram_qupfw,args.qupfw_disk,args.pmic_metadata)):
             parser.error('UFS write/preflight requires an isolated profile without filesystem/Shell/Setup/USB/touch consumers')
         args.ufs_blockio=True
@@ -114,6 +117,10 @@ def bounded_fs_ram_app(text):
 
 
 def validate_usb_fastboot_options(parser,args):
+    if args.usb_ram_boot:
+        if args.usb_ufs_fetch or args.usb_screenshot or args.return_seconds!=120:
+            parser.error('--usb-ram-boot is isolated and requires --return-seconds 120')
+        args.usb_fastboot=True
     if args.usb_ufs_fetch:
         if any((args.ufs_filesystems,args.ufs_shell,args.ufs_shell_interactive,args.ufs_setup,
                 args.ufs_write_preflight,args.ufs_write_restore_test,args.ufs_bounded_filesystem_test,
@@ -133,12 +140,28 @@ def validate_usb_fastboot_options(parser,args):
     args.usb_ep0=True
 
 
+def validate_readonly_diagnostic_options(parser,args):
+    if not (args.pogo_register_probe or args.high_ram_readonly):return
+    if args.pogo_register_probe and args.high_ram_readonly:
+        parser.error('Pogo and high RAM diagnostics must be separate')
+    forbidden=('keys','touch_probe','gpi_probe','ram_qupfw','qupfw_disk','usb_debug',
+        'fault_recovery','fault_recovery_test','pmic_metadata','ufs_probe','dma_probe','dma_owned',
+        'ufs_dma_nop','ufs_blockio','ufs_filesystems','ufs_shell','ufs_shell_interactive','ufs_setup',
+        'ufs_write_preflight','ufs_write_restore_test','ufs_bounded_filesystem_test',
+        'usb_controller','usb_ep0','usb_fastboot','usb_screenshot','usb_ufs_fetch','usb_ram_boot')
+    if any(getattr(args,name) for name in forbidden):parser.error('Readonly register/memory diagnostic requires an isolated profile')
+    if args.high_ram_readonly and args.foundation:parser.error('High RAM evidence excludes native foundation')
+
+
 def main():
     parser=argument_parser()
     args=parser.parse_args()
+    validate_readonly_diagnostic_options(parser,args)
     if args.usb_screenshot:args.usb_fastboot=True
     validate_write_options(parser,args)
     validate_usb_fastboot_options(parser,args)
+    if args.pogo_register_probe:args.foundation=True
+    if args.high_ram_readonly:args.fault_recovery=True
     if args.ufs_shell_interactive:args.ufs_shell=True
     if args.ufs_shell:args.ufs_filesystems=True
     if args.ufs_setup:args.ufs_filesystems=True
@@ -440,7 +463,7 @@ def main():
             '  Status=gBS->LoadImage (FALSE,ImageHandle')
         path.write_text(text)
     if args.usb_controller:
-        for name in ('PianoUsbController.c','PianoDma.c','PianoDma.h','PianoSmmu.c','PianoSmmu.h',
+        for name in ('PianoUsbController.c','PianoUsbRamBootExperiment.h','PianoDma.c','PianoDma.h','PianoSmmu.c','PianoSmmu.h',
                      'PianoOwnedSmmu.c','PianoOwnedSmmu.h','PianoIoPageTable.c','PianoIoPageTable.h'):
             shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
         path=app/'PianoKeys.c';path.write_text('#define PIANO_USB_POWER_PROBE 1\n'+path.read_text())
@@ -474,6 +497,24 @@ def main():
                         shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
                     path=app/'PianoDwc3Device.c';path.write_text('#define PIANO_USB_SCREENSHOT 1\n'+path.read_text())
                     path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFastbootScreen.c'))
+                if args.usb_ram_boot:
+                    sources=('PianoFastbootBoot.c','PianoFastbootLaunch.c','PianoFastbootDownloadBlob.c','PianoUsbRamBoot.c')
+                    headers=('PianoFastbootBoot.h','PianoFastbootLaunch.h','PianoFastbootDownloadBlob.h','PianoUsbRamBoot.h',
+                             'PianoRamBootProbe.h','PianoUsbStorageExperiment.h')
+                    for name in sources+headers:shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+                    for name in ('PianoFastboot.c','PianoDwc3Device.c','PianoUsbController.c'):
+                        path=app/name;path.write_text('#define PIANO_USB_RAM_BOOT 1\n'+path.read_text())
+                    path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n'+''.join('  '+name+'\n' for name in sources).rstrip())
+                    text=text.replace('  UefiLib','  UefiLib\n  UefiRuntimeServicesTableLib')
+                    text+='\n[Guids]\n  gEfiEventExitBootServicesGuid\n';path.write_text(text)
+                    path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
+                        '#include "PianoUsbRamBoot.h"\n#pragma pack(1)',1)
+                    text=text.replace('Status=PianoUsbControllerExperiment(Fdt)','Status=PianoRunUsbRamBoot(Fdt,ImageHandle)')
+                    text=text.replace('  Status=PianoStartKeys(Fdt);\n','').replace('  DEBUG((DEBUG_WARN,"SUNUEFI_KEYS_START %r\\n",Status));\n','')
+                    text=write_test_ram_app(text).replace('SUNUEFI_UFS_WRITE_PROFILE_WAIT boot_blocked=1 readonly_blockio=1',
+                        'SUNUEFI_RAM_BOOT_PROFILE_WAIT probe_only=1 max_download_64MiB=1')
+                    path.write_text(text)
+                    path=app/'PianoFaultRecovery.c';path.write_text('#define PIANO_USB_RAM_BOOT 1\n'+path.read_text())
                 if args.usb_ufs_fetch:
                     for name in ('PianoUsbStorageExperiment.h','PianoFastbootBlockRead.c','PianoFastbootBlockRead.h',
                                  'PianoUsbUfsFetch.c','PianoUsbUfsFetch.h'):
@@ -489,6 +530,29 @@ def main():
                         'SUNUEFI_FETCH_PROFILE_WAIT boot_blocked=1 readonly=1')
                     path.write_text(text)
                     path=app/'PianoFaultRecovery.c';path.write_text('#define PIANO_USB_UFS_FETCH 1\n'+path.read_text())
+    if args.pogo_register_probe or args.high_ram_readonly:
+        if args.pogo_register_probe:
+            sources=('PianoPogoProbe.c','PianoGeniI2cPio.c');headers=('PianoPogoProbe.h','PianoGeniI2cPio.h')
+            call='Status=PianoProbePogo(Fdt);';declaration='#include "PianoPogoProbe.h"'
+        else:
+            sources=('PianoHighRamReadonly.c','PianoHighRamProbe.c');headers=('PianoHighRamProbe.h',)
+            call='Status=PianoProbeHighRamReadonly();';declaration='EFI_STATUS PianoProbeHighRamReadonly(VOID);'
+        for name in sources+headers:shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+        for name in sources:
+            path=app/name;define='#define PIANO_POGO_PROBE_EXPERIMENT 1\n' if args.pogo_register_probe else '#define PIANO_HIGH_RAM_PROBE_EXPERIMENT 1\n'
+            path.write_text(define+path.read_text())
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n'+''.join('  '+name+'\n' for name in sources).rstrip())
+        text=text.replace('  DebugLib','  DebugLib\n  DxeServicesTableLib\n  PrintLib\n  TimerLib')
+        if args.pogo_register_probe:
+            text=text.replace('  MdePkg/MdePkg.dec','  MdePkg/MdePkg.dec\n  QcomPkg/QcomPkg.dec')
+            text+='  gEfiCpuArchProtocolGuid\n  gEfiMemoryAttributeProtocolGuid\n'
+        path.write_text(text)
+        path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',declaration+'\n#pragma pack(1)',1)
+        anchor='  Status=gBS->LoadImage (FALSE,ImageHandle'
+        if text.count(anchor)!=1:raise ValueError('Unexpected readonly diagnostic app anchor')
+        text=text.replace(anchor,'  '+call+'\n  DEBUG((DEBUG_WARN,"SUNUEFI_READONLY_DIAGNOSTIC_RETURN %r\\n",Status));\n'+anchor)
+        path.write_text(write_test_ram_app(text).replace('SUNUEFI_UFS_WRITE_PROFILE_WAIT boot_blocked=1 readonly_blockio=1',
+            'SUNUEFI_READONLY_PROFILE_WAIT no_storage=1 no_os=1'))
     dsc = target / 'pianoGui.dsc'
     text = dsc.read_text().replace('pianoGuiPkg/Library/RamLogSerialPortLib/FrameBufferSerialPortLib.inf',
                                   'pianoGuiPkg/Library/RamOnlySerialPortLib/RamOnlySerialPortLib.inf')
@@ -583,11 +647,24 @@ def main():
             '  EFI_GUID ShutdownGuid=PIANO_UFS_SHUTDOWN_GUID; PIANO_UFS_SHUTDOWN *Shutdown=NULL;\n'
             '  if(!EFI_ERROR(gBS->LocateProtocol(&ShutdownGuid,NULL,(VOID **)&Shutdown)) && Shutdown->Revision==1)\n'
             '    Shutdown->Halt();\n  gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);')
-    if args.usb_ufs_fetch:
+    if args.usb_ufs_fetch or args.usb_ram_boot:
         for name in ('PianoUsbStorageExperiment.h','PianoFastboot.h'):
             shutil.copyfile(root/'bootprofiles/uefi-app'/name,lib/name)
-        text=text.replace('#include "PianoUfsShutdown.h"',
-            '#include "PianoUfsShutdown.h"\n#include "PianoUsbStorageExperiment.h"\n#include <Library/BaseLib.h>')
+        if args.usb_ram_boot:
+            text=text.replace('#include <Protocol/GraphicsOutput.h>',
+                '#include <Protocol/GraphicsOutput.h>\n#include "PianoUsbStorageExperiment.h"\n#include <Library/BaseLib.h>')
+            anchor='  gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);'
+            if text.count(anchor)!=1:raise ValueError('Unexpected RAM boot timer anchor')
+            text=text.replace(anchor,'''  EFI_GUID UsbGuid=PIANO_USB_SHUTDOWN_GUID; PIANO_USB_SHUTDOWN *Usb=NULL;
+  EFI_STATUS UsbLocate=gBS->LocateProtocol(&UsbGuid,NULL,(VOID **)&Usb);
+  if(UsbLocate==EFI_SUCCESS) {
+    if(Usb==NULL || Usb->Revision!=1 || Usb->Halt==NULL || Usb->Halt()!=EFI_SUCCESS)CpuDeadLoop();
+  } else if(UsbLocate!=EFI_NOT_FOUND)CpuDeadLoop();
+'''+anchor)
+        else:
+            text=text.replace('#include "PianoUfsShutdown.h"',
+                '#include "PianoUfsShutdown.h"\n#include "PianoUsbStorageExperiment.h"\n#include <Library/BaseLib.h>')
+    if args.usb_ufs_fetch:
         before='  EFI_GUID ShutdownGuid=PIANO_UFS_SHUTDOWN_GUID; PIANO_UFS_SHUTDOWN *Shutdown=NULL;'
         replacement='''  EFI_GUID UsbGuid=PIANO_USB_SHUTDOWN_GUID; PIANO_USB_SHUTDOWN *Usb=NULL;
   EFI_STATUS UsbLocate=gBS->LocateProtocol(&UsbGuid,NULL,(VOID **)&Usb);

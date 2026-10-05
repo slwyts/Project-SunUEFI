@@ -49,6 +49,11 @@ BOOLEAN PianoDwc3ConsumeRebootRequest(VOID) {
 }
 #if PIANO_USB_FASTBOOT
 STATIC PIANO_FASTBOOT mFastboot;
+#if PIANO_USB_RAM_BOOT
+STATIC PIANO_FB_BOOT mExperimentBoot;
+STATIC BOOLEAN mExperimentHasBoot,mBootAckObserved,mBootActionValid;
+STATIC PIANO_FB_BOOT_ACTION mBootAction;
+#endif
 STATIC PIANO_FB_STORAGE mExperimentStorage;
 STATIC BOOLEAN mExperimentHasStorage,mExperimentContractFailed;
 STATIC PIANO_USB_STORAGE_CHECK mExperimentCheck;
@@ -68,6 +73,26 @@ STATIC FB_FRAME *mFrames,*mFramesTail;
 STATIC UINTN mFrameCount,mFrameBytes,mInFlightBytes;
 #define FB_QUEUE_FRAMES 16U
 #define FB_QUEUE_BYTES (PIANO_FASTBOOT_MAX_DOWNLOAD+1024U)
+EFI_STATUS PianoDwc3SetBootForExperiment(CONST PIANO_FB_BOOT *Boot) {
+  if(mExperimentRunning)return EFI_NOT_READY;
+#if PIANO_USB_RAM_BOOT
+  if(mBootActionValid)return EFI_NOT_READY;
+  if(Boot!=NULL && (!Boot->MaxImageBytes || Boot->Ready==NULL || Boot->Validate==NULL || Boot->TakeAfterAck==NULL))return EFI_INVALID_PARAMETER;
+  if(Boot!=NULL)mExperimentBoot=*Boot;else ZeroMem(&mExperimentBoot,sizeof(mExperimentBoot));mExperimentHasBoot=Boot!=NULL;return EFI_SUCCESS;
+#else
+  return Boot==NULL?EFI_SUCCESS:EFI_UNSUPPORTED;
+#endif
+}
+EFI_STATUS PianoDwc3ConsumeBootAction(PIANO_FB_BOOT_ACTION *Action) {
+  if(Action==NULL)return EFI_INVALID_PARAMETER;
+  ZeroMem(Action,sizeof(*Action));
+#if PIANO_USB_RAM_BOOT
+  if(!mBootActionValid)return EFI_NOT_FOUND;
+  *Action=mBootAction;ZeroMem(&mBootAction,sizeof(mBootAction));mBootActionValid=FALSE;return Action->Status;
+#else
+  return EFI_NOT_FOUND;
+#endif
+}
 EFI_STATUS PianoDwc3SetStorageForExperiment(CONST PIANO_FB_STORAGE *Storage) {
   if(mExperimentRunning)return EFI_NOT_READY;
   if(Storage!=NULL && (Storage->Ready==NULL || Storage->Info==NULL || Storage->ReadBlocks==NULL))return EFI_INVALID_PARAMETER;
@@ -198,6 +223,13 @@ STATIC EFI_STATUS Halt(VOID) {
   for(UINTN I=0;I<10000;++I){if(Dr(0xC70C)&BIT22)return EFI_SUCCESS;gBS->Stall(10);}
   return EFI_TIMEOUT;
 }
+STATIC EFI_STATUS CompleteEventDma(PIANO_DMA_BUFFER *Buffer) {
+  EFI_STATUS S=PianoDmaComplete(Buffer,EFI_SUCCESS,TRUE);
+#if PIANO_USB_FASTBOOT && PIANO_USB_RAM_BOOT
+  if(S!=EFI_SUCCESS){Buffer->Quarantined=TRUE;mFastboot.BootTransferFrozen=TRUE;return EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
+#endif
+  return S;
+}
 STATIC EFI_STATUS StopTransfer(UINT8 Ep) {
   if(!mPending[Ep])return EFI_SUCCESS;
   EFI_STATUS Status=Command(Ep,8|BIT11|((UINT32)mResource[Ep]<<16),0,0,0);
@@ -205,8 +237,8 @@ STATIC EFI_STATUS StopTransfer(UINT8 Ep) {
   // EP0 legacy synchronous END path: USB31 has no END polling mode. Wait the
   // 1ms recommended by dwc3_stop_active_transfer before releasing its buffers.
   gBS->Stall(1000);
-  Status=PianoDmaComplete(&mTrbs[Ep],EFI_SUCCESS,TRUE);if(EFI_ERROR(Status))return Status;
-  if(mPayload[Ep]!=NULL){Status=PianoDmaComplete(mPayload[Ep],EFI_SUCCESS,TRUE);if(EFI_ERROR(Status))return Status;}
+  Status=CompleteEventDma(&mTrbs[Ep]);if(EFI_ERROR(Status))return Status;
+  if(mPayload[Ep]!=NULL){Status=CompleteEventDma(mPayload[Ep]);if(EFI_ERROR(Status))return Status;}
   mPending[Ep]=FALSE;mPayload[Ep]=NULL;return EFI_SUCCESS;
 }
 STATIC EFI_STATUS Transfer(UINT8 Ep,UINT32 Type,PIANO_DMA_BUFFER *Payload,UINT32 Bytes,CONST CHAR8 *Name) {
@@ -241,6 +273,9 @@ STATIC VOID ClearFrames(VOID) {
 }
 STATIC VOID ClearFastboot(VOID) {
   ClearFrames();PianoFastbootReset(&mFastboot);
+#if PIANO_USB_RAM_BOOT
+  if(!mFastboot.BootTransferFrozen)mBootAckObserved=FALSE;
+#endif
   mFastLogBytes=mFastLogCrc=mFastLogGeneration=0;mLogValid=FALSE;
   if(mLogSnapshot!=NULL)ZeroMem(mLogSnapshot,USB_DIAG_LOG_BYTES);
 #if PIANO_USB_SCREENSHOT
@@ -324,7 +359,7 @@ STATIC EFI_STATUS BulkPump(VOID) {
     CopyMem(mBulkTx.Cpu,mFrames->Data+mFrames->Offset,mInFlightBytes);
     return Transfer(3,1,&mBulkTx,(UINT32)mInFlightBytes,"USB_FASTBOOT_IN");
   }
-  if(mPending[3] || mPending[2] || mFastboot.ExitRequested || mFastboot.RebootRequested)return EFI_SUCCESS;
+  if(mPending[3] || mPending[2] || mFastboot.ExitRequested || mFastboot.RebootRequested || mFastboot.BootPending || mFastboot.BootTransferFrozen)return EFI_SUCCESS;
   UINTN Bytes=BulkMps(); // A command <=64 fits in one packet at every supported speed.
   if(mFastboot.Receiving) {
     UINTN Remaining=mFastboot.Expected-mFastboot.Received;
@@ -368,8 +403,8 @@ STATIC EFI_STATUS FinishConfiguration(VOID) {
 }
 STATIC EFI_STATUS BulkComplete(UINT8 Ep,UINT8 EventStatus) {
   if(!mPending[Ep])return mEnding[Ep] || !mBulkLive?EFI_SUCCESS:EFI_COMPROMISED_DATA;
-  EFI_STATUS S=PianoDmaComplete(&mTrbs[Ep],EFI_SUCCESS,TRUE);if(EFI_ERROR(S))return S;
-  S=PianoDmaComplete(mPayload[Ep],EFI_SUCCESS,TRUE);if(EFI_ERROR(S))return S;
+  EFI_STATUS S=CompleteEventDma(&mTrbs[Ep]);if(EFI_ERROR(S))return S;
+  S=CompleteEventDma(mPayload[Ep]);if(EFI_ERROR(S))return S;
   DWC_TRB *T=mTrbs[Ep].Cpu;UINT32 Residual=T->Size&0xFFFFFF,Status=T->Size>>28;
   mPending[Ep]=FALSE;mPayload[Ep]=NULL;
   if(mEnding[Ep])return EFI_SUCCESS; // Still wait for END before reuse.
@@ -394,6 +429,9 @@ STATIC EFI_STATUS BulkComplete(UINT8 Ep,UINT8 EventStatus) {
     if(Residual || mFrames==NULL || Bytes!=mInFlightBytes)return EFI_DEVICE_ERROR;
     mBulkInBytes+=Bytes;mFrames->Offset+=Bytes;mInFlightBytes=0;
     if(mFrames->Offset==mFrames->Bytes) {
+#if PIANO_USB_RAM_BOOT
+      if(mFastboot.BootPending && mFrames->Next==NULL && mFrames->Bytes==4 && !CompareMem(mFrames->Data,"OKAY",4))mBootAckObserved=TRUE;
+#endif
       FB_FRAME *Done=mFrames;mFrames=Done->Next;--mFrameCount;mFrameBytes-=Done->Bytes;
       ZeroMem(Done->Data,Done->Bytes);FreePool(Done);if(mFrames==NULL)mFramesTail=NULL;
     }
@@ -404,8 +442,8 @@ STATIC EFI_STATUS BulkEnded(UINT8 Ep,UINT32 E) {
   if(((E>>24)&15)!=8)return EFI_SUCCESS;
   if(!mEnding[Ep])return EFI_SUCCESS;
   if((E>>12)&15)return EFI_DEVICE_ERROR;
-  if(mTrbs[Ep].Active){EFI_STATUS S=PianoDmaComplete(&mTrbs[Ep],EFI_SUCCESS,TRUE);if(EFI_ERROR(S))return S;}
-  if(mPayload[Ep]!=NULL && mPayload[Ep]->Active){EFI_STATUS S=PianoDmaComplete(mPayload[Ep],EFI_SUCCESS,TRUE);if(EFI_ERROR(S))return S;}
+  if(mTrbs[Ep].Active){EFI_STATUS S=CompleteEventDma(&mTrbs[Ep]);if(EFI_ERROR(S))return S;}
+  if(mPayload[Ep]!=NULL && mPayload[Ep]->Active){EFI_STATUS S=CompleteEventDma(mPayload[Ep]);if(EFI_ERROR(S))return S;}
   mPending[Ep]=mEnding[Ep]=FALSE;mPayload[Ep]=NULL;
   DEBUG((DEBUG_WARN,"SUNUEFI_FASTBOOT_END_COMPLETE ep=%u raw=%08x\n",Ep,E));
   return FinishConfiguration();
@@ -413,8 +451,8 @@ STATIC EFI_STATUS BulkEnded(UINT8 Ep,UINT32 E) {
 #endif
 STATIC EFI_STATUS Complete(UINT8 Ep) {
   if(Ep>1 || !mPending[Ep])return EFI_COMPROMISED_DATA;
-  EFI_STATUS Dma=PianoDmaComplete(&mTrbs[Ep],EFI_SUCCESS,TRUE);if(EFI_ERROR(Dma))return Dma;
-  Dma=PianoDmaComplete(mPayload[Ep],EFI_SUCCESS,TRUE);if(EFI_ERROR(Dma))return Dma;
+  EFI_STATUS Dma=CompleteEventDma(&mTrbs[Ep]);if(EFI_ERROR(Dma))return Dma;
+  Dma=CompleteEventDma(mPayload[Ep]);if(EFI_ERROR(Dma))return Dma;
   DWC_TRB *T=mTrbs[Ep].Cpu;
   UINT32 Residual=T->Size&0xFFFFFF,Status=T->Size>>28;
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_XFER_COMPLETE ep=%u phase=%u residual=%u trb_status=%u hwo=%u\n",Ep,mPhase,Residual,Status,T->Control&1));
@@ -520,6 +558,9 @@ STATIC EFI_STATUS Event(UINT32 E) {
 EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Device) {
 #if PIANO_USB_FASTBOOT
   if(mExperimentRunning)return EFI_ALREADY_STARTED;
+#if PIANO_USB_RAM_BOOT
+  if(mBootActionValid)return EFI_ALREADY_STARTED;
+#endif
   mExperimentRunning=TRUE;mExperimentContractFailed=FALSE;
 #endif
 #if PIANO_USB_FASTBOOT
@@ -533,6 +574,10 @@ EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *De
   UINT32 OldGctl=Dr(0xC110),OldDcfg=Dr(0xC700),OldSize=Dr(0xC408),OldLow=Dr(0xC400),OldHigh=Dr(0xC404),Count=0;
   UINT32 OldSessionHs=Dr(USB_SESSION_HS),OldSessionSs=Dr(USB_SESSION_SS);
   BOOLEAN SessionSet=FALSE,RebootReady=FALSE;
+#if PIANO_USB_FASTBOOT && PIANO_USB_RAM_BOOT
+  BOOLEAN BootAckReady=FALSE;
+  BOOLEAN CleanupUncertain[ARRAY_SIZE(Buffers)];ZeroMem(CleanupUncertain,sizeof(CleanupUncertain));
+#endif
   mRebootAfterCleanup=FALSE;
   EFI_STATUS Status=EFI_SUCCESS;mRingPosition=0;mConfigured=FALSE;
   mLogValid=FALSE;mLogBytes=mLogCrc=mLogGeneration=0;mLogFlags=0;
@@ -543,6 +588,10 @@ EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *De
 #if PIANO_USB_FASTBOOT
   mBulkLive=mBulkPrepared=mConfigWaiting=mStatusWaiting=FALSE;
   ClearFastboot();PianoFastbootInit(&mFastboot,NULL,FastbootSend,NULL);
+#if PIANO_USB_RAM_BOOT
+  mBootAckObserved=FALSE;
+  if(mExperimentHasBoot){Status=PianoFastbootSetBoot(&mFastboot,&mExperimentBoot);if(Status!=EFI_SUCCESS)goto Exit;}
+#endif
   if(mExperimentHasStorage) {
     Status=PianoFastbootSetStorage(&mFastboot,&mExperimentStorage);
     if(EFI_ERROR(Status))goto Exit;
@@ -605,6 +654,11 @@ EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *De
     }
 #if PIANO_USB_FASTBOOT
     if(!mFrames && !mPending[3] && (mFastboot.ExitRequested || mFastboot.RebootRequested))break;
+#if PIANO_USB_RAM_BOOT
+    if(mFastboot.BootPending && mBootAckObserved && !mFrames && !mPending[3] && !mEnding[3]) {
+      mFastboot.BootTransferFrozen=TRUE;BootAckReady=TRUE;break;
+    }
+#endif
 #endif
     gBS->Stall(1000);
   }
@@ -626,7 +680,13 @@ Exit:
     if(EFI_ERROR(Quiet)) {
       PianoSmmuLogFaults(&Context->After);
       DEBUG((DEBUG_WARN,"SUNUEFI_USB_DMA_UNQUIESCED_RESET buffers_retained=1\n"));
+#if PIANO_USB_FASTBOOT && PIANO_USB_RAM_BOOT
+      mFastboot.BootTransferFrozen=TRUE;
+      mBootAction=(PIANO_FB_BOOT_ACTION){.Context=mFastboot.Boot.Context,.View=mFastboot.BootView,.Status=Quiet,.Retained=TRUE,
+        .Proof={.AckCompleted=mBootAckObserved,.QueueEmpty=mFrames==NULL && !mPending[3],.DispatchFrozen=TRUE,.AckBytes=mBootAckObserved?4:0}};mBootActionValid=TRUE;
+#else
       gRT->ResetSystem(EfiResetCold,Quiet,0,NULL);
+#endif
       CpuDeadLoop();return Quiet; // A failed reset must never let caller remove clocks/SMMU.
     }}
   // Never remove session-valid while the core may still own DMA buffers.
@@ -638,7 +698,13 @@ Exit:
     if(RestoredHs!=OldSessionHs || RestoredSs!=OldSessionSs)Status=EFI_DEVICE_ERROR;
   }
   for(UINTN I=0;I<ARRAY_SIZE(Buffers);++I)if(Buffers[I]->Active) {
-    EFI_STATUS S=PianoDmaComplete(Buffers[I],Status,TRUE);if(EFI_ERROR(S))Status=S;
+#if PIANO_USB_FASTBOOT && PIANO_USB_RAM_BOOT
+    EFI_STATUS S=PianoDmaComplete(Buffers[I],EFI_SUCCESS,TRUE); // Halt is proven; preserve the operation error separately.
+    if(S!=EFI_SUCCESS){CleanupUncertain[I]=TRUE;Buffers[I]->Quarantined=TRUE;Status=EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
+#else
+    EFI_STATUS S=PianoDmaComplete(Buffers[I],Status,TRUE);
+    if(EFI_ERROR(S))Status=S;
+#endif
   }
   Dw(0xC708,0);Dw(0xC408,BIT31);Count=Dr(0xC40C)&0xFFFF;if(Count)Dw(0xC40C,Count);
   Dw(0xC400,OldLow);Dw(0xC404,OldHigh);Dw(0xC408,OldSize|BIT31);Dw(0xC700,OldDcfg);Dw(0xC110,OldGctl);
@@ -647,7 +713,13 @@ Exit:
 #if PIANO_USB_FASTBOOT
     if(mExperimentContractFailed && Buffers[I]->Signature)Buffers[I]->Quarantined=TRUE;
 #endif
-    if(Buffers[I]->Signature){EFI_STATUS S=PianoDmaFree(Buffers[I]);if(EFI_ERROR(S))Status=S;}
+    if(Buffers[I]->Signature){EFI_STATUS S=PianoDmaFree(Buffers[I]);
+#if PIANO_USB_FASTBOOT && PIANO_USB_RAM_BOOT
+      if(S!=EFI_SUCCESS){CleanupUncertain[I]=TRUE;Status=EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
+#else
+      if(EFI_ERROR(S))Status=S;
+#endif
+    }
     if(Buffers[I]->Signature)++Retained;
   }
   if(Retained && !EFI_ERROR(Status))Status=EFI_DEVICE_ERROR;
@@ -655,8 +727,33 @@ Exit:
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_DEVICE_CLEANUP status=%r buffers_retained=%u reboot_acknowledged=%u reboot_ready=%u\n",
     Status,(UINT32)Retained,RebootReady,mRebootAfterCleanup));
 #if PIANO_USB_FASTBOOT
+#if PIANO_USB_RAM_BOOT
+  UINTN Uncertain=0;for(UINTN I=0;I<ARRAY_SIZE(Buffers);++I)if(CleanupUncertain[I])++Uncertain;
+  if(BootAckReady || (mFastboot.BootPending && mFastboot.BootTransferFrozen)) {
+    mFastboot.BootProof=(PIANO_FB_BOOT_PROOF){.AckCompleted=mBootAckObserved,.QueueEmpty=mFrames==NULL && !mPending[3],
+      .DeviceHalted=(Dr(0xC70C)&BIT22)!=0 && !(Dr(0xC704)&BIT31),.DmaFreed=Retained==0 && Uncertain==0,.DispatchFrozen=mFastboot.BootTransferFrozen,
+      .AckBytes=mBootAckObserved?4:0,.DmaBuffersFreed=(UINT32)(ARRAY_SIZE(Buffers)-Retained)};
+    mBootAction=(PIANO_FB_BOOT_ACTION){.Context=mFastboot.Boot.Context,.View=mFastboot.BootView,.Proof=mFastboot.BootProof,.Status=Status,.Retained=TRUE};
+    mBootActionValid=TRUE;
+    if(BootAckReady && Status==EFI_SUCCESS && Retained==0 && Uncertain==0 && mFastboot.BootProof.DeviceHalted && mFastboot.Download==mFastboot.BootValidatedDownload &&
+       mFastboot.Received==mFastboot.BootValidatedBytes && mFastboot.Expected==mFastboot.BootValidatedBytes && mFastboot.Complete &&
+       mFastboot.UploadBorrowed && mFastboot.Upload==mFastboot.Download && mFastboot.UploadBytes==mFastboot.Received) {
+      EFI_STATUS Take=mFastboot.Boot.Validate(mFastboot.Boot.Context,&mFastboot,&mFastboot.BootView);
+      if(Take==EFI_SUCCESS && mFastboot.Download==mFastboot.BootValidatedDownload && mFastboot.Received==mFastboot.BootValidatedBytes)
+        Take=mFastboot.Boot.TakeAfterAck(mFastboot.Boot.Context,&mFastboot,&mFastboot.BootView,&mBootAction.Token);
+      else if(Take==EFI_SUCCESS)Take=EFI_COMPROMISED_DATA;
+      if(Take==EFI_SUCCESS && mBootAction.Token!=NULL && mFastboot.Download==NULL && mFastboot.Upload==NULL && !mFastboot.UploadBytes &&
+         !mFastboot.UploadBorrowed && !mFastboot.Expected && !mFastboot.Received && !mFastboot.Receiving && !mFastboot.Complete) {
+        mBootAction.Status=EFI_SUCCESS;mBootAction.Taken=TRUE;mBootAction.Retained=FALSE;mFastboot.BootTransferFrozen=FALSE;
+      } else {Status=Take==EFI_SUCCESS?EFI_COMPROMISED_DATA:EFI_ERROR(Take)?Take:EFI_DEVICE_ERROR;mBootAction.Status=Status;}
+    } else {if(Status==EFI_SUCCESS)Status=EFI_COMPROMISED_DATA;mBootAction.Status=Status;}
+    DEBUG((DEBUG_WARN,"SUNUEFI_FASTBOOT_BOOT_TRANSFER status=%r taken=%u retained=%u ack=%u halted=%u dma_freed=%u\n",
+      mBootAction.Status,mBootAction.Taken,mBootAction.Retained,mBootAction.Proof.AckCompleted,mBootAction.Proof.DeviceHalted,mBootAction.Proof.DmaBuffersFreed));
+  }
+  if(Uncertain){mFastboot.BootTransferFrozen=TRUE;}
+#endif
   ClearFastboot();
-  if(Retained==0)mExperimentRunning=FALSE; // Clean Halt errors/NOTREADY may be retried; retained ownership may not.
+  if(Retained==0 && !mFastboot.BootTransferFrozen)mExperimentRunning=FALSE; // Clean errors may retry; unknown ownership may not.
 #endif
   if(mLogSnapshot!=NULL){ZeroMem(mLogSnapshot,USB_DIAG_LOG_BYTES);FreePool(mLogSnapshot);mLogSnapshot=NULL;}mLogValid=FALSE;
   return Status;

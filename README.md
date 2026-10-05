@@ -12,6 +12,7 @@
 | --- | --- | --- |
 | GOP / 中文显示 | 3200×2136 继承显存模式；中文 GUI、字号 72/64、GOP Blt 和 RAM 截图通过 | 更多模式和显示硬件重新初始化；近期部分用户观察为灰屏，RAM 截图不能证明面板正在扫描输出 |
 | 实体按键 | 第 23–24 次实测音量移动焦点，两次短按电源选中并执行，进入工具主界面 | 更多快捷键及长按策略 |
+| 官方键盘 / 触控板 | 软件报告与输入层、固定GENI PIO模块及受保护只读SE6快照固件已构建，均未实机验收 | 真实clock/FW/PIO报告、完整键盘与触控板输入 |
 | USB 设备 / PC 调试 | 第82–84次SuperSpeed、RAM/日志、reboot及全帧BMP实测 | 单分区fetch已读回一致，但联合关闭失败；目标重启、受控flash、菜单/后台服务及自主PHY/Type-C管理待做 |
 | USB 主机 | 标准PCI_IO facade的地址、映射与生命周期主机测试通过 | NC common-buffer后端、主机角色/VBUS、XHCI及外设实测 |
 | 串口调试 | ramoops RAM 日志及重启后 ADB 回收已实测 | 物理 UART 和实时 USB 日志；RAM SerialPortLib 不是物理串口 |
@@ -278,3 +279,5 @@ bash tools/build_stage0.sh gui
 内存范围、SID、API 生命周期、恢复策略和证据位置见 [DMA / SMMU milestone 状态](docs/dma-smmu-milestone.md)。可复用主机检查为 `bash tools/test_dma_foundation.sh`；Android 元数据对照为 `tools/compare_ufs_gpt_android.py`，只有只读命令。
 
 已验证的 60 秒自动返回 Android 的 RAM 诊断镜像和证据清单：`artifacts/dma-milestone/`。工具 `check_dma_log.py` 核对核心 DMA 记录，`compare_ufs_gpt_android.py` 只读对照 GPT，`seal_dma_milestone.py` 固化两轮完整验证后的产物。
+
+新增待实机候选已完成完整EDK2构建：受保护[键盘SE6只读快照与高RAM只读元数据](docs/readonly-device-profiles.md)，以及接入标准boot命令/真实IN ACK/Controller退休/carrier/Load+Start的[小EFI返回应用](docs/ram-boot-probe-profile.md)。默认关闭、当前容量64MiB，首个boot profile仅允许固定probe SHA；尚未实机启动，不替代第89次联合关闭故障的CRC取证。

@@ -46,6 +46,7 @@ int main(void){
   assert(PianoFastbootInit(&S,(void *)123,NULL,NULL)==EFI_INVALID_PARAMETER);
   assert(PianoFastbootInit(&S,(void *)123,send_reply,log_reply)==EFI_SUCCESS);
   command(&S,"getvar:version","OKAY0.4");
+  command(&S,"getvar:SunUEFI:ram-boot","OKAYdisabled");
   command(&S,"getvar:version-malicious","FAILunknown variable");
   command(&S,"getvar:all","OKAY");assert(calls==5);
   const char *blocked[]={"flash:boot_a","erase:userdata","flashing unlock","oem unlock",
