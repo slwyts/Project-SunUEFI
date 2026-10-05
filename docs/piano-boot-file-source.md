@@ -1,8 +1,8 @@
 # Piano readonly boot-file source
 
 `bootprofiles/os-boot/PianoBootFileSource.c/h` is a real UEFI Simple File System
-reader and CPU staging owner for the autonomous OS loader. It is independent of
-the current product build inputs. It does not start an image, change the EFI
+reader and CPU staging owner for the autonomous OS loader. Its canonical source
+directory is shared with the unique product build. It does not start an image, change the EFI
 memory map, request ExitBootServices, or write storage.
 
 The caller selects an existing `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL` handle and a
@@ -73,12 +73,27 @@ current low-memory product. No 1 GiB allocation or high-DDR ownership is claimed
 
 ## Integration and verification
 
+`tools/prepare_product.py` now stages all canonical `bootprofiles/os-boot` files
+unchanged into `Applications/ProductCore/OsBoot`, and the unique ProductCore INF
+includes the reader, CPU image loan and Linux EFI session C files and headers.
+The staged `uefi-app` header mirror preserves the canonical relative includes;
+ordinary quoted includes use the actual ProductCore module include directory.
+SynchronizationLib and the standard FDT, initrd, LoadFile2 and EBS GUID/protocol
+declarations are present. `build_integrity.py` hashes the canonical OS subtree
+and rejects mismatched prepared/staged files, include mirrors or omitted INF
+source bindings. This is shared product build wiring; it does not bind or enable
+an autonomous boot target. The three APIs are not called by Core yet; final PE
+linker garbage collection may discard unreferenced functions. The manifest
+claims INF compilation, not runtime activation or final PE code retention.
+
 The autonomous supervisor still needs to bind the approved SFS handle, fixed
 paths/digests, lifetime context and budget, and pass the three exported blob
 interfaces to the Linux EFI session. It must finish loading before retiring UFS,
 then retain the CPU snapshots until the session releases its loans. This reader
-has not been connected to the product Core or exercised on the tablet in this
-change. Presence of the source is not evidence of successful autonomous boot.
+has not been given an active product Core platform binding or exercised on the
+tablet in this change. Compiled code is not evidence of successful autonomous
+boot. The build manifest explicitly reports `COMPILED_PLATFORM_NOT_READY`, a
+64 MiB source budget and no full-DDR or platform readiness.
 
 Run:
 
@@ -94,3 +109,16 @@ change, EBS during a read, bundle budget and rollback, active/stale loans, zero
 before free, and all state/data/output aliases. The SFS/Boot Services boundary is
 a host fixture; these are not physical UFS, hardware DMA or OS boot tests. The
 same actual source also passes strict AArch64 freestanding compilation.
+
+Product staging and freshness verification:
+
+```sh
+python3 -m unittest discover -s tests -p test_product_os_boot_wiring.py -v
+```
+
+These four tests stage the real canonical files through the product helper,
+compile the three C files named by the generated INF into AArch64 objects using
+the actual module include layout, and exercise nine canonical/staged/header/INF
+mutation refusals. A coherent reprepare must produce a different build input
+fingerprint. This is not the complete product link/build or a device boot; that
+remains the Root build's responsibility.

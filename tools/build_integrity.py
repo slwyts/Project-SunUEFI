@@ -36,10 +36,14 @@ def inputs(root,profile):
         pump_record=pump(root,apply=False);ui_record=ui(root,apply=False)
         files.update(root/path for path in (*pump_record['files'],*ui_record['files']))
         files.update(root/path for path in nv_guard(root,apply=False)['files'])
-        from prepare_product import SOURCE_NAMES
+        from prepare_product import SOURCE_NAMES, os_boot_files, verify_os_boot
         canonical=root/'bootprofiles/uefi-app'
         files.update(canonical/name for name in SOURCE_NAMES)
         files.update(path for path in canonical.iterdir() if path.is_file() and path.suffix in ('.h','.inc'))
+        files.update(os_boot_files(root).values())
+        os_boot=json.loads((root/'build/product/prepared-manifest.json').read_text()).get('os_boot',{})
+        for app in (platform/'Applications/ProductCore',root/'platforms/pianoProductPkg/Applications/ProductCore'):
+            verify_os_boot(root,app,os_boot)
         for folder in ('bootprofiles/product-pump','bootprofiles/product-support'):
             files.update(path for path in (root/folder).rglob('*') if path.is_file())
         for relative in ('config/piano-product.json','build/product/prepared-manifest.json',

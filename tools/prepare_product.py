@@ -25,6 +25,9 @@ SOURCE_NAMES=(
     'PianoFastbootScreen.c','PianoDwc3Device.c','PianoUsbControl.c','PianoUsbController.c',
     'PianoPogoReport.c','PianoPogoInput.c','PianoPogoI2c.c','PianoPogoTransport.c','PianoGeniI2cPio.c','PianoUsbHostPci.c',
 )
+OS_BOOT_SOURCES=('PianoBootFileSource.c','PianoCpuImageLoan.c','PianoLinuxEfiSession.c')
+OS_BOOT_HEADERS=tuple(name[:-2]+'.h' for name in OS_BOOT_SOURCES)
+OS_BOOT_INF_SOURCES=tuple('OsBoot/'+name for name in (*OS_BOOT_SOURCES,*OS_BOOT_HEADERS))
 PRODUCT_FLAGS=('PIANO_USB_SERVICE=1','PIANO_USB_EP0=1','PIANO_USB_FASTBOOT=1','PIANO_USB_SCREENSHOT=1',
     'PIANO_USB_UFS_FETCH=1','PIANO_USB_RAM_BOOT=1','PIANO_USB_POWER_PROBE=1','PIANO_UFS_BLOCKIO=1',
     'PIANO_UFS_PRODUCT_STORAGE=1','PIANO_NV_BOOT_ONLY=1')
@@ -39,6 +42,67 @@ HOST_MODULES=('MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf','MdeModulePkg/Bus/Usb/U
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def os_boot_files(root):
+    folder=root/'bootprofiles/os-boot'
+    files={path.relative_to(folder).as_posix():path for path in folder.rglob('*')
+           if path.is_file() and '__pycache__' not in path.parts}
+    if any(name not in files for name in (*OS_BOOT_SOURCES,*OS_BOOT_HEADERS)):
+        raise ValueError('Canonical OS boot sources or headers missing')
+    if {name for name in files if name.endswith('.c')}!=set(OS_BOOT_SOURCES):
+        raise ValueError('OS boot C sources must all have explicit ProductCore INF bindings')
+    if any(path.is_symlink() for path in files.values()):
+        raise ValueError('Canonical OS boot inputs must be ordinary owned files')
+    return files
+
+
+def shared_boot_headers(root):
+    folder=root/'bootprofiles/uefi-app'
+    return {path.relative_to(folder).as_posix():path for path in folder.rglob('*')
+            if path.is_file() and path.suffix in ('.h','.inc')}
+
+
+def prepare_os_boot(root,app):
+    """Byte-identical shared code; preserve its canonical relative includes."""
+    files=os_boot_files(root)
+    shutil.copytree(root/'bootprofiles/os-boot',app/'OsBoot',
+                    ignore=shutil.ignore_patterns('__pycache__'))
+    # ../uefi-app paths remain unchanged. The module root already supplies the
+    # ordinary quoted PianoFastbootLaunch.h include used by CpuImageLoan.
+    headers=shared_boot_headers(root)
+    for name,path in headers.items():
+        destination=app/'uefi-app'/name;destination.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(path,destination)
+    return {'status':'SHARED_IMPLEMENTATION_COMPILED_PLATFORM_NOT_READY',
+            'platform_bound':False,'full_ddr_verified':False,'start_enabled':False,
+            'configured_source_budget_bytes':64*1024*1024,
+            'sources':list(OS_BOOT_INF_SOURCES),
+            'canonical_files':{name:sha(path)for name,path in sorted(files.items())},
+            'shared_headers':{name:sha(path)for name,path in sorted(headers.items())}}
+
+
+def verify_os_boot(root,app,record):
+    """Freshness includes actual compiled copies, not just a canonical hash."""
+    expected={name:sha(path)for name,path in sorted(os_boot_files(root).items())}
+    headers={name:sha(path)for name,path in sorted(shared_boot_headers(root).items())}
+    if record.get('canonical_files')!=expected or record.get('shared_headers')!=headers or record.get('sources')!=list(OS_BOOT_INF_SOURCES):
+        raise ValueError('Prepared shared OS boot identity differs from canonical sources')
+    actual={path.relative_to(app/'OsBoot').as_posix():sha(path)
+            for path in (app/'OsBoot').rglob('*')if path.is_file() and '__pycache__' not in path.parts}
+    if actual!=expected:raise ValueError('ProductCore OS boot compiled copies are stale or missing')
+    for name,digest in headers.items():
+        for path in (app/'uefi-app'/name,app/name):
+            if not path.is_file() or sha(path)!=digest:
+                raise ValueError('ProductCore shared OS boot include identity mismatch: '+name)
+    sections={};section=None
+    for line in (app/'ProductCore.inf').read_text().splitlines():
+        line=line.strip()
+        if line.startswith('[')and line.endswith(']'):section=line;sections[section]=set()
+        elif line and section:sections[section].add(line)
+    if not set(OS_BOOT_INF_SOURCES)<=sections.get('[Sources]',set()) or 'SynchronizationLib' not in sections.get('[LibraryClasses]',set()):
+        raise ValueError('ProductCore INF omits actual shared OS boot sources or synchronization')
+    return True
 
 
 def fix_product_low_heap(text,dtb):
@@ -87,7 +151,7 @@ def backend_status():
       'usb_device_fastboot':{'status':'IMPLEMENTED_RESIDENT_SERVICE_UNTESTED','physical_evidence':'isolated standard bulk82/reboot83/screen84/fetch91; resident product untested','navigation_commands':['oem setup','oem shell','oem simpleinit'],'navigation_physical_validation':False,'current_download_limit_bytes':67108864,'target_download_limit_bytes':1073741824},
       'usb_host':{'status':'NOT_READY','missing':'actual Host PCI_IO/NC common DMA and Type-C/VBUS ownership backend; standard consumers linked'},
       'debug_logs_screenshot':{'status':'IMPLEMENTED_FASTBOOT','physical_evidence':'test82 ramlog and84 screenshot; product UI snapshots untested'},
-      'efi_android_linux_boot':{'status':'PARTIAL','missing':'generic product EFI/img boot, autonomous UFS OS load and Android/Recovery/Windows handoff'},
+      'efi_android_linux_boot':{'status':'PARTIAL','shared_os_loader':'COMPILED_PLATFORM_NOT_READY','source_budget_bytes':67108864,'platform_bound':False,'full_ddr_verified':False,'missing':'approved SFS/path source, independent BS fence, actual full-DDR and all-owner EFI handoff binding; generic Android/Recovery/Windows handoff'},
       'os_exit':{'status':'STRICT_RETIREMENT_INTEGRATED_UNTESTED','missing':'joint controller retirement and full EFI DRAM/OS handoff contract'},
     }
 
@@ -122,7 +186,7 @@ def core_inf():
   VERSION_STRING = 0.1
   ENTRY_POINT = PianoProductCoreEntry
 [Sources]
-'''+''.join('  '+name+'\n' for name in SOURCE_NAMES)+'''[Packages]
+'''+''.join('  '+name+'\n' for name in (*SOURCE_NAMES,*OS_BOOT_INF_SOURCES))+'''[Packages]
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
   QcomPkg/QcomPkg.dec
@@ -151,10 +215,14 @@ def core_inf():
   DevicePathLib
   PcdLib
   PianoProductPumpLib
+  SynchronizationLib
 [Guids]
   gEfiEventExitBootServicesGuid
+  gEfiEventBeforeExitBootServicesGuid
   gEfiFileInfoGuid
   gEfiFileSystemInfoGuid
+  gFdtTableGuid
+  gLinuxEfiInitrdMediaGuid
 [Protocols]
   gEfiGraphicsOutputProtocolGuid
   gEfiAbsolutePointerProtocolGuid
@@ -168,6 +236,7 @@ def core_inf():
   gEfiDevicePathProtocolGuid
   gEfiCpuArchProtocolGuid
   gEfiLoadedImageProtocolGuid
+  gEfiLoadFile2ProtocolGuid
   gEfiPartitionInfoProtocolGuid
   gEfiSimpleFileSystemProtocolGuid
   gEfiFirmwareVolume2ProtocolGuid
@@ -186,6 +255,7 @@ def prepare(root=ROOT):
     contract=validate(json.loads((root/'config/piano-product.json').read_text()))
     source=root/'bootprofiles/uefi-app';missing=[name for name in SOURCE_NAMES if not(source/name).is_file()]
     if missing:raise ValueError('Actual product core sources missing: '+', '.join(missing))
+    os_boot_files(root)
     prepare_pump(root,apply=True)
     from prepare_product_ui import prepare as prepare_ui
     ui=prepare_ui(root,apply=True)
@@ -210,6 +280,7 @@ def prepare(root=ROOT):
     for path in source.iterdir():
         if path.is_file() and path.suffix in ('.h','.inc'):shutil.copyfile(path,app/path.name)
     shutil.copytree(source/'Protocol',app/'Protocol')
+    os_boot=prepare_os_boot(root,app)
     (app/'PianoProductSimpleInitDigest.h').write_text(header)
     from prepare_ufs_write_test import verify_capture, _c_array
     storage_blobs=verify_capture()
@@ -220,6 +291,7 @@ def prepare(root=ROOT):
         storage_baseline+=_c_array(symbol,storage_blobs[name])+'\n'
     (app/'PianoProductStorageBaseline.h').write_text(storage_baseline)
     (app/'ProductCore.inf').write_text(core_inf())
+    verify_os_boot(root,app,os_boot)
     native_fdf,native_id=native_modules(root,app)
     memory=target/'Library/MemoryMapLib/MemoryMapLib.c';text=memory.read_text()
     text,low_memory_contract=fix_product_low_heap(text,(root/'private/captures/2026-10-03-piano/live.dtb').read_bytes())
@@ -284,12 +356,13 @@ def prepare(root=ROOT):
     staged=root/'upstream/Mu-Silicium/Platforms/Xiaomi/pianoProductPkg'
     if staged.exists():shutil.rmtree(staged)
     shutil.copytree(target,staged)
+    verify_os_boot(root,staged/'Applications/ProductCore',os_boot)
     manifest={'target':'product','artifact':contract['artifact'],'status':'INCOMPLETE_NOT_RELEASE',
       'features':contract['features'],'shared_core':True,'entry_points':contract['entry_points'],'entry_policy_only':True,
       'fastboot_mode':'resident_background','fastboot_surfaces':contract['fastboot']['available_in'],
       'default_application':'SimpleInit','setup_key':'F12','diagnostic_reboot_timer':False,
       'backend_initialization_required':True,'backends':backend_status(),'runtime_readiness':'NOT_PRODUCT_DEVICE_VALIDATED',
-      'service_compile_flags':list(PRODUCT_FLAGS),'sources':list(SOURCE_NAMES),'native_foundation':native_id,
+      'service_compile_flags':list(PRODUCT_FLAGS),'sources':list((*SOURCE_NAMES,*OS_BOOT_INF_SOURCES)),'native_foundation':native_id,'os_boot':os_boot,
       'simpleinit':simpleinit,'simpleinit_payload':app_identity,'ui_hooks':ui,'pump_hooks':prepare_pump(root,apply=False),
       'low_memory_contract':low_memory_contract,
       'platform_files':{str(path.relative_to(target)):sha(path)for path in sorted(target.rglob('*'))if path.is_file()},
