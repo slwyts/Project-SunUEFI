@@ -5,6 +5,7 @@
 #include "PianoProductOwners.h"
 #include "PianoFastbootBlockRead.h"
 #include "PianoKeysLifecycle.h"
+#include "PianoRamPartition.h"
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/BaseLib.h>
@@ -20,6 +21,7 @@ STATIC PIANO_PRODUCT_OWNERS mOwners;
 STATIC BOOLEAN mUfsAttempted,mUfsStarted,mInputStarted;
 STATIC EFI_STATUS mUfsStatus=EFI_NOT_STARTED;
 STATIC UINT64 mCounterFrequency,mCounterStart,mCounterEnd;
+STATIC PIANO_RAM_PARTITION_REPORT mRamInventory;
 STATIC VOID ReportRequiredBackends(VOID) {
   // Required remains true. Missing real hardware/startup is visible rather
   // than converted into a silent build-time feature switch or fake Ready.
@@ -65,6 +67,26 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   if(Status!=EFI_SUCCESS || Fdt==NULL)return Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status;
   ReportRequiredBackends();
   PianoProbeFoundation();
+  // Bind the exact native Env implementation before calling its audited ABI.
+  // This is a DDR/preloaded inventory, never permission to map or allocate RAM.
+  Status=PianoRamPartitionInventory(FALSE,&mRamInventory);
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_RAM_ABI status=%r present=%u identity=%u abi=%u native_get_calls=0\n",
+    Status,mRamInventory.Present,mRamInventory.IdentityVerified,mRamInventory.AbiVerified));
+  if(mRamInventory.Retained || Status==EFI_ABORTED)FailStop(Status);
+  if(Status==EFI_SUCCESS && mRamInventory.IdentityVerified && mRamInventory.AbiVerified) {
+    Status=PianoRamPartitionInventory(TRUE,&mRamInventory);
+    DEBUG((DEBUG_WARN,"PIANO_PRODUCT_RAM_INVENTORY status=%r valid=%u banks=%u preloaded=%lu fallback=%u ownership=0 high_allocation=0\n",
+      Status,mRamInventory.DataValid,mRamInventory.BankCount,mRamInventory.PreloadedCount,mRamInventory.PotentialFallback));
+    if(mRamInventory.Retained || Status==EFI_ABORTED)FailStop(Status);
+    if(Status==EFI_SUCCESS && mRamInventory.DataValid) {
+      for(UINTN I=0;I<mRamInventory.BankCount;++I)
+        DEBUG((DEBUG_WARN,"PIANO_PRODUCT_RAM_BANK index=%u base=%lx bytes=%lx ownership=0\n",
+          (UINT32)I,mRamInventory.Banks[I].Base,mRamInventory.Banks[I].AvailableLength));
+      for(UINTN I=0;I<mRamInventory.PreloadedCount;++I)
+        DEBUG((DEBUG_WARN,"PIANO_PRODUCT_RAM_PRELOADED index=%u base=%lx bytes=%lx raw_type=%u\n",
+          (UINT32)I,mRamInventory.Preloaded[I].Base,mRamInventory.Preloaded[I].Size,mRamInventory.Preloaded[I].RawType));
+    }
+  }
   Status=PianoStartKeys(Fdt);mInputStarted=Status==EFI_SUCCESS;
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_INPUT_START status=%r started=%u\n",Status,mInputStarted));
   if(Status!=EFI_SUCCESS)FailStop(Status);
