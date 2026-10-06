@@ -2,13 +2,13 @@
 
 目标是在保留现有 Android 系统和数据的前提下，研究并移植 ARM64 UEFI，随后从 RAM 或外接介质启动 Linux / Windows PE。
 
-**最新实机结果（第110次）：Linux已经枚举6个UFS LUN、读取GPT并挂载真实 `sunuefi_linux` ext4根分区。** 新建bypass CB82的CBA2R从0读回为1（AArch64），UFS提交后SID0x60路由健康检查保持通过，先前NOP失败已越过。约49秒进入switch_root，但BusyBox要求旧initramfs存在普通 `/init` 文件；当时只有 `/pianoinit`，PID1退出后panic。r5已补齐普通 `/init` 并保留强制 `/pianoinit` 命令行。分区里的真实systemd257已在设备只读chroot中成功执行 `--version`；正式PID1/systemd/GNOME仍待验证，USB尚未枚举。
+**最新实机结果（第111次）：同一产品PianoUEFI从真实ESP读取Stable镜像，启动真实ext4根系统、systemd和GNOME。** 未经USB下载Linux镜像，只发送标准 `oem boot-stable`。USB ACM控制台、NCM网络和SSH均实测可用；原生双DSI接管、背光驱动启动并重启GDM后，用户确认看到tty和GNOME桌面。实测freedreno/Adreno830v1硬件加速，8个Qualcomm Oryon核心在线，SCMI/schedutil调频正常。触屏服务已启用并收到真实THP帧，用户确认点击、拖动窗口及亮度调节可用；GNOME动画已恢复。键盘/触控板仍被旧panel supplier阻塞，最小DTB修正已更新ESP等待下一次启动验证。原生显示先于GDM的持久启动顺序已部署，下一次冷启动自动顺序仍需验收；关屏偏红、短点按反馈、Wi-Fi/蓝牙/音频等完整设备体验尚未闭环。
 
 按用户授权已在线缩小 userdata，并新增 `sunuefi_esp`（512 MiB FAT32）和 `sunuefi_linux`（63.5 GiB ext4），共64 GiB。Debian 13/GNOME 已写入 Linux 分区；ESP 目前为空。两次 Android 恢复已验证，`/data` 约397 GiB总容量、60 GiB已用。只读回读核对了分区边界、文件系统标识、systemd/GNOME Shell SHA256及根分区配置。没有刷写 Android boot/recovery/system。证据保存在 `private/provisioning/sunuefi-linux64-plan-20261006/`、`private/analysis/linux-disk-test107/` 和 `private/analysis/ramlog-test-107/`。
 
 真实ESP已安装Stable的 `\EFI\Piano\stable\boot.img`、Image、DTB和小型initramfs，13个文件全部读回校验，证据 `artifacts/linux-assembled/piano-disk-esp-20261007-r5/install-result.json`。Stable启动镜像SHA为 `bb0b05532fe55279e0e40a19d45f76c407513a7ee6cde00e39f23715903cb938`；同一内核及配套模块已在root分区。单一产品固件的本地ESP加载入口和菜单正在整合；它将复用真实文件source和原OS交接，不伪造USB下载或ACK。Next文件已放ESP，但其强制RAM根和磁盘bootstrap仍需改造，尚不可选为可运行的磁盘系统。
 
-**唯一产品候选：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成 TianoCore 启动画面、默认 SimpleInit、F12 Setup、标准 Shell 和驻留 Fastboot；没有诊断自动重启计时器。第105次构建通过405项主机测试、固件编译和输入一致性验证，实机验证256KiB日志及统一退出重启；第103次另已验证3200×2136完整BMP上传。第107次当前镜像SHA256为 `54c994a0ffea72e8768349b5592b4a228b861813fcc328cb3570bc86f5564470`，封存在 `artifacts/tests/stage0-test-107/`。构建、必需功能与真实后端状态见 [唯一产品构建](docs/piano-product-build.md)。
+**唯一产品候选：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成 TianoCore 启动画面、默认 SimpleInit、F12 Setup、标准 Shell 和驻留 Fastboot；没有诊断自动重启计时器。第105次构建通过405项主机测试、固件编译和输入一致性验证，实机验证256KiB日志及统一退出重启；第103次另已验证3200×2136完整BMP上传。第111次当前镜像SHA256为 `4eacaceee862c107e1b98e578efe881153beda6bd2e430fd739a831cd54f0309`，封存在 `artifacts/tests/stage0-test-111/`。构建、必需功能与真实后端状态见 [唯一产品构建](docs/piano-product-build.md)。
 
 已有 UFS 证据包括6个LUN和GPT读取、139个只读BlockIO句柄、7个只读SFS卷及标准Shell枚举；第80/86次专用区域写入实验完成备份、写入、读回和恢复，第91次标准fetch与USB/UFS联合关闭通过。UEFI 原分区访问仍只读；新增 Linux 分区已按上文授权修改 GPT，独立的产品FAT/NV容器仍未配置，EFI变量仍在RAM中。触摸真实输入、官方键盘/触控板、USB Host、通用OS启动和1GiB下载仍有未完成后端。早期诊断镜像作为实验封存，不构成多套最终产品功能集。
 
