@@ -21,6 +21,28 @@ STATIC EFI_STATUS CreateStatus,PaintStatus;
 STATIC BOOLEAN Down;
 STATIC UINT64 Counter,LastElapsed;
 STATIC EFI_EVENT_NOTIFY Notify;
+STATIC UINT32 ObserveOrder,SmmuCalls,MappingCalls;
+STATIC BOOLEAN RetainedSmmu,RetainedMapping;
+STATIC UINT32 ObserveInject;
+
+BOOLEAN PianoProductDisplayRetained(VOID){return FALSE;}
+BOOLEAN PianoDisplaySmmuRetained(VOID){return RetainedSmmu;}
+BOOLEAN PianoFrameBufferMappingRetained(VOID){return RetainedMapping;}
+UINTN EFIAPI AsciiSPrint(CHAR8 *Buffer,UINTN Size,CONST CHAR8 *Format,...){
+  (VOID)Format;assert(Size==32);strcpy(Buffer,"pre:ClockDxe");return strlen(Buffer);
+}
+EFI_STATUS PianoDisplaySmmuObserve(CONST CHAR8 *Phase,PIANO_DISPLAY_SMMU_ALIVE Alive){
+  assert(Phase&&Alive()&&ObserveOrder==0);ObserveOrder=1;++SmmuCalls;
+  if(ObserveInject==1)Notify((EFI_EVENT)(UINTN)1,NULL);
+  if(ObserveInject==2)RetainedSmmu=TRUE;
+  return RetainedSmmu?EFI_DEVICE_ERROR:EFI_SUCCESS;
+}
+EFI_STATUS PianoFrameBufferMappingObserve(CONST CHAR8 *Phase,PIANO_FB_MAPPING_ALIVE Alive){
+  assert(Phase&&Alive()&&ObserveOrder==1);ObserveOrder=2;++MappingCalls;
+  if(ObserveInject==3)Notify((EFI_EVENT)(UINTN)1,NULL);
+  if(ObserveInject==4)RetainedMapping=TRUE;
+  return RetainedMapping?EFI_DEVICE_ERROR:EFI_SUCCESS;
+}
 
 VOID EFIAPI CpuDeadLoop(VOID){longjmp(Halt,1);}
 UINT64 EFIAPI GetPerformanceCounter(VOID){UINT64 Value=Counter;Counter=Down?Counter-100:Counter+100;return Value;}
@@ -46,6 +68,7 @@ STATIC VOID Reset(VOID){
   gBS=&Services;gST=&System;System.BootServices=gBS;
   memset(&mOwners,0,sizeof(mOwners));mBootLogExited=FALSE;mBootLogExitEvent=NULL;mBootLogEnabled=FALSE;
   Creates=Closes=Locates=Paints=Inject=0;CreateStatus=PaintStatus=EFI_SUCCESS;Down=FALSE;Counter=1000000;Notify=NULL;
+  ObserveOrder=SmmuCalls=MappingCalls=ObserveInject=0;RetainedSmmu=RetainedMapping=FALSE;
 }
 int main(VOID){
   Reset();assert(!setjmp(Halt));BootLogStart();assert(Creates==1&&Locates==1&&Paints==2&&mBootLogEnabled);
@@ -65,6 +88,15 @@ int main(VOID){
       assert(!"lost BootServices must halt before the caller resumes");
     }
     assert(mBootLogExited);assert(Closes==(Case==3?1:0));
+  }
+  Reset();assert(!setjmp(Halt));BootLogStart();ObserveNative("ClockDxe",TRUE);
+  assert(SmmuCalls==1&&MappingCalls==1&&ObserveOrder==2);BootLogReturned();
+  for(UINT32 Case=1;Case<=4;++Case){
+    Reset();assert(!setjmp(Halt));BootLogStart();ObserveInject=Case;
+    if(!setjmp(Halt)){ObserveNative("ClockDxe",TRUE);assert(!"observer lifetime/retention must halt");}
+    assert(SmmuCalls==1&&MappingCalls==(Case>2));
+    // Retention and EBS must not paint or close/call protocols before halt.
+    assert(Paints==2&&Closes==0);
   }
   puts("Actual Core boot-log event lifetime, warning cleanup, counter direction and EBS post-call CPU fences passed");return 0;
 }

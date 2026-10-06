@@ -12,6 +12,7 @@
 #include "PianoProductBootLog.h"
 #include "PianoProductDisplayObserve.h"
 #include "PianoDisplaySmmuObserve.h"
+#include "PianoFrameBufferMappingObserve.h"
 #include "LateHandoff/PianoLateHandoff.h"
 #include <Guid/EventGroup.h>
 #include <Library/UefiBootServicesTableLib.h>
@@ -93,9 +94,11 @@ STATIC EFI_STATUS ProductDebugReplay(VOID *Context) {
   EFI_STATUS Memory=PianoProductSmemReemit(NULL);
   EFI_STATUS Display=PianoProductDisplayReemit(BootLogAlive);
   EFI_STATUS Translation=PianoDisplaySmmuReemit(BootLogAlive);
+  EFI_STATUS CpuMapping=PianoFrameBufferMappingReemit(BootLogAlive);
   if(!BootLogAlive())return EFI_ABORTED;
   if(PianoProductDisplayRetained())return Display==EFI_SUCCESS?EFI_COMPROMISED_DATA:Display;
   if(PianoDisplaySmmuRetained())return Translation==EFI_SUCCESS?EFI_COMPROMISED_DATA:Translation;
+  if(PianoFrameBufferMappingRetained())return CpuMapping==EFI_SUCCESS?EFI_COMPROMISED_DATA:CpuMapping;
   // Unavailable GOP inventory remains diagnostic output. It must not prevent
   // export of a valid saved memory report or create a readiness claim.
   return Memory;
@@ -107,6 +110,9 @@ STATIC VOID ObserveDisplay(CONST CHAR8 *Phase) {
   Status=PianoDisplaySmmuObserve(Phase,BootLogAlive);
   if(!BootLogAlive())FailStop(EFI_ABORTED);
   if(PianoDisplaySmmuRetained())FailStop(Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status);
+  Status=PianoFrameBufferMappingObserve(Phase,BootLogAlive);
+  if(!BootLogAlive())FailStop(EFI_ABORTED);
+  if(PianoFrameBufferMappingRetained())FailStop(Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status);
 }
 STATIC VOID ObserveNative(CONST CHAR8 *Name,BOOLEAN Before) {
   CHAR8 Phase[32];
@@ -115,6 +121,9 @@ STATIC VOID ObserveNative(CONST CHAR8 *Name,BOOLEAN Before) {
   EFI_STATUS Status=PianoDisplaySmmuObserve(Phase,BootLogAlive);
   if(!BootLogAlive())FailStop(EFI_ABORTED);
   if(PianoDisplaySmmuRetained())FailStop(Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status);
+  Status=PianoFrameBufferMappingObserve(Phase,BootLogAlive);
+  if(!BootLogAlive())FailStop(EFI_ABORTED);
+  if(PianoFrameBufferMappingRetained())FailStop(Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status);
 }
 STATIC VOID ReportRequiredBackends(VOID) {
   // Required remains true. Missing real hardware/startup is visible rather
@@ -128,7 +137,10 @@ STATIC EFI_STATUS InitUfs(CONST VOID *Fdt) {
   mUfsStarted=mUfsStatus==EFI_SUCCESS;return mUfsStatus;
 }
 STATIC VOID FailStop(EFI_STATUS Status) {
-  BootLogStage(mBootLogStage,Status);
+  // A retained observer may still own an exception handler or have lost its
+  // service lifetime. Do not make another display/protocol call on that path.
+  if(!PianoProductDisplayRetained() && !PianoDisplaySmmuRetained() &&
+     !PianoFrameBufferMappingRetained())BootLogStage(mBootLogStage,Status);
 #ifdef __aarch64__
   __asm__ volatile("msr daifset, #15" ::: "memory");
 #endif
