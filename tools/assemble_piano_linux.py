@@ -300,6 +300,7 @@ def device_tree(path, manifests, library):
         'HOST_FOLDED_KERNEL_ROUTE_READBACK_REQUIRED': 'Piano-full-linux-owned-dma.dtb',
         'HOST_CLOCK_BINDINGS_FOLDED_NORMAL_DRIVER_READBACK_REQUIRED': 'Piano-full-linux-managed-clocks.dtb',
         'HOST_DSP_PCIE_BINDINGS_FOLDED_KERNEL_READBACK_REQUIRED': 'Piano-full-linux-managed-dsp-pcie.dtb',
+        'HOST_KEYBOARD_SUPPLIERS_FOLDED_KERNEL_READBACK_REQUIRED': 'Piano-full-linux-keyboard-suppliers.dtb',
     }
     previous = None
     before = None
@@ -348,6 +349,13 @@ def device_tree(path, manifests, library):
                 {'clocks', 'compatible'} if record['status'] == 'HOST_CLOCK_BINDINGS_FOLDED_NORMAL_DRIVER_READBACK_REQUIRED' else {'iommus', 'iommu-map'})
             boot_fixes = set()
             usb_fixes = set()
+            keyboard_fixes = set()
+            if record['status'] == 'HOST_KEYBOARD_SUPPLIERS_FOLDED_KERNEL_READBACK_REQUIRED':
+                from apply_piano_keyboard_suppliers import FIX_FIELDS, validate_delta
+                if actual != FIX_FIELDS or record.get('new_nodes') != []:
+                    raise ValueError('Incomplete or unaudited keyboard supplier repair')
+                validate_delta(before, parsed)
+                keyboard_fixes = FIX_FIELDS
             if record['status'] == 'HOST_DSP_PCIE_BINDINGS_FOLDED_KERNEL_READBACK_REQUIRED':
                 from apply_piano_dsp_pcie_masters import (BOOT_FIX_FIELDS, USB_FIX_FIELDS,
                                                         validate_boot_fix_delta, validate_usb_fix_delta)
@@ -362,7 +370,7 @@ def device_tree(path, manifests, library):
                     validate_usb_fix_delta(before, parsed)
                     usb_fixes = USB_FIX_FIELDS
             if any(prop not in allowed_properties or not node.startswith('/soc/')
-                   for node, prop in actual - boot_fixes - usb_fixes - usb_supply_fixes):
+                   for node, prop in actual - boot_fixes - usb_fixes - usb_supply_fixes - keyboard_fixes):
                 raise ValueError('DTB stage changed an unaudited property class')
         previous, before = expected_sha, parsed
     data = path.read_bytes()
