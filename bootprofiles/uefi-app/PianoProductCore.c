@@ -237,12 +237,8 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   PianoNativeSetObserver(NULL);
   if(!BootLogAlive())FailStop(EFI_ABORTED);
   ObserveDisplay("after-foundation");
-  Status=PianoProductDisplayStart(BootLogAlive);
-  PianoProductDisplayStartup(&mDisplayStartup);
-  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_DISPLAY_START status=%r held=%u owned=%u known_absent=%u required=1\n",
-    Status,mDisplayStartup.Held,mDisplayStartup.OwnedReferences,mDisplayStartup.KnownNoSideEffects));
-  if(PianoProductDisplayOwnerRetained()||mDisplayStartup.ServicesLost)FailStop(Status);
-  if(Status!=EFI_SUCCESS&&!mDisplayStartup.KnownNoSideEffects)FailStop(Status);
+  mDisplayStartup=(PIANO_PRODUCT_DISPLAY_STARTUP_REPORT){.Revision=1,.KnownNoSideEffects=TRUE,.Status=EFI_NOT_STARTED};
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_DISPLAY_START status=%r inherited_gop=1 no_clock_acquire=1 held=0\n",mDisplayStartup.Status));
   ObserveDisplay("after-display-lease");
   // Real protected SMEM observations precede product DMA owners. Failure with
   // exact handler cleanup leaves data unknown; retained ownership cannot be
@@ -340,8 +336,30 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
       // An acknowledged host action can arrive while a UI return is pending.
       // Observe its real service ledger before using an older UI reason.
       Status=PianoProductOwnersResolveReturnedAction(&mOwners);
+      BOOLEAN FileLoaded=FALSE;
+      if(Status==EFI_NOT_READY&&PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionBoot) {
+        VOID *FileContext=NULL,*FileToken=NULL;
+        EFI_STATUS Load=PianoRawLinuxLoadStable(Runtime,&FileContext,&FileToken);
+        DEBUG((DEBUG_WARN,"PIANO_PRODUCT_ESP_STABLE_LOAD status=%r path=EFI/Piano/stable/boot.img\n",Load));
+        if(PianoRawLinuxStableRetained())FailStop(Load);
+        FileLoaded=Load==EFI_SUCCESS;
+        // Loading pumps the real USB service. A host action may now take priority.
+        Status=PianoProductOwnersResolveReturnedAction(&mOwners);
+        if(Status==EFI_NOT_READY&&FileLoaded)Status=PianoProductOwnersRequestFileBoot(&mOwners,FileContext,FileToken);
+        if(Status==EFI_NOT_READY&&!FileLoaded) {
+          Status=PianoBootPolicyCancelStable();if(Status!=EFI_SUCCESS)FailStop(Status);
+          continue;
+        }
+      }
       if(Status!=EFI_SUCCESS)FailStop(Status);
+      if(FileLoaded&&mOwners.Report.Origin!=PianoProductRequestFile) {
+        Status=PianoRawLinuxDiscardStable();if(Status!=EFI_SUCCESS)FailStop(Status);FileLoaded=FALSE;
+      }
       Status=PianoProductOwnersRetire(&mOwners);
+      if(Status==EFI_NOT_READY&&FileLoaded&&mOwners.Report.Origin==PianoProductRequestUsb) {
+        Status=PianoRawLinuxDiscardStable();if(Status!=EFI_SUCCESS)FailStop(Status);
+        Status=PianoProductOwnersRetire(&mOwners);
+      }
       if(Status!=EFI_SUCCESS || !mOwners.Report.Clean)FailStop(Status);
       if(mOwners.Report.AllowedAction==PianoUsbServiceActionReboot || mOwners.Report.AllowedAction==PianoUsbServiceActionContinue) {
         gRT->ResetSystem(EfiResetCold,EFI_SUCCESS,0,NULL);FailStop(EFI_ABORTED);

@@ -227,6 +227,7 @@ hook(SI+'src/boot/SimpleInitBoot.inf', '[LibraryClasses]\n', '[LibraryClasses]\n
 hook(SI+'src/boot/bootdef.c', '\tgui_splash_set_text(true,_("Loading UEFI boot options..."));',
      '\tif(PianoProductRebootManaged()){\n'
      '\t\tboot_config entries[]={\n'
+     '\t\t\t{.mode=BOOT_EXIT,.ident="piano-stable",.desc="启动 Piano Linux（Stable）",.save=false,.replace=true,.show=true,.enabled=true},\n'
      '\t\t\t{.mode=BOOT_EXIT,.ident="piano-setup",.desc="固件设置（BIOS）",.save=false,.replace=true,.show=true,.enabled=true},\n'
      '\t\t\t{.mode=BOOT_EXIT,.ident="piano-shell",.desc="进入 UEFI Shell",.save=false,.replace=true,.show=true,.enabled=true},\n'
      '\t\t\t{.mode=BOOT_EXIT,.ident="continue",.desc="返回 Android（重启）",.save=false,.replace=true,.show=true,.enabled=true}\n'
@@ -244,6 +245,7 @@ hook(SI+'src/gui/interface/core/bootmenu.c', '\t#ifdef ENABLE_UEFI\n\tif(bi->cfg
      '\t\t\telse msgbox_alert("未能返回 Android，请稍后重试。");\n'
      '\t\t\treturn;\n\t\t}\n'
      '\t\tUINT32 action=strcmp(bi->cfg.ident,"piano-setup")==0?PIANO_PRODUCT_ACTION_SETUP:\n'
+     '\t\t\tstrcmp(bi->cfg.ident,"piano-stable")==0?PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE:\n'
      '\t\t\tstrcmp(bi->cfg.ident,"piano-shell")==0?PIANO_PRODUCT_ACTION_SHELL:PIANO_PRODUCT_ACTION_NONE;\n'
      '\t\tif(action!=PIANO_PRODUCT_ACTION_NONE){\n'
      '\t\t\tEFI_STATUS status=PianoProductRequestNavigation(action);\n'
@@ -280,6 +282,9 @@ hook(RESET_LIB+'Reset.c', '  if (ShellCommandLineGetFlag (Package, L"-fwui")) {'
 # transition is therefore an exit request for any active UI, including dialogs
 # embedded in Shell, where a compile-time "current=Setup" guess would be wrong.
 MENU_MIGRATIONS=[]
+for menu_path,menu_old,menu_new in HOOKS:
+    prior=menu_new.replace('\t\t\t{.mode=BOOT_EXIT,.ident="piano-stable",.desc="启动 Piano Linux（Stable）",.save=false,.replace=true,.show=true,.enabled=true},\n','').replace('\t\t\tstrcmp(bi->cfg.ident,"piano-stable")==0?PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE:\n','')
+    if prior!=menu_new:MENU_MIGRATIONS.append((menu_path,prior,menu_new))
 for menu_path,menu_old,menu_new in HOOKS:
     prior=menu_new
     if menu_path==SI+'src/boot/bootdef.c' and '.ident="continue"'in prior:

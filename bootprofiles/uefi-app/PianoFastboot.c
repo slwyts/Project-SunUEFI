@@ -309,7 +309,7 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes)
   }
   if(Equal(Cmd,"oem sha256"))return HashDownload(S);
   if(Equal(Cmd,"oem discard")){PianoFastbootReset(S);return Reply(S,"OKAY");}
-  if(Equal(Cmd,"oem setup") || Equal(Cmd,"oem shell") || Equal(Cmd,"oem simpleinit")) {
+  if(Equal(Cmd,"oem setup") || Equal(Cmd,"oem shell") || Equal(Cmd,"oem simpleinit") || Equal(Cmd,"oem boot-stable")) {
 #if PIANO_USB_SERVICE
     if(S->Diagnostic==NULL)return Reply(S,"FAILUI navigation backend unavailable");
     EFI_STATUS Status=S->Diagnostic(S->Context,S,Cmd);

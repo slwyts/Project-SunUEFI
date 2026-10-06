@@ -263,9 +263,9 @@ static VOID run_navigation(UINTN Test) {
   PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID *)0x55,.NowUs=now_us,.Storage=&backend};
   assert(PianoUsbControllerServiceStart((VOID *)123,&C)==EFI_SUCCESS);service_enumerate();
   if(Test==0){
-    CONST CHAR8 *Commands[]={"oem setup","oem shell","oem simpleinit"};CONST UINT32 Actions[]={PIANO_PRODUCT_ACTION_SETUP,PIANO_PRODUCT_ACTION_SHELL,PIANO_PRODUCT_ACTION_SIMPLEINIT};
-    for(UINTN I=0;I<3;++I){UINTN Alloc=allocations;service_out(Commands[I]);assert(mPending[3] && mPosted[3]==4 && !memcmp(mBulkTx.Cpu,"OKAY",4) && navigation_action==Actions[I]);service_ack();assert(!closes && !clock_calls && allocations==Alloc && mService.State.Phase==PianoUsbServiceListening && mService.State.Action==PianoUsbServiceActionNone);}
-    assert(navigation_queries==3 && navigation_requests==3);service_out("getvar:version");service_ack();
+    CONST CHAR8 *Commands[]={"oem setup","oem shell","oem simpleinit","oem boot-stable"};CONST UINT32 Actions[]={PIANO_PRODUCT_ACTION_SETUP,PIANO_PRODUCT_ACTION_SHELL,PIANO_PRODUCT_ACTION_SIMPLEINIT,PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE};
+    for(UINTN I=0;I<ARRAY_SIZE(Commands);++I){UINTN Alloc=allocations;service_out(Commands[I]);assert(mPending[3] && mPosted[3]==4 && !memcmp(mBulkTx.Cpu,"OKAY",4) && navigation_action==Actions[I]);service_ack();assert(!closes && !clock_calls && allocations==Alloc && mService.State.Phase==PianoUsbServiceListening && mService.State.Action==PianoUsbServiceActionNone);}
+    assert(navigation_queries==4 && navigation_requests==4);service_out("getvar:version");service_ack();
   } else {
     if(Test==6 || Test==7){service_out("oem setup");service_ack();assert(navigation_requests==1);if(Test==7)navigation_runtime.RequestAction=navigation_changed_request;}
     if(Test==10){

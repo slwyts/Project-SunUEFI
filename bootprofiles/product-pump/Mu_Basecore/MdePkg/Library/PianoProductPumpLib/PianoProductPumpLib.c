@@ -115,7 +115,7 @@ BOOLEAN EFIAPI PianoProductUiReturnRequested(VOID) {
   return Status==EFI_SUCCESS && Action!=PIANO_PRODUCT_ACTION_NONE;
 }
 EFI_STATUS EFIAPI PianoProductRequestNavigation(UINT32 Action) {
-  if(Action<PIANO_PRODUCT_ACTION_SIMPLEINIT || Action>PIANO_PRODUCT_ACTION_SHELL)return EFI_INVALID_PARAMETER;
+  if((Action<PIANO_PRODUCT_ACTION_SIMPLEINIT || Action>PIANO_PRODUCT_ACTION_SHELL)&&Action!=PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE)return EFI_INVALID_PARAMETER;
   EFI_STATUS Status=Enter();
   if(!PianoProductPumpBootServicesAlive()){
 #ifdef __aarch64__

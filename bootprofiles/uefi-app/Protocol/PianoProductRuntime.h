@@ -27,6 +27,8 @@
 // all-owner retirement+cold reboot; a future configured OS loader can resolve
 // this same action explicitly. Pending consumers still observe only 0..4.
 #define PIANO_PRODUCT_ACTION_REQUEST_CONTINUE 6U
+// Fixed installed ESP image; Core reads the file before retiring device owners.
+#define PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE 7U
 
 typedef struct PIANO_PRODUCT_RUNTIME_PROTOCOL PIANO_PRODUCT_RUNTIME_PROTOCOL;
 struct PIANO_PRODUCT_RUNTIME_PROTOCOL {

@@ -66,14 +66,15 @@ STATIC VOID EndCritical(UINT64 Mask) {
 }
 STATIC BOOLEAN EFIAPI Alive(PIANO_PRODUCT_RUNTIME_PROTOCOL *This){return This==&mRuntime && mAlive;}
 STATIC EFI_STATUS EFIAPI Request(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Action) {
-  if(This!=&mRuntime || Action<PIANO_PRODUCT_ACTION_SIMPLEINIT || Action>PIANO_PRODUCT_ACTION_REQUEST_CONTINUE)return EFI_INVALID_PARAMETER;
+  if(This!=&mRuntime || Action<PIANO_PRODUCT_ACTION_SIMPLEINIT || Action>PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE)return EFI_INVALID_PARAMETER;
   PIANO_USB_SERVICE_ACTION Reason=Action==PIANO_PRODUCT_ACTION_REQUEST_REBOOT?PianoUsbServiceActionReboot:
-    Action==PIANO_PRODUCT_ACTION_REQUEST_CONTINUE?PianoUsbServiceActionContinue:PianoUsbServiceActionNone;
+    Action==PIANO_PRODUCT_ACTION_REQUEST_CONTINUE?PianoUsbServiceActionContinue:
+    Action==PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE?PianoUsbServiceActionBoot:PianoUsbServiceActionNone;
   BOOLEAN Typed=Reason!=PianoUsbServiceActionNone;
   if(Typed)Action=PIANO_PRODUCT_ACTION_RETURN_CORE;
   UINT64 Mask=Critical();EFI_STATUS S=EFI_SUCCESS;
   if(!mAlive)S=EFI_ABORTED;
-  else if(Typed && (mReport.ActiveAction<PIANO_PRODUCT_ACTION_SIMPLEINIT || mReport.ActiveAction>PIANO_PRODUCT_ACTION_SHELL))S=EFI_ACCESS_DENIED;
+  else if(Typed && Reason!=PianoUsbServiceActionBoot && (mReport.ActiveAction<PIANO_PRODUCT_ACTION_SIMPLEINIT || mReport.ActiveAction>PIANO_PRODUCT_ACTION_SHELL))S=EFI_ACCESS_DENIED;
   else if(Typed && mReport.PendingAction==PIANO_PRODUCT_ACTION_RETURN_CORE && mReport.RequestedCoreAction!=Reason)S=EFI_ACCESS_DENIED;
   else if(mReport.PendingAction==PIANO_PRODUCT_ACTION_RETURN_CORE && Action!=PIANO_PRODUCT_ACTION_RETURN_CORE)S=EFI_ACCESS_DENIED;
   else if(!Typed && Action<=PIANO_PRODUCT_ACTION_SHELL && mReport.ActiveAction==Action){ /* same UI: successful no-op, preserve any newer pending action */ }
@@ -336,6 +337,13 @@ EFI_STATUS PianoBootPolicyRun(VOID) {
       if(Action==PIANO_PRODUCT_ACTION_NONE){Get=Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT);if(Get!=EFI_SUCCESS)return Get;}
     }
   }
+}
+EFI_STATUS PianoBootPolicyCancelStable(VOID) {
+  EFI_STATUS S=AtApp();if(S!=EFI_SUCCESS)return S;
+  if(mReport.Retained||mReport.Pumping||mReport.Dispatching||mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE||
+     mReport.RequestedCoreAction!=PianoUsbServiceActionBoot||mReport.PendingAction!=PIANO_PRODUCT_ACTION_NONE)return EFI_ACCESS_DENIED;
+  mReport.RequestedCoreAction=PianoUsbServiceActionNone;
+  return Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT);
 }
 EFI_STATUS PianoBootPolicyStop(VOID) {
   if(!mReport.Initialized)return EFI_NOT_STARTED;

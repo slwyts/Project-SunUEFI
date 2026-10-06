@@ -334,7 +334,8 @@ STATIC EFI_STATUS FastbootDiagnostic(VOID *Context,PIANO_FASTBOOT *State,CONST C
 #if PIANO_USB_SERVICE
   UINT32 UiAction=!AsciiStrCmp(Cmd,"oem setup")?PIANO_PRODUCT_ACTION_SETUP:
     !AsciiStrCmp(Cmd,"oem shell")?PIANO_PRODUCT_ACTION_SHELL:
-    !AsciiStrCmp(Cmd,"oem simpleinit")?PIANO_PRODUCT_ACTION_SIMPLEINIT:PIANO_PRODUCT_ACTION_NONE;
+    !AsciiStrCmp(Cmd,"oem simpleinit")?PIANO_PRODUCT_ACTION_SIMPLEINIT:
+    !AsciiStrCmp(Cmd,"oem boot-stable")?PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE:PIANO_PRODUCT_ACTION_NONE;
   if(UiAction!=PIANO_PRODUCT_ACTION_NONE) {
     EFI_STATUS UiStatus=ServiceRequestUi(UiAction);
     // An actual EBS fence forbids even a FAIL response DMA. Ordinary missing
@@ -835,7 +836,7 @@ STATIC EFI_STATUS ServiceRequestUi(UINT32 Action) {
   if(mService.State.ServicesLost)return EFI_ABORTED;
   if(!mService.State.Started || mService.State.Phase!=PianoUsbServiceListening || mService.State.Retained ||
      !mExperimentRunning || !ServiceAtApp() || gBS->LocateProtocol==NULL)return EFI_NOT_READY;
-  if(Action<PIANO_PRODUCT_ACTION_SIMPLEINIT || Action>PIANO_PRODUCT_ACTION_SHELL)return EFI_INVALID_PARAMETER;
+  if((Action<PIANO_PRODUCT_ACTION_SIMPLEINIT || Action>PIANO_PRODUCT_ACTION_SHELL)&&Action!=PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE)return EFI_INVALID_PARAMETER;
   EFI_GUID Guid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime=NULL;
   EFI_STATUS S=gBS->LocateProtocol(&Guid,NULL,(VOID **)&Runtime);
   if(mService.State.ServicesLost)return EFI_ABORTED;

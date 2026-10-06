@@ -192,7 +192,7 @@ EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){
 }
 EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RETIRE_REPORT *Report){(void)Reason;(void)Report;++stops;assert(!"UI return must not stop shared USB");return EFI_DEVICE_ERROR;}
 int main(int argc,char **argv){
-  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=87);
+  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=88);
   gBS=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);assert(gBS!=MAP_FAILED);
   *gBS=(EFI_BOOT_SERVICES){.RaiseTPL=raise,.RestoreTPL=restore,.CreateEventEx=create_ex,.CreateEvent=create,.CloseEvent=close_event,
     .RegisterProtocolNotify=notify,.InstallProtocolInterface=install,.UninstallProtocolInterface=uninstall,.LocateProtocol=locate,
@@ -207,6 +207,20 @@ int main(int argc,char **argv){
   if(scenario==13){assert(S==EFI_COMPROMISED_DATA && PianoBootPolicyReport()->Retained);goto Done;}
   if(scenario>=23 && scenario<=25){assert(S==EFI_COMPROMISED_DATA && PianoBootPolicyReport()->Retained && !starts);goto Done;}
   assert(S==EFI_SUCCESS && runtime && key_reg==1);
+  if(scenario==88) {
+    UINT32 A;UINT64 Seq,Again;
+    assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE)==EFI_SUCCESS);
+    assert(runtime->GetPendingAction(runtime,&A,&Seq)==EFI_SUCCESS&&A==PIANO_PRODUCT_ACTION_RETURN_CORE);
+    assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE)==EFI_SUCCESS);
+    assert(runtime->GetPendingAction(runtime,&A,&Again)==EFI_SUCCESS&&Again==Seq);
+    assert(PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionBoot);
+    assert(PianoBootPolicyCancelStable()==EFI_ACCESS_DENIED);
+    assert(PianoBootPolicyRun()==EFI_END_OF_FILE&&!starts&&!stops);
+    assert(PianoBootPolicyCancelStable()==EFI_SUCCESS);
+    assert(PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionNone);
+    assert(runtime->GetPendingAction(runtime,&A,&Again)==EFI_SUCCESS&&A==PIANO_PRODUCT_ACTION_SIMPLEINIT&&Again>Seq);
+    assert(PianoBootPolicyStop()==EFI_SUCCESS);goto Done;
+  }
   if(scenario>=82){
     UINT64 Sample=0;BOOLEAN Active=TRUE;assert(idle&&idle->Runtime==runtime&&idle->Read(idle,runtime,&Sample,&Active)==EFI_NOT_READY);
     assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_WAIT_EVENT,1000)==EFI_SUCCESS);
@@ -259,7 +273,7 @@ int main(int argc,char **argv){
     if(scenario==42 || scenario==43){
       assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_RETURN_CORE)==EFI_SUCCESS);
       assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_SETUP)==EFI_ACCESS_DENIED);
-      assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_NONE)==EFI_INVALID_PARAMETER && runtime->RequestAction(runtime,7)==EFI_INVALID_PARAMETER);
+      assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_NONE)==EFI_INVALID_PARAMETER && runtime->RequestAction(runtime,8)==EFI_INVALID_PARAMETER);
       if(scenario==43){tpl=TPL_CALLBACK;assert(PianoBootPolicyDispatchPending()==EFI_UNSUPPORTED && !starts && !stops);tpl=TPL_APPLICATION;}
     }
     if(scenario==44 || scenario==45){

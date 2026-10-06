@@ -119,7 +119,11 @@ EFI_STATUS PianoBootFileLoad(PIANO_BOOT_FILE_SOURCE *S,CONST PIANO_BOOT_FILE_ENV
   E=Env->Services->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,ExitNotify,S,&gEfiEventExitBootServicesGuid,&S->Exit);if(!Live(S)||E!=EFI_SUCCESS||!S->Exit){Retain(S,!Live(S)?EFI_ABORTED:E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);goto Done;}
   E=Env->Services->HandleProtocol(S->FileSystem,&gEfiSimpleFileSystemProtocolGuid,(VOID **)&S->Sfs);if(!Live(S)){Retain(S,EFI_ABORTED);goto Done;}if(E!=EFI_SUCCESS||!S->Sfs||!S->Sfs->OpenVolume){E=E==EFI_SUCCESS?EFI_COMPROMISED_DATA:Exact(E);goto Failure;}
   E=S->Sfs->OpenVolume(S->Sfs,&S->Root);if(!Live(S)){Retain(S,EFI_ABORTED);goto Done;}if(E!=EFI_SUCCESS||!S->Root||!S->Root->Open||!S->Root->Close){Retain(S,E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);goto Done;}S->CloseRoot=S->Root->Close;
-  E=S->Root->Open(S->Root,&S->File,S->Path,EFI_FILE_MODE_READ,0);if(!Live(S)){Retain(S,EFI_ABORTED);goto Done;}if(E!=EFI_SUCCESS||!S->File||!S->File->Close||!S->File->Read||!S->File->SetPosition||!S->File->GetPosition||!S->File->GetInfo){Retain(S,E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);goto Done;}
+  E=S->Root->Open(S->Root,&S->File,S->Path,EFI_FILE_MODE_READ,0);if(!Live(S)){Retain(S,EFI_ABORTED);goto Done;}
+  // A normal open failure without a returned file owns only the root/event.
+  // Close those through the ordinary cleanup path so a later request can retry.
+  if(EFI_ERROR(E)&&!S->File)goto Failure;
+  if(E!=EFI_SUCCESS||!S->File||!S->File->Close||!S->File->Read||!S->File->SetPosition||!S->File->GetPosition||!S->File->GetInfo){Retain(S,E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);goto Done;}
   S->CloseFile=S->File->Close;S->ReadFile=S->File->Read;S->SeekFile=S->File->SetPosition;S->PositionFile=S->File->GetPosition;S->InfoFile=S->File->GetInfo;
   UINTN Need=0;E=S->InfoFile(S->File,&gEfiFileInfoGuid,&Need,NULL);if(!Live(S)){Retain(S,EFI_ABORTED);goto Done;}if(E!=EFI_BUFFER_TOO_SMALL||Need<SIZE_OF_EFI_FILE_INFO+2||Need>sizeof(S->Info)){E=E==EFI_BUFFER_TOO_SMALL?EFI_BAD_BUFFER_SIZE:E==EFI_SUCCESS?EFI_COMPROMISED_DATA:Exact(E);goto Failure;}
   UINT64 Bytes=0;E=Information(S,TRUE,&Bytes);if(E!=EFI_SUCCESS)goto Failure;if(S->InfoBytes!=Need){E=EFI_MEDIA_CHANGED;goto Failure;}if(Bytes>Spec->MaxBytes||Bytes>MAX_UINTN){E=EFI_BAD_BUFFER_SIZE;goto Failure;}S->Bytes=(UINTN)Bytes;

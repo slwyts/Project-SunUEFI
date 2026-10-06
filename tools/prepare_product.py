@@ -28,7 +28,7 @@ SOURCE_NAMES=(
     'PianoFastbootScreen.c','PianoDwc3Device.c','PianoUsbControl.c','PianoUsbController.c',
     'PianoPogoReport.c','PianoPogoInput.c','PianoPogoI2c.c','PianoPogoTransport.c','PianoGeniI2cPio.c','PianoUsbHostPci.c',
 )
-OS_BOOT_SOURCES=('PianoBootFileSource.c','PianoCpuImageLoan.c','PianoLinuxEfiSession.c','PianoCpuInput.c')
+OS_BOOT_SOURCES=('PianoBootFileSource.c','PianoCpuImageLoan.c','PianoLinuxEfiSession.c','PianoCpuInput.c','PianoEspBootSource.c')
 OS_BOOT_HEADERS=tuple(name[:-2]+'.h' for name in OS_BOOT_SOURCES)
 LATE_HANDOFF_INF_SOURCES=('LateHandoff/PianoLateHandoff.c','LateHandoff/PianoLateHandoff.h')
 OS_BOOT_INF_SOURCES=tuple('OsBoot/'+name for name in (*OS_BOOT_SOURCES,*OS_BOOT_HEADERS))

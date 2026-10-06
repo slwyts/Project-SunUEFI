@@ -4,13 +4,17 @@
 #include <Protocol/LoadedImage.h>
 
 // This is the fixed, reserved Kernel-window loader, not full-DDR EFI authority.
-// Only the resident Core's real registered download session can produce it.
+// Only the resident Core's real download session or fixed ESP snapshot produces it.
 typedef struct {
   UINT32 Revision;UINT64 Epoch,Kernel,KernelBytes,KernelSpan,Dtb,DtbBytes,Initrd,InitrdBytes;
   EFI_HANDLE Image;CONST EFI_LOADED_IMAGE_PROTOCOL *Identity;VOID *Token;
   UINT8 KernelSha[32],InitrdSha[32],DtbSha[32];
 } PIANO_RAW_LINUX_REPORT;
 EFI_STATUS PianoRawLinuxRegister(EFI_HANDLE Image,EFI_SYSTEM_TABLE *SystemTable);
+// Fixed ESP snapshot, taken from the real FileSource before controller retirement.
+EFI_STATUS PianoRawLinuxLoadStable(PIANO_PRODUCT_RUNTIME_PROTOCOL *,VOID **Context,VOID **Token);
+EFI_STATUS PianoRawLinuxDiscardStable(VOID);
+BOOLEAN PianoRawLinuxStableRetained(VOID);
 EFI_STATUS PianoRawLinuxPrepare(PIANO_PRODUCT_OWNERS *,EFI_HANDLE,CONST PIANO_RAW_LINUX_REPORT **);
 // CPU-only identity/ownership check, including the actual complete owner ledger.
 BOOLEAN PianoRawLinuxPrepared(CONST PIANO_RAW_LINUX_REPORT *,CONST PIANO_PRODUCT_OWNERS *,EFI_HANDLE);

@@ -39,6 +39,7 @@
 #define PIANO_PRODUCT_ACTION_SIMPLEINIT 1
 #define PIANO_PRODUCT_ACTION_SETUP 2
 #define PIANO_PRODUCT_ACTION_SHELL 3
+#define PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE 7
 
 EFI_BOOT_SERVICES *gBS;
 EFI_SYSTEM_TABLE *gST;
@@ -178,7 +179,7 @@ static UINTN AsciiStrLen(CONST char *s){return strlen(s);}
 static char *confd_get_string_base(CONST char *key,CONST char *item,VOID *fallback){return NULL;}
 static VOID confd_save_file(VOID *path){++config_saves;}
 static VOID tlog_warn(CONST char *message){++reboot_warnings;}
-static EFI_STATUS PianoProductRequestNavigation(UINT32 a){assert(a>=1&&a<=3);++navigation_requests;navigation_action=a;if(request_failure)return EFI_ACCESS_DENIED;pending=TRUE;return EFI_SUCCESS;}
+static EFI_STATUS PianoProductRequestNavigation(UINT32 a){assert((a>=1&&a<=3)||a==PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE);++navigation_requests;navigation_action=a;if(request_failure)return EFI_ACCESS_DENIED;pending=TRUE;return EFI_SUCCESS;}
 static struct initial_cfg{bool valid;boot_config cfg;VOID *args;}initial_cfgs[]={{.valid=false}};
 static boot_config created_entries[4];
 static int boot_create_config(boot_config *cfg,VOID *data){assert(entry_count<4);created_entries[entry_count++]=*cfg;return 0;}
@@ -269,10 +270,11 @@ int main(VOID){
   for(UINTN cmd=0;cmd<=REBOOT_DATA;++cmd)if(cmd!=REBOOT_COLD&&cmd!=REBOOT_RESTART){reset(TRUE);assert(adv_reboot((enum reboot_cmd)cmd,NULL)==-1&&errno==EOPNOTSUPP&&!reboot_requests&&!native_resets);}
   reset(FALSE);allow_native_reset=TRUE;assert(adv_reboot(REBOOT_COLD,NULL)==-1&&native_resets==1&&!reboot_requests);
   reset(TRUE);boot_config boot={.mode=BOOT_REBOOT};assert(run_boot_reboot(&boot)==0&&pending&&reboot_requests==1&&config_saves==1&&!reboot_warnings&&!native_resets);
-  reset(TRUE);boot_init_configs();assert(entry_count==3&&!strcmp(created_entries[0].ident,"piano-setup")&&!strcmp(created_entries[0].desc,"固件设置（BIOS）")&&!strcmp(created_entries[1].ident,"piano-shell")&&created_entries[0].show&&created_entries[0].enabled&&!created_entries[0].save&&!strcmp(created_entries[2].ident,"continue")&&!strcmp(created_entries[2].desc,"返回 Android（重启）"));
-  struct bootmenu_item item={.cfg=created_entries[0]};struct bootmenu bm={.selected=&item};bootmenu_boot(&bm);assert(navigation_action==2&&navigation_requests==1&&gui_exits==1&&!legacy_boots&&!native_resets);
-  item.cfg=created_entries[1];bootmenu_boot(&bm);assert(navigation_action==3&&navigation_requests==2&&gui_exits==2&&!legacy_boots&&!native_resets);
-  item.cfg=created_entries[2];bootmenu_boot(&bm);assert(continue_requests==1&&gui_exits==3&&!legacy_boots&&!native_resets);
+  reset(TRUE);boot_init_configs();assert(entry_count==4&&!strcmp(created_entries[0].ident,"piano-stable")&&!strcmp(created_entries[0].desc,"启动 Piano Linux（Stable）")&&!strcmp(created_entries[1].ident,"piano-setup")&&!strcmp(created_entries[2].ident,"piano-shell")&&created_entries[0].show&&created_entries[0].enabled&&!created_entries[0].save&&!strcmp(created_entries[3].ident,"continue")&&!strcmp(created_entries[3].desc,"返回 Android（重启）"));
+  struct bootmenu_item item={.cfg=created_entries[0]};struct bootmenu bm={.selected=&item};bootmenu_boot(&bm);assert(navigation_action==7&&navigation_requests==1&&gui_exits==1&&!legacy_boots&&!native_resets);
+  item.cfg=created_entries[1];bootmenu_boot(&bm);assert(navigation_action==2&&navigation_requests==2&&gui_exits==2&&!legacy_boots&&!native_resets);
+  item.cfg=created_entries[2];bootmenu_boot(&bm);assert(navigation_action==3&&navigation_requests==3&&gui_exits==3&&!legacy_boots&&!native_resets);
+  item.cfg=created_entries[3];bootmenu_boot(&bm);assert(continue_requests==1&&gui_exits==4&&!legacy_boots&&!native_resets);
   reset(TRUE);request_failure=TRUE;strcpy(item.cfg.ident,"continue");bootmenu_boot(&bm);assert(continue_requests==1&&message_errors==1&&!gui_exits&&!legacy_boots&&!native_resets);
   reset(TRUE);request_failure=TRUE;strcpy(item.cfg.ident,"piano-setup");bootmenu_boot(&bm);assert(navigation_requests==1&&!gui_exits&&!legacy_boots&&!native_resets);
   reset(FALSE);boot_init_configs();assert(!entry_count);bootmenu_boot(&bm);assert(legacy_boots==1&&!navigation_requests&&!gui_exits);

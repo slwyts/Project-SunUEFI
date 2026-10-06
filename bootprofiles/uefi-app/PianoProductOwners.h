@@ -63,13 +63,17 @@ typedef enum {
   PianoProductOwnersClean,PianoProductOwnersRetained
 } PIANO_PRODUCT_OWNERS_PHASE;
 typedef enum {
-  PianoProductRequestNone=0,PianoProductRequestUsb,PianoProductRequestUi
+  PianoProductRequestNone=0,PianoProductRequestUsb,PianoProductRequestUi,PianoProductRequestFile
 } PIANO_PRODUCT_REQUEST_ORIGIN;
 typedef struct {
   UINT32 Revision;
   PIANO_PRODUCT_OWNERS_PHASE Phase;
   PIANO_USB_SERVICE_ACTION RequestedAction,AllowedAction;
   PIANO_PRODUCT_REQUEST_ORIGIN Origin;
+  // Identity supplied by Core only after the actual FileSource is validated
+  // and taken. Core retains its ownership; this ledger never invents a USB
+  // action or takes/releases the file token.
+  VOID *FileContext,*FileToken;
   BOOLEAN Initialized,Busy,ServicesLost,Retained,Clean,PolicyStopped;
   BOOLEAN UsbStopped,ProofAccepted,BridgeStopped,UfsStopped,InputStopped,DisplayStopped;
   BOOLEAN BootActionConsumed,OuterTplHeld,ManagerEventClosed;
@@ -100,6 +104,10 @@ EFI_STATUS PianoProductOwnersObserveUsbAction(PIANO_PRODUCT_OWNERS *Owners);
 // APP-only after a cooperative UI return. Requires the actual BootPolicy
 // report's exact UI action latch; it does not synthesize a USB command or ACK.
 EFI_STATUS PianoProductOwnersRequestUiAction(PIANO_PRODUCT_OWNERS *Owners,PIANO_USB_SERVICE_ACTION Action);
+// APP-only after child return and the real policy Boot latch. Context/Token
+// must identify Core's validated, taken FileSource. A real USB stop request
+// wins: inspect Report.Origin on success and release an unused file in Core.
+EFI_STATUS PianoProductOwnersRequestFileBoot(PIANO_PRODUCT_OWNERS *Owners,VOID *FileContext,VOID *FileToken);
 // Compatibility entry for the existing cold reboot UI path.
 EFI_STATUS PianoProductOwnersRequestUiReboot(PIANO_PRODUCT_OWNERS *Owners);
 // After child cleanup, real acknowledged USB requests take precedence over

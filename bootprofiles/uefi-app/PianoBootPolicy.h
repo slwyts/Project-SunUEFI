@@ -27,6 +27,8 @@ EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds);
 // actions dispatch only at APP after the preceding child cooperatively exits.
 EFI_STATUS PianoBootPolicyRun(VOID);
 EFI_STATUS PianoBootPolicyDispatchPending(VOID);
+// Core may return to the existing menu after a clean failed ESP read.
+EFI_STATUS PianoBootPolicyCancelStable(VOID);
 // Parent must keep code/state alive while installed, or Stop before returning.
 // This stops policy notifications only, never shared device/service owners.
 EFI_STATUS PianoBootPolicyStop(VOID);
