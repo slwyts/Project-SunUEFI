@@ -41,6 +41,17 @@ typedef struct {
   UINT16 Total[2],PerClient[2];UINT8 ClientFlags;
   UINT32 MatchingSnapshots; // two full independent decoded snapshots compared equal
 } PIANO_DISPLAY_CLOCK_LEASE_REFS;
+#define PIANO_DISPLAY_CLOCK_LEASE_HELD_PROOF_REVISION 1U
+// One real gcc_disp_ahb clock reference, not a rail/domain/MMCX or DPU lease.
+// Native queries and its own short GCC guard complete before this is returned.
+typedef struct {
+  UINT32 Revision;UINT64 Token;VOID *LeaseContext;
+  UINTN ClockId;UINT64 NativeBase;
+  EFI_STATUS Status,Identity,CounterStatus,IsEnabled,GccStatus;
+  BOOLEAN EnabledObserved;UINT32 OwnedReferences;
+  PIANO_DISPLAY_CLOCK_LEASE_REFS Refs;
+  PIANO_DISPLAY_CLOCK_LEASE_GCC Gcc;
+} PIANO_DISPLAY_CLOCK_LEASE_HELD_PROOF;
 typedef struct {
   UINT32 Revision;EFI_STATUS Status,Identity,Before,GetId,Enable,IsOn,After,Disable,Cleanup,CounterStatus,ReleaseReadbackStatus;
   UINT32 OwnedReferences;
@@ -62,7 +73,7 @@ typedef struct {
   EFI_CLOCK_PROTOCOL *Clock;EFI_HANDLE NativeImage;
   EFI_LOADED_IMAGE_PROTOCOL *ImageIdentity;VOID *ImageBase;UINT64 ImageSize;
   EFI_EVENT Exit;VOID *PinnedCopy;UINTN PinnedBytes;
-  UINT64 ReadCpuCalls;
+  UINT64 ReadCpuCalls,BorrowToken;
   UINT8 LiveText[256];
 } PIANO_DISPLAY_CLOCK_LEASE;
 // Zeroed driver-lifetime state. Exactly one gcc_disp_ahb native reference, no
@@ -72,3 +83,10 @@ EFI_STATUS PianoDisplayClockLeaseAcquire(PIANO_DISPLAY_CLOCK_LEASE *,CONST PIANO
 // Strict one attempt. Exact native ref decrement + identity + guard evidence
 // releases only the reference held here; never claims global hardware off.
 EFI_STATUS PianoDisplayClockLeaseRelease(PIANO_DISPLAY_CLOCK_LEASE *);
+// APP only, one live borrow at a time. Driver-lifetime tokens never repeat.
+// These do not acquire/release a native ref or grant any memory/domain access.
+EFI_STATUS PianoDisplayClockLeaseBorrowHeld(PIANO_DISPLAY_CLOCK_LEASE *,PIANO_DISPLAY_CLOCK_LEASE_HELD_PROOF *);
+EFI_STATUS PianoDisplayClockLeaseValidateHeld(PIANO_DISPLAY_CLOCK_LEASE *,UINT64 Token,PIANO_DISPLAY_CLOCK_LEASE_HELD_PROOF *);
+// Call only after the caller's guarded read has exactly ended. Fresh validation
+// is mandatory on return; failure revokes the token and retains the clock owner.
+EFI_STATUS PianoDisplayClockLeaseReturnHeld(PIANO_DISPLAY_CLOCK_LEASE *,UINT64 Token,PIANO_DISPLAY_CLOCK_LEASE_HELD_PROOF *);

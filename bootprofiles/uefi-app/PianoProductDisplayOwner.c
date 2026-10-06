@@ -2,6 +2,7 @@
 // Product binding of real native clock refs, bounded CPU reads and GCC guards.
 #include "PianoProductDisplayOwner.h"
 #include "PianoDisplayClockRead.h"
+#include "PianoDisplayClockObserve.h"
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/DxeServicesTableLib.h>
 #include <Library/BaseMemoryLib.h>
@@ -31,6 +32,13 @@ VOID PianoProductDisplayFenceExit(VOID){
   mDisplay.ServicesLost=mDisplay.Retained=TRUE;
   PianoDisplayClockReadFenceExit(&mDisplay.Reader);
   mDisplay.Lease.Report.ServicesLost=mDisplay.Lease.Report.Retained=TRUE;
+}
+EFI_STATUS PianoProductDisplayClockObserve(CONST CHAR8 *Phase,PIANO_PRODUCT_DISPLAY_ALIVE Alive){
+  if(!Phase||!Alive)return EFI_INVALID_PARAMETER;
+  if(PianoProductDisplayOwnerRetained())return EFI_NOT_READY;
+  if(!mDisplay.Lease.Report.Held)return PianoDisplayClockObserve(Phase,Alive);
+  if(Alive!=mDisplay.Alive||!ReadAlive(&mDisplay))return EFI_ABORTED;
+  return PianoDisplayClockObserveHeld(Phase,Alive,&mDisplay.Lease);
 }
 STATIC EFI_STATUS ReadGcc(VOID *Context,PIANO_DISPLAY_CLOCK_LEASE_GCC *R){
   if(Context!=&mDisplay.Reader||!R)return EFI_INVALID_PARAMETER;

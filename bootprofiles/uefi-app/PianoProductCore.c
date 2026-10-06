@@ -120,9 +120,10 @@ STATIC VOID ObserveDisplay(CONST CHAR8 *Phase) {
   Status=PianoFrameBufferMappingObserve(Phase,BootLogAlive);
   if(!BootLogAlive())FailStop(EFI_ABORTED);
   if(PianoFrameBufferMappingRetained())FailStop(Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status);
-  Status=PianoDisplayClockObserve(Phase,BootLogAlive);
+  Status=PianoProductDisplayClockObserve(Phase,BootLogAlive);
   if(!BootLogAlive())FailStop(EFI_ABORTED);
   if(PianoDisplayClockRetained())FailStop(Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status);
+  if(PianoProductDisplayOwnerRetained())FailStop(Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status);
 }
 STATIC VOID ObserveNative(CONST CHAR8 *Name,BOOLEAN Before) {
   CHAR8 Phase[32];

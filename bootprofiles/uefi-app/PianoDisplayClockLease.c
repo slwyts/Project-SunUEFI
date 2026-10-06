@@ -13,11 +13,12 @@
 STATIC EFI_GUID mClockGuid=EFI_CLOCK_PROTOCOL_GUID;
 STATIC EFI_GUID mImageGuid={0x4db5dea6,0x5302,0x4d1a,{0x8a,0x82,0x67,0x7a,0x68,0x3b,0x0d,0x29}};
 STATIC CONST UINT8 mPin[32]={0xf9,0xe8,0x5a,0xa7,0x58,0x93,0x2b,0x43,0x66,0xc5,0x5e,0xc8,0x3b,0x58,0xe0,0x17,0x6f,0x58,0xfb,0xa2,0x94,0x4c,0xc2,0xfd,0xd3,0x48,0x75,0xa4,0x6f,0xdb,0x76,0x9e};
+STATIC UINT64 mLastHeldToken;
 STATIC EFI_STATUS Exact(EFI_STATUS E){return E==EFI_SUCCESS?E:EFI_ERROR(E)?E:EFI_DEVICE_ERROR;}
 STATIC BOOLEAN Alias(CONST VOID *A,UINTN An,CONST VOID *B,UINTN Bn){UINTN X=(UINTN)A,Y=(UINTN)B;return An>MAX_UINTN-X||Bn>MAX_UINTN-Y||(X<Y+Bn&&Y<X+An);}
 STATIC BOOLEAN Live(PIANO_DISPLAY_CLOCK_LEASE *S){if(S->Report.ServicesLost||S->Env.BootServicesAlive(S->Env.Context)!=TRUE){S->Report.ServicesLost=TRUE;return FALSE;}return TRUE;}
-STATIC EFI_STATUS Retain(PIANO_DISPLAY_CLOCK_LEASE *S,EFI_STATUS E){S->Report.Retained=TRUE;S->Report.Busy=FALSE;return S->Report.Status=Exact(E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);}
-STATIC VOID EFIAPI Exit(EFI_EVENT Event,VOID *Context){(VOID)Event;PIANO_DISPLAY_CLOCK_LEASE *S=Context;S->Report.ServicesLost=S->Report.Retained=TRUE;}
+STATIC EFI_STATUS Retain(PIANO_DISPLAY_CLOCK_LEASE *S,EFI_STATUS E){S->BorrowToken=0;S->Report.Retained=TRUE;S->Report.Busy=FALSE;return S->Report.Status=Exact(E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);}
+STATIC VOID EFIAPI Exit(EFI_EVENT Event,VOID *Context){(VOID)Event;PIANO_DISPLAY_CLOCK_LEASE *S=Context;S->BorrowToken=0;S->Report.ServicesLost=S->Report.Retained=TRUE;}
 STATIC BOOLEAN CleanFirstTextRefusal(PIANO_DISPLAY_CLOCK_LEASE *S,UINT64 Address,UINTN Bytes,EFI_STATUS Status){
  if(Status!=EFI_NOT_READY||S->ReadCpuCalls!=1||Address!=S->Report.NativeBase+TEXT_FIRST||Bytes!=sizeof(S->LiveText)||
    !S->PinnedCopy||S->PinnedBytes!=IMAGE_BYTES||S->Exit||S->Report.GetId!=EFI_NOT_STARTED||S->Report.Enable!=EFI_NOT_STARTED||
@@ -208,7 +209,7 @@ Unheld:
 }
 EFI_STATUS PianoDisplayClockLeaseRelease(PIANO_DISPLAY_CLOCK_LEASE *S){
  if(!S||S->Signature!=SIGNATURE)return EFI_INVALID_PARAMETER;
- if(S->Report.Retained||S->Report.ServicesLost||S->Report.Busy||!S->Report.Held||S->Report.ReleaseAttempted)return EFI_ACCESS_DENIED;
+ if(S->Report.Retained||S->Report.ServicesLost||S->Report.Busy||!S->Report.Held||S->Report.ReleaseAttempted||S->BorrowToken)return EFI_ACCESS_DENIED;
  S->Report.Busy=TRUE;EFI_STATUS E=App(S);if(E!=EFI_SUCCESS)return Retain(S,E);
  E=Identity(S,FALSE);if(E!=EFI_SUCCESS)return Retain(S,E);
  PIANO_DISPLAY_CLOCK_LEASE_REFS Before;E=Refs(S,&Before,TRUE);if(E!=EFI_SUCCESS)return Retain(S,E);
@@ -223,4 +224,45 @@ EFI_STATUS PianoDisplayClockLeaseRelease(PIANO_DISPLAY_CLOCK_LEASE *S){
  E=Identity(S,FALSE);if(E!=EFI_SUCCESS)return Retain(S,E);
  E=S->Env.Services->CloseEvent(S->Exit);if(!Live(S)||E!=EFI_SUCCESS)return Retain(S,!Live(S)?EFI_ABORTED:E);
  S->Exit=NULL;S->Report.Held=FALSE;S->Report.Released=TRUE;S->Report.Busy=FALSE;return S->Report.Status=EFI_SUCCESS;
+}
+STATIC BOOLEAN HeldOutput(PIANO_DISPLAY_CLOCK_LEASE *S,PIANO_DISPLAY_CLOCK_LEASE_HELD_PROOF *R){
+ return R&&!Alias(R,sizeof(*R),S,sizeof(*S))&&(!S->Env.Context||!Alias(R,sizeof(*R),S->Env.Context,1))&&
+  (!S->ImageBase||!Alias(R,sizeof(*R),S->ImageBase,IMAGE_BYTES))&&(!S->ImageIdentity||!Alias(R,sizeof(*R),S->ImageIdentity,sizeof(*S->ImageIdentity)))&&
+  (!S->Env.Services||!Alias(R,sizeof(*R),S->Env.Services,sizeof(*S->Env.Services)));
+}
+STATIC EFI_STATUS HeldFresh(PIANO_DISPLAY_CLOCK_LEASE *S,UINT64 Token,PIANO_DISPLAY_CLOCK_LEASE_HELD_PROOF *R){
+ ZeroMem(R,sizeof(*R));R->Revision=PIANO_DISPLAY_CLOCK_LEASE_HELD_PROOF_REVISION;R->LeaseContext=S;R->ClockId=S->Report.ClockId;R->NativeBase=S->Report.NativeBase;
+ R->Status=R->Identity=R->CounterStatus=R->IsEnabled=R->GccStatus=EFI_NOT_STARTED;
+ S->Report.Busy=TRUE;EFI_STATUS E=App(S);if(E!=EFI_SUCCESS)goto Failure;
+ if(!Token){if(mLastHeldToken==MAX_UINT64){E=EFI_OUT_OF_RESOURCES;goto Failure;}Token=++mLastHeldToken;S->BorrowToken=Token;}
+ R->Identity=E=Identity(S,FALSE);if(E!=EFI_SUCCESS)goto Failure;
+ R->CounterStatus=E=Refs(S,&R->Refs,TRUE);if(E!=EFI_SUCCESS)goto Failure;
+ if(S->Report.OwnedReferences!=1||!SameRef(&R->Refs,&S->Report.Acquired)||R->Refs.MatchingSnapshots!=2||!R->Refs.Total[0]||!R->Refs.PerClient[0]){E=EFI_COMPROMISED_DATA;goto Failure;}
+ BOOLEAN Enabled=0xA5;R->IsEnabled=E=IsEnabled(S,&Enabled);R->EnabledObserved=Enabled;
+ if(!Live(S)||E!=EFI_SUCCESS||Enabled!=TRUE){E=!Live(S)?EFI_ABORTED:E==EFI_SUCCESS?EFI_NOT_READY:E;goto Failure;}
+ R->GccStatus=E=Gcc(S,&R->Gcc);if(E!=EFI_SUCCESS)goto Failure;
+ if(!(R->Gcc.Ahb[0]&BIT0)){E=EFI_COMPROMISED_DATA;goto Failure;}
+ R->Identity=E=Identity(S,FALSE);if(E!=EFI_SUCCESS)goto Failure;
+ R->OwnedReferences=1;R->Token=Token;S->Report.Busy=FALSE;return R->Status=EFI_SUCCESS;
+Failure:
+ R->Token=0;R->Status=Exact(E);return Retain(S,E);
+}
+STATIC EFI_STATUS HeldInput(PIANO_DISPLAY_CLOCK_LEASE *S,PIANO_DISPLAY_CLOCK_LEASE_HELD_PROOF *R){
+ if(!S||S->Signature!=SIGNATURE||!HeldOutput(S,R))return EFI_INVALID_PARAMETER;
+ if(S->Report.Retained||S->Report.ServicesLost||S->Report.Busy||!S->Report.Held||S->Report.Released||S->Report.ReleaseAttempted||S->Report.OwnedReferences!=1||!S->Exit)return EFI_ACCESS_DENIED;
+ return EFI_SUCCESS;
+}
+EFI_STATUS PianoDisplayClockLeaseBorrowHeld(PIANO_DISPLAY_CLOCK_LEASE *S,PIANO_DISPLAY_CLOCK_LEASE_HELD_PROOF *R){
+ EFI_STATUS E=HeldInput(S,R);if(E!=EFI_SUCCESS)return E;if(S->BorrowToken)return EFI_ALREADY_STARTED;
+ if(mLastHeldToken==MAX_UINT64)return EFI_OUT_OF_RESOURCES;
+ // Reserve only at actual APP, before validation callbacks; no reuse even if
+ // validation fails or reenters. HeldFresh already marks this context busy.
+ return HeldFresh(S,0,R);
+}
+EFI_STATUS PianoDisplayClockLeaseValidateHeld(PIANO_DISPLAY_CLOCK_LEASE *S,UINT64 Token,PIANO_DISPLAY_CLOCK_LEASE_HELD_PROOF *R){
+ EFI_STATUS E=HeldInput(S,R);if(E!=EFI_SUCCESS)return E;if(!Token||S->BorrowToken!=Token)return EFI_ACCESS_DENIED;return HeldFresh(S,Token,R);
+}
+EFI_STATUS PianoDisplayClockLeaseReturnHeld(PIANO_DISPLAY_CLOCK_LEASE *S,UINT64 Token,PIANO_DISPLAY_CLOCK_LEASE_HELD_PROOF *R){
+ EFI_STATUS E=HeldInput(S,R);if(E!=EFI_SUCCESS)return E;if(!Token||S->BorrowToken!=Token)return EFI_ACCESS_DENIED;
+ E=HeldFresh(S,Token,R);if(E!=EFI_SUCCESS)return E;S->BorrowToken=0;return EFI_SUCCESS;
 }

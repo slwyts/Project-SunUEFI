@@ -93,9 +93,35 @@ the callback does not grant memory, clock or display permission. FV retrieval
 warnings/partial outputs, any uncertain guard, later text failures, native
 mutations, EBS and failed/warning frees keep their previous retention rules.
 
+`BorrowHeld`, `ValidateHeld` and `ReturnHeld` provide one revocable read-only
+borrow of the existing clock reference. Every successful call performs fresh
+APP/alive/image checks, two matching typed-counter snapshots, an actual
+`IsClockEnabled` output and an independent exact GCC guarded readback, followed
+by another fresh image check. Ordinary total and client references must each
+remain at least1; the owner ledger must remain exactly1 and object identity,
+flags and counter class must match the acquired owner. Other legitimate
+references may change since startup or between borrow and return. No call
+adds a reference, disables a clock or invokes IsOn.
+
+The token is monotonic across all Lease instances for the loaded driver
+lifetime, reserved before callbacks and never reused or wrapped. Only one
+borrow per Lease may be active. Release rejects an active borrow. Return
+validates again itself before revoking its token; a prior Validate cannot
+substitute for that final check. EBS and retained failures revoke the token
+and prohibit release retries. Invalid/stale tokens and aliased outputs are
+rejected without granting a proof. Native queries and the API's own short GCC
+guard must finish before the observer's guarded session begins; Return is
+called only after the observer's exact Guard End.
+
+The typed held proof covers one `gcc_disp_ahb` reference and its enable state.
+It does not prove MMCX, MM/MX rails, a complete DISPCC bus-power lease, any DPU
+domain, or permission to map/read arbitrary registers. A controller observer
+must separately satisfy its actual power and fixed-resource gates; no missing
+gate may be replaced by the presence of a held-clock token.
+
 The actual pinned PE fixture now uses its real static BSP283a0/module-array28308,
 GCC module28678/149 clocks/array32418/index51, and static parent37528. Only native
-ARM calls and protected-read boundaries are substituted.70 ASAN/UBSAN fork
+ARM calls and protected-read boundaries are substituted.88 ASAN/UBSAN fork
 cases cover identity/hash/relocations, first client entry creation, two-snapshot
 coherence, legal other-reference changes, skip/no-op behavior, failed native
 calls, wrong/missing outputs, saturation/cycles/wrap, guard cleanup, EBS during
@@ -104,6 +130,10 @@ outputs, hardware gated idle88000003 with IsOn FALSE, inherited enabled refs
 and exact-once release. The first-read evidence cases cover a clean map refusal,
 absent/stale/mismatched callbacks, every guard-owner uncertainty, warning/failed
 cleanup, service loss and the prohibition on cleaning later read failures.
+Borrow cases additionally cover active-release rejection, before/after fresh
+validation, legitimate other-reference changes, cross-instance and returned
+token rejection, output aliasing, reentry, EBS revocation, counter drift, missing
+or false enabled outputs, changed identities/flags and uncertain GCC cleanup.
 Strict AArch64 syntax passes. Host callbacks are fixtures, not hardware proof;
 Root must bind the real reader/manager and run the next unique image to verify
 AHB retention and subsequent display observations.

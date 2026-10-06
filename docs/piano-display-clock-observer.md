@@ -55,9 +55,40 @@ subsequent DISPCC qualification.
 If the GCC pair is stable and AHB enable is observed, a second short guard session
 qualifies only `AF08000/2000` using CPU/GCD/AT validation. It performs **zero
 DISPCC LDRs**. This validates two mapped pages, not controller bus/rail safety.
-The current module has no audited controller accessibility/hold backend, so all
+The current module has no audited MM/MX controller power/access owner, so all
 eight DISPCC registers remain declared, required and skipped. No caller boolean
 can relabel the observed bit as a bus lease.
+
+`PianoDisplayClockObserveHeld(Phase, Alive, ActualLease)` now consumes the actual
+product ClockLease's `BorrowHeld` and `ReturnHeld` APIs. Both APIs freshly check
+native image identity, two decoded reference snapshots, actual IsEnabled output
+and an independent GCC guard. Their monotonic opaque token prevents a concurrent
+release while borrowed. The observer checks the exact pinned scope: GCC typed
+ID `04010033`, provider4/index51, nine modules/149 GCC clocks and actual native
+Global/Module/Node identities. It does not compare absolute before/after counts:
+other legitimate native references may change while the owned reference stays1.
+Native queries finish before the observer begins its own guard, and the return
+query happens only after exact End. Retained guard state or EBS prohibits that
+query and requires Root's resident fail-stop path; uncertain token/proof/return
+cannot become clean. The ordinary pre-foundation/native checkpoints still use
+the existing `PianoDisplayClockObserve` entry and never borrow an absent owner.
+
+The stored `ClockReferenceHeld` records that actual scoped proof; it is distinct
+from `ControllerBusHeld`, which remains false. `ControllerPowerUnproven` is the
+explicit skip for the eight controller registers even after a successful borrow
+and mapping qualification. DPU retains its separate missing-domain/clock skip.
+
+The power dependency is concrete, not an inferred policy. At byte baseline
+352508, `sm8750.dtsi:3750` supplies DISPCC from RPMHPD_MMCX at low-SVS and
+`dispcc-sm8750.c:1912` resumes its runtime PM domain before accessing registers.
+The official [SM8750 DT](https://github.com/torvalds/linux/blob/master/arch/arm64/boot/dts/qcom/sm8750.dtsi)
+and [DISPCC driver](https://github.com/torvalds/linux/blob/master/drivers/clk/qcom/dispcc-sm8750.c)
+show the same dependency. The ROM `private/analysis/live.dts:9919` instead uses
+`vdd_mm-supply`/`vdd_mx-supply`; their phandles resolve to RPMh `mmcx.lvl` and
+`mx.lvl`. A missing `power-domains` property in that representation does not
+eliminate those supplies. ROM proxy-consumer requests belong to Android's
+driver setup, and do not prove a current UEFI rail/client lifetime. Consequently
+the real GCC reference alone does not authorize eight controller LDRs.
 
 The six DPU registers are always explicitly skipped while there is no actual
 held domain/clock/access lifetime. Future release requires a real platform or
@@ -103,8 +134,27 @@ catalog INTF391 and SSPP/VIG/DMA bases54 onward. Line numbers describe baseline
 bytes, not a promise about a different source revision.
 
 Run `python3 -m unittest discover -s tests -p test_display_clock_observe.py -v`.
-The actual collector and actual Guard pass17 fork cases with ASAN/UBSAN, strict
+The actual collector and actual Guard pass33 fork cases with ASAN/UBSAN, strict
 AARCH64 and real `AsciiVSPrint(256)` complete lines under180bytes. Tests forbid
 every non-GCC LDR, cover double-read drift/disable, GCD/AT refusals, zero-load
 DISPCC qualification, foreign handlers, read-abort/SError/EBS, cleanup retention,
-32-phase capacity, CPU-only replay and long status formatting. No device is used.
+32-phase capacity, CPU-only replay and long status formatting. Held-consumer
+cases explicitly control the Lease service boundary and cover missing/invalid
+proof, zero token, scope drift, reentry, EBS, uncertain return/guard cleanup and
+legitimate changes to other native reference counts. They do not manufacture a
+rail proof. A second joint test links the actual Lease, actual Reader, actual
+Guard and actual collector against the pinned native PE fixture for both newly
+created and inherited client reference paths. Real borrow/return queries and
+mapping qualification succeed, then normal retirement decrements only the owned
+reference. The existing machine/EFI/native ARM-call boundaries are fixtures,
+not tablet hardware acceptance. All eight DISPCC and six DPU load counts remain
+zero. No device is used.
+
+The product Core now routes its outer display observations through
+`PianoProductDisplayClockObserve`. Before acquisition it uses the existing
+observation path; after acquisition it borrows the actual resident owner state
+and freshly returns that borrow before continuing. Native driver pre/post
+observations remain unchanged. The joint test exercises this exact product
+adapter as well as Lease/Reader/Guard, so the new consumer is connected to the
+single product source rather than only reachable from a test fixture. This
+binding has not yet been compiled into or accepted on the tablet.
