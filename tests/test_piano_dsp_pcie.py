@@ -155,13 +155,15 @@ class DspPcieTests(unittest.TestCase):
                 fdtoverlay=ROOT / 'build/kernel-topics/piano-panel/scripts/dtc/fdtoverlay',
                 libfdt=ROOT / 'upstream/dtc/libfdt/libfdt.so.1.8.1')
             report = patch.fold(args)
-            self.assertEqual(len(report['changes']), 16)
+            self.assertEqual(len(report['changes']), 22)
+            self.assertEqual(set(report['new_nodes']), patch.USB_RAIL_NODES)
             self.assertFalse(report['domain_forced'])
             self.assertFalse(report['hardware_dma_verified'])
             result = read_fdt((args.output_dir / 'Piano-full-linux-managed-dsp-pcie.dtb').read_bytes())
             before = read_fdt(base_path.read_bytes())
             self.assertEqual(before['reservations'], result['reservations'])
-            self.assertEqual(before['phandles'], result['phandles'])
+            self.assertTrue(before['phandles'].items() <= result['phandles'].items())
+            self.assertEqual(set(result['tree']) - set(before['tree']), patch.USB_RAIL_NODES)
             self.assertEqual(len(result['tree'][patch.PCI]['iommu-map']), 40)
             self.assertEqual(result['tree'][patch.RAMOOPS]['reg'], before['tree'][patch.RAMOOPS]['reg'])
             self.assertEqual(result['tree'][patch.RAMOOPS]['console-size'], patch.encode(0x200000))
@@ -174,13 +176,14 @@ class DspPcieTests(unittest.TestCase):
             self.assertNotIn('maximum-speed', result['tree'][patch.USB])
             self.assertEqual(result['tree'][patch.HS]['phys'], before['tree'][patch.REPEATER]['phandle'])
             self.assertEqual(result['tree'][patch.REPEATER]['#phy-cells'], patch.encode(0))
-            self.assertFalse(report['usb_supplies_converted'])
+            self.assertTrue(report['usb_supplies_converted'])
             self.assertFalse(report['usb_vendor_tuning_converted'])
             self.assertFalse(report['usb_hardware_verified'])
             for path in (patch.USB, patch.HS, patch.SS, patch.REPEATER):
                 for key, value in before['tree'][path].items():
                     if key == 'status' or key.endswith('-supply') or 'override-seq' in key:
-                        self.assertEqual(result['tree'][path][key], value)
+                        if (path, key) not in patch.USB_SUPPLY_FIX_FIELDS:
+                            self.assertEqual(result['tree'][path][key], value)
             import assemble_piano_linux as assemble
             manifests = [ROOT / 'private/analysis' / name / 'manifest.json' for name in (
                 'piano-full-dtb-fd6266-impact-fixed', 'piano-linux-owned-dma', 'piano-linux-managed-clocks-v1')]
@@ -191,6 +194,10 @@ class DspPcieTests(unittest.TestCase):
             broken['tree'][patch.USB]['phys'] = before['tree'][patch.HS]['phandle']
             with self.assertRaisesRegex(ValueError, 'USB PHY chain repair differs'):
                 patch.validate_usb_fix_delta(before, broken)
+            broken = copy.deepcopy(result)
+            broken['tree'][patch.SS]['vdda-pll-supply'] = result['tree']['/soc/rsc@16500000/regulators-6/ldo2']['phandle']
+            with self.assertRaisesRegex(ValueError, 'USB supply reference differs'):
+                patch.validate_usb_supply_delta(before, broken)
             args.base_sha256 = '0' * 64
             with self.assertRaises(ValueError): patch.fold(args)
 

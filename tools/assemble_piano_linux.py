@@ -323,9 +323,18 @@ def device_tree(path, manifests, library):
             raise ValueError('DTB stage output bytes differ')
         parsed = libcheck(blob, library)
         if before is not None:
+            usb_supply_fixes = set()
+            added = set(parsed['tree']) - set(before['tree'])
+            if record['status'] == 'HOST_DSP_PCIE_BINDINGS_FOLDED_KERNEL_READBACK_REQUIRED' and added:
+                from apply_piano_dsp_pcie_masters import (USB_RAIL_NODES, USB_SUPPLY_FIX_FIELDS,
+                                                        validate_usb_supply_delta)
+                if added != USB_RAIL_NODES or record.get('new_nodes') != sorted(USB_RAIL_NODES):
+                    raise ValueError('DTB stage added unaudited regulator nodes')
+                validate_usb_supply_delta(before, parsed)
+                usb_supply_fixes = USB_SUPPLY_FIX_FIELDS
             if (set(before['tree']) != set(parsed['tree']) or
                     before['reservations'] != parsed['reservations'] or
-                    before['phandles'] != parsed['phandles']):
+                    before['phandles'] != parsed['phandles']) and not usb_supply_fixes:
                 raise ValueError('DTB stage changed node/reservation/phandle identity')
             actual = {(node, prop) for node in before['tree']
                       for prop in set(before['tree'][node]) | set(parsed['tree'][node])
@@ -333,6 +342,8 @@ def device_tree(path, manifests, library):
             declared = {(row['path'], row['property']) for row in record['changes']}
             if actual != declared:
                 raise ValueError('DTB stage actual property changes differ from manifest')
+            if usb_supply_fixes and actual & usb_supply_fixes != usb_supply_fixes:
+                raise ValueError('Incomplete USB supply reference repair')
             allowed_properties = {'iommus'} if record['status'] == 'HOST_FOLDED_KERNEL_ROUTE_READBACK_REQUIRED' else (
                 {'clocks', 'compatible'} if record['status'] == 'HOST_CLOCK_BINDINGS_FOLDED_NORMAL_DRIVER_READBACK_REQUIRED' else {'iommus', 'iommu-map'})
             boot_fixes = set()
@@ -350,7 +361,8 @@ def device_tree(path, manifests, library):
                         raise ValueError('Incomplete USB PHY chain repair')
                     validate_usb_fix_delta(before, parsed)
                     usb_fixes = USB_FIX_FIELDS
-            if any(prop not in allowed_properties or not node.startswith('/soc/') for node, prop in actual - boot_fixes - usb_fixes):
+            if any(prop not in allowed_properties or not node.startswith('/soc/')
+                   for node, prop in actual - boot_fixes - usb_fixes - usb_supply_fixes):
                 raise ValueError('DTB stage changed an unaudited property class')
         previous, before = expected_sha, parsed
     data = path.read_bytes()

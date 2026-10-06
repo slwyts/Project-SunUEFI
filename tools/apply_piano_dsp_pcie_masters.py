@@ -23,6 +23,21 @@ SS = '/soc/ssphy@88e8000'
 REPEATER = '/soc/qcom,spmi@c42d000/qcom,pmih010x@7/eusb2-repeater@fd00'
 USB_FIX_FIELDS = {(USB, 'phys'), (USB, 'phy-names'), (HS, 'phys'),
                   (REPEATER, 'compatible'), (REPEATER, '#phy-cells')}
+USB_SUPPLIES = {(REPEATER, 'vdd3-supply'): 'ldob5', (REPEATER, 'vdd18-supply'): 'ldob15',
+                (HS, 'vdd-supply'): 'ldod2', (HS, 'vdda12-supply'): 'ldog3',
+                (SS, 'vdda-phy-supply'): 'ldod2', (SS, 'vdda-pll-supply'): 'ldog3'}
+USB_SUPPLY_FIX_FIELDS = set(USB_SUPPLIES)
+# These resources and limits agree between the same-board ROM, Android
+# regulator consumers, command DB and the standard Piano PMIC regulator data.
+USB_RAILS = {
+    'ldob5': ('/soc/rsc@16500000/regulators-4/ldo5', 'b', 'qcom,pm8550-rpmh-regulators', 3100000, 3148000),
+    'ldob15': ('/soc/rsc@16500000/regulators-4/ldo15', 'b', 'qcom,pm8550-rpmh-regulators', 1800000, 1800000),
+    'ldod2': ('/soc/rsc@16500000/regulators-0/ldo2', 'd', 'qcom,pm8550ve-rpmh-regulators', 880000, 912000),
+    'ldog3': ('/soc/rsc@16500000/regulators-6/ldo3', 'g', 'qcom,pm8550ve-rpmh-regulators', 1200000, 1256000),
+}
+USB_RAIL_NODES = {row[0] for row in USB_RAILS.values()}
+USB_SUPPLY_EVIDENCE = ROOT / 'private/analysis/piano-usb-supply-runtime/evidence.json'
+USB_SUPPLY_EVIDENCE_SHA = 'ade69b5782b07fa4a67710effd49fc728ad686285bb756ed6fd6719825295379'
 MASTERS = {DAIS: [(0x1001, 0x80), (0x1041, 0x20)],
            **{ADSP + f'/qcom,fastrpc/compute-cb@{i}':
               ([(0x1007, 0x40), (0x1067, 0), (0x1087, 0)] if i == 5 else
@@ -41,6 +56,8 @@ INPUTS = {
     'drivers/phy/qualcomm/phy-qcom-eusb2-repeater.c': '74fb34dcc0ad2377d12969e78a20c7e307f24ed46acd1ad4c150397ac0964c6d',
     'drivers/phy/qualcomm/phy-qcom-qmp-combo.c': '76c68d618de56c49d3d4e73af65e225eb19c1a2c4b51687a927480f9f18f0e33',
     'include/dt-bindings/phy/phy-qcom-qmp.h': '98993f931712dae608075c60149f7fec21405dda335bae06dcf3f448598bb995',
+    'drivers/regulator/qcom-rpmh-regulator.c': 'bd7f9cd8dcdb065ae38bc13c0ef6acc887a5bd796758c99c915819ec3fc2e596',
+    'drivers/soc/qcom/cmd-db.c': 'e6082231f11d6e85f663840ea40d4fdba36d41b76683fcdabadd002681f92f2f',
 }
 
 
@@ -84,8 +101,7 @@ def repair_usb_phy_chain(parsed):
     """Replace the observed NULL PHY path with normal supplier dependencies.
 
     The PMIH0108 fd00 block compatible is from the pinned SoC PMIC DTSI.
-    Supplies and downstream tuning are preserved, not claimed converted;
-    unavailable real providers must defer normal probe. QMP argument 0 is
+    Downstream tuning is preserved, not claimed converted. QMP argument 0 is
     QMP_USB43DP_USB3_PHY in the pinned sm8750.dtsi/phy-qcom-qmp.h binding.
     This reference does not invent its missing lane/orientation/role graph.
     """
@@ -125,11 +141,73 @@ def repair_usb_phy_chain(parsed):
 
 def validate_usb_fix_delta(before, after):
     expected = repair_usb_phy_chain(before)
-    for path in (USB, HS, REPEATER):
+    if set(after['tree']) - set(before['tree']):
+        expected = repair_usb_supplies(expected)
+    for path in (USB, HS, SS, REPEATER):
         if after['tree'][path] != expected['tree'][path]:
             raise ValueError('USB PHY chain repair differs: ' + path)
     for path in (USB, HS):
         reference_offsets(after, path, 'phys', after['tree'][path]['phys'])
+
+
+def repair_usb_supplies(parsed):
+    """Use observed RPMh outputs, without guessing input rails or vote modes.
+
+    The normal qcom-rpmh driver still resolves each resource in the runtime
+    command DB and fails registration if it is absent. Observed addresses
+    never become DT MMIO resources or a replacement for that lookup.
+    """
+    raw = USB_SUPPLY_EVIDENCE.read_bytes()
+    if sha(raw) != USB_SUPPLY_EVIDENCE_SHA:
+        raise ValueError('read-only Android USB supply evidence drift')
+    evidence = json.loads(raw)['resources']
+    fixed = copy.deepcopy(parsed)
+    next_handle = max(parsed['phandles']) + 1
+    for resource, (path, pmic_id, compatible, minimum, maximum) in USB_RAILS.items():
+        parent = parsed['tree'][path.rsplit('/', 1)[0]]
+        if (path in parsed['tree'] or parent.get('qcom,pmic-id') != (pmic_id + '\0').encode()
+                or parent.get('compatible') != (compatible + '\0').encode()
+                or evidence[resource]['constraints_microvolt'] != [minimum, maximum]
+                or evidence[resource]['type'] != 'pmic5-ldo'
+                or not evidence[resource]['enabled']):
+            raise ValueError('USB regulator resource/provider identity drift: ' + resource)
+        legacy = '/soc/rsc@16500000/drv@2/rpmh-regulator-' + resource
+        if (parsed['tree'][legacy].get('qcom,resource-name') != (resource + '\0').encode()
+                or parsed['tree'][legacy].get('qcom,regulator-type') != b'pmic5-ldo\0'):
+            raise ValueError('USB legacy regulator resource/type drift: ' + resource)
+        children = [p for p in parsed['tree'] if p.rsplit('/', 1)[0] == legacy
+                    and parsed['tree'][p].get('regulator-name') ==
+                    (evidence[resource]['regulator_name'] + '\0').encode()]
+        if len(children) != 1:
+            raise ValueError('USB legacy regulator child is ambiguous: ' + resource)
+        old = parsed['tree'][children[0]]
+        if (old.get('regulator-min-microvolt') != encode(minimum)
+                or old.get('regulator-max-microvolt') != encode(maximum)):
+            raise ValueError('USB regulator voltage constraint drift: ' + resource)
+        fixed['tree'][path] = {'regulator-name': ('piano_usb_' + resource + '\0').encode(),
+                              'regulator-min-microvolt': encode(minimum),
+                              'regulator-max-microvolt': encode(maximum),
+                              'phandle': encode(next_handle)}
+        fixed['phandles'][next_handle] = path
+        next_handle += 1
+    for (consumer, key), resource in USB_SUPPLIES.items():
+        fixed['tree'][consumer][key] = fixed['tree'][USB_RAILS[resource][0]]['phandle']
+    return fixed
+
+
+def validate_usb_supply_delta(before, after):
+    expected = repair_usb_supplies(before)
+    if (set(after['tree']) != set(expected['tree'])
+            or after['phandles'] != expected['phandles']
+            or after['reservations'] != before['reservations']):
+        raise ValueError('USB supply repair changed unrelated node/reservation/phandle identity')
+    for path in USB_RAIL_NODES:
+        if after['tree'][path] != expected['tree'][path]:
+            raise ValueError('USB supply regulator differs: ' + path)
+    for path, key in USB_SUPPLY_FIX_FIELDS:
+        if after['tree'][path][key] != expected['tree'][path][key]:
+            raise ValueError('USB supply reference differs: ' + path + ':' + key)
+        reference_offsets(after, path, key, after['tree'][path][key])
 
 
 def validate(parsed, repaired):
@@ -182,13 +260,13 @@ def fold(args):
         execute([args.fdtoverlay, '-i', args.base, '-o', tmp / 'out.dtb', tmp / 'in.dtbo'], out / 'fold.log')
         result = (tmp / 'out.dtb').read_bytes()
     after = libcheck(result, args.libfdt)
-    result = write_fdt(repair_usb_phy_chain(repair_boot_geometry(after)))
+    result = write_fdt(repair_usb_supplies(repair_usb_phy_chain(repair_boot_geometry(after))))
     after = libcheck(result, args.libfdt)
-    if set(before['tree']) != set(after['tree']) or before['reservations'] != after['reservations'] or before['phandles'] != after['phandles']:
-        raise ValueError('DSP/PCI repair changed tree/reservations/phandle identities')
+    validate_usb_supply_delta(before, after)
     changed = {(p, k) for p in before['tree'] for k in set(before['tree'][p]) | set(after['tree'][p])
                if before['tree'][p].get(k) != after['tree'][p].get(k)}
-    expected = {(p, 'iommus') for p in MASTERS} | {(PCI, 'iommu-map')} | BOOT_FIX_FIELDS | USB_FIX_FIELDS
+    expected = ({(p, 'iommus') for p in MASTERS} | {(PCI, 'iommu-map')}
+                | BOOT_FIX_FIELDS | USB_FIX_FIELDS | USB_SUPPLY_FIX_FIELDS)
     if changed != expected:
         raise ValueError('unexpected or missing property delta: ' + str(changed ^ expected))
     validate(after, True)
@@ -200,11 +278,15 @@ def fold(args):
               'base_sha256': sha(data), 'rom_sha256': sha(rom_data), 'source_dma_inputs': INPUTS,
               'overlay_sha256': sha(overlay.read_bytes()), 'output_sha256': sha(result),
               'output_bytes': len(result), 'changes': [{'path': p, 'property': k} for p, k in sorted(changed)],
+              'new_nodes': sorted(USB_RAIL_NODES),
               'dsp_consumers': {p: pairs for p, pairs in MASTERS.items()},
               'pci_rid_sid': [[0, 0x1400], [0x100, 0x1401]],
               'usb_phy_consumers': {USB: [HS, SS], HS: [REPEATER]},
               'usb3_phy_argument': 0,
-              'usb_supplies_converted': False, 'usb_vendor_tuning_converted': False,
+              'usb_supplies_converted': True, 'usb_vendor_tuning_converted': False,
+              'usb_supply_evidence_sha256': USB_SUPPLY_EVIDENCE_SHA,
+              'usb_supply_resources': {resource: row[0] for resource, row in USB_RAILS.items()},
+              'usb_supply_input_topology_verified': False,
               'usb_repeater_mapping_source': 'arch/arm64/boot/dts/qcom/pmih0108.dtsi',
               'usb_hardware_verified': False,
               'domain_forced': False, 'hardware_dma_verified': False,
