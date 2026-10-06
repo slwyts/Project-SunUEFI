@@ -2,9 +2,9 @@
 
 目标是在保留现有 Android 系统和数据的前提下，研究并移植 ARM64 UEFI，随后从 RAM 或外接介质启动 Linux / Windows PE。
 
-**最新实机结果（截至第103次）：显示 AHB 原生引用的获取、保持和释放已在唯一产品镜像中验证。** 第101次确认 ClockDxe 初始化把 `gcc_disp_ahb` 的 enable 位关闭；第103次产品主动获取一份真实引用，原生总计数/客户端计数均 `0→1`，寄存器 `88000002→88000003`，退出时 `refs=1/0、owned=1/0、clean=1`，标准 Fastboot 重启回 Android。物理屏幕是否恢复仍待操作员确认；软件 framebuffer 中的菜单不能替代面板显示验收。详见 [第103次记录](docs/piano-product-test103.md) 和 [显示回归证据](docs/piano-display-regression-window.md)。
+**最新实机结果（截至第104次）：显示 AHB 引用已保持，第二条 non-GDSC 显示时钟及其域的原生引用仍为0。** 第104次在唯一产品镜像中完成两份一致的只读快照，记录到配置 corner 为 `0x38`、缓存投票为0，MM/MX 客户端存在；这些软件状态尚不能证明实际供电或白屏根因。GCC 引用的三次使用前后核对均成功，退出时 `refs=1/0、owned=1/0、clean=1`，标准 Fastboot 重启回 Android。物理屏幕恢复仍未验收。详见 [第104次记录](docs/piano-product-test104.md) 和 [显示回归证据](docs/piano-display-regression-window.md)。
 
-**唯一产品候选：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成 TianoCore 启动画面、默认 SimpleInit、F12 Setup、标准 Shell 和驻留 Fastboot；没有诊断自动重启计时器。当前第103次构建通过393项主机测试，实机已验证标准命令、256KiB完整日志、3200×2136完整BMP上传及统一退役重启。该次镜像SHA256为 `aa47ec1d372b2cb5adaa684f72ebf01241f0936d49fd7a0228b3bd1402a729db`，封存版本和结果在 `artifacts/tests/stage0-test-103/`。构建、必需功能与真实后端状态见 [唯一产品构建](docs/piano-product-build.md)。
+**唯一产品候选：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成 TianoCore 启动画面、默认 SimpleInit、F12 Setup、标准 Shell 和驻留 Fastboot；没有诊断自动重启计时器。当前第104次构建通过针对性主机测试、固件编译和输入一致性验证，实机验证256KiB日志及统一退出重启；第103次另已验证3200×2136完整BMP上传。当前镜像SHA256为 `bc9458208ec443363b6f5c529ffba8a139e0c389f1532a5320f0ca62ad0bca18`，封存在 `artifacts/tests/stage0-test-104/`。构建、必需功能与真实后端状态见 [唯一产品构建](docs/piano-product-build.md)。
 
 已有 UFS 证据包括6个LUN和GPT读取、139个只读BlockIO句柄、7个只读SFS卷及标准Shell枚举；第80/86次专用区域写入实验完成备份、写入、读回和恢复，第91次标准fetch与USB/UFS联合关闭通过。原分区仍只读，GPT未改，永久产品FAT/NV区域尚未配置，EFI变量仍在RAM中。触摸真实输入、官方键盘/触控板、USB Host、通用OS启动和1GiB下载仍有未完成后端。早期诊断镜像作为实验封存，不构成多套最终产品功能集。
 
