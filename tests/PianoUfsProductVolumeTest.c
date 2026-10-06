@@ -19,6 +19,8 @@ VOID *EFIAPI CopyMem(VOID *D,CONST VOID *S,UINTN N){return memmove(D,S,N);}INTN 
 BOOLEAN EFIAPI Sha256HashAll(CONST VOID *P,UINTN N,UINT8 *Digest){return SHA256(P,N,Digest)!=NULL;}
 static VOID put32(UINT8 *P,UINT32 V){for(UINTN I=0;I<4;++I)P[I]=(UINT8)(V>>(8*I));}
 static VOID put64(UINT8 *P,UINT64 V){for(UINTN I=0;I<8;++I)P[I]=(UINT8)(V>>(8*I));}
+static UINT64 get64(CONST UINT8 *P){UINT64 V=0;for(UINTN I=0;I<8;++I)V|=(UINT64)P[I]<<(8*I);return V;}
+static VOID priority(UINTN Index,UINT8 Value){UINT8 *P=entries+Index*128+48;put64(P,(get64(P)&~0x000F000000000000ULL)|((UINT64)Value<<48));}
 static EFI_STATUS acquire(VOID *Context){assert(Context==&volume && volume.State.Busy && !held);held=TRUE;++acquires;return EFI_SUCCESS;}
 static EFI_STATUS release(VOID *Context,BOOLEAN Quarantined){(void)Quarantined;assert(Context==&volume && !volume.State.Busy && held);held=FALSE;++releases;return release_error?EFI_WARN_STALE_DATA:EFI_SUCCESS;}
 static EFI_STATUS guard(VOID *Context,UINT8 Lun,PIANO_UFS_WRITE_GUARD *G){assert(Context==&volume && held && Lun==4);*G=(PIANO_UFS_WRITE_GUARD){.Lun=4,.Collected=31,.CapacityBytes=1551892480,.Fua=!wp,.UnitWriteProtect=1};return EFI_SUCCESS;}
@@ -62,6 +64,13 @@ static void load_file(const char *Directory,const char *Name,void *Buffer,size_t
   FILE *F=fopen(Path,"rb");assert(F&&fread(Buffer,1,Bytes,F)==Bytes&&fgetc(F)==EOF);fclose(F);
 }
 int main(int argc,char **argv){
+  if(argc==3 && !strcmp(argv[1],"--current-gpt")){
+    fresh(FALSE);FILE *F=fopen(argv[2],"rb");assert(F && fread(primary,1,sizeof(primary),F)==sizeof(primary) && fread(entries,1,sizeof(entries),F)==sizeof(entries) && fgetc(F)==EOF);fclose(F);
+    // Preserve the captured primary CRCs; synthesize only its matching backup.
+    memcpy(backup_entries,entries,sizeof(entries));put32(backup+88,PianoGptCrc32(entries,sizeof(entries)));put32(backup+16,0);put32(backup+16,PianoGptCrc32(backup,92));
+    assert(PianoUfsProductVolumeOpen(&volume,&original,&io)==EFI_NOT_FOUND && !volume.State.Quarantined && !volume.State.NeedsRecovery && !writes && !syncs && !held && acquires==releases);
+    puts("Actual current Android GPT: priority-only drift accepted, absent owned entry NOT_FOUND, zero WRITE/SYNC, no quarantine.");return 0;
+  }
   if(argc==2){
     fresh(FALSE);
     load_file(argv[1],"primary-header.bin",primary,sizeof(primary));
@@ -77,6 +86,26 @@ int main(int argc,char **argv){
   }
   assert(argc==1);
   fresh(FALSE);assert(PianoUfsProductVolumeOpen(&volume,&original,&io)==EFI_NOT_FOUND && !volume.State.Provisioned && !volume.State.Quarantined && !writes && !syncs && !PianoUfsProductVolumeNvIo(&volume));
+  for(UINTN I=0;I<16;++I){
+    fresh(FALSE);priority(12,(UINT8)I);priority(46,(UINT8)(15-I));reseal_gpt();
+    assert(PianoUfsProductVolumeOpen(&volume,&original,&io)==EFI_NOT_FOUND && !volume.State.Quarantined && !volume.State.NeedsRecovery && !writes && !syncs && !held && acquires==releases);
+  }
+  fresh(TRUE);priority(12,15);priority(46,2);reseal_gpt();open();
+  priority(12,7);priority(46,3);reseal_gpt();assert(volume.Block.WriteBlocks(&volume.Block,1,0,4096,pattern)==EFI_SUCCESS && writes==1 && volume.State.VerifiedWrites==1);
+  for(UINTN Index=12;Index<=46;Index+=34)for(UINTN I=0;I<7;++I){
+    fresh(TRUE);UINT8 *E=entries+Index*128;
+    if(I==0)E[54]^=0x10; // tries bit 52
+    if(I==1)E[54]^=0x80; // successful bit 55
+    if(I==2)E[48]^=1;    // unrelated attribute
+    if(I==3)E[56]^=1;    // label
+    if(I==4)put64(E+32,get64(E+32)+1); // range
+    if(I==5)E[0]^=1;     // type GUID
+    if(I==6)E[16]^=1;    // unique GUID
+    reseal_gpt();assert(PianoUfsProductVolumeOpen(&volume,&original,&io)!=EFI_SUCCESS && !writes && !syncs);fenced();
+  }
+  fresh(FALSE);priority(12,15);assert(PianoUfsProductVolumeOpen(&volume,&original,&io)==EFI_CRC_ERROR && !writes && !syncs);fenced();
+  fresh(FALSE);priority(10,0);reseal_gpt();assert(PianoUfsProductVolumeOpen(&volume,&original,&io)==EFI_SECURITY_VIOLATION && !writes && !syncs);fenced();
+  fresh(TRUE);open();entries[12*128+54]^=0x10;reseal_gpt();assert(volume.Block.WriteBlocks(&volume.Block,1,0,4096,pattern)==EFI_SECURITY_VIOLATION && !writes);fenced();
   fresh(TRUE);original.PrimaryHeader.Bytes=92;assert(PianoUfsProductVolumeOpen(&volume,&original,&io)==EFI_SECURITY_VIOLATION && !acquires);
   for(UINTN I=0;I<7;++I){fresh(TRUE);if(I==0)disk[4096+32]^=1;if(I==1){disk[32]^=1;header();disk[32]^=1;}if(I==2)disk[100]^=1;if(I==3)entries[56]^=1;if(I==4)entries[95*128+48]=0;if(I==5)put64(entries+95*128+40,378624);if(I==6)backup[56]^=1;reseal_gpt();assert(PianoUfsProductVolumeOpen(&volume,&original,&io)!=EFI_SUCCESS && !writes && !syncs);fenced();}
   fresh(TRUE);open();UINT8 Meta[8192];memcpy(Meta,disk,8192);assert(volume.Media.LastBlock==2045);

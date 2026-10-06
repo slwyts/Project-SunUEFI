@@ -17,6 +17,9 @@ class UfsProductVolumeTests(unittest.TestCase):
             sources=[ROOT/'tests/PianoUfsProductVolumeTest.c',ROOT/'bootprofiles/uefi-app/PianoUfsProductVolume.c',ROOT/'bootprofiles/uefi-app/PianoGpt.c']
             cmd=['cc','-std=gnu11','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-Wno-unused-const-variable','-fsanitize=address,undefined','-fno-pie','-no-pie','-I',str(out),'-I',str(INC),'-I',str(INC/'X64'),'-I',str(CRYPTO),*[str(p) for p in sources],'-lcrypto','-o',str(out/'volume')]
             subprocess.run(cmd,check=True);subprocess.run([str(out/'volume')],check=True)
+            current=ROOT/'private/analysis/linux-live-test113/current-lun4-gpt.bin'
+            if current.is_file():
+                subprocess.run([str(out/'volume'),'--current-gpt',str(current)],check=True)
             proposal=ROOT/'private/provisioning/piano-storage-v1-final'
             if proposal.is_dir():
                 subprocess.run([str(out/'volume'),str(proposal)],check=True)

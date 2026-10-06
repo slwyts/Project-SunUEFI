@@ -6,6 +6,7 @@
 #include <Library/BaseCryptLib.h>
 #define PRODUCT_SIGNATURE SIGNATURE_32('P','V','O','L')
 #define DISK_LAST 378879ULL
+#define ANDROID_BOOT_PRIORITY_MASK 0x000F000000000000ULL
 STATIC UINT32 Le32(CONST UINT8 *P){return P[0]|((UINT32)P[1]<<8)|((UINT32)P[2]<<16)|((UINT32)P[3]<<24);}
 STATIC UINT64 Le64(CONST UINT8 *P){return Le32(P)|((UINT64)Le32(P+4)<<32);}
 STATIC VOID Put32(UINT8 *P,UINT32 V){for(UINTN I=0;I<4;++I)P[I]=(UINT8)(V>>(8*I));}
@@ -20,20 +21,29 @@ STATIC EFI_STATUS Quiet(PIANO_UFS_PRODUCT_VOLUME *D){BOOLEAN Q=FALSE;EFI_STATUS 
 STATIC EFI_STATUS ReadExact(PIANO_UFS_PRODUCT_VOLUME *D,EFI_LBA Lba,UINTN Bytes,VOID *Buffer){
   SetMem(Buffer,Bytes,0xCC);UINTN Got=0;EFI_STATUS S=Exact(D->Transport.Io.Read(D->Transport.Io.Context,4,Lba,Bytes,Buffer,&Got));if(S==EFI_SUCCESS && Got!=Bytes)S=EFI_BAD_BUFFER_SIZE;EFI_STATUS Q=Quiet(D);return Q!=EFI_SUCCESS?Q:S;
 }
+STATIC BOOLEAN OriginalEntryMatches(CONST UINT8 *Current,CONST UINT8 *Original,UINTN Index){
+  if(Index!=12 && Index!=46)return CompareMem(Current,Original,128)==0;
+  // These exact SHA-pinned rows are boot_a/boot_b. Android may change only
+  // their four priority bits; tries, success, GUIDs, ranges and names stay pinned.
+  STATIC CONST CHAR16 BootA[]=L"boot_a",BootB[]=L"boot_b";
+  if(CompareMem(Original+56,Index==12?BootA:BootB,sizeof(BootA)))return FALSE;
+  return CompareMem(Current,Original,48)==0 && CompareMem(Current+56,Original+56,72)==0 &&
+    ((Le64(Current+48)^Le64(Original+48)) & ~ANDROID_BOOT_PRIORITY_MASK)==0;
+}
 STATIC EFI_STATUS CheckGpt(PIANO_UFS_PRODUCT_VOLUME *D){
   PIANO_GPT_HEADER H;EFI_STATUS S=PianoGptParseHeader(D->Primary,4096,DISK_LAST,4096,&H);if(S!=EFI_SUCCESS)return Exact(S);
   UINTN Active=0;S=PianoGptCheckEntries(D->Entries,12288,&H,&Active);if(S!=EFI_SUCCESS)return Exact(S);
   if(H.Entries!=96 || H.EntryBytes!=128 || H.ArrayBytes!=12288 || H.EntryLba!=2 ||
      CompareMem(D->Entries,D->BackupEntries,12288))return EFI_COMPROMISED_DATA;
-  // The only allowed GPT changes are a new fixed entry and the two resulting
-  // CRC fields. Header bytes, GUID, original partitions and usable range stay.
+  // Allow the fixed owned entry, boot_a/boot_b priority bits and resulting CRCs.
+  // Header bytes, GUID, partition identities and usable range stay pinned.
   UINT8 P[4096],B[4096];CopyMem(P,D->Primary,4096);CopyMem(B,D->Backup,4096);
   Put32(P+16,Le32(D->OriginalPrimary+16));Put32(P+88,Le32(D->OriginalPrimary+88));
   Put32(B+16,Le32(D->OriginalBackup+16));Put32(B+88,Le32(D->OriginalBackup+88));
   if(CompareMem(P,D->OriginalPrimary,4096) || CompareMem(B,D->OriginalBackup,4096))return EFI_SECURITY_VIOLATION;
   if(Le32(D->Backup+88)!=H.ArrayCrc || Le32(D->Backup+12)!=92)return EFI_COMPROMISED_DATA;
   CopyMem(B,D->Backup,4096);Put32(B+16,0);if(PianoGptCrc32(B,92)!=Le32(D->Backup+16))return EFI_CRC_ERROR;
-  for(UINTN I=0;I<96;++I)if(I!=PIANO_PRODUCT_VOLUME_GPT_INDEX && CompareMem(D->Entries+I*128,D->OriginalEntries+I*128,128))return EFI_SECURITY_VIOLATION;
+  for(UINTN I=0;I<96;++I)if(I!=PIANO_PRODUCT_VOLUME_GPT_INDEX && !OriginalEntryMatches(D->Entries+I*128,D->OriginalEntries+I*128,I))return EFI_SECURITY_VIOLATION;
   CONST UINT8 *E=D->Entries+PIANO_PRODUCT_VOLUME_GPT_INDEX*128;
   if(Zero(E,128))return Active==79?EFI_NOT_FOUND:EFI_COMPROMISED_DATA;
   EFI_GUID Type=PIANO_PRODUCT_STORAGE_TYPE_GUID;
