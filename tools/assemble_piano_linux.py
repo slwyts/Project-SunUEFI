@@ -91,7 +91,7 @@ def kernel(folder, family):
             'release': manifest['kernel_release'], 'manifest_sha256': pin,
             'image': info, 'config_sha256': config_pin, 'command_line': command,
             'config_cmdline_force': True, 'external_debug_parameters_effective': False,
-            'debug_parameter_limitation': 'CONFIG_CMDLINE_FORCE=y discards external debug bootargs; explicit canonical config change/rebuild is required',
+            'debug_parameter_limitation': 'CONFIG_CMDLINE_FORCE=y discards external debug bootargs; RAM distro /etc/piano/linux-debug.conf supplies validated USB/shell/network defaults',
             'public_bt_le_enabled': full.config_values((folder / 'config').read_text()).get('CONFIG_BT_LE') == 'y',
             'modules': rows, 'module_summary': summary, 'required_hardware_modules': required}
 

@@ -72,8 +72,9 @@ remain in the manifest; these checks do not grant DDR ownership or prove DMA.
 
 `CONFIG_CMDLINE_FORCE=y` is explicitly reported for both current kernels.
 External LoadOptions cannot enable Linux USB-debug flags while this configuration
-is active; an explicit canonical config change and rebuild is needed. The
-assembler preserves the existing console/debug command line, refuses Android
+is active. The RAM distro now supplies validated USB/shell/network defaults via
+`/etc/piano/linux-debug.conf`; compiled command-line values still take priority.
+The assembler preserves the existing console/debug command line, refuses Android
 userdata root arguments and records the public BT_LE=n limitation.
 
 Six component tests use the actual sealed kernels and four-stage DTB chain,
