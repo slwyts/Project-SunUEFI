@@ -2,7 +2,7 @@
 
 目标是在保留现有 Android 系统和数据的前提下，研究并移植 ARM64 UEFI，随后从 RAM 或外接介质启动 Linux / Windows PE。
 
-**最新实机结果（第111次）：同一产品PianoUEFI从真实ESP读取Stable镜像，启动真实ext4根系统、systemd和GNOME。** 未经USB下载Linux镜像，只发送标准 `oem boot-stable`。USB ACM控制台、NCM网络和SSH均实测可用；原生双DSI接管、背光驱动启动并重启GDM后，用户确认看到tty和GNOME桌面。实测freedreno/Adreno830v1硬件加速，8个Qualcomm Oryon核心在线，SCMI/schedutil调频正常。触屏服务已启用并收到真实THP帧，用户确认点击、拖动窗口及亮度调节可用；GNOME动画已恢复。键盘/触控板仍被旧panel supplier阻塞，最小DTB修正已更新ESP等待下一次启动验证。原生显示先于GDM的持久启动顺序已部署，下一次冷启动自动顺序仍需验收；关屏偏红、短点按反馈、Wi-Fi/蓝牙/音频等完整设备体验尚未闭环。
+**最新实机结果（第114次）：同一产品从真实ESP启动Kernel69、真实ext4根系统和GNOME。** 修复合法boot_a/boot_b优先级变化误触发旧GPT保护后，产品Fastboot枚举和256KiB日志上传实测成功；显示AHB enable已保留，但UEFI物理画面仍白。Linux约2分10秒进入图形目标，显示/触控/键盘/无线/ADSP/音频服务均自动启动。用户确认键盘、触控板、Wi-Fi联网及蓝牙发现设备可用；触屏长按能弹出菜单。普通GNOME左右扬声器测试在补装libcanberra-pulse后正常；DMIC1的6秒RAM录音回放可辨认音乐，但底噪大，录音质量和输入音量条仍未闭环。当前保持Linux会话，recovery仍是已恢复且校验一致的原厂版本。
 
 **触控速率实测（第111次会话）：** 原厂固件THP帧中的扫描率字段为144 Hz，原始帧交付143.998 Hz，稳定期uinput报告约144 Hz。43.89秒单消费者观测收到6316帧，序号缺失、校验错误及输入写入错误均为0；主机算法平均12.73微秒，SPI完成到uinput写入平均1.54毫秒、最大7.05毫秒。这不包含传感器扫描等待和GNOME呈现延迟。可复用测量已加入运行时helper（默认关闭）；原厂游戏模式getter及可回退setter正在适配，尚未启用或实测360 Hz。
 
