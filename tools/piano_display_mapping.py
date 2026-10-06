@@ -13,9 +13,13 @@ ROOT = Path(__file__).resolve().parents[1]
 NATIVE = 'platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'
 DTB = 'private/captures/2026-10-03-piano/live.dtb'
 DTS = 'kernels/linux-piano/arch/arm64/boot/dts/qcom/sm8750.dtsi'
+NATIVE_DTB = 'private/analysis/xbl_config_a-0x8358.dtb'
+CLOCK_PE = 'upstream/Mu-Silicium/Binaries/piano/ProductFoundation/ClockDxe/ClockDxe.efi'
 PINS = {
     DTB: 'a4b55dd3b77e69be451aaf2263c76f5496c93325767e49f748ee49570611e8d7',
     NATIVE: '04ef5a00cee0123d4870a82670e677bfec2af5c360342fc5e0d9092bd7cbb9df',
+    NATIVE_DTB: '634ec73dc6d69a07b5af8246e03b0d2ae84dfb9ce9901135121c220443c9cd10',
+    CLOCK_PE: 'f9e85aa758932b4366c55ec83b58e0176f58fba2944cc2fdd34875a46fdb769e',
     DTS: '531d6a6d53c8e23b94e8ba2747386f3265c1930bfa24c8db4f8fd1c0086940e0',
     'kernels/linux-piano/drivers/clk/qcom/gcc-sm8750.c': '3ac38ce713871b541dd7d4bee7007b14fee36d3a2fc6faa951e7c82fd53da960',
     'kernels/linux-piano/drivers/clk/qcom/dispcc-sm8750.c': 'd33b53c94c12f6f30118dbb20f5c7714aa14ee3421cec436379425cfee2be164',
@@ -32,7 +36,10 @@ WINDOWS = (
     ('Piano_Display_GCC', '/soc/clock-controller@100000', 0x100000, 0x1f4200, 0x1f5000),
     ('Piano_Display_DPU', '/soc/qcom,mdss_mdp@ae00000', 0xae00000, 0x93800, 0x94000),
     ('Piano_Display_DISPCC', '/soc/clock-controller@af00000', 0xaf00000, 0x20000, 0x20000),
+    ('Piano_Display_CESTA', '/soc/cesta@af27000', 0xaf27000, 0x3000, 0x3000),
 )
+CESTA_NAMES = ('SDE_CRMB', 'SDE_CRMB_PT', 'SDE_CRMC', 'SDE_CRMV', 'SDE_CRM_COMMON')
+CESTA_REGS = ((0xaf27000, 0x400), (0xaf27400, 0x400), (0xaf27800, 0x2000), (0xaf29800, 0x700), (0xaf29f00, 0x100))
 SYMBOLS = {'NoHob': 0, 'AddMem': 1, 'AddDev': 2, 'HobOnlyNoCacheSetting': 3, 'AllocOnly': 4,
            'SYS_MEM': 0, 'MMAP_IO': 1, 'MEM_RES': 5, 'SYS_MEM_CAP': 0x703c07, 'EFI_RESOURCE_ATTRIBUTE_UNCACHEABLE': 0x400,
            'BsData': 4, 'EfiLoaderData': 2, 'EfiConventionalMemory': 7, 'EfiMemoryMappedIO': 11,
@@ -95,6 +102,7 @@ def parse_native(data):
 
 def validate(inputs, native_data, owners=()):
     tree = read_fdt(inputs[DTB])['tree']
+    native_tree = read_fdt(inputs[NATIVE_DTB])['tree']
     _, _, native = parse_native(native_data)
     if len(native) != 49:
         raise ValueError('Expected the actual 49-row product table')
@@ -114,12 +122,31 @@ def validate(inputs, native_data, owners=()):
         protected.append((owner['name'], span(owner['base'], owner['size'])))
     windows = []
     for name, path, base, raw_size, page_size in WINDOWS:
-        props = tree.get(path)
-        if not props or props.get('reg', b'')[:8] != struct.pack('>II', base, raw_size):
+        cesta = name == 'Piano_Display_CESTA'
+        props = (native_tree if cesta else tree).get(path)
+        if cesta:
+            expected_reg = b''.join(struct.pack('>II', *r) for r in CESTA_REGS)
+            expected_names = '\0'.join(CESTA_NAMES).encode() + b'\0'
+            if not props or props.get('reg') != expected_reg or props.get('reg-names') != expected_names:
+                raise ValueError('Native CESTA exact reg/name changed')
+            cursor = base
+            for start, length in CESTA_REGS:
+                if start != cursor:
+                    raise ValueError('CESTA role has a gap or overlap')
+                cursor = span(start, length)[1]
+            if cursor != base + raw_size:
+                raise ValueError('CESTA role union changed')
+            # Independent Android ROM corroboration, not the source of a
+            # guessed FAR envelope. Preserve the unrelated CRM base/RSC roles.
+            crm = tree.get('/soc/crm@af21000', {})
+            corroborated = b''.join(struct.pack('>II', *r) for r in ((0xaf21000, 0x6000), *CESTA_REGS))
+            if crm.get('reg') != corroborated or tree.get('/soc/syscon@af27800', {}).get('reg') != struct.pack('>II', 0xaf27800, 0x2000):
+                raise ValueError('Android CRM/CRMC corroboration changed')
+        elif not props or props.get('reg', b'')[:8] != struct.pack('>II', base, raw_size):
             raise ValueError('ROM exact reg changed: ' + path)
         if path.endswith('mdss_mdp@ae00000') and props.get('reg-names', b'').split(b'\0')[0] != b'mdp_phys':
             raise ValueError('ROM DPU resource identity changed')
-        if path != WINDOWS[1][1] and len(props['reg']) != 8:
+        if not cesta and path != WINDOWS[1][1] and len(props['reg']) != 8:
             raise ValueError('Clock-controller reg tuple changed')
         bounds = span(base, page_size)
         if base & 4095 or page_size != (raw_size + 4095) & ~4095 or bounds[1] > 0x80000000:
@@ -147,7 +174,7 @@ def render(native_data, windows):
         body += ','
     generated = (text[:array.start(1)] + body + added + text[array.end(1):]).encode()
     _, _, after = parse_native(generated)
-    if after[:len(before)] != before or len(after) != len(before) + 3 or len(after) >= 128:
+    if after[:len(before)] != before or len(after) != len(before) + len(windows) or len(after) >= 128:
         raise ValueError('Generated typed rows altered the native table')
     if any(r['hob'] != 2 or r['resource'] != 1 or r['resource_attrs'] != 0x400 or r['memory_type'] != 11 or r['arm_attrs'] != 6 for r in after[len(before):]):
         raise ValueError('Generated MMIO descriptor semantics differ')
@@ -182,7 +209,7 @@ def prepare(root, input_native_text, owners=()):
     windows = validate(inputs, native, owners)
     source = render(native, windows)
     metadata = {'status': 'HOST_DISPLAY_MMIO_CANDIDATE_REQUIRES_LIVE_AT_GCD',
-                'original_rows': 49, 'candidate_rows': 52, 'windows': windows,
+                'original_rows': 49, 'candidate_rows': 53, 'windows': windows,
                 'original_native_sha256': digest(native),
                 'generator_sha256': digest(generator_bytes),
                 'source_inputs': {p: {'sha256': digest(b), 'bytes': len(b)} for p, b in inputs.items()},
@@ -201,7 +228,7 @@ def prepare(root, input_native_text, owners=()):
 
 def recover_original(expanded_text):
     text, array, rows = parse_native(expanded_text.encode())
-    if len(rows) != 52 or array[1].count(MARKER) != 1:
+    if len(rows) not in (52, 53) or array[1].count(MARKER) != 1:
         raise ValueError('Expanded display table block missing/duplicated')
     original_body = array[1].split(MARKER)[0]
     if not original_body.endswith(','):
@@ -222,12 +249,15 @@ def original_native(root=ROOT):
         return text
     original = recover_original(text)
     expected, _ = prepare(root, original)
-    if text != expected:
+    historical = render(original.encode(), validate({p:(root/p).read_bytes() for p in PINS if p!=NATIVE}, original.encode())[:3]).decode()
+    if text not in (expected, historical):
         raise ValueError('Native expanded source differs from exact reconstruction')
     return original
 
 
 def verify(root, expanded_text, record):
+    if len(parse_native(expanded_text.encode())[2]) != 53:
+        raise ValueError('Current display verification requires 53 rows')
     original = recover_original(expanded_text)
     expected, expected_record = prepare(root, original, record.get('owners', ()))
     if expected != expanded_text or record != expected_record:

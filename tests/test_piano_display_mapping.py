@@ -33,14 +33,19 @@ class DisplayMappingTests(unittest.TestCase):
 
     def test_pinned_prepare_verify_and_small_fixture_drift(self):
         native=mapping.original_native(ROOT);text,record=mapping.prepare(ROOT,native)
-        self.assertTrue(mapping.verify(ROOT,text,record));self.assertEqual(record['candidate_rows'],52)
-        self.assertEqual([r['size'] for r in record['windows']],[0x1f5000,0x94000,0x20000])
+        self.assertTrue(mapping.verify(ROOT,text,record));self.assertEqual(record['candidate_rows'],53)
+        self.assertEqual([r['size'] for r in record['windows']],[0x1f5000,0x94000,0x20000,0x3000])
         self.assertFalse(record['hardware_verified']);self.assertFalse(record['register_access_authorized'])
         with tempfile.TemporaryDirectory(prefix='display-pin-')as directory:
             root=self.fixture(directory);self.assertEqual(mapping.prepare(root,native),(text,record))
             (root/mapping.NATIVE).write_text(text)
             self.assertEqual(mapping.original_native(root),native)
             self.assertEqual(mapping.create(root),(text.encode(),record))
+            historical=mapping.render(native.encode(),record['windows'][:3]).decode()
+            (root/mapping.NATIVE).write_text(historical)
+            self.assertEqual(mapping.original_native(root),native)
+            self.assertEqual(mapping.create(root),(text.encode(),record))
+            with self.assertRaisesRegex(ValueError,'53 rows'):mapping.verify(root,historical,record)
             for path in mapping.source_files(root):
                 original=path.read_bytes();path.write_bytes(original+b'\n')
                 with self.assertRaises(ValueError):mapping.verify(root,text,record)
@@ -64,6 +69,11 @@ class DisplayMappingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'exact reg'):mapping.validate(changed,native)
         changed=dict(inputs);changed[mapping.DTS]=inputs[mapping.DTS].replace(b'0x1f4200',b'0x1f4000')
         with self.assertRaisesRegex(ValueError,'Kernel resource'):mapping.validate(changed,native)
+        changed=dict(inputs);native_dtb=inputs[mapping.NATIVE_DTB]
+        changed[mapping.NATIVE_DTB]=native_dtb.replace(bytes.fromhex('0af2780000002000'),bytes.fromhex('0af2780000001000'),1)
+        with self.assertRaisesRegex(ValueError,'CESTA exact'):mapping.validate(changed,native)
+        changed=dict(inputs);changed[mapping.NATIVE_DTB]=native_dtb.replace(b'SDE_CRMC\0',b'SDE_BADX\0',1)
+        with self.assertRaisesRegex(ValueError,'CESTA exact'):mapping.validate(changed,native)
 
     def test_actual_mu_hobs_typed_rows_and_arm_mmu_device(self):
         native=mapping.original_native(ROOT);expanded,record=mapping.prepare(ROOT,native)
