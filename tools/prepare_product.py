@@ -15,10 +15,11 @@ from simpleinit_build_identity import inspect as inspect_simpleinit
 from prepare_gui_profile import SETUP_DSC_ADDITIONS, SETUP_FV_MODULES
 from prepare_product_early_memory import prepare as prepare_early_memory, verify as verify_early_memory
 from prepare_product_handoff import prepare as prepare_handoff, stage_provider, verify_provider
+import piano_display_mapping as display_mapping
 
 CORE_GUID='35E0D1B5-93CE-4D6A-9A93-6ADAA3F26C40'
 SOURCE_NAMES=(
-    'PianoProductCore.c','PianoProductBootLog.c','PianoProductDisplayObserve.c','PianoDisplaySmmuObserve.c','PianoFrameBufferMappingObserve.c','PianoBootPolicy.c','PianoFvApplication.c','PianoProductPayload.c','PianoProductOwners.c','PianoRamPartition.c','PianoProductSmem.c',
+    'PianoProductCore.c','PianoProductBootLog.c','PianoProductDisplayObserve.c','PianoDisplaySmmuObserve.c','PianoFrameBufferMappingObserve.c','PianoDisplayClockObserve.c','PianoBootPolicy.c','PianoFvApplication.c','PianoProductPayload.c','PianoProductOwners.c','PianoRamPartition.c','PianoProductSmem.c',
     'NativeProbe.c','PianoKeys.c','PianoFaultRecovery.c',
     'PianoSmmu.c','PianoDma.c','PianoOwnedSmmu.c','PianoIoPageTable.c',
     'PianoUfsProbe.c','PianoUfsReadOnlyDma.c','PianoUfsDmaLayout.c','PianoGpt.c','PianoReadOnlyBlock.c',
@@ -48,6 +49,16 @@ HOST_MODULES=('MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf','MdeModulePkg/Bus/Usb/U
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def verify_display_mapping(root,target,record):
+    if set(record)!={'candidate','compiled_into_product','hardware_verified','register_access_authorized'} or \
+       record['compiled_into_product'] is not True or record['hardware_verified'] is not False or \
+       record['register_access_authorized'] is not False:
+        raise ValueError('Product display mapping binding or readiness metadata changed')
+    memory=Path(target)/'Library/MemoryMapLib/MemoryMapLib.c'
+    if memory.is_symlink()or not memory.is_file():raise ValueError('Product display mapping source missing or unowned')
+    return display_mapping.verify(root,memory.read_text(),record['candidate'])
 
 
 def observation_files(root):
@@ -359,7 +370,11 @@ def prepare(root=ROOT):
     if text.count(old)!=1:raise ValueError('Unexpected product ramoops map')
     text=text.replace(old,'  {"Piano_Ramoops", 0xA3500000, 0x400000, AddMem, 5, 0x703C07, 0, UNCACHED_UNBUFFERED_XN},\n'
         '  {"Display_Demura_Tail", 0xA3900000, 0x2880000, AddMem, 5, 0x703C07, 0, WRITE_THROUGH_XN},')
+    text,display_candidate=display_mapping.prepare(root,text)
+    display_contract={'candidate':display_candidate,'compiled_into_product':True,
+                      'hardware_verified':False,'register_access_authorized':False}
     memory.write_text(text)
+    verify_display_mapping(root,target,display_contract)
     dsc=target/'pianoProduct.dsc';text=dsc.read_text().replace('183A8587-C1F1-5FDD-8E2A-127FB6BD81A4','5E182CB1-63D4-44B5-AF6E-C23959625BA1')
     text=text.replace('pianoProductPkg/Library/Stage0BootManagerLib/Stage0BootManagerLib.inf','pianoProductPkg/Library/ProductBootManagerLib/ProductBootManagerLib.inf')
     text=text.replace('pianoProductPkg/Library/RamLogSerialPortLib/FrameBufferSerialPortLib.inf','pianoProductPkg/Library/RamOnlySerialPortLib/RamOnlySerialPortLib.inf')
@@ -416,6 +431,7 @@ def prepare(root=ROOT):
     if staged.exists():shutil.rmtree(staged)
     shutil.copytree(target,staged)
     verify_early_memory(root,staged,early_memory)
+    verify_display_mapping(root,staged,display_contract)
     verify_os_boot(root,staged/'Applications/ProductCore',os_boot)
     verify_observation_families(root,staged/'Applications/ProductCore',observation)
     verify_provider(root,staged/'Applications/ProductCore',late_provider)
@@ -427,6 +443,7 @@ def prepare(root=ROOT):
       'service_compile_flags':list(PRODUCT_FLAGS),'sources':list((*SOURCE_NAMES,*OS_BOOT_INF_SOURCES,*OBSERVATION_INF_SOURCES)),'native_foundation':native_id,'os_boot':os_boot,'dxe_observation':observation,'early_memory':early_memory,
       'simpleinit':simpleinit,'simpleinit_payload':app_identity,'ui_hooks':ui,'pump_hooks':prepare_pump(root,apply=False),
       'low_memory_contract':low_memory_contract,
+      'display_mapping':display_contract,
       'native_late_handoff':handoff_hooks,'late_provider':late_provider,
       'platform_files':{str(path.relative_to(target)):sha(path)for path in sorted(target.rglob('*'))if path.is_file()},
       'device_boot_performed':False,'permanent_storage_writes':False}

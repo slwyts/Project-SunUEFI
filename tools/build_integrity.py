@@ -36,7 +36,7 @@ def inputs(root,profile):
         pump_record=pump(root,apply=False);ui_record=ui(root,apply=False)
         files.update(root/path for path in (*pump_record['files'],*ui_record['files']))
         files.update(root/path for path in nv_guard(root,apply=False)['files'])
-        from prepare_product import SOURCE_NAMES, os_boot_files, verify_os_boot, observation_files, verify_observation_families
+        from prepare_product import SOURCE_NAMES, os_boot_files, verify_os_boot, observation_files, verify_observation_families,verify_display_mapping
         canonical=root/'bootprofiles/uefi-app'
         files.update(canonical/name for name in SOURCE_NAMES)
         files.update(path for path in canonical.iterdir() if path.is_file() and path.suffix in ('.h','.inc'))
@@ -49,6 +49,10 @@ def inputs(root,profile):
         from prepare_product_early_memory import verify as verify_early_memory, EARLY_FILES
         for target in (platform,root/'platforms/pianoProductPkg'):
             verify_early_memory(root,target,prepared.get('early_memory',{}))
+            verify_display_mapping(root,target,prepared.get('display_mapping',{}))
+        from piano_display_mapping import source_files as display_sources
+        files.update(display_sources(root))
+        files.update(root/path for path in ('tools/compose_piano_dtb.py','tools/analyze_capture.py'))
         files.update(root/'bootprofiles/early-memory'/name for name in EARLY_FILES)
         from prepare_product_handoff import prepare as handoff, verify_provider
         handoff_record=handoff(root,apply=False)

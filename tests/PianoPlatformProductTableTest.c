@@ -31,7 +31,15 @@ int main(int Argc,char **Argv){
   assert(Argc==3);UINTN Bytes,RawBytes;VOID *Dtb=ReadFile(Argv[1],&Bytes),*Payload=ReadFile(Argv[2],&RawBytes);
   assert(RawBytes==2328&&RawBytes<sizeof(raw));memcpy(raw,Payload,RawBytes);free(Payload);
   assert(PianoSmemRamParse(raw,RawBytes,&observed)==EFI_SUCCESS&&observed.BankCount==12&&observed.OtherCategoryCount==3);
-  UINT8 NativeCount;EFI_MEMORY_REGION_DESCRIPTOR *Native;PianoActualProductGetMemoryMap(&Native,&NativeCount);assert(NativeCount==49);
+  UINT8 NativeCount;EFI_MEMORY_REGION_DESCRIPTOR *Native;PianoActualProductGetMemoryMap(&Native,&NativeCount);assert(NativeCount==49||NativeCount==52);
+  if(NativeCount==52){
+    CONST CHAR8 *Names[]={"Piano_Display_GCC","Piano_Display_DPU","Piano_Display_DISPCC"};
+    CONST UINT64 Base[]={0x100000,0xae00000,0xaf00000},Length[]={0x1f5000,0x94000,0x20000};
+    for(UINTN I=0;I<3;++I){CONST EFI_MEMORY_REGION_DESCRIPTOR *R=&Native[49+I];
+      assert(!strcmp(R->Name,Names[I])&&R->Address==Base[I]&&R->Length==Length[I]&&R->HobOption==AddDev&&
+        R->ResourceType==MMAP_IO&&R->ResourceAttribute==EFI_RESOURCE_ATTRIBUTE_UNCACHEABLE&&
+        R->MemoryType==EfiMemoryMappedIO&&R->ArmAttributes==ARM_MEMORY_REGION_ATTRIBUTE_DEVICE);}
+  }
   memcpy(native_copy,Native,NativeCount*sizeof(*Native));
   // The actual native-call identity boundary is separately executed in
   // PianoRamPartitionTest. These flags are explicit host fixture inputs only.
@@ -70,5 +78,5 @@ int main(int Argc,char **Argv){
   PIANO_PLATFORM_MEMORY_OWNER CurrentOwner={0xA10000000ULL,4096,-1};input.KnownOwners=&CurrentOwner;input.OwnerCount=1;
   Compose(EFI_ACCESS_DENIED);input.KnownOwners=NULL;input.OwnerCount=0;Compose(EFI_SUCCESS);
   assert(!inventory.OwnershipVerified&&!contract.ReadyForMemoryPeim);
-  free(Dtb);printf("Actual product49 rows + final DTB + physical current12: %u canonical/zero/MMIO-alias/default-unready cases passed; no HOB/MMU/high allocation\n",cases);return 0;
+  free(Dtb);printf("Actual product%u rows + final DTB + physical current12: %u canonical/zero/MMIO-alias/default-unready cases passed; no HOB/MMU/high allocation\n",NativeCount,cases);return 0;
 }

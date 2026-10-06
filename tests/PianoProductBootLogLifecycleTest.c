@@ -21,13 +21,14 @@ STATIC EFI_STATUS CreateStatus,PaintStatus;
 STATIC BOOLEAN Down;
 STATIC UINT64 Counter,LastElapsed;
 STATIC EFI_EVENT_NOTIFY Notify;
-STATIC UINT32 ObserveOrder,SmmuCalls,MappingCalls;
-STATIC BOOLEAN RetainedSmmu,RetainedMapping;
+STATIC UINT32 ObserveOrder,SmmuCalls,MappingCalls,ClockCalls;
+STATIC BOOLEAN RetainedSmmu,RetainedMapping,RetainedClock;
 STATIC UINT32 ObserveInject;
 
 BOOLEAN PianoProductDisplayRetained(VOID){return FALSE;}
 BOOLEAN PianoDisplaySmmuRetained(VOID){return RetainedSmmu;}
 BOOLEAN PianoFrameBufferMappingRetained(VOID){return RetainedMapping;}
+BOOLEAN PianoDisplayClockRetained(VOID){return RetainedClock;}
 UINTN EFIAPI AsciiSPrint(CHAR8 *Buffer,UINTN Size,CONST CHAR8 *Format,...){
   (VOID)Format;assert(Size==32);strcpy(Buffer,"pre:ClockDxe");return strlen(Buffer);
 }
@@ -42,6 +43,12 @@ EFI_STATUS PianoFrameBufferMappingObserve(CONST CHAR8 *Phase,PIANO_FB_MAPPING_AL
   if(ObserveInject==3)Notify((EFI_EVENT)(UINTN)1,NULL);
   if(ObserveInject==4)RetainedMapping=TRUE;
   return RetainedMapping?EFI_DEVICE_ERROR:EFI_SUCCESS;
+}
+EFI_STATUS PianoDisplayClockObserve(CONST CHAR8 *Phase,PIANO_DISPLAY_CLOCK_ALIVE Alive){
+  assert(Phase&&Alive()&&ObserveOrder==2);ObserveOrder=3;++ClockCalls;
+  if(ObserveInject==5)Notify((EFI_EVENT)(UINTN)1,NULL);
+  if(ObserveInject==6)RetainedClock=TRUE;
+  return RetainedClock?EFI_DEVICE_ERROR:EFI_NOT_READY;
 }
 
 VOID EFIAPI CpuDeadLoop(VOID){longjmp(Halt,1);}
@@ -68,7 +75,7 @@ STATIC VOID Reset(VOID){
   gBS=&Services;gST=&System;System.BootServices=gBS;
   memset(&mOwners,0,sizeof(mOwners));mBootLogExited=FALSE;mBootLogExitEvent=NULL;mBootLogEnabled=FALSE;
   Creates=Closes=Locates=Paints=Inject=0;CreateStatus=PaintStatus=EFI_SUCCESS;Down=FALSE;Counter=1000000;Notify=NULL;
-  ObserveOrder=SmmuCalls=MappingCalls=ObserveInject=0;RetainedSmmu=RetainedMapping=FALSE;
+  ObserveOrder=SmmuCalls=MappingCalls=ClockCalls=ObserveInject=0;RetainedSmmu=RetainedMapping=RetainedClock=FALSE;
 }
 int main(VOID){
   Reset();assert(!setjmp(Halt));BootLogStart();assert(Creates==1&&Locates==1&&Paints==2&&mBootLogEnabled);
@@ -90,11 +97,12 @@ int main(VOID){
     assert(mBootLogExited);assert(Closes==(Case==3?1:0));
   }
   Reset();assert(!setjmp(Halt));BootLogStart();ObserveNative("ClockDxe",TRUE);
-  assert(SmmuCalls==1&&MappingCalls==1&&ObserveOrder==2);BootLogReturned();
-  for(UINT32 Case=1;Case<=4;++Case){
+  assert(SmmuCalls==1&&MappingCalls==1&&ClockCalls==1&&ObserveOrder==3);BootLogReturned();
+  for(UINT32 Case=1;Case<=6;++Case){
     Reset();assert(!setjmp(Halt));BootLogStart();ObserveInject=Case;
     if(!setjmp(Halt)){ObserveNative("ClockDxe",TRUE);assert(!"observer lifetime/retention must halt");}
     assert(SmmuCalls==1&&MappingCalls==(Case>2));
+    assert(ClockCalls==(Case>4));
     // Retention and EBS must not paint or close/call protocols before halt.
     assert(Paints==2&&Closes==0);
   }

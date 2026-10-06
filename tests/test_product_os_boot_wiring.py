@@ -42,9 +42,17 @@ class ProductOsBootWiringTests(unittest.TestCase):
         (target/'pianoProduct.dsc').write_text('[Components]\n')
         (target/'pianoProduct.fdf').write_text('[FV]\n  INF SiliciumPkg/Sec/Sec.inf\n')
         early=prepare_early(root,target)
+        import piano_display_mapping as display
+        for path in display.source_files(ROOT):
+            copy=root/path.relative_to(ROOT);copy.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,copy)
+        for name in ('tools/compose_piano_dtb.py','tools/analyze_capture.py'):
+            copy=root/name;copy.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/name,copy)
+        memory,display_candidate=display.prepare(root,display.original_native(ROOT))
+        memory_path=target/'Library/MemoryMapLib/MemoryMapLib.c';memory_path.parent.mkdir(parents=True,exist_ok=True);memory_path.write_text(memory)
+        display_binding={'candidate':display_candidate,'compiled_into_product':True,'hardware_verified':False,'register_access_authorized':False}
         staged=root/'upstream/Mu-Silicium/Platforms/Xiaomi/pianoProductPkg'
         shutil.copytree(app.parent.parent,staged)
-        manifest=root/'build/product/prepared-manifest.json';manifest.parent.mkdir(parents=True);manifest.write_text(json.dumps({'os_boot':record,'dxe_observation':observation,'early_memory':early,'native_late_handoff':native,'late_provider':provider}))
+        manifest=root/'build/product/prepared-manifest.json';manifest.parent.mkdir(parents=True);manifest.write_text(json.dumps({'os_boot':record,'dxe_observation':observation,'early_memory':early,'native_late_handoff':native,'late_provider':provider,'display_mapping':display_binding}))
         for relative in ('config/piano-product.json','tools/prepare_product.py','tools/build_product.sh','tools/package_product.py',
                          'tools/prepare_product_pump.py','tools/prepare_product_ui.py','tools/prepare_nv_runtime_guard.py','tools/prepare_product_early_memory.py','tools/prepare_product_handoff.py','tools/simpleinit_build_identity.py',
                          'tools/build_simpleinit.sh','tools/prepare_simpleinit.py','tools/product_payload_digest.py',
@@ -119,6 +127,31 @@ class ProductOsBootWiringTests(unittest.TestCase):
         self.assertEqual(status['shared_os_loader'],'COMPILED_PLATFORM_NOT_READY')
         self.assertFalse(status['platform_bound']);self.assertFalse(status['full_ddr_verified'])
         self.assertEqual(status['source_budget_bytes'],64*1024*1024)
+
+    def test_display_mapping_freshness_and_no_readiness_promotion(self):
+        for mutation in ('staged_row','target_row','generator','driver_pin','parser','binding','hardware_ready','missing_row'):
+            with self.subTest(mutation=mutation),tempfile.TemporaryDirectory(prefix='product-display-binding-')as tmp:
+                root=Path(tmp);app,_,staged=self.fixture(root);before=self.fingerprint(root)
+                if mutation in ('staged_row','target_row','missing_row'):
+                    table=(staged if mutation!='target_row'else app).parent.parent/'Library/MemoryMapLib/MemoryMapLib.c'
+                    source=table.read_text()
+                    if mutation=='missing_row':source=source.replace('"Piano_Display_GCC"','"Missing_GCC"')
+                    else:source=source.replace('0x1F5000','0x1F4000')
+                    table.write_text(source)
+                elif mutation in ('generator','driver_pin','parser'):
+                    name='tools/piano_display_mapping.py'if mutation=='generator'else 'tools/compose_piano_dtb.py'if mutation=='parser'else 'kernels/linux-piano/drivers/clk/qcom/gcc-sm8750.c'
+                    path=root/name;path.write_bytes(path.read_bytes()+b'\n// changed input\n')
+                else:
+                    path=root/'build/product/prepared-manifest.json';manifest=json.loads(path.read_text())
+                    manifest['display_mapping']['hardware_verified'if mutation=='hardware_ready'else 'compiled_into_product']=mutation=='hardware_ready'
+                    path.write_text(json.dumps(manifest))
+                if mutation=='parser':
+                    # Parser dependencies are fingerprinted even though exact
+                    # fixed output geometry remains separately reconstructed.
+                    self.assertNotEqual(self.fingerprint(root)['sha256'],before['sha256'])
+                else:
+                    with self.assertRaises(ValueError):self.fingerprint(root)
+
 
 
 if __name__=='__main__':unittest.main()
