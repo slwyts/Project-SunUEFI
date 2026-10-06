@@ -10,9 +10,24 @@
 #include <Library/DebugLib.h>
 #include <Library/UefiLib.h>
 #include "NativeProbeTable.h"
+#include "PianoNativeImages.h"
+STATIC EFI_HANDLE mNativeLoaded[ARRAY_SIZE(mNativeImages)];
+STATIC BOOLEAN mFoundationAttempted,mFoundationRunning;
 STATIC VOID (*mNativeObserver)(CONST CHAR8 *,BOOLEAN);
 VOID PianoNativeSetObserver(VOID (*Observer)(CONST CHAR8 *,BOOLEAN)) {
   mNativeObserver=Observer;
+}
+EFI_STATUS PianoNativeGetLoadedImage(CONST EFI_GUID *FileGuid,EFI_HANDLE *Handle) {
+  if(FileGuid==NULL||Handle==NULL)return EFI_INVALID_PARAMETER;
+  *Handle=NULL;
+  if(!mFoundationAttempted||mFoundationRunning)return EFI_NOT_READY;
+  for(UINTN I=0;I<ARRAY_SIZE(mNativeImages);++I) {
+    if(CompareGuid(FileGuid,&mNativeImages[I].Guid)) {
+      if(!mNativeLoaded[I])return EFI_NOT_FOUND;
+      *Handle=mNativeLoaded[I];return EFI_SUCCESS;
+    }
+  }
+  return EFI_NOT_FOUND;
 }
 
 STATIC BOOLEAN Ready(CONST UINT8 *Expression,UINTN Length) {
@@ -40,6 +55,8 @@ STATIC BOOLEAN Ready(CONST UINT8 *Expression,UINTN Length) {
 }
 
 VOID PianoProbeFoundation(VOID) {
+  if(mFoundationAttempted)return;
+  mFoundationAttempted=mFoundationRunning=TRUE;
   BOOLEAN Attempted[ARRAY_SIZE(mNativeImages)]={FALSE};
   DEBUG((DEBUG_WARN,"SUNUEFI_FOUNDATION_BEGIN\n"));
   for(UINTN Pass=0;Pass<ARRAY_SIZE(mNativeImages);++Pass) {
@@ -88,6 +105,7 @@ VOID PianoProbeFoundation(VOID) {
           if(mNativeObserver)mNativeObserver(Image->Name,FALSE);
           // A successfully started foundation driver must remain loaded.
           if(EFI_ERROR(Status))gBS->UnloadImage(Handle);
+          else mNativeLoaded[I]=Handle;
         }
       }
       DEBUG((DEBUG_WARN,"SUNUEFI_NATIVE_RESULT %a %r\n",Image->Name,Status));
@@ -98,4 +116,5 @@ VOID PianoProbeFoundation(VOID) {
     DEBUG((DEBUG_WARN,"SUNUEFI_NATIVE_DEPEX_WAIT %a\n",mNativeImages[I].Name));
   }
   DEBUG((DEBUG_WARN,"SUNUEFI_FOUNDATION_END\n"));
+  mFoundationRunning=FALSE;
 }
