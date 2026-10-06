@@ -57,16 +57,43 @@ AcquireForMemoryPeim exposes the table only after exact authorization. The
 callback remains unbound; setting it to success would erase the outstanding
 cold owner, cache and legal allocation problem.
 
-An occupied1GiB arena cannot supply the current reader's standard
-AllocatePool or the kernel stub's standard AllocatePages. The legal minimal
-extension for the unchanged standard loaders is to have the cold authority
-identify, prove and publish additional **Conventional** page ranges before
-first MMU/HOB construction, excluding every live owner, fixed/no-map/CMA and
-phase-relevant dynamic placement. That requires an explicit typed authorized
-allocation class in the cold descriptor producer; changing the current occupied
-row's type after Compose is not sufficient. An alternative source-only arena
-allocator would require a real reader/allocator integration which is currently
-absent, and still would not satisfy the stub's independent page allocation.
+An occupied arena cannot supply AllocatePool/AllocatePages **while it remains
+LoaderData**. It does not have to be Conventional in the initial cold table.
+The actual Mu path supports a shorter two-phase design: cold Compose maps and
+publishes a genuinely dedicated unused CPU arena as SystemMemory/LoaderData,
+WB-XP; a later trusted owner transfers only that arena to the standard allocator
+with `gBS->FreePages`, followed by live map verification. This is a normal
+allocation-ledger transition, not direct descriptor editing, a second MemoryPeim
+or another MMU map. The cold epoch/current-owner/reservation/mapping proofs still
+have to exist; changing an authority boolean does not provide them.
+
+The actual Silicium `MemoryInitPei.c:89-102` emits a resource HOB plus a memory
+allocation HOB for SystemMemory rows. Mu `Core/Dxe/Gcd/Gcd.c:2767-2789` consumes
+that allocation HOB and calls CoreAddMemoryDescriptor using its declared type.
+`Core/Dxe/Mem/Page.c:1454-1534` frees an existing non-Conventional ledger range;
+CoreConvertPagesEx at644/693-727 permits the transition to Conventional and
+does not require an AllocatePages-only cookie. Therefore a cold HOB-created
+LoaderData allocation can be transferred when its real producer owns it. The
+standard service does not check the caller's arena provenance: the typed cold
+ownership record and release gate must do that.
+
+`Page.c:1556-1580` adds an important Mu-specific check: if the memory-attribute
+protocol reports NO_MAPPING, RO or RP, CoreFreePages can return SUCCESS **while
+leaking the pages**. Success alone is insufficient. Before release verify actual
+RW/non-RP normal WB mapping for the whole arena; after release require actual
+GetMemoryMap coverage to be Conventional under the expected protection policy.
+GetMemoryMap cache bits can be capability-derived, so current GCD/PTE/CPU
+evidence remains separate. A descriptor can merge with neighboring same-type
+regions: verify exact requested coverage, not exact descriptor-base equality.
+
+The existing composed rows use generic allocation HOBs, not a named producer
+lease. Add a cold GUID owner record for the exact `Piano_CPU_Arena` base/pages,
+boot epoch and immutable contract/owner-set identity. The late transfer must
+match that record and prove it has no allocations, loans, DMA mappings, image,
+stack, page tables, ABL payload or current/preloaded firmware user. Do not free
+`Piano_DDR_Occupied`, CMA, native fixed rows or other LoaderData allocations just
+because their type is reclaimable. Full DDR description and arena release are
+distinct states; only the exclusive arena needs allocator publication now.
 
 The final DTB has14 dynamic reserved-memory requests, now represented explicitly
 by `FutureLinuxDynamicConstraints=14` in the tested58884bc composition. They are
@@ -78,6 +105,98 @@ Any earlier firmware/UEFI owner is still independently supplied through
 KnownOwners and validated by the cold authority. Future requests alone must
 not become a current UnresolvedReservations count or an allocation permission;
 actual unknown current owners remain a separate unresolved contract.
+
+## Concrete late arena transfer and failure handling
+
+The smallest implementation is one resident typed arena-transfer participant,
+bound to the real cold HOB and current owner ledger. Its release operation runs
+at APP after native Foundation/backend startup and their required clock/rail
+acquisitions, before the first large FileSource or fastboot CPU download
+allocation. It performs no new native StartImage. UFS and USB remain active:
+their DMA targets are separately verified low allocations, and the arena is an
+unused CPU allocation rather than their current buffer. A service slice can run
+between transfer chunks; there is no need to retire either controller merely to
+publish CPU staging pages.
+
+The participant needs an actual state transition and report, for example cold
+owned → transfer-attempted → allocator-owned, with BootEpoch, arena base/pages,
+contract digest, before/after map keys, FreeStatus and exact published intervals.
+Before its first FreePages call it must:
+
+1. Match the immutable cold record to this boot and the live CPU/MMU generation,
+   eligible bank, final DT reservations and actual current owners. Check a
+   complete LoaderData ledger covering the exact arena, without a mixed type,
+   gap, RP/RO/runtime owner or source/loan/DMA overlap. The existing full-region
+   protection/map evidence may establish the mapping; three endpoint AT samples
+   alone cannot prove every page of a multi-GiB arena.
+2. Claim the participant's one release attempt, prevent recursive release and
+   record the original descriptor/protection/map identities in resident state.
+   A current EFI type is not a producer-ownership proof.
+3. Call standard FreePages only for the exact owned page span, then immediately
+   recollect the real EFI map. Accept publication only when all returned pages
+   are actually Conventional and live GCD/cache/protection state matches the
+   normal allocator policy. No subsequent raw write uses the old arena lease.
+4. Let unchanged FileSource AllocatePool and stub AllocatePages allocate normally.
+   Register FileSource's actual returned buffer/producer/owner/loan spans and
+   validate them before CPU writes. The kernel's independently allocated initrd
+   destination needs its separate armed-session allocation validation. The same
+   memory provider feeds source loading and NativeLate pre/post-retirement checks.
+
+Preflight refusal makes no allocator change and can leave UI/fastboot usable.
+After a service call, uncertain/error/warning/EBS or a partially changed map
+cannot be retried as if the arena were still private. CoreConvertPagesEx
+`Page.c:677-728,760-845` walks and mutates descriptors incrementally; a request
+crossing an unvalidated later gap/type can fail after earlier pages changed.
+Preflight a single uniformly typed covering range or explicitly track each
+validated piece. Record every actually published interval, retain uncertainty
+and do not roll it back with an arbitrary FreePages or descriptor rewrite.
+If a failed OS attempt returns before EBS, dispose only its registered source/
+destination allocations. The arena remains allocator-owned after a successful
+transfer and must not be released a second time.
+
+There is a concrete servicing concern in the current product build, not a reason
+to forbid late release: DxeCore AutoGen.c:212 has PcdDebugPropertyMask=2F, whose
+DebugLib CLEAR_MEMORY bit08 is enabled. `Page.c:827-838` can clear the whole freed
+range while holding the memory lock. A giant FreePages call therefore is not a
+zero-load/instant metadata update. Use measured bounded transfer pieces with
+APP pump between them and a persistent published-piece ledger, or choose a cold
+product build with only that debug-clear behavior disabled and verify its real
+setting/protection policy before one full-range call. This review does not change
+the PCD. Freed-memory guard policy must also be accounted for: Page.c:818-824
+can withhold a Conventional descriptor when that policy is enabled. A SUCCESS
+with no real public pages cannot authorize source allocation.
+
+## Actual address limits and native allocation behavior
+
+The unified DMA layer provides a real low-address guarantee:
+`PianoDma.c:84-97` uses AllocateMaxAddress capped by the named low DXE_Heap and,
+for32-bit devices, MAX_UINT32, then validates the entire allocated span. USB
+service endpoint/ring buffers call it with32 bits at `PianoDwc3Device.c:898`.
+CPU response frames use AllocatePool at301 and are copied into the bounded DMA
+bounce buffer at393. Publishing high CPU arena pages does not move those DMA
+allocations or make the device consume a high CPU staging pointer directly.
+
+Mu Pool.c:424-431 backs a large pool with pages;
+Page.c:2355-2374 uses FindFreePages with AArch64 MAX_ALLOC_ADDRESS=0000FFFFFFFFFFFF.
+FindFreePages at1085-1148 first tries the type's preferred bin and the default
+bin, then falls back to any eligible address. Existing small native pools do not
+automatically move high immediately, but there is no permanent low-address
+promise once a high Conventional region is public. Native Clock/NPA/VCS paths
+audited for display use 64-bit pointer loads; no specific32-bit pointer truncation
+has been established there. The current diagnostic readers' low-heap envelope
+is an admission boundary, not proof that all vendor CPU allocations must be32-bit.
+Do not invent a global native32-bit prohibition. Freeze new native driver starts
+at the late publication boundary and inspect any actually relevant remaining
+allocation/DMA path rather than assuming it is unsafe. Keep all device DMA
+allocation limits explicit; native pointer/DMA assumptions still unexamined must
+remain identified gaps, not a blanket assertion that FreePages is impossible.
+
+The unchanged stub obtains the second initrd through standard AllocateMaxAddress
+with the real ARM64 image-relative limit. The release interval must accommodate
+that limit, required contiguous blocks, loaded PE placement and the documented
+peak below. Publishing only enough for the immutable source still leaves the
+stub unable to allocate its second copy. Root's current memory callbacks remain
+NOT_READY until the actual cold/live/arena/allocation participants are bound.
 
 ## Two large allocations are live at once
 
