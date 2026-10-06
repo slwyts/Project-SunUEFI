@@ -11,8 +11,9 @@ uniquely built image. MMU and resource/free-page publication remain unchanged.
 The actual prepared binding is a single Observe before the first HobConstructor
 and MemoryPeim, followed by PublishHob after the existing PrePeiSetHobList and
 before the sole MemoryPeim. Original SMEM Observe/Publish calls remain in order
-with unchanged budgets. The collector calls the existing real `PianoSecRead32`
-short LDR/fixup directly. It has a separate admission policy for the fixed
+with unchanged budgets. The collector uses its separate `PianoColdSecRead256`
+short batch LDR/fixup; the original `PianoSecRead32` remains unchanged.
+It has a separate admission policy for the fixed
 BootHandoff page, the checked original shim header and the checked factory-DTB
 span. It does not modify the SMEM adapter, cookie permissions or SMEM budgets.
 There is no BS service, target write, cache/MMU operation, resource/allocation
@@ -60,22 +61,49 @@ SEC stack has a compiled, checked extent.
 The factory-DTB reader is deliberately a bounded `/chosen` metadata extractor.
 It validates header/version and nonoverlapping structure/string ranges, the
 initial reserve-table bounds, token/node depth, property bounds and initrd
-start/end. It parses two independent views and compares the exact header plus
-chosen boundaries. `DtbHeaderCrc32` covers only the40-byte header. It does **not**
+start/end. It extracts the first matching direct-root `/chosen`, matching the
+existing libfdt path consumer, and stops when that node closes. Duplicate
+initrd-start/end properties within that node still fail. It does not claim
+there are no later duplicate chosen nodes. Two independent views clear their
+structure/strings caches and compare the exact header plus chosen boundaries.
+`DtbHeaderCrc32` covers only the40-byte header. It does **not**
 claim full-DTB byte coherence, a full DT validator, all mem_rsvmap entries or
 final-Linux reserved-memory ownership. The complete declared DTB and initrd
 spans must stay inside the already-known native Kernel/low-heap input windows.
 Final-Linux fixed reservations and future Linux memblock constraints remain
 the separate full-DDR contract's job.
 
-Scratch is256 bytes and parse temporaries are small; no multi-MiB BSS/snapshot
-is added. The independent budget is4MiB+64KiB of attempted aligned word reads
-and2 seconds, including repeated header/string/parser access, rather than
-counting each DT byte once. Each word performs the actual short guard and CPU
-freshness checks. Reports preserve attempted loads, recovered faults, elapsed
+Scratch and each structure/strings cache are256 bytes; parse temporaries are
+small and no multi-MiB BSS/snapshot is added. Cache validity requires a complete
+guarded fill. Logical DTB size and the protected aligned read span are separate:
+at most3 padding bytes are checked against the native input range, never parsed
+or added to the reported object length. The independent budget remains
+4MiB+64KiB of attempted aligned word reads and2 seconds. CPU freshness is
+checked before/after each bounded batch, and batch assembly checks SCTLR
+stability before each word. Reports preserve attempted words, guard batches,
+cache fills/hits, recovered faults, elapsed
 ticks/usecs and last requested/completed read address. Exhaustion returns
 NOT_READY/error with a budget reason; it does not convert partial observations
-into coherent inputs. Actual device timing of this unbound candidate is unknown.
+into coherent inputs. Actual device timing of the optimized path remains to be measured.
+
+Test105's earlier per-word implementation timed out after927 loads in
+2,000,765us, with no recovered faults; handoff and FD provenance had passed.
+The actual1,110,810-byte capture has chosen at structure offsets61C..E7C and
+strings atFDB54. Scanning the unrelated remainder and repeatedly installing
+vectors for every name byte was unnecessary for this metadata claim. The
+actual fixture now uses36 guard batches,1822 target words,28 cache fills and
+698 hits for two views. These are host operation counts, not a tablet ETA.
+
+The independent batch admits only aligned1..64 words and installs its vector
+once. One fixed LDR PC updates state.Address before each target word. Precise
+recovery requires that ELR, exact current FAR, load-abort EC/IL, WnR=0, CM=0
+(ESR bit8), FnV=0 (bit10), and EL1 SPx SPSR5 all match. Fault exits without
+advancing/copying the failed word. Partial scratch stays private and cannot
+become collector output. Unknown/ownerless/nested exceptions and SError reach
+the existing fatal/reset path. Final DSB/ISB completes with SError vector still
+owned, then VBAR/DAIF restore in the existing order. SMEM retains its original
+single-word implementation. Report version2 adds counts and exact HOB size;
+BootShim/handoff remains ABI version1.
 
 PublishHob separately validates the current legal EL1/SPx/MMU-and-Dcache-off
 CPU writer phase and actual FD/stack, without reusing the probe time/load limit.

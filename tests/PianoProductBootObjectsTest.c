@@ -18,7 +18,7 @@ VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}INTN EFIAPI CompareM
 VOID *EFIAPI CopyMem(VOID *D,CONST VOID *S,UINTN N){if(S==&Hob.R&&N==sizeof(Hob.R)){Copies++;if(Case==16&&Copies==2)Hob.R.Reason=PianoColdReasonRead;if((Case==19&&Copies==1)||(Case==20&&Copies==2))Live=FALSE;}return memmove(D,S,N);}
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return TRUE;}BOOLEAN EFIAPI DebugPrintLevelEnabled(CONST UINTN L){(VOID)L;return TRUE;}VOID EFIAPI DebugPrint(UINTN L,CONST CHAR8 *F,...){(VOID)L;(VOID)F;assert(Live);Logs++;}
 int main(int argc,char **argv){assert(argc==2);Case=strtoul(argv[1],NULL,10);Hob.G=(EFI_HOB_GUID_TYPE){.Header={.HobType=EFI_HOB_TYPE_GUID_EXTENSION,.HobLength=sizeof(Hob)},.Name=Guid};
- Hob.R=(PIANO_COLD_BOOT_OBJECT_REPORT){.Version=1,.Bytes=sizeof(Hob.R),.Status=EFI_NOT_READY,.PublishStatus=EFI_SUCCESS,.Reason=PianoColdReasonLegacyHandoff,.Attempted=TRUE,.Finished=TRUE,.Published=TRUE,.Count=1,.Objects={{PIANO_COLD_HANDOFF_ADDRESS,4096,PianoColdObjectHandoff,0}}};
+ Hob.R=(PIANO_COLD_BOOT_OBJECT_REPORT){.Version=PIANO_COLD_OBJECT_VERSION,.Bytes=sizeof(Hob.R),.Status=EFI_NOT_READY,.PublishStatus=EFI_SUCCESS,.Reason=PianoColdReasonLegacyHandoff,.Attempted=TRUE,.Finished=TRUE,.Published=TRUE,.Count=1,.Objects={{PIANO_COLD_HANDOFF_ADDRESS,4096,PianoColdObjectHandoff,0}}};
  if(Case==3)Hob.G.Header.HobLength--;if(Case==4)Hob.G.Header.HobLength++;if(Case==5)Hob.G.Header.Reserved=1;if(Case==6)Hob.G.Name.Data1++;
  if(Case==8)Hob.R.Version++;if(Case==9)Hob.R.Bytes--;if(Case==10)Hob.R.AuthorityReady=TRUE;if(Case==11)Hob.R.Loads=PIANO_COLD_TOTAL_MAX/4+1;
  if(Case==12)Hob.R.Objects[0].Bytes=0;if(Case==13)Hob.R.Published=2;if(Case==14)Hob.R.Objects[0].Reserved=1;if(Case==15)Hob.R.Status=EFI_WARN_STALE_DATA;

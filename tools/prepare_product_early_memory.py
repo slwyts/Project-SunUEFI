@@ -19,7 +19,7 @@ SEC_FILES={
 }
 EARLY_FILES=('PianoEarlyMemory.c','PianoEarlyMemory.h','PianoSecRead32.S',
              'PianoSmemRam.c','PianoSmemRam.h','PianoSmemDescriptor.c','PianoSmemDescriptor.h',
-             'PianoColdBootObjects.c','PianoColdBootObjects.h','PianoColdBootObjectsContract.c')
+             'PianoColdBootObjects.c','PianoColdBootObjects.h','PianoColdBootObjectsContract.c','PianoColdSecRead256.S')
 OBJECT_DXE_FILES={'PianoProductBootObjects.c':'bootprofiles/uefi-app/PianoProductBootObjects.c',
                  'PianoProductBootObjects.h':'bootprofiles/uefi-app/PianoProductBootObjects.h',
                  'PianoColdBootObjects.h':'bootprofiles/early-memory/PianoColdBootObjects.h',
@@ -37,7 +37,7 @@ def sec_inf(text):
     text=text.replace('BASE_NAME                      = Sec','BASE_NAME                      = PianoProductSec')
     text=text.replace('9AFFB503-E643-4141-8B90-17E8588B1D35','892BCA3B-55ED-4F2B-8750-534543504941')
     text=text.replace('  Sec.c','  Sec.c\n  PianoEarlyMemory.c\n  PianoSmemRam.c\n  PianoSmemDescriptor.c\n  PianoColdBootObjects.c\n  PianoColdBootObjectsContract.c',1)
-    return text.replace('  AArch64/ArchSec.c','  PianoSecRead32.S\n  AArch64/ArchSec.c',1)
+    return text.replace('  AArch64/ArchSec.c','  PianoSecRead32.S\n  PianoColdSecRead256.S\n  AArch64/ArchSec.c',1)
 
 
 def sec_source(text):

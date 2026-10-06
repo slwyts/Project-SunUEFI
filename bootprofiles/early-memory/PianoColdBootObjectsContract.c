@@ -5,7 +5,7 @@ STATIC BOOLEAN ColdSpan(UINT64 B,UINT64 N,UINT64 A,UINT64 Z){return B&&N&&B<=MAX
 STATIC UINT32 ColdBe(CONST UINT8 *P){return ((UINT32)P[0]<<24)|((UINT32)P[1]<<16)|((UINT32)P[2]<<8)|P[3];}
 STATIC CONST PIANO_COLD_BOOT_OBJECT *ColdReportRole(CONST PIANO_COLD_BOOT_OBJECT_REPORT *R,PIANO_COLD_OBJECT_ROLE Role){CONST PIANO_COLD_BOOT_OBJECT *O=NULL;for(UINT32 I=0;I<R->Count;++I)if(R->Objects[I].Role==Role){if(O)return NULL;O=&R->Objects[I];}return O;}
 EFI_STATUS PianoColdBootObjectsValidate(CONST PIANO_COLD_BOOT_OBJECT_REPORT *R){
- if(!R||R->Version!=1||R->Bytes!=sizeof(*R)||R->Reserved||R->ReservedFlags||R->ReportCrc32!=PianoColdObjectsCrc(R)||R->Attempted!=TRUE||R->Finished!=TRUE||R->Published>TRUE||R->Coherent>TRUE||R->Count>PIANO_COLD_OBJECT_MAX||
+ if(!R||R->Version!=PIANO_COLD_OBJECT_VERSION||R->Bytes!=sizeof(*R)||R->Reserved||R->ReservedFlags||R->ReservedCache||R->ReportCrc32!=PianoColdObjectsCrc(R)||R->Attempted!=TRUE||R->Finished!=TRUE||R->Published>TRUE||R->Coherent>TRUE||R->Count>PIANO_COLD_OBJECT_MAX||
     R->Reason>PianoColdReasonBudget||R->Loads>PIANO_COLD_TOTAL_MAX/4||R->RecoveredFaults>R->Loads||(R->Status!=EFI_SUCCESS&&!EFI_ERROR(R->Status))||
     R->ReservedRead||R->MemoryOwnershipGranted||R->HighDdrPublished||R->AuthorityReady)return EFI_COMPROMISED_DATA;
  for(UINT32 I=0;I<R->Count;++I)if(R->Objects[I].Reserved||R->Objects[I].Role<=PianoColdObjectNone||R->Objects[I].Role>PianoColdObjectHobHeap||!ColdSpan(R->Objects[I].Base,R->Objects[I].Bytes,R->Objects[I].Base,R->Objects[I].Bytes))return EFI_COMPROMISED_DATA;

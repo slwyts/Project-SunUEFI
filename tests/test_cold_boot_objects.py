@@ -2,6 +2,7 @@ from pathlib import Path
 import os,re,subprocess,tempfile,unittest
 import zlib
 from piano_boot_objects_asm_model import run as run_shim
+from piano_sec_batch_model import run_batch
 ROOT=Path(__file__).resolve().parents[1];BASE=ROOT/'upstream/Mu-Silicium/Mu_Basecore'
 class ColdBootObjectsTests(unittest.TestCase):
  def includes(self,arch):return (BASE/'MdePkg/Include',BASE/'MdePkg/Include'/arch,BASE/'MdeModulePkg/Include',BASE/'EmbeddedPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include')
@@ -11,7 +12,7 @@ class ColdBootObjectsTests(unittest.TestCase):
    for p in self.includes('X64'):cmd+=['-I',str(p)]
    cmd+=[str(ROOT/'tests/PianoColdBootObjectsTest.c'),str(ROOT/'bootprofiles/early-memory/PianoColdBootObjectsContract.c'),str(ROOT/'bootprofiles/uefi-app/PianoProductBootObjects.c'),str(ROOT/'platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),'-Wl,--gc-sections','-o',str(exe)]
    p=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(p.returncode,0,(p.stdout+p.stderr)[:12000])
-   p=subprocess.run([str(exe)],capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
+   p=subprocess.run([str(exe),str(ROOT/'private/captures/2026-10-03-piano/live.dtb')],capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
  def test_isolated_actual_arm64_extension_object(self):
   with tempfile.TemporaryDirectory(prefix='cold-shim-')as td:
    d=Path(td);clang=ROOT/'build/host-tools/usr/bin/clang';objdump=ROOT/'build/host-tools/usr/bin/llvm-objdump';env={**os.environ,'LD_LIBRARY_PATH':str(ROOT/'build/host-tools/usr/lib')};obj=d/'shim.o'
@@ -35,4 +36,21 @@ class ColdBootObjectsTests(unittest.TestCase):
     args=[str(clang),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-D_PCD_VALUE_PcdFdBaseAddress=0xA7100000ULL','-D_PCD_VALUE_PcdFdSize=0x300000U','-D_PCD_VALUE_PcdCPUCoresStackBase=0xA760D000ULL','-D_PCD_VALUE_PcdCPUCorePrimaryStackSize=0x40000U']
     for p in self.includes('AArch64'):args+=['-I',str(p)]
     subprocess.run(args+[str(ROOT/'bootprofiles/early-memory'/name)],check=True,env=env)
+ def test_actual_linked_bounded_batch_vectors_fault_model(self):
+  with tempfile.TemporaryDirectory(prefix='cold-batch-model-')as td:
+   d=Path(td);clang=ROOT/'build/host-tools/usr/bin/clang';objdump=ROOT/'build/host-tools/usr/bin/llvm-objdump';env={**os.environ,'LD_LIBRARY_PATH':str(ROOT/'build/host-tools/usr/lib')}
+   stub=d/'fatal.S';stub.write_text('.text\n.globl PianoSecReadFatal\nPianoSecReadFatal:\n brk #0\n')
+   elf=d/'batch.elf';subprocess.run([str(clang),'--target=aarch64-linux-gnu','-nostdlib','-fuse-ld='+str(ROOT/'build/host-tools/usr/bin/ld.lld'),'-Wl,-Ttext=0x100000','-Wl,--entry=PianoColdSecRead256',str(ROOT/'bootprofiles/early-memory/PianoColdSecRead256.S'),str(stub),'-o',str(elf)],check=True,env=env)
+   subprocess.run([str(clang),'--target=aarch64-windows-msvc','-c',str(ROOT/'bootprofiles/early-memory/PianoColdSecRead256.S'),'-o',str(d/'batch.obj')],check=True,env=env)
+   dis=subprocess.run([str(objdump),'-d',str(elf)],check=True,capture_output=True,text=True,env=env).stdout;table=subprocess.run([str(objdump),'-t',str(elf)],check=True,capture_output=True,text=True,env=env).stdout
+   symbols={m[2]:int(m[1],16)for line in table.splitlines()if(m:=re.match(r'^([0-9a-f]+).*\s(Piano\w+)$',line))}
+   binary=d/'batch.bin';subprocess.run([str(ROOT/'build/host-tools/usr/bin/llvm-objcopy'),'-O','binary','--only-section=.text',str(elf),str(binary)],check=True,env=env);raw=binary.read_bytes()
+   for words in (1,2,63,64):
+    r=run_batch(raw,dis,symbols,words);self.assertEqual((r['status'],r['words'],r['attempts'],r['installs'],r['fatal']),(0,words,words,1,False));self.assertEqual(r['scratch'][:words*4],bytes(range(256))[:words*4]);self.assertEqual((r['vbar'],r['daif'],r['armed'],r['active'],r['sp']),(0x81200000,0x3c0,0,0,0x230800))
+   for word in (0,1,31,63):
+    r=run_batch(raw,dis,symbols,64,{'word':word});self.assertEqual((r['status'],r['words'],r['attempts'],r['fatal']),(1,word,word+1,False));self.assertEqual((r['vbar'],r['daif'],r['armed'],r['active']),(0x81200000,0x3c0,0,0))
+   for bad in ({'far_delta':4},{'pc_delta':4},{'esr':0x96000050},{'esr':0x96000110},{'esr':0x96000410},{'esr':0x92000010},{'spsr':4},{'serror':True}):
+    self.assertTrue(run_batch(raw,dis,symbols,64,bad)['fatal'])
+   for args in ({'bytes_override':0},{'bytes_override':260},{'bytes_override':3},{'el':8},{'spsel':0},{'sctlr':1},{'sctlr':4}):
+    r=run_batch(raw,dis,symbols,**args);self.assertEqual((r['status'],r['attempts'],r['installs']),(2,0,0))
 if __name__=='__main__':unittest.main()

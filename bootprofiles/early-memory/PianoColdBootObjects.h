@@ -2,7 +2,7 @@
 #pragma once
 #include "PianoEarlyMemory.h"
 #include <Library/MemoryMapLib.h>
-#define PIANO_COLD_OBJECT_VERSION 1U
+#define PIANO_COLD_OBJECT_VERSION 2U
 #define PIANO_COLD_HANDOFF_ADDRESS 0xa7fff000ULL
 #define PIANO_COLD_HANDOFF_MAGIC 0x534e554546494448ULL
 #define PIANO_COLD_EXTENSION_MAGIC 0x314a424f544f4f42ULL
@@ -23,6 +23,8 @@ typedef struct {
  UINT32 Crc32,Reserved;UINT64 EntryPc;
 } PIANO_COLD_BOOT_HANDOFF;
 typedef struct {UINT64 Pc,Sp,El,Sctlr,Vbar,Daif,SpSel,Ttbr0,Ttbr1,Counter,Frequency;} PIANO_COLD_CPU;
+typedef struct {PIANO_SEC_READ_STATE Read;UINT64 Words;} PIANO_COLD_BATCH_STATE;
+UINTN EFIAPI PianoColdSecRead256(UINT64 Address,UINT32 *PrivateScratch,PIANO_COLD_BATCH_STATE *,UINTN Bytes);
 typedef enum {
  PianoColdObjectNone=0,PianoColdObjectFirmware,PianoColdObjectStack,
  PianoColdObjectVectorReservation,PianoColdObjectActiveVector,
@@ -41,6 +43,7 @@ typedef struct {
  UINT32 Version,Bytes,ReportCrc32,Reserved;
  EFI_STATUS Status,HandoffStatus,DtbStatus,PublishStatus;
  PIANO_COLD_OBJECT_REASON Reason;UINT32 Count,Loads,RecoveredFaults;
+ UINT32 GuardBatches,CacheFills,CacheHits,ReservedCache;
  BOOLEAN Attempted,Finished,Published,Coherent,MemoryOwnershipGranted,HighDdrPublished,AuthorityReady;
  UINT8 ReservedFlags;
  UINT64 Epoch;PIANO_COLD_CPU Cpu,After;
@@ -53,7 +56,7 @@ typedef struct {
  PIANO_COLD_BOOT_OBJECT Objects[PIANO_COLD_OBJECT_MAX];
 } PIANO_COLD_BOOT_OBJECT_REPORT;
 // Singleton SEC producer, before the first PHIT/MemoryPeim. Calls the same real
-// short PianoSecRead32 fixup, with an independent fixed BootObjects whitelist.
+// bounded short batch fixup, with an independent fixed BootObjects whitelist.
 EFI_STATUS PianoColdBootObjectsObserve(VOID);
 // After the one real HobConstructor: frozen typed object input, never resources.
 EFI_STATUS PianoColdBootObjectsPublishHob(VOID);

@@ -13,7 +13,7 @@
 #define PIANO_COLD_OBJECT_HOST_TEST 1
 #include "../bootprofiles/early-memory/PianoColdBootObjects.c"
 VOID *EFIAPI CopyMem(VOID *D,CONST VOID *S,UINTN N){return memmove(D,S,N);}VOID *EFIAPI ZeroMem(VOID *D,UINTN N){return memset(D,0,N);}INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
-static UINTN Case,Loads;static UINT64 Counter=1000;static PIANO_COLD_BOOT_HANDOFF Handoff;static UINT8 Shim[64],Dtb[256];static UINT32 DtbBytes;
+static UINTN Case,Loads;static UINT64 Counter=1000;static PIANO_COLD_BOOT_HANDOFF Handoff;static UINT8 Shim[64],Dtb[PIANO_COLD_DTB_MAX+4];static UINT32 DtbBytes;static CONST CHAR8 *ActualDtb;
 static UINTN ColdLogs,ColdObjectLogs;static BOOLEAN Services=TRUE;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return TRUE;}BOOLEAN EFIAPI DebugPrintLevelEnabled(CONST UINTN Level){(VOID)Level;return TRUE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){(VOID)Level;assert(Services);ColdLogs++;if(strstr(Format,"PIANO_COLD_OBJECT i="))ColdObjectLogs++;}
@@ -31,6 +31,7 @@ UINTN EFIAPI PianoSecRead32(UINT64 A,UINT32 *V,PIANO_SEC_READ_STATE *S){Loads++;
  else if(A>=Handoff.Dtb&&A<Handoff.Dtb+sizeof(Dtb))P=Dtb+(A-Handoff.Dtb);else assert(FALSE);
  memcpy(V,P,4);if(Case==15&&Loads==36)Handoff.Dtb+=4;return 0;
 }
+UINTN EFIAPI PianoColdSecRead256(UINT64 A,UINT32 *P,PIANO_COLD_BATCH_STATE *S,UINTN N){assert(N&&N<=256&&!(N&3));S->Words=0;for(UINTN I=0;I<N/4;++I){UINTN E=PianoSecRead32(A+I*4,&P[I],&S->Read);if(E)return E;S->Words++;}return 0;}
 static VOID Be(UINT8 *P,UINT32 V){P[0]=V>>24;P[1]=V>>16;P[2]=V>>8;P[3]=V;}
 static VOID Be64(UINT8 *P,UINT64 V){Be(P,(UINT32)(V>>32));Be(P+4,(UINT32)V);}
 static VOID MakeDtb(VOID){UINT32 At=56;Be(Dtb+At,1);At+=8;Be(Dtb+At,1);At+=4;memcpy(Dtb+At,"chosen",7);At+=8;
@@ -41,6 +42,8 @@ static VOID MakeDtb(VOID){UINT32 At=56;Be(Dtb+At,1);At+=8;Be(Dtb+At,1);At+=4;mem
  Be(Dtb,0xd00dfeed);Be(Dtb+4,DtbBytes);Be(Dtb+8,56);Be(Dtb+12,At);Be(Dtb+16,40);Be(Dtb+20,17);Be(Dtb+24,16);Be(Dtb+32,sizeof(Names));Be(Dtb+36,At-56);
 }
 static VOID Run(UINTN N){Case=N;MakeDtb();Handoff=(PIANO_COLD_BOOT_HANDOFF){.Magic=PIANO_COLD_HANDOFF_MAGIC,.Dtb=0xa8500000,.EntryEl=4,.ExtensionMagic=PIANO_COLD_EXTENSION_MAGIC,.Version=1,.Bytes=144,.Counter=10,.Frequency=1000000000,.ShimBase=0xa8000000,.ShimBytes=0x400,.FdSource=0xa8000400,.FdBase=0xa7100000,.FdBytes=0x300000,.EntrySp=0xa9000000,.EntryPc=0xa8000040,.Flags=127};
+ if(N==24){FILE *F=fopen(ActualDtb,"rb");assert(F);DtbBytes=(UINT32)fread(Dtb,1,PIANO_COLD_DTB_MAX,F);assert(feof(F)&&DtbBytes==1110810);fclose(F);}
+ if(N==25){UINT32 Strings=(UINT32)Dtb[12]<<24|((UINT32)Dtb[13]<<16)|((UINT32)Dtb[14]<<8)|Dtb[15];UINT32 Bytes=DtbBytes-Strings-1;memmove(Dtb+Strings+2,Dtb+Strings,Bytes);DtbBytes=Strings+2+Bytes;Be(Dtb+4,DtbBytes);Be(Dtb+12,Strings+2);Be(Dtb+32,Bytes);assert(Dtb[DtbBytes-1]==0&&(DtbBytes&3));}
  memcpy(Shim+8,&Handoff.FdBase,8);memcpy(Shim+16,&Handoff.FdBytes,8);UINT32 Magic=0x644d5241;memcpy(Shim+56,&Magic,4);
  if(N==5)Handoff.ExtensionMagic=0;if(N==6)Handoff.Version=2;if(N==7)Handoff.Reserved=1;if(N==8)Handoff.Flags|=128;
  if(N==9)Handoff.FdSource+=16;if(N==10)Handoff.EntryPc=Handoff.ShimBase+Handoff.ShimBytes;
@@ -49,8 +52,8 @@ static VOID Run(UINTN N){Case=N;MakeDtb();Handoff=(PIANO_COLD_BOOT_HANDOFF){.Mag
  if(N==13)Handoff.Counter=2000;if(N==14)Shim[56]^=1;if(N==19)Dtb[0]^=1;if(N==20)Be(Dtb+20,18);
  Handoff.Crc32=PianoColdHandoffCrc(&Handoff);if(N==21)Handoff.Crc32^=1;
  EFI_STATUS E=PianoColdBootObjectsObserve();CONST PIANO_COLD_BOOT_OBJECT_REPORT *R=PianoColdBootObjectsReport();
- if(N==0||N==12||N==22||N==23||N==18||N==5){
-  if(N!=18&&N!=5)assert(E==EFI_SUCCESS&&R->Coherent&&R->Epoch==10&&R->DtbBytes==DtbBytes&&R->InitrdStart==0xa8600000&&R->InitrdEnd==0xa8700000&&R->Count==13&&PianoColdBootObjectsValidate(R)==EFI_SUCCESS);
+ if(N==0||N==12||N==22||N==23||N==18||N==5||N==24||N==25){
+  if(N!=18&&N!=5)assert(E==EFI_SUCCESS&&R->Coherent&&R->Epoch==10&&R->DtbBytes==DtbBytes&&R->InitrdStart==(N==24?0xb5d77000:0xa8600000)&&R->InitrdEnd==(N==24?0xb7ffe7dc:0xa8700000)&&R->Count==13&&PianoColdBootObjectsValidate(R)==EFI_SUCCESS);
   else assert(E!=EFI_SUCCESS&&!R->Coherent&&PianoColdBootObjectsValidate(R)==EFI_NOT_READY);
   VOID *Space=mmap((VOID*)0xbd980000,0x10000,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE,-1,0);assert(Space==(VOID*)0xbd980000);
   HobList=HobConstructor(Space,0x10000,Space,(UINT8*)Space+0x10000);
@@ -58,6 +61,7 @@ static VOID Run(UINTN N){Case=N;MakeDtb();Handoff=(PIANO_COLD_BOOT_HANDOFF){.Mag
    assert(PianoColdBootObjectsPublishHob()!=EFI_SUCCESS&&P->EfiFreeMemoryBottom==Before&&!PianoColdBootObjectsReport()->Published);return;
   }
   assert(PianoColdBootObjectsPublishHob()==EFI_SUCCESS&&PianoColdBootObjectsReport()->Published);if(N!=18&&N!=5)assert(PianoColdBootObjectsReport()->Count==14&&PianoColdBootObjectsValidate(PianoColdBootObjectsReport())==EFI_SUCCESS);
+  if(N==24){assert(R->GuardBatches<100&&R->Loads<4096&&R->CacheHits>100);printf("Actual1.1MiB FDT chosen-only: batches%u words%u fills%u hits%u\n",R->GuardBatches,R->Loads,R->CacheFills,R->CacheHits);fflush(stdout);}
   EFI_HOB_GUID_TYPE *Guid=(VOID*)((UINT8*)HobList+sizeof(EFI_HOB_HANDOFF_INFO_TABLE));assert(Guid->Header.HobType==EFI_HOB_TYPE_GUID_EXTENSION);PIANO_COLD_BOOT_OBJECT_REPORT *Saved=(VOID*)(Guid+1);assert(!memcmp(Saved,PianoColdBootObjectsReport(),sizeof(*Saved)));
   assert(PianoProductBootObjectsReemit(Alive)==E&&PianoProductBootObjectsStatus()==EFI_SUCCESS&&PianoProductBootObjectsSnapshot());assert(ColdLogs>=10&&ColdObjectLogs==Saved->Count);
   UINT32 Count=Saved->Count;memset(Saved,0,sizeof(*Saved));assert(PianoProductBootObjectsReemit(Alive)==E&&ColdObjectLogs==2*Count); // replay frozen cache, no second physical/HOB read
@@ -67,4 +71,4 @@ static VOID Run(UINTN N){Case=N;MakeDtb();Handoff=(PIANO_COLD_BOOT_HANDOFF){.Mag
  }else{assert(E!=EFI_SUCCESS&&R->Finished&&!R->Coherent&&PianoColdBootObjectsValidate(R)!=EFI_SUCCESS);if(N==5)assert(R->Reason==PianoColdReasonLegacyHandoff);if(N==16)assert(R->RecoveredFaults==1&&R->Reason==PianoColdReasonRead);if(N==18)assert(E==EFI_TIMEOUT&&R->Reason==PianoColdReasonBudget&&R->ElapsedUsecs>=PIANO_COLD_MAX_USECS);}
  assert(!R->MemoryOwnershipGranted&&!R->HighDdrPublished&&!R->AuthorityReady&&R->Loads==Loads);assert(PianoColdBootObjectsObserve()==EFI_ALREADY_STARTED);
 }
-int main(VOID){for(UINTN I=0;I<24;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"cold objects case%lu failed\n",(unsigned long)I);return 1;}}puts("Actual cold BootObjects:24 native-map/CPU/legacy/ABI/header/chosen/epoch/overlap/fault/budget/prechecked-PHIT/HOB cases; no permissions/device");return 0;}
+int main(int Argc,char **Argv){assert(Argc==2);ActualDtb=Argv[1];for(UINTN I=0;I<26;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"cold objects case%lu failed\n",(unsigned long)I);return 1;}}puts("Actual cold BootObjects:26 native-map/CPU/legacy/ABI/header/chosen/cache/real-DTB/unaligned-tail/epoch/fault/budget/HOB cases; no permissions/device");return 0;}
