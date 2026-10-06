@@ -14,7 +14,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = 'fd6266d73f3442b23362260c3aa0c86782e0b52c'
 CHECKER_SHA = '1f2c26329c00b5b791a101d409032cd3d8b1962f83018937807c5cbbb7f5a2e1'
-CONTEXT_CHECKER_SHA = 'ae2c661a7a4eec1a84f5720041550f9cadd5884fd567dbfc3d4211d0be7393fc'
+CONTEXT_CHECKER_SHA = '9731f4027c0656d50a930ed2fb087d0ccfb3a99bb4373cfb65e9e0a0865ac63d'
 PINS = {
     'display-start': 'a371d7cfa526b575f7393eeed60fcc7a6dba85b6971ebd0c977ae880ab60a8ba',
     'touch-start': '77aacb8b37d2513b4a919d568d9b57048ef09ea32df20758babb8c8c1d83acdd',

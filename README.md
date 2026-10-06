@@ -4,9 +4,15 @@
 
 **最新实机结果（第111次）：同一产品PianoUEFI从真实ESP读取Stable镜像，启动真实ext4根系统、systemd和GNOME。** 未经USB下载Linux镜像，只发送标准 `oem boot-stable`。USB ACM控制台、NCM网络和SSH均实测可用；原生双DSI接管、背光驱动启动并重启GDM后，用户确认看到tty和GNOME桌面。实测freedreno/Adreno830v1硬件加速，8个Qualcomm Oryon核心在线，SCMI/schedutil调频正常。触屏服务已启用并收到真实THP帧，用户确认点击、拖动窗口及亮度调节可用；GNOME动画已恢复。键盘/触控板仍被旧panel supplier阻塞，最小DTB修正已更新ESP等待下一次启动验证。原生显示先于GDM的持久启动顺序已部署，下一次冷启动自动顺序仍需验收；关屏偏红、短点按反馈、Wi-Fi/蓝牙/音频等完整设备体验尚未闭环。
 
-按用户授权已在线缩小 userdata，并新增 `sunuefi_esp`（512 MiB FAT32）和 `sunuefi_linux`（63.5 GiB ext4），共64 GiB。Debian 13/GNOME 已写入 Linux 分区；ESP 目前为空。两次 Android 恢复已验证，`/data` 约397 GiB总容量、60 GiB已用。只读回读核对了分区边界、文件系统标识、systemd/GNOME Shell SHA256及根分区配置。没有刷写 Android boot/recovery/system。证据保存在 `private/provisioning/sunuefi-linux64-plan-20261006/`、`private/analysis/linux-disk-test107/` 和 `private/analysis/ramlog-test-107/`。
+**触控速率实测（第111次会话）：** 原厂固件THP帧中的扫描率字段为144 Hz，原始帧交付143.998 Hz，稳定期uinput报告约144 Hz。43.89秒单消费者观测收到6316帧，序号缺失、校验错误及输入写入错误均为0；主机算法平均12.73微秒，SPI完成到uinput写入平均1.54毫秒、最大7.05毫秒。这不包含传感器扫描等待和GNOME呈现延迟。可复用测量已加入运行时helper（默认关闭）；原厂游戏模式getter及可回退setter正在适配，尚未启用或实测360 Hz。
 
-真实ESP已安装Stable的 `\EFI\Piano\stable\boot.img`、Image、DTB和小型initramfs，13个文件全部读回校验，证据 `artifacts/linux-assembled/piano-disk-esp-20261007-r5/install-result.json`。Stable启动镜像SHA为 `bb0b05532fe55279e0e40a19d45f76c407513a7ee6cde00e39f23715903cb938`；同一内核及配套模块已在root分区。单一产品固件的本地ESP加载入口和菜单正在整合；它将复用真实文件source和原OS交接，不伪造USB下载或ACK。Next文件已放ESP，但其强制RAM根和磁盘bootstrap仍需改造，尚不可选为可运行的磁盘系统。
+**无线与音频（第111次会话）：** PCIe已枚举PEACH Wi-Fi，真实网卡`wlp1s0`已能扫描附近热点；BT的PERI/控制器固件已完成加载，`hci0` powered，扫描命令成功。ADSP、AudioReach、四个FS19xx放大器及真实ALSA声卡已注册，PipeWire已识别扬声器和内置麦克风，播放/录音PCM DMA指针持续推进。无线、ADSP、音频服务已在Linux root中启用；网络关联/蓝牙配对、真实听音/麦克风信号及冷启动恢复尚需验收。Python sysfs读取丢失EAGAIN的问题已修复，仍严格验证实际identity/stage1路由，没有跳过DMA检查。
+
+**下一次启动候选：** Stable `7.2.6-piano-gnome-00069-gefe5734c2451`、匹配1637个模块、小型磁盘bootstrap及键盘supplier修正均已安装到真实root/ESP并读回确认；入口仍为`\EFI\Piano\stable\boot.img`。新增THP控制器getter、0/1游戏模式和已确认旧状态的回退接口；尚未实机启动该内核、切换模式或证明360 Hz。用户已授权将同一产品固件写入当前槽的recovery作为脱离电脑入口，格式与ABL路径已离线核对，刷入和入口验收尚待完成。
+
+按用户授权已在线缩小 userdata，并新增 `sunuefi_esp`（512 MiB FAT32）和 `sunuefi_linux`（63.5 GiB ext4），共64 GiB。Debian 13/GNOME 已写入 Linux 分区。两次 Android 恢复已验证，`/data` 约397 GiB总容量、60 GiB已用。只读回读核对了分区边界、文件系统标识、systemd/GNOME Shell SHA256及根分区配置。没有刷写 Android boot/recovery/system。证据保存在 `private/provisioning/sunuefi-linux64-plan-20261006/`、`private/analysis/linux-disk-test107/` 和 `private/analysis/ramlog-test-107/`。
+
+真实ESP已安装Stable的 `\EFI\Piano\stable\boot.img`、Image、DTB和小型initramfs，13个文件全部读回校验，证据 `artifacts/linux-assembled/piano-disk-esp-20261007-r5/install-result.json`。Stable启动镜像SHA为 `bb0b05532fe55279e0e40a19d45f76c407513a7ee6cde00e39f23715903cb938`；同一内核及配套模块已在root分区。单一产品固件的本地ESP加载入口已由第111次启动验证，菜单复用真实文件source和原OS交接。Next文件已放ESP，但其强制RAM根和磁盘bootstrap仍需改造，尚不可选为可运行的磁盘系统。
 
 **唯一产品候选：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成 TianoCore 启动画面、默认 SimpleInit、F12 Setup、标准 Shell 和驻留 Fastboot；没有诊断自动重启计时器。第105次构建通过405项主机测试、固件编译和输入一致性验证，实机验证256KiB日志及统一退出重启；第103次另已验证3200×2136完整BMP上传。第111次当前镜像SHA256为 `4eacaceee862c107e1b98e578efe881153beda6bd2e430fd739a831cd54f0309`，封存在 `artifacts/tests/stage0-test-111/`。构建、必需功能与真实后端状态见 [唯一产品构建](docs/piano-product-build.md)。
 
