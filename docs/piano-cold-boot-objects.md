@@ -1,14 +1,17 @@
-# Cold BootObjects owner inputs: isolated host candidate
+# Cold BootObjects owner inputs: product SEC binding
 
 The new `bootprofiles/early-memory/PianoColdBootObjects.c/.h` is a real SEC
-collector for occupied boot-object inputs. `PianoBootObjectsShim.S` is its
-isolated assembly candidate. Neither is bound to the current product.
-The actual `bootprofiles/handoff/BootShim.S`, SEC preparation, Core, display
-modules, MMU and memory publication code are unchanged by this work.
+collector for occupied boot-object inputs. The reviewed `PianoBootObjectsShim.S`
+and actual `bootprofiles/handoff/BootShim.S` now contain byte-identical extension
+source. `prepare_product_early_memory.py` binds the collectors once to product
+SEC and stages a separate read-only DXE consumer. This binding has host
+verification; its actual cold report remains to be captured from the next
+uniquely built image. MMU and resource/free-page publication remain unchanged.
 
-The intended binding is a single Observe before the first HobConstructor and
-MemoryPeim, followed by PublishHob after the existing PrePeiSetHobList and before
-the sole MemoryPeim. The collector calls the existing real `PianoSecRead32`
+The actual prepared binding is a single Observe before the first HobConstructor
+and MemoryPeim, followed by PublishHob after the existing PrePeiSetHobList and
+before the sole MemoryPeim. Original SMEM Observe/Publish calls remain in order
+with unchanged budgets. The collector calls the existing real `PianoSecRead32`
 short LDR/fixup directly. It has a separate admission policy for the fixed
 BootHandoff page, the checked original shim header and the checked factory-DTB
 span. It does not modify the SMEM adapter, cookie permissions or SMEM budgets.
@@ -74,7 +77,12 @@ ticks/usecs and last requested/completed read address. Exhaustion returns
 NOT_READY/error with a budget reason; it does not convert partial observations
 into coherent inputs. Actual device timing of this unbound candidate is unknown.
 
-PublishHob first validates the real low-heap PHIT/type/length/free bounds and
+PublishHob separately validates the current legal EL1/SPx/MMU-and-Dcache-off
+CPU writer phase and actual FD/stack, without reusing the probe time/load limit.
+Thus an expired probe budget or incomplete/legacy observation can publish its
+frozen failed diagnostic when the current CPU and PHIT are legal. It does not
+continue any target read or upgrade the failed Status/Reason. It then validates
+the real low-heap PHIT/type/length/free bounds and
 space, then creates one GUID HOB. The appended occupied HOB prefix comes from
 the actual PHIT/free-bottom values. Failure before creation leaves no empty
 typed HOB. The report is frozen with exact layout/CRC and explicit status;
@@ -98,7 +106,24 @@ EL1, non-EL1 and in-place paths. It checks all metadata writes stay inside
 exact flags/reserved/CRC and the final branch. This is host instruction
 modeling, not physical ARM execution. AArch64 C syntax also passes.
 
-The next separately reviewed step is to bind this candidate extension and SEC
-collector once, capture actual reports on the device, then feed the occupied
-inputs into an independently proved cold full-DDR authority. The current high
-DDR/Conventional gate remains unchanged and NOT_READY.
+`PianoColdBootObjectsContract.c` contains the shared pure validation used in
+SEC tests and DXE; the DXE INF cannot link the SEC collector. The preparation
+record hashes each staged source/schema and the real BootShim input, rejects
+drift/duplicate INF sources, and retains exactly one MemoryPeim. Root supplies
+the product Core call sites; this binding does not modify Core/display code.
+
+`PianoProductBootObjectsReemit(Alive)` captures only the unique exact-length
+GUID HOB, rejects duplicates, copies twice and validates frozen CRC/shape and
+all permission bits. Its report getter distinguishes a valid failed diagnostic
+from invalid/missing HOB data. Subsequent replay uses the owned cache only;
+it neither reruns SEC nor rereads handoff, DTB, SMEM or hardware. Initial/failed
+capture, each object log and final return check the actual Root CPU lifetime
+fence. Captured Status/Reason/elapsed/read/fault fields and every typed object
+are reemitted before Fastboot log capture. Additional21 ASAN/UBSAN consumer
+cases cover missing/duplicate/truncated/CRC/recomputed-tamper/permission bits,
+copy drift, EBS and cache-only replay. The actual collector/HOB test also proves
+timeout and legacy failure diagnostics can publish and replay as NOT_READY.
+
+The next step is Root's unified product preparation/build and actual report
+capture, then occupied inputs can feed an independently proved cold full-DDR
+authority. The current high DDR/Conventional gate remains unchanged and NOT_READY.

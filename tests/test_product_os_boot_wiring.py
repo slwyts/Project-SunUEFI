@@ -12,7 +12,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tools'))
 import prepare_product as product
 import build_integrity as integrity
-from prepare_product_early_memory import prepare as prepare_early
+from prepare_product_early_memory import prepare as prepare_early, OBJECT_DXE_FILES
 from prepare_product_handoff import prepare as prepare_handoff, stage_provider
 
 
@@ -24,6 +24,9 @@ class ProductOsBootWiringTests(unittest.TestCase):
         for name,path in product.shared_boot_headers(ROOT).items():
             target=shared/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
         for name in product.SOURCE_NAMES:(shared/name).write_bytes((ROOT/'bootprofiles/uefi-app'/name).read_bytes())
+        for relative in OBJECT_DXE_FILES.values():
+            target=root/relative;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/relative,target)
+        shutil.copytree(ROOT/'bootprofiles/handoff',root/'bootprofiles/handoff')
         app=root/'platforms/pianoProductPkg/Applications/ProductCore';app.mkdir(parents=True)
         for name in product.SOURCE_NAMES:shutil.copyfile(shared/name,app/name)
         for name,path in product.shared_boot_headers(root).items():
@@ -65,10 +68,14 @@ class ProductOsBootWiringTests(unittest.TestCase):
         shutil.rmtree(target/'Sec')
         (target/'pianoProduct.dsc').write_text('[Components]\n')
         (target/'pianoProduct.fdf').write_text('[FV]\n  INF SiliciumPkg/Sec/Sec.inf\n')
+        # Recreate the actual base INF, retaining its OS/family wiring. The
+        # early helper must still reject duplicate cold-source binding.
+        (app/'ProductCore.inf').write_text(product.core_inf())
         record=prepare_early(root,target)
         staged=root/'upstream/Mu-Silicium/Platforms/Xiaomi/pianoProductPkg'
         shutil.rmtree(staged/'Sec');shutil.copytree(target/'Sec',staged/'Sec')
         for name in ('pianoProduct.dsc','pianoProduct.fdf'):shutil.copyfile(target/name,staged/name)
+        for name in (*OBJECT_DXE_FILES,'ProductCore.inf'):shutil.copyfile(app/name,staged/'Applications/ProductCore'/name)
         path=root/'build/product/prepared-manifest.json';manifest=json.loads(path.read_text());manifest['early_memory']=record;path.write_text(json.dumps(manifest))
 
     def fingerprint(self,root):

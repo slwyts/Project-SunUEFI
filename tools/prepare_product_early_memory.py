@@ -18,7 +18,13 @@ SEC_FILES={
     'Sec.h':'614b0416843e46abd57e7c9ba72b8ea3a9ded4802e3e07d474c6ea2583a88784',
 }
 EARLY_FILES=('PianoEarlyMemory.c','PianoEarlyMemory.h','PianoSecRead32.S',
-             'PianoSmemRam.c','PianoSmemRam.h','PianoSmemDescriptor.c','PianoSmemDescriptor.h')
+             'PianoSmemRam.c','PianoSmemRam.h','PianoSmemDescriptor.c','PianoSmemDescriptor.h',
+             'PianoColdBootObjects.c','PianoColdBootObjects.h','PianoColdBootObjectsContract.c')
+OBJECT_DXE_FILES={'PianoProductBootObjects.c':'bootprofiles/uefi-app/PianoProductBootObjects.c',
+                 'PianoProductBootObjects.h':'bootprofiles/uefi-app/PianoProductBootObjects.h',
+                 'PianoColdBootObjects.h':'bootprofiles/early-memory/PianoColdBootObjects.h',
+                 'PianoColdBootObjectsContract.c':'bootprofiles/early-memory/PianoColdBootObjectsContract.c'}
+OBJECT_DXE_SOURCES=('PianoProductBootObjects.c','PianoColdBootObjectsContract.c')
 
 
 def sha(path):
@@ -30,7 +36,7 @@ def sec_inf(text):
         raise ValueError('SEC INF drift')
     text=text.replace('BASE_NAME                      = Sec','BASE_NAME                      = PianoProductSec')
     text=text.replace('9AFFB503-E643-4141-8B90-17E8588B1D35','892BCA3B-55ED-4F2B-8750-534543504941')
-    text=text.replace('  Sec.c','  Sec.c\n  PianoEarlyMemory.c\n  PianoSmemRam.c\n  PianoSmemDescriptor.c',1)
+    text=text.replace('  Sec.c','  Sec.c\n  PianoEarlyMemory.c\n  PianoSmemRam.c\n  PianoSmemDescriptor.c\n  PianoColdBootObjects.c\n  PianoColdBootObjectsContract.c',1)
     return text.replace('  AArch64/ArchSec.c','  PianoSecRead32.S\n  AArch64/ArchSec.c',1)
 
 
@@ -38,21 +44,37 @@ def sec_source(text):
     """Exact pinned SEC source with the sole cold boundary and report HOB."""
     if hashlib.sha256(text.encode()).hexdigest()!=SEC_TEXT:
         raise ValueError('SEC source drift: re-audit first MemoryPeim ordering')
-    text=text.replace('#include "Sec.h"','#include "Sec.h"\n#include "PianoEarlyMemory.h"',1)
+    text=text.replace('#include "Sec.h"','#include "Sec.h"\n#include "PianoEarlyMemory.h"\n#include "PianoColdBootObjects.h"',1)
     anchor='  // Locate "DXE Heap" Memory Region'
     if text.count(anchor)!=1:
         raise ValueError('SEC first memory boundary ambiguous')
     text=text.replace(anchor,'  // Product SEC observation before the first PHIT/MMU. Failures keep\n'
         '  // the native low map; observation never authorizes high DDR.\n'
+        '  PianoColdBootObjectsObserve ();\n'
         '  PianoEarlyMemoryObserveCold ();\n\n'+anchor,1)
     anchor='  PrePeiSetHobList (HobList);'
     if text.count(anchor)!=1:
         raise ValueError('SEC PHIT publication boundary ambiguous')
     text=text.replace(anchor,anchor+'\n\n  // Immutable diagnostic HOB, not RAM/resource/allocation authority.\n'
-        '  PianoEarlyMemoryPublishHob ();',1)
+        '  PianoEarlyMemoryPublishHob ();\n'
+        '  PianoColdBootObjectsPublishHob ();',1)
     if text.count('Status = MemoryPeim (UefiMemoryBase, UefiMemorySize);')!=1:
         raise ValueError('SEC must call the original MemoryPeim exactly once')
     return text
+
+def bootshim_digest(root):
+    actual=Path(root)/'bootprofiles/handoff/BootShim.S'
+    candidate=Path(root)/'bootprofiles/early-memory/PianoBootObjectsShim.S'
+    if actual.read_bytes()!=candidate.read_bytes():
+        raise ValueError('BootObjects BootShim differs from reviewed extension source')
+    return sha(actual)
+
+def bind_object_sources(text):
+    if text.count('[Sources]\n')!=1:raise ValueError('ProductCore INF source boundary ambiguous')
+    source=text.split('[Sources]\n',1)[1].split('[',1)[0].splitlines()
+    names=[line.strip()for line in source if line.strip()]
+    if any(name in names for name in OBJECT_DXE_SOURCES):raise ValueError('Cold object consumer already staged')
+    return text.replace('[Sources]\n','[Sources]\n'+''.join('  '+name+'\n'for name in OBJECT_DXE_SOURCES),1)
 
 
 def prepare(root=ROOT,target=None):
@@ -61,7 +83,7 @@ def prepare(root=ROOT,target=None):
     actual={str(path.relative_to(source)):sha(path)for path in source.rglob('*')if path.is_file()}
     if actual!=SEC_FILES:
         raise ValueError('SEC source/assembly/INF drift: audit entry, vector and dependencies')
-    transformed=sec_source((source/'Sec.c').read_text())
+    transformed=sec_source((source/'Sec.c').read_text());shim_sha=bootshim_digest(root)
     destination=target/'Sec'
     if destination.exists():
         raise ValueError('Early SEC already staged; rebuild product preparation')
@@ -85,15 +107,20 @@ def prepare(root=ROOT,target=None):
     app=target/'Applications/ProductCore'
     if app.exists():
         shutil.copyfile(root/'bootprofiles/early-memory/PianoEarlyMemory.h',app/'PianoEarlyMemory.h')
+        for name,canonical in OBJECT_DXE_FILES.items():shutil.copyfile(root/canonical,app/name)
+        inf=app/'ProductCore.inf';inf.write_text(bind_object_sources(inf.read_text()))
+    staged={str(path.relative_to(target)):sha(path)for path in sorted(destination.rglob('*'))if path.is_file()}
+    if app.exists():staged.update({str((app/name).relative_to(target)):sha(app/name)for name in OBJECT_DXE_FILES})
     return {'status':'COLD_SEC_OBSERVER_BOUND_NOT_HARDWARE_VERIFIED',
         'sec_source_sha256':SEC_SOURCE,'sec_inf_sha256':SEC_INF,
         'first_hook':'InitializeMemory before LocateMemoryRegionByName / HobConstructor',
         'report_hook':'after PrePeiSetHobList before sole MemoryPeim',
         'hob_guid':'495ec035-44a5-4f17-8750-5049414e4f31',
+        'objects_hob_guid':'3025a79b-7ed3-4f6b-9050-434f4c443031',
+        'bootshim_sha256':shim_sha,'objects_observation_bound':True,
         'high_ddr_published':False,'memory_ownership_granted':False,
         'fallback':'unchanged corrected native low memory table',
-        'files':{str(path.relative_to(target)):sha(path)
-                 for path in sorted(destination.rglob('*'))if path.is_file()}}
+        'files':staged}
 
 
 def verify(root,target,record):
@@ -105,8 +132,12 @@ def verify(root,target,record):
     expected['Sec/Sec.c']=hashlib.sha256(sec_source((source/'Sec.c').read_text()).encode()).hexdigest()
     expected['Sec/Sec.inf']=hashlib.sha256(sec_inf((source/'Sec.inf').read_text()).encode()).hexdigest()
     expected.update({'Sec/'+name:sha(root/'bootprofiles/early-memory'/name)for name in EARLY_FILES})
+    app=target/'Applications/ProductCore'
+    if app.exists():expected.update({str((app/name).relative_to(target)):sha(root/canonical)for name,canonical in OBJECT_DXE_FILES.items()})
     if record.get('files')!=expected or record.get('high_ddr_published')is not False or record.get('memory_ownership_granted')is not False:
         raise ValueError('Cold SEC preparation record differs from canonical bounded observer')
+    if record.get('bootshim_sha256')!=bootshim_digest(root)or record.get('objects_observation_bound')is not True or record.get('objects_hob_guid')!='3025a79b-7ed3-4f6b-9050-434f4c443031':
+        raise ValueError('Cold BootObjects handoff/producer record differs')
     for name,digest in expected.items():
         path=target/name
         if path.is_symlink()or not path.is_file()or sha(path)!=digest:raise ValueError('Cold SEC compiled copy stale: '+name)
@@ -115,11 +146,13 @@ def verify(root,target,record):
         raise ValueError('Product FDF must bind the sole actual cold SEC observer')
     dsc=(target/'pianoProduct.dsc').read_text()
     if dsc.count('  pianoProductPkg/Sec/Sec.inf {')!=1:raise ValueError('Product DSC omits or duplicates cold SEC')
-    app=target/'Applications/ProductCore'
     if app.exists():
         header=app/'PianoEarlyMemory.h'
         if not header.is_file()or sha(header)!=sha(root/'bootprofiles/early-memory/PianoEarlyMemory.h'):
             raise ValueError('ProductCore early HOB header differs from the actual SEC producer')
         classes=(app/'ProductCore.inf').read_text().split('[LibraryClasses]\n',1)[1].split('[Guids]',1)[0].splitlines()
         if 'HobLib'not in {line.strip()for line in classes}:raise ValueError('ProductCore lacks the actual HOB consumer library')
+        sources=[line.strip()for line in (app/'ProductCore.inf').read_text().split('[Sources]\n',1)[1].split('[',1)[0].splitlines()]
+        if any(sources.count(name)!=1 for name in OBJECT_DXE_SOURCES):raise ValueError('ProductCore cold consumer source missing or duplicated')
+        if 'PianoColdBootObjects.c'in sources or 'PianoEarlyMemory.c'in sources:raise ValueError('SEC collector cannot link into DXE')
     return True

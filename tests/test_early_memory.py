@@ -24,6 +24,10 @@ class EarlyMemoryTests(unittest.TestCase):
         old=function(source,'InitializeMemory').replace('InitializeMemory','PianoActualInitializeMemory')
         new=function(sec_source(source),'InitializeMemory').replace('InitializeMemory','PianoBoundInitializeMemory')
         self.assertLess(new.index('PianoEarlyMemoryObserveCold'),new.index('LocateMemoryRegionByName'))
+        self.assertEqual(new.count('PianoColdBootObjectsObserve ()'),1)
+        self.assertEqual(new.count('PianoColdBootObjectsPublishHob ()'),1)
+        self.assertLess(new.index('PianoColdBootObjectsObserve'),new.index('PianoEarlyMemoryObserveCold'))
+        self.assertLess(new.index('PianoColdBootObjectsPublishHob'),new.index('Status = MemoryPeim'))
         self.assertLess(new.index('PrePeiSetHobList'),new.index('PianoEarlyMemoryPublishHob'))
         self.assertLess(new.index('PianoEarlyMemoryPublishHob'),new.index('Status = MemoryPeim'))
         with tempfile.TemporaryDirectory(prefix='piano-cold-sec-')as directory:
@@ -103,6 +107,29 @@ class EarlyMemoryTests(unittest.TestCase):
             with self.assertRaises(ValueError):prepare(ROOT,target)
         original=(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Sec/Sec.c').read_text()
         with self.assertRaises(ValueError):sec_source(original+'\n')
+
+    def test_cold_dxe_sources_bound_and_verified_without_sec_link(self):
+        from prepare_product import core_inf
+        from prepare_product_early_memory import OBJECT_DXE_FILES,OBJECT_DXE_SOURCES
+        with tempfile.TemporaryDirectory(prefix='piano-cold-flat-')as directory:
+            target=Path(directory);app=target/'Applications/ProductCore';app.mkdir(parents=True)
+            (app/'ProductCore.inf').write_text(core_inf())
+            (target/'pianoProduct.dsc').write_text('[Components]\n');(target/'pianoProduct.fdf').write_text('[FV]\n  INF SiliciumPkg/Sec/Sec.inf\n')
+            record=prepare(ROOT,target);self.assertTrue(verify(ROOT,target,record))
+            (app/'PianoSmemRam.h').write_bytes((ROOT/'bootprofiles/early-memory/PianoSmemRam.h').read_bytes())
+            for name in OBJECT_DXE_SOURCES:
+                args=[str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-misleading-indentation']
+                for path in (BASE/'MdePkg/Include',BASE/'MdePkg/Include/AArch64',ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include',app):args+=['-I',str(path)]
+                subprocess.run(args+[str(app/name)],check=True)
+            sources=(app/'ProductCore.inf').read_text().split('[Sources]\n',1)[1].split('[',1)[0]
+            for name in OBJECT_DXE_SOURCES:self.assertEqual(sources.splitlines().count('  '+name),1)
+            self.assertNotIn('  PianoColdBootObjects.c',sources)
+            for name in OBJECT_DXE_FILES:
+                p=app/name;before=p.read_bytes();p.write_bytes(before+b'\n// drift\n')
+                with self.assertRaisesRegex(ValueError,'copy stale'):verify(ROOT,target,record)
+                p.write_bytes(before)
+            inf=app/'ProductCore.inf';original=inf.read_text();inf.write_text(original.replace('  PianoProductBootObjects.c\n',''))
+            with self.assertRaisesRegex(ValueError,'missing or duplicated'):verify(ROOT,target,record)
 
 
 if __name__=='__main__':unittest.main()

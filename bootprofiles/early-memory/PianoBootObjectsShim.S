@@ -1,4 +1,4 @@
-/* Isolated reviewed candidate; does not replace actual handoff/BootShim.S. */
+/* Reviewed BootObjects ABI; the product wrapper uses this same source. */
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
 _Head:
   adr x1, _Payload

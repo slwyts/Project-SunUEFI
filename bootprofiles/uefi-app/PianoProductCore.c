@@ -9,6 +9,7 @@
 #include "PianoUfsProductVolume.h"
 #include "PianoProductStorageBaseline.h"
 #include "PianoProductSmem.h"
+#include "PianoProductBootObjects.h"
 #include "PianoProductBootLog.h"
 #include "PianoProductDisplayObserve.h"
 #include "PianoDisplaySmmuObserve.h"
@@ -100,6 +101,7 @@ STATIC EFI_STATUS ProductDebugReplay(VOID *Context) {
   EFI_STATUS CpuMapping=PianoFrameBufferMappingReemit(BootLogAlive);
   EFI_STATUS Clock=PianoDisplayClockReemit(BootLogAlive);
   EFI_STATUS DisplayOwner=PianoProductDisplayReplay();
+  (VOID)PianoProductBootObjectsReemit(BootLogAlive);
   if(!BootLogAlive())return EFI_ABORTED;
   if(PianoProductDisplayRetained())return Display==EFI_SUCCESS?EFI_COMPROMISED_DATA:Display;
   if(PianoDisplaySmmuRetained())return Translation==EFI_SUCCESS?EFI_COMPROMISED_DATA:Translation;
@@ -226,6 +228,8 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   BootLogStage("PAYLOAD",Status);
   if(Status!=EFI_SUCCESS){BootLogReturned();return Status;}
   ReportRequiredBackends();
+  (VOID)PianoProductBootObjectsReemit(BootLogAlive);
+  if(!BootLogAlive())FailStop(EFI_ABORTED);
   ObserveDisplay("before-foundation");
   PianoNativeSetObserver(ObserveNative);
   PianoProbeFoundation();

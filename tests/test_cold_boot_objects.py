@@ -7,9 +7,9 @@ class ColdBootObjectsTests(unittest.TestCase):
  def includes(self,arch):return (BASE/'MdePkg/Include',BASE/'MdePkg/Include'/arch,BASE/'MdeModulePkg/Include',BASE/'EmbeddedPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include')
  def test_actual_collector_native_map_and_hob(self):
   with tempfile.TemporaryDirectory(prefix='cold-objects-')as td:
-   exe=Path(td)/'objects';cmd=['cc','-std=gnu11','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-missing-field-initializers','-Wno-unused-parameter','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-include',str(ROOT/'tests/PianoCmaPcdShim.h'),'-D_PCD_VALUE_PcdFdBaseAddress=0xA7100000ULL','-D_PCD_VALUE_PcdFdSize=0x300000U','-D_PCD_VALUE_PcdCPUCoresStackBase=0xA760D000ULL','-D_PCD_VALUE_PcdCPUCorePrimaryStackSize=0x40000U']
+   exe=Path(td)/'objects';cmd=['cc','-std=gnu11','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-missing-field-initializers','-Wno-unused-parameter','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-I',str(ROOT/'bootprofiles/early-memory'),'-include',str(ROOT/'tests/PianoCmaPcdShim.h'),'-D_PCD_VALUE_PcdFdBaseAddress=0xA7100000ULL','-D_PCD_VALUE_PcdFdSize=0x300000U','-D_PCD_VALUE_PcdCPUCoresStackBase=0xA760D000ULL','-D_PCD_VALUE_PcdCPUCorePrimaryStackSize=0x40000U']
    for p in self.includes('X64'):cmd+=['-I',str(p)]
-   cmd+=[str(ROOT/'tests/PianoColdBootObjectsTest.c'),str(ROOT/'platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),'-Wl,--gc-sections','-o',str(exe)]
+   cmd+=[str(ROOT/'tests/PianoColdBootObjectsTest.c'),str(ROOT/'bootprofiles/early-memory/PianoColdBootObjectsContract.c'),str(ROOT/'bootprofiles/uefi-app/PianoProductBootObjects.c'),str(ROOT/'platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),'-Wl,--gc-sections','-o',str(exe)]
    p=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(p.returncode,0,(p.stdout+p.stderr)[:12000])
    p=subprocess.run([str(exe)],capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
  def test_isolated_actual_arm64_extension_object(self):
@@ -30,7 +30,8 @@ class ColdBootObjectsTests(unittest.TestCase):
    for code in ('str\tx9, [x7, #0x10]','str\tx10, [x7, #0x60]','str\tw10, [x7, #0x80]','mrs\tx10, VBAR_EL1','mrs\tx10, SCTLR_EL1','ldp\tx2, x3, [x4], #0x10','br\tx5'):self.assertIn(code,dis)
    # Actual branch precedes all EL1-only metadata instructions.
    self.assertLess(dis.index('b.ne'),dis.index('mrs\tx10, CNTVCT_EL0'))
-   for name in ('PianoColdBootObjects.c',):
+   self.assertEqual((ROOT/'bootprofiles/handoff/BootShim.S').read_bytes(),(ROOT/'bootprofiles/early-memory/PianoBootObjectsShim.S').read_bytes())
+   for name in ('PianoColdBootObjects.c','PianoColdBootObjectsContract.c'):
     args=[str(clang),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-D_PCD_VALUE_PcdFdBaseAddress=0xA7100000ULL','-D_PCD_VALUE_PcdFdSize=0x300000U','-D_PCD_VALUE_PcdCPUCoresStackBase=0xA760D000ULL','-D_PCD_VALUE_PcdCPUCorePrimaryStackSize=0x40000U']
     for p in self.includes('AArch64'):args+=['-I',str(p)]
     subprocess.run(args+[str(ROOT/'bootprofiles/early-memory'/name)],check=True,env=env)

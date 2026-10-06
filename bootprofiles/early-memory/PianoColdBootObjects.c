@@ -131,7 +131,13 @@ EFI_STATUS PianoColdBootObjectsObserve(VOID){
  E=ColdFresh();if(E!=EFI_SUCCESS)return ColdFinish(E,PianoColdReasonCpu);ColdCpu(&mCold.After);mCold.Coherent=TRUE;return ColdFinish(EFI_SUCCESS,PianoColdReasonNone);
 }
 EFI_STATUS PianoColdBootObjectsPublishHob(VOID){
- if(!mCold.Finished||mCold.Published)return EFI_NOT_READY;EFI_STATUS E=ColdFresh();if(E!=EFI_SUCCESS)return E;
+ if(!mCold.Finished||mCold.Published)return EFI_NOT_READY;
+ // Publishing frozen failure evidence is not another protected target read.
+ // Probe time/load limits remain strict, but cannot suppress their own report.
+ PIANO_COLD_CPU C={0};EFI_STATUS E=ColdCpu(&C);
+ if(E!=EFI_SUCCESS||C.El!=4||C.SpSel!=1||(C.Sctlr&(BIT0|BIT2))||!ColdKnown("UEFI_FD",C.Pc,4)||!ColdKnown("UEFI_Stack",C.Sp-1,1)){
+  mCold.PublishStatus=E==EFI_SUCCESS?EFI_NOT_READY:E;mCold.ReportCrc32=PianoColdObjectsCrc(&mCold);return mCold.PublishStatus;
+ }
  EFI_HOB_HANDOFF_INFO_TABLE *H=GetHobList();
  if(!H||!ColdKnown("DXE_Heap",(UINT64)(UINTN)H,sizeof(*H))||H->Header.HobType!=EFI_HOB_TYPE_HANDOFF||H->Header.HobLength!=sizeof(*H)||
     H->EfiFreeMemoryBottom<=(UINT64)(UINTN)H||H->EfiFreeMemoryTop<H->EfiFreeMemoryBottom||
@@ -142,21 +148,3 @@ EFI_STATUS PianoColdBootObjectsPublishHob(VOID){
  mCold.Published=TRUE;mCold.PublishStatus=EFI_SUCCESS;mCold.ReportCrc32=PianoColdObjectsCrc(&mCold);CopyMem(Data,&mCold,sizeof(mCold));return EFI_SUCCESS;
 }
 CONST PIANO_COLD_BOOT_OBJECT_REPORT *PianoColdBootObjectsReport(VOID){return &mCold;}
-STATIC CONST PIANO_COLD_BOOT_OBJECT *ColdReportRole(CONST PIANO_COLD_BOOT_OBJECT_REPORT *R,PIANO_COLD_OBJECT_ROLE Role){CONST PIANO_COLD_BOOT_OBJECT *O=NULL;for(UINT32 I=0;I<R->Count;++I)if(R->Objects[I].Role==Role){if(O)return NULL;O=&R->Objects[I];}return O;}
-EFI_STATUS PianoColdBootObjectsValidate(CONST PIANO_COLD_BOOT_OBJECT_REPORT *R){
- if(!R||R->Version!=1||R->Bytes!=sizeof(*R)||R->Reserved||R->ReservedFlags||R->ReportCrc32!=PianoColdObjectsCrc(R)||!R->Attempted||!R->Finished||R->Count>PIANO_COLD_OBJECT_MAX||
-    R->ReservedRead||R->MemoryOwnershipGranted||R->HighDdrPublished||R->AuthorityReady)return EFI_COMPROMISED_DATA;
- for(UINT32 I=0;I<R->Count;++I)if(R->Objects[I].Reserved||R->Objects[I].Role<=PianoColdObjectNone||R->Objects[I].Role>PianoColdObjectHobHeap||!ColdSpan(R->Objects[I].Base,R->Objects[I].Bytes,R->Objects[I].Base,R->Objects[I].Bytes))return EFI_COMPROMISED_DATA;
- if(R->Status!=EFI_SUCCESS)return EFI_NOT_READY;
- CONST PIANO_COLD_BOOT_HANDOFF *H=&R->Handoff;
- if(!R->Coherent||!R->Epoch||R->Epoch!=H->Counter||H->Magic!=PIANO_COLD_HANDOFF_MAGIC||H->ExtensionMagic!=PIANO_COLD_EXTENSION_MAGIC||H->Version!=1||H->Bytes!=144||H->Reserved||
-    H->Crc32!=PianoColdHandoffCrc(H)||H->EntryEl!=4||(H->Flags&~127ULL)||(H->Flags&63)!=63||H->FdSource!=H->ShimBase+H->ShimBytes||!ColdSpan(H->ShimBase,H->ShimBytes,H->EntryPc,4)||
-    R->DtbHeaderCrc32!=PianoEarlyMemoryBytesCrc32(R->DtbHeader,40)||ColdBe(R->DtbHeader)!=0xd00dfeed||ColdBe(R->DtbHeader+4)!=R->DtbBytes||
-    R->InitrdEnd<=R->InitrdStart||R->Cpu.El!=4||R->Cpu.SpSel!=1||(R->Cpu.Sctlr&(BIT0|BIT2))||R->After.El!=R->Cpu.El||R->After.Sctlr!=R->Cpu.Sctlr||R->After.Vbar!=R->Cpu.Vbar)return EFI_COMPROMISED_DATA;
- CONST PIANO_COLD_BOOT_OBJECT *Fd=ColdReportRole(R,PianoColdObjectFirmware),*Stack=ColdReportRole(R,PianoColdObjectStack),*Vector=ColdReportRole(R,PianoColdObjectActiveVector),*Shim=ColdReportRole(R,PianoColdObjectOriginalShim),*Source=ColdReportRole(R,PianoColdObjectOriginalFd),*Dtb=ColdReportRole(R,PianoColdObjectFactoryDtb),*Initrd=ColdReportRole(R,PianoColdObjectCombinedInitrd);
- if(!Fd||!Stack||!Vector||!Shim||!Source||!Dtb||!Initrd||Fd->Base!=H->FdBase||Fd->Bytes!=H->FdBytes||!ColdSpan(Fd->Base,Fd->Bytes,R->Cpu.Pc,4)||
-    !ColdSpan(Stack->Base,Stack->Bytes,R->Cpu.Sp-1,1)||Vector->Base!=R->Cpu.Vbar||Vector->Bytes!=2048||Shim->Base!=H->ShimBase||Shim->Bytes!=H->ShimBytes||Source->Base!=H->FdSource||Source->Bytes!=H->FdBytes||
-    Dtb->Base!=H->Dtb||Dtb->Bytes!=R->DtbBytes||Initrd->Base!=R->InitrdStart||Initrd->Bytes!=R->InitrdEnd-R->InitrdStart||
-    (R->Published&&!ColdReportRole(R,PianoColdObjectHobHeap)))return EFI_COMPROMISED_DATA;
- return EFI_SUCCESS;
-}

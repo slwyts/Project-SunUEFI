@@ -27,7 +27,10 @@ class ProductObservationWiringTests(unittest.TestCase):
             for name in expected:
                 if name.endswith('.c'):
                     output=root/(Path(name).stem+'.obj')
-                    subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-c','-Wall','-Wextra','-Werror','-I',str(include),'-I',str(include/'AArch64'),'-I',str(staged),str(staged/name),'-o',str(output)],check=True)
+                    subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-c','-Wall','-Wextra','-Werror','-I',str(include),'-I',str(include/'AArch64'),
+                        '-I',str(ROOT/'upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include'),
+                        '-I',str(ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include'),
+                        '-I',str(staged),str(staged/name),'-o',str(output)],check=True)
                     self.assertGreater(output.stat().st_size,0)
             fixture.fingerprint(root)
 

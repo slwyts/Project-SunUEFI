@@ -4,6 +4,11 @@
 #include "PianoFrozenLowFixture.h"
 #define PIANO_EARLY_HOST_TEST 1
 #include "../bootprofiles/early-memory/PianoEarlyMemory.c"
+// Cold object implementation has its own actual native/guard/HOB tests. These
+// boundary counters verify the generated real SEC calls each producer once.
+static UINTN cold_object_observes,cold_object_publishes;
+EFI_STATUS PianoColdBootObjectsObserve(VOID){assert(!hob_list&&!mmu_calls);cold_object_observes++;return EFI_NOT_READY;}
+EFI_STATUS PianoColdBootObjectsPublishHob(VOID){assert(hob_list&&!mmu_calls);cold_object_publishes++;return EFI_SUCCESS;}
 #define HobConstructor HostArena
 #include "PianoBoundSecMemory.h"
 #undef HobConstructor
