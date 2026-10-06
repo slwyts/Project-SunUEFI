@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-#pragma once
+#ifndef SUNUEFI_PIANOFASTBOOTBOOT_H
+#define SUNUEFI_PIANOFASTBOOTBOOT_H
 #include <Uefi.h>
 // Structural recognition only. No allocation, physical address dereference,
 // authentication, decompression, LoadImage, StartImage or boot state changes.
@@ -27,3 +28,5 @@ typedef struct {
 // The reader must supply all requested bytes or fail; range checks occur
 // before every callback. Output is zero/Unknown after any top-level failure.
 EFI_STATUS PianoFastbootBootParse(CONST PIANO_BOOT_SOURCE *Source,PIANO_BOOT_IMAGE *Image);
+
+#endif // SUNUEFI_PIANOFASTBOOTBOOT_H

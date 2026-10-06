@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-#pragma once
+#ifndef SUNUEFI_PIANOFASTBOOTLAUNCH_H
+#define SUNUEFI_PIANOFASTBOOTLAUNCH_H
 #include "PianoFastbootBoot.h"
 #include <Protocol/LoadedImage.h>
 // Take moves exclusive ownership out of the download state. No callback may
@@ -70,3 +71,5 @@ typedef struct {
 EFI_STATUS PianoFastbootLaunchInit(PIANO_FASTBOOT_LAUNCH *State);
 EFI_STATUS PianoFastbootLaunchRun(PIANO_FASTBOOT_LAUNCH *State,CONST PIANO_LAUNCH_ENV *Environment,
                                CONST PIANO_LAUNCH_BLOB *Blob,CONST VOID *LoadOptions,UINT32 LoadOptionsBytes);
+
+#endif // SUNUEFI_PIANOFASTBOOTLAUNCH_H
