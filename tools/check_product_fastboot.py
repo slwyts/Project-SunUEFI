@@ -154,7 +154,7 @@ def run_check(root, test_id, phase='simpleinit', wait_seconds=60, command_timeou
         size = hex_variable('SunUEFI:log-size')
         checksum = hex_variable('SunUEFI:log-crc32')
         generation = hex_variable('SunUEFI:log-generation')
-        if not 0 < size <= 65536 or not 0 <= checksum <= 0xffffffff or not generation:
+        if not 0 < size <= 262144 or not 0 <= checksum <= 0xffffffff or not generation:
             raise CheckFailed('Invalid frozen RAM log metadata')
         target = out / f'ramlog-{label}.bin'
         command('get_staged', str(target.resolve()))

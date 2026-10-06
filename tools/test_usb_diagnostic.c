@@ -24,6 +24,33 @@ static UINTN exchange(UINT8 Request,UINT8 Op,UINT16 Page,UINT16 Length,UINT8 *Re
   trb->Control&=~BIT0;assert(Event(0xC040)==EFI_SUCCESS && mPhase==0 && mPending[0]);
   return size;
 }
+static VOID large_console(UINT32 *Header,UINTN Cap){
+  assert(USB_DIAG_LOG_BYTES==262144U&&USB_DIAG_PAGE_BYTES==512U&&USB_DIAG_LOG_BYTES/USB_DIAG_PAGE_BYTES==512);
+  UINT8 *Ring=(UINT8 *)(Header+3),*Expected=malloc(USB_DIAG_LOG_BYTES);assert(Expected);UINT8 Data[4096];UINTN Bytes=0;
+  // More than the old64KiB limit, without truncation or session-marker trim.
+  UINT32 Size=131113;Header[0]=0x43474244;Header[1]=Header[2]=Size;memset(Ring,'Q',Cap);
+  assert(request(1,0,24,Data,&Bytes)==EFI_SUCCESS&&get32(Data+12)==Size&&mLogBytes==Size&&!mLogFlags);
+  memset(Expected,'Q',Size);assert(get32(Data+16)==DiagCrc(Expected,Size)&&!memcmp(mLogSnapshot,Expected,Size));
+  UINT32 Generation=mLogGeneration;memset(Ring,'W',Cap);assert(!memcmp(mLogSnapshot,Expected,Size)&&mLogGeneration==Generation);
+  assert(request(2,256,65,Data,&Bytes)==EFI_SUCCESS&&get32(Data+12)==131072&&DiagLe16(Data+16)==41&&Bytes==65);
+  // Full wrapped ring: the saved bytes are exactly its latest256KiB tail.
+  for(UINTN I=0;I<Cap;++I)Ring[I]=(UINT8)('a'+I%23);
+  Header[1]=1637;Header[2]=(UINT32)Cap;UINTN Offset=(Header[1]+Cap-USB_DIAG_LOG_BYTES)%Cap;
+  for(UINTN I=0;I<USB_DIAG_LOG_BYTES;++I)Expected[I]=Ring[(Offset+I)%Cap];
+  assert(request(1,0,24,Data,&Bytes)==EFI_SUCCESS&&mLogBytes==USB_DIAG_LOG_BYTES&&mLogFlags==1&&get32(Data+16)==DiagCrc(Expected,USB_DIAG_LOG_BYTES));
+  assert(!memcmp(mLogSnapshot,Expected,USB_DIAG_LOG_BYTES));Generation=mLogGeneration;memset(Ring,'R',Cap);
+  assert(request(2,511,536,Data,&Bytes)==EFI_SUCCESS&&Bytes==536&&get32(Data+8)==Generation&&get32(Data+12)==511*512&&DiagLe16(Data+16)==512&&get32(Data+20)==DiagCrc(Expected+511*512,512)&&!memcmp(Data+24,Expected+511*512,512));
+  assert(request(2,512,536,Data,&Bytes)==EFI_UNSUPPORTED&&request(2,65535,536,Data,&Bytes)==EFI_UNSUPPORTED);
+  // An older marker outside the bounded tail cannot fake a current marker.
+  CONST CHAR8 *Marker="SUNUEFI_RAMLOG_BEGIN\n";UINTN M=strlen(Marker);memset(Ring,'T',Cap);memcpy(Ring,Marker,M);
+  Header[1]=Header[2]=USB_DIAG_LOG_BYTES+5000;
+  assert(request(1,0,24,Data,&Bytes)==EFI_SUCCESS&&mLogBytes==USB_DIAG_LOG_BYTES&&mLogFlags==1&&mLogSnapshot[0]=='T');
+  // Keep the newest marker within the tail and freeze its exact remaining log.
+  UINTN Newest=Header[2]-131113,Older=Header[2]-200000;Ring[Older-1]=Ring[Newest-1]='\n';memcpy(Ring+Older,Marker,M);memcpy(Ring+Newest,Marker,M);
+  assert(request(1,0,24,Data,&Bytes)==EFI_SUCCESS&&mLogBytes==131113&&mLogFlags==3&&!memcmp(mLogSnapshot,Marker,M)&&get32(Data+16)==DiagCrc(Ring+Newest,131113));
+  memcpy(Expected,mLogSnapshot,mLogBytes);Generation=mLogGeneration;memset(Ring,'X',Cap);assert(!memcmp(mLogSnapshot,Expected,131113)&&mLogGeneration==Generation);
+  free(Expected);
+}
 int main(void) {
   assert(session_suite_main()==0);
   void *console=mmap((void *)0xA3500000,0x200000,PROT_READ|PROT_WRITE,
@@ -78,6 +105,7 @@ int main(void) {
   assert(request(1,0,24,data,&bytes)==EFI_COMPROMISED_DATA && !mLogValid);
   header[0]=0x43474244;header[1]=0;header[2]=USB_DIAG_LOG_BYTES+123;
   assert(request(1,0,24,data,&bytes)==EFI_SUCCESS && mLogBytes==USB_DIAG_LOG_BYTES && (mLogFlags&1));
+  large_console(header,cap);
   FreePool(mLogSnapshot);mLogSnapshot=NULL;mLogValid=FALSE;
   assert(munmap(console,0x200000)==0);
   puts("USB diagnostics: fixed console wrap/newest marker, bounded immutable pages/CRC, invalid request rejection, reset invalidation, and shared-DMA EP0 IN/STATUS-OUT passed.");

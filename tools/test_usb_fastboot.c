@@ -13,7 +13,8 @@ INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
 INTN EFIAPI AsciiStrnCmp(CONST CHAR8 *A,CONST CHAR8 *B,UINTN N){return strncmp(A,B,N);}
 VOID *EFIAPI AllocateZeroPool(UINTN N){return calloc(1,N);}
 BOOLEAN EFIAPI Sha256HashAll(CONST VOID *A,UINTN N,UINT8 *H){return SHA256(A,N,H)!=NULL;}
-static UINT8 wire[70000];static UINTN wire_bytes,wire_packets;
+static UINT8 wire[300000]; // host-only reconstruction, DMA bounce remains4KiB
+static UINTN wire_bytes,wire_packets;
 static PIANO_DMA_BUFFER *all[]={&mRing,&mTrbs[0],&mTrbs[1],&mSetup,&mTx,&mTrbs[2],&mTrbs[3],&mBulkRx,&mBulkTx};
 static VOID model_init(VOID) {
   PIANO_DMA_DEVICE Device={0};init();gBS=&bs;bs.Stall=stall;gRT=&rt;rt.ResetSystem=reset;
@@ -139,6 +140,14 @@ int USB_FASTBOOT_TEST_MAIN(void) {
   memset(Header+3,'X',LogBytes);CHAR8 ExpectedSize[13]="OKAY";FastHex(LogBytes,ExpectedSize+4);cmd("getvar:SunUEFI:log-size",ExpectedSize);
   out("upload",6);drain();assert(wire_bytes==LogBytes+16 && !memcmp(wire+12,Log,LogBytes));
   Header[1]=Header[2]+1;cmd("oem ramlog","FAILRAM log snapshot unavailable");assert(mFastLogBytes==0);
+  // Standard get_staged/upload of a full256KiB immutable RAM-log stage.
+  const UINTN LargeBytes=262144;assert(USB_DIAG_LOG_BYTES==LargeBytes&&mBulkTx.Bytes==4096);
+  Header[1]=Header[2]=(UINT32)LargeBytes;UINT8 *LiveLog=(UINT8 *)(Header+3);
+  for(UINTN I=0;I<LargeBytes;++I)LiveLog[I]=(UINT8)('A'+I%19);
+  cmd("oem ramlog","OKAY");assert(mFastLogBytes==LargeBytes&&mFastLogCrc==DiagCrc(LiveLog,LargeBytes)&&mFastboot.UploadBytes==LargeBytes);
+  UINT8 *SavedLarge=malloc(LargeBytes);assert(SavedLarge);CopyMem(SavedLarge,mFastboot.Upload,LargeBytes);memset(LiveLog,'Z',LargeBytes);
+  out("upload",6);drain();assert(wire_bytes==LargeBytes+16&&wire_packets==66&&!memcmp(wire,"DATA00040000",12)&&!memcmp(wire+12,SavedLarge,LargeBytes)&&!memcmp(wire+12+LargeBytes,"OKAY",4));
+  assert(mBulkTx.Bytes==4096&&PIANO_FASTBOOT_MAX_FETCH==65536U);free(SavedLarge);
   // IN's DMA copy stays intact while config0 zeros/frees all CPU-owned data.
   out("getvar:version",14);assert(mPending[3]);UINT8 Active[7];CopyMem(Active,mBulkTx.Cpu,7);
   setup_packet(9,0);assert(mEnding[3] && mPending[3] && mBulkTx.Active && !mFrames && !mFastboot.Download && !mFastboot.Upload);

@@ -31,7 +31,7 @@ class FirmwareModel:
                                0x00600804 | address << 3, 0x253DC, 0x102005,
                                0x10100000, 0x01000000, 3, len(self.calls), count, 3)
         if value == 1:
-            total = 65537 if self.fault == "oversize" else len(self.log)
+            total = reader.MAX_LOG_BYTES + 1 if self.fault == "oversize" else len(self.log)
             checksum = zlib.crc32(self.log) ^ (1 if self.fault == "total_crc" else 0)
             return struct.pack("<8sIIIHH", b"SUNLOG01", 7, total, checksum, 512, 0)
         payload = self.log[page*512:(page+1)*512]
@@ -51,6 +51,15 @@ class ReaderTests(unittest.TestCase):
         pages = [call for call in model.calls if call[1:3] == (0x5B, 2)]
         self.assertEqual([call[4] for call in pages], [536, 536, 64])
         self.assertGreater(result["status_after"]["accepted_replies"], result["status_before"]["accepted_replies"])
+
+    def test_full_256k_snapshot_uses_all_512_vendor_pages(self):
+        model = FirmwareModel(log=bytes(range(256)) * 1024)
+        result, log = reader.read_roundtrip(model.control)
+        self.assertEqual(log, model.log)
+        self.assertEqual(result['pages'], 512)
+        pages = [call for call in model.calls if call[1:3] == (0x5B, 2)]
+        self.assertEqual(pages[-1][3:], (511, 536))
+        self.assertEqual(reader.MAX_LOG_BYTES, 262144)
 
     def test_empty_snapshot(self):
         result, log = reader.read_roundtrip(FirmwareModel(log=b"").control)

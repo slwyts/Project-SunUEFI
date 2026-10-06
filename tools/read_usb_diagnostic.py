@@ -10,7 +10,7 @@ import time
 import zlib
 
 VID, PID, SERIAL = 0x1209, 0x8750, "SunUEFI-piano"
-MAX_LOG_BYTES, PAGE_BYTES, PAGE_HEADER = 65536, 512, 24
+MAX_LOG_BYTES, PAGE_BYTES, PAGE_HEADER = 262144, 512, 24
 
 
 class ProtocolError(RuntimeError):

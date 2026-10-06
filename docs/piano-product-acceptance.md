@@ -1,5 +1,10 @@
 # First product fastboot acceptance
 
+Current firmware bounds the immutable RAM-log export at256KiB. Both stock
+fastboot checkers accept that bound; partition `fetch` remains64KiB per command.
+Vendor diagnostic pages remain512 bytes and keep their original wire format.
+
+
 The first acceptance covers SimpleInit background fastboot, CPU RAM transfer,
 CRC-frozen logs, current GOP capture and readonly UFS partition fetch. It does
 not establish all UI routes, product storage writes, OS boot or release readiness.

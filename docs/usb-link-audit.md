@@ -95,12 +95,12 @@ cc -std=gnu11 -fshort-wchar -ffunction-sections -fdata-sections \
 | wValue | wIndex / wLength | 内容 |
 | --- | --- | --- |
 | 0 | 0 / 48 | SUNDBG01，固定 48-byte 当前状态 |
-| 1 | 0 / 24 | 从固定 ramoops console 0xA3500000 捕获至多 64 KiB 尾部，返回 SUNLOG01 元信息 |
+| 1 | 0 / 24 | 从固定 ramoops console 0xA3500000 捕获至多 256 KiB 尾部，返回 SUNLOG01 元信息 |
 | 2 | page number / 24+该页实际 payload | SUNPAGE1，24-byte 页头和至多 512-byte 快照 payload |
 
 所有整数为 little-endian。Status: offset 8/9/10/11 为 address/configuration/SS/SETUP 处理时的 phase；offset 12/16/20/24/28 为 DCFG/DSTS/GCTL/QSCRATCH HS/SS；32/36/40 为 device-event、SETUP、已接受的 5B reply 计数；44 为 flags（bit0 曾配置成功，bit1 快照有效）。
 
-Snapshot info: offset 8/12/16 为 generation/total bytes/完整 CRC32，20/22 为 16-bit page size/flags。Flags bit0 表示只保留了 64 KiB 尾部，bit1 表示在保留尾部中找到最新 SUNUEFI_RAMLOG_BEGIN，并从该 marker 开始导出。未找到 marker 时返回已明确标记的 console tail，不宣称其包含完整启动日志。
+Snapshot info: offset 8/12/16 为 generation/total bytes/完整 CRC32，20/22 为 16-bit page size/flags。Flags bit0 表示日志超过快照上限时只保留了 256 KiB 尾部，bit1 表示在保留尾部中找到最新 SUNUEFI_RAMLOG_BEGIN，并从该 marker 开始导出。未找到 marker 时返回已明确标记的 console tail，不宣称其包含完整启动日志。
 
 Page header: offset 8/12 为 generation/offset，16/18 为 16-bit payload bytes/header bytes=24，20 为该页 payload CRC32。**最后一页的 wLength 必须等于 24+剩余字节**，避免短包长度恰好整除 EP0 MPS 时需要额外 ZLP。Host 从 snapshot info 计算精确长度，校验 generation、offset、大小、页 CRC、完整 CRC 和状态计数增长。
 
@@ -152,7 +152,7 @@ python tools/test_usb_diagnostic_host.py
 | `stage FILE` | 仅下载到上限 64 MiB 的 RAM pool，完成后成为可 upload 的数据 |
 | `oem sha256` | 对完整 RAM download 输出两条各 32 hex 的 INFO，再 OKAY |
 | `get_staged FILE` | 标准 `upload`，回传当前 staged RAM 数据，随后 OKAY |
-| `oem ramlog` | 固定 console 捕获至多 64 KiB、最新 session marker 开始的尾部，复制到独立 frozen staged pool |
+| `oem ramlog` | 固定 console 捕获至多 256 KiB、最新 session marker 开始的尾部，复制到独立 frozen staged pool |
 | `getvar SunUEFI:log-size/log-crc32/log-generation` | 实际 CLI 分别查询三个完整变量名；固定 8 hex metadata 描述 frozen log |
 | `oem discard` | 清零并释放 RAM download / frozen staged 数据 |
 
