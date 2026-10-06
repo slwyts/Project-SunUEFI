@@ -36,5 +36,8 @@ combined-header checks pass. The existing69 Reader cases also pass. The host
 fixture uses the actual captured PE and guarded-read implementation; CPU/EFI
 boundaries are fixtures, and no native clock or hardware method is executed.
 Root binds one read-only snapshot after successful GCC acquire and caches it
-for later replay; the implementation is staged for product observation and has
-not yet been verified by a new tablet capture.
+for later replay. Test104 verifies that actual path: two matching snapshots,
+zero node/client/domain refs, pinned config corner38hex, cached vote0 and
+non-NULL MM/MX client pointers. It also verifies clean owner retirement and
+Android recovery. See [test104](piano-product-test104.md); actual rail application
+and physical panel recovery remain unverified.
