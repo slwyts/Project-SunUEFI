@@ -95,6 +95,13 @@ values and native references have not yet been measured. Controller access
 requires an effective MMCX lifetime and interface clock; neither the successful
 GCC reference nor a software framebuffer screenshot supplies that evidence.
 
+Test105 distinguishes the native Clock cache from actual NPA state: the Clock
+cached vote is0, but the MM client's active request and NPA aggregate are48.
+The configured/pending value is56. VCS applied state remains unobserved because
+the typed graph stops before its rail link. Do not infer power-off from the
+Clock cache or declare the zero clock reference to be the established physical
+root cause. See piano-product-test105.md for exact captured fields and recovery.
+
 Sessions are fully closed before native code runs. No driver
 is disabled for that product observation, and no display/clock/MMU/
 SMMU register is written to obtain it. Test97 is an explicitly requested replay
