@@ -35,6 +35,7 @@ class NativeObserverTests(unittest.TestCase):
                 directory=Path(directory);actual=directory/'NativeProbe.c';actual.write_bytes(SRC.read_bytes())
                 self.assertEqual(actual.read_bytes(),SRC.read_bytes())
                 (directory/'NativeProbeTable.h').write_text(header(modules,capacity))
+                (directory/'PianoNativeImages.h').write_bytes((ROOT/'bootprofiles/uefi-app/PianoNativeImages.h').read_bytes())
                 exe=directory/'native'
                 subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-unused-const-variable',
                     '-fshort-wchar','-g','-fsanitize=address,undefined','-fno-pie','-no-pie',

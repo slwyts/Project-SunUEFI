@@ -23,6 +23,7 @@ VOID PianoProbeFoundation(VOID);
 VOID PianoNativeSetObserver(VOID (*Observer)(CONST CHAR8 *,BOOLEAN));
 STATIC VOID Event(CHAR8 Kind,UINT32 Index){assert(EventCount<256);Events[EventCount++]=(TRACE){Kind,Index};}
 VOID *EFIAPI CopyMem(VOID *D,CONST VOID *S,UINTN N){return memcpy(D,S,N);}
+BOOLEAN EFIAPI CompareGuid(CONST GUID *A,CONST GUID *B){return !memcmp(A,B,sizeof(*A));}
 INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return TRUE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(CONST UINTN L){(VOID)L;return TRUE;}
