@@ -1,7 +1,10 @@
 # Physical display regression: earliest evidence window
 
-The first explicit display regression report is between test24 and test25,
-not the later white product splash change.
+The first explicit empty physical display report after the known-visible GUI is
+between test24 and test25. Test25 was grey; the first explicit white product
+screen report is test93. The grey and white symptoms are not yet proved to have
+the same cause, and the later white product splash is not established as the
+initial cause.
 
 Test24's archived image SHA is
 `32e0b363887340ce72f38f90969b04beb9874ac0840baabde31e73fa4dc212e2`.
@@ -33,10 +36,27 @@ truncated by the256byte DebugLib formatter; the remaining recorded pointers
 and base/stride are consistent, but missing fields must not be invented.
 The emitter is being split into bounded lines for the next build.
 
-The regression window is localized to the transition that added native hardware
-initialization. Which exact native driver changes display behavior is not yet
-proved. A separate temporary read-only guard session around each actual native
+Test97 replays the exact sealed test24 image, with the same SHA listed above,
+on the current tablet through fastboot boot. The operator explicitly confirmed
+"正常进入simpleinit而且可以操作工具箱": the physical SimpleInit display and
+toolbox operation both still work. The baseline excludes the test25 foundation
+and touch configuration workflow; the test97 replay does not flash partitions
+and does not run routine partition hash checks. The retained test97 log confirms
+PIANO_MENU_SELECT/PIANO_MENU_EXECUTE simple-init, subsequent tool input and
+PIANO_STAGE0_RETURN_TO_ANDROID. Live sys.boot_completed=1 confirms Android
+recovery. The complete evidence is recorded in
+private/analysis/stage0-test-97.json and private/analysis/ramlog-test-97/uefi.txt.
+
+This strengthens the version-regression window and establishes a current
+known-visible control. It does not isolate one variable: test24 differs from the
+current product in GUI/runtime code and multiple hardware features. Test25 also
+adds touch RAM configuration before foundation and SPI Open before SimpleInit.
+The version transition coincides with these additions; the exact step that
+changes physical display behavior is not yet proved. A separate temporary
+read-only guard session around each actual native
 StartImage will compare the uniquely matched MDSS SID800/mask2 route and fixed
 CB2 state. Sessions must be fully closed before native code runs. No driver
-is disabled, no alternate feature profile is used, and no display/clock/MMU/
-SMMU register is written to obtain the comparison.
+is disabled for that proposed product observation, and no display/clock/MMU/
+SMMU register is written to obtain it. Test97 is an explicitly requested replay
+of a historical diagnostic image, not a replacement product profile or a change
+to the single product feature set.
