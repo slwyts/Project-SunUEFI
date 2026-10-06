@@ -227,4 +227,67 @@ EFI_STATUS PianoDisplayClockReadFailureEvidence(VOID *Context,UINT64 A,UINTN N,E
  R.GuardReads=S->Report.Guard.Reads;R.GuardActive=S->Report.Guard.Active;R.GuardSyncOwned=S->Report.Guard.SyncOwned;R.GuardSErrorOwned=S->Report.Guard.SErrorOwned;R.GuardFatal=S->Report.Guard.Fatal;R.GuardRetained=S->Report.Guard.Retained;R.GuardServicesLost=S->Report.Guard.ServicesLost;
  if(!DcrLive(S))return EFI_ABORTED;CopyMem(Out,&R,sizeof(R));return EFI_SUCCESS;
 }
+typedef struct {UINT32 Id,Module,Array,Count,Node,Name,Parent;} DCR_CLOCK_SELECTION;
+STATIC CONST DCR_CLOCK_SELECTION mDcrClockSelections[]={
+ {0x04010033,0x28678,0x32418,149,0x33a68,0x14e02,0x37528},
+ {0x02010006,0x28548,0x2e280,61,0x2e520,0x13b4e,0x30478}
+};
+STATIC EFI_STATUS DcrSnapshotData(PIANO_DISPLAY_CLOCK_READ *S,UINT64 A,UINTN N,VOID *Out){
+ if(!DcrSpan(S->ImageBase+DCR_TEXT_END,DCR_DATA_END-DCR_TEXT_END,A,N))return EFI_ACCESS_DENIED;
+ return DcrStable(S,DcrData(S,A,N),A,N,Out);
+}
+STATIC EFI_STATUS DcrSnapshotOnce(PIANO_DISPLAY_CLOCK_READ *S,PIANO_DISPLAY_CLOCK_SELECTOR Selector,PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT *R,VOID *Destination){
+ ZeroMem(R,sizeof(*R));R->Revision=PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT_REVISION;R->Selector=Selector;R->ReaderContext=S;R->LeaseContext=S->Env.Lease;
+ R->NativeImage=S->ImageHandle;R->NativeBase=S->ImageBase;R->ImageSize=DCR_IMAGE_BYTES;R->Status=R->Identity=EFI_NOT_STARTED;
+ CONST DCR_CLOCK_SELECTION *C=&mDcrClockSelections[Selector];UINT64 B=S->ImageBase;EFI_STATUS E=R->Identity=DcrIdentity(S);if(E!=EFI_SUCCESS)return E;
+ R->ExpectedClockId=C->Id;R->Provider=C->Id>>24;R->Index=C->Id&65535;
+ E=DcrSnapshotData(S,B+0x3fe48,8,&R->Global);if(E!=EFI_SUCCESS)return E;E=DcrSnapshotData(S,B+0x3f5f0,8,&R->Client);if(E!=EFI_SUCCESS)return E;
+ if(R->Global!=B+0x283a0||!R->Client||R->Client>MAX_UINT64-0x20)return EFI_NOT_READY;
+ // Reuse the unchanged primary registry/INTERNAL-client identity path. This
+ // does not swap Lease.ClockId or claim GetID was executed for the selector.
+ DCR_OBJECT Client={0};DCR_GRAPH Graph={0};E=DcrResolve(S,R->Client+0x19,1,&Client,&Graph);if(E!=EFI_SUCCESS)return E;
+ if(Graph.Client!=R->Client||Graph.Global!=R->Global||Client.Role!=PianoClockReadClient)return EFI_COMPROMISED_DATA;
+ for(UINT32 I=0;I<Graph.Entries;++I)if(DcrAlias(Destination,sizeof(*R),(VOID*)(UINTN)Graph.RegistrySeen[I],32))return EFI_INVALID_PARAMETER;
+ for(UINT32 I=0;I<Graph.Clients;++I)if(DcrAlias(Destination,sizeof(*R),(VOID*)(UINTN)Graph.ClientSeen[I],32))return EFI_INVALID_PARAMETER;
+ E=DcrStable(S,Client,R->Client+0x19,1,&R->ClientFlags);if(E!=EFI_SUCCESS)return E;
+ UINT64 Modules=0;E=DcrSnapshotData(S,R->Global,8,&Modules);if(E!=EFI_SUCCESS)return E;E=DcrSnapshotData(S,R->Global+8,4,&R->ModuleCount);if(E!=EFI_SUCCESS)return E;
+ E=DcrSnapshotData(S,R->Global+0x2c,4,&R->GlobalFlags);if(E!=EFI_SUCCESS)return E;
+ if(Modules!=B+0x28308||R->ModuleCount!=9||R->Provider>=R->ModuleCount)return EFI_COMPROMISED_DATA;
+ E=DcrSnapshotData(S,Modules+8*(UINT64)R->Provider,8,&R->Module);if(E!=EFI_SUCCESS)return E;if(R->Module!=B+C->Module)return EFI_COMPROMISED_DATA;
+ E=DcrSnapshotData(S,R->Module+0x38,8,&R->Array);if(E!=EFI_SUCCESS)return E;E=DcrSnapshotData(S,R->Module+0x40,4,&R->ClockCount);if(E!=EFI_SUCCESS)return E;
+ if(R->Array!=B+C->Array||R->ClockCount!=C->Count||R->Index>=R->ClockCount||R->Array>MAX_UINT64-112*(UINT64)R->Index)return EFI_COMPROMISED_DATA;
+ R->Node=R->Array+112*(UINT64)R->Index;if(R->Node!=B+C->Node)return EFI_COMPROMISED_DATA;
+ E=DcrSnapshotData(S,R->Node,8,&R->Name);if(E!=EFI_SUCCESS)return E;if(R->Name!=B+C->Name)return EFI_COMPROMISED_DATA;
+ E=DcrSnapshotData(S,R->Node+8,8,&R->Parent);if(E!=EFI_SUCCESS)return E;if(R->Parent!=B+C->Parent)return EFI_COMPROMISED_DATA;
+ E=DcrSnapshotData(S,R->Node+0x10,4,&R->NodeFlags);if(E!=EFI_SUCCESS)return E;E=DcrSnapshotData(S,R->Node+0x50,4,R->Total);if(E!=EFI_SUCCESS)return E;
+ E=DcrSnapshotData(S,R->Parent+0x18,4,&R->ParentFlags);if(E!=EFI_SUCCESS)return E;E=DcrSnapshotData(S,R->Parent+0xc,4,&R->ParentRailMask);if(E!=EFI_SUCCESS)return E;
+ E=DcrSnapshotData(S,R->Parent+0x48,4,R->ParentRefs);if(E!=EFI_SUCCESS)return E;E=DcrSnapshotData(S,R->Parent+0x40,8,&R->ParentCurrentConfig);if(E!=EFI_SUCCESS)return E;
+ E=DcrSnapshotData(S,R->Parent+0x4c,4,&R->ParentCachedCorner);if(E!=EFI_SUCCESS)return E;E=DcrSnapshotData(S,R->Parent+0x50,1,&R->ParentVoteAlternate);if(E!=EFI_SUCCESS)return E;
+ if(R->ParentCurrentConfig){R->ConfigObservation=PianoClockConfigOtherProducer;
+  if(Selector==PianoClockSelectNonGdscAhb&&(R->ParentCurrentConfig==B+0x31220||R->ParentCurrentConfig==B+0x31258||R->ParentCurrentConfig==B+0x31290)){
+   E=DcrSnapshotData(S,R->ParentCurrentConfig+0x18,4,&R->CurrentCorner);if(E!=EFI_SUCCESS)return E;R->ConfigObservation=PianoClockConfigPinned;
+  }
+ }
+ E=DcrSnapshotData(S,B+0x3df68,8,&R->MmClient);if(E!=EFI_SUCCESS)return E;E=DcrSnapshotData(S,B+0x3e128,8,&R->MxClient);if(E!=EFI_SUCCESS)return E;
+ UINT64 Ref=0,Seen[64];UINT32 Used=0;E=DcrSnapshotData(S,R->Node+0x58,8,&Ref);if(E!=EFI_SUCCESS)return E;
+ while(Ref){if(Used>=64)return EFI_COMPROMISED_DATA;for(UINT32 I=0;I<Used;++I)if(Seen[I]==Ref)return EFI_COMPROMISED_DATA;
+  UINT64 Anchor=Used?Seen[Used-1]:R->Node+0x58;Seen[Used++]=Ref;DCR_OBJECT O={PianoClockReadClientRef,Ref,24,Anchor};if(!DcrObject(S,O))return EFI_NOT_READY;
+  if(DcrAlias(Destination,sizeof(*R),(VOID*)(UINTN)Ref,24))return EFI_INVALID_PARAMETER;
+  UINT64 Pair[2];E=DcrStable(S,O,Ref,16,Pair);if(E!=EFI_SUCCESS)return E;
+  if(Pair[1]==R->Client){R->ClientRef=Ref;R->ClientRefPresent=TRUE;E=DcrStable(S,O,Ref+0x10,4,R->PerClient);if(E!=EFI_SUCCESS)return E;
+   if(R->PerClient[0]>R->Total[0]||R->PerClient[1]>R->Total[1])return EFI_COMPROMISED_DATA;break;
+  }Ref=Pair[0];
+ }
+ R->Identity=E=DcrIdentity(S);if(E!=EFI_SUCCESS)return E;return R->Status=EFI_SUCCESS;
+}
+EFI_STATUS PianoDisplayClockReadSnapshotClock(PIANO_DISPLAY_CLOCK_READ *S,PIANO_DISPLAY_CLOCK_SELECTOR Selector,PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT *Out){
+ if(!S||S->Signature!=DCR_SIGNATURE||!Out||(Selector!=PianoClockSelectGccAhb&&Selector!=PianoClockSelectNonGdscAhb)||DcrAlias(Out,sizeof(*Out),S,sizeof(*S))||
+  DcrAlias(Out,sizeof(*Out),S->Env.Lease,sizeof(*S->Env.Lease))||DcrAlias(Out,sizeof(*Out),S->Env.Services,sizeof(*S->Env.Services))||DcrAlias(Out,sizeof(*Out),S->Env.DxeServices,sizeof(*S->Env.DxeServices))||
+  (S->ImageBase&&DcrAlias(Out,sizeof(*Out),(VOID*)(UINTN)S->ImageBase,DCR_IMAGE_BYTES))||DcrAlias(Out,sizeof(*Out),S->ImageIdentity,sizeof(*S->ImageIdentity)))return EFI_INVALID_PARAMETER;
+ if(!DcrLive(S))return EFI_ABORTED;if(S->Report.Busy||S->Report.Retained||S->Report.PinStatus!=EFI_SUCCESS||!S->Report.TextVerified||S->NextText!=DCR_TEXT_END||S->PinnedCopy)return EFI_NOT_READY;
+ S->Report.Busy=TRUE;PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT One,Two;EFI_STATUS E=DcrSnapshotOnce(S,Selector,&One,Out);if(E==EFI_SUCCESS)E=DcrSnapshotOnce(S,Selector,&Two,Out);
+ if(E==EFI_SUCCESS&&CompareMem(&One,&Two,sizeof(One)))E=EFI_MEDIA_CHANGED;
+ if(E==EFI_SUCCESS&&!DcrLive(S))E=EFI_ABORTED;
+ if(E==EFI_SUCCESS){One.MatchingSnapshots=2;CopyMem(Out,&One,sizeof(One));}ZeroMem(&One,sizeof(One));ZeroMem(&Two,sizeof(Two));S->Report.Busy=FALSE;return DcrFail(S,E);
+}
 EFI_STATUS PianoDisplayClockReadClose(PIANO_DISPLAY_CLOCK_READ *S){if(!S||S->Signature!=DCR_SIGNATURE)return EFI_INVALID_PARAMETER;if(S->Report.Busy||S->Report.Retained||S->Report.ServicesLost)return EFI_ACCESS_DENIED;return DcrFail(S,DcrFree(S));}

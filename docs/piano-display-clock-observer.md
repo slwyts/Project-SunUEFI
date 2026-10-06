@@ -55,7 +55,7 @@ subsequent DISPCC qualification.
 If the GCC pair is stable and AHB enable is observed, a second short guard session
 qualifies only `AF08000/2000` using CPU/GCD/AT validation. It performs **zero
 DISPCC LDRs**. This validates two mapped pages, not controller bus/rail safety.
-The current module has no audited MM/MX controller power/access owner, so all
+The current module has no audited MMCX controller power/access owner, so all
 eight DISPCC registers remain declared, required and skipped. No caller boolean
 can relabel the observed bit as a bus lease.
 
@@ -86,7 +86,11 @@ and [DISPCC driver](https://github.com/torvalds/linux/blob/master/drivers/clk/qc
 show the same dependency. The ROM `private/analysis/live.dts:9919` instead uses
 `vdd_mm-supply`/`vdd_mx-supply`; their phandles resolve to RPMh `mmcx.lvl` and
 `mx.lvl`. A missing `power-domains` property in that representation does not
-eliminate those supplies. ROM proxy-consumer requests belong to Android's
+eliminate those supplies. For the eight controller reads, the primary Linux
+access path requires MMCX plus its interface clock: no separate MX domain vote
+is present before access. The ROM MX supply can support PLL/frequency choices;
+its presence alone does not add a mandatory independent MX owner to this narrow
+read contract. ROM proxy-consumer requests belong to Android's
 driver setup, and do not prove a current UEFI rail/client lifetime. Consequently
 the real GCC reference alone does not authorize eight controller LDRs.
 

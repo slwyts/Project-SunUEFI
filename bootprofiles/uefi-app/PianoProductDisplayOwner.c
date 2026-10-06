@@ -10,6 +10,8 @@
 STATIC struct {
   PIANO_DISPLAY_CLOCK_LEASE Lease;
   PIANO_DISPLAY_CLOCK_READ Reader;
+  PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT NonGdsc;
+  EFI_STATUS NonGdscStatus;
   PIANO_PRODUCT_DISPLAY_ALIVE Alive;
   EFI_STATUS Status;
   BOOLEAN Attempted,Retained,ServicesLost;
@@ -97,11 +99,22 @@ EFI_STATUS PianoProductDisplayReplay(VOID){
   DEBUG((DEBUG_WARN,"PIANO_DISPLAY_CLEAN_REFUSAL proof=%r accepted=%u seq=%lu address=%lx bytes=%lu sessions=%u\n",
     R->ReadFailureEvidenceStatus,R->CleanSourceRefusal,R->ReadFailureEvidence.Sequence,R->ReadFailureEvidence.Address,
     (UINT64)R->ReadFailureEvidence.Bytes,R->ReadFailureEvidence.Sessions));
+  CONST PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT *N=&mDisplay.NonGdsc;
+  DEBUG((DEBUG_WARN,"PIANO_DISPLAY_NON_GDSC status=%r snapshots=%u expected_id=%x node=%lx parent=%lx\n",
+    mDisplay.NonGdscStatus,N->MatchingSnapshots,N->ExpectedClockId,N->Node,N->Parent));
+  if(mDisplay.NonGdscStatus==EFI_SUCCESS){
+    DEBUG((DEBUG_WARN,"PIANO_DISPLAY_NON_GDSC_REFS total=%u/%u client=%u/%u present=%u domain=%u/%u mask=%x\n",
+      N->Total[0],N->Total[1],N->PerClient[0],N->PerClient[1],N->ClientRefPresent,N->ParentRefs[0],N->ParentRefs[1],N->ParentRailMask));
+    DEBUG((DEBUG_WARN,"PIANO_DISPLAY_NON_GDSC_VOTE config=%lx kind=%u corner=%u cached=%u alternate=%u\n",
+      N->ParentCurrentConfig,N->ConfigObservation,N->CurrentCorner,N->ParentCachedCorner,N->ParentVoteAlternate));
+    DEBUG((DEBUG_WARN,"PIANO_DISPLAY_RAIL_CLIENTS mm=%lx mx=%lx observation_only=1 power_held=0\n",N->MmClient,N->MxClient));
+  }
   return EFI_SUCCESS;
 }
 EFI_STATUS PianoProductDisplayStart(PIANO_PRODUCT_DISPLAY_ALIVE Alive){
   if(!Alive)return EFI_INVALID_PARAMETER;if(mDisplay.Attempted)return EFI_ALREADY_STARTED;
   mDisplay.Attempted=TRUE;mDisplay.Alive=Alive;mDisplay.Status=EFI_NOT_STARTED;
+  mDisplay.NonGdscStatus=EFI_NOT_STARTED;
   PIANO_DISPLAY_CLOCK_LEASE_REPORT *Initial=&mDisplay.Lease.Report;
   Initial->Revision=1;Initial->ClockId=MAX_UINTN;
   Initial->Status=Initial->Identity=Initial->Before=Initial->GetId=Initial->Enable=
@@ -114,6 +127,12 @@ EFI_STATUS PianoProductDisplayStart(PIANO_PRODUCT_DISPLAY_ALIVE Alive){
     PIANO_DISPLAY_CLOCK_LEASE_ENV Lease={.Context=&mDisplay.Reader,.Services=gBS,.BootServicesAlive=LeaseAlive,
       .ReadCpu=PianoDisplayClockReadCpu,.ReadGcc=ReadGcc,.GetReadFailureEvidence=PianoDisplayClockReadFailureEvidence};
     S=PianoDisplayClockLeaseAcquire(&mDisplay.Lease,&Lease);
+  }
+  if(S==EFI_SUCCESS&&!PianoProductDisplayOwnerRetained()){
+    // One cached CPU-only observation. No second native reference or rail
+    // request is acquired; oem log replay never repeats these target loads.
+    mDisplay.NonGdscStatus=PianoDisplayClockReadSnapshotClock(&mDisplay.Reader,PianoClockSelectNonGdscAhb,&mDisplay.NonGdsc);
+    if(PianoProductDisplayOwnerRetained())S=mDisplay.NonGdscStatus==EFI_SUCCESS?EFI_COMPROMISED_DATA:mDisplay.NonGdscStatus;
   }
   if(!ReadAlive(&mDisplay)){mDisplay.Retained=mDisplay.ServicesLost=TRUE;S=EFI_ABORTED;}
   if(S!=EFI_SUCCESS&&!PianoProductDisplayOwnerRetained()){

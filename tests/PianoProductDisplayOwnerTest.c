@@ -60,6 +60,12 @@ static EFI_STATUS EFIAPI Gcd(EFI_PHYSICAL_ADDRESS A,EFI_GCD_MEMORY_SPACE_DESCRIP
 UINT32 PianoGuardedHostLoad(UINTN A){assert(ServicesLive&&(A==0x127004||A==0x127008));Loads++;if(Case==15&&Loads==1){EFI_SYSTEM_CONTEXT_AARCH64 C={.ELR=0x1000,.FAR=A,.ESR=0x96000010,.SPSR=5};EFI_SYSTEM_CONTEXT Context={.SystemContextAArch64=&C};Handlers[0](0,Context);assert(C.ELR==0x1004);}return A==0x127004?Ahb:0x08200001;}
 EFI_STATUS PianoDisplayClockReadInitialize(PIANO_DISPLAY_CLOCK_READ *S,CONST PIANO_DISPLAY_CLOCK_READ_ENV *E){assert(ServicesLive&&E->Services==gBS&&E->DxeServices==gDS&&E->Lease);ReaderStarts++;Reader=S;Lease=E->Lease;if(Case==1)return EFI_UNSUPPORTED;S->Signature=1;S->Env=*E;S->Report.Revision=1;S->PinnedCopy=(VOID *)0x500;S->PinnedBytes=256;return EFI_SUCCESS;}
 EFI_STATUS PianoDisplayClockReadCpu(VOID *Context,UINT64 A,UINTN N,VOID *D){assert(Context==Reader&&A&&N&&D&&ServicesLive);ZeroMem(D,N);return EFI_SUCCESS;}
+EFI_STATUS PianoDisplayClockReadSnapshotClock(PIANO_DISPLAY_CLOCK_READ *S,PIANO_DISPLAY_CLOCK_SELECTOR Selector,PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT *Out){
+  assert(S==Reader&&ServicesLive&&Selector==PianoClockSelectNonGdscAhb&&Out&&Lease->Report.Held);
+  // Real selector paths are tested separately. An unavailable clean diagnostic
+  // must not undo the established GCC owner or pretend a power vote exists.
+  return EFI_NOT_READY;
+}
 EFI_STATUS PianoDisplayClockReadFailureEvidence(VOID *Context,UINT64 A,UINTN N,EFI_STATUS Status,PIANO_DISPLAY_CLOCK_LEASE_READ_FAILURE_EVIDENCE *Out){
   assert(Context==Reader&&A&&N&&Status==EFI_NOT_READY&&Out&&ServicesLive);EvidenceCalls++;
   // The controlled reader supplies no proof; actual Reader+Lease tests own the

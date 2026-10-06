@@ -54,6 +54,22 @@ typedef struct {
   UINT64 ReadSequence,LastReadAddress;UINTN LastReadBytes;EFI_STATUS LastReadStatus;
   UINT64 Map[PIANO_DISPLAY_CLOCK_READ_MAP_BYTES/8];
 } PIANO_DISPLAY_CLOCK_READ;
+typedef enum {PianoClockSelectGccAhb=0,PianoClockSelectNonGdscAhb=1} PIANO_DISPLAY_CLOCK_SELECTOR;
+typedef enum {PianoClockConfigUnobserved=0,PianoClockConfigPinned,PianoClockConfigOtherProducer} PIANO_DISPLAY_CLOCK_CONFIG_OBSERVATION;
+#define PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT_REVISION 1U
+// Read-only diagnostic identity/reference snapshot. ExpectedClockId is a fixed
+// pinned selector, not an observed GetID result or a clock/rail owner grant.
+typedef struct {
+ UINT32 Revision;PIANO_DISPLAY_CLOCK_SELECTOR Selector;EFI_STATUS Status,Identity;
+ VOID *ReaderContext,*LeaseContext;EFI_HANDLE NativeImage;UINT64 NativeBase,ImageSize;
+ UINT32 MatchingSnapshots,ExpectedClockId,Provider,Index,ModuleCount,ClockCount;
+ UINT64 Global,Client,Module,Array,Node,Name,Parent,ClientRef;
+ UINT32 GlobalFlags,NodeFlags,ParentFlags,ParentRailMask;UINT8 ClientFlags;
+ UINT16 Total[2],PerClient[2],ParentRefs[2];BOOLEAN ClientRefPresent;
+ UINT64 ParentCurrentConfig;UINT32 ParentCachedCorner;UINT8 ParentVoteAlternate;
+ PIANO_DISPLAY_CLOCK_CONFIG_OBSERVATION ConfigObservation;UINT32 CurrentCorner;
+ UINT64 MmClient,MxClient;
+} PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT;
 // Initialize authenticates the exact FV Clock PE. No native Clock invocation,
 // mapping, allocation permission, DMA permission or MMIO session is created.
 EFI_STATUS PianoDisplayClockReadInitialize(PIANO_DISPLAY_CLOCK_READ *,CONST PIANO_DISPLAY_CLOCK_READ_ENV *);
@@ -61,6 +77,11 @@ EFI_STATUS PianoDisplayClockReadInitialize(PIANO_DISPLAY_CLOCK_READ *,CONST PIAN
 // Only exact pinned image text/data or the bounded native typed graph qualifies.
 // Destination is unchanged unless read + anchor/identity/map + End all succeed.
 EFI_STATUS PianoDisplayClockReadCpu(VOID *Context,UINT64 Address,UINTN Bytes,VOID *Destination);
+// Fixed GCC and second CESTA non-GDSC AHB selectors only. Requires completed
+// actual image/text verification; no GetID, Enable, NPA request or MMIO occurs.
+// Two complete matching observations, output unchanged on failure. A missing
+// client ref or unknown runtime configuration stays an explicit observation.
+EFI_STATUS PianoDisplayClockReadSnapshotClock(PIANO_DISPLAY_CLOCK_READ *,PIANO_DISPLAY_CLOCK_SELECTOR,PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT *);
 // Fresh observation of this reader's immediately preceding first-text refusal.
 // Does not call EFI, authorize a memory read, or certify a native reference.
 EFI_STATUS PianoDisplayClockReadFailureEvidence(VOID *Context,UINT64 Address,UINTN Bytes,EFI_STATUS Status,PIANO_DISPLAY_CLOCK_LEASE_READ_FAILURE_EVIDENCE *);

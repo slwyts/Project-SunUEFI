@@ -62,8 +62,13 @@ instead of writing MDP/GDSC registers. Before accepting that as a controller
 access lifetime it needs actual pinned LoadedImage/vtable identity plus bounded
 client→NPA resource→VCS rail→RPMh backend evidence, applied ordinary corner and
 matching domain/clock counters; uncertainty or a partial request must retain
-the owner. MX is a separate resource: an effective owned MX request or another
-explicitly proved lifetime is still needed, rather than assuming MM holds it.
+the owner. For the eight controller reads, the minimum source-backed access
+dependency is MMCX plus the GCC interface clock. The actual Linux node has only
+MMCX and its probe accesses the controller after that runtime resume; no
+independent MX vote is introduced. The ROM MX supply can support PLL/frequency
+choices, so merely finding it does not make it an extra admission gate for these
+reads. MX remains useful raw diagnostics, not a required second owner for this
+narrow scope. DPU/DSI operation still needs its separate domain/clock contract.
 The current Clock reader only admits its exact GCC object graph. New NPA/VCS
 objects need their own pinned, typed bounded reader and ABI validation; they must
 not be admitted by enlarging an arbitrary low-memory range. No native rail call,
