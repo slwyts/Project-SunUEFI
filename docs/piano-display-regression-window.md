@@ -81,6 +81,20 @@ still needs physical validation. See piano-product-test100.md and
 piano-product-test101.md for the distinct fault, corrected mapping and phase
 evidence. No direct clock bit patch or old-image success alone proves a repair.
 
+Test103 subsequently measures a real product AHB reference0→1, restores
+88000003, retains it through USB/UI, and retires it1→0 before normal Android
+recovery. The physical panel result remains pending; this is not a confirmed
+white-screen fix. See piano-product-test103.md.
+
+The native CESTA temporary-clock list also contains non-GDSC AHB and RSCC
+AHB/vsync. Linux explicitly keeps the RSCC branches at DISPCC offsets C00C
+and C008 enabled in its probe (the pinned local driver lines1932–1933;
+[official probe](https://github.com/torvalds/linux/blob/master/drivers/clk/qcom/dispcc-sm8750.c)).
+These are additional specific candidates for a handoff regression. Their live
+values and native references have not yet been measured. Controller access
+requires an effective MMCX lifetime and interface clock; neither the successful
+GCC reference nor a software framebuffer screenshot supplies that evidence.
+
 Sessions are fully closed before native code runs. No driver
 is disabled for that product observation, and no display/clock/MMU/
 SMMU register is written to obtain it. Test97 is an explicitly requested replay
