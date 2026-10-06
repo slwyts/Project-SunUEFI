@@ -80,7 +80,7 @@ STATIC VOID Run(UINT32 N){
   for(UINT32 I=0;I<ARRAY_SIZE(mNativeImages);++I){assert(FvCalls[I]<=1&&LoadCalls[I]<=1&&StartCalls[I]<=1&&UnloadCalls[I]<=1);assert(HookBefore[I]==HookAfter[I]);if(StartCalls[I])assert(HookBefore[I]==(Enabled?1U:0U));}
 #ifdef PIANO_NATIVE_FIXTURE_CAPACITY
   UINT32 Starts=0,Hooks=0;for(UINT32 I=0;I<ARRAY_SIZE(mNativeImages);++I){Order(I,Enabled);Starts+=StartCalls[I];Hooks+=HookBefore[I]+HookAfter[I];}
-  assert(Starts==13&&Hooks==(Enabled?26U:0U)&&4+Hooks<=32);
+  assert(Starts==13&&Hooks==(Enabled?26U:0U)&&5+Hooks<=32);
 #else
   for(UINT32 I=1;I<=5;++I)Order(I,Enabled);
   assert(!UnloadCalls[1]&&!UnloadCalls[5]&&UnloadCalls[4]==1);
@@ -95,7 +95,7 @@ STATIC VOID Run(UINT32 N){
 }
 int main(VOID){for(UINT32 I=0;I<7;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"native callback case%u failed\n",I);return 1;}}
 #ifdef PIANO_NATIVE_FIXTURE_CAPACITY
-  puts("Actual NativeProbe:13 product names,26 callbacks+4 outer phases fit32; clear prevents stale callbacks");
+  puts("Actual NativeProbe:13 product names,26 callbacks+5 outer phases fit32; clear prevents stale callbacks");
 #else
   puts("Actual NativeProbe:7 fork cases, before/Start/after/Unload order, FV/Load/DEPEX/runtime misses, second pass/warning/default/clear");
 #endif

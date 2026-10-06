@@ -26,7 +26,8 @@ class NativeObserverTests(unittest.TestCase):
         names=re.findall(r'\{"([^"\n]+)",\{',product_table.read_text())
         self.assertEqual(len(names),13)
         core=(ROOT/'bootprofiles/uefi-app/PianoProductCore.c').read_text()
-        outer=len(re.findall(r'ObserveDisplay\("',core));self.assertEqual(outer,4)
+        outer=len(re.findall(r'ObserveDisplay\("',core));self.assertEqual(outer,5)
+        self.assertIn('ObserveDisplay("after-display-lease")',core)
         self.assertLessEqual(outer+2*len(names),32)
         fixtures=[(['LaterDependency','SmemDxe','MissingFv','BadLoad','BadStart','Good2','NeverReady','GpiDxe','QcomScmiDxe','UsbConfigDxe'],False),(names,True)]
         for modules,capacity in fixtures:

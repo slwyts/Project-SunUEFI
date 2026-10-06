@@ -20,11 +20,32 @@ STATIC VOID EFIAPI ExitFence(EFI_EVENT Event,VOID *Context){(VOID)Event;PianoPro
 STATIC EFI_STATUS AtApp(PIANO_PRODUCT_OWNERS *Owners) {
   if(Owners->Report.ServicesLost)return EFI_ACCESS_DENIED;
   if(!gBS || !gBS->RaiseTPL || !gBS->RestoreTPL)return EFI_UNSUPPORTED;
-  EFI_TPL Old=gBS->RaiseTPL(TPL_HIGH_LEVEL);gBS->RestoreTPL(Old);
+  EFI_TPL Old=gBS->RaiseTPL(TPL_HIGH_LEVEL);
+  if(Owners->Report.ServicesLost)return EFI_ACCESS_DENIED;
+  gBS->RestoreTPL(Old);
+  if(Owners->Report.ServicesLost)return EFI_ACCESS_DENIED;
   return Old==TPL_APPLICATION?EFI_SUCCESS:EFI_UNSUPPORTED;
 }
 STATIC BOOLEAN PolicyLive(CONST PIANO_BOOT_POLICY_REPORT *Policy) {
   return Policy && Policy->Initialized && Policy->ProtocolInstalled && !Policy->ServicesLost && !Policy->Retained;
+}
+STATIC BOOLEAN RefIncrement(CONST UINT16 Before[2],CONST UINT16 After[2]){
+  return Before[0]<MAX_UINT16&&After[0]==Before[0]+1&&After[1]==Before[1];
+}
+STATIC BOOLEAN RefDecrement(CONST UINT16 Before[2],CONST UINT16 After[2]){
+  return Before[0]>0&&After[0]==Before[0]-1&&After[1]==Before[1];
+}
+STATIC BOOLEAN DisplayRegistration(CONST PIANO_PRODUCT_OWNERS_CONFIG *C){
+  CONST PIANO_PRODUCT_DISPLAY_STARTUP_REPORT *D=&C->DisplayStartup;
+  if(D->Revision!=1||D->Retained!=FALSE||D->ServicesLost!=FALSE||D->LeaseContext!=C->DisplayContext)return FALSE;
+  if(C->StartedOwnerMask&PIANO_OWNER_DISPLAY)return C->DisplayContext&&C->StopDisplay&&
+    D->AcquireAttempted==TRUE&&D->Held==TRUE&&D->KnownNoSideEffects==FALSE&&D->OwnedReferences==1&&D->Status==EFI_SUCCESS&&D->NativeBase&&
+    D->AcquireBeforeSnapshots==2&&D->AcquireAfterSnapshots==2&&
+    RefIncrement(D->AcquireBeforeTotal,D->AcquireAfterTotal)&&RefIncrement(D->AcquireBeforeClient,D->AcquireAfterClient);
+  // Conservative absence is only allowed before a native Enable attempt,
+  // with explicit actual no-side-effect knowledge, never an unknown result.
+  return (C->AbsentOwnerMask&PIANO_OWNER_DISPLAY)&&D->KnownNoSideEffects==TRUE&&D->AcquireAttempted==FALSE&&D->Held==FALSE&&!D->OwnedReferences&&
+    (D->Status==EFI_NOT_STARTED||EFI_ERROR(D->Status));
 }
 STATIC EFI_STATUS FreshRuntime(PIANO_PRODUCT_OWNERS *Owners) {
   EFI_GUID Guid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;PIANO_PRODUCT_RUNTIME_PROTOCOL *Fresh=NULL;
@@ -45,7 +66,8 @@ EFI_STATUS PianoProductOwnersInitialize(PIANO_PRODUCT_OWNERS *Owners,CONST PIANO
      (Config->StartedOwnerMask|Config->AbsentOwnerMask)!=PIANO_OWNER_ALL_MASK ||
      (Config->StartedOwnerMask&Config->AbsentOwnerMask))return EFI_NOT_READY;
   if((Config->StartedOwnerMask&PIANO_OWNER_CORE_MASK)!=PIANO_OWNER_CORE_MASK)return EFI_NOT_READY;
-  if(Config->StartedOwnerMask&~PIANO_OWNER_CORE_MASK)return EFI_UNSUPPORTED;
+  if(Config->StartedOwnerMask&~PIANO_OWNER_SUPPORTED_MASK)return EFI_UNSUPPORTED;
+  if(!DisplayRegistration(Config))return EFI_NOT_READY;
   if(!gBS || !gBS->CreateEventEx || !gBS->CloseEvent || !gBS->LocateProtocol)return EFI_UNSUPPORTED;
   EFI_STATUS S=AtApp(Owners);if(S!=EFI_SUCCESS)return S;
   CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();if(!PolicyLive(Policy))return EFI_NOT_READY;
@@ -57,6 +79,9 @@ EFI_STATUS PianoProductOwnersInitialize(PIANO_PRODUCT_OWNERS *Owners,CONST PIANO
   S=Storage->Ready(Storage->Context);if(S!=EFI_SUCCESS)return Exact(S);
   if(!PolicyLive(PianoBootPolicyReport()))return EFI_ACCESS_DENIED;
   ZeroMem(Owners,sizeof(*Owners));Owners->Config=*Config;Owners->Report.Revision=1;
+  Owners->Report.DisplayStatus=EFI_NOT_STARTED;
+  Owners->Report.Display.Status=Owners->Report.Display.Release=Owners->Report.Display.CounterStatus=
+    Owners->Report.Display.GccReadback=Owners->Report.Display.GccReadbackEnd=Owners->Report.Display.Cleanup=EFI_NOT_STARTED;
   Owners->Report.RegisteredStartedMask=Config->StartedOwnerMask;Owners->Report.RegisteredAbsentMask=Config->AbsentOwnerMask;
   // Runtime is not dereferenced until a fresh protocol lookup matches it.
   PIANO_PRODUCT_RUNTIME_PROTOCOL *Fresh=NULL;EFI_GUID Guid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;
@@ -139,6 +164,19 @@ STATIC BOOLEAN UfsClean(CONST PIANO_UFS_RESET_REPORT *R) {
     R->DmaFreed==3 && R->Disconnected>0 && R->ProtocolsRemoved==R->Disconnected+1 &&
     !R->TransferDoorbell && !R->TaskDoorbell && !R->TransferRun && !R->TaskRun && !R->Interrupt;
 }
+STATIC BOOLEAN DisplayClean(CONST PIANO_PRODUCT_OWNERS *O){
+  CONST PIANO_PRODUCT_DISPLAY_RETIRE_REPORT *R=&O->Report.Display;
+  CONST PIANO_PRODUCT_DISPLAY_STARTUP_REPORT *A=&O->Config.DisplayStartup;
+  if(R->Revision!=1||R->LeaseContext!=O->Config.DisplayContext||R->ClockId!=A->ClockId||R->NativeBase!=A->NativeBase||
+     R->Started!=TRUE||R->Returned!=TRUE||R->Clean!=TRUE||R->Retained!=FALSE||R->ServicesLost!=FALSE||R->ReleaseAttempted!=TRUE||R->HeldAfter!=FALSE||R->Released!=TRUE||R->ExitClosed!=TRUE||
+     R->OwnedReferencesBefore!=1||R->OwnedReferencesAfter||R->Status!=EFI_SUCCESS||R->Release!=EFI_SUCCESS||
+     R->CounterStatus!=EFI_SUCCESS||R->GccReadback!=EFI_SUCCESS||R->GccReadbackEnd!=EFI_SUCCESS||R->Cleanup!=EFI_SUCCESS||R->GccReads!=4||R->GccPages!=1)return FALSE;
+  if(R->AcquireBeforeSnapshots!=2||R->AcquireAfterSnapshots!=2||R->ReleaseBeforeSnapshots!=2||R->ReleaseAfterSnapshots!=2)return FALSE;
+  for(UINTN I=0;I<2;++I)if(R->AcquireBeforeTotal[I]!=A->AcquireBeforeTotal[I]||R->AcquireAfterTotal[I]!=A->AcquireAfterTotal[I]||
+     R->AcquireBeforeClient[I]!=A->AcquireBeforeClient[I]||R->AcquireAfterClient[I]!=A->AcquireAfterClient[I])return FALSE;
+  return RefIncrement(R->AcquireBeforeTotal,R->AcquireAfterTotal)&&RefIncrement(R->AcquireBeforeClient,R->AcquireAfterClient)&&
+    RefDecrement(R->ReleaseBeforeTotal,R->ReleaseAfterTotal)&&RefDecrement(R->ReleaseBeforeClient,R->ReleaseAfterClient);
+}
 EFI_STATUS PianoProductOwnersRetire(PIANO_PRODUCT_OWNERS *Owners) {
   if(!Owners || !Owners->Report.Initialized)return EFI_INVALID_PARAMETER;
   if(Owners->Report.Retained || Owners->Report.Clean)return EFI_ACCESS_DENIED;
@@ -202,6 +240,15 @@ EFI_STATUS PianoProductOwnersRetire(PIANO_PRODUCT_OWNERS *Owners) {
      Input->Status!=EFI_SUCCESS || Input->Timer!=EFI_SUCCESS || Input->Protocols!=EFI_SUCCESS || Owners->Report.ServicesLost)
     return Retain(Owners,S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S);
   Owners->Report.InputStopped=TRUE;Owners->Report.RetiredMask|=PIANO_OWNER_INPUT;
+  if(Owners->Report.RegisteredStartedMask&PIANO_OWNER_DISPLAY){
+    S=AtApp(Owners);if(S!=EFI_SUCCESS||Owners->Report.ServicesLost)return Retain(Owners,S);
+    if(!Owners->Config.StopDisplay||!Owners->Config.DisplayContext)return Retain(Owners,EFI_COMPROMISED_DATA);
+    Owners->Report.DisplayStatus=S=Owners->Config.StopDisplay(Owners->Config.DisplayContext,&Owners->Report.Display);
+    if(Owners->Report.Display.ServicesLost)Owners->Report.ServicesLost=TRUE;
+    if(S!=EFI_SUCCESS||Owners->Report.ServicesLost||!DisplayClean(Owners))return Retain(Owners,S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S);
+    Owners->Report.DisplayStopped=TRUE;Owners->Report.RetiredMask|=PIANO_OWNER_DISPLAY;
+    S=AtApp(Owners);if(S!=EFI_SUCCESS||Owners->Report.ServicesLost)return Retain(Owners,S);
+  }else Owners->Report.DisplayStatus=EFI_NOT_STARTED;
   Owners->Report.EventStatus=S=gBS->CloseEvent(Owners->ExitEvent);
   if(S!=EFI_SUCCESS || Owners->Report.ServicesLost)return Retain(Owners,S==EFI_SUCCESS?EFI_ACCESS_DENIED:S);
   Owners->ExitEvent=NULL;Owners->Report.ManagerEventClosed=TRUE;

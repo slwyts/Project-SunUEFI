@@ -14,6 +14,7 @@
 #include "PianoDisplaySmmuObserve.h"
 #include "PianoFrameBufferMappingObserve.h"
 #include "PianoDisplayClockObserve.h"
+#include "PianoProductDisplayOwner.h"
 #include "LateHandoff/PianoLateHandoff.h"
 #include <Guid/EventGroup.h>
 #include <Library/UefiBootServicesTableLib.h>
@@ -36,6 +37,7 @@ STATIC EFI_STATUS mUfsStatus=EFI_NOT_STARTED;
 STATIC UINT64 mCounterFrequency,mCounterStart,mCounterEnd;
 STATIC PIANO_RAM_PARTITION_REPORT mRamInventory;
 STATIC PIANO_UFS_PRODUCT_VOLUME mProductVolume;
+STATIC PIANO_PRODUCT_DISPLAY_STARTUP_REPORT mDisplayStartup;
 STATIC volatile BOOLEAN mBootLogExited;
 STATIC EFI_EVENT mBootLogExitEvent;
 STATIC BOOLEAN mBootLogEnabled,mBootLogCounterDown;
@@ -47,7 +49,7 @@ STATIC BOOLEAN EFIAPI BootLogAlive(VOID) {
   return !mBootLogExited && !mOwners.Report.ServicesLost && gST!=NULL && gST->BootServices==gBS;
 }
 STATIC VOID EFIAPI BootLogExit(EFI_EVENT Event,VOID *Context) {
-  (VOID)Event;(VOID)Context;mBootLogExited=TRUE;
+  (VOID)Event;(VOID)Context;mBootLogExited=TRUE;PianoProductDisplayFenceExit();
 }
 STATIC VOID BootLogStage(CONST CHAR8 *Name,EFI_STATUS Status) {
   mBootLogStage=Name;
@@ -97,11 +99,13 @@ STATIC EFI_STATUS ProductDebugReplay(VOID *Context) {
   EFI_STATUS Translation=PianoDisplaySmmuReemit(BootLogAlive);
   EFI_STATUS CpuMapping=PianoFrameBufferMappingReemit(BootLogAlive);
   EFI_STATUS Clock=PianoDisplayClockReemit(BootLogAlive);
+  EFI_STATUS DisplayOwner=PianoProductDisplayReplay();
   if(!BootLogAlive())return EFI_ABORTED;
   if(PianoProductDisplayRetained())return Display==EFI_SUCCESS?EFI_COMPROMISED_DATA:Display;
   if(PianoDisplaySmmuRetained())return Translation==EFI_SUCCESS?EFI_COMPROMISED_DATA:Translation;
   if(PianoFrameBufferMappingRetained())return CpuMapping==EFI_SUCCESS?EFI_COMPROMISED_DATA:CpuMapping;
   if(PianoDisplayClockRetained())return Clock==EFI_SUCCESS?EFI_COMPROMISED_DATA:Clock;
+  if(PianoProductDisplayOwnerRetained())return DisplayOwner==EFI_SUCCESS?EFI_COMPROMISED_DATA:DisplayOwner;
   // Unavailable GOP inventory remains diagnostic output. It must not prevent
   // export of a valid saved memory report or create a readiness claim.
   return Memory;
@@ -149,7 +153,8 @@ STATIC VOID FailStop(EFI_STATUS Status) {
   // A retained observer may still own an exception handler or have lost its
   // service lifetime. Do not make another display/protocol call on that path.
   if(!PianoProductDisplayRetained() && !PianoDisplaySmmuRetained() &&
-     !PianoFrameBufferMappingRetained() && !PianoDisplayClockRetained())BootLogStage(mBootLogStage,Status);
+     !PianoFrameBufferMappingRetained() && !PianoDisplayClockRetained() &&
+     !PianoProductDisplayOwnerRetained())BootLogStage(mBootLogStage,Status);
 #ifdef __aarch64__
   __asm__ volatile("msr daifset, #15" ::: "memory");
 #endif
@@ -226,6 +231,13 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   PianoNativeSetObserver(NULL);
   if(!BootLogAlive())FailStop(EFI_ABORTED);
   ObserveDisplay("after-foundation");
+  Status=PianoProductDisplayStart(BootLogAlive);
+  PianoProductDisplayStartup(&mDisplayStartup);
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_DISPLAY_START status=%r held=%u owned=%u known_absent=%u required=1\n",
+    Status,mDisplayStartup.Held,mDisplayStartup.OwnedReferences,mDisplayStartup.KnownNoSideEffects));
+  if(PianoProductDisplayOwnerRetained()||mDisplayStartup.ServicesLost)FailStop(Status);
+  if(Status!=EFI_SUCCESS&&!mDisplayStartup.KnownNoSideEffects)FailStop(Status);
+  ObserveDisplay("after-display-lease");
   // Real protected SMEM observations precede product DMA owners. Failure with
   // exact handler cleanup leaves data unknown; retained ownership cannot be
   // carried into UFS/USB bring-up. DXE evidence never changes the early map.
@@ -299,8 +311,10 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   // Extra owner bits are explicitly unstarted in this integration. Their
   // hardware backend is still incomplete; the manifest must disclose that.
   PIANO_PRODUCT_OWNERS_CONFIG Config={.Revision=1,.Fdt=Fdt,.ExpectedOwnerMask=PIANO_OWNER_ALL_MASK,
-    .StartedOwnerMask=PIANO_OWNER_CORE_MASK,.AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|PIANO_OWNER_POGO,
-    .Runtime=Runtime,.InputContext=NULL,.StopInput=StopInput};
+    .StartedOwnerMask=PIANO_OWNER_CORE_MASK|(mDisplayStartup.Held?PIANO_OWNER_DISPLAY:0),
+    .AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|PIANO_OWNER_POGO|(mDisplayStartup.Held?0:PIANO_OWNER_DISPLAY),
+    .Runtime=Runtime,.InputContext=NULL,.StopInput=StopInput,
+    .DisplayContext=mDisplayStartup.LeaseContext,.StopDisplay=PianoProductDisplayStop,.DisplayStartup=mDisplayStartup};
   Status=PianoProductOwnersInitialize(&mOwners,&Config);if(Status!=EFI_SUCCESS)FailStop(Status);
   PIANO_LATE_HANDOFF_ENV Late={.Context=NULL,.Services=gBS,.SystemTable=SystemTable,
     .ParentImage=Image,.Owners=&mOwners,.BootServicesAlive=LateServicesAlive,
