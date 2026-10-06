@@ -9,6 +9,8 @@
 #undef NULL
 #include "PianoProductDisplayObserve.h"
 #include <Library/UefiBootServicesTableLib.h>
+#include <Library/PrintLib.h>
+#include <Library/BaseLib.h>
 EFI_BOOT_SERVICES *gBS;EFI_SYSTEM_TABLE *gST;
 EFI_GUID gEfiGraphicsOutputProtocolGuid={0x12345678,0,0,{0}};
 STATIC EFI_BOOT_SERVICES Bs;STATIC EFI_SYSTEM_TABLE St;
@@ -18,11 +20,24 @@ STATIC EFI_GRAPHICS_OUTPUT_MODE_INFORMATION Info[2];
 STATIC EFI_HANDLE Handles[17];
 STATIC UINT32 Case,Calls,Raises,Restores,Locates,Enumerates,Interfaces,Frees,Logs;
 STATIC BOOLEAN Live=TRUE,Reentered;STATIC EFI_TPL Tpl=TPL_APPLICATION;
+STATIC CHAR8 Lines[1024][256];STATIC UINTN Longest;
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 VOID *EFIAPI CopyMem(VOID *D,CONST VOID *S,UINTN N){return memcpy(D,S,N);}
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return TRUE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(CONST UINTN Level){(VOID)Level;return TRUE;}
-VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Fmt,...){assert(Live&&Level&&strstr(Fmt,"PIANO_GOP_"));Logs++;}
+BOOLEAN EFIAPI DebugAssertEnabled(VOID){return TRUE;}
+VOID EFIAPI DebugAssert(CONST CHAR8 *File,UINTN Line,CONST CHAR8 *Description){fprintf(stderr,"actual PrintLib assert %s:%lu %s\n",File,(unsigned long)Line,Description);abort();}
+UINT64 EFIAPI DivU64x32Remainder(UINT64 Dividend,UINT32 Divisor,UINT32 *Remainder){if(Remainder)*Remainder=(UINT32)(Dividend%Divisor);return Dividend/Divisor;}
+UINTN EFIAPI AsciiStrnLenS(CONST CHAR8 *S,UINTN N){UINTN I=0;while(I<N&&S[I])++I;return I;}
+UINTN EFIAPI StrnLenS(CONST CHAR16 *S,UINTN N){UINTN I=0;while(I<N&&S[I])++I;return I;}
+UINT16 EFIAPI ReadUnaligned16(CONST VOID *P){UINT16 V;memcpy(&V,P,sizeof(V));return V;}
+UINT32 EFIAPI ReadUnaligned32(CONST VOID *P){UINT32 V;memcpy(&V,P,sizeof(V));return V;}
+VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Fmt,...){
+  assert(Live&&Level&&strstr(Fmt,"PIANO_GOP_")&&Logs<1024);
+  VA_LIST Args;VA_START(Args,Fmt);UINTN N=AsciiVSPrint(Lines[Logs],sizeof(Lines[Logs]),Fmt,Args);VA_END(Args);
+  assert(N&&N<=180&&Lines[Logs][N-1]=='\n'&&Lines[Logs][N]==0);
+  if(N>Longest)Longest=N;Logs++;
+}
 STATIC VOID Lost(VOID){Live=FALSE;gBS=(VOID *)1;gST=(VOID *)1;}
 STATIC BOOLEAN EFIAPI Alive(VOID){
   if(Case==29&&!Reentered){Reentered=TRUE;assert(PianoProductDisplayObserve("nested",Alive)==EFI_ALREADY_STARTED);}
@@ -83,6 +98,35 @@ STATIC VOID Run(UINT32 N){
   if(N==27){assert(PianoProductDisplayObserve("abcdefghijklmnopqrstuvwxyz123456789",Alive)==EFI_INVALID_PARAMETER&&!Calls);return;}
   if(N==28){assert(PianoProductDisplayObserve(NULL,Alive)==EFI_INVALID_PARAMETER&&PianoProductDisplayObserve("",Alive)==EFI_INVALID_PARAMETER&&PianoProductDisplayObserve("phase",NULL)==EFI_INVALID_PARAMETER&&!Calls);return;}
   if(N==26){for(UINT32 I=0;I<8;++I)assert(PianoProductDisplayObserve("phase",Alive)==EFI_SUCCESS);UINT32 C=Calls;assert(PianoProductDisplayObserve("overflow",Alive)==EFI_OUT_OF_RESOURCES&&Calls==C);assert(PianoProductDisplayGetReport()->Count==8&&Frees==8);return;}
+  if(N==37){
+    assert(PianoProductDisplayObserve("1234567890123456789012345678901",Alive)==EFI_SUCCESS);
+    // Extend a host fixture's captured CPU report to full-width diagnostic
+    // values. Reemit must format these snapshots without provider access.
+    PIANO_PRODUCT_DISPLAY_REPORT *Worst=(VOID *)PianoProductDisplayGetReport();
+    PIANO_PRODUCT_DISPLAY_SNAPSHOT *W=&Worst->Snapshot[0];
+    W->Status=W->PreferredStatus=W->ConOutStatus=W->EnumerationStatus=W->FreeStatus=EFI_INCOMPATIBLE_VERSION;
+    W->PreferredInterface=W->ConOutInterface=W->HandleCount=MAX_UINTN;
+    for(UINT32 I=0;I<2;++I){PIANO_PRODUCT_DISPLAY_GOP *G=&W->Gop[I];
+      G->Handle=G->Interface=G->BltPc=G->ModePointer=G->InfoPointer=MAX_UINTN;
+      G->ModeStatus=G->InterfaceStatus=EFI_INCOMPATIBLE_VERSION;
+      G->Mode=G->MaxMode=G->Width=G->Height=G->PixelFormat=G->PixelsPerScanLine=MAX_UINT32;
+      G->FrameBufferBase=G->FrameBufferSize=MAX_UINT64;G->Preferred=G->ConOut=TRUE;
+    }
+    UINT32 C=Calls,L=Logs;gBS=(VOID *)1;gST=(VOID *)1;
+    assert(PianoProductDisplayReemit(Alive)==EFI_SUCCESS&&Calls==C&&Logs==L+8);
+    assert(strstr(Lines[L],"observation_only=1\r\n")&&strstr(Lines[L+1],"recorded=2\r\n"));
+    assert(strstr(Lines[L+2],"info_ptr=FFFFFFFFFFFFFFFF\r\n"));
+    assert(strstr(Lines[L+3],"stride=4294967295\r\n"));
+    assert(strstr(Lines[L+4],"bytes=FFFFFFFFFFFFFFFF preferred=1 conout=1 observation_only=1\r\n"));
+    CHAR8 Old[256];PIANO_PRODUCT_DISPLAY_GOP *G=&W->Gop[0];
+    UINTN OldBytes=AsciiSPrint(Old,sizeof(Old),
+      "PIANO_GOP_INSTANCE phase=%a index=%u handle=%lx interface=%lx blt_pc=%lx mode_ptr=%lx info_ptr=%lx mode_status=%r interface_status=%r mode=%u max=%u width=%u height=%u format=%u stride=%u base=%lx bytes=%lx preferred=%u conout=%u observation_only=1\n",
+      W->Phase,0,(UINT64)G->Handle,(UINT64)G->Interface,(UINT64)G->BltPc,(UINT64)G->ModePointer,(UINT64)G->InfoPointer,
+      G->ModeStatus,G->InterfaceStatus,G->Mode,G->MaxMode,G->Width,G->Height,G->PixelFormat,G->PixelsPerScanLine,
+      G->FrameBufferBase,G->FrameBufferSize,G->Preferred,G->ConOut);
+    assert(OldBytes==255&&Old[OldBytes-1]!='\n'&&!strstr(Old,"preferred=1 conout=1"));
+    printf("Actual AsciiVSPrint(256): full-width observer max line=%lu bytes, complete CRLF\n",(unsigned long)Longest);return;
+  }
   S=PianoProductDisplayObserve("after-usb",Alive);R=PianoProductDisplayGetReport();assert(R->Revision==1&&R->Count==1);
   CONST PIANO_PRODUCT_DISPLAY_SNAPSHOT *P=&R->Snapshot[0];assert(!strcmp(P->Phase,"after-usb"));assert(S==P->Status);
   if(N==0||N==24||N==25||N==29||N==31||N==32){
@@ -112,7 +156,7 @@ STATIC VOID Run(UINT32 N){
   if(N==22)assert(Interfaces==1&&!Frees);
   if(N==23)assert(Frees==1);
   if(N==20)assert(S==EFI_UNSUPPORTED&&Raises==1&&Restores==1&&!Locates&&!R->Retained);
-  if(N==24){UINT32 C=Calls,L=Logs;memset(Gop,0xa5,sizeof(Gop));gBS=(VOID *)1;gST=(VOID *)1;assert(PianoProductDisplayReemit(Alive)==EFI_SUCCESS&&Calls==C&&Logs==L+3);}
+  if(N==24){UINT32 C=Calls,L=Logs;memset(Gop,0xa5,sizeof(Gop));gBS=(VOID *)1;gST=(VOID *)1;assert(PianoProductDisplayReemit(Alive)==EFI_SUCCESS&&Calls==C&&Logs==L+8);}
   if(N==25){UINT32 L=Logs;Lost();assert(PianoProductDisplayReemit(Alive)==EFI_ABORTED&&Logs==L);assert(PianoProductDisplayRetained());}
   if(N==30)assert(S==EFI_NOT_READY&&!Calls);
   if(N==33)assert(S==EFI_COMPROMISED_DATA&&!R->Retained&&Frees==1&&!Interfaces);
@@ -121,6 +165,6 @@ STATIC VOID Run(UINT32 N){
   if(R->Retained){UINT32 C=Calls;assert(PianoProductDisplayObserve("retry",Alive)==EFI_NOT_READY&&Calls==C);}
 }
 int main(VOID){
-  for(UINT32 I=0;I<37;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"display observer case %u failed\n",I);return 1;}}
-  puts("Actual GOP observer: 37 fork cases, metadata only, warnings/EBS/opaque retention/bounded replay; no framebuffer or MMIO");return 0;
+  for(UINT32 I=0;I<38;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);fflush(stdout);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"display observer case %u failed\n",I);return 1;}}
+  puts("Actual GOP observer: 38 fork cases, actual AsciiVSPrint capped at256 bytes, metadata/warnings/EBS/opaque replay; no framebuffer or MMIO");return 0;
 }

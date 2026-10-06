@@ -42,12 +42,30 @@ callback. SimpleInit's own selected GOP pointer should be logged where its real
 required. This module alone does not provide that build or runtime wiring.
 
 Run `python3 -m unittest discover -s tests -p test_product_display_observe.py -v`.
-The actual C implementation passes 37 fork scenarios with ASAN/UBSAN and strict
+The actual C implementation passes 38 fork scenarios with ASAN/UBSAN and strict
 AARCH64 compilation. They cover physical/ConSplitter metadata, preferred and
 ConOut identities, count bounds, malformed modes, missing services, actual TPL,
 warnings, uncertain output/free ownership, reentry, eight-stage capacity, EBS at
 each service boundary and replay after provider/service pointers become
 inaccessible. GOP fixture methods abort if invoked; no hardware is accessed.
+
+After test96 exposed the SerialPort DebugLib's actual 256-byte `AsciiVSPrint`
+limit, emission is split without changing the observation data or ABI. Each
+snapshot has `PIANO_GOP_OBSERVE` (phase/status/selected interfaces/lifetime flags)
+and `PIANO_GOP_STATUS` (individual calls/counts). Each GOP has three consecutive
+lines: `PIANO_GOP_ID` (phase/index/addresses), `PIANO_GOP_MODE` (index/statuses/
+mode/max/width/height/format/stride), and `PIANO_GOP_FB` (index/base/bytes/selection
+flags). The mode and framebuffer continuation lines belong to the preceding
+identity line; they carry the same index. A snapshot block contains exactly
+`2 + 3 * RecordedCount` lines.
+
+The host harness compiles the real pinned BasePrintLib implementation and uses
+`AsciiVSPrint(Buffer, 256, ...)` for every actual DebugPrint. Full-width addresses
+and scalar values, 31-byte phase strings and long EFI status text produce at
+most 176 bytes including complete CRLF; each line is checked for its trailing
+newline. The same actual formatter reproduces the old 255-byte truncation and
+missing newline/selection flags. This is a formatting regression test, not a
+length estimate or hardware readiness claim.
 
 The next display diagnostic should use these identities to distinguish a
 framebuffer/source mismatch from scanout/IOMMU state. The separately observed

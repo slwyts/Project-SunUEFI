@@ -15,7 +15,8 @@ class ProductBootLogLifecycleTests(unittest.TestCase):
                     WS / 'Mu_Basecore/MdePkg/Include/X64',
                     WS / 'Mu_Basecore/MdeModulePkg/Include',
                     WS / 'Silicon/Qualcomm/QcomPkg/Include',
-                    WS / 'Silicon/Silicium/SiliciumPkg/Include']
+                    WS / 'Silicon/Silicium/SiliciumPkg/Include',
+                    ROOT / 'bootprofiles/guarded-read']
         with tempfile.TemporaryDirectory(prefix='piano-core-bootlog-') as temporary:
             executable = Path(temporary) / 'lifecycle'
             mirror = Path(temporary) / 'includes'

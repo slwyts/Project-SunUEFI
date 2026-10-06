@@ -10,6 +10,10 @@
 #include <Library/DebugLib.h>
 #include <Library/UefiLib.h>
 #include "NativeProbeTable.h"
+STATIC VOID (*mNativeObserver)(CONST CHAR8 *,BOOLEAN);
+VOID PianoNativeSetObserver(VOID (*Observer)(CONST CHAR8 *,BOOLEAN)) {
+  mNativeObserver=Observer;
+}
 
 STATIC BOOLEAN Ready(CONST UINT8 *Expression,UINTN Length) {
   BOOLEAN Stack[64];UINTN Count=0,Offset=0;
@@ -79,7 +83,9 @@ VOID PianoProbeFoundation(VOID) {
         Status=gBS->LoadImage(FALSE,gImageHandle,NULL,Source,Bytes,&Handle);FreePool(Source);
         if(!EFI_ERROR(Status)) {
           DEBUG((DEBUG_WARN,"SUNUEFI_NATIVE_START %a\n",Image->Name));
+          if(mNativeObserver)mNativeObserver(Image->Name,TRUE);
           Status=gBS->StartImage(Handle,NULL,NULL);
+          if(mNativeObserver)mNativeObserver(Image->Name,FALSE);
           // A successfully started foundation driver must remain loaded.
           if(EFI_ERROR(Status))gBS->UnloadImage(Handle);
         }

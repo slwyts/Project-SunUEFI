@@ -30,16 +30,21 @@ STATIC EFI_STATUS Application(PIANO_PRODUCT_DISPLAY_ALIVE Alive,PIANO_PRODUCT_DI
   return Tpl==TPL_APPLICATION?EFI_SUCCESS:EFI_UNSUPPORTED;
 }
 STATIC VOID Emit(CONST PIANO_PRODUCT_DISPLAY_SNAPSHOT *S){
-  DEBUG((DEBUG_WARN,"PIANO_GOP_OBSERVE phase=%a status=%r count=%lu recorded=%lu preferred=%lx conout=%lx preferred_status=%r conout_status=%r enum_status=%r free_status=%r retained=%u services_lost=%u observation_only=1\n",
-    S->Phase,S->Status,(UINT64)S->HandleCount,(UINT64)S->RecordedCount,
-    (UINT64)S->PreferredInterface,(UINT64)S->ConOutInterface,S->PreferredStatus,S->ConOutStatus,
-    S->EnumerationStatus,S->FreeStatus,S->Retained,S->ServicesLost));
+  // SerialPort DebugLib has a 256-byte formatting buffer. Keep complete lines
+  // comfortably below it, including a 31-byte phase and full-width metadata.
+  DEBUG((DEBUG_WARN,"PIANO_GOP_OBSERVE phase=%a status=%r preferred=%lx conout=%lx retained=%u lost=%u observation_only=1\n",
+    S->Phase,S->Status,(UINT64)S->PreferredInterface,(UINT64)S->ConOutInterface,S->Retained,S->ServicesLost));
+  DEBUG((DEBUG_WARN,"PIANO_GOP_STATUS locate=%r conout=%r enum=%r free=%r count=%lu recorded=%lu\n",
+    S->PreferredStatus,S->ConOutStatus,S->EnumerationStatus,S->FreeStatus,(UINT64)S->HandleCount,(UINT64)S->RecordedCount));
   for(UINTN I=0;I<S->RecordedCount;++I){CONST PIANO_PRODUCT_DISPLAY_GOP *G=&S->Gop[I];
-    DEBUG((DEBUG_WARN,"PIANO_GOP_INSTANCE phase=%a index=%u handle=%lx interface=%lx blt_pc=%lx mode_ptr=%lx info_ptr=%lx mode_status=%r interface_status=%r mode=%u max=%u width=%u height=%u format=%u stride=%u base=%lx bytes=%lx preferred=%u conout=%u observation_only=1\n",
+    DEBUG((DEBUG_WARN,"PIANO_GOP_ID phase=%a i=%u handle=%lx iface=%lx blt=%lx mode_ptr=%lx info_ptr=%lx\n",
       S->Phase,(UINT32)I,(UINT64)G->Handle,(UINT64)G->Interface,(UINT64)G->BltPc,
-      (UINT64)G->ModePointer,(UINT64)G->InfoPointer,G->ModeStatus,G->InterfaceStatus,
-      G->Mode,G->MaxMode,G->Width,G->Height,G->PixelFormat,G->PixelsPerScanLine,
-      G->FrameBufferBase,G->FrameBufferSize,G->Preferred,G->ConOut));
+      (UINT64)G->ModePointer,(UINT64)G->InfoPointer));
+    DEBUG((DEBUG_WARN,"PIANO_GOP_MODE i=%u mode_s=%r iface_s=%r mode=%u/%u wh=%u/%u fmt=%u stride=%u\n",
+      (UINT32)I,G->ModeStatus,G->InterfaceStatus,
+      G->Mode,G->MaxMode,G->Width,G->Height,G->PixelFormat,G->PixelsPerScanLine));
+    DEBUG((DEBUG_WARN,"PIANO_GOP_FB i=%u base=%lx bytes=%lx preferred=%u conout=%u observation_only=1\n",
+      (UINT32)I,G->FrameBufferBase,G->FrameBufferSize,G->Preferred,G->ConOut));
   }
 }
 EFI_STATUS PianoProductDisplayObserve(CONST CHAR8 *Phase,PIANO_PRODUCT_DISPLAY_ALIVE Alive){

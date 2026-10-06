@@ -11,6 +11,7 @@
 #include "PianoProductSmem.h"
 #include "PianoProductBootLog.h"
 #include "PianoProductDisplayObserve.h"
+#include "PianoDisplaySmmuObserve.h"
 #include "LateHandoff/PianoLateHandoff.h"
 #include <Guid/EventGroup.h>
 #include <Library/UefiBootServicesTableLib.h>
@@ -19,7 +20,9 @@
 #include <Library/BaseMemoryLib.h>
 #include <Library/DebugLib.h>
 #include <Library/TimerLib.h>
+#include <Library/PrintLib.h>
 VOID PianoProbeFoundation(VOID);
+VOID PianoNativeSetObserver(VOID (*Observer)(CONST CHAR8 *,BOOLEAN));
 VOID PianoProbeUfs(CONST VOID *Fdt);
 VOID PianoUfsSetProbeAction(EFI_STATUS (*Action)(CONST VOID *));
 EFI_STATUS PianoUfsReadOnlyDmaExperiment(CONST VOID *Fdt);
@@ -89,8 +92,10 @@ STATIC EFI_STATUS ProductDebugReplay(VOID *Context) {
   if(Context!=NULL)return EFI_INVALID_PARAMETER;
   EFI_STATUS Memory=PianoProductSmemReemit(NULL);
   EFI_STATUS Display=PianoProductDisplayReemit(BootLogAlive);
+  EFI_STATUS Translation=PianoDisplaySmmuReemit(BootLogAlive);
   if(!BootLogAlive())return EFI_ABORTED;
   if(PianoProductDisplayRetained())return Display==EFI_SUCCESS?EFI_COMPROMISED_DATA:Display;
+  if(PianoDisplaySmmuRetained())return Translation==EFI_SUCCESS?EFI_COMPROMISED_DATA:Translation;
   // Unavailable GOP inventory remains diagnostic output. It must not prevent
   // export of a valid saved memory report or create a readiness claim.
   return Memory;
@@ -99,6 +104,17 @@ STATIC VOID ObserveDisplay(CONST CHAR8 *Phase) {
   EFI_STATUS Status=PianoProductDisplayObserve(Phase,BootLogAlive);
   if(!BootLogAlive())FailStop(EFI_ABORTED);
   if(PianoProductDisplayRetained())FailStop(Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status);
+  Status=PianoDisplaySmmuObserve(Phase,BootLogAlive);
+  if(!BootLogAlive())FailStop(EFI_ABORTED);
+  if(PianoDisplaySmmuRetained())FailStop(Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status);
+}
+STATIC VOID ObserveNative(CONST CHAR8 *Name,BOOLEAN Before) {
+  CHAR8 Phase[32];
+  if(Name==NULL)FailStop(EFI_INVALID_PARAMETER);
+  AsciiSPrint(Phase,sizeof(Phase),"%a:%a",Before?"pre":"post",Name);
+  EFI_STATUS Status=PianoDisplaySmmuObserve(Phase,BootLogAlive);
+  if(!BootLogAlive())FailStop(EFI_ABORTED);
+  if(PianoDisplaySmmuRetained())FailStop(Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status);
 }
 STATIC VOID ReportRequiredBackends(VOID) {
   // Required remains true. Missing real hardware/startup is visible rather
@@ -184,7 +200,9 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   if(Status!=EFI_SUCCESS){BootLogReturned();return Status;}
   ReportRequiredBackends();
   ObserveDisplay("before-foundation");
+  PianoNativeSetObserver(ObserveNative);
   PianoProbeFoundation();
+  PianoNativeSetObserver(NULL);
   if(!BootLogAlive())FailStop(EFI_ABORTED);
   ObserveDisplay("after-foundation");
   // Real protected SMEM observations precede product DMA owners. Failure with
