@@ -8,6 +8,7 @@ exposing this read-only ABI. This is configuration evidence, not a DMA test.
 import argparse
 import errno
 import json
+import os
 from pathlib import Path
 import re
 
@@ -26,6 +27,30 @@ SCOPES = {
 }
 BASE_FIELDS = {'sid', 'mask', 'slot', 'origin', 'smr', 's2cr', 'expected', 'cb', 'sctlr', 'cbar', 'fsr'}
 CONTEXT_FIELDS = {'ttbr0', 'ttbr1', 'tcr', 'tcr2', 'mair0', 'mair1'}
+MAX_SYSFS_TEXT_BYTES = 8192
+
+
+def read_sysfs_text(path):
+    """Read a bounded kernel snapshot without Python's FileIO EAGAIN-to-None.
+
+    A sysfs show callback can return EAGAIN even on a blocking descriptor.
+    FileIO turns that errno into None, which text decoding can turn into a
+    TypeError. Direct read(2) preserves the actual OSError and its errno.
+    Do not return partial evidence if a later read fails.
+    """
+    descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        chunks, size = [], 0
+        while True:
+            chunk = os.read(descriptor, MAX_SYSFS_TEXT_BYTES + 1 - size)
+            if not chunk:
+                return b''.join(chunks).decode('ascii')
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > MAX_SYSFS_TEXT_BYTES:
+                raise ValueError('sysfs context evidence exceeds its bounded ABI')
+    finally:
+        os.close(descriptor)
 
 
 def fields(line, context):
@@ -119,7 +144,7 @@ def pci_consumer(sysfs, device, expected, handle):
     directory = sysfs / 'bus/pci/devices' / device
     if (directory / 'of_node').resolve(strict=True) != expected.resolve(strict=True):
         raise ValueError('PCI endpoint does not match the actual wifi DT node')
-    if (directory / 'vendor').read_text().strip() != '0x17cb' or (directory / 'device').read_text().strip() != '0x110e':
+    if read_sysfs_text(directory / 'vendor').strip() != '0x17cb' or read_sysfs_text(directory / 'device').strip() != '0x110e':
         raise ValueError('PCI endpoint is not the WCN7861 consumer')
     host = sysfs / 'firmware/devicetree/base/soc/pcie@1c00000'
     wanted = b''.join(value.to_bytes(4, 'big') for value in
@@ -158,19 +183,20 @@ def read_scope(scope, sysfs=Path('/sys')):
             raise ValueError('consumer does not reference the expected real IOMMU provider')
     if mode == 'managed':
         # Normal consumer attachment chooses the domain. Never force identity.
-        # Only the getter's exact "not stage1" errno permits identity fallback.
+        # EAGAIN can also mean no domain or group contention. Only try the
+        # independent identity getter; it must prove the actual identity domain.
         try:
-            first = (directory / 'piano_dma_context').read_text()
+            first = read_sysfs_text(directory / 'piano_dma_context')
             mode = 'stage1'
         except OSError as error:
             if error.errno != errno.EAGAIN:
                 raise
             mode = 'identity'
-            first = (directory / 'piano_dma_route').read_text()
+            first = read_sysfs_text(directory / 'piano_dma_route')
     else:
-        first = (directory / ('piano_dma_context' if mode == 'stage1' else 'piano_dma_route')).read_text()
+        first = read_sysfs_text(directory / ('piano_dma_context' if mode == 'stage1' else 'piano_dma_route'))
     attr = 'piano_dma_context' if mode == 'stage1' else 'piano_dma_route'
-    second = (directory / attr).read_text()
+    second = read_sysfs_text(directory / attr)
     if first != second:
         raise ValueError('context changed across fresh kernel reads')
     return {'scope': scope, 'consumer': directory.name, 'domain': mode, 'routes': verify(first, mode, pairs),

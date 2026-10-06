@@ -1,11 +1,13 @@
 """Actual kernel stage1 comparator and strict readback consumer, no device."""
 from pathlib import Path
+import errno
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -13,6 +15,37 @@ import check_piano_kernel_contexts as context
 
 
 class KernelContextTests(unittest.TestCase):
+    def test_raw_sysfs_reader_preserves_actual_eagain_and_closes_descriptor(self):
+        # A real nonblocking read reproduces the errno that FileIO hides as None.
+        descriptor, writer = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
+        self.addCleanup(os.close, writer)
+        with mock.patch.object(context.os, 'open', return_value=descriptor) as opened:
+            with self.assertRaises(OSError) as caught:
+                context.read_sysfs_text(Path('/sys/mock/piano_dma_context'))
+        self.assertEqual(caught.exception.errno, errno.EAGAIN)
+        opened.assert_called_once_with(Path('/sys/mock/piano_dma_context'), os.O_RDONLY | os.O_CLOEXEC)
+        with self.assertRaises(OSError) as closed:
+            os.fstat(descriptor)
+        self.assertEqual(closed.exception.errno, errno.EBADF)
+
+    def test_raw_sysfs_reader_discards_partial_or_oversized_evidence(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / 'build', prefix='context-read-') as directory:
+            path = Path(directory) / 'piano_dma_context'
+            path.write_text(self.report([(0x1401, 0)]))
+            self.assertEqual(context.read_sysfs_text(path), path.read_text())
+            for code in (errno.EAGAIN, errno.EIO, errno.EPERM, errno.ESTALE):
+                error = OSError(code, 'actual kernel read failure')
+                with self.subTest(code=code), mock.patch.object(context.os, 'read', side_effect=[b'piano-dma-', error]):
+                    with self.assertRaises(OSError) as caught:
+                        context.read_sysfs_text(path)
+                    self.assertIs(caught.exception, error)
+            path.write_bytes(b'x' * (context.MAX_SYSFS_TEXT_BYTES + 1))
+            with self.assertRaisesRegex(ValueError, 'bounded ABI'):
+                context.read_sysfs_text(path)
+            path.write_bytes(b'\xff')
+            with self.assertRaises(UnicodeDecodeError):
+                context.read_sysfs_text(path)
+
     def report(self, pairs, mode='stage1', mask_override=None):
         kind = 'context' if mode == 'stage1' else 'route'
         lines = [f'piano-dma-{kind}-v1 domain={mode} ids={len(pairs)}']

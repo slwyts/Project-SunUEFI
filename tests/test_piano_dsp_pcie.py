@@ -57,15 +57,15 @@ class DspPcieTests(unittest.TestCase):
             identity += ' '.join(token for token in row.replace('sctlr=00000001', 'sctlr=00000000').split()
                                   if token.split('=')[0] not in contexts.CONTEXT_FIELDS) + '\n'
         (directory / 'piano_dma_route').write_text(identity)
-        original = Path.read_text
-        for code in (errno.EAGAIN, errno.EIO, errno.EPERM, errno.ESTALE, errno.EOPNOTSUPP, errno.ENOENT):
+        original = contexts.read_sysfs_text
+        for code in (errno.EAGAIN, errno.EIO, errno.EPERM, errno.ESTALE, errno.EOPNOTSUPP, errno.ENODATA, errno.ENOENT):
             calls = []
             def read(path, *args, **kwargs):
                 calls.append(path)
                 if path == directory / 'piano_dma_context':
                     raise OSError(code, 'actual getter error fixture')
                 return original(path, *args, **kwargs)
-            with mock.patch.object(Path, 'read_text', new=read):
+            with mock.patch.object(contexts, 'read_sysfs_text', new=read):
                 if code == errno.EAGAIN:
                     proof = contexts.read_scope('audio', self.sysfs)
                     self.assertEqual(proof['domain'], 'identity')
@@ -75,6 +75,21 @@ class DspPcieTests(unittest.TestCase):
                     with self.assertRaises(OSError):
                         contexts.read_scope('audio', self.sysfs)
                     self.assertNotIn(directory / 'piano_dma_route', calls)
+
+        for code in (errno.EAGAIN, errno.EIO, errno.ESTALE):
+            calls = []
+            def unavailable_identity(path):
+                calls.append(path)
+                if path == directory / 'piano_dma_context':
+                    raise OSError(errno.EAGAIN, 'not stage1 or group unavailable')
+                if path == directory / 'piano_dma_route':
+                    raise OSError(code, 'identity domain evidence unavailable')
+                return original(path)
+            with self.subTest(identity_errno=code), mock.patch.object(contexts, 'read_sysfs_text', new=unavailable_identity):
+                with self.assertRaises(OSError) as caught:
+                    contexts.read_scope('audio', self.sysfs)
+                self.assertEqual(caught.exception.errno, code)
+                self.assertEqual(calls.count(directory / 'piano_dma_route'), 1)
 
     def test_real_pci_endpoint_mapping_vendor_and_no_parf_or_dma_claim(self):
         proof = contexts.read_scope('radio', self.sysfs)
@@ -128,15 +143,20 @@ class DspPcieTests(unittest.TestCase):
         calls = []
         def now(): return clock[0]
         def sleep(seconds): clock[0] += seconds
-        def read(module, scope):
-            calls.append(scope)
-            if clock[0] < 2:
-                raise OSError(errno.ENOENT, 'normal RPMsg children not created yet')
-            return contexts.read_scope('audio', self.sysfs)
-        result = base.hardware.wait_proof(None, 'audio', 3, read, now, sleep)
-        self.assertEqual(result['domain'], 'stage1')
-        self.assertEqual(len(calls), 3)
-        for error in (OSError(errno.EIO, 'fault'), ValueError('changed context')):
+        for code in (errno.ENOENT, errno.ENODEV, errno.EAGAIN):
+            clock[0] = 0
+            calls.clear()
+            def read(module, scope):
+                calls.append(scope)
+                if clock[0] < 2:
+                    raise OSError(code, 'normal consumer unavailable or group busy')
+                return contexts.read_scope('audio', self.sysfs)
+            result = base.hardware.wait_proof(None, 'audio', 3, read, now, sleep)
+            self.assertEqual(result['domain'], 'stage1')
+            self.assertEqual(len(calls), 3)
+        for error in (*(OSError(code, 'kernel refusal') for code in
+                       (errno.EIO, errno.EPERM, errno.ESTALE, errno.ENODATA, errno.EOPNOTSUPP)),
+                      ValueError('changed context')):
             calls.clear()
             def fail(module, scope):
                 calls.append(scope)
@@ -144,6 +164,17 @@ class DspPcieTests(unittest.TestCase):
             with self.assertRaises(type(error)):
                 base.hardware.wait_proof(None, 'audio', 30, fail, now, sleep)
             self.assertEqual(len(calls), 1)
+
+        clock[0] = 0
+        calls.clear()
+        def unavailable(module, scope):
+            calls.append(scope)
+            raise OSError(errno.EAGAIN, 'actual domain still unavailable')
+        with self.assertRaises(OSError) as caught:
+            base.hardware.wait_proof(None, 'radio', 3, unavailable, now, sleep)
+        self.assertEqual(caught.exception.errno, errno.EAGAIN)
+        self.assertEqual(clock[0], 3)
+        self.assertEqual(len(calls), 4)
 
     def test_actual_cpp_dtc_fold_and_exact_boot_geometry_and_usb_chain(self):
         with tempfile.TemporaryDirectory(dir=ROOT / 'private/analysis', prefix='dsp-pcie-fold-test-') as temporary:
