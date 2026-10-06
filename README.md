@@ -2,11 +2,13 @@
 
 目标是在保留现有 Android 系统和数据的前提下，研究并移植 ARM64 UEFI，随后从 RAM 或外接介质启动 Linux / Windows PE。
 
-**最新实机结果（截至第91次）：UFS 已完成统一 DMA/SMMU、6个LUN和GPT读取、139个只读BlockIO句柄及7个只读SFS卷；标准Shell三条枚举命令真实执行成功。第80次固定块和第86次限定14MiB窗口FAT写入试验均完成备份、写入、校验、完整恢复及独立复核，原分区BlockIO仍只读，未改GPT。USB已实测SuperSpeed枚举、标准fastboot RAM/日志传输、正常重启和3200×2136 GOP BMP导出。第91次标准fetch读取xbl_config_a的524288 bytes与原备份一致，USB/UFS联合关闭通过，固件主动恢复Android；26启动分区SHA全部一致。触摸尚无真实触点验收。**
+**最新实机结果（截至第103次）：显示 AHB 原生引用的获取、保持和释放已在唯一产品镜像中验证。** 第101次确认 ClockDxe 初始化把 `gcc_disp_ahb` 的 enable 位关闭；第103次产品主动获取一份真实引用，原生总计数/客户端计数均 `0→1`，寄存器 `88000002→88000003`，退出时 `refs=1/0、owned=1/0、clean=1`，标准 Fastboot 重启回 Android。物理屏幕是否恢复仍待操作员确认；软件 framebuffer 中的菜单不能替代面板显示验收。详见 [第103次记录](docs/piano-product-test103.md) 和 [显示回归证据](docs/piano-display-regression-window.md)。
 
-**唯一产品候选已完成构建：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成实际TianoCore Logo、默认SimpleInit、F12 Setup、标准Shell和驻留fastboot调度；产品没有诊断自动重启计时器。230项主机测试通过，产品实机联合验收尚未执行。原UFS卷仍只读，新增专用可写卷后端已接入发现流程，但设备尚未配置永久保留区；变量仍在RAM中。触摸、官方键盘触控板、USB Host、通用OS启动及1GiB下载后端尚未完成。开发诊断镜像仅保留为实验记录，不是额外产品功能集。构建与后端状态见 [唯一产品构建](docs/piano-product-build.md)，联合关闭证据见 [第91次验收](docs/ufs-usb-retirement-test-91.md)。
+**唯一产品候选：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成 TianoCore 启动画面、默认 SimpleInit、F12 Setup、标准 Shell 和驻留 Fastboot；没有诊断自动重启计时器。当前第103次构建通过393项主机测试，实机已验证标准命令、256KiB完整日志、3200×2136完整BMP上传及统一退役重启。该次镜像SHA256为 `aa47ec1d372b2cb5adaa684f72ebf01241f0936d49fd7a0228b3bd1402a729db`，封存版本和结果在 `artifacts/tests/stage0-test-103/`。构建、必需功能与真实后端状态见 [唯一产品构建](docs/piano-product-build.md)。
 
-当前产品修订已包含SimpleInit的“固件设置（BIOS）”“进入 UEFI Shell”菜单及 `fastboot oem setup/shell/simpleinit` 导航。应用正常返回父核心后切换界面，导航不关闭驻留USB/UFS；Shell普通cold reset也走统一退休。另已接入本机Env映像/ABI校验后的有界RAM-partition查询，不映射或分配高RAM；旧头文件的preloaded接口与本机不同，见 [原生RAM接口审计](docs/piano-native-ram-partition.md)。本次冷构建还排除ADSP/HWFence与DXE堆的两个已知冲突，保留上方47MiB资源，见 [内存契约](docs/piano-platform-memory-contract.md)。完整构建通过，当前修订SHA256为 `06dd2587ef3e83163b21912331fddda46bcd2ac1feba54eef828fe5b2e4f6f23`，仍待实机验收；命令与证据边界见 [产品验收](docs/piano-product-acceptance.md)。
+已有 UFS 证据包括6个LUN和GPT读取、139个只读BlockIO句柄、7个只读SFS卷及标准Shell枚举；第80/86次专用区域写入实验完成备份、写入、读回和恢复，第91次标准fetch与USB/UFS联合关闭通过。原分区仍只读，GPT未改，永久产品FAT/NV区域尚未配置，EFI变量仍在RAM中。触摸真实输入、官方键盘/触控板、USB Host、通用OS启动和1GiB下载仍有未完成后端。早期诊断镜像作为实验封存，不构成多套最终产品功能集。
+
+SimpleInit 已包含“固件设置（BIOS）”“进入 UEFI Shell”，标准 `fastboot oem setup/shell/simpleinit` 导航走同一父核心和后台服务。当前冷映射保护 ADSP/HWFence 与低堆边界，保留上方47MiB资源，并按原厂描述加入独立显示 MMIO 资源；这些变化没有授权高DDR分配。完整 Stable/Next Linux 和RAM发行版已有主机构建候选，真实大块Conventional内存发布、加载来源与OS交接仍未闭环，GNOME和Windows启动尚未实机验证。见 [内存契约](docs/piano-platform-memory-contract.md) 与 [完整DDR生产者缺口](docs/piano-full-ddr-producer-gaps.md)。
 
 产品菜单原“继续启动”已明确改为“返回 Android（重启）”，经真实Continue请求、GUI清理和全部设备退休后冷重启；尚不表示默认OSloader已就绪。真实USB已应答动作优先于较早UI请求。官方键盘/触控板的协议生产者生命周期已完成源码测试，真实SE6传输仍未就绪，不发布虚拟输入。
 
