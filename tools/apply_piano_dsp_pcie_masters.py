@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fold real ADSP/FastRPC and PCIe IOMMU consumers; host-only and narrowly scoped."""
+"""Fold real DMA consumers and the standard USB PHY chain; host-only."""
 import argparse
 import copy
 import json
@@ -17,6 +17,12 @@ LEGACY = '/soc/apps-smmu@15000000'
 RAMOOPS = '/reserved-memory/ramoops-region'
 SRAM = '/soc/mmio-sram@0x17b4e000'
 BOOT_FIX_FIELDS = {(RAMOOPS, 'record-size'), (RAMOOPS, 'pmsg-size'), (SRAM, 'reg')}
+USB = '/soc/ssusb@a600000'
+HS = '/soc/hsphy@88e3000'
+SS = '/soc/ssphy@88e8000'
+REPEATER = '/soc/qcom,spmi@c42d000/qcom,pmih010x@7/eusb2-repeater@fd00'
+USB_FIX_FIELDS = {(USB, 'phys'), (USB, 'phy-names'), (HS, 'phys'),
+                  (REPEATER, 'compatible'), (REPEATER, '#phy-cells')}
 MASTERS = {DAIS: [(0x1001, 0x80), (0x1041, 0x20)],
            **{ADSP + f'/qcom,fastrpc/compute-cb@{i}':
               ([(0x1007, 0x40), (0x1067, 0), (0x1087, 0)] if i == 5 else
@@ -30,6 +36,11 @@ INPUTS = {
     'drivers/of/base.c': '9889bd90c30c5fc1be5c4c5707f341e9e94fc06081b2fde349f0e76952948ade',
     'drivers/iommu/of_iommu.c': '45b8483228d75a20a8d0aa3360ef8571ac1e1edbab373cb733a6bdaa3dedf61d',
     'arch/arm64/boot/dts/qcom/sm8750.dtsi': '531d6a6d53c8e23b94e8ba2747386f3265c1930bfa24c8db4f8fd1c0086940e0',
+    'arch/arm64/boot/dts/qcom/pmih0108.dtsi': 'f09272308fe1e0419ce86a30db74d4047efd7149a4b3ae4f100840d9ef1a17ca',
+    'drivers/phy/qualcomm/phy-qcom-m31-eusb2.c': '4e75319b6b3862778be33234b6385d19c684e10bcf88ab74b894627ca0839142',
+    'drivers/phy/qualcomm/phy-qcom-eusb2-repeater.c': '74fb34dcc0ad2377d12969e78a20c7e307f24ed46acd1ad4c150397ac0964c6d',
+    'drivers/phy/qualcomm/phy-qcom-qmp-combo.c': '76c68d618de56c49d3d4e73af65e225eb19c1a2c4b51687a927480f9f18f0e33',
+    'include/dt-bindings/phy/phy-qcom-qmp.h': '98993f931712dae608075c60149f7fec21405dda335bae06dcf3f448598bb995',
 }
 
 
@@ -67,6 +78,58 @@ def validate_boot_fix_delta(before, after):
     for path in (RAMOOPS, SRAM):
         if after['tree'][path] != expected['tree'][path]:
             raise ValueError('boot geometry repair differs: ' + path)
+
+
+def repair_usb_phy_chain(parsed):
+    """Replace the observed NULL PHY path with normal supplier dependencies.
+
+    The PMIH0108 fd00 block compatible is from the pinned SoC PMIC DTSI.
+    Supplies and downstream tuning are preserved, not claimed converted;
+    unavailable real providers must defer normal probe. QMP argument 0 is
+    QMP_USB43DP_USB3_PHY in the pinned sm8750.dtsi/phy-qcom-qmp.h binding.
+    This reference does not invent its missing lane/orientation/role graph.
+    """
+    tree = parsed['tree']
+    usb, hs, repeater = (tree[path] for path in (USB, HS, REPEATER))
+    ss = tree[SS]
+    nop = tree['/soc/usb_nop_phy']
+    if (usb.get('compatible') != b'qcom,sm8750-dwc3\0qcom,snps-dwc3\0'
+            or usb.get('phys') != nop.get('phandle')
+            or usb.get('phy-names') != b'usb2-phy\0'
+            or usb.get('maximum-speed') is not None
+            or usb.get('dr_mode') != b'peripheral\0'
+            or nop.get('compatible') != b'usb-nop-xceiv\0'):
+        raise ValueError('unexpected USB NULL-PHY baseline')
+    if (hs.get('compatible') != b'qcom,sm8750-m31-eusb2-phy\0'
+            or hs.get('#phy-cells') != encode(0) or hs.get('phys') is not None
+            or hs.get('usb-repeater') != repeater.get('phandle')
+            or hs.get('reg', b'')[:8] != encode(0x88e3000, 0x29c)):
+        raise ValueError('unexpected M31 PHY/repeater identity')
+    if (repeater.get('compatible') != b'qcom,pmic-eusb2-repeater\0'
+            or repeater.get('reg') != encode(0xfd00)
+            or repeater.get('#phy-cells') is not None
+            or tree[REPEATER.rsplit('/', 1)[0]].get('reg') != encode(7, 0)):
+        raise ValueError('unexpected PMIH0108 fd00 repeater identity')
+    if (ss.get('compatible') != b'qcom,sm8750-qmp-usb3-dp-phy\0'
+            or ss.get('reg') != encode(0x88e8000, 0x4000)
+            or ss.get('#phy-cells') != encode(1)):
+        raise ValueError('unexpected QMP USB3 PHY identity')
+    fixed = copy.deepcopy(parsed)
+    fixed['tree'][USB]['phys'] = hs['phandle'] + ss['phandle'] + encode(0)
+    fixed['tree'][USB]['phy-names'] = b'usb2-phy\0usb3-phy\0'
+    fixed['tree'][HS]['phys'] = repeater['phandle']
+    fixed['tree'][REPEATER]['compatible'] = b'qcom,pm8550b-eusb2-repeater\0'
+    fixed['tree'][REPEATER]['#phy-cells'] = encode(0)
+    return fixed
+
+
+def validate_usb_fix_delta(before, after):
+    expected = repair_usb_phy_chain(before)
+    for path in (USB, HS, REPEATER):
+        if after['tree'][path] != expected['tree'][path]:
+            raise ValueError('USB PHY chain repair differs: ' + path)
+    for path in (USB, HS):
+        reference_offsets(after, path, 'phys', after['tree'][path]['phys'])
 
 
 def validate(parsed, repaired):
@@ -119,17 +182,18 @@ def fold(args):
         execute([args.fdtoverlay, '-i', args.base, '-o', tmp / 'out.dtb', tmp / 'in.dtbo'], out / 'fold.log')
         result = (tmp / 'out.dtb').read_bytes()
     after = libcheck(result, args.libfdt)
-    result = write_fdt(repair_boot_geometry(after))
+    result = write_fdt(repair_usb_phy_chain(repair_boot_geometry(after)))
     after = libcheck(result, args.libfdt)
     if set(before['tree']) != set(after['tree']) or before['reservations'] != after['reservations'] or before['phandles'] != after['phandles']:
         raise ValueError('DSP/PCI repair changed tree/reservations/phandle identities')
     changed = {(p, k) for p in before['tree'] for k in set(before['tree'][p]) | set(after['tree'][p])
                if before['tree'][p].get(k) != after['tree'][p].get(k)}
-    expected = {(p, 'iommus') for p in MASTERS} | {(PCI, 'iommu-map')} | BOOT_FIX_FIELDS
+    expected = {(p, 'iommus') for p in MASTERS} | {(PCI, 'iommu-map')} | BOOT_FIX_FIELDS | USB_FIX_FIELDS
     if changed != expected:
         raise ValueError('unexpected or missing property delta: ' + str(changed ^ expected))
     validate(after, True)
     validate_boot_fix_delta(before, after)
+    validate_usb_fix_delta(before, after)
     target = out / 'Piano-full-linux-managed-dsp-pcie.dtb'
     target.write_bytes(result)
     report = {'status': 'HOST_DSP_PCIE_BINDINGS_FOLDED_KERNEL_READBACK_REQUIRED',
@@ -138,6 +202,11 @@ def fold(args):
               'output_bytes': len(result), 'changes': [{'path': p, 'property': k} for p, k in sorted(changed)],
               'dsp_consumers': {p: pairs for p, pairs in MASTERS.items()},
               'pci_rid_sid': [[0, 0x1400], [0x100, 0x1401]],
+              'usb_phy_consumers': {USB: [HS, SS], HS: [REPEATER]},
+              'usb3_phy_argument': 0,
+              'usb_supplies_converted': False, 'usb_vendor_tuning_converted': False,
+              'usb_repeater_mapping_source': 'arch/arm64/boot/dts/qcom/pmih0108.dtsi',
+              'usb_hardware_verified': False,
               'domain_forced': False, 'hardware_dma_verified': False,
               'pci_parf_hardware_table_verified': False, 'userspace_mmio': False}
     (out / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')

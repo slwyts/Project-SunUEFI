@@ -145,7 +145,7 @@ class DspPcieTests(unittest.TestCase):
                 base.hardware.wait_proof(None, 'audio', 30, fail, now, sleep)
             self.assertEqual(len(calls), 1)
 
-    def test_actual_cpp_dtc_fold_and_exact_boot_geometry(self):
+    def test_actual_cpp_dtc_fold_and_exact_boot_geometry_and_usb_chain(self):
         with tempfile.TemporaryDirectory(dir=ROOT / 'private/analysis', prefix='dsp-pcie-fold-test-') as temporary:
             base_path = ROOT / 'private/analysis/piano-linux-managed-clocks-v1/Piano-full-linux-managed-clocks.dtb'
             args = SimpleNamespace(base=base_path, base_sha256=patch.sha(base_path.read_bytes()),
@@ -155,7 +155,7 @@ class DspPcieTests(unittest.TestCase):
                 fdtoverlay=ROOT / 'build/kernel-topics/piano-panel/scripts/dtc/fdtoverlay',
                 libfdt=ROOT / 'upstream/dtc/libfdt/libfdt.so.1.8.1')
             report = patch.fold(args)
-            self.assertEqual(len(report['changes']), 11)
+            self.assertEqual(len(report['changes']), 16)
             self.assertFalse(report['domain_forced'])
             self.assertFalse(report['hardware_dma_verified'])
             result = read_fdt((args.output_dir / 'Piano-full-linux-managed-dsp-pcie.dtb').read_bytes())
@@ -168,12 +168,29 @@ class DspPcieTests(unittest.TestCase):
             self.assertEqual(result['tree'][patch.RAMOOPS]['pmsg-size'], patch.encode(0x200000))
             self.assertNotIn('record-size', result['tree'][patch.RAMOOPS])
             self.assertEqual(result['tree'][patch.SRAM]['reg'], patch.encode(0x17b4e000, 0x400))
+            self.assertEqual(result['tree'][patch.USB]['phys'],
+                             before['tree'][patch.HS]['phandle'] + before['tree'][patch.SS]['phandle'] + patch.encode(0))
+            self.assertEqual(result['tree'][patch.USB]['phy-names'], b'usb2-phy\0usb3-phy\0')
+            self.assertNotIn('maximum-speed', result['tree'][patch.USB])
+            self.assertEqual(result['tree'][patch.HS]['phys'], before['tree'][patch.REPEATER]['phandle'])
+            self.assertEqual(result['tree'][patch.REPEATER]['#phy-cells'], patch.encode(0))
+            self.assertFalse(report['usb_supplies_converted'])
+            self.assertFalse(report['usb_vendor_tuning_converted'])
+            self.assertFalse(report['usb_hardware_verified'])
+            for path in (patch.USB, patch.HS, patch.SS, patch.REPEATER):
+                for key, value in before['tree'][path].items():
+                    if key == 'status' or key.endswith('-supply') or 'override-seq' in key:
+                        self.assertEqual(result['tree'][path][key], value)
             import assemble_piano_linux as assemble
             manifests = [ROOT / 'private/analysis' / name / 'manifest.json' for name in (
                 'piano-full-dtb-fd6266-impact-fixed', 'piano-linux-owned-dma', 'piano-linux-managed-clocks-v1')]
             accepted = assemble.device_tree(args.output_dir / 'Piano-full-linux-managed-dsp-pcie.dtb',
                                            manifests + [args.output_dir / 'manifest.json'], args.libfdt)
             self.assertEqual(accepted['sha256'], report['output_sha256'])
+            broken = copy.deepcopy(result)
+            broken['tree'][patch.USB]['phys'] = before['tree'][patch.HS]['phandle']
+            with self.assertRaisesRegex(ValueError, 'USB PHY chain repair differs'):
+                patch.validate_usb_fix_delta(before, broken)
             args.base_sha256 = '0' * 64
             with self.assertRaises(ValueError): patch.fold(args)
 
