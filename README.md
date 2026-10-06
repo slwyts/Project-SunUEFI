@@ -8,7 +8,7 @@
 
 **无线与音频（第111次会话）：** PCIe已枚举PEACH Wi-Fi，真实网卡`wlp1s0`已能扫描附近热点；BT的PERI/控制器固件已完成加载，`hci0` powered，扫描命令成功。ADSP、AudioReach、四个FS19xx放大器及真实ALSA声卡已注册，PipeWire已识别扬声器和内置麦克风，播放/录音PCM DMA指针持续推进。无线、ADSP、音频服务已在Linux root中启用；网络关联/蓝牙配对、真实听音/麦克风信号及冷启动恢复尚需验收。Python sysfs读取丢失EAGAIN的问题已修复，仍严格验证实际identity/stage1路由，没有跳过DMA检查。
 
-**下一次启动候选：** Stable `7.2.6-piano-gnome-00069-gefe5734c2451`、匹配1637个模块、小型磁盘bootstrap及键盘supplier修正均已安装到真实root/ESP并读回确认；入口仍为`\EFI\Piano\stable\boot.img`。新增THP控制器getter、0/1游戏模式和已确认旧状态的回退接口；尚未实机启动该内核、切换模式或证明360 Hz。用户已授权将同一产品固件写入当前槽的recovery作为脱离电脑入口，格式与ABL路径已离线核对，刷入和入口验收尚待完成。
+**下一次启动候选：** Stable `7.2.6-piano-gnome-00069-gefe5734c2451`、匹配1637个模块、小型磁盘bootstrap及键盘supplier修正均已安装到真实root/ESP并读回确认；入口仍为`\EFI\Piano\stable\boot.img`。新增THP控制器getter、0/1游戏模式和已确认旧状态的回退接口；尚未实机启动该内核、切换模式或证明360 Hz。Recovery尝试发现原厂vbmeta对recovery的AVB chain依赖：无footer产品使加载失败并标记A槽unbootable。已恢复原厂recovery、清除A槽失败标记，完整读回匹配且Android boot_completed=1；用户授权的recovery安装仍在完善结构有效的AVB封装，尚不能宣称无电脑入口可用。唯一product已加入明确recovery入口3秒后自动Stable的策略；正常/未知入口保留SimpleInit，侧键/F12/USB请求可覆盖默认，实机recovery策略仍待验收。
 
 按用户授权已在线缩小 userdata，并新增 `sunuefi_esp`（512 MiB FAT32）和 `sunuefi_linux`（63.5 GiB ext4），共64 GiB。Debian 13/GNOME 已写入 Linux 分区。两次 Android 恢复已验证，`/data` 约397 GiB总容量、60 GiB已用。只读回读核对了分区边界、文件系统标识、systemd/GNOME Shell SHA256及根分区配置。没有刷写 Android boot/recovery/system。证据保存在 `private/provisioning/sunuefi-linux64-plan-20261006/`、`private/analysis/linux-disk-test107/` 和 `private/analysis/ramlog-test-107/`。
 
