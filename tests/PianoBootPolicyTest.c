@@ -22,7 +22,7 @@ EFI_BOOT_SERVICES *gBS;
 EFI_GUID gEfiLoadedImageProtocolGuid={.Data1=1},gEfiFirmwareVolume2ProtocolGuid={.Data1=2},gEfiEventExitBootServicesGuid={.Data1=3},gEfiSimpleTextInputExProtocolGuid={.Data1=4};
 EFI_GUID gEfiHiiDatabaseProtocolGuid={.Data1=5},gEfiHiiStringProtocolGuid={.Data1=6},gEfiHiiFontProtocolGuid={.Data1=7},gEfiHiiConfigRoutingProtocolGuid={.Data1=8},gEfiFormBrowser2ProtocolGuid={.Data1=9},gEdkiiFormDisplayEngineProtocolGuid={.Data1=10},gEfiVariableArchProtocolGuid={.Data1=11},gEfiVariableWriteArchProtocolGuid={.Data1=12};
 static UINT32 scenario;static EFI_TPL tpl=TPL_APPLICATION;static PIANO_PRODUCT_RUNTIME_PROTOCOL *runtime;
-static EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *keyboard,*old_keyboard;static EFI_KEY_NOTIFY_FUNCTION key_callback,escape_callback;
+static EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *keyboard,*old_keyboard;static EFI_KEY_NOTIFY_FUNCTION key_callback,escape_callback,volume_callback;
 static EFI_FIRMWARE_VOLUME2_PROTOCOL fv;static EFI_LOADED_IMAGE_PROTOCOL loaded;
 static BOOLEAN image_live,keyboard_live=TRUE,loan,alive=TRUE;static UINT8 payload[4096];
 static EFI_LOADED_IMAGE_PROTOCOL replacement_loaded;
@@ -41,6 +41,7 @@ static EFI_GUID runtime_guid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;
 static VOID *pool(UINTN Bytes){for(UINTN I=0;I<64;++I)if(!pools[I].Pointer){VOID *P=calloc(1,Bytes);assert(P);pools[I].Pointer=P;pools[I].Bytes=Bytes;return P;}abort();}
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 VOID *EFIAPI CopyMem(VOID *A,CONST VOID *B,UINTN N){return memmove(A,B,N);}
+INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
 VOID EFIAPI CpuDeadLoop(VOID){longjmp(stop,1);}
 static EFI_STATUS EFIAPI free_pool(VOID *P){
   ++frees;if(scenario==6 && current_action==2)return EFI_WARN_UNKNOWN_GLYPH;
@@ -97,9 +98,12 @@ static EFI_STATUS EFIAPI handle(EFI_HANDLE Handle,EFI_GUID *Guid,VOID **Out){
   *Out=scenario==32 && starts?&replacement_loaded:&loaded;return EFI_SUCCESS;
 }
 static EFI_STATUS EFIAPI register_key(EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *This,EFI_KEY_DATA *Key,EFI_KEY_NOTIFY_FUNCTION Notify,VOID **Token){
-  assert(This==keyboard && (Key->Key.ScanCode==SCAN_F12 || Key->Key.ScanCode==SCAN_ESC) && !Key->Key.UnicodeChar);
-  if(Key->Key.ScanCode==SCAN_F12)key_callback=Notify;else {assert(scenario>=64);escape_callback=Notify;}
+  assert(This==keyboard && (Key->Key.ScanCode==SCAN_F12 || Key->Key.ScanCode==SCAN_ESC || Key->Key.ScanCode==SCAN_UP || Key->Key.ScanCode==SCAN_DOWN) && !Key->Key.UnicodeChar);
+  if(Key->Key.ScanCode==SCAN_F12)key_callback=Notify;
+  else if(Key->Key.ScanCode==SCAN_ESC){assert(scenario>=64);escape_callback=Notify;}
+  else {assert(scenario>=89&&navigation);volume_callback=Notify;}
   *Token=(VOID *)++key_reg;
+  if(Key->Key.ScanCode==SCAN_DOWN&&scenario==104){*Token=NULL;return EFI_DEVICE_ERROR;}
   if(Key->Key.ScanCode==SCAN_ESC&&scenario==69)return EFI_WARN_UNKNOWN_GLYPH;
   if(Key->Key.ScanCode==SCAN_ESC&&(scenario==78||scenario==79)){*Token=NULL;return scenario==78?EFI_DEVICE_ERROR:EFI_SUCCESS;}
   return EFI_SUCCESS;
@@ -119,6 +123,9 @@ static EFI_STATUS EFIAPI window_stall(UINTN Us){
     if(scenario==65){Key.Key.ScanCode=SCAN_F12;assert(key_callback(&Key)==EFI_SUCCESS);}
     if(scenario==66){Key.Key.ScanCode=SCAN_ESC;assert(escape_callback(&Key)==EFI_SUCCESS);}
     if(scenario==67)assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_RETURN_CORE)==EFI_SUCCESS);
+    if(scenario==99){Key.Key.ScanCode=SCAN_F12;assert(key_callback(&Key)==EFI_SUCCESS);}
+    if(scenario==100){Key.Key.ScanCode=SCAN_ESC;assert(escape_callback(&Key)==EFI_SUCCESS);}
+    if(scenario==101||scenario==102){assert(navigation);Key.Key.ScanCode=scenario==101?SCAN_UP:SCAN_DOWN;assert(volume_callback(&Key)==EFI_SUCCESS);}
     if(scenario==72){for(UINTN I=0;I<16;++I)if(events[I].Live&&events[I].Group)events[I].Notify(&events[I],events[I].Context);alive=FALSE;assert(mprotect(gBS,4096,PROT_NONE)==0);}
     if(scenario==76||scenario==77){old_keyboard=keyboard;keyboard_live=FALSE;assert(mprotect(old_keyboard,4096,PROT_NONE)==0);
       if(scenario==77){keyboard=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);assert(keyboard!=MAP_FAILED);keyboard->RegisterKeyNotify=register_key;keyboard->UnregisterKeyNotify=unregister_key;keyboard_live=TRUE;}}
@@ -186,13 +193,13 @@ EFI_STATUS PianoProductReleaseSimpleInit(CONST PIANO_PRODUCT_PAYLOAD_VIEW *V){++
 EFI_STATUS PianoUsbControllerServicePumpApp(UINT32 Reason,UINTN Budget){assert(tpl==TPL_APPLICATION && alive && Budget==1000);++pumps;if(scenario==11)assert(runtime->Pump(runtime,Reason,Budget)==EFI_NOT_READY);return scenario==14?EFI_UNSUPPORTED:EFI_SUCCESS;}
 EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){
   *S=(PIANO_DWC3_SERVICE_STATUS){.Revision=scenario==47?2:1,.Started=scenario!=14,.Configured=TRUE,.Phase=PianoUsbServiceListening,.BulkActive=scenario==83};
-  if(scenario==81&&window_stalls>=2){S->Phase=PianoUsbServiceStopRequested;S->Action=PianoUsbServiceActionReboot;}
+  if((scenario==81||scenario==103)&&window_stalls>=2){S->Phase=PianoUsbServiceStopRequested;S->Action=PianoUsbServiceActionReboot;}
   if((scenario>=38 && scenario<=41) || scenario==44 || scenario==45 || scenario==46 || scenario==51 || scenario==61){S->Phase=PianoUsbServiceStopRequested;S->Action=scenario==46?PianoUsbServiceActionNone:scenario==51 || scenario==61?PianoUsbServiceActionBoot:scenario==44 || scenario==45?PianoUsbServiceActionReboot:(PIANO_USB_SERVICE_ACTION)(scenario-37);}
   return scenario==14?EFI_UNSUPPORTED:EFI_SUCCESS;
 }
 EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RETIRE_REPORT *Report){(void)Reason;(void)Report;++stops;assert(!"UI return must not stop shared USB");return EFI_DEVICE_ERROR;}
 int main(int argc,char **argv){
-  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=88);
+  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=106);
   gBS=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);assert(gBS!=MAP_FAILED);
   *gBS=(EFI_BOOT_SERVICES){.RaiseTPL=raise,.RestoreTPL=restore,.CreateEventEx=create_ex,.CreateEvent=create,.CloseEvent=close_event,
     .RegisterProtocolNotify=notify,.InstallProtocolInterface=install,.UninstallProtocolInterface=uninstall,.LocateProtocol=locate,
@@ -207,6 +214,37 @@ int main(int argc,char **argv){
   if(scenario==13){assert(S==EFI_COMPROMISED_DATA && PianoBootPolicyReport()->Retained);goto Done;}
   if(scenario>=23 && scenario<=25){assert(S==EFI_COMPROMISED_DATA && PianoBootPolicyReport()->Retained && !starts);goto Done;}
   assert(S==EFI_SUCCESS && runtime && key_reg==1);
+  if(scenario>=89) {
+    CONST CHAR8 *Args="a=1 bootmonitor.bootmode=recovery b=2";UINTN Bytes=strlen(Args)+1;
+    PIANO_BOOT_ENTRY Expected=PianoBootEntryRecovery;
+    if(scenario==90){Args="bootmonitor.bootmode=normal";Bytes=strlen(Args)+1;Expected=PianoBootEntryNormal;}
+    if(scenario==91){Args=NULL;Bytes=0;Expected=PianoBootEntryUnknown;}
+    if(scenario==92){Args="xbootmonitor.bootmode=recovery";Bytes=strlen(Args)+1;Expected=PianoBootEntryUnknown;}
+    if(scenario==93){Args="bootmonitor.bootmode=recovery bootmonitor.bootmode=recovery";Bytes=strlen(Args)+1;Expected=PianoBootEntryUnknown;}
+    if(scenario==94){Args="bootmonitor.bootmode=recovery bootmonitor.bootmode=normal";Bytes=strlen(Args)+1;Expected=PianoBootEntryUnknown;}
+    if(scenario==95){Args="bootmonitor.bootmode=recovery_extra";Bytes=strlen(Args)+1;Expected=PianoBootEntryUnknown;}
+    if(scenario==96){Bytes=strlen(Args);Expected=PianoBootEntryUnknown;}
+    if(scenario==97){Args="bootmonitor.bootmode=recovery\0hidden";Bytes=sizeof("bootmonitor.bootmode=recovery\0hidden");Expected=PianoBootEntryUnknown;}
+    if(scenario==98){Args=(CONST CHAR8 *)1;Bytes=8193;Expected=PianoBootEntryUnknown;}
+    if(scenario==105){Args="\tbootmonitor.bootmode=recovery\r\n";Bytes=strlen(Args)+1;}
+    assert(PianoBootPolicySetEntryBootArgs(Args,Bytes)==EFI_SUCCESS);
+    assert(PianoBootPolicyReport()->Entry==Expected);
+    assert(PianoBootPolicyReport()->StartupDefaultAction==(Expected==PianoBootEntryRecovery?PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE:PIANO_PRODUCT_ACTION_SIMPLEINIT));
+    if(scenario==106){EFI_KEY_DATA Key={0};Key.Key.ScanCode=SCAN_F12;assert(key_callback(&Key)==EFI_SUCCESS);}
+    S=PianoBootPolicyStartupWindow(3000);
+    assert(!navigation&&!starts&&!loads&&!stops);
+    if(scenario==104){assert(S==EFI_DEVICE_ERROR&&!PianoBootPolicyReport()->Retained&&key_reg==4&&key_unreg==2);assert(PianoBootPolicyStop()==EFI_SUCCESS&&key_unreg==3);goto Done;}
+    assert(S==EFI_SUCCESS);
+    UINT32 A;UINT64 Seq;assert(runtime->GetPendingAction(runtime,&A,&Seq)==EFI_SUCCESS);
+    BOOLEAN Auto=Expected==PianoBootEntryRecovery&&scenario<99;
+    Auto=Auto||scenario==105;
+    assert(A==(Auto?PIANO_PRODUCT_ACTION_RETURN_CORE:scenario==99||scenario==106?PIANO_PRODUCT_ACTION_SETUP:scenario>=100&&scenario<=102?PIANO_PRODUCT_ACTION_SIMPLEINIT:scenario==103?PIANO_PRODUCT_ACTION_RETURN_CORE:PIANO_PRODUCT_ACTION_NONE));
+    assert(PianoBootPolicyReport()->RequestedCoreAction==(Auto?PianoUsbServiceActionBoot:PianoUsbServiceActionNone));
+    assert(PianoBootPolicySetEntryBootArgs(Args,Bytes)==EFI_ACCESS_DENIED);
+    if(Auto){assert(window_stalls==3000&&pumps==3001);assert(PianoBootPolicyRun()==EFI_END_OF_FILE&&!starts&&!stops);assert(PianoBootPolicyCancelStable()==EFI_SUCCESS);assert(runtime->GetPendingAction(runtime,&A,&Seq)==EFI_SUCCESS&&A==PIANO_PRODUCT_ACTION_SIMPLEINIT);}
+    assert(PianoBootPolicyStop()==EFI_SUCCESS);
+    assert(key_unreg==key_reg&&key_reg==(scenario==106?1:Expected==PianoBootEntryRecovery?4:2));goto Done;
+  }
   if(scenario==88) {
     UINT32 A;UINT64 Seq,Again;
     assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE)==EFI_SUCCESS);

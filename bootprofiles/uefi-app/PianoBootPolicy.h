@@ -4,9 +4,12 @@
 #include "Protocol/PianoProductRuntime.h"
 #include "PianoFvApplication.h"
 #include "PianoUsbService.h"
+typedef enum {PianoBootEntryUnknown,PianoBootEntryNormal,PianoBootEntryRecovery} PIANO_BOOT_ENTRY;
 typedef struct {
   BOOLEAN Initialized,ProtocolInstalled,ServicesLost,Retained,Pumping,Dispatching;
   UINT32 PendingAction,ActiveAction,KeyboardProviders;
+  PIANO_BOOT_ENTRY Entry;
+  UINT32 StartupDefaultAction;
   UINT64 Sequence,PumpCalls,AppRuns,IdleSample;
   BOOLEAN IdleInstalled,IdleKnown,IdleBulkActive;
   EFI_STATUS LastPump,LastAction,KeyStatus,PayloadStatus;
@@ -19,8 +22,13 @@ typedef struct {
 // Shared core starts real USB/UFS/input first; this policy does not create a
 // transport, stop it on UI return, or turn an unbound worker into USB-ready.
 EFI_STATUS PianoBootPolicyInitialize(EFI_HANDLE Parent);
+// Core supplies the bounded /chosen/bootargs property from its validated FDT.
+// Missing, malformed or duplicate mode tokens keep the normal SimpleInit default.
+EFI_STATUS PianoBootPolicySetEntryBootArgs(CONST CHAR8 *BootArgs,UINTN Bytes);
 // One APP-only startup choice window (1..3000ms). Keeps the shared service
 // pump alive; F12 keeps its normal path, Esc requests SimpleInit only here.
+// Recovery also maps the side volume keys to SimpleInit during this window;
+// its timeout latches the existing stable-file request only if nothing is pending.
 // It only latches an action; the existing Run performs actual dispatch later.
 EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds);
 // Auto SimpleInit from Root's actual APPv1 validated payload registry. Pending

@@ -26,6 +26,7 @@
 #include <Library/DebugLib.h>
 #include <Library/TimerLib.h>
 #include <Library/PrintLib.h>
+#include <Library/FdtLib.h>
 VOID PianoProbeFoundation(VOID);
 VOID PianoNativeSetObserver(VOID (*Observer)(CONST CHAR8 *,BOOLEAN));
 VOID PianoProbeUfs(CONST VOID *Fdt);
@@ -308,6 +309,11 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   ObserveDisplay("after-usb");
   BootLogStage("MENU",EFI_NOT_STARTED);
   Status=PianoBootPolicyInitialize(Image);if(Status!=EFI_SUCCESS)FailStop(Status);
+  // Fdt was validated against the BootShim handoff and mapped input at PAYLOAD.
+  INT32 Chosen=FdtPathOffset(Fdt,"/chosen"),BootArgsBytes=0;
+  CONST CHAR8 *BootArgs=Chosen<0?NULL:FdtGetProp(Fdt,Chosen,"bootargs",&BootArgsBytes);
+  Status=PianoBootPolicySetEntryBootArgs(BootArgs,BootArgsBytes>0?(UINTN)BootArgsBytes:0);
+  if(Status!=EFI_SUCCESS)FailStop(Status);
   EFI_GUID Guid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime=NULL;
   Status=gBS->LocateProtocol(&Guid,NULL,(VOID **)&Runtime);
   if(Status!=EFI_SUCCESS || Runtime==NULL || Runtime->Revision!=PIANO_PRODUCT_RUNTIME_REVISION)FailStop(EFI_NOT_READY);
@@ -327,8 +333,10 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_LATE_EXIT provider_bound=1 phase=unarmed full_ddr_ready=0\n"));
   Status=PianoBootPolicyStartupWindow(3000);
   if(Status!=EFI_SUCCESS)FailStop(Status);
-  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_BOOT_WINDOW status=%r budget_ms=3000 f12_setup=1 esc_boot_menu=1 usb_pumped=1\n",Status));
-  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_CORE_READY one_shared_core=1 auto_simpleinit=1 f12_setup=1 usb_background=1\n"));
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_BOOT_WINDOW status=%r budget_ms=3000 f12_setup=1 esc_boot_menu=1 volume_boot_menu=%u usb_pumped=1 entry_hint=%u default_action=%u\n",Status,
+    (UINT32)(PianoBootPolicyReport()->Entry==PianoBootEntryRecovery),(UINT32)PianoBootPolicyReport()->Entry,PianoBootPolicyReport()->StartupDefaultAction));
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_CORE_READY one_shared_core=1 auto_simpleinit=%u recovery_auto_stable=%u f12_setup=1 usb_background=1\n",
+    (UINT32)(PianoBootPolicyReport()->Entry!=PianoBootEntryRecovery),(UINT32)(PianoBootPolicyReport()->Entry==PianoBootEntryRecovery)));
   BootLogStage("MENU",EFI_SUCCESS);
   for(;;) {
     Status=PianoBootPolicyRun();

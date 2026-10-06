@@ -29,7 +29,7 @@ STATIC VOID *mKeyRegistration;
 STATIC volatile BOOLEAN mAlive,mKeysDirty;
 STATIC PIANO_PRODUCT_PAYLOAD_VIEW mPayload;
 STATIC BOOLEAN mPayloadLoan;
-STATIC struct {EFI_HANDLE Handle;EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *Input;VOID *Notify[2];EFI_UNREGISTER_KEYSTROKE_NOTIFY Unregister;} mKeys[32];
+STATIC struct {EFI_HANDLE Handle;EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *Input;VOID *Notify[4];EFI_UNREGISTER_KEYSTROKE_NOTIFY Unregister;} mKeys[32];
 STATIC UINTN mKeysCount;
 STATIC volatile BOOLEAN mStartupWindow;
 STATIC BOOLEAN mStartupWindowUsed;
@@ -103,15 +103,23 @@ STATIC EFI_STATUS EFIAPI F12(EFI_KEY_DATA *Key) {
   return Request(&mRuntime,PIANO_PRODUCT_ACTION_SETUP); // CPU latch only; no BS/StartImage.
 }
 STATIC EFI_STATUS EFIAPI StartupEsc(EFI_KEY_DATA *Key) {
-  if(!mStartupWindow || !Key || Key->Key.ScanCode!=SCAN_ESC || Key->Key.UnicodeChar)return EFI_SUCCESS;
+  if(!mStartupWindow || !Key || Key->Key.UnicodeChar)return EFI_SUCCESS;
+  if(Key->Key.ScanCode!=SCAN_ESC && !(mReport.Entry==PianoBootEntryRecovery &&
+     (Key->Key.ScanCode==SCAN_UP || Key->Key.ScanCode==SCAN_DOWN)))return EFI_SUCCESS;
   return Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT);
 }
 STATIC EFI_STATUS RegisterEsc(UINTN I) {
-  EFI_KEY_DATA Key;ZeroMem(&Key,sizeof(Key));Key.Key.ScanCode=SCAN_ESC;
-  VOID *Token=NULL;EFI_STATUS S=mKeys[I].Input->RegisterKeyNotify(mKeys[I].Input,&Key,StartupEsc,&Token);RequireAlive();
-  if(S==EFI_SUCCESS && Token){mKeys[I].Notify[1]=Token;return EFI_SUCCESS;}
-  if(Token || S==EFI_SUCCESS || !EFI_ERROR(S))mReport.Retained=TRUE;
-  return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:Exact(S);
+  CONST UINT16 Scans[]={SCAN_ESC,SCAN_UP,SCAN_DOWN};
+  UINTN Count=mReport.Entry==PianoBootEntryRecovery?3:1;
+  for(UINTN J=0;J<Count;++J) {
+    if(mKeys[I].Notify[J+1])continue;
+    EFI_KEY_DATA Key;ZeroMem(&Key,sizeof(Key));Key.Key.ScanCode=Scans[J];
+    VOID *Token=NULL;EFI_STATUS S=mKeys[I].Input->RegisterKeyNotify(mKeys[I].Input,&Key,StartupEsc,&Token);RequireAlive();
+    if(S==EFI_SUCCESS && Token){mKeys[I].Notify[J+1]=Token;continue;}
+    if(Token || S==EFI_SUCCESS || !EFI_ERROR(S))mReport.Retained=TRUE;
+    return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:Exact(S);
+  }
+  return EFI_SUCCESS;
 }
 STATIC VOID EFIAPI KeysChanged(EFI_EVENT Event,VOID *Context){(VOID)Event;(VOID)Context;mKeysDirty=TRUE;}
 STATIC VOID EFIAPI Ebs(EFI_EVENT Event,VOID *Context){(VOID)Event;(VOID)Context;mStartupWindow=FALSE;mAlive=FALSE;mReport.ServicesLost=TRUE;mReport.IdleKnown=FALSE;}
@@ -156,7 +164,7 @@ STATIC EFI_STATUS RefreshKeys(VOID) {
       if(Token || S==EFI_SUCCESS || !EFI_ERROR(S))mReport.Retained=TRUE;
       mReport.KeyStatus=Exact(S);continue;
     }
-    mKeys[mKeysCount].Handle=Handles[I];mKeys[mKeysCount].Input=Input;mKeys[mKeysCount].Notify[0]=Token;mKeys[mKeysCount].Notify[1]=NULL;mKeys[mKeysCount].Unregister=Input->UnregisterKeyNotify;++mKeysCount;
+    mKeys[mKeysCount].Handle=Handles[I];mKeys[mKeysCount].Input=Input;ZeroMem(mKeys[mKeysCount].Notify,sizeof(mKeys[mKeysCount].Notify));mKeys[mKeysCount].Notify[0]=Token;mKeys[mKeysCount].Unregister=Input->UnregisterKeyNotify;++mKeysCount;
     if(mStartupWindow){WindowFailure=RegisterEsc(mKeysCount-1);if(WindowFailure!=EFI_SUCCESS)break;}
   }
   EFI_STATUS Free=Handles?gBS->FreePool(Handles):EFI_SUCCESS;RequireAlive();if(Free!=EFI_SUCCESS)mReport.Retained=TRUE;
@@ -204,17 +212,46 @@ STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime={PIANO_PRODUCT_RUNTIME_REVISION,P
 STATIC EFI_STATUS RetireEsc(VOID) {
   if(mReport.Retained)return EFI_COMPROMISED_DATA;
   for(UINTN I=0;I<mKeysCount;++I){
-    if(!mKeys[I].Notify[1])continue;
+    if(!mKeys[I].Notify[1] && !mKeys[I].Notify[2] && !mKeys[I].Notify[3])continue;
     EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *Fresh=NULL;
     EFI_STATUS S=gBS->HandleProtocol(mKeys[I].Handle,&gEfiSimpleTextInputExProtocolGuid,(VOID **)&Fresh);RequireAlive();
     if(S==EFI_SUCCESS && Fresh==mKeys[I].Input && Fresh && Fresh->UnregisterKeyNotify==mKeys[I].Unregister){
-      S=Fresh->UnregisterKeyNotify(Fresh,mKeys[I].Notify[1]);RequireAlive();
-      if(S!=EFI_SUCCESS){mReport.Retained=TRUE;return Exact(S);}mKeys[I].Notify[1]=NULL;
+      for(UINTN J=1;J<4;++J)if(mKeys[I].Notify[J]) {
+        S=Fresh->UnregisterKeyNotify(Fresh,mKeys[I].Notify[J]);RequireAlive();
+        if(S!=EFI_SUCCESS){mReport.Retained=TRUE;return Exact(S);}mKeys[I].Notify[J]=NULL;
+      }
     }else if((S==EFI_SUCCESS && (!Fresh || Fresh==mKeys[I].Input)) ||
       (S!=EFI_SUCCESS && S!=EFI_NOT_FOUND && S!=EFI_UNSUPPORTED && S!=EFI_INVALID_PARAMETER)){
       mReport.Retained=TRUE;return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:Exact(S);
-    }else mKeys[I].Notify[1]=NULL; // Removed/replaced provider owns its old callback list.
+    }else for(UINTN J=1;J<4;++J)mKeys[I].Notify[J]=NULL; // Removed/replaced provider owns its old callback list.
   }return EFI_SUCCESS;
+}
+STATIC BOOLEAN Space(CHAR8 C){return C==' ' || C=='\t' || C=='\r' || C=='\n';}
+EFI_STATUS PianoBootPolicySetEntryBootArgs(CONST CHAR8 *BootArgs,UINTN Bytes) {
+  if(!mReport.Initialized || !mReport.ProtocolInstalled)return EFI_NOT_READY;
+  if(mStartupWindowUsed || mReport.Dispatching || mReport.Pumping || mReport.Retained)return EFI_ACCESS_DENIED;
+  EFI_STATUS S=AtApp();if(S!=EFI_SUCCESS)return S;
+  mReport.Entry=PianoBootEntryUnknown;mReport.StartupDefaultAction=PIANO_PRODUCT_ACTION_SIMPLEINIT;
+  // ABL derives this exact non-Android token from its recovery flag. It is an
+  // entry-policy hint only, never authority for new memory or storage access.
+  STATIC CONST CHAR8 Key[]="bootmonitor.bootmode=";
+  if(!BootArgs || !Bytes || Bytes>8192 || BootArgs[Bytes-1]!=0)return EFI_SUCCESS;
+  for(UINTN I=0;I<Bytes-1;++I)if(!BootArgs[I] ||
+     ((!Space(BootArgs[I])) && ((UINT8)BootArgs[I]<0x20 || (UINT8)BootArgs[I]>0x7e)))return EFI_SUCCESS;
+  PIANO_BOOT_ENTRY Entry=PianoBootEntryUnknown;UINTN Matches=0;
+  for(UINTN I=0;I<Bytes-1;) {
+    while(I<Bytes-1 && Space(BootArgs[I]))++I;
+    UINTN Start=I;while(I<Bytes-1 && !Space(BootArgs[I]))++I;
+    UINTN Length=I-Start;
+    if(Length<sizeof(Key)-1 || CompareMem(BootArgs+Start,Key,sizeof(Key)-1))continue;
+    if(++Matches!=1)return EFI_SUCCESS;
+    CONST CHAR8 *Value=BootArgs+Start+sizeof(Key)-1;UINTN ValueBytes=Length-(sizeof(Key)-1);
+    if(ValueBytes==8 && !CompareMem(Value,"recovery",8))Entry=PianoBootEntryRecovery;
+    else if(ValueBytes==6 && !CompareMem(Value,"normal",6))Entry=PianoBootEntryNormal;
+  }
+  if(Matches==1)mReport.Entry=Entry;
+  if(mReport.Entry==PianoBootEntryRecovery)mReport.StartupDefaultAction=PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE;
+  return EFI_SUCCESS;
 }
 EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds) {
   if(!Milliseconds || Milliseconds>3000)return EFI_INVALID_PARAMETER;
@@ -225,6 +262,8 @@ EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds) {
   UINT64 First,Last;UINT64 Frequency=GetPerformanceCounterProperties(&First,&Last);
   if(!Frequency || First==Last)return EFI_UNSUPPORTED;
   BOOLEAN Down=First>Last;UINT64 Start=GetPerformanceCounter(),Previous=Start;
+  BOOLEAN Navigation=FALSE,PreviousNavigation=FALSE;
+  if(mReport.Entry==PianoBootEntryRecovery){PreviousNavigation=PianoSetStandardKeyNavigation(TRUE);Navigation=TRUE;}
   mStartupWindowUsed=TRUE;mStartupWindow=TRUE;mKeysDirty=TRUE;
   for(UINTN Slice=0;Slice<3100;++Slice){
     UINT32 Action;UINT64 Sequence;S=Pending(&mRuntime,&Action,&Sequence);RequireAlive();
@@ -243,7 +282,14 @@ EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds) {
 Done:
   mStartupWindow=FALSE;
   EFI_STATUS Cleanup=RetireEsc();
-  return Cleanup==EFI_SUCCESS?S:Cleanup;
+  if(Navigation)PianoSetStandardKeyNavigation(PreviousNavigation);
+  if(Cleanup!=EFI_SUCCESS)return Cleanup;
+  if(S==EFI_SUCCESS && mReport.StartupDefaultAction==PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE) {
+    UINT64 Mask=Critical();
+    if(mReport.PendingAction==PIANO_PRODUCT_ACTION_NONE)S=Request(&mRuntime,PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE);
+    EndCritical(Mask);
+  }
+  return S;
 }
 STATIC EFI_STATUS SetupReady(VOID) {
   EFI_GUID *Guids[]={&gEfiHiiDatabaseProtocolGuid,&gEfiHiiStringProtocolGuid,&gEfiHiiFontProtocolGuid,
@@ -262,6 +308,7 @@ EFI_STATUS PianoBootPolicyInitialize(EFI_HANDLE Parent) {
   Existing=NULL;S=gBS->LocateProtocol(&mIdleGuid,NULL,&Existing);
   if(S!=EFI_NOT_FOUND)return S==EFI_SUCCESS?EFI_ALREADY_STARTED:Exact(S);
   ZeroMem(&mReport,sizeof(mReport));mReport.Initialized=TRUE;mParent=Parent;mAlive=TRUE;
+  mReport.StartupDefaultAction=PIANO_PRODUCT_ACTION_SIMPLEINIT;
   S=AtApp();if(S!=EFI_SUCCESS)return S;
   S=Exact(gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,Ebs,NULL,&gEfiEventExitBootServicesGuid,&mExitEvent));RequireAlive();if(S!=EFI_SUCCESS || !mExitEvent){mReport.Retained=TRUE;return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S;}
   S=Exact(gBS->InstallProtocolInterface(&mProtocolHandle,&mRuntimeGuid,EFI_NATIVE_INTERFACE,&mRuntime));RequireAlive();if(S!=EFI_SUCCESS || !mProtocolHandle){mReport.Retained=TRUE;return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S;}
@@ -353,7 +400,7 @@ EFI_STATUS PianoBootPolicyStop(VOID) {
     S=gBS->HandleProtocol(mKeys[I].Handle,&gEfiSimpleTextInputExProtocolGuid,(VOID **)&Fresh);RequireAlive();
     if(S==EFI_NOT_FOUND || S==EFI_UNSUPPORTED || S==EFI_INVALID_PARAMETER || (S==EFI_SUCCESS && (Fresh!=mKeys[I].Input || !Fresh || Fresh->UnregisterKeyNotify!=mKeys[I].Unregister))){--mKeysCount;continue;}
     if(S!=EFI_SUCCESS){mReport.Retained=TRUE;return Exact(S);}
-    for(UINTN K=2;K>0;--K){if(mKeys[I].Notify[K-1]){S=Fresh->UnregisterKeyNotify(Fresh,mKeys[I].Notify[K-1]);RequireAlive();if(S!=EFI_SUCCESS){mReport.Retained=TRUE;return Exact(S);}mKeys[I].Notify[K-1]=NULL;}}
+    for(UINTN K=4;K>0;--K){if(mKeys[I].Notify[K-1]){S=Fresh->UnregisterKeyNotify(Fresh,mKeys[I].Notify[K-1]);RequireAlive();if(S!=EFI_SUCCESS){mReport.Retained=TRUE;return Exact(S);}mKeys[I].Notify[K-1]=NULL;}}
     --mKeysCount;}
   if(mKeyEvent){S=gBS->CloseEvent(mKeyEvent);RequireAlive();if(S!=EFI_SUCCESS){mReport.Retained=TRUE;return Exact(S);}mKeyEvent=NULL;}
   mReport.IdleKnown=FALSE;

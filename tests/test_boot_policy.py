@@ -15,7 +15,7 @@ class BootPolicyTests(unittest.TestCase):
             subprocess.run(["cc","-std=gnu11","-fshort-wchar","-g","-Wall","-Wextra","-Werror","-Wno-unused-parameter",
                 "-fsanitize=address,undefined","-fno-pie","-no-pie",*flags,str(ROOT/"tests/PianoBootPolicyTest.c"),
                 str(APP/"PianoBootPolicy.c"),str(APP/"PianoFvApplication.c"),"-o",binary],check=True)
-            for case in range(89):
+            for case in range(107):
                 result=subprocess.run([binary,str(case)],capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,f"case {case}: {result.stdout}\n{result.stderr}")
             subprocess.run([str(ROOT/"build/host-tools/usr/bin/clang"),"--target=aarch64-windows-msvc","-fshort-wchar","-ffreestanding",
