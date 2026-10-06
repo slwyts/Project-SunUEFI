@@ -52,7 +52,13 @@ G=$CONFIG/usb_gadget/piano-linux-debug
 ROOT_TYPE=''
 [ -r "$(p /proc/mounts)" ] || fail mounts_unavailable
 while read -r dev point type rest; do [ "$point" != / ] || ROOT_TYPE=$type; done <"$(p /proc/mounts)"
-ram_root() { case "$ROOT_TYPE" in rootfs|tmpfs|ramfs) return 0;; *) return 1;; esac; }
+ram_root() {
+    case "$ROOT_TYPE" in
+        rootfs|tmpfs|ramfs) return 0 ;;
+        ext4) /usr/lib/piano/piano-disk-hardware-prepare --check-root >/dev/null 2>&1 ;;
+        *) return 1 ;;
+    esac
+}
 log "action=$ACTION usb=$USB root_type=${ROOT_TYPE:-unknown} recovery_seconds=$RECOVERY shell=$SHELL_ENABLED"
 case "$ACTION" in diagnose|start|stop|serial|recover) :;; *) fail unknown_action;; esac
 if [ "$ACTION" = diagnose ]; then
@@ -184,8 +190,8 @@ write_attr "$G/bDeviceSubClass" 0x02
 write_attr "$G/bDeviceProtocol" 0x01
 mkdir "$G/strings/0x409"
 write_attr "$G/strings/0x409/manufacturer" PianoUEFI
-write_attr "$G/strings/0x409/product" 'Piano Linux RAM Debug ACM NCM'
-write_attr "$G/strings/0x409/serialnumber" Piano-Linux-RAM
+write_attr "$G/strings/0x409/product" 'Piano Linux Debug ACM NCM'
+write_attr "$G/strings/0x409/serialnumber" Piano-Linux
 mkdir "$G/configs/c.1"
 mkdir "$G/configs/c.1/strings/0x409"
 write_attr "$G/configs/c.1/strings/0x409/configuration" 'ACM serial and NCM debug network'

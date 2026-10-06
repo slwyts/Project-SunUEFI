@@ -10,6 +10,8 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
+import stat
 from pathlib import Path
 import subprocess
 import struct
@@ -74,12 +76,30 @@ def require_ram(proc=Path('/proc'), run=Path('/run')):
     if any(word.startswith('root=') for word in words):
         raise Refused('block-root command line is forbidden for the RAM-root hardware entry')
     modes = [word[11:] for word in words if word.startswith('piano.root=')]
-    if modes != ['ram'] or (run / 'piano-root-mode').read_text().strip() != 'ram':
-        raise Refused('explicit RAM-root policy is missing')
     roots = [line.split() for line in (proc / 'mounts').read_text().splitlines()
              if len(line.split()) >= 3 and line.split()[1] == '/']
-    if len(roots) != 1 or roots[0][2] not in ('tmpfs', 'rootfs', 'ramfs'):
-        raise Refused('actual root is not RAM-backed')
+    if len(roots) != 1 or len(modes) != 1:
+        raise Refused('root mode or actual root mount is ambiguous')
+    if (run / 'piano-root-mode').read_text().strip() != modes[0]:
+        raise Refused('bootstrapped root mode differs from kernel policy')
+    if modes == ['ram']:
+        if roots[0][2] not in ('tmpfs', 'rootfs', 'ramfs'):
+            raise Refused('actual root is not RAM-backed')
+    else:
+        policy = json.loads(Path('/etc/piano/root-policy.json').read_text())
+        partuuid = policy.get('root_partuuid', '')
+        if (not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', partuuid)
+                or modes != ['PARTUUID=' + partuuid] or roots[0][2] != 'ext4'):
+            raise Refused('root is not the explicitly configured Linux partition')
+        device = (run / 'piano-root-device').read_text().strip()
+        if not re.fullmatch(r'/dev/sd[a-z]+[0-9]+', device):
+            raise Refused('unexpected Linux root device')
+        info = os.stat(device)
+        if not stat.S_ISBLK(info.st_mode) or info.st_rdev != os.stat('/').st_dev:
+            raise Refused('configured device is not the mounted root')
+        actual = subprocess.check_output(['/usr/sbin/blkid', '-s', 'PARTUUID', '-o', 'value', device], text=True).strip().lower()
+        if actual != partuuid:
+            raise Refused('mounted root partition identity differs')
     if not Path('/usr/lib/modules', os.uname().release).is_dir():
         raise Refused('matching full kernel module directory is missing')
 
@@ -202,12 +222,20 @@ def wait_proof(module, scope, seconds, prove_fn=prove, now=time.monotonic, sleep
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     mode = ap.add_mutually_exclusive_group()
+    mode.add_argument('--check-root', action='store_true', help='Verify only the actual RAM or configured Linux root')
     mode.add_argument('--require-scope', choices=tuple(SCOPES) + tuple(CONTEXT_SCOPES) + ('all', 'clock'))
     mode.add_argument('--observe-scope', choices=('mdss-prebind',),
                       help='Nonblocking prebind diagnostic; never authorizes a driver or reports readiness')
     ap.add_argument('--wait-seconds', type=int, choices=range(31), default=0,
                     help='Wait only for normal consumer creation or busy getter; faults/drift still fail immediately')
     args = ap.parse_args()
+    if args.check_root:
+        try:
+            require_ram()
+        except (OSError, ValueError, Refused, subprocess.SubprocessError) as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        return 0
     scope = args.require_scope or args.observe_scope or 'bootstrap'
     try:
         require_ram()

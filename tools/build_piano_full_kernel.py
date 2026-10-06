@@ -62,7 +62,7 @@ def command_line(fragment,public,root_policy):
     if tokens.count('root=PARTLABEL=userdata')!=1:raise ValueError('Unexpected public root policy')
     expected=' '.join('piano.root=ram'if token=='root=PARTLABEL=userdata'else token for token in tokens)
     if provided!=expected:raise ValueError('Full candidate must preserve every public handoff argument except userdata root')
-    if root_policy!='ram'and not re.fullmatch(r'(UUID=[0-9a-fA-F-]{8,64}|LABEL=PIANO[A-Za-z0-9_-]{0,48})',root_policy):
+    if root_policy!='ram'and not re.fullmatch(r'(UUID=[0-9a-fA-F-]{8,64}|PARTUUID=[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|LABEL=PIANO[A-Za-z0-9_-]{0,48})',root_policy):
         raise ValueError('External root must be an explicit UUID or PIANO-owned label; Android partition selectors are refused')
     return provided.replace('piano.root=ram','piano.root='+root_policy)
 

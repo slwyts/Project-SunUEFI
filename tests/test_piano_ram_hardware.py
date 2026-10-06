@@ -27,6 +27,28 @@ loader.exec_module(hardware)
 
 
 class RamHardwareTests(unittest.TestCase):
+    def test_disk_root_requires_actual_device_and_partition_identity(self):
+        import os, stat
+        uid = 'ffc480ed-c219-400b-a8f9-5f6805aa1f34'
+        proc = self.path / 'proc'; proc.mkdir()
+        (proc / 'cmdline').write_text('piano.root=PARTUUID=' + uid)
+        (proc / 'mounts').write_text('/dev/sda36 / ext4 rw 0 0\n')
+        (self.run / 'piano-root-mode').write_text('PARTUUID=' + uid)
+        (self.run / 'piano-root-device').write_text('/dev/sda36')
+        read = Path.read_text
+        def text(path, *args, **kwargs):
+            if str(path) == '/etc/piano/root-policy.json':
+                return json.dumps({'root_partuuid': uid})
+            return read(path, *args, **kwargs)
+        with mock.patch.object(Path, 'read_text', text), \
+             mock.patch.object(Path, 'is_dir', return_value=True), \
+             mock.patch.object(hardware.os, 'stat', side_effect=lambda path: SimpleNamespace(st_mode=stat.S_IFBLK, st_rdev=42, st_dev=42)), \
+             mock.patch.object(hardware.subprocess, 'check_output', return_value=uid+'\n') as query:
+            hardware.require_ram(proc, self.run)
+            query.assert_called_once_with(['/usr/sbin/blkid', '-s', 'PARTUUID', '-o', 'value', '/dev/sda36'], text=True)
+            query.return_value = 'different\n'
+            with self.assertRaises(hardware.Refused): hardware.require_ram(proc, self.run)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / 'build', prefix='ram-hardware-test-')
         self.path = Path(self.temp.name)

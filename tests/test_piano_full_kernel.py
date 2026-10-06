@@ -27,6 +27,8 @@ class PianoFullKernelTests(unittest.TestCase):
         public=(full.WORK/'arch/arm64/configs/piano_rootfs.config').read_text();fragment=(ROOT/'configs/linux/piano-full.config').read_text()
         command=full.command_line(fragment,public,'LABEL=PIANO_EXTERNAL')
         self.assertIn('piano.root=LABEL=PIANO_EXTERNAL',command);self.assertNotIn('root=PARTLABEL=userdata',command)
+        disk=full.command_line(fragment,public,'PARTUUID=ffc480ed-c219-400b-a8f9-5f6805aa1f34')
+        self.assertIn('piano.root=PARTUUID=ffc480ed-c219-400b-a8f9-5f6805aa1f34',disk)
         for flag in ('rdinit=/pianoinit','pd_ignore_unused','clk_ignore_unused','iommu.passthrough=1'):self.assertIn(flag,command)
         for bad in ('PARTLABEL=userdata','/dev/sda','ram root=PARTLABEL=userdata','LABEL=userdata'):
             with self.subTest(root=bad),self.assertRaises(ValueError):full.command_line(fragment,public,bad)
