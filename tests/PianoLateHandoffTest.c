@@ -55,6 +55,9 @@ static EFI_STATUS Memory(VOID*Context,PIANO_LINUX_MEMORY_PROOF*P){assert(Context
  *P=(PIANO_LINUX_MEMORY_PROOF){.Revision=1,.Status=EFI_SUCCESS,.BootEpoch=scenario==7&&memchecks>=3?2:1,.DramBytes=16ULL*1024*1024*1024,
  .NormalBytes=4ULL*1024*1024*1024,.FullDdr=scenario!=5,.FixedReservations=TRUE,.DynamicReservations=TRUE,.RuntimeRegions=TRUE,.CacheVerified=TRUE,.OwnershipVerified=TRUE};return EFI_SUCCESS;}
 static EFI_STATUS Validate(VOID*Context,CONST PIANO_LINUX_MEMORY_PROOF*P){assert(Context==&Late&&P->BootEpoch&&!mExitBootServicesCalled);++memvalidations;return scenario==6?EFI_NOT_READY:EFI_SUCCESS;}
+static PIANO_RAW_LINUX_REPORT RawReport;
+static BOOLEAN RawValidate(CONST PIANO_RAW_LINUX_REPORT*R,CONST PIANO_PRODUCT_OWNERS*O,EFI_HANDLE Image){
+ return R==&RawReport&&O==&Owners&&Image==Child&&Owners.Report.Clean&&scenario!=19;}
 static EFI_STATUS EFIAPI Install(EFI_HANDLE*H,EFI_GUID*G,EFI_INTERFACE_TYPE Type,VOID*P){EFI_GUID Expected=PIANO_PRODUCT_EXIT_PROTOCOL_GUID;
  assert(Type==EFI_NATIVE_INTERFACE&&!memcmp(G,&Expected,sizeof(*G))&&!Installed&&Tpl==TPL_APPLICATION);Installed=P;*H=(VOID*)0x333;++installs;return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI Uninstall(EFI_HANDLE H,EFI_GUID*G,VOID*P){EFI_GUID Expected=PIANO_PRODUCT_EXIT_PROTOCOL_GUID;
@@ -67,7 +70,7 @@ static EFI_STATUS EFIAPI Handle(EFI_HANDLE H,EFI_GUID*G,VOID**Out){assert(H==Chi
 static EFI_STATUS EFIAPI TimerPeriod(EFI_TIMER_ARCH_PROTOCOL*This,UINT64 Period){assert(This==&Timer&&!Period&&Owners.Report.Clean&&Late.Phase==PianoExitClean);++timer_calls;return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI Disable(EFI_CPU_ARCH_PROTOCOL*This){assert(This==&Cpu&&gMemoryMapTerminated&&Owners.Report.Clean);++interrupt_calls;return EFI_SUCCESS;}
 VOID CoreNotifySignalList(CONST EFI_GUID*G){
- if(G==&gEfiEventBeforeExitBootServicesGuid){assert(Owners.Report.Clean&&Late.RetireCalls==1);++before_events;}
+ if(G==&gEfiEventBeforeExitBootServicesGuid){assert(Owners.Report.Clean&&(Late.RetireCalls==1||(Late.RawMode&&!Late.RetireCalls)));++before_events;if(Late.RawMode)++mMemoryMapKey;}
  else if(G==&gEfiEventExitBootServicesGuid){assert(gMemoryMapTerminated&&Owners.Report.Clean);++exit_events;}
  else if(G==&gEventExitBootServicesFailedGuid){assert(!gMemoryMapTerminated&&before_events==1);++failed_events;}
  else assert(!"unknown Core notification");}
@@ -102,11 +105,29 @@ static void Setup(void){
  Loaded=NativeImage.Info;mCurrentImage=&NativeImage;
  gMemoryMap.ForwardLink=gMemoryMap.BackLink=&gMemoryMap;Timer.SetTimerPeriod=TimerPeriod;Cpu.DisableInterrupt=Disable;
 }
-int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);assert(scenario<18);Setup();
+int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);assert(scenario<21);Setup();
  PIANO_LATE_HANDOFF_ENV Env={.Context=&Late,.Services=&Bs,.SystemTable=&SystemTable,.ParentImage=Parent,.Owners=&Owners,
   .BootServicesAlive=Alive,.CheckMemory=Memory,.ValidateMemory=Validate,.FailStop=Fail};
+ if(scenario>=18){Env.ParentImage=Child;Env.ValidateRaw=RawValidate;}
  assert(PianoLateHandoffInitialize(&Late,&Env)==EFI_SUCCESS&&Late.Phase==PianoExitUnarmed&&installs==1);
  locates=0;
+ if(scenario>=18){
+  RawReport=(PIANO_RAW_LINUX_REPORT){.Revision=1,.Epoch=123,.Image=Child,.Identity=&NativeImage.Info,.Token=(VOID*)0x444};
+  assert(PianoLateHandoffArmRaw(&Late,Child,&RawReport)==EFI_ACCESS_DENIED&&!memchecks&&!Calls);
+  assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS&&Owners.Report.Clean);
+  PIANO_RAW_LINUX_REPORT Forged=RawReport;
+  assert(PianoLateHandoffArmRaw(&Late,Child,&Forged)==EFI_ACCESS_DENIED);
+  assert(PianoLateHandoffArmRaw(&Late,Parent,&RawReport)==EFI_ACCESS_DENIED);
+  EFI_STATUS Armed=PianoLateHandoffArmRaw(&Late,Child,&RawReport);
+  if(scenario==19){assert(Armed==EFI_ACCESS_DENIED&&!Late.RawMode&&!memchecks);return 0;}
+  assert(Armed==EFI_SUCCESS&&Late.RawMode&&!Late.Memory.FullDdr&&!memchecks);
+  assert(PianoLateHandoffDisarm(&Late)==EFI_ACCESS_DENIED);
+  UINTN Saved=Calls;assert(CoreExitBootServices(Child,10)==EFI_INVALID_PARAMETER&&Late.Phase==PianoExitArmed&&!before_events);
+  assert(CoreExitBootServices(Child,mMemoryMapKey)==EFI_INVALID_PARAMETER&&Late.Phase==PianoExitClean&&Calls==Saved&&!memchecks&&!Late.RetireCalls);
+  if(scenario==20){RawReport.Kernel=0xdead;int Fatal=setjmp(jump);if(!Fatal)CoreExitBootServices(Child,mMemoryMapKey);assert(Fatal&&!gMemoryMapTerminated);return 0;}
+  assert(CoreExitBootServices(Child,mMemoryMapKey)==EFI_SUCCESS&&gMemoryMapTerminated&&Calls==Saved&&!memchecks&&!Late.RetireCalls);
+  puts("Raw Core EBS: trusted pre-retired report, no full-DDR claim, standard key retry, immutable authority passed");return 0;
+ }
  if(scenario==15){PIANO_LATE_HANDOFF Other={0};assert(PianoLateHandoffInitialize(&Other,&Env)==EFI_ALREADY_STARTED&&installs==1&&!Other.Signature);return 0;}
  // Provider snapshots the actual current native loaded object via Handle.
  Loaded=NativeImage.Info;

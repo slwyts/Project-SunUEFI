@@ -3,6 +3,7 @@
 #include "PianoProductCore.h"
 #include "PianoProductPayload.h"
 #include "PianoProductOwners.h"
+#include "PianoRawLinuxBoot.h"
 #include "PianoFastbootBlockRead.h"
 #include "PianoKeysLifecycle.h"
 #include "PianoRamPartition.h"
@@ -304,6 +305,7 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   PIANO_DWC3_SERVICE_CONFIG UsbConfig={.Context=NULL,.NowUs=NowUs,.Storage=Storage,
     .BeforeRamlog=ProductDebugReplay};
   BootLogStage("USB",EFI_NOT_STARTED);
+  Status=PianoRawLinuxRegister(Image,SystemTable);if(Status!=EFI_SUCCESS)FailStop(Status);
   Status=PianoUsbControllerServiceStart(Fdt,&UsbConfig);BootLogStage("USB",Status);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_USB_START status=%r resident_service=1 foreground_loop=0\n",Status));
   if(Status!=EFI_SUCCESS)FailStop(Status);
@@ -323,7 +325,8 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   Status=PianoProductOwnersInitialize(&mOwners,&Config);if(Status!=EFI_SUCCESS)FailStop(Status);
   PIANO_LATE_HANDOFF_ENV Late={.Context=NULL,.Services=gBS,.SystemTable=SystemTable,
     .ParentImage=Image,.Owners=&mOwners,.BootServicesAlive=LateServicesAlive,
-    .CheckMemory=LateMemoryUnavailable,.ValidateMemory=LateValidateMemory,.FailStop=LateFailStop};
+    .CheckMemory=LateMemoryUnavailable,.ValidateMemory=LateValidateMemory,.FailStop=LateFailStop,
+    .ValidateRaw=PianoRawLinuxPrepared};
   Status=PianoLateHandoffInitialize(&mLateHandoff,&Late);if(Status!=EFI_SUCCESS)FailStop(Status);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_LATE_EXIT provider_bound=1 phase=unarmed full_ddr_ready=0\n"));
   Status=PianoBootPolicyStartupWindow(3000);
@@ -343,8 +346,13 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
       if(mOwners.Report.AllowedAction==PianoUsbServiceActionReboot || mOwners.Report.AllowedAction==PianoUsbServiceActionContinue) {
         gRT->ResetSystem(EfiResetCold,EFI_SUCCESS,0,NULL);FailStop(EFI_ABORTED);
       }
-      // Boot token handoff needs the generalized OS loader. Never relabel a
-      // retained token or a clean Stop as successful execution of that image.
+      if(mOwners.Report.AllowedAction==PianoUsbServiceActionBoot){
+        CONST PIANO_RAW_LINUX_REPORT *Raw=NULL;
+        Status=PianoRawLinuxPrepare(&mOwners,Image,&Raw);
+        if(Status==EFI_SUCCESS)Status=PianoLateHandoffArmRaw(&mLateHandoff,Image,Raw);
+        if(Status==EFI_SUCCESS)Status=PianoRawLinuxEnter(Raw);
+        FailStop(Status==EFI_SUCCESS?EFI_ABORTED:Status);
+      }
       FailStop(EFI_UNSUPPORTED);
     }
     if(Status!=EFI_SUCCESS && Status!=EFI_ABORTED)FailStop(Status);

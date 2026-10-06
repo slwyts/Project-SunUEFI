@@ -55,6 +55,7 @@ typedef struct {
   // Called only after the proof is populated. Move exclusive source ownership
   // to driver-lifetime storage; never LoadImage/StartImage from this callback.
   EFI_STATUS (*TakeAfterAck)(VOID *Context,PIANO_FASTBOOT *Source,CONST PIANO_FB_BOOT_VIEW *View,VOID **Token);
+  BOOLEAN AllowRawLinux; // Opt-in: Android v2 Image/initrd/full-DTB, validated by the registered owner.
 } PIANO_FB_BOOT;
 typedef struct {
   VOID *Context,*Token;

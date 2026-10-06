@@ -134,7 +134,7 @@ EFI_STATUS PianoRunUsbRamBoot(CONST VOID *Fdt,EFI_HANDLE Parent) {
   if(Fence!=EFI_SUCCESS)return CloseFence(EFI_ERROR(Fence)?Fence:EFI_DEVICE_ERROR);
   if(mSession.EbsEvent==NULL)FailStop(&mSession,EFI_COMPROMISED_DATA);
   if(!Alive(&mSession))FailStop(&mSession,EFI_ABORTED);
-  PIANO_FB_BOOT Backend={&mSession,0x100000,FALSE,Ready,Validate,TakeAfterAck};
+  PIANO_FB_BOOT Backend={&mSession,0x100000,FALSE,Ready,Validate,TakeAfterAck,FALSE};
   PIANO_FB_BOOT_ACTION Action;BOOLEAN Reboot=FALSE;
   EFI_STATUS Status=PianoUsbControllerRunForRamBoot(Fdt,&Backend,&Action,&mSession.Retire,&Reboot);
   if(!Alive(&mSession))FailStop(&mSession,EFI_ABORTED);

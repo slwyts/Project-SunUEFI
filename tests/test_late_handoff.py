@@ -46,7 +46,7 @@ class LateHandoffTests(unittest.TestCase):
      str(ROOT/'bootprofiles/product-handoff/Mu_Basecore/MdePkg/Library/PianoProductExitLib/PianoProductExitLib.c'),
      str(ROOT/'bootprofiles/os-boot/PianoCpuInput.c'),'-lcrypto','-o',str(exe)]
    subprocess.run(command,check=True,timeout=60)
-   for case in range(18):subprocess.run([str(exe),str(case)],check=True,timeout=60)
+   for case in range(21):subprocess.run([str(exe),str(case)],check=True,timeout=60)
    native=p/'native-launch';joint=list(command)
    joint[joint.index(str(ROOT/'tests/PianoLateHandoffTest.c'))]=str(ROOT/'tests/PianoNativeLaunchTest.c')
    joint[joint.index('-o')+1]=str(native)

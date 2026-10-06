@@ -101,6 +101,18 @@ int main(void) {
   ((UINT32 *)Wrapped)[4]=1;cmd("boot","FAILunsupported RAM boot image");((UINT32 *)Wrapped)[4]=0;
   assert(PianoFastbootPacket(&mFastboot,"boot",4)==EFI_SUCCESS && mFastboot.BootPending && mFastboot.BootView.Wrapped && mFastboot.BootView.Offset==2048 && !take_calls);
   ClearFrames();PianoFastbootReset(&mFastboot);
+  // Raw Linux stays opt-in. A strict v2 three-component container reaches
+  // the owner validator only when that particular backend enables it.
+  UINT8 *LinuxImage=AllocateZeroPool(8192);CopyMem(LinuxImage,"ANDROID!",8);
+  ((UINT32 *)LinuxImage)[2]=1024;((UINT32 *)LinuxImage)[4]=1;((UINT32 *)LinuxImage)[9]=2048;
+  ((UINT32 *)LinuxImage)[10]=2;((UINT32 *)LinuxImage)[411]=1660;((UINT32 *)LinuxImage)[412]=40;
+  CopyMem(LinuxImage+2048,payload,sizeof(payload));
+  mFastboot.Download=mFastboot.Upload=LinuxImage;mFastboot.Expected=mFastboot.Received=mFastboot.UploadBytes=8192;mFastboot.Complete=mFastboot.UploadBorrowed=TRUE;
+  UINTN Validations=validate_calls;cmd("boot","FAILunsupported RAM boot image");assert(validate_calls==Validations);
+  PIANO_FB_BOOT RawBackend=backend;RawBackend.AllowRawLinux=TRUE;assert(PianoFastbootSetBoot(&mFastboot,&RawBackend)==EFI_SUCCESS);
+  test_case=21;cmd("boot","FAILRAM boot policy rejected");assert(validate_calls==Validations+1);test_case=0;
+  ((UINT32 *)LinuxImage)[6]=1;cmd("boot","FAILunsupported RAM boot image");assert(validate_calls==Validations+1);
+  ClearFrames();PianoFastbootReset(&mFastboot);
   mFastboot.Download=mFastboot.Upload=AllocateZeroPool(1024);CopyMem(mFastboot.Download,payload,1024);mFastboot.Expected=mFastboot.Received=mFastboot.UploadBytes=1024;mFastboot.Complete=mFastboot.UploadBorrowed=TRUE;
   PIANO_FB_BOOT Local=backend;assert(PianoFastbootSetBoot(&mFastboot,&Local)==EFI_SUCCESS);Local.TakeAfterAck=NULL;assert(mFastboot.Boot.TakeAfterAck==backend.TakeAfterAck);
   out("boot",4);assert(mFastboot.BootPending && !mBootAckObserved && !take_calls);assert(PianoFastbootSetBoot(&mFastboot,NULL)==EFI_NOT_READY);

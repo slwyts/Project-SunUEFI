@@ -39,12 +39,16 @@ STATIC BOOLEAN LateClean(PIANO_LATE_HANDOFF *S){
  (R->RegisteredStartedMask|R->RegisteredAbsentMask)==PIANO_OWNER_ALL_MASK&&
  !CompareMem(R,&S->CleanOwners,sizeof(*R));
 }
+STATIC BOOLEAN LateRaw(PIANO_LATE_HANDOFF *S){return S->RawMode&&S->Image==S->Env.ParentImage&&S->Raw&&S->Env.ValidateRaw&&
+ !CompareMem(S->Raw,&S->RawSnapshot,sizeof(S->RawSnapshot))&&S->RawSnapshot.Epoch&&
+ S->Env.ValidateRaw(S->Raw,S->Env.Owners,S->Image);}
 STATIC EFI_STATUS EFIAPI LateObserve(PIANO_PRODUCT_EXIT_PROTOCOL *P,EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *L,UINT64 *Epoch){
  PIANO_LATE_HANDOFF *S=BASE_CR(P,PIANO_LATE_HANDOFF,Protocol);
  if(S->Signature!=LATE_SIG||!Epoch||LateOverlap(Epoch,sizeof(*Epoch),S,sizeof(*S))||
     LateOverlap(Epoch,sizeof(*Epoch),S->Env.Owners,sizeof(*S->Env.Owners))||
     S->Retained||S->Phase!=PianoExitClean||S->Busy||!LateIdentity(S,Image,L)||!LateClean(S))return EFI_COMPROMISED_DATA;
- *Epoch=S->Memory.BootEpoch;return EFI_SUCCESS; // no BS, HAL or provider lookup
+ if(S->RawMode&&!LateRaw(S))return EFI_COMPROMISED_DATA;
+ *Epoch=S->RawMode?S->RawSnapshot.Epoch:S->Memory.BootEpoch;return EFI_SUCCESS; // no BS, HAL or provider lookup
 }
 STATIC VOID EFIAPI LateFail(PIANO_PRODUCT_EXIT_PROTOCOL *P,EFI_STATUS E){LateStop(BASE_CR(P,PIANO_LATE_HANDOFF,Protocol),E);}
 STATIC EFI_STATUS EFIAPI LateEnter(PIANO_PRODUCT_EXIT_PROTOCOL *P,EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *L,UINTN MapKey){
@@ -52,6 +56,10 @@ STATIC EFI_STATUS EFIAPI LateEnter(PIANO_PRODUCT_EXIT_PROTOCOL *P,EFI_HANDLE Ima
  if(S->Signature!=LATE_SIG||S->Retained||!S->Installed)return EFI_NOT_READY;
  if(S->Busy)return EFI_ALREADY_STARTED;
  if(S->Phase!=PianoExitArmed||!LateIdentity(S,Image,L))return EFI_ACCESS_DENIED;
+ if(S->RawMode){
+   if(!LateLive(S)||!LateRaw(S)||!LateClean(S))return EFI_ACCESS_DENIED;
+   S->CallerMapKey=MapKey;++S->ExitCalls;S->Phase=PianoExitClean;return S->Status=EFI_SUCCESS;
+ }
  EFI_STATUS E=LateApp(S);if(E!=EFI_SUCCESS)return E;
  if(CompareMem(&S->Env.Owners->Config,&S->OwnerConfig,sizeof(S->OwnerConfig)))return EFI_COMPROMISED_DATA;
  PIANO_LINUX_MEMORY_PROOF Fresh;E=LateMemory(S,&Fresh);if(E!=EFI_SUCCESS)return E;
@@ -98,10 +106,26 @@ EFI_STATUS PianoLateHandoffArm(PIANO_LATE_HANDOFF *S,EFI_HANDLE Image){
 }
 EFI_STATUS PianoLateHandoffDisarm(PIANO_LATE_HANDOFF *S){
  if(!S||S->Signature!=LATE_SIG||!S->Installed)return EFI_INVALID_PARAMETER;
- if(S->Phase!=PianoExitArmed||S->Busy||S->Retained||S->RetireCalls)return EFI_ACCESS_DENIED;
+ if(S->Phase!=PianoExitArmed||S->Busy||S->Retained||S->RetireCalls||S->RawMode)return EFI_ACCESS_DENIED;
  EFI_STATUS E=LateApp(S);if(E!=EFI_SUCCESS)return E;
  S->Image=NULL;S->Identity=NULL;ZeroMem(&S->Loaded,sizeof(S->Loaded));ZeroMem(&S->Memory,sizeof(S->Memory));
  S->Phase=PianoExitUnarmed;return S->Status=EFI_SUCCESS;
+}
+EFI_STATUS PianoLateHandoffArmRaw(PIANO_LATE_HANDOFF *S,EFI_HANDLE Image,CONST PIANO_RAW_LINUX_REPORT *R){
+ if(!S||S->Signature!=LATE_SIG||!S->Installed||S->Retained||!R||!S->Env.ValidateRaw||Image!=S->Env.ParentImage)return EFI_ACCESS_DENIED;
+ if(S->Phase!=PianoExitUnarmed||S->Busy||S->RawMode)return EFI_ALREADY_STARTED;
+ EFI_STATUS E=LateApp(S);if(E!=EFI_SUCCESS)return E;
+ // The Root-installed callback accepts only its own live download session;
+ // a caller-created report or boolean readiness flag cannot arm raw EBS.
+ if(!S->Env.ValidateRaw(R,S->Env.Owners,Image))return EFI_ACCESS_DENIED;
+ EFI_LOADED_IMAGE_PROTOCOL *L=NULL;E=S->Env.Services->HandleProtocol(Image,&gEfiLoadedImageProtocolGuid,(VOID **)&L);
+ if(E!=EFI_SUCCESS||!LateLive(S))return E==EFI_SUCCESS?EFI_ABORTED:E;
+ if(!L||L!=R->Identity||R->Image!=Image||R->Revision!=1||!R->Epoch||!R->Token||
+ L->SystemTable!=S->Env.SystemTable||!L->ImageBase||!L->ImageSize||L->ImageCodeType!=EfiLoaderCode||L->ImageDataType!=EfiLoaderData)return EFI_COMPROMISED_DATA;
+ S->OwnerConfig=S->Env.Owners->Config;S->CleanOwners=S->Env.Owners->Report;
+ if(!LateClean(S))return EFI_ACCESS_DENIED;
+ S->Image=Image;S->Identity=L;S->Loaded=*L;S->Raw=R;S->RawSnapshot=*R;S->RawMode=TRUE;
+ S->Phase=PianoExitArmed;return S->Status=EFI_SUCCESS;
 }
 EFI_STATUS PianoLateHandoffShutdown(PIANO_LATE_HANDOFF *S){
  if(!S||S->Signature!=LATE_SIG||!S->Installed)return EFI_INVALID_PARAMETER;

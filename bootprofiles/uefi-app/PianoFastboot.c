@@ -84,7 +84,10 @@ STATIC EFI_STATUS BootCommand(PIANO_FASTBOOT *S) {
   if(Status!=EFI_SUCCESS)goto Rejected;
   PIANO_BOOT_SOURCE Source={S,BootRead,Bytes};Status=PianoFastbootBootParse(&Source,&Image);
   Failure="FAILunsupported RAM boot image";if(Status!=EFI_SUCCESS)goto Rejected;
-  if(Image.Kind==PianoBootAndroid && (!Image.KernelIsArm64Pe || Image.Ramdisk.Bytes || Image.Second.Bytes || Image.RecoveryDtbo.Bytes || Image.Dtb.Bytes ||
+  BOOLEAN Raw=S->Boot.AllowRawLinux && Image.Kind==PianoBootAndroid && Image.Version==2 &&
+    Image.Kernel.Bytes>=64 && Image.Ramdisk.Bytes && Image.Dtb.Bytes>=40 &&
+    !Image.Second.Bytes && !Image.RecoveryDtbo.Bytes && !Image.Signature.Bytes && !Image.Trailing.Bytes;
+  if(!Raw && Image.Kind==PianoBootAndroid && (!Image.KernelIsArm64Pe || Image.Ramdisk.Bytes || Image.Second.Bytes || Image.RecoveryDtbo.Bytes || Image.Dtb.Bytes ||
     (Image.KnownV4CliHeaderQuirk && !S->Boot.AllowKnownV4CliHeaderQuirk)))goto Rejected;
   if(Image.Kind!=PianoBootAndroid && Image.Kind!=PianoBootArm64Pe)goto Rejected;
   Failure="FAILRAM boot exceeds image budget";
