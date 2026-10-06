@@ -7,6 +7,17 @@ by `fastboot boot`, a boot entry or a recovery entry. Physical acceptance of
 those three entry paths is still pending. The builder does not flash partitions,
 change slots or contact a device.
 
+Current installation status (2026-10-07): temporary `fastboot boot` of the
+canonical product is verified. Recovery installation was rejected by ABL, both
+without AVB metadata and with a structurally valid recovery hash/footer. Stock
+recovery was restored and read back exactly, the A-slot failure flag and the
+leftover recovery request were cleared, and ordinary on-disk Android boot was
+verified. Do not treat the raw product or the host-verified recovery install
+container as a release accepted by the recovery entry. The bounded installer
+`tools/package_piano_recovery_avb.py` preserves the canonical product prefix and
+adds target metadata; it does not create another firmware feature profile.
+Recovery-load/authentication acceptance remains unresolved.
+
 ```sh
 bash tools/build_product.sh > build/logs/product-integration-build.txt 2>&1
 python3 tools/build_integrity.py validate --profile product
