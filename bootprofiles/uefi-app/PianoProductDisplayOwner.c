@@ -31,6 +31,7 @@ VOID PianoProductDisplayFenceExit(VOID){
   if(!mDisplay.Attempted)return;
   mDisplay.ServicesLost=mDisplay.Retained=TRUE;
   PianoDisplayClockReadFenceExit(&mDisplay.Reader);
+  mDisplay.Lease.BorrowToken=0;
   mDisplay.Lease.Report.ServicesLost=mDisplay.Lease.Report.Retained=TRUE;
 }
 EFI_STATUS PianoProductDisplayClockObserve(CONST CHAR8 *Phase,PIANO_PRODUCT_DISPLAY_ALIVE Alive){

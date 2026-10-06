@@ -44,7 +44,7 @@ VOID EFIAPI DebugAssert(CONST CHAR8 *F,UINTN L,CONST CHAR8 *D){fprintf(stderr,"P
 VOID EFIAPI DebugPrint(UINTN L,CONST CHAR8 *Fmt,...){assert(ServicesLive&&L);CHAR8 B[256];VA_LIST A;VA_START(A,Fmt);UINTN N=AsciiVSPrint(B,sizeof(B),Fmt,A);VA_END(A);assert(N&&N<180&&B[N-1]=='\n');Logs++;}
 VOID EFIAPI CpuDeadLoop(VOID){assert(!"unexpected fatal fixture fault");abort();}
 static BOOLEAN EFIAPI Alive(VOID){return ServicesLive;}
-static VOID Lost(VOID){PianoProductDisplayFenceExit();ServicesLive=FALSE;gBS=(VOID *)1;gDS=(VOID *)1;}
+static VOID Lost(VOID){Lease->BorrowToken=17;PianoProductDisplayFenceExit();assert(!Lease->BorrowToken);ServicesLive=FALSE;gBS=(VOID *)1;gDS=(VOID *)1;}
 static EFI_TPL EFIAPI Raise(EFI_TPL N){assert(ServicesLive);EFI_TPL Old=Tpl;Tpl=N;return Old;}
 static VOID EFIAPI Restore(EFI_TPL N){assert(ServicesLive);Tpl=N;}
 static EFI_STATUS EFIAPI Register(EFI_CPU_ARCH_PROTOCOL *P,EFI_EXCEPTION_TYPE T,EFI_CPU_INTERRUPT_HANDLER H){assert(ServicesLive&&P==&Cpu&&(T==0||T==3));if(H){assert(!Handlers[T]);Handlers[T]=H;}else{assert(Handlers[T]);Handlers[T]=NULL;}return EFI_SUCCESS;}
