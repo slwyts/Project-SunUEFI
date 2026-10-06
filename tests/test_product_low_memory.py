@@ -22,6 +22,26 @@ def function(text,name):
 
 
 class ProductLowMemoryTests(unittest.TestCase):
+    def test_actual_product_native_table_aliases_and_current_records(self):
+        import hashlib
+        source=ROOT/'bootprofiles/uefi-app/PianoPlatformMemoryContract.c'
+        native=ROOT/'platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'
+        dt=ROOT/'artifacts/linux-assembled/piano-stable-next-20261006/EFI/Piano/stable/piano.dtb'
+        raw=ROOT/'private/analysis/usb-live-test95/ram402.bin'
+        self.assertEqual(hashlib.sha256(dt.read_bytes()).hexdigest(),'c2cb041e2b286713c225af7bf0e3a5f7eec8926db168149984823c25ad3f38c4')
+        self.assertEqual(hashlib.sha256(raw.read_bytes()).hexdigest(),'16aed6a815309af4109f34000f43de0058d310e293b2aecc29c6d4d9a7ed828c')
+        libfdt=BASE/'MdePkg/Library/BaseFdtLib/libfdt/libfdt'
+        with tempfile.TemporaryDirectory(prefix='piano-actual-product-contract-')as directory:
+            tmp=Path(directory);(tmp/'PianoActualProductTable.c').write_bytes(native.read_bytes());exe=tmp/'contract'
+            includes=[source.parent,tmp,BASE/'MdePkg/Include',BASE/'MdePkg/Include/X64',BASE/'MdeModulePkg/Include',BASE/'UefiCpuPkg/Include',BASE/'EmbeddedPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include',libfdt]
+            cmd=['cc','-std=gnu11','-fshort-wchar','-g','-fsanitize=address,undefined','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-include',str(ROOT/'tests/PianoCmaPcdShim.h')]
+            for include in includes:cmd+=['-I',str(include)]
+            cmd+=[str(ROOT/'tests/PianoPlatformProductTableTest.c'),str(ROOT/'tests/PianoPlatformFdtHost.c'),str(source),str(ROOT/'bootprofiles/early-memory/PianoSmemRam.c'),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c')]
+            cmd+=[str(libfdt/name)for name in ('fdt.c','fdt_ro.c','fdt_check.c')];cmd+=['-Wl,--gc-sections','-o',str(exe)]
+            build=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(build.returncode,0,build.stdout+build.stderr)
+            run=subprocess.run([str(exe),str(dt),str(raw)],capture_output=True,text=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'});self.assertEqual(run.returncode,0,run.stdout+run.stderr);print(run.stdout.strip())
+        inc=BASE/'MdePkg/Include'
+        subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-I'+str(inc),'-I'+str(inc/'AArch64'),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),str(source)],check=True)
     def test_semantic_dt_and_native_cache_preservation(self):
         original=(ROOT/'platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c').read_text()
         dt=(ROOT/'private/captures/2026-10-03-piano/live.dtb').read_bytes()

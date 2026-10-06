@@ -10,6 +10,14 @@ typedef struct {UINT64 Begin,End;BOOLEAN Cma;} SPAN;
 STATIC UINT64 Be(CONST UINT8 *P,UINTN N){UINT64 V=0;for(UINTN I=0;I<N;++I)V=(V<<8)|P[I];return V;}
 STATIC BOOLEAN Valid(UINT64 B,UINT64 N){return N&&B<=MAX_UINT64-N;}
 STATIC BOOLEAN Overlap(UINT64 A,UINT64 B,UINT64 C,UINT64 D){return A<D&&C<B;}
+STATIC BOOLEAN MmioAlias(CONST EFI_MEMORY_REGION_DESCRIPTOR *A,CONST EFI_MEMORY_REGION_DESCRIPTOR *B){
+  if(A->HobOption!=AddDev||B->HobOption!=AddDev||A->ResourceType!=MMAP_IO||B->ResourceType!=MMAP_IO||
+     A->MemoryType!=EfiMemoryMappedIO||B->MemoryType!=EfiMemoryMappedIO||
+     A->ArmAttributes!=ARM_MEMORY_REGION_ATTRIBUTE_DEVICE||B->ArmAttributes!=A->ArmAttributes||
+     A->ResourceAttribute!=B->ResourceAttribute)return FALSE;
+  return (A->Address<=B->Address&&B->Address+B->Length<=A->Address+A->Length)||
+    (B->Address<=A->Address&&A->Address+A->Length<=B->Address+B->Length);
+}
 STATIC BOOLEAN Covered(SPAN *S,UINTN N,UINT64 B,UINT64 E){for(UINTN I=0;I<N;++I)if(B>=S[I].Begin&&E<=S[I].End)return TRUE;return FALSE;}
 STATIC EFI_STATUS Add(SPAN *S,UINTN *N,UINT64 B,UINT64 Z,BOOLEAN Cma,BOOLEAN Outward){
   if(!Z)return EFI_SUCCESS;if(!Valid(B,Z)||*N>=MAX_SPANS)return EFI_COMPROMISED_DATA;
@@ -61,15 +69,17 @@ EFI_STATUS PianoPlatformMemoryCompose(CONST PIANO_PLATFORM_MEMORY_INPUT *I,PIANO
       BOOLEAN Reuse=Prop(I->Fdt,Node,"reusable"),NoMap=Prop(I->Fdt,Node,"no-map");if(Reuse&&NoMap)return C->Status=EFI_COMPROMISED_DATA;
       S=Pairs(I->Fdt,Node,Fixed,&Nf,Enabled&&Reuse&&!NoMap&&Compat(I->Fdt,Node),TRUE);if(S!=EFI_SUCCESS)return C->Status=S;
     }else if(Prop(I->Fdt,Node,"size")){
-      BOOLEAN Known=FALSE;for(UINTN X=0;X<I->OwnerCount;++X)if(I->KnownOwners[X].DynamicNode==Node)Known=TRUE;
-      if(!Known)++C->UnplacedDynamicConstraints;
+      // Generic Linux reserved-memory allocates these requests in memblock
+      // after EBS. Their envelopes are not present UEFI owner intervals.
+      // Any real current owner supplied by Root is independently excluded.
+      ++C->FutureLinuxDynamicConstraints;
     }
   }
   if(Node!=-FDT_ERR_NOTFOUND)return C->Status=EFI_COMPROMISED_DATA;
   INTN Reserves=FdtGetNumberOfReserveMapEntries(I->Fdt);if(Reserves<0||(UINTN)Reserves>MAX_SPANS)return C->Status=EFI_COMPROMISED_DATA;
   for(INTN X=0;X<Reserves;++X){UINT64 B,Z;if(FdtGetReserveMapEntry(I->Fdt,X,&B,&Z))return C->Status=EFI_COMPROMISED_DATA;S=Add(Fixed,&Nf,B,Z,FALSE,TRUE);if(S!=EFI_SUCCESS)return C->Status=S;}
   C->FixedReservations=(UINT32)Nf;
-  for(UINTN X=0;X<R->BankCount;++X){if(!Valid(R->Banks[X].Base,R->Banks[X].AvailableLength))return C->Status=EFI_COMPROMISED_DATA;S=Add(Banks,&Nb,R->Banks[X].Base,R->Banks[X].AvailableLength,FALSE,FALSE);if(S!=EFI_SUCCESS)return C->Status=S;}
+  for(UINTN X=0;X<R->BankCount;++X){if(!R->Banks[X].AvailableLength)continue;if(!Valid(R->Banks[X].Base,R->Banks[X].AvailableLength))return C->Status=EFI_COMPROMISED_DATA;S=Add(Banks,&Nb,R->Banks[X].Base,R->Banks[X].AvailableLength,FALSE,FALSE);if(S!=EFI_SUCCESS)return C->Status=S;}
   for(UINTN X=0;X<Nb;++X)for(UINTN Y=0;Y<X;++Y)if(Overlap(Banks[X].Begin,Banks[X].End,Banks[Y].Begin,Banks[Y].End))return C->Status=EFI_COMPROMISED_DATA;
   for(UINTN X=0;X<Nd;++X)for(UINTN Y=0;Y<X;++Y)if(Overlap(Dram[X].Begin,Dram[X].End,Dram[Y].Begin,Dram[Y].End))return C->Status=EFI_COMPROMISED_DATA;
   for(UINTN X=0;X<R->PreloadedCount;++X){if(!Valid(R->Preloaded[X].Base,R->Preloaded[X].Size))return C->Status=EFI_COMPROMISED_DATA;S=Add(Owners,&No,R->Preloaded[X].Base,R->Preloaded[X].Size,FALSE,TRUE);if(S!=EFI_SUCCESS)return C->Status=S;}
@@ -78,7 +88,7 @@ EFI_STATUS PianoPlatformMemoryCompose(CONST PIANO_PLATFORM_MEMORY_INPUT *I,PIANO
   BOOLEAN Heap=FALSE;for(UINTN X=0;X<I->NativeCount;++X){CONST EFI_MEMORY_REGION_DESCRIPTOR *N=&I->Native[X];
     BOOLEAN Terminated=FALSE;for(UINTN Y=0;Y<sizeof(N->Name);++Y)if(!N->Name[Y])Terminated=TRUE;if(!Terminated)return C->Status=EFI_COMPROMISED_DATA;
     if(!Valid(N->Address,N->Length)||(N->Address|N->Length)&4095)return C->Status=EFI_COMPROMISED_DATA;
-    for(UINTN Y=0;Y<X;++Y)if(Overlap(N->Address,N->Address+N->Length,I->Native[Y].Address,I->Native[Y].Address+I->Native[Y].Length))return C->Status=EFI_COMPROMISED_DATA;
+    for(UINTN Y=0;Y<X;++Y)if(Overlap(N->Address,N->Address+N->Length,I->Native[Y].Address,I->Native[Y].Address+I->Native[Y].Length)&&!MmioAlias(N,&I->Native[Y]))return C->Status=EFI_COMPROMISED_DATA;
     if(!AsciiStrCmp(N->Name,"DXE_Heap")){if(Heap||N->Address!=0xBD980000||N->Length!=0x174A3000||N->MemoryType!=EfiConventionalMemory)return C->Status=EFI_ACCESS_DENIED;Heap=TRUE;}
     C->Rows[C->Count++]=*N;
   }if(!Heap)return C->Status=EFI_NOT_FOUND;
@@ -109,9 +119,15 @@ EFI_STATUS PianoPlatformMemoryAuthorizeCold(CONST PIANO_PLATFORM_MEMORY_INPUT *I
   C->ReadyForMemoryPeim=FALSE;C->AuthorizationAttempted=TRUE;if(!A)return C->Authorization=EFI_NOT_READY;
   // Same input set must still compose identically; no mutable owner/DT snapshot.
   PIANO_PLATFORM_MEMORY_CONTRACT Fresh;EFI_STATUS S=PianoPlatformMemoryCompose(I,&Fresh);
-  if(S!=EFI_SUCCESS||Fresh.InputFingerprint!=C->InputFingerprint||Fresh.Count!=C->Count||CompareMem(Fresh.Rows,C->Rows,C->Count*sizeof(C->Rows[0])))return C->Authorization=EFI_COMPROMISED_DATA;
+  if(S!=EFI_SUCCESS||Fresh.InputFingerprint!=C->InputFingerprint||Fresh.Count!=C->Count||
+     Fresh.FixedReservations!=C->FixedReservations||Fresh.UnplacedDynamicConstraints!=C->UnplacedDynamicConstraints||
+     Fresh.FutureLinuxDynamicConstraints!=C->FutureLinuxDynamicConstraints||
+     CompareMem(Fresh.Rows,C->Rows,C->Count*sizeof(C->Rows[0])))return C->Authorization=EFI_COMPROMISED_DATA;
   S=A(Context,I,C);C->Authorization=S==EFI_SUCCESS?S:EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
-  if(Fingerprint(I)!=C->InputFingerprint||Fresh.Count!=C->Count||CompareMem(Fresh.Rows,C->Rows,C->Count*sizeof(C->Rows[0])))return C->Authorization=EFI_COMPROMISED_DATA;
+  if(Fingerprint(I)!=C->InputFingerprint||Fresh.Count!=C->Count||
+     Fresh.FixedReservations!=C->FixedReservations||Fresh.UnplacedDynamicConstraints!=C->UnplacedDynamicConstraints||
+     Fresh.FutureLinuxDynamicConstraints!=C->FutureLinuxDynamicConstraints||
+     CompareMem(Fresh.Rows,C->Rows,C->Count*sizeof(C->Rows[0])))return C->Authorization=EFI_COMPROMISED_DATA;
   C->ReadyForMemoryPeim=S==EFI_SUCCESS;return C->Authorization;
 }
 EFI_STATUS PianoPlatformMemoryAcquireForMemoryPeim(PIANO_PLATFORM_MEMORY_CONTRACT *C,EFI_MEMORY_REGION_DESCRIPTOR **Rows,UINT8 *Count){

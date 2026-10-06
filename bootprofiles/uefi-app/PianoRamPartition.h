@@ -2,13 +2,15 @@
 #pragma once
 #include <Uefi.h>
 #define PIANO_RAM_PARTITION_MAX 32U
+// Exact native current record. AvailableLength==0 is preserved as an empty
+// observation, with no allocation/map authority.
 typedef struct {UINT64 Base,AvailableLength;} PIANO_RAM_BANK;
 // Native SM8750 Env output; NOT old header's named 48-byte entry.
 typedef struct {UINT64 Base,Size;UINT32 RawType,Padding;} PIANO_RAM_PRELOADED;
 typedef struct {
   EFI_STATUS Status,Locate,Identity,Abi,BanksStatus,PreloadedStatus,Release;
   BOOLEAN Present,IdentityVerified,AbiVerified,FetchAttempted,PotentialFallback,Retained;
-  BOOLEAN DataValid,OwnershipVerified; // final coherent data != target ownership
+  BOOLEAN DataValid,OwnershipVerified; // coherent records (including empty) != ownership
   UINT64 Revision;
   UINTN ImageBase,ImageSize,InterfaceAddress;
   UINT32 BankCount;UINT64 PreloadedCount;

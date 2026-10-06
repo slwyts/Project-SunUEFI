@@ -9,6 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 INCLUDE = ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 CRYPTO = ROOT/'upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include'
 SOURCE = ROOT/'bootprofiles/uefi-app'
+# Explicit pending source permits isolated verification while the product inputs are frozen.
+IMPLEMENTATION = Path(os.environ.get('PIANO_RAM_PARTITION_TEST_SOURCE', str(SOURCE/'PianoRamPartition.c'))).resolve()
+RAW402 = ROOT/'private/analysis/usb-live-test95/ram402.bin'
 PE = ROOT/'upstream/Mu-Silicium/Binaries/piano/Stage0/EnvDxeEnhanced/EnvDxeEnhanced.efi'
 
 
@@ -22,10 +25,11 @@ class RamPartitionTests(unittest.TestCase):
             for path in (INCLUDE, INCLUDE/'X64', CRYPTO, SOURCE):
                 args += ['-I', str(path)]
             args += [str(ROOT/'tests/PianoRamPartitionTest.c'),
-                     str(SOURCE/'PianoRamPartition.c'), '-lcrypto', '-o', str(exe)]
+                     str(IMPLEMENTATION), '-lcrypto', '-o', str(exe)]
             build = subprocess.run(args, capture_output=True, text=True)
             self.assertEqual(build.returncode, 0, build.stdout+build.stderr)
-            run = subprocess.run([str(exe), str(PE)], capture_output=True, text=True,
+            command = [str(exe), str(PE)] + ([str(RAW402)] if RAW402.is_file() else [])
+            run = subprocess.run(command, capture_output=True, text=True,
                                  env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1'})
             self.assertEqual(run.returncode, 0, run.stdout+run.stderr)
             print(run.stdout.strip())
@@ -37,7 +41,7 @@ class RamPartitionTests(unittest.TestCase):
                 '-Wno-misleading-indentation']
         for path in (INCLUDE, INCLUDE/'AArch64', CRYPTO, SOURCE):
             args += ['-I', str(path)]
-        result = subprocess.run(args+[str(SOURCE/'PianoRamPartition.c')],
+        result = subprocess.run(args+[str(IMPLEMENTATION)],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
 

@@ -25,15 +25,19 @@ int main(int argc,char **argv){
   INT32 Node=FdtPathOffset(Dtb,"/memory"),Length;CONST UINT8 *P=FdtGetProp(Dtb,Node,"reg",&Length);assert(P&&Length%16==0);
   for(INT32 X=0;X<Length;X+=16){UINT64 B=0,Z=0;for(unsigned Q=0;Q<8;Q++){B=(B<<8)|P[X+Q];Z=(Z<<8)|P[X+8+Q];}if(Z)inventory.Banks[inventory.BankCount++]=(PIANO_RAM_BANK){B,Z};}
   input=(PIANO_PLATFORM_MEMORY_INPUT){.Native=Native,.NativeCount=N,.Inventory=&inventory,.Fdt=Dtb,.FdtBytes=Bytes,.CpuArenaBase=0xA00000000ULL,.CpuArenaBytes=0x40000000ULL};
-  assert(PianoPlatformMemoryCompose(&input,&contract)==EFI_SUCCESS&&contract.Composed&&!contract.ReadyForMemoryPeim&&contract.UnplacedDynamicConstraints==14&&Named("Piano_CPU_Arena")==1);
+  assert(PianoPlatformMemoryCompose(&input,&contract)==EFI_SUCCESS&&contract.Composed&&!contract.ReadyForMemoryPeim&&
+    !contract.UnplacedDynamicConstraints&&contract.FutureLinuxDynamicConstraints==14&&Named("Piano_CPU_Arena")==1);
   assert(contract.CpuArenaBytes==0x40000000ULL&&contract.AddedOccupiedBytes>13ULL*1024*1024*1024);
-  printf("Host fixture typed contract: rows=%u added_occupied_bytes=%llu unknown_dynamic=%u ready=%u\n",contract.Count,(unsigned long long)contract.AddedOccupiedBytes,contract.UnplacedDynamicConstraints,contract.ReadyForMemoryPeim);
+  printf("Host fixture typed contract: rows=%u added_occupied_bytes=%llu future_linux_dynamic=%u ready=%u\n",contract.Count,(unsigned long long)contract.AddedOccupiedBytes,contract.FutureLinuxDynamicConstraints,contract.ReadyForMemoryPeim);
   for(unsigned X=0;X<N;X++)assert(!memcmp(&Native[X],&contract.Rows[X],sizeof(*Native)));
   for(unsigned X=N;X<contract.Count;X++)assert(contract.Rows[X].MemoryType==EfiLoaderData&&contract.Rows[X].ArmAttributes==ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK_XP);
   EFI_MEMORY_REGION_DESCRIPTOR *Exposed=(VOID *)1;UINT8 Count=99;
   assert(PianoPlatformMemoryAcquireForMemoryPeim(&contract,&Exposed,&Count)==EFI_NOT_READY&&!Exposed&&!Count);
   assert(PianoPlatformMemoryAuthorizeCold(&input,&contract,NULL,NULL)==EFI_NOT_READY&&!contract.ReadyForMemoryPeim);
   assert(PianoPlatformMemoryAuthorizeCold(&input,&contract,Warn,NULL)==EFI_DEVICE_ERROR&&!contract.ReadyForMemoryPeim);
+  contract.FutureLinuxDynamicConstraints=0;
+  assert(PianoPlatformMemoryAuthorizeCold(&input,&contract,ApproveHostOnly,NULL)==EFI_COMPROMISED_DATA&&!contract.ReadyForMemoryPeim);
+  assert(PianoPlatformMemoryCompose(&input,&contract)==EFI_SUCCESS);
   assert(PianoPlatformMemoryAuthorizeCold(&input,&contract,ApproveHostOnly,NULL)==EFI_SUCCESS);
   assert(PianoPlatformMemoryAcquireForMemoryPeim(&contract,&Exposed,&Count)==EFI_SUCCESS&&Count==contract.Count);
   assert(PianoPlatformMemoryAcquireForMemoryPeim(&contract,&Exposed,&Count)==EFI_NOT_READY);

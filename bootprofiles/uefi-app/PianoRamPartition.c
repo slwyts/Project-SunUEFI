@@ -128,8 +128,11 @@ EFI_STATUS PianoRamPartitionInventory(BOOLEAN ExplicitFetch,PIANO_RAM_PARTITION_
     if(S!=EFI_SUCCESS||Capacity!=Banks){S=S==EFI_SUCCESS?EFI_COMPROMISED_DATA:Exact(S);goto Done;}
     R->BankCount=Banks;
     for(UINTN I=0;I<Banks;++I){
-      if(!Range(R->Banks[I].Base,R->Banks[I].AvailableLength)){S=EFI_COMPROMISED_DATA;goto Done;}
-      for(UINTN J=0;J<I;++J)if(R->Banks[I].Base<R->Banks[J].Base+R->Banks[J].AvailableLength&&R->Banks[J].Base<R->Banks[I].Base+R->Banks[I].AvailableLength){S=EFI_COMPROMISED_DATA;goto Done;}
+      // The pinned native getter preserves empty current records. They are
+      // observations, not ranges which can overlap or authorize allocation.
+      if(R->Banks[I].AvailableLength&&!Range(R->Banks[I].Base,R->Banks[I].AvailableLength)){S=EFI_COMPROMISED_DATA;goto Done;}
+      for(UINTN J=0;J<I;++J)if(R->Banks[I].AvailableLength&&R->Banks[J].AvailableLength&&
+        R->Banks[I].Base<R->Banks[J].Base+R->Banks[J].AvailableLength&&R->Banks[J].Base<R->Banks[I].Base+R->Banks[I].AvailableLength){S=EFI_COMPROMISED_DATA;goto Done;}
     }
   }
   R->PotentialFallback=Banks==1&&R->Banks[0].Base==0x80000000&&R->Banks[0].AvailableLength==0x60000000;

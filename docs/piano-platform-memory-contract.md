@@ -35,7 +35,11 @@ across a protected hole.
 planner. Inputs are the real verified RAM inventory, bounded handoff DT, the
 already corrected native table, explicit current owner intervals, and an
 optional occupied CPU-arena request. Missing inventory, unverified/retained
-data, the native synthetic fallback or bad bounds refuse composition.
+data, the native synthetic fallback or bad bounds refuse composition. The pinned
+native inventory now preserves zero-length current records as empty observations;
+only positive current spans contribute to coverage or overlap checks. Its
+`DataValid` flag means coherent native records, while `OwnershipVerified` remains
+false. No observed native record alone is a physical ownership grant.
 
 The builder reads the actual DT through FdtLib. It intersects DT RAM banks with
 the native available bank inventory, protects partial pages, preserves every
@@ -48,6 +52,13 @@ described DDR uses the same occupied type. No new Conventional region is
 created. Requested CPU arena must have complete uninterrupted eligible
 coverage and may not consume CMA or any recorded owner.
 
+The actual product table has two MMIO subrange aliases: Piano_USB2_PHY and
+Piano_USB3_PHY lie inside PERIPH_SS. Composition accepts a containment alias
+only when both rows are AddDev, MMAP_IO, EfiMemoryMappedIO and DEVICE, with equal
+resource attributes. It preserves both original rows and their order byte for
+byte. Different cache/type/resource attributes, partial overlap and every
+DRAM/allocator-space overlap are rejected; no native row is merged or retagged.
+
 The row count is bounded by the real platform limit128 (leaving the MMU table
 terminator slot), names and spans remain bounded, and no BS/allocator/MMU or
 target DDR access occurs. The input fingerprint is a coherence check over all
@@ -58,10 +69,18 @@ Composition always returns `ReadyForMemoryPeim=FALSE`. The public acquire
 function refuses to expose a table for MemoryPeim until a real Root/platform
 authority approves the current cold phase and every ownership condition; it
 can expose the authorized table only once. NULL authority and warnings refuse.
-The unresolved dynamic-constraint count is reported to that authority, which
-must establish actual placements or prove their consumers are inactive in the
-current phase. Passing a hardcoded success callback is only used by the host
-fixture and is not a valid hardware implementation.
+The 14 size/alloc-ranges nodes are reported independently as
+`FutureLinuxDynamicConstraints`: generic Linux reserved-memory allocates them in
+memblock after EBS, rather than requiring invented UEFI addresses. Their complete
+constraints stay in the original fingerprinted DT. The legacy
+`UnplacedDynamicConstraints` counter does not count these future requests; zero
+there does not prove that all current firmware owners are known. Actual supplied
+current owner intervals remain excluded regardless of their DynamicNode label.
+The real cold authority still has to establish current ownership, kernel phase
+and the future-request disposition. All phase counters are compared again during
+authorization so a caller cannot alter them while preserving the rows. Passing
+a hardcoded success callback is only used by the host fixture and is not a valid
+hardware implementation.
 
 ## The bootstrap ordering constraint remains real
 
@@ -83,7 +102,7 @@ remains64MiB and the high table remains unbound.
 
 ## Actual-source verification
 
-`tests/test_product_low_memory.py` executes three checks:
+`tests/test_product_low_memory.py` executes four checks:
 
 - Original captured and current Android DT reservation semantics yield the
   same product low fix; all unrelated native rows/cache fields are unchanged.
@@ -102,3 +121,21 @@ tests remain the page-attribute conversion check. These results prove source
 and HOB/MMU-input behavior, not live PTEs, physical DDR or EFI allocator access.
 No firmware build, device operation, kernel/config/pin change or high-DDR
 mapping was performed in this work.
+
+The producer compatibility tests additionally use the actual prepared 49-row
+product MemoryMapLib, final shared Stable/Next DTB SHA256
+`c2cb041e2b286713c225af7bf0e3a5f7eec8926db168149984823c25ad3f38c4`,
+and unchanged physical test95 RAM402 bytes. They compose a host-only occupied
+2GiB CPU-arena request, preserve all 49 native rows, reproduce identical output,
+retain native empty-current observations, and reject MMIO attribute/role/partial
+overlap mutations, DRAM aliases, current overflow/overlap and real owner conflicts.
+They never call an authority, MemoryPeim, MMU or a high-memory allocator.
+
+`tests/test_ram_partition.py` runs 31 actual inventory/identity/ABI/lifetime
+cases against the pinned original Env PE, including the physical current12 view
+behind the substituted ARM-call boundary. `tests/test_product_low_memory.py`
+runs four methods including the 16-case actual-product compatibility fixture.
+Those producer fixes remove structural refusals; they do not make the full Linux
+plan ready. Newly composed DDR is still occupied LoaderData, with no new free
+Conventional arena. Real cold authority, live map/cache/owner evidence and the
+separate large EFI-stub allocation capacity remain future work.
