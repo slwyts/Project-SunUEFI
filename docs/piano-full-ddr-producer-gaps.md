@@ -14,7 +14,7 @@ operation was performed for this review.
 | ABL handoff | `bootprofiles/handoff/BootShim.S:15-19` writes magic, x0 DTB and entry EL at A7FFF000 | No original shim/FD-copy-source span, current stack, payload-owner identity or boot epoch is recorded |
 | Product FD/current SEC footprint | BootShim copies FD to its compiled FD_BASE; prepared `pianoProductPkg/Sec/Sec.c:94` builds the compiled stack HOB; MemoryMapLib has FD/vector/page-table/stack/SEC/scheduler/FV spans | Need one cold observation tying actual executing PC/SP, compiled span values and the same handoff/boot instance together; do not infer unrecorded old loader extents |
 | Factory DTB and combined ABL initrd | `PianoProductPayload.c:59-70` checks the handoff and bounded DTB/chosen initrd against named native map rows, then `106-129` provides a pinned SimpleInit loan | This is a DXE bounded SimpleInit view. Its release retains the parent Kernel reservation; it does not free an ABL initrd or give cold high-DDR ownership. The factory DTB is not automatically the final Linux c2cb DTB |
-| Cold SMEM/current/preloaded | `PianoEarlyMemory.c:126-143` observes the cold CPU state and complete two-read RAM402/SIII data; rev2 diagnostic HOB stores the observations | Test96 v3 parsing is now successful, but zero-current container rows must not become free banks. The typed native inventory still rejects zero available length at `PianoRamPartition.c:131`; splash agent owns its current/positive adapter work |
+| Cold SMEM/current/preloaded | `PianoEarlyMemory.c:126-143` observes the cold CPU state and complete two-read RAM402/SIII data; rev2 diagnostic HOB stores the observations | Test96 v3 parsing is successful. Commit58884bc also preserves empty native current records without false overlap; the actual12-current/11-positive capture passes the pinned native identity/ABI fixture. DataValid remains coherent observation, OwnershipVerified remains FALSE, and empty records are not free banks |
 | Final Linux reservations | Final complete DTB c2cb041e2b286713c225af7bf0e3a5f7eec8926db168149984823c25ad3f38c4, 1,209,191 bytes | Bind its exact fixed/no-map and dynamic constraints to the cold authority. A new GPIO/driver graph or RAM bank count is not a reservation placement |
 | Live EFI/GCD/cache | Real BS GetMemoryMap plus DXE GetMemorySpaceMap/Descriptor; `PianoGuardedRead.c:55-72,100-112` demonstrates current CPU registers, identity AT/PAR and GCD attribute verification for a bounded reader | No full-DDR live validator exists. GCD/cache bits alone do not prove allocation ownership or every live PTE. The existing guarded reader's budgets/window must not be enlarged implicitly |
 | File snapshots | `PianoBootFileSource.c:126-128` performs actual AllocatePool(EfiLoaderData), then ValidateBuffer before its first write; Take/Borrow retains the actual source objects | Root needs a producer-lifetime registry for its exact FileSource objects and allocated spans, plus owner/loan transitions. A size-only callback cannot authorize the writes |
@@ -39,19 +39,23 @@ or a DT pointer to authorize an arbitrary new read range.
 
 `PianoPlatformMemoryContract.h:8-12` accepts the real native descriptors,
 inventory, FDT, explicit KnownOwners(Base,Bytes,DynamicNode) and a CPU arena.
-`PianoPlatformMemoryContract.c:51` requires a verified non-fallback inventory;
-`75-76` excludes all preloaded/current owner intervals. `82` requires the
-corrected BD980000..D4E23000 low heap. The original prepared native table has
-USB PHY MMIO rows overlapping PERIPH_SS; its strict no-overlap input check at81
-cannot accept that table unchanged. Splash agent owns the narrowly reviewed
-normalization; this is not evidence that high DDR itself overlaps a reservation.
+Commit58884bc preserves zero-current observations and skips them as range
+candidates at `PianoPlatformMemoryContract.c:82`. The real49-row product table
+now composes unchanged: `MmioAlias` at13-19 permits only containing AddDev/
+MMAP_IO/EfiMemoryMappedIO/DEVICE rows with identical resource attributes. It
+retains USB PHY/PERIPH_SS aliases without accepting mismatched cache, role or
+partial overlaps. Positive current ranges, actual owner/preloaded intervals
+and the corrected BD980000..D4E23000 low heap remain checked. The actual
+product-table/final-DTB/raw-current fixture and inventory tests pass; the
+original zero/alias structural blockers are resolved.
 
-Every newly constructed row currently uses **EfiLoaderData, WB-XP** at39-40,
-including `Piano_CPU_Arena` at100. Compose returns ReadyForMemoryPeim=FALSE at105.
-AuthorizeCold at107-115 re-composes the same inputs then calls a real external
-cold authority. AcquireForMemoryPeim at117-120 exposes the table only after
-exact authorization. The callback is currently unbound; setting it to success
-would erase the outstanding ownership problem.
+Every newly constructed row still uses **EfiLoaderData, WB-XP** at47-48,
+including `Piano_CPU_Arena`. Compose still returns ReadyForMemoryPeim=FALSE.
+AuthorizeCold re-composes the same inputs and compares rows plus immutable
+Fixed/Unplaced/Future counters before and after the real external cold authority.
+AcquireForMemoryPeim exposes the table only after exact authorization. The
+callback remains unbound; setting it to success would erase the outstanding
+cold owner, cache and legal allocation problem.
 
 An occupied1GiB arena cannot supply the current reader's standard
 AllocatePool or the kernel stub's standard AllocatePages. The legal minimal
@@ -64,16 +68,16 @@ row's type after Compose is not sufficient. An alternative source-only arena
 allocator would require a real reader/allocator integration which is currently
 absent, and still would not satisfy the stub's independent page allocation.
 
-The final DTB has14 dynamic reserved-memory constraints. Their exact constraints
-are retained, not converted wholesale into occupied alloc-ranges. Twelve are
-restricted below4GiB; debug_kinfo and dump_mem permit high placements. The cold
-authority must record actual placements or establish, for the exact current
-phase and consumer state, why a placement is not live yet; the later Linux
-handoff must preserve the complete constraints and protect actual source/copy
-allocations. `Compose.c:64-65` currently treats a supplied matching DynamicNode
-as known; it does not validate size/alignment/alloc-range/consumer ownership.
-That caller evidence remains required. Do not set UnresolvedReservations to0
-merely because the candidate high window has no fixed overlap.
+The final DTB has14 dynamic reserved-memory requests, now represented explicitly
+by `FutureLinuxDynamicConstraints=14` in the tested58884bc composition. They are
+future Linux memblock requests after EBS, not fabricated current UEFI owners or
+fully occupied alloc-ranges. Twelve are restricted below4GiB; debug_kinfo and
+dump_mem permit high placements. The complete DT requests stay immutable and
+must reach Linux, where real source/copy reservations protect those pages.
+Any earlier firmware/UEFI owner is still independently supplied through
+KnownOwners and validated by the cold authority. Future requests alone must
+not become a current UnresolvedReservations count or an allocation permission;
+actual unknown current owners remain a separate unresolved contract.
 
 ## Two large allocations are live at once
 
