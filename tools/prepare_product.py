@@ -222,11 +222,22 @@ def native_modules(root,app):
         row=catalog[name];source=Path(row['pe_path'])
         if sha(source)!=row['pe_sha256']:raise ValueError('Native PE hash mismatch: '+name)
         destination=root/'upstream/Mu-Silicium/Binaries/piano/ProductFoundation'/name
-        destination.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,destination/(name+'.efi'))
+        destination.mkdir(parents=True,exist_ok=True)
+        target=destination/(name+'.efi')
+        retention=None
+        if name=='ClockDxe':
+            # Keep ABL's active display path while the same real provider serves
+            # UFS/USB. Original capture stays immutable; expose the derivation.
+            from piano_inherited_clock import derive
+            derived,retention=derive(source.read_bytes());target.write_bytes(derived)
+        else:shutil.copyfile(source,target)
         dep=Path(row['depex_path']).read_bytes() if row['depex_path'] else b'\x06\x08'
         table.append(f'STATIC CONST UINT8 mDepex{index}[]={{'+','.join(hex(value) for value in dep)+'};')
         ffs.append(f'  FILE FREEFORM = {row["file_guid"]} {{\n    SECTION PE32 = Binaries/piano/ProductFoundation/{name}/{name}.efi\n  }}')
-        identities[name]={'pe_sha256':row['pe_sha256'],'depex_sha256':hashlib.sha256(dep).hexdigest(),'file_guid':row['file_guid']}
+        identities[name]={'pe_sha256':sha(target),'depex_sha256':hashlib.sha256(dep).hexdigest(),'file_guid':row['file_guid']}
+        if retention is not None:
+            identities[name]['original_pe_sha256']=row['pe_sha256']
+            identities[name]['inherited_clock_retention']=retention
     table.append('STATIC CONST NATIVE_IMAGE mNativeImages[]={')
     for index,name in enumerate(NATIVE_NAMES):
         guid=uuid.UUID(catalog[name]['file_guid']);literal='{0x%08X,0x%04X,0x%04X,{'%guid.fields[:3]+','.join(f'0x{value:02X}' for value in guid.bytes[8:])+'}}'
