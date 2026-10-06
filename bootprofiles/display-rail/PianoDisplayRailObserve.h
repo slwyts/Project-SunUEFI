@@ -13,11 +13,22 @@ typedef struct {
   EFI_HANDLE NpaHandle,VcsHandle;
 } PIANO_DISPLAY_RAIL_ENV;
 typedef struct {
+  CHAR8 Field[32];UINT64 Address;UINTN Bytes;EFI_STATUS Status;
+  BOOLEAN Image;
+  PIANO_DISPLAY_CLOCK_EFI_MAP_DIAGNOSTIC Map;
+  UINT64 GuardPage,GuardPar,GuardAttributes;UINT32 GuardType;
+  EFI_STATUS GuardMapping,GuardEnd;
+} PIANO_DISPLAY_RAIL_READ_DIAGNOSTIC;
+typedef struct {
   EFI_STATUS Status;UINT64 Client,Resource,Definition,Node,Rail,Backend;
+  // RpmhConfig is the DRV-ID config pointer from context+10; its first word
+  // is RpmhDrvId and its +8 slot is the actual RpmhHandle (static ctx+298).
   UINT64 RequestCallback,Driver,Plugin,RequestMapping,RpmhContext,RpmhConfig,RpmhHandle;
   UINT32 ClientType,ActiveIndex,ActiveRequest,PendingRequest,RequestAttributes;
   UINT32 NpaApplied,NpaRequired,NpaSuppressible,VcsApplied,RpmhDrvId;
   CHAR8 ResourceName[16],RailName[16];
+  // Diagnostic observations are excluded from semantic graph comparison.
+  PIANO_DISPLAY_RAIL_READ_DIAGNOSTIC LastRead;
 } PIANO_DISPLAY_RAIL_GRAPH;
 typedef struct {
   CHAR8 Phase[32];EFI_STATUS Status,SelectorBefore,SelectorAfter;
@@ -31,6 +42,8 @@ typedef struct {
   UINT32 Revision,Count,Reads,Sessions;EFI_STATUS Status,Pin[2],Identity[2],Close;
   BOOLEAN Initialized,Busy,Retained,ServicesLost;
   PIANO_GUARDED_REPORT Guard;
+  PIANO_DISPLAY_RAIL_READ_DIAGNOSTIC LastRead;
+  EFI_STATUS StaticProducer;UINT64 StaticDriver,StaticRows;UINT32 StaticCount;
   PIANO_DISPLAY_RAIL_SNAPSHOT Snapshot[PIANO_DISPLAY_RAIL_OBSERVE_PHASES];
 } PIANO_DISPLAY_RAIL_REPORT;
 typedef struct {

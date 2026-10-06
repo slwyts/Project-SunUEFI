@@ -39,6 +39,41 @@ these genuine allocator outputs. No eight-byte pointer-alignment assumption is
 introduced. Objects and names are derived through typed links; a malformed,
 unmapped, changed or foreign image/table pointer stays a real failure.
 
+Test105 established live NPA/VCS FV/code identities, but stopped during the first
+MM graph with NPA request/applied48, pending56 and Clock cached0. VCS applied was
+not read; its zero-filled report field was not a voltage result. The old logs did
+not identify which subsequent field/map admission failed. Each graph now saves
+its last field/address/length/result, actual EFI descriptor type/base/pages/
+attributes and rejection reason, and the last Guard mapping/end evidence. Saved
+Definition/Node/Plugin pointers and an independently named DRV config/id/handle
+line identify the typed producer chain. Logs remain bounded complete short lines
+and reemit stored CPU data. Unattempted fields use NotStarted rather than zero
+status/SUCCESS, including a missing optional MX client. Diagnostics are excluded
+from the semantic two-graph comparison: descriptor index/key drift cannot make
+unchanged object data appear inconsistent.
+Name comparisons retain only the matched string through its NUL; the unused
+tail of the16-byte physical read is zeroed before saving the semantic graph.
+Changing adjacent bytes after the NUL therefore cannot create graph drift.
+
+One precisely proved static producer is allowed to have BSCode or BSData ledger
+classification. This is not a rule for every image or every low-heap address.
+VCS60F0/60F4 sets the private context atFA30 toA468;6104/610C sets the rail-array
+pointer atA478 toA488. The current instantiated count is atA480. After guarded
+reads prove these exact anchors and a count1..20, a typed field must lie entirely
+inside a currently instantiated0x120-byte rail slot. Native6158/6168 selects
+those slots.6734..6994 places the Node atslot+38 and Resource Definition atslot+78.
+The20 possible slots end atBB08. Matching initialization at6314/631C/6320 places
+each rail's backend context atBB08+i×328 and its DRV config atcontext+290. The
+collector allows only context+10 pointer and context+290..2A0 data fields, then
+checks the rail/context/config ordinal relationship. It does not expose the
+whole backend context. The actual handle isconfig+8, which iscontext+298;
+context+10 is the config/DRV-ID pointer, not the handle. Unknown image data,
+uninstantiated rows, straddling fields, foreign anchors and dynamic low-heap
+BSCode remain refused. GCD WB/PAR FF, code pins, fresh loaded identities and
+exact Guard End requirements are unchanged. Next live capture must determine
+whether105's failed field actually belongs to this producer; host cases prove
+the intended boundary, not the tablet's resulting power state.
+
 ## Actual binary field evidence
 
 These offsets are from the pinned binaries, not a layout invented by fixtures.
@@ -94,11 +129,15 @@ an exhausted report does not begin another source or Guard operation.
 
 Run `python3 -m unittest discover -s tests -p test_display_rail_observe.py -v`.
 The actual collector and actual Guard, complete native NPA/VCS PE pins and real
-BasePrintLib pass36 fork cases plus strict AARCH64 compilation. The tests cover
+BasePrintLib pass48 fork cases plus strict AARCH64 compilation. The tests cover
 four-byte-aligned links, code/hash/handle/protocol identity, true graph drift,
 bad callbacks/backlinks/plugin, optional MX/alias, EFI/GCD refusals, read abort,
 uncertain guard cleanup, EBS, failure cleanup and Init/Alive/selector/Close
-callback reentry. Real AsciiVSPrint256 checks complete short lines. The fixture
+callback reentry. Real AsciiVSPrint256 checks complete short lines. Cases also
+exercise the authentic static rail/context layout when the complete VCS
+allocation has BSCode type, bad producer/count/ordinal/row boundaries, unchanged
+dynamic-heap Code rejection, real EFI/Guard refusal diagnostics and diagnostic
+drift/name-tail changes excluded from semantic equality. The fixture
 substitutes the selector and machine/EFI service boundaries; native NPA/VCS code
 is never executed and no fixture authorizes a power lifetime. Low physical
 addresses are used unchanged, so UBSAN is used here because x64 ASAN reserves

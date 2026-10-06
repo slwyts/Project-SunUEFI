@@ -65,7 +65,10 @@ EFI_STATUS EFIAPI GetSectionFromAnyFv(CONST EFI_GUID *G,UINT8 Type,UINTN Index,V
 static EFI_STATUS EFIAPI MemoryMap(UINTN *N,EFI_MEMORY_DESCRIPTOR *D,UINTN *Key,UINTN *Stride,UINT32 *Version){Boundary();Maps++;assert(*N>=3*sizeof(*D));*N=3*sizeof(*D);*Key=Maps;*Stride=sizeof(*D);*Version=EFI_MEMORY_DESCRIPTOR_VERSION;
   D[0]=(EFI_MEMORY_DESCRIPTOR){.Type=EfiBootServicesCode,.PhysicalStart=NPA_BASE,.NumberOfPages=0x13,.Attribute=EFI_MEMORY_UC|EFI_MEMORY_WB};
   D[1]=(EFI_MEMORY_DESCRIPTOR){.Type=EfiBootServicesData,.PhysicalStart=VCS_BASE,.NumberOfPages=0x11,.Attribute=EFI_MEMORY_WB};
-  D[2]=(EFI_MEMORY_DESCRIPTOR){.Type=EfiBootServicesData,.PhysicalStart=HEAP_BASE,.NumberOfPages=16,.Attribute=EFI_MEMORY_WB};if(Case==23&&Observing)D[2].Attribute=EFI_MEMORY_UC;if(Case==32&&Observing)Lose();return EFI_SUCCESS;
+  D[2]=(EFI_MEMORY_DESCRIPTOR){.Type=EfiBootServicesData,.PhysicalStart=HEAP_BASE,.NumberOfPages=16,.Attribute=EFI_MEMORY_WB};if(Case==23&&Observing)D[2].Attribute=EFI_MEMORY_UC;if(Case>=36&&Observing)D[1].Type=EfiBootServicesCode;
+  if(Case==44&&Observing)D[2].Type=EfiBootServicesCode;
+  if(Case==43&&Observing&&MmStarts>=2){EFI_MEMORY_DESCRIPTOR T=D[0];D[0]=D[2];D[2]=T;}
+  if(Case==32&&Observing)Lose();return EFI_SUCCESS;
 }
 static EFI_STATUS EFIAPI Gcd(EFI_PHYSICAL_ADDRESS A,EFI_GCD_MEMORY_SPACE_DESCRIPTOR *D){Boundary();assert((A>=NPA_BASE&&A<NPA_BASE+0x13000)||(A>=VCS_BASE&&A<VCS_BASE+0x11000)||(A>=HEAP_BASE&&A<HEAP_BASE+0x10000));*D=(EFI_GCD_MEMORY_SPACE_DESCRIPTOR){.BaseAddress=A,.Length=4096,.GcdMemoryType=EfiGcdMemoryTypeSystemMemory,.Attributes=EFI_MEMORY_WB};if(Case==24&&Observing&&A>=HEAP_BASE)D->Attributes=EFI_MEMORY_WT;return EFI_SUCCESS;}
 UINT64 EFIAPI GetPerformanceCounterProperties(UINT64 *A,UINT64 *B){assert(Services);*A=0;*B=MAX_UINT64;return 1000000;}UINT64 EFIAPI GetPerformanceCounter(VOID){assert(Services);return ++Counter;}
@@ -76,6 +79,7 @@ UINT32 PianoGuardedHostLoad(UINTN A){assert(Services&&m.Armed&&((A>=NPA_BASE&&A<
   if(Case==25&&Observing&&A==MM_CLIENT+0x20){EFI_SYSTEM_CONTEXT_AARCH64 C={.ELR=0x1000,.FAR=A,.ESR=0x96000010,.SPSR=5};EFI_SYSTEM_CONTEXT U={.SystemContextAArch64=&C};Handlers[0](0,U);assert(C.ELR==0x1004);}
   if(Observing&&A==MM_CLIENT+0x20)MmStarts++;
   if(Case==20&&MmStarts==2&&A==MM_CLIENT+0x20)Put32(HEAP_BASE+0x1230,0x80);
+  if(Case==47&&Observing&&MmStarts==2&&A==HEAP_BASE+0x1400)Put32(HEAP_BASE+0x140c,0xaabbccdd);
   UINT32 V;memcpy(&V,(VOID *)(UINTN)A,4);return V;
 }
 EFI_STATUS PianoDisplayClockReadSnapshotClock(PIANO_DISPLAY_CLOCK_READ *R,PIANO_DISPLAY_CLOCK_SELECTOR Which,PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT *P){
@@ -89,6 +93,10 @@ static VOID MakeGraph(UINT64 Client,UINT64 Offset,CONST CHAR8 *NameText){UINT64 
   Put64(Resource,Def);Put64(Resource+0x10,Node);Put64(Resource+0x28,VCS_BASE+0x98d8);Put32(Resource+0x30,0x38);Put32(Resource+0x40,0x38);Put32(Resource+0x44,0);Put64(Def,NameAddress);Put64(Def+0x28,Rail);Put64(Node+8,VCS_BASE+0x6a8c);Put64(Node+0x18,Rail);
   Put64(Rail+0xb8,Resource);Put64(Rail+0x78,NameAddress);Put64(Rail+0x20,VCS_BASE+0xa2c0);Put32(Rail+0x30,0x38);Put64(Rail+0x28,Context);Put64(Context+0x10,HEAP_BASE+0x9000);Put32(HEAP_BASE+0x9000,2);Put64(HEAP_BASE+0x9008,HEAP_BASE+0x9040);memcpy((VOID *)(UINTN)NameAddress,NameText,strlen(NameText)+1);
 }
+static VOID StaticGraph(UINT64 Client,UINT64 Offset,UINT32 Index){UINT64 Resource=HEAP_BASE+Offset,Rail=VCS_BASE+0xa488+0x120*Index,Def=Rail+0x78,Node=Rail+0x38;
+  Put64(Resource,Def);Put64(Resource+0x10,Node);Put64(Def,Resource+0x400);Put64(Def+0x28,Rail);Put64(Node+8,VCS_BASE+0x6a8c);Put64(Node+0x18,Rail);
+  UINT64 Context=VCS_BASE+0xbb08+0x328*Index;Put64(Rail+0xb8,Resource);Put64(Rail+0x20,VCS_BASE+0xa2c0);Put32(Rail+0x30,0x38);Put64(Rail+0x28,Context);Put64(Context+0x10,Context+0x290);Put32(Context+0x290,2);Put64(Context+0x298,HEAP_BASE+0x9040);(VOID)Client;
+}
 static VOID Relocate(UINT32 I){for(UINTN A=mPin[I].Reloc;A<mPin[I].Bytes;){UINT32 Page,N;memcpy(&Page,Source[I]+A,4);memcpy(&N,Source[I]+A+4,4);if(!N)break;assert(N>=8&&N<=mPin[I].Bytes-A);for(UINTN X=A+8;X<A+N;X+=2){UINT16 V;memcpy(&V,Source[I]+X,2);if((V>>12)==10){UINT64 P;UINTN R=Page+(V&4095);assert(R<=mPin[I].Bytes-8);memcpy(&P,Code[I]+R,8);P+=I?VCS_BASE:NPA_BASE;memcpy(Code[I]+R,&P,8);}}A+=N;}}
 static VOID Run(UINT32 Number){Case=Number;for(UINT32 I=0;I<2;++I){UINT64 B=I?VCS_BASE:NPA_BASE;Code[I]=mmap((VOID *)(UINTN)B,mPin[I].Bytes,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE,-1,0);assert(Code[I]==(VOID *)(UINTN)B);memcpy(Code[I],Source[I],mPin[I].Bytes);Relocate(I);LoadedImage[I]=(EFI_LOADED_IMAGE_PROTOCOL){.Revision=EFI_LOADED_IMAGE_PROTOCOL_REVISION,.ImageBase=Code[I],.ImageSize=mPin[I].Bytes,.ImageCodeType=EfiBootServicesCode,.ImageDataType=EfiBootServicesData};}
   HeapBytes=mmap((VOID *)(UINTN)HEAP_BASE,0x10000,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE,-1,0);assert(HeapBytes==(VOID *)(UINTN)HEAP_BASE);MakeGraph(MM_CLIENT,0x1000,"/vcs/vdd_mm");MakeGraph(MX_CLIENT,0x3000,"/vcs/vdd_mx");
@@ -99,17 +107,27 @@ static VOID Run(UINT32 Number){Case=Number;for(UINT32 I=0;I<2;++I){UINT64 B=I?VC
     assert(E!=EFI_SUCCESS&&!State.Report.Initialized);if(Case==8||Case==12||Case==13){assert(Case==8?State.Report.Retained:State.Report.ServicesLost);assert(PianoDisplayRailClose(&State)==EFI_ACCESS_DENIED);return;}
     assert(PianoDisplayRailClose(&State)==EFI_SUCCESS&&Allocated==Freed&&Closed==EventCount);return;}
   assert(E==EFI_SUCCESS&&State.Report.Initialized&&State.Image[0].CodeVerified&&State.Image[1].CodeVerified);Observing=TRUE;
+  if(Case>=36){Put64(VCS_BASE+0xfa30,VCS_BASE+0xa468);Put64(VCS_BASE+0xa478,VCS_BASE+0xa488);Put32(VCS_BASE+0xa480,2);StaticGraph(MM_CLIENT,0x1000,0);StaticGraph(MX_CLIENT,0x3000,1);}
+  if(Case==37)Put64(VCS_BASE+0xfa30,VCS_BASE+0xa470);if(Case==38)Put32(VCS_BASE+0xa480,0);if(Case==39)Put32(VCS_BASE+0xa480,21);
+  if(Case==40)StaticGraph(MM_CLIENT,0x1000,19);if(Case==41)Put64(HEAP_BASE+0x1000,VCS_BASE+0xa488+0x120-4);if(Case==42)Put64(HEAP_BASE+0x1010,VCS_BASE+0xbb08);
+  if(Case==45)Put64(VCS_BASE+0xa4b0,VCS_BASE+0xbb08+0x328);if(Case==46)Put64(VCS_BASE+0xbb18,VCS_BASE+0xbb08+0x290+4);
   if(Case==34)memcpy((VOID *)(UINTN)(HEAP_BASE+0x3400),"/vcs/vdd_mxa",13);
   if(Case==35)Put64(VCS_BASE+0x9908,VCS_BASE+0x6d68);
   if(Case==14)Put32(MM_CLIENT+0x30,0x800);if(Case==15)Put64(HEAP_BASE+0x1188,VCS_BASE+0x6a90);if(Case==16)Put64(HEAP_BASE+0x12b8,HEAP_BASE+0x3000);if(Case==17)Put64(HEAP_BASE+0x1220,VCS_BASE+0xa2c8);if(Case==18)Put32(MM_CLIENT+0x68,2);if(Case==19)Put64(MM_CLIENT+0x88,VCS_BASE+0x1000);
   E=PianoDisplayRailObserve(&State,"actual-mm-object-graph");CONST PIANO_DISPLAY_RAIL_SNAPSHOT *R=&State.Report.Snapshot[0];assert(State.Report.Count==1&&!R->PowerReady&&!R->MemoryOwnershipGranted&&!R->RpmhCompletionObserved);
-  if(Case==0||Case==2||(Case>=28&&Case<=31)||Case==33||Case==34){if(E!=EFI_SUCCESS)fprintf(stderr,"rail positive status%lx mm=%lx/%lx mx=%lx/%lx guard=%lx\n",(unsigned long)E,(unsigned long)R->Mm[0].Status,(unsigned long)R->Mm[1].Status,(unsigned long)R->Mx[0].Status,(unsigned long)R->Mx[1].Status,(unsigned long)State.Report.Guard.Status);
-    assert(E==EFI_SUCCESS&&R->MmCoherent&&R->Mm[0].Client==MM_CLIENT&&R->Mm[0].ActiveRequest==0x38&&R->Mm[0].NpaApplied==0x38&&R->Mm[0].VcsApplied==0x38&&!State.Report.Retained&&Selects==2);if(Case==2)assert(!R->MxCoherent&&R->Mx[0].Status==EFI_NOT_READY);
+  if(Case==0||Case==2||(Case>=28&&Case<=31)||Case==33||Case==34||Case==36||Case==43||Case==47){if(E!=EFI_SUCCESS)fprintf(stderr,"rail positive status%lx mm=%lx/%lx mx=%lx/%lx guard=%lx last=%s/%lx map=%u/%u\n",(unsigned long)E,(unsigned long)R->Mm[0].Status,(unsigned long)R->Mm[1].Status,(unsigned long)R->Mx[0].Status,(unsigned long)R->Mx[1].Status,(unsigned long)State.Report.Guard.Status,R->Mm[0].LastRead.Field,(unsigned long)R->Mm[0].LastRead.Address,R->Mm[0].LastRead.Map.Reason,R->Mm[0].LastRead.Map.DescriptorType);
+    assert(E==EFI_SUCCESS&&R->MmCoherent&&R->Mm[0].Client==MM_CLIENT&&R->Mm[0].ActiveRequest==0x38&&R->Mm[0].NpaApplied==0x38&&R->Mm[0].VcsApplied==0x38&&!State.Report.Retained&&Selects==2);if(Case==2)assert(!R->MxCoherent&&R->Mx[0].Status==EFI_NOT_READY&&R->Mx[0].LastRead.Status==EFI_NOT_STARTED&&!R->Mx[0].LastRead.Address);
     UINT32 C=Calls,L=Loads;assert(PianoDisplayRailReemit(&State)==EFI_SUCCESS&&Calls==C&&Loads==L);}
   else{assert(E!=EFI_SUCCESS);if(Case==26)assert(State.Report.Retained&&m.Report.Retained&&PianoDisplayRailClose(&State)==EFI_ACCESS_DENIED);}
+  if(Case==36)assert(State.Report.StaticProducer==EFI_SUCCESS&&State.Report.StaticCount==2&&R->Mm[0].Definition==VCS_BASE+0xa500&&R->Mm[0].Node==VCS_BASE+0xa4c0);
+  if(Case==43){assert(R->MmCoherent);PIANO_DISPLAY_RAIL_GRAPH A=R->Mm[0],B=R->Mm[1];B.LastRead.Map.DescriptorIndex=A.LastRead.Map.DescriptorIndex+1;B.LastRead.Map.MapKey=42;assert(SameGraph(&A,&B));}
+  if(Case==47){assert(R->MmCoherent&&!CompareMem(R->Mm[0].ResourceName,R->Mm[1].ResourceName,16));for(UINT32 I=12;I<16;++I)assert(!R->Mm[1].ResourceName[I]&&!R->Mm[1].RailName[I]);}
+  if(Case==23||Case==44){assert(!strcmp(R->Mm[0].LastRead.Field,"Resource")&&R->Mm[0].LastRead.Address==MM_CLIENT+0x20&&R->Mm[0].LastRead.Status==EFI_NOT_READY&&R->Mm[0].LastRead.GuardMapping==EFI_NOT_STARTED);assert(R->Mm[0].LastRead.Map.Reason==(Case==23?PianoClockEfiMapCache:PianoClockEfiMapWrongType));}
+  if(Case==24)assert(R->Mm[0].LastRead.Map.Reason==PianoClockEfiMapReady&&R->Mm[0].LastRead.GuardAttributes==EFI_MEMORY_WT&&R->Mm[0].LastRead.GuardMapping==EFI_NOT_READY);
+  if(Case==42)assert(State.Report.StaticProducer==EFI_NOT_READY&&!strcmp(R->Mm[0].LastRead.Field,"StaticCount"));
   if(Case==33){Observing=FALSE;assert(PianoDisplayRailClose(&State)==EFI_ABORTED&&State.Report.Retained&&State.Report.ServicesLost&&State.Image[0].Copy&&!State.Report.Busy);return;}
   if(!State.Report.Retained){assert(PianoDisplayRailClose(&State)==EFI_SUCCESS&&Allocated==Freed&&Closed==EventCount&&!Handlers[0]&&!Handlers[3]);}
   if(Case>=28&&Case<=31)assert(Nested==1);
 }
 int main(int argc,char **argv){assert(argc==3);for(UINT32 I=0;I<2;++I){FILE *F=fopen(argv[I+1],"rb");assert(F);Source[I]=malloc(mPin[I].Bytes);assert(Source[I]&&fread(Source[I],1,mPin[I].Bytes,F)==mPin[I].Bytes&&fgetc(F)==EOF);fclose(F);}
-  for(UINT32 I=0;I<36;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int E;assert(waitpid(P,&E,0)==P);if(!WIFEXITED(E)||WEXITSTATUS(E)){fprintf(stderr,"rail observer case%u failed\n",I);return 1;}}puts("Actual Rail collector+Guard+NPA/VCS PE pin:36 cases; 4-aligned typed CPU objects, Busy callback boundaries, honest selector boundary, cached/applied separate, no native request/MMIO/ready grant");return 0;}
+  for(UINT32 I=0;I<48;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int E;assert(waitpid(P,&E,0)==P);if(!WIFEXITED(E)||WEXITSTATUS(E)){fprintf(stderr,"rail observer case%u failed\n",I);return 1;}}puts("Actual Rail collector+Guard+NPA/VCS PE pin:48 cases; pinned static row Code/Data admission, dynamic Code rejection, real last-field/map diagnostics, semantic pairs/name-tail normalization, no native request/MMIO/ready grant");return 0;}

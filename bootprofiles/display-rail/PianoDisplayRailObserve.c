@@ -24,22 +24,34 @@ STATIC EFI_STATUS Fail(PIANO_DISPLAY_RAIL_OBSERVER *S,EFI_STATUS E){if(!Live(S))
 STATIC VOID EFIAPI Exit(EFI_EVENT Event,VOID *Context){(VOID)Event;PIANO_DISPLAY_RAIL_OBSERVER *S=Context;S->Report.ServicesLost=S->Report.Retained=TRUE;}
 STATIC EFI_STATUS App(PIANO_DISPLAY_RAIL_OBSERVER *S){if(!Live(S))return EFI_ABORTED;EFI_TPL T=S->Env.Services->RaiseTPL(TPL_HIGH_LEVEL);if(!Live(S))return EFI_ABORTED;S->Env.Services->RestoreTPL(T);return !Live(S)?EFI_ABORTED:T==TPL_APPLICATION?EFI_SUCCESS:EFI_UNSUPPORTED;}
 STATIC EFI_STATUS Free(PIANO_DISPLAY_RAIL_OBSERVER *S,VOID **P){if(!*P)return EFI_SUCCESS;if(!Live(S))return EFI_ABORTED;EFI_STATUS E=S->Env.Services->FreePool(*P);if(!Live(S))return EFI_ABORTED;if(E==EFI_SUCCESS)*P=NULL;else S->Report.Retained=TRUE;return Exact(E);}
+STATIC VOID ReadField(PIANO_DISPLAY_RAIL_OBSERVER *S,CONST CHAR8 *Name){UINTN N=0;while(N<31&&Name[N])++N;ZeroMem(S->Report.LastRead.Field,sizeof(S->Report.LastRead.Field));CopyMem(S->Report.LastRead.Field,Name,N);}
+STATIC VOID Unread(PIANO_DISPLAY_RAIL_READ_DIAGNOSTIC *D){ZeroMem(D,sizeof(*D));D->Status=D->Map.Status=D->Map.GetMapStatus=D->GuardMapping=D->GuardEnd=EFI_NOT_STARTED;D->Map.DescriptorIndex=D->Map.DescriptorType=MAX_UINT32;}
+STATIC EFI_STATUS MapDone(PIANO_DISPLAY_RAIL_OBSERVER *S,PIANO_DISPLAY_CLOCK_EFI_MAP_REASON Reason,EFI_STATUS E){S->Report.LastRead.Map.Reason=Reason;return S->Report.LastRead.Map.Status=Exact(E);}
 STATIC EFI_STATUS Map(PIANO_DISPLAY_RAIL_OBSERVER *S,UINT64 A,UINTN N,BOOLEAN Image){
-  if(!Heap(A,N))return EFI_ACCESS_DENIED;if(!Live(S))return EFI_ABORTED;UINTN Bytes=sizeof(S->Map),Key=0,Stride=0;UINT32 Version=0;
-  EFI_STATUS E=S->Env.Services->GetMemoryMap(&Bytes,(VOID *)S->Map,&Key,&Stride,&Version);if(!Live(S))return EFI_ABORTED;if(E!=EFI_SUCCESS)return Exact(E);
-  if(!Bytes||Bytes>sizeof(S->Map)||Stride<sizeof(EFI_MEMORY_DESCRIPTOR)||Stride>256||(Stride&7)||Bytes%Stride||Version!=EFI_MEMORY_DESCRIPTOR_VERSION)return EFI_COMPROMISED_DATA;
+  PIANO_DISPLAY_CLOCK_EFI_MAP_DIAGNOSTIC *M=&S->Report.LastRead.Map;
+  if(!Heap(A,N))return MapDone(S,PianoClockEfiMapNoCoverage,EFI_ACCESS_DENIED);if(!Live(S))return MapDone(S,PianoClockEfiMapServicesLost,EFI_ABORTED);UINTN Bytes=sizeof(S->Map),Key=0,Stride=0;UINT32 Version=0;
+  EFI_STATUS E=S->Env.Services->GetMemoryMap(&Bytes,(VOID *)S->Map,&Key,&Stride,&Version);
+  M->GetMapStatus=E;M->MapBytes=Bytes;M->DescriptorBytes=Stride;M->DescriptorVersion=Version;
+  if(!Live(S))return MapDone(S,PianoClockEfiMapServicesLost,EFI_ABORTED);if(E!=EFI_SUCCESS)return MapDone(S,PianoClockEfiMapGetMap,E);
+  if(!Bytes||Bytes>sizeof(S->Map)||Stride<sizeof(EFI_MEMORY_DESCRIPTOR)||Stride>256||(Stride&7)||Bytes%Stride||Version!=EFI_MEMORY_DESCRIPTOR_VERSION)return MapDone(S,PianoClockEfiMapFormat,EFI_COMPROMISED_DATA);
   for(UINTN I=0;I<Bytes;I+=Stride){EFI_MEMORY_DESCRIPTOR D;CopyMem(&D,(UINT8 *)S->Map+I,sizeof(D));
-    if(!D.NumberOfPages||D.NumberOfPages>MAX_UINT64/4096||(D.PhysicalStart&4095)||D.PhysicalStart>MAX_UINT64-D.NumberOfPages*4096)return EFI_COMPROMISED_DATA;
-    for(UINTN J=0;J<I;J+=Stride){EFI_MEMORY_DESCRIPTOR P;CopyMem(&P,(UINT8 *)S->Map+J,sizeof(P));if(D.PhysicalStart<P.PhysicalStart+P.NumberOfPages*4096&&P.PhysicalStart<D.PhysicalStart+D.NumberOfPages*4096)return EFI_COMPROMISED_DATA;}
+    if(!D.NumberOfPages||D.NumberOfPages>MAX_UINT64/4096||(D.PhysicalStart&4095)||D.PhysicalStart>MAX_UINT64-D.NumberOfPages*4096)return MapDone(S,PianoClockEfiMapInvalidDescriptor,EFI_COMPROMISED_DATA);
+    for(UINTN J=0;J<I;J+=Stride){EFI_MEMORY_DESCRIPTOR P;CopyMem(&P,(UINT8 *)S->Map+J,sizeof(P));if(D.PhysicalStart<P.PhysicalStart+P.NumberOfPages*4096&&P.PhysicalStart<D.PhysicalStart+D.NumberOfPages*4096)return MapDone(S,PianoClockEfiMapOverlap,EFI_COMPROMISED_DATA);}
   }
   UINT64 Cursor=A,End=A+N;while(Cursor<End){BOOLEAN Found=FALSE;for(UINTN I=0;I<Bytes;I+=Stride){EFI_MEMORY_DESCRIPTOR D;CopyMem(&D,(UINT8 *)S->Map+I,sizeof(D));UINT64 Last=D.PhysicalStart+D.NumberOfPages*4096;
-    if(Cursor<D.PhysicalStart||Cursor>=Last)continue;if((Image?D.Type!=EfiBootServicesCode&&D.Type!=EfiBootServicesData:D.Type!=EfiBootServicesData)||!(D.Attribute&EFI_MEMORY_WB)||(D.Attribute&(EFI_MEMORY_RP|EFI_MEMORY_RUNTIME))||(D.VirtualStart&&D.VirtualStart!=D.PhysicalStart))return EFI_NOT_READY;
-    Cursor=MIN(Last,End);Found=TRUE;break;}if(!Found)return EFI_NOT_FOUND;
-  }return EFI_SUCCESS;
+    if(Cursor<D.PhysicalStart||Cursor>=Last)continue;M->Cursor=Cursor;M->DescriptorIndex=(UINT32)(I/Stride);M->DescriptorType=D.Type;M->DescriptorBase=D.PhysicalStart;M->DescriptorPages=D.NumberOfPages;M->DescriptorAttributes=D.Attribute;M->DescriptorVirtual=D.VirtualStart;
+    if(Image?D.Type!=EfiBootServicesCode&&D.Type!=EfiBootServicesData:D.Type!=EfiBootServicesData)return MapDone(S,PianoClockEfiMapWrongType,EFI_NOT_READY);
+    if(!(D.Attribute&EFI_MEMORY_WB))return MapDone(S,PianoClockEfiMapCache,EFI_NOT_READY);
+    if(D.Attribute&EFI_MEMORY_RP)return MapDone(S,PianoClockEfiMapReadProtected,EFI_NOT_READY);
+    if(D.Attribute&EFI_MEMORY_RUNTIME)return MapDone(S,PianoClockEfiMapRuntime,EFI_NOT_READY);
+    if(D.VirtualStart&&D.VirtualStart!=D.PhysicalStart)return MapDone(S,PianoClockEfiMapNonIdentityVirtual,EFI_NOT_READY);
+    Cursor=MIN(Last,End);Found=TRUE;break;}if(!Found)return MapDone(S,PianoClockEfiMapNoCoverage,EFI_NOT_FOUND);
+  }return MapDone(S,PianoClockEfiMapReady,EFI_SUCCESS);
 }
 STATIC EFI_STATUS Read(PIANO_DISPLAY_RAIL_OBSERVER *S,UINT64 A,UINTN N,VOID *Out,BOOLEAN Image){
-  if(!A||!N||N>256||A>MAX_UINT64-N-3||!Out)return EFI_INVALID_PARAMETER;UINT64 First=A&~3ULL,Last=(A+N+3)&~3ULL;UINTN Bytes=(UINTN)(Last-First);if(Bytes>256)return EFI_INVALID_PARAMETER;
-  EFI_STATUS E=Map(S,First,Bytes,Image);if(E!=EFI_SUCCESS)return E;
+  PIANO_DISPLAY_RAIL_READ_DIAGNOSTIC *D=&S->Report.LastRead;CHAR8 Name[32];CopyMem(Name,D->Field,32);ZeroMem(D,sizeof(*D));CopyMem(D->Field,Name,32);D->Address=A;D->Bytes=N;D->Image=Image;D->Status=D->Map.Status=D->Map.GetMapStatus=D->GuardMapping=D->GuardEnd=EFI_NOT_STARTED;D->Map.DescriptorIndex=D->Map.DescriptorType=MAX_UINT32;
+  if(!A||!N||N>256||A>MAX_UINT64-N-3||!Out)return D->Status=EFI_INVALID_PARAMETER;UINT64 First=A&~3ULL,Last=(A+N+3)&~3ULL;UINTN Bytes=(UINTN)(Last-First);if(Bytes>256)return D->Status=EFI_INVALID_PARAMETER;
+  EFI_STATUS E=Map(S,First,Bytes,Image);if(E!=EFI_SUCCESS)return D->Status=E;
   PIANO_GUARDED_CONFIG C={.Context=S,.Services=S->Env.Services,.DxeServices=S->Env.DxeServices,.BootServicesAlive=GuardAlive,
     .Ranges={{First,Bytes,EfiGcdMemoryTypeSystemMemory,EFI_MEMORY_WB,0xff}},.RangeCount=1,.MaxReads=(UINT32)(Bytes/4),.MaxUsecs=100000};
   VOID *Token=NULL;UINT32 Scratch[64];++S->Report.Sessions;E=PianoGuardedReadBegin(&C,&Token);EFI_STATUS End=EFI_NOT_STARTED;
@@ -47,9 +59,10 @@ STATIC EFI_STATUS Read(PIANO_DISPLAY_RAIL_OBSERVER *S,UINT64 A,UINTN N,VOID *Out
   else if(E==EFI_SUCCESS){S->Report.Retained=TRUE;E=EFI_COMPROMISED_DATA;}
   S->Report.Guard=*PianoGuardedReadReport();S->Report.Reads+=S->Report.Guard.Reads;
   CONST PIANO_GUARDED_REPORT *G=&S->Report.Guard;
+  D->GuardPage=G->LastMappingPage;D->GuardPar=G->LastPar;D->GuardType=G->LastGcdType;D->GuardAttributes=G->LastGcdAttributes;D->GuardMapping=G->MappingStatus;D->GuardEnd=End;
   if(G->Retained||G->ServicesLost||G->Fatal||G->Active||G->SyncOwned||G->SErrorOwned||(Token&&End!=EFI_SUCCESS))S->Report.Retained=TRUE;
-  if(!Live(S))return EFI_ABORTED;if(S->Report.Retained)return End==EFI_SUCCESS?EFI_COMPROMISED_DATA:Exact(End==EFI_NOT_STARTED?E:End);
-  if(E!=EFI_SUCCESS)return Exact(E);CopyMem(Out,(UINT8 *)Scratch+(UINTN)(A-First),N);ZeroMem(Scratch,sizeof(Scratch));return EFI_SUCCESS;
+  if(!Live(S))return D->Status=EFI_ABORTED;if(S->Report.Retained)return D->Status=End==EFI_SUCCESS?EFI_COMPROMISED_DATA:Exact(End==EFI_NOT_STARTED?E:End);
+  if(E!=EFI_SUCCESS)return D->Status=Exact(E);CopyMem(Out,(UINT8 *)Scratch+(UINTN)(A-First),N);ZeroMem(Scratch,sizeof(Scratch));return D->Status=EFI_SUCCESS;
 }
 STATIC EFI_STATUS Loaded(PIANO_DISPLAY_RAIL_OBSERVER *S,UINT32 I){
   PIANO_DISPLAY_RAIL_IMAGE *P=&S->Image[I];if(!P->Handle||!P->Loaded||!P->Base)return EFI_NOT_READY;
@@ -99,37 +112,58 @@ EFI_STATUS PianoDisplayRailInit(PIANO_DISPLAY_RAIL_OBSERVER *S,CONST PIANO_DISPL
   for(UINT32 I=0;I<2;++I){if(!S->Image[I].Handle)return Fail(S,EFI_NOT_FOUND);S->Report.Identity[I]=VerifyCode(S,I);if(S->Report.Identity[I]!=EFI_SUCCESS)return Fail(S,S->Report.Identity[I]);}
   E=Identity(S);if(E!=EFI_SUCCESS)return Fail(S,E);S->Report.Initialized=TRUE;S->Report.Busy=FALSE;return S->Report.Status=EFI_SUCCESS;
 }
-STATIC EFI_STATUS Field(PIANO_DISPLAY_RAIL_OBSERVER *S,UINT64 B,UINTN Offset,UINTN N,VOID *Out,BOOLEAN Image){if(!B||B>MAX_UINT64-Offset)return EFI_COMPROMISED_DATA;return Read(S,B+Offset,N,Out,Image);}
+STATIC EFI_STATUS StaticRail(PIANO_DISPLAY_RAIL_OBSERVER *S,UINT64 A,UINTN N,BOOLEAN *Known){
+  *Known=FALSE;UINT64 B=S->Image[1].Base;
+  if(!Span(B+0xa488,0x1680,A,N)&&!Span(B+0xbb08,0x3f20,A,N))return EFI_SUCCESS;
+  UINT64 Driver=0,Rows=0;UINT32 Count=0;EFI_STATUS E;
+  ReadField(S,"StaticDriver");E=Read(S,B+0xfa30,8,&Driver,TRUE);if(E!=EFI_SUCCESS)return S->Report.StaticProducer=E;
+  ReadField(S,"StaticRows");E=Read(S,B+0xa478,8,&Rows,TRUE);if(E!=EFI_SUCCESS)return S->Report.StaticProducer=E;
+  ReadField(S,"StaticCount");E=Read(S,B+0xa480,4,&Count,TRUE);if(E!=EFI_SUCCESS)return S->Report.StaticProducer=E;
+  S->Report.StaticDriver=Driver;S->Report.StaticRows=Rows;S->Report.StaticCount=Count;
+  if(Driver!=B+0xa468||Rows!=B+0xa488||!Count||Count>20)return S->Report.StaticProducer=EFI_COMPROMISED_DATA;
+  for(UINT32 I=0;I<Count;++I){UINT64 Context=B+0xbb08+0x328*(UINT64)I;
+    if(Span(Rows+0x120*(UINT64)I,0x120,A,N)||Span(Context+0x10,8,A,N)||Span(Context+0x290,16,A,N)){*Known=TRUE;return S->Report.StaticProducer=EFI_SUCCESS;}}
+  return S->Report.StaticProducer=EFI_NOT_READY;
+}
+STATIC EFI_STATUS Field(PIANO_DISPLAY_RAIL_OBSERVER *S,UINT64 B,UINTN Offset,UINTN N,VOID *Out,BOOLEAN Image,CONST CHAR8 *Name){
+  ReadField(S,Name);if(!B||B>MAX_UINT64-Offset)return EFI_COMPROMISED_DATA;BOOLEAN Known=FALSE;
+  EFI_STATUS E=StaticRail(S,B+Offset,N,&Known);if(E!=EFI_SUCCESS)return E;ReadField(S,Name);return Read(S,B+Offset,N,Out,Image||Known);
+}
 STATIC EFI_STATUS Name(PIANO_DISPLAY_RAIL_OBSERVER *S,UINT64 A,CONST CHAR8 *Expected,CHAR8 Out[16]){
   BOOLEAN Image=Span(S->Image[0].Base,mPin[0].Bytes,A,16)||Span(S->Image[1].Base,mPin[1].Bytes,A,16)||Span(S->Env.ClockReader->ImageBase,0x44000,A,16);
-  EFI_STATUS E=Read(S,A,16,Out,Image);if(E!=EFI_SUCCESS)return E;UINTN N=0;while(Expected[N])++N;
-  if(!CompareMem(Out,Expected,N+1))return EFI_SUCCESS;
+  CHAR8 Scratch[16];EFI_STATUS E=Read(S,A,16,Scratch,Image);if(E!=EFI_SUCCESS)return E;UINTN N=0;while(Expected[N])++N;
+  if(!CompareMem(Scratch,Expected,N+1)){ZeroMem(Out,16);CopyMem(Out,Scratch,N+1);return EFI_SUCCESS;}
   // The pinned UEFI DT declares primary /vcs/vdd_mxa plus /vcs/vdd_mx
   // alias; a lookup through the latter can retain the primary resource name.
-  return !CompareMem(Expected,"/vcs/vdd_mx",12)&&!CompareMem(Out,"/vcs/vdd_mxa",13)?EFI_SUCCESS:EFI_COMPROMISED_DATA;
+  if(!CompareMem(Expected,"/vcs/vdd_mx",12)&&!CompareMem(Scratch,"/vcs/vdd_mxa",13)){ZeroMem(Out,16);CopyMem(Out,Scratch,13);return EFI_SUCCESS;}
+  ZeroMem(Out,16);return EFI_COMPROMISED_DATA;
 }
-#define RF(Base,Offset,FieldName) do{E=Field(S,Base,Offset,sizeof(G->FieldName),&G->FieldName,FALSE);if(E!=EFI_SUCCESS)goto Done;}while(0)
+#define RF(Base,Offset,FieldName) do{E=Field(S,Base,Offset,sizeof(G->FieldName),&G->FieldName,FALSE,#FieldName);if(E!=EFI_SUCCESS)goto Done;}while(0)
 STATIC EFI_STATUS Graph(PIANO_DISPLAY_RAIL_OBSERVER *S,UINT64 Client,CONST CHAR8 *Expected,PIANO_DISPLAY_RAIL_GRAPH *G){
-  ZeroMem(G,sizeof(*G));G->Client=Client;EFI_STATUS E=Client?EFI_SUCCESS:EFI_NOT_READY;if(!Client)goto Done;
+  ZeroMem(G,sizeof(*G));Unread(&S->Report.LastRead);ReadField(S,"ClientAnchor");G->Client=Client;EFI_STATUS E=Client?EFI_SUCCESS:EFI_NOT_READY;if(!Client)goto Done;
   RF(Client,0x20,Resource);RF(Client,0x30,ClientType);RF(Client,0x68,ActiveIndex);RF(Client,0x80,RequestAttributes);RF(Client,0x88,RequestCallback);
   if(G->ClientType!=0x40||G->ActiveIndex>1||!Span(S->Image[0].Base+0x1000,mPin[0].CodeEnd-0x1000,G->RequestCallback,4)){E=EFI_COMPROMISED_DATA;goto Done;}
   RF(Client,0x38+24*G->ActiveIndex,ActiveRequest);RF(Client,0x38+24*(G->ActiveIndex^1),PendingRequest);
   RF(G->Resource,0,Definition);RF(G->Resource,0x10,Node);RF(G->Resource,0x30,NpaApplied);RF(G->Resource,0x40,NpaRequired);RF(G->Resource,0x44,NpaSuppressible);
   RF(G->Resource,0x28,Plugin);if(G->Plugin!=S->Image[1].Base+0x98d8){E=EFI_COMPROMISED_DATA;goto Done;}
-  UINT64 Plugin[2];E=Read(S,G->Plugin,16,Plugin,TRUE);if(E!=EFI_SUCCESS)goto Done;
+  UINT64 Plugin[2];ReadField(S,"PluginHeader");E=Read(S,G->Plugin,16,Plugin,TRUE);if(E!=EFI_SUCCESS)goto Done;
   if(Plugin[0]!=S->Image[1].Base+0x6d68||Plugin[1]!=0x844){E=EFI_MEDIA_CHANGED;goto Done;}
-  E=Field(S,G->Plugin,0x30,8,&G->RequestMapping,TRUE);if(E!=EFI_SUCCESS)goto Done;if(G->RequestMapping){E=EFI_UNSUPPORTED;goto Done;}
-  UINT64 P=0,Q=0;E=Field(S,G->Definition,0,8,&P,FALSE);if(E!=EFI_SUCCESS)goto Done;E=Name(S,P,Expected,G->ResourceName);if(E!=EFI_SUCCESS)goto Done;
+  E=Field(S,G->Plugin,0x30,8,&G->RequestMapping,TRUE,"RequestMapping");if(E!=EFI_SUCCESS)goto Done;if(G->RequestMapping){E=EFI_UNSUPPORTED;goto Done;}
+  UINT64 P=0,Q=0;E=Field(S,G->Definition,0,8,&P,FALSE,"DefinitionName");if(E!=EFI_SUCCESS)goto Done;ReadField(S,"ResourceName");E=Name(S,P,Expected,G->ResourceName);if(E!=EFI_SUCCESS)goto Done;
   RF(G->Node,8,Driver);RF(G->Node,0x18,Rail);if(G->Driver!=S->Image[1].Base+0x6a8c){E=EFI_COMPROMISED_DATA;goto Done;}
-  E=Field(S,G->Definition,0x28,8,&Q,FALSE);if(E!=EFI_SUCCESS)goto Done;if(Q!=G->Rail){E=EFI_COMPROMISED_DATA;goto Done;}
-  E=Field(S,G->Rail,0xb8,8,&Q,FALSE);if(E!=EFI_SUCCESS)goto Done;if(Q!=G->Resource){E=EFI_COMPROMISED_DATA;goto Done;}
-  E=Field(S,G->Rail,0x78,8,&P,FALSE);if(E!=EFI_SUCCESS)goto Done;E=Name(S,P,Expected,G->RailName);if(E!=EFI_SUCCESS)goto Done;
+  E=Field(S,G->Definition,0x28,8,&Q,FALSE,"DefinitionRail");if(E!=EFI_SUCCESS)goto Done;if(Q!=G->Rail){E=EFI_COMPROMISED_DATA;goto Done;}
+  E=Field(S,G->Rail,0xb8,8,&Q,FALSE,"RailResource");if(E!=EFI_SUCCESS)goto Done;if(Q!=G->Resource){E=EFI_COMPROMISED_DATA;goto Done;}
+  E=Field(S,G->Rail,0x78,8,&P,FALSE,"RailNamePointer");if(E!=EFI_SUCCESS)goto Done;ReadField(S,"RailName");E=Name(S,P,Expected,G->RailName);if(E!=EFI_SUCCESS)goto Done;
   RF(G->Rail,0x20,Backend);RF(G->Rail,0x30,VcsApplied);if(G->Backend!=S->Image[1].Base+0xa2c0){E=EFI_COMPROMISED_DATA;goto Done;}
-  UINT64 Backend[2];E=Read(S,G->Backend,16,Backend,TRUE);if(E!=EFI_SUCCESS)goto Done;if(Backend[0]!=S->Image[1].Base+0x711c||Backend[1]!=S->Image[1].Base+0x7218){E=EFI_MEDIA_CHANGED;goto Done;}
+  UINT64 Backend[2];ReadField(S,"BackendHeader");E=Read(S,G->Backend,16,Backend,TRUE);if(E!=EFI_SUCCESS)goto Done;if(Backend[0]!=S->Image[1].Base+0x711c||Backend[1]!=S->Image[1].Base+0x7218){E=EFI_MEDIA_CHANGED;goto Done;}
   RF(G->Rail,0x28,RpmhContext);if(G->RpmhContext){RF(G->RpmhContext,0x10,RpmhConfig);if(G->RpmhConfig){RF(G->RpmhConfig,0,RpmhDrvId);RF(G->RpmhConfig,8,RpmhHandle);}}
-Done:return G->Status=Exact(E);
+  if(Span(S->Image[1].Base+0xa488,0x1680,G->Rail,0x120)){
+    UINT64 Offset=G->Rail-(S->Image[1].Base+0xa488);if(Offset%0x120||Offset/0x120>=S->Report.StaticCount||
+      G->RpmhContext!=S->Image[1].Base+0xbb08+0x328*(Offset/0x120)||G->RpmhConfig!=G->RpmhContext+0x290){E=EFI_COMPROMISED_DATA;goto Done;}}
+Done:CopyMem(&G->LastRead,&S->Report.LastRead,sizeof(G->LastRead));return G->Status=Exact(E);
 }
 #undef RF
+STATIC BOOLEAN SameGraph(CONST PIANO_DISPLAY_RAIL_GRAPH *A,CONST PIANO_DISPLAY_RAIL_GRAPH *B){return !CompareMem(A,B,OFFSET_OF(PIANO_DISPLAY_RAIL_GRAPH,LastRead));}
 STATIC VOID Emit(CONST PIANO_DISPLAY_RAIL_SNAPSHOT *R){
   DEBUG((DEBUG_WARN,"PIANO_RAIL_OBSERVE phase=%a status=%r mm_pair=%u mx_pair=%u retained=%u lost=%u power_ready=0 completion_observed=0\n",R->Phase,R->Status,R->MmCoherent,R->MxCoherent,R->Retained,R->ServicesLost));
   DEBUG((DEBUG_WARN,"PIANO_RAIL_CLOCK status=%r/%r cached=%u config_corner=%u parent_refs=%u/%u railmask=%x\n",R->SelectorBefore,R->SelectorAfter,R->ClockBefore.ParentCachedCorner,R->ClockBefore.CurrentCorner,R->ClockBefore.ParentRefs[0],R->ClockBefore.ParentRefs[1],R->ClockBefore.ParentRailMask));
@@ -137,20 +171,27 @@ STATIC VOID Emit(CONST PIANO_DISPLAY_RAIL_SNAPSHOT *R){
   for(UINT32 I=0;I<2;++I)for(UINT32 J=0;J<2;++J){CONST PIANO_DISPLAY_RAIL_GRAPH *G=I?&R->Mx[J]:&R->Mm[J];
     DEBUG((DEBUG_WARN,"PIANO_RAIL_GRAPH rail=%u round=%u status=%r client=%lx resource=%lx vcs=%lx backend=%lx\n",I,J,G->Status,G->Client,G->Resource,G->Rail,G->Backend));
     DEBUG((DEBUG_WARN,"PIANO_RAIL_STATE rail=%u round=%u active_i=%u type=%x request=%u pending=%u npa=%u vcs=%u\n",I,J,G->ActiveIndex,G->ClientType,G->ActiveRequest,G->PendingRequest,G->NpaApplied,G->VcsApplied));
+    DEBUG((DEBUG_WARN,"PIANO_RAIL_LINKS rail=%u round=%u definition=%lx node=%lx plugin=%lx driver=%lx\n",I,J,G->Definition,G->Node,G->Plugin,G->Driver));
+    DEBUG((DEBUG_WARN,"PIANO_RAIL_RPMH rail=%u round=%u context=%lx drv_config=%lx drv_id=%u handle=%lx completion=0\n",I,J,G->RpmhContext,G->RpmhConfig,G->RpmhDrvId,G->RpmhHandle));
+    CONST PIANO_DISPLAY_RAIL_READ_DIAGNOSTIC *D=&G->LastRead;CONST PIANO_DISPLAY_CLOCK_EFI_MAP_DIAGNOSTIC *M=&D->Map;
+    DEBUG((DEBUG_WARN,"PIANO_RAIL_READ rail=%u round=%u field=%a address=%lx bytes=%lu status=%r image=%u\n",I,J,D->Field,D->Address,(UINT64)D->Bytes,D->Status,D->Image));
+    DEBUG((DEBUG_WARN,"PIANO_RAIL_EFI rail=%u round=%u status=%r get=%r reason=%u type=%u attrs=%lx\n",I,J,M->Status,M->GetMapStatus,M->Reason,M->DescriptorType,M->DescriptorAttributes));
+    DEBUG((DEBUG_WARN,"PIANO_RAIL_EFI_SPAN rail=%u round=%u base=%lx pages=%lx virtual=%lx index=%u\n",I,J,M->DescriptorBase,M->DescriptorPages,M->DescriptorVirtual,M->DescriptorIndex));
+    DEBUG((DEBUG_WARN,"PIANO_RAIL_GUARD rail=%u round=%u page=%lx par=%lx type=%u attrs=%lx map=%r end=%r\n",I,J,D->GuardPage,D->GuardPar,D->GuardType,D->GuardAttributes,D->GuardMapping,D->GuardEnd));
   }
 }
 EFI_STATUS PianoDisplayRailObserve(PIANO_DISPLAY_RAIL_OBSERVER *S,CONST CHAR8 *Phase){
   if(!S||S->Signature!=RAIL_SIGNATURE||!Phase)return EFI_INVALID_PARAMETER;UINTN N=0;while(N<32&&Phase[N])++N;if(!N||N==32)return EFI_INVALID_PARAMETER;
   if(S->Report.Busy)return EFI_ALREADY_STARTED;if(S->Report.Retained||S->Report.ServicesLost)return EFI_NOT_READY;if(!S->Report.Initialized)return EFI_NOT_READY;if(S->Report.Count==PIANO_DISPLAY_RAIL_OBSERVE_PHASES)return EFI_OUT_OF_RESOURCES;
   S->Report.Busy=TRUE;EFI_STATUS E=App(S);if(E!=EFI_SUCCESS)return Fail(S,E);PIANO_DISPLAY_RAIL_SNAPSHOT *R=&S->Report.Snapshot[S->Report.Count++];ZeroMem(R,sizeof(*R));CopyMem(R->Phase,Phase,N);R->SelectorBefore=R->SelectorAfter=EFI_NOT_STARTED;
-  for(UINT32 J=0;J<2;++J)R->Mm[J].Status=R->Mx[J].Status=EFI_NOT_STARTED;
+  for(UINT32 J=0;J<2;++J){R->Mm[J].Status=R->Mx[J].Status=EFI_NOT_STARTED;Unread(&R->Mm[J].LastRead);Unread(&R->Mx[J].LastRead);}
   E=Identity(S);if(E!=EFI_SUCCESS)goto Done;
   R->SelectorBefore=E=PianoDisplayClockReadSnapshotClock(S->Env.ClockReader,PianoClockSelectNonGdscAhb,&R->ClockBefore);
   if(S->Env.ClockReader->Report.Retained||S->Env.ClockReader->Report.ServicesLost)S->Report.Retained=TRUE;
   if(!Live(S)){E=EFI_ABORTED;goto Done;}if(E!=EFI_SUCCESS||S->Report.Retained){if(E==EFI_SUCCESS)E=EFI_COMPROMISED_DATA;goto Done;}
   for(UINT32 J=0;J<2;++J){E=Graph(S,R->ClockBefore.MmClient,"/vcs/vdd_mm",&R->Mm[J]);if(E!=EFI_SUCCESS)goto Done;
     EFI_STATUS Mx=Graph(S,R->ClockBefore.MxClient,"/vcs/vdd_mx",&R->Mx[J]);if(S->Report.Retained||!Live(S)){E=EFI_ABORTED;goto Done;}(VOID)Mx;}
-  R->MmCoherent=!CompareMem(&R->Mm[0],&R->Mm[1],sizeof(R->Mm[0]));R->MxCoherent=R->Mx[0].Status==EFI_SUCCESS&&R->Mx[1].Status==EFI_SUCCESS&&!CompareMem(&R->Mx[0],&R->Mx[1],sizeof(R->Mx[0]));
+  R->MmCoherent=SameGraph(&R->Mm[0],&R->Mm[1]);R->MxCoherent=R->Mx[0].Status==EFI_SUCCESS&&R->Mx[1].Status==EFI_SUCCESS&&SameGraph(&R->Mx[0],&R->Mx[1]);
   if(!R->MmCoherent){E=EFI_MEDIA_CHANGED;goto Done;}
   E=Identity(S);if(E!=EFI_SUCCESS)goto Done;R->SelectorAfter=E=PianoDisplayClockReadSnapshotClock(S->Env.ClockReader,PianoClockSelectNonGdscAhb,&R->ClockAfter);
   if(S->Env.ClockReader->Report.Retained||S->Env.ClockReader->Report.ServicesLost)S->Report.Retained=TRUE;
