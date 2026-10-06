@@ -32,7 +32,7 @@ class DisplayClockPipelineTests(unittest.TestCase):
    # use UBSAN here without weakening either source's real address contract.
    # Separate actual Lease/Reader/Guard tests retain their ASAN coverage.
    exe=d/'pipeline';cmd=['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-g','-DPIANO_DISPLAY_CLOCK_HOST_TEST=1','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie']
-   for p in (BASE/'MdePkg/Include',BASE/'MdePkg/Include/X64',BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',ROOT/'bootprofiles/guarded-read',d):cmd+=['-I',str(p)]
+   for p in (BASE/'MdePkg/Include',BASE/'MdePkg/Include/X64',BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',ROOT/'bootprofiles/guarded-read',ROOT/'bootprofiles/uefi-app',d):cmd+=['-I',str(p)]
    cmd+=[str(ROOT/'tests/PianoDisplayClockPipelineTest.c'),str(ROOT/'bootprofiles/uefi-app/PianoDisplayClockRead.c'),str(ROOT/'bootprofiles/uefi-app/PianoDisplayClockLease.c'),'-lcrypto','-o',str(exe)]
    p=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr)
    p=subprocess.run([str(exe),str(ROOT/'upstream/Mu-Silicium/Binaries/piano/ProductFoundation/ClockDxe/ClockDxe.efi')],capture_output=True,text=True,env={**os.environ,'UBSAN_OPTIONS':'halt_on_error=1:print_stacktrace=1'});self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())

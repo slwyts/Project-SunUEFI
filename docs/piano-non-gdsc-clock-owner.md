@@ -1,8 +1,11 @@
-# Staged non-GDSC AHB clock owner
+# Native non-GDSC AHB clock owner
 
 `bootprofiles/display-rail/PianoDisplayNonGdscClock.c/.h` is a separate minimal
-owner for `disp_cc_mdss_non_gdsc_ahb_clk`. It is not linked to a native tablet
-callsite. The existing GCC Lease and Reader contracts are unchanged.
+owner for `disp_cc_mdss_non_gdsc_ahb_clk`. The existing GCC Lease and Reader
+contracts are unchanged. ProductDisplayOwner now conditionally calls it after
+the actual Rail Init and first MM graph observation both succeed. The compiled
+and hardware acceptance of this new callsite remains pending; test105 did not
+execute it.
 
 The owner directly consumes the actual GCC Lease, Clock Reader and Rail
 Observer. A short GCC Borrow/Validate/Return transaction proves the registered
@@ -39,10 +42,12 @@ counts, unknown observers, EBS or partial cleanup retain the child and any
 active transaction; no Disable retry is permitted.
 
 Successful acquire returns the single GCC borrow token, so existing periodic
-observers remain usable while the child is held. Future product integration
-must place GCC and this child under the same parent: stop the child first and
-require its actual clean report before releasing GCC. The standalone GCC API
-has not been changed to discover this staged child automatically.
+observers remain usable while the child is held. The product integration
+places GCC and this child under the same parent: stop the child first, verify
+Released with zero owned references/token and a closed event, then close the
+Rail observer, release GCC and close the Clock reader. A child warning, error,
+EBS or incomplete success report prevents parent cleanup. The standalone GCC
+API has not been changed to discover this child automatically.
 
 25 UBSAN actual-source cases compile the new owner with the real GCC Lease,
 Reader, Guard and captured Clock PE; AArch64 syntax also passes. Native ARM
@@ -50,6 +55,8 @@ methods and the separate Rail Observer's typed graph boundary are fixtures.
 They cover zero/first and existing references, legal lifetime changes, node/
 client/domain deltas, HWCG, missing/wrong outputs, unsupported masks/flags,
 MM-graph failure, EBS, partial native failures and exact-once cleanup. The Rail
-Observer has its own actual pin/Guard tests; an all-modules joint fixture and
-product parent binding remain future work. No native device invocation, media
-write, full product build or new product readiness claim is made by this unit.
+Observer has its own actual pin/Guard tests. The actual product coordinator's
+26-case fixture covers child-first ordering, absent preconditions and refusal
+to advance after child failure. An all-modules joint fixture is in progress.
+Native device invocation and the new product build remain unverified; this
+unit does not claim that the physical display works.

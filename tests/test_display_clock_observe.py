@@ -38,7 +38,7 @@ class DisplayClockObserveTests(unittest.TestCase):
             nonlocal fixture
             self.assertEqual(fixture.count(old),1,'actual pipeline fixture anchor drift: '+old[:80])
             fixture=fixture.replace(old,new)
-        for path in ('bootprofiles/guarded-read/PianoGuardedRead.c','bootprofiles/uefi-app/PianoDisplayClockRead.h'):
+        for path in ('bootprofiles/guarded-read/PianoGuardedRead.c','bootprofiles/uefi-app/PianoDisplayClockRead.h','bootprofiles/display-rail/PianoDisplayNonGdscClock.h'):
             replace_once('"../'+path+'"','"'+str(ROOT/path)+'"')
         replace_once('#include "ActualClockObjectComparison.h"','#include "ActualClockObjectComparison.h"\n#include "'+str(ROOT/'bootprofiles/uefi-app/PianoDisplayClockObserve.h')+'"\n#include "'+str(ROOT/'bootprofiles/uefi-app/PianoProductDisplayOwner.h')+'"')
         replace_once('static BOOLEAN GlobalAlive(VOID){return Services;}',
@@ -76,7 +76,7 @@ class DisplayClockObserveTests(unittest.TestCase):
             test=d/'ActualHeldConsumer.c';test.write_text(fixture);exe=d/'held'
             cmd=['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-g',
                 '-DPIANO_DISPLAY_CLOCK_HOST_TEST=1','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie']
-            for path in (INC,INC/'X64',INC.parent.parent/'CryptoPkg/Include',QCOM,ROOT/'bootprofiles/guarded-read',d):cmd+=['-I',str(path)]
+            for path in (INC,INC/'X64',INC.parent.parent/'CryptoPkg/Include',QCOM,ROOT/'bootprofiles/guarded-read',ROOT/'bootprofiles/uefi-app',d):cmd+=['-I',str(path)]
             cmd+=[str(test),str(ROOT/'bootprofiles/uefi-app/PianoDisplayClockRead.c'),str(ROOT/'bootprofiles/uefi-app/PianoDisplayClockLease.c'),str(SRC),'-lcrypto','-o',str(exe)]
             result=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             result=subprocess.run([str(exe),str(ROOT/'upstream/Mu-Silicium/Binaries/piano/ProductFoundation/ClockDxe/ClockDxe.efi')],capture_output=True,text=True,

@@ -14,6 +14,7 @@
 #define PIANO_GUARDED_HOST_TEST 1
 #include "../bootprofiles/guarded-read/PianoGuardedRead.c"
 #include "../bootprofiles/uefi-app/PianoDisplayClockRead.h"
+#include "../bootprofiles/display-rail/PianoDisplayNonGdscClock.h"
 #include "ActualClockObjectComparison.h"
 EFI_GUID gEfiLoadedImageProtocolGuid={.Data1=1},gEfiCpuArchProtocolGuid={.Data1=2},gEfiEventExitBootServicesGuid=EFI_EVENT_GROUP_EXIT_BOOT_SERVICES;
 VOID *EFIAPI CopyMem(VOID *D,CONST VOID *S,UINTN N){return memmove(D,S,N);}VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}BOOLEAN EFIAPI Sha256HashAll(CONST VOID *P,UINTN N,UINT8 *H){return SHA256(P,N,H)!=NULL;}
@@ -29,6 +30,7 @@ static EFI_BOOT_SERVICES Bs;static EFI_DXE_SERVICES Ds;static EFI_CPU_ARCH_PROTO
 EFI_BOOT_SERVICES *gBS=&Bs;EFI_DXE_SERVICES *gDS=&Ds;
 static struct {
  PIANO_DISPLAY_CLOCK_LEASE Lease;PIANO_DISPLAY_CLOCK_READ Reader;
+ PIANO_NON_GDSC_CLOCK Child;PIANO_DISPLAY_RAIL_OBSERVER Rail;
  BOOLEAN (*Alive)(VOID);EFI_STATUS Status;BOOLEAN Attempted,Retained,ServicesLost;
 } mDisplay;
 static EFI_CPU_INTERRUPT_HANDLER Handlers[4];static EFI_TPL Tpl=TPL_APPLICATION;

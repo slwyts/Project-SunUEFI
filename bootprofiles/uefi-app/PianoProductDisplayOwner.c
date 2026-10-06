@@ -4,6 +4,7 @@
 #include "PianoDisplayClockRead.h"
 #include "PianoDisplayClockObserve.h"
 #include "PianoDisplayRailObserve.h"
+#include "PianoDisplayNonGdscClock.h"
 #include "PianoNativeImages.h"
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/DxeServicesTableLib.h>
@@ -16,6 +17,8 @@ STATIC struct {
   EFI_STATUS NonGdscStatus;
   PIANO_DISPLAY_RAIL_OBSERVER Rail;
   EFI_STATUS RailInit,RailObserve,RailClose;
+  PIANO_NON_GDSC_CLOCK Child;
+  EFI_STATUS ChildStart,ChildStop;
   PIANO_PRODUCT_DISPLAY_ALIVE Alive;
   EFI_STATUS Status;
   BOOLEAN Attempted,Retained,ServicesLost;
@@ -31,7 +34,9 @@ STATIC BOOLEAN ReadAlive(VOID *Context){
 STATIC BOOLEAN LeaseAlive(VOID *Context){return Context==&mDisplay.Reader&&ReadAlive(&mDisplay);}
 BOOLEAN PianoProductDisplayOwnerRetained(VOID){
   return mDisplay.Retained||mDisplay.ServicesLost||mDisplay.Reader.Report.Retained||
-    mDisplay.Reader.Report.ServicesLost||mDisplay.Lease.Report.Retained||mDisplay.Lease.Report.ServicesLost;
+    mDisplay.Reader.Report.ServicesLost||mDisplay.Lease.Report.Retained||mDisplay.Lease.Report.ServicesLost||
+    mDisplay.Child.Report.Retained||mDisplay.Child.Report.ServicesLost||
+    mDisplay.Rail.Report.Retained||mDisplay.Rail.Report.ServicesLost;
 }
 VOID PianoProductDisplayFenceExit(VOID){
   if(!mDisplay.Attempted)return;
@@ -40,6 +45,7 @@ VOID PianoProductDisplayFenceExit(VOID){
   mDisplay.Lease.BorrowToken=0;
   mDisplay.Lease.Report.ServicesLost=mDisplay.Lease.Report.Retained=TRUE;
   if(mDisplay.Rail.Signature)mDisplay.Rail.Report.ServicesLost=mDisplay.Rail.Report.Retained=TRUE;
+  if(mDisplay.Child.Signature)mDisplay.Child.Report.ServicesLost=mDisplay.Child.Report.Retained=TRUE;
 }
 EFI_STATUS PianoProductDisplayClockObserve(CONST CHAR8 *Phase,PIANO_PRODUCT_DISPLAY_ALIVE Alive){
   if(!Phase||!Alive)return EFI_INVALID_PARAMETER;
@@ -123,6 +129,17 @@ EFI_STATUS PianoProductDisplayReplay(VOID){
     EFI_STATUS E=PianoDisplayRailReemit(&mDisplay.Rail);
     if(PianoDisplayRailRetained(&mDisplay.Rail)){mDisplay.Retained=TRUE;return E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E;}
   }
+  CONST PIANO_NON_GDSC_CLOCK_REPORT *C=&mDisplay.Child.Report;
+  DEBUG((DEBUG_WARN,"PIANO_DISPLAY_CHILD start=%r stop=%r held=%u owned=%u retained=%u lost=%u token=%lu\n",
+    mDisplay.ChildStart,mDisplay.ChildStop,C->Held,C->OwnedReferences,C->Retained,C->ServicesLost,C->TransactionToken));
+  if(mDisplay.Child.Signature){
+    DEBUG((DEBUG_WARN,"PIANO_DISPLAY_CHILD_NATIVE get=%r enable=%r counters=%r enabled=%r/%u on=%r/%u\n",
+      C->GetId,C->Enable,C->Counter,C->IsEnabled,C->EnabledObserved,C->IsOn,C->OnObserved));
+    DEBUG((DEBUG_WARN,"PIANO_DISPLAY_CHILD_REFS node=%u/%u client=%u/%u domain=%u/%u mm=%u/%u vcs=%u/%u\n",
+      C->Baseline.Total[0],C->Acquired.Total[0],C->Baseline.PerClient[0],C->Acquired.PerClient[0],
+      C->Baseline.ParentRefs[0],C->Acquired.ParentRefs[0],C->RailBefore.Mm[0].NpaApplied,C->RailAfter.Mm[0].NpaApplied,
+      C->RailBefore.Mm[0].VcsApplied,C->RailAfter.Mm[0].VcsApplied));
+  }
   return EFI_SUCCESS;
 }
 STATIC VOID ObserveRail(VOID){
@@ -147,6 +164,7 @@ EFI_STATUS PianoProductDisplayStart(PIANO_PRODUCT_DISPLAY_ALIVE Alive){
   mDisplay.Attempted=TRUE;mDisplay.Alive=Alive;mDisplay.Status=EFI_NOT_STARTED;
   mDisplay.NonGdscStatus=EFI_NOT_STARTED;
   mDisplay.RailInit=mDisplay.RailObserve=mDisplay.RailClose=EFI_NOT_STARTED;
+  mDisplay.ChildStart=mDisplay.ChildStop=EFI_NOT_STARTED;
   PIANO_DISPLAY_CLOCK_LEASE_REPORT *Initial=&mDisplay.Lease.Report;
   Initial->Revision=1;Initial->ClockId=MAX_UINTN;
   Initial->Status=Initial->Identity=Initial->Before=Initial->GetId=Initial->Enable=
@@ -169,6 +187,12 @@ EFI_STATUS PianoProductDisplayStart(PIANO_PRODUCT_DISPLAY_ALIVE Alive){
   if(S==EFI_SUCCESS&&!PianoProductDisplayOwnerRetained()){
     ObserveRail();
     if(PianoProductDisplayOwnerRetained())S=EFI_NOT_READY;
+    else if(mDisplay.RailInit==EFI_SUCCESS&&mDisplay.RailObserve==EFI_SUCCESS){
+      PIANO_NON_GDSC_CLOCK_ENV Child={.Gcc=&mDisplay.Lease,.Reader=&mDisplay.Reader,.Rail=&mDisplay.Rail};
+      mDisplay.ChildStart=PianoDisplayNonGdscClockAcquire(&mDisplay.Child,&Child);
+      if(mDisplay.ChildStart!=EFI_SUCCESS){mDisplay.Retained=TRUE;S=EFI_ERROR(mDisplay.ChildStart)?mDisplay.ChildStart:EFI_DEVICE_ERROR;}
+      else CopyMem(&mDisplay.NonGdsc,&mDisplay.Child.Report.Acquired,sizeof(mDisplay.NonGdsc));
+    }
   }
   if(!ReadAlive(&mDisplay)){mDisplay.Retained=mDisplay.ServicesLost=TRUE;S=EFI_ABORTED;}
   if(S!=EFI_SUCCESS&&!PianoProductDisplayOwnerRetained()){
@@ -182,7 +206,7 @@ STATIC VOID CopyAcquire(PIANO_PRODUCT_DISPLAY_STARTUP_REPORT *R){
   CONST PIANO_DISPLAY_CLOCK_LEASE_REPORT *L=&mDisplay.Lease.Report;
   R->Revision=1;R->LeaseContext=&mDisplay;R->ClockId=L->ClockId;R->NativeBase=L->NativeBase;
   R->AcquireAttempted=L->AcquireAttempted;R->Held=L->Held;R->OwnedReferences=L->OwnedReferences;
-  R->Retained=PianoProductDisplayOwnerRetained();R->ServicesLost=mDisplay.ServicesLost||L->ServicesLost||mDisplay.Reader.Report.ServicesLost;
+  R->Retained=PianoProductDisplayOwnerRetained();R->ServicesLost=mDisplay.ServicesLost||L->ServicesLost||mDisplay.Reader.Report.ServicesLost||mDisplay.Child.Report.ServicesLost||mDisplay.Rail.Report.ServicesLost;
   R->Status=mDisplay.Status;R->AcquireBeforeSnapshots=L->Baseline.MatchingSnapshots;R->AcquireAfterSnapshots=L->Acquired.MatchingSnapshots;
   CopyMem(R->AcquireBeforeTotal,L->Baseline.Total,sizeof(R->AcquireBeforeTotal));CopyMem(R->AcquireAfterTotal,L->Acquired.Total,sizeof(R->AcquireAfterTotal));
   CopyMem(R->AcquireBeforeClient,L->Baseline.PerClient,sizeof(R->AcquireBeforeClient));CopyMem(R->AcquireAfterClient,L->Acquired.PerClient,sizeof(R->AcquireAfterClient));
@@ -202,7 +226,16 @@ EFI_STATUS PianoProductDisplayStop(VOID *Context,PIANO_PRODUCT_DISPLAY_RETIRE_RE
   CopyMem(R->AcquireBeforeTotal,Start.AcquireBeforeTotal,sizeof(R->AcquireBeforeTotal));CopyMem(R->AcquireAfterTotal,Start.AcquireAfterTotal,sizeof(R->AcquireAfterTotal));
   CopyMem(R->AcquireBeforeClient,Start.AcquireBeforeClient,sizeof(R->AcquireBeforeClient));CopyMem(R->AcquireAfterClient,Start.AcquireAfterClient,sizeof(R->AcquireAfterClient));
   EFI_STATUS S=EFI_SUCCESS;
-  if(mDisplay.Rail.Signature&&mDisplay.RailClose!=EFI_SUCCESS){
+  if(mDisplay.Child.Signature){
+    S=mDisplay.ChildStop=PianoDisplayNonGdscClockRelease(&mDisplay.Child);
+    CONST PIANO_NON_GDSC_CLOCK_REPORT *C=&mDisplay.Child.Report;
+    if(S!=EFI_SUCCESS||C->Retained||C->ServicesLost||C->Held||C->OwnedReferences||C->TransactionToken||!C->Released||mDisplay.Child.Exit){
+      mDisplay.Retained=TRUE;S=EFI_ERROR(S)?S:EFI_COMPROMISED_DATA;
+    }
+    if(!mDisplay.ServicesLost&&!C->ServicesLost)DEBUG((DEBUG_WARN,"PIANO_DISPLAY_CHILD_RELEASE status=%r held=%u owned=%u released=%u retained=%u refs=%u/%u\n",
+      S,C->Held,C->OwnedReferences,C->Released,C->Retained,C->ReleaseBefore.Total[0],C->Retired.Total[0]));
+  }
+  if(S==EFI_SUCCESS&&mDisplay.Rail.Signature&&mDisplay.RailClose!=EFI_SUCCESS){
     S=mDisplay.RailClose=PianoDisplayRailClose(&mDisplay.Rail);
     if(S!=EFI_SUCCESS){mDisplay.Retained=TRUE;if(!EFI_ERROR(S))S=EFI_DEVICE_ERROR;}
   }
@@ -212,7 +245,7 @@ EFI_STATUS PianoProductDisplayStop(VOID *Context,PIANO_PRODUCT_DISPLAY_RETIRE_RE
   R->Cleanup=EFI_NOT_STARTED;
   if(S==EFI_SUCCESS&&!PianoProductDisplayOwnerRetained())R->Cleanup=PianoDisplayClockReadClose(&mDisplay.Reader);
   if(S==EFI_SUCCESS&&R->Cleanup!=EFI_SUCCESS)S=R->Cleanup;
-  R->Retained=PianoProductDisplayOwnerRetained()||(R->Cleanup!=EFI_SUCCESS);R->ServicesLost=mDisplay.ServicesLost||L->ServicesLost||mDisplay.Reader.Report.ServicesLost;
+  R->Retained=PianoProductDisplayOwnerRetained()||(R->Cleanup!=EFI_SUCCESS);R->ServicesLost=mDisplay.ServicesLost||L->ServicesLost||mDisplay.Reader.Report.ServicesLost||mDisplay.Child.Report.ServicesLost||mDisplay.Rail.Report.ServicesLost;
   if(R->ServicesLost)S=EFI_ABORTED;
   R->ReleaseAttempted=L->ReleaseAttempted;R->HeldAfter=L->Held;R->Released=L->Released;R->ExitClosed=mDisplay.Lease.Exit==NULL;
   R->OwnedReferencesAfter=L->OwnedReferences;R->CounterStatus=L->CounterStatus;R->GccReadback=L->ReleaseReadbackStatus;R->GccReadbackEnd=L->ReleaseGcc.EndStatus;
