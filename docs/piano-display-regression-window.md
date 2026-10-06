@@ -52,11 +52,17 @@ known-visible control. It does not isolate one variable: test24 differs from the
 current product in GUI/runtime code and multiple hardware features. Test25 also
 adds touch RAM configuration before foundation and SPI Open before SimpleInit.
 The version transition coincides with these additions; the exact step that
-changes physical display behavior is not yet proved. A separate temporary
-read-only guard session around each actual native
-StartImage will compare the uniquely matched MDSS SID800/mask2 route and fixed
-CB2 state. Sessions must be fully closed before native code runs. No driver
-is disabled for that proposed product observation, and no display/clock/MMU/
+changes physical display behavior is not yet proved. Test98 completed a separate
+temporary read-only guard session before and after every actual native StartImage
+and four outer phases: all 30 snapshots are coherent and cleaned up. The measured
+MDSS/global/SID800-mask2/CB2 fields are identical in every phase, while the
+operator still sees a blank white/grey screen. Thus this experiment does not
+support a native-start change in these SMMU fields. CPU framebuffer translation,
+cache metadata, display clock and DPU scanout remain separate unmeasured paths.
+See piano-product-test98.md for exact observations and recovery.
+
+Sessions are fully closed before native code runs. No driver
+is disabled for that product observation, and no display/clock/MMU/
 SMMU register is written to obtain it. Test97 is an explicitly requested replay
 of a historical diagnostic image, not a replacement product profile or a change
 to the single product feature set.
