@@ -78,6 +78,16 @@ EFI_STATUS PianoProductDisplayReplay(VOID){
   DEBUG((DEBUG_WARN,"PIANO_DISPLAY_READER_ANCHOR anchor=%lx sessions=%u words=%u retained=%u\n",
     mDisplay.Reader.Report.ProducerAnchor,
     mDisplay.Reader.Report.Sessions,mDisplay.Reader.Report.Words,mDisplay.Reader.Report.Retained));
+  CONST PIANO_DISPLAY_CLOCK_EFI_MAP_DIAGNOSTIC *Map=&mDisplay.Reader.Report.EfiMap;
+  DEBUG((DEBUG_WARN,"PIANO_DISPLAY_EFI_MAP status=%r get=%r reason=%u cursor=%lx bytes=%lu stride=%lu version=%u\n",
+    Map->Status,Map->GetMapStatus,Map->Reason,Map->Cursor,(UINT64)Map->MapBytes,(UINT64)Map->DescriptorBytes,Map->DescriptorVersion));
+  DEBUG((DEBUG_WARN,"PIANO_DISPLAY_EFI_DESCRIPTOR i=%u type=%u base=%lx pages=%lx attrs=%lx virtual=%lx\n",
+    Map->DescriptorIndex,Map->DescriptorType,Map->DescriptorBase,Map->DescriptorPages,Map->DescriptorAttributes,Map->DescriptorVirtual));
+  DEBUG((DEBUG_WARN,"PIANO_DISPLAY_EFI_CONFLICT i=%u base=%lx pages=%lx\n",
+    Map->ConflictIndex,Map->ConflictBase,Map->ConflictPages));
+  DEBUG((DEBUG_WARN,"PIANO_DISPLAY_CLEAN_REFUSAL proof=%r accepted=%u seq=%lu address=%lx bytes=%lu sessions=%u\n",
+    R->ReadFailureEvidenceStatus,R->CleanSourceRefusal,R->ReadFailureEvidence.Sequence,R->ReadFailureEvidence.Address,
+    (UINT64)R->ReadFailureEvidence.Bytes,R->ReadFailureEvidence.Sessions));
   return EFI_SUCCESS;
 }
 EFI_STATUS PianoProductDisplayStart(PIANO_PRODUCT_DISPLAY_ALIVE Alive){
@@ -87,13 +97,13 @@ EFI_STATUS PianoProductDisplayStart(PIANO_PRODUCT_DISPLAY_ALIVE Alive){
   Initial->Revision=1;Initial->ClockId=MAX_UINTN;
   Initial->Status=Initial->Identity=Initial->Before=Initial->GetId=Initial->Enable=
     Initial->IsOn=Initial->After=Initial->Disable=Initial->Cleanup=Initial->CounterStatus=
-    Initial->ReleaseReadbackStatus=Initial->IsEnabled=EFI_NOT_STARTED;
+    Initial->ReleaseReadbackStatus=Initial->IsEnabled=Initial->ReadFailureEvidenceStatus=EFI_NOT_STARTED;
   PIANO_DISPLAY_CLOCK_READ_ENV Reader={.Context=&mDisplay,.Services=gBS,.DxeServices=gDS,
     .BootServicesAlive=ReadAlive,.Lease=&mDisplay.Lease};
   EFI_STATUS S=PianoDisplayClockReadInitialize(&mDisplay.Reader,&Reader);
   if(S==EFI_SUCCESS){
     PIANO_DISPLAY_CLOCK_LEASE_ENV Lease={.Context=&mDisplay.Reader,.Services=gBS,.BootServicesAlive=LeaseAlive,
-      .ReadCpu=PianoDisplayClockReadCpu,.ReadGcc=ReadGcc};
+      .ReadCpu=PianoDisplayClockReadCpu,.ReadGcc=ReadGcc,.GetReadFailureEvidence=PianoDisplayClockReadFailureEvidence};
     S=PianoDisplayClockLeaseAcquire(&mDisplay.Lease,&Lease);
   }
   if(!ReadAlive(&mDisplay)){mDisplay.Retained=mDisplay.ServicesLost=TRUE;S=EFI_ABORTED;}

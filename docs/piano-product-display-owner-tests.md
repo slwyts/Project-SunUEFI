@@ -35,11 +35,18 @@ retires through Policy→USB→Proof→Bridge→UFS→Input→Display→Event, a
 reference values10→9, exact owned1→0 and actual12 guarded loads in three separate
 clean sessions. No fake Clean workflow bypasses the manager's validations.
 
-Seventeen fork cases cover successful typed translation/handoff, true early
+Eighteen fork cases cover successful typed translation/handoff, true early
 absence, opaque pinned/partial Enable refusal, release failure, reader-close
 failure, release/close EBS with inaccessible service tables, duplicate release,
 wrong context, whole-state output aliases, pointer overflow, before-start getter,
 recoverable GCC read abort and uncertain guard event close. Real BasePrintLib
-AsciiVSPrint256 checks complete short log lines. ASAN/UBSAN and strict AARCH64
+AsciiVSPrint256 checks complete short log lines, including the actual EFI-map
+diagnostic fields. The additional reader evidence boundary verifies that the
+production coordinator wires the exact `PianoDisplayClockReadFailureEvidence`
+callback. Its controlled implementation returns `EFI_UNSUPPORTED`, leaves the
+output sentinel untouched, and never grants `CleanSourceRefusal` or performs an
+additional guarded read. Only the separate actual Reader/Lease pipeline can
+prove a fresh first-read refusal and release both pinned FV copies.
+ASAN/UBSAN and strict AARCH64
 coordinator compilation pass. No firmware build, device or native hardware Clock
 operation is executed by this test.

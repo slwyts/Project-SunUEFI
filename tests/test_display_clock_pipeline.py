@@ -1,9 +1,10 @@
 """Actual combined clock pipeline; only machine/EFI/native ARM boundaries mocked."""
 from pathlib import Path
 import hashlib,os,re,subprocess,tempfile,unittest
+from piano_mu_map_fixture import write_mu_map_fixture
 ROOT=Path(__file__).resolve().parents[1];BASE=ROOT/'upstream/Mu-Silicium/Mu_Basecore'
 def function(text,name):
- match=re.search(r'STATIC\s+(?:BOOLEAN|EFI_STATUS)\s+'+re.escape(name)+r'\s*\([^)]*\)\s*\{',text)
+ match=re.search(r'(?:STATIC\s+)?(?:VOID|BOOLEAN|EFI_STATUS)\s+'+re.escape(name)+r'\s*\([^)]*\)\s*\{',text)
  if not match:raise AssertionError('missing actual Root function '+name)
  pos=match.end();depth=1
  while depth:
@@ -21,8 +22,11 @@ class DisplayClockPipelineTests(unittest.TestCase):
  def test_actual_combined_native_clock_reader_and_guard_pipeline(self):
   owner=ROOT/'bootprofiles/uefi-app/PianoProductDisplayOwner.c';text=owner.read_text()
   with tempfile.TemporaryDirectory(prefix='display-clock-pipeline-')as directory:
-   d=Path(directory);(d/'ActualDisplayGcc.h').write_text('// Verbatim actual Root adapter source SHA256 '+hashlib.sha256(owner.read_bytes()).hexdigest()+'\n'+'\n'.join(function(text,n)for n in ('ReadAlive','LeaseAlive','ReadGcc'))+'\n')
+   d=Path(directory);owners=(ROOT/'bootprofiles/uefi-app/PianoProductOwners.h').read_text();startup=re.search(r'typedef struct \{(?:(?!typedef struct).)*?\} PIANO_PRODUCT_DISPLAY_STARTUP_REPORT;',owners,re.S)
+   if not startup:raise AssertionError('missing actual Root startup report')
+   (d/'ActualDisplayGcc.h').write_text('// Verbatim actual Root adapter source SHA256 '+hashlib.sha256(owner.read_bytes()).hexdigest()+'\n'+startup.group()+'\n'+'\n'.join(function(text,n)for n in ('ReadAlive','LeaseAlive','ReadGcc','PianoProductDisplayOwnerRetained','CopyAcquire'))+'\n')
    (d/'ActualClockObjectComparison.h').write_text(object_comparison((ROOT/'bootprofiles/uefi-app/PianoDisplayClockRead.c').read_text()))
+   write_mu_map_fixture(ROOT,d/'ActualMuMemoryMap.h')
    # Actual Lease directly dereferences the native protocol and actual Reader
    # enforces the original low heap. ASAN reserves that x64 address-space gap;
    # use UBSAN here without weakening either source's real address contract.

@@ -18,9 +18,23 @@ STATIC BOOLEAN Alias(CONST VOID *A,UINTN An,CONST VOID *B,UINTN Bn){UINTN X=(UIN
 STATIC BOOLEAN Live(PIANO_DISPLAY_CLOCK_LEASE *S){if(S->Report.ServicesLost||S->Env.BootServicesAlive(S->Env.Context)!=TRUE){S->Report.ServicesLost=TRUE;return FALSE;}return TRUE;}
 STATIC EFI_STATUS Retain(PIANO_DISPLAY_CLOCK_LEASE *S,EFI_STATUS E){S->Report.Retained=TRUE;S->Report.Busy=FALSE;return S->Report.Status=Exact(E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);}
 STATIC VOID EFIAPI Exit(EFI_EVENT Event,VOID *Context){(VOID)Event;PIANO_DISPLAY_CLOCK_LEASE *S=Context;S->Report.ServicesLost=S->Report.Retained=TRUE;}
+STATIC BOOLEAN CleanFirstTextRefusal(PIANO_DISPLAY_CLOCK_LEASE *S,UINT64 Address,UINTN Bytes,EFI_STATUS Status){
+ if(Status!=EFI_NOT_READY||S->ReadCpuCalls!=1||Address!=S->Report.NativeBase+TEXT_FIRST||Bytes!=sizeof(S->LiveText)||
+   !S->PinnedCopy||S->PinnedBytes!=IMAGE_BYTES||S->Exit||S->Report.GetId!=EFI_NOT_STARTED||S->Report.Enable!=EFI_NOT_STARTED||
+   S->Report.AcquireAttempted||S->Report.Held||S->Report.OwnedReferences||S->Report.Retained||!S->Env.GetReadFailureEvidence)return FALSE;
+ PIANO_DISPLAY_CLOCK_LEASE_READ_FAILURE_EVIDENCE *R=&S->Report.ReadFailureEvidence;ZeroMem(R,sizeof(*R));
+ S->Report.ReadFailureEvidenceStatus=S->Env.GetReadFailureEvidence(S->Env.Context,Address,Bytes,Status,R);
+ if(!Live(S)||S->Report.ReadFailureEvidenceStatus!=EFI_SUCCESS)return FALSE;
+ if(R->Revision!=PIANO_DISPLAY_CLOCK_LEASE_READ_FAILURE_REVISION||R->Sequence!=1||R->Address!=Address||R->Bytes!=Bytes||R->Status!=Status||
+   R->MapStatus!=EFI_NOT_READY||(R->EndStatus!=EFI_SUCCESS&&R->EndStatus!=EFI_NOT_STARTED)||R->Busy||R->Retained||R->ServicesLost||
+   R->Sessions||R->GuardReads||R->GuardActive||R->GuardSyncOwned||R->GuardSErrorOwned||R->GuardFatal||R->GuardRetained||R->GuardServicesLost)return FALSE;
+ S->Report.CleanSourceRefusal=TRUE;return TRUE;
+}
 STATIC EFI_STATUS Read(PIANO_DISPLAY_CLOCK_LEASE *S,UINT64 Address,UINTN Bytes,VOID *Out){
  if(!Address||!Bytes||Bytes>256||Address>MAX_UINT64-Bytes||!Out)return EFI_INVALID_PARAMETER;
- if(!Live(S))return EFI_ABORTED;EFI_STATUS E=S->Env.ReadCpu(S->Env.Context,Address,Bytes,Out);return !Live(S)?Retain(S,EFI_ABORTED):E==EFI_SUCCESS?E:Retain(S,E);
+ if(!Live(S))return EFI_ABORTED;if(S->ReadCpuCalls==MAX_UINT64)return Retain(S,EFI_OUT_OF_RESOURCES);++S->ReadCpuCalls;
+ EFI_STATUS E=S->Env.ReadCpu(S->Env.Context,Address,Bytes,Out);if(!Live(S))return Retain(S,EFI_ABORTED);if(E==EFI_SUCCESS)return E;
+ if(CleanFirstTextRefusal(S,Address,Bytes,E))return E;return Retain(S,!Live(S)?EFI_ABORTED:E);
 }
 STATIC EFI_STATUS ReadOffset(PIANO_DISPLAY_CLOCK_LEASE *S,UINT64 Base,UINTN Offset,UINTN Bytes,VOID *Out){
  if(!Base||Base>MAX_UINT64-Offset)return EFI_COMPROMISED_DATA;return Read(S,Base+Offset,Bytes,Out);
@@ -159,7 +173,7 @@ EFI_STATUS PianoDisplayClockLeaseAcquire(PIANO_DISPLAY_CLOCK_LEASE *S,CONST PIAN
  if(!S||!Env||S->Signature||Alias(S,sizeof(*S),Env,sizeof(*Env))||(Env->Context&&Alias(S,sizeof(*S),Env->Context,1)))return EFI_INVALID_PARAMETER;
  if(!Env->Services||!Env->BootServicesAlive||!Env->ReadCpu||!Env->ReadGcc||!Env->Services->LocateProtocol||!Env->Services->LocateHandleBuffer||!Env->Services->HandleProtocol||!Env->Services->FreePool||!Env->Services->RaiseTPL||!Env->Services->RestoreTPL||!Env->Services->CreateEventEx||!Env->Services->CloseEvent)return EFI_UNSUPPORTED;
  S->Signature=SIGNATURE;S->Env=*Env;S->Report.Revision=1;
- S->Report.Status=S->Report.Identity=S->Report.Before=S->Report.GetId=S->Report.Enable=S->Report.IsOn=S->Report.IsEnabled=S->Report.After=S->Report.Disable=S->Report.Cleanup=S->Report.CounterStatus=S->Report.ReleaseReadbackStatus=EFI_NOT_STARTED;
+ S->Report.Status=S->Report.Identity=S->Report.Before=S->Report.GetId=S->Report.Enable=S->Report.IsOn=S->Report.IsEnabled=S->Report.After=S->Report.Disable=S->Report.Cleanup=S->Report.CounterStatus=S->Report.ReleaseReadbackStatus=S->Report.ReadFailureEvidenceStatus=EFI_NOT_STARTED;
  S->Report.Busy=TRUE;EFI_STATUS E=App(S);if(E!=EFI_SUCCESS)return Retain(S,E);
  S->Report.Identity=E=Identity(S,TRUE);if(E!=EFI_SUCCESS)goto Unheld;
  E=Refs(S,&S->Report.Baseline,FALSE);if(E!=EFI_SUCCESS)goto Unheld;

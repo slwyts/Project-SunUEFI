@@ -32,12 +32,17 @@ STATIC EFI_STATUS DcrFree(PIANO_DISPLAY_CLOCK_READ *S){
  EFI_STATUS E=S->Env.Services->FreePool(S->PinnedCopy);if(!DcrLive(S))return EFI_ABORTED;
  if(E==EFI_SUCCESS){S->PinnedCopy=NULL;S->PinnedBytes=0;}else S->Report.Retained=TRUE;return DcrExact(E);
 }
+STATIC VOID DcrClearMap(PIANO_DISPLAY_CLOCK_READ *S){
+ ZeroMem(&S->Report.EfiMap,sizeof(S->Report.EfiMap));S->Report.EfiMap.Status=S->Report.EfiMap.GetMapStatus=EFI_NOT_STARTED;
+ S->Report.EfiMap.DescriptorIndex=S->Report.EfiMap.DescriptorType=S->Report.EfiMap.ConflictIndex=MAX_UINT32;
+}
 EFI_STATUS PianoDisplayClockReadInitialize(PIANO_DISPLAY_CLOCK_READ *S,CONST PIANO_DISPLAY_CLOCK_READ_ENV *E){
  if(!S||!E||S->Signature||DcrAlias(S,sizeof(*S),E,sizeof(*E))||!E->Lease||DcrAlias(S,sizeof(*S),E->Lease,sizeof(*E->Lease)))return EFI_INVALID_PARAMETER;
  if(!E->Services||!E->DxeServices||!E->BootServicesAlive)return EFI_INVALID_PARAMETER;
  if(S->Report.ServicesLost||S->Report.Retained||E->BootServicesAlive(E->Context)!=TRUE)return EFI_NOT_READY;
  if(!E->Services->HandleProtocol||!E->Services->GetMemoryMap||!E->Services->FreePool||!E->DxeServices->GetMemorySpaceDescriptor)return EFI_UNSUPPORTED;
  S->Signature=DCR_SIGNATURE;S->Env=*E;S->Report.Revision=PIANO_DISPLAY_CLOCK_READ_REVISION;S->NextText=DCR_TEXT_FIRST;
+ S->Report.MapStatus=S->Report.IdentityStatus=S->Report.EndStatus=EFI_NOT_STARTED;DcrClearMap(S);
  EFI_STATUS Q=GetSectionFromAnyFv(&mDcrImageGuid,EFI_SECTION_PE32,0,&S->PinnedCopy,&S->PinnedBytes);
  if(!DcrLive(S))return DcrFail(S,EFI_ABORTED);
  if(Q!=EFI_SUCCESS||!S->PinnedCopy||S->PinnedBytes!=DCR_IMAGE_BYTES){S->Report.PinStatus=DcrExact(Q==EFI_SUCCESS?EFI_COMPROMISED_DATA:Q);goto Done;}
@@ -65,24 +70,36 @@ STATIC EFI_STATUS DcrIdentity(PIANO_DISPLAY_CLOCK_READ *S){
  if(!S->ImageHandle){S->ImageHandle=P->NativeImage;S->ImageIdentity=L;S->ImageBase=(UINT64)(UINTN)L->ImageBase;return DcrRelocate(S);}
  return S->ImageHandle==P->NativeImage&&S->ImageIdentity==L&&S->ImageBase==(UINT64)(UINTN)L->ImageBase?EFI_SUCCESS:EFI_MEDIA_CHANGED;
 }
+STATIC EFI_STATUS DcrMapDone(PIANO_DISPLAY_CLOCK_READ *S,PIANO_DISPLAY_CLOCK_EFI_MAP_REASON Reason,EFI_STATUS E){S->Report.EfiMap.Reason=Reason;return S->Report.EfiMap.Status=DcrExact(E);}
+STATIC VOID DcrMapDescriptor(PIANO_DISPLAY_CLOCK_READ *S,UINT32 Index,CONST EFI_MEMORY_DESCRIPTOR *A){
+ S->Report.EfiMap.DescriptorIndex=Index;S->Report.EfiMap.DescriptorType=A->Type;S->Report.EfiMap.DescriptorBase=A->PhysicalStart;
+ S->Report.EfiMap.DescriptorPages=A->NumberOfPages;S->Report.EfiMap.DescriptorAttributes=A->Attribute;S->Report.EfiMap.DescriptorVirtual=A->VirtualStart;
+}
 STATIC EFI_STATUS DcrMap(PIANO_DISPLAY_CLOCK_READ *S,CONST DCR_OBJECT *O){
- if(!DcrLive(S))return EFI_ABORTED;UINTN N=sizeof(S->Map),Key=0,Stride=0;UINT32 Version=0;
- EFI_STATUS E=S->Env.Services->GetMemoryMap(&N,(VOID*)S->Map,&Key,&Stride,&Version);if(!DcrLive(S))return EFI_ABORTED;if(E!=EFI_SUCCESS)return DcrExact(E);
- if(!N||N>sizeof(S->Map)||Stride<sizeof(EFI_MEMORY_DESCRIPTOR)||Stride>256||(Stride&7)||N%Stride||Version!=EFI_MEMORY_DESCRIPTOR_VERSION||N/Stride>1024)return EFI_COMPROMISED_DATA;
+ DcrClearMap(S);S->Report.EfiMap.Cursor=O->Base;if(!DcrLive(S))return DcrMapDone(S,PianoClockEfiMapServicesLost,EFI_ABORTED);UINTN N=sizeof(S->Map),Key=0,Stride=0;UINT32 Version=0;
+ EFI_STATUS E=S->Env.Services->GetMemoryMap(&N,(VOID*)S->Map,&Key,&Stride,&Version);S->Report.EfiMap.GetMapStatus=E;
+ S->Report.EfiMap.MapBytes=N;S->Report.EfiMap.DescriptorBytes=Stride;S->Report.EfiMap.DescriptorVersion=Version;S->Report.EfiMap.MapKey=Key;
+ if(!DcrLive(S))return DcrMapDone(S,PianoClockEfiMapServicesLost,EFI_ABORTED);if(E!=EFI_SUCCESS)return DcrMapDone(S,PianoClockEfiMapGetMap,E);
+ if(!N||N>sizeof(S->Map)||Stride<sizeof(EFI_MEMORY_DESCRIPTOR)||Stride>256||(Stride&7)||N%Stride||Version!=EFI_MEMORY_DESCRIPTOR_VERSION||N/Stride>1024)return DcrMapDone(S,PianoClockEfiMapFormat,EFI_COMPROMISED_DATA);
  UINT64 Cursor=O->Base,End=O->Base+O->Bytes;
  for(UINTN I=0;I<N;I+=Stride){EFI_MEMORY_DESCRIPTOR A;CopyMem(&A,(UINT8*)S->Map+I,sizeof(A));
-  if(!A.NumberOfPages||A.NumberOfPages>MAX_UINT64/4096||(A.PhysicalStart&4095)||A.PhysicalStart>MAX_UINT64-A.NumberOfPages*4096)return EFI_COMPROMISED_DATA;
-  for(UINTN J=0;J<I;J+=Stride){EFI_MEMORY_DESCRIPTOR B;CopyMem(&B,(UINT8*)S->Map+J,sizeof(B));if(A.PhysicalStart<B.PhysicalStart+B.NumberOfPages*4096&&B.PhysicalStart<A.PhysicalStart+A.NumberOfPages*4096)return EFI_COMPROMISED_DATA;}
+  if(!A.NumberOfPages||A.NumberOfPages>MAX_UINT64/4096||(A.PhysicalStart&4095)||A.PhysicalStart>MAX_UINT64-A.NumberOfPages*4096){DcrMapDescriptor(S,(UINT32)(I/Stride),&A);return DcrMapDone(S,PianoClockEfiMapInvalidDescriptor,EFI_COMPROMISED_DATA);}
+  for(UINTN J=0;J<I;J+=Stride){EFI_MEMORY_DESCRIPTOR B;CopyMem(&B,(UINT8*)S->Map+J,sizeof(B));if(A.PhysicalStart<B.PhysicalStart+B.NumberOfPages*4096&&B.PhysicalStart<A.PhysicalStart+A.NumberOfPages*4096){DcrMapDescriptor(S,(UINT32)(I/Stride),&A);S->Report.EfiMap.ConflictIndex=(UINT32)(J/Stride);S->Report.EfiMap.ConflictBase=B.PhysicalStart;S->Report.EfiMap.ConflictPages=B.NumberOfPages;return DcrMapDone(S,PianoClockEfiMapOverlap,EFI_COMPROMISED_DATA);}}
  }
  while(Cursor<End){BOOLEAN Found=FALSE;for(UINTN I=0;I<N;I+=Stride){EFI_MEMORY_DESCRIPTOR A;CopyMem(&A,(UINT8*)S->Map+I,sizeof(A));UINT64 AE=A.PhysicalStart+A.NumberOfPages*4096;
    if(Cursor<A.PhysicalStart||Cursor>=AE)continue;
+   S->Report.EfiMap.Cursor=Cursor;DcrMapDescriptor(S,(UINT32)(I/Stride),&A);
    BOOLEAN Image=O->Role==PianoClockReadText||O->Role==PianoClockReadImageData||DcrSpan(S->ImageBase+DCR_TEXT_END,DCR_DATA_END-DCR_TEXT_END,O->Base,O->Bytes);
-   if((Image?A.Type!=EfiBootServicesData&&A.Type!=EfiBootServicesCode:A.Type!=EfiBootServicesData)||
-      (A.Attribute&DCR_CACHE_TYPES)!=EFI_MEMORY_WB||(A.Attribute&(EFI_MEMORY_RP|EFI_MEMORY_RUNTIME))||
-      (A.VirtualStart&&A.VirtualStart!=A.PhysicalStart))return EFI_NOT_READY;
+   if(Image?A.Type!=EfiBootServicesData&&A.Type!=EfiBootServicesCode:A.Type!=EfiBootServicesData)return DcrMapDone(S,PianoClockEfiMapWrongType,EFI_NOT_READY);
+   // Actual Mu CoreGetMemoryMap exposes capability-derived cache bits. The
+   // current mode is proved independently by Guard's exact GCD WB/PAR FF.
+   if(!(A.Attribute&EFI_MEMORY_WB))return DcrMapDone(S,PianoClockEfiMapCache,EFI_NOT_READY);
+   if(A.Attribute&EFI_MEMORY_RP)return DcrMapDone(S,PianoClockEfiMapReadProtected,EFI_NOT_READY);
+   if(A.Attribute&EFI_MEMORY_RUNTIME)return DcrMapDone(S,PianoClockEfiMapRuntime,EFI_NOT_READY);
+   if(A.VirtualStart&&A.VirtualStart!=A.PhysicalStart)return DcrMapDone(S,PianoClockEfiMapNonIdentityVirtual,EFI_NOT_READY);
    Cursor=MIN(AE,End);Found=TRUE;break;
-  }if(!Found)return EFI_NOT_FOUND;
- }return EFI_SUCCESS;
+  }if(!Found){S->Report.EfiMap.Cursor=Cursor;return DcrMapDone(S,PianoClockEfiMapNoCoverage,EFI_NOT_FOUND);}
+ }return DcrMapDone(S,PianoClockEfiMapReady,EFI_SUCCESS);
 }
 STATIC BOOLEAN DcrObject(PIANO_DISPLAY_CLOCK_READ *S,DCR_OBJECT O){
  if(!O.Base||!O.Bytes||O.Base>MAX_UINT64-O.Bytes||(O.Base&3)||(O.Bytes&3))return FALSE;
@@ -174,9 +191,11 @@ STATIC EFI_STATUS DcrResolve(PIANO_DISPLAY_CLOCK_READ *S,UINT64 A,UINTN N,DCR_OB
  }return EFI_ACCESS_DENIED;
 }
 EFI_STATUS PianoDisplayClockReadCpu(VOID *Context,UINT64 A,UINTN N,VOID *Out){
- PIANO_DISPLAY_CLOCK_READ *S=Context;if(!S||S->Signature!=DCR_SIGNATURE||!Out||!A||!N||N>256||A>MAX_UINT64-N-3||DcrAlias(Out,N,S,sizeof(*S))||DcrAlias(Out,N,&S->Env.Lease->Env,sizeof(S->Env.Lease->Env))||DcrAlias(Out,N,&S->Env.Lease->NativeImage,sizeof(S->Env.Lease->NativeImage))||DcrAlias(Out,N,&S->Env.Lease->ImageIdentity,sizeof(S->Env.Lease->ImageIdentity))||DcrAlias(Out,N,&S->Env.Lease->ImageBase,sizeof(S->Env.Lease->ImageBase))||DcrAlias(Out,N,&S->Env.Lease->ImageSize,sizeof(S->Env.Lease->ImageSize))||DcrAlias(Out,N,&S->Env.Lease->Report.NativeBase,sizeof(S->Env.Lease->Report.NativeBase))||DcrAlias(Out,N,&S->Env.Lease->Report.ClockId,sizeof(S->Env.Lease->Report.ClockId))||DcrAlias(Out,N,S->Env.Services,sizeof(*S->Env.Services))||DcrAlias(Out,N,S->Env.DxeServices,sizeof(*S->Env.DxeServices))||DcrAlias(Out,N,(VOID*)(UINTN)A,N))return EFI_INVALID_PARAMETER;
- if((S->ImageBase&&DcrAlias(Out,N,(VOID*)(UINTN)S->ImageBase,DCR_IMAGE_BYTES))||(S->PinnedCopy&&DcrAlias(Out,N,S->PinnedCopy,S->PinnedBytes))||DcrAlias(Out,N,S->Env.Lease->ImageIdentity,sizeof(*S->Env.Lease->ImageIdentity)))return EFI_INVALID_PARAMETER;
- if(S->Report.Retained||S->Report.ServicesLost||S->Report.Busy||S->Report.PinStatus!=EFI_SUCCESS)return EFI_ACCESS_DENIED;S->Report.Busy=TRUE;
+ PIANO_DISPLAY_CLOCK_READ *S=Context;if(!S||S->Signature!=DCR_SIGNATURE)return EFI_INVALID_PARAMETER;
+ if(S->ReadSequence==MAX_UINT64)return EFI_OUT_OF_RESOURCES;++S->ReadSequence;S->LastReadAddress=A;S->LastReadBytes=N;S->LastReadStatus=EFI_NOT_STARTED;
+ if(!Out||!A||!N||N>256||A>MAX_UINT64-N-3||DcrAlias(Out,N,S,sizeof(*S))||DcrAlias(Out,N,&S->Env.Lease->Env,sizeof(S->Env.Lease->Env))||DcrAlias(Out,N,&S->Env.Lease->NativeImage,sizeof(S->Env.Lease->NativeImage))||DcrAlias(Out,N,&S->Env.Lease->ImageIdentity,sizeof(S->Env.Lease->ImageIdentity))||DcrAlias(Out,N,&S->Env.Lease->ImageBase,sizeof(S->Env.Lease->ImageBase))||DcrAlias(Out,N,&S->Env.Lease->ImageSize,sizeof(S->Env.Lease->ImageSize))||DcrAlias(Out,N,&S->Env.Lease->Report.NativeBase,sizeof(S->Env.Lease->Report.NativeBase))||DcrAlias(Out,N,&S->Env.Lease->Report.ClockId,sizeof(S->Env.Lease->Report.ClockId))||DcrAlias(Out,N,S->Env.Services,sizeof(*S->Env.Services))||DcrAlias(Out,N,S->Env.DxeServices,sizeof(*S->Env.DxeServices))||DcrAlias(Out,N,(VOID*)(UINTN)A,N))return S->LastReadStatus=EFI_INVALID_PARAMETER;
+ if((S->ImageBase&&DcrAlias(Out,N,(VOID*)(UINTN)S->ImageBase,DCR_IMAGE_BYTES))||(S->PinnedCopy&&DcrAlias(Out,N,S->PinnedCopy,S->PinnedBytes))||DcrAlias(Out,N,S->Env.Lease->ImageIdentity,sizeof(*S->Env.Lease->ImageIdentity)))return S->LastReadStatus=EFI_INVALID_PARAMETER;
+ if(S->Report.Retained||S->Report.ServicesLost||S->Report.Busy||S->Report.PinStatus!=EFI_SUCCESS)return S->LastReadStatus=EFI_ACCESS_DENIED;S->Report.Busy=TRUE;
  DCR_OBJECT O={0},After={0};DCR_GRAPH G={0},H={0};UINT8 Scratch[256];EFI_STATUS E=S->Report.IdentityStatus=DcrIdentity(S);if(E!=EFI_SUCCESS)goto Done;
  E=DcrResolve(S,A,N,&O,&G);if(E!=EFI_SUCCESS)goto Done;
  if(O.Role==PianoClockReadText){if(A!=S->ImageBase+S->NextText||(A&3)||(N&3)||!S->PinnedCopy){E=EFI_ACCESS_DENIED;goto Done;}
@@ -188,6 +207,24 @@ EFI_STATUS PianoDisplayClockReadCpu(VOID *Context,UINT64 A,UINTN N,VOID *Out){
  }
  if(!DcrLive(S)){E=EFI_ABORTED;goto Done;}CopyMem(Out,Scratch,N);
 Done:
- ZeroMem(Scratch,sizeof(Scratch));S->Report.Address=A;S->Report.Role=O.Role;S->Report.ObjectBase=O.Base;S->Report.ObjectBytes=O.Bytes;S->Report.ProducerAnchor=O.Anchor;S->Report.ClientNodes=G.Used;S->Report.Busy=FALSE;return DcrFail(S,E);
+ ZeroMem(Scratch,sizeof(Scratch));S->Report.Address=A;S->Report.Role=O.Role;S->Report.ObjectBase=O.Base;S->Report.ObjectBytes=O.Bytes;S->Report.ProducerAnchor=O.Anchor;S->Report.ClientNodes=G.Used;S->Report.Busy=FALSE;return S->LastReadStatus=DcrFail(S,E);
+}
+EFI_STATUS PianoDisplayClockReadFailureEvidence(VOID *Context,UINT64 A,UINTN N,EFI_STATUS Status,PIANO_DISPLAY_CLOCK_LEASE_READ_FAILURE_EVIDENCE *Out){
+ PIANO_DISPLAY_CLOCK_READ *S=Context;if(!S||S->Signature!=DCR_SIGNATURE||!Out||DcrAlias(Out,sizeof(*Out),S,sizeof(*S))||
+    (DcrAlias(Out,sizeof(*Out),S->Env.Lease,sizeof(*S->Env.Lease))&&Out!=&S->Env.Lease->Report.ReadFailureEvidence)||
+    DcrAlias(Out,sizeof(*Out),S->Env.Services,sizeof(*S->Env.Services))||DcrAlias(Out,sizeof(*Out),S->Env.DxeServices,sizeof(*S->Env.DxeServices))||
+    (S->ImageBase&&DcrAlias(Out,sizeof(*Out),(VOID*)(UINTN)S->ImageBase,DCR_IMAGE_BYTES))||(S->PinnedCopy&&DcrAlias(Out,sizeof(*Out),S->PinnedCopy,S->PinnedBytes)))return EFI_INVALID_PARAMETER;
+ if(!DcrLive(S))return EFI_ABORTED;
+ if(S->ReadSequence!=1||S->LastReadAddress!=A||S->LastReadBytes!=N||S->LastReadStatus!=Status||Status!=EFI_NOT_READY||
+    A!=S->ImageBase+DCR_TEXT_FIRST||N!=256||S->NextText!=DCR_TEXT_FIRST||!S->PinnedCopy||S->PinnedBytes!=DCR_IMAGE_BYTES||
+    S->Report.Status!=Status||S->Report.PinStatus!=EFI_SUCCESS||S->Report.IdentityStatus!=EFI_SUCCESS||S->Report.MapStatus!=EFI_NOT_READY||
+    S->Report.Role!=PianoClockReadText||S->Report.Address!=A||S->Report.ObjectBase!=A||S->Report.ObjectBytes!=N||
+    S->Report.Busy||S->Report.Retained||S->Report.ServicesLost||S->Report.Sessions||S->Report.Guard.Reads||
+    S->Report.Guard.Active||S->Report.Guard.SyncOwned||S->Report.Guard.SErrorOwned||S->Report.Guard.Fatal||S->Report.Guard.Retained||S->Report.Guard.ServicesLost||
+    (S->Report.EndStatus!=EFI_NOT_STARTED&&S->Report.EndStatus!=EFI_SUCCESS))return EFI_NOT_READY;
+ PIANO_DISPLAY_CLOCK_LEASE_READ_FAILURE_EVIDENCE R={0};R.Revision=PIANO_DISPLAY_CLOCK_LEASE_READ_FAILURE_REVISION;R.Sequence=S->ReadSequence;R.Address=A;R.Bytes=N;R.Status=S->LastReadStatus;
+ R.MapStatus=S->Report.MapStatus;R.EndStatus=S->Report.EndStatus;R.Busy=S->Report.Busy;R.Retained=S->Report.Retained;R.ServicesLost=S->Report.ServicesLost;R.Sessions=S->Report.Sessions;
+ R.GuardReads=S->Report.Guard.Reads;R.GuardActive=S->Report.Guard.Active;R.GuardSyncOwned=S->Report.Guard.SyncOwned;R.GuardSErrorOwned=S->Report.Guard.SErrorOwned;R.GuardFatal=S->Report.Guard.Fatal;R.GuardRetained=S->Report.Guard.Retained;R.GuardServicesLost=S->Report.Guard.ServicesLost;
+ if(!DcrLive(S))return EFI_ABORTED;CopyMem(Out,&R,sizeof(R));return EFI_SUCCESS;
 }
 EFI_STATUS PianoDisplayClockReadClose(PIANO_DISPLAY_CLOCK_READ *S){if(!S||S->Signature!=DCR_SIGNATURE)return EFI_INVALID_PARAMETER;if(S->Report.Busy||S->Report.Retained||S->Report.ServicesLost)return EFI_ACCESS_DENIED;return DcrFail(S,DcrFree(S));}

@@ -25,6 +25,7 @@ static BOOLEAN Services=TRUE,DynamicPhase,Inject;static UINTN Case,Loads,Creates
 static VOID Put64(UINT8 *P,UINT64 V){memcpy(P,&V,8);}static VOID Put32(UINT8 *P,UINT32 V){memcpy(P,&V,4);}
 static UINT8 *Pointer(UINT64 A,UINTN N){if(A>=BASE&&A-BASE<=sizeof(Image)&&N<=sizeof(Image)-(A-BASE))return Image+(UINTN)(A-BASE);if(A>=HEAP&&A-HEAP<=sizeof(Heap)&&N<=sizeof(Heap)-(A-HEAP))return Heap+(UINTN)(A-HEAP);assert(FALSE);return NULL;}
 static BOOLEAN Alive(VOID *Context){assert(Context==(VOID*)1);return Services;}
+#include "ActualMuMemoryMap.h"
 static VOID Lost(VOID){assert(ExitFn);ExitFn((VOID*)7,ExitContext);Services=FALSE;}
 static EFI_TPL EFIAPI Raise(EFI_TPL N){assert(Services);EFI_TPL T=Tpl;Tpl=N;return T;}static VOID EFIAPI Restore(EFI_TPL N){assert(Services);Tpl=N;}
 static VOID EFIAPI Foreign(EFI_EXCEPTION_TYPE T,EFI_SYSTEM_CONTEXT C){(VOID)T;(VOID)C;abort();}
@@ -39,13 +40,22 @@ static EFI_STATUS EFIAPI Map(UINTN *N,EFI_MEMORY_DESCRIPTOR *M,UINTN *Key,UINTN 
  assert(Services&&*N>=3*sizeof(*M));MapCalls++;*Stride=sizeof(*M);*Version=EFI_MEMORY_DESCRIPTOR_VERSION;*Key=MapCalls;
  M[0]=(EFI_MEMORY_DESCRIPTOR){.Type=EfiBootServicesCode,.PhysicalStart=BASE,.NumberOfPages=sizeof(Image)/4096,.Attribute=EFI_MEMORY_WB};
  M[1]=(EFI_MEMORY_DESCRIPTOR){.Type=EfiBootServicesData,.PhysicalStart=HEAP,.NumberOfPages=sizeof(Heap)/4096,.Attribute=EFI_MEMORY_WB};*N=2*sizeof(*M);
+ if(Case>=60){UINT64 Cap=CoreConvertResourceDescriptorHobAttributesToCapabilities(EfiGcdMemoryTypeSystemMemory,0x703c07);assert((Cap&(EFI_MEMORY_UC|EFI_MEMORY_WC|EFI_MEMORY_WT|EFI_MEMORY_WB))==15);
+  ActualMuEfiDescriptor(&M[0],BASE,sizeof(Image)/4096,EfiBootServicesCode,Cap);ActualMuEfiDescriptor(&M[1],HEAP,sizeof(Heap)/4096,EfiBootServicesData,Cap);
+ }
+ if(Case==63)M[0].Attribute=0;
+ if(Case==64)M[0].Attribute|=EFI_MEMORY_RP;
+ if(Case==65)M[0].Attribute|=EFI_MEMORY_RUNTIME;
+ if(Case==66)M[0].VirtualStart=BASE+4096;
+ if(Case==67)M[0].Type=EfiMemoryMappedIO;
+ if(Case==68)return EFI_WARN_STALE_DATA;
  if(DynamicPhase){if(Case==9)M[1].Type=EfiConventionalMemory;if(Case==10)M[1].NumberOfPages=1;if(Case==11)M[1].Attribute=EFI_MEMORY_UC;if(Case==28){M[2]=M[1];*N=3*sizeof(*M);}if(Case==37)*Stride=sizeof(*M)-1;if(Case==4&&TargetLoads)Loaded.ImageSize--;}
  return EFI_SUCCESS;
 }
-static EFI_STATUS EFIAPI Gcd(EFI_PHYSICAL_ADDRESS A,EFI_GCD_MEMORY_SPACE_DESCRIPTOR *D){assert(Services);*D=(EFI_GCD_MEMORY_SPACE_DESCRIPTOR){.BaseAddress=A,.Length=4096,.GcdMemoryType=EfiGcdMemoryTypeSystemMemory,.Attributes=EFI_MEMORY_WB};if(DynamicPhase&&Case==12)D->Attributes=EFI_MEMORY_UC;return EFI_SUCCESS;}
+static EFI_STATUS EFIAPI Gcd(EFI_PHYSICAL_ADDRESS A,EFI_GCD_MEMORY_SPACE_DESCRIPTOR *D){assert(Services);*D=(EFI_GCD_MEMORY_SPACE_DESCRIPTOR){.BaseAddress=A,.Length=4096,.GcdMemoryType=EfiGcdMemoryTypeSystemMemory,.Attributes=EFI_MEMORY_WB};if(DynamicPhase&&Case==12)D->Attributes=EFI_MEMORY_UC;if(DynamicPhase&&Case==61)D->Attributes=EFI_MEMORY_WC;return EFI_SUCCESS;}
 UINT64 EFIAPI GetPerformanceCounterProperties(UINT64 *First,UINT64 *End){*First=0;*End=MAX_UINT64;return 1000000;}UINT64 EFIAPI GetPerformanceCounter(VOID){return ++Counter;}
 EFI_STATUS PianoGuardedHostCpuState(VOID *P){*(CPU_STATE*)P=(CPU_STATE){4,1,0x480803514ULL,0xd7fff000,0,0xff44};return EFI_SUCCESS;}UINT64 PianoGuardedHostCurrentEl(VOID){return 4;}
-EFI_STATUS PianoGuardedHostAt(UINTN A,UINT64 *P){*P=A|(0xffULL<<56);if(DynamicPhase&&Case==13)*P+=4096;if(DynamicPhase&&Case==14)*P^=0xbbULL<<56;return EFI_SUCCESS;}
+EFI_STATUS PianoGuardedHostAt(UINTN A,UINT64 *P){*P=A|(0xffULL<<56);if(DynamicPhase&&Case==13)*P+=4096;if(DynamicPhase&&(Case==14||Case==62))*P^=0xbbULL<<56;return EFI_SUCCESS;}
 UINT32 PianoGuardedHostLoad(UINTN A){
  Loads++;if(DynamicPhase&&A>=HEAP+0x1000&&A<HEAP+0x1018)TargetLoads++;
  if(DynamicPhase&&Case==20){Lost();return 0;}
@@ -72,6 +82,14 @@ static VOID Run(UINTN C){
  PIANO_DISPLAY_CLOCK_READ_ENV E={(VOID*)1,&Bs,&Ds,Alive,&Lease};UINT8 Out[256];memset(Out,0xa5,sizeof(Out));
  if(C==21){PianoDisplayClockReadFenceExit(&Reader);assert(PianoDisplayClockReadInitialize(&Reader,&E)==EFI_NOT_READY&&!Creates&&!Loads);return;}
  EFI_STATUS S=PianoDisplayClockReadInitialize(&Reader,&E);if(C==1||C==30){assert(S!=EFI_SUCCESS&&!Reader.PinnedCopy&&!Loads);return;}assert(S==EFI_SUCCESS);
+ assert(Reader.Report.EfiMap.Status==EFI_NOT_STARTED&&Reader.Report.EfiMap.GetMapStatus==EFI_NOT_STARTED);
+ if(C>=63&&C<=68){S=Read(BASE+0x1000,256,Out);assert(S!=EFI_SUCCESS&&Out[0]==0xa5&&!Reader.Report.Sessions&&!Loads);
+  assert(Reader.Report.EfiMap.Status==S&&Reader.Report.EfiMap.DescriptorBytes==sizeof(EFI_MEMORY_DESCRIPTOR));
+  PIANO_DISPLAY_CLOCK_EFI_MAP_REASON R=C==63?PianoClockEfiMapCache:C==64?PianoClockEfiMapReadProtected:C==65?PianoClockEfiMapRuntime:C==66?PianoClockEfiMapNonIdentityVirtual:C==67?PianoClockEfiMapWrongType:PianoClockEfiMapGetMap;
+  assert(Reader.Report.EfiMap.Reason==R);if(C!=68)assert(Reader.Report.EfiMap.DescriptorBase==BASE&&Reader.Report.EfiMap.DescriptorPages==sizeof(Image)/4096&&Reader.Report.EfiMap.Cursor==BASE+0x1000);
+  if(C==63){PIANO_DISPLAY_CLOCK_LEASE_READ_FAILURE_EVIDENCE F={0};assert(PianoDisplayClockReadFailureEvidence(&Reader,BASE+0x1000,256,S,&F)==EFI_SUCCESS&&F.Sequence==1&&F.MapStatus==EFI_NOT_READY&&!F.Sessions&&!F.GuardReads);assert(PianoDisplayClockReadFailureEvidence(&Reader,BASE+0x1004,256,S,&F)==EFI_NOT_READY);assert(Read(BASE+0x1000,256,Out)==EFI_NOT_READY);assert(PianoDisplayClockReadFailureEvidence(&Reader,BASE+0x1000,256,S,&F)==EFI_NOT_READY);}
+  goto End;
+ }
  if(C==3){Loaded.ImageSize--;assert(Read(BASE+0x1000,256,Out)!=EFI_SUCCESS&&!Loads);goto End;}
  if(C==5){Reader.Report.TextVerified=TRUE;assert(Read(BASE+0x3fe48,8,Out)==EFI_NOT_READY&&!Loads);goto End;}
  if(C==31){assert(Read(BASE+0x1100,256,Out)==EFI_ACCESS_DENIED&&!Loads);goto End;}
@@ -103,12 +121,17 @@ static VOID Run(UINTN C){
  else if(C==58)S=Read(HEAP+0x1010,257,Out);
  else if(C==59)S=Read(MAX_UINT64-1,4,Out);
  else{if(C==17)Handlers[0]=Foreign;S=Read(HEAP+0x1010,4,Out);}
- if(C==0){assert(S==EFI_SUCCESS&&Out[0]==3&&Out[1]==0&&Out[2]==2&&Reader.Report.Role==PianoClockReadClientRef&&Reader.Report.ObjectBytes==24&&Reader.Report.ClientNodes==1);assert(Read(HEAP+0x19,1,Out)==EFI_SUCCESS&&Out[0]==4);assert(Read(BASE+0x3fe48,8,Lease.LiveText)==EFI_SUCCESS);}
+ if(C==0||C==60){assert(S==EFI_SUCCESS&&Out[0]==3&&Out[1]==0&&Out[2]==2&&Reader.Report.Role==PianoClockReadClientRef&&Reader.Report.ObjectBytes==24&&Reader.Report.ClientNodes==1);assert(Read(HEAP+0x19,1,Out)==EFI_SUCCESS&&Out[0]==4);assert(Read(BASE+0x3fe48,8,Lease.LiveText)==EFI_SUCCESS);if(C==60)assert(Reader.Report.EfiMap.DescriptorAttributes==(CoreConvertResourceDescriptorHobAttributesToCapabilities(EfiGcdMemoryTypeSystemMemory,0x703c07)&~(EFI_MEMORY_ACCESS_MASK|EFI_MEMORY_RUNTIME))&&Reader.Report.Guard.LastGcdAttributes==EFI_MEMORY_WB&&(Reader.Report.Guard.LastPar>>56)==0xff);}
  else{if(S==EFI_SUCCESS){fprintf(stderr,"unexpected successful case%lu\n",(unsigned long)C);abort();}assert(Out[0]==0xa5);}
  assert(!NativeCalls&&!Reader.Report.MemoryOwnershipGranted&&!Reader.Report.Guard.MemoryOwnershipGranted);
+ if(C==9)assert(Reader.Report.EfiMap.Reason==PianoClockEfiMapWrongType&&Reader.Report.EfiMap.DescriptorType==EfiConventionalMemory);
+ if(C==11)assert(Reader.Report.EfiMap.Reason==PianoClockEfiMapCache&&Reader.Report.EfiMap.DescriptorAttributes==EFI_MEMORY_UC);
+ if(C==28)assert(Reader.Report.EfiMap.Reason==PianoClockEfiMapOverlap&&Reader.Report.EfiMap.ConflictIndex==1);
+ if(C==37)assert(Reader.Report.EfiMap.Reason==PianoClockEfiMapFormat);
+ if(C==61||C==62)assert(Reader.Report.EfiMap.Reason==PianoClockEfiMapReady&&(Reader.Report.EfiMap.DescriptorAttributes&15)==15&&Reader.Report.Guard.MappingStatus==EFI_NOT_READY);
  if(C==18||C==20||(C>=38&&C<=42)){assert(Reader.Report.Retained);UINTN Before=Loads;assert(Read(HEAP+0x1010,4,Out)==EFI_ACCESS_DENIED&&Loads==Before);assert(PianoDisplayClockReadClose(&Reader)==EFI_ACCESS_DENIED);return;}
  if(C==17)Handlers[0]=NULL;assert(!Handlers[0]&&!Handlers[3]&&Creates==Closes);
 End:
  assert(PianoDisplayClockReadClose(&Reader)==EFI_SUCCESS&&!Reader.PinnedCopy);
 }
-int main(int Argc,char **Argv){assert(Argc==2);FILE *F=fopen(Argv[1],"rb");assert(F);File=malloc(sizeof(Image));assert(fread(File,1,sizeof(Image),F)==sizeof(Image)&&fgetc(F)==EOF);fclose(F);for(UINTN I=0;I<60;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"clock read case%lu failed\n",(unsigned long)I);return 1;}}free(File);puts("Actual ClockRead+GuardedRead:60 pinnedPE/text/map/GCD/PAR/typedgraph/anchor/registry/client-membership/fault/EBS/cleanup cases; host fixtures, no native or hardware calls");return 0;}
+int main(int Argc,char **Argv){assert(Argc==2);FILE *F=fopen(Argv[1],"rb");assert(F);File=malloc(sizeof(Image));assert(fread(File,1,sizeof(Image),F)==sizeof(Image)&&fgetc(F)==EOF);fclose(F);for(UINTN I=0;I<69;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"clock read case%lu failed\n",(unsigned long)I);return 1;}}free(File);puts("Actual ClockRead+GuardedRead:69 pinnedPE/text/actualMu capabilities-map/currentGCD-PAR/typedgraph/fresh-failure-evidence/EBS/cleanup cases; host fixtures, no native or hardware calls");return 0;}

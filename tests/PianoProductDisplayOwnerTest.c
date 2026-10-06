@@ -23,7 +23,7 @@ EFI_GUID gEfiCpuArchProtocolGuid={.Data1=1},gEfiEventExitBootServicesGuid=EFI_EV
 static EFI_BOOT_SERVICES Bs;static EFI_DXE_SERVICES Ds;static EFI_CPU_ARCH_PROTOCOL Cpu;
 static EFI_CPU_INTERRUPT_HANDLER Handlers[4];static EFI_EVENT_NOTIFY GuardExit;static VOID *GuardContext;
 static BOOLEAN ServicesLive=TRUE;static EFI_TPL Tpl=TPL_APPLICATION;
-static UINT32 Case,Loads,ReaderStarts,AcquireCalls,ReleaseCalls,ReaderCloses,HandlerCloses,Logs;
+static UINT32 Case,Loads,ReaderStarts,AcquireCalls,ReleaseCalls,ReaderCloses,HandlerCloses,Logs,EvidenceCalls;
 static UINT32 Counter=100;static UINT32 Ahb=0x88000002;
 static PIANO_DISPLAY_CLOCK_READ *Reader;static PIANO_DISPLAY_CLOCK_LEASE *Lease;
 static PIANO_PRODUCT_OWNERS Owners;static PIANO_BOOT_POLICY_REPORT Policy;
@@ -60,10 +60,16 @@ static EFI_STATUS EFIAPI Gcd(EFI_PHYSICAL_ADDRESS A,EFI_GCD_MEMORY_SPACE_DESCRIP
 UINT32 PianoGuardedHostLoad(UINTN A){assert(ServicesLive&&(A==0x127004||A==0x127008));Loads++;if(Case==15&&Loads==1){EFI_SYSTEM_CONTEXT_AARCH64 C={.ELR=0x1000,.FAR=A,.ESR=0x96000010,.SPSR=5};EFI_SYSTEM_CONTEXT Context={.SystemContextAArch64=&C};Handlers[0](0,Context);assert(C.ELR==0x1004);}return A==0x127004?Ahb:0x08200001;}
 EFI_STATUS PianoDisplayClockReadInitialize(PIANO_DISPLAY_CLOCK_READ *S,CONST PIANO_DISPLAY_CLOCK_READ_ENV *E){assert(ServicesLive&&E->Services==gBS&&E->DxeServices==gDS&&E->Lease);ReaderStarts++;Reader=S;Lease=E->Lease;if(Case==1)return EFI_UNSUPPORTED;S->Signature=1;S->Env=*E;S->Report.Revision=1;S->PinnedCopy=(VOID *)0x500;S->PinnedBytes=256;return EFI_SUCCESS;}
 EFI_STATUS PianoDisplayClockReadCpu(VOID *Context,UINT64 A,UINTN N,VOID *D){assert(Context==Reader&&A&&N&&D&&ServicesLive);ZeroMem(D,N);return EFI_SUCCESS;}
+EFI_STATUS PianoDisplayClockReadFailureEvidence(VOID *Context,UINT64 A,UINTN N,EFI_STATUS Status,PIANO_DISPLAY_CLOCK_LEASE_READ_FAILURE_EVIDENCE *Out){
+  assert(Context==Reader&&A&&N&&Status==EFI_NOT_READY&&Out&&ServicesLive);EvidenceCalls++;
+  // The controlled reader supplies no proof; actual Reader+Lease tests own the
+  // fresh refusal proof. Unsupported must leave the caller's output untouched.
+  return EFI_UNSUPPORTED;
+}
 VOID PianoDisplayClockReadFenceExit(PIANO_DISPLAY_CLOCK_READ *S){if(S)S->Report.Retained=S->Report.ServicesLost=TRUE;}
 EFI_STATUS PianoDisplayClockReadClose(PIANO_DISPLAY_CLOCK_READ *S){assert(ServicesLive&&S==Reader);ReaderCloses++;if(Case==5||Case==8){S->Report.Retained=TRUE;return EFI_DEVICE_ERROR;}if(Case==9){Lost();return EFI_ABORTED;}S->PinnedCopy=NULL;S->PinnedBytes=0;return EFI_SUCCESS;}
 EFI_STATUS PianoDisplayClockLeaseAcquire(PIANO_DISPLAY_CLOCK_LEASE *S,CONST PIANO_DISPLAY_CLOCK_LEASE_ENV *E){
-  assert(ServicesLive&&S==Lease&&E->Context==Reader&&E->ReadGcc&&E->ReadCpu);AcquireCalls++;S->Signature=1;S->Env=*E;S->Report.Revision=1;
+  assert(ServicesLive&&S==Lease&&E->Context==Reader&&E->ReadGcc&&E->ReadCpu&&E->GetReadFailureEvidence==PianoDisplayClockReadFailureEvidence);AcquireCalls++;S->Signature=1;S->Env=*E;S->Report.Revision=1;
   if(Case==2||Case==3||Case==5){if(Case==3)S->PinnedCopy=(VOID *)0x501;return S->Report.Status=EFI_NOT_READY;}
   EFI_STATUS Q=E->ReadGcc(E->Context,&S->Report.BeforeGcc);if(Q!=EFI_SUCCESS){S->Report.Retained=S->Report.BeforeGcc.Retained;return S->Report.Status=Q;}
   S->Report.AcquireAttempted=S->Report.Held=TRUE;S->Report.OwnedReferences=1;S->Exit=(VOID *)0xaa;S->Report.ClockId=0x10001;S->Report.NativeBase=0xcf100000;
@@ -105,10 +111,18 @@ static VOID Setup(UINT32 N){Case=N;gBS=&Bs;gDS=&Ds;Bs.RaiseTPL=Raise;Bs.RestoreT
 static VOID Run(UINT32 N){Setup(N);PIANO_PRODUCT_DISPLAY_STARTUP_REPORT Start={0};PIANO_PRODUCT_DISPLAY_RETIRE_REPORT Stop={0};
   if(N==14){assert(PianoProductDisplayStartup(&Start)==EFI_NOT_STARTED&&!Start.Revision);return;}
   EFI_STATUS S=PianoProductDisplayStart(Alive);PianoProductDisplayStartup(&Start);
-  if(N==0||N==6||N==7||N==8||N==9||N==10||N==11||N==12||N==13){assert(S==EFI_SUCCESS&&Start.Held&&Start.OwnedReferences==1&&!Start.KnownNoSideEffects&&Start.AcquireBeforeTotal[0]==5&&Start.AcquireAfterTotal[0]==6&&Loads==8&&HandlerCloses==2);}
+  if(N==0||N==6||N==7||N==8||N==9||N==10||N==11||N==12||N==13||N==17){assert(S==EFI_SUCCESS&&Start.Held&&Start.OwnedReferences==1&&!Start.KnownNoSideEffects&&Start.AcquireBeforeTotal[0]==5&&Start.AcquireAfterTotal[0]==6&&Loads==8&&HandlerCloses==2);}
   if(N==1||N==2||N==5||N==15){assert(S!=EFI_SUCCESS&&!Start.Held&&!Start.AcquireAttempted);if(N==5)assert(Start.Retained&&!Start.KnownNoSideEffects);else assert(Start.KnownNoSideEffects&&!Start.Retained);return;}
   if(N==3||N==4||N==16){assert(S!=EFI_SUCCESS&&Start.Retained&&!Start.KnownNoSideEffects&&!ReaderCloses);return;}
   if(N==10){assert(PianoProductDisplayStop((VOID *)3,&Stop)==EFI_INVALID_PARAMETER&&!ReleaseCalls);return;}
+  if(N==17){PIANO_DISPLAY_CLOCK_LEASE_READ_FAILURE_EVIDENCE Evidence,Before;memset(&Evidence,0xa5,sizeof(Evidence));Before=Evidence;
+    assert(Lease->Env.GetReadFailureEvidence(Lease->Env.Context,Lease->Report.NativeBase+0x1000,256,EFI_NOT_READY,&Evidence)==EFI_UNSUPPORTED);
+    assert(EvidenceCalls==1&&!memcmp(&Evidence,&Before,sizeof(Evidence))&&!Lease->Report.CleanSourceRefusal&&!ReleaseCalls&&Loads==8);
+    Reader->Report.EfiMap=(PIANO_DISPLAY_CLOCK_EFI_MAP_DIAGNOSTIC){.Status=EFI_NOT_READY,.GetMapStatus=EFI_SUCCESS,.Reason=PianoClockEfiMapCache,
+      .DescriptorIndex=MAX_UINT32,.DescriptorType=EfiBootServicesCode,.DescriptorBase=0xcf100000,.DescriptorPages=0x44,
+      .DescriptorAttributes=EFI_MEMORY_UC|EFI_MEMORY_WC|EFI_MEMORY_WT,.ConflictIndex=MAX_UINT32,.Cursor=0xcf101000,
+      .MapBytes=sizeof(Reader->Map),.DescriptorBytes=256,.DescriptorVersion=EFI_MEMORY_DESCRIPTOR_VERSION};
+    UINT32 BeforeLogs=Logs;assert(PianoProductDisplayReplay()==EFI_SUCCESS&&Logs>BeforeLogs&&Loads==8&&EvidenceCalls==1);return;}
   if(N==12||N==13){PIANO_DISPLAY_CLOCK_LEASE Before=*Lease;if(N==12){assert(PianoProductDisplayStartup((VOID *)Start.LeaseContext)==EFI_INVALID_PARAMETER);assert(PianoProductDisplayStop(Start.LeaseContext,(VOID *)Start.LeaseContext)==EFI_INVALID_PARAMETER);}else assert(PianoProductDisplayStartup((VOID *)(MAX_UINTN-16))==EFI_INVALID_PARAMETER);
     assert(!memcmp(&Before,Lease,sizeof(Before))&&!ReleaseCalls);return;}
   if(N==0){PIANO_PRODUCT_OWNERS_CONFIG C={.Revision=1,.Fdt=(VOID *)1,.ExpectedOwnerMask=PIANO_OWNER_ALL_MASK,.StartedOwnerMask=PIANO_OWNER_SUPPORTED_MASK,.AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|PIANO_OWNER_POGO,.Runtime=&Runtime,.StopInput=InputStop,.DisplayContext=Start.LeaseContext,.StopDisplay=PianoProductDisplayStop,.DisplayStartup=Start};
@@ -122,4 +136,4 @@ static VOID Run(UINT32 N){Setup(N);PIANO_PRODUCT_DISPLAY_STARTUP_REPORT Start={0
   if(N==7||N==9)assert(S==EFI_ABORTED&&Stop.Retained&&Stop.ServicesLost&&!Stop.Clean);
   if(N==8)assert(S==EFI_DEVICE_ERROR&&Stop.Retained&&Stop.Released&&!Stop.HeldAfter&&Stop.Cleanup==EFI_DEVICE_ERROR&&!Stop.Clean);
 }
-int main(VOID){for(UINT32 I=0;I<17;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"display coordinator case%u failed\n",I);return 1;}}puts("Actual display coordinator+Owners+GCC Guard:17 cases; honest Lease/Reader boundaries, typed ref mapping/order/absence/aliases/EBS/cleanup; no native hardware executed");return 0;}
+int main(VOID){for(UINT32 I=0;I<18;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"display coordinator case%u failed\n",I);return 1;}}puts("Actual display coordinator+Owners+GCC Guard:18 cases; honest Lease/Reader boundaries, typed ref mapping/order/absence/aliases/EBS/cleanup/unsupported evidence; no native hardware executed");return 0;}

@@ -80,15 +80,30 @@ reader not ready or a native identity mismatch before Get/Enable has no clock
 reference side effect; Root may distinguish that exact unheld result from any
 retained or attempted native mutation.
 
+The first live-text read has one narrow clean-refusal path. The optional
+`GetReadFailureEvidence` callback must return the actual Reader's fresh first
+call sequence, exact address/length/status and map failure, with zero sessions,
+reads, active/owned exception handlers, fatal/retained/lost state and no busy
+reader. Only `EFI_NOT_READY` at image+1000 for the first256 bytes qualifies,
+before any Lease event, GetID, Enable or owned reference. The Lease then frees
+its successfully acquired FV copy and returns the original refusal. Root must
+also successfully close the actual Reader and free its separate FV copy before
+reporting zero side effects. Missing/stale/malformed evidence remains retained;
+the callback does not grant memory, clock or display permission. FV retrieval
+warnings/partial outputs, any uncertain guard, later text failures, native
+mutations, EBS and failed/warning frees keep their previous retention rules.
+
 The actual pinned PE fixture now uses its real static BSP283a0/module-array28308,
 GCC module28678/149 clocks/array32418/index51, and static parent37528. Only native
-ARM calls and protected-read boundaries are substituted.46 ASAN/UBSAN fork
+ARM calls and protected-read boundaries are substituted.70 ASAN/UBSAN fork
 cases cover identity/hash/relocations, first client entry creation, two-snapshot
 coherence, legal other-reference changes, skip/no-op behavior, failed native
 calls, wrong/missing outputs, saturation/cycles/wrap, guard cleanup, EBS during
 RaiseTPL/Enable/IsEnabled, uncertain registration/release, actual sentinel
 outputs, hardware gated idle88000003 with IsOn FALSE, inherited enabled refs
-and exact-once release.
+and exact-once release. The first-read evidence cases cover a clean map refusal,
+absent/stale/mismatched callbacks, every guard-owner uncertainty, warning/failed
+cleanup, service loss and the prohibition on cleaning later read failures.
 Strict AArch64 syntax passes. Host callbacks are fixtures, not hardware proof;
 Root must bind the real reader/manager and run the next unique image to verify
 AHB retention and subsequent display observations.

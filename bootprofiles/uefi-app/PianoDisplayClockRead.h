@@ -18,6 +18,23 @@ typedef struct {
   // Source calls ReadCpu; no caller-supplied "verified"/ownership boolean.
   PIANO_DISPLAY_CLOCK_LEASE *Lease;
 } PIANO_DISPLAY_CLOCK_READ_ENV;
+typedef enum {
+  PianoClockEfiMapNotObserved=0,PianoClockEfiMapReady,
+  PianoClockEfiMapServicesLost,PianoClockEfiMapGetMap,
+  PianoClockEfiMapFormat,PianoClockEfiMapInvalidDescriptor,
+  PianoClockEfiMapOverlap,PianoClockEfiMapNoCoverage,
+  PianoClockEfiMapWrongType,PianoClockEfiMapCache,
+  PianoClockEfiMapReadProtected,PianoClockEfiMapRuntime,
+  PianoClockEfiMapNonIdentityVirtual
+} PIANO_DISPLAY_CLOCK_EFI_MAP_REASON;
+typedef struct {
+  EFI_STATUS Status,GetMapStatus;
+  PIANO_DISPLAY_CLOCK_EFI_MAP_REASON Reason;
+  UINT32 DescriptorIndex,DescriptorType,DescriptorVersion,ConflictIndex;
+  UINT64 DescriptorBase,DescriptorPages,DescriptorAttributes,DescriptorVirtual;
+  UINT64 Cursor,ConflictBase,ConflictPages;
+  UINTN MapBytes,DescriptorBytes,MapKey;
+} PIANO_DISPLAY_CLOCK_EFI_MAP_DIAGNOSTIC;
 typedef struct {
   UINT32 Revision;EFI_STATUS Status,PinStatus,IdentityStatus,MapStatus,EndStatus;
   BOOLEAN Busy,Retained,ServicesLost,TextVerified,MemoryOwnershipGranted;
@@ -25,12 +42,16 @@ typedef struct {
   UINT64 Address,ObjectBase,ObjectBytes,ProducerAnchor;
   UINT32 Sessions,Words,AnchorSnapshots,ClientNodes;
   PIANO_GUARDED_REPORT Guard;
+  // Last actual GetMemoryMap decision; descriptor fields are raw EFI metadata,
+  // never current-cache/ownership proof. Reason disambiguates absent fields.
+  PIANO_DISPLAY_CLOCK_EFI_MAP_DIAGNOSTIC EfiMap;
 } PIANO_DISPLAY_CLOCK_READ_REPORT;
 typedef struct {
   UINT32 Signature;PIANO_DISPLAY_CLOCK_READ_ENV Env;
   PIANO_DISPLAY_CLOCK_READ_REPORT Report;
   EFI_HANDLE ImageHandle;EFI_LOADED_IMAGE_PROTOCOL *ImageIdentity;
   UINT64 ImageBase;VOID *PinnedCopy;UINTN PinnedBytes,NextText;
+  UINT64 ReadSequence,LastReadAddress;UINTN LastReadBytes;EFI_STATUS LastReadStatus;
   UINT64 Map[PIANO_DISPLAY_CLOCK_READ_MAP_BYTES/8];
 } PIANO_DISPLAY_CLOCK_READ;
 // Initialize authenticates the exact FV Clock PE. No native Clock invocation,
@@ -40,6 +61,9 @@ EFI_STATUS PianoDisplayClockReadInitialize(PIANO_DISPLAY_CLOCK_READ *,CONST PIAN
 // Only exact pinned image text/data or the bounded native typed graph qualifies.
 // Destination is unchanged unless read + anchor/identity/map + End all succeed.
 EFI_STATUS PianoDisplayClockReadCpu(VOID *Context,UINT64 Address,UINTN Bytes,VOID *Destination);
+// Fresh observation of this reader's immediately preceding first-text refusal.
+// Does not call EFI, authorize a memory read, or certify a native reference.
+EFI_STATUS PianoDisplayClockReadFailureEvidence(VOID *Context,UINT64 Address,UINTN Bytes,EFI_STATUS Status,PIANO_DISPLAY_CLOCK_LEASE_READ_FAILURE_EVIDENCE *);
 // CPU-only lifetime fence; never attempts EFI cleanup after ExitBootServices.
 VOID PianoDisplayClockReadFenceExit(PIANO_DISPLAY_CLOCK_READ *);
 // Release the FV copy after an early failure. Retained state is terminal.
