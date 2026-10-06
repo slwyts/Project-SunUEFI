@@ -100,6 +100,7 @@ def main():
     (out/'uefi.txt').write_text(segment)
     linux = 'rdinit=/init ro nokaslr efi=novamap' in text and 'console=ttyGS0,115200' in text
     independent_init = 'PIANO_KERNEL_RAM BEGIN pid=1' in text
+    disk_init = bool(re.search(r'(?m)^\[\s*[0-9.]+\] piano: DISK_INIT_BEGIN:', text))
     (out/'linux.txt').write_text(text if linux else '')
     summary = {'test_id':args.test_id,'console_bytes':len(p.stdout),
                'console_source':console_name,
@@ -107,7 +108,9 @@ def main():
                'uefi_marker_found':index>=0 and scope!='wrapped-uefi-tail-with-product-ui-events',
                'uefi_bytes':len(segment.encode()),'path':str(out/'uefi.txt'),
                'linux_ram_command_line_found':linux,
-               'linux_init_process_started':linux and 'Run /init as init process' in text,
+               'linux_init_process_started':disk_init or (linux and 'Run /init as init process' in text),
+               'linux_disk_initramfs_userland_verified':disk_init,
+               'linux_disk_root_failure':next((line for line in reversed(text.splitlines()) if 'piano: DISK_ROOT_REFUSED:' in line),None),
                'linux_ram_userland_marker':linux and 'SUNUEFI_RAM_INIT BEGIN pid=1' in text,
                'independent_kernel_ram_userland_marker':linux and independent_init,
                'pstore_files':pstore,'uefi_log_scope':scope}

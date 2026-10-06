@@ -11,6 +11,21 @@ log() {
 }
 fail() {
     log "DISK_ROOT_REFUSED: $*; remaining in initramfs rescue"
+    # The shared gadget helper needs all virtual mounts at their original paths.
+    # Rescue never returns, so no gadget handoff to the disk root is needed.
+    if mountpoint -q /dev && mountpoint -q /proc &&
+       mountpoint -q /sys && mountpoint -q /run; then
+        if /usr/local/sbin/piano-debug-bootstrap start; then
+            (
+                while :; do
+                    /usr/local/sbin/piano-debug-bootstrap serial
+                    sleep 5
+                done
+            ) &
+        else
+            log 'USB rescue setup failed; console rescue remains available'
+        fi
+    fi
     console=/dev/console
     [ -c "$console" ] || console=/sysroot/dev/console
     while :; do
@@ -37,9 +52,23 @@ for arg in $(cat /proc/cmdline); do
     esac
 done
 [ "$selected" -eq 1 ] || fail 'Exactly one explicit piano.root=PARTUUID is required'
+dma_routes() {
+    # Reuse the kernel's serialized per-master readback; never write SMMU MMIO.
+    for device in 1d84000.ufshc a600000.ssusb; do
+        for attribute in piano_dma_route piano_dma_context; do
+            path=/sys/bus/platform/devices/$device/$attribute
+            [ -r "$path" ] || continue
+            snapshot=$(cat "$path" 2>&1)
+            result=$?
+            log "DMA_READBACK phase=$1 device=$device attribute=$attribute status=$result"
+            printf '%s\n' "$snapshot" | while IFS= read -r line; do log "$line"; done
+        done
+    done
+}
 while read -r name module; do
     log "Loading module $name"
     [ -d "/sys/module/$name" ] || insmod "$module" || fail "Cannot load $name"
+    case "$name" in arm_smmu|ufs_qcom) dma_routes "after-$name" ;; esac
 done </etc/piano/modules-load-order
 
 # sysfs identifies partition nodes; blkid low-level probing bypasses all caches.

@@ -2,11 +2,11 @@
 
 目标是在保留现有 Android 系统和数据的前提下，研究并移植 ARM64 UEFI，随后从 RAM 或外接介质启动 Linux / Windows PE。
 
-**最新实机结果（第107次，2026-10-06）：唯一产品 UEFI 已通过标准 Fastboot 内存启动 Linux 7.2.6，尚未进入磁盘根系统或 GNOME。** 45,219,840 字节 Android v2 Linux 镜像下载及 boot 应答成功；恢复 Android 后，从 `pmsg-ramoops-0` 取回该内核的启动日志。日志记录 USB DWC3 core reset 超时、UFS NOP OUT 失败以及多项 DT 资源依赖错误。物理屏幕仍白，Linux USB 未枚举。本轮不继续追加实机启动，先依据这些错误修正 Linux 硬件初始化。
+**最新实机结果（第108次）：唯一产品 UEFI 已启动 Linux 7.2.6 和 `/pianoinit` 用户态，尚未进入磁盘根系统或 GNOME。** 原厂兼容的ramoops布局已验证，恢复Android后直接取回 `console-ramoops-0`。内核约18.65秒运行磁盘bootstrap、加载6个模块，约57.46秒报告根分区未出现并进入RAM救援循环。USB复位现场为USB2/USB3 PHY对象均缺失；UFS NOP doorbell清零但OCS仍0xf，UIC错误全零，UTRL地址读回一致。尚不能把大于4GiB的UTRL直接归因为地址截断；下一步读取已有SID0x60实际SMMU路由。证据见 `private/analysis/ramlog-test-108/`。
 
 按用户授权已在线缩小 userdata，并新增 `sunuefi_esp`（512 MiB FAT32）和 `sunuefi_linux`（63.5 GiB ext4），共64 GiB。Debian 13/GNOME 已写入 Linux 分区；ESP 目前为空。两次 Android 恢复已验证，`/data` 约397 GiB总容量、60 GiB已用。只读回读核对了分区边界、文件系统标识、systemd/GNOME Shell SHA256及根分区配置。没有刷写 Android boot/recovery/system。证据保存在 `private/provisioning/sunuefi-linux64-plan-20261006/`、`private/analysis/linux-disk-test107/` 和 `private/analysis/ramlog-test-107/`。
 
-下一次 Linux 候选已准备：`artifacts/linux-disk/sunuefi64-r2/sunuefi-linux-stable-boot.img`（45,223,936字节），内核提交 `0b04714515a7236aebd0847b9b3806493321151d`。修正原厂兼容的ramoops布局和SRAM地址编码，加入失败时的USB/UFS状态与initramfs持久日志。配套1637个模块及14个索引文件已写入新Linux分区并读回核对，旧模块保留；本候选尚未实机启动，不能视为USB/UFS故障已修复。
+下一次 Linux 候选：`artifacts/linux-disk/sunuefi64-r3/sunuefi-linux-stable-boot.img`（45,228,032字节），沿用已启动的内核提交 `0b04714515a7236aebd0847b9b3806493321151d` 及已安装模块。新增initramfs中的内核既有SMMU路由/上下文读回；根分区失败时复用ACM救援脚本。修正了调试脚本对 `dwc3-qcom` 固定peripheral模式的识别，已安装到Linux分区；USB硬件复位仍未修复，本候选尚未实机运行。
 
 **唯一产品候选：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成 TianoCore 启动画面、默认 SimpleInit、F12 Setup、标准 Shell 和驻留 Fastboot；没有诊断自动重启计时器。第105次构建通过405项主机测试、固件编译和输入一致性验证，实机验证256KiB日志及统一退出重启；第103次另已验证3200×2136完整BMP上传。第107次当前镜像SHA256为 `54c994a0ffea72e8768349b5592b4a228b861813fcc328cb3570bc86f5564470`，封存在 `artifacts/tests/stage0-test-107/`。构建、必需功能与真实后端状态见 [唯一产品构建](docs/piano-product-build.md)。
 

@@ -16,7 +16,8 @@ from make_kernel_initramfs import ROOT, inspect_newc, make_newc, validate_static
 from package_piano_ram_root import sha_file
 
 APPLETS = ('sh', 'cat', 'mkdir', 'mount', 'mountpoint', 'chmod', 'uname', 'chroot',
-           'switch_root', 'sleep', 'insmod', 'umount', 'grep')
+           'switch_root', 'sleep', 'insmod', 'umount', 'grep', 'tr', 'id', 'awk',
+           'readlink', 'rm', 'rmdir', 'ln')
 SEEDS = ('arm_smmu', 'pinctrl_sm8750', 'phy_qcom_qmp_ufs', 'ufs_qcom')
 
 
@@ -110,11 +111,13 @@ def build(root, kernel, busybox, output, root_partuuid):
         files[name] = source
     files['bin/busybox'] = busybox
     files['pianoinit'] = ROOT / 'bootprofiles/linux-userspace/disk-bootstrap'
+    files['usr/local/sbin/piano-debug-bootstrap'] = ROOT / 'bootprofiles/linux-userspace/piano-debug-bootstrap'
     files['etc/piano/busybox-source.json'] = busybox.with_name('busybox-source.json')
     files[f'lib/modules/{release}/modules.builtin'] = directory / 'modules.builtin'
     generated = {
         'etc/piano/root-partuuid': root_partuuid + '\n',
         'etc/piano/kernel-release': release + '\n',
+        'etc/piano/linux-debug.conf': 'usb=acm-ncm\nshell=1\nrecovery_seconds=0\n',
         'etc/piano/modules-load-order': ''.join(f'{module_name(path)} /lib/modules/{release}/{path}\n' for path in ordered),
         f'lib/modules/{release}/modules.dep': ''.join(line + '\n' for line in (directory / 'modules.dep').read_text().splitlines()
                                                      if line.split(':', 1)[0] in ordered),
