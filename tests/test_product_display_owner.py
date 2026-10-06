@@ -14,10 +14,10 @@ class ProductDisplayOwnerTests(unittest.TestCase):
             subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-implicit-fallthrough','-Wno-unused-parameter',
                 '-fshort-wchar','-g','-fsanitize=address,undefined','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-Wl,--gc-sections',
                 '-DPIANO_GUARDED_HOST_TEST','-DNO_MSABI_VA_FUNCS','-D_PCD_GET_MODE_32_PcdMaximumAsciiStringLength=0','-D_PCD_GET_MODE_32_PcdMaximumUnicodeStringLength=0',
-                '-I'+str(INC),'-I'+str(INC/'X64'),'-I'+str(QCOM),'-I'+str(ROOT/'bootprofiles/uefi-app'),'-I'+str(ROOT/'bootprofiles/guarded-read'),
+                '-I'+str(INC),'-I'+str(INC/'X64'),'-I'+str(QCOM),'-I'+str(ROOT/'bootprofiles/uefi-app'),'-I'+str(ROOT/'bootprofiles/guarded-read'),'-I'+str(ROOT/'bootprofiles/display-rail'),
                 str(ROOT/'tests/PianoProductDisplayOwnerTest.c'),str(SRC),str(ROOT/'bootprofiles/uefi-app/PianoProductOwners.c'),str(ROOT/'bootprofiles/guarded-read/PianoGuardedRead.c'),str(PRINT/'PrintLib.c'),str(PRINT/'PrintLibInternal.c'),'-o',str(exe)],check=True)
             run=subprocess.run([str(exe)],capture_output=True,text=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'});self.assertEqual(run.returncode,0,run.stdout+run.stderr);print(run.stdout.strip())
     def test_actual_aarch64_coordinator(self):
         subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-misleading-indentation',
-            '-I'+str(INC),'-I'+str(INC/'AArch64'),'-I'+str(QCOM),'-I'+str(ROOT/'bootprofiles/guarded-read'),str(SRC)],check=True)
+            '-I'+str(INC),'-I'+str(INC/'AArch64'),'-I'+str(QCOM),'-I'+str(ROOT/'bootprofiles/uefi-app'),'-I'+str(ROOT/'bootprofiles/guarded-read'),'-I'+str(ROOT/'bootprofiles/display-rail'),str(SRC)],check=True)
 if __name__=='__main__':unittest.main()

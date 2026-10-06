@@ -11,6 +11,8 @@
 #undef NULL
 #include "PianoProductDisplayOwner.h"
 #include "PianoDisplayClockRead.h"
+#include "PianoDisplayRailObserve.h"
+#include "PianoNativeImages.h"
 #include "PianoFastbootBlockRead.h"
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/DxeServicesTableLib.h>
@@ -24,6 +26,7 @@ static EFI_BOOT_SERVICES Bs;static EFI_DXE_SERVICES Ds;static EFI_CPU_ARCH_PROTO
 static EFI_CPU_INTERRUPT_HANDLER Handlers[4];static EFI_EVENT_NOTIFY GuardExit;static VOID *GuardContext;
 static BOOLEAN ServicesLive=TRUE;static EFI_TPL Tpl=TPL_APPLICATION;
 static UINT32 Case,Loads,ReaderStarts,AcquireCalls,ReleaseCalls,ReaderCloses,HandlerCloses,Logs,EvidenceCalls;
+static UINT32 RailInits,RailObservations,RailCloses;
 static UINT32 Counter=100;static UINT32 Ahb=0x88000002;
 static PIANO_DISPLAY_CLOCK_READ *Reader;static PIANO_DISPLAY_CLOCK_LEASE *Lease;
 static PIANO_PRODUCT_OWNERS Owners;static PIANO_BOOT_POLICY_REPORT Policy;
@@ -60,6 +63,24 @@ static EFI_STATUS EFIAPI Gcd(EFI_PHYSICAL_ADDRESS A,EFI_GCD_MEMORY_SPACE_DESCRIP
 UINT32 PianoGuardedHostLoad(UINTN A){assert(ServicesLive&&(A==0x127004||A==0x127008));Loads++;if(Case==15&&Loads==1){EFI_SYSTEM_CONTEXT_AARCH64 C={.ELR=0x1000,.FAR=A,.ESR=0x96000010,.SPSR=5};EFI_SYSTEM_CONTEXT Context={.SystemContextAArch64=&C};Handlers[0](0,Context);assert(C.ELR==0x1004);}return A==0x127004?Ahb:0x08200001;}
 EFI_STATUS PianoDisplayClockReadInitialize(PIANO_DISPLAY_CLOCK_READ *S,CONST PIANO_DISPLAY_CLOCK_READ_ENV *E){assert(ServicesLive&&E->Services==gBS&&E->DxeServices==gDS&&E->Lease);ReaderStarts++;Reader=S;Lease=E->Lease;if(Case==1)return EFI_UNSUPPORTED;S->Signature=1;S->Env=*E;S->Report.Revision=1;S->PinnedCopy=(VOID *)0x500;S->PinnedBytes=256;return EFI_SUCCESS;}
 EFI_STATUS PianoDisplayClockReadCpu(VOID *Context,UINT64 A,UINTN N,VOID *D){assert(Context==Reader&&A&&N&&D&&ServicesLive);ZeroMem(D,N);return EFI_SUCCESS;}
+EFI_STATUS PianoNativeGetLoadedImage(CONST EFI_GUID *Guid,EFI_HANDLE *Out){
+  assert(Guid&&Out&&ServicesLive);*Out=NULL;if(Case<18)return EFI_NOT_FOUND;
+  assert(Guid->Data1==0xcb29f4d1||Guid->Data1==0x8bd3b475);*Out=(VOID *)(UINTN)Guid->Data1;return EFI_SUCCESS;
+}
+EFI_STATUS PianoDisplayRailInit(PIANO_DISPLAY_RAIL_OBSERVER *S,CONST PIANO_DISPLAY_RAIL_ENV *E){
+  assert(ServicesLive&&E->ClockReader==Reader&&E->NpaHandle&&E->VcsHandle);RailInits++;
+  S->Signature=1;S->Env=*E;S->Report.Initialized=Case<20;return Case>=20?EFI_NOT_READY:EFI_SUCCESS;
+}
+EFI_STATUS PianoDisplayRailObserve(PIANO_DISPLAY_RAIL_OBSERVER *S,CONST CHAR8 *Phase){
+  assert(S->Report.Initialized&&ServicesLive&&Phase);RailObservations++;return EFI_SUCCESS;
+}
+EFI_STATUS PianoDisplayRailReemit(PIANO_DISPLAY_RAIL_OBSERVER *S){assert(S->Signature&&ServicesLive);return EFI_SUCCESS;}
+BOOLEAN PianoDisplayRailRetained(CONST PIANO_DISPLAY_RAIL_OBSERVER *S){return S->Report.Retained||S->Report.ServicesLost;}
+EFI_STATUS PianoDisplayRailClose(PIANO_DISPLAY_RAIL_OBSERVER *S){
+  assert(ServicesLive&&S->Signature&&!ReleaseCalls&&!ReaderCloses);RailCloses++;
+  if(Case==19||Case==21)return EFI_WARN_STALE_DATA;
+  S->Report.Initialized=FALSE;S->Report.Close=EFI_SUCCESS;return EFI_SUCCESS;
+}
 EFI_STATUS PianoDisplayClockReadSnapshotClock(PIANO_DISPLAY_CLOCK_READ *S,PIANO_DISPLAY_CLOCK_SELECTOR Selector,PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT *Out){
   assert(S==Reader&&ServicesLive&&Selector==PianoClockSelectNonGdscAhb&&Out&&Lease->Report.Held);
   // Real selector paths are tested separately. An unavailable clean diagnostic
@@ -117,6 +138,7 @@ static VOID Setup(UINT32 N){Case=N;gBS=&Bs;gDS=&Ds;Bs.RaiseTPL=Raise;Bs.RestoreT
 static VOID Run(UINT32 N){Setup(N);PIANO_PRODUCT_DISPLAY_STARTUP_REPORT Start={0};PIANO_PRODUCT_DISPLAY_RETIRE_REPORT Stop={0};
   if(N==14){assert(PianoProductDisplayStartup(&Start)==EFI_NOT_STARTED&&!Start.Revision);return;}
   EFI_STATUS S=PianoProductDisplayStart(Alive);PianoProductDisplayStartup(&Start);
+  if(N==21){assert(S!=EFI_SUCCESS&&Start.Retained&&Start.Held&&RailCloses==1&&!ReleaseCalls);return;}
   if(N==0||N==6||N==7||N==8||N==9||N==10||N==11||N==12||N==13||N==17){assert(S==EFI_SUCCESS&&Start.Held&&Start.OwnedReferences==1&&!Start.KnownNoSideEffects&&Start.AcquireBeforeTotal[0]==5&&Start.AcquireAfterTotal[0]==6&&Loads==8&&HandlerCloses==2);}
   if(N==1||N==2||N==5||N==15){assert(S!=EFI_SUCCESS&&!Start.Held&&!Start.AcquireAttempted);if(N==5)assert(Start.Retained&&!Start.KnownNoSideEffects);else assert(Start.KnownNoSideEffects&&!Start.Retained);return;}
   if(N==3||N==4||N==16){assert(S!=EFI_SUCCESS&&Start.Retained&&!Start.KnownNoSideEffects&&!ReaderCloses);return;}
@@ -137,9 +159,14 @@ static VOID Run(UINT32 N){Setup(N);PIANO_PRODUCT_DISPLAY_STARTUP_REPORT Start={0
     if(Retire!=EFI_SUCCESS)fprintf(stderr,"joint retire=%lx order=%s display=%lx release=%lx count=%lx gcc=%lx/%lx reads=%u pages=%u cleanup=%lx started=%u returned=%u clean=%u held=%u released=%u owned=%u/%u snapshots=%u/%u\n",(unsigned long)Retire,Order,(unsigned long)Owners.Report.Display.Status,(unsigned long)Owners.Report.Display.Release,(unsigned long)Owners.Report.Display.CounterStatus,(unsigned long)Owners.Report.Display.GccReadback,(unsigned long)Owners.Report.Display.GccReadbackEnd,Owners.Report.Display.GccReads,Owners.Report.Display.GccPages,(unsigned long)Owners.Report.Display.Cleanup,Owners.Report.Display.Started,Owners.Report.Display.Returned,Owners.Report.Display.Clean,Owners.Report.Display.HeldAfter,Owners.Report.Display.Released,Owners.Report.Display.OwnedReferencesBefore,Owners.Report.Display.OwnedReferencesAfter,Owners.Report.Display.ReleaseBeforeSnapshots,Owners.Report.Display.ReleaseAfterSnapshots);
     assert(Retire==EFI_SUCCESS&&Owners.Report.Clean&&Owners.Report.DisplayStopped&&Owners.Report.Display.ReleaseBeforeTotal[0]==10&&Owners.Report.Display.ReleaseAfterTotal[0]==9&&!strcmp(Order,"PURXApsIDM")&&Loads==12&&ReleaseCalls==1&&ReaderCloses==1);return;}
   S=PianoProductDisplayStop(Start.LeaseContext,&Stop);
+  if(N>=18){
+    assert(RailInits==1&&RailCloses==1&&RailObservations==(N<20?1U:0U));
+    if(N==19)assert(S==EFI_DEVICE_ERROR&&Stop.Retained&&Stop.HeldAfter&&!ReleaseCalls&&!ReaderCloses);
+    else assert(S==EFI_SUCCESS&&Stop.Clean&&ReleaseCalls==1&&ReaderCloses==1);
+  }
   if(N==11){assert(S==EFI_SUCCESS&&Stop.Clean&&Stop.ExitClosed&&Stop.OwnedReferencesBefore==1&&!Stop.OwnedReferencesAfter&&Stop.GccReads==4&&Stop.GccPages==1&&Stop.ReleaseBeforeSnapshots==2&&Stop.ReleaseAfterSnapshots==2);assert(PianoProductDisplayStop(Start.LeaseContext,&Stop)==EFI_ACCESS_DENIED&&ReleaseCalls==1);}
   if(N==6)assert(S==EFI_DEVICE_ERROR&&Stop.Retained&&!Stop.Clean&&!ReaderCloses&&Stop.HeldAfter);
   if(N==7||N==9)assert(S==EFI_ABORTED&&Stop.Retained&&Stop.ServicesLost&&!Stop.Clean);
   if(N==8)assert(S==EFI_DEVICE_ERROR&&Stop.Retained&&Stop.Released&&!Stop.HeldAfter&&Stop.Cleanup==EFI_DEVICE_ERROR&&!Stop.Clean);
 }
-int main(VOID){for(UINT32 I=0;I<18;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"display coordinator case%u failed\n",I);return 1;}}puts("Actual display coordinator+Owners+GCC Guard:18 cases; honest Lease/Reader boundaries, typed ref mapping/order/absence/aliases/EBS/cleanup/unsupported evidence; no native hardware executed");return 0;}
+int main(VOID){for(UINT32 I=0;I<22;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"display coordinator case%u failed\n",I);return 1;}}puts("Actual display coordinator+Owners+GCC Guard:22 cases; lease/reader/rail boundaries, actual order/absence/aliases/EBS/cleanup; no native hardware executed");return 0;}
