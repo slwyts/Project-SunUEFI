@@ -111,6 +111,9 @@ def build(root, kernel, busybox, output, root_partuuid):
         files[name] = source
     files['bin/busybox'] = busybox
     files['pianoinit'] = ROOT / 'bootprofiles/linux-userspace/disk-bootstrap'
+    # BusyBox switch_root checks for a regular /init in the old initramfs.
+    # The forced kernel command line still selects /pianoinit explicitly.
+    files['init'] = files['pianoinit']
     files['usr/local/sbin/piano-debug-bootstrap'] = ROOT / 'bootprofiles/linux-userspace/piano-debug-bootstrap'
     files['etc/piano/busybox-source.json'] = busybox.with_name('busybox-source.json')
     files[f'lib/modules/{release}/modules.builtin'] = directory / 'modules.builtin'

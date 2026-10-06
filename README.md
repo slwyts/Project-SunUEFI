@@ -2,11 +2,11 @@
 
 目标是在保留现有 Android 系统和数据的前提下，研究并移植 ARM64 UEFI，随后从 RAM 或外接介质启动 Linux / Windows PE。
 
-**最新已收回日志的实机结果（第109次）：Linux内核和 `/pianoinit` 已运行，UFS提交前的真实SID0x60、USB SID0x40均指向新建CB82且FSR为0。** UFS NOP失败后，共享CB的健康读回对两设备都返回EIO；磁盘根未出现，USB救援因控制器未就绪失败，Android已恢复。旧bypass初始化没有选择AArch64地址格式，依据Arm IHI0062D.c表3-1补入owned CB的CBA2R.VA64，并保留故障寄存器记录。该修正的实机结果仍待收回，不能把提交前路由正确视为DMA已经成功。
+**最新实机结果（第110次）：Linux已经枚举6个UFS LUN、读取GPT并挂载真实 `sunuefi_linux` ext4根分区。** 新建bypass CB82的CBA2R从0读回为1（AArch64），UFS提交后SID0x60路由健康检查保持通过，先前NOP失败已越过。约49秒进入switch_root，但BusyBox要求旧initramfs存在普通 `/init` 文件；当时只有 `/pianoinit`，PID1退出后panic。r5已补齐普通 `/init` 并保留强制 `/pianoinit` 命令行。分区里的真实systemd257已在设备只读chroot中成功执行 `--version`；正式PID1/systemd/GNOME仍待验证，USB尚未枚举。
 
 按用户授权已在线缩小 userdata，并新增 `sunuefi_esp`（512 MiB FAT32）和 `sunuefi_linux`（63.5 GiB ext4），共64 GiB。Debian 13/GNOME 已写入 Linux 分区；ESP 目前为空。两次 Android 恢复已验证，`/data` 约397 GiB总容量、60 GiB已用。只读回读核对了分区边界、文件系统标识、systemd/GNOME Shell SHA256及根分区配置。没有刷写 Android boot/recovery/system。证据保存在 `private/provisioning/sunuefi-linux64-plan-20261006/`、`private/analysis/linux-disk-test107/` 和 `private/analysis/ramlog-test-107/`。
 
-当前Linux修正候选：`artifacts/linux-disk/sunuefi64-r4/sunuefi-linux-stable-boot.img`（45,228,032字节），内核提交 `d4c8b9fadef5167b68b8aa7160255f62c0c4cb82`，topic `topic/piano-smmu-bypass-va64`。SMMU初始化AArch64格式；USB改为真实M31/QMP链，六个供电引用连接同机Android command-db/regulator确认的四个标准RPMh资源。配套模块已安装并读回，旧模块保留。第110次已发出该候选，UFS/USB/桌面验收结果待收回。
+真实ESP已安装Stable的 `\EFI\Piano\stable\boot.img`、Image、DTB和小型initramfs，13个文件全部读回校验，证据 `artifacts/linux-assembled/piano-disk-esp-20261007-r5/install-result.json`。Stable启动镜像SHA为 `bb0b05532fe55279e0e40a19d45f76c407513a7ee6cde00e39f23715903cb938`；同一内核及配套模块已在root分区。单一产品固件的本地ESP加载入口和菜单正在整合；它将复用真实文件source和原OS交接，不伪造USB下载或ACK。Next文件已放ESP，但其强制RAM根和磁盘bootstrap仍需改造，尚不可选为可运行的磁盘系统。
 
 **唯一产品候选：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成 TianoCore 启动画面、默认 SimpleInit、F12 Setup、标准 Shell 和驻留 Fastboot；没有诊断自动重启计时器。第105次构建通过405项主机测试、固件编译和输入一致性验证，实机验证256KiB日志及统一退出重启；第103次另已验证3200×2136完整BMP上传。第107次当前镜像SHA256为 `54c994a0ffea72e8768349b5592b4a228b861813fcc328cb3570bc86f5564470`，封存在 `artifacts/tests/stage0-test-107/`。构建、必需功能与真实后端状态见 [唯一产品构建](docs/piano-product-build.md)。
 

@@ -116,5 +116,5 @@ for virtual in dev proc sys run; do
 done
 chroot /sysroot /usr/lib/piano/piano-disk-hardware-prepare || fail 'Hardware preparation failed'
 log "DISK_ROOT_READY: starting Debian systemd on PARTUUID=$expected"
-exec switch_root -c /dev/console /sysroot /usr/lib/systemd/systemd
+exec switch_root -c /dev/console /sysroot /usr/lib/systemd/systemd >/sysroot/dev/kmsg 2>&1
 fail 'switch_root failed'

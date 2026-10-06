@@ -28,10 +28,10 @@ SimpleInit automatically and receives F12 through real key-notify enrollment.
 
 Core owns the native dependency foundation, standalone physical keys, persistent
 UFS owner and read-only BlockIO, storage bridge, resident USB service and UI
-policy. The USB owner is started once. CoreWait and GUI cooperative slices pump
-that same service while children are active. UI return does not itself retire
-the controllers. Deferred reboot/continue/boot actions pass through the typed
-all-owner retirement manager. No diagnostic polling-loop application is loaded.
+policy. Default startup uses the inherited GOP and does not automatically run
+experimental display clock acquisition. The display lease backend stays linked;
+its unstarted owner is recorded as absent. UFS/USB initialize resources they use
+and retire their actual owned references before the OS handoff.
 
 The source assembly includes actual standard FAT, Partition/DiskIo, complete
 Shell command libraries including install1/bcfg, standard TianoCore UiApp/HII
@@ -76,3 +76,25 @@ This artifact is a genuinely assembled integration candidate, not a renamed
 diagnostic image or a completed release. No product device boot, background USB
 acceptance across all UIs, persistent storage operation or final OS boot is
 claimed by a host build.
+
+
+## Boot files on the real ESP
+
+The installed `sunuefi_esp` is a 512 MiB FAT32 volume with GPT unique GUID
+`5fd95c71-fea3-47af-b0df-29ca9994a23a`. Stable files are installed under
+`\EFI\Piano\stable\`; the bounded native Linux loader reads `boot.img`, an
+Android v2 wrapper containing the actual Image, DTB and disk bootstrap. Its
+forced command line selects the separate ext4 `sunuefi_linux` root by PARTUUID
+`ffc480ed-c219-400b-a8f9-5f6805aa1f34`.
+
+`fastboot -s SunUEFI-piano oem boot-stable` requests this local file source;
+it does not download an OS image. Core closes the file before UFS retirement,
+uses an explicit file-origin owner ledger, releases the source allocation and
+EBS event after copying to the reserved kernel window, and then uses the same
+raw Linux handoff. Genuine USB actions retain their existing proof checks and
+priority; no USB ACK or download token is fabricated for a local boot.
+
+The staged Next kernel currently forces a RAM root and has no matching disk
+bootstrap. Its files and gap record are present on the ESP, but it is not yet a
+runnable disk entry. Local ESP startup, standard EFI-stub startup and the
+remaining product/device capabilities must be accepted independently.
