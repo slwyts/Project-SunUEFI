@@ -70,6 +70,17 @@ requires a separate trusted mapping/observation contract. See
 piano-product-test99.md; the standard 256KiB fastboot log and clean reboot were
 also verified on hardware.
 
+Test100 verified mapped GCC reads but native Clock initialization stopped at
+a separate CESTA CRMC write, RVA C234/FAR AF27D6C, with a missing CPU translation.
+Test101 mapped the exact native CESTA role and Clock StartImage returned. Its
+30-phase clock trace identifies GCC display AHB bit0 clearing at post:ClockDxe
+(88000003 to88000002), persisting through UFS/USB. Framebuffer and MDSS fields
+remain unchanged. This provides a specific hardware causal candidate for the
+blank display; acquiring and retaining a real product-owned clock reference
+still needs physical validation. See piano-product-test100.md and
+piano-product-test101.md for the distinct fault, corrected mapping and phase
+evidence. No direct clock bit patch or old-image success alone proves a repair.
+
 Sessions are fully closed before native code runs. No driver
 is disabled for that product observation, and no display/clock/MMU/
 SMMU register is written to obtain it. Test97 is an explicitly requested replay
