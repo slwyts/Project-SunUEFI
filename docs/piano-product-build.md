@@ -1,5 +1,8 @@
 # One PianoUEFI product integration image
 
+For the current device results and candidate identity, see [project status](status.md).
+For a first build, start with [building](devel/building.md); this page describes the product assembly.
+
 The product build exports exactly one boot image:
 `artifacts/product/PianoUEFI-product.img`. The same FD, product supervisor and
 APPv1 SimpleInit payload are present regardless of whether the image is loaded
@@ -8,8 +11,9 @@ those three entry paths is still pending. The builder does not flash partitions,
 change slots or contact a device.
 
 Current installation status (2026-10-07): temporary `fastboot boot` of the
-canonical product is verified. Recovery installation was rejected by ABL, both
-without AVB metadata and with a structurally valid recovery hash/footer. Stock
+canonical product is verified for recorded candidates. Recovery startup experiments
+failed both without AVB metadata and with a structurally valid recovery hash/footer;
+the precise failing phase is unresolved. Stock
 recovery was restored and read back exactly, the A-slot failure flag and the
 leftover recovery request were cleared, and ordinary on-disk Android boot was
 verified. Do not treat the raw product or the host-verified recovery install
@@ -83,10 +87,10 @@ ownership, real pogo and touch transport, generalized OS image boot, the full
 EFI DRAM contract and a verified 1 GiB download arena remain incomplete. Current
 fastboot download capacity is 64 MiB; the contract retains the 1024 MiB target.
 
-This artifact is a genuinely assembled integration candidate, not a renamed
-diagnostic image or a completed release. No product device boot, background USB
-acceptance across all UIs, persistent storage operation or final OS boot is
-claimed by a host build.
+A host build does not claim device acceptance. Recorded earlier product candidates
+have since booted through temporary fastboot, and test114 loaded ESP Linux into
+a disk-root GNOME session. The latest candidate remains untested on hardware;
+background USB across all UIs and persistent storage still need acceptance.
 
 
 ## Boot files on the real ESP

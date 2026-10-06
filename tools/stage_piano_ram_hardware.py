@@ -205,7 +205,7 @@ def build(output, source, rootfs=None):
                                             'gpu', 'gmu', 'mdss', 'display', 'display-active', 'video', 'camera', 'adsp', 'audio', 'radio'],
               'clock_scope': 'ACTUAL_DT_CONSUMERS_AND_BOUND_PROVIDER_ONLY_NO_RATE_ENABLE_READBACK',
               'context_scope': 'KERNEL_PRIVATE_AND_HARDWARE_CONFIGURATION_ONLY_NO_DMA_TRANSFER',
-              'audio_profile': {'source_sha256': digest(original_audio), 'microphone': 'DMIC1', 'capture_channels': 2, 'dec0_gain_db': 0, 'required_desktop_packages': ['libcanberra-pulse'], 'noise_quality_verified': False},
+              'audio_profile': {'source_sha256': digest(original_audio), 'microphone': 'DMIC1', 'capture_channels': 2, 'dec0_gain_db': 0, 'required_desktop_packages': ['libcanberra-pulse', 'rtkit'], 'noise_quality_verified': False},
               'device_transfer_validation_pending': True,
               'pci_parf_hardware_table_verified': False,
               'domain_forced': False}

@@ -1,5 +1,9 @@
 # Integrated Piano Linux candidate
 
+This page records the original full-integration baseline and its RAM-root design.
+The later kernel69 ESP/ext4/GNOME result is documented in [status.md](status.md);
+version roles are listed in [kernel-roles.md](devel/kernel-roles.md).
+
 The user's target is one integrated, full-function Linux attempt. This candidate
 reuses the current public GNOME/hardware startup chain rather than treating a
 RAM-smoke or generic userspace-debug kernel as complete Piano enablement.

@@ -1,5 +1,7 @@
 # Piano Linux 构建与引导门槛
 
+本页保留救援 RAM 基线及其历史实验。当前磁盘 Linux 与不同版本角色见[项目状态](status.md)、[内核角色](devel/kernel-roles.md)；首次参与从[构建入口](devel/building.md)开始。
+
 当前状态（2026-10-05）：stable 的独立 7.2.6 内核已在电脑编译，38 MiB Image 带 ARM64 EFI stub。test71 已实机完成 raw ARM64 RAM smoke：PID 1/BusyBox 运行，CPU_ONLINE=0-7，MemTotal=15520788 kB，DIAGNOSTICS_READY，180 秒后自动重启 Android；实际 /proc/config.gz 解压 SHA256=1cbb6541bdd94231db305fbc6ff79658ed45e8af888d32351d6fbbbbfb06c211，与构建 config 完全一致，恢复后26启动分区 SHA 一致。console 不可用时通过 kmsg 记录，不再退出 PID 1。此前 test68 的 console 退出问题和 test69 的嵌入 DTB 地址对齐问题均已修复。
 
 官方 next 7.3-rc5（7704c4c5bb127673b4f0ead839919db573559e38）也已在 test73 完成同样 RAM smoke：PID1、8 CPU、DIAGNOSTICS_READY、180 秒恢复、26启动分区校验全部通过；runtime config SHA=85c048d4f361802c204be5cae880bbfd9d961e170730ede9cba9198b2153fb31 与该 next build 相符。两条 profile 的具体验收保存在各自 artifacts/kernels/{profile}/ram/ram-validation-test-*.json，构建 manifest 保留构建时状态。
@@ -10,7 +12,7 @@
 
 | 位置 | 实际状态 |
 | --- | --- |
-| `/home/slwyts/linux-piano` | 独立 sibling Git 仓库，当前 `piano-stable` 在 `7a33c60fd6eda8a9c20dfda636d4e0a4efa4cbb8` |
+| `<workspace-parent>/linux-piano` | 独立 sibling Git 仓库，当前 `piano-stable` 在 `7a33c60fd6eda8a9c20dfda636d4e0a4efa4cbb8` |
 | `kernels/linux-piano` | 主仓库登记的 Gitlink/submodule，当前 detached checkout 为同一提交；其 `.git` 指向 sibling 的 `.git/worktrees/linux-piano`，共享 sibling Git 数据 |
 | `build/kernel-worktrees/stable` | 当前 detached 构建 worktree，同一固定提交；构建工具也支持带 profile/提交前缀的新目录 |
 | `kernel-profiles.json` | 构建的完整 commit / base / base-config 锁定信息，branch 名称仅帮助识别来源 |
@@ -58,7 +60,7 @@ python3 tools/package_kernel_payload.py --profile stable --mode ram --dtb /绝�
 | payload | v2 头长 144 bytes；kernel/initrd/DTB 大小、顺序、边界和各自 SHA256 一致 |
 | 运行状态 | 主机生成的 status / `hardware_verified=false` 保持原义；实际结果由对应镜像的本轮日志和设备观察建立 |
 
-当前 stable 具有主机 Image 和新 RAM initramfs，可用于后续实验；test68 只能证明内核执行到 init 尝试。当前 next 缺对应完成构建与 piano 板级移植验收，其实验入口应在这些产物和校验齐备后启用。不能借用 stable initramfs 的 provenance、旧 GKI 成功日志或通用 ARM64 镜像把 next 标记为可用。
+test68 曾只到 init 尝试；后续 test71/test73 已分别验证 Stable/Next 的 raw RAM smoke，见本页顶部。Next 的这项成功不等于完整板级功能或磁盘 GNOME 已可用。各角色仍须使用自己的 Image、config、initramfs 和 DTB，不能借用其他角色的验收。
 
 RAM PID 1 先写 `/dev/kmsg` 并启动 180 秒恢复计时器，再探测可打开的 console；没有 console 时保留 PID 1 并继续诊断。它只挂载 devtmpfs/proc/sysfs/tmpfs，读取 USB sysfs 状态，不配置 gadget 或加载模块。计时器只能处理 PID 1 已运行后的情况；kernel panic 恢复由本次 loader cmdline 决定。
 

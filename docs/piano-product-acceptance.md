@@ -74,27 +74,14 @@ routine hash pass after Android returns. At the user's request, partition hash
 verification is reserved for a test involving persistent writes or a concrete
 unexpected partition/state change; the read-only helper remains available.
 
-## Exact current command surface
+## Current command reference
 
-All direct commands select `-s SunUEFI-piano`:
-
-| Stock fastboot arguments | Current expected behavior |
-| --- | --- |
-| `getvar product` / `getvar version` | `piano-sunuefi` / `0.4` |
-| `getvar max-download-size` | `0x04000000` (64 MiB) |
-| `getvar max-fetch-size` | `0x00010000` (64 KiB) |
-| `getvar partition-size:xbl_config_a` | `0x0000000000080000` |
-| `getvar SunUEFI:ram-boot` | `disabled`; product has not registered a boot backend |
-| `oem status` | Readonly policy and DWC status; not a full owner retirement report |
-| `oem ramlog` → `get_staged FILE` | Frozen console tail, up to 65,536 bytes |
-| `oem screenshot` → `get_staged FILE.bmp` | Current native GOP screenshot |
-| `fetch xbl_config_a FILE.img` | Guarded readonly UFS reads, complete PC comparison |
-| `reboot` | True IN ACK, cooperative UI return, full owner manager retirement, then cold reset |
-| `continue` | Currently the same clean cold reset; it does not start an OS |
-| `boot FILE` | Currently rejects: `RAM boot backend unavailable` |
-| `oem log` | Rejects: `log service unavailable`; use `oem ramlog` |
-| `oem setup` / `oem shell` / `oem simpleinit` | Resident product only: validate fresh runtime, latch target UI and reply; core dispatches after normal child cleanup |
-| reboot targets / flash / erase / slot commands | No registered backend; command denied |
+The single maintained command table is [user/fastboot.md](user/fastboot.md).
+The product currently bounds frozen logs at 256 KiB, downloads at 64 MiB and
+individual fetch requests at 64 KiB. A restricted raw Linux backend is now wired
+in the product, and `oem boot-stable` has recorded ESP/disk-root acceptance;
+this does not make arbitrary `.img` / `.efi` downloads generally bootable.
+Use [status.md](status.md) for candidate-specific acceptance.
 
 The resident product also accepts these stock CLI navigation commands:
 
