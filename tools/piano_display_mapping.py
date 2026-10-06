@@ -19,7 +19,9 @@ PINS = {
     DTB: 'a4b55dd3b77e69be451aaf2263c76f5496c93325767e49f748ee49570611e8d7',
     NATIVE: '04ef5a00cee0123d4870a82670e677bfec2af5c360342fc5e0d9092bd7cbb9df',
     NATIVE_DTB: '634ec73dc6d69a07b5af8246e03b0d2ae84dfb9ce9901135121c220443c9cd10',
-    CLOCK_PE: 'f9e85aa758932b4366c55ec83b58e0176f58fba2944cc2fdd34875a46fdb769e',
+    # Product staging retains CESTA startup clock refs; the immutable original
+    # and exact derivation are checked by piano_inherited_clock.
+    CLOCK_PE: 'bbfcfdf93d51a271133fd5209624db323e95474be306d270128397c034d5780b',
     DTS: '531d6a6d53c8e23b94e8ba2747386f3265c1930bfa24c8db4f8fd1c0086940e0',
     'kernels/linux-piano/drivers/clk/qcom/gcc-sm8750.c': '3ac38ce713871b541dd7d4bee7007b14fee36d3a2fc6faa951e7c82fd53da960',
     'kernels/linux-piano/drivers/clk/qcom/dispcc-sm8750.c': 'd33b53c94c12f6f30118dbb20f5c7714aa14ee3421cec436379425cfee2be164',
