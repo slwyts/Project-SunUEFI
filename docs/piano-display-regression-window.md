@@ -61,6 +61,15 @@ support a native-start change in these SMMU fields. CPU framebuffer translation,
 cache metadata, display clock and DPU scanout remain separate unmeasured paths.
 See piano-product-test98.md for exact observations and recovery.
 
+Test99 added no-target-load CPU/GCD/AT framebuffer observations at three fixed
+pages, twice per phase. All30 CPU groups and all30 MDSS groups are complete and
+unchanged. The measured CPU PAR44/NormalNC versus static/GCD WT discrepancy is
+already present before foundation; it does not identify a native pre/post
+trigger. The physical screen remains blank. DPU/DSI/display-clock state still
+requires a separate trusted mapping/observation contract. See
+piano-product-test99.md; the standard 256KiB fastboot log and clean reboot were
+also verified on hardware.
+
 Sessions are fully closed before native code runs. No driver
 is disabled for that product observation, and no display/clock/MMU/
 SMMU register is written to obtain it. Test97 is an explicitly requested replay
