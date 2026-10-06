@@ -4,6 +4,7 @@ import importlib.machinery
 import importlib.util
 import json
 import io
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -27,6 +28,53 @@ loader.exec_module(hardware)
 
 
 class RamHardwareTests(unittest.TestCase):
+    def test_display_real_stage_flow_survives_diagnostic_failure_but_not_driver_failure(self):
+        original = (ROOT / 'upstream/debian-piano-current/rootfs/overlay/usr/lib/piano/display-start').read_bytes()
+        script = stage.adapt('display-start', original).decode()
+        bound = ['arm-smmu/15000000.iommu', 'sm8750-gpucc/3d90000.clock-controller-ml',
+                 'arm-smmu/3da0000.iommu', 'adreno/3d00000.gpu', 'msm_dpu/ae01000.display-controller']
+        for failure in ('none', 'msm', 'gpu-binding', 'backlight', 'dsi'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory(prefix='piano-display-flow-') as tmp:
+                root = Path(tmp); commands = root / 'commands'; commands.mkdir()
+                trace = root / 'trace'
+                for name, body in {
+                    'modprobe': 'echo "$*" >> "$TRACE"\n[ "$1" != "$FAIL_MODULE" ]\n',
+                    'sleep': 'exit 0\n',
+                    'observe': 'echo "diagnostic:$*" >> "$TRACE"\nexit 1\n',
+                }.items():
+                    path = commands / name; path.write_text('#!/bin/sh\n' + body); path.chmod(0o755)
+                for name in bound:
+                    if failure == 'gpu-binding' and name.startswith('adreno/'):
+                        continue
+                    (root / 'sys/bus/platform/drivers' / name).mkdir(parents=True)
+                (root / 'sys/bus/platform/devices').mkdir(parents=True)
+                (root / 'sys/class/backlight').mkdir(parents=True)
+                if failure != 'backlight':
+                    (root / 'sys/class/backlight/ktz8866-backlight').touch()
+                connector = root / 'sys/class/drm/card1-DSI-1'; connector.mkdir(parents=True)
+                (connector / 'enabled').write_text('disabled\n' if failure == 'dsi' else 'enabled\n')
+                translated = script.replace('/sys/', str(root / 'sys') + '/').replace('/etc/piano/', str(root / 'etc') + '/')
+                translated = translated.replace('/dev/kmsg', str(root / 'kmsg')).replace('/usr/lib/piano/piano-ram-hardware-prepare', str(commands / 'observe'))
+                executable = root / 'display-start'; executable.write_text(translated)
+                result = subprocess.run(['/bin/sh', str(executable), '--all'], capture_output=True, text=True,
+                    env={**os.environ, 'PATH': str(commands) + os.pathsep + os.environ['PATH'],
+                         'TRACE': str(trace), 'FAIL_MODULE': 'msm' if failure == 'msm' else ''}, timeout=10)
+                events = trace.read_text()
+                if failure == 'none':
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('WARN gpu context readback unavailable', result.stdout)
+                    self.assertIn('WARN display-active context readback unavailable', result.stdout)
+                    self.assertIn('stage 5 display: done', result.stdout)
+                    self.assertLess(events.index('msm separate_gpu_kms=1'), events.index('ktz8866'))
+                    self.assertLess(events.index('ktz8866'), events.index('dispcc_sm8750'))
+                else:
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertNotIn('stage 5 display: done', result.stdout)
+                    if failure in ('msm', 'gpu-binding'):
+                        self.assertNotIn('ktz8866', events)
+                    if failure == 'backlight':
+                        self.assertNotIn('dispcc_sm8750', events)
+
     def test_disk_root_requires_actual_device_and_partition_identity(self):
         import os, stat
         uid = 'ffc480ed-c219-400b-a8f9-5f6805aa1f34'
@@ -155,11 +203,15 @@ class RamHardwareTests(unittest.TestCase):
             self.assertLess(text.index('echo DMA'), text.index('--require-scope'))
             self.assertLess(text.index('--require-scope'), text.index('\nmodprobe '))
         display = (self.path / 'adapters/usr/lib/piano/display-start').read_text()
-        self.assertLess(display.index('modprobe msm $MSM_OPTIONS'), display.index('--require-scope gpu'))
-        self.assertLess(display.index('wait_bound adreno'), display.index('--require-scope gpu'))
+        self.assertLess(display.index('modprobe msm $MSM_OPTIONS'), display.index('observe_scope gpu'))
+        self.assertLess(display.index('wait_bound adreno'), display.index('observe_scope gpu'))
         self.assertNotIn('--require-scope display\n', display)
         self.assertLess(display.index('--observe-scope mdss-prebind'), display.index('modprobe dispcc_sm8750'))
-        self.assertLess(display.index('wait_bound msm_dpu'), display.index('--require-scope display-active'))
+        self.assertLess(display.index('wait_bound msm_dpu'), display.index('observe_scope display-active'))
+        self.assertEqual((self.path / 'adapters/etc/systemd/system/gdm3.service.d/20-piano-display.conf').read_text(),
+                         '[Unit]\nRequires=piano-display.service\nAfter=piano-display.service\n')
+        self.assertIn('Before=display-manager.service gdm3.service gdm.service',
+                      (self.path / 'adapters/etc/systemd/system/piano-display.service.d/20-native-kms-order.conf').read_text())
         for name in ('adsp-start', 'audio-start'):
             text = (self.path / 'adapters/usr/lib/piano' / name).read_text()
             self.assertIn('disabled by /etc/piano/' + name.split('-')[0] + '.conf"; exit 0;', text)

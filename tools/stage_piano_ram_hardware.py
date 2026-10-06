@@ -57,25 +57,35 @@ def adapt(name, data):
                             '# Normal PHY/host probing enumerates the real PCI endpoint first.\n'
                             + GUARD + 'radio --wait-seconds 30')
     elif name == 'display-start':
+        text = replace_once(text, 'die() { say "FAIL $*"; exit 1; }',
+            'die() { say "FAIL $*"; exit 1; }\n\n'
+            '# Active GPU/GMU register snapshots may be unavailable after normal probe.\n'
+            '# They are diagnostics, not authority over the kernel-owned DMA domains.\n'
+            'observe_scope() {\n'
+            '    if ! /usr/lib/piano/piano-ram-hardware-prepare --require-scope "$1"; then\n'
+            '        say "WARN $1 context readback unavailable; continuing kernel driver initialization"\n'
+            '    fi\n'
+            '}')
         text = replace_once(text,
             '    # No stream match may be added behind the SMMU driver\'s back once it\n'
             '    # is bound, and it must adopt the /pianoinit ones.\n'
             "    [ -f /run/piano-smmu-ready ] || die 'apps SMMU stream matches not installed'",
-            '    # Verify the actual QUP consumers; no global marker grants other streams.\n'
-            '    ' + GUARD + 'qup')
+            '    # Observe QUP consumers; arm-smmu probe/binding remains mandatory.\n'
+            '    observe_scope qup')
         text = replace_once(text, "    wait_bound adreno 3d00000.gpu 30 || die 'GPU not bound'",
                             "    wait_bound adreno 3d00000.gpu 30 || die 'GPU not bound'\n"
                             '    # MSM creates and attaches its GPU/GMU domains during normal probe.\n'
-                            '    ' + GUARD + 'gpu')
+                            '    observe_scope gpu')
         text = replace_once(text, '    modprobe dispcc_sm8750',
                             '    # Preserved live display contexts can still translate before takeover.\n'
                             '    # Observe the prebind route without blocking normal DPU ownership.\n'
-                            '    /usr/lib/piano/piano-ram-hardware-prepare --observe-scope mdss-prebind\n'
+                            '    /usr/lib/piano/piano-ram-hardware-prepare --observe-scope mdss-prebind ||\n'
+                            '        say "WARN MDSS prebind readback unavailable; continuing kernel driver initialization"\n'
                             '    modprobe dispcc_sm8750')
         text = replace_once(text, "    wait_bound msm_dpu ae01000.display-controller 30 || die 'DPU not bound'",
                             "    wait_bound msm_dpu ae01000.display-controller 30 || die 'DPU not bound'\n"
                             '    # DPU has now attached its own translated display domain.\n'
-                            '    ' + GUARD + 'display-active')
+                            '    observe_scope display-active')
         text = text.replace('                (UFS, USB, display, and the ones /pianoinit added) as bypass',
                             '                through normal kernel consumer attachment')
     else:
@@ -129,6 +139,12 @@ def build(output, source, rootfs=None):
              'usr/lib/piano/piano_dma_contexts.py': contexts,
              'usr/lib/piano/piano-ram-hardware-prepare':
              (ROOT / 'bootprofiles/linux-userspace/piano-ram-hardware-prepare').read_bytes()}
+    # Keep the pinned service intact; order the real Debian display manager
+    # behind completed native backlight/DPU/DSI readiness, including cold boots.
+    files['etc/systemd/system/piano-display.service.d/20-native-kms-order.conf'] = (
+        '[Unit]\nBefore=display-manager.service gdm3.service gdm.service\n').encode()
+    files['etc/systemd/system/gdm3.service.d/20-piano-display.conf'] = (
+        '[Unit]\nRequires=piano-display.service\nAfter=piano-display.service\n').encode()
     inputs = {}
     for name in PINS:
         original = (source / 'rootfs/overlay/usr/lib/piano' / name).read_bytes()
@@ -154,7 +170,7 @@ def build(output, source, rootfs=None):
         target = output / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
-        target.chmod(0o644 if relative.endswith('.py') else 0o755)
+        target.chmod(0o755 if relative.startswith('usr/lib/piano/') and not relative.endswith('.py') else 0o644)
         if relative.endswith('-start'):
             subprocess.run(['/bin/sh', '-n', str(target)], check=True)
     result = {'status': 'SCOPED_RAM_HARDWARE_ADAPTERS_PREPARED_NOT_DEVICE_VERIFIED',
