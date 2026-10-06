@@ -12,7 +12,7 @@ class NonGdscClockTests(unittest.TestCase):
    (d/'ActualDisplayGcc.h').write_text(startup.group()+'\n'+'\n'.join(function(owner,n)for n in ('ReadAlive','LeaseAlive','ReadGcc','PianoProductDisplayOwnerRetained','CopyAcquire')))
    (d/'ActualClockObjectComparison.h').write_text(object_comparison((ROOT/'bootprofiles/uefi-app/PianoDisplayClockRead.c').read_text()))
    fixture=(ROOT/'tests/PianoDisplayClockPipelineTest.c').read_text();fixture=fixture[:fixture.index('static VOID Run(UINTN Number){')]
-   for source in ('guarded-read/PianoGuardedRead.c','uefi-app/PianoDisplayClockRead.h'):fixture=fixture.replace('"../bootprofiles/'+source+'"','"'+str(ROOT/'bootprofiles'/source)+'"')
+   for source in ('guarded-read/PianoGuardedRead.c','uefi-app/PianoDisplayClockRead.h','display-rail/PianoDisplayNonGdscClock.h'):fixture=fixture.replace('"../bootprofiles/'+source+'"','"'+str(ROOT/'bootprofiles'/source)+'"')
    fixture=fixture.replace('Events[8192]','Events[32768]');needle='static EFI_STATUS EFIAPI Close(EFI_EVENT Event){';self.assertEqual(fixture.count(needle),1);fixture=fixture.replace(needle,needle+'\n if(ChildCloseWarning(Event))return EFI_WARN_STALE_DATA;')
    (d/'ActualNonGdscFixture.h').write_text(fixture)
    cmd=['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-misleading-indentation','-g','-DPIANO_DISPLAY_CLOCK_HOST_TEST=1','-DPIANO_NON_GDSC_CLOCK_HOST_TEST=1','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie']

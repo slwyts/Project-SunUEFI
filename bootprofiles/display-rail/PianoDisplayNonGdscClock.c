@@ -35,7 +35,8 @@ STATIC EFI_STATUS Return(PIANO_NON_GDSC_CLOCK *S){
 STATIC EFI_STATUS Snapshot(PIANO_NON_GDSC_CLOCK *S,PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT *R){
  EFI_STATUS E=Idle(S);if(E!=EFI_SUCCESS)return E;E=PianoDisplayClockReadSnapshotClock(S->Env.Reader,PianoClockSelectNonGdscAhb,R);if(!Live(S))return EFI_ABORTED;if(E!=EFI_SUCCESS)return E;
  if(R->Status!=EFI_SUCCESS||R->Identity!=EFI_SUCCESS||R->MatchingSnapshots!=2||R->ReaderContext!=S->Env.Reader||R->LeaseContext!=S->Env.Gcc||R->NativeBase!=S->Report.NativeBase||R->NativeImage!=S->Env.Gcc->NativeImage||R->ExpectedClockId!=NGC_ID||
-   R->ParentRailMask!=8||(R->GlobalFlags&(BIT8|BIT11))||(R->NodeFlags&(BIT8|BIT9|BIT14))||(R->ParentFlags&(BIT9|BIT10)))return EFI_UNSUPPORTED;return Idle(S);
+   R->ParentRailMask!=8||(R->GlobalFlags&(BIT8|BIT11))||(R->NodeFlags&(BIT8|BIT9|BIT14))||(R->ParentFlags&(BIT9|BIT10))){return EFI_UNSUPPORTED;}
+ return Idle(S);
 }
 STATIC BOOLEAN SameSource(CONST PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT *A,CONST PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT *B){
  return A->NativeBase==B->NativeBase&&A->NativeImage==B->NativeImage&&A->Global==B->Global&&A->Client==B->Client&&A->Node==B->Node&&A->Parent==B->Parent&&A->Name==B->Name&&A->Module==B->Module&&A->Array==B->Array&&A->ClientRef==B->ClientRef&&A->ClientRefPresent==B->ClientRefPresent&&A->GlobalFlags==B->GlobalFlags&&A->NodeFlags==B->NodeFlags&&A->ParentFlags==B->ParentFlags&&A->ParentRailMask==B->ParentRailMask&&A->ClientFlags==B->ClientFlags&&A->MmClient==B->MmClient;
