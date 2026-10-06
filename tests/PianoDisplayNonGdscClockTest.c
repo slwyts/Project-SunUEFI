@@ -53,7 +53,11 @@ static VOID Setup(VOID){
 static VOID RunChild(unsigned C){ChildCase=C;Setup();if(C==1){Put64(CHILD_NODE+0x58,CHILD_REF);Put64(CHILD_REF+8,HEAP);Put16(CHILD_NODE+0x50,5);Put16(CHILD_REF+0x10,2);Put16(CHILD_PARENT+0x48,3);Put64(CHILD_PARENT+0x40,BASE+0x31258);Put64(CHILD_PARENT+0x4c,0x80);}
  if(C==18)Put64(CHILD_PARENT+0xc,16);if(C==19)Put64(BASE+0x283a0+0x2c,BIT11);
  PIANO_NON_GDSC_CLOCK_ENV E={&mDisplay.Lease,&mDisplay.Reader,&RailObserver};EFI_STATUS Status=PianoDisplayNonGdscClockAcquire(&Child,&E);
- if(C==0||C==1||C==12||C==13||C==14||C==15||C==17||C==22||C==24){assert(Status==EFI_SUCCESS&&Child.Report.Held&&Child.Report.OwnedReferences==1&&!Child.Report.Retained&&!Child.Report.TransactionToken&&!mDisplay.Lease.BorrowToken&&ChildGet==1&&ChildEnable==1&&ChildQueries==2&&Child.Report.EnabledObserved&&Child.Report.OnObserved==FALSE);
+ if(C==8){assert(Status==EFI_NOT_READY&&Child.Report.Released&&!Child.Report.Held&&!Child.Report.Retained&&!Child.Report.OwnedReferences&&!Child.Report.TransactionToken&&!Child.Exit&&ChildDisable==1&&RailObserver.Report.Count==4);
+  assert(!Child.Report.EnabledObserved&&Child.Report.IsEnabled==EFI_SUCCESS&&Child.Report.IsOn==EFI_NOT_STARTED&&Child.Report.After==EFI_SUCCESS);
+  assert(PianoDisplayClockLeaseRelease(&mDisplay.Lease)==EFI_SUCCESS&&PianoDisplayClockReadClose(&mDisplay.Reader)==EFI_SUCCESS&&EventCount==EventClosed);
+ }
+ else if(C==0||C==1||C==12||C==13||C==14||C==15||C==17||C==22||C==24){assert(Status==EFI_SUCCESS&&Child.Report.Held&&Child.Report.OwnedReferences==1&&!Child.Report.Retained&&!Child.Report.TransactionToken&&!mDisplay.Lease.BorrowToken&&ChildGet==1&&ChildEnable==1&&ChildQueries==2&&Child.Report.EnabledObserved&&Child.Report.OnObserved==FALSE);
   assert(Child.Report.Acquired.Total[0]==(C==1?6:1)&&Child.Report.Acquired.ParentRefs[0]==(C==1?3:1));
   if(C==17){Put16(CHILD_NODE+0x50,3);Put16(CHILD_REF+0x10,3);Put16(CHILD_PARENT+0x48,2);}
   Status=PianoDisplayNonGdscClockRelease(&Child);

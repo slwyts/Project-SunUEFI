@@ -84,10 +84,17 @@ EFI_STATUS PianoDisplayNonGdscClockAcquire(PIANO_NON_GDSC_CLOCK *S,CONST PIANO_N
  E=FreshParent(S);if(E!=EFI_SUCCESS)return Retain(S,E);S->Report.EnableAttempted=TRUE;S->Report.Enable=E=Change(S,TRUE);if(!Live(S)||E!=EFI_SUCCESS)return Retain(S,!Live(S)?EFI_ABORTED:E);S->Report.Held=TRUE;
  S->Report.Counter=E=Snapshot(S,&S->Report.Acquired);if(E!=EFI_SUCCESS)return Retain(S,E);PIANO_DISPLAY_CLOCK_SELECTOR_SNAPSHOT *A=&S->Report.Acquired;
  if(!SameSource(B,A)||A->Total[0]!=B->Total[0]+1||A->PerClient[0]!=B->PerClient[0]+1||A->Total[1]!=B->Total[1]||A->PerClient[1]!=B->PerClient[1]||A->ParentRefs[0]!=B->ParentRefs[0]+(!B->Total[0])||A->ParentRefs[1]!=B->ParentRefs[1])return Retain(S,EFI_COMPROMISED_DATA);S->Report.OwnedReferences=1;
- E=FreshParent(S);if(E!=EFI_SUCCESS)return Retain(S,E);BOOLEAN V=0xA5;S->Report.IsEnabled=E=Enabled(S,&V,FALSE);S->Report.EnabledObserved=V;if(!Live(S)||E!=EFI_SUCCESS||V!=TRUE)return Retain(S,!Live(S)?EFI_ABORTED:E==EFI_SUCCESS?EFI_NOT_READY:E);
- E=FreshParent(S);if(E!=EFI_SUCCESS)return Retain(S,E);V=0xA5;S->Report.IsOn=E=Enabled(S,&V,TRUE);S->Report.OnObserved=V;if(!Live(S)||E!=EFI_SUCCESS||(V!=TRUE&&V!=FALSE))return Retain(S,!Live(S)?EFI_ABORTED:E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);
+ E=FreshParent(S);if(E!=EFI_SUCCESS)return Retain(S,E);BOOLEAN V=0xA5;S->Report.IsEnabled=E=Enabled(S,&V,FALSE);S->Report.EnabledObserved=V;if(!Live(S)||E!=EFI_SUCCESS||(V!=TRUE&&V!=FALSE))return Retain(S,!Live(S)?EFI_ABORTED:E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);
+ if(V==TRUE){E=FreshParent(S);if(E!=EFI_SUCCESS)return Retain(S,E);V=0xA5;S->Report.IsOn=E=Enabled(S,&V,TRUE);S->Report.OnObserved=V;if(!Live(S)||E!=EFI_SUCCESS||(V!=TRUE&&V!=FALSE))return Retain(S,!Live(S)?EFI_ABORTED:E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);}
  S->Report.After=E=Rail(S,"non-gdsc-acquired",&S->Report.RailAfter);if(E!=EFI_SUCCESS)return Retain(S,E);E=Return(S);if(E!=EFI_SUCCESS)return Retain(S,E);
- S->Report.Busy=FALSE;return S->Report.Status=EFI_SUCCESS;
+ S->Report.Busy=FALSE;
+ if(S->Report.EnabledObserved==FALSE){
+  // A known FALSE readback is not hardware success. Preserve the post-enable
+  // rail state, then undo only our verified reference through normal release.
+  E=PianoDisplayNonGdscClockRelease(S);if(E!=EFI_SUCCESS)return E;
+  return S->Report.Status=EFI_NOT_READY;
+ }
+ return S->Report.Status=EFI_SUCCESS;
 }
 EFI_STATUS PianoDisplayNonGdscClockRelease(PIANO_NON_GDSC_CLOCK *S){
  if(!S||S->Signature!=NGC_SIGNATURE)return EFI_INVALID_PARAMETER;if(S->Report.Busy||S->Report.Retained||S->Report.ServicesLost||!S->Report.Held||S->Report.Released||S->Report.DisableAttempted||S->Report.OwnedReferences!=1||S->Report.TransactionToken||!S->Exit)return EFI_ACCESS_DENIED;

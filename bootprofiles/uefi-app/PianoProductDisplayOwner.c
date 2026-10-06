@@ -190,7 +190,11 @@ EFI_STATUS PianoProductDisplayStart(PIANO_PRODUCT_DISPLAY_ALIVE Alive){
     else if(mDisplay.RailInit==EFI_SUCCESS&&mDisplay.RailObserve==EFI_SUCCESS){
       PIANO_NON_GDSC_CLOCK_ENV Child={.Gcc=&mDisplay.Lease,.Reader=&mDisplay.Reader,.Rail=&mDisplay.Rail};
       mDisplay.ChildStart=PianoDisplayNonGdscClockAcquire(&mDisplay.Child,&Child);
-      if(mDisplay.ChildStart!=EFI_SUCCESS){mDisplay.Retained=TRUE;S=EFI_ERROR(mDisplay.ChildStart)?mDisplay.ChildStart:EFI_DEVICE_ERROR;}
+      CONST PIANO_NON_GDSC_CLOCK_REPORT *C=&mDisplay.Child.Report;
+      if(mDisplay.ChildStart==EFI_NOT_READY&&C->Released&&!C->Retained&&!C->ServicesLost&&!C->Held&&!C->OwnedReferences&&!C->TransactionToken&&!mDisplay.Child.Exit){
+        mDisplay.ChildStop=EFI_SUCCESS; // actual Acquire rollback completed
+      }
+      else if(mDisplay.ChildStart!=EFI_SUCCESS){mDisplay.Retained=TRUE;S=EFI_ERROR(mDisplay.ChildStart)?mDisplay.ChildStart:EFI_DEVICE_ERROR;}
       else CopyMem(&mDisplay.NonGdsc,&mDisplay.Child.Report.Acquired,sizeof(mDisplay.NonGdsc));
     }
   }
@@ -227,7 +231,7 @@ EFI_STATUS PianoProductDisplayStop(VOID *Context,PIANO_PRODUCT_DISPLAY_RETIRE_RE
   CopyMem(R->AcquireBeforeClient,Start.AcquireBeforeClient,sizeof(R->AcquireBeforeClient));CopyMem(R->AcquireAfterClient,Start.AcquireAfterClient,sizeof(R->AcquireAfterClient));
   EFI_STATUS S=EFI_SUCCESS;
   if(mDisplay.Child.Signature){
-    S=mDisplay.ChildStop=PianoDisplayNonGdscClockRelease(&mDisplay.Child);
+    if(!mDisplay.Child.Report.Released)S=mDisplay.ChildStop=PianoDisplayNonGdscClockRelease(&mDisplay.Child);
     CONST PIANO_NON_GDSC_CLOCK_REPORT *C=&mDisplay.Child.Report;
     if(S!=EFI_SUCCESS||C->Retained||C->ServicesLost||C->Held||C->OwnedReferences||C->TransactionToken||!C->Released||mDisplay.Child.Exit){
       mDisplay.Retained=TRUE;S=EFI_ERROR(S)?S:EFI_COMPROMISED_DATA;

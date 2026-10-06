@@ -87,6 +87,7 @@ EFI_STATUS PianoDisplayRailClose(PIANO_DISPLAY_RAIL_OBSERVER *S){
 EFI_STATUS PianoDisplayNonGdscClockAcquire(PIANO_NON_GDSC_CLOCK *S,CONST PIANO_NON_GDSC_CLOCK_ENV *E){
   assert(E->Gcc==Lease&&E->Reader==Reader&&E->Rail->Report.Initialized&&RailObservations==1);ChildStarts++;
   S->Signature=1;S->Env=*E;S->Report.Held=TRUE;S->Report.OwnedReferences=1;S->Exit=(VOID *)0xdef;
+  if(Case==26){S->Report.Held=FALSE;S->Report.OwnedReferences=0;S->Report.Released=TRUE;S->Exit=NULL;ChildStops++;return EFI_NOT_READY;}
   if(Case==23){S->Report.Retained=TRUE;return EFI_DEVICE_ERROR;}return EFI_SUCCESS;
 }
 EFI_STATUS PianoDisplayNonGdscClockRelease(PIANO_NON_GDSC_CLOCK *S){
@@ -182,9 +183,10 @@ static VOID Run(UINT32 N){Setup(N);PIANO_PRODUCT_DISPLAY_STARTUP_REPORT Start={0
   }
   if(N==22||N==24||N==25)assert(EFI_ERROR(S)&&Stop.Retained&&!Stop.Clean&&ChildStops==1&&!RailCloses&&!ReleaseCalls&&!ReaderCloses);
   if(N==25)assert(S==EFI_ABORTED&&Stop.ServicesLost);
+  if(N==26)assert(S==EFI_SUCCESS&&Stop.Clean&&ChildStarts==1&&ChildStops==1&&RailCloses==1&&ReleaseCalls==1&&ReaderCloses==1);
   if(N==11){assert(S==EFI_SUCCESS&&Stop.Clean&&Stop.ExitClosed&&Stop.OwnedReferencesBefore==1&&!Stop.OwnedReferencesAfter&&Stop.GccReads==4&&Stop.GccPages==1&&Stop.ReleaseBeforeSnapshots==2&&Stop.ReleaseAfterSnapshots==2);assert(PianoProductDisplayStop(Start.LeaseContext,&Stop)==EFI_ACCESS_DENIED&&ReleaseCalls==1);}
   if(N==6)assert(S==EFI_DEVICE_ERROR&&Stop.Retained&&!Stop.Clean&&!ReaderCloses&&Stop.HeldAfter);
   if(N==7||N==9)assert(S==EFI_ABORTED&&Stop.Retained&&Stop.ServicesLost&&!Stop.Clean);
   if(N==8)assert(S==EFI_DEVICE_ERROR&&Stop.Retained&&Stop.Released&&!Stop.HeldAfter&&Stop.Cleanup==EFI_DEVICE_ERROR&&!Stop.Clean);
 }
-int main(VOID){for(UINT32 I=0;I<26;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"display coordinator case%u failed\n",I);return 1;}}puts("Actual display coordinator+Owners+GCC Guard:26 cases; child-first/rail/parent boundaries, actual order/absence/aliases/EBS/cleanup; no native hardware executed");return 0;}
+int main(VOID){for(UINT32 I=0;I<27;++I){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"display coordinator case%u failed\n",I);return 1;}}puts("Actual display coordinator+Owners+GCC Guard:27 cases; child-first/rail/parent boundaries and verified false-readback rollback; no native hardware executed");return 0;}
