@@ -151,22 +151,35 @@ case "$(read_value "$U/state")" in
     *) fail udc_state_unknown;;
 esac
 driver=$(readlink -f "$U/device/driver" 2>/dev/null || :)
-[ "${driver##*/}" = dwc3 ] || fail unsupported_udc_driver
+case "${driver##*/}" in dwc3|dwc3-qcom) :;; *) fail unsupported_udc_driver;; esac
 controller=$(readlink -f "$U/device" 2>/dev/null || :)
 [ -n "$controller" ] || fail udc_device_unavailable
-role_count=0 role_path=''
-for node in "$(p /sys/class/usb_role)"/*; do
-    [ -r "$node/role" ] || continue
-    [ -z "$ROLE" ] || [ "${node##*/}" = "$ROLE" ] || continue
-    provider=$(readlink -f "$node/device" 2>/dev/null || :)
-    [ -n "$provider" ] || continue
-    case "$controller/" in "$provider/"*) related=1;; *)
-        case "$provider/" in "$controller/"*) related=1;; *) related=0;; esac;; esac
-    [ "$related" = 1 ] || continue
-    role_count=$((role_count+1)); role_path=$node/role
-done
-[ "$role_count" = 1 ] || fail device_role_unproven_or_ambiguous
-[ "$(read_value "$role_path")" = device ] || fail role_not_device
+find_related_roles() {
+    related_count=0 role_count=0 role_path=''
+    for node in "$(p /sys/class/usb_role)"/*; do
+        [ -r "$node/role" ] || continue
+        provider=$(readlink -f "$node/device" 2>/dev/null || :)
+        [ -n "$provider" ] || continue
+        case "$controller/" in "$provider/"*) related=1;; *)
+            case "$provider/" in "$controller/"*) related=1;; *) related=0;; esac;; esac
+        [ "$related" = 1 ] || continue
+        related_count=$((related_count+1))
+        [ -z "$ROLE" ] || [ "${node##*/}" = "$ROLE" ] || continue
+        role_count=$((role_count+1)); role_path=$node/role
+    done
+}
+find_related_roles
+role_source=usb_role
+if [ "$role_count" = 1 ]; then
+    [ "$(read_value "$role_path")" = device ] || fail role_not_device
+else
+    # Fixed-peripheral DWC3 skips dual-role initialization, so it has no
+    # usb_role provider. The flat Qualcomm driver owns the UDC device itself.
+    # An explicit role selection must never fall back to a different source.
+    [ "$related_count" = 0 ] && [ -z "$ROLE" ] &&
+        [ "$(read_value "$controller/of_node/dr_mode")" = peripheral ] || fail device_role_unproven_or_ambiguous
+    role_source=device_tree
+fi
 # Never request a Type-C/role switch or write UDC soft_connect to compensate.
 mounted=0
 while read -r dev point type rest; do [ "$point" != /sys/kernel/config ] || { [ "$type" != configfs ] || mounted=1; }; done <"$(p /proc/mounts)"
@@ -202,9 +215,17 @@ write_attr "$G/functions/ncm.usb0/dev_addr" 02:87:50:00:00:01
 write_attr "$G/functions/ncm.usb0/host_addr" 02:87:50:00:00:02
 ln -s "$G/functions/acm.usb0" "$G/configs/c.1/acm.usb0"
 ln -s "$G/functions/ncm.usb0" "$G/configs/c.1/ncm.usb0"
-# Recheck kernel-owned role immediately before binding; a hotplug transition
-# must not be silently converted into register/PHY writes by userspace.
-[ "$(read_value "$role_path")" = device ] || fail role_changed_before_bind
+# Recheck the same evidence immediately before binding, including whether a
+# role provider appeared while preparing a fixed-peripheral gadget.
+selected_role_path=$role_path
+find_related_roles
+if [ "$role_source" = device_tree ]; then
+    [ "$related_count" = 0 ] &&
+        [ "$(read_value "$controller/of_node/dr_mode")" = peripheral ] || fail role_changed_before_bind
+else
+    [ "$role_count" = 1 ] && [ "$role_path" = "$selected_role_path" ] &&
+        [ "$(read_value "$role_path")" = device ] || fail role_changed_before_bind
+fi
 write_attr "$G/UDC" "$UDC"
 [ "$(read_value "$G/UDC")" = "$UDC" ] || fail udc_bind_unconfirmed
 printf '%s\n' "$BOOT_ID" >"$RUN/boot-id"

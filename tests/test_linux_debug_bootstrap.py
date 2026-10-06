@@ -1,5 +1,5 @@
 from pathlib import Path
-import os,subprocess,tempfile,unittest,json
+import os,subprocess,tempfile,unittest,json,shutil
 ROOT=Path(__file__).resolve().parents[1];SCRIPT=ROOT/'bootprofiles/linux-userspace/piano-debug-bootstrap'
 class LinuxDebugBootstrapTests(unittest.TestCase):
  def setUp(self):
@@ -30,6 +30,13 @@ if name=='mkdir':
   elif p.name=='ncm.usb0':
    for f in('dev_addr','host_addr'):(p/f).touch()
    (p/'ifname').write_text('usb0\\n')
+   root=pathlib.Path(os.environ['PIANO_DEBUG_FIXTURE_ROOT'])
+   if os.environ.get('CHANGE_DR_MODE'):
+    (root/'sys/devices/platform/soc/usb/dwc3/of_node/dr_mode').write_bytes(os.environ['CHANGE_DR_MODE'].encode()+b'\\0')
+   if os.environ.get('CHANGE_ROLE'):
+    role=root/'sys/class/usb_role/role0';role.mkdir(exist_ok=True)
+    (role/'role').write_text(os.environ['CHANGE_ROLE'])
+    if not (role/'device').exists():(role/'device').symlink_to(root/'sys/devices/platform/soc/usb')
  sys.exit()
 if name=='rmdir':
  for a in args:
@@ -50,6 +57,47 @@ sys.exit(1)
  def commands(self):return self.trace.read_text()if self.trace.exists()else''
  def config(self,text):
   path=self.fs/'etc/piano/linux-debug.conf';path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text)
+ def fixed_peripheral(self,driver='dwc3-qcom',mode='peripheral',keep_role=False):
+  controller=self.fs/'sys/devices/platform/soc/usb/dwc3'
+  link=controller/'driver';link.unlink();target=self.fs/'sys/bus/platform/drivers'/driver;target.mkdir(exist_ok=True);link.symlink_to(target)
+  node=self.fs/'sys/firmware/devicetree/base/soc/usb';node.mkdir(parents=True)
+  (controller/'of_node').symlink_to(node)
+  if mode is not None:(node/'dr_mode').write_bytes(mode.encode()+b'\0')
+  if not keep_role:shutil.rmtree(self.fs/'sys/class/usb_role/role0')
+ def test_fixed_peripheral_supports_generic_and_flat_qcom_drivers(self):
+  self.fixed_peripheral()
+  for driver in('dwc3-qcom','dwc3'):
+   with self.subTest(driver=driver):
+    link=self.fs/'sys/devices/platform/soc/usb/dwc3/driver';link.unlink();link.symlink_to(self.fs/'sys/bus/platform/drivers'/driver)
+    self.assertIn('gadget_bound udc=udc0 role=device',self.run_script());self.run_script('stop')
+ def test_fixed_peripheral_requires_explicit_dt_mode(self):
+  self.fixed_peripheral(mode=None);mode=self.fs/'sys/devices/platform/soc/usb/dwc3/of_node/dr_mode'
+  for value in(None,'host','otg',''):
+   with self.subTest(mode=value):
+    if value is not None:mode.write_bytes(value.encode()+b'\0')
+    self.assertIn('device_role_unproven_or_ambiguous',self.run_script(ok=False))
+    self.assertFalse((self.fs/'sys/kernel/config/usb_gadget/piano-linux-debug').exists())
+ def test_fixed_peripheral_cannot_override_existing_host_role(self):
+  self.fixed_peripheral(keep_role=True);role=self.fs/'sys/class/usb_role/role0/role';role.write_text('host\n')
+  self.assertIn('role_not_device',self.run_script(ok=False));self.assertEqual(role.read_text(),'host\n')
+  (self.fs/'proc/cmdline').write_text('piano.debug_usb=acm-ncm piano.debug_role=missing')
+  self.assertIn('device_role_unproven_or_ambiguous',self.run_script(ok=False))
+  self.assertFalse((self.fs/'sys/kernel/config/usb_gadget/piano-linux-debug').exists())
+ def test_fixed_peripheral_does_not_ignore_explicit_role_selection(self):
+  self.fixed_peripheral();(self.fs/'proc/cmdline').write_text('piano.debug_usb=acm-ncm piano.debug_role=missing')
+  self.assertIn('device_role_unproven_or_ambiguous',self.run_script(ok=False))
+ def test_fixed_peripheral_does_not_override_ambiguous_roles(self):
+  self.fixed_peripheral(keep_role=True);role=self.fs/'sys/class/usb_role/role1';role.mkdir();(role/'role').write_text('device');(role/'device').symlink_to(self.fs/'sys/devices/platform/soc/usb')
+  self.assertIn('device_role_unproven_or_ambiguous',self.run_script(ok=False))
+ def test_fixed_peripheral_mode_is_rechecked_before_bind(self):
+  self.fixed_peripheral();self.env['CHANGE_DR_MODE']='host'
+  self.assertIn('role_changed_before_bind',self.run_script(ok=False));self.assertFalse((self.fs/'sys/kernel/config/usb_gadget/piano-linux-debug').exists())
+ def test_fixed_peripheral_refuses_new_role_provider_before_bind(self):
+  self.fixed_peripheral();self.env['CHANGE_ROLE']='host'
+  self.assertIn('role_changed_before_bind',self.run_script(ok=False));self.assertFalse((self.fs/'sys/kernel/config/usb_gadget/piano-linux-debug').exists())
+ def test_existing_role_is_rechecked_before_bind(self):
+  self.env['CHANGE_ROLE']='host'
+  self.assertIn('role_changed_before_bind',self.run_script(ok=False));self.assertFalse((self.fs/'sys/kernel/config/usb_gadget/piano-linux-debug').exists())
  def test_real_config_works_with_forced_kernel_cmdline_and_cmdline_overrides(self):
   self.config('usb=acm-ncm\nshell=1\nipv4=192.168.77.1/30\nrecovery_seconds=0\n')
   (self.fs/'proc/cmdline').write_text('piano.root=ram')
