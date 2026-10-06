@@ -335,7 +335,15 @@ def device_tree(path, manifests, library):
                 raise ValueError('DTB stage actual property changes differ from manifest')
             allowed_properties = {'iommus'} if record['status'] == 'HOST_FOLDED_KERNEL_ROUTE_READBACK_REQUIRED' else (
                 {'clocks', 'compatible'} if record['status'] == 'HOST_CLOCK_BINDINGS_FOLDED_NORMAL_DRIVER_READBACK_REQUIRED' else {'iommus', 'iommu-map'})
-            if any(prop not in allowed_properties or not node.startswith('/soc/') for node, prop in actual):
+            boot_fixes = set()
+            if record['status'] == 'HOST_DSP_PCIE_BINDINGS_FOLDED_KERNEL_READBACK_REQUIRED':
+                from apply_piano_dsp_pcie_masters import BOOT_FIX_FIELDS, validate_boot_fix_delta
+                if actual & BOOT_FIX_FIELDS:
+                    if actual & BOOT_FIX_FIELDS != BOOT_FIX_FIELDS:
+                        raise ValueError('Incomplete boot geometry repair')
+                    validate_boot_fix_delta(before, parsed)
+                    boot_fixes = BOOT_FIX_FIELDS
+            if any(prop not in allowed_properties or not node.startswith('/soc/') for node, prop in actual - boot_fixes):
                 raise ValueError('DTB stage changed an unaudited property class')
         previous, before = expected_sha, parsed
     data = path.read_bytes()

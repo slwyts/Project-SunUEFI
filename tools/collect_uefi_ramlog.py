@@ -35,15 +35,22 @@ def main():
         if p.returncode == 0 and p.stdout.strip() == '1': break
         time.sleep(2)
     else: raise SystemExit('Android has not returned; manual recovery may be needed')
+    console_name = 'console-ramoops-0'
     p = subprocess.run(adb+['exec-out',"su -c 'cat /sys/fs/pstore/console-ramoops-0'"],capture_output=True,timeout=20)
     if p.returncode or not p.stdout or p.stdout.startswith(b'cat:'):
-        raise SystemExit('Cannot read ramoops console')
+        # The Linux DT can place its console where the stock DT expects pmsg.
+        # Accept that fallback only with an actual kernel version record, and
+        # retain the source name so Android pmsg is not mistaken for a console.
+        console_name = 'pmsg-ramoops-0'
+        p = subprocess.run(adb+['exec-out',"su -c 'cat /sys/fs/pstore/pmsg-ramoops-0'"],capture_output=True,timeout=20)
+        if p.returncode or not re.search(rb'(?m)^\[\s*[0-9.]+\] Linux version ',p.stdout):
+            raise SystemExit('Cannot read ramoops console or identify a Linux console in pmsg')
     out = root/'private/analysis'/f'ramlog-test-{args.test_id}'
     out.mkdir(exist_ok=False)
     (out/'console.txt').write_bytes(p.stdout)
     # A later kernel panic can be in dmesg-ramoops rather than the firmware
     # console. Preserve every named ramoops object without changing originals.
-    pstore = {'console-ramoops-0': {'bytes': len(p.stdout),
+    pstore = {console_name: {'bytes': len(p.stdout),
                                   'sha256': hashlib.sha256(p.stdout).hexdigest(),
                                   'saved_as': 'console.txt'}}
     listing = subprocess.run(adb+['shell','ls','-1','/sys/fs/pstore'],
@@ -51,7 +58,7 @@ def main():
     if listing.returncode == 0:
         names = sorted(set(listing.stdout.splitlines()))
         for name in names:
-            if name == 'console-ramoops-0' or not re.fullmatch(
+            if name == console_name or not re.fullmatch(
                     r'(?:console|dmesg|pmsg|ftrace)-ramoops(?:-\d+)?',name):
                 continue
             read = subprocess.run(adb+['exec-out','su -c '+shlex.quote('cat /sys/fs/pstore/'+name)],
@@ -95,6 +102,8 @@ def main():
     independent_init = 'PIANO_KERNEL_RAM BEGIN pid=1' in text
     (out/'linux.txt').write_text(text if linux else '')
     summary = {'test_id':args.test_id,'console_bytes':len(p.stdout),
+               'console_source':console_name,
+               'linux_kernel_version':next((line for line in text.splitlines() if re.match(r'^\[\s*[0-9.]+\] Linux version ',line)),None),
                'uefi_marker_found':index>=0 and scope!='wrapped-uefi-tail-with-product-ui-events',
                'uefi_bytes':len(segment.encode()),'path':str(out/'uefi.txt'),
                'linux_ram_command_line_found':linux,
@@ -106,6 +115,9 @@ def main():
     summary['product_core_payload_security_violation']='SUNUEFI_PRODUCT_CORE_RETURN status=Security Violation' in segment
     summary['startup_prefix_overwritten']=scope=='wrapped-uefi-tail-with-product-ui-events'
     summary['simpleinit_menu_events_found']='PIANO_KEY_EVENT' in segment or 'bootitem-piano-setup' in segment
+    summary['linux_disk_command_line_found']='rdinit=/pianoinit' in text and 'piano.root=PARTUUID=' in text
+    if summary['linux_kernel_version']:
+        (out/'linux.txt').write_text(text)
     (out/'manifest.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))
     if segment: print(segment[-18000:])

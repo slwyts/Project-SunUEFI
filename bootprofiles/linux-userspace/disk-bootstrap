@@ -1,7 +1,14 @@
 #!/bin/sh
 # Mount only the new, explicitly selected Linux partition; never an Android root.
 export PATH=/usr/sbin:/usr/bin:/bin:/sbin
-log() { printf 'piano: %s\n' "$*"; }
+log() {
+    printf 'piano: %s\n' "$*"
+    # Persist early userspace failures even when the framebuffer stays blank.
+    # After mount --move, the same devtmpfs is reachable below /sysroot.
+    kmsg=/dev/kmsg
+    [ -c "$kmsg" ] || kmsg=/sysroot/dev/kmsg
+    if [ -c "$kmsg" ]; then printf '<5>piano: %s\n' "$*" >"$kmsg"; fi
+}
 fail() {
     log "DISK_ROOT_REFUSED: $*; remaining in initramfs rescue"
     console=/dev/console
@@ -19,6 +26,7 @@ mountpoint -q /run || mount -t tmpfs -o mode=0755 tmpfs /run || fail 'run failed
 expected=$(cat /etc/piano/root-partuuid) || fail 'Missing root identity'
 release=$(cat /etc/piano/kernel-release) || fail 'Missing kernel identity'
 [ "$(uname -r)" = "$release" ] || fail 'Kernel/module release mismatch'
+log "DISK_INIT_BEGIN: kernel=$release root=PARTUUID=$expected"
 selected=0
 for arg in $(cat /proc/cmdline); do
     case "$arg" in
@@ -30,6 +38,7 @@ for arg in $(cat /proc/cmdline); do
 done
 [ "$selected" -eq 1 ] || fail 'Exactly one explicit piano.root=PARTUUID is required'
 while read -r name module; do
+    log "Loading module $name"
     [ -d "/sys/module/$name" ] || insmod "$module" || fail "Cannot load $name"
 done </etc/piano/modules-load-order
 

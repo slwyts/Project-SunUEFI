@@ -1,5 +1,6 @@
 """Actual DSP/PCI fold, shared parser and service wiring; no device/module access."""
 import errno
+import copy
 from pathlib import Path
 import subprocess
 import tempfile
@@ -144,7 +145,7 @@ class DspPcieTests(unittest.TestCase):
                 base.hardware.wait_proof(None, 'audio', 30, fail, now, sleep)
             self.assertEqual(len(calls), 1)
 
-    def test_actual_cpp_dtc_fold_only_eight_properties_and_normalized_rid_tuples(self):
+    def test_actual_cpp_dtc_fold_and_exact_boot_geometry(self):
         with tempfile.TemporaryDirectory(dir=ROOT / 'private/analysis', prefix='dsp-pcie-fold-test-') as temporary:
             base_path = ROOT / 'private/analysis/piano-linux-managed-clocks-v1/Piano-full-linux-managed-clocks.dtb'
             args = SimpleNamespace(base=base_path, base_sha256=patch.sha(base_path.read_bytes()),
@@ -154,7 +155,7 @@ class DspPcieTests(unittest.TestCase):
                 fdtoverlay=ROOT / 'build/kernel-topics/piano-panel/scripts/dtc/fdtoverlay',
                 libfdt=ROOT / 'upstream/dtc/libfdt/libfdt.so.1.8.1')
             report = patch.fold(args)
-            self.assertEqual(len(report['changes']), 8)
+            self.assertEqual(len(report['changes']), 11)
             self.assertFalse(report['domain_forced'])
             self.assertFalse(report['hardware_dma_verified'])
             result = read_fdt((args.output_dir / 'Piano-full-linux-managed-dsp-pcie.dtb').read_bytes())
@@ -162,8 +163,33 @@ class DspPcieTests(unittest.TestCase):
             self.assertEqual(before['reservations'], result['reservations'])
             self.assertEqual(before['phandles'], result['phandles'])
             self.assertEqual(len(result['tree'][patch.PCI]['iommu-map']), 40)
+            self.assertEqual(result['tree'][patch.RAMOOPS]['reg'], before['tree'][patch.RAMOOPS]['reg'])
+            self.assertEqual(result['tree'][patch.RAMOOPS]['console-size'], patch.encode(0x200000))
+            self.assertEqual(result['tree'][patch.RAMOOPS]['pmsg-size'], patch.encode(0x200000))
+            self.assertNotIn('record-size', result['tree'][patch.RAMOOPS])
+            self.assertEqual(result['tree'][patch.SRAM]['reg'], patch.encode(0x17b4e000, 0x400))
+            import assemble_piano_linux as assemble
+            manifests = [ROOT / 'private/analysis' / name / 'manifest.json' for name in (
+                'piano-full-dtb-fd6266-impact-fixed', 'piano-linux-owned-dma', 'piano-linux-managed-clocks-v1')]
+            accepted = assemble.device_tree(args.output_dir / 'Piano-full-linux-managed-dsp-pcie.dtb',
+                                           manifests + [args.output_dir / 'manifest.json'], args.libfdt)
+            self.assertEqual(accepted['sha256'], report['output_sha256'])
             args.base_sha256 = '0' * 64
             with self.assertRaises(ValueError): patch.fold(args)
+
+    def test_boot_geometry_rejects_changed_region_or_parent(self):
+        parsed = read_fdt((ROOT / 'private/analysis/piano-linux-managed-clocks-v1/Piano-full-linux-managed-clocks.dtb').read_bytes())
+        for path, key, value in (
+                ('/soc', '#address-cells', patch.encode(2)),
+                ('/reserved-memory', '#size-cells', patch.encode(1)),
+                (patch.SRAM, 'reg', patch.encode(0, 0x17b4e000, 0, 0x800)),
+                (patch.RAMOOPS, 'reg', patch.encode(0, 0xa3500000, 0, 0x800000)),
+                (patch.RAMOOPS, 'console-size', patch.encode(0x100000)),
+                (patch.RAMOOPS, 'ecc-size', patch.encode(16))):
+            with self.subTest(path=path, key=key):
+                changed = copy.deepcopy(parsed)
+                changed['tree'][path][key] = value
+                with self.assertRaises(ValueError): patch.repair_boot_geometry(changed)
 
 
 if __name__ == '__main__':

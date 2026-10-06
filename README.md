@@ -2,17 +2,21 @@
 
 目标是在保留现有 Android 系统和数据的前提下，研究并移植 ARM64 UEFI，随后从 RAM 或外接介质启动 Linux / Windows PE。
 
-**最新实机结果（截至第105次）：MM 的真实 NPA 请求/聚合值为48，Clock缓存为0并不代表电源请求为0。** NPA/VCS 驱动身份和代码验证通过，MM 图已读到实际客户端、资源及请求值；后续 VCS 对象读取仍待定位。真实冷启动对象 HOB 已能通过 Fastboot 取回，但 DTB 遍历触及2秒预算，尚未开放高DDR。显示 AHB 引用正常保持并在退出时干净释放，标准 Fastboot 重启回 Android；物理白屏修复仍未验收。详见 [第105次记录](docs/piano-product-test105.md) 和 [显示回归证据](docs/piano-display-regression-window.md)。
+**最新实机结果（第107次，2026-10-06）：唯一产品 UEFI 已通过标准 Fastboot 内存启动 Linux 7.2.6，尚未进入磁盘根系统或 GNOME。** 45,219,840 字节 Android v2 Linux 镜像下载及 boot 应答成功；恢复 Android 后，从 `pmsg-ramoops-0` 取回该内核的启动日志。日志记录 USB DWC3 core reset 超时、UFS NOP OUT 失败以及多项 DT 资源依赖错误。物理屏幕仍白，Linux USB 未枚举。本轮不继续追加实机启动，先依据这些错误修正 Linux 硬件初始化。
 
-**唯一产品候选：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成 TianoCore 启动画面、默认 SimpleInit、F12 Setup、标准 Shell 和驻留 Fastboot；没有诊断自动重启计时器。第105次构建通过405项主机测试、固件编译和输入一致性验证，实机验证256KiB日志及统一退出重启；第103次另已验证3200×2136完整BMP上传。当前镜像SHA256为 `561cf1a7578031858a8b8ad370b0cc1bcba5f45afb48778ddc65fbeb88d3f534`，封存在 `artifacts/tests/stage0-test-105/`。构建、必需功能与真实后端状态见 [唯一产品构建](docs/piano-product-build.md)。
+按用户授权已在线缩小 userdata，并新增 `sunuefi_esp`（512 MiB FAT32）和 `sunuefi_linux`（63.5 GiB ext4），共64 GiB。Debian 13/GNOME 已写入 Linux 分区；ESP 目前为空。两次 Android 恢复已验证，`/data` 约397 GiB总容量、60 GiB已用。只读回读核对了分区边界、文件系统标识、systemd/GNOME Shell SHA256及根分区配置。没有刷写 Android boot/recovery/system。证据保存在 `private/provisioning/sunuefi-linux64-plan-20261006/`、`private/analysis/linux-disk-test107/` 和 `private/analysis/ramlog-test-107/`。
 
-已有 UFS 证据包括6个LUN和GPT读取、139个只读BlockIO句柄、7个只读SFS卷及标准Shell枚举；第80/86次专用区域写入实验完成备份、写入、读回和恢复，第91次标准fetch与USB/UFS联合关闭通过。原分区仍只读，GPT未改，永久产品FAT/NV区域尚未配置，EFI变量仍在RAM中。触摸真实输入、官方键盘/触控板、USB Host、通用OS启动和1GiB下载仍有未完成后端。早期诊断镜像作为实验封存，不构成多套最终产品功能集。
+下一次 Linux 候选已准备：`artifacts/linux-disk/sunuefi64-r2/sunuefi-linux-stable-boot.img`（45,223,936字节），内核提交 `0b04714515a7236aebd0847b9b3806493321151d`。修正原厂兼容的ramoops布局和SRAM地址编码，加入失败时的USB/UFS状态与initramfs持久日志。配套1637个模块及14个索引文件已写入新Linux分区并读回核对，旧模块保留；本候选尚未实机启动，不能视为USB/UFS故障已修复。
+
+**唯一产品候选：`artifacts/product/PianoUEFI-product.img`，状态为 `INCOMPLETE_NOT_RELEASE`。** 同一份核心集成 TianoCore 启动画面、默认 SimpleInit、F12 Setup、标准 Shell 和驻留 Fastboot；没有诊断自动重启计时器。第105次构建通过405项主机测试、固件编译和输入一致性验证，实机验证256KiB日志及统一退出重启；第103次另已验证3200×2136完整BMP上传。第107次当前镜像SHA256为 `54c994a0ffea72e8768349b5592b4a228b861813fcc328cb3570bc86f5564470`，封存在 `artifacts/tests/stage0-test-107/`。构建、必需功能与真实后端状态见 [唯一产品构建](docs/piano-product-build.md)。
+
+已有 UFS 证据包括6个LUN和GPT读取、139个只读BlockIO句柄、7个只读SFS卷及标准Shell枚举；第80/86次专用区域写入实验完成备份、写入、读回和恢复，第91次标准fetch与USB/UFS联合关闭通过。UEFI 原分区访问仍只读；新增 Linux 分区已按上文授权修改 GPT，独立的产品FAT/NV容器仍未配置，EFI变量仍在RAM中。触摸真实输入、官方键盘/触控板、USB Host、通用OS启动和1GiB下载仍有未完成后端。早期诊断镜像作为实验封存，不构成多套最终产品功能集。
 
 SimpleInit 已包含“固件设置（BIOS）”“进入 UEFI Shell”，标准 `fastboot oem setup/shell/simpleinit` 导航走同一父核心和后台服务。当前冷映射保护 ADSP/HWFence 与低堆边界，保留上方47MiB资源，并按原厂描述加入独立显示 MMIO 资源；这些变化没有授权高DDR分配。完整 Stable/Next Linux 和RAM发行版已有主机构建候选，真实大块Conventional内存发布、加载来源与OS交接仍未闭环，GNOME和Windows启动尚未实机验证。见 [内存契约](docs/piano-platform-memory-contract.md) 与 [完整DDR生产者缺口](docs/piano-full-ddr-producer-gaps.md)。
 
 产品菜单原“继续启动”已明确改为“返回 Android（重启）”，经真实Continue请求、GUI清理和全部设备退休后冷重启；尚不表示默认OSloader已就绪。真实USB已应答动作优先于较早UI请求。官方键盘/触控板的协议生产者生命周期已完成源码测试，真实SE6传输仍未就绪，不发布虚拟输入。
 
-已准备 [专用存储提案](docs/piano-product-storage-proposal.md) 和 [标准NV后端](docs/piano-persistent-nv-backend.md)：固定14MiB容器提供有边界的FAT与双槽日志，PC提案与实际C provider互操作通过。未写介质、未改GPT；正式长期保留区与标准变量驱动早期初始化仍未完成，不能把后端源码和断电模拟当作实机持久化。
+已准备 [专用存储提案](docs/piano-product-storage-proposal.md) 和 [标准NV后端](docs/piano-persistent-nv-backend.md)：固定14MiB容器提供有边界的FAT与双槽日志，PC提案与实际C provider互操作通过。该14MiB方案未写介质；它与已安装的64GiB Linux分区独立，标准变量驱动早期初始化仍未完成，不能把后端源码和断电模拟当作实机持久化。
 
 详见 [BlockIO / USB进展](docs/blockio-usb-progress.md)、[受控UFS写入证据](docs/ufs-controlled-write-transport.md) 和 [Linux EFI交接审查](docs/linux-efi-handoff-audit.md)。stable/next独立内核已分别通过第71/73次原生ARM64 RAM启动；第85次标准EFI路径启动8CPU并完成MM/console，抓到固定TrustUI CMA缺失vmemmap导致panic；第88次补入两个占用CMA区域后越过原故障，但因普通可分配内存不足在内核初始化时OOM。EFI路径RAM用户态PID1尚未成功。
 
@@ -56,7 +60,7 @@ SimpleInit 已包含“固件设置（BIOS）”“进入 UEFI Shell”，标准
 | Linux RAM 启动 | 第 13–16 次重复成功；第 16 次明确记录 PID 1、正确 HWID、71 个模块及 RAM 挂载列表 |
 | 实验后分区校验 | 最近一次第91次，26启动分区SHA一致，root与A槽正常；完整测试gap/GPT/邻块在FAT试验后恢复一致 |
 
-启动分区只读；没有执行 `flash`、`erase`、重分区、改槽或Bootloader锁定/解锁。第80次仅在独立备份且live gate通过的测试gap内进行固定块写入，并完成恢复及Android独立校验。Linux 对照实验使用原样启动内核和 RAM initramfs。没有主动写入用户数据、加密元数据、持久化校准或密钥分区，也没有复制其内容；正常 Android 启动仍会自行更新运行数据。分区哈希校验范围为上述 26 个启动相关分区。
+截至第91次的历史范围：启动分区只读，当时没有执行 `flash`、`erase`、重分区、改槽或Bootloader锁定/解锁。后来经授权的64GiB Linux分区创建与写入见顶部最新状态。第80次仅在独立备份且live gate通过的测试gap内进行固定块写入，并完成恢复及Android独立校验。Linux 对照实验使用原样启动内核和 RAM initramfs。没有主动写入用户数据、加密元数据、持久化校准或密钥分区，也没有复制其内容；正常 Android 启动仍会自行更新运行数据。分区哈希校验范围为上述 26 个启动相关分区。
 
 原始证据保存在 `private/`，默认不纳入版本控制。26 个 A/B 启动相关分区逐一通过设备端与电脑端 SHA-256 比对；完整采集为 36 个文件、743,577,789 字节。该备份用于分析和恢复启动固件，不是用户数据备份。
 

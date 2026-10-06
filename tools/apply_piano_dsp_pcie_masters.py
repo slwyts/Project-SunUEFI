@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """Fold real ADSP/FastRPC and PCIe IOMMU consumers; host-only and narrowly scoped."""
 import argparse
+import copy
 import json
 from pathlib import Path
 import struct
 import tempfile
 from build_piano_full_dtb import ROOT, execute, libcheck, sha, reference_offsets
+from compose_piano_dtb import write_fdt
 
 ADSP = '/soc/remoteproc-adsp@03000000/glink-edge'
 DAIS = ADSP + '/qcom,gpr/service@3/dais'
 PCI = '/soc/pcie@1c00000'
 REAL = '/soc/iommu@15000000'
 LEGACY = '/soc/apps-smmu@15000000'
+RAMOOPS = '/reserved-memory/ramoops-region'
+SRAM = '/soc/mmio-sram@0x17b4e000'
+BOOT_FIX_FIELDS = {(RAMOOPS, 'record-size'), (RAMOOPS, 'pmsg-size'), (SRAM, 'reg')}
 MASTERS = {DAIS: [(0x1001, 0x80), (0x1041, 0x20)],
            **{ADSP + f'/qcom,fastrpc/compute-cb@{i}':
               ([(0x1007, 0x40), (0x1067, 0), (0x1087, 0)] if i == 5 else
@@ -30,6 +35,38 @@ INPUTS = {
 
 def encode(*values):
     return struct.pack('>' + 'I' * len(values), *values)
+
+
+def repair_boot_geometry(parsed):
+    """Two observed test107 binding fixes, preserving both physical regions."""
+    tree = parsed['tree']
+    soc, reserved = tree['/soc'], tree['/reserved-memory']
+    ram, sram = tree[RAMOOPS], tree[SRAM]
+    if (soc.get('#address-cells'), soc.get('#size-cells')) != (encode(1), encode(1)):
+        raise ValueError('unexpected SRAM parent geometry')
+    if (reserved.get('#address-cells'), reserved.get('#size-cells')) != (encode(2), encode(2)):
+        raise ValueError('unexpected ramoops parent geometry')
+    if (ram.get('compatible') != b'ramoops\0' or ram.get('reg') != encode(0, 0xa3500000, 0, 0x400000)
+            or ram.get('console-size') != encode(0x200000) or ram.get('record-size') != encode(0x40000)
+            or ram.get('pmsg-size') != encode(0) or ram.get('ftrace-size') not in (None, encode(0))
+            or ram.get('ecc-size') not in (None, encode(0))):
+        raise ValueError('unexpected ramoops region/layout')
+    if (sram.get('compatible') != b'mmio-sram\0' or sram.get('reg') != encode(0, 0x17b4e000, 0, 0x400)
+            or sram.get('#address-cells') != encode(2) or sram.get('#size-cells') != encode(2)):
+        raise ValueError('unexpected SRAM region/layout')
+    fixed = copy.deepcopy(parsed)
+    fixed['tree'][RAMOOPS].pop('record-size')
+    fixed['tree'][RAMOOPS]['pmsg-size'] = encode(0x200000)
+    fixed['tree'][SRAM]['reg'] = encode(0x17b4e000, 0x400)
+    return fixed
+
+
+def validate_boot_fix_delta(before, after):
+    """Permit exactly these fields only when their entire nodes match the repair."""
+    expected = repair_boot_geometry(before)
+    for path in (RAMOOPS, SRAM):
+        if after['tree'][path] != expected['tree'][path]:
+            raise ValueError('boot geometry repair differs: ' + path)
 
 
 def validate(parsed, repaired):
@@ -82,14 +119,17 @@ def fold(args):
         execute([args.fdtoverlay, '-i', args.base, '-o', tmp / 'out.dtb', tmp / 'in.dtbo'], out / 'fold.log')
         result = (tmp / 'out.dtb').read_bytes()
     after = libcheck(result, args.libfdt)
+    result = write_fdt(repair_boot_geometry(after))
+    after = libcheck(result, args.libfdt)
     if set(before['tree']) != set(after['tree']) or before['reservations'] != after['reservations'] or before['phandles'] != after['phandles']:
         raise ValueError('DSP/PCI repair changed tree/reservations/phandle identities')
     changed = {(p, k) for p in before['tree'] for k in set(before['tree'][p]) | set(after['tree'][p])
                if before['tree'][p].get(k) != after['tree'][p].get(k)}
-    expected = {(p, 'iommus') for p in MASTERS} | {(PCI, 'iommu-map')}
+    expected = {(p, 'iommus') for p in MASTERS} | {(PCI, 'iommu-map')} | BOOT_FIX_FIELDS
     if changed != expected:
         raise ValueError('unexpected or missing property delta: ' + str(changed ^ expected))
     validate(after, True)
+    validate_boot_fix_delta(before, after)
     target = out / 'Piano-full-linux-managed-dsp-pcie.dtb'
     target.write_bytes(result)
     report = {'status': 'HOST_DSP_PCIE_BINDINGS_FOLDED_KERNEL_READBACK_REQUIRED',
