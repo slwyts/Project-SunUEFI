@@ -1,0 +1,256 @@
+--- a/initramfs/touch-view/piano-touch-view.c
++++ b/initramfs/touch-view/piano-touch-view.c
+@@ -41,0 +42 @@
++ *   --diagnostics N  JSON diagnostics to stderr every N seconds (0: off)
+@@ -92 +93,2 @@
+-} opt = { MODE_STATS, 30, 200, 32, 0, 0, 0, 1, -1 };
++	int diagnostics;
++} opt = { MODE_STATS, 30, 200, 32, 0, 0, 0, 1, -1, 0 };
+@@ -102,0 +105,18 @@
++/* Observe the existing reader; never open another shared stream consumer. */
++static struct {
++	int replay, have_sequence, have_timestamp;
++	uint64_t sequence, sequence_high, timestamp_ns, source_intervals, source_ns;
++	uint64_t sequence_gaps, sequence_reorders, timestamp_reorders, epochs;
++	uint64_t algorithm_frames, algorithm_sequence, input_frames;
++	uint64_t input_sequence, input_attempts, algorithm_ns, algorithm_complete_ns;
++	uint64_t input_complete_ns, source_interval_min_ns, source_interval_max_ns;
++	uint64_t age_count, age_ns, age_max_ns, input_age_count;
++	uint64_t input_age_ns, input_age_max_ns;
++	unsigned long type_skips, reference_frames, shape_skips;
++	unsigned int frame_no, firmware_drop_frame_no, scan_mode;
++	unsigned int firmware_scan_rate, scan_freq_index;
++	unsigned long previous_records;
++	uint64_t previous_algorithm_frames, previous_input_frames;
++	double previous_time;
++} diag;
++
+@@ -138,0 +159,63 @@
++}
++
++static uint64_t le64(const uint8_t *p)
++{
++	return (uint64_t)le32(p) | (uint64_t)le32(p + 4) << 32;
++}
++
++static uint64_t boot_ns(void)
++{
++	struct timespec ts;
++
++	clock_gettime(CLOCK_BOOTTIME, &ts);
++	return (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
++}
++
++static void observe_record(const uint8_t *h)
++{
++	uint64_t sequence = le64(h + 8), timestamp = le64(h + 16);
++	uint64_t now;
++	int epoch = !!(le16(h + 26) & 2);
++
++	if (!opt.diagnostics)
++		return;
++	if (diag.have_sequence) {
++		if (sequence <= diag.sequence_high)
++			diag.sequence_reorders++;
++		else
++			diag.sequence_gaps += sequence - diag.sequence_high - 1;
++	}
++	if (epoch) {
++		diag.epochs++;
++		diag.have_timestamp = 0;
++	}
++	if (diag.have_timestamp) {
++		if (timestamp <= diag.timestamp_ns)
++			diag.timestamp_reorders++;
++		else {
++			uint64_t interval = timestamp - diag.timestamp_ns;
++
++			diag.source_intervals++;
++			diag.source_ns += interval;
++			if (!diag.source_interval_min_ns || interval < diag.source_interval_min_ns)
++				diag.source_interval_min_ns = interval;
++			if (interval > diag.source_interval_max_ns)
++				diag.source_interval_max_ns = interval;
++		}
++	}
++	diag.sequence = sequence;
++	if (!diag.have_sequence || sequence > diag.sequence_high)
++		diag.sequence_high = sequence;
++	diag.timestamp_ns = timestamp;
++	diag.have_sequence = diag.have_timestamp = 1;
++	if (!diag.replay && timestamp) {
++		now = boot_ns();
++		if (now >= timestamp) {
++			uint64_t age = now - timestamp;
++
++			diag.age_count++;
++			diag.age_ns += age;
++			if (age > diag.age_max_ns)
++				diag.age_max_ns = age;
++		}
++	}
+@@ -558,0 +642,15 @@
++	else if (opt.diagnostics && type == EV_SYN && code == SYN_REPORT) {
++		uint64_t now = boot_ns();
++
++		diag.input_frames++;
++		diag.input_sequence = diag.sequence;
++		diag.input_complete_ns = now;
++		if (!diag.replay && diag.timestamp_ns && now >= diag.timestamp_ns) {
++			uint64_t age = now - diag.timestamp_ns;
++
++			diag.input_age_count++;
++			diag.input_age_ns += age;
++			if (age > diag.input_age_max_ns)
++				diag.input_age_max_ns = age;
++		}
++	}
+@@ -563,0 +662,3 @@
++
++	if (opt.diagnostics)
++		diag.input_attempts++;
+@@ -596,0 +698 @@
++	uint64_t algorithm_start = 0;
+@@ -625,0 +728,7 @@
++	if (opt.diagnostics) {
++		diag.frame_no = le16(p + 28);
++		diag.firmware_drop_frame_no = le16(p + 30);
++		diag.scan_mode = p[24];
++		diag.firmware_scan_rate = le16(p + 52);
++		diag.scan_freq_index = p[54];
++	}
+@@ -638 +747,3 @@
+-	if (type != ref_type)
++	if (type != ref_type) {
++		if (opt.diagnostics)
++			diag.type_skips++;
+@@ -639,0 +751 @@
++	}
+@@ -646 +758,3 @@
+-		if (rows != st.rows || cols != st.cols)
++		if (rows != st.rows || cols != st.cols) {
++			if (opt.diagnostics)
++				diag.shape_skips++;
+@@ -647,0 +762 @@
++		}
+@@ -651,0 +767,2 @@
++		if (opt.diagnostics)
++			diag.reference_frames++;
+@@ -654 +771,3 @@
+-	if (rows != st.rows || cols != st.cols)
++	if (rows != st.rows || cols != st.cols) {
++		if (opt.diagnostics)
++			diag.shape_skips++;
+@@ -655,0 +775,3 @@
++	}
++	if (opt.diagnostics)
++		algorithm_start = boot_ns();
+@@ -680,0 +803,5 @@
++		if (opt.diagnostics) {
++			diag.algorithm_frames++;
++			diag.algorithm_sequence = diag.sequence;
++		}
++
+@@ -682 +809,7 @@
+-			paint(track(pts, count));
++			int active = track(pts, count);
++
++			if (opt.diagnostics) {
++				diag.algorithm_complete_ns = boot_ns();
++				diag.algorithm_ns += diag.algorithm_complete_ns - algorithm_start;
++			}
++			paint(active);
+@@ -686 +819,7 @@
+-			ui_report(track(pts, count));
++			int active = track(pts, count);
++
++			if (opt.diagnostics) {
++				diag.algorithm_complete_ns = boot_ns();
++				diag.algorithm_ns += diag.algorithm_complete_ns - algorithm_start;
++			}
++			ui_report(active);
+@@ -687,0 +827,4 @@
++		}
++		if (opt.diagnostics) {
++			diag.algorithm_complete_ns = boot_ns();
++			diag.algorithm_ns += diag.algorithm_complete_ns - algorithm_start;
+@@ -714,0 +858,62 @@
++static void print_diagnostics(double elapsed, int final)
++{
++	double interval = elapsed - diag.previous_time;
++	int type, first = 1;
++
++	if (!opt.diagnostics)
++		return;
++	fprintf(stderr,
++		"{\"kind\":\"piano_touch_diagnostics\",\"final\":%s,\"replay\":%s,"
++		"\"elapsed_s\":%.6f,\"interval_s\":%.6f,\"records\":%lu,"
++		"\"records_hz\":%.3f,\"source_completion_hz\":%.3f,"
++		"\"sequence\":%llu,\"sequence_gaps\":%llu,"
++		"\"source_timestamp_ns\":%llu,\"source_interval_min_ms\":%.3f,"
++		"\"source_interval_max_ms\":%.3f,"
++		"\"sequence_reorders\":%llu,\"timestamp_reorders\":%llu,\"epochs\":%llu,"
++		"\"checksum_ok\":%lu,\"checksum_bad\":%lu,\"short_payload\":%lu,"
++		"\"reference_frames\":%lu,\"type_skips\":%lu,\"shape_skips\":%lu,"
++		"\"algorithm_frames\":%llu,\"algorithm_hz\":%.3f,"
++		"\"algorithm_sequence\":%llu,\"algorithm_complete_ns\":%llu,\"algorithm_mean_us\":%.3f,"
++		"\"input_report_attempts\":%llu,\"input_syn_success\":%llu,"
++		"\"input_syn_hz\":%.3f,\"input_sequence\":%llu,\"input_complete_ns\":%llu,\"input_write_errors\":%lu,"
++		"\"read_age_samples\":%llu,\"read_age_mean_ms\":%.3f,\"read_age_max_ms\":%.3f,"
++		"\"input_age_samples\":%llu,\"input_age_mean_ms\":%.3f,\"input_age_max_ms\":%.3f,"
++		"\"frame_no\":%u,\"firmware_drop_frame_no\":%u,\"scan_mode\":%u,"
++		"\"firmware_scan_rate\":%u,\"scan_freq_index\":%u,\"types\":{",
++		final ? "true" : "false", diag.replay ? "true" : "false", elapsed, interval,
++		st.records, interval > 0 ? (st.records - diag.previous_records) / interval : 0,
++		diag.source_ns ? diag.source_intervals * 1e9 / diag.source_ns : 0,
++		(unsigned long long)diag.sequence, (unsigned long long)diag.sequence_gaps,
++		(unsigned long long)diag.timestamp_ns, diag.source_interval_min_ns / 1e6,
++		diag.source_interval_max_ns / 1e6,
++		(unsigned long long)diag.sequence_reorders,
++		(unsigned long long)diag.timestamp_reorders, (unsigned long long)diag.epochs,
++		st.csum_ok, st.csum_bad, st.short_payload, diag.reference_frames,
++		diag.type_skips, diag.shape_skips, (unsigned long long)diag.algorithm_frames,
++		interval > 0 ? (diag.algorithm_frames - diag.previous_algorithm_frames) / interval : 0,
++		(unsigned long long)diag.algorithm_sequence,
++		(unsigned long long)diag.algorithm_complete_ns,
++		diag.algorithm_frames ? diag.algorithm_ns / 1e3 / diag.algorithm_frames : 0,
++		(unsigned long long)diag.input_attempts, (unsigned long long)diag.input_frames,
++		interval > 0 ? (diag.input_frames - diag.previous_input_frames) / interval : 0,
++		(unsigned long long)diag.input_sequence, (unsigned long long)diag.input_complete_ns,
++		st.ui_write_errors,
++		(unsigned long long)diag.age_count,
++		diag.age_count ? diag.age_ns / 1e6 / diag.age_count : 0, diag.age_max_ns / 1e6,
++		(unsigned long long)diag.input_age_count,
++		diag.input_age_count ? diag.input_age_ns / 1e6 / diag.input_age_count : 0,
++		diag.input_age_max_ns / 1e6, diag.frame_no, diag.firmware_drop_frame_no,
++		diag.scan_mode, diag.firmware_scan_rate, diag.scan_freq_index);
++	for (type = 0; type < MAX_TYPES; type++)
++		if (st.types[type]) {
++			fprintf(stderr, "%s\"%d\":%lu", first ? "" : ",", type, st.types[type]);
++			first = 0;
++		}
++	fputs("}}\n", stderr);
++	fflush(stderr);
++	diag.previous_time = elapsed;
++	diag.previous_records = st.records;
++	diag.previous_algorithm_frames = diag.algorithm_frames;
++	diag.previous_input_frames = diag.input_frames;
++}
++
+@@ -718,0 +924 @@
++	      "       [--diagnostics N] (JSON every N seconds; default off)\n"
+@@ -749,0 +956,2 @@
++		else if (!strcmp(argv[i], "--diagnostics") && i + 1 < argc)
++			opt.diagnostics = atoi(argv[++i]);
+@@ -764 +972 @@
+-	    opt.type >= MAX_TYPES)
++	    opt.type >= MAX_TYPES || opt.diagnostics < 0)
+@@ -787,0 +996 @@
++	diag.replay = !!replay;
+@@ -850,0 +1060 @@
++			observe_record(h);
+@@ -860,0 +1071,2 @@
++		if (opt.diagnostics && now_s() - start - diag.previous_time >= opt.diagnostics)
++			print_diagnostics(now_s() - start, 0);
+@@ -874,0 +1087 @@
++	print_diagnostics(now_s() - start, 1);

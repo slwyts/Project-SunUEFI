@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """One reproducible Piano runtime build/stage entry; no device or global install.
 
-The public C programs and topology are unchanged. Small generated main wrappers
-add a --help path before any device code. A new output directory is mandatory.
+Small generated main wrappers add a --help path before any device code. Touch
+diagnostics are applied to a copied, pinned public source. A new output directory
+is mandatory; the public checkout and device remain untouched.
 """
 import argparse
 import hashlib
@@ -33,6 +34,7 @@ QEMU_PIN='73cc2584f119f9e74c85c0a8549dbb6fd104ae3897a06a7500797f9e5b4d0943'
 ALSA_TOOLCHAIN_PIN='09676a0fc68ee9cd5ba6684646b7e82c96e2ed5ac7ba53d639c4fe53b0612346'
 TOPOLOGY_PIN='6b10e42b5d0b4242004c750613462c2ccd7d37cd180ca842abbb431bda6057bb'
 DEFAULT_RELEASE='7.2.6-piano-gnome-00061-g352508459733'
+TOUCH_DIAGNOSTICS_PATCH=ROOT/'tools/patches/piano-touch-view-observability.patch'
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -55,7 +57,19 @@ def entry_source(name):
     if name not in PUBLIC_SOURCES:raise ValueError('Unknown public helper')
     signature='int PianoOriginalMain(int,char **);'if name=='piano-touch-view'else'int PianoOriginalMain(void);'
     normal='return PianoOriginalMain(argc,argv);'if name=='piano-touch-view'else'if(argc!=1){fprintf(stderr,"Use --help or no arguments.\\n");return 2;} return PianoOriginalMain();'
-    return '#include <stdio.h>\n#include <string.h>\n'+signature+'\nint main(int argc,char **argv){if(argc==2 && !strcmp(argv[1],"--help")){puts("'+name+': Linux Piano runtime helper; --help performs no device access. Public implementation unchanged.");return 0;}'+normal+'}\n'
+    description=' Optional --diagnostics N emits touch JSON every N seconds (default off).'if name=='piano-touch-view'else''
+    return '#include <stdio.h>\n#include <string.h>\n'+signature+'\nint main(int argc,char **argv){if(argc==2 && !strcmp(argv[1],"--help")){puts("'+name+': Linux Piano runtime helper; --help performs no device access.'+description+'");return 0;}'+normal+'}\n'
+
+
+def derive_touch_source(public, output):
+    """Apply the tracked diagnostic patch only to a verified public copy."""
+    relative,pin,_=PUBLIC_SOURCES['piano-touch-view'];original=Path(public)/relative
+    if sha(original)!=pin:raise ValueError('Public touch source changed')
+    folder=Path(output)/'piano-touch-source';target=folder/relative
+    target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,target)
+    for options in (['--check'],[]):
+        subprocess.run(['git','apply','--no-index','--unidiff-zero',*options,str(TOUCH_DIAGNOSTICS_PATCH)],cwd=folder,check=True)
+    return target,{'public_source_sha256':pin,'patch_sha256':sha(TOUCH_DIAGNOSTICS_PATCH),'effective_source_sha256':sha(target)}
 
 
 def kernel_identity(build,source,commit,release):
@@ -111,6 +125,7 @@ def build(args):
     repository(args.macros.resolve(),MACROS_COMMIT);repository(args.v4l2_source.resolve(),LOOP_COMMIT)
     tools=ROOT/'build/host-tools/usr/bin';env=os.environ.copy();env['PATH']=str(tools)+os.pathsep+env['PATH'];env['LD_LIBRARY_PATH']=str(ROOT/'build/host-tools/usr/lib')
     inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
+    inputs[str(TOUCH_DIAGNOSTICS_PATCH)]=sha(TOUCH_DIAGNOSTICS_PATCH)
     for name,pin in TOOL_PINS.items():
         p=tools/name
         if sha(p)!=pin:raise ValueError('Reviewed LLVM tool changed: '+name)
@@ -144,12 +159,15 @@ def build(args):
     inputs[str(public/'scripts/build-topology.sh')]=sha(public/'scripts/build-topology.sh')
     inputs.update(identity['inputs']);output.mkdir(parents=True);log=output/'build.log';files={};commands=[]
     flags=[tools/'clang','--target=aarch64-linux-gnu','--sysroot='+str(sysroot),'--gcc-toolchain='+str(sysroot/'usr'),'-O2','-Wall','-Wextra','-Werror']
+    touch_source,touch_provenance=derive_touch_source(public,output)
     for name,(path,_,destination)in PUBLIC_SOURCES.items():
         entry=output/(name+'-entry.c');entry.write_text(entry_source(name));obj=output/(name+'.o');binary=output/name
-        run([*flags,'-isystem',uapi/'include','-Dmain=PianoOriginalMain','-c',public/path,'-o',obj],env,log)
+        effective_source=touch_source if name=='piano-touch-view'else public/path
+        run([*flags,'-isystem',uapi/'include','-Dmain=PianoOriginalMain','-c',effective_source,'-o',obj],env,log)
         run([*flags,'-fuse-ld=lld','-static',entry,obj,'-lm','-o',binary],env,log)
         row=verify_elf(binary);help_result=subprocess.run([str(qemu),str(binary),'--help'],capture_output=True,text=True,timeout=10,check=True)
         row.update({'file':name,'mode':0o755,'source_sha256':PUBLIC_SOURCES[name][1],'entry_sha256':sha(entry),'compile_exit_code':0,'help_exit_code':help_result.returncode,'help_no_device_access':True});files[destination]=row
+        if name=='piano-touch-view':row.update(touch_provenance)
     wrapper=output/'host-bin';wrapper.mkdir();exe=wrapper/'alsatplg';launch=[alsa['loader'],'--library-path',str(alsa_root/'usr/lib/x86_64-linux-gnu'),str(alsa_root/'usr/bin/alsatplg')]
     import shlex
     exe.write_text('#!/bin/sh\nexec '+shlex.join(launch)+' "$@"\n');exe.chmod(0o755);top_env=env.copy();top_env['PATH']=str(wrapper)+os.pathsep+top_env['PATH']
