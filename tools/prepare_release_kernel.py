@@ -176,12 +176,17 @@ def ensure_repository(root, repository, policy):
         if git(repo, 'cat-file', '-e', commit + '^{commit}', check=False).returncode:
             # The URL is fixed in TARGETS; user remotes and original local
             # target commit are never used as fallback fetch sources.
-            args = ['fetch', '--no-tags']
-            if git(repo, 'rev-parse', '--is-shallow-repository') == 'true':
-                args.append('--unshallow')
-            git(repo, *args, policy['source_url'], commit)
+            git(repo, 'fetch', '--no-tags', '--depth=128', policy['source_url'], commit)
         if git(repo, 'rev-parse', commit + '^{commit}') != commit:
             raise ValueError('Public baseline object mismatch')
+    if policy.get('upstream_base_commit'):
+        ancestor = policy['upstream_base_commit']
+        if git(repo, 'merge-base', '--is-ancestor', ancestor, policy['base_commit'], check=False).returncode:
+            # The fixed Piano tip has 61 commits after v7.2.6. Having both
+            # objects is insufficient when the tip remains a shallow boundary.
+            git(repo, 'fetch', '--no-tags', '--depth=128', policy['source_url'], policy['base_commit'])
+        if git(repo, 'merge-base', '--is-ancestor', ancestor, policy['base_commit'], check=False).returncode:
+            raise ValueError('Public Piano baseline ancestry is incomplete')
     if policy.get('stable_commit'):
         stable = policy['stable_commit']
         ancestry = git(repo, 'merge-base', '--is-ancestor', policy['upstream_base_commit'], stable, check=False)

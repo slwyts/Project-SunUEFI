@@ -349,6 +349,57 @@ class ReleaseKernelTests(unittest.TestCase):
         self.assertEqual(self.git("status", "--porcelain", directory=self.root), "")
         self.assertEqual(list(empty_kernel.iterdir()), [])
 
+    def test_shallow_public_ancestry_is_fetched_without_unshallow(self):
+        # Model a source-only CI clone: the public tip and upstream base objects
+        # both exist, but a shallow boundary hides the commits between them.
+        ancestor = self.base_commit
+        public = self.original_target_commit
+        public_tree = self.target_tree
+        self.git('branch', 'public', public)
+        (self.repository / 'local.txt').write_text('local adapter\n')
+        self.git('add', 'local.txt')
+        self.git('commit', '--quiet', '-m', 'Local adapter fixture')
+        local = self.git('rev-parse', 'HEAD')
+        local_tree = self.git('rev-parse', 'HEAD^{tree}')
+        filename = '0001-cold-local.patch'
+        path = self.patch_directory / filename
+        path.write_bytes(self.git_bytes('format-patch', '--stdout', '-1', local))
+        row = {'file': filename, 'sha256': self.sha256(path), 'original_commit': local,
+               'original_parent': public, 'committer_date': self.git('show', '-s', '--format=%cI', local),
+               'tree': local_tree}
+        url = self.repository.as_uri()
+        self.manifest.update(base_commit=public, base_tree=public_tree, target_tree=local_tree,
+                             original_target_commit=local, source_url=url, patches=[row])
+        self.write_manifest()
+        policy = {'base_commit': public, 'upstream_base_commit': ancestor,
+                  'target_tree': local_tree, 'original_target_commit': local, 'source_url': url}
+        cold = self.root / 'cold-source.git'
+        subprocess.run(['git', 'clone', '--quiet', '--bare', '--depth=1', '--branch=public', url, str(cold)],
+                       check=True, env=self.environment)
+        self.git('fetch', '--quiet', '--depth=1', url, ancestor, directory=cold)
+        self.assertEqual(self.git('cat-file', '-t', ancestor, directory=cold), 'commit')
+        self.assertNotEqual(subprocess.run(['git', '-C', str(cold), 'merge-base', '--is-ancestor', ancestor, public],
+                                          env=self.environment).returncode, 0)
+        real_run = subprocess.run
+        fetches = []
+        def local_run(command, *args, **kwargs):
+            words = [str(value) for value in command]
+            if 'fetch' in words:
+                self.assertIn(url, words)
+                self.assertIn('--depth=128', words)
+                self.assertNotIn('--unshallow', words)
+                fetches.append(words)
+            return real_run(command, *args, **kwargs)
+        with patch.dict(builder.TARGETS, {'fixture': policy}, clear=True), \
+                patch.dict(os.environ, {'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}), \
+                patch.object(subprocess, 'run', side_effect=local_run):
+            result = builder.prepare(root=self.root, repository=cold, target='fixture')
+        self.assertEqual(len(fetches), 1)
+        self.assertEqual(result['actual_tree'], local_tree)
+        self.assertEqual(result['status'], 'SOURCE_PREPARED_NOT_BUILT')
+        self.git('merge-base', '--is-ancestor', ancestor, result['actual_commit'], directory=cold)
+        self.assertEqual((self.worktree / 'local.txt').read_text(), 'local adapter\n')
+
     def test_patch_tamper_is_rejected_before_worktree_creation(self):
         patch_path = self.patch_directory / self.manifest["patches"][0]["file"]
         patch_path.write_bytes(patch_path.read_bytes() + b"tampered after export\n")
