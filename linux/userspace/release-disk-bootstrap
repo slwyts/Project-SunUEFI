@@ -13,6 +13,15 @@ fail() {
     log "DISK_ROOT_REFUSED: $*; remaining in initramfs rescue"
     # The shared gadget helper needs all virtual mounts at their original paths.
     # Rescue never returns, so no gadget handoff to the disk root is needed.
+    # A late failure can occur after some or all mounts moved below /sysroot.
+    # Move those same mounts back; do not create a second gadget or hide logs.
+    for virtual in dev proc sys run; do
+        if ! mountpoint -q "/$virtual" && mountpoint -q "/sysroot/$virtual"; then
+            if ! mount --move "/sysroot/$virtual" "/$virtual"; then
+                log "Cannot return $virtual to initramfs rescue"
+            fi
+        fi
+    done
     if mountpoint -q /dev && mountpoint -q /proc &&
        mountpoint -q /sys && mountpoint -q /run; then
         if /usr/local/sbin/piano-debug-bootstrap start; then
