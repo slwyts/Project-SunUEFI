@@ -25,3 +25,6 @@
 [submodule "upstream/v4l2loopback"]
 	path = upstream/v4l2loopback
 	url = https://github.com/umlaeute/v4l2loopback.git
+[submodule "upstream/piano-sensors-current"]
+	path = upstream/piano-sensors-current
+	url = https://github.com/blu-sharky/piano-sensors.git

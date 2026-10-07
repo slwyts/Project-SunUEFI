@@ -331,7 +331,9 @@ def package(args):
     require(sum((work / n).stat().st_size for n in names[1:]) + boot.stat().st_size + 2 * MIB < args.esp_size_mib * MIB, 'Payload exceeds ESP capacity')
     with esp.open('xb') as stream:
         stream.truncate(args.esp_size_mib * MIB)
-    run(['mkfs.vfat', '--invariant', '-F', '32', '-n', 'SUNUEFI_ESP', esp])
+    # Piano UFS exposes 4 KiB logical sectors; Linux rejects a smaller BPB
+    # sector size even when firmware can read the filesystem.
+    run(['mkfs.vfat', '--invariant', '-S', '4096', '-F', '32', '-n', 'SUNUEFI_ESP', esp])
     run(['mmd', '-i', esp, '::/EFI', '::/EFI/Piano', '::/EFI/Piano/stable'])
     for path in (work / 'Image', work / 'board.dtb', work / 'initramfs', boot):
         run(['mcopy', '-m', '-i', esp, path, '::/EFI/Piano/stable/' + path.name])
@@ -348,7 +350,7 @@ def package(args):
               'epoch': args.epoch, 'mkbootimg': maker_source, 'device_operation_performed': False, 'device_ready': False,
               'components': {name: {'sha256': value} for name, value in zip(('uefi', 'kernel', 'dtb', 'initramfs'), hashes)},
               'kernel_manifest_sha256': sha(kernel / 'manifest.json') if (kernel / 'manifest.json').is_file() else None,
-              'partitions': {'esp': {'partlabel': 'sunuefi_esp', 'label': 'SUNUEFI_ESP', 'capacity_bytes': esp.stat().st_size},
+              'partitions': {'esp': {'partlabel': 'sunuefi_esp', 'label': 'SUNUEFI_ESP', 'sector_bytes': 4096, 'capacity_bytes': esp.stat().st_size},
                              'root': {'partlabel': 'sunuefi_root', 'label': args.root_selector.split('=', 1)[1], 'capacity_bytes': args.root_size_mib * MIB if args.root_size_mib else None}},
               'esp_files': ['/EFI/Piano/stable/' + n for n in ('Image', 'board.dtb', 'initramfs', 'boot.img')],
               'metadata': {'archive': 'numeric uid/gid, modes, symlinks, hardlinks, xattrs and ACLs; mtime normalized',
