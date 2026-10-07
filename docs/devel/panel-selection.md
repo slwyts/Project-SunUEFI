@@ -15,7 +15,7 @@ UEFI 在早期读取原厂 DTB 的 `/chosen/bootargs`，保存匹配结果，交
 
 定向 host 检查使用真实 1.1 MiB 原厂 Android DTB，经受限 SEC collector、typed HOB 和 DXE 缓存识别 CSOT，再修改实际 Linux DTB 的交接副本。同步遍历 5804 个节点及其全部属性，确认只有一个 Piano `compatible` 改变，fallback 字符串与原输入字节保持原值；未知选择保持输入配置。
 
-目前已从基准机的原厂 Android 启动参数确认 CSOT。产品构建和实机启动验证仍需完成；尚不能据此宣布 BOE 和 CSOT 两种设备都已实测。该选择也不等同于已修复 UEFI 的物理白屏、刷新率切换或 HDR。
+定向检查使用真实原厂 DTB 读取 CSOT，逐一比较 Linux DTB 的 5,804 个节点与属性，确认仅目标面板 `compatible` 改变，原始输入不变。产品固件已编译通过。2026-10-08 从 BOOT 普通重启、新 ESP 和 `PIANOROOT` 启动 7.2.9 后，实机 `/proc/device-tree` 读回为 `xiaomi,piano-csot-nt36532`，ESP 输入仍为 BOE，确认 CSOT 自动选择走通。BOE 设备尚未实测。该选择也不等同于已修复 UEFI 的物理白屏、刷新率切换或 HDR。
 
 实现位于 `uefi/handoff/early-memory/PianoColdBootObjects.c`、`uefi/core/PianoPanelSelection.c`；Raw Linux 和 EFI Linux 加载路径均使用同一选择函数。Linux 驱动为 `drivers/gpu/drm/panel/panel-novatek-nt36532.c`。
 
