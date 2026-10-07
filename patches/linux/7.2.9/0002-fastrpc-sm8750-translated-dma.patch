@@ -1,0 +1,59 @@
+From c85b24616d84a5fc68814e0090fa2b2d41acdfbc Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 8 Oct 2026 04:58:40 +0800
+Subject: [PATCH] fix(iommu): use translated DMA for SM8750 FastRPC
+
+FastRPC describes an imported dma-buf as its first DMA address and the
+sum of its mapped scatterlist lengths. Select a DMA domain before binding
+for compute context banks whose actual IOMMU provider is the SM8750 SMMU,
+so scattered system-heap pages use the normal IOMMU DMA mapping path.
+Leave all other clients and the global passthrough default unchanged.
+
+Record the first physical/DMA addresses and mapped/original entry counts
+only through opt-in dev_dbg for a later runtime comparison. No hardware
+SMMU fault or specific bad page is established by the AEE error codes.
+---
+ drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c | 7 +++++++
+ drivers/misc/fastrpc.c                     | 5 +++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+index 75bda7f5575..a1487d6d621 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+@@ -660,9 +660,16 @@ static void qcom_smmu_write_s2cr(struct arm_smmu_device *smmu, int idx)
+ 
+ static int qcom_smmu_def_domain_type(struct device *dev)
+ {
++	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
+ 	const struct of_device_id *match =
+ 		of_match_device(qcom_smmu_client_of_match, dev);
+ 
++	/* FastRPC describes imported scatter-gather buffers as one DMA range. */
++	if (fwspec && of_device_is_compatible(dev->of_node, "qcom,fastrpc-compute-cb") &&
++	    of_device_is_compatible(to_of_node(fwspec->iommu_fwnode),
++				    "qcom,sm8750-smmu-500"))
++		return IOMMU_DOMAIN_DMA;
++
+ 	return match ? IOMMU_DOMAIN_IDENTITY : 0;
+ }
+ 
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index d7a9e12f557..3819dc613ec 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -877,6 +877,11 @@ static int fastrpc_map_attach(struct fastrpc_user *fl, int fd,
+ 	for_each_sg(map->table->sgl, sgl, map->table->nents,
+ 		sgl_index)
+ 		map->size += sg_dma_len(sgl);
++	dev_dbg(sess->dev,
++		"dma-buf fd=%d nents=%u orig_nents=%u first_phys=%llx first_dma=%llx size=%llu\n",
++		fd, map->table->nents, map->table->orig_nents,
++		(unsigned long long)sg_phys(map->table->sgl),
++		(unsigned long long)sg_dma_address(map->table->sgl), map->size);
+ 	if (len > map->size) {
+ 		dev_dbg(sess->dev, "Bad size passed len 0x%llx map size 0x%llx\n",
+ 				len, map->size);
+-- 
+2.56.0
+

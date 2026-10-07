@@ -1,0 +1,29 @@
+From 086a94c4529d9f76fe30a47492d2de1aaf8a5b2a Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 8 Oct 2026 04:58:40 +0800
+Subject: [PATCH] fix(drm): report Piano DSC color depth
+
+Report the configured DSC bits per component for RGB101010 panels. Both
+Piano variants use the existing ten-bit DSC configuration; leave the
+generic RGB888 NT36532 panel unchanged. This reports color depth only
+and does not claim HDR or twelve-bit transport support.
+---
+ drivers/gpu/drm/panel/panel-novatek-nt36532.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36532.c b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+index fb602367fbc..db778f3e147 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+@@ -200,6 +200,8 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ 
+ 	connector->display_info.width_mm = panel_info->modes[0].width_mm;
+ 	connector->display_info.height_mm = panel_info->modes[0].height_mm;
++	if (panel_info->format == MIPI_DSI_FMT_RGB101010 && panel_info->dsc_cfg)
++		connector->display_info.bpc = panel_info->dsc_cfg->bits_per_component;
+ 	ctx->connector = connector;
+ 
+ 	return panel_info->num_modes;
+-- 
+2.56.0
+

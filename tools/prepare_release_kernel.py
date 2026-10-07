@@ -41,14 +41,14 @@ TARGETS[DEFAULT_TARGET] = {
     **TARGETS['kernel69'],
     'series_target': 'kernel69',
     'patch_tree': TARGETS['kernel69']['target_tree'],
-    'target_tree': '0d85ad8d34b7a18a1fa15d2231538b1b32c6f699',
+    'target_tree': '841bc932a79f53395a28be4e5668f1a93afa1553',
     'stable_commit': '5fce161649b4d779d1b76d9fcd52dc77779774b8',
     'stable_tree': 'c278d1443495d2a1a07fff2bcfb286b5c35baaea',
     'stable_version': '7.2.9',
     'stable_url': 'https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git',
     'stable_merged_tree': 'f1bccb0e42a13a6dcf1174cafb5e3253f4b5a22d',
     'merge_date': '2026-10-08T00:00:00+00:00',
-    'worktree_name': 'release-7.2.9',
+    'worktree_name': 'release-7.2.9-dma',
     'manifest_directory': 'release-7.2.9',
     'conflict_resolution': {
         'source': 'drivers/i2c/busses/i2c-qcom-cci.c',
@@ -58,6 +58,14 @@ TARGETS[DEFAULT_TARGET] = {
     'cpu_model_patch': {
         'file': 'patches/linux/7.2.9/0001-arm64-cpuinfo-read-dt-model.patch',
         'sha256': 'efc25dfd43e5b32ee3b46176f7ae4716dc94bb6af27f3b064ebbeccc19cfca64',
+    },
+    'fastrpc_dma_patch': {
+        'file': 'patches/linux/7.2.9/0002-fastrpc-sm8750-translated-dma.patch',
+        'sha256': 'e7adb9adda777279c14c7dbc473d86b9c8a240cff27344b237a5368950adafdc',
+    },
+    'panel_depth_patch': {
+        'file': 'patches/linux/7.2.9/0003-panel-nt36532-piano-color-depth.patch',
+        'sha256': '0259986f0d09eb82703bcd4556306e3de4b2b20c217c82965399de28965335b7',
     },
 }
 
@@ -222,7 +230,7 @@ def write_manifest(path, record):
 
 def update_patches(root, policy):
     result = {}
-    for key in ('conflict_resolution', 'cpu_model_patch'):
+    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch'):
         if key not in policy:
             continue
         row = policy[key]
@@ -263,12 +271,18 @@ def merge_stable(work, policy, paths):
                 'source_tree': policy['stable_tree'], 'version': policy['stable_version'],
                 'merge_commit': merge_commit, 'parents': parents,
                 'merged_tree': policy['stable_merged_tree'], 'resolved_conflicts': conflicts}
-    if 'cpu_model_patch' in paths:
-        git(work, 'apply', '--check', '--index', paths['cpu_model_patch'])
-        git(work, 'apply', '--index', paths['cpu_model_patch'])
+    for key, message, commit_key in (
+        ('cpu_model_patch', 'fix(arm64): expose DT CPU model in cpuinfo', 'cpu_model_commit'),
+        ('fastrpc_dma_patch', 'fix(iommu): use translated DMA for SM8750 FastRPC', 'fastrpc_dma_commit'),
+        ('panel_depth_patch', 'fix(drm): report Piano DSC color depth', 'panel_depth_commit'),
+    ):
+        if key not in paths:
+            continue
+        git(work, 'apply', '--check', '--index', paths[key])
+        git(work, 'apply', '--index', paths[key])
         git(work, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null',
-            'commit', '-m', 'fix(arm64): expose DT CPU model in cpuinfo', env=env)
-        metadata['cpu_model_commit'] = git(work, 'rev-parse', 'HEAD')
+            'commit', '-m', message, env=env)
+        metadata[commit_key] = git(work, 'rev-parse', 'HEAD')
     makefile = (work / 'Makefile').read_text()
     fields = [re.search(r'^' + key + r' = (\d+)$', makefile, re.M)
               for key in ('VERSION', 'PATCHLEVEL', 'SUBLEVEL')]

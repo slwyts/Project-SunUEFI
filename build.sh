@@ -55,8 +55,14 @@ PY_SENSORS
   rootfs)
     python3 tools/assemble_rootfs.py "$@" ;;
   release-rootfs)
+    sunuefi_release_source="$(python3 - <<'PY_RELEASE_SOURCE'
+import json
+from pathlib import Path
+print(json.loads(Path('build/release-7.2.9/source-manifest.json').read_text())['worktree'])
+PY_RELEASE_SOURCE
+)"
     python3 tools/build_release_rootfs.py --kernel artifacts/kernels/release-7.2.9 \
-      --source build/kernel-worktrees/release-7.2.9 --kernel-build build/kernels/release-7.2.9 \
+      --source "$sunuefi_release_source" --kernel-build build/kernels/release-7.2.9 \
       --output build/distros/release-7.2.9 --mesa-dir build/mesa/runtime \
       --sensors-dir build/sensors/runtime --execute "$@" ;;
   package|esp)
@@ -81,6 +87,7 @@ PY_SENSORS
   help|-h|--help)
     printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|linux|mesa|sensors|bsp|rootfs|release-rootfs|package|all|installer|install' \
       'Full builds need the documented builder environment; rootfs/Mesa/sensors run in a root ARM64 build container.' \
+      'release-rootfs reads its kernel source worktree from build/release-7.2.9/source-manifest.json.' \
       'Building never partitions or flashes a tablet. install is a separate explicit command.' ;;
   *) printf 'Unknown command: %s\n' "$command" >&2; exit 2 ;;
 esac

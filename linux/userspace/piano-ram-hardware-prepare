@@ -278,7 +278,7 @@ def main():
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument('--check-root', action='store_true', help='Verify only the actual RAM or configured Linux root')
     mode.add_argument('--require-scope', choices=tuple(SCOPES) + tuple(CONTEXT_SCOPES) + ('all', 'clock'))
-    mode.add_argument('--observe-scope', choices=('mdss-prebind', 'camera', 'video'),
+    mode.add_argument('--observe-scope', choices=('mdss-prebind', 'camera', 'video', 'adsp'),
                       help='Nonblocking context diagnostic; never authorizes a driver or reports readiness')
     ap.add_argument('--wait-seconds', type=int, choices=range(31), default=0,
                     help='Wait only for normal consumer creation or busy getter; faults/drift still fail immediately')

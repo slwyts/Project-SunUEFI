@@ -107,7 +107,13 @@ def adapt(name, data):
             before = anchors[name]
             preparation = 'modprobe fastrpc || { say "FAIL fastrpc"; exit 1; }\n' if name == 'adsp-start' else ''
             wait = ' --wait-seconds 20' if name in ('keyboard-start', 'adsp-start', 'audio-start') else ''
-            text = replace_once(text, before, preparation + GUARD + scope + wait + '\n\n' + before)
+            if name == 'adsp-start':
+                # FastRPC has already bound through the native driver here.
+                # Its context readback is diagnostic, as for CAMSS and Iris.
+                probe = '/usr/lib/piano/piano-ram-hardware-prepare --observe-scope adsp'
+            else:
+                probe = GUARD + scope + wait
+            text = replace_once(text, before, preparation + probe + '\n\n' + before)
     if name in ('adsp-start', 'audio-start'):
         # A failed oneshot must not be reported successful by systemd.
         text = text.replace('; exit 0; }', '; exit 1; }')
