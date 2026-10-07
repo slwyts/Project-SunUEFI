@@ -117,7 +117,7 @@ runtime 包。来源及包 hash 写入 SOURCE.json/SHA256SUMS。该入口已加�
 
 完整 Build-Depends 应先在隔离 builder 核对实际缺口和体积；可选
 `--install-dependencies` 使用标准 signed APT 安装 builder 构建依赖，不向 Arch
-host 安装 Debian 包。rootfs 的 `--ffmpeg-dir build/ffmpeg` 仅在显式指定时核对
+host 安装 Debian 包。rootfs 的 `--ffmpeg-dir build/ffmpeg/runtime` 仅在显式指定时核对
 并安装这组标准包，当前不默认启用；设备上的真实 decoder/encoder 对照仍须完成。
 
 Arch 在固定 FFmpeg 7.1.5 PKGBUILD 的副本里加入同一补丁来源和 SHA256，在
