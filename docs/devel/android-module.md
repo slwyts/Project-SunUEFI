@@ -1,6 +1,6 @@
 # Android 模块
 
-模块源码位于 `android/module/`，面向 Magisk / KernelSU 管理器。普通启动保留 Android，`reboot recovery` 保留原厂 Mi Recovery；UEFI 使用独立的明确请求。当前原生重打包工具和一次性请求消费工具尚未实现，因此不能生成可安装 ZIP。
+模块源码位于 `android/module/`，面向 Magisk / KernelSU 管理器。普通启动保留 Android，`reboot recovery` 保留原厂 Mi Recovery；UEFI 使用独立的明确请求。[原生重打包工具](android-boot-repack.md)已实现普通文件模式并验证真实 BOOT 的无损还原；在线身份检查、设备写入与一次性请求消费仍未完成，因此不能生成可安装 ZIP。文件工具不是现有模块脚本所要求的完整在线接口。
 
 先检查当前产品：
 
@@ -35,4 +35,4 @@ ZIP 只携带当前产品的 FD、APP、早期 selector 和经测试的 ARM64 �
 python3 tests/unit/test_android_module.py
 ```
 
-测试使用临时夹具验证篡改、路径越界、ELF 入口、打包门禁、音量选择和默认禁用的请求接口，不执行 Android 工具或访问设备。下一步是实现原生重打包/还原与一次性请求，再验证同一包装的 Android、原厂 Recovery 和单独请求的 UEFI；主机测试不能替代这一步。
+测试使用临时夹具验证篡改、路径越界、ELF 入口、打包门禁、音量选择和默认禁用的请求接口，不执行 Android 工具或访问设备。下一步是将已完成的原生文件重打包／还原接入在线身份检查和受限写入，实现请求消费，再验证同一包装的 Android、原厂 Recovery 和单独请求的 UEFI；主机测试不能替代这一步。

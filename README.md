@@ -114,7 +114,7 @@ docker run --rm --privileged -v "$PWD:/workspace" -w /workspace sunuefi-builder 
 
 同一固定上游的基础根系统已构建完成后，可以用 `./build.sh release-rootfs --resume` 更新内核、硬件包和配置，复用基础系统，避免重新跑 debootstrap。此操作更新本地生成目录，不操作平板。
 
-维护者可用 `./build.sh trampoline --stock-boot 当前ROM的boot.img --output 新输出目录` 生成前置入口。选择器的 Android 直通已实测，Magisk／KernelSU 模块的原生重打包工具与请求自动消费仍未齐备；`./build.sh module --inspect` 当前列出缺项，不生成可安装 ZIP。接口与升级流程见[Android 模块说明](docs/devel/android-module.md)。
+维护者可用 `./build.sh trampoline --stock-boot 当前ROM的boot.img --output 新输出目录` 生成前置入口。选择器的 Android 直通已实测。`./build.sh boot-repack` 已能编译原生 BOOT 文件重打包／还原工具，真实原厂 BOOT 无损还原已验证；在线安装、OTA 自动化与请求自动消费尚未完成。`./build.sh module --inspect` 当前列出缺项，不生成可安装 ZIP。接口与升级流程见[Android 模块说明](docs/devel/android-module.md)，文件工具见[原生重打包说明](docs/devel/android-boot-repack.md)。
 
 ## 下载后如何刷写
 
