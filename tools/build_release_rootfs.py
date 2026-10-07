@@ -48,8 +48,16 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
     kernel, source, output = [Path(p).resolve() for p in (kernel, source, output)]
     if not output.is_relative_to(root / 'build/distros') or output.is_symlink() or (output.exists() and not resume):
         raise ValueError('Output must be a new project build/distros directory')
-    if resume and (not (output / 'COMPLETE').is_file() or not (output / 'FAILED.json').is_file()):
-        raise ValueError('Resume needs a completed upstream root and its failed assembly record')
+    previous = None
+    if resume:
+        if not (output / 'COMPLETE').is_file():
+            raise ValueError('Resume needs a completed upstream base root')
+        if (output / 'manifest.json').is_file():
+            previous = json.loads((output / 'manifest.json').read_text())
+            if previous.get('status') != 'HOST_BUILT_RELEASE_GNOME_ROOT_NOT_BOOT_VERIFIED' or previous.get('debian_commit') != config['debian']['commit']:
+                raise ValueError('Completed base root belongs to another source')
+        elif not (output / 'FAILED.json').is_file():
+            raise ValueError('Resume needs an assembly result or failure record')
     if not kernel.is_relative_to(root / 'artifacts/kernels') or not source.is_relative_to(root / 'build/kernel-worktrees'):
         raise ValueError('Use project release kernel source and artifacts')
     public = Path(public_source or root / config['debian']['source']).resolve()
@@ -84,7 +92,9 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
             raise ValueError('Release kernel must select LABEL=PIANOROOT, never Android userdata')
     if public.is_dir(): repository(public, config['debian']['commit'])
     if firmware.is_dir(): repository(firmware, config['firmware']['commit'])
-    return {'status': 'PLAN_ONLY', 'resume': resume, 'root_policy': 'LABEL=PIANOROOT', 'kernel': str(kernel), 'source': str(source),
+    return {'status': 'PLAN_ONLY', 'resume': resume,
+            'previous_kernel_release': previous.get('kernel_release') if previous else None,
+            'root_policy': 'LABEL=PIANOROOT', 'kernel': str(kernel), 'source': str(source),
             'output': str(output), 'rootfs': str(output / 'rootfs'), 'mesa_dir': str(mesa) if mesa else None,
             'sensors_dir': str(sensors),
             'runtime_dir': str(Path(runtime_dir).resolve()) if runtime_dir else None,
@@ -153,6 +163,22 @@ def build_resolver(rootfs):
         if link is not None: path.symlink_to(link)
         elif original is not None:
             path.write_bytes(original); path.chmod(mode)
+
+
+@contextmanager
+def build_devices(rootfs):
+    """Restore standard chroot nodes removed when the public image was sealed."""
+    created = []
+    try:
+        for name, major, minor in (('null', 1, 3), ('zero', 1, 5), ('random', 1, 8), ('urandom', 1, 9)):
+            path = target(rootfs, 'dev/' + name)
+            if not path.exists():
+                os.mknod(path, stat.S_IFCHR | 0o666, os.makedev(major, minor))
+                created.append(path)
+        yield
+    finally:
+        for path in created:
+            path.unlink(missing_ok=True)
 
 
 def apply_policy(rootfs, output, config):
@@ -291,7 +317,7 @@ def bootstrap(rootfs, kernel, output, release):
     rows += [{'name': 'bin/' + n, 'mode': stat.S_IFLNK | 0o777, 'data': b'busybox'} for n in disk.APPLETS]
     rows += [{'name': 'dev/console', 'mode': stat.S_IFCHR | 0o600, 'major': 5, 'minor': 1},
              {'name': 'dev/null', 'mode': stat.S_IFCHR | 0o666, 'major': 1, 'minor': 3}]
-    target = output / 'initramfs/initramfs.cpio.gz'; target.parent.mkdir()
+    target = output / 'initramfs/initramfs.cpio.gz'; target.parent.mkdir(exist_ok=True)
     target.write_bytes(gzip.compress(make_newc(rows), mtime=0))
     record = {'status': 'HOST_BUILT_LABEL_BOOTSTRAP_NOT_BOOT_VERIFIED', 'kernel_release': release,
               'kernel_commit': json.loads((Path(kernel) / 'manifest.json').read_text())['source_commit'],
@@ -332,7 +358,7 @@ def execute(record):
             shutil.copy2(Path(record['sensors_dir']) / row['file'], sensor_stage / row['file'])
             if digest(sensor_stage / row['file']) != row['sha256']:
                 raise ValueError('Piano sensors package changed while staging: ' + row['file'])
-        with build_resolver(rootfs):
+        with build_devices(rootfs), build_resolver(rootfs):
             run(['chroot', rootfs, 'apt-get', 'update'])
             run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get', 'install', '-y',
                  '--no-install-recommends', *cfg['debian']['extra_packages'],
@@ -344,7 +370,11 @@ def execute(record):
         if record.get('resume'):
             staged_modules = target(rootfs, 'usr/lib/modules') / m['kernel_release']
             if staged_modules.is_dir(): shutil.rmtree(staged_modules)
-        userspace.stage(rootfs, public); hardware.build(out / 'adapters', public, rootfs); modules.stage(rootfs, kernel)
+        userspace.stage(rootfs, public); hardware.build(out / 'adapters', public, rootfs)
+        previous_release = record.get('previous_kernel_release')
+        remove_releases = ([previous_release] if previous_release and previous_release != m['kernel_release']
+                           and (rootfs / 'usr/lib/modules' / previous_release).is_dir() else [])
+        modules.stage(rootfs, kernel, remove_releases)
         if record['runtime_dir']:
             bundle = Path(record['runtime_dir']); rm = json.loads((bundle / 'manifest.json').read_text())
             if rm['kernel'] != runtime.kernel_identity(Path(record['kernel_build']), source, m['source_commit'], m['kernel_release']): raise ValueError('Runtime bundle kernel ABI provenance differs')
@@ -394,7 +424,7 @@ def main():
     for name in ('kernel', 'source', 'output'): parser.add_argument('--' + name, type=Path, required=True)
     for name in ('mesa-dir', 'sensors-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
     mode = parser.add_mutually_exclusive_group(required=True); mode.add_argument('--plan', action='store_true'); mode.add_argument('--execute', action='store_true')
-    parser.add_argument('--resume', action='store_true', help='Resume assembly after a completed upstream root build')
+    parser.add_argument('--resume', action='store_true', help='Reuse the completed upstream base and refresh release assembly')
     args = vars(parser.parse_args()); execute_flag = args.pop('execute'); args.pop('plan')
     try:
         record = plan(**args); print(json.dumps(execute(record) if execute_flag else record, indent=2))

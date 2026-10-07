@@ -86,6 +86,8 @@ Project SunUEFI 是为小米平板 8 Pro（代号 `piano`，搭载骁龙 8 至�
 ./build.sh sources
 docker build -t sunuefi-builder -f containers/Dockerfile .
 docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
+  git config --global --add safe.directory /workspace
+  git config --global --add safe.directory "/workspace/*"
   python3 -m venv .venv
   .venv/bin/pip install -r requirements-build.txt
   ./build.sh uefi
@@ -97,17 +99,22 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
 
 ```sh
 docker run --rm --privileged -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
+  git config --global --add safe.directory /workspace
+  git config --global --add safe.directory "/workspace/*"
   ./build.sh linux
   ./build.sh mesa
+  ./build.sh sensors
   ./build.sh release-rootfs
   ./build.sh package --root-size-mib 8192
-  ./build.sh installer --bundle artifacts/release
+  ./build.sh installer --bundle artifacts/release-7.2.9
 '
 ```
 
 这组命令需要前面已生成的 UEFI，rootfs 构建容器需 `--privileged`。单独固件工具包在 `artifacts/installer-uefi/`，完整包在 `artifacts/installer/`；依赖、来源和构建记录详见[公开构建链](docs/devel/public-build.md)。当前构建包仍是开发候选。
 
-维护者可用 `./build.sh trampoline --stock-boot 当前ROM的boot.img --output 新输出目录` 生成前置入口原型。Magisk／KernelSU 模块目标为 `./build.sh module --inspect`；原生重打包工具、Android 直通和请求消费尚未通过设备验证，当前只列出缺项，不生成可安装 ZIP。接口与升级流程见[Android 模块说明](docs/devel/android-module.md)。
+同一固定上游的基础根系统已构建完成后，可以用 `./build.sh release-rootfs --resume` 更新内核、硬件包和配置，复用基础系统，避免重新跑 debootstrap。此操作更新本地生成目录，不操作平板。
+
+维护者可用 `./build.sh trampoline --stock-boot 当前ROM的boot.img --output 新输出目录` 生成前置入口。选择器的 Android 直通已实测，Magisk／KernelSU 模块的原生重打包工具与请求自动消费仍未齐备；`./build.sh module --inspect` 当前列出缺项，不生成可安装 ZIP。接口与升级流程见[Android 模块说明](docs/devel/android-module.md)。
 
 ## 下载后如何刷写
 
