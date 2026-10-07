@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SunUEFI source preparation <source-preparation@example.invalid>
+Date: Wed, 07 Oct 2026 22:21:59 +0000
+Subject: [PATCH] fix(leds): correct qcom flash cleanup indexing
+
+leds_count is the number of successfully registered LED entries.  The
+cleanup and remove loops currently index this count before decrementing it.
+After all child LEDs have registered, that accesses one element beyond the
+allocated v4l2_flash array.
+
+Check the count first, decrement it before indexing, and release every
+registered slot.  Do not terminate cleanup on a NULL slot: torch-only LEDs
+and configurations without the V4L2 wrapper may leave NULL entries, which
+v4l2_flash_release() already accepts.
+---
+ drivers/leds/flash/leds-qcom-flash.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/leds/flash/leds-qcom-flash.c b/drivers/leds/flash/leds-qcom-flash.c
+index b03a6833e3e3..c2fefeec9b80 100644
+--- a/drivers/leds/flash/leds-qcom-flash.c
++++ b/drivers/leds/flash/leds-qcom-flash.c
+@@ -953,8 +953,8 @@
+ 
+ 	return regmap_field_write(flash_data->r_fields[REG_TORCH_CLAMP], flash_data->torch_clamp);
+ release:
+-	while (flash_data->v4l2_flash[flash_data->leds_count] && flash_data->leds_count)
+-		v4l2_flash_release(flash_data->v4l2_flash[flash_data->leds_count--]);
++	while (flash_data->leds_count)
++		v4l2_flash_release(flash_data->v4l2_flash[--flash_data->leds_count]);
+ 	return rc;
+ }
+ 
+@@ -962,8 +962,8 @@
+ {
+ 	struct qcom_flash_data *flash_data = platform_get_drvdata(pdev);
+ 
+-	while (flash_data->v4l2_flash[flash_data->leds_count] && flash_data->leds_count)
+-		v4l2_flash_release(flash_data->v4l2_flash[flash_data->leds_count--]);
++	while (flash_data->leds_count)
++		v4l2_flash_release(flash_data->v4l2_flash[--flash_data->leds_count]);
+ 
+ 	mutex_destroy(&flash_data->lock);
+ }
+-- 
+2.52.0

@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/leds/common.h>
+
+/*
+ * Non-default diagnostic description.  The standard controller stays disabled
+ * until its physical type/subtype and both outputs have been checked.
+ * Factory and reference board DTBs agree on SPMI SID 1, peripheral 0xee00.
+ * See docs/devel/piano-camera-flash.md for the remaining integration work.
+ */
+/ {
+	fragment@0 {
+		target-path = "/soc/qcom,spmi@c42d000/qcom,pm8550@1/qcom,flash_led@ee00";
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc/qcom,camera-flash0";
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@2 {
+		target-path = "/soc/qcom,spmi@c42d000/qcom,pm8550@1";
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			led-controller@ee00 {
+				/* Specific IP name follows the factory flash compatible. */
+				compatible = "qcom,pm8350c-flash-led", "qcom,spmi-flash-led";
+				reg = <0xee00>;
+				status = "disabled";
+
+				piano_camera_flash0: led-0 {
+					function = LED_FUNCTION_FLASH;
+					function-enumerator = <0>;
+					/* Factory qcom,id 0 is standard channel 1. */
+					led-sources = <1>;
+					led-max-microamp = <100000>;
+					flash-max-microamp = <400000>;
+					flash-max-timeout-us = <300000>;
+				};
+
+				piano_camera_flash1: led-1 {
+					function = LED_FUNCTION_FLASH;
+					function-enumerator = <1>;
+					/* Factory qcom,id 1 is standard channel 2. */
+					led-sources = <2>;
+					led-max-microamp = <100000>;
+					flash-max-microamp = <400000>;
+					flash-max-timeout-us = <300000>;
+				};
+			};
+		};
+	};
+};
