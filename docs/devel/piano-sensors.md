@@ -56,13 +56,20 @@ importer 默认读取 `super` 的 primary metadata slot 0，并选择 `odm_a`、
 
 本机原厂 vendor 文本为 version 1，包含 input/output/property 路径，没有其他设备示例中的 hw_platform 映射；persist 下同名文件则是已解析 JSON 的时间戳缓存，二者不能互换。现场日志已确认 SSC QMI service 400 可通信，`registry` SUID 可发现，但 `accel` 查询返回空 UID。补齐配置后的实际读数仍需正常重启后的验证；不增加等待时间或添加固定平台值来掩盖空 UID。
 
-`system_heap` 暂不作为产品服务依赖。2026-10-08 的冷启动在启用该 heap 后出现反向 RPC `0xe`（FastRPC 的 `AEE_EBADPARM`，不能直接解释为内核 `-EFAULT`），此前 fastrpc ioctl fallback 能读 JSON。临时 namespace 对照使 fallback 返回真实加速度，但没有作为产品方案。两条分配/映射路径的差异仍需定位：FastRPC 使用首个 SG DMA 地址描述一个连续区间，identity domain 的非连续 SG 和 DMA32 高物理页的 bounce/sync 都需核对。后续需修真实 DMA/IOMMU 映射；只取消预加载不能覆盖摄像头等其他功能启用 heap 的情况。
+`system_heap` 暂不作为产品服务依赖。2026-10-08 的冷启动启用该 heap 后，反向 RPC 返回 `0xe`；此前 fastrpc ioctl fallback 能读 JSON。已确认的两条路径差异如下：
+
+* [FastRPC 1.0.7 rpcmem](https://github.com/qualcomm/fastrpc/blob/v1.0.7/src/rpcmem_linux.c) 优先打开 `/dev/dma_heap/system`；只有打开失败才改用 fastrpc 分配 ioctl。前者导入一般页组成的 DMA-BUF，后者来自 compute-cb 的 `dma_alloc_coherent`，受其 DMA mask 约束。
+* 当前 [fastrpc 映射](../../upstream/linux-piano/drivers/misc/fastrpc.c) 只取首段 SG DMA 地址，并用一个连续地址区间传给 DSP。identity/direct domain 下非连续物理 SG 不满足这一表示；translated DMA domain 可由 IOMMU 提供连续 IOVA。
+* listener 最小 buffer 为4 KiB，所以还需核对单段情况。DMA32 的高物理页可能经 SWIOTLB bounce；system_heap 提供 CPU/device 同步回调，但当前 rpcmem/listener 未调用 DMA-BUF CPU 同步接口，fastrpc 也没有相应 SG 同步。未取得失败 buffer 的实际物理/DMA地址、SG段数和同步状态前，不把 bounce 作为已确认根因。
+* [AEE 错误定义](https://github.com/qualcomm/fastrpc/blob/v1.0.7/inc/AEEStdErr.h) 中 `0xe` 是 `AEE_EBADPARM`、`0x14` 是 `AEE_EUNSUPPORTED`；`mod_table` 日志不能直接解释为内核 `-EFAULT` 或 SMMU fault。
+
+后续需修实际使用的 compute-cb DMA/IOMMU 映射，保留其他设备的现有策略；只取消预加载不能覆盖摄像头等其他功能启用 heap 的情况。临时 namespace 只用于一次分配路径对照，没有作为产品方案。
 
 本地 native 包已用 Debian trixie ARM64 sysroot、QEMU 与标准 `dpkg-buildpackage -b -us -uc -aarm64` 构建为 `5+sunuefi1`，保留 socinfo，去掉 system_heap 预加载。`build/sensors-patched/runtime` 复用官方 CI 的另外五包；父目录的 SOURCE、SHA256SUMS 与 BUILD.json 记录真实源码/补丁/包哈希及构建来源，可作为 `--sensors-dir` 输入。该包构建通过不代表上述 DMA 映射问题已解决。
 
 ## 运行状态
 
-构建集成和包检查不证明实机读数可用。当前说明未包含已通过的运行实测；还需在实际启动后核对 import 来源、ADSP/sensors PD 日志、四类 SSC 读数，以及桌面旋转和亮度行为。可先读取服务日志：
+2026-10-08 已在设备安装标准 `5+sunuefi1` 包。仅在临时 namespace 隐藏 system heap 的诊断条件下，iio-sensor-proxy 的 HasAccelerometer/Light/Proximity/Compass 均为 true，accelerometer 和 compass CLI 返回真实读数。正常 heap 可见条件下的映射修正，以及桌面旋转和亮度行为仍待验证，不能将该对照称为产品传感器已修好。可先读取服务日志：
 
 ```sh
 systemctl status piano-adsp piano-sensors-import adsprpcd-sensorspd iio-sensor-proxy

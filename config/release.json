@@ -9,7 +9,9 @@
     "stable_version": "7.2.9",
     "target_tree": "0d85ad8d34b7a18a1fa15d2231538b1b32c6f699",
     "cpu_model_overlay": "linux/dts/piano-cpu-model.dtso",
-    "additional_dtb_overlays": ["linux/dts/piano-audio-dmic-clock.dtso"],
+    "additional_dtb_overlays": [
+      "linux/dts/piano-audio-dmic-clock.dtso"
+    ],
     "root_policy": "LABEL=PIANOROOT"
   },
   "debian": {
@@ -19,7 +21,14 @@
     "apt_policy": "mutable-recorded",
     "snapshot": null,
     "archive_signature_verification": "upstream debootstrap keyring and APT defaults; never disabled",
-    "extra_packages": ["libcanberra-pulse", "rtkit", "build-essential", "libc6-dev", "kmod"]
+    "extra_packages": [
+      "libcanberra-pulse",
+      "rtkit",
+      "build-essential",
+      "libc6-dev",
+      "kmod",
+      "ffmpeg"
+    ]
   },
   "firmware": {
     "source": "upstream/piano-firmware-current",
@@ -37,7 +46,9 @@
     "commit": "65a92202db65ad13493b43fbf15d6abb3b7bcf92",
     "source_url": "https://github.com/blu-sharky/piano-sensors.git",
     "required": true,
-    "patches": ["patches/piano-sensors/0001-import-vendor-reg-config.patch"]
+    "patches": [
+      "patches/piano-sensors/0001-import-vendor-reg-config.patch"
+    ]
   },
   "storage": {
     "root_label": "PIANOROOT",
@@ -45,8 +56,16 @@
     "root_fstype": "ext4",
     "esp_label": "SUNUEFI_ESP",
     "esp_partname": "sunuefi_esp",
-    "masked_units": ["piano-swapfile.service", "systemd-growfs-root.service", "qbootctl.service"]
+    "masked_units": [
+      "piano-swapfile.service",
+      "systemd-growfs-root.service",
+      "qbootctl.service"
+    ]
   },
-  "login": {"user": "piano", "autologin": true, "password": "locked; owner sets their own password after deployment"},
+  "login": {
+    "user": "piano",
+    "autologin": true,
+    "password": "locked; owner sets their own password after deployment"
+  },
   "reproducibility": "source identities and actual package/metadata hashes recorded; complete bit reproducibility is not claimed"
 }
