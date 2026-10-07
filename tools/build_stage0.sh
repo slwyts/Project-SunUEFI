@@ -20,7 +20,7 @@ if [[ "$sun_profile" == product ]]; then
   sun_buildid=SunUEFI-piano-product
 fi
 rm -f "$sun_root/artifacts/$sun_profile/build-ok.json"
-export PATH="$sun_tools/bin:$sun_root/.venv/bin:$PATH"
+export PATH="$sun_root/.venv/bin:$sun_tools/bin:$PATH"
 export LD_LIBRARY_PATH="$sun_tools/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export CLANG_BIN="$sun_tools/bin/"
 export IASL_PREFIX="$sun_tools/bin/"
