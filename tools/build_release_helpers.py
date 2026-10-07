@@ -60,6 +60,7 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
         flags += ['--sysroot=' + str(sysroot)]
     files = {}
     touch, touch_record = runtime.derive_touch_source(public, output)
+    camera, camera_record = runtime.derive_camerad_source(public, output)
     native = platform.machine() in ('aarch64', 'arm64')
     emulator = None if native else shutil.which('qemu-aarch64-static') or shutil.which('qemu-aarch64')
     if not native and not emulator:
@@ -68,7 +69,7 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
         original = public / relative
         if runtime.sha(original) != digest:
             raise ValueError('Public helper source changed: ' + name)
-        source_file = touch if name == 'piano-touch-view' else original
+        source_file = touch if name == 'piano-touch-view' else camera if name == 'piano-camerad' else original
         entry, obj, binary = output / (name + '-entry.c'), output / (name + '.o'), output / name
         entry.write_text(runtime.entry_source(name))
         run([*flags, '-isystem', uapi / 'include', '-Dmain=PianoOriginalMain',
@@ -79,6 +80,8 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
         item.update(file=name, mode=0o755, source_sha256=digest, help_no_device_access=True)
         if name == 'piano-touch-view':
             item.update(touch_record)
+        if name == 'piano-camerad':
+            item.update(camera_record)
         files[destination] = item
     run(['bash', public / 'scripts/build-topology.sh', macros, output / 'firmware'])
     topology = output / 'firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'

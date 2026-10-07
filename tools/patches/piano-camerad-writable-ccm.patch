@@ -1,0 +1,21 @@
+--- a/camera/piano-camerad.c
++++ b/camera/piano-camerad.c
+@@ -715,13 +715,16 @@
+ 	apply_exposure(c);
+ 	apply_wb(c);
+ 	{
++		int32_t ccm[9];
+ 		struct v4l2_ext_control ec = {
+ 			.id = V4L2_CID_CAMSS_CCM,
+-			.size = sizeof(cfg->ccm),
+-			.p_s32 = (int32_t *)cfg->ccm,
++			.size = sizeof(ccm),
++			.p_s32 = ccm,
+ 		};
+ 		struct v4l2_ext_controls ecs = { .count = 1, .controls = &ec };
+ 
++		/* S_EXT_CTRLS writes the accepted payload back to userspace. */
++		memcpy(ccm, cfg->ccm, sizeof(ccm));
+ 		if (xioctl(c->vfe_fd, VIDIOC_S_EXT_CTRLS, &ecs) < 0)
+ 			logmsg(c, "colour matrix: %s", strerror(errno));
+ 	}

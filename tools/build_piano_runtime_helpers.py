@@ -35,6 +35,7 @@ ALSA_TOOLCHAIN_PIN='09676a0fc68ee9cd5ba6684646b7e82c96e2ed5ac7ba53d639c4fe53b061
 TOPOLOGY_PIN='6b10e42b5d0b4242004c750613462c2ccd7d37cd180ca842abbb431bda6057bb'
 DEFAULT_RELEASE='7.2.6-piano-gnome-00061-g352508459733'
 TOUCH_DIAGNOSTICS_PATCH=ROOT/'tools/patches/piano-touch-view-observability.patch'
+CAMERAD_CCM_PATCH=ROOT/'tools/patches/piano-camerad-writable-ccm.patch'
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -70,6 +71,18 @@ def derive_touch_source(public, output):
     for options in (['--check'],[]):
         subprocess.run(['git','apply','--no-index','--unidiff-zero',*options,str(TOUCH_DIAGNOSTICS_PATCH)],cwd=folder,check=True)
     return target,{'public_source_sha256':pin,'patch_sha256':sha(TOUCH_DIAGNOSTICS_PATCH),'effective_source_sha256':sha(target)}
+
+
+def derive_camerad_source(public, output):
+    """Keep the CCM ioctl's input/output payload writable in a public copy."""
+    relative,pin,_=PUBLIC_SOURCES['piano-camerad'];original=Path(public)/relative
+    if sha(original)!=pin:raise ValueError('Public camera source changed')
+    folder=Path(output)/'piano-camera-source';target=folder/relative
+    target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,target)
+    for options in (['--check'],[]):
+        subprocess.run(['git','apply','--no-index',*options,str(CAMERAD_CCM_PATCH)],cwd=folder,check=True)
+    return target,{'public_source_sha256':pin,'patch':'tools/patches/piano-camerad-writable-ccm.patch',
+                  'patch_sha256':sha(CAMERAD_CCM_PATCH),'effective_source_sha256':sha(target)}
 
 
 def kernel_identity(build,source,commit,release):
@@ -126,6 +139,7 @@ def build(args):
     tools=ROOT/'build/host-tools/usr/bin';env=os.environ.copy();env['PATH']=str(tools)+os.pathsep+env['PATH'];env['LD_LIBRARY_PATH']=str(ROOT/'build/host-tools/usr/lib')
     inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
     inputs[str(TOUCH_DIAGNOSTICS_PATCH)]=sha(TOUCH_DIAGNOSTICS_PATCH)
+    inputs[str(CAMERAD_CCM_PATCH)]=sha(CAMERAD_CCM_PATCH)
     for name,pin in TOOL_PINS.items():
         p=tools/name
         if sha(p)!=pin:raise ValueError('Reviewed LLVM tool changed: '+name)
@@ -160,14 +174,16 @@ def build(args):
     inputs.update(identity['inputs']);output.mkdir(parents=True);log=output/'build.log';files={};commands=[]
     flags=[tools/'clang','--target=aarch64-linux-gnu','--sysroot='+str(sysroot),'--gcc-toolchain='+str(sysroot/'usr'),'-O2','-Wall','-Wextra','-Werror']
     touch_source,touch_provenance=derive_touch_source(public,output)
+    camera_source,camera_provenance=derive_camerad_source(public,output)
     for name,(path,_,destination)in PUBLIC_SOURCES.items():
         entry=output/(name+'-entry.c');entry.write_text(entry_source(name));obj=output/(name+'.o');binary=output/name
-        effective_source=touch_source if name=='piano-touch-view'else public/path
+        effective_source=touch_source if name=='piano-touch-view'else camera_source if name=='piano-camerad'else public/path
         run([*flags,'-isystem',uapi/'include','-Dmain=PianoOriginalMain','-c',effective_source,'-o',obj],env,log)
         run([*flags,'-fuse-ld=lld','-static',entry,obj,'-lm','-o',binary],env,log)
         row=verify_elf(binary);help_result=subprocess.run([str(qemu),str(binary),'--help'],capture_output=True,text=True,timeout=10,check=True)
         row.update({'file':name,'mode':0o755,'source_sha256':PUBLIC_SOURCES[name][1],'entry_sha256':sha(entry),'compile_exit_code':0,'help_exit_code':help_result.returncode,'help_no_device_access':True});files[destination]=row
         if name=='piano-touch-view':row.update(touch_provenance)
+        if name=='piano-camerad':row.update(camera_provenance)
     wrapper=output/'host-bin';wrapper.mkdir();exe=wrapper/'alsatplg';launch=[alsa['loader'],'--library-path',str(alsa_root/'usr/lib/x86_64-linux-gnu'),str(alsa_root/'usr/bin/alsatplg')]
     import shlex
     exe.write_text('#!/bin/sh\nexec '+shlex.join(launch)+' "$@"\n');exe.chmod(0o755);top_env=env.copy();top_env['PATH']=str(wrapper)+os.pathsep+top_env['PATH']
