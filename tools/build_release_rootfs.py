@@ -243,6 +243,18 @@ def sanitize(rootfs, output):
         if backup.exists() or backup.is_symlink(): backup.unlink()
 
 
+def native_boot_request(rootfs, output):
+    # Compile inside the same ARM64 builder/root ABI used for the release.
+    import build_boot_request
+    folder = output / 'native-boot-request'
+    compiler = os.environ.get('SUNUEFI_BOOT_REQUEST_CC') or ('clang' if platform.machine() in ('aarch64', 'arm64') else 'aarch64-linux-gnu-gcc')
+    record = build_boot_request.build(folder, 'aarch64', compiler, rootfs)
+    binary = target(rootfs, 'usr/local/sbin/piano-boot-request')
+    shutil.copy2(folder / 'piano-boot-request', binary)
+    binary.chmod(0o755)
+    return record
+
+
 def mesa_packages(folder):
     rows = {}
     for path in Path(folder).glob('*.deb'):
@@ -388,7 +400,9 @@ def execute(record):
         fw = Path(record['firmware_source']); run(['sha256sum', '--check', '--quiet', 'SHA256SUMS'], fw / 'firmware')
         shutil.copytree(fw / 'firmware', rootfs / 'usr/lib/firmware', dirs_exist_ok=True)
         shutil.copytree(fw / 'LICENSES', rootfs / 'usr/share/doc/piano-firmware/LICENSES', dirs_exist_ok=True)
-        apply_policy(rootfs, out, cfg); sanitize(rootfs, out)
+        apply_policy(rootfs, out, cfg)
+        boot_request = native_boot_request(rootfs, out)
+        sanitize(rootfs, out)
         run(['chroot', rootfs, '/usr/sbin/depmod', '-a', m['kernel_release']])
         (rootfs / 'usr/sbin/policy-rc.d').unlink()
         packages = capture(['chroot', rootfs, 'dpkg-query', '-W', '-f=${binary:Package}\t${Version}\t${Architecture}\t${db:Status-Status}\n'])
@@ -408,7 +422,7 @@ def execute(record):
                   'kernel_manifest_sha256': kernel_hash, 'release_config_sha256': digest(POLICY), 'packages_sha256': digest(out / 'packages.tsv'),
                   'adapters_manifest_sha256': digest(out / 'adapters/manifest.json'), 'runtime_manifest_sha256': digest(bundle / 'manifest.json'),
                   'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata, 'debian_commit': cfg['debian']['commit'],
-                  'mesa_packages': mesa, 'sensors': sensors, 'firmware_commit': cfg['firmware']['commit'],
+                  'mesa_packages': mesa, 'sensors': sensors, 'boot_request': boot_request, 'firmware_commit': cfg['firmware']['commit'],
                   'initramfs': boot, 'password': 'locked; owner must set their own', 'autologin_retained': True,
                   'bit_reproducible': False, 'root_uid': rootfs.stat().st_uid, 'device_operation_performed': False}
         (out / 'manifest.json').write_text(json.dumps(result, indent=2) + '\n')
