@@ -1,0 +1,134 @@
+--- a/piano-sensors/piano-sensors-import
++++ b/piano-sensors/piano-sensors-import
+@@ -4,7 +4,9 @@
+ # The sensors PD of the Xiaomi Pad 8 Pro reads its JSON configuration from
+ # /odm/etc/sensors/config (json.lst and the files it lists) and keeps its
+ # registry and calibration in /mnt/vendor/persist/sensors. Without json.lst
+-# it gives up before reading the registry, even a valid one. Both belong to
++# it gives up before reading the registry, even a valid one. The file service
++# also reads /vendor/etc/sensors/sns_reg_config for input and output paths.
++# These files belong to
+ # the individual tablet, so nothing is shipped: on first boot they are copied
+ # from the device's own partitions, and adsprpcd, which opens the paths the
+ # ADSP asks for as they are, reaches the copies through symlinks.
+@@ -12,6 +14,8 @@
+ #   odm      EROFS logical partition inside super: mapped read-only with
+ #            device-mapper from the super metadata, read with dump.erofs,
+ #            never mounted
++#   vendor   EROFS logical partition, read the file-service configuration
++#            /etc/sensors/sns_reg_config through the same read-only mapping
+ #   persist  ext4, mounted read-only with noload (no journal replay), so the
+ #            partition Android uses is never written; the ADSP updates its
+ #            registry in the copy
+@@ -23,11 +27,21 @@
+ ODM=${PIANO_SENSORS_ODM:-}
+ SUPER=${PIANO_SENSORS_SUPER:-/dev/disk/by-partlabel/super}
+ ODM_NAME=${PIANO_SENSORS_ODM_NAME:-odm_a}
+-DM_NAME=piano-sensors-odm
++VENDOR=${PIANO_SENSORS_VENDOR:-}
++VENDOR_NAME=${PIANO_SENSORS_VENDOR_NAME:-vendor_a}
+ PERSIST=${PIANO_SENSORS_PERSIST:-/dev/disk/by-partlabel/persist}
+ CONFIG_DIR=/etc/sensors/config
+ CONFIG_LINK=${PIANO_SENSORS_CONFIG_LINK:-/odm/etc/sensors/config}
+ PERSIST_LINK=${PIANO_SENSORS_LINK:-/mnt/vendor/persist/sensors}
++VENDOR_LINK=${PIANO_SENSORS_VENDOR_LINK:-/vendor/etc/sensors/sns_reg_config}
++MAPPINGS=''
++
++cleanup() {
++    for mapping in $MAPPINGS; do
++        dmsetup remove "$mapping" 2>/dev/null || true
++    done
++}
++trap cleanup EXIT
+ 
+ log() { echo "piano-sensors-import: $*"; }
+ 
+@@ -38,14 +52,16 @@
+     [ -e "$1" ] || { log "$1 did not appear"; exit 1; }
+ }
+ 
+-map_odm() {
++map_partition() {
++    mapping=$1
++    partition=$2
+     modprobe dm_mod 2>/dev/null || true
+-    dmsetup remove "$DM_NAME" 2>/dev/null || true
+-    table=$(/usr/libexec/piano-sensors/piano-sensors-lp-table "$SUPER" "$ODM_NAME")
+-    [ -n "$table" ] || { log "$ODM_NAME has no extents in $SUPER"; exit 1; }
+-    printf '%s\n' "$table" | dmsetup create --readonly "$DM_NAME"
+-    ODM=/dev/mapper/$DM_NAME
+-    trap 'dmsetup remove "$DM_NAME" 2>/dev/null || true' EXIT
++    dmsetup remove "$mapping" 2>/dev/null || true
++    table=$(/usr/libexec/piano-sensors/piano-sensors-lp-table "$SUPER" "$partition")
++    [ -n "$table" ] || { log "$partition has no extents in $SUPER"; exit 1; }
++    printf '%s\n' "$table" | dmsetup create --readonly "$mapping"
++    MAPPINGS="$MAPPINGS $mapping"
++    MAPPED_DEVICE=/dev/mapper/$mapping
+ }
+ 
+ mkdir -p "$ROOT"
+@@ -53,7 +69,8 @@
+ if [ ! -s "$ROOT/odm/config/json.lst" ]; then
+     if [ -z "$ODM" ]; then
+         wait_for "$SUPER"
+-        map_odm
++        map_partition piano-sensors-odm "$ODM_NAME"
++        ODM=$MAPPED_DEVICE
+     fi
+     mkdir -p "$ROOT/odm"
+     tmp=$(mktemp -d "$ROOT/odm/.config.XXXXXX")
+@@ -70,6 +87,25 @@
+     rm -rf "$ROOT/odm/config"
+     mv "$tmp" "$ROOT/odm/config"
+     log "imported $n sensors configuration files from $ODM"
++fi
++
++if [ ! -s "$ROOT/vendor/sns_reg_config" ]; then
++    if [ -z "$VENDOR" ]; then
++        wait_for "$SUPER"
++        map_partition piano-sensors-vendor "$VENDOR_NAME"
++        VENDOR=$MAPPED_DEVICE
++    fi
++    mkdir -p "$ROOT/vendor"
++    tmp=$(mktemp "$ROOT/vendor/.sns_reg_config.XXXXXX")
++    if ! dump.erofs --path=/etc/sensors/sns_reg_config --cat "$VENDOR" > "$tmp"; then
++        rm -f "$tmp"
++        log "cannot read sensors file-service configuration from $VENDOR"
++        exit 1
++    fi
++    [ -s "$tmp" ] || { rm -f "$tmp"; log "no sensors file-service configuration in $VENDOR"; exit 1; }
++    chmod 0644 "$tmp"
++    mv "$tmp" "$ROOT/vendor/sns_reg_config"
++    log "imported sensors file-service configuration from $VENDOR"
+ fi
+ 
+ if [ ! -d "$ROOT/persist/sensors" ]; then
+@@ -100,3 +136,4 @@
+ }
+ link "$ROOT/odm/config" "$CONFIG_LINK"
+ link "$ROOT/persist/sensors" "$PERSIST_LINK"
++link "$ROOT/vendor/sns_reg_config" "$VENDOR_LINK"
+--- a/piano-sensors/debian/piano-sensors.adsprpcd-sensorspd.service
++++ b/piano-sensors/debian/piano-sensors.adsprpcd-sensorspd.service
+@@ -8,6 +8,7 @@
+ Type=exec
+ # fastrpc is kept off the automatic module loading list on piano; load it
+ # once the ADSP runs and wait for its device node.
++ExecStartPre=/usr/sbin/modprobe socinfo
+ ExecStartPre=/usr/sbin/modprobe fastrpc
+ ExecStartPre=/bin/sh -c 'for i in $$(seq 60); do [ -e /dev/fastrpc-adsp-secure ] && exit 0; sleep 1; done; exit 1'
+ ExecStart=/usr/sbin/adsprpcd sensorspd
+--- a/piano-sensors/debian/changelog
++++ b/piano-sensors/debian/changelog
+@@ -1,3 +1,11 @@
++piano-sensors (5+sunuefi1) trixie; urgency=medium
++
++  * Import the tablet's vendor sensors file-service configuration through
++    a read-only logical partition mapping, alongside ODM and persist.
++  * Load the real socinfo driver before sensors PD.
++
++ -- Project SunUEFI contributors <piano@localhost>  Thu, 08 Oct 2026 00:00:00 +0000
++
+ piano-sensors (5) trixie; urgency=medium
+ 
+   * Start adsprpcd-sensorspd as ready only once libssc finds the

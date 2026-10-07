@@ -36,7 +36,8 @@
     "source": "upstream/piano-sensors-current",
     "commit": "65a92202db65ad13493b43fbf15d6abb3b7bcf92",
     "source_url": "https://github.com/blu-sharky/piano-sensors.git",
-    "required": true
+    "required": true,
+    "patches": ["patches/piano-sensors/0001-import-vendor-reg-config.patch"]
   },
   "storage": {
     "root_label": "PIANOROOT",

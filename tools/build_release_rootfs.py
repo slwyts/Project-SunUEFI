@@ -67,7 +67,7 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
     if not (sensor_source / 'scripts/build-sensors-debs.sh').is_file(): missing.append('fixed Piano sensors source')
     if sensor_source.is_dir(): repository(sensor_source, config['sensors']['commit'])
     if not list(sensors.glob('*.deb')): missing.append('Piano sensors runtime .deb directory (--sensors-dir)')
-    else: sensors_packages(sensors, config['sensors'])
+    else: sensors_packages(sensors, config['sensors'], root=root)
     if runtime_dir:
         if not (Path(runtime_dir) / 'manifest.json').is_file(): missing.append('matching runtime bundle manifest')
     else:
@@ -229,7 +229,7 @@ def mesa_packages(folder):
     return rows
 
 
-def sensors_packages(folder, config):
+def sensors_packages(folder, config, root=ROOT):
     folder = Path(folder).resolve()
     metadata = next((p for p in (folder.parent, folder)
                      if (p / 'SOURCE').is_file() and (p / 'SHA256SUMS').is_file()), None)
@@ -238,6 +238,9 @@ def sensors_packages(folder, config):
     source = json.loads((metadata / 'SOURCE').read_text())
     if (source.get('source_url'), source.get('source_commit')) != (config['source_url'], config['commit']):
         raise ValueError('Piano sensors SOURCE does not match the fixed release source')
+    patches = [{'path': name, 'sha256': digest(Path(root) / name)} for name in config.get('patches', [])]
+    if source.get('patches', []) != patches:
+        raise ValueError('Piano sensors SOURCE does not match the release importer patches; rebuild with ./build.sh sensors')
     sums = {}
     for line in (metadata / 'SHA256SUMS').read_text().splitlines():
         if not line.strip(): continue
@@ -259,9 +262,11 @@ def sensors_packages(folder, config):
         rows[package] = {'file': path.name, 'version': version, 'architecture': arch, 'sha256': actual}
     if set(rows) != {'piano-sensors', 'fastrpc-support', 'libfastrpc1', 'libssc2', 'libssc-bin', 'iio-sensor-proxy'}:
         raise ValueError('Expected exactly the six Piano sensors runtime packages')
+    if patches and rows['piano-sensors']['version'] != '5+sunuefi1':
+        raise ValueError('Expected the patched Piano sensors importer package version 5+sunuefi1')
     return {'source_url': source['source_url'], 'source_commit': source['source_commit'],
             'source_sha256': digest(metadata / 'SOURCE'), 'sha256sums_sha256': digest(metadata / 'SHA256SUMS'),
-            'packages': rows}
+            'patches': patches, 'packages': rows}
 
 
 def bootstrap(rootfs, kernel, output, release):

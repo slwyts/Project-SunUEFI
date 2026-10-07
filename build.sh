@@ -25,22 +25,29 @@ PY_KERNEL
     bash upstream/piano-mesa-current/scripts/build-mesa-debs.sh \
       "${1:-$sunuefi_root/build/mesa}" 26.1.6-1~bpo13+1 ;;
   sensors)
-    sensors_source="$sunuefi_root/upstream/piano-sensors-current"
-    sensors_commit=65a92202db65ad13493b43fbf15d6abb3b7bcf92
-    sensors_output="${1:-$sunuefi_root/build/sensors}"
-    if [[ "$(git -C "$sensors_source" rev-parse HEAD)" != "$sensors_commit" ||
-          -n "$(git -C "$sensors_source" status --porcelain --untracked-files=all)" ]]; then
-      printf '%s\n' 'Sensors source HEAD/cleanliness mismatch; run ./build.sh sources.' >&2
-      exit 1
-    fi
-    bash "$sensors_source/scripts/build-sensors-debs.sh" "$sensors_output"
-    python3 - "$sensors_output" "$sensors_commit" <<'PY_SENSORS'
-import json, sys
+    python3 - "$sunuefi_root" "${1:-$sunuefi_root/build/sensors}" <<'PY_SENSORS'
+import hashlib, json, shutil, subprocess, sys
 from pathlib import Path
-(Path(sys.argv[1]) / 'SOURCE').write_text(json.dumps({
-    'source_url': 'https://github.com/blu-sharky/piano-sensors.git',
-    'source_commit': sys.argv[2],
-}, indent=2) + '\n')
+root, output = (Path(p).resolve() for p in sys.argv[1:])
+config = json.loads((root / 'config/release.json').read_text())['sensors']
+source = root / config['source']
+head = subprocess.check_output(['git', '-C', source, 'rev-parse', 'HEAD'], text=True).strip()
+dirty = subprocess.check_output(['git', '-C', source, 'status', '--porcelain'], text=True)
+if head != config['commit'] or dirty:
+    raise SystemExit('Sensors source HEAD/cleanliness mismatch; run ./build.sh sources.')
+workspace = root / 'build/sensors-workspace'
+if workspace.exists():
+    shutil.rmtree(workspace)
+shutil.copytree(source, workspace, ignore=shutil.ignore_patterns('.git'))
+patches = []
+for name in config['patches']:
+    patch = root / name
+    patches.append({'path': name, 'sha256': hashlib.sha256(patch.read_bytes()).hexdigest()})
+    subprocess.run(['patch', '--batch', '--forward', '-p1', '-i', patch], cwd=workspace, check=True)
+record = {'source_url': config['source_url'], 'source_commit': head, 'patches': patches}
+(workspace / 'SOURCE').write_text(json.dumps(record, indent=2) + '\n')
+subprocess.run(['bash', workspace / 'scripts/build-sensors-debs.sh', output], check=True)
+shutil.copy2(workspace / 'SOURCE', output / 'SOURCE')
 PY_SENSORS
     ;;
   bsp)
