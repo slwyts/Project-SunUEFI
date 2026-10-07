@@ -48,7 +48,7 @@ TARGETS[DEFAULT_TARGET] = {
     'stable_url': 'https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git',
     'stable_merged_tree': 'f1bccb0e42a13a6dcf1174cafb5e3253f4b5a22d',
     'merge_date': '2026-10-08T00:00:00+00:00',
-    'worktree_name': 'release-7.2.9-dma',
+    'worktree_name': 'release-7.2.9',
     'manifest_directory': 'release-7.2.9',
     'conflict_resolution': {
         'source': 'drivers/i2c/busses/i2c-qcom-cci.c',
@@ -294,21 +294,29 @@ def merge_stable(work, policy, paths):
     return metadata
 
 
-def prepare(root=ROOT, repository=None, worktree=None, source_manifest=None, target=DEFAULT_TARGET):
+def prepare(root=ROOT, repository=None, worktree=None, source_manifest=None, target=DEFAULT_TARGET, refresh=False):
     root = Path(root).resolve()
     series, patches, series_hash = load_series(root, target)
     policy = TARGETS[target]
     paths = update_patches(root, policy)
-    work = Path(worktree or root / 'build/kernel-worktrees' / policy.get('worktree_name', 'release-kernel')).resolve()
+    # Source snapshots follow their content, while one generated record selects
+    # the current release. Updating a pin never resets an older checkout.
+    default_name = policy.get('worktree_name', target) + '-' + policy['target_tree'][:12]
+    work = Path(worktree or root / 'build/kernel-worktrees' / default_name).resolve()
     marker = Path(source_manifest or root / 'build' / policy.get('manifest_directory', 'release-kernel') / 'source-manifest.json').resolve()
     if not work.is_relative_to(root / 'build/kernel-worktrees'):
         raise ValueError('Release worktree must stay under project build/kernel-worktrees')
     if not marker.is_relative_to(root / 'build') or marker.is_relative_to(work):
         raise ValueError('Source manifest must stay under project build and outside the worktree')
+    snapshot = work.with_name(work.name + '.source.json')
     if work.exists():
-        if not marker.is_file():
+        current = json.loads(marker.read_text()) if marker.is_file() else None
+        selected = current is not None and current.get('worktree') == str(work)
+        if not selected and not refresh:
+            raise ValueError('Use --refresh to select a different prepared source snapshot')
+        if not selected and not snapshot.is_file():
             raise ValueError('Existing release worktree has no completed source manifest; preserve it')
-        record = json.loads(marker.read_text())
+        record = current if selected else json.loads(snapshot.read_text())
         if (record.get('status') != 'SOURCE_PREPARED_NOT_BUILT' or record.get('target') != target or
                 record.get('series_sha256') != series_hash or record.get('worktree') != str(work) or
                 record.get('public_baseline') != policy['base_commit'] or
@@ -327,9 +335,16 @@ def prepare(root=ROOT, repository=None, worktree=None, source_manifest=None, tar
                     record.get('update_patches') != {key: policy[key] for key in paths} or
                     git(work, 'merge-base', '--is-ancestor', policy['stable_commit'], record['actual_commit'], check=False).returncode):
                 raise ValueError('Prepared stable update provenance mismatch')
+        if not snapshot.is_file():
+            write_manifest(snapshot, record)
+        if not selected:
+            write_manifest(marker, record)
         return record
     if marker.exists():
-        raise ValueError('Source manifest exists without its worktree; preserve it')
+        previous = json.loads(marker.read_text())
+        if (not refresh or previous.get('status') not in ('SOURCE_PREPARED_NOT_BUILT', 'SOURCE_PREPARATION_FAILED') or
+                previous.get('target') != target or previous.get('worktree') == str(work)):
+            raise ValueError('Source record needs explicit --refresh for a completed older release snapshot')
     repo = ensure_repository(root, repository, policy)
     if git(repo, 'rev-parse', policy['base_commit'] + '^{tree}') != series['base_tree']:
         raise ValueError('Public baseline tree mismatch')
@@ -373,6 +388,7 @@ def prepare(root=ROOT, repository=None, worktree=None, source_manifest=None, tar
             raise ValueError('Patch series changed during preparation')
         update_patches(root, policy)
         record['status'] = 'SOURCE_PREPARED_NOT_BUILT'
+        write_manifest(snapshot, record)
         write_manifest(marker, record)
         return record
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
@@ -380,7 +396,7 @@ def prepare(root=ROOT, repository=None, worktree=None, source_manifest=None, tar
         if work.exists() and not git(work, 'rev-parse', 'HEAD', check=False).returncode:
             record['actual_commit'] = git(work, 'rev-parse', 'HEAD')
             record['actual_tree'] = git(work, 'rev-parse', 'HEAD^{tree}')
-        write_manifest(marker, record)
+        write_manifest(work.with_name(work.name + '.failure.json'), record)
         raise
 
 
@@ -390,10 +406,12 @@ def main():
     parser.add_argument('--worktree', type=Path, help='Fresh worktree under project build/kernel-worktrees')
     parser.add_argument('--source-manifest', type=Path, help='New provenance record under project build')
     parser.add_argument('--target', default=DEFAULT_TARGET)
+    parser.add_argument('--refresh', action='store_true',
+                        help='Update the generated current-source record when the release pin changes; preserve older worktrees')
     args = parser.parse_args()
     try:
         result = prepare(repository=args.repository, worktree=args.worktree,
-                         source_manifest=args.source_manifest, target=args.target)
+                         source_manifest=args.source_manifest, target=args.target, refresh=args.refresh)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         parser.exit(2, str(exc) + '\n')
     print(json.dumps({key: result[key] for key in ('status', 'worktree', 'actual_commit', 'actual_tree', 'public_baseline')}, indent=2))

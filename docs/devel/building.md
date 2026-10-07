@@ -74,7 +74,9 @@ python3 tools/product_contract.py --build-manifest artifacts/product/manifest.js
 
 `./build.sh uefi` 使用 `vendor/piano` 的必要板级输入和 `patches/firmware`；`./build.sh linux` 从公开基线与八份补丁准备源码，再编译 LABEL 根策略的内核。ESP/root 打包与多发行版适配正在接入，不能仅凭命令存在当作所有发行版已经构建成功。
 
-默认 Linux release 目标为 `7.2.9`：先保留 `debian-piano` 配套的 Piano 内核基线与八份本地补丁，再合入固定的官方 `v7.2.9` stable 提交。源码和记录位于 `build/kernel-worktrees/release-7.2.9/`、`build/release-7.2.9/source-manifest.json`；旧 Kernel 69 工作树和构建记录保留。只准备源码可运行 `python3 tools/prepare_release_kernel.py`，历史目标仍可用 `--target kernel69`。准备完成不代表内核已编译或平板已升级。
+默认 Linux release 目标为 `7.2.9`：先保留 `debian-piano` 配套的 Piano 内核基线与八份本地补丁，再合入固定的官方 `v7.2.9` stable 提交和登记的 release 补丁。源码快照目录按版本与目标树前缀命名，当前选择记录位于 `build/release-7.2.9/source-manifest.json`；构建入口从该记录读取路径。只准备源码可运行 `python3 tools/prepare_release_kernel.py --refresh`，历史目标仍可用 `--target kernel69`。准备完成不代表内核已编译或平板已升级。
+
+`./build.sh linux` 明确刷新当前源码选择，并在原 O 目录增量重建内核。旧源码快照保留；准备失败记录独立保存，不覆盖上一份成功选择。重建时先使旧产物 manifest 失效，编译完成后才原子发布新的 manifest，避免把旧 Image 与新模块混用。O 目录与产物目录均由实际文件锁防止同时写入。已有基础 root 使用 `./build.sh release-rootfs --resume` 更新；重新打包时用 `--output` 指定新的生成目录，现有完整磁盘包保持原样。
 
 CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点补充标准 `model` 属性，内核的小补丁将其输出为 `/proc/cpuinfo` 的 `model name`，供 GNOME 等通用程序读取。这里只补充处理器名称；MIDR、核心拓扑、时钟和系统板型号都保持原值。`vendor/piano-linux/board.dtb` 是采集来源，应用 overlay 后的 DTB另行生成。
 

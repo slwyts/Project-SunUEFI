@@ -14,13 +14,13 @@ case "$command" in
   boot-repack) python3 tools/build_boot_repack.py "$@" ;;
   ffmpeg) python3 tools/build_ffmpeg_packages.py "$@" ;;
   linux)
-    python3 tools/prepare_release_kernel.py
+    python3 tools/prepare_release_kernel.py --refresh
     python3 - <<'PY_KERNEL'
 import json, subprocess
 from pathlib import Path
 record=json.loads(Path('build/release-7.2.9/source-manifest.json').read_text())
 subprocess.run(['python3','tools/build_piano_full_kernel.py','--worktree',record['worktree'],
- '--commit',record['actual_commit'],'--root','LABEL=PIANOROOT',
+ '--commit',record['actual_commit'],'--root','LABEL=PIANOROOT','--rebuild',
  '--build-dir','build/kernels/release-7.2.9','--artifacts','artifacts/kernels/release-7.2.9'],check=True)
 PY_KERNEL
     ;;

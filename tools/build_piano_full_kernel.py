@@ -4,6 +4,7 @@
 No git checkout, rescue-pin change, guest execution, device or partition operation.
 """
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -140,6 +141,7 @@ def main():
     parser.add_argument('--commit',default=COMMIT)
     parser.add_argument('--build-dir',type=Path,default=OUT)
     parser.add_argument('--artifacts',type=Path,default=ARTIFACTS)
+    parser.add_argument('--rebuild',action='store_true',help='Replace generated candidate artifacts with an incremental build')
     args=parser.parse_args()
     if not 1<=args.jobs<=8:raise SystemExit('Full candidate jobs must be 1..8')
     work,out,artifacts=(path.resolve()for path in (args.worktree,args.build_dir,args.artifacts));commit=args.commit
@@ -149,8 +151,19 @@ def main():
     root_command=command_line(fragment.read_text(),public.read_text(),args.root)
     bluetooth=ROOT/'linux/configs/piano-bluetooth.config';modules=module_overrides(bluetooth.read_text())
     env,tools=toolchain();out.mkdir(parents=True,exist_ok=True);artifacts.mkdir(parents=True,exist_ok=True)
+    build_locks=[]
+    lock_root=ROOT/'build/locks';lock_root.mkdir(parents=True,exist_ok=True)
+    for directory in sorted({out,artifacts}):
+        name=hashlib.sha256(str(directory).encode()).hexdigest()+'.lock'
+        handle=(lock_root/name).open('a');build_locks.append(handle)
+        try:fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:raise ValueError('Kernel build/output is in use: '+str(directory))
     marker=artifacts/'manifest.json'
-    if marker.exists():raise ValueError('Sealed full candidate exists; choose a new artifact directory')
+    if marker.exists():
+        if not args.rebuild:raise ValueError('Candidate exists; use --rebuild to replace generated artifacts')
+        # Stale Image/modules may remain during the build, but no consumer can
+        # mistake them for a completed new bundle without its final manifest.
+        marker.unlink()
     hashes={str(path.relative_to(ROOT)):sha(path)for path in (fragment,bluetooth,Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py')}
     effective_text=effective_config(root_command,modules)
     effective=out/'piano-full.effective.config';effective.write_text(effective_text)
@@ -182,7 +195,8 @@ def main():
     run(command+[f'INSTALL_MOD_PATH={install}','INSTALL_MOD_STRIP=1','modules_install'],env=env);fresh()
     state['modules'],state['module_summary']=seal_modules(install,state['kernel_release'])
     for name,source in (('Image',image),('System.map',out/'System.map')):shutil.copyfile(source,artifacts/name)
-    fresh();state['status']='HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED';marker.write_text(json.dumps(state,indent=2)+'\n');pending.unlink()
+    fresh();state['status']='HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED'
+    temporary=marker.with_suffix('.json.tmp');temporary.write_text(json.dumps(state,indent=2)+'\n');os.replace(temporary,marker);pending.unlink()
     print(json.dumps({'status':state['status'],'build_id':state['build_id'],'image':state['image'],'kernel_release':state['kernel_release'],'module_summary':state['module_summary']},indent=2))
 
 
