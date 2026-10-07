@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+"""Read P81 raw THP metadata and external factory ini calibration.
+
+This module never runs vendor code or creates an input device. Raw input starts
+at MiCode's frame_data_packet: omit the Linux stream record header and the
+257-byte SPI/event prefix. It must be the original SPI payload, not Android's
+HAL mmap frame, whose additive checksums may have been rewritten as CRC32.
+
+The isolated tilt function reconstructs calculate_tilt, not the complete pen
+algorithm. Coordinate calibration, raw-matrix preprocessing, final report
+semantics and hardware validation remain incomplete.
+"""
+
+import argparse
+import json
+import math
+import re
+import struct
+from pathlib import Path
+
+
+SOURCE = (
+    "https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/"
+    "6957f6b646d1c919e175e6f9000eb50c8635273c/p81/nt36532/nt36xxx.c"
+)
+ALGORITHM_SHA256 = "26f86f74781e70d03958271b100b31865d3eb80b69f30774ce1b1e25cb24f1c9"
+CONFIG_SECTIONS = {"project_infor", "hw", "super_resolution", "stylus"}
+# Current NT36532e Linux capture: 8 KiB rbuf minus SPI/event prefix and dummy.
+MAX_PAYLOAD_SIZE = 8192 - 257 - 1
+
+
+def _u16(data, offset):
+    return struct.unpack_from("<H", data, offset)[0]
+
+
+def _u32(data, offset):
+    return struct.unpack_from("<I", data, offset)[0]
+
+
+def parse_metadata(data):
+    """Return source-defined raw fields and matrices, without solved X/Y/tilt.
+
+    Only the outer additive checksum is checked. Its advertised extent is
+    reported; the separate trailing pen checksum and hand packets are not
+    validated or decoded by this function.
+    """
+    if not 64 <= len(data) <= MAX_PAYLOAD_SIZE:
+        raise ValueError("P81 THP payload length outside current capture bounds")
+    count = struct.unpack_from("<i", data, 8)[0]
+    checksum_end = 20 + count * 4
+    if count <= 0 or not 64 <= checksum_end <= len(data):
+        raise ValueError("outer checksum extent outside payload")
+    expected = _u16(data, 4)
+    if (_u16(data, 12) != (~expected & 0xffff)
+            or _u32(data, 16) != (~count & 0xffffffff)):
+        raise ValueError("outer checksum/length complement differs")
+    words = struct.unpack_from("<" + str(count * 2) + "H", data, 20)
+    if (-sum(words) & 0xffff) != expected:
+        raise ValueError("outer THP checksum differs")
+    kind = data[56]
+    if kind not in (6, 7, 9, 17, 29):
+        raise ValueError("not a source-defined P81 pen frame")
+    base = 64
+    metadata_size = 36 if kind in (17, 29) else 26
+    start = base + metadata_size
+    if start > checksum_end:
+        raise ValueError("pen metadata exceeds outer checksum extent")
+    sizes = tuple(data[base + i] for i in (7, 8, 9, 10))
+    n1, n2 = sizes[0] * sizes[1], sizes[2] * sizes[3]
+    if not n1 or not n2:
+        raise ValueError("zero Tip/Ring matrix geometry")
+    if start + 4 * (n1 + n2) > checksum_end:
+        raise ValueError("Tip/Ring arrays exceed outer checksum extent")
+    arrays = {}
+    cursor = start
+    for name, length in zip(
+        ("tip_group1", "tip_group2", "ring_group1", "ring_group2"),
+        (n1, n2, n1, n2),
+    ):
+        arrays[name] = list(struct.unpack_from("<" + str(length) + "h", data, cursor))
+        cursor += length * 2
+    result = {
+        "status": "RAW_METADATA_ONLY_NOT_PEN_INPUT",
+        "source": SOURCE,
+        "frame_type": kind,
+        "drop_frame_no": _u16(data, base),
+        "pen_frame_no": _u16(data, base + 2),
+        "raw_pressure": _u16(data, base + 4),
+        "raw_button1": data[base + 6],
+        "raw_button2": data[base + 14],
+        "raw_battery": data[base + 15],
+        "raw_hover_status": data[base + 16],
+        "geometry": {"group1": list(sizes[:2]), "group2": list(sizes[2:])},
+        "raw_arrays": arrays,
+        "hand_packet_no": data[base + 11],
+        "hand_packet_bytes": _u16(data, base + 12),
+        "outer_checksum_verified": True,
+        "outer_checksum_range": [20, checksum_end],
+        "pen_checksum_verified": False,
+        "coordinates_available": False,
+        "tilt_available": False,
+        "button_semantics_verified": False,
+        "device_tested": False,
+    }
+    if kind in (17, 29):
+        result.update(
+            raw_pen_scan_rate=_u16(data, base + 18),
+            raw_pen_scan_frequency=_u16(data, base + 20),
+            raw_pen_noise0=_u16(data, base + 22),
+            raw_pen_noise1=_u16(data, base + 24),
+        )
+    return result
+
+
+def read_config(path):
+    """Read integer/list values from the four relevant custom ini sections.
+
+    Files are supplied by the caller. No proprietary configuration is embedded.
+    This is the observed Piano ini text format, not an Android HAL execution.
+    """
+    section = None
+    result = {}
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        text = line.split("#", 1)[0].strip()
+        if not text:
+            continue
+        if not line[0].isspace() and "=" not in text:
+            section = text
+            if section in CONFIG_SECTIONS:
+                result.setdefault(section, {})
+            continue
+        if section not in CONFIG_SECTIONS or "=" not in text:
+            continue
+        key, value = map(str.strip, text.split("=", 1))
+        if re.fullmatch(r"-?\d+", value):
+            result[section][key] = int(value)
+        elif re.fullmatch(r"\{\s*-?\d+(?:\s*,\s*-?\d+)*\s*\}", value):
+            result[section][key] = [int(item.strip()) for item in value[1:-1].split(",")]
+    return result
+
+
+def profile(config, vendor_id):
+    """Resolve the profile declared by an external ini, not the active pen ID."""
+    values = config["stylus"]
+    prefix = "stylus"
+    for number in (2, 3):
+        if values.get(f"stylus_{number}_vendor_id") == vendor_id:
+            prefix = f"stylus_{number}"
+    if prefix == "stylus" and values.get("stylus_vendor_id") != vendor_id:
+        raise ValueError("unmapped pen vendor id")
+    thresholds = values.get(prefix + "_coor_diff", values["stylus_coor_diff"])
+    angles = values["stylus_angle"]
+    if (len(thresholds) != 6 or len(angles) != 6 or thresholds[0] != 0
+            or any(a >= b for a, b in zip(thresholds, thresholds[1:]))):
+        raise ValueError("unsupported calibration table")
+    return {
+        "prefix": prefix,
+        "vendor_id": vendor_id,
+        "angles": angles,
+        "thresholds": thresholds,
+        "tilt_calibration_enabled": values["stylus_tilt_calibration_en"],
+        "tilt_calibration_threshold": values.get(
+            prefix + "_tilt_calibration_thd", values["stylus_tilt_calibration_thd"]),
+        "tilt_calibration_rate": values.get(
+            prefix + "_tilt_calibration_rate", values["stylus_tilt_calibration_rate"]),
+    }
+
+
+def truncdiv(a, b):
+    """Signed integer division truncated toward zero, as ARM64 SDIV."""
+    if not b:
+        raise ValueError("zero calibration divisor")
+    return (abs(a) // abs(b)) * (-1 if (a < 0) != (b < 0) else 1)
+
+
+def _int32(value):
+    if type(value) is not int or not -0x80000000 <= value <= 0x7fffffff:
+        raise ValueError("working value exceeds reference int32 domain")
+    return value
+
+
+def factory_tilt_component(dx, dy, resolution, calibration):
+    """Reconstruct the isolated calculate_tilt step at ELF offset 0x83278.
+
+    Inputs must be already solved Tip/Ring deltas and their actual runtime
+    resolution. Project/report ini factors are not substitutes. This does not
+    apply tilt_calibration_enabled/threshold/rate: calibrate_coordinate_tilt is
+    a separate, unimplemented step. Results are working components, not final
+    tablet-tool events; vendor execution and hardware equivalence are untested.
+    """
+    if type(resolution) is not int or resolution <= 0:
+        raise ValueError("explicit positive runtime resolution required")
+    _int32(dx)
+    _int32(dy)
+    thresholds, angles = calibration["thresholds"], calibration["angles"]
+    if (len(thresholds) != 6 or len(angles) != 6 or thresholds[0] != 0
+            or any(a >= b for a, b in zip(thresholds, thresholds[1:]))):
+        raise ValueError("unsupported calibration table")
+    for value in (*thresholds, *angles):
+        _int32(value)
+    limit = _int32(resolution * thresholds[-1])
+    saturated = _int32((thresholds[-1] - 1) * resolution)
+
+    def cap(value, negative_bias=0):
+        if value >= limit:
+            return saturated
+        if value <= -limit:
+            return -saturated + negative_bias
+        return value
+
+    # CSINC in the reference adds one unit on negative Y saturation only.
+    dx, dy = cap(dx), cap(dy, 1)
+    squared = _int32(dx * dx + dy * dy)
+    radius = int(math.sqrt(squared)) + 1
+    ratio = math.sqrt(_int32(abs(dx) + abs(dy))) / math.sqrt(radius)
+
+    def axis(delta):
+        value = _int32(int(ratio * abs(delta)))
+        if value >= limit:
+            value = saturated
+        segment = next((i for i in range(5) if value < thresholds[i + 1] * resolution), 4)
+        slope = truncdiv(_int32(angles[segment + 1] - angles[segment]),
+                         thresholds[segment + 1] - thresholds[segment])
+        product = _int32((value - thresholds[segment] * resolution) * slope)
+        scaled = _int32(angles[segment] + truncdiv(product, resolution))
+        return truncdiv(scaled, 100 if delta > 0 else -100)
+
+    return axis(dx), axis(dy)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    raw = commands.add_parser("metadata", help="parse one original SPI THP payload")
+    raw.add_argument("payload", type=Path)
+    config = commands.add_parser("config", help="read an external factory ini")
+    config.add_argument("ini", type=Path)
+    args = parser.parse_args()
+    try:
+        if args.command == "metadata":
+            result = parse_metadata(args.payload.read_bytes())
+        else:
+            values = read_config(args.ini)
+            stylus = values["stylus"]
+            result = {
+                "status": "FACTORY_CALIBRATION_READ_STATIC_ONLY",
+                "configuration": values,
+                "profiles": [profile(values, stylus[key]) for key in (
+                    "stylus_vendor_id", "stylus_2_vendor_id", "stylus_3_vendor_id")],
+                "input_devices_registered": False,
+                "device_tested": False,
+            }
+    except (OSError, ValueError, KeyError) as error:
+        parser.error(str(error))
+    print(json.dumps(result, indent=2))
+
+
+if __name__ == "__main__":
+    main()
