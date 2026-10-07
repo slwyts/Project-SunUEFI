@@ -100,6 +100,7 @@ jobs:
                   ./build.sh uefi
                   ./build.sh linux
                   ./build.sh mesa
+                  ./build.sh sensors
                   ./build.sh release-rootfs
                   ./build.sh package --root-size-mib 8192
                   ./build.sh installer --bundle artifacts/release-7.2.9
@@ -112,6 +113,18 @@ jobs:
         with:
           name: piano-${{ env.TARGET }}-${{ github.sha }}
           path: artifacts/installer/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Downloadable sensor runtime packages and source identity
+        if: matrix.target == 'debian-gnome'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: piano-sensors-${{ github.sha }}
+          path: |
+            build/sensors/runtime/
+            build/sensors/SOURCE
+            build/sensors/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -138,6 +151,8 @@ jobs:
             linux/dts/piano-audio-dmic-clock.dtso
             build/release-7.2.9/source-manifest.json
             build/mesa/SHA256SUMS
+            build/sensors/SOURCE
+            build/sensors/SHA256SUMS
             build/distros/release-7.2.9/manifest.json
             build/distros/release-7.2.9/packages.tsv
             build/distros/release-7.2.9/adapters/manifest.json

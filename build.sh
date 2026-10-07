@@ -24,6 +24,25 @@ PY_KERNEL
   mesa)
     bash upstream/piano-mesa-current/scripts/build-mesa-debs.sh \
       "${1:-$sunuefi_root/build/mesa}" 26.1.6-1~bpo13+1 ;;
+  sensors)
+    sensors_source="$sunuefi_root/upstream/piano-sensors-current"
+    sensors_commit=65a92202db65ad13493b43fbf15d6abb3b7bcf92
+    sensors_output="${1:-$sunuefi_root/build/sensors}"
+    if [[ "$(git -C "$sensors_source" rev-parse HEAD)" != "$sensors_commit" ||
+          -n "$(git -C "$sensors_source" status --porcelain --untracked-files=all)" ]]; then
+      printf '%s\n' 'Sensors source HEAD/cleanliness mismatch; run ./build.sh sources.' >&2
+      exit 1
+    fi
+    bash "$sensors_source/scripts/build-sensors-debs.sh" "$sensors_output"
+    python3 - "$sensors_output" "$sensors_commit" <<'PY_SENSORS'
+import json, sys
+from pathlib import Path
+(Path(sys.argv[1]) / 'SOURCE').write_text(json.dumps({
+    'source_url': 'https://github.com/blu-sharky/piano-sensors.git',
+    'source_commit': sys.argv[2],
+}, indent=2) + '\n')
+PY_SENSORS
+    ;;
   bsp)
     python3 tools/package_bsp.py "$@" ;;
   rootfs)
@@ -31,7 +50,8 @@ PY_KERNEL
   release-rootfs)
     python3 tools/build_release_rootfs.py --kernel artifacts/kernels/release-7.2.9 \
       --source build/kernel-worktrees/release-7.2.9 --kernel-build build/kernels/release-7.2.9 \
-      --output build/distros/release-7.2.9 --mesa-dir build/mesa/runtime --execute "$@" ;;
+      --output build/distros/release-7.2.9 --mesa-dir build/mesa/runtime \
+      --sensors-dir build/sensors/runtime --execute "$@" ;;
   package|esp)
     python3 tools/package_release.py --uefi artifacts/product/PianoUEFI-product.img \
       --kernel artifacts/kernels/release-7.2.9 --dtb vendor/piano-linux/board.dtb \
@@ -45,14 +65,15 @@ PY_KERNEL
     "$0" uefi
     "$0" linux
     "$0" mesa
+    "$0" sensors
     "$0" release-rootfs
     "$0" package "$@"
     ;;
   install) python3 tools/install_piano.py "$@" ;;
   installer) python3 tools/export_installer.py "$@" ;;
   help|-h|--help)
-    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|linux|mesa|bsp|rootfs|release-rootfs|package|all|installer|install' \
-      'Full builds need the documented builder environment; rootfs/Mesa run in a root ARM64 build container.' \
+    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|linux|mesa|sensors|bsp|rootfs|release-rootfs|package|all|installer|install' \
+      'Full builds need the documented builder environment; rootfs/Mesa/sensors run in a root ARM64 build container.' \
       'Building never partitions or flashes a tablet. install is a separate explicit command.' ;;
   *) printf 'Unknown command: %s\n' "$command" >&2; exit 2 ;;
 esac

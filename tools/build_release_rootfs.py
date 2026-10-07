@@ -40,7 +40,8 @@ def repository(path, commit=None, tree=None):
 
 
 def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=None,
-         public_source=None, firmware_source=None, macros=None, v4l2_source=None, root=ROOT, resume=False):
+         public_source=None, firmware_source=None, macros=None, v4l2_source=None, root=ROOT, resume=False,
+         sensors_dir=None):
     root = Path(root).resolve(); config = json.loads((root / 'config/release.json').read_text())
     if config['debian']['apt_policy'] != 'mutable-recorded' or config['debian']['snapshot'] is not None:
         raise ValueError('Only signed mutable APT with recorded metadata is implemented; snapshot mode is not configured')
@@ -61,6 +62,12 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
         if not path.is_file(): missing.append(name)
     mesa = Path(mesa_dir).resolve() if mesa_dir else None
     if mesa is None or not list(mesa.glob('*.deb')): missing.append('Piano Mesa .deb directory (--mesa-dir)')
+    sensors = Path(sensors_dir or root / 'build/sensors/runtime').resolve()
+    sensor_source = root / config['sensors']['source']
+    if not (sensor_source / 'scripts/build-sensors-debs.sh').is_file(): missing.append('fixed Piano sensors source')
+    if sensor_source.is_dir(): repository(sensor_source, config['sensors']['commit'])
+    if not list(sensors.glob('*.deb')): missing.append('Piano sensors runtime .deb directory (--sensors-dir)')
+    else: sensors_packages(sensors, config['sensors'])
     if runtime_dir:
         if not (Path(runtime_dir) / 'manifest.json').is_file(): missing.append('matching runtime bundle manifest')
     else:
@@ -79,6 +86,7 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
     if firmware.is_dir(): repository(firmware, config['firmware']['commit'])
     return {'status': 'PLAN_ONLY', 'resume': resume, 'root_policy': 'LABEL=PIANOROOT', 'kernel': str(kernel), 'source': str(source),
             'output': str(output), 'rootfs': str(output / 'rootfs'), 'mesa_dir': str(mesa) if mesa else None,
+            'sensors_dir': str(sensors),
             'runtime_dir': str(Path(runtime_dir).resolve()) if runtime_dir else None,
             'kernel_build': str(Path(kernel_build or root / 'build/kernels/release-7.2.9').resolve()),
             'public_source': str(public), 'firmware_source': str(firmware), 'config': config, 'missing_inputs': missing,
@@ -86,6 +94,7 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
             'steps': ['require root + mount/chroot capability; ARM64 or enabled qemu-aarch64 binfmt',
                       'run public build-rootfs.sh --suite trixie --output NEW --mesa-dir DEBS in private mount namespace',
                       'install extra packages with signed APT defaults; record mutable repository metadata',
+                      'verify sensors SOURCE/SHA256SUMS; install six runtime packages and signed APT dependencies',
                       'stage public overlay/adapters/modules; build_release_helpers uses actual compiler, alsatplg/m4 and matching kernel ABI',
                       'verify/stage firmware; apply label storage policy; lock passwords and remove generated access keys',
                       'record actual packages/source hashes; build release label initramfs; no archive or device writes']}
@@ -220,6 +229,41 @@ def mesa_packages(folder):
     return rows
 
 
+def sensors_packages(folder, config):
+    folder = Path(folder).resolve()
+    metadata = next((p for p in (folder.parent, folder)
+                     if (p / 'SOURCE').is_file() and (p / 'SHA256SUMS').is_file()), None)
+    if metadata is None:
+        raise ValueError('Piano sensors packages need SOURCE and SHA256SUMS beside or above the runtime directory')
+    source = json.loads((metadata / 'SOURCE').read_text())
+    if (source.get('source_url'), source.get('source_commit')) != (config['source_url'], config['commit']):
+        raise ValueError('Piano sensors SOURCE does not match the fixed release source')
+    sums = {}
+    for line in (metadata / 'SHA256SUMS').read_text().splitlines():
+        if not line.strip(): continue
+        checksum, name = line.split(maxsplit=1)
+        name = str(Path(name.lstrip('*')))
+        if len(checksum) != 64 or any(c not in '0123456789abcdef' for c in checksum.lower()) or name in sums:
+            raise ValueError('Invalid or duplicate Piano sensors SHA256SUMS entry')
+        sums[name] = checksum.lower()
+    rows = {}
+    for path in sorted(folder.glob('*.deb')):
+        actual = digest(path)
+        if sums.get(str(path.relative_to(metadata))) != actual:
+            raise ValueError('Piano sensors package checksum mismatch: ' + path.name)
+        package, version, arch = [capture(['dpkg-deb', '-f', path, field]) for field in ('Package', 'Version', 'Architecture')]
+        if arch not in ('arm64', 'all') or package in rows:
+            raise ValueError('Expected unique ARM64 Piano sensors runtime packages')
+        if package in {'libssc2', 'libssc-bin', 'iio-sensor-proxy'} and '+piano' not in version:
+            raise ValueError('Piano sensors needs the SSC-enabled Piano package versions')
+        rows[package] = {'file': path.name, 'version': version, 'architecture': arch, 'sha256': actual}
+    if set(rows) != {'piano-sensors', 'fastrpc-support', 'libfastrpc1', 'libssc2', 'libssc-bin', 'iio-sensor-proxy'}:
+        raise ValueError('Expected exactly the six Piano sensors runtime packages')
+    return {'source_url': source['source_url'], 'source_commit': source['source_commit'],
+            'source_sha256': digest(metadata / 'SOURCE'), 'sha256sums_sha256': digest(metadata / 'SHA256SUMS'),
+            'packages': rows}
+
+
 def bootstrap(rootfs, kernel, output, release):
     busybox = ROOT / 'build/linux-ram/busybox'
     if digest(busybox) != disk.BUSYBOX_SHA: raise ValueError('Static BusyBox source hash changed')
@@ -265,6 +309,7 @@ def execute(record):
     elif any(not shutil.which(name) for name in ('clang' if platform.machine() in ('aarch64', 'arm64') else 'aarch64-linux-gnu-gcc', 'alsatplg', 'm4', 'make', 'depmod')):
         raise ValueError('Install the release helper compiler, alsatplg, m4, make and depmod first')
     mesa = mesa_packages(record['mesa_dir'])
+    sensors = sensors_packages(record['sensors_dir'], cfg['sensors'])
     if out.exists() and not record.get('resume'): raise ValueError('Output appeared after planning; preserve it')
     out.parent.mkdir(parents=True, exist_ok=True); log = out.with_name(out.name + '.build.log')
     if log.exists() and not record.get('resume'): raise ValueError('Build log exists; choose a new output name')
@@ -276,8 +321,20 @@ def execute(record):
                  '--suite', cfg['debian']['suite'], '--output', out, '--mesa-dir', record['mesa_dir']])
         if not (out / 'COMPLETE').is_file() or rootfs.stat().st_uid: raise ValueError('Public GNOME build did not complete with native guest ownership')
         put(rootfs, 'usr/sbin/policy-rc.d', '#!/bin/sh\nexit 101\n'); (rootfs / 'usr/sbin/policy-rc.d').chmod(0o755)
+        sensor_stage = target(rootfs, 'tmp/piano-sensors-packages')
+        sensor_stage.mkdir(parents=True, exist_ok=True)
+        for row in sensors['packages'].values():
+            shutil.copy2(Path(record['sensors_dir']) / row['file'], sensor_stage / row['file'])
+            if digest(sensor_stage / row['file']) != row['sha256']:
+                raise ValueError('Piano sensors package changed while staging: ' + row['file'])
         with build_resolver(rootfs):
-            run(['chroot', rootfs, 'apt-get', 'install', '-y', '--no-install-recommends', *cfg['debian']['extra_packages']])
+            run(['chroot', rootfs, 'apt-get', 'update'])
+            run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get', 'install', '-y',
+                 '--no-install-recommends', *cfg['debian']['extra_packages'],
+                 *('/tmp/piano-sensors-packages/' + row['file'] for row in sensors['packages'].values())])
+        shutil.rmtree(sensor_stage)
+        put(rootfs, 'usr/lib/systemd/system/adsprpcd-sensorspd.service.d/10-piano-adsp.conf',
+            '[Unit]\nRequires=piano-adsp.service\n')
         if record.get('resume') and (out / 'adapters').is_dir(): shutil.rmtree(out / 'adapters')
         if record.get('resume'):
             staged_modules = target(rootfs, 'usr/lib/modules') / m['kernel_release']
@@ -303,6 +360,9 @@ def execute(record):
         (out / 'packages.tsv').write_text(packages + '\n')
         installed = {p[0].split(':')[0]: p[1] for line in packages.splitlines() if len(p := line.split('\t')) == 4 and p[3] == 'installed'}
         if not {'gnome-shell', 'gdm3', 'systemd-sysv', 'pipewire', 'network-manager'} <= installed.keys(): raise ValueError('Required GNOME packages are not installed')
+        for package, row in sensors['packages'].items():
+            if installed.get(package) != row['version']:
+                raise ValueError('Installed Piano sensors version differs: ' + package)
         metadata = {str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'var/lib/apt/lists').glob('*InRelease')}
         if not metadata: raise ValueError('Signed APT InRelease metadata is missing')
         metadata.update({str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'etc/apt').rglob('*') if p.is_file()})
@@ -313,7 +373,7 @@ def execute(record):
                   'kernel_manifest_sha256': kernel_hash, 'release_config_sha256': digest(POLICY), 'packages_sha256': digest(out / 'packages.tsv'),
                   'adapters_manifest_sha256': digest(out / 'adapters/manifest.json'), 'runtime_manifest_sha256': digest(bundle / 'manifest.json'),
                   'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata, 'debian_commit': cfg['debian']['commit'],
-                  'mesa_packages': mesa, 'firmware_commit': cfg['firmware']['commit'],
+                  'mesa_packages': mesa, 'sensors': sensors, 'firmware_commit': cfg['firmware']['commit'],
                   'initramfs': boot, 'password': 'locked; owner must set their own', 'autologin_retained': True,
                   'bit_reproducible': False, 'root_uid': rootfs.stat().st_uid, 'device_operation_performed': False}
         (out / 'manifest.json').write_text(json.dumps(result, indent=2) + '\n')
@@ -327,7 +387,7 @@ def execute(record):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('kernel', 'source', 'output'): parser.add_argument('--' + name, type=Path, required=True)
-    for name in ('mesa-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
+    for name in ('mesa-dir', 'sensors-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
     mode = parser.add_mutually_exclusive_group(required=True); mode.add_argument('--plan', action='store_true'); mode.add_argument('--execute', action='store_true')
     parser.add_argument('--resume', action='store_true', help='Resume assembly after a completed upstream root build')
     args = vars(parser.parse_args()); execute_flag = args.pop('execute'); args.pop('plan')

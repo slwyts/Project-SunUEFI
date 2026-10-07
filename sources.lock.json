@@ -43,6 +43,10 @@
     "commit": "a89c1e46eef3e161520b084479928aaa5a8e8732",
     "url": "https://github.com/blu-sharky/piano-mesa.git"
   },
+  "piano-sensors-current": {
+    "commit": "65a92202db65ad13493b43fbf15d6abb3b7bcf92",
+    "url": "https://github.com/blu-sharky/piano-sensors.git"
+  },
   "Mu-Silicium/Mu_Basecore/BaseTools/Source/C/BrotliCompress/brotli": {
     "commit": "e230f474b87134e8c6c85b630084c612057f253e",
     "url": "https://github.com/google/brotli"

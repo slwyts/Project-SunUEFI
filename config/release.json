@@ -32,6 +32,12 @@
     "required": true,
     "package_version_contains": "+piano"
   },
+  "sensors": {
+    "source": "upstream/piano-sensors-current",
+    "commit": "65a92202db65ad13493b43fbf15d6abb3b7bcf92",
+    "source_url": "https://github.com/blu-sharky/piano-sensors.git",
+    "required": true
+  },
   "storage": {
     "root_label": "PIANOROOT",
     "root_partname": "sunuefi_root",
