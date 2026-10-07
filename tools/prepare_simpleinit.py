@@ -216,7 +216,7 @@ def main():
     dsc += '''
 [LibraryClasses]
   PianoProductPumpLib|MdePkg/Library/PianoProductPumpLibNull/PianoProductPumpLibNull.inf
-  SerialPortLib|pianoGuiPkg/Library/RamOnlySerialPortLib/RamOnlySerialPortLib.inf
+  SerialPortLib|product-support/Library/RamOnlySerialPortLib/RamOnlySerialPortLib.inf
   MemoryTypeInformationChangeLib|MdeModulePkg/Library/MemoryTypeInformationChangeLibNull/MemoryTypeInformationChangeLibNull.inf
 [PcdsFixedAtBuild]
   gSimpleInitTokenSpaceGuid.PcdLoggerdUseConsole|FALSE

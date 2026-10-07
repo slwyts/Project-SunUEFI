@@ -14,6 +14,7 @@ from analyze_capture import parse_fdt
 from build_integrity import validate as validate_build
 from product_contract import ROOT,validate,validate_build_manifest
 from simpleinit_build_identity import inspect as inspect_simpleinit
+from firmware_workspace import active_root
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -22,7 +23,7 @@ def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--header-version',type=int,choices=(3,4),default=3)
-    args=parser.parse_args();root=ROOT;ws=root/'upstream/Mu-Silicium';out=root/'artifacts/product'
+    args=parser.parse_args();root=active_root(ROOT);ws=root/'upstream/Mu-Silicium';out=root/'artifacts/product'
     build=validate_build(root,'product')
     contract=validate(json.loads((root/'config/piano-product.json').read_text()))
     prepared=json.loads((root/'build/product/prepared-manifest.json').read_text())

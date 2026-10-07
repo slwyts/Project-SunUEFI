@@ -32,9 +32,10 @@ export IASL_PREFIX="$sun_tools/bin/"
 export PYTHON_COMMAND="$sun_root/.venv/bin/python"
 export WORKSPACE="$sun_build"
 export EDK_TOOLS_PATH="$sun_mu/Mu_Basecore/BaseTools"
-export PACKAGES_PATH="$sun_si:$sun_mu/Mu_Basecore:$sun_root/uefi/platforms:$sun_mu/Silicon/Silicium"
+export PACKAGES_PATH="$sun_si:$sun_mu/Mu_Basecore:$sun_root/uefi/platforms:$sun_root/uefi/components:$sun_mu/Silicon/Silicium"
 export PYTHONPATH="$EDK_TOOLS_PATH/Source/Python${PYTHONPATH:+:$PYTHONPATH}"
 export PATH="$EDK_TOOLS_PATH/Source/C/bin:$EDK_TOOLS_PATH/BinWrappers/PosixLike:$PATH"
+make -C "$EDK_TOOLS_PATH/Source/C" -j8
 mkdir -p "$sun_build/Conf" "$sun_si/build"
 for sun_conf in target tools_def build_rule; do
   if ! cmp -s "$EDK_TOOLS_PATH/Conf/$sun_conf.template" "$sun_build/Conf/$sun_conf.txt"; then

@@ -15,6 +15,7 @@
 | `linux/kernel-profiles.json`、`upstream/linux-piano` | RAM 内核角色锁与 Gitlink；完整/磁盘角色见 [内核角色](kernel-roles.md) |
 | `tools/`、`tests/` | 准备、校验、封装及测试入口；其中部分工具会操作设备，按各工具的实际行为选择入口 |
 | `upstream/` | 正式依赖由固定 Git submodule 登记；额外本地缓存仍忽略。改动通过 patch/overlay 重现 |
+| `build/firmware-workspace/` | 产品构建使用的本地副本；在这里应用上游补丁与生成平台，上游子模块保持原样 |
 | `.venv/` | 本地 Python 环境，不入库 |
 | `build/`、`artifacts/` | ignored 工作目录与产物；manifest/哈希是构建证据，不是硬件验收 |
 | `private/` | ignored 采集、恢复和原始证据；公开仓库不依赖其被自动分发 |

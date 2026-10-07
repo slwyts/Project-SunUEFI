@@ -42,6 +42,9 @@ PRODUCT_FLAGS=('PIANO_USB_SERVICE=1','PIANO_USB_EP0=1','PIANO_USB_FASTBOOT=1','P
     'PIANO_UFS_PRODUCT_STORAGE=1','PIANO_NV_BOOT_ONLY=1','PIANO_PRODUCT_NATIVE_LATE=1')
 NATIVE_NAMES=('SmemDxe','DALSys','ChipInfo','PlatformInfoDxeDriver','HWIODxeDriver','ULogDxe',
     'CmdDbDxe','PwrUtilsDxe','RpmhDxe','NpaDxe','VcsDxe','ClockDxe','HALIOMMU')
+EARLY_DXE_SOURCE='vendor/piano/early-dxe/EnvDxeEnhanced'
+EARLY_DXE_NAMES=('EnvDxeEnhanced.inf','EnvDxeEnhanced.efi','EnvDxeEnhanced.depex')
+EARLY_DXE_PROVENANCE_SHA256='486da704630a5f2357a075554010350b8015df84f1aeb2e36bbf9b4a7695d46d'
 DISK_MODULES=('MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf',
     'MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf',
     'MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf','FatPkg/EnhancedFatDxe/Fat.inf')
@@ -219,7 +222,33 @@ def backend_status():
     }
 
 
+def early_dxe_files(root):
+    folder=Path(root)/EARLY_DXE_SOURCE
+    return tuple(folder/name for name in (*EARLY_DXE_NAMES,'provenance.json'))
+
+
+def stage_early_dxe(root):
+    folder=Path(root)/EARLY_DXE_SOURCE
+    provenance=(folder/'provenance.json').read_bytes()
+    if hashlib.sha256(provenance).hexdigest()!=EARLY_DXE_PROVENANCE_SHA256:
+        raise ValueError('EnvDxeEnhanced provenance SHA256 mismatch')
+    record=json.loads(provenance);data={}
+    for name in EARLY_DXE_NAMES:
+        raw=(folder/name).read_bytes();expected=record['files'][name]
+        if len(raw)!=expected['bytes'] or hashlib.sha256(raw).hexdigest()!=expected['sha256']:
+            raise ValueError('EnvDxeEnhanced source length/SHA256 mismatch: '+name)
+        data[name]=raw
+    vendor_inputs.validate_pe(data['EnvDxeEnhanced.efi'])
+    vendor_inputs.validate_depex(data['EnvDxeEnhanced.depex'])
+    # This APRIORI driver still runs through DXE dispatch with its original
+    # DEPEX. It is separate from the thirteen runtime-loaded Foundation PEs.
+    target=Path(root)/'upstream/Mu-Silicium/Binaries/piano/Stage0/EnvDxeEnhanced'
+    target.mkdir(parents=True,exist_ok=True)
+    for name,raw in data.items():(target/name).write_bytes(raw)
+
+
 def native_modules(root,app,inputs=None):
+    stage_early_dxe(root)
     if NATIVE_NAMES!=vendor_inputs.NATIVE_NAMES:raise ValueError('Product native names differ from fixed vendor bundle')
     catalog=(inputs if inputs is not None else vendor_inputs.load(root))['native_drivers']
     table=['typedef struct { CONST CHAR8 *Name; EFI_GUID Guid; CONST UINT8 *Depex; UINTN DepexBytes; } NATIVE_IMAGE;']

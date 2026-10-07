@@ -2,6 +2,9 @@
 # One host-built product integration candidate. No device/flash operation.
 set -euo pipefail
 piano_product_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ ! -f "$piano_product_root/.firmware-workspace.json" ]]; then
+  exec python3 "$piano_product_root/tools/firmware_workspace.py" build
+fi
 mkdir -p "$piano_product_root/build/logs" "$piano_product_root/artifacts/product"
 python3 "$piano_product_root/tools/apply_firmware_patches.py"
 # Stage the board DTB from the same fixed bundle used by product preparation.

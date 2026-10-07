@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import uuid
+from firmware_workspace import active_root, validate_sources
 
 NAMES={'stage0':'piano','probe':'pianoProbe','linux':'pianoLinux','gui':'pianoGui','product':'pianoProduct'}
 
@@ -17,6 +18,8 @@ def sha(path):
 
 
 def inputs(root,profile):
+    original_root=root
+    if profile=='product':root=active_root(root)
     ws=root/'upstream/Mu-Silicium'
     platform=ws/'Platforms/Xiaomi'/f'{NAMES[profile]}Pkg'
     if not platform.is_dir():
@@ -41,7 +44,8 @@ def inputs(root,profile):
         pump_record=pump(root,apply=False);ui_record=ui(root,apply=False)
         files.update(root/path for path in (*pump_record['files'],*ui_record['files']))
         files.update(root/path for path in nv_guard(root,apply=False)['files'])
-        from prepare_product import SOURCE_NAMES, os_boot_files, verify_os_boot, observation_files, verify_observation_families,verify_display_mapping
+        from prepare_product import SOURCE_NAMES, os_boot_files, verify_os_boot, observation_files, verify_observation_families,verify_display_mapping,early_dxe_files
+        files.update(early_dxe_files(root))
         canonical=root/'uefi/core'
         files.update(canonical/name for name in SOURCE_NAMES)
         files.update(path for path in canonical.iterdir() if path.is_file() and path.suffix in ('.h','.inc'))
@@ -74,7 +78,7 @@ def inputs(root,profile):
         for folder in ('uefi/components/product-pump','uefi/components/product-support','uefi/components/product-handoff'):
             files.update(path for path in (root/folder).rglob('*') if path.is_file())
         for relative in ('config/piano-product.json','build/product/prepared-manifest.json',
-                         'tools/prepare_product.py','tools/build_product.sh','tools/package_product.py',
+                         'tools/prepare_product.py','tools/build_product.sh','tools/firmware_workspace.py','tools/package_product.py',
                          'tools/prepare_product_pump.py','tools/prepare_product_ui.py','tools/prepare_nv_runtime_guard.py','tools/prepare_product_early_memory.py','tools/prepare_product_handoff.py','tools/source_input_tail.py','tools/simpleinit_build_identity.py',
                          'tools/build_simpleinit.sh','tools/prepare_simpleinit.py','tools/product_payload_digest.py',
                          'artifacts/simpleinit/product/SimpleInit.efi','artifacts/simpleinit/product/app-payload.bin',
@@ -82,6 +86,8 @@ def inputs(root,profile):
             p=root/relative
             if not p.is_file():raise ValueError('Missing product build input: '+relative)
             files.add(p)
+    if profile=='product':
+        validate_sources(original_root, [str(p.relative_to(root)) for p in files])
     hashes={str(p.relative_to(root)):sha(p) for p in sorted(files)}
     return {'sha256':hashlib.sha256(json.dumps(hashes,sort_keys=True).encode()).hexdigest(),
             'file_count':len(hashes)}

@@ -20,6 +20,8 @@ def sha(path):
 
 
 def inspect(build, output, product):
+    from firmware_workspace import active_root
+    root=active_root(ROOT) if product else ROOT
     manifest=json.loads((build/'source-manifest.json').read_text())
     if manifest.get('product_gui_pump') is not product:
         raise ValueError('wrong SimpleInit product/default build mode')
@@ -28,18 +30,19 @@ def inspect(build, output, product):
     if product and any(relative not in sources for relative in PRODUCT_NAVIGATION_SOURCES):
         raise ValueError('SimpleInit product navigation source fingerprint missing')
     for relative,digest in sources.items():
-        path=ROOT/relative
+        path=root/relative
         if not path.is_file()or sha(path)!=digest:raise ValueError('SimpleInit actual owned source changed: '+relative)
     if product:
         from prepare_product_ui import prepare as prepare_ui
-        if manifest.get('ui_hooks')!=prepare_ui(ROOT,apply=False):raise ValueError('SimpleInit product UI/reboot hooks changed')
-    hooks=prepare(ROOT,apply=False)
+        if manifest.get('ui_hooks')!=prepare_ui(root,apply=False):raise ValueError('SimpleInit product UI/reboot hooks changed')
+    hooks=prepare(root,apply=False)
     if manifest['pump_hooks']!=hooks:
         raise ValueError('built SimpleInit source hook manifest is stale')
     if sha(build/'SunSimpleInit.dsc')!=manifest['dsc_sha256']:
         raise ValueError('SimpleInit DSC differs from its source manifest')
     report=build/'simpleinit-build-report.txt'
-    report_text=report.read_text()
+    # EDK2 wraps long library paths before a slash in its text report.
+    report_text=report.read_text().replace('\n/', '/')
     base=build/'Build/SimpleInit/NOOPT_CLANGDWARF/AARCH64'
     gui=base/'src/gui/SimpleInitGUI/GNUmakefile'
     main=base/'src/main/SimpleInitMain/GNUmakefile'

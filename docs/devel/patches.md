@@ -4,7 +4,7 @@
 
 ## 产品构建中的顺序
 
-[`build_product.sh`](../../tools/build_product.sh) 依次 apply handoff、pump、UI、NV guard，再编译 SimpleInit、prepare 产品、构建固件和封装。SimpleInit 准备会再次核对/安装 pump 和产品 UI；产品准备再次核对 handoff/pump/UI，并复制 canonical 来源。这些重复步骤依赖严格转换与已安装状态的验证，不是手工补丁叠加。
+[`build_product.sh`](../../tools/build_product.sh) 先准备 `build/firmware-workspace/`，随后在该副本中依次 apply handoff、pump、UI、NV guard，再编译 SimpleInit、prepare 产品、构建固件和封装。上游子模块不应用这些修改。SimpleInit 准备会再次核对/安装 pump 和产品 UI；产品准备再次核对 handoff/pump/UI，并复制 canonical 来源。
 
 | 顺序/机制 | 目标 | 校验与用途 |
 | --- | --- | --- |
@@ -19,10 +19,10 @@
 完成对应准备后，可单独检查产品 hooks（只操作/检查主机源码；要求已有固定 checkout）：
 
 ```sh
-python3 tools/prepare_product_handoff.py verify
-python3 tools/prepare_product_pump.py verify
-python3 tools/prepare_product_ui.py verify
-python3 tools/prepare_nv_runtime_guard.py verify
+python3 build/firmware-workspace/tools/prepare_product_handoff.py verify
+python3 build/firmware-workspace/tools/prepare_product_pump.py verify
+python3 build/firmware-workspace/tools/prepare_product_ui.py verify
+python3 build/firmware-workspace/tools/prepare_nv_runtime_guard.py verify
 ```
 
 ## 其他补丁与维护方式

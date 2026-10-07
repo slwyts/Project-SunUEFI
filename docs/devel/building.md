@@ -34,6 +34,8 @@ python3 tools/check_host.py --group portable
 bash tools/build_product.sh
 ```
 
+默认产品构建在 `build/firmware-workspace/` 的本地副本中应用补丁、生成平台和编译。`upstream/` 保留固定的上游源码，成品仍输出到主仓库的 `artifacts/`。修改本地适配时编辑 `uefi/`、`patches/` 或 `tools/`；不要修改构建副本。
+
 ### 构建过程流水线：
 1. **准备接入**：应用并核对共同服务、应用退出等源码修改。
 2. **编译 UI 前端**：编译 ARM64 版 SimpleInit 图形应用与中文字体包，再组装 `pianoProductPkg`。

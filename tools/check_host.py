@@ -19,6 +19,8 @@ PORTABLE = (
     'tests/unit/test_collect_uefi_ramlog.py',
     'tests/unit/test_piano_bootfail.py',
     'tests/unit/test_build_integrity.py',
+    'tests/unit/test_firmware_workspace.py',
+    'tests/unit/test_product_early_dxe.py',
     'tests/unit/test_dma_log.py',
     'tests/unit/test_usb_diagnostic_host.py',
     'tests/unit/test_host_checks.py',
