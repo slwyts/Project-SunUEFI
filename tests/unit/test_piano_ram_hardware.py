@@ -197,14 +197,16 @@ class RamHardwareTests(unittest.TestCase):
                     self.assertIn(command, after)
             self.assertNotIn('devmem', after)
             self.assertNotIn('piano-smmu-ready', after)
-            self.assertIn('piano-ram-hardware-prepare --require-scope', after)
+            self.assertIn('piano-ram-hardware-prepare --' +
+                          ('observe-scope' if name in ('video-start', 'camera-start') else 'require-scope'), after)
             if name == 'keyboard-start':
                 self.assertIn('--require-scope keyboard --wait-seconds 20', after)
             subprocess.run(['/bin/sh', '-n', str(self.path / 'adapters/usr/lib/piano' / name)], check=True)
         for name in ('video-start', 'camera-start'):
             text = (self.path / 'adapters/usr/lib/piano' / name).read_text()
-            self.assertLess(text.index('echo DMA'), text.index('--require-scope'))
-            self.assertLess(text.index('--require-scope'), text.index('\nmodprobe '))
+            self.assertLess(text.index('echo DMA'), text.index('\nmodprobe '))
+            bound = 'done\n' if name == 'video-start' else 'wait_bound "$CAMSS" \'CAMSS\''
+            self.assertLess(text.index(bound), text.index('--observe-scope'))
         display = (self.path / 'adapters/usr/lib/piano/display-start').read_text()
         self.assertLess(display.index('modprobe msm $MSM_OPTIONS'), display.index('observe_scope gpu'))
         self.assertLess(display.index('wait_bound adreno'), display.index('observe_scope gpu'))
@@ -355,7 +357,7 @@ class RamHardwareTests(unittest.TestCase):
                  mock.patch('sys.stderr', new_callable=io.StringIO) as error:
                 self.assertEqual(hardware.main(), expected)
                 result = json.loads(error.getvalue())
-                self.assertEqual(result['status'], 'REFUSED')
+                self.assertEqual(result['status'], 'OBSERVATION_UNAVAILABLE' if flag == '--observe-scope' else 'REFUSED')
                 self.assertFalse(result['full_hardware_ready'])
                 self.assertEqual(result['observation_only'], flag == '--observe-scope')
 

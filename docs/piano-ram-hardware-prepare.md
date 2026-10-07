@@ -93,8 +93,8 @@ paths that returned zero are changed to nonzero failures.
 | radio | Real WCN7861 RID100→SID1401/mask0 and CLKREF consumer | Normal PHY/host enumeration, fresh endpoint/domain proof, then MHI/ath12k |
 | ADSP | Six real FastRPC consumers, thirteen SID/mask pairs | Normal remoteproc running and FastRPC child creation, fresh proofs, then application/power handoff |
 | audio | Actual GPR dais1001/80 and1041/20 | Normal APM/frontend creation, fresh dais proof, then card/PCM buffers |
-| video | Iris1940 **and1947**, translated DMA domain | Normal group type switch to DMA, then mandatory context readback before module load |
-| camera | CAMSS1c00 translated DMA domain | Normal group type switch to DMA, then mandatory context readback before module load |
+| video | Iris1940 **and1947**, translated DMA domain | Normal group type switch to DMA and actual driver binding, then nonblocking context observation |
+| camera | CAMSS1c00 translated DMA domain | Normal group type switch to DMA and actual driver binding, then nonblocking context observation |
 | UFS | SID60/mask0 plus real qref binding | Read-only scope is available; bootstrap does not load storage |
 
 The complete merged DT has two Iris SIDs; the public standalone video overlay
@@ -119,8 +119,11 @@ now requires every actual consumer proof; even success still reports
 
 Guard placement follows actual Linux ownership acquisition. Video/camera must
 first write `DMA` to their normal IOMMU group `type` interface. That operation
-allocates/attaches the kernel domain; the context guard runs immediately after
-it and before the driver modules. GPU/GMU domains are created by
+allocates/attaches the kernel domain and refuses a switch while a driver owns
+the group. Module loading and actual driver binding remain mandatory. The
+additional `piano_dma_context` snapshot follows binding as a nonblocking
+observation: an unavailable readback is recorded with its error, not treated
+as proof that normal Linux initialization must stop. GPU/GMU domains are created by
 `msm_iommu_new` through paging-domain allocation and `iommu_attach_device` during
 normal MSM/Adreno initialization, so their guard follows `modprobe msm` and the
 bound-driver wait. `msm_kms_init_vm` similarly attaches the MDSS display domain
@@ -131,8 +134,10 @@ Before DPU takeover the old display context may legitimately still have M=1.
 and returns zero to permit normal driver probe. Every such report has
 `observation_only=true`, `full_hardware_ready=false`; it never grants readiness.
 `--require-scope display-active` remains mandatory after DPU binds and requires
-real MDSS, GPU **and** GMU stage1 evidence. The observation mode cannot be used
-for other scopes. Historical `ram-hardware-adapters-v1` output remains unchanged;
+real MDSS, GPU **and** GMU stage1 evidence. The observation mode also supports
+camera/video after their normal drivers bind; failure reports use
+`OBSERVATION_UNAVAILABLE` and never claim device readiness.
+Historical `ram-hardware-adapters-v1` output remains unchanged;
 new context-enabled adapters must be generated into a new directory.
 
 GPR/FastRPC children only exist after normal remoteproc and module startup.

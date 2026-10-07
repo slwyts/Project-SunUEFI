@@ -88,13 +88,21 @@ def adapt(name, data):
                             '    observe_scope display-active')
         text = text.replace('                (UFS, USB, display, and the ones /pianoinit added) as bypass',
                             '                through normal kernel consumer attachment')
+    elif name in ('video-start', 'camera-start'):
+        scope = name.removesuffix('-start')
+        observation = ('# The normal driver owns its DMA domain; readback adds diagnostics only.\n'
+                       + '/usr/lib/piano/piano-ram-hardware-prepare --observe-scope ' + scope + ' ||\n'
+                       + '    say "WARN ' + scope + ' context observation unavailable; driver remains bound"\n')
+        if name == 'video-start':
+            text = replace_once(text, 'done\nsay "DONE ', 'done\n' + observation + 'say "DONE ')
+        else:
+            text = replace_once(text, 'wait_bound "$CAMSS" \'CAMSS\'\n',
+                                'wait_bound "$CAMSS" \'CAMSS\'\n' + observation)
     else:
         scope = name.removesuffix('-start')
         # Before the first hardware operation, after the published disable option.
         anchors = {'keyboard-start': 'n=0\nuntil [ -e "$BUS/driver" ]; do',
-                   'adsp-start': 'say "BEGIN power"', 'audio-start': 'say "BEGIN card"',
-                   'video-start': 'modprobe videocc_sm8750',
-                   'camera-start': 'modprobe system_heap'}
+                   'adsp-start': 'say "BEGIN power"', 'audio-start': 'say "BEGIN card"'}
         if name in anchors:
             before = anchors[name]
             preparation = 'modprobe fastrpc || { say "FAIL fastrpc"; exit 1; }\n' if name == 'adsp-start' else ''

@@ -278,8 +278,8 @@ def main():
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument('--check-root', action='store_true', help='Verify only the actual RAM or configured Linux root')
     mode.add_argument('--require-scope', choices=tuple(SCOPES) + tuple(CONTEXT_SCOPES) + ('all', 'clock'))
-    mode.add_argument('--observe-scope', choices=('mdss-prebind',),
-                      help='Nonblocking prebind diagnostic; never authorizes a driver or reports readiness')
+    mode.add_argument('--observe-scope', choices=('mdss-prebind', 'camera', 'video'),
+                      help='Nonblocking context diagnostic; never authorizes a driver or reports readiness')
     ap.add_argument('--wait-seconds', type=int, choices=range(31), default=0,
                     help='Wait only for normal consumer creation or busy getter; faults/drift still fail immediately')
     args = ap.parse_args()
@@ -296,7 +296,8 @@ def main():
         module = checker()
         report = wait_proof(module, scope, args.wait_seconds, prove_fn=prove) if (args.require_scope or args.observe_scope) else prepare(module)
     except (OSError, ValueError, Refused) as error:
-        report = {'schema': 'piano-ram-hardware-v1', 'scope': scope, 'status': 'REFUSED',
+        report = {'schema': 'piano-ram-hardware-v1', 'scope': scope,
+                  'status': 'OBSERVATION_UNAVAILABLE' if args.observe_scope else 'REFUSED',
                   'error': str(error), 'full_hardware_ready': False,
                   'observation_only': bool(args.observe_scope),
                   'global_ready_marker_written': False, 'memory_ownership_authorized': False}
@@ -308,7 +309,8 @@ def main():
         return 0 if args.observe_scope else 1
     if args.observe_scope:
         report['observation_only'] = True
-        report['status'] = 'NONBLOCKING_PREBIND_OBSERVATION_NOT_READINESS'
+        report['status'] = ('NONBLOCKING_PREBIND_OBSERVATION_NOT_READINESS' if scope == 'mdss-prebind'
+                            else 'NONBLOCKING_CONTEXT_OBSERVATION_NOT_READINESS')
     publish(report)
     print(json.dumps(report))
     return 0
