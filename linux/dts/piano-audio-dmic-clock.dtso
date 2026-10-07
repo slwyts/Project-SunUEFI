@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+/dts-v1/;
+/plugin/;
+
+/* Match the factory normal-rate microphone divider; see docs/devel/piano-audio-clock.md. */
+/ {
+	fragment@0 {
+		target-path = "/soc/codec@7660000";
+		__overlay__ {
+			qcom,dmic-sample-rate = <2400000>;
+		};
+	};
+};

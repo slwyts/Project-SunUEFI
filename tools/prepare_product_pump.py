@@ -12,8 +12,8 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 PINS = {
-    "upstream/Mu-Silicium": "66e7bd1e7bcb757d4b28629bd6409d7209d3b242",
-    "upstream/Mu-Silicium/Mu_Basecore": "bb557081f80f4883ed832e34ab36bdca6ede1e10",
+    "upstream/Mu-Silicium": "3ec9169f308c01030a7e698072aca5acb2c0a144",
+    "upstream/Mu-Silicium/Mu_Basecore": "cfb93724a06ff86ff5ba971413368a7809ee42a5",
     "upstream/simple-init": "3d66a6e78d519dd050fbebde4db6c5ac933f9aa4",
 }
 BASE = "upstream/Mu-Silicium/Mu_Basecore/"

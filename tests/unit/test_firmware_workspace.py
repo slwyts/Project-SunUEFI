@@ -123,6 +123,20 @@ class FirmwareWorkspaceTests(unittest.TestCase):
         self.assertFalse((copy / 'extra.c').exists())
         self.assertTrue(validate_sources(self.root))
 
+    def test_repeated_prepare_fetches_an_upgraded_local_upstream_commit(self):
+        workspace = prepare(self.root)
+        original = self.root / 'upstream/Mu-Silicium'
+        (original / 'source.c').write_text('new upstream source\n')
+        git(original, 'commit', '-qam', 'test: upstream update')
+        commit = git(original, 'rev-parse', 'HEAD').decode().strip()
+        pinfile = self.root / 'sources.lock.json'
+        pins = json.loads(pinfile.read_text())
+        pins['Mu-Silicium']['commit'] = commit
+        pinfile.write_text(json.dumps(pins))
+        self.assertEqual(prepare(self.root), workspace)
+        self.assertEqual(git(workspace / 'upstream/Mu-Silicium', 'rev-parse', 'HEAD').decode().strip(), commit)
+        self.assertTrue(validate_sources(self.root))
+
     def test_actual_build_inputs_ignore_unrelated_tools_and_documentation(self):
         workspace = prepare(self.root)
         (self.root / 'tools/unrelated_linux.py').write_text('# changed unrelated tool\n')

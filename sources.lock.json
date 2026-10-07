@@ -1,10 +1,10 @@
 {
   "Mu-Silicium": {
-    "commit": "66e7bd1e7bcb757d4b28629bd6409d7209d3b242",
+    "commit": "3ec9169f308c01030a7e698072aca5acb2c0a144",
     "url": "https://github.com/Project-Silicium/Mu-Silicium.git"
   },
   "Mu-Silicium/Mu_Basecore": {
-    "commit": "bb557081f80f4883ed832e34ab36bdca6ede1e10",
+    "commit": "cfb93724a06ff86ff5ba971413368a7809ee42a5",
     "url": "https://github.com/microsoft/mu_basecore.git"
   },
   "Mu-Silicium/Common/Mu": {
@@ -16,15 +16,15 @@
     "url": "https://github.com/microsoft/mu_oem_sample.git"
   },
   "Mu-Silicium/Binaries": {
-    "commit": "203fb36bf7bf560989ca6b6848bfa07c79a5a04a",
+    "commit": "a1501e0c2e642d6ac0d8f52c85af2a67b75a7799",
     "url": "https://github.com/Project-Silicium/Device-Binaries.git"
   },
   "Mu-Silicium/Silicium-ACPI": {
-    "commit": "9abca7f95eb185cf97cb2d16b4a504324941aa23",
+    "commit": "2d465ad77c25de908f0ec7bdfcb57f865b61233c",
     "url": "https://github.com/Project-Silicium/Silicium-ACPI.git"
   },
   "dtc": {
-    "commit": "7a1e017926004ecff5fce62d62d42ce9f3e00082",
+    "commit": "f3451d12532b9d382707c458a2ae2e5aa0e1eee4",
     "url": "https://github.com/dgibson/dtc.git"
   },
   "simple-init": {
@@ -32,7 +32,7 @@
     "url": "https://github.com/BigfootACA/simple-init.git"
   },
   "debian-piano-current": {
-    "commit": "fd6266d73f3442b23362260c3aa0c86782e0b52c",
+    "commit": "25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1",
     "url": "https://github.com/blu-sharky/debian-piano.git"
   },
   "piano-firmware-current": {

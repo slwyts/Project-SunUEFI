@@ -9,13 +9,15 @@ operation is performed.
 
 ## Pinned input layers
 
-The current build uses `upstream/debian-piano-current` at
-`fd6266d73f3442b23362260c3aa0c86782e0b52c`, top-level
+The current builder pins `upstream/debian-piano-current` at
+`25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1`, top-level
 `boot/dtbo-piano-camera.dts`, and explicit headers from the complete kernel
 candidate `build/kernel-worktrees/piano-full-integration` at
 `352508459733d3e6d349ea5581a8dd2fd8bb4180`. Source commits, tracked cleanliness,
 all preprocessing input hashes and raw DT input hashes are checked and recorded.
 The earlier e400 overlay and disabled display-only topic are not these inputs.
+This source update changes camera userspace startup only; the DT overlay is
+unchanged. Existing fd6266 output directories retain their original provenance.
 
 The selected current-ROM layer is vendor_boot_a **DTB index4**, extracted at
 `0x21B5430`, plus official DTBO **index0**. The actual current live FDT is the

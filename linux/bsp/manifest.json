@@ -3,7 +3,7 @@
   "component": "piano-device-config",
   "source": {
     "url": "https://github.com/blu-sharky/debian-piano.git",
-    "commit": "fd6266d73f3442b23362260c3aa0c86782e0b52c"
+    "commit": "25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1"
   },
   "status": "SOURCE_CONFIG_NOT_DEVICE_TESTED",
   "files": [
@@ -186,17 +186,17 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "fa7e6a52f443abb3dd68ffa2716177e0b4b78d8ca234adc8a6650c25944e6459",
+      "sha256": "c700e2b86dceb48a0b71d5bfc00e671d8071c1d946abb83e55246d9597c84d9b",
       "source": "rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf",
       "source_sha256": "ed1b91e6f7e4cef76f1f60cfe3dc01d249cfb0267bb983bfc362df8f4f97609c",
       "source_git_mode": "100644",
       "license": "MIT",
       "patch": "patches/0001-ucm-dmic1-gain0.patch",
-      "patch_sha256": "a923ae172d50dcffca89d71f4da1e528c1e7b4cb3e579d5774531269f15374ee",
+      "patch_sha256": "509e646424cadb66dac379d84cf350e054efefbe058f543704bc22c292a36c22",
       "derived_from": {
         "path": "tools/stage_piano_ram_hardware.py",
-        "sha256": "223d91580affa639cd519975c31e34fc904b4c0964c99c2742e6f8212ce695f6",
-        "scope": "DMIC1, CaptureChannels 2, VA_DEC0 Volume 84 (existing adapter labels 0 dB); noise unresolved"
+        "sha256": "c8732b37978b84741dd6db91af393a06cab38ee0ace2eaac876796ab01c838a1",
+        "scope": "DMIC1, hardware capture 2 channels labelled MONO/AUX0, DEC0 0 dB; 4 hardware playback slots with simple stereo duplication; noise unresolved"
       }
     },
     {
@@ -271,13 +271,13 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "b4c861d683187e2b889b17826b61fdf320b5601a6983f26f07418f8e73510a45",
+      "sha256": "8f276beac28fac65d84c932f4905e3d2bfe20ffdb8f09b1ad8c168737f054dbf",
       "source": "rootfs/overlay/usr/lib/systemd/system/piano-camerad.service",
-      "source_sha256": "d0c3ec0b8417388d2f42eaa1b3333590e925164454f8fad96b55c2218f661f31",
+      "source_sha256": "89be5055f92c75cff4f950e0a2e4bc588df15037b5a00c33dfb905760844032b",
       "source_git_mode": "100644",
       "license": "MIT",
       "patch": "patches/0003-camera-portable-modprobe.patch",
-      "patch_sha256": "c469fdab56674e19167b9ae8215fd0bf142976c871648199aff4265e7e62c7fc"
+      "patch_sha256": "b4892c279dfdce444292ed55a61d984829815bfb567add1d508f053ea5166d5b"
     },
     {
       "group": "common",
@@ -286,7 +286,7 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "9119ac8ccbccec3f6e427cbd0682879a6b36a0f9bfc57c0c93caafe3a2944895",
+      "sha256": "ae688c29d6210ffff09212daf9f2079e0a7d000cc3ffcd52870671d2d2108ee0",
       "source": "LICENSE",
       "source_sha256": "8b6c78d2205c89d079a36c1810b17b3db44f063f2602341ea25051528a054eca",
       "source_git_mode": "100644",
@@ -306,6 +306,48 @@
       "source_sha256": "aaa7b46a3c1d9027c023fd698890e0fc51a278ac6e3034cda8a8354566159a9b",
       "source_git_mode": "100644",
       "license": "NOASSERTION"
+    },
+    {
+      "group": "common",
+      "path": "etc/pipewire/client.conf.d/60-piano-audio.conf",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "ee54bfc15590f1ecabceb2b34da43798b7ccdb4ec1e870dbb2e96ce01af7b25a",
+      "source": "linux/bsp/common/etc/pipewire/client.conf.d/60-piano-audio.conf",
+      "source_component": "Project SunUEFI",
+      "source_sha256": "ee54bfc15590f1ecabceb2b34da43798b7ccdb4ec1e870dbb2e96ce01af7b25a",
+      "source_git_mode": "100644",
+      "license": "MIT"
+    },
+    {
+      "group": "common",
+      "path": "etc/pipewire/pipewire-pulse.conf.d/60-piano-audio.conf",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "67a30e27a28df023d4647a8c43e6028b829e6eaffd693e05f1b457f2ff85d8f7",
+      "source": "linux/bsp/common/etc/pipewire/pipewire-pulse.conf.d/60-piano-audio.conf",
+      "source_component": "Project SunUEFI",
+      "source_sha256": "67a30e27a28df023d4647a8c43e6028b829e6eaffd693e05f1b457f2ff85d8f7",
+      "source_git_mode": "100644",
+      "license": "MIT"
+    },
+    {
+      "group": "common",
+      "path": "etc/wireplumber/wireplumber.conf.d/50-piano-audio.conf",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "620e669c26d4469b4844b7a087724d06b2c768c667f92bd0d2caa9bfefb5f495",
+      "source": "linux/bsp/common/etc/wireplumber/wireplumber.conf.d/50-piano-audio.conf",
+      "source_component": "Project SunUEFI",
+      "source_sha256": "620e669c26d4469b4844b7a087724d06b2c768c667f92bd0d2caa9bfefb5f495",
+      "source_git_mode": "100644",
+      "license": "MIT"
     }
   ],
   "excluded": [

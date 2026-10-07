@@ -12,7 +12,7 @@ from pathlib import Path
 import subprocess
 from prepare_product_pump import ROOT, BASE, SI, transform
 
-PIN = 'bb557081f80f4883ed832e34ab36bdca6ede1e10'
+PIN = 'cfb93724a06ff86ff5ba971413368a7809ee42a5'
 SIMPLEINIT_PIN = '3d66a6e78d519dd050fbebde4db6c5ac933f9aa4'
 DISPLAY = BASE + 'MdeModulePkg/Universal/DisplayEngineDxe/'
 BROWSER = BASE + 'MdeModulePkg/Universal/SetupBrowserDxe/'

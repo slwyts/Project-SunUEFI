@@ -14,7 +14,7 @@ namespace backend, using authenticated APT to install gcc/libc6-dev/make; no
 unsigned fetch-arm64-tools script is executed.
 
 The public C sources are fixed at Debian builder commit
-`fd6266d73f3442b23362260c3aa0c86782e0b52c` and also individually SHA pinned. The
+`25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1` and also individually SHA pinned. The
 helper UAPI is fixed at kernel commit `352508459733d3e6d349ea5581a8dd2fd8bb4180`,
 with a complete header-tree digest. Public C files remain unchanged: generated
 entry sources rename the original main symbol and implement `--help` before

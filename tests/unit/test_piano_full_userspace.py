@@ -24,6 +24,8 @@ class PianoFullUserspaceTests(unittest.TestCase):
             for path in (source/'rootfs/overlay/etc/systemd/system').glob('piano-*.service'):
                 if path.name=='piano-swapfile.service':continue
                 self.assertEqual((target/'etc/systemd/system'/path.name).read_bytes(),path.read_bytes())
+            camerad=Path('usr/lib/systemd/system/piano-camerad.service')
+            self.assertEqual((target/camerad).read_bytes(),(source/'rootfs/overlay'/camerad).read_bytes())
             self.assertNotIn('userdata',(target/'etc/fstab').read_text())
             self.assertEqual(os.readlink(target/'etc/systemd/system/piano-swapfile.service'),'/dev/null')
             self.assertEqual(os.readlink(target/'etc/systemd/system/qbootctl.service'),'/dev/null')

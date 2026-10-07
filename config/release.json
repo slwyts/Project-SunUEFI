@@ -1,14 +1,20 @@
 {
   "schema_version": 1,
   "kernel": {
+    "target": "release-7.2.9",
     "public_baseline": "352508459733d3e6d349ea5581a8dd2fd8bb4180",
     "patch_series": "patches/linux/series.json",
-    "target_tree": "17d484d4771a140e1eeb18eaf0315028adc5a16a",
+    "stable_source": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
+    "stable_commit": "5fce161649b4d779d1b76d9fcd52dc77779774b8",
+    "stable_version": "7.2.9",
+    "target_tree": "0d85ad8d34b7a18a1fa15d2231538b1b32c6f699",
+    "cpu_model_overlay": "linux/dts/piano-cpu-model.dtso",
+    "additional_dtb_overlays": ["linux/dts/piano-audio-dmic-clock.dtso"],
     "root_policy": "LABEL=PIANOROOT"
   },
   "debian": {
     "source": "upstream/debian-piano-current",
-    "commit": "fd6266d73f3442b23362260c3aa0c86782e0b52c",
+    "commit": "25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1",
     "suite": "trixie",
     "apt_policy": "mutable-recorded",
     "snapshot": null,

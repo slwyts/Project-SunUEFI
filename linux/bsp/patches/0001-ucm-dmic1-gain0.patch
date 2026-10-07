@@ -1,6 +1,16 @@
 --- a/rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf
 +++ b/rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf
-@@ -32,10 +32,20 @@
+@@ -23,7 +23,8 @@
+ 	Comment "Speaker playback"
+ 
+ 	Value {
+-		PlaybackChannels 2
++		# Open all four hardware slots; PipeWire duplicates ordinary stereo.
++		PlaybackChannels 4
+ 		PlaybackPriority 100
+ 		PlaybackPCM "hw:${CardId},0"
+ 	}
+@@ -32,10 +33,20 @@
  SectionDevice."Mic" {
  	Comment "Internal microphone"
  

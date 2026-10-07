@@ -36,7 +36,8 @@ class BspPackageTests(unittest.TestCase):
         self.assertEqual(set(report['required_layers']), {'runtime', 'modules', 'mesa', 'firmware'})
         for name in report['payload_files']:
             self.assertFalse(any(token in name for token in ('fstab', 'ssh', 'machine-id', 'gdm3', '80-drivers', 'libinput')))
-        self.assertFalse(any('wireplumber' in p for p in report['payload_files']))
+        self.assertIn('etc/wireplumber/wireplumber.conf.d/50-piano-audio.conf', report['payload_files'])
+        self.assertNotIn('etc/wireplumber/wireplumber.conf.d/50-piano-camera.conf', report['payload_files'])
         row=report['payload_files']['etc/modules-load.d/piano-bluetooth.conf']
         self.assertEqual(row['source_component'],'Project SunUEFI')
         data=(bsp.BSP/'common/etc/modules-load.d/piano-bluetooth.conf').read_text()
@@ -62,21 +63,27 @@ class BspPackageTests(unittest.TestCase):
                 bsp.build(args)
         self.assertFalse(args.output.exists())
 
-    def test_tracked_ucm_patch_applies_to_exact_public_source(self):
-        source = ROOT / 'upstream/debian-piano-current'
-        if not (source / '.git').exists():
-            self.skipTest('Pinned public source is not initialized')
-        row = next(r for r in json.loads((bsp.BSP / 'manifest.json').read_text())['files'] if r['path'].endswith('/HiFi.conf'))
-        commit = json.loads((bsp.BSP / 'manifest.json').read_text())['source']['commit']
-        raw = subprocess.check_output(['git', '-C', source, 'show', commit + ':' + row['source']])
-        self.assertEqual(hashlib.sha256(raw).hexdigest(), row['source_sha256'])
-        path = self.base / row['source']
-        path.parent.mkdir(parents=True)
-        path.write_bytes(raw)
-        subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i', bsp.BSP / row['patch']], cwd=self.base, check=True, capture_output=True)
-        self.assertEqual(path.read_bytes(), (bsp.BSP / 'common' / row['path']).read_bytes())
-        self.assertIn(b"VA DMIC MUX0' DMIC1", path.read_bytes())
-        self.assertIn(b'CaptureChannels 2', path.read_bytes())
+    def test_tracked_patches_apply_to_exact_public_sources(self):
+        source = ROOT / 'tests/fixtures/bsp-upstream'
+        manifest = json.loads((bsp.BSP / 'manifest.json').read_text())
+        for row in manifest['files']:
+            if not row.get('patch'):
+                continue
+            with self.subTest(path=row['path']):
+                raw = (source / row['source']).read_bytes()
+                self.assertEqual(hashlib.sha256(raw).hexdigest(), row['source_sha256'])
+                path = self.base / row['source']
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(raw)
+                subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i', bsp.BSP / row['patch']], cwd=self.base, check=True, capture_output=True)
+                layer = 'common' if row['group'] == 'common' else 'optional/' + row['group']
+                self.assertEqual(path.read_bytes(), (bsp.BSP / layer / row['path']).read_bytes())
+                if row.get('derived_from'):
+                    derived = row['derived_from']
+                    self.assertEqual(hashlib.sha256((ROOT / derived['path']).read_bytes()).hexdigest(), derived['sha256'])
+        hifi = self.base / 'rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf'
+        self.assertIn(b"VA DMIC MUX0' DMIC1", hifi.read_bytes())
+        self.assertIn(b'CaptureChannels 2', hifi.read_bytes())
 
     def test_dpkg_file_owner_and_unowned_existing_file_conflicts(self):
         root = self.base / 'guest'

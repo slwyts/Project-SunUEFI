@@ -135,6 +135,9 @@ def prepare(root=ROOT):
             destination.parent.mkdir(parents=True, exist_ok=True)
             subprocess.run(['git', 'clone', '--local', '--no-checkout', '--',
                             str(root / relative), str(destination)], check=True, capture_output=True)
+        if subprocess.run(['git', '-C', str(destination), 'cat-file', '-e',
+                           commit + '^{commit}'], capture_output=True).returncode:
+            git(destination, 'fetch', '--no-tags', str(root / relative), commit)
         # Only disposable workspace checkouts are reset. Reapplying a changed
         # patch/overlay must start from its recorded upstream commit.
         git(destination, 'checkout', '--detach', '--force', commit)

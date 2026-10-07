@@ -1,6 +1,25 @@
 name: Build products
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-products.yml'
+      - 'build.sh'
+      - 'Makefile'
+      - 'requirements-build.txt'
+      - 'containers/**'
+      - 'config/**'
+      - 'sources.lock.json'
+      - '.gitmodules'
+      - 'patches/firmware/**'
+      - 'uefi/**'
+      - 'vendor/piano/**'
+      - 'vendor/piano-linux/**'
+      - 'linux/**'
+      - 'patches/linux/**'
+      - 'tools/**'
+      - 'upstream/**'
   workflow_dispatch:
     inputs:
       target:
@@ -12,9 +31,36 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: build-products-${{ github.ref }}-${{ inputs.target || 'automatic' }}
+  cancel-in-progress: true
+
 jobs:
+  select:
+    runs-on: ubuntu-24.04
+    outputs:
+      has_build: ${{ steps.targets.outputs.has_build }}
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          submodules: false
+          persist-credentials: false
+      - id: targets
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+          MANUAL_TARGET: ${{ inputs.target }}
+        run: python3 tools/ci_build_targets.py
   build:
-    runs-on: ${{ inputs.target == 'debian-gnome' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    needs: select
+    if: needs.select.outputs.has_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    env:
+      TARGET: ${{ matrix.target }}
+    runs-on: ${{ matrix.target == 'debian-gnome' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -26,20 +72,20 @@ jobs:
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/ccache
-          key: ccache-${{ runner.arch }}-${{ inputs.target }}-${{ hashFiles('sources.lock.json', 'patches/**', 'config/build-container.json') }}-${{ github.sha }}
+          key: ccache-${{ runner.arch }}-${{ env.TARGET }}-${{ hashFiles('sources.lock.json', 'patches/**', 'config/build-container.json') }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.arch }}-${{ inputs.target }}-${{ hashFiles('sources.lock.json', 'patches/**', 'config/build-container.json') }}-
+            ccache-${{ runner.arch }}-${{ env.TARGET }}-${{ hashFiles('sources.lock.json', 'patches/**', 'config/build-container.json') }}-
       - name: Build the pinned-base environment
         run: docker build -t sunuefi-builder -f containers/Dockerfile .
       - name: Build selected product
-        env:
-          TARGET: ${{ inputs.target }}
         run: |
           mkdir -p build/logs build/ccache
           docker run --rm --privileged \
             -v "$PWD:/workspace" -w /workspace \
             -e CCACHE_DIR=/workspace/build/ccache -e CCACHE_MAXSIZE=3G \
             -e TARGET sunuefi-builder bash -euc '
+              git config --global --add safe.directory /workspace
+              git config --global --add safe.directory "/workspace/*"
               python3 -m venv .venv
               .venv/bin/pip install -r requirements-build.txt
               case "$TARGET" in
@@ -49,7 +95,6 @@ jobs:
                   ;;
                 linux)
                   ./build.sh linux
-                  ./build.sh installer
                   ;;
                 debian-gnome)
                   ./build.sh uefi
@@ -57,15 +102,25 @@ jobs:
                   ./build.sh mesa
                   ./build.sh release-rootfs
                   ./build.sh package --root-size-mib 8192
-                  ./build.sh installer --bundle artifacts/release
+                  ./build.sh installer --bundle artifacts/release-7.2.9
                   ;;
               esac
             ' > build/logs/ci-build.log 2>&1
       - name: Downloadable product and standalone installer
+        if: matrix.target != 'linux'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: piano-${{ inputs.target }}-${{ github.sha }}
+          name: piano-${{ env.TARGET }}-${{ github.sha }}
           path: artifacts/installer/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Downloadable Linux Image, config and matching modules
+        if: matrix.target == 'linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: piano-linux-${{ github.sha }}
+          path: artifacts/kernels/release-7.2.9/
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -73,14 +128,25 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: piano-build-records-${{ inputs.target }}-${{ github.sha }}
+          name: piano-build-records-${{ env.TARGET }}-${{ github.sha }}
           path: |
             build/logs/
+            sources.lock.json
+            config/release.json
+            linux/bsp/manifest.json
+            linux/dts/piano-cpu-model.dtso
+            linux/dts/piano-audio-dmic-clock.dtso
+            build/release-7.2.9/source-manifest.json
+            build/mesa/SHA256SUMS
+            build/distros/release-7.2.9/manifest.json
+            build/distros/release-7.2.9/packages.tsv
+            build/distros/release-7.2.9/adapters/manifest.json
+            build/distros/release-7.2.9/runtime/manifest.json
             artifacts/product/manifest.json
-            artifacts/kernels/release/Image
-            artifacts/kernels/release/config
-            artifacts/kernels/release/manifest.json
-            artifacts/release/manifest.json
+            artifacts/kernels/release-7.2.9/Image
+            artifacts/kernels/release-7.2.9/config
+            artifacts/kernels/release-7.2.9/manifest.json
+            artifacts/release-7.2.9/manifest.json
           if-no-files-found: warn
           retention-days: 7
           compression-level: 0

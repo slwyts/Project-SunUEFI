@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build a new public-source GNOME root and label bootstrap; never write a device."""
 import argparse
+from contextlib import contextmanager
 import gzip
 import json
 import os
@@ -77,7 +78,7 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
     return {'status': 'PLAN_ONLY', 'root_policy': 'LABEL=PIANOROOT', 'kernel': str(kernel), 'source': str(source),
             'output': str(output), 'rootfs': str(output / 'rootfs'), 'mesa_dir': str(mesa) if mesa else None,
             'runtime_dir': str(Path(runtime_dir).resolve()) if runtime_dir else None,
-            'kernel_build': str(Path(kernel_build or root / 'build/kernels/release-kernel').resolve()),
+            'kernel_build': str(Path(kernel_build or root / 'build/kernels/release-7.2.9').resolve()),
             'public_source': str(public), 'firmware_source': str(firmware), 'config': config, 'missing_inputs': missing,
             'macros': str(macros), 'v4l2_source': str(loop),
             'steps': ['require root + mount/chroot capability; ARM64 or enabled qemu-aarch64 binfmt',
@@ -123,6 +124,24 @@ def put(root, name, text):
     path = target(root, name)
     if path.is_symlink(): path.unlink()
     path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
+
+
+@contextmanager
+def build_resolver(rootfs):
+    # NetworkManager is not running inside the new build chroot yet.
+    path = target(rootfs, 'etc/resolv.conf')
+    link = path.readlink() if path.is_symlink() else None
+    original = path.read_bytes() if path.is_file() and link is None else None
+    mode = path.stat().st_mode & 0o777 if original is not None else 0o644
+    path.unlink(missing_ok=True)
+    path.write_bytes(Path('/etc/resolv.conf').read_bytes())
+    try:
+        yield
+    finally:
+        path.unlink(missing_ok=True)
+        if link is not None: path.symlink_to(link)
+        elif original is not None:
+            path.write_bytes(original); path.chmod(mode)
 
 
 def apply_policy(rootfs, output, config):
@@ -246,7 +265,8 @@ def execute(record):
              '--suite', cfg['debian']['suite'], '--output', out, '--mesa-dir', record['mesa_dir']])
         if not (out / 'COMPLETE').is_file() or rootfs.stat().st_uid: raise ValueError('Public GNOME build did not complete with native guest ownership')
         put(rootfs, 'usr/sbin/policy-rc.d', '#!/bin/sh\nexit 101\n'); (rootfs / 'usr/sbin/policy-rc.d').chmod(0o755)
-        run(['chroot', rootfs, 'apt-get', 'install', '-y', '--no-install-recommends', *cfg['debian']['extra_packages']])
+        with build_resolver(rootfs):
+            run(['chroot', rootfs, 'apt-get', 'install', '-y', '--no-install-recommends', *cfg['debian']['extra_packages']])
         userspace.stage(rootfs, public); hardware.build(out / 'adapters', public, rootfs); modules.stage(rootfs, kernel)
         if record['runtime_dir']:
             bundle = Path(record['runtime_dir']); rm = json.loads((bundle / 'manifest.json').read_text())

@@ -1,0 +1,22 @@
+[Unit]
+Description=Piano camera daemon (hardware ISP frames to the v4l2loopback cameras)
+# The loopback cameras only advertise capture once the daemon has written
+# to them, and PipeWire does not re-probe a device later: be ready before
+# any session starts. The camera drivers (piano-camera) load later; a
+# camera opens only when an application streams from it.
+Before=systemd-user-sessions.service
+Wants=piano-camera.service
+[Service]
+Type=notify
+NotifyAccess=main
+# /etc/piano/camera.conf: CAMERA_START=0 disables the cameras;
+# PIANO_CAMERA_SATURATION (percent) and PIANO_CAMERA_CONTRAST (0-256)
+# adjust the rendering
+EnvironmentFile=-/etc/piano/camera.conf
+ExecCondition=/bin/sh -c 'test "${CAMERA_START:-1}" = 1'
+ExecStartPre=/usr/sbin/modprobe v4l2loopback
+ExecStart=/usr/lib/piano/piano-camerad
+Restart=on-failure
+RestartSec=2
+[Install]
+WantedBy=multi-user.target

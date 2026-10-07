@@ -3,8 +3,8 @@
   "repository_path": "upstream/linux-piano",
   "profiles": {
     "stable": {
-      "branch": "piano-stable",
-      "commit": "7a33c60fd6eda8a9c20dfda636d4e0a4efa4cbb8",
+      "branch": "piano-7.2.6",
+      "commit": "352508459733d3e6d349ea5581a8dd2fd8bb4180",
       "base_commit": "500df175a7f9e6bc1a9c328590ca5150f84f9ff0",
       "base_config": "piano_defconfig",
       "source_url": "https://github.com/blu-sharky/linux-piano.git",

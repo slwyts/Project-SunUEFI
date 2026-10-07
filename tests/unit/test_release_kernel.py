@@ -1,5 +1,6 @@
 """Prepare a release source tree from real local Git fixtures, without network."""
 from copy import deepcopy
+import difflib
 import hashlib
 import importlib.util
 import json
@@ -156,6 +157,96 @@ class ReleaseKernelTests(unittest.TestCase):
         self.assertEqual(self.git("rev-parse", "HEAD"), self.initial_head)
         self.assertEqual(self.git("config", "--local", "--list"), self.initial_configuration)
         return failure
+
+    def stable_fixture(self, conflict=False, resolve=False):
+        original_branch = self.git('branch', '--show-current')
+        self.git('checkout', '--detach', self.base_commit)
+        (self.repository / 'Makefile').write_text('VERSION = 7\nPATCHLEVEL = 2\nSUBLEVEL = 9\n')
+        (self.repository / 'stable.txt').write_text('official stable fix\n')
+        if conflict:
+            (self.repository / 'config.txt').write_text('stable baseline\n')
+        self.git('add', '.')
+        self.git('commit', '--quiet', '-m', 'Official stable fixture update')
+        stable = self.git('rev-parse', 'HEAD')
+        stable_tree = self.git('rev-parse', 'HEAD^{tree}')
+        self.git('checkout', original_branch)
+        merged = subprocess.run(['git', '-C', str(self.repository), 'merge-tree', '--write-tree',
+                                 self.initial_head, stable], capture_output=True, text=True, env=self.environment)
+        tree = merged.stdout.splitlines()[0]
+        self.target.update(series_target='fixture', patch_tree=self.target_tree,
+                           target_tree=tree, stable_commit=stable, stable_tree=stable_tree,
+                           stable_version='7.2.9', stable_url=SOURCE_URL,
+                           upstream_base_commit=self.base_commit, stable_merged_tree=tree,
+                           merge_date='2020-01-03T00:00:00+00:00')
+        if resolve:
+            before = (self.repository / 'config.txt').read_text()
+            after = before + 'stable baseline\n'
+            resolution = self.patch_directory / 'resolve-config.patch'
+            resolution.write_text(''.join(difflib.unified_diff(before.splitlines(True), after.splitlines(True),
+                                                            fromfile='a/config.txt', tofile='b/config.txt')))
+            environment = self.environment.copy()
+            environment['GIT_INDEX_FILE'] = str(self.root / 'merge-index')
+            subprocess.run(['git', '-C', str(self.repository), 'read-tree', tree], check=True, env=environment)
+            blob = subprocess.check_output(['git', '-C', str(self.repository), 'hash-object', '-w', '--stdin'],
+                                           input=after.encode(), env=environment).decode().strip()
+            subprocess.run(['git', '-C', str(self.repository), 'update-index', '--cacheinfo', '100644', blob, 'config.txt'],
+                           check=True, env=environment)
+            tree = subprocess.check_output(['git', '-C', str(self.repository), 'write-tree'], env=environment).decode().strip()
+            self.target.update(target_tree=tree, stable_merged_tree=tree,
+                               conflict_resolution={'source': 'config.txt', 'file': 'patches/linux/resolve-config.patch',
+                                                    'sha256': self.sha256(resolution)})
+        return stable
+
+    def test_stable_merge_keeps_real_parentage_and_local_patch_content(self):
+        stable = self.stable_fixture()
+        result = self.prepare()
+        metadata = result['stable_update']
+        self.assertEqual(metadata['source_commit'], stable)
+        self.assertEqual(metadata['version'], '7.2.9')
+        self.assertEqual(self.git('show', '-s', '--format=%P', result['actual_commit'], directory=self.worktree).split(),
+                         metadata['parents'])
+        self.assertEqual(metadata['parents'][1], stable)
+        self.assertEqual((self.worktree / 'config.txt').read_text(), 'baseline\nenabled\nready\n')
+        self.assertEqual((self.worktree / 'stable.txt').read_text(), 'official stable fix\n')
+        self.assertEqual(result['actual_tree'], self.target['target_tree'])
+        self.assertEqual(len(result['patches']), 2)
+        self.assertEqual(self.git('merge-base', self.base_commit, result['actual_commit'], directory=self.worktree), self.base_commit)
+
+    def test_stable_merge_is_reproducible_and_repeated_prepare_preserves_marker(self):
+        self.stable_fixture()
+        first = self.prepare()
+        marker = self.source_manifest.read_bytes()
+        self.assertEqual(self.prepare(), first)
+        self.assertEqual(self.source_manifest.read_bytes(), marker)
+        second = self.prepare(worktree=self.root / 'build/kernel-worktrees/stable-reproduction',
+                              source_manifest=self.root / 'build/stable-reproduction/source-manifest.json')
+        self.assertEqual(first['actual_commit'], second['actual_commit'])
+        self.assertEqual(first['actual_tree'], second['actual_tree'])
+
+    def test_reviewed_merge_resolution_keeps_both_changes(self):
+        self.stable_fixture(conflict=True, resolve=True)
+        result = self.prepare()
+        self.assertEqual(result['stable_update']['resolved_conflicts'], ['config.txt'])
+        self.assertEqual((self.worktree / 'config.txt').read_text(), 'baseline\nenabled\nready\nstable baseline\n')
+        self.assertEqual((self.worktree / 'stable.txt').read_text(), 'official stable fix\n')
+        self.assertEqual(self.git('status', '--porcelain', directory=self.worktree), '')
+
+    def test_unreviewed_stable_conflict_retains_merge_and_failure_record(self):
+        self.stable_fixture(conflict=True)
+        with self.assertRaisesRegex(ValueError, 'Stable merge failed'):
+            self.prepare()
+        failure = self.assert_failure_retained()
+        self.assertEqual(failure['failing_patch'], 'merge Linux 7.2.9')
+        self.assertIn('config.txt', failure['error'])
+        self.assertIn('UU config.txt', self.git('status', '--porcelain', directory=self.worktree))
+
+    def test_stable_resolution_patch_tamper_is_rejected_before_source_creation(self):
+        self.stable_fixture(conflict=True, resolve=True)
+        resolution = self.root / self.target['conflict_resolution']['file']
+        resolution.write_bytes(resolution.read_bytes() + b'tampered\n')
+        with self.assertRaisesRegex(ValueError, 'Stable update patch SHA'):
+            self.prepare()
+        self.assert_no_preparation_mutation()
 
     def test_applies_real_patches_and_records_exact_source_tree(self):
         configuration = self.initial_configuration

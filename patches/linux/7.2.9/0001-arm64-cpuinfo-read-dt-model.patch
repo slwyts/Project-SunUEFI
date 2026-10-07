@@ -1,0 +1,41 @@
+--- a/arch/arm64/kernel/cpuinfo.c
++++ b/arch/arm64/kernel/cpuinfo.c
+@@ -17,6 +17,7 @@
+ #include <linux/elf.h>
+ #include <linux/init.h>
+ #include <linux/kernel.h>
++#include <linux/of.h>
+ #include <linux/personality.h>
+ #include <linux/preempt.h>
+ #include <linux/printk.h>
+@@ -219,6 +220,19 @@
+ };
+ #endif /* CONFIG_COMPAT */
+ 
++static void cpuinfo_show_model(struct seq_file *m, int cpu, u32 midr, bool compat)
++{
++	struct device_node *node = of_get_cpu_node(cpu, NULL);
++	const char *model;
++
++	if (node && !of_property_read_string(node, "model", &model))
++		seq_printf(m, "model name\t: %s\n", model);
++	else if (compat)
++		seq_printf(m, "model name\t: ARMv8 Processor rev %d (%s)\n",
++			   MIDR_REVISION(midr), COMPAT_ELF_PLATFORM);
++	of_node_put(node);
++}
++
+ static int c_show(struct seq_file *m, void *v)
+ {
+ 	int j;
+@@ -233,9 +247,7 @@
+ 	 * "processor".  Give glibc what it expects.
+ 	 */
+ 	seq_printf(m, "processor\t: %d\n", cpu);
+-	if (compat)
+-		seq_printf(m, "model name\t: ARMv8 Processor rev %d (%s)\n",
+-			   MIDR_REVISION(midr), COMPAT_ELF_PLATFORM);
++	cpuinfo_show_model(m, cpu, midr, compat);
+ 
+ 	seq_printf(m, "BogoMIPS\t: %lu.%02lu\n",
+ 		   loops_per_jiffy / (500000UL/HZ),

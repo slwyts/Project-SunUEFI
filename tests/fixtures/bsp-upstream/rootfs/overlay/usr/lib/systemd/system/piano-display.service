@@ -1,0 +1,12 @@
+[Unit]
+Description=Piano native display and GPU (msm) bring-up
+# touch-start loads the mainline TLMM and GPI drivers the display chain uses
+After=systemd-udev-trigger.service
+Before=gdm.service display-manager.service
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/piano/display-start --all
+RemainAfterExit=yes
+TimeoutStartSec=240
+[Install]
+WantedBy=graphical.target

@@ -24,6 +24,7 @@ PORTABLE = (
     'tests/unit/test_dma_log.py',
     'tests/unit/test_usb_diagnostic_host.py',
     'tests/unit/test_host_checks.py',
+    'tests/unit/test_ci_build_targets.py',
     'tests/unit/test_vendor_inputs.py',
     'tests/unit/test_release_kernel.py',
     'tests/unit/test_release_rootfs.py',

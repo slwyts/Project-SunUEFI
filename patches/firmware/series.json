@@ -3,13 +3,13 @@
   "patches": [
     {
       "repository": "upstream/Mu-Silicium/Mu_Basecore",
-      "base_commit": "bb557081f80f4883ed832e34ab36bdca6ede1e10",
+      "base_commit": "cfb93724a06ff86ff5ba971413368a7809ee42a5",
       "patch": "mu-basecore.patch",
       "sha256": "f921c45227afe470d3368389409664c463fdb7e158d29e64c3db746c0e538adb"
     },
     {
       "repository": "upstream/Mu-Silicium",
-      "base_commit": "66e7bd1e7bcb757d4b28629bd6409d7209d3b242",
+      "base_commit": "3ec9169f308c01030a7e698072aca5acb2c0a144",
       "patch": "mu-silicium.patch",
       "sha256": "a68761caebc222a17ca0f57fb9f896180535f37ddb408382c6ea2681eb4eba21"
     },

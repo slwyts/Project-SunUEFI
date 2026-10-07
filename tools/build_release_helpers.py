@@ -13,6 +13,16 @@ import build_piano_runtime_helpers as runtime
 from prepare_linux_modules import modinfo
 
 ROOT = Path(__file__).resolve().parents[1]
+STABLE_UAPI_COMMIT = '5fce161649b4d779d1b76d9fcd52dc77779774b8'
+STABLE_UAPI_DIGEST = 'b0effcf9c1b646a06c6839a2b98e1c051a7854f23349f676cfb280d6b749b33e'
+
+
+def expected_uapi_digest(source, commit):
+    # v7.2.9 changes AMDGPU/RDMA headers and linux/version.h. The helpers'
+    # input/media/V4L2 interfaces are unchanged; record the actual header tree.
+    stable = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor',
+                             STABLE_UAPI_COMMIT, commit], capture_output=True)
+    return STABLE_UAPI_DIGEST if stable.returncode == 0 else runtime.UAPI_DIGEST
 
 
 def run(args, cwd=None):
@@ -38,7 +48,8 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
     run(['make', '-C', source, 'O=' + str(kernel_build), 'ARCH=arm64',
          'headers_install', 'INSTALL_HDR_PATH=' + str(uapi)])
     rows = runtime.tree_files(uapi / 'include')
-    if runtime.tree_digest(rows) != runtime.UAPI_DIGEST:
+    uapi_digest = expected_uapi_digest(source, commit)
+    if runtime.tree_digest(rows) != uapi_digest:
         raise ValueError('Runtime UAPI differs from the reviewed public interfaces')
     flags = [compiler, '-O2', '-Wall', '-Wextra', '-Werror']
     if 'clang' in Path(compiler).name:
@@ -94,7 +105,7 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
         'source_commit': runtime.LOOP_COMMIT}
     result = {'status': 'RUNTIME_COMPILED_NOT_DEVICE_TESTED', 'kernel': identity,
         'public_commit': runtime.PUBLIC_COMMIT, 'runtime_files': files,
-        'uapi_sha256': runtime.UAPI_DIGEST, 'macros_commit': runtime.MACROS_COMMIT,
+        'uapi_sha256': uapi_digest, 'uapi_source_commit': commit, 'macros_commit': runtime.MACROS_COMMIT,
         'v4l2_commit': runtime.LOOP_COMMIT, 'hardware_verified': False,
         'toolchain': {'compiler': compiler, 'compiler_sha256': runtime.sha(Path(compiler)),
             'version': subprocess.check_output([compiler, '--version'], text=True).splitlines()[0],

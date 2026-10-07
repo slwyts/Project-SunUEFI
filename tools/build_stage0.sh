@@ -34,7 +34,7 @@ test -x "$sun_tools/bin/lld-link"
 cd "$sun_ws"
 
 # Apply the reference project's required patches to the isolated host checkout.
-for sun_patch in Auth-Service.patch Boot-Manager.patch Timer.patch Usb-Bus.patch; do
+for sun_patch in Auth-Service.patch Boot-Manager.patch Timer.patch Usb-Bus.patch AsmMacroLib.patch; do
   sun_file="$sun_ws/Resources/MuPatches/$sun_patch"
   if git -C Mu_Basecore apply --check "$sun_file" 2>/dev/null; then
     git -C Mu_Basecore apply "$sun_file"

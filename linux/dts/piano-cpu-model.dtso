@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+/plugin/;
+
+// Processor identity only; preserve CPU topology, MIDR and platform model.
+/ {
+    fragment@0 {
+        target-path = "/cpus/cpu@0";
+        __overlay__ {
+            model = "Qualcomm Snapdragon 8 Elite Mobile Platform (SM8750)";
+        };
+    };
+    fragment@1 {
+        target-path = "/cpus/cpu@100";
+        __overlay__ {
+            model = "Qualcomm Snapdragon 8 Elite Mobile Platform (SM8750)";
+        };
+    };
+    fragment@2 {
+        target-path = "/cpus/cpu@200";
+        __overlay__ {
+            model = "Qualcomm Snapdragon 8 Elite Mobile Platform (SM8750)";
+        };
+    };
+    fragment@3 {
+        target-path = "/cpus/cpu@300";
+        __overlay__ {
+            model = "Qualcomm Snapdragon 8 Elite Mobile Platform (SM8750)";
+        };
+    };
+    fragment@4 {
+        target-path = "/cpus/cpu@400";
+        __overlay__ {
+            model = "Qualcomm Snapdragon 8 Elite Mobile Platform (SM8750)";
+        };
+    };
+    fragment@5 {
+        target-path = "/cpus/cpu@500";
+        __overlay__ {
+            model = "Qualcomm Snapdragon 8 Elite Mobile Platform (SM8750)";
+        };
+    };
+    fragment@6 {
+        target-path = "/cpus/cpu@10000";
+        __overlay__ {
+            model = "Qualcomm Snapdragon 8 Elite Mobile Platform (SM8750)";
+        };
+    };
+    fragment@7 {
+        target-path = "/cpus/cpu@10100";
+        __overlay__ {
+            model = "Qualcomm Snapdragon 8 Elite Mobile Platform (SM8750)";
+        };
+    };
+};

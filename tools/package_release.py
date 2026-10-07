@@ -18,6 +18,7 @@ import tempfile
 from make_kernel_initramfs import inspect_newc
 from build_piano_ram_bootstrap import guest_resolve
 from prepare_boot_files import fdt_info, image_info, initramfs_info
+from compose_piano_dtb import read_fdt
 
 ROOT = Path(__file__).resolve().parents[1]
 MIB = 1024 * 1024
@@ -35,6 +36,37 @@ def sha(path):
 
 def run(argv, **kwargs):
     return subprocess.run([str(x) for x in argv], check=True, capture_output=True, text=True, **kwargs)
+
+
+def apply_cpu_model_overlay(board, overlay, work, cpu_only=True):
+    """Apply declared board properties to a copy of the captured input."""
+    before = read_fdt(board.read_bytes())['tree']
+    compiled, derived = work / 'cpu-model.dtbo', work / 'board-with-cpu-model.dtb'
+    run(['dtc', '-@', '-I', 'dts', '-O', 'dtb', '-o', compiled, overlay])
+    fragments = read_fdt(compiled.read_bytes())['tree']
+    expected = {}
+    for path, properties in fragments.items():
+        if path.count('/') == 1 and path.startswith('/fragment@'):
+            target = properties['target-path'].rstrip(b'\0').decode()
+            payload = fragments[path + '/__overlay__']
+            require(target in before, 'Board overlay must target an existing node')
+            if cpu_only:
+                require(set(payload) == {'model'} and target.startswith('/cpus/cpu@'),
+                        'CPU model overlay must only add CPU model properties')
+            expected[target] = payload
+    require(expected, 'Board overlay has no targets')
+    run(['fdtoverlay', '-i', board, '-o', derived, compiled])
+    after = read_fdt(derived.read_bytes())['tree']
+    for target, payload in expected.items():
+        for key, value in payload.items():
+            require(after[target].get(key) == value, 'Board overlay did not apply')
+            if key in before[target]: after[target][key] = before[target][key]
+            else: after[target].pop(key, None)
+    require(after == before, 'Board overlay changed undeclared properties')
+    result = {'input_sha256': sha(board), 'overlay_sha256': sha(overlay),
+              'output_sha256': sha(derived), 'cpu_nodes' if cpu_only else 'nodes': sorted(expected)}
+    derived.replace(board)
+    return result
 
 
 def record(path):
@@ -257,6 +289,13 @@ def package(args):
     for source, name, expected in zip(sources, names, hashes):
         shutil.copyfile(source, work / name)
         require(sha(work / name) == expected, 'Source changed while copying: ' + name)
+    dtb_derivation = None
+    if args.cpu_model_overlay:
+        require(shutil.which('dtc') and shutil.which('fdtoverlay'), 'CPU model overlay needs dtc and fdtoverlay')
+        dtb_derivation = apply_cpu_model_overlay(work / 'board.dtb', args.cpu_model_overlay, work)
+    extra_dtb_overlays = []
+    for overlay in args.dtb_overlay:
+        extra_dtb_overlays.append(apply_cpu_model_overlay(work / 'board.dtb', overlay, work, cpu_only=False))
     boot = output / 'boot.img'
     run([sys.executable, maker, '--header_version', '2', '--pagesize', '4096', '--kernel', work / 'Image', '--ramdisk', work / 'initramfs', '--dtb', work / 'board.dtb', '-o', boot],
         env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
@@ -290,6 +329,8 @@ def package(args):
               'metadata': {'archive': 'numeric uid/gid, modes, symlinks, hardlinks, xattrs and ACLs; mtime normalized',
                            'ext4': 'all inode uid/gid/mode/mtime and source xattrs/ACLs checked; ctime normalized; sparse source allocation not preserved'},
               'files': {}}
+    if dtb_derivation: result['dtb_derivation'] = dtb_derivation
+    if extra_dtb_overlays: result['additional_dtb_overlays'] = extra_dtb_overlays
     shutil.rmtree(work)
     for path in sorted(output.iterdir()):
         if path.name == '.incomplete':
@@ -304,6 +345,8 @@ def package(args):
 
 def parser():
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--cpu-model-overlay', type=Path)
+    ap.add_argument('--dtb-overlay', type=Path, action='append', default=[])
     for name in ('uefi', 'kernel', 'dtb', 'initramfs', 'rootfs', 'output'):
         ap.add_argument('--' + name, type=Path, required=True)
     for name in ('uefi', 'kernel', 'dtb', 'initramfs'):

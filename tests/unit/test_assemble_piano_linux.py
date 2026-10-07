@@ -16,6 +16,7 @@ from build_piano_ram_bootstrap import write_newc
 
 DT_DIRS = ('piano-full-dtb-fd6266-impact-fixed', 'piano-linux-owned-dma',
            'piano-linux-managed-clocks-v1', 'piano-linux-managed-dsp-pcie-v1')
+DT_COMMIT = 'fd6266d73f3442b23362260c3aa0c86782e0b52c'
 LIB = ROOT / 'upstream/dtc/libfdt/libfdt.so.1.8.1'
 
 
@@ -37,17 +38,23 @@ class AssemblePianoLinuxTests(unittest.TestCase):
     def test_actual_full_dtb_chain_and_stage_mutation_rejected(self):
         manifests = [ROOT / 'private/analysis' / name / 'manifest.json' for name in DT_DIRS]
         dtb = manifests[-1].parent / 'Piano-full-linux-managed-dsp-pcie.dtb'
-        result = assemble.device_tree(dtb, manifests, LIB)
-        self.assertEqual(result['sha256'], 'c2cb041e2b286713c225af7bf0e3a5f7eec8926db168149984823c25ad3f38c4')
-        self.assertFalse(result['memory_ownership_authorized'])
-        with tempfile.TemporaryDirectory(prefix='assemble-dtb-') as directory:
-            folder = Path(directory)
-            original = manifests[-1]
-            shutil.copyfile(dtb, folder / dtb.name)
-            value = json.loads(original.read_text());value['changes'] = []
-            broken = folder / 'manifest.json';broken.write_text(json.dumps(value))
-            with self.assertRaisesRegex(ValueError, 'property changes'):
-                assemble.device_tree(dtb, manifests[:-1] + [broken], LIB)
+        if assemble.DEBIAN_COMMIT != DT_COMMIT:
+            with self.assertRaisesRegex(ValueError, 'complete fold provenance'):
+                assemble.device_tree(dtb, manifests, LIB)
+        # These sealed DT fixtures retain their original source identity after
+        # a source upgrade. Exercise their chain under that historical pin.
+        with patch.object(assemble, 'DEBIAN_COMMIT', DT_COMMIT):
+            result = assemble.device_tree(dtb, manifests, LIB)
+            self.assertEqual(result['sha256'], 'c2cb041e2b286713c225af7bf0e3a5f7eec8926db168149984823c25ad3f38c4')
+            self.assertFalse(result['memory_ownership_authorized'])
+            with tempfile.TemporaryDirectory(prefix='assemble-dtb-') as directory:
+                folder = Path(directory)
+                original = manifests[-1]
+                shutil.copyfile(dtb, folder / dtb.name)
+                value = json.loads(original.read_text());value['changes'] = []
+                broken = folder / 'manifest.json';broken.write_text(json.dumps(value))
+                with self.assertRaisesRegex(ValueError, 'property changes'):
+                    assemble.device_tree(dtb, manifests[:-1] + [broken], LIB)
 
     def test_obsolete_root_missing_final_releases_is_rejected_before_big_read(self):
         root = ROOT / 'build/distros/debian13-piano-full'

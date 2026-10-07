@@ -18,14 +18,14 @@ import subprocess
 from prepare_linux_modules import modinfo
 
 ROOT=Path(__file__).resolve().parents[1]
-PUBLIC_COMMIT='fd6266d73f3442b23362260c3aa0c86782e0b52c'
+PUBLIC_COMMIT='25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1'
 UAPI_COMMIT='352508459733d3e6d349ea5581a8dd2fd8bb4180'
 UAPI_DIGEST='c4c7b7358f4440da8832eea607ff812fb5481181401e869a34cca70bbe103d4c'
 MACROS_COMMIT='993a17dcb672357998a463a73f120064d6c74f4f'
 LOOP_COMMIT='0f9ee86760b7f2bea174b7e3e7a1d38845da0ab4'
 PUBLIC_SOURCES={
  'piano-touch-view':('initramfs/touch-view/piano-touch-view.c','eb1bac5a7bfac3200248ebe39e8d9564bed3d7848b11655ded5d065dc0ef6e12','usr/bin/piano-touch-view'),
- 'piano-camerad':('camera/piano-camerad.c','2ed7eb0067db6d070dbebe9ac4d195906446cd1ab4da571b3f57e802ac77a898','usr/lib/piano/piano-camerad'),
+ 'piano-camerad':('camera/piano-camerad.c','921f9c1ea6155d6876502249d8ff23fd70cbf2f6e7e33298738a65720d690bee','usr/lib/piano/piano-camerad'),
  'piano-pd-locator':('initramfs/pd-locator/piano-pd-locator.c','8de9d2840a896b4bd6c90bd4b124479d2f142e9e85420f2022894bb32fc8dde8','usr/sbin/piano-pd-locator')}
 TOOL_PINS={'clang':'939a882527432ec23b094c289e7f170bf2d6ec282e74dde75e31b08602fa3eae',
  'ld.lld':'57b6c64db534793f05918a6e935c900e9938bd64d0ac95933285930b568387ea',

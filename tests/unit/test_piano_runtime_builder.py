@@ -1,6 +1,9 @@
 """Actual runtime compilation and exact kernel/stage refusal, no live root edit."""
 from pathlib import Path
 import json
+import os
+import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -11,6 +14,23 @@ import build_piano_runtime_helpers as runtime
 
 
 class PianoRuntimeBuilderTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('cc'), 'Native C compiler unavailable')
+    def test_camerad_readiness_notification_without_camera_access(self):
+        source=ROOT/'upstream/debian-piano-current'/runtime.PUBLIC_SOURCES['piano-camerad'][0]
+        if not source.exists():self.skipTest('Pinned camera source not fetched')
+        with tempfile.TemporaryDirectory(prefix='camera-notify-')as directory:
+            folder=Path(directory);harness=folder/'notify.c';binary=folder/'notify'
+            harness.write_text('#define main PianoCameraDeviceMain\n#include '+json.dumps(str(source))+'\n#undef main\nint main(void){notify_ready();return 0;}\n')
+            # Production compiler warnings are covered by the canonical ARM64
+            # build above; this native harness only exercises notify_ready().
+            subprocess.run(['cc','-O2',str(harness),'-lm','-o',str(binary)],check=True)
+            for address in (str(folder/'notify.sock'),'\0piano-camera-notify-'+str(os.getpid())):
+                with self.subTest(address=address),socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM)as listener:
+                    listener.bind(address);listener.settimeout(2)
+                    env=os.environ.copy();env['NOTIFY_SOCKET']='@'+address[1:]if address[0]=='\0'else address
+                    subprocess.run([str(binary)],env=env,check=True,timeout=5)
+                    self.assertEqual(listener.recv(128),b'READY=1')
+
     def test_actual_canonical_compile_help_topology_and_module(self):
         if not(ROOT/'build/distros/piano-runtime-build/usr/lib/aarch64-linux-gnu/libc.a').exists():self.skipTest('Verified native ARM64 sysroot not prepared')
         with tempfile.TemporaryDirectory(prefix='runtime-build-test-',dir=ROOT/'build')as directory:

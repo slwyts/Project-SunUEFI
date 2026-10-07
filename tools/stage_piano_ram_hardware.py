@@ -12,7 +12,7 @@ import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-PUBLIC = 'fd6266d73f3442b23362260c3aa0c86782e0b52c'
+PUBLIC = '25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1'
 CHECKER_SHA = '1f2c26329c00b5b791a101d409032cd3d8b1962f83018937807c5cbbb7f5a2e1'
 CONTEXT_CHECKER_SHA = '9731f4027c0656d50a930ed2fb087d0ccfb3a99bb4373cfb65e9e0a0865ac63d'
 PINS = {
@@ -23,7 +23,7 @@ PINS = {
     'audio-start': 'a19b542542eeef5539728b19f52d92c6fbfb7f6deb0e15668609666e76522f2c',
     'keyboard-start': 'e09115a093c9cdfc239706b280baeda09ab038cf108c1360f902f1b5558609ac',
     'video-start': 'b6c0e2a77d58981592fe779405d5d52be5faff4fbc11837b7c3403497d86aa62',
-    'camera-start': '3a8dbee57c21c98b6e057a4b17725c972dc18d5d033469b1c50482f5c5480527',
+    'camera-start': '943679e42c36ae95325566136ecbe599ce7a6a4070a16d11a25079ff0a12d0e3',
 }
 GUARD = '/usr/lib/piano/piano-ram-hardware-prepare --require-scope '
 LEGACY_GATE = "[ -f /run/piano-smmu-ready ] || { echo 'SMMU initialization missing'; exit 1; }"
@@ -141,6 +141,9 @@ def build(output, source, rootfs=None):
              (ROOT / 'linux/userspace/piano-ram-hardware-prepare').read_bytes()}
     # Install these local additions from the same files as the generic BSP.
     for relative in ('etc/modules-load.d/piano-bluetooth.conf',
+                     'etc/pipewire/client.conf.d/60-piano-audio.conf',
+                     'etc/pipewire/pipewire-pulse.conf.d/60-piano-audio.conf',
+                     'etc/wireplumber/wireplumber.conf.d/50-piano-audio.conf',
                      'usr/lib/systemd/system/upower.service.d/20-piano-keyboard.conf'):
         files[relative] = (ROOT / 'linux/bsp/common' / relative).read_bytes()
     audio_path = 'usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf'
@@ -161,6 +164,8 @@ def build(output, source, rootfs=None):
 \t\tcset "name='VA_AIF1_CAP Mixer DEC0' 0"
 \t]'''
     audio_text = replace_once(audio_text, includes, sequence)
+    audio_text = replace_once(audio_text, '\t\tPlaybackChannels 2',
+                             '\t\t# Open all four hardware slots; PipeWire duplicates ordinary stereo.\n\t\tPlaybackChannels 4')
     audio_text = replace_once(audio_text, '\t\tCapturePriority 100', '\t\tCaptureChannels 2\n\t\tCapturePriority 100')
     files[audio_path] = audio_text.encode()
     # Keep the pinned service intact; order the real Debian display manager
@@ -209,7 +214,7 @@ def build(output, source, rootfs=None):
                                             'gpu', 'gmu', 'mdss', 'display', 'display-active', 'video', 'camera', 'adsp', 'audio', 'radio'],
               'clock_scope': 'ACTUAL_DT_CONSUMERS_AND_BOUND_PROVIDER_ONLY_NO_RATE_ENABLE_READBACK',
               'context_scope': 'KERNEL_PRIVATE_AND_HARDWARE_CONFIGURATION_ONLY_NO_DMA_TRANSFER',
-              'audio_profile': {'source_sha256': digest(original_audio), 'microphone': 'DMIC1', 'capture_channels': 2, 'dec0_gain_db': 0, 'required_desktop_packages': ['libcanberra-pulse', 'rtkit'], 'noise_quality_verified': False},
+              'audio_profile': {'source_sha256': digest(original_audio), 'microphone': 'DMIC1', 'capture_channels': 2, 'capture_positions': ['MONO', 'AUX0'], 'dec0_gain_db': 0, 'playback_channels': 4, 'speaker_mix': 'simple left/right duplication for stereo streams', 'required_desktop_packages': ['libcanberra-pulse', 'rtkit'], 'noise_quality_verified': False},
               'device_transfer_validation_pending': True,
               'pci_parf_hardware_table_verified': False,
               'domain_forced': False}

@@ -36,6 +36,30 @@ TARGETS = {
 }
 COMMITTER_NAME = 'SunUEFI source preparation'
 COMMITTER_EMAIL = 'source-preparation@example.invalid'
+DEFAULT_TARGET = 'release-7.2.9'
+TARGETS[DEFAULT_TARGET] = {
+    **TARGETS['kernel69'],
+    'series_target': 'kernel69',
+    'patch_tree': TARGETS['kernel69']['target_tree'],
+    'target_tree': '0d85ad8d34b7a18a1fa15d2231538b1b32c6f699',
+    'stable_commit': '5fce161649b4d779d1b76d9fcd52dc77779774b8',
+    'stable_tree': 'c278d1443495d2a1a07fff2bcfb286b5c35baaea',
+    'stable_version': '7.2.9',
+    'stable_url': 'https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git',
+    'stable_merged_tree': 'f1bccb0e42a13a6dcf1174cafb5e3253f4b5a22d',
+    'merge_date': '2026-10-08T00:00:00+00:00',
+    'worktree_name': 'release-7.2.9',
+    'manifest_directory': 'release-7.2.9',
+    'conflict_resolution': {
+        'source': 'drivers/i2c/busses/i2c-qcom-cci.c',
+        'file': 'patches/linux/7.2.9/cci-scoped-node-resolution.patch',
+        'sha256': 'c59308c6b186c85e5004e72508c49328d0dacfdcd009709fe993aabcb058b6eb',
+    },
+    'cpu_model_patch': {
+        'file': 'patches/linux/7.2.9/0001-arm64-cpuinfo-read-dt-model.patch',
+        'sha256': 'efc25dfd43e5b32ee3b46176f7ae4716dc94bb6af27f3b064ebbeccc19cfca64',
+    },
+}
 
 
 def sha(data):
@@ -66,10 +90,11 @@ def load_series(root, target):
     manifest_path = folder / 'series.json'
     raw = manifest_path.read_bytes()
     series = json.loads(raw)
-    if series.get('schema_version') != 1 or series.get('target') != target:
+    if series.get('schema_version') != 1 or series.get('target') != policy.get('series_target', target):
         raise ValueError('Patch series schema/target mismatch')
     for key in ('base_commit', 'target_tree', 'original_target_commit', 'source_url'):
-        if series.get(key) != policy[key]:
+        expected = policy.get('patch_tree', policy['target_tree']) if key == 'target_tree' else policy[key]
+        if series.get(key) != expected:
             raise ValueError('Patch series pin mismatch: ' + key)
     object_id(series.get('base_tree'), 'base tree')
     rows = series.get('patches')
@@ -108,7 +133,7 @@ def load_series(root, target):
         if not data.startswith(('From ' + commit + ' Mon Sep 17 00:00:00 2001\n').encode()):
             raise ValueError('Patch original commit header mismatch: ' + name)
         patches.append((path, dict(row)))
-    if previous != policy['original_target_commit'] or rows[-1]['tree'] != policy['target_tree']:
+    if previous != policy['original_target_commit'] or rows[-1]['tree'] != policy.get('patch_tree', policy['target_tree']):
         raise ValueError('Patch series target mismatch')
     return series, patches, sha(raw)
 
@@ -157,6 +182,16 @@ def ensure_repository(root, repository, policy):
             git(repo, *args, policy['source_url'], commit)
         if git(repo, 'rev-parse', commit + '^{commit}') != commit:
             raise ValueError('Public baseline object mismatch')
+    if policy.get('stable_commit'):
+        stable = policy['stable_commit']
+        ancestry = git(repo, 'merge-base', '--is-ancestor', policy['upstream_base_commit'], stable, check=False)
+        if ancestry.returncode:
+            # Fetch only this fixed stable tip. Deepening every shallow ref is
+            # unnecessary; 2048 commits cover the 1633 fixes after v7.2.6.
+            git(repo, 'fetch', '--no-tags', '--depth=2048', policy['stable_url'], stable)
+        if (git(repo, 'rev-parse', stable + '^{tree}') != policy['stable_tree'] or
+                git(repo, 'merge-base', '--is-ancestor', policy['upstream_base_commit'], stable, check=False).returncode):
+            raise ValueError('Stable source tree/ancestry mismatch')
     return repo
 
 
@@ -167,7 +202,7 @@ def clean(work):
     if any(line and (line[0].islower() or line[0] == 'S') for line in flags):
         raise ValueError('Release kernel index hides working-tree changes')
     git_dir = Path(git(work, 'rev-parse', '--absolute-git-dir'))
-    if (git_dir / 'rebase-apply').exists():
+    if (git_dir / 'rebase-apply').exists() or (git_dir / 'MERGE_HEAD').exists():
         raise ValueError('Release kernel patch application is incomplete')
 
 
@@ -180,12 +215,73 @@ def write_manifest(path, record):
     temporary.replace(path)
 
 
-def prepare(root=ROOT, repository=None, worktree=None, source_manifest=None, target='kernel69'):
+def update_patches(root, policy):
+    result = {}
+    for key in ('conflict_resolution', 'cpu_model_patch'):
+        if key not in policy:
+            continue
+        row = policy[key]
+        path = root / row['file']
+        if path.is_symlink() or not path.resolve().is_relative_to(root / 'patches/linux') or sha(path.read_bytes()) != row['sha256']:
+            raise ValueError('Stable update patch SHA/path mismatch: ' + row['file'])
+        result[key] = path
+    return result
+
+
+def merge_stable(work, policy, paths):
+    env = os.environ.copy()
+    env.update({'GIT_AUTHOR_NAME': COMMITTER_NAME, 'GIT_AUTHOR_EMAIL': COMMITTER_EMAIL,
+                'GIT_COMMITTER_NAME': COMMITTER_NAME, 'GIT_COMMITTER_EMAIL': COMMITTER_EMAIL,
+                'GIT_AUTHOR_DATE': policy['merge_date'], 'GIT_COMMITTER_DATE': policy['merge_date']})
+    before = git(work, 'rev-parse', 'HEAD')
+    merged = git(work, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null',
+                 'merge', '--no-ff', '--no-commit', '--no-stat', policy['stable_commit'], env=env, check=False)
+    conflicts = git(work, 'diff', '--name-only', '--diff-filter=U').splitlines()
+    if merged.returncode:
+        resolution = policy.get('conflict_resolution')
+        if not resolution or conflicts != [resolution['source']]:
+            raise ValueError('Stable merge failed: ' + merged.stderr.strip() + '; conflicts=' + repr(conflicts))
+        # Resolve the one reviewed CCI overlap from our exact source, retaining
+        # all other auto-merged stable changes already staged by Git.
+        git(work, 'checkout', 'HEAD', '--', resolution['source'])
+        git(work, 'apply', '--check', '--index', paths['conflict_resolution'])
+        git(work, 'apply', '--index', paths['conflict_resolution'])
+    if git(work, 'write-tree') != policy['stable_merged_tree']:
+        raise ValueError('Stable merge result tree mismatch')
+    git(work, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null',
+        'commit', '-m', 'merge: Linux ' + policy['stable_version'] + ' stable fixes', env=env)
+    merge_commit = git(work, 'rev-parse', 'HEAD')
+    parents = git(work, 'show', '-s', '--format=%P', merge_commit).split()
+    if parents != [before, policy['stable_commit']]:
+        raise ValueError('Stable merge parent provenance mismatch')
+    metadata = {'source_url': policy['stable_url'], 'source_commit': policy['stable_commit'],
+                'source_tree': policy['stable_tree'], 'version': policy['stable_version'],
+                'merge_commit': merge_commit, 'parents': parents,
+                'merged_tree': policy['stable_merged_tree'], 'resolved_conflicts': conflicts}
+    if 'cpu_model_patch' in paths:
+        git(work, 'apply', '--check', '--index', paths['cpu_model_patch'])
+        git(work, 'apply', '--index', paths['cpu_model_patch'])
+        git(work, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null',
+            'commit', '-m', 'fix(arm64): expose DT CPU model in cpuinfo', env=env)
+        metadata['cpu_model_commit'] = git(work, 'rev-parse', 'HEAD')
+    makefile = (work / 'Makefile').read_text()
+    fields = [re.search(r'^' + key + r' = (\d+)$', makefile, re.M)
+              for key in ('VERSION', 'PATCHLEVEL', 'SUBLEVEL')]
+    if not all(fields):
+        raise ValueError('Prepared kernel Makefile version fields missing')
+    version = '.'.join(field.group(1) for field in fields)
+    if version != policy['stable_version']:
+        raise ValueError('Prepared kernel Makefile version mismatch')
+    return metadata
+
+
+def prepare(root=ROOT, repository=None, worktree=None, source_manifest=None, target=DEFAULT_TARGET):
     root = Path(root).resolve()
     series, patches, series_hash = load_series(root, target)
     policy = TARGETS[target]
-    work = Path(worktree or root / 'build/kernel-worktrees/release-kernel').resolve()
-    marker = Path(source_manifest or root / 'build/release-kernel/source-manifest.json').resolve()
+    paths = update_patches(root, policy)
+    work = Path(worktree or root / 'build/kernel-worktrees' / policy.get('worktree_name', 'release-kernel')).resolve()
+    marker = Path(source_manifest or root / 'build' / policy.get('manifest_directory', 'release-kernel') / 'source-manifest.json').resolve()
     if not work.is_relative_to(root / 'build/kernel-worktrees'):
         raise ValueError('Release worktree must stay under project build/kernel-worktrees')
     if not marker.is_relative_to(root / 'build') or marker.is_relative_to(work):
@@ -205,6 +301,13 @@ def prepare(root=ROOT, repository=None, worktree=None, source_manifest=None, tar
             raise ValueError('Prepared release source HEAD/tree drifted')
         if git(work, 'merge-base', '--is-ancestor', policy['base_commit'], record['actual_commit'], check=False).returncode:
             raise ValueError('Prepared source no longer descends from the public baseline')
+        if policy.get('stable_commit'):
+            stable = record.get('stable_update', {})
+            if (stable.get('source_commit') != policy['stable_commit'] or
+                    stable.get('source_tree') != policy['stable_tree'] or
+                    record.get('update_patches') != {key: policy[key] for key in paths} or
+                    git(work, 'merge-base', '--is-ancestor', policy['stable_commit'], record['actual_commit'], check=False).returncode):
+                raise ValueError('Prepared stable update provenance mismatch')
         return record
     if marker.exists():
         raise ValueError('Source manifest exists without its worktree; preserve it')
@@ -220,6 +323,8 @@ def prepare(root=ROOT, repository=None, worktree=None, source_manifest=None, tar
         'tool_sha256': sha(Path(__file__).read_bytes()), 'kernel_built': False,
         'device_operation_performed': False,
     }
+    if policy.get('stable_commit'):
+        record['update_patches'] = {key: policy[key] for key in paths}
     current_patch = None
     try:
         work.parent.mkdir(parents=True, exist_ok=True)
@@ -237,11 +342,17 @@ def prepare(root=ROOT, repository=None, worktree=None, source_manifest=None, tar
             record['patches'].append({**row, 'applied_commit': applied_commit, 'applied_tree': applied_tree})
             if applied_tree != row['tree']:
                 raise ValueError('Applied patch tree mismatch: ' + path.name)
+        if policy.get('stable_commit'):
+            current_patch = 'merge Linux ' + policy['stable_version']
+            record['stable_update'] = merge_stable(work, policy, paths)
+            record['kernel_version'] = record['stable_update']['version']
+            record.update(actual_commit=git(work, 'rev-parse', 'HEAD'), actual_tree=git(work, 'rev-parse', 'HEAD^{tree}'))
         if git(work, 'rev-parse', 'HEAD^{tree}') != policy['target_tree']:
             raise ValueError('Final release kernel tree mismatch')
         clean(work)
         if load_series(root, target)[2] != series_hash:
             raise ValueError('Patch series changed during preparation')
+        update_patches(root, policy)
         record['status'] = 'SOURCE_PREPARED_NOT_BUILT'
         write_manifest(marker, record)
         return record
@@ -259,7 +370,7 @@ def main():
     parser.add_argument('--repository', type=Path, help='Existing kernel Git repository; default is project-local')
     parser.add_argument('--worktree', type=Path, help='Fresh worktree under project build/kernel-worktrees')
     parser.add_argument('--source-manifest', type=Path, help='New provenance record under project build')
-    parser.add_argument('--target', default='kernel69')
+    parser.add_argument('--target', default=DEFAULT_TARGET)
     args = parser.parse_args()
     try:
         result = prepare(repository=args.repository, worktree=args.worktree,

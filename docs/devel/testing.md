@@ -27,4 +27,8 @@ python3 tools/check_host.py --group python-all
 
 PR 写明运行的组或具体命令、通过/失败/跳过及原因。主机检查证明解析、契约或模拟行为；设备结论另记录源码/镜像身份、启动路径、实际屏幕/输入/数据结果与恢复情况。编译、模拟 DMA 或协议存在都不能替代真实硬件传输。
 
-当前 CI 只覆盖 portable 组，不编译完整产品、不提供私有输入、不运行设备实验。发布前还需[发布要求](release.md)中的构建与设备验收。
+Portable CI 在没有上游 checkout 的源码副本中运行，BSP 补丁输入是仓库中的固定原版夹具，并核对来源 SHA 与补丁结果；缺少 submodule 不再跳过这项验证。
+
+产品 CI 对 `main` 的相关源变更自动选择 UEFI、Linux 或两者构建；共享构建工具与来源锁变化会触发两者。UEFI 输出产品镜像和安装工具，Linux 输出 Image、配置及完整匹配模块。完整 Debian GNOME 仍通过 `Build products` 的 `debian-gnome` 手动目标构建，输出 ESP/root 镜像及安装工具。
+
+CI 使用与本地相同的 `build.sh`、固定来源、补丁、Kernel 7.2.9 配置、BSP 音频配置及 CPU/音频 DT overlays，不读取 `private/` 或本机已应用的工作副本。构建记录附带源码树、runtime/UAPI、固件与 Mesa/APT 包来源；目标是功能与安装步骤一致，mutable APT、时间和构建路径仍可能影响二进制字节。CI 不运行设备实验。发布前还需[发布要求](release.md)中的构建与设备验证。

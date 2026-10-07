@@ -14,7 +14,7 @@ import subprocess
 import uuid
 from analyze_capture import parse_fdt, reg_ranges, scan_fdts, text
 
-REFERENCE_COMMIT = '66e7bd1e7bcb757d4b28629bd6409d7209d3b242'
+REFERENCE_COMMIT = '3ec9169f308c01030a7e698072aca5acb2c0a144'
 NATIVE_MODULES = (
     'EnvDxeEnhanced', 'ShmBridgeDxeLA', 'ScmDxeCompat', 'TzDxeLA',
     'ChipInfo', 'PlatformInfoDxeDriver', 'DALSys', 'HWIODxeDriver',

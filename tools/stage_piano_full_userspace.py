@@ -12,7 +12,7 @@ import shutil
 import subprocess
 
 ROOT=Path(__file__).resolve().parents[1]
-EXPECTED='fd6266d73f3442b23362260c3aa0c86782e0b52c'
+EXPECTED='25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1'
 
 
 def stage(rootfs, source):

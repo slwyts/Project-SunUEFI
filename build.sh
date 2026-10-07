@@ -15,10 +15,10 @@ case "$command" in
     python3 - <<'PY_KERNEL'
 import json, subprocess
 from pathlib import Path
-record=json.loads(Path('build/release-kernel/source-manifest.json').read_text())
+record=json.loads(Path('build/release-7.2.9/source-manifest.json').read_text())
 subprocess.run(['python3','tools/build_piano_full_kernel.py','--worktree',record['worktree'],
  '--commit',record['actual_commit'],'--root','LABEL=PIANOROOT',
- '--build-dir','build/kernels/release','--artifacts','artifacts/kernels/release'],check=True)
+ '--build-dir','build/kernels/release-7.2.9','--artifacts','artifacts/kernels/release-7.2.9'],check=True)
 PY_KERNEL
     ;;
   mesa)
@@ -29,15 +29,17 @@ PY_KERNEL
   rootfs)
     python3 tools/assemble_rootfs.py "$@" ;;
   release-rootfs)
-    python3 tools/build_release_rootfs.py --kernel artifacts/kernels/release \
-      --source build/kernel-worktrees/release-kernel --kernel-build build/kernels/release \
-      --output build/distros/release --mesa-dir build/mesa/runtime --execute "$@" ;;
+    python3 tools/build_release_rootfs.py --kernel artifacts/kernels/release-7.2.9 \
+      --source build/kernel-worktrees/release-7.2.9 --kernel-build build/kernels/release-7.2.9 \
+      --output build/distros/release-7.2.9 --mesa-dir build/mesa/runtime --execute "$@" ;;
   package|esp)
     python3 tools/package_release.py --uefi artifacts/product/PianoUEFI-product.img \
-      --kernel artifacts/kernels/release --dtb vendor/piano-linux/board.dtb \
-      --initramfs build/distros/release/initramfs/initramfs.cpio.gz \
-      --rootfs build/distros/release/rootfs --rootfs-manifest build/distros/release/manifest.json \
-      --output artifacts/release --root-selector LABEL=PIANOROOT "$@" ;;
+      --kernel artifacts/kernels/release-7.2.9 --dtb vendor/piano-linux/board.dtb \
+      --cpu-model-overlay linux/dts/piano-cpu-model.dtso \
+      --dtb-overlay linux/dts/piano-audio-dmic-clock.dtso \
+      --initramfs build/distros/release-7.2.9/initramfs/initramfs.cpio.gz \
+      --rootfs build/distros/release-7.2.9/rootfs --rootfs-manifest build/distros/release-7.2.9/manifest.json \
+      --output artifacts/release-7.2.9 --root-selector LABEL=PIANOROOT "$@" ;;
   all)
     "$0" sources
     "$0" uefi
