@@ -195,7 +195,7 @@
       "patch_sha256": "509e646424cadb66dac379d84cf350e054efefbe058f543704bc22c292a36c22",
       "derived_from": {
         "path": "tools/stage_piano_ram_hardware.py",
-        "sha256": "c8732b37978b84741dd6db91af393a06cab38ee0ace2eaac876796ab01c838a1",
+        "sha256": "72be895c6bb2dfa111550891a598b542eaf5c8f20c9b8c418543abcad908701a",
         "scope": "DMIC1, hardware capture 2 channels labelled MONO/AUX0, DEC0 0 dB; 4 hardware playback slots with simple stereo duplication; noise unresolved"
       }
     },

@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Read/update only SunUEFI-owned request pages in a combined BOOT image."""
+import argparse
+import json
+import os
+from pathlib import Path
+import struct
+import subprocess
+import zlib
+
+MAGIC = b'SUNUEFI-NEXTv1\0'.ljust(16, b'\0')
+
+
+def request_crc(record):
+    data = bytearray(record); data[36:40] = bytes(4)
+    return zlib.crc32(data)
+
+
+def layout(stream):
+    stream.seek(0); header = stream.read(4096)
+    if header[:8] != b'ANDROID!' or struct.unpack_from('<I', header, 40)[0] not in (3, 4):
+        raise ValueError('Not a supported combined BOOT')
+    kernel_bytes = struct.unpack_from('<I', header, 8)[0]
+    stream.seek(4096); image = stream.read(64)
+    branch = struct.unpack_from('<I', image, 4)[0]
+    if image[56:60] != b'ARM\x64' or branch >> 26 != 0b000101:
+        raise ValueError('No SunUEFI entry branch')
+    selector = 4 + ((branch & 0x3ffffff) << 2)
+    if not 8192 < selector < kernel_bytes:
+        raise ValueError('Invalid selector location')
+    stream.seek(4096 + selector); data = stream.read(min(65536, kernel_bytes-selector))
+    candidates = []
+    for i in range(len(data)-127):
+        if data[i:i+16] != b'SUNUEFI-SPLITv1\0'.ljust(16, b'\0'): continue
+        record = data[i:i+128]
+        version, size, saved_selector, span = struct.unpack_from('<IIQQ', record, 16)
+        app_offset, app_bytes, total = struct.unpack_from('<QQQ', record, 72)
+        page = (span + 4095) & ~4095
+        if (version, size, saved_selector) == (1, 128, selector) and page+8192 == selector and app_offset+app_bytes <= total <= kernel_bytes:
+            candidates.append((4096+page, record[96:112]))
+    if len(candidates) != 1: raise ValueError('Combined BOOT metadata is missing or ambiguous')
+    return candidates[0]
+
+
+def records(stream, offset, generation):
+    result = []
+    for page in range(2):
+        stream.seek(offset+4096*page); data = stream.read(4096)
+        raw = data[:64]
+        valid = (len(data) == 4096 and raw[:16] == MAGIC and
+                 struct.unpack_from('<II', raw, 16) == (1, 64) and
+                 raw[40:56] == generation and not any(raw[56:64]) and
+                 struct.unpack_from('<I', raw, 36)[0] == request_crc(raw) and
+                 struct.unpack_from('<I', raw, 32)[0] <= 3)
+        sequence = struct.unpack_from('<Q', raw, 24)[0] if valid else 0
+        target = struct.unpack_from('<I', raw, 32)[0] if valid else 0
+        valid = valid and (sequence != 0 or target == 0)
+        result.append({'page': page, 'valid': valid, 'sequence': sequence, 'target': target, 'data': data})
+    return result
+
+
+def operate(path, action, target=0):
+    writing = action in ('set', 'consume')
+    block = path.is_block_device()
+    with path.open('rb') as stream:
+        offset, generation = layout(stream); pages = records(stream, offset, generation)
+    valid = [r for r in pages if r['valid']]
+    if not valid: raise ValueError('Both request records are invalid')
+    current = max(valid, key=lambda r:r['sequence'])
+    if writing and (action == 'set' or current['target'] != 0):
+        selected = min(pages, key=lambda r:r['sequence'] if r['valid'] else -1)
+        sequence = current['sequence']+1
+        raw = bytearray(struct.pack('<16sIIQII16s8s', MAGIC, 1, 64, sequence, target, 0, generation, bytes(8)))
+        struct.pack_into('<I', raw, 36, request_crc(raw))
+        data = bytearray(selected['data']); data[:64] = raw
+        if block: subprocess.run(['blockdev', '--setrw', str(path)], check=True)
+        try:
+            with path.open('r+b', buffering=0) as stream:
+                stream.seek(offset+4096*selected['page']); stream.write(data); os.fsync(stream.fileno())
+                stream.seek(offset+4096*selected['page'])
+                if stream.read(4096) != data: raise ValueError('Request page readback differs')
+        finally:
+            if block: subprocess.run(['blockdev', '--setro', str(path)], check=True)
+        current = {'sequence': sequence, 'target': target}
+    return {'target': current['target'], 'sequence': current['sequence'], 'request_pages_offset': offset,
+            'operation': action, 'original_kernel_changed': False}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=('status', 'set', 'consume'))
+    parser.add_argument('--device', type=Path, required=True)
+    parser.add_argument('--target', choices=('android', 'menu', 'linux', 'setup'), default='android')
+    args = parser.parse_args()
+    try:
+        print(json.dumps(operate(args.device, args.action, ('android', 'menu', 'linux', 'setup').index(args.target))))
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        parser.exit(1, str(error)+'\n')
+
+
+if __name__ == '__main__': main()

@@ -44,7 +44,7 @@ def adapt(name, data):
         raise ValueError('pinned public script drift: ' + name)
     text = data.decode()
     if name in ('touch-start', 'radio-start'):
-        text = replace_once(text, LEGACY_GATE, GUARD + ('touch' if name == 'touch-start' else 'qup'))
+        text = replace_once(text, LEGACY_GATE, GUARD + ('touch' if name == 'touch-start' else 'qup --wait-seconds 20'))
     if name == 'radio-start':
         text = replace_once(text,
             '# Only this verified register is safe; do not probe adjacent TLMM windows.\n'

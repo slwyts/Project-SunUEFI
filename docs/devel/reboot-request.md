@@ -2,6 +2,22 @@
 
 普通开机和 `reboot recovery` 应继续进入原厂 Android/Mi Recovery。UEFI 使用独立请求，不把原厂 Recovery 模式当作 UEFI 请求。
 
+## 当前状态
+
+合体 BOOT 的普通 Android 路径和原厂 `reboot recovery` 已实测。最新产品也已通过普通 BOOT 冷启动进入磁盘上的 Linux；原厂 `fastboot continue` 仍可作为调试启动入口。
+
+`piano-boot-request` 提供 `status`、`set`、`consume`，只读写合体 BOOT 自有的两份请求页，不重包原厂内核。Linux 安装路径为 `/usr/local/sbin/piano-boot-request`。本机已手动消费 Linux 请求、正常重启回 Android；自动消费、记住上次路线及 Android 模块按钮的完整联动尚未完成。不要把手动验证当作已经具备一次性自动请求。
+
+```sh
+sudo piano-boot-request status --device /dev/disk/by-partlabel/boot_a
+sudo piano-boot-request set --device /dev/disk/by-partlabel/boot_a --target linux
+sudo piano-boot-request consume --device /dev/disk/by-partlabel/boot_a
+```
+
+目标为 `android`、`menu`、`linux`、`setup`。明确指定实际使用的合体 BOOT 分区；命令不会对原厂 BOOT 或其他格式猜测写入。
+
+以下保留前置选择器的实现与历史定位记录，实验时的“未完成”描述不代表上述当前状态。
+
 ## 当前选择器
 
 前置选择器支持合体镜像自有区域中的请求页。两份 4 KiB 页位于原厂 GKI 工作区之后、selector 之前；每份含 64 字节记录：magic、版本、序号、目标、CRC32、当前 APP 标识和保留字节。最高有效序号决定目标；同序号冲突、旧载荷标识、两份均损坏时保留原厂路径。默认两份都是“无请求”。

@@ -40,13 +40,15 @@ def repository(path, commit=None, tree=None):
 
 
 def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=None,
-         public_source=None, firmware_source=None, macros=None, v4l2_source=None, root=ROOT):
+         public_source=None, firmware_source=None, macros=None, v4l2_source=None, root=ROOT, resume=False):
     root = Path(root).resolve(); config = json.loads((root / 'config/release.json').read_text())
     if config['debian']['apt_policy'] != 'mutable-recorded' or config['debian']['snapshot'] is not None:
         raise ValueError('Only signed mutable APT with recorded metadata is implemented; snapshot mode is not configured')
     kernel, source, output = [Path(p).resolve() for p in (kernel, source, output)]
-    if not output.is_relative_to(root / 'build/distros') or output.exists() or output.is_symlink():
+    if not output.is_relative_to(root / 'build/distros') or output.is_symlink() or (output.exists() and not resume):
         raise ValueError('Output must be a new project build/distros directory')
+    if resume and (not (output / 'COMPLETE').is_file() or not (output / 'FAILED.json').is_file()):
+        raise ValueError('Resume needs a completed upstream root and its failed assembly record')
     if not kernel.is_relative_to(root / 'artifacts/kernels') or not source.is_relative_to(root / 'build/kernel-worktrees'):
         raise ValueError('Use project release kernel source and artifacts')
     public = Path(public_source or root / config['debian']['source']).resolve()
@@ -75,7 +77,7 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
             raise ValueError('Release kernel must select LABEL=PIANOROOT, never Android userdata')
     if public.is_dir(): repository(public, config['debian']['commit'])
     if firmware.is_dir(): repository(firmware, config['firmware']['commit'])
-    return {'status': 'PLAN_ONLY', 'root_policy': 'LABEL=PIANOROOT', 'kernel': str(kernel), 'source': str(source),
+    return {'status': 'PLAN_ONLY', 'resume': resume, 'root_policy': 'LABEL=PIANOROOT', 'kernel': str(kernel), 'source': str(source),
             'output': str(output), 'rootfs': str(output / 'rootfs'), 'mesa_dir': str(mesa) if mesa else None,
             'runtime_dir': str(Path(runtime_dir).resolve()) if runtime_dir else None,
             'kernel_build': str(Path(kernel_build or root / 'build/kernels/release-7.2.9').resolve()),
@@ -176,10 +178,18 @@ LABEL="release_end"
     if debug.is_symlink(): debug.unlink()
     debug.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / 'linux/userspace/piano-debug-bootstrap', debug)
+    put(rootfs, 'usr/local/sbin/piano-boot-request', (ROOT / 'linux/userspace/piano-boot-request').read_text())
+    target(rootfs, 'usr/local/sbin/piano-boot-request').chmod(0o755)
 
 
 def sanitize(rootfs, output):
     rootfs, output = own_root(rootfs, output)
+    # These are populated by the running kernel after switch_root.
+    for name in ('dev', 'proc', 'sys', 'run'):
+        directory = target(rootfs, name)
+        for child in directory.iterdir():
+            if child.is_dir() and not child.is_symlink(): shutil.rmtree(child)
+            else: child.unlink()
     for relative in ('root/.ssh/authorized_keys', 'home/piano/.ssh/authorized_keys'):
         path = target(rootfs, relative)
         if path.exists() or path.is_symlink(): path.unlink()
@@ -255,18 +265,23 @@ def execute(record):
     elif any(not shutil.which(name) for name in ('clang' if platform.machine() in ('aarch64', 'arm64') else 'aarch64-linux-gnu-gcc', 'alsatplg', 'm4', 'make', 'depmod')):
         raise ValueError('Install the release helper compiler, alsatplg, m4, make and depmod first')
     mesa = mesa_packages(record['mesa_dir'])
-    if out.exists(): raise ValueError('Output appeared after planning; preserve it')
+    if out.exists() and not record.get('resume'): raise ValueError('Output appeared after planning; preserve it')
     out.parent.mkdir(parents=True, exist_ok=True); log = out.with_name(out.name + '.build.log')
-    if log.exists(): raise ValueError('Build log exists; choose a new output name')
+    if log.exists() and not record.get('resume'): raise ValueError('Build log exists; choose a new output name')
     def run(args, cwd=None):
         with log.open('a') as stream: subprocess.run(list(map(str, args)), cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, check=True)
     try:
-        run(['unshare', '--mount', '--propagation', 'private', 'bash', public / 'scripts/build-rootfs.sh',
-             '--suite', cfg['debian']['suite'], '--output', out, '--mesa-dir', record['mesa_dir']])
+        if not record.get('resume'):
+            run(['unshare', '--mount', '--propagation', 'private', 'bash', public / 'scripts/build-rootfs.sh',
+                 '--suite', cfg['debian']['suite'], '--output', out, '--mesa-dir', record['mesa_dir']])
         if not (out / 'COMPLETE').is_file() or rootfs.stat().st_uid: raise ValueError('Public GNOME build did not complete with native guest ownership')
         put(rootfs, 'usr/sbin/policy-rc.d', '#!/bin/sh\nexit 101\n'); (rootfs / 'usr/sbin/policy-rc.d').chmod(0o755)
         with build_resolver(rootfs):
             run(['chroot', rootfs, 'apt-get', 'install', '-y', '--no-install-recommends', *cfg['debian']['extra_packages']])
+        if record.get('resume') and (out / 'adapters').is_dir(): shutil.rmtree(out / 'adapters')
+        if record.get('resume'):
+            staged_modules = target(rootfs, 'usr/lib/modules') / m['kernel_release']
+            if staged_modules.is_dir(): shutil.rmtree(staged_modules)
         userspace.stage(rootfs, public); hardware.build(out / 'adapters', public, rootfs); modules.stage(rootfs, kernel)
         if record['runtime_dir']:
             bundle = Path(record['runtime_dir']); rm = json.loads((bundle / 'manifest.json').read_text())
@@ -280,9 +295,9 @@ def execute(record):
             runtime.stage(bundle, rootfs)
         fw = Path(record['firmware_source']); run(['sha256sum', '--check', '--quiet', 'SHA256SUMS'], fw / 'firmware')
         shutil.copytree(fw / 'firmware', rootfs / 'usr/lib/firmware', dirs_exist_ok=True)
-        shutil.copytree(fw / 'LICENSES', rootfs / 'usr/share/doc/piano-firmware/LICENSES')
+        shutil.copytree(fw / 'LICENSES', rootfs / 'usr/share/doc/piano-firmware/LICENSES', dirs_exist_ok=True)
         apply_policy(rootfs, out, cfg); sanitize(rootfs, out)
-        run(['chroot', rootfs, 'depmod', '-a', m['kernel_release']])
+        run(['chroot', rootfs, '/usr/sbin/depmod', '-a', m['kernel_release']])
         (rootfs / 'usr/sbin/policy-rc.d').unlink()
         packages = capture(['chroot', rootfs, 'dpkg-query', '-W', '-f=${binary:Package}\t${Version}\t${Architecture}\t${db:Status-Status}\n'])
         (out / 'packages.tsv').write_text(packages + '\n')
@@ -301,7 +316,9 @@ def execute(record):
                   'mesa_packages': mesa, 'firmware_commit': cfg['firmware']['commit'],
                   'initramfs': boot, 'password': 'locked; owner must set their own', 'autologin_retained': True,
                   'bit_reproducible': False, 'root_uid': rootfs.stat().st_uid, 'device_operation_performed': False}
-        (out / 'manifest.json').write_text(json.dumps(result, indent=2) + '\n'); return result
+        (out / 'manifest.json').write_text(json.dumps(result, indent=2) + '\n')
+        (out / 'FAILED.json').unlink(missing_ok=True)
+        return result
     except Exception as exc:
         if out.is_dir(): (out / 'FAILED.json').write_text(json.dumps({'status': 'BUILD_FAILED', 'error': str(exc)}) + '\n')
         raise
@@ -312,6 +329,7 @@ def main():
     for name in ('kernel', 'source', 'output'): parser.add_argument('--' + name, type=Path, required=True)
     for name in ('mesa-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
     mode = parser.add_mutually_exclusive_group(required=True); mode.add_argument('--plan', action='store_true'); mode.add_argument('--execute', action='store_true')
+    parser.add_argument('--resume', action='store_true', help='Resume assembly after a completed upstream root build')
     args = vars(parser.parse_args()); execute_flag = args.pop('execute'); args.pop('plan')
     try:
         record = plan(**args); print(json.dumps(execute(record) if execute_flag else record, indent=2))
