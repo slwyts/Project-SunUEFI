@@ -10,6 +10,7 @@ case "$command" in
   uefi) make uefi ;;
   trampoline) python3 tools/package_product_trampoline.py "$@" ;;
   module) python3 tools/build_android_module.py "$@" ;;
+  boot-request) python3 tools/build_boot_request.py "$@" ;;
   linux)
     python3 tools/prepare_release_kernel.py
     python3 - <<'PY_KERNEL'
@@ -85,7 +86,7 @@ PY_RELEASE_SOURCE
   install) python3 tools/install_piano.py "$@" ;;
   installer) python3 tools/export_installer.py "$@" ;;
   help|-h|--help)
-    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|linux|mesa|sensors|bsp|rootfs|release-rootfs|package|all|installer|install' \
+    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|boot-request|linux|mesa|sensors|bsp|rootfs|release-rootfs|package|all|installer|install' \
       'Full builds need the documented builder environment; rootfs/Mesa/sensors run in a root ARM64 build container.' \
       'release-rootfs reads its kernel source worktree from build/release-7.2.9/source-manifest.json.' \
       'Building never partitions or flashes a tablet. install is a separate explicit command.' ;;
