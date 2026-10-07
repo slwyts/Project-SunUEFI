@@ -33,3 +33,27 @@ Mutter 48.7 从 [KMS connector 与 EDID](https://github.com/GNOME/mutter/blob/48
 - 驱动现有 dump 中，活跃 PP 的 dither enable、bitdepth/temporal 位，以及 DSPP dither control 和矩阵。实例基址按原厂 DT 与活跃对象确定，不能套用主线 catalog 地址。
 
 若这些记录仍不能解释 10+2，再查 DDIC 的可靠寄存器定义与对应状态。当前采集没有 DRM blobs 或 MMIO，不能据此宣布 FRC/HDR 已启用。
+
+## 读取实际 DRM 属性与 blob
+
+`tools/android/piano_drm_snapshot.c` 通过标准 DRM UAPI 读取 connector、CRTC、plane 的当前属性与 blob 原始字节。它只改变本次文件描述符的 client capability，不设置显示模式、不申请 DRM master、不访问 MMIO；Android 和 Linux 可使用同一个静态 ARM64 程序。
+
+在准备好的构建环境中编译：
+
+```sh
+python3 tools/build_drm_snapshot.py \
+  --kernel-source build/kernel-worktrees/piano-fastrpc-dma-7.2.9 \
+  --sysroot build/distros/release-7.2.9/rootfs \
+  --output build/android-drm-snapshot-capture
+```
+
+使用设备的实际 KMS card 节点，不使用 `renderD*`；节点编号不固定。设备恢复后，在同一刷新率、亮度和色彩模式下，先保存 SDR，再播放实际 HDR 内容保存第二份。例如 Linux 中运行：
+
+```sh
+sudo /run/piano-drm-snapshot /dev/dri/cardN --blobs > sdr.json
+sudo /run/piano-drm-snapshot /dev/dri/cardN --blobs > hdr.json
+```
+
+Android 可将程序放在 `/data/local/tmp/`，使用 `adb exec-out su -c` 执行，把标准输出直接保存到电脑。默认省略 blob 内容，`--blobs` 才输出原始十六进制数据，包括存在的 HDR metadata、色彩 LUT 与原厂 dither blob；属性不存在时不会编造。每份记录包含单调时钟起止时间和真实 errno。对象依次读取，**不是跨对象的原子快照**；采集期间应保持画面模式稳定，属性数量增长或 blob 已删除会报错，不把部分结果当成完整采集。
+
+2026-10-08 已编译静态 ARM64 产物；尚未在原厂或 Linux 的实际 KMS 节点运行。这份程序也不读取扫描输出的 framebuffer 格式或活跃硬件寄存器，仍需配合驱动现有 state/dump；有 blob 不等同于硬件已消费它。
