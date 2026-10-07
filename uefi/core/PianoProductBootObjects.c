@@ -24,6 +24,7 @@ STATIC VOID ObjectsCapture(BOOLEAN(*Alive)(VOID)){
 }
 EFI_STATUS PianoProductBootObjectsStatus(VOID){return mObjectsStatus;}
 CONST PIANO_COLD_BOOT_OBJECT_REPORT *PianoProductBootObjectsSnapshot(VOID){return mObjectsStatus==EFI_SUCCESS?&mObjects:NULL;}
+UINT32 PianoProductBootObjectsFactoryPanel(VOID){return !mObjectsLost&&mObjectsStatus==EFI_SUCCESS&&mObjectsValidation==EFI_SUCCESS&&mObjects.Coherent?mObjects.FactoryPanel:PianoFactoryPanelUnknown;}
 EFI_STATUS PianoProductBootObjectsReemit(BOOLEAN(*Alive)(VOID)){
  if(!Alive)return EFI_NOT_READY;if(!ObjectsAlive(Alive))return EFI_ABORTED;
  if(!mObjectsAttempted)ObjectsCapture(Alive);if(!ObjectsAlive(Alive))return EFI_ABORTED;
@@ -38,6 +39,7 @@ EFI_STATUS PianoProductBootObjectsReemit(BOOLEAN(*Alive)(VOID)){
  DEBUG((DEBUG_WARN,"PIANO_COLD_HANDOFF version=%u bytes=%u flags=%lx crc=%08x dtb=%lx entry_pc=%lx entry_sp=%lx entry_el=%lx\n",R->Handoff.Version,R->Handoff.Bytes,R->Handoff.Flags,R->Handoff.Crc32,R->Handoff.Dtb,R->Handoff.EntryPc,R->Handoff.EntrySp,R->Handoff.EntryEl));
  DEBUG((DEBUG_WARN,"PIANO_COLD_HANDOFF_FD shim=%lx/%lx source=%lx destination=%lx bytes=%lx counter=%lx frequency=%lu\n",R->Handoff.ShimBase,R->Handoff.ShimBytes,R->Handoff.FdSource,R->Handoff.FdBase,R->Handoff.FdBytes,R->Handoff.Counter,R->Handoff.Frequency));
  DEBUG((DEBUG_WARN,"PIANO_COLD_DTB bytes=%u header_crc=%08x initrd=%lx..%lx whole_dtb_identity=0\n",R->DtbBytes,R->DtbHeaderCrc32,R->InitrdStart,R->InitrdEnd));
+ DEBUG((DEBUG_WARN,"PIANO_FACTORY_PANEL source=cold_bootargs panel=%u bytes=%u crc=%08x arguments=%u target_reads=0\n",R->FactoryPanel,R->FactoryBootargsBytes,R->FactoryBootargsCrc32,R->FactoryPanelArguments));
  for(UINT32 I=0;I<R->Count;++I){if(!ObjectsAlive(Alive))return EFI_ABORTED;CONST PIANO_COLD_BOOT_OBJECT *O=&R->Objects[I];DEBUG((DEBUG_WARN,"PIANO_COLD_OBJECT i=%u role=%u base=%lx bytes=%lx occupied_input=1 allocation_permission=0\n",I,O->Role,O->Base,O->Bytes));}
  if(R->RecoveredFaults)DEBUG((DEBUG_WARN,"PIANO_COLD_OBJECT_FAULT address=%lx elr=%lx esr=%lx far=%lx spsr=%lx resume=%lx\n",R->LastFault.Address,R->LastFault.Elr,R->LastFault.Esr,R->LastFault.Far,R->LastFault.Spsr,R->LastFault.Resume));
  return ObjectsAlive(Alive)?R->Status:EFI_ABORTED;

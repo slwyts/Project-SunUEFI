@@ -7,7 +7,9 @@ STATIC CONST PIANO_COLD_BOOT_OBJECT *ColdReportRole(CONST PIANO_COLD_BOOT_OBJECT
 EFI_STATUS PianoColdBootObjectsValidate(CONST PIANO_COLD_BOOT_OBJECT_REPORT *R){
  if(!R||R->Version!=PIANO_COLD_OBJECT_VERSION||R->Bytes!=sizeof(*R)||R->Reserved||R->ReservedFlags||R->ReservedCache||R->ReportCrc32!=PianoColdObjectsCrc(R)||R->Attempted!=TRUE||R->Finished!=TRUE||R->Published>TRUE||R->Coherent>TRUE||R->Count>PIANO_COLD_OBJECT_MAX||
     R->Reason>PianoColdReasonBudget||R->Loads>PIANO_COLD_TOTAL_MAX/4||R->RecoveredFaults>R->Loads||(R->Status!=EFI_SUCCESS&&!EFI_ERROR(R->Status))||
-    R->ReservedRead||R->MemoryOwnershipGranted||R->HighDdrPublished||R->AuthorityReady)return EFI_COMPROMISED_DATA;
+    R->ReservedRead||R->MemoryOwnershipGranted||R->HighDdrPublished||R->AuthorityReady||
+    R->FactoryPanel>PianoFactoryPanelCsot||R->FactoryBootargsBytes>PIANO_FACTORY_BOOTARGS_MAX||R->FactoryPanelArguments>R->FactoryBootargsBytes||
+    (R->FactoryPanel&&R->FactoryPanelArguments!=1)||(!R->FactoryBootargsBytes&&(R->FactoryPanel||R->FactoryBootargsCrc32||R->FactoryPanelArguments)))return EFI_COMPROMISED_DATA;
  for(UINT32 I=0;I<R->Count;++I)if(R->Objects[I].Reserved||R->Objects[I].Role<=PianoColdObjectNone||R->Objects[I].Role>PianoColdObjectHobHeap||!ColdSpan(R->Objects[I].Base,R->Objects[I].Bytes,R->Objects[I].Base,R->Objects[I].Bytes))return EFI_COMPROMISED_DATA;
  for(UINT32 I=R->Count;I<PIANO_COLD_OBJECT_MAX;++I)if(R->Objects[I].Base||R->Objects[I].Bytes||R->Objects[I].Role||R->Objects[I].Reserved)return EFI_COMPROMISED_DATA;
  if(R->Status!=EFI_SUCCESS)return EFI_NOT_READY;

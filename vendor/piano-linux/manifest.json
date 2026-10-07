@@ -25,5 +25,12 @@
     "file": "board.dtb",
     "sha256": "36e6adef75306d7727f79e97d0406376baa43e1b454e29d1c40bc0fc36d47db3",
     "bytes": 1208011
+  },
+  "factory_panel": {
+    "vendor": "csot",
+    "display_mode": "qcom,mdss_dsi_p81_35_02_0b_dualdsi_dsc_vid",
+    "source": "Piano factory Android runtime command line captured on 2026-10-03 and 2026-10-05",
+    "command_line_sha256": "422933123b7a564cbee5a286e61a731ea739f1f89a0f7b2e005f6f904f355c4a",
+    "scope": "Reference 16GiB device; another device must supply its own factory panel identity or explicit selection"
   }
 }

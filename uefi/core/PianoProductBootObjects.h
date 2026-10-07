@@ -7,3 +7,5 @@
 EFI_STATUS PianoProductBootObjectsReemit(BOOLEAN (*Alive)(VOID));
 EFI_STATUS PianoProductBootObjectsStatus(VOID);
 CONST PIANO_COLD_BOOT_OBJECT_REPORT *PianoProductBootObjectsSnapshot(VOID);
+// Only a coherent cached SEC report can supply a factory panel choice.
+UINT32 PianoProductBootObjectsFactoryPanel(VOID);

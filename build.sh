@@ -35,7 +35,7 @@ PY_KERNEL
   package|esp)
     python3 tools/package_release.py --uefi artifacts/product/PianoUEFI-product.img \
       --kernel artifacts/kernels/release-7.2.9 --dtb vendor/piano-linux/board.dtb \
-      --cpu-model-overlay linux/dts/piano-cpu-model.dtso \
+      --cpu-model-overlay linux/dts/piano-cpu-model.dtso --panel-vendor auto \
       --dtb-overlay linux/dts/piano-audio-dmic-clock.dtso \
       --initramfs build/distros/release-7.2.9/initramfs/initramfs.cpio.gz \
       --rootfs build/distros/release-7.2.9/rootfs --rootfs-manifest build/distros/release-7.2.9/manifest.json \

@@ -18,7 +18,7 @@ import tempfile
 from make_kernel_initramfs import inspect_newc
 from build_piano_ram_bootstrap import guest_resolve
 from prepare_boot_files import fdt_info, image_info, initramfs_info
-from compose_piano_dtb import read_fdt
+from compose_piano_dtb import read_fdt, write_fdt
 
 ROOT = Path(__file__).resolve().parents[1]
 MIB = 1024 * 1024
@@ -67,6 +67,28 @@ def apply_cpu_model_overlay(board, overlay, work, cpu_only=True):
               'output_sha256': sha(derived), 'cpu_nodes' if cpu_only else 'nodes': sorted(expected)}
     derived.replace(board)
     return result
+
+
+def select_panel_vendor(board, requested='auto'):
+    parsed = read_fdt(board.read_bytes())
+    panels = [(name, props) for name, props in parsed['tree'].items()
+              if any(value in props.get('compatible', b'').split(b'\0')
+                     for value in (b'xiaomi,piano-boe-nt36532', b'xiaomi,piano-csot-nt36532'))]
+    require(len(panels) == 1, 'Input DTB must identify one supported Piano panel; supply the device-specific board DTB')
+    node, properties = panels[0]
+    original = 'boe' if b'xiaomi,piano-boe-nt36532' in properties['compatible'] else 'csot'
+    # A factory capture identifies its donor tablet, not every future device.
+    # The shared firmware selects the actual panel from ABL at Linux handoff.
+    selected = original if requested == 'auto' else requested
+    if selected != original:
+        properties['compatible'] = properties['compatible'].replace(
+            ('xiaomi,piano-' + original + '-nt36532').encode(),
+            ('xiaomi,piano-' + selected + '-nt36532').encode())
+        board.write_bytes(write_fdt(parsed))
+    return {'requested': requested, 'input_vendor': original, 'selected': selected,
+            'panel_node': node, 'selection_source': 'runtime-ABL-selection' if requested == 'auto' else 'explicit-owner-selection',
+            'fallback_vendor': original,
+            'hardware_tested': False, 'csot_status': 'DRIVER_IMPLEMENTED_DEVICE_TEST_PENDING'}
 
 
 def record(path):
@@ -175,7 +197,7 @@ def archive_root(root, target, epoch):
                                 '--pax-option=delete=atime,delete=ctime', '--mtime=@' + str(epoch), '-C', str(root), '-cf', '-', '.'],
                                stdout=subprocess.PIPE, stderr=errors)
         try:
-            subprocess.run(['zstd', '-q', '-T1', '-19', '-o', str(target)], stdin=tar.stdout, check=True)
+            subprocess.run(['zstd', '-q', '-T0', '-6', '-o', str(target)], stdin=tar.stdout, check=True)
             tar.stdout.close()
             require(tar.wait() == 0, 'tar failed; rootfs may have changed during packing')
         finally:
@@ -233,7 +255,7 @@ def package(args):
     require(not args.output.is_symlink(), 'Output must not be a host symlink')
     root, output = root.resolve(), args.output.resolve()
     require(not output.exists() and not output.is_relative_to(root), 'Output must be fresh and outside rootfs')
-    require(64 <= args.esp_size_mib <= 2048 and (args.root_size_mib is None or 64 <= args.root_size_mib <= 16384), 'Invalid image capacity; expand the dedicated root partition during installation')
+    require(64 <= args.esp_size_mib <= 2048 and (args.root_size_mib is None or 64 <= args.root_size_mib <= 65536), 'Invalid image capacity')
     require(0 <= args.epoch <= 0x7fffffff, 'Invalid SOURCE_DATE_EPOCH')
     require(re.fullmatch('LABEL=[A-Za-z0-9_-]{1,16}', args.root_selector), 'Portable bundle requires a filesystem LABEL root selector')
     metas = [record(uefi.parent / 'manifest.json'), record(kernel / 'manifest.json'), record(dtb.parent / 'manifest.json'), record(initrd.parent / 'manifest.json')]
@@ -296,6 +318,9 @@ def package(args):
     extra_dtb_overlays = []
     for overlay in args.dtb_overlay:
         extra_dtb_overlays.append(apply_cpu_model_overlay(work / 'board.dtb', overlay, work, cpu_only=False))
+    panel_selection = None
+    if args.panel_vendor:
+        panel_selection = select_panel_vendor(work / 'board.dtb', args.panel_vendor)
     boot = output / 'boot.img'
     run([sys.executable, maker, '--header_version', '2', '--pagesize', '4096', '--kernel', work / 'Image', '--ramdisk', work / 'initramfs', '--dtb', work / 'board.dtb', '-o', boot],
         env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
@@ -331,6 +356,7 @@ def package(args):
               'files': {}}
     if dtb_derivation: result['dtb_derivation'] = dtb_derivation
     if extra_dtb_overlays: result['additional_dtb_overlays'] = extra_dtb_overlays
+    if panel_selection: result['panel_selection'] = panel_selection
     shutil.rmtree(work)
     for path in sorted(output.iterdir()):
         if path.name == '.incomplete':
@@ -347,6 +373,7 @@ def parser():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--cpu-model-overlay', type=Path)
     ap.add_argument('--dtb-overlay', type=Path, action='append', default=[])
+    ap.add_argument('--panel-vendor', choices=('auto', 'boe', 'csot'))
     for name in ('uefi', 'kernel', 'dtb', 'initramfs', 'rootfs', 'output'):
         ap.add_argument('--' + name, type=Path, required=True)
     for name in ('uefi', 'kernel', 'dtb', 'initramfs'):

@@ -20,10 +20,11 @@ SEC_FILES={
 }
 EARLY_FILES=('PianoEarlyMemory.c','PianoEarlyMemory.h','PianoSecRead32.S',
              'PianoSmemRam.c','PianoSmemRam.h','PianoSmemDescriptor.c','PianoSmemDescriptor.h',
-             'PianoColdBootObjects.c','PianoColdBootObjects.h','PianoColdBootObjectsContract.c','PianoColdSecRead256.S')
+             'PianoColdBootObjects.c','PianoColdBootObjects.h','PianoColdBootObjectsContract.c','PianoColdSecRead256.S','PianoFactoryPanel.h')
 OBJECT_DXE_FILES={'PianoProductBootObjects.c':'uefi/core/PianoProductBootObjects.c',
                  'PianoProductBootObjects.h':'uefi/core/PianoProductBootObjects.h',
                  'PianoColdBootObjects.h':'uefi/handoff/early-memory/PianoColdBootObjects.h',
+                 'PianoFactoryPanel.h':'uefi/handoff/early-memory/PianoFactoryPanel.h',
                  'PianoColdBootObjectsContract.c':'uefi/handoff/early-memory/PianoColdBootObjectsContract.c'}
 OBJECT_DXE_SOURCES=('PianoProductBootObjects.c','PianoColdBootObjectsContract.c')
 

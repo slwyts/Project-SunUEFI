@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #pragma once
 #include "PianoEarlyMemory.h"
+#include "PianoFactoryPanel.h"
 #include <Library/MemoryMapLib.h>
-#define PIANO_COLD_OBJECT_VERSION 2U
+#define PIANO_COLD_OBJECT_VERSION 3U
 #define PIANO_COLD_HANDOFF_ADDRESS 0xa7fff000ULL
 #define PIANO_COLD_HANDOFF_MAGIC 0x534e554546494448ULL
 #define PIANO_COLD_EXTENSION_MAGIC 0x314a424f544f4f42ULL
@@ -52,6 +53,9 @@ typedef struct {
  PIANO_COLD_BOOT_HANDOFF Handoff;
  UINT32 DtbBytes,DtbHeaderCrc32;UINT64 InitrdStart,InitrdEnd;
  UINT8 DtbHeader[40]; // exact repeated header, not a whole-DTB checksum claim
+ // Optional factory selection, frozen by the same two bounded DTB reads.
+ // This is display metadata only; it grants no memory or device authority.
+ UINT32 FactoryPanel,FactoryBootargsBytes,FactoryBootargsCrc32,FactoryPanelArguments;
  PIANO_SEC_READ_STATE LastRead,LastFault;
  PIANO_COLD_BOOT_OBJECT Objects[PIANO_COLD_OBJECT_MAX];
 } PIANO_COLD_BOOT_OBJECT_REPORT;

@@ -34,7 +34,7 @@ Project SunUEFI 是为小米平板 8 Pro（代号 `piano`，搭载骁龙 8 至�
 
 ## 硬件支持状态
 
-> 基准机型：小米平板 8 Pro (`piano`) 16GB，BOE 屏幕，已解锁 Bootloader。下表的输入、无线、音频和电源均指 Linux；UEFI 的触屏和键盘后端尚未完成。
+> 基准机型：小米平板 8 Pro (`piano`) 16GB，已解锁 Bootloader；原厂运行参数识别为 CSOT 面板。固件按当前设备的原厂面板标识选择 Linux 配置，见[面板选择](docs/devel/panel-selection.md)。下表的输入、无线、音频和电源均指 Linux；UEFI 的触屏和键盘后端尚未完成。
 
 | 组件 / 功能 | 状态 | 说明 |
 | :--- | :---: | :--- |

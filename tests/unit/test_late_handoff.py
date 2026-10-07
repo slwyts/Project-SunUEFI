@@ -125,8 +125,8 @@ class LateHandoffTests(unittest.TestCase):
    linux=p/'native-linux';combined=list(joint)
    combined[combined.index(str(ROOT/'tests/native/PianoNativeLaunchTest.c'))]=str(ROOT/'tests/native/PianoNativeLinuxSessionTest.c')
    fdt=BASE/'MdePkg/Library/BaseFdtLib/libfdt/libfdt'
-   combined +=['-I'+str(fdt),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include')]
-   combined +=[str(ROOT/'uefi/components/os-boot/PianoLinuxEfiSession.c'),str(ROOT/'tests/native/PianoLinuxFdtHost.c')]
+   combined +=['-I'+str(ROOT/'uefi/handoff/early-memory'),'-I'+str(fdt),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include')]
+   combined +=[str(ROOT/'uefi/components/os-boot/PianoLinuxEfiSession.c'),str(ROOT/'uefi/core/PianoPanelSelection.c'),str(ROOT/'tests/native/PianoLinuxFdtHost.c')]
    combined +=[str(fdt/name)for name in ('fdt.c','fdt_ro.c','fdt_rw.c','fdt_wip.c','fdt_sw.c','fdt_check.c','fdt_empty_tree.c')]
    combined[combined.index('-o')+1]=str(linux)
    subprocess.run(combined,check=True,timeout=60)

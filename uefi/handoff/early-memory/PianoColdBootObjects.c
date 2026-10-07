@@ -91,7 +91,28 @@ STATIC EFI_STATUS ColdDtbWord(UINT32 At,UINT32 *V){UINT8 B[4];EFI_STATUS E=ColdD
 STATIC EFI_STATUS ColdString(UINT32 At,UINT32 Limit,CHAR8 *Name,UINTN Capacity,UINT32 *Used){
  for(UINT32 I=0;I<Capacity&&At<=Limit&&I<Limit-At;++I){EFI_STATUS E=ColdDtbRead(At+I,1,&Name[I]);if(E!=EFI_SUCCESS)return E;if(!Name[I]){*Used=I+1;return EFI_SUCCESS;}}return EFI_COMPROMISED_DATA;
 }
-typedef struct {UINT8 Header[40];UINT32 Bytes;UINT64 Start,End;} COLD_DTB;
+typedef struct {UINT8 Header[40];UINT32 Bytes;UINT64 Start,End;
+ UINT32 Panel,BootargsBytes,BootargsCrc32,PanelArguments;} COLD_DTB;
+STATIC EFI_STATUS ColdPanelBootargs(UINT32 At,UINT32 Bytes,COLD_DTB *D){
+ // Use only the already-admitted factory DTB reader. Oversized/ambiguous
+ // metadata leaves panel selection unknown; it never widens the whitelist.
+ if(!Bytes||Bytes>PIANO_FACTORY_BOOTARGS_MAX)return EFI_SUCCESS;
+ CHAR8 Token[256];UINTN Used=0;BOOLEAN Overflow=FALSE,Valid=TRUE;UINT32 Crc=MAX_UINT32;
+ for(UINT32 I=0;I<Bytes;++I){UINT8 B;EFI_STATUS E=ColdDtbRead(At+I,1,&B);if(E!=EFI_SUCCESS)return E;
+  Crc^=B;for(UINTN J=0;J<8;++J)Crc=(Crc>>1)^((Crc&1)?0xedb88320U:0);
+  if(B==0&&I!=Bytes-1)Valid=FALSE;if(B>127)Valid=FALSE;
+  if(B==0||B==' '||B=='\t'||B=='\r'||B=='\n'){
+   if(PianoFactoryPanelPrefix(Token,Used)){
+    ++D->PanelArguments;D->Panel=Overflow?PianoFactoryPanelUnknown:PianoFactoryPanelToken(Token,Used);
+   }
+   Used=0;Overflow=FALSE;
+  }else if(Used<sizeof(Token))Token[Used++]=(CHAR8)B;else Overflow=TRUE;
+  if(I==Bytes-1&&B!=0)Valid=FALSE;
+ }
+ D->BootargsBytes=Bytes;D->BootargsCrc32=~Crc;
+ if(!Valid||D->PanelArguments!=1)D->Panel=PianoFactoryPanelUnknown;
+ ZeroMem(Token,sizeof(Token));return EFI_SUCCESS;
+}
 STATIC EFI_STATUS ColdParseDtb(COLD_DTB *D){
  ZeroMem(&mColdStructCache,sizeof(mColdStructCache));ZeroMem(&mColdStringCache,sizeof(mColdStringCache));mColdStructStart=mColdStructEnd=mColdStringStart=mColdStringEnd=0;
  ZeroMem(D,sizeof(*D));EFI_STATUS E=ColdRead(mColdDtbBase,40,D->Header);if(E!=EFI_SUCCESS)return E;
@@ -101,7 +122,7 @@ STATIC EFI_STATUS ColdParseDtb(COLD_DTB *D){
     Reserve<40||(Reserve&7)||Reserve>Total||Total-Reserve<16||
     ColdOverlap(Struct,StructBytes,Strings,StringBytes)||ColdOverlap(Reserve,16,Struct,StructBytes)||ColdOverlap(Reserve,16,Strings,StringBytes))return EFI_COMPROMISED_DATA;
  mColdStructStart=Struct;mColdStructEnd=Struct+StructBytes;mColdStringStart=Strings;mColdStringEnd=Strings+StringBytes;
- D->Bytes=Total;UINT32 At=Struct,Limit=Struct+StructBytes,Depth=0;BOOLEAN Chosen=FALSE,Seen=FALSE,GotStart=FALSE,GotEnd=FALSE;
+ D->Bytes=Total;UINT32 At=Struct,Limit=Struct+StructBytes,Depth=0;BOOLEAN Chosen=FALSE,Seen=FALSE,GotStart=FALSE,GotEnd=FALSE,GotBootargs=FALSE;
  while(At<=Limit&&Limit-At>=4){UINT32 Token;E=ColdDtbWord(At,&Token);if(E!=EFI_SUCCESS)return E;At+=4;
   if(Token==1){CHAR8 Name[128];UINT32 Used=0;E=ColdString(At,Limit,Name,sizeof(Name),&Used);if(E!=EFI_SUCCESS)return E;if(!Depth&&Name[0])return EFI_COMPROMISED_DATA;
    if(Depth==1&&!AsciiStrCmp(Name,"chosen")){if(Seen)return EFI_COMPROMISED_DATA;Chosen=Seen=TRUE;}if(++Depth>64)return EFI_COMPROMISED_DATA;At=ALIGN_VALUE(At+Used,4);}
@@ -110,6 +131,7 @@ STATIC EFI_STATUS ColdParseDtb(COLD_DTB *D){
    if(!Depth||N>Limit-At||Offset>=StringBytes)return EFI_COMPROMISED_DATA;
    if(Chosen&&Depth==2){CHAR8 Name[128];UINT32 Used;E=ColdString(Strings+Offset,Strings+StringBytes,Name,sizeof(Name),&Used);if(E!=EFI_SUCCESS)return E;
     BOOLEAN Start=!AsciiStrCmp(Name,"linux,initrd-start"),End=!AsciiStrCmp(Name,"linux,initrd-end");if(Start||End){if((N!=4&&N!=8)||(Start?GotStart:GotEnd))return EFI_COMPROMISED_DATA;UINT8 B[8];E=ColdDtbRead(At,N,B);if(E!=EFI_SUCCESS)return E;UINT64 V=0;for(UINTN I=0;I<N;++I)V=(V<<8)|B[I];if(Start){D->Start=V;GotStart=TRUE;}else{D->End=V;GotEnd=TRUE;}}
+    if(!AsciiStrCmp(Name,"bootargs")){if(GotBootargs)return EFI_COMPROMISED_DATA;GotBootargs=TRUE;E=ColdPanelBootargs(At,N,D);if(E!=EFI_SUCCESS)return E;}
    }At=ALIGN_VALUE(At+N,4);if(At>Limit)return EFI_COMPROMISED_DATA;}
   else if(Token==4)continue;else if(Token==9)return !Depth&&GotStart&&GotEnd?EFI_SUCCESS:EFI_NOT_FOUND;else return EFI_COMPROMISED_DATA;
  }return EFI_COMPROMISED_DATA;
@@ -149,6 +171,7 @@ EFI_STATUS PianoColdBootObjectsObserve(VOID){
  if(CompareMem(&A,&B,sizeof(A)))return ColdFinish(EFI_MEDIA_CHANGED,PianoColdReasonCoherence);
  if(A.End<=A.Start||A.End-A.Start>0x10000000||!ColdInput(A.Start,A.End-A.Start))return ColdFinish(EFI_NOT_READY,PianoColdReasonInitrd);
  CopyMem(mCold.DtbHeader,A.Header,40);mCold.DtbBytes=A.Bytes;mCold.DtbHeaderCrc32=PianoEarlyMemoryBytesCrc32(A.Header,40);mCold.InitrdStart=A.Start;mCold.InitrdEnd=A.End;
+ mCold.FactoryPanel=A.Panel;mCold.FactoryBootargsBytes=A.BootargsBytes;mCold.FactoryBootargsCrc32=A.BootargsCrc32;mCold.FactoryPanelArguments=A.PanelArguments;
  ColdAdd(PianoColdObjectFactoryDtb,H->Dtb,A.Bytes);ColdAdd(PianoColdObjectCombinedInitrd,A.Start,A.End-A.Start);
  E=ColdFresh();if(E!=EFI_SUCCESS)return ColdFinish(E,PianoColdReasonCpu);ColdCpu(&mCold.After);mCold.Coherent=TRUE;return ColdFinish(EFI_SUCCESS,PianoColdReasonNone);
 }
