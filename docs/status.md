@@ -1,14 +1,28 @@
 # 项目状态
 
-更新日期：2026-10-07。本页记录已保存的源码、构建和设备观察，不表示今天重新验收了每项硬件。项目仍为 **`INCOMPLETE_NOT_RELEASE`**；当前构建与已运行镜像必须分开看。
+更新日期：2026-10-08。本页记录已保存的源码、构建和设备观察，不表示今天重新验收了每项硬件。项目仍为 **`INCOMPLETE_NOT_RELEASE`**；当前构建与已运行镜像必须分开看。
 
 ## 验证范围
 
-设备记录来自小米平板 8 Pro `piano`，型号 `25091RP04C`，SM8750P，16 GB 内存，BOE 面板，Android 16 / `OS3.0.309.0.WPYCNXM`，已解锁 Bootloader。其他面板、容量、地区 ROM 和版本未由这些记录证明兼容。
+设备记录来自小米平板 8 Pro `piano`，型号 `25091RP04C`，SM8750P，16 GB 内存，原厂标识为 CSOT 面板，Android 16 / `OS3.0.309.0.WPYCNXM`，已解锁 Bootloader。其他面板、容量、地区 ROM 和版本未由这些记录证明兼容。
 
 研究设备已按所有者授权划分 `sunuefi_esp`（512 MiB FAT32）和 `sunuefi_root`（63.5 GiB ext4），并安装 Debian 13/GNOME。该部署不是公开的一键安装流程。Recovery 实验后已恢复原厂 Recovery，并验证普通 Android 磁盘启动；不能将它描述为 UEFI 已持久安装。
 
-## 当前候选与最近设备结果
+## 最近实机结果（2026-10-08）
+
+合体 BOOT 已普通重启进入新构建的 Linux `7.2.9-piano-gnome-gc24355c2de05`，源码 `c24355c2de05ccfda69abc113c6b01da6a983919`。这轮重新部署了 ESP 与 `PIANOROOT`，不使用完整 RAM 根系统。UEFI 根据原厂 ABL 的 CSOT 标识修改交接 DTB，实机读回 CSOT；其他面板尚未实测。
+
+ESP 打包已改为 4 KiB FAT32 扇区，与本机 UFS 逻辑扇区一致。修正后 Linux 正常挂载 `/boot/efi`，再次普通 BOOT 重启进入同一磁盘系统。CPU 名称已显示 Qualcomm Snapdragon 8 Elite Mobile Platform (SM8750)。触屏、键盘、ADSP、音频和无线服务在新系统中启动成功；旧系统的人工功能观察见下表，新构建不能继承未复测的全部体验结论。
+
+相机／视频的额外寄存器诊断已移到原生驱动绑定之后，保留原生 IOMMU、模块与绑定的实际失败处理。OV32D40、S5KJN1 和 Iris 已绑定；前后两路各取得约28个真实 ISP 帧。启动时黑帧与曝光收敛已观察，颜色矩阵 ioctl 写回只读数组的错误已修正并重新编译；画质、应用使用和性能仍在验证。
+
+SSC 已安装固定来源的 FastRPC/libssc/iio-sensor-proxy 包，QMI 通信和 registry 可访问，但物理传感器 UID 尚未返回。已从本机原厂 Vendor 只读提取缺失的 `sns_reg_config`，补入标准导入补丁及启动模块依赖，正在重启验证。不能据服务 active 宣称旋转、光感等已正常。
+
+本轮麦克风用同一增益比较 DMIC1/DMIC2，尚未获得足以证明质量改善的结果，默认路由未改。HDR/12-bit、触控笔完整功能、闪光灯、合盖与休眠仍未完成实测。当前产物仍为开发构建。
+
+以下为此前候选与定位记录，其“最新”字段只指当时的状态。
+
+## 先前候选与设备结果
 
 | 项目 | 身份与范围 |
 | --- | --- |
