@@ -3,14 +3,14 @@
 set -euo pipefail
 sun_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 sun_ws="$sun_root/upstream/Mu-Silicium"
-sun_tools="$sun_root/build/host-tools/usr"
+sun_tools="${SUNUEFI_TOOLCHAIN_ROOT:-$sun_root/build/host-tools/usr}"
 sun_profile="${1:-stage0}"
 case "$sun_profile" in
   stage0) sun_name=piano; sun_bootshim="$sun_ws/BootShim" ;;
-  probe) sun_name=pianoProbe; sun_bootshim="$sun_root/bootprofiles/handoff" ;;
-  linux) sun_name=pianoLinux; sun_bootshim="$sun_root/bootprofiles/handoff" ;;
-  gui) sun_name=pianoGui; sun_bootshim="$sun_root/bootprofiles/handoff" ;;
-  product) sun_name=pianoProduct; sun_bootshim="$sun_root/bootprofiles/handoff" ;;
+  probe) sun_name=pianoProbe; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
+  linux) sun_name=pianoLinux; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
+  gui) sun_name=pianoGui; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
+  product) sun_name=pianoProduct; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
   *) printf 'Unknown build profile\n' >&2; exit 1 ;;
 esac
 sun_fd_name=piano-stage0.fd

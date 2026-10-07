@@ -65,7 +65,7 @@ drift,owner tail-byte collisions,overflow and malformed owners. They run actual
 C under ASAN/UBSAN and do not invoke an allocator or MMU on the tablet.
 
 ```sh
-python3 -m unittest discover -s tests -p test_piano_display_mapping.py -v
+python3 -m unittest discover -s tests/unit -p test_piano_display_mapping.py -v
 python3 tools/piano_display_mapping.py --output-dir artifacts/display-mapping-candidate
 ```
 

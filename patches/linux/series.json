@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "target": "kernel69",
+  "source_url": "https://github.com/blu-sharky/linux-piano.git",
+  "base_commit": "352508459733d3e6d349ea5581a8dd2fd8bb4180",
+  "base_tree": "827a5a011f71fa76162fd85bf78ecf58c08620f1",
+  "target_tree": "17d484d4771a140e1eeb18eaf0315028adc5a16a",
+  "original_target_commit": "efe5734c24510c3c194f765511b49be9f13b4aa0",
+  "patches": [
+    {
+      "file": "0001-iommu-arm-smmu-qcom-preserve-occupied-firmware-route.patch",
+      "sha256": "47a06bb973c2e53166103f15c55c387ba5bcb6295041d423c8ffbda6da5c1657",
+      "original_commit": "1fd91b90a7204c7846f2fc0580cc967a20d692cf",
+      "original_parent": "352508459733d3e6d349ea5581a8dd2fd8bb4180",
+      "committer_date": "2026-10-06T00:56:55+08:00",
+      "tree": "8943c1efb32374f8173d411927d88dfeae47015f"
+    },
+    {
+      "file": "0002-iommu-arm-smmu-expose-serialized-per-master-identity.patch",
+      "sha256": "29130c06a04a5632d2ef9bbc75ed8fa4f79743ad53badedc76696fce688a3bfa",
+      "original_commit": "74c517825a95113f35c121db136e3880d44b9806",
+      "original_parent": "1fd91b90a7204c7846f2fc0580cc967a20d692cf",
+      "committer_date": "2026-10-06T01:22:47+08:00",
+      "tree": "0c0e1ca75f942327736977d46d11768ee66bedbe"
+    },
+    {
+      "file": "0003-iommu-arm-smmu-validate-live-stage1-contexts-with-no.patch",
+      "sha256": "bd1fad607d3a6cd7f0ed07d24511bcae39b58d46d436bf66b442ca14b57712e0",
+      "original_commit": "d42158782b81c4aaa47c8643f1400a471785370b",
+      "original_parent": "74c517825a95113f35c121db136e3880d44b9806",
+      "committer_date": "2026-10-06T01:53:35+08:00",
+      "tree": "731cc8757397da0e9988fa940bf3f8b63d8fcb6e"
+    },
+    {
+      "file": "0004-ufs-core-capture-descriptor-and-HCI-state-after-fina.patch",
+      "sha256": "f3b43040416751cae01b24268d5f99c899129ab5ca26fa99d981eb9a8d13482b",
+      "original_commit": "40bee45195195997dca6603821e27cc233057d4d",
+      "original_parent": "d42158782b81c4aaa47c8643f1400a471785370b",
+      "committer_date": "2026-10-06T23:32:07+08:00",
+      "tree": "71d7e3edc7c5843716ff7babfb824cabbfd4d57e"
+    },
+    {
+      "file": "0005-usb-dwc3-record-reset-and-wrapper-clock-state-on-pro.patch",
+      "sha256": "276580da14328e6dde0bb550dd02959875b8fd19202d73a392114ca7cd6f0b1e",
+      "original_commit": "0b04714515a7236aebd0847b9b3806493321151d",
+      "original_parent": "40bee45195195997dca6603821e27cc233057d4d",
+      "committer_date": "2026-10-06T23:32:30+08:00",
+      "tree": "9dd04588c745d0ce05d139f536bd149165c16c10"
+    },
+    {
+      "file": "0006-iommu-arm-smmu-retain-identity-route-fault-evidence-.patch",
+      "sha256": "440453d11d06521e6e12f9197a81f970c4de423be6c041b6a623622019b4053c",
+      "original_commit": "e23f4479f6bd35eec3f1438e8c022e6a27d8fc8f",
+      "original_parent": "0b04714515a7236aebd0847b9b3806493321151d",
+      "committer_date": "2026-10-06T23:51:28+08:00",
+      "tree": "f4a77cbba2ef3e8b9142bb0b39155689f17d1a35"
+    },
+    {
+      "file": "0007-iommu-arm-smmu-qcom-initialize-owned-bypass-banks-fo.patch",
+      "sha256": "711b2c4636159ae916d65d97d15898ff7b7565ee29029469dfa530070663bbd0",
+      "original_commit": "d4c8b9fadef5167b68b8aa7160255f62c0c4cb82",
+      "original_parent": "e23f4479f6bd35eec3f1438e8c022e6a27d8fc8f",
+      "committer_date": "2026-10-06T23:53:09+08:00",
+      "tree": "300b19d3950a96bab18b112d17fe04826fe416a6"
+    },
+    {
+      "file": "0008-Input-nt36532e-add-verified-THP-controller-queries-a.patch",
+      "sha256": "9f829aececa9e5392bd5cd59879167b96600f32db4ec7535a213309da04d5abd",
+      "original_commit": "efe5734c24510c3c194f765511b49be9f13b4aa0",
+      "original_parent": "d4c8b9fadef5167b68b8aa7160255f62c0c4cb82",
+      "committer_date": "2026-10-07T01:35:53+08:00",
+      "tree": "17d484d4771a140e1eeb18eaf0315028adc5a16a"
+    }
+  ]
+}

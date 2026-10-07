@@ -1,6 +1,6 @@
 # RAM-root Linux 发行版调试 bootstrap
 
-bootprofiles/linux-userspace 提供可复制到BusyBox initramfs或Debian ARM64 RAM root的POSIX shell脚本。默认只输出可观察diagnostics，不启用gadget、交互shell或恢复timer。它不修改kernel pins，不挂载Android/data，不调用insmod/modprobe，不创建USB存储功能，也不改role/PHY/TCSR/devmem。
+linux/userspace 提供可复制到BusyBox initramfs或Debian ARM64 RAM root的POSIX shell脚本。默认只输出可观察diagnostics，不启用gadget、交互shell或恢复timer。它不修改kernel pins，不挂载Android/data，不调用insmod/modprobe，不创建USB存储功能，也不改role/PHY/TCSR/devmem。
 
 ## 文件与调用
 
@@ -54,6 +54,6 @@ configfs gadget使用实验开发ID1209:8751、CDC IAD、ACM和NCM功能、确�
 
 ## 验证范围
 
-tests/test_linux_debug_bootstrap.py运行实际shell脚本，以临时proc/sys/configfs边界与命令fixture测试16个场景：默认无操作/timer、ACM+NCM配置、自己拥有的stop、配置失败回滚、UDC/role/provider/state/configfs拒绝、路径参数、非RAM root、已有gadget保留、显式timer、显式NCM地址无路由及shellopt-in。fixture状态全部打印evidence=fixture，不计Piano枚举成功。
+tests/unit/test_linux_debug_bootstrap.py运行实际shell脚本，以临时proc/sys/configfs边界与命令fixture测试16个场景：默认无操作/timer、ACM+NCM配置、自己拥有的stop、配置失败回滚、UDC/role/provider/state/configfs拒绝、路径参数、非RAM root、已有gadget保留、显式timer、显式NCM地址无路由及shellopt-in。fixture状态全部打印evidence=fixture，不计Piano枚举成功。
 
 标准依据：[Linux gadget configfs](https://docs.kernel.org/usb/gadget_configfs.html)；[UDC sysfs ABI](https://raw.githubusercontent.com/torvalds/linux/master/Documentation/ABI/stable/sysfs-class-udc)；[USB role switch ABI](https://raw.githubusercontent.com/torvalds/linux/master/Documentation/ABI/testing/sysfs-class-usb_role)。这些接口提供Linux标准功能，不能取代SM8750硬件后端的验证。

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "matrix": {
+    "debian": {"gnome": "candidate", "kde": "candidate", "dde": "unavailable"},
+    "ubuntu": {"gnome": "candidate", "kde": "candidate", "dde": "unavailable"},
+    "arch": {"gnome": "candidate", "kde": "candidate", "dde": "unavailable"},
+    "deepin": {"gnome": "unavailable", "kde": "unavailable", "dde": "explicit-base-and-package-check"}
+  },
+  "desktops": {
+    "gnome": {
+      "apt_packages": ["gnome-shell", "gnome-session", "gdm3", "nautilus", "gnome-control-center", "dconf-cli", "pipewire", "wireplumber", "iio-sensor-proxy"],
+      "arch_packages": ["gnome-shell", "gnome-session", "gdm", "nautilus", "gnome-control-center", "dconf", "pipewire", "wireplumber", "iio-sensor-proxy"],
+      "display_manager": {"apt": "gdm3", "arch": "gdm"},
+      "scale_percent": 200, "scale_scope": "GNOME integer toolkit default; per-output Wayland layout remains user configurable",
+      "osk": "GNOME Shell built-in screen keyboard", "rotation": "iio-sensor-proxy installed; actual sensor transport and rotation unverified"
+    },
+    "kde": {
+      "apt_packages": ["plasma-desktop", "plasma-workspace-wayland", "sddm", "dolphin", "konsole", "pipewire", "wireplumber", "iio-sensor-proxy"],
+      "arch_packages": ["plasma-desktop", "plasma-workspace", "sddm", "dolphin", "konsole", "pipewire", "wireplumber", "iio-sensor-proxy"],
+      "optional_packages": ["maliit-keyboard"], "display_manager": {"apt": "sddm", "arch": "sddm"},
+      "scale_percent": 200, "scale_scope": "Qt default; per-output compositor scaling remains user configurable",
+      "osk": "Maliit only when target package and desktop entry are present, Wayland session required",
+      "rotation": "sensor-dependent, not hardware verified"
+    },
+    "dde": {
+      "apt_packages": ["dde", "dde-daemon", "dde-control-center", "dde-file-manager", "lightdm"],
+      "display_manager": {"apt": "lightdm"},
+      "scale_percent": 200, "scale_scope": "requested default, no unverified DDE settings API applied",
+      "osk": "unverified; no fabricated keyboard service", "rotation": "unverified"
+    }
+  },
+  "meaning": "candidate denotes a package/backend recipe, not a tested Piano boot. Every execute checks package candidates in the target distro."
+}

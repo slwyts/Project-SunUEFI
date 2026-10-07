@@ -1,0 +1,10 @@
+[Unit]
+Description=Piano ADSP bring-up (remoteproc, glink, charger telemetry)
+After=systemd-udev-trigger.service piano-display.service piano-touch.service
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/piano/adsp-start
+RemainAfterExit=yes
+TimeoutStartSec=120
+[Install]
+WantedBy=multi-user.target

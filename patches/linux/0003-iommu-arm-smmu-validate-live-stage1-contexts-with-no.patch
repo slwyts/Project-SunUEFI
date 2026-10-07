@@ -1,0 +1,465 @@
+From d42158782b81c4aaa47c8643f1400a471785370b Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 6 Oct 2026 01:53:35 +0800
+Subject: [PATCH] iommu/arm-smmu: validate live stage1 contexts with
+ nonblocking group observation
+
+---
+ .../ABI/testing/sysfs-devices-piano-dma-route |  25 +++
+ .../arm/arm-smmu/arm-smmu-qcom-handoff.h      |  23 +++
+ drivers/iommu/arm/arm-smmu/arm-smmu.c         | 189 +++++++++++++++++-
+ drivers/iommu/iommu.c                         |  47 ++++-
+ include/linux/iommu.h                         |   4 +-
+ .../selftests/iommu/qcom-handoff-snapshot.c   |  49 ++++-
+ 6 files changed, 325 insertions(+), 12 deletions(-)
+
+diff --git a/Documentation/ABI/testing/sysfs-devices-piano-dma-route b/Documentation/ABI/testing/sysfs-devices-piano-dma-route
+index 9ca17ec1c0bf5e4a86d55a1adbe64f41288a1606..bbe9261da7446fb2df449e93790553679fec1ae7 100644
+--- a/Documentation/ABI/testing/sysfs-devices-piano-dma-route
++++ b/Documentation/ABI/testing/sysfs-devices-piano-dma-route
+@@ -19,3 +19,28 @@ Description:
+                 external firmware lease or memory ownership authorization.
+                 It does not allocate or program routes. Runtime PM uses
+                 the driver's normal resource APIs while reading registers.
++
++What:           /sys/devices/.../piano_dma_context
++Date:           October 2026
++Contact:        Linux IOMMU developers <iommu@lists.linux.dev>
++Description:
++                Admin-only readback of an actually attached ARM64 stage1 DMA
++                or unmanaged domain. Group serialization pins the attached
++                domain, and the driver's init/stream locks protect private
++                state. The getter compares actual SMR/S2CR, TTBR0/TTBR1,
++                TCR/TCR2 and MAIR with that owning domain's programmed state.
++                It rejects firmware-adopted routes, invalid table roots,
++                disabled translation, faults, mismatches and changes across
++                repeated hardware/private-state reads. No register is written
++                by the getter; normal runtime PM may power the bound provider.
++
++                The first line is
++                "piano-dma-context-v1 domain=stage1 ids=N", followed by at most
++                eight stream records. The prior identity route fields remain,
++                with ttbr0/ttbr1 (16 hexadecimal digits) and tcr/tcr2/mair0/mair1
++                (eight hexadecimal digits). All records belong to one context.
++                Context fields are diagnostics, not CPU read permission,
++                a successful device transfer or global hardware readiness.
++
++                The identity getter also uses group serialization so a domain
++                cannot be detached/freed during either readback callback.
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
+index bca3b1c2d7ec871b0917a2f273776a4f47805269..470fd9fb638fdd6518e08388ddb0684ea6c3c8cd 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
+@@ -9,6 +9,7 @@
+ #include <stdbool.h>
+ #include <stdint.h>
+ typedef uint32_t u32;
++typedef uint64_t u64;
+ #endif
+ 
+ #define QCOM_HANDOFF_MAX_SMR 128
+@@ -23,6 +24,28 @@ struct qcom_smmu_handoff_snapshot {
+ 	u32 sctlr[QCOM_HANDOFF_MAX_CB];
+ };
+ 
++/* Stage-1 readback versus the real owning domain's programmed state. */
++struct piano_smmu_context_snapshot {
++	u64 ttbr[2];
++	u32 tcr[2], mair[2];
++	u32 sctlr, cbar, cba2r, fsr;
++};
++
++static inline bool piano_smmu_stage1_equal(const struct piano_smmu_context_snapshot *hw,
++					 const struct piano_smmu_context_snapshot *owned)
++{
++	return hw && owned && (hw->sctlr & 1) && !((hw->fsr) & 0xc00001feU) &&
++		!((hw->sctlr ^ owned->sctlr) & 0x1017U) &&
++		(hw->cba2r & 1) && hw->cba2r == owned->cba2r &&
++		((hw->cbar >> 16) & 3) == 1 &&
++		hw->ttbr[0] == owned->ttbr[0] && hw->ttbr[1] == owned->ttbr[1] &&
++		hw->tcr[0] == owned->tcr[0] && hw->tcr[1] == owned->tcr[1] &&
++		hw->mair[0] == owned->mair[0] && hw->mair[1] == owned->mair[1] &&
++		(!(hw->tcr[0] & (1U << 7)) || !(hw->tcr[0] & (1U << 23))) &&
++		((hw->tcr[0] & (1U << 7)) || (hw->ttbr[0] & 0x0000fffffffff000ULL)) &&
++		((hw->tcr[0] & (1U << 23)) || (hw->ttbr[1] & 0x0000fffffffff000ULL));
++}
++
+ /* Compare actual hardware with kernel-private expected register encodings. */
+ static inline bool qcom_smmu_handoff_route_equal(u32 smr, u32 wanted_smr,
+ 					       u32 s2cr, u32 expected_s2cr,
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.c b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+index 0618c5e09407f3fcdbb60595a49e1d49e15af0c1..387182a324d0136232f2da6045916e3bd1395972 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+@@ -1443,8 +1443,7 @@ struct arm_smmu_device *arm_smmu_get_by_fwnode(struct fwnode_handle *fwnode)
+ }
+ 
+ /* Read-only per-master evidence. No route/context programming or ready file. */
+-static ssize_t piano_dma_route_show(struct device *dev,
+-				    struct device_attribute *attr, char *buf)
++static ssize_t piano_dma_identity_read(struct device *dev, char *buf)
+ {
+ 	struct arm_smmu_master_cfg *cfg = dev_iommu_priv_get(dev);
+ 	struct iommu_fwspec *fw = dev_iommu_fwspec_get(dev);
+@@ -1534,8 +1533,190 @@ static ssize_t piano_dma_route_show(struct device *dev,
+ 	arm_smmu_rpm_put(smmu);
+ 	return ret ? ret : len;
+ }
++static void piano_context_owned(struct arm_smmu_cb *cb,
++				struct piano_smmu_context_snapshot *state)
++{
++	memset(state, 0, sizeof(*state));
++	state->ttbr[0] = READ_ONCE(cb->ttbr[0]);
++	state->ttbr[1] = READ_ONCE(cb->ttbr[1]);
++	state->tcr[0] = READ_ONCE(cb->tcr[0]);
++	state->tcr[1] = READ_ONCE(cb->tcr[1]);
++	state->mair[0] = READ_ONCE(cb->mair[0]);
++	state->mair[1] = READ_ONCE(cb->mair[1]);
++}
++
++static void piano_context_hardware(struct arm_smmu_device *smmu, unsigned int cb,
++				   struct piano_smmu_context_snapshot *state)
++{
++	memset(state, 0, sizeof(*state));
++	state->ttbr[0] = arm_smmu_cb_readq(smmu, cb, ARM_SMMU_CB_TTBR0);
++	state->ttbr[1] = arm_smmu_cb_readq(smmu, cb, ARM_SMMU_CB_TTBR1);
++	state->tcr[0] = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_TCR);
++	state->tcr[1] = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_TCR2);
++	state->mair[0] = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_S1_MAIR0);
++	state->mair[1] = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_S1_MAIR1);
++	state->sctlr = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_SCTLR);
++	state->cbar = arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(cb));
++	state->cba2r = arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBA2R(cb));
++	state->fsr = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSR);
++}
++
++static ssize_t piano_dma_stage1_read(struct device *dev, char *buf)
++{
++	struct arm_smmu_master_cfg *cfg = dev_iommu_priv_get(dev);
++	struct iommu_fwspec *fw = dev_iommu_fwspec_get(dev);
++	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
++	struct arm_smmu_domain *owned;
++	struct arm_smmu_device *smmu;
++	struct arm_smmu_cb *bank;
++	struct piano_smmu_context_snapshot expected, fresh, first, second;
++	unsigned int i, cb;
++	ssize_t len;
++	int ret;
++
++	/* Group mutex pins this actual attached domain across the callback. */
++	if (!cfg || !fw || !domain || domain->owner != &arm_smmu_ops ||
++	    !(iommu_is_dma_domain(domain) || domain->type == IOMMU_DOMAIN_UNMANAGED))
++		return -EAGAIN;
++	owned = to_smmu_domain(domain);
++	smmu = cfg->smmu;
++	if (!smmu->smrs || !fw->num_ids || fw->num_ids > 8 || smmu->version <= ARM_SMMU_V1)
++		return -EOPNOTSUPP;
++	ret = arm_smmu_rpm_get(smmu);
++	if (ret < 0)
++		return ret;
++	mutex_lock(&owned->init_mutex);
++	if (owned->smmu != smmu || !owned->pgtbl_ops ||
++	    owned->stage != ARM_SMMU_DOMAIN_S1 || owned->cfg.fmt != ARM_SMMU_CTX_FMT_AARCH64 ||
++	    owned->cfg.cbar != CBAR_TYPE_S1_TRANS_S2_BYPASS ||
++	    owned->cfg.cbndx >= smmu->num_context_banks) {
++		ret = -EOPNOTSUPP;
++		goto out_domain;
++	}
++	cb = owned->cfg.cbndx;
++	bank = &smmu->cbs[cb];
++	if (READ_ONCE(bank->cfg) != &owned->cfg || !test_bit(cb, smmu->context_map)) {
++		ret = -ESTALE;
++		goto out_domain;
++	}
++	mutex_lock(&smmu->stream_map_mutex);
++	piano_context_owned(bank, &expected);
++	expected.cba2r = ARM_SMMU_CBA2R_VA64;
++	if (smmu->features & ARM_SMMU_FEAT_VMID16)
++		expected.cba2r |= FIELD_PREP(ARM_SMMU_CBA2R_VMID16, owned->cfg.vmid);
++	expected.sctlr = ARM_SMMU_SCTLR_S1_ASIDPNE | ARM_SMMU_SCTLR_AFE |
++		ARM_SMMU_SCTLR_TRE | ARM_SMMU_SCTLR_M;
++	if (IS_ENABLED(CONFIG_CPU_BIG_ENDIAN))
++		expected.sctlr |= ARM_SMMU_SCTLR_E;
++	piano_context_hardware(smmu, cb, &first);
++	if (!piano_smmu_stage1_equal(&first, &expected)) {
++		ret = -EIO;
++		goto out_stream;
++	}
++	len = sysfs_emit(buf, "piano-dma-context-v1 domain=stage1 ids=%u\n", fw->num_ids);
++	for (i = 0; i < fw->num_ids; i++) {
++		int idx = cfg->smendx[i];
++		struct arm_smmu_s2cr *route;
++		u32 smr, s2cr, wanted_smr, wanted_s2cr;
++		u32 smr_mask = ARM_SMMU_SMR_VALID | ARM_SMMU_SMR_ID | ARM_SMMU_SMR_MASK;
++		u32 s2cr_mask = ARM_SMMU_S2CR_TYPE | ARM_SMMU_S2CR_CBNDX | ARM_SMMU_S2CR_PRIVCFG;
++
++		if (idx < 0 || idx >= smmu->num_mapping_groups || !smmu->smrs[idx].valid) {
++			ret = -ENODATA;
++			goto out_stream;
++		}
++		route = &smmu->s2crs[idx];
++		if (route->boot || route->type != S2CR_TYPE_TRANS || route->cbndx != cb) {
++			ret = -ESTALE;
++			goto out_stream;
++		}
++		wanted_smr = FIELD_PREP(ARM_SMMU_SMR_ID, smmu->smrs[idx].id) |
++			FIELD_PREP(ARM_SMMU_SMR_MASK, smmu->smrs[idx].mask) | ARM_SMMU_SMR_VALID;
++		wanted_s2cr = FIELD_PREP(ARM_SMMU_S2CR_TYPE, route->type) |
++			FIELD_PREP(ARM_SMMU_S2CR_CBNDX, route->cbndx) |
++			FIELD_PREP(ARM_SMMU_S2CR_PRIVCFG, route->privcfg);
++		smr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(idx));
++		s2cr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(idx));
++		if (!qcom_smmu_handoff_route_equal(smr, wanted_smr, s2cr, wanted_s2cr,
++						 smr_mask, s2cr_mask) ||
++		    smr != arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(idx)) ||
++		    s2cr != arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(idx))) {
++			ret = -ESTALE;
++			goto out_stream;
++		}
++		len += sysfs_emit_at(buf, len,
++			"sid=%x mask=%x slot=%d origin=kernel-installed smr=%08x s2cr=%08x expected=%08x cb=%u ",
++			(u32)FIELD_GET(ARM_SMMU_SMR_ID, fw->ids[i]),
++			(u32)FIELD_GET(ARM_SMMU_SMR_MASK, fw->ids[i]),
++			idx, smr, s2cr, wanted_s2cr, cb);
++		len += sysfs_emit_at(buf, len,
++			"sctlr=%08x cbar=%08x fsr=%08x ttbr0=%016llx ttbr1=%016llx tcr=%08x tcr2=%08x mair0=%08x mair1=%08x\n",
++			first.sctlr, first.cbar, first.fsr, first.ttbr[0], first.ttbr[1],
++			first.tcr[0], first.tcr[1], first.mair[0], first.mair[1]);
++	}
++	piano_context_owned(bank, &fresh);
++	fresh.cba2r = expected.cba2r;
++	fresh.sctlr = expected.sctlr;
++	piano_context_hardware(smmu, cb, &second);
++	if (memcmp(&expected, &fresh, sizeof(expected)) ||
++	    memcmp(&first, &second, sizeof(first)) ||
++	    READ_ONCE(bank->cfg) != &owned->cfg) {
++		ret = -ESTALE;
++		goto out_stream;
++	}
++	ret = len;
++out_stream:
++	mutex_unlock(&smmu->stream_map_mutex);
++out_domain:
++	mutex_unlock(&owned->init_mutex);
++	arm_smmu_rpm_put(smmu);
++	return ret;
++}
++
++struct piano_dma_read {
++	struct device *target;
++	char *buffer;
++	bool context, seen;
++	ssize_t length;
++};
++
++static int piano_dma_group_read(struct device *dev, void *opaque)
++{
++	struct piano_dma_read *read = opaque;
++
++	if (dev != read->target)
++		return 0;
++	read->seen = true;
++	read->length = read->context ? piano_dma_stage1_read(dev, read->buffer) :
++		piano_dma_identity_read(dev, read->buffer);
++	return read->length < 0 ? read->length : 0;
++}
++
++static ssize_t piano_dma_read_serialized(struct device *dev, char *buffer, bool context)
++{
++	struct iommu_group *group = iommu_group_get(dev);
++	struct piano_dma_read read = { .target = dev, .buffer = buffer, .context = context };
++	int ret;
++
++	if (!group)
++		return -EAGAIN;
++	ret = iommu_group_for_each_dev_trylock(group, &read, piano_dma_group_read);
++	iommu_group_put(group);
++	return ret ? ret : read.seen ? read.length : -ENODEV;
++}
++
++static ssize_t piano_dma_route_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	return piano_dma_read_serialized(dev, buf, false);
++}
+ static DEVICE_ATTR_RO(piano_dma_route);
+ 
++static ssize_t piano_dma_context_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	return piano_dma_read_serialized(dev, buf, true);
++}
++static DEVICE_ATTR_ADMIN_RO(piano_dma_context);
++
+ static struct iommu_device *arm_smmu_probe_device(struct device *dev)
+ {
+ 	struct arm_smmu_device *smmu = NULL;
+@@ -1599,6 +1780,9 @@ static struct iommu_device *arm_smmu_probe_device(struct device *dev)
+ 	ret = device_create_file(dev, &dev_attr_piano_dma_route);
+ 	if (ret)
+ 		dev_warn(dev, "DMA route readback attribute unavailable: %d\n", ret);
++	ret = device_create_file(dev, &dev_attr_piano_dma_context);
++	if (ret)
++		dev_warn(dev, "DMA context readback attribute unavailable: %d\n", ret);
+ 
+ 	device_link_add(dev, smmu->dev,
+ 			DL_FLAG_PM_RUNTIME | DL_FLAG_AUTOREMOVE_SUPPLIER);
+@@ -1618,6 +1802,7 @@ static void arm_smmu_release_device(struct device *dev)
+ 	int ret;
+ 
+ 	device_remove_file(dev, &dev_attr_piano_dma_route);
++	device_remove_file(dev, &dev_attr_piano_dma_context);
+ 	ret = arm_smmu_rpm_get(cfg->smmu);
+ 	if (ret < 0)
+ 		return;
+diff --git a/drivers/iommu/iommu.c b/drivers/iommu/iommu.c
+index 23a531595835f46b2660705a4297f34ec54e9b05..20953344c9a7ec697ea8b57ddf19cdfaff8d0594 100644
+--- a/drivers/iommu/iommu.c
++++ b/drivers/iommu/iommu.c
+@@ -1389,6 +1389,20 @@ static struct device *iommu_group_first_dev(struct iommu_group *group)
+ 	return list_first_entry(&group->devices, struct group_device, list)->dev;
+ }
+ 
++static int iommu_group_for_each_dev_locked(struct iommu_group *group, void *data,
++					 int (*fn)(struct device *, void *))
++{
++	struct group_device *device;
++	int ret = 0;
++
++	for_each_group_device(group, device) {
++		ret = fn(device->dev, data);
++		if (ret)
++			break;
++	}
++	return ret;
++}
++
+ /**
+  * iommu_group_for_each_dev - iterate over each device in the group
+  * @group: the group
+@@ -1403,21 +1417,38 @@ static struct device *iommu_group_first_dev(struct iommu_group *group)
+ int iommu_group_for_each_dev(struct iommu_group *group, void *data,
+ 			     int (*fn)(struct device *, void *))
+ {
+-	struct group_device *device;
+-	int ret = 0;
++	int ret;
+ 
+ 	mutex_lock(&group->mutex);
+-	for_each_group_device(group, device) {
+-		ret = fn(device->dev, data);
+-		if (ret)
+-			break;
+-	}
++	ret = iommu_group_for_each_dev_locked(group, data, fn);
+ 	mutex_unlock(&group->mutex);
+-
+ 	return ret;
+ }
+ EXPORT_SYMBOL_GPL(iommu_group_for_each_dev);
+ 
++/**
++ * iommu_group_for_each_dev_trylock - nonblocking serialized group iteration
++ * @group: referenced group
++ * @data: callback data
++ * @fn: callback executed with the group mutex held
++ *
++ * For observational callbacks whose own lifetime is drained while removal
++ * holds the group mutex. Returning -EAGAIN avoids waiting for that mutex and
++ * deadlocking with the callback drain. The caller must hold a group reference.
++ */
++int iommu_group_for_each_dev_trylock(struct iommu_group *group, void *data,
++				     int (*fn)(struct device *, void *))
++{
++	int ret;
++
++	if (!mutex_trylock(&group->mutex))
++		return -EAGAIN;
++	ret = iommu_group_for_each_dev_locked(group, data, fn);
++	mutex_unlock(&group->mutex);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(iommu_group_for_each_dev_trylock);
++
+ /**
+  * iommu_group_get - Return the group for a device and increment reference
+  * @dev: get the group that this device belongs to
+diff --git a/include/linux/iommu.h b/include/linux/iommu.h
+index ac43b8b93f14aa4853e794eec5e6ca39d1eac0f1..4edd8ee58ba386755241cb9c7c87ee745ad85d76 100644
+--- a/include/linux/iommu.h
++++ b/include/linux/iommu.h
+@@ -987,7 +987,9 @@ extern int iommu_group_add_device(struct iommu_group *group,
+ 				  struct device *dev);
+ extern void iommu_group_remove_device(struct device *dev);
+ extern int iommu_group_for_each_dev(struct iommu_group *group, void *data,
+-				    int (*fn)(struct device *, void *));
++				  int (*fn)(struct device *, void *));
++extern int iommu_group_for_each_dev_trylock(struct iommu_group *group, void *data,
++					  int (*fn)(struct device *, void *));
+ extern struct iommu_group *iommu_group_get(struct device *dev);
+ extern struct iommu_group *iommu_group_ref_get(struct iommu_group *group);
+ extern void iommu_group_put(struct iommu_group *group);
+diff --git a/tools/testing/selftests/iommu/qcom-handoff-snapshot.c b/tools/testing/selftests/iommu/qcom-handoff-snapshot.c
+index 5c49d99fd290ac06b7500590d47ed95f3fe9605e..80ee8421bf5defc15cad82177362acbc304ae31c 100644
+--- a/tools/testing/selftests/iommu/qcom-handoff-snapshot.c
++++ b/tools/testing/selftests/iommu/qcom-handoff-snapshot.c
+@@ -10,6 +10,53 @@ static struct qcom_smmu_handoff_snapshot s;
+ int main(void)
+ {
+ 	unsigned int i;
++	struct piano_smmu_context_snapshot owned = {
++		.ttbr = { 0x00070000bd980000ULL, 0x0007000000000000ULL },
++		.tcr = { 1U << 23, 0x70014 }, .mair = { 0xff44, 0 },
++		.sctlr = 0x1007, .cba2r = 1,
++	};
++	struct piano_smmu_context_snapshot hw = owned;
++
++	hw.sctlr = 0x1007;
++	hw.cbar = 1U << 16;
++	hw.fsr = 0x400; /* FORMAT is not a fault. */
++	assert(piano_smmu_stage1_equal(&hw, &owned));
++	assert(!piano_smmu_stage1_equal(NULL, &owned));
++	for (i = 1; i <= 8; i <<= 1) {
++		hw.fsr = i << 1;
++		assert(!piano_smmu_stage1_equal(&hw, &owned));
++	}
++	hw.fsr = 0x400;
++	hw.ttbr[0] ^= 0x1000;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.ttbr[0] = owned.ttbr[0];
++	hw.tcr[1] ^= 1;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.tcr[1] = owned.tcr[1];
++	hw.mair[0] ^= 1;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.mair[0] = owned.mair[0];
++	hw.sctlr = 0;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.sctlr = 0x1007;
++	hw.cba2r = 0;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.cba2r = 1;
++	hw.sctlr |= 0x10; /* Wrong endian despite a matching table root. */
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.sctlr = 0x1007;
++	hw.cbar = 0;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.cbar = 1U << 16;
++	/* Reject enabled table with only an ASID, or both walks disabled. */
++	owned.ttbr[0] = hw.ttbr[0] = 0x0007000000000000ULL;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	owned.tcr[0] = hw.tcr[0] = (1U << 23) | (1U << 7);
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	/* GPU TTBR1-only configuration is a real stage1 domain too. */
++	owned.tcr[0] = hw.tcr[0] = 1U << 7;
++	owned.ttbr[1] = hw.ttbr[1] = 0x00070000bd982000ULL;
++	assert(piano_smmu_stage1_equal(&hw, &owned));
+ 
+ 	s.num_smr = 4;
+ 	s.num_cb = 4;
+@@ -56,6 +103,6 @@ int main(void)
+ 	assert(!qcom_smmu_handoff_cb_referenced(&s, 3));
+ 	s.sctlr[3] = 0;
+ 	assert(qcom_smmu_handoff_bypass_cb(&s) == 3);
+-	puts("qcom SMMU handoff snapshot assertions passed.");
++	puts("qcom SMMU handoff and real stage1 register comparator assertions passed.");
+ 	return 0;
+ }

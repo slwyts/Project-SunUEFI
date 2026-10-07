@@ -1,6 +1,6 @@
 # Early SMEM RAM402 reader contract
 
-`bootprofiles/early-memory/PianoSmemRam.c/.h` is an actual read-only source
+`uefi/handoff/early-memory/PianoSmemRam.c/.h` is an actual read-only source
 collector and payload parser. The product now calls it through the guarded DXE
 reader after Foundation and before UFS/USB startup. This runtime binding has
 not been exercised on the tablet. It does not publish memory HOBs/GCD/MMU
@@ -63,7 +63,7 @@ The SBL version is read at `+0x5C`; only major 11 and 12 are supported:
 
 This layout follows the primary
 [Linux qcom SMEM source](https://github.com/torvalds/linux/blob/v6.16/drivers/soc/qcom/smem.c),
-also present in `kernels/linux-piano/drivers/soc/qcom/smem.c`. The collector
+also present in `upstream/linux-piano/drivers/soc/qcom/smem.c`. The collector
 intentionally applies stricter size/alignment/budget and duplicate checks.
 Unknown majors, partition versions, auxiliary regions, or shapes are rejected,
 not treated as a usable fallback.
@@ -110,7 +110,7 @@ early exception-recoverable physical reader remain platform integration work.
 
 ## Verification
 
-`python -m unittest discover -s tests -p test_smem_ram.py -v` runs the actual C
+`python -m unittest discover -s tests/unit -p test_smem_ram.py -v` runs the actual C
 source under AddressSanitizer/UndefinedBehaviorSanitizer and checks the same
 source for AArch64 Windows/EDK2 syntax. The byte-addressed fixture covers 57 cases
 including both RAM layouts, major11 and global12 cached/uncached paths, callback

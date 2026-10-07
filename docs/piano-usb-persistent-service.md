@@ -71,7 +71,7 @@ start. An invalid USB SMR alone never creates a proof.
 
 ## Validation and remaining device work
 
-`python3 -m unittest discover -s tests -p test_usb_service.py -v` compiles the
+`python3 -m unittest discover -s tests/unit -p test_usb_service.py -v` compiles the
 actual Device and Controller source together under ASan/UBSan. Twenty lifecycle and eleven navigation isolated
 cases cover APP/TPL/reentry checks, timer-only queueing, overflow/malformed
 rings, standard command and guarded fetch, more than 90 seconds of simulated

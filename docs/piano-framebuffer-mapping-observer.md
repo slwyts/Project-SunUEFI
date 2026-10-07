@@ -50,7 +50,7 @@ not demonstrate working clocks, DPU plane state or the physical panel. Native
 HWIO mapping operations must not be called merely to obtain a diagnostic range;
 DPU/DISPCC remain outside this module.
 
-Run `python3 -m unittest discover -s tests -p test_framebuffer_mapping_observe.py -v`.
+Run `python3 -m unittest discover -s tests/unit -p test_framebuffer_mapping_observe.py -v`.
 The real source passes 38 fork scenarios with ASAN/UBSAN and actual BasePrintLib
 `AsciiVSPrint(256)`; full-width output stays below180 bytes with complete CRLF
 (observed maximum154). Cases cover the exact six pages, source metadata rejection,

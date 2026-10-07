@@ -1,0 +1,12 @@
+[Unit]
+Description=Piano Iris video codec bring-up (hardware decode and encode)
+# piano-display loads the apps SMMU driver the codec is attached to
+After=piano-display.service
+Wants=piano-display.service
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/piano/video-start
+RemainAfterExit=yes
+TimeoutStartSec=60
+[Install]
+WantedBy=multi-user.target

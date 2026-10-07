@@ -109,7 +109,7 @@ the next UEFI boot permission to reclaim memory or operate active owners.
 
 ## Tests
 
-`python -m unittest discover -s tests -p test_build_piano_full_dtb.py -v` uses
+`python -m unittest discover -s tests/unit -p test_build_piano_full_dtb.py -v` uses
 actual libfdt, dtc and fdtoverlay. It covers malformed FDT/header rejection,
 input pin failure, known-reference bounds, unknown opaque integers, real
 overlay folding/canonical stock drift, embedded-prefix extraction, target
@@ -141,7 +141,7 @@ without registered driver matches. They combine vendor one-cell ICC references
 with a provider changed to mainline two-cell ABI. Their raw diagnostics remain;
 no false provider #cells were added and no nodes were deleted.
 
-`configs/linux/dtb/piano-uart7-icc.dtso` uses exact same-UART7 ICC paths from
+`linux/dts/piano-uart7-icc.dtso` uses exact same-UART7 ICC paths from
 selected `sm8750.dtsi:2014..2028` and its headers. Only the a9c000 debug UART's
 interconnects/names are replaced by qup-core/config. Its target compatible and
 physical reg are checked; fdtoverlay output must preserve all other properties,

@@ -57,7 +57,7 @@ def main():
     add('bin/busybox', stat.S_IFREG | 0o755, busybox)
     for name in ('sh','mount','mknod','mkdir','sleep','echo','uname','insmod','ls','head','ln','seq','mdev','getty','reboot','cat','dmesg','lsmod'):
         add('bin/' + name, stat.S_IFLNK | 0o777, b'busybox')
-    add('init', stat.S_IFREG | 0o755, (root / 'bootprofiles/linux-ram/init').read_bytes())
+    add('init', stat.S_IFREG | 0o755, (root / 'linux/initramfs/linux-ram/init').read_bytes())
     for name in ordered:
         info = modules[name]
         payload = (module_dir / info['file']).read_bytes()

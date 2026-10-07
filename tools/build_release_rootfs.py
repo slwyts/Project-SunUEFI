@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""Build a new public-source GNOME root and label bootstrap; never write a device."""
+import argparse
+import gzip
+import json
+import os
+from pathlib import Path
+import platform
+import shutil
+import stat
+import subprocess
+import sys
+
+import build_piano_disk_bootstrap as disk
+import build_piano_runtime_helpers as runtime
+import stage_piano_full_userspace as userspace
+import stage_piano_kernel_modules as modules
+import stage_piano_ram_hardware as hardware
+from make_kernel_initramfs import make_newc, validate_static_arm64_elf
+
+ROOT = Path(__file__).resolve().parents[1]
+POLICY = ROOT / 'config/release.json'
+
+
+def digest(path): return modules.sha(path)
+
+
+def capture(args, cwd=None):
+    return subprocess.check_output(list(map(str, args)), cwd=cwd, text=True).strip()
+
+
+def repository(path, commit=None, tree=None):
+    head = capture(['git', '-C', path, 'rev-parse', 'HEAD'])
+    if (commit and head != commit) or capture(['git', '-C', path, 'status', '--porcelain']):
+        raise ValueError('Source HEAD/cleanliness mismatch: ' + str(path))
+    if tree and capture(['git', '-C', path, 'rev-parse', 'HEAD^{tree}']) != tree:
+        raise ValueError('Release kernel tree mismatch')
+    return head
+
+
+def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=None,
+         public_source=None, firmware_source=None, macros=None, v4l2_source=None, root=ROOT):
+    root = Path(root).resolve(); config = json.loads((root / 'config/release.json').read_text())
+    if config['debian']['apt_policy'] != 'mutable-recorded' or config['debian']['snapshot'] is not None:
+        raise ValueError('Only signed mutable APT with recorded metadata is implemented; snapshot mode is not configured')
+    kernel, source, output = [Path(p).resolve() for p in (kernel, source, output)]
+    if not output.is_relative_to(root / 'build/distros') or output.exists() or output.is_symlink():
+        raise ValueError('Output must be a new project build/distros directory')
+    if not kernel.is_relative_to(root / 'artifacts/kernels') or not source.is_relative_to(root / 'build/kernel-worktrees'):
+        raise ValueError('Use project release kernel source and artifacts')
+    public = Path(public_source or root / config['debian']['source']).resolve()
+    firmware = Path(firmware_source or root / config['firmware']['source']).resolve()
+    macros = Path(macros or root / 'upstream/audioreach-topology').resolve()
+    loop = Path(v4l2_source or root / 'upstream/v4l2loopback').resolve()
+    missing = []
+    for name, path in (('kernel manifest', kernel / 'manifest.json'), ('kernel source', source / 'Makefile'),
+                       ('public rootfs builder', public / 'scripts/build-rootfs.sh'), ('firmware', firmware / 'firmware/SHA256SUMS')):
+        if not path.is_file(): missing.append(name)
+    mesa = Path(mesa_dir).resolve() if mesa_dir else None
+    if mesa is None or not list(mesa.glob('*.deb')): missing.append('Piano Mesa .deb directory (--mesa-dir)')
+    if runtime_dir:
+        if not (Path(runtime_dir) / 'manifest.json').is_file(): missing.append('matching runtime bundle manifest')
+    else:
+        for name, path in (('AudioReach topology macros', macros / 'audioreach'), ('v4l2loopback source', loop / 'Makefile')):
+            if not path.exists(): missing.append(name)
+    record = None
+    if (kernel / 'manifest.json').is_file():
+        record, _ = modules.inspect(kernel)
+        head = repository(source, tree=config['kernel']['target_tree'])
+        if record['source_commit'] != head or record.get('source_clean') is not True:
+            raise ValueError('Kernel manifest does not match the prepared release source')
+        words = record['command_line'].split()
+        if record.get('root_policy') != 'LABEL=PIANOROOT' or [w for w in words if w.startswith('piano.root=')] != ['piano.root=LABEL=PIANOROOT'] or any(w.startswith('root=') for w in words) or 'userdata' in record['command_line']:
+            raise ValueError('Release kernel must select LABEL=PIANOROOT, never Android userdata')
+    if public.is_dir(): repository(public, config['debian']['commit'])
+    if firmware.is_dir(): repository(firmware, config['firmware']['commit'])
+    return {'status': 'PLAN_ONLY', 'root_policy': 'LABEL=PIANOROOT', 'kernel': str(kernel), 'source': str(source),
+            'output': str(output), 'rootfs': str(output / 'rootfs'), 'mesa_dir': str(mesa) if mesa else None,
+            'runtime_dir': str(Path(runtime_dir).resolve()) if runtime_dir else None,
+            'kernel_build': str(Path(kernel_build or root / 'build/kernels/release-kernel').resolve()),
+            'public_source': str(public), 'firmware_source': str(firmware), 'config': config, 'missing_inputs': missing,
+            'macros': str(macros), 'v4l2_source': str(loop),
+            'steps': ['require root + mount/chroot capability; ARM64 or enabled qemu-aarch64 binfmt',
+                      'run public build-rootfs.sh --suite trixie --output NEW --mesa-dir DEBS in private mount namespace',
+                      'install extra packages with signed APT defaults; record mutable repository metadata',
+                      'stage public overlay/adapters/modules; build_release_helpers uses actual compiler, alsatplg/m4 and matching kernel ABI',
+                      'verify/stage firmware; apply label storage policy; lock passwords and remove generated access keys',
+                      'record actual packages/source hashes; build release label initramfs; no archive or device writes']}
+
+
+def require_host():
+    if os.geteuid(): raise ValueError('--execute requires root; debootstrap/chroot/mount are real build dependencies')
+    caps = next(line.split()[1] for line in Path('/proc/self/status').read_text().splitlines() if line.startswith('CapEff:'))
+    if int(caps, 16) & ((1 << 21) | (1 << 18)) != ((1 << 21) | (1 << 18)):
+        raise ValueError('Root runner also needs CAP_SYS_ADMIN and CAP_SYS_CHROOT')
+    required = ['debootstrap', 'chroot', 'curl', 'ssh-keygen', 'openssl', 'mount', 'umount', 'unshare', 'sha256sum', 'dpkg-deb']
+    if platform.machine() not in ('aarch64', 'arm64'):
+        required.append('qemu-aarch64-static')
+        entry = Path('/proc/sys/fs/binfmt_misc/qemu-aarch64')
+        if not entry.is_file() or 'enabled' not in entry.read_text() or 'F' not in entry.read_text().split('flags:')[-1].splitlines()[0]:
+            raise ValueError('x86 runner needs enabled qemu-aarch64 binfmt with the F flag')
+    absent = [name for name in required if not shutil.which(name)]
+    if absent: raise ValueError('Missing build dependencies: ' + ', '.join(absent))
+
+
+def own_root(rootfs, output):
+    rootfs, output = Path(rootfs).resolve(), Path(output).resolve()
+    if not output.is_relative_to(ROOT / 'build/distros') or rootfs != output / 'rootfs' or not rootfs.is_dir():
+        raise ValueError('Modify only this new release build rootfs')
+    return rootfs, output
+
+
+def target(root, name):
+    path = root / name
+    if not path.is_relative_to(root) or '..' in Path(name).parts: raise ValueError('Guest path escapes root')
+    for parent in path.parents:
+        if parent == root: break
+        if parent.is_symlink(): raise ValueError('Guest path traverses a symlink')
+    return path
+
+
+def put(root, name, text):
+    path = target(root, name)
+    if path.is_symlink(): path.unlink()
+    path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
+
+
+def apply_policy(rootfs, output, config):
+    rootfs, _ = own_root(rootfs, output)
+    storage = config['storage']
+    if (storage['root_label'], storage['root_partname'], storage['esp_label'], storage['root_fstype'], storage['esp_partname']) != ('PIANOROOT', 'sunuefi_root', 'SUNUEFI_ESP', 'ext4', 'sunuefi_esp'):
+        raise ValueError('Unknown release storage identities')
+    if set(storage['masked_units']) != {'piano-swapfile.service', 'systemd-growfs-root.service', 'qbootctl.service'}:
+        raise ValueError('Only the three storage-policy units may be masked')
+    put(rootfs, 'etc/fstab', 'LABEL=PIANOROOT / ext4 defaults,noatime 0 1\nLABEL=SUNUEFI_ESP /boot/efi vfat umask=0077,nofail 0 2\n')
+    put(rootfs, 'etc/piano/root-policy.json', json.dumps({'version': 1, 'mode': 'label', 'root_label': 'PIANOROOT',
+        'root_partlabel': 'sunuefi_root', 'esp_label': 'SUNUEFI_ESP'}, indent=2) + '\n')
+    put(rootfs, 'etc/udev/rules.d/01-piano-protect-android.rules', '''SUBSYSTEM!="block", GOTO="release_end"
+KERNELS!="1d84000.*", GOTO="release_end"
+ENV{UDISKS_IGNORE}="1"
+ENV{DEVTYPE}!="partition", GOTO="release_end"
+IMPORT{builtin}="blkid"
+ENV{ID_FS_LABEL}=="PIANOROOT", ENV{ID_PART_ENTRY_NAME}=="sunuefi_root", ENV{ID_FS_TYPE}=="ext4", GOTO="release_end"
+ENV{ID_FS_LABEL}=="SUNUEFI_ESP", ENV{ID_PART_ENTRY_NAME}=="sunuefi_esp", ENV{ID_FS_TYPE}=="vfat", GOTO="release_end"
+ATTR{ro}=="1", GOTO="release_end"
+RUN+="/usr/sbin/blockdev --setro /dev/%k"
+LABEL="release_end"
+''')
+    for unit in storage['masked_units']:
+        path = target(rootfs, Path('etc/systemd/system') / unit)
+        if path.exists() or path.is_symlink(): path.unlink()
+        path.parent.mkdir(parents=True, exist_ok=True); path.symlink_to('/dev/null')
+    helper = target(rootfs, 'usr/lib/piano/piano-disk-hardware-prepare')
+    if helper.exists() or helper.is_symlink(): helper.unlink()
+    helper.symlink_to('piano-ram-hardware-prepare')
+    debug = target(rootfs, Path('usr/local/sbin/piano-debug-bootstrap'))
+    if debug.is_symlink(): debug.unlink()
+    debug.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / 'linux/userspace/piano-debug-bootstrap', debug)
+
+
+def sanitize(rootfs, output):
+    rootfs, output = own_root(rootfs, output)
+    for relative in ('root/.ssh/authorized_keys', 'home/piano/.ssh/authorized_keys'):
+        path = target(rootfs, relative)
+        if path.exists() or path.is_symlink(): path.unlink()
+    for path in target(rootfs, 'etc/ssh/placeholder').parent.glob('ssh_host_*'):
+        if path.is_file() or path.is_symlink(): path.unlink()
+    for name in ('access-key', 'access-key.pub', 'login.txt'):
+        path = output / name
+        if path.exists() or path.is_symlink(): path.unlink()
+    put(rootfs, 'etc/machine-id', '')
+    path = target(rootfs, Path('var/lib/dbus/machine-id'))
+    if path.exists() or path.is_symlink(): path.unlink()
+    path.parent.mkdir(parents=True, exist_ok=True); path.symlink_to('/etc/machine-id')
+    subprocess.run(['chroot', str(rootfs), '/usr/sbin/usermod', '--password', '!', 'piano'], check=True)
+    for name in ('etc/shadow-', 'etc/gshadow-'):
+        backup = target(rootfs, name)
+        if backup.exists() or backup.is_symlink(): backup.unlink()
+
+
+def mesa_packages(folder):
+    rows = {}
+    for path in Path(folder).glob('*.deb'):
+        package, version, arch = [capture(['dpkg-deb', '-f', path, field]) for field in ('Package', 'Version', 'Architecture')]
+        if arch not in ('arm64', 'all') or '+piano' not in version:
+            raise ValueError('Expected ARM64 Piano Mesa packages')
+        rows[package] = {'version': version, 'architecture': arch, 'sha256': digest(path)}
+    if not {'mesa-libgallium', 'libgbm1', 'libegl-mesa0', 'libglx-mesa0', 'mesa-vulkan-drivers'} <= rows.keys():
+        raise ValueError('Piano Mesa core packages are missing')
+    return rows
+
+
+def bootstrap(rootfs, kernel, output, release):
+    busybox = ROOT / 'build/linux-ram/busybox'
+    if digest(busybox) != disk.BUSYBOX_SHA: raise ValueError('Static BusyBox source hash changed')
+    validate_static_arm64_elf(busybox.read_bytes())
+    files = disk.runtime_files(rootfs); directory = Path(kernel) / 'modules/lib/modules' / release
+    ordered, _ = disk.module_closure(directory)
+    files.update({'bin/busybox': busybox, 'pianoinit': ROOT / 'linux/userspace/release-disk-bootstrap',
+                  'usr/local/sbin/piano-debug-bootstrap': ROOT / 'linux/userspace/piano-debug-bootstrap'})
+    files['init'] = files['pianoinit']
+    for name in ordered: files[f'lib/modules/{release}/{name}'] = directory / name
+    generated = {'etc/piano/root-label': 'PIANOROOT\n', 'etc/piano/root-partname': 'sunuefi_root\n',
+                 'etc/piano/kernel-release': release + '\n',
+                 'etc/piano/linux-debug.conf': 'usb=acm-ncm\nshell=1\nrecovery_seconds=0\n',
+                 'etc/piano/modules-load-order': ''.join(f'{disk.module_name(p)} /lib/modules/{release}/{p}\n' for p in ordered)}
+    dirs = {'dev', 'proc', 'sys', 'run', 'tmp', 'sysroot'}
+    for name in files.keys() | generated.keys(): dirs.update(p.as_posix() for p in Path(name).parents if p.as_posix() != '.')
+    rows = [{'name': n, 'mode': stat.S_IFDIR | (0o1777 if n == 'tmp' else 0o755)} for n in sorted(dirs)]
+    rows += [{'name': n, 'mode': stat.S_IFREG | 0o755, 'data': p.read_bytes()} for n, p in sorted(files.items())]
+    rows += [{'name': n, 'mode': stat.S_IFREG | 0o644, 'data': v.encode()} for n, v in generated.items()]
+    rows += [{'name': 'bin/' + n, 'mode': stat.S_IFLNK | 0o777, 'data': b'busybox'} for n in disk.APPLETS]
+    rows += [{'name': 'dev/console', 'mode': stat.S_IFCHR | 0o600, 'major': 5, 'minor': 1},
+             {'name': 'dev/null', 'mode': stat.S_IFCHR | 0o666, 'major': 1, 'minor': 3}]
+    target = output / 'initramfs/initramfs.cpio.gz'; target.parent.mkdir()
+    target.write_bytes(gzip.compress(make_newc(rows), mtime=0))
+    record = {'status': 'HOST_BUILT_LABEL_BOOTSTRAP_NOT_BOOT_VERIFIED', 'kernel_release': release,
+              'kernel_commit': json.loads((Path(kernel) / 'manifest.json').read_text())['source_commit'],
+              'kernel_manifest_sha256': digest(Path(kernel) / 'manifest.json'), 'root_policy': 'LABEL=PIANOROOT',
+              'initramfs_sha256': digest(target), 'entry_sha256': digest(files['pianoinit'])}
+    (target.parent / 'manifest.json').write_text(json.dumps(record, indent=2) + '\n')
+    return record
+
+
+def execute(record):
+    if record['missing_inputs']: raise ValueError('Missing inputs: ' + ', '.join(record['missing_inputs']))
+    require_host()
+    out, rootfs, source, kernel = [Path(record[k]) for k in ('output', 'rootfs', 'source', 'kernel')]
+    cfg = record['config']; public = Path(record['public_source']); m, kernel_hash = modules.inspect(kernel)
+    abi = runtime.kernel_identity(Path(record['kernel_build']), source, m['source_commit'], m['kernel_release'])
+    if record['runtime_dir']:
+        saved = json.loads((Path(record['runtime_dir']) / 'manifest.json').read_text())
+        if saved.get('status') != 'RUNTIME_COMPILED_NOT_DEVICE_TESTED' or saved.get('kernel') != abi or saved.get('public_commit') != cfg['debian']['commit']:
+            raise ValueError('Runtime bundle does not belong to the actual new kernel build')
+    elif any(not shutil.which(name) for name in ('clang' if platform.machine() in ('aarch64', 'arm64') else 'aarch64-linux-gnu-gcc', 'alsatplg', 'm4', 'make', 'depmod')):
+        raise ValueError('Install the release helper compiler, alsatplg, m4, make and depmod first')
+    mesa = mesa_packages(record['mesa_dir'])
+    if out.exists(): raise ValueError('Output appeared after planning; preserve it')
+    out.parent.mkdir(parents=True, exist_ok=True); log = out.with_name(out.name + '.build.log')
+    if log.exists(): raise ValueError('Build log exists; choose a new output name')
+    def run(args, cwd=None):
+        with log.open('a') as stream: subprocess.run(list(map(str, args)), cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, check=True)
+    try:
+        run(['unshare', '--mount', '--propagation', 'private', 'bash', public / 'scripts/build-rootfs.sh',
+             '--suite', cfg['debian']['suite'], '--output', out, '--mesa-dir', record['mesa_dir']])
+        if not (out / 'COMPLETE').is_file() or rootfs.stat().st_uid: raise ValueError('Public GNOME build did not complete with native guest ownership')
+        put(rootfs, 'usr/sbin/policy-rc.d', '#!/bin/sh\nexit 101\n'); (rootfs / 'usr/sbin/policy-rc.d').chmod(0o755)
+        run(['chroot', rootfs, 'apt-get', 'install', '-y', '--no-install-recommends', *cfg['debian']['extra_packages']])
+        userspace.stage(rootfs, public); hardware.build(out / 'adapters', public, rootfs); modules.stage(rootfs, kernel)
+        if record['runtime_dir']:
+            bundle = Path(record['runtime_dir']); rm = json.loads((bundle / 'manifest.json').read_text())
+            if rm['kernel'] != runtime.kernel_identity(Path(record['kernel_build']), source, m['source_commit'], m['kernel_release']): raise ValueError('Runtime bundle kernel ABI provenance differs')
+            runtime.stage(bundle, rootfs)
+        else:
+            bundle = out / 'runtime'
+            run([sys.executable, ROOT / 'tools/build_release_helpers.py', '--kernel', kernel, '--source', source,
+                 '--kernel-build', record['kernel_build'], '--output', bundle, '--sysroot', rootfs,
+                 '--macros', record['macros'], '--v4l2-source', record['v4l2_source']])
+            runtime.stage(bundle, rootfs)
+        fw = Path(record['firmware_source']); run(['sha256sum', '--check', '--quiet', 'SHA256SUMS'], fw / 'firmware')
+        shutil.copytree(fw / 'firmware', rootfs / 'usr/lib/firmware', dirs_exist_ok=True)
+        shutil.copytree(fw / 'LICENSES', rootfs / 'usr/share/doc/piano-firmware/LICENSES')
+        apply_policy(rootfs, out, cfg); sanitize(rootfs, out)
+        run(['chroot', rootfs, 'depmod', '-a', m['kernel_release']])
+        (rootfs / 'usr/sbin/policy-rc.d').unlink()
+        packages = capture(['chroot', rootfs, 'dpkg-query', '-W', '-f=${binary:Package}\t${Version}\t${Architecture}\t${db:Status-Status}\n'])
+        (out / 'packages.tsv').write_text(packages + '\n')
+        installed = {p[0].split(':')[0]: p[1] for line in packages.splitlines() if len(p := line.split('\t')) == 4 and p[3] == 'installed'}
+        if not {'gnome-shell', 'gdm3', 'systemd-sysv', 'pipewire', 'network-manager'} <= installed.keys(): raise ValueError('Required GNOME packages are not installed')
+        metadata = {str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'var/lib/apt/lists').glob('*InRelease')}
+        if not metadata: raise ValueError('Signed APT InRelease metadata is missing')
+        metadata.update({str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'etc/apt').rglob('*') if p.is_file()})
+        boot = bootstrap(rootfs, kernel, out, m['kernel_release'])
+        if modules.inspect(kernel)[1] != kernel_hash: raise ValueError('Kernel changed during rootfs build')
+        result = {'status': 'HOST_BUILT_RELEASE_GNOME_ROOT_NOT_BOOT_VERIFIED', 'rootfs': str(rootfs),
+                  'root_policy': 'LABEL=PIANOROOT', 'kernel_release': m['kernel_release'], 'kernel_commit': m['source_commit'],
+                  'kernel_manifest_sha256': kernel_hash, 'release_config_sha256': digest(POLICY), 'packages_sha256': digest(out / 'packages.tsv'),
+                  'adapters_manifest_sha256': digest(out / 'adapters/manifest.json'), 'runtime_manifest_sha256': digest(bundle / 'manifest.json'),
+                  'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata, 'debian_commit': cfg['debian']['commit'],
+                  'mesa_packages': mesa, 'firmware_commit': cfg['firmware']['commit'],
+                  'initramfs': boot, 'password': 'locked; owner must set their own', 'autologin_retained': True,
+                  'bit_reproducible': False, 'root_uid': rootfs.stat().st_uid, 'device_operation_performed': False}
+        (out / 'manifest.json').write_text(json.dumps(result, indent=2) + '\n'); return result
+    except Exception as exc:
+        if out.is_dir(): (out / 'FAILED.json').write_text(json.dumps({'status': 'BUILD_FAILED', 'error': str(exc)}) + '\n')
+        raise
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ('kernel', 'source', 'output'): parser.add_argument('--' + name, type=Path, required=True)
+    for name in ('mesa-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
+    mode = parser.add_mutually_exclusive_group(required=True); mode.add_argument('--plan', action='store_true'); mode.add_argument('--execute', action='store_true')
+    args = vars(parser.parse_args()); execute_flag = args.pop('execute'); args.pop('plan')
+    try:
+        record = plan(**args); print(json.dumps(execute(record) if execute_flag else record, indent=2))
+    except (OSError, ValueError, subprocess.SubprocessError) as exc: parser.exit(2, str(exc) + '\n')
+
+
+if __name__ == '__main__': main()

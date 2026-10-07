@@ -19,7 +19,7 @@ python3 tools/check_host.py --group python-all --list
 python3 tools/check_host.py --group python-all
 ```
 
-`python-all` 包含 `tests/test_*.py` 和 `tools/test_*.py`，逐文件运行，默认每文件 120 秒超时。部分测试依赖上游头文件、C 编译器、准备树或本地采集；缺少条件可能跳过或失败，输出会保留原因。不要把此组的跳过当成该功能已验证。
+`python-all` 包含 `tests/unit/test_*.py` 和 `tools/test_*.py`，逐文件运行，默认每文件 120 秒超时。部分测试依赖上游头文件、C 编译器、准备树或本地采集；缺少条件可能跳过或失败，输出会保留原因。不要把此组的跳过当成该功能已验证。
 
 原有 `tools/test_*.sh`、独立 C/汇编夹具不会被 Python discovery 自动执行。修改某个原生模块时，还要运行该模块文档指定的入口；例如 DMA、UFS、USB、输入生命周期的 shell 组需要 Mu 头文件与编译器。请先查看脚本的工具路径和输入要求，按[构建准备](building.md)配置环境，别把所有测试盲目塞进公开 CI。
 

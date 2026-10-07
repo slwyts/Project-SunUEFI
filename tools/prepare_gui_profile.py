@@ -221,8 +221,8 @@ def main():
     if args.ufs_bounded_filesystem_test:
         bounded_format=load_bounded_format(root)
         bounded_format.verify()
-    source = root / 'platforms/pianoProbePkg'
-    target = root / 'platforms/pianoGuiPkg'
+    source = root / 'uefi/platforms/pianoProbePkg'
+    target = root / 'uefi/platforms/pianoGuiPkg'
     shutil.copytree(source, target, dirs_exist_ok=True)
     for path in target.rglob('*'):
         if path.is_file() and path.suffix in ('.c','.h','.inf','.dsc','.dec','.fdf','.py'):
@@ -232,15 +232,15 @@ def main():
     app = target / 'Applications/RamApp'
     app.mkdir(parents=True, exist_ok=True)
     for name in ('RamApp.c','RamApp.inf'):
-        shutil.copyfile(root / 'bootprofiles/uefi-app' / name, app / name)
+        shutil.copyfile(root / 'uefi/core' / name, app / name)
     if args.foundation:
         for name in ('NativeProbe.c','NativeProbeTable.h'):
-            shutil.copyfile(root / 'bootprofiles/uefi-app' / name,app / name)
+            shutil.copyfile(root / 'uefi/core' / name,app / name)
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  NativeProbe.c').replace('  DebugLib','  DebugLib\n  DxeServicesLib');path.write_text(text)
         path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)','VOID PianoProbeFoundation (VOID);\n#pragma pack(1)',1).replace('  ProbeGop ();','  PianoProbeFoundation ();\n  ProbeGop ();');path.write_text(text)
     if args.keys:
-        shutil.copyfile(root/'bootprofiles/uefi-app/PianoKeys.c',app/'PianoKeys.c')
-        shutil.copyfile(root/'bootprofiles/uefi-app/PianoKeysLifecycle.h',app/'PianoKeysLifecycle.h')
+        shutil.copyfile(root/'uefi/core/PianoKeys.c',app/'PianoKeys.c')
+        shutil.copyfile(root/'uefi/core/PianoKeysLifecycle.h',app/'PianoKeysLifecycle.h')
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoKeys.c').replace('  DebugLib','  DebugLib\n  IoLib')
         text+='  gEfiSimpleTextInProtocolGuid\n  gEfiDevicePathProtocolGuid\n';path.write_text(text)
         path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
@@ -253,16 +253,16 @@ def main():
             '  gBS->UnloadImage (App); PianoStopKeys(); return Status;')
         path.write_text(text)
     if args.touch_probe:
-        shutil.copyfile(root/'bootprofiles/uefi-app/PianoTouchProbe.c',app/'PianoTouchProbe.c')
+        shutil.copyfile(root/'uefi/core/PianoTouchProbe.c',app/'PianoTouchProbe.c')
         if args.gpi_probe:
             path=app/'PianoTouchProbe.c';path.write_text('#define PIANO_GPI_PROBE 1\n'+path.read_text())
         if args.ram_qupfw:
-            shutil.copyfile(root/'bootprofiles/uefi-app/PianoQupFwRam.c',app/'PianoQupFwRam.c')
+            shutil.copyfile(root/'uefi/core/PianoQupFwRam.c',app/'PianoQupFwRam.c')
             path=app/'PianoTouchProbe.c';text=path.read_text().replace('STATIC VOID ProbeGpiLibrary(VOID) {',
                 'EFI_STATUS PianoInstallQupFwRam(VOID);\nSTATIC VOID ProbeGpiLibrary(VOID) {\n  EFI_STATUS Firmware=PianoInstallQupFwRam();\n  if(EFI_ERROR(Firmware)) {DEBUG((DEBUG_WARN,"SUNUEFI_QUPFW_PROVIDER_ERROR %r\\n",Firmware));return;}')
             path.write_text(text)
             if args.qupfw_disk:
-                shutil.copyfile(root/'bootprofiles/uefi-app/PianoQupFwDisk.c',app/'PianoQupFwDisk.c')
+                shutil.copyfile(root/'uefi/core/PianoQupFwDisk.c',app/'PianoQupFwDisk.c')
                 path.write_text(path.read_text().replace('PianoInstallQupFwRam','PianoInstallQupFwDisk'))
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoTouchProbe.c').replace('  DebugLib','  DebugLib\n  CacheMaintenanceLib\n  ArmSmcLib')
         text=text.replace('  MdePkg/MdePkg.dec','  MdePkg/MdePkg.dec\n  QcomPkg/QcomPkg.dec')
@@ -281,7 +281,7 @@ def main():
     if args.usb_debug:
         path=app/'PianoKeys.c';path.write_text('#define PIANO_USB_POWER_PROBE 1\n'+path.read_text())
         for name in ('PianoFastboot.h','PianoFastboot.c','PianoUsbDebug.c'):
-            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+            shutil.copyfile(root/'uefi/core'/name,app/name)
         path=app/'RamApp.inf'
         text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFastboot.c\n  PianoUsbDebug.c')
         text=text.replace('  MdePkg/MdePkg.dec','  MdePkg/MdePkg.dec\n  QcomPkg/QcomPkg.dec')
@@ -307,14 +307,14 @@ def main():
         text=text.replace(old,'  {"Piano_Ramoops", 0xA3500000, 0x400000, AddMem, 5, 0x703C07, 0, UNCACHED_UNBUFFERED_XN},\n'
                              '  {"Display_Demura_Tail", 0xA3900000, 0x2880000, AddMem, 5, 0x703C07, 0, WRITE_THROUGH_XN},')
         mapping.write_text(text)
-        shutil.copyfile(root/'bootprofiles/uefi-app/PianoUfsProbe.c',app/'PianoUfsProbe.c')
+        shutil.copyfile(root/'uefi/core/PianoUfsProbe.c',app/'PianoUfsProbe.c')
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoUfsProbe.c')
         text=text.replace('  MdePkg/MdePkg.dec','  MdePkg/MdePkg.dec\n  QcomPkg/QcomPkg.dec');path.write_text(text)
         path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
             'VOID PianoProbeUfs(CONST VOID *Fdt);\n#pragma pack(1)',1)
         text=text.replace('  Status=PianoStartKeys(Fdt);','  PianoProbeUfs(Fdt);\n  Status=PianoStartKeys(Fdt);');path.write_text(text)
     if args.fault_recovery:
-        shutil.copyfile(root/'bootprofiles/uefi-app/PianoFaultRecovery.c',app/'PianoFaultRecovery.c')
+        shutil.copyfile(root/'uefi/core/PianoFaultRecovery.c',app/'PianoFaultRecovery.c')
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFaultRecovery.c')
         if '  ArmSmcLib\n' not in text:text=text.replace('  DebugLib','  DebugLib\n  ArmSmcLib')
         if '  UefiRuntimeServicesTableLib\n' not in text:text=text.replace('  UefiLib','  UefiLib\n  UefiRuntimeServicesTableLib')
@@ -340,7 +340,7 @@ def main():
     if args.pmic_metadata:
         driver=target/'Drivers/PianoPmicMetadata';driver.mkdir(parents=True,exist_ok=True)
         for name in ('PianoPmicMetadata.c','PianoPmicMetadata.inf'):
-            shutil.copyfile(root/'bootprofiles/uefi-app'/name,driver/name)
+            shutil.copyfile(root/'uefi/core'/name,driver/name)
         path=app/'RamApp.c';text=path.read_text()
         helper='''STATIC EFI_STATUS LoadPmicMetadata(VOID) {
   EFI_GUID Guid={0x7BA3F20C,0x2A18,0x4F68,{0x85,0x40,0x0E,0x12,0x4B,0x6A,0x51,0xBD}};
@@ -366,7 +366,7 @@ def main():
         path.write_text(text)
     if args.dma_probe:
         for name in ('PianoSmmu.c','PianoSmmu.h','PianoDma.c','PianoDma.h','PianoDmaSelfTest.c'):
-            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+            shutil.copyfile(root/'uefi/core'/name,app/name)
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoSmmu.c\n  PianoDma.c\n  PianoDmaSelfTest.c')
         text=text.replace('  DebugLib','  DebugLib\n  DxeServicesTableLib\n  CacheMaintenanceLib');path.write_text(text)
         path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
@@ -377,7 +377,7 @@ def main():
         path.write_text(text)
     if args.dma_owned:
         for name in ('PianoOwnedSmmu.c','PianoOwnedSmmu.h','PianoIoPageTable.c','PianoIoPageTable.h'):
-            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+            shutil.copyfile(root/'uefi/core'/name,app/name)
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoOwnedSmmu.c\n  PianoIoPageTable.c')
         text+='  gEfiLoadedImageProtocolGuid\n';path.write_text(text)
         path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
@@ -385,7 +385,7 @@ def main():
         text=text.replace('  PianoProbeUfs(Fdt);','  PianoUfsSetProbeAction(PianoOwnedSmmuMemoryExperiment);\n  PianoProbeUfs(Fdt);');path.write_text(text)
     if args.ufs_dma_nop:
         for name in ('PianoUfsReadOnlyDma.c','PianoUfsDmaLayout.c','PianoUfsDmaLayout.h','PianoGpt.c','PianoGpt.h'):
-            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+            shutil.copyfile(root/'uefi/core'/name,app/name)
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoUfsReadOnlyDma.c\n  PianoUfsDmaLayout.c\n  PianoGpt.c')
         if '  PrintLib\n' not in text:text=text.replace('  DebugLib','  DebugLib\n  PrintLib')
         path.write_text(text)
@@ -395,7 +395,7 @@ def main():
             'PianoUfsSetProbeAction(PianoUfsReadOnlyDmaExperiment)');path.write_text(text)
     if args.ufs_blockio:
         for name in ('PianoReadOnlyBlock.c','PianoReadOnlyBlock.h','PianoUfsShutdown.h'):
-            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+            shutil.copyfile(root/'uefi/core'/name,app/name)
         path=app/'PianoUfsReadOnlyDma.c';path.write_text('#define PIANO_UFS_BLOCKIO 1\n'+path.read_text())
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoReadOnlyBlock.c')
         text+='  gEfiDevicePathProtocolGuid\n';text=text.replace('[Protocols]','[Guids]\n  gEfiEventExitBootServicesGuid\n\n[Protocols]');path.write_text(text)
@@ -403,7 +403,7 @@ def main():
         text=text.replace('PianoStopFaultRecovery();','PianoUfsBlockIoStop(); PianoStopFaultRecovery();');path.write_text(text)
     if args.ufs_write_preflight or args.ufs_write_restore_test:
         for name in ('PianoUfsWriteTest.c','PianoUfsWriteTest.h'):
-            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+            shutil.copyfile(root/'uefi/core'/name,app/name)
         write_attestation.prepare_ufs_write_test(output=app/'PianoUfsWriteTestBaseline.h')
         mode='PIANO_UFS_WRITE_PREFLIGHT' if args.ufs_write_preflight else 'PIANO_UFS_WRITE_RESTORE_TEST'
         path=app/'PianoUfsReadOnlyDma.c'
@@ -414,7 +414,7 @@ def main():
         for name in ('PianoUfsWriteTest.c','PianoUfsWriteTest.h','PianoUfsBoundedBlock.c','PianoUfsBoundedBlock.h',
                      'PianoUfsBoundedLayout.c','PianoUfsBoundedLayout.h','PianoUfsBoundedTransport.h',
                      'PianoUfsBoundedBindings.inc','PianoUfsBoundedFileSystemTest.c','PianoUfsBoundedFileSystemTest.h'):
-            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+            shutil.copyfile(root/'uefi/core'/name,app/name)
         write_attestation.prepare_ufs_write_test(output=app/'PianoUfsWriteTestBaseline.h')
         bounded_format.prepare(app/'PianoUfsBoundedFsFormat.h')
         path=app/'PianoUfsReadOnlyDma.c'
@@ -425,13 +425,13 @@ def main():
         text+='  gEfiSimpleFileSystemProtocolGuid\n';path.write_text(text)
         path=app/'RamApp.c';path.write_text(bounded_fs_ram_app(path.read_text()))
     if args.ufs_filesystems:
-        shutil.copyfile(root/'bootprofiles/uefi-app/PianoUfsFileSystemProbe.c',app/'PianoUfsFileSystemProbe.c')
+        shutil.copyfile(root/'uefi/core/PianoUfsFileSystemProbe.c',app/'PianoUfsFileSystemProbe.c')
         path=app/'PianoUfsReadOnlyDma.c';path.write_text('#define PIANO_UFS_FILESYSTEMS 1\n'+path.read_text())
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoUfsFileSystemProbe.c')
         text=text.replace('  gEfiEventExitBootServicesGuid','  gEfiEventExitBootServicesGuid\n  gEfiFileInfoGuid\n  gEfiFileSystemInfoGuid')
         text+='  gEfiSimpleFileSystemProtocolGuid\n';path.write_text(text)
     if args.ufs_shell:
-        shutil.copyfile(root/'bootprofiles/uefi-app/PianoLaunchShell.c',app/'PianoLaunchShell.c')
+        shutil.copyfile(root/'uefi/core/PianoLaunchShell.c',app/'PianoLaunchShell.c')
         path=app/'PianoUfsReadOnlyDma.c';path.write_text('#define PIANO_UFS_SHELL 1\n'+path.read_text())
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoLaunchShell.c')
         text=text.replace('  DebugLib','  DebugLib\n  DevicePathLib')
@@ -444,7 +444,7 @@ def main():
             '  Status=gBS->LoadImage (FALSE,ImageHandle')
         path.write_text(text)
     if args.ufs_setup:
-        shutil.copyfile(root/'bootprofiles/uefi-app/PianoLaunchSetup.c',app/'PianoLaunchSetup.c')
+        shutil.copyfile(root/'uefi/core/PianoLaunchSetup.c',app/'PianoLaunchSetup.c')
         path=app/'PianoUfsReadOnlyDma.c';path.write_text('#define PIANO_UFS_SETUP 1\n'+path.read_text())
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoLaunchSetup.c')
         text=text.replace('  MdePkg/MdePkg.dec','  MdePkg/MdePkg.dec\n  MdeModulePkg/MdeModulePkg.dec')
@@ -466,7 +466,7 @@ def main():
     if args.usb_controller:
         for name in ('PianoUsbController.c','PianoUsbRamBootExperiment.h','PianoUsbService.h','PianoDwc3Service.h','PianoDma.c','PianoDma.h','PianoSmmu.c','PianoSmmu.h',
                      'PianoOwnedSmmu.c','PianoOwnedSmmu.h','PianoIoPageTable.c','PianoIoPageTable.h'):
-            shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+            shutil.copyfile(root/'uefi/core'/name,app/name)
         path=app/'PianoKeys.c';path.write_text('#define PIANO_USB_POWER_PROBE 1\n'+path.read_text())
         mapping=target/'Library/MemoryMapLib/MemoryMapLib.c';text=mapping.read_text()
         anchor='  {"CRYPTO0_CRYPTO",'
@@ -484,28 +484,28 @@ def main():
         text=text.replace('  Status=PianoStartKeys(Fdt);',foundation+'  Status=PianoUsbControllerExperiment(Fdt);\n  DEBUG((DEBUG_WARN,"SUNUEFI_USB_CONTROLLER_ACTION %r\\n",Status));\n  Status=PianoStartKeys(Fdt);');path.write_text(text)
         if args.usb_ep0:
             for name in ('PianoDwc3Device.c','PianoUsbControl.c','PianoUsbControl.h'):
-                shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+                shutil.copyfile(root/'uefi/core'/name,app/name)
             path=app/'PianoUsbController.c';path.write_text('#define PIANO_USB_EP0 1\n'+path.read_text())
             path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoDwc3Device.c\n  PianoUsbControl.c'))
             if args.usb_fastboot:
                 for name in ('PianoFastboot.c','PianoFastboot.h'):
-                    shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+                    shutil.copyfile(root/'uefi/core'/name,app/name)
                 for name in ('PianoDwc3Device.c','PianoUsbControl.c'):
                     path=app/name;path.write_text('#define PIANO_USB_FASTBOOT 1\n'+path.read_text())
                 path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFastboot.c'))
                 if args.usb_screenshot:
                     for name in ('PianoFastbootScreen.c','PianoFastbootScreen.h'):
-                        shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+                        shutil.copyfile(root/'uefi/core'/name,app/name)
                     path=app/'PianoDwc3Device.c';path.write_text('#define PIANO_USB_SCREENSHOT 1\n'+path.read_text())
                     path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFastbootScreen.c'))
                 if args.usb_ram_boot:
                     sources=('PianoFastbootBoot.c','PianoFastbootLaunch.c','PianoFastbootDownloadBlob.c','PianoUsbRamBoot.c')
                     headers=('PianoFastbootBoot.h','PianoFastbootLaunch.h','PianoFastbootDownloadBlob.h','PianoUsbRamBoot.h','PianoCpuInput.h',
                              'PianoRamBootProbe.h','PianoUsbStorageExperiment.h')
-                    for name in sources+headers:shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+                    for name in sources+headers:shutil.copyfile(root/'uefi/core'/name,app/name)
                     # Existing ram-boot source now shares the product CPU
                     # chunks/ownership helper; default transport limit stays64MiB.
-                    shutil.copyfile(root/'bootprofiles/os-boot/PianoCpuInput.c',app/'PianoCpuInput.c')
+                    shutil.copyfile(root/'uefi/components/os-boot/PianoCpuInput.c',app/'PianoCpuInput.c')
                     for name in ('PianoFastboot.c','PianoDwc3Device.c','PianoUsbController.c'):
                         path=app/name;path.write_text('#define PIANO_USB_RAM_BOOT 1\n'+path.read_text())
                     path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n'+''.join('  '+name+'\n' for name in (*sources,'PianoCpuInput.c')).rstrip())
@@ -522,7 +522,7 @@ def main():
                 if args.usb_ufs_fetch:
                     for name in ('PianoUsbStorageExperiment.h','PianoFastbootBlockRead.c','PianoFastbootBlockRead.h',
                                  'PianoUsbUfsFetch.c','PianoUsbUfsFetch.h'):
-                        shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+                        shutil.copyfile(root/'uefi/core'/name,app/name)
                     for name in ('PianoUsbController.c','PianoDwc3Device.c'):
                         path=app/name;path.write_text('#define PIANO_USB_UFS_FETCH 1\n'+path.read_text())
                     path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFastbootBlockRead.c\n  PianoUsbUfsFetch.c')
@@ -541,7 +541,7 @@ def main():
         else:
             sources=('PianoHighRamReadonly.c','PianoHighRamProbe.c');headers=('PianoHighRamProbe.h',)
             call='Status=PianoProbeHighRamReadonly();';declaration='EFI_STATUS PianoProbeHighRamReadonly(VOID);'
-        for name in sources+headers:shutil.copyfile(root/'bootprofiles/uefi-app'/name,app/name)
+        for name in sources+headers:shutil.copyfile(root/'uefi/core'/name,app/name)
         for name in sources:
             path=app/name;define='#define PIANO_POGO_PROBE_EXPERIMENT 1\n' if args.pogo_register_probe else '#define PIANO_HIGH_RAM_PROBE_EXPERIMENT 1\n'
             path.write_text(define+path.read_text())
@@ -645,7 +645,7 @@ def main():
     text = c.read_text().replace('#include <Library/DebugLib.h>',
         '#include <Library/DebugLib.h>\n#include <Library/DxeServicesLib.h>\n#include <Library/MemoryAllocationLib.h>')
     if args.ufs_blockio:
-        shutil.copyfile(root/'bootprofiles/uefi-app/PianoUfsShutdown.h',lib/'PianoUfsShutdown.h')
+        shutil.copyfile(root/'uefi/core/PianoUfsShutdown.h',lib/'PianoUfsShutdown.h')
         text=text.replace('#include <Protocol/GraphicsOutput.h>','#include <Protocol/GraphicsOutput.h>\n#include "PianoUfsShutdown.h"')
         text=text.replace('  gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);',
             '  EFI_GUID ShutdownGuid=PIANO_UFS_SHUTDOWN_GUID; PIANO_UFS_SHUTDOWN *Shutdown=NULL;\n'
@@ -653,7 +653,7 @@ def main():
             '    Shutdown->Halt();\n  gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);')
     if args.usb_ufs_fetch or args.usb_ram_boot:
         for name in ('PianoUsbStorageExperiment.h','PianoFastboot.h'):
-            shutil.copyfile(root/'bootprofiles/uefi-app'/name,lib/name)
+            shutil.copyfile(root/'uefi/core'/name,lib/name)
         if args.usb_ram_boot:
             text=text.replace('#include <Protocol/GraphicsOutput.h>',
                 '#include <Protocol/GraphicsOutput.h>\n#include "PianoUsbStorageExperiment.h"\n#include <Library/BaseLib.h>')

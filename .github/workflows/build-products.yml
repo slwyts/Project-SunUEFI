@@ -1,0 +1,86 @@
+name: Build products
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Product to build
+        type: choice
+        options: [uefi, linux, debian-gnome]
+        default: uefi
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ${{ inputs.target == 'debian-gnome' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Get only required fixed sources
+        run: ./build.sh sources
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/ccache
+          key: ccache-${{ runner.arch }}-${{ inputs.target }}-${{ hashFiles('sources.lock.json', 'patches/**', 'config/build-container.json') }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.arch }}-${{ inputs.target }}-${{ hashFiles('sources.lock.json', 'patches/**', 'config/build-container.json') }}-
+      - name: Build the pinned-base environment
+        run: docker build -t sunuefi-builder -f containers/Dockerfile .
+      - name: Build selected product
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          mkdir -p build/logs build/ccache
+          docker run --rm --privileged \
+            -v "$PWD:/workspace" -w /workspace \
+            -e CCACHE_DIR=/workspace/build/ccache -e CCACHE_MAXSIZE=3G \
+            -e TARGET sunuefi-builder bash -euc '
+              python3 -m venv .venv
+              .venv/bin/pip install -r requirements-build.txt
+              case "$TARGET" in
+                uefi)
+                  ./build.sh uefi
+                  ./build.sh installer --product artifacts/product/PianoUEFI-product.img
+                  ;;
+                linux)
+                  ./build.sh linux
+                  ./build.sh installer
+                  ;;
+                debian-gnome)
+                  ./build.sh uefi
+                  ./build.sh linux
+                  ./build.sh mesa
+                  ./build.sh release-rootfs
+                  ./build.sh package --root-size-mib 8192
+                  ./build.sh installer --bundle artifacts/release
+                  ;;
+              esac
+            ' > build/logs/ci-build.log 2>&1
+      - name: Downloadable product and standalone installer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: piano-${{ inputs.target }}-${{ github.sha }}
+          path: artifacts/installer/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Keep build records and kernel outputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: piano-build-records-${{ inputs.target }}-${{ github.sha }}
+          path: |
+            build/logs/
+            artifacts/product/manifest.json
+            artifacts/kernels/release/Image
+            artifacts/kernels/release/config
+            artifacts/kernels/release/manifest.json
+            artifacts/release/manifest.json
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0

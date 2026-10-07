@@ -251,7 +251,7 @@ def fold(args):
     out = args.output_dir.resolve()
     if not out.is_relative_to(ROOT / 'private/analysis') or out.exists():
         raise ValueError('output must be a new private/analysis directory')
-    overlay = ROOT / 'configs/linux/dtb/piano-linux-dsp-pcie-dma.dtso'
+    overlay = ROOT / 'linux/dts/piano-linux-dsp-pcie-dma.dtso'
     out.mkdir(parents=True)
     with tempfile.TemporaryDirectory(prefix='piano-dsp-pci-') as temporary:
         tmp = Path(temporary)

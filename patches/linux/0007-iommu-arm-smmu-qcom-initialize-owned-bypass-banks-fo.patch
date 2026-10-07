@@ -1,0 +1,61 @@
+From d4c8b9fadef5167b68b8aa7160255f62c0c4cb82 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 6 Oct 2026 23:53:09 +0800
+Subject: [PATCH] iommu: arm-smmu-qcom: initialize owned bypass banks for
+ 64-bit addresses
+
+---
+ drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c | 26 +++++++++++++++++++++-
+ 1 file changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+index 9be903c0760d3f66463f64b21bd745f1371bc99e..75bda7f5575e6b8d67d425d4c9263d3141fdacbc 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+@@ -454,6 +454,8 @@ static int qcom_smmu_cfg_probe(struct arm_smmu_device *smmu)
+ 	struct qcom_smmu_handoff_snapshot *state;
+ 	unsigned int probe_s2cr;
+ 	int probe_idx, bypass_cb;
++	bool bypass_va64;
++	u32 cba2r_before = 0, cba2r_after = 0;
+ 	u32 reg;
+ 	u32 smr;
+ 	int i;
+@@ -556,6 +558,25 @@ static int qcom_smmu_cfg_probe(struct arm_smmu_device *smmu)
+ 		qsmmu->bypass_cbndx = bypass_cb;
+ 		set_bit(bypass_cb, smmu->context_map);
+ 		arm_smmu_cb_write(smmu, bypass_cb, ARM_SMMU_CB_SCTLR, 0);
++		/*
++		 * Emulated bypass still passes through a stage-1 context. IHI
++		 * 0062D.c table 3-1 requires VA64 for inputs above 32 bits even
++		 * with SCTLR.M clear. Only this new, unreferenced bank is owned;
++		 * select its format before any stream can be routed through it.
++		 */
++		bypass_va64 = smmu->version > ARM_SMMU_V1 &&
++			(smmu->features & (ARM_SMMU_FEAT_FMT_AARCH64_4K |
++					   ARM_SMMU_FEAT_FMT_AARCH64_16K |
++					   ARM_SMMU_FEAT_FMT_AARCH64_64K));
++		if (smmu->version > ARM_SMMU_V1) {
++			cba2r_before = arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBA2R(bypass_cb));
++			reg = bypass_va64 ? ARM_SMMU_CBA2R_VA64 : 0;
++			arm_smmu_gr1_write(smmu, ARM_SMMU_GR1_CBA2R(bypass_cb), reg);
++			cba2r_after = arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBA2R(bypass_cb));
++			if (cba2r_after != reg)
++				return dev_err_probe(smmu->dev, -EIO,
++						     "owned bypass CB address format did not read back\n");
++		}
+ 		reg = FIELD_PREP(ARM_SMMU_CBAR_TYPE, CBAR_TYPE_S1_TRANS_S2_BYPASS);
+ 		arm_smmu_gr1_write(smmu, ARM_SMMU_GR1_CBAR(bypass_cb), reg);
+ 		if ((arm_smmu_cb_read(smmu, bypass_cb, ARM_SMMU_CB_SCTLR) & ARM_SMMU_SCTLR_M) ||
+@@ -564,7 +585,10 @@ static int qcom_smmu_cfg_probe(struct arm_smmu_device *smmu)
+ 		    CBAR_TYPE_S1_TRANS_S2_BYPASS)
+ 			return dev_err_probe(smmu->dev, -EIO,
+ 					     "owned bypass CB configuration did not read back\n");
+-		dev_notice(smmu->dev, "owned bypass CB %d from idle route snapshot\n", bypass_cb);
++		dev_notice(smmu->dev,
++			   "owned bypass CB %d from idle route snapshot: format=%s cba2r=%08x->%08x\n",
++			   bypass_cb, bypass_va64 ? "AArch64" : "AArch32",
++			   cba2r_before, cba2r_after);
+ 	}
+ 
+ 	return 0;

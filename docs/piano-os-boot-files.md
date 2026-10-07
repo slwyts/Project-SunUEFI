@@ -37,7 +37,7 @@ all-owner OS transition must succeed. Current product lacks that verified memory
 contract and has no active generic OS loader. The Continue menu therefore still
 returns Android through managed retirement instead of claiming OS startup.
 
-The canonical loader sources are `bootprofiles/os-boot/PianoBootFileSource.c`
+The canonical loader sources are `uefi/components/os-boot/PianoBootFileSource.c`
 and `PianoLinuxEfiSession.c`. They are shared implementation work awaiting the
 real platform binding, not alternate feature-specific firmware images. Product
 preparation now compiles all three shared OS modules through its actual INF and
@@ -55,7 +55,7 @@ when the call fails: the stub may retry its memory map/exit sequence, while the
 parent cannot return to ordinary device/UI operations. See the [UEFI Boot
 Services specification](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html).
 
-Current host verification: `python3 -m unittest discover -s tests -v` passed
+Current host verification: `python3 -m unittest discover -s tests/unit -v` passed
 238 methods, including the actual reader's 29 isolated C scenarios, the Linux
 session's 35 EFI/libfdt scenarios, DownloadBlob/CPU-loan integration and three
 export provenance tests. The actual ARM64 sources passed strict compilation.

@@ -16,6 +16,7 @@ from prepare_gui_profile import SETUP_DSC_ADDITIONS, SETUP_FV_MODULES
 from prepare_product_early_memory import prepare as prepare_early_memory, verify as verify_early_memory
 from prepare_product_handoff import prepare as prepare_handoff, stage_provider, verify_provider
 import piano_display_mapping as display_mapping
+import piano_vendor_inputs as vendor_inputs
 
 CORE_GUID='35E0D1B5-93CE-4D6A-9A93-6ADAA3F26C40'
 SOURCE_NAMES=(
@@ -31,7 +32,7 @@ SOURCE_NAMES=(
 OS_BOOT_SOURCES=('PianoBootFileSource.c','PianoCpuImageLoan.c','PianoLinuxEfiSession.c','PianoCpuInput.c','PianoEspBootSource.c')
 OS_BOOT_HEADERS=tuple(name[:-2]+'.h' for name in OS_BOOT_SOURCES)
 LATE_HANDOFF_INF_SOURCES=('LateHandoff/PianoLateHandoff.c','LateHandoff/PianoLateHandoff.h')
-OS_BOOT_INF_SOURCES=tuple('OsBoot/'+name for name in (*OS_BOOT_SOURCES,*OS_BOOT_HEADERS))
+OS_BOOT_INF_SOURCES=tuple('Components/os-boot/'+name for name in (*OS_BOOT_SOURCES,*OS_BOOT_HEADERS))
 OBSERVATION_FAMILIES={'early-memory':('PianoSmemRam.c','PianoSmemRam.h'),
                       'guarded-read':('PianoGuardedRead.c','PianoGuardedRead.h'),
                       'display-rail':('PianoDisplayRailObserve.c','PianoDisplayRailObserve.h','PianoDisplayNonGdscClock.c','PianoDisplayNonGdscClock.h')}
@@ -62,8 +63,12 @@ def verify_display_mapping(root,target,record):
     return display_mapping.verify(root,memory.read_text(),record['candidate'])
 
 
+def observation_directory(root,family):
+    return root/('uefi/handoff/early-memory' if family=='early-memory' else 'uefi/components/'+family)
+
+
 def observation_files(root):
-    files={family:{name:root/'bootprofiles'/family/name for name in names}
+    files={family:{name:observation_directory(root,family)/name for name in names}
            for family,names in OBSERVATION_FAMILIES.items()}
     for family,rows in files.items():
         for name,path in rows.items():
@@ -75,7 +80,7 @@ def prepare_observation_families(root,app):
     families=observation_files(root)
     for rows in families.values():
         for name,path in rows.items():
-            if (root/'bootprofiles/uefi-app'/name).exists():raise ValueError('Flat DXE observation name conflicts with core source: '+name)
+            if (root/'uefi/core'/name).exists():raise ValueError('Flat DXE observation name conflicts with core source: '+name)
             shutil.copyfile(path,app/name)
     return {'status':'READ_ONLY_DXE_OBSERVATION_BOUND_UNTESTED','phase':'DXE_AFTER_FOUNDATION_BEFORE_RAM_INVENTORY_UFS_USB',
             'platform_bound':True,'device_validated':False,'sec_early_ready':False,
@@ -103,7 +108,7 @@ def verify_observation_families(root,app,record):
 
 
 def os_boot_files(root):
-    folder=root/'bootprofiles/os-boot'
+    folder=root/'uefi/components/os-boot'
     files={path.relative_to(folder).as_posix():path for path in folder.rglob('*')
            if path.is_file() and '__pycache__' not in path.parts}
     if any(name not in files for name in (*OS_BOOT_SOURCES,*OS_BOOT_HEADERS)):
@@ -116,7 +121,7 @@ def os_boot_files(root):
 
 
 def shared_boot_headers(root):
-    folder=root/'bootprofiles/uefi-app'
+    folder=root/'uefi/core'
     return {path.relative_to(folder).as_posix():path for path in folder.rglob('*')
             if path.is_file() and path.suffix in ('.h','.inc')}
 
@@ -124,13 +129,13 @@ def shared_boot_headers(root):
 def prepare_os_boot(root,app):
     """Byte-identical shared code; preserve its canonical relative includes."""
     files=os_boot_files(root)
-    shutil.copytree(root/'bootprofiles/os-boot',app/'OsBoot',
+    shutil.copytree(root/'uefi/components/os-boot',app/'Components/os-boot',
                     ignore=shutil.ignore_patterns('__pycache__'))
-    # ../uefi-app paths remain unchanged. The module root already supplies the
+    # Preserve components/os-boot -> ../../core in the generated module.
     # ordinary quoted PianoFastbootLaunch.h include used by CpuImageLoan.
     headers=shared_boot_headers(root)
     for name,path in headers.items():
-        destination=app/'uefi-app'/name;destination.parent.mkdir(parents=True,exist_ok=True)
+        destination=app/'core'/name;destination.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(path,destination)
     return {'status':'SHARED_IMPLEMENTATION_COMPILED_PLATFORM_NOT_READY',
             'platform_bound':False,'full_ddr_verified':False,'start_enabled':False,
@@ -146,11 +151,11 @@ def verify_os_boot(root,app,record):
     headers={name:sha(path)for name,path in sorted(shared_boot_headers(root).items())}
     if record.get('canonical_files')!=expected or record.get('shared_headers')!=headers or record.get('sources')!=list(OS_BOOT_INF_SOURCES):
         raise ValueError('Prepared shared OS boot identity differs from canonical sources')
-    actual={path.relative_to(app/'OsBoot').as_posix():sha(path)
-            for path in (app/'OsBoot').rglob('*')if path.is_file() and '__pycache__' not in path.parts}
+    actual={path.relative_to(app/'Components/os-boot').as_posix():sha(path)
+            for path in (app/'Components/os-boot').rglob('*')if path.is_file() and '__pycache__' not in path.parts}
     if actual!=expected:raise ValueError('ProductCore OS boot compiled copies are stale or missing')
     for name,digest in headers.items():
-        for path in (app/'uefi-app'/name,app/name):
+        for path in (app/'core'/name,app/name):
             if not path.is_file() or sha(path)!=digest:
                 raise ValueError('ProductCore shared OS boot include identity mismatch: '+name)
     sections={};section=None
@@ -214,8 +219,9 @@ def backend_status():
     }
 
 
-def native_modules(root,app):
-    catalog=json.loads((root/'private/analysis/native-driver-inventory.json').read_text())['drivers']
+def native_modules(root,app,inputs=None):
+    if NATIVE_NAMES!=vendor_inputs.NATIVE_NAMES:raise ValueError('Product native names differ from fixed vendor bundle')
+    catalog=(inputs if inputs is not None else vendor_inputs.load(root))['native_drivers']
     table=['typedef struct { CONST CHAR8 *Name; EFI_GUID Guid; CONST UINT8 *Depex; UINTN DepexBytes; } NATIVE_IMAGE;']
     ffs=[];identities={}
     for index,name in enumerate(NATIVE_NAMES):
@@ -323,7 +329,9 @@ def core_inf():
 
 def prepare(root=ROOT):
     contract=validate(json.loads((root/'config/piano-product.json').read_text()))
-    source=root/'bootprofiles/uefi-app';missing=[name for name in SOURCE_NAMES if not(source/name).is_file()]
+    inputs=vendor_inputs.load(root)
+    vendor_record=vendor_inputs.record(root,inputs)
+    source=root/'uefi/core';missing=[name for name in SOURCE_NAMES if not(source/name).is_file()]
     if missing:raise ValueError('Actual product core sources missing: '+', '.join(missing))
     os_boot_files(root)
     observation_files(root)
@@ -337,16 +345,16 @@ def prepare(root=ROOT):
     header,app_identity=digest_header(product_app/'SimpleInit.efi')
     raw=(product_app/'SimpleInit.efi').read_bytes()
     (product_app/'app-payload.bin').write_bytes(struct.pack('<16sIIQ32s',b'SUNUEFI-APPv1\0',1,64,len(raw),hashlib.sha256(raw).digest())+raw)
-    target=root/'platforms/pianoProductPkg'
+    target=root/'uefi/platforms/pianoProductPkg'
     if target.exists():shutil.rmtree(target)
-    shutil.copytree(root/'platforms/pianoProbePkg',target)
+    shutil.copytree(root/'uefi/platforms/pianoProbePkg',target)
     for path in target.rglob('*'):
         if path.is_file() and path.suffix in ('.c','.h','.inf','.dsc','.dec','.fdf','.py'):
             path.write_text(path.read_text().replace('pianoProbe','pianoProduct'))
     for suffix in ('dsc','dec','fdf'):(target/f'pianoProbe.{suffix}').rename(target/f'pianoProduct.{suffix}')
     shutil.rmtree(target/'Library/Stage0BootManagerLib')
     shutil.rmtree(target/'Library/RamLogSerialPortLib')
-    shutil.copytree(root/'bootprofiles/product-support',target,dirs_exist_ok=True)
+    shutil.copytree(root/'uefi/components/product-support',target,dirs_exist_ok=True)
     app=target/'Applications/ProductCore';app.mkdir(parents=True)
     for name in SOURCE_NAMES:shutil.copyfile(source/name,app/name)
     for path in source.iterdir():
@@ -358,21 +366,13 @@ def prepare(root=ROOT):
     late_provider['os_image_armed']=False
     observation=prepare_observation_families(root,app)
     (app/'PianoProductSimpleInitDigest.h').write_text(header)
-    from prepare_ufs_write_test import verify_capture, _c_array
-    storage_blobs=verify_capture()
-    storage_baseline='// Pinned original GPT bytes; no provisioning or write authorization.\n#include <Uefi.h>\n'
-    for symbol,name in (('mProductStorageOriginalPrimary','primary-header.bin'),
-                        ('mProductStorageOriginalEntries','primary-entries.bin'),
-                        ('mProductStorageOriginalBackup','backup-header.bin')):
-        storage_baseline+=_c_array(symbol,storage_blobs[name])+'\n'
-    (app/'PianoProductStorageBaseline.h').write_text(storage_baseline)
     (app/'ProductCore.inf').write_text(core_inf())
     verify_os_boot(root,app,os_boot)
     verify_observation_families(root,app,observation)
     verify_provider(root,app,late_provider)
-    native_fdf,native_id=native_modules(root,app)
+    native_fdf,native_id=native_modules(root,app,inputs)
     memory=target/'Library/MemoryMapLib/MemoryMapLib.c';text=memory.read_text()
-    text,low_memory_contract=fix_product_low_heap(text,(root/'private/captures/2026-10-03-piano/live.dtb').read_bytes())
+    text,low_memory_contract=fix_product_low_heap(text,inputs['board_dtb'])
     anchor='  {"CRYPTO0_CRYPTO",'
     if text.count(anchor)!=1:raise ValueError('Unexpected product MMIO map anchor')
     text=text.replace(anchor,'  {"UFS_HCI", 0x1D84000, 0x3000, AddDev, 1, 0x400, 11, NS_DEVICE},\n'
@@ -457,9 +457,11 @@ def prepare(root=ROOT):
       'low_memory_contract':low_memory_contract,
       'display_mapping':display_contract,
       'native_late_handoff':handoff_hooks,'late_provider':late_provider,
+      'vendor_inputs':vendor_record,
       'platform_files':{str(path.relative_to(target)):sha(path)for path in sorted(target.rglob('*'))if path.is_file()},
       'device_boot_performed':False,'permanent_storage_writes':False}
     out=root/'build/product';out.mkdir(parents=True,exist_ok=True)
+    if vendor_inputs.record(root)!=vendor_record:raise ValueError('Vendor inputs changed during product preparation')
     (out/'prepared-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     return manifest
 

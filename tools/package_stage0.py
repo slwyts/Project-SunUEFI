@@ -29,7 +29,7 @@ def main():
     dtb = (ws / 'Resources/DTBs/piano.dtb').read_bytes()
     if len(fd) != 0x300000 or shim[56:60] != b'ARM\x64':
         raise SystemExit('Unexpected FD/BootShim header')
-    elf = ws / 'BootShim/BootShim.elf' if args.profile == 'stage0' else root / 'bootprofiles/handoff/BootShim.elf'
+    elf = ws / 'BootShim/BootShim.elf' if args.profile == 'stage0' else root / 'uefi/handoff/bootshim/BootShim.elf'
     symbols = subprocess.check_output([str(root / 'build/host-tools/usr/bin/aarch64-linux-gnu-nm'),
                                        '-n', str(elf)], text=True)
     payload_offsets = [int(line.split()[0], 16) for line in symbols.splitlines()

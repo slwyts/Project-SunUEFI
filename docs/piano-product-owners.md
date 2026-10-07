@@ -107,7 +107,7 @@ manager. None of this authorizes a DPU power/clock bus load.
 
 ## Validation
 
-`python3 -m unittest discover -s tests -p test_product_owners.py -v` compiles the
+`python3 -m unittest discover -s tests/unit -p test_product_owners.py -v` compiles the
 actual manager under ASan/UBSan and checks173 cases, preserving all100 original
 workflows: registration, missing and
 unsupported owners, cooperative UI admission, all status/report fields,

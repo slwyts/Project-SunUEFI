@@ -1,6 +1,6 @@
 # Piano high-memory probe：默认关闭的实际C helper
 
-本轮交付`bootprofiles/uefi-app/PianoHighRamProbe.c/.h`、真实C host测试和AArch64指令审查。没有加入prepare/profile/INF、启动硬件测试、改88 memorymaps/kernel/pins或扩大fastboot公告；当前默认两个宏均0。Root负责后续集成和设备验收，当前status文档不在本轮修改范围。
+本轮交付`uefi/core/PianoHighRamProbe.c/.h`、真实C host测试和AArch64指令审查。没有加入prepare/profile/INF、启动硬件测试、改88 memorymaps/kernel/pins或扩大fastboot公告；当前默认两个宏均0。Root负责后续集成和设备验收，当前status文档不在本轮修改范围。
 
 ```c
 #define PIANO_HIGH_RAM_PROBE_EXPERIMENT 0
@@ -59,7 +59,7 @@ caller提供有界Log sink；helper以小于256bytes的行输出：
 Root未来集成必须明确提供：预分配map buffer、gBS/gDS和已确认的MemoryAttribute provider、ArchitectureState/AtRead、受保护ReadTableWord及Log。运行时enable默认FALSE，两个regime/low-table验证字段默认FALSE。缺字段时可保留AT/metadata诊断，但不能伪造TRUE来让table读取过gate。pattern与当前只读profile始终分开，不能改旧DeviceDmaAllocator、增加GPI/SMMU映射或自动apply offline high table。
 
 ```sh
-python3 -m unittest discover -s tests -p test_piano_high_ram_probe.py -v
+python3 -m unittest discover -s tests/unit -p test_piano_high_ram_probe.py -v
 ```
 
 实际测试是**2个Python unittest methods、4次真实C host gate组合执行、3组AArch64 object/指令检查**。C使用真实Mu UEFI/PI/protocol headers与ASan/UBSan，覆盖default-off零callback、1GiB/2MiB/4KiB walk、EFI洞边界/partial budget、translation fault/identity mismatch、low表owner/guard、cache/hierarchical权限、state变化，以及State/map/AT/table/GCD/MemoryAttribute六类“warning但输出完整”的拒绝。额外检查IPS44之外TTBR/下级table OA/leaf OA/PAR OA不变proof。

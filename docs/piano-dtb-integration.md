@@ -8,7 +8,7 @@
 
 显示源码在独立 `/home/slwyts/linux-piano-dtb` worktree 的 `topic/piano-dtb`，从 panel topic `33ca14a5b6673d562606433112c90b97903a8466` 派生；canonical commit 为 `1c2655ef4a94912fae39a14b943ba3d10b6847ce`。唯一新增 kernel 文件是116行 `arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano-display-topology.dtso`，不含大份 stock 反编译源码。
 
-参考审核锁定到 `debian-piano e4004f5d5f08f79433b61a892c8b4f783c4c2e37` 的 display/video/touch-v2/usb-nopd9 文件，逐文件 URL/SHA 见 `configs/linux/dtb/display-review.json`。只取显示 wiring 信息；不会编译其 include 链、rootfs、UFS、GPU、音频、视频 codec、触摸或 USB 转换。参考 display overlay 的 synthetic supplies、rpmhpd hold consumer、第二个 apps SMMU 和 userspace devmem/bypass 修复均未移植。
+参考审核锁定到 `debian-piano e4004f5d5f08f79433b61a892c8b4f783c4c2e37` 的 display/video/touch-v2/usb-nopd9 文件，逐文件 URL/SHA 见 `linux/dts/display-review.json`。只取显示 wiring 信息；不会编译其 include 链、rootfs、UFS、GPU、音频、视频 codec、触摸或 USB 转换。参考 display overlay 的 synthetic supplies、rpmhpd hold consumer、第二个 apps SMMU 和 userspace devmem/bypass 修复均未移植。
 
 ## 精确映射
 

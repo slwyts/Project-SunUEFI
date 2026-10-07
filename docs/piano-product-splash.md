@@ -6,7 +6,7 @@ atFC800000, and LogoDxe loaded. It also records BootLogo2 `Not Found` and
 prove that the product had rendered a logo; the small visible logo could be an
 inherited bootloader framebuffer.
 
-`bootprofiles/product-support/Library/ProductBootManagerLib/ProductSplash.c`
+`uefi/components/product-support/Library/ProductBootManagerLib/ProductSplash.c`
 now renders through the actual GOP `Blt` interface from AfterConsole. It has no
 BootLogo2/LogoDxe dependency, direct framebuffer pointer, image decoder or bitmap
 asset. The reference-inspired six-spoke orange geometric mark and rounded
@@ -39,7 +39,7 @@ retrying or claiming success. The boot-manager record is now
 `SUNUEFI_PRODUCT_SPLASH status=... backend=gop-blt vector=1 ... hint_drawn=...`.
 
 The library INF includes the actual new C/headers and GOP GUID. Existing
-`prepare_product.py` copies all `bootprofiles/product-support` files and existing
+`prepare_product.py` copies all `uefi/components/product-support` files and existing
 build freshness hashes that directory, so no Root Core or prepare change is
 needed. This is enabled in the same canonical product library, not a separate
 GUI test profile.
@@ -47,7 +47,7 @@ GUI test profile.
 Validation command:
 
 ```sh
-python3 -m unittest discover -s tests -p test_product_splash.py -v
+python3 -m unittest discover -s tests/unit -p test_product_splash.py -v
 ```
 
 Actual renderer C runs with the real Mu UEFI types and ASan/UBSan. Tests inspect

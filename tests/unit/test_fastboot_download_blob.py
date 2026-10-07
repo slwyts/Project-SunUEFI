@@ -1,0 +1,33 @@
+"""Actual current-pool ownership adapter tests; no USB or firmware build."""
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[2]
+INC = ROOT / "upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include"
+
+
+class DownloadBlobTests(unittest.TestCase):
+    def test_actual_pool_and_command_source(self):
+        with tempfile.TemporaryDirectory(prefix="sunuefi-download-blob-") as out:
+            binary = str(Path(out) / "ownership")
+            subprocess.run([
+                "cc", "-std=gnu11", "-fshort-wchar", "-Wall", "-Wextra", "-Werror",
+                "-Wno-unused-parameter", "-Wno-misleading-indentation", "-Wno-deprecated-declarations", "-fsanitize=address,undefined", "-fno-pie", "-no-pie",
+                "-I", str(INC), "-I", str(INC / "X64"),
+                "-I", str(ROOT / "upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include"),
+                str(ROOT / "tests/native/test_fastboot_download_blob.c"),str(ROOT / "uefi/components/os-boot/PianoCpuInput.c"), "-lcrypto", "-o", binary
+            ], check=True)
+            subprocess.run([binary], check=True)
+            subprocess.run([
+                str(ROOT / "build/host-tools/usr/bin/clang"), "--target=aarch64-windows-msvc",
+                "-fshort-wchar", "-ffreestanding", "-fsyntax-only", "-Wall", "-Wextra",
+                "-Werror", "-Wno-unused-parameter", "-I", str(INC),
+                "-I", str(INC / "AArch64"),
+                str(ROOT / "uefi/core/PianoFastbootDownloadBlob.c")
+            ], check=True)
+
+
+if __name__ == "__main__":
+    unittest.main()

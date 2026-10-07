@@ -1,0 +1,12 @@
+[Unit]
+Description=Piano CPU boost frequencies (prime cores up to 4.32 GHz)
+# qcom_cpucp_mbox is loaded through modules-load.d; scmi-cpufreq follows
+After=systemd-modules-load.service
+Wants=systemd-modules-load.service
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/piano/cpufreq-start
+RemainAfterExit=yes
+TimeoutStartSec=30
+[Install]
+WantedBy=multi-user.target

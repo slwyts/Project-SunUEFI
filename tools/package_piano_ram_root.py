@@ -200,7 +200,7 @@ def package(root, output):
     if before['regular_page_budget_bytes'] >= LIMIT:
         raise ValueError('Unpacked root exceeds the 4GiB tmpfs budget')
     # Refuse a mismatched staged entry instead of packaging an obsolete policy.
-    if (root / 'pianoinit').read_bytes() != (ROOT / 'bootprofiles/linux-userspace/pianoinit').read_bytes():
+    if (root / 'pianoinit').read_bytes() != (ROOT / 'linux/userspace/pianoinit').read_bytes():
         raise ValueError('Staged pianoinit differs from current RAM entry')
     if not (root / 'usr/lib/systemd/systemd').is_file():
         raise ValueError('Complete GNU systemd root is required')

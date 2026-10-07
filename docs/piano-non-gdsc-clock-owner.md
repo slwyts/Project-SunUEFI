@@ -1,6 +1,6 @@
 # Native non-GDSC AHB clock owner
 
-`bootprofiles/display-rail/PianoDisplayNonGdscClock.c/.h` is a separate minimal
+`uefi/components/display-rail/PianoDisplayNonGdscClock.c/.h` is a separate minimal
 owner for `disp_cc_mdss_non_gdsc_ahb_clk`. The existing GCC Lease and Reader
 contracts are unchanged. ProductDisplayOwner now conditionally calls it after
 the actual Rail Init and first MM graph observation both succeed. The compiled

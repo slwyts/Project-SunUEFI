@@ -1,0 +1,9 @@
+{
+  "id": "arch", "name": "Arch Linux ARM", "suite": "rolling", "backend": "arch-tarball",
+  "arch": "aarch64", "package_arch": "aarch64",
+  "base_url": "https://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz", "base_sha256": null,
+  "base_packages": ["sudo", "networkmanager", "openssh", "kmod", "util-linux", "dbus"],
+  "factory_accounts_to_lock": ["root", "alarm"],
+  "official_source": "https://archlinuxarm.org/platforms/armv8/generic",
+  "source_policy": "explicit base SHA256 required; initialize/populate pacman-key; repository package signatures remain required"
+}

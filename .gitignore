@@ -3,10 +3,11 @@ upstream/
 .venv/
 build/
 artifacts/
-platforms/pianoGuiPkg/
-platforms/pianoLinuxPkg/
-platforms/pianoProductPkg/
+bootprofiles/
+uefi/platforms/pianoGuiPkg/
+uefi/platforms/pianoLinuxPkg/
+uefi/platforms/pianoProductPkg/
 __pycache__/
 *.pyc
-bootprofiles/handoff/BootShim.bin
-bootprofiles/handoff/BootShim.elf
+uefi/handoff/bootshim/BootShim.bin
+uefi/handoff/bootshim/BootShim.elf

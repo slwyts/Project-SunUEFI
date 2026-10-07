@@ -22,7 +22,7 @@ def apply(args):
     if sha(original) != args.base_sha256:
         raise ValueError('base DTB hash mismatch')
     before = libcheck(original, args.libfdt)
-    source = ROOT / 'configs/linux/dtb/piano-linux-owned-dma.dtso'
+    source = ROOT / 'linux/dts/piano-linux-owned-dma.dtso'
     out = args.output_dir
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='piano-dma-bindings-') as directory:

@@ -13,11 +13,11 @@
 | 位置 | 实际状态 |
 | --- | --- |
 | `<workspace-parent>/linux-piano` | 独立 sibling Git 仓库，当前 `piano-stable` 在 `7a33c60fd6eda8a9c20dfda636d4e0a4efa4cbb8` |
-| `kernels/linux-piano` | 主仓库登记的 Gitlink/submodule，当前 detached checkout 为同一提交；其 `.git` 指向 sibling 的 `.git/worktrees/linux-piano`，共享 sibling Git 数据 |
+| `upstream/linux-piano` | 主仓库登记的 Gitlink/submodule，当前 detached checkout 为同一提交；其 `.git` 指向 sibling 的 `.git/worktrees/linux-piano`，共享 sibling Git 数据 |
 | `build/kernel-worktrees/stable` | 当前 detached 构建 worktree，同一固定提交；构建工具也支持带 profile/提交前缀的新目录 |
-| `kernel-profiles.json` | 构建的完整 commit / base / base-config 锁定信息，branch 名称仅帮助识别来源 |
+| `linux/kernel-profiles.json` | 构建的完整 commit / base / base-config 锁定信息，branch 名称仅帮助识别来源 |
 
-`.gitmodules` 登记 `path = kernels/linux-piano`、`url = ../linux-piano`、`branch = piano-stable`。这是当前本地 linked-worktree 安排，不是已经发布到远端的完整仓库拓扑。复制或迁移工作区时，应重新建立 sibling / worktree 关联；绝对 `.git` 指针不能作为可搬迁的依赖描述。
+`.gitmodules` 登记 `path = upstream/linux-piano`、`url = ../linux-piano`、`branch = piano-stable`。这是当前本地 linked-worktree 安排，不是已经发布到远端的完整仓库拓扑。复制或迁移工作区时，应重新建立 sibling / worktree 关联；绝对 `.git` 指针不能作为可搬迁的依赖描述。
 
 | 分支/来源 | 固定提交 | 当前用途 |
 | --- | --- | --- |
@@ -25,7 +25,7 @@
 | `piano-next` / `torvalds:master` | `7704c4c5bb127673b4f0ead839919db573559e38` | test73 已验收 raw RAM smoke；完整 piano 板级功能仍需 topic commits 和实机验证 |
 | `stable:linux-7.2.y` | `5fce161649b4d779d1b76d9fcd52dc77779774b8` | 已观察到的 kernel.org 7.2.9 更新来源；尚未成为本项目 stable pin |
 
-内核源码由独立仓库维护。更新 pin 时，分支、Gitlink 和 `kernel-profiles.json` 应明确指向选定版本，并保留可恢复的 stable 产物和来源；不要依靠移动 remote ref 隐式改变既有构建。
+内核源码由独立仓库维护。更新 pin 时，分支、Gitlink 和 `linux/kernel-profiles.json` 应明确指向选定版本，并保留可恢复的 stable 产物和来源；不要依靠移动 remote ref 隐式改变既有构建。
 
 ## 电脑构建与产物
 

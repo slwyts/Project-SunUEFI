@@ -30,8 +30,8 @@ canonical code changes the build input fingerprint. Existing OS-loader freshness
 tests now provide real family fixtures rather than skipping this added dependency.
 
 ```sh
-python3 -m unittest discover -s tests -p test_product_observation_wiring.py -v
-python3 -m unittest discover -s tests -p test_product_os_boot_wiring.py -v
+python3 -m unittest discover -s tests/unit -p test_product_observation_wiring.py -v
+python3 -m unittest discover -s tests/unit -p test_product_os_boot_wiring.py -v
 ```
 
 The new four tests stage the real files and compile the two implementations plus

@@ -6,7 +6,7 @@
 
 [AOSP fastboot.cpp LoadBootableImage](https://android.googlesource.com/platform/system/core/+/refs/heads/main/fastboot/fastboot.cpp) 只有遇到 `ANDROID!` 输入时原样下载；否则调用 [bootimg_utils.cpp](https://android.googlesource.com/platform/system/core/+/refs/heads/main/fastboot/bootimg_utils.cpp) 把文件作为kernel生成Android容器。`fastboot boot APP.efi` 不是raw PE直传，extension不改变行为；源码也先要求输入至少sizeof(v3)=1580bytes。本机 `/usr/bin/fastboot` 为37.0.0-android-tools，help没有raw EFI boot开关。
 
-`tools/test_fastboot_boot_cli.py` 使用本机binary、仅loopback TCP fake server，不枚举/连接USB。人工8KiB MZ fixture的`boot`实际wire为download10240bytes→boot：ANDROIDv0、page2048、kernel逐字节等于原fixture；同一Android容器作为`.img`输入逐字节原样下载。server固定FAIL，绝不执行。相同MZ文件`stage`原样传8192bytes且不发送boot；512-byte输入boot在download之前too short。封存结果为 [CLI审计JSON](fastboot-ram-boot-cli-audit.json)，不是设备boot验收。
+`tests/unit/test_fastboot_boot_cli.py` 使用本机binary、仅loopback TCP fake server，不枚举/连接USB。人工8KiB MZ fixture的`boot`实际wire为download10240bytes→boot：ANDROIDv0、page2048、kernel逐字节等于原fixture；同一Android容器作为`.img`输入逐字节原样下载。server固定FAIL，绝不执行。相同MZ文件`stage`原样传8192bytes且不发送boot；512-byte输入boot在download之前too short。封存结果为 [CLI审计JSON](fastboot-ram-boot-cli-audit.json)，不是设备boot验收。
 
 本机也实测了显式header versions1–4。v4 raw-input wrapper存在已确认producer quirk：version=4但header_size=1580、signature_size=0；规范v4为1584。AOSP当前mkbootimg_v3_and_above同样写sizeof(v3)。新parser只把这一精确zero-signature形态单独标为`KnownV4CliHeaderQuirk`，仍必须在边界内读取完整1584bytes。它没有将该形态假称canonical v4。
 
@@ -55,7 +55,7 @@ test85已在8CPU、setup/mm/sched/console后，于trust_ui reusable CMA的PFNf38
 ## 离线运行
 
 ```sh
-bash tools/test_fastboot_boot.sh
+bash tests/native/test_fastboot_boot.sh
 python tools/audit_fastboot_ram_pool.py --runtime-reserves private/analysis/dram-runtime-android-after-test-86.json --json docs/fastboot-ram-boot-memory-audit.json
 python tools/audit_fastboot_ram_pool.py --runtime-reserves PHASE.json --json PHASE-AUDIT.json
 ```
@@ -68,4 +68,4 @@ python tools/audit_fastboot_ram_pool.py --runtime-reserves PHASE.json --json PHA
 
 Take必须在现有Device ClearFastboot/Reset之前执行；如果先清理原状态，源镜像已不存在，本适配器只能拒绝。Take只移动所有权，清空Fastboot状态里的Download和借用Upload，不复制完整镜像。因此正常FastbootReset不会释放已转交的source。Read检查64-bit范围；Borrow只给CPU稳定view和递增opaque loan，不映射给DMA。旧loan和未结束loan拒绝释放/归还；Restore只可交回完全空的Fastboot状态，且不宣称USB服务已重新启动。目标已有新下载时，原镜像保留给显式ZeroRelease；该操作在无loan时全量清零，再调用必需的status-returning `EFI_FREE_POOL`（应绑定实际Boot Services FreePool，不能用VOID library wrapper）。只有exact Success才消费所有权；error/warning均保留原状态，置ReleaseAttempted，禁止进一步Read/Borrow/Restore/再次Free，避免用已清零或释放结果未知的镜像继续启动。适配器为一次绑定的持久ledger，不得覆盖仍bound/owned的实例。
 
-主机actual Fastboot.c + adapter测试已通过ASan/UBSan与AArch64语法检查，覆盖exact-success quiet、quiet回调改变source、Reset后source存活、范围溢出、source替换、stale loan、恢复目标冲突、zero-before-free，以及FreePool error/warning后禁止重试/归还。入口：`python3 -m unittest discover -s tests -p 'test_fastboot_download_blob.py' -v`。没有注册boot命令，也没有增加1GiB广告或高地址分配。
+主机actual Fastboot.c + adapter测试已通过ASan/UBSan与AArch64语法检查，覆盖exact-success quiet、quiet回调改变source、Reset后source存活、范围溢出、source替换、stale loan、恢复目标冲突、zero-before-free，以及FreePool error/warning后禁止重试/归还。入口：`python3 -m unittest discover -s tests/unit -p 'test_fastboot_download_blob.py' -v`。没有注册boot命令，也没有增加1GiB广告或高地址分配。

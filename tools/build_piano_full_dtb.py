@@ -623,7 +623,7 @@ def main():
     ap.add_argument('--dtc', type=Path, default=ROOT / 'build/kernel-topics/piano-panel/scripts/dtc/dtc')
     ap.add_argument('--fdtoverlay', type=Path, default=ROOT / 'build/kernel-topics/piano-panel/scripts/dtc/fdtoverlay')
     ap.add_argument('--libfdt', type=Path, default=ROOT / 'upstream/dtc/libfdt/libfdt.so.1.8.1')
-    ap.add_argument('--resource-overlay', type=Path, default=ROOT / 'configs/linux/dtb/piano-uart7-icc.dtso')
+    ap.add_argument('--resource-overlay', type=Path, default=ROOT / 'linux/dts/piano-uart7-icc.dtso')
     args = ap.parse_args()
     try:
         result = build(args)

@@ -1,5 +1,8 @@
 # 公开入口整理前的 README 快照
 
+> 文中的 `sunuefi_linux` 是当时的分区名；当前名称为 `sunuefi_root`，位置、UUID和大小不变。
+
+
 保存时间：2026-10-07。原提交：`6c1bbcd4309ecdb2578b43b95a99f968b4123247`。
 
 本页用于追溯，**不是当前使用或安装指南**。原文混合了不同时期的状态，存在已被后续实验替代的结论；当前功能和限制请看[项目状态](../status.md)。设备序列号和个人路径已改为占位符，相对文档链接已调整。原始版本仍可由 Git 历史追溯。
@@ -84,7 +87,7 @@ SimpleInit 已包含“固件设置（BIOS）”“进入 UEFI Shell”，标准
 
 ## 已实现的诊断目标
 
-`platforms/pianoPkg/` 基于 [Mu-Silicium 的 SM8750 Pakala 平台和 OnePlus 13 移植](https://github.com/Project-Silicium/Mu-Silicium/tree/66e7bd1e7bcb757d4b28629bd6409d7209d3b242/Platforms/OnePlus/dodgePkg)。平台配置取自本机 `xbl_config_a` 中的 Qualcomm UEFI DT 配置，没有直接采用手机内存布局。
+`uefi/platforms/pianoPkg/` 基于 [Mu-Silicium 的 SM8750 Pakala 平台和 OnePlus 13 移植](https://github.com/Project-Silicium/Mu-Silicium/tree/66e7bd1e7bcb757d4b28629bd6409d7209d3b242/Platforms/OnePlus/dodgePkg)。平台配置取自本机 `xbl_config_a` 中的 Qualcomm UEFI DT 配置，没有直接采用手机内存布局。
 
 主要证据与实现：
 
@@ -167,9 +170,9 @@ Windows 介质必须使用 ARM64 版本。[Microsoft 的 WinPE 文档](https://l
 
 已把原机 `boot_a` 内核检查为 ARM64 PE/COFF EFI-stub（Machine `0xAA64`），在电脑上准备了约 39 MB 的 RAM 载荷：原样内核加约 6.75 MB 的最小 initramfs。initramfs 包含 ARM64 静态 BusyBox，以及从同机固件解析出的 47 个 USB/PHY/时钟等模块和依赖；压缩与 CPIO 格式已检查。它只设计 USB ACM 串口，不提供 USB 大容量存储，也不挂载持久化文件系统，带 180 秒诊断重启脚本。**第 13 次原生交接已运行该最小 initramfs；USB 串口尚未工作。第 14 次候选增加到 65 个模块，包含设备树要求的硬件自旋锁、PDC、M31 PHY、I²C、总线和 IOMMU 等依赖，未加入内置存储驱动。**
 
-`bootprofiles/linux-ram/init` 和 `tools/make_linux_initramfs.py` 保存了构建逻辑；输出在 `artifacts/linux-ram/`。BusyBox 来自 Alpine 官方 ARM64 仓库，版本与下载来源记录在 `build/linux-ram/busybox-source.json`，没有将发行版的通用内核替换到设备。
+`linux/initramfs/linux-ram/init` 和 `tools/make_linux_initramfs.py` 保存了构建逻辑；输出在 `artifacts/linux-ram/`。BusyBox 来自 Alpine 官方 ARM64 仓库，版本与下载来源记录在 `build/linux-ram/busybox-source.json`，没有将发行版的通用内核替换到设备。
 
-Linux 启动需要运行时 DTB 和 initrd 交接参数。独立 `pianoProbePkg` / `bootprofiles/handoff/` 保留了 BootShim 进入时的 x0 和 EL。封装脚本强制检查 `_Payload` 偏移等于 BootShim 完整长度，避免第 4/5 次汇编常量池引起的 16 字节错位。最小版只保留原生 EnvDxeEnhanced，以避免 ABL 已交接内核环境后重新初始化 SCM/TZ 导致的断言。
+Linux 启动需要运行时 DTB 和 initrd 交接参数。独立 `pianoProbePkg` / `uefi/handoff/bootshim/` 保留了 BootShim 进入时的 x0 和 EL。封装脚本强制检查 `_Payload` 偏移等于 BootShim 完整长度，避免第 4/5 次汇编常量池引起的 16 字节错位。最小版只保留原生 EnvDxeEnhanced，以避免 ABL 已交接内核环境后重新初始化 SCM/TZ 导致的断言。
 
 自动诊断通过本机 ramoops 的 console RAM 环形缓冲区保存 UEFI DEBUG 输出（`0xA3500000`，前 2 MiB）；检查原有签名、边界和写入位置，不清空原日志，不触碰后 2 MiB pmsg。回到 Android 后只读 `/sys/fs/pstore/console-ramoops-0`。第 8 次已实测读到 EL1、有效 DTB `0xB5B76000` 及原始 initrd 参数。日志位于 `private/analysis/ramlog-test-*/`。
 
@@ -212,7 +215,7 @@ GOP 已补上无效模式、空参数及 framebuffer 边界检查，加入像素
 
 GUI 候选不包含内置存储驱动，全部使用 fastboot 临时内存启动。第 17 次异常已恢复并读出日志，后续第 18／19 次已确认中文界面和放大后的布局。UFS 接入必须先具备源代码层面的写保护，不能只依赖应用层约定。
 
-主要源码：`tools/build_simpleinit.sh`、`tools/prepare_simpleinit.py`、`tools/prepare_gui_profile.py`、`bootprofiles/uefi-app/`、`platforms/pianoGuiPkg/`。截图提取工具为 `tools/extract_ram_screenshot.py`；原机驱动依赖在 `private/analysis/native-driver-inventory.json`。
+主要源码：`tools/build_simpleinit.sh`、`tools/prepare_simpleinit.py`、`tools/prepare_gui_profile.py`、`uefi/core/`、`uefi/platforms/pianoGuiPkg/`。截图提取工具为 `tools/extract_ram_screenshot.py`；原机驱动依赖在 `private/analysis/native-driver-inventory.json`。
 
 第 17 次用户照片中的异常地址 `0xD2754A5C`，减去应用加载基址 `0xD2725000` 后为 `0x2FA5C`，符号定位为截图回调 `Capture` 的入口。完整日志显示此前 simple-init 默认 Continue Boot 已返回 Aborted，应用已卸载；因此是遗留事件回调到释放的代码。修复退出时取消/关闭事件，诊断阶段延长菜单默认倒计时以便截图。GOP 实机 `BLT_ROUNDTRIP match=1`，字体加载成功；ConSplitter 暴露的 AbsolutePointer 不能当作物理触屏已可用。
 
@@ -222,7 +225,7 @@ GUI 候选不包含内置存储驱动，全部使用 fastboot 临时内存启动
 
 第 22 次已恢复并取回完整日志：SPMI 本身 StartImage 成功；PmicDxe 初始化调用 SPMI，在 RVA `0x3758` 的 `ldr w9,[x3,x4]` 访问 `0x0C7B2008`，ESR `0x96000010` 为同步外部数据中止。该地址是写通道状态，寄存器和指令证明已经进入写事务路径，异常发生在该笔命令发送前。Buttons 与 simple-init 尚未运行。26 分区复核全部匹配。
 
-`bootprofiles/uefi-app/PianoKeys.c` 提供独立按键候选，`prepare_gui_profile.py --keys` 与 `--foundation` 互斥，排除原机 PMIC/SPMI/Buttons 初始化。先核对运行时 DT 中控制器布局、EE 0 和 bus 0，再读取 v7 APID 映射并要求按键外设具备 EE 0 条目；只允许 SID 0 的 PON HLOS `0x1310` 和 SID 1 的 GPIO6 `0x8D10`。唯一 MMIO 写入是向 observer 通道提交一字节 EXT_READL，没有 PMIC 写命令或写 FIFO。短按电源松开后发 Enter，音量键映射标准扫描码，40 ms 去抖，超时/错误停止轮询，应用退出时取消事件和卸载接口。第 23 次实测版本为 `0x70020000`，896 个 APID，PON APID 581、GPIO6 APID 610，均为 EE 0。用户确认音量键移动菜单；RAM 日志同时确认音量扫描码 `0x80/0x81` 及短按电源 Enter `0x0D` 被 simple-init 读取。75 秒计时器正常恢复 Android，26 分区匹配。PNG 因 CRC 不匹配未采用为画面证据。
+`uefi/core/PianoKeys.c` 提供独立按键候选，`prepare_gui_profile.py --keys` 与 `--foundation` 互斥，排除原机 PMIC/SPMI/Buttons 初始化。先核对运行时 DT 中控制器布局、EE 0 和 bus 0，再读取 v7 APID 映射并要求按键外设具备 EE 0 条目；只允许 SID 0 的 PON HLOS `0x1310` 和 SID 1 的 GPIO6 `0x8D10`。唯一 MMIO 写入是向 observer 通道提交一字节 EXT_READL，没有 PMIC 写命令或写 FIFO。短按电源松开后发 Enter，音量键映射标准扫描码，40 ms 去抖，超时/错误停止轮询，应用退出时取消事件和卸载接口。第 23 次实测版本为 `0x70020000`，896 个 APID，PON APID 581、GPIO6 APID 610，均为 EE 0。用户确认音量键移动菜单；RAM 日志同时确认音量扫描码 `0x80/0x81` 及短按电源 Enter `0x0D` 被 simple-init 读取。75 秒计时器正常恢复 Android，26 分区匹配。PNG 因 CRC 不匹配未采用为画面证据。
 
 主机测试直接编译该 C 源码，用模拟 MMIO 检查地址白名单、读操作码、重复 APID 的所有者选择、拒绝与超时、按键去抖及长按电源不触发确认：
 
@@ -230,7 +233,7 @@ GUI 候选不包含内置存储驱动，全部使用 fastboot 临时内存启动
 cc -std=gnu11 -fshort-wchar -ffunction-sections -fdata-sections \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/X64 \
-  tools/test_readonly_keys.c -Wl,--gc-sections -o build/test-readonly-keys
+  tests/native/test_readonly_keys.c -Wl,--gc-sections -o build/test-readonly-keys
 build/test-readonly-keys
 ```
 
@@ -250,7 +253,7 @@ Simple-init 的 UEFI 键盘代码已提供音量上／下切换焦点、`SCAN_SU
 
 ## UEFI USB / fastboot 调试端（2026-10-04）
 
-命令层在 `bootprofiles/uefi-app/PianoFastboot.c`，Qualcomm USB Device 适配层在 `PianoUsbDebug.c`。参考 EDK2 的 AndroidFastboot 与 USB transport，但采用自己的默认拒绝策略；不会调用上游 FlashPartition / ErasePartition / DoOemCommand，也没有存储、变量写入或任意内存写 API。
+命令层在 `uefi/core/PianoFastboot.c`，Qualcomm USB Device 适配层在 `PianoUsbDebug.c`。参考 EDK2 的 AndroidFastboot 与 USB transport，但采用自己的默认拒绝策略；不会调用上游 FlashPartition / ErasePartition / DoOemCommand，也没有存储、变量写入或任意内存写 API。
 
 当前允许 `getvar:*` 的指定变量、`download:XXXXXXXX`（最大 64 MiB，仅 RAM）、`oem sha256`、`oem discard`、`oem log`、`reboot`、`continue`。`boot` 当前明确返回未实现，不会把未执行的交接报告为成功。所有其他命令包括 flash、erase、flashing unlock、set_active、任意 OEM 和特殊重启模式均拒绝。`continue` 结束 USB 调试服务，SimpleInit 继续运行。
 
@@ -269,7 +272,7 @@ fastboot -s SunUEFI-piano reboot
 ```sh
 .venv/bin/python tools/prepare_native_probe.py --group usb
 .venv/bin/python tools/prepare_gui_profile.py --usb-debug --return-seconds 120
-bash tools/test_usb_debug.sh
+bash tests/native/test_usb_debug.sh
 bash tools/build_stage0.sh gui
 .venv/bin/python tools/package_stage0.py --profile gui --header-version 3
 ```
@@ -308,7 +311,7 @@ bash tools/build_stage0.sh gui
 
 44 次首次真实 NOP 门铃没有完成；无法确认停止时保留缓冲区并自动重启，26 分区匹配。没有执行 QUERY、LUN、容量、LBA 或 GPT。45 次只读确认 MEM_CFG=0、原机处于单门铃模式。46/47 次在 Hibern8 exit 后真实 NOP DMA 成功；Descriptor FF。48 次读取 bCurrentPowerMode=33，确认存储设备仍为 PowerDown。49 次无数据恢复 Active 后，89 字节 Device Descriptor、6 个 LUN / 容量成功。50 次全部 6 份 GPT 的 header / array CRC 成功，解除 SMMU 后读回也通过。Android 只读对照与 UEFI 全部一致，26 分区匹配。54 / 55 次同一镜像复测通过：每轮 37 次命令、21 个元数据块、220 条完整 CRC 校验记录，Android 对照和 26 分区校验一致。原始日志损坏仍会出现，镜像回收拒绝损坏副本，保留原始捕获。
 
-内存范围、SID、API 生命周期、恢复策略和证据位置见 [DMA / SMMU milestone 状态](../dma-smmu-milestone.md)。可复用主机检查为 `bash tools/test_dma_foundation.sh`；Android 元数据对照为 `tools/compare_ufs_gpt_android.py`，只有只读命令。
+内存范围、SID、API 生命周期、恢复策略和证据位置见 [DMA / SMMU milestone 状态](../dma-smmu-milestone.md)。可复用主机检查为 `bash tests/native/test_dma_foundation.sh`；Android 元数据对照为 `tools/compare_ufs_gpt_android.py`，只有只读命令。
 
 已验证的 60 秒自动返回 Android 的 RAM 诊断镜像和证据清单：`artifacts/dma-milestone/`。工具 `check_dma_log.py` 核对核心 DMA 记录，`compare_ufs_gpt_android.py` 只读对照 GPT，`seal_dma_milestone.py` 固化两轮完整验证后的产物。
 

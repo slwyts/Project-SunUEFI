@@ -1,6 +1,6 @@
 # Bounded NPA/VCS object observations
 
-`bootprofiles/display-rail/PianoDisplayRailObserve.c/h` implements Init, Observe,
+`uefi/components/display-rail/PianoDisplayRailObserve.c/h` implements Init, Observe,
 CPU-only Reemit, Close and retained/report getters. The environment receives the
 actual private Clock reader plus explicit NPA/VCS handles from NativeProbe's
 successful GUID→StartImage registry. There is no loaded-image size scan, generic
@@ -127,7 +127,7 @@ parent clock release. Root's planned order is child clock retirement → RailClo
 are16 phase slots, sufficient for acquire-before/after and release-before/after;
 an exhausted report does not begin another source or Guard operation.
 
-Run `python3 -m unittest discover -s tests -p test_display_rail_observe.py -v`.
+Run `python3 -m unittest discover -s tests/unit -p test_display_rail_observe.py -v`.
 The actual collector and actual Guard, complete native NPA/VCS PE pins and real
 BasePrintLib pass48 fork cases plus strict AARCH64 compilation. The tests cover
 four-byte-aligned links, code/hash/handle/protocol identity, true graph drift,

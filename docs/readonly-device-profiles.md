@@ -30,4 +30,4 @@ python3 tools/package_stage0.py --profile gui --header-version 3
 
 封存`artifacts/diagnostics/high-ram-readonly-v1`，build_id `70da647d-1321-4059-b85d-27e3d9c97359`，image SHA `1c71ca677f8610733f5ec914c115eba1a592bd547eef7fb8e54e03bae2e6a842`。helper实际C/ARM64检查和完整EDK2构建通过，尚未取得实际AT或高RAM内容证据。
 
-两种profile都强制排除其他硬件消费者及OS load；`tests/test_new_diagnostic_profiles.py`在临时repo运行真实prepare，验证隔离和生成内容，不修改当前staging。后续device boot、保留日志、完整启动分区SHA核对使用单独新test-id。
+两种profile都强制排除其他硬件消费者及OS load；`tests/unit/test_new_diagnostic_profiles.py`在临时repo运行真实prepare，验证隔离和生成内容，不修改当前staging。后续device boot、保留日志、完整启动分区SHA核对使用单独新test-id。

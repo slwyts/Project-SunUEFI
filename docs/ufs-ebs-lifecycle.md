@@ -40,8 +40,8 @@ PianoDmaReportQuietSync (&mRing); // at event receipt and before final Free
 
 ## 主机检查
 
-- `bash tools/test_dma_foundation.sh`：ASan/UBSan 验证实际 Reserved type、普通 Stop 回收、EBS 后回收拒绝、owned table retain 无 native HAL、原有 DMA/cache/rollback 契约、quiet 每次 invalidate/不逐次 log/双份汇总及默认日志保持。
-- `bash tools/test_ufs_firmware.sh`：高位 transfer/task 槽、两个 stuck run、stuck doorbell、MCQ 拒绝、固定轮询上限、bases/IRQ 在回收前验证、run 在回收后恢复、`gBS=NULL` 时 EBS 路径无 BS 调用/free、错误 memory type 拒绝、失败保留与 reset 返回后的 fail-stop。
+- `bash tests/native/test_dma_foundation.sh`：ASan/UBSan 验证实际 Reserved type、普通 Stop 回收、EBS 后回收拒绝、owned table retain 无 native HAL、原有 DMA/cache/rollback 契约、quiet 每次 invalidate/不逐次 log/双份汇总及默认日志保持。
+- `bash tests/native/test_ufs_firmware.sh`：高位 transfer/task 槽、两个 stuck run、stuck doorbell、MCQ 拒绝、固定轮询上限、bases/IRQ 在回收前验证、run 在回收后恢复、`gBS=NULL` 时 EBS 路径无 BS 调用/free、错误 memory type 拒绝、失败保留与 reset 返回后的 fail-stop。
 - Dma/OwnedSmmu/UFS 源码 AARCH64 语法检查和 `git diff --check`。
 
 [UEFI Boot Services 规范](https://uefi.org/specs/UEFI/2.11/07_Services_Boot_Services.html) 定义 EBS 回调和 memory map 生命周期；[Linux UFS HCI register 定义](https://github.com/torvalds/linux/blob/master/include/ufs/ufshci.h) 与固定源码的 list-clear/run 寄存器一致。源码收敛和主机模型检查不能替代真实硬件读回与 OS 接管测试。

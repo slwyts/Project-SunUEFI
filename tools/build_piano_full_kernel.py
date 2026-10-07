@@ -67,6 +67,22 @@ def command_line(fragment,public,root_policy):
     return provided.replace('piano.root=ram','piano.root='+root_policy)
 
 
+def module_overrides(fragment):
+    lines=[line.strip()for line in fragment.splitlines()if line.strip()and not line.lstrip().startswith('#')]
+    if lines!=['CONFIG_UHID=m']:raise ValueError('Bluetooth fragment may enable only CONFIG_UHID=m')
+    return {'CONFIG_UHID':'m'}
+
+
+def validate_module_overrides(values):
+    if values not in ({},{'CONFIG_UHID':'m'}):raise ValueError('Only the UHID module override is supported')
+    return values
+
+
+def effective_config(command,modules):
+    validate_module_overrides(modules)
+    return 'CONFIG_CMDLINE='+json.dumps(command)+'\n'+''.join(key+'='+value+'\n'for key,value in sorted(modules.items()))
+
+
 def verify_source(work=WORK,commit=None):
     commit=COMMIT if commit is None else commit
     if not re.fullmatch(r'[0-9a-f]{40}',commit):raise ValueError('Exact canonical full kernel commit required')
@@ -78,15 +94,18 @@ def verify_source(work=WORK,commit=None):
         if sha(work/name)!=pin:raise ValueError('Pinned public full config changed: '+name)
 
 
-def validate_config(config,public,expected_command):
+def validate_config(config,public,expected_command,modules=None):
+    modules=validate_module_overrides({}if modules is None else modules)
     values=config_values(config)
     if values.get('CONFIG_CMDLINE')!=json.dumps(expected_command):raise ValueError('Configured full candidate root command line changed')
     if 'userdata'in expected_command or 'root=PARTLABEL'in expected_command:raise ValueError('Android root target survived')
     for key,value in config_values(public).items():
-        if key!='CONFIG_CMDLINE'and values.get(key)!=value:raise ValueError('Public full profile option lost: '+key)
+        if key!='CONFIG_CMDLINE'and values.get(key)!=modules.get(key,value):raise ValueError('Public full profile option lost: '+key)
+    for key,value in modules.items():
+        if values.get(key)!=value:raise ValueError('Local module requirement lost: '+key)
     for key,value in REQUIRED.items():
         if values.get('CONFIG_'+key)!=value:raise ValueError('Full driver/userspace requirement lost: CONFIG_'+key)
-    return {key:values['CONFIG_'+key]for key in REQUIRED}
+    return {**{key:values['CONFIG_'+key]for key in REQUIRED},**{key.removeprefix('CONFIG_'):value for key,value in modules.items()}}
 
 
 def toolchain():
@@ -126,28 +145,30 @@ def main():
     work,out,artifacts=(path.resolve()for path in (args.worktree,args.build_dir,args.artifacts));commit=args.commit
     if not work.is_relative_to(ROOT/'build/kernel-worktrees')or not out.is_relative_to(ROOT/'build/kernels')or not artifacts.is_relative_to(ROOT/'artifacts/kernels'):
         raise ValueError('Explicit full kernel paths must stay in the workspace build/artifact directories')
-    verify_source(work,commit);public=work/'arch/arm64/configs/piano_rootfs.config';fragment=ROOT/'configs/linux/piano-full.config'
+    verify_source(work,commit);public=work/'arch/arm64/configs/piano_rootfs.config';fragment=ROOT/'linux/configs/piano-full.config'
     root_command=command_line(fragment.read_text(),public.read_text(),args.root)
+    bluetooth=ROOT/'linux/configs/piano-bluetooth.config';modules=module_overrides(bluetooth.read_text())
     env,tools=toolchain();out.mkdir(parents=True,exist_ok=True);artifacts.mkdir(parents=True,exist_ok=True)
     marker=artifacts/'manifest.json'
     if marker.exists():raise ValueError('Sealed full candidate exists; choose a new artifact directory')
-    hashes={str(path.relative_to(ROOT)):sha(path)for path in (fragment,Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py')}
-    effective=out/'piano-full.effective.config';effective.write_text('CONFIG_CMDLINE='+json.dumps(root_command)+'\n')
+    hashes={str(path.relative_to(ROOT)):sha(path)for path in (fragment,bluetooth,Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py')}
+    effective_text=effective_config(root_command,modules)
+    effective=out/'piano-full.effective.config';effective.write_text(effective_text)
     command=['make','-C',work,'O='+str(out),'ARCH=arm64','LLVM=1','LLVM_IAS=1']
     run(command+['piano_defconfig'],env=env)
     run(['bash',work/'scripts/kconfig/merge_config.sh','-m','-O',out,out/'.config',public,effective],cwd=work,env=env)
     run(command+['olddefconfig'],env=env)
-    requirements=validate_config((out/'.config').read_text(),public.read_text(),root_command);config_hash=sha(out/'.config')
+    requirements=validate_config((out/'.config').read_text(),public.read_text(),root_command,modules);config_hash=sha(out/'.config')
     def fresh():
         verify_source(work,commit)
-        if any(sha(ROOT/name)!=value for name,value in hashes.items())or sha(out/'.config')!=config_hash or effective.read_text()!='CONFIG_CMDLINE='+json.dumps(root_command)+'\n':raise ValueError('Full candidate source/config/tool inputs drifted')
+        if any(sha(ROOT/name)!=value for name,value in hashes.items())or sha(out/'.config')!=config_hash or effective.read_text()!=effective_text:raise ValueError('Full candidate source/config/tool inputs drifted')
         if any(sha(Path(tools['paths'][name]))!=value for name,value in tools['sha256'].items()):raise ValueError('Full candidate build tool changed during compilation')
     fresh();state={'profile':'full-integration','mode':'complete-public-hardware','build_id':str(uuid.uuid4()),'source_commit':commit,'source_worktree':str(work),'source_clean':True,
       'source_branch':text(['git','branch','--show-current'],work),'base_commit':BASE_COMMIT,
       'public_full_baseline':COMMIT,'local_patch_commits':text(['git','rev-list','--reverse',COMMIT+'..'+commit],work).splitlines(),
       'public_patch_commits':text(['git','rev-list','--reverse',BASE_COMMIT+'..'+COMMIT],work).splitlines(),
       'public_config_sha256':SOURCE_PINS,'inputs':hashes,'config_sha256':config_hash,'toolchain':tools,'root_policy':args.root,'command_line':root_command,
-      'full_profile_requirements':requirements,'hardware_verified':False,'device_operation_performed':False,'android_userdata_selected':False,
+      'full_profile_requirements':requirements,'local_module_overrides':modules,'hardware_verified':False,'device_operation_performed':False,'android_userdata_selected':False,
       'safe_pianoinit_external_bundle_required':True,'public_bt_le_enabled':config_values((out/'.config').read_text()).get('CONFIG_BT_LE')=='y',
       'dtb':None,'status':'CONFIGURED_NOT_BUILT'if args.configure_only else 'BUILDING_NOT_BOOTABLE'}
     shutil.copyfile(out/'.config',artifacts/'config');pending=out/'full-build-pending.json';pending.write_text(json.dumps(state,indent=2)+'\n')

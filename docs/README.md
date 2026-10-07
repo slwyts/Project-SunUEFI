@@ -26,6 +26,7 @@
 
 - [仓库地图](devel/repository-map.md)、[本地输入](devel/local-inputs.md)、[内核角色](devel/kernel-roles.md)
 - [补丁登记](devel/patches.md)、[测试范围](devel/testing.md)、[发布要求](devel/release.md)
+- [公开构建链](devel/public-build.md)、[BSP配置包](../linux/bsp/README.md)、[发行版装配](../linux/rootfs/README.md)、[桌面配置](../linux/desktops/README.md)
 - [贡献指南](../CONTRIBUTING.md)、[来源](../THIRD_PARTY.md)、[许可](../LICENSE.md)
 
 </details>

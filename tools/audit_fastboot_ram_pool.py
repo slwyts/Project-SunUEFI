@@ -206,7 +206,7 @@ def audit(dtb, native, efi, runtime=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dtb', type=Path, default=Path('private/captures/2026-10-03-piano/live.dtb'))
-    parser.add_argument('--native', type=Path, default=Path('platforms/pianoPkg/native-memory-map.json'))
+    parser.add_argument('--native', type=Path, default=Path('uefi/platforms/pianoPkg/native-memory-map.json'))
     parser.add_argument('--efi-log', type=Path, default=Path('private/analysis/ramlog-test-85/console.txt'))
     parser.add_argument('--json', type=Path)
     parser.add_argument('--runtime-reserves', type=Path, help='Explicit phase-labelled observed dynamic allocations; never UEFI proof by inference')

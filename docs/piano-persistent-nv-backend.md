@@ -32,7 +32,7 @@ UFS在OS/重启前由统一 owner manager关闭。必须先完成 NvJournalFlush
 
 ## 当前初始化阻碍
 
-真实启动顺序必须是：早期存储可用→验证 provisioning→恢复 journal 到 RuntimeData mirror→发布 FVB/FlashInfo→标准 FTW/VariableRuntimeDxe 初始化。bootprofiles/nv/standard-components.dsc.inc 与标准 VariableFlashInfoLib 是这一集成的 canonical组件，不是独立测试功能集；当前不能盲目把产品 EmuNv PCD 改成FALSE。
+真实启动顺序必须是：早期存储可用→验证 provisioning→恢复 journal 到 RuntimeData mirror→发布 FVB/FlashInfo→标准 FTW/VariableRuntimeDxe 初始化。uefi/components/nv/standard-components.dsc.inc 与标准 VariableFlashInfoLib 是这一集成的 canonical组件，不是独立测试功能集；当前不能盲目把产品 EmuNv PCD 改成FALSE。
 
 HALIOMMU 原 DEPEX 同时需要 VariableArch 和 VariableWriteArch，而早期真实 NV 恢复又需要其 DMA/SMMU，因此有实际循环。其余12个 native foundation不要求变量，但不能伪造 VariableWriteArch 或未经证据绕过 HAL DEPEX。NativeProbe源码未直接调用变量，不代表 opaque HAL内部完全无依赖。
 

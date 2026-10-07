@@ -160,7 +160,7 @@ def main():
     args=p.parse_args()
     try:
         source,meta=create();directory=args.output_dir.resolve()
-        protected=[ROOT/name for name in("platforms","upstream","build","private","bootprofiles","configs")]
+        protected=[ROOT/name for name in("uefi","linux","upstream","build","private","vendor")]
         if any(directory.is_relative_to(path.resolve())for path in protected):raise ValueError("Prototype cannot publish to protected source/staging/evidence")
         if (directory/"MemoryMapLib.c").resolve()==(ROOT/BASE_TABLE).resolve():raise ValueError("Cannot overwrite 88 base artifact")
         directory.mkdir(parents=True,exist_ok=True)

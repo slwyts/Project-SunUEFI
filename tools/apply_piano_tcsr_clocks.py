@@ -91,7 +91,7 @@ def fold(args):
     out = args.output_dir.resolve()
     if not out.is_relative_to(ROOT / 'private/analysis') or out.exists():
         raise ValueError('output must be a new private/analysis directory')
-    overlay = ROOT / 'configs/linux/dtb/piano-linux-tcsr-clocks.dtso'
+    overlay = ROOT / 'linux/dts/piano-linux-tcsr-clocks.dtso'
     out.mkdir(parents=True)
     with tempfile.TemporaryDirectory(prefix='piano-tcsr-') as directory:
         tmp = Path(directory)

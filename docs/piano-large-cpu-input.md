@@ -1,6 +1,6 @@
 # Unified large CPU input and the remaining platform binding
 
-The public ABI is `bootprofiles/uefi-app/PianoCpuInput.h`; the OS directory
+The public ABI is `uefi/core/PianoCpuInput.h`; the OS directory
 keeps a relative forwarding header, following its existing shared LaunchBlob
 layout. `PianoCpuInput.c` implements one admission/owner validation and one
 64 KiB slice policy for file snapshots, borrowed CPU images and download blobs.

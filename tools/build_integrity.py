@@ -25,11 +25,16 @@ def inputs(root,profile):
     binaries=ws/'Binaries/piano'
     if binaries.exists():
         files.update(p for p in binaries.rglob('*') if p.is_file())
-    shim=ws/'BootShim' if profile=='stage0' else root/'bootprofiles/handoff'
+    shim=ws/'BootShim' if profile=='stage0' else root/'uefi/handoff/bootshim'
     for p in (shim/'BootShim.S',shim/'Makefile',ws/'Resources/DTBs/piano.dtb',
               root/'tools/build_stage0.sh',root/'tools/build_integrity.py'):
         if p.is_file():files.add(p)
     if profile=='product':
+        import piano_vendor_inputs as vendor_inputs
+        vendor_record=vendor_inputs.record(root)
+        files.update(vendor_inputs.source_files(root))
+        files.update(path for path in (root/'patches/firmware').iterdir() if path.is_file())
+        files.add(root/'tools/apply_firmware_patches.py')
         from prepare_product_pump import prepare as pump
         from prepare_product_ui import prepare as ui
         from prepare_nv_runtime_guard import prepare as nv_guard
@@ -37,23 +42,25 @@ def inputs(root,profile):
         files.update(root/path for path in (*pump_record['files'],*ui_record['files']))
         files.update(root/path for path in nv_guard(root,apply=False)['files'])
         from prepare_product import SOURCE_NAMES, os_boot_files, verify_os_boot, observation_files, verify_observation_families,verify_display_mapping
-        canonical=root/'bootprofiles/uefi-app'
+        canonical=root/'uefi/core'
         files.update(canonical/name for name in SOURCE_NAMES)
         files.update(path for path in canonical.iterdir() if path.is_file() and path.suffix in ('.h','.inc'))
         files.update(os_boot_files(root).values())
         prepared=json.loads((root/'build/product/prepared-manifest.json').read_text());os_boot=prepared.get('os_boot',{})
+        if prepared.get('vendor_inputs')!=vendor_record:
+            raise ValueError('Prepared vendor inputs differ from the fixed input bundle')
         for rows in observation_files(root).values():files.update(rows.values())
-        for app in (platform/'Applications/ProductCore',root/'platforms/pianoProductPkg/Applications/ProductCore'):
+        for app in (platform/'Applications/ProductCore',root/'uefi/platforms/pianoProductPkg/Applications/ProductCore'):
             verify_os_boot(root,app,os_boot)
             verify_observation_families(root,app,prepared.get('dxe_observation',{}))
         from prepare_product_early_memory import verify as verify_early_memory, EARLY_FILES
-        for target in (platform,root/'platforms/pianoProductPkg'):
+        for target in (platform,root/'uefi/platforms/pianoProductPkg'):
             verify_early_memory(root,target,prepared.get('early_memory',{}))
             verify_display_mapping(root,target,prepared.get('display_mapping',{}))
         from piano_display_mapping import source_files as display_sources
         files.update(display_sources(root))
         files.update(root/path for path in ('tools/compose_piano_dtb.py','tools/analyze_capture.py'))
-        files.update(root/'bootprofiles/early-memory'/name for name in EARLY_FILES)
+        files.update(root/'uefi/handoff/early-memory'/name for name in EARLY_FILES)
         from prepare_product_handoff import prepare as handoff, verify_provider
         handoff_record=handoff(root,apply=False)
         if prepared.get('native_late_handoff',{}).get('files')!=handoff_record['files']:
@@ -62,13 +69,13 @@ def inputs(root,profile):
             path=root/name
             if not path.is_file()or sha(path)!=digest:raise ValueError('Native late handoff compiled hook stale: '+name)
             files.add(path)
-        for target in (platform,root/'platforms/pianoProductPkg'):
+        for target in (platform,root/'uefi/platforms/pianoProductPkg'):
             verify_provider(root,target/'Applications/ProductCore',prepared.get('late_provider',{}))
-        for folder in ('bootprofiles/product-pump','bootprofiles/product-support','bootprofiles/product-handoff'):
+        for folder in ('uefi/components/product-pump','uefi/components/product-support','uefi/components/product-handoff'):
             files.update(path for path in (root/folder).rglob('*') if path.is_file())
         for relative in ('config/piano-product.json','build/product/prepared-manifest.json',
                          'tools/prepare_product.py','tools/build_product.sh','tools/package_product.py',
-                         'tools/prepare_product_pump.py','tools/prepare_product_ui.py','tools/prepare_nv_runtime_guard.py','tools/prepare_product_early_memory.py','tools/prepare_product_handoff.py','tools/simpleinit_build_identity.py',
+                         'tools/prepare_product_pump.py','tools/prepare_product_ui.py','tools/prepare_nv_runtime_guard.py','tools/prepare_product_early_memory.py','tools/prepare_product_handoff.py','tools/source_input_tail.py','tools/simpleinit_build_identity.py',
                          'tools/build_simpleinit.sh','tools/prepare_simpleinit.py','tools/product_payload_digest.py',
                          'artifacts/simpleinit/product/SimpleInit.efi','artifacts/simpleinit/product/app-payload.bin',
                          'artifacts/simpleinit/product/build-ok.json'):

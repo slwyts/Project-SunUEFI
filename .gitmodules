@@ -1,4 +1,27 @@
 [submodule "kernels/linux-piano"]
-	path = kernels/linux-piano
-	url = ../linux-piano
-	branch = piano-stable
+	path = upstream/linux-piano
+	url = https://github.com/blu-sharky/linux-piano.git
+[submodule "upstream/Mu-Silicium"]
+	path = upstream/Mu-Silicium
+	url = https://github.com/Project-Silicium/Mu-Silicium.git
+[submodule "upstream/simple-init"]
+	path = upstream/simple-init
+	url = https://github.com/BigfootACA/simple-init.git
+[submodule "upstream/debian-piano-current"]
+	path = upstream/debian-piano-current
+	url = https://github.com/blu-sharky/debian-piano.git
+[submodule "upstream/piano-firmware-current"]
+	path = upstream/piano-firmware-current
+	url = https://github.com/blu-sharky/piano-firmware.git
+[submodule "upstream/piano-mesa-current"]
+	path = upstream/piano-mesa-current
+	url = https://github.com/blu-sharky/piano-mesa.git
+[submodule "upstream/dtc"]
+	path = upstream/dtc
+	url = https://github.com/dgibson/dtc.git
+[submodule "upstream/audioreach-topology"]
+	path = upstream/audioreach-topology
+	url = https://github.com/linux-msm/audioreach-topology.git
+[submodule "upstream/v4l2loopback"]
+	path = upstream/v4l2loopback
+	url = https://github.com/umlaeute/v4l2loopback.git

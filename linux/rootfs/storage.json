@@ -1,0 +1,8 @@
+{
+  "root_label": "PIANOROOT",
+  "root_partname": "sunuefi_root",
+  "root_fstype": "ext4",
+  "esp_label": "SUNUEFI_ESP",
+  "esp_partname": "sunuefi_esp",
+  "note": "Expected release identities only; no partition table or device data is changed by rootfs assembly."
+}

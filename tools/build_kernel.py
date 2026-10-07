@@ -54,7 +54,7 @@ def main():
     ap.add_argument('--modules',action='store_true')
     ap.add_argument('--dtb',type=Path,help='Explicit final board DTB; no implicit phone/MTP substitution')
     args=ap.parse_args();root=Path(__file__).resolve().parent.parent
-    lock=json.loads((root/'kernel-profiles.json').read_text());profile=lock['profiles'][args.profile]
+    lock=json.loads((root/'linux/kernel-profiles.json').read_text());profile=lock['profiles'][args.profile]
     repo=(args.repository or root/lock['repository_path']).resolve()
     commit=output(['git','rev-parse',profile['commit']+'^{commit}'],repo)
     if commit!=profile['commit']:raise SystemExit('Pinned source commit mismatch')
@@ -75,8 +75,8 @@ def main():
         env['LD_LIBRARY_PATH']=str(bundled/'lib')+(os.pathsep+env['LD_LIBRARY_PATH'] if env.get('LD_LIBRARY_PATH') else '')
     for name in ('clang','ld.lld','llvm-ar','llvm-nm','llvm-objcopy','make','bison','flex','bc'):
         if not shutil.which(name,path=env['PATH']):raise SystemExit('Missing host build dependency: '+name)
-    fragments=[root/'configs/linux/piano-ram.config']
-    if args.mode=='userspace-debug':fragments.append(root/'configs/linux/piano-userspace-debug.config')
+    fragments=[root/'linux/configs/piano-ram.config']
+    if args.mode=='userspace-debug':fragments.append(root/'linux/configs/piano-userspace-debug.config')
     for fragment in fragments:
         if not fragment.exists():raise SystemExit('Missing profile fragment: '+str(fragment))
     input_hashes={str(f.relative_to(root)):digest(f) for f in fragments}

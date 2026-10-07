@@ -121,7 +121,7 @@ EBS 要使用统一、有证据的 halt-only 生命周期，不能依赖不同 d
 
 ## 下一段代码的建议范围
 
-独立 `PianoUsbHostPci` core 与 fake-MMIO/DMA tests 已按后续授权实施，文件为 `bootprofiles/uefi-app/PianoUsbHostPci.c/.h`、`tools/test_usb_host_pci.c`。它输出真实 `EFI_PCI_IO_PROTOCOL` function table，但不 InstallProtocol、不改变控制器/PHY/供电，也未连接实际 backend。ABI 可由标准 XhciDxe 调用，硬件 Host 仍待接线与实测。
+独立 `PianoUsbHostPci` core 与 fake-MMIO/DMA tests 已按后续授权实施，文件为 `uefi/core/PianoUsbHostPci.c/.h`、`tests/native/test_usb_host_pci.c`。它输出真实 `EFI_PCI_IO_PROTOCOL` function table，但不 InstallProtocol、不改变控制器/PHY/供电，也未连接实际 backend。ABI 可由标准 XhciDxe 调用，硬件 Host 仍待接线与实测。
 
 ## 已实现 core 的 API 与 backend contract
 
@@ -153,7 +153,7 @@ cc -std=gnu11 -fshort-wchar -Wall -Wextra -Werror -Wno-unused-parameter \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/X64 \
   -I upstream/Mu-Silicium/Mu_Basecore/MdeModulePkg/Include \
-  tools/test_usb_host_pci.c -o /tmp/sunuefi-test-usb-host-pci-asan
+  tests/native/test_usb_host_pci.c -o /tmp/sunuefi-test-usb-host-pci-asan
 ASAN_OPTIONS=detect_leaks=1 /tmp/sunuefi-test-usb-host-pci-asan
 ```
 

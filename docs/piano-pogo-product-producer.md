@@ -1,6 +1,6 @@
 # Pogo product input producer: lifecycle implemented, hardware NOT_READY
 
-`bootprofiles/pogo-product/PianoPogoDxe.c/.h` provide one product-lifetime
+`uefi/components/pogo-product/PianoPogoDxe.c/.h` provide one product-lifetime
 producer for the official cover keyboard and touchpad. They are separate from
 the frozen Root Keys driver and current firmware inputs. This work does not
 enable the diagnostic PIO/transport gates or install a fake input device.
@@ -81,7 +81,7 @@ behavior are not claimed by this lifecycle implementation.
 
 ## Verification and integration boundary
 
-`python3 -m unittest discover -s tests -p test_pogo_dxe.py -v` runs the actual
+`python3 -m unittest discover -s tests/unit -p test_pogo_dxe.py -v` runs the actual
 producer plus actual parser/adapter under ASan/UBSan:23 fork cases cover
 NOT_READY/no-publication, exact five-interface tuple, duplicate start/notify,
 timer-only work, F12 callback TPL, wait-event signaling, stale tokens, relative

@@ -247,7 +247,7 @@ def main() -> int:
     artifacts = ROOT / "artifacts/kernels" / args.profile / args.mode
     try:
         result = generate(args.profile, args.kernel_manifest or artifacts / "manifest.json",
-                          args.busybox, args.busybox_provenance, ROOT / "bootprofiles/kernel-ram/init",
+                          args.busybox, args.busybox_provenance, ROOT / "linux/initramfs/kernel-ram/init",
                           args.output_dir or artifacts)
     except (ValueError, OSError, struct.error) as exc:
         parser.exit(2, f"kernel initramfs: {exc}\n")

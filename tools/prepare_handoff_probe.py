@@ -5,8 +5,8 @@ import shutil
 
 def main():
     root = Path(__file__).resolve().parent.parent
-    src = root / 'platforms/pianoPkg'
-    dst = root / 'platforms/pianoProbePkg'
+    src = root / 'uefi/platforms/pianoPkg'
+    dst = root / 'uefi/platforms/pianoProbePkg'
     shutil.copytree(src, dst, dirs_exist_ok=True)
     for path in list(dst.rglob('*')):
         if path.is_file() and path.suffix in ('.py', '.dsc', '.fdf', '.inf', '.dec', '.c'):
@@ -20,7 +20,7 @@ def main():
     serial = dst/'Library/RamLogSerialPortLib'
     reference = root/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib'
     shutil.copytree(reference,serial,dirs_exist_ok=True)
-    shutil.copyfile(root/'bootprofiles/handoff/RamLog.c',serial/'RamLog.c')
+    shutil.copyfile(root/'uefi/handoff/bootshim/RamLog.c',serial/'RamLog.c')
     inf = serial/'FrameBufferSerialPortLib.inf'
     inf.write_text(inf.read_text().replace('  FrameBufferSerialPortLib.c','  FrameBufferSerialPortLib.c\n  RamLog.c'))
     code = serial/'FrameBufferSerialPortLib.c'
@@ -48,7 +48,7 @@ def main():
         raise SystemExit('Native UEFI reserved memory layout changed')
     mem.write_text(data.replace(old, new))
     lib = dst / 'Library/Stage0BootManagerLib'
-    shutil.copyfile(root / 'bootprofiles/handoff/Probe.c', lib / 'Probe.c')
+    shutil.copyfile(root / 'uefi/handoff/bootshim/Probe.c', lib / 'Probe.c')
     inf = lib / 'Stage0BootManagerLib.inf'
     data = inf.read_text().replace('  Stage0BootManagerLib.c', '  Stage0BootManagerLib.c\n  Probe.c')
     data = data.replace('  MsCorePkg/MsCorePkg.dec', '  MsCorePkg/MsCorePkg.dec\n  SiliciumPkg/SiliciumPkg.dec')

@@ -1,0 +1,313 @@
+From 74c517825a95113f35c121db136e3880d44b9806 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 6 Oct 2026 01:22:47 +0800
+Subject: [PATCH] iommu/arm-smmu: expose serialized per-master identity route
+ readback
+
+Strict UEFI retirement removes its USB route, so hardware preparation must
+observe normal kernel IOMMU attachment rather than clone an inherited
+USB context or manufacture a ready marker.
+
+Expose a readonly piano_dma_route attribute only on real ARM-SMMU masters.
+Require the actual driver identity domain, then compare hardware SMR/S2CR
+with the kernel-private encoding, including QCOM hypervisor bypass. Verify
+passthrough context control/type/fault state and repeated register equality.
+Serialize route installation with the same stream map mutex and remove the
+attribute before releasing master state. Keep firmware-adopted and
+kernel-installed origins distinct. Diagnostic publication failure does not
+break normal IOMMU attachment, but consumers cannot claim readback success.
+
+Add the actual shared register comparator to the host snapshot selftest
+and document the ABI. Both affected AArch64 objects compile without warnings;
+shared C assertions pass ASAN/UBSAN. No runtime hardware test, route programming
+from the diagnostic, global TLB/control bypass or memory permission is added.
+Only identity/pass-through evidence is supported, not arbitrary translated
+DMA domains or an all-device hardware-ready assertion.
+
+Based-on: 1fd91b90a7204c7846f2fc0580cc967a20d692cf
+Assisted-by: Codex:GPT-6
+---
+ .../ABI/testing/sysfs-devices-piano-dma-route |  21 ++++
+ .../arm/arm-smmu/arm-smmu-qcom-handoff.h      |   9 ++
+ drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c    |  19 ++++
+ drivers/iommu/arm/arm-smmu/arm-smmu.c         | 102 ++++++++++++++++++
+ drivers/iommu/arm/arm-smmu/arm-smmu.h         |   1 +
+ .../selftests/iommu/qcom-handoff-snapshot.c   |   6 ++
+ 6 files changed, 158 insertions(+)
+ create mode 100644 Documentation/ABI/testing/sysfs-devices-piano-dma-route
+
+diff --git a/Documentation/ABI/testing/sysfs-devices-piano-dma-route b/Documentation/ABI/testing/sysfs-devices-piano-dma-route
+new file mode 100644
+index 0000000000000000000000000000000000000000..9ca17ec1c0bf5e4a86d55a1adbe64f41288a1606
+--- /dev/null
++++ b/Documentation/ABI/testing/sysfs-devices-piano-dma-route
+@@ -0,0 +1,21 @@
++What:           /sys/devices/.../piano_dma_route
++Date:           October 2026
++Contact:        Linux IOMMU developers <iommu@lists.linux.dev>
++Description:
++                Read-only diagnostic for an actual ARM SMMU configured master
++                attached to the driver's identity domain. Returns EAGAIN when
++                not attached and an error for changed/faulted hardware.
++
++                The first line is "piano-dma-route-v1 domain=identity ids=N".
++                Subsequent lines contain sid, mask, slot, origin, actual smr,
++                actual s2cr, kernel-private expected hardware encoding, cb,
++                sctlr, cbar and fsr. Origin is firmware-adopted or
++                kernel-installed, preserving that ownership distinction.
++                QCOM's emulated bypass bank is compared using its real
++                hardware encoding. Hardware is read twice under stream-map
++                serialization; faults are observed, never cleared.
++
++                This snapshot is not a DMA completion, boot-ready flag,
++                external firmware lease or memory ownership authorization.
++                It does not allocate or program routes. Runtime PM uses
++                the driver's normal resource APIs while reading registers.
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
+index f97ad38a3352ea8dce6da0ea1dfd5987d2ab5cb4..bca3b1c2d7ec871b0917a2f273776a4f47805269 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
+@@ -23,6 +23,15 @@ struct qcom_smmu_handoff_snapshot {
+ 	u32 sctlr[QCOM_HANDOFF_MAX_CB];
+ };
+ 
++/* Compare actual hardware with kernel-private expected register encodings. */
++static inline bool qcom_smmu_handoff_route_equal(u32 smr, u32 wanted_smr,
++					       u32 s2cr, u32 expected_s2cr,
++					       u32 smr_mask, u32 s2cr_mask)
++{
++	return (smr & smr_mask) == wanted_smr &&
++		(s2cr & s2cr_mask) == expected_s2cr;
++}
++
+ static inline bool qcom_smmu_handoff_geometry(const struct qcom_smmu_handoff_snapshot *s)
+ {
+ 	return s && s->num_smr && s->num_smr <= QCOM_HANDOFF_MAX_SMR &&
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+index 981e95bcda91ff2d94a0dc5260a3f0311c7f39fc..9be903c0760d3f66463f64b21bd745f1371bc99e 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+@@ -583,6 +583,22 @@ static int qcom_adreno_smmuv2_cfg_probe(struct arm_smmu_device *smmu)
+ 	return 0;
+ }
+ 
++/* Expected hardware encoding, including the hypervisor bypass emulation. */
++static u32 qcom_smmu_expected_s2cr(struct arm_smmu_device *smmu, int idx)
++{
++	struct arm_smmu_s2cr *s2cr = smmu->s2crs + idx;
++	struct qcom_smmu *qsmmu = to_qcom_smmu(smmu);
++	u32 type = s2cr->type, cbndx = s2cr->cbndx;
++
++	if (!s2cr->boot && qsmmu->bypass_quirk && type == S2CR_TYPE_BYPASS) {
++		type = S2CR_TYPE_TRANS;
++		cbndx = qsmmu->bypass_cbndx;
++	}
++	return FIELD_PREP(ARM_SMMU_S2CR_TYPE, type) |
++		FIELD_PREP(ARM_SMMU_S2CR_CBNDX, cbndx) |
++		FIELD_PREP(ARM_SMMU_S2CR_PRIVCFG, s2cr->privcfg);
++}
++
+ static void qcom_smmu_write_s2cr(struct arm_smmu_device *smmu, int idx)
+ {
+ 	struct arm_smmu_s2cr *s2cr = smmu->s2crs + idx;
+@@ -650,6 +666,7 @@ static const struct arm_smmu_impl qcom_smmu_v2_impl = {
+ 	.cfg_probe = qcom_smmu_cfg_probe,
+ 	.def_domain_type = qcom_smmu_def_domain_type,
+ 	.write_s2cr = qcom_smmu_write_s2cr,
++	.expected_s2cr = qcom_smmu_expected_s2cr,
+ 	.tlb_sync = qcom_smmu_tlb_sync,
+ };
+ 
+@@ -659,6 +676,7 @@ static const struct arm_smmu_impl qcom_smmu_500_impl = {
+ 	.def_domain_type = qcom_smmu_def_domain_type,
+ 	.reset = arm_mmu500_reset,
+ 	.write_s2cr = qcom_smmu_write_s2cr,
++	.expected_s2cr = qcom_smmu_expected_s2cr,
+ 	.tlb_sync = qcom_smmu_tlb_sync,
+ #ifdef CONFIG_ARM_SMMU_QCOM_DEBUG
+ 	.context_fault = qcom_smmu_context_fault,
+@@ -672,6 +690,7 @@ static const struct arm_smmu_impl sdm845_smmu_500_impl = {
+ 	.def_domain_type = qcom_smmu_def_domain_type,
+ 	.reset = qcom_sdm845_smmu500_reset,
+ 	.write_s2cr = qcom_smmu_write_s2cr,
++	.expected_s2cr = qcom_smmu_expected_s2cr,
+ 	.tlb_sync = qcom_smmu_tlb_sync,
+ #ifdef CONFIG_ARM_SMMU_QCOM_DEBUG
+ 	.context_fault = qcom_smmu_context_fault,
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.c b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+index 0f1612df5ff8911f52f7b8d7f86cfc57fc6071ef..0618c5e09407f3fcdbb60595a49e1d49e15af0c1 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+@@ -39,6 +39,7 @@
+ #include <linux/fsl/mc.h>
+ 
+ #include "arm-smmu.h"
++#include "arm-smmu-qcom-handoff.h"
+ #include "../../dma-iommu.h"
+ 
+ /*
+@@ -1155,6 +1156,7 @@ static void arm_smmu_master_install_s2crs(struct arm_smmu_master_cfg *cfg,
+ 	struct arm_smmu_s2cr *s2cr = smmu->s2crs;
+ 	int i, idx;
+ 
++	mutex_lock(&smmu->stream_map_mutex);
+ 	for_each_cfg_sme(cfg, fwspec, i, idx) {
+ 		if (type == s2cr[idx].type && cbndx == s2cr[idx].cbndx)
+ 			continue;
+@@ -1171,6 +1173,7 @@ static void arm_smmu_master_install_s2crs(struct arm_smmu_master_cfg *cfg,
+ 		s2cr[idx].cbndx = cbndx;
+ 		arm_smmu_write_s2cr(smmu, idx);
+ 	}
++	mutex_unlock(&smmu->stream_map_mutex);
+ }
+ 
+ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev,
+@@ -1439,6 +1442,100 @@ struct arm_smmu_device *arm_smmu_get_by_fwnode(struct fwnode_handle *fwnode)
+ 	return dev ? dev_get_drvdata(dev) : NULL;
+ }
+ 
++/* Read-only per-master evidence. No route/context programming or ready file. */
++static ssize_t piano_dma_route_show(struct device *dev,
++				    struct device_attribute *attr, char *buf)
++{
++	struct arm_smmu_master_cfg *cfg = dev_iommu_priv_get(dev);
++	struct iommu_fwspec *fw = dev_iommu_fwspec_get(dev);
++	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
++	struct arm_smmu_device *smmu;
++	unsigned int i;
++	ssize_t len = 0;
++	int idx, ret;
++
++	if (!cfg || !fw || domain != &arm_smmu_identity_domain)
++		return -EAGAIN;
++	smmu = cfg->smmu;
++	if (!smmu->smrs || fw->num_ids > 16)
++		return -EOPNOTSUPP;
++	ret = arm_smmu_rpm_get(smmu);
++	if (ret < 0)
++		return ret;
++	mutex_lock(&smmu->stream_map_mutex);
++	len = sysfs_emit(buf, "piano-dma-route-v1 domain=identity ids=%u\n", fw->num_ids);
++	for (i = 0; i < fw->num_ids; i++) {
++		struct arm_smmu_s2cr *route;
++		u32 smr, s2cr, expected, sctlr = 0, cbar = 0, fsr = 0;
++		u32 smrmask = ARM_SMMU_SMR_VALID | ARM_SMMU_SMR_ID | ARM_SMMU_SMR_MASK;
++		u32 s2mask = ARM_SMMU_S2CR_TYPE | ARM_SMMU_S2CR_CBNDX | ARM_SMMU_S2CR_PRIVCFG;
++		u32 wanted_smr, cb, type;
++
++		idx = cfg->smendx[i];
++		if (idx < 0 || idx >= smmu->num_mapping_groups || !smmu->smrs[idx].valid) {
++			ret = -ENODATA;
++			goto out;
++		}
++		route = &smmu->s2crs[idx];
++		wanted_smr = FIELD_PREP(ARM_SMMU_SMR_ID, smmu->smrs[idx].id) |
++			FIELD_PREP(ARM_SMMU_SMR_MASK, smmu->smrs[idx].mask) | ARM_SMMU_SMR_VALID;
++		expected = FIELD_PREP(ARM_SMMU_S2CR_TYPE, route->type) |
++			FIELD_PREP(ARM_SMMU_S2CR_CBNDX, route->cbndx) |
++			FIELD_PREP(ARM_SMMU_S2CR_PRIVCFG, route->privcfg);
++		if (smmu->impl && smmu->impl->expected_s2cr)
++			expected = smmu->impl->expected_s2cr(smmu, idx);
++		smr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(idx));
++		s2cr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(idx));
++		if (!qcom_smmu_handoff_route_equal(smr, wanted_smr, s2cr, expected,
++						 smrmask, s2mask)) {
++			ret = -ESTALE;
++			goto out;
++		}
++		type = FIELD_GET(ARM_SMMU_S2CR_TYPE, s2cr);
++		cb = FIELD_GET(ARM_SMMU_S2CR_CBNDX, s2cr);
++		if (type == S2CR_TYPE_TRANS) {
++			if (cb >= smmu->num_context_banks) {
++				ret = -ERANGE;
++				goto out;
++			}
++			sctlr = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_SCTLR);
++			cbar = arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(cb));
++			fsr = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSR);
++			if ((sctlr & ARM_SMMU_SCTLR_M) || (fsr & ARM_SMMU_CB_FSR_FAULT) ||
++			    FIELD_GET(ARM_SMMU_CBAR_TYPE, cbar) != CBAR_TYPE_S1_TRANS_S2_BYPASS) {
++				ret = -EIO;
++				goto out;
++			}
++		} else if (type != S2CR_TYPE_BYPASS) {
++			ret = -EIO;
++			goto out;
++		}
++		if (smr != arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(idx)) ||
++		    s2cr != arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(idx)) ||
++		    (type == S2CR_TYPE_TRANS &&
++		     (sctlr != arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_SCTLR) ||
++		      cbar != arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(cb)) ||
++		      fsr != arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSR)))) {
++			ret = -ESTALE;
++			goto out;
++		}
++		len += sysfs_emit_at(buf, len,
++			"sid=%x mask=%x slot=%d origin=%s smr=%08x s2cr=%08x expected=%08x ",
++			(u32)FIELD_GET(ARM_SMMU_SMR_ID, fw->ids[i]),
++			(u32)FIELD_GET(ARM_SMMU_SMR_MASK, fw->ids[i]), idx,
++			route->boot ? "firmware-adopted" : "kernel-installed",
++			smr, s2cr, expected);
++		len += sysfs_emit_at(buf, len, "cb=%u sctlr=%08x cbar=%08x fsr=%08x\n",
++				     cb, sctlr, cbar, fsr);
++	}
++	ret = 0;
++out:
++	mutex_unlock(&smmu->stream_map_mutex);
++	arm_smmu_rpm_put(smmu);
++	return ret ? ret : len;
++}
++static DEVICE_ATTR_RO(piano_dma_route);
++
+ static struct iommu_device *arm_smmu_probe_device(struct device *dev)
+ {
+ 	struct arm_smmu_device *smmu = NULL;
+@@ -1499,6 +1596,10 @@ static struct iommu_device *arm_smmu_probe_device(struct device *dev)
+ 	if (ret)
+ 		goto out_cfg_free;
+ 
++	ret = device_create_file(dev, &dev_attr_piano_dma_route);
++	if (ret)
++		dev_warn(dev, "DMA route readback attribute unavailable: %d\n", ret);
++
+ 	device_link_add(dev, smmu->dev,
+ 			DL_FLAG_PM_RUNTIME | DL_FLAG_AUTOREMOVE_SUPPLIER);
+ 
+@@ -1516,6 +1617,7 @@ static void arm_smmu_release_device(struct device *dev)
+ 	struct arm_smmu_master_cfg *cfg = dev_iommu_priv_get(dev);
+ 	int ret;
+ 
++	device_remove_file(dev, &dev_attr_piano_dma_route);
+ 	ret = arm_smmu_rpm_get(cfg->smmu);
+ 	if (ret < 0)
+ 		return;
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.h b/drivers/iommu/arm/arm-smmu/arm-smmu.h
+index c9634522b98f998d322bad197bee457ee0d2d71e..096b87aae0fd7d1923aff7b442691ebd7973acb7 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.h
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.h
+@@ -457,6 +457,7 @@ struct arm_smmu_impl {
+ 				  struct arm_smmu_device *smmu,
+ 				  struct device *dev, int start);
+ 	void (*write_s2cr)(struct arm_smmu_device *smmu, int idx);
++	u32 (*expected_s2cr)(struct arm_smmu_device *smmu, int idx);
+ 	void (*write_sctlr)(struct arm_smmu_device *smmu, int idx, u32 reg);
+ 	void (*probe_finalize)(struct arm_smmu_device *smmu, struct device *dev);
+ };
+diff --git a/tools/testing/selftests/iommu/qcom-handoff-snapshot.c b/tools/testing/selftests/iommu/qcom-handoff-snapshot.c
+index b712a8aade943a662c1cd2ba8e59860aed5a2a5c..5c49d99fd290ac06b7500590d47ed95f3fe9605e 100644
+--- a/tools/testing/selftests/iommu/qcom-handoff-snapshot.c
++++ b/tools/testing/selftests/iommu/qcom-handoff-snapshot.c
+@@ -17,6 +17,12 @@ int main(void)
+ 	assert(qcom_smmu_handoff_geometry(&s));
+ 	assert(qcom_smmu_handoff_probe_slot(&s) == 0);
+ 	assert(qcom_smmu_handoff_bypass_cb(&s) == 3);
++	assert(qcom_smmu_handoff_route_equal(0x80000040, 0x80000040,
++					    3, 3, 0xffffffff, 0x030300ff));
++	assert(!qcom_smmu_handoff_route_equal(0x40, 0x80000040,
++					     3, 3, 0xffffffff, 0x030300ff));
++	assert(!qcom_smmu_handoff_route_equal(0x80000040, 0x80000040,
++					     0x01000003, 3, 0xffffffff, 0x030300ff));
+ 	/* Last bank is live even with M=0: reference alone reserves it. */
+ 	s.smr[3] = QCOM_HANDOFF_SMR_VALID | 0x800;
+ 	s.s2cr[3] = 3;

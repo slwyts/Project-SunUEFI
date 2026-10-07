@@ -117,7 +117,7 @@ The second command only generates reviewable adapters. v1/v2 remain historical
 immutable outputs, not separate final feature profiles; the single canonical
 entry/stager now carries the complete scope.
 
-Validation uses seven new actual-source tests in `tests/test_piano_dsp_pcie.py`,
+Validation uses seven new actual-source tests in `tests/unit/test_piano_dsp_pcie.py`,
 the four existing context tests and ten adapter tests. They exercise the real
 fold, dynamic discovery, all fifteen pairs, actual PCI identity/map, exact
 EAGAIN fallback, immediate failure, creation timing and actual script order.

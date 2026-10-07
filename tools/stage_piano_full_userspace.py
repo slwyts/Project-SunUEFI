@@ -52,7 +52,7 @@ def stage(rootfs, source):
         target=units/unit
         if target.exists() or target.is_symlink():target.unlink()
         target.symlink_to('/dev/null')
-    init=ROOT/'bootprofiles/linux-userspace/pianoinit'
+    init=ROOT/'linux/userspace/pianoinit'
     shutil.copy2(init,rootfs/'pianoinit');(rootfs/'pianoinit').chmod(0o755)
     result={'status':'COMPLETE_SERVICE_OVERLAY_STAGED_NOT_BOOT_VERIFIED','source_commit':commit,
         'source_files':copied,'root_policy':'RAM_ONLY_NO_ANDROID_BLOCK_MOUNT',

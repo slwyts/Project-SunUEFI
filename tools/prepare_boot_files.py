@@ -17,7 +17,7 @@ import tempfile
 from urllib.parse import urlsplit
 
 ROOT=Path(__file__).resolve().parent.parent
-TEMPLATE=ROOT/'bootprofiles/piano-boot/simpleinit.static.uefi.json'
+TEMPLATE=ROOT/'uefi/components/piano-boot/simpleinit.static.uefi.json'
 LOAD_LIMIT=0x8000000  # Fixed SimpleInit linux-boot/loader.c rejects >=128 MiB.
 
 def digest(path):
@@ -189,7 +189,7 @@ def validate_build(name,manifest_path,mode,allow_unverified,lock,image_name='Ima
     require(manifest.get('status') in ('HOST_BUILT_NOT_HARDWARE_VERIFIED','HARDWARE_VERIFIED'),f'{name}: kernel is not built')
     verified=manifest.get('hardware_verified') is True
     require(verified or allow_unverified,f'{name}: unverified; use --allow-unverified for a candidate tree')
-    config=folder/'config';fragment=ROOT/'configs/linux'/f'piano-{mode}.config'
+    config=folder/'config';fragment=ROOT/'linux/configs'/f'piano-{mode}.config'
     require(config.is_file() and digest(config)==manifest.get('config_sha256'),f'{name}: config hash mismatch')
     require(fragment.is_file() and digest(fragment)==manifest.get('fragment_sha256'),f'{name}: stale fragment hash')
     lines=set(config.read_text().splitlines())
@@ -208,7 +208,7 @@ def validate_build(name,manifest_path,mode,allow_unverified,lock,image_name='Ima
     return manifest,actual,actual_dtb,verified
 
 def prepare(args,root=ROOT):
-    lock=read_json(root/'kernel-profiles.json');menu=read_json(TEMPLATE)
+    lock=read_json(root/'linux/kernel-profiles.json');menu=read_json(TEMPLATE)
     result={'schema_version':1,'state':'HOST_ONLY_NOT_DEPLOYED','storage_location':'UNASSIGNED',
         'default_policy':'verified Stable rescue first; Next independent; no userdata fallback',
         'profiles':{},'files':[],'simpleinit_source_contract':source_contract(),
@@ -272,7 +272,7 @@ def prepare(args,root=ROOT):
 def check_tree(tree):
     tree=Path(tree).resolve();manifest=read_json(tree/'EFI/Piano/BootManifest.json');menu=read_json(tree/'simpleinit.static.uefi.json')
     require(manifest.get('state')=='HOST_ONLY_NOT_DEPLOYED','tree lacks honest host-only state');validate_menu(menu)
-    lock=read_json(ROOT/'kernel-profiles.json')
+    lock=read_json(ROOT/'linux/kernel-profiles.json')
     for name,item in manifest['profiles'].items():
         require(item['source_commit']==lock['profiles'][name]['commit'],f'{name}: tree source pin stale')
         require(menu['boot']['configs']['piano-'+name]['enabled']==(item['status']!='NOT_STAGED'),f'{name}: menu availability differs from manifest')

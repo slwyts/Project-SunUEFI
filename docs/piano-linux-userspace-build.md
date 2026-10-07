@@ -1,7 +1,7 @@
 # Pinned userspace-debug kernel builds
 
 The userspace-debug mode merges the existing RAM fragment with
-`configs/linux/piano-userspace-debug.config`. It provides distribution and USB
+`linux/configs/piano-userspace-debug.config`. It provides distribution and USB
 debug facilities while keeping UFS and its PHY as modules. This is not a
 validated distribution or board-driver result; no userdata root or automatic
 module-loading policy is selected here.

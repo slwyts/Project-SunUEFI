@@ -12,12 +12,12 @@ HD 的 PartitionStart/PartitionSize/Signature 现在分别核对 GPT StartingLBA
 
 每次 Ready/Info/ReadBlocks 重查真实 handle 的 BlockIO、PartitionInfo、path、MediaId、容量、ReadOnly、alignment 与 ReadBlocks pointer。成功 read 之后再查一次；read过程中 revoke / MediaId改变时返回失败，fetch协议不会发送DATA。重复 exact name 返回 EFI_NO_MAPPING，不能猜测选择 LUN。Stop 使 callback Ready/Info/Read 失效；opaque cookie 单调递增，Stop→Init同名同容量同槽位也不会恢复旧 token。counter耗尽拒绝，绝不wrap重用。定位接口的空/损坏结果以及初始化失败会释放handle array/清除未发布metadata。
 
-`tools/test_fastboot_block_read.c` 编译实际 bridge + actual fastboot command layer，使用 EFI mock。覆盖正确 MediaId/relative LBA、跨4K fetch的两次完整块读取、exact name/ambiguity、HD/GPT/Unique GUID、node/END、alignment、只读/函数/protocol/媒体撤销、read期间撤销、Stop/reinit stale cookie、160项上限、全长36字符名、warning/error normalization与pool清理。WriteBlocks mock 一旦调用就失败；所有测试确认0写。已通过 ASan/UBSan/leak detection。
+`tests/native/test_fastboot_block_read.c` 编译实际 bridge + actual fastboot command layer，使用 EFI mock。覆盖正确 MediaId/relative LBA、跨4K fetch的两次完整块读取、exact name/ambiguity、HD/GPT/Unique GUID、node/END、alignment、只读/函数/protocol/媒体撤销、read期间撤销、Stop/reinit stale cookie、160项上限、全长36字符名、warning/error normalization与pool清理。WriteBlocks mock 一旦调用就失败；所有测试确认0写。已通过 ASan/UBSan/leak detection。
 
 统一 host 入口：
 
 ```sh
-bash tools/test_usb_fastboot.sh
+bash tests/native/test_usb_fastboot.sh
 ```
 
 以下是实现前的验收要求；第87/89次已按exact `xbl_config_a`完成桥接和原备份比对。`max-fetch-size` / `partition-size:<name>` 只有真实 Ready 后才可成功。

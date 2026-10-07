@@ -1,8 +1,8 @@
 # Cold BootObjects owner inputs: product SEC binding
 
-The new `bootprofiles/early-memory/PianoColdBootObjects.c/.h` is a real SEC
+The new `uefi/handoff/early-memory/PianoColdBootObjects.c/.h` is a real SEC
 collector for occupied boot-object inputs. The reviewed `PianoBootObjectsShim.S`
-and actual `bootprofiles/handoff/BootShim.S` now contain byte-identical extension
+and actual `uefi/handoff/bootshim/BootShim.S` now contain byte-identical extension
 source. `prepare_product_early_memory.py` binds the collectors once to product
 SEC and stages a separate read-only DXE consumer. This binding has host
 verification; its actual cold report remains to be captured from the next
@@ -121,7 +121,7 @@ or incomplete report remains NOT_READY. All `MemoryOwnershipGranted`,
 record supplies specific occupied spans; it does not complete the platform
 owner inventory or admit any new Conventional page.
 
-Run `python -m unittest discover -s tests -p test_cold_boot_objects.py -v`.
+Run `python -m unittest discover -s tests/unit -p test_cold_boot_objects.py -v`.
 The actual C collector is linked against the actual current53-row native map
 and real Mu PrePiHobLib, with CPU/LDR boundaries substituted.24 UBSAN fork
 cases cover current CPU/span checks, legacy/ABI/source/PC/CRC failures, in-place

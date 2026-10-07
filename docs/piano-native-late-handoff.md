@@ -1,6 +1,6 @@
 # Native APP handoff at ExitBootServices
 
-The new `bootprofiles/product-handoff` unit implements a native EBS client and
+The new `uefi/components/product-handoff` unit implements a native EBS client and
 a Root authority backed by the actual `PianoProductOwners` manager. It is not a
 planner or a clean/no-DMA report supplied by UI. `prepare_product_handoff.py`
 generates exact changes to the three native Core sources and stages library
@@ -76,7 +76,7 @@ Root integration, full DDR/OS backend and device verification remain required.
 
 ## Evidence
 
-`tests/test_late_handoff.py` compiles actual transformed CoreExitBootServices,
+`tests/unit/test_late_handoff.py` compiles actual transformed CoreExitBootServices,
 the real Page.c CoreTerminateMemoryMap, both exact native getters, the actual
 client/provider and actual PianoProductOwnersRetire. Eighteen host cases cover
 success/stale-key retry, wrong image/TPL/Started identity, unarmed/missing

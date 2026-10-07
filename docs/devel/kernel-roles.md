@@ -4,7 +4,7 @@
 
 | 角色 | 固定 commit | 消费位置/用途 |
 | --- | --- | --- |
-| RAM/救援 Stable 基线 | `7a33c60fd6eda8a9c20dfda636d4e0a4efa4cbb8` | `kernel-profiles.json`、主仓库 Gitlink；`build_kernel.py` 的 stable profile |
+| RAM/救援 Stable 基线 | `7a33c60fd6eda8a9c20dfda636d4e0a4efa4cbb8` | `linux/kernel-profiles.json`、主仓库 Gitlink；`build_kernel.py` 的 stable profile |
 | RAM Next 快照 | `7704c4c5bb127673b4f0ead839919db573559e38` | 同一 JSON 的 next profile；独立 RAM smoke，不代表完整板级功能 |
 | 完整 Stable 公开基线 | `352508459733d3e6d349ea5581a8dd2fd8bb4180` | `build_piano_full_kernel.py` 默认基线；允许明确指定并验证其后代作为本地完整候选 |
 | Stable EFI 文件组装候选 | `d42158782b81c4aaa47c8643f1400a471785370b` | `assemble_piano_linux.py` 的 stable 固定来源；组装检查仍保留运行时 DDR/退休/readback 门槛 |

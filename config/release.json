@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kernel": {
+    "public_baseline": "352508459733d3e6d349ea5581a8dd2fd8bb4180",
+    "patch_series": "patches/linux/series.json",
+    "target_tree": "17d484d4771a140e1eeb18eaf0315028adc5a16a",
+    "root_policy": "LABEL=PIANOROOT"
+  },
+  "debian": {
+    "source": "upstream/debian-piano-current",
+    "commit": "fd6266d73f3442b23362260c3aa0c86782e0b52c",
+    "suite": "trixie",
+    "apt_policy": "mutable-recorded",
+    "snapshot": null,
+    "archive_signature_verification": "upstream debootstrap keyring and APT defaults; never disabled",
+    "extra_packages": ["libcanberra-pulse", "rtkit", "build-essential", "libc6-dev", "kmod"]
+  },
+  "firmware": {
+    "source": "upstream/piano-firmware-current",
+    "commit": "05fc37c09ca8146eecfc4920f8485479db140ae5",
+    "manifest": "firmware/SHA256SUMS"
+  },
+  "mesa": {
+    "source": "upstream/piano-mesa-current",
+    "commit": "a89c1e46eef3e161520b084479928aaa5a8e8732",
+    "required": true,
+    "package_version_contains": "+piano"
+  },
+  "storage": {
+    "root_label": "PIANOROOT",
+    "root_partname": "sunuefi_root",
+    "root_fstype": "ext4",
+    "esp_label": "SUNUEFI_ESP",
+    "esp_partname": "sunuefi_esp",
+    "masked_units": ["piano-swapfile.service", "systemd-growfs-root.service", "qbootctl.service"]
+  },
+  "login": {"user": "piano", "autologin": true, "password": "locked; owner sets their own password after deployment"},
+  "reproducibility": "source identities and actual package/metadata hashes recorded; complete bit reproducibility is not claimed"
+}

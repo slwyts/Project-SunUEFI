@@ -1,0 +1,6 @@
+id=piano_sunuefi
+name=SunUEFI for Piano
+version=0.1-dev
+versionCode=1
+author=Project SunUEFI
+description=Current-ROM BOOT selector with explicit UEFI requests; ordinary Android and stock Recovery stay available.

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "profile": "piano-boe-16gb",
+  "source_sha256": "2073f74c9d17c7722bf8ab2ee559fa8fddda028610e24a684b66ef800259a2c9",
+  "sha256": "36e6adef75306d7727f79e97d0406376baa43e1b454e29d1c40bc0fc36d47db3",
+  "bytes": 1208011,
+  "removed_snapshot_properties": [
+    {
+      "node": "/chosen",
+      "property": "bootargs"
+    },
+    {
+      "node": "/soc/qcom,qupv3_2_geni_se@8c0000/qcom,qup_uart@898000/bluetooth",
+      "property": "local-bd-address"
+    },
+    {
+      "node": "/soc/pcie@1c00000/pcie0_rp/wifi@0",
+      "property": "local-mac-address"
+    }
+  ],
+  "kernel_source_tree": "17d484d4771a140e1eeb18eaf0315028adc5a16a",
+  "status": "SANITIZED_BOARD_INPUT_NOT_NEW_HARDWARE_ACCEPTANCE",
+  "source_note": "Derived from the documented full Linux DTB with kernel-owned DMA, managed clocks, DSP/PCIe bindings and keyboard supplier fix. Personal/transient properties removed; no register ranges, phandles, routes or reserved-memory changed.",
+  "output": {
+    "file": "board.dtb",
+    "sha256": "36e6adef75306d7727f79e97d0406376baa43e1b454e29d1c40bc0fc36d47db3",
+    "bytes": 1208011
+  }
+}

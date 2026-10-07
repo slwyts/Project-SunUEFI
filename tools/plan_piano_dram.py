@@ -269,8 +269,8 @@ def plan(dt, native, archived, reference_json=None, android=None):
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dtb",type=Path,default=ROOT/"private/captures/2026-10-03-piano/live.dtb")
-    ap.add_argument("--native-c",type=Path,default=ROOT/"platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c")
-    ap.add_argument("--native-json",type=Path,default=ROOT/"platforms/pianoProbePkg/native-memory-map.json")
+    ap.add_argument("--native-c",type=Path,default=ROOT/"uefi/platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c")
+    ap.add_argument("--native-json",type=Path,default=ROOT/"uefi/platforms/pianoProbePkg/native-memory-map.json")
     ap.add_argument("--efi-trace",type=Path,default=ROOT/"private/analysis/ramlog-test-85/console.txt")
     ap.add_argument("--runtime-evidence",type=Path)
     ap.add_argument("--output",type=Path,required=True)

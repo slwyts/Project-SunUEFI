@@ -50,7 +50,7 @@
 
 五个尾隙恰好对应一个 **TypeGUID 全零而其余字段非零**的 `last_parti` 条目。每个 marker 有 UniqueGUID、范围及 attributes `0x1000000000000000`，因此不能把整条目误报为全零，也不应根据名称认定它是活动分区或隐藏数据。
 
-Qualcomm 官方 [qcom-ptool UFS 示例](https://github.com/qualcomm-linux/qcom-ptool/blob/main/platforms/qcs9100-ride-sx/ufs/partitions.conf) 明确设置同名、零 TypeGUID、初始 size=0 的末条目；[ptool 的 grow-last 逻辑](https://github.com/qualcomm-linux/qcom-ptool/blob/main/qcom_ptool/ptool.py) 将末条目补到可用范围末端。因此现象符合 Qualcomm 的未分配尾部占位方式；该示例不是本机分区生成配置，不能替代本机 rawprogram/固件使用情况核对。
+Qualcomm 官方 [qcom-ptool UFS 示例](https://github.com/qualcomm-linux/qcom-ptool/blob/main/uefi/platforms/qcs9100-ride-sx/ufs/partitions.conf) 明确设置同名、零 TypeGUID、初始 size=0 的末条目；[ptool 的 grow-last 逻辑](https://github.com/qualcomm-linux/qcom-ptool/blob/main/qcom_ptool/ptool.py) 将末条目补到可用范围末端。因此现象符合 Qualcomm 的未分配尾部占位方式；该示例不是本机分区生成配置，不能替代本机 rawprogram/固件使用情况核对。
 
 条目序号均为 **1-based**；每条占 128 bytes。以下全部空槽总计 155 个，其中完全全零 150 个，另 5 个为上述 marker。
 

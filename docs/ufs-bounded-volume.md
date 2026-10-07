@@ -52,7 +52,7 @@ EFI_STATUS PianoUfsBoundedTransportVerifyRestored(VOID);
 
 下一独立profile需复制这些新文件到RamApp source目录：PianoUfsBoundedBlock.c/.h、PianoUfsBoundedLayout.c/.h、PianoUfsBoundedTransport.h、PianoUfsBoundedBindings.inc。INF Sources增加两个.c；继续链接PianoUfsWriteTest.c/PianoGpt.c及BaseCryptLib、BaseMemoryLib、DebugLib、MemoryAllocationLib。INF Protocols必须含gEfiBlockIoProtocolGuid、gEfiDevicePathProtocolGuid、**gEfiSimpleFileSystemProtocolGuid**，Guids含gEfiEventExitBootServicesGuid。使用已验证PC header；Fat/EnglishDxe/Shell的DSC/FDF由root专用profile另接，不能同时发布原父卷，也不能走普通SimpleInit/OS自动启动。
 
-`bash tools/test_ufs_bounded_block.sh`：15个actual C fixture场景覆盖默认关闭、外部基线拒绝、Open最后gap块非零、只扫描一次、64-bit/末边界/size/MediaId/buffer alias、unaligned客户、多块partial success、FUA/flush/RX/quiet失败、quarantine拒绝重试、Close后无法写、非零gap不能清Dirty、真实wholegap读取证明才能清除、最后Release失败与busy/reentry。固定builder还对照packed UFS ABI并拒绝越窗/非LUN4/错误size。
+`bash tests/native/test_ufs_bounded_block.sh`：15个actual C fixture场景覆盖默认关闭、外部基线拒绝、Open最后gap块非零、只扫描一次、64-bit/末边界/size/MediaId/buffer alias、unaligned客户、多块partial success、FUA/flush/RX/quiet失败、quarantine拒绝重试、Close后无法写、非零gap不能清Dirty、真实wholegap读取证明才能清除、最后Release失败与busy/reentry。固定builder还对照packed UFS ABI并拒绝越窗/非LUN4/错误size。
 
 同脚本运行actual bounded Submit：golden gap布局、scope拒绝、全窗SYNC、未知queue保留且不reset、confirmed quiet退休、嵌套恢复/TPL、Dirty timer/exception fence、既有BlockIO/SFS和不完整inventory拒绝；ASan/UBSan通过，bounded宏下三个production translation units AArch64语法通过。原固定事务82例、原transport16+9例、原FAT/Shell/lifetime tests也通过。全部controller/DMA/介质写回调都是主机内存模拟；fixture header只临时render后删除，不运行prepare/main，不改staging。
 

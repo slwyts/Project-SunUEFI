@@ -1,0 +1,566 @@
+diff --git a/SimpleInit.inc b/SimpleInit.inc
+index c2468b2dee10dc0f435b10b0691a2fca59fce5b7..d7d5c83911ce53a1da320ae18ea67e9298cf29b4 100644
+--- a/SimpleInit.inc
++++ b/SimpleInit.inc
+@@ -27,7 +27,7 @@
+   SimpleInitConfd|src/confd/SimpleInitConfd.inf
+   SimpleInitRootFS|src/SimpleInitRootFS.inf
+   KernelFdtDxe|src/kernelfdt/KernelFdtDxe.inf
+-  FdtLib|EmbeddedPkg/Library/FdtLib/FdtLib.inf
++  FdtLib|MdePkg/Library/BaseFdtLib/BaseFdtLib.inf
+ 
+ [Components]
+   libs/stb/STBLib.inf
+diff --git a/libs/compatible/SimpleInitCompatible.inf b/libs/compatible/SimpleInitCompatible.inf
+index 97783e7ad2d1d2910b0f0fab0978a8caace26f56..a59985b6a1ef7f5f01d1035b92f68268cf5185a1 100644
+--- a/libs/compatible/SimpleInitCompatible.inf
++++ b/libs/compatible/SimpleInitCompatible.inf
+@@ -15,6 +15,7 @@
+   SimpleInit.dec
+ 
+ [Sources]
++  PianoQuadFloatCompat.c
+   # Simple-Init UEFI compatible library
+   errno.c
+   str.c
+diff --git a/root/etc/default.ttf b/root/etc/default.ttf
+index 6198ccc00cc65cdca0c3b1ceb4d4b0f24d20f999..4e73642e75186521249574e2ff818e5358cb98d3 120000
+--- a/root/etc/default.ttf
++++ b/root/etc/default.ttf
+@@ -1 +1 @@
+-../usr/share/fonts/wqy-mono-microhei.ttf
+\ No newline at end of file
++../usr/share/fonts/NotoSansCJKsc-Regular.otf
+\ No newline at end of file
+diff --git a/src/boot/SimpleInitBoot.inf b/src/boot/SimpleInitBoot.inf
+index 94068503f10d3d739c83c55f82d5bd18290e98c3..5e34d7bb2c995ce35504f5df2fca665df620c5b3 100644
+--- a/src/boot/SimpleInitBoot.inf
++++ b/src/boot/SimpleInitBoot.inf
+@@ -15,6 +15,7 @@
+   SimpleInit.dec
+ 
+ [LibraryClasses]
++  PianoProductPumpLib
+   UefiLib
+   BaseLib
+   BaseMemoryLib
+diff --git a/src/boot/bootdef.c b/src/boot/bootdef.c
+index 49ac6e6dfd71327634a536854a3ebd7e982e4899..5e4887db19556541939c5e3702a3f41f3404d4c2 100644
+--- a/src/boot/bootdef.c
++++ b/src/boot/bootdef.c
+@@ -13,6 +13,7 @@
+ #include"gui/splash.h"
+ #ifdef ENABLE_UEFI
+ #include<Library/BaseLib.h>
++#include <Library/PianoProductPumpLib.h>
+ #include<Library/PrintLib.h>
+ #include<Library/BaseMemoryLib.h>
+ #include<Library/MemoryAllocationLib.h>
+@@ -254,6 +255,15 @@ void boot_init_configs(void){
+ 	for(size_t i=0;(c=&initial_cfgs[i])->valid;i++)
+ 		boot_create_config(&c->cfg,c->args);
+ 	#ifdef ENABLE_UEFI
++	if(PianoProductRebootManaged()){
++		boot_config entries[]={
++			{.mode=BOOT_EXIT,.ident="piano-stable",.desc="启动 Piano Linux（Stable）",.save=false,.replace=true,.show=true,.enabled=true},
++			{.mode=BOOT_EXIT,.ident="piano-setup",.desc="固件设置（BIOS）",.save=false,.replace=true,.show=true,.enabled=true},
++			{.mode=BOOT_EXIT,.ident="piano-shell",.desc="进入 UEFI Shell",.save=false,.replace=true,.show=true,.enabled=true},
++			{.mode=BOOT_EXIT,.ident="continue",.desc="返回 Android（重启）",.save=false,.replace=true,.show=true,.enabled=true}
++		};
++		for(size_t n=0;n<sizeof(entries)/sizeof(entries[0]);n++)boot_create_config(&entries[n],NULL);
++	}
+ 	gui_splash_set_text(true,_("Loading UEFI boot options..."));
+ 	load_uefi_boot();
+ 	#endif
+diff --git a/src/boot/exit.c b/src/boot/exit.c
+index 4d6900c990e2eff7bb7f408d7eb92c8deca581c8..860ccb3a033a166788b3ca1b689c50ffe00ac0f8 100644
+--- a/src/boot/exit.c
++++ b/src/boot/exit.c
+@@ -11,8 +11,11 @@
+ #include<Library/UefiBootServicesTableLib.h>
+ #include"boot.h"
+ 
++extern VOID PianoCancelSnapshot (VOID);
++
+ int run_boot_exit(boot_config*boot){
+ 	if(!boot->splash[0])BootLogoEnableLogo();
++	PianoCancelSnapshot();
+ 	gBS->Exit(gImageHandle,EFI_ABORTED,0,NULL);
+ 	return -1;
+ }
+diff --git a/src/boot/reboot_uefi.c b/src/boot/reboot_uefi.c
+index 188089179dca85bf6a3761d511dcd26fdbccc39b..fe2eef7c684373fd9984bb803d1b3a6d3bbe7e27 100644
+--- a/src/boot/reboot_uefi.c
++++ b/src/boot/reboot_uefi.c
+@@ -8,6 +8,7 @@
+ 
+ #include<errno.h>
+ #include<string.h>
++#include<stdlib.h>
+ #include"boot.h"
+ #include"confd.h"
+ #include"logger.h"
+@@ -29,7 +30,10 @@ int run_boot_reboot(boot_config*boot){
+ 		default:ERET(EINVAL);
+ 	}
+ 	confd_save_file(NULL);
+-	adv_reboot(cmd,data);
++	if(adv_reboot(cmd,data)==0){
++		if(data)free(data);
++		return 0;
++	}
+ 	tlog_warn("reset system failed");
+ 	return -1;
+ }
+diff --git a/src/gui/SimpleInitGUI.inf b/src/gui/SimpleInitGUI.inf
+index 6107fc80c2d5e139da35895232cda6468bb2307f..32d1531db2a6ca47ea6c7bad29d42930da0e83bc 100644
+--- a/src/gui/SimpleInitGUI.inf
++++ b/src/gui/SimpleInitGUI.inf
+@@ -17,6 +17,7 @@
+   SimpleInit.dec
+ 
+ [LibraryClasses]
++  PianoProductPumpLib
+   BaseLib
+   DevicePathLib
+   MemoryAllocationLib
+@@ -60,7 +61,6 @@
+   gEfiSimplePointerProtocolGuid
+   gEfiSimpleTextInProtocolGuid
+   gEfiGraphicsOutputProtocolGuid
+-  gEfiUgaDrawProtocolGuid
+   gEfiLoadedImageProtocolGuid
+   gEfiSimpleFileSystemProtocolGuid
+   gEfiTimestampProtocolGuid
+@@ -79,12 +79,12 @@
+   activity.c
+   activities.c
+   gui_init.c
++  piano_product_runtime.c
+   guidrv.c
+   drivers.c
+   drivers/modes.c
+   drivers/dummy.c
+   drivers/uefi_gop.c
+-  drivers/uefi_uga.c
+   drivers/uefi_pointer.c
+   drivers/uefi_keyboard.c
+   drivers/uefi_touch.c
+diff --git a/src/gui/drivers.c b/src/gui/drivers.c
+index 2052e8f00a8a400bafa1b3e2a83f210eeec520b0..585187dc26a9c8a6306399d9c0c2612e4a2895fe 100644
+--- a/src/gui/drivers.c
++++ b/src/gui/drivers.c
+@@ -33,7 +33,6 @@ extern struct input_driver indrv_event;
+ struct gui_driver*gui_drvs[]={
+ 	#ifdef ENABLE_UEFI
+ 	&guidrv_uefigop,
+-	&guidrv_uefiuga,
+ 	#else
+ 	#ifdef ENABLE_GTK
+ 	&guidrv_gtk,
+diff --git a/src/gui/drivers/uefi_gop.c b/src/gui/drivers/uefi_gop.c
+index 5440cd3e76ad164434e575354cbfa061028ece23..a861b49fc76a0b02bccb92d46b8dfe2b6bac710a 100644
+--- a/src/gui/drivers/uefi_gop.c
++++ b/src/gui/drivers/uefi_gop.c
+@@ -117,6 +117,11 @@ static int uefigop_init(){
+ 	);
+ 	if(EFI_ERROR(st)||!gop)return -1;
+ 	uefigop_apply_mode();
++	if(gop->Mode&&gop->Mode->Info)tlog_notice("PIANO_GUI_GOP_SELECTED interface=%p blt=%p mode=%u base=%llx bytes=%llu width=%u height=%u stride=%u format=%u",
++		(void*)gop,(void*)gop->Blt,gop->Mode->Mode,
++		(unsigned long long)gop->Mode->FrameBufferBase,(unsigned long long)gop->Mode->FrameBufferSize,
++		gop->Mode->Info->HorizontalResolution,gop->Mode->Info->VerticalResolution,
++		gop->Mode->Info->PixelsPerScanLine,(unsigned)gop->Mode->Info->PixelFormat);
+ 	ww=gop->Mode->Info->HorizontalResolution;
+ 	hh=gop->Mode->Info->VerticalResolution;
+ 	if(ww<=0||hh<=0)
+diff --git a/src/gui/drivers/uefi_keyboard.c b/src/gui/drivers/uefi_keyboard.c
+index 3f23bbec9bab4ef5c2d7a68636cc82d25a81f4f0..26b5a017c3d88c15fe05c2330ef9448a4ddce850 100644
+--- a/src/gui/drivers/uefi_keyboard.c
++++ b/src/gui/drivers/uefi_keyboard.c
+@@ -56,6 +56,7 @@ static void keyboard_read(lv_indev_drv_t*indev_drv,lv_indev_data_t*data){
+ 			continue;
+ 		}
+ 		if(EFI_ERROR(kd->kbd->ReadKeyStroke(kd->kbd,&p)))continue;
++		tlog_notice("PIANO_KEY_EVENT scan=0x%x unicode=0x%x",p.ScanCode,p.UnicodeChar);
+ 		data->state=0;
+ 		if(p.ScanCode!=0){
+ 			if(lv_group_get_editing(gui_grp))switch(p.ScanCode){
+diff --git a/src/gui/drivers/uefi_touch.c b/src/gui/drivers/uefi_touch.c
+index a711161a36673a0faac780e950e8f4524cc963f4..6198a627e15dfb241a34b812ed5d428b891ae076 100644
+--- a/src/gui/drivers/uefi_touch.c
++++ b/src/gui/drivers/uefi_touch.c
+@@ -25,13 +25,17 @@
+ #include"logger.h"
+ #include"defines.h"
+ #include"gui/guidrv.h"
++#include"PianoTouchInput.h"
+ static void*event_reg=NULL;
+ static list*touchs;
+ static lv_indev_drv_t drv;
+ static lv_indev_t*dev;
+ static INT64 lx=0,ly=0;
++static bool lp=false;
+ struct input_data{
+-	INT64 lx,ly,rx,ry;
++	UINT64 lx,ly,mx,my,rx,ry;
++	UINT32 buttons;
++	bool sampled;
+ 	EFI_ABSOLUTE_POINTER_PROTOCOL*touch;
+ 	void*pd;
+ };
+@@ -54,14 +58,17 @@ static void touch_read(lv_indev_drv_t*indev_drv,lv_indev_data_t*data){
+ 			continue;
+ 		}
+ 		if(EFI_ERROR(d->touch->GetState(d->touch,&p)))continue;
+-		if(p.CurrentX==d->lx&&p.CurrentY==d->ly)continue;
+-		lx=((double)p.CurrentX/(double)d->rx)*gui_w;
+-		ly=((double)p.CurrentY/(double)d->ry)*gui_h;
+-		d->lx=p.CurrentX,d->ly=p.CurrentY;
+-		data->state=LV_INDEV_STATE_PR;
++		if(d->sampled&&p.CurrentX==d->lx&&p.CurrentY==d->ly&&p.ActiveButtons==d->buttons)continue;
++		int32_t w=gui_w,h=gui_h;
++		if(gui_rotate==90||gui_rotate==270){w=gui_h;h=gui_w;}
++		lx=PianoTouchAxis(p.CurrentX,d->mx,d->rx,w);
++		ly=PianoTouchAxis(p.CurrentY,d->my,d->ry,h);
++		lp=PianoTouchPressed(p.ActiveButtons);
++		d->lx=p.CurrentX,d->ly=p.CurrentY,d->buttons=p.ActiveButtons,d->sampled=true;
+ 		data->continue_reading=true;
+ 		break;
+ 	}while((l=n));
++	data->state=lp?LV_INDEV_STATE_PR:LV_INDEV_STATE_REL;
+ 	data->point.x=lx;
+ 	data->point.y=ly;
+ }
+@@ -71,6 +78,7 @@ static bool proto_cmp(list*f,void*data){
+ }
+ static int _touch_register(EFI_ABSOLUTE_POINTER_PROTOCOL*touch){
+ 	struct input_data*data=NULL;
++	if(!touch||!touch->Mode||touch->Mode->AbsoluteMaxX<=touch->Mode->AbsoluteMinX||touch->Mode->AbsoluteMaxY<=touch->Mode->AbsoluteMinY)return -1;
+ 	if(list_search_one(touchs,proto_cmp,touch))return 0;
+ 	if(confd_get_boolean(
+ 		"gui.driver.pointer.use_first",
+@@ -82,6 +90,8 @@ static int _touch_register(EFI_ABSOLUTE_POINTER_PROTOCOL*touch){
+ 	if(!(data=malloc(sizeof(struct input_data))))return -1;
+ 	memset(data,0,sizeof(struct input_data));
+ 	data->touch=touch;
++	data->mx=data->touch->Mode->AbsoluteMinX;
++	data->my=data->touch->Mode->AbsoluteMinY;
+ 	data->rx=data->touch->Mode->AbsoluteMaxX;
+ 	data->ry=data->touch->Mode->AbsoluteMaxY;
+ 	tlog_debug("found new uefi absolute %p",data->touch);
+diff --git a/src/gui/gui_init.c b/src/gui/gui_init.c
+index 136d0a50d84e355f923c6b403bab562800e020d1..7d68c7d51f6262c89cc609a751a767e6e47f7e1e 100644
+--- a/src/gui/gui_init.c
++++ b/src/gui/gui_init.c
+@@ -41,6 +41,7 @@
+ #include"gui/guidrv.h"
+ #include"gui/activity.h"
+ #include"gui/clipboard.h"
++#include"piano_product_runtime.h"
+ #define TAG "gui"
+ 
+ // gui dpi
+@@ -338,6 +339,9 @@ static void gui_enter_sleep(){
+ #endif
+ 
+ uint32_t custom_tick_get(void){
++	#if defined(ENABLE_UEFI) && defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP
++	return (uint32_t)piano_product_gui_tick();
++	#else
+ 	static uint64_t start_ms=0;
+ 	uint64_t cur_ms;
+ 	errno=0;
+@@ -383,6 +387,7 @@ uint32_t custom_tick_get(void){
+ 	#endif
+ 	if(start_ms==0)start_ms=cur_ms;
+ 	return cur_ms-start_ms;
++	#endif
+ }
+ 
+ int gui_screen_init(){
+@@ -506,7 +511,14 @@ int gui_main(){
+ 		xlua_run_confd(gui_global_lua,TAG,"lua.on_gui_pre_main");
+ 	#endif
+ 	uint32_t time=30;
++	#if defined(ENABLE_UEFI) && defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP
++	uint32_t piano_frame_logs=0;
++	uint64_t piano_next_log_ms=0;
++	#endif
+ 	while(gui_run){
++		// Explicit APP slice outside gui_lock; Null unless product enables it.
++		piano_product_gui_pump();
++		if(!gui_run)break;
+ 		// 10 seconds inactive sleep
+ 		if(lv_disp_get_inactive_time(NULL)<10000||!cansleep){
+ 			MUTEX_LOCK(gui_lock);
+@@ -514,10 +526,26 @@ int gui_main(){
+ 			guidrv_taskhandler();
+ 			MUTEX_UNLOCK(gui_lock);
+ 		}else gui_enter_sleep();
++		#if defined(ENABLE_UEFI) && defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP
++		// Eight real loop/opacity observations, outside gui_lock; no readiness claim.
++		uint64_t piano_now_ms=piano_product_gui_tick();
++		if(piano_frame_logs<8&&piano_now_ms>=piano_next_log_ms){
++			lv_obj_t*piano_screen=lv_scr_act();
++			uint32_t piano_children=piano_screen?lv_obj_get_child_cnt(piano_screen):0;
++			lv_obj_t*piano_last=piano_children?lv_obj_get_child(piano_screen,-1):NULL;
++			struct gui_activity*piano_activity=guiact_get_last();
++			tlog_notice("PIANO_GUI_FRAME tick_ms=%llu wait_ms=%u root_opa=%u last_child_opa=%u children=%u activity=%s",
++				(unsigned long long)piano_now_ms,time,
++				piano_screen?(unsigned)lv_obj_get_style_opa(piano_screen,0):0,
++				piano_last?(unsigned)lv_obj_get_style_opa(piano_last,0):0,
++				piano_children,piano_activity?piano_activity->name:"none");
++			piano_frame_logs++;piano_next_log_ms=piano_now_ms+250;
++		}
++		#endif
+ 		if(time>0){
+ 			#ifdef ENABLE_UEFI
+-			tick_ms+=time;
+-			gBS->Stall(EFI_TIMER_PERIOD_MILLISECONDS(time));
++			// LVGL milliseconds, real elapsed clock and bounded APP service slices.
++			tick_ms+=piano_product_gui_wait(time);
+ 			#else
+ 			usleep(time*1000);
+ 			#endif
+diff --git a/src/gui/interface/apps/uefi_shell.c b/src/gui/interface/apps/uefi_shell.c
+index 400fa6ca76f2b6fc3895e496e9773815685ed45a..9bb9363e82515cfea91598422db6a6024384f5cf 100644
+--- a/src/gui/interface/apps/uefi_shell.c
++++ b/src/gui/interface/apps/uefi_shell.c
+@@ -11,6 +11,7 @@
+ #include<stdlib.h>
+ #include<Uefi.h>
+ #include<Library/UefiLib.h>
++#include<Library/PianoProductPumpLib.h>
+ #include<Library/DevicePathLib.h>
+ #include<Library/UefiBootServicesTableLib.h>
+ #include<Protocol/LoadedImage.h>
+@@ -38,6 +39,12 @@ static int after_exit(void*d __attribute__((unused))){
+ 
+ static bool msg_click(uint16_t id,const char*text,void*user_data __attribute__((unused))){
+ 	if(id==0){
++		if(PianoProductRebootManaged()){
++			EFI_STATUS status=PianoProductRequestNavigation(PIANO_PRODUCT_ACTION_SHELL);
++			if(status==EFI_SUCCESS)gui_run_and_exit(NULL);
++			else msgbox_alert("product navigation request failed");
++			return false;
++		}
+ 		MEDIA_FW_VOL_FILEPATH_DEVICE_PATH fn;
+ 		EFI_LOADED_IMAGE_PROTOCOL*li;
+ 		EFI_DEVICE_PATH_PROTOCOL*dp;
+diff --git a/src/gui/interface/core/bootmenu.c b/src/gui/interface/core/bootmenu.c
+index 76d8540a68304a36c757c8e0b5b39c9358b5b9da..9a44c326c09dff5e289bda2e6c6ab755186bca59 100644
+--- a/src/gui/interface/core/bootmenu.c
++++ b/src/gui/interface/core/bootmenu.c
+@@ -20,6 +20,10 @@
+ #ifdef ENABLE_GUI
+ #include"gui.h"
+ #include"gui/tools.h"
++#include"gui/msgbox.h"
++#ifdef ENABLE_UEFI
++#include<Library/PianoProductPumpLib.h>
++#endif
+ 
+ struct bootmenu;
+ struct bootmenu_item;
+@@ -116,10 +120,27 @@ static void bootmenu_boot(void*data){
+ 	struct bootmenu_item*bi;
+ 	if(!bm||!(bi=bm->selected))return;
+ 	if(bootmenu_chdir(bi))return;
+-	tlog_debug("run config %s",bi->cfg.ident);
++	tlog_notice("PIANO_MENU_EXECUTE %s",bi->cfg.ident);
+ 	confd_set_string("boot.current",bi->cfg.ident);
+ 	confd_set_save("boot.current",false);
+ 	#ifdef ENABLE_UEFI
++	if(PianoProductRebootManaged()){
++		if(strcmp(bi->cfg.ident,"continue")==0){
++			EFI_STATUS status=PianoProductRequestContinue();
++			if(status==EFI_SUCCESS)gui_run_and_exit(NULL);
++			else msgbox_alert("未能返回 Android，请稍后重试。");
++			return;
++		}
++		UINT32 action=strcmp(bi->cfg.ident,"piano-setup")==0?PIANO_PRODUCT_ACTION_SETUP:
++			strcmp(bi->cfg.ident,"piano-stable")==0?PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE:
++			strcmp(bi->cfg.ident,"piano-shell")==0?PIANO_PRODUCT_ACTION_SHELL:PIANO_PRODUCT_ACTION_NONE;
++		if(action!=PIANO_PRODUCT_ACTION_NONE){
++			EFI_STATUS status=PianoProductRequestNavigation(action);
++			if(status==EFI_SUCCESS)gui_run_and_exit(NULL);
++			else tlog_warn("product navigation request failed");
++			return;
++		}
++	}
+ 	if(bi->cfg.mode==BOOT_SIMPLE_INIT){
+ 		lv_async_call(enter_simple_init,NULL);
+ 		return;
+@@ -197,6 +218,7 @@ static void bootmenu_item_click(lv_event_t*e){
+ 	lv_obj_set_checked(bi->btn,true);
+ 	lv_obj_clear_flag(bi->chk,LV_OBJ_FLAG_HIDDEN);
+ 	bi->bm->selected=bi;
++	tlog_notice("PIANO_MENU_SELECT %s",bi->cfg.ident);
+ }
+ 
+ static void bootmenu_auto_boot_cb(lv_timer_t*tsk);
+diff --git a/src/lib/SimpleInitLib.inf b/src/lib/SimpleInitLib.inf
+index 1d2469620acd95673d2f9d9e217ef985b3817aa7..bb7c2eb1a32532741fdc441082e68a97e7bee504 100644
+--- a/src/lib/SimpleInitLib.inf
++++ b/src/lib/SimpleInitLib.inf
+@@ -16,6 +16,7 @@
+   SimpleInit.dec
+ 
+ [LibraryClasses]
++  PianoProductPumpLib
+   FdtLib
+   SimpleInitCompatible
+ 
+diff --git a/src/lib/reboot.c b/src/lib/reboot.c
+index 72b2d143060a523ae63057f4cebbd72848f87a1f..4d72607f00e16170ca5d4dc03b33e06c3c216a27 100644
+--- a/src/lib/reboot.c
++++ b/src/lib/reboot.c
+@@ -12,6 +12,7 @@
+ #ifdef ENABLE_UEFI
+ #include<Uefi.h>
+ #include<Library/BaseLib.h>
++#include <Library/PianoProductPumpLib.h>
+ #include<Library/UefiRuntimeServicesTableLib.h>
+ #else
+ #include<syscall.h>
+@@ -41,6 +42,12 @@ typedef struct RESET_DATA_TYPE{
+ }RESET_DATA_TYPE;
+ 
+ int adv_reboot(enum reboot_cmd cmd,char*data){
++	if(PianoProductRebootManaged()){
++		if(cmd!=REBOOT_RESTART&&cmd!=REBOOT_COLD)ERET(EOPNOTSUPP);
++		EFI_STATUS status=PianoProductRequestReboot();
++		if(status!=EFI_SUCCESS)ERET(EIO);
++		return 0;
++	}
+ 	UINTN s=0;
+ 	VOID*x=NULL;
+ 	RESET_DATA_TYPE rdt;
+diff --git a/src/linux-boot/SimpleInitBootLinux.inf b/src/linux-boot/SimpleInitBootLinux.inf
+index ad0682dbc128ae65c6b654a014a0ec5090a20eff..dce05036c660f3e48928f2b02ef302a4ac42d9ba 100644
+--- a/src/linux-boot/SimpleInitBootLinux.inf
++++ b/src/linux-boot/SimpleInitBootLinux.inf
+@@ -21,7 +21,6 @@
+ 
+ [LibraryClasses.ARM, LibraryClasses.AARCH64]
+   ArmLib
+-  ArmGicLib
+   CacheMaintenanceLib
+ 
+ [LibraryClasses]
+diff --git a/src/linux-boot/arm.c b/src/linux-boot/arm.c
+index d11dbb74f3c28e9bc526d2fa7b56417f399b32b3..eba6cf38faa1dd3a61208fa608f7c6ceaaec73ad 100644
+--- a/src/linux-boot/arm.c
++++ b/src/linux-boot/arm.c
+@@ -21,41 +21,13 @@
+ #include"internal.h"
+ #define TAG "linux-arm"
+ 
+-typedef VOID (*ARM_V7_CACHE_OPERATION)(UINTN);
+-typedef VOID (*AARCH64_CACHE_OPERATION)(UINTN);
+-extern VOID ArmV7DataCacheOperation(IN ARM_V7_CACHE_OPERATION DataCacheOperation);
+-extern VOID AArch64DataCacheOperation(IN AARCH64_CACHE_OPERATION DataCacheOperation);
+-extern VOID EFIAPI ArmInvalidateDataCacheEntryBySetWay(IN UINTN SetWayFormat);
+-extern VOID EFIAPI ArmCleanDataCacheEntryBySetWay(IN UINTN SetWayFormat);
+-#if defined(__arm__)
+-#define DataCacheOperation ArmV7DataCacheOperation
+-#elif defined(__aarch64__)
+-#define DataCacheOperation AArch64DataCacheOperation
+-#endif
+-
+-static VOID EFIAPI ArmInvalidateDataCacheInternal(VOID){
+-	// FUCK ASSERT
+-	ArmDataSynchronizationBarrier();
+-	DataCacheOperation(ArmInvalidateDataCacheEntryBySetWay);
+-}
+-
+-static VOID EFIAPI ArmCleanDataCacheInternal(VOID){
+-	// FUCK ASSERT
+-	ArmDataSynchronizationBarrier();
+-	DataCacheOperation(ArmCleanDataCacheEntryBySetWay);
+-}
+-
+ static void platform_cleanup(linux_boot*lb){
+-	DEBUG((EFI_D_INFO,"boot: cleanup platform...\n"));
+-
+-	ArmCleanDataCacheInternal();
+-	ArmDisableDataCache();
+-	ArmInvalidateDataCacheInternal();
+-
+-	ArmDisableInstructionCache();
+-	ArmInvalidateInstructionCache();
+-
+-	ArmDisableMmu();
++  WriteBackInvalidateDataCacheRange(lb->kernel.address,lb->kernel.size);
++  WriteBackInvalidateDataCacheRange(lb->dtb.address,lb->dtb.size);
++  if(lb->initrd.address)WriteBackInvalidateDataCacheRange(lb->initrd.address,lb->initrd.size);
++  ArmDisableDataCache();
++  ArmDisableMmu();
++  ArmInvalidateInstructionCache();
+ }
+ 
+ static void exit_boot_services(void){
+diff --git a/src/main/SimpleInitMain.inf b/src/main/SimpleInitMain.inf
+index 543190944ddd755b9002bc8fb8f8ad5561dc9c79..c3f68344308fb93dfe2d70107d6799619090a54c 100644
+--- a/src/main/SimpleInitMain.inf
++++ b/src/main/SimpleInitMain.inf
+@@ -15,6 +15,7 @@
+   SimpleInit.dec
+ 
+ [LibraryClasses]
++  LodePNG
+   LuaLib
+   DebugLib
+   UefiBootManagerLib
+@@ -45,6 +46,7 @@
+   gSimpleInitTokenSpaceGuid.PcdLoggerdUseConsole
+ 
+ [Sources]
++  PianoSnapshot.c
+   # UEFI entry point
+   uefimain.c
+   dump.c
+diff --git a/src/main/uefimain.c b/src/main/uefimain.c
+index 19601167803ac97efafe90fcd636380346a924e1..b79b578bc49e7d485282b03c6017ef4e1d3b9e52 100644
+--- a/src/main/uefimain.c
++++ b/src/main/uefimain.c
+@@ -24,6 +24,8 @@
+ #include"gui/splash.h"
+ #define TAG "main"
+ 
++extern VOID PianoScheduleSnapshot (VOID);
++extern VOID PianoCancelSnapshot (VOID);
+ int main_retval=0;
+ jmp_buf main_exit;
+ extern int bootmenu_draw();
+@@ -37,6 +39,13 @@ static int post_main(){
+ 	int r;
+ 	logger_set_console(PcdGetBool(PcdLoggerdUseConsole));
+ 	confd_init();
++	confd_set_string("language", "zh_CN.UTF-8");
++#if defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP
++	confd_set_integer("boot.timeout", -1);
++#else
++	confd_set_integer("boot.timeout", 150);
++#endif
++	confd_set_boolean("gui.driver.pointer.use_first", false);
+ 	logger_init();
+ 	tlog_notice("initialize simple-init");
+ 	tlog_debug("simple init main entry point at %p",&UefiMain);
+@@ -79,6 +88,7 @@ static int post_main(){
+ EFI_STATUS EFIAPI UefiMain(IN EFI_HANDLE ih,IN EFI_SYSTEM_TABLE*st){
+ 	REPORT_STATUS_CODE(EFI_PROGRESS_CODE,(EFI_SOFTWARE_DXE_BS_DRIVER|EFI_SW_PC_USER_SETUP));
+ 
++	PianoScheduleSnapshot();
+ 	EfiBootManagerConnectAll();
+ 	EfiBootManagerRefreshAllBootOption();
+ 	DEBUG((EFI_D_INFO,"Initialize SimpleInit GUI...\n"));
+@@ -87,6 +97,7 @@ EFI_STATUS EFIAPI UefiMain(IN EFI_HANDLE ih,IN EFI_SYSTEM_TABLE*st){
+ 	main_retval=0;
+ 	if(setjmp(main_exit)==0)
+ 		main_retval=post_main();
++	PianoCancelSnapshot();
+ 	return main_retval;
+ }
+ #endif

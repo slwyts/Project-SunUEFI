@@ -1,0 +1,12 @@
+{
+  "id": "debian", "name": "Debian 13", "suite": "trixie", "backend": "debootstrap",
+  "arch": "aarch64", "package_arch": "arm64", "keyring": "/usr/share/keyrings/debian-archive-keyring.gpg",
+  "mirror": "https://deb.debian.org/debian", "components": ["main"], "sources": [
+    "deb https://deb.debian.org/debian trixie main",
+    "deb https://deb.debian.org/debian trixie-updates main",
+    "deb https://security.debian.org/debian-security trixie-security main"
+  ],
+  "base_packages": ["systemd-sysv", "dbus", "sudo", "locales", "ca-certificates", "network-manager", "openssh-server", "kmod", "util-linux"],
+  "official_source": "https://www.debian.org/releases/trixie/arm64/",
+  "source_policy": "signed mutable APT; actual packages and repository metadata recorded"
+}

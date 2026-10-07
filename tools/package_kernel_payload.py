@@ -18,7 +18,7 @@ def main():
     metadata=json.loads((source/'manifest.json').read_text())
     init_meta=json.loads((source/'initramfs-manifest.json').read_text())
     kernel=(source/'Image').read_bytes();initrd=(source/'initramfs.cpio.gz').read_bytes();dtb=args.dtb.read_bytes()
-    pin=json.loads((root/'kernel-profiles.json').read_text())['profiles'][args.profile]
+    pin=json.loads((root/'linux/kernel-profiles.json').read_text())['profiles'][args.profile]
     if metadata.get('profile')!=args.profile or metadata.get('mode')!=args.mode or metadata.get('source_commit')!=pin['commit']:
         raise SystemExit('Kernel profile/mode/pinned commit mismatch')
     if metadata['status']!='HOST_BUILT_NOT_HARDWARE_VERIFIED' or metadata['source_dirty']:

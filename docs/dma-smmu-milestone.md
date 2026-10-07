@@ -40,7 +40,7 @@ framebuffer、ramoops、内核载荷、原厂启动器留下的命令列表及�
 
 ## 统一接口
 
-实现：`bootprofiles/uefi-app/PianoDma.c/.h`。
+实现：`uefi/core/PianoDma.c/.h`。
 
 1. `PianoDmaAllocate`：分配独占页，核对 PA、WB 和地址位数。
 2. `PianoDmaMap`：调用设备后端建立映射，检查 IOVA 范围与对齐；无后端返回 NotReady。
@@ -91,7 +91,7 @@ framebuffer、ramoops、内核载荷、原厂启动器留下的命令列表及�
 
 证据位置：`private/analysis/ramlog-test-N/uefi.txt`、`partition-verification-test-N.json`；每次镜像归档于 `artifacts/tests/stage0-test-N/`。
 
-主机检查：`bash tools/test_dma_foundation.sh`，执行 8 组 ASan / UBSan 检查。构建及封装沿用 `build_integrity.py`，失败、旧构建或产物不匹配时拒绝 RAM 启动。
+主机检查：`bash tests/native/test_dma_foundation.sh`，执行 8 组 ASan / UBSan 检查。构建及封装沿用 `build_integrity.py`，失败、旧构建或产物不匹配时拒绝 RAM 启动。
 
 ## 写入约束
 

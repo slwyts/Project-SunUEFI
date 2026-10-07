@@ -1,0 +1,9 @@
+{
+  "status": "MODULE_NOT_READY",
+  "device_passthrough_verified": false,
+  "request_handling_verified": false,
+  "standard_recovery_preserved": false,
+  "webui_bridge_verified": false,
+  "entry_policy": "explicit-request-only",
+  "request_bootarg": "sunuefi.boot=uefi"
+}

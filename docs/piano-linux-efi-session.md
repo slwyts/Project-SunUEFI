@@ -1,6 +1,6 @@
 # 产品标准 Linux EFI session
 
-`bootprofiles/os-boot/PianoLinuxEfiSession.c/.h` 把旧 LinuxRamBoot 中真实标准 EFI 机制提取为可复用 session。它不扫描固定 boot RAM、不写固定 kernel/DTB 地址、不走 raw MMU-off 跳转、不增加 diagnostic profile、不修改 Boot Services 函数表或 console vtable。
+`uefi/components/os-boot/PianoLinuxEfiSession.c/.h` 把旧 LinuxRamBoot 中真实标准 EFI 机制提取为可复用 session。它不扫描固定 boot RAM、不写固定 kernel/DTB 地址、不走 raw MMU-off 跳转、不增加 diagnostic profile、不修改 Boot Services 函数表或 console vtable。
 
 输入是 reader 提供的三份已验证 immutable CPU snapshot，直接使用统一 PIANO_LAUNCH_BLOB。Take/Borrow 移交并固定 kernel、DTB、initrd，直到相关 image、LoadFile2 和 config table 已退休才 Unborrow/ZeroRelease。Root配置明确 kernel/loaded/DTB/initrd budget；默认总预算64MiB，可通过实际统一CPU内存及owner验证路径请求最多1GiB，当前产品平台仍未绑定。Session不把文件扩展名当Linux身份，也不在owner退休后访问UFS；内核须通过实际AA64 PE parser，DTB用实际libfdt检查并复制到aligned LoaderData。
 
@@ -26,7 +26,7 @@ BeforeEBS代表尝试，不等于成功。它只设置Attempted fence，EFI stub
 
 ## 当前证据与剩余
 
-`tests/test_linux_efi_session.py` 编译实际session、PE parser和固定libfdt，35个实际EFI ABI host场景通过ASAN/UBSAN。包括完整LoadFile2 query/copy、DTB修改、返回自动卸载/显式卸载、FullDDR false/未绑定validator、all-TRUE报告但实际validator拒绝、退休后fresh epoch变化、已存在initrd provider、owner失败、Before-only/Exit fence、各种cleanup retained与pre-transition service slice abort。
+`tests/unit/test_linux_efi_session.py` 编译实际session、PE parser和固定libfdt，35个实际EFI ABI host场景通过ASAN/UBSAN。包括完整LoadFile2 query/copy、DTB修改、返回自动卸载/显式卸载、FullDDR false/未绑定validator、all-TRUE报告但实际validator拒绝、退休后fresh epoch变化、已存在initrd provider、owner失败、Before-only/Exit fence、各种cleanup retained与pre-transition service slice abort。
 
 ARM64严格语法检查通过。测试不执行ARM内核，不接触平板。仍需Root/平台提供真实完整DDR验收、标准EFI内存图及reservation/cache proof、实际全owner pre-handoff、kernel entry/EBS/kernel console/PID1证据。保留已有raw Linux救援结果，不能用它替代标准EFI session验收。
 

@@ -16,7 +16,7 @@ include Linux EFI stubs. Thus generic returning-app admission needs a reviewed
 application contract or a real pre-EBS owner gate. No new such policy, dispatcher
 or EBS authorization is implemented here.
 
-`bootprofiles/os-boot/PianoCpuImageLoan.c` is the shared data-only component.
+`uefi/components/os-boot/PianoCpuImageLoan.c` is the shared data-only component.
 It accepts a PIANO_LAUNCH_BLOB whose owner has already been taken once. It loans
 one stable CPU view with an atomic driver-lifetime monotonic token shared
 across all session instances (no wrap or reuse), copies no full image and
@@ -32,7 +32,7 @@ is allowed only when the download state remains empty; a later background
 download therefore makes restore refuse, and the original owner must be
 released separately after its consumers have ended.
 
-`python3 -m unittest discover -s tests -p test_cpu_image_loan.py -v` passes actual
+`python3 -m unittest discover -s tests/unit -p test_cpu_image_loan.py -v` passes actual
 DownloadBlob/parser-state plus loan integration under ASan/UBSan and AArch64
 compilation: one external Take, no loan image allocation, new-download/reset
 survival, bounds/alias/stale-token rejection, mutation and warning retention.

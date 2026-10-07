@@ -49,7 +49,7 @@ success-event log flood and no claim that SimpleInit has displayed a successful
 frame merely because it signaled `lv_disp_flush_ready`.
 
 ```
-python3 -m unittest discover -s tests -p test_product_gop_blt.py -v
+python3 -m unittest discover -s tests/unit -p test_product_gop_blt.py -v
 ```
 
 The actual product driver is linked with the actual selected

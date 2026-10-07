@@ -105,7 +105,7 @@ def main():
         text=text.replace('[Sources]\n','[Sources]\n  PianoSnapshot.c\n')
         text=text.replace('[LibraryClasses]\n','[LibraryClasses]\n  LodePNG\n')
     main_inf.write_text(text)
-    shutil.copyfile(root / 'bootprofiles/uefi-app/PianoSnapshot.c', si / 'src/main/PianoSnapshot.c')
+    shutil.copyfile(root / 'uefi/core/PianoSnapshot.c', si / 'src/main/PianoSnapshot.c')
     # Keep real key-event diagnostics reproducible instead of relying on a
     # one-off edit to the upstream checkout. Merely locating ConSplitter's
     # virtual keyboard does not demonstrate a working physical button.
@@ -160,7 +160,7 @@ def main():
         text=text.replace('\tdata->rx=data->touch->Mode->AbsoluteMaxX;',
             '\tdata->mx=data->touch->Mode->AbsoluteMinX;\n\tdata->my=data->touch->Mode->AbsoluteMinY;\n\tdata->rx=data->touch->Mode->AbsoluteMaxX;')
         touch.write_text(text)
-    shutil.copyfile(root/'bootprofiles/uefi-app/PianoTouchInput.h',touch.parent/'PianoTouchInput.h')
+    shutil.copyfile(root/'uefi/core/PianoTouchInput.h',touch.parent/'PianoTouchInput.h')
     text=main_c.read_text()
     if 'gui.driver.pointer.use_first' not in text:
         text=text.replace('\tconfd_set_integer("boot.timeout", 150);',
@@ -184,7 +184,7 @@ def main():
     if 'PianoQuadFloatCompat.c' not in text:
         text = text.replace('[Sources]\n', '[Sources]\n  PianoQuadFloatCompat.c\n')
     compat_inf.write_text(text)
-    shutil.copyfile(root / 'bootprofiles/uefi-app/QuadFloatCompat.c',
+    shutil.copyfile(root / 'uefi/core/QuadFloatCompat.c',
                     si / 'libs/compatible/PianoQuadFloatCompat.c')
     arm = si / 'src/linux-boot/arm.c'
     text = arm.read_text()

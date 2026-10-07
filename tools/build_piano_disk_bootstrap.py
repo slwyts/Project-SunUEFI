@@ -110,11 +110,11 @@ def build(root, kernel, busybox, output, root_partuuid):
             raise ValueError('Distro module differs from selected kernel: ' + path)
         files[name] = source
     files['bin/busybox'] = busybox
-    files['pianoinit'] = ROOT / 'bootprofiles/linux-userspace/disk-bootstrap'
+    files['pianoinit'] = ROOT / 'linux/userspace/disk-bootstrap'
     # BusyBox switch_root checks for a regular /init in the old initramfs.
     # The forced kernel command line still selects /pianoinit explicitly.
     files['init'] = files['pianoinit']
-    files['usr/local/sbin/piano-debug-bootstrap'] = ROOT / 'bootprofiles/linux-userspace/piano-debug-bootstrap'
+    files['usr/local/sbin/piano-debug-bootstrap'] = ROOT / 'linux/userspace/piano-debug-bootstrap'
     files['etc/piano/busybox-source.json'] = busybox.with_name('busybox-source.json')
     files[f'lib/modules/{release}/modules.builtin'] = directory / 'modules.builtin'
     generated = {
@@ -145,7 +145,7 @@ def build(root, kernel, busybox, output, root_partuuid):
     target = output / 'initramfs.cpio.gz'
     target.write_bytes(gzip.compress(archive, mtime=0))
     result = {'status': 'HOST_BUILT_DISK_BOOTSTRAP_NOT_BOOT_VERIFIED', 'kernel_release': release,
-              'root_partuuid': root_partuuid, 'root_partlabel': 'sunuefi_linux', 'root_fstype': 'ext4',
+              'root_partuuid': root_partuuid, 'root_partlabel': 'sunuefi_root', 'root_fstype': 'ext4',
               'kernel_root_policy': record.get('root_policy'),
               'kernel_cmdline_matches_root': f'piano.root=PARTUUID={root_partuuid}' in record['command_line'].split(),
               'initramfs_bytes': target.stat().st_size, 'initramfs_sha256': sha_file(target),

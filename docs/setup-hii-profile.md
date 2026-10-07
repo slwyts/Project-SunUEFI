@@ -55,7 +55,7 @@ UiApp 会清屏，所以前置文字提示不替代这里的非持久说明或�
 
 ## 已通过的主机检查
 
-入口：`bash tools/test_uefi_setup.sh`，不会 prepare、完整构建或连接设备。
+入口：`bash tests/native/test_uefi_setup.sh`，不会 prepare、完整构建或连接设备。
 
 - 真实 loader 的 ASan/UBSan 行为检查：非 RAM backend 拒绝、缺/空 HII 服务拒绝、marker 协议 NULL interface 接受、无 FV/DevicePath/有效 section 的失败、真实 FV file node、LoadImage 错误、错误 image type 的卸载、StartImage 状态传播与 buffer 释放。
 - AARCH64 loader 编译语法检查。

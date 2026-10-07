@@ -55,8 +55,8 @@ and is not assigned a fabricated OK row.
 Run the actual renderer validation with:
 
 ```sh
-python3 -m unittest discover -s tests -p test_product_boot_log.py -v
-python3 -m unittest discover -s tests -p test_product_boot_log_lifecycle.py -v
+python3 -m unittest discover -s tests/unit -p test_product_boot_log.py -v
+python3 -m unittest discover -s tests/unit -p test_product_boot_log_lifecycle.py -v
 ```
 
 The host C test decodes the rendered pixels for status labels, original status

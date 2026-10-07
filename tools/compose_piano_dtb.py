@@ -295,7 +295,7 @@ def compose(base_path, recipe_path, kernel_tree, output_dir, variant, dtc, fdtov
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", type=Path, required=True)
-    parser.add_argument("--review", type=Path, default=ROOT / "configs/linux/dtb/display-review.json")
+    parser.add_argument("--review", type=Path, default=ROOT / "linux/dts/display-review.json")
     parser.add_argument("--kernel-tree", type=Path, default=Path("/home/slwyts/linux-piano-dtb"))
     parser.add_argument("--output", type=Path, default=ROOT / "artifacts/dtb/display-topology")
     parser.add_argument("--variant", choices=("boe", "csot"), required=True)

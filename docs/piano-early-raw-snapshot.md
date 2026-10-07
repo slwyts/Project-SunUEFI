@@ -52,8 +52,8 @@ memory path. ARM64 compilation checks the producer and consumer; a compile-time
 assertion requires the complete GUID HOB to fit below 64 KiB.
 
 ```sh
-python3 -m unittest discover -s tests -p test_early_memory.py -v
-python3 -m unittest discover -s tests -p test_product_smem.py -v
+python3 -m unittest discover -s tests/unit -p test_early_memory.py -v
+python3 -m unittest discover -s tests/unit -p test_product_smem.py -v
 ```
 
 Test95 physically retrieved RAM402 CRC7C271814 and SIII CRC2776A43D through this

@@ -32,9 +32,9 @@ SFS重新Open/Read验收文件API/metadata行为；FAT可能保留cache，因此
 可复现电脑端入口：
 
 ```bash
-bash tools/test_ufs_bounded_fs.sh
-python3 -m unittest discover -s tests -p 'test_ufs_bounded_fs_profile.py'
-bash tools/test_ufs_bounded_block.sh
+bash tests/native/test_ufs_bounded_fs.sh
+python3 -m unittest discover -s tests/unit -p 'test_ufs_bounded_fs_profile.py'
+bash tests/native/test_ufs_bounded_block.sh
 ```
 
 actual C harness 26个memory-only场景通过ASan/UBSan，包含成功与format/Connect/SFS/OpenVolume/CREATE/short write/flush/close/GetInfo/read/EOF错误后同session恢复；恢复Acquire/WP/read/WRITE/short WRITE/unknown quiet/sync/whole verify/release不明均fence。10个纯profile/PC image tests通过，涵盖默认关闭、全部隔离（含USB screenshot）、无OS路径、pinned image/size/manifest类型/extent/symlink/PC archive漂移；测试仅临时render/header，不运行main/prepare或改变staging。production bounded+harness宏下AArch64语法通过。

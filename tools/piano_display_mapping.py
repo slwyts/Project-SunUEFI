@@ -8,24 +8,25 @@ import re
 import struct
 
 from compose_piano_dtb import read_fdt
+import piano_vendor_inputs as vendor_inputs
 
 ROOT = Path(__file__).resolve().parents[1]
-NATIVE = 'platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'
-DTB = 'private/captures/2026-10-03-piano/live.dtb'
-DTS = 'kernels/linux-piano/arch/arm64/boot/dts/qcom/sm8750.dtsi'
-NATIVE_DTB = 'private/analysis/xbl_config_a-0x8358.dtb'
+NATIVE = 'uefi/platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'
+DTB = vendor_inputs.BOARD_DTB
+DTS = 'upstream/linux-piano/arch/arm64/boot/dts/qcom/sm8750.dtsi'
+NATIVE_DTB = vendor_inputs.XBL_DTB
 CLOCK_PE = 'upstream/Mu-Silicium/Binaries/piano/ProductFoundation/ClockDxe/ClockDxe.efi'
 PINS = {
-    DTB: 'a4b55dd3b77e69be451aaf2263c76f5496c93325767e49f748ee49570611e8d7',
+    DTB: vendor_inputs.BOARD_DTB_SHA256,
     NATIVE: '04ef5a00cee0123d4870a82670e677bfec2af5c360342fc5e0d9092bd7cbb9df',
-    NATIVE_DTB: '634ec73dc6d69a07b5af8246e03b0d2ae84dfb9ce9901135121c220443c9cd10',
+    NATIVE_DTB: vendor_inputs.XBL_DTB_SHA256,
     # Product staging retains CESTA startup clock refs; the immutable original
     # and exact derivation are checked by piano_inherited_clock.
     CLOCK_PE: '3f459c822c8d8f87ca832b37709c3b56548319bfe60ff01ffd37ddc56d72d967',
     DTS: '531d6a6d53c8e23b94e8ba2747386f3265c1930bfa24c8db4f8fd1c0086940e0',
-    'kernels/linux-piano/drivers/clk/qcom/gcc-sm8750.c': '3ac38ce713871b541dd7d4bee7007b14fee36d3a2fc6faa951e7c82fd53da960',
-    'kernels/linux-piano/drivers/clk/qcom/dispcc-sm8750.c': 'd33b53c94c12f6f30118dbb20f5c7714aa14ee3421cec436379425cfee2be164',
-    'kernels/linux-piano/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c': 'f8cf490fe9a74c3deb219b28345b66b54085d4b0eef34f3e7e765465f4dfba99',
+    'upstream/linux-piano/drivers/clk/qcom/gcc-sm8750.c': '3ac38ce713871b541dd7d4bee7007b14fee36d3a2fc6faa951e7c82fd53da960',
+    'upstream/linux-piano/drivers/clk/qcom/dispcc-sm8750.c': 'd33b53c94c12f6f30118dbb20f5c7714aa14ee3421cec436379425cfee2be164',
+    'upstream/linux-piano/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c': 'f8cf490fe9a74c3deb219b28345b66b54085d4b0eef34f3e7e765465f4dfba99',
     'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include/Library/MemoryMapLib.h': 'c60c4b80e81388d40148cc014a25f22a20a89a1722c6dd0f1e784efa3268816b',
     'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Library/MemoryInitPeiLib/MemoryInitPei.c': 'dced274a5e31484b647e643fa255439a9a6f6eb5fc210671233614ed80ef2edb',
     'upstream/Mu-Silicium/Mu_Basecore/UefiCpuPkg/Library/ArmMmuLib/AArch64/ArmMmuLibCore.c': 'bf3be06245f00c6d1b24b94eb0068f607387780966297070836799fea2aa3521',
@@ -185,11 +186,14 @@ def render(native_data, windows):
 
 def source_files(root=ROOT):
     root = Path(root)
-    return (root / 'tools/piano_display_mapping.py', *(root / p for p in PINS if p != NATIVE))
+    return tuple(dict.fromkeys((root / 'tools/piano_display_mapping.py',
+                               *(root / p for p in PINS if p != NATIVE),
+                               *vendor_inputs.source_files(root))))
 
 
 def prepare(root, input_native_text, owners=()):
     root = Path(root)
+    vendor_record = vendor_inputs.record(root)
     generator = root / 'tools/piano_display_mapping.py'
     if generator.is_symlink():
         raise ValueError('Display mapping generator is a symlink')
@@ -215,6 +219,7 @@ def prepare(root, input_native_text, owners=()):
                 'original_native_sha256': digest(native),
                 'generator_sha256': digest(generator_bytes),
                 'source_inputs': {p: {'sha256': digest(b), 'bytes': len(b)} for p, b in inputs.items()},
+                'vendor_inputs': vendor_record,
                 'candidate_sha256': digest(source), 'owners': list(owners),
                 'conventional_bytes_added': 0, 'framebuffer_changed': False, 'high_ddr_changed': False,
                 'applied_to_product': False, 'hardware_verified': False, 'register_access_authorized': False,
@@ -225,6 +230,8 @@ def prepare(root, input_native_text, owners=()):
         raise ValueError('Display mapping source changed during generation')
     if generator.read_bytes() != generator_bytes:
         raise ValueError('Display mapping generator changed during generation')
+    if vendor_inputs.record(root) != vendor_record:
+        raise ValueError('Vendor inputs changed during display generation')
     return source.decode(), metadata
 
 
@@ -279,7 +286,7 @@ def main():
     args = parser.parse_args()
     try:
         directory = args.output_dir.resolve()
-        if any(directory.is_relative_to((ROOT / p).resolve()) for p in ('platforms', 'upstream', 'bootprofiles', 'tools', 'private')):
+        if any(directory.is_relative_to((ROOT / p).resolve()) for p in ('uefi', 'linux', 'upstream', 'tools', 'private', 'vendor')):
             raise ValueError('Candidate output cannot overwrite source/staging/evidence')
         owners = json.loads(args.owners.read_text()) if args.owners else []
         source, record = create(owners=owners)

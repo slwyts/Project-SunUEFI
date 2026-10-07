@@ -1,6 +1,6 @@
 # 固定 topic 的 Linux RAM 诊断包
 
-`tools/package_kernel_diagnostic.py` 是独立诊断入口。现有 `make_kernel_initramfs.py`、`package_kernel_payload.py` 的 stable/next CLI 和 pin 行为保持原样；诊断工具不读取或修改 `kernel-profiles.json`，不修改prepare、staging或设备。
+`tools/package_kernel_diagnostic.py` 是独立诊断入口。现有 `make_kernel_initramfs.py`、`package_kernel_payload.py` 的 stable/next CLI 和 pin 行为保持原样；诊断工具不读取或修改 `linux/kernel-profiles.json`，不修改prepare、staging或设备。
 
 当前允许两个固定topic。`piano-efi-entry-debug`仍是clean commit `094d0b053f61ca20f584e10faa624cd0bc745db0`，直接parent为官方 `7704c4c5bb127673b4f0ead839919db573559e38`。新增`piano-efi-memory-debug`为commit `c4bbf928f335174f8518831797a94597a530c575`，明确parent_commit=094d，上游base_commit仍为7704；验证HEAD^==parent且base为ancestor，旧policy仍默认HEAD^==base。新topic状态与产物见[EFI memory诊断说明](linux-efi-memory-debug.md)。允许的topic/build-manifest/Image/config/同机captured live.dtb/BusyBox/provenance/PID1各自SHA固定在工具的显式topic policy中。输入或重新构建的Image发生改变时必须经过新诊断review更新该policy，工具不会自动跟随branch、重标旧manifest或移动stable/next pins。
 
@@ -31,4 +31,4 @@ V2保持loader实际布局：144字节header，kernel/initrd/DTB sizes在24/32/1
 
 工具不会自动替换共享`artifacts/linux-ram`。root在独立目录严格验证成功后，如现有build需要共享路径，应显式复制`linux-payload.bin`和`payload-manifest.json`，再核对共享副本hash；不要运行普通stable/next packager来给诊断包重标profile。
 
-`tests/test_package_kernel_diagnostic.py`使用真实临时Git histories、实际newc/gzip和独立V2边界修改，覆盖source HEAD/branch/dirty、self-consistent config漂移、输入与生成中漂移、manifest gate、EFI header、CPIO模块/模式/绑定、payload长度/hash/尾部和bounded解压负例。以上仅为host验证，没有执行设备、kernel build、meta commit或staging操作。
+`tests/unit/test_package_kernel_diagnostic.py`使用真实临时Git histories、实际newc/gzip和独立V2边界修改，覆盖source HEAD/branch/dirty、self-consistent config漂移、输入与生成中漂移、manifest gate、EFI header、CPIO模块/模式/绑定、payload长度/hash/尾部和bounded解压负例。以上仅为host验证，没有执行设备、kernel build、meta commit或staging操作。

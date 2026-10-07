@@ -1,0 +1,11 @@
+[Unit]
+Description=Piano ordered WLAN and Bluetooth bring-up
+After=systemd-udev-trigger.service piano-touch.service
+Before=bluetooth.service
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/piano/radio-start
+RemainAfterExit=yes
+TimeoutStartSec=180
+[Install]
+WantedBy=multi-user.target

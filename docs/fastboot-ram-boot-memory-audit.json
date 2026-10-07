@@ -866,7 +866,7 @@
   "linux_contract_note": "Fixed reusable CMA is excluded from download ownership but must retain valid System RAM/vmemmap at Linux handoff; no-map/secure exclusions differ.",
   "inputs_sha256": {
     "private/captures/2026-10-03-piano/live.dtb": "a4b55dd3b77e69be451aaf2263c76f5496c93325767e49f748ee49570611e8d7",
-    "platforms/pianoPkg/native-memory-map.json": "b7f5e824e309e639e7cc9227cdca10396bb9e91054ebabd2f07172c0fe79ad9c",
+    "uefi/platforms/pianoPkg/native-memory-map.json": "b7f5e824e309e639e7cc9227cdca10396bb9e91054ebabd2f07172c0fe79ad9c",
     "private/analysis/ramlog-test-85/console.txt": "6c6c5de09aafb185c6fbd4c491b6e745a5559c263a64cd63e34e60fd20fcf83c",
     "private/analysis/dram-runtime-android-after-test-86.json": "0be847850c90d7ba46fb5266e2e032680dc7da4ff05797a0602f75a07cd74aa1"
   }

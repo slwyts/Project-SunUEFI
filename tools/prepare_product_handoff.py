@@ -2,12 +2,15 @@
 """Deterministic native late-APP EBS hooks; dry transform unless apply=True."""
 from pathlib import Path
 import hashlib,json,subprocess,shutil
+from source_input_tail import split_source_tail
 ROOT=Path(__file__).resolve().parents[1]
 BASE='upstream/Mu-Silicium/Mu_Basecore/'
+# Audited LF source bodies. Only independent footer comments/whitespace vary;
+# function structure and the native EBS/getter behavior remain byte-identical.
 PINS={
- BASE+'MdeModulePkg/Core/Dxe/DxeMain/DxeMain.c':'3679d1a6fbf77411b6aec6d93ca33f92745a6c0e61c7ddd6192c3e42671332f9',
- BASE+'MdeModulePkg/Core/Dxe/Image/Image.c':'3da6c13829490d35e19aedeb32d946664873ed5e116ce13211f0932922c72b64',
- BASE+'MdeModulePkg/Core/Dxe/Mem/Page.c':'fa8880138742041263701de921c0c266662e24b53af4e6da8488ac0960a19e87',
+ BASE+'MdeModulePkg/Core/Dxe/DxeMain/DxeMain.c':'cd9d91719c7c5bdf0d01f4579034bc5ad31763bbc219f8a9c43a349869685471',
+ BASE+'MdeModulePkg/Core/Dxe/Image/Image.c':'6790ba708a531f866db05ce3b1abe9edccebb6c79513bafadc5332e2d5254983',
+ BASE+'MdeModulePkg/Core/Dxe/Mem/Page.c':'ec16ef78e7c817fbc7e238ae94ce90d8662d0e3872fdd44e92472505fe1c816a',
 }
 IMAGE_GETTER='''
 // Native current StartImage frame; never trust the caller's handle alone.
@@ -55,40 +58,46 @@ EXIT_HOOK='''  // Product native APP transition before any BeforeNotify/Timer0/m
 
 def transform_core(relative,raw):
     newline=b'\r\n'if b'\r\n'in raw else b'\n'
-    text=raw.decode().replace('\r\n','\n')
+    text,tail=split_source_tail(raw.decode())
     if relative.endswith('DxeMain/DxeMain.c'):
+        if text.count('#include "DxeMain.h"\n')!=1:raise ValueError('Native Core include boundary drift')
         text=text.replace('#include "DxeMain.h"\n','#include "DxeMain.h"\n'+PROTOTYPES,1)
         old='''  //
   // Notify other drivers of their last chance to use boot services
 '''
         if text.count(old)!=1:raise ValueError('Native EBS boundary drift')
         text=text.replace(old,EXIT_HOOK+old,1)
-    elif relative.endswith('Image/Image.c'):text+='\n'+IMAGE_GETTER
-    elif relative.endswith('Mem/Page.c'):text+='\n'+KEY_GETTER
+    elif relative.endswith('Image/Image.c'):text+='\n\n'+IMAGE_GETTER.rstrip(' \t\n')
+    elif relative.endswith('Mem/Page.c'):text+='\n\n'+KEY_GETTER.rstrip(' \t\n')
     else:raise ValueError(relative)
-    return text.replace('\n',newline.decode()).encode()
+    return (text+tail).replace('\n',newline.decode()).encode()
 
 
 def desired_core(root=ROOT):
-    root=Path(root);result={}
+    root=Path(root);result={};installed=[]
     for relative,pin in PINS.items():
         raw=(root/relative).read_bytes()
-        if hashlib.sha256(raw).hexdigest()!=pin:
+        body,tail=split_source_tail(raw.decode())
+        has_hook=hashlib.sha256(body.encode()).hexdigest()!=pin
+        installed.append(has_hook)
+        if has_hook:
             # Exact installed form may be verified without silently accepting
             # edits to the native root function or the added hook/getters.
-            newline=b'\r\n'if b'\r\n'in raw else b'\n';text=raw.decode().replace('\r\n','\n')
+            newline=b'\r\n'if b'\r\n'in raw else b'\n';text=body
             if relative.endswith('DxeMain/DxeMain.c'):
                 if text.count(PROTOTYPES)!=1 or text.count(EXIT_HOOK)!=1:raise ValueError('Native Core hook drift: '+relative)
                 text=text.replace(PROTOTYPES,'',1).replace(EXIT_HOOK,'',1)
             else:
-                suffix='\n'+(IMAGE_GETTER if relative.endswith('Image/Image.c')else KEY_GETTER)
+                suffix='\n\n'+(IMAGE_GETTER if relative.endswith('Image/Image.c')else KEY_GETTER).rstrip(' \t\n')
                 if not text.endswith(suffix)or text.count(suffix)!=1:raise ValueError('Native getter drift: '+relative)
                 text=text[:-len(suffix)]
-            original=text.replace('\n',newline.decode()).encode()
-            if hashlib.sha256(original).hexdigest()!=pin or raw!=transform_core(relative,original):
+            original=(text+tail).replace('\n',newline.decode()).encode()
+            if hashlib.sha256(text.encode()).hexdigest()!=pin or raw!=transform_core(relative,original):
                 raise ValueError('Native Core source drift: '+relative)
             result[relative]=raw
         else:result[relative]=transform_core(relative,raw)
+    if len(set(installed))!=1:
+        raise ValueError('Native Core hooks are partially installed')
     return result
 
 
@@ -113,7 +122,7 @@ def prepare(root=ROOT,apply=False):
         if relative.endswith('SiliciumPkg.dsc.inc'):
             anchor='!include MdePkg/MdeLibs.dsc.inc\n\n[LibraryClasses]\n'
         outputs[relative]=_insert(text,anchor,line,relative).replace('\n',newline.decode()).encode()
-    source=root/'bootprofiles/product-handoff/Mu_Basecore'
+    source=root/'uefi/components/product-handoff/Mu_Basecore'
     for path in source.rglob('*'):
         if path.is_file():outputs[BASE+path.relative_to(source).as_posix()]=path.read_bytes()
     # Construct/validate every output before any mutation. apply=False is a
@@ -132,16 +141,16 @@ def stage_provider(root,app):
     """Stage exact Root provider source; does not initialize/Arm any image."""
     root=Path(root);app=Path(app);folder=app/'LateHandoff'
     if folder.exists():raise ValueError('Late provider already staged')
-    # Relative ../uefi-app references use the existing shared header mirror.
+    # The generated module contains the canonical core header mirror.
     required=('PianoProductOwners.h','PianoCpuInput.h')
     for name in required:
-        canonical=root/'bootprofiles/uefi-app'/name
-        mirror=app/'uefi-app'/name
+        canonical=root/'uefi/core'/name
+        mirror=app/'core'/name
         if not mirror.exists()or mirror.read_bytes()!=canonical.read_bytes():
             raise ValueError('Late provider shared header stale: '+name)
     folder.mkdir()
     for name in ('PianoLateHandoff.c','PianoLateHandoff.h'):
-        shutil.copyfile(root/'bootprofiles/product-handoff'/name,folder/name)
+        shutil.copyfile(root/'uefi/components/product-handoff'/name,folder/name)
     return {'status':'ROOT_PROVIDER_COMPILED_NOT_PLATFORM_ARMED',
         'sources':['LateHandoff/PianoLateHandoff.c','LateHandoff/PianoLateHandoff.h'],
         'files':{str(path.relative_to(app)):hashlib.sha256(path.read_bytes()).hexdigest()
@@ -150,7 +159,7 @@ def stage_provider(root,app):
 
 def verify_provider(root,app,record):
     root,app=Path(root),Path(app)
-    expected={'LateHandoff/'+name:hashlib.sha256((root/'bootprofiles/product-handoff'/name).read_bytes()).hexdigest()
+    expected={'LateHandoff/'+name:hashlib.sha256((root/'uefi/components/product-handoff'/name).read_bytes()).hexdigest()
               for name in ('PianoLateHandoff.c','PianoLateHandoff.h')}
     if record.get('files')!=expected:raise ValueError('Late provider canonical manifest differs')
     for name,digest in expected.items():

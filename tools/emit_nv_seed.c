@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #undef NULL
-#include "../bootprofiles/uefi-app/PianoNvFvb.h"
+#include "../uefi/core/PianoNvFvb.h"
 #include <Library/BaseMemoryLib.h>
 static UINT8 slots[2][768][4096];
 VOID *EFIAPI ZeroMem(VOID*p,UINTN n){return memset(p,0,n);}VOID *EFIAPI SetMem(VOID*p,UINTN n,UINT8 v){return memset(p,v,n);}VOID *EFIAPI CopyMem(VOID*a,CONST VOID*b,UINTN n){return memmove(a,b,n);}INTN EFIAPI CompareMem(CONST VOID*a,CONST VOID*b,UINTN n){return memcmp(a,b,n);}

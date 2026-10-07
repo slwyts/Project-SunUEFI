@@ -56,10 +56,10 @@ sleep恢复的第一IRQ在参考驱动中只清suspended，第二IRQ才携带连
 
 ## 已落地的host组件
 
-`bootprofiles/uefi-app/PianoPogoReport.c/.h`提供事务性packed parser、64-key queue、16-control ring、relative累加/INT32饱和、absolute primary/release、detach清输入、软件toggle与unknown/auth阶段。坏frame/key queue overflow不提交半帧；控制telemetry满时丢最旧并计数，不使键盘输入永久停住。重复attach coalesces。未知incoming vendor不执行命令。
+`uefi/core/PianoPogoReport.c/.h`提供事务性packed parser、64-key queue、16-control ring、relative累加/INT32饱和、absolute primary/release、detach清输入、软件toggle与unknown/auth阶段。坏frame/key queue overflow不提交半帧；控制telemetry满时丢最旧并计数，不使键盘输入永久停住。重复attach coalesces。未知incoming vendor不执行命令。
 
 `PianoPogoInput.c/.h`提供真实SimpleTextIn、SimpleTextInputEx、SimplePointer、AbsolutePointer方法，8个bounded key-notify注册、caller提供的readiness signal/events；没有install handle/gBS或硬件Reset。ExtendedVerification返回UNSUPPORTED，普通Reset只重置软件状态。legacy WaitForKey只在存在非partial key时signal。mouse counts/mm resolution必须由调用者提供已核对值，代码不编造physical resolution。absolute范围采用参考layout，无压力轴。
 
 当前按键采用US bootstrap，涵盖modifier、Caps/Num/Scroll、常用scan、keypad、consumer常用EFI scan。HII layouts/dead keys、typematic timer、触控板多指gesture/滚动、硬件LED与电源/认证状态机尚未实现。协议方法和synthetic报告host通过不等于设备完整适配。
 
-运行`python3 tests/PianoPogoReportTest.py`会用真实Mu UEFI X64 headers、-Werror、ASan/UBSan编译实际三组PianoPogo C源码，覆盖packed/badframe事务回滚、键/lock/modifier/rollover、queue、负relative/wheel和饱和、touch/primary/release、detach、auth信息最小化、notify重入拒绝、真实protocol方法和PI请求布局。没有设备操作、prepare/staging/build修改或commit。memory-debug kernel保留Ready并仍可独立包装。
+运行`python3 tests/unit/PianoPogoReportTest.py`会用真实Mu UEFI X64 headers、-Werror、ASan/UBSan编译实际三组PianoPogo C源码，覆盖packed/badframe事务回滚、键/lock/modifier/rollover、queue、负relative/wheel和饱和、touch/primary/release、detach、auth信息最小化、notify重入拒绝、真实protocol方法和PI请求布局。没有设备操作、prepare/staging/build修改或commit。memory-debug kernel保留Ready并仍可独立包装。

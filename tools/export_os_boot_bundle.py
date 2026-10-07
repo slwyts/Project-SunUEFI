@@ -27,7 +27,7 @@ def export(profile, dtb, output):
     if output.exists() or output.is_symlink():
         raise ValueError('Output exists; preserve previous bundle')
     source = ROOT/'artifacts/kernels'/profile/'ram'
-    pin_path = ROOT/'kernel-profiles.json'
+    pin_path = ROOT/'linux/kernel-profiles.json'
     kernel_path, initrd_path = source/'manifest.json', source/'initramfs-manifest.json'
     metadata = {path: path.read_bytes() for path in (pin_path, kernel_path, initrd_path)}
     pin = json.loads(metadata[pin_path])['profiles'][profile]

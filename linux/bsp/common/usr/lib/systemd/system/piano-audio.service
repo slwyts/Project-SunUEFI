@@ -1,0 +1,11 @@
+[Unit]
+Description=Piano sound card bring-up (AudioReach, speakers, microphones)
+After=piano-adsp.service
+Wants=piano-adsp.service
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/piano/audio-start
+RemainAfterExit=yes
+TimeoutStartSec=120
+[Install]
+WantedBy=multi-user.target

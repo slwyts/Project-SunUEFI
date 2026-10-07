@@ -1,0 +1,120 @@
+#!/bin/sh
+# Mount only the new, explicitly selected Linux partition; never an Android root.
+export PATH=/usr/sbin:/usr/bin:/bin:/sbin
+log() {
+    printf 'piano: %s\n' "$*"
+    # Persist early userspace failures even when the framebuffer stays blank.
+    # After mount --move, the same devtmpfs is reachable below /sysroot.
+    kmsg=/dev/kmsg
+    [ -c "$kmsg" ] || kmsg=/sysroot/dev/kmsg
+    if [ -c "$kmsg" ]; then printf '<5>piano: %s\n' "$*" >"$kmsg"; fi
+}
+fail() {
+    log "DISK_ROOT_REFUSED: $*; remaining in initramfs rescue"
+    # The shared gadget helper needs all virtual mounts at their original paths.
+    # Rescue never returns, so no gadget handoff to the disk root is needed.
+    if mountpoint -q /dev && mountpoint -q /proc &&
+       mountpoint -q /sys && mountpoint -q /run; then
+        if /usr/local/sbin/piano-debug-bootstrap start; then
+            (
+                while :; do
+                    /usr/local/sbin/piano-debug-bootstrap serial
+                    sleep 5
+                done
+            ) &
+        else
+            log 'USB rescue setup failed; console rescue remains available'
+        fi
+    fi
+    console=/dev/console
+    [ -c "$console" ] || console=/sysroot/dev/console
+    while :; do
+        /bin/sh <"$console" >"$console" 2>&1
+        sleep 5
+    done
+}
+mkdir -p /dev /proc /sys /run /sysroot || fail 'Cannot create mountpoints'
+mountpoint -q /dev || mount -t devtmpfs devtmpfs /dev || fail 'devtmpfs failed'
+mountpoint -q /proc || mount -t proc proc /proc || fail 'proc failed'
+mountpoint -q /sys || mount -t sysfs sysfs /sys || fail 'sysfs failed'
+mountpoint -q /run || mount -t tmpfs -o mode=0755 tmpfs /run || fail 'run failed'
+expected=$(cat /etc/piano/root-partuuid) || fail 'Missing root identity'
+release=$(cat /etc/piano/kernel-release) || fail 'Missing kernel identity'
+[ "$(uname -r)" = "$release" ] || fail 'Kernel/module release mismatch'
+log "DISK_INIT_BEGIN: kernel=$release root=PARTUUID=$expected"
+selected=0
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in
+        piano.root=*)
+            [ "$arg" = "piano.root=PARTUUID=$expected" ] || fail 'Unexpected piano.root'
+            selected=$((selected + 1)) ;;
+        root=*) [ "$arg" = "root=PARTUUID=$expected" ] || fail 'Other block roots are forbidden' ;;
+    esac
+done
+[ "$selected" -eq 1 ] || fail 'Exactly one explicit piano.root=PARTUUID is required'
+dma_routes() {
+    # Reuse the kernel's serialized per-master readback; never write SMMU MMIO.
+    for device in 1d84000.ufshc a600000.ssusb; do
+        for attribute in piano_dma_route piano_dma_context; do
+            path=/sys/bus/platform/devices/$device/$attribute
+            [ -r "$path" ] || continue
+            snapshot=$(cat "$path" 2>&1)
+            result=$?
+            log "DMA_READBACK phase=$1 device=$device attribute=$attribute status=$result"
+            printf '%s\n' "$snapshot" | while IFS= read -r line; do log "$line"; done
+        done
+    done
+}
+while read -r name module; do
+    log "Loading module $name"
+    [ -d "/sys/module/$name" ] || insmod "$module" || fail "Cannot load $name"
+    case "$name" in arm_smmu|ufs_qcom) dma_routes "after-$name" ;; esac
+done </etc/piano/modules-load-order
+
+# sysfs identifies partition nodes; blkid low-level probing bypasses all caches.
+# The label alone never authorizes a mount. No filesystem repair is attempted.
+rootdev=
+attempt=0
+while [ "$attempt" -lt 30 ]; do
+    for part in /sys/class/block/*; do
+        [ -f "$part/partition" ] || continue
+        grep -qx 'PARTNAME=sunuefi_root' "$part/uevent" || continue
+        candidate=/dev/${part##*/}
+        [ -b "$candidate" ] || continue
+        uuid=$(blkid -p -s PART_ENTRY_UUID -o value "$candidate" 2>/dev/null) || continue
+        [ "$uuid" = "$expected" ] || continue
+        [ -z "$rootdev" ] || fail 'Duplicate root PARTUUID'
+        rootdev=$candidate
+    done
+    [ -z "$rootdev" ] || break
+    attempt=$((attempt + 1))
+    sleep 1
+done
+[ -n "$rootdev" ] || fail 'Selected Linux partition did not appear'
+verify_device() {
+    [ "$(blkid -p -s PART_ENTRY_UUID -o value "$rootdev")" = "$expected" ] &&
+    [ "$(blkid -p -s PART_ENTRY_NAME -o value "$rootdev")" = sunuefi_root ] &&
+    [ "$(blkid -p -s TYPE -o value "$rootdev")" = ext4 ]
+}
+verify_device || fail 'PARTUUID/PARTLABEL/TYPE mismatch'
+# noload prevents even journal replay during the first read-only inspection.
+mount -t ext4 -o ro,noload "$rootdev" /sysroot || fail 'Read-only Linux mount failed'
+[ -x /sysroot/usr/lib/systemd/systemd ] || fail 'Real systemd is missing'
+[ -d "/sysroot/usr/lib/modules/$release" ] || fail 'Matching distro modules are missing'
+[ ! -f /sysroot/etc/initrd-release ] || fail 'Root is initrd-only'
+[ -x /sysroot/usr/lib/piano/piano-disk-hardware-prepare ] || fail 'Hardware preparation is missing'
+umount /sysroot || fail 'Cannot finish read-only inspection'
+verify_device || fail 'Root identity changed before writable mount'
+# A fresh mount allows normal ext4 journal recovery on this verified partition.
+mount -t ext4 -o rw "$rootdev" /sysroot || fail 'Writable Linux mount failed'
+mkdir -p /sysroot/dev /sysroot/proc /sysroot/sys /sysroot/run /sysroot/tmp || fail 'Root mountpoints failed'
+chmod 1777 /sysroot/tmp || fail 'Root tmp permissions failed'
+printf 'PARTUUID=%s\n' "$expected" >/run/piano-root-mode || fail 'Cannot record root mode'
+printf '%s\n' "$rootdev" >/run/piano-root-device || fail 'Cannot record root device'
+for virtual in dev proc sys run; do
+    mount --move "/$virtual" "/sysroot/$virtual" || fail "Cannot move $virtual"
+done
+chroot /sysroot /usr/lib/piano/piano-disk-hardware-prepare || fail 'Hardware preparation failed'
+log "DISK_ROOT_READY: starting Debian systemd on PARTUUID=$expected"
+exec switch_root -c /dev/console /sysroot /usr/lib/systemd/systemd >/sysroot/dev/kmsg 2>&1
+fail 'switch_root failed'

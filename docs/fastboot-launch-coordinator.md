@@ -29,7 +29,7 @@ CreateEventEx安装EXIT_BOOT_SERVICES notify，只做State CPU标记。所有BS�
 ## actual-source host验证
 
 ```sh
-bash tools/test_fastboot_launch.sh
+bash tests/native/test_fastboot_launch.sh
 ```
 
 `test_fastboot_launch.c` 编译实际parser/coordinator，用真实EFI_BOOT_SERVICES函数类型实现mock，覆盖：raw/wrapped PE、shutdown-before-Load/Start、normal auto-unload与显式unload、fresh身份/recycled handle、LoadOptions及ExitData、rawAndroid/ramdisk unsupported、budget、load/security/allocator/start错误、restore-vs-zero、unload/close/free/unborrow/ownership失败保留、successNULL违约、reentry和1GiB logical source无wholecopy。旧LoadedImage页在模拟auto-unload时PROT_NONE，BootServices表在模拟EBS返回后PROT_NONE，确保生命周期错误会实际fault。
@@ -38,4 +38,4 @@ ASan+UBSan/leak通过；PianoFastbootLaunch.c与Boot.c的AArch64 freestanding -W
 
 下一步root可让USB boot请求在IN ACK结束后转移blob到持久adapter，绑定可信live BS检查/typed all-owner shutdown/Runtime FailStop与budget，再单独运行可返回的小AA64 EFI app。原版boot是否成功仍以真实日志/画面/返回/回归验收；不要现在把这些callback接口宣称已接线。
 
-联合actual-source测试另通过：`python3 tests/test_fastboot_launch_integration.py -v`。四个生产翻译单元（Fastboot、DownloadBlob、Boot parser、Launch）分别编译链接，使用实际命令层完成valid AA64 PE下载；ShutdownAll调用真实FastbootReset，确认borrowed source没有提前zero/free。四个场景覆盖返回应用成功、Load失败后完整Restore、typed release error和warning后保留及禁止重入。该fixture的EFI函数仍是host mock，未执行ARM64指令或操作设备。
+联合actual-source测试另通过：`python3 tests/unit/test_fastboot_launch_integration.py -v`。四个生产翻译单元（Fastboot、DownloadBlob、Boot parser、Launch）分别编译链接，使用实际命令层完成valid AA64 PE下载；ShutdownAll调用真实FastbootReset，确认borrowed source没有提前zero/free。四个场景覆盖返回应用成功、Load失败后完整Restore、typed release error和warning后保留及禁止重入。该fixture的EFI函数仍是host mock，未执行ARM64指令或操作设备。

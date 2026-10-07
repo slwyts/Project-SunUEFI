@@ -40,7 +40,7 @@ def stage(root,usb='acm-ncm',shell=True):
                 raise ValueError('Existing debug service link differs')
     records={}
     for name,relative in FILES.items():
-        source=ROOT/'bootprofiles/linux-userspace'/name;target=safe(root,relative)
+        source=ROOT/'linux/userspace'/name;target=safe(root,relative)
         target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,target)
         target.chmod(0o644 if name.endswith('.service')else 0o755)
         records[relative]=hashlib.sha256(target.read_bytes()).hexdigest()

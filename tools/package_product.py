@@ -4,6 +4,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -38,7 +39,7 @@ def main():
     fd=out/'PianoUEFI-product.fd';shim=out/'BootShim.bin';dtb=ws/'Resources/DTBs/piano.dtb'
     fd_bytes=fd.read_bytes();shim_bytes=shim.read_bytes()
     if len(fd_bytes)!=0x300000 or shim_bytes[56:60]!=b'ARM\x64':raise ValueError('Unexpected product FD/BootShim')
-    symbols=subprocess.check_output([str(root/'build/host-tools/usr/bin/aarch64-linux-gnu-nm'),'-n',str(root/'bootprofiles/handoff/BootShim.elf')],text=True)
+    symbols=subprocess.check_output([str(Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',str(root/'build/host-tools/usr')))/'bin/aarch64-linux-gnu-nm'),'-n',str(root/'uefi/handoff/bootshim/BootShim.elf')],text=True)
     offsets=[int(row.split()[0],16)for row in symbols.splitlines()if len(row.split())==3 and row.split()[2]=='_Payload']
     if offsets!=[len(shim_bytes)]:raise ValueError('Product BootShim FD payload offset mismatch')
     for path in (fd,ws/'Build/pianoProductPkg/DEBUG_CLANGPDB/FV/FVMAIN.Fv'):

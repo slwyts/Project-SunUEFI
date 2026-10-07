@@ -1,0 +1,32 @@
+From e23f4479f6bd35eec3f1438e8c022e6a27d8fc8f Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 6 Oct 2026 23:51:28 +0800
+Subject: [PATCH] iommu: arm-smmu: retain identity-route fault evidence on
+ failed readback
+
+---
+ drivers/iommu/arm/arm-smmu/arm-smmu.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.c b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+index 387182a324d0136232f2da6045916e3bd1395972..3414b7e9471ab12397f68a4b3f06918d25176cff 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+@@ -1502,6 +1502,17 @@ static ssize_t piano_dma_identity_read(struct device *dev, char *buf)
+ 			fsr = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSR);
+ 			if ((sctlr & ARM_SMMU_SCTLR_M) || (fsr & ARM_SMMU_CB_FSR_FAULT) ||
+ 			    FIELD_GET(ARM_SMMU_CBAR_TYPE, cbar) != CBAR_TYPE_S1_TRANS_S2_BYPASS) {
++				/* Preserve the latched fault; these observations never ack it. */
++				dev_err_ratelimited(dev,
++					"identity route invalid sid=%x slot=%d cb=%u sctlr=%08x cbar=%08x cba2r=%08x tcr=%08x tcr2=%08x fsr=%08x far=%016llx fsynr0=%08x fsynr1=%08x\n",
++					(u32)FIELD_GET(ARM_SMMU_SMR_ID, fw->ids[i]), idx, cb,
++					sctlr, cbar,
++					arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBA2R(cb)),
++					arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_TCR),
++					arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_TCR2), fsr,
++					arm_smmu_cb_readq(smmu, cb, ARM_SMMU_CB_FAR),
++					arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSYNR0),
++					arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSYNR1));
+ 				ret = -EIO;
+ 				goto out;
+ 			}

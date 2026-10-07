@@ -379,7 +379,7 @@ def main() -> int:
     args = parser.parse_args()
     artifact = ROOT / "artifacts/kernel-topics" / args.topic
     manifest, output = args.kernel_manifest or artifact / "manifest.json", args.output_dir or artifact / "ram"
-    init = ROOT / "bootprofiles/kernel-ram/init"
+    init = ROOT / "linux/initramfs/kernel-ram/init"
     policy = TOPICS[args.topic]
     try:
         if args.verify_output:

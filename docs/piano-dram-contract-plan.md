@@ -8,7 +8,7 @@
 python3 tools/plan_piano_dram.py \
   --runtime-evidence private/analysis/dram-runtime-android-after-test-86.txt \
   --output artifacts/dram/piano-full-dram-review.json
-python3 -m unittest discover -s tests -p test_plan_piano_dram.py -v
+python3 -m unittest discover -s tests/unit -p test_plan_piano_dram.py -v
 ```
 
 DTB SHA固定a4b55dd3b77e69be451aaf2263c76f5496c93325767e49f748ee49570611e8d7；其他输入按实际bytes/SHA记录，发布前重核。不同DTB不能通过CLI替换。输出源是review snapshot，root后续更新native或runtime证据必须重新生成并审查；不能把旧JSON当现行表。

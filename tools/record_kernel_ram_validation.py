@@ -40,7 +40,7 @@ def main():
     archive = root / f'artifacts/tests/stage0-test-{args.test_id}'
     image = (archive / 'piano-stage0-UNTESTED.img').read_bytes()
     test_meta = json.loads((archive / 'manifest.json').read_text())
-    pin = json.loads((root / 'kernel-profiles.json').read_text())['profiles'][args.profile]['commit']
+    pin = json.loads((root / 'linux/kernel-profiles.json').read_text())['profiles'][args.profile]['commit']
     if record.get('profile') != 'linux' or record.get('fastboot_boot', {}).get('exit_code') != 0 or record.get('flash_commands_performed') or not partition['all_26_match']:
         raise ValueError('No successful RAM-only test with restored Android partition verification')
     if sha(image) != record['image_sha256'] or test_meta['linux_handoff_mode'] != 'raw-arm64':

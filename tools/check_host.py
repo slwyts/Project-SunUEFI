@@ -2,7 +2,7 @@
 """Run explicit offline checks; never prepares firmware or contacts a device.
 
 The portable group runs on a source-only clone with Python's standard library.
-python-all discovers both Python test locations and needs their documented
+python-all discovers tests/unit and needs its documented
 local prerequisites. Native shell/C checks remain separate, explicit commands.
 """
 import argparse
@@ -14,26 +14,32 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 PORTABLE = (
-    'tests/test_product_contract.py',
-    'tests/test_usb_log_bounds.py',
-    'tests/test_collect_uefi_ramlog.py',
-    'tools/test_build_integrity.py',
-    'tools/test_dma_log.py',
-    'tools/test_usb_diagnostic_host.py',
-    'tests/test_host_checks.py',
+    'tests/unit/test_product_contract.py',
+    'tests/unit/test_usb_log_bounds.py',
+    'tests/unit/test_collect_uefi_ramlog.py',
+    'tests/unit/test_piano_bootfail.py',
+    'tests/unit/test_build_integrity.py',
+    'tests/unit/test_dma_log.py',
+    'tests/unit/test_usb_diagnostic_host.py',
+    'tests/unit/test_host_checks.py',
+    'tests/unit/test_vendor_inputs.py',
+    'tests/unit/test_release_kernel.py',
+    'tests/unit/test_release_rootfs.py',
+    'tests/unit/test_install_piano.py',
+    'tests/unit/test_assemble_rootfs.py',
+    'tests/unit/test_bsp_package.py',
 )
 
 
 def checks(root, group):
     if group == 'portable':
         return [root / name for name in PORTABLE]
-    return sorted(path for folder in ('tests', 'tools')
-                  for path in (root / folder).glob('test_*.py'))
+    return sorted((root / 'tests/unit').glob('test_*.py'))
 
 
 def run_check(path, timeout):
     # Discover only this file. A subprocess isolates module names/import paths
-    # between the old tools tests and newer tests directory.
+    # between individual unit files and their temporary fixtures.
     command = [sys.executable, '-m', 'unittest', 'discover',
                '-s', str(path.parent), '-p', path.name, '-v']
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')

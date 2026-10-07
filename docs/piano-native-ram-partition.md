@@ -55,7 +55,7 @@ exact range and keeps `OwnershipVerified=FALSE` for every result.
 
 ## Product integration
 
-The canonical implementation is `bootprofiles/uefi-app/PianoRamPartition.c/.h`.
+The canonical implementation is `uefi/core/PianoRamPartition.c/.h`.
 The single ProductCore calls the identity-only inventory after the native
 foundation is ready. Only exact successful image/ABI verification permits one
 explicit bounded native fetch. Retained resources or a services-loss result
@@ -107,7 +107,7 @@ copy. Full fetch uses distinct UINT32 bank and UINT64 preloaded counts. A final
 fresh-identity error after successful reads keeps raw observations but sets
 DataValid FALSE; OwnershipVerified remains FALSE in every report.
 
-`tests/PianoRamPartitionTest.c` executes the actual C inventory against the real
+`tests/native/PianoRamPartitionTest.c` executes the actual C inventory against the real
 captured Env PE. Actual source SHA, relocation normalization, loaded-image
 identity and vtable guards run unchanged. Only the **audited ARM method call
 boundary** is replaced, because the host is x86. This is not provider/hardware
@@ -116,7 +116,7 @@ inventory, missing/changed PE, wrong image/path/text/revision/method, oversized
 counts, warning/error, stale identity, changed counts, overflowing or overlapping
 banks, synthetic fallback, zero preloaded size, EBS and uncertain release.
 
-`python3 -m unittest discover -s tests -p test_ram_partition.py -v` executes the
+`python3 -m unittest discover -s tests/unit -p test_ram_partition.py -v` executes the
 27 cases and strictly compiles the actual ARM64 ABI. The ARM call boundary is
 substituted only in the host test. Native invocation, real collected bank data,
 high-memory ownership, MMU/GCD integration and 1 GiB allocation still require

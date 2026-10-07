@@ -43,7 +43,7 @@
 | SETUP TRB | 8 bytes，TRBCTL 2，HWO/LST/ISP/IOC | 正确 |
 | STARTTRANSFER | PAR0 = TRB address high、PAR1 = low | 正确 |
 
-依据：`bootprofiles/uefi-app/PianoDwc3Device.c`、`upstream/reference-kernel/drivers/usb/dwc3/{core.h,gadget.h,core.c,ep0.c}`。本机原生 `UsbfnDwc3Dxe` 在 RVA `8c80–8ce4` 使用相同 event-ring 偏移；其 `e988` attach 操作是现有实验缺失的额外步骤。
+依据：`uefi/core/PianoDwc3Device.c`、`upstream/reference-kernel/drivers/usb/dwc3/{core.h,gadget.h,core.c,ep0.c}`。本机原生 `UsbfnDwc3Dxe` 在 RVA `8c80–8ce4` 使用相同 event-ring 偏移；其 `e988` attach 操作是现有实验缺失的额外步骤。
 
 ## PHY、EUD 与 Type-C / I2C
 
@@ -67,7 +67,7 @@ cleanup 必须先得到 `DSTS.DEVCTRLHLT = 1`，之后才恢复两个 QSCRATCH �
 
 新增日志为 `SUNUEFI_USB_SESSION_SAVED`、`SUNUEFI_USB_SESSION_SET`、`SUNUEFI_USB_SESSION_RESTORE`，分别包含原值、目标/读回、恢复/读回以及 DSTS。补丁没有初始化 PHY、写 PMIC、运行 Type-C/I2C 驱动或改动其他硬件路径。
 
-`tools/test_usb_session.c` 直接包含实际固件 C 源，以主机 MMIO/DMA 模型覆盖正常零事件退出、session 读回拒绝、STARTTRANSFER 失败、分配失败和 Halt 失败。验证包括其他位保留、RUN_STOP 前 session 有效、成功 Halt 后完整恢复，以及 Halt 失败时不恢复/不释放 DMA。以下命令已通过；没有执行 prepare 脚本、完整固件构建或任何设备操作：
+`tests/native/test_usb_session.c` 直接包含实际固件 C 源，以主机 MMIO/DMA 模型覆盖正常零事件退出、session 读回拒绝、STARTTRANSFER 失败、分配失败和 Halt 失败。验证包括其他位保留、RUN_STOP 前 session 有效、成功 Halt 后完整恢复，以及 Halt 失败时不恢复/不释放 DMA。以下命令已通过；没有执行 prepare 脚本、完整固件构建或任何设备操作：
 
 ```sh
 cc -std=gnu11 -fshort-wchar -ffunction-sections -fdata-sections \
@@ -76,7 +76,7 @@ cc -std=gnu11 -fshort-wchar -ffunction-sections -fdata-sections \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/X64 \
   -I upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include \
   -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include \
-  tools/test_usb_session.c -Wl,--gc-sections -o /tmp/sunuefi-test-usb-session
+  tests/native/test_usb_session.c -Wl,--gc-sections -o /tmp/sunuefi-test-usb-session
 /tmp/sunuefi-test-usb-session
 ```
 
@@ -118,7 +118,7 @@ reader 只匹配 1209:8750 与 SunUEFI-piano serial，等待可打开设备；�
 
 输出为 `private/analysis/usb-diagnostic-host-test-68/manifest.json`、`ramlog.bin`、`ramlog.txt`。真实验收需要 manifest 中 **debug_verified=true 和 log_verified=true**，并且 status_after.accepted_replies 相比 status_before 增长、页/全量 CRC 全部匹配。固件日志还应有 request=5B、DIAG_SNAPSHOT 和正常 IN/STATUS OUT 完成。仅看到设备节点、旧 watcher 的枚举标志或主机 mock 成功不算通道实测。
 
-`tools/test_usb_diagnostic.c` 直接包含实际 C 源和既有 session/address 测试，额外检查 console wrap、最新 marker、稳定快照、页 CRC、越界/错误方向/错误长度拒绝、RESET 失效，以及回复沿 mTx shared-DMA 的 IN→STATUS OUT 流程。`tools/test_usb_diagnostic_host.py` 离线覆盖二进制往返、最后页精确长度、空快照、timeout 同页重试、损坏 CRC、过期 generation、reset/过期状态及大小上限，测试不初始化 libusb。
+`tests/native/test_usb_diagnostic.c` 直接包含实际 C 源和既有 session/address 测试，额外检查 console wrap、最新 marker、稳定快照、页 CRC、越界/错误方向/错误长度拒绝、RESET 失效，以及回复沿 mTx shared-DMA 的 IN→STATUS OUT 流程。`tests/unit/test_usb_diagnostic_host.py` 离线覆盖二进制往返、最后页精确长度、空快照、timeout 同页重试、损坏 CRC、过期 generation、reset/过期状态及大小上限，测试不初始化 libusb。
 
 ```sh
 cc -std=gnu11 -fshort-wchar -ffunction-sections -fdata-sections \
@@ -127,9 +127,9 @@ cc -std=gnu11 -fshort-wchar -ffunction-sections -fdata-sections \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/X64 \
   -I upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include \
   -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include \
-  tools/test_usb_diagnostic.c -Wl,--gc-sections -o /tmp/sunuefi-test-usb-diagnostic
+  tests/native/test_usb_diagnostic.c -Wl,--gc-sections -o /tmp/sunuefi-test-usb-diagnostic
 /tmp/sunuefi-test-usb-diagnostic
-python tools/test_usb_diagnostic_host.py
+python tests/unit/test_usb_diagnostic_host.py
 ```
 
 ## session 步骤的验收依据
@@ -169,7 +169,7 @@ Console 检查现已包括 signature、Start < capacity、Size <= capacity、**S
 Host-only 全测试入口：
 
 ```sh
-bash tools/test_usb_fastboot.sh
+bash tests/native/test_usb_fastboot.sh
 ```
 
 它把实际 C 源编译为 `/tmp` host binary，覆盖默认 EP0/session/5B、command allowlist、SHA256、download overflow、frozen upload zero/free，以及 gate=1 的 65,553-byte binary roundtrip、FS/HS/SS 描述符/FIFO、状态 ACK 时序、config0 异步 END、reset/disconnect、Start>Size 拒绝。新 bulk 测试含 ASan+UBSan 与 leak detection；它没有调用设备，也没有运行 prepare 或固件构建。
@@ -196,7 +196,7 @@ test82 没有测试 `reboot`；其后新增 lifecycle 属于下一未验证版�
 
 Halt 失败保留活跃 DMA 并按原 fail-stop 分支复位/DeadLoop；DMA free、OwnedClose、clock 或 GDSC 失败不会假装 clean 或执行普通 reboot。日志分别报告 `SUNUEFI_USB_DEVICE_CLEANUP` 的 retained buffer 数、`SUNUEFI_USB_SMMU_CLOSE` 的 attached/table 状态及 `SUNUEFI_USB_CONTROLLER_END` 的 release 失败/未确认状态，并拒绝覆盖仍保留的 Controller context。Close 失败而 DWC3 已 Halt 时可以释放 USB clocks，但 SMMU table 保留和 reboot 取消会明确记录。
 
-`bash tools/test_usb_fastboot.sh` 已覆盖完整实际 Device event-loop 的 SETUP → configuration → reboot → IN ACK → cleanup → 单次消费，以及未 ACK / DMA free 失败不发布请求、continue 返回。独立 `test_usb_reboot_lifecycle.c` 编译实际 Controller，验证 OwnedClose → clocks → GDSC → reset 顺序、ResetSystem 返回后 DeadLoop、Close/clock/GDSC/Halt 失败保留状态与 retry refusal。Bulk/event-loop 测试通过 ASan+UBSan/leak，四个固件源通过 AArch64 freestanding syntax check；这些仍是 host 证据，实机 reboot 以 test83 的新日志为准。没有加入未核实的 `reboot-bootloader` / recovery 重启 reason。
+`bash tests/native/test_usb_fastboot.sh` 已覆盖完整实际 Device event-loop 的 SETUP → configuration → reboot → IN ACK → cleanup → 单次消费，以及未 ACK / DMA free 失败不发布请求、continue 返回。独立 `test_usb_reboot_lifecycle.c` 编译实际 Controller，验证 OwnedClose → clocks → GDSC → reset 顺序、ResetSystem 返回后 DeadLoop、Close/clock/GDSC/Halt 失败保留状态与 retry refusal。Bulk/event-loop 测试通过 ASan+UBSan/leak，四个固件源通过 AArch64 freestanding syntax check；这些仍是 host 证据，实机 reboot 以 test83 的新日志为准。没有加入未核实的 `reboot-bootloader` / recovery 重启 reason。
 
 ## 标准只读 partition fetch 接口（未连接实机 backend）
 

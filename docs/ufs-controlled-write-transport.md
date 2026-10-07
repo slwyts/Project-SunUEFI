@@ -69,12 +69,12 @@ Reserved UFS DMA/table retention 只对消费 UEFI memory map 的OS有保障；r
 可重现 host-only 验证入口：
 
 ```bash
-bash tools/test_ufs_write_transaction.sh
-bash tools/test_ufs_write_transport.sh
-python3 -m unittest discover -s tests -p 'test_ufs_write_profile.py'
-python3 -m unittest discover -s tests -p 'test_prepare_ufs_write_test.py'
-bash tools/test_dma_foundation.sh
-bash tools/test_ufs_firmware.sh
+bash tests/native/test_ufs_write_transaction.sh
+bash tests/native/test_ufs_write_transport.sh
+python3 -m unittest discover -s tests/unit -p 'test_ufs_write_profile.py'
+python3 -m unittest discover -s tests/unit -p 'test_prepare_ufs_write_test.py'
+bash tests/native/test_dma_foundation.sh
+bash tests/native/test_ufs_firmware.sh
 ```
 
 当前结果：helper82个actual C用例（含20完整preflight），真实Submit/guard/read/FUA/sync/quiet适配器16个restore-test + 9个preflight memory-only用例，packed ABI、ASan/UBSan、两macro profile AArch64语法检查通过；profile10项、attestation22项通过；既有DMA/owned/layout/BlockIO/lifetime/FAT/Shell host检查通过。

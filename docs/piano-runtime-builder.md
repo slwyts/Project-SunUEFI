@@ -65,7 +65,7 @@ bundle bytes and staging into the original artifact base are refused. The tool
 does not modify the account, locale, GDM policy or firmware overrides. Rebuild
 into a new output directory for every generation; this preserves old evidence.
 
-`tests/test_piano_runtime_builder.py` runs the actual canonical compile/link,
+`tests/unit/test_piano_runtime_builder.py` runs the actual canonical compile/link,
 QEMU help, topology compile/decode and external module path in a separate output,
 then verifies wrong kernel release and forbidden staging are refused. It does
 not modify the already staged rootfs. Runtime packaging success is distinct

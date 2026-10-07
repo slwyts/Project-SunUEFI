@@ -98,7 +98,7 @@ def adapt(name, data):
         if name in anchors:
             before = anchors[name]
             preparation = 'modprobe fastrpc || { say "FAIL fastrpc"; exit 1; }\n' if name == 'adsp-start' else ''
-            wait = ' --wait-seconds 20' if name in ('adsp-start', 'audio-start') else ''
+            wait = ' --wait-seconds 20' if name in ('keyboard-start', 'adsp-start', 'audio-start') else ''
             text = replace_once(text, before, preparation + GUARD + scope + wait + '\n\n' + before)
     if name in ('adsp-start', 'audio-start'):
         # A failed oneshot must not be reported successful by systemd.
@@ -138,7 +138,11 @@ def build(output, source, rootfs=None):
     files = {'usr/lib/piano/piano_dma_routes.py': check,
              'usr/lib/piano/piano_dma_contexts.py': contexts,
              'usr/lib/piano/piano-ram-hardware-prepare':
-             (ROOT / 'bootprofiles/linux-userspace/piano-ram-hardware-prepare').read_bytes()}
+             (ROOT / 'linux/userspace/piano-ram-hardware-prepare').read_bytes()}
+    # Install these local additions from the same files as the generic BSP.
+    for relative in ('etc/modules-load.d/piano-bluetooth.conf',
+                     'usr/lib/systemd/system/upower.service.d/20-piano-keyboard.conf'):
+        files[relative] = (ROOT / 'linux/bsp/common' / relative).read_bytes()
     audio_path = 'usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf'
     original_audio = (source / 'rootfs/overlay' / audio_path).read_bytes()
     if digest(original_audio) != 'ed1b91e6f7e4cef76f1f60cfe3dc01d249cfb0267bb983bfc362df8f4f97609c':

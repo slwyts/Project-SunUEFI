@@ -1,6 +1,6 @@
 # Piano readonly boot-file source
 
-`bootprofiles/os-boot/PianoBootFileSource.c/h` is a real UEFI Simple File System
+`uefi/components/os-boot/PianoBootFileSource.c/h` is a real UEFI Simple File System
 reader and CPU staging owner for the autonomous OS loader. Its canonical source
 directory is shared with the unique product build. It does not start an image, change the EFI
 memory map, request ExitBootServices, or write storage.
@@ -73,7 +73,7 @@ current low-memory product. No 1 GiB allocation or high-DDR ownership is claimed
 
 ## Integration and verification
 
-`tools/prepare_product.py` now stages all canonical `bootprofiles/os-boot` files
+`tools/prepare_product.py` now stages all canonical `uefi/components/os-boot` files
 unchanged into `Applications/ProductCore/OsBoot`, and the unique ProductCore INF
 includes the reader, CPU image loan and Linux EFI session C files and headers.
 The staged `uefi-app` header mirror preserves the canonical relative includes;
@@ -98,7 +98,7 @@ boot. The build manifest explicitly reports `COMPILED_PLATFORM_NOT_READY`, a
 Run:
 
 ```sh
-python3 -m unittest discover -s tests -p test_boot_file_source.py -v
+python3 -m unittest discover -s tests/unit -p test_boot_file_source.py -v
 ```
 
 The test compiles the actual C reader and shared interfaces with AddressSanitizer
@@ -113,7 +113,7 @@ same actual source also passes strict AArch64 freestanding compilation.
 Product staging and freshness verification:
 
 ```sh
-python3 -m unittest discover -s tests -p test_product_os_boot_wiring.py -v
+python3 -m unittest discover -s tests/unit -p test_product_os_boot_wiring.py -v
 ```
 
 These four tests stage the real canonical files through the product helper,

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'">
+  <title>SunUEFI</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="main.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">PROJECT SUNUEFI · PIANO</p>
+      <h1>选择下一次启动</h1>
+      <p class="intro">普通重启进入 Android，重启到 Recovery 保留原厂恢复。只有单独确认的请求才进入 SunUEFI。</p>
+    </header>
+    <section class="status" aria-live="polite">
+      <span class="dot" aria-hidden="true"></span>
+      <div><strong id="status-title">源码预览，启动请求尚未就绪</strong><p id="status-detail">正在读取本地模块信息。</p></div>
+    </section>
+    <section class="choices" aria-label="启动目标">
+      <article>
+        <span class="number">01</span><h2>UEFI</h2>
+        <p>进入 SunUEFI 菜单，选择系统或打开设置。</p>
+        <button id="request-uefi" data-target="uefi" disabled>请求启动 UEFI</button>
+      </article>
+      <article>
+        <span class="number">02</span><h2>Linux</h2>
+        <p>通过同一 UEFI 核心进入已安装的 Linux。</p>
+        <button id="request-linux" data-target="linux" disabled>请求启动 Linux</button>
+      </article>
+    </section>
+    <section class="preview">
+      <label for="preview-target">只读预览</label>
+      <select id="preview-target"><option value="uefi">UEFI 请求</option><option value="linux">Linux 请求</option><option value="setup">UEFI 设置请求</option></select>
+      <p id="preview-detail">预览不会写入请求，也不会重启。</p>
+    </section>
+    <footer>本页当前没有连接管理器原生接口。一次性请求工具和消费逻辑尚未实现；不会修改 BOOT、GPT 或 Recovery。</footer>
+  </main>
+</body>
+</html>

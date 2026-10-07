@@ -1,0 +1,25 @@
+--- a/rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf
++++ b/rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf
+@@ -32,10 +32,20 @@
+ SectionDevice."Mic" {
+ 	Comment "Internal microphone"
+ 
+-	Include.vadm0e.File "/codecs/qcom-lpass/va-macro/DMIC0EnableSeq.conf"
+-	Include.vadm0d.File "/codecs/qcom-lpass/va-macro/DMIC0DisableSeq.conf"
++	EnableSequence [
++		cset "name='VA DEC0 MUX' VA_DMIC"
++		cset "name='VA DMIC MUX0' DMIC1"
++		cset "name='VA_AIF1_CAP Mixer DEC0' 1"
++		cset "name='VA_DEC0 Volume' 84"
++	]
++	DisableSequence [
++		cset "name='VA DMIC MUX0' ZERO"
++		cset "name='VA_DEC0 Volume' 0"
++		cset "name='VA_AIF1_CAP Mixer DEC0' 0"
++	]
+ 
+ 	Value {
++		CaptureChannels 2
+ 		CapturePriority 100
+ 		CapturePCM "hw:${CardId},2"
+ 	}

@@ -6,8 +6,8 @@
 
 ```sh
 python3 tools/audit_pogo_i2c.py --output artifacts/pogo/native-i2c-review.json
-python3 -m unittest discover -s tests -p test_pogo_i2c.py -v
-python3 tests/PianoPogoReportTest.py
+python3 -m unittest discover -s tests/unit -p test_pogo_i2c.py -v
+python3 tests/unit/PianoPogoReportTest.py
 ```
 
 ## 固定binary与ABI证据

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "interface_version": 1,
+  "tool": "piano-boot-repack",
+  "implementation_status": "NOT_IMPLEMENTED",
+  "device_passthrough_verified": false,
+  "request_handling_verified": false,
+  "standard_recovery_preserved": false,
+  "webui_bridge_verified": false,
+  "sticky_route_verified": false,
+  "partition_execution_ready": false,
+  "commands": {
+    "status": "Read-only policy/tool/payload/current-owned-wrapper status. --require-ready fails unless native tests, Android passthrough, request consumption and stock Recovery evidence match.",
+    "probe": "Read only active BOOT and current Android identity. Reject unknown headers, nested wrappers, malformed layout, slot changes and incompatible GKI. Emit bounded reconstruction metadata, never a whole stock BOOT copy.",
+    "repack": "Extract the current ROM GKI at runtime, preserve normal init_boot/vendor_boot use, embed selector/FD/APP. With --execute re-read source hash, slot and both fingerprints; write only matching active BOOT, then read back. No inactive-slot, REC, vbmeta or GPT write.",
+    "restore": "Verify the currently active wrapper belongs to the same current ROM and source identity. Reconstruct the original kernel/header/footer from embedded original bytes and metadata; verify exact original-image SHA before writing/readback. Refuse an OTA or changed slot; never restore a historical ROM image.",
+    "request": "--target uefi/linux/setup --preview reads only. --execute requires matching policy, current active slot/ROM and an intact owned wrapper; stores a bounded consumable one-shot target and verifies readback. The consumer must remove the request before dispatch and expose sunuefi.boot=uefi only for the requested boot. Do not write raw PMIC/misc or issue an unknown reboot command. Neither producer nor consumer is implemented yet."
+  },
+  "entry_policy": "Without a valid owned request, both NORMAL and REC pass through to the current ROM kernel; reboot recovery retains original Mi Recovery. Two 4 KiB request pages follow the original GKI span and precede the selector. Each 64-byte record has a sequence, target, CRC32 and APP-generation pin. Reader/package layout is host-tested; device writer, consumption and target dispatch remain unavailable. sunuefi.boot=uefi is a host diagnostic override only. Sticky route is deferred; no post-boot updater or misc-writing shell workaround.",
+  "webui": "KernelSU webroot and Magisk action.sh are source entry points. MMRL is an optional external WebUI host. No root-command strings are embedded in JavaScript; a future verified adapter must invoke the bounded action.sh status/preview/request interfaces. Until the adapter and native request consumer are verified, request buttons are disabled.",
+  "reconstruction": {
+    "wrapper_magic": "SUNUEFI-BOOTWRAPv1",
+    "required_fields": ["wrapper_version", "source_boot_sha256", "source_boot_bytes", "active_slot", "rom_fingerprint", "boot_fingerprint", "original_kernel_sha256", "original_header_sha256", "original_footer_sha256", "original_kernel_code0", "original_kernel_code1", "original_image_size", "original_sections", "original_padding", "payload_hashes"],
+    "storage": "Embed original kernel, header, footer and exact layout/padding required for lossless reconstruction in the wrapper. install-state.json holds identities and offsets only. Do not save a second full stock partition image."
+  },
+  "fresh_partition_install": {
+    "root_gib_choices": [0, 32, 64, 128],
+    "esp_bytes": 536870912,
+    "phase_1": "Explicit volume-key confirmation; verified helper validates current GPT and F2FS, shrinks online, reads both plaintext superblocks and stores a hash-bound pending plan. Reboot Android before GPT changes.",
+    "phase_2": "After a normal Android reboot and new explicit confirmation, helper must verify the same plan/GPT and both smaller superblocks. Write backup GPT before primary with readback; reboot again before using new partition nodes.",
+    "current_behavior": "Any nonzero choice fails before all writes because the helper has not been validated. No dd or force fallback."
+  }
+}

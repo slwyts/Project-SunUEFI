@@ -73,7 +73,7 @@ error 时，保留相关资源，拒绝启动下一应用。
 
 ## 当前证据与待接线
 
-`tests/PianoBootPolicyTest.c` 编译实际策略和 FV 加载器，使用真实 UEFI ABI
+`tests/native/PianoBootPolicyTest.c` 编译实际策略和 FV 加载器，使用真实 UEFI ABI
 签名进行 59 个隔离场景测试。覆盖默认 SimpleInit、F12 顺序、UI 返回不关闭
 USB、实际 worker 状态、热插拔且旧接口不可访问、Setup 的空标记协议、
 畸形 FV 枚举、自动卸载与显式卸载、异常句柄身份、warning/error 的资源保留，

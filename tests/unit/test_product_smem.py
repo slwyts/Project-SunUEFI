@@ -1,0 +1,35 @@
+from pathlib import Path
+import hashlib,os,subprocess,tempfile,unittest
+ROOT=Path(__file__).resolve().parents[2];BASE=ROOT/'upstream/Mu-Silicium/Mu_Basecore'
+class ProductSmemTests(unittest.TestCase):
+ def test_actual_sec_revision2_hob_consumer_and_raw_replay(self):
+  inc=BASE/'MdePkg/Include';early=ROOT/'uefi/handoff/early-memory';guard=ROOT/'uefi/components/guarded-read'
+  with tempfile.TemporaryDirectory(prefix='cold-smem-hob-')as d:
+   exe=Path(d)/'snapshot';flags=['-I'+str(inc),'-I'+str(inc/'X64'),'-I'+str(guard),'-I'+str(early)]
+   cmd=['cc','-std=gnu11','-DPIANO_EARLY_HOST_TEST','-DPIANO_GUARDED_HOST_TEST','-DNO_MSABI_VA_FUNCS','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-g','-fsanitize=address,undefined','-fno-pie','-no-pie',*flags,
+    str(ROOT/'tests/native/PianoEarlySmemSnapshotTest.c'),str(ROOT/'uefi/core/PianoProductSmem.c'),str(guard/'PianoGuardedRead.c'),str(early/'PianoSmemRam.c'),str(early/'PianoSmemDescriptor.c'),str(early/'PianoEarlyMemory.c'),'-o',str(exe)]
+   build=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(build.returncode,0,build.stdout+build.stderr)
+   captured=ROOT/'private/analysis/usb-live-test95'
+   self.assertEqual(hashlib.sha256((captured/'ram402.bin').read_bytes()).hexdigest(),'16aed6a815309af4109f34000f43de0058d310e293b2aecc29c6d4d9a7ed828c')
+   self.assertEqual(hashlib.sha256((captured/'siii.bin').read_bytes()).hexdigest(),'313b218fd801ca2d9cba0450e8e4b97c046ef77443e24909c0d66234959053bc')
+   for case in range(58):
+    args=[str(exe),str(case)]
+    if case==50:args.extend((str(captured/'ram402.bin'),str(captured/'siii.bin')))
+    run=subprocess.run(args,capture_output=True,text=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'});self.assertEqual(run.returncode,0,f'cold snapshot{case}\n'+run.stdout+run.stderr)
+    if case==0:print(run.stdout.strip())
+   print('Actual SEC -> revision2 HOB -> DXE consumer: 58 raw/v3-physical/failure/tamper/bounds/wrapped-prefix replay cases passed')
+ def test_actual_three_modules_guard_parser_lifetime(self):
+  inc=BASE/'MdePkg/Include';families=[ROOT/'uefi/components/guarded-read',ROOT/'uefi/handoff/early-memory'];source=ROOT/'uefi/core/PianoProductSmem.c'
+  with tempfile.TemporaryDirectory(prefix='product-smem-')as d:
+   exe=Path(d)/'smem';flags=['-I'+str(inc),'-I'+str(inc/'X64'),*['-I'+str(p)for p in families]]
+   cmd=['cc','-std=gnu11','-DPIANO_GUARDED_HOST_TEST','-DNO_MSABI_VA_FUNCS','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-g','-fsanitize=address,undefined','-fno-pie','-no-pie',*flags,str(ROOT/'tests/native/PianoProductSmemTest.c'),str(source),str(families[0]/'PianoGuardedRead.c'),str(families[1]/'PianoSmemRam.c'),'-o',str(exe)]
+   build=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(build.returncode,0,build.stdout+build.stderr)
+   for case in range(13):
+    run=subprocess.run([str(exe),str(case)],capture_output=True,text=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'});self.assertEqual(run.returncode,0,f'case{case}\n'+run.stdout+run.stderr)
+   for early_case in range(1,20):
+    run=subprocess.run([str(exe),'0',str(early_case)],capture_output=True,text=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'});self.assertEqual(run.returncode,0,f'early{early_case}\n'+run.stdout+run.stderr)
+ def test_wrapper_actual_aarch64_syntax_and_root_order(self):
+  inc=BASE/'MdePkg/Include';flags=['-I'+str(inc),'-I'+str(inc/'AArch64'),'-I'+str(ROOT/'uefi/components/guarded-read'),'-I'+str(ROOT/'uefi/handoff/early-memory')]
+  subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror',*flags,str(ROOT/'uefi/core/PianoProductSmem.c')],check=True)
+  core=(ROOT/'uefi/core/PianoProductCore.c').read_text();self.assertLess(core.index('PianoProbeFoundation();'),core.index('Status=PianoProductObserveSmem();'));self.assertLess(core.index('Status=PianoProductObserveSmem();'),core.index('PianoUfsSetProbeAction(InitUfs)'))
+if __name__=='__main__':unittest.main()

@@ -1,0 +1,1064 @@
+diff --git a/ArmPkg/Library/ArmGenericTimerPhyCounterLib/ArmGenericTimerPhyCounterLib.c b/ArmPkg/Library/ArmGenericTimerPhyCounterLib/ArmGenericTimerPhyCounterLib.c
+index fbbecdc52830b9ac20e54eb798113175238fca21..9378c2701732d24202c339b840df734bffea99e3 100644
+--- a/ArmPkg/Library/ArmGenericTimerPhyCounterLib/ArmGenericTimerPhyCounterLib.c
++++ b/ArmPkg/Library/ArmGenericTimerPhyCounterLib/ArmGenericTimerPhyCounterLib.c
+@@ -59,7 +59,14 @@ ArmGenericTimerGetTimerFreq (
+   VOID
+   )
+ {
+-  return ArmReadCntFrq ();
++  UINTN Freq;
++
++  Freq = ArmReadCntFrq ();
++  if (!Freq) {
++    Freq = FixedPcdGet64 (PcdTimerFreqOverwrite);
++  }
++
++  return Freq;
+ }
+ 
+ UINTN
+diff --git a/ArmPkg/Library/ArmGenericTimerPhyCounterLib/ArmGenericTimerPhyCounterLib.inf b/ArmPkg/Library/ArmGenericTimerPhyCounterLib/ArmGenericTimerPhyCounterLib.inf
+index c37f2729b18869b2c58b96e4bae3493b131707cd..04626506803e20e3f9e2f3fd9d82952dafd66727 100644
+--- a/ArmPkg/Library/ArmGenericTimerPhyCounterLib/ArmGenericTimerPhyCounterLib.inf
++++ b/ArmPkg/Library/ArmGenericTimerPhyCounterLib/ArmGenericTimerPhyCounterLib.inf
+@@ -22,7 +22,12 @@
+ [Packages]
+   MdePkg/MdePkg.dec
+   ArmPkg/ArmPkg.dec
++  SiliciumPkg/SiliciumPkg.dec
+ 
+ [LibraryClasses]
+   ArmLib
+   BaseLib
++  PcdLib
++
++[FixedPcd]
++  gSiliciumPkgTokenSpaceGuid.PcdTimerFreqOverwrite
+diff --git a/ArmPkg/Library/ArmGenericTimerVirtCounterLib/ArmGenericTimerVirtCounterLib.c b/ArmPkg/Library/ArmGenericTimerVirtCounterLib/ArmGenericTimerVirtCounterLib.c
+index 893125a11185ce1b21f3e1438398690902d53641..4b1018b8dc46a95a82bf8bdd6c3d32a1a9dd9a97 100644
+--- a/ArmPkg/Library/ArmGenericTimerVirtCounterLib/ArmGenericTimerVirtCounterLib.c
++++ b/ArmPkg/Library/ArmGenericTimerVirtCounterLib/ArmGenericTimerVirtCounterLib.c
+@@ -59,7 +59,14 @@ ArmGenericTimerGetTimerFreq (
+   VOID
+   )
+ {
+-  return ArmReadCntFrq ();
++  UINTN Freq;
++
++  Freq = ArmReadCntFrq ();
++  if (!Freq) {
++    Freq = FixedPcdGet64 (PcdTimerFreqOverwrite);
++  }
++
++  return Freq;
+ }
+ 
+ UINTN
+diff --git a/ArmPkg/Library/ArmGenericTimerVirtCounterLib/ArmGenericTimerVirtCounterLib.inf b/ArmPkg/Library/ArmGenericTimerVirtCounterLib/ArmGenericTimerVirtCounterLib.inf
+index 89fcb71c5f6d1914b76f05b3fa674359b36eaf8d..5c29ece5a616ec57dd9f667e869c6e434373c306 100644
+--- a/ArmPkg/Library/ArmGenericTimerVirtCounterLib/ArmGenericTimerVirtCounterLib.inf
++++ b/ArmPkg/Library/ArmGenericTimerVirtCounterLib/ArmGenericTimerVirtCounterLib.inf
+@@ -22,7 +22,12 @@
+ [Packages]
+   MdePkg/MdePkg.dec
+   ArmPkg/ArmPkg.dec
++  SiliciumPkg/SiliciumPkg.dec
+ 
+ [LibraryClasses]
+   ArmLib
+   BaseLib
++  PcdLib
++
++[FixedPcd]
++  gSiliciumPkgTokenSpaceGuid.PcdTimerFreqOverwrite
+diff --git a/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenu.c b/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenu.c
+index 5bba6ea8165e85d122393699f688ee75ba265e41..8ad07ceb598ff8aeb78c3c2dd0c8cb633b7c61d9 100644
+--- a/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenu.c
++++ b/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenu.c
+@@ -6,6 +6,8 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ 
+ **/
+ 
++#include <Library/UefiRuntimeServicesTableLib.h>
++
+ #include "BootManagerMenu.h"
+ 
+ EFI_HII_HANDLE  gStringPackHandle;
+@@ -344,9 +346,9 @@ IgnoreBootOption (
+   }
+ 
+   //
+-  // Ignore the hidden/inactive boot option.
++  // Ignore "UEFI Misc Device" boot options.
+   //
+-  if (((BootOption->Attributes & LOAD_OPTION_HIDDEN) != 0) || ((BootOption->Attributes & LOAD_OPTION_ACTIVE) == 0)) {
++  if (BootOption->Description != NULL && StrnCmp (BootOption->Description, L"UEFI Misc Device", 16) == 0) {
+     return TRUE;
+   }
+ 
+@@ -379,7 +381,7 @@ InitializeBootMenuData (
+   }
+ 
+   BootMenuData->TitleToken[0] = STRING_TOKEN (STR_BOOT_POPUP_MENU_TITLE_STRING);
+-  BootMenuData->PtrTokens     = AllocateZeroPool (BootOptionCount * sizeof (EFI_STRING_ID));
++  BootMenuData->PtrTokens     = AllocateZeroPool ((BootOptionCount + 2) * sizeof (EFI_STRING_ID));
+   ASSERT (BootMenuData->PtrTokens != NULL);
+ 
+   //
+@@ -399,10 +401,19 @@ InitializeBootMenuData (
+                                             );
+   }
+ 
++  //
++  // Add Power Off Option
++  //
++  BootMenuData->PtrTokens[StrIndex++] = HiiSetString (gStringPackHandle, 0, L"Power Off", NULL);
++
++  //
++  // Add Exit Option
++  //
++  BootMenuData->PtrTokens[StrIndex++] = HiiSetString (gStringPackHandle, 0, L"Exit", NULL);
++
+   BootMenuData->ItemCount    = StrIndex;
+   BootMenuData->HelpToken[0] = STRING_TOKEN (STR_BOOT_POPUP_MENU_HELP1_STRING);
+   BootMenuData->HelpToken[1] = STRING_TOKEN (STR_BOOT_POPUP_MENU_HELP2_STRING);
+-  BootMenuData->HelpToken[2] = STRING_TOKEN (STR_BOOT_POPUP_MENU_HELP3_STRING);
+   InitializeBootMenuScreen (BootMenuData);
+   BootMenuData->SelectItem = 0;
+   return EFI_SUCCESS;
+@@ -468,7 +479,7 @@ BootMenuSelectItem (
+       BootMenuData->ScrollBarControl.LastItem  = WantSelectItem;
+     }
+ 
+-    gST->ConOut->SetAttribute (gST->ConOut, EFI_WHITE | EFI_BACKGROUND_BLUE);
++    gST->ConOut->SetAttribute (gST->ConOut, EFI_WHITE | EFI_BACKGROUND_BLACK);
+     FirstItem   = BootMenuData->ScrollBarControl.FirstItem;
+     LastItem    = BootMenuData->ScrollBarControl.LastItem;
+     TopShadeNum = 0;
+@@ -539,7 +550,7 @@ BootMenuSelectItem (
+   //
+   FirstItem = BootMenuData->ScrollBarControl.FirstItem;
+   if ((WantSelectItem != BootMenuData->SelectItem) && !RePaintItems) {
+-    gST->ConOut->SetAttribute (gST->ConOut, EFI_WHITE | EFI_BACKGROUND_BLUE);
++    gST->ConOut->SetAttribute (gST->ConOut, EFI_WHITE | EFI_BACKGROUND_BLACK);
+     String   = HiiGetString (gStringPackHandle, BootMenuData->PtrTokens[BootMenuData->SelectItem], NULL);
+     PrintCol = StartCol  + 1;
+     PrintRow = StartRow + 3 + BootMenuData->SelectItem - FirstItem;
+@@ -550,7 +561,7 @@ BootMenuSelectItem (
+   //
+   // Print want to select item
+   //
+-  gST->ConOut->SetAttribute (gST->ConOut, EFI_WHITE | EFI_BACKGROUND_BLACK);
++  gST->ConOut->SetAttribute (gST->ConOut, EFI_BLACK | EFI_BACKGROUND_LIGHTGRAY);
+   String   = HiiGetString (gStringPackHandle, BootMenuData->PtrTokens[WantSelectItem], NULL);
+   PrintCol = StartCol  + 1;
+   PrintRow = StartRow + TITLE_TOKEN_COUNT + 2 + WantSelectItem - FirstItem;
+@@ -589,7 +600,7 @@ DrawBootPopupMenu (
+   gST->ConOut->ClearScreen (gST->ConOut);
+ 
+   SavedAttribute = gST->ConOut->Mode->Attribute;
+-  gST->ConOut->SetAttribute (gST->ConOut, EFI_WHITE | EFI_BACKGROUND_BLUE);
++  gST->ConOut->SetAttribute (gST->ConOut, EFI_WHITE | EFI_BACKGROUND_BLACK);
+   Width              = BootMenuData->MenuScreen.Width;
+   StartCol           = BootMenuData->MenuScreen.StartCol;
+   StartRow           = BootMenuData->MenuScreen.StartRow;
+@@ -754,6 +765,16 @@ BootFromSelectOption (
+       break;
+     }
+   }
++
++  // Power Off
++  if (SelectItem == ItemNum) {
++    gRT->ResetSystem (EfiResetShutdown, EFI_SUCCESS, 0, NULL);
++  }
++
++  // Exit
++  if (SelectItem == ItemNum + 1) {
++    gBS->Exit (gImageHandle, EFI_SUCCESS, 0, NULL);
++  }
+ }
+ 
+ /**
+diff --git a/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenu.h b/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenu.h
+index 697a44aeae1ae0bae68d950a5069f2c678f0082d..8b45ad193d45b4e8911d4a0c602752ab8ea91fd2 100644
+--- a/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenu.h
++++ b/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenu.h
+@@ -22,7 +22,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ #include <Protocol/BootLogo.h>
+ 
+ #define TITLE_TOKEN_COUNT  1
+-#define HELP_TOKEN_COUNT   3
++#define HELP_TOKEN_COUNT   2
+ 
+ typedef struct _BOOT_MENU_SCREEN {
+   UINTN    StartCol;
+diff --git a/MdeModulePkg/Application/UiApp/FrontPage.c b/MdeModulePkg/Application/UiApp/FrontPage.c
+index 84fba400a21fc3d2d89abf202a963a66b4a0ea21..488cedb878ea957cd9d81f206810e051e5ff993e 100644
+--- a/MdeModulePkg/Application/UiApp/FrontPage.c
++++ b/MdeModulePkg/Application/UiApp/FrontPage.c
+@@ -8,6 +8,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ **/
+ 
+ #include "FrontPage.h"
++#include <Library/PianoProductPumpLib.h>
+ #include "FrontPageCustomizedUi.h"
+ 
+ #define MAX_STRING_LEN  200
+@@ -1042,6 +1043,9 @@ UiEntry (
+   CallFrontPage ();
+ 
+   FreeFrontPage ();
++  if (PianoProductUiReturnRequested ()) {
++    return;
++  }
+ 
+   //
+   // Will leave browser, check any reset required change is applied? if yes, reset system
+@@ -1113,11 +1117,21 @@ SetupResetReminder (
+     //
+     do {
+       CreatePopUp (EFI_LIGHTGRAY | EFI_BACKGROUND_BLUE, &Key, StringBuffer1, StringBuffer2, NULL);
+-    } while (Key.UnicodeChar != CHAR_CARRIAGE_RETURN);
++    } while (!PianoProductUiReturnRequested () && Key.UnicodeChar != CHAR_CARRIAGE_RETURN);
+ 
+     FreePool (StringBuffer1);
+     FreePool (StringBuffer2);
++    if (PianoProductUiReturnRequested ()) {
++      return;
++    }
+ 
++    if (PianoProductRebootManaged ()) {
++      EFI_STATUS RequestStatus = PianoProductRequestReboot ();
++      if (RequestStatus != EFI_SUCCESS) {
++        DEBUG ((DEBUG_ERROR, "Piano product reboot request failed: %r\n", RequestStatus));
++      }
++      return;
++    }
+     gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
+   }
+ }
+diff --git a/MdeModulePkg/Application/UiApp/UiApp.inf b/MdeModulePkg/Application/UiApp/UiApp.inf
+index 3b9e048851fefd05a15b15752041422eb2f0d876..7db5dae45282408e719c2cf40b9993176b899e0a 100644
+--- a/MdeModulePkg/Application/UiApp/UiApp.inf
++++ b/MdeModulePkg/Application/UiApp/UiApp.inf
+@@ -39,6 +39,7 @@
+   MdeModulePkg/MdeModulePkg.dec
+ 
+ [LibraryClasses]
++  PianoProductPumpLib
+   DevicePathLib
+   BaseLib
+   UefiRuntimeServicesTableLib
+diff --git a/MdeModulePkg/Bus/Usb/UsbBusDxe/UsbBus.h b/MdeModulePkg/Bus/Usb/UsbBusDxe/UsbBus.h
+index d775ca10420976e2a118b66125e17d32d82feb17..e229b1624a01b017ee04d1db8acb80fbcd4af2eb 100644
+--- a/MdeModulePkg/Bus/Usb/UsbBusDxe/UsbBus.h
++++ b/MdeModulePkg/Bus/Usb/UsbBusDxe/UsbBus.h
+@@ -133,10 +133,10 @@ typedef struct _USB_HUB_API    USB_HUB_API;
+ #define USB_CLEAR_FEATURE_REQUEST_TIMEOUT  10
+ 
+ //
+-// Bus raises TPL to TPL_NOTIFY to serialize all its operations
++// Bus raises TPL to TPL_CALLBACK to serialize all its operations
+ // to protect shared data structures.
+ //
+-#define  USB_BUS_TPL  TPL_NOTIFY
++#define  USB_BUS_TPL  TPL_CALLBACK
+ 
+ #define  USB_INTERFACE_SIGNATURE  SIGNATURE_32 ('U', 'S', 'B', 'I')
+ #define  USB_BUS_SIGNATURE        SIGNATURE_32 ('U', 'S', 'B', 'B')
+diff --git a/MdeModulePkg/Core/Dxe/DxeMain.inf b/MdeModulePkg/Core/Dxe/DxeMain.inf
+index fa21505df8f2be061644fc1eb0fa8fcb3d041488..9a59b40259503ca818e44ab06d3716a55e5c7435 100644
+--- a/MdeModulePkg/Core/Dxe/DxeMain.inf
++++ b/MdeModulePkg/Core/Dxe/DxeMain.inf
+@@ -76,6 +76,9 @@
+   MdeModulePkg/MdeModulePkg.dec
+ 
+ [LibraryClasses]
++  PianoProductPumpLib
++  PianoProductExitLib
++  PianoProductPumpLib
+   BaseMemoryLib
+   CacheMaintenanceLib
+   UefiDecompressLib
+diff --git a/MdeModulePkg/Core/Dxe/DxeMain/DxeMain.c b/MdeModulePkg/Core/Dxe/DxeMain/DxeMain.c
+index 3c20568655dbe5047e5618f5abce9e6a7f717b20..ac69f0393888c56488640af46e590e3f1039ee42 100644
+--- a/MdeModulePkg/Core/Dxe/DxeMain/DxeMain.c
++++ b/MdeModulePkg/Core/Dxe/DxeMain/DxeMain.c
+@@ -7,6 +7,9 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ **/
+ 
+ #include "DxeMain.h"
++#include <Library/PianoProductExitLib.h>
++EFI_LOADED_IMAGE_PROTOCOL *CorePianoCurrentImageInfo (EFI_HANDLE ImageHandle);
++UINTN CorePianoCurrentMemoryMapKey (VOID);
+ 
+ //
+ // DXE Core Global Variables for Protocols from PEI
+@@ -782,6 +785,18 @@ CoreExitBootServices (
+ {
+   EFI_STATUS  Status;
+ 
++  // Product native APP transition before any BeforeNotify/Timer0/map teardown.
++  // Legacy targets bind Null. A stale key or foreign image does not stop USB.
++  if (gMemoryMapTerminated) {
++    return EFI_NOT_READY;
++  }
++  Status = PianoProductBeforeExitBootServices (
++             ImageHandle, CorePianoCurrentImageInfo (ImageHandle), gEfiCurrentTpl,
++             MapKey, CorePianoCurrentMemoryMapKey (), mExitBootServicesCalled);
++  if (Status != EFI_SUCCESS) {
++    return Status;
++  }
++
+   //
+   // Notify other drivers of their last chance to use boot services
+   // before the memory map is terminated.
+diff --git a/MdeModulePkg/Core/Dxe/Event/Event.c b/MdeModulePkg/Core/Dxe/Event/Event.c
+index c2d6c30a360a57c8e6cc5d71a295b1bf64c55e2a..7af2e279889b2ba2e8a70c321cb422eda884cdff 100644
+--- a/MdeModulePkg/Core/Dxe/Event/Event.c
++++ b/MdeModulePkg/Core/Dxe/Event/Event.c
+@@ -10,6 +10,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ 
+ #include "DxeMain.h"
+ #include "Event.h"
++#include <Library/PianoProductPumpLib.h>
+ 
+ ///
+ /// gEfiCurrentTpl - Current Task priority level
+@@ -681,6 +682,18 @@ CoreWaitForEvent (
+   }
+ 
+   for ( ; ;) {
++    // Product library binding is Null for legacy diagnostics. Mu all-TPL
++    // wait behavior stays intact; APP work never runs at CALLBACK/NOTIFY.
++    if (gEfiCurrentTpl == TPL_APPLICATION) {
++      EFI_STATUS ProductStatus = PianoProductPumpApplication (PIANO_PRODUCT_PUMP_WAIT_EVENT, 1000);
++      if (!PianoProductPumpBootServicesAlive ()) {
++        return EFI_ABORTED;
++      }
++      BOOLEAN ReturnCore = PianoProductReturnCoreRequested ();
++      if (!PianoProductPumpBootServicesAlive () || ReturnCore || ProductStatus == EFI_ABORTED) {
++        return EFI_ABORTED;
++      }
++    }
+     for (Index = 0; Index < NumberOfEvents; Index++) {
+       Status = CoreCheckEvent (UserEvents[Index]);
+ 
+@@ -699,7 +712,9 @@ CoreWaitForEvent (
+     //
+     // Signal the Idle event
+     //
+-    CoreSignalEvent (gIdleLoopEvent);
++    if (gEfiCurrentTpl != TPL_APPLICATION || PianoProductPumpShouldIdle ()) {
++      CoreSignalEvent (gIdleLoopEvent);
++    }
+   }
+ }
+ 
+diff --git a/MdeModulePkg/Core/Dxe/Image/Image.c b/MdeModulePkg/Core/Dxe/Image/Image.c
+index eb2ce42264b364f0f6b4d7c092f103c341872cb3..1d4ea010249ccb1dbf173507b9988a53896ced8f 100644
+--- a/MdeModulePkg/Core/Dxe/Image/Image.c
++++ b/MdeModulePkg/Core/Dxe/Image/Image.c
+@@ -2013,3 +2013,16 @@ CoreUnloadImage (
+ Done:
+   return Status;
+ }
++
++
++// Native current StartImage frame; never trust the caller's handle alone.
++EFI_LOADED_IMAGE_PROTOCOL *
++CorePianoCurrentImageInfo (IN EFI_HANDLE ImageHandle)
++{
++  if (mCurrentImage == NULL || mCurrentImage->Signature != LOADED_IMAGE_PRIVATE_DATA_SIGNATURE || !mCurrentImage->Started ||
++      mCurrentImage->Handle != ImageHandle ||
++      mCurrentImage->ImageContext.ImageType != EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION) {
++    return NULL;
++  }
++  return &mCurrentImage->Info;
++}
+diff --git a/MdeModulePkg/Core/Dxe/Mem/Page.c b/MdeModulePkg/Core/Dxe/Mem/Page.c
+index 6a4f7a17ce47c1a2176ffca70fe81d29ef1f1a3a..bbe98d8e1741e22826f29812de368b471ae9942b 100644
+--- a/MdeModulePkg/Core/Dxe/Mem/Page.c
++++ b/MdeModulePkg/Core/Dxe/Mem/Page.c
+@@ -2472,3 +2472,15 @@ Done:
+ 
+   return Status;
+ }
++
++
++// Read-only native key snapshot. No allocation/map termination/BS call.
++UINTN
++CorePianoCurrentMemoryMapKey (VOID)
++{
++  UINTN Key;
++  CoreAcquireMemoryLock ();
++  Key = mMemoryMapKey;
++  CoreReleaseMemoryLock ();
++  return Key;
++}
+diff --git a/MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLib.c b/MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLib.c
+index 444c70af1874503685c84b91d8a1185868e2663b..a9da0f94bcd69c9e8834b87efe7e0cfa10b19eaf 100644
+--- a/MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLib.c
++++ b/MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLib.c
+@@ -7,6 +7,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ 
+ **/
+ #include "CustomizedDisplayLibInternal.h"
++#include <Library/PianoProductPumpLib.h>
+ 
+ EFI_GUID  gCustomizedDisplayLibGuid = {
+   0x99fdc8fd, 0x849b, 0x4eba, { 0xad, 0x13, 0xfb, 0x96, 0x99, 0xc9, 0xa, 0x4d }
+@@ -554,6 +555,11 @@ CreateDialog (
+ 
+   if (Key != NULL) {
+     Status = WaitForKeyStroke (&KeyValue);
++    if (PianoProductUiReturnRequested ()) {
++      gST->ConOut->SetAttribute (gST->ConOut, CurrentAttribute);
++      gST->ConOut->EnableCursor (gST->ConOut, CursorVisible);
++      return;
++    }
+     ASSERT_EFI_ERROR (Status);
+     CopyMem (Key, &KeyValue, sizeof (EFI_INPUT_KEY));
+   }
+@@ -589,11 +595,15 @@ ConfirmDataChange (
+     CreateDialog (&Key, gLibEmptyString, gSaveChanges, gAreYouSure, gLibEmptyString, NULL);
+   } while
+   (
++   !PianoProductUiReturnRequested () &&
+    (Key.ScanCode != SCAN_ESC) &&
+    ((Key.UnicodeChar | UPPER_LOWER_CASE_OFFSET) != (NoResponse | UPPER_LOWER_CASE_OFFSET)) &&
+    ((Key.UnicodeChar | UPPER_LOWER_CASE_OFFSET) != (YesResponse | UPPER_LOWER_CASE_OFFSET))
+   );
+ 
++  if (PianoProductUiReturnRequested ()) {
++    return BROWSER_ACTION_DISCARD;
++  }
+   if (Key.ScanCode == SCAN_ESC) {
+     return BROWSER_ACTION_NONE;
+   } else if ((Key.UnicodeChar | UPPER_LOWER_CASE_OFFSET) == (YesResponse | UPPER_LOWER_CASE_OFFSET)) {
+diff --git a/MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLib.inf b/MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLib.inf
+index 45fbdaf864d17b49d890f7f00d4f021426d18256..673a5780849657f293bfbcae0bcefe5b344c7d9a 100644
+--- a/MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLib.inf
++++ b/MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLib.inf
+@@ -35,6 +35,7 @@
+   MdeModulePkg/MdeModulePkg.dec
+ 
+ [LibraryClasses]
++  PianoProductPumpLib
+   MemoryAllocationLib
+   BaseLib
+   UefiBootServicesTableLib
+diff --git a/MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLibInternal.c b/MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLibInternal.c
+index 21e7e87c948cf9da494d2af63420a6ffec5859be..627b69d7258612d211619fc89c4419fbaee26ba2 100644
+--- a/MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLibInternal.c
++++ b/MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLibInternal.c
+@@ -8,6 +8,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ 
+ **/
+ #include "CustomizedDisplayLibInternal.h"
++#include <Library/PianoProductPumpLib.h>
+ 
+ EFI_SCREEN_DESCRIPTOR  gScreenDimensions;
+ CHAR16                 *mLibUnknownString;
+@@ -797,6 +798,10 @@ WaitForKeyStroke (
+   UINTN       Index;
+ 
+   while (TRUE) {
++    PianoProductPumpApplication (PIANO_PRODUCT_PUMP_APP, 1000);
++    if (PianoProductUiReturnRequested ()) {
++      return EFI_ABORTED;
++    }
+     Status = gST->ConIn->ReadKeyStroke (gST->ConIn, Key);
+     if (!EFI_ERROR (Status)) {
+       break;
+diff --git a/MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf b/MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf
+index 07e19140b4037cef950ba592c6f39afcee94ad97..bb55959168db40655e4be1beab00e39600488e5b 100644
+--- a/MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf
++++ b/MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf
+@@ -36,6 +36,7 @@
+   MdeModulePkg/MdeModulePkg.dec
+ 
+ [LibraryClasses]
++  PianoProductPumpLib
+   UefiDriverEntryPoint
+   UefiBootServicesTableLib
+   DebugLib
+diff --git a/MdeModulePkg/Universal/DisplayEngineDxe/FormDisplay.c b/MdeModulePkg/Universal/DisplayEngineDxe/FormDisplay.c
+index 0d0774af6c9dabac9e22d3ee2022ef869a4246c1..49e100cc401f6059ffb197bd5e4a5ff3851807d1 100644
+--- a/MdeModulePkg/Universal/DisplayEngineDxe/FormDisplay.c
++++ b/MdeModulePkg/Universal/DisplayEngineDxe/FormDisplay.c
+@@ -8,6 +8,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ **/
+ 
+ #include "FormDisplay.h"
++#include <Library/PianoProductPumpLib.h>
+ 
+ //
+ // Search table for UiDisplayMenu()
+@@ -1460,6 +1461,12 @@ UiWaitForEvent (
+   }
+ 
+   Status = gBS->WaitForEvent (EventNum, WaitList, &Index);
++  if (PianoProductUiReturnRequested ()) {
++    if (TimerEvent != NULL) {
++      gBS->CloseEvent (TimerEvent);
++    }
++    return UIEventReturnCore;
++  }
+   ASSERT_EFI_ERROR (Status);
+ 
+   switch (Index) {
+@@ -2359,11 +2366,13 @@ FxConfirmPopup (
+ 
+   do {
+     CreateDialog (&Key, gEmptyString, CfmStr, gConfirmOpt, gEmptyString, NULL);
+-  } while (((Key.UnicodeChar | UPPER_LOWER_CASE_OFFSET) != (gConfirmOptYes[0] | UPPER_LOWER_CASE_OFFSET)) &&
++  } while (!PianoProductUiReturnRequested () &&
++           ((Key.UnicodeChar | UPPER_LOWER_CASE_OFFSET) != (gConfirmOptYes[0] | UPPER_LOWER_CASE_OFFSET)) &&
+            ((Key.UnicodeChar | UPPER_LOWER_CASE_OFFSET) != (gConfirmOptNo[0] | UPPER_LOWER_CASE_OFFSET)) &&
+            (Key.ScanCode != SCAN_ESC));
+ 
+-  if ((Key.UnicodeChar | UPPER_LOWER_CASE_OFFSET) == (gConfirmOptYes[0] | UPPER_LOWER_CASE_OFFSET)) {
++  if (!PianoProductUiReturnRequested () &&
++      (Key.UnicodeChar | UPPER_LOWER_CASE_OFFSET) == (gConfirmOptYes[0] | UPPER_LOWER_CASE_OFFSET)) {
+     RetVal = TRUE;
+   } else {
+     RetVal = FALSE;
+@@ -3208,6 +3217,12 @@ UiDisplayMenu (
+         break;
+ 
+       case CfReadKey:
++        PianoProductPumpApplication (PIANO_PRODUCT_PUMP_APP, 1000);
++        if (PianoProductUiReturnRequested ()) {
++          gUserInput->Action = BROWSER_ACTION_NONE;
++          ControlFlag = CfExit;
++          break;
++        }
+         ControlFlag = CfScreenOperation;
+ 
+         //
+@@ -3235,6 +3250,12 @@ UiDisplayMenu (
+           break;
+         }
+ 
++        if (EventType == UIEventReturnCore) {
++          gUserInput->Action = BROWSER_ACTION_NONE;
++          ControlFlag = CfExit;
++          break;
++        }
++
+         if (EventType == UIEventDriver) {
+           gMisMatch          = TRUE;
+           gUserInput->Action = BROWSER_ACTION_NONE;
+@@ -4061,10 +4082,13 @@ BrowserStatusProcess (
+ 
+       do {
+         CreateDialog (&Key, gEmptyString, ErrorInfo, PrintString, gEmptyString, NULL);
+-      } while (((Key.UnicodeChar | UPPER_LOWER_CASE_OFFSET) != (DiscardChange | UPPER_LOWER_CASE_OFFSET)) &&
++      } while (!PianoProductUiReturnRequested () &&
++               ((Key.UnicodeChar | UPPER_LOWER_CASE_OFFSET) != (DiscardChange | UPPER_LOWER_CASE_OFFSET)) &&
+                ((Key.UnicodeChar | UPPER_LOWER_CASE_OFFSET) != (JumpToFormSet | UPPER_LOWER_CASE_OFFSET)));
+ 
+-      if ((Key.UnicodeChar | UPPER_LOWER_CASE_OFFSET) == (DiscardChange | UPPER_LOWER_CASE_OFFSET)) {
++      if (PianoProductUiReturnRequested ()) {
++        gUserInput->Action = BROWSER_ACTION_NONE;
++      } else if ((Key.UnicodeChar | UPPER_LOWER_CASE_OFFSET) == (DiscardChange | UPPER_LOWER_CASE_OFFSET)) {
+         gUserInput->Action = BROWSER_ACTION_DISCARD;
+       } else {
+         gUserInput->Action = BROWSER_ACTION_GOTO;
+@@ -4076,7 +4100,7 @@ BrowserStatusProcess (
+       if (TimeOut == 0) {
+         do {
+           CreateDialog (&Key, gEmptyString, ErrorInfo, gPressEnter, gEmptyString, NULL);
+-        } while (Key.UnicodeChar != CHAR_CARRIAGE_RETURN);
++        } while (!PianoProductUiReturnRequested () && Key.UnicodeChar != CHAR_CARRIAGE_RETURN);
+       } else {
+         Status = gBS->CreateEvent (EVT_NOTIFY_WAIT, TPL_CALLBACK, EmptyEventProcess, NULL, &TimeOutEvent);
+         ASSERT_EFI_ERROR (Status);
+@@ -4110,6 +4134,9 @@ BrowserStatusProcess (
+           WaitList[1] = gST->ConIn->WaitForKey;
+ 
+           Status = gBS->WaitForEvent (2, WaitList, &Index);
++          if (PianoProductUiReturnRequested ()) {
++            break;
++          }
+           ASSERT_EFI_ERROR (Status);
+ 
+           if (Index == 0) {
+diff --git a/MdeModulePkg/Universal/DisplayEngineDxe/FormDisplay.h b/MdeModulePkg/Universal/DisplayEngineDxe/FormDisplay.h
+index 34e6cc53c67fabeb5211f7e680056a49180d384c..31d577c7fcb79c07c8ec0787997237c7a6eda3e5 100644
+--- a/MdeModulePkg/Universal/DisplayEngineDxe/FormDisplay.h
++++ b/MdeModulePkg/Universal/DisplayEngineDxe/FormDisplay.h
+@@ -188,7 +188,8 @@ typedef enum {
+   UIEventNone,
+   UIEventKey,
+   UIEventTimeOut,
+-  UIEventDriver
++  UIEventDriver,
++  UIEventReturnCore
+ } UI_EVENT_TYPE;
+ 
+ typedef struct {
+diff --git a/MdeModulePkg/Universal/DisplayEngineDxe/InputHandler.c b/MdeModulePkg/Universal/DisplayEngineDxe/InputHandler.c
+index b7f2d8a6280f9b17f3de7d6a458a3d082323e8a1..ec23c872ba519bd823bb424b2590d9a6f9f30d5c 100644
+--- a/MdeModulePkg/Universal/DisplayEngineDxe/InputHandler.c
++++ b/MdeModulePkg/Universal/DisplayEngineDxe/InputHandler.c
+@@ -8,6 +8,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ **/
+ 
+ #include "FormDisplay.h"
++#include <Library/PianoProductPumpLib.h>
+ 
+ /**
+   Get maximum and minimum info from this opcode.
+@@ -164,6 +165,13 @@ ReadString (
+ 
+   do {
+     Status = WaitForKeyStroke (&Key);
++    if (PianoProductUiReturnRequested ()) {
++      FreePool (TempString);
++      FreePool (BufferedString);
++      gST->ConOut->SetAttribute (gST->ConOut, EFI_TEXT_ATTR (EFI_LIGHTGRAY, EFI_BLACK));
++      gST->ConOut->EnableCursor (gST->ConOut, CursorVisible);
++      return EFI_ABORTED;
++    }
+     ASSERT_EFI_ERROR (Status);
+ 
+     gST->ConOut->SetAttribute (gST->ConOut, EFI_TEXT_ATTR (EFI_BLACK, EFI_LIGHTGRAY));
+@@ -219,7 +227,7 @@ ReadString (
+           //
+           do {
+             CreateDialog (&Key, &NullCharacter, gMiniString, gPressEnter, &NullCharacter, NULL);
+-          } while (Key.UnicodeChar != CHAR_CARRIAGE_RETURN);
++          } while (!PianoProductUiReturnRequested () && Key.UnicodeChar != CHAR_CARRIAGE_RETURN);
+ 
+           FreePool (TempString);
+           FreePool (BufferedString);
+@@ -755,6 +763,9 @@ GetNumericInput (
+     }
+ 
+     WaitForKeyStroke (&Key);
++    if (PianoProductUiReturnRequested ()) {
++      return EFI_ABORTED;
++    }
+ 
+ TheKey2:
+     switch (Key.UnicodeChar) {
+@@ -1508,6 +1519,9 @@ GetSelectionInputPopUp (
+     }
+ 
+     WaitForKeyStroke (&Key);
++    if (PianoProductUiReturnRequested ()) {
++      goto PianoProductCancelOrderedList;
++    }
+ 
+ TheKey:
+     switch (Key.UnicodeChar) {
+@@ -1656,6 +1670,7 @@ TheKey:
+             break;
+ 
+           case SCAN_ESC:
++PianoProductCancelOrderedList:
+             gST->ConOut->SetAttribute (gST->ConOut, SavedAttribute);
+ 
+             //
+diff --git a/MdeModulePkg/Universal/DisplayEngineDxe/Popup.c b/MdeModulePkg/Universal/DisplayEngineDxe/Popup.c
+index 9954c4e4d58b34dd4b2960f3088299f30ff8255d..d0f879c8ffb6acd80079772a0bc7627c361f3889 100644
+--- a/MdeModulePkg/Universal/DisplayEngineDxe/Popup.c
++++ b/MdeModulePkg/Universal/DisplayEngineDxe/Popup.c
+@@ -7,6 +7,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ **/
+ 
+ #include "FormDisplay.h"
++#include <Library/PianoProductPumpLib.h>
+ 
+ EFI_SCREEN_DESCRIPTOR  gPopupDimensions;
+ LIST_ENTRY             gUserSelectableOptions;
+@@ -251,6 +252,9 @@ GetUserSelection (
+     }
+ 
+     Status = WaitForKeyStroke (&KeyValue);
++    if (PianoProductUiReturnRequested ()) {
++      return;
++    }
+     ASSERT_EFI_ERROR (Status);
+ 
+     HighlightOption = SELECTABLE_OPTION_FROM_LINK (HighlightPos);
+diff --git a/MdeModulePkg/Universal/SetupBrowserDxe/Presentation.c b/MdeModulePkg/Universal/SetupBrowserDxe/Presentation.c
+index 05163b2cf20cbfd92678fa56c11066ee32e3ea34..d72e0487fb4d5725f95b5d5cb23879e595ad68c8 100644
+--- a/MdeModulePkg/Universal/SetupBrowserDxe/Presentation.c
++++ b/MdeModulePkg/Universal/SetupBrowserDxe/Presentation.c
+@@ -8,6 +8,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ **/
+ 
+ #include "Setup.h"
++#include <Library/PianoProductPumpLib.h>
+ 
+ BOOLEAN                   mHiiPackageListUpdated;
+ UI_MENU_SELECTION         *gCurrentSelection;
+@@ -1787,6 +1788,17 @@ DisplayForm (
+     return Status;
+   }
+ 
++  if (PianoProductUiReturnRequested ()) {
++    if (UserInput.InputValue.Buffer != NULL &&
++        (UserInput.SelectedStatement == NULL ||
++         UserInput.InputValue.Buffer != UserInput.SelectedStatement->CurrentValue.Buffer)) {
++      ZeroMem (UserInput.InputValue.Buffer, UserInput.InputValue.BufferLen);
++      FreePool (UserInput.InputValue.Buffer);
++    }
++    FreeDisplayFormData ();
++    return EFI_SUCCESS;
++  }
++
+   CheckConfigAccess (gCurrentSelection->FormSet);
+ 
+   Status = ProcessUserInput (&UserInput);
+@@ -2592,7 +2604,13 @@ SetupBrowser (
+     // Display form
+     //
+     Status = DisplayForm ();
+-    if (EFI_ERROR (Status)) {
++    if (PianoProductUiReturnRequested ()) {
++      DiscardForm (Selection->FormSet, Selection->Form, SystemLevel);
++      Selection->Statement = NULL;
++      Selection->Action = UI_ACTION_EXIT;
++      gExitRequired = FALSE;
++      Status = EFI_SUCCESS;
++    } else if (EFI_ERROR (Status)) {
+       goto Done;
+     }
+ 
+diff --git a/MdeModulePkg/Universal/SetupBrowserDxe/Setup.c b/MdeModulePkg/Universal/SetupBrowserDxe/Setup.c
+index f57421cd74d75141a12eafa7f960753ec10b9847..de3c58f8738b78c703d484aeba52f8d946f4d63e 100644
+--- a/MdeModulePkg/Universal/SetupBrowserDxe/Setup.c
++++ b/MdeModulePkg/Universal/SetupBrowserDxe/Setup.c
+@@ -8,6 +8,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ **/
+ 
+ #include "Setup.h"
++#include <Library/PianoProductPumpLib.h>
+ 
+ SETUP_DRIVER_PRIVATE_DATA  mPrivateData = {
+   SETUP_DRIVER_SIGNATURE,
+@@ -600,6 +601,9 @@ SendForm (
+     } while (Selection->Action == UI_ACTION_REFRESH_FORMSET);
+ 
+     FreePool (Selection);
++    if (PianoProductUiReturnRequested ()) {
++      break;
++    }
+   }
+ 
+   if (ActionRequest != NULL) {
+diff --git a/MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf b/MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf
+index 82db7c1ef156eaa597d398b22ab5421abd8c7e6c..152d2bfc3d15c36b392cf4789a3880f0e7bb54f1 100644
+--- a/MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf
++++ b/MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf
+@@ -38,6 +38,7 @@
+   MdeModulePkg/MdeModulePkg.dec
+ 
+ [LibraryClasses]
++  PianoProductPumpLib
+   MemoryAllocationLib
+   BaseLib
+   UefiBootServicesTableLib
+diff --git a/MdeModulePkg/Universal/Variable/RuntimeDxe/Variable.c b/MdeModulePkg/Universal/Variable/RuntimeDxe/Variable.c
+index 0ea888d233ddea27e4fd56fadbdfd0626793566b..09b7f23607cb1fe0b0e70d9a39406c11642c94d3 100644
+--- a/MdeModulePkg/Universal/Variable/RuntimeDxe/Variable.c
++++ b/MdeModulePkg/Universal/Variable/RuntimeDxe/Variable.c
+@@ -26,6 +26,12 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ **/
+ 
+ #include "Variable.h"
++#ifndef PIANO_NV_BOOT_ONLY
++#define PIANO_NV_BOOT_ONLY 0
++#endif
++#if PIANO_NV_BOOT_ONLY != 0 && PIANO_NV_BOOT_ONLY != 1
++#error PIANO_NV_BOOT_ONLY must be 0 or 1
++#endif
+ #include "VariableNonVolatile.h"
+ #include "VariableParsing.h"
+ #include "VariableRuntimeCache.h"
+@@ -2954,6 +2960,21 @@ VariableServiceSetVariable (
+     }
+   }
+ 
++#if PIANO_NV_BOOT_ONLY
++  // The UFS owner is retired before OS handoff. Refuse NV before MOR/auth
++  // callbacks or cache mutation, including attribute-zero deletion.
++  if (AtRuntime ()) {
++    if ((Attributes & EFI_VARIABLE_NON_VOLATILE) != 0) {
++      return EFI_UNSUPPORTED;
++    }
++    VARIABLE_POINTER_TRACK NvExisting;
++    EFI_STATUS NvLookup = FindVariable (VariableName, VendorGuid, &NvExisting, &mVariableModuleGlobal->VariableGlobal, TRUE);
++    if (!EFI_ERROR (NvLookup) && ((NvExisting.CurrPtr->Attributes & EFI_VARIABLE_NON_VOLATILE) != 0)) {
++      return EFI_UNSUPPORTED;
++    }
++  }
++#endif
++
+   //
+   // Special Handling for MOR Lock variable.
+   //
+@@ -2998,6 +3019,14 @@ VariableServiceSetVariable (
+   //
+   Status = FindVariable (VariableName, VendorGuid, &Variable, &mVariableModuleGlobal->VariableGlobal, TRUE);
+   if (!EFI_ERROR (Status)) {
++#if PIANO_NV_BOOT_ONLY
++    // Attribute-zero deletes must also refuse an existing NV variable before
++    // auth/policy/language processing or any store mutation.
++    if (AtRuntime () && ((Variable.CurrPtr->Attributes & EFI_VARIABLE_NON_VOLATILE) != 0)) {
++      Status = EFI_UNSUPPORTED;
++      goto Done;
++    }
++#endif
+     if (((Variable.CurrPtr->Attributes & EFI_VARIABLE_RUNTIME_ACCESS) == 0) && AtRuntime ()) {
+       Status = EFI_WRITE_PROTECTED;
+       goto Done;
+diff --git a/MdePkg/Library/UefiLib/Console.c b/MdePkg/Library/UefiLib/Console.c
+index 1bf8778756f1d17a9e58f5c97a3e5713973ffde0..407deb99c1397b0b7c65ddd1699ad79bccce991e 100644
+--- a/MdePkg/Library/UefiLib/Console.c
++++ b/MdePkg/Library/UefiLib/Console.c
+@@ -7,6 +7,7 @@
+ **/
+ 
+ #include "UefiLibInternal.h"
++#include <Library/PianoProductPumpLib.h>
+ 
+ typedef struct {
+   CHAR16    WChar;
+@@ -563,6 +564,10 @@ CreatePopUp (
+   //
+   if (Key != NULL) {
+     while (TRUE) {
++      PianoProductPumpApplication (PIANO_PRODUCT_PUMP_APP, 1000);
++      if (PianoProductUiReturnRequested ()) {
++        break;
++      }
+       Status = gST->ConIn->ReadKeyStroke (gST->ConIn, Key);
+       if (!EFI_ERROR (Status)) {
+         break;
+diff --git a/MdePkg/Library/UefiLib/UefiLib.inf b/MdePkg/Library/UefiLib/UefiLib.inf
+index 8a35276180d4b45b6551532b23a70a11b27eeec6..8d301b040ad1ecad669a6475a28f366250ca5a02 100644
+--- a/MdePkg/Library/UefiLib/UefiLib.inf
++++ b/MdePkg/Library/UefiLib/UefiLib.inf
+@@ -44,6 +44,7 @@
+ 
+ 
+ [LibraryClasses]
++  PianoProductPumpLib
+   PrintLib
+   PcdLib
+   MemoryAllocationLib
+diff --git a/MdePkg/MdeLibs.dsc.inc b/MdePkg/MdeLibs.dsc.inc
+index 91cf2aa3c457ad8ab64a8f05ed7c8d0458051199..aa7a45668603e3bf4a62df80689bb3cfb6214488 100644
+--- a/MdePkg/MdeLibs.dsc.inc
++++ b/MdePkg/MdeLibs.dsc.inc
+@@ -20,6 +20,9 @@
+ !endif
+ 
+ [LibraryClasses]
++  PianoProductPumpLib|MdePkg/Library/PianoProductPumpLibNull/PianoProductPumpLibNull.inf
++  PianoProductExitLib|MdePkg/Library/PianoProductExitLibNull/PianoProductExitLibNull.inf
++  PianoProductPumpLib|MdePkg/Library/PianoProductPumpLibNull/PianoProductPumpLibNull.inf
+   OrderedCollectionLib|MdePkg/Library/BaseOrderedCollectionRedBlackTreeLib/BaseOrderedCollectionRedBlackTreeLib.inf
+   ArmTrngLib|MdePkg/Library/BaseArmTrngLibNull/BaseArmTrngLibNull.inf
+   RegisterFilterLib|MdePkg/Library/RegisterFilterLibNull/RegisterFilterLibNull.inf
+diff --git a/MdePkg/MdePkg.dec b/MdePkg/MdePkg.dec
+index b2c413eabd8b83e42fbcdb31f02a0d085276325e..7ea421b8a5e8dc536ff58593c2a353699c7296b2 100644
+--- a/MdePkg/MdePkg.dec
++++ b/MdePkg/MdePkg.dec
+@@ -51,6 +51,9 @@
+   Include/LoongArch64
+ 
+ [LibraryClasses]
++  PianoProductPumpLib|Include/Library/PianoProductPumpLib.h
++  PianoProductExitLib|Include/Library/PianoProductExitLib.h
++  PianoProductPumpLib|Include/Library/PianoProductPumpLib.h
+   ##  @libraryclass  Provides most usb APIs to support the Hid requests defined in Usb Hid 1.1 spec
+   #                  and the standard requests defined in Usb 1.1 spec.
+   ##
+diff --git a/SecurityPkg/Library/AuthVariableLib/AuthService.c b/SecurityPkg/Library/AuthVariableLib/AuthService.c
+index d6e9f9f8153eafd41886892d0b4d1690b46fe2bb..3bec1eee7cc5f159742d49ab226f6caff6095575 100644
+--- a/SecurityPkg/Library/AuthVariableLib/AuthService.c
++++ b/SecurityPkg/Library/AuthVariableLib/AuthService.c
+@@ -29,6 +29,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ 
+ #include <Protocol/VariablePolicy.h>
+ #include <Library/VariablePolicyLib.h>
++#include <Library/UefiRuntimeLib.h>
+ 
+ #define SHA_DIGEST_SIZE_MAX  SHA512_DIGEST_SIZE
+ 
+@@ -2570,6 +2571,10 @@ VerifyTimeBasedPayloadAndUpdate (
+   AUTH_VARIABLE_INFO             OrgVariableInfo;
+   BOOLEAN                        IsDel;
+ 
++  if (EfiAtRuntime ()) {
++    return EFI_WRITE_PROTECTED;
++  }
++
+   ZeroMem (&OrgVariableInfo, sizeof (OrgVariableInfo));
+   FindStatus = mAuthVarLibContextIn->FindVariable (
+                                        VariableName,
+diff --git a/SecurityPkg/Library/AuthVariableLib/AuthVariableLib.inf b/SecurityPkg/Library/AuthVariableLib/AuthVariableLib.inf
+index 0b0f0a9f9645e0486176ba5590d4ff2c1efabfbe..0f605de9b597d6ba5cf8f71b4b457df2716d7a21 100644
+--- a/SecurityPkg/Library/AuthVariableLib/AuthVariableLib.inf
++++ b/SecurityPkg/Library/AuthVariableLib/AuthVariableLib.inf
+@@ -43,6 +43,7 @@
+   BaseCryptLib
+   PlatformSecureLib
+   VariablePolicyLib
++  UefiRuntimeLib
+ 
+ # MU_CHANGE [BEGIN] - TCBZ2506
+ [FeaturePcd]
+diff --git a/ShellPkg/Application/Shell/ConsoleLogger.c b/ShellPkg/Application/Shell/ConsoleLogger.c
+index 3b0b7204ccf72a97f12831805c88922748a04f94..e419bf51f5ec901c74a1e9c54817bbb76c5b1db2 100644
+--- a/ShellPkg/Application/Shell/ConsoleLogger.c
++++ b/ShellPkg/Application/Shell/ConsoleLogger.c
+@@ -8,6 +8,7 @@
+ **/
+ 
+ #include "Shell.h"
++#include <Library/PianoProductPumpLib.h>
+ 
+ /**
+   Install our intermediate ConOut into the system table to
+@@ -902,6 +903,9 @@ ConsoleLoggerOutputString (
+       // just get some key
+       //
+       Status = gBS->WaitForEvent (1, &TxtInEx->WaitForKeyEx, &EventIndex);
++      if (PianoProductUiReturnRequested ()) {
++        return EFI_ABORTED;
++      }
+       ASSERT_EFI_ERROR (Status);
+       Status = TxtInEx->ReadKeyStrokeEx (TxtInEx, &KeyData);
+       if (EFI_ERROR (Status)) {
+diff --git a/ShellPkg/Application/Shell/FileHandleWrappers.c b/ShellPkg/Application/Shell/FileHandleWrappers.c
+index 2344bbb7618489ec6fee95a389d61d055775ccf8..96c5866b82b8732fa6ea2f5090754a414aa9e922 100644
+--- a/ShellPkg/Application/Shell/FileHandleWrappers.c
++++ b/ShellPkg/Application/Shell/FileHandleWrappers.c
+@@ -10,6 +10,7 @@
+ **/
+ 
+ #include "Shell.h"
++#include <Library/PianoProductPumpLib.h>
+ #include "FileHandleInternal.h"
+ 
+ #define MEM_WRITE_REALLOC_OVERHEAD  1024
+@@ -535,8 +536,15 @@ FileInterfaceStdInRead (
+     //
+     // Read a key
+     //
+-    gBS->WaitForEvent (1, &gST->ConIn->WaitForKey, &EventIndex);
+-    Status = gST->ConIn->ReadKeyStroke (gST->ConIn, &Key);
++    PianoProductPumpApplication (PIANO_PRODUCT_PUMP_APP, 1000);
++    if (!PianoProductUiReturnRequested ()) {
++      gBS->WaitForEvent (1, &gST->ConIn->WaitForKey, &EventIndex);
++    }
++    if (PianoProductUiReturnRequested ()) {
++      Status = EFI_ABORTED;
++    } else {
++      Status = gST->ConIn->ReadKeyStroke (gST->ConIn, &Key);
++    }
+     if (EFI_ERROR (Status)) {
+       if (Status == EFI_NOT_READY) {
+         continue;
+diff --git a/ShellPkg/Application/Shell/Shell.c b/ShellPkg/Application/Shell/Shell.c
+index e2dd95b3c47ea908455ccf305cabebbe9a8f4896..fcfebb3953b560dc8afb5706e3af648c9d58c244 100644
+--- a/ShellPkg/Application/Shell/Shell.c
++++ b/ShellPkg/Application/Shell/Shell.c
+@@ -10,6 +10,7 @@
+ **/
+ 
+ #include "Shell.h"
++#include <Library/PianoProductPumpLib.h>
+ 
+ //
+ // Initialize the global structure
+@@ -642,7 +643,7 @@ UefiMain (
+           // Display Prompt
+           //
+           Status = DoShellPrompt ();
+-        } while (!ShellCommandGetExit ());
++        } while (!ShellCommandGetExit () && !PianoProductUiReturnRequested ());
+       }
+ 
+       if ((OldConIn != NULL) && (ConInHandle != NULL)) {
+@@ -753,6 +754,9 @@ FreeResources:
+ 
+   ShellFreeEnvVarList ();
+ 
++  if (PianoProductUiReturnRequested ()) {
++    return EFI_SUCCESS;
++  }
+   if (ShellCommandGetExit ()) {
+     return ((EFI_STATUS)ShellCommandGetExitCode ());
+   }
+@@ -1431,7 +1435,7 @@ DoShellPrompt (
+   //
+   // Null terminate the string and parse it
+   //
+-  if (!EFI_ERROR (Status)) {
++  if (!EFI_ERROR (Status) && !PianoProductUiReturnRequested ()) {
+     //
+     // Reset the CTRL-C event just before running the command (yes we ignore the return values)
+     //
+diff --git a/ShellPkg/Application/Shell/Shell.inf b/ShellPkg/Application/Shell/Shell.inf
+index f8a1a2d58d647a9cf0cccf3414260a9143c5a417..04f0f8c415f7e244e8afb1693c18bf19b8fe5a96 100644
+--- a/ShellPkg/Application/Shell/Shell.inf
++++ b/ShellPkg/Application/Shell/Shell.inf
+@@ -49,6 +49,7 @@
+   MdeModulePkg/MdeModulePkg.dec
+ 
+ [LibraryClasses]
++  PianoProductPumpLib
+   BaseLib
+   UefiApplicationEntryPoint
+   UefiLib
+diff --git a/ShellPkg/Library/UefiShellLevel2CommandsLib/Reset.c b/ShellPkg/Library/UefiShellLevel2CommandsLib/Reset.c
+index 0d254923888ddac959cc8d0eb8547c0dc6994d8d..9caf27b35fbc0e366ab2c7631bb06c74c7a60917 100644
+--- a/ShellPkg/Library/UefiShellLevel2CommandsLib/Reset.c
++++ b/ShellPkg/Library/UefiShellLevel2CommandsLib/Reset.c
+@@ -8,6 +8,7 @@
+ **/
+ 
+ #include "UefiShellLevel2CommandsLib.h"
++#include <Library/PianoProductPumpLib.h>
+ 
+ STATIC CONST SHELL_PARAM_ITEM  ResetParamList[] = {
+   { L"-w",    TypeValue },
+@@ -47,6 +48,17 @@ MainCmdReset (
+     return SHELL_INVALID_PARAMETER;
+   }
+ 
++  if (PianoProductRebootManaged ()) {
++    if (ShellCommandLineGetFlag (Package, L"-w") ||
++        ShellCommandLineGetFlag (Package, L"-s") ||
++        ShellCommandLineGetFlag (Package, L"-fwui") ||
++        ShellCommandLineGetValue (Package, L"-c") != NULL) {
++      return SHELL_UNSUPPORTED;
++    }
++    Status = PianoProductRequestReboot ();
++    return Status == EFI_SUCCESS ? SHELL_SUCCESS : SHELL_DEVICE_ERROR;
++  }
++
+   if (ShellCommandLineGetFlag (Package, L"-fwui")) {
+     DataSize = sizeof (OsIndications);
+     Status   = gRT->GetVariable (
+diff --git a/ShellPkg/Library/UefiShellLevel2CommandsLib/UefiShellLevel2CommandsLib.inf b/ShellPkg/Library/UefiShellLevel2CommandsLib/UefiShellLevel2CommandsLib.inf
+index 3b8374223636dc8c0cc243699867c084d2dab16a..3fd6cc663a1609d37b26d6a36713a91a28804cfe 100644
+--- a/ShellPkg/Library/UefiShellLevel2CommandsLib/UefiShellLevel2CommandsLib.inf
++++ b/ShellPkg/Library/UefiShellLevel2CommandsLib/UefiShellLevel2CommandsLib.inf
+@@ -47,6 +47,7 @@
+   MdeModulePkg/MdeModulePkg.dec
+ 
+ [LibraryClasses]
++  PianoProductPumpLib
+   MemoryAllocationLib
+   BaseLib
+   BaseMemoryLib

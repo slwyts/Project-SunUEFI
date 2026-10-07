@@ -1,6 +1,6 @@
 # Native Clock typed CPU reader
 
-`bootprofiles/uefi-app/PianoDisplayClockRead.c/.h` supplies the real protected
+`uefi/core/PianoDisplayClockRead.c/.h` supplies the real protected
 CPU read callback for `PianoDisplayClockLease`. It never calls a Clock method,
 reads GCC/MMIO, changes a mapping, writes a native object, allocates DDR, or
 grants DMA ownership. `MemoryOwnershipGranted` remains false. The lease's
@@ -66,7 +66,7 @@ Gcd.c SHA256
 `3d82f7ff075dc491c8934979e8153dfb112fcab39148a4559a54c301c7dd034a`,
 and AArch64 Mmu.c SHA256
 `173073a5a9e827be71aa0222e7af26c6122d159eb314f79bfcc07c6c95d3b533`.
-`tests/piano_mu_map_fixture.py` compiles the actual conversion table/function,
+`tests/unit/piano_mu_map_fixture.py` compiles the actual conversion table/function,
 actual CoreGetMemoryMap descriptor-emission lines, type handling, and final
 access-mask clearing. The storage/list boundary is a host fixture. This proves
 mixed EFI capabilities plus current GCD WB/PAR FF are accepted, while current
@@ -150,7 +150,7 @@ closes the reader's separate FV copy and requires exact success. Free warnings
 or EBS retain the state. This cleanup neither acquires a native reference nor
 marks display hardware ready.
 
-Run `python -m unittest discover -s tests -p test_display_clock_read.py -v`.
+Run `python -m unittest discover -s tests/unit -p test_display_clock_read.py -v`.
 The host suite links the actual Reader and GuardedRead, uses the real pinned FV
 bytes/relocations/static BSP table, and injects only the EFI/CPU/LDR boundaries.
 It covers source/text drift, field bounds, stale identities, EFI/GCD/PAR drift,

@@ -1,0 +1,12 @@
+{
+  "id": "ubuntu", "name": "Ubuntu 24.04 LTS", "suite": "noble", "backend": "debootstrap",
+  "arch": "aarch64", "package_arch": "arm64", "keyring": "/usr/share/keyrings/ubuntu-archive-keyring.gpg",
+  "mirror": "https://ports.ubuntu.com/ubuntu-ports", "components": ["main", "universe"], "sources": [
+    "deb https://ports.ubuntu.com/ubuntu-ports noble main universe",
+    "deb https://ports.ubuntu.com/ubuntu-ports noble-updates main universe",
+    "deb https://ports.ubuntu.com/ubuntu-ports noble-security main universe"
+  ],
+  "base_packages": ["systemd-sysv", "dbus", "sudo", "locales", "ca-certificates", "network-manager", "openssh-server", "kmod", "util-linux"],
+  "official_source": "https://cdimage.ubuntu.com/ubuntu/releases/noble/release/",
+  "source_policy": "signed mutable Ubuntu ports APT; no Debian or third-party desktop repository"
+}

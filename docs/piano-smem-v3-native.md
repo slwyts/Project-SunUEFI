@@ -76,9 +76,9 @@ structure success; memory ownership and high-DDR publication remain false.
 ```sh
 python3 tools/analyze_native_ram_v3.py
 python3 tools/analyze_native_ram_v3.py --disassemble
-python3 -m unittest discover -s tests -p test_smem_ram.py -v
-python3 -m unittest discover -s tests -p test_product_smem.py -v
-python3 -m unittest discover -s tests -p test_early_memory.py -v
+python3 -m unittest discover -s tests/unit -p test_smem_ram.py -v
+python3 -m unittest discover -s tests/unit -p test_product_smem.py -v
+python3 -m unittest discover -s tests/unit -p test_early_memory.py -v
 ```
 
 The script hashes all three evidence files, validates the vtable and selected

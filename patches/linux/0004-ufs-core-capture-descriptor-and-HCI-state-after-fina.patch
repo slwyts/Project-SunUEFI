@@ -1,0 +1,124 @@
+From 40bee45195195997dca6603821e27cc233057d4d Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 6 Oct 2026 23:32:07 +0800
+Subject: [PATCH] ufs: core: capture descriptor and HCI state after final
+ failed NOP
+
+---
+ drivers/ufs/core/ufshcd.c | 82 +++++++++++++++++++++++++++++++--------
+ 1 file changed, 66 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/ufs/core/ufshcd.c b/drivers/ufs/core/ufshcd.c
+index 86f49c0522ec05a441f0bcfce13bcb8dfbd3c1cd..a4fe1c08ad8b0b425843aa4fff4c2ab29897a075 100644
+--- a/drivers/ufs/core/ufshcd.c
++++ b/drivers/ufs/core/ufshcd.c
+@@ -3329,20 +3329,48 @@ static int ufshcd_issue_dev_cmd(struct ufs_hba *hba, struct scsi_cmnd *cmd,
+ 	return lrbp->utr_descriptor_ptr->header.ocs;
+ }
+ 
+-/**
+- * ufshcd_exec_dev_cmd - API for sending device management requests
+- * @hba: UFS hba
+- * @cmd_type: specifies the type (NOP, Query...)
+- * @timeout: timeout in milliseconds
+- *
+- * Return: 0 upon success; > 0 in case the UFS device reported an OCS error;
+- * < 0 if another error occurred.
+- *
+- * NOTE: Since there is only one available tag for device management commands,
+- * it is expected you hold the hba->dev_cmd.lock mutex.
+- */
+-static int ufshcd_exec_dev_cmd(struct ufs_hba *hba,
+-		enum dev_cmd_type cmd_type, int timeout)
++/* Capture only the last failed NOP, before its reserved command is freed. */
++static void ufshcd_dump_nop_failure(struct ufs_hba *hba,
++				   struct scsi_cmnd *cmd, int err)
++{
++	struct ufshcd_lrb *lrbp = scsi_cmd_priv(cmd);
++	struct utp_transfer_req_desc *utrd = lrbp->utr_descriptor_ptr;
++	u64 list_base;
++
++	list_base = (u64)ufshcd_readl(hba, REG_UTP_TRANSFER_REQ_LIST_BASE_H) << 32;
++	list_base |= ufshcd_readl(hba, REG_UTP_TRANSFER_REQ_LIST_BASE_L);
++	dev_err(hba->dev,
++		"NOP failure err=%d tag=%d mcq=%d ocs=%#x rsp=%#x db=%#x rsr=%#x hcs=%#x hce=%#x is=%#x\n",
++		err, scsi_cmd_to_rq(cmd)->tag, hba->mcq_enabled,
++		utrd->header.ocs, lrbp->ucd_rsp_ptr->header.transaction_code,
++		ufshcd_readl(hba, REG_UTP_TRANSFER_REQ_DOOR_BELL),
++		ufshcd_readl(hba, REG_UTP_TRANSFER_REQ_LIST_RUN_STOP),
++		ufshcd_readl(hba, REG_CONTROLLER_STATUS),
++		ufshcd_readl(hba, REG_CONTROLLER_ENABLE),
++		ufshcd_readl(hba, REG_INTERRUPT_STATUS));
++	dev_err(hba->dev,
++		"NOP DMA list_hw=%#llx list=%pad utrd=%pad ucd=%pad rsp=%pad mask=%#llx coherent_mask=%#llx\n",
++		list_base, &hba->utrdl_dma_addr, &lrbp->utrd_dma_addr,
++		&lrbp->ucd_req_dma_addr, &lrbp->ucd_rsp_dma_addr,
++		dma_get_mask(hba->dev), hba->dev->coherent_dma_mask);
++	dev_err(hba->dev,
++		"NOP descriptor ucd=%#llx rsp_off=%#x rsp_len=%#x prdt_off=%#x prdt_len=%#x\n",
++		le64_to_cpu(utrd->command_desc_base_addr),
++		le16_to_cpu(utrd->response_upiu_offset),
++		le16_to_cpu(utrd->response_upiu_length),
++		le16_to_cpu(utrd->prd_table_offset),
++		le16_to_cpu(utrd->prd_table_length));
++	dev_err(hba->dev,
++		"NOP UIC errors pa=%#x dl=%#x nl=%#x tl=%#x dme=%#x\n",
++		ufshcd_readl(hba, REG_UIC_ERROR_CODE_PHY_ADAPTER_LAYER),
++		ufshcd_readl(hba, REG_UIC_ERROR_CODE_DATA_LINK_LAYER),
++		ufshcd_readl(hba, REG_UIC_ERROR_CODE_NETWORK_LAYER),
++		ufshcd_readl(hba, REG_UIC_ERROR_CODE_TRANSPORT_LAYER),
++		ufshcd_readl(hba, REG_UIC_ERROR_CODE_DME));
++}
++
++static int __ufshcd_exec_dev_cmd(struct ufs_hba *hba,
++		enum dev_cmd_type cmd_type, int timeout, bool last_nop)
+ {
+ 	struct scsi_cmnd *cmd = ufshcd_get_dev_mgmt_cmd(hba);
+ 	struct ufshcd_lrb *lrbp = scsi_cmd_priv(cmd);
+@@ -3364,6 +3392,10 @@ static int ufshcd_exec_dev_cmd(struct ufs_hba *hba,
+ 	err = ufshcd_issue_dev_cmd(hba, cmd, tag, timeout);
+ 	if (err == 0)
+ 		err = ufshcd_dev_cmd_completion(hba, lrbp);
++	/* A timeout terminates the NOP loop immediately, regardless of retry. */
++	if (cmd_type == DEV_CMD_TYPE_NOP && err &&
++	    (last_nop || err == -ETIMEDOUT))
++		ufshcd_dump_nop_failure(hba, cmd, err);
+ 
+ out:
+ 	ufshcd_put_dev_mgmt_cmd(cmd);
+@@ -3371,6 +3403,24 @@ static int ufshcd_exec_dev_cmd(struct ufs_hba *hba,
+ 	return err;
+ }
+ 
++/**
++ * ufshcd_exec_dev_cmd - API for sending device management requests
++ * @hba: UFS hba
++ * @cmd_type: specifies the type (NOP, Query...)
++ * @timeout: timeout in milliseconds
++ *
++ * Return: 0 upon success; > 0 in case the UFS device reported an OCS error;
++ * < 0 if another error occurred.
++ *
++ * NOTE: Since there is only one available tag for device management commands,
++ * it is expected you hold the hba->dev_cmd.lock mutex.
++ */
++static int ufshcd_exec_dev_cmd(struct ufs_hba *hba,
++		enum dev_cmd_type cmd_type, int timeout)
++{
++	return __ufshcd_exec_dev_cmd(hba, cmd_type, timeout, false);
++}
++
+ /**
+  * ufshcd_init_query() - init the query response and request parameters
+  * @hba: per-adapter instance
+@@ -5364,8 +5414,8 @@ static int ufshcd_verify_dev_init(struct ufs_hba *hba)
+ 	ufshcd_dev_man_lock(hba);
+ 
+ 	for (retries = NOP_OUT_RETRIES; retries > 0; retries--) {
+-		err = ufshcd_exec_dev_cmd(hba, DEV_CMD_TYPE_NOP,
+-					  hba->nop_out_timeout);
++		err = __ufshcd_exec_dev_cmd(hba, DEV_CMD_TYPE_NOP,
++					    hba->nop_out_timeout, retries == 1);
+ 
+ 		if (!err || err == -ETIMEDOUT)
+ 			break;

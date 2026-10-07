@@ -9,7 +9,7 @@
 * **汇报问题**：通过 GitHub Issues 反馈 Bug 或测试结果，请附上测试所用的镜像哈希、操作步骤与具体现象（若可用，提供 `fastboot -s SunUEFI-piano oem ramlog` 导出的运行日志）。
 * **提交代码**：
   1. 优先拆分为独立、清晰的小 Pull Request，并在提交信息中说明改动原因与验证方式。
-  2. 固件核心与生命周期代码位于 `bootprofiles/` 目录。
+  2. 固件核心与生命周期代码位于 `uefi/core/` 和 `uefi/components/`；Linux 服务与适配来源见 [Linux 服务源码地图](docs/devel/linux-services.md)。完整目录说明见 [代码地图](docs/devel/repository-map.md)。
   3. 修改代码后，请在本地通过编译与完整性自检（参考[开发者手册](docs/devel/building.md)）。
 * **AI 协助开发**：若使用 AI 编程助手（如 Claude、Gemini 等）进行代码编写或文档改进，请遵循仓库根目录的 [AGENTS.md](AGENTS.md) 协作规范。
 

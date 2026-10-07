@@ -11,7 +11,7 @@ def emit(volume_uuid,out):
  if out.exists()and any(out.iterdir()):raise ValueError('output must be empty; preserve previous seed')
  out.mkdir(parents=True,exist_ok=True)
  inc=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
- sources=[ROOT/'tools/emit_nv_seed.c',ROOT/'bootprofiles/uefi-app/PianoNvJournal.c',ROOT/'bootprofiles/uefi-app/PianoNvFvb.c']
+ sources=[ROOT/'tools/emit_nv_seed.c',ROOT/'uefi/core/PianoNvJournal.c',ROOT/'uefi/core/PianoNvFvb.c']
  with tempfile.TemporaryDirectory(prefix='nv-seed-host-')as tmp:
   exe=Path(tmp)/'emit'
   subprocess.run(['cc','-O2','-std=gnu11','-DNO_MSABI_VA_FUNCS','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-I'+str(inc),'-I'+str(inc/'X64'),'-I'+str(ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdeModulePkg/Include'),*map(str,sources),'-o',str(exe)],check=True)

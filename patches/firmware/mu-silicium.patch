@@ -1,0 +1,14 @@
+diff --git a/Silicon/Silicium/SiliciumPkg/SiliciumPkg.dsc.inc b/Silicon/Silicium/SiliciumPkg/SiliciumPkg.dsc.inc
+index 00ec09e1e64f0d649f45767c8f39d135e16280d3..6510fee7bdd2cac5682bff03047aefa9c347d7bc 100644
+--- a/Silicon/Silicium/SiliciumPkg/SiliciumPkg.dsc.inc
++++ b/Silicon/Silicium/SiliciumPkg/SiliciumPkg.dsc.inc
+@@ -124,6 +124,9 @@
+ !include MdePkg/MdeLibs.dsc.inc
+ 
+ [LibraryClasses]
++  PianoProductPumpLib|MdePkg/Library/PianoProductPumpLibNull/PianoProductPumpLibNull.inf
++  PianoProductExitLib|MdePkg/Library/PianoProductExitLibNull/PianoProductExitLibNull.inf
++  PianoProductPumpLib|MdePkg/Library/PianoProductPumpLibNull/PianoProductPumpLibNull.inf
+   #
+   # Compiler Libraries
+   #

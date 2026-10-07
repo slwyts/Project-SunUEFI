@@ -1,0 +1,25 @@
+:root { color-scheme: dark; font-family: system-ui, sans-serif; color: #e7ebed; background: #10191d; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { width: min(1240px, 100%); margin: auto; padding: clamp(28px, 5vw, 70px); }
+.eyebrow { margin: 0 0 16px; color: #89b4b9; font-size: 17px; letter-spacing: .13em; }
+h1 { margin: 0 0 20px; font-size: clamp(34px, 4vw, 56px); font-weight: 650; line-height: 1.2; }
+.intro { max-width: 880px; margin: 0; font-size: 22px; line-height: 1.65; color: #b5c4cb; }
+.status { display: flex; gap: 18px; padding: 23px 26px; margin: 32px 0; border: 1px solid #34494e; border-radius: 16px; background: #19292e; }
+.dot { flex: 0 0 12px; height: 12px; margin-top: 9px; border-radius: 50%; background: #b8b082; }
+.status strong { font-size: 22px; }
+.status p { margin: 8px 0 0; color: #b2c3ca; font-size: 18px; line-height: 1.6; }
+.choices { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+article { padding: 28px; background: #17252b; border: 1px solid #2b414b; border-radius: 20px; }
+.number { color: #6e929e; font-size: 17px; }
+h2 { font-size: 34px; font-weight: 600; margin: 12px 0; }
+article p { min-height: 64px; margin: 0 0 28px; color: #b5c4cb; font-size: 20px; line-height: 1.6; }
+button { width: 100%; min-height: 76px; border: 1px solid #618a91; border-radius: 13px; background: #416d73; color: #eef5f6; font: inherit; font-size: 23px; font-weight: 600; cursor: pointer; }
+button:disabled { background: #25363d; color: #859ba5; border-color: #344a54; cursor: default; }
+button:focus-visible, select:focus-visible { outline: 3px solid #a7d1d5; outline-offset: 4px; }
+.preview { margin-top: 30px; padding: 24px 26px; border: 1px solid #2b414b; border-radius: 16px; }
+.preview label { font-size: 20px; margin-right: 18px; }
+select { min-height: 56px; padding: 10px 16px; border: 1px solid #48616c; border-radius: 10px; background: #17252b; color: #e7ebed; font: inherit; font-size: 20px; }
+.preview p { margin: 18px 0 0; color: #bdcbd1; font-size: 18px; line-height: 1.65; }
+footer { margin-top: 24px; color: #899fa9; font-size: 16px; line-height: 1.7; }
+@media (max-width: 680px) { .choices { grid-template-columns: 1fr; } article p { min-height: auto; } main { padding: 28px; } .intro { font-size: 20px; } }

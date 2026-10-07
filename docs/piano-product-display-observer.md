@@ -41,7 +41,7 @@ callback. SimpleInit's own selected GOP pointer should be logged where its real
 `uefigop_init` selects it. No independent diagnostic image or feature profile is
 required. This module alone does not provide that build or runtime wiring.
 
-Run `python3 -m unittest discover -s tests -p test_product_display_observe.py -v`.
+Run `python3 -m unittest discover -s tests/unit -p test_product_display_observe.py -v`.
 The actual C implementation passes 38 fork scenarios with ASAN/UBSAN and strict
 AARCH64 compilation. They cover physical/ConSplitter metadata, preferred and
 ConOut identities, count bounds, malformed modes, missing services, actual TPL,

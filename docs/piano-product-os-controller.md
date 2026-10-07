@@ -44,7 +44,7 @@ refused. A missing file or memory proof returns an observable status to Root;
 Root must restore its actual policy/owner request state before resuming UI,
 without manufacturing a USB ACK or silently reusing an old sequence.
 
-`tests/test_product_os_controller.py` compiles the actual controller and CPU
+`tests/unit/test_product_os_controller.py` compiles the actual controller and CPU
 layer with ASAN/UBSAN for six preflight scenarios. A second actual joint fixture
 links the real FileSource, Linux EFI session, CPU layer, AA64 PE parser and
 libfdt: ordinary native-late return/Disarm, preflight NOT_READY, Before/EBS

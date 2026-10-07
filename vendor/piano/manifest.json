@@ -1,0 +1,215 @@
+{
+  "board_dtb": {
+    "hardware_scope_unchanged": true,
+    "path": "dtb/piano.dtb",
+    "removed_properties": {
+      "/": [],
+      "/chosen": [
+        "bootargs",
+        "kaslr-seed",
+        "linux,initrd-end",
+        "linux,initrd-start"
+      ]
+    },
+    "source_sha256": "a4b55dd3b77e69be451aaf2263c76f5496c93325767e49f748ee49570611e8d7"
+  },
+  "files": {
+    "dtb/piano.dtb": {
+      "bytes": 1109254,
+      "sha256": "82b2404bc872c1f60eb4c54c62eb9f2094b97586bdc2aeccae9765f5f258aff1"
+    },
+    "dtb/xbl-config.dtb": {
+      "bytes": 142005,
+      "sha256": "634ec73dc6d69a07b5af8246e03b0d2ae84dfb9ce9901135121c220443c9cd10"
+    },
+    "native/ChipInfo.depex": {
+      "bytes": 36,
+      "sha256": "5a2204901e9095761d883230974b7d3265bb85eb6eecfd02550ce4d17ec61802"
+    },
+    "native/ChipInfo.efi": {
+      "bytes": 49152,
+      "sha256": "71117ca24c5a7243858865ee1512f31ffe7fa1a3fff608880ec7ab89e055dfba"
+    },
+    "native/ClockDxe.depex": {
+      "bytes": 54,
+      "sha256": "c8001e9cea134cf8205ad4167fd0ff3b8dab6ecf325c723158cc6916e4a9b1cf"
+    },
+    "native/ClockDxe.efi": {
+      "bytes": 278528,
+      "sha256": "f9e85aa758932b4366c55ec83b58e0176f58fba2944cc2fdd34875a46fdb769e"
+    },
+    "native/CmdDbDxe.depex": {
+      "bytes": 2,
+      "sha256": "557c754d26e2667287367a856ea5fcd584f35ab796d24a6a875d1648a4637d23"
+    },
+    "native/CmdDbDxe.efi": {
+      "bytes": 32768,
+      "sha256": "b513dfeacf1fc4464acfa8da59ada1eaa019a19860daf03c790a5010bd9dbb09"
+    },
+    "native/DALSys.depex": {
+      "bytes": 18,
+      "sha256": "445084b65f55991565be20b692e489f28006a91c3d0a050eae2a8eebdf12f563"
+    },
+    "native/DALSys.efi": {
+      "bytes": 344064,
+      "sha256": "577fdab4fb956a0acf727d7b70698def1ba7658d4f5c3d8ed9509a62262ca8a1"
+    },
+    "native/HALIOMMU.depex": {
+      "bytes": 216,
+      "sha256": "8d212b55931b8b7178a06d7d5ff305306299accdbd845743b3c58bdf2e62a45f"
+    },
+    "native/HALIOMMU.efi": {
+      "bytes": 143360,
+      "sha256": "98598d11ff42f89534bb6e25fa20a0b99964a152b59df2f379021fb903ea479c"
+    },
+    "native/HWIODxeDriver.depex": {
+      "bytes": 18,
+      "sha256": "51e48aff95a5c61299f0c6b7550d1e2348078025c313f63c206f4d6f5cf36477"
+    },
+    "native/HWIODxeDriver.efi": {
+      "bytes": 32768,
+      "sha256": "6717aacfe5d592e8a82d36612a597053506d9baeebc2f95d94f870cdb9a64333"
+    },
+    "native/NpaDxe.depex": {
+      "bytes": 2,
+      "sha256": "557c754d26e2667287367a856ea5fcd584f35ab796d24a6a875d1648a4637d23"
+    },
+    "native/NpaDxe.efi": {
+      "bytes": 77824,
+      "sha256": "19a7df5cdf25ae247ca5628bd67496729f17f30d74e564a7d7f999ac2d5934b9"
+    },
+    "native/PlatformInfoDxeDriver.depex": {
+      "bytes": 18,
+      "sha256": "51e48aff95a5c61299f0c6b7550d1e2348078025c313f63c206f4d6f5cf36477"
+    },
+    "native/PlatformInfoDxeDriver.efi": {
+      "bytes": 32768,
+      "sha256": "5dbee1fa42987a21d745f3403fe37eb482bca1704dd916698b90cf922e669793"
+    },
+    "native/PwrUtilsDxe.depex": {
+      "bytes": 18,
+      "sha256": "69f6f40457ed7a884f56e034cb84bf53bf4cb3210cc31839e0d1a5d86b460a94"
+    },
+    "native/PwrUtilsDxe.efi": {
+      "bytes": 32768,
+      "sha256": "87b552c1a4ad90697f71920b8b5dbec9af90830790c7940c8fed1f92e0e7b2be"
+    },
+    "native/RpmhDxe.depex": {
+      "bytes": 36,
+      "sha256": "4222f37e19a4b252aa185240a267b613ee5e464543e682f222a21fea7c0ed2a2"
+    },
+    "native/RpmhDxe.efi": {
+      "bytes": 65536,
+      "sha256": "7ee3a1a46d2f2e210a54be964ada2dd355223d845a937ca22505c45d538cf2eb"
+    },
+    "native/SmemDxe.depex": {
+      "bytes": 2,
+      "sha256": "557c754d26e2667287367a856ea5fcd584f35ab796d24a6a875d1648a4637d23"
+    },
+    "native/SmemDxe.efi": {
+      "bytes": 40960,
+      "sha256": "9f0de741db1b5f70d9716c90170b4269ab52a251fe1a87adad1915fac4f0d5cf"
+    },
+    "native/ULogDxe.depex": {
+      "bytes": 2,
+      "sha256": "557c754d26e2667287367a856ea5fcd584f35ab796d24a6a875d1648a4637d23"
+    },
+    "native/ULogDxe.efi": {
+      "bytes": 77824,
+      "sha256": "f3d718d8616b6e5f1aaa53b991e7a0c48d6aee8466d35ab53c61fd4bff819181"
+    },
+    "native/VcsDxe.depex": {
+      "bytes": 54,
+      "sha256": "c8001e9cea134cf8205ad4167fd0ff3b8dab6ecf325c723158cc6916e4a9b1cf"
+    },
+    "native/VcsDxe.efi": {
+      "bytes": 69632,
+      "sha256": "d335dbcfd4175e6d9f189062bc777961f497e968d66acc7dacb4aae8b3055e4f"
+    }
+  },
+  "native_drivers": {
+    "ChipInfo": {
+      "depex": "native/ChipInfo.depex",
+      "file_guid": "10e193df-9966-44e7-b17c-59dd831e20fc",
+      "pe": "native/ChipInfo.efi"
+    },
+    "ClockDxe": {
+      "depex": "native/ClockDxe.depex",
+      "file_guid": "4db5dea6-5302-4d1a-8a82-677a683b0d29",
+      "pe": "native/ClockDxe.efi"
+    },
+    "CmdDbDxe": {
+      "depex": "native/CmdDbDxe.depex",
+      "file_guid": "aba01ff8-2ccb-4e12-8b2e-cd3f4a742993",
+      "pe": "native/CmdDbDxe.efi"
+    },
+    "DALSys": {
+      "depex": "native/DALSys.depex",
+      "file_guid": "8e9bd160-b184-11df-94e2-0800200c9a66",
+      "pe": "native/DALSys.efi"
+    },
+    "HALIOMMU": {
+      "depex": "native/HALIOMMU.depex",
+      "file_guid": "9a00771f-36d4-4dd5-8916-c48ed9b16b86",
+      "pe": "native/HALIOMMU.efi"
+    },
+    "HWIODxeDriver": {
+      "depex": "native/HWIODxeDriver.depex",
+      "file_guid": "af9763a2-033b-4109-8e17-56a98d380c92",
+      "pe": "native/HWIODxeDriver.efi"
+    },
+    "NpaDxe": {
+      "depex": "native/NpaDxe.depex",
+      "file_guid": "cb29f4d1-7f37-4692-a416-93e82e219711",
+      "pe": "native/NpaDxe.efi"
+    },
+    "PlatformInfoDxeDriver": {
+      "depex": "native/PlatformInfoDxeDriver.depex",
+      "file_guid": "b105211b-bbbd-4add-a3b0-d1cf4a52154c",
+      "pe": "native/PlatformInfoDxeDriver.efi"
+    },
+    "PwrUtilsDxe": {
+      "depex": "native/PwrUtilsDxe.depex",
+      "file_guid": "0401b830-bff9-44a2-a5f6-95734a33c017",
+      "pe": "native/PwrUtilsDxe.efi"
+    },
+    "RpmhDxe": {
+      "depex": "native/RpmhDxe.depex",
+      "file_guid": "cb29f4d1-7f37-4692-a416-93e82e219766",
+      "pe": "native/RpmhDxe.efi"
+    },
+    "SmemDxe": {
+      "depex": "native/SmemDxe.depex",
+      "file_guid": "f541d663-4a48-40aa-aabf-ff158ccae34c",
+      "pe": "native/SmemDxe.efi"
+    },
+    "ULogDxe": {
+      "depex": "native/ULogDxe.depex",
+      "file_guid": "e43128a8-8692-42b6-8afa-676158578d18",
+      "pe": "native/ULogDxe.efi"
+    },
+    "VcsDxe": {
+      "depex": "native/VcsDxe.depex",
+      "file_guid": "8bd3b475-401a-4b0b-9315-edee61a1eae5",
+      "pe": "native/VcsDxe.efi"
+    }
+  },
+  "provenance": {
+    "board_source": "Captured runtime board FDT, with only root/chosen snapshot properties removed; hardware tree and reservations unchanged",
+    "distribution_license_status": "NOT_REVIEWED",
+    "native_source": "Original EFI PE and DEPEX sections extracted from captured factory uefi_a",
+    "uefi_image_sha256": "ffa07250817984c3c32c260c48fec6100cd8be06168fe0948a01c88f2156faad",
+    "xbl_source": "Configuration FDT extracted from captured xbl_config_a"
+  },
+  "schema_version": 1,
+  "scope": "CAPTURED_FIRMWARE_NOT_RUNTIME_AUTHORITY",
+  "target": {
+    "device": "piano",
+    "memory_gib": 16,
+    "soc": "SM8750P"
+  },
+  "xbl_config_dtb": {
+    "path": "dtb/xbl-config.dtb",
+    "source_sha256": "634ec73dc6d69a07b5af8246e03b0d2ae84dfb9ce9901135121c220443c9cd10"
+  }
+}

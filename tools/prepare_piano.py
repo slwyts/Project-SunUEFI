@@ -26,7 +26,7 @@ def main():
     ap.add_argument('--capture', type=Path, required=True)
     ap.add_argument('--extracted', type=Path, required=True)
     ap.add_argument('--workspace', type=Path, default=Path('upstream/Mu-Silicium'))
-    ap.add_argument('--source', type=Path, default=Path('platforms/pianoPkg'))
+    ap.add_argument('--source', type=Path, default=Path('uefi/platforms/pianoPkg'))
     ap.add_argument('--fdtput', type=Path, default=Path('upstream/dtc/fdtput'))
     args = ap.parse_args()
     manifest = json.loads((args.capture / 'manifest.json').read_text())

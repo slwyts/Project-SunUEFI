@@ -33,7 +33,7 @@ The existing EBS fence disables the window on CPU state only and blocks all
 subsequent BS/keyboard/USB calls. The parent keeps retained code resident.
 
 ```
-python3 -m unittest discover -s tests -p test_boot_policy.py -v
+python3 -m unittest discover -s tests/unit -p test_boot_policy.py -v
 ```
 
 The actual BootPolicy+FV loader C runs64 unchanged Run regression scenarios and

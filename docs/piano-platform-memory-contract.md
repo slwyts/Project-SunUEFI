@@ -102,7 +102,7 @@ remains64MiB and the high table remains unbound.
 
 ## Actual-source verification
 
-`tests/test_product_low_memory.py` executes four checks:
+`tests/unit/test_product_low_memory.py` executes four checks:
 
 - Original captured and current Android DT reservation semantics yield the
   same product low fix; all unrelated native rows/cache fields are unchanged.
@@ -131,9 +131,9 @@ retain native empty-current observations, and reject MMIO attribute/role/partial
 overlap mutations, DRAM aliases, current overflow/overlap and real owner conflicts.
 They never call an authority, MemoryPeim, MMU or a high-memory allocator.
 
-`tests/test_ram_partition.py` runs 31 actual inventory/identity/ABI/lifetime
+`tests/unit/test_ram_partition.py` runs 31 actual inventory/identity/ABI/lifetime
 cases against the pinned original Env PE, including the physical current12 view
-behind the substituted ARM-call boundary. `tests/test_product_low_memory.py`
+behind the substituted ARM-call boundary. `tests/unit/test_product_low_memory.py`
 runs four methods including the 16-case actual-product compatibility fixture.
 Those producer fixes remove structural refusals; they do not make the full Linux
 plan ready. Newly composed DDR is still occupied LoaderData, with no new free

@@ -136,7 +136,7 @@ def build(root, payload_dir, busybox, output):
             write_newc(stream, 'bin/' + applet, stat.S_IFLNK | 0o777, inode, data=b'busybox'); inode += 1
         for name, source in sorted(files.items()):
             write_newc(stream, name, stat.S_IFREG | 0o755, inode, source=source); inode += 1
-        entry = ROOT / 'bootprofiles/linux-userspace/ram-bootstrap'
+        entry = ROOT / 'linux/userspace/ram-bootstrap'
         write_newc(stream, 'pianoinit', stat.S_IFREG | 0o755, inode, source=entry); inode += 1
         check = (record['archive_sha256'] + '  rootfs.tar.gz\n').encode()
         write_newc(stream, 'rootfs.sha256', stat.S_IFREG | 0o600, inode, data=check); inode += 1

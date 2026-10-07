@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "debian": {
+      "default_suite": "trixie",
+      "depends": [
+        "systemd",
+        "udev",
+        "kmod",
+        "coreutils",
+        "alsa-ucm-conf",
+        "alsa-utils"
+      ],
+      "camera_depends": [
+        "wireplumber (>= 0.5)"
+      ],
+      "dependency_resolution_tested": false,
+      "device_tested": false,
+      "native_layer_abi_verified": false,
+      "camera_profile_status": "Declared source schema; target compatibility and dependency resolution untested"
+    },
+    "ubuntu": {
+      "default_suite": "noble",
+      "depends": [
+        "systemd",
+        "udev",
+        "kmod",
+        "coreutils",
+        "alsa-ucm-conf",
+        "alsa-utils"
+      ],
+      "camera_depends": [
+        "wireplumber (>= 0.5)"
+      ],
+      "dependency_resolution_tested": false,
+      "device_tested": false,
+      "native_layer_abi_verified": false,
+      "camera_profile_status": "Declared source schema; target compatibility and dependency resolution untested"
+    },
+    "deepin": {
+      "default_suite": null,
+      "depends": [
+        "systemd",
+        "udev",
+        "kmod",
+        "coreutils",
+        "alsa-ucm-conf",
+        "alsa-utils"
+      ],
+      "camera_depends": [
+        "wireplumber (>= 0.5)"
+      ],
+      "dependency_resolution_tested": false,
+      "device_tested": false,
+      "native_layer_abi_verified": false,
+      "camera_profile_status": "Declared source schema; target compatibility and dependency resolution untested"
+    },
+    "arch": {
+      "default_suite": "rolling",
+      "depends": [
+        "systemd",
+        "kmod",
+        "coreutils",
+        "alsa-ucm-conf",
+        "alsa-utils"
+      ],
+      "camera_depends": [
+        "wireplumber>=0.5"
+      ],
+      "dependency_resolution_tested": false,
+      "device_tested": false,
+      "native_layer_abi_verified": false,
+      "camera_profile_status": "Declared source schema; target compatibility and dependency resolution untested"
+    }
+  }
+}

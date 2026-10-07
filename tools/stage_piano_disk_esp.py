@@ -119,7 +119,7 @@ def stage(output):
         'schema': 1, 'status': 'HOST_STAGED_STABLE_DISK_INPUTS_NEXT_DISABLED',
         'partitions': {
             'esp': {'partlabel': 'sunuefi_esp', 'partuuid': ESP_UUID, 'filesystem': 'FAT32', 'capacity_bytes': ESP_BYTES},
-            'root': {'partlabel': 'sunuefi_linux', 'partuuid': ROOT_UUID, 'filesystem': 'ext4', 'capacity_bytes': ROOT_BYTES}},
+            'root': {'partlabel': 'sunuefi_root', 'partuuid': ROOT_UUID, 'filesystem': 'ext4', 'capacity_bytes': ROOT_BYTES}},
         'entries': {
             'stable': {'enabled': False, 'disk_inputs_ready': True, 'boot_image': '/EFI/Piano/stable/boot.img',
                        'efi_image': '/EFI/Piano/stable/Image.efi', 'device_tree': '/EFI/Piano/stable/piano.dtb',

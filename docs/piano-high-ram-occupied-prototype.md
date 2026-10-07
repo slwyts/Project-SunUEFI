@@ -12,7 +12,7 @@ python3 tools/piano_high_ram_contract.py --output-dir /tmp/piano-high-review
 python3 tools/piano_high_ram_contract.py \
   --output-dir artifacts/dram/high-occupied-prototype --emit-prototype
 
-python3 -m unittest discover -s tests -p test_piano_high_ram_contract.py -v
+python3 -m unittest discover -s tests/unit -p test_piano_high_ram_contract.py -v
 ```
 
 已生成`artifacts/dram/high-occupied-prototype/MemoryMapLib.c`，SHA `45d73ca96e8e2769ce08abc8a46fcb7e2ccdf6000f6233f1e4e9a752d4dda311`。review为同目录`high-occupied-prototype.json`。原88候选表SHA仍`70aaab84738198b18a78b0f11f715f15fa4c11295f30befe8ab82a98e693b7cc`；原probe表仍b93f559dc4570b998a519fa0987d02b4b9390ee678772c641a615deb252a8634。

@@ -17,7 +17,7 @@ The actual current runtime FDT and352508 source agree on six DMA masters:
 
 GPI descriptor and QUP payload devices are different DMA API consumers. Binding
 only the GPI controller does not bind the buffers mapped through the wrapper.
-`configs/linux/dtb/piano-linux-owned-dma.dtso` retargets only these six iommus
+`linux/dts/piano-linux-owned-dma.dtso` retargets only these six iommus
 properties to the actual Linux `apps_smmu_ml`, `/soc/iommu@15000000`, with two
 provider cells. No provider count, register, clock, GPIO or enable status changes.
 `tools/apply_piano_dma_masters.py` uses real cpp/dtc/fdtoverlay/libfdt and rejects

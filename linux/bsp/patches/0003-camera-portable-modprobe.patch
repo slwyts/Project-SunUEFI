@@ -1,0 +1,11 @@
+--- a/rootfs/overlay/usr/lib/systemd/system/piano-camerad.service
++++ b/rootfs/overlay/usr/lib/systemd/system/piano-camerad.service
+@@ -10,7 +10,7 @@
+ # /etc/piano/camera.conf may set PIANO_CAMERA_SATURATION (percent) and
+ # PIANO_CAMERA_CONTRAST (0-256)
+ EnvironmentFile=-/etc/piano/camera.conf
+-ExecStartPre=/usr/sbin/modprobe v4l2loopback
++ExecStartPre=/usr/bin/env modprobe v4l2loopback
+ ExecStart=/usr/lib/piano/piano-camerad
+ Restart=on-failure
+ RestartSec=2

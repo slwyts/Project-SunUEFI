@@ -1,9 +1,9 @@
 # HAL-independent SMMU register prototype
 
 This is an offline, injected-register source prototype. Root preserves the
-frozen source separately in bootprofiles/smmu-independent/, outside product
+frozen source separately in uefi/components/smmu-independent/, outside product
 inputs; no product driver or physical register operations are bound.
-Run `python3 -m unittest discover -s tests -p test_smmu_independent.py -v`
+Run `python3 -m unittest discover -s tests/unit -p test_smmu_independent.py -v`
 for the original12 register cases,14 readonly-probe cases, table-bound refusal
 cases, ASan/UBSan and strict AArch64 source compilation. No device was accessed.
 The product still uses the native HAL backend.

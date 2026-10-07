@@ -1,0 +1,18 @@
+[Unit]
+Description=Piano camera daemon (hardware ISP frames to the v4l2loopback cameras)
+# piano-camera loads the camera drivers; without CAMSS (CAMERA_START=0)
+# there is nothing to run.
+After=piano-camera.service
+Requires=piano-camera.service
+ConditionPathExists=/sys/bus/platform/devices/ad27000.isp-ml/driver
+[Service]
+Type=simple
+# /etc/piano/camera.conf may set PIANO_CAMERA_SATURATION (percent) and
+# PIANO_CAMERA_CONTRAST (0-256)
+EnvironmentFile=-/etc/piano/camera.conf
+ExecStartPre=/usr/bin/env modprobe v4l2loopback
+ExecStart=/usr/lib/piano/piano-camerad
+Restart=on-failure
+RestartSec=2
+[Install]
+WantedBy=multi-user.target

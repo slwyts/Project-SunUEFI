@@ -14,7 +14,7 @@
 
 ## 固定操作与接口
 
-新增`bootprofiles/uefi-app/PianoGeniI2cPio.c/.h`，宏`PIANO_GENI_I2C_PIO_EXPERIMENT`默认0，尚未加入任何INF/DSC/FDF或prepare flag。默认编译下Initialize/Read返回UNSUPPORTED，不调用transaction callbacks；纯packet builder和显式只读Capture仍可用于后续审核。
+新增`uefi/core/PianoGeniI2cPio.c/.h`，宏`PIANO_GENI_I2C_PIO_EXPERIMENT`默认0，尚未加入任何INF/DSC/FDF或prepare flag。默认编译下Initialize/Read返回UNSUPPORTED，不调用transaction callbacks；纯packet builder和显式只读Capture仍可用于后续审核。
 
 `PianoGeniI2cPioBuildRuntimePacket()`没有slave/register/length参数，只输出两条固定命令：
 
@@ -52,7 +52,7 @@ Context保留attempt/command/TX-word计数、partial Received、poll/cleanup计�
 执行：
 
 ```sh
-python3 tests/test_geni_i2c_pio.py -v
+python3 tests/unit/test_geni_i2c_pio.py -v
 ```
 
 两项Python tests均通过。实际C分别编译default0和opt-in1，使用真实Mu UEFI types、ASan/UBSan及Wall/Wextra/Werror；生产C另经AArch64 opt-in语法检查。opt-in有48个控制/故障场景：8个独立gate、1个成功事务、20个运行失败、reentry/预算2项、错误base/window2项、14个初始寄存器漂移、1个Capture错误；另有1个default-off场景及共用的packet/null/read-only Capture检查。每个运行失败还检查后续read/reinitialize不再触发callback。

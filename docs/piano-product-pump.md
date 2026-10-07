@@ -6,7 +6,7 @@ same USB service. Entering an application does not construct another DWC3
 controller or substitute another feature set. Diagnostic image profiles are
 development inputs, not separate product distributions.
 
-`bootprofiles/uefi-app/Protocol/PianoProductRuntime.h` is the canonical ABI:
+`uefi/core/Protocol/PianoProductRuntime.h` is the canonical ABI:
 revision 1, one GUID, five methods (`Pump`, `BootServicesAlive`, `RequestAction`,
 `GetPendingAction`, `AckAction`). Consumers never dispatch an EFI image from a
 timer, key notification, or `WaitForEvent` callback. Notifications only latch
@@ -72,8 +72,8 @@ into unloaded application code.
 ## Reproducible source installation and builds
 
 The ignored `upstream/` checkout is not the canonical implementation. New client
-and wrapper files live under `bootprofiles/product-pump/`; the protocol lives
-under `bootprofiles/uefi-app/Protocol/`. Run:
+and wrapper files live under `uefi/components/product-pump/`; the protocol lives
+under `uefi/core/Protocol/`. Run:
 
 ```sh
 python3 tools/prepare_product_pump.py apply
@@ -112,7 +112,7 @@ device acceptance tests against the single product image.
 
 ## Verification scope
 
-`python3 -m unittest discover -s tests -p test_product_pump.py -v` compiles the
+`python3 -m unittest discover -s tests/unit -p test_product_pump.py -v` compiles the
 actual client and extracts the actual `CoreWaitForEvent`, `gui_main`, and
 `gui_run_and_exit` source bodies into a host harness. With GUI mode both disabled
 and enabled, 56 fork cases cover application TPL, nonreentry, EBS/cache refusal,

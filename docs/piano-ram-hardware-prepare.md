@@ -1,7 +1,7 @@
 # Piano RAM hardware preparation and reference-clock bindings
 
 The canonical entry is
-`bootprofiles/linux-userspace/piano-ram-hardware-prepare`. The RAM bootstrap calls
+`linux/userspace/piano-ram-hardware-prepare`. The RAM bootstrap calls
 it before handing PID 1 to Debian systemd. It verifies an explicit `piano.root=ram`
 command line, actual RAM-backed root, the current full module directory, normal
 clock-provider binding, then normal `modprobe arm_smmu` and fresh USB/QUP route
@@ -30,7 +30,7 @@ retain the distinctions reported by the shared verifier.
 
 ## Exact reference-clock repair
 
-`configs/linux/dtb/piano-linux-tcsr-clocks.dtso` and
+`linux/dts/piano-linux-tcsr-clocks.dtso` and
 `tools/apply_piano_tcsr_clocks.py` fix a concrete three-source mismatch:
 
 * The current Android capture has `/soc/clock-controller@f204008`,
@@ -164,7 +164,7 @@ staged into the existing GNOME rootfs or run on the tablet.
 Validation:
 
 ```sh
-python3 -m unittest discover -s tests -p test_piano_ram_hardware.py -v
+python3 -m unittest discover -s tests/unit -p test_piano_ram_hardware.py -v
 ```
 
 Ten tests execute the actual runtime parser and normal-load sequencing against

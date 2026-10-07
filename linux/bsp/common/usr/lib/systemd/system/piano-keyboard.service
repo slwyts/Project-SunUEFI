@@ -1,0 +1,12 @@
+[Unit]
+Description=Piano keyboard cover (Nanosic WN8030 keyboard and touchpad)
+# piano-touch loads the QUP1 GPI controller, piano-display the GENI I2C driver
+After=piano-touch.service piano-display.service
+Wants=piano-touch.service
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/piano/keyboard-start
+RemainAfterExit=yes
+TimeoutStartSec=60
+[Install]
+WantedBy=multi-user.target

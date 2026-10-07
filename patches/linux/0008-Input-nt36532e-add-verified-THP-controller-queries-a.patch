@@ -1,0 +1,877 @@
+From efe5734c24510c3c194f765511b49be9f13b4aa0 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Wed, 7 Oct 2026 01:35:53 +0800
+Subject: [PATCH] Input: nt36532e - add verified THP controller queries and
+ game rollback
+
+---
+ .../ABI/testing/procfs-nvt-thp-control        |  63 ++++
+ drivers/input/touchscreen/nt36532e/Kconfig    |   1 +
+ drivers/input/touchscreen/nt36532e/nt36xxx.c  | 328 +++++++++++++++++-
+ drivers/input/touchscreen/nt36532e/nt36xxx.h  |  13 +
+ .../touchscreen/nt36532e/nt36xxx_fw_update.c  |   9 +
+ .../touchscreen/nt36532e/test_thp_control.py  | 325 +++++++++++++++++
+ 6 files changed, 738 insertions(+), 1 deletion(-)
+ create mode 100644 Documentation/ABI/testing/procfs-nvt-thp-control
+ create mode 100644 drivers/input/touchscreen/nt36532e/test_thp_control.py
+
+diff --git a/Documentation/ABI/testing/procfs-nvt-thp-control b/Documentation/ABI/testing/procfs-nvt-thp-control
+new file mode 100644
+index 0000000000000000000000000000000000000000..84487392392970a227361673e354fe4b58011a05
+--- /dev/null
++++ b/Documentation/ABI/testing/procfs-nvt-thp-control
+@@ -0,0 +1,63 @@
++What:           /proc/nvt_thp_controller_state
++Date:           October 2026
++Description:
++                Explicitly query the NT36532 THP firmware host mailbox. Reading
++                this file sends the vendor getter commands, temporarily pauses
++                the IRQ thread, and returns game_mode (0x0f), scan_freq_no
++                (0x08), scan_freq (0x09), hand_scan_rate (0x0a), pen_scan_rate
++                (0x0b), firmware identity and the validated game/rollback cache.
++
++                A failed query returns its errno without presenting initialized
++                zero values as controller state. Before a successful firmware
++                download/info read, or during suspend, reads return EAGAIN.
++                The frequency-selection number has no documented Hz mapping.
++                No scan-rate setter or 360-Hz command is exposed here.
++
++                /proc/nvt_thp_status remains passive: reading its frame, IRQ and
++                error counters never sends a firmware command.
++
++What:           /proc/nvt_thp_game_mode
++Date:           October 2026
++Description:
++                Reading queries the controller's game_mode and reports whether
++                a requested mode and a rollback baseline are known. Values for
++                unknown cached states are omitted.
++
++                Writing the integer 0 or 1 selects the vendor game-mode setting.
++                The driver reads the old mode, sends the setting, and reads it
++                back. A successful write requires the returned mode to match.
++                A timeout, SPI error or mismatching readback returns an errno
++                and attempts to restore and verify the mode read before writing.
++                An unconfirmed recovery invalidates the cached requested mode
++                and rollback baseline.
++
++                The first successful write saves the verified prior mode.
++                Further writes, including idempotent writes, retain that
++                baseline until explicit rollback succeeds. Firmware reloading
++                restores a requested mode only if a prior write was confirmed
++                for the same downloaded firmware CRC32, reported version and
++                project ID. With no validated request, no game-mode command is
++                automatically sent. Firmware identity mismatch forgets both
++                cached states. An untracked 0x0f write through nvt_thp_cmd also
++                invalidates both states.
++
++                Command acknowledgement and game-mode readback do not prove a
++                particular scan, raw-frame or coordinate-report frequency.
++
++What:           /proc/nvt_thp_game_rollback
++Date:           October 2026
++Description:
++                Writing the integer 1 restores and verifies the saved baseline
++                for the current firmware, then consumes the rollback snapshot.
++                It returns ENODATA if no matching snapshot exists. Other input
++                values return EINVAL. A failed rollback retains the snapshot
++                only if recovery to the immediate pre-write mode was confirmed.
++
++                These interfaces use the Piano p81/NT36532 extended command ABI
++                from MiCode/vendor_xiaomi_proprietary_touch-driver, piano-w-oss,
++                p81/nt36532/nt36xxx_ext_proc.c. The ABI was also checked against
++                the captured stock nt36532_touch.ko. Root-only proc permissions
++                restrict explicit controller operations.
++
++                Host verification without hardware:
++                python3 drivers/input/touchscreen/nt36532e/test_thp_control.py
+diff --git a/drivers/input/touchscreen/nt36532e/Kconfig b/drivers/input/touchscreen/nt36532e/Kconfig
+index 89a470ec6f68701bcba650437b39c552665d3143..a0e0f16b38058d6df849adebfa311166bf72e7fe 100644
+--- a/drivers/input/touchscreen/nt36532e/Kconfig
++++ b/drivers/input/touchscreen/nt36532e/Kconfig
+@@ -4,6 +4,7 @@
+ #
+ config TOUCHSCREEN_NT36532E_SPI
+ 	tristate "Novatek NT36532E host download SPI driver"
++	select CRC32
+ 	default n
+ 	help
+ 	  Say Y here if you have a Novatek NT36532E no flash touchscreen connected
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.c b/drivers/input/touchscreen/nt36532e/nt36xxx.c
+index c965d5eed27b1298e4edb1463725975c945904f2..804501cbccaf715db4bb8b0549f2ae540c066761 100644
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx.c
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.c
+@@ -194,6 +194,296 @@ static ssize_t nvt_thp_raw_write(struct file *file, const char __user *buf,
+ 	return count;
+ }
+ 
++/*
++ * Xiaomi p81/NT36532 THP ABI, also verified against the captured Piano
++ * nt36532_touch.ko (SHA256 d3ef0e85f98147d50784fc6b32d1d55e53834e8aa406e682e86c048ef663bac0):
++ * https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/piano-w-oss/p81/nt36532/nt36xxx_ext_proc.c
++ * nvt_{get,set}_extend_custom_cmd and nvt_xm_htc_{get,set}_game_mode.
++ * 0x08 is a frequency selection number; 0x0a/0x0b are scan-rate getters.
++ * The vendor source supplies no index-to-Hz mapping or 360-Hz command.
++ * Caller holds ts->lock; a read request itself writes the host mailbox.
++ */
++static int nvt_thp_extended_cmd(u8 cmd, bool read, u16 *value)
++{
++	u8 buf[6] = { 0 };
++	u8 status = 0;
++	u16 result = 0;
++	int retry, ret, page_ret;
++
++	ret = nvt_set_page(ts->mmap->EVENT_BUF_ADDR | EVENT_MAP_HOST_CMD);
++	if (ret < 0)
++		goto out;
++
++	for (retry = 0; retry < 10; retry++) {
++		/* 0xbf means the preceding request is still pending. */
++		if (status != 0xbf) {
++			buf[0] = EVENT_MAP_HOST_CMD;
++			buf[1] = 0xbf;
++			buf[2] = cmd;
++			buf[3] = read ? 0x01 : 0x00;
++			buf[4] = *value & 0xff;
++			buf[5] = *value >> 8;
++			ret = CTP_SPI_WRITE(ts->client, buf, read ? 4 : 6);
++			if (ret < 0)
++				goto out;
++		}
++
++		usleep_range(10000, 11000);
++		memset(buf, 0, sizeof(buf));
++		buf[0] = EVENT_MAP_HOST_CMD;
++		buf[1] = 0xff;
++		ret = CTP_SPI_READ(ts->client, buf, read ? 6 : 2);
++		if (ret < 0)
++			goto out;
++		status = buf[1];
++		if (!status) {
++			result = get_unaligned_le16(buf + 4);
++			break;
++		}
++	}
++	ret = retry == 10 ? -ETIMEDOUT : 0;
++out:
++	/* Restore the frame-read page on every exit, including SPI errors. */
++	page_ret = nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
++	if (!ret && page_ret < 0)
++		ret = page_ret;
++	if (!ret && read)
++		*value = result;
++	return ret;
++}
++
++static int nvt_thp_control_begin(void)
++{
++	/*
++	 * Balance our own IRQ-disable reference without changing irq_enabled.
++	 * This preserves a concurrent suspend/boot disable, and avoids waiting
++	 * for the IRQ thread while holding the mutex that thread needs.
++	 */
++	disable_irq(ts->client->irq);
++	mutex_lock(&ts->lock);
++	if (!bTouchIsAwake || ts->dev_pm_suspend ||
++	    !ts->thp_firmware_ready || ts->ic_state == NVT_IC_SUSPEND_IN ||
++	    ts->ic_state == NVT_IC_SUSPEND_OUT) {
++		mutex_unlock(&ts->lock);
++		enable_irq(ts->client->irq);
++		return -EAGAIN;
++	}
++	return 0;
++}
++
++static void nvt_thp_control_end(void)
++{
++	mutex_unlock(&ts->lock);
++	enable_irq(ts->client->irq);
++}
++
++static bool nvt_thp_game_firmware_matches(void)
++{
++	return ts->thp_firmware_ready &&
++	       ts->thp_game_fw_crc == ts->thp_firmware_crc &&
++	       ts->thp_game_fw_ver == ts->fw_ver &&
++	       ts->thp_game_fw_pid == ts->nvt_pid;
++}
++
++static void nvt_thp_game_forget(void)
++{
++	ts->thp_game_valid = false;
++	ts->thp_game_prior_valid = false;
++}
++
++static int nvt_thp_game_get(u16 *value)
++{
++	int ret = nvt_thp_extended_cmd(0x0f, true, value);
++
++	if (!ret && *value > 1)
++		ret = -ERANGE;
++	return ret;
++}
++
++/* Caller holds ts->lock. Only confirmed writes become reload requests. */
++static int nvt_thp_game_apply(u8 requested, bool save_prior)
++{
++	u16 before = 0, after = 0, target = requested;
++	int ret, rollback_ret;
++
++	ret = nvt_thp_game_get(&before);
++	if (ret)
++		return ret;
++	ret = nvt_thp_extended_cmd(0x0f, false, &target);
++	if (!ret)
++		ret = nvt_thp_game_get(&after);
++	if (!ret && after != requested)
++		ret = -EIO;
++	if (ret) {
++		/* A timed-out write may have taken effect: verify the rollback. */
++		rollback_ret = nvt_thp_extended_cmd(0x0f, false, &before);
++		if (!rollback_ret)
++			rollback_ret = nvt_thp_game_get(&after);
++		if (!rollback_ret && after != before)
++			rollback_ret = -EIO;
++		if (rollback_ret) {
++			nvt_thp_game_forget();
++			NVT_ERR("game-mode rollback unconfirmed: %d\n", rollback_ret);
++		}
++		return ret;
++	}
++
++	/* Keep the first verified baseline until rollback is consumed. */
++	if (save_prior && (!ts->thp_game_prior_valid ||
++			   !nvt_thp_game_firmware_matches())) {
++		ts->thp_game_prior = before;
++		ts->thp_game_prior_valid = true;
++	}
++	ts->thp_game_requested = requested;
++	ts->thp_game_fw_crc = ts->thp_firmware_crc;
++	ts->thp_game_fw_ver = ts->fw_ver;
++	ts->thp_game_fw_pid = ts->nvt_pid;
++	ts->thp_game_valid = true;
++	return 0;
++}
++
++void nvt_thp_restore_game(void)
++{
++	int ret;
++
++	if (!ts->thp_game_valid)
++		return;
++	if (!nvt_thp_game_firmware_matches()) {
++		nvt_thp_game_forget();
++		return;
++	}
++	ret = nvt_thp_game_apply(ts->thp_game_requested, false);
++	if (ret) {
++		nvt_thp_game_forget();
++		NVT_ERR("game-mode restore unconfirmed: %d\n", ret);
++	}
++}
++
++static void nvt_thp_game_show_cache(struct seq_file *m)
++{
++	bool matches = nvt_thp_game_firmware_matches();
++
++	seq_printf(m, "requested_known: %u\n", ts->thp_game_valid && matches);
++	if (ts->thp_game_valid && matches)
++		seq_printf(m, "requested_game_mode: %u\n", ts->thp_game_requested);
++	seq_printf(m, "rollback_known: %u\n", ts->thp_game_prior_valid && matches);
++	if (ts->thp_game_prior_valid && matches)
++		seq_printf(m, "rollback_game_mode: %u\n", ts->thp_game_prior);
++}
++
++/* Explicit controller queries; nvt_thp_status remains entirely passive. */
++static int nvt_thp_controller_show(struct seq_file *m, void *v)
++{
++	static const u8 commands[] = { 0x0f, 0x08, 0x09, 0x0a, 0x0b };
++	static const char * const names[] = {
++		"game_mode", "scan_freq_no", "scan_freq", "hand_scan_rate", "pen_scan_rate"
++	};
++	u16 values[ARRAY_SIZE(commands)] = { 0 };
++	int i, ret;
++
++	if (!ts)
++		return -ENODEV;
++	ret = nvt_thp_control_begin();
++	if (ret)
++		return ret;
++	for (i = 0; i < ARRAY_SIZE(commands); i++) {
++		ret = nvt_thp_extended_cmd(commands[i], true, &values[i]);
++		if (ret)
++			goto out;
++	}
++	seq_printf(m, "firmware: %s\nfw_ver: 0x%02x\nfw_pid: 0x%04x\n",
++		   ts->fw_name, ts->fw_ver, ts->nvt_pid);
++	seq_printf(m, "firmware_crc32: 0x%08x\n", ts->thp_firmware_crc);
++	for (i = 0; i < ARRAY_SIZE(commands); i++)
++		seq_printf(m, "%s: %d\n", names[i], (s16)values[i]);
++	nvt_thp_game_show_cache(m);
++out:
++	nvt_thp_control_end();
++	return ret;
++}
++
++static int nvt_thp_game_show(struct seq_file *m, void *v)
++{
++	u16 value = 0;
++	int ret;
++
++	if (!ts)
++		return -ENODEV;
++	ret = nvt_thp_control_begin();
++	if (ret)
++		return ret;
++	ret = nvt_thp_game_get(&value);
++	if (!ret) {
++		seq_printf(m, "game_mode: %u\n", value);
++		nvt_thp_game_show_cache(m);
++	}
++	nvt_thp_control_end();
++	return ret;
++}
++
++static ssize_t nvt_thp_game_write(struct file *file, const char __user *buf,
++				size_t count, loff_t *ppos)
++{
++	u8 mode;
++	int ret;
++
++	if (!ts)
++		return -ENODEV;
++	ret = kstrtou8_from_user(buf, count, 0, &mode);
++	if (ret)
++		return ret;
++	if (mode > 1)
++		return -EINVAL;
++	ret = nvt_thp_control_begin();
++	if (ret)
++		return ret;
++	ret = nvt_thp_game_apply(mode, true);
++	nvt_thp_control_end();
++	if (ret)
++		return ret;
++	return count;
++}
++
++static ssize_t nvt_thp_game_rollback_write(struct file *file,
++					 const char __user *buf, size_t count,
++					 loff_t *ppos)
++{
++	u8 rollback;
++	int ret;
++
++	if (!ts)
++		return -ENODEV;
++	ret = kstrtou8_from_user(buf, count, 0, &rollback);
++	if (ret)
++		return ret;
++	if (rollback != 1)
++		return -EINVAL;
++	ret = nvt_thp_control_begin();
++	if (ret)
++		return ret;
++	if (!ts->thp_game_prior_valid || !nvt_thp_game_firmware_matches()) {
++		ret = -ENODATA;
++	} else {
++		ret = nvt_thp_game_apply(ts->thp_game_prior, false);
++		if (!ret)
++			ts->thp_game_prior_valid = false;
++	}
++	nvt_thp_control_end();
++	if (ret)
++		return ret;
++	return count;
++}
++
++static int nvt_thp_controller_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, nvt_thp_controller_show, NULL);
++}
++
++static int nvt_thp_game_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, nvt_thp_game_show, NULL);
++}
++
+ static ssize_t nvt_thp_stylus_read(struct file *file, char __user *buf,
+ 				   size_t count, loff_t *ppos)
+ {
+@@ -309,6 +599,9 @@ static ssize_t nvt_thp_cmd_write(struct file *file, const char __user *buf,
+ 		nvt_irq_enable(false);
+ 	mutex_lock(&ts->lock);
+ 	ret = nvt_set_custom_cmd(cmd, value);
++	/* An untracked debug write must not leave a stale reload request. */
++	if (cmd == 0x0f)
++		nvt_thp_game_forget();
+ 	mutex_unlock(&ts->lock);
+ 	if (irq_was_enabled)
+ 		nvt_irq_enable(true);
+@@ -463,6 +756,26 @@ static const struct proc_ops nvt_thp_status_ops = {
+ 	.proc_release = single_release,
+ };
+ 
++static const struct proc_ops nvt_thp_controller_ops = {
++	.proc_open = nvt_thp_controller_open,
++	.proc_read = seq_read,
++	.proc_lseek = seq_lseek,
++	.proc_release = single_release,
++};
++
++static const struct proc_ops nvt_thp_game_ops = {
++	.proc_open = nvt_thp_game_open,
++	.proc_read = seq_read,
++	.proc_write = nvt_thp_game_write,
++	.proc_lseek = seq_lseek,
++	.proc_release = single_release,
++};
++
++static const struct proc_ops nvt_thp_game_rollback_ops = {
++	.proc_write = nvt_thp_game_rollback_write,
++	.proc_lseek = noop_llseek,
++};
++
+ uint32_t ENG_RST_ADDR  = 0x7FFF80;
+ uint32_t SPI_RD_FAST_ADDR;	//read from dtsi
+ 
+@@ -1914,9 +2227,16 @@ static int32_t nvt_ts_probe(struct spi_device *client)
+ 					  &nvt_thp_stylus_ops);
+ 	ts->thp_cmd_proc = proc_create("nvt_thp_cmd", 0200, NULL,
+ 				       &nvt_thp_cmd_ops);
++	ts->thp_controller_proc = proc_create("nvt_thp_controller_state", 0400,
++					      NULL, &nvt_thp_controller_ops);
++	ts->thp_game_proc = proc_create("nvt_thp_game_mode", 0600, NULL,
++					&nvt_thp_game_ops);
++	ts->thp_game_rollback_proc = proc_create("nvt_thp_game_rollback", 0200,
++						 NULL, &nvt_thp_game_rollback_ops);
+ 	if (!ts->thp_raw_proc || !ts->thp_stream_proc ||
+ 	    !ts->thp_status_proc || !ts->thp_stylus_proc ||
+-	    !ts->thp_cmd_proc) {
++	    !ts->thp_cmd_proc || !ts->thp_controller_proc ||
++	    !ts->thp_game_proc || !ts->thp_game_rollback_proc) {
+ 		ret = -ENOMEM;
+ 		goto err_create_thp_proc;
+ 	}
+@@ -1936,6 +2256,9 @@ static int32_t nvt_ts_probe(struct spi_device *client)
+ 	return 0;
+ 
+ err_create_thp_proc:
++	proc_remove(ts->thp_game_rollback_proc);
++	proc_remove(ts->thp_game_proc);
++	proc_remove(ts->thp_controller_proc);
+ 	if (ts->thp_cmd_proc)
+ 		proc_remove(ts->thp_cmd_proc);
+ 	if (ts->thp_status_proc)
+@@ -2009,6 +2332,9 @@ static void nvt_ts_remove(struct spi_device *client)
+ 	bTouchIsAwake = 0;
+ 	WRITE_ONCE(ts->thp_capture_enabled, false);
+ 	wake_up_interruptible(&ts->thp_stream_wait);
++	proc_remove(ts->thp_game_rollback_proc);
++	proc_remove(ts->thp_game_proc);
++	proc_remove(ts->thp_controller_proc);
+ 	proc_remove(ts->thp_cmd_proc);
+ 	proc_remove(ts->thp_status_proc);
+ 	proc_remove(ts->thp_stylus_proc);
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.h b/drivers/input/touchscreen/nt36532e/nt36xxx.h
+index 92cc6832dac80eaae31707f9e76f35fc0a2d8468..281e41af2d200d4724c8f919e31b69cc3bfc99df 100644
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx.h
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.h
+@@ -146,6 +146,15 @@ struct nvt_ts_data {
+ 	u8 *thp_frame;
+ 	bool thp_capture_enabled;
+ 	u8 thp_stylus_mode;
++	bool thp_firmware_ready; /* successful download and firmware-info read */
++	u32 thp_firmware_crc;
++	bool thp_game_valid;
++	bool thp_game_prior_valid;
++	u8 thp_game_requested;
++	u8 thp_game_prior;
++	u8 thp_game_fw_ver;
++	u16 thp_game_fw_pid;
++	u32 thp_game_fw_crc;
+ 	bool thp_frame_valid;
+ 	bool thp_epoch_pending;
+ 	u64 thp_frame_count;
+@@ -166,6 +175,9 @@ struct nvt_ts_data {
+ 	struct proc_dir_entry *thp_status_proc;
+ 	struct proc_dir_entry *thp_stylus_proc;
+ 	struct proc_dir_entry *thp_cmd_proc;
++	struct proc_dir_entry *thp_controller_proc;
++	struct proc_dir_entry *thp_game_proc;
++	struct proc_dir_entry *thp_game_rollback_proc;
+ };
+ 
+ typedef enum {
+@@ -228,6 +240,7 @@ int32_t nvt_check_spi_dma_tx_info(void);
+ int32_t nvt_check_tx_auto_copy(void);
+ int nvt_set_custom_cmd(u8 cmd, u16 value);
+ int nvt_thp_restore_stylus(void);
++void nvt_thp_restore_game(void);
+ void nvt_power_supply_restore(void);
+ void nvt_set_doze_delay(u16 value);
+ void Boot_Update_Firmware(struct work_struct *work);
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx_fw_update.c b/drivers/input/touchscreen/nt36532e/nt36xxx_fw_update.c
+index 6acad4fb8e45797df67192fe8c4ad094c74c329e..01572b9da4e2816199192357014c1d96984c7b84 100644
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx_fw_update.c
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx_fw_update.c
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include <linux/firmware.h>
++#include <linux/crc32.h>
+ #include <linux/gpio.h>
+ 
+ #include "nt36xxx.h"
+@@ -832,6 +833,9 @@ int32_t nvt_update_firmware(const char *firmware_name)
+ {
+ 	int32_t ret = 0;
+ 
++	/* A failed download/info read must not leave the control API ready. */
++	ts->thp_firmware_ready = false;
++
+ 	// request bin file in "/etc/firmware"
+ 	ret = update_firmware_request(firmware_name);
+ 	if (ret) {
+@@ -872,6 +876,11 @@ int32_t nvt_update_firmware(const char *firmware_name)
+ 	} else {
+ 		NVT_INFO("fw_ver=0x%02X, x_num=%u, y_num=%u, PID=0x%04X\n",
+ 			 ts->fw_ver, ts->x_num, ts->y_num, ts->nvt_pid);
++		ts->thp_firmware_crc = crc32_le(~0U, fw_entry->data,
++					      fw_entry->size) ^ ~0U;
++		ts->thp_firmware_ready = true;
++		/* No game-mode write unless userspace previously validated one. */
++		nvt_thp_restore_game();
+ 	}
+ 
+ download_fail:
+diff --git a/drivers/input/touchscreen/nt36532e/test_thp_control.py b/drivers/input/touchscreen/nt36532e/test_thp_control.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..52c11349b630cdec6c02d958f39a8c83f7b3e004
+--- /dev/null
++++ b/drivers/input/touchscreen/nt36532e/test_thp_control.py
+@@ -0,0 +1,325 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-2.0
++"""Exercise the real THP control functions with a scripted SPI/IRQ transport.
++
++Run with python3 test_thp_control.py. No device access or kernel build is used.
++The harness compiles functions extracted from nt36xxx.c, so it tests production
++retry/cleanup/state transitions rather than a second protocol implementation.
++"""
++from pathlib import Path
++import os
++import re
++import subprocess
++import tempfile
++
++
++def function(source, name):
++    match = re.search(r"^(?:static )?(?:int|bool|void|ssize_t) " + name +
++                      r"\(", source, re.MULTILINE)
++    if not match:
++        raise RuntimeError("Missing production function: " + name)
++    opening = source.index("{", match.start())
++    depth = 1
++    cursor = opening + 1
++    while depth:
++        depth += (source[cursor] == "{") - (source[cursor] == "}")
++        cursor += 1
++    return source[match.start():cursor]
++
++
++PRELUDE = r"""
++#include <assert.h>
++#include <errno.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/types.h>
++typedef uint8_t u8;
++typedef uint16_t u16;
++typedef uint32_t u32;
++#define EVENT_MAP_HOST_CMD 0x50
++#define NVT_IC_SUSPEND_IN 1
++#define NVT_IC_SUSPEND_OUT 2
++#define __user
++#define NVT_ERR(...) do {} while (0)
++struct file {};
++struct spi_device { int irq; };
++struct nvt_ts_mem_map { u32 EVENT_BUF_ADDR; };
++struct nvt_ts_data {
++    struct spi_device *client;
++    struct nvt_ts_mem_map *mmap;
++    int lock, ic_state;
++    bool dev_pm_suspend, irq_enabled, thp_firmware_ready;
++    bool thp_game_valid, thp_game_prior_valid;
++    u8 fw_ver, thp_game_fw_ver, thp_game_requested, thp_game_prior;
++    u16 nvt_pid, thp_game_fw_pid;
++    u32 thp_firmware_crc, thp_game_fw_crc;
++};
++static struct spi_device client = { .irq = 7 };
++static struct nvt_ts_mem_map mmap = { .EVENT_BUF_ADDR = 0x11c400 };
++static struct nvt_ts_data state, *ts = &state;
++static u8 bTouchIsAwake;
++static int irq_depth, sleeps;
++struct step {
++    char kind;
++    int error, len;
++    u8 cmd, status;
++    bool read;
++    u16 value;
++    u32 addr;
++};
++static struct step steps[256];
++static int step_count, step_cursor;
++static struct step *take(char kind)
++{
++    assert(step_cursor < step_count);
++    struct step *s = &steps[step_cursor++];
++    assert(s->kind == kind);
++    return s;
++}
++static void plan_page(u32 addr, int error)
++{
++    steps[step_count++] = (struct step){ .kind='P', .addr=addr, .error=error };
++}
++static void plan_write(u8 cmd, bool read, u16 value, int error)
++{
++    steps[step_count++] = (struct step){
++        .kind='W', .cmd=cmd, .read=read, .value=value, .error=error };
++}
++static void plan_read(bool read, u8 status, u16 value, int error)
++{
++    steps[step_count++] = (struct step){
++        .kind='R', .len=read ? 6 : 2, .status=status, .value=value, .error=error };
++}
++static void plan_command(u8 cmd, bool read, u16 value, u16 response)
++{
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0);
++    plan_write(cmd, read, value, 0);
++    plan_read(read, 0, response, 0);
++    plan_page(mmap.EVENT_BUF_ADDR, 0);
++}
++static void plan_game(bool read, u16 value)
++{
++    plan_command(0x0f, read, read ? 0 : value, read ? value : 0);
++}
++static void plan_game_write_error(u16 value)
++{
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0);
++    plan_write(0x0f, false, value, -EIO);
++    plan_page(mmap.EVENT_BUF_ADDR, 0);
++}
++static int nvt_set_page(u32 addr)
++{
++    struct step *s = take('P');
++    assert(s->addr == addr);
++    return s->error;
++}
++static int CTP_SPI_WRITE(struct spi_device *dev, u8 *buf, int len)
++{
++    struct step *s = take('W');
++    assert(dev == &client && len == (s->read ? 4 : 6));
++    assert(buf[0] == 0x50 && buf[1] == 0xbf && buf[2] == s->cmd);
++    assert(buf[3] == (s->read ? 1 : 0));
++    if (!s->read)
++        assert(buf[4] == (s->value & 255) && buf[5] == (s->value >> 8));
++    buf[0] |= 0x80; /* The production SPI wrapper mutates the write offset. */
++    return s->error;
++}
++static int CTP_SPI_READ(struct spi_device *dev, u8 *buf, int len)
++{
++    struct step *s = take('R');
++    assert(dev == &client && len == s->len);
++    assert(buf[0] == 0x50 && buf[1] == 0xff);
++    for (int i=2; i<len; i++) assert(buf[i] == 0);
++    if (!s->error) {
++        buf[1] = s->status;
++        if (len == 6) { buf[4] = s->value & 255; buf[5] = s->value >> 8; }
++    }
++    return s->error;
++}
++static void usleep_range(int lower, int upper)
++{
++    assert(lower == 10000 && upper == 11000);
++    sleeps++;
++}
++static u16 get_unaligned_le16(const void *ptr)
++{
++    const u8 *p = ptr;
++    return p[0] | (p[1] << 8);
++}
++static void disable_irq(int irq) { assert(irq == 7); irq_depth++; }
++static void enable_irq(int irq) { assert(irq == 7 && irq_depth > 0); irq_depth--; }
++static void mutex_lock(int *lock) { assert(!*lock); *lock = 1; }
++static void mutex_unlock(int *lock) { assert(*lock); *lock = 0; }
++static int kstrtou8_from_user(const char *buf, size_t count, int base, u8 *value)
++{
++    char tmp[32], *end;
++    if (!count || count >= sizeof(tmp)) return -EINVAL;
++    memcpy(tmp, buf, count); tmp[count]=0;
++    unsigned long result = strtoul(tmp, &end, base);
++    if (end == tmp || (*end && strcmp(end, "\n")) || result > 255) return -EINVAL;
++    *value = result;
++    return 0;
++}
++static void reset(void)
++{
++    assert(step_cursor == step_count);
++    state = (struct nvt_ts_data){
++        .client=&client, .mmap=&mmap, .irq_enabled=true,
++        .thp_firmware_ready=true, .fw_ver=0x13, .nvt_pid=0x59b0,
++        .thp_firmware_crc=0x12345678 };
++    bTouchIsAwake=1; irq_depth=0; step_count=0; step_cursor=0; sleeps=0;
++}
++static void confirmed_request(u8 value)
++{
++    ts->thp_game_valid=true; ts->thp_game_requested=value;
++    ts->thp_game_fw_crc=ts->thp_firmware_crc;
++    ts->thp_game_fw_ver=ts->fw_ver; ts->thp_game_fw_pid=ts->nvt_pid;
++}
++"""
++
++TESTS = r"""
++int main(void)
++{
++    u16 value=0x9999;
++    reset();
++    plan_command(0x0a, true, 0, 0x0168);
++    assert(!nvt_thp_extended_cmd(0x0a, true, &value) && value == 360);
++    assert(sleeps == 1); /* A returned 360 is data, not a guessed setter. */
++
++    reset();
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0);
++    plan_write(0x09, true, 0, 0);
++    plan_read(true, 0xbf, 0, 0); plan_read(true, 0xbf, 0, 0);
++    plan_read(true, 0, 0xabcd, 0); plan_page(mmap.EVENT_BUF_ADDR, 0);
++    assert(!nvt_thp_extended_cmd(0x09, true, &value) && value == 0xabcd);
++    assert(sleeps == 3); /* Pending requests are polled without resubmission. */
++
++    reset();
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0);
++    plan_write(0x08, true, 0, 0); plan_read(true, 0x7f, 0, 0);
++    plan_write(0x08, true, 0, 0); plan_read(true, 0, 4, 0);
++    plan_page(mmap.EVENT_BUF_ADDR, 0);
++    assert(!nvt_thp_extended_cmd(0x08, true, &value) && value == 4);
++
++    reset(); value=123;
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0); plan_write(0x0a, true, 0, 0);
++    for (int i=0; i<10; i++) plan_read(true, 0xbf, 0, 0);
++    plan_page(mmap.EVENT_BUF_ADDR, 0);
++    assert(nvt_thp_extended_cmd(0x0a, true, &value) == -ETIMEDOUT);
++    assert(value == 123 && sleeps == 10);
++
++    reset();
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, -EIO);
++    plan_page(mmap.EVENT_BUF_ADDR, -ENOSPC);
++    assert(nvt_thp_extended_cmd(0x0a, true, &value) == -EIO);
++    reset();
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0); plan_write(0x0a, true, 0, -EIO);
++    plan_page(mmap.EVENT_BUF_ADDR, 0);
++    assert(nvt_thp_extended_cmd(0x0a, true, &value) == -EIO);
++    reset();
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0); plan_write(0x0a, true, 0, 0);
++    plan_read(true, 0, 360, -EIO); plan_page(mmap.EVENT_BUF_ADDR, 0);
++    assert(nvt_thp_extended_cmd(0x0a, true, &value) == -EIO && value == 123);
++    reset();
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0); plan_write(0x0a, true, 0, 0);
++    plan_read(true, 0, 360, 0); plan_page(mmap.EVENT_BUF_ADDR, -ENOSPC);
++    assert(nvt_thp_extended_cmd(0x0a, true, &value) == -ENOSPC && value == 123);
++    puts("PASS: vendor packets, pending/resubmit ACKs, timeout, SPI/page cleanup");
++
++    reset(); ts->thp_firmware_ready=false;
++    assert(nvt_thp_control_begin() == -EAGAIN && !irq_depth && !ts->lock);
++    reset(); bTouchIsAwake=0;
++    assert(nvt_thp_control_begin() == -EAGAIN && !irq_depth && !ts->lock);
++    reset(); ts->dev_pm_suspend=true;
++    assert(nvt_thp_control_begin() == -EAGAIN && !irq_depth && !ts->lock);
++    reset(); ts->ic_state=NVT_IC_SUSPEND_IN;
++    assert(nvt_thp_control_begin() == -EAGAIN && !irq_depth && !ts->lock);
++    reset(); irq_depth=1; ts->irq_enabled=false;
++    assert(!nvt_thp_control_begin() && irq_depth == 2 && ts->lock);
++    nvt_thp_control_end();
++    assert(irq_depth == 1 && !ts->lock && !ts->irq_enabled);
++    puts("PASS: not-ready/suspend gates and preservation of an existing IRQ disable");
++
++    reset();
++    assert(nvt_thp_game_write(NULL, "2", 1, NULL) == -EINVAL && !irq_depth);
++    assert(nvt_thp_game_rollback_write(NULL, "1", 1, NULL) == -ENODATA);
++    assert(!irq_depth && !ts->lock);
++    plan_game(true, 0); plan_game(false, 1); plan_game(true, 1);
++    assert(nvt_thp_game_write(NULL, "1", 1, NULL) == 1);
++    assert(ts->thp_game_valid && ts->thp_game_prior_valid);
++    assert(ts->thp_game_requested == 1 && ts->thp_game_prior == 0);
++    assert(!irq_depth && !ts->lock);
++    plan_game(true, 1); plan_game(false, 1); plan_game(true, 1);
++    assert(nvt_thp_game_write(NULL, "1", 1, NULL) == 1);
++    assert(ts->thp_game_prior == 0); /* Idempotent writes keep the baseline. */
++    plan_game(true, 1); plan_game(false, 0); plan_game(true, 0);
++    assert(nvt_thp_game_write(NULL, "0", 1, NULL) == 1);
++    assert(ts->thp_game_prior == 0); /* Opposite writes also keep the baseline. */
++    plan_game(true, 0); plan_game(false, 0); plan_game(true, 0);
++    assert(nvt_thp_game_rollback_write(NULL, "1", 1, NULL) == 1);
++    assert(!ts->thp_game_prior_valid && ts->thp_game_requested == 0);
++    assert(!irq_depth && !ts->lock);
++    puts("PASS: typed 0/1 writes, readback validation, oldest baseline and rollback");
++
++    reset();
++    plan_game(true, 2);
++    assert(nvt_thp_game_write(NULL, "1", 1, NULL) == -ERANGE);
++    assert(!ts->thp_game_valid && !irq_depth && !ts->lock);
++    reset();
++    plan_game(true, 0); plan_game(false, 1); plan_game(true, 0);
++    plan_game(false, 0); plan_game(true, 0);
++    assert(nvt_thp_game_write(NULL, "1", 1, NULL) == -EIO);
++    assert(!ts->thp_game_valid && !irq_depth && !ts->lock);
++    reset(); confirmed_request(0); ts->thp_game_prior_valid=true;
++    plan_game(true, 0); plan_game_write_error(1); plan_game_write_error(0);
++    assert(nvt_thp_game_write(NULL, "1", 1, NULL) == -EIO);
++    assert(!ts->thp_game_valid && !ts->thp_game_prior_valid);
++    assert(!irq_depth && !ts->lock);
++    puts("PASS: out-of-range/readback failures and uncertain rollback invalidate state");
++
++    reset(); nvt_thp_restore_game(); /* Default: no automatic command. */
++    confirmed_request(1); ts->thp_firmware_crc++;
++    nvt_thp_restore_game();
++    assert(!ts->thp_game_valid && !ts->thp_game_prior_valid);
++    reset(); confirmed_request(1); ts->fw_ver++;
++    nvt_thp_restore_game(); assert(!ts->thp_game_valid);
++    reset(); confirmed_request(1); ts->nvt_pid++;
++    nvt_thp_restore_game(); assert(!ts->thp_game_valid);
++    reset(); confirmed_request(1); ts->thp_firmware_ready=false;
++    nvt_thp_restore_game(); assert(!ts->thp_game_valid);
++    reset(); confirmed_request(1); ts->thp_game_prior_valid=true; ts->thp_game_prior=0;
++    plan_game(true, 0); plan_game(false, 1); plan_game(true, 1);
++    nvt_thp_restore_game();
++    assert(ts->thp_game_valid && ts->thp_game_requested == 1);
++    assert(ts->thp_game_prior_valid && ts->thp_game_prior == 0);
++    assert(step_cursor == step_count);
++    puts("PASS: restore only a validated request for matching downloaded firmware");
++    return 0;
++}
++"""
++
++
++def main():
++    source = Path(__file__).with_name("nt36xxx.c").read_text()
++    names = [
++        "nvt_thp_extended_cmd", "nvt_thp_control_begin", "nvt_thp_control_end",
++        "nvt_thp_game_firmware_matches", "nvt_thp_game_forget",
++        "nvt_thp_game_get", "nvt_thp_game_apply", "nvt_thp_restore_game",
++        "nvt_thp_game_write", "nvt_thp_game_rollback_write",
++    ]
++    with tempfile.TemporaryDirectory(prefix="nvt-thp-control-") as directory:
++        path = Path(directory)
++        c = path / "test.c"
++        c.write_text(PRELUDE + "\n".join(function(source, n) for n in names) + TESTS)
++        executable = path / "test"
++        subprocess.run([os.environ.get("CC", "cc"), "-std=gnu11", "-Wall", "-Wextra",
++                        "-Werror", "-Wno-unused-parameter", str(c), "-o",
++                        str(executable)], check=True)
++        subprocess.run([str(executable)], check=True)
++
++
++if __name__ == "__main__":
++    main()

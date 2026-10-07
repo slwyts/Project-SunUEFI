@@ -1,0 +1,396 @@
+From 1fd91b90a7204c7846f2fc0580cc967a20d692cf Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 6 Oct 2026 00:56:55 +0800
+Subject: [PATCH] iommu/arm-smmu-qcom: preserve occupied firmware routes before
+ bypass probe
+
+The firmware bypass test overwrites the last reliable S2CR before reading
+valid SMRs, then may disable the last context bank even when a live
+firmware route references it. A strict UEFI retirement also means USB
+SID 0x40 cannot be assumed to supply an inherited bypass context.
+
+Take a bounded raw SMR/S2CR/SCTLR snapshot before the first write. Reserve
+referenced and enabled firmware CBs, retain every valid route, and probe
+only an invalid SMR slot whose state is refreshed and restored. Allocate
+an emulated bypass bank only from unreferenced, disabled stage1-capable
+CBs, refresh routes before configuration and require CB readback. Refuse
+full/unsupported geometry, state drift and failed restoration rather
+than overwriting occupied hardware. Identity attachment still uses the
+normal IOMMU path and can replace an inherited FAULT route.
+
+Add shared snapshot selectors and host assertions for live M0 references,
+enabled unreferenced banks, stage2 exclusion and exhausted geometry.
+Both affected objects compile for AArch64 with the full candidate config;
+the selector test passes ASAN/UBSAN. No device validation, ready marker,
+USB-route cloning or global SMMU disable is included. DT master bindings,
+secure access, global reset/TLB effects and real DMA remain to validate.
+
+Based-on: 352508459733d3e6d349ea5581a8dd2fd8bb4180
+Assisted-by: Codex:GPT-6
+---
+ MAINTAINERS                                   |   1 +
+ .../arm/arm-smmu/arm-smmu-qcom-handoff.h      |  71 ++++++++
+ drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c    | 161 ++++++++++--------
+ drivers/iommu/arm/arm-smmu/arm-smmu.c         |   2 +-
+ .../selftests/iommu/qcom-handoff-snapshot.c   |  55 ++++++
+ 5 files changed, 217 insertions(+), 73 deletions(-)
+ create mode 100644 drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
+ create mode 100644 tools/testing/selftests/iommu/qcom-handoff-snapshot.c
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 05fa8be832eb6f65ecfce0d33567b8ca01fd4733..74e1e6fb9a958f62bc966b9538bb90821920be87 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2406,6 +2406,7 @@ S:	Maintained
+ F:	Documentation/devicetree/bindings/iommu/arm,smmu*
+ F:	drivers/iommu/arm/
+ F:	drivers/iommu/io-pgtable-arm*
++F:	tools/testing/selftests/iommu/qcom-handoff-snapshot.c
+ 
+ ARM SMMU SVA SUPPORT
+ R:	Jean-Philippe Brucker <jpb@kernel.org>
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..f97ad38a3352ea8dce6da0ea1dfd5987d2ab5cb4
+--- /dev/null
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
+@@ -0,0 +1,71 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef ARM_SMMU_QCOM_HANDOFF_H
++#define ARM_SMMU_QCOM_HANDOFF_H
++
++/* Raw bounded architectural observations; these selectors grant no DMA lease. */
++#ifdef __KERNEL__
++#include <linux/types.h>
++#else
++#include <stdbool.h>
++#include <stdint.h>
++typedef uint32_t u32;
++#endif
++
++#define QCOM_HANDOFF_MAX_SMR 128
++#define QCOM_HANDOFF_MAX_CB 256
++#define QCOM_HANDOFF_SMR_VALID (1U << 31)
++#define QCOM_HANDOFF_SCTLR_M 1U
++
++struct qcom_smmu_handoff_snapshot {
++	unsigned int num_smr, num_cb, num_s2_cb;
++	u32 smr[QCOM_HANDOFF_MAX_SMR];
++	u32 s2cr[QCOM_HANDOFF_MAX_SMR];
++	u32 sctlr[QCOM_HANDOFF_MAX_CB];
++};
++
++static inline bool qcom_smmu_handoff_geometry(const struct qcom_smmu_handoff_snapshot *s)
++{
++	return s && s->num_smr && s->num_smr <= QCOM_HANDOFF_MAX_SMR &&
++		s->num_cb && s->num_cb <= QCOM_HANDOFF_MAX_CB && s->num_s2_cb <= s->num_cb;
++}
++
++static inline bool qcom_smmu_handoff_cb_referenced(const struct qcom_smmu_handoff_snapshot *s,
++						 unsigned int cb)
++{
++	unsigned int i;
++
++	if (!qcom_smmu_handoff_geometry(s) || cb >= s->num_cb)
++		return true;
++	for (i = 0; i < s->num_smr; i++)
++		if ((s->smr[i] & QCOM_HANDOFF_SMR_VALID) &&
++		    ((s->s2cr[i] >> 16) & 3) == 0 && (s->s2cr[i] & 0xff) == cb)
++			return true;
++	return false;
++}
++
++static inline int qcom_smmu_handoff_probe_slot(const struct qcom_smmu_handoff_snapshot *s)
++{
++	unsigned int i;
++
++	if (!qcom_smmu_handoff_geometry(s))
++		return -1;
++	for (i = 0; i < s->num_smr; i++)
++		if (!(s->smr[i] & QCOM_HANDOFF_SMR_VALID))
++			return i;
++	return -1;
++}
++
++static inline int qcom_smmu_handoff_bypass_cb(const struct qcom_smmu_handoff_snapshot *s)
++{
++	unsigned int i;
++
++	if (!qcom_smmu_handoff_geometry(s))
++		return -1;
++	for (i = s->num_cb; i-- > s->num_s2_cb;)
++		if (!(s->sctlr[i] & QCOM_HANDOFF_SCTLR_M) &&
++		    !qcom_smmu_handoff_cb_referenced(s, i))
++			return i;
++	return -1;
++}
++
++#endif
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+index 733edd268a7e2df8a8fb565a8c0d58200bfb1d9c..981e95bcda91ff2d94a0dc5260a3f0311c7f39fc 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+@@ -13,6 +13,7 @@
+ 
+ #include "arm-smmu.h"
+ #include "arm-smmu-qcom.h"
++#include "arm-smmu-qcom-handoff.h"
+ 
+ #define QCOM_DUMMY_VAL	-1
+ 
+@@ -450,7 +451,9 @@ static int qcom_smmu_init_context(struct arm_smmu_domain *smmu_domain,
+ static int qcom_smmu_cfg_probe(struct arm_smmu_device *smmu)
+ {
+ 	struct qcom_smmu *qsmmu = to_qcom_smmu(smmu);
+-	unsigned int last_s2cr;
++	struct qcom_smmu_handoff_snapshot *state;
++	unsigned int probe_s2cr;
++	int probe_idx, bypass_cb;
+ 	u32 reg;
+ 	u32 smr;
+ 	int i;
+@@ -469,85 +472,99 @@ static int qcom_smmu_cfg_probe(struct arm_smmu_device *smmu)
+ 			smmu->num_context_banks = 13;
+ 	}
+ 
+-	/*
+-	 * Some platforms support more than the Arm SMMU architected maximum of
+-	 * 128 stream matching groups. The additional registers appear to have
+-	 * the same behavior as the architected registers in the hardware.
+-	 * However, on some firmware versions, the hypervisor does not
+-	 * correctly trap and emulate accesses to the additional registers,
+-	 * resulting in unexpected behavior.
+-	 *
+-	 * If there are more than 128 groups, use the last reliable group to
+-	 * detect if we need to apply the bypass quirk.
++	/* Read and reserve every live route before probing firmware behaviour.
++	 * A last-slot probe is not safe when firmware occupies that slot, and
++	 * the last CB is not necessarily free even with translation disabled.
+ 	 */
+-	if (smmu->num_mapping_groups > 128)
+-		last_s2cr = ARM_SMMU_GR0_S2CR(127);
+-	else
+-		last_s2cr = ARM_SMMU_GR0_S2CR(smmu->num_mapping_groups - 1);
++	state = devm_kzalloc(smmu->dev, sizeof(*state), GFP_KERNEL);
++	if (!state)
++		return -ENOMEM;
++	state->num_smr = smmu->num_mapping_groups;
++	state->num_cb = smmu->num_context_banks;
++	state->num_s2_cb = smmu->num_s2_context_banks;
++	BUILD_BUG_ON(QCOM_HANDOFF_SMR_VALID != ARM_SMMU_SMR_VALID);
++	BUILD_BUG_ON(QCOM_HANDOFF_SCTLR_M != ARM_SMMU_SCTLR_M);
++	if (!qcom_smmu_handoff_geometry(state))
++		return dev_err_probe(smmu->dev, -EOPNOTSUPP,
++				     "unsupported bounded firmware route geometry\n");
++
++	for (i = 0; i < state->num_smr; i++) {
++		state->smr[i] = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(i));
++		state->s2cr[i] = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(i));
++		if (!(state->smr[i] & ARM_SMMU_SMR_VALID))
++			continue;
++		reg = FIELD_GET(ARM_SMMU_S2CR_TYPE, state->s2cr[i]);
++		if (reg > S2CR_TYPE_FAULT ||
++		    (reg == S2CR_TYPE_TRANS &&
++		     FIELD_GET(ARM_SMMU_S2CR_CBNDX, state->s2cr[i]) >= state->num_cb))
++			return dev_err_probe(smmu->dev, -EINVAL,
++					     "invalid live firmware route %d\n", i);
++	}
++	for (i = 0; i < state->num_cb; i++) {
++		state->sctlr[i] = arm_smmu_cb_read(smmu, i, ARM_SMMU_CB_SCTLR);
++		if ((state->sctlr[i] & ARM_SMMU_SCTLR_M) ||
++		    qcom_smmu_handoff_cb_referenced(state, i)) {
++			set_bit(i, smmu->boot_cbs);
++			set_bit(i, smmu->context_map);
++		}
++	}
++	for (i = 0; i < state->num_smr; i++) {
++		if (!(state->smr[i] & ARM_SMMU_SMR_VALID))
++			continue;
++		smr = state->smr[i] & ~ARM_SMMU_SMR_VALID;
++		smmu->smrs[i].id = FIELD_GET(ARM_SMMU_SMR_ID, smr);
++		smmu->smrs[i].mask = FIELD_GET(ARM_SMMU_SMR_MASK, smr);
++		smmu->smrs[i].valid = true;
++		smmu->s2crs[i].type = FIELD_GET(ARM_SMMU_S2CR_TYPE, state->s2cr[i]);
++		smmu->s2crs[i].privcfg = FIELD_GET(ARM_SMMU_S2CR_PRIVCFG, state->s2cr[i]);
++		smmu->s2crs[i].cbndx = FIELD_GET(ARM_SMMU_S2CR_CBNDX, state->s2cr[i]);
++		smmu->s2crs[i].boot = true;
++	}
+ 
+-	/*
+-	 * With some firmware versions writes to S2CR of type FAULT are
+-	 * ignored, and writing BYPASS will end up written as FAULT in the
+-	 * register. Perform a write to S2CR to detect if this is the case and
+-	 * if so reserve a context bank to emulate bypass streams.
+-	 */
++	probe_idx = qcom_smmu_handoff_probe_slot(state);
++	if (probe_idx < 0)
++		return dev_err_probe(smmu->dev, -ENOSPC,
++				     "no idle stream slot for bypass probe\n");
++	probe_s2cr = ARM_SMMU_GR0_S2CR(probe_idx);
++	/* Refresh the selected invalid row before its only temporary write. */
++	if (arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(probe_idx)) != state->smr[probe_idx] ||
++	    arm_smmu_gr0_read(smmu, probe_s2cr) != state->s2cr[probe_idx])
++		return -EBUSY;
+ 	reg = FIELD_PREP(ARM_SMMU_S2CR_TYPE, S2CR_TYPE_BYPASS) |
+ 	      FIELD_PREP(ARM_SMMU_S2CR_CBNDX, 0xff) |
+ 	      FIELD_PREP(ARM_SMMU_S2CR_PRIVCFG, S2CR_PRIVCFG_DEFAULT);
+-	arm_smmu_gr0_write(smmu, last_s2cr, reg);
+-	reg = arm_smmu_gr0_read(smmu, last_s2cr);
++	arm_smmu_gr0_write(smmu, probe_s2cr, reg);
++	reg = arm_smmu_gr0_read(smmu, probe_s2cr);
++	/* Restore the idle probe row; it must never replace a live SMR route. */
++	arm_smmu_gr0_write(smmu, probe_s2cr, state->s2cr[probe_idx]);
++	if (arm_smmu_gr0_read(smmu, probe_s2cr) != state->s2cr[probe_idx])
++		return dev_err_probe(smmu->dev, -EIO,
++				     "idle bypass probe row did not restore\n");
+ 	if (FIELD_GET(ARM_SMMU_S2CR_TYPE, reg) != S2CR_TYPE_BYPASS) {
++		bypass_cb = qcom_smmu_handoff_bypass_cb(state);
++		if (bypass_cb < 0)
++			return dev_err_probe(smmu->dev, -ENOSPC,
++					     "no unreferenced disabled bypass CB\n");
++		/* Firmware routes may have changed while the quirk was tested. */
++		for (i = 0; i < state->num_smr; i++)
++			if (arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(i)) != state->smr[i] ||
++			    arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(i)) != state->s2cr[i])
++				return -EBUSY;
++		if (arm_smmu_cb_read(smmu, bypass_cb, ARM_SMMU_CB_SCTLR) != state->sctlr[bypass_cb])
++			return -EBUSY;
+ 		qsmmu->bypass_quirk = true;
+-		qsmmu->bypass_cbndx = smmu->num_context_banks - 1;
+-
+-		set_bit(qsmmu->bypass_cbndx, smmu->context_map);
+-
+-		arm_smmu_cb_write(smmu, qsmmu->bypass_cbndx, ARM_SMMU_CB_SCTLR, 0);
+-
++		qsmmu->bypass_cbndx = bypass_cb;
++		set_bit(bypass_cb, smmu->context_map);
++		arm_smmu_cb_write(smmu, bypass_cb, ARM_SMMU_CB_SCTLR, 0);
+ 		reg = FIELD_PREP(ARM_SMMU_CBAR_TYPE, CBAR_TYPE_S1_TRANS_S2_BYPASS);
+-		arm_smmu_gr1_write(smmu, ARM_SMMU_GR1_CBAR(qsmmu->bypass_cbndx), reg);
+-
+-		if (smmu->num_mapping_groups > 128) {
+-			dev_notice(smmu->dev, "\tLimiting the stream matching groups to 128\n");
+-			smmu->num_mapping_groups = 128;
+-		}
+-	}
+-
+-	for (i = 0; i < smmu->num_mapping_groups; i++) {
+-		smr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(i));
+-
+-		if (FIELD_GET(ARM_SMMU_SMR_VALID, smr)) {
+-			/* Ignore valid bit for SMR mask extraction. */
+-			smr &= ~ARM_SMMU_SMR_VALID;
+-			smmu->smrs[i].id = FIELD_GET(ARM_SMMU_SMR_ID, smr);
+-			smmu->smrs[i].mask = FIELD_GET(ARM_SMMU_SMR_MASK, smr);
+-			smmu->smrs[i].valid = true;
+-
+-			/*
+-			 * When the hypervisor emulates bypass, moving a live
+-			 * stream from its bootloader context bank to the
+-			 * emulated bypass bank resets the SoC (seen on
+-			 * SM8750). Keep such routes and their banks as they
+-			 * are until a translating domain is attached.
+-			 */
+-			reg = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(i));
+-			if (qsmmu->bypass_quirk &&
+-			    FIELD_GET(ARM_SMMU_S2CR_TYPE, reg) == S2CR_TYPE_TRANS) {
+-				u8 cbndx = FIELD_GET(ARM_SMMU_S2CR_CBNDX, reg);
+-
+-				smmu->s2crs[i].type = S2CR_TYPE_TRANS;
+-				smmu->s2crs[i].privcfg = FIELD_GET(ARM_SMMU_S2CR_PRIVCFG, reg);
+-				smmu->s2crs[i].cbndx = cbndx;
+-				smmu->s2crs[i].boot = true;
+-				set_bit(cbndx, smmu->boot_cbs);
+-				set_bit(cbndx, smmu->context_map);
+-				continue;
+-			}
+-
+-			smmu->s2crs[i].type = S2CR_TYPE_BYPASS;
+-			smmu->s2crs[i].privcfg = S2CR_PRIVCFG_DEFAULT;
+-			smmu->s2crs[i].cbndx = 0xff;
+-		}
++		arm_smmu_gr1_write(smmu, ARM_SMMU_GR1_CBAR(bypass_cb), reg);
++		if ((arm_smmu_cb_read(smmu, bypass_cb, ARM_SMMU_CB_SCTLR) & ARM_SMMU_SCTLR_M) ||
++		    FIELD_GET(ARM_SMMU_CBAR_TYPE,
++			      arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(bypass_cb))) !=
++		    CBAR_TYPE_S1_TRANS_S2_BYPASS)
++			return dev_err_probe(smmu->dev, -EIO,
++					     "owned bypass CB configuration did not read back\n");
++		dev_notice(smmu->dev, "owned bypass CB %d from idle route snapshot\n", bypass_cb);
+ 	}
+ 
+ 	return 0;
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.c b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+index 125e8864d3ad049ba1b0535238bdf311178c4e65..0f1612df5ff8911f52f7b8d7f86cfc57fc6071ef 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+@@ -1161,7 +1161,7 @@ static void arm_smmu_master_install_s2crs(struct arm_smmu_master_cfg *cfg,
+ 
+ 		/* An inherited route already bypasses translation. */
+ 		if (s2cr[idx].boot) {
+-			if (type == S2CR_TYPE_BYPASS)
++			if (type == S2CR_TYPE_BYPASS && s2cr[idx].type != S2CR_TYPE_FAULT)
+ 				continue;
+ 			s2cr[idx].boot = false;
+ 		}
+diff --git a/tools/testing/selftests/iommu/qcom-handoff-snapshot.c b/tools/testing/selftests/iommu/qcom-handoff-snapshot.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..b712a8aade943a662c1cd2ba8e59860aed5a2a5c
+--- /dev/null
++++ b/tools/testing/selftests/iommu/qcom-handoff-snapshot.c
+@@ -0,0 +1,55 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* cc -Wall -Wextra -Werror -fsanitize=address,undefined qcom-handoff-snapshot.c */
++#include <assert.h>
++#include <stdio.h>
++#include <string.h>
++#include "../../../../drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h"
++
++static struct qcom_smmu_handoff_snapshot s;
++
++int main(void)
++{
++	unsigned int i;
++
++	s.num_smr = 4;
++	s.num_cb = 4;
++	s.num_s2_cb = 1;
++	assert(qcom_smmu_handoff_geometry(&s));
++	assert(qcom_smmu_handoff_probe_slot(&s) == 0);
++	assert(qcom_smmu_handoff_bypass_cb(&s) == 3);
++	/* Last bank is live even with M=0: reference alone reserves it. */
++	s.smr[3] = QCOM_HANDOFF_SMR_VALID | 0x800;
++	s.s2cr[3] = 3;
++	assert(qcom_smmu_handoff_cb_referenced(&s, 3));
++	assert(qcom_smmu_handoff_bypass_cb(&s) == 2);
++	/* Enabled but unreferenced firmware context must not be reclaimed. */
++	s.sctlr[2] = QCOM_HANDOFF_SCTLR_M;
++	assert(qcom_smmu_handoff_bypass_cb(&s) == 1);
++	s.sctlr[1] = QCOM_HANDOFF_SCTLR_M;
++	assert(qcom_smmu_handoff_bypass_cb(&s) == -1);
++	/* Stage-2-only CB0 is not an alternative when all stage1 banks are busy. */
++	assert(s.sctlr[0] == 0);
++	for (i = 0; i < s.num_smr; ++i)
++		s.smr[i] = QCOM_HANDOFF_SMR_VALID | i;
++	assert(qcom_smmu_handoff_probe_slot(&s) == -1);
++	/* Empty row keeps the live last row intact; no fixed last-slot policy. */
++	s.smr[1] = 0;
++	assert(qcom_smmu_handoff_probe_slot(&s) == 1);
++	s.num_smr = 129;
++	assert(!qcom_smmu_handoff_geometry(&s));
++	assert(qcom_smmu_handoff_probe_slot(&s) == -1);
++	s.num_smr = 4;
++	s.num_cb = 257;
++	assert(!qcom_smmu_handoff_geometry(&s));
++	s.num_cb = 4;
++	s.num_s2_cb = 5;
++	assert(!qcom_smmu_handoff_geometry(&s));
++	s.num_s2_cb = 1;
++	/* FAULT/BYPASS type fields do not name a translating context bank. */
++	s.s2cr[3] = (1U << 16) | 3;
++	assert(!qcom_smmu_handoff_cb_referenced(&s, 3));
++	s.sctlr[3] = 0;
++	assert(qcom_smmu_handoff_bypass_cb(&s) == 3);
++	puts("qcom SMMU handoff snapshot assertions passed.");
++	return 0;
++}

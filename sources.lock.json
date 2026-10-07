@@ -26,5 +26,57 @@
   "dtc": {
     "commit": "7a1e017926004ecff5fce62d62d42ce9f3e00082",
     "url": "https://github.com/dgibson/dtc.git"
+  },
+  "simple-init": {
+    "commit": "3d66a6e78d519dd050fbebde4db6c5ac933f9aa4",
+    "url": "https://github.com/BigfootACA/simple-init.git"
+  },
+  "debian-piano-current": {
+    "commit": "fd6266d73f3442b23362260c3aa0c86782e0b52c",
+    "url": "https://github.com/blu-sharky/debian-piano.git"
+  },
+  "piano-firmware-current": {
+    "commit": "05fc37c09ca8146eecfc4920f8485479db140ae5",
+    "url": "https://github.com/blu-sharky/piano-firmware.git"
+  },
+  "piano-mesa-current": {
+    "commit": "a89c1e46eef3e161520b084479928aaa5a8e8732",
+    "url": "https://github.com/blu-sharky/piano-mesa.git"
+  },
+  "Mu-Silicium/Mu_Basecore/BaseTools/Source/C/BrotliCompress/brotli": {
+    "commit": "e230f474b87134e8c6c85b630084c612057f253e",
+    "url": "https://github.com/google/brotli"
+  },
+  "Mu-Silicium/Mu_Basecore/MdeModulePkg/Library/BrotliCustomDecompressLib/brotli": {
+    "commit": "e230f474b87134e8c6c85b630084c612057f253e",
+    "url": "https://github.com/google/brotli"
+  },
+  "Mu-Silicium/Mu_Basecore/MdeModulePkg/Universal/RegularExpressionDxe/oniguruma": {
+    "commit": "4ef89209a239c1aea328cf13c05a2807e5c146d1",
+    "url": "https://github.com/kkos/oniguruma"
+  },
+  "Mu-Silicium/Mu_Basecore/MdePkg/Library/BaseFdtLib/libfdt": {
+    "commit": "cfff805481bdea27f900c32698171286542b8d3c",
+    "url": "https://github.com/devicetree-org/pylibfdt.git"
+  },
+  "Mu-Silicium/Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl": {
+    "commit": "67b5686b4419b4cb8caa502711c41815f5279751",
+    "url": "https://github.com/openssl/openssl.git"
+  },
+  "simple-init/libs/freetype": {
+    "commit": "6a2b3e4007e794bfc6c91030d0ed987f925164a8",
+    "url": "https://github.com/freetype/freetype.git"
+  },
+  "Mu-Silicium/Mu_Basecore/MdePkg/Library/MipiSysTLib/mipisyst": {
+    "commit": "370b5944c046bab043dd8b133727b2135af7747a",
+    "url": "https://github.com/MIPI-Alliance/public-mipi-sys-t.git"
+  },
+  "audioreach-topology": {
+    "url": "https://github.com/linux-msm/audioreach-topology.git",
+    "commit": "993a17dcb672357998a463a73f120064d6c74f4f"
+  },
+  "v4l2loopback": {
+    "url": "https://github.com/umlaeute/v4l2loopback.git",
+    "commit": "0f9ee86760b7f2bea174b7e3e7a1d38845da0ab4"
   }
 }

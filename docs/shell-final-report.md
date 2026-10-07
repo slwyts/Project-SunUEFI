@@ -17,4 +17,4 @@ SUNUEFI_SHELL_REPORT command=drivers requested=1 execution=returned-success ...
 
 标准 UEFI application 正常 return/Exit 通常已由核心卸载。因此保留既有显式 UnloadImage 调用时可能得到 Invalid Parameter；摘要同时记录 `auto_unload_expected=1`，该 unload 状态不应直接被解释为 Shell 命令失败。判断 image 执行结果使用独立 start 字段。摘要说明 image 是否启动/返回及其状态；命令输出内容仍由 `SUNUEFI_SHELL_OUTPUT` 保存，不能用摘要伪造映射名或文件内容。
 
-`bash tools/test_ufs_firmware.sh` 已通过 loader 状态与最终 re-report 的 ASan/UBSan 检查、正常/EBS halt hook 检查和 AARCH64 语法检查。该补丁未执行 prepare/fullbuild/device，未写入第 67 次已验证镜像。
+`bash tests/native/test_ufs_firmware.sh` 已通过 loader 状态与最终 re-report 的 ASan/UBSan 检查、正常/EBS halt hook 检查和 AARCH64 语法检查。该补丁未执行 prepare/fullbuild/device，未写入第 67 次已验证镜像。

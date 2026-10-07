@@ -10,15 +10,15 @@ mkdir -p artifacts/ufs-block
   -fno-builtin -Oz -Wall -Wextra -Werror -Wno-unused-parameter \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/AArch64 \
-  -c bootprofiles/uefi-app/PianoUfsBlockIo.c -o artifacts/ufs-block/PianoUfsBlockIo.obj
+  -c uefi/core/PianoUfsBlockIo.c -o artifacts/ufs-block/PianoUfsBlockIo.obj
 cc -std=gnu11 -fshort-wchar -Wall -Wextra -Werror -Wno-unused-parameter \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/X64 \
-  tools/test_ufs_block.c -o build/test-ufs-block
+  tests/native/test_ufs_block.c -o build/test-ufs-block
 build/test-ufs-block
 cc -std=gnu11 -fshort-wchar -fsanitize=address,undefined -g \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/X64 \
-  tools/test_ufs_block.c -o build/test-ufs-block-asan
+  tests/native/test_ufs_block.c -o build/test-ufs-block-asan
 build/test-ufs-block-asan
 printf 'ARM64 UFS block layer compiled; physical controller/PHY/DMA remains unverified.\n'

@@ -1,0 +1,8 @@
+{
+  "id": "deepin", "name": "Deepin ARM64", "suite": null, "backend": "explicit-signed-base",
+  "arch": "aarch64", "package_arch": "arm64", "base_url": null, "base_sha256": null,
+  "base_packages": ["systemd-sysv", "dbus", "sudo", "ca-certificates", "network-manager", "openssh-server", "kmod", "util-linux"],
+  "required_inputs": ["suite", "base_url", "base_sha256", "base_signature_url", "base_keyring", "base_keyring_sha256", "keyring", "sources_list"],
+  "official_source": "https://www.deepin.org/en/download/",
+  "source_policy": "ARM64 release exists; a bootstrappable base tarball is not verified here. Require explicit signed base and Deepin-only APT sources."
+}

@@ -21,10 +21,10 @@ TakeAfterAck only moves exclusive CPU-pool ownership to persistent storage; it m
 
 The original download adapter cannot be Take-called twice. Root's carrier handles the second ownership handoff: DWC callback binds/takes the underlying pool, records its token, then Launch's Blob.Take transfers that captured token once. Restore into a stopped DWC is not a restart; first-profile failure policy is ZeroRelease. These carrier/Controller/App/profile changes are root-owned and outside this step.
 
-`tools/test_usb_boot_request.c` compiles actual Fastboot + Boot parser + Dwc3 source. It covers real download→boot event-loop, successful Send without ACK, missing completion timeout, backend/Ready/Validate/budget/unsupported gates, wrapper extraction and ramdisk rejection, copied callbacks, policy recheck, exact4-byte IN completion, Halt+9free before transfer, reset/dispatch freeze, post-clear ownership, reset-before-ACK cancellation, partial/NULL/error take, hardwareHalt failstop and DMA warning retention. It does not execute PE APIs or access devices.
+`tests/native/test_usb_boot_request.c` compiles actual Fastboot + Boot parser + Dwc3 source. It covers real download→boot event-loop, successful Send without ACK, missing completion timeout, backend/Ready/Validate/budget/unsupported gates, wrapper extraction and ramdisk rejection, copied callbacks, policy recheck, exact4-byte IN completion, Halt+9free before transfer, reset/dispatch freeze, post-clear ownership, reset-before-ACK cancellation, partial/NULL/error take, hardwareHalt failstop and DMA warning retention. It does not execute PE APIs or access devices.
 
 ```sh
-bash tools/test_usb_fastboot.sh
+bash tests/native/test_usb_fastboot.sh
 ```
 
 New boot-request tests pass ASan/UBSan/leak; prior default-off suite still passes. Gate1 and gate0 AArch64 freestanding syntax checks pass. The first device activation must be a separate, explicitly enabled root-built return-probe profile; no hardware boot result is claimed by these host tests.

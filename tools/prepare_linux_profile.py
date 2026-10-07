@@ -27,8 +27,8 @@ def main():
         if args.raw: ap.error('--cma-contract-candidate is an EFI contract diagnostic and cannot be combined with --raw')
         # Complete pin/DT/native/Mu/HOB preflight before creating a derived target.
         candidate = create_cma_candidate(root)
-    src = root / 'platforms/pianoProbePkg'
-    dst = root / 'platforms/pianoLinuxPkg'
+    src = root / 'uefi/platforms/pianoProbePkg'
+    dst = root / 'uefi/platforms/pianoLinuxPkg'
     shutil.copytree(src, dst, dirs_exist_ok=True)
     for f in list(dst.rglob('*')):
         if f.is_file() and f.suffix in ('.c','.h','.inf','.dsc','.dec','.fdf','.py'):
@@ -38,10 +38,10 @@ def main():
     app = dst/'Applications/LinuxRamBoot'
     app.mkdir(parents=True, exist_ok=True)
     for name in ('LinuxRamBoot.c','LinuxRamBoot.inf'):
-        shutil.copyfile(root/'bootprofiles/linux-ram'/name, app/name)
-    shutil.copyfile(root/'bootprofiles/uefi-app/PianoFaultRecovery.c',app/'PianoFaultRecovery.c')
+        shutil.copyfile(root/'uefi/components/linux-loader'/name, app/name)
+    shutil.copyfile(root/'uefi/core/PianoFaultRecovery.c',app/'PianoFaultRecovery.c')
     for name in ('PianoEfiHandoffTrace.c','PianoEfiHandoffTrace.h'):
-        shutil.copyfile(root/'bootprofiles/linux-ram'/name,app/name)
+        shutil.copyfile(root/'uefi/components/linux-loader'/name,app/name)
     if args.raw:
         f=app/'LinuxRamBoot.c';f.write_text('#define SUNUEFI_RAW_HANDOFF 1\n'+f.read_text())
     dsc = dst/'pianoLinux.dsc'

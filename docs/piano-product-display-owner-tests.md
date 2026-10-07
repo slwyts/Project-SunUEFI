@@ -24,7 +24,7 @@ the whole coordinator state and overflow before ZeroMem. Stop returns Aborted
 and does not log after service loss. Tests execute both fixes rather than merely
 searching source text.
 
-Run `python3 -m unittest discover -s tests -p test_product_display_owner.py -v`.
+Run `python3 -m unittest discover -s tests/unit -p test_product_display_owner.py -v`.
 The host test compiles the **actual coordinator, actual Owners manager and actual
 PianoGuardedRead implementation**, with explicit controlled Lease/Reader service
 boundaries. Those boundaries do not validate native PE identity or model it as

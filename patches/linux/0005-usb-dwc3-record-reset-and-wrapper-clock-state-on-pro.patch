@@ -1,0 +1,73 @@
+From 0b04714515a7236aebd0847b9b3806493321151d Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 6 Oct 2026 23:32:30 +0800
+Subject: [PATCH] usb: dwc3: record reset and wrapper clock state on probe
+ failure
+
+---
+ drivers/usb/dwc3/core.c      | 11 +++++++++++
+ drivers/usb/dwc3/dwc3-qcom.c |  8 ++++++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index 36f7b4cc24efd03d8d965fe72765f9cc5c593cf7..2ed48c7b20e52deb6a1c235d51bdabecafb7c40d 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -322,6 +322,7 @@ u32 dwc3_core_fifo_space(struct dwc3_ep *dep, u8 type)
+ int dwc3_core_soft_reset(struct dwc3 *dwc)
+ {
+ 	u32		reg;
++	u32		dctl_before;
+ 	int		retries = 1000;
+ 
+ 	/*
+@@ -333,6 +334,7 @@ int dwc3_core_soft_reset(struct dwc3 *dwc)
+ 		return 0;
+ 
+ 	reg = dwc3_readl(dwc, DWC3_DCTL);
++	dctl_before = reg;
+ 	reg |= DWC3_DCTL_CSFTRST;
+ 	reg &= ~DWC3_DCTL_RUN_STOP;
+ 	dwc3_gadget_dctl_write_safe(dwc, reg);
+@@ -358,6 +360,15 @@ int dwc3_core_soft_reset(struct dwc3 *dwc)
+ 	} while (--retries);
+ 
+ 	dev_warn(dwc->dev, "DWC3 controller soft reset failed.\n");
++	/* Capture the failed reset before probe cleanup changes PHY/clock state. */
++	dev_err(dwc->dev,
++		"reset state: DCTL=%08x->%08x GCTL=%08x GSNPSID=%08x USB2PHYCFG=%08x USB3PIPECTL=%08x usb2_phy=%u usb3_phy=%u\n",
++		dctl_before, reg, dwc3_readl(dwc, DWC3_GCTL),
++		dwc3_readl(dwc, DWC3_GSNPSID),
++		dwc->num_usb2_ports ? dwc3_readl(dwc, DWC3_GUSB2PHYCFG(0)) : 0,
++		dwc->num_usb3_ports ? dwc3_readl(dwc, DWC3_GUSB3PIPECTL(0)) : 0,
++		!!dwc->usb2_phy || (dwc->num_usb2_ports && !!dwc->usb2_generic_phy[0]),
++		!!dwc->usb3_phy || (dwc->num_usb3_ports && !!dwc->usb3_generic_phy[0]));
+ 	return -ETIMEDOUT;
+ 
+ done:
+diff --git a/drivers/usb/dwc3/dwc3-qcom.c b/drivers/usb/dwc3/dwc3-qcom.c
+index 283eaec863e8619c0aef469c7292594978973950..e13baafd02950a5ce82613fd3d9342d49d9f2df6 100644
+--- a/drivers/usb/dwc3/dwc3-qcom.c
++++ b/drivers/usb/dwc3/dwc3-qcom.c
+@@ -7,6 +7,7 @@
+ #include <linux/io.h>
+ #include <linux/of.h>
+ #include <linux/clk.h>
++#include <linux/clk-provider.h>
+ #include <linux/irq.h>
+ #include <linux/of_clk.h>
+ #include <linux/module.h>
+@@ -714,6 +715,13 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+ 	probe_data.properties = DWC3_DEFAULT_PROPERTIES;
+ 	ret = dwc3_core_probe(&probe_data);
+ 	if (ret)  {
++		int i;
++
++		/* Keep failure evidence before disabling the wrapper clocks. */
++		for (i = 0; i < qcom->num_clocks; i++)
++			dev_err(dev, "probe failure clock %s: rate=%lu enabled=%d\n",
++				qcom->clks[i].id, clk_get_rate(qcom->clks[i].clk),
++				__clk_is_enabled(qcom->clks[i].clk));
+ 		ret = dev_err_probe(dev, ret, "failed to register DWC3 Core\n");
+ 		goto clk_disable;
+ 	}

@@ -16,8 +16,8 @@ from plan_piano_dram import DTB_SHA, extract_dt, parse_native_c, parse_efi, inte
 ROOT=Path(__file__).resolve().parents[1]
 PINS={
     "private/captures/2026-10-03-piano/live.dtb":DTB_SHA,
-    "platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c":"b93f559dc4570b998a519fa0987d02b4b9390ee678772c641a615deb252a8634",
-    "platforms/pianoProbePkg/native-memory-map.json":"b7f5e824e309e639e7cc9227cdca10396bb9e91054ebabd2f07172c0fe79ad9c",
+    "uefi/platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c":"b93f559dc4570b998a519fa0987d02b4b9390ee678772c641a615deb252a8634",
+    "uefi/platforms/pianoProbePkg/native-memory-map.json":"b7f5e824e309e639e7cc9227cdca10396bb9e91054ebabd2f07172c0fe79ad9c",
     "private/analysis/ramlog-test-85/console.txt":"6c6c5de09aafb185c6fbd4c491b6e745a5559c263a64cd63e34e60fd20fcf83c",
     "upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include/Library/MemoryMapLib.h":"c60c4b80e81388d40148cc014a25f22a20a89a1722c6dd0f1e784efa3268816b",
     "upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Library/MemoryInitPeiLib/MemoryInitPei.c":"dced274a5e31484b647e643fa255439a9a6f6eb5fc210671233614ed80ef2edb",
@@ -104,7 +104,7 @@ def render_candidate(original,pools):
 def create(root=ROOT):
     inputs=snapshot(root)
     dt=extract_dt(inputs["private/captures/2026-10-03-piano/live.dtb"])
-    path="platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c"
+    path="uefi/platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c"
     original=inputs[path];native=parse_native_c(original.decode())
     archived=parse_efi(inputs["private/analysis/ramlog-test-85/console.txt"].decode(errors="replace"))
     pools=validate_pools(dt,native,archived)
@@ -136,7 +136,7 @@ def main():
     ap.add_argument("--output-dir",type=Path,required=True);args=ap.parse_args()
     try:
         source,meta=create()
-        if args.output_dir.resolve().is_relative_to((ROOT/"platforms").resolve())or args.output_dir.resolve().is_relative_to((ROOT/"upstream").resolve()):
+        if args.output_dir.resolve().is_relative_to((ROOT/"uefi/platforms").resolve())or args.output_dir.resolve().is_relative_to((ROOT/"upstream").resolve()):
             raise ValueError("Offline generator cannot publish into platform/staging source")
         publish(args.output_dir,source,meta)
     except(ValueError,OSError,KeyError)as exc:ap.exit(2,"CMA candidate: "+str(exc)+"\n")

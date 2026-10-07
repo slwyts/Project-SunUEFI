@@ -1,5 +1,8 @@
 # One PianoUEFI product integration image
 
+> 文中的 `sunuefi_linux` 是当时的分区名；当前名称为 `sunuefi_root`，位置、UUID和大小不变。
+
+
 For the current device results and candidate identity, see [project status](status.md).
 For a first build, start with [building](devel/building.md); this page describes the product assembly.
 
@@ -57,7 +60,7 @@ physical producer. Unbound hardware backends remain explicitly NOT_READY.
 
 `prepare_product.py` directly assembles the platform from canonical sources,
 hash-verified native foundation PEs and original dependency expressions.
-`bootprofiles/product-support` is the canonical tested GOP/serial/BDS source;
+`uefi/components/product-support` is the canonical tested GOP/serial/BDS source;
 the ignored GUI staging checkout is not used as a required build input.
 `PianoProductSimpleInitDigest.h` is generated from the actual separately built
 ARM64 SimpleInit application. The ramdisk has the same APPv1 bytes whose complete

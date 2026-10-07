@@ -137,7 +137,7 @@ selection61; `dpu_hw_intf.c` offsets49/75 and get_status326; SSPP address offset
 catalog INTF391 and SSPP/VIG/DMA bases54 onward. Line numbers describe baseline
 bytes, not a promise about a different source revision.
 
-Run `python3 -m unittest discover -s tests -p test_display_clock_observe.py -v`.
+Run `python3 -m unittest discover -s tests/unit -p test_display_clock_observe.py -v`.
 The actual collector and actual Guard pass33 fork cases with ASAN/UBSAN, strict
 AARCH64 and real `AsciiVSPrint(256)` complete lines under180bytes. Tests forbid
 every non-GCC LDR, cover double-read drift/disable, GCD/AT refusals, zero-load

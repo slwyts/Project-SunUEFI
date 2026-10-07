@@ -46,7 +46,7 @@ for i,name in enumerate(names):
     literal='{0x%08X,0x%04X,0x%04X,{'%fields[:3]+','.join(f'0x{b:02X}' for b in guid.bytes[8:])+'}}'
     header.append('{"'+name+'",'+literal+f',mDepex{i},sizeof(mDepex{i})'+'},')
 header.append('};')
-(root/'bootprofiles/uefi-app/NativeProbeTable.h').write_text('\n'.join(header)+'\n')
+(root/'uefi/core/NativeProbeTable.h').write_text('\n'.join(header)+'\n')
 (root/'build/native-foundation.fdf.inc').write_text('\n'.join(ffs)+'\n')
 (root/'build/native-probe-selection.json').write_text(json.dumps({
     'group':args.group,'modules':names,'excluded':sorted(set(args.exclude)),

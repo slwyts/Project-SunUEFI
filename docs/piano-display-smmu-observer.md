@@ -57,7 +57,7 @@ not change those sources or introduce a diagnostic feature profile. A successful
 register observation grants no ownership, memory allocation, translation lease,
 DMA completion or physical display readiness.
 
-Run `python3 -m unittest discover -s tests -p test_display_smmu_observe.py -v`.
+Run `python3 -m unittest discover -s tests/unit -p test_display_smmu_observe.py -v`.
 The actual observer and actual guarded-read source run jointly in 32 fork cases
 with ASAN/UBSAN, strict AARCH64 compilation and real capped ASCII formatting.
 Cases cover the three exact ranges, CPU/GCD/AT refusals, unique route shape,
@@ -85,7 +85,7 @@ bounded capacity or explicitly handle capacity exhaustion; observations must not
 be silently dropped. The current host integration test verifies the actual
 generated table against the current Core checkpoint count.
 
-`tests/test_native_observer.py` compiles a byte-identical temporary copy of the
+`tests/unit/test_native_observer.py` compiles a byte-identical temporary copy of the
 actual NativeProbe source with generated FFS/BS fixture tables. Seven scenarios
 exercise real callback order, post-before-unload, FV/load failure, DEPEX second
 pass and misses, special runtime dependencies, default/cleared callbacks and the

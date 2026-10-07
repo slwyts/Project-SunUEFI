@@ -26,7 +26,7 @@ Shell 的 Components 与库映射原本没有加入平台，新增 `ShellLib`、
 
 ## 真实文件系统和 Shell 证据
 
-新增 `bootprofiles/uefi-app/PianoUfsFileSystemProbe.c`：
+新增 `uefi/core/PianoUfsFileSystemProbe.c`：
 
 1. 用 `LocateHandleBuffer(SimpleFileSystem)` 获取真实句柄，再逐节点比较 DevicePath 与 UFS 父路径，只接受其后代。
 2. 该句柄必须存在只读 BlockIO；不会探查可写卷。
@@ -37,7 +37,7 @@ Shell 的 Components 与库映射原本没有加入平台，新增 `ShellLib`、
 
 标志：`SUNUEFI_UFS_FS_REPORT`、`SUNUEFI_UFS_FS_VOLUME`、`SUNUEFI_UFS_FS_FILE`。空目录或仅有子目录的卷可以证明 OpenVolume/GetInfo/目录读取成功，但没有普通文件内容读取证据；`file=Not Started` 不表示读取成功。
 
-新增 `bootprofiles/uefi-app/PianoLaunchShell.c` 从具有真实 FV2 DevicePath 的 FV 读取固定 Shell 文件 GUID `7C04A583-9E3E-4F1C-AD65-E05268D0B4D1`，追加 FV file node 后 `LoadImage/StartImage`。保留真实 LoadedImage 路径，供 Shell 的映射初始化和 image/file path 查询使用。Shell 必须在 RamApp 仍存活时启动，因为 UFS、DMA 和按键服务的代码/数据目前属于 RamApp。
+新增 `uefi/core/PianoLaunchShell.c` 从具有真实 FV2 DevicePath 的 FV 读取固定 Shell 文件 GUID `7C04A583-9E3E-4F1C-AD65-E05268D0B4D1`，追加 FV file node 后 `LoadImage/StartImage`。保留真实 LoadedImage 路径，供 Shell 的映射初始化和 image/file path 查询使用。Shell 必须在 RamApp 仍存活时启动，因为 UFS、DMA 和按键服务的代码/数据目前属于 RamApp。
 
 自动启动参数禁用 `startup.nsh`、控制台输入、Ctrl-C 监视、默认映射表和版本输出，然后运行并退出：
 
@@ -59,7 +59,7 @@ SimpleInit 的 UEFI volume 层已经枚举 PartitionInfo/BlockIO/DiskIO/SFS；�
 
 ## 生命周期修正与 EBS 未完成工作
 
-`bootprofiles/uefi-app/PianoUfsReadOnlyDma.c:PianoUfsBlockIoStop()` 原先先 `HaltService()`，把父介质置为不存在，随后才 DisconnectController。现改成：
+`uefi/core/PianoUfsReadOnlyDma.c:PianoUfsBlockIoStop()` 原先先 `HaltService()`，把父介质置为不存在，随后才 DisconnectController。现改成：
 
 ```text
 DisconnectController 全部父设备，消费者仍可访问只读介质
@@ -102,12 +102,12 @@ LibraryClasses: CustomizedDisplayLib|MdeModulePkg/Library/CustomizedDisplayLib/C
 
 本次通过：
 
-可复现入口：`bash tools/test_ufs_firmware.sh`，只运行主机行为/ABI检查，不 prepare、不完整构建、不连接设备。
+可复现入口：`bash tests/native/test_ufs_firmware.sh`，只运行主机行为/ABI检查，不 prepare、不完整构建、不连接设备。
 
 - Python 准备脚本语法及 `--help`。
 - 两份新诊断 C，以及 `PIANO_UFS_BLOCKIO + PIANO_UFS_FILESYSTEMS` 下真实 UFS 源码的 AARCH64 编译语法检查。
-- `tools/test_ufs_filesystems.c` 的 ASan/UBSan：真实路径继承、无 SFS、可写卷拒绝、OpenVolume/GetInfo/目录/文件读取 CRC、异常元数据和关闭/free。
-- `tools/test_ufs_blockio_lifetime.c` 的 ASan/UBSan：先断消费者、失败保留资源走恢复、EBS halt-only。
+- `tests/native/test_ufs_filesystems.c` 的 ASan/UBSan：真实路径继承、无 SFS、可写卷拒绝、OpenVolume/GetInfo/目录/文件读取 CRC、异常元数据和关闭/free。
+- `tests/native/test_ufs_blockio_lifetime.c` 的 ASan/UBSan：先断消费者、失败保留资源走恢复、EBS halt-only。
 
 全固件构建和实机启动仍由集成者执行。验收需包含新增模块确实在 FV、Shell 加载/返回和自动命令输出、真实 `ufs_sfs` 数量、每个卷 OpenVolume/GetInfo/读取结果，以及最终恢复后 GPT 和启动分区哈希保持。没有真实 FAT 卷时应把“标准链路已接通，但 UFS 文件载入未完成”写清楚。
 

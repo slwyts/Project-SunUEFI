@@ -1,6 +1,6 @@
 # Guarded Read32 DXE adapter
 
-`bootprofiles/guarded-read/PianoGuardedRead.c/h` implements an actual AArch64
+`uefi/components/guarded-read/PianoGuardedRead.c/h` implements an actual AArch64
 guarded LDR32 using the exception, AT and mapping approach already present in
 `PianoPogoProbe.c`. This is a singleton DXE adapter with static producer storage,
 not a SEC memory provider. It does not install memory, map pages, walk PTE tables,
@@ -102,7 +102,7 @@ the host verification.
 ## Verification
 
 ```sh
-python3 -m unittest discover -s tests -p test_guarded_read.py -v
+python3 -m unittest discover -s tests/unit -p test_guarded_read.py -v
 ```
 
 The test runs the actual adapter C in 41 isolated ASan/UBSan cases with EFI and

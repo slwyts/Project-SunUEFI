@@ -64,3 +64,12 @@ python3 tools/product_contract.py --build-manifest artifacts/product/manifest.js
 * 想了解代码组织和各目录的作用？查阅 [源码目录地图](repository-map.md)。
 * 想了解各模块具体的测试命令？查阅 [测试与验证指南](testing.md)。
 * 准备提交 Pull Request？请查阅 [贡献指南](../../CONTRIBUTING.md) 与 [AI 协作规范](../../AGENTS.md)。
+
+
+## 新的统一构建入口（接入中）
+
+上游已登记为固定版本的 submodule。首次从主仓库克隆后运行 `./build.sh sources`，只取得编译所需的子模块，不递归下载上游的测试和 fuzz 数据。`./build.sh check` 运行公开主机检查。
+
+`./build.sh uefi` 使用 `vendor/piano` 的必要板级输入和 `patches/firmware`；`./build.sh linux` 从公开基线与八份补丁准备源码，再编译 LABEL 根策略的内核。ESP/root 打包与多发行版适配正在接入，不能仅凭命令存在当作所有发行版已经构建成功。
+
+容器基础镜像固定在 `config/build-container.json`，定义见 `containers/Dockerfile`。实际 APT 包版本仍需记录，不宣称完整位级复现。构建在电脑/CI 中进行，安装器是独立入口。

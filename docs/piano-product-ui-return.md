@@ -76,7 +76,7 @@ ShellParameters 和 ShellEnvironment、清理临时缓冲与历史、移除 HII 
 
 ## 当前验证范围
 
-`tests/test_product_ui.py` 执行实际补丁后的 UiWaitForEvent、WaitForKeyStroke、
+`tests/unit/test_product_ui.py` 执行实际补丁后的 UiWaitForEvent、WaitForKeyStroke、
 DoShellPrompt、UiEntry 函数，以及 Shell 读行/完整 FreeResources、菜单 CfExit、
 SetupBrowser FORM_CLOSE/notify 清理和输入取消的精确源码片段。主机提供
 Boot Services 与设备模拟，覆盖 Continue/Reboot/Boot 的共同返回条件、无键唤醒、

@@ -82,7 +82,7 @@ approval has been received, and this producer cannot apply the proposal.
 ```sh
 # PC-only; output must be a new directory under private.
 python3 tools/prepare_product_storage.py --output private/provisioning/NEW_NAME
-python3 -m unittest discover -s tests -p test_prepare_product_storage.py -v
+python3 -m unittest discover -s tests/unit -p test_prepare_product_storage.py -v
 python3 tools/check_product_storage_proposal.py \
   --proposal private/provisioning/piano-storage-v1-final \
   --readonly-capture private/captures/ufs-test-area-5

@@ -1,0 +1,13 @@
+[Unit]
+Description=Piano camera drivers (CAMSS, rear S5KJN1 and front OV32D40)
+# piano-display loads the apps SMMU and GENI I2C drivers, piano-touch the
+# GPI DMA controllers of the front sensor bus
+After=piano-display.service piano-touch.service
+Wants=piano-display.service piano-touch.service
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/piano/camera-start
+RemainAfterExit=yes
+TimeoutStartSec=60
+[Install]
+WantedBy=multi-user.target

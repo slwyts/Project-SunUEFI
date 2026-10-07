@@ -74,8 +74,8 @@ def kernel(folder, family):
     if sha_file(public_path) != full.SOURCE_PINS['arch/arm64/configs/piano_rootfs.config']:
         raise ValueError('Pinned public full profile changed')
     public = public_path.read_text()
-    command = full.command_line((ROOT / 'configs/linux/piano-full.config').read_text(), public, 'ram')
-    requirements = full.validate_config((folder / 'config').read_text(), public, command)
+    command = full.command_line((ROOT / 'linux/configs/piano-full.config').read_text(), public, 'ram')
+    requirements = full.validate_config((folder / 'config').read_text(), public, command, manifest.get('local_module_overrides', {}))
     if requirements != manifest['full_profile_requirements']:
         raise ValueError('Complete kernel requirements changed')
     release = manifest['kernel_release']

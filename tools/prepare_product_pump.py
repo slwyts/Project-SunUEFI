@@ -75,7 +75,7 @@ HOOKS = (
 
 
 def canonical_files(root=ROOT):
-    source = root / "bootprofiles/product-pump"
+    source = root / "uefi/components/product-pump"
     copies = {}
     for directory, destination in ((source / "Mu_Basecore", root / BASE),
                                    (source / "simple-init", root / SI)):
@@ -83,7 +83,7 @@ def canonical_files(root=ROOT):
             if path.is_file():
                 copies[destination / path.relative_to(directory)] = path.read_bytes()
     copies[root / (BASE + "MdePkg/Include/Protocol/PianoProductRuntime.h")] = (
-        root / "bootprofiles/uefi-app/Protocol/PianoProductRuntime.h").read_bytes()
+        root / "uefi/core/Protocol/PianoProductRuntime.h").read_bytes()
     return copies
 
 

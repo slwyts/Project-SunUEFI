@@ -89,8 +89,11 @@ def package(image, product_manifest, output_dir):
     canonical_sha = hashlib.sha256(canonical).hexdigest()
     if record != {'bytes': len(canonical), 'sha256': canonical_sha}:
         raise ValueError('Canonical product does not match manifest size/SHA256')
-    if len(canonical) < 4096 or len(canonical) > PARTITION_BYTES - 69632 or canonical[:8] != b'ANDROID!' or struct.unpack_from('<I', canonical, 40)[0] not in (3, 4):
-        raise ValueError('Expected a bounded Android v3/v4 canonical product')
+    if len(canonical) < 4096 or len(canonical) > PARTITION_BYTES - 69632 or canonical[:8] != b'ANDROID!' or struct.unpack_from('<I', canonical, 40)[0] not in (2, 3, 4):
+        raise ValueError('Expected a bounded Android v2/v3/v4 canonical product')
+    if struct.unpack_from('<I', canonical, 40)[0] == 2:
+        if struct.unpack_from('<I', canonical, 36)[0] != 4096 or struct.unpack_from('<I', canonical, 1644)[0] != 1660:
+            raise ValueError('Expected Android v2/4096 with a complete header')
     if canonical[-64:-60] == b'AVBf':
         raise ValueError('Canonical product already has an AVB footer')
     if sha(AVBTOOL) != AVBTOOL_SHA256:

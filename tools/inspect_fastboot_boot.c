@@ -5,7 +5,7 @@
 #include <string.h>
 #include <stdint.h>
 #undef NULL
-#include "../bootprofiles/uefi-app/PianoFastbootBoot.c"
+#include "../uefi/core/PianoFastbootBoot.c"
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
 static EFI_STATUS file_read(VOID *Context,UINT64 Offset,UINTN Bytes,VOID *Buffer) {

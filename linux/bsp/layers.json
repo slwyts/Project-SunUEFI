@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "configuration": {
+    "architecture": "all",
+    "arch_package_architecture": "any"
+  },
+  "required_layers": {
+    "firmware": {
+      "target_specific": true,
+      "source": {
+        "commit": "05fc37c09ca8146eecfc4920f8485479db140ae5",
+        "url": "https://github.com/blu-sharky/piano-firmware.git"
+      },
+      "license": "per blob; no license inherited from config"
+    },
+    "mesa": {
+      "target_specific": true,
+      "source": {
+        "commit": "a89c1e46eef3e161520b084479928aaa5a8e8732",
+        "url": "https://github.com/blu-sharky/piano-mesa.git"
+      },
+      "source_patch_ledger": [
+        {
+          "path": "patches/0001-freedreno-Add-chip-id-support-for-A830v1.patch",
+          "sha256": "01bc8e6b35019f7d6b84bc2d919a60686ffb1742d4df04467a89d3aac22a7380"
+        }
+      ],
+      "license": "MIT; retain patch authorship; no source copied"
+    },
+    "runtime": {
+      "target_specific": true,
+      "source": [
+        "tools/stage_piano_ram_hardware.py",
+        "tools/build_release_helpers.py"
+      ],
+      "kernel_context_abi": "piano-dma-context-v1",
+      "include_adapted_public_scripts": true,
+      "prebuilt_host_paths": false
+    },
+    "modules": {
+      "target_specific": true,
+      "kernel_release_must_match": true,
+      "license": "retain kernel GPL and per-file BSD declarations"
+    }
+  },
+  "optional_layers": {
+    "native-camera": {
+      "selected_by": "camera",
+      "requires": [
+        "piano-camerad",
+        "matching-kernel v4l2loopback"
+      ],
+      "dependency_resolution_tested": false,
+      "requires_layer": "runtime"
+    }
+  }
+}

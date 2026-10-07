@@ -1,113 +1,42 @@
-# Product UFS dedicated-volume provider
+# 产品存储后端
 
-This module is a long-lived dedicated-volume provider, not the test86 temporary
-FAT format/restore routine. It contains no provisioning, GPT writer, formatter,
-original-gap restore or caller `Authorized` flag. Current original GPT media
-returns `EFI_NOT_FOUND` with zero WRITE and zero SYNCHRONIZE CACHE commands.
-No writable protocol or NV interface is available in that state.
+`PianoUfsProductVolume` 为可选的项目 FAT／NV 容器提供读写接口。它不创建分区、不格式化磁盘，也不要求整块盘维持历史分区布局。普通 UFS BlockIO、GPT 枚举和 ESP 读取使用当前介质；原厂关键分区的只读接口继续保留。
 
-## Exact layout and real readiness evidence
+## 发现与启动
 
-The only container is LUN4, 4096-byte blocks, physical LBA375040 through378623
-inclusive (3584 blocks, 14MiB). The immutable wire schema is documented in
-`PianoUfsProductVolume.h`. Layout1 reserves:
+发现过程先读取当前主备 GPT，检查结构、CRC、数组一致性和分区边界。没有本项目容器时返回 `EFI_NOT_FOUND`，不执行写能力探测、WRITE 或 SYNCHRONIZE CACHE，不标记介质隔离。产品核心继续启动只读存储、USB 和菜单。
 
-| Container blocks | Purpose | Public access |
+运行时已经删除历史 GPT 的 SHA256、原表／原 header 比对、有效分区数量限制和 Android 启动属性掩码。合法的其他分区变化不会阻止本项目容器使用。生产构建也不再需要旧 GPT 采集文件；历史数据仅用于测试重放。
+
+## 当前可选容器格式
+
+当前后端支持 LUN4 的布局1：4096字节块，物理 LBA375040–378623，共3584块。该限制属于此容器的格式和写入范围，不是整个固件的分区要求。
+
+| 容器块 | 用途 | 接口 |
 | --- | --- | --- |
-| 0 and1 | Byte-identical volume identity headers | No write API |
-| 2 through2047 | FAT child, 2046 blocks (8MiB minus8KiB) | Dedicated writable BlockIO |
-| 2048 through2815 | NV journal slotA, 768 blocks (3MiB) | Private slot-relative callbacks |
-| 2816 through3583 | NV journal slotB, 768 blocks (3MiB) | Private slot-relative callbacks |
+| 0–1 | 两份一致的身份 header | 不提供写接口 |
+| 2–2047 | FAT 数据 | 独立 BlockIO |
+| 2048–2815 | NV 日志 A | 私有回调 |
+| 2816–3583 | NV 日志 B | 私有回调 |
 
-The original three PC GPT blobs must match the independently pinned SHA256
-values. Both live GPT copies must have valid CRCs and identical entry arrays.
-All original entries and header bytes remain identical except the two CRC
-fields caused by adding the single previously empty slot95. Its type GUID is
-`3e4ea305-5b3d-49a4-b3b4-5844ef513648`, name `PianoUEFI Storage`, attributes2
-(the standard no-BlockIO attribute), and exact full-container bounds. It must
-have a nonzero unique partition UUID and overlap no original partition.
+启用这个可写后端需要在当前 GPT 中发现其类型 GUID `3e4ea305-5b3d-49a4-b3b4-5844ef513648`、非零分区 UUID、名称 `PianoUEFI Storage` 与格式要求的范围。它必须与所有其他当前分区不重叠，不能共用分区 UUID。两份容器 header 必须一致，CRC、当前磁盘 GUID、分区 UUID 与格式字段必须正确。
 
-Both volume headers must match byte for byte, have valid whole-block CRCs,
-zero reserved bytes and exact fixed layout/geometry. UUID matches the new
-GPT entry, disk GUID matches the pinned original GPT, and type/layout match.
-Fresh capacity, FUA support, mode/unit/permanent/power-on write protection and
-actual owned UFS DMA/SMMU state are checked before access and mutation.
-Neither a caller bool nor an old in-memory success can substitute for these
-media reads. A UUID change during a live volume fences it.
+只有发现该容器后才检查 FUA、写保护和同步能力。格式未配置时不会要求设备可写；本模块也不把历史原厂 GPT 当作写入授权。
 
-## Actual shared transport and writes
+## 传输与退出
 
-`PIANO_UFS_PRODUCT_STORAGE=1` adds the private adapter inside the existing
-`PianoUfsReadOnlyDma.c`. It reuses its three already allocated/mapped UCD,
-UTRL and4KiB data buffers, existing owner domain and exact test86 wire builders.
-It creates no parallel DMA allocator/domain. Data bounce becomes bidirectional
-for this product gate; the six original LUN BlockIO media remain readonly.
+后端复用现有 UFS 的 UCD、UTRL、4KiB 数据缓冲区和 DMA／SMMU 上下文。每次传输检查本次拥有的资源、地址映射、队列和完成状态，不另建一套 DMA。
 
-Each request excludes the shared transport. HCI list bases, queue readback,
-SMMU owner identity/faults, complete routing and peers, exact reserved WB buffer
-shapes and software PA/IOVA translations are checked. The snapshot is frozen
-only within that current lease; it does not assume the later USB lifetime is
-identical to UFS's initial open snapshot.
+每个4KiB写入使用 FUA、同步、独立缓冲区读回比较，并再次确认当前容器身份与范围。短写、完成状态不明、读回错误或资源退出不完整时，保留状态并拒绝进一步写入与不安全交接。原厂 LUN 的只读接口不会因这个后端启用而变成可写。
 
-Each4KiB write is marked pending before callback entry, uses WRITE(10) FUA,
-requires exact GOOD/OCS/tag/LUN/count, performs full-container SYNCHRONIZE CACHE,
-then issues a fresh READ and compares an independent RX buffer. RX is first
-filled with the bitwise inverse of TX, so a callback returning stale untouched
-bytes cannot pass even for an all0xCC payload. A final media gate confirms the
-identity remains valid. Verified writes are persistent, not restored to zero.
-Flush performs an actual exact sync and media/quiet checks.
+公开 FAT I/O 支持应用到 `TPL_CALLBACK`，私有 NV I/O 支持到 `TPL_NOTIFY`；只恢复本次提高的 TPL。关闭前断开 FAT 子句柄、同步并关闭后端，再退出 DMA／SMMU／时钟资源。Boot Services 结束后，旧 NV token 不能继续访问设备。
 
-Any transport warning, short/failed/unknown write, changed guard, failed readback
-or uncertain release retains the owner and first failure, makes public media
-readonly, revokes NV readiness and prevents reset/OS retirement. ResetBlock
-cannot clear the fence. Bounds/TPL admission failures do not submit hardware.
+## 验证范围
 
-## TPL and lifecycle
+现有主机测试覆盖：没有容器、合法 GPT 变化、主备 CRC／数组错误、容器边界与重叠、写保护、FUA／同步／读回、实际共享 UFS 适配器及资源退出。运行：
 
-The standard Mu FAT filesystem holds FatFsLock at `TPL_CALLBACK`, and DiskIo
-performs synchronous subtasks there. Public FAT I/O therefore supports APP
-through CALLBACK. Standard VariableRuntimeDxe holds its variable lock at
-`TPL_NOTIFY`; private NV I/O supports APP through NOTIFY. The lease never lowers
-the caller's TPL: it raises low callers to CALLBACK, keeps NOTIFY as-is, and
-restores only its own raised lease. It does not invoke WaitForEvent, the APP USB
-worker or an allocator in these transport operations. Binding/publication occur
-at actual APP. This is synchronous BlockIO, not an asynchronous BlockIO2 backend.
+```sh
+python -m unittest discover -s tests/unit -p test_ufs_product_volume.py -v
+```
 
-Only verified media can publish the distinct FAT child at handle slot7. The
-original RO providers are retained. Typed UFS retirement disconnects that child
-while live, permits its CALLBACK flush, syncs/closes the dedicated provider,
-then performs existing DMA/domain/clock teardown. The exact child BlockIO and
-DevicePath are uninstalled rather than using the original-LUN interface at7.
-Seven parent disconnects and eight protocol removals are validated by the
-integrated host case. The legacy Stop path refuses a published product child.
-
-After Close/EBS, a stale NV token cannot access storage. This Boot Services
-transport is not an OS-runtime UFS backend. A standard persistent FVB/variable
-integration also needs correct DXE initialization order and its own EBS/runtime
-fence before using these callbacks. Connecting a late callback to an already
-initialized RAM variable driver does not prove journal restoration.
-
-## Integration and validation status
-
-The product core must call `PianoUfsProductTransportIo` after real RO UFS startup,
-then `PianoUfsProductVolumeOpen` with pinned original GPT blobs. NOT_FOUND keeps
-honest unprovisioned state. Only exact success permits
-`PianoUfsProductTransportPublish` and `PianoUfsProductVolumeNvIo`.
-The latter supplies the shared volume UUID/layout and fixed slot-relative IO
-for the standard NV+FTW snapshot journal. Add ProductVolume and BoundedLayout
-sources and the shared inline WriteGuard header when enabling the transport.
-The product does not link the diagnostic restore-test transaction entrypoint.
-
-`python3 -m unittest discover -s tests -p test_ufs_product_volume.py -v` passes
-20 memory-backed provider cases plus an actual shared Submit/adapter suite:
-original GPT refusal, reservation/UUID/CRC/pin mutation, span limits, FUA/sync/RX,
-APP/CALLBACK/NOTIFY leases, readonly originals, strict peer/translation failures,
-partial writes, guarded publication and exact typed child teardown. ASan/UBSan
-and gate0/gate1 strict AArch64 checks pass. Existing bounded-volume and typed
-reset/probe suites also pass.
-
-This is offline implementation. The present product candidate has not bound or
-physically verified this provider. No GPT/container provisioning or device write
-was performed. A PC provisioning proposal and explicit permanent-reservation
-approval are separate from this code; physical persistence, Shell file writes,
-FVB/FTW integration and recovery remain acceptance work.
+主机与 ARM64 编译检查通过不表示真实 FAT／NV 写入和持久变量已经验收。当前设备没有配置这个可选容器；UEFI 变量仍使用 RAM 模式。
