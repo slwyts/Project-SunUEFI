@@ -18,6 +18,7 @@ import stage_piano_full_userspace as userspace
 import stage_piano_kernel_modules as modules
 import stage_piano_ram_hardware as hardware
 from make_kernel_initramfs import make_newc, validate_static_arm64_elf
+from build_ffmpeg_packages import RUNTIME as FFMPEG_RUNTIME
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / 'config/release.json'
@@ -41,7 +42,7 @@ def repository(path, commit=None, tree=None):
 
 def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=None,
          public_source=None, firmware_source=None, macros=None, v4l2_source=None, root=ROOT, resume=False,
-         sensors_dir=None):
+         sensors_dir=None, ffmpeg_dir=None):
     root = Path(root).resolve(); config = json.loads((root / 'config/release.json').read_text())
     if config['debian']['apt_policy'] != 'mutable-recorded' or config['debian']['snapshot'] is not None:
         raise ValueError('Only signed mutable APT with recorded metadata is implemented; snapshot mode is not configured')
@@ -76,6 +77,9 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
     if sensor_source.is_dir(): repository(sensor_source, config['sensors']['commit'])
     if not list(sensors.glob('*.deb')): missing.append('Piano sensors runtime .deb directory (--sensors-dir)')
     else: sensors_packages(sensors, config['sensors'], root=root)
+    ffmpeg = Path(ffmpeg_dir).resolve() if ffmpeg_dir else None
+    if ffmpeg:
+        ffmpeg_packages(ffmpeg, root)
     if runtime_dir:
         if not (Path(runtime_dir) / 'manifest.json').is_file(): missing.append('matching runtime bundle manifest')
     else:
@@ -97,6 +101,7 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
             'root_policy': 'LABEL=PIANOROOT', 'kernel': str(kernel), 'source': str(source),
             'output': str(output), 'rootfs': str(output / 'rootfs'), 'mesa_dir': str(mesa) if mesa else None,
             'sensors_dir': str(sensors),
+            'ffmpeg_dir': str(ffmpeg) if ffmpeg else None,
             'runtime_dir': str(Path(runtime_dir).resolve()) if runtime_dir else None,
             'kernel_build': str(Path(kernel_build or root / 'build/kernels/release-7.2.9').resolve()),
             'public_source': str(public), 'firmware_source': str(firmware), 'config': config, 'missing_inputs': missing,
@@ -307,6 +312,36 @@ def sensors_packages(folder, config, root=ROOT):
             'patches': patches, 'packages': rows}
 
 
+def ffmpeg_packages(folder, root=ROOT):
+    folder = Path(folder).resolve()
+    metadata = folder.parent / 'SOURCE.json'
+    if not metadata.is_file() or (folder.parent / '.incomplete').exists():
+        raise ValueError('Use the completed FFmpeg runtime from ./build.sh ffmpeg')
+    source = json.loads(metadata.read_text())
+    series = json.loads((Path(root) / 'linux/bsp/patches/ffmpeg/series.json').read_text())
+    patches = [{'path': 'linux/bsp/patches/ffmpeg/' + row['path'],
+                'sha256': digest(Path(root) / 'linux/bsp/patches/ffmpeg' / row['path'])}
+               for row in series['series']]
+    archive = next(row for row in series['source']['archives'] if row['filename'].endswith('.orig.tar.xz'))
+    version = series['source']['debian_source_version'] + '+' + series['local_revision']
+    if (source.get('packages_built') is not True or source.get('patches') != patches or
+            source.get('archive_sha256') != archive['sha256'] or source.get('package_version') != version):
+        raise ValueError('FFmpeg runtime does not match the selected source and patch')
+    rows = {}
+    for path in sorted(folder.glob('*.deb')):
+        package, actual_version, arch = [capture(['dpkg-deb', '-f', path, field])
+                                         for field in ('Package', 'Version', 'Architecture')]
+        row = {'file': path.name, 'version': actual_version, 'architecture': arch, 'sha256': digest(path)}
+        if (package in rows or arch != 'arm64' or actual_version != version or
+                source.get('packages', {}).get(package) != row):
+            raise ValueError('FFmpeg runtime package identity differs: ' + path.name)
+        rows[package] = row
+    if rows.keys() != FFMPEG_RUNTIME:
+        raise ValueError('The complete FFmpeg runtime package set is required')
+    return {'source_sha256': digest(metadata), 'patches': patches, 'packages': rows,
+            'device_verified': False}
+
+
 def bootstrap(rootfs, kernel, output, release):
     busybox = ROOT / 'build/linux-ram/busybox'
     if digest(busybox) != disk.BUSYBOX_SHA: raise ValueError('Static BusyBox source hash changed')
@@ -353,6 +388,7 @@ def execute(record):
         raise ValueError('Install the release helper compiler, alsatplg, m4, make and depmod first')
     mesa = mesa_packages(record['mesa_dir'])
     sensors = sensors_packages(record['sensors_dir'], cfg['sensors'])
+    ffmpeg = ffmpeg_packages(record['ffmpeg_dir']) if record.get('ffmpeg_dir') else None
     if out.exists() and not record.get('resume'): raise ValueError('Output appeared after planning; preserve it')
     out.parent.mkdir(parents=True, exist_ok=True); log = out.with_name(out.name + '.build.log')
     if log.exists() and not record.get('resume'): raise ValueError('Build log exists; choose a new output name')
@@ -370,12 +406,25 @@ def execute(record):
             shutil.copy2(Path(record['sensors_dir']) / row['file'], sensor_stage / row['file'])
             if digest(sensor_stage / row['file']) != row['sha256']:
                 raise ValueError('Piano sensors package changed while staging: ' + row['file'])
+        ffmpeg_stage = target(rootfs, 'tmp/piano-ffmpeg-packages')
+        if ffmpeg:
+            ffmpeg_stage.mkdir(parents=True, exist_ok=True)
+            for row in ffmpeg['packages'].values():
+                shutil.copy2(Path(record['ffmpeg_dir']) / row['file'], ffmpeg_stage / row['file'])
+                if digest(ffmpeg_stage / row['file']) != row['sha256']:
+                    raise ValueError('FFmpeg package changed while staging: ' + row['file'])
         with build_devices(rootfs), build_resolver(rootfs):
             run(['chroot', rootfs, 'apt-get', 'update'])
+            local_packages = ['/tmp/piano-sensors-packages/' + row['file']
+                              for row in sensors['packages'].values()]
+            if ffmpeg:
+                local_packages.extend('/tmp/piano-ffmpeg-packages/' + row['file']
+                                      for row in ffmpeg['packages'].values())
             run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get', 'install', '-y',
-                 '--no-install-recommends', *cfg['debian']['extra_packages'],
-                 *('/tmp/piano-sensors-packages/' + row['file'] for row in sensors['packages'].values())])
+                 '--no-install-recommends', *cfg['debian']['extra_packages'], *local_packages])
         shutil.rmtree(sensor_stage)
+        if ffmpeg:
+            shutil.rmtree(ffmpeg_stage)
         put(rootfs, 'usr/lib/systemd/system/adsprpcd-sensorspd.service.d/10-piano-adsp.conf',
             '[Unit]\nRequires=piano-adsp.service\n')
         if record.get('resume') and (out / 'adapters').is_dir(): shutil.rmtree(out / 'adapters')
@@ -412,6 +461,10 @@ def execute(record):
         for package, row in sensors['packages'].items():
             if installed.get(package) != row['version']:
                 raise ValueError('Installed Piano sensors version differs: ' + package)
+        if ffmpeg:
+            for package, row in ffmpeg['packages'].items():
+                if installed.get(package) != row['version']:
+                    raise ValueError('Installed FFmpeg version differs: ' + package)
         metadata = {str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'var/lib/apt/lists').glob('*InRelease')}
         if not metadata: raise ValueError('Signed APT InRelease metadata is missing')
         metadata.update({str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'etc/apt').rglob('*') if p.is_file()})
@@ -422,7 +475,8 @@ def execute(record):
                   'kernel_manifest_sha256': kernel_hash, 'release_config_sha256': digest(POLICY), 'packages_sha256': digest(out / 'packages.tsv'),
                   'adapters_manifest_sha256': digest(out / 'adapters/manifest.json'), 'runtime_manifest_sha256': digest(bundle / 'manifest.json'),
                   'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata, 'debian_commit': cfg['debian']['commit'],
-                  'mesa_packages': mesa, 'sensors': sensors, 'boot_request': boot_request, 'firmware_commit': cfg['firmware']['commit'],
+                  'mesa_packages': mesa, 'sensors': sensors, 'ffmpeg': ffmpeg,
+                  'boot_request': boot_request, 'firmware_commit': cfg['firmware']['commit'],
                   'initramfs': boot, 'password': 'locked; owner must set their own', 'autologin_retained': True,
                   'bit_reproducible': False, 'root_uid': rootfs.stat().st_uid, 'device_operation_performed': False}
         (out / 'manifest.json').write_text(json.dumps(result, indent=2) + '\n')
@@ -436,7 +490,7 @@ def execute(record):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('kernel', 'source', 'output'): parser.add_argument('--' + name, type=Path, required=True)
-    for name in ('mesa-dir', 'sensors-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
+    for name in ('mesa-dir', 'sensors-dir', 'ffmpeg-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
     mode = parser.add_mutually_exclusive_group(required=True); mode.add_argument('--plan', action='store_true'); mode.add_argument('--execute', action='store_true')
     parser.add_argument('--resume', action='store_true', help='Reuse the completed upstream base and refresh release assembly')
     args = vars(parser.parse_args()); execute_flag = args.pop('execute'); args.pop('plan')
