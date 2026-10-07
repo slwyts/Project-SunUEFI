@@ -311,7 +311,8 @@ def prepare(root=ROOT, repository=None, worktree=None, source_manifest=None, tar
     snapshot = work.with_name(work.name + '.source.json')
     if work.exists():
         current = json.loads(marker.read_text()) if marker.is_file() else None
-        selected = current is not None and current.get('worktree') == str(work)
+        selected = (current is not None and current.get('worktree') == str(work) and
+                    current.get('status') == 'SOURCE_PREPARED_NOT_BUILT')
         if not selected and not refresh:
             raise ValueError('Use --refresh to select a different prepared source snapshot')
         if not selected and not snapshot.is_file():
