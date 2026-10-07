@@ -120,7 +120,7 @@ def stage(output,destination):
         if not p.is_file()or p.is_symlink()or p.stat().st_size!=row['bytes']or sha(p)!=row['sha256']:raise ValueError('Runtime bundle changed: '+name)
     for name,row in files.items():
         target=destination/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(output/row['file'],target);target.chmod(row['mode'])
-    subprocess.run(['depmod','-b',str(destination),manifest['kernel']['release']],check=True)
+    subprocess.run(['depmod','-b',str(destination),'-m','/usr/lib/modules',manifest['kernel']['release']],check=True)
     record={'status':'REAL_RUNTIME_STAGED_NOT_DEVICE_TESTED','bundle_manifest_sha256':sha(output/'manifest.json'),'kernel':manifest['kernel'],'files':files,'device_tested':False}
     p=destination/'usr/share/piano-provenance/runtime-helpers.json';p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(record,indent=2)+'\n')
     return record
