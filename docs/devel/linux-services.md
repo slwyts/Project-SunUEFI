@@ -28,7 +28,9 @@
 
 相机硬件当前只交给 `piano-camerad` 管理；它配置 CSID→TFE PIX、缩放和 NV12，并提供曝光、白平衡、对焦控制。[WirePlumber 配置](../../linux/bsp/optional/camera/etc/wireplumber/wireplumber.conf.d/50-piano-camera.conf) 因此禁用 `monitor.libcamera` 和直连 CAMSS 节点，应用使用 loopback。标准 [libcamera v0.7.1 simple pipeline](https://gitlab.freedesktop.org/camera/libcamera/-/blob/v0.7.1/src/libcamera/pipeline/simple/simple.cpp) 有通用 CAMSS/software ISP 支持，但尚未接入这里的 TFE 硬件 ISP 路径；不要同时开启两个管理程序争用传感器。若以后改用 libcamera，需要先完成实际 media 路径、硬件控件及图像调校的接入。
 
-相机3A指自动曝光、白平衡和对焦，当前这部分必要算法由 `piano-camerad` 使用内核 sensor/ISP 控件实现。前摄自然光日志中，高亮像素占比在3%..8%间变化；旧 AE 跨过4%时会突然降约19%曝光量，又因平均亮度不足而提高增益。稳定性补丁改为连续高亮响应、每相机统计滤波、约5%亮度误差死区和单次6%变化上限，保留既有曝光/增益分配、白平衡与对焦；没有新增50Hz手工参数。独立 ARM64 camerad 已编译，画面稳定性仍需部署后确认；这项改进不代表完整原厂3A调校。
+相机3A指自动曝光、白平衡和对焦，当前这部分必要算法由 `piano-camerad` 使用内核 sensor/ISP 控件实现。前摄自然光日志中，高亮像素占比在3%..8%间变化；旧 AE 跨过4%时会突然降约19%曝光量，又因平均亮度不足而提高增益。稳定性补丁改为连续高亮响应、每相机统计滤波、约5%亮度误差死区和单次6%变化上限，保留既有曝光/增益分配、白平衡与对焦。用户确认现场是自然光、没有开室内灯，因此没有强制新增50Hz防闪烁参数。
+
+修正后的 ARM64 camerad 已部署。本机前摄的一次900帧采集中，启动3秒后的810帧全画面 YAVG 为76.54..77.76，曝光和两项增益保持2808/15872/6958；程序自身的局部亮度统计为93..95，采样范围不同，不能直接比较这两组亮度的绝对值。采集只保留统计，没有保存相机视频。这确认了该场景下控制循环稳定，尚未测量光照突变和完整模式切换，也不代表完整原厂3A调校。原始统计在本地 `private/analysis/front-ae-stable-20261008/`。
 
 ## 两条 rootfs 构建路径
 
