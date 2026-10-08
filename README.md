@@ -27,7 +27,7 @@ Project SunUEFI 是为小米平板 8 Pro（代号 `piano`，搭载骁龙 8 至�
 * **已知关键问题**：
   * **UEFI 启动阶段物理白屏**：部分记录中显存内容正常，屏幕却仍白。时钟初始化是调查方向，具体原因还未确认；Linux 后续接管后已能显示桌面。
   * **启动耗时较长**：最近一次磁盘 Linux 启动约 130 秒，具体瓶颈仍在定位。
-  * **持久启动正在完善**：修复前置选择器的 DTB 对齐读取后，源码构建的合体 BOOT 已正常启动 Android，并保留标准 `reboot recovery` 的 Mi Recovery 行为。显式 UEFI 请求及自动消费仍在验证；独立 Recovery 镜像路径依然受 ABL 缺载依赖限制。详见[入口分析](docs/devel/recovery-entry.md)与[请求机制](docs/devel/reboot-request.md)。
+  * **持久启动正在完善**：合体 BOOT 保存 Linux 路线后已通过普通重启进入磁盘 Linux，也已正常返回 Android。请求自动消费、完整在线安装和 OTA 联动尚未完成；持久 Linux 偏好与原厂 `reboot recovery` 的组合仍待实机验证。详见[入口分析](docs/devel/recovery-entry.md)与[请求机制](docs/devel/reboot-request.md)。
   * 麦克风底噪、待机休眠等细节功能仍在调试中。
 
 ---
@@ -57,7 +57,7 @@ Project SunUEFI 是为小米平板 8 Pro（代号 `piano`，搭载骁龙 8 至�
 
 * **单一固件核心**：所有功能收敛到单一镜像 `PianoUEFI-product.img`，避免分散维护碎片化的测试版本。
 * **原厂数据安全**：底层对原厂 Android 分区（系统、基带、凭据）强制写保护，正常退出路径冷重启回 Android；卡住时可能需要手动恢复。
-* **常驻 Fastboot 调试端**：UEFI 阶段后台暴露 USB 设备（`SunUEFI-piano`），白屏时也可提取运行日志、显存截图或请求安全重启。
+* **常驻 Fastboot 调试端**：USB 成功初始化时，UEFI 阶段后台暴露设备（`SunUEFI-piano`），可提取运行日志、显存截图或请求安全重启。冷 BOOT 的 USB 初始化仍未完整验证；安全回滚后进入 Linux 的路径不提供该 UEFI 调试端。
 
 ---
 
@@ -116,7 +116,7 @@ docker run --rm --privileged -v "$PWD:/workspace" -w /workspace sunuefi-builder 
 
 Debian/GNOME 的根系统构建会在独立副本中编译带 Piano 自动亮度策略的标准 `gnome-settings-daemon` 包，再按正常 APT 流程安装。原厂 lux 阈值和等待时间用于减少亮度频繁波动，不修改传感器读数；包来源和补丁记录随根系统保存。其他桌面直接使用标准传感器、背光接口。
 
-维护者可用 `./build.sh trampoline --stock-boot 当前ROM的boot.img --output 新输出目录` 生成前置入口。选择器的 Android 直通已实测。`./build.sh boot-repack` 已能编译原生 BOOT 文件重打包／还原工具，真实原厂 BOOT 无损还原已验证；在线安装、OTA 自动化与请求自动消费尚未完成。`./build.sh module --inspect` 当前列出缺项，不生成可安装 ZIP。接口与升级流程见[Android 模块说明](docs/devel/android-module.md)，文件工具见[原生重打包说明](docs/devel/android-boot-repack.md)。
+维护者可用 `./build.sh trampoline --stock-boot 当前ROM的boot.img --output 新输出目录` 生成前置入口。选择器的 Android 直通、保存 Linux 路线后的普通重启以及 Linux 返回 Android 均已实测。`./build.sh boot-repack` 已能编译原生 BOOT 文件重打包／还原工具，真实原厂 BOOT 无损还原已验证；在线安装、OTA 自动化与请求自动消费尚未完成。`./build.sh module --inspect` 当前列出缺项，不生成可安装 ZIP。接口与升级流程见[Android 模块说明](docs/devel/android-module.md)，文件工具见[原生重打包说明](docs/devel/android-boot-repack.md)。
 
 ## 下载后如何刷写
 

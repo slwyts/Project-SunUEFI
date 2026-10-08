@@ -6,6 +6,8 @@
 
 2026-10-08 已部署含 Recovery 优先选择器的 `build/boot-repack-recovery-20261008/roundtrip-wrapped.img`，普通 Android 启动完成。Android 原生保存 Linux target2/sequence1后正常重启，已通过 SSH 确认 g086 Linux、`/dev/sda36` ext4 rw 根和 GDM/ADSP/sensors active。此前 Linux CLI 返回 Android 也已成功；原厂 `fastboot continue` 仍可作为调试入口。
 
+普通重启进入持久Linux路线已有实机记录，不再以ABL `fastboot continue`作为必要入口：`private/provisioning/recovery-priority-20261008/deployment.json`记录实际请求、正常重启和Linux结果，同目录`linux-status.txt`保存请求页读回及活动服务。Linux USB网络上线不能证明UEFI USB core或全生命周期fastboot已正常；当前核心仅在USB启动失败且回滚已证实安全时允许继续ESP启动，USB完整初始化仍需单独验证。
+
 此前 Mi Recovery 检查使用target0（无Linux偏好）；**持久NEXT2与`reboot recovery`组合尚未实机验证，等待用户能退出 Mi Recovery 的物理配合**。新选择器已部署：准确、唯一的`bootmonitor.bootmode=recovery`会在读取NEXT请求页前返回未修改的原厂GKI入口，保留ABL提供的DTB/initrd，不清除Linux偏好。普通启动仍读取共享CRC请求；不能把旧target0结果当作新组合已通过。
 
 标识依据是`private/provisioning/recovery-product-20261007/console-after-restore.txt:8`恢复内核命令行，以及`private/analysis/recovery-blackbox-v2-20261007/boot-region-2000000.txt:925/:928`的真实ABL Bootmode/MNTParam；`mtdoops.boot_mode=1`只作交叉证据，不加入猜测的识别别名。ABL同次记录同时Loaded Partition boot/recovery，不能简单假设Recovery必定绕过BOOT包装。主机必要检查使用完整捕获FDT与该真实Recovery命令行：普通路由返回CRC target2，Recovery路由返回原厂入口0；把NEXT两页设置不可读仍能返回，且内容不变。它是实际C分支检查，不是完整Recovery FDT捕获或实机重启，结果保存在`private/analysis/bootselect-recovery-priority-20261008/result.json`。
