@@ -1,0 +1,56 @@
+From: Project SunUEFI
+Subject: [PATCH] leds: flash: qcom: preserve torch steps through LED conversion
+
+An exact V4L2 torch current passes through the 0..255 LED brightness
+scale before programming the PMIC. Two floor divisions can turn a 25mA
+request into 24mA and then a 20mA target at the hardware's 5mA step.
+Round up only the intensity-to-LED encoding, leaving LED_CLASS's 255
+maximum, the setter, current bounds and thermal limiting unchanged.
+
+Mirror the setter and per-channel PMIC rounding in the reverse callback,
+which the V4L2 wrapper uses for both set alignment and volatile get.
+Return the quantized total current, retaining the hardware's nonzero
+minimum for positive brightness and zero for LED_OFF. This conversion
+is not hardware readback; thermal limiting may reduce current further.
+
+At the supported maximum of 500mA/channel the encoding error remains
+below one 5mA/channel hardware step, so every valid V4L2 step is preserved.
+
+--- a/drivers/leds/flash/leds-qcom-flash.c
++++ b/drivers/leds/flash/leds-qcom-flash.c
+@@ -654,16 +654,31 @@
+ 	if (!current_ma)
+ 		return LED_OFF;
+ 
+-	return (current_ma * LED_FULL) / led->max_torch_current_ma;
++	/* brightness_set() converts back with integer division. Round this
++	 * encoding up so an exact 5mA/channel control step is not lost to a
++	 * second truncation. The PMIC still rounds current down to its step.
++	 */
++	return DIV_ROUND_UP(current_ma * LED_FULL, led->max_torch_current_ma);
+ }
+ 
+ static s32 qcom_flash_brightness_to_led_intensity(struct v4l2_flash *v4l2_flash,
+-					enum led_brightness brightness)
++						enum led_brightness brightness)
+ {
+ 	struct led_classdev_flash *fled_cdev = v4l2_flash->fled_cdev;
+ 	struct qcom_flash_led *led = flcdev_to_qcom_fled(fled_cdev);
+-
+-	return (brightness * led->max_torch_current_ma * UA_PER_MA) / LED_FULL;
++	u32 current_ma, steps;
++
++	if (!brightness)
++		return 0;
++
++	/* Mirror brightness_set() then set_flash_current(): the total mA are
++	 * split per channel, and ITARGET=0 is a nonzero 5mA minimum. Return the
++	 * quantized total, not the unrepresentable LED scale fraction. Thermal
++	 * limiting can still reduce the current during brightness_set().
++	 */
++	current_ma = brightness * led->max_torch_current_ma / LED_FULL;
++	steps = (current_ma * UA_PER_MA / led->chan_count + 1) / TORCH_IRES_UA;
++	return max_t(u32, steps, 1) * TORCH_IRES_UA * led->chan_count;
+ }
+ 
+ static const struct v4l2_flash_ops qcom_v4l2_flash_ops = {
