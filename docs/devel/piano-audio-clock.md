@@ -1,6 +1,6 @@
 # Piano 麦克风时钟
 
-`linux/dts/piano-audio-dmic-clock.dtso` 在完整音频 overlay 之后应用，将 Linux 实际绑定的 `/soc/codec@7660000` 的 `qcom,dmic-sample-rate` 从 4800000 改为 2400000。主线驱动据此选择 divider 4。它只改变这一属性，不修改原厂 DTB，也不改变 DMIC1、DEC0、0 dB、48 kHz/S16 和两通道 PCM 配置。
+`linux/dts/piano-audio-dmic-clock.dtso` 在完整音频 overlay 之后应用，将 Linux 实际绑定的 `/soc/codec@7660000` 的 `qcom,dmic-sample-rate` 从 4800000 改为 2400000。主线驱动据此选择 divider 4。它只改变这一属性，不修改原厂 DTB；路由和增益由统一 UCM 管理，当前为 DMIC2、DEC0、Volume98（+14dB）、48 kHz/S16 和两通道 PCM。
 
 依据是同机 Android 最终 DTB（2026-10-05，SHA256 `8056ae623549f4dbefbf3c2615c134fa670cafa83387235575ab573896636fcc`）及 [MiCode piano-w-oss 音频源码](https://github.com/MiCode/vendor_qcom_opensource_audio-kernel/tree/baeb7389997a6f6074dae31ec26565d6c286986e)。原厂 TX 四组 DMIC 配置均为 divider 4；VA 的 DT 配置为 divider 16，但 [VA hw_params](https://github.com/MiCode/vendor_qcom_opensource_audio-kernel/blob/baeb7389997a6f6074dae31ec26565d6c286986e/asoc/codecs/lpass-cdc/lpass-cdc-va-macro.c#L1414) 在采样率超过 16 kHz 时设置切换标志，[分频 getter](https://github.com/MiCode/vendor_qcom_opensource_audio-kernel/blob/baeb7389997a6f6074dae31ec26565d6c286986e/asoc/codecs/lpass-cdc/lpass-cdc-va-macro.c#L233) 返回 divider 4。
 
@@ -12,7 +12,7 @@ g086 实机已读回该属性为2400000；这确认配置已应用，不代表�
 
 2026-10-08 使用电脑的实际扬声器播放已知500/1000/2000Hz声源，自动在PCM开始后播放；仅保存逐秒电平、频谱和削顶计数，不保存麦克风音频。DMIC2比DMIC1的响应更强，与原厂VA路由一致。DMIC2、Volume98（+14dB）的稳定段中，三频信号相对后段环境背景约为18/27/21dB，没有削顶；声源距离与声压未标定，不能把它当完整语音质量验证。
 
-开流首段仍有约41个满幅样本，之后没有；此前短采样的高RMS包含启动冲击，不能直接当持续底噪。当前UCM已选DMIC2/DEC0和Volume98，保留驱动要求的两通道PCM及MONO/AUX0，不添加虚拟入口。完整release和多发行版BSP使用同一份tracked HiFi.conf；原厂TX路径与LinuxVA后端仍有差异，启动冲击、正常语音与DSP处理继续排查。实际统计在private/analysis/pc-speaker-mic-20261008/RESULT.json。
+这是时钟顺序修正前的记录：开流首段有约41个满幅样本，之后没有；此前短采样的高RMS包含启动冲击，不能直接当持续底噪。当前UCM已选DMIC2/DEC0和Volume98，保留驱动要求的两通道PCM及MONO/AUX0，不添加虚拟入口。完整release和多发行版BSP使用同一份tracked HiFi.conf。随后a8内核的启动冲击和受控声源结果见下段；正常语音与原厂TX/DSP处理仍待验证。此次早期统计在private/analysis/pc-speaker-mic-20261008/RESULT.json。
 
 ## 开流冲击的源码候选
 
@@ -56,7 +56,7 @@ commit `a8c9650eb32038c40a5f5934bb64a813dff0044f`。新内核已经完整构建�
 处理仍待验证。仅保存电平/频谱统计，PCM在内存中处理后丢弃，记录在本机
 `private/analysis/pc-speaker-mic-20261008/startup-a8.json` 与 `RESULT-a8.json`。
 
-当前 `sound/soc/codecs/lpass-va-macro.c:va_macro_enable_dec()` 的 PRE_PMU
+修正前 `sound/soc/codecs/lpass-va-macro.c:va_macro_enable_dec()` 的 PRE_PMU
 只留“Enable TX PGA Mute”注释，未写 `TX_PATH_CTL` 的 PGA mute BIT4；widget
 注册了 PRE_PMD，但函数也未处理。POST_PMU 已使能 TX clock BIT5，并执行
 1/1/6ms 的 HPF gate 稳定流程；`va_macro_digital_mute()` 随后直接清 BIT4。
@@ -114,7 +114,11 @@ SNR改善，也没有验证正常说话响应。DMIC2返回非零 PCM，仍是�
 
 原厂最终 DTB 的 `cdc_dmic01_pinctrl` / `cdc_dmic23_pinctrl` 选 LPI gpio6/7、gpio8/9 的 p81 active states，drive-strength=4；上游音频 overlay 对这四个引脚使用8。原厂节点中的 `qcom,tlmm-pins=<171 172>` / `<174>` 由 [msm-cdc-pinctrl](https://github.com/MiCode/vendor_qcom_opensource_audio-kernel/blob/baeb7389997a6f6074dae31ec26565d6c286986e/asoc/codecs/msm-cdc-pinctrl.c#L317) 保存为唤醒引脚，[唤醒操作](https://github.com/MiCode/vendor_qcom_opensource_audio-kernel/blob/baeb7389997a6f6074dae31ec26565d6c286986e/asoc/codecs/msm-cdc-pinctrl.c#L197) 调用 `msm_gpio_mpm_wake_set`；active 操作仅切 LPI pinctrl。这些 TLMM 属性不是麦克风供电开关，不应按供电猜测新增 GPIO 输出。
 
-## 下一次受控声源比较
+## 此前 DMIC1/DMIC2 比较步骤
+
+以下为路由选择前的历史步骤，不能作为当前设置的恢复指令。当前默认为
+DMIC2、Volume98，后续测量应恢复这组实际配置；电脑受控声源比较已经完成，
+无需为同一个问题重复采样。
 
 先安排明确的测试窗口和声源，不自行开始正常说话采样。保持 DEC0、gain84、
 48 kHz/S16 和两通道真实 PCM，只输出分阶段峰值/RMS，不保存 PCM 或音频文件。
