@@ -31,9 +31,14 @@ def main():
     fontdir = si / 'root/usr/share/fonts'
     fontdir.mkdir(parents=True, exist_ok=True)
     from fontTools.ttLib import TTCollection
-    source_font = Path('/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc')
     target_font = fontdir / 'NotoSansCJKsc-Regular.otf'
     if not target_font.exists():
+        source_font = next((path for path in (
+            Path('/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc'),
+            Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'),
+        ) if path.is_file()), None)
+        if source_font is None:
+            raise SystemExit('Noto Sans CJK Regular collection missing; install fonts-noto-cjk or noto-fonts-cjk')
         collection = TTCollection(str(source_font))
         # The installed Noto collection has JP/KR/SC/TC/HK faces in this order.
         face = collection.fonts[2]
