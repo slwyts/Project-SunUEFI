@@ -62,7 +62,13 @@ def apply_cpu_model_overlay(board, overlay, work, cpu_only=True):
             require(after[target].get(key) == value, 'Board overlay did not apply')
             if key in before[target]: after[target][key] = before[target][key]
             else: after[target].pop(key, None)
-    require(after == before, 'Board overlay changed undeclared properties')
+    # The CPU model helper changes only existing properties. General board
+    # overlays also add standard child nodes and relocate their phandles and
+    # __symbols__; fdtoverlay performs that merge. Comparing them to the old
+    # tree after undoing only target properties would reject those additions.
+    if cpu_only:
+        require(after == before, 'CPU model overlay changed undeclared properties')
+    fdt_info(derived)
     result = {'input_sha256': sha(board), 'overlay_sha256': sha(overlay),
               'output_sha256': sha(derived), 'cpu_nodes' if cpu_only else 'nodes': sorted(expected)}
     derived.replace(board)
