@@ -15,6 +15,37 @@ ROOT=Path(__file__).resolve().parents[1]
 EXPECTED='25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1'
 
 
+def stage_gnome_power(rootfs):
+    """Install the existing GNOME power service's local cover support."""
+    rootfs = Path(rootfs).resolve()
+    if not rootfs.is_relative_to(ROOT / 'build/distros') or not rootfs.is_dir():
+        raise ValueError('GNOME power files require a workspace rootfs')
+    overlay = ROOT / 'linux/desktops/gnome/power-overlay'
+    copied = {}
+    for source in sorted(overlay.rglob('*')):
+        if not source.is_file() or '__pycache__' in source.parts:
+            continue
+        relative = source.relative_to(overlay)
+        destination = rootfs / relative
+        if destination.is_symlink() or any(parent.is_symlink() for parent in destination.parents
+                if parent != rootfs and parent.is_relative_to(rootfs)):
+            raise ValueError('Guest symlink in GNOME power destination')
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        destination.chmod(0o755 if relative.as_posix() == 'usr/lib/piano/power-button' else 0o644)
+        copied[relative.as_posix()] = hashlib.sha256(source.read_bytes()).hexdigest()
+    wants = rootfs / 'etc/systemd/user/graphical-session.target.wants'
+    if any(parent.is_symlink() for parent in (wants, *wants.parents)
+           if parent != rootfs and parent.is_relative_to(rootfs)):
+        raise ValueError('Guest symlink in GNOME user service directory')
+    wants.mkdir(parents=True, exist_ok=True)
+    link = wants / 'piano-power-button.service'
+    if link.exists() or link.is_symlink():
+        link.unlink()
+    link.symlink_to('/usr/lib/systemd/user/piano-power-button.service')
+    return copied
+
+
 def stage(rootfs, source):
     rootfs,source=Path(rootfs).resolve(),Path(source).resolve()
     if not rootfs.is_relative_to(ROOT) or not rootfs.is_dir():
@@ -41,6 +72,7 @@ def stage(rootfs, source):
             if target.is_symlink():raise ValueError('Refuse writing through guest symlink')
             shutil.copy2(path,target)
             copied[name.as_posix()]=hashlib.sha256(path.read_bytes()).hexdigest()
+    copied.update(stage_gnome_power(rootfs))
     # Replace only persistence policy. All display/input/radio/audio/camera
     # service files and dependency links copied above remain present.
     (rootfs/'etc/fstab').write_text('# Piano RAM root. No Android mounts or growfs.\n')

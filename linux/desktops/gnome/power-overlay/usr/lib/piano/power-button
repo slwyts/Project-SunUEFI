@@ -1,0 +1,194 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0-only
+"""Piano GNOME power key and real SW_LID, using the existing user service.
+
+Adapted from debian-piano 25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1.
+Short press/closed cover blank only the backlight; opening/restoring wakes it.
+Long press opens the standard GNOME power menu. Lock/suspend are not invoked:
+GNOME Lock currently drives DPMS OFF, whose DSI recovery is still unverified.
+"""
+import fcntl
+import glob
+import os
+import select
+import struct
+import subprocess
+import sys
+import time
+
+KEY_NAME = 'pmic_pwrkey'
+LID_NAME = 'soc:piano-hall-ml'
+KEY_POWER = 116
+SW_LID = 0
+EV_KEY, EV_SW, EV_SYN, SYN_DROPPED = 1, 5, 0, 3
+LONG_PRESS = 0.8
+EVIOCGRAB = 0x40044590
+# _IOR('E', 0x1b, an eight-byte bitmap): read the current switch state.
+EVIOCGSW = (2 << 30) | (8 << 16) | (ord('E') << 8) | 0x1b
+EVENT = struct.Struct('llHHi')
+
+
+def say(message):
+    print('power-button: ' + message, file=sys.stderr, flush=True)
+
+
+def find_device(name):
+    for path in glob.glob('/sys/class/input/event*/device/name'):
+        try:
+            with open(path) as stream:
+                if stream.read().strip() == name:
+                    return '/dev/input/' + path.split('/')[4]
+        except OSError:
+            continue
+    return None
+
+
+def find_backlight():
+    names = sorted(os.listdir('/sys/class/backlight'))
+    return names[0] if names else None
+
+
+def brightness(backlight):
+    with open(f'/sys/class/backlight/{backlight}/brightness') as stream:
+        return int(stream.read())
+
+
+def call(args, operation):
+    try:
+        result = subprocess.run(args, stdout=subprocess.DEVNULL, check=False, timeout=4)
+        if result.returncode == 0:
+            return True
+        say(f'{operation} failed ({result.returncode})')
+    except (OSError, subprocess.TimeoutExpired) as error:
+        say(f'{operation} failed: {error}')
+    return False
+
+
+def set_brightness(backlight, value):
+    return call(['gdbus', 'call', '--system', '--dest', 'org.freedesktop.login1',
+                 '--object-path', '/org/freedesktop/login1/session/auto',
+                 '--method', 'org.freedesktop.login1.Session.SetBrightness',
+                 'backlight', backlight, str(value)], 'backlight request')
+
+
+def power_dialog():
+    call(['gdbus', 'call', '--session', '--dest', 'org.gnome.SessionManager',
+          '--object-path', '/org/gnome/SessionManager',
+          '--method', 'org.gnome.SessionManager.Shutdown'], 'power menu')
+
+
+def lid_closed(fd):
+    bitmap = bytearray(8)
+    fcntl.ioctl(fd, EVIOCGSW, bitmap, True)
+    return bool(int.from_bytes(bitmap, sys.byteorder) & (1 << SW_LID))
+
+
+class Screen:
+    def __init__(self):
+        self.saved = None
+        self.cover_closed = None
+
+    def blank(self):
+        backlight = find_backlight()
+        if backlight is None or self.saved is not None:
+            return
+        saved = brightness(backlight) or 1
+        if set_brightness(backlight, 0):
+            self.saved = (backlight, saved)
+
+    def wake(self):
+        if self.saved is not None:
+            backlight, value = self.saved
+            if set_brightness(backlight, value):
+                self.saved = None
+
+    def toggle(self):
+        if self.saved is None:
+            self.blank()
+        else:
+            self.wake()
+
+    def lid(self, closed):
+        if closed == self.cover_closed:
+            return
+        self.cover_closed = closed
+        if closed:
+            self.blank()
+        else:
+            self.wake()
+
+
+def main():
+    # Only these two exact devices are opened. Touch/keyboards are not read.
+    devices = {}
+    dropped = set()
+    screen = Screen()
+    pressed_at = None
+    try:
+        while True:
+            names = set(devices.values())
+            for name in (KEY_NAME, LID_NAME):
+                if name in names:
+                    continue
+                path = find_device(name)
+                if path is None:
+                    continue
+                fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+                try:
+                    if name == KEY_NAME:
+                        fcntl.ioctl(fd, EVIOCGRAB, 1)
+                    else:
+                        # SW_LID reports state, not just transitions. A cover
+                        # already closed at service startup must also blank.
+                        screen.lid(lid_closed(fd))
+                except OSError:
+                    os.close(fd)
+                    raise
+                devices[fd] = name
+            timeout = 2.0
+            if pressed_at is not None:
+                timeout = min(timeout, max(0.0, pressed_at + LONG_PRESS - time.monotonic()))
+            ready, _, _ = select.select(list(devices), [], [], timeout)
+            if not ready and pressed_at is not None and time.monotonic() >= pressed_at + LONG_PRESS:
+                pressed_at = None
+                screen.wake()
+                power_dialog()
+            for fd in ready:
+                data = os.read(fd, EVENT.size * 64)
+                if not data:
+                    if devices[fd] == KEY_NAME:
+                        pressed_at = None
+                    os.close(fd)
+                    dropped.discard(fd)
+                    del devices[fd]
+                    continue
+                for off in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                    _, _, etype, code, value = EVENT.unpack_from(data, off)
+                    if fd in dropped:
+                        if etype == EV_SYN and code == 0:  # SYN_REPORT
+                            dropped.discard(fd)
+                            if devices[fd] == LID_NAME:
+                                screen.lid(lid_closed(fd))
+                        continue
+                    if etype == EV_SYN and code == SYN_DROPPED:
+                        dropped.add(fd)
+                        if devices[fd] == KEY_NAME:
+                            pressed_at = None
+                        continue
+                    if devices[fd] == LID_NAME:
+                        if etype == EV_SW and code == SW_LID:
+                            screen.lid(bool(value))
+                        continue
+                    if etype == EV_KEY and code == KEY_POWER:
+                        if value == 1:
+                            pressed_at = time.monotonic()
+                        elif value == 0 and pressed_at is not None:
+                            pressed_at = None
+                            screen.toggle()
+    finally:
+        for fd in devices:
+            os.close(fd)  # Closing only the power FD releases EVIOCGRAB.
+
+
+if __name__ == '__main__':
+    main()

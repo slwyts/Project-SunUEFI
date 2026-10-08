@@ -159,6 +159,8 @@ def configure_desktop(root, result, guest, optional):
     if skeleton.is_symlink(): raise ValueError('Guest skeleton redirects a host write')
     skeleton.mkdir(parents=True, exist_ok=True)
     if desktop == 'gnome':
+        from stage_piano_full_userspace import stage_gnome_power
+        result['gnome_power_files'] = stage_gnome_power(root)
         path = inside(root, root / 'etc/dconf/db/local.d/00-sunuefi'); path.parent.mkdir(parents=True, exist_ok=True)
         text = (ROOT / 'linux/desktops/gnome/defaults.ini').read_text().replace('uint32 2', 'uint32 ' + str(scale // 100))
         path.write_text(text); profile = inside(root, root / 'etc/dconf/profile/user'); profile.parent.mkdir(parents=True, exist_ok=True)

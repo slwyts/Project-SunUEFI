@@ -1,0 +1,4 @@
+# Grant the active local session only these physical input devices.
+# The power key is grabbed; SW_LID is observed without an exclusive grab.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="pmic_pwrkey", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="soc:piano-hall-ml", TAG+="uaccess"

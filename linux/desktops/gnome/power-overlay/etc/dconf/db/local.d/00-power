@@ -1,0 +1,10 @@
+[org/gnome/settings-daemon/plugins/media-keys]
+# The same Piano power-button service handles this key.
+power-static=['']
+
+[org/gnome/settings-daemon/plugins/power]
+power-button-action='nothing'
+
+[org/gnome/desktop/session]
+# Keep idle DPMS disabled while native DSI re-enable is not reliable.
+idle-delay=uint32 0
