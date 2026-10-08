@@ -164,24 +164,8 @@ def build(output, source, rootfs=None):
     original_audio = (source / 'rootfs/overlay' / audio_path).read_bytes()
     if digest(original_audio) != 'ed1b91e6f7e4cef76f1f60cfe3dc01d249cfb0267bb983bfc362df8f4f97609c':
         raise ValueError('Reviewed public audio UCM changed')
-    audio_text = original_audio.decode()
-    includes = '\tInclude.vadm0e.File "/codecs/qcom-lpass/va-macro/DMIC0EnableSeq.conf"\n\tInclude.vadm0d.File "/codecs/qcom-lpass/va-macro/DMIC0DisableSeq.conf"'
-    sequence = '''\tEnableSequence [
-\t\tcset "name='VA DEC0 MUX' VA_DMIC"
-\t\tcset "name='VA DMIC MUX0' DMIC1"
-\t\tcset "name='VA_AIF1_CAP Mixer DEC0' 1"
-\t\tcset "name='VA_DEC0 Volume' 84"
-\t]
-\tDisableSequence [
-\t\tcset "name='VA DMIC MUX0' ZERO"
-\t\tcset "name='VA_DEC0 Volume' 0"
-\t\tcset "name='VA_AIF1_CAP Mixer DEC0' 0"
-\t]'''
-    audio_text = replace_once(audio_text, includes, sequence)
-    audio_text = replace_once(audio_text, '\t\tPlaybackChannels 2',
-                             '\t\t# Open all four hardware slots; PipeWire duplicates ordinary stereo.\n\t\tPlaybackChannels 4')
-    audio_text = replace_once(audio_text, '\t\tCapturePriority 100', '\t\tCaptureChannels 2\n\t\tCapturePriority 100')
-    files[audio_path] = audio_text.encode()
+    # One tracked UCM source for complete releases and distro BSP packages.
+    files[audio_path] = (ROOT / 'linux/bsp/common' / audio_path).read_bytes()
     # Keep the pinned service intact; order the real Debian display manager
     # behind completed native backlight/DPU/DSI readiness, including cold boots.
     files['etc/systemd/system/piano-display.service.d/20-native-kms-order.conf'] = (
@@ -228,7 +212,7 @@ def build(output, source, rootfs=None):
                                             'gpu', 'gmu', 'mdss', 'display', 'display-active', 'video', 'camera', 'adsp', 'audio', 'radio'],
               'clock_scope': 'ACTUAL_DT_CONSUMERS_AND_BOUND_PROVIDER_ONLY_NO_RATE_ENABLE_READBACK',
               'context_scope': 'KERNEL_PRIVATE_AND_HARDWARE_CONFIGURATION_ONLY_NO_DMA_TRANSFER',
-              'audio_profile': {'source_sha256': digest(original_audio), 'microphone': 'DMIC1', 'capture_channels': 2, 'capture_positions': ['MONO', 'AUX0'], 'dec0_gain_db': 0, 'playback_channels': 4, 'speaker_mix': 'simple left/right duplication for stereo streams', 'required_desktop_packages': ['libcanberra-pulse', 'rtkit'], 'noise_quality_verified': False},
+              'audio_profile': {'source_sha256': digest(original_audio), 'microphone': 'DMIC2', 'capture_channels': 2, 'capture_positions': ['MONO', 'AUX0'], 'dec0_gain_db': 14, 'playback_channels': 4, 'speaker_mix': 'simple left/right duplication for stereo streams', 'required_desktop_packages': ['libcanberra-pulse', 'rtkit'], 'noise_quality_verified': False},
               'device_transfer_validation_pending': True,
               'pci_parf_hardware_table_verified': False,
               'domain_forced': False}

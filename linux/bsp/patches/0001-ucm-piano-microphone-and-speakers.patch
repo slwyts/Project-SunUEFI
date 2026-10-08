@@ -10,7 +10,7 @@
  		PlaybackPriority 100
  		PlaybackPCM "hw:${CardId},0"
  	}
-@@ -32,10 +33,20 @@
+@@ -32,10 +33,21 @@
  SectionDevice."Mic" {
  	Comment "Internal microphone"
  
@@ -18,9 +18,10 @@
 -	Include.vadm0d.File "/codecs/qcom-lpass/va-macro/DMIC0DisableSeq.conf"
 +	EnableSequence [
 +		cset "name='VA DEC0 MUX' VA_DMIC"
-+		cset "name='VA DMIC MUX0' DMIC1"
++		cset "name='VA DMIC MUX0' DMIC2"
 +		cset "name='VA_AIF1_CAP Mixer DEC0' 1"
-+		cset "name='VA_DEC0 Volume' 84"
++		# Measured speech headroom; the standard VA control uses 1 dB steps.
++		cset "name='VA_DEC0 Volume' 98"
 +	]
 +	DisableSequence [
 +		cset "name='VA DMIC MUX0' ZERO"

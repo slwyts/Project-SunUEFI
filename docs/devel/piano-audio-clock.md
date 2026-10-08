@@ -8,7 +8,15 @@
 
 g086 实机已读回该属性为2400000；这确认配置已应用，不代表已测量物理 DMIC clock 或验证语音质量。公开源码与本机二进制的构建提交尚未确认一致；原厂普通录音的活动 mixer/DSP 路由和寄存器也未采集。未测得改善前不宣称麦克风质量已修好。
 
-## 原厂路由与当前配置
+## 当前麦克风配置与受控比较
+
+2026-10-08 使用电脑的实际扬声器播放已知500/1000/2000Hz声源，自动在PCM开始后播放；仅保存逐秒电平、频谱和削顶计数，不保存麦克风音频。DMIC2比DMIC1的响应更强，与原厂VA路由一致。DMIC2、Volume98（+14dB）的稳定段中，三频信号相对后段环境背景约为18/27/21dB，没有削顶；声源距离与声压未标定，不能把它当完整语音质量验证。
+
+开流首段仍有约41个满幅样本，之后没有；此前短采样的高RMS包含启动冲击，不能直接当持续底噪。当前UCM已选DMIC2/DEC0和Volume98，保留驱动要求的两通道PCM及MONO/AUX0，不添加虚拟入口。完整release和多发行版BSP使用同一份tracked HiFi.conf；原厂TX路径与LinuxVA后端仍有差异，启动冲击、正常语音与DSP处理继续排查。实际统计在private/analysis/pc-speaker-mic-20261008/RESULT.json。
+
+以下保留此前DMIC1/0dB与时钟、原厂路由的定位记录。
+
+## 原厂路由与此前配置
 
 2026-10-08 的原厂空闲采集位于 `private/captures/2026-10-08-factory-hardware/`。`tinymix-idle.txt` 的声卡是 `sun-mtp-snd-card`，TX/VA 的 CAP 全部关闭、DMIC mux 全为 ZERO，VA Volume 为 84；这些是空闲状态，不是录音活动路由。同目录提取的 `extracted/vendor/etc/audio/sku_sun/mixer_paths_sun_mtp.xml` 和 `resourcemanager_sun_mtp.xml` 提供以下静态配置：
 
@@ -22,7 +30,7 @@ g086 实机已读回该属性为2400000；这确认配置已应用，不代表�
 
 原厂 VA 的 `MSM_DMIC` 与主线的 `VA_DMIC` 都是 DEC mux 的值 0。[原厂 DMIC 枚举](https://github.com/MiCode/vendor_qcom_opensource_audio-kernel/blob/baeb7389997a6f6074dae31ec26565d6c286986e/asoc/codecs/lpass-cdc/lpass-cdc-va-macro.c#L1614) 与本地 `upstream/linux-piano/sound/soc/codecs/lpass-va-macro.c` 同为 ZERO、DMIC0…DMIC7，并在 CFG0 的 shift 4 选择输入；DMIC2/3 可以直接对应，不存在编号偏移。
 
-当前 UCM 只开 VA DEC0/DMIC1，Volume=84。主线 Volume 的每格为 1 dB，84 对应 0 dB；98 对应 +14 dB，但原厂98属于 TX handset 路径，不能据此直接给当前 VA 加14 dB。增益增加也会放大底噪。当前 WirePlumber 将两通道 PCM 标为 `[ MONO AUX0 ]`，第二个通道没有路由是既有单麦设计，默认全零本身不说明缺少双麦。
+此前 UCM 只开 VA DEC0/DMIC1，Volume=84。主线 Volume 的每格为 1 dB，84 对应 0 dB；98 对应 +14 dB，但原厂98属于 TX handset 路径，不能据此直接给当前 VA 加14 dB。增益增加也会放大底噪。当前 WirePlumber 将两通道 PCM 标为 `[ MONO AUX0 ]`，第二个通道没有路由是既有单麦设计，默认全零本身不说明缺少双麦。
 
 2026-10-08 g086 的真实 PipeWire 默认源为既有 `HiFi__Mic__source`，PCM 是
 `hw:Pro,2`；空闲时 suspended，EnumFormat 为 S16LE/48 kHz/两通道 MONO、AUX0，
