@@ -63,13 +63,17 @@ importer 默认读取 `super` 的 primary metadata slot 0，并选择 `odm_a`、
 * listener 最小 buffer 为4 KiB，所以还需核对单段情况。DMA32 的高物理页可能经 SWIOTLB bounce；system_heap 提供 CPU/device 同步回调，但当前 rpcmem/listener 未调用 DMA-BUF CPU 同步接口，fastrpc 也没有相应 SG 同步。未取得失败 buffer 的实际物理/DMA地址、SG段数和同步状态前，不把 bounce 作为已确认根因。
 * [AEE 错误定义](https://github.com/qualcomm/fastrpc/blob/v1.0.7/inc/AEEStdErr.h) 中 `0xe` 是 `AEE_EBADPARM`、`0x14` 是 `AEE_EUNSUPPORTED`；`mod_table` 日志不能直接解释为内核 `-EFAULT` 或 SMMU fault。
 
-后续需修实际使用的 compute-cb DMA/IOMMU 映射，保留其他设备的现有策略；只取消预加载不能覆盖摄像头等其他功能启用 heap 的情况。临时 namespace 只用于一次分配路径对照，没有作为产品方案。
+`patches/linux/7.2.9/0002-fastrpc-sm8750-translated-dma.patch` 为实际 SM8750 compute-cb 选择标准 DMA domain，保留其他设备的现有策略；只取消预加载不能覆盖摄像头等其他功能启用 heap 的情况。临时 namespace 只用于早先的一次分配路径对照，没有作为产品方案。
 
 本地 native 包已用 Debian trixie ARM64 sysroot、QEMU 与标准 `dpkg-buildpackage -b -us -uc -aarm64` 构建为 `5+sunuefi1`，保留 socinfo，去掉 system_heap 预加载。`build/sensors-patched/runtime` 复用官方 CI 的另外五包；父目录的 SOURCE、SHA256SUMS 与 BUILD.json 记录真实源码/补丁/包哈希及构建来源，可作为 `--sensors-dir` 输入。该包构建通过不代表上述 DMA 映射问题已解决。
 
 ## 运行状态
 
-2026-10-08 已在设备安装标准 `5+sunuefi1` 包。仅在临时 namespace 隐藏 system heap 的诊断条件下，iio-sensor-proxy 的 HasAccelerometer/Light/Proximity/Compass 均为 true，accelerometer 和 compass CLI 返回真实读数。正常 heap 可见条件下的映射修正，以及桌面旋转和亮度行为仍待验证，不能将该对照称为产品传感器已修好。可先读取服务日志：
+2026-10-08，`7.2.9-piano-gnome-g086a94c4529d` 经普通 BOOT 启动，六个实际 compute-cb 的 `iommu_group/type` 均为 `DMA`。标准 `5+sunuefi1` 服务运行，`/dev/dma_heap/system` 可见，`InaccessiblePaths`、`RootDirectory`、`RootImage` 均为空，未使用此前隐藏 heap 的临时方案。
+
+SensorProxy 的 HasAccelerometer/Light/Proximity/Compass 均为 true；一次三秒采样实际返回加速度约 `(8.49, -0.08, 4.75) m/s²` 和罗盘约 `195°`，LightLevel 为 `153`。这证明本次正常 heap 条件下 SSC 数据读取已工作，不能扩大为所有 buffer、全部传感器或待机恢复都已验证。桌面自动旋转和亮度联动仍需核对。一次早先的 g086 启动没有形成可用调试接口；本轮成功也没有解释那次失联原因。
+
+本地原始记录位于 `private/analysis/recover-dma-20261008-131916/g086-state.json`、`g086-sensor-samples.txt` 和 `g086-live-journal.txt`。可读取标准服务日志：
 
 ```sh
 systemctl status piano-adsp piano-sensors-import adsprpcd-sensorspd iio-sensor-proxy
