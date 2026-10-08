@@ -1,0 +1,225 @@
+From: Project SunUEFI
+Subject: [PATCH] input: add an optional Piano magnetic pen-dock switch
+
+DRAFT: not in the release patch list, not enabled in the default config.
+Firmware must provide compatible xiaomi,piano-pen-dock and exactly two
+hall-gpios with the actual GPIO polarity and AP input pin configuration.
+The device node remains disabled until the board/model path, Hall power
+and physical attachment transitions have been validated.
+
+Normal GPIO acquisition selects the AP GPIO mux and claims EGPIO ownership
+on Qualcomm TLMM. This is an intended hardware operation; the original
+Piano hall3/4 DT state requests GPIO input, pull-up and qcom,apps ownership.
+It is not a read-only probe or an additional approval requirement. No
+I2C13/SC96231 dependency, charging attributes, PPE or keyboard logic is added.
+
+Normalize both Hall inputs using descriptor polarity and report their OR
+as one EV_SW/SW_PEN_INSERTED input. Initial state is read before the input
+is made visible, then resampled after both edge IRQs are installed. Read
+errors retain the last known state instead of reporting detached. IRQ
+threads serialize samples and reports; reverse devres order synchronizes
+and frees both IRQs before input/GPIO/dock cleanup. Resume resamples the
+real inputs. No events are sent before input registration.
+---
+diff --git a/drivers/input/misc/Kconfig b/drivers/input/misc/Kconfig
+--- a/drivers/input/misc/Kconfig
++++ b/drivers/input/misc/Kconfig
+@@ -993,4 +993,16 @@
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called stpmic1_onkey.
+ 
++config INPUT_XIAOMI_PIANO_PEN_DOCK
++	tristate "Xiaomi Piano magnetic pen dock"
++	depends on OF && GPIOLIB
++	help
++	  Report the logical OR of two Hall inputs as SW_PEN_INSERTED.
++	  Hall GPIO polarity comes from firmware. This is only the magnetic
++	  dock switch and does not provide wireless charging or battery data.
++	  The board must configure its AP-owned Hall inputs and power first.
++
++	  To compile this driver as a module, choose M here: the module will
++	  be called piano-pen-dock.
++
+ endif
+diff --git a/drivers/input/misc/Makefile b/drivers/input/misc/Makefile
+--- a/drivers/input/misc/Makefile
++++ b/drivers/input/misc/Makefile
+@@ -41,6 +41,7 @@
+ obj-$(CONFIG_INPUT_DRV2667_HAPTICS)	+= drv2667.o
+ obj-$(CONFIG_INPUT_GPIO_BEEPER)		+= gpio-beeper.o
+ obj-$(CONFIG_INPUT_GPIO_DECODER)	+= gpio_decoder.o
++obj-$(CONFIG_INPUT_XIAOMI_PIANO_PEN_DOCK) += piano-pen-dock.o
+ obj-$(CONFIG_INPUT_GPIO_VIBRA)		+= gpio-vibra.o
+ obj-$(CONFIG_INPUT_HISI_POWERKEY)	+= hisi_powerkey.o
+ obj-$(CONFIG_HP_SDC_RTC)		+= hp_sdc_rtc.o
+diff --git a/drivers/input/misc/piano-pen-dock.c b/drivers/input/misc/piano-pen-dock.c
+new file mode 100644
+--- /dev/null
++++ b/drivers/input/misc/piano-pen-dock.c
+@@ -0,0 +1,166 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Xiaomi Piano magnetic pen dock; no charging or pen-battery interface. */
++#include <linux/bitops.h>
++#include <linux/device.h>
++#include <linux/err.h>
++#include <linux/gpio/consumer.h>
++#include <linux/input.h>
++#include <linux/interrupt.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/pm.h>
++#include <linux/slab.h>
++
++struct piano_pen_dock {
++	struct device *dev;
++	struct gpio_descs *hall;
++	struct input_dev *input;
++	struct mutex lock;
++	int irq[2];
++};
++
++static int piano_pen_dock_read(struct piano_pen_dock *dock)
++{
++	int state[2], i;
++
++	for (i = 0; i < ARRAY_SIZE(state); i++) {
++		/* DT polarity normalizes each line to 1 = magnetic assertion. */
++		state[i] = gpiod_get_value_cansleep(dock->hall->desc[i]);
++		if (state[i] < 0)
++			return state[i];
++	}
++	return !!(state[0] || state[1]);
++}
++
++static int piano_pen_dock_report(struct piano_pen_dock *dock)
++{
++	int state;
++
++	/* Two different IRQ threads may run concurrently; sample and report
++	 * together so an older sample cannot overwrite a newer one. */
++	mutex_lock(&dock->lock);
++	state = piano_pen_dock_read(dock);
++	if (state >= 0) {
++		input_report_switch(dock->input, SW_PEN_INSERTED, state);
++		input_sync(dock->input);
++	}
++	mutex_unlock(&dock->lock);
++	return state < 0 ? state : 0;
++}
++
++static irqreturn_t piano_pen_dock_irq(int irq, void *data)
++{
++	struct piano_pen_dock *dock = data;
++	int error = piano_pen_dock_report(dock);
++
++	if (error)
++		dev_err_ratelimited(dock->dev, "Hall state read failed: %d\n", error);
++	return IRQ_HANDLED;
++}
++
++static int piano_pen_dock_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct piano_pen_dock *dock;
++	int state, error, i;
++
++	dock = devm_kzalloc(dev, sizeof(*dock), GFP_KERNEL);
++	if (!dock)
++		return -ENOMEM;
++	dock->dev = dev;
++	mutex_init(&dock->lock);
++
++	/* Normal GPIO acquisition selects the AP GPIO mux, including EGPIO
++	 * ownership on Qualcomm TLMM. This is the intended hardware operation. */
++	dock->hall = devm_gpiod_get_array(dev, "hall", GPIOD_IN);
++	if (IS_ERR(dock->hall))
++		return dev_err_probe(dev, PTR_ERR(dock->hall), "cannot acquire Hall GPIOs\n");
++	if (dock->hall->ndescs != 2)
++		return dev_err_probe(dev, -EINVAL, "exactly two Hall GPIOs are required\n");
++
++	for (i = 0; i < ARRAY_SIZE(dock->irq); i++) {
++		dock->irq[i] = gpiod_to_irq(dock->hall->desc[i]);
++		if (dock->irq[i] < 0)
++			return dev_err_probe(dev, dock->irq[i], "cannot map Hall IRQ\n");
++	}
++	state = piano_pen_dock_read(dock);
++	if (state < 0)
++		return dev_err_probe(dev, state, "cannot read initial Hall state\n");
++
++	dock->input = devm_input_allocate_device(dev);
++	if (!dock->input)
++		return -ENOMEM;
++	dock->input->name = "Xiaomi Piano Pen Dock";
++	dock->input->id.bustype = BUS_HOST;
++	input_set_capability(dock->input, EV_SW, SW_PEN_INSERTED);
++	/* Seed a validated state without sending events before registration. */
++	__assign_bit(SW_PEN_INSERTED, dock->input->sw, state);
++	error = input_register_device(dock->input);
++	if (error)
++		return dev_err_probe(dev, error, "cannot register pen-dock input\n");
++
++	/* Request IRQs after the managed input registration. Reverse devres
++	 * order frees/synchronizes both IRQs before unregistering the input,
++	 * releasing GPIOs, or freeing dock, including a partial probe failure. */
++	for (i = 0; i < ARRAY_SIZE(dock->irq); i++) {
++		error = devm_request_threaded_irq(dev, dock->irq[i], NULL,
++			piano_pen_dock_irq, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING |
++			IRQF_ONESHOT, dev_name(dev), dock);
++		if (error)
++			return dev_err_probe(dev, error, "cannot request Hall IRQ\n");
++	}
++	platform_set_drvdata(pdev, dock);
++	/* Close the window between the initial sample and IRQ installation. */
++	error = piano_pen_dock_report(dock);
++	if (error)
++		return dev_err_probe(dev, error, "cannot synchronize Hall state\n");
++	return 0;
++}
++
++static int piano_pen_dock_suspend(struct device *dev)
++{
++	struct piano_pen_dock *dock = dev_get_drvdata(dev);
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(dock->irq); i++)
++		disable_irq(dock->irq[i]);
++	return 0;
++}
++
++static int piano_pen_dock_resume(struct device *dev)
++{
++	struct piano_pen_dock *dock = dev_get_drvdata(dev);
++	int error, i;
++
++	for (i = 0; i < ARRAY_SIZE(dock->irq); i++)
++		enable_irq(dock->irq[i]);
++	error = piano_pen_dock_report(dock);
++	if (error)
++		dev_err(dev, "Hall state restore failed: %d\n", error);
++	return error;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(piano_pen_dock_pm_ops,
++			       piano_pen_dock_suspend, piano_pen_dock_resume);
++
++static const struct of_device_id piano_pen_dock_of_match[] = {
++	{ .compatible = "xiaomi,piano-pen-dock" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, piano_pen_dock_of_match);
++
++static struct platform_driver piano_pen_dock_driver = {
++	.probe = piano_pen_dock_probe,
++	.driver = {
++		.name = "piano-pen-dock",
++		.of_match_table = piano_pen_dock_of_match,
++		.pm = pm_sleep_ptr(&piano_pen_dock_pm_ops),
++	},
++};
++module_platform_driver(piano_pen_dock_driver);
++
++MODULE_DESCRIPTION("Xiaomi Piano magnetic pen-dock input switch");
++MODULE_AUTHOR("Project SunUEFI");
++MODULE_LICENSE("GPL");
