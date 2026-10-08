@@ -1,0 +1,56 @@
+--- a/camera/piano-camerad.c
++++ b/camera/piano-camerad.c
+@@ -124,6 +124,8 @@
+ 	int exposure, again, dgain;
+ 	double rgain, bgain;
+ 	bool have_state;
++	/* AE statistics are seeded from the first valid frame of each stream. */
++	double ae_mean, ae_bright;
+ 	/* autofocus: lens position range, scan state */
+ 	int af_min, af_max, af_pos;
+ 	enum { AF_OFF, AF_WAIT, AF_SCAN, AF_LOCKED } af_state;
+@@ -816,16 +818,25 @@
+ static void control_update(struct cam *c, const struct stats *s)
+ {
+ 	const struct cam_cfg *cfg = c->cfg;
+-	double k, total, rem;
++	double k, total, rem, target, error;
+ 	int exp, ag;
+ 
+-	/* exposure: luma is gamma encoded, so ~2.2 power for linear light */
+-	k = pow(AE_TARGET / (s->mean < 1 ? 1 : s->mean), 2.2);
+-	if (s->bright > 0.04)
+-		k = fmin(k, 0.7);
+-	k = clampd(pow(k, 0.6), 0.5, 2.0);
+-
+-	if (fabs(log(k)) > 0.04) {
++	if (c->frames == AE_PERIOD) {
++		c->ae_mean = s->mean;
++		c->ae_bright = s->bright;
++	} else {
++		c->ae_mean += 0.25 * (s->mean - c->ae_mean);
++		c->ae_bright += 0.25 * (s->bright - c->ae_bright);
++	}
++	/* A hard clipping cutoff alternated between gain-up and gain-down.
++	 * Reduce the luma target continuously instead of reversing the step.
++	 */
++	target = fmax(AE_TARGET * 0.65, AE_TARGET / (1.0 + 2.0 * c->ae_bright));
++	error = log(target / fmax(c->ae_mean, 1.0));
++	if (fabs(error) > 0.05) {
++		/* Gamma-encoded luma; damp feedback and limit each update to6%. */
++		k = clampd(pow(target / fmax(c->ae_mean, 1.0), 2.2 * 0.3),
++			   0.94, 1.06);
+ 		total = (double)c->exposure * c->again / cfg->again_unit *
+ 			c->dgain / DGAIN_UNITY * k;
+ 
+@@ -857,8 +868,8 @@
+ 	}
+ 
+ 	if (c->frames % (AE_PERIOD * 30) == 0)
+-		logmsg(c, "mean %.0f bright %.2f exp %d again %d dgain %d wb r %.2f b %.2f",
+-		       s->mean, s->bright, c->exposure, c->again, c->dgain,
++		logmsg(c, "mean %.0f bright %.2f ae %.0f target %.0f exp %d again %d dgain %d wb r %.2f b %.2f",
++		       s->mean, s->bright, c->ae_mean, target, c->exposure, c->again, c->dgain,
+ 		       c->rgain, c->bgain);
+ }
+ 

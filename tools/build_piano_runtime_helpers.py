@@ -36,6 +36,7 @@ TOPOLOGY_PIN='6b10e42b5d0b4242004c750613462c2ccd7d37cd180ca842abbb431bda6057bb'
 DEFAULT_RELEASE='7.2.6-piano-gnome-00061-g352508459733'
 TOUCH_DIAGNOSTICS_PATCH=ROOT/'tools/patches/piano-touch-view-observability.patch'
 CAMERAD_CCM_PATCH=ROOT/'tools/patches/piano-camerad-writable-ccm.patch'
+CAMERAD_AE_PATCH=ROOT/'tools/patches/piano-camerad-stable-ae.patch'
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -74,15 +75,19 @@ def derive_touch_source(public, output):
 
 
 def derive_camerad_source(public, output):
-    """Keep the CCM ioctl's input/output payload writable in a public copy."""
+    """Apply CCM payload and AE stability fixes to the same verified copy."""
     relative,pin,_=PUBLIC_SOURCES['piano-camerad'];original=Path(public)/relative
     if sha(original)!=pin:raise ValueError('Public camera source changed')
     folder=Path(output)/'piano-camera-source';target=folder/relative
     target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,target)
-    for options in (['--check'],[]):
-        subprocess.run(['git','apply','--no-index',*options,str(CAMERAD_CCM_PATCH)],cwd=folder,check=True)
+    patches=[]
+    for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH):
+        for options in (['--check'],[]):
+            subprocess.run(['git','apply','--no-index',*options,str(patch)],cwd=folder,check=True)
+        patches.append({'file':str(patch.relative_to(ROOT)),'sha256':sha(patch)})
     return target,{'public_source_sha256':pin,'patch':'tools/patches/piano-camerad-writable-ccm.patch',
-                  'patch_sha256':sha(CAMERAD_CCM_PATCH),'effective_source_sha256':sha(target)}
+                  'patch_sha256':sha(CAMERAD_CCM_PATCH),'patches':patches,
+                  'effective_source_sha256':sha(target)}
 
 
 def kernel_identity(build,source,commit,release):
