@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build the exact public complete Piano candidate, isolated O and RAM-root policy.
 
-No git checkout, rescue-pin change, guest execution, device or partition operation.
+Prepared snapshots stay immutable. Only the locked build-owned compiler checkout
+is switched; no rescue-pin, guest, device or partition operation.
 """
 import argparse
 import fcntl
@@ -105,6 +106,29 @@ def verify_source(work=WORK,commit=None):
         if sha(work/name)!=pin:raise ValueError('Pinned public full config changed: '+name)
 
 
+def compiler_checkout(snapshot,work,commit,tree):
+    common=text(['git','rev-parse','--path-format=absolute','--git-common-dir'],snapshot)
+    owner=work.with_name(work.name+'.compiler.json')
+    identity={'schema':1,'worktree':str(work),'git_common_dir':common}
+    if work.exists():
+        if not owner.is_file()or json.loads(owner.read_text())!=identity:
+            raise ValueError('Existing compiler checkout is not build-owned: '+str(work))
+        if text(['git','rev-parse','--path-format=absolute','--git-common-dir'],work)!=common:
+            raise ValueError('Compiler checkout belongs to another repository')
+        if text(['git','status','--porcelain=v1','--untracked-files=all'],work):
+            raise ValueError('Compiler checkout is dirty; preserve it')
+        if subprocess.run(['git','symbolic-ref','-q','HEAD'],cwd=work,capture_output=True).returncode==0:
+            raise ValueError('Compiler checkout must remain detached')
+    else:
+        if owner.exists():raise ValueError('Compiler ownership record has no checkout; inspect it')
+        run(['git','-c','core.hooksPath=/dev/null','worktree','add','--detach',work,commit],cwd=snapshot)
+        owner.write_text(json.dumps(identity,indent=2)+'\n')
+    run(['git','-c','core.hooksPath=/dev/null','checkout','--detach',commit],cwd=work)
+    verify_source(work,commit)
+    if text(['git','rev-parse','HEAD^{tree}'],work)!=tree:
+        raise ValueError('Compiler checkout differs from the prepared source tree')
+
+
 def validate_config(config,public,expected_command,modules=None):
     modules=validate_module_overrides({}if modules is None else modules)
     values=config_values(config)
@@ -172,6 +196,9 @@ def main():
     work,out,artifacts=(path.resolve()for path in (args.worktree,args.build_dir,args.artifacts));commit=args.commit
     if not work.is_relative_to(ROOT/'build/kernel-worktrees')or not out.is_relative_to(ROOT/'build/kernels')or not artifacts.is_relative_to(ROOT/'artifacts/kernels'):
         raise ValueError('Explicit full kernel paths must stay in the workspace build/artifact directories')
+    compiler=ROOT/'build/kernel-worktrees'/(out.name+'-compiler-'+hashlib.sha256(str(out).encode()).hexdigest()[:12])
+    if compiler==work or compiler.resolve()!=compiler:
+        raise ValueError('Compiler checkout must be a separate physical build-owned directory')
     verify_source(work,commit);public=work/'arch/arm64/configs/piano_rootfs.config';fragment=ROOT/'linux/configs/piano-full.config'
     root_command=command_line(fragment.read_text(),public.read_text(),args.root)
     bluetooth=ROOT/'linux/configs/piano-bluetooth.config';flash=ROOT/'linux/configs/piano-flash.config'
@@ -181,7 +208,7 @@ def main():
     env,tools=toolchain();out.mkdir(parents=True,exist_ok=True);artifacts.mkdir(parents=True,exist_ok=True)
     build_locks=[]
     lock_root=ROOT/'build/locks';lock_root.mkdir(parents=True,exist_ok=True)
-    for directory in sorted({out,artifacts}):
+    for directory in sorted({work,compiler,out,artifacts}):
         name=hashlib.sha256(str(directory).encode()).hexdigest()+'.lock'
         handle=(lock_root/name).open('a');build_locks.append(handle)
         try:fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -192,25 +219,31 @@ def main():
         # Stale Image/modules may remain during the build, but no consumer can
         # mistake them for a completed new bundle without its final manifest.
         marker.unlink()
+    verify_source(work,commit)
+    tree=text(['git','rev-parse','HEAD^{tree}'],work)
+    compiler_checkout(work,compiler,commit,tree)
     hashes={str(path.relative_to(ROOT)):sha(path)for path in (fragment,bluetooth,flash,early_cpucp,Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py')}
     effective_text=effective_config(root_command,modules)
     effective=out/'piano-full.effective.config';effective.write_text(effective_text)
-    command=['make','-C',work,'O='+str(out),'ARCH=arm64','LLVM=1','LLVM_IAS=1']
+    command=['make','-C',compiler,'O='+str(out),'ARCH=arm64','LLVM=1','LLVM_IAS=1']
     if tools['ccache_enabled']:
         # Kbuild recommends a stable timestamp for useful ccache reuse.
         env.setdefault('KBUILD_BUILD_TIMESTAMP',text(['git','show','-s','--format=%cI',commit],work))
         tools['kbuild_build_timestamp']=env['KBUILD_BUILD_TIMESTAMP']
         command.append('CC='+shlex.join(tools['kernel_cc']))
     run(command+['piano_defconfig'],env=env)
-    run(['bash',work/'scripts/kconfig/merge_config.sh','-m','-O',out,out/'.config',public,effective],cwd=work,env=env)
+    run(['bash',compiler/'scripts/kconfig/merge_config.sh','-m','-O',out,out/'.config',public,effective],cwd=compiler,env=env)
     run(command+['olddefconfig'],env=env)
     requirements=validate_config((out/'.config').read_text(),public.read_text(),root_command,modules);config_hash=sha(out/'.config')
     def fresh():
         verify_source(work,commit)
+        verify_source(compiler,commit)
+        if text(['git','rev-parse','HEAD^{tree}'],compiler)!=tree:raise ValueError('Compiler source tree drifted')
         if any(sha(ROOT/name)!=value for name,value in hashes.items())or sha(out/'.config')!=config_hash or effective.read_text()!=effective_text:raise ValueError('Full candidate source/config/tool inputs drifted')
         if any(sha(Path(tools['paths'][name]))!=value for name,value in tools['sha256'].items()):raise ValueError('Full candidate build tool changed during compilation')
-    fresh();state={'profile':'full-integration','mode':'complete-public-hardware','build_id':str(uuid.uuid4()),'source_commit':commit,'source_worktree':str(work),'source_clean':True,
-      'source_branch':text(['git','branch','--show-current'],work),'base_commit':BASE_COMMIT,
+    fresh();state={'profile':'full-integration','mode':'complete-public-hardware','build_id':str(uuid.uuid4()),'source_commit':commit,'source_tree':tree,'source_worktree':str(compiler),'source_clean':True,
+      'prepared_source_worktree':str(work),'compiler_worktree':str(compiler),
+      'source_branch':text(['git','branch','--show-current'],compiler),'base_commit':BASE_COMMIT,
       'public_full_baseline':COMMIT,'local_patch_commits':text(['git','rev-list','--reverse',COMMIT+'..'+commit],work).splitlines(),
       'public_patch_commits':text(['git','rev-list','--reverse',BASE_COMMIT+'..'+COMMIT],work).splitlines(),
       'public_config_sha256':SOURCE_PINS,'inputs':hashes,'config_sha256':config_hash,'toolchain':tools,'root_policy':args.root,'command_line':root_command,

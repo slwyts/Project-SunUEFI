@@ -40,3 +40,5 @@ UFS 根分区发现耗时。后续定位应使用原始 source 时间，并保�
 `private/analysis/piano-boot-time-45-20261008/`。这些记录没有作为公开构建输入。
 
 完整SMMU/UFS路由及上下文转储默认关闭。需要定位DMA时，在内核命令行显式加入 `piano.boot-dma-log=1`，initramfs仍会在原来的加载阶段只读转储；这不是新的启动profile，也不改变DMA映射、模块加载失败处理或根分区选择。恢复a8的日志显示该转储发生在早期启动并逐行写入console/kmsg；下一份默认initramfs不再为正常启动执行这些诊断读取。尚未测量这项变化带来的耗时差，不把全部慢启动归因于它。
+
+内核编译现改用固定的构建专用checkout，准备器仍保留每版不可变snapshot。此前每次更换带tree摘要的源码绝对路径，会改变所有对象的编译命令和依赖时间，即使只改少量文件也近乎整树重编。固定checkout在持有源/O/产物锁后按正常Git切换提交，manifest记录实际commit/tree及两份源码路径；runtime headers_install也使用同一compiler路径，不修改Kbuild的.cmd或依赖检查。现有已完成bde3 runtime身份仍可读取且完全一致；首次迁入新路径仍需整编，后续增量耗时尚未实测。

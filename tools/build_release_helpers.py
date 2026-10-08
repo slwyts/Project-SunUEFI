@@ -33,6 +33,7 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
     record = json.loads((kernel / 'manifest.json').read_text())
     release, commit = record['kernel_release'], record['source_commit']
     identity = runtime.kernel_identity(kernel_build, source, commit, release)
+    compiler_source = runtime.kernel_compiler_source(kernel_build, source, commit)
     runtime.repository(ROOT / 'upstream/debian-piano-current', runtime.PUBLIC_COMMIT)
     runtime.repository(macros, runtime.MACROS_COMMIT)
     runtime.repository(loop, runtime.LOOP_COMMIT)
@@ -45,7 +46,7 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
     output.mkdir(parents=True)
     public = ROOT / 'upstream/debian-piano-current'
     uapi = output / 'uapi'
-    run(['make', '-C', source, 'O=' + str(kernel_build), 'ARCH=arm64',
+    run(['make', '-C', compiler_source, 'O=' + str(kernel_build), 'ARCH=arm64',
          'headers_install', 'INSTALL_HDR_PATH=' + str(uapi)])
     rows = runtime.tree_files(uapi / 'include')
     uapi_digest = expected_uapi_digest(source, commit)
@@ -106,6 +107,8 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
         'file': str(module.relative_to(output)), 'bytes': module.stat().st_size,
         'sha256': runtime.sha(module), 'mode': 0o644, 'vermagic': item['vermagic'],
         'source_commit': runtime.LOOP_COMMIT}
+    if runtime.kernel_identity(kernel_build, source, commit, release) != identity:
+        raise ValueError('Kernel source/ABI changed during runtime helper build')
     result = {'status': 'RUNTIME_COMPILED_NOT_DEVICE_TESTED', 'kernel': identity,
         'public_commit': runtime.PUBLIC_COMMIT, 'runtime_files': files,
         'uapi_sha256': uapi_digest, 'uapi_source_commit': commit, 'macros_commit': runtime.MACROS_COMMIT,
