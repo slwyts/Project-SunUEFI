@@ -6,7 +6,7 @@
 
 所有结果来自同一台小米平板 8 Pro（`piano`，型号 `25091RP04C`，SM8750P，16 GB 内存），原厂 Android 16（`OS3.0.309.0.WPYCNXM`），Bootloader 已解锁，当前运行使用 CSOT 面板配置（由原厂引导程序传来的标识选择，不等同于对物理供应商的识别）。Linux 对面板的选择见[面板选择](devel/panel-selection.md)；其他面板、内存容量和 ROM 版本没有测试过。
 
-这台机器划出了 `sunuefi_esp`（512 MiB FAT32，4 KiB 扇区，与 UFS 逻辑扇区一致）和 `sunuefi_root`（63.5 GiB ext4），安装了 Debian 13 / GNOME。当前 Linux 内核为 `7.2.9-piano-gnome-gc24355c2de05`，从合体 BOOT 经 UEFI 启动，已实际来回切换 Android 与 Linux。
+这台机器划出了 `sunuefi_esp`（512 MiB FAT32，4 KiB 扇区，与 UFS 逻辑扇区一致）和 `sunuefi_root`（63.5 GiB ext4），安装了 Debian 13 / GNOME。当前 Linux 内核为 `7.2.9-piano-gnome-g60fd202096bf`，从合体 BOOT 经 UEFI 启动，已实际来回切换 Android 与 Linux。
 
 ## 启动与安装
 
@@ -47,8 +47,8 @@
 | Wi-Fi | 可用 | 新系统需自行保存网络连接 |
 | 蓝牙 | 可用 | 安装器自动配置本机地址，手工部署方式见[蓝牙地址](devel/piano-bluetooth.md) |
 | 扬声器 | 四路都能发声，沿用原厂功放增益 235 | 睡眠恢复未测 |
-| 麦克风 | 能录音 | 单声道混合造成衰减，真正的单声道修正已编译、未部署；噪声与桌面电平待调 |
-| 相机 | 前后路预览、录像，CAMSS/TFE 硬件 ISP | 首帧绿色区域、启动偏暗、曝光收敛慢、对焦与画质差距；启动曝光与帧完整性修正已构建、未在设备上验证；与原厂 CamX/CHI 不同，3A 为软件实现。见[相机与闪光灯](devel/piano-camera-flash.md) |
+| 麦克风 | 录音、原生单声道 ALSA / PipeWire 输入 | 底噪与桌面电平待调 |
+| 相机 | 前后路预览、录像，CAMSS/TFE 硬件 ISP | 曝光、对焦和首帧处理仍在改善；3A 为软件实现，与原厂画质有差距。见[相机与闪光灯](devel/piano-camera-flash.md)，手动接口见[相机控制](devel/piano-camera-controls.md) |
 | 闪光灯 | 两路标准 LED 已注册，限值已读回 | 实际发光和曝光同步未观察 |
 | 传感器 | SSC / FastRPC / iio-sensor-proxy 已装，多种数据可读 | 桌面联动和单位未全部完成，见[传感器](devel/piano-sensors.md) |
 | 自动亮度 | GNOME 策略包沿用原厂 lux 阈值与延迟，传感器数据不做修改 | 依赖传感器联动完成度，见[自动亮度](devel/piano-auto-brightness.md) |
