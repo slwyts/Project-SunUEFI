@@ -40,7 +40,7 @@ PY_KERNEL
       "${1:-$sunuefi_root/build/mesa}" 26.1.6-1~bpo13+1 ;;
   sensors)
     python3 - "$sunuefi_root" "${1:-$sunuefi_root/build/sensors}" "${@:2}" <<'PY_SENSORS'
-import hashlib, json, shutil, subprocess, sys
+import hashlib, json, os, shutil, subprocess, sys
 from pathlib import Path
 root, output = (Path(p).resolve() for p in sys.argv[1:3])
 selection = sys.argv[3:]
@@ -65,7 +65,14 @@ for name in config['patches']:
     subprocess.run(['patch', '--batch', '--forward', '-p1', '-i', patch], cwd=workspace, check=True)
 record = {'source_url': config['source_url'], 'source_commit': head, 'patches': patches}
 (workspace / 'SOURCE').write_text(json.dumps(record, indent=2) + '\n')
-subprocess.run(['bash', workspace / 'scripts/build-sensors-debs.sh', output, *selection], check=True)
+# Native Debian package tools must see their APT-installed Python modules.
+# Keep the caller's virtualenv for UEFI and only isolate this child build.
+build_env = os.environ.copy()
+for name in ('VIRTUAL_ENV', 'PYTHONHOME', 'PYTHONPATH'):
+    build_env.pop(name, None)
+build_env['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
+subprocess.run(['bash', workspace / 'scripts/build-sensors-debs.sh', output, *selection],
+               env=build_env, check=True)
 shutil.copy2(workspace / 'SOURCE', output / 'SOURCE')
 PY_SENSORS
     ;;
