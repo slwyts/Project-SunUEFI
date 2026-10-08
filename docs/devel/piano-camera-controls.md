@@ -49,6 +49,8 @@ piano-camera-ctl set front ae auto
 
 后摄 S5KJN1 的 4080×3072 模式也提供时间控件。将上述命令的 `front` 换为 `rear`，请求 500000 纳秒会选中 64 行，实际约 497371 纳秒。这个模式的积分时钟为 560 MHz、行长为 4352，精确行时间是 `54400 / 7` 纳秒；同一颗传感器的[厂商固定源码](https://github.com/MotorolaMobilityLLC/kernel-mtk/blob/4cbe43fe20dc19b9c5218553468efb3b868567c5/drivers/misc/mediatek/imgsensor/src/common/v1_1/mot_devonn_s5kjn1_mipi_raw/s5kjn1mipiraw_Sensor.c#L68)明确区分积分时钟和 MIPI 像素率，其[VT PLL 配置](https://github.com/MotorolaMobilityLLC/kernel-mtk/blob/4cbe43fe20dc19b9c5218553468efb3b868567c5/drivers/misc/mediatek/imgsensor/src/common/v1_1/mot_devonn_s5kjn1_mipi_raw/settings/s5kjn1_4080x3072_30fps.h#L255)与当前 Linux 配置一致。后摄运行时另外核对 HBLANK 为 272、VBLANK 默认 1216，以及曝光上限保留 22 行的间隔。其他分辨率或时序不匹配时拒绝换算；不使用原厂不同模式的行时间，也不从标称 30 fps 反推该模式的精确积分时钟。
 
+2026-10-09 已在同一默认相机服务中完成后摄读回：请求 500000 纳秒，接受 64 行，`get` 返回 497371 纳秒；随后恢复自动曝光并停止开流。记录在本地 `private/provisioning/recovery-priority-20261008/rear-exposure-live-result.json`，测试没有保存像素数据。
+
 AE、AWB、AF 各自拥有自动/手动状态；数值写入必须先把对应域切为 manual，自动算法不会覆盖该域。模式切换先读回该域的现有控件，恢复 auto 从这个状态继续。手动曝光仍保留帧统计供后摄 AF 判断稳定性。每个数值请求只写一个白名单控件，随后读回；失败保留 errno，读回不一致同时给出 requested/value 并返回错误。多个传感器/TFE 控件不构成硬件原子事务；回复丢失或读回失败后应先 `get`，再决定是否重试。
 
 两个正常 producer 顺序应用这份补丁、继续编译同一 camerad，并另编 CLI；stage 的完整文件集合包含客户端。CLI 的 main 使用 argc/argv，不复用 camerad 的 void-main wrapper。二进制不存入 Git，无需新增 systemd unit。

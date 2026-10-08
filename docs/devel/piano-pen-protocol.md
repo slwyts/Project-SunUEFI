@@ -10,6 +10,16 @@
 
 已保存的 Focus Pen Pro BLE descriptor 只有 mouse/keyboard/sensor Input，没有 Digitizer、Output、Feature 或标准 FF。轻捏、滑动和笔端震动的具体协议尚未确认；屏幕 hover 要从屏幕端工具位置与 proximity 得到。小米的[产品说明](https://www.mi.com/global/product/xiaomi-focus-pen-pro/)不能替代这些实际协议字段。
 
+## IC 扫描模式与原厂开关条件
+
+2026-10-09补充：模式1和3表示不同笔型号，并非普通与高性能扫描档位。[原厂枚举](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/p81/nt36532/nt36xxx.h#L245)定义 `SUPPORT_M80P=1`、`SUPPORT_N83P=2`、`SUPPORT_P81C=3`。同机已提取的 `nt36532_touch.ko`（SHA `d3ef0e85f98147d50784fc6b32d1d55e53834e8aa406e682e86c048ef663bac0`）也在 `nvt_set_cur_value` 的 `0xb038/0xb4a4..0xb4c8` 将笔ID8对应到模式3；同版HAL在 `0x29fc0..0x2a220` 选择内部profile3，型号日志为 `xiaomi_p81c`。
+
+原厂的[连接处理](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/p81/nt36532/nt36xxx.c#L3753)接收 `DATA_MODE_20`：高四位表示连接，低四位表示笔ID；P81C连接值为 `0x18`，断开值为 `0x08`。[扫描策略](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/p81/nt36532/nt36xxx.c#L3571)要求屏幕醒着、笔已连接且没有磁吸充电；游戏模式会额外限制扫描，白名单可放行。连接或充电状态变化、固件恢复和屏幕恢复都会重新应用策略。这些连接条件不能用来推断压力数据一定来自BLE。
+
+实际开启分为两步：[扩展命令04](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/p81/nt36532/nt36xxx_ext_proc.c#L1356)发送 `50 BF 04 00 01 00`，使能笔扫描；随后[型号命令](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/p81/nt36532/nt36xxx_ext_proc.c#L663)发送 `50 7B 03` 选择P81C，并等待控制器ACK。关闭扫描将扩展命令04的值改为0。当前Linux的 `/proc/nvt_thp_stylus` 已包含这组命令、ACK和恢复路径，但默认启动没有请求开启扫描；读取该节点得到的是已成功请求的缓存值，不是控制器硬件状态查询。
+
+后续应在现有触控进程内按真实连接、充电和屏幕状态管理P81C扫描，不新增服务或第二个FIFO读取者。此处只记录已确认的型号和命令，本次没有修改默认扫描状态。开启扫描也不等于笔输入可用：尚未取得真实type29笔帧和最终事件对照，外部 `0x440` 压力记录的发送进程与物理来源仍未确认。最终坐标、压力、倾角和悬浮必须走下面记录的算法与标准输入路径，不能用猜测值填充。
+
 ## 实际提取的 HAL 链
 
 从[官方同版本 ROM](https://bigota.d.miui.com/OS3.0.309.0.WPYCNXM/piano-ota_full-OS3.0.309.0.WPYCNXM-user-16.0-6672ba521d.zip)读取 ZIP 目录与 payload manifest，核验官方 metadata SHA，并逐操作核验数据 SHA。为避免下载完整分区，构造了拒绝读取未知区间的只读稀疏 EROFS 视图，按 inode/pcluster 定向提文件。原始 metadata 保持不变；**部分镜像没有通过最终分区 SHA，不可刷写**。没有运行 HAL 或访问设备。
