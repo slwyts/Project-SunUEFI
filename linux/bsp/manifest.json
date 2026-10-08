@@ -14,11 +14,12 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "cde4078636ab42317345bfb714bee0e88e4e7d33bef41a2464adfbbe4827d93e",
-      "source": "rootfs/overlay/etc/modprobe.d/piano.conf",
-      "source_sha256": "cde4078636ab42317345bfb714bee0e88e4e7d33bef41a2464adfbbe4827d93e",
+      "sha256": "b3688fbd028cd80f1833868d091a68730696f634d96a7c497b8d14b068837d46",
+      "source": "linux/bsp/common/etc/modprobe.d/piano.conf",
+      "source_sha256": "b3688fbd028cd80f1833868d091a68730696f634d96a7c497b8d14b068837d46",
       "source_git_mode": "100644",
-      "license": "MIT"
+      "license": "MIT",
+      "source_component": "Project SunUEFI"
     },
     {
       "group": "common",

@@ -45,3 +45,5 @@
 还缺本机实际使用的 HAL/服务及其传感器或安全环境传输入口、芯片协议、以及可接入标准认证用户空间的实现。当前没有证据证明其确切安全环境通道。后续先用原厂 init/VINTF 与加载依赖确认公开接口元数据，不读取指纹模板、密钥、校准私密值或用户数据；不要创建占位的认证设备。
 
 本轮源清单、精确节点和哈希保存在私有分析目录 `private/analysis/piano-led-ir-fp-20261008/`。未修改当前内核源码、配置、构建目录或产品 DT。
+
+随后bde3普通重启发现，虽然modules-load文件已安装，旧modprobe黑名单仍使systemd把LPG记为deny-listed。已仅移除 `leds_qcom_lpg` 这一条，并让完整root stager与通用BSP使用同一份tracked modprobe配置。重新启动标准modules-load后实际插入LPG并出现三个接口；尚待下一次完整重启确认。当前证据在 `bde3-rgb-startup.txt` 与 `bde3-rgb-policy-fixed.txt`，不能用之前手动modprobe结果替代启动策略验证。

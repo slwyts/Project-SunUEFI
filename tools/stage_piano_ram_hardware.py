@@ -154,7 +154,8 @@ def build(output, source, rootfs=None):
              'usr/lib/piano/piano-ram-hardware-prepare':
              (ROOT / 'linux/userspace/piano-ram-hardware-prepare').read_bytes()}
     # Install these local additions from the same files as the generic BSP.
-    for relative in ('etc/modules-load.d/piano-rgb.conf',
+    for relative in ('etc/modprobe.d/piano.conf',
+                     'etc/modules-load.d/piano-rgb.conf',
                      'etc/modules-load.d/piano-bluetooth.conf',
                      'etc/pipewire/client.conf.d/60-piano-audio.conf',
                      'etc/pipewire/pipewire-pulse.conf.d/60-piano-audio.conf',
