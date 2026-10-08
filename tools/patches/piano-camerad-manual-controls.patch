@@ -1,0 +1,503 @@
+From: Project SunUEFI
+Subject: [PATCH] camera: serve native manual controls from the existing frame owner
+
+Apply after debian-piano a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45
+and the CCM, startup/stable 3A and frame-integrity patches. The exact
+prerequisite camera source SHA256 is:
+0a96e7d4aa2dd23bd1f49cbdfae37578327f47d3a9118464cbdfd924bf9f6f1d
+
+Use a fixed root:video UNIX seqpacket socket in the existing poll loop.
+Query actual driver capabilities and values; serialize named control writes
+with independent AE/AWB/AF ownership and require successful readback.
+Inactive cameras and unsupported front focus are refused. No second daemon,
+arbitrary node/ioctl or inferred ISO/Kelvin/focal-distance conversion.
+The CLI source is maintained separately at linux/userspace/piano-camera-ctl.c.
+
+The resulting daemon and CLI compiled and statically linked for AArch64.
+Hardware control and automatic/manual switching have not been tested.
+---
+diff --git a/camera/piano-camerad.c b/camera/piano-camerad.c
+--- a/camera/piano-camerad.c
++++ b/camera/piano-camerad.c
+@@ -16,6 +16,8 @@
+ #include <dirent.h>
+ #include <errno.h>
+ #include <fcntl.h>
++#include <grp.h>
++#include <limits.h>
+ #include <math.h>
+ #include <poll.h>
+ #include <signal.h>
+@@ -128,6 +130,8 @@
+ 	int exposure, again, dgain;
+ 	double rgain, bgain;
+ 	bool have_state;
++	/* Ownership is independent for exposure, white balance and rear focus. */
++	bool ae_manual, wb_manual, af_manual;
+ 	/* exposure statistics are fresh for each stream */
+ 	double ae_mean, ae_bright;
+ 	unsigned int ae_updates, ae_stable;
+@@ -915,7 +919,7 @@
+ 	 */
+ 	target = fmax(AE_TARGET * 0.65, AE_TARGET / (1.0 + 2.0 * c->ae_bright));
+ 	error = log(target / fmax(c->ae_mean, 1.0));
+-	if (fabs(error) > 0.05) {
++	if (!c->ae_manual && fabs(error) > 0.05) {
+ 		/* Only startup may take a larger step. The existing highlight target
+ 		 * remains, and the startup upper bound falls with clipped pixels.
+ 		 */
+@@ -958,7 +962,7 @@
+ 		c->ae_acquiring = false;
+ 
+ 	/* gray world white balance on mid tones */
+-	if (s->n_rgb > 200 && s->r > 0 && s->b > 0) {
++	if (!c->wb_manual && s->n_rgb > 200 && s->r > 0 && s->b > 0) {
+ 		double rr = s->g / s->r, bb = s->g / s->b;
+ 
+ 		if (fabs(log(rr)) > 0.02 || fabs(log(bb)) > 0.02) {
+@@ -1190,7 +1194,7 @@
+ 
+ static void af_update(struct cam *c, const uint8_t *y, unsigned int stride)
+ {
+-	if (c->af_state == AF_OFF)
++	if (c->af_manual || c->af_state == AF_OFF)
+ 		return;
+ 	if (c->af_state == AF_WAIT) {
+ 		if (c->frames >= AF_START && c->ae_ready)
+@@ -1316,6 +1320,363 @@
+ 	close(fd);
+ }
+ 
++/* Fixed native controls, serialized with 3A by the existing owner loop. */
++#define CONTROL_PATH "/run/piano-camerad/control.sock"
++#define CONTROL_CLIENTS 4
++static int control_fd = -1;
++static int control_clients[CONTROL_CLIENTS] = { -1, -1, -1, -1 };
++
++enum control_domain { DOMAIN_AE, DOMAIN_WB, DOMAIN_AF };
++struct named_control {
++	const char *name, *unit;
++	uint32_t id;
++	enum control_domain domain;
++};
++static const struct named_control named_controls[] = {
++	{ "exposure", "sensor-lines", V4L2_CID_EXPOSURE, DOMAIN_AE },
++	{ "analog-gain", "driver-native", V4L2_CID_ANALOGUE_GAIN, DOMAIN_AE },
++	{ "digital-gain", "q10", V4L2_CID_DIGITAL_GAIN, DOMAIN_AE },
++	{ "red-balance", "q10", V4L2_CID_RED_BALANCE, DOMAIN_WB },
++	{ "blue-balance", "q10", V4L2_CID_BLUE_BALANCE, DOMAIN_WB },
++	{ "focus", "driver-native-dac", V4L2_CID_FOCUS_ABSOLUTE, DOMAIN_AF },
++};
++#define CONTROL_COUNT (sizeof(named_controls) / sizeof(named_controls[0]))
++
++static int control_node(const struct cam *c, unsigned int i)
++{
++	if (i < 2)
++		return c->sensor_fd;
++	return i == 5 ? c->vcm_fd : c->vfe_fd;
++}
++
++static int control_get(struct cam *c, unsigned int i, int *value)
++{
++	struct v4l2_control ctl = { .id = named_controls[i].id };
++	int fd = control_node(c, i);
++
++	if (fd < 0) {
++		errno = EOPNOTSUPP;
++		return -1;
++	}
++	if (xioctl(fd, VIDIOC_G_CTRL, &ctl) < 0)
++		return -1;
++	*value = ctl.value;
++	return 0;
++}
++
++static void control_cache(struct cam *c, unsigned int i, int value)
++{
++	switch (i) {
++	case 0: c->exposure = value; break;
++	case 1: c->again = value; break;
++	case 2: c->dgain = value; break;
++	case 3: c->rgain = (double)value / WB_UNITY; break;
++	case 4: c->bgain = (double)value / WB_UNITY; break;
++	case 5: c->af_pos = value; break;
++	}
++}
++
++static int control_refresh(struct cam *c, enum control_domain domain)
++{
++	int values[CONTROL_COUNT];
++
++	for (unsigned int i = 0; i < CONTROL_COUNT; i++)
++		if (named_controls[i].domain == domain && control_get(c, i, &values[i]) < 0)
++			return -1;
++	for (unsigned int i = 0; i < CONTROL_COUNT; i++)
++		if (named_controls[i].domain == domain)
++			control_cache(c, i, values[i]);
++	return 0;
++}
++
++static void control_error(FILE *out, const char *stage, int error, bool attempted)
++{
++	fprintf(out, "{\"version\":1,\"ok\":false,\"stage\":\"%s\",\"errno\":%d,"
++		"\"write_attempted\":%s}\n", stage, error, attempted ? "true" : "false");
++}
++
++static void control_report(FILE *out, struct cam *c, bool values)
++{
++	struct v4l2_query_ext_ctrl query[CONTROL_COUNT];
++	int current[CONTROL_COUNT] = {0}, query_error[CONTROL_COUNT] = {0};
++	int get_error[CONTROL_COUNT] = {0};
++	bool complete = true;
++
++	for (unsigned int i = 0; i < CONTROL_COUNT; i++) {
++		int fd = control_node(c, i);
++
++		query[i] = (struct v4l2_query_ext_ctrl){ .id = named_controls[i].id };
++		if (fd < 0)
++			continue;
++		if (xioctl(fd, VIDIOC_QUERY_EXT_CTRL, &query[i]) < 0) {
++			query_error[i] = errno;
++			complete = false;
++		} else if (values && control_get(c, i, &current[i]) < 0) {
++			get_error[i] = errno;
++			complete = false;
++		}
++	}
++	fprintf(out, "{\"version\":1,\"ok\":%s,\"camera\":\"%s\",\"active\":true,"
++		"\"ae\":\"%s\",\"awb\":\"%s\",\"af\":\"%s\",\"controls\":[",
++		complete ? "true" : "false", c->cfg->name, c->ae_manual ? "manual" : "auto",
++		c->wb_manual ? "manual" : "auto",
++		c->vcm_fd < 0 ? "unsupported" : c->af_manual ? "manual" :
++		c->af_state == AF_OFF ? "error" : "auto");
++	for (unsigned int i = 0; i < CONTROL_COUNT; i++) {
++		const struct named_control *n = &named_controls[i];
++		const struct v4l2_query_ext_ctrl *q = &query[i];
++
++		fprintf(out, "%s{\"name\":\"%s\",\"unit\":\"%s\"", i ? "," : "", n->name, n->unit);
++		if (control_node(c, i) < 0) {
++			fputs(",\"supported\":false}", out);
++			continue;
++		}
++		if (query_error[i]) {
++			fprintf(out, ",\"query_errno\":%d}", query_error[i]);
++			continue;
++		}
++		fprintf(out, ",\"supported\":true,\"type\":%u,\"min\":%lld,\"max\":%lld,"
++			"\"step\":%llu,\"default\":%lld,\"flags\":%u",
++			q->type, (long long)q->minimum, (long long)q->maximum,
++			(unsigned long long)q->step, (long long)q->default_value, q->flags);
++		if (values) {
++			if (get_error[i])
++				fprintf(out, ",\"get_errno\":%d", get_error[i]);
++			else
++				fprintf(out, ",\"value\":%d", current[i]);
++		}
++		fputc('}', out);
++	}
++	fputs("]}\n", out);
++}
++
++static void control_request(FILE *out, const char *packet)
++{
++	char verb[16], camera[16], name[32], arg[32], extra[2];
++	struct cam *c = NULL;
++	int count = sscanf(packet, "%15s %15s %31s %31s %1s", verb, camera, name, arg, extra);
++
++	if (count < 2 || count > 4) {
++		control_error(out, "syntax", EINVAL, false);
++		return;
++	}
++	for (unsigned int i = 0; i < NUM_CAMS; i++)
++		if (!strcmp(camera, cams[i].cfg->name))
++			c = &cams[i];
++	if (!c) {
++		control_error(out, "camera", EINVAL, false);
++		return;
++	}
++	if (!c->streaming) {
++		control_error(out, "inactive", ENODEV, false);
++		return;
++	}
++	if ((!strcmp(verb, "caps") || !strcmp(verb, "get")) && count == 2) {
++		control_report(out, c, !strcmp(verb, "get"));
++		return;
++	}
++	if (strcmp(verb, "set") || count != 4) {
++		control_error(out, "syntax", EINVAL, false);
++		return;
++	}
++	if (!strcmp(name, "ae") || !strcmp(name, "awb") || !strcmp(name, "af")) {
++		enum control_domain domain = !strcmp(name, "ae") ? DOMAIN_AE :
++			!strcmp(name, "awb") ? DOMAIN_WB : DOMAIN_AF;
++		bool manual = !strcmp(arg, "manual");
++
++		if (!manual && strcmp(arg, "auto")) {
++			control_error(out, "mode", EINVAL, false);
++			return;
++		}
++		/* Confirm driver state before the software loop changes owner. */
++		if (control_refresh(c, domain) < 0) {
++			control_error(out, "get-before-mode", errno, false);
++			return;
++		}
++		if (domain == DOMAIN_AE) {
++			c->ae_manual = manual;
++			c->ae_updates = c->ae_stable = 0;
++			c->ae_acquiring = !manual;
++			c->ae_ready = false;
++		} else if (domain == DOMAIN_WB) {
++			c->wb_manual = manual;
++		} else {
++			c->af_manual = manual;
++			c->af_settle = 0;
++			c->af_state = manual ? AF_OFF : AF_WAIT;
++		}
++		fprintf(out, "{\"version\":1,\"ok\":true,\"camera\":\"%s\","
++			"\"domain\":\"%s\",\"mode\":\"%s\",\"write_attempted\":false}\n",
++			camera, name, arg);
++		return;
++	}
++	for (unsigned int i = 0; i < CONTROL_COUNT; i++) {
++		const struct named_control *n = &named_controls[i];
++		struct v4l2_query_ext_ctrl q = { .id = n->id };
++		int fd = control_node(c, i), actual;
++		char *end;
++		long requested;
++		bool manual = n->domain == DOMAIN_AE ? c->ae_manual :
++			n->domain == DOMAIN_WB ? c->wb_manual : c->af_manual;
++
++		if (strcmp(name, n->name))
++			continue;
++		if (fd < 0) {
++			control_error(out, "unsupported", EOPNOTSUPP, false);
++			return;
++		}
++		if (!manual) {
++			control_error(out, "auto-owner", EBUSY, false);
++			return;
++		}
++		errno = 0;
++		requested = strtol(arg, &end, 10);
++		if (errno || !arg[0] || *end || requested < INT_MIN || requested > INT_MAX) {
++			control_error(out, "value", ERANGE, false);
++			return;
++		}
++		if (xioctl(fd, VIDIOC_QUERY_EXT_CTRL, &q) < 0) {
++			control_error(out, "query", errno, false);
++			return;
++		}
++		if (q.type != V4L2_CTRL_TYPE_INTEGER || q.minimum < INT_MIN || q.maximum > INT_MAX ||
++		    q.flags & (V4L2_CTRL_FLAG_DISABLED | V4L2_CTRL_FLAG_READ_ONLY | V4L2_CTRL_FLAG_GRABBED) ||
++		    requested < q.minimum || requested > q.maximum || !q.step ||
++		    (uint64_t)(requested - q.minimum) % q.step) {
++			control_error(out, "range-or-flags", ERANGE, false);
++			return;
++		}
++		if (ctrl_set(fd, n->id, (int)requested) < 0) {
++			control_error(out, "set", errno, true);
++			return;
++		}
++		/* Cache the accepted request if readback itself fails; never report it as a readback. */
++		control_cache(c, i, (int)requested);
++		if (n->domain == DOMAIN_AE) {
++			c->ae_stable = 0;
++			c->ae_ready = false;
++		}
++		if (control_get(c, i, &actual) < 0) {
++			control_error(out, "readback", errno, true);
++			return;
++		}
++		control_cache(c, i, actual);
++		fprintf(out, "{\"version\":1,\"ok\":%s,\"camera\":\"%s\",\"control\":\"%s\","
++			"\"requested\":%ld,\"value\":%d,\"errno\":%d,\"write_attempted\":true}\n",
++			actual == requested ? "true" : "false", camera, name, requested, actual,
++			actual == requested ? 0 : EIO);
++		return;
++	}
++	control_error(out, "control", EINVAL, false);
++}
++
++static int control_open(void)
++{
++	struct sockaddr_un sa = { .sun_family = AF_UNIX, .sun_path = CONTROL_PATH };
++	struct group *video = getgrnam("video");
++	struct stat st;
++	mode_t old;
++	int fd, error;
++
++	if (!video || geteuid() != 0) {
++		errno = EPERM;
++		return -1;
++	}
++	if (mkdir("/run/piano-camerad", 0750) < 0 && errno != EEXIST)
++		return -1;
++	if (lstat("/run/piano-camerad", &st) < 0 || !S_ISDIR(st.st_mode) || st.st_uid != 0) {
++		errno = EPERM;
++		return -1;
++	}
++	if (chown("/run/piano-camerad", 0, video->gr_gid) < 0 || chmod("/run/piano-camerad", 0750) < 0)
++		return -1;
++	if (!lstat(CONTROL_PATH, &st)) {
++		if (!S_ISSOCK(st.st_mode) || st.st_uid != 0) {
++			errno = EEXIST;
++			return -1;
++		}
++		if (unlink(CONTROL_PATH) < 0)
++			return -1;
++	} else if (errno != ENOENT) {
++		return -1;
++	}
++	fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
++	if (fd < 0)
++		return -1;
++	old = umask(0077);
++	int bound = bind(fd, (struct sockaddr *)&sa, sizeof(sa));
++	umask(old);
++	if (bound < 0)
++		goto fail;
++	if (chown(CONTROL_PATH, 0, video->gr_gid) < 0 || chmod(CONTROL_PATH, 0660) < 0 ||
++	    listen(fd, CONTROL_CLIENTS) < 0) {
++		error = errno;
++		unlink(CONTROL_PATH);
++		errno = error;
++		goto fail;
++	}
++	return fd;
++fail:
++	error = errno;
++	close(fd);
++	errno = error;
++	return -1;
++}
++
++static void control_accept(void)
++{
++	int fd = accept4(control_fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
++
++	if (fd < 0)
++		return;
++	for (unsigned int i = 0; i < CONTROL_CLIENTS; i++)
++		if (control_clients[i] < 0) {
++			control_clients[i] = fd;
++			return;
++		}
++	close(fd);
++}
++
++static void control_receive(unsigned int i)
++{
++	char packet[256], *reply = NULL;
++	size_t bytes = 0;
++	int fd = control_clients[i];
++	ssize_t n = recv(fd, packet, sizeof(packet) - 1, MSG_TRUNC);
++
++	if (n < 0 && (errno == EAGAIN || errno == EINTR))
++		return;
++	if (n > 0) {
++		FILE *out = open_memstream(&reply, &bytes);
++
++		if (out) {
++			if (n >= (ssize_t)sizeof(packet) || memchr(packet, 0, (size_t)n))
++				control_error(out, "packet", EMSGSIZE, false);
++			else {
++				packet[n] = 0;
++				control_request(out, packet);
++			}
++			fclose(out);
++			if (send(fd, reply, bytes, MSG_NOSIGNAL) < 0)
++				logmsg(NULL, "control reply: %s", strerror(errno));
++			free(reply);
++		}
++	}
++	close(fd);
++	control_clients[i] = -1;
++}
++
++static void control_close(void)
++{
++	for (unsigned int i = 0; i < CONTROL_CLIENTS; i++)
++		if (control_clients[i] >= 0)
++			close(control_clients[i]);
++	if (control_fd >= 0) {
++		close(control_fd);
++		unlink(CONTROL_PATH);
++	}
++}
++
+ static void on_signal(int sig)
+ {
+ 	(void)sig;
+@@ -1362,13 +1723,20 @@
+ 		logmsg(NULL, "no camera outputs");
+ 		return 1;
+ 	}
++	control_fd = control_open();
++	if (control_fd < 0) {
++		logmsg(NULL, "control socket: %s", strerror(errno));
++		for (unsigned int i = 0; i < NUM_CAMS; i++)
++			cam_stop(&cams[i]);
++		return 1;
++	}
+ 	logmsg(NULL, "ready, %u camera(s)", ncams);
+ 	notify_ready();
+ 
+ 	while (!quit) {
+-		struct pollfd pfd[2 * NUM_CAMS];
+-		struct cam *owner[2 * NUM_CAMS];
+-		bool is_vid[2 * NUM_CAMS];
++		struct pollfd pfd[2 * NUM_CAMS + 1 + CONTROL_CLIENTS];
++		struct cam *owner[2 * NUM_CAMS + 1 + CONTROL_CLIENTS];
++		unsigned int kind[2 * NUM_CAMS + 1 + CONTROL_CLIENTS];
+ 		unsigned int n = 0;
+ 
+ 		for (unsigned int i = 0; i < NUM_CAMS; i++) {
+@@ -1379,13 +1747,24 @@
+ 			pfd[n] = (struct pollfd){ .fd = c->loop_fd,
+ 						  .events = POLLPRI };
+ 			owner[n] = c;
+-			is_vid[n++] = false;
++			kind[n++] = 0;
+ 			if (c->streaming) {
+ 				pfd[n] = (struct pollfd){ .fd = c->vid_fd,
+ 							  .events = POLLIN };
+ 				owner[n] = c;
+-				is_vid[n++] = true;
++				kind[n++] = 1;
+ 			}
++		}
++
++		pfd[n] = (struct pollfd){ .fd = control_fd, .events = POLLIN };
++		owner[n] = NULL;
++		kind[n++] = 2;
++		for (unsigned int i = 0; i < CONTROL_CLIENTS; i++) {
++			if (control_clients[i] < 0)
++				continue;
++			pfd[n] = (struct pollfd){ .fd = control_clients[i], .events = POLLIN };
++			owner[n] = NULL;
++			kind[n++] = 3 + i;
+ 		}
+ 
+ 		if (poll(pfd, n, 1000) < 0) {
+@@ -1398,7 +1777,12 @@
+ 		for (unsigned int i = 0; i < n; i++) {
+ 			if (!pfd[i].revents)
+ 				continue;
+-			if (is_vid[i]) {
++			if (kind[i] == 2) {
++				if (pfd[i].revents & POLLIN)
++					control_accept();
++			} else if (kind[i] >= 3) {
++				control_receive(kind[i] - 3);
++			} else if (kind[i] == 1) {
+ 				if (owner[i]->streaming)
+ 					cam_frame(owner[i]);
+ 			} else if (pfd[i].revents & POLLPRI) {
+@@ -1409,6 +1793,7 @@
+ 
+ 	for (unsigned int i = 0; i < NUM_CAMS; i++)
+ 		cam_stop(&cams[i]);
++	control_close();
+ 	logmsg(NULL, "exit");
+ 
+ 	return 0;

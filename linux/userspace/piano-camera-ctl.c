@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: MIT
+#define _GNU_SOURCE
+#include <errno.h>
+#include <poll.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#define CONTROL_PATH "/run/piano-camerad/control.sock"
+
+int main(int argc, char **argv)
+{
+	struct sockaddr_un sa = { .sun_family = AF_UNIX, .sun_path = CONTROL_PATH };
+	char packet[256], reply[8192];
+	size_t used = 0;
+	int fd;
+	ssize_t n;
+
+	if (argc != 3 && argc != 5) {
+		fprintf(stderr, "Usage: %s caps|get rear|front\n"
+			"       %s set rear|front ae|awb|af auto|manual\n"
+			"       %s set rear|front exposure|analog-gain|digital-gain|red-balance|blue-balance|focus INTEGER\n"
+			"The camera must already be streaming. Values use driver-native units; caps reports live ranges.\n",
+			argv[0], argv[0], argv[0]);
+		return 2;
+	}
+	for (int i = 1; i < argc; i++) {
+		if (!argv[i][0] || strpbrk(argv[i], " \t\r\n"))
+			return 2;
+		int bytes = snprintf(packet + used, sizeof(packet) - used, "%s%s", i == 1 ? "" : " ", argv[i]);
+		if (bytes < 0 || (size_t)bytes >= sizeof(packet) - used)
+			return 2;
+		used += (size_t)bytes;
+	}
+	fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+	if (fd < 0 || connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+		perror("camera control connect");
+		if (fd >= 0)
+			close(fd);
+		return 1;
+	}
+	if (send(fd, packet, used, MSG_NOSIGNAL) != (ssize_t)used) {
+		perror("camera control send");
+		close(fd);
+		return 1;
+	}
+	struct pollfd pfd = { .fd = fd, .events = POLLIN };
+	int ready;
+	do { ready = poll(&pfd, 1, 3000); } while (ready < 0 && errno == EINTR);
+	if (ready <= 0) {
+		fprintf(stderr, "No control reply; query current state before retrying a write.\n");
+		close(fd);
+		return 1;
+	}
+	do { n = recv(fd, reply, sizeof(reply) - 1, MSG_TRUNC); } while (n < 0 && errno == EINTR);
+	close(fd);
+	if (n <= 0 || n >= (ssize_t)sizeof(reply) || memchr(reply, 0, (size_t)n)) {
+		fprintf(stderr, "Invalid or missing control reply.\n");
+		return 1;
+	}
+	reply[n] = 0;
+	fputs(reply, stdout);
+	return strstr(reply, "\"ok\":true") ? 0 : 1;
+}

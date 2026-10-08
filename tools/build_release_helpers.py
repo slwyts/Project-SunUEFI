@@ -66,10 +66,10 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
     emulator = None if native else shutil.which('qemu-aarch64-static') or shutil.which('qemu-aarch64')
     if not native and not emulator:
         raise ValueError('AArch64 helper checks need qemu-aarch64 on this host')
-    for name, (relative, digest, destination) in runtime.PUBLIC_SOURCES.items():
-        original = public / relative
+    for name, (relative, digest, destination) in (runtime.PUBLIC_SOURCES | runtime.BSP_SOURCES).items():
+        original = (ROOT if name in runtime.BSP_SOURCES else public) / relative
         if runtime.sha(original) != digest:
-            raise ValueError('Public helper source changed: ' + name)
+            raise ValueError('Runtime helper source changed: ' + name)
         source_file = touch if name == 'piano-touch-view' else camera if name == 'piano-camerad' else original
         entry, obj, binary = output / (name + '-entry.c'), output / (name + '.o'), output / name
         entry.write_text(runtime.entry_source(name))
@@ -83,6 +83,8 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
             item.update(touch_record)
         if name == 'piano-camerad':
             item.update(camera_record)
+        if name in runtime.BSP_SOURCES:
+            item.update(source_kind='project-bsp', source_path=relative)
         files[destination] = item
     run(['bash', public / 'scripts/build-topology.sh', macros, output / 'firmware'])
     topology = output / 'firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'

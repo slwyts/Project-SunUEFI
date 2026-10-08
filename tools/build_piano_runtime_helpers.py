@@ -27,6 +27,8 @@ PUBLIC_SOURCES={
  'piano-touch-view':('initramfs/touch-view/piano-touch-view.c','eb1bac5a7bfac3200248ebe39e8d9564bed3d7848b11655ded5d065dc0ef6e12','usr/bin/piano-touch-view'),
  'piano-camerad':('camera/piano-camerad.c','c2ab6391fa41d21d1c3e4359dc0adf671261417dbda180724faf8b2758932d47','usr/lib/piano/piano-camerad'),
  'piano-pd-locator':('initramfs/pd-locator/piano-pd-locator.c','8de9d2840a896b4bd6c90bd4b124479d2f142e9e85420f2022894bb32fc8dde8','usr/sbin/piano-pd-locator')}
+BSP_SOURCES={
+ 'piano-camera-ctl':('linux/userspace/piano-camera-ctl.c','4dfb52f3736c2522ba0fe2ac28cb0f7219241b94e5f733d2947725620da40661','usr/bin/piano-camera-ctl')}
 TOOL_PINS={'clang':'939a882527432ec23b094c289e7f170bf2d6ec282e74dde75e31b08602fa3eae',
  'ld.lld':'57b6c64db534793f05918a6e935c900e9938bd64d0ac95933285930b568387ea',
  'llvm-strip':'629062ddc62f936d7f07418099d202850e18b222217a85f419552fa25d3eb4ec'}
@@ -39,6 +41,7 @@ TOUCH_CAPTURE_PATCH=ROOT/'tools/patches/piano-touch-view-raw-capture.patch'
 CAMERAD_CCM_PATCH=ROOT/'tools/patches/piano-camerad-writable-ccm.patch'
 CAMERAD_AE_PATCH=ROOT/'tools/patches/piano-camerad-stable-ae.patch'
 CAMERAD_FRAME_PATCH=ROOT/'tools/patches/piano-camerad-frame-integrity.patch'
+CAMERAD_MANUAL_PATCH=ROOT/'tools/patches/piano-camerad-manual-controls.patch'
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -58,10 +61,11 @@ def tree_digest(rows):return hashlib.sha256(json.dumps(rows,sort_keys=True).enco
 
 
 def entry_source(name):
-    if name not in PUBLIC_SOURCES:raise ValueError('Unknown public helper')
-    signature='int PianoOriginalMain(int,char **);'if name=='piano-touch-view'else'int PianoOriginalMain(void);'
-    normal='return PianoOriginalMain(argc,argv);'if name=='piano-touch-view'else'if(argc!=1){fprintf(stderr,"Use --help or no arguments.\\n");return 2;} return PianoOriginalMain();'
+    if name not in PUBLIC_SOURCES and name not in BSP_SOURCES:raise ValueError('Unknown runtime helper')
+    signature='int PianoOriginalMain(int,char **);'if name in ('piano-touch-view','piano-camera-ctl')else'int PianoOriginalMain(void);'
+    normal='return PianoOriginalMain(argc,argv);'if name in ('piano-touch-view','piano-camera-ctl')else'if(argc!=1){fprintf(stderr,"Use --help or no arguments.\\n");return 2;} return PianoOriginalMain();'
     description=' Optional --diagnostics N emits touch JSON; --capture FILE saves this reader\'s complete raw records with --capture-seconds N (1..10, default5, max16MiB). Both default off.'if name=='piano-touch-view'else''
+    if name=='piano-camera-ctl':description=' caps|get rear|front; set rear|front ae|awb|af auto|manual; set rear|front exposure|analog-gain|digital-gain|red-balance|blue-balance|focus INTEGER.'
     return '#include <stdio.h>\n#include <string.h>\n'+signature+'\nint main(int argc,char **argv){if(argc==2 && !strcmp(argv[1],"--help")){puts("'+name+': Linux Piano runtime helper; --help performs no device access.'+description+'");return 0;}'+normal+'}\n'
 
 
@@ -81,13 +85,13 @@ def derive_touch_source(public, output):
 
 
 def derive_camerad_source(public, output):
-    """Apply CCM, AE/AF and frame-integrity fixes to the verified copy."""
+    """Apply CCM, AE/AF, frame-integrity and manual controls to the verified copy."""
     relative,pin,_=PUBLIC_SOURCES['piano-camerad'];original=Path(public)/relative
     if sha(original)!=pin:raise ValueError('Public camera source changed')
     folder=Path(output)/'piano-camera-source';target=folder/relative
     target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,target)
     patches=[]
-    for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH,CAMERAD_FRAME_PATCH):
+    for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH,CAMERAD_FRAME_PATCH,CAMERAD_MANUAL_PATCH):
         # This generated directory is inside the parent Git checkout. Git can
         # silently skip a git-format patch whose paths lie outside that prefix.
         # Apply the standard patch to this standalone source copy instead.
@@ -151,7 +155,7 @@ def stage(output,destination):
     if not destination.resolve().is_relative_to(ROOT/'build/distros'):raise ValueError('Stage only into a derived workspace distro')
     manifest=json.loads((output/'manifest.json').read_text());files=manifest['runtime_files'];release=manifest['kernel']['release']
     if not re.fullmatch(r'[a-zA-Z0-9_.+-]{1,128}',release):raise ValueError('Unsafe runtime kernel release')
-    expected={row[2]for row in PUBLIC_SOURCES.values()}|{'usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin','usr/lib/modules/'+release+'/updates/v4l2loopback.ko'}
+    expected={row[2]for row in (PUBLIC_SOURCES|BSP_SOURCES).values()}|{'usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin','usr/lib/modules/'+release+'/updates/v4l2loopback.ko'}
     if set(files)!=expected:raise ValueError('Runtime bundle source/install paths differ from the exact contract')
     if not(destination/'usr/lib/modules'/release/'kernel').is_dir():raise ValueError('Stage the matching full kernel module tree first')
     # Prevalidate the entire generation before changing any destination file.
@@ -182,7 +186,7 @@ def build(args):
     inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
     inputs[str(TOUCH_DIAGNOSTICS_PATCH)]=sha(TOUCH_DIAGNOSTICS_PATCH)
     inputs[str(TOUCH_CAPTURE_PATCH)]=sha(TOUCH_CAPTURE_PATCH)
-    for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH,CAMERAD_FRAME_PATCH):
+    for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH,CAMERAD_FRAME_PATCH,CAMERAD_MANUAL_PATCH):
         inputs[str(patch)]=sha(patch)
     for name,pin in TOOL_PINS.items():
         p=tools/name
@@ -212,6 +216,10 @@ def build(args):
         p=public/path
         if sha(p)!=pin:raise ValueError('Public helper source changed: '+name)
         inputs[str(p)]=pin
+    for name,(path,pin,_)in BSP_SOURCES.items():
+        p=ROOT/path
+        if sha(p)!=pin:raise ValueError('BSP helper source changed: '+name)
+        inputs[str(p)]=pin
     for folder in (public/'topology',args.macros.resolve()/'audioreach'):
         inputs.update({str(folder/name):digest for name,digest in tree_files(folder).items()})
     inputs[str(public/'scripts/build-topology.sh')]=sha(public/'scripts/build-topology.sh')
@@ -219,15 +227,16 @@ def build(args):
     flags=[tools/'clang','--target=aarch64-linux-gnu','--sysroot='+str(sysroot),'--gcc-toolchain='+str(sysroot/'usr'),'-O2','-Wall','-Wextra','-Werror']
     touch_source,touch_provenance=derive_touch_source(public,output)
     camera_source,camera_provenance=derive_camerad_source(public,output)
-    for name,(path,_,destination)in PUBLIC_SOURCES.items():
+    for name,(path,pin,destination)in (PUBLIC_SOURCES|BSP_SOURCES).items():
         entry=output/(name+'-entry.c');entry.write_text(entry_source(name));obj=output/(name+'.o');binary=output/name
-        effective_source=touch_source if name=='piano-touch-view'else camera_source if name=='piano-camerad'else public/path
+        effective_source=touch_source if name=='piano-touch-view'else camera_source if name=='piano-camerad'else(ROOT/path if name in BSP_SOURCES else public/path)
         run([*flags,'-isystem',uapi/'include','-Dmain=PianoOriginalMain','-c',effective_source,'-o',obj],env,log)
         run([*flags,'-fuse-ld=lld','-static',entry,obj,'-lm','-o',binary],env,log)
         row=verify_elf(binary);help_result=subprocess.run([str(qemu),str(binary),'--help'],capture_output=True,text=True,timeout=10,check=True)
-        row.update({'file':name,'mode':0o755,'source_sha256':PUBLIC_SOURCES[name][1],'entry_sha256':sha(entry),'compile_exit_code':0,'help_exit_code':help_result.returncode,'help_no_device_access':True});files[destination]=row
+        row.update({'file':name,'mode':0o755,'source_sha256':pin,'entry_sha256':sha(entry),'compile_exit_code':0,'help_exit_code':help_result.returncode,'help_no_device_access':True});files[destination]=row
         if name=='piano-touch-view':row.update(touch_provenance)
         if name=='piano-camerad':row.update(camera_provenance)
+        if name in BSP_SOURCES:row.update(source_kind='project-bsp',source_path=path)
     wrapper=output/'host-bin';wrapper.mkdir();exe=wrapper/'alsatplg';launch=[alsa['loader'],'--library-path',str(alsa_root/'usr/lib/x86_64-linux-gnu'),str(alsa_root/'usr/bin/alsatplg')]
     import shlex
     exe.write_text('#!/bin/sh\nexec '+shlex.join(launch)+' "$@"\n');exe.chmod(0o755);top_env=env.copy();top_env['PATH']=str(wrapper)+os.pathsep+top_env['PATH']
