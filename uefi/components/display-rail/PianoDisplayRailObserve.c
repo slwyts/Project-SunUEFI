@@ -165,14 +165,15 @@ Done:CopyMem(&G->LastRead,&S->Report.LastRead,sizeof(G->LastRead));return G->Sta
 #undef RF
 STATIC BOOLEAN SameGraph(CONST PIANO_DISPLAY_RAIL_GRAPH *A,CONST PIANO_DISPLAY_RAIL_GRAPH *B){return !CompareMem(A,B,OFFSET_OF(PIANO_DISPLAY_RAIL_GRAPH,LastRead));}
 STATIC VOID Emit(CONST PIANO_DISPLAY_RAIL_SNAPSHOT *R){
-  DEBUG((DEBUG_WARN,"PIANO_RAIL_OBSERVE phase=%a status=%r mm_pair=%u mx_pair=%u retained=%u lost=%u power_ready=0 completion_observed=0\n",R->Phase,R->Status,R->MmCoherent,R->MxCoherent,R->Retained,R->ServicesLost));
+  // Object-graph reads do not measure rail power or RPMh completion.
+  DEBUG((DEBUG_WARN,"PIANO_RAIL_OBSERVE phase=%a status=%r mm_pair=%u mx_pair=%u retained=%u lost=%u\n",R->Phase,R->Status,R->MmCoherent,R->MxCoherent,R->Retained,R->ServicesLost));
   DEBUG((DEBUG_WARN,"PIANO_RAIL_CLOCK status=%r/%r cached=%u config_corner=%u parent_refs=%u/%u railmask=%x\n",R->SelectorBefore,R->SelectorAfter,R->ClockBefore.ParentCachedCorner,R->ClockBefore.CurrentCorner,R->ClockBefore.ParentRefs[0],R->ClockBefore.ParentRefs[1],R->ClockBefore.ParentRailMask));
   DEBUG((DEBUG_WARN,"PIANO_RAIL_ANCHORS mm_client=%lx mx_client=%lx expected_clock_id=%x\n",R->ClockBefore.MmClient,R->ClockBefore.MxClient,R->ClockBefore.ExpectedClockId));
   for(UINT32 I=0;I<2;++I)for(UINT32 J=0;J<2;++J){CONST PIANO_DISPLAY_RAIL_GRAPH *G=I?&R->Mx[J]:&R->Mm[J];
     DEBUG((DEBUG_WARN,"PIANO_RAIL_GRAPH rail=%u round=%u status=%r client=%lx resource=%lx vcs=%lx backend=%lx\n",I,J,G->Status,G->Client,G->Resource,G->Rail,G->Backend));
     DEBUG((DEBUG_WARN,"PIANO_RAIL_STATE rail=%u round=%u active_i=%u type=%x request=%u pending=%u npa=%u vcs=%u\n",I,J,G->ActiveIndex,G->ClientType,G->ActiveRequest,G->PendingRequest,G->NpaApplied,G->VcsApplied));
     DEBUG((DEBUG_WARN,"PIANO_RAIL_LINKS rail=%u round=%u definition=%lx node=%lx plugin=%lx driver=%lx\n",I,J,G->Definition,G->Node,G->Plugin,G->Driver));
-    DEBUG((DEBUG_WARN,"PIANO_RAIL_RPMH rail=%u round=%u context=%lx drv_config=%lx drv_id=%u handle=%lx completion=0\n",I,J,G->RpmhContext,G->RpmhConfig,G->RpmhDrvId,G->RpmhHandle));
+    DEBUG((DEBUG_WARN,"PIANO_RAIL_RPMH rail=%u round=%u context=%lx drv_config=%lx drv_id=%u handle=%lx\n",I,J,G->RpmhContext,G->RpmhConfig,G->RpmhDrvId,G->RpmhHandle));
     CONST PIANO_DISPLAY_RAIL_READ_DIAGNOSTIC *D=&G->LastRead;CONST PIANO_DISPLAY_CLOCK_EFI_MAP_DIAGNOSTIC *M=&D->Map;
     DEBUG((DEBUG_WARN,"PIANO_RAIL_READ rail=%u round=%u field=%a address=%lx bytes=%lu status=%r image=%u\n",I,J,D->Field,D->Address,(UINT64)D->Bytes,D->Status,D->Image));
     DEBUG((DEBUG_WARN,"PIANO_RAIL_EFI rail=%u round=%u status=%r get=%r reason=%u type=%u attrs=%lx\n",I,J,M->Status,M->GetMapStatus,M->Reason,M->DescriptorType,M->DescriptorAttributes));
