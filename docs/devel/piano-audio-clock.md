@@ -14,6 +14,37 @@ g086 实机已读回该属性为2400000；这确认配置已应用，不代表�
 
 开流首段仍有约41个满幅样本，之后没有；此前短采样的高RMS包含启动冲击，不能直接当持续底噪。当前UCM已选DMIC2/DEC0和Volume98，保留驱动要求的两通道PCM及MONO/AUX0，不添加虚拟入口。完整release和多发行版BSP使用同一份tracked HiFi.conf；原厂TX路径与LinuxVA后端仍有差异，启动冲击、正常语音与DSP处理继续排查。实际统计在private/analysis/pc-speaker-mic-20261008/RESULT.json。
 
+## 开流冲击的源码候选
+
+现有统计按一秒分块：DMIC2/gain84 的首块 peak=13362、RMS=310，而稳定背景
+RMS 约3.8；gain98 首块有41个削顶样本、均值约62，后续没有削顶。这说明低增益
+时也有启动大峰值，但不能从分块数据确定发生在第几个样本或全归因于 codec。
+下一窗口先输出 PCM 前100ms的小窗 DC/RMS/peak/clip 时序，区分首包 DSP/DMA
+数据与物理开流过渡；不保存 PCM，不先裁掉首包或加入软件滤波。
+
+当前 `sound/soc/codecs/lpass-va-macro.c:va_macro_enable_dec()` 的 PRE_PMU
+只留“Enable TX PGA Mute”注释，未写 `TX_PATH_CTL` 的 PGA mute BIT4；widget
+注册了 PRE_PMD，但函数也未处理。POST_PMU 已使能 TX clock BIT5，并执行
+1/1/6ms 的 HPF gate 稳定流程；`va_macro_digital_mute()` 随后直接清 BIT4。
+`TX_PATH_CTL=0x400+0x80*DEC`；HPF cutoff 位在 `TX_PATH_CFG0`，gate 位在
+`TX_PATH_SEC2`。这与路线编号、增益和额外 TLMM 供电无关。
+
+固定原厂 [VA enable_dec](https://github.com/MiCode/vendor_qcom_opensource_audio-kernel/blob/baeb7389997a6f6074dae31ec26565d6c286986e/asoc/codecs/lpass-cdc/lpass-cdc-va-macro.c#L1031)
+会在 PRE_PMU/PRE_PMD 写 BIT4 mute，关 TX clock 后脉冲 BIT6 reset；
+[DAI mute_stream](https://github.com/MiCode/vendor_qcom_opensource_audio-kernel/blob/baeb7389997a6f6074dae31ec26565d6c286986e/asoc/codecs/lpass-cdc/lpass-cdc-va-macro.c#L1491)
+另有开流 BIT6 reset/2ms、延后10ms解除 mute。原厂 dec path 还设 DMIC 40ms
+解除 mute、300ms 恢复原 HPF cutoff；这些不等于本机实测的冲击时长。
+
+还需注意正常 DAPM 顺序：主线 DEC 是 MUX_E（`soc-dapm.c` up seq7），DMIC
+clock event 在 ADC_E（seq11），所以 DEC POST_PMU 的等待早于 DMIC clock
+PRE_PMU；原厂则在 enable_dec 中先启用实际 DMIC。`soc-pcm.c:__soc_pcm_prepare`
+在完整 DAPM STREAM_START 后才调用 DAI unmute。盲目在 DEC POST 再加等待不能
+证明已经等待了实际 DMIC，延迟与 reset 应按这个顺序和前100ms证据定位。
+
+私有 `codec-candidate.patch` 是供复核的最小 RFC：补 PRE_PMU/PRE_PMD 硬件
+mute，并匹配原厂 POST_PMD reset。它未应用／编译／实机运行，没有新增延迟、
+改 HPF、gain、路由或 PCM，也不声称已解决全部41个削顶样本。
+
 以下保留此前DMIC1/0dB与时钟、原厂路由的定位记录。
 
 ## 原厂路由与此前配置
