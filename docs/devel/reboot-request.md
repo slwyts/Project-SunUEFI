@@ -16,7 +16,7 @@
 
 原生 C 命令位于 `android/native/piano-boot-request.c`，与前置选择器复用同一 CRC 实现。可用 `./build.sh boot-request --sysroot ARM64根系统目录` 生成静态 AArch64 ELF，Android/Linux 使用同样的 `status / set / consume` 参数。它恢复块设备原来的只读状态，只更新自有请求页，不重包 BOOT，也不发出重启。
 
-原生工具已与真实合体镜像、Python 工具和固件实际读取函数进行主机互操作检查；尚未在 Android 实机验证。它是独立请求命令，不等于模块需要的完整 OTA 重打包／还原工具，也不会自动清除一次性请求或补齐模块 WebUI。
+原生工具已与真实合体镜像、Python 工具和固件实际读取函数进行主机互操作检查。2026-10-08 已在 Linux 使用 generation 绑定的原生写入，经正常重启进入 Android；Android 上同一静态程序只读 status 确认目标0/sequence4。Android 端直接写入尚待验证。它是独立请求命令，不等于模块需要的完整 OTA 重打包／还原工具，也不会自动清除一次性请求或补齐模块 WebUI。
 
 完整发布 root builder 会从这些源码编译静态原生命令，安装到 `/usr/local/sbin/piano-boot-request` 并记录编译器、源码与二进制身份；Python 版本保留为主机参考工具。两者操作同一请求格式。
 
