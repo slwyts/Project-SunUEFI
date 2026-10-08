@@ -2,8 +2,6 @@
 /dts-v1/;
 /plugin/;
 
-#include <dt-bindings/leds/common.h>
-
 /*
  * Standard flash controller for the verified SID 1 peripheral at 0xee00.
  * Read-only identity: type 0x18, subtype 0x07 (existing four-channel layout).
@@ -38,7 +36,7 @@
 				status = "okay";
 
 				piano_camera_flash0: led-0 {
-					function = LED_FUNCTION_FLASH;
+					function = "flash";
 					function-enumerator = <0>;
 					/* Factory qcom,id 0 is standard channel 1. */
 					led-sources = <1>;
@@ -48,7 +46,7 @@
 				};
 
 				piano_camera_flash1: led-1 {
-					function = LED_FUNCTION_FLASH;
+					function = "flash";
 					function-enumerator = <1>;
 					/* Factory qcom,id 1 is standard channel 2. */
 					led-sources = <2>;
