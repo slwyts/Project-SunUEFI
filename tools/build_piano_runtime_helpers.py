@@ -38,6 +38,7 @@ TOUCH_DIAGNOSTICS_PATCH=ROOT/'tools/patches/piano-touch-view-observability.patch
 TOUCH_CAPTURE_PATCH=ROOT/'tools/patches/piano-touch-view-raw-capture.patch'
 CAMERAD_CCM_PATCH=ROOT/'tools/patches/piano-camerad-writable-ccm.patch'
 CAMERAD_AE_PATCH=ROOT/'tools/patches/piano-camerad-stable-ae.patch'
+CAMERAD_FRAME_PATCH=ROOT/'tools/patches/piano-camerad-frame-integrity.patch'
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -80,15 +81,19 @@ def derive_touch_source(public, output):
 
 
 def derive_camerad_source(public, output):
-    """Apply CCM payload and AE stability fixes to the same verified copy."""
+    """Apply CCM, AE/AF and frame-integrity fixes to the verified copy."""
     relative,pin,_=PUBLIC_SOURCES['piano-camerad'];original=Path(public)/relative
     if sha(original)!=pin:raise ValueError('Public camera source changed')
     folder=Path(output)/'piano-camera-source';target=folder/relative
     target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,target)
     patches=[]
-    for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH):
-        for options in (['--check'],[]):
-            subprocess.run(['git','apply','--no-index',*options,str(patch)],cwd=folder,check=True)
+    for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH,CAMERAD_FRAME_PATCH):
+        # This generated directory is inside the parent Git checkout. Git can
+        # silently skip a git-format patch whose paths lie outside that prefix.
+        # Apply the standard patch to this standalone source copy instead.
+        subprocess.run(['patch','--batch','--forward','--fuzz=0',
+                        '--no-backup-if-mismatch','-p1','-i',str(patch)],
+                       cwd=folder,check=True)
         patches.append({'file':str(patch.relative_to(ROOT)),'sha256':sha(patch)})
     return target,{'public_source_sha256':pin,'patch':'tools/patches/piano-camerad-writable-ccm.patch',
                   'patch_sha256':sha(CAMERAD_CCM_PATCH),'patches':patches,
@@ -177,7 +182,8 @@ def build(args):
     inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
     inputs[str(TOUCH_DIAGNOSTICS_PATCH)]=sha(TOUCH_DIAGNOSTICS_PATCH)
     inputs[str(TOUCH_CAPTURE_PATCH)]=sha(TOUCH_CAPTURE_PATCH)
-    inputs[str(CAMERAD_CCM_PATCH)]=sha(CAMERAD_CCM_PATCH)
+    for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH,CAMERAD_FRAME_PATCH):
+        inputs[str(patch)]=sha(patch)
     for name,pin in TOOL_PINS.items():
         p=tools/name
         if sha(p)!=pin:raise ValueError('Reviewed LLVM tool changed: '+name)
