@@ -18,7 +18,10 @@ from package_piano_ram_root import sha_file
 APPLETS = ('sh', 'cat', 'mkdir', 'mount', 'mountpoint', 'chmod', 'uname', 'chroot',
            'switch_root', 'sleep', 'insmod', 'umount', 'grep', 'tr', 'id', 'awk',
            'readlink', 'rm', 'rmdir', 'ln')
-SEEDS = ('arm_smmu', 'pinctrl_sm8750', 'phy_qcom_qmp_ufs', 'ufs_qcom')
+# SCMI/cpufreq is built in, but its CPUCP mailbox provider is a module.
+# Load it before storage/root discovery instead of waiting for systemd.
+SEEDS = ('arm_smmu', 'pinctrl_sm8750', 'qcom_cpucp_mbox',
+         'phy_qcom_qmp_ufs', 'ufs_qcom')
 
 
 def runtime_files(root, programs=('/usr/sbin/blkid',)):
