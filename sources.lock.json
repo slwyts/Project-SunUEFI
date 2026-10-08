@@ -75,6 +75,10 @@
     "commit": "370b5944c046bab043dd8b133727b2135af7747a",
     "url": "https://github.com/MIPI-Alliance/public-mipi-sys-t.git"
   },
+  "Mu-Silicium/Mu_Basecore/SecurityPkg/DeviceSecurity/SpdmLib/libspdm": {
+    "commit": "f55cf6d48ec69b4ac60a63903e9c6a2cb0fd155d",
+    "url": "https://github.com/DMTF/libspdm.git"
+  },
   "audioreach-topology": {
     "url": "https://github.com/linux-msm/audioreach-topology.git",
     "commit": "993a17dcb672357998a463a73f120064d6c74f4f"

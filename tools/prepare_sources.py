@@ -19,7 +19,8 @@ NESTED = {
         'BaseTools/Source/C/BrotliCompress/brotli',
         'MdeModulePkg/Library/BrotliCustomDecompressLib/brotli',
         'MdeModulePkg/Universal/RegularExpressionDxe/oniguruma',
-        'MdePkg/Library/BaseFdtLib/libfdt', 'MdePkg/Library/MipiSysTLib/mipisyst'),
+        'MdePkg/Library/BaseFdtLib/libfdt', 'MdePkg/Library/MipiSysTLib/mipisyst',
+        'SecurityPkg/DeviceSecurity/SpdmLib/libspdm'),
     'upstream/simple-init': ('libs/freetype',),
 }
 

@@ -74,9 +74,12 @@ def _repositories(root):
             if mode != '160000':
                 continue
             child = relative + '/' + name.decode()
+            locked = lock.get(child.removeprefix('upstream/'))
             if not (root / child / '.git').exists():
+                if locked is not None:
+                    raise ValueError('Required firmware dependency is missing; run ./build.sh sources: ' + child)
                 continue  # Upstream's optional test/fuzz repositories stay uninitialized.
-            pinned = lock.get(child.removeprefix('upstream/'), {}).get('commit', nested_commit)
+            pinned = locked['commit'] if locked is not None else nested_commit
             if pinned != nested_commit:
                 raise ValueError('Firmware lock differs from the parent gitlink: ' + child)
             visit(child, pinned)
