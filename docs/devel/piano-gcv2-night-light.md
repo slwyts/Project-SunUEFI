@@ -61,4 +61,6 @@ ea3d完整增量构建约66秒完成，匹配root/ESP及安装脚本也已生成
 
 原厂和Linux实际都使用v7.2 PHY；两侧原厂DT均未声明PLL bypass，外部PLL从链路不等同bypass。固定MiCode的 `dsi_phy_hw_v7_2.c:521–543` 在HS时钟就绪后对RBUF_CTRL（0x1c）写0/1并加写屏障，再只清CLK_CFG1（0x14）的bit4；D-PHY执行清位，C-PHY保留该位。原厂外层先重同步两个PHY，再清两个选择位。下一源码 `f4c691bf537b95b26415a7e0217dcfeaa86820cf` 的[补丁](../../patches/linux/7.2.9/0012-dsi-sm8750-post-hs-resync.patch)按相同两轮顺序，在两host power_on成功后、IRQ及面板命令前调用可选PHY方法；只有SM8750配置注册，保留bit5及其他位、现有寄存器锁和PLL/VCO流程。当前仅完成源码准备，效果尚未实机验证。准确版本、寄存器与bypass来源保存在 `private/analysis/piano-dsi-recovery-20261008/ea3d-dual-phy-resync-review.json`。
 
+f4c6随后已完成构建和配套打包，并部署匹配模块及移除默认寄存器观察的display-start。普通重启后GNOME、触屏、相机和蓝牙服务均启动，未见启动FIFO错误；在uptime224.69–228.86秒的一次OFF/ON中，主链路CMD_MDP欠流仍未出现，但从host1重新报 `0xaaaa1010/0xdddd1011/0xeeee1011`、worker status4。重同步并未解决本次视频恢复故障。已保存失败状态的clk_summary并恢复bde3启动文件、正常重启；精简后的display-start保留。记录前缀为同一私有目录的 `dsi-resync-f4c6-*`，包含部署、请求、完整内核日志、DRM状态及失败时钟信息。此结果不能作为锁屏/睡眠/刷新率切换已支持的证明，不连续重试原操作。
+
 普通IGCv5的[标准DEGAMMA候选](../../patches/linux/7.2.9/drafts/0012-drm-msm-dpu-igcv5-degamma.patch)已经准备，尚未加入默认补丁序列。它提供257项16bit RGB输入曲线，与现有GC在同一REGDMA缓冲区中合并提交，保留实际DSPP分配，并在共同完成后更新两类flush。七个ARM64对象及实际CPU命令打包的长度、端点和容量检查已通过；最大普通双LUT为7800B，末描述符位于7936，完整落在8KiB缓冲区内。没有模拟DMA完成，也没有实机验证此候选。高精度扩展采样域仍不明确，因此没有启用高精度、抖动、HDR或12bit FRC。固定MiCode来源、对象和边界结果保存在 `private/analysis/piano-igcv5-degamma-20261009/`。
