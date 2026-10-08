@@ -15,6 +15,7 @@ SunUEFI 站在这些项目之上：EDK2 / Mu-Silicium 提供 UEFI 基础和高�
 | Linux / linux-piano | [blu-sharky/linux-piano](https://github.com/blu-sharky/linux-piano)、[torvalds/linux](https://github.com/torvalds/linux)；救援 pin 见 [kernel-profiles.json](linux/kernel-profiles.json) | [build_kernel.py](tools/build_kernel.py)；完整基线见 [full builder](tools/build_piano_full_kernel.py) / [next builder](tools/build_piano_next_full.py) | 选定内核的 `COPYING`、`LICENSES/` 和文件声明；不改变主机脚本的许可。 |
 | MiCode 板级资料 / 公开内核 | [MiCode/Xiaomi_Kernel_OpenSource](https://github.com/MiCode/Xiaomi_Kernel_OpenSource)，`45fb9bd6ae5ba2942fc1d53e4b6b46ef76992f71`；DTS pin 见 [来源集](docs/piano-full-linux-candidate.md) | [PianoKeys.c](uefi/core/PianoKeys.c) 等注明参考来源 | 原声明保留；本地 Keys 为 GPL-2.0-only，TouchProbe 为 GPL-2.0-or-later。 |
 | Debian/Piano 用户态、Mesa、固件 | 组件/精确 commit 见 [Linux 来源集](docs/piano-full-linux-candidate.md) | [stage_piano_full_userspace.py](tools/stage_piano_full_userspace.py) 等暂存到派生根系统 | 包、服务源码、Mesa 与固件按各自通知处理。 |
+| xiaomi-sheng-thp 笔解算 | [ianchb/xiaomi-sheng-thp](https://github.com/ianchb/xiaomi-sheng-thp)，`34046210932d654a4c0df0121ecc31c008f8148c` | [Piano 参数化核心](linux/userspace/pen/piano-pen-core.h) 从独立矩阵解算与滤波代码派生，读取本机实际校准配置；不启动上游的第二个触控服务 | Apache-2.0；保留 [完整许可证](linux/userspace/pen/Apache-2.0.txt)、源文件 SPDX 和 [来源／修改说明](linux/userspace/pen/OPEN_CORE_ORIGIN.txt)。当前仅完成真实配置和压力报告处理，坐标仍需实际笔矩阵验证。 |
 
 `sources.lock.json` 只覆盖部分依赖，其他 pin 仍在脚本中。内核 linked-worktree 获取方式见 [内核复现说明](docs/linux-reproducible-builds.md)。
 

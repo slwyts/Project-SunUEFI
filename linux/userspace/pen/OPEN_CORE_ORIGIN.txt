@@ -1,0 +1,36 @@
+Piano's parameterized pen decoder is derived from:
+https://github.com/ianchb/xiaomi-sheng-thp
+Commit: 34046210932d654a4c0df0121ecc31c008f8148c
+Original files: src/nvt_stylus.hpp, src/nvt_stylus.cpp
+License: Apache-2.0 (full text in Apache-2.0.txt).
+
+Project changes replace Sheng's axis tables, dimensions, resolution, edge and
+tilt calibration with values read from the caller's actual Piano firmware ini.
+Piano's original ALG instruction trace confirms row-first mapping_x, first-row
+mapping_y, average node pitch and the final portrait axes. No proprietary ALG,
+HAL or firmware ini is embedded or needed at link time.
+
+piano-pen-core.h exposes an offline C ABI for the existing single FIFO owner.
+The existing BSD-2-Clause-Patent piano-pen-frame adapter validates original
+payload checksums and the four actual mutual quarters. Actual BLE report5
+pressure is separate from raw29 metadata and has caller-supplied CLOCK_BOOTTIME timestamps
+and freshness policy. Missing data has no validity bit; it is never invented.
+
+The CLI reads only supplied regular capture files and external ini. It does
+not open the THP FIFO, configure Bluetooth, control hardware, create uinput,
+or rotate data into a desktop coordinate space. Its native output is portrait
+X0..213599/Y0..319999; no extra swap, transpose or report-factor10 division.
+
+The inherited peak separation and filter algorithms remain an independent
+open implementation, not an assertion of identical proprietary firmware
+behavior. Film/hover-specific slope changes, complete palm-interference
+integration and physical frame/event comparisons remain later work. No new
+service or default product build entry is installed by these files.
+
+The ini must match the touch controller's LCDid/factory firmware profile;
+the display-panel label is not a touch-calibration selector. NTP frames use
+ktime_get_boottime(), so BLE timestamps must use CLOCK_BOOTTIME too. Legacy
+monotonic captures are only comparable within a verified no-suspend interval.
+Solver multiply/divide intermediates use int64 and checked int32 narrowing;
+overflow is an error, not an axis-clamp substitute. Stateless frame-rate
+validation precedes the stateful hand-quarter decoder.
