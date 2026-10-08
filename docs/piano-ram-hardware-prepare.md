@@ -88,8 +88,8 @@ paths that returned zero are changed to nonzero failures.
 | Service | Required DMA/clock evidence | Current adapter behavior |
 | --- | --- | --- |
 | touch and keyboard | QUP1 GPI b6, wrapper a3; QUP2 GPI436, wrapper423; all mask0 | Fresh shared six-master parser; retains touch rebind and keyboard firmware/HID chain |
-| native GPU | Adreno GPU SID0/1, GMU5; normal MSM-managed domains | Normal MSM probe and bound-driver wait first, then mandatory GPU+GMU stage1 readback |
-| native display | MDSS800/mask2 plus Adreno proof | Nonblocking prebind diagnostic, then mandatory MDSS+GPU+GMU stage1 readback after DPU binds |
+| native GPU | Adreno GPU SID0/1, GMU5; normal MSM-managed domains | Normal MSM probe and actual bound-driver wait; register snapshots remain explicit diagnostics |
+| native display | MDSS800/mask2; normal DPU-managed domain | Normal DPU binding and enabled KMS output wait; no register snapshots on the default boot path |
 | radio | Real WCN7861 RID100→SID1401/mask0 and CLKREF consumer | Normal PHY/host enumeration, fresh endpoint/domain proof, then MHI/ath12k |
 | ADSP | Six real FastRPC consumers, thirteen SID/mask pairs | Normal remoteproc running and FastRPC child creation, fresh proofs, then application/power handoff |
 | audio | Actual GPR dais1001/80 and1041/20 | Normal APM/frontend creation, fresh dais proof, then card/PCM buffers |
@@ -125,16 +125,22 @@ additional `piano_dma_context` snapshot follows binding as a nonblocking
 observation: an unavailable readback is recorded with its error, not treated
 as proof that normal Linux initialization must stop. GPU/GMU domains are created by
 `msm_iommu_new` through paging-domain allocation and `iommu_attach_device` during
-normal MSM/Adreno initialization, so their guard follows `modprobe msm` and the
+normal MSM/Adreno initialization. The default display adapter retains `modprobe msm` and the
 bound-driver wait. `msm_kms_init_vm` similarly attaches the MDSS display domain
-when DPU initializes. Its mandatory guard follows the DPU bound-driver wait.
+when DPU initializes; its driver binding and enabled KMS output remain mandatory.
 
 Before DPU takeover the old display context may legitimately still have M=1.
 `--observe-scope mdss-prebind` records even an unavailable identity observation
 and returns zero to permit normal driver probe. Every such report has
 `observation_only=true`, `full_hardware_ready=false`; it never grants readiness.
-`--require-scope display-active` remains mandatory after DPU binds and requires
-real MDSS, GPU **and** GMU stage1 evidence. The observation mode also supports
+The default `display-start` no longer runs the four QUP/GPU/prebind/display-active
+snapshots. They only checked and published diagnostic evidence, never installed
+routes or granted resource ownership; kernel getters may temporarily acquire and
+release runtime-PM references for the reads. The standalone
+`piano-ram-hardware-prepare --require-scope gpu`, `--observe-scope mdss-prebind`
+and `--require-scope display-active` commands remain available for explicit
+diagnosis at the appropriate stage. Module ordering, binding polls, their
+timeouts and the enabled-output wait are unchanged. The observation mode also supports
 camera/video after their normal drivers bind; failure reports use
 `OBSERVATION_UNAVAILABLE` and never claim device readiness.
 Historical `ram-hardware-adapters-v1` output remains unchanged;

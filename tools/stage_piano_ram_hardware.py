@@ -57,35 +57,13 @@ def adapt(name, data):
                             '# Normal PHY/host probing enumerates the real PCI endpoint first.\n'
                             + GUARD + 'radio --wait-seconds 30')
     elif name == 'display-start':
-        text = replace_once(text, 'die() { say "FAIL $*"; exit 1; }',
-            'die() { say "FAIL $*"; exit 1; }\n\n'
-            '# Active GPU/GMU register snapshots may be unavailable after normal probe.\n'
-            '# They are diagnostics, not authority over the kernel-owned DMA domains.\n'
-            'observe_scope() {\n'
-            '    if ! /usr/lib/piano/piano-ram-hardware-prepare --require-scope "$1"; then\n'
-            '        say "WARN $1 context readback unavailable; continuing kernel driver initialization"\n'
-            '    fi\n'
-            '}')
+        # Register snapshots do not prepare a domain or authorize its owner.
+        # Keep them in the standalone diagnostic CLI, off the boot path.
         text = replace_once(text,
             '    # No stream match may be added behind the SMMU driver\'s back once it\n'
             '    # is bound, and it must adopt the /pianoinit ones.\n'
             "    [ -f /run/piano-smmu-ready ] || die 'apps SMMU stream matches not installed'",
-            '    # Observe QUP consumers; arm-smmu probe/binding remains mandatory.\n'
-            '    observe_scope qup')
-        text = replace_once(text, "    wait_bound adreno 3d00000.gpu 30 || die 'GPU not bound'",
-                            "    wait_bound adreno 3d00000.gpu 30 || die 'GPU not bound'\n"
-                            '    # MSM creates and attaches its GPU/GMU domains during normal probe.\n'
-                            '    observe_scope gpu')
-        text = replace_once(text, '    modprobe dispcc_sm8750',
-                            '    # Preserved live display contexts can still translate before takeover.\n'
-                            '    # Observe the prebind route without blocking normal DPU ownership.\n'
-                            '    /usr/lib/piano/piano-ram-hardware-prepare --observe-scope mdss-prebind ||\n'
-                            '        say "WARN MDSS prebind readback unavailable; continuing kernel driver initialization"\n'
-                            '    modprobe dispcc_sm8750')
-        text = replace_once(text, "    wait_bound msm_dpu ae01000.display-controller 30 || die 'DPU not bound'",
-                            "    wait_bound msm_dpu ae01000.display-controller 30 || die 'DPU not bound'\n"
-                            '    # DPU has now attached its own translated display domain.\n'
-                            '    observe_scope display-active')
+            '    # The normal kernel owns consumer routes; require its actual binding.')
         text = text.replace('                (UFS, USB, display, and the ones /pianoinit added) as bypass',
                             '                through normal kernel consumer attachment')
     elif name in ('video-start', 'camera-start'):
