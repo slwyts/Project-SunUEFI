@@ -22,6 +22,7 @@ from compose_piano_dtb import read_fdt, write_fdt
 
 ROOT = Path(__file__).resolve().parents[1]
 MIB = 1024 * 1024
+CLOCK_EPOCH = 'usr/lib/clock-epoch'
 
 
 def require(ok, message):
@@ -200,6 +201,19 @@ def verify_boot(path, inputs):
 
 
 def archive_root(root, target, epoch):
+    clock = root / CLOCK_EPOCH
+    if clock.is_file() and not clock.is_symlink():
+        # --mtime is global in GNU tar. Append this one semantic timestamp
+        # without that option rather than normalizing systemd's clock floor.
+        with tempfile.TemporaryDirectory(dir=target.parent) as temporary:
+            archive = Path(temporary) / 'root.tar'
+            common = ['tar', '--numeric-owner', '--xattrs', '--acls', '--format=pax',
+                      '--pax-option=delete=atime,delete=ctime', '-C', str(root)]
+            run([*common, '--sort=name', '--mtime=@' + str(epoch),
+                 '--exclude=./' + CLOCK_EPOCH, '-cf', archive, '.'])
+            run([*common, '-rf', archive, './' + CLOCK_EPOCH])
+            run(['zstd', '-q', '-T0', '-6', '-o', target, archive])
+        return
     with tempfile.TemporaryFile() as errors:
         tar = subprocess.Popen(['tar', '--numeric-owner', '--xattrs', '--acls', '--sort=name', '--format=pax',
                                 '--pax-option=delete=atime,delete=ctime', '--mtime=@' + str(epoch), '-C', str(root), '-cf', '-', '.'],
@@ -228,6 +242,14 @@ def xattr_equal(name, left, right):
             return [(tag, perm, ident if tag in (2, 8) else None) for tag, perm, ident in struct.iter_unpack('<HHI', data[4:])]
         return acl(left) == acl(right)
     return left == right
+
+
+def inode_mtime(name, info, epoch):
+    if name == CLOCK_EPOCH and stat.S_ISREG(info.st_mode):
+        timestamp = int(info.st_mtime)
+        require(0 <= timestamp <= 0x7fffffff, 'Invalid systemd clock epoch timestamp')
+        return timestamp
+    return epoch
 
 
 def ext4(root, target, size, label, epoch, rows, work):
@@ -259,7 +281,7 @@ def ext4(root, target, size, label, epoch, rows, work):
         return f'<{inodes[parent]}>'
     references = {n: inode_reference(n) if any(c in n for c in '"\\') else quote(n) for n in rows}
     script = work / 'inode-checks'
-    script.write_text(f'set_inode_field "/" mode 0{owner.st_mode:o}\n' + ''.join(f'set_inode_field {references[n]} mtime {epoch}\nset_inode_field {references[n]} ctime {epoch}\nstat {references[n]}\n' for n in rows))
+    script.write_text(f'set_inode_field "/" mode 0{owner.st_mode:o}\n' + ''.join(f'set_inode_field {references[n]} mtime @{inode_mtime(n, info, epoch)}\nset_inode_field {references[n]} ctime @{epoch}\nstat {references[n]}\n' for n, info in rows.items()))
     output = run(['debugfs', '-w', '-f', script, target]).stdout
     sections = re.split(r'debugfs:\s+stat ', output)[1:]
     require(len(sections) == len(rows), 'ext4 inode checks incomplete')
@@ -270,7 +292,8 @@ def ext4(root, target, size, label, epoch, rows, work):
         ctime = re.search(r'ctime:\s+0x([0-9a-f]+)', text)
         require(mode and owner and mtime and int(mode[1], 8) == stat.S_IMODE(info.st_mode)
                 and ctime and tuple(map(int, owner.groups())) == (info.st_uid, info.st_gid)
-                and int(mtime[1], 16) == int(ctime[1], 16) == epoch,
+                and int(mtime[1], 16) == inode_mtime(name, info, epoch)
+                and int(ctime[1], 16) == epoch,
                 'ext4 metadata mismatch: ' + name)
         for attr in os.listxattr(root / name, follow_symlinks=False):
             require(re.fullmatch('[A-Za-z0-9_.-]+', attr), 'Unsupported xattr name')
@@ -384,9 +407,12 @@ def package(args):
               'partitions': {'esp': {'partlabel': 'sunuefi_esp', 'label': 'SUNUEFI_ESP', 'sector_bytes': 4096, 'capacity_bytes': esp.stat().st_size},
                              'root': {'partlabel': 'sunuefi_root', 'label': args.root_selector.split('=', 1)[1], 'capacity_bytes': args.root_size_mib * MIB if args.root_size_mib else None}},
               'esp_files': ['/EFI/Piano/stable/' + n for n in ('Image', 'board.dtb', 'initramfs', 'boot.img')],
-              'metadata': {'archive': 'numeric uid/gid, modes, symlinks, hardlinks, xattrs and ACLs; mtime normalized',
+              'metadata': {'archive': 'numeric uid/gid, modes, symlinks, hardlinks, xattrs and ACLs; mtime normalized except /usr/lib/clock-epoch',
                            'ext4': 'all inode uid/gid/mode/mtime and source xattrs/ACLs checked; ctime normalized; sparse source allocation not preserved'},
               'files': {}}
+    if CLOCK_EPOCH in rows and stat.S_ISREG(rows[CLOCK_EPOCH].st_mode):
+        result['clock_epoch'] = {'path': '/' + CLOCK_EPOCH,
+                                 'mtime': inode_mtime(CLOCK_EPOCH, rows[CLOCK_EPOCH], args.epoch)}
     if dtb_derivation: result['dtb_derivation'] = dtb_derivation
     if extra_dtb_overlays: result['additional_dtb_overlays'] = extra_dtb_overlays
     if panel_selection: result['panel_selection'] = panel_selection

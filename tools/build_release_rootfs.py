@@ -2,6 +2,7 @@
 """Build a new public-source GNOME root and label bootstrap; never write a device."""
 import argparse
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import gzip
 import json
 import os
@@ -11,6 +12,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 
 import build_piano_disk_bootstrap as disk
 import build_piano_runtime_helpers as runtime
@@ -151,6 +153,18 @@ def put(root, name, text):
     path = target(root, name)
     if path.is_symlink(): path.unlink()
     path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
+
+
+def clock_epoch(rootfs):
+    """Give systemd a build-time clock floor before RTC or NTP is available."""
+    name = 'usr/lib/clock-epoch'
+    put(rootfs, name, '')
+    path = target(rootfs, name)
+    path.chmod(0o644)
+    timestamp = int(time.time())
+    os.utime(path, (timestamp, timestamp))
+    return {'path': '/' + name, 'mtime': timestamp,
+            'utc': datetime.fromtimestamp(timestamp, timezone.utc).isoformat()}
 
 
 @contextmanager
@@ -622,6 +636,7 @@ def execute(record):
         shutil.copy2(ROOT / 'linux/userspace/piano-boot-task-snapshot', snapshot)
         snapshot.chmod(0o755)
         boot = bootstrap(rootfs, kernel, out, m['kernel_release'], record.get('boot_task_snapshot', False))
+        clock = clock_epoch(rootfs)
         if modules.inspect(kernel)[1] != kernel_hash: raise ValueError('Kernel changed during rootfs build')
         result = {'status': 'HOST_BUILT_RELEASE_GNOME_ROOT_NOT_BOOT_VERIFIED', 'rootfs': str(rootfs),
                   'root_policy': 'LABEL=PIANOROOT', 'kernel_release': m['kernel_release'], 'kernel_commit': m['source_commit'],
@@ -631,6 +646,7 @@ def execute(record):
                   'mesa_packages': mesa, 'sensors': sensors, 'ffmpeg': ffmpeg, 'gnome_power': gsd,
                   'mutter': mutter,
                   'boot_request': boot_request, 'firmware_commit': cfg['firmware']['commit'],
+                  'clock_epoch': clock,
                   'initramfs': boot, 'password': 'locked; owner must set their own', 'autologin_retained': True,
                   'bit_reproducible': False, 'root_uid': rootfs.stat().st_uid, 'device_operation_performed': False}
         (out / 'manifest.json').write_text(json.dumps(result, indent=2) + '\n')
