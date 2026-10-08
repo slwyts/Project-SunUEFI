@@ -1,44 +1,52 @@
 # 返回 Android 与故障恢复
 
-Project SunUEFI 在底层对原厂关键分区配置了写保护，并在 RAM 中运行临时镜像。正常退出路径已验证能回到 Android；故障时也可能需要手动重启。此前 Recovery 实验后已恢复原厂 Recovery，并验证正常 Android 启动。
+SunUEFI 不替换原厂引导程序，也不修改 Android 的系统分区。UEFI 阶段对原厂关键分区由代码强制只读。出问题时，按下面的情形找到对应办法。
 
----
+## 在 Linux 里正常运行
 
-## 场景一：固件运行中正常退出
+```sh
+piano-next-boot android --reboot
+```
 
-当电脑端能识别到 `SunUEFI-piano` 接口时（即使物理屏幕处于白屏）：
+它把“下次进入 Android”保存到合体 BOOT 的记录区并正常重启。不加 `--reboot` 只保存，不重启。桌面里也有“返回 Android”入口，会先弹出确认框。
 
-1. 执行重启命令：
-   ```sh
-   fastboot -s SunUEFI-piano reboot
-   ```
-2. 固件会注销已占用的控制器资源并触发冷重启。
-3. 平板将正常显示开机画面并进入 Android 桌面。
+## 在 Android 里想改回 Linux 或 Android
 
----
+Android 里用 root 执行（设备路径是你的 BOOT 分区，不要预设 `boot_a`，先看 `status`）：
 
-## 场景二：停留在原厂 Fastboot 界面
+```sh
+piano-boot-request status --device 分区路径
+piano-boot-request set android --device 分区路径
+```
 
-若设备显示原厂 FASTBOOT 图标：
+可选目标：`android`、`menu`、`linux`、`setup`。没有有效记录时系统默认进入 Android。
 
-1. 执行重启命令：
-   ```sh
-   fastboot reboot
-   ```
-2. 设备直接重启进入系统。
+## 屏幕停在原厂 Fastboot
 
----
+```sh
+fastboot reboot
+```
 
-## 场景三：无响应或无法建立连接
+## 电脑能看到 `SunUEFI-piano`
 
-若遇到固件死循环、崩溃或电脑检测不到任何设备：
+固件正在运行，只是屏幕可能白屏：
 
-长按电源键，直到设备强制重启；此前多次实验通过这种方式恢复 Android。具体时长未固定验证，先使用自己设备已知的原厂强制重启方法。看到 Android 实际进入系统后再判断恢复成功。若仍不能恢复，停止追加实验并记录当前画面和连接状态。
+```sh
+fastboot -s SunUEFI-piano reboot
+```
 
----
+固件会先释放 USB、存储、时钟和 SMMU 资源，再冷重启回 Android。
 
-## 数据安全说明
+## 没有任何反应
 
-* **临时加载机制**：使用 `fastboot boot` 时，固件全部在运存（RAM）中运行，不向平板内部写入启动固件。
-* **存储写保护**：固件源码内置块设备只读保护（`PianoReadOnlyBlock`），阻断对原厂系统分区、基带和安全元数据的写入操作。
-* 临时加载不安装固件，但不能据此保证任意实验不会改变运行状态。Linux 分区部署与介质写入是独立操作，不属于本页的退出命令。
+长按电源键强制重启，直到看到开机画面，并确认进入 Android。具体需要按多久因机器而异，用你已知的原厂强制重启方式。如果还是回不去，先不要继续刷写，记下屏幕状态和电脑端 `fastboot devices` 的输出再求助。
+
+## 小米原厂 Recovery
+
+在 Android 里 `reboot recovery`，或使用系统的重启菜单，会进入小米原厂 Recovery，不会触发 SunUEFI，也不改变已保存的路线。从 Mi Recovery 里选择“重启 → 重启至系统”。
+
+SunUEFI 目前不使用 Recovery 分区安装。独立的 Recovery 镜像会被原厂引导程序拒绝加载（缺少 vendor_boot 和 pvmfw），所以安装器不允许 `--recovery`。如果之前自己刷过类似镜像，请恢复原厂 Recovery 镜像。持久选择 Linux 的同时使用 `reboot recovery` 的组合，尚未在设备上验证。
+
+## 关于数据
+
+`fastboot boot` 只在内存里运行。安装器会写入 `sunuefi_esp` 和 `sunuefi_root` 两个分区，不会碰其他分区。合体 BOOT 会改写 BOOT 分区；恢复原样需要原厂 BOOT 镜像，可用[原生 BOOT 重打包工具](../devel/android-boot-repack.md)无损还原。动手之前备份 BOOT 分区。

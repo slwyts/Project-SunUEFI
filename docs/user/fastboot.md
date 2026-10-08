@@ -1,71 +1,62 @@
-# 驻留 Fastboot 调试端使用速查
+# UEFI Fastboot
 
-SunUEFI 固件在运行期间内置了轻量级 USB Fastboot 调试服务。它可以在白屏或没有图形交互的情况下，通过电脑终端协助开发者和玩家排查问题、抓取日志甚至启动系统。
+SunUEFI 运行期间在后台提供一个 USB Fastboot 服务，用来调试和请求启动。即使物理屏幕白屏、没有菜单，也能通过它读日志、截图。它在固件把控制权交给 Linux 时退出。
 
-> ⚠️ **重要提示**：在固件运行时，设备向电脑暴露的标识为 **`SunUEFI-piano`**。请注意区分它与原机 Bootloader（返回真实数字序列号）的不同。
+## 和另外两个“Fastboot”的区别
 
----
+| | 设备序列号 | 什么时候 | 刷写 |
+| --- | --- | --- | --- |
+| 原厂 Bootloader Fastboot | 平板真实序列号 | `adb reboot bootloader` | 可以 |
+| UEFI Fastboot | `SunUEFI-piano` | 固件运行期间 | 拒绝 |
+| Linux 的 USB 网络 / SSH | — | Linux 起来之后 | 不适用 |
 
-## 🛠️ 1. 基础连接与状态查询
+下面所有命令都带 `-s SunUEFI-piano`，确保操作的是 UEFI 服务而不是原厂 Bootloader。
 
-在电脑终端中执行以下命令（所有命令均带 `-s SunUEFI-piano` 前缀）：
+> 目前，从冷启动的合体 BOOT 进入 UEFI 时，USB 初始化曾经超时，服务不一定出现。这条路径还在修。
+
+## 状态
 
 ```sh
-# 确认连接状态（应返回 piano-sunuefi）
-fastboot -s SunUEFI-piano getvar product
-
-# 查看协议版本与存储保护策略
+fastboot -s SunUEFI-piano getvar product        # piano-sunuefi
 fastboot -s SunUEFI-piano getvar version
 fastboot -s SunUEFI-piano getvar storage-policy
-
-# 查看综合状态摘要
 fastboot -s SunUEFI-piano oem status
 ```
 
----
+## 日志和截图
 
-## 📸 2. 导出运行日志与屏幕截图
-
-固件在内存（RAM）中维护了环形日志缓冲区与当前 Framebuffer 显存映射。即使物理屏幕白屏，可以尝试导出显存中的内容；是否成功仍需检查返回结果。
-
-### 导出日志快照（最大 256 KiB）
 ```sh
-# 冻结并暂存当前日志
 fastboot -s SunUEFI-piano oem ramlog
+fastboot -s SunUEFI-piano get_staged uefi-ramlog.txt      # 最多 256 KiB
 
-# 将暂存日志取回电脑保存为文本文件
-fastboot -s SunUEFI-piano get_staged uefi-ramlog.txt
-```
-
-### 导出当前显存画面截图（BMP 格式）
-```sh
-# 请求固件将当前 GOP 显存封装为 BMP
 fastboot -s SunUEFI-piano oem screenshot
-
-# 取回截图文件
-fastboot -s SunUEFI-piano get_staged uefi-screenshot.bmp
+fastboot -s SunUEFI-piano get_staged uefi-screenshot.bmp  # 24 位 BMP
 ```
-*导出的 `uefi-screenshot.bmp` 是标准的 24 位位图文件，可直接用电脑图片查看器打开。*
 
----
+截图读取的是帧缓冲，不代表物理屏幕当前显示的内容。
 
-## 🚀 3. 系统调度与控制命令
+## 读取分区
 
-| 终端命令 | 说明 |
-| :--- | :--- |
-| `fastboot -s SunUEFI-piano oem boot-stable` | **引导已安装的 Linux**：从平板内部 ESP 加载内核，请求启动已部署的 Stable，实际结果取决于文件和当前固件状态 |
-| `fastboot -s SunUEFI-piano oem setup` | 切换进入标准 UEFI BIOS 设置界面 (UiApp) |
-| `fastboot -s SunUEFI-piano oem shell` | 切换进入 UEFI Shell 命令行环境 |
-| `fastboot -s SunUEFI-piano oem simpleinit` | 切换回 SimpleInit 图形菜单主界面 |
-| `fastboot -s SunUEFI-piano reboot` | **退出**：正常清理路径冷重启回 Android |
+```sh
+fastboot -s SunUEFI-piano fetch 分区名 文件
+```
 
----
+只读，每次请求最多 64 KiB，由工具分块。
 
-## 🔒 4. 固件的安全限制
+## 启动与退出
 
-为了防止误操作损坏平板，SunUEFI 的 Fastboot 调试端在底层设置了安全红线：
+| 命令 | 作用 |
+| --- | --- |
+| `oem boot-stable` | 读取 ESP 中的 `\EFI\Piano\stable\boot.img` 并启动 Linux |
+| `oem setup` / `oem shell` / `oem simpleinit` | 切换到 UEFI 设置、Shell 或 SimpleInit 菜单 |
+| `reboot` | 清理资源后冷重启，回到 Android |
+| `continue` | 同样冷重启，不会继续启动 Linux |
+| `stage 文件` | 下载到内存，上限 64 MiB（目标是 1 GiB） |
+| `oem sha256`、`oem discard` | 对暂存数据计算哈希或丢弃 |
 
-* ❌ **完全拒绝所有刷写/擦除指令**：`flash`、`erase`、`flashing unlock` 等直接操作分区的命令均被底层阻断并返回拒绝。
-* ❌ **内存下载上限限制**：当前仅允许最大 64 MiB 的测试内存载荷传输。
+## 不支持的
 
-`continue` 当前也执行冷重启，不继续启动 Linux。一般 `boot 文件` 尚不是通用系统/EFI 引导入口；只读 `fetch` 的设备请求上限为 64 KiB。菜单切换命令已接入，但当前物理画面和所有界面后台服务尚未联合验证。
+* `flash`、`erase`、`flashing`、槽位切换和未知的 `oem` 命令一律拒绝。
+* `oem log` 不存在，用 `oem ramlog`。
+* `boot 文件` 还不是通用的系统 / EFI 启动入口。
+* 菜单切换命令已接入，但物理屏幕白屏时无法直接确认画面。

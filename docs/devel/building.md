@@ -1,83 +1,81 @@
-# 开发者编译与构建手册
+# 构建手册
 
-欢迎加入 Project SunUEFI 的开发！本手册介绍如何在电脑上准备构建环境，并编译出唯一的统一产品镜像 **`PianoUEFI-product.img`**。
+所有构建都在电脑或 CI 上进行，不会向连接的平板写入。统一入口是仓库根目录的 `./build.sh`。
 
-所有构建均在主机（PC）上完成，过程中**不会向任何连接的设备发起静默刷写**。
-
----
-
-## 🛠️ 1. 主机开发环境准备
-
-现有准备环境已成功构建产品；从全新克隆到完整构建的流程仍在整理。新贡献者可以直接运行下面的 portable 检查。
-
-完整构建还需要固定版本的 Mu/SimpleInit 源码、`.venv/`、脚本使用的 `build/host-tools/usr` 工具链，以及从设备取得的 PE、DTB 和存储对照。具体材料见[本地输入](local-inputs.md)，来源见[第三方说明](../../THIRD_PARTY.md)。这些文件不会随克隆自动出现。
-
----
-
-## 🧪 2. 快速自检（无需连接平板）
-
-在开始全量固件编译前，可以先运行便携式主机自检，确保基础环境与校验算法正常：
+## 取得源码和检查
 
 ```sh
-python3 tools/check_host.py --group portable
+./build.sh sources     # 取得固定版本的上游子模块，不递归下载测试数据
+./build.sh check       # 不需要平板的公开主机检查
 ```
 
-该命令仅依赖标准 Python 环境，耗时数秒，检查产品配置、日志处理和构建状态管理。它不编译固件，也不检查完整工具链或硬件。
+上游源码放在 `upstream/`，保持固定提交。本地修改在 `patches/`、`uefi/`、`linux/`、`tools/`。构建在 `build/` 下的副本里应用补丁，不要改构建副本。
 
----
+## 构建容器
 
-## 🏗️ 3. 在已准备环境中编译产品
-
-当源码与依赖准备就绪后，直接执行一键编译脚本：
+容器基础镜像记录在 `config/build-container.json`，定义是 `containers/Dockerfile`：
 
 ```sh
-bash tools/build_product.sh
+docker build -t sunuefi-builder -f containers/Dockerfile .
 ```
 
-默认产品构建在 `build/firmware-workspace/` 的本地副本中应用补丁、生成平台和编译。`upstream/` 保留固定的上游源码，成品仍输出到主仓库的 `artifacts/`。修改本地适配时编辑 `uefi/`、`patches/` 或 `tools/`；不要修改构建副本。
+APT 包版本会被记录，但不承诺位级可复现。
 
-### 构建过程流水线：
-1. **准备接入**：应用并核对共同服务、应用退出等源码修改。
-2. **编译 UI 前端**：编译 ARM64 版 SimpleInit 图形应用与中文字体包，再组装 `pianoProductPkg`。
-3. **编译 EDK2 核心**：调用 Clang 工具链与 BaseTools 编译生成 `PianoUEFI-product.fd`。
-4. **封装产物**：将 BootShim 跳转头、固件 FD、DTB 设备树与 Android 启动头（boot header v3）合成为最终镜像。
-
-### 产物输出位置：
-* 固件镜像：**`artifacts/product/PianoUEFI-product.img`**
-* 构建记录：`artifacts/product/manifest.json`；构建命令的输出可保存到 `build/logs/`。
-
-### 校验构建完整性：
-构建完成后，运行以下命令验证构建结果与合约一致性：
+## UEFI 和安装工具
 
 ```sh
-python3 tools/build_integrity.py validate --profile product
-python3 tools/product_contract.py --build-manifest artifacts/product/manifest.json
+docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
+  git config --global --add safe.directory /workspace
+  git config --global --add safe.directory "/workspace/*"
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements-build.txt
+  ./build.sh uefi
+  ./build.sh installer --product artifacts/product/PianoUEFI-product.img --output artifacts/installer-uefi
+'
 ```
 
----
+`./build.sh uefi` 使用 `vendor/piano` 的板级输入和 `patches/firmware`，输出 `artifacts/product/PianoUEFI-product.img` 与 `manifest.json`。完整 UEFI 构建还需要本地提取的原厂材料，见[本地输入](local-inputs.md)。
 
-## 🐧 4. Linux 内核与设备树编译
+## 完整 Debian / GNOME
 
-先从[内核角色](kernel-roles.md)选择基线，再按对应构建工具的 `--help` 准备参数。完整内核使用 `build_piano_full_kernel.py`，设备树使用 `build_piano_full_dtb.py`；二者仍依赖固定源码和已核对的板级输入。内核、config、DTB、initramfs 与模块要保持匹配，不能只替换一个 Image。
+需要 ARM64 构建机，容器需要 `--privileged` 才能 chroot 并挂载：
 
----
+```sh
+./build.sh linux
+./build.sh mesa
+./build.sh sensors
+./build.sh release-rootfs
+./build.sh package --root-size-mib 8192
+./build.sh installer --bundle artifacts/release-7.2.9
+```
 
-## 📖 深入探索
-* 想了解代码组织和各目录的作用？查阅 [源码目录地图](repository-map.md)。
-* 想了解各模块具体的测试命令？查阅 [测试与验证指南](testing.md)。
-* 准备提交 Pull Request？请查阅 [贡献指南](../../CONTRIBUTING.md) 与 [AI 协作规范](../../AGENTS.md)。
+* 默认内核目标为 `7.2.9`：在 `debian-piano` 配套的内核基线上，合入官方 `v7.2.9` stable 提交和登记的 release 补丁。当前选择记录在 `build/release-7.2.9/source-manifest.json`。只准备源码：`python3 tools/prepare_release_kernel.py --refresh`。
+* 重建内核时，旧产物清单先作废，编译完成后才原子发布新的，避免旧 Image 与新模块混用。O 目录与产物目录有文件锁。
+* 基础根系统已构建后，用 `./build.sh release-rootfs --resume` 更新内核、硬件包和配置，不重新运行 debootstrap。
+* 其他目标：`./build.sh rootfs --distro ID --desktop ID --plan` 列出 Ubuntu / Deepin / Arch 与 KDE 等组合的计划，目前只有 Debian / GNOME 完整验证。
 
+### 软件包的本地构建
 
-## 新的统一构建入口（接入中）
+* **CPU 型号**：`linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `model` 属性，内核小补丁把它输出为 `/proc/cpuinfo` 的 `model name`，让 GNOME 显示 Snapdragon 8 Elite。MIDR、核心拓扑、时钟和板型号保持原值。
+* **gnome-settings-daemon**（`./build.sh gsd`）：在副本里编译带 Piano 自动亮度策略的标准包，使用原厂 lux 阈值和延迟，不修改传感器读数，再经 APT 安装。
+* **Mutter**（`./build.sh mutter`）：修正空 Gamma 曲线的恢复，以及无 EDID 的内置屏幕颜色配置。保留标准颜色服务和用户配置，不伪造 EDID；通用 sRGB 是未校准的默认值，不等于原厂色彩校准。来源与补丁见[Mutter 适配说明](../../linux/desktops/gnome/patches/mutter/README.md)。
 
-上游已登记为固定版本的 submodule。首次从主仓库克隆后运行 `./build.sh sources`，只取得编译所需的子模块，不递归下载上游的测试和 fuzz 数据。`./build.sh check` 运行公开主机检查。
+## 合体 BOOT 相关工具
 
-`./build.sh uefi` 使用 `vendor/piano` 的必要板级输入和 `patches/firmware`；`./build.sh linux` 从公开基线与八份补丁准备源码，再编译 LABEL 根策略的内核。ESP/root 打包与多发行版适配正在接入，不能仅凭命令存在当作所有发行版已经构建成功。
+```sh
+./build.sh trampoline --stock-boot 当前ROM的boot.img --output 输出目录   # 生成前置选择器入口
+./build.sh boot-repack                                                   # 编译原生 BOOT 重打包 / 还原工具
+./build.sh boot-request --sysroot ...                                    # 编译 piano-boot-request
+./build.sh module --inspect                                              # 列出 Android 模块的缺项，不生成 ZIP
+```
 
-默认 Linux release 目标为 `7.2.9`：先保留 `debian-piano` 配套的 Piano 内核基线与八份本地补丁，再合入固定的官方 `v7.2.9` stable 提交和登记的 release 补丁。源码快照目录按版本与目标树前缀命名，当前选择记录位于 `build/release-7.2.9/source-manifest.json`；构建入口从该记录读取路径。只准备源码可运行 `python3 tools/prepare_release_kernel.py --refresh`，历史目标仍可用 `--target kernel69`。准备完成不代表内核已编译或平板已升级。
+在线安装、OTA 自动化和请求自动清除尚未完成，见[原生 BOOT 重打包](android-boot-repack.md)、[Android 模块](android-module.md)。
 
-`./build.sh linux` 明确刷新当前源码选择，并在原 O 目录增量重建内核。旧源码快照保留；准备失败记录独立保存，不覆盖上一份成功选择。重建时先使旧产物 manifest 失效，编译完成后才原子发布新的 manifest，避免把旧 Image 与新模块混用。O 目录与产物目录均由实际文件锁防止同时写入。已有基础 root 使用 `./build.sh release-rootfs --resume` 更新；重新打包时用 `--output` 指定新的生成目录，现有完整磁盘包保持原样。
+## CI
 
-CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点补充标准 `model` 属性，内核的小补丁将其输出为 `/proc/cpuinfo` 的 `model name`，供 GNOME 等通用程序读取。这里只补充处理器名称；MIDR、核心拓扑、时钟和系统板型号都保持原值。`vendor/piano-linux/board.dtb` 是采集来源，应用 overlay 后的 DTB另行生成。
+GitHub Actions 的 **Build products** 提供 `uefi`、`linux`、`debian-gnome` 三个目标，产物为 `piano-目标-提交号`（含 `install.sh`、`install.cmd`、安装器和 `INSTALL.md`；`debian-gnome` 另有 `bundle/`），日志为 `piano-build-records-目标-提交号`。依赖和来源记录见[公开构建链](public-build.md)。
 
-容器基础镜像固定在 `config/build-container.json`，定义见 `containers/Dockerfile`。实际 APT 包版本仍需记录，不宣称完整位级复现。构建在电脑/CI 中进行，安装器是独立入口。
+## 继续阅读
+
+[仓库地图](repository-map.md)、[测试](testing.md)、[发布要求](release.md)、[贡献指南](../../CONTRIBUTING.md)。

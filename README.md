@@ -1,86 +1,159 @@
-# Project SunUEFI — 小米平板 8 Pro (`piano`)
+# Project SunUEFI
 
-Project SunUEFI 是为小米平板 8 Pro（代号 `piano`，搭载骁龙 8 至尊版 / SM8750 芯片）开发的开源 UEFI 固件与跨系统引导项目。
+小米平板 8 Pro（代号 `piano`，骁龙 8 至尊版 / SM8750）的统一 UEFI 与 Linux 适配项目。
 
-项目的长期目标是在该设备上实现 **UEFI 固件**、**主线 Linux** 与 **Windows on ARM** 的稳定运行。
+平板的原厂 Android 保持不动。SunUEFI 在它旁边加入一套开源 UEFI（EDK2），让同一块平板可以从内部存储直接启动 Debian 和 GNOME，不需要每次接电脑。项目的长期目标是通过这一套 UEFI，在这台平板上获得完整的 Linux 与 Windows 使用体验；Linux 已经能日常操作，Windows 还没有启动过。
 
-**目前仍是开发候选（`INCOMPLETE_NOT_RELEASE`）。部分启动链路已实机验证，完整发布包仍不能当作稳定安装版。**
+## 现在能做什么
 
----
+从内部磁盘启动的 Debian 13 / GNOME 已经可以：
 
-## 项目目标
+* 用 Adreno GPU 加速绘制桌面，屏幕以 3200×2136、144 Hz 显示，可以手动调亮度。
+* 用手指点按、拖动窗口、长按弹出菜单和使用手势。
+* 接上官方磁吸键盘打字、使用触控板，键盘背光可以通过 GNOME 的标准选项调节。
+* 连接 Wi-Fi、配对蓝牙设备，并使用蓝牙耳机播放音频。
+* 用四个扬声器播放声音，并用 GNOME 夜灯调整屏幕色温。
+* 打开前后相机预览并录像。
+* 在 Linux 和原厂 Android 之间来回切换。
 
-1. **统一的 UEFI 固件**：构建单一产物 `PianoUEFI-product.img`，提供图形启动菜单、标准 ACPI 表与安全的运行环境。
-2. **主线 Linux 支持**：摆脱原厂下游内核包袱，推进 SM8750 上游主线驱动，完善触控输入、键盘皮套、音频与日常桌面体验。
-3. **Windows on ARM 支持**：补齐板级 ACPI 与核心驱动链，逐步推进 WinPE 引导与 Windows ARM64 桌面运行。
+目前最影响使用的是：切换刷新率、关屏或合盖之后，屏幕可能黑屏而背光仍亮，需要重启。完整列表见下文[功能与已知问题](#功能与已知问题)。
 
----
+## 开机时发生什么
 
-## 当前进展
+平板最早的启动阶段仍由小米原厂的引导程序（XBL 和 ABL）完成，我们没有替换它们。SunUEFI 放进的是 Android 的 BOOT 分区：在原厂 Android 内核前面加一个很小的“选择器”，再把同一份 SunUEFI 核心附在后面。这个组合叫**合体 BOOT**。
 
-目前已打通从 UEFI 到独立磁盘分区的启动链路，并成功进入 GNOME 图形桌面：
+```mermaid
+flowchart LR
+    A["原厂引导程序<br/>XBL / ABL"] --> B["合体 BOOT 中的选择器"]
+    B -->|"Android"| C["原厂 Android 内核<br/>HyperOS"]
+    B -->|"Linux / 菜单"| D["SunUEFI (EDK2)"]
+    D --> E["ESP 中的 Linux 内核<br/>sunuefi_esp"]
+    E --> F["ext4 根文件系统<br/>sunuefi_root"]
+    F --> G["Debian / GNOME"]
+    D -.->|"目标，尚未实现"| H["Windows"]
+```
 
-* **已可用**：
-  * 支持通过电脑以 `fastboot boot` 临时加载固件运行（不改动任何原厂启动分区）。
-  * 从平板内部的专用 ESP 和 ext4 分区引导 Linux。
-  * 正常进入 **GNOME 桌面**，Adreno GPU 加速、**约 144 Hz 的触控输入**、**官方键盘皮套与触控板**、**Wi-Fi 联网**及扬声器发声均可正常工作。
-* **已知关键问题**：
-  * **UEFI 启动阶段物理白屏**：部分记录中显存内容正常，屏幕却仍白。时钟初始化是调查方向，具体原因还未确认；Linux 后续接管后已能显示桌面。
-  * **启动耗时较长**：最近一次磁盘 Linux 启动约 130 秒，具体瓶颈仍在定位。
-  * **持久启动正在完善**：合体 BOOT 保存 Linux 路线后已通过普通重启进入磁盘 Linux，也已正常返回 Android。请求自动消费、完整在线安装和 OTA 联动尚未完成；持久 Linux 偏好与原厂 `reboot recovery` 的组合仍待实机验证。详见[入口分析](docs/devel/recovery-entry.md)与[请求机制](docs/devel/reboot-request.md)。
-  * 麦克风底噪、待机休眠等细节功能仍在调试中。
+选择器读取一条保存好的“下次走哪条路”。Android 路线直接把控制权交给原厂内核，不会先运行 UEFI；Linux 或菜单路线才进入完整的 UEFI。Linux 的内核放在一个小的 FAT32 分区 `sunuefi_esp` 中（ESP，EFI 系统分区，UEFI 约定存放启动文件的分区），系统和应用放在单独的 ext4 分区 `sunuefi_root`，所以不需要每次把整个桌面解压到内存。
 
----
+### 启动路线会被记住
 
-## 硬件支持状态
+选择保存在合体 BOOT 自己的一小块记录区里，由项目工具读写，不依赖 PMIC 寄存器。普通重启会沿用上一次的选择；没有有效记录时默认进入 Android。目前已经能用的是：
 
-> 基准机型：小米平板 8 Pro (`piano`) 16GB，已解锁 Bootloader；原厂运行参数识别为 CSOT 面板。固件按当前设备的原厂面板标识选择 Linux 配置，见[面板选择](docs/devel/panel-selection.md)。下表的输入、无线、音频和电源均指 Linux；UEFI 的触屏和键盘后端尚未完成。
+* 在 Android 一侧保存路线，重启后进入 Linux。
+* 在 Linux 里执行 `piano-next-boot android --reboot` 回到 Android。
+* 用 Android 标准的 `reboot recovery` 进入小米原厂 Recovery，不改动已保存的路线。
 
-| 组件 / 功能 | 状态 | 说明 |
-| :--- | :---: | :--- |
-| **UEFI 固件引导** | ⚠️ 开发中 | 合体 BOOT 已普通重启进入磁盘 Linux；持久 Linux 偏好与 Recovery 组合待验证，UEFI 物理白屏仍在修复 |
-| **Linux 图形桌面** | ✅ 正常 | 正常进入 GNOME 桌面，Adreno GPU 加速可用 |
-| **屏幕多点触控** | ✅ 正常 | 点按、拖动、长按正常，稳定输入报告约 144 Hz，不能等同于传感器最高采样率 |
-| **官方键盘 / 触控板** | ✅ 正常 | 磁吸 Pogo-pin 键盘打字与触控板指针操作正常 |
-| **无线网络 (Wi-Fi)** | ✅ 正常 | PCIe 接口网卡正常驱动，已确认扫描热点和联网 |
-| **蓝牙 (Bluetooth)** | ⚠️ 基础 | 固件加载正常，可扫描周边设备，配对与音频完善中 |
-| **声音输出 (扬声器)** | ✅ 正常 | 左右立体声扬声器正常发声 |
-| **声音输入 (麦克风)** | ⚠️ 有底噪 | 能录入声音，底噪偏大，电平调节待优化 |
-| **前后相机** | ⚠️ 基础 | 两路已输出真实 ISP 帧，画质与桌面应用使用验证中 |
-| **传感器** | ⚠️ 适配中 | SSC 通信已建立，物理读数与桌面联动仍在推进 |
-| **电池与充电** | ⚠️ 基础 | 可读取基础状态，高级电源管理与待机尚未完善 |
-| **Windows on ARM** | 🔄 规划中 | 板级 ACPI 构建中，准备推进 WinPE 早期引导 |
+还没有做的是：自动记住 UEFI 菜单里的每一次选择、一次性请求用完后自动清除，以及和系统更新（OTA）配合的 Root 模块。细节见[启动状态与切换](docs/devel/reboot-request.md)和[Linux 下次启动入口](docs/devel/linux-next-boot.md)。
 
----
+### UEFI 里的 Fastboot
 
-## 设计原则
+SunUEFI 运行时在后台提供一个 USB Fastboot 服务，设备名为 `SunUEFI-piano`。它用来调试：即使屏幕没有画面，也能从电脑读取日志、导出屏幕截图、只读读取分区内容，或请求启动已安装的 Linux。
 
-* **单一固件核心**：所有功能收敛到单一镜像 `PianoUEFI-product.img`，避免分散维护碎片化的测试版本。
-* **原厂数据安全**：底层对原厂 Android 分区（系统、基带、凭据）强制写保护，正常退出路径冷重启回 Android；卡住时可能需要手动恢复。
-* **常驻 Fastboot 调试端**：USB 成功初始化时，UEFI 阶段后台暴露设备（`SunUEFI-piano`），可提取运行日志、显存截图或请求安全重启。冷 BOOT 的 USB 初始化仍未完整验证；安全回滚后进入 Linux 的路径不提供该 UEFI 调试端。
+它和另外两个容易混淆的东西不同：
 
----
+| 名称 | 什么时候出现 | 能做什么 |
+| --- | --- | --- |
+| 原厂 Bootloader Fastboot | 开机时按键进入，或 `adb reboot bootloader` | 小米原厂功能，可刷写分区 |
+| UEFI Fastboot（本项目） | SunUEFI 运行期间 | 日志、截图、只读读取、请求启动；不支持刷写和擦除 |
+| Linux 的 USB 网络 / SSH | Linux 启动之后 | 普通的 Linux 远程登录与调试 |
 
-## 快速入口
+交接给 Linux 时 UEFI Fastboot 就会退出。从冷启动的合体 BOOT 进入时，USB 初始化曾经超时，所有后台场景也还没有走通，所以现在不能依赖它。命令见 [UEFI Fastboot](docs/user/fastboot.md)。
 
-* **使用与体验**：
-  * [快速体验指南](docs/user/getting-started.md)：如何用电脑临时加载固件并进入 Linux
-  * [安全返回 Android](docs/user/recovery.md)：意外状况下的自救与退回原厂系统
-  * [已知问题与排查](docs/user/known-issues.md)：白屏、启动耗时与注意事项
-  * [Fastboot 调试命令速查](docs/user/fastboot.md)：日志抓取与显存截图
-* **开发与构建**：
-  * [编译与构建手册](docs/devel/building.md)：从源码构建 `PianoUEFI-product.img`
-  * [源码目录地图](docs/devel/repository-map.md)：代码与工具链分布
-  * [全量硬件状态记录](docs/status.md)：技术细节与底层验证
-  * [贡献指南](CONTRIBUTING.md) 与 [AI 协作规范](AGENTS.md)
+### 同一个核心
 
----
+项目只维护一套 UEFI 核心和一套产品镜像 `PianoUEFI-product.img`。合体 BOOT、临时的 `fastboot boot` 启动、安装器用到的都是同一份核心，不再按功能拆成多套测试镜像。
 
-## 构建与下载
+## 功能与已知问题
 
-在 GitHub Actions 的 **Build products** 中选择 `uefi`、`linux` 或 `debian-gnome`。成功后下载 `piano-目标-提交号` 并解压：里面有 `install.sh`、`install.cmd`、独立安装器和 `INSTALL.md`。`uefi` 包带唯一固件镜像；`debian-gnome` 包才带完整 ESP/root 磁盘包。日志与内核输出在另一个 `piano-build-records-目标-提交号` 中。
+当前运行使用 CSOT 面板配置，选择方式见[面板选择](docs/devel/panel-selection.md)。
 
-自行构建先取得固定源码，使用登记的构建容器。下面生成 UEFI 和可下载的安装工具包，不操作平板：
+### 可以使用
+
+| 功能 | 说明 |
+| --- | --- |
+| 磁盘启动 Linux | 从合体 BOOT 经 UEFI 进入内部 ESP 和 ext4 系统，普通重启沿用选择 |
+| 返回原厂 Android | Android 路线直通，Linux 里可以一条命令切回 |
+| GNOME 桌面与 GPU 加速 | 原生双 DSI 显示、Adreno 加速 |
+| 屏幕显示与亮度 | 3200×2136、144 Hz 初始显示，手动亮度 |
+| 触屏 | 点按、拖动、长按、手势，报告速率约 144 Hz |
+| 官方键盘与触控板 | 打字、指针、点击、键盘背光 |
+| Wi-Fi | 扫描并联网 |
+| 蓝牙 | 扫描、配对、设备连接和蓝牙耳机播放；安装器会写入本机蓝牙地址 |
+| 四扬声器 | 沿用原厂功放增益，音量可调 |
+| 夜灯 | GNOME 夜灯调整色温 |
+| 前后相机 | 预览和录像；画质问题见下表 |
+| 电池与充电状态 | 双电池、基础 PD 充电和 UPower 状态 |
+
+### 可以使用，但有问题
+
+| 功能 | 能做到什么 | 现存问题 |
+| --- | --- | --- |
+| 144 Hz 显示 | 初始即 144 Hz | 切换 60 / 120 Hz，或关屏、合盖后恢复，可能黑屏、背光仍亮 |
+| 相机 | 前后摄像头预览与录像，走高通 CAMSS/TFE 硬件 ISP，3A（自动曝光 / 对焦 / 白平衡）由软件实现 | 首帧有绿色区域；刚打开时偏暗、曝光收敛慢；对焦和画质与原厂有差距。启动曝光、对焦和帧完整性的修正已构建，尚未在平板上验证。专业 / 手动控制的底层接口存在，应用入口未做 |
+| 麦克风 | 能录音并回放 | 单声道混合时声音被衰减，原因已找到，真正的单声道修正已编译但还没装到平板上；噪声和桌面输入电平待调 |
+| 传感器 | 加速度、光线、罗盘、距离等数据可读，并接入标准的 SensorProxy | 自动旋转、自动亮度曲线等桌面联动还在完善；陀螺仪等数据的单位和标准接口未全部完成 |
+| 电源 | 充电状态、基础 PD 充电 | 关机偶尔回到 Android，原因未知；合盖和电源键目前只处理背光 |
+| 启动时间 | 能从内部 ext4 启动到桌面 | 从内核启动到桌面约一到两分钟（`systemd-analyze` 测量，不含 UEFI 阶段），仍在优化 |
+| UEFI 菜单 / Setup / Shell | 中文菜单和实体按键可用 | 集成版本的物理屏幕白屏（截图内容正确）；UEFI 阶段触屏和键盘不可用。进入 Linux 后屏幕恢复正常 |
+| UEFI Fastboot | 日志、截图、只读读取 | 冷启动 USB 初始化曾超时，部分后台场景未走通 |
+| 闪光灯 / RGB 灯 / 红外 | 闪光灯的标准 LED 接口已注册；RGB 灯接口已出现 | 闪光灯实际发光未观察；红外发射未验证 |
+
+### 尚未完成
+
+* **触控笔**：蓝牙连接可用，但笔的坐标、压感、悬停、按键、震动和无线充电联动都没有完成。
+* **睡眠**：锁屏、待机、休眠没有完成。
+* **HDR、12-bit 色深、可变刷新率**：还在适配，不能作为可用功能。
+* **指纹**：原厂安全通路已定位，Linux 端没有实现。
+* **Windows / WinPE**：目标，尚未启动。
+* **桌面默认配置**：Chromium 已替换 Firefox，中文界面、拼音输入和动画已写入系统配置；全新镜像的首次启动检查正在进行。
+
+更详细的现状和设备记录见[项目状态](docs/status.md)，用户可见的问题和绕过办法见[已知问题](docs/user/known-issues.md)。
+
+## 开始使用
+
+目前没有公开的 Release 下载页。构建产物来自 GitHub Actions 的 **Build products** 工作流，你也可以自己构建。固件和原厂提取材料的再分发许可还在核对，核对完成前不会提供二进制 Release。
+
+### 你需要
+
+* 小米平板 8 Pro，Bootloader 已解锁，Android 已 root 并开启 USB 调试。
+* 电脑安装 Python 3.10 或更高版本、Android platform-tools（`adb`、`fastboot`）。
+* 一块已划好 `sunuefi_esp`（512 MiB，FAT32）和 `sunuefi_root`（约 63.5 GiB，ext4）的平板。**全新平板的首次分区还不能由安装器完成。**
+* 先备份个人数据。
+
+### 安装
+
+1. 在工作流里选择 `debian-gnome` 目标（`uefi` 和 `linux` 目标不含完整系统），下载 `piano-debian-gnome-提交号` 并解压。
+2. 用 `adb devices -l` 找到平板在 Android 下的序列号，然后运行：
+
+   ```sh
+   sh install.sh inspect --serial 序列号 --output inspect.json
+   sh install.sh plan --serial 序列号 --output update-plan.json
+   sh install.sh apply --serial 序列号 --plan update-plan.json
+   ```
+
+   Windows 把 `sh install.sh` 换成 `install.cmd`。这三条命令只读取和核对，不写入。
+3. 确认计划后加 `--execute` 才会真正更新 ESP 和 root：
+
+   ```sh
+   sh install.sh apply --serial 序列号 --plan update-plan.json --execute
+   ```
+
+安装器的完整说明见[下载包中的安装入口](docs/user/install-from-artifact.md)。
+
+合体 BOOT 还没有集成到安装器，Android 端的 KernelSU / Magisk 模块（含 WebUI）也还没有可安装的 ZIP。合体 BOOT 目前由维护者用 `./build.sh trampoline` 和 `./build.sh boot-repack` 生成并写入 BOOT 分区，步骤和限制见[原生 BOOT 重打包](docs/devel/android-boot-repack.md)。不想改动 BOOT 的话，可以按[快速体验](docs/user/getting-started.md)用 `fastboot boot` 临时加载固件，重启后即恢复。
+
+### 回到 Android
+
+* 在 Linux 里运行 `piano-next-boot android --reboot`。
+* 屏幕停在原厂 Fastboot 界面：`fastboot reboot`。
+* 电脑能看到 `SunUEFI-piano`：`fastboot -s SunUEFI-piano reboot`。
+* 完全没有反应：长按电源键强制重启。
+
+更多情况见[返回 Android 与故障恢复](docs/user/recovery.md)。
+
+## 自己构建
+
+先取得固定版本的上游源码，再在构建容器里生成 UEFI 和安装工具包：
 
 ```sh
 ./build.sh sources
@@ -89,59 +162,36 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
   git config --global --add safe.directory /workspace
   git config --global --add safe.directory "/workspace/*"
   python3 -m venv .venv
-  .venv/bin/pip install -r requirements-build.txt
+  source .venv/bin/activate
+  python -m pip install -r requirements-build.txt
   ./build.sh uefi
   ./build.sh installer --product artifacts/product/PianoUEFI-product.img --output artifacts/installer-uefi
 '
 ```
 
-完整 Debian/GNOME 构建需要 **ARM64 构建机**和允许挂载/chroot 的构建容器；在同一环境内依次执行：
+完整的 Debian / GNOME 系统包需要 ARM64 构建机，以及允许 chroot 的 `--privileged` 容器，依次运行 `./build.sh linux`、`mesa`、`sensors`、`release-rootfs`、`package`、`installer`。检查可以不连接平板：`./build.sh check`。完整流程、输入材料和各步骤的输出位置见[构建手册](docs/devel/building.md)与[公开构建链](docs/devel/public-build.md)。
 
-```sh
-docker run --rm --privileged -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
-  git config --global --add safe.directory /workspace
-  git config --global --add safe.directory "/workspace/*"
-  ./build.sh linux
-  ./build.sh mesa
-  ./build.sh sensors
-  ./build.sh release-rootfs
-  ./build.sh package --root-size-mib 8192
-  ./build.sh installer --bundle artifacts/release-7.2.9
-'
-```
+## 项目站在哪些项目之上
 
-这组命令需要前面已生成的 UEFI，rootfs 构建容器需 `--privileged`。单独固件工具包在 `artifacts/installer-uefi/`，完整包在 `artifacts/installer/`；依赖、来源和构建记录详见[公开构建链](docs/devel/public-build.md)。当前构建包仍是开发候选。
+SunUEFI 不是从零重写所有东西。上游源码保持固定版本放在 `upstream/`，我们自己的修改放在 `patches/`、`uefi/`、`linux/` 和构建工具里。
 
-同一固定上游的基础根系统已构建完成后，可以用 `./build.sh release-rootfs --resume` 更新内核、硬件包和配置，复用基础系统，避免重新跑 debootstrap。此操作更新本地生成目录，不操作平板。
+| 项目 | 负责什么 | 我们在上面做了什么 |
+| --- | --- | --- |
+| [TianoCore EDK2](https://github.com/tianocore/edk2) / [Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium) | UEFI 基础代码和高通平台集成 | Piano 平台、启动交接、存储、输入、显示继承、UEFI Fastboot，以及对原厂分区的只读保护和安全退出 |
+| [simple-init](https://github.com/BigfootACA/simple-init) | UEFI 里的图形启动菜单 | 平板布局、中文、实体按键，以及和固件后台服务的联动 |
+| [linux-piano](https://github.com/blu-sharky/linux-piano) | SM8750 内核、设备树和板级驱动基线 | 合入稳定版内核，修正内存 / DMA、显示、音频等 |
+| [debian-piano](https://github.com/blu-sharky/debian-piano) | Debian 根系统构建、设备服务、相机和输入辅助程序 | 专用 ESP / root、多发行版 BSP（板级配置包）、统一打包 |
+| [piano-firmware](https://github.com/blu-sharky/piano-firmware) | Wi-Fi、蓝牙、DSP、触控等设备固件和功放预设 | 按来源装入系统；设备参数从本机原厂数据读取。它不是整套 HyperOS，也不含原厂相机算法 |
+| [piano-mesa](https://github.com/blu-sharky/piano-mesa) | Adreno 图形用户空间 | 与内核和根系统配套的 Mesa 软件包 |
+| [piano-sensors](https://github.com/blu-sharky/piano-sensors) | 高通传感器（SSC）通信与桌面桥接 | 数据类型、读取接口、标准 SensorProxy 与自动亮度策略 |
+| [MiCode](https://github.com/MiCode) 与本机 HyperOS | 原厂设备树、驱动、配置的参照 | 对照真实命令、时序和参数，按标准接口移植 |
 
-Debian/GNOME 的根系统构建会在独立副本中编译带 Piano 自动亮度策略的标准 `gnome-settings-daemon` 包，再按正常 APT 流程安装。原厂 lux 阈值和等待时间用于减少亮度频繁波动，不修改传感器读数；包来源和补丁记录随根系统保存。其他桌面直接使用标准传感器、背光接口。
+内核之外的 Debian 软件仍通过标准 APT 安装。除 Debian / GNOME 之外，仓库里还有 Ubuntu、Arch、KDE 等目标的配置，但只有 Debian / GNOME 完整走通过，其他目标没有验证。
 
-同一入口也构建标准 Mutter 包，修正空 Gamma 曲线恢复，以及无 EDID 内置屏幕的颜色配置生成。两处修改保留标准颜色服务和用户已有配置，不生成假 EDID；通用 sRGB 作为未校准的默认配置，不能等同于原厂色彩校准。可单独用 `./build.sh mutter` 重建，来源及补丁见 [Mutter 适配说明](linux/desktops/gnome/patches/mutter/README.md)。新包已完成本地构建，并实机验证自动颜色配置和空曲线恢复；夜灯实际色温效果仍在验证。
+## 文档
 
-维护者可用 `./build.sh trampoline --stock-boot 当前ROM的boot.img --output 新输出目录` 生成前置入口。选择器的 Android 直通、保存 Linux 路线后的普通重启以及 Linux 返回 Android 均已实测。`./build.sh boot-repack` 已能编译原生 BOOT 文件重打包／还原工具，真实原厂 BOOT 无损还原已验证；在线安装、OTA 自动化与请求自动消费尚未完成。`./build.sh module --inspect` 当前列出缺项，不生成可安装 ZIP。接口与升级流程见[Android 模块说明](docs/devel/android-module.md)，文件工具见[原生重打包说明](docs/devel/android-boot-repack.md)。
+* [快速体验](docs/user/getting-started.md)、[安装入口](docs/user/install-from-artifact.md)、[返回 Android](docs/user/recovery.md)、[UEFI Fastboot](docs/user/fastboot.md)、[已知问题](docs/user/known-issues.md)
+* [项目状态](docs/status.md)：功能和设备记录
+* [文档导航](docs/README.md)：开发、专题和历史记录
+* [第三方来源](THIRD_PARTY.md)、[许可](LICENSE.md)、[贡献指南](CONTRIBUTING.md)、[AI 协作规范](AGENTS.md)
 
-## 下载后如何刷写
-
-电脑准备 Python 3.10+ 和 Android platform-tools，平板进入已解锁、开启 USB 调试的 rooted Android。Linux 使用 `sh install.sh`，Windows 将它换成 `install.cmd`。先用 `adb devices -l` 找到原机 ADB 序列号，明确选择自己的设备：
-
-```sh
-sh install.sh inspect --serial 原机ADB序列号 --output inspect.json
-sh install.sh plan --serial 原机ADB序列号 --output update-plan.json
-sh install.sh apply --serial 原机ADB序列号 --plan update-plan.json
-```
-
-默认是读取与核对，不会刷写。完整磁盘包自动使用随包的 `bundle/`。确认计划后，再明确允许执行：
-
-```sh
-sh install.sh apply --serial 原机ADB序列号 --plan update-plan.json --execute
-```
-
-当前只执行**已有 `sunuefi_esp` 和 `sunuefi_root` 的更新**，并在回 Android 后检查读回。出厂新平板首次缩小 userdata／创建分区尚未开放，脚本不能一键完成新机部署。Recovery 入口的依赖缺失仍待修复，安装器未开放刷写；UEFI-only 包也不含可执行磁盘更新的 ESP/root 镜像。需要临时体验固件或处理白屏时，参看[快速体验](docs/user/getting-started.md)和[返回 Android](docs/user/recovery.md)。
-
----
-
-## 协议与来源
-
-* UEFI 固件移植基于 [TianoCore EDK2](https://github.com/tianocore/edk2) 与 [Project Silicium (Mu-Silicium)](https://github.com/Project-Silicium/Mu-Silicium)，相关源码保留各自许可；本仓库包含 BSD、GPL、LGPL 等不同声明，具体范围见下方说明。
-* 启动菜单前端基于 [simple-init](https://github.com/BigfootACA/simple-init)。
-* 完整第三方来源与许可证见 [THIRD_PARTY.md](THIRD_PARTY.md) 与 [LICENSE.md](LICENSE.md)。
