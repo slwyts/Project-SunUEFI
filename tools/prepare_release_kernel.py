@@ -41,7 +41,7 @@ TARGETS[DEFAULT_TARGET] = {
     **TARGETS['kernel69'],
     'series_target': 'kernel69',
     'patch_tree': TARGETS['kernel69']['target_tree'],
-    'target_tree': '4681a1ea43614a6de638e11352b96b51892a2a1f',
+    'target_tree': '0f0263d9404dec16e64900c2097bdffd9b0efc0c',
     'stable_commit': '5fce161649b4d779d1b76d9fcd52dc77779774b8',
     'stable_tree': 'c278d1443495d2a1a07fff2bcfb286b5c35baaea',
     'stable_version': '7.2.9',
@@ -106,6 +106,10 @@ TARGETS[DEFAULT_TARGET] = {
     'piano_panel_reset_patch': {
         'file': 'patches/linux/7.2.9/0014-panel-piano-factory-reset.patch',
         'sha256': 'f6d934da0ea51ec8309bcc969c09a04221c9029c69ca53070aa07da28799440a',
+    },
+    'dsi_post_resync_reset_patch': {
+        'file': 'patches/linux/7.2.9/0015-dsi-sm8750-post-resync-controller-reset.patch',
+        'sha256': '80067cb42d31ef0ca012eb1e1de611b9f348194466448f982e5f1e18c9794caf',
     },
     'dsi_stop_order_patch': {
         'file': 'patches/linux/7.2.9/0008-dsi-bonded-stop-slave-first.patch',
@@ -274,7 +278,7 @@ def write_manifest(path, record):
 
 def update_patches(root, policy):
     result = {}
-    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch', 'va_clock_order_patch', 'gcv2_backend_patch', 'gcv2_catalog_patch', 'dsi_stop_order_patch', 'dsi_fixed_bpc_patch', 'flash_torch_rounding_patch', 'dsi_video_phases_patch', 'dsi_post_hs_sync_patch', 'va_mono_patch', 'piano_panel_reset_patch'):
+    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch', 'va_clock_order_patch', 'gcv2_backend_patch', 'gcv2_catalog_patch', 'dsi_stop_order_patch', 'dsi_fixed_bpc_patch', 'flash_torch_rounding_patch', 'dsi_video_phases_patch', 'dsi_post_hs_sync_patch', 'va_mono_patch', 'piano_panel_reset_patch', 'dsi_post_resync_reset_patch'):
         if key not in policy:
             continue
         row = policy[key]
@@ -330,6 +334,7 @@ def merge_stable(work, policy, paths):
         ('dsi_post_hs_sync_patch', 'fix(drm): resynchronize SM8750 PHYs after HS clocks', 'dsi_post_hs_sync_commit'),
         ('va_mono_patch', 'fix(asoc): use real mono capture on Piano VA', 'va_mono_commit'),
         ('piano_panel_reset_patch', 'fix(drm): use factory reset sequence for Piano panels', 'piano_panel_reset_commit'),
+        ('dsi_post_resync_reset_patch', 'fix(drm): reset SM8750 bonded controllers after PHY sync', 'dsi_post_resync_reset_commit'),
     ):
         if key not in paths:
             continue

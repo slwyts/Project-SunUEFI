@@ -1,0 +1,125 @@
+Subject: [PATCH] drm/msm/dsi: Reset SM8750 bonded controllers after PHY resync
+
+After both HS clock paths and the two PHY synchronization passes complete,
+reset each SM8750 bonded video controller before IRQs or panel commands.
+The existing per-host reset is earlier, inside host_power_on. Preserve the
+controller and clock-control values around this later reset, clearing all
+three engine enable bits and using the OEM v7.2 dynamic clock-force mask.
+The reset pulse is the OEM 1 us. This is a controller-only reset: no PHY
+reset, PLL change, lane exchange, DSC change or panel delay is added.
+
+Restrict the additional reset to bonded video and the actual controller
+compatible qcom,sm8750-dsi-ctrl. Unrelated controllers and command-mode
+panels keep their existing path. Keep the existing early dsi_sw_reset
+unchanged. If either new reset fails its powered/not-enabled precondition,
+unwind both powered hosts before the existing PHY cleanup.
+
+Source: MiCode/vendor_opensource_display-drivers
+  aa06fd1757c28dce96fbe4e04d4530ec21b52aac
+  msm/dsi/dsi_display.c:1677-1701, 4277-4285, 9385-9417
+  msm/dsi/dsi_ctrl_hw_cmn.c:23, 283-309
+Base: 60fd202096bf453c19fdfc2a7aaa5decd2963666 (tree 4681a1ea4361).
+
+Candidate only. The baseline first boot works, but its single OFF/ON
+still reports host1 VID_MDP overflow. This source-order difference is
+verified; causality and resume behavior need a new device run. No device
+operation and no default kernel configuration change are part of this patch.
+
+diff --git a/drivers/gpu/drm/msm/dsi/dsi.h b/drivers/gpu/drm/msm/dsi/dsi.h
+--- a/drivers/gpu/drm/msm/dsi/dsi.h
++++ b/drivers/gpu/drm/msm/dsi/dsi.h
+@@ -78,6 +78,7 @@
+ 			struct msm_dsi_phy_shared_timings *phy_shared_timings,
+ 			bool is_bonded_dsi, struct msm_dsi_phy *phy);
+ int msm_dsi_host_power_off(struct mipi_dsi_host *host);
++int msm_dsi_host_reset_after_phy_sync(struct mipi_dsi_host *host);
+ int msm_dsi_host_set_display_mode(struct mipi_dsi_host *host,
+ 				  const struct drm_display_mode *mode);
+ enum drm_mode_status msm_dsi_host_check_dsc(struct mipi_dsi_host *host,
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_host.c b/drivers/gpu/drm/msm/dsi/dsi_host.c
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -2608,6 +2608,54 @@
+ 	return ret;
+ }
+ 
++/*
++ * SM8750 bonded video requires a controller reset after both HS clock paths
++ * and PHY retime FIFOs have settled. Do not reset the PHY here: that would
++ * discard the synchronization which the manager has just completed.
++ */
++int msm_dsi_host_reset_after_phy_sync(struct mipi_dsi_host *host)
++{
++	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
++	u32 ctrl, clk_ctrl;
++	int ret = 0;
++
++	if (!of_device_is_compatible(msm_host->pdev->dev.of_node,
++				     "qcom,sm8750-dsi-ctrl") ||
++	    !(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO))
++		return 0;
++
++	mutex_lock(&msm_host->dev_mutex);
++	/* The manager calls before IRQs, panel commands or video are enabled. */
++	if (!msm_host->power_on || msm_host->enabled) {
++		ret = -EINVAL;
++		goto unlock;
++	}
++
++	ctrl = dsi_read(msm_host, REG_DSI_CTRL);
++	clk_ctrl = dsi_read(msm_host, REG_DSI_CLK_CTRL);
++	dsi_write(msm_host, REG_DSI_CTRL,
++		  ctrl & ~(DSI_CTRL_ENABLE | DSI_CTRL_VID_MODE_EN |
++			   DSI_CTRL_CMD_MODE_EN));
++	wmb();
++
++	/* MiCode v7.2 dynamic force-on mask; preserve every existing bit. */
++	dsi_write(msm_host, REG_DSI_CLK_CTRL,
++		  clk_ctrl | 0x23f | BIT(8) | BIT(9) | BIT(11) | BIT(21));
++	wmb();
++	dsi_write(msm_host, REG_DSI_RESET, 1);
++	wmb();
++	udelay(1);
++	dsi_write(msm_host, REG_DSI_RESET, 0);
++	wmb();
++	dsi_write(msm_host, REG_DSI_CLK_CTRL, clk_ctrl);
++	wmb();
++	dsi_write(msm_host, REG_DSI_CTRL, ctrl);
++	wmb();
++unlock:
++	mutex_unlock(&msm_host->dev_mutex);
++	return ret;
++}
++
+ int msm_dsi_host_power_off(struct mipi_dsi_host *host)
+ {
+ 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_manager.c b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+--- a/drivers/gpu/drm/msm/dsi/dsi_manager.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+@@ -253,6 +253,16 @@
+ 	if (is_bonded_dsi && msm_dsi1)
+ 		msm_dsi_phy_reset_clk_en_sel(msm_dsi1->phy);
+ 
++	/* OEM bonded-video prepare resets both controllers after PHY resync. */
++	if (is_bonded_dsi && msm_dsi1) {
++		ret = msm_dsi_host_reset_after_phy_sync(host);
++		if (ret)
++			goto host_sync_fail;
++		ret = msm_dsi_host_reset_after_phy_sync(msm_dsi1->host);
++		if (ret)
++			goto host_sync_fail;
++	}
++
+ 	/*
+ 	 * Enable before preparing the panel, disable after unpreparing, so
+ 	 * that the panel can communicate over the DSI link.
+@@ -263,6 +273,8 @@
+ 
+ 	return 0;
+ 
++host_sync_fail:
++	msm_dsi_host_power_off(msm_dsi1->host);
+ host1_on_fail:
+ 	msm_dsi_host_power_off(host);
+ host_on_fail:
