@@ -1,0 +1,556 @@
+From: Project SunUEFI <sunuefi@localhost>
+Subject: [PATCH] drm/msm/dpu: add ordinary IGC v5 through shared REGDMA color state
+
+Expose the verified ordinary 257-entry, 16-bit IGC v5 layout through standard
+DEGAMMA_LUT. Use R/G/B LUTBUS transfers, the published three-NOP workaround,
+and IGC control enable at DSPP 0x1264. Preserve the standard endpoint including
+zero; leave high precision and dither disabled.
+
+Merge complete GC and IGC state in the existing REGDMA BO and queue. Calculate
+the final descriptor offset from the actual command length and reject an
+out-of-buffer layout before taking clocks or publishing DMA. Existing GEM/VM,
+mutex, PM/module/clock lifetime and unknown-queue reset retention are unchanged.
+
+Keep assigned DSPPs for this backend even when both LUTs are bypassed, clear
+unassigned duplicate pointers, and validate every actual split-display half.
+On color change or modeset, submit both current LUTs (NULL disables each).
+Only successful combined DMA stages GC/IGC flush; failure cannot apply PCC
+alone. Other platforms keep their existing GC programming implementation.
+
+Based on Piano source 95b72a5bd7eb7fb31b2b385faa915edeee5a31cf, tree
+70a83a85970d3c6b50afe8886b4f6b855bd32d6a. Register/command ABI from MiCode
+vendor_opensource_display-drivers aa06fd1757c28dce96fbe4e04d4530ec21b52aac.
+This candidate is not in the default series. Seven ARM64 objects and actual
+CPU packer boundary calls passed; no full kernel link or hardware test.
+It does not implement high-precision sampling, HDR metadata or 12-bit FRC.
+---
+--- a/drivers/gpu/drm/msm/Makefile
++++ b/drivers/gpu/drm/msm/Makefile
+@@ -90,6 +90,7 @@
+ 	disp/dpu1/dpu_hw_sspp_v13.o \
+ 	disp/dpu1/dpu_hw_dspp.o \
+ 	disp/dpu1/dpu_hw_gcv2.o \
++	disp/dpu1/dpu_hw_igcv5.o \
+ 	disp/dpu1/dpu_lutdma.o \
+ 	disp/dpu1/dpu_hw_merge3d.o \
+ 	disp/dpu1/dpu_hw_top.o \
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -25,6 +25,7 @@
+ 
+ #include "dpu_kms.h"
+ #include "dpu_lutdma.h"
++#include "dpu_hw_igcv5.h"
+ #include "dpu_hw_lm.h"
+ #include "dpu_hw_ctl.h"
+ #include "dpu_hw_dspp.h"
+@@ -886,9 +887,26 @@
+ 			else
+ 				_dpu_crtc_get_gc_lut(state, gc_lut);
+ 		}
+-		if (!gcv2_ret)
+-			gcv2_ret = gc_master->ops.setup_gc(gc_master, gc_lut, mixer[0].lm_ctl, gc_mask);
++		if (!gcv2_ret) {
++			if (gc_master->ops.setup_color) {
++				const struct drm_color_lut *igc_lut = state->degamma_lut ?
++					state->degamma_lut->data : NULL;
++
++				gcv2_ret = gc_master->ops.setup_color(gc_master, gc_lut,
++						igc_lut, mixer[0].lm_ctl, gc_mask);
++			} else {
++				gcv2_ret = gc_master->ops.setup_gc(gc_master, gc_lut,
++						mixer[0].lm_ctl, gc_mask);
++			}
++		}
+ 		kfree(gc_lut);
++		if (gcv2_ret) {
++			drm_err(crtc->dev, "color REGDMA programming failed: %d\n", gcv2_ret);
++			if (state->event && state->event->base.fence)
++				dma_fence_set_error(state->event->base.fence, gcv2_ret);
++			/* Do not apply only PCC after the combined LUT update failed. */
++			return;
++		}
+ 	}
+ 
+ 	for (i = 0; i < cstate->num_mixers; i++) {
+@@ -935,6 +953,9 @@
+ 			/* stage config flush mask */
+ 			ctl->ops.update_pending_flush_dspp(ctl,
+ 				mixer[i].hw_dspp->idx, DPU_DSPP_GC);
++			if (gc_master && gc_master->ops.setup_color)
++				ctl->ops.update_pending_flush_dspp(ctl,
++					mixer[i].hw_dspp->idx, DPU_DSPP_IGC);
+ 		}
+ 	}
+ }
+@@ -1416,6 +1437,39 @@
+ 
+ #define MAX_CHANNELS_PER_CRTC PIPES_PER_PLANE
+ #define MAX_HDISPLAY_SPLIT 1080
++
++static bool dpu_crtc_has_regdma_color(struct dpu_kms *kms)
++{
++	struct dpu_hw_blk *block = kms->catalog->dspp_count ? kms->rm.dspp_blks[0] : NULL;
++	struct dpu_hw_dspp *dspp = block ? to_dpu_hw_dspp(block) : NULL;
++
++	return dspp && dspp->ops.setup_color;
++}
++
++static int dpu_crtc_check_regdma_color(struct drm_crtc *crtc,
++				     struct drm_crtc_state *state)
++{
++	struct dpu_kms *kms = _dpu_crtc_get_kms(crtc);
++	struct dpu_crtc_state *cstate = to_dpu_crtc_state(state);
++	u32 mask = 0;
++	int i;
++
++	if (!dpu_crtc_has_regdma_color(kms) ||
++	    (!state->color_mgmt_changed && !drm_atomic_crtc_needs_modeset(state)))
++		return 0;
++	if (!dpu_lutdma_ready(kms->lutdma) || !cstate->num_mixers)
++		return -EIO;
++	for (i = 0; i < cstate->num_mixers; i++) {
++		struct dpu_hw_dspp *dspp = cstate->mixers[i].hw_dspp;
++
++		if (!dspp || dspp->idx < DSPP_0 || dspp->idx >= DSPP_MAX ||
++		    !dspp->ops.setup_color || dspp->lutdma != kms->lutdma ||
++		    !dpu_lutdma_ctl_valid(kms->lutdma, cstate->mixers[i].lm_ctl))
++			return -EINVAL;
++		mask |= BIT(17 + dspp->idx - DSPP_0);
++	}
++	return hweight32(mask) == cstate->num_mixers ? 0 : -EINVAL;
++}
+ 
+ static struct msm_display_topology dpu_crtc_get_topology(
+ 		struct drm_crtc *crtc,
+@@ -1444,7 +1498,7 @@
+ 	 *
+ 	 * If DSC is enabled, use 2 LMs for 2:2:1 topology
+ 	 *
+-	 * Add dspps to the reservation requirements if ctm or gamma_lut are requested
++	 * Keep DSPPs for complete REGDMA color state, including NULL bypass.
+ 	 *
+ 	 * Only hardcode num_lm to 2 for cases where num_intf == 2 and CWB is not
+ 	 * enabled. This is because in cases where CWB is enabled, num_intf will
+@@ -1464,7 +1518,8 @@
+ 	else
+ 		topology.num_lm = 1;
+ 
+-	if (crtc_state->ctm || crtc_state->gamma_lut)
++	if (crtc_state->ctm || crtc_state->gamma_lut || crtc_state->degamma_lut ||
++	    dpu_crtc_has_regdma_color(dpu_kms))
+ 		topology.num_dspp = topology.num_lm;
+ 
+ 	return topology;
+@@ -1521,8 +1576,8 @@
+ 
+ 		cstate->mixers[i].hw_lm = to_dpu_hw_mixer(hw_lm[i]);
+ 		cstate->mixers[i].lm_ctl = to_dpu_hw_ctl(hw_ctl[ctl_idx]);
+-		if (i < num_dspp)
+-			cstate->mixers[i].hw_dspp = to_dpu_hw_dspp(hw_dspp[i]);
++		cstate->mixers[i].hw_dspp = i < num_dspp ?
++			to_dpu_hw_dspp(hw_dspp[i]) : NULL;
+ 	}
+ 
+ 	cstate->num_mixers = num_lm;
+@@ -1579,8 +1634,8 @@
+ 	/* A hardware failure latches the engine unusable. Do not accept a
+ 	 * later gamma update as though its transport were still initialized.
+ 	 */
+-	if (crtc_state->color_mgmt_changed && kms->lutdma &&
+-	    !dpu_lutdma_ready(kms->lutdma))
++	if ((crtc_state->color_mgmt_changed || drm_atomic_crtc_needs_modeset(crtc_state)) &&
++	    kms->lutdma && !dpu_lutdma_ready(kms->lutdma))
+ 		return -EIO;
+ 
+ 
+@@ -1610,6 +1665,10 @@
+ 	}
+ 
+ 	DRM_DEBUG_ATOMIC("%s: check\n", dpu_crtc->name);
++
++	rc = dpu_crtc_check_regdma_color(crtc, crtc_state);
++	if (rc)
++		return rc;
+ 
+ 	if (cstate->num_mixers) {
+ 		rc = _dpu_crtc_check_and_setup_lm_bounds(crtc, crtc_state);
+@@ -1978,7 +2037,9 @@
+ 		 */
+ 		if (dspp && dspp->ops.setup_gc) {
+ 			drm_mode_crtc_set_gamma_size(crtc, DPU_GAMMA_LUT_SIZE);
+-			drm_crtc_enable_color_mgmt(crtc, 0, true, DPU_GAMMA_LUT_SIZE);
++			drm_crtc_enable_color_mgmt(crtc,
++					dspp->ops.setup_color ? DPU_IGCV5_LUT_SIZE : 0,
++					true, DPU_GAMMA_LUT_SIZE);
+ 		} else {
+ 			drm_crtc_enable_color_mgmt(crtc, 0, true, 0);
+ 		}
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
+@@ -430,6 +430,8 @@
+ 		.len = 0x90, .version = 0x60000},
+ 	.gc = {.name = "gc", .base = 0x17c0,
+ 		.len = 0x40, .version = 0x20000},
++	.igc = {.name = "igc", .base = 0x1260,
++		.len = 0x8, .version = 0x50000},
+ };
+ 
+ /*************************************************************
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
+@@ -78,10 +78,12 @@
+  * DSPP sub-blocks
+  * @DPU_DSPP_PCC             Panel color correction block
+  * @DPU_DSPP_GC              Gamma correction block
++ * @DPU_DSPP_IGC             Inverse gamma correction block
+  */
+ enum {
+ 	DPU_DSPP_PCC = 0x1,
+ 	DPU_DSPP_GC,
++	DPU_DSPP_IGC,
+ 	DPU_DSPP_MAX
+ };
+ 
+@@ -331,10 +333,12 @@
+  * struct dpu_dspp_sub_blks: Information of DSPP block
+  * @pcc: pixel color correction block
+  * @gc: gamma correction block
++ * @igc: inverse gamma correction block
+  */
+ struct dpu_dspp_sub_blks {
+ 	struct dpu_pp_blk pcc;
+ 	struct dpu_pp_blk gc;
++	struct dpu_pp_blk igc;
+ };
+ 
+ struct dpu_pingpong_sub_blks {
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
+@@ -403,6 +403,9 @@
+ 	case DPU_DSPP_GC:
+ 		ctx->pending_dspp_flush_mask[dspp - DSPP_0] |= BIT(5);
+ 		break;
++	case DPU_DSPP_IGC:
++		ctx->pending_dspp_flush_mask[dspp - DSPP_0] |= BIT(2);
++		break;
+ 	default:
+ 		return;
+ 	}
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.c
+@@ -124,6 +124,13 @@
+ 	return dpu_lutdma_submit_gc(ctx->lutdma, ctl, dspp_mask, lut);
+ }
+ 
++static int dpu_setup_dspp_color(struct dpu_hw_dspp *ctx,
++		struct dpu_hw_gc_lut *gc_lut, const struct drm_color_lut *igc_lut,
++		struct dpu_hw_ctl *ctl, u32 dspp_mask)
++{
++	return dpu_lutdma_submit_color(ctx->lutdma, ctl, dspp_mask, gc_lut, igc_lut, true);
++}
++
+ void dpu_hw_dspp_bind_regdma(struct dpu_hw_dspp *ctx, struct dpu_lutdma *dma)
+ {
+ 	if (ctx->cap->sblk->gc.version != 0x20000 ||
+@@ -131,6 +138,9 @@
+ 		return;
+ 	ctx->lutdma = dma;
+ 	ctx->ops.setup_gc = dpu_setup_dspp_gcv2;
++	if (ctx->cap->sblk->igc.version == 0x50000 &&
++	    ctx->cap->sblk->igc.base == 0x1260)
++		ctx->ops.setup_color = dpu_setup_dspp_color;
+ }
+ 
+ /**
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h
+@@ -8,6 +8,7 @@
+ struct dpu_hw_dspp;
+ struct dpu_hw_ctl;
+ struct dpu_lutdma;
++struct drm_color_lut;
+ 
+ /**
+  * struct dpu_hw_pcc_coeff - PCC coefficient structure for each color
+@@ -75,6 +76,11 @@
+ 	int (*setup_gc)(struct dpu_hw_dspp *ctx, struct dpu_hw_gc_lut *gc_lut,
+ 			struct dpu_hw_ctl *ctl, u32 dspp_mask);
+ 
++	/* Complete GC/IGC state in one shared REGDMA submission. */
++	int (*setup_color)(struct dpu_hw_dspp *ctx, struct dpu_hw_gc_lut *gc_lut,
++			   const struct drm_color_lut *igc_lut,
++			   struct dpu_hw_ctl *ctl, u32 dspp_mask);
++
+ };
+ 
+ /**
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.c
+@@ -75,3 +75,19 @@
+ 	words[n++] = cpu_to_le32(GC_ENABLE);
+ 	return n;
+ }
++
++int dpu_hw_color_regdma_last_offset(size_t command_words, size_t buffer_bytes,
++				    size_t *offset)
++{
++	size_t last;
++
++	if (!offset || !command_words || command_words > 0x3fff)
++		return -EINVAL;
++	if (buffer_bytes < 8 || command_words > (buffer_bytes - 8) / sizeof(u32))
++		return -ENOSPC;
++	last = (command_words * sizeof(u32) + 255) & ~(size_t)255;
++	if (last > buffer_bytes - 8)
++		return -ENOSPC;
++	*offset = last;
++	return 0;
++}
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.h
+@@ -19,4 +19,7 @@
+ int dpu_hw_gcv2_pack_regdma(__le32 *words, size_t capacity,
+ 			  u32 dspp_mask, const struct dpu_hw_gc_lut *lut);
+ 
++int dpu_hw_color_regdma_last_offset(size_t command_words, size_t buffer_bytes,
++				    size_t *offset);
++
+ #endif
+--- /dev/null
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_igcv5.c
+@@ -0,0 +1,68 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Ordinary IGC v5 LUTBUS layout from Qualcomm's published display driver. */
++#include <linux/bitops.h>
++#include <linux/byteorder/generic.h>
++#include <linux/errno.h>
++#include <drm/drm_color_mgmt.h>
++
++#include "dpu_hw_gcv2.h"
++#include "dpu_hw_igcv5.h"
++
++#define REGDMA_V3_DECODE_SELECT 0x18180114
++#define REGDMA_SINGLE_WRITE BIT(28)
++#define REGDMA_LUTBUS_WRITE (BIT(30) | BIT(29))
++#define IGC_CONTROL_OFFSET 0x4
++#define IGC_ENABLE BIT(8)
++#define IGC_TRANSFER_WORDS 3
++#define IGC_TRANSFER_COUNT (DPU_IGCV5_DATA_WORDS / IGC_TRANSFER_WORDS)
++
++static u16 igcv5_component(const struct drm_color_lut *lut, unsigned int index)
++{
++	unsigned int entry = index / 3;
++
++	if (entry >= DPU_IGCV5_LUT_SIZE)
++		return 0; /* Pad the odd endpoint to a complete LUTBUS transfer. */
++	switch (index % 3) {
++	case 0:
++		return lut[entry].red;
++	case 1:
++		return lut[entry].green;
++	default:
++		return lut[entry].blue;
++	}
++}
++
++int dpu_hw_igcv5_pack_regdma(__le32 *words, size_t capacity,
++			   u32 dspp_mask, const struct drm_color_lut *lut)
++{
++	unsigned int i, n = 0;
++	unsigned int required = lut ? DPU_IGCV5_LUT_WORDS : 4;
++
++	if (!words || !dspp_mask || (dspp_mask & ~DPU_GCV2_DSPP_MASK))
++		return -EINVAL;
++	if (capacity < required)
++		return -ENOSPC;
++	words[n++] = cpu_to_le32(REGDMA_V3_DECODE_SELECT);
++	words[n++] = cpu_to_le32(dspp_mask);
++	if (lut) {
++		/* LUTBUS block IGC=0, table select=0, three DWORDs per transfer.
++		 * Ordinary v5 uses the full 16-bit R/G/B, without the v4 <<4.
++		 * Preserve the standard endpoint including zero; the vendor API's
++		 * zero-as-default-last sentinel is not part of the DRM LUT ABI.
++		 */
++		words[n++] = cpu_to_le32(REGDMA_LUTBUS_WRITE);
++		words[n++] = cpu_to_le32((IGC_TRANSFER_WORDS << 16) | IGC_TRANSFER_COUNT);
++		for (i = 0; i < DPU_IGCV5_DATA_WORDS; i++)
++			words[n++] = cpu_to_le32(igcv5_component(lut, i * 2) |
++					((u32)igcv5_component(lut, i * 2 + 1) << 16));
++		/* Published LUTBUS workaround: three real NO_OP opcodes. */
++		words[n++] = 0;
++		words[n++] = 0;
++		words[n++] = 0;
++	}
++	words[n++] = cpu_to_le32(REGDMA_SINGLE_WRITE |
++				(DPU_IGCV5_REG_BASE + IGC_CONTROL_OFFSET));
++	/* High precision and dither have no standard encoding in this backend. */
++	words[n++] = cpu_to_le32(lut ? IGC_ENABLE : 0);
++	return n;
++}
+--- /dev/null
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_igcv5.h
+@@ -0,0 +1,21 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _DPU_HW_IGCV5_H
++#define _DPU_HW_IGCV5_H
++
++#include <linux/types.h>
++
++struct drm_color_lut;
++
++#define DPU_IGCV5_LUT_SIZE 257
++#define DPU_IGCV5_REG_BASE 0x1260
++/* 258 padded RGB triplets / two triplets per LUTBUS transfer. */
++#define DPU_IGCV5_DATA_WORDS 387
++#define DPU_IGCV5_LUT_WORDS (2 + 2 + DPU_IGCV5_DATA_WORDS + 3 + 2)
++
++/* CPU command preparation only. A non-NULL LUT has exactly 257 DRM entries.
++ * The caller owns the buffer, mapping, queue and completion/reset lifetime.
++ */
++int dpu_hw_igcv5_pack_regdma(__le32 *words, size_t capacity,
++			   u32 dspp_mask, const struct drm_color_lut *lut);
++
++#endif
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
+@@ -14,6 +14,7 @@
+ #include "msm_drv.h"
+ #include "msm_gem.h"
+ #include "dpu_hw_gcv2.h"
++#include "dpu_hw_igcv5.h"
+ #include "dpu_hw_vbif.h"
+ #include "dpu_kms.h"
+ #include "dpu_hw_dspp.h"
+@@ -37,7 +38,7 @@
+ #define REGDMA_CMD_WORDS GENMASK(13, 0)
+ #define REGDMA_ALIGN 256
+ #define REGDMA_BUFFER_SIZE SZ_8K
+-#define REGDMA_LAST_OFFSET ALIGN(DPU_GCV2_LUT_WORDS * sizeof(u32), REGDMA_ALIGN)
++#define REGDMA_LAST_SIZE (2 * sizeof(u32))
+ 
+ struct dpu_lutdma {
+ 	struct dpu_kms *kms;
+@@ -145,12 +146,20 @@
+ 	}
+ }
+ 
+-int dpu_lutdma_submit_gc(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
+-			u32 dspp_mask, const struct dpu_hw_gc_lut *lut)
++bool dpu_lutdma_ctl_valid(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl)
++{
++	return ctl && queue_reg(dma, ctl->idx, REGDMA_QUEUE_RESET);
++}
++
++int dpu_lutdma_submit_color(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
++			u32 dspp_mask, const struct dpu_hw_gc_lut *gc_lut,
++			const struct drm_color_lut *igc_lut, bool update_igc)
+ {
+ 	u32 done, errors, descriptor;
+ 	__le32 *last;
+-	int words, ret;
++	size_t capacity = (REGDMA_BUFFER_SIZE - REGDMA_LAST_SIZE) / sizeof(u32);
++	size_t last_offset;
++	int words, igc_words, ret;
+ 
+ 	might_sleep(); /* Called by the process-context atomic commit, never IRQ. */
+ 	if (!dma || !ctl || ctl->idx < CTL_0 || ctl->idx >= CTL_MAX ||
+@@ -162,12 +171,23 @@
+ 		ret = -EIO;
+ 		goto unlock;
+ 	}
+-	words = dpu_hw_gcv2_pack_regdma(dma->commands, REGDMA_LAST_OFFSET / sizeof(u32),
+-				       dspp_mask, lut);
++	words = dpu_hw_gcv2_pack_regdma(dma->commands, capacity, dspp_mask, gc_lut);
+ 	if (words < 0) {
+ 		ret = words;
+ 		goto unlock;
+ 	}
++	if (update_igc) {
++		igc_words = dpu_hw_igcv5_pack_regdma(dma->commands + words,
++						capacity - words, dspp_mask, igc_lut);
++		if (igc_words < 0) {
++			ret = igc_words;
++			goto unlock;
++		}
++		words += igc_words;
++	}
++	ret = dpu_hw_color_regdma_last_offset(words, REGDMA_BUFFER_SIZE, &last_offset);
++	if (ret)
++		goto unlock;
+ 	ret = clocks_get(dma);
+ 	if (ret)
+ 		goto unlock;
+@@ -178,7 +198,7 @@
+ 		goto unlock;
+ 	}
+ 	dma->module_held = true;
+-	last = (__le32 *)((u8 *)dma->commands + REGDMA_LAST_OFFSET);
++	last = (__le32 *)((u8 *)dma->commands + last_offset);
+ 	last[0] = cpu_to_le32(0x18180114);
+ 	last[1] = 0; /* Real downstream final descriptor: decode-select no blocks. */
+ 	dma_wmb(); /* WC GEM writes must precede descriptor publication. */
+@@ -187,12 +207,12 @@
+ 	writel(REGDMA_DONE, queue_reg(dma, ctl->idx, REGDMA_DONE_CLEAR));
+ 	dma->active_ctl = ctl->idx;
+ 	WRITE_ONCE(dma->inflight, true);
+-	drm_dbg_kms(dma->kms->dev, "GC2 REGDMA ctl=%u dspp_mask=%#x iova=%#llx words=%d\n",
++	drm_dbg_kms(dma->kms->dev, "color REGDMA ctl=%u dspp_mask=%#x iova=%#llx words=%d\n",
+ 		    ctl->idx, dspp_mask, dma->iova, words);
+ 	writel(lower_32_bits(dma->iova), queue_reg(dma, ctl->idx, 0));
+ 	writel(REGDMA_WRITE | (words & REGDMA_CMD_WORDS), queue_reg(dma, ctl->idx, 4));
+ 	wmb();
+-	writel(lower_32_bits(dma->iova + REGDMA_LAST_OFFSET), queue_reg(dma, ctl->idx, 0));
++	writel(lower_32_bits(dma->iova + last_offset), queue_reg(dma, ctl->idx, 0));
+ 	descriptor = REGDMA_WRITE | REGDMA_LAST | 2;
+ 	writel(descriptor, queue_reg(dma, ctl->idx, 4));
+ 	wmb();
+@@ -202,7 +222,7 @@
+ 	errors = readl(dma->mmio + dma->cfg->db_base + REGDMA_ERROR_STATUS) & REGDMA_ERROR_MASK;
+ 	if (ret || errors) {
+ 		WRITE_ONCE(dma->faulted, true);
+-		drm_err(dma->kms->dev, "GC2 REGDMA failure ctl=%u done=%#x error=%#x ret=%d\n",
++		drm_err(dma->kms->dev, "color REGDMA failure ctl=%u done=%#x error=%#x ret=%d\n",
+ 			ctl->idx, done, errors, ret);
+ 		ret = ret ? ret : -EIO;
+ 		if (queue_reset(dma, ctl->idx)) {
+@@ -210,12 +230,18 @@
+ 			goto unlock;
+ 		}
+ 	} else {
+-		drm_dbg_kms(dma->kms->dev, "GC2 REGDMA completed ctl=%u status=%#x\n", ctl->idx, done);
++		drm_dbg_kms(dma->kms->dev, "color REGDMA completed ctl=%u status=%#x\n", ctl->idx, done);
+ 	}
+ 	retire_reference(dma);
+ unlock:
+ 	mutex_unlock(&dma->lock);
+ 	return ret;
++}
++
++int dpu_lutdma_submit_gc(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
++			u32 dspp_mask, const struct dpu_hw_gc_lut *lut)
++{
++	return dpu_lutdma_submit_color(dma, ctl, dspp_mask, lut, NULL, false);
+ }
+ 
+ struct dpu_lutdma *dpu_lutdma_init(struct dpu_kms *kms)
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h
+@@ -6,12 +6,17 @@
+ 
+ struct dpu_kms;
+ struct dpu_lutdma;
++struct drm_color_lut;
+ struct dpu_hw_ctl;
+ struct dpu_hw_gc_lut;
+ 
+ struct dpu_lutdma *dpu_lutdma_init(struct dpu_kms *kms);
+ bool dpu_lutdma_ready(struct dpu_lutdma *dma);
+ bool dpu_lutdma_idle(struct dpu_lutdma *dma);
++bool dpu_lutdma_ctl_valid(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl);
++int dpu_lutdma_submit_color(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
++			u32 dspp_mask, const struct dpu_hw_gc_lut *gc_lut,
++			const struct drm_color_lut *igc_lut, bool update_igc);
+ void dpu_lutdma_quiesce(struct dpu_lutdma *dma);
+ int dpu_lutdma_submit_gc(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
+ 			u32 dspp_mask, const struct dpu_hw_gc_lut *lut);
