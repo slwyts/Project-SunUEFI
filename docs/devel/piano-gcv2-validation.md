@@ -1,6 +1,6 @@
 # GCv2 最小实机检查
 
-这份步骤供主任务在正常默认内核构建完成、恢复包可用之后执行。bde3已实测恒等Gamma的硬件提交与完成，但未修补的Mutter48.7在恢复原空LUT时使用户会话SEGV；当前客户端已阻止这种写入。温色先通过GNOME标准Night Light入口检查，不能将恒等DMA成功扩大为全部颜色路径可用。
+这份步骤供主任务在正常默认内核构建完成、恢复包可用之后执行。bde3已实测恒等Gamma的硬件提交与完成；原Mutter48.7在恢复空LUT时使用户会话SEGV。正常Debian本地包已修复该路径，无EDID输出也已自动关联标准sRGB profile。新库的空清除和真实曲线恢复已完成D-Bus读回及会话存活检查，温色的硬件与物理反馈仍单独记录。通用客户端默认继续阻止原状态为空的probe，不据安装版本猜测活动进程。
 
 ## 只读起点
 
@@ -21,7 +21,7 @@ dmesg --color=never > /tmp/gcv2-before-kernel.txt
 
 bde3恒等提交在boottime659.136439秒记录`ctl1 dspp_mask0x60000 iova0x1000 words1554`，659.136542秒记录`completed status0x8`，Set/Get读回一致。约3秒后的空恢复使UID1000的GNOME Shell以`status11/SEGV`退出，GDM重新建立会话；这次日志没有kernel Oops或REGDMA timeout。源码可达路径是SetCrtcGamma缓存非NULL的size0对象，[meta_kms_update_set_crtc_gamma](https://github.com/GNOME/mutter/blob/48.7/src/backends/native/meta-kms-update.c#L554)将其送入[meta_gamma_lut_copy_to_size](https://github.com/GNOME/mutter/blob/48.7/src/backends/meta-crtc.c#L278)，后者用零size计算slots并访问空数组的`i-1`项。未取得core stack，不能把源码定位写成已确认的崩溃栈。
 
-[Mutter最小修复](../../linux/desktops/gnome/patches/mutter/0001-kms-empty-gamma-bypass.patch)在KMS更新入口将size0与NULL一同表示为bypass，非空曲线仍走原重采样。适用官方48.7；当前root记录`libmutter-16-0 48.7-0+deb13u1`、`gnome-shell 48.7-0+deb13u2`。只完成源码补丁及固定官方文件上的fuzz0应用检查，未构建正常Debian包、未实机验证修复后的空恢复。内核atomic层可写blob0这一事实不替代上层完整验证，也无需为此新增legacy gamma回调。
+[Mutter最小修复](../../linux/desktops/gnome/patches/mutter/0001-kms-empty-gamma-bypass.patch)在KMS更新入口将size0与NULL一同表示为bypass，非空曲线仍走原重采样。适用官方48.7；当前root记录`libmutter-16-0 48.7-0+deb13u1`、`gnome-shell 48.7-0+deb13u2`。已用固定Debian源包、原rules/control及正常quilt构建ARM64源码和五个运行包，版本`48.7-0+deb13u1+sunuefi1`。实际安装并正常重启GDM后，保存当前真实1024项曲线→设置空→读回三空→恢复原曲线，D-Bus返回与曲线读回均匹配，同一piano会话15保持、GDM active。此检查证明新库完整空LUT接口往返和会话存活，未单独证明面板光学恢复。内核atomic层可写blob0这一事实不替代上层完整验证，也无需为此新增legacy gamma回调。
 
 当前后端在真实提交与完成处有`drm_dbg_kms`日志，但没有成功初始化、逐DSPP绑定和健康退出的正向日志。`GAMMA_LUT`出现可以说明代码已安装可用ops，无法单独说明每个物理DSPP的输出结果。此前独立[日志草案](../../patches/linux/drafts/0003-drm-msm-dpu-log-gcv2-init-bind-quiesce.patch)基于旧281的CTL枚举循环，未加入a589；正式0006本次修复改为catalog循环后，该草案不可直接应用，须先更新再正常编译。所需正向消息仍应只在真实reset成功、资源初始化、实际ops绑定和quiesce完成之后输出，不增加寄存器读取、假完成事件或新控制路径。
 
@@ -41,7 +41,7 @@ gdbus call --session --dest org.gnome.SettingsDaemon.Color \
 
 调用环境必须是实际活动用户的session bus。预览结束后的6500K是非空的正常颜色曲线，可能包含profile校准；不等于恢复最初`GAMMA_LUT=0`。是否真正变暖仍看实际面板和新硬件完成记录。
 
-bde3后续一次标准10秒预览已accepted，Temperature由6500过渡到6395，但during/after的Gamma blob仍为0，没有新REGDMA。实际colord的DSI设备已Enabled且Embedded，却没有关联profile；包与服务齐全。官方48.7 [ensure_device_profile](https://github.com/GNOME/mutter/blob/48.7/src/backends/meta-color-store.c#L492)在没有EDID checksum时提前return FALSE，未进入已有的无EDID sRGB fallback；无default profile使assigned profile为空，白点更新直接返回。正常夜灯硬件更新尚未完成。最小源码方向是以真实device ID建立无EDID缓存，给标准sRGB fallback补实际Filename和MAPPING_device_id，沿colord原有soft关联形成default profile；不能通过伪EDID或强开UI代替。
+bde3后续一次标准10秒预览已accepted，Temperature由6500过渡到6395，但during/after的Gamma blob仍为0，没有新REGDMA。实际colord的DSI设备已Enabled且Embedded，却没有关联profile；包与服务齐全。官方48.7 [ensure_device_profile](https://github.com/GNOME/mutter/blob/48.7/src/backends/meta-color-store.c#L492)在没有EDID checksum时提前return FALSE，未进入已有的无EDID sRGB fallback；无default profile使assigned profile为空，白点更新直接返回。无EDID修复已经进入上述正常包：以真实device ID建立缓存，在实际colord connect成功且没有任何default profile时，给标准sRGB fallback补实际Filename和MAPPING_device_id，沿原有soft关联形成默认profile；已有用户profile和EDID路线保持。实际安装、重启GDM后，DSI已自动关联no-edid ICC，GetCrtcGamma三曲线各1024项，kernel正常。标准sRGB明确未实机校准；正常夜灯的硬件提交和物理变暖反馈仍待独立记录，不能通过伪EDID或强开UI代替。
 
 ## 非空备份的恒等后温色
 

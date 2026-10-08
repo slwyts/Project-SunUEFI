@@ -116,7 +116,7 @@ docker run --rm --privileged -v "$PWD:/workspace" -w /workspace sunuefi-builder 
 
 Debian/GNOME 的根系统构建会在独立副本中编译带 Piano 自动亮度策略的标准 `gnome-settings-daemon` 包，再按正常 APT 流程安装。原厂 lux 阈值和等待时间用于减少亮度频繁波动，不修改传感器读数；包来源和补丁记录随根系统保存。其他桌面直接使用标准传感器、背光接口。
 
-同一入口也构建标准 Mutter 包，修正空 Gamma 曲线恢复，以及无 EDID 内置屏幕的颜色配置生成。两处修改保留标准颜色服务和用户已有配置，不生成假 EDID；通用 sRGB 作为未校准的默认配置，不能等同于原厂色彩校准。可单独用 `./build.sh mutter` 重建，来源及补丁见 [Mutter 适配说明](linux/desktops/gnome/patches/mutter/README.md)。当前新包正在完成本地构建和实机验证。
+同一入口也构建标准 Mutter 包，修正空 Gamma 曲线恢复，以及无 EDID 内置屏幕的颜色配置生成。两处修改保留标准颜色服务和用户已有配置，不生成假 EDID；通用 sRGB 作为未校准的默认配置，不能等同于原厂色彩校准。可单独用 `./build.sh mutter` 重建，来源及补丁见 [Mutter 适配说明](linux/desktops/gnome/patches/mutter/README.md)。新包已完成本地构建，并实机验证自动颜色配置和空曲线恢复；夜灯实际色温效果仍在验证。
 
 维护者可用 `./build.sh trampoline --stock-boot 当前ROM的boot.img --output 新输出目录` 生成前置入口。选择器的 Android 直通、保存 Linux 路线后的普通重启以及 Linux 返回 Android 均已实测。`./build.sh boot-repack` 已能编译原生 BOOT 文件重打包／还原工具，真实原厂 BOOT 无损还原已验证；在线安装、OTA 自动化与请求自动消费尚未完成。`./build.sh module --inspect` 当前列出缺项，不生成可安装 ZIP。接口与升级流程见[Android 模块说明](docs/devel/android-module.md)，文件工具见[原生重打包说明](docs/devel/android-boot-repack.md)。
 
