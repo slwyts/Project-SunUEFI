@@ -1,5 +1,6 @@
 """Synthetic GPT/image fixtures and recorded command refusal; no devices."""
 import copy
+import base64
 import json
 from pathlib import Path
 import shutil
@@ -109,6 +110,31 @@ class FakeDevice:
 
 
 class InstallerTests(unittest.TestCase):
+    def test_ssh_plan_binds_key_and_refuses_missing_or_changed_key_before_flash(self):
+        snapshot = update_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = fixture_bundle(directory)
+            key = Path(directory) / 'access.pub'
+            other = Path(directory) / 'other.pub'
+            for path, hex_key in ((key, 'd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a'),
+                                  (other, '3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c')):
+                wire = struct.pack('>I', 11) + b'ssh-ed25519' + struct.pack('>I', 32) + bytes.fromhex(hex_key)
+                path.write_bytes(b'ssh-ed25519 ' + base64.b64encode(wire) + b'\n')
+            plan = install.make_plan(snapshot, bundle, ssh_public_key=key)
+            self.assertEqual(plan['ssh_provisioning']['source_root_sha256'],
+                             plan['bundle']['images']['root.ext4.img']['sha256'])
+            fake = FakeDevice(snapshot, {})
+            for supplied in (None, other):
+                fake.events.clear()
+                with self.assertRaisesRegex(ValueError, 'changed since plan'):
+                    install.apply_update(fake, plan, bundle, execute=True, ssh_public_key=supplied)
+                self.assertEqual(fake.events, ['inspect'])
+            fake.events.clear()
+            preview = install.apply_update(fake, plan, bundle, ssh_public_key=key)
+            self.assertEqual(preview['ssh_provisioning_pending'], plan['ssh_provisioning'])
+            self.assertFalse(preview['device_writes'])
+            self.assertEqual(fake.events, ['inspect'])
+
     def test_fresh_exact_64g_alignment_and_unchanged_other_entries(self):
         original = fixture_gpt();plan = fresh_plan(original)
         self.assertEqual(sum(row['bytes'] for row in plan['partitions']), 64 * 1024**3)

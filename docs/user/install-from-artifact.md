@@ -34,6 +34,19 @@ Windows 把 `sh install.sh` 换成 `install.cmd`。完整磁盘包会自动使�
 sh install.sh apply --serial 序列号 --plan update-plan.json --execute
 ```
 
+## 可选：启用 SSH 登录
+
+如果希望从电脑远程管理 Linux，可以在安装时提供自己的 SSH **公钥**。安装器会把它加入平板的 `root` 和 `piano` 账户；不提供公钥也可以正常进入桌面。
+
+创建安装计划和执行安装时，需要指定同一个 `.pub` 文件：
+
+```sh
+sh install.sh plan --serial 序列号 --ssh-public-key ~/.ssh/id_ed25519.pub --output update-plan.json
+sh install.sh apply --serial 序列号 --plan update-plan.json --ssh-public-key ~/.ssh/id_ed25519.pub --execute
+```
+
+这项功能需要 Linux 电脑上的 `e2fsprogs` 和 GNU `coreutils`。Windows 使用 `install.cmd`，并在默认 WSL 发行版中安装这两个软件包。请只提供公钥，私钥始终留在自己的电脑上；发布镜像不包含任何人的登录密钥。
+
 ## 它会做什么
 
 安装器核对 GPT、设备身份、分区容量和镜像哈希，只更新 `sunuefi_esp` 和 `sunuefi_root`，然后回到 Android 读回检查。接着读出本机的原厂蓝牙地址，写入 ESP 里 Linux `boot.img` 的设备树，让蓝牙控制器有自己的地址。通用包里没有这个地址，所以安装后 ESP 与下载包不再逐字节相同，这是正常的。

@@ -6,6 +6,7 @@ helper and device transport have been compiled and validated. No GPT writer or
 stock boot/recovery/system/vbmeta flashing is implemented here.
 """
 import argparse
+from contextlib import nullcontext
 from dataclasses import dataclass
 import hashlib
 import json
@@ -19,6 +20,7 @@ import uuid
 import zlib
 
 from provision_piano_bluetooth import FACTORY_PATH, factory_address, provision_boot, split_boot
+import provision_piano_ssh as ssh_provision
 
 BLOCK = 4096
 ALIGN = 512  # One supported F2FS section: 512 * 4 KiB.
@@ -442,7 +444,7 @@ printf '%s\\n' {q(record['output_boot_sha256'])}
                 'target': '/EFI/Piano/stable/boot.img', 'readback_boot_sha256': record['output_boot_sha256']}
 
 
-def make_plan(snapshot, bundle_dir=None, new_guids=None):
+def make_plan(snapshot, bundle_dir=None, new_guids=None, ssh_public_key=None):
     geometry = plan_gpt(snapshot['gpt'], snapshot['f2fs'], new_guids)
     plan = {'schema_version': 1, 'status': 'READ_ONLY_PLAN', 'device': snapshot['identity'], 'gpt': geometry}
     if bundle_dir is not None:
@@ -450,6 +452,13 @@ def make_plan(snapshot, bundle_dir=None, new_guids=None):
         plan['bundle'] = {key: value for key, value in bundle.items() if key != 'images'}
         if bundle.get('images'):
             plan['bundle']['images'] = {name: {key: value for key, value in image.items() if key != 'path'} for name, image in bundle['images'].items()}
+    if ssh_public_key is not None:
+        require(bundle_dir is not None and bundle.get('update_ready'), 'SSH provisioning requires a complete raw disk bundle')
+        _, info = ssh_provision.public_key(ssh_public_key)
+        plan['ssh_provisioning'] = {'public_key': info, 'accounts': ['root', 'piano'],
+            'source_root_sha256': bundle['images']['root.ext4.img']['sha256'],
+            'provisioner_sha256': file_sha(ssh_provision.__file__),
+            'derived_before_device_write': True}
     return plan
 
 
@@ -461,7 +470,7 @@ def inspection_report(snapshot):
             'selected_partitions': selected, 'f2fs': snapshot['f2fs'], 'device_writes': False}
 
 
-def apply_update(device, plan, bundle_dir, execute=False, recovery=False):
+def apply_update(device, plan, bundle_dir, execute=False, recovery=False, ssh_public_key=None):
     require(not recovery, 'RECOVERY_INSTALL_NOT_READY: recovery writes are unavailable')
     require(plan.get('schema_version') == 1 and plan.get('status') == 'READ_ONLY_PLAN', 'Expected a reviewed read-only plan')
     if plan['gpt']['mode'] == 'fresh':
@@ -469,12 +478,36 @@ def apply_update(device, plan, bundle_dir, execute=False, recovery=False):
             raise ValueError(plan['gpt']['blocked_reason'])
         return {'status': 'NEW_INSTALL_NOT_READY', 'device_writes': False, 'reason': plan['gpt']['blocked_reason']}
     snapshot = device.inspect()
-    fresh = make_plan(snapshot, bundle_dir)
+    fresh = make_plan(snapshot, bundle_dir, ssh_public_key=ssh_public_key)
     require(fresh == plan, 'Device GPT/identity or bundle changed since plan; inspect and plan again')
     bundle = load_bundle(bundle_dir, plan['gpt']['partitions'], require_images=True)
     if not execute:
         return {'status': 'UPDATE_HOST_AND_GPT_VALIDATED_NOT_EXECUTED', 'device_writes': False,
-                'factory_fastboot_checks_pending': True, 'targets': list(PARTITIONS)}
+                'factory_fastboot_checks_pending': True, 'targets': list(PARTITIONS),
+                **({'ssh_provisioning_pending': plan['ssh_provisioning']} if ssh_public_key is not None else {})}
+    # A public key changes only a host-derived root, never the generic bundle.
+    # Keep it alive until the actual flashed prefix has been read back.
+    # Stay on the bundle filesystem: large roots must not fill a RAM-backed /tmp.
+    with (tempfile.TemporaryDirectory(prefix='piano-ssh-install-', dir=Path(bundle_dir).absolute().parent) if ssh_public_key is not None
+          else nullcontext(None)) as temporary:
+        receipt = None
+        if ssh_public_key is not None:
+            original = bundle['images']['root.ext4.img']
+            derived = Path(temporary) / 'root.ext4.img'
+            receipt = ssh_provision.provision_image(original['path'], derived, ssh_public_key, original['sha256'])
+            require(receipt['public_key'] == plan['ssh_provisioning']['public_key'], 'Public key changed since plan')
+            info = image_info(derived, 'root')
+            require(info['label'] == 'PIANOROOT' and info['bytes'] == original['bytes'], 'Derived root label/size changed')
+            bundle['images']['root.ext4.img'] = {**original, 'path': derived, 'sha256': receipt['derived_sha256']}
+        result = _apply_verified_images(device, snapshot, plan, bundle)
+        if receipt is not None:
+            result['image_prefix_readback'] = result.pop('generic_prefix_readback')
+            result['ssh_provisioning'] = receipt
+            result['generic_root_flashed'] = False
+        return result
+
+
+def _apply_verified_images(device, snapshot, plan, bundle):
     device.reboot_bootloader()
     for name, partition in zip(IMAGE_NAMES, plan['gpt']['partitions']):
         image = bundle['images'][name]
@@ -516,25 +549,31 @@ class ProvisioningError(ValueError):
         self.report = report
 
 
-def apply_installation(device, plan, bundle_dir, execute=False, recovery=False):
+def apply_installation(device, plan, bundle_dir, execute=False, recovery=False, ssh_public_key=None):
     # Keep generic flash/readback and the later per-device filesystem change
     # distinct. A failed provisioning step must not erase the completed stage.
     if plan.get('gpt', {}).get('mode') == 'fresh':
-        return apply_update(device, plan, bundle_dir, execute, recovery)
+        return apply_update(device, plan, bundle_dir, execute, recovery, ssh_public_key)
     boot = bundle_boot(bundle_dir)
-    generic = apply_update(device, plan, bundle_dir, execute, recovery)
+    generic = apply_update(device, plan, bundle_dir, execute, recovery, ssh_public_key)
     if not execute:
         return {**generic, 'device_provisioning_pending': True, 'factory_source': FACTORY_PATH}
     try:
         provision = device.provision_bluetooth(boot)
     except (ValueError, OSError, subprocess.SubprocessError) as error:
-        raise ProvisioningError(str(error), {'status': 'GENERIC_UPDATE_VERIFIED_DEVICE_PROVISION_FAILED',
-            'generic_update': generic, 'generic_readback_completed_before_provision': True,
+        raise ProvisioningError(str(error), {'status': ('IMAGES_UPDATE_VERIFIED_DEVICE_PROVISION_FAILED' if ssh_public_key is not None
+                                                       else 'GENERIC_UPDATE_VERIFIED_DEVICE_PROVISION_FAILED'),
+            ('disk_update' if ssh_public_key is not None else 'generic_update'): generic,
+            ('image_readback_completed_before_bluetooth_provision' if ssh_public_key is not None
+             else 'generic_readback_completed_before_provision'): True,
             'device_provisioning': {'status': 'FAILED', 'reason': str(error)},
             'esp_equals_generic_after_provision': None, 'device_writes': True,
             'linux_boot_verified': False}) from error
-    return {'status': 'UPDATE_GENERIC_VERIFIED_DEVICE_DTB_PROVISIONED', 'generic_update': generic,
-            'generic_readback_completed_before_provision': True, 'device_provisioning': provision,
+    return {'status': ('UPDATE_IMAGES_VERIFIED_DEVICE_DTB_PROVISIONED' if ssh_public_key is not None
+                      else 'UPDATE_GENERIC_VERIFIED_DEVICE_DTB_PROVISIONED'),
+            ('disk_update' if ssh_public_key is not None else 'generic_update'): generic,
+            ('image_readback_completed_before_bluetooth_provision' if ssh_public_key is not None
+             else 'generic_readback_completed_before_provision'): True, 'device_provisioning': provision,
             'esp_equals_generic_after_provision': False, 'device_writes': True,
             'gpt_changed': False, 'linux_boot_verified': False, 'recovery_written': False}
 
@@ -546,19 +585,22 @@ def main():
     parser.add_argument('--bundle', type=Path, help='Generic disk bundle for plan/apply/device provisioning')
     parser.add_argument('--plan', type=Path, help='Reviewed JSON plan for apply')
     parser.add_argument('--output', type=Path, help='Write inspection/plan/result JSON; never a partition backup')
+    parser.add_argument('--ssh-public-key', type=Path,
+                        help='Optional .pub key for root/piano in a derived root; pass to both plan and apply (Windows: WSL e2fsprogs)')
     parser.add_argument('--execute', action='store_true', help='Allow dedicated OS update or explicit per-device ESP provisioning')
     parser.add_argument('--recovery', action='store_true', help='Explicit recovery request; currently rejected as not ready')
     args = parser.parse_args()
     try:
         require(not args.execute or args.operation in ('apply', 'provision-bluetooth'), '--execute is only valid for apply/provision-bluetooth')
         require(not args.recovery, 'RECOVERY_INSTALL_NOT_READY: no recovery operation is implemented')
+        require(args.ssh_public_key is None or args.operation in ('plan', 'apply'), '--ssh-public-key is valid only for plan/apply')
         require(args.operation != 'inspect' or args.bundle is None, 'Use plan --bundle to verify a host bundle')
         if args.output:
             require(not args.output.exists() and not args.output.is_symlink(), 'Output exists; refusing to replace it')
         device = Device(args.serial)
         if args.operation == 'apply':
             require(args.plan is not None and args.bundle is not None, 'apply requires --plan and --bundle')
-            result = apply_installation(device, read_json(args.plan), args.bundle, args.execute)
+            result = apply_installation(device, read_json(args.plan), args.bundle, args.execute, ssh_public_key=args.ssh_public_key)
         elif args.operation == 'provision-bluetooth':
             require(args.bundle is not None, 'provision-bluetooth requires the original generic bundle')
             snapshot = device.inspect()
@@ -572,7 +614,7 @@ def main():
                 'factory_source': FACTORY_PATH, 'target': '/EFI/Piano/stable/boot.img'}
         else:
             snapshot = device.inspect()
-            result = inspection_report(snapshot) if args.operation == 'inspect' else make_plan(snapshot, args.bundle)
+            result = inspection_report(snapshot) if args.operation == 'inspect' else make_plan(snapshot, args.bundle, ssh_public_key=args.ssh_public_key)
         text = json.dumps(result, indent=2, sort_keys=True) + '\n'
         if args.output:
             with args.output.open('x') as stream:

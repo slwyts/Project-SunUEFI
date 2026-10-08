@@ -75,6 +75,7 @@ def export(output, bundle=None, product=None):
     sources = [(ROOT / 'tools/install_piano.py', 'install_piano.py'),
                (ROOT / 'tools/provision_piano_bluetooth.py', 'provision_piano_bluetooth.py'),
                (ROOT / 'tools/compose_piano_dtb.py', 'compose_piano_dtb.py'),
+               (ROOT / 'tools/provision_piano_ssh.py', 'provision_piano_ssh.py'),
                (ROOT / 'docs/user/install-from-artifact.md', 'INSTALL.md')]
     sources += [(ROOT / 'tools/installer-launchers' / name, name)
                 for name in ('install.sh', 'install.cmd', 'installer_launcher.py')]
@@ -94,7 +95,7 @@ def export(output, bundle=None, product=None):
     record = {'schema_version': 1, 'status': 'HOST_EXPORTED_INSTALLER_NOT_DEVICE_TESTED',
               'kind': 'disk-bundle' if bundle else 'uefi-utility' if product else 'utility-only',
               'installer_source': 'tools/install_piano.py', 'bundle': 'bundle' if bundle else None,
-              'python_sources': ['install_piano.py', 'provision_piano_bluetooth.py', 'compose_piano_dtb.py'],
+              'python_sources': ['install_piano.py', 'provision_piano_bluetooth.py', 'compose_piano_dtb.py', 'provision_piano_ssh.py'],
               'default_action': 'help; explicit --serial uses read-only inspect', 'device_operation_performed': False,
               'fresh_partition_install_ready': False, 'recovery_install_ready': False, 'files': files}
     (output / 'installer-record.json').write_text(json.dumps(record, indent=2) + '\n')
