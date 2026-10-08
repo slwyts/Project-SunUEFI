@@ -14,6 +14,12 @@ case "$command" in
   boot-repack) python3 tools/build_boot_repack.py "$@" ;;
   ffmpeg) python3 tools/build_ffmpeg_packages.py "$@" ;;
   gsd) python3 tools/build_gsd_packages.py "$@" ;;
+  mutter)
+    if (($#)); then
+      python3 tools/build_mutter_packages.py "$@"
+    else
+      python3 tools/build_mutter_packages.py --sysroot build/distros/release-7.2.9/rootfs
+    fi ;;
   linux)
     python3 tools/prepare_release_kernel.py --refresh
     python3 - <<'PY_KERNEL'
@@ -97,7 +103,7 @@ PY_RELEASE_SOURCE
   install) python3 tools/install_piano.py "$@" ;;
   installer) python3 tools/export_installer.py "$@" ;;
   help|-h|--help)
-    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|boot-request|boot-repack|linux|mesa|sensors|ffmpeg|bsp|rootfs|release-rootfs|package|all|installer|install' \
+    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|boot-request|boot-repack|linux|mesa|sensors|ffmpeg|gsd|mutter|bsp|rootfs|release-rootfs|package|all|installer|install' \
       'Full builds need the documented builder environment; rootfs/Mesa/sensors run in a root ARM64 build container.' \
       'release-rootfs reads its kernel source worktree from build/release-7.2.9/source-manifest.json.' \
       'Building never partitions or flashes a tablet. install is a separate explicit command.' ;;

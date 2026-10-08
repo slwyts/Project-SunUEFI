@@ -27,8 +27,10 @@ sudo python3 tools/build_mutter_packages.py \
 
 `--builder-root` 必须是独立构建目录，不传设备或已封存的产品 rootfs。
 `--skip-install-dependencies` 仍运行实际 `dpkg-checkbuilddeps -Pnocheck`。
-如果输入装有本地 Mesa 等运行包，先在独立 builder 内用已签名仓库安装配套
-开发依赖；本次 builder 的处理与包快照记录在 `build/mutter/builder-ready.json`。
+工具会在独立 builder 内读取实际 GBM/PipeWire 版本，从已签名 APT 索引选择
+同版本开发包。对本项目 `+pianoN` 的 Mesa 包一起调整完整来源 cohort，
+APT 模拟有删除则停止；不修改原输入或设备，也不猜测其他大版本。
+实际版本、包 SHA 和 solver 记录随 `SOURCE.json` 保存。
 
 输出 `build/mutter/runtime/` 中五个标准运行包，`all/` 保留正常构建产物，
 `SOURCE.json`、`SHA256SUMS` 记录固定来源、实际补丁、包版本及 hash。

@@ -86,17 +86,17 @@ def chroot(rootfs, args, **kwargs):
     return run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', *args], **kwargs)
 
 
-def verify_source(rootfs, cache):
+def verify_source(rootfs, cache, package='gnome-settings-daemon', source_version=SOURCE_VERSION):
     # APT's source index is authenticated by its InRelease signature. Check
     # cached archives and .dsc against that exact index, not a caller receipt.
-    index = capture(['chroot', rootfs, 'apt-cache', 'showsrc', '--only-source', 'gnome-settings-daemon'])
+    index = capture(['chroot', rootfs, 'apt-cache', 'showsrc', '--only-source', package])
     candidates = [row for row in controls(index)
-                  if row.get('Package') == 'gnome-settings-daemon' and row.get('Version') == SOURCE_VERSION]
+                  if row.get('Package') == package and row.get('Version') == source_version]
     if not candidates or any(checksum_rows(row) != checksum_rows(candidates[0]) for row in candidates):
-        raise ValueError('Signed APT source index must unambiguously identify gnome-settings-daemon ' + SOURCE_VERSION)
+        raise ValueError('Signed APT source index must unambiguously identify ' + package + ' ' + source_version)
     row = candidates[0]
     expected = checksum_rows(row)
-    dsc_name = 'gnome-settings-daemon_' + SOURCE_VERSION + '.dsc'
+    dsc_name = package + '_' + source_version + '.dsc'
     if dsc_name not in expected:
         raise ValueError('APT source index has no checksum for the selected .dsc')
     files = {}
@@ -107,16 +107,16 @@ def verify_source(rootfs, cache):
         if path.stat().st_size != proof['size'] or sha(path) != proof['sha256']:
             raise ValueError('APT source checksum mismatch: ' + name)
         files[name] = {'file': name, **proof}
-    dsc = next(row for row in controls((cache / dsc_name).read_text()) if row.get('Source') == 'gnome-settings-daemon')
-    if dsc.get('Version') != SOURCE_VERSION or dsc.get('Format') != '3.0 (quilt)':
-        raise ValueError('Unexpected Debian GSD source identity')
+    dsc = next(row for row in controls((cache / dsc_name).read_text()) if row.get('Source') == package)
+    if dsc.get('Version') != source_version or dsc.get('Format') != '3.0 (quilt)':
+        raise ValueError('Unexpected Debian source identity')
     for name, proof in checksum_rows(dsc).items():
         if expected.get(name) != proof:
             raise ValueError('.dsc archive checksums differ from the authenticated APT index')
     apt_files = []
     for path in sorted((rootfs / 'var/lib/apt/lists').glob('*InRelease')):
         apt_files.append({'file': path.name, 'sha256': sha(path)})
-    return {'package': 'gnome-settings-daemon', 'version': SOURCE_VERSION, 'suite': 'trixie',
+    return {'package': package, 'version': source_version, 'suite': 'trixie',
             'directory': row.get('Directory'), 'dsc': files.pop(dsc_name), 'archives': list(files.values()),
             'apt_source_record_sha256': hashlib.sha256(json.dumps(row, sort_keys=True).encode()).hexdigest(),
             'apt_inrelease': apt_files, 'verification': 'APT authenticated source index; exact archive and .dsc SHA256'}

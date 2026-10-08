@@ -395,6 +395,35 @@ def gsd_packages(folder):
             'device_verified': False}
 
 
+def mutter_packages(folder):
+    """Use the standard Mutter packages carrying the two desktop fixes."""
+    import build_mutter_packages as builder
+    folder = Path(folder).resolve()
+    metadata = folder.parent / 'SOURCE.json'
+    if (folder.parent / '.incomplete').exists():
+        raise ValueError('Mutter package build has not completed')
+    source = json.loads(metadata.read_text())
+    if (source.get('packages_built') is not True or
+            source.get('patches') != builder.patch_records() or
+            source.get('source', {}).get('package') != 'mutter' or
+            source.get('source', {}).get('version') != builder.SOURCE_VERSION):
+        raise ValueError('Mutter packages do not match the desktop patches; rebuild with ./build.sh mutter')
+    rows = {}
+    for path in sorted(folder.glob('*.deb')):
+        package, version, arch = [capture(['dpkg-deb', '-f', path, field])
+                                  for field in ('Package', 'Version', 'Architecture')]
+        row = {'file': path.name, 'version': version, 'architecture': arch, 'sha256': digest(path)}
+        if (package in rows or builder.RUNTIME.get(package) != arch or
+                version != builder.PACKAGE_VERSION or
+                source.get('packages', {}).get(package) != row):
+            raise ValueError('Mutter runtime package identity differs: ' + path.name)
+        rows[package] = row
+    if set(rows) != set(builder.RUNTIME):
+        raise ValueError('The complete standard Mutter runtime package set is required')
+    return {'source_sha256': digest(metadata), 'patches': source['patches'],
+            'packages': rows, 'device_verified': False}
+
+
 def bootstrap(rootfs, kernel, output, release, boot_task_snapshot=False):
     # Use the same authenticated distro input on fresh CI and local builds.
     # The early diagnostic BusyBox capture is not a release dependency.
@@ -486,10 +515,20 @@ def execute(record):
             run([sys.executable, ROOT / 'tools/build_gsd_packages.py', '--output',
                  gsd_folder.parent, '--sysroot', rootfs])
         gsd = gsd_packages(gsd_folder)
+        mutter_folder = ROOT / 'build/mutter/runtime'
+        if not (mutter_folder.parent / 'SOURCE.json').is_file():
+            run([sys.executable, ROOT / 'tools/build_mutter_packages.py', '--output',
+                 mutter_folder.parent, '--sysroot', rootfs])
+        mutter = mutter_packages(mutter_folder)
         gsd_stage = target(rootfs, 'tmp/piano-gnome-packages')
         gsd_stage.mkdir(parents=True, exist_ok=True)
         for row in gsd['packages'].values():
             shutil.copy2(gsd_folder / row['file'], gsd_stage / row['file'])
+        for row in mutter['packages'].values():
+            destination = gsd_stage / row['file']
+            shutil.copy2(mutter_folder / row['file'], destination)
+            if digest(destination) != row['sha256']:
+                raise ValueError('Mutter package changed while staging: ' + row['file'])
         sensor_stage = target(rootfs, 'tmp/piano-sensors-packages')
         sensor_stage.mkdir(parents=True, exist_ok=True)
         for row in sensors['packages'].values():
@@ -509,6 +548,8 @@ def execute(record):
                               for row in sensors['packages'].values()]
             local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
                                   for row in gsd['packages'].values())
+            local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
+                                  for row in mutter['packages'].values())
             if ffmpeg:
                 local_packages.extend('/tmp/piano-ffmpeg-packages/' + row['file']
                                       for row in ffmpeg['packages'].values())
@@ -566,6 +607,9 @@ def execute(record):
         for package, row in gsd['packages'].items():
             if installed.get(package) != row['version']:
                 raise ValueError('Installed GNOME power package version differs: ' + package)
+        for package, row in mutter['packages'].items():
+            if installed.get(package) != row['version']:
+                raise ValueError('Installed Mutter package version differs: ' + package)
         metadata = {str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'var/lib/apt/lists').glob('*InRelease')}
         if not metadata: raise ValueError('Signed APT InRelease metadata is missing')
         metadata.update({str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'etc/apt').rglob('*') if p.is_file()})
@@ -580,6 +624,7 @@ def execute(record):
                   'adapters_manifest_sha256': digest(out / 'adapters/manifest.json'), 'runtime_manifest_sha256': digest(bundle / 'manifest.json'),
                   'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata, 'debian_commit': cfg['debian']['commit'],
                   'mesa_packages': mesa, 'sensors': sensors, 'ffmpeg': ffmpeg, 'gnome_power': gsd,
+                  'mutter': mutter,
                   'boot_request': boot_request, 'firmware_commit': cfg['firmware']['commit'],
                   'initramfs': boot, 'password': 'locked; owner must set their own', 'autologin_retained': True,
                   'bit_reproducible': False, 'root_uid': rootfs.stat().st_uid, 'device_operation_performed': False}
