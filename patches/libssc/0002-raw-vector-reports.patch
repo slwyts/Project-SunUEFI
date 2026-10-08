@@ -1,0 +1,259 @@
+From: Project SunUEFI
+Subject: [PATCH] libssc: expose immutable raw reports and uninterpreted vectors
+
+Apply after the sensor property type correction to libssc 0.4.4.
+Keep the existing SUID discovery, QMI subscription and typed measurements.
+Forward original event bytes only for the sensor UID and only if used;
+provide a public proto-c vector decoder without guessed component units.
+Unknown event IDs and malformed payloads return normal GIO errors.
+
+Package as a new +sunuefi2 build, not a replacement of +sunuefi1.
+Live delivery and ARM64/GIR packaging still require normal validation.
+
+--- a/src/libssc-sensor.c
++++ b/src/libssc-sensor.c
+@@ -40,6 +40,12 @@
+ };
+ static GParamSpec *properties[N_PROPERTIES];
+ 
++enum {
++	SIGNAL_RAW_REPORT,
++	N_SIGNALS
++};
++static guint signals[N_SIGNALS];
++
+ typedef struct {
+ 	GTask *task;
+ 	SSCSensor *sensor;
+@@ -80,6 +86,28 @@
+ 
+ static void
+ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_low, GArray *buf, gpointer user_data);
++
++static void
++raw_report_received (SSCClient *client, guint32 msg_id, guint64 uid_high,
++		     guint64 uid_low, GArray *buf, gpointer user_data)
++{
++	SSCSensor *self = SSC_SENSOR (user_data);
++	SSCSensorPrivate *priv = ssc_sensor_get_instance_private (self);
++	g_autoptr (GBytes) payload = NULL;
++
++	if (uid_high != priv->uid_high || uid_low != priv->uid_low ||
++	    !g_signal_has_handler_pending (self, signals[SIGNAL_RAW_REPORT], 0, FALSE))
++		return;
++	if (buf == NULL || g_array_get_element_size (buf) != 1 || buf->len > 65536) {
++		g_warning ("Invalid raw SSC report buffer");
++		return;
++	}
++	/* The client frees its GArray after report emission. Copy only when used. */
++	payload = g_bytes_new (buf->data, buf->len);
++	g_object_ref (self);
++	g_signal_emit (self, signals[SIGNAL_RAW_REPORT], 0, msg_id, payload);
++	g_object_unref (self);
++}
+ 
+ GQuark ssc_sensor_error_quark (void)
+ {
+@@ -670,6 +698,11 @@
+ 		return;
+ 	}
+ 
++	/* Separate from the temporary discovery/open report handler. The closure
++	 * disconnects when the sensor is destroyed; no new QMI subscription. */
++	g_signal_connect_object (priv->client, "report",
++		G_CALLBACK (raw_report_received), self, 0);
++
+ 	ctx = g_slice_new (ReportReceivedContext);
+ 	ctx->task = task;
+ 	ctx->sensor = self;
+@@ -812,6 +845,21 @@
+ 	ssc_sensor_class->open_finish = sensor_open_finish;
+ 	ssc_sensor_class->close = sensor_close;
+ 	ssc_sensor_class->close_finish = sensor_close_finish;
++
++	/**
++	 * SSCSensor::raw-report:
++	 * @self: the sensor matching the report's original SUID
++	 * @message_id: original SSC message ID
++	 * @payload: (transfer none): immutable original event protobuf bytes
++	 *
++	 * Emitted synchronously in the SSC client's report dispatch context.
++	 * Retain @payload with g_bytes_ref() to keep it after the callback.
++	 * No physical units, firmware timestamp or successful hardware calibration
++	 * are implied. Discovery/open/close and sampling remain the existing APIs.
++	 */
++	signals[SIGNAL_RAW_REPORT] = g_signal_new ("raw-report",
++		G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
++		0, NULL, NULL, NULL, G_TYPE_NONE, 2, G_TYPE_UINT, G_TYPE_BYTES);
+ 
+ 	properties[PROP_UID_LOW] =
+ 		g_param_spec_uint64 (SSC_SENSOR_UID_LOW,
+--- a/src/libssc.h
++++ b/src/libssc.h
+@@ -25,5 +25,6 @@
+ #include <libssc-sensor-light.h>
+ #include <libssc-sensor-proximity.h>
+ #include <libssc-sensor-gyroscope.h>
++#include <libssc-vector.h>
+ 
+ #endif /* _LIBSSC_H_ */
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -29,6 +29,7 @@
+ headers += files(
+   'libssc.h',
+   'libssc-sensor.h',
++  'libssc-vector.h',
+   'libssc-sensor-proximity.h',
+   'libssc-sensor-light.h',
+   'libssc-sensor-accelerometer.h',
+@@ -46,6 +47,7 @@
+   'libssc-common.c',
+   'libssc-client.c',
+   'libssc-sensor.c',
++  'libssc-vector.c',
+   'libssc-sensor-proximity.c',
+   'libssc-sensor-light.c',
+   'libssc-sensor-accelerometer.c',
+--- a/data/meson.build
++++ b/data/meson.build
+@@ -23,6 +23,7 @@
+   'sensor-suid',
+   'sensor-proximity',
+   'sensor-light',
++  'sensor-vector',
+   'sensor-accelerometer',
+   'sensor-magnetometer',
+   'sensor-rotationvector',
+--- a/libssc.map
++++ b/libssc.map
+@@ -71,6 +71,7 @@
+ 		ssc_sensor_magnetometer_get_type;
+ 		ssc_sensor_proximity_get_type;
+ 		ssc_sensor_error_quark;
++		ssc_sensor_decode_vector_report;
+ 	local:
+ 		*;
+ };
+--- /dev/null
++++ b/src/libssc-vector.h
+@@ -0,0 +1,31 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later */
++#ifndef _LIBSSC_VECTOR_H_
++#define _LIBSSC_VECTOR_H_
++
++#include <gio/gio.h>
++
++G_BEGIN_DECLS
++
++/**
++ * ssc_sensor_decode_vector_report:
++ * @message_id: original SSC event message ID, not a payload field value
++ * @payload: unmodified protobuf event payload from SSCSensor::raw-report
++ * @error: return location for a #GError
++ *
++ * Decode observed wire layouts without assigning physical component meanings.
++ * Message 1025 returns `values` (ad, lossless float32 to double) and `accuracy`
++ * (i). Message 769 returns `field1`, `field2`, `field3` (i) and `values` (ad).
++ * All known scalar fields must be present. Empty/oversized/malformed payloads
++ * are invalid; other event IDs return G_IO_ERROR_NOT_SUPPORTED. Unknown protobuf
++ * fields remain available in the caller's original @payload.
++ * No lux, Kelvin, Hz, axis transform, filtering or calibration is inferred.
++ *
++ * Returns: (transfer full) (nullable): a #GVariant of type a{sv}, or %NULL
++ */
++GVariant *ssc_sensor_decode_vector_report (guint32 message_id,
++                                          GBytes *payload,
++                                          GError **error);
++
++G_END_DECLS
++
++#endif
+--- /dev/null
++++ b/src/libssc-vector.c
+@@ -0,0 +1,65 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later */
++#include "libssc-vector.h"
++#include "ssc-sensor-vector.pb-c.h"
++
++#define SSC_VECTOR_MAX_PAYLOAD (64 * 1024)
++
++static void
++add_values (GVariantBuilder *fields, const gfloat *values, gsize count)
++{
++    GVariantBuilder vector;
++
++    g_variant_builder_init (&vector, G_VARIANT_TYPE ("ad"));
++    for (gsize i = 0; i < count; i++)
++        g_variant_builder_add (&vector, "d", (gdouble) values[i]);
++    g_variant_builder_add (fields, "{sv}", "values", g_variant_builder_end (&vector));
++}
++
++GVariant *
++ssc_sensor_decode_vector_report (guint32 message_id, GBytes *payload, GError **error)
++{
++    GVariantBuilder fields;
++    gsize length;
++    const guint8 *data;
++
++    g_return_val_if_fail (payload != NULL, NULL);
++    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
++    if (message_id != 1025 && message_id != 769) {
++        g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
++                     "No vector wire schema for SSC event %u", message_id);
++        return NULL;
++    }
++    data = g_bytes_get_data (payload, &length);
++    if (length == 0 || length > SSC_VECTOR_MAX_PAYLOAD) {
++        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
++                     "SSC vector payload size %" G_GSIZE_FORMAT " is outside 1..65536", length);
++        return NULL;
++    }
++    g_variant_builder_init (&fields, G_VARIANT_TYPE_VARDICT);
++    if (message_id == 1025) {
++        SscVectorResponse *message = ssc_vector_response__unpack (NULL, length, data);
++
++        if (message == NULL)
++            goto invalid;
++        add_values (&fields, message->values, message->n_values);
++        g_variant_builder_add (&fields, "{sv}", "accuracy", g_variant_new_int32 (message->accuracy));
++        ssc_vector_response__free_unpacked (message, NULL);
++    } else {
++        SscVendorVectorResponse *message = ssc_vendor_vector_response__unpack (NULL, length, data);
++
++        if (message == NULL)
++            goto invalid;
++        g_variant_builder_add (&fields, "{sv}", "field1", g_variant_new_int32 (message->field1));
++        g_variant_builder_add (&fields, "{sv}", "field2", g_variant_new_int32 (message->field2));
++        g_variant_builder_add (&fields, "{sv}", "field3", g_variant_new_int32 (message->field3));
++        add_values (&fields, message->values, message->n_values);
++        ssc_vendor_vector_response__free_unpacked (message, NULL);
++    }
++    return g_variant_ref_sink (g_variant_builder_end (&fields));
++
++invalid:
++    g_variant_builder_clear (&fields);
++    g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
++                 "Invalid SSC event %u protobuf or missing required scalar fields", message_id);
++    return NULL;
++}
+--- /dev/null
++++ b/data/ssc-sensor-vector.proto
+@@ -0,0 +1,17 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++syntax = "proto2";
++
++// Observed SSC 1025 layout; values have no implied component units here.
++message SscVectorResponse {
++    repeated float values = 1 [packed = true];
++    required int32 accuracy = 2;
++}
++
++// Observed vendor 769 layout. Require the complete observed shape in this API;
++// names intentionally preserve wire field numbers, not guessed semantics.
++message SscVendorVectorResponse {
++    required int32 field1 = 1;
++    required int32 field2 = 2;
++    required int32 field3 = 3;
++    repeated float values = 4 [packed = true];
++}
