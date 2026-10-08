@@ -51,7 +51,7 @@ Type17 is preserved by the factory v2 decoder and issues an external ALG/HAL
 command; it is never changed into29. Any frequency-hopping request from type29
 is returned as the actual metadata byte, without hardware command or fake ACK.
 
-Next collect one short synchronized sequence of actual29 packets, the IC
+Next collect one short synchronized sequence of actual29 packets, the genuine
 common pressure/profile records and factory final events; no second FIFO
 reader is needed. Bind the verified worker output into the owner's standard
 Linux pen uinput/Wayland reporting after comparing this sequence.
