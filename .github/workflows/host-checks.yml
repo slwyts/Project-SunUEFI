@@ -2,7 +2,33 @@ name: Portable host checks
 
 on:
   push:
+    paths:
+      - '.github/workflows/host-checks.yml'
+      - 'tools/**'
+      - 'tests/**'
+      - 'config/**'
+      - 'uefi/**'
+      - 'linux/**'
+      - 'android/**'
+      - 'patches/**'
+      - 'sources.lock.json'
+      - '.gitmodules'
+      - 'build.sh'
+      - 'Makefile'
   pull_request:
+    paths:
+      - '.github/workflows/host-checks.yml'
+      - 'tools/**'
+      - 'tests/**'
+      - 'config/**'
+      - 'uefi/**'
+      - 'linux/**'
+      - 'android/**'
+      - 'patches/**'
+      - 'sources.lock.json'
+      - '.gitmodules'
+      - 'build.sh'
+      - 'Makefile'
   workflow_dispatch:
 
 permissions:
