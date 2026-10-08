@@ -38,7 +38,29 @@
 
 `alg_init_param` `0x437bc` 在 `0x4385c` 读取其 HAL hardware-info 参数 `+0x24` 的 u16，并在 `0x43868` 写入 context `+0x2c`。公开内核的 [`hardware_param_t`](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/xiaomi/xiaomi_touch_type_common.h#L302) 使用另一种布局：`super_resolution_factor` 是 `+8` 的 u8，NT36 初始化为100。因此仍须追踪中间 HAL 参数的构造，不能把 project100 或 report10 直接当作这个 runtime resolution。
 
-剩余静态工作集中在 raw2D阵列到 `stylus_total_data` 的预处理、HAL hardware-info 参数的构造、`update_stylus_param` 的活动笔 profile 选择，以及最终36字节 `stylus_point` 的 `0x10..0x20` 字段和压力/proximity/action转换。`stylus_sts_bak` `0x86ae8` 将 `+0x10` 复制到 `+0x14`，并处理 `+0x10==3`，只提供当前/上一状态的线索，尚不足以定义完整事件语义。
+剩余静态工作集中在 raw2D阵列到 `stylus_total_data` 的预处理、HAL hardware-info 参数的构造、`update_stylus_param` 的活动笔 profile 选择、压力环形缓冲预处理，以及与本机内核接收结构的核对。最终对象和到 mmap 的桥接字段已得到下列实际指令依据，仍未做设备事件对照。
+
+## 最终36字节点与64字节 HAL 上报
+
+`stylus_point` 的动态对象大小确为36字节，地址 `0x15ca14`，GOT `0x913d0`。按实际写入和消费者核对：
+
+| 偏移 | 已确认含义与依据 |
+| --- | --- |
+| `0x10` | 当前状态；`stylus_hover_pressure_judge` 在 `0x866e0/0x86740/0x867c4/0x867d0` 写入0..3 |
+| `0x14` | 上一状态；`stylus_sts_bak` 在 `0x86b04` 复制当前状态 |
+| `0x18` | 最终 callback gate；`0x88914..0x88918` 为0则不调用上报回调，不是直接 proximity |
+| `0x1c` | 处理后压力；`0x866e4..0x866f4` 从 `stylus_total_data+4` 读取u16，经条件最小值/有符号扩展写入；其他路径明确清零。其输入还可能来自 `0x88448` 环形压力缓冲，不能把它称作原始压力直接透传 |
+| `0x20` | distance布尔值；`0x88218..0x88228` 将内部输入 `+0x11d` 的非零判断写到total_data+7，再由 `0x882a4/0x882b8` 写入最终对象 |
+
+`0x888e0` 的最终回调构造器读取真实 rodata `0x11240` 的四项表 **`{2,0,1,3}`**，把状态0/1/2/3分别映射为 action UP/DOWN/MOVE/HOVER。这与[公开 action 枚举](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/xiaomi/xiaomi_touch_device.c#L12)数值一致；不是依据函数名推断。hover样本仍须对照evdev，不能仅以gate或压力生成BTN_TOUCH。
+
+同一构造器产生的是**64字节** HAL 点：input style在0，坐标在8/12，tilt在24/28，distance在32，pressure在36，action在60。它将最终对象的压力/distance两项交换后写入。其余未明确初始化或解释的字保留未知，不补零生成事件。
+
+实际 callback/GOT 链为：算法 `0x889fc` → libtouchreport 的 alg callback[0] `0x83ec` → 活动HAL子模块 `+0x80`（`register_hal_module` 在 `0x11c90..0x11c98` 安装）→ report interface `+0x48=0x21ae4` → `0x21c70` 按64字节点遍历 → v2 stylus方法 `+0x30=0x26dec`。HAL `0x26804..0x26834` 以cmd2/arg4选择point共享区并mmap4096字节；`0x26eb4..0x26ec8` **直接复制64字节** 到这块映射；`0x27018..0x27024` 再调用cmd6 `UPDATE_REPORT_POINT`。
+
+这里出现一处必须解决的版本差异：公开固定MiCode代码的 `hal_report_piont_t` 是**56字节**，坐标4/8、tilt16/20、distance24、pressure28、action52；实际ROM HAL是上面的64字节，当前链没有发现64→56重排。公开泛用receiver还声明pressure上限8191，而P81C其他路径声明16383。因此接入前应核对实际ROM内核的point receiver/注册范围，不能用公开结构直接解释本机mmap。此差异不说明原厂系统错误，只说明公开源码和这份HAL不能直接混用。
+
+结构化事实、四个原厂库SHA、GOT、实际地址和剩余项保存在 `private/analysis/piano-pen-final/facts.json`。这些结果来自静态ELF/源码分析；没有运行厂商ELF、调用设备接口或创建input设备。
 
 完成这些字段与计算链的还原后，用一次短的 raw17/29与Android evdev同步记录检查比例、proximity和tip边界，再接入现有触控进程的独立 pen uinput，保留手指 MT与唯一 FIFO。使用 libinput/Wayland tablet-tool接口；悬浮时工具在范围内而笔尖未触地，不能照抄泛用原厂 reporter 将所有非UP动作都设为 `BTN_TOUCH=1`。未知倾角、按钮语义或姿态不填零宣称支持。
 
@@ -49,8 +71,12 @@
 ```sh
 python3 tools/piano_pen_protocol.py metadata /path/to/original-spi-payload.bin
 python3 tools/piano_pen_protocol.py config /path/to/piano_nova_csot_thp_config.ini
+python3 tools/piano_pen_protocol.py stylus-point /path/to/36-byte-solved-object.bin
+python3 tools/piano_pen_protocol.py hal-point /path/to/64-byte-factory-point.bin
 ```
 
 `metadata` 的输入从 `frame_data_packet` 开始。Linux `/proc/nvt_thp_stream` 每条记录的32字节 record header 和257字节 SPI/event前缀须先去掉，不能直接传整个流；当前捕获路径的最大 payload 是7934字节。解析器核验外层 additive checksum 与长度补码，且要求 metadata 和全部 Tip/Ring 矩阵位于该校验范围内。另一个尾部 pen checksum、hand packet 暂不解析。Android 内核可能已将 additive checksum 字段改写为 CRC32，不能把这样的 HAL mmap 帧混入这个输入格式。
 
 Python 调用可使用 `parse_metadata(data)`、`read_config(path)`、`profile(config, vendor_id)` 和 `factory_tilt_component(dx, dy, resolution, calibration)`。最后一个函数没有 CLI 事件输出，要求真实的已算 Tip/Ring 差值和已确认的 runtime resolution；配置 reader 返回的 vendor profile 只是配置映射，不证明当前连接的笔采用哪一个 profile。参数单位与最终 input 上报仍按上面的缺项处理。
+
+`parse_stylus_point(data)` 和 `parse_factory_hal_point(data)` 只读取调用者提供的精确36/64字节dump，返回上述已确认字与状态/action映射；它们不接受SPI帧、不转换坐标单位、不归一化压力、不产生uinput/libinput事件。没有实测dump时，静态布局不能当作笔输入已可用。

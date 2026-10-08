@@ -25,6 +25,9 @@ SOURCE = (
     "6957f6b646d1c919e175e6f9000eb50c8635273c/p81/nt36532/nt36xxx.c"
 )
 ALGORITHM_SHA256 = "26f86f74781e70d03958271b100b31865d3eb80b69f30774ce1b1e25cb24f1c9"
+HAL_SHA256 = "0cc145e5bc55b7c1fa6d59a9995e6cf315c625a1f029b800f04d075346a075ca"
+STATE_ACTION = (2, 0, 1, 3)  # actual alg ELF rodata0x11240, not raw SPI states
+ACTION_NAMES = ("down", "move", "up", "hover")
 CONFIG_SECTIONS = {"project_infor", "hw", "super_resolution", "stylus"}
 # Current NT36532e Linux capture: 8 KiB rbuf minus SPI/event prefix and dummy.
 MAX_PAYLOAD_SIZE = 8192 - 257 - 1
@@ -36,6 +39,73 @@ def _u16(data, offset):
 
 def _u32(data, offset):
     return struct.unpack_from("<I", data, offset)[0]
+
+
+def parse_stylus_point(data):
+    """Decode a36-byte solved algorithm-object dump, never a SPI packet.
+
+    The callback gate/state/pressure/distance writes and state-to-action table
+    are statically traced for the pinned ROM. Units, button behavior and actual
+    device events remain unverified; this function does not generate input.
+    """
+    if len(data) != 36:
+        raise ValueError("expected the exact36-byte stylus_point object")
+    x, y, tilt_x, tilt_y, state, previous, gate, pressure, distance = struct.unpack(
+        "<9i", data)
+    if not 0 <= state < len(STATE_ACTION):
+        raise ValueError("unmapped algorithm stylus state")
+    return {
+        "status": "SOLVED_OBJECT_STATIC_ABI_ONLY_NOT_INPUT",
+        "algorithm_sha256": ALGORITHM_SHA256,
+        "coordinate_words": [x, y],
+        "tilt_words": [tilt_x, tilt_y],
+        "state": state,
+        "previous_state": previous,
+        "report_gate_word": gate,
+        "callback_enabled": gate != 0,
+        "pressure_word": pressure,
+        "distance_word": distance,
+        "mapped_action": STATE_ACTION[state],
+        "mapped_action_name": ACTION_NAMES[STATE_ACTION[state]],
+        "coordinate_units_verified": False,
+        "pressure_normalization_verified": False,
+        "button_semantics_verified": False,
+        "device_tested": False,
+    }
+
+
+def parse_factory_hal_point(data):
+    """Read one pinned ROM64-byte HAL report/mmap point dump.
+
+    This layout is confirmed by the ALG callback and HAL v2 whole-point copy.
+    It differs from the public MiCode56-byte hal_report_piont_t. Unassigned
+    words are returned separately; nothing is converted to uinput/libinput.
+    """
+    if len(data) != 64:
+        raise ValueError("expected one ROM64-byte HAL point, not MiCode56-byte")
+    words = struct.unpack("<16i", data)
+    if words[0] != 1:
+        raise ValueError("factory HAL point is not stylus input style1")
+    action = words[15]
+    if not 0 <= action < len(ACTION_NAMES):
+        raise ValueError("unmapped factory HAL action")
+    return {
+        "status": "FACTORY_MMAP_STATIC_ABI_ONLY_NOT_INPUT",
+        "hal_sha256": HAL_SHA256,
+        "bytes": 64,
+        "input_style": words[0],
+        "coordinate_words": list(words[2:4]),
+        "tilt_words": list(words[6:8]),
+        "distance_word": words[8],
+        "pressure_word": words[9],
+        "action": action,
+        "action_name": ACTION_NAMES[action],
+        "unassigned_words": {hex(i * 4): words[i] for i in (1, 4, 5, 10, 11, 12, 13, 14)},
+        "public_micode_layout_matches": False,
+        "coordinate_units_verified": False,
+        "button_semantics_verified": False,
+        "device_tested": False,
+    }
 
 
 def parse_metadata(data):
@@ -236,9 +306,17 @@ def main():
     raw.add_argument("payload", type=Path)
     config = commands.add_parser("config", help="read an external factory ini")
     config.add_argument("ini", type=Path)
+    solved = commands.add_parser("stylus-point", help="read an exact36-byte solved object dump")
+    solved.add_argument("point", type=Path)
+    final = commands.add_parser("hal-point", help="read one ROM64-byte mmap point dump")
+    final.add_argument("point", type=Path)
     args = parser.parse_args()
     try:
-        if args.command == "metadata":
+        if args.command == "stylus-point":
+            result = parse_stylus_point(args.point.read_bytes())
+        elif args.command == "hal-point":
+            result = parse_factory_hal_point(args.point.read_bytes())
+        elif args.command == "metadata":
             result = parse_metadata(args.payload.read_bytes())
         else:
             values = read_config(args.ini)
