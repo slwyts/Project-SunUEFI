@@ -362,6 +362,20 @@
       "source_sha256": "1043fbcb727a6aca61be8d713e61e03ac1153b6edc093834a73a262499d7a792",
       "source_git_mode": "100644",
       "license": "MIT"
+    },
+    {
+      "group": "common",
+      "path": "etc/modules-load.d/piano-rgb.conf",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "5a8f02dba36412c89cad50ba3c261250b6bbe596f2ad0cccebfe5c854b5fbcd0",
+      "source": "linux/bsp/common/etc/modules-load.d/piano-rgb.conf",
+      "source_component": "Project SunUEFI",
+      "source_sha256": "5a8f02dba36412c89cad50ba3c261250b6bbe596f2ad0cccebfe5c854b5fbcd0",
+      "source_git_mode": "100644",
+      "license": "MIT"
     }
   ],
   "excluded": [
