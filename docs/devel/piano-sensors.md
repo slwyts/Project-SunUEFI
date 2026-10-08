@@ -69,6 +69,28 @@ importer 默认读取 `super` 的 primary metadata slot 0，并选择 `odm_a`、
 
 ## 运行状态
 
+2026-10-08，当前a8+CPUCP版本通过普通BOOT启动后，标准SSC客户端已实际返回
+陀螺仪三轴、罗盘连续读数和光线0lux。陀螺仪在现有libssc中已有实现，CLI帮助
+漏列但 `ssccli --sensor gyroscope --timeout 3` 可以使用；其输出中的`m/s`
+不是已核验的角速度单位，后续修正须依据协议，不据该字符串换算测值。
+
+从本机原厂`sensors.qsh.so`核对数据类型后，通过正常libssc SUID查询确认
+`rgb`（STK3BCX）、`cct_front`（STK3BCX前置色温）、`ambient_light_back`
+及`ambient_light_back_strm`（SIP1328后置光线）、`flicker`（SIP1328）可用。
+前置色温、后置光线和防闪烁均已限时订阅并正常关闭，收到原始SSC报告。
+前两者使用1025标准浮点载荷；防闪烁为769独立格式，不把未知字段强标成
+lux、Kelvin或Hz。后置事件包含六个浮点分量，原厂handler原样转交Android。
+这证明通道和数据到达，尚未完成全部语义、桌面策略或校准验证。
+
+实际库另有三个属性声明错误：`available`/`sample-rate`/`stream-type`注册为
+字符串，getter却写boolean/float/uint，读取触发GLib类型检查失败。标准软件包
+修正正在准备，不修改传感器载荷或用常量补值。该问题与QMI能返回真实测量
+是不同层次；不能把声明修正直接称为硬件校准完成。
+
+本轮原始记录位于`private/provisioning/recovery-priority-20261008/`的
+`a8-ssc-gyroscope.txt`、`a8-ssc-vendor-inventory.jsonl`及
+`a8-ssc-vendor-payloads.jsonl`。原厂ELF只做静态读取，没有在Linux执行。
+
 2026-10-08，`7.2.9-piano-gnome-g086a94c4529d` 经普通 BOOT 启动，六个实际 compute-cb 的 `iommu_group/type` 均为 `DMA`。标准 `5+sunuefi1` 服务运行，`/dev/dma_heap/system` 可见，`InaccessiblePaths`、`RootDirectory`、`RootImage` 均为空，未使用此前隐藏 heap 的临时方案。
 
 SensorProxy 的 HasAccelerometer/Light/Proximity/Compass 均为 true；一次三秒采样实际返回加速度约 `(8.49, -0.08, 4.75) m/s²` 和罗盘约 `195°`，LightLevel 为 `153`。这证明本次正常 heap 条件下 SSC 数据读取已工作，不能扩大为所有 buffer、全部传感器或待机恢复都已验证。桌面自动旋转仍需现场核对。一次早先的 g086 启动没有形成可用调试接口；本轮成功也没有解释那次失联原因。
