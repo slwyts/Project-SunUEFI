@@ -8,6 +8,8 @@ Piano 面板驱动已经使用 `MIPI_DSI_FMT_RGB101010`，DSC 1.1 输入为 **10
 
 本地源码：[NT36532 驱动](../../build/kernel-worktrees/release-7.2.9/drivers/gpu/drm/panel/panel-novatek-nt36532.c)，`piano_dsc_cfg`、`piano_init_sequence()` 与 `PIANO_PANEL_INFO`；原厂采集位于 `private/analysis/android-board-runtime-2026-10-05/live.dtb`。本机原厂选择为 CSOT `p81_35_02_0b`，应保留对应初始化序列。
 
+Night Light的缺口同样在真实色彩处理backend：[Mutter48.7 `update_night_light_supported()`](https://github.com/GNOME/mutter/blob/48.7/src/backends/meta-monitor-manager.c#L1340)检查CRTC gamma LUT size是否大于0。g086 connector实际报告NightLightSupported=false，DRM只有CTM；SM8750的GC2尚未接标准gamma接口，因此不添加night-light-enabled强制设置或用户空间染色替身。
+
 [小米官方规格](https://www.mi.com/global/product/xiaomi-pad-8-pro/)和 [FAQ](https://www.mi.com/ph/support/faq/details/KA-667493/)明确宣传 12-bit 色深，但未说明 native12、10+2 FRC 或内部 LUT 精度。现有 DTB 与未公开含义的 DDIC 命令，不能确定“额外两位”在哪一层实现。
 
 ## 原厂 PP dither 不用于这套十位配置
