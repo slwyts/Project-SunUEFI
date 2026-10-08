@@ -253,7 +253,9 @@ def native_boot_request(rootfs, output):
     # Compile inside the same ARM64 builder/root ABI used for the release.
     import build_boot_request
     folder = output / 'native-boot-request'
-    compiler = os.environ.get('SUNUEFI_BOOT_REQUEST_CC') or ('clang' if platform.machine() in ('aarch64', 'arm64') else 'aarch64-linux-gnu-gcc')
+    compiler = os.environ.get('SUNUEFI_BOOT_REQUEST_CC') or (
+        'aarch64-linux-gnu-gcc' if platform.machine() not in ('aarch64', 'arm64')
+        and shutil.which('aarch64-linux-gnu-gcc') else 'clang')
     record = build_boot_request.build(folder, 'aarch64', compiler, rootfs)
     binary = target(rootfs, 'usr/local/sbin/piano-boot-request')
     shutil.copy2(folder / 'piano-boot-request', binary)
@@ -425,11 +427,13 @@ def execute(record):
     out, rootfs, source, kernel = [Path(record[k]) for k in ('output', 'rootfs', 'source', 'kernel')]
     cfg = record['config']; public = Path(record['public_source']); m, kernel_hash = modules.inspect(kernel)
     abi = runtime.kernel_identity(Path(record['kernel_build']), source, m['source_commit'], m['kernel_release'])
+    helper_cc = ('clang' if platform.machine() in ('aarch64', 'arm64') or
+                 not shutil.which('aarch64-linux-gnu-gcc') else 'aarch64-linux-gnu-gcc')
     if record['runtime_dir']:
         saved = json.loads((Path(record['runtime_dir']) / 'manifest.json').read_text())
         if saved.get('status') != 'RUNTIME_COMPILED_NOT_DEVICE_TESTED' or saved.get('kernel') != abi or saved.get('public_commit') != cfg['debian']['commit']:
             raise ValueError('Runtime bundle does not belong to the actual new kernel build')
-    elif any(not shutil.which(name) for name in ('clang' if platform.machine() in ('aarch64', 'arm64') else 'aarch64-linux-gnu-gcc', 'alsatplg', 'm4', 'make', 'depmod')):
+    elif any(not shutil.which(name) for name in (helper_cc, 'alsatplg', 'm4', 'make', 'depmod')):
         raise ValueError('Install the release helper compiler, alsatplg, m4, make and depmod first')
     mesa = mesa_packages(record['mesa_dir'])
     sensors = sensors_packages(record['sensors_dir'], cfg['sensors'])
@@ -437,6 +441,8 @@ def execute(record):
     if out.exists() and not record.get('resume'): raise ValueError('Output appeared after planning; preserve it')
     out.parent.mkdir(parents=True, exist_ok=True); log = out.with_name(out.name + '.build.log')
     if log.exists() and not record.get('resume'): raise ValueError('Build log exists; choose a new output name')
+    if record.get('resume'):
+        (out / 'manifest.json').unlink(missing_ok=True)
     def run(args, cwd=None):
         with log.open('a') as stream: subprocess.run(list(map(str, args)), cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, check=True)
     try:
@@ -487,9 +493,11 @@ def execute(record):
             runtime.stage(bundle, rootfs)
         else:
             bundle = out / 'runtime'
+            if record.get('resume') and bundle.is_dir():
+                shutil.rmtree(bundle)
             run([sys.executable, ROOT / 'tools/build_release_helpers.py', '--kernel', kernel, '--source', source,
                  '--kernel-build', record['kernel_build'], '--output', bundle, '--sysroot', rootfs,
-                 '--macros', record['macros'], '--v4l2-source', record['v4l2_source']])
+                 '--cc', helper_cc, '--macros', record['macros'], '--v4l2-source', record['v4l2_source']])
             runtime.stage(bundle, rootfs)
         fw = Path(record['firmware_source']); run(['sha256sum', '--check', '--quiet', 'SHA256SUMS'], fw / 'firmware')
         shutil.copytree(fw / 'firmware', rootfs / 'usr/lib/firmware', dirs_exist_ok=True)
