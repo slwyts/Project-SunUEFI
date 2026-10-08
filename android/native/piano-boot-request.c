@@ -58,6 +58,28 @@ static int fail(const char *message) {
   fprintf(stderr, "piano-boot-request: %s\n", message);
   return 1;
 }
+static int parse_generation(const char *text, unsigned char generation[16]) {
+  if (strlen(text) != 32)
+    return -1;
+  for (unsigned i = 0; i < 16; i++) {
+    unsigned value = 0;
+    for (unsigned j = 0; j < 2; j++) {
+      unsigned char c = (unsigned char)text[2 * i + j];
+      unsigned digit;
+      if (c >= '0' && c <= '9')
+        digit = c - '0';
+      else if (c >= 'a' && c <= 'f')
+        digit = c - 'a' + 10;
+      else if (c >= 'A' && c <= 'F')
+        digit = c - 'A' + 10;
+      else
+        return -1;
+      value = (value << 4) | digit;
+    }
+    generation[i] = (unsigned char)value;
+  }
+  return 0;
+}
 static int locate(int fd, uint64_t *offset, unsigned char generation[16]) {
   unsigned char header[PAGE], image[64], data[65536];
   if (transfer(fd, header, sizeof(header), 0, 0) ||
@@ -120,13 +142,17 @@ static void read_record(struct record *r, const unsigned char generation[16]) {
 int main(int argc, char **argv) {
   if (argc == 2 && !strcmp(argv[1], "--help")) {
     puts("piano-boot-request status|set|consume --device PATH [--target "
-         "android|menu|linux|setup]\nUpdates only the two SunUEFI-owned "
+         "android|menu|linux|setup] [--expect-generation HEX32]\n"
+         "Generation matching is available for set/consume. "
+         "Updates only the two SunUEFI-owned "
          "request pages. Does not repack BOOT or reboot.");
     return 0;
   }
   if (argc < 4)
     return fail("use --help for command syntax");
-  const char *action = argv[1], *path = NULL, *target_name = "android";
+  const char *action = argv[1], *path = NULL, *target_name = "android",
+             *expected_text = NULL;
+  unsigned char expected_generation[16];
   uint32_t target = 0;
   int writing = !strcmp(action, "set") || !strcmp(action, "consume");
   if (!writing && strcmp(action, "status"))
@@ -136,11 +162,17 @@ int main(int argc, char **argv) {
       path = argv[++i];
     else if (!strcmp(argv[i], "--target") && i + 1 < argc)
       target_name = argv[++i];
+    else if (!strcmp(argv[i], "--expect-generation") && i + 1 < argc &&
+             !expected_text)
+      expected_text = argv[++i];
     else
       return fail("unknown or duplicate option");
   }
   if (!path)
     return fail("--device is required");
+  if (expected_text &&
+      (!writing || parse_generation(expected_text, expected_generation)))
+    return fail("--expect-generation requires set/consume and 32 hex digits");
   const char *names[] = {"android", "menu", "linux", "setup"};
   for (target = 0; target < 4 && strcmp(target_name, names[target]); target++)
     ;
@@ -157,6 +189,10 @@ int main(int argc, char **argv) {
       locate(fd, &offset, generation)) {
     close(fd);
     return fail("unsupported BOOT or missing SunUEFI layout");
+  }
+  if (expected_text && memcmp(expected_generation, generation, 16)) {
+    close(fd);
+    return fail("APP generation differs from installed configuration");
   }
   for (unsigned i = 0; i < 2; i++) {
     if (transfer(fd, records[i].page, PAGE, (off_t)(offset + i * PAGE), 0)) {
@@ -228,7 +264,8 @@ int main(int argc, char **argv) {
       uint64_t latest_offset;
       unsigned char latest_generation[16];
       if (locate(write_fd, &latest_offset, latest_generation) ||
-          offset != latest_offset || memcmp(generation, latest_generation, 16))
+          offset != latest_offset || memcmp(generation, latest_generation, 16) ||
+          (expected_text && memcmp(expected_generation, latest_generation, 16)))
         result = fail("BOOT layout changed before write");
       for (unsigned i = 0; i < 2 && !result; i++)
         if (transfer(write_fd, latest, PAGE, (off_t)(offset + i * PAGE), 0) ||
@@ -252,10 +289,15 @@ int main(int argc, char **argv) {
     }
   }
   close(fd);
-  if (!result)
+  if (!result) {
+    char generation_hex[33];
+    for (unsigned i = 0; i < 16; i++)
+      snprintf(generation_hex + 2 * i, 3, "%02x", generation[i]);
     printf("{\"target\":%u,\"sequence\":%" PRIu64
            ",\"request_pages_offset\":%" PRIu64
-           ",\"operation\":\"%s\",\"original_kernel_changed\":false}\n",
-           chosen, sequence, offset, action);
+           ",\"operation\":\"%s\",\"app_generation\":\"%s\","
+           "\"original_kernel_changed\":false}\n",
+           chosen, sequence, offset, action, generation_hex);
+  }
   return result;
 }

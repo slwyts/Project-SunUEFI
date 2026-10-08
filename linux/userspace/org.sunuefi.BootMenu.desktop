@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SunUEFI Boot Menu
+Name[zh_CN]=SunUEFI 启动选择菜单
+Comment=Restart into the SunUEFI boot selection menu
+Comment[zh_CN]=正常重启并进入 SunUEFI 启动选择菜单
+Exec=/usr/bin/piano-next-boot menu --reboot --desktop
+Icon=preferences-system
+Terminal=false
+Categories=System;

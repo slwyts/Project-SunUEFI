@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Return to Android
+Name[zh_CN]=返回 Android
+Comment=Save the next boot target and restart Linux normally
+Comment[zh_CN]=保存启动目标并正常重启 Linux
+Exec=/usr/bin/piano-next-boot android --reboot --desktop
+Icon=system-reboot
+Terminal=false
+Categories=System;

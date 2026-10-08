@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Project SunUEFI</vendor>
+  <action id="org.sunuefi.boot-request">
+    <description>Choose the next SunUEFI boot</description>
+    <description xml:lang="zh_CN">选择 SunUEFI 的下次启动路线</description>
+    <message>Authentication is required to change the next boot target.</message>
+    <message xml:lang="zh_CN">更改下次启动目标需要管理员授权。</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/piano-next-boot-helper</annotate>
+  </action>
+</policyconfig>

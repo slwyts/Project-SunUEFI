@@ -1,0 +1,84 @@
+#!/usr/bin/python3 -I
+"""Schedule a configured next boot, with optional normal reboot or desktop UI."""
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+HELPER = '/usr/libexec/piano-next-boot-helper'
+LABELS = {'android': 'Android', 'menu': '启动选择菜单', 'linux': 'Linux', 'setup': 'UEFI 设置'}
+
+
+def desktop_dialog(args):
+    from gi.repository import Gtk
+    target = LABELS[args.action]
+    text = f'下次启动选择：{target}。'
+    text += '\n之后正常开机会继续沿用这个选择。'
+    if args.reboot:
+        text += '\n将正常关闭当前 Linux 会话并重启，请先保存工作。'
+    else:
+        text += '\n当前 Linux 会话会继续运行，稍后正常重启时生效。'
+    dialog = Gtk.MessageDialog(message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.OK_CANCEL,
+                               text=f'进入{target}' if args.reboot else f'安排下次进入{target}')
+    dialog.format_secondary_text(text)
+    result = dialog.run()
+    dialog.destroy()
+    return result == Gtk.ResponseType.OK
+
+
+def show_error(message, desktop):
+    print(message, file=sys.stderr)
+    if desktop:
+        from gi.repository import Gtk
+        dialog = Gtk.MessageDialog(message_type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.CLOSE,
+                                   text='启动请求没有完成')
+        dialog.format_secondary_text(message)
+        dialog.run()
+        dialog.destroy()
+
+
+def main():
+    parser = argparse.ArgumentParser(description='选择已安装 SunUEFI 的下次启动路线；默认不重启。')
+    parser.add_argument('action', choices=('status', *LABELS))
+    parser.add_argument('--reboot', action='store_true', help='保存请求成功后正常重启 Linux')
+    parser.add_argument('--desktop', action='store_true', help='显示桌面确认和错误对话框')
+    args = parser.parse_args()
+    if args.action == 'status' and (args.reboot or args.desktop):
+        parser.error('status 是只读 CLI 操作，不能带 --reboot/--desktop')
+    if args.desktop:
+        try:
+            import gi
+            gi.require_version('Gtk', '3.0')
+            if not desktop_dialog(args):
+                return 0
+        except (ImportError, ValueError, RuntimeError) as error:
+            show_error(f'桌面入口需要 GTK3/Python GI；可在终端使用 piano-next-boot。{error}', False)
+            return 1
+    if not Path(HELPER).is_file():
+        show_error('缺少 /usr/libexec/piano-next-boot-helper，请安装 SunUEFI 启动工具。', args.desktop)
+        return 1
+    command = [HELPER, args.action]
+    if args.reboot:
+        command.append('--reboot')
+    if os.geteuid() != 0:
+        command.insert(0, '/usr/bin/pkexec')
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode:
+        message = result.stderr.strip() or '授权未完成。piano 初始账号没有预设密码；请先通过受信任的 root 终端设置自己的密码。'
+        show_error(message, args.desktop)
+        return result.returncode
+    print(result.stdout.strip())
+    if args.desktop and not args.reboot:
+        from gi.repository import Gtk
+        dialog = Gtk.MessageDialog(message_type=Gtk.MessageType.INFO, buttons=Gtk.ButtonsType.CLOSE,
+                                   text='下次启动目标已保存')
+        dialog.format_secondary_text(f'正常重启时将进入{LABELS[args.action]}。')
+        dialog.run()
+        dialog.destroy()
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

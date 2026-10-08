@@ -8,11 +8,9 @@
 
 `piano-boot-request` 提供 `status`、`set`、`consume`，只读写合体 BOOT 自有的两份请求页，不重包原厂内核。Linux 安装路径为 `/usr/local/sbin/piano-boot-request`。本机已手动消费 Linux 请求、正常重启回 Android；自动消费、记住上次路线及 Android 模块按钮的完整联动尚未完成。不要把手动验证当作已经具备一次性自动请求。
 
-```sh
-sudo piano-boot-request status --device /dev/disk/by-partlabel/boot_a
-sudo piano-boot-request set --device /dev/disk/by-partlabel/boot_a --target linux
-sudo piano-boot-request consume --device /dev/disk/by-partlabel/boot_a
-```
+面向普通 Linux 用户的新入口是 [`piano-next-boot`](linux-next-boot.md)：从安装配置读取实际使用的 BOOT 分区和 APP generation，默认只安排下次启动，显式 `--reboot` 才正常重启。源码已完成；安装器配置、发布包接线和桌面按钮实机检查仍待完成。不能给所有设备预填 `boot_a`。
+
+底层开发者命令仍为 `piano-boot-request status|set|consume --device 实际分区`；写入时可加 `--expect-generation HEX32`，产品 helper 总是使用这个检查。status 现输出 `app_generation`，不改变请求页。
 
 目标为 `android`、`menu`、`linux`、`setup`。明确指定实际使用的合体 BOOT 分区；命令不会对原厂 BOOT 或其他格式猜测写入。
 

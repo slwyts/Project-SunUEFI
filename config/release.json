@@ -27,7 +27,10 @@
       "build-essential",
       "libc6-dev",
       "kmod",
-      "ffmpeg"
+      "ffmpeg",
+      "python3-gi",
+      "gir1.2-gtk-3.0",
+      "pkexec"
     ]
   },
   "firmware": {

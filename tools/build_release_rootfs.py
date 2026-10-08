@@ -258,6 +258,26 @@ def native_boot_request(rootfs, output):
     binary = target(rootfs, 'usr/local/sbin/piano-boot-request')
     shutil.copy2(folder / 'piano-boot-request', binary)
     binary.chmod(0o755)
+    installed = {}
+    for name, destination, mode in (
+        ('piano-next-boot', 'usr/bin/piano-next-boot', 0o755),
+        ('piano-next-boot-helper', 'usr/libexec/piano-next-boot-helper', 0o755),
+        ('piano-next-boot-configure', 'usr/sbin/piano-next-boot-configure', 0o755),
+        ('org.sunuefi.boot-request.policy', 'usr/share/polkit-1/actions/org.sunuefi.boot-request.policy', 0o644),
+        ('49-piano-boot-request.rules', 'usr/share/polkit-1/rules.d/49-piano-boot-request.rules', 0o644),
+        ('org.sunuefi.ReturnAndroid.desktop', 'usr/share/applications/org.sunuefi.ReturnAndroid.desktop', 0o644),
+        ('org.sunuefi.BootMenu.desktop', 'usr/share/applications/org.sunuefi.BootMenu.desktop', 0o644),
+        ('boot-request.example.json', 'usr/share/doc/piano-next-boot/boot-request.example.json', 0o644),
+    ):
+        source = ROOT / 'linux/userspace' / name
+        path = target(rootfs, destination)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, path)
+        path.chmod(mode)
+        installed[destination] = digest(source)
+    record['next_boot_tools'] = installed
+    record['device_configuration_required'] = '/etc/piano/boot-request.json'
+    # Actual slot/generation is installation-specific, never guessed in a public root.
     return record
 
 

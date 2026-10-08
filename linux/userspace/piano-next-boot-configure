@@ -1,0 +1,57 @@
+#!/usr/bin/python3 -I
+"""Record an explicitly installed BOOT entry; never change its request pages."""
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import tempfile
+
+CONFIG = Path('/etc/piano/boot-request.json')
+NATIVE = '/usr/local/sbin/piano-boot-request'
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--device', required=True,
+                        help='Actual installed /dev/disk/by-partlabel/boot_a or boot_b; no slot detection')
+    args = parser.parse_args()
+    if os.geteuid() != 0:
+        parser.error('Run from the installer or an administrator root terminal')
+    if not re.fullmatch('/dev/disk/by-partlabel/boot_[ab]', args.device):
+        parser.error('Specify the installed BOOT partition explicitly')
+    if not stat.S_ISBLK(os.stat(args.device).st_mode):
+        parser.error('Installed BOOT entry must be a block device')
+    result = json.loads(subprocess.check_output(
+        [NATIVE, 'status', '--device', args.device], text=True,
+        env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C.UTF-8'}))
+    generation = result.get('app_generation', '')
+    if not re.fullmatch('[0-9a-f]{32}', generation) or not int(generation, 16):
+        parser.error('The installed entry has no valid APP generation')
+    config = {'version': 1, 'boot_device': args.device, 'app_generation': generation}
+    CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', dir=CONFIG.parent, prefix='.boot-request-', delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(config, stream, indent=2)
+            stream.write('\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.chmod(0o644)
+        os.replace(temporary, CONFIG)
+        directory = os.open(CONFIG.parent, os.O_DIRECTORY | os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
+    print(json.dumps({**config, 'boot_request_changed': False}))
+
+
+if __name__ == '__main__':
+    main()

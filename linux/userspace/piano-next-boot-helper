@@ -1,0 +1,78 @@
+#!/usr/bin/python3 -I
+"""Privileged, one-shot adapter for the installed SunUEFI request pages."""
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+
+CONFIG = Path('/etc/piano/boot-request.json')
+NATIVE = Path('/usr/local/sbin/piano-boot-request')
+TARGETS = {'android': 0, 'menu': 1, 'linux': 2, 'setup': 3}
+
+
+def installed_config():
+    try:
+        fd = os.open(CONFIG, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        raise ValueError('缺少 /etc/piano/boot-request.json。请先由安装器记录实际启动分区和 APP generation。')
+    with os.fdopen(fd, 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022 or info.st_size > 8192:
+            raise ValueError('启动配置必须是 root 所有、不可由普通用户改写的小型 JSON 文件。')
+        config = json.load(stream)
+    if not isinstance(config, dict) or set(config) != {'version', 'boot_device', 'app_generation'} or type(config['version']) is not int or config['version'] != 1:
+        raise ValueError('启动配置需要 version=1、boot_device 和 app_generation。')
+    device = config['boot_device']
+    if not isinstance(device, str) or not re.fullmatch(r'/dev/disk/by-partlabel/boot_[ab]', device):
+        raise ValueError('boot_device 尚未配置：安装器须记录实际 /dev/disk/by-partlabel/boot_a 或 boot_b。')
+    generation = config['app_generation']
+    if not isinstance(generation, str) or not re.fullmatch(r'[0-9a-fA-F]{32}', generation) or not int(generation, 16):
+        raise ValueError('app_generation 尚未配置：须记录安装镜像的 16-byte generation（32 位十六进制）。')
+    if not stat.S_ISBLK(os.stat(device).st_mode):
+        raise ValueError('配置指定的启动分区不是块设备；不会扫描或猜测其他分区。')
+    info = NATIVE.stat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise ValueError('原生 piano-boot-request 必须是 root 所有、不可由普通用户改写的文件。')
+    return device, generation.lower()
+
+
+def main(argv):
+    if not argv or argv[0] not in {'status', *TARGETS} or argv[1:] not in ([], ['--reboot']):
+        raise ValueError('用法：piano-next-boot-helper status|android|menu|linux|setup [--reboot]')
+    action, reboot = argv[0], len(argv) == 2
+    if action == 'status' and reboot:
+        raise ValueError('status 是只读操作，不能带 --reboot。')
+    if os.geteuid() != 0:
+        raise ValueError('请使用 piano-next-boot；它会通过 polkit 请求本次操作的授权。')
+    device, generation = installed_config()
+    command = [str(NATIVE), 'status' if action == 'status' else 'set', '--device', device]
+    if action != 'status':
+        command += ['--target', action, '--expect-generation', generation]
+    result = subprocess.run(command, text=True, capture_output=True, check=False, env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C.UTF-8'})
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or '原生启动请求失败；没有请求重启。')
+    record = json.loads(result.stdout)
+    if record.get('app_generation') != generation:
+        raise ValueError('当前镜像 generation 与安装配置不同；请由安装器更新配置。')
+    if action != 'status' and record.get('target') != TARGETS[action]:
+        raise ValueError('原生请求读回的目标不同；没有请求重启。')
+    record.update(boot_device=device, reboot_planned=reboot)
+    print(json.dumps(record, ensure_ascii=False), flush=True)
+    if reboot:
+        # A normal systemd reboot stops services and unmounts filesystems.
+        # No forced syscall, reboot -f, PMIC/misc write or reboot target string.
+        result = subprocess.run(['/usr/bin/systemctl', 'reboot'], check=False,
+                                env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C.UTF-8'})
+        if result.returncode:
+            raise ValueError('下次启动目标已保存，但正常重启未成功。可检查 status 后再手动重启。')
+
+
+if __name__ == '__main__':
+    try:
+        main(sys.argv[1:])
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        print(f'piano-next-boot: {error}', file=sys.stderr)
+        sys.exit(1)
