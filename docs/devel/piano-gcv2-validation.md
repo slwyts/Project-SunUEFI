@@ -84,3 +84,5 @@ python3 tools/host/piano_gcv2_report.py \
 第一次颜色检查不注入SMMU故障、不任意读写MMIO、不测试sysfs解绑、DPMS或睡眠。若真实reset持续不ack，退出路径会保留映射并继续等待，后续component/devres回收不能继续；这不是一次成功恢复。恢复操作由主任务依据实际设备状态执行，可能需要平台强制重启。
 
 完成这轮以后再用GNOME的标准Night Light确认桌面联动。GC2本轮使用常规10bit LUT；不能把温色变化扩大解释为HDR、IGC5、12bit FRC或面板高精度校准已完成。
+
+正常Debian五包 `48.7-0+deb13u1+sunuefi1` 已完成构建和APT安装，重启GDM后实际DSI设备自动关联生成的sRGB profile，三条正常Gamma各1024项、DRM blob8192字节。随后保存真实正常曲线→清为空→读回三空→恢复原曲线，均成功，piano会话15没有注销。这证明新Mutter的空恢复缺陷已修；标准夜灯的物理两侧输出仍待现场预览。通用sRGB不是面板实测校准。记录在本机 `mutter-sunuefi1-profile-state.txt`、`mutter-sunuefi1-gamma-readonly.txt` 和 `mutter-sunuefi1-empty-restore.txt`。
