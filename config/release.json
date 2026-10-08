@@ -79,7 +79,6 @@
     "esp_partname": "sunuefi_esp",
     "masked_units": [
       "piano-swapfile.service",
-      "systemd-growfs-root.service",
       "qbootctl.service"
     ]
   },

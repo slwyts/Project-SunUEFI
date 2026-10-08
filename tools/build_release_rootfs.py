@@ -206,9 +206,13 @@ def apply_policy(rootfs, output, config):
     storage = config['storage']
     if (storage['root_label'], storage['root_partname'], storage['esp_label'], storage['root_fstype'], storage['esp_partname']) != ('PIANOROOT', 'sunuefi_root', 'SUNUEFI_ESP', 'ext4', 'sunuefi_esp'):
         raise ValueError('Unknown release storage identities')
-    if set(storage['masked_units']) != {'piano-swapfile.service', 'systemd-growfs-root.service', 'qbootctl.service'}:
-        raise ValueError('Only the three storage-policy units may be masked')
-    put(rootfs, 'etc/fstab', 'LABEL=PIANOROOT / ext4 defaults,noatime 0 1\nLABEL=SUNUEFI_ESP /boot/efi vfat umask=0077,nofail 0 2\n')
+    if set(storage['masked_units']) != {'piano-swapfile.service', 'qbootctl.service'}:
+        raise ValueError('Only the two storage-policy units may be masked')
+    put(rootfs, 'etc/fstab', 'LABEL=PIANOROOT / ext4 defaults,noatime,x-systemd.growfs 0 1\nLABEL=SUNUEFI_ESP /boot/efi vfat umask=0077,nofail 0 2\n')
+    # The RAM overlay masks growfs; the dedicated disk root uses systemd's native service.
+    growfs_mask = target(rootfs, 'etc/systemd/system/systemd-growfs-root.service')
+    if growfs_mask.is_symlink() and growfs_mask.readlink() == Path('/dev/null'):
+        growfs_mask.unlink()
     put(rootfs, 'etc/piano/root-policy.json', json.dumps({'version': 1, 'mode': 'label', 'root_label': 'PIANOROOT',
         'root_partlabel': 'sunuefi_root', 'esp_label': 'SUNUEFI_ESP'}, indent=2) + '\n')
     put(rootfs, 'etc/udev/rules.d/01-piano-protect-android.rules', '''SUBSYSTEM!="block", GOTO="release_end"

@@ -148,7 +148,10 @@ def clean_identity(root, guest):
     (root / 'etc/machine-id').write_text('')
     fstab = inside(root, root / 'etc/fstab')
     if fstab.is_symlink(): fstab.unlink()
-    fstab.write_text('LABEL=PIANOROOT / ext4 defaults,noatime 0 1\nLABEL=SUNUEFI_ESP /boot/efi vfat umask=0077,nofail 0 2\n')
+    fstab.write_text('LABEL=PIANOROOT / ext4 defaults,noatime,x-systemd.growfs 0 1\nLABEL=SUNUEFI_ESP /boot/efi vfat umask=0077,nofail 0 2\n')
+    growfs_mask = inside(root, root / 'etc/systemd/system/systemd-growfs-root.service')
+    if growfs_mask.is_symlink() and growfs_mask.readlink() == Path('/dev/null'):
+        growfs_mask.unlink()
     setup = inside(root, root / 'home/piano/FIRST-SETUP.txt'); setup.parent.mkdir(parents=True, exist_ok=True)
     setup.write_text('No factory password is retained. Set your own piano password using the installer or a trusted root console before privileged desktop tasks.\n')
 
