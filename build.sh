@@ -32,7 +32,11 @@ subprocess.run(['python3','tools/build_piano_full_kernel.py','--worktree',record
 PY_KERNEL
     ;;
   mesa)
-    bash upstream/piano-mesa-current/scripts/build-mesa-debs.sh \
+    # Mesa is a native Debian package build; its Python dependencies come from
+    # APT, not the isolated virtualenv used for UEFI font preparation.
+    env -u VIRTUAL_ENV -u PYTHONHOME -u PYTHONPATH \
+      PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+      bash upstream/piano-mesa-current/scripts/build-mesa-debs.sh \
       "${1:-$sunuefi_root/build/mesa}" 26.1.6-1~bpo13+1 ;;
   sensors)
     python3 - "$sunuefi_root" "${1:-$sunuefi_root/build/sensors}" "${@:2}" <<'PY_SENSORS'

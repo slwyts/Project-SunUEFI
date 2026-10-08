@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential git make clang lld llvm nasm acpica-tools \
     binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
     flex bison bc libssl-dev uuid-dev zlib1g-dev libelf-dev \
-    python3 python3-venv python3-pip gettext fonts-noto-cjk \
+    python3 python3-venv python3-pip python3-packaging gettext fonts-noto-cjk \
     debootstrap debian-archive-keyring qemu-user-static \
     mtools dosfstools e2fsprogs cpio kmod device-tree-compiler \
     zstd rsync ccache alsa-utils m4 pkg-config curl ca-certificates \
