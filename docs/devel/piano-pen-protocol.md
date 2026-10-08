@@ -88,6 +88,10 @@ python3 tools/piano_pen_protocol.py runtime-context /path/to/48-byte-context-con
 
 `metadata` 的输入从 `frame_data_packet` 开始。Linux `/proc/nvt_thp_stream` 每条记录的32字节 record header 和257字节 SPI/event前缀须先去掉，不能直接传整个流；当前捕获路径的最大 payload 是7934字节。解析器核验外层 additive checksum 与长度补码，且要求 metadata 和全部 Tip/Ring 矩阵位于该校验范围内。另一个尾部 pen checksum、hand packet 暂不解析。Android 内核可能已将 additive checksum 字段改写为 CRC32，不能把这样的 HAL mmap 帧混入这个输入格式。
 
+Linux唯一流读取者 `piano-touch-view` 现有可选 [`--capture FILE --capture-seconds N`](../../tools/patches/piano-touch-view-raw-capture.patch)：默认关闭，N为1..10秒、默认5秒，内存上限16MiB。它保存自己已读到的完整NTP1记录，包含原内核头、序列、时间戳、epoch与所有普通/SC/17/29帧；不只保留笔帧，不另开FIFO。窗口结束或达到字节上限后一次写出新文件并继续原有输入，stderr给出实际字节数、错误和帧类型统计；应选择本地tmpfs新路径，不能覆盖旧捕获。后续调试应让现有owner带此选项启动，不能在服务旁再运行第二个reader。两个runtime builder通过同一 `derive_touch_source` 应用这个默认关闭补丁。当前仅已编译，未在设备采集。
+
+当前a8内核 `nt36532e` 的 `nvt_thp_read_frame` 原样读SPI，`nvt_thp_publish_frame` 检查补码后把原buffer直接送同一FIFO；没有原厂Android的checksum→CRC32重写。因此上述Linux捕获仍保留原始双校验字段，但内核valid flag只检查头补码，不能代替CPU适配器的两层校验。当前驱动没有1032B common7/0x440接口；需要先确认原厂真实enqueue来源或取得同步真实common记录，再把正确记录和时间戳通过同一owner传递。不能从raw29 pressure拼接一个common记录，也不能把HAL发送sysfs `touch_thp_ic_cmd_data` 当作已确认读取来源。
+
 Python 调用可使用 `parse_metadata(data)`、`read_config(path)`、`profile(config, vendor_id)` 和 `factory_tilt_component(dx, dy, resolution, calibration)`。最后一个函数没有 CLI 事件输出，要求真实的已算 Tip/Ring 差值和已确认的 runtime resolution；配置 reader 返回的 vendor profile 只是配置映射，不证明当前连接的笔采用哪一个 profile。参数单位与最终 input 上报仍按上面的缺项处理。
 
 `parse_stylus_point(data)`、`parse_factory_hal_point(data)`、`parse_kernel_report_point(data)` 分别读取调用者提供的精确36/64/56字节dump，返回已确认布局；64字节解析额外列出v1的静态键值判断，56字节解析保留prop[]原字。它们不接受SPI帧、不转换坐标单位、不归一化压力、不产生uinput/libinput事件。`config` 现在也输出 `input_device` 中的report版本。没有实测dump时，静态布局不能当作笔输入已可用。

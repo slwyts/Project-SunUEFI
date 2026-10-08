@@ -35,6 +35,7 @@ ALSA_TOOLCHAIN_PIN='09676a0fc68ee9cd5ba6684646b7e82c96e2ed5ac7ba53d639c4fe53b061
 TOPOLOGY_PIN='6b10e42b5d0b4242004c750613462c2ccd7d37cd180ca842abbb431bda6057bb'
 DEFAULT_RELEASE='7.2.6-piano-gnome-00061-g352508459733'
 TOUCH_DIAGNOSTICS_PATCH=ROOT/'tools/patches/piano-touch-view-observability.patch'
+TOUCH_CAPTURE_PATCH=ROOT/'tools/patches/piano-touch-view-raw-capture.patch'
 CAMERAD_CCM_PATCH=ROOT/'tools/patches/piano-camerad-writable-ccm.patch'
 CAMERAD_AE_PATCH=ROOT/'tools/patches/piano-camerad-stable-ae.patch'
 
@@ -59,19 +60,23 @@ def entry_source(name):
     if name not in PUBLIC_SOURCES:raise ValueError('Unknown public helper')
     signature='int PianoOriginalMain(int,char **);'if name=='piano-touch-view'else'int PianoOriginalMain(void);'
     normal='return PianoOriginalMain(argc,argv);'if name=='piano-touch-view'else'if(argc!=1){fprintf(stderr,"Use --help or no arguments.\\n");return 2;} return PianoOriginalMain();'
-    description=' Optional --diagnostics N emits touch JSON every N seconds (default off).'if name=='piano-touch-view'else''
+    description=' Optional --diagnostics N emits touch JSON; --capture FILE saves this reader\'s complete raw records with --capture-seconds N (1..10, default5, max16MiB). Both default off.'if name=='piano-touch-view'else''
     return '#include <stdio.h>\n#include <string.h>\n'+signature+'\nint main(int argc,char **argv){if(argc==2 && !strcmp(argv[1],"--help")){puts("'+name+': Linux Piano runtime helper; --help performs no device access.'+description+'");return 0;}'+normal+'}\n'
 
 
 def derive_touch_source(public, output):
-    """Apply the tracked diagnostic patch only to a verified public copy."""
+    """Apply optional diagnostics/capture to the same verified public copy."""
     relative,pin,_=PUBLIC_SOURCES['piano-touch-view'];original=Path(public)/relative
     if sha(original)!=pin:raise ValueError('Public touch source changed')
     folder=Path(output)/'piano-touch-source';target=folder/relative
     target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,target)
-    for options in (['--check'],[]):
-        subprocess.run(['git','apply','--no-index','--unidiff-zero',*options,str(TOUCH_DIAGNOSTICS_PATCH)],cwd=folder,check=True)
-    return target,{'public_source_sha256':pin,'patch_sha256':sha(TOUCH_DIAGNOSTICS_PATCH),'effective_source_sha256':sha(target)}
+    patches=[]
+    for patch in (TOUCH_DIAGNOSTICS_PATCH,TOUCH_CAPTURE_PATCH):
+        for options in (['--check'],[]):
+            subprocess.run(['git','apply','--no-index','--unidiff-zero',*options,str(patch)],cwd=folder,check=True)
+        patches.append({'file':str(patch.relative_to(ROOT)),'sha256':sha(patch)})
+    return target,{'public_source_sha256':pin,'patch_sha256':sha(TOUCH_DIAGNOSTICS_PATCH),
+                  'patches':patches,'effective_source_sha256':sha(target)}
 
 
 def derive_camerad_source(public, output):
@@ -144,6 +149,7 @@ def build(args):
     tools=ROOT/'build/host-tools/usr/bin';env=os.environ.copy();env['PATH']=str(tools)+os.pathsep+env['PATH'];env['LD_LIBRARY_PATH']=str(ROOT/'build/host-tools/usr/lib')
     inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
     inputs[str(TOUCH_DIAGNOSTICS_PATCH)]=sha(TOUCH_DIAGNOSTICS_PATCH)
+    inputs[str(TOUCH_CAPTURE_PATCH)]=sha(TOUCH_CAPTURE_PATCH)
     inputs[str(CAMERAD_CCM_PATCH)]=sha(CAMERAD_CCM_PATCH)
     for name,pin in TOOL_PINS.items():
         p=tools/name

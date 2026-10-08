@@ -1,0 +1,195 @@
+--- a/initramfs/touch-view/piano-touch-view.c
++++ b/initramfs/touch-view/piano-touch-view.c
+@@ -40,6 +40,8 @@
+  *   --threshold T    delta counted as touch (default 200)
+  *   --reference N    reference frames (default 32)
+  *   --diagnostics N  JSON diagnostics to stderr every N seconds (0: off)
++ *   --capture FILE   save this reader's complete raw records (default off)
++ *   --capture-seconds N  capture window1..10 seconds (default5, max16MiB)
+  *   --invert         touches lower the value (default: raise)
+  *   --swap-xy --flip-x --flip-y   toggle the orientation
+  *
+@@ -91,7 +93,9 @@
+ 	int swap_xy, flip_x, flip_y;
+ 	int type;
+ 	int diagnostics;
+-} opt = { MODE_STATS, 30, 200, 32, 0, 0, 0, 1, -1, 0 };
++	const char *capture_file;
++	int capture_seconds;
++} opt = { MODE_STATS, 30, 200, 32, 0, 0, 0, 1, -1, 0, NULL, 5 };
+ 
+ static struct {
+ 	unsigned long records, bad_magic, flag_valid, csum_ok, csum_bad;
+@@ -227,6 +231,103 @@
+ 
+ 	clock_gettime(CLOCK_MONOTONIC, &ts);
+ 	return ts.tv_sec + ts.tv_nsec / 1e9;
++}
++
++/* Optional bounded snapshot inside the one existing FIFO owner. Keep every
++ * complete NTP1 header and frame byte, including ordinary/SC/reference frames
++ * before and between pen29 packets. No packet or checksum field is rewritten.
++ * Memory is allocated only when enabled; the reader keeps running afterwards.
++ */
++#define CAPTURE_MAX_BYTES (16 * 1024 * 1024)
++static struct {
++	uint8_t *data;
++	size_t bytes;
++	unsigned long records, types[MAX_TYPES];
++	double start;
++	int fd, active;
++} raw_capture = { .fd = -1 };
++
++static int capture_open(void)
++{
++	if (!opt.capture_file)
++		return 0;
++	raw_capture.data = malloc(CAPTURE_MAX_BYTES);
++	if (!raw_capture.data)
++		return -ENOMEM;
++	/* New regular output only: do not overwrite a previous real capture. */
++	raw_capture.fd = open(opt.capture_file,
++			      O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
++	if (raw_capture.fd < 0) {
++		int error = -errno;
++
++		free(raw_capture.data);
++		raw_capture.data = NULL;
++		return error;
++	}
++	return 0;
++}
++
++static void capture_finish(const char *reason)
++{
++	size_t written = 0;
++	int error = 0, type, first = 1;
++
++	if (raw_capture.fd < 0)
++		return;
++	raw_capture.active = 0;
++	/* One bounded output at the end of the short window. Use a local tmpfs
++ * destination for debug capture; no per-frame disk writes or new daemon.
++ */
++	while (written < raw_capture.bytes) {
++		ssize_t n = write(raw_capture.fd, raw_capture.data + written,
++				  raw_capture.bytes - written);
++
++		if (n < 0 && errno == EINTR)
++			continue;
++		if (n <= 0) {
++			error = n < 0 ? errno : EIO;
++			break;
++		}
++		written += n;
++	}
++	if (close(raw_capture.fd) && !error)
++		error = errno;
++	raw_capture.fd = -1;
++	free(raw_capture.data);
++	raw_capture.data = NULL;
++	fprintf(stderr,
++		"{\"kind\":\"piano_touch_raw_capture\",\"reason\":\"%s\","
++		"\"format\":\"NTP1_UNCHANGED_RECORDS\",\"records\":%lu,"
++		"\"bytes\":%zu,\"written_bytes\":%zu,\"write_errno\":%d,\"types\":{",
++		reason, raw_capture.records, raw_capture.bytes, written, error);
++	for (type = 0; type < MAX_TYPES; type++)
++		if (raw_capture.types[type]) {
++			fprintf(stderr, "%s\"%d\":%lu", first ? "" : ",", type,
++				raw_capture.types[type]);
++			first = 0;
++		}
++	fputs("}}\n", stderr);
++}
++
++static void capture_record(const uint8_t *record, uint16_t hlen, uint16_t flen)
++{
++	size_t bytes = (size_t)hlen + flen;
++
++	if (!raw_capture.active)
++		return;
++	if (now_s() - raw_capture.start >= opt.capture_seconds) {
++		capture_finish("time_limit");
++		return;
++	}
++	if (bytes > CAPTURE_MAX_BYTES - raw_capture.bytes) {
++		capture_finish("byte_limit");
++		return;
++	}
++	memcpy(raw_capture.data + raw_capture.bytes, record, bytes);
++	raw_capture.bytes += bytes;
++	raw_capture.records++;
++	if (flen >= TRANSPORT_LEN + PAYLOAD_MIN)
++		raw_capture.types[record[hlen + TRANSPORT_LEN + 56]]++;
+ }
+ 
+ static int write_control(int value)
+@@ -922,6 +1023,7 @@
+ 	fputs("usage: piano-touch-view [stats|map|points|paint|dump|input] [--seconds N]\n"
+ 	      "       [--type N] [--threshold T] [--reference N] [--invert]\n"
+ 	      "       [--diagnostics N] (JSON every N seconds; default off)\n"
++	      "       [--capture FILE] [--capture-seconds N] (1..10s, default5s, max16MiB)\n"
+ 	      "       [--swap-xy] [--flip-x] [--flip-y]\n", stderr);
+ 	exit(2);
+ }
+@@ -955,6 +1057,10 @@
+ 			opt.ref_frames = atoi(argv[++i]);
+ 		else if (!strcmp(argv[i], "--diagnostics") && i + 1 < argc)
+ 			opt.diagnostics = atoi(argv[++i]);
++		else if (!strcmp(argv[i], "--capture") && i + 1 < argc)
++			opt.capture_file = argv[++i];
++		else if (!strcmp(argv[i], "--capture-seconds") && i + 1 < argc)
++			opt.capture_seconds = atoi(argv[++i]);
+ 		else if (!strcmp(argv[i], "--type") && i + 1 < argc)
+ 			opt.type = strtol(argv[++i], NULL, 0);
+ 		else if (!strcmp(argv[i], "--invert"))
+@@ -969,9 +1075,15 @@
+ 			usage();
+ 	}
+ 	if (opt.threshold <= 0 || opt.ref_frames < 1 || opt.ref_frames > MAX_REF ||
+-	    opt.type >= MAX_TYPES || opt.diagnostics < 0)
++	    opt.type >= MAX_TYPES || opt.diagnostics < 0 ||
++	    opt.capture_seconds < 1 || opt.capture_seconds > 10)
+ 		usage();
+ 	ref_type = opt.type;
++	ret = capture_open();
++	if (ret) {
++		fprintf(stderr, "raw capture output: %s\n", strerror(-ret));
++		return 1;
++	}
+ 
+ 	signal(SIGINT, on_signal);
+ 	signal(SIGTERM, on_signal);
+@@ -1011,6 +1123,10 @@
+ 	interactive = opt.mode == MODE_PAINT && isatty(STDIN_FILENO);
+ 
+ 	start = last_stats = now_s();
++	if (raw_capture.fd >= 0) {
++		raw_capture.start = start;
++		raw_capture.active = 1;
++	}
+ 	while (running && (!opt.seconds || now_s() - start < opt.seconds)) {
+ 		struct pollfd pfd[2] = {
+ 			{ .fd = fd, .events = POLLIN },
+@@ -1058,6 +1174,7 @@
+ 			if (le16(h + 26) & 1)
+ 				st.flag_valid++;
+ 			observe_record(h);
++			capture_record(h, hlen, flen);
+ 			handle_frame(h + hlen, flen);
+ 			off += hlen + flen;
+ 		}
+@@ -1070,8 +1187,11 @@
+ 		}
+ 		if (opt.diagnostics && now_s() - start - diag.previous_time >= opt.diagnostics)
+ 			print_diagnostics(now_s() - start, 0);
+-	}
+-
++		if (raw_capture.active && now_s() - raw_capture.start >= opt.capture_seconds)
++			capture_finish("time_limit");
++	}
++
++	capture_finish("owner_stopped");
+ 	if (!replay)
+ 		write_control(0);
+ 	close(fd);
