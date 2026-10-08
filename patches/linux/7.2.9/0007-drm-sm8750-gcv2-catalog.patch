@@ -2,8 +2,9 @@ From: Project SunUEFI
 Subject: [PATCH] drm/msm/dpu: describe SM8750 GC v2 capability
 
 Apply after the complete GC v2 REGDMA v3 backend. Use the actual SM8750
-GC register offset/version and describe the capability on all four
-DSPPs. Capability is not an unconditional GAMMA_LUT publication: only
+GC register offset/version in the sub-block table shared by all four
+DSPPs. The DSPP configuration has no features mask. The sub-block is
+not an unconditional GAMMA_LUT publication: only
 the initialized REGDMA backend binds GC2 ops, and the CRTC checks those
 ops. Keep the old GC1 AHB path excluded for version 2.0.
 
@@ -21,28 +22,3 @@ Compilation/catalog capability is not a hardware validation result.
  };
  
  /*************************************************************
---- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
-+++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
-@@ -207,18 +207,22 @@
- 	{
- 		.name = "dspp_0", .id = DSPP_0,
- 		.base = 0x54000, .len = 0x1800,
-+		.features = BIT(DPU_DSPP_PCC) | BIT(DPU_DSPP_GC),
- 		.sblk = &sm8750_dspp_sblk,
- 	}, {
- 		.name = "dspp_1", .id = DSPP_1,
- 		.base = 0x56000, .len = 0x1800,
-+		.features = BIT(DPU_DSPP_PCC) | BIT(DPU_DSPP_GC),
- 		.sblk = &sm8750_dspp_sblk,
- 	}, {
- 		.name = "dspp_2", .id = DSPP_2,
- 		.base = 0x58000, .len = 0x1800,
-+		.features = BIT(DPU_DSPP_PCC) | BIT(DPU_DSPP_GC),
- 		.sblk = &sm8750_dspp_sblk,
- 	}, {
- 		.name = "dspp_3", .id = DSPP_3,
- 		.base = 0x5a000, .len = 0x1800,
-+		.features = BIT(DPU_DSPP_PCC) | BIT(DPU_DSPP_GC),
- 		.sblk = &sm8750_dspp_sblk,
- 	},
- };

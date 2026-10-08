@@ -41,7 +41,7 @@ TARGETS[DEFAULT_TARGET] = {
     **TARGETS['kernel69'],
     'series_target': 'kernel69',
     'patch_tree': TARGETS['kernel69']['target_tree'],
-    'target_tree': '162d8ccbe21d8edbfff1685b8c6ff7ad426dfffd',
+    'target_tree': '3d76760c7263bcb0e2efce032a1d34059e7012c3',
     'stable_commit': '5fce161649b4d779d1b76d9fcd52dc77779774b8',
     'stable_tree': 'c278d1443495d2a1a07fff2bcfb286b5c35baaea',
     'stable_version': '7.2.9',
@@ -81,7 +81,7 @@ TARGETS[DEFAULT_TARGET] = {
     },
     'gcv2_catalog_patch': {
         'file': 'patches/linux/7.2.9/0007-drm-sm8750-gcv2-catalog.patch',
-        'sha256': '97216158548a824b3d1cfef3ebfb19f9aa9d50483a3cf5fad04556f442708e42',
+        'sha256': '38689e09ba31b55b077794e6e7e5b67fa67dee7b9c4c12f996c9bf28eeb441f1',
     },
     'dsi_stop_order_patch': {
         'file': 'patches/linux/7.2.9/0008-dsi-bonded-stop-slave-first.patch',
