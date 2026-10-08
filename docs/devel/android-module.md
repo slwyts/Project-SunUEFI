@@ -1,6 +1,6 @@
 # Android 模块
 
-模块源码位于 `android/module/`，面向 Magisk / KernelSU 管理器。普通启动保留 Android，`reboot recovery` 保留原厂 Mi Recovery；UEFI 使用独立的明确请求。[原生重打包工具](android-boot-repack.md)已实现普通文件模式并验证真实 BOOT 的无损还原；在线身份检查、设备写入与一次性请求消费仍未完成，因此不能生成可安装 ZIP。文件工具不是现有模块脚本所要求的完整在线接口。
+模块源码位于 `android/module/`，面向 Magisk / KernelSU 管理器。普通启动保留 Android，UEFI 使用独立的明确请求。原厂 Mi Recovery 已在target0验证；持久Linux偏好与`reboot recovery`组合仍待实机检查，新增的Recovery优先源码和证据见[重启请求说明](reboot-request.md)。[原生重打包工具](android-boot-repack.md)已实现普通文件模式并验证真实 BOOT 的无损还原；在线身份检查、设备写入与一次性请求消费仍未完成，因此不能生成可安装 ZIP。文件工具不是现有模块脚本所要求的完整在线接口。
 
 先检查当前产品：
 

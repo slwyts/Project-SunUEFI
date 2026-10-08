@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PIANO_SELECT_NORMAL 0
-#define PIANO_SELECT_RECOVERY 1
+#define PIANO_SELECT_RECOVERY 1 /* Legacy name for the EDK2/menu request, not Mi Recovery. */
 #define PIANO_SELECT_INVALID_METADATA (-1)
 #define PIANO_SELECT_MAX_FDT 0x200000U
 

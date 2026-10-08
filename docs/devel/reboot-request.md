@@ -6,6 +6,10 @@
 
 合体 BOOT 的普通 Android 路径和原厂 `reboot recovery` 已实测。最新产品也已通过普通 BOOT 冷启动进入磁盘上的 Linux；原厂 `fastboot continue` 仍可作为调试启动入口。
 
+上述 Mi Recovery 检查使用target0（无Linux偏好）；**持久NEXT2与`reboot recovery`组合尚未实机验证**。2026-10-08核对已有记录后，选择器源码已补Recovery优先：准确、唯一的`bootmonitor.bootmode=recovery`会在读取NEXT请求页前返回未修改的原厂GKI入口，保留ABL提供的DTB/initrd；不会清除Linux偏好。普通启动仍读取共享CRC请求。此改动尚未替换设备镜像，不能把旧target0结果当作新组合已通过。
+
+标识依据是`private/provisioning/recovery-product-20261007/console-after-restore.txt:8`恢复内核命令行，以及`private/analysis/recovery-blackbox-v2-20261007/boot-region-2000000.txt:925/:928`的真实ABL Bootmode/MNTParam；`mtdoops.boot_mode=1`只作交叉证据，不加入猜测的识别别名。ABL同次记录同时Loaded Partition boot/recovery，不能简单假设Recovery必定绕过BOOT包装。主机必要检查使用完整捕获FDT与该真实Recovery命令行：普通路由返回CRC target2，Recovery路由返回原厂入口0；把NEXT两页设置不可读仍能返回，且内容不变。它是实际C分支检查，不是完整Recovery FDT捕获或实机重启，结果保存在`private/analysis/bootselect-recovery-priority-20261008/result.json`。
+
 `piano-boot-request` 提供 `status`、`set`、`consume`，只读写合体 BOOT 自有的两份请求页，不重包原厂内核。Linux 安装路径为 `/usr/local/sbin/piano-boot-request`。本机已手动消费 Linux 请求、正常重启回 Android；自动消费、记住上次路线及 Android 模块按钮的完整联动尚未完成。不要把手动验证当作已经具备一次性自动请求。
 
 面向普通 Linux 用户的新入口是 [`piano-next-boot`](linux-next-boot.md)：从安装配置读取实际使用的 BOOT 分区和 APP generation，默认只安排下次启动，显式 `--reboot` 才正常重启。源码已完成；安装器配置、发布包接线和桌面按钮实机检查仍待完成。不能给所有设备预填 `boot_a`。

@@ -26,9 +26,10 @@ SOURCE = (
 )
 ALGORITHM_SHA256 = "26f86f74781e70d03958271b100b31865d3eb80b69f30774ce1b1e25cb24f1c9"
 HAL_SHA256 = "0cc145e5bc55b7c1fa6d59a9995e6cf315c625a1f029b800f04d075346a075ca"
+KERNEL_TOUCH_BTF_SHA256 = "b7a88957d3d5237770d014ad609075ea5da5a787fb9342181389d4278fe4c308"
 STATE_ACTION = (2, 0, 1, 3)  # actual alg ELF rodata0x11240, not raw SPI states
 ACTION_NAMES = ("down", "move", "up", "hover")
-CONFIG_SECTIONS = {"project_infor", "hw", "super_resolution", "stylus"}
+CONFIG_SECTIONS = {"project_infor", "hw", "super_resolution", "input_device", "stylus"}
 # Current NT36532e Linux capture: 8 KiB rbuf minus SPI/event prefix and dummy.
 MAX_PAYLOAD_SIZE = 8192 - 257 - 1
 
@@ -75,11 +76,13 @@ def parse_stylus_point(data):
 
 
 def parse_factory_hal_point(data):
-    """Read one pinned ROM64-byte HAL report/mmap point dump.
+    """Read one pinned ROM64-byte internal HAL point dump.
 
-    This layout is confirmed by the ALG callback and HAL v2 whole-point copy.
-    It differs from the public MiCode56-byte hal_report_piont_t. Unassigned
-    words are returned separately; nothing is converted to uinput/libinput.
+    ALG constructs this layout for both HAL report methods. The two Piano ini
+    files select v1, which writes input_event records. The v2 mmap copy is an
+    alternate path; actual kernel BTF confirms its receiver is56-byte, so this
+    internal object must not be treated as the current kernel receiver layout.
+    Nothing is converted to uinput/libinput.
     """
     if len(data) != 64:
         raise ValueError("expected one ROM64-byte HAL point, not MiCode56-byte")
@@ -90,7 +93,7 @@ def parse_factory_hal_point(data):
     if not 0 <= action < len(ACTION_NAMES):
         raise ValueError("unmapped factory HAL action")
     return {
-        "status": "FACTORY_MMAP_STATIC_ABI_ONLY_NOT_INPUT",
+        "status": "FACTORY_INTERNAL_POINT_STATIC_ABI_ONLY_NOT_INPUT",
         "hal_sha256": HAL_SHA256,
         "bytes": 64,
         "input_style": words[0],
@@ -102,8 +105,42 @@ def parse_factory_hal_point(data):
         "action_name": ACTION_NAMES[action],
         "unassigned_words": {hex(i * 4): words[i] for i in (1, 4, 5, 10, 11, 12, 13, 14)},
         "public_micode_layout_matches": False,
+        "current_kernel_receiver_bytes": 56,
+        "current_kernel_receiver_layout_matches": False,
+        "v1_static_key_values": {
+            "BTN_TOUCH": int(action != 2 and words[9] != 0),
+            "BTN_TOOL_PEN": int(action != 2 and (words[8] | words[9]) != 0),
+        },
         "coordinate_units_verified": False,
         "button_semantics_verified": False,
+        "device_tested": False,
+    }
+
+
+def parse_kernel_report_point(data):
+    """Decode the actual BTF56-byte receiver layout, without generating events.
+
+    prop[] indices are returned raw: BTF proves layout, not their runtime use.
+    The factory v1 reporter bypasses this mmap point receiver.
+    """
+    if len(data) != 56:
+        raise ValueError("expected the exact56-byte kernel point receiver object")
+    words = struct.unpack("<14i", data)
+    if words[0] != 1:
+        raise ValueError("kernel point is not stylus input style1")
+    action = words[13]
+    if not 0 <= action < len(ACTION_NAMES):
+        raise ValueError("unmapped kernel point action")
+    return {
+        "status": "KERNEL_RECEIVER_BTF_LAYOUT_ONLY_NOT_INPUT",
+        "kernel_touch_btf_sha256": KERNEL_TOUCH_BTF_SHA256,
+        "bytes": 56,
+        "input_style": words[0],
+        "coordinate_words": list(words[1:3]),
+        "property_words": list(words[3:13]),
+        "action": action,
+        "action_name": ACTION_NAMES[action],
+        "coordinate_units_verified": False,
         "device_tested": False,
     }
 
@@ -184,7 +221,7 @@ def parse_metadata(data):
 
 
 def read_config(path):
-    """Read integer/list values from the four relevant custom ini sections.
+    """Read integer/list values from the relevant custom ini sections.
 
     Files are supplied by the caller. No proprietary configuration is embedded.
     This is the observed Piano ini text format, not an Android HAL execution.
@@ -308,14 +345,18 @@ def main():
     config.add_argument("ini", type=Path)
     solved = commands.add_parser("stylus-point", help="read an exact36-byte solved object dump")
     solved.add_argument("point", type=Path)
-    final = commands.add_parser("hal-point", help="read one ROM64-byte mmap point dump")
+    final = commands.add_parser("hal-point", help="read one ROM64-byte internal HAL point dump")
     final.add_argument("point", type=Path)
+    kernel = commands.add_parser("kernel-point", help="read one actual BTF56-byte receiver dump")
+    kernel.add_argument("point", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "stylus-point":
             result = parse_stylus_point(args.point.read_bytes())
         elif args.command == "hal-point":
             result = parse_factory_hal_point(args.point.read_bytes())
+        elif args.command == "kernel-point":
+            result = parse_kernel_report_point(args.point.read_bytes())
         elif args.command == "metadata":
             result = parse_metadata(args.payload.read_bytes())
         else:

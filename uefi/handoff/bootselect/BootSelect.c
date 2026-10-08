@@ -16,7 +16,7 @@ static void Trace(unsigned Stage,uint64_t Base,uint64_t Dtb) {
 }
 
 typedef struct {
-  int Valid, Mode, Splash;
+  int Valid, Mode, Splash, StockRecovery;
   uint32_t Total;
   uint64_t Initrd, InitrdBytes;
 } FDT_RESULT;
@@ -38,12 +38,15 @@ static int Overlap(uint64_t A, uint64_t N, uint64_t B, uint64_t M) {
 }
 static int Space(uint8_t C) { return C == ' ' || C == '\t' || C == '\n' || C == '\r'; }
 
-static int BootArgs(const uint8_t *P, uint32_t N) {
-  // The stock normal/recovery mode alone must never select EDK2. An explicit
-  // SunUEFI request is independent of ABL's original Android/Recovery policy.
+static int BootArgs(const uint8_t *P, uint32_t N, int *StockRecovery) {
+  // The exact stock marker is present in both captured ABL MNTParam and the
+  // real Mi Recovery kernel cmdline. It must take priority over persistent
+  // NEXT requests. Other recovery-looking names are not inferred.
   static const char Key[] = "sunuefi.boot";
-  uint32_t I = 0, Seen = 0;
-  int Recovery = 0;
+  static const char StockKey[] = "bootmonitor.bootmode";
+  uint32_t I = 0, Seen = 0, StockSeen = 0;
+  int ExplicitUefi = 0, StockValue = 0;
+  *StockRecovery = 0;
   if (!N || N > 16384 || P[N - 1]) return PIANO_SELECT_NORMAL;
   for (I = 0; I + 1 < N; ++I) if (!P[I]) return PIANO_SELECT_NORMAL;
   I = 0;
@@ -55,22 +58,28 @@ static int BootArgs(const uint8_t *P, uint32_t N) {
     Length = I - Start;
     if (Length >= K && Equal(P + Start, K, Key) && (Length == K || P[Start + K] == '=')) {
       ++Seen;
-      Recovery = Length == K + 5 && P[Start + K] == '=' && Equal(P + Start + K + 1, 4, "uefi");
+      ExplicitUefi = Length == K + 5 && P[Start + K] == '=' && Equal(P + Start + K + 1, 4, "uefi");
+    }
+    K = sizeof(StockKey) - 1;
+    if (Length >= K && Equal(P + Start, K, StockKey) && (Length == K || P[Start + K] == '=')) {
+      ++StockSeen;
+      StockValue = Length == K + 9 && P[Start + K] == '=' && Equal(P + Start + K + 1, 8, "recovery");
     }
   }
-  return Seen == 1 && Recovery ? PIANO_SELECT_RECOVERY : PIANO_SELECT_NORMAL;
+  *StockRecovery = StockSeen == 1 && StockValue;
+  return !*StockRecovery && Seen == 1 && ExplicitUefi ? PIANO_SELECT_RECOVERY : PIANO_SELECT_NORMAL;
 }
 
 /* One bounded read-only walker serves mode selection, initrd and splash proof. */
 static FDT_RESULT Walk(const void *Pointer, size_t Available) {
-  FDT_RESULT R = {0, PIANO_SELECT_NORMAL, 0, 0, 0, 0};
+  FDT_RESULT R = {0, PIANO_SELECT_NORMAL, 0, 0, 0, 0, 0};
   const uint8_t *P = Pointer;
   uint32_t Total, Structure, Strings, Reserve, StringBytes, StructureBytes, Cursor, End;
   uint32_t Depth = 0, RootSeen = 0, Chosen = 0, Args = 0, StartSeen = 0, EndSeen = 0;
   uint32_t Reserved = 0, SplashNodes = 0, SplashRegs = 0;
   uint64_t InitrdStart = 0, InitrdEnd = 0;
   uint8_t Kind[64];
-  int SplashReg = 0, Finished = 0, Mode = PIANO_SELECT_NORMAL;
+  int SplashReg = 0, Finished = 0, Mode = PIANO_SELECT_NORMAL, StockRecovery = 0;
   if (!P || Available < 40 || Be32(P) != 0xD00DFEEDU) return R;
   Total = Be32(P + 4); Structure = Be32(P + 8); Strings = Be32(P + 12); Reserve = Be32(P + 16);
   StringBytes = Be32(P + 32); StructureBytes = Be32(P + 36);
@@ -115,7 +124,7 @@ static FDT_RESULT Walk(const void *Pointer, size_t Available) {
       if (NameEnd == StringBytes) return R;
       Name = P + Strings + NameOffset; Value = P + Cursor;
       if (Depth == 2 && Kind[1] == 1) {
-        if (Equal(Name, NameEnd - NameOffset, "bootargs")) { ++Args; Mode = BootArgs(Value, Bytes); }
+        if (Equal(Name, NameEnd - NameOffset, "bootargs")) { ++Args; Mode = BootArgs(Value, Bytes, &StockRecovery); }
         else if (Equal(Name, NameEnd - NameOffset, "linux,initrd-start")) {
           if ((Bytes != 4 && Bytes != 8) || StartSeen++) return R;
           InitrdStart = Bytes == 8 ? Be64(Value) : Be32(Value);
@@ -140,6 +149,7 @@ static FDT_RESULT Walk(const void *Pointer, size_t Available) {
   if (!Finished || StartSeen != EndSeen || (StartSeen && (InitrdEnd <= InitrdStart))) return R;
   R.Valid = 1; R.Total = Total;
   R.Mode = Chosen == 1 && Args == 1 ? Mode : PIANO_SELECT_NORMAL;
+  R.StockRecovery = Chosen == 1 && Args == 1 && StockRecovery;
   R.Splash = Reserved == 1 && SplashNodes == 1 && SplashRegs == 1 && SplashReg;
   R.Initrd = InitrdStart; R.InitrdBytes = StartSeen ? InitrdEnd - InitrdStart : 0;
   return R;
@@ -194,6 +204,9 @@ int PianoBootSelectEntry(const PIANO_BOOT_SELECT_META *M, const void *Fdt, uint6
   R = Walk(Fdt, (size_t)(KERNEL_END - Address < PIANO_SELECT_MAX_FDT ? KERNEL_END - Address : PIANO_SELECT_MAX_FDT));
   if(!R.Valid || !PianoBootSelectRecoveryLayout(M, Base, SelectorBytes, Address, R.Total, R.Initrd, R.InitrdBytes))
     return PIANO_SELECT_NORMAL;
+  // NORMAL returns to the untouched original GKI entry with ABL's recovery
+  // DTB/initrd. Do not read, consume or clear NEXT pages on this route.
+  if(R.StockRecovery) { Trace(4,Base,Address); return PIANO_SELECT_NORMAL; }
   uint64_t Pages = (M->OriginalImageSize + 4095U) & ~4095ULL;
   if(Pages <= M->SelectorOffset && PIANO_BOOT_REQUEST_PAGES_BYTES <= M->SelectorOffset-Pages)
     Requested = PianoBootRequestSelect((const void *)(uintptr_t)(Base+Pages), M->AppSha256);

@@ -108,10 +108,21 @@ class BootSelectTests(unittest.TestCase):
                 data = dtb(('bootmonitor.bootmode='+stock_mode+'\0').encode())
                 ctypes.memmove(tree, data, len(data))
                 self.assertEqual(self.lib.PianoBootSelectEntry(ctypes.byref(m), tree, base, 0x4000), 0)
+            # Normal mode still follows the highest valid persistent request.
+            data = dtb(b'bootmonitor.bootmode=normal\0')
+            ctypes.memmove(tree, data, len(data))
             ctypes.memmove(base+0x3000, page(1, 3), 64)
             self.assertEqual(self.lib.PianoBootSelectEntry(ctypes.byref(m), tree, base, 0x4000), 3)
             ctypes.memmove(base+0x3000, page(1, 2), 64)
             self.assertEqual(self.lib.PianoBootSelectEntry(ctypes.byref(m), tree, base, 0x4000), 2)
+            # Stock Recovery wins over that same valid NEXT2, without changing it.
+            saved = ctypes.string_at(base+0x2000, 0x2000)
+            data = dtb(b'bootmonitor.bootmode=recovery sunuefi.boot=uefi\0')
+            ctypes.memmove(tree, data, len(data))
+            self.assertEqual(self.lib.PianoBootSelectEntry(ctypes.byref(m), tree, base, 0x4000), 0)
+            self.assertEqual(ctypes.string_at(base+0x2000, 0x2000), saved)
+            data = dtb(b'bootmonitor.bootmode=normal\0')
+            ctypes.memmove(tree, data, len(data))
             ctypes.memmove(base+0x2000, page(2, 0), 64)
             self.assertEqual(self.lib.PianoBootSelectEntry(ctypes.byref(m), tree, base, 0x4000), 0)
         finally:
