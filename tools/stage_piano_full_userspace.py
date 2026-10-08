@@ -11,6 +11,8 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from build_piano_ram_bootstrap import guest_resolve
+
 ROOT=Path(__file__).resolve().parents[1]
 EXPECTED='a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45'
 
@@ -26,14 +28,13 @@ def stage_gnome_power(rootfs):
         if not source.is_file() or '__pycache__' in source.parts:
             continue
         relative = source.relative_to(overlay)
-        destination = rootfs / relative
-        if destination.is_symlink() or any(parent.is_symlink() for parent in destination.parents
-                if parent != rootfs and parent.is_relative_to(rootfs)):
-            raise ValueError('Guest symlink in GNOME power destination')
+        # Debian links /etc/default/locale to /etc/locale.conf. Resolve guest
+        # links inside this root rather than following host absolute paths.
+        destination = guest_resolve(rootfs, relative.as_posix())
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
         destination.chmod(0o755 if relative.as_posix() == 'usr/lib/piano/power-button' else 0o644)
-        copied[relative.as_posix()] = hashlib.sha256(source.read_bytes()).hexdigest()
+        copied[destination.relative_to(rootfs).as_posix()] = hashlib.sha256(source.read_bytes()).hexdigest()
     # Use the same GNOME defaults as the multi-distro assembler. In particular,
     # the public schema override disables animation; local dconf takes priority.
     defaults = ROOT / 'linux/desktops/gnome/defaults.ini'
