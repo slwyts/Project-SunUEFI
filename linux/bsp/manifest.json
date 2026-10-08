@@ -187,17 +187,17 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "3e844811cbffb17cb1ebc6aa119d86d8bd369fbce5605afc3fea9a42cf55fcfc",
+      "sha256": "5f789106ba7dc81ac6f71365237c7f5aad3403ccc0c73ba6cc19e5461098a479",
       "source": "rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf",
       "source_sha256": "ed1b91e6f7e4cef76f1f60cfe3dc01d249cfb0267bb983bfc362df8f4f97609c",
       "source_git_mode": "100644",
       "license": "MIT",
       "patch": "patches/0001-ucm-piano-microphone-and-speakers.patch",
-      "patch_sha256": "bbf8759ae3057398cfd83b4bef125348aacc5796d8e333f168491460e9a2e20f",
+      "patch_sha256": "5fd111588abb13b7b07e14fabc8d946b2303db2c791361ab4e3663586a0e2169",
       "derived_from": {
-        "path": "tools/stage_piano_ram_hardware.py",
-        "sha256": "291346638d70f5c4eb33b099d820e3a3085559b836658932d584e20ba92c9697",
-        "scope": "DMIC1, hardware capture 2 channels labelled MONO/AUX0, DEC0 0 dB; 4 hardware playback slots with simple stereo duplication; noise unresolved"
+        "path": "patches/linux/7.2.9/0013-asoc-piano-va-mono.patch",
+        "sha256": "a584675049a6677d8f5acc1c0c03dd7d29a5719551f484ff26331aedd6f81edc",
+        "scope": "CaptureChannels 1 requires the Piano-specific VA mono FE/BE kernel route"
       }
     },
     {
@@ -343,10 +343,10 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "620e669c26d4469b4844b7a087724d06b2c768c667f92bd0d2caa9bfefb5f495",
+      "sha256": "34d0ead0f47cac49d7c87c3a26f955630d114f0ddbb94a83f49f713389ba0485",
       "source": "linux/bsp/common/etc/wireplumber/wireplumber.conf.d/50-piano-audio.conf",
       "source_component": "Project SunUEFI",
-      "source_sha256": "620e669c26d4469b4844b7a087724d06b2c768c667f92bd0d2caa9bfefb5f495",
+      "source_sha256": "34d0ead0f47cac49d7c87c3a26f955630d114f0ddbb94a83f49f713389ba0485",
       "source_git_mode": "100644",
       "license": "MIT"
     },

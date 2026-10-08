@@ -1,6 +1,19 @@
 --- a/rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf
 +++ b/rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf
-@@ -23,7 +23,8 @@
+@@ -12,6 +12,12 @@
+ 	EnableSequence [
+ 		cset "name='SECONDARY_TDM_RX_0 Audio Mixer MultiMedia1' 1"
+ 		cset "name='MultiMedia3 Mixer VA_CODEC_DMA_TX_0' 1"
++		# Set all physical amp caches before PipeWire probes/starts the PCM.
++		# OEM FSM_Volume is 235 (-7.5 dB) on all four speaker paths.
++		cset "name='Top Left Amp Volume' 235"
++		cset "name='Top Right Amp Volume' 235"
++		cset "name='Bottom Left Amp Volume' 235"
++		cset "name='Bottom Right Amp Volume' 235"
+ 	]
+ 
+ 	Value {
+@@ -23,7 +29,8 @@
  	Comment "Speaker playback"
  
  	Value {
@@ -10,7 +23,7 @@
  		PlaybackPriority 100
  		PlaybackPCM "hw:${CardId},0"
  	}
-@@ -32,10 +33,21 @@
+@@ -32,10 +39,21 @@
  SectionDevice."Mic" {
  	Comment "Internal microphone"
  
@@ -30,7 +43,7 @@
 +	]
  
  	Value {
-+		CaptureChannels 2
++		CaptureChannels 1
  		CapturePriority 100
  		CapturePCM "hw:${CardId},2"
  	}
