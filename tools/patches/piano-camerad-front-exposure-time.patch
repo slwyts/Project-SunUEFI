@@ -1,0 +1,213 @@
+From: Project SunUEFI
+Subject: [PATCH] camera: expose verified front exposure time from the existing owner
+
+Apply after the current CCM, AE, frame-integrity and manual-control patches.
+Exact prerequisite source SHA256: 97184524133b8b6132da411ec4b86fe15c7bd80a76562038711805c319747ef3
+
+The front OV32D40 3264x2448 mode has HTS1182/FLL2820 at30fps in the
+original sensor-module data. CamX derives the integration clock from those
+values rather than the CSI output pixel clock. Runtime active format and
+frame/exposure bounds must match before time conversion is available.
+Quantize nanoseconds to the actual exposure range and step, preserve AE
+ownership and read back the accepted native line control. Rear exposure,
+ISO and Kelvin units are not added. No new daemon or device is created.
+---
+diff --git a/camera/piano-camerad.c b/camera/piano-camerad.c
+--- a/camera/piano-camerad.c
++++ b/camera/piano-camerad.c
+@@ -37,6 +37,7 @@
+ #include <unistd.h>
+ 
+ #include <linux/media.h>
++#include <linux/media-bus-format.h>
+ #include <linux/v4l2-subdev.h>
+ #include <linux/videodev2.h>
+ 
+@@ -1395,6 +1396,107 @@
+ 		"\"write_attempted\":%s}\n", stage, error, attempted ? "true" : "false");
+ }
+ 
++/* OV32D40 3264x2448: OEM HTS1182/FLL2820 at30fps. The CSI output
++ * pixel rate is not its integration clock. Check the active mode and the
++ * driver's frame-length/exposure relationship before offering time units. */
++#define FRONT_LINE_NS_NUM UINT64_C(1000000000)
++#define FRONT_LINE_NS_DEN UINT64_C(84600)
++
++static int front_exposure_timing(struct cam *c, const struct v4l2_query_ext_ctrl *q)
++{
++	struct v4l2_subdev_format f = { .which = V4L2_SUBDEV_FORMAT_ACTIVE, .pad = 0 };
++	struct v4l2_query_ext_ctrl vq = { .id = V4L2_CID_VBLANK };
++	struct v4l2_control vb = { .id = V4L2_CID_VBLANK };
++
++	if (strcmp(c->cfg->sensor, "ov32d40") ||
++	    c->cfg->in_w != 3264 || c->cfg->in_h != 2448 || c->cfg->fps != 30.0) {
++		errno = EOPNOTSUPP;
++		return -1;
++	}
++	if (xioctl(c->sensor_fd, VIDIOC_SUBDEV_G_FMT, &f) < 0 ||
++	    xioctl(c->sensor_fd, VIDIOC_QUERY_EXT_CTRL, &vq) < 0 ||
++	    xioctl(c->sensor_fd, VIDIOC_G_CTRL, &vb) < 0)
++		return -1;
++	if (f.format.width != 3264 || f.format.height != 2448 ||
++	    f.format.code != MEDIA_BUS_FMT_SBGGR10_1X10 ||
++	    vq.type != V4L2_CTRL_TYPE_INTEGER || vq.minimum != 372 ||
++	    vq.default_value != 372 || vb.value < 372 || vb.value > 65535 - 2448 ||
++	    q->type != V4L2_CTRL_TYPE_INTEGER || q->minimum != 4 || !q->step || q->step > INT_MAX ||
++	    q->maximum != 2448 + vb.value - 12 || q->maximum > INT_MAX ||
++	    q->default_value < q->minimum || q->default_value > q->maximum) {
++		errno = EOPNOTSUPP;
++		return -1;
++	}
++	return 0;
++}
++
++static uint64_t front_exposure_ns(uint64_t lines)
++{
++	return (lines * FRONT_LINE_NS_NUM + FRONT_LINE_NS_DEN / 2) / FRONT_LINE_NS_DEN;
++}
++
++static int front_exposure_lines(const char *arg, const struct v4l2_query_ext_ctrl *q,
++			       uint64_t *ns, long *lines)
++{
++	char *end;
++	uint64_t minimum = (uint64_t)q->minimum;
++	uint64_t steps = (q->maximum - q->minimum) / q->step;
++	uint64_t maximum = minimum + steps * q->step;
++	uint64_t quantum = q->step * FRONT_LINE_NS_NUM;
++	long long input;
++
++	errno = 0;
++	input = strtoll(arg, &end, 10);
++	if (errno || !arg[0] || *end || input <= 0 ||
++	    (uint64_t)input < front_exposure_ns(minimum) ||
++	    (uint64_t)input > front_exposure_ns(maximum)) {
++		errno = ERANGE;
++		return -1;
++	}
++	*ns = (uint64_t)input;
++	uint64_t scaled = *ns * FRONT_LINE_NS_DEN;
++	uint64_t origin = minimum * FRONT_LINE_NS_NUM;
++	uint64_t delta = scaled > origin ? scaled - origin : 0;
++	uint64_t selected = (delta + quantum / 2) / quantum;
++	if (selected > steps)
++		selected = steps;
++	*lines = (long)(minimum + selected * q->step);
++	return 0;
++}
++
++static void control_report_exposure_time(FILE *out, struct cam *c)
++{
++	struct v4l2_query_ext_ctrl q = { .id = V4L2_CID_EXPOSURE };
++	int actual;
++
++	fputs(",{\"name\":\"exposure-time-ns\",\"unit\":\"ns\"", out);
++	if (strcmp(c->cfg->sensor, "ov32d40")) {
++		fputs(",\"supported\":false}", out);
++		return;
++	}
++	if (xioctl(c->sensor_fd, VIDIOC_QUERY_EXT_CTRL, &q) < 0 ||
++	    front_exposure_timing(c, &q) < 0) {
++		fprintf(out, ",\"supported\":false,\"timing_errno\":%d}", errno);
++		return;
++	}
++	uint64_t last = q.minimum + (q.maximum - q.minimum) / q.step * q.step;
++	fprintf(out, ",\"supported\":true,\"min\":%llu,\"max\":%llu,\"default\":%llu,"
++		"\"line_ns_num\":%llu,\"line_ns_den\":%llu,\"line_step\":%llu,\"flags\":%u",
++		(unsigned long long)front_exposure_ns((uint64_t)q.minimum),
++		(unsigned long long)front_exposure_ns(last),
++		(unsigned long long)front_exposure_ns((uint64_t)q.default_value),
++		(unsigned long long)FRONT_LINE_NS_NUM, (unsigned long long)FRONT_LINE_NS_DEN,
++		(unsigned long long)q.step, q.flags);
++	if (control_get(c, 0, &actual) < 0)
++		fprintf(out, ",\"get_errno\":%d", errno);
++	else if (actual < q.minimum || actual > q.maximum)
++		fprintf(out, ",\"get_errno\":%d,\"lines\":%d", ERANGE, actual);
++	else
++		fprintf(out, ",\"lines\":%d,\"value\":%llu", actual,
++			(unsigned long long)front_exposure_ns((uint64_t)actual));
++	fputc('}', out);
++}
++
+ static void control_report(FILE *out, struct cam *c, bool values)
+ {
+ 	struct v4l2_query_ext_ctrl query[CONTROL_COUNT];
+@@ -1447,6 +1549,7 @@
+ 		}
+ 		fputc('}', out);
+ 	}
++	control_report_exposure_time(out, c);
+ 	fputs("]}\n", out);
+ }
+ 
+@@ -1516,10 +1619,12 @@
+ 		int fd = control_node(c, i), actual;
+ 		char *end;
+ 		long requested;
++		uint64_t requested_ns = 0;
++		bool time_units = i == 0 && !strcmp(name, "exposure-time-ns");
+ 		bool manual = n->domain == DOMAIN_AE ? c->ae_manual :
+ 			n->domain == DOMAIN_WB ? c->wb_manual : c->af_manual;
+ 
+-		if (strcmp(name, n->name))
++		if (strcmp(name, n->name) && !time_units)
+ 			continue;
+ 		if (fd < 0) {
+ 			control_error(out, "unsupported", EOPNOTSUPP, false);
+@@ -1529,15 +1634,26 @@
+ 			control_error(out, "auto-owner", EBUSY, false);
+ 			return;
+ 		}
+-		errno = 0;
+-		requested = strtol(arg, &end, 10);
+-		if (errno || !arg[0] || *end || requested < INT_MIN || requested > INT_MAX) {
+-			control_error(out, "value", ERANGE, false);
+-			return;
+-		}
+ 		if (xioctl(fd, VIDIOC_QUERY_EXT_CTRL, &q) < 0) {
+ 			control_error(out, "query", errno, false);
+ 			return;
++		}
++		if (time_units) {
++			if (front_exposure_timing(c, &q) < 0) {
++				control_error(out, "timing", errno, false);
++				return;
++			}
++			if (front_exposure_lines(arg, &q, &requested_ns, &requested) < 0) {
++				control_error(out, "value", errno, false);
++				return;
++			}
++		} else {
++			errno = 0;
++			requested = strtol(arg, &end, 10);
++			if (errno || !arg[0] || *end || requested < INT_MIN || requested > INT_MAX) {
++				control_error(out, "value", ERANGE, false);
++				return;
++			}
+ 		}
+ 		if (q.type != V4L2_CTRL_TYPE_INTEGER || q.minimum < INT_MIN || q.maximum > INT_MAX ||
+ 		    q.flags & (V4L2_CTRL_FLAG_DISABLED | V4L2_CTRL_FLAG_READ_ONLY | V4L2_CTRL_FLAG_GRABBED) ||
+@@ -1558,6 +1674,24 @@
+ 		}
+ 		if (control_get(c, i, &actual) < 0) {
+ 			control_error(out, "readback", errno, true);
++			return;
++		}
++		if (time_units) {
++			if (actual < q.minimum || actual > q.maximum ||
++			    (uint64_t)(actual - q.minimum) % q.step) {
++				fprintf(out, "{\"version\":1,\"ok\":false,\"stage\":\"readback-range\","
++					"\"lines\":%d,\"errno\":%d,\"write_attempted\":true}\n", actual, ERANGE);
++				return;
++			}
++			control_cache(c, i, actual);
++			fprintf(out, "{\"version\":1,\"ok\":%s,\"camera\":\"%s\","
++				"\"control\":\"%s\",\"unit\":\"ns\",\"requested\":%llu,"
++				"\"requested_lines\":%ld,\"lines\":%d,\"value\":%llu,"
++				"\"errno\":%d,\"write_attempted\":true}\n",
++				actual == requested ? "true" : "false", camera, name,
++				(unsigned long long)requested_ns, requested, actual,
++				(unsigned long long)front_exposure_ns((uint64_t)actual),
++				actual == requested ? 0 : EIO);
+ 			return;
+ 		}
+ 		control_cache(c, i, actual);

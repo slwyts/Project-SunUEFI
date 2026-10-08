@@ -42,6 +42,7 @@ CAMERAD_CCM_PATCH=ROOT/'tools/patches/piano-camerad-writable-ccm.patch'
 CAMERAD_AE_PATCH=ROOT/'tools/patches/piano-camerad-stable-ae.patch'
 CAMERAD_FRAME_PATCH=ROOT/'tools/patches/piano-camerad-frame-integrity.patch'
 CAMERAD_MANUAL_PATCH=ROOT/'tools/patches/piano-camerad-manual-controls.patch'
+CAMERAD_TIMING_PATCH=ROOT/'tools/patches/piano-camerad-front-exposure-time.patch'
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -65,7 +66,7 @@ def entry_source(name):
     signature='int PianoOriginalMain(int,char **);'if name in ('piano-touch-view','piano-camera-ctl')else'int PianoOriginalMain(void);'
     normal='return PianoOriginalMain(argc,argv);'if name in ('piano-touch-view','piano-camera-ctl')else'if(argc!=1){fprintf(stderr,"Use --help or no arguments.\\n");return 2;} return PianoOriginalMain();'
     description=' Optional --diagnostics N emits touch JSON; --capture FILE saves this reader\'s complete raw records with --capture-seconds N (1..10, default5, max16MiB). Both default off.'if name=='piano-touch-view'else''
-    if name=='piano-camera-ctl':description=' caps|get rear|front; set rear|front ae|awb|af auto|manual; set rear|front exposure|analog-gain|digital-gain|red-balance|blue-balance|focus INTEGER.'
+    if name=='piano-camera-ctl':description=' caps|get rear|front; set rear|front ae|awb|af auto|manual; set rear|front exposure|analog-gain|digital-gain|red-balance|blue-balance|focus INTEGER; set front exposure-time-ns NANOSECONDS quantizes to the verified active sensor mode.'
     return '#include <stdio.h>\n#include <string.h>\n'+signature+'\nint main(int argc,char **argv){if(argc==2 && !strcmp(argv[1],"--help")){puts("'+name+': Linux Piano runtime helper; --help performs no device access.'+description+'");return 0;}'+normal+'}\n'
 
 
@@ -85,13 +86,13 @@ def derive_touch_source(public, output):
 
 
 def derive_camerad_source(public, output):
-    """Apply CCM, AE/AF, frame-integrity and manual controls to the verified copy."""
+    """Apply CCM, AE/AF, frame integrity, manual controls and front timing."""
     relative,pin,_=PUBLIC_SOURCES['piano-camerad'];original=Path(public)/relative
     if sha(original)!=pin:raise ValueError('Public camera source changed')
     folder=Path(output)/'piano-camera-source';target=folder/relative
     target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,target)
     patches=[]
-    for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH,CAMERAD_FRAME_PATCH,CAMERAD_MANUAL_PATCH):
+    for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH,CAMERAD_FRAME_PATCH,CAMERAD_MANUAL_PATCH,CAMERAD_TIMING_PATCH):
         # This generated directory is inside the parent Git checkout. Git can
         # silently skip a git-format patch whose paths lie outside that prefix.
         # Apply the standard patch to this standalone source copy instead.
@@ -186,7 +187,7 @@ def build(args):
     inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
     inputs[str(TOUCH_DIAGNOSTICS_PATCH)]=sha(TOUCH_DIAGNOSTICS_PATCH)
     inputs[str(TOUCH_CAPTURE_PATCH)]=sha(TOUCH_CAPTURE_PATCH)
-    for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH,CAMERAD_FRAME_PATCH,CAMERAD_MANUAL_PATCH):
+    for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH,CAMERAD_FRAME_PATCH,CAMERAD_MANUAL_PATCH,CAMERAD_TIMING_PATCH):
         inputs[str(patch)]=sha(patch)
     for name,pin in TOOL_PINS.items():
         p=tools/name
