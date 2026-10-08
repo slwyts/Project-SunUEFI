@@ -2,9 +2,9 @@
 
 `piano-next-boot` 使用现有合体 BOOT 请求页选择 Android、启动菜单、Linux 或 UEFI 设置。默认只保存下次路线；`--reboot` 才请求 systemd 正常重启。本工具不重包内核、不切槽、不写 misc/PMIC，也不增加后台服务。
 
-当前选择会持续保留，后续正常开机继续沿用，直到改选其他路线。一次性请求自动消费尚未实现。原厂 Recovery 重启保持原语义。
+当前选择会持续保留，后续正常开机继续沿用，直到改选其他路线。一次性请求自动消费尚未实现。已部署的新选择器让原厂 Recovery 优先，持久 Linux 偏好与实际 Recovery 的组合检查仍待完成。
 
-已部署到研究设备并完成配置、只读 status 和当前桌面管理员的 polkit 授权查询。2026-10-08 从 g086 Linux 执行 `piano-next-boot android --reboot` 后，原厂 Android 启动完成；原生命令读回 target0、sequence4，与配置 generation 相同，未重包或刷写 BOOT/ESP/root。此为相同后端的 CLI 重启证明；桌面确认内容已渲染检查，真实点击仍待验证。菜单/Setup路线仍须核对，不能因为保存请求就宣称菜单已显示。
+已部署到研究设备并完成配置、只读 status 和当前桌面管理员的 polkit 授权查询。2026-10-08 从 g086 Linux 执行 `piano-next-boot android --reboot` 后，原厂 Android 启动完成，读回 target0/sequence4。随后部署含 Recovery 优先的新选择器，在 Android 原生保存 target2/sequence1并正常重启，已通过 SSH 确认返回 g086 Linux，磁盘 ext4 根为 rw，GDM/ADSP/sensors active。两份 GTK 确认内容已按现场主题和2×缩放渲染检查，尚未通过真实桌面点击执行切换；菜单/Setup路线也未实测。
 
 ## 使用
 
@@ -17,7 +17,7 @@ piano-next-boot android --reboot # 保存成功后正常重启
 
 普通用户通过pkexec调用这一次操作。新增的有限polkit规则允许本地、当前活动会话中的sudo或wheel管理员免密码使用此启动action；其他用户仍须管理员认证。piano账号没有工厂密码，本入口不会修改或解锁账号，不增加通用sudo免密或强制锁屏流程。root可直接调用同一CLI。
 
-2026-10-08 对当前 g086 只读检查：piano 在 sudo 组，密码locked；`sudo -l -U piano` 仅 `(ALL : ALL) ALL`，没有NOPASSWD，`/etc/sudoers.d`只有README。polkit默认管理员为sudo组。单独auth_admin会让未设置密码的owner无法使用按钮，因此本任务明确新增`49-piano-boot-request.rules`这一有限能力，不把它描述为已有NOPASSWD继承。规则只匹配`org.sunuefi.boot-request`，并同时要求local、active和sudo/wheel组；其他用户/action由原policy处理。规则源码已完成，安装和当前会话实际授权检查由root执行；本轮没有改guest权限或测试BOOT写入。
+2026-10-08 对当前 g086 的检查：piano 在 sudo 组，密码locked；`sudo -l -U piano` 仅 `(ALL : ALL) ALL`，没有NOPASSWD，`/etc/sudoers.d`只有README。polkit默认管理员为sudo组。单独auth_admin会让未设置密码的owner无法使用按钮，因此本任务明确新增`49-piano-boot-request.rules`这一有限能力，不把它描述为已有NOPASSWD继承。规则只匹配`org.sunuefi.boot-request`，并同时要求local、active和sudo/wheel组；其他用户/action由原policy处理。规则已安装，当前桌面会话的授权查询通过；随后 CLI 的原生请求写入与正常返回 Android 也已验证。
 
 两个`.desktop`入口为“返回 Android”和“SunUEFI 启动选择菜单”。按钮先显示GTK确认对话框，提醒保存当前工作，再走相同CLI/helper。取消不保存请求；失败显示错误。桌面环境需要标准polkit认证代理及Python GI/GTK3，CLI仅需Python标准库、pkexec和原生工具。
 
@@ -61,6 +61,6 @@ piano-next-boot-configure --device /dev/disk/by-partlabel/实际已安装的boot
 piano-next-boot status
 ```
 
-配置命令从实际分区读回 APP generation，原子保存配置，不写 BOOT 请求；它没有扫描当前槽或覆盖原厂镜像。2026-10-08 已在研究设备部署，实际 boot_a 配置与只读 status 匹配，当前桌面管理员的 polkit 授权查询返回成功。尚未通过新入口执行重启，UI 预览仍在准备，不能把这些检查当作完整切换成功。
+配置命令从实际分区读回 APP generation，原子保存配置，不写 BOOT 请求；它没有扫描当前槽或覆盖原厂镜像。研究设备的实际 boot_a 配置与只读 status 匹配，CLI 返回 Android 已完成；这不等于所有用户都应配置 boot_a。
 
-本轮必要检查仅三例真实C regular-file执行：stale generation拒绝且文件未变、status/set/consume共享CRC并仅请求头改变、坏hex/非法helper参数提前拒绝。另检查Python语法、desktop格式、polkit XML精确绑定；没有设备写测试。
+源码阶段的必要检查覆盖 generation 不符时拒绝写入、共享 CRC、请求页范围及非法参数；Python、desktop 和 polkit 格式检查通过。实际部署、重启和 UI 检查范围见上方当前状态。
