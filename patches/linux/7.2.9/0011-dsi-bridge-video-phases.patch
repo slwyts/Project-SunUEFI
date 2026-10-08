@@ -1,0 +1,295 @@
+From: Project SunUEFI
+Subject: [PATCH] drm/msm/dsi: stage command link and video through bridge phases
+
+Piano's LP11 panel preparation performs reset, on DCS and DSC PPS. The
+current prepare_prev_first chain starts the video engine before these
+commands, and post-disable sends off DCS before stopping the old engine.
+The fixed downstream normal sequence prepares command/PHY/link access,
+then panel DCS/PPS, then video. Match these stages through ordinary bridge
+pre_enable/enable/disable/post_disable without recursively driving panels.
+
+Keep command access, IRQs and clocks through panel unprepare. Distinguish
+link enable from actual video enable, reject powered-off MMIO, unwind only
+started video on peer failure and keep the existing slave-first clock
+shutdown and final PHY release. Clear only VID/CMD mode bits when selecting
+a mode. Report the already-read FIFO IRQ subcause before W1C, ratelimited.
+
+The September RFC09 proposes the same link/video API separation but is
+unmerged; maintainer requested precise downstream evidence. This patch is
+a candidate supported by fixed MiCode/Android FDT and the observed FIFO
+failure, not a claim that the physical DPMS cause has been verified.
+References:
+https://www.mail-archive.com/dri-devel@lists.freedesktop.org/msg634893.html
+https://www.mail-archive.com/dri-devel@lists.freedesktop.org/msg635747.html
+https://github.com/MiCode/vendor_opensource_display-drivers/blob/aa06fd1757c28dce96fbe4e04d4530ec21b52aac/msm/dsi/dsi_display.c
+
+No reset GPIO pulse, off-command delay, refresh policy or timing change.
+
+--- a/drivers/gpu/drm/msm/dsi/dsi.h
++++ b/drivers/gpu/drm/msm/dsi/dsi.h
+@@ -69,6 +69,8 @@
+ void msm_dsi_host_cmd_xfer_commit(struct mipi_dsi_host *host,
+ 					u32 dma_base, u32 len);
+ int msm_dsi_host_enable(struct mipi_dsi_host *host);
++int msm_dsi_host_enable_video(struct mipi_dsi_host *host);
++int msm_dsi_host_disable_video(struct mipi_dsi_host *host);
+ int msm_dsi_host_disable(struct mipi_dsi_host *host);
+ void msm_dsi_host_enable_irq(struct mipi_dsi_host *host);
+ void msm_dsi_host_disable_irq(struct mipi_dsi_host *host);
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -186,6 +186,7 @@
+ 	bool registered;
+ 	bool power_on;
+ 	bool enabled;
++	bool video_enabled;
+ 	int irq;
+ };
+ 
+@@ -1164,6 +1165,7 @@
+ 	u32 dsi_ctrl;
+ 
+ 	dsi_ctrl = dsi_read(msm_host, REG_DSI_CTRL);
++	dsi_ctrl &= ~(DSI_CTRL_VID_MODE_EN | DSI_CTRL_CMD_MODE_EN);
+ 
+ 	if (!enable) {
+ 		dsi_ctrl &= ~(DSI_CTRL_ENABLE | DSI_CTRL_VID_MODE_EN |
+@@ -1173,6 +1175,7 @@
+ 	} else {
+ 		if (video_mode) {
+ 			dsi_ctrl |= DSI_CTRL_VID_MODE_EN;
++			dsi_intr_ctrl(msm_host, DSI_IRQ_MASK_CMD_MDP_DONE, 0);
+ 		} else {		/* command mode */
+ 			dsi_ctrl |= DSI_CTRL_CMD_MODE_EN;
+ 			dsi_intr_ctrl(msm_host, DSI_IRQ_MASK_CMD_MDP_DONE, 1);
+@@ -1232,7 +1235,7 @@
+ 	if (!(data & DSI_STATUS0_VIDEO_MODE_ENGINE_BUSY))
+ 		return;
+ 
+-	if (msm_host->power_on && msm_host->enabled) {
++	if (msm_host->power_on && msm_host->video_enabled) {
+ 		dsi_wait4video_done(msm_host);
+ 		/* delay 4 ms to skip BLLP */
+ 		usleep_range(2000, 4000);
+@@ -1572,7 +1575,9 @@
+ 		container_of(work, struct msm_dsi_host, err_work);
+ 	u32 status = msm_host->err_work_state;
+ 
+-	pr_err_ratelimited("%s: status=%x\n", __func__, status);
++	pr_err_ratelimited("%s: host=%d status=%x power_on=%u enabled=%u video=%u\n",
++			   __func__, msm_host->id, status, READ_ONCE(msm_host->power_on),
++			   READ_ONCE(msm_host->enabled), READ_ONCE(msm_host->video_enabled));
+ 	if (status & DSI_ERR_STATE_MDP_FIFO_UNDERFLOW)
+ 		dsi_sw_reset(msm_host);
+ 
+@@ -1633,6 +1638,9 @@
+ 
+ 	/* fifo underflow, overflow */
+ 	if (status) {
++		pr_err_ratelimited("%s: host=%d raw_fifo=%08x power_on=%u enabled=%u video=%u\n",
++				   __func__, msm_host->id, status, READ_ONCE(msm_host->power_on),
++				   READ_ONCE(msm_host->enabled), READ_ONCE(msm_host->video_enabled));
+ 		dsi_write(msm_host, REG_DSI_FIFO_STATUS, status);
+ 		msm_host->err_work_state |= DSI_ERR_STATE_FIFO;
+ 		if (status & DSI_FIFO_STATUS_CMD_MDP_FIFO_UNDERFLOW)
+@@ -2437,20 +2445,57 @@
+ int msm_dsi_host_enable(struct mipi_dsi_host *host)
+ {
+ 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
+-
+-	dsi_op_mode_config(msm_host,
+-		!!(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO), true);
+-
+-	/* TODO: clock should be turned off for command mode,
+-	 * and only turned on before MDP START.
+-	 * This part of code should be enabled once mdp driver support it.
++	int ret = 0;
++
++	mutex_lock(&msm_host->dev_mutex);
++	if (!msm_host->power_on) {
++		ret = -EINVAL;
++		goto unlock;
++	}
++	/* Panel prepare needs the link and command engine, not video yet. */
++	dsi_op_mode_config(msm_host, false, true);
++	msm_host->enabled = true;
++	msm_host->video_enabled = false;
++unlock:
++	mutex_unlock(&msm_host->dev_mutex);
++	return ret;
++}
++
++int msm_dsi_host_enable_video(struct mipi_dsi_host *host)
++{
++	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
++	int ret = 0;
++
++	mutex_lock(&msm_host->dev_mutex);
++	if (!msm_host->power_on || !msm_host->enabled) {
++		ret = -EINVAL;
++		goto unlock;
++	}
++	if (msm_host->mode_flags & MIPI_DSI_MODE_VIDEO) {
++		dsi_op_mode_config(msm_host, true, true);
++		msm_host->video_enabled = true;
++	}
++unlock:
++	mutex_unlock(&msm_host->dev_mutex);
++	return ret;
++}
++
++int msm_dsi_host_disable_video(struct mipi_dsi_host *host)
++{
++	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
++
++	mutex_lock(&msm_host->dev_mutex);
++	if (!msm_host->power_on || !msm_host->video_enabled)
++		goto unlock;
++	/* Stop video before INTF stops; reset removes its command-engine block.
++	 * Keep command/IRQ/clock access for the panel's later unprepare DCS.
+ 	 */
+-	/* if (msm_panel->mode == MSM_DSI_CMD_MODE) {
+-	 *	dsi_link_clk_disable(msm_host);
+-	 *	pm_runtime_put(&msm_host->pdev->dev);
+-	 * }
+-	 */
+-	msm_host->enabled = true;
++	dsi_op_mode_config(msm_host, true, false);
++	dsi_sw_reset(msm_host);
++	dsi_op_mode_config(msm_host, false, true);
++	msm_host->video_enabled = false;
++unlock:
++	mutex_unlock(&msm_host->dev_mutex);
+ 	return 0;
+ }
+ 
+@@ -2458,16 +2503,16 @@
+ {
+ 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
+ 
++	mutex_lock(&msm_host->dev_mutex);
++	if (msm_host->power_on) {
++		dsi_op_mode_config(msm_host, false, false);
++		/* Command-mode panels retain the existing final controller reset. */
++		if (!(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO))
++			dsi_sw_reset(msm_host);
++	}
+ 	msm_host->enabled = false;
+-	dsi_op_mode_config(msm_host,
+-		!!(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO), false);
+-
+-	/* Since we have disabled INTF, the video engine won't stop so that
+-	 * the cmd engine will be blocked.
+-	 * Reset to disable video engine so that we can send off cmd.
+-	 */
+-	dsi_sw_reset(msm_host);
+-
++	msm_host->video_enabled = false;
++	mutex_unlock(&msm_host->dev_mutex);
+ 	return 0;
+ }
+ 
+@@ -2560,6 +2605,8 @@
+ 	}
+ 
+ 	dsi_ctrl_disable(msm_host);
++	msm_host->enabled = false;
++	msm_host->video_enabled = false;
+ 
+ 	pinctrl_pm_select_sleep_state(&msm_host->pdev->dev);
+ 
+--- a/drivers/gpu/drm/msm/dsi/dsi_manager.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+@@ -199,6 +199,7 @@
+ struct dsi_bridge {
+ 	struct drm_bridge base;
+ 	int id;
++	bool link_ready;
+ };
+ 
+ #define to_dsi_bridge(x) container_of(x, struct dsi_bridge, base)
+@@ -291,6 +292,7 @@
+ 	if (is_bonded_dsi && !IS_MASTER_DSI_LINK(id))
+ 		return;
+ 
++	to_dsi_bridge(bridge)->link_ready = false;
+ 	ret = dsi_mgr_bridge_power_on(bridge);
+ 	if (ret) {
+ 		dev_err(&msm_dsi->pdev->dev, "Power on failed: %d\n", ret);
+@@ -311,12 +313,57 @@
+ 		}
+ 	}
+ 
++	to_dsi_bridge(bridge)->link_ready = true;
+ 	return;
+ 
+ host1_en_fail:
+ 	msm_dsi_host_disable(host);
+ host_en_fail:
+ 	dsi_mgr_bridge_power_off(bridge);
++}
++
++static void dsi_mgr_bridge_enable(struct drm_bridge *bridge)
++{
++	int id = dsi_mgr_bridge_get_id(bridge);
++	struct msm_dsi *msm_dsi = dsi_mgr_get_dsi(id);
++	struct msm_dsi *msm_dsi1 = dsi_mgr_get_dsi(DSI_1);
++	bool bonded = IS_BONDED_DSI();
++	int ret;
++
++	if ((bonded && !IS_MASTER_DSI_LINK(id)) || !to_dsi_bridge(bridge)->link_ready)
++		return;
++	/* The standard panel bridge has now completed prepare/DCS/PPS. */
++	ret = msm_dsi_host_enable_video(msm_dsi->host);
++	if (ret)
++		goto failed;
++	if (bonded && msm_dsi1) {
++		ret = msm_dsi_host_enable_video(msm_dsi1->host);
++		if (ret) {
++			msm_dsi_host_disable_video(msm_dsi->host);
++			goto failed;
++		}
++	}
++	return;
++failed:
++	/* Do not power off a prepared panel: keep command access for unprepare. */
++	pr_err("%s: video enable failed, %d\n", __func__, ret);
++}
++
++static void dsi_mgr_bridge_disable(struct drm_bridge *bridge)
++{
++	int id = dsi_mgr_bridge_get_id(bridge);
++	struct msm_dsi *msm_dsi = dsi_mgr_get_dsi(id);
++	struct msm_dsi *msm_dsi1 = dsi_mgr_get_dsi(DSI_1);
++	bool bonded = IS_BONDED_DSI();
++
++	if ((bonded && !IS_MASTER_DSI_LINK(id)) || !to_dsi_bridge(bridge)->link_ready)
++		return;
++	/* Stop the peer before its master, keeping link/command/IRQ access until
++	 * the panel's standard post-disable has sent its off/sleep DCS.
++	 */
++	if (bonded && msm_dsi1)
++		msm_dsi_host_disable_video(msm_dsi1->host);
++	msm_dsi_host_disable_video(msm_dsi->host);
+ }
+ 
+ void msm_dsi_manager_tpg_enable(void)
+@@ -350,6 +397,9 @@
+ 	 */
+ 	if (is_bonded_dsi && !IS_MASTER_DSI_LINK(id))
+ 		goto disable_phy;
++	if (!to_dsi_bridge(bridge)->link_ready)
++		goto disable_phy;
++	to_dsi_bridge(bridge)->link_ready = false;
+ 
+ 	ret = msm_dsi_host_disable(host);
+ 	if (ret)
+@@ -452,6 +502,8 @@
+ static const struct drm_bridge_funcs dsi_mgr_bridge_funcs = {
+ 	.attach = dsi_mgr_bridge_attach,
+ 	.pre_enable = dsi_mgr_bridge_pre_enable,
++	.enable = dsi_mgr_bridge_enable,
++	.disable = dsi_mgr_bridge_disable,
+ 	.post_disable = dsi_mgr_bridge_post_disable,
+ 	.mode_set = dsi_mgr_bridge_mode_set,
+ 	.mode_valid = dsi_mgr_bridge_mode_valid,

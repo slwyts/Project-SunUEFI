@@ -46,3 +46,5 @@ DT中的`qcom,sde-reg-dma-trigger-off=0x119c`是`trigger_sel_off`，不能误当
 本轮实机结果保存在 `private/provisioning/recovery-priority-20261008/bde3-drm.json`、`bde3-identity-probe.json`、`bde3-session-journal.txt`。内核的真实提交和完成时间为659.136439/659.136542秒，桌面恢复空数组时在662秒附近退出；无本轮SMMU或REGDMA timeout。标准显示恢复、暖色两侧输出及正常Night Light关开仍需分别验证。
 
 bde3同次DPMS关屏两秒再开屏仍出现 `dsi_err_worker status=4`，两次D-Bus调用返回不能证明物理链路恢复。随后正常重启已恢复GNOME。slave-first变更不足以解决此问题；status4是软件FIFO分类，尚无raw FIFO子位，不能确定具体underflow/overflow。暂不部署锁屏/睡眠策略，不重复切刷新率，下一步对照原厂video-enable与面板reset/DCS/PPS分期。
+
+下一默认内核的 [DSI分期修正](../../patches/linux/7.2.9/0011-dsi-bridge-video-phases.patch) 使用标准bridge四阶段：pre-enable准备PHY/clock/command，panel自行prepare完成DCS/PPS，enable再开启video；disable先停video并保留command，panel unprepare之后post-disable再清IRQ/clock/PHY。已有从链路先关时钟的顺序保留，未改变复位脉冲、off延时或刷新策略。IRQ日志复用已经读取的FIFO寄存器并限速输出，不新增MMIO读取。相关host/manager ARM64对象编译通过；新源码 `95b72a5bd7eb7fb31b2b385faa915edeee5a31cf`、tree `70a83a85970d3c6b50afe8886b4f6b855bd32d6a` 正在完整构建，实机恢复效果未验证。

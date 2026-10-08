@@ -41,7 +41,7 @@ TARGETS[DEFAULT_TARGET] = {
     **TARGETS['kernel69'],
     'series_target': 'kernel69',
     'patch_tree': TARGETS['kernel69']['target_tree'],
-    'target_tree': '16fe3d5fa0d8d2da8e66e69fde394d7850fb7f23',
+    'target_tree': '70a83a85970d3c6b50afe8886b4f6b855bd32d6a',
     'stable_commit': '5fce161649b4d779d1b76d9fcd52dc77779774b8',
     'stable_tree': 'c278d1443495d2a1a07fff2bcfb286b5c35baaea',
     'stable_version': '7.2.9',
@@ -90,6 +90,10 @@ TARGETS[DEFAULT_TARGET] = {
     'flash_torch_rounding_patch': {
         'file': 'patches/linux/7.2.9/0010-leds-qcom-flash-torch-rounding.patch',
         'sha256': '39f6e21b562b6c46b42d8be7582f2222a452b2485e01372e5b3302e44e47064e',
+    },
+    'dsi_video_phases_patch': {
+        'file': 'patches/linux/7.2.9/0011-dsi-bridge-video-phases.patch',
+        'sha256': 'd7a1e848ed94066fb99ab0a97810eaa425d8bafaf1fd4b1aad72b778b092ecbd',
     },
     'dsi_stop_order_patch': {
         'file': 'patches/linux/7.2.9/0008-dsi-bonded-stop-slave-first.patch',
@@ -258,7 +262,7 @@ def write_manifest(path, record):
 
 def update_patches(root, policy):
     result = {}
-    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch', 'va_clock_order_patch', 'gcv2_backend_patch', 'gcv2_catalog_patch', 'dsi_stop_order_patch', 'dsi_fixed_bpc_patch', 'flash_torch_rounding_patch'):
+    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch', 'va_clock_order_patch', 'gcv2_backend_patch', 'gcv2_catalog_patch', 'dsi_stop_order_patch', 'dsi_fixed_bpc_patch', 'flash_torch_rounding_patch', 'dsi_video_phases_patch'):
         if key not in policy:
             continue
         row = policy[key]
@@ -310,6 +314,7 @@ def merge_stable(work, policy, paths):
         ('dsi_stop_order_patch', 'fix(drm): stop bonded DSI slave before clock master', 'dsi_stop_order_commit'),
         ('dsi_fixed_bpc_patch', 'fix(drm): preserve actual DSC component depth', 'dsi_fixed_bpc_commit'),
         ('flash_torch_rounding_patch', 'fix(leds): preserve qcom torch current steps', 'flash_torch_rounding_commit'),
+        ('dsi_video_phases_patch', 'fix(drm): stage DSI command and video through bridge phases', 'dsi_video_phases_commit'),
     ):
         if key not in paths:
             continue
