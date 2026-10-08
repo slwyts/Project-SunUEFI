@@ -241,10 +241,15 @@ static int decode_frames(struct section *tree,const unsigned char *hardware,
     int (*prepare)(void *)=stylus[8];
     unsigned char *(*get_total)(void)=required(library,"get_stylus_data");
     if (common_path) {
-        /* Actual HAL160e8..160f8 reads1032B into the common ring unchanged;
-         * ALG86cf0's pressure branch checks byte1=7/u16+2=0x440, then reads
-         * the two actual u32 body words at0xc/0x10. Never derive a record from
-         * raw29 metadata pressure or reinterpret +8 as a packet length.
+        /* The pinned touchfeature service's external long-vector path
+         * 16cac->19df8 builds cmd7/mode440 and copies the caller's s32 body.
+         * 19eec->1df40 calls thp_daemon_cmd_process directly; this pressure
+         * path does not need a kernel common FIFO. HAL160f8's char-device
+         * reader is another common transport, not this proved writer.
+         * ALG86cf0 checks byte1=7/u16+2=0x440 and reads body words0xc/0x10.
+         * Accept an original external record; do not derive it from raw29
+         * pressure or reinterpret +8 as a packet length. Physical sender
+         * and synchronized pressure values are still unverified.
          */
         unsigned char record[1032];size_t bytes;
         if (read_file(common_path,record,sizeof(record),&bytes) || bytes!=sizeof(record) ||

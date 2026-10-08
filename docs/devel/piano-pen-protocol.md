@@ -90,7 +90,7 @@ python3 tools/piano_pen_protocol.py runtime-context /path/to/48-byte-context-con
 
 Linux唯一流读取者 `piano-touch-view` 现有可选 [`--capture FILE --capture-seconds N`](../../tools/patches/piano-touch-view-raw-capture.patch)：默认关闭，N为1..10秒、默认5秒，内存上限16MiB。它保存自己已读到的完整NTP1记录，包含原内核头、序列、时间戳、epoch与所有普通/SC/17/29帧；不只保留笔帧，不另开FIFO。窗口结束或达到字节上限后一次写出新文件并继续原有输入，stderr给出实际字节数、错误和帧类型统计；应选择本地tmpfs新路径，不能覆盖旧捕获。后续调试应让现有owner带此选项启动，不能在服务旁再运行第二个reader。两个runtime builder通过同一 `derive_touch_source` 应用这个默认关闭补丁。当前仅已编译，未在设备采集。
 
-当前a8内核 `nt36532e` 的 `nvt_thp_read_frame` 原样读SPI，`nvt_thp_publish_frame` 检查补码后把原buffer直接送同一FIFO；没有原厂Android的checksum→CRC32重写。因此上述Linux捕获仍保留原始双校验字段，但内核valid flag只检查头补码，不能代替CPU适配器的两层校验。当前驱动没有1032B common7/0x440接口；需要先确认原厂真实enqueue来源或取得同步真实common记录，再把正确记录和时间戳通过同一owner传递。不能从raw29 pressure拼接一个common记录，也不能把HAL发送sysfs `touch_thp_ic_cmd_data` 当作已确认读取来源。
+当前a8内核 `nt36532e` 的 `nvt_thp_read_frame` 原样读SPI，`nvt_thp_publish_frame` 检查补码后把原buffer直接送同一FIFO；没有原厂Android的checksum→CRC32重写。因此上述Linux捕获仍保留原始双校验字段，但内核valid flag只检查头补码，不能代替CPU适配器的两层校验。当前驱动没有1032B common7/0x440接口，但下述实际writer已经证明这条压力路径绕过kernel queue；不再把新增kernel读取API作为前提。不能从raw29 pressure拼接一个common记录，也不能把HAL发送sysfs `touch_thp_ic_cmd_data` 当作压力读取来源。
 
 Python 调用可使用 `parse_metadata(data)`、`read_config(path)`、`profile(config, vendor_id)` 和 `factory_tilt_component(dx, dy, resolution, calibration)`。最后一个函数没有 CLI 事件输出，要求真实的已算 Tip/Ring 差值和已确认的 runtime resolution；配置 reader 返回的 vendor profile 只是配置映射，不证明当前连接的笔采用哪一个 profile。参数单位与最终 input 上报仍按上面的缺项处理。
 
@@ -106,4 +106,8 @@ Python 调用可使用 `parse_metadata(data)`、`read_config(path)`、`profile(c
 
 [CPU适配器](../../linux/userspace/pen/piano-pen-frame.c)已按同版HAL的 `0x2fe44/0x30718` 实现类型29的笔输入前缀：内部跨度1297B，header在0x3c、36B metadata在0x10d、四个pointer在0x131/139/141/149，20B trailer在0x151。矩阵长度来自实际ini的12×40、60×8，每组480个int16，四组共3840B。它核验原始包的外层与笔尾层additive checksum/补码/边界；手指四分包实际齐全、原厂累计和为10时才发布完整矩阵。频率跳转请求保留原字，不在CPU worker发硬件指令或返回假ACK。Android mmap中被内核改写成CRC32的包不属于此输入格式。
 
-worker的 `--decode29` 接受已捕获的原始包；`--prepare29` 还需要真实1032B common记录，byte1=7、u16+2=0x440，原厂slot2读取body中的两个u32 `+0xc/+0x10` 来更新压力ring。真实本机BTF确认common_data是8B头加256个s32 body，`+8` 是data_buf[0]，不是长度；[公共生产函数](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/xiaomi/xiaomi_touch_core.c#L182)把u16+4的data_len作为s32数量，所以此入口要求3..256个实际body字。HAL `0x160f8` 整块pread1032B、consumer `0x16390` 原样转发，没有由raw29的pressure字段构造这份记录。未经证实不能把压力来源归为BLE。CPU前缀也不能交给完整 `parse_data_package`：该函数还读取真实主触摸/SC缓冲与噪声状态。当前没有真实29包、common压力/profile记录及最终事件同步数据，因此新路径只完成源码与ARM64编译；原有隔离配置/init再次通过，尚未执行帧prepare/坐标解算或生成uinput。没有第二FIFO reader、假触点或模拟输出。
+worker的 `--decode29` 接受已捕获的原始包；`--prepare29` 还需要真实外部1032B common记录，byte1=7、u16+2=0x440，原厂slot2读取body中的两个u32 `+0xc/+0x10` 来更新压力ring。真实本机BTF确认common_data是8B头加256个s32 body，`+8` 是data_buf[0]，不是长度；u16+4的data_len是s32数量，此入口要求3..256个实际body字。HAL的另一条common读取路径已追明为 `0x11dc8` 打开 `/dev/xiaomi-touch`，touchid/hardware ioctl后在 `0x11fdc..0x12000` 把同一FD交给getcmd等子模块，再由 `0x160f8/0x16390` 原样读取/转发；这不证明压力记录由kernel生产。
+
+同版ROM service SHA `3e4549b2…271f42` 已确认真正的0x440 writer：外部长vector入口 `0x16b88` 在 `0x16c70/0x16cac` 特判mode0x440，调用 `0x19df8`；后者在 `0x19e98..0x19eac` 写入touchid/cmd7/mode0x440/data_len，把外部s32数组原样复制到body。`0x19eec→0x1df40` 通过实际dlsym安装的 `thp_daemon_cmd_process` 直接进入libtouchreport与ALG压力ring，绕过kernel common queue。vtable槽位 `0x400e0` 指向这个入口；确切AIDL方法名还需要匹配同版V1-ndk接口，外部Binder调用者及其笔压力物理来源尚未确认。固定MiCode中cmd7是SET_LONG_VALUE、0x440是DATA_MODE_141；普通ioctl的long-value只处理mode15，不能用这个泛用入口解释当前pressure writer。没有raw29压力转换、SPI读取或BLE读取出现在已证明的这个构造函数中，但不能因此替上层来源作推断。worker继续接收真实外部1032B记录，由现有唯一owner转交；不增加假kernel API或第二FIFO。
+
+CPU前缀仍不能交给完整 `parse_data_package`：该函数还读取真实主触摸/SC缓冲与噪声状态。当前已有唯一owner的5秒719条type3记录、原始校验和序列均正常，但没有笔29包、common压力/profile记录或最终事件同步数据，尚未执行帧prepare/坐标解算或生成uinput。没有假触点或模拟输出。
