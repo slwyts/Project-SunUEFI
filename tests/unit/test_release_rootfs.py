@@ -36,6 +36,7 @@ class ReleaseRootTests(unittest.TestCase):
         (self.root / 'config/release.json').write_text(json.dumps(CONFIG))
         debug = self.root / 'linux/userspace/piano-debug-bootstrap'
         debug.parent.mkdir(parents=True); debug.write_text('#!/bin/sh\nexit 0\n')
+        (debug.parent / 'piano-boot-request').write_text('#!/bin/sh\nexit 0\n')
         self.m = {'source_commit': 'a' * 40, 'source_clean': True, 'root_policy': 'LABEL=PIANOROOT',
                   'command_line': 'rdinit=/pianoinit piano.root=LABEL=PIANOROOT', 'kernel_release': 'fixture-release'}
 
@@ -44,7 +45,7 @@ class ReleaseRootTests(unittest.TestCase):
             return builder.plan(self.kernel, self.source, self.output, root=self.root)
 
     def policy_tree(self):
-        for name in ('usr/lib/piano', 'etc/systemd/system', 'etc/ssh', 'home/piano/.ssh', 'root/.ssh'):
+        for name in ('usr/lib/piano', 'etc/systemd/system', 'etc/ssh', 'home/piano/.ssh', 'root/.ssh', 'dev', 'proc', 'sys', 'run'):
             (self.rootfs / name).mkdir(parents=True, exist_ok=True)
         (self.rootfs / 'usr/lib/piano/piano-ram-hardware-prepare').write_text('real adapter fixture')
         for name in ('piano-display.service', 'piano-touch.service', 'piano-keyboard.service', 'piano-audio.service'):
@@ -94,7 +95,7 @@ class ReleaseRootTests(unittest.TestCase):
         with patch.object(builder, 'ROOT', self.root):
             builder.apply_policy(self.rootfs, self.output, CONFIG)
             builder.apply_policy(self.rootfs, self.output, CONFIG)
-        self.assertEqual((self.rootfs / 'etc/fstab').read_text(), 'LABEL=PIANOROOT / ext4 defaults,noatime 0 1\nLABEL=SUNUEFI_ESP /boot/efi vfat umask=0077,nofail 0 2\n')
+        self.assertEqual((self.rootfs / 'etc/fstab').read_text(), 'LABEL=PIANOROOT / ext4 defaults,noatime,x-systemd.growfs 0 1\nLABEL=SUNUEFI_ESP /boot/efi vfat umask=0077,nofail 0 2\n')
         for name, data in before.items(): self.assertEqual((self.rootfs / 'etc/systemd/system' / name).read_bytes(), data)
         for name in CONFIG['storage']['masked_units']:
             self.assertEqual(os.readlink(self.rootfs / 'etc/systemd/system' / name), '/dev/null')

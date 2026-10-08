@@ -82,8 +82,10 @@ class BspPackageTests(unittest.TestCase):
                     derived = row['derived_from']
                     self.assertEqual(hashlib.sha256((ROOT / derived['path']).read_bytes()).hexdigest(), derived['sha256'])
         hifi = self.base / 'rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf'
-        self.assertIn(b"VA DMIC MUX0' DMIC1", hifi.read_bytes())
-        self.assertIn(b'CaptureChannels 2', hifi.read_bytes())
+        self.assertIn(b"VA DMIC MUX0' DMIC2", hifi.read_bytes())
+        self.assertIn(b'CaptureChannels 1', hifi.read_bytes())
+        for position in ('Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'):
+            self.assertIn(f"{position} Amp Volume' 235".encode(), hifi.read_bytes())
 
     def test_dpkg_file_owner_and_unowned_existing_file_conflicts(self):
         root = self.base / 'guest'
@@ -128,7 +130,7 @@ class BspPackageTests(unittest.TestCase):
             self.assertTrue(member.issym())
             self.assertEqual(member.linkname, '../../Qualcomm/sm8750/Xiaomi-Pad-8-Pro/Xiaomi-Pad-8-Pro.conf')
             hifi = archive.extractfile('./usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf').read()
-            self.assertIn(b"VA_DEC0 Volume' 84", hifi)
+            self.assertIn(b"VA_DEC0 Volume' 98", hifi)
         self.assertEqual(report['files']['payload.tar']['sha256'], hashlib.sha256((out / 'payload.tar').read_bytes()).hexdigest())
 
     def test_missing_deb_backend_does_not_fake_package(self):

@@ -93,7 +93,7 @@ class ReleaseKernelTests(unittest.TestCase):
             "original_target_commit": self.original_target_commit,
             "source_url": SOURCE_URL,
         }
-        self.worktree = self.root / "build/kernel-worktrees/release-kernel"
+        self.worktree = self.root / "build/kernel-worktrees" / ("fixture-" + self.target_tree[:12])
         self.source_manifest = self.root / "build/release-kernel/source-manifest.json"
         self.initial_worktrees = self.git("worktree", "list", "--porcelain")
         self.initial_head = self.git("rev-parse", "HEAD")
@@ -151,8 +151,10 @@ class ReleaseKernelTests(unittest.TestCase):
 
     def assert_failure_retained(self):
         self.assertTrue(self.worktree.is_dir(), "Keep the failed worktree for inspection")
-        self.assertTrue(self.source_manifest.is_file(), "Keep preparation failure metadata")
-        failure = json.loads(self.source_manifest.read_text(encoding="utf-8"))
+        failed = self.worktree.with_name(self.worktree.name + ".failure.json")
+        self.assertTrue(failed.is_file(), "Keep preparation failure metadata beside its source snapshot")
+        self.assertFalse(self.source_manifest.exists(), "A failed source must not become the current release")
+        failure = json.loads(failed.read_text(encoding="utf-8"))
         self.assertEqual(failure["status"], "SOURCE_PREPARATION_FAILED")
         self.assertEqual(self.git("rev-parse", "HEAD"), self.initial_head)
         self.assertEqual(self.git("config", "--local", "--list"), self.initial_configuration)
@@ -195,6 +197,7 @@ class ReleaseKernelTests(unittest.TestCase):
             self.target.update(target_tree=tree, stable_merged_tree=tree,
                                conflict_resolution={'source': 'config.txt', 'file': 'patches/linux/resolve-config.patch',
                                                     'sha256': self.sha256(resolution)})
+        self.worktree = self.root / "build/kernel-worktrees" / ("fixture-" + self.target["target_tree"][:12])
         return stable
 
     def test_stable_merge_keeps_real_parentage_and_local_patch_content(self):
@@ -373,6 +376,7 @@ class ReleaseKernelTests(unittest.TestCase):
         self.write_manifest()
         policy = {'base_commit': public, 'upstream_base_commit': ancestor,
                   'target_tree': local_tree, 'original_target_commit': local, 'source_url': url}
+        self.worktree = self.root / 'build/kernel-worktrees' / ('fixture-' + local_tree[:12])
         cold = self.root / 'cold-source.git'
         subprocess.run(['git', 'clone', '--quiet', '--bare', '--depth=1', '--branch=public', url, str(cold)],
                        check=True, env=self.environment)
