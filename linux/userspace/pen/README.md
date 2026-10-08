@@ -36,8 +36,11 @@ real1032-byte common7/id0x440 record before the raw packets. It delivers that
 unchanged record to the actual pressure-ring callback, then calls ALG slot8
 to sign-extend the real four matrices into `stylus_total_data`. It reports
 preparation only: no solved coordinates, physical events or pressure accuracy.
-The pinned factory service's long-vector Binder entry constructs this record
-from its external s32 array, then calls `thp_daemon_cmd_process` directly.
+The pinned factory service's `ITouchFeature::setModeLongValue(touch_id, mode,
+length, values)` Binder entry (transaction8) constructs this record when
+mode is1088, from its external s32 array, then calls `thp_daemon_cmd_process`
+directly. The same-version V1-ndk vtable and proxy parcel writes confirm the
+method and argument order; no physical pen sender has been identified.
 It bypasses the kernel common queue. The worker therefore accepts an original
 external record; a new kernel pressure-read API is not a prerequisite. The
 physical sender and the array's data source remain unverified, and raw29
