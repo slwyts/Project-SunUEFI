@@ -59,4 +59,6 @@ bde3同次DPMS关屏两秒再开屏仍出现 `dsi_err_worker status=4`，两次D
 
 ea3d完整增量构建约66秒完成，匹配root/ESP及安装脚本也已生成；实机普通重启后GNOME、触屏、相机和蓝牙服务正常启动。在uptime133.36–137.53秒的一次相同OFF/ON中，关屏阶段未再观察到主链路CMD_MDP欠流或worker `0xd/0xc`，但开屏后host1仍报告 `0xeeee1011/0xdddd1011`、worker status4，包含VID_MDP溢出。因此待机修正只解决了本次观察到的一类错误，双DSI恢复仍未完成。日志在 `dsi-idle-ea3d-dpms-kernel.txt`、`dsi-idle-ea3d-dpms-result.txt` 和 `dsi-idle-ea3d-drm-after.json`，目录与前述相同。已恢复bde3启动文件并正常重启；不重复原操作，下一步只核对从链路PLL/PHY恢复与真实视频启用顺序。
 
+原厂和Linux实际都使用v7.2 PHY；两侧原厂DT均未声明PLL bypass，外部PLL从链路不等同bypass。固定MiCode的 `dsi_phy_hw_v7_2.c:521–543` 在HS时钟就绪后对RBUF_CTRL（0x1c）写0/1并加写屏障，再只清CLK_CFG1（0x14）的bit4；D-PHY执行清位，C-PHY保留该位。原厂外层先重同步两个PHY，再清两个选择位。下一源码 `f4c691bf537b95b26415a7e0217dcfeaa86820cf` 的[补丁](../../patches/linux/7.2.9/0012-dsi-sm8750-post-hs-resync.patch)按相同两轮顺序，在两host power_on成功后、IRQ及面板命令前调用可选PHY方法；只有SM8750配置注册，保留bit5及其他位、现有寄存器锁和PLL/VCO流程。当前仅完成源码准备，效果尚未实机验证。准确版本、寄存器与bypass来源保存在 `private/analysis/piano-dsi-recovery-20261008/ea3d-dual-phy-resync-review.json`。
+
 普通IGCv5的[标准DEGAMMA候选](../../patches/linux/7.2.9/drafts/0012-drm-msm-dpu-igcv5-degamma.patch)已经准备，尚未加入默认补丁序列。它提供257项16bit RGB输入曲线，与现有GC在同一REGDMA缓冲区中合并提交，保留实际DSPP分配，并在共同完成后更新两类flush。七个ARM64对象及实际CPU命令打包的长度、端点和容量检查已通过；最大普通双LUT为7800B，末描述符位于7936，完整落在8KiB缓冲区内。没有模拟DMA完成，也没有实机验证此候选。高精度扩展采样域仍不明确，因此没有启用高精度、抖动、HDR或12bit FRC。固定MiCode来源、对象和边界结果保存在 `private/analysis/piano-igcv5-degamma-20261009/`。

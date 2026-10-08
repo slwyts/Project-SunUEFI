@@ -41,7 +41,7 @@ TARGETS[DEFAULT_TARGET] = {
     **TARGETS['kernel69'],
     'series_target': 'kernel69',
     'patch_tree': TARGETS['kernel69']['target_tree'],
-    'target_tree': '37d794cbb300ac90d10e0629644557f7f6fb0bb4',
+    'target_tree': 'fe5d571dc785bf8017eaff3c9e0d04933b2a2fa7',
     'stable_commit': '5fce161649b4d779d1b76d9fcd52dc77779774b8',
     'stable_tree': 'c278d1443495d2a1a07fff2bcfb286b5c35baaea',
     'stable_version': '7.2.9',
@@ -94,6 +94,10 @@ TARGETS[DEFAULT_TARGET] = {
     'dsi_video_phases_patch': {
         'file': 'patches/linux/7.2.9/0011-dsi-bridge-video-phases.patch',
         'sha256': 'd0a4a4c3492b9d9d07202ca926af00c5c9188f30552e5e76b4820430363b4e67',
+    },
+    'dsi_post_hs_sync_patch': {
+        'file': 'patches/linux/7.2.9/0012-dsi-sm8750-post-hs-resync.patch',
+        'sha256': '9866d42e9a767abf64f2ea84e5aa7855100c97b0c4e732d52d02e030a988d7bc',
     },
     'dsi_stop_order_patch': {
         'file': 'patches/linux/7.2.9/0008-dsi-bonded-stop-slave-first.patch',
@@ -262,7 +266,7 @@ def write_manifest(path, record):
 
 def update_patches(root, policy):
     result = {}
-    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch', 'va_clock_order_patch', 'gcv2_backend_patch', 'gcv2_catalog_patch', 'dsi_stop_order_patch', 'dsi_fixed_bpc_patch', 'flash_torch_rounding_patch', 'dsi_video_phases_patch'):
+    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch', 'va_clock_order_patch', 'gcv2_backend_patch', 'gcv2_catalog_patch', 'dsi_stop_order_patch', 'dsi_fixed_bpc_patch', 'flash_torch_rounding_patch', 'dsi_video_phases_patch', 'dsi_post_hs_sync_patch'):
         if key not in policy:
             continue
         row = policy[key]
@@ -315,6 +319,7 @@ def merge_stable(work, policy, paths):
         ('dsi_fixed_bpc_patch', 'fix(drm): preserve actual DSC component depth', 'dsi_fixed_bpc_commit'),
         ('flash_torch_rounding_patch', 'fix(leds): preserve qcom torch current steps', 'flash_torch_rounding_commit'),
         ('dsi_video_phases_patch', 'fix(drm): stage DSI command and video through bridge phases', 'dsi_video_phases_commit'),
+        ('dsi_post_hs_sync_patch', 'fix(drm): resynchronize SM8750 PHYs after HS clocks', 'dsi_post_hs_sync_commit'),
     ):
         if key not in paths:
             continue
