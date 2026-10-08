@@ -1,0 +1,32 @@
+From: Project SunUEFI <sunuefi@localhost>
+Subject: [PATCH] backends/native: treat empty gamma as bypass before resampling
+
+DisplayConfig SetCrtcGamma accepts three empty arrays, and GetCrtcGamma
+returns these arrays when the KMS gamma LUT is unset. The CRTC cache copies
+that request into a non-NULL, zero-sized MetaGammaLut. Resampling it to the
+hardware LUT size divides by zero and reads sample -1 from its NULL arrays.
+
+Keep the existing NULL bypass representation in the KMS color update for a
+zero-sized LUT. The atomic backend then writes GAMMA_LUT=0. Non-empty LUTs
+continue through the existing resampling path without changed sample data.
+
+Applies to upstream Mutter 48.7. The current Debian 13 root uses source
+mutter 48.7-0+deb13u1 (libmutter-16-0), with gnome-shell 48.7-0+deb13u2.
+This is a source patch only; no patched package or device restore has yet
+been built or verified.
+
+Origin: https://github.com/GNOME/mutter/blob/48.7/src/backends/native/meta-kms-update.c
+Forwarded: no
+---
+--- a/src/backends/native/meta-kms-update.c
++++ b/src/backends/native/meta-kms-update.c
+@@ -561,7 +561,8 @@
+ 
+   g_assert (meta_kms_crtc_get_device (crtc) == update->device);
+ 
+-  if (gamma)
++  /* A zero-sized LUT represents bypass and has no samples to resample. */
++  if (gamma && gamma->size > 0)
+     gamma_update = meta_gamma_lut_copy_to_size (gamma, crtc_state->gamma.size);
+ 
+   color_update = ensure_color_update (update, crtc);

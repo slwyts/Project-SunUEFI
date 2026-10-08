@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause-Patent
-"""Inspect Mutter gamma; explicit short probes save and restore its real ramps.
+"""Inspect Mutter gamma; short probes save and restore its non-empty real ramps.
 
 Run as the active GNOME user. Default is read-only. This uses the published
 DisplayConfig GetResources/GetCrtcGamma/SetCrtcGamma ABI, no DRM-master takeover,
@@ -25,6 +25,22 @@ def digest(ramp):
 def summary(ramps):
     return [{'entries': len(row), 'sha256_le16': digest(row),
              'first': row[0] if row else None, 'last': row[-1] if row else None} for row in ramps]
+
+
+def bypass_backend(snapshot_path, kms_id):
+    if snapshot_path is None:
+        raise ValueError('Empty gamma is bypass; provide --drm-snapshot with the actual backend size')
+    data = snapshot_path.read_bytes()
+    snapshot = json.loads(data)
+    crtcs = [row for row in snapshot['objects'] if row['kind'] == 'crtc' and row['id'] == kms_id]
+    if snapshot.get('errors') != 0 or snapshot.get('atomic_cap_errno') != 0 or len(crtcs) != 1:
+        raise ValueError('DRM snapshot is incomplete or does not identify the same atomic KMS CRTC')
+    props = {prop['name']: prop['value'] for prop in crtcs[0]['properties']}
+    if (props.get('ACTIVE'), props.get('GAMMA_LUT'), props.get('GAMMA_LUT_SIZE')) != (1, 0, 1024):
+        raise ValueError('Actual CRTC must be active with GAMMA_LUT=0 and GAMMA_LUT_SIZE=1024')
+    return {'size': props['GAMMA_LUT_SIZE'], 'state': 'bypass', 'kms_id': kms_id,
+            'snapshot': str(snapshot_path), 'snapshot_sha256': hashlib.sha256(data).hexdigest(),
+            'device': snapshot.get('device')}
 
 
 class Gamma:
@@ -55,6 +71,8 @@ class Gamma:
         self.call('SetCrtcGamma', '(uuaqaqaq)', (serial, crtc, *ramps))
 
     def restore(self, original):
+        if not original['ramps'][0]:
+            raise RuntimeError('Mutter 48.7 empty-LUT restore crashed the real session; bypass restore is disabled pending its fix')
         serial, crtcs = self.resources()
         candidates = [row for row in crtcs if row['kms_id'] == original['kms_id'] and row['active']]
         if len(candidates) != 1:
@@ -70,6 +88,8 @@ def main():
     parser.add_argument('--crtc', type=int, help='Actual Mutter API ID, from the read-only listing')
     parser.add_argument('--probe', choices=('identity', 'warm'), help='Explicit temporary Gamma change')
     parser.add_argument('--backup', type=Path, help='Required new file for the original real ramps')
+    parser.add_argument('--drm-snapshot', type=Path,
+                        help='Actual atomic DRM snapshot explaining empty gamma capacity; does not permit bypass writes')
     parser.add_argument('--restore-from', type=Path, help='Explicit recovery of an earlier saved ramp')
     parser.add_argument('--hold-seconds', type=float, default=4)
     args = parser.parse_args()
@@ -90,7 +110,10 @@ def main():
     report = {'serial': serial, 'crtcs': crtcs, 'read_only': not bool(args.probe),
               'hardware_result': 'not established by a D-Bus reply'}
     for row in active:
-        row['gamma'] = summary(client.get(serial, row['api_id']))
+        ramps = client.get(serial, row['api_id'])
+        row['gamma'] = summary(ramps)
+        if not args.probe and not ramps[0] and args.drm_snapshot:
+            row['backend'] = bypass_backend(args.drm_snapshot, row['kms_id'])
     if not args.probe:
         print(json.dumps(report, indent=2))
         return
@@ -99,6 +122,9 @@ def main():
     crtc = active[0]
     original = client.get(serial, crtc['api_id'])
     count = len(original[0])
+    if count == 0:
+        bypass_backend(args.drm_snapshot, crtc['kms_id'])
+        raise ValueError('Actual bypass is supported, but this Mutter 48.7 cannot safely restore it; no probe sent')
     if count != 1024:
         raise ValueError('Piano GCv2 probe requires the actual standard 1024-entry Gamma backend')
     saved = {'mutter_api_id': crtc['api_id'], 'kms_id': crtc['kms_id'], 'ramps': original,
