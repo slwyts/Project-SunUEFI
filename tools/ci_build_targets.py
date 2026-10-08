@@ -25,6 +25,7 @@ UEFI_FILES = {'requirements-build.txt', 'upstream/Mu-Silicium', 'upstream/simple
               'tools/product_payload_digest.py', 'tools/piano_vendor_inputs.py'}
 UEFI_PREFIXES = ('uefi/', 'vendor/piano/', 'patches/firmware/',
                  'tools/prepare_product_')
+DRAFT_PREFIXES = ('patches/linux/7.2.9/drafts/', 'linux/dts/drafts/')
 
 
 def select(files, manual=None):
@@ -34,6 +35,10 @@ def select(files, manual=None):
         return [manual]
     uefi = False
     for name in files:
+        # Candidates in these directories are not product inputs. Promoting
+        # one changes the tracked release config/preparation tools as well.
+        if name.startswith(DRAFT_PREFIXES):
+            continue
         if name in FULL_FILES:
             return ['debian-gnome']
         if name in UEFI_FILES or name.startswith(UEFI_PREFIXES):
