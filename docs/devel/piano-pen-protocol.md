@@ -36,9 +36,11 @@
 
 本机 Android 的只读 `getevent -lp` 已确认 `NVTCapacitivePenP81c` 注册范围：X 0..213599、Y 0..319999、pressure 0..16383、distance 0..1、tilt X/Y ±60，另有 ABS_BRAKE 0..360。这证明当前输入设备的声明，不证明笔事件已采到，也不能把 raw 压力直接冒充最终归一化输入。两份实际 ini 已提取。BOE/CSOT 的 hw/stylus 内容相同，project vendor ID 分别26/4。配置是 portrait `2136×3200`、三个轴翻转标志均0、project super-resolution100，stylus normal report factor10；Tip/Ring几何为 `12×40` 与 `60×8`。角度表为 `{0,1500,3000,4500,6000,7000}`；默认差值表 `{0,28,51,67,81,87}`，model2/3为 `{0,37,81,103,121,132}`，model2/3校正阈值37、rate8。这些参数不再是缺失项。
 
-`alg_init_param` `0x437bc` 在 `0x4385c` 读取其 HAL hardware-info 参数 `+0x24` 的 u16，并在 `0x43868` 写入 context `+0x2c`。公开内核的 [`hardware_param_t`](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/xiaomi/xiaomi_touch_type_common.h#L302) 使用另一种布局：`super_resolution_factor` 是 `+8` 的 u8，NT36 初始化为100。因此仍须追踪中间 HAL 参数的构造，不能把 project100 或 report10 直接当作这个 runtime resolution。
+中间 hardware-info 构造已追明：`alg_read_config_param_core` 在 `0x1f88c..0x1f8ec` 读取完整键 `project_infor.super_resolution`，与内核 hardware 参数 `+8` 交叉核对，最终在 `0x1fbb0` 写入扩展 hwinfo `+0x24` 的 u16。`+0x14/+0x18` 是显示尺寸乘该因子，`+0x26/+0x27/+0x28` 是 x/y/xy flip。`alg_pass_hwinfo_core` 将此配置复制后，`alg_init_param` 在 `0x4385c/0x43868` 再将 resolution 写到 context `+0x2c`。这里的100与 stylus report factor10 是不同参数。
 
-剩余静态工作集中在 raw2D阵列到 `stylus_total_data` 的预处理、HAL hardware-info 参数的构造、`update_stylus_param` 的活动笔 profile 选择和压力环形缓冲预处理。本机内核 point 结构已用实际 BTF 核对；最终对象和两条 report 路径已得到下列实际指令依据，仍未做设备事件对照。
+2026-10-08在 Android 触控服务仍运行时，核验本机五个 ELF SHA 和 PID/starttime，再按 maps 仅两轮读取各155字节配置。实际硬件头为 `2136×3200`、rx40/tx60、factor100；两个41字节 hwinfo 配置副本与48字节 context 配置均稳定，三个阶段的resolution都是100，scaled尺寸 `213600×320000`、三个 flip 均0；真实 report 方法指针为v1。context还按columns60/rows40选择了column/row extent `320000/213600`，不是固定min/max。没有停服务、操作笔、读取触点/FIFO/矩阵或运行额外厂商程序。原始记录在本地 `private/analysis/piano-pen-runtime-plan-20261008/`；这确认了当前配置与选路，仍不证明笔事件与图像坐标的单位已验证。
+
+剩余静态工作集中在 raw2D阵列到 `stylus_total_data` 的预处理、`update_stylus_param` 的活动笔 profile 选择和压力环形缓冲预处理。本机内核 point 结构已用实际 BTF 核对；最终对象和两条 report 路径已得到下列实际指令依据，仍未做设备事件对照。
 
 ## 最终36字节点与64字节 HAL 内部点
 
@@ -58,7 +60,7 @@
 
 共同 callback/GOT 链为：算法 `0x889fc` → libtouchreport 的 alg callback[0] `0x83ec` → 活动HAL子模块 `+0x80`（`register_hal_module` 在 `0x11c90..0x11c98` 安装）→ report interface `+0x48=0x21ae4` → `0x21c70` 按64字节点遍历 → 所选 report 方法 `+0x30`。
 
-两份实际 ini 的 `input_device.report_version` 都为1。HAL `0x219bc..0x219f0` 读取这个完整键名，仅值2选v2，其余选v1；v2初始化报错也可在 `0x21304..0x21350` 回退v1。v1方法 `+0x30=0x25f9c` 在 `0x260a0..0x26118` 将上述内部点构造为24字节 `input_event`：BTN_TOUCH由pressure非零决定，BTN_TOOL_PEN由 `(distance | pressure)` 非零决定；X/Y、pressure、distance、tilt分别直接取已列字段。action UP分支清零这些键和轴。`0x2613c` 调用 `write`，按配置写所选输入fd。这条路径没有把64字节点交给mmap receiver。配置与分支均已确认；运行中是否另改参数还未读取。
+两份实际 ini 的 `input_device.report_version` 都为1，本次进程配置读取也确认实际选用v1。HAL `0x219bc..0x219f0` 读取这个完整键名，仅值2选v2，其余选v1；v2初始化报错也可在 `0x21304..0x21350` 回退v1。v1方法 `+0x30=0x25f9c` 在 `0x260a0..0x26118` 将上述内部点构造为24字节 `input_event`：BTN_TOUCH由pressure非零决定，BTN_TOOL_PEN由 `(distance | pressure)` 非零决定；X/Y、pressure、distance、tilt分别直接取已列字段。action UP分支清零这些键和轴。`0x2613c` 调用 `write`，按配置写所选输入fd。这条路径没有把64字节点交给mmap receiver。
 
 v2方法 `+0x30=0x26dec` 是另一条路径：HAL `0x26804..0x26834` 以cmd2/arg4选择point共享区并mmap4096字节；`0x26eb4..0x26ec8` **直接复制64字节** 到映射；`0x27018..0x27024` 再调用cmd6 `UPDATE_REPORT_POINT`。这里仍未找到64→56重排，不能启用这条路径后假定布局相同。
 
@@ -67,6 +69,8 @@ v2方法 `+0x30=0x26dec` 是另一条路径：HAL `0x26804..0x26834` 以cmd2/arg
 结构化事实、原厂库/BTF SHA、GOT、实际地址和剩余项保存在 `private/analysis/piano-pen-final/facts.json`。本次新增证据只有内核BTF与输入能力声明的只读导出；静态分析未执行厂商ELF、采笔触点或创建input设备。
 
 完成这些字段与计算链的还原后，用一次短的 raw17/29与Android evdev同步记录检查比例、proximity和tip边界，再接入现有触控进程的独立 pen uinput，保留手指 MT与唯一 FIFO。使用 libinput/Wayland tablet-tool接口；悬浮时工具在范围内而笔尖未触地，不能照抄泛用原厂 reporter 将所有非UP动作都设为 `BTN_TOUCH=1`。未知倾角、按钮语义或姿态不填零宣称支持。
+
+SC96231 在 Android 的 `i2c9-0038` 已绑定，MCA 创建的属性组为 `/sys/class/xm_power/charger/wls_rev_charge/`。原厂模块 show 指令已确认 `wls_fw_state`、`reverse_chg_mode`、`reverse_chg_state`、`pen_ss_voltage` 直接返回缓存值；仅按这四项观察，不根据文件可读权限批量读取整组。`pen_soc` 在某些连接/hall状态会通过 SC96231 的 `regmap_raw_read` 读取芯片并更新缓存，本轮排除它，不能宣称已测笔电量或充电。公开 MiCode 内核中的 MCA 路径只是指向 `vendor/xiaomi/proprietary/mca/driver/mca` 的链接，完整 vendor source仍未取得；上述性质来自本机固定模块静态核对。
 
 ## 公开解析模块
 
@@ -78,6 +82,8 @@ python3 tools/piano_pen_protocol.py config /path/to/piano_nova_csot_thp_config.i
 python3 tools/piano_pen_protocol.py stylus-point /path/to/36-byte-solved-object.bin
 python3 tools/piano_pen_protocol.py hal-point /path/to/64-byte-factory-point.bin
 python3 tools/piano_pen_protocol.py kernel-point /path/to/56-byte-kernel-point.bin
+python3 tools/piano_pen_protocol.py runtime-hwinfo /path/to/41-byte-hwinfo-prefix.bin
+python3 tools/piano_pen_protocol.py runtime-context /path/to/48-byte-context-config.bin
 ```
 
 `metadata` 的输入从 `frame_data_packet` 开始。Linux `/proc/nvt_thp_stream` 每条记录的32字节 record header 和257字节 SPI/event前缀须先去掉，不能直接传整个流；当前捕获路径的最大 payload 是7934字节。解析器核验外层 additive checksum 与长度补码，且要求 metadata 和全部 Tip/Ring 矩阵位于该校验范围内。另一个尾部 pen checksum、hand packet 暂不解析。Android 内核可能已将 additive checksum 字段改写为 CRC32，不能把这样的 HAL mmap 帧混入这个输入格式。
@@ -85,3 +91,5 @@ python3 tools/piano_pen_protocol.py kernel-point /path/to/56-byte-kernel-point.b
 Python 调用可使用 `parse_metadata(data)`、`read_config(path)`、`profile(config, vendor_id)` 和 `factory_tilt_component(dx, dy, resolution, calibration)`。最后一个函数没有 CLI 事件输出，要求真实的已算 Tip/Ring 差值和已确认的 runtime resolution；配置 reader 返回的 vendor profile 只是配置映射，不证明当前连接的笔采用哪一个 profile。参数单位与最终 input 上报仍按上面的缺项处理。
 
 `parse_stylus_point(data)`、`parse_factory_hal_point(data)`、`parse_kernel_report_point(data)` 分别读取调用者提供的精确36/64/56字节dump，返回已确认布局；64字节解析额外列出v1的静态键值判断，56字节解析保留prop[]原字。它们不接受SPI帧、不转换坐标单位、不归一化压力、不产生uinput/libinput事件。`config` 现在也输出 `input_device` 中的report版本。没有实测dump时，静态布局不能当作笔输入已可用。
+
+`parse_runtime_hw_header(data)`、`parse_runtime_hwinfo_prefix(data)`、`parse_runtime_context_config(data)` 分别解析精确9/41/48字节的配置片段。context片段从已核对指针的 `+0x10` 开始；解析器只读调用者提供的文件，不跟随指针、不读进程。byte8保留原字，不作为ready标志。配置解析不能替代最终坐标、压力、hover与按钮事件的实测。

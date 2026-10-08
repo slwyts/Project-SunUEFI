@@ -42,6 +42,69 @@ def _u32(data, offset):
     return struct.unpack_from("<I", data, offset)[0]
 
 
+def parse_runtime_hw_header(data):
+    """Read the exact9-byte config prefix of kernel hardware_param_t.
+
+    The remaining214-byte object's lockdown/config/version fields are excluded.
+    These dimensions are configuration, not a captured pen position.
+    """
+    if len(data) != 9:
+        raise ValueError("expected the exact9-byte hardware config prefix")
+    x, y, rx, tx, resolution = struct.unpack("<4HB", data)
+    return {
+        "status": "HARDWARE_CONFIG_PREFIX_NOT_PEN_INPUT",
+        "display_x": x, "display_y": y,
+        "rx": rx, "tx": tx, "super_resolution": resolution,
+    }
+
+
+def parse_runtime_hwinfo_prefix(data):
+    """Read the pinned ALG41-byte initialized hardware-info config prefix.
+
+    alg_read_config_param_core constructs it at ELF VA0xa9d10, then copies
+    it to0xaa0d0 before alg_init_param. Only this prefix is needed; no raw
+    matrices, identities, calibration buffers or solved coordinates are read.
+    Byte8 is returned as an uninterpreted flag, never a readiness assertion.
+    """
+    if len(data) != 41:
+        raise ValueError("expected the exact41-byte hardware-info config prefix")
+    return {
+        "status": "ALGORITHM_RUNTIME_CONFIG_NOT_PEN_INPUT",
+        "algorithm_sha256": ALGORITHM_SHA256,
+        "raw_hw_pointer": hex(struct.unpack_from("<Q", data)[0]),
+        "flag_byte8": data[8],
+        "hal_rows": data[9], "hal_cols": data[10],
+        "nodes": _u16(data, 12), "snodes": _u16(data, 14),
+        "nnodes": _u16(data, 16),
+        "scaled_x": _u32(data, 20), "scaled_y": _u32(data, 24),
+        "max_scaled": _u32(data, 28), "min_scaled": _u32(data, 32),
+        "resolution": _u16(data, 36),
+        "x_flip": data[38], "y_flip": data[39], "xy_flip": data[40],
+    }
+
+
+def parse_runtime_context_config(data):
+    """Read only48 config bytes from context+0x10, not its0x84d10-byte buffer.
+
+    The runtime context pointer must be independently checked against maps
+    before collection. This offline parser neither follows pointers nor reads
+    a process. The resolution comes from hwinfo+0x24, via alg_init_param.
+    """
+    if len(data) != 48:
+        raise ValueError("expected exact48-byte context+0x10 config slice")
+    return {
+        "status": "ALGORITHM_CONTEXT_CONFIG_NOT_PEN_INPUT",
+        "algorithm_sha256": ALGORITHM_SHA256,
+        "hal_cols": _u32(data, 0), "hal_rows": _u32(data, 4),
+        "column_extent": _u32(data, 8), "row_extent": _u32(data, 12),
+        "scaled_x": _u32(data, 16), "scaled_y": _u32(data, 20),
+        "resolution": _u32(data, 28),
+        "x_flip": data[32], "y_flip": data[33], "xy_flip": data[34],
+        "scale_coefficient0": struct.unpack_from("<f", data, 36)[0],
+        "scale_coefficient1": struct.unpack_from("<f", data, 40)[0],
+    }
+
+
 def parse_stylus_point(data):
     """Decode a36-byte solved algorithm-object dump, never a SPI packet.
 
@@ -349,6 +412,10 @@ def main():
     final.add_argument("point", type=Path)
     kernel = commands.add_parser("kernel-point", help="read one actual BTF56-byte receiver dump")
     kernel.add_argument("point", type=Path)
+    hwinfo = commands.add_parser("runtime-hwinfo", help="read the exact41-byte ALG config prefix")
+    hwinfo.add_argument("config", type=Path)
+    context = commands.add_parser("runtime-context", help="read exact48 config bytes from context+0x10")
+    context.add_argument("config", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "stylus-point":
@@ -357,6 +424,10 @@ def main():
             result = parse_factory_hal_point(args.point.read_bytes())
         elif args.command == "kernel-point":
             result = parse_kernel_report_point(args.point.read_bytes())
+        elif args.command == "runtime-hwinfo":
+            result = parse_runtime_hwinfo_prefix(args.config.read_bytes())
+        elif args.command == "runtime-context":
+            result = parse_runtime_context_config(args.config.read_bytes())
         elif args.command == "metadata":
             result = parse_metadata(args.payload.read_bytes())
         else:
