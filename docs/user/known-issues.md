@@ -34,7 +34,7 @@ fastboot -s SunUEFI-piano getvar product
 
 ## 启动较慢
 
-从内核启动到桌面约一到两分钟（`systemd-analyze` 测量，不含 UEFI 阶段），仍有优化空间。详见[启动时间](../devel/piano-boot-time.md)。
+从内核启动到桌面通常需要一到两分钟，首次启动可能更久。启动过程中可能长时间灰屏或白屏，缺少清楚的进度提示。仅凭屏幕颜色无法区分正在启动与已经停住；不要连续强制重启。当前系统直接使用内部 ext4 分区，慢启动已经不是解压整套 RAM 根系统造成的，硬件初始化和服务等待仍需优化。详见[启动时间](../devel/piano-boot-time.md)。
 
 ## 蓝牙
 
