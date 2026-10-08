@@ -12,7 +12,7 @@ import shutil
 import subprocess
 
 ROOT=Path(__file__).resolve().parents[1]
-EXPECTED='25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1'
+EXPECTED='a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45'
 
 
 def stage_gnome_power(rootfs):

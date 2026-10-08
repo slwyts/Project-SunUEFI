@@ -19,7 +19,7 @@
   },
   "debian": {
     "source": "upstream/debian-piano-current",
-    "commit": "25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1",
+    "commit": "a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45",
     "suite": "trixie",
     "apt_policy": "mutable-recorded",
     "snapshot": null,
@@ -34,7 +34,19 @@
       "busybox-static",
       "python3-gi",
       "gir1.2-gtk-3.0",
-      "pkexec"
+      "pkexec",
+      "chromium",
+      "chromium-sandbox",
+      "chromium-l10n",
+      "task-gnome-desktop",
+      "gnome",
+      "fonts-noto-cjk",
+      "locales",
+      "ibus",
+      "ibus-libpinyin",
+      "ibus-gtk",
+      "ibus-gtk3",
+      "ibus-gtk4"
     ]
   },
   "firmware": {

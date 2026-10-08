@@ -2,7 +2,7 @@
 """Wrap the ONE manifest-pinned product in a recovery-only AVB install container.
 
 No device access or product/profile changes. The pinned AOSP avbtool copy in
-upstream/debian-piano-current (25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1)
+upstream/debian-piano-current (a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45)
 is version 1.3.0. Generate unsigned metadata with flags zero and a recovery hash;
 then copy its footer to the 100 MiB partition end, preserving the small image,
 as AOSP fastboot's copy_avb_footer does. This verifies structure and host hashes,
@@ -24,7 +24,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 AVBTOOL = ROOT / 'upstream/debian-piano-current/avb/avbtool.py'
 AVBTOOL_SHA256 = 'e5a664a38db623da00f080219bc0ee60a640a9dc4a872803616fae4938ac749b'
-AVBTOOL_REVISION = '25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1'
+AVBTOOL_REVISION = 'a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45'
 PARTITION_BYTES = 100 * 1024 * 1024
 
 

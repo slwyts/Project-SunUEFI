@@ -32,7 +32,7 @@
     "url": "https://github.com/BigfootACA/simple-init.git"
   },
   "debian-piano-current": {
-    "commit": "25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1",
+    "commit": "a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45",
     "url": "https://github.com/blu-sharky/debian-piano.git"
   },
   "piano-firmware-current": {

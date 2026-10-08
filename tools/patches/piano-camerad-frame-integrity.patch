@@ -14,8 +14,9 @@ as a second frame. Existing initial/stopped black-frame behavior is retained;
 no black or green image is synthesized for an invalid capture frame.
 
 Base public camerad SHA256:
- 921f9c1ea6155d6876502249d8ff23fd70cbf2f6e7e33298738a65720d690bee
-Apply after piano-camerad-writable-ccm.patch and piano-camerad-stable-ae.patch.
+ c2ab6391fa41d21d1c3e4359dc0adf671261417dbda180724faf8b2758932d47
+Base commit: a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45
+Apply after piano-camerad-writable-ccm.patch and the rebased stable-3A patch.
 This patch does not change exposure, white balance or autofocus algorithms.
 
 The current CAMSS video_buf_prepare pre-fills payload with sizeimage before
@@ -24,10 +25,13 @@ This corrects frame metadata/bounds handling; it does not guarantee removal
 of the green block seen in the authorized recording. No build, simulated
 test, new recording, service stop or device operation was performed.
 
+Rebased from the 25babfe candidate onto a75f8c5. Upstream autofocus now uses
+the resting-position hill climb; this patch does not change that algorithm.
+
 diff --git a/camera/piano-camerad.c b/camera/piano-camerad.c
 --- a/camera/piano-camerad.c
 +++ b/camera/piano-camerad.c
-@@ -115,7 +115,8 @@
+@@ -117,7 +117,8 @@
  	bool streaming;
  	int vid_fd, sensor_fd, vfe_fd, vcm_fd;
  	struct buf bufs[NUM_BUFS];
@@ -37,7 +41,7 @@ diff --git a/camera/piano-camerad.c b/camera/piano-camerad.c
  	uint8_t *stage;		/* repacked frame when bpl != width */
  	unsigned long frames;
  	/* sensor control ranges */
-@@ -442,6 +443,21 @@
+@@ -450,6 +451,21 @@
  	return (size_t)cfg->out_w * cfg->out_h * 3 / 2;
  }
  
@@ -59,7 +63,7 @@ diff --git a/camera/piano-camerad.c b/camera/piano-camerad.c
  static int loopback_black(struct cam *c)
  {
  	const struct cam_cfg *cfg = c->cfg;
-@@ -453,7 +469,7 @@
+@@ -461,7 +477,7 @@
  		return -1;
  	memset(black, 0, luma);
  	memset(black + luma, 128, size - luma);
@@ -68,7 +72,7 @@ diff --git a/camera/piano-camerad.c b/camera/piano-camerad.c
  	free(black);
  
  	return ret;
-@@ -483,8 +499,16 @@
+@@ -491,8 +507,16 @@
  	f.fmt.pix.sizeimage = size;
  	/* full range BT.601 YCbCr, sRGB transfer */
  	f.fmt.pix.colorspace = V4L2_COLORSPACE_JPEG;
@@ -87,7 +91,7 @@ diff --git a/camera/piano-camerad.c b/camera/piano-camerad.c
  		return -1;
  	}
  
-@@ -550,6 +574,8 @@
+@@ -558,6 +582,8 @@
  
  	memset(c->bufs, 0, sizeof(c->bufs));
  	c->stage = NULL;
@@ -96,7 +100,7 @@ diff --git a/camera/piano-camerad.c b/camera/piano-camerad.c
  	c->vid_fd = c->sensor_fd = c->vfe_fd = c->vcm_fd = -1;
  	if (c->streaming)
  		logmsg(c, "stopped after %lu frames", c->frames);
-@@ -657,23 +683,42 @@
+@@ -674,23 +700,42 @@
  	f.fmt.pix_mp.field = V4L2_FIELD_NONE;
  	f.fmt.pix_mp.num_planes = 1;
  	if (xioctl(c->vid_fd, VIDIOC_S_FMT, &f) < 0 ||
@@ -144,7 +148,7 @@ diff --git a/camera/piano-camerad.c b/camera/piano-camerad.c
  		struct v4l2_plane pl[VIDEO_MAX_PLANES] = { 0 };
  		struct v4l2_buffer b = {
  			.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
-@@ -685,6 +730,11 @@
+@@ -702,6 +747,11 @@
  
  		if (xioctl(c->vid_fd, VIDIOC_QUERYBUF, &b) < 0)
  			goto out;
@@ -156,7 +160,7 @@ diff --git a/camera/piano-camerad.c b/camera/piano-camerad.c
  		c->bufs[i].len = pl[0].length;
  		c->bufs[i].ptr = mmap(NULL, pl[0].length, PROT_READ,
  				      MAP_SHARED, c->vid_fd,
-@@ -973,10 +1023,27 @@
+@@ -1120,10 +1170,27 @@
  		return;
  	}
  
@@ -187,7 +191,7 @@ diff --git a/camera/piano-camerad.c b/camera/piano-camerad.c
  		if (++c->frames % AE_PERIOD == 0) {
  			struct stats s;
  
-@@ -994,11 +1061,13 @@
+@@ -1141,11 +1208,13 @@
  				       y + (size_t)r * c->bpl, cfg->out_w);
  			out = c->stage;
  		}

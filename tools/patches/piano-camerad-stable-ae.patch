@@ -1,25 +1,53 @@
+From: Project SunUEFI
+Subject: [PATCH] camera: bound startup exposure acquisition before rear autofocus
+
+Base: debian-piano a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45.
+Keep its current-position hill climb, peak fit and configurable settle frames.
+Use a finite faster startup exposure phase, then the existing filtered slow
+tracking; require exposure observations before lens scanning. Report failed
+focus position reads/writes instead of using an unconfirmed lens position.
+
+This is a source-only candidate, without camera or build validation.
+---
 --- a/camera/piano-camerad.c
 +++ b/camera/piano-camerad.c
 @@ -47,6 +47,7 @@
  #define NUM_BUFS	4
  #define AE_TARGET	112.0	/* mean luma, gamma encoded */
  #define AE_PERIOD	3	/* frames between control updates */
-+#define AE_STARTUP_UPDATES 10	/* finite acquisition, at most30 valid frames */
++#define AE_STARTUP_UPDATES 10	/* bounded acquisition, then steady tracking */
  #define DGAIN_UNITY	1024
  #define DGAIN_MAX	(8 * DGAIN_UNITY)
  #define WB_UNITY	1024
-@@ -124,6 +125,10 @@
+@@ -126,6 +127,10 @@
  	int exposure, again, dgain;
  	double rgain, bgain;
  	bool have_state;
-+	/* AE statistics are seeded from the first valid frame of each stream. */
++	/* exposure statistics are fresh for each stream */
 +	double ae_mean, ae_bright;
 +	unsigned int ae_updates, ae_stable;
 +	bool ae_acquiring, ae_ready;
  	/* autofocus: lens position range, scan state */
  	int af_min, af_max, af_pos;
- 	enum { AF_OFF, AF_WAIT, AF_SCAN, AF_LOCKED } af_state;
-@@ -735,6 +740,9 @@
+ 	enum { AF_OFF, AF_WAIT, AF_SCAN, AF_FINE, AF_VERIFY, AF_LOCKED } af_state;
+@@ -635,10 +640,13 @@
+ 			};
+ 
+ 			/* the climb starts where the lens rests */
+-			if (xioctl(c->vcm_fd, VIDIOC_G_CTRL, &ctl) == 0)
++			if (xioctl(c->vcm_fd, VIDIOC_G_CTRL, &ctl) == 0) {
+ 				c->af_pos = ctl.value;
+-			c->af_settle = 0;
+-			c->af_state = AF_WAIT;
++				c->af_settle = 0;
++				c->af_state = AF_WAIT;
++			} else {
++				logmsg(c, "focus position: %s", strerror(errno));
++			}
+ 		}
+ 	}
+ 
+@@ -752,6 +760,9 @@
  
  	c->streaming = true;
  	c->frames = 0;
@@ -29,7 +57,7 @@
  	logmsg(c, "streaming %ux%u -> %ux%u NV12 (bayer 0x%04x)", cfg->in_w,
  	       cfg->in_h, cfg->out_w, cfg->out_h, code);
  	ret = 0;
-@@ -816,16 +824,31 @@
+@@ -833,16 +844,31 @@
  static void control_update(struct cam *c, const struct stats *s)
  {
  	const struct cam_cfg *cfg = c->cfg;
@@ -70,7 +98,7 @@
  		total = (double)c->exposure * c->again / cfg->again_unit *
  			c->dgain / DGAIN_UNITY * k;
  
-@@ -845,6 +868,22 @@
+@@ -862,6 +888,22 @@
  		apply_exposure(c);
  	}
  
@@ -93,7 +121,7 @@
  	/* gray world white balance on mid tones */
  	if (s->n_rgb > 200 && s->r > 0 && s->b > 0) {
  		double rr = s->g / s->r, bb = s->g / s->b;
-@@ -857,8 +896,8 @@
+@@ -874,8 +916,8 @@
  	}
  
  	if (c->frames % (AE_PERIOD * 30) == 0)
@@ -104,52 +132,60 @@
  		       c->rgain, c->bgain);
  }
  
-@@ -892,12 +931,19 @@
- 	return luma ? (double)grad / luma : 0;
+@@ -924,14 +966,19 @@
+ 	return pos < c->af_min ? c->af_min : pos > c->af_max ? c->af_max : pos;
  }
  
 -static void af_move(struct cam *c, int pos)
--{
--	c->af_pos = pos < c->af_min ? c->af_min :
 +static int af_move(struct cam *c, int pos)
-+{
-+	int next = pos < c->af_min ? c->af_min :
- 		    pos > c->af_max ? c->af_max : pos;
--	ctrl_set(c->vcm_fd, V4L2_CID_FOCUS_ABSOLUTE, c->af_pos);
-+
-+	if (ctrl_set(c->vcm_fd, V4L2_CID_FOCUS_ABSOLUTE, next) < 0) {
-+		logmsg(c, "focus control %d: %s", next, strerror(errno));
-+		c->af_state = AF_OFF;
-+		return -1;
-+	}
-+	c->af_pos = next;
- 	c->af_settle = AF_SETTLE;
+ {
+ 	pos = af_clamp(c, pos);
+ 	if (pos != c->af_pos) {
++		if (ctrl_set(c->vcm_fd, V4L2_CID_FOCUS_ABSOLUTE, pos) < 0) {
++			logmsg(c, "focus control %d: %s", pos, strerror(errno));
++			c->af_state = AF_OFF;
++			return -1;
++		}
+ 		c->af_pos = pos;
+-		ctrl_set(c->vcm_fd, V4L2_CID_FOCUS_ABSOLUTE, pos);
+ 		c->af_settle = af_settle_frames;
+ 	}
 +	return 0;
  }
  
- static void af_scan(struct cam *c, int lo, int hi, int step)
-@@ -918,11 +964,13 @@
+ static void af_scan(struct cam *c)
+@@ -1045,12 +1092,14 @@
+ 				continue;
+ 			next = c->af_fine[i];
+ 			c->af_fine[i] = -1;
+-			af_move(c, next);
++			if (af_move(c, next) < 0)
++				return;
+ 			if (c->af_pos != next || c->af_settle)
+ 				return;
+ 			/* already there (clamped): sampled */
+ 		}
+-		af_move(c, af_peak(c));
++		if (af_move(c, af_peak(c)) < 0)
++			return;
+ 		c->af_state = AF_VERIFY;
+ 		return;
+ 	}
+@@ -1091,7 +1140,7 @@
  	if (c->af_state == AF_OFF)
  		return;
  	if (c->af_state == AF_WAIT) {
 -		if (c->frames >= AF_START)
 +		if (c->frames >= AF_START && c->ae_ready)
- 			af_scan(c, c->af_min, c->af_max, coarse);
+ 			af_scan(c);
  		return;
  	}
- 	if (c->af_settle && c->af_settle--)
-+		return;
+@@ -1099,6 +1148,8 @@
+ 		c->af_settle--;
+ 		return;
+ 	}
 +	if (!c->ae_ready)
- 		return;
- 
- 	sh = af_sharpness(c, y, stride);
-@@ -947,7 +995,8 @@
- 			c->af_best_pos + c->af_step, coarse / 4);
- 		return;
- 	}
--	af_move(c, c->af_best_pos);
-+	if (af_move(c, c->af_best_pos) < 0)
 +		return;
- 	c->af_settle = 0;
- 	c->af_lock = c->af_best;
- 	c->af_lost = 0;
+ 	af_feed(c, af_sharpness(c, y, stride));
+ }
+ 

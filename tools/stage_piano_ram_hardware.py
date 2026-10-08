@@ -12,7 +12,7 @@ import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-PUBLIC = '25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1'
+PUBLIC = 'a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45'
 CHECKER_SHA = '1f2c26329c00b5b791a101d409032cd3d8b1962f83018937807c5cbbb7f5a2e1'
 CONTEXT_CHECKER_SHA = '9731f4027c0656d50a930ed2fb087d0ccfb3a99bb4373cfb65e9e0a0865ac63d'
 PINS = {
