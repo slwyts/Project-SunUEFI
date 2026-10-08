@@ -51,7 +51,13 @@ def inspect(kernel):
         config_sha=configs[0]
     if sha(kernel/'Image')!=m['image']['sha256'] or sha(kernel/'config')!=config_sha:
         raise ValueError('Sealed kernel Image/config changed')
-    rows,summary=seal_modules(kernel/'modules',release)
+    expected_summary=m['module_summary']
+    rows,summary=seal_modules(kernel/'modules',release,
+                               required_builtin=expected_summary.get('required_builtin',()))
+    # Older sealed bundles predate the optional built-in-provider receipt.
+    # Their existing file/ABI/index checks remain identical.
+    if 'required_builtin' not in expected_summary:
+        summary.pop('required_builtin',None)
     if rows!=m['modules'] or summary!=m['module_summary']:
         raise ValueError('Sealed module ABI, file hash or dependency index changed')
     if path.read_bytes()!=raw:raise ValueError('Kernel manifest changed during verification')
