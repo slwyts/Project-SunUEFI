@@ -86,10 +86,12 @@ V4L2 wrapper 注册异步 flash subdevice。相机侧 fwnode/notifier 关联仍�
 strobe、timeout、flash/torch intensity和fault；当前off、无fault。这确认了
 真实subdevice与控制接口，不证明拍照曝光同步或桌面应用已经接好闪光灯。
 
-同一a8版本又通过标准V4L2控件分别开启两路25mA torch，并只读实际PMIC
+同一a8版本又通过标准V4L2控件分别请求两路25mA torch，并只读实际PMIC
 regmap的11个明确寄存器。开启第一路时，module-enable `ee46=80`、channel-enable
 `ee4e=01`、5mA resolution `ee49=01`、第一路current-target `ee42=03`；
-开启第二路时对应 `ee4e=02`、`ee49=02`、`ee43=03`。两次三个状态寄存器
+开启第二路时对应 `ee4e=02`、`ee49=02`、`ee43=03`。5mA步进的target=3实际
+编程电流为20mA：现有强度与0..255亮度的两次向下取整，使25mA请求降到24mA，
+随后PMIC再向下取整。不能将请求值当作实测或编程电流。两次三个状态寄存器
 `ee06/ee07/ee09`均为0；关闭后module/channel-enable均恢复0。
 这确认控件已到达PMIC输出配置，没有直接写寄存器。实际光学发光与曝光同步
 仍未证明：此前后摄统计没有明确亮度变化，场景距离和遮挡也未受控，不能据此
