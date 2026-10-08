@@ -41,10 +41,13 @@ def run(argv, **kwargs):
 
 def apply_cpu_model_overlay(board, overlay, work, cpu_only=True):
     """Apply declared board properties to a copy of the captured input."""
-    before = read_fdt(board.read_bytes())['tree']
+    parsed = read_fdt(board.read_bytes())
+    before = parsed['tree']
     compiled, derived = work / 'cpu-model.dtbo', work / 'board-with-cpu-model.dtb'
     run(['dtc', '-@', '-I', 'dts', '-O', 'dtb', '-o', compiled, overlay])
-    fragments = read_fdt(compiled.read_bytes())['tree']
+    overlay_fdt = read_fdt(compiled.read_bytes())
+    fragments = overlay_fdt['tree']
+    next_phandle = max(parsed['phandles'], default=0) + 1
     expected = {}
     for path, properties in fragments.items():
         if path.count('/') == 1 and path.startswith('/fragment@'):
@@ -54,10 +57,35 @@ def apply_cpu_model_overlay(board, overlay, work, cpu_only=True):
             if cpu_only:
                 require(set(payload) == {'model'} and target.startswith('/cpus/cpu@'),
                         'CPU model overlay must only add CPU model properties')
+            else:
+                # libfdt treats an addressless path component as a partial
+                # match: led-controller can select led-controller@ee00 even
+                # when the exact addressless node also exists. Resolve the
+                # declared path in our exact node dictionary, then use a
+                # base-tree phandle so fdtoverlay cannot pick its sibling.
+                handle = before[target].get('phandle', before[target].get('linux,phandle'))
+                if handle is None:
+                    require(next_phandle < 0xffffffff, 'Board phandle space is exhausted')
+                    handle = struct.pack('>I', next_phandle)
+                    next_phandle += 1
+                    before[target]['phandle'] = handle
+                properties.pop('target-path')
+                properties['target'] = handle
             expected[target] = payload
     require(expected, 'Board overlay has no targets')
-    run(['fdtoverlay', '-i', board, '-o', derived, compiled])
-    after = read_fdt(derived.read_bytes())['tree']
+    overlay_input = board
+    if not cpu_only:
+        overlay_input = work / 'board-with-exact-targets.dtb'
+        overlay_input.write_bytes(write_fdt(parsed))
+        # Preserve __symbols__ and __local_fixups__: fdtoverlay must still
+        # relocate child phandles and references within the overlay normally.
+        compiled.write_bytes(write_fdt(overlay_fdt))
+    run(['fdtoverlay', '-i', overlay_input, '-o', derived, compiled])
+    output_fdt = read_fdt(derived.read_bytes())
+    require(output_fdt['reservations'] == parsed['reservations'] and
+            output_fdt['boot_cpu'] == parsed['boot_cpu'],
+            'Board overlay changed reserved memory or boot CPU')
+    after = output_fdt['tree']
     if cpu_only:
         for target, payload in expected.items():
             for key, value in payload.items():
