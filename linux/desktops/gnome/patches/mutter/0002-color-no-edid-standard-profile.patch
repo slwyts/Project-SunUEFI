@@ -1,0 +1,130 @@
+From: Project SunUEFI <sunuefi@localhost>
+Subject: [PATCH] color: generate a standard fallback profile without EDID
+
+A physical DSI monitor without EDID has a real colord device ID but no
+EDID checksum. The color store currently stops before the existing sRGB
+fallback can run. The device consequently has no default profile and
+normal Night Light temperature changes do not update its gamma LUT.
+
+Key the no-EDID generated filename by the actual colord device ID and let
+that existing fallback run. Exclude this internally generated file from
+the user-import watcher, as for generated EDID profiles. Add its real
+filename and device mapping before ICC serialization so colord can make
+its existing soft association. The no-EDID path checks connected colord state first and only generates
+the fallback if there is no existing default profile, including a soft
+one. It does not select or overwrite a user profile.
+
+Keep the EDID filename and generation path unchanged. The fallback uses
+colord's standard sRGB profile and is explicitly labelled uncalibrated;
+it contains no invented EDID, panel primaries or HDR capability.
+
+Applies to upstream Mutter 48.7 and Debian mutter 48.7-0+deb13u1.
+Origin: https://github.com/GNOME/mutter/blob/48.7/src/backends/meta-color-store.c
+Forwarded: no
+---
+--- a/src/backends/meta-color-store.c
++++ b/src/backends/meta-color-store.c
+@@ -165,9 +165,10 @@
+ {
+   g_autofree char *file_name = NULL;
+ 
+-  /* Ignore profiles from EDID, as they will always be generated on demand. */
++  /* Generated device profiles are always regenerated on demand. */
+   file_name = g_file_get_basename (file);
+-  return g_str_has_prefix (file_name, "edid-");
++  return g_str_has_prefix (file_name, "edid-") ||
++    g_str_has_prefix (file_name, "no-edid-");
+ }
+ 
+ static void
+@@ -505,13 +506,24 @@
+ 
+   monitor = meta_color_device_get_monitor (color_device);
+   edid_checksum_md5 = meta_monitor_get_edid_checksum_md5 (monitor);
+-  if (!edid_checksum_md5)
+-    return FALSE;
+ 
+   task = g_task_new (G_OBJECT (color_store), cancellable, callback, user_data);
+   g_task_set_source_tag (task, meta_color_store_ensure_device_profile);
+ 
+-  file_name = g_strdup_printf ("edid-%s.icc", edid_checksum_md5);
++  if (edid_checksum_md5)
++    {
++      file_name = g_strdup_printf ("edid-%s.icc", edid_checksum_md5);
++    }
++  else
++    {
++      g_autofree char *device_checksum = NULL;
++
++      device_checksum =
++        g_compute_checksum_for_string (G_CHECKSUM_SHA256,
++                                       meta_color_device_get_id (color_device),
++                                       -1);
++      file_name = g_strdup_printf ("no-edid-%s.icc", device_checksum);
++    }
+   file_path = g_build_filename (g_get_user_data_dir (),
+                                 "icc", file_name, NULL);
+ 
+--- a/src/backends/meta-color-device.c
++++ b/src/backends/meta-color-device.c
+@@ -387,6 +387,10 @@
+   meta_color_device_notify_ready (color_device, TRUE);
+ }
+ 
++static void ensure_device_profile_cb (GObject      *source_object,
++                                      GAsyncResult *res,
++                                      gpointer      user_data);
++
+ static void
+ on_cd_device_connected (GObject      *source_object,
+                         GAsyncResult *res,
+@@ -421,6 +425,23 @@
+   g_signal_connect (cd_device, "changed",
+                     G_CALLBACK (on_cd_device_changed), color_device);
+   update_assigned_profile (color_device);
++
++  /* Query connected colord state before adding a no-EDID soft fallback.
++   * Leave every existing default profile, including a soft one, untouched.
++   */
++  if (!meta_monitor_get_edid_checksum_md5 (color_device->monitor) &&
++      !cd_device_get_default_profile (cd_device))
++    {
++      MetaColorStore *color_store =
++        meta_color_manager_get_color_store (color_device->color_manager);
++
++      if (meta_color_store_ensure_device_profile (color_store,
++                                                  color_device,
++                                                  color_device->cancellable,
++                                                  ensure_device_profile_cb,
++                                                  color_device))
++        color_device->pending_state |= PENDING_EDID_PROFILE;
++    }
+ 
+   maybe_finish_setup (color_device);
+ }
+@@ -523,7 +544,8 @@
+ 
+   color_manager = color_device->color_manager;
+   color_store = meta_color_manager_get_color_store (color_manager);
+-  if (meta_color_store_ensure_device_profile (color_store,
++  if (meta_monitor_get_edid_checksum_md5 (color_device->monitor) &&
++      meta_color_store_ensure_device_profile (color_store,
+                                               color_device,
+                                               color_device->cancellable,
+                                               ensure_device_profile_cb,
+@@ -1142,6 +1164,15 @@
+                                        CD_ICC_LOAD_FLAGS_PRIMARIES,
+                                        &error))
+         g_clear_object (&cd_icc);
++      else
++        {
++          /* Standard sRGB is a fallback, not a measured panel calibration. */
++          cd_icc_set_description (cd_icc, NULL, "Standard sRGB (uncalibrated)");
++          cd_icc_add_metadata (cd_icc, CD_PROFILE_PROPERTY_FILENAME,
++                               data->file_path);
++          cd_icc_add_metadata (cd_icc, CD_PROFILE_METADATA_MAPPING_DEVICE_ID,
++                               color_device->cd_device_id);
++        }
+     }
+ 
+   if (!cd_icc)
