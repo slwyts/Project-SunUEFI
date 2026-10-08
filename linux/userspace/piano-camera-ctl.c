@@ -23,7 +23,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Usage: %s caps|get rear|front\n"
 			"       %s set rear|front ae|awb|af auto|manual\n"
 			"       %s set rear|front exposure|analog-gain|digital-gain|red-balance|blue-balance|focus INTEGER\n"
-			"       %s set front exposure-time-ns NANOSECONDS\n"
+			"       %s set rear|front exposure-time-ns NANOSECONDS\n"
 			"The camera must already be streaming. Exposure time is quantized to sensor lines; caps reports the active mode and live ranges. Other values use driver-native units.\n",
 			argv[0], argv[0], argv[0], argv[0]);
 		return 2;

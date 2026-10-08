@@ -66,7 +66,7 @@ def entry_source(name):
     signature='int PianoOriginalMain(int,char **);'if name in ('piano-touch-view','piano-camera-ctl')else'int PianoOriginalMain(void);'
     normal='return PianoOriginalMain(argc,argv);'if name in ('piano-touch-view','piano-camera-ctl')else'if(argc!=1){fprintf(stderr,"Use --help or no arguments.\\n");return 2;} return PianoOriginalMain();'
     description=' Optional --diagnostics N emits touch JSON; --capture FILE saves this reader\'s complete raw records with --capture-seconds N (1..10, default5, max16MiB). Both default off.'if name=='piano-touch-view'else''
-    if name=='piano-camera-ctl':description=' caps|get rear|front; set rear|front ae|awb|af auto|manual; set rear|front exposure|analog-gain|digital-gain|red-balance|blue-balance|focus INTEGER; set front exposure-time-ns NANOSECONDS quantizes to the verified active sensor mode.'
+    if name=='piano-camera-ctl':description=' caps|get rear|front; set rear|front ae|awb|af auto|manual; set rear|front exposure|analog-gain|digital-gain|red-balance|blue-balance|focus INTEGER; set rear|front exposure-time-ns NANOSECONDS quantizes to the verified active sensor mode.'
     return '#include <stdio.h>\n#include <string.h>\n'+signature+'\nint main(int argc,char **argv){if(argc==2 && !strcmp(argv[1],"--help")){puts("'+name+': Linux Piano runtime helper; --help performs no device access.'+description+'");return 0;}'+normal+'}\n'
 
 
@@ -86,7 +86,7 @@ def derive_touch_source(public, output):
 
 
 def derive_camerad_source(public, output):
-    """Apply CCM, AE/AF, frame integrity, manual controls and front timing."""
+    """Apply CCM, AE/AF, frame integrity, manual controls and mode timing."""
     relative,pin,_=PUBLIC_SOURCES['piano-camerad'];original=Path(public)/relative
     if sha(original)!=pin:raise ValueError('Public camera source changed')
     folder=Path(output)/'piano-camera-source';target=folder/relative

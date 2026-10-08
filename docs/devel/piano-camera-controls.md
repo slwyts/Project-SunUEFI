@@ -25,7 +25,7 @@ piano-camera-ctl set rear focus INTEGER
 | 控件 | 呈现单位 | 硬件接口 |
 | --- | --- | --- |
 | exposure | sensor lines | 传感器 `V4L2_CID_EXPOSURE` |
-| exposure-time-ns | 纳秒，仅已匹配的前摄模式 | 换算为同一传感器曝光控件，按实际行数取整 |
+| exposure-time-ns | 纳秒，仅已匹配的前后摄模式 | 换算为同一传感器曝光控件，按实际行数取整 |
 | analog-gain | 驱动原生整数 | 传感器 `V4L2_CID_ANALOGUE_GAIN` |
 | digital-gain | Q10，1024 为 1× | TFE `V4L2_CID_DIGITAL_GAIN` |
 | red-balance / blue-balance | Q10，1024 为 1× | TFE 红/蓝平衡控件 |
@@ -45,7 +45,9 @@ piano-camera-ctl set front ae auto
 
 `500000` 纳秒约为 1/2000 秒；当前模式会取最近合法的 42 行，实际约 496454 纳秒。回复同时给出请求时间、接受的行数和读回时间。每次换算均核对传感器活动格式、VBLANK 和曝光范围；模式不匹配时明确拒绝。`caps/get` 的时间控件包含行时间分数和当前值，曝光上限继续跟随驱动当前范围。
 
-该模式的行时间为 `1e9 / 84600` 纳秒，来自原厂 HTS1182、FLL2820、30 fps 参数及 CamX 的积分时钟算法，最短四行与 Android 的 47281 纳秒相符。CSI 输出像素率不用于曝光换算。时间补丁接在手动控制补丁之后，由正常 producer 统一应用；后摄当前 Linux 模式与原厂模式不同，暂不提供秒单位。
+前摄该模式的行时间为 `1e9 / 84600` 纳秒，来自原厂 HTS1182、FLL2820、30 fps 参数及 CamX 的积分时钟算法，最短四行与 Android 的 47281 纳秒相符。CSI 输出像素率不用于曝光换算。时间补丁接在手动控制补丁之后，由正常 producer 统一应用。
+
+后摄 S5KJN1 的 4080×3072 模式也提供时间控件。将上述命令的 `front` 换为 `rear`，请求 500000 纳秒会选中 64 行，实际约 497371 纳秒。这个模式的积分时钟为 560 MHz、行长为 4352，精确行时间是 `54400 / 7` 纳秒；同一颗传感器的[厂商固定源码](https://github.com/MotorolaMobilityLLC/kernel-mtk/blob/4cbe43fe20dc19b9c5218553468efb3b868567c5/drivers/misc/mediatek/imgsensor/src/common/v1_1/mot_devonn_s5kjn1_mipi_raw/s5kjn1mipiraw_Sensor.c#L68)明确区分积分时钟和 MIPI 像素率，其[VT PLL 配置](https://github.com/MotorolaMobilityLLC/kernel-mtk/blob/4cbe43fe20dc19b9c5218553468efb3b868567c5/drivers/misc/mediatek/imgsensor/src/common/v1_1/mot_devonn_s5kjn1_mipi_raw/settings/s5kjn1_4080x3072_30fps.h#L255)与当前 Linux 配置一致。后摄运行时另外核对 HBLANK 为 272、VBLANK 默认 1216，以及曝光上限保留 22 行的间隔。其他分辨率或时序不匹配时拒绝换算；不使用原厂不同模式的行时间，也不从标称 30 fps 反推该模式的精确积分时钟。
 
 AE、AWB、AF 各自拥有自动/手动状态；数值写入必须先把对应域切为 manual，自动算法不会覆盖该域。模式切换先读回该域的现有控件，恢复 auto 从这个状态继续。手动曝光仍保留帧统计供后摄 AF 判断稳定性。每个数值请求只写一个白名单控件，随后读回；失败保留 errno，读回不一致同时给出 requested/value 并返回错误。多个传感器/TFE 控件不构成硬件原子事务；回复丢失或读回失败后应先 `get`，再决定是否重试。
 
@@ -59,4 +61,4 @@ AE、AWB、AF 各自拥有自动/手动状态；数值写入必须先把对应�
 
 Snapshot 首次远程打开时可能停在概览中。该版本等待窗口获得焦点后才开始相机发现；退出 GNOME 概览后，前摄可进入正常预览。不要仅凭窗口的加载动画判断相机服务没有工作。
 
-这套接口还不是原厂相机专业模式。原厂 Android 的小米扩展公布后摄 ISO 50–6400，QTI 视频表另有 3840×2160/60 fps；前摄标准输出包含 1920×1080/30 fps。当前 Linux 相机输出仍固定为 1920×1440/30 fps，不能因原厂能力表存在这些条目就直接宣布支持 4K60。ISO 换算需要传感器增益标定，后摄快门秒数需要当前模式的真实积分行时钟，Kelvin 色温需要白平衡和色彩标定。测光模式、实际裁切变焦和闪光灯同步仍需适配；隐私指示灯的驱动与 PWM 联动结果见[实现说明](piano-camera-privacy-led.md)。
+这套接口还不是原厂相机专业模式。原厂 Android 的小米扩展公布后摄 ISO 50–6400，QTI 视频表另有 3840×2160/60 fps；前摄标准输出包含 1920×1080/30 fps。当前 Linux 相机输出仍固定为 1920×1440/30 fps，不能因原厂能力表存在这些条目就直接宣布支持 4K60。ISO 换算需要传感器增益标定，其他传感器模式需要各自的真实积分行时钟，Kelvin 色温需要白平衡和色彩标定。测光模式、实际裁切变焦和闪光灯同步仍需适配；隐私指示灯的驱动与 PWM 联动结果见[实现说明](piano-camera-privacy-led.md)。
