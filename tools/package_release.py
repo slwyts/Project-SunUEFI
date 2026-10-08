@@ -124,7 +124,7 @@ def scan_root(root, release):
     rows, links = {}, Counter()
     for path in [root, *sorted(root.rglob('*'))]:
         name = path.relative_to(root).as_posix()
-        require(not any(c in name for c in '\n\r"\\'), 'Unsupported rootfs filename')
+        require(not any(c in name for c in '\n\r'), 'Unsupported rootfs filename')
         info = path.lstat()
         require(stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode), 'Special rootfs file: ' + name)
         if name.split('/')[0] in ('dev', 'proc', 'sys', 'run'):
@@ -215,7 +215,8 @@ def archive_root(root, target, epoch):
 
 
 def quote(name):
-    return '"' + ('/' if name == '.' else '/' + name) + '"'
+    path = '/' if name == '.' else '/' + name
+    return '"' + path.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
 def xattr_equal(name, left, right):
