@@ -68,7 +68,9 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
         raise ValueError('AArch64 helper checks need qemu-aarch64 on this host')
     for name, (relative, digest, destination) in (runtime.PUBLIC_SOURCES | runtime.BSP_SOURCES).items():
         original = (ROOT if name in runtime.BSP_SOURCES else public) / relative
-        if runtime.sha(original) != digest:
+        if name in runtime.BSP_SOURCES:
+            digest = runtime.sha(original)
+        elif runtime.sha(original) != digest:
             raise ValueError('Runtime helper source changed: ' + name)
         source_file = touch if name == 'piano-touch-view' else camera if name == 'piano-camerad' else original
         entry, obj, binary = output / (name + '-entry.c'), output / (name + '.o'), output / name

@@ -28,7 +28,7 @@ PUBLIC_SOURCES={
  'piano-camerad':('camera/piano-camerad.c','c2ab6391fa41d21d1c3e4359dc0adf671261417dbda180724faf8b2758932d47','usr/lib/piano/piano-camerad'),
  'piano-pd-locator':('initramfs/pd-locator/piano-pd-locator.c','8de9d2840a896b4bd6c90bd4b124479d2f142e9e85420f2022894bb32fc8dde8','usr/sbin/piano-pd-locator')}
 BSP_SOURCES={
- 'piano-camera-ctl':('linux/userspace/piano-camera-ctl.c','4dfb52f3736c2522ba0fe2ac28cb0f7219241b94e5f733d2947725620da40661','usr/bin/piano-camera-ctl')}
+ 'piano-camera-ctl':('linux/userspace/piano-camera-ctl.c',None,'usr/bin/piano-camera-ctl')}
 TOOL_PINS={'clang':'939a882527432ec23b094c289e7f170bf2d6ec282e74dde75e31b08602fa3eae',
  'ld.lld':'57b6c64db534793f05918a6e935c900e9938bd64d0ac95933285930b568387ea',
  'llvm-strip':'629062ddc62f936d7f07418099d202850e18b222217a85f419552fa25d3eb4ec'}
@@ -218,8 +218,9 @@ def build(args):
         inputs[str(p)]=pin
     for name,(path,pin,_)in BSP_SOURCES.items():
         p=ROOT/path
-        if sha(p)!=pin:raise ValueError('BSP helper source changed: '+name)
-        inputs[str(p)]=pin
+        # Project sources are editable; record the actual bytes instead of
+        # requiring developers to update a second, hard-coded source hash.
+        inputs[str(p)]=sha(p)
     for folder in (public/'topology',args.macros.resolve()/'audioreach'):
         inputs.update({str(folder/name):digest for name,digest in tree_files(folder).items()})
     inputs[str(public/'scripts/build-topology.sh')]=sha(public/'scripts/build-topology.sh')
@@ -230,6 +231,7 @@ def build(args):
     for name,(path,pin,destination)in (PUBLIC_SOURCES|BSP_SOURCES).items():
         entry=output/(name+'-entry.c');entry.write_text(entry_source(name));obj=output/(name+'.o');binary=output/name
         effective_source=touch_source if name=='piano-touch-view'else camera_source if name=='piano-camerad'else(ROOT/path if name in BSP_SOURCES else public/path)
+        if name in BSP_SOURCES:pin=inputs[str(ROOT/path)]
         run([*flags,'-isystem',uapi/'include','-Dmain=PianoOriginalMain','-c',effective_source,'-o',obj],env,log)
         run([*flags,'-fuse-ld=lld','-static',entry,obj,'-lm','-o',binary],env,log)
         row=verify_elf(binary);help_result=subprocess.run([str(qemu),str(binary),'--help'],capture_output=True,text=True,timeout=10,check=True)
