@@ -8,8 +8,8 @@
   },
   "desktops": {
     "gnome": {
-      "apt_packages": ["gnome-shell", "gnome-session", "gdm3", "nautilus", "gnome-control-center", "dconf-cli", "pipewire", "wireplumber", "iio-sensor-proxy"],
-      "arch_packages": ["gnome-shell", "gnome-session", "gdm", "nautilus", "gnome-control-center", "dconf", "pipewire", "wireplumber", "iio-sensor-proxy"],
+      "apt_packages": ["gnome-shell", "gnome-session", "gdm3", "nautilus", "gnome-control-center", "dconf-cli", "pipewire", "wireplumber", "iio-sensor-proxy", "python3"],
+      "arch_packages": ["gnome-shell", "gnome-session", "gdm", "nautilus", "gnome-control-center", "dconf", "pipewire", "wireplumber", "iio-sensor-proxy", "python"],
       "display_manager": {"apt": "gdm3", "arch": "gdm"},
       "scale_percent": 200, "scale_scope": "GNOME integer toolkit default; per-output Wayland layout remains user configurable",
       "osk": "GNOME Shell built-in screen keyboard", "rotation": "iio-sensor-proxy installed; actual sensor transport and rotation unverified"
