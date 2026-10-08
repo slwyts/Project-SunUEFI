@@ -43,8 +43,10 @@ release=$(cat /etc/piano/kernel-release) || fail 'Missing kernel identity'
 [ "$(uname -r)" = "$release" ] || fail 'Kernel/module release mismatch'
 log "DISK_INIT_BEGIN: kernel=$release root=PARTUUID=$expected"
 selected=0
+dma_log=0
 for arg in $(cat /proc/cmdline); do
     case "$arg" in
+        piano.boot-dma-log=1) dma_log=1 ;;
         piano.root=*)
             [ "$arg" = "piano.root=PARTUUID=$expected" ] || fail 'Unexpected piano.root'
             selected=$((selected + 1)) ;;
@@ -53,6 +55,8 @@ for arg in $(cat /proc/cmdline); do
 done
 [ "$selected" -eq 1 ] || fail 'Exactly one explicit piano.root=PARTUUID is required'
 dma_routes() {
+    # Full routing dumps are diagnostic, not a condition for loading modules.
+    [ "$dma_log" -eq 1 ] || return 0
     # Reuse the kernel's serialized per-master readback; never write SMMU MMIO.
     for device in 1d84000.ufshc a600000.ssusb; do
         for attribute in piano_dma_route piano_dma_context; do
