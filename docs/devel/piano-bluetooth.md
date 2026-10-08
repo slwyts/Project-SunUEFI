@@ -1,10 +1,18 @@
 # Piano 蓝牙地址
 
-当前 fresh root 的 UART/固件初始化成功，rfkill 未阻止无线，但 management
-接口报告 `Unconfigured / missing public-address`，BlueZ 没有 Adapter1。
-这需要补齐每台设备的真实 BDAddr 来源，不能用随机／公共 NVM 默认地址完成。
+2026-10-08，设备 owner 已将本机地址写入实际 Linux 启动的内嵌 DTB，并正常
+`systemctl reboot`。这次冷启动在 `7.2.9-piano-gnome-g7fff463f0630` 自动出现
+BlueZ public controller、`Powered: yes` / `PowerState: on`，unconfigured index
+list 为 0；实际 DT 属性路径也已读回。记录位于本机
+`private/provisioning/recovery-priority-20261008/bluez-persistent-cold-boot.txt`，
+不在公开文档展示 MAC。这证明本机 DT provider 和标准 QCA 开机配置链已工作，
+没有验证本轮扫描、配对、连接或音频/HID profile 的实际使用。
 
-当前板级 `&uart14/bluetooth` 没有 `local-bd-address`。`btqca.c` 的
+此前 fresh root 的 UART/固件初始化成功、rfkill 未阻止无线，但 management
+接口报告 `Unconfigured / missing public-address`，BlueZ 没有 Adapter1。
+修正使用每台设备的原厂地址；通用包不包含固定／随机地址。
+
+通用板级源码的 `&uart14/bluetooth` 不填写本机 `local-bd-address`。`btqca.c` 的
 `qca_check_bdaddr()` 在 controller 地址仍等于 NVM tag2 默认值时设置
 `HCI_QUIRK_USE_BDADDR_PROPERTY`；`hci_sync.c` 随后读取 controller firmware
 node 的 `local-bd-address` 并通过已有 `qca_set_bdaddr()` 写入控制器。
@@ -59,5 +67,7 @@ standalone `apply --execute` 先刷 generic ESP/root 并逐项记录 prefix read
 回到正常 Android 后只读 raw6，挂载 `sunuefi_esp` 更新实际 boot.img、sync/核对
 文件 SHA，再卸载。最终报告明确 ESP 已与 generic 不同；配置失败时保留已经
 完成的 generic 读回阶段。`provision-bluetooth --execute` 只补配置，不重刷 root。
-helper 已用本机真实 BOOTv2/raw6 生成文件并核对组件；没有执行设备安装流程。
-在线标准设置及持久 DTB 的硬件结果仍由设备 owner 另行验证。
+helper 已用本机真实 BOOTv2/raw6 生成文件并核对组件；Root 手动部署到项目 ESP
+后，本机地址 DTB 的冷启动已完成上述验证。standalone Android 安装／升级流程
+仍未实机运行，不能用此次手动部署证明它已经完成；扫描／连接与各 profile 的
+实际使用也分别待验证。
