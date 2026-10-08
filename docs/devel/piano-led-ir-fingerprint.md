@@ -32,6 +32,10 @@
 
 最小标准适配方向是：将控制器转为 `qcom,geni-spi`、时钟名 `se`，逐项按当前GENI/GPI的clock、interconnect、DMA binding转换资源；子节点用 `ir-spi-led`，配置开启 `LIRC` 和 `IR_SPI`。现有产品DT仍是厂商 `qcom,spi-geni` / `se-clk`，不能只替换子节点compatible。标准驱动每个载波使用16个位样本、SPI时钟为载波×16；请求40%占空比时当前公式得到7/16高位，约43.75%，并不等同于原厂1.92MHz量化波形。移植可复用标准rc-core/LIRC接口及已确认的低电平间隔，但需明确是否保留原厂编码、实际word顺序与约40%占空比。原厂两层均无供电控制，标准驱动的regulator请求仍需按真实无可控供电接口处理，不能虚构supply或默默依赖dummy regulator。相关标准接口见 [IR SPI绑定](https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/leds/irled/ir-spi-led.yaml)。
 
+[控制器独立草案](../../linux/dts/piano-ir-spi-controller.dtso)已使用当前内核headers编译并与参考产品DT合并检查，尚未接入产品构建或部署。GCC ID123、GIC SPI462、SE7、GPIO28–31都与原厂最终DT和当前 `sm8750.dtsi` 对应；DMA改为GPI2三cell参数 `0/1,7,SPI`，三个ICC路径使用现有标准provider及两cell参数。新default/sleep pinctrl位于真实 `piano_tlmm_ml`，保留原厂6mA/2mA、bias-disable，未添加输出电平操作。共享QUP2 wrapper、GPI2掩码和Linux拥有的SID `0x423/0x436`均未改变；同地址I2C节点仍禁用。
+
+该草案只准备标准SPI控制器，现有CS0子节点已改为 `ir-spi-led` 但保持 **disabled**，没有供电、假设备或发射操作。合并检查证明资源能解析，不证明控制器已绑定或完成DMA；下一次正常产品集成后先检查GENI/SPI provider绑定及probe日志，不写SPI数据。当前GENI驱动会检查真实SE协议和FIFO状态，必要时加载SPI固件或取得GPI通道，因此仍可能报告协议/固件/依赖错误。精确属性差异保存在私有 `ir-controller-overlay-review.json`；未声称整份继承厂商DT通过上游schema校验。
+
 ## 侧指纹
 
 原厂 `/soc/xiaomi_fingerprint` 实际绑定 `mi_fp`：GPIO73 复位、GPIO85 IRQ，`fp_3v3_vreg-supply` 指向 PM-HUMU L9，netlink 协议号 25，选择字符串 `p81_n1_142`。ROM 名称清单含 `libgoodixhwfingerprint.so`，但该名称不能独自确定芯片型号或实际认证传输。

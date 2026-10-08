@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/clock/qcom,sm8750-gcc.h>
+#include <dt-bindings/dma/qcom-gpi.h>
+#include <dt-bindings/interconnect/qcom,icc.h>
+#include <dt-bindings/interconnect/qcom,sm8750-rpmh.h>
+
+/*
+ * Controller-only draft for the factory SE15 / QUP2 SE7 / CS0 IR path.
+ * Source: selected Android final DT and current sm8750.dtsi spi15.
+ * The base already provides the standard QUP2 wrapper, GPI2 and Linux-owned
+ * IOMMU routes. Do not replace those shared providers or their channel mask.
+ * The transmitter stays disabled until its standard LIRC driver, waveform
+ * and lack of a software-controlled supply have been handled explicitly.
+ */
+/ {
+	fragment@0 {
+		target = <&piano_tlmm_ml>;
+		__overlay__ {
+			piano_ir_spi15_default: ir-spi15-default-state {
+				pins = "gpio28", "gpio29", "gpio30", "gpio31";
+				function = "qup2_se7";
+				drive-strength = <6>;
+				bias-disable;
+			};
+
+			piano_ir_spi15_sleep: ir-spi15-sleep-state {
+				pins = "gpio28", "gpio29", "gpio30", "gpio31";
+				function = "gpio";
+				drive-strength = <2>;
+				bias-disable;
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc/qcom,qupv3_2_geni_se@8c0000/spi@89c000";
+		__overlay__ {
+			compatible = "qcom,geni-spi";
+			/* Keep the factory physical range and GIC SPI462 unchanged. */
+			clocks = <&gcc GCC_QUPV3_WRAP2_S7_CLK>;
+			clock-names = "se";
+			interconnects = <&clk_virt MASTER_QUP_CORE_2 QCOM_ICC_TAG_ALWAYS
+					 &clk_virt SLAVE_QUP_CORE_2 QCOM_ICC_TAG_ALWAYS>,
+					<&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ALWAYS
+					 &config_noc SLAVE_QUP_2 QCOM_ICC_TAG_ALWAYS>,
+					<&aggre2_noc MASTER_QUP_2 QCOM_ICC_TAG_ALWAYS
+					 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>;
+			interconnect-names = "qup-core", "qup-config", "qup-memory";
+			dmas = <&gpi_dma2 0 7 QCOM_GPI_SPI>,
+			       <&gpi_dma2 1 7 QCOM_GPI_SPI>;
+			dma-names = "tx", "rx";
+			pinctrl-names = "default", "sleep";
+			pinctrl-0 = <&piano_ir_spi15_default>;
+			pinctrl-1 = <&piano_ir_spi15_sleep>;
+			status = "okay";
+		};
+	};
+
+	fragment@2 {
+		target-path = "/soc/qcom,qupv3_2_geni_se@8c0000/spi@89c000/ir-spi@0";
+		__overlay__ {
+			compatible = "ir-spi-led";
+			status = "disabled";
+		};
+	};
+};
