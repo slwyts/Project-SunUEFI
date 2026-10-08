@@ -348,6 +348,20 @@
       "source_sha256": "620e669c26d4469b4844b7a087724d06b2c768c667f92bd0d2caa9bfefb5f495",
       "source_git_mode": "100644",
       "license": "MIT"
+    },
+    {
+      "group": "camera",
+      "path": "etc/modules-load.d/piano-flash.conf",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "1043fbcb727a6aca61be8d713e61e03ac1153b6edc093834a73a262499d7a792",
+      "source": "linux/bsp/optional/camera/etc/modules-load.d/piano-flash.conf",
+      "source_component": "Project SunUEFI",
+      "source_sha256": "1043fbcb727a6aca61be8d713e61e03ac1153b6edc093834a73a262499d7a792",
+      "source_git_mode": "100644",
+      "license": "MIT"
     }
   ],
   "excluded": [

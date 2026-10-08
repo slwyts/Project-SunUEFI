@@ -41,7 +41,7 @@ TARGETS[DEFAULT_TARGET] = {
     **TARGETS['kernel69'],
     'series_target': 'kernel69',
     'patch_tree': TARGETS['kernel69']['target_tree'],
-    'target_tree': '841bc932a79f53395a28be4e5668f1a93afa1553',
+    'target_tree': 'b8f07b7e9f9efb0cece6dc465f7052fc5d7079a8',
     'stable_commit': '5fce161649b4d779d1b76d9fcd52dc77779774b8',
     'stable_tree': 'c278d1443495d2a1a07fff2bcfb286b5c35baaea',
     'stable_version': '7.2.9',
@@ -66,6 +66,10 @@ TARGETS[DEFAULT_TARGET] = {
     'panel_depth_patch': {
         'file': 'patches/linux/7.2.9/0003-panel-nt36532-piano-color-depth.patch',
         'sha256': '0259986f0d09eb82703bcd4556306e3de4b2b20c217c82965399de28965335b7',
+    },
+    'flash_cleanup_patch': {
+        'file': 'patches/linux/7.2.9/0004-leds-qcom-flash-cleanup-index.patch',
+        'sha256': 'd733ff5eabf62ff970cc0eece7580fe505dabc757b310458fc878adac0303228',
     },
 }
 
@@ -230,7 +234,7 @@ def write_manifest(path, record):
 
 def update_patches(root, policy):
     result = {}
-    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch'):
+    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch'):
         if key not in policy:
             continue
         row = policy[key]
@@ -275,6 +279,7 @@ def merge_stable(work, policy, paths):
         ('cpu_model_patch', 'fix(arm64): expose DT CPU model in cpuinfo', 'cpu_model_commit'),
         ('fastrpc_dma_patch', 'fix(iommu): use translated DMA for SM8750 FastRPC', 'fastrpc_dma_commit'),
         ('panel_depth_patch', 'fix(drm): report Piano DSC color depth', 'panel_depth_commit'),
+        ('flash_cleanup_patch', 'fix(leds): correct qcom flash cleanup indexing', 'flash_cleanup_commit'),
     ):
         if key not in paths:
             continue

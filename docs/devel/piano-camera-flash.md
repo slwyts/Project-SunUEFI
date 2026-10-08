@@ -1,32 +1,41 @@
 # Piano 摄像头闪光灯
 
-2026-10-08：已准备标准 LED Flash/V4L2 接口的非默认诊断 DT；未部署、未点灯，也没有实机 peripheral type/subtype 读值。控制器保持 `disabled`，默认构建与内核配置不变。
+2026-10-08：实机只读 regmap `0-01` 的精确两寄存器读回确认 **SPMI SID 1、基址
+0xee00，type=0x18、subtype=0x07**。标准驱动已有该四通道 IP 布局，两路实际接线
+1/2可直接描述。默认release已接入标准驱动配置、DT overlay、cleanup补丁和
+modules-load策略。新源码已准备并在全新O目录通过配置检查；尚未进行完整内核
+构建、部署或点灯，不能把这些结果计作LED/V4L2实际注册或光学效果。
 
-## 实际硬件路径
+## 身份、接线与限值
 
-原厂最终 Android DTB 与参考 `vendor/piano-linux/board.dtb` 都使用：
+原厂最终 Android DTB 与参考 `vendor/piano-linux/board.dtb` 一致：父节点为
+`/soc/qcom,spmi@c42d000/qcom,pm8550@1`，`reg=<1 0>`；旧 flash 位于
+`qcom,flash_led@ee00`。原厂 compatible `qcom,qti-pm8350c-flash-led` 是 IP 名称，
+不用于推测 SID。原厂 `qcom,id` 0/1 对应标准一基 `led-sources=<1>/<2>`，
+保持两支独立 LED，不合并为并联通道。
 
-```text
-/soc/qcom,spmi@c42d000/qcom,pm8550@1/qcom,flash_led@ee00
-```
+每路 flash 限值为 **400mA、300ms**；原厂 torch 允许短时400mA，5000ms后降至
+100mA。主线没有该时间曲线，因此连续 torch 上限采用 **100mA/路**。
+限值字段依据 [MiCode 原厂实现](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/45fb9bd6ae5ba2942fc1d53e4b6b46ef76992f71/drivers/leds/leds-qti-flash.c#L1710)。
 
-父设备为 `qcom,spmi-pmic`，`reg = <1 0>`，即 **SPMI SID 1、外设基址 0xee00**。原厂 flash compatible 是 `qcom,qti-pm8350c-flash-led`；该 IP 名称不能用来猜父 PMIC 的 SID。原厂 `/soc/qcom,camera-flash0` 的 `flash-source` 指向 `qcom,flash_0/1`，`torch-source` 指向 `qcom,torch_0/1`。两路 `qcom,id` 为 0/1，对应主线的一基 `led-sources = <1>/<2>`，不把两路臆造为一个并联 LED。
+只读身份记录在本地
+`private/provisioning/recovery-priority-20261008/flash-type.json`：ee04=18、ee05=07，
+共读取两寄存器。原厂 live DTB SHA256 为
+`8056ae623549f4dbefbf3c2615c134fa670cafa83387235575ab573896636fcc`，参考板 DTB 为
+`36e6adef75306d7727f79e97d0406376baa43e1b454e29d1c40bc0fc36d47db3`。
+这确认身份和描述依据，不证明亮度、供电、thermal/fault 或曝光同步已经正常。
 
-每路原厂 flash 上限为 400mA、300ms；torch 的时间表为 400mA 至 5000ms、随后 100mA。主线没有这份小米时间曲线，诊断描述将连续 torch 上限直接设为 **100mA/路**，flash 保留 400mA/300ms。[MiCode 原厂实现](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/45fb9bd6ae5ba2942fc1d53e4b6b46ef76992f71/drivers/leds/leds-qti-flash.c#L1710)记录了时限与分档字段。
+## 唯一默认 release 接线
 
-本地依据为 `private/analysis/android-board-runtime-2026-10-05/live.dtb`（SHA-256 `8056ae623549f4dbefbf3c2615c134fa670cafa83387235575ab573896636fcc`）与参考板 DTB（SHA-256 `36e6adef75306d7727f79e97d0406376baa43e1b454e29d1c40bc0fc36d47db3`）。原厂绑定记录有 `leds-qti-flash`，这只证明绑定，不能证明两路实际点亮或供电正常。
+[piano-camera-flash.dtso](../../linux/dts/piano-camera-flash.dtso) 禁用旧 vendor
+flash 和 `/soc/qcom,camera-flash0` trigger consumer，创建只有两个标准子节点的
+`led-controller@ee00` 并设为 `okay`，保持100mA torch、400mA/300ms flash。
+旧 vendor 多子节点结构不能直接换 compatible；标准绑定见
+[qcom,spmi-flash-led.yaml](https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/leds/qcom,spmi-flash-led.yaml)。
+没有加入电源/GPIO猜测或手工寄存器初始化。
 
-## 诊断 DT 与驱动
-
-[piano-camera-flash.dtso](../../linux/dts/piano-camera-flash.dtso)先禁用旧 vendor flash 节点和旧 camera trigger consumer，再在同一 SID 创建独立的标准 `led-controller@ee00`。不能只替换旧节点的 compatible：它有多于四个 vendor 子节点，主线按子节点总数和 `led-sources` 解析，会拒绝这份结构。新控制器只有两路标准 LED 子节点，仍保持 `disabled`；没有增加猜测的电源、GPIO 或寄存器初始化。
-
-现有 [leds-qcom-flash.c](../../build/kernel-worktrees/release-7.2.9/drivers/leds/flash/leds-qcom-flash.c)读取父 regmap 的 `0xee04` type 与 `0xee05` subtype。只有 type `0x18` 且 subtype `0x03/0x04/0x07` 受支持，分别选择已有三路/四路布局；其他 subtype 返回 `flash LED subtype ... is not yet supported` 和 `-ENODEV`。尚未取得本机读值，不能根据 compatible 宣布匹配成功，也不增加强制 subtype 的补丁。[上游绑定](https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/leds/qcom,spmi-flash-led.yaml)定义了标准属性。
-
-已另准备 [cleanup 索引补丁](../../patches/linux/7.2.9/0004-leds-qcom-flash-cleanup-index.patch)：原驱动在成功计数等于数组长度时读取 `v4l2_flash[leds_count]`，会越界。两处清理改为先检查计数、递减后释放每个槽位，包括 NULL；这份补丁等待统一的新源码准备，不修改冻结 worktree 或默认 release tree pin。
-
-## 最小标准接口接入
-
-当前 release 配置已有 `CONFIG_LEDS_CLASS_FLASH=m`、`CONFIG_LEDS_QCOM_FLASH=m`、SPMI PMIC 支持；`CONFIG_V4L2_FLASH_LED_CLASS` 未启用。本次不改变默认值。独立诊断构建在合入上述补丁后，可配置：
+[piano-flash.config](../../linux/configs/piano-flash.config) 是现有完整内核上的小
+fragment，不创建第二个 profile：
 
 ```text
 CONFIG_LEDS_CLASS_FLASH=m
@@ -35,27 +44,30 @@ CONFIG_V4L2_FLASH_LED_CLASS=m
 CONFIG_VIDEO_V4L2_SUBDEV_API=y
 ```
 
-保留已有 SPMI/PMIC 与媒体框架依赖。验证 peripheral type/subtype、父 regmap 和两路接线后，才能在诊断 DT 副本中将新控制器设为 `okay`；旧 vendor 节点继续 disabled。标准 LED class 提供 torch brightness、flash brightness/timeout/strobe/fault；V4L2 wrapper 注册异步 flash subdevice。相机侧仍需标准 fwnode/notifier 关联，不能仅凭注册就宣称曝光同步或 `/dev/v4l-subdev*` 已可用，也不恢复 vendor trigger daemon。[Linux Flash LED 文档](https://docs.kernel.org/leds/leds-class-flash.html)
+现有 LED、SPMI PMIC、VIDEO_DEV 依赖保留；V4L2_FLASH_LED_CLASS 按 Kconfig 选择
+MEDIA_CONTROLLER、V4L2_ASYNC 和 subdev API。`build_piano_full_kernel.py`默认合并
+这四项及既有UHID，并检查四项最终值和PUBLIC其余选项。配置检查通过，未修改
+此前已完成的7fff内核O目录或artifact。
 
-## 离线组合检查
+现有根系统会阻止SoC `of:*`自动modprobe，默认完整stager现复制同一
+`etc/modules-load.d/piano-flash.conf`，标准加载`leds_qcom_flash`；camera可选BSP
+也通过manifest包含这份策略。不新增daemon或profile，不把DT `okay`当作已绑定。
+`build.sh package`与release的additional_dtb_overlays均保留DMIC并加入flash。
 
-只对实际参考板组合一次，不改变参考 DTB：
+统一的新源码准备已经带上既有
+[cleanup 索引补丁](../../patches/linux/7.2.9/0004-leds-qcom-flash-cleanup-index.patch)。
+它修正两个释放循环的数组越界，先检查成功计数、递减索引再释放，包括 NULL。
+此前该补丁已做单AArch64对象编译。本轮以旧7fff真实tree加补丁的临时index算出
+新tree `b8f07b7e9f9efb0cece6dc465f7052fc5d7079a8`，标准准备器复现同一tree，
+新commit为`45bba6e91e6c1f04b1d306024a7ef3780c0380dc`；旧snapshot保持不变。
+新O配置SHA为`8baf147f407fdb21659ad012f0535f285fba5c382da719f0f03aa2e904729aa1`。
 
-```sh
-mkdir -p /tmp/piano-camera-flash-check
-cpp -nostdinc -undef -x assembler-with-cpp \
-  -I upstream/linux-piano/include linux/dts/piano-camera-flash.dtso \
-  > /tmp/piano-camera-flash-check/piano-camera-flash.dts
-dtc -@ -I dts -O dtb \
-  -o /tmp/piano-camera-flash-check/piano-camera-flash.dtbo \
-  /tmp/piano-camera-flash-check/piano-camera-flash.dts
-fdtoverlay -i vendor/piano-linux/board.dtb \
-  -o /tmp/piano-camera-flash-check/board-flash-disabled.dtb \
-  /tmp/piano-camera-flash-check/piano-camera-flash.dtbo
-```
+标准 LED class 提供 torch brightness、flash brightness/timeout/strobe/fault；
+V4L2 wrapper 注册异步 flash subdevice。相机侧 fwnode/notifier 关联仍需验证，不能
+仅凭注册宣布 `/dev/v4l-subdev*` 或曝光同步可用，也不恢复 vendor trigger daemon。
+接口语义见 [Linux Flash LED 文档](https://docs.kernel.org/leds/leds-class-flash.html)。
 
-本次已完成上述一次参考板组合，结果保留 SID 1、基址 0xee00、通道 1/2 与上述电流/时限，三个诊断涉及的 controller/consumer 均 disabled。结果保存于 `/tmp/piano-camera-flash-check/composition.json`，组合 DTB SHA-256 为 `20fab5813a2d36e2f6512b7b0072a25b8665a253977995ac08eb571a59dcc387`。
-
-cleanup mail patch 的 `git apply --check` 通过；使用现有 release 的实际 `.leds-qcom-flash.o.cmd` 参数、原配置及生成头文件，LLVM 23.1.1 编译修改后的单个 AArch64 C 对象成功，源副本和结果都在 `/tmp/piano-camera-flash-check/`。该配置尚未启用 V4L2 flash wrapper，带 wrapper 的构建留给统一的新内核准备。没有修改冻结/上游工作树、配置或默认源码 pin，也没有全量构建。
-
-以上仅证明源码与 DT 可以准备、组合和编译；实机 type/subtype、点灯、thermal/fault、供电状态与相机同步仍未验证。
+此前主机已对参考board.dtb组合一次overlay，检查标准节点okay、旧vendor/trigger
+disabled及两路通道、电流和时限，结果在`build/flash-overlay-check/`。本轮另确认
+完整stager实际复制modules-load策略、可选camera BSP payload含相同文件；没有运行
+服务、触碰设备或生成新的测试镜像。下一次统一build使用这条默认接线。

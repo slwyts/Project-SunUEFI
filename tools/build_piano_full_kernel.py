@@ -38,6 +38,11 @@ REQUIRED={
  'CGROUPS':'y','INOTIFY_USER':'y','FHANDLE':'y','SECCOMP':'y','SECCOMP_FILTER':'y','ZRAM':'y','BINFMT_MISC':'y',
  'TMPFS_POSIX_ACL':'y','TMPFS_XATTR':'y','SECURITY':'y',
 }
+FLASH_OVERRIDES={
+ 'CONFIG_LEDS_CLASS_FLASH':'m','CONFIG_LEDS_QCOM_FLASH':'m',
+ 'CONFIG_V4L2_FLASH_LED_CLASS':'m','CONFIG_VIDEO_V4L2_SUBDEV_API':'y',
+}
+ALLOWED_OVERRIDES={'CONFIG_UHID':'m',**FLASH_OVERRIDES}
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -68,14 +73,17 @@ def command_line(fragment,public,root_policy):
     return provided.replace('piano.root=ram','piano.root='+root_policy)
 
 
-def module_overrides(fragment):
+def module_overrides(fragment,kind='bluetooth'):
     lines=[line.strip()for line in fragment.splitlines()if line.strip()and not line.lstrip().startswith('#')]
-    if lines!=['CONFIG_UHID=m']:raise ValueError('Bluetooth fragment may enable only CONFIG_UHID=m')
-    return {'CONFIG_UHID':'m'}
+    expected={'CONFIG_UHID':'m'}if kind=='bluetooth'else FLASH_OVERRIDES if kind=='flash'else None
+    if expected is None or lines!=[key+'='+value for key,value in expected.items()]:raise ValueError('Unexpected '+kind+' module fragment')
+    return dict(expected)
 
 
 def validate_module_overrides(values):
-    if values not in ({},{'CONFIG_UHID':'m'}):raise ValueError('Only the UHID module override is supported')
+    if any(key not in ALLOWED_OVERRIDES or value!=ALLOWED_OVERRIDES[key]for key,value in values.items()):raise ValueError('Only reviewed Bluetooth/flash module overrides are supported')
+    flash=set(values)&set(FLASH_OVERRIDES)
+    if flash and flash!=set(FLASH_OVERRIDES):raise ValueError('Flash requires all four reviewed options')
     return values
 
 
@@ -149,7 +157,8 @@ def main():
         raise ValueError('Explicit full kernel paths must stay in the workspace build/artifact directories')
     verify_source(work,commit);public=work/'arch/arm64/configs/piano_rootfs.config';fragment=ROOT/'linux/configs/piano-full.config'
     root_command=command_line(fragment.read_text(),public.read_text(),args.root)
-    bluetooth=ROOT/'linux/configs/piano-bluetooth.config';modules=module_overrides(bluetooth.read_text())
+    bluetooth=ROOT/'linux/configs/piano-bluetooth.config';flash=ROOT/'linux/configs/piano-flash.config'
+    modules={**module_overrides(bluetooth.read_text()),**module_overrides(flash.read_text(),'flash')}
     env,tools=toolchain();out.mkdir(parents=True,exist_ok=True);artifacts.mkdir(parents=True,exist_ok=True)
     build_locks=[]
     lock_root=ROOT/'build/locks';lock_root.mkdir(parents=True,exist_ok=True)
@@ -164,7 +173,7 @@ def main():
         # Stale Image/modules may remain during the build, but no consumer can
         # mistake them for a completed new bundle without its final manifest.
         marker.unlink()
-    hashes={str(path.relative_to(ROOT)):sha(path)for path in (fragment,bluetooth,Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py')}
+    hashes={str(path.relative_to(ROOT)):sha(path)for path in (fragment,bluetooth,flash,Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py')}
     effective_text=effective_config(root_command,modules)
     effective=out/'piano-full.effective.config';effective.write_text(effective_text)
     command=['make','-C',work,'O='+str(out),'ARCH=arm64','LLVM=1','LLVM_IAS=1']

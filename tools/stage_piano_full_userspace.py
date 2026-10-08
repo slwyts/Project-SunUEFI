@@ -73,6 +73,17 @@ def stage(rootfs, source):
             shutil.copy2(path,target)
             copied[name.as_posix()]=hashlib.sha256(path.read_bytes()).hexdigest()
     copied.update(stage_gnome_power(rootfs))
+    # Use the same camera BSP module policy in the complete default release.
+    # The public SoC of:* autoload block otherwise leaves this driver unbound.
+    flash_source = ROOT / 'linux/bsp/optional/camera/etc/modules-load.d/piano-flash.conf'
+    flash_target = rootfs / 'etc/modules-load.d/piano-flash.conf'
+    if flash_target.is_symlink() or any(parent.is_symlink() for parent in flash_target.parents
+            if parent != rootfs and parent.is_relative_to(rootfs)):
+        raise ValueError('Guest symlink in flash module policy destination')
+    flash_target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(flash_source, flash_target)
+    flash_target.chmod(0o644)
+    copied['etc/modules-load.d/piano-flash.conf'] = hashlib.sha256(flash_source.read_bytes()).hexdigest()
     # Replace only persistence policy. All display/input/radio/audio/camera
     # service files and dependency links copied above remain present.
     (rootfs/'etc/fstab').write_text('# Piano RAM root. No Android mounts or growfs.\n')
