@@ -41,7 +41,7 @@ TARGETS[DEFAULT_TARGET] = {
     **TARGETS['kernel69'],
     'series_target': 'kernel69',
     'patch_tree': TARGETS['kernel69']['target_tree'],
-    'target_tree': '3d76760c7263bcb0e2efce032a1d34059e7012c3',
+    'target_tree': '16fe3d5fa0d8d2da8e66e69fde394d7850fb7f23',
     'stable_commit': '5fce161649b4d779d1b76d9fcd52dc77779774b8',
     'stable_tree': 'c278d1443495d2a1a07fff2bcfb286b5c35baaea',
     'stable_version': '7.2.9',
@@ -77,11 +77,19 @@ TARGETS[DEFAULT_TARGET] = {
     },
     'gcv2_backend_patch': {
         'file': 'patches/linux/7.2.9/0006-drm-msm-dpu-gcv2-regdma-backend.patch',
-        'sha256': '56d645402bfa91fa653851b044a98b46066aa84acfa200c2bf5c74a95ed471c9',
+        'sha256': '60768e66de73e32d0f61aad302b01d8111bb10120ca91b435064001b93533587',
     },
     'gcv2_catalog_patch': {
         'file': 'patches/linux/7.2.9/0007-drm-sm8750-gcv2-catalog.patch',
         'sha256': '38689e09ba31b55b077794e6e7e5b67fa67dee7b9c4c12f996c9bf28eeb441f1',
+    },
+    'dsi_fixed_bpc_patch': {
+        'file': 'patches/linux/7.2.9/0009-drm-msm-dsi-fixed-dsc-bpc.patch',
+        'sha256': 'fe49a73531c9b73b222b65279529bd195d0cfb5065d1f4607acbe76de3c3c4d0',
+    },
+    'flash_torch_rounding_patch': {
+        'file': 'patches/linux/7.2.9/0010-leds-qcom-flash-torch-rounding.patch',
+        'sha256': '39f6e21b562b6c46b42d8be7582f2222a452b2485e01372e5b3302e44e47064e',
     },
     'dsi_stop_order_patch': {
         'file': 'patches/linux/7.2.9/0008-dsi-bonded-stop-slave-first.patch',
@@ -250,7 +258,7 @@ def write_manifest(path, record):
 
 def update_patches(root, policy):
     result = {}
-    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch', 'va_clock_order_patch', 'gcv2_backend_patch', 'gcv2_catalog_patch', 'dsi_stop_order_patch'):
+    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch', 'va_clock_order_patch', 'gcv2_backend_patch', 'gcv2_catalog_patch', 'dsi_stop_order_patch', 'dsi_fixed_bpc_patch', 'flash_torch_rounding_patch'):
         if key not in policy:
             continue
         row = policy[key]
@@ -300,6 +308,8 @@ def merge_stable(work, policy, paths):
         ('gcv2_backend_patch', 'feat(drm): add GCv2 REGDMA backend', 'gcv2_backend_commit'),
         ('gcv2_catalog_patch', 'feat(drm): bind SM8750 GCv2 capability', 'gcv2_catalog_commit'),
         ('dsi_stop_order_patch', 'fix(drm): stop bonded DSI slave before clock master', 'dsi_stop_order_commit'),
+        ('dsi_fixed_bpc_patch', 'fix(drm): preserve actual DSC component depth', 'dsi_fixed_bpc_commit'),
+        ('flash_torch_rounding_patch', 'fix(leds): preserve qcom torch current steps', 'flash_torch_rounding_commit'),
     ):
         if key not in paths:
             continue

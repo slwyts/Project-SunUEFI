@@ -125,7 +125,7 @@ High-precision LUT extension is not supported.
 +#endif
 --- /dev/null
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,366 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/* REGDMA v3 DB queue transport, based on Qualcomm's published register ABI. */
 +#include <linux/delay.h>
@@ -179,6 +179,7 @@ High-precision LUT extension is not supported.
 +	struct mutex lock;
 +	bool faulted, inflight, module_held, pm_held, clock_changed;
 +	u32 active_ctl, pmu_before;
++	unsigned long ctl_mask;
 +};
 +
 +bool dpu_lutdma_ready(struct dpu_lutdma *dma)
@@ -193,17 +194,30 @@ High-precision LUT extension is not supported.
 +
 +static void __iomem *queue_reg(struct dpu_lutdma *dma, u32 ctl, u32 offset)
 +{
++	resource_size_t reg;
++
++	if (!dma || !dma->mmio || !dma->cfg || ctl < CTL_0 || ctl >= CTL_MAX ||
++	    !(dma->ctl_mask & BIT(ctl)) || (offset & 3) ||
++	    offset > REGDMA_QUEUE_STRIDE - sizeof(u32))
++		return NULL;
 +	/* CTL_0 == 1 in both the downstream ABI and this driver. */
-+	return dma->mmio + dma->cfg->db_base + ctl * REGDMA_QUEUE_STRIDE + offset;
++	reg = (resource_size_t)dma->cfg->db_base +
++	      (resource_size_t)ctl * REGDMA_QUEUE_STRIDE + offset;
++	if (reg > dma->size || dma->size - reg < sizeof(u32))
++		return NULL;
++	return dma->mmio + reg;
 +}
 +
 +static int queue_reset(struct dpu_lutdma *dma, u32 ctl)
 +{
++	void __iomem *reset = queue_reg(dma, ctl, REGDMA_QUEUE_RESET);
 +	u32 value;
 +
++	if (!reset)
++		return -EINVAL;
 +	writel(BIT(0), dma->mmio + dma->cfg->db_base + REGDMA_OPMODE);
-+	writel(BIT(0), queue_reg(dma, ctl, REGDMA_QUEUE_RESET));
-+	return readl_poll_timeout(queue_reg(dma, ctl, REGDMA_QUEUE_RESET), value,
++	writel(BIT(0), reset);
++	return readl_poll_timeout(reset, value,
 +				  !value, 10, 2000);
 +}
 +
@@ -268,7 +282,8 @@ High-precision LUT extension is not supported.
 +
 +	might_sleep(); /* Called by the process-context atomic commit, never IRQ. */
 +	if (!dma || !ctl || ctl->idx < CTL_0 || ctl->idx >= CTL_MAX ||
-+	    !dspp_mask || (dspp_mask & ~DPU_GCV2_DSPP_MASK))
++	    !dspp_mask || (dspp_mask & ~DPU_GCV2_DSPP_MASK) ||
++	    !queue_reg(dma, ctl->idx, REGDMA_QUEUE_RESET))
 +		return -EINVAL;
 +	mutex_lock(&dma->lock);
 +	if (!dpu_lutdma_ready(dma)) {
@@ -337,7 +352,8 @@ High-precision LUT extension is not supported.
 +	struct dpu_lutdma *dma;
 +	struct resource *resource;
 +	struct dpu_hw_vbif *vbif = kms->hw_vbif;
-+	int ret, ctl;
++	int ret;
++	u32 i;
 +
 +	if (!cfg)
 +		return NULL;
@@ -347,6 +363,7 @@ High-precision LUT extension is not supported.
 +	if (!resource)
 +		return NULL; /* Optional resource: no initialized GC2 backend. */
 +	if (cfg->version != REGDMA_V3 || resource_size(resource) < 0x7000 ||
++	    !kms->catalog->ctl || !kms->catalog->ctl_count ||
 +	    cfg->clk_ctrl <= DPU_CLK_CTRL_NONE || cfg->clk_ctrl >= DPU_CLK_CTRL_MAX ||
 +	    !kms->catalog->mdp->clk_ctrls[cfg->clk_ctrl].reg_off ||
 +	    !kms->base.vm || !kms->hw_mdp || !kms->hw_mdp->ops.setup_clk_force_ctrl ||
@@ -368,6 +385,22 @@ High-precision LUT extension is not supported.
 +	if (!dma->mmio) {
 +		ret = -ENOMEM;
 +		goto release_region;
++	}
++	/* The enum includes CTLs absent on this SoC. Validate only catalog IDs,
++	 * including the last u32 register, before allocating or publishing DMA.
++	 */
++	for (i = 0; i < kms->catalog->ctl_count; i++) {
++		u32 ctl = kms->catalog->ctl[i].id;
++
++		if (ctl < CTL_0 || ctl >= CTL_MAX || (dma->ctl_mask & BIT(ctl))) {
++			ret = -EINVAL;
++			goto unmap;
++		}
++		dma->ctl_mask |= BIT(ctl);
++		if (!queue_reg(dma, ctl, REGDMA_QUEUE_RESET)) {
++			ret = -EINVAL;
++			goto unmap;
++		}
 +	}
 +	dma->bo = msm_gem_new(kms->dev, REGDMA_BUFFER_SIZE, MSM_BO_WC);
 +	if (IS_ERR(dma->bo)) {
@@ -396,8 +429,8 @@ High-precision LUT extension is not supported.
 +	/* A reset acknowledgement is required before advertising this engine.
 +	 * No descriptor using our GEM has been sent during initialization.
 +	 */
-+	for (ctl = CTL_0; ctl < CTL_MAX; ctl++) {
-+		ret = queue_reset(dma, ctl);
++	for (i = 0; i < kms->catalog->ctl_count; i++) {
++		ret = queue_reset(dma, kms->catalog->ctl[i].id);
 +		if (ret)
 +			break;
 +	}

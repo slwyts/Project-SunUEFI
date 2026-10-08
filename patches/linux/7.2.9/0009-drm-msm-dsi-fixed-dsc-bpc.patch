@@ -1,0 +1,85 @@
+From: Project SunUEFI
+Subject: [PATCH] drm/msm/dsi: expose and preserve fixed DSC component depth
+
+Report the actual fixed DSC PPS component depth through standard max bpc.
+Piano has DSC10, while compressed bpp and panel FRC are separate facts.
+Preserve the fixed depth across the generic bridge state reset, which
+otherwise allocates a zeroed state. Leave HDMI and non-DSI policy alone.
+No HDR metadata/Colorspace, EDID, PPS or DDIC programming is added.
+
+Prepared for the default release. Both related ARM64 objects compile;
+connector reporting still requires validation on the target device.
+
+--- a/drivers/gpu/drm/msm/dsi/dsi_manager.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include "drm/drm_bridge_connector.h"
++#include <drm/display/drm_dsc.h>
+ 
+ #include "msm_kms.h"
+ #include "dsi.h"
+@@ -464,6 +465,7 @@
+ 	struct drm_bridge *bridge;
+ 	struct dsi_bridge *dsi_bridge;
+ 	struct drm_connector *connector;
++	struct drm_dsc_config *dsc;
+ 	int ret;
+ 
+ 	dsi_bridge = devm_drm_bridge_alloc(msm_dsi->dev->dev, struct dsi_bridge, base,
+@@ -487,6 +489,25 @@
+ 	if (IS_ERR(connector)) {
+ 		DRM_ERROR("Unable to create bridge connector\n");
+ 		return PTR_ERR(connector);
++	}
++
++	/* DSC uses one fixed component depth from the attached panel. Expose
++	 * that exact depth; changing it would also require changing the PPS
++	 * and panel configuration. This does not advertise HDR or panel FRC.
++	 */
++	dsc = msm_dsi_host_get_dsc_config(msm_dsi->host);
++	if (connector->connector_type == DRM_MODE_CONNECTOR_DSI &&
++	    dsc && dsc->bits_per_component) {
++		if (!connector->state)
++			connector->funcs->reset(connector);
++		if (!connector->state)
++			return -ENOMEM;
++		ret = drm_connector_attach_max_bpc_property(connector,
++						     dsc->bits_per_component,
++						     dsc->bits_per_component);
++		if (ret)
++			return ret;
++		connector->max_bpc = dsc->bits_per_component;
+ 	}
+ 
+ 	return 0;
+--- a/drivers/gpu/drm/display/drm_bridge_connector.c
++++ b/drivers/gpu/drm/display/drm_bridge_connector.c
+@@ -20,6 +20,7 @@
+ #include <drm/drm_modeset_helper_vtables.h>
+ #include <drm/drm_print.h>
+ #include <drm/drm_probe_helper.h>
++#include <drm/drm_property.h>
+ #include <drm/display/drm_hdcp_helper.h>
+ #include <drm/display/drm_hdmi_audio_helper.h>
+ #include <drm/display/drm_hdmi_cec_helper.h>
+@@ -269,8 +270,18 @@
+ {
+ 	struct drm_bridge_connector *bridge_connector =
+ 		to_drm_bridge_connector(connector);
++	struct drm_property *max_bpc = connector->max_bpc_property;
+ 
+ 	drm_atomic_helper_connector_reset(connector);
++	/* The generic reset creates a zeroed state. Keep an attached fixed
++	 * DSI depth across mode_config_reset without modifying HDMI policy.
++	 */
++	if (!bridge_connector->bridge_hdmi && connector->state &&
++	    connector->connector_type == DRM_MODE_CONNECTOR_DSI && max_bpc &&
++	    max_bpc->values[0] == max_bpc->values[1]) {
++		connector->state->max_requested_bpc = max_bpc->values[1];
++		connector->state->max_bpc = max_bpc->values[1];
++	}
+ 	if (bridge_connector->bridge_hdmi)
+ 		__drm_atomic_helper_connector_hdmi_reset(connector,
+ 							 connector->state);

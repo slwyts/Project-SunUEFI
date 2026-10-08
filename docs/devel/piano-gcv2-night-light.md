@@ -36,3 +36,7 @@ DT中的`qcom,sde-reg-dma-trigger-off=0x119c`是`trigger_sel_off`，不能误当
 固定源、原厂FDT资源、target检查和SHA记录在`private/analysis/piano-gcv2-night-light-20261008/`。修正后的0007 SHA256为`38689e09ba31b55b077794e6e7e5b67fa67dee7b9c4c12f996c9bf28eeb441f1`；`catalog-fix-281/result.json`记录实际281全部MSM头/源的独立副本及单对象编译结果。先前7个文件syntax检查没有覆盖后来加入的错误DSPP成员，不能代替这次真实catalog编译。后续按[最小实机检查步骤](piano-gcv2-validation.md)验证REGDMA、DRM恒等LUT与两侧色温。UI出现开关不能单独说明Gamma已正确编程。
 
 若真实reset持续不ack，退出调用将继续等待，映射、控制器和依赖都不会被收走；这不是有时间上限的成功恢复，仍可能需要平台强制重启。旧草案的“void destroy早返回能拒绝外层退出”判断已删除。实际`msm_drm_uninit`在回调后还会执行component解绑、清dev_private及drm_dev_put，因此局部GEM/module引用不能被当作对这些路径的阻止机制。
+
+实机a589通过普通BOOT进入内核并出现Linux USB，但显示绑定在 `queue_reset+0x50` 异常：访问位于映射末端之外的第七个队列（`0x7054`），ESR为`0x96000047`，为CPU level3 translation fault，并非已提交DMA后的SMMU fault。通用 `CTL_MAX` 枚举包含八个控制器，SM8750 catalog只列六个，REGDMA资源为0x7000。此轮没有发布可用Gamma，也没有进入GNOME。已恢复ESP中的上一可用a8启动文件；异常后正常重启未完成，需要长按恢复。后续修正只遍历实际catalog的CTL编号，并在初始化和每次提交前检查编号及最后一个u32寄存器是否在真实映射范围内，不能靠扩大MMIO区域掩盖越界。原始日志位于本机 `private/provisioning/recovery-priority-20261008/a589-boot-kernel.txt`。
+
+修正后的默认源码为 `bde3f2e9e9156875e08c81a4df75a369f5518d8a`，tree为 `16fe3d5fa0d8d2da8e66e69fde394d7850fb7f23`；相关 `dpu_lutdma` ARM64对象已经编译，完整内核正在构建，尚未部署。它同时包含固定DSC位深报告和标准torch档位转换；a589失败产物不作为可用版本推荐。

@@ -79,3 +79,5 @@ Android相同程序在真正`/dev/dri/card0`完成读取（errors=0），原始�
 `hdr_properties`为44字节，enabled、WRGB、peak10000000和black7000与原厂DT完全相同。IGC_V5/GC_V2/gamut_V4分别为4632/7688/39536字节，flags3/2/0；IGC strength=4，包含IGC dither和高精度标志，GC也有高精度标志。两次PP_DITHER、PA_DITHER和hdr_metadata均为0。本次没有播放HDR或强改模式；高精度LUT和内部IGC dither不能直接说明PQ或12-bit temporal FRC。raw payload可作为移植GC2/IGC5数据布局的参照，不应原样复制为所有模式的HDR曲线。离线对照在`private/analysis/piano-hdr-frc-gap-20261008/android-blobs-awake-decoded.json`。
 
 原始记录为本地 `private/analysis/recover-dma-20261008-131916/g086-drm-snapshot.json`。采集程序不读取扫描输出的 framebuffer 格式或活跃硬件寄存器，仍需配合驱动现有 state/dump；有 blob 不等同于硬件已消费它。
+
+下一默认内核增加 [固定 DSC 位深报告](../../patches/linux/7.2.9/0009-drm-msm-dsi-fixed-dsc-bpc.patch)：标准 `max bpc` 的范围取实际 PPS 的 `bits_per_component`，Piano 为10..10。当前驱动不支持按属性动态改变 PPS，所以不暴露8/12的选择。通用 bridge reset 会重新分配 connector state，补丁也恢复固定范围的 `max_requested_bpc/max_bpc`；逻辑仅作用于非HDMI的DSI。两个相关ARM64对象已独立编译，目标属性读回尚未验证。该报告不会实现HDR或FRC，也没有生成EDID。
