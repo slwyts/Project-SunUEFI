@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMMANDS = ('status', 'probe', 'repack', 'restore', 'request')
 TESTS = ('lossless_roundtrip', 'current_source_guard', 'active_slot_guard',
          'nested_wrapper_rejected', 'ota_restore_refused', 'write_readback',
-         'payload_tamper_rejected', 'request_owned_wrapper_only', 'request_consumed_once',
+         'payload_tamper_rejected', 'request_owned_wrapper_only', 'request_persistent_reselection_crc',
          'missing_request_stock_passthrough')
 DEVICE_PROOFS = ('device_passthrough_verified', 'request_handling_verified', 'standard_recovery_preserved')
 SOURCE_FILES = ('module.prop', 'common.sh', 'customize.sh', 'uninstall.sh',
@@ -98,8 +98,8 @@ def product_payload(folder):
     stream = zlib.decompressobj(16 + zlib.MAX_WBITS)
     raw = stream.decompress(image[4096:4096 + kernel_bytes], len(shim) + len(fd) + 1)
     require(stream.eof and raw == shim + fd, 'Product gzip does not contain the recorded shared core')
-    return {'fd.bin': fd, 'app.bin': app}, {'product_sha256': digest(image),
-            'product_header_version': version, 'fd': record(fd), 'app': record(app)}
+    return {'fd.bin': fd, 'app.bin': app, 'shim.bin': shim}, {'product_sha256': digest(image),
+            'product_header_version': version, 'fd': record(fd), 'app': record(app), 'shim': record(shim)}
 
 
 def selector_payload(path, manifest, payloads):
@@ -117,7 +117,11 @@ def selector_payload(path, manifest, payloads):
             meta.get('request_bootarg') == 'sunuefi.boot=uefi', 'Selector must preserve ordinary Android/Recovery entry')
     require(meta.get('persistent_uefi_request') is False, 'A diagnostic persistent UEFI request must not ship in a module')
     require(len(data) >= 4 and len(data) % 4 == 0, 'Selector must contain aligned ARM64 instructions')
-    return data
+    memory, offset = meta.get('selector_memory_bytes'), meta.get('metadata_offset')
+    require(type(memory) is int and type(offset) is int and 8192 < memory < 65536 and
+            len(data) <= memory and offset >= 0 and offset % 16 == 0 and offset + 128 <= len(data) and
+            data[offset:offset + 128] == bytes(128), 'Selector memory/metadata layout differs')
+    return data, {'memory_bytes': memory, 'metadata_offset': offset}
 
 
 def arm64_executable(data):
@@ -144,6 +148,7 @@ def native_proof(tool, manifest, payloads, selector):
             'Unsupported native proof/interface')
     checked(data, proof.get('executable'), 'Native tool')
     require(set(proof.get('commands', [])) == set(COMMANDS), 'Native interface commands are incomplete')
+    require(proof.get('request_policy') == 'persistent-until-changed', 'Native proof must describe persistent requests')
     expected = {name: digest(raw) for name, raw in {**payloads, 'selector.bin': selector}.items()}
     require(proof.get('payload_sha256') == expected, 'Native proof belongs to different payloads')
     require(proof.get('tested_boot_headers') == [4], 'Native BOOT v4 tests are missing')
@@ -169,9 +174,9 @@ def native_proof(tool, manifest, payloads, selector):
 def inspect(args):
     payloads, identity = product_payload(args.product)
     blockers = []
-    selector = None
+    selector = selector_meta = None
     if args.selector and args.selector_manifest:
-        selector = selector_payload(args.selector, args.selector_manifest, payloads)
+        selector, selector_meta = selector_payload(args.selector, args.selector_manifest, payloads)
         payloads['selector.bin'] = selector
     else:
         blockers.append('current-product selector and selector manifest are required')
@@ -185,13 +190,15 @@ def inspect(args):
     report = {'schema_version': 1, 'status': 'READY_FOR_MODULE_PACKAGE' if not blockers else 'MODULE_NOT_READY',
               'zip_ready': not blockers, 'blockers': blockers, 'product': identity,
               'payloads': {name: record(data) for name, data in payloads.items()},
+              'selector': selector_meta,
+              'native_tests': proof.get('tests', {}) if proof else {},
               'device_passthrough_verified': bool(proof and proof.get('device_passthrough_verified') is True),
               'request_handling_verified': bool(proof and proof.get('request_handling_verified') is True),
               'standard_recovery_preserved': bool(proof and proof.get('standard_recovery_preserved') is True),
-              'sticky_route_verified': False,
               'partition_execution_ready': False, 'stock_kernel_bundled': False,
               'ota_automatic': False, 'supported_managers': ['Magisk', 'KernelSU']}
     report['entry_policy'] = 'explicit-request-only'
+    report['request_policy'] = 'persistent-until-changed'
     report['request_bootarg'] = 'sunuefi.boot=uefi'
     report['webui_bridge_verified'] = False
     return report, payloads, native
@@ -209,6 +216,8 @@ def package(args):
     entries = {name: read_file(source / name, 128 * 1024) for name in SOURCE_FILES}
     entries.update({'payload/' + name: data for name, data in payloads.items()})
     entries['bin/piano-boot-repack'] = native
+    entries['licenses/COPYING.libmd'] = read_file(ROOT / 'upstream/simple-init/libs/libmd/COPYING')
+    entries['licenses/jsmn.h'] = read_file(ROOT / 'android/native/jsmn.h')
     entries['policy.json'] = (json.dumps({**report, 'interface_version': 1,
         'supported_boot_headers': [4], 'wrapper_version': 1, 'app_abi': 1,
         'commands': list(COMMANDS), 'tool': record(native),
@@ -217,7 +226,7 @@ def package(args):
     entries['module-policy.sh'] = b'PIANO_POLICY_SCHEMA=1\nPIANO_INTERFACE_VERSION=1\nPIANO_DEVICE_PASSTHROUGH_VERIFIED=true\nPIANO_REQUEST_HANDLING_VERIFIED=true\nPIANO_STANDARD_RECOVERY_PRESERVED=true\n'
     entries['webroot/status.json'] = (json.dumps({key: report[key] for key in
         ('status', 'device_passthrough_verified', 'request_handling_verified', 'standard_recovery_preserved',
-         'webui_bridge_verified', 'entry_policy', 'request_bootarg')}, indent=2) + '\n').encode()
+         'webui_bridge_verified', 'entry_policy', 'request_policy', 'request_bootarg')}, indent=2) + '\n').encode()
     entries['payload.sha256'] = ''.join(digest(data) + '  ' + name + '\n' for name, data in sorted(entries.items())).encode()
     output.parent.mkdir(parents=True, exist_ok=True)
     created = False

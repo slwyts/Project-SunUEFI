@@ -1,19 +1,25 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-/* Regular-file SPLITv1 repacking only. No block-device or online write mode.
+/* SPLITv1 file repacking and explicit current-slot Android BOOT operations.
  * BOOT4 and AVB fields follow the AOSP bootimg/libavb wire structures.
  * Recovery data follows APP; the original GKI is kept once, in place.
  */
 #define _GNU_SOURCE
 #include "BootRequest.h"
+#define JSMN_STRICT
+#include "jsmn.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <linux/fs.h>
 #include <sha2.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/file.h>
+#include <sys/ioctl.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define PAGE 4096u
@@ -29,6 +35,7 @@ struct avb {
   const unsigned char *descriptors;
   uint64_t descriptor_bytes, original_bytes, vbmeta_offset, vbmeta_bytes, rollback;
   int hash_matches;
+  char fingerprint[1024];
 };
 struct boot { uint32_t kernel_bytes; uint64_t span; struct avb avb; };
 
@@ -159,7 +166,10 @@ static struct avb parse_avb(const struct blob *b, int require_hash) {
               !d[32 + key] && !d[33 + key + value], "invalid AVB property extent");
       const char *wanted = "com.android.build.boot.fingerprint";
       if (key == strlen(wanted) && !memcmp(d + 32, wanted, key)) {
-        require(value >= 13 && !memcmp(d + 33 + key, "Xiaomi/piano/", 13), "BOOT is not the supported Piano ROM family");
+        require(value >= 13 && value < sizeof(a.fingerprint) &&
+                !memchr(d + 33 + key, 0, (size_t)value) &&
+                !memcmp(d + 33 + key, "Xiaomi/piano/", 13), "BOOT is not the supported Piano ROM family");
+        memcpy(a.fingerprint, d + 33 + key, (size_t)value);
         fingerprint++;
       }
     } else fail("unsupported AVB descriptor; no metadata will be discarded");
@@ -359,14 +369,479 @@ static uint64_t number(const char *p) {
   char *end; errno = 0; uint64_t n = strtoull(p, &end, 0);
   require(!errno && p[0] && p[0] != '-' && !*end, "invalid numeric option"); return n;
 }
+/* The policy/state parser is the pinned MIT jsmn tokenizer, not string matching.
+ * Metadata contains hashes and identities only; no full BOOT backup is saved. */
+struct json { struct blob text; jsmntok_t tokens[4096]; int count; };
+static int token_is(const struct json *j, int t, const char *value) {
+  return t >= 0 && t < j->count && j->tokens[t].end - j->tokens[t].start == (int)strlen(value) &&
+         !memcmp(j->text.data + j->tokens[t].start, value, strlen(value));
+}
+static int token_after(const struct json *j, int t) {
+  int end = j->tokens[t].end;
+  do { t++; } while (t < j->count && j->tokens[t].start < end);
+  return t;
+}
+static int member(const struct json *j, int object, const char *key) {
+  require(object >= 0 && object < j->count && j->tokens[object].type == JSMN_OBJECT, "expected JSON object");
+  int found = -1;
+  for (int t = object + 1; t < j->count && j->tokens[t].start < j->tokens[object].end;) {
+    require(j->tokens[t].type == JSMN_STRING && t + 1 < j->count, "invalid JSON member");
+    if (token_is(j, t, key)) { require(found < 0, "duplicate JSON member"); found = t + 1; }
+    t = token_after(j, t + 1);
+  }
+  return found;
+}
+static void string_token(const struct json *j, int t, char *out, size_t capacity) {
+  require(t >= 0 && j->tokens[t].type == JSMN_STRING, "missing JSON string");
+  size_t n = 0;
+  for (int i = j->tokens[t].start; i < j->tokens[t].end; i++) {
+    unsigned char c = j->text.data[i];
+    if (c == '\\') {
+      c = j->text.data[++i];
+      switch (c) {
+        case '"': case '/': case '\\': break;
+        case 'b': c = '\b'; break; case 'f': c = '\f'; break;
+        case 'n': c = '\n'; break; case 'r': c = '\r'; break; case 't': c = '\t'; break;
+        case 'u': {
+          unsigned value = 0;
+          for (unsigned k = 0; k < 4; k++) {
+            unsigned char digit = j->text.data[++i];
+            value = value * 16 + (digit <= '9' ? digit - '0' : (digit | 32) - 'a' + 10);
+          }
+          require(value > 0 && value < 128, "identity JSON must use ASCII strings"); c = (unsigned char)value; break;
+        }
+        default: fail("invalid JSON escape");
+      }
+    }
+    require(c > 0 && c < 128 && n + 1 < capacity, "invalid or oversized JSON string"); out[n++] = (char)c;
+  }
+  out[n] = 0;
+}
+static void json_string(const struct json *j, int object, const char *key, char *out, size_t capacity) {
+  string_token(j, member(j, object, key), out, capacity);
+}
+static uint64_t json_number(const struct json *j, int object, const char *key) {
+  int t = member(j, object, key);
+  require(t >= 0 && j->tokens[t].type == JSMN_PRIMITIVE &&
+          j->tokens[t].end - j->tokens[t].start < 32, "missing JSON integer");
+  char value[32]; int n = j->tokens[t].end - j->tokens[t].start;
+  memcpy(value, j->text.data + j->tokens[t].start, (size_t)n); value[n] = 0;
+  for (int i = 0; i < n; i++) require(value[i] >= '0' && value[i] <= '9', "invalid JSON integer");
+  char *end; errno = 0; uint64_t result = strtoull(value, &end, 10);
+  require(n > 0 && !errno && !*end, "invalid JSON integer"); return result;
+}
+static int json_true(const struct json *j, int object, const char *key) {
+  int t = member(j, object, key);
+  return t >= 0 && j->tokens[t].type == JSMN_PRIMITIVE && token_is(j, t, "true");
+}
+static void string_matches(const struct json *j, int object, const char *key, const char *expected) {
+  char actual[1024]; json_string(j, object, key, actual, sizeof(actual));
+  require(!strcmp(actual, expected), "policy/state/source identity differs");
+}
+static void read_json(const char *path, struct json *j) {
+  j->text = load(path, 256 * 1024); jsmn_parser parser; jsmn_init(&parser);
+  j->count = jsmn_parse(&parser, (const char *)j->text.data, j->text.size, j->tokens, 4096);
+  require(j->count > 0 && j->tokens[0].type == JSMN_OBJECT && token_after(j, 0) == j->count,
+          "invalid or oversized JSON document");
+  for (int i = 0; i < j->tokens[0].start; i++)
+    require(j->text.data[i] && strchr(" \r\n\t", j->text.data[i]) != NULL, "invalid JSON prefix");
+  for (size_t i = (size_t)j->tokens[0].end; i < j->text.size; i++)
+    require(j->text.data[i] && strchr(" \r\n\t", j->text.data[i]) != NULL, "trailing JSON content");
+  /* Validate all object keys once, including unconsumed members. */
+  for (int o = 0; o < j->count; o++) if (j->tokens[o].type == JSMN_OBJECT) {
+    for (int t = o + 1; t < j->count && j->tokens[t].start < j->tokens[o].end;) {
+      char key[128]; string_token(j, t, key, sizeof(key));
+      require(!memchr(j->text.data + j->tokens[t].start, '\\', (size_t)(j->tokens[t].end - j->tokens[t].start)),
+              "escaped JSON member names are unsupported");
+      (void)member(j, o, key); t = token_after(j, t + 1);
+    }
+  }
+}
+static void quote(FILE *f, const char *s) {
+  fputc('"', f);
+  for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+    if (*p == '"' || *p == '\\') { fputc('\\', f); fputc(*p, f); }
+    else if (*p < 32 || *p >= 127) fprintf(f, "\\u%04x", *p);
+    else fputc(*p, f);
+  }
+  fputc('"', f);
+}
+struct identity { char slot[16], node[64], rom[1024], bootprop[1024]; };
+struct snapshot { struct identity id; struct stat st; int fd; struct blob bytes; struct boot boot; char sha[65]; };
+struct options {
+  const char *action, *device, *slot, *rom, *bootprop, *policy, *output, *source, *state, *state_output, *payload, *target, *input;
+  int execute, preview, reject_wrapped, require_ready, read_only;
+};
+static void property(const char *name, char *value, size_t capacity) {
+  int p[2]; require(!pipe2(p, O_CLOEXEC), "getprop pipe failed");
+  pid_t child = fork(); require(child >= 0, "getprop fork failed");
+  if (!child) {
+    close(p[0]); if (dup2(p[1], STDOUT_FILENO) < 0) _exit(127); close(p[1]);
+    execl("/system/bin/getprop", "getprop", name, (char *)NULL); _exit(127);
+  }
+  close(p[1]); size_t done = 0;
+  for (;;) {
+    unsigned char c; ssize_t n = read(p[0], &c, 1);
+    if (n < 0 && errno == EINTR) continue;
+    require(n >= 0, "getprop read failed"); if (!n) break;
+    require(c > 0 && c < 128 && done + 1 < capacity, "invalid or oversized Android property"); value[done++] = (char)c;
+  }
+  close(p[0]); int status;
+  while (waitpid(child, &status, 0) < 0) require(errno == EINTR, "getprop wait failed");
+  require(WIFEXITED(status) && !WEXITSTATUS(status), "Android /system/bin/getprop is unavailable");
+  while (done && (value[done - 1] == '\n' || value[done - 1] == '\r')) done--;
+  value[done] = 0;
+}
+static struct identity current_identity(const struct options *o, int write) {
+  struct identity id = {0}; char value[64];
+  property("ro.product.device", value, sizeof(value)); require(!strcmp(value, "piano"), "only the current Piano Android is supported");
+  property("ro.boot.slot_suffix", id.slot, sizeof(id.slot));
+  require(!strcmp(id.slot, "_a") || !strcmp(id.slot, "_b"), "unknown active Android slot");
+  snprintf(id.node, sizeof(id.node), "/dev/block/by-name/boot%s", id.slot);
+  property("ro.build.fingerprint", id.rom, sizeof(id.rom));
+  property("ro.bootimage.build.fingerprint", id.bootprop, sizeof(id.bootprop));
+  /* These are independent identities. The actual BOOT footer may describe a
+   * newer image than ro.bootimage.build.fingerprint on the same running ROM. */
+  require(id.rom[0] && id.bootprop[0], "current ROM/bootimage properties are missing");
+  require(!o->slot || !strcmp(o->slot, id.slot), "requested slot is not the current Android slot");
+  require(!o->device || !strcmp(o->device, id.node), "only the exact active boot_a/boot_b node is allowed");
+  require(!o->rom || !strcmp(o->rom, id.rom), "ROM changed since invocation");
+  require(!o->bootprop || !strcmp(o->bootprop, id.bootprop), "bootimage property changed since invocation");
+  if (write) {
+    property("ro.boot.flash.locked", value, sizeof(value)); require(!strcmp(value, "0"), "BOOT writes require an unlocked bootloader");
+    property("sys.boot_completed", value, sizeof(value)); require(!strcmp(value, "1"), "BOOT writes require a normally booted Android ROM");
+  }
+  return id;
+}
+static void read_exact(int fd, void *buffer, size_t bytes, uint64_t offset) {
+  size_t done = 0;
+  while (done < bytes) {
+    ssize_t n = pread(fd, (unsigned char *)buffer + done, bytes - done, (off_t)(offset + done));
+    if (n < 0 && errno == EINTR) continue;
+    require(n > 0, "BOOT read failed"); done += (size_t)n;
+  }
+}
+static void fd_hash(int fd, size_t bytes, char result[65]) {
+  unsigned char buffer[65536], hash[32]; SHA2_CTX ctx; SHA256Init(&ctx);
+  for (size_t at = 0; at < bytes;) {
+    size_t n = bytes - at < sizeof(buffer) ? bytes - at : sizeof(buffer);
+    read_exact(fd, buffer, n, at); SHA256Update(&ctx, buffer, n); at += n;
+  }
+  SHA256Final(hash, &ctx); hex(hash, result);
+}
+static struct snapshot snapshot(const struct options *o) {
+  struct snapshot s = { .id = current_identity(o, 0) };
+  s.fd = open(s.id.node, O_RDONLY | O_CLOEXEC);
+  require(s.fd >= 0 && !fstat(s.fd, &s.st) && S_ISBLK(s.st.st_mode), "active BOOT block device is unavailable");
+  require(!flock(s.fd, LOCK_EX | LOCK_NB), "another BOOT operation holds the active node");
+  uint64_t capacity = 0;
+  require(!ioctl(s.fd, BLKGETSIZE64, &capacity) && capacity == BOOT_BYTES, "active BOOT is not the supported 96MiB carrier");
+  s.bytes.size = (size_t)capacity; s.bytes.data = malloc(s.bytes.size); require(s.bytes.data != NULL, "out of memory");
+  read_exact(s.fd, s.bytes.data, s.bytes.size, 0); hash_hex(s.bytes.data, s.bytes.size, s.sha);
+  s.boot = parse_boot(&s.bytes, 0); return s;
+}
+static void identity_fields(FILE *f, const struct snapshot *s) {
+  fputs("\"active_slot\":", f); quote(f, s->id.slot); fputs(",\"boot_device\":", f); quote(f, s->id.node);
+  fputs(",\"rom_fingerprint\":", f); quote(f, s->id.rom); fputs(",\"boot_fingerprint\":", f); quote(f, s->id.bootprop);
+  fputs(",\"footer_fingerprint\":", f); quote(f, s->boot.avb.fingerprint);
+  fprintf(f, ",\"boot_bytes\":%zu,\"device_rdev\":%ju", s->bytes.size, (uintmax_t)s->st.st_rdev);
+}
+static void check_identity(const struct json *j, const struct snapshot *s) {
+  require(json_number(j, 0, "schema_version") == 1 && json_number(j, 0, "boot_bytes") == s->bytes.size &&
+          json_number(j, 0, "device_rdev") == (uintmax_t)s->st.st_rdev, "BOOT metadata/device identity differs");
+  string_matches(j, 0, "active_slot", s->id.slot); string_matches(j, 0, "boot_device", s->id.node);
+  string_matches(j, 0, "rom_fingerprint", s->id.rom); string_matches(j, 0, "boot_fingerprint", s->id.bootprop);
+  string_matches(j, 0, "footer_fingerprint", s->boot.avb.fingerprint);
+}
+static const unsigned char *catalog(const struct blob *b, const unsigned char *m) {
+  return b->data + PAGE + align_to(le64(m + 72) + le64(m + 80), 16);
+}
+static uint64_t request_offset(const unsigned char *m) { return PAGE + align_to(le64(m + 32), PAGE); }
+struct request_state { int valid[2], newest; uint64_t sequence[2]; unsigned target[2]; };
+static struct request_state read_requests(const struct blob *b, const unsigned char *m) {
+  struct request_state r = {0}; uint64_t offset = request_offset(m);
+  require(range(offset, 2 * PAGE, b->size), "request pages outside BOOT");
+  for (unsigned i = 0; i < 2; i++) {
+    const unsigned char *p = b->data + offset + i * PAGE;
+    require(!nonzero(p + 64, PAGE - 64), "unexpected data in owned NEXT page padding");
+    r.sequence[i] = le64(p + 24); r.target[i] = le32(p + 32);
+    r.valid[i] = !memcmp(p, request_magic, 16) && le32(p + 16) == 1 && le32(p + 20) == 64 &&
+      r.target[i] <= PIANO_BOOT_REQUEST_SETUP && (r.sequence[i] || !r.target[i]) &&
+      !memcmp(p + 40, m + 96, 16) && !nonzero(p + 56, 8) && le32(p + 36) == PianoBootRequestCrc32(p);
+  }
+  require(r.valid[0] || r.valid[1], "both owned request CRC/generation records are invalid");
+  require(!(r.valid[0] && r.valid[1] && r.sequence[0] == r.sequence[1] && r.target[0] != r.target[1]), "conflicting request records");
+  r.newest = !r.valid[0] || (r.valid[1] && r.sequence[1] > r.sequence[0]);
+  require(r.target[r.newest] == PianoBootRequestSelect(b->data + offset, m + 96), "request reader/writer contract differs");
+  return r;
+}
+static void wrapper_hash(const struct blob *b, const unsigned char *m, char result[65]) {
+  (void)read_requests(b, m);
+  uint64_t offset = request_offset(m); unsigned char pages[2 * PAGE] = {0}, hash[32];
+  initial_request(pages, m + 96); initial_request(pages + PAGE, m + 96);
+  SHA2_CTX ctx; SHA256Init(&ctx); SHA256Update(&ctx, b->data, (size_t)offset);
+  SHA256Update(&ctx, pages, sizeof(pages));
+  SHA256Update(&ctx, b->data + offset + sizeof(pages), b->size - (size_t)offset - sizeof(pages));
+  SHA256Final(hash, &ctx); hex(hash, result);
+}
+static unsigned target_number(const char *target) {
+  require(target != NULL, "--target is required");
+  if (!strcmp(target, "android")) return PIANO_BOOT_REQUEST_NONE;
+  if (!strcmp(target, "uefi") || !strcmp(target, "menu")) return PIANO_BOOT_REQUEST_UEFI_MENU;
+  if (!strcmp(target, "linux")) return PIANO_BOOT_REQUEST_LINUX;
+  if (!strcmp(target, "setup")) return PIANO_BOOT_REQUEST_SETUP;
+  fail("unknown persistent request target"); return 0;
+}
+static unsigned update_request(struct blob *b, const unsigned char *m, unsigned target) {
+  struct request_state r = read_requests(b, m);
+  require(r.sequence[r.newest] < UINT64_MAX, "request sequence exhausted");
+  unsigned page = !r.valid[0] ? 0 : (!r.valid[1] ? 1 : (r.sequence[0] <= r.sequence[1] ? 0 : 1));
+  unsigned char *p = b->data + request_offset(m) + page * PAGE;
+  memset(p, 0, 64); initial_request(p, m + 96); put64(p + 24, r.sequence[r.newest] + 1); put32(p + 32, target);
+  put32(p + 36, PianoBootRequestCrc32(p)); r = read_requests(b, m);
+  require(r.target[r.newest] == target, "new persistent request CRC/select failed"); return page;
+}
+static int policy_ready(const struct json *j) {
+  static const char *tests[] = {"lossless_roundtrip", "current_source_guard", "active_slot_guard", "nested_wrapper_rejected",
+    "ota_restore_refused", "write_readback", "payload_tamper_rejected", "request_owned_wrapper_only",
+    "request_persistent_reselection_crc", "missing_request_stock_passthrough"};
+  if (!json_true(j, 0, "zip_ready") || !json_true(j, 0, "device_passthrough_verified") ||
+      !json_true(j, 0, "request_handling_verified") || !json_true(j, 0, "standard_recovery_preserved")) return 0;
+  int object = member(j, 0, "native_tests"); if (object < 0) return 0;
+  for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) if (!json_true(j, object, tests[i])) return 0;
+  return 1;
+}
+static void policy_fields(FILE *f, const struct json *j) {
+  fprintf(f, "\"device_passthrough_verified\":%s,\"request_handling_verified\":%s,\"standard_recovery_preserved\":%s,"
+          "\"webui_bridge_verified\":%s,\"entry_policy\":\"explicit-request-only\",\"request_bootarg\":\"sunuefi.boot=uefi\"",
+          json_true(j, 0, "device_passthrough_verified") ? "true" : "false",
+          json_true(j, 0, "request_handling_verified") ? "true" : "false",
+          json_true(j, 0, "standard_recovery_preserved") ? "true" : "false",
+          json_true(j, 0, "webui_bridge_verified") ? "true" : "false");
+}
+static void check_policy(const struct json *j) {
+  require(json_number(j, 0, "schema_version") == 1 && json_number(j, 0, "interface_version") == 1 &&
+          json_number(j, 0, "wrapper_version") == 1 && json_number(j, 0, "app_abi") == 1,
+          "unsupported module policy/ABI");
+  string_matches(j, 0, "entry_policy", "explicit-request-only");
+  string_matches(j, 0, "request_policy", "persistent-until-changed");
+  int stock = member(j, 0, "stock_kernel_bundled"), ota = member(j, 0, "ota_automatic");
+  require(stock >= 0 && ota >= 0 && j->tokens[stock].type == JSMN_PRIMITIVE && j->tokens[ota].type == JSMN_PRIMITIVE &&
+          token_is(j, stock, "false") && token_is(j, ota, "false"), "unsupported module policy");
+  int object = member(j, 0, "tool");
+  int fd = open("/proc/self/exe", O_RDONLY | O_CLOEXEC); struct stat st; char hash[65];
+  require(fd >= 0 && !fstat(fd, &st) && S_ISREG(st.st_mode) && st.st_size > 0 && st.st_size <= 32 * 1024 * 1024,
+          "cannot verify the running native executable");
+  fd_hash(fd, (size_t)st.st_size, hash); close(fd);
+  require(json_number(j, object, "bytes") == (uint64_t)st.st_size, "policy native executable size differs");
+  string_matches(j, object, "sha256", hash);
+}
+static struct blob payload(const struct json *policy, const char *directory, const char *name, size_t limit) {
+  char path[4096], hash[65];
+  require(directory && snprintf(path, sizeof(path), "%s/%s", directory, name) < (int)sizeof(path), "payload directory is required");
+  struct blob b = load(path, limit); hash_hex(b.data, b.size, hash);
+  int object = member(policy, member(policy, 0, "payloads"), name);
+  require(json_number(policy, object, "bytes") == b.size, "module payload size differs");
+  string_matches(policy, object, "sha256", hash); return b;
+}
+static void check_owned(const struct json *state, const struct snapshot *s, const unsigned char *m) {
+  check_identity(state, s); char hash[65];
+  string_matches(state, 0, "wrapper", "SPLITv1+RSTRv1"); wrapper_hash(&s->bytes, m, hash);
+  string_matches(state, 0, "wrapper_sha256", hash); hex(catalog(&s->bytes, m) + 96, hash);
+  string_matches(state, 0, "source_sha256", hash); hex(m + 96, hash); string_matches(state, 0, "app_sha256", hash);
+}
+static int ro_fd = -1, restore_ro;
+static void reset_ro(void) {
+  if (ro_fd >= 0 && restore_ro && ioctl(ro_fd, BLKROSET, &restore_ro))
+    fprintf(stderr, "piano-boot-repack: could not restore the original BOOT readonly flag: %s\n", strerror(errno));
+}
+static void write_guarded(const struct options *o, const struct snapshot *s, const void *data,
+                          size_t bytes, uint64_t offset, const char *expected_after) {
+  struct identity id = current_identity(o, 1); char before[65], after[65];
+  require(!strcmp(id.slot, s->id.slot) && !strcmp(id.node, s->id.node) &&
+          !strcmp(id.rom, s->id.rom) && !strcmp(id.bootprop, s->id.bootprop), "Android identity changed before BOOT write");
+  fd_hash(s->fd, s->bytes.size, before); require(!strcmp(before, s->sha), "active BOOT source hash changed before write");
+  require(range(offset, bytes, s->bytes.size), "write is outside the active BOOT");
+  ro_fd = s->fd; require(!ioctl(ro_fd, BLKROGET, &restore_ro), "cannot inspect active BOOT readonly flag");
+  if (restore_ro) { int zero = 0; require(!ioctl(ro_fd, BLKROSET, &zero), "cannot temporarily enable active BOOT writes"); }
+  int fd = open(id.node, O_RDWR | O_SYNC | O_CLOEXEC); struct stat st; uint64_t capacity = 0;
+  require(fd >= 0 && !fstat(fd, &st) && S_ISBLK(st.st_mode) && st.st_rdev == s->st.st_rdev &&
+          !ioctl(fd, BLKGETSIZE64, &capacity) && capacity == s->bytes.size, "active BOOT changed on write reopen");
+  id = current_identity(o, 1);
+  require(!strcmp(id.slot, s->id.slot) && !strcmp(id.rom, s->id.rom) && !strcmp(id.bootprop, s->id.bootprop), "Android identity changed on write reopen");
+  fd_hash(fd, s->bytes.size, before); require(!strcmp(before, s->sha), "active BOOT source changed on write reopen");
+  size_t done = 0;
+  while (done < bytes) {
+    ssize_t n = pwrite(fd, (const unsigned char *)data + done, bytes - done, (off_t)(offset + done));
+    if (n < 0 && errno == EINTR) continue;
+    require(n > 0, "active BOOT write failed; do not reboot without inspecting the current partition"); done += (size_t)n;
+  }
+  require(!fsync(fd), "active BOOT fsync failed"); fd_hash(fd, s->bytes.size, after);
+  require(!strcmp(after, expected_after), "active BOOT complete readback SHA256 differs");
+  require(!close(fd), "active BOOT write close failed");
+  if (restore_ro) require(!ioctl(ro_fd, BLKROSET, &restore_ro), "could not restore original BOOT readonly flag");
+  ro_fd = -1; restore_ro = 0;
+}
+static void sync_parent(const char *path) {
+  char directory[4096]; require(strlen(path) < sizeof(directory), "metadata path is too long"); strcpy(directory, path);
+  char *slash = strrchr(directory, '/');
+  if (slash == directory) slash[1] = 0; else if (slash) *slash = 0; else strcpy(directory, ".");
+  int fd = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  require(fd >= 0 && !fsync(fd), "metadata directory fsync failed"); close(fd);
+}
+static struct blob installation_state(const struct snapshot *s, const struct blob *wrapped, const unsigned char *m, const char *status) {
+  struct blob b = {0}; FILE *f = open_memstream((char **)&b.data, &b.size); require(f != NULL, "metadata allocation failed");
+  char wrapper[65], app[65]; wrapper_hash(wrapped, m, wrapper); hex(m + 96, app);
+  fputs("{\"schema_version\":1,\"status\":", f); quote(f, status); fputc(',', f); identity_fields(f, s);
+  fprintf(f, ",\"wrapper\":\"SPLITv1+RSTRv1\",\"source_sha256\":\"%s\",\"wrapper_sha256\":\"%s\",\"app_sha256\":\"%s\","
+          "\"request_policy\":\"persistent-until-changed\",\"full_partition_backup\":false}\n", s->sha, wrapper, app);
+  require(!fclose(f), "metadata formatting failed"); return b;
+}
+static void finish_state(const char *path, const struct blob *b) {
+  char temporary[4096];
+  require(snprintf(temporary, sizeof(temporary), "%s.complete.%ld", path, (long)getpid()) < (int)sizeof(temporary), "state path is too long");
+  save(temporary, b); require(!rename(temporary, path), "state rename failed"); sync_parent(path);
+}
+static void emit_result(const struct blob *b, const char *path) {
+  if (path) { save(path, b); sync_parent(path); }
+  require(fwrite(b->data, 1, b->size, stdout) == b->size, "JSON output failed");
+}
+static int online_main(int argc, char **argv) {
+  struct options o = { .action = argv[1] };
+  for (int i = 2; i < argc; i++) {
+    const char *name = argv[i];
+    if (!strcmp(name, "--execute")) { require(!o.execute, "duplicate --execute"); o.execute = 1; continue; }
+    if (!strcmp(name, "--preview")) { require(!o.preview, "duplicate --preview"); o.preview = 1; continue; }
+    if (!strcmp(name, "--read-only")) { o.read_only = 1; continue; }
+    if (!strcmp(name, "--reject-wrapped")) { o.reject_wrapped = 1; continue; }
+    if (!strcmp(name, "--require-ready")) { o.require_ready = 1; continue; }
+    if (!strcmp(name, "--json")) continue;
+    require(i + 1 < argc, "option needs a value"); const char *value = argv[++i]; const char **field = NULL;
+    if (!strcmp(name, "--interface-version")) { require(!strcmp(value, "1"), "unsupported interface version"); continue; }
+    if (!strcmp(name, "--boot-device")) field = &o.device;
+    else if (!strcmp(name, "--active-slot")) field = &o.slot;
+    else if (!strcmp(name, "--rom-fingerprint")) field = &o.rom;
+    else if (!strcmp(name, "--boot-fingerprint")) field = &o.bootprop;
+    else if (!strcmp(name, "--policy")) field = &o.policy;
+    else if (!strcmp(name, "--output")) field = &o.output;
+    else if (!strcmp(name, "--source-metadata")) field = &o.source;
+    else if (!strcmp(name, "--installed-state")) field = &o.state;
+    else if (!strcmp(name, "--state-output")) field = &o.state_output;
+    else if (!strcmp(name, "--payload-dir")) field = &o.payload;
+    else if (!strcmp(name, "--target")) field = &o.target;
+    else if (!strcmp(name, "--input")) field = &o.input;
+    require(field && !*field, "unknown/duplicate interface option"); *field = value;
+  }
+  require(!(o.execute && (o.preview || o.read_only)), "write and read-only modes conflict");
+  require(!strcmp(o.action, "status") || !strcmp(o.action, "probe") || !strcmp(o.action, "repack") ||
+          !strcmp(o.action, "restore") || !strcmp(o.action, "request"), "unknown command");
+  /* A real wrapped file can exercise the same persistent CRC writer, without Android or fake block nodes. */
+  if (o.input) {
+    require(!strcmp(o.action, "request") && !o.device && !o.slot && !o.policy && !o.state && !o.execute,
+            "file request uses --input/--output, never --execute or device identities");
+    struct blob b = load(o.input, BOOT_BYTES); struct boot boot = parse_boot(&b, 0); const unsigned char *m = find_split(&b, &boot);
+    uint64_t bytes, records; struct blob original = restore(&b, &boot, m, &bytes, &records); free(original.data);
+    unsigned target = target_number(o.target); if (!o.preview) { (void)update_request(&b, m, target); save(o.output, &b); }
+    struct request_state r = read_requests(&b, m);
+    char full_sha[65]; hash_hex(b.data, b.size, full_sha);
+    printf("{\"status\":\"%s\",\"target\":%u,\"sequence\":%" PRIu64 ",\"requested_target\":%u,"
+           "\"crc_valid\":true,\"persistent\":true,\"file_sha256\":\"%s\",\"device_operation_performed\":false}\n",
+           o.preview ? "FILE_REQUEST_PREVIEW" : "FILE_REQUEST_SAVED", r.target[r.newest], r.sequence[r.newest], target, full_sha);
+    free(b.data); return 0;
+  }
+  struct json policy = {0}; read_json(o.policy, &policy); check_policy(&policy); int ready = policy_ready(&policy);
+  require(!o.require_ready || ready, "module remains unverified: actual online writes, persistent request handling and stock Recovery evidence are required");
+  require(!o.execute || !strcmp(o.action, "repack") || !strcmp(o.action, "restore") || !strcmp(o.action, "request"), "this command is read-only");
+  if (!strcmp(o.action, "status") && !o.device) {
+    printf("{\"status\":\"%s\",\"interface_version\":1,\"module_ready\":%s,\"online_interface_implemented\":true,"
+           "\"request_policy\":\"persistent-until-changed\",\"device_operation_performed\":false,",
+           ready ? "POLICY_READY" : "POLICY_NOT_DEVICE_VERIFIED", ready ? "true" : "false");
+    policy_fields(stdout, &policy); puts("}");
+    free(policy.text.data); return 0;
+  }
+  require(o.device && o.slot, "--boot-device and --active-slot are required for Android operations");
+  struct snapshot s = snapshot(&o); const unsigned char *m = find_split(&s.bytes, &s.boot);
+  uint64_t catalog_bytes = 0, records = 0; struct blob original = {0};
+  if (m) original = restore(&s.bytes, &s.boot, m, &catalog_bytes, &records);
+  else require(s.boot.avb.hash_matches, "stock BOOT data hash mismatch");
+  require(!o.reject_wrapped || !m, "active BOOT is already wrapped");
+  if (!strcmp(o.action, "repack")) {
+    require(!m && o.execute && o.source && o.state_output && o.payload && !o.output && !o.state, "repack needs unwrapped source metadata, payloads, state output and --execute");
+    struct json source = {0}; read_json(o.source, &source); check_identity(&source, &s); string_matches(&source, 0, "source_sha256", s.sha);
+    struct blob sel = payload(&policy, o.payload, "selector.bin", 65536), shim = payload(&policy, o.payload, "shim.bin", 1024 * 1024);
+    struct blob fd = payload(&policy, o.payload, "fd.bin", 0x300000), app = payload(&policy, o.payload, "app.bin", 64 * 1024 * 1024);
+    int selector_meta = member(&policy, 0, "selector");
+    struct blob result = repack(&s.bytes, &s.boot, &sel, json_number(&policy, selector_meta, "memory_bytes"),
+                               json_number(&policy, selector_meta, "metadata_offset"), &shim, &fd, &app);
+    struct boot check = parse_boot(&result, 1); const unsigned char *rm = find_split(&result, &check);
+    struct blob back = restore(&result, &check, rm, &catalog_bytes, &records);
+    require(back.size == s.bytes.size && !memcmp(back.data, s.bytes.data, back.size), "internal full BOOT reconstruction differs"); free(back.data);
+    struct blob state = installation_state(&s, &result, rm, "PREPARED_NOT_WRITTEN"); save(o.state_output, &state); sync_parent(o.state_output); free(state.data);
+    char after[65]; hash_hex(result.data, result.size, after); write_guarded(&o, &s, result.data, result.size, 0, after);
+    state = installation_state(&s, &result, rm, "WRITTEN_READBACK_VERIFIED"); finish_state(o.state_output, &state); emit_result(&state, NULL);
+    free(state.data); free(result.data); free(sel.data); free(shim.data); free(fd.data); free(app.data); free(source.text.data);
+  } else if (!strcmp(o.action, "restore") || !strcmp(o.action, "request")) {
+    require(m && o.state && !o.output && !o.source && !o.payload && !o.state_output, "restore/request needs the current installed wrapper state");
+    struct json state = {0}; read_json(o.state, &state); check_owned(&state, &s, m);
+    if (!strcmp(o.action, "restore")) {
+      require(o.execute && !o.target && original.size == s.bytes.size, "restore requires --execute and exact active BOOT size");
+      char after[65]; hash_hex(original.data, original.size, after);
+      write_guarded(&o, &s, original.data, original.size, 0, after);
+      printf("{\"status\":\"RESTORED_READBACK_VERIFIED\",\"source_sha256\":\"%s\",\"active_slot\":\"%s\",\"boot_bytes\":%zu}\n", after, s.id.slot, original.size);
+    } else {
+      require(o.execute || o.preview, "request requires --preview or explicit --execute");
+      unsigned target = target_number(o.target); struct request_state before = read_requests(&s.bytes, m);
+      if (o.execute) {
+        unsigned page = update_request(&s.bytes, m, target); char after[65]; hash_hex(s.bytes.data, s.bytes.size, after);
+        uint64_t offset = request_offset(m) + page * PAGE;
+        write_guarded(&o, &s, s.bytes.data + offset, PAGE, offset, after);
+      }
+      struct request_state r = read_requests(&s.bytes, m);
+      printf("{\"status\":\"%s\",\"stored\":%s,\"target\":%u,\"sequence\":%" PRIu64 ",\"previous_target\":%u,"
+             "\"requested_target\":%u,\"persistent\":true,\"crc_valid\":true,\"active_slot\":\"%s\"}\n",
+             o.execute ? "REQUEST_READBACK_VERIFIED" : "REQUEST_PREVIEW", o.execute ? "true" : "false", r.target[r.newest],
+             r.sequence[r.newest], before.target[before.newest], target, s.id.slot);
+    }
+    free(state.text.data);
+  } else {
+    require(!o.execute && !o.target && !o.source && !o.payload && !o.state_output, "probe/status is read-only");
+    int owned = 0; struct request_state r = {0};
+    if (o.state) { require(m != NULL, "installed wrapper is no longer present"); struct json state = {0}; read_json(o.state, &state); check_owned(&state, &s, m); free(state.text.data); owned = 1; }
+    if (m) r = read_requests(&s.bytes, m);
+    char immutable[65] = "", original_sha[65], app_sha[65] = "";
+    strcpy(original_sha, s.sha);
+    if (m) { wrapper_hash(&s.bytes, m, immutable); hex(catalog(&s.bytes, m) + 96, original_sha); hex(m + 96, app_sha); }
+    struct blob result = {0}; FILE *f = open_memstream((char **)&result.data, &result.size); require(f != NULL, "metadata allocation failed");
+    fprintf(f, "{\"schema_version\":1,\"status\":\"%s\",", !strcmp(o.action, "probe") ? "ACTIVE_BOOT_PROBED" : "ACTIVE_BOOT_STATUS"); identity_fields(f, &s);
+    fprintf(f, ",\"source_sha256\":\"%s\",\"original_source_sha256\":\"%s\",\"wrapper_sha256\":\"%s\",\"app_sha256\":\"%s\","
+            "\"wrapped\":%s,\"owned\":%s,\"avb_hash_matches\":%s,\"module_ready\":%s,"
+            "\"restore_catalog_bytes\":%" PRIu64 ",\"request_target\":%u,\"request_sequence\":%" PRIu64 ","
+            "\"request_policy\":\"persistent-until-changed\",\"read_only\":true,\"full_partition_backup\":false,",
+            s.sha, original_sha, immutable, app_sha, m ? "true" : "false", owned ? "true" : "false",
+            s.boot.avb.hash_matches ? "true" : "false", ready ? "true" : "false",
+            catalog_bytes, m ? r.target[r.newest] : 0, m ? r.sequence[r.newest] : 0);
+    policy_fields(f, &policy); fputs("}\n", f);
+    require(!fclose(f), "metadata formatting failed"); emit_result(&result, o.output); free(result.data);
+  }
+  close(s.fd); free(s.bytes.data); free(original.data); free(policy.text.data); return 0;
+}
+
 int main(int argc, char **argv) {
+  require(!atexit(reset_ro), "cannot register BOOT readonly cleanup");
+  int online = argc >= 2 && !strcmp(argv[1], "request");
+  for (int i = 2; i < argc; i++)
+    if (!strcmp(argv[i], "--boot-device") || !strcmp(argv[i], "--policy")) online = 1;
+  if (online) return online_main(argc, argv);
   if (argc == 2 && !strcmp(argv[1], "--help")) {
     puts("piano-boot-repack status\n"
          "piano-boot-repack probe --input BOOT.img\n"
          "piano-boot-repack repack --input STOCK.img --output NEW.img --selector FILE\n"
          "  --selector-memory-bytes N --selector-metadata-offset N --shim FILE --fd FILE --app FILE\n"
          "piano-boot-repack restore --input WRAPPED.img --output RESTORED.img\n"
-         "Regular files only. No --execute, block-device writes, OTA automation or module-ready mode.");
+         "piano-boot-repack request --input WRAPPED.img --output NEW.img --target android|uefi|linux|setup\n"
+         "Android: probe/status --boot-device /dev/block/by-name/boot_a|boot_b --active-slot _a|_b --policy FILE\n"
+         "repack/restore/request online writes require --execute and current-ROM metadata/state.\n"
+         "No inactive-slot, Recovery, vbmeta, GPT, OTA automation or automatic reboot.");
     return 0;
   }
   require(argc >= 2, "use --help for syntax");
@@ -374,7 +849,7 @@ int main(int argc, char **argv) {
   const char *shim_path = NULL, *fd_path = NULL, *app_path = NULL;
   uint64_t memory = 0, metadata = UINT64_MAX;
   for (int i = 2; i < argc; i++) {
-    require(i + 1 < argc, "option needs a value; online/device modes are not implemented");
+    require(i + 1 < argc, "option needs a value");
     const char *name = argv[i], *value = argv[++i];
     if (!strcmp(name, "--input") && !input) input = value;
     else if (!strcmp(name, "--output") && !output) output = value;
@@ -384,12 +859,13 @@ int main(int argc, char **argv) {
     else if ((!strcmp(name, "--shim") || !strcmp(name, "--bootshim")) && !shim_path) shim_path = value;
     else if (!strcmp(name, "--fd") && !fd_path) fd_path = value;
     else if (!strcmp(name, "--app") && !app_path) app_path = value;
-    else fail("unknown/duplicate option; module execution is not implemented");
+    else fail("unknown/duplicate file option");
   }
   if (!strcmp(action, "status")) {
-    require(argc == 2, "module policy/readiness interface is not implemented");
-    puts("{\"status\":\"FILE_MODE_ONLY_NOT_DEVICE_VERIFIED\",\"wrapper\":\"SPLITv1+RSTRv1\","
-         "\"commands\":[\"status\",\"probe\",\"repack\",\"restore\"],\"device_execution_ready\":false,"
+    require(argc == 2, "status policy mode requires --policy");
+    puts("{\"status\":\"ONLINE_INTERFACE_NOT_DEVICE_VERIFIED\",\"wrapper\":\"SPLITv1+RSTRv1\","
+         "\"commands\":[\"status\",\"probe\",\"repack\",\"restore\",\"request\"],\"device_execution_ready\":false,"
+         "\"online_interface_implemented\":true,\"request_policy\":\"persistent-until-changed\","
          "\"ota_automatic\":false,\"full_partition_backup\":false}"); return 0;
   }
   require(!strcmp(action, "probe") || !strcmp(action, "repack") || !strcmp(action, "restore"), "unknown command");

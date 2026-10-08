@@ -62,7 +62,7 @@ piano_check_payload() {
   [ "$PIANO_DEVICE_PASSTHROUGH_VERIFIED" = true ] &&
   [ "$PIANO_REQUEST_HANDLING_VERIFIED" = true ] &&
   [ "$PIANO_STANDARD_RECOVERY_PRESERVED" = true ] || {
-    piano_fail "Android passthrough, one-shot request handling or stock Recovery remain unverified."; return 1;
+    piano_fail "Android passthrough, persistent request handling or stock Recovery remain unverified."; return 1;
   }
   (cd "$MODPATH" && sha256sum -c payload.sha256 >/dev/null 2>&1) || {
     piano_fail "Module payload hashes differ."; return 1;

@@ -1,0 +1,8 @@
+{
+  "project": "jsmn",
+  "repository": "https://github.com/zserge/jsmn",
+  "version": "1.1.0",
+  "commit": "fdcef3ebf886fa210d14956d3c068a653e76a24e",
+  "file": "jsmn.h",
+  "license": "MIT; included in the header"
+}

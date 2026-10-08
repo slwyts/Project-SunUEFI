@@ -13,7 +13,7 @@
     <header>
       <p class="eyebrow">PROJECT SUNUEFI · PIANO</p>
       <h1>选择下一次启动</h1>
-      <p class="intro">普通重启进入 Android，重启到 Recovery 保留原厂恢复。只有单独确认的请求才进入 SunUEFI。</p>
+      <p class="intro">默认进入 Android。确认的持久选择会继续生效，直到重新改选；原厂恢复入口仍需独立验证。</p>
     </header>
     <section class="status" aria-live="polite">
       <span class="dot" aria-hidden="true"></span>
@@ -36,7 +36,7 @@
       <select id="preview-target"><option value="uefi">UEFI 请求</option><option value="linux">Linux 请求</option><option value="setup">UEFI 设置请求</option></select>
       <p id="preview-detail">预览不会写入请求，也不会重启。</p>
     </section>
-    <footer>本页当前没有连接管理器原生接口。一次性请求工具和消费逻辑尚未实现；不会修改 BOOT、GPT 或 Recovery。</footer>
+    <footer>本页尚未连接管理器 bridge。原生持久请求接口已实现，在线读写与 Recovery 仍待实机验证；本页不会自行写入或重启。</footer>
   </main>
 </body>
 </html>

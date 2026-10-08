@@ -1,9 +1,13 @@
-# 原生 BOOT 文件重打包与还原
+# 原生 BOOT 重打包、还原与持久请求
 
-`android/native/piano-boot-repack.c` 已实现普通文件模式的 `status`、`probe`、
-`repack`、`restore`。当前支持 Piano 原厂 BOOT v4、raw AArch64 GKI、独立
-init_boot 和无 boot_signature 的布局；不读写设备，不接受 `--boot-device` 或
-`--execute`，不能直接交给现有 Android 模块的在线安装脚本使用。
+`android/native/piano-boot-repack.c` 已实现普通文件的无损重打包／还原，并接通
+Android 模块要求的在线 `status`、`probe`、`repack`、`restore`、`request`。
+在线写入源码已完成，尚未在设备执行；实际安装、读回、还原、包装启动和
+标准 Recovery 仍需分别验证，模块 ZIP 的设备证明门禁保持关闭。
+
+当前仅支持 Piano 原厂 BOOT v4、raw AArch64 GKI、独立 init_boot、无
+boot_signature 和 96 MiB active BOOT。工具不改变 Recovery、init_boot、
+vendor_boot、vbmeta、GPT 或非活动槽，也不自动重启／处理 OTA。
 
 ## 已核对的真实布局
 
@@ -18,7 +22,7 @@ BOOT4 / AVB 字段依据 AOSP 的
 [AVB footer](https://android.googlesource.com/platform/external/avb/+/refs/heads/main/libavb/avb_footer.h)
 与 [hash descriptor](https://android.googlesource.com/platform/external/avb/+/refs/heads/main/libavb/avb_hash_descriptor.h)。
 输入必须有一个正确的 SHA256 boot hash descriptor 和 Piano boot fingerprint；
-当前文件模式验证 descriptor 的数据 hash，没有验证 OEM RSA 签名。
+工具验证 descriptor 的数据 hash，没有验证 OEM RSA 签名。
 
 ## 保持 SPLITv1
 
@@ -61,7 +65,9 @@ python tools/build_boot_repack.py --arch aarch64 \
 
 编译入口使用现有 clang/LLD 和 ARM64 libc/GCC sysroot，输出无 PT_INTERP 的
 静态 ELF，不安装 host 包。SHA256 复用固定 simple-init 内的 BSD libmd
-`sha2.c`；NEXTv1 CRC 复用现有 `BootRequest.c`。manifest.json 记录编译命令、
+`sha2.c`；NEXTv1 CRC 和选择规则复用现有 `BootRequest.c`。policy/state JSON
+使用固定 jsmn v1.1.0 的 MIT tokenizer，来源与 commit 位于
+`android/native/jsmn-source.json`。manifest.json 记录编译命令、
 所有源码 SHA、固定上游提交、二进制 SHA 和明确为 false 的设备证明。
 
 ```sh
@@ -72,6 +78,8 @@ piano-boot-repack repack --input stock-boot.img --output wrapped-boot.img \
   --selector-metadata-offset 12688 --shim BootShim.bin \
   --fd PianoUEFI-product.fd --app app-payload.bin
 piano-boot-repack restore --input wrapped-boot.img --output restored-boot.img
+piano-boot-repack request --input wrapped-boot.img --output selected-boot.img --target linux
+piano-boot-repack request --input selected-boot.img --target linux --preview
 ```
 
 示例中的两个 selector 数值仅对应本次已编译的 selector；每次应取同一
@@ -90,7 +98,8 @@ python tools/build_boot_repack.py --arch aarch64 \
 ```
 
 builder 会核对 selector 与当前 product FD/BootShim 的 manifest，运行原生
-probe/repack/restore，逐字节比较原文件与临时恢复文件，并将结果写入
+probe/repack/restore，逐字节比较原文件与临时恢复文件，再用真实 wrapper
+保存 Linux 请求、只读查看、改选 Android，并验证请求变化后仍精确还原。结果写入
 roundtrip.json。临时完整恢复文件比较后删除，不作为备用分区镜像保留。
 ARM64 工具可在已有的本机 binfmt/QEMU 下执行；也可显式提供现有用户态
 `--runner`。这一过程没有设备行为。
@@ -98,25 +107,86 @@ ARM64 工具可在已有的本机 binfmt/QEMU 下执行；也可显式提供现�
 本次真实 boot_a 已完成该比较，原文件/恢复 SHA256 均为
 `7c444a2d6aa930cd79e2d48c569f6c891fbaff054c63fc85c3a57fb61c660ac2`。
 恢复目录为 18,368 字节，仅四个非零尾块，包内 GKI 只有一份。具体的产品、
-selector、shim、APP、工具 SHA 和输出 SHA 位于本地 `build/boot-repack-native/`
-记录中；它是文件 roundtrip 证据，不能当作 Android 旁路、Mi Recovery 或
+selector、shim、APP、工具 SHA 和输出 SHA 位于本地 `build/boot-repack-online-native-recovery-20261008/`
+记录中；最终二进制的源码/工具 hash、同 stock 文件重打包、持久改选和
+精确还原另记录在 `final-file-validation.json`。它们是文件证据，不能当作 Android 旁路、Mi Recovery 或
 设备刷写已经验证。
 
-固定 AOSP avbtool 已独立验证新 footer、NONE vbmeta 与 boot SHA256；现有
-`piano-boot-request status` 也已只读识别新文件的 NEXTv1 页，返回 target=0、
-sequence=0。这些检查确认文件结构与现有请求 reader 的布局兼容，没有执行请求
-写入或设备重启。
+固定 AOSP avbtool 的既有检查已验证新 footer、NONE vbmeta 与 boot SHA256。
+当前原生真实文件检查返回 Linux target=2/sequence=1，preview 保持该记录，
+改选 Android 后 target=0/sequence=2；共享 reader 与 CRC 一致。请求变化会使
+新包装 AVB 数据 hash 失配，RSTR 还原仍得到上述相同原始 SHA。所有临时完整
+恢复文件和请求对照文件在比较后删除；这些是文件证据，不能代表在线写入已验证。
 
-## Android 模块的下一步
+## 在线接口与模块接线
 
-当前模块 payload 模板只携带 FD、APP、selector，实际 SPLIT 还需要同一产品的
-BootShim.bin。后续模块必须增加它及其 manifest SHA，不能让原生工具虚构 shim
-或回退到其他构建。在线适配还缺活动槽、ROM/boot fingerprint 和 current BOOT
-身份的重新读取、写前比对、受限写入和读回；OTA 后仍需正常启动当前 Android，
-不能预写非活动槽。
+在线调用需要 `--policy`。工具校验接口／ABI、运行中自身二进制的 hash，以及
+实际 repack 所用的四个 payload hash。模块 builder 现在携带同一产品的
+`shim.bin`、`fd.bin`、`app.bin`、`selector.bin`，并从同一次 selector manifest
+传入 `selector.memory_bytes` 与 `selector.metadata_offset`，不猜测 shim 或偏移。
+有真实文件检查输入时，native builder 还输出 `selector-module.json` 与
+`policy-prototype.json`，可供设备只读 probe/status；该 prototype policy 的
+`zip_ready` 与设备证明均为 false。
 
-文件工具没有实现 module policy/readiness、`request`、一次性请求消费、OTA
-自动化或分区操作。`status` 明确给出 `device_execution_ready=false`，现有模块
-的 `--require-ready` 参数也会被拒绝。原厂 Recovery 的路径没有被修改，但设备上
-的 NORMAL、Recovery 和独立 UEFI 请求仍需同一包装的真实证明，模块 ZIP 门禁
-不能据主机文件比较而解除。
+以下是原生与模块脚本采用的接口。只读阶段可先 probe/status；当前已经是
+RSTR wrapper 时 probe 不加 `--reject-wrapped`。该选项只用于后面的新安装检查。
+`slot` 必须来自当前
+Android `getprop ro.boot.slot_suffix`，node 只能是与它对应的
+`/dev/block/by-name/boot_a` 或 `boot_b`：
+
+```sh
+piano-boot-repack status --interface-version 1 --policy policy.json
+piano-boot-repack probe --boot-device "$bootdev" --active-slot "$slot" --policy policy.json
+piano-boot-repack probe --boot-device "$bootdev" --active-slot "$slot" \
+  --policy policy.json --output current.json --reject-wrapped
+piano-boot-repack repack --boot-device "$bootdev" --active-slot "$slot" \
+  --source-metadata current.json --payload-dir payload --policy policy.json \
+  --state-output install-state.json --execute
+piano-boot-repack status --boot-device "$bootdev" --active-slot "$slot" \
+  --policy policy.json --installed-state install-state.json --json --read-only
+piano-boot-repack request --target linux --boot-device "$bootdev" --active-slot "$slot" \
+  --policy policy.json --installed-state install-state.json --preview
+piano-boot-repack request --target android --boot-device "$bootdev" --active-slot "$slot" \
+  --policy policy.json --installed-state install-state.json --execute
+piano-boot-repack restore --boot-device "$bootdev" --active-slot "$slot" \
+  --policy policy.json --installed-state install-state.json --execute
+```
+
+原生端调用固定 `/system/bin/getprop`，重新确认 piano、active slot、正常启动
+完成和解锁状态。probe 只读 BOOT，保存 current source SHA、节点/rdev、容量
+以及三项独立身份：当前 ROM 指纹、`ro.bootimage.build.fingerprint`、实际 BOOT
+footer 指纹；不要求后两者相等。当前 wrapper 的 probe 还报告从 RSTR
+验证的 `original_source_sha256`、`app_sha256` 和规范化 `wrapper_sha256`，用于
+对照既有载荷；没有安装记录时 `owned=false`，仍不能据 probe 直接写入。
+实际设备曾出现 bootimage 属性 303、BOOT
+footer 309，属于要分别记录与写前比对的情况。
+
+repack 会先在内存中完成完整包装及逐字节反向重建，保存小型
+`PREPARED_NOT_WRITTEN` 安装记录并 fsync；写前重新读取身份、source hash 和节点，
+只写当前 active BOOT。成功必须 fsync 并读取整个 96 MiB 的 SHA，随后才将
+状态更新为 `WRITTEN_READBACK_VERIFIED`。如需临时解除该 BOOT 的内核 readonly
+flag，只针对已验证的当前节点，并恢复原 flag；工具没有其他分区写入口。
+中途报错必须先检查现分区，不能把 PREPARED 记录当成已安装或直接重启。
+
+restore/request 必须核对同 ROM、同槽、同 bootimage 属性、同 footer 和安装
+记录中的 source/app/wrapper hash。wrapper hash 只规范化两个自有 NEXT 页，
+其他 header、GKI、payload、catalog、padding 与 AVB bytes 均需相同；NEXT 页的
+CRC、generation 和零 padding 另行校验。还原先重建并验证完整原 BOOT SHA，
+再执行相同的写前检查、fsync 和完整读回。OTA、改槽、外国包装、旧 SPLIT 无
+RSTR 目录或缺安装记录都会拒绝；不能拿历史 ROM 镜像替代缺失的原始数据。
+
+request 使用共享 CRC 与双页序号，写入较旧／无效的一个 4 KiB 请求页，完整
+读回 BOOT 后才报告保存成功。目标可以选 Android(0)、UEFI(1)、Linux(2)、
+setup(3)，持续生效直到重新选择；status/preview 不消费请求，不写 misc/PMIC，
+不负责重启。模块 Action 的 `request TARGET --confirm` 保留用户明确确认。
+所谓 one-shot/consumed_once 不再作为产品门禁；对应检查是实际持久选择、
+改选与 CRC 往返。诊断 cmdline 的 `sunuefi.boot=uefi` override 与 NEXT 持久
+选择是两个接口，不能据名字把前者捆进普通模块。
+
+`status --require-ready` 仍要求在线 source/slot/restore/readback 等实际检查、
+同包装的 Android 旁路、持久 request handling 和标准 Recovery 的证据。
+实现在线代码、host roundtrip 或把字段设为 true 都不能替代这些记录。
+WebUI manager bridge、设备在线写入与还原、最新 selector 包装启动和持久 Linux
+偏好下的 Recovery 仍待验证；当前 prototype 文件检查使用最新 Recovery 优先 selector
+`2d053c9e...`（`build/bootselect-recovery-20261008`），其源码记录保存在
+roundtrip.json。已有 selector 的设备证明与在线 repacker 写入／还原的证明仍需分别记录。

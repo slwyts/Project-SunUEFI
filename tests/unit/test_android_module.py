@@ -31,16 +31,17 @@ class AndroidModuleTests(unittest.TestCase):
         struct.pack_into('<II', header, 8, len(kernel), len(app))
         struct.pack_into('<I', header, 40, 4)
         image = bytes(header) + kernel.ljust(((len(kernel) + 4095) // 4096) * 4096, b'\0') + app
-        self.payloads = {'fd.bin': fd, 'app.bin': app}
+        self.payloads = {'fd.bin': fd, 'app.bin': app, 'shim.bin': bytes(shim)}
         parts = {'PianoUEFI-product.img': image, 'PianoUEFI-product.fd': fd, 'BootShim.bin': bytes(shim)}
         for name, data in parts.items():
             (self.product / name).write_bytes(data)
         self.write_json(self.product / 'manifest.json', {'android_header_version': 4,
             'files': {name: mod.record(data) for name, data in parts.items()}})
         self.selector = self.base / 'selector.bin'
-        self.selector.write_bytes(b'\x1f\x20\x03\xd5')  # NOP, fixture only.
+        self.selector.write_bytes(b'\x1f\x20\x03\xd5' + bytes(12 + 128))  # NOP + metadata placeholder, never run.
         self.selector_meta = {'schema_version': 1, 'interface_version': 1,
-            'selector_sha256': mod.digest(self.selector.read_bytes()), 'selector_bytes': 4,
+            'selector_sha256': mod.digest(self.selector.read_bytes()), 'selector_bytes': 144,
+            'selector_memory_bytes': 16384, 'metadata_offset': 16,
             'product_fd_sha256': mod.digest(fd), 'app_payload_sha256': mod.digest(app),
             'supported_boot_headers': [4], 'app_abi': 1, 'wrapper_version': 1,
             'entry_policy': 'explicit-request-only', 'request_bootarg': 'sunuefi.boot=uefi',
@@ -58,6 +59,7 @@ class AndroidModuleTests(unittest.TestCase):
         evidence.write_text('FIXTURE ONLY; not device evidence\n')
         self.proof = {'schema_version': 1, 'interface_version': 1,
             'executable': mod.record(bytes(elf)), 'commands': list(mod.COMMANDS),
+            'request_policy': 'persistent-until-changed',
             'payload_sha256': {name: mod.digest(raw) for name, raw in
                 {**self.payloads, 'selector.bin': self.selector.read_bytes()}.items()},
             'tested_boot_headers': [4], 'stock_kernel_bundled': False,
@@ -172,6 +174,7 @@ class AndroidModuleTests(unittest.TestCase):
             self.assertFalse(any(name.endswith('.img') for name in names))
             self.assertEqual(archive.read('payload/app.bin'), self.payloads['app.bin'])
             self.assertEqual(archive.read('payload/fd.bin'), self.payloads['fd.bin'])
+            self.assertEqual(archive.read('payload/shim.bin'), self.payloads['shim.bin'])
             for row in archive.read('payload.sha256').decode().splitlines():
                 sha, path = row.split('  ')
                 self.assertEqual(sha, mod.digest(archive.read(path)))
@@ -180,6 +183,8 @@ class AndroidModuleTests(unittest.TestCase):
             self.assertFalse(policy['ota_automatic'])
             self.assertFalse(policy['partition_execution_ready'])
             self.assertEqual(policy['entry_policy'], 'explicit-request-only')
+            self.assertEqual(policy['request_policy'], 'persistent-until-changed')
+            self.assertEqual(policy['selector'], {'memory_bytes': 16384, 'metadata_offset': 16})
             self.assertTrue(policy['standard_recovery_preserved'])
             status = json.loads(archive.read('webroot/status.json'))
             self.assertFalse(status['webui_bridge_verified'])

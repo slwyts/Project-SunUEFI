@@ -6,7 +6,7 @@ operation=${1:-status}
 target=${2:-}
 case "$operation" in
   status) [ -z "$target" ] || exit 2 ;;
-  preview|request) case "$target" in uefi|linux|setup) ;; *) exit 2 ;; esac ;;
+  preview|request) case "$target" in android|uefi|linux|setup) ;; *) exit 2 ;; esac ;;
   *) exit 2 ;;
 esac
 if [ ! -f "$MODPATH/module-policy.sh" ] || [ ! -x "$MODPATH/bin/piano-boot-repack" ]; then
@@ -34,4 +34,5 @@ else
     --rom-fingerprint "$rom_fingerprint" --boot-fingerprint "$boot_fingerprint" \
     --installed-state "$MODPATH/install-state.json" --policy "$MODPATH/policy.json" "$mode"
 fi
-# request stores a one-shot record only; this script does not reboot or write misc/PMIC.
+# The route persists until another confirmed request selects Android/UEFI/Linux/setup.
+# This script does not reboot or write misc/PMIC.
