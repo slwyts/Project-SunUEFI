@@ -555,6 +555,11 @@ def execute(record):
                                       for row in ffmpeg['packages'].values())
             run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get', 'install', '-y',
                  '--no-install-recommends', *cfg['debian']['extra_packages'], *local_packages])
+            if 'chromium' in cfg['debian']['extra_packages']:
+                # The selected browser is installed before removing the old
+                # base's Firefox package. User browser profiles are untouched.
+                run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive',
+                     'apt-get', 'purge', '-y', 'firefox-esr'])
         shutil.rmtree(sensor_stage)
         shutil.rmtree(gsd_stage)
         if ffmpeg:
