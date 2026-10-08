@@ -1,0 +1,70 @@
+From: Project SunUEFI
+Subject: [PATCH] drm/msm/dpu: log confirmed GC2 initialization and retirement
+
+Only observability. Messages follow real reset success, initialized
+resources and installed ops; no readiness or completion is synthesized.
+Keep existing debug submit/done messages enabled through DRM KMS debug.
+
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
+@@ -272,10 +272,13 @@
+ 		ret = queue_reset(dma, ctl);
+ 		if (ret)
+ 			break;
++		drm_info(kms->dev, "GC2 REGDMA init reset acknowledged ctl=%u\n", ctl);
+ 	}
+ 	clocks_put(dma);
+ 	if (ret)
+ 		goto put_vaddr;
++	drm_info(kms->dev, "GC2 REGDMA3 initialized resource=%pa size=%pa iova=%#llx buffer=%u\n",
++		 &dma->start, &dma->size, dma->iova, REGDMA_BUFFER_SIZE);
+ 	return dma;
+ put_vaddr:
+ 	msm_gem_put_vaddr(dma->bo);
+@@ -298,6 +301,8 @@
+ 	if (!dma)
+ 		return;
+ 	mutex_lock(&dma->lock);
++	drm_info(dma->kms->dev, "GC2 REGDMA quiesce begin inflight=%u ctl=%u\n",
++		 dma->inflight, dma->active_ctl);
+ 	WRITE_ONCE(dma->faulted, true);
+ 	/* The outer unbind path cannot be vetoed by a void destroy callback.
+ 	 * It must wait here while the KMS, clock, MMIO, VM and GEM owners all
+@@ -307,6 +312,7 @@
+ 	 */
+ 	while (dma->inflight) {
+ 		if (!queue_reset(dma, dma->active_ctl)) {
++			drm_info(dma->kms->dev, "GC2 REGDMA quiesce reset acknowledged ctl=%u\n", dma->active_ctl);
+ 			retire_reference(dma);
+ 			break;
+ 		}
+@@ -315,6 +321,7 @@
+ 			dma->active_ctl);
+ 		msleep(100);
+ 	}
++	drm_info(dma->kms->dev, "GC2 REGDMA quiesce complete inflight=0\n");
+ 	mutex_unlock(&dma->lock);
+ }
+ 
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+@@ -1254,9 +1254,16 @@
+ 	}
+ 	if (dpu_lutdma_ready(dpu_kms->lutdma)) {
+ 		for (int i = 0; i < ARRAY_SIZE(dpu_kms->rm.dspp_blks); i++) {
+-			if (dpu_kms->rm.dspp_blks[i])
+-				dpu_hw_dspp_bind_regdma(to_dpu_hw_dspp(dpu_kms->rm.dspp_blks[i]),
+-							dpu_kms->lutdma);
++			struct dpu_hw_dspp *dspp;
++
++			if (!dpu_kms->rm.dspp_blks[i])
++				continue;
++			dspp = to_dpu_hw_dspp(dpu_kms->rm.dspp_blks[i]);
++			dpu_hw_dspp_bind_regdma(dspp, dpu_kms->lutdma);
++			if (dspp->lutdma == dpu_kms->lutdma && dspp->ops.setup_gc)
++				drm_info(dev, "GC2 REGDMA bound DSPP%u base=%#x version=%#x\n",
++					 dspp->idx - DSPP_0, dspp->cap->sblk->gc.base,
++					 dspp->cap->sblk->gc.version);
+ 		}
+ 	}
+ 
