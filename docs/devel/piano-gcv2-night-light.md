@@ -1,6 +1,6 @@
 # GCv2 与标准 Night Light 后端
 
-当前实机a8内核没有SM8750 Gamma，Night Light仍不可用。下一默认release已接入[完整后端](../../patches/linux/7.2.9/0006-drm-msm-dpu-gcv2-regdma-backend.patch)、[SM8750 catalog](../../patches/linux/7.2.9/0007-drm-sm8750-gcv2-catalog.patch)和实际产品REGDMA资源overlay。首次281完整构建因catalog误用不存在的DSPP `features`成员而停止；0007已删除该四项，独立实际ARM64 catalog对象编译通过。修正后源码commit为`a58948e88201a23df52d9833a9640b904cdf0911`、tree为`3d76760c7263bcb0e2efce032a1d34059e7012c3`，现由`sunuefi-kernel-display-a589-20261008`正常完整构建。尚未部署或验证DMA与颜色。没有复用GCv1 AHB实现或强开用户空间设置。
+当前a589完整内核首次实机启动在REGDMA初始化中异常，Night Light仍不可用。实际日志定位`queue_reset`访问CTL编号7的`+0x7054`，超出映射的`0x7000`资源；SM8750 catalog只有one-based编号1..6，通用CTL枚举却还包含7/8。正式[0006后端补丁](../../patches/linux/7.2.9/0006-drm-msm-dpu-gcv2-regdma-backend.patch)已改为逐个catalog ID初始化，并在queue/reset/submit检查catalog成员及完整u32的资源边界，未扩大MMIO窗口或改变DMA完成/退出管理。修正源已独立ARM64单对象编译及实际queue地址函数边界检查通过，新的默认源码bde3已准备并开始完整构建，尚未部署。恢复使用的旧a8仍无Gamma。没有复用GCv1 AHB实现或强开用户空间设置。
 
 GC地址为 `0x17c0`、窗口 `0x40`、版本 `0x20000`，四个DSPP通过共用`sblk`描述PCC/GC；当前`dpu_dspp_cfg`没有独立features成员。只有REGDMA资源、GEM映射及真实队列reset初始化成功后才绑定ops并发布Gamma。实际组合DT追加命名regdma资源，不能仅改上游dtsi。
 
@@ -20,18 +20,18 @@ GC地址为 `0x17c0`、窗口 `0x40`、版本 `0x20000`，四个DSPP通过共用
 
 草案已接上以下实际路径，仍需正常整包构建和硬件验证：
 
-1. DPU驱动映射REGDMA命名资源，使用SM8750 catalog的版本、XIN7、REG_DMA clock、read OT及真实8级QoS。初始化必须具备这些ops并完成6个真实队列的reset自清ack；失败不绑定GC2，不发布Gamma。
+1. DPU驱动映射REGDMA命名资源，使用SM8750 catalog的版本、XIN7、REG_DMA clock、read OT及真实8级QoS。初始化只接受catalog列出的CTL，分配GEM前核对每个reset寄存器的offset+sizeof(u32)完整落在资源内，再逐个做reset自清ack；失败不绑定GC2，不发布Gamma。SM8750实际为编号1..6，不能以CTL_MAX代替该表。
 2. 在真实DPU GPUVM分配并pin一个预分配8KiB WC GEM，明确限定32bit IOVA范围及256B对齐。LUT和256B对齐的最终descriptor共用该映射；没有将CPU物理地址当IOVA。
 3. GC命令与实际decode-select空块最终descriptor排入CTL queue0，随后真实CTL软件trigger，轮询完成与错误状态。CTL enum从1开始；v3队列偏移`ctl_idx*0x1000`，done`+0x44/bit3`、clear`+0x48`、reset`+0x54`。全局错误寄存器是v1.1继承的`0x170/0x1b0`，不是v1.0的旧offset。没有合成IRQ或完成结果。
 4. 提交位于正常原子commit的可睡眠进程上下文，用mutex串行化；完成后才复用GEM。错误/timeout必须得到reset自清ack才能放掉module/PM/clock vote。外层注销/解绑、KMS uninit和正常machine shutdown入口新增quiesce：先拒新提交，若仍有未知active queue，就在全部依赖尚在时只重试该queue的reset；没有ack不返回该退出入口，不能让后续component/devres/VM回收继续。没有在mutex下flush workqueue；健康退出立即通过。runtime suspend对未知inflight返回EBUSY。错误跳过GC flush并标记可用out-fence错误，后续颜色更新拒绝faulted engine。
 
 本机最终原厂DT没有`qcom,sde-reg-dma-broadcast-disabled`或其他broadcast键。固定catalog用`of_property_read_bool`得到0，color processing直接传入该值；没有依据通用函数猜本机禁用标志。草案按此公开配置一次向实际assigned DSPP mask发送broadcast，成功后才同时stage两边GC flush。硬件广播结果仍待验证。
 
-DT中的`qcom,sde-reg-dma-trigger-off=0x119c`是`trigger_sel_off`，不能误当作队列kickoff地址；固定DB驱动的CTL软件触发是`ctl+0xd4`。草案包含真正descriptor提交代码，但本轮没有运行它或验证硬件完成事件。
+DT中的`qcom,sde-reg-dma-trigger-off=0x119c`是`trigger_sel_off`，不能误当作队列kickoff地址；固定DB驱动的CTL软件触发是`ctl+0xd4`。a589首次运行停在初始化队列越界，尚未到自有descriptor提交，未验证硬件DMA完成事件。
 
 ## 本轮结果
 
-命令准备、真实传输、DSPP/CRTC/KMS、catalog和外层MSM KMS共7个实际C文件使用完整独立MSM header副本与现有内核ARM64参数做syntax检查，均通过；全16路径补丁对固定b8f07b7e9f9e源码无fuzz dry-run通过。独立QRD源码经正常cpp+dtc编译并读回`reg-names=mdp/vbif/regdma`；DT schema工具本机未安装。没有修改活动树/O、模拟颜色结果或改显示。完整内核link、REGDMA硬件完成/reset和实际标准Night Light仍待Root复核后统一默认构建测试。
+此前7个后端C文件的target syntax及补丁应用检查通过，281完整构建仍捕到后来catalog小补丁使用不存在`features`成员；0007已修正，a589随后正常完整编译。实机又捕到本次CTL队列越界，因此编译通过没有证明硬件初始化完整。日志来源是`private/provisioning/recovery-priority-20261008/a589-boot-kernel.txt:1741`。新0006 SHA256为`60768e66de73e32d0f61aad302b01d8111bb10120ca91b435064001b93533587`，独立单对象和队列地址边界结果在`private/analysis/piano-regdma-catalog-queues-20261008/result.json`。未修改已完成a589源码/O或操作设备；新硬件初始化、DMA完成和标准Night Light仍需正常构建后验证。
 
 固定源、原厂FDT资源、target检查和SHA记录在`private/analysis/piano-gcv2-night-light-20261008/`。修正后的0007 SHA256为`38689e09ba31b55b077794e6e7e5b67fa67dee7b9c4c12f996c9bf28eeb441f1`；`catalog-fix-281/result.json`记录实际281全部MSM头/源的独立副本及单对象编译结果。先前7个文件syntax检查没有覆盖后来加入的错误DSPP成员，不能代替这次真实catalog编译。后续按[最小实机检查步骤](piano-gcv2-validation.md)验证REGDMA、DRM恒等LUT与两侧色温。UI出现开关不能单独说明Gamma已正确编程。
 

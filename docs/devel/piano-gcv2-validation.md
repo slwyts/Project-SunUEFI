@@ -17,7 +17,7 @@ dmesg --color=never > /tmp/gcv2-before-kernel.txt
 
 `/run`是临时部署路径，源文件是[Gamma客户端](../../tools/host/piano_gamma_probe.py)和[只读DRM采集器](../../tools/android/piano_drm_snapshot.c)。脚本使用[Mutter48.7实际DisplayConfig接口](https://raw.githubusercontent.com/GNOME/mutter/48.7/data/dbus-interfaces/org.gnome.Mutter.DisplayConfig.xml)的`GetResources`、`GetCrtcGamma`和`SetCrtcGamma`；API ID来自当前配置，不能拿DRM对象ID直接代入。
 
-当前后端在真实提交与完成处有`drm_dbg_kms`日志，但没有成功初始化、逐DSPP绑定和健康退出的正向日志。`GAMMA_LUT`出现可以说明代码已安装可用ops，无法单独说明每个物理DSPP的输出结果。若需要确认初始化与退出，可在下一次正常构建应用独立[日志补丁](../../patches/linux/drafts/0003-drm-msm-dpu-log-gcv2-init-bind-quiesce.patch)：它只在真实reset成功、资源初始化、实际ops绑定和quiesce完成之后输出，不增加寄存器读取、假完成事件或新控制路径。它基于281相同后端准备，未加入已经冻结的a589输入，尚未做目标编译。
+当前后端在真实提交与完成处有`drm_dbg_kms`日志，但没有成功初始化、逐DSPP绑定和健康退出的正向日志。`GAMMA_LUT`出现可以说明代码已安装可用ops，无法单独说明每个物理DSPP的输出结果。此前独立[日志草案](../../patches/linux/drafts/0003-drm-msm-dpu-log-gcv2-init-bind-quiesce.patch)基于旧281的CTL枚举循环，未加入a589；正式0006本次修复改为catalog循环后，该草案不可直接应用，须先更新再正常编译。所需正向消息仍应只在真实reset成功、资源初始化、实际ops绑定和quiesce完成之后输出，不增加寄存器读取、假完成事件或新控制路径。
 
 主任务可在测试窗口保存当前`/sys/module/drm/parameters/debug`值，仅增加KMS bit`0x04`，结束时恢复原值。不开启该bit时没有提交debug消息不能被当作没有DMA；已有error日志仍应保留。
 
