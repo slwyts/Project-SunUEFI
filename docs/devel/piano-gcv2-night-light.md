@@ -57,4 +57,6 @@ bde3同次DPMS关屏两秒再开屏仍出现 `dsi_err_worker status=4`，两次D
 
 原始位定义进一步确认：关屏时置位的是CMD_MDP欠流bit7和四路HS欠流，不是CMD_DMA欠流bit10；开屏后从链路还置位VID_MDP溢出bit0。下一份源码 `ea3ddda5a6a7bc4c650459953fd9e527e5f871ca` 只修正视频面板的待机状态：保留controller ENABLE，清除VID/CMD时序位及对应done中断，由已有xfer_prepare/restore在真正发送命令时临时启用CMD及CMD_DMA_DONE。命令模式面板的常开CMD行为保持。该差异符合固定原厂按面板类型选择时序引擎的实现，但物理恢复效果仍未验证；此次没有调整复位、延时、刷新率或电源。补丁已合并回同一份0011及默认源码准备流程，不增加独占功能的产品profile。
 
+ea3d完整增量构建约66秒完成，匹配root/ESP及安装脚本也已生成；实机普通重启后GNOME、触屏、相机和蓝牙服务正常启动。在uptime133.36–137.53秒的一次相同OFF/ON中，关屏阶段未再观察到主链路CMD_MDP欠流或worker `0xd/0xc`，但开屏后host1仍报告 `0xeeee1011/0xdddd1011`、worker status4，包含VID_MDP溢出。因此待机修正只解决了本次观察到的一类错误，双DSI恢复仍未完成。日志在 `dsi-idle-ea3d-dpms-kernel.txt`、`dsi-idle-ea3d-dpms-result.txt` 和 `dsi-idle-ea3d-drm-after.json`，目录与前述相同。已恢复bde3启动文件并正常重启；不重复原操作，下一步只核对从链路PLL/PHY恢复与真实视频启用顺序。
+
 普通IGCv5的[标准DEGAMMA候选](../../patches/linux/7.2.9/drafts/0012-drm-msm-dpu-igcv5-degamma.patch)已经准备，尚未加入默认补丁序列。它提供257项16bit RGB输入曲线，与现有GC在同一REGDMA缓冲区中合并提交，保留实际DSPP分配，并在共同完成后更新两类flush。七个ARM64对象及实际CPU命令打包的长度、端点和容量检查已通过；最大普通双LUT为7800B，末描述符位于7936，完整落在8KiB缓冲区内。没有模拟DMA完成，也没有实机验证此候选。高精度扩展采样域仍不明确，因此没有启用高精度、抖动、HDR或12bit FRC。固定MiCode来源、对象和边界结果保存在 `private/analysis/piano-igcv5-degamma-20261009/`。
