@@ -1,8 +1,10 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 # One explicit diagnostic capture; no module loading or reboot.
-sleep 120
 log() { printf '<5>PIANO_BOOT_TASK_SNAPSHOT %s\n' "$*" >/dev/kmsg; }
+log ARMED
+: >/run/piano-boot-task-snapshot.ready
+sleep 120
 log BEGIN
 for field in status wchan stack; do
     if [ -r "/proc/1/$field" ]; then

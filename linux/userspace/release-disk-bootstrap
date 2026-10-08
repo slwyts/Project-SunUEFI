@@ -129,7 +129,15 @@ chroot /sysroot /usr/lib/piano/piano-disk-hardware-prepare || fail 'Hardware pre
 log "DISK_ROOT_READY: starting Debian systemd on LABEL=$expected"
 if [ -f /etc/piano/boot-task-snapshot ]; then
     # Run from the real root, so this process survives the initramfs removal.
-    chroot /sysroot /bin/sh /usr/lib/piano/piano-boot-task-snapshot &
+    rm -f /sysroot/run/piano-boot-task-snapshot.ready
+    chroot /sysroot /bin/sh /usr/lib/piano/piano-boot-task-snapshot \
+        </sysroot/dev/null >/sysroot/dev/null 2>&1 &
+    diagnostic_wait=0
+    while [ ! -f /sysroot/run/piano-boot-task-snapshot.ready ] && [ "$diagnostic_wait" -lt 3 ]; do
+        sleep 1
+        diagnostic_wait=$((diagnostic_wait + 1))
+    done
+    [ -f /sysroot/run/piano-boot-task-snapshot.ready ] || log 'Diagnostic task snapshot could not be armed'
 fi
 exec switch_root -c /dev/console /sysroot /usr/lib/systemd/systemd \
     --log-target=kmsg --log-level=info >/sysroot/dev/kmsg 2>&1

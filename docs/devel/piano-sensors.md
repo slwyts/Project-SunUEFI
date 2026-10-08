@@ -71,7 +71,7 @@ importer 默认读取 `super` 的 primary metadata slot 0，并选择 `odm_a`、
 
 2026-10-08，`7.2.9-piano-gnome-g086a94c4529d` 经普通 BOOT 启动，六个实际 compute-cb 的 `iommu_group/type` 均为 `DMA`。标准 `5+sunuefi1` 服务运行，`/dev/dma_heap/system` 可见，`InaccessiblePaths`、`RootDirectory`、`RootImage` 均为空，未使用此前隐藏 heap 的临时方案。
 
-SensorProxy 的 HasAccelerometer/Light/Proximity/Compass 均为 true；一次三秒采样实际返回加速度约 `(8.49, -0.08, 4.75) m/s²` 和罗盘约 `195°`，LightLevel 为 `153`。这证明本次正常 heap 条件下 SSC 数据读取已工作，不能扩大为所有 buffer、全部传感器或待机恢复都已验证。桌面自动旋转和亮度联动仍需核对。一次早先的 g086 启动没有形成可用调试接口；本轮成功也没有解释那次失联原因。
+SensorProxy 的 HasAccelerometer/Light/Proximity/Compass 均为 true；一次三秒采样实际返回加速度约 `(8.49, -0.08, 4.75) m/s²` 和罗盘约 `195°`，LightLevel 为 `153`。这证明本次正常 heap 条件下 SSC 数据读取已工作，不能扩大为所有 buffer、全部传感器或待机恢复都已验证。桌面自动旋转仍需现场核对。一次早先的 g086 启动没有形成可用调试接口；本轮成功也没有解释那次失联原因。
 
 GNOME 的实际 DBus 订阅包括 gnome-shell、gsd-power 和 gsd-media-keys，`ambient-enabled=true`。一次自然光照变化中 LightLevel从138降到124，KTZ8866背光及实际背光从1256降到1135，未手动写亮度，确认标准桌面自动亮度已有响应；完整范围尚未测试。自动旋转当前未由 Mutter 管理：键盘套提供鼠标/触控板且没有 tablet-mode switch，GNOME48.7按标准策略退出 touch-mode。摘下键盘后的实际旋转仍待确认，不强制绕过这项策略。
 
