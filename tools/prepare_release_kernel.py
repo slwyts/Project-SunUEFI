@@ -41,7 +41,7 @@ TARGETS[DEFAULT_TARGET] = {
     **TARGETS['kernel69'],
     'series_target': 'kernel69',
     'patch_tree': TARGETS['kernel69']['target_tree'],
-    'target_tree': '70a83a85970d3c6b50afe8886b4f6b855bd32d6a',
+    'target_tree': '37d794cbb300ac90d10e0629644557f7f6fb0bb4',
     'stable_commit': '5fce161649b4d779d1b76d9fcd52dc77779774b8',
     'stable_tree': 'c278d1443495d2a1a07fff2bcfb286b5c35baaea',
     'stable_version': '7.2.9',
@@ -93,7 +93,7 @@ TARGETS[DEFAULT_TARGET] = {
     },
     'dsi_video_phases_patch': {
         'file': 'patches/linux/7.2.9/0011-dsi-bridge-video-phases.patch',
-        'sha256': 'd7a1e848ed94066fb99ab0a97810eaa425d8bafaf1fd4b1aad72b778b092ecbd',
+        'sha256': 'd0a4a4c3492b9d9d07202ca926af00c5c9188f30552e5e76b4820430363b4e67',
     },
     'dsi_stop_order_patch': {
         'file': 'patches/linux/7.2.9/0008-dsi-bonded-stop-slave-first.patch',

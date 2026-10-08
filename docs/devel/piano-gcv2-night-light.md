@@ -6,7 +6,7 @@ Mutter 48.7读取未设置的Gamma时返回三个空数组。旧版通过SetCrtc
 
 这块DSI面板没有EDID，原版Mutter因此没有为其建立默认颜色配置。第二个补丁通过实际colord设备ID建立未校准的标准sRGB配置，保留用户已有配置，未伪造EDID。实机已经自动关联该配置，Gamma为三条各1024项的曲线。标准 `NightLightSupported` 为true，但暖色在屏幕两侧的实际输出仍待观察；恒等DMA完成或软件读回不能代替这一结果，也不能证明HDR已支持。
 
-注销记录需要区分两件事：2026-10-08北京时间22:11:07，旧版空Gamma恢复触发 `status=11/SEGV`；23:26:30，安装sunuefi1后主动重启GDM，显示会话正常退出并自动重新登录。后者的新GNOME Shell进程为PID2406、用户会话为15。截至2026-10-09北京时间00:06，未记录新的Shell崩溃，相机服务保持运行；这些日志不能支持相机导致注销的结论。对应记录在 `private/provisioning/recovery-priority-20261008/camera-logout-timeline-20261009.txt`，旧异常在同目录的 `bde3-session-journal.txt`。
+注销记录需要区分两件事：日志时间2026-10-08 14:11:07 UTC，旧版空Gamma恢复触发 `status=11/SEGV`；15:26:30 UTC，安装sunuefi1后主动重启GDM，显示会话正常退出并自动重新登录。后者的新GNOME Shell进程为PID2406、用户会话为15，后续未记录新的Shell崩溃，相机服务保持运行；这些日志不能支持相机导致注销的结论。平板的NTP未同步，墙钟存在偏差，不能将上述日志时间直接用于精确对齐用户操作；同一启动中的顺序和uptime仍可用于比较。对应记录在 `private/provisioning/recovery-priority-20261008/camera-logout-timeline-20261009.txt`，旧异常在同目录的 `bde3-session-journal.txt`。
 
 GC地址为 `0x17c0`、窗口 `0x40`、版本 `0x20000`，四个DSPP通过共用`sblk`描述PCC/GC；当前`dpu_dspp_cfg`没有独立features成员。只有REGDMA资源、GEM映射及真实队列reset初始化成功后才绑定ops并发布Gamma。实际组合DT追加命名regdma资源，不能仅改上游dtsi。
 
@@ -54,5 +54,7 @@ bde3同次DPMS关屏两秒再开屏仍出现 `dsi_err_worker status=4`，两次D
 [DSI分期修正](../../patches/linux/7.2.9/0011-dsi-bridge-video-phases.patch)使用标准bridge四阶段：pre-enable准备PHY/clock/command，panel自行prepare完成DCS/PPS，enable再开启video；disable先停video并保留command，panel unprepare之后post-disable再清IRQ/clock/PHY。已有从链路先关时钟的顺序保留，未改变复位脉冲、off延时或刷新策略。IRQ日志复用已经读取的FIFO寄存器并限速输出，不新增MMIO读取。源码 `95b72a5bd7eb7fb31b2b385faa915edeee5a31cf`、tree `70a83a85970d3c6b50afe8886b4f6b855bd32d6a` 已完成完整内核、匹配模块及成品打包，并从ESP正常启动；GNOME用户会话、相机和触屏服务已运行。
 
 这次唯一的两秒DPMS OFF/ON仍失败。请求在uptime237.23–241.40秒均返回成功，CRTC之后也报告ACTIVE=1，但关屏时主host0在video=0状态读到raw FIFO `0x99991090`、worker status `0xd/0xc`；开屏时从host1在video=1状态持续读到 `0xaaaa1010`、`0xdddd1011`、`0xeeee1011`、`0xcccc1011`、worker status4。因此四阶段调整不足以解决恢复，不能拿回调返回或ACTIVE属性称为显示恢复成功。原始记录在 `private/provisioning/recovery-priority-20261008/dsi-95b72-dpms-kernel.txt`，软件状态在同目录的 `dsi-95b72-dpms-result.txt` 和 `dsi-95b72-drm-after.json`。已将ESP启动文件恢复到bde3并发出正常重启，没有连续重复关屏检查。
+
+原始位定义进一步确认：关屏时置位的是CMD_MDP欠流bit7和四路HS欠流，不是CMD_DMA欠流bit10；开屏后从链路还置位VID_MDP溢出bit0。下一份源码 `ea3ddda5a6a7bc4c650459953fd9e527e5f871ca` 只修正视频面板的待机状态：保留controller ENABLE，清除VID/CMD时序位及对应done中断，由已有xfer_prepare/restore在真正发送命令时临时启用CMD及CMD_DMA_DONE。命令模式面板的常开CMD行为保持。该差异符合固定原厂按面板类型选择时序引擎的实现，但物理恢复效果仍未验证；此次没有调整复位、延时、刷新率或电源。补丁已合并回同一份0011及默认源码准备流程，不增加独占功能的产品profile。
 
 普通IGCv5的[标准DEGAMMA候选](../../patches/linux/7.2.9/drafts/0012-drm-msm-dpu-igcv5-degamma.patch)已经准备，尚未加入默认补丁序列。它提供257项16bit RGB输入曲线，与现有GC在同一REGDMA缓冲区中合并提交，保留实际DSPP分配，并在共同完成后更新两类flush。七个ARM64对象及实际CPU命令打包的长度、端点和容量检查已通过；最大普通双LUT为7800B，末描述符位于7936，完整落在8KiB缓冲区内。没有模拟DMA完成，也没有实机验证此候选。高精度扩展采样域仍不明确，因此没有启用高精度、抖动、HDR或12bit FRC。固定MiCode来源、对象和边界结果保存在 `private/analysis/piano-igcv5-degamma-20261009/`。
