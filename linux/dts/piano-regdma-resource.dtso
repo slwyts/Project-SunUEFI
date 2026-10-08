@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+/dts-v1/;
+/plugin/;
+
+/* The composed Piano display node uses one-cell addresses and sizes.
+ * Preserve its existing MDP/VBIF windows and add the independent REGDMA3
+ * resource from the factory final DT. Applied after the shared display
+ * overlay; no GPIO, clock, IOMMU or panel property is changed.
+ */
+/ {
+    fragment@0 {
+        target-path = "/soc/display-subsystem@ae00000/display-controller@ae01000";
+        __overlay__ {
+            reg = <0x0ae01000 0x93000>, <0x0aeb0000 0x3000>,
+                  <0x0af80000 0x7000>;
+            reg-names = "mdp", "vbif", "regdma";
+        };
+    };
+};

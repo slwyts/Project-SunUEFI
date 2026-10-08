@@ -41,7 +41,7 @@ TARGETS[DEFAULT_TARGET] = {
     **TARGETS['kernel69'],
     'series_target': 'kernel69',
     'patch_tree': TARGETS['kernel69']['target_tree'],
-    'target_tree': '7d2ad26d416bec0d052059727491a37ac7536f0b',
+    'target_tree': '162d8ccbe21d8edbfff1685b8c6ff7ad426dfffd',
     'stable_commit': '5fce161649b4d779d1b76d9fcd52dc77779774b8',
     'stable_tree': 'c278d1443495d2a1a07fff2bcfb286b5c35baaea',
     'stable_version': '7.2.9',
@@ -74,6 +74,18 @@ TARGETS[DEFAULT_TARGET] = {
     'va_clock_order_patch': {
         'file': 'patches/linux/7.2.9/0005-asoc-va-dmic-clock-before-filter.patch',
         'sha256': 'b59ddf79d3c2a7ce06d4759b89aae3bfba111a4cdc8a50a92b4f933bd9f32f6e',
+    },
+    'gcv2_backend_patch': {
+        'file': 'patches/linux/7.2.9/0006-drm-msm-dpu-gcv2-regdma-backend.patch',
+        'sha256': '56d645402bfa91fa653851b044a98b46066aa84acfa200c2bf5c74a95ed471c9',
+    },
+    'gcv2_catalog_patch': {
+        'file': 'patches/linux/7.2.9/0007-drm-sm8750-gcv2-catalog.patch',
+        'sha256': '97216158548a824b3d1cfef3ebfb19f9aa9d50483a3cf5fad04556f442708e42',
+    },
+    'dsi_stop_order_patch': {
+        'file': 'patches/linux/7.2.9/0008-dsi-bonded-stop-slave-first.patch',
+        'sha256': 'efff8c2a9782bae290697423d071e7d98b60c02c88738421fb9a76b4b3f5c4c4',
     },
 }
 
@@ -238,7 +250,7 @@ def write_manifest(path, record):
 
 def update_patches(root, policy):
     result = {}
-    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch', 'va_clock_order_patch'):
+    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch', 'va_clock_order_patch', 'gcv2_backend_patch', 'gcv2_catalog_patch', 'dsi_stop_order_patch'):
         if key not in policy:
             continue
         row = policy[key]
@@ -285,6 +297,9 @@ def merge_stable(work, policy, paths):
         ('panel_depth_patch', 'fix(drm): report Piano DSC color depth', 'panel_depth_commit'),
         ('flash_cleanup_patch', 'fix(leds): correct qcom flash cleanup indexing', 'flash_cleanup_commit'),
         ('va_clock_order_patch', 'fix(asoc): start VA DMIC clocks before filter settling', 'va_clock_order_commit'),
+        ('gcv2_backend_patch', 'feat(drm): add GCv2 REGDMA backend', 'gcv2_backend_commit'),
+        ('gcv2_catalog_patch', 'feat(drm): bind SM8750 GCv2 capability', 'gcv2_catalog_commit'),
+        ('dsi_stop_order_patch', 'fix(drm): stop bonded DSI slave before clock master', 'dsi_stop_order_commit'),
     ):
         if key not in paths:
             continue

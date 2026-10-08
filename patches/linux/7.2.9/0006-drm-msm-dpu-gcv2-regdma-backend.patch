@@ -1,0 +1,990 @@
+From: Project SunUEFI
+Subject: [RFC PATCH] drm/msm/dpu: wire GC v2 through REGDMA v3
+
+Use optional REGDMA resources and real DPU GPUVM GEM mappings. Submit
+standard gamma in regular 10-bit GC v2 mode, poll real queue completion,
+and only reuse/unpin after completion or acknowledged reset. Broadcast
+assigned split-display DSPPs once and gate their flushes on success.
+
+Quiesce runs before outer KMS unregister/uninit and machine shutdown,
+while all workers/IRQ/clock/MMIO/VM owners exist. An unknown active queue
+holds that exit call waiting for real reset acknowledgement; a void
+local destroy return is not presented as a veto of outer devres cleanup.
+Runtime-PM/module votes do not pretend to stop component unbind/reboot.
+
+The SM8750 GC catalog address remains unset for reviewed default-kernel
+hardware enablement. This is not a hardware-test claim. The actual
+Piano composed DT also needs piano-regdma-resource.dtso after the shared
+display overlay; editing upstream sm8750.dtsi alone is not that input.
+High-precision LUT extension is not supported.
+
+--- /dev/null
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.c
+@@ -0,0 +1,77 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* GC v2 command preparation for standard DRM gamma LUTs.
++ * Register layout and REGDMA v3 opcodes follow Qualcomm's published driver.
++ */
++#include <linux/bitops.h>
++#include <linux/byteorder/generic.h>
++#include <linux/errno.h>
++
++#include "dpu_hwio.h"
++#include "dpu_hw_catalog.h"
++#include "dpu_hw_lm.h"
++#include "dpu_hw_dspp.h"
++#include "dpu_hw_gcv2.h"
++
++#define REGDMA_V3_DECODE_SELECT 0x18180114
++#define REGDMA_SINGLE_WRITE BIT(28)
++#define REGDMA_HW_INDEX_WRITE (BIT(28) | BIT(29))
++#define GC_ENABLE BIT(0)
++#define GC_DATA_OFFSET 0x04
++#define GC_INDEX_OFFSET 0x08
++#define GC_CHANNEL_STRIDE 0x08
++#define GC_LUT_SWAP_OFFSET 0x1c
++
++int dpu_hw_gcv2_pack_regdma(__le32 *words, size_t capacity,
++			  u32 dspp_mask, const struct dpu_hw_gc_lut *lut)
++{
++	const u32 *channels[3];
++	unsigned int channel, entry, n = 0;
++	unsigned int required = lut ? DPU_GCV2_LUT_WORDS : 4;
++
++	if (!words || !dspp_mask || (dspp_mask & ~DPU_GCV2_DSPP_MASK))
++		return -EINVAL;
++	if (capacity < required)
++		return -ENOSPC;
++	/* GC v2 supports a distinct extended precision mode. Its extra bits
++	 * are not represented by dpu_hw_gc_lut, so never silently enable it.
++	 */
++	if (lut && lut->flags)
++		return -EOPNOTSUPP;
++
++	words[n++] = cpu_to_le32(REGDMA_V3_DECODE_SELECT);
++	words[n++] = cpu_to_le32(dspp_mask);
++	if (!lut) {
++		words[n++] = cpu_to_le32(REGDMA_SINGLE_WRITE | DPU_GCV2_REG_BASE);
++		words[n++] = 0;
++		return n;
++	}
++
++	/* dpu_crtc's standard conversion packs the green, blue, red channel
++	 * LUTs as pairs of 10-bit values in 512 words. Keep that exact order.
++	 */
++	channels[0] = lut->c0;
++	channels[1] = lut->c1;
++	channels[2] = lut->c2;
++	for (channel = 0; channel < 3; channel++) {
++		u32 offset = DPU_GCV2_REG_BASE + channel * GC_CHANNEL_STRIDE;
++
++		words[n++] = cpu_to_le32(REGDMA_SINGLE_WRITE | (offset + GC_INDEX_OFFSET));
++		words[n++] = 0;
++		/* HW-index writes repeatedly address the LUT port. An ordinary
++		 * auto-address-increment or MMIO loop is a different operation.
++		 */
++		words[n++] = cpu_to_le32(REGDMA_HW_INDEX_WRITE | (offset + GC_DATA_OFFSET));
++		words[n++] = cpu_to_le32(PGC_TBL_LEN);
++		for (entry = 0; entry < PGC_TBL_LEN; entry++)
++			words[n++] = cpu_to_le32(channels[channel][entry]);
++	}
++	words[n++] = cpu_to_le32(REGDMA_SINGLE_WRITE |
++				(DPU_GCV2_REG_BASE + GC_LUT_SWAP_OFFSET));
++	words[n++] = cpu_to_le32(BIT(0));
++	words[n++] = cpu_to_le32(REGDMA_SINGLE_WRITE | DPU_GCV2_REG_BASE);
++	/* The first backend uses the genuine regular 10-bit GC v2 mode.
++	 * BIT(2), GC_HIGHPREC_EN, deliberately stays clear.
++	 */
++	words[n++] = cpu_to_le32(GC_ENABLE);
++	return n;
++}
+--- /dev/null
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.h
+@@ -0,0 +1,22 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _DPU_HW_GCV2_H
++#define _DPU_HW_GCV2_H
++
++#include <linux/bits.h>
++#include <linux/types.h>
++
++struct dpu_hw_gc_lut;
++
++/* DSPP selection bits in the actual REGDMA v3 command stream. */
++#define DPU_GCV2_DSPP_MASK GENMASK(20, 17)
++#define DPU_GCV2_REG_BASE 0x17c0
++#define DPU_GCV2_LUT_WORDS (2 + 3 * (2 + 2 + 512) + 2 + 2)
++
++/* This prepares CPU data only: no mapping, MMIO, queueing or DMA lifetime.
++ * Return the command length in dwords or a negative error. The caller must
++ * keep the mapped command buffer pinned until REGDMA completion or reset.
++ */
++int dpu_hw_gcv2_pack_regdma(__le32 *words, size_t capacity,
++			  u32 dspp_mask, const struct dpu_hw_gc_lut *lut);
++
++#endif
+--- /dev/null
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
+@@ -0,0 +1,333 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* REGDMA v3 DB queue transport, based on Qualcomm's published register ABI. */
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/ioport.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/sizes.h>
++#include <linux/slab.h>
++
++#include "msm_drv.h"
++#include "msm_gem.h"
++#include "dpu_hw_gcv2.h"
++#include "dpu_hw_vbif.h"
++#include "dpu_kms.h"
++#include "dpu_hw_dspp.h"
++#include "dpu_lutdma.h"
++
++#define REGDMA_V3 0x30000
++#define REGDMA_OPMODE 0x4
++#define REGDMA_ERROR_STATUS 0x170
++#define REGDMA_ERROR_CLEAR 0x1b0
++#define REGDMA_ERROR_MASK (GENMASK(2, 0) | GENMASK(19, 16))
++#define REGDMA_PMU_CLK_CTRL 0x1f0
++#define REGDMA_PMU_FORCE (BIT(0) | BIT(16))
++#define REGDMA_QUEUE_STRIDE 0x1000
++#define REGDMA_DONE_STATUS 0x44
++#define REGDMA_DONE_CLEAR 0x48
++#define REGDMA_QUEUE_RESET 0x54
++#define REGDMA_DONE BIT(3)
++#define CTL_REGDMA_TRIGGER 0xd4
++#define REGDMA_WRITE BIT(22)
++#define REGDMA_LAST BIT(24)
++#define REGDMA_CMD_WORDS GENMASK(13, 0)
++#define REGDMA_ALIGN 256
++#define REGDMA_BUFFER_SIZE SZ_8K
++#define REGDMA_LAST_OFFSET ALIGN(DPU_GCV2_LUT_WORDS * sizeof(u32), REGDMA_ALIGN)
++
++struct dpu_lutdma {
++	struct dpu_kms *kms;
++	const struct dpu_lutdma_cfg *cfg;
++	void __iomem *mmio;
++	resource_size_t start, size;
++	struct drm_gem_object *bo;
++	struct drm_gpuvm *vm;
++	__le32 *commands;
++	u64 iova;
++	struct mutex lock;
++	bool faulted, inflight, module_held, pm_held, clock_changed;
++	u32 active_ctl, pmu_before;
++};
++
++bool dpu_lutdma_ready(struct dpu_lutdma *dma)
++{
++	return dma && dma->bo && !READ_ONCE(dma->faulted);
++}
++
++bool dpu_lutdma_idle(struct dpu_lutdma *dma)
++{
++	return !dma || !READ_ONCE(dma->inflight);
++}
++
++static void __iomem *queue_reg(struct dpu_lutdma *dma, u32 ctl, u32 offset)
++{
++	/* CTL_0 == 1 in both the downstream ABI and this driver. */
++	return dma->mmio + dma->cfg->db_base + ctl * REGDMA_QUEUE_STRIDE + offset;
++}
++
++static int queue_reset(struct dpu_lutdma *dma, u32 ctl)
++{
++	u32 value;
++
++	writel(BIT(0), dma->mmio + dma->cfg->db_base + REGDMA_OPMODE);
++	writel(BIT(0), queue_reg(dma, ctl, REGDMA_QUEUE_RESET));
++	return readl_poll_timeout(queue_reg(dma, ctl, REGDMA_QUEUE_RESET), value,
++				  !value, 10, 2000);
++}
++
++static int clocks_get(struct dpu_lutdma *dma)
++{
++	struct dpu_hw_mdp *mdp = dma->kms->hw_mdp;
++	int ret;
++
++	ret = pm_runtime_resume_and_get(&dma->kms->pdev->dev);
++	if (ret < 0)
++		return ret;
++	dma->pm_held = true;
++	dma->clock_changed = mdp->ops.setup_clk_force_ctrl(mdp, dma->cfg->clk_ctrl, true);
++	dma->pmu_before = readl(dma->mmio + dma->cfg->db_base + REGDMA_PMU_CLK_CTRL);
++	writel(dma->pmu_before | REGDMA_PMU_FORCE,
++	       dma->mmio + dma->cfg->db_base + REGDMA_PMU_CLK_CTRL);
++	wmb();
++	return 0;
++}
++
++static void clocks_put(struct dpu_lutdma *dma)
++{
++	/* Only called after completion/reset or before any descriptor was sent. */
++	writel(dma->pmu_before, dma->mmio + dma->cfg->db_base + REGDMA_PMU_CLK_CTRL);
++	if (dma->clock_changed)
++		dma->kms->hw_mdp->ops.setup_clk_force_ctrl(dma->kms->hw_mdp,
++							 dma->cfg->clk_ctrl, false);
++	dma->clock_changed = false;
++	if (dma->pm_held) {
++		pm_runtime_put(&dma->kms->pdev->dev);
++		dma->pm_held = false;
++	}
++}
++
++static void setup_qos(struct dpu_lutdma *dma)
++{
++	struct dpu_hw_vbif *vbif = dma->kms->hw_vbif;
++	int level;
++
++	/* Dedicated LUTDMA client policy from the SM8750 hardware catalog. */
++	for (level = 0; level < ARRAY_SIZE(dma->cfg->qos); level++)
++		vbif->ops.set_qos_remap(vbif, dma->cfg->xin_id, level, dma->cfg->qos[level]);
++	vbif->ops.set_limit_conf(vbif, dma->cfg->xin_id, true, dma->cfg->read_ot_limit);
++}
++
++static void retire_reference(struct dpu_lutdma *dma)
++{
++	WRITE_ONCE(dma->inflight, false);
++	clocks_put(dma);
++	if (dma->module_held) {
++		module_put(THIS_MODULE);
++		dma->module_held = false;
++	}
++}
++
++int dpu_lutdma_submit_gc(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
++			u32 dspp_mask, const struct dpu_hw_gc_lut *lut)
++{
++	u32 done, errors, descriptor;
++	__le32 *last;
++	int words, ret;
++
++	might_sleep(); /* Called by the process-context atomic commit, never IRQ. */
++	if (!dma || !ctl || ctl->idx < CTL_0 || ctl->idx >= CTL_MAX ||
++	    !dspp_mask || (dspp_mask & ~DPU_GCV2_DSPP_MASK))
++		return -EINVAL;
++	mutex_lock(&dma->lock);
++	if (!dpu_lutdma_ready(dma)) {
++		ret = -EIO;
++		goto unlock;
++	}
++	words = dpu_hw_gcv2_pack_regdma(dma->commands, REGDMA_LAST_OFFSET / sizeof(u32),
++				       dspp_mask, lut);
++	if (words < 0) {
++		ret = words;
++		goto unlock;
++	}
++	ret = clocks_get(dma);
++	if (ret)
++		goto unlock;
++	setup_qos(dma);
++	if (!try_module_get(THIS_MODULE)) {
++		ret = -ENODEV;
++		clocks_put(dma);
++		goto unlock;
++	}
++	dma->module_held = true;
++	last = (__le32 *)((u8 *)dma->commands + REGDMA_LAST_OFFSET);
++	last[0] = cpu_to_le32(0x18180114);
++	last[1] = 0; /* Real downstream final descriptor: decode-select no blocks. */
++	dma_wmb(); /* WC GEM writes must precede descriptor publication. */
++	writel(BIT(0), dma->mmio + dma->cfg->db_base + REGDMA_OPMODE);
++	writel(REGDMA_ERROR_MASK, dma->mmio + dma->cfg->db_base + REGDMA_ERROR_CLEAR);
++	writel(REGDMA_DONE, queue_reg(dma, ctl->idx, REGDMA_DONE_CLEAR));
++	dma->active_ctl = ctl->idx;
++	WRITE_ONCE(dma->inflight, true);
++	drm_dbg_kms(dma->kms->dev, "GC2 REGDMA ctl=%u dspp_mask=%#x iova=%#llx words=%d\n",
++		    ctl->idx, dspp_mask, dma->iova, words);
++	writel(lower_32_bits(dma->iova), queue_reg(dma, ctl->idx, 0));
++	writel(REGDMA_WRITE | (words & REGDMA_CMD_WORDS), queue_reg(dma, ctl->idx, 4));
++	wmb();
++	writel(lower_32_bits(dma->iova + REGDMA_LAST_OFFSET), queue_reg(dma, ctl->idx, 0));
++	descriptor = REGDMA_WRITE | REGDMA_LAST | 2;
++	writel(descriptor, queue_reg(dma, ctl->idx, 4));
++	wmb();
++	DPU_REG_WRITE(&ctl->hw, CTL_REGDMA_TRIGGER, BIT(0));
++	ret = readl_poll_timeout(queue_reg(dma, ctl->idx, REGDMA_DONE_STATUS), done,
++				 done & REGDMA_DONE, 10, 20000);
++	errors = readl(dma->mmio + dma->cfg->db_base + REGDMA_ERROR_STATUS) & REGDMA_ERROR_MASK;
++	if (ret || errors) {
++		WRITE_ONCE(dma->faulted, true);
++		drm_err(dma->kms->dev, "GC2 REGDMA failure ctl=%u done=%#x error=%#x ret=%d\n",
++			ctl->idx, done, errors, ret);
++		ret = ret ? ret : -EIO;
++		if (queue_reset(dma, ctl->idx)) {
++			drm_err(dma->kms->dev, "REGDMA reset unconfirmed; retaining GEM/VM/clocks\n");
++			goto unlock;
++		}
++	} else {
++		drm_dbg_kms(dma->kms->dev, "GC2 REGDMA completed ctl=%u status=%#x\n", ctl->idx, done);
++	}
++	retire_reference(dma);
++unlock:
++	mutex_unlock(&dma->lock);
++	return ret;
++}
++
++struct dpu_lutdma *dpu_lutdma_init(struct dpu_kms *kms)
++{
++	const struct dpu_lutdma_cfg *cfg = kms->catalog->lutdma;
++	struct dpu_lutdma *dma;
++	struct resource *resource;
++	struct dpu_hw_vbif *vbif = kms->hw_vbif;
++	int ret, ctl;
++
++	if (!cfg)
++		return NULL;
++	resource = platform_get_resource_byname(kms->pdev, IORESOURCE_MEM, "regdma");
++	if (!resource)
++		resource = platform_get_resource_byname(kms->pdev, IORESOURCE_MEM, "regdma_phys");
++	if (!resource)
++		return NULL; /* Optional resource: no initialized GC2 backend. */
++	if (cfg->version != REGDMA_V3 || resource_size(resource) < 0x7000 ||
++	    cfg->clk_ctrl <= DPU_CLK_CTRL_NONE || cfg->clk_ctrl >= DPU_CLK_CTRL_MAX ||
++	    !kms->catalog->mdp->clk_ctrls[cfg->clk_ctrl].reg_off ||
++	    !kms->base.vm || !kms->hw_mdp || !kms->hw_mdp->ops.setup_clk_force_ctrl ||
++	    !vbif || !vbif->ops.set_qos_remap || !vbif->ops.set_limit_conf)
++		return ERR_PTR(-EINVAL);
++	dma = kzalloc_obj(*dma);
++	if (!dma)
++		return ERR_PTR(-ENOMEM);
++	dma->kms = kms;
++	dma->cfg = cfg;
++	dma->start = resource->start;
++	dma->size = resource_size(resource);
++	mutex_init(&dma->lock);
++	if (!request_mem_region(dma->start, dma->size, "dpu-regdma")) {
++		ret = -EBUSY;
++		goto free_dma;
++	}
++	dma->mmio = ioremap(dma->start, dma->size);
++	if (!dma->mmio) {
++		ret = -ENOMEM;
++		goto release_region;
++	}
++	dma->bo = msm_gem_new(kms->dev, REGDMA_BUFFER_SIZE, MSM_BO_WC);
++	if (IS_ERR(dma->bo)) {
++		ret = PTR_ERR(dma->bo);
++		goto unmap;
++	}
++	dma->vm = drm_gpuvm_get(kms->base.vm);
++	ret = msm_gem_get_and_pin_iova_range(dma->bo, dma->vm, &dma->iova,
++					    PAGE_SIZE, (u64)U32_MAX + 1);
++	if (ret)
++		goto put_bo;
++	if ((dma->iova & (REGDMA_ALIGN - 1)) || dma->iova > (u64)U32_MAX + 1 - REGDMA_BUFFER_SIZE) {
++		ret = -ERANGE;
++		goto unpin;
++	}
++	dma->commands = msm_gem_get_vaddr(dma->bo);
++	if (IS_ERR(dma->commands)) {
++		ret = PTR_ERR(dma->commands);
++		goto unpin;
++	}
++	memset(dma->commands, 0, REGDMA_BUFFER_SIZE);
++	ret = clocks_get(dma);
++	if (ret)
++		goto put_vaddr;
++	setup_qos(dma);
++	/* A reset acknowledgement is required before advertising this engine.
++	 * No descriptor using our GEM has been sent during initialization.
++	 */
++	for (ctl = CTL_0; ctl < CTL_MAX; ctl++) {
++		ret = queue_reset(dma, ctl);
++		if (ret)
++			break;
++	}
++	clocks_put(dma);
++	if (ret)
++		goto put_vaddr;
++	return dma;
++put_vaddr:
++	msm_gem_put_vaddr(dma->bo);
++unpin:
++	msm_gem_unpin_iova(dma->bo, dma->vm);
++put_bo:
++	drm_gpuvm_put(dma->vm);
++	drm_gem_object_put(dma->bo);
++unmap:
++	iounmap(dma->mmio);
++release_region:
++	release_mem_region(dma->start, dma->size);
++free_dma:
++	kfree(dma);
++	return ERR_PTR(ret);
++}
++
++void dpu_lutdma_quiesce(struct dpu_lutdma *dma)
++{
++	if (!dma)
++		return;
++	mutex_lock(&dma->lock);
++	WRITE_ONCE(dma->faulted, true);
++	/* The outer unbind path cannot be vetoed by a void destroy callback.
++	 * It must wait here while the KMS, clock, MMIO, VM and GEM owners all
++	 * still exist. Only the actual active queue is reset. No workqueue
++	 * is flushed under this mutex: waiting commit workers are released
++	 * with -EIO after confirmed stop.
++	 */
++	while (dma->inflight) {
++		if (!queue_reset(dma, dma->active_ctl)) {
++			retire_reference(dma);
++			break;
++		}
++		drm_err_ratelimited(dma->kms->dev,
++			"REGDMA ctl=%u stop unconfirmed; teardown waits with mappings retained\n",
++			dma->active_ctl);
++		msleep(100);
++	}
++	mutex_unlock(&dma->lock);
++}
++
++void dpu_lutdma_destroy(struct dpu_lutdma *dma)
++{
++	if (!dma)
++		return;
++	dpu_lutdma_quiesce(dma);
++	mutex_lock(&dma->lock);
++	msm_gem_kernel_put(dma->bo, dma->vm);
++	drm_gpuvm_put(dma->vm);
++	iounmap(dma->mmio);
++	release_mem_region(dma->start, dma->size);
++	mutex_unlock(&dma->lock);
++	kfree(dma);
++}
+--- /dev/null
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h
+@@ -0,0 +1,23 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _DPU_LUTDMA_H
++#define _DPU_LUTDMA_H
++
++#include <linux/types.h>
++
++struct dpu_kms;
++struct dpu_lutdma;
++struct dpu_hw_ctl;
++struct dpu_hw_gc_lut;
++
++struct dpu_lutdma *dpu_lutdma_init(struct dpu_kms *kms);
++bool dpu_lutdma_ready(struct dpu_lutdma *dma);
++bool dpu_lutdma_idle(struct dpu_lutdma *dma);
++void dpu_lutdma_quiesce(struct dpu_lutdma *dma);
++int dpu_lutdma_submit_gc(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
++			u32 dspp_mask, const struct dpu_hw_gc_lut *lut);
++/* Quiesces before freeing. An unconfirmed active queue never returns to
++ * the outer uninit/shutdown path; it keeps all dependencies alive.
++ */
++void dpu_lutdma_destroy(struct dpu_lutdma *dma);
++
++#endif
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.c
+@@ -9,6 +9,7 @@
+ #include "dpu_hw_lm.h"
+ #include "dpu_hw_dspp.h"
+ #include "dpu_kms.h"
++#include "dpu_lutdma.h"
+ 
+ 
+ /* DSPP_PCC */
+@@ -75,28 +76,29 @@
+ 	DPU_REG_WRITE(&ctx->hw, base, PCC_EN);
+ }
+ 
+-static void dpu_setup_dspp_gc(struct dpu_hw_dspp *ctx,
+-		struct dpu_hw_gc_lut *gc_lut)
++static int dpu_setup_dspp_gc(struct dpu_hw_dspp *ctx,
++		struct dpu_hw_gc_lut *gc_lut,
++		struct dpu_hw_ctl *ctl, u32 dspp_mask)
+ {
+ 	int i = 0;
+ 	u32 base, reg;
+ 
+ 	if (!ctx) {
+ 		DRM_ERROR("invalid ctx\n");
+-		return;
++		return -EINVAL;
+ 	}
+ 
+ 	base = ctx->cap->sblk->gc.base;
+ 
+ 	if (!base) {
+ 		DRM_ERROR("invalid ctx %p gc base\n", ctx);
+-		return;
++		return -EINVAL;
+ 	}
+ 
+ 	if (!gc_lut) {
+ 		DRM_DEBUG_DRIVER("disable gc feature\n");
+ 		DPU_REG_WRITE(&ctx->hw, base, GC_DIS);
+-		return;
++		return 0;
+ 	}
+ 
+ 	DPU_REG_WRITE(&ctx->hw, base + GC_C0_INDEX_OFF, 0);
+@@ -113,6 +115,22 @@
+ 
+ 	reg = GC_EN | ((gc_lut->flags & PGC_8B_ROUND) ? GC_8B_ROUND_EN : 0);
+ 	DPU_REG_WRITE(&ctx->hw, base, reg);
++	return 0;
++}
++
++static int dpu_setup_dspp_gcv2(struct dpu_hw_dspp *ctx,
++		struct dpu_hw_gc_lut *lut, struct dpu_hw_ctl *ctl, u32 dspp_mask)
++{
++	return dpu_lutdma_submit_gc(ctx->lutdma, ctl, dspp_mask, lut);
++}
++
++void dpu_hw_dspp_bind_regdma(struct dpu_hw_dspp *ctx, struct dpu_lutdma *dma)
++{
++	if (ctx->cap->sblk->gc.version != 0x20000 ||
++	    ctx->cap->sblk->gc.base != 0x17c0 || !dpu_lutdma_ready(dma))
++		return;
++	ctx->lutdma = dma;
++	ctx->ops.setup_gc = dpu_setup_dspp_gcv2;
+ }
+ 
+ /**
+@@ -144,7 +162,12 @@
+ 	c->cap = cfg;
+ 	if (c->cap->sblk->pcc.base)
+ 		c->ops.setup_pcc = dpu_setup_dspp_pcc;
+-	if (c->cap->sblk->gc.base)
++	/* GC v2 requires REGDMA; do not bind the legacy AHB implementation
++	 * merely because the catalog describes a nonzero register offset.
++	 */
++	if (c->cap->sblk->gc.base &&
++	    (c->cap->sblk->gc.version == 0x10007 ||
++	     c->cap->sblk->gc.version == 0x10008))
+ 		c->ops.setup_gc = dpu_setup_dspp_gc;
+ 
+ 	return c;
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h
+@@ -6,6 +6,8 @@
+ #define _DPU_HW_DSPP_H
+ 
+ struct dpu_hw_dspp;
++struct dpu_hw_ctl;
++struct dpu_lutdma;
+ 
+ /**
+  * struct dpu_hw_pcc_coeff - PCC coefficient structure for each color
+@@ -70,7 +72,8 @@
+ 	 * @ctx: Pointer to dspp context
+ 	 * @gc_lut: Pointer to lut content
+ 	 */
+-	void (*setup_gc)(struct dpu_hw_dspp *ctx, struct dpu_hw_gc_lut *gc_lut);
++	int (*setup_gc)(struct dpu_hw_dspp *ctx, struct dpu_hw_gc_lut *gc_lut,
++			struct dpu_hw_ctl *ctl, u32 dspp_mask);
+ 
+ };
+ 
+@@ -92,6 +95,7 @@
+ 
+ 	/* Ops */
+ 	struct dpu_hw_dspp_ops ops;
++	struct dpu_lutdma *lutdma;
+ };
+ 
+ /**
+@@ -108,5 +112,7 @@
+ 				     const struct dpu_dspp_cfg *cfg,
+ 				     void __iomem *addr);
+ 
++void dpu_hw_dspp_bind_regdma(struct dpu_hw_dspp *ctx, struct dpu_lutdma *dma);
++
+ #endif /*_DPU_HW_DSPP_H */
+ 
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -24,6 +24,7 @@
+ #include <drm/drm_self_refresh_helper.h>
+ 
+ #include "dpu_kms.h"
++#include "dpu_lutdma.h"
+ #include "dpu_hw_lm.h"
+ #include "dpu_hw_ctl.h"
+ #include "dpu_hw_dspp.h"
+@@ -853,11 +854,42 @@
+ 	struct dpu_hw_gc_lut *gc_lut;
+ 	struct dpu_hw_ctl *ctl;
+ 	struct dpu_hw_dspp *dspp;
+-	int i;
++	struct dpu_hw_dspp *gc_master = NULL;
++	u32 gc_mask = 0;
++	int i, ret, gc_mixers = 0, gcv2_ret = 0;
+ 
+ 
+ 	if (!state->color_mgmt_changed && !drm_atomic_crtc_needs_modeset(state))
+ 		return;
++
++	/* GC2 uses the downstream broadcast programming model: submit once
++	 * for every assigned DSPP, then stage both flushes only after success.
++	 * Independent submissions could leave split-display halves unequal.
++	 */
++	for (i = 0; i < cstate->num_mixers; i++) {
++		dspp = mixer[i].hw_dspp;
++		if (dspp && dspp->lutdma && dspp->ops.setup_gc) {
++			if (!gc_master)
++				gc_master = dspp;
++			gc_mask |= BIT(17 + dspp->idx - DSPP_0);
++			gc_mixers++;
++		}
++	}
++	if (gc_master) {
++		gc_lut = NULL;
++		if (gc_mixers != cstate->num_mixers) {
++			gcv2_ret = -EINVAL;
++		} else if (state->gamma_lut) {
++			gc_lut = kzalloc_obj(*gc_lut);
++			if (!gc_lut)
++				gcv2_ret = -ENOMEM;
++			else
++				_dpu_crtc_get_gc_lut(state, gc_lut);
++		}
++		if (!gcv2_ret)
++			gcv2_ret = gc_master->ops.setup_gc(gc_master, gc_lut, mixer[0].lm_ctl, gc_mask);
++		kfree(gc_lut);
++	}
+ 
+ 	for (i = 0; i < cstate->num_mixers; i++) {
+ 		ctl = mixer[i].lm_ctl;
+@@ -880,15 +912,24 @@
+ 		}
+ 
+ 		if (dspp->ops.setup_gc) {
+-			if (!state->gamma_lut) {
+-				dspp->ops.setup_gc(dspp, NULL);
++			if (dspp->lutdma) {
++				ret = gcv2_ret;
++			} else if (!state->gamma_lut) {
++				ret = dspp->ops.setup_gc(dspp, NULL, ctl, 0);
+ 			} else {
+ 				gc_lut = kzalloc_obj(*gc_lut);
+ 				if (!gc_lut)
+ 					continue;
+ 				_dpu_crtc_get_gc_lut(state, gc_lut);
+-				dspp->ops.setup_gc(dspp, gc_lut);
++				ret = dspp->ops.setup_gc(dspp, gc_lut, ctl, 0);
+ 				kfree(gc_lut);
++			}
++
++			if (ret) {
++				drm_err(crtc->dev, "GC programming failed on DSPP%u: %d\n", dspp->idx, ret);
++				if (state->event && state->event->base.fence)
++					dma_fence_set_error(state->event->base.fence, ret);
++				continue;
+ 			}
+ 
+ 			/* stage config flush mask */
+@@ -1533,6 +1574,15 @@
+ 	int rc = 0;
+ 
+ 	bool needs_dirtyfb = dpu_crtc_needs_dirtyfb(crtc_state);
++	struct dpu_kms *kms = _dpu_crtc_get_kms(crtc);
++
++	/* A hardware failure latches the engine unusable. Do not accept a
++	 * later gamma update as though its transport were still initialized.
++	 */
++	if (crtc_state->color_mgmt_changed && kms->lutdma &&
++	    !dpu_lutdma_ready(kms->lutdma))
++		return -EIO;
++
+ 
+ 	/* don't reallocate resources if only ACTIVE has beeen changed */
+ 	if (crtc_state->mode_changed || crtc_state->connectors_changed ||
+@@ -1920,9 +1970,13 @@
+ 	drm_crtc_helper_add(crtc, &dpu_crtc_helper_funcs);
+ 
+ 	if (dpu_kms->catalog->dspp_count) {
+-		const struct dpu_dspp_cfg *dspp = &dpu_kms->catalog->dspp[0];
+-
+-		if (dspp->sblk->gc.base) {
++		struct dpu_hw_blk *block = dpu_kms->rm.dspp_blks[0];
++		struct dpu_hw_dspp *dspp = block ? to_dpu_hw_dspp(block) : NULL;
++
++		/* Publish the standard property only with an initialized backend.
++		 * A GC v2 catalog entry alone does not provide gamma programming.
++		 */
++		if (dspp && dspp->ops.setup_gc) {
+ 			drm_mode_crtc_set_gamma_size(crtc, DPU_GAMMA_LUT_SIZE);
+ 			drm_crtc_enable_color_mgmt(crtc, 0, true, DPU_GAMMA_LUT_SIZE);
+ 		} else {
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+@@ -33,6 +33,8 @@
+ #include "dpu_formats.h"
+ #include "dpu_hw_vbif.h"
+ #include "dpu_kms.h"
++#include "dpu_hw_dspp.h"
++#include "dpu_lutdma.h"
+ #include "dpu_plane.h"
+ #include "dpu_vbif.h"
+ #include "dpu_writeback.h"
+@@ -888,6 +890,8 @@
+ 
+ static void _dpu_kms_hw_destroy(struct dpu_kms *dpu_kms)
+ {
++	dpu_lutdma_destroy(dpu_kms->lutdma);
++	dpu_kms->lutdma = NULL;
+ 	dpu_kms->hw_intr = NULL;
+ 
+ 	/* safe to call these more than once during shutdown */
+@@ -1064,6 +1068,11 @@
+ 				    "vbif");
+ 
+ 	pm_runtime_put_sync(&dpu_kms->pdev->dev);
++}
++
++static void dpu_kms_quiesce(struct msm_kms *kms)
++{
++	dpu_lutdma_quiesce(to_dpu_kms(kms)->lutdma);
+ }
+ 
+ static const struct msm_kms_funcs kms_funcs = {
+@@ -1080,6 +1089,7 @@
+ 	.complete_commit = dpu_kms_complete_commit,
+ 	.enable_vblank   = dpu_kms_enable_vblank,
+ 	.disable_vblank  = dpu_kms_disable_vblank,
++	.quiesce         = dpu_kms_quiesce,
+ 	.destroy         = dpu_kms_destroy,
+ 	.snapshot        = dpu_kms_mdp_snapshot,
+ #ifdef CONFIG_DEBUG_FS
+@@ -1226,6 +1236,31 @@
+ 
+ 	dpu_kms->hw_vbif = hw;
+ 
++	/* Only initialize when a GC2 catalog entry requests this backend.
++	 * No resource or no acknowledged reset means no GC2 op/property.
++	 */
++	for (int i = 0; i < dpu_kms->catalog->dspp_count; i++) {
++		const struct dpu_dspp_cfg *dspp = &dpu_kms->catalog->dspp[i];
++
++		if (!dspp->sblk->gc.base || dspp->sblk->gc.version != 0x20000)
++			continue;
++		dpu_kms->lutdma = dpu_lutdma_init(dpu_kms);
++		if (IS_ERR(dpu_kms->lutdma)) {
++			drm_warn(dev, "GC2 REGDMA initialization failed: %ld\n",
++				 PTR_ERR(dpu_kms->lutdma));
++			dpu_kms->lutdma = NULL;
++		}
++		break;
++	}
++	if (dpu_lutdma_ready(dpu_kms->lutdma)) {
++		for (int i = 0; i < ARRAY_SIZE(dpu_kms->rm.dspp_blks); i++) {
++			if (dpu_kms->rm.dspp_blks[i])
++				dpu_hw_dspp_bind_regdma(to_dpu_hw_dspp(dpu_kms->rm.dspp_blks[i]),
++							dpu_kms->lutdma);
++		}
++	}
++
++
+ 	/* TODO: use the same max_freq as in dpu_kms_hw_init */
+ 	max_core_clk_rate = dpu_kms_get_clk_rate(dpu_kms, "core");
+ 	if (!max_core_clk_rate) {
+@@ -1437,6 +1472,9 @@
+ 	struct platform_device *pdev = to_platform_device(dev);
+ 	struct msm_drm_private *priv = platform_get_drvdata(pdev);
+ 	struct dpu_kms *dpu_kms = to_dpu_kms(priv->kms);
++
++	if (!dpu_lutdma_idle(dpu_kms->lutdma))
++		return -EBUSY;
+ 
+ 	clk_bulk_disable_unprepare(dpu_kms->num_clocks, dpu_kms->clocks);
+ 
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h
+@@ -56,6 +56,8 @@
+ 
+ extern bool dpu_use_virtual_planes;
+ 
++struct dpu_lutdma;
++
+ struct dpu_kms {
+ 	struct msm_kms base;
+ 	struct drm_device *dev;
+@@ -64,6 +66,7 @@
+ 
+ 	/* io/register spaces: */
+ 	void __iomem *mmio, *vbif;
++	struct dpu_lutdma *lutdma;
+ 
+ 	struct regulator *vdd;
+ 	struct regulator *mmagic;
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
+@@ -712,12 +712,22 @@
+  * @cursor_formats     Supported formats for cursor pipe
+  * @vig_formats        Supported formats for vig pipe
+  */
++struct dpu_lutdma_cfg {
++	u32 version;
++	u32 db_base;
++	u32 xin_id;
++	enum dpu_clk_ctrl_type clk_ctrl;
++	u32 read_ot_limit;
++	u8 qos[8];
++};
++
+ struct dpu_mdss_cfg {
+ 	const struct dpu_mdss_version *mdss_ver;
+ 
+ 	const struct dpu_caps *caps;
+ 
+ 	const struct dpu_mdp_cfg *mdp;
++	const struct dpu_lutdma_cfg *lutdma;
+ 
+ 	u32 ctl_count;
+ 	const struct dpu_ctl_cfg *ctl;
+--- a/drivers/gpu/drm/msm/Makefile
++++ b/drivers/gpu/drm/msm/Makefile
+@@ -89,6 +89,8 @@
+ 	disp/dpu1/dpu_hw_sspp.o \
+ 	disp/dpu1/dpu_hw_sspp_v13.o \
+ 	disp/dpu1/dpu_hw_dspp.o \
++	disp/dpu1/dpu_hw_gcv2.o \
++	disp/dpu1/dpu_lutdma.o \
+ 	disp/dpu1/dpu_hw_merge3d.o \
+ 	disp/dpu1/dpu_hw_top.o \
+ 	disp/dpu1/dpu_hw_util.o \
+--- a/drivers/gpu/drm/msm/msm_kms.c
++++ b/drivers/gpu/drm/msm/msm_kms.c
+@@ -222,6 +222,8 @@
+ 	struct msm_drm_private *priv = platform_get_drvdata(pdev);
+ 	struct drm_device *ddev = priv->dev;
+ 
++	if (priv->kms->funcs && priv->kms->funcs->quiesce)
++		priv->kms->funcs->quiesce(priv->kms);
+ 	drm_atomic_helper_shutdown(ddev);
+ }
+ 
+@@ -234,6 +236,9 @@
+ 	int i;
+ 
+ 	BUG_ON(!kms);
++
++	if (kms->funcs && kms->funcs->quiesce)
++		kms->funcs->quiesce(kms);
+ 
+ 	/* We must cancel and cleanup any pending vblank enable/disable
+ 	 * work before msm_irq_uninstall() to avoid work re-enabling an
+@@ -373,8 +378,12 @@
+ 	 * msm_drm_init, drm_dev->registered is used as an indicator that the
+ 	 * shutdown will be successful.
+ 	 */
+-	if (drm && drm->registered && priv->kms)
++	if (drm && drm->registered && priv->kms) {
++		/* Do not proceed to other devices' shutdown with owned DMA active. */
++		if (priv->kms->funcs && priv->kms->funcs->quiesce)
++			priv->kms->funcs->quiesce(priv->kms);
+ 		drm_atomic_helper_shutdown(drm);
++	}
+ }
+ 
+ void msm_drm_kms_post_init(struct device *dev)
+--- a/drivers/gpu/drm/msm/msm_kms.h
++++ b/drivers/gpu/drm/msm/msm_kms.h
+@@ -104,6 +104,10 @@
+ 	/* misc: */
+ 	long (*round_pixclk)(struct msm_kms *kms, unsigned long rate,
+ 			struct drm_encoder *encoder);
++	/* Called in process context before KMS uninit or machine shutdown.
++	 * Must return only after device DMA no longer accesses its buffers.
++	 */
++	void (*quiesce)(struct msm_kms *kms);
+ 	/* cleanup: */
+ 	void (*destroy)(struct msm_kms *kms);
+ 
+--- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
+@@ -17,6 +17,16 @@
+ 	.has_3d_merge = true,
+ 	.max_linewidth = 8192,
+ 	.pixel_ram_size = DEFAULT_PIXEL_RAM_SIZE,
++};
++
++/* REGDMA3 DB block and client policy from the SM8750 hardware layout. */
++static const struct dpu_lutdma_cfg sm8750_lutdma = {
++	.version = 0x30000,
++	.db_base = 0,
++	.xin_id = 7,
++	.clk_ctrl = DPU_CLK_CTRL_REG_DMA,
++	.read_ot_limit = 40,
++	.qos = { 4, 4, 4, 4, 5, 5, 5, 5 },
+ };
+ 
+ static const struct dpu_mdp_cfg sm8750_mdp = {
+@@ -464,6 +474,7 @@
+ 	.mdss_ver = &sm8750_mdss_ver,
+ 	.caps = &sm8750_dpu_caps,
+ 	.mdp = &sm8750_mdp,
++	.lutdma = &sm8750_lutdma,
+ 	.cdm = &dpu_cdm_5_x,
+ 	.ctl_count = ARRAY_SIZE(sm8750_ctl),
+ 	.ctl = sm8750_ctl,
+--- a/arch/arm64/boot/dts/qcom/sm8750.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+@@ -3360,9 +3360,11 @@
+ 			mdss_mdp: display-controller@ae01000 {
+ 				compatible = "qcom,sm8750-dpu";
+ 				reg = <0x0 0x0ae01000 0x0 0x93000>,
+-				      <0x0 0x0aeb0000 0x0 0x2008>;
++				      <0x0 0x0aeb0000 0x0 0x2008>,
++				      <0x0 0x0af80000 0x0 0x7000>;
+ 				reg-names = "mdp",
+-					    "vbif";
++					    "vbif",
++					    "regdma";
+ 
+ 				interrupts-extended = <&mdss 0>;
+ 
+--- a/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml
++++ b/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml
+@@ -29,14 +29,18 @@
+           - const: qcom,sa8775p-dpu
+ 
+   reg:
++    minItems: 2
+     items:
+       - description: Address offset and size for mdp register set
+       - description: Address offset and size for vbif register set
++      - description: Optional REGDMA register set (SM8750)
+ 
+   reg-names:
++    minItems: 2
+     items:
+       - const: mdp
+       - const: vbif
++      - const: regdma
+ 
+   clocks:
+     items:
+@@ -53,6 +57,19 @@
+       - const: lut
+       - const: core
+       - const: vsync
++
++allOf:
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: qcom,sm8750-dpu
++    else:
++      properties:
++        reg:
++          maxItems: 2
++        reg-names:
++          maxItems: 2
+ 
+ required:
+   - compatible

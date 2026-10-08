@@ -74,6 +74,7 @@ PY_RELEASE_SOURCE
       --kernel artifacts/kernels/release-7.2.9 --dtb vendor/piano-linux/board.dtb \
       --cpu-model-overlay linux/dts/piano-cpu-model.dtso --panel-vendor auto \
       --dtb-overlay linux/dts/piano-board-identity.dtso \
+      --dtb-overlay linux/dts/piano-regdma-resource.dtso \
       --dtb-overlay linux/dts/piano-audio-dmic-clock.dtso \
       --dtb-overlay linux/dts/piano-camera-flash.dtso \
       --initramfs build/distros/release-7.2.9/initramfs/initramfs.cpio.gz \

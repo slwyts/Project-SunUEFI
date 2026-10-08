@@ -7,10 +7,11 @@
     "stable_source": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
     "stable_commit": "5fce161649b4d779d1b76d9fcd52dc77779774b8",
     "stable_version": "7.2.9",
-    "target_tree": "7d2ad26d416bec0d052059727491a37ac7536f0b",
+    "target_tree": "162d8ccbe21d8edbfff1685b8c6ff7ad426dfffd",
     "cpu_model_overlay": "linux/dts/piano-cpu-model.dtso",
     "additional_dtb_overlays": [
       "linux/dts/piano-board-identity.dtso",
+      "linux/dts/piano-regdma-resource.dtso",
       "linux/dts/piano-audio-dmic-clock.dtso",
       "linux/dts/piano-camera-flash.dtso"
     ],
