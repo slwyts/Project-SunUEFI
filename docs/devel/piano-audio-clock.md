@@ -19,8 +19,33 @@ g086 实机已读回该属性为2400000；这确认配置已应用，不代表�
 现有统计按一秒分块：DMIC2/gain84 的首块 peak=13362、RMS=310，而稳定背景
 RMS 约3.8；gain98 首块有41个削顶样本、均值约62，后续没有削顶。这说明低增益
 时也有启动大峰值，但不能从分块数据确定发生在第几个样本或全归因于 codec。
-下一窗口先输出 PCM 前100ms的小窗 DC/RMS/peak/clip 时序，区分首包 DSP/DMA
-数据与物理开流过渡；不保存 PCM，不先裁掉首包或加入软件滤波。
+Root 随后已输出前100ms的小窗统计，见下段；实际硬件启用／period时序仍待
+关联。不保存 PCM，不先裁掉首包或加入软件滤波。
+
+45 普通重启后的新统计在 `startup-45b.json`：75个削顶样本连续为 frame0…74，
+最后一个时间为1.5417ms（75样本总跨度1.5625ms）。首1ms的48样本全部为
++32767；之后仍为正DC，2/3/4ms峰值分别21241/8241/3197，约12ms降至量化
+底部。对实际3…7ms的小窗DC均值取log线性拟合，时间常数约1.055ms，等效
+单极点约150.8Hz，与驱动开流强制的150Hz HPF吻合。这支持“正阶跃经HPF
+衰减”的解释，不像随机首包的无规则噪声；但首个DSP/DMA包也可能装着这段
+已有的codec/filter过渡，缺实际硬件时间戳和period边界，仍不能排除首包因素。
+
+原RFC不能据此认定足够：关流reset不会初始化首次冷开，PRE mute之后仍由
+DAI立即解除；它没有新增DMIC启动后的有效mute窗口。优先最小正常方案是
+将真实DMIC clock事件放到正确DAPM supply顺序，早于DEC/filter初始化，保留
+已有HPF等待和信号路径，再配合PRE mute。若还需unmute/reset稳定动作，应在
+完整DAPM之后、仅对刚上电DEC处理，依据OEM时序；不能在seq7盲等或软件丢帧。
+本轮仅更新分析/文档，`startup-45b-analysis.json` 记录拟合与上述边界，未改RFC
+或当前内核实现。
+
+随后默认 release 已接入
+[DMIC clock 顺序补丁](../../patches/linux/7.2.9/0005-asoc-va-dmic-clock-before-filter.patch)：
+八个原 ADC 保留，实际 clock event 改为各自的 DAPM supply，并显式依赖
+`VA_MCLK`；supply 在 DEC MUX 前上电、后断电。补齐 PRE_PMU/PRE_PMD 的
+硬件 PGA mute，保留共享 clock 计数、原信号路线和现有 HPF 等待，不加 reset
+或新延时。准备器已复现 tree `7d2ad26d416bec0d052059727491a37ac7536f0b`，
+commit `a8c9650eb32038c40a5f5934bb64a813dff0044f`；当前正在完整构建，
+尚未部署或证明启动冲击消失。此前 RFC 仍只保留为分析草案。
 
 当前 `sound/soc/codecs/lpass-va-macro.c:va_macro_enable_dec()` 的 PRE_PMU
 只留“Enable TX PGA Mute”注释，未写 `TX_PATH_CTL` 的 PGA mute BIT4；widget

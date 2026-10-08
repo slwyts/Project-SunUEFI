@@ -41,7 +41,7 @@ TARGETS[DEFAULT_TARGET] = {
     **TARGETS['kernel69'],
     'series_target': 'kernel69',
     'patch_tree': TARGETS['kernel69']['target_tree'],
-    'target_tree': 'b8f07b7e9f9efb0cece6dc465f7052fc5d7079a8',
+    'target_tree': '7d2ad26d416bec0d052059727491a37ac7536f0b',
     'stable_commit': '5fce161649b4d779d1b76d9fcd52dc77779774b8',
     'stable_tree': 'c278d1443495d2a1a07fff2bcfb286b5c35baaea',
     'stable_version': '7.2.9',
@@ -70,6 +70,10 @@ TARGETS[DEFAULT_TARGET] = {
     'flash_cleanup_patch': {
         'file': 'patches/linux/7.2.9/0004-leds-qcom-flash-cleanup-index.patch',
         'sha256': 'd733ff5eabf62ff970cc0eece7580fe505dabc757b310458fc878adac0303228',
+    },
+    'va_clock_order_patch': {
+        'file': 'patches/linux/7.2.9/0005-asoc-va-dmic-clock-before-filter.patch',
+        'sha256': 'b59ddf79d3c2a7ce06d4759b89aae3bfba111a4cdc8a50a92b4f933bd9f32f6e',
     },
 }
 
@@ -234,7 +238,7 @@ def write_manifest(path, record):
 
 def update_patches(root, policy):
     result = {}
-    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch'):
+    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch', 'va_clock_order_patch'):
         if key not in policy:
             continue
         row = policy[key]
@@ -280,6 +284,7 @@ def merge_stable(work, policy, paths):
         ('fastrpc_dma_patch', 'fix(iommu): use translated DMA for SM8750 FastRPC', 'fastrpc_dma_commit'),
         ('panel_depth_patch', 'fix(drm): report Piano DSC color depth', 'panel_depth_commit'),
         ('flash_cleanup_patch', 'fix(leds): correct qcom flash cleanup indexing', 'flash_cleanup_commit'),
+        ('va_clock_order_patch', 'fix(asoc): start VA DMIC clocks before filter settling', 'va_clock_order_commit'),
     ):
         if key not in paths:
             continue

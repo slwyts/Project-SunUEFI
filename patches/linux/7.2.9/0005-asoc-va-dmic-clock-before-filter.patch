@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SunUEFI source preparation <source-preparation@example.invalid>
+Date: Thu, 08 Oct 2026 11:00:00 +0000
+Subject: [PATCH] ASoC: qcom: lpass-va-macro: start DMIC clocks before filter settling
+
+DMIC clock events currently run on ADC widgets after the decimator MUX
+POST_PMU filter waits. On Piano this leaves the clock stopped throughout
+the settling interval, and capture starts with a positive clipped transient
+whose decay matches the configured 150 Hz high-pass filter.
+
+Represent each hardware DMIC clock as a DAPM supply and route its existing
+ADC through that supply. This powers clocks before the decimator filter
+sequence and keeps them available through decimator shutdown. Preserve the
+signal routes, shared clock reference counts and existing delays.
+
+Write the hardware PGA mute at PRE_PMU, where the current code has only a
+comment, and at PRE_PMD. The normal DAI mute callback releases capture after
+DAPM. No new delays, discarded PCM, mixer controls or userspace services.
+---
+--- a/sound/soc/codecs/lpass-va-macro.c
++++ b/sound/soc/codecs/lpass-va-macro.c
+@@ -768,7 +768,10 @@
+ 		snd_soc_component_update_bits(comp,
+ 			dec_cfg_reg, CDC_VA_ADC_MODE_MASK,
+ 			va->dec_mode[decimator] << CDC_VA_ADC_MODE_SHIFT);
+-		/* Enable TX PGA Mute */
++		/* Keep startup/filter transients muted until the DAI is ready. */
++		snd_soc_component_update_bits(comp, tx_vol_ctl_reg,
++					      CDC_VA_TX_PATH_PGA_MUTE_EN_MASK,
++					      CDC_VA_TX_PATH_PGA_MUTE_EN);
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMU:
+ 		/* Enable TX CLK */
+@@ -815,6 +818,11 @@
+ 		/* apply gain after decimator is enabled */
+ 		snd_soc_component_write(comp, tx_gain_ctl_reg,
+ 			snd_soc_component_read(comp, tx_gain_ctl_reg));
++		break;
++	case SND_SOC_DAPM_PRE_PMD:
++		snd_soc_component_update_bits(comp, tx_vol_ctl_reg,
++					      CDC_VA_TX_PATH_PGA_MUTE_EN_MASK,
++					      CDC_VA_TX_PATH_PGA_MUTE_EN);
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
+ 		/* Disable TX CLK */
+@@ -1148,35 +1156,43 @@
+ 	SND_SOC_DAPM_INPUT("DMIC6 Pin"),
+ 	SND_SOC_DAPM_INPUT("DMIC7 Pin"),
+ 
+-	SND_SOC_DAPM_ADC_E("VA DMIC0", NULL, SND_SOC_NOPM, 0, 0,
++	SND_SOC_DAPM_ADC("VA DMIC0", NULL, SND_SOC_NOPM, 0, 0),
++	SND_SOC_DAPM_SUPPLY("VA DMIC0 Clock", SND_SOC_NOPM, 0, 0,
+ 		va_macro_enable_dmic, SND_SOC_DAPM_PRE_PMU |
+ 		SND_SOC_DAPM_POST_PMD),
+ 
+-	SND_SOC_DAPM_ADC_E("VA DMIC1", NULL, SND_SOC_NOPM, 1, 0,
++	SND_SOC_DAPM_ADC("VA DMIC1", NULL, SND_SOC_NOPM, 1, 0),
++	SND_SOC_DAPM_SUPPLY("VA DMIC1 Clock", SND_SOC_NOPM, 1, 0,
+ 		va_macro_enable_dmic, SND_SOC_DAPM_PRE_PMU |
+ 		SND_SOC_DAPM_POST_PMD),
+ 
+-	SND_SOC_DAPM_ADC_E("VA DMIC2", NULL, SND_SOC_NOPM, 2, 0,
++	SND_SOC_DAPM_ADC("VA DMIC2", NULL, SND_SOC_NOPM, 2, 0),
++	SND_SOC_DAPM_SUPPLY("VA DMIC2 Clock", SND_SOC_NOPM, 2, 0,
+ 		va_macro_enable_dmic, SND_SOC_DAPM_PRE_PMU |
+ 		SND_SOC_DAPM_POST_PMD),
+ 
+-	SND_SOC_DAPM_ADC_E("VA DMIC3", NULL, SND_SOC_NOPM, 3, 0,
++	SND_SOC_DAPM_ADC("VA DMIC3", NULL, SND_SOC_NOPM, 3, 0),
++	SND_SOC_DAPM_SUPPLY("VA DMIC3 Clock", SND_SOC_NOPM, 3, 0,
+ 		va_macro_enable_dmic, SND_SOC_DAPM_PRE_PMU |
+ 		SND_SOC_DAPM_POST_PMD),
+ 
+-	SND_SOC_DAPM_ADC_E("VA DMIC4", NULL, SND_SOC_NOPM, 4, 0,
++	SND_SOC_DAPM_ADC("VA DMIC4", NULL, SND_SOC_NOPM, 4, 0),
++	SND_SOC_DAPM_SUPPLY("VA DMIC4 Clock", SND_SOC_NOPM, 4, 0,
+ 		va_macro_enable_dmic, SND_SOC_DAPM_PRE_PMU |
+ 		SND_SOC_DAPM_POST_PMD),
+ 
+-	SND_SOC_DAPM_ADC_E("VA DMIC5", NULL, SND_SOC_NOPM, 5, 0,
++	SND_SOC_DAPM_ADC("VA DMIC5", NULL, SND_SOC_NOPM, 5, 0),
++	SND_SOC_DAPM_SUPPLY("VA DMIC5 Clock", SND_SOC_NOPM, 5, 0,
+ 		va_macro_enable_dmic, SND_SOC_DAPM_PRE_PMU |
+ 		SND_SOC_DAPM_POST_PMD),
+ 
+-	SND_SOC_DAPM_ADC_E("VA DMIC6", NULL, SND_SOC_NOPM, 6, 0,
++	SND_SOC_DAPM_ADC("VA DMIC6", NULL, SND_SOC_NOPM, 6, 0),
++	SND_SOC_DAPM_SUPPLY("VA DMIC6 Clock", SND_SOC_NOPM, 6, 0,
+ 		va_macro_enable_dmic, SND_SOC_DAPM_PRE_PMU |
+ 		SND_SOC_DAPM_POST_PMD),
+ 
+-	SND_SOC_DAPM_ADC_E("VA DMIC7", NULL, SND_SOC_NOPM, 7, 0,
++	SND_SOC_DAPM_ADC("VA DMIC7", NULL, SND_SOC_NOPM, 7, 0),
++	SND_SOC_DAPM_SUPPLY("VA DMIC7 Clock", SND_SOC_NOPM, 7, 0,
+ 		va_macro_enable_dmic, SND_SOC_DAPM_PRE_PMU |
+ 		SND_SOC_DAPM_POST_PMD),
+ 
+@@ -1283,13 +1299,29 @@
+ 	{"VA DMIC MUX3", "DMIC7", "VA DMIC7"},
+ 
+ 	{ "VA DMIC0", NULL, "DMIC0 Pin" },
++	{ "VA DMIC0", NULL, "VA DMIC0 Clock" },
++	{ "VA DMIC0 Clock", NULL, "VA_MCLK" },
+ 	{ "VA DMIC1", NULL, "DMIC1 Pin" },
++	{ "VA DMIC1", NULL, "VA DMIC1 Clock" },
++	{ "VA DMIC1 Clock", NULL, "VA_MCLK" },
+ 	{ "VA DMIC2", NULL, "DMIC2 Pin" },
++	{ "VA DMIC2", NULL, "VA DMIC2 Clock" },
++	{ "VA DMIC2 Clock", NULL, "VA_MCLK" },
+ 	{ "VA DMIC3", NULL, "DMIC3 Pin" },
++	{ "VA DMIC3", NULL, "VA DMIC3 Clock" },
++	{ "VA DMIC3 Clock", NULL, "VA_MCLK" },
+ 	{ "VA DMIC4", NULL, "DMIC4 Pin" },
++	{ "VA DMIC4", NULL, "VA DMIC4 Clock" },
++	{ "VA DMIC4 Clock", NULL, "VA_MCLK" },
+ 	{ "VA DMIC5", NULL, "DMIC5 Pin" },
++	{ "VA DMIC5", NULL, "VA DMIC5 Clock" },
++	{ "VA DMIC5 Clock", NULL, "VA_MCLK" },
+ 	{ "VA DMIC6", NULL, "DMIC6 Pin" },
++	{ "VA DMIC6", NULL, "VA DMIC6 Clock" },
++	{ "VA DMIC6 Clock", NULL, "VA_MCLK" },
+ 	{ "VA DMIC7", NULL, "DMIC7 Pin" },
++	{ "VA DMIC7", NULL, "VA DMIC7 Clock" },
++	{ "VA DMIC7 Clock", NULL, "VA_MCLK" },
+ };
+ 
+ static const char * const dec_mode_mux_text[] = {
