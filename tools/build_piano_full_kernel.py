@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import uuid
@@ -42,7 +43,8 @@ FLASH_OVERRIDES={
  'CONFIG_LEDS_CLASS_FLASH':'m','CONFIG_LEDS_QCOM_FLASH':'m',
  'CONFIG_V4L2_FLASH_LED_CLASS':'m','CONFIG_VIDEO_V4L2_SUBDEV_API':'y',
 }
-ALLOWED_OVERRIDES={'CONFIG_UHID':'m',**FLASH_OVERRIDES}
+EARLY_CPUCP_OVERRIDES={'CONFIG_QCOM_CPUCP_MBOX':'y'}
+ALLOWED_OVERRIDES={'CONFIG_UHID':'m',**FLASH_OVERRIDES,**EARLY_CPUCP_OVERRIDES}
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -75,13 +77,13 @@ def command_line(fragment,public,root_policy):
 
 def module_overrides(fragment,kind='bluetooth'):
     lines=[line.strip()for line in fragment.splitlines()if line.strip()and not line.lstrip().startswith('#')]
-    expected={'CONFIG_UHID':'m'}if kind=='bluetooth'else FLASH_OVERRIDES if kind=='flash'else None
-    if expected is None or lines!=[key+'='+value for key,value in expected.items()]:raise ValueError('Unexpected '+kind+' module fragment')
+    expected={'CONFIG_UHID':'m'}if kind=='bluetooth'else FLASH_OVERRIDES if kind=='flash'else EARLY_CPUCP_OVERRIDES if kind=='early-cpucp'else None
+    if expected is None or lines!=[key+'='+value for key,value in expected.items()]:raise ValueError('Unexpected '+kind+' configuration fragment')
     return dict(expected)
 
 
 def validate_module_overrides(values):
-    if any(key not in ALLOWED_OVERRIDES or value!=ALLOWED_OVERRIDES[key]for key,value in values.items()):raise ValueError('Only reviewed Bluetooth/flash module overrides are supported')
+    if any(key not in ALLOWED_OVERRIDES or value!=ALLOWED_OVERRIDES[key]for key,value in values.items()):raise ValueError('Only reviewed Bluetooth/flash/early-CPUCP configuration overrides are supported')
     flash=set(values)&set(FLASH_OVERRIDES)
     if flash and flash!=set(FLASH_OVERRIDES):raise ValueError('Flash requires all four reviewed options')
     return values
@@ -106,6 +108,9 @@ def verify_source(work=WORK,commit=None):
 def validate_config(config,public,expected_command,modules=None):
     modules=validate_module_overrides({}if modules is None else modules)
     values=config_values(config)
+    if modules.get('CONFIG_QCOM_CPUCP_MBOX')=='y':
+        for key in ('CONFIG_ARM_SCMI_PROTOCOL','CONFIG_ARM_SCMI_TRANSPORT_MAILBOX','CONFIG_ARM_SCMI_CPUFREQ'):
+            if values.get(key)!='y':raise ValueError('Early CPUCP requires built-in SCMI/cpufreq: '+key)
     if values.get('CONFIG_CMDLINE')!=json.dumps(expected_command):raise ValueError('Configured full candidate root command line changed')
     if 'userdata'in expected_command or 'root=PARTLABEL'in expected_command:raise ValueError('Android root target survived')
     for key,value in config_values(public).items():
@@ -122,12 +127,16 @@ def toolchain():
     env['PATH']=str(bundled/'bin')+os.pathsep+env.get('PATH','')
     env['LD_LIBRARY_PATH']=str(bundled/'lib')+(os.pathsep+env['LD_LIBRARY_PATH']if env.get('LD_LIBRARY_PATH')else '')
     names=('clang','ld.lld','llvm-ar','llvm-nm','llvm-objcopy','llvm-strip','make','bison','flex','bc','depmod')
+    cached=bool(env.get('CCACHE_DIR'))
+    if cached:names+=('ccache',)
     binaries={name:shutil.which(name,path=env['PATH'])for name in names}
     if any(path is None for path in binaries.values()):raise ValueError('Missing full build dependencies: '+str([name for name,path in binaries.items()if path is None]))
-    return env,{'paths':binaries,'sha256':{name:sha(Path(path))for name,path in binaries.items()},'compiler':text([binaries['clang'],'--version'],env=env).splitlines()[0]}
+    cc=[binaries['ccache'],binaries['clang']]if cached else[binaries['clang']]
+    return env,{'paths':binaries,'sha256':{name:sha(Path(path))for name,path in binaries.items()},'compiler':text([binaries['clang'],'--version'],env=env).splitlines()[0],
+               'ccache_enabled':cached,'ccache_dir':env.get('CCACHE_DIR')if cached else None,'kernel_cc':cc}
 
 
-def seal_modules(folder,release):
+def seal_modules(folder,release,required_builtin=()):
     modules=[];names=set();total=0
     for path in sorted(folder.rglob('*.ko')):
         info=modinfo(path);vermagic=info.get('vermagic','')
@@ -140,7 +149,15 @@ def seal_modules(folder,release):
     library=folder/'lib/modules'/release
     metadata={path.relative_to(folder).as_posix():sha(path)for path in sorted(library.glob('modules.*'))if path.is_file()}
     if not(library/'modules.dep').is_file():raise ValueError('Installed module dependency index missing')
-    return modules,{'count':len(modules),'bytes':total,'install_mod_strip':1,'all_vermagic_checked':True,'index_sha256':metadata}
+    # Built-in providers have no installed .ko or modules.dep entry. Require
+    # their normal Kbuild metadata instead of treating them as missing modules.
+    if required_builtin:
+        index=library/'modules.builtin'
+        if not index.is_file():raise ValueError('Installed built-in module index missing')
+        builtin={Path(path).name.removesuffix('.ko').replace('-','_')for path in index.read_text().splitlines()}
+        for name in required_builtin:
+            if name not in builtin or name in names:raise ValueError('Required built-in provider differs from installed metadata: '+name)
+    return modules,{'count':len(modules),'bytes':total,'install_mod_strip':1,'all_vermagic_checked':True,'index_sha256':metadata,'required_builtin':list(required_builtin)}
 
 
 def main():
@@ -158,7 +175,9 @@ def main():
     verify_source(work,commit);public=work/'arch/arm64/configs/piano_rootfs.config';fragment=ROOT/'linux/configs/piano-full.config'
     root_command=command_line(fragment.read_text(),public.read_text(),args.root)
     bluetooth=ROOT/'linux/configs/piano-bluetooth.config';flash=ROOT/'linux/configs/piano-flash.config'
-    modules={**module_overrides(bluetooth.read_text()),**module_overrides(flash.read_text(),'flash')}
+    early_cpucp=ROOT/'linux/configs/piano-cpucp-early.config'
+    modules={**module_overrides(bluetooth.read_text()),**module_overrides(flash.read_text(),'flash'),
+             **module_overrides(early_cpucp.read_text(),'early-cpucp')}
     env,tools=toolchain();out.mkdir(parents=True,exist_ok=True);artifacts.mkdir(parents=True,exist_ok=True)
     build_locks=[]
     lock_root=ROOT/'build/locks';lock_root.mkdir(parents=True,exist_ok=True)
@@ -173,10 +192,15 @@ def main():
         # Stale Image/modules may remain during the build, but no consumer can
         # mistake them for a completed new bundle without its final manifest.
         marker.unlink()
-    hashes={str(path.relative_to(ROOT)):sha(path)for path in (fragment,bluetooth,flash,Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py')}
+    hashes={str(path.relative_to(ROOT)):sha(path)for path in (fragment,bluetooth,flash,early_cpucp,Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py')}
     effective_text=effective_config(root_command,modules)
     effective=out/'piano-full.effective.config';effective.write_text(effective_text)
     command=['make','-C',work,'O='+str(out),'ARCH=arm64','LLVM=1','LLVM_IAS=1']
+    if tools['ccache_enabled']:
+        # Kbuild recommends a stable timestamp for useful ccache reuse.
+        env.setdefault('KBUILD_BUILD_TIMESTAMP',text(['git','show','-s','--format=%cI',commit],work))
+        tools['kbuild_build_timestamp']=env['KBUILD_BUILD_TIMESTAMP']
+        command.append('CC='+shlex.join(tools['kernel_cc']))
     run(command+['piano_defconfig'],env=env)
     run(['bash',work/'scripts/kconfig/merge_config.sh','-m','-O',out,out/'.config',public,effective],cwd=work,env=env)
     run(command+['olddefconfig'],env=env)
@@ -202,7 +226,7 @@ def main():
     install=artifacts/'modules'
     if install.exists():shutil.rmtree(install)
     run(command+[f'INSTALL_MOD_PATH={install}','INSTALL_MOD_STRIP=1','modules_install'],env=env);fresh()
-    state['modules'],state['module_summary']=seal_modules(install,state['kernel_release'])
+    state['modules'],state['module_summary']=seal_modules(install,state['kernel_release'],required_builtin=('qcom_cpucp_mbox',))
     for name,source in (('Image',image),('System.map',out/'System.map')):shutil.copyfile(source,artifacts/name)
     fresh();state['status']='HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED'
     temporary=marker.with_suffix('.json.tmp');temporary.write_text(json.dumps(state,indent=2)+'\n');os.replace(temporary,marker);pending.unlink()
