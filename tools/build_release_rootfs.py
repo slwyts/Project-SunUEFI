@@ -364,16 +364,35 @@ def ffmpeg_packages(folder, root=ROOT):
 
 
 def bootstrap(rootfs, kernel, output, release, boot_task_snapshot=False):
-    busybox = ROOT / 'build/linux-ram/busybox'
-    if digest(busybox) != disk.BUSYBOX_SHA: raise ValueError('Static BusyBox source hash changed')
+    # Use the same authenticated distro input on fresh CI and local builds.
+    # The early diagnostic BusyBox capture is not a release dependency.
+    busybox = disk.guest_resolve(rootfs, '/usr/bin/busybox')
     validate_static_arm64_elf(busybox.read_bytes())
-    files = disk.runtime_files(rootfs); directory = Path(kernel) / 'modules/lib/modules' / release
+    applets = set(capture(['chroot', rootfs, '/usr/bin/busybox', '--list']).splitlines())
+    # Debian's static build omits mountpoint; use its util-linux executable
+    # with the same ELF dependency closure already needed by blkid.
+    bootstrap_applets = tuple(name for name in disk.APPLETS if name != 'mountpoint')
+    if missing := set(bootstrap_applets) - applets:
+        raise ValueError('Static BusyBox is missing bootstrap applets: ' + ', '.join(sorted(missing)))
+    package = capture(['chroot', rootfs, 'dpkg-query', '-W',
+                       '-f=${Package}\t${Version}\t${Architecture}', 'busybox-static']).split('\t')
+    if len(package) != 3 or package[0] != 'busybox-static' or package[2] != 'arm64':
+        raise ValueError('Release bootstrap requires the installed ARM64 busybox-static package')
+    busybox_source = output / 'initramfs/busybox-source.json'
+    busybox_source.parent.mkdir(exist_ok=True)
+    busybox_record = {'package': package[0], 'version': package[1],
+        'architecture': package[2], 'sha256': digest(busybox),
+        'source': 'signed Debian APT in the release rootfs', 'license': 'GPL-2.0-only'}
+    busybox_source.write_text(json.dumps(busybox_record, indent=2) + '\n')
+    files = disk.runtime_files(rootfs, ('/usr/sbin/blkid', '/usr/bin/mountpoint'))
+    directory = Path(kernel) / 'modules/lib/modules' / release
     ordered, _ = disk.module_closure(directory)
     files.update({'bin/busybox': busybox, 'pianoinit': ROOT / 'linux/userspace/release-disk-bootstrap',
                   'usr/local/sbin/piano-debug-bootstrap': ROOT / 'linux/userspace/piano-debug-bootstrap'})
     files['init'] = files['pianoinit']
     for name in ordered: files[f'lib/modules/{release}/{name}'] = directory / name
     generated = {'etc/piano/root-label': 'PIANOROOT\n', 'etc/piano/root-partname': 'sunuefi_root\n',
+                 'etc/piano/busybox-source.json': busybox_source.read_text(),
                  'etc/piano/kernel-release': release + '\n',
                  'etc/piano/linux-debug.conf': 'usb=acm-ncm\nshell=1\nrecovery_seconds=0\n',
                  'etc/piano/modules-load-order': ''.join(f'{disk.module_name(p)} /lib/modules/{release}/{p}\n' for p in ordered)}
@@ -384,7 +403,7 @@ def bootstrap(rootfs, kernel, output, release, boot_task_snapshot=False):
     rows = [{'name': n, 'mode': stat.S_IFDIR | (0o1777 if n == 'tmp' else 0o755)} for n in sorted(dirs)]
     rows += [{'name': n, 'mode': stat.S_IFREG | 0o755, 'data': p.read_bytes()} for n, p in sorted(files.items())]
     rows += [{'name': n, 'mode': stat.S_IFREG | 0o644, 'data': v.encode()} for n, v in generated.items()]
-    rows += [{'name': 'bin/' + n, 'mode': stat.S_IFLNK | 0o777, 'data': b'busybox'} for n in disk.APPLETS]
+    rows += [{'name': 'bin/' + n, 'mode': stat.S_IFLNK | 0o777, 'data': b'busybox'} for n in bootstrap_applets]
     rows += [{'name': 'dev/console', 'mode': stat.S_IFCHR | 0o600, 'major': 5, 'minor': 1},
              {'name': 'dev/null', 'mode': stat.S_IFCHR | 0o666, 'major': 1, 'minor': 3}]
     target = output / 'initramfs/initramfs.cpio.gz'; target.parent.mkdir(exist_ok=True)
@@ -393,6 +412,7 @@ def bootstrap(rootfs, kernel, output, release, boot_task_snapshot=False):
               'kernel_commit': json.loads((Path(kernel) / 'manifest.json').read_text())['source_commit'],
               'kernel_manifest_sha256': digest(Path(kernel) / 'manifest.json'), 'root_policy': 'LABEL=PIANOROOT',
               'initramfs_sha256': digest(target), 'entry_sha256': digest(files['pianoinit']),
+              'busybox': busybox_record,
               'boot_task_snapshot': boot_task_snapshot,
               'boot_task_snapshot_source_sha256': digest(ROOT / 'linux/userspace/piano-boot-task-snapshot')}
     (target.parent / 'manifest.json').write_text(json.dumps(record, indent=2) + '\n')

@@ -12,14 +12,15 @@ on:
       - 'config/**'
       - 'sources.lock.json'
       - '.gitmodules'
-      - 'patches/firmware/**'
+      - 'patches/**'
       - 'uefi/**'
       - 'vendor/piano/**'
       - 'vendor/piano-linux/**'
       - 'linux/**'
-      - 'patches/linux/**'
       - 'tools/**'
       - 'upstream/**'
+      - 'android/native/piano-boot-request.c'
+      - 'docs/user/install-from-artifact.md'
   workflow_dispatch:
     inputs:
       target:
@@ -30,10 +31,6 @@ on:
 
 permissions:
   contents: read
-
-concurrency:
-  group: build-products-${{ github.ref }}-${{ inputs.target || 'automatic' }}
-  cancel-in-progress: true
 
 jobs:
   select:
@@ -55,6 +52,9 @@ jobs:
   build:
     needs: select
     if: needs.select.outputs.has_build == 'true'
+    concurrency:
+      group: build-products-${{ github.ref }}-${{ matrix.target }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}

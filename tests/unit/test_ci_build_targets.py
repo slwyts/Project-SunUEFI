@@ -14,11 +14,22 @@ import ci_build_targets as targets
 class CiBuildTargetsTests(unittest.TestCase):
     def test_domains_and_shared_inputs(self):
         self.assertEqual(targets.select(['uefi/core/PianoProductCore.c']), ['uefi'])
-        self.assertEqual(targets.select(['linux/dts/piano-audio-dmic-clock.dtso']), ['linux'])
-        self.assertEqual(targets.select(['config/release.json']), ['uefi', 'linux'])
-        self.assertEqual(targets.select(['sources.lock.json']), ['uefi', 'linux'])
+        self.assertEqual(targets.select(['linux/dts/piano-audio-dmic-clock.dtso']), ['debian-gnome'])
+        self.assertEqual(targets.select(['config/release.json']), ['debian-gnome'])
+        self.assertEqual(targets.select(['sources.lock.json']), ['debian-gnome'])
+        self.assertEqual(targets.select(['tools/build_simpleinit.sh']), ['uefi'])
+        self.assertEqual(targets.select(['patches/firmware/series.json']), ['uefi'])
+        self.assertEqual(targets.select(['upstream/piano-mesa-current']), ['debian-gnome'])
+        self.assertEqual(targets.select(['patches/piano-sensors/import.patch']), ['debian-gnome'])
+        self.assertEqual(targets.select(['android/native/piano-boot-request.c']), ['debian-gnome'])
+        self.assertEqual(targets.select(['uefi/handoff/bootselect/BootRequest.h']), ['debian-gnome'])
+        self.assertEqual(targets.select(['tools/export_installer.py']), ['debian-gnome'])
+        self.assertEqual(targets.select(['docs/user/install-from-artifact.md']), ['debian-gnome'])
+        self.assertEqual(targets.select(['uefi/core/PianoProductCore.c', 'linux/config']), ['debian-gnome'])
         self.assertEqual(targets.select(['README.md', 'docs/status.md']), [])
         self.assertEqual(targets.select([], 'debian-gnome'), ['debian-gnome'])
+        self.assertEqual(targets.select(['linux/config'], 'uefi'), ['uefi'])
+        self.assertEqual(targets.select(['config/release.json'], 'linux'), ['linux'])
         with self.assertRaises(ValueError):
             targets.select([], 'unknown')
 
@@ -35,8 +46,8 @@ class CiBuildTargetsTests(unittest.TestCase):
             before = git('rev-parse', 'HEAD')
             (root / 'linux/config').write_text('new\n'); git('add', '.')
             git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Linux change')
-            self.assertEqual(targets.select(targets.changed_files(root, before)), ['linux'])
-            self.assertEqual(targets.select(targets.changed_files(root, '0' * 40)), ['uefi', 'linux'])
+            self.assertEqual(targets.select(targets.changed_files(root, before)), ['debian-gnome'])
+            self.assertEqual(targets.select(targets.changed_files(root, '0' * 40)), ['debian-gnome'])
 
 
 if __name__ == '__main__':

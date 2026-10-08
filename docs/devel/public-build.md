@@ -37,3 +37,14 @@ UEFI 镜像、ESP 镜像与 root 归档是不同发布文件。所有发行版�
 `build-products.yml` 的成功产物 `piano-TARGET-COMMIT` 直接包含 `install.sh`、`install.cmd`、原样复制的 `install_piano.py`、启动检查器、`INSTALL.md`、`installer-record.json` 和 `SHA256SUMS`。完整 `debian-gnome` 构建还包含 `bundle/` 下的原始 manifest 与磁盘镜像；日志和内核独立放在 `piano-build-records-TARGET-COMMIT`。
 
 `uefi` 构建带 `PianoUEFI-product.img` 与 `uefi-manifest.json`，没有伪造的 ESP/root manifest；`linux` 构建的内核输出在记录包，安装工具本身不代表已构建完整系统。直接运行启动脚本只显示帮助，明确给出序列号后才检查设备，实际写入需要 `apply --execute`。首次分区与 Recovery 写入继续由原安装器拒绝。
+
+main push 涉及 Linux/BSP、root、打包/安装器、公共构建配置或固定来源时，自动只选
+`debian-gnome`，一次生成 UEFI、ESP/root 与安装脚本；该目标已经包含 UEFI/kernel，
+不会再并行重复构建。纯 UEFI 来源/构建变化只选 `uefi`，普通文档变化不构建产品。
+手动仍可明确选择 `uefi`、`linux` 或 `debian-gnome`；选择规则不代表远端构建已经成功。
+过时构建按最终target取消，纯UEFI push不会取消正在运行的完整系统构建。
+
+发布 initramfs 使用根系统从已认证 Debian APT 安装的 ARM64 `busybox-static`，
+版本与摘要写入 `initramfs/busybox-source.json` 和 manifest。该包不带 `mountpoint`
+applet，打包器同时收集发行版的 util-linux `mountpoint` 及 ELF 依赖；不再要求
+本机历史 `build/linux-ram/busybox` 文件。新流程已在本地完成打包，尚未运行远端完整 CI。

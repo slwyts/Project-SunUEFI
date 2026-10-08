@@ -8,11 +8,23 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-COMMON_FILES = {'.github/workflows/build-products.yml', '.gitmodules',
-                'build.sh', 'Makefile', 'sources.lock.json'}
-COMMON_PREFIXES = ('tools/', 'config/', 'containers/')
-UEFI_PREFIXES = ('uefi/', 'vendor/piano/', 'patches/firmware/')
-LINUX_PREFIXES = ('linux/', 'vendor/piano-linux/', 'patches/linux/')
+FULL_FILES = {'.github/workflows/build-products.yml', '.gitmodules',
+              'build.sh', 'Makefile', 'sources.lock.json',
+              'android/native/piano-boot-request.c',
+              'uefi/handoff/bootselect/BootRequest.c',
+              'uefi/handoff/bootselect/BootRequest.h',
+              'docs/user/install-from-artifact.md'}
+FULL_PREFIXES = ('tools/', 'config/', 'containers/', 'linux/',
+                 'vendor/piano-linux/', 'patches/', 'upstream/')
+UEFI_FILES = {'requirements-build.txt', 'upstream/Mu-Silicium', 'upstream/simple-init',
+              'tools/build_product.sh', 'tools/build_simpleinit.sh', 'tools/build_stage0.sh',
+              'tools/firmware_workspace.py', 'tools/apply_firmware_patches.py',
+              'tools/prepare_simpleinit.py', 'tools/simpleinit_build_identity.py',
+              'tools/prepare_product.py', 'tools/prepare_nv_runtime_guard.py',
+              'tools/package_product.py', 'tools/build_integrity.py',
+              'tools/product_payload_digest.py', 'tools/piano_vendor_inputs.py'}
+UEFI_PREFIXES = ('uefi/', 'vendor/piano/', 'patches/firmware/',
+                 'tools/prepare_product_')
 
 
 def select(files, manual=None):
@@ -20,16 +32,16 @@ def select(files, manual=None):
         if manual not in ('uefi', 'linux', 'debian-gnome'):
             raise ValueError('Unknown manual product target')
         return [manual]
-    targets = set()
+    uefi = False
     for name in files:
-        if name in COMMON_FILES or name.startswith(COMMON_PREFIXES):
-            targets.update(('uefi', 'linux'))
-        elif (name.startswith(UEFI_PREFIXES) or name == 'requirements-build.txt' or
-              name in ('upstream/Mu-Silicium', 'upstream/simple-init')):
-            targets.add('uefi')
-        elif name.startswith(LINUX_PREFIXES) or name.startswith('upstream/'):
-            targets.add('linux')
-    return [name for name in ('uefi', 'linux') if name in targets]
+        if name in FULL_FILES:
+            return ['debian-gnome']
+        if name in UEFI_FILES or name.startswith(UEFI_PREFIXES):
+            uefi = True
+        elif name.startswith(FULL_PREFIXES):
+            # Full already builds UEFI, kernel, Mesa, sensors, root and installer.
+            return ['debian-gnome']
+    return ['uefi'] if uefi else []
 
 
 def changed_files(root, before):
@@ -38,7 +50,7 @@ def changed_files(root, before):
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if exists.returncode == 0:
             return subprocess.check_output(['git', '-C', str(root), 'diff', '--name-only', '-z', before, 'HEAD'], text=True).split('\0')
-    # A new branch or an unavailable force-push base requires both builds.
+    # An unavailable push base selects full from the complete tracked input set.
     return subprocess.check_output(['git', '-C', str(root), 'ls-files', '-z'], text=True).split('\0')
 
 

@@ -21,8 +21,8 @@ APPLETS = ('sh', 'cat', 'mkdir', 'mount', 'mountpoint', 'chmod', 'uname', 'chroo
 SEEDS = ('arm_smmu', 'pinctrl_sm8750', 'phy_qcom_qmp_ufs', 'ufs_qcom')
 
 
-def runtime_files(root):
-    pending, files = ['/usr/sbin/blkid'], {}
+def runtime_files(root, programs=('/usr/sbin/blkid',)):
+    pending, files = list(programs), {}
     while pending:
         name = pending.pop(0)
         if name.lstrip('/') in files:

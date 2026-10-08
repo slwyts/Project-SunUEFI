@@ -28,6 +28,7 @@
       "libc6-dev",
       "kmod",
       "ffmpeg",
+      "busybox-static",
       "python3-gi",
       "gir1.2-gtk-3.0",
       "pkexec"
