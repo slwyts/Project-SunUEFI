@@ -38,4 +38,4 @@
 
 [cc-power-panel48.4 `als_enabled_state_changed`](https://github.com/GNOME/gnome-control-center/blob/48.4/panels/power/cc-power-panel.c#L405)要求SensorProxy HasAmbientLight且`has_brightness`，后者由Power.Screen.Brightness≥0决定（638行）。ambient-enabled决定开关状态，不决定隐藏。电池决定分页布局，ALS在Power Saving组，不在Display页面。
 
-当前实际HasAmbientLight=true、ambient-enabled=true、Screen.Brightness=99，满足显示条件。该开关应在电源节能页；没有强制显示能力行或另做设置界面。
+当前实际HasAmbientLight=true、ambient-enabled=true、Screen.Brightness=99。已通过标准AT-SPI动作进入GNOME设置的Power Saving分页，并查看真实3200×2136截图：Automatic Screen Brightness原生行可见，开关开启。没有强制显示能力行或另做设置界面。

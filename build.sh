@@ -13,6 +13,7 @@ case "$command" in
   boot-request) python3 tools/build_boot_request.py "$@" ;;
   boot-repack) python3 tools/build_boot_repack.py "$@" ;;
   ffmpeg) python3 tools/build_ffmpeg_packages.py "$@" ;;
+  gsd) python3 tools/build_gsd_packages.py "$@" ;;
   linux)
     python3 tools/prepare_release_kernel.py --refresh
     python3 - <<'PY_KERNEL'

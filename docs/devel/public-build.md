@@ -9,12 +9,19 @@
 | `./build.sh uefi` | 使用 vendor 板级材料与固件补丁构建唯一产品 |
 | `./build.sh linux` | 重建公开基线+八个补丁的源码，编译 LABEL 根策略的内核与模块 |
 | `./build.sh mesa` | 在 ARM64 Debian 构建容器中编译该发行版的 Piano Mesa 包 |
+| `./build.sh gsd --sysroot 已完成的基础根目录` | 在独立副本中编译 Debian GNOME 自动亮度策略包；不修改提供的根目录 |
 | `./build.sh rootfs --distro ID --desktop ID --plan` | 选择基础发行版与桌面，列出真实输入和包管理步骤；`--execute` 才构建 |
 | `./build.sh package` | 从已完成且匹配的组件生成 ESP、root 归档和 manifest |
 | `./build.sh installer --bundle artifacts/release` | 导出独立安装器、Linux/Windows 启动脚本、说明、校验记录和原样磁盘包 |
 | `./build.sh install ...` | 独立安装入口，默认读取状态/计划，不随构建操作设备 |
 
 UEFI 已在原准备环境中用新的 vendor 输入重建成功。内核完整构建、干净 rootfs/ESP 的端到端验证和 GitHub 实际运行分别记录，不把“命令已实现”当作全流程通过。
+
+默认 `release-rootfs` 在公共基础系统完成后准备 `build/gsd/runtime`，
+从签名 APT 取得对应的 GNOME 源码，使用原始 Debian 打包规则编译。
+根系统正常安装 `gnome-settings-daemon` 与 `gnome-settings-daemon-common`，
+记录实际版本、源码与补丁摘要；不会把构建依赖装进最终系统。
+该策略仅匹配 `xiaomi,piano` 板级标识，SensorProxy 保持真实 lux 输出。
 
 ## 安装器当前范围
 

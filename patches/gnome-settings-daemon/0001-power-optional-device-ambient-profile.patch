@@ -191,7 +191,7 @@ GNOME brightness mapping and EMA remain, pending panel nits calibration.
  
  cflags += ['-DLIBEXECDIR="@0@"'.format(gsd_libexecdir)]
  cflags += ['-DUSE_GTK=1']
-+cflags += ['-DGSD_AMBIENT_PROFILE_DIR=\"@0@\"'.format(join_paths(gsd_datadir, 'gnome-settings-daemon', 'ambient-profiles'))]
++cflags += ['-DGSD_AMBIENT_PROFILE_DIR="@0@"'.format(join_paths(gsd_datadir, 'gnome-settings-daemon', 'ambient-profiles'))]
 +
 +install_data('ambient-profiles/piano.ini',
 +  install_dir: join_paths(gsd_datadir, 'gnome-settings-daemon', 'ambient-profiles'))
