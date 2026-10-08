@@ -1,0 +1,290 @@
+Subject: [PATCH] media: ir-spi: add Piano fixed-clock transmitter
+
+Reuse rc-core/LIRC and the SPI core for the Xiaomi Piano IR waveform:
+1.92 MHz sampling, native MSB-first 32-bit words, 40 percent default
+carrier duty and zero-padded 1024-byte transfers. Only the explicit
+xiaomi,piano-ir-spi device variant uses this encoder. Existing ir-spi-led
+encoding and regulator behavior stay unchanged.
+
+Accept positive LIRC pulse/space durations within its one-second bound;
+do not inherit the factory negative-input or cumulative minus-five-us
+behavior. Add a zero word before alignment so the final SPI word is
+inactive even when the last pulse ends on a block boundary. Propagate
+real SPI errors. The board describes no software-controlled IR supply;
+this variant neither requests a dummy regulator nor invents a supply.
+
+This is a source candidate, not a hardware validation result. The
+transmitter remains disabled in the separate controller overlay.
+---
+diff --git a/drivers/media/rc/ir-spi.c b/drivers/media/rc/ir-spi.c
+--- a/drivers/media/rc/ir-spi.c
++++ b/drivers/media/rc/ir-spi.c
+@@ -22,9 +22,28 @@
+ #define IR_SPI_DEFAULT_FREQUENCY	38000
+ #define IR_SPI_BITS_PER_PULSE		16
+ 
++/* The factory Piano transmitter consumes MSB-first native u32 words. */
++#define IR_SPI_PIANO_WORD_BITS		32
++#define IR_SPI_PIANO_PADDING_BYTES	1024
++#define IR_SPI_PIANO_MAX_DURATIONS	1024
++#define IR_SPI_PIANO_MIN_CARRIER		30000
++#define IR_SPI_PIANO_MAX_CARRIER		56000
++
++struct ir_spi_variant {
++	u32 sample_hz;
++	u8 default_duty_cycle;
++};
++
++static const struct ir_spi_variant piano_ir_spi = {
++	.sample_hz = 1920000,
++	.default_duty_cycle = 40,
++};
++
+ struct ir_spi_data {
+ 	u32 freq;
+ 	bool negated;
++	u8 duty_cycle;
++	const struct ir_spi_variant *variant;
+ 
+ 	u16 pulse;
+ 	u16 space;
+@@ -92,6 +111,71 @@
+ 	return ret ? ret : count;
+ }
+ 
++static int ir_spi_tx_piano(struct rc_dev *dev, unsigned int *buffer,
++			   unsigned int count)
++{
++	struct ir_spi_data *idata = dev->priv;
++	struct spi_transfer xfer = {};
++	u32 total_us = 0, end_us = 0, sample = 0;
++	u32 samples, bytes, period, high, phase;
++	u32 *tx_buf;
++	unsigned int i;
++	int ret;
++
++	/* Match normal LIRC pulse/space bounds; never reinterpret negative data. */
++	if (!count || count > IR_SPI_PIANO_MAX_DURATIONS || !(count & 1))
++		return -EINVAL;
++
++	for (i = 0; i < count; i++) {
++		if (!buffer[i] || buffer[i] > IR_MAX_DURATION - total_us)
++			return -EINVAL;
++		total_us += buffer[i];
++	}
++
++	period = DIV_ROUND_CLOSEST(idata->variant->sample_hz, idata->freq);
++	high = period * idata->duty_cycle / 100;
++	if (!high || high >= period)
++		return -EINVAL;
++
++	samples = DIV_ROUND_CLOSEST_ULL((u64)total_us *
++				      idata->variant->sample_hz, 1000000);
++	/* Always finish with an all-zero word, even at an exact block boundary. */
++	bytes = round_up(DIV_ROUND_UP(samples, IR_SPI_PIANO_WORD_BITS) *
++			 sizeof(*tx_buf) + sizeof(*tx_buf),
++			 IR_SPI_PIANO_PADDING_BYTES);
++	tx_buf = kzalloc(bytes, GFP_KERNEL);
++	if (!tx_buf)
++		return -ENOMEM;
++
++	for (i = 0; i < count; i++) {
++		u32 end;
++
++		end_us += buffer[i];
++		end = DIV_ROUND_CLOSEST_ULL((u64)end_us *
++					  idata->variant->sample_hz, 1000000);
++		phase = 0;
++		for (; sample < end; sample++) {
++			if (!(i & 1) && phase < high)
++				tx_buf[sample / IR_SPI_PIANO_WORD_BITS] |=
++					BIT(31 - sample % IR_SPI_PIANO_WORD_BITS);
++			if (++phase == period)
++				phase = 0;
++		}
++	}
++
++	/* No byte swap: GENI transmits each native 32-bit word MSB first. */
++	xfer.tx_buf = tx_buf;
++	xfer.len = bytes;
++	xfer.bits_per_word = IR_SPI_PIANO_WORD_BITS;
++	xfer.speed_hz = idata->variant->sample_hz;
++	ret = spi_sync_transfer(idata->spi, &xfer, 1);
++	if (ret)
++		dev_err(&idata->spi->dev, "unable to deliver the signal: %d\n", ret);
++	kfree(tx_buf);
++
++	return ret ? ret : count;
++}
++
+ static int ir_spi_set_tx_carrier(struct rc_dev *dev, u32 carrier)
+ {
+ 	struct ir_spi_data *idata = dev->priv;
+@@ -99,8 +183,18 @@
+ 	if (!carrier)
+ 		return -EINVAL;
+ 
+-	if (carrier > idata->spi->max_speed_hz / IR_SPI_BITS_PER_PULSE)
++	if (idata->variant) {
++		u32 period;
++
++		if (carrier < IR_SPI_PIANO_MIN_CARRIER ||
++		    carrier > IR_SPI_PIANO_MAX_CARRIER)
++			return -EINVAL;
++		period = DIV_ROUND_CLOSEST(idata->variant->sample_hz, carrier);
++		if (!(period * idata->duty_cycle / 100))
++			return -EINVAL;
++	} else if (carrier > idata->spi->max_speed_hz / IR_SPI_BITS_PER_PULSE) {
+ 		return -EINVAL;
++	}
+ 
+ 	idata->freq = carrier;
+ 
+@@ -111,6 +205,19 @@
+ {
+ 	struct ir_spi_data *idata = dev->priv;
+ 	int bits = (duty_cycle * 15) / 100;
++
++	if (idata->variant) {
++		u32 period, high;
++
++		if (!duty_cycle || duty_cycle >= 100)
++			return -EINVAL;
++		period = DIV_ROUND_CLOSEST(idata->variant->sample_hz, idata->freq);
++		high = period * duty_cycle / 100;
++		if (!high || high >= period)
++			return -EINVAL;
++		idata->duty_cycle = duty_cycle;
++		return 0;
++	}
+ 
+ 	idata->pulse = GENMASK(bits, 0);
+ 
+@@ -135,46 +242,65 @@
+ 	if (!idata)
+ 		return -ENOMEM;
+ 
+-	idata->regulator = devm_regulator_get(dev, "irda_regulator");
+-	if (IS_ERR(idata->regulator))
+-		return PTR_ERR(idata->regulator);
++	idata->variant = spi_get_device_match_data(spi);
++	if (idata->variant) {
++		if (spi->max_speed_hz < idata->variant->sample_hz ||
++		    spi->mode & SPI_LSB_FIRST)
++			return -EINVAL;
++		/* This board has no described software-controlled IR supply. */
++		if (device_property_present(dev, "power-supply") ||
++		    device_property_present(dev, "irda_regulator-supply") ||
++		    device_property_present(dev, "led-active-low") ||
++		    device_property_present(dev, "duty-cycle"))
++			return -EINVAL;
++	} else {
++		idata->regulator = devm_regulator_get(dev, "irda_regulator");
++		if (IS_ERR(idata->regulator))
++			return PTR_ERR(idata->regulator);
++	}
+ 
+ 	idata->rc = devm_rc_allocate_device(&spi->dev, RC_DRIVER_IR_RAW_TX);
+ 	if (!idata->rc)
+ 		return -ENOMEM;
+ 
+-	idata->rc->tx_ir           = ir_spi_tx;
++	idata->rc->tx_ir           = idata->variant ? ir_spi_tx_piano : ir_spi_tx;
+ 	idata->rc->s_tx_carrier    = ir_spi_set_tx_carrier;
+ 	idata->rc->s_tx_duty_cycle = ir_spi_set_duty_cycle;
+ 	idata->rc->device_name	   = "IR SPI";
+ 	idata->rc->driver_name     = IR_SPI_DRIVER_NAME;
+ 	idata->rc->priv            = idata;
+ 	idata->spi                 = spi;
++	idata->freq = IR_SPI_DEFAULT_FREQUENCY;
+ 
+ 	idata->negated = device_property_read_bool(dev, "led-active-low");
+-	ret = device_property_read_u8(dev, "duty-cycle", &dc);
++	if (idata->variant) {
++		dc = idata->variant->default_duty_cycle;
++	} else {
++		ret = device_property_read_u8(dev, "duty-cycle", &dc);
++		if (ret)
++			dc = 50;
++	}
++
++	/*
++	 * The Piano variant checks whether the requested duty can be sampled.
++	 */
++	ret = ir_spi_set_duty_cycle(idata->rc, dc);
+ 	if (ret)
+-		dc = 50;
+-
+-	/*
+-	 * ir_spi_set_duty_cycle() cannot fail, it returns int
+-	 * to be compatible with the rc->s_tx_duty_cycle function.
+-	 */
+-	ir_spi_set_duty_cycle(idata->rc, dc);
+-
+-	idata->freq = IR_SPI_DEFAULT_FREQUENCY;
++		return ret;
+ 
+ 	return devm_rc_register_device(dev, idata->rc);
+ }
+ 
+ static const struct of_device_id ir_spi_of_match[] = {
+ 	{ .compatible = "ir-spi-led" },
++	{ .compatible = "xiaomi,piano-ir-spi", .data = &piano_ir_spi },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, ir_spi_of_match);
+ 
+ static const struct spi_device_id ir_spi_ids[] = {
+ 	{ "ir-spi-led" },
++	{ "piano-ir-spi", (kernel_ulong_t)&piano_ir_spi },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(spi, ir_spi_ids);
+diff --git a/Documentation/devicetree/bindings/leds/irled/ir-spi-led.yaml b/Documentation/devicetree/bindings/leds/irled/ir-spi-led.yaml
+--- a/Documentation/devicetree/bindings/leds/irled/ir-spi-led.yaml
++++ b/Documentation/devicetree/bindings/leds/irled/ir-spi-led.yaml
+@@ -13,12 +13,11 @@
+   IR LED switch is connected to the MOSI line of the SPI device and the data
+   is delivered through that.
+ 
+-allOf:
+-  - $ref: /schemas/spi/spi-peripheral-props.yaml#
+-
+ properties:
+   compatible:
+-    const: ir-spi-led
++    enum:
++      - ir-spi-led
++      - xiaomi,piano-ir-spi
+ 
+   reg:
+     maxItems: 1
+@@ -42,6 +41,23 @@
+ 
+ unevaluatedProperties: false
+ 
++allOf:
++  - $ref: /schemas/spi/spi-peripheral-props.yaml#
++  - if:
++      properties:
++        compatible:
++          const: xiaomi,piano-ir-spi
++    then:
++      description: |
++        Piano uses a fixed 1.92 MHz sample clock and native MSB-first 32-bit
++        words, with low-level spaces and 40 percent duty by default. The
++        factory device has no described software-controlled IR supply.
++        Runtime carrier and duty requests use the normal LIRC interface.
++      properties:
++        duty-cycle: false
++        led-active-low: false
++        power-supply: false
++
+ examples:
+   - |
+     spi {
+@@ -58,4 +74,3 @@
+             spi-max-frequency = <5000000>;
+         };
+     };
+-
