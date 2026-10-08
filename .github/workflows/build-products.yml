@@ -59,7 +59,8 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     env:
-      TARGET: ${{ matrix.target }}
+      # TARGET is reserved by Cargo/bindgen for the compiler target triple.
+      SUNUEFI_BUILD_TARGET: ${{ matrix.target }}
     runs-on: ${{ matrix.target == 'debian-gnome' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 300
     steps:
@@ -72,9 +73,9 @@ jobs:
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/ccache
-          key: ccache-${{ runner.arch }}-${{ env.TARGET }}-${{ hashFiles('sources.lock.json', 'patches/**', 'config/build-container.json') }}-${{ github.sha }}
+          key: ccache-${{ runner.arch }}-${{ env.SUNUEFI_BUILD_TARGET }}-${{ hashFiles('sources.lock.json', 'patches/**', 'config/build-container.json') }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.arch }}-${{ env.TARGET }}-${{ hashFiles('sources.lock.json', 'patches/**', 'config/build-container.json') }}-
+            ccache-${{ runner.arch }}-${{ env.SUNUEFI_BUILD_TARGET }}-${{ hashFiles('sources.lock.json', 'patches/**', 'config/build-container.json') }}-
       - name: Build the pinned-base environment
         run: docker build -t sunuefi-builder -f containers/Dockerfile .
       - name: Build selected product
@@ -84,13 +85,13 @@ jobs:
           docker run --rm --privileged \
             -v "$PWD:/workspace" -w /workspace \
             -e CCACHE_DIR=/workspace/build/ccache -e CCACHE_MAXSIZE=3G \
-            -e TARGET sunuefi-builder bash -euc '
+            -e SUNUEFI_BUILD_TARGET sunuefi-builder bash -euc '
               git config --global --add safe.directory /workspace
               git config --global --add safe.directory "/workspace/*"
               python3 -m venv .venv
               .venv/bin/pip install -r requirements-build.txt
               . .venv/bin/activate
-              case "$TARGET" in
+              case "$SUNUEFI_BUILD_TARGET" in
                 uefi)
                   ./build.sh uefi
                   ./build.sh installer --product artifacts/product/PianoUEFI-product.img
@@ -119,7 +120,7 @@ jobs:
         if: matrix.target != 'linux'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: piano-${{ env.TARGET }}-${{ github.sha }}
+          name: piano-${{ env.SUNUEFI_BUILD_TARGET }}-${{ github.sha }}
           path: artifacts/installer/
           if-no-files-found: error
           retention-days: 7
@@ -163,7 +164,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: piano-build-records-${{ env.TARGET }}-${{ github.sha }}
+          name: piano-build-records-${{ env.SUNUEFI_BUILD_TARGET }}-${{ github.sha }}
           path: |
             build/logs/
             sources.lock.json
