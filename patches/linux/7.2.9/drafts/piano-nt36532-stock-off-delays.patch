@@ -1,0 +1,55 @@
+Subject: [DRAFT] drm/panel: nt36532: preserve Piano stock off-command delays
+
+The captured final Android DT contains identical off commands for both Piano
+BOE/CSOT variants at120/144/90 timings: DCS28 waits20ms and DCS10 waits100ms.
+The current driver uses the generic panel's10ms/65ms for every variant.
+Keep the generic CSOT timing and select the captured Piano delays explicitly.
+
+This is a source-only correction draft. It has not been enabled or built into
+the active kernel, and does not establish the cause of60Hz/DPMS failure or
+validate system suspend. No PHY/clock/reset/refresh behavior is changed.
+
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+@@ -46,6 +46,9 @@
+ 	/* Enabled in this order and disabled in reverse order */
+ 	const struct regulator_bulk_data *supplies;
+ 	unsigned int num_supplies;
++
++	unsigned int display_off_delay_ms;
++	unsigned int sleep_in_delay_ms;
+ 
+ 	const struct drm_dsc_config *dsc_cfg;
+ 
+@@ -153,9 +156,11 @@
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
+ 
+ 	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
+-	mipi_dsi_usleep_range(&dsi_ctx, 10000, 10100);
++	mipi_dsi_usleep_range(&dsi_ctx,
++			     ctx->panel_info->display_off_delay_ms * 1000,
++			     ctx->panel_info->display_off_delay_ms * 1000 + 100);
+ 	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
+-	mipi_dsi_msleep(&dsi_ctx, 65);
++	mipi_dsi_msleep(&dsi_ctx, ctx->panel_info->sleep_in_delay_ms);
+ 
+ 	return dsi_ctx.accum_err;
+ }
+@@ -728,6 +733,8 @@
+ 	.num_modes = 1,
+ 	.supplies = nt36532_supplies,
+ 	.num_supplies = ARRAY_SIZE(nt36532_supplies),
++	.display_off_delay_ms = 10,
++	.sleep_in_delay_ms = 65,
+ 	.dsc_cfg = &csot_dsc_cfg,
+ 	.init_sequence = csot_init_sequence,
+ 	.is_dual_dsi = true,
+@@ -742,6 +749,8 @@
+ 	.num_modes = ARRAY_SIZE(piano_display_modes),				\
+ 	.supplies = piano_supplies,						\
+ 	.num_supplies = ARRAY_SIZE(piano_supplies),				\
++	.display_off_delay_ms = 20,						\
++	.sleep_in_delay_ms = 100,							\
+ 	.dsc_cfg = &piano_dsc_cfg,						\
+ 	.init_sequence = _init,							\
+ 	.is_dual_dsi = true,							\
