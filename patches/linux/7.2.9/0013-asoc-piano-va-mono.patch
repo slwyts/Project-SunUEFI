@@ -1,0 +1,53 @@
+Subject: [PATCH] ASoC: qcom: permit Piano single-decimator capture
+
+The enabled Piano VA route contains one decimator. Keep other cards and
+playback limits unchanged; widen only this DT-selected card's capture FE
+range to include mono, and configure its VA_CODEC_DMA_TX_0 backend as one
+channel. The copied FE range still accepts the existing two-channel
+requests. DSP graph negotiation and that compatibility require hardware
+validation; this candidate has not been built or deployed.
+
+Base: f4c691bf537b95b26415a7e0217dcfeaa86820cf
+
+---
+diff --git a/sound/soc/qcom/qdsp6/q6apm-dai.c b/sound/soc/qcom/qdsp6/q6apm-dai.c
+--- a/sound/soc/qcom/qdsp6/q6apm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6apm-dai.c
+@@ -398,8 +398,13 @@
+ 
+ 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+ 		runtime->hw = q6apm_dai_hardware_playback;
+-	else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
++	else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
+ 		runtime->hw = q6apm_dai_hardware_capture;
++		/* Piano enables one VA decimator; other cards retain their limits. */
++		if (of_device_is_compatible(soc_prtd->card->dev->of_node,
++					    "xiaomi,piano-sndcard"))
++			runtime->hw.channels_min = 1;
++	}
+ 
+ 	/* Ensure that buffer size is a multiple of period size */
+ 	ret = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS);
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -3,6 +3,7 @@
+ 
+ #include <dt-bindings/sound/qcom,q6afe.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <sound/soc.h>
+ #include <sound/soc-dapm.h>
+@@ -234,6 +235,11 @@
+ 	channels->min = 2;
+ 	channels->max = 2;
+ 	switch (cpu_dai->id) {
++	case VA_CODEC_DMA_TX_0:
++		if (of_device_is_compatible(rtd->card->dev->of_node,
++					    "xiaomi,piano-sndcard"))
++			channels->min = channels->max = 1;
++		break;
+ 	case TX_CODEC_DMA_TX_0:
+ 	case TX_CODEC_DMA_TX_1:
+ 	case TX_CODEC_DMA_TX_2:

@@ -1,0 +1,56 @@
+From: Project SunUEFI <sunuefi@localhost>
+Subject: [PATCH] drm/panel: use the factory four-stage reset for Piano only
+
+Candidate based on f4c691bf537b95b26415a7e0217dcfeaa86820cf.
+The same machine's final FDT gives both P81_35 and P81_42 reset cells
+<0 10 1 3 0 3 1 15>. Fixed MiCode display-drivers commit
+ aa06fd1757c28dce96fbe4e04d4530ec21b52aac, dsi_panel.c:304-320,
+applies those as physical GPIO levels. The reviewed Piano reset binding
+is active-low, so logical assert/deassert must be 1/0/1/0.
+
+Select this sequence only from the two Piano descriptions. The other CSOT
+panel retains its existing three-stage reset. On/off, PPS, DSI, regulators
+and other sequences are unchanged. This is an untested private candidate,
+not a claim that slave VID_MDP overflow is fixed.
+---
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+@@ -53,6 +53,7 @@
+ 			     const struct drm_display_mode *mode);
+ 
+ 	bool is_dual_dsi;
++	bool piano_reset_sequence;
+ };
+ 
+ static const struct regulator_bulk_data nt36532_supplies[] = {
+@@ -118,6 +119,22 @@
+ 
+ static void nt36532_reset(struct nt36532 *ctx)
+ {
++	if (ctx->panel_info->piano_reset_sequence) {
++		/* Piano P81_35/P81_42 final DT reset: low10/high3/low3/high15.
++		 * MiCode aa06fd1757c2 dsi_panel_reset() applies physical levels.
++		 * The reviewed Piano reset GPIO is active-low: 1 asserts reset.
++		 */
++		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++		usleep_range(10000, 10100);
++		gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++		usleep_range(3000, 3100);
++		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++		usleep_range(3000, 3100);
++		gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++		usleep_range(15000, 15100);
++		return;
++	}
++
+ 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
+ 	usleep_range(10000, 10100);
+ 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+@@ -744,6 +761,7 @@
+ 	.num_supplies = ARRAY_SIZE(piano_supplies),				\
+ 	.dsc_cfg = &piano_dsc_cfg,						\
+ 	.init_sequence = _init,							\
++	.piano_reset_sequence = true,						\
+ 	.is_dual_dsi = true,							\
+ }
+ 
