@@ -1,0 +1,121 @@
+From: Project SunUEFI
+Subject: [PATCH] sensors: apply libssc property types through Debian quilt
+
+Keep the fixed upstream source clean. The existing Debian build applies
+patches/libssc through debian/patches/series; add the property-type fix there
+and use a version newer than the installed +piano1 packages. Runtime data
+and the SSC protocol are unchanged. Dev/GIR and CLI use this same source.
+An optional --libssc-only selection builds that source package alone;
+the default still builds the complete sensor stack.
+
+--- /dev/null
++++ b/patches/libssc/0001-fix-sensor-property-types.patch
+@@ -0,0 +1,47 @@
++From: Project SunUEFI
++Subject: [PATCH] libssc: register sensor properties with their actual types
++
++The getters populate uint, boolean and float GValues, respectively.
++Register matching param specs instead of string specs so ordinary
++GObject property reads do not trigger type assertions. Preserve the
++read-only flags, attribute values, QMI protocol and sampling behavior.
++
++--- a/src/libssc-sensor.c
+++++ b/src/libssc-sensor.c
++@@ -858,26 +858,30 @@
++ 	g_object_class_install_property (object_class, PROP_DATA_TYPE, properties[PROP_DATA_TYPE]);
++ 
++ 	properties[PROP_STREAM_TYPE] =
++-		g_param_spec_string (SSC_SENSOR_STREAM_TYPE,
+++		g_param_spec_uint (SSC_SENSOR_STREAM_TYPE,
++ 				     "Stream type",
++ 				     "The stream type supported by the sensor.",
++-				     NULL,
+++				     0,
+++				     G_MAXUINT,
+++				     0,
++ 				     G_PARAM_READABLE);
++ 	g_object_class_install_property (object_class, PROP_STREAM_TYPE, properties[PROP_STREAM_TYPE]);
++ 
++ 	properties[PROP_AVAILABLE] =
++-		g_param_spec_string (SSC_SENSOR_AVAILABLE,
+++		g_param_spec_boolean (SSC_SENSOR_AVAILABLE,
++ 				     "Availability",
++ 				     "If the sensor is available for measurements.",
++-				     NULL,
+++				     FALSE,
++ 				     G_PARAM_READABLE);
++ 	g_object_class_install_property (object_class, PROP_AVAILABLE, properties[PROP_AVAILABLE]);
++ 
++ 	properties[PROP_SAMPLE_RATE] =
++-		g_param_spec_string (SSC_SENSOR_SAMPLE_RATE,
+++		g_param_spec_float (SSC_SENSOR_SAMPLE_RATE,
++ 				     "Sample rate",
++ 				     "The sample rate in Hz supported by the sensor.",
++-				     NULL,
+++				     0.0f,
+++				     G_MAXFLOAT,
+++				     0.0f,
++ 				     G_PARAM_READABLE);
++ 	g_object_class_install_property (object_class, PROP_SAMPLE_RATE, properties[PROP_SAMPLE_RATE]);
++ 
+--- a/scripts/build-sensors-debs.sh
++++ b/scripts/build-sensors-debs.sh
+@@ -18,7 +18,9 @@
+ #   OUTPUT_DIR/SHA256SUMS
+ set -euo pipefail
+ 
+-OUTPUT=${1:?usage: build-sensors-debs.sh OUTPUT_DIR}
++OUTPUT=${1:?usage: build-sensors-debs.sh OUTPUT_DIR [--libssc-only]}
++ONLY_LIBSSC=${2:-}
++case "$ONLY_LIBSSC" in "" | --libssc-only) ;; *) echo "Unknown build selection: $ONLY_LIBSSC" >&2; exit 2 ;; esac
+ REPO=$(cd "$(dirname "$0")/.." && pwd)
+ BUILD_ROOT=/build/sensors
+ # Source versions from Debian unstable, with the SHA-256 of each .dsc; the
+@@ -71,12 +73,18 @@
+         cp "$patch" debian/patches/
+         basename "$patch" >> debian/patches/series
+     done
+-    DEBFULLNAME='piano mainline contributors' DEBEMAIL='piano@localhost' \
+-        dch --local +piano --distribution trixie "$message"
++    if [ "$name" = libssc ]; then
++        DEBFULLNAME='piano mainline contributors' DEBEMAIL='piano@localhost' \
++            dch --newversion 0.4.4-2+piano1+sunuefi1 --distribution trixie "$message"
++    else
++        DEBFULLNAME='piano mainline contributors' DEBEMAIL='piano@localhost' \
++            dch --local +piano --distribution trixie "$message"
++    fi
+     mk-build-deps -i -r -t 'apt-get -y --no-install-recommends' debian/control
+-    DEB_BUILD_OPTIONS="nocheck parallel=$(nproc)" DEB_BUILD_PROFILES=nocheck \
++    DEB_BUILD_OPTIONS="${DEB_BUILD_OPTIONS:-nocheck parallel=$(nproc)}" DEB_BUILD_PROFILES=nocheck \
+         dpkg-buildpackage -b -uc -us
+     cp ../*.deb "$OUTPUT/all/"
++    cp ../*.buildinfo ../*.changes "$OUTPUT/"
+     rm -f ../*.deb ../*.buildinfo ../*.changes
+ }
+ 
+@@ -85,10 +93,24 @@
+ cd "$BUILD_ROOT"
+ for entry in "${SOURCES[@]}"; do
+     read -r name version dir <<< "$entry"
++    [ -z "$ONLY_LIBSSC" ] || [ "$name" = libssc ] || continue
+     fetch "$name" "$version" "$dir"
+ done
+ 
+-build libssc 'Rebuild for trixie (needed by iio-sensor-proxy SSC support).'
++build libssc 'Fix GObject sensor property types and rebuild for trixie.'
++if [ -n "$ONLY_LIBSSC" ]; then
++    for deb in "$OUTPUT"/all/*.deb; do
++        case $(dpkg-deb -f "$deb" Package) in
++            libssc2 | libssc-bin) cp "$deb" "$OUTPUT/runtime/" ;;
++        esac
++    done
++    for pkg in libssc2 libssc-bin; do
++        compgen -G "$OUTPUT/runtime/${pkg}_*.deb" >/dev/null || die "no $pkg package was built"
++    done
++    (cd "$OUTPUT" && find . -name '*.deb' | sort | xargs sha256sum > SHA256SUMS)
++    echo 'build-sensors-debs: two libssc runtime packages built; full sensors bundle is separate'
++    exit 0
++fi
+ # iio-sensor-proxy build-depends on the libssc just built.
+ apt-get install -y --no-install-recommends "$OUTPUT"/all/libssc-dev_*.deb \
+     "$OUTPUT"/all/libssc2_*.deb "$OUTPUT"/all/gir1.2-ssc-2_*.deb

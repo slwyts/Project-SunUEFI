@@ -29,11 +29,16 @@ PY_KERNEL
     bash upstream/piano-mesa-current/scripts/build-mesa-debs.sh \
       "${1:-$sunuefi_root/build/mesa}" 26.1.6-1~bpo13+1 ;;
   sensors)
-    python3 - "$sunuefi_root" "${1:-$sunuefi_root/build/sensors}" <<'PY_SENSORS'
+    python3 - "$sunuefi_root" "${1:-$sunuefi_root/build/sensors}" "${@:2}" <<'PY_SENSORS'
 import hashlib, json, shutil, subprocess, sys
 from pathlib import Path
-root, output = (Path(p).resolve() for p in sys.argv[1:])
+root, output = (Path(p).resolve() for p in sys.argv[1:3])
+selection = sys.argv[3:]
+if selection not in ([], ['--libssc-only']):
+    raise SystemExit('Usage: ./build.sh sensors [OUTPUT_DIR] [--libssc-only]')
 config = json.loads((root / 'config/release.json').read_text())['sensors']
+if selection and 'patches/piano-sensors/0002-fix-libssc-property-types.patch' not in config['patches']:
+    raise SystemExit('Select the libssc property-type patch in sensors.patches before building libssc-only.')
 source = root / config['source']
 head = subprocess.check_output(['git', '-C', source, 'rev-parse', 'HEAD'], text=True).strip()
 dirty = subprocess.check_output(['git', '-C', source, 'status', '--porcelain'], text=True)
@@ -50,7 +55,7 @@ for name in config['patches']:
     subprocess.run(['patch', '--batch', '--forward', '-p1', '-i', patch], cwd=workspace, check=True)
 record = {'source_url': config['source_url'], 'source_commit': head, 'patches': patches}
 (workspace / 'SOURCE').write_text(json.dumps(record, indent=2) + '\n')
-subprocess.run(['bash', workspace / 'scripts/build-sensors-debs.sh', output], check=True)
+subprocess.run(['bash', workspace / 'scripts/build-sensors-debs.sh', output, *selection], check=True)
 shutil.copy2(workspace / 'SOURCE', output / 'SOURCE')
 PY_SENSORS
     ;;

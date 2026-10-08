@@ -328,6 +328,10 @@ def sensors_packages(folder, config, root=ROOT):
         rows[package] = {'file': path.name, 'version': version, 'architecture': arch, 'sha256': actual}
     if set(rows) != {'piano-sensors', 'fastrpc-support', 'libfastrpc1', 'libssc2', 'libssc-bin', 'iio-sensor-proxy'}:
         raise ValueError('Expected exactly the six Piano sensors runtime packages')
+    if any(row['path'] == 'patches/piano-sensors/0002-fix-libssc-property-types.patch' for row in patches):
+        version = '0.4.4-2+piano1+sunuefi1'
+        if any(rows[package]['version'] != version for package in ('libssc2', 'libssc-bin')):
+            raise ValueError('Expected the property-type fixed libssc library/CLI pair ' + version)
     if patches and rows['piano-sensors']['version'] != '5+sunuefi1':
         raise ValueError('Expected the patched Piano sensors importer package version 5+sunuefi1')
     return {'source_url': source['source_url'], 'source_commit': source['source_commit'],

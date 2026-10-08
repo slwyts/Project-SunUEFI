@@ -12,7 +12,7 @@
 ./build.sh release-rootfs
 ```
 
-`sensors` 默认写入 `build/sensors`，先要求源码 HEAD 与固定提交一致、工作区干净，将源码复制到 `build/sensors-workspace`，在副本应用 `config/release.json` 列出的 `patches/piano-sensors/0001-import-vendor-reg-config.patch`，再调用副本中的上游 `scripts/build-sensors-debs.sh`。上游 checkout 保持干净。`all` 和公开 `debian-gnome` CI 的相关顺序均为 Mesa → sensors → release-rootfs。
+`sensors` 默认写入 `build/sensors`，先要求源码 HEAD 与固定提交一致、工作区干净，将源码复制到 `build/sensors-workspace`，在副本应用 `config/release.json` 列出的导入配置和 libssc 属性类型补丁，再调用副本中的上游 `scripts/build-sensors-debs.sh`。上游 checkout 保持干净。`all` 和公开 `debian-gnome` CI 的相关顺序均为 Mesa → sensors → release-rootfs。
 
 官方 CI 的 runtime 集合为六个包：
 
@@ -20,7 +20,7 @@
 | --- | --- |
 | `piano-sensors` | 上游 CI 为 `5`，本地补丁构建为 `5+sunuefi1`，架构 `all` |
 | `fastrpc-support`、`libfastrpc1` | `1.0.7-2~bpo13+1`，架构 `arm64` |
-| `libssc2`、`libssc-bin` | `0.4.4-2+piano1`，架构 `arm64` |
+| `libssc2`、`libssc-bin` | `0.4.4-2+piano1+sunuefi1`，架构 `arm64` |
 | `iio-sensor-proxy` | `3.9-1+piano1`，架构 `arm64` |
 
 FastRPC 包使用上游脚本固定校验值的 Debian 二进制包；libssc 与 iio-sensor-proxy 从固定 `.dsc` 校验值的 Debian 源包重建。版本与六包集合会记录到发布 manifest。
@@ -34,6 +34,10 @@ FastRPC 包使用上游脚本固定校验值的 Debian 二进制包；libssc 与
   "patches": [
     {
       "path": "patches/piano-sensors/0001-import-vendor-reg-config.patch",
+      "sha256": "<构建时记录的补丁 SHA-256>"
+    },
+    {
+      "path": "patches/piano-sensors/0002-fix-libssc-property-types.patch",
       "sha256": "<构建时记录的补丁 SHA-256>"
     }
   ]
@@ -84,8 +88,14 @@ lux、Kelvin或Hz。后置事件包含六个浮点分量，原厂handler原样�
 
 实际库另有三个属性声明错误：`available`/`sample-rate`/`stream-type`注册为
 字符串，getter却写boolean/float/uint，读取触发GLib类型检查失败。标准软件包
-修正正在准备，不修改传感器载荷或用常量补值。该问题与QMI能返回真实测量
+已通过 Debian quilt 修正，并使用原有 `debian/rules` 构建标准 ARM64 库、CLI、开发包和 GIR。默认构建已选择此补丁；只重建库可用 `./build.sh sensors build/libssc-only --libssc-only`，但这两包不能单独代替发布需要的完整六包。修正不修改传感器载荷或用常量补值。该问题与QMI能返回真实测量
 是不同层次；不能把声明修正直接称为硬件校准完成。
+
+本机已安装同源的 `libssc2` 和 `libssc-bin` 新版本，并重启标准 SensorProxy。
+实际属性读取返回 `available=true`、`sample-rate=26.0`、`stream-type=0`，
+陀螺仪仍能返回三轴数据，stderr 不再出现上述类型断言。完整六包输入已通过
+真实 rootfs 消费函数检查；此时下一份 root 镜像尚未生成，不把当前平板安装
+结果等同于新镜像已部署。GIR 在同一源码构建中生成，库的 SONAME 仍为 2。
 
 本轮原始记录位于`private/provisioning/recovery-priority-20261008/`的
 `a8-ssc-gyroscope.txt`、`a8-ssc-vendor-inventory.jsonl`及
