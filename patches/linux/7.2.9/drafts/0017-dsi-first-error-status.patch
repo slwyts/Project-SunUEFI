@@ -1,0 +1,175 @@
+Subject: [PATCH DRAFT] drm/msm/dsi: Record the first raw error tuple
+
+Diagnostic candidate based on5902d3af6f6254604d88f9d5590b66ad73de5dbf.
+Reuse six existing status reads and the already-read ISR. Preserve all
+W1C writes, masks, resets and work scheduling. Print once per host per
+IRQ-enable cycle without relying on a shared printk ratelimit.
+No new hardware reads, controller changes, or default configuration.
+
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -3,6 +3,7 @@
+  * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+  */
+ 
++#include <linux/atomic.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+ #include <linux/dma-mapping.h>
+@@ -147,6 +148,7 @@
+ 	spinlock_t intr_lock; /* Protect interrupt ctrl register */
+ 
+ 	u32 err_work_state;
++	atomic_t first_error_logged;
+ 	struct work_struct err_work;
+ 	struct workqueue_struct *workqueue;
+ 
+@@ -1600,7 +1602,7 @@
+ 	dsi_intr_ctrl(msm_host, DSI_IRQ_MASK_ERROR, 1);
+ }
+ 
+-static void dsi_ack_err_status(struct msm_dsi_host *msm_host)
++static u32 dsi_ack_err_status(struct msm_dsi_host *msm_host)
+ {
+ 	u32 status;
+ 
+@@ -1612,9 +1614,11 @@
+ 		dsi_write(msm_host, REG_DSI_ACK_ERR_STATUS, 0);
+ 		msm_host->err_work_state |= DSI_ERR_STATE_ACK;
+ 	}
+-}
+-
+-static void dsi_timeout_status(struct msm_dsi_host *msm_host)
++
++	return status;
++}
++
++static u32 dsi_timeout_status(struct msm_dsi_host *msm_host)
+ {
+ 	u32 status;
+ 
+@@ -1624,9 +1628,11 @@
+ 		dsi_write(msm_host, REG_DSI_TIMEOUT_STATUS, status);
+ 		msm_host->err_work_state |= DSI_ERR_STATE_TIMEOUT;
+ 	}
+-}
+-
+-static void dsi_dln0_phy_err(struct msm_dsi_host *msm_host)
++
++	return status;
++}
++
++static u32 dsi_dln0_phy_err(struct msm_dsi_host *msm_host)
+ {
+ 	u32 status;
+ 
+@@ -1640,9 +1646,11 @@
+ 		dsi_write(msm_host, REG_DSI_DLN0_PHY_ERR, status);
+ 		msm_host->err_work_state |= DSI_ERR_STATE_DLN0_PHY;
+ 	}
+-}
+-
+-static void dsi_fifo_status(struct msm_dsi_host *msm_host)
++
++	return status;
++}
++
++static u32 dsi_fifo_status(struct msm_dsi_host *msm_host)
+ {
+ 	u32 status;
+ 
+@@ -1659,9 +1667,11 @@
+ 			msm_host->err_work_state |=
+ 					DSI_ERR_STATE_MDP_FIFO_UNDERFLOW;
+ 	}
+-}
+-
+-static void dsi_status(struct msm_dsi_host *msm_host)
++
++	return status;
++}
++
++static u32 dsi_status(struct msm_dsi_host *msm_host)
+ {
+ 	u32 status;
+ 
+@@ -1672,9 +1682,11 @@
+ 		msm_host->err_work_state |=
+ 			DSI_ERR_STATE_INTERLEAVE_OP_CONTENTION;
+ 	}
+-}
+-
+-static void dsi_clk_status(struct msm_dsi_host *msm_host)
++
++	return status;
++}
++
++static u32 dsi_clk_status(struct msm_dsi_host *msm_host)
+ {
+ 	u32 status;
+ 
+@@ -1684,19 +1696,36 @@
+ 		dsi_write(msm_host, REG_DSI_CLK_STATUS, status);
+ 		msm_host->err_work_state |= DSI_ERR_STATE_PLL_UNLOCKED;
+ 	}
+-}
+-
+-static void dsi_error(struct msm_dsi_host *msm_host)
+-{
++
++	return status;
++}
++
++/*
++ * Preserve the first raw error tuple for each IRQ-enable cycle. All six
++ * values are returned by the existing read/clear helpers: no extra MMIO
++ * accesses or error handling changes are needed to classify the event.
++ */
++static void dsi_error(struct msm_dsi_host *msm_host, u32 isr)
++{
++	u32 clk, fifo, ack, timeout, ctrl_status, phy;
++
+ 	/* disable dsi error interrupt */
+ 	dsi_intr_ctrl(msm_host, DSI_IRQ_MASK_ERROR, 0);
+ 
+-	dsi_clk_status(msm_host);
+-	dsi_fifo_status(msm_host);
+-	dsi_ack_err_status(msm_host);
+-	dsi_timeout_status(msm_host);
+-	dsi_status(msm_host);
+-	dsi_dln0_phy_err(msm_host);
++	clk = dsi_clk_status(msm_host);
++	fifo = dsi_fifo_status(msm_host);
++	ack = dsi_ack_err_status(msm_host);
++	timeout = dsi_timeout_status(msm_host);
++	ctrl_status = dsi_status(msm_host);
++	phy = dsi_dln0_phy_err(msm_host);
++
++	/* Do not allow repeated IRQs to flood or replace the first event. */
++	if (!atomic_xchg(&msm_host->first_error_logged, 1))
++		pr_err("dsi_first_error: host=%d isr=%08x clk=%08x fifo=%08x ack=%08x timeout=%08x ctrl_status=%08x phy=%08x work=%08x power=%u enabled=%u video=%u\n",
++		       msm_host->id, isr, clk, fifo, ack, timeout, ctrl_status,
++		       phy, msm_host->err_work_state,
++		       READ_ONCE(msm_host->power_on), READ_ONCE(msm_host->enabled),
++		       READ_ONCE(msm_host->video_enabled));
+ 
+ 	queue_work(msm_host->workqueue, &msm_host->err_work);
+ }
+@@ -1718,7 +1747,7 @@
+ 	DBG("isr=0x%x, id=%d", isr, msm_host->id);
+ 
+ 	if (isr & DSI_IRQ_ERROR)
+-		dsi_error(msm_host);
++		dsi_error(msm_host, isr);
+ 
+ 	if (isr & DSI_IRQ_VIDEO_DONE)
+ 		complete(&msm_host->video_comp);
+@@ -2444,6 +2473,8 @@
+ {
+ 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
+ 
++	/* Re-arm only while the IRQ is disabled, before the next enable. */
++	atomic_set(&msm_host->first_error_logged, 0);
+ 	enable_irq(msm_host->irq);
+ }
+ 
