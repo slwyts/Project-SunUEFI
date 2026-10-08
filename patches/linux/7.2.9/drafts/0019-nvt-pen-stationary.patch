@@ -1,0 +1,210 @@
+From: Project SunUEFI
+Subject: [PATCH] input: nt36532e: forward real pen stationary state
+
+DRAFT: not in the release patch list. No default pen state or device
+command is introduced. The owner forwards the actual OEM FE12 state
+unchanged through /proc/nvt_thp_pen_stationary (numeric 0 or 1).
+
+OEM DATA_MODE_29 has min 0 and max 1. The same-machine nt36532_touch
+module sends host bytes 50 7E <state>, waits 10-11 ms for ACK zero and
+keeps polling when ACK remains 7E. This is distinct from extended BF7E.
+
+The interface balances its IRQ-disable reference and the existing lock,
+restores the event-buffer page on all paths, and returns SPI, timeout or
+page-restore errors. A successful request is cached as
+requested-not-queried; a newly bound device starts unknown. Firmware
+reload and resume replay only a successfully requested state after the
+new firmware is ready; failed downloads retain the request without replay. The raw
+stream reader and its frame layout remain unchanged.
+---
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.c b/drivers/input/touchscreen/nt36532e/nt36xxx.c
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx.c
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.c
+@@ -532,6 +532,91 @@
+ 	return ack[1] ? -ETIMEDOUT : 0;
+ }
+ 
++/*
++ * OEM DATA_MODE_29 forwards the actual pen state unchanged. Its range is
++ * 0..1; this is the three-byte host command, not Xiaomi extended BF7E.
++ * Caller holds ts->lock and has stopped the IRQ reader.
++ */
++static int nvt_thp_set_pen_stationary(u8 value)
++{
++	u8 command[3] = { 0x50, 0x7e, value };
++	u8 ack[2] = { 0x50, 0xff };
++	int retry, ret, restore_ret;
++
++	ret = nvt_set_page(ts->mmap->EVENT_BUF_ADDR | 0x50);
++	if (ret < 0)
++		goto restore_page;
++
++	for (retry = 0; retry < 10; retry++) {
++		/* An outstanding 7E command only needs another ACK read. */
++		if (!retry || ack[1] != 0x7e) {
++			ret = CTP_SPI_WRITE(ts->client, command, sizeof(command));
++			if (ret < 0)
++				goto restore_page;
++		}
++		usleep_range(10000, 11000);
++		ack[1] = 0xff;
++		ret = CTP_SPI_READ(ts->client, ack, sizeof(ack));
++		if (ret < 0)
++			goto restore_page;
++		if (!ack[1])
++			break;
++	}
++	ret = ack[1] ? -ETIMEDOUT : 0;
++
++restore_page:
++	restore_ret = nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
++	if (!ret && restore_ret < 0)
++		ret = restore_ret;
++	return ret;
++}
++
++static ssize_t nvt_thp_pen_stationary_read(struct file *file,
++					 char __user *buf, size_t count,
++					 loff_t *ppos)
++{
++	char value[64];
++	int len;
++
++	if (!ts)
++		return -ENODEV;
++	if (mutex_lock_interruptible(&ts->lock))
++		return -ERESTARTSYS;
++	if (ts->thp_pen_stationary_requested)
++		len = scnprintf(value, sizeof(value), "%u requested-not-queried\n",
++				ts->thp_pen_stationary);
++	else
++		len = scnprintf(value, sizeof(value), "unknown requested-not-queried\n");
++	mutex_unlock(&ts->lock);
++	return simple_read_from_buffer(buf, count, ppos, value, len);
++}
++
++static ssize_t nvt_thp_pen_stationary_write(struct file *file,
++					  const char __user *buf, size_t count,
++					  loff_t *ppos)
++{
++	u8 value;
++	int ret;
++
++	if (!ts)
++		return -ENODEV;
++	ret = kstrtou8_from_user(buf, count, 0, &value);
++	if (ret)
++		return ret;
++	if (value > 1)
++		return -EINVAL;
++	ret = nvt_thp_control_begin();
++	if (ret)
++		return ret;
++	ret = nvt_thp_set_pen_stationary(value);
++	if (!ret) {
++		ts->thp_pen_stationary = value;
++		ts->thp_pen_stationary_requested = true;
++	}
++	nvt_thp_control_end();
++	return ret ? ret : count;
++}
++
+ static ssize_t nvt_thp_stylus_write(struct file *file,
+ 				    const char __user *buf, size_t count,
+ 				    loff_t *ppos)
+@@ -613,15 +698,21 @@
+ int nvt_thp_restore_stylus(void)
+ {
+ 	u8 mode;
+-	int ret;
++	int ret = 0;
+ 
+ 	mode = READ_ONCE(ts->thp_stylus_mode);
+-	if (!mode)
+-		return 0;
+-
+-	ret = nvt_set_custom_cmd(0x04, 1);
+-	if (!ret)
+-		ret = nvt_thp_set_pen_switch(mode);
++	if (mode) {
++		ret = nvt_set_custom_cmd(0x04, 1);
++		if (!ret)
++			ret = nvt_thp_set_pen_switch(mode);
++	}
++	/* All callers already hold ts->lock during firmware reload/resume. */
++	if (!ret && ts->thp_pen_stationary_requested) {
++		if (!ts->thp_firmware_ready)
++			ret = -EAGAIN;
++		else
++			ret = nvt_thp_set_pen_stationary(ts->thp_pen_stationary);
++	}
+ 	if (ret)
+ 		NVT_ERR("failed to restore THP stylus state: %d\n", ret);
+ 
+@@ -744,6 +835,12 @@
+ 	.proc_lseek = default_llseek,
+ };
+ 
++static const struct proc_ops nvt_thp_pen_stationary_ops = {
++	.proc_read = nvt_thp_pen_stationary_read,
++	.proc_write = nvt_thp_pen_stationary_write,
++	.proc_lseek = default_llseek,
++};
++
+ static const struct proc_ops nvt_thp_cmd_ops = {
+ 	.proc_write = nvt_thp_cmd_write,
+ 	.proc_lseek = noop_llseek,
+@@ -2225,6 +2322,8 @@
+ 					  &nvt_thp_status_ops);
+ 	ts->thp_stylus_proc = proc_create("nvt_thp_stylus", 0600, NULL,
+ 					  &nvt_thp_stylus_ops);
++	ts->thp_pen_stationary_proc = proc_create("nvt_thp_pen_stationary", 0600,
++						NULL, &nvt_thp_pen_stationary_ops);
+ 	ts->thp_cmd_proc = proc_create("nvt_thp_cmd", 0200, NULL,
+ 				       &nvt_thp_cmd_ops);
+ 	ts->thp_controller_proc = proc_create("nvt_thp_controller_state", 0400,
+@@ -2235,6 +2334,7 @@
+ 						 NULL, &nvt_thp_game_rollback_ops);
+ 	if (!ts->thp_raw_proc || !ts->thp_stream_proc ||
+ 	    !ts->thp_status_proc || !ts->thp_stylus_proc ||
++	    !ts->thp_pen_stationary_proc ||
+ 	    !ts->thp_cmd_proc || !ts->thp_controller_proc ||
+ 	    !ts->thp_game_proc || !ts->thp_game_rollback_proc) {
+ 		ret = -ENOMEM;
+@@ -2265,6 +2365,7 @@
+ 		proc_remove(ts->thp_status_proc);
+ 	if (ts->thp_stylus_proc)
+ 		proc_remove(ts->thp_stylus_proc);
++	proc_remove(ts->thp_pen_stationary_proc);
+ 	if (ts->thp_stream_proc)
+ 		proc_remove(ts->thp_stream_proc);
+ 	if (ts->thp_raw_proc)
+@@ -2338,6 +2439,7 @@
+ 	proc_remove(ts->thp_cmd_proc);
+ 	proc_remove(ts->thp_status_proc);
+ 	proc_remove(ts->thp_stylus_proc);
++	proc_remove(ts->thp_pen_stationary_proc);
+ 	proc_remove(ts->thp_stream_proc);
+ 	proc_remove(ts->thp_raw_proc);
+ 	if (ts->power_supply_registered) {
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.h b/drivers/input/touchscreen/nt36532e/nt36xxx.h
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx.h
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.h
+@@ -146,6 +146,9 @@
+ 	u8 *thp_frame;
+ 	bool thp_capture_enabled;
+ 	u8 thp_stylus_mode;
++	/* Last ACKed request, not a controller query; false means unknown. */
++	bool thp_pen_stationary_requested;
++	u8 thp_pen_stationary;
+ 	bool thp_firmware_ready; /* successful download and firmware-info read */
+ 	u32 thp_firmware_crc;
+ 	bool thp_game_valid;
+@@ -174,6 +177,7 @@
+ 	struct proc_dir_entry *thp_stream_proc;
+ 	struct proc_dir_entry *thp_status_proc;
+ 	struct proc_dir_entry *thp_stylus_proc;
++	struct proc_dir_entry *thp_pen_stationary_proc;
+ 	struct proc_dir_entry *thp_cmd_proc;
+ 	struct proc_dir_entry *thp_controller_proc;
+ 	struct proc_dir_entry *thp_game_proc;

@@ -18,6 +18,29 @@ keys/buttons, stops the linked session and closes the connection, including on
 error. JSON reports actual PNG dimensions/caps and whether Stop was acknowledged.
 No RDP, Shell Eval, shell execution, password change or touch FIFO is involved.
 
+## Focus Pen Pro control observation
+
+Run `piano_pen_control.py` on the tablet with Python GI and BlueZ. Supply the
+address of the connected Focus Pen Pro; the tool discovers its actual adapter
+and FE11/FE12 characteristics. It observes notifications without pairing or
+changing THP scanning by default.
+
+```sh
+python3 piano_pen_control.py --address AA:BB:CC:DD:EE:FF --seconds 30
+sudo python3 piano_pen_control.py --address AA:BB:CC:DD:EE:FF \
+  --screen-on --query-state --forward-stationary --seconds 30
+```
+
+The explicit second command sends the OEM screen-on and state-query messages.
+Only real `53 01 <state>` or `D2 01 <state>` responses with state 0 or 1 are
+forwarded unchanged to `/proc/nvt_thp_pen_stationary`. This interface is provided
+by the candidate `0019-nvt-pen-stationary.patch`; it is not yet part of the
+default kernel. No state is invented when the pen does not respond. Logs use
+`CLOCK_BOOTTIME`, matching THP frame timestamps. The tool releases its BlueZ
+notification subscription on exit and does not own the touch FIFO or generate
+input events. A successful response confirms control communication, not drawing
+support. See [pen protocol](../../docs/devel/piano-pen-protocol.md).
+
 `piano_gamma_probe.py` reads the current Mutter CRTCs and Gamma ramps by default.
 Explicit `--probe identity|warm --crtc ACTUAL_ID --backup NEW_FILE` requests a short
 standard Gamma change and restores the original ramps in `finally`. A failed
