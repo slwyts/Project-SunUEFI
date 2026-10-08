@@ -1,0 +1,78 @@
+name: Build Android module
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Validation candidate or module with complete same-payload proof
+        type: choice
+        options: [candidate, ready]
+        default: candidate
+      qualification:
+        description: Repository-relative native proof JSON for ready packaging
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  android-module:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Get fixed sources
+        run: ./build.sh sources
+      - name: Build pinned-base environment
+        run: docker build -t sunuefi-builder -f containers/Dockerfile .
+      - name: Build unique core and module inputs
+        env:
+          MODULE_PACKAGE: ${{ inputs.package }}
+          MODULE_QUALIFICATION: ${{ inputs.qualification }}
+        run: |
+          mkdir -p build/logs artifacts/android-module
+          docker run --rm --privileged \
+            -v "$PWD:/workspace" -w /workspace \
+            -e MODULE_PACKAGE -e MODULE_QUALIFICATION sunuefi-builder bash -euc '
+              git config --global --add safe.directory /workspace
+              git config --global --add safe.directory "/workspace/*"
+              apt-get update
+              apt-get install -y --no-install-recommends libc6-dev-arm64-cross
+              python3 -m venv .venv
+              .venv/bin/pip install -r requirements-build.txt
+              . .venv/bin/activate
+              ./build.sh uefi
+              python3 - <<"PY_MODULE"
+          import os, subprocess
+          from pathlib import Path
+          command = ["python3", "tools/prepare_android_module.py",
+                     "--product", "artifacts/product", "--output", "artifacts/android-module/package",
+                     "--cc", "aarch64-linux-gnu-gcc", "--package", os.environ["MODULE_PACKAGE"]]
+          proof = os.environ.get("MODULE_QUALIFICATION", "")
+          if proof:
+              path = Path(proof)
+              if path.is_absolute() or ".." in path.parts or not path.is_file():
+                  raise SystemExit("Qualification must be an existing repository-relative file")
+              command += ["--qualification", str(path)]
+          subprocess.run(command, check=True)
+          PY_MODULE
+            ' > build/logs/ci-android-module.log 2>&1
+      - name: Show failed module preparation
+        if: failure()
+        run: tail -n 120 build/logs/ci-android-module.log
+      - name: Downloadable module and its actual readiness
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: piano-android-module-${{ inputs.package }}-${{ github.sha }}
+          path: |
+            artifacts/android-module/package/*.zip
+            artifacts/android-module/package/*.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

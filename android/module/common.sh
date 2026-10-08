@@ -1,12 +1,6 @@
 #!/system/bin/sh
 # These functions also run under host sh with injected key events in tests.
 piano_fail() { ui_print "! $*"; return 1; }
-piano_next_choice() {
-  case "$1:$2" in
-    0:up) echo 32 ;; 32:up) echo 64 ;; 64:up) echo 128 ;;
-    128:up) echo 0 ;; *:down) echo "$1" ;; *) return 1 ;;
-  esac
-}
 piano_read_key() {
   command -v getevent >/dev/null && command -v timeout >/dev/null || return 1
   event=$(timeout 15 getevent -qlc 1 2>/dev/null) || return 1
@@ -16,18 +10,6 @@ piano_read_key() {
     *) echo ignored ;;
   esac
 }
-piano_choose_root() {
-  choice=0
-  ui_print "Volume Up: next; Volume Down: select. No is the default." >&2
-  while :; do
-    if [ "$choice" = 0 ]; then ui_print "Root space: No (leave partitions unchanged)" >&2
-    else ui_print "Root space: $choice GiB + 512 MiB ESP" >&2; fi
-    key=$(piano_read_key) || { echo 0; return; }
-    [ "$key" = ignored ] && continue
-    if [ "$key" = down ]; then echo "$choice"; return; fi
-    choice=$(piano_next_choice "$choice" "$key") || return 1
-  done
-}
 piano_partition_state() {
   esp=0; root=0
   [ -e "$1/sunuefi_esp" ] && esp=1
@@ -36,10 +18,10 @@ piano_partition_state() {
     1:1) echo existing ;; 0:0) echo absent ;; *) echo incomplete; return 1 ;;
   esac
 }
-piano_require_partition_execution() {
-  [ "$1" = 0 ] && return 0
-  case "$1" in 32|64|128) ;; *) piano_fail "Unsupported root capacity."; return 1 ;; esac
-  piano_fail "NEW_INSTALL_NOT_READY: validated F2FS/GPT helper and two-stage reboot are required."
+piano_linux_available() {
+  [ "$(piano_partition_state /dev/block/by-name)" = existing ] || {
+    piano_fail "Linux requires an already installed sunuefi_esp and sunuefi_root pair."; return 1;
+  }
 }
 piano_current_identity() {
   [ "$(getprop ro.product.device)" = piano ] || piano_fail "Only piano is supported." || return

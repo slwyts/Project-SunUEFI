@@ -1,0 +1,11 @@
+#!/sbin/sh
+# Magisk Manager supplies install_module through its own utility library.
+OUTFD=$2
+ZIPFILE=$3
+if [ ! -r /data/adb/magisk/util_functions.sh ]; then
+  echo "Install this ZIP from KernelSU or Magisk Manager in Android."
+  exit 1
+fi
+. /data/adb/magisk/util_functions.sh
+[ "${MAGISK_VER_CODE:-0}" -ge 20400 ] || abort "Magisk 20.4 or later is required."
+install_module

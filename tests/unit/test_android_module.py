@@ -195,23 +195,33 @@ class AndroidModuleTests(unittest.TestCase):
             mod.package(self.args)
         self.assertEqual(self.args.output.read_bytes(), b'EXISTING FIXTURE')
 
-    def test_volume_choices_cycle_and_resize_is_blocked(self):
-        result = self.shell('for n in 0 32 64 128; do piano_next_choice "$n" up; done')
-        self.assertEqual(result.stdout.splitlines(), ['32', '64', '128', '0'])
-        for value in (32, 64, 128, 1):
-            result = self.shell('piano_require_partition_execution ' + str(value))
-            self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(self.shell('piano_require_partition_execution 0').returncode, 0)
+    def test_candidate_keeps_unverified_installation_blocked(self):
+        self.proof['device_passthrough_verified'] = False
+        self.write_json(self.native_manifest, self.proof)
+        self.args.candidate = True
+        report = mod.package(self.args)
+        self.assertFalse(report['zip_ready'])
+        self.assertFalse(report['install_ready'])
+        self.assertEqual(report['artifact_kind'], 'validation-candidate')
+        with zipfile.ZipFile(self.args.output) as archive:
+            policy = json.loads(archive.read('policy.json'))
+            self.assertFalse(policy['zip_ready'])
+            self.assertIn(b'PIANO_DEVICE_PASSTHROUGH_VERIFIED=false', archive.read('module-policy.sh'))
+            self.assertIn(b'validation candidate', archive.read('module.prop'))
+        result = self.shell('PIANO_POLICY_SCHEMA=1; PIANO_INTERFACE_VERSION=1; '
+            'PIANO_DEVICE_PASSTHROUGH_VERIFIED=false; PIANO_REQUEST_HANDLING_VERIFIED=true; '
+            'PIANO_STANDARD_RECOVERY_PRESERVED=true; piano_check_payload')
+        self.assertNotEqual(result.returncode, 0)
 
-    def test_volume_timeout_returns_no_and_key_selection_is_clean(self):
-        result = self.shell('piano_read_key() { return 1; }; piano_choose_root')
-        self.assertEqual(result.stdout.strip(), '0')
-        events = self.base / 'events'
-        events.write_text('up\nup\ndown\n')
-        result = self.shell('piano_read_key() { head -n 1 "' + str(events) +
-            '"; tail -n +2 "' + str(events) + '" > "' + str(events) +
-            '.next"; mv "' + str(events) + '.next" "' + str(events) + '"; }; piano_choose_root')
-        self.assertEqual(result.stdout.strip(), '64')
+    def test_manager_metadata_is_excluded_from_installed_checksums(self):
+        mod.package(self.args)
+        with zipfile.ZipFile(self.args.output) as archive:
+            hashes = archive.read('payload.sha256').decode()
+            self.assertNotIn('META-INF/', hashes)
+            self.assertNotIn('  module.prop\n', hashes)
+            self.assertNotIn('  customize.sh\n', hashes)
+            self.assertEqual(archive.read('META-INF/com/google/android/updater-script'), b'#MAGISK\n')
+            self.assertTrue(archive.getinfo('META-INF/com/google/android/update-binary').external_attr >> 16 & 0o111)
 
     def test_partition_pair_skips_choice_incomplete_pair_fails(self):
         folder = self.base / 'by-name';folder.mkdir()

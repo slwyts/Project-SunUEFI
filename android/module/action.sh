@@ -22,6 +22,7 @@ if [ "$operation" = status ]; then
   "$tool" status --policy "$MODPATH/policy.json" --boot-device "$bootdev" \
     --active-slot "$slot" --installed-state "$MODPATH/install-state.json" --json --read-only
 else
+  [ "$target" != linux ] || piano_linux_available || exit 2
   if [ "$operation" = request ]; then
     # A future bridge must collect explicit user confirmation, then pass this bounded token.
     [ "${3:-}" = --confirm ] && [ "$#" = 3 ] || exit 2
@@ -32,7 +33,7 @@ else
   fi
   "$tool" request --target "$target" --boot-device "$bootdev" --active-slot "$slot" \
     --rom-fingerprint "$rom_fingerprint" --boot-fingerprint "$boot_fingerprint" \
-    --installed-state "$MODPATH/install-state.json" --policy "$MODPATH/policy.json" "$mode"
+    --installed-state "$MODPATH/install-state.json" --policy "$MODPATH/policy.json" --require-ready "$mode"
 fi
 # The route persists until another confirmed request selects Android/UEFI/Linux/setup.
 # This script does not reboot or write misc/PMIC.

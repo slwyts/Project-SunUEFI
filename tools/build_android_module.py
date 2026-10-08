@@ -18,7 +18,9 @@ TESTS = ('lossless_roundtrip', 'current_source_guard', 'active_slot_guard',
 DEVICE_PROOFS = ('device_passthrough_verified', 'request_handling_verified', 'standard_recovery_preserved')
 SOURCE_FILES = ('module.prop', 'common.sh', 'customize.sh', 'uninstall.sh',
                 'native-interface.json', 'skip_mount', 'action.sh',
-                'webroot/index.html', 'webroot/style.css', 'webroot/main.js')
+                'webroot/index.html', 'webroot/style.css', 'webroot/main.js',
+                'META-INF/com/google/android/update-binary',
+                'META-INF/com/google/android/updater-script')
 
 
 def require(value, message):
@@ -151,10 +153,13 @@ def native_proof(tool, manifest, payloads, selector):
     require(proof.get('request_policy') == 'persistent-until-changed', 'Native proof must describe persistent requests')
     expected = {name: digest(raw) for name, raw in {**payloads, 'selector.bin': selector}.items()}
     require(proof.get('payload_sha256') == expected, 'Native proof belongs to different payloads')
-    require(proof.get('tested_boot_headers') == [4], 'Native BOOT v4 tests are missing')
+    require(proof.get('supported_boot_headers', proof.get('tested_boot_headers')) == [4],
+            'Native tool must support current-ROM BOOT v4')
     require(proof.get('stock_kernel_bundled') is False and proof.get('full_partition_backup') is False,
             'Native proof must preserve runtime extraction and no whole-partition backup')
     blockers = []
+    if proof.get('tested_boot_headers') != [4]:
+        blockers.append('native BOOT v4 tests are missing')
     tests = proof.get('tests', {})
     for name in TESTS:
         if tests.get(name) is not True:
@@ -196,7 +201,10 @@ def inspect(args):
               'request_handling_verified': bool(proof and proof.get('request_handling_verified') is True),
               'standard_recovery_preserved': bool(proof and proof.get('standard_recovery_preserved') is True),
               'partition_execution_ready': False, 'stock_kernel_bundled': False,
-              'ota_automatic': False, 'supported_managers': ['Magisk', 'KernelSU']}
+              'ota_automatic': False, 'supported_managers': ['Magisk', 'KernelSU'],
+              'automatic_partition_operations': False,
+              'root_preservation': 'current BOOT GKI bytes retained; init_boot/vendor_boot untouched',
+              'supported_source_layout': 'raw ARM64 BOOT v4, separate init_boot, valid Piano AVB hash/fingerprint'}
     report['entry_policy'] = 'explicit-request-only'
     report['request_policy'] = 'persistent-until-changed'
     report['request_bootarg'] = 'sunuefi.boot=uefi'
@@ -208,12 +216,21 @@ def package(args):
     report, payloads, native = inspect(args)
     if args.inspect:
         return report
-    require(report['zip_ready'], 'MODULE_NOT_READY: ' + '; '.join(report['blockers']))
+    candidate = getattr(args, 'candidate', False)
+    require(report['zip_ready'] or candidate,
+            'MODULE_NOT_READY: ' + '; '.join(report['blockers']))
+    require(native is not None and report['selector'] is not None,
+            'A candidate also requires the real native tool and same-product selector')
     require(args.output is not None, '--output is required for a ZIP')
     output = Path(args.output)
     require(output.suffix == '.zip' and not output.exists() and not output.is_symlink(), 'Use a new .zip output path')
     source = ROOT / 'android/module'
     entries = {name: read_file(source / name, 128 * 1024) for name in SOURCE_FILES}
+    if candidate and not report['zip_ready']:
+        entries['module.prop'] = entries['module.prop'].replace(
+            b'name=SunUEFI for Piano\n', b'name=SunUEFI for Piano (validation candidate)\n').replace(
+            b'description=Current-ROM BOOT selector with explicit UEFI requests; ordinary Android and stock Recovery stay available.\n',
+            b'description=Validation candidate; installer refuses BOOT writes until the recorded native and device checks pass.\n')
     entries.update({'payload/' + name: data for name, data in payloads.items()})
     entries['bin/piano-boot-repack'] = native
     entries['licenses/COPYING.libmd'] = read_file(ROOT / 'upstream/simple-init/libs/libmd/COPYING')
@@ -223,11 +240,21 @@ def package(args):
         'commands': list(COMMANDS), 'tool': record(native),
         'native_proof_sha256': digest(read_file(args.native_manifest)),
         'selector_manifest_sha256': digest(read_file(args.selector_manifest))}, sort_keys=True, indent=2) + '\n').encode()
-    entries['module-policy.sh'] = b'PIANO_POLICY_SCHEMA=1\nPIANO_INTERFACE_VERSION=1\nPIANO_DEVICE_PASSTHROUGH_VERIFIED=true\nPIANO_REQUEST_HANDLING_VERIFIED=true\nPIANO_STANDARD_RECOVERY_PRESERVED=true\n'
+    fields = {'PIANO_POLICY_SCHEMA': '1', 'PIANO_INTERFACE_VERSION': '1',
+              'PIANO_DEVICE_PASSTHROUGH_VERIFIED': str(report['device_passthrough_verified']).lower(),
+              'PIANO_REQUEST_HANDLING_VERIFIED': str(report['request_handling_verified']).lower(),
+              'PIANO_STANDARD_RECOVERY_PRESERVED': str(report['standard_recovery_preserved']).lower()}
+    entries['module-policy.sh'] = ''.join(key + '=' + value + '\n' for key, value in fields.items()).encode()
     entries['webroot/status.json'] = (json.dumps({key: report[key] for key in
         ('status', 'device_passthrough_verified', 'request_handling_verified', 'standard_recovery_preserved',
          'webui_bridge_verified', 'entry_policy', 'request_policy', 'request_bootarg')}, indent=2) + '\n').encode()
-    entries['payload.sha256'] = ''.join(digest(data) + '  ' + name + '\n' for name, data in sorted(entries.items())).encode()
+    # Managers do not retain META-INF and may remove customize.sh or rewrite
+    # module.prop. Check the installed runtime/payload files, not installer-only
+    # files that are legitimately absent after installation.
+    installed = {name: data for name, data in entries.items()
+                 if not name.startswith('META-INF/') and name not in ('customize.sh', 'module.prop')}
+    entries['payload.sha256'] = ''.join(digest(data) + '  ' + name + '\n'
+                                      for name, data in sorted(installed.items())).encode()
     output.parent.mkdir(parents=True, exist_ok=True)
     created = False
     try:
@@ -237,7 +264,8 @@ def package(args):
                 for name, data in sorted(entries.items()):
                     item = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
                     item.create_system = 3
-                    item.external_attr = (0o100755 if name.endswith('.sh') or name.startswith('bin/') else 0o100644) << 16
+                    executable = name.endswith('.sh') or name.startswith('bin/') or name.endswith('/update-binary')
+                    item.external_attr = (0o100755 if executable else 0o100644) << 16
                     item.compress_type = zipfile.ZIP_DEFLATED
                     archive.writestr(item, data)
         with zipfile.ZipFile(output) as archive:
@@ -246,7 +274,10 @@ def package(args):
         if created:
             output.unlink(missing_ok=True)
         raise
-    return {**report, 'zip': str(output), 'zip_sha256': digest(output.read_bytes()), 'zip_bytes': output.stat().st_size}
+    return {**report, 'artifact_kind': 'installable-module' if report['zip_ready'] else 'validation-candidate',
+            'install_ready': report['zip_ready'], 'zip': str(output),
+            'zip_sha256': digest(output.read_bytes()), 'zip_bytes': output.stat().st_size,
+            'zip_entries': len(entries)}
 
 
 def parser():
@@ -258,6 +289,8 @@ def parser():
     result.add_argument('--native-manifest', type=Path)
     result.add_argument('--output', type=Path)
     result.add_argument('--inspect', action='store_true')
+    result.add_argument('--candidate', action='store_true',
+                        help='Export a clearly labelled validation ZIP; keep install/write readiness checks intact')
     return result
 
 

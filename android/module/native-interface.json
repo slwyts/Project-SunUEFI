@@ -53,16 +53,9 @@
     ]
   },
   "fresh_partition_install": {
-    "root_gib_choices": [
-      0,
-      32,
-      64,
-      128
-    ],
-    "esp_bytes": 536870912,
-    "phase_1": "Explicit volume-key confirmation; verified helper validates current GPT and F2FS, shrinks online, reads both plaintext superblocks and stores a hash-bound pending plan. Reboot Android before GPT changes.",
-    "phase_2": "After a normal Android reboot and new explicit confirmation, helper must verify the same plan/GPT and both smaller superblocks. Write backup GPT before primary with readback; reboot again before using new partition nodes.",
-    "current_behavior": "Any nonzero choice fails before all writes because the helper has not been validated. No dd or force fallback."
+    "automatic_partition_operations": false,
+    "new_layout_installation": "Not provided by this module. No userdata resize, GPT or filesystem write.",
+    "existing_linux": "A Linux request requires an existing sunuefi_esp + sunuefi_root pair and their installed boot files."
   },
   "file_tool": {
     "source": "android/native/piano-boot-repack.c",
@@ -78,5 +71,7 @@
     "online_module_interface_implemented": true,
     "details": "docs/devel/android-boot-repack.md"
   },
-  "request_policy": "persistent-until-changed"
+  "request_policy": "persistent-until-changed",
+  "package_readiness": "A validation-candidate ZIP may contain the real same-product payloads and tool, but its installer keeps native/device readiness checks and refuses BOOT writes. A production module requires actual same-payload qualification.",
+  "root_preservation": "Dynamic repack retains the current raw ARM64 GKI bytes, including compatible KernelSU code, and leaves init_boot/vendor_boot/REC/vbmeta untouched. Unsupported current-BOOT layout or AVB metadata is refused; this is not a replacement CI kernel."
 }
