@@ -10,6 +10,7 @@
     "target_tree": "b8f07b7e9f9efb0cece6dc465f7052fc5d7079a8",
     "cpu_model_overlay": "linux/dts/piano-cpu-model.dtso",
     "additional_dtb_overlays": [
+      "linux/dts/piano-board-identity.dtso",
       "linux/dts/piano-audio-dmic-clock.dtso",
       "linux/dts/piano-camera-flash.dtso"
     ],

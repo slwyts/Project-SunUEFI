@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+/dts-v1/;
+/plugin/;
+
+// Identify this product while retaining the factory SoC/board fallbacks.
+/ {
+    fragment@0 {
+        target-path = "/";
+        __overlay__ {
+            model = "Xiaomi Pad 8 Pro";
+            compatible = "xiaomi,piano", "qcom,sm8750",
+                         "qcom,sun-mtp", "qcom,sun", "qcom,sunp-mtp",
+                         "qcom,sunp", "qcom,mtp";
+        };
+    };
+};

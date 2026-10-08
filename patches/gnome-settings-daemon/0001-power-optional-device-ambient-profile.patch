@@ -1,0 +1,433 @@
+From: Project SunUEFI
+Subject: [PATCH] power: add optional device-specific ambient-light hysteresis
+
+GNOME 48.1. Raw SensorProxy lux remains unchanged. A matching DT
+compatible and measured lux unit select a profile; other devices keep
+existing behavior. Piano uses the actual OS3.0.309.0 main-ALS 15/19/15
+threshold points and 1000/1000/5000ms continuous intervals. The existing
+GNOME brightness mapping and EMA remain, pending panel nits calibration.
+
+--- a/plugins/power/gsd-power-manager.c
++++ b/plugins/power/gsd-power-manager.c
+@@ -23,6 +23,7 @@
+ #include "config.h"
+ 
+ #include <stdlib.h>
++#include <math.h>
+ #include <string.h>
+ #include <glib/gi18n.h>
+ #include <gtk/gtk.h>
+@@ -43,6 +44,7 @@
+ #include "gsm-manager-logout-mode.h"
+ #include "gpm-common.h"
+ #include "gsd-backlight.h"
++#include "gsd-ambient-profile.h"
+ #include "gnome-settings-profile.h"
+ #include "gnome-settings-bus.h"
+ #include "gnome-settings-daemon/gsd-enums.h"
+@@ -183,6 +185,8 @@
+         guint                    iio_proxy_watch_id;
+         gboolean                 ambient_norm_required;
+         gdouble                  ambient_accumulator;
++        GsdAmbientProfile       *ambient_profile;
++        guint                    ambient_profile_update_id;
+         gdouble                  ambient_norm_value;
+         gdouble                  ambient_percentage_old;
+         gdouble                  ambient_last_absolute;
+@@ -1244,6 +1248,10 @@
+ static void
+ iio_proxy_claim_light (GsdPowerManager *manager, gboolean active)
+ {
++        if (!active) {
++                g_clear_handle_id (&manager->ambient_profile_update_id, g_source_remove);
++                gsd_ambient_profile_reset (manager->ambient_profile);
++        }
+         if (manager->iio_proxy == NULL)
+                 return;
+         if (!manager->backlight)
+@@ -2829,6 +2837,18 @@
+         }
+ }
+ 
++static gboolean
++ambient_profile_timeout_cb (gpointer user_data)
++{
++        GsdPowerManager *manager = user_data;
++        manager->ambient_profile_update_id = 0;
++        if (manager->iio_proxy && manager->backlight && manager->settings &&
++            manager->session_is_active &&
++            g_settings_get_boolean (manager->settings, "ambient-enabled"))
++                iio_proxy_changed (manager);
++        return G_SOURCE_REMOVE;
++}
++
+ static void
+ iio_proxy_changed (GsdPowerManager *manager)
+ {
+@@ -2838,6 +2858,10 @@
+         gdouble alpha;
+         gint64 current_time;
+         gint pc;
++        guint next_update_ms = 0;
++        gdouble policy_lux;
++        gboolean device_policy = FALSE;
++        g_autoptr(GVariant) unit = NULL;
+ 
+         /* no display hardware */
+         if (!manager->backlight)
+@@ -2851,10 +2875,19 @@
+         val_has = g_dbus_proxy_get_cached_property (manager->iio_proxy, "HasAmbientLight");
+         if (val_has == NULL || !g_variant_get_boolean (val_has))
+                 goto out;
++        unit = g_dbus_proxy_get_cached_property (manager->iio_proxy, "LightLevelUnit");
++        device_policy = manager->ambient_profile && unit &&
++                        g_variant_is_of_type (unit, G_VARIANT_TYPE_STRING) &&
++                        g_str_equal (g_variant_get_string (unit, NULL), "lux");
+         val_als = g_dbus_proxy_get_cached_property (manager->iio_proxy, "LightLevel");
+-        if (val_als == NULL || g_variant_get_double (val_als) == 0.0)
++        if (val_als == NULL ||
++            (device_policy ? (!isfinite (g_variant_get_double (val_als)) ||
++                              g_variant_get_double (val_als) < 0.0 ||
++                              (g_variant_get_double (val_als) == 0.0 && manager->ambient_norm_required))
++                           : g_variant_get_double (val_als) == 0.0))
+                 goto out;
+         manager->ambient_last_absolute = g_variant_get_double (val_als);
++        g_clear_handle_id (&manager->ambient_profile_update_id, g_source_remove);
+         g_debug ("Read last absolute light level: %f", manager->ambient_last_absolute);
+ 
+         /* the user has asked to renormalize */
+@@ -2863,10 +2896,18 @@
+                          manager->ambient_percentage_old);
+                 manager->ambient_accumulator = manager->ambient_percentage_old;
+                 ch_backlight_renormalize (manager);
++                gsd_ambient_profile_reset (manager->ambient_profile);
+         }
+ 
+         /* time-weighted constant for moving average */
+-        current_time = g_get_monotonic_time();
++        current_time = g_get_monotonic_time ();
++        policy_lux = manager->ambient_last_absolute;
++        if (device_policy)
++                policy_lux = gsd_ambient_profile_update (manager->ambient_profile,
++                                                       policy_lux, current_time,
++                                                       &next_update_ms);
++        else
++                gsd_ambient_profile_reset (manager->ambient_profile);
+         if (manager->ambient_last_time)
+                 alpha = 1.0f / (1.0f + (GSD_AMBIENT_TIME_CONSTANT / (current_time - manager->ambient_last_time)));
+         else
+@@ -2874,12 +2915,24 @@
+         manager->ambient_last_time = current_time;
+ 
+         /* calculate exponential weighted moving average */
+-        brightness = manager->ambient_last_absolute * 100.f / manager->ambient_norm_value;
++        brightness = policy_lux * 100.f / manager->ambient_norm_value;
+         brightness = MIN (brightness, 100.f);
+         brightness = MAX (brightness, 0.f);
+ 
+         manager->ambient_accumulator = (alpha * brightness) +
+                 (1.0 - alpha) * manager->ambient_accumulator;
++
++        if (device_policy) {
++                /* Finish the existing low-pass transition even if an unchanged
++                 * sensor value emits no further PropertiesChanged signal. */
++                if (fabs (manager->ambient_accumulator - brightness) < 0.05)
++                        manager->ambient_accumulator = brightness;
++                else
++                        next_update_ms = next_update_ms ? MIN (next_update_ms, 250) : 250;
++                if (next_update_ms)
++                        manager->ambient_profile_update_id = g_timeout_add (next_update_ms,
++                                                        ambient_profile_timeout_cb, manager);
++        }
+ 
+         /* no valid readings yet */
+         if (manager->ambient_accumulator < 0.f)
+@@ -2889,6 +2942,8 @@
+         g_debug ("Setting brightness from ambient %.1f%%",
+                  manager->ambient_accumulator);
+         pc = manager->ambient_accumulator;
++        if (device_policy && pc == manager->ambient_percentage_old)
++                goto out;
+ 
+         if (manager->backlight)
+                 gsd_backlight_set_brightness_async (manager->backlight, pc, NULL, NULL, NULL);
+@@ -2934,6 +2989,8 @@
+                        gpointer user_data)
+ {
+         GsdPowerManager *manager = GSD_POWER_MANAGER (user_data);
++        g_clear_handle_id (&manager->ambient_profile_update_id, g_source_remove);
++        gsd_ambient_profile_reset (manager->ambient_profile);
+         g_clear_object (&manager->iio_proxy);
+ }
+ 
+@@ -3023,6 +3080,7 @@
+         manager->ambient_percentage_old = -1.f;
+         manager->ambient_last_absolute = -1.f;
+         manager->ambient_last_time = 0;
++        manager->ambient_profile = gsd_ambient_profile_load ();
+ 
+         manager->backlight = gsd_backlight_new (NULL);
+ 
+@@ -3144,6 +3202,8 @@
+         GsdPowerManager *manager = GSD_POWER_MANAGER (app);
+ 
+         g_debug ("Stopping power manager");
++        g_clear_handle_id (&manager->ambient_profile_update_id, g_source_remove);
++        g_clear_pointer (&manager->ambient_profile, gsd_ambient_profile_free);
+ 
+         if (manager->inhibit_lid_switch_timer_id != 0) {
+                 g_source_remove (manager->inhibit_lid_switch_timer_id);
+--- a/plugins/power/meson.build
++++ b/plugins/power/meson.build
+@@ -2,6 +2,7 @@
+   'gpm-common.c',
+   'gsd-backlight.c',
+   'gsd-power-manager.c',
++  'gsd-ambient-profile.c',
+   'main.c'
+ )
+ sources += main_helper_sources
+@@ -32,6 +33,10 @@
+ 
+ cflags += ['-DLIBEXECDIR="@0@"'.format(gsd_libexecdir)]
+ cflags += ['-DUSE_GTK=1']
++cflags += ['-DGSD_AMBIENT_PROFILE_DIR=\"@0@\"'.format(join_paths(gsd_datadir, 'gnome-settings-daemon', 'ambient-profiles'))]
++
++install_data('ambient-profiles/piano.ini',
++  install_dir: join_paths(gsd_datadir, 'gnome-settings-daemon', 'ambient-profiles'))
+ 
+ gsd_power = executable(
+   'gsd-' + plugin_name,
+--- /dev/null
++++ b/plugins/power/gsd-ambient-profile.c
+@@ -0,0 +1,197 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/* Optional measured-lux policy in the existing power manager, not a sensor. */
++#include "gsd-ambient-profile.h"
++#include <math.h>
++#include <string.h>
++
++#ifndef GSD_AMBIENT_PROFILE_DIR
++#define GSD_AMBIENT_PROFILE_DIR "/usr/share/gnome-settings-daemon/ambient-profiles"
++#endif
++
++typedef struct {
++        gdouble *x, *y;
++        gsize count;
++} Curve;
++
++struct _GsdAmbientProfile {
++        Curve bright, dark, small;
++        guint bright_ms, dark_ms, small_ms;
++        gboolean initialized;
++        gdouble accepted_lux;
++        gint64 bright_since, dark_since, small_since;
++};
++
++static gboolean
++compatible_matches (const gchar *wanted, const gchar *bytes, gsize size)
++{
++        const gchar *p = bytes, *end = bytes + size;
++        while (p < end) {
++                const gchar *zero = memchr (p, '\0', end - p);
++                if (!zero)
++                        return FALSE;
++                if ((gsize) (zero - p) == strlen (wanted) && memcmp (p, wanted, zero - p) == 0)
++                        return TRUE;
++                p = zero + 1;
++        }
++        return FALSE;
++}
++
++static gboolean
++load_curve (GKeyFile *file, const gchar *x_name, const gchar *y_name, Curve *curve)
++{
++        gsize yn = 0;
++        curve->x = g_key_file_get_double_list (file, "Ambient", x_name, &curve->count, NULL);
++        curve->y = g_key_file_get_double_list (file, "Ambient", y_name, &yn, NULL);
++        if (!curve->x || !curve->y || curve->count < 2 || curve->count > 256 || yn != curve->count)
++                return FALSE;
++        for (gsize i = 0; i < curve->count; i++) {
++                if (!isfinite (curve->x[i]) || !isfinite (curve->y[i]) ||
++                    curve->x[i] < 0 || curve->y[i] < 0 ||
++                    (i && curve->x[i] <= curve->x[i - 1]))
++                        return FALSE;
++        }
++        return TRUE;
++}
++
++static gdouble
++interpolate (const Curve *curve, gdouble lux)
++{
++        if (lux <= curve->x[0])
++                return curve->y[0];
++        for (gsize i = 1; i < curve->count; i++) {
++                if (lux <= curve->x[i])
++                        return curve->y[i - 1] + (curve->y[i] - curve->y[i - 1]) *
++                                (lux - curve->x[i - 1]) / (curve->x[i] - curve->x[i - 1]);
++        }
++        return curve->y[curve->count - 1];
++}
++
++static gboolean
++load_delay (GKeyFile *file, const gchar *name, guint *delay)
++{
++        g_autoptr(GError) error = NULL;
++        guint64 value = g_key_file_get_uint64 (file, "Ambient", name, &error);
++        if (error || !value || value > 60000)
++                return FALSE;
++        *delay = value;
++        return TRUE;
++}
++
++void
++gsd_ambient_profile_free (GsdAmbientProfile *profile)
++{
++        if (!profile)
++                return;
++        g_free (profile->bright.x); g_free (profile->bright.y);
++        g_free (profile->dark.x); g_free (profile->dark.y);
++        g_free (profile->small.x); g_free (profile->small.y);
++        g_free (profile);
++}
++
++GsdAmbientProfile *
++gsd_ambient_profile_load (void)
++{
++        g_autofree gchar *compatible = NULL;
++        g_autoptr(GDir) dir = NULL;
++        gsize bytes = 0;
++        const gchar *name;
++        if (!g_file_get_contents ("/sys/firmware/devicetree/base/compatible", &compatible, &bytes, NULL))
++                return NULL;
++        dir = g_dir_open (GSD_AMBIENT_PROFILE_DIR, 0, NULL);
++        if (!dir)
++                return NULL;
++        while ((name = g_dir_read_name (dir))) {
++                g_autofree gchar *path = NULL, *match = NULL;
++                g_autoptr(GKeyFile) file = g_key_file_new ();
++                GsdAmbientProfile *profile;
++                if (!g_str_has_suffix (name, ".ini"))
++                        continue;
++                path = g_build_filename (GSD_AMBIENT_PROFILE_DIR, name, NULL);
++                if (!g_key_file_load_from_file (file, path, G_KEY_FILE_NONE, NULL))
++                        continue;
++                match = g_key_file_get_string (file, "Match", "Compatible", NULL);
++                if (!match || !compatible_matches (match, compatible, bytes))
++                        continue;
++                profile = g_new0 (GsdAmbientProfile, 1);
++                if (!load_curve (file, "BrighteningLux", "BrighteningThresholdLux", &profile->bright) ||
++                    !load_curve (file, "DarkeningLux", "DarkeningThresholdLux", &profile->dark) ||
++                    !load_delay (file, "BrighteningDebounceMs", &profile->bright_ms) ||
++                    !load_delay (file, "DarkeningDebounceMs", &profile->dark_ms) ||
++                    (g_key_file_has_key (file, "Ambient", "SmallBrighteningLux", NULL) &&
++                     (!load_curve (file, "SmallBrighteningLux", "SmallBrighteningThresholdLux", &profile->small) ||
++                      !load_delay (file, "SmallBrighteningDebounceMs", &profile->small_ms)))) {
++                        g_warning ("Ignoring invalid ambient-light profile %s", path);
++                        gsd_ambient_profile_free (profile);
++                        return NULL;
++                }
++                g_debug ("Using ambient-light profile %s for %s", path, match);
++                return profile;
++        }
++        return NULL;
++}
++
++void
++gsd_ambient_profile_reset (GsdAmbientProfile *profile)
++{
++        if (profile) {
++                profile->initialized = FALSE;
++                profile->bright_since = profile->dark_since = profile->small_since = -1;
++        }
++}
++
++/* Each threshold has its own continuous interval: crossing the large
++ * threshold must not discard time already spent above the small threshold. */
++static gboolean
++threshold_elapsed (gboolean crossed, guint delay_ms, gint64 now_us,
++                   gint64 *since, guint *next_update_ms)
++{
++        gint64 remaining;
++        if (!crossed) {
++                *since = -1;
++                return FALSE;
++        }
++        if (*since < 0 || now_us < *since)
++                *since = now_us;
++        remaining = (gint64) delay_ms * 1000 - (now_us - *since);
++        if (remaining <= 0)
++                return TRUE;
++        guint wait_ms = (guint) ((remaining + 999) / 1000);
++        *next_update_ms = *next_update_ms ? MIN (*next_update_ms, wait_ms) : wait_ms;
++        return FALSE;
++}
++
++gdouble
++gsd_ambient_profile_update (GsdAmbientProfile *profile, gdouble lux,
++                            gint64 now_us, guint *next_update_ms)
++{
++        gdouble bright, dark;
++        gboolean big_ready, dark_ready, small_ready = FALSE;
++        *next_update_ms = 0;
++        if (!profile || !isfinite (lux) || lux < 0)
++                return lux;
++        if (!profile->initialized) {
++                profile->initialized = TRUE;
++                profile->accepted_lux = lux;
++                profile->bright_since = profile->dark_since = profile->small_since = -1;
++                return lux;
++        }
++        bright = interpolate (&profile->bright, profile->accepted_lux);
++        dark = interpolate (&profile->dark, profile->accepted_lux);
++        big_ready = threshold_elapsed (lux > bright && lux > profile->accepted_lux,
++                                       profile->bright_ms, now_us,
++                                       &profile->bright_since, next_update_ms);
++        dark_ready = threshold_elapsed (lux < dark && lux < profile->accepted_lux,
++                                        profile->dark_ms, now_us,
++                                        &profile->dark_since, next_update_ms);
++        if (profile->small.count)
++                small_ready = threshold_elapsed (lux > interpolate (&profile->small, profile->accepted_lux) &&
++                                                 lux > profile->accepted_lux,
++                                                 profile->small_ms, now_us,
++                                                 &profile->small_since, next_update_ms);
++        if (big_ready || dark_ready || small_ready) {
++                profile->accepted_lux = lux;
++                profile->bright_since = profile->dark_since = profile->small_since = -1;
++                *next_update_ms = 0;
++        }
++        return profile->accepted_lux;
++}
+--- /dev/null
++++ b/plugins/power/gsd-ambient-profile.h
+@@ -0,0 +1,12 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#pragma once
++#include <glib.h>
++
++typedef struct _GsdAmbientProfile GsdAmbientProfile;
++GsdAmbientProfile *gsd_ambient_profile_load (void);
++void gsd_ambient_profile_free (GsdAmbientProfile *profile);
++void gsd_ambient_profile_reset (GsdAmbientProfile *profile);
++gdouble gsd_ambient_profile_update (GsdAmbientProfile *profile,
++                                  gdouble measured_lux,
++                                  gint64 now_us,
++                                  guint *next_update_ms);
+--- /dev/null
++++ b/plugins/power/ambient-profiles/piano.ini
+@@ -0,0 +1,15 @@
++# Source: actual OS3.0.309.0.WPYCNXM display configuration, 2026-10-08.
++# Lux remains the real SensorProxy measurement. No nits-to-percent claim.
++[Match]
++Compatible=xiaomi,piano
++
++[Ambient]
++BrighteningDebounceMs=1000
++DarkeningDebounceMs=1000
++BrighteningLux=0.0;3.0;4.0;6.0;7.0;8.0;9.0;15.0;30.0;600.0;1677.4;2000.0;2500.0;3000.0;8500.0;
++BrighteningThresholdLux=2.0;6.0;8.51;13.66;14.84;15.46;17.22;28.44;160.0;992.58;3000.0;4038.77;5738.77;7538.77;13038.77;
++DarkeningLux=0.0;1.0;7.0;8.0;9.0;10.0;11.0;12.0;13.0;14.0;15.0;30.0;199.0;200.0;360.0;600.0;1010.47;3000.0;20000.0;
++DarkeningThresholdLux=0.0;0.32;3.53;3.8;4.1;4.45;4.82;5.2;5.58;6.05;6.9;15.83;34.31;41.39;45.34;216.99;600.0;2052.56;10011.96;
++SmallBrighteningDebounceMs=5000
++SmallBrighteningLux=0.0;3.0;4.0;6.0;7.0;8.0;9.0;15.0;30.0;600.0;1677.4;2000.0;2500.0;3000.0;8500.0;
++SmallBrighteningThresholdLux=2.0;6.0;8.51;13.66;14.84;15.46;17.22;23.064001;108.0;835.54803;2470.96;3223.2622;4443.262;5738.77;11223.262;
