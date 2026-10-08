@@ -44,3 +44,5 @@ DT中的`qcom,sde-reg-dma-trigger-off=0x119c`是`trigger_sel_off`，不能误当
 修正后的默认源码为 `bde3f2e9e9156875e08c81a4df75a369f5518d8a`，tree为 `16fe3d5fa0d8d2da8e66e69fde394d7850fb7f23`；相关 `dpu_lutdma` ARM64对象已经编译，完整内核正在构建，尚未部署。它同时包含固定DSC位深报告和标准torch档位转换；a589失败产物不作为可用版本推荐。
 
 本轮实机结果保存在 `private/provisioning/recovery-priority-20261008/bde3-drm.json`、`bde3-identity-probe.json`、`bde3-session-journal.txt`。内核的真实提交和完成时间为659.136439/659.136542秒，桌面恢复空数组时在662秒附近退出；无本轮SMMU或REGDMA timeout。标准显示恢复、暖色两侧输出及正常Night Light关开仍需分别验证。
+
+bde3同次DPMS关屏两秒再开屏仍出现 `dsi_err_worker status=4`，两次D-Bus调用返回不能证明物理链路恢复。随后正常重启已恢复GNOME。slave-first变更不足以解决此问题；status4是软件FIFO分类，尚无raw FIFO子位，不能确定具体underflow/overflow。暂不部署锁屏/睡眠策略，不重复切刷新率，下一步对照原厂video-enable与面板reset/DCS/PPS分期。
