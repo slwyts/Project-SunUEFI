@@ -1,8 +1,11 @@
 # Piano Iris / FFmpeg stateful decoder
 
 2026-10-08：Iris encoder 已实际产生 640×480 H.264，软件 ffprobe 确认 12 帧。
-Decoder 曾在 strace 下输出多帧，但透明 recorder 再次捕获到提前结束。当前不能
-将 decoder 标记为可用；新增 FFmpeg 适配还需设备恢复后用同一码流验证。
+Decoder 原来在透明 recorder 下提前结束。2026-10-08 已在真实 g086 内核上验证
+FFmpeg 7.1.5 `sunuefi3` 最小候选：同一合成 12 帧 640×480 H.264，系统 FFmpeg
+只输出一个 corrupt 帧，候选输出 12 帧、0 decode errors、退出码 0。短 encoder
+对照也通过。此结果限于该分辨率短流；正式发行版包、DRC、其他 codec 和播放
+时序尚未验证。
 
 ## 已捕获的失败
 
@@ -57,17 +60,30 @@ DRC 不清掉已接受 STOP 的 drain 状态。EOS 事件不提前结束 CAPTURE
 ## 可复现的源码副本
 
 ```sh
-python tools/prepare_ffmpeg_source.py --output build/ffmpeg-source-7.1.5-sunuefi1
+python tools/prepare_ffmpeg_source.py --output build/ffmpeg-source-7.1.5-sunuefi3
 ```
 
 脚本校验固定 Debian orig archive 和 BSP patch 的 SHA256，只在新的 build 目录
 应用标准 patch，并写入 SOURCE.json。版本是 FFmpeg 7.1.5；Debian 参考源码版本
 `7:7.1.5-0+deb13u1`，拟定 Debian 包版本
-`7:7.1.5-0+deb13u1+sunuefi1`。BSP 补丁不包含发行版打包元数据。
+`7:7.1.5-0+deb13u1+sunuefi3`。BSP 补丁不包含发行版打包元数据。
+
+实机额外发现并修正两处：V4L2 core 的非阻塞 DQEVENT 空队列返回 ENOENT，
+原来的事件循环将它当作 fatal；0002 仅将该 DQEVENT 返回值作为空队列结束，
+DQBUF 和其他 I/O 错误仍返回。0003 将 decoder 的 WAIT_INITIAL 判断限定于
+decoder，恢复 encoder 原有的 CAPTURE-only drain poll，修复 EOF 时的 EAGAIN
+和 CLI frame assertion。没有更改 CAPTURE ERROR/LAST flags 或构造帧。
+
+`sunuefi2` 的一次透明实机记录中，主解码线程 CAPTURE sequence 0–11 都有
+462848 字节负载、无 ERROR，最后 sequence 12 是空 LAST（flags=0x104001）。
+STOP cmd=1 成功，未提前发 START。之后 `sunuefi3` 再做解码回归，仍为 12 帧、
+0 errors。对同一份 12 帧 NV12 文件，系统与最终候选各编码一次，软件 ffprobe
+均确认 12 帧，输出 H.264 逐字节相同；13 个编码 packets 含独立 headers，不能
+把 CLI progress 的 13 当作 13 个画面。
 
 ## ARM64 原型与真实验证
 
-最小 CLI 产物放在 `build/ffmpeg-prototype/7.1.5-sunuefi1/`，其中 SOURCE.json、
+最小 CLI 产物放在 `build/ffmpeg-prototype/7.1.5-sunuefi3/`，其中 SOURCE.json、
 BUILD.json 和 SHA256SUMS 记录实际源码、补丁、configure 参数和二进制。CLI 的
 原型配置不代表 Debian/Arch 完整功能，不能作为最终 rootfs 的 ffmpeg 替代包。
 
@@ -82,11 +98,11 @@ BUILD.json 和 SHA256SUMS 记录实际源码、补丁、configure 参数和二�
   --enable-bsf=h264_mp4toannexb --enable-demuxer=h264,rawvideo \
   --enable-muxer=null,rawvideo,h264 --enable-parser=h264 --enable-protocol=file,pipe \
   --enable-filter=buffer,buffersink,null,format,scale,testsrc2 \
-  --extra-version=sunuefi1-stateful-prototype
+  --extra-version=sunuefi3-stateful-prototype
 make -j2 ffmpeg
 ```
 
-设备恢复后，复制 CLI 至 /run，由负责实机的人使用原来已记录的码流运行一次：
+本轮 CLI 仅复制到 /run，系统 FFmpeg、内核和服务均未替换。保留的同输入命令为：
 
 ```sh
 /run/ffmpeg-stateful-prototype -hide_banner -loglevel verbose \
@@ -97,8 +113,11 @@ make -j2 ffmpeg
 SOURCE_CHANGE、DQBUF planes/flags；另外保存 dmesg 和 CLI 的真实帧数与返回码。
 初始应出现 OUTPUT → SOURCE_CHANGE → CAPTURE 开流，后续若有 DRC 则 LAST 在
 START 前被消费，最终 EOF 仍有真实 LAST。不能以返回码或 object 编译单独断定
-decoder 已工作。编码器源码入口保持原样，共用 buffer 生命周期改动仍需真实
-encoder 回归，构建成功不能替代它。
+decoder 已工作。编码器源码入口保持原样，共用 buffer 生命周期和 drain 改动已
+完成上述短 encoder 对照。本地实际记录在
+`private/analysis/g086-codec-20261008/RESULT-verified.json`；没有新增 mock、重启或
+刷写。增量原型复用原配置，版本由标准 `ffbuild/version.sh` 与 make 的
+`EXTRA_VERSION=sunuefi3-stateful-prototype` 更新；实际命令见 BUILD.json。
 
 ## 标准发行版包的最小接入
 

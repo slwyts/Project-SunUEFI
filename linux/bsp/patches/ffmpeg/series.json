@@ -2,8 +2,8 @@
   "schema_version": 1,
   "component": "ffmpeg-v4l2m2m",
   "upstream_version": "7.1.5",
-  "local_revision": "sunuefi1",
-  "status": "AARCH64_PROTOTYPE_BUILT_NOT_DEVICE_VERIFIED",
+  "local_revision": "sunuefi3",
+  "status": "DEVICE_SYNTHETIC_H264_DECODER_ENCODER_VERIFIED",
   "source": {
     "source": "https://ffmpeg.org",
     "upstream_version": "7.1.5",
@@ -34,12 +34,22 @@
       "path": "0001-v4l2m2m-follow-stateful-source-change.patch",
       "sha256": "835317cc81c4d39f8296c4d7cf7dba8d437f0d37d3f5be058c4e512d05af6fe5",
       "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "0002-v4l2m2m-accept-empty-event-queue.patch",
+      "sha256": "4cf97a176bde5595309e06229435799b21ac8b7ace2c8796361d1b99b30bcb17",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "0003-v4l2m2m-preserve-encoder-drain-poll.patch",
+      "sha256": "c7906fee1aa8ce5ce3bc36eadc42df56cb714d08bdbc5623ddd06460d863c200",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
     }
   ],
   "distribution_independent": true,
   "debian_reference": {
     "source_version": "7:7.1.5-0+deb13u1",
-    "planned_binary_version": "7:7.1.5-0+deb13u1+sunuefi1",
+    "planned_binary_version": "7:7.1.5-0+deb13u1+sunuefi3",
     "binary_packages_built": false
   },
   "scope": [
@@ -50,50 +60,47 @@
     "AVBufferRef accounting required for capture remapping",
     "input EOF without initial metadata reports driver error or exhausted invalid input"
   ],
-  "device_operation_performed": false,
+  "device_operation_performed": true,
   "mock_tests_performed": false,
   "verification": {
-    "status": "AARCH64_OBJECTS_AND_REAL_CLI_BUILT_NOT_DEVICE_VERIFIED",
+    "status": "REAL_SYNTHETIC_H264_DECODER_ENCODER_VERIFIED_ON_G086",
     "source_inputs": {
-      "libavcodec/v4l2_context.c": "80cf3fb0bad8e5d5a85b76d38f859dc2332a46fcb5aa571168df1f2f3c974fd4",
+      "libavcodec/v4l2_context.c": "4a9acb801050ccdda9302aa7268536c514ddc58555146c5311942fc092d0fe7a",
       "libavcodec/v4l2_context.h": "2a0988b6247550316ae6fc0a6daae5da984660b5df0e4abcf25da259ec314146",
       "libavcodec/v4l2_m2m.c": "f4e06377dff2fc913c7db0a906ab6ce45d65cccf89dc150096c79b74745294af",
       "libavcodec/v4l2_m2m.h": "0ce53e32f79bbc34120bd4e36652e65356b2de62b61705cf9d868657f07b6cfe",
       "libavcodec/v4l2_m2m_dec.c": "a323735725bdfe6b65d369924b56ea3d153839ce0755b9d5ab7c1bcd0ed70afe",
       "libavcodec/v4l2_buffers.c": "69cdb7681030e3b9e3f6ada0adef8d7f9cbcbeb879ad3acb8e234a74c68afeb7"
     },
-    "objects": {
-      "v4l2_buffers.o": "83977febd3651aa72720aee3f8b3ba12ee4a54c223794283a3516a9efb7c643f",
-      "v4l2_context.o": "1f06257e63652ab9c5c16e22c463c72b8625c5394b3ce45a8d0c39de2da4f224",
-      "v4l2_m2m.o": "7483b7c65e2a03bf932fa75be5946f3248d2233723859dec69e8e317eb680b17",
-      "v4l2_m2m_dec.o": "23c4ddd2f1b7f4c59dddd24dfc5f8af170c68fd6b2f154f5d92bb543842bed37",
-      "v4l2_m2m_enc.o": "36eb647208a18970a2450d650054909f0e2707b49a81e0e18e21edf09c9558af"
-    },
-    "configure_log_sha256": "812f766901a4942b7cd9d25212df16cb78e80236ddd3d6ac0736041f7bcb464d",
-    "compile_logs": {
-      "build-verify-final.log": "096707d0f281928c9c9e5a7a0b29c7b46b6d5f905868ac77b8aa17a0fe1adc4b",
-      "build-latest-and-relink.log": "0a0a7ec8d36f2d020f2a273076bb26904926d0190129a2f17affbd09b7587b44"
-    },
-    "configured_H264_v4l2m2m_decoder": true,
-    "configured_H264_v4l2m2m_encoder": true,
-    "unchanged_encoder_source_sha256": "2df529dc600a19e25f9f28a7f861bce7c0c2de449adeceffad3c31b8f247fae0",
+    "context_object_sha256": "a2aa8a42092a7311f1ac408580a17d2569f391617a2cb07163846bad3958965c",
     "fresh_archive_patch_application_matches_workspace": true,
-    "tests_added": false,
+    "device_result_sha256": "23a1ccafa3ac4aa34b5469db645e6dec25fa3491b206c2b752c84c2f6e455b6e",
+    "synthetic_decoder_frames": 12,
+    "synthetic_encoder_frames": 12,
+    "encoder_output_matches_baseline_bytes": true,
     "mock_tests_run": false,
-    "device_operation_performed": false
+    "full_debian_packages_built": false,
+    "DRC_reallocation_device_verified": false,
+    "playback_timing_verified": false
   },
   "runtime_pending": [
-    "Same recorded Annex-B H.264 decoder input on real Iris",
-    "Real h264_v4l2m2m encoder regression",
-    "Real source-change/reallocation with old frame references retained",
-    "Actual invalid input that exhausts OUTPUT without initial source-change"
+    "Real DRC and capture reallocation with old frame references retained",
+    "Actual invalid input that exhausts OUTPUT without initial source-change",
+    "Container playback timing and complete standard distro package integration"
   ],
   "reference_lifetime_limit": "Capture reallocation still waits for caller AVBufferRefs, as upstream; retained same-thread frames can block. No forced unref.",
-  "prototype": {
+  "previous_prototype": {
     "path": "build/ffmpeg-prototype/7.1.5-sunuefi1/ffmpeg-stateful-prototype",
     "sha256": "30b4016433f59fcf364cb1eb343b45890060690f233105a9b4d6191147f5ba76",
     "size": 1904112,
     "manifest": "build/ffmpeg-prototype/7.1.5-sunuefi1/BUILD.json",
     "status": "REAL_AARCH64_FFMPEG_PROTOTYPE_NOT_DEVICE_VERIFIED"
+  },
+  "prototype": {
+    "path": "build/ffmpeg-prototype/7.1.5-sunuefi3/ffmpeg-stateful-prototype",
+    "sha256": "af8a5d012fcca1867d76516fbb974c1632a9f39d9b80053b6e768f697e88bd43",
+    "size": 1904112,
+    "manifest": "build/ffmpeg-prototype/7.1.5-sunuefi3/BUILD.json",
+    "status": "REAL_SYNTHETIC_H264_DECODER_ENCODER_VERIFIED_ON_G086"
   }
 }
