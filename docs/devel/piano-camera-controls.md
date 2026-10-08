@@ -36,6 +36,10 @@ AE、AWB、AF 各自拥有自动/手动状态；数值写入必须先把对应�
 
 两个正常 producer 顺序应用这份补丁、继续编译同一 camerad，并另编 CLI；stage 的完整文件集合包含客户端。CLI 的 main 使用 argc/argv，不复用 camerad 的 void-main wrapper。二进制不存入 Git，无需新增 systemd unit。
 
-2026-10-09 已使用完成的 Debian rootfs 作为 ARM64 sysroot，针对 `7.2.9-piano-gnome-g60fd202096bf` 编译完整 runtime。产物保存在 `build/piano-runtime/release-7.2.9-manual-camera-20261009/`；相机服务及客户端均为静态 AArch64 ELF，客户端 SHA256 为 `a2039e1415fea9a7d2640fc5a330faa3d848e0fdc780f99c6586232975de1097`。正常 stage 已将完整的六个 runtime 文件安装到独立的 `build/distros/camera-manual-stage-20261009/` 并运行 depmod；当前设备与已打包的 ESP/root 未修改。硬件控件读回与自动/手动切换需要在安装这些产物后验证。
+2026-10-09 已使用完成的 Debian rootfs 作为 ARM64 sysroot 编译完整 runtime。相机服务与客户端随后随 `7.2.9-piano-gnome-gc8bf8df4d2ca` 部署；客户端 SHA256 为 `a2039e1415fea9a7d2640fc5a330faa3d848e0fdc780f99c6586232975de1097`。正常构建与 stage 都包含这两个静态 AArch64 程序。
+
+实机后摄开流期间，`caps/get` 成功查询控件；AE 切为 manual 后，将当前曝光写回并读到相同值，再恢复 auto，所有步骤均成功。该模式的曝光范围为 8–4266 行、模拟增益 1–64、数字增益 1024–16383（Q10）、对焦 DAC 0–1023。前摄查询也成功，并正确报告没有对焦马达。这些范围对应当前模式，应用应重新查询，不能写成所有模式的常量。测试只丢弃帧数据，没有保存图像或改变永久参数。
+
+Snapshot 首次远程打开时可能停在概览中。该版本等待窗口获得焦点后才开始相机发现；退出 GNOME 概览后，前摄可进入正常预览。不要仅凭窗口的加载动画判断相机服务没有工作。
 
 这套接口还不是原厂相机专业模式。原厂 Android 的小米扩展公布后摄 ISO 50–6400，QTI 视频表另有 3840×2160/60 fps；前摄标准输出包含 1920×1080/30 fps。当前 Linux 相机输出仍固定为 1920×1440/30 fps，不能因原厂能力表存在这些条目就直接宣布支持 4K60。ISO 换算需要传感器增益标定，快门秒数需要所选模式的真实积分行时钟，Kelvin 色温需要白平衡和色彩标定。测光模式、实际裁切变焦、闪光灯同步和实体隐私指示灯也需要分别接入真实硬件路径。

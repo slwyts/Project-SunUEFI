@@ -6,7 +6,7 @@
 
 所有结果来自同一台小米平板 8 Pro（`piano`，型号 `25091RP04C`，SM8750P，16 GB 内存），原厂 Android 16（`OS3.0.309.0.WPYCNXM`），Bootloader 已解锁，当前运行使用 CSOT 面板配置（由原厂引导程序传来的标识选择，不等同于对物理供应商的识别）。Linux 对面板的选择见[面板选择](devel/panel-selection.md)；其他面板、内存容量和 ROM 版本没有测试过。
 
-这台机器划出了 `sunuefi_esp`（512 MiB FAT32，4 KiB 扇区，与 UFS 逻辑扇区一致）和 `sunuefi_root`（63.5 GiB ext4），安装了 Debian 13 / GNOME。当前 Linux 内核为 `7.2.9-piano-gnome-g60fd202096bf`，从合体 BOOT 经 UEFI 启动，已实际来回切换 Android 与 Linux。
+这台机器划出了 `sunuefi_esp`（512 MiB FAT32，4 KiB 扇区，与 UFS 逻辑扇区一致）和 `sunuefi_root`（63.5 GiB ext4），安装了 Debian 13 / GNOME。当前 Linux 内核为 `7.2.9-piano-gnome-gc8bf8df4d2ca`，从合体 BOOT 经 UEFI 启动，已实际来回切换 Android 与 Linux。
 
 ## 启动与安装
 
@@ -39,7 +39,7 @@
 
 | 项目 | 状态 | 已知问题 |
 | --- | --- | --- |
-| 显示 | 3200×2136 144 Hz，手动亮度 | 60 / 120 Hz 切换、关屏和合盖后恢复可能黑屏，双 DSI PHY 重同步的修正已提交，仍待验证；HDR、12-bit、VRR 未完成 |
+| 显示 | 3200×2136 144 Hz，手动亮度 | 完整关闭显示链路后恢复仍可能黑屏；电源键当前只关闭背光。HDR、12-bit、VRR 未完成 |
 | GPU | Adreno 加速的 GNOME | 窗口缩放时曾有约 30 次/秒的提交，原因未定位 |
 | 触屏 | 点按、拖动、长按、手势，约 144 Hz | 360 Hz 未实现；依赖主机端触点算法和 uinput |
 | 键盘 / 触控板 | 可用，键盘背光走 UPower / GNOME | 特殊键和睡眠恢复未完成 |
