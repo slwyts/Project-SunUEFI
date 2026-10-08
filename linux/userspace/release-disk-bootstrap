@@ -127,5 +127,10 @@ for virtual in dev proc sys run; do
 done
 chroot /sysroot /usr/lib/piano/piano-disk-hardware-prepare || fail 'Hardware preparation failed'
 log "DISK_ROOT_READY: starting Debian systemd on LABEL=$expected"
-exec switch_root -c /dev/console /sysroot /usr/lib/systemd/systemd >/sysroot/dev/kmsg 2>&1
+if [ -f /etc/piano/boot-task-snapshot ]; then
+    # Run from the real root, so this process survives the initramfs removal.
+    chroot /sysroot /bin/sh /usr/lib/piano/piano-boot-task-snapshot &
+fi
+exec switch_root -c /dev/console /sysroot /usr/lib/systemd/systemd \
+    --log-target=kmsg --log-level=info >/sysroot/dev/kmsg 2>&1
 fail 'switch_root failed'

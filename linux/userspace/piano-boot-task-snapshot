@@ -1,0 +1,16 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# One explicit diagnostic capture; no module loading or reboot.
+sleep 120
+log() { printf '<5>PIANO_BOOT_TASK_SNAPSHOT %s\n' "$*" >/dev/kmsg; }
+log BEGIN
+for field in status wchan stack; do
+    if [ -r "/proc/1/$field" ]; then
+        while IFS= read -r line; do log "pid1 $field $line"; done <"/proc/1/$field"
+    fi
+done
+if [ -w /proc/sysrq-trigger ]; then
+    log blocked_tasks
+    printf w >/proc/sysrq-trigger
+fi
+log END

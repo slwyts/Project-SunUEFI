@@ -42,7 +42,7 @@ def repository(path, commit=None, tree=None):
 
 def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=None,
          public_source=None, firmware_source=None, macros=None, v4l2_source=None, root=ROOT, resume=False,
-         sensors_dir=None, ffmpeg_dir=None):
+         sensors_dir=None, ffmpeg_dir=None, boot_task_snapshot=False):
     root = Path(root).resolve(); config = json.loads((root / 'config/release.json').read_text())
     if config['debian']['apt_policy'] != 'mutable-recorded' or config['debian']['snapshot'] is not None:
         raise ValueError('Only signed mutable APT with recorded metadata is implemented; snapshot mode is not configured')
@@ -102,6 +102,7 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
             'output': str(output), 'rootfs': str(output / 'rootfs'), 'mesa_dir': str(mesa) if mesa else None,
             'sensors_dir': str(sensors),
             'ffmpeg_dir': str(ffmpeg) if ffmpeg else None,
+            'boot_task_snapshot': boot_task_snapshot,
             'runtime_dir': str(Path(runtime_dir).resolve()) if runtime_dir else None,
             'kernel_build': str(Path(kernel_build or root / 'build/kernels/release-7.2.9').resolve()),
             'public_source': str(public), 'firmware_source': str(firmware), 'config': config, 'missing_inputs': missing,
@@ -342,7 +343,7 @@ def ffmpeg_packages(folder, root=ROOT):
             'device_verified': False}
 
 
-def bootstrap(rootfs, kernel, output, release):
+def bootstrap(rootfs, kernel, output, release, boot_task_snapshot=False):
     busybox = ROOT / 'build/linux-ram/busybox'
     if digest(busybox) != disk.BUSYBOX_SHA: raise ValueError('Static BusyBox source hash changed')
     validate_static_arm64_elf(busybox.read_bytes())
@@ -356,6 +357,8 @@ def bootstrap(rootfs, kernel, output, release):
                  'etc/piano/kernel-release': release + '\n',
                  'etc/piano/linux-debug.conf': 'usb=acm-ncm\nshell=1\nrecovery_seconds=0\n',
                  'etc/piano/modules-load-order': ''.join(f'{disk.module_name(p)} /lib/modules/{release}/{p}\n' for p in ordered)}
+    if boot_task_snapshot:
+        generated['etc/piano/boot-task-snapshot'] = 'once\n'
     dirs = {'dev', 'proc', 'sys', 'run', 'tmp', 'sysroot'}
     for name in files.keys() | generated.keys(): dirs.update(p.as_posix() for p in Path(name).parents if p.as_posix() != '.')
     rows = [{'name': n, 'mode': stat.S_IFDIR | (0o1777 if n == 'tmp' else 0o755)} for n in sorted(dirs)]
@@ -369,7 +372,9 @@ def bootstrap(rootfs, kernel, output, release):
     record = {'status': 'HOST_BUILT_LABEL_BOOTSTRAP_NOT_BOOT_VERIFIED', 'kernel_release': release,
               'kernel_commit': json.loads((Path(kernel) / 'manifest.json').read_text())['source_commit'],
               'kernel_manifest_sha256': digest(Path(kernel) / 'manifest.json'), 'root_policy': 'LABEL=PIANOROOT',
-              'initramfs_sha256': digest(target), 'entry_sha256': digest(files['pianoinit'])}
+              'initramfs_sha256': digest(target), 'entry_sha256': digest(files['pianoinit']),
+              'boot_task_snapshot': boot_task_snapshot,
+              'boot_task_snapshot_source_sha256': digest(ROOT / 'linux/userspace/piano-boot-task-snapshot')}
     (target.parent / 'manifest.json').write_text(json.dumps(record, indent=2) + '\n')
     return record
 
@@ -468,7 +473,10 @@ def execute(record):
         metadata = {str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'var/lib/apt/lists').glob('*InRelease')}
         if not metadata: raise ValueError('Signed APT InRelease metadata is missing')
         metadata.update({str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'etc/apt').rglob('*') if p.is_file()})
-        boot = bootstrap(rootfs, kernel, out, m['kernel_release'])
+        snapshot = target(rootfs, 'usr/lib/piano/piano-boot-task-snapshot')
+        shutil.copy2(ROOT / 'linux/userspace/piano-boot-task-snapshot', snapshot)
+        snapshot.chmod(0o755)
+        boot = bootstrap(rootfs, kernel, out, m['kernel_release'], record.get('boot_task_snapshot', False))
         if modules.inspect(kernel)[1] != kernel_hash: raise ValueError('Kernel changed during rootfs build')
         result = {'status': 'HOST_BUILT_RELEASE_GNOME_ROOT_NOT_BOOT_VERIFIED', 'rootfs': str(rootfs),
                   'root_policy': 'LABEL=PIANOROOT', 'kernel_release': m['kernel_release'], 'kernel_commit': m['source_commit'],
@@ -493,6 +501,8 @@ def main():
     for name in ('mesa-dir', 'sensors-dir', 'ffmpeg-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
     mode = parser.add_mutually_exclusive_group(required=True); mode.add_argument('--plan', action='store_true'); mode.add_argument('--execute', action='store_true')
     parser.add_argument('--resume', action='store_true', help='Reuse the completed upstream base and refresh release assembly')
+    parser.add_argument('--boot-task-snapshot', action='store_true',
+                        help='Enable one delayed PID1/blocked-task snapshot in the diagnostic initramfs')
     args = vars(parser.parse_args()); execute_flag = args.pop('execute'); args.pop('plan')
     try:
         record = plan(**args); print(json.dumps(execute(record) if execute_flag else record, indent=2))
