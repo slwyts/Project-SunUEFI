@@ -80,7 +80,26 @@ v2方法 `+0x30=0x26dec` 是另一条路径：HAL `0x26804..0x26834` 以cmd2/arg
 
 完成这些字段与计算链的还原后，用一次短的 raw17/29与Android evdev同步记录检查比例、proximity和tip边界，再接入现有触控进程的独立 pen uinput，保留手指 MT与唯一 FIFO。使用 libinput/Wayland tablet-tool接口；悬浮时工具在范围内而笔尖未触地，不能照抄泛用原厂 reporter 将所有非UP动作都设为 `BTN_TOUCH=1`。未知倾角、按钮语义或姿态不填零宣称支持。
 
-SC96231 在 Android 的 `i2c9-0038` 已绑定，MCA 创建的属性组为 `/sys/class/xm_power/charger/wls_rev_charge/`。原厂模块 show 指令已确认 `wls_fw_state`、`reverse_chg_mode`、`reverse_chg_state`、`pen_ss_voltage` 直接返回缓存值；仅按这四项观察，不根据文件可读权限批量读取整组。`pen_soc` 在某些连接/hall状态会通过 SC96231 的 `regmap_raw_read` 读取芯片并更新缓存，本轮排除它，不能宣称已测笔电量或充电。公开 MiCode 内核中的 MCA 路径只是指向 `vendor/xiaomi/proprietary/mca/driver/mca` 的链接，完整 vendor source仍未取得；上述性质来自本机固定模块静态核对。
+## 笔的磁吸检测与无线充电
+
+SC96231 在 Android 的 `i2c9-0038` 已绑定，MCA 创建的属性组为 `/sys/class/xm_power/charger/wls_rev_charge/`。原厂模块 show 指令已确认 `wls_fw_state`、`reverse_chg_mode`、`reverse_chg_state`、`pen_ss_voltage` 直接返回缓存值；仅按这四项观察，不根据文件可读权限批量读取整组。`pen_soc` 在某些连接/hall状态会通过 SC96231 的 `regmap_raw_read` 读取芯片并更新缓存，本轮排除它，不能宣称已测笔电量或充电。[固定 MiCode 的 MCA 路径](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/45fb9bd6ae5ba2942fc1d53e4b6b46ef76992f71/drivers/power/supply/mca)只是指向 `vendor/xiaomi/proprietary/mca/driver/mca` 的链接，没有可直接移植的完整实现；上述性质来自本机固定模块静态核对。
+
+2026-10-09的原厂最终DTB（本地 `private/analysis/piano-camera-privacy-led-20261009/android-live.dtb`，SHA `67518975f4a464ecc8c330373b5d6ac2cb7724fceba3481051cfbba418f4df95`）将芯片放在 `/soc/qcom,qupv3_2_geni_se@8c0000/i2c@894000/sc96231@38`：硬件为SE13、I²C地址 `0x38`，Android的适配器编号9不能作为Linux的固定总线号。GPIO来自TLMM，具体连接如下。
+
+| 原厂属性 | TLMM GPIO | 用途与已知配置 |
+| --- | --- | --- |
+| `rx-int` | 78 | 芯片中断；上拉，模块请求下降沿和oneshot中断 |
+| `reverse-txon-gpio` | 14 | TXON控制；DT有 `reverse-txon-low`，默认输出低 |
+| `reverse-boost-gpio` | 120 | Boost控制，默认输出低 |
+| `hall3-int` / `hall4-int` | 200 / 196 | 两路Hall，上拉输入，模块请求双沿和oneshot中断 |
+| `hall3-s-int` / `hall4-s-int` | 201 / 197 | 两路补充Hall，上拉输入，双沿中断 |
+| `hall-ppe-int` / `hall-ppe-s-int` | 55 / 59 | PPE Hall，上拉输入，双沿中断；与普通Hall走不同事件 |
+| `lp-nen-gpio` | 99 | 低功耗控制，默认输出高 |
+| `keyboard-front-gpio` / `keyboard-back-gpio` | 80 / 11 | 原厂还读取键盘位置；移植时须避免与现有键盘驱动重复占用 |
+
+该节点没有 `*-supply` 属性，原厂模块也没有regulator或标准 `power_supply_register` 调用，不能由此认定芯片无需供电，或已有标准充电接口。普通Hall工作函数 `0x18e4..0x18f4` 发MCA事件78，后者在 `0x2698..0x26ac` 将值非零通知触控模块；这是磁吸位置，不是充电电流或充满状态。PPE Hall发事件79，必须另行核对其组合判定，不能照搬事件78或用 `reverse_chg_mode=0` 表示笔未吸附。
+
+当前Linux实际DT仍保留这个子节点，但父节点的原厂 `qcom,i2c-geni` 与主线驱动要求的 `qcom,geni-i2c` 不匹配，`894000.i2c` 未绑定，尚未产生该总线的 `0x38` I²C设备；SC96231驱动和磁吸状态提供者也未实现。下一步先按主线 `i2c13` 定义转换总线及其时钟、DMA、引脚等供应者，再移植有依据的Hall检测，通过标准输入开关报告真实磁吸状态。无线充电、电量和标准power_supply属性还需要芯片协议、固件及供电流程，不能用虚拟设备代替。状态缺失时保留unknown，不默认填“未充电”。本次只有只读核对，没有更改扫描或充电状态。
 
 ## 公开解析模块
 
