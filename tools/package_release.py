@@ -236,8 +236,30 @@ def ext4(root, target, size, label, epoch, rows, work):
         stream.truncate(size * MIB)
     owner = rows['.']
     run(['mke2fs', '-q', '-t', 'ext4', '-F', '-L', label, '-E', f'root_owner={owner.st_uid}:{owner.st_gid}', '-d', root, target], env={**os.environ, 'E2FSPROGS_FAKE_TIME': str(epoch)})
+    # debugfs does not reliably unescape embedded quotes in filenames. Use
+    # inode references for these paths; directory listing names stay literal.
+    inodes = {'.': 2}
+    children = {}
+    def inode_reference(name):
+        parent = '.'
+        for part in PurePosixPath(name).parts:
+            child = part if parent == '.' else parent + '/' + part
+            if child not in inodes:
+                if parent not in children:
+                    listing = run(['debugfs', '-R', f'ls -p <{inodes[parent]}>', target]).stdout
+                    entries = {}
+                    for line in listing.splitlines():
+                        fields = line.split('/')
+                        if len(fields) >= 8 and fields[1].isdigit():
+                            entries[fields[5]] = int(fields[1])
+                    children[parent] = entries
+                require(part in children[parent], 'ext4 directory entry missing: ' + child)
+                inodes[child] = children[parent][part]
+            parent = child
+        return f'<{inodes[parent]}>'
+    references = {n: inode_reference(n) if any(c in n for c in '"\\') else quote(n) for n in rows}
     script = work / 'inode-checks'
-    script.write_text(f'set_inode_field "/" mode 0{owner.st_mode:o}\n' + ''.join(f'set_inode_field {quote(n)} mtime {epoch}\nset_inode_field {quote(n)} ctime {epoch}\nstat {quote(n)}\n' for n in rows))
+    script.write_text(f'set_inode_field "/" mode 0{owner.st_mode:o}\n' + ''.join(f'set_inode_field {references[n]} mtime {epoch}\nset_inode_field {references[n]} ctime {epoch}\nstat {references[n]}\n' for n in rows))
     output = run(['debugfs', '-w', '-f', script, target]).stdout
     sections = re.split(r'debugfs:\s+stat ', output)[1:]
     require(len(sections) == len(rows), 'ext4 inode checks incomplete')
@@ -254,7 +276,7 @@ def ext4(root, target, size, label, epoch, rows, work):
             require(re.fullmatch('[A-Za-z0-9_.-]+', attr), 'Unsupported xattr name')
             saved = work / 'xattr-value'
             saved.unlink(missing_ok=True)
-            run(['debugfs', '-R', f'ea_get -f "{saved}" {quote(name)} {attr}', target])
+            run(['debugfs', '-R', f'ea_get -f "{saved}" {references[name]} {attr}', target])
             require(saved.is_file() and xattr_equal(attr, saved.read_bytes(), os.getxattr(root / name, attr, follow_symlinks=False)), 'ext4 xattr/ACL mismatch: ' + name)
 
 
