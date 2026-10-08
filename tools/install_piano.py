@@ -14,8 +14,11 @@ import re
 import shlex
 import struct
 import subprocess
+import tempfile
 import uuid
 import zlib
+
+from provision_piano_bluetooth import FACTORY_PATH, factory_address, provision_boot, split_boot
 
 BLOCK = 4096
 ALIGN = 512  # One supported F2FS section: 512 * 4 KiB.
@@ -370,6 +373,74 @@ class Device:
         require(re.fullmatch(r'[0-9a-f]{64}\s+.*', output), 'Device SHA256 readback failed')
         return output.split()[0]
 
+    def provision_bluetooth(self, generic_boot):
+        """Explicit Android installation step; only the project ESP is writable."""
+        require(self.text('getprop sys.boot_completed') == '1', 'Wait for normal Android boot completion before device provisioning')
+        source = shlex.quote(FACTORY_PATH)
+        raw = self.shell(f'test -f {source} && test ! -L {source} && test "$(stat -c %s {source})" = 6 && head -c 7 {source}')
+        factory_address(raw)
+        derived, _, record = provision_boot(generic_boot, raw)
+        token = uuid.uuid4().hex
+        remote = '/data/local/tmp/sunuefi-provision-' + token
+        mount = remote + '/esp'
+        boot = mount + '/EFI/Piano/stable/boot.img'
+        pending = boot + '.provision-new'
+        q = shlex.quote
+        # No host FAT tools are needed: Android mounts only sunuefi_esp after
+        # generic fastboot readback, with this session's temporary mountpoint.
+        script = f'''set -eu
+mounted=0
+cleanup() {{
+  if [ "$mounted" = 1 ]; then
+    rm -f {q(pending)}
+    umount {q(mount)} || {{ echo 'Project ESP unmount failed' >&2; exit 1; }}
+  fi
+}}
+trap cleanup EXIT
+test -b /dev/block/by-name/sunuefi_esp
+test "$(stat -c %s {source})" = 6
+test "$(sha256sum {source} | cut -d ' ' -f 1)" = {q(record['factory_source_sha256'])}
+test "$(sha256sum {q(remote + '/boot.img')} | cut -d ' ' -f 1)" = {q(record['output_boot_sha256'])}
+mkdir {q(mount)}
+mount -t vfat -o rw,nodev,nosuid,noexec /dev/block/by-name/sunuefi_esp {q(mount)}
+mounted=1
+test -f {q(boot)} && test ! -L {q(boot)}
+old=$(sha256sum {q(boot)} | cut -d ' ' -f 1)
+if [ "$old" != {q(record['output_boot_sha256'])} ]; then
+  test "$old" = {q(record['input_boot_sha256'])}
+  dd if={q(remote + '/boot.img')} of={q(pending)} bs=1048576 conv=fsync 2>/dev/null
+  test "$(sha256sum {q(pending)} | cut -d ' ' -f 1)" = {q(record['output_boot_sha256'])}
+  mv {q(pending)} {q(boot)}
+fi
+dd if={q(remote + '/device-provision.json')} of={q(mount + '/EFI/Piano/device-provision.json')} bs=4096 conv=fsync 2>/dev/null
+sync
+test "$(sha256sum {q(boot)} | cut -d ' ' -f 1)" = {q(record['output_boot_sha256'])}
+umount {q(mount)}
+mounted=0
+trap - EXIT
+printf '%s\\n' {q(record['output_boot_sha256'])}
+'''
+        with tempfile.TemporaryDirectory(prefix='piano-device-provision-') as temporary:
+            folder = Path(temporary)
+            (folder / 'boot.img').write_bytes(derived)
+            (folder / 'device-provision.json').write_text(json.dumps(record, indent=2) + '\n')
+            for name in ('boot.img', 'device-provision.json'):
+                (folder / name).chmod(0o600)
+            # adb push uses Android shell uid 2000 even when su commands are
+            # root. Only this temporary directory is delegated to that uid.
+            self.shell(f'mkdir {q(remote)} && chown 2000:2000 {q(remote)} && chmod 700 {q(remote)}')
+            try:
+                for name in ('boot.img', 'device-provision.json'):
+                    self.call(['adb', '-s', self.serial, 'push', str(folder / name), remote + '/' + name], timeout=180)
+                require(self.text(script) == record['output_boot_sha256'], 'Provisioned BOOT file readback failed')
+            finally:
+                # rmdir intentionally refuses a mount left active by a failure.
+                self.shell(f'rm -f {q(remote + "/boot.img")} {q(remote + "/device-provision.json")}; rmdir {q(mount)} 2>/dev/null || :; rmdir {q(remote)} 2>/dev/null || :')
+        return {**record, 'status': 'DEVICE_DTB_FILE_READBACK_VERIFIED',
+                'device_operation_performed': True, 'linux_boot_verified': False,
+                'esp_equals_generic_after_provision': False,
+                'target': '/EFI/Piano/stable/boot.img', 'readback_boot_sha256': record['output_boot_sha256']}
+
 
 def make_plan(snapshot, bundle_dir=None, new_guids=None):
     geometry = plan_gpt(snapshot['gpt'], snapshot['f2fs'], new_guids)
@@ -414,25 +485,72 @@ def apply_update(device, plan, bundle_dir, execute=False, recovery=False):
     after = device.inspect()
     require(after['identity'] == snapshot['identity'] and after['gpt'].baseline() == snapshot['gpt'].baseline(),
             'Post-update device/GPT differs; readback incomplete')
+    prefix_readback = {}
     for name in IMAGE_NAMES:
         image = bundle['images'][name]
-        require(device.readback_hash(image['partition'], image['bytes']) == image['sha256'], 'Device image readback mismatch: ' + name)
+        measured = device.readback_hash(image['partition'], image['bytes'])
+        require(measured == image['sha256'], 'Device image readback mismatch: ' + name)
+        prefix_readback[image['partition']] = {'bytes': image['bytes'], 'sha256': measured}
     return {'status': 'UPDATE_PREFIX_READBACK_VERIFIED', 'targets': list(PARTITIONS),
+            'generic_prefix_readback': prefix_readback,
             'device_writes': True, 'gpt_changed': False, 'linux_boot_verified': False, 'recovery_written': False}
+
+
+def bundle_boot(directory):
+    base = Path(directory)
+    manifest = read_json(_bundle_path(base, 'manifest.json'))
+    row = manifest.get('files', {}).get('boot.img', {})
+    path = _bundle_path(base, 'boot.img')
+    require(path.is_file() and not path.is_symlink() and type(row.get('bytes')) is int and
+            path.stat().st_size == row['bytes'] and 0 < row['bytes'] <= 1024**3,
+            'Device provisioning requires the manifest-bound generic BOOTv2')
+    data = path.read_bytes()
+    require(sha(data) == row.get('sha256'), 'Generic BOOT file hash differs from bundle manifest')
+    split_boot(data)
+    return data
+
+
+class ProvisioningError(ValueError):
+    def __init__(self, message, report):
+        super().__init__(message)
+        self.report = report
+
+
+def apply_installation(device, plan, bundle_dir, execute=False, recovery=False):
+    # Keep generic flash/readback and the later per-device filesystem change
+    # distinct. A failed provisioning step must not erase the completed stage.
+    if plan.get('gpt', {}).get('mode') == 'fresh':
+        return apply_update(device, plan, bundle_dir, execute, recovery)
+    boot = bundle_boot(bundle_dir)
+    generic = apply_update(device, plan, bundle_dir, execute, recovery)
+    if not execute:
+        return {**generic, 'device_provisioning_pending': True, 'factory_source': FACTORY_PATH}
+    try:
+        provision = device.provision_bluetooth(boot)
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        raise ProvisioningError(str(error), {'status': 'GENERIC_UPDATE_VERIFIED_DEVICE_PROVISION_FAILED',
+            'generic_update': generic, 'generic_readback_completed_before_provision': True,
+            'device_provisioning': {'status': 'FAILED', 'reason': str(error)},
+            'esp_equals_generic_after_provision': None, 'device_writes': True,
+            'linux_boot_verified': False}) from error
+    return {'status': 'UPDATE_GENERIC_VERIFIED_DEVICE_DTB_PROVISIONED', 'generic_update': generic,
+            'generic_readback_completed_before_provision': True, 'device_provisioning': provision,
+            'esp_equals_generic_after_provision': False, 'device_writes': True,
+            'gpt_changed': False, 'linux_boot_verified': False, 'recovery_written': False}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('inspect', 'plan', 'apply'), nargs='?', default='inspect')
+    parser.add_argument('operation', choices=('inspect', 'plan', 'apply', 'provision-bluetooth'), nargs='?', default='inspect')
     parser.add_argument('--serial', required=True, help='Explicit rooted Android ADB serial; factory serial is rechecked')
-    parser.add_argument('--bundle', type=Path, help='Host disk bundle for plan/apply, containing manifest.json')
+    parser.add_argument('--bundle', type=Path, help='Generic disk bundle for plan/apply/device provisioning')
     parser.add_argument('--plan', type=Path, help='Reviewed JSON plan for apply')
     parser.add_argument('--output', type=Path, help='Write inspection/plan/result JSON; never a partition backup')
-    parser.add_argument('--execute', action='store_true', help='Allow existing dedicated ESP/Linux flash and verified readback')
+    parser.add_argument('--execute', action='store_true', help='Allow dedicated OS update or explicit per-device ESP provisioning')
     parser.add_argument('--recovery', action='store_true', help='Explicit recovery request; currently rejected as not ready')
     args = parser.parse_args()
     try:
-        require(not args.execute or args.operation == 'apply', '--execute is only valid for apply')
+        require(not args.execute or args.operation in ('apply', 'provision-bluetooth'), '--execute is only valid for apply/provision-bluetooth')
         require(not args.recovery, 'RECOVERY_INSTALL_NOT_READY: no recovery operation is implemented')
         require(args.operation != 'inspect' or args.bundle is None, 'Use plan --bundle to verify a host bundle')
         if args.output:
@@ -440,7 +558,18 @@ def main():
         device = Device(args.serial)
         if args.operation == 'apply':
             require(args.plan is not None and args.bundle is not None, 'apply requires --plan and --bundle')
-            result = apply_update(device, read_json(args.plan), args.bundle, args.execute)
+            result = apply_installation(device, read_json(args.plan), args.bundle, args.execute)
+        elif args.operation == 'provision-bluetooth':
+            require(args.bundle is not None, 'provision-bluetooth requires the original generic bundle')
+            snapshot = device.inspect()
+            current = make_plan(snapshot, args.bundle)
+            require(current['gpt']['mode'] == 'update', 'Existing project ESP/root partitions are required')
+            if args.plan:
+                require(current == read_json(args.plan), 'Device or bundle differs from the reviewed plan')
+            boot = bundle_boot(args.bundle)
+            result = device.provision_bluetooth(boot) if args.execute else {
+                'status': 'DEVICE_PROVISION_NOT_EXECUTED', 'device_writes': False,
+                'factory_source': FACTORY_PATH, 'target': '/EFI/Piano/stable/boot.img'}
         else:
             snapshot = device.inspect()
             result = inspection_report(snapshot) if args.operation == 'inspect' else make_plan(snapshot, args.bundle)
@@ -449,6 +578,13 @@ def main():
             with args.output.open('x') as stream:
                 stream.write(text)
         print(text, end='')
+    except ProvisioningError as error:
+        text = json.dumps(error.report, indent=2, sort_keys=True) + '\n'
+        if args.output:
+            with args.output.open('x') as stream:
+                stream.write(text)
+        print(text, end='')
+        parser.exit(1, str(error) + '\n')
     except (ValueError, OSError, KeyError, subprocess.SubprocessError) as error:
         parser.exit(1, str(error) + '\n')
 
