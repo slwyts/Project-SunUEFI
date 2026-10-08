@@ -54,7 +54,7 @@ jobs:
     if: needs.select.outputs.has_build == 'true'
     concurrency:
       group: build-products-${{ github.ref }}-${{ matrix.target }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
