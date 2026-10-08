@@ -1,8 +1,8 @@
 # GCv2 与标准 Night Light 后端
 
-当前实机a8内核没有SM8750 Gamma，Night Light仍不可用。下一默认release已接入[完整后端](../../patches/linux/7.2.9/0006-drm-msm-dpu-gcv2-regdma-backend.patch)、[SM8750 catalog](../../patches/linux/7.2.9/0007-drm-sm8750-gcv2-catalog.patch)和实际产品REGDMA资源overlay；准备器已复现tree `162d8ccbe21d8edbfff1685b8c6ff7ad426dfffd`、commit `281247916d39ff137c48954a762a11a28e976cbf`。正在进行正常完整构建，尚未部署或验证DMA与颜色。没有复用GCv1 AHB实现或强开用户空间设置。
+当前实机a8内核没有SM8750 Gamma，Night Light仍不可用。下一默认release已接入[完整后端](../../patches/linux/7.2.9/0006-drm-msm-dpu-gcv2-regdma-backend.patch)、[SM8750 catalog](../../patches/linux/7.2.9/0007-drm-sm8750-gcv2-catalog.patch)和实际产品REGDMA资源overlay。首次281完整构建因catalog误用不存在的DSPP `features`成员而停止；0007已删除该四项，独立实际ARM64 catalog对象编译通过。修正后源码commit为`a58948e88201a23df52d9833a9640b904cdf0911`、tree为`3d76760c7263bcb0e2efce032a1d34059e7012c3`，现由`sunuefi-kernel-display-a589-20261008`正常完整构建。尚未部署或验证DMA与颜色。没有复用GCv1 AHB实现或强开用户空间设置。
 
-GC地址为 `0x17c0`、窗口 `0x40`、版本 `0x20000`，四个DSPP描述真实PCC/GC能力；只有REGDMA资源、GEM映射及真实队列reset初始化成功后才绑定ops并发布Gamma。实际组合DT追加命名regdma资源，不能仅改上游dtsi。
+GC地址为 `0x17c0`、窗口 `0x40`、版本 `0x20000`，四个DSPP通过共用`sblk`描述PCC/GC；当前`dpu_dspp_cfg`没有独立features成员。只有REGDMA资源、GEM映射及真实队列reset初始化成功后才绑定ops并发布Gamma。实际组合DT追加命名regdma资源，不能仅改上游dtsi。
 
 四个DSPP共用此GCv2 subblock，KMS依次对真实RM资源调用绑定；每个绑定都检查该地址/版本及真正初始化成功的REGDMA对象，随后CRTC按实际setup_gc ops决定是否发布1024项Gamma。原子更新则要求全部assigned mixers都有GC2后端，合并它们的实际DSPP mask，一次提交；只有共同提交成功才给两侧stage GC flush。源码条件符合这个顺序，实际每个DSPP绑定、DMA完成与两侧输出仍须正常启动后查运行状态和画面，不能拿catalog或编译成功代替。
 
@@ -10,7 +10,7 @@ GC地址为 `0x17c0`、窗口 `0x40`、版本 `0x20000`，四个DSPP描述真实
 
 当前主线DPU已有1024项`GAMMA_LUT`验证、16bit DRM LUT到成对10bit值的转换、双mixer DSPP分配和GC flush bit5；实机a8的SM8750 catalog只有PCC6，GC为空。MDP时钟表虽列出REG_DMA的`0x2bc/bit20`，代码没有REGDMA传输驱动。原厂[GC2绑定](https://github.com/MiCode/vendor_opensource_display-drivers/blob/aa06fd1757c28dce96fbe4e04d4530ec21b52aac/msm/sde/sde_hw_dspp.c#L97)只接受REGDMA，初始化失败不回退到旧GC AHB。
 
-离线读取原厂最终FDT确定：REGDMA3独立MMIO为`0x0af80000/0x7000`，DB/SB子块偏移为`0/0x800`，XIN=7；GC2相对DSPP为`0x17c0`。原厂DSPP0偏移`0x55000`与主线`0x54000`并不矛盾：两者MDP映射起点分别为`0x0ae00000/0x0ae01000`，物理地址相同。草案在标准SM8750节点与绑定中加入可选第三段`regdma`，不把它算在mdp范围内。产品实际DT来自原厂base与共享display overlay，并不直接消费此dtsi；另有`linux/dts/piano-regdma-resource.dtso`在实际DPU节点追加该段，保留原mdp/vbif。它已对`vendor/piano-linux/board.dtb`组合并核对整个树，只有目标的reg/reg-names两项变化，没有接默认config或packaging。驱动也识别原厂命名`regdma_phys`；没有该资源就不初始化GC2。
+离线读取原厂最终FDT确定：REGDMA3独立MMIO为`0x0af80000/0x7000`，DB/SB子块偏移为`0/0x800`，XIN=7；GC2相对DSPP为`0x17c0`。原厂DSPP0偏移`0x55000`与主线`0x54000`并不矛盾：两者MDP映射起点分别为`0x0ae00000/0x0ae01000`，物理地址相同。后端在标准SM8750节点与绑定中加入可选第三段`regdma`，不把它算在mdp范围内。产品实际DT来自原厂base与共享display overlay，并不直接消费此dtsi；`linux/dts/piano-regdma-resource.dtso`在实际DPU节点追加该段，保留原mdp/vbif。它已对`vendor/piano-linux/board.dtb`组合并核对整个树，只有目标的reg/reg-names两项变化，现已接入下一默认release。驱动也识别原厂命名`regdma_phys`；没有该资源就不初始化GC2。
 
 ## 最小编程路径
 
@@ -33,6 +33,6 @@ DT中的`qcom,sde-reg-dma-trigger-off=0x119c`是`trigger_sel_off`，不能误当
 
 命令准备、真实传输、DSPP/CRTC/KMS、catalog和外层MSM KMS共7个实际C文件使用完整独立MSM header副本与现有内核ARM64参数做syntax检查，均通过；全16路径补丁对固定b8f07b7e9f9e源码无fuzz dry-run通过。独立QRD源码经正常cpp+dtc编译并读回`reg-names=mdp/vbif/regdma`；DT schema工具本机未安装。没有修改活动树/O、模拟颜色结果或改显示。完整内核link、REGDMA硬件完成/reset和实际标准Night Light仍待Root复核后统一默认构建测试。
 
-固定源、原厂FDT资源、target检查和草案SHA记录在`private/analysis/piano-gcv2-night-light-20261008/`。下一步由Root复核外层quiesce、正常构建和启用实际GC2 catalog及资源overlay，再以默认镜像验证REGDMA、DRM恒等LUT与两侧色温。UI出现开关不能单独说明Gamma已正确编程。
+固定源、原厂FDT资源、target检查和SHA记录在`private/analysis/piano-gcv2-night-light-20261008/`。修正后的0007 SHA256为`38689e09ba31b55b077794e6e7e5b67fa67dee7b9c4c12f996c9bf28eeb441f1`；`catalog-fix-281/result.json`记录实际281全部MSM头/源的独立副本及单对象编译结果。先前7个文件syntax检查没有覆盖后来加入的错误DSPP成员，不能代替这次真实catalog编译。后续按[最小实机检查步骤](piano-gcv2-validation.md)验证REGDMA、DRM恒等LUT与两侧色温。UI出现开关不能单独说明Gamma已正确编程。
 
 若真实reset持续不ack，退出调用将继续等待，映射、控制器和依赖都不会被收走；这不是有时间上限的成功恢复，仍可能需要平台强制重启。旧草案的“void destroy早返回能拒绝外层退出”判断已删除。实际`msm_drm_uninit`在回调后还会执行component解绑、清dev_private及drm_dev_put，因此局部GEM/module引用不能被当作对这些路径的阻止机制。

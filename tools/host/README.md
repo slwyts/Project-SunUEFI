@@ -18,6 +18,14 @@ keys/buttons, stops the linked session and closes the connection, including on
 error. JSON reports actual PNG dimensions/caps and whether Stop was acknowledged.
 No RDP, Shell Eval, shell execution, password change or touch FIFO is involved.
 
+`piano_gamma_probe.py` reads the current Mutter CRTCs and Gamma ramps by default.
+Explicit `--probe identity|warm --crtc ACTUAL_ID --backup NEW_FILE` requests a short
+standard Gamma change and restores the original ramps in `finally`. A failed
+software readback/restore returns status2. `piano_gcv2_report.py` reads previously
+captured DRM JSON and kernel text entirely offline. Neither a D-Bus reply nor a
+compositor screenshot establishes the panel's hardware color result; use the
+[GCv2 validation steps](../../docs/devel/piano-gcv2-validation.md).
+
 The initial guest run on2026-10-08 captured a3200×2136 PNG with sRGB caps and a
 successful Stop reply. Input commands still require observing their effect;
 a completed D-Bus call alone does not establish the resulting UI state.
