@@ -3,8 +3,12 @@
 2026-10-08：实机只读 regmap `0-01` 的精确两寄存器读回确认 **SPMI SID 1、基址
 0xee00，type=0x18、subtype=0x07**。标准驱动已有该四通道 IP 布局，两路实际接线
 1/2可直接描述。默认release已接入标准驱动配置、DT overlay、cleanup补丁和
-modules-load策略。新源码已准备并在全新O目录通过配置检查；尚未进行完整内核
-构建、部署或点灯，不能把这些结果计作LED/V4L2实际注册或光学效果。
+modules-load策略。新内核 `7.2.9-piano-gnome-g45bba6e91e6c` 已完整构建，
+随匹配模块和默认设备树部署，并通过普通 BOOT 重启进入 Linux。
+两路 `:flash-0` / `:flash-1` 标准 LED class 已注册；实际读回每路 flash
+上限400000µA、timeout上限300000µs。第一路以32/255的低档torch请求运行1秒，
+写入成功、fault无标志，随后brightness读回0。未观察实际发光或测光，
+也未证明相机应用曝光同步。
 
 ## 身份、接线与限值
 
@@ -66,6 +70,12 @@ MEDIA_CONTROLLER、V4L2_ASYNC 和 subdev API。`build_piano_full_kernel.py`默�
 V4L2 wrapper 注册异步 flash subdevice。相机侧 fwnode/notifier 关联仍需验证，不能
 仅凭注册宣布 `/dev/v4l-subdev*` 或曝光同步可用，也不恢复 vendor trigger daemon。
 接口语义见 [Linux Flash LED 文档](https://docs.kernel.org/leds/leds-class-flash.html)。
+
+本次实际 `/sys/class/video4linux/*/name` 尚无flash subdevice；LED class注册不能
+代替media关联。部署和低档请求记录位于本机
+`private/provisioning/recovery-priority-20261008/45b-cold-interfaces.txt` 与
+`flash-torch-low-current.txt`。原UFS系统分区和BOOT载荷未在这轮部署中重写；
+更新的是项目ESP中的Linux boot文件及根系统模块/软件包。
 
 此前主机已对参考board.dtb组合一次overlay，检查标准节点okay、旧vendor/trigger
 disabled及两路通道、电流和时限，结果在`build/flash-overlay-check/`。本轮另确认
