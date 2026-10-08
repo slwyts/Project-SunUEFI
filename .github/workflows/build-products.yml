@@ -79,6 +79,7 @@ jobs:
         run: docker build -t sunuefi-builder -f containers/Dockerfile .
       - name: Build selected product
         run: |
+          set -o pipefail
           mkdir -p build/logs build/ccache
           docker run --rm --privileged \
             -v "$PWD:/workspace" -w /workspace \
@@ -107,7 +108,7 @@ jobs:
                   ./build.sh installer --bundle artifacts/release-7.2.9
                   ;;
               esac
-            ' > build/logs/ci-build.log 2>&1
+            ' 2>&1 | tee build/logs/ci-build.log
       - name: Show failed build output
         if: failure()
         run: |
