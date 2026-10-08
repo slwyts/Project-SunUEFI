@@ -26,3 +26,5 @@ logind LockedHint是桌面提供的提示，并不是设置它就完成锁屏：
 ## 持久接入
 
 Root builder只在GNOME组装时覆盖同名helper/unit、udev、logind和dconf文件；helper0755，其他0644，root所有。使用已有graphical-session.target启用同一服务；dconf更新和udev权限刷新后由正常会话生效。当前BSP通用manifest排除了GNOME power/logind组件，因此不能把本目录悄悄加入通用配置包或其他桌面。完整 userspace stager 复制公开 overlay 后应用这组本地适配；发布 builder 和通用 GNOME 组装使用同一安装函数。实际显示恢复修复并验证后，再接标准Lock/Suspend，不另建功能profile。
+
+后续标准策略已有待验证草案：停用独占evdev的旧helper，恢复GNOME的 `XF86PowerOff` 绑定，由media-keys请求logind Suspend，再由Shell的 `PrepareForSleep` 和delay inhibitor完成锁屏。覆盖原有dconf/logind路径，不能只删源码而让旧文件残留；新增全局用户unit mask后，已运行helper仍要等正常会话退出才释放EVIOCGRAB。当前设备hostname1已报告 `tablet`，不改machine-info或独立的 `vm-other` 检测事实。草案尚未应用，因为当前用户无可用解锁凭据，显示DPMS及完整睡眠恢复尚未验证；默认产品仍保持现有可用行为。
