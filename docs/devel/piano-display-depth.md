@@ -56,4 +56,6 @@ sudo /run/piano-drm-snapshot /dev/dri/cardN --blobs > hdr.json
 
 Android 可将程序放在 `/data/local/tmp/`，使用 `adb exec-out su -c` 执行，把标准输出直接保存到电脑。默认省略 blob 内容，`--blobs` 才输出原始十六进制数据，包括存在的 HDR metadata、色彩 LUT 与原厂 dither blob；属性不存在时不会编造。每份记录包含单调时钟起止时间和真实 errno。对象依次读取，**不是跨对象的原子快照**；采集期间应保持画面模式稳定，属性数量增长或 blob 已删除会报错，不把部分结果当成完整采集。
 
-2026-10-08 已编译静态 ARM64 产物；尚未在原厂或 Linux 的实际 KMS 节点运行。这份程序也不读取扫描输出的 framebuffer 格式或活跃硬件寄存器，仍需配合驱动现有 state/dump；有 blob 不等同于硬件已消费它。
+2026-10-08 已在 g086 Linux 的实际 `/dev/dri/card2` 运行静态 ARM64 产物，读取完成且 errors=0；活动 CRTC 为103，DSI connector 指向同一 CRTC。当前没有 `HDR_OUTPUT_METADATA`、`Colorspace` 或 `max bpc` 属性，CTM为0。驱动现有 state 同时显示主画面 `XR30`、光标 `AR24` 和 `3200×2136@144` 模式。这证明当前 Linux 的十位扫描输出，不证明 HDR/PQ 或额外两位 FRC 已启用；原厂 Android 的 SDR/HDR 对照仍未采集。
+
+原始记录为本地 `private/analysis/recover-dma-20261008-131916/g086-drm-snapshot.json`。采集程序不读取扫描输出的 framebuffer 格式或活跃硬件寄存器，仍需配合驱动现有 state/dump；有 blob 不等同于硬件已消费它。
