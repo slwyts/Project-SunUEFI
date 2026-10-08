@@ -80,8 +80,11 @@ V4L2 wrapper 注册异步 flash subdevice。相机侧 fwnode/notifier 关联仍�
 下一默认 overlay 已给实际 S5KJN1 节点增加标准 `flash-leds`，引用两路 LED
 子节点。该 sensor 使用 `v4l2_async_register_subdev_sensor()`，其现有 notifier
 读取这项属性；flash wrapper 已按 LED fwnode 注册，因此不另加用户空间设备。
-组合 DTB 中两个 phandle 已分别解析到真实 led-0/led-1。该关联尚未部署，
-需要下一次正常启动核对 flash subdevice 和媒体连接，再验证应用控制。
+组合 DTB 中两个 phandle 已分别解析到真实 led-0/led-1。关联已随a8版启动文件
+部署并通过普通BOOT重启，实际出现 `/dev/v4l-subdev34` 的 `:flash-0` 与
+`/dev/v4l-subdev35` 的 `:flash-1`。标准V4L2接口列出LED mode、software/hardware
+strobe、timeout、flash/torch intensity和fault；当前off、无fault。这确认了
+真实subdevice与控制接口，不证明拍照曝光同步或桌面应用已经接好闪光灯。
 
 此前主机已对参考board.dtb组合一次overlay，检查标准节点okay、旧vendor/trigger
 disabled及两路通道、电流和时限，结果在`build/flash-overlay-check/`。本轮另确认

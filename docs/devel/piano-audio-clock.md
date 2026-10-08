@@ -44,8 +44,17 @@ DAI立即解除；它没有新增DMIC启动后的有效mute窗口。优先最小
 `VA_MCLK`；supply 在 DEC MUX 前上电、后断电。补齐 PRE_PMU/PRE_PMD 的
 硬件 PGA mute，保留共享 clock 计数、原信号路线和现有 HPF 等待，不加 reset
 或新延时。准备器已复现 tree `7d2ad26d416bec0d052059727491a37ac7536f0b`，
-commit `a8c9650eb32038c40a5f5934bb64a813dff0044f`；当前正在完整构建，
-尚未部署或证明启动冲击消失。此前 RFC 仍只保留为分析草案。
+commit `a8c9650eb32038c40a5f5934bb64a813dff0044f`。新内核已经完整构建并
+随匹配模块、默认ESP启动文件部署，通过普通BOOT重启进入Linux。
+此前 RFC 仍只保留为分析草案。
+
+实机同一DMIC2/gain98配置的前100ms采样，原来的75个连续满幅样本变为0；
+首1ms峰值33，另一次20秒受控声源采样也没有削顶。电脑实际扬声器的
+500/1000/2000Hz响应仍分别约155/476/219 S16 RMS，1000Hz与修正前约478
+接近，因此没有用静音消除启动峰值。本次后段环境背景RMS约8.04，未校准
+声压或环境，不能把前后背景差直接归因全部硬件降噪；正常语音及原厂TX/DSP
+处理仍待验证。仅保存电平/频谱统计，PCM在内存中处理后丢弃，记录在本机
+`private/analysis/pc-speaker-mic-20261008/startup-a8.json` 与 `RESULT-a8.json`。
 
 当前 `sound/soc/codecs/lpass-va-macro.c:va_macro_enable_dec()` 的 PRE_PMU
 只留“Enable TX PGA Mute”注释，未写 `TX_PATH_CTL` 的 PGA mute BIT4；widget
