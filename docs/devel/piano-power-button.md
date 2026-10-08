@@ -10,6 +10,8 @@
 
 显示侧已准备独立 [关屏时序草案](../../patches/linux/7.2.9/drafts/piano-nt36532-stock-off-delays.patch)：原厂最终DT的BOE/CSOT各模式均要求DCS `0x28` 后20ms、`0x10` 后100ms，当前驱动使用10ms/65ms。草案只把Piano参数恢复为原厂值，未接入当前内核或实机验证。已有PLL/clock警告发生于初始probe；系统关机红屏记录也不是DPMS恢复测试，不能据此把此草案称作黑屏/睡眠修复。还需要同一模式下受控的OFF→ON日志，再处理具体时钟/复位故障。
 
+2026-10-08的a8同模式OFF→ON已有实际故障记录：12:07:49关屏后，DSI1的 `pclk1`、`byte1_intf`、`byte1` 在 `dsi_link_clk_disable_6g` 返回偏移 `+0x34/+0x48/+0x5c` 报stuck-on；实际目标对象反汇编确认它们来自正常 `post_disable` 的第二个 `power_off(host1)`，host0此前已关。12:07:51恢复ON后反复 `status=4` 只证明FIFO错误；日志没有原始FIFO_STATUS子位，不能把它称为PLL失锁。固定[原厂clock manager](https://github.com/MiCode/vendor_opensource_display-drivers/blob/aa06fd1757c28dce96fbe4e04d4530ec21b52aac/msm/dsi/dsi_clk_manager.c#L742)要求先停slave link/core clocks、再停clock master，最后才关PLL。[对应小补丁](../../patches/linux/7.2.9/0008-dsi-bonded-stop-slave-first.patch)仅把正常bonded路径改为host1先、host0后，与已有错误回退路径一致；HALT检查、PLL/PHY保存恢复及面板时序不变。补丁尚未实机验证，不据此启用锁屏或宣称休眠恢复正常。
+
 ## 为什么暂不追加 GNOME Lock
 
 对应现场版本的一手源码给出明确链路：

@@ -1,0 +1,46 @@
+Subject: [PATCH] drm/msm/dsi: power off the bonded slave before its clock master
+
+A same-mode OFF/ON cycle on SM8750 Piano a8c9650e reports DSI1 pixel,
+byte-interface and byte branch clocks stuck on. The captured return address
+is the second power_off in dsi_mgr_bridge_post_disable(), after host0 has
+already stopped its link clocks. DSI1 sources its clocks from DSI0's PHY PLL.
+
+Qualcomm's fixed public clock manager disables non-master link and core
+clocks before the clock master. Match that sequence in the normal bonded
+shutdown, as the existing power_off error unwind already does. Leave PLL
+save/restore, the final dual-PHY disable, panel timing and halt checking intact.
+
+Source: MiCode/vendor_opensource_display-drivers aa06fd1757c28dce96fbe4e04d4530ec21b52aac
+msm/dsi/dsi_clk_manager.c:705-794
+
+This candidate is not enabled or hardware tested. It addresses the actual
+shutdown order difference, not initial-probe PLL warnings, and does not claim
+60Hz modeset or system suspend recovery until the same-mode cycle is tested.
+
+--- a/drivers/gpu/drm/msm/dsi/dsi_manager.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+@@ -367,16 +367,20 @@
+ 	/* Save PHY status if it is a clock source */
+ 	msm_dsi_phy_pll_save_state(msm_dsi->phy);
+ 
+-	ret = msm_dsi_host_power_off(host);
+-	if (ret)
+-		pr_err("%s: host %d power off failed,%d\n", __func__, id, ret);
+-
++	/* Keep the clock-source host running until the bonded slave's link
++	 * clocks have stopped. Match the reverse power-on order and the
++	 * existing dsi_mgr_bridge_power_off() unwind path.
++	 */
+ 	if (is_bonded_dsi && msm_dsi1) {
+ 		ret = msm_dsi_host_power_off(msm_dsi1->host);
+ 		if (ret)
+ 			pr_err("%s: host1 power off failed, %d\n",
+ 								__func__, ret);
+ 	}
++
++	ret = msm_dsi_host_power_off(host);
++	if (ret)
++		pr_err("%s: host %d power off failed,%d\n", __func__, id, ret);
+ 
+ disable_phy:
+ 	dsi_mgr_phy_disable(id);
