@@ -483,6 +483,9 @@ def execute(record):
             staged_modules = target(rootfs, 'usr/lib/modules') / m['kernel_release']
             if staged_modules.is_dir(): shutil.rmtree(staged_modules)
         userspace.stage(rootfs, public); hardware.build(out / 'adapters', public, rootfs)
+        # Compile the staged local GNOME defaults after the public builder's
+        # dconf update, so animation/power policy is actually present in root.
+        run(['chroot', rootfs, 'dconf', 'update'])
         previous_release = record.get('previous_kernel_release')
         remove_releases = ([previous_release] if previous_release and previous_release != m['kernel_release']
                            and (rootfs / 'usr/lib/modules' / previous_release).is_dir() else [])

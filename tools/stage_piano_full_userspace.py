@@ -34,6 +34,18 @@ def stage_gnome_power(rootfs):
         shutil.copyfile(source, destination)
         destination.chmod(0o755 if relative.as_posix() == 'usr/lib/piano/power-button' else 0o644)
         copied[relative.as_posix()] = hashlib.sha256(source.read_bytes()).hexdigest()
+    # Use the same GNOME defaults as the multi-distro assembler. In particular,
+    # the public schema override disables animation; local dconf takes priority.
+    defaults = ROOT / 'linux/desktops/gnome/defaults.ini'
+    relative = Path('etc/dconf/db/local.d/00-sunuefi')
+    destination = rootfs / relative
+    if destination.is_symlink() or any(parent.is_symlink() for parent in destination.parents
+            if parent != rootfs and parent.is_relative_to(rootfs)):
+        raise ValueError('Guest symlink in GNOME defaults destination')
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(defaults, destination)
+    destination.chmod(0o644)
+    copied[relative.as_posix()] = hashlib.sha256(defaults.read_bytes()).hexdigest()
     wants = rootfs / 'etc/systemd/user/graphical-session.target.wants'
     if any(parent.is_symlink() for parent in (wants, *wants.parents)
            if parent != rootfs and parent.is_relative_to(rootfs)):
