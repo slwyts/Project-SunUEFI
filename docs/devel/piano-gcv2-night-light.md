@@ -1,6 +1,8 @@
 # GCv2 与标准 Night Light 后端
 
-当前a589完整内核首次实机启动在REGDMA初始化中异常，Night Light仍不可用。实际日志定位`queue_reset`访问CTL编号7的`+0x7054`，超出映射的`0x7000`资源；SM8750 catalog只有one-based编号1..6，通用CTL枚举却还包含7/8。正式[0006后端补丁](../../patches/linux/7.2.9/0006-drm-msm-dpu-gcv2-regdma-backend.patch)已改为逐个catalog ID初始化，并在queue/reset/submit检查catalog成员及完整u32的资源边界，未扩大MMIO窗口或改变DMA完成/退出管理。修正源已独立ARM64单对象编译及实际queue地址函数边界检查通过，新的默认源码bde3已准备并开始完整构建，尚未部署。恢复使用的旧a8仍无Gamma。没有复用GCv1 AHB实现或强开用户空间设置。
+当前bde3版本已通过普通BOOT进入GNOME，实际CRTC报告1024项Gamma，DSI连接器报告固定10bpc。一次恒等曲线更新已取得真实REGDMA提交和完成：CTL1、DSPP mask `0x60000`、IOVA `0x1000`、1554 words，完成状态 `0x8`。此前a589的CTL越界已修正，当前未再出现该异常。
+
+Mutter 48.7读取未设置的Gamma时返回三个空数组，标准 `NightLightSupported` 已为true。恒等提交的软件读回一致，但通过SetCrtcGamma恢复空数组触发了桌面进程SIGSEGV；源码中size0对象进入缩放并读取空数组是对应缺陷。已暂停这条恢复路径并正常重启GDM恢复会话。恒等DMA成功不能扩大为暖色、完整Night Light或HDR已验证。
 
 GC地址为 `0x17c0`、窗口 `0x40`、版本 `0x20000`，四个DSPP通过共用`sblk`描述PCC/GC；当前`dpu_dspp_cfg`没有独立features成员。只有REGDMA资源、GEM映射及真实队列reset初始化成功后才绑定ops并发布Gamma。实际组合DT追加命名regdma资源，不能仅改上游dtsi。
 
@@ -40,3 +42,5 @@ DT中的`qcom,sde-reg-dma-trigger-off=0x119c`是`trigger_sel_off`，不能误当
 实机a589通过普通BOOT进入内核并出现Linux USB，但显示绑定在 `queue_reset+0x50` 异常：访问位于映射末端之外的第七个队列（`0x7054`），ESR为`0x96000047`，为CPU level3 translation fault，并非已提交DMA后的SMMU fault。通用 `CTL_MAX` 枚举包含八个控制器，SM8750 catalog只列六个，REGDMA资源为0x7000。此轮没有发布可用Gamma，也没有进入GNOME。已恢复ESP中的上一可用a8启动文件；异常后正常重启未完成，需要长按恢复。后续修正只遍历实际catalog的CTL编号，并在初始化和每次提交前检查编号及最后一个u32寄存器是否在真实映射范围内，不能靠扩大MMIO区域掩盖越界。原始日志位于本机 `private/provisioning/recovery-priority-20261008/a589-boot-kernel.txt`。
 
 修正后的默认源码为 `bde3f2e9e9156875e08c81a4df75a369f5518d8a`，tree为 `16fe3d5fa0d8d2da8e66e69fde394d7850fb7f23`；相关 `dpu_lutdma` ARM64对象已经编译，完整内核正在构建，尚未部署。它同时包含固定DSC位深报告和标准torch档位转换；a589失败产物不作为可用版本推荐。
+
+本轮实机结果保存在 `private/provisioning/recovery-priority-20261008/bde3-drm.json`、`bde3-identity-probe.json`、`bde3-session-journal.txt`。内核的真实提交和完成时间为659.136439/659.136542秒，桌面恢复空数组时在662秒附近退出；无本轮SMMU或REGDMA timeout。标准显示恢复、暖色两侧输出及正常Night Light关开仍需分别验证。

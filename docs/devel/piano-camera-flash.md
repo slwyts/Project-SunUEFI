@@ -103,3 +103,5 @@ regmap的11个明确寄存器。开启第一路时，module-enable `ee46=80`、c
 disabled及两路通道、电流和时限，结果在`build/flash-overlay-check/`。本轮另确认
 完整stager实际复制modules-load策略、可选camera BSP payload含相同文件；没有运行
 服务、触碰设备或生成新的测试镜像。下一次统一build使用这条默认接线。
+
+bde3实机分别请求两路25mA torch，实际PMIC target由此前3变为4，5mA步进对应25mA；module/channel-enable分别正确置位，关闭后回到0，三项状态均无fault。该结果确认取整修正到达硬件；实际发光和曝光同步仍未验证，记录在 `bde3-flash-current.json`。

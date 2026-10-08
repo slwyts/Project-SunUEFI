@@ -81,3 +81,5 @@ Android相同程序在真正`/dev/dri/card0`完成读取（errors=0），原始�
 原始记录为本地 `private/analysis/recover-dma-20261008-131916/g086-drm-snapshot.json`。采集程序不读取扫描输出的 framebuffer 格式或活跃硬件寄存器，仍需配合驱动现有 state/dump；有 blob 不等同于硬件已消费它。
 
 下一默认内核增加 [固定 DSC 位深报告](../../patches/linux/7.2.9/0009-drm-msm-dsi-fixed-dsc-bpc.patch)：标准 `max bpc` 的范围取实际 PPS 的 `bits_per_component`，Piano 为10..10。当前驱动不支持按属性动态改变 PPS，所以不暴露8/12的选择。通用 bridge reset 会重新分配 connector state，补丁也恢复固定范围的 `max_requested_bpc/max_bpc`；逻辑仅作用于非HDMI的DSI。两个相关ARM64对象已独立编译，目标属性读回尚未验证。该报告不会实现HDR或FRC，也没有生成EDID。
+
+bde3普通BOOT启动后，实际DSI connector36的 `max bpc` 为10、范围10..10，两个CRTC的 `GAMMA_LUT_SIZE` 为1024。此结果已从真实DRM只读ioctl取得，`errors=0`，记录在 `bde3-drm.json`；十位报告已实机确认，HDR metadata、Colorspace和12-bit FRC没有因此实现。
