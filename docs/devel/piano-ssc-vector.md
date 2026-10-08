@@ -2,7 +2,7 @@
 
 这份扩展准备在正常libssc中提供额外传感器事件，复用已有SUID发现、QMI传输及open/close流程。[源码补丁](../../patches/libssc/0002-raw-vector-reports.patch)应用在libssc0.4.4及property-types修正之后；[最小客户端](../../linux/userspace/piano-ssc-vector.c)只用公开libssc API。没有新增传感器daemon、IIO假设备或桌面策略。
 
-当前`+sunuefi1`软件包只有属性类型修正；新向量补丁尚未加入默认消费者，后续正常包需要使用`+sunuefi2`并重新生成GIR，不用相同版本替换不同内容。此次host共享库和客户端已编译，原始捕获已离线解码，ARM64包、GIR安装和新接口实机订阅仍待正常打包验证。
+默认发布配置已通过 `patches/piano-sensors/0003-libssc-raw-vector-reports.patch` 接入向量扩展和客户端，标准 ARM64 库、CLI、开发包及 GIR 使用 `+sunuefi2`。客户端的 Debian 依赖要求同版本或更新的库，避免链接旧版本缺少的公开符号。完整六包已通过真实 rootfs 消费函数；平板已安装新库和 CLI，三个通道的限时订阅均正常关闭。下一份 root 镜像尚未生成，不能把运行中的软件包升级视为新镜像已部署。
 
 ## 应用接口
 
@@ -34,7 +34,7 @@ cc -O2 -Wall -Wextra linux/userspace/piano-ssc-vector.c \
 ./piano-ssc-vector --decode 1025 --payload-hex 0a04000000001003
 ```
 
-真实订阅由主任务另行执行；准确data type来自实际SUID发现，不扫描或造名称：
+准确data type来自实际SUID发现，限时真实订阅使用：
 
 ```sh
 ./piano-ssc-vector --sensor cct_front --seconds 3
@@ -50,4 +50,6 @@ cc -O2 -Wall -Wextra linux/userspace/piano-ssc-vector.c \
 
 本机`a8-ssc-vendor-payloads.jsonl`中的33条支持布局已由实际新共享库、protobuf-c和客户端离线解码：cct_front1条1025返回`[0]`、accuracy3；后置光线1条1025返回`[0,2,0,50,1024,1024]`、accuracy3；flicker31条包含769和1025。769的field1实际为493，message ID仍是769。这里只确认字段和值，不为分量补物理含义。缺accuracy、截断、packed float长度3字节和未知768的最小错误检查均明确拒绝。
 
-离线结果与source/ELF/capture哈希记录在`private/analysis/piano-ssc-vector-20261008/`，不随公共镜像分发捕获数据。尚未运行新API实机订阅，也未因此宣称后置自动亮度、色温校准或防闪烁桌面策略完成。
+随后标准 Debian/Meson 包构建完成，目标 GIR 同时包含正确属性类型、raw-report 和 decoder。平板实际运行新客户端：后置光线1025返回六值 `[7.8125,1658,60,50,1024,1024]`、accuracy3；前置色温返回 `[0]`；防闪烁收到769，field1仍为493。三个客户端均收到真实close完成回复，SensorProxy仍active，原有陀螺仪继续返回数据。这证明新接口实机交付和关闭流程，不确定全部物理单位，也不表示桌面策略已经完成。
+
+离线结果与source/ELF/capture哈希记录在`private/analysis/piano-ssc-vector-20261008/`；实机结果在`private/provisioning/recovery-priority-20261008/libssc-vector-live-{upgrade,channels}.txt`。不随公共镜像分发捕获数据。

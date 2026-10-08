@@ -20,7 +20,7 @@
 | --- | --- |
 | `piano-sensors` | 上游 CI 为 `5`，本地补丁构建为 `5+sunuefi1`，架构 `all` |
 | `fastrpc-support`、`libfastrpc1` | `1.0.7-2~bpo13+1`，架构 `arm64` |
-| `libssc2`、`libssc-bin` | `0.4.4-2+piano1+sunuefi1`，架构 `arm64` |
+| `libssc2`、`libssc-bin` | `0.4.4-2+piano1+sunuefi2`，架构 `arm64` |
 | `iio-sensor-proxy` | `3.9-1+piano1`，架构 `arm64` |
 
 FastRPC 包使用上游脚本固定校验值的 Debian 二进制包；libssc 与 iio-sensor-proxy 从固定 `.dsc` 校验值的 Debian 源包重建。版本与六包集合会记录到发布 manifest。
@@ -38,6 +38,10 @@ FastRPC 包使用上游脚本固定校验值的 Debian 二进制包；libssc 与
     },
     {
       "path": "patches/piano-sensors/0002-fix-libssc-property-types.patch",
+      "sha256": "<构建时记录的补丁 SHA-256>"
+    },
+    {
+      "path": "patches/piano-sensors/0003-libssc-raw-vector-reports.patch",
       "sha256": "<构建时记录的补丁 SHA-256>"
     }
   ]
@@ -96,6 +100,11 @@ lux、Kelvin或Hz。后置事件包含六个浮点分量，原厂handler原样�
 陀螺仪仍能返回三轴数据，stderr 不再出现上述类型断言。完整六包输入已通过
 真实 rootfs 消费函数检查；此时下一份 root 镜像尚未生成，不把当前平板安装
 结果等同于新镜像已部署。GIR 在同一源码构建中生成，库的 SONAME 仍为 2。
+
+后续 `+sunuefi2` 增加[公开向量接口及限时客户端](piano-ssc-vector.md)，
+默认发布配置已选择0003补丁，平板上前置色温、后置光线和防闪烁订阅均收到
+真实数据并正常关闭。它保留全部分量，不向未知数据指定物理单位，不新增
+daemon或改变GNOME的既有光线接口。标准包依赖阻止新客户端混用旧库。
 
 本轮原始记录位于`private/provisioning/recovery-priority-20261008/`的
 `a8-ssc-gyroscope.txt`、`a8-ssc-vendor-inventory.jsonl`及

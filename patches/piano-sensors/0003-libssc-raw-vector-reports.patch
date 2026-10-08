@@ -1,0 +1,553 @@
+From: Project SunUEFI
+Subject: [PATCH] sensors: package libssc raw-vector APIs and client
+
+Apply after the property-type wrapper. Use the frozen upstream libssc
+source and normal Debian quilt/Meson/debhelper path for the new API and
+public client. Give the added symbol a Debian minimum-version entry so
+libssc-bin cannot silently resolve against the older library.
+Only raw payload/vector/accuracy values are exposed; no units or sensor
+calibration are invented and no daemon/subscription starts by default.
+
+--- /dev/null
++++ b/patches/libssc/0002-raw-vector-reports.patch
+@@ -0,0 +1,259 @@
++From: Project SunUEFI
++Subject: [PATCH] libssc: expose immutable raw reports and uninterpreted vectors
++
++Apply after the sensor property type correction to libssc 0.4.4.
++Keep the existing SUID discovery, QMI subscription and typed measurements.
++Forward original event bytes only for the sensor UID and only if used;
++provide a public proto-c vector decoder without guessed component units.
++Unknown event IDs and malformed payloads return normal GIO errors.
++
++Package as a new +sunuefi2 build, not a replacement of +sunuefi1.
++Live delivery and ARM64/GIR packaging still require normal validation.
++
++--- a/src/libssc-sensor.c
+++++ b/src/libssc-sensor.c
++@@ -40,6 +40,12 @@
++ };
++ static GParamSpec *properties[N_PROPERTIES];
++ 
+++enum {
+++	SIGNAL_RAW_REPORT,
+++	N_SIGNALS
+++};
+++static guint signals[N_SIGNALS];
+++
++ typedef struct {
++ 	GTask *task;
++ 	SSCSensor *sensor;
++@@ -80,6 +86,28 @@
++ 
++ static void
++ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_low, GArray *buf, gpointer user_data);
+++
+++static void
+++raw_report_received (SSCClient *client, guint32 msg_id, guint64 uid_high,
+++		     guint64 uid_low, GArray *buf, gpointer user_data)
+++{
+++	SSCSensor *self = SSC_SENSOR (user_data);
+++	SSCSensorPrivate *priv = ssc_sensor_get_instance_private (self);
+++	g_autoptr (GBytes) payload = NULL;
+++
+++	if (uid_high != priv->uid_high || uid_low != priv->uid_low ||
+++	    !g_signal_has_handler_pending (self, signals[SIGNAL_RAW_REPORT], 0, FALSE))
+++		return;
+++	if (buf == NULL || g_array_get_element_size (buf) != 1 || buf->len > 65536) {
+++		g_warning ("Invalid raw SSC report buffer");
+++		return;
+++	}
+++	/* The client frees its GArray after report emission. Copy only when used. */
+++	payload = g_bytes_new (buf->data, buf->len);
+++	g_object_ref (self);
+++	g_signal_emit (self, signals[SIGNAL_RAW_REPORT], 0, msg_id, payload);
+++	g_object_unref (self);
+++}
++ 
++ GQuark ssc_sensor_error_quark (void)
++ {
++@@ -670,6 +698,11 @@
++ 		return;
++ 	}
++ 
+++	/* Separate from the temporary discovery/open report handler. The closure
+++	 * disconnects when the sensor is destroyed; no new QMI subscription. */
+++	g_signal_connect_object (priv->client, "report",
+++		G_CALLBACK (raw_report_received), self, 0);
+++
++ 	ctx = g_slice_new (ReportReceivedContext);
++ 	ctx->task = task;
++ 	ctx->sensor = self;
++@@ -812,6 +845,21 @@
++ 	ssc_sensor_class->open_finish = sensor_open_finish;
++ 	ssc_sensor_class->close = sensor_close;
++ 	ssc_sensor_class->close_finish = sensor_close_finish;
+++
+++	/**
+++	 * SSCSensor::raw-report:
+++	 * @self: the sensor matching the report's original SUID
+++	 * @message_id: original SSC message ID
+++	 * @payload: (transfer none): immutable original event protobuf bytes
+++	 *
+++	 * Emitted synchronously in the SSC client's report dispatch context.
+++	 * Retain @payload with g_bytes_ref() to keep it after the callback.
+++	 * No physical units, firmware timestamp or successful hardware calibration
+++	 * are implied. Discovery/open/close and sampling remain the existing APIs.
+++	 */
+++	signals[SIGNAL_RAW_REPORT] = g_signal_new ("raw-report",
+++		G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+++		0, NULL, NULL, NULL, G_TYPE_NONE, 2, G_TYPE_UINT, G_TYPE_BYTES);
++ 
++ 	properties[PROP_UID_LOW] =
++ 		g_param_spec_uint64 (SSC_SENSOR_UID_LOW,
++--- a/src/libssc.h
+++++ b/src/libssc.h
++@@ -25,5 +25,6 @@
++ #include <libssc-sensor-light.h>
++ #include <libssc-sensor-proximity.h>
++ #include <libssc-sensor-gyroscope.h>
+++#include <libssc-vector.h>
++ 
++ #endif /* _LIBSSC_H_ */
++--- a/src/meson.build
+++++ b/src/meson.build
++@@ -29,6 +29,7 @@
++ headers += files(
++   'libssc.h',
++   'libssc-sensor.h',
+++  'libssc-vector.h',
++   'libssc-sensor-proximity.h',
++   'libssc-sensor-light.h',
++   'libssc-sensor-accelerometer.h',
++@@ -46,6 +47,7 @@
++   'libssc-common.c',
++   'libssc-client.c',
++   'libssc-sensor.c',
+++  'libssc-vector.c',
++   'libssc-sensor-proximity.c',
++   'libssc-sensor-light.c',
++   'libssc-sensor-accelerometer.c',
++--- a/data/meson.build
+++++ b/data/meson.build
++@@ -23,6 +23,7 @@
++   'sensor-suid',
++   'sensor-proximity',
++   'sensor-light',
+++  'sensor-vector',
++   'sensor-accelerometer',
++   'sensor-magnetometer',
++   'sensor-rotationvector',
++--- a/libssc.map
+++++ b/libssc.map
++@@ -71,6 +71,7 @@
++ 		ssc_sensor_magnetometer_get_type;
++ 		ssc_sensor_proximity_get_type;
++ 		ssc_sensor_error_quark;
+++		ssc_sensor_decode_vector_report;
++ 	local:
++ 		*;
++ };
++--- /dev/null
+++++ b/src/libssc-vector.h
++@@ -0,0 +1,31 @@
+++/* SPDX-License-Identifier: GPL-3.0-or-later */
+++#ifndef _LIBSSC_VECTOR_H_
+++#define _LIBSSC_VECTOR_H_
+++
+++#include <gio/gio.h>
+++
+++G_BEGIN_DECLS
+++
+++/**
+++ * ssc_sensor_decode_vector_report:
+++ * @message_id: original SSC event message ID, not a payload field value
+++ * @payload: unmodified protobuf event payload from SSCSensor::raw-report
+++ * @error: return location for a #GError
+++ *
+++ * Decode observed wire layouts without assigning physical component meanings.
+++ * Message 1025 returns `values` (ad, lossless float32 to double) and `accuracy`
+++ * (i). Message 769 returns `field1`, `field2`, `field3` (i) and `values` (ad).
+++ * All known scalar fields must be present. Empty/oversized/malformed payloads
+++ * are invalid; other event IDs return G_IO_ERROR_NOT_SUPPORTED. Unknown protobuf
+++ * fields remain available in the caller's original @payload.
+++ * No lux, Kelvin, Hz, axis transform, filtering or calibration is inferred.
+++ *
+++ * Returns: (transfer full) (nullable): a #GVariant of type a{sv}, or %NULL
+++ */
+++GVariant *ssc_sensor_decode_vector_report (guint32 message_id,
+++                                          GBytes *payload,
+++                                          GError **error);
+++
+++G_END_DECLS
+++
+++#endif
++--- /dev/null
+++++ b/src/libssc-vector.c
++@@ -0,0 +1,65 @@
+++/* SPDX-License-Identifier: GPL-3.0-or-later */
+++#include "libssc-vector.h"
+++#include "ssc-sensor-vector.pb-c.h"
+++
+++#define SSC_VECTOR_MAX_PAYLOAD (64 * 1024)
+++
+++static void
+++add_values (GVariantBuilder *fields, const gfloat *values, gsize count)
+++{
+++    GVariantBuilder vector;
+++
+++    g_variant_builder_init (&vector, G_VARIANT_TYPE ("ad"));
+++    for (gsize i = 0; i < count; i++)
+++        g_variant_builder_add (&vector, "d", (gdouble) values[i]);
+++    g_variant_builder_add (fields, "{sv}", "values", g_variant_builder_end (&vector));
+++}
+++
+++GVariant *
+++ssc_sensor_decode_vector_report (guint32 message_id, GBytes *payload, GError **error)
+++{
+++    GVariantBuilder fields;
+++    gsize length;
+++    const guint8 *data;
+++
+++    g_return_val_if_fail (payload != NULL, NULL);
+++    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+++    if (message_id != 1025 && message_id != 769) {
+++        g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+++                     "No vector wire schema for SSC event %u", message_id);
+++        return NULL;
+++    }
+++    data = g_bytes_get_data (payload, &length);
+++    if (length == 0 || length > SSC_VECTOR_MAX_PAYLOAD) {
+++        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+++                     "SSC vector payload size %" G_GSIZE_FORMAT " is outside 1..65536", length);
+++        return NULL;
+++    }
+++    g_variant_builder_init (&fields, G_VARIANT_TYPE_VARDICT);
+++    if (message_id == 1025) {
+++        SscVectorResponse *message = ssc_vector_response__unpack (NULL, length, data);
+++
+++        if (message == NULL)
+++            goto invalid;
+++        add_values (&fields, message->values, message->n_values);
+++        g_variant_builder_add (&fields, "{sv}", "accuracy", g_variant_new_int32 (message->accuracy));
+++        ssc_vector_response__free_unpacked (message, NULL);
+++    } else {
+++        SscVendorVectorResponse *message = ssc_vendor_vector_response__unpack (NULL, length, data);
+++
+++        if (message == NULL)
+++            goto invalid;
+++        g_variant_builder_add (&fields, "{sv}", "field1", g_variant_new_int32 (message->field1));
+++        g_variant_builder_add (&fields, "{sv}", "field2", g_variant_new_int32 (message->field2));
+++        g_variant_builder_add (&fields, "{sv}", "field3", g_variant_new_int32 (message->field3));
+++        add_values (&fields, message->values, message->n_values);
+++        ssc_vendor_vector_response__free_unpacked (message, NULL);
+++    }
+++    return g_variant_ref_sink (g_variant_builder_end (&fields));
+++
+++invalid:
+++    g_variant_builder_clear (&fields);
+++    g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+++                 "Invalid SSC event %u protobuf or missing required scalar fields", message_id);
+++    return NULL;
+++}
++--- /dev/null
+++++ b/data/ssc-sensor-vector.proto
++@@ -0,0 +1,17 @@
+++// SPDX-License-Identifier: GPL-3.0-or-later
+++syntax = "proto2";
+++
+++// Observed SSC 1025 layout; values have no implied component units here.
+++message SscVectorResponse {
+++    repeated float values = 1 [packed = true];
+++    required int32 accuracy = 2;
+++}
+++
+++// Observed vendor 769 layout. Require the complete observed shape in this API;
+++// names intentionally preserve wire field numbers, not guessed semantics.
+++message SscVendorVectorResponse {
+++    required int32 field1 = 1;
+++    required int32 field2 = 2;
+++    required int32 field3 = 3;
+++    repeated float values = 4 [packed = true];
+++}
+--- /dev/null
++++ b/patches/libssc/0003-piano-ssc-vector-cli.patch
+@@ -0,0 +1,255 @@
++From: Project SunUEFI
++Subject: [PATCH] libssc: package the public raw-vector client
++
++Build the fixed public-API client with the same library and Meson
++configuration as ssccli. Install it in libssc-bin through Debian's normal
++manifest; no service or default subscription is added.
++
++--- /dev/null
+++++ b/src/piano-ssc-vector.c
++@@ -0,0 +1,227 @@
+++/* SPDX-License-Identifier: GPL-3.0-or-later */
+++/* One-shot client of public libssc APIs; no private QMI API or daemon. */
+++#include <libssc.h>
+++#include <glib-unix.h>
+++#include <signal.h>
+++#include <stdio.h>
+++#include <string.h>
+++
+++typedef struct {
+++    GMainLoop *loop;
+++    GCancellable *cancellable;
+++    SSCSensor *sensor;
+++    guint watchdog;
+++    guint timer;
+++    gulong report_handler;
+++    gint seconds;
+++    gint result;
+++    gboolean stopping;
+++    guint decoded;
+++} Client;
+++
+++static gboolean
+++print_report (guint message_id, GBytes *payload)
+++{
+++    g_autoptr (GError) error = NULL;
+++    g_autoptr (GVariant) fields = ssc_sensor_decode_vector_report (message_id, payload, &error);
+++    g_autofree gchar *printed = fields ? g_variant_print (fields, TRUE) : NULL;
+++    gsize length;
+++    const guint8 *bytes = g_bytes_get_data (payload, &length);
+++
+++    printf ("message=%u bytes=%" G_GSIZE_FORMAT, message_id, length);
+++    if (fields)
+++        printf (" fields=%s", printed);
+++    else
+++        printf (" decode_error=%s", error->message);
+++    printf (" raw_hex=");
+++    for (gsize i = 0; i < length; i++)
+++        printf ("%02x", bytes[i]);
+++    putchar ('\n');
+++    fflush (stdout);
+++    return fields != NULL;
+++}
+++
+++static void
+++report_received (SSCSensor *sensor, guint message_id, GBytes *payload, Client *client)
+++{
+++    if (print_report (message_id, payload))
+++        client->decoded++;
+++}
+++
+++static gboolean stop (gpointer data);
+++
+++static gboolean
+++watchdog (gpointer data)
+++{
+++    Client *client = data;
+++
+++    client->watchdog = 0;
+++    client->result = 2;
+++    if (!client->stopping) {
+++        fprintf (stderr, "initialization/open timed out; cancelling and closing\n");
+++        stop (client);
+++    } else {
+++        fprintf (stderr, "cancellation/close timed out; sensor close is unconfirmed\n");
+++        g_cancellable_cancel (client->cancellable);
+++        g_main_loop_quit (client->loop);
+++    }
+++    return G_SOURCE_REMOVE;
+++}
+++
+++static void
+++closed (GObject *object, GAsyncResult *result, gpointer data)
+++{
+++    Client *client = data;
+++    g_autoptr (GError) error = NULL;
+++
+++    if (!ssc_sensor_close_finish (SSC_SENSOR (object), result, &error)) {
+++        client->result = 2;
+++        fprintf (stderr, "close failed: %s\n", error ? error->message : "no error details");
+++    } else {
+++        printf ("closed=true decoded_reports=%u\n", client->decoded);
+++    }
+++    g_main_loop_quit (client->loop);
+++}
+++
+++static gboolean
+++stop (gpointer data)
+++{
+++    Client *client = data;
+++
+++    if (client->stopping)
+++        return G_SOURCE_REMOVE;
+++    client->stopping = TRUE;
+++    g_cancellable_cancel (client->cancellable);
+++    if (client->watchdog) {
+++        g_source_remove (client->watchdog);
+++        client->watchdog = 0;
+++    }
+++    client->watchdog = g_timeout_add_seconds (5, watchdog, client);
+++    if (client->sensor)
+++        ssc_sensor_close (client->sensor, NULL, closed, client);
+++    /* Discovery may finish after cancellation. Keep its callback context alive
+++     * until it returns or the bounded cancellation watchdog expires. */
+++    return G_SOURCE_REMOVE;
+++}
+++
+++static gboolean
+++timed_stop (gpointer data)
+++{
+++    Client *client = data;
+++    client->timer = 0;
+++    return stop (data);
+++}
+++
+++static gboolean
+++signal_stop (gpointer data)
+++{
+++    stop (data);
+++    return G_SOURCE_CONTINUE;
+++}
+++
+++static void
+++opened (GObject *object, GAsyncResult *result, gpointer data)
+++{
+++    Client *client = data;
+++    g_autoptr (GError) error = NULL;
+++
+++    if (!ssc_sensor_open_finish (SSC_SENSOR (object), result, &error)) {
+++        client->result = 2;
+++        fprintf (stderr, "open failed: %s\n", error ? error->message : "no error details");
+++        stop (client);
+++        return;
+++    }
+++    if (client->stopping)
+++        return;
+++    if (client->watchdog) {
+++        g_source_remove (client->watchdog);
+++        client->watchdog = 0;
+++    }
+++    client->timer = g_timeout_add_seconds (client->seconds, timed_stop, client);
+++}
+++
+++static void
+++created (GObject *object, GAsyncResult *result, gpointer data)
+++{
+++    Client *client = data;
+++    g_autoptr (GError) error = NULL;
+++    g_autoptr (SSCSensor) discovered = ssc_sensor_new_finish (result, &error);
+++
+++    if (!discovered) {
+++        client->result = 2;
+++        fprintf (stderr, "sensor discovery failed: %s\n", error ? error->message : "no error details");
+++        g_main_loop_quit (client->loop);
+++        return;
+++    }
+++    client->sensor = g_steal_pointer (&discovered);
+++    if (client->stopping) {
+++        fprintf (stderr, "discovery completed after stop; closing without opening\n");
+++        ssc_sensor_close (client->sensor, NULL, closed, client);
+++        return;
+++    }
+++    client->report_handler = g_signal_connect (client->sensor, "raw-report",
+++                                               G_CALLBACK (report_received), client);
+++    ssc_sensor_open (client->sensor, client->cancellable, opened, client);
+++}
+++
+++int
+++main (int argc, char **argv)
+++{
+++    g_autofree gchar *sensor = NULL;
+++    g_autofree gchar *hex = NULL;
+++    gint decode = 0, seconds = 3;
+++    g_autoptr (GError) error = NULL;
+++    g_autoptr (GOptionContext) options = g_option_context_new ("- original SSC vector fields, unknown units");
+++    GOptionEntry entries[] = {
+++        {"sensor", 0, 0, G_OPTION_ARG_STRING, &sensor, "Subscribe to the exact public SSC data type", "TYPE"},
+++        {"seconds", 0, 0, G_OPTION_ARG_INT, &seconds, "Read for 1..30 seconds after open completes", "N"},
+++        {"decode", 0, 0, G_OPTION_ARG_INT, &decode, "Offline decode of original SSC event message ID", "ID"},
+++        {"payload-hex", 0, 0, G_OPTION_ARG_STRING, &hex, "Offline original protobuf payload", "HEX"},
+++        {NULL}
+++    };
+++
+++    g_option_context_add_main_entries (options, entries, NULL);
+++    if (!g_option_context_parse (options, &argc, &argv, &error)) {
+++        fprintf (stderr, "%s\n", error->message);
+++        return 2;
+++    }
+++    if (hex) {
+++        g_autofree guint8 *bytes = NULL;
+++        g_autoptr (GBytes) payload = NULL;
+++        gsize chars = strlen (hex);
+++
+++        if (sensor || decode <= 0 || chars == 0 || chars % 2 || chars > 131072)
+++            return 2;
+++        bytes = g_malloc (chars / 2);
+++        for (gsize i = 0; i < chars; i += 2) {
+++            gint high = g_ascii_xdigit_value (hex[i]), low = g_ascii_xdigit_value (hex[i + 1]);
+++            if (high < 0 || low < 0)
+++                return 2;
+++            bytes[i / 2] = (high << 4) | low;
+++        }
+++        payload = g_bytes_new (bytes, chars / 2);
+++        return print_report (decode, payload) ? 0 : 2;
+++    }
+++    if (!sensor || decode != 0 || seconds < 1 || seconds > 30)
+++        return 2;
+++    Client client = {.loop = g_main_loop_new (NULL, FALSE),
+++                     .cancellable = g_cancellable_new (), .seconds = seconds};
+++    guint interrupt_id = g_unix_signal_add (SIGINT, signal_stop, &client);
+++    guint terminate_id = g_unix_signal_add (SIGTERM, signal_stop, &client);
+++
+++    client.watchdog = g_timeout_add_seconds (10, watchdog, &client);
+++    ssc_sensor_new (sensor, client.cancellable, created, &client);
+++    g_main_loop_run (client.loop);
+++    if (client.watchdog)
+++        g_source_remove (client.watchdog);
+++    if (client.timer)
+++        g_source_remove (client.timer);
+++    g_source_remove (interrupt_id);
+++    g_source_remove (terminate_id);
+++    if (client.sensor && client.report_handler)
+++        g_signal_handler_disconnect (client.sensor, client.report_handler);
+++    g_clear_object (&client.sensor);
+++    g_clear_object (&client.cancellable);
+++    g_main_loop_unref (client.loop);
+++    return client.result;
+++}
++--- a/src/meson.build
+++++ b/src/meson.build
++@@ -81,6 +81,15 @@
++   install: true,
++ )
++ 
+++piano_ssc_vector = executable(
+++  'piano-ssc-vector',
+++  sources: files('piano-ssc-vector.c'),
+++  include_directories: includes,
+++  dependencies: deps,
+++  link_with: libssc,
+++  install: true,
+++)
+++
++ ns = 'SSC'
++ 
++ pkg.generate(
+--- a/scripts/build-sensors-debs.sh
++++ b/scripts/build-sensors-debs.sh
+@@ -74,8 +74,10 @@
+         basename "$patch" >> debian/patches/series
+     done
+     if [ "$name" = libssc ]; then
++        printf '%s\n' 'usr/bin/piano-ssc-vector' >> debian/libssc-bin.install
++        printf '%s\n' ' ssc_sensor_decode_vector_report@LIBSSC_0.4.0 0.4.4-2+piano1+sunuefi2' >> debian/libssc2.symbols
+         DEBFULLNAME='piano mainline contributors' DEBEMAIL='piano@localhost' \
+-            dch --newversion 0.4.4-2+piano1+sunuefi1 --distribution trixie "$message"
++            dch --newversion 0.4.4-2+piano1+sunuefi2 --distribution trixie "$message"
+     else
+         DEBFULLNAME='piano mainline contributors' DEBEMAIL='piano@localhost' \
+             dch --local +piano --distribution trixie "$message"
+@@ -97,7 +99,7 @@
+     fetch "$name" "$version" "$dir"
+ done
+ 
+-build libssc 'Fix GObject sensor property types and rebuild for trixie.'
++build libssc 'Expose immutable SSC raw reports and uninterpreted vector decoding.'
+ if [ -n "$ONLY_LIBSSC" ]; then
+     for deb in "$OUTPUT"/all/*.deb; do
+         case $(dpkg-deb -f "$deb" Package) in

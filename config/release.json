@@ -55,7 +55,8 @@
     "required": true,
     "patches": [
       "patches/piano-sensors/0001-import-vendor-reg-config.patch",
-      "patches/piano-sensors/0002-fix-libssc-property-types.patch"
+      "patches/piano-sensors/0002-fix-libssc-property-types.patch",
+      "patches/piano-sensors/0003-libssc-raw-vector-reports.patch"
     ]
   },
   "storage": {
