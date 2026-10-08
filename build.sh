@@ -88,6 +88,7 @@ PY_RELEASE_SOURCE
       --dtb-overlay linux/dts/piano-regdma-resource.dtso \
       --dtb-overlay linux/dts/piano-audio-dmic-clock.dtso \
       --dtb-overlay linux/dts/piano-camera-flash.dtso \
+      --dtb-overlay linux/dts/piano-camera-privacy-led.dtso \
       --initramfs build/distros/release-7.2.9/initramfs/initramfs.cpio.gz \
       --rootfs build/distros/release-7.2.9/rootfs --rootfs-manifest build/distros/release-7.2.9/manifest.json \
       --output artifacts/release-7.2.9 --root-selector LABEL=PIANOROOT "$@" ;;

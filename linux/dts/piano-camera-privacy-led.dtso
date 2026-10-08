@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/dts-v1/;
+/plugin/;
+
+/*
+ * Default Piano product privacy-indicator wiring.
+ * Stock camera preview: green brightness 0 -> 4 -> 0, max 255;
+ * framework LightsService ids 0..7 remain zero. Provider: PM8550 LPG2.
+ * Both sensors share this physical indicator. The fraction property is the
+ * SunUEFI proposed video-interface binding extension in kernel patch 0016.
+ */
+/ {
+	fragment@0 {
+		target-path = "/soc/qcom,spmi@c42d000/qcom,pm8550@1/led-controller";
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			piano_privacy_led: led@2 {
+				reg = <2>;
+				/* Keep the actual LPG provider and its real brightness range. */
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc/cci-ml@ac7b000/i2c-bus@1/camera@10";
+		__overlay__ {
+			leds = <&piano_privacy_led>;
+			led-names = "privacy";
+			privacy-led-brightness = <4 255>;
+		};
+	};
+
+	fragment@2 {
+		target-path = "/soc/qcom,qupv3_2_geni_se@8c0000/i2c@884000/camera@10";
+		__overlay__ {
+			leds = <&piano_privacy_led>;
+			led-names = "privacy";
+			privacy-led-brightness = <4 255>;
+		};
+	};
+};
