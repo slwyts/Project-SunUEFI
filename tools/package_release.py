@@ -57,15 +57,17 @@ def apply_cpu_model_overlay(board, overlay, work, cpu_only=True):
     require(expected, 'Board overlay has no targets')
     run(['fdtoverlay', '-i', board, '-o', derived, compiled])
     after = read_fdt(derived.read_bytes())['tree']
-    for target, payload in expected.items():
-        for key, value in payload.items():
-            require(after[target].get(key) == value, 'Board overlay did not apply')
-            if key in before[target]: after[target][key] = before[target][key]
-            else: after[target].pop(key, None)
+    if cpu_only:
+        for target, payload in expected.items():
+            for key, value in payload.items():
+                require(after[target].get(key) == value, 'CPU model overlay did not apply')
+                if key in before[target]: after[target][key] = before[target][key]
+                else: after[target].pop(key, None)
     # The CPU model helper changes only existing properties. General board
     # overlays also add standard child nodes and relocate their phandles and
-    # __symbols__; fdtoverlay performs that merge. Comparing them to the old
-    # tree after undoing only target properties would reject those additions.
+    # __symbols__; fdtoverlay performs that merge. Both new child nodes and
+    # references such as flash-leds have relocated phandles, so raw property
+    # bytes are not comparable with the independently compiled overlay.
     if cpu_only:
         require(after == before, 'CPU model overlay changed undeclared properties')
     fdt_info(derived)
