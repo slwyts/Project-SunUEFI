@@ -77,6 +77,12 @@ V4L2 wrapper 注册异步 flash subdevice。相机侧 fwnode/notifier 关联仍�
 `flash-torch-low-current.txt`。原UFS系统分区和BOOT载荷未在这轮部署中重写；
 更新的是项目ESP中的Linux boot文件及根系统模块/软件包。
 
+下一默认 overlay 已给实际 S5KJN1 节点增加标准 `flash-leds`，引用两路 LED
+子节点。该 sensor 使用 `v4l2_async_register_subdev_sensor()`，其现有 notifier
+读取这项属性；flash wrapper 已按 LED fwnode 注册，因此不另加用户空间设备。
+组合 DTB 中两个 phandle 已分别解析到真实 led-0/led-1。该关联尚未部署，
+需要下一次正常启动核对 flash subdevice 和媒体连接，再验证应用控制。
+
 此前主机已对参考board.dtb组合一次overlay，检查标准节点okay、旧vendor/trigger
 disabled及两路通道、电流和时限，结果在`build/flash-overlay-check/`。本轮另确认
 完整stager实际复制modules-load策略、可选camera BSP payload含相同文件；没有运行

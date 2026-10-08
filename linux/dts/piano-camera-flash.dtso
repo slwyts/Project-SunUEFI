@@ -57,4 +57,12 @@
 			};
 		};
 	};
+
+	fragment@3 {
+		target-path = "/soc/cci-ml@ac7b000/i2c-bus@1/camera@10";
+		__overlay__ {
+			/* S5KJN1 uses the standard sensor async notifier. */
+			flash-leds = <&piano_camera_flash0 &piano_camera_flash1>;
+		};
+	};
 };
