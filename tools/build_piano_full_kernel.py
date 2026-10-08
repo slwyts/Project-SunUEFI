@@ -69,8 +69,10 @@ def command_line(fragment,public,root_policy):
     original=json.loads(config_values(public)['CONFIG_CMDLINE']);provided=json.loads(override['CONFIG_CMDLINE'])
     tokens=original.split()
     if tokens.count('root=PARTLABEL=userdata')!=1:raise ValueError('Unexpected public root policy')
-    expected=' '.join('piano.root=ram'if token=='root=PARTLABEL=userdata'else token for token in tokens)
-    if provided!=expected:raise ValueError('Full candidate must preserve every public handoff argument except userdata root')
+    levels=[token for token in provided.split()if token.startswith('loglevel=')]
+    if len(levels)!=1 or not re.fullmatch(r'loglevel=[0-8]',levels[0]):raise ValueError('Use one standard console loglevel from 0 to 8')
+    expected=' '.join('piano.root=ram'if token=='root=PARTLABEL=userdata'else levels[0]if token.startswith('loglevel=')else token for token in tokens)
+    if provided!=expected:raise ValueError('Preserve public handoff arguments except the OS root and console loglevel')
     if root_policy!='ram'and not re.fullmatch(r'(UUID=[0-9a-fA-F-]{8,64}|PARTUUID=[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|LABEL=PIANO[A-Za-z0-9_-]{0,48})',root_policy):
         raise ValueError('External root must be an explicit UUID or PIANO-owned label; Android partition selectors are refused')
     return provided.replace('piano.root=ram','piano.root='+root_policy)
