@@ -1,0 +1,114 @@
+From: Project SunUEFI
+Subject: [PATCH] input: nt36532e: detach the panel follower before cleanup
+
+DRAFT: not in the release patch list. Base5902d3af6f62; applies after0019.
+The follower is embedded in manually allocated ts. A devm follower action
+runs only after probe returns an error or remove returns, when ts has already
+been freed. Use explicit add/remove ownership and a registration flag.
+
+Every unwind entry which may own a follower removes it before destroying
+workqueues, IRQs or locks. Fall-through cleanup is idempotent through the
+flag. remove and shutdown detach first, preserving valid callback resources.
+The standard remove helper synchronizes via panel->follower_lock and invokes
+unprepare while the controller context is alive. Do not suppress callbacks
+or retain a second devm removal action. Firmware/pen commands are unchanged.
+
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx.c
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.c
+@@ -50,6 +50,20 @@
+ #if defined(CONFIG_DRM_PANEL)
+ static struct drm_panel_follower_funcs nt36xxx_panel_follower_funcs;
+ #endif
++
++/* The follower lives inside ts, so it must not outlive manual ts cleanup.
++ * drm_panel_remove_follower() takes the panel follower lock, waits for
++ * callbacks and invokes unprepare while our work/IRQ/locks still exist.
++ */
++static void nvt_panel_remove_follower(struct nvt_ts_data *data)
++{
++#if defined(CONFIG_DRM_PANEL)
++	if (data->panel_follower_registered) {
++		drm_panel_remove_follower(&data->panel_follower);
++		data->panel_follower_registered = false;
++	}
++#endif
++}
+ #define NVT_THP_HEADER_LEN 257
+ /* sheng payload length, used when the firmware has no polling info */
+ #define NVT_THP_DEFAULT_PAYLOAD_LEN 5160
+@@ -2104,9 +2118,10 @@
+ 	/* If the device follows a DRM panel, configure panel follower */
+ 	if (drm_is_panel_follower(&client->dev)) {
+ 		ts->panel_follower.funcs = &nt36xxx_panel_follower_funcs;
+-		ret = devm_drm_panel_add_follower(&client->dev, &ts->panel_follower);
++		ret = drm_panel_add_follower(&client->dev, &ts->panel_follower);
+ 		if (ret)
+ 			goto err_panelwait_failed;
++		ts->panel_follower_registered = true;
+ 	} else
+ #endif
+ 	{
+@@ -2256,6 +2271,7 @@
+ 	return 0;
+ 
+ err_create_thp_proc:
++	nvt_panel_remove_follower(ts);
+ 	proc_remove(ts->thp_game_rollback_proc);
+ 	proc_remove(ts->thp_game_proc);
+ 	proc_remove(ts->thp_controller_proc);
+@@ -2273,11 +2289,13 @@
+ 	ts->power_supply_registered = false;
+ 	cancel_work_sync(&ts->power_supply_work);
+ err_register_power_supply_notifier:
++	nvt_panel_remove_follower(ts);
+ 	mutex_destroy(&ts->power_supply_lock);
+ 	destroy_workqueue(ts->event_wq);
+ 	ts->event_wq = NULL;
+ 
+ err_alloc_work_thread_failed:
++	nvt_panel_remove_follower(ts);
+ #if BOOT_UPDATE_FIRMWARE
+ 	if (nvt_fwu_wq) {
+ 		cancel_delayed_work_sync(&ts->nvt_fwu_work);
+@@ -2285,11 +2303,13 @@
+ 		nvt_fwu_wq = NULL;
+ 	}
+ err_create_nvt_fwu_wq_failed:
++	nvt_panel_remove_follower(ts);
+ #endif
+ 	free_irq(client->irq, ts);
+ err_int_request_failed:
+ err_panelwait_failed:
+ err_chipvertrim_failed:
++	nvt_panel_remove_follower(ts);
+ 	vfree(ts->thp_stream_buf);
+ 	ts->thp_stream_buf = NULL;
+ 	kfree(ts->thp_frame);
+@@ -2329,6 +2349,8 @@
+ {
+ 	NVT_LOG("Removing driver...\n");
+ 
++	nvt_panel_remove_follower(ts);
++
+ 	bTouchIsAwake = 0;
+ 	WRITE_ONCE(ts->thp_capture_enabled, false);
+ 	wake_up_interruptible(&ts->thp_stream_wait);
+@@ -2395,6 +2417,8 @@
+ static void nvt_ts_shutdown(struct spi_device *client)
+ {
+ 	NVT_LOG("Shutdown driver...\n");
++
++	nvt_panel_remove_follower(ts);
+ 
+ 	nvt_irq_enable(false);
+ 	if (ts->power_supply_registered) {
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx.h
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.h
+@@ -105,6 +105,7 @@
+ 	uint16_t addr;
+ #if defined(CONFIG_DRM_PANEL)
+ 	struct drm_panel_follower panel_follower;
++	bool panel_follower_registered;
+ #endif
+ 	const char *fw_name;
+ 	struct gpio_desc *lcd_id_gpiod;
