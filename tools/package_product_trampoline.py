@@ -57,13 +57,13 @@ def build_selector(output):
     environment = {**os.environ, 'LD_LIBRARY_PATH': str(toolroot / 'lib') +
                    (':' + os.environ['LD_LIBRARY_PATH'] if os.environ.get('LD_LIBRARY_PATH') else '')}
     inc = ROOT / 'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
-    sources = [ROOT / 'uefi/handoff/bootselect' / name for name in ('Entry.S', 'BootSelect.c', 'BootRequest.c', 'EarlyTrace.c', 'EarlySplash.c')]
+    sources = [ROOT / 'uefi/handoff/bootselect' / name for name in ('Entry.S', 'BootSelect.c', 'BootRequest.c', 'EarlyTrace.c', 'EarlySplash.c', 'EarlyKeys.c', 'EarlyMmio.S')]
     sources.append(ROOT / 'uefi/components/product-support/Library/ProductBootManagerLib/ProductSplash.c')
     trace_id=digest(b''.join(path.read_bytes() for path in sources))[:16]
     objects = []
     flags = ['--target=aarch64-linux-gnu', '-O2', '-ffreestanding', '-fno-builtin', '-fno-stack-protector',
              '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-mgeneral-regs-only', '-mstrict-align', '-fshort-wchar',
-             '-Wall', '-Wextra', '-Werror', '-Wno-misleading-indentation', '-DPIANO_EARLY_SPLASH',
+             '-Wall', '-Wextra', '-Werror', '-Wno-misleading-indentation', '-DPIANO_EARLY_SPLASH', '-DPIANO_EARLY_CHOOSER',
              '-DPIANO_BOOTSELECT_TRACE_ID="'+trace_id+'"',
              '-I' + str(inc), '-I' + str(inc / 'AArch64')]
     for index, source in enumerate(sources):
@@ -80,9 +80,25 @@ def build_selector(output):
     require(labels.get('_start') == 0 and labels['__image_end'] == labels['__stack_end'] and
             8192 < labels['__image_end'] < 65536 and labels['bootselect_metadata'] + 128 <= binary.stat().st_size,
             'Selector entry/metadata/private-stack layout changed')
-    related = [*sources, ROOT / 'uefi/handoff/bootselect/BootSelect.h', ROOT / 'uefi/handoff/bootselect/BootRequest.h', ROOT / 'uefi/handoff/bootselect/EarlyTrace.h', ROOT / 'uefi/handoff/bootselect/BootSelect.ld',
+    related = [*sources, ROOT / 'uefi/handoff/bootselect/BootSelect.h', ROOT / 'uefi/handoff/bootselect/BootRequest.h', ROOT / 'uefi/handoff/bootselect/EarlyTrace.h', ROOT / 'uefi/handoff/bootselect/EarlyKeys.h', ROOT / 'uefi/handoff/bootselect/BootSelect.ld',
                ROOT / 'uefi/components/product-support/Library/ProductBootManagerLib/ProductSplashAssets.h']
     return binary.read_bytes(), labels, {str(p.relative_to(ROOT)): digest(p.read_bytes()) for p in related}
+
+
+def selector_only(output):
+    """Rebuild the entry picker without rebuilding the unchanged EDK2 payload."""
+    output = Path(output).resolve()
+    require(not output.exists(), 'Output must be a fresh directory')
+    output.mkdir(parents=True)
+    binary, labels, inputs = build_selector(output)
+    result = {'schema_version': 1, 'interface_version': 1, 'wrapper_version': 1, 'app_abi': 1,
+              'selector_bytes': len(binary), 'selector_sha256': digest(binary),
+              'selector_memory_bytes': labels['__image_end'], 'metadata_offset': labels['bootselect_metadata'],
+              'early_chooser_enabled': True, 'early_chooser_timeout_seconds': 3,
+              'early_chooser_persists_selection': False, 'device_chooser_verified': False,
+              'source_files': inputs}
+    (output / 'selector.json').write_text(json.dumps(result, indent=2) + '\n')
+    return result
 
 
 def combine(original, selector, symbols, shim, fd, app):
@@ -132,7 +148,9 @@ def combine(original, selector, symbols, shim, fd, app):
                            'fd_offset': shim_offset + len(shim), 'app_offset': app_offset,
                            'app_bytes': len(app), 'container_bytes': total,
                            'original_kernel_reconstructable_byte_equal': True,
-                           'normal_header_writes': False, 'normal_splash_enabled': False}
+                           'normal_header_writes': False, 'normal_splash_enabled': 'PianoEarlyChoose' in symbols,
+                           'early_chooser_timeout_seconds': 3 if 'PianoEarlyChoose' in symbols else 0,
+                           'early_chooser_persists_selection': False}
 
 
 def package(stock, product, output, uefi_request=False):
@@ -199,15 +217,17 @@ def package(stock, product, output, uefi_request=False):
                      'app_abi': 1, 'wrapper_version': 1, 'selector_memory_bytes': symbols['__image_end'],
                      'metadata_offset': symbols['bootselect_metadata'], 'product_fd_sha256': digest(components['PianoUEFI-product.fd']),
                      'app_payload_sha256': digest(app), 'source_files': inputs,
-                     'entry_policy': 'explicit-request-only', 'request_bootarg': 'sunuefi.boot=uefi',
+                     'entry_policy': 'saved-request-with-early-picker', 'request_bootarg': 'sunuefi.boot=uefi',
+                     'early_chooser_enabled': True, 'early_chooser_timeout_seconds': 3,
+                     'early_chooser_persists_selection': False, 'device_chooser_verified': False,
                      'persistent_uefi_request': uefi_request,
                      'device_passthrough_verified': False, 'sticky_route_enabled': False}
     (output / 'selector.json').write_text(json.dumps(selector_meta, indent=2) + '\n')
     result = {**manifest, 'status': 'COMBINED_ENTRY_HOST_BUILT_NOT_DEVICE_VERIFIED',
               'entry_kind': 'stock-gki-early-selector', 'android_header_version': 4,
               'stock_input': {'sha256': digest(source), **original}, 'layout': layout,
-              'normal_path': 'direct stock primary_entry before EDK2; DTB/initrd unchanged; no header writes or splash',
-              'recovery_path': 'original Mi Recovery unless an explicit SunUEFI request is present',
+              'normal_path': 'inherited-framebuffer 3s picker then direct stock primary_entry; DTB/initrd unchanged; no header writes',
+              'recovery_path': 'original Mi Recovery has priority over NEXT and bypasses the picker',
               'uefi_entry': 'unique sunuefi.boot=uefi request; never inferred from the stock recovery mode',
               'diagnostic_persistent_request': uefi_request, 'one_shot_request_verified': False,
               'independent_recovery_install_supported': False, 'boot_partition_installed': False,
@@ -223,13 +243,20 @@ def package(stock, product, output, uefi_request=False):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--stock-boot', type=Path, required=True)
+    parser.add_argument('--stock-boot', type=Path)
     parser.add_argument('--product', type=Path, default=ROOT / 'artifacts/product')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--selector-only', action='store_true', help='Build selector.bin and selector.json, reusing existing EDK2/stock payloads later')
     parser.add_argument('--uefi-request', action='store_true', help='Host diagnostic only: persistent cmdline request, NOT a verified one-shot installation')
     args = parser.parse_args()
     try:
-        result = package(args.stock_boot, args.product, args.output, args.uefi_request)
-        print(json.dumps({'status': result['status'], 'layout': result['layout'], 'files': result['files']}, indent=2))
+        if args.selector_only:
+            require(not args.stock_boot and not args.uefi_request, '--selector-only does not package a stock BOOT or set requests')
+            result = selector_only(args.output)
+            print(json.dumps(result, indent=2))
+        else:
+            require(args.stock_boot is not None, '--stock-boot is required for combined BOOT packaging')
+            result = package(args.stock_boot, args.product, args.output, args.uefi_request)
+            print(json.dumps({'status': result['status'], 'layout': result['layout'], 'files': result['files']}, indent=2))
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         raise SystemExit(str(error))

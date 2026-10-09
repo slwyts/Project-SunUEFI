@@ -16,7 +16,7 @@ static void Trace(unsigned Stage,uint64_t Base,uint64_t Dtb) {
 }
 
 typedef struct {
-  int Valid, Mode, Splash, StockRecovery;
+  int Valid, Mode, Splash, StockRecovery, Keys;
   uint32_t Total;
   uint64_t Initrd, InitrdBytes;
 } FDT_RESULT;
@@ -72,14 +72,16 @@ static int BootArgs(const uint8_t *P, uint32_t N, int *StockRecovery) {
 
 /* One bounded read-only walker serves mode selection, initrd and splash proof. */
 static FDT_RESULT Walk(const void *Pointer, size_t Available) {
-  FDT_RESULT R = {0, PIANO_SELECT_NORMAL, 0, 0, 0, 0, 0};
+  FDT_RESULT R = {0};
   const uint8_t *P = Pointer;
   uint32_t Total, Structure, Strings, Reserve, StringBytes, StructureBytes, Cursor, End;
   uint32_t Depth = 0, RootSeen = 0, Chosen = 0, Args = 0, StartSeen = 0, EndSeen = 0;
   uint32_t Reserved = 0, SplashNodes = 0, SplashRegs = 0;
+  uint32_t Controllers = 0, ControllerRegs = 0, Ees = 0, Buses = 0;
   uint64_t InitrdStart = 0, InitrdEnd = 0;
   uint8_t Kind[64];
-  int SplashReg = 0, Finished = 0, Mode = PIANO_SELECT_NORMAL, StockRecovery = 0;
+  int SplashReg = 0, ControllerReg = 0, Ee = 0, Bus = 0;
+  int Finished = 0, Mode = PIANO_SELECT_NORMAL, StockRecovery = 0;
   if (!P || Available < 40 || Be32(P) != 0xD00DFEEDU) return R;
   Total = Be32(P + 4); Structure = Be32(P + 8); Strings = Be32(P + 12); Reserve = Be32(P + 16);
   StringBytes = Be32(P + 32); StructureBytes = Be32(P + 36);
@@ -108,6 +110,8 @@ static FDT_RESULT Walk(const void *Pointer, size_t Available) {
       else if (Depth == 1 && Equal(P + Start, NameBytes, "chosen")) { Kind[Depth] = 1; ++Chosen; }
       else if (Depth == 1 && Equal(P + Start, NameBytes, "reserved-memory")) { Kind[Depth] = 2; ++Reserved; }
       else if (Depth == 2 && Kind[1] == 2 && Equal(P + Start, NameBytes, "splash_region")) { Kind[Depth] = 3; ++SplashNodes; }
+      else if (Depth == 1 && Equal(P + Start, NameBytes, "soc")) Kind[Depth] = 4;
+      else if (Depth == 2 && Kind[1] == 4 && Equal(P + Start, NameBytes, "qcom,spmi@c42d000")) { Kind[Depth] = 5; ++Controllers; }
       ++Depth; Cursor = (Cursor + 4) & ~3U;
       if (Cursor > End) return R;
     } else if (Token == 2) {
@@ -135,6 +139,18 @@ static FDT_RESULT Walk(const void *Pointer, size_t Available) {
       } else if (Depth == 3 && Kind[2] == 3 && Equal(Name, NameEnd - NameOffset, "reg")) {
         ++SplashRegs;
         SplashReg = Bytes == 16 && Be64(Value) == 0xFC800000ULL && Be64(Value + 8) == 0x02B00000ULL;
+      } else if (Depth == 3 && Kind[2] == 5) {
+        if (Equal(Name, NameEnd - NameOffset, "reg")) {
+          static const uint32_t Expected[] = {0x0C42D000,0x4000,0x0C400000,0x3000,
+            0x0C500000,0x400000,0x0C440000,0x80000,0x0C4C0000,0x10000};
+          ++ControllerRegs; ControllerReg = Bytes == sizeof(Expected);
+          if (ControllerReg) for (unsigned I = 0; I < sizeof(Expected)/sizeof(Expected[0]); ++I)
+            if (Be32(Value + 4*I) != Expected[I]) ControllerReg = 0;
+        } else if (Equal(Name, NameEnd - NameOffset, "qcom,ee")) {
+          ++Ees; Ee = Bytes == 4 && Be32(Value) == 0;
+        } else if (Equal(Name, NameEnd - NameOffset, "qcom,bus-id")) {
+          ++Buses; Bus = Bytes == 4 && Be32(Value) == 0;
+        }
       }
       Cursor += Bytes;
       if (Cursor > End - (3U & (0U - Cursor))) return R;
@@ -151,16 +167,23 @@ static FDT_RESULT Walk(const void *Pointer, size_t Available) {
   R.Mode = Chosen == 1 && Args == 1 ? Mode : PIANO_SELECT_NORMAL;
   R.StockRecovery = Chosen == 1 && Args == 1 && StockRecovery;
   R.Splash = Reserved == 1 && SplashNodes == 1 && SplashRegs == 1 && SplashReg;
+  R.Keys = Controllers == 1 && ControllerRegs == 1 && Ees == 1 && Buses == 1 && ControllerReg && Ee && Bus;
   R.Initrd = InitrdStart; R.InitrdBytes = StartSeen ? InitrdEnd - InitrdStart : 0;
   return R;
 }
 
 int PianoBootSelectParseFdt(const void *Fdt, size_t Available) { return Walk(Fdt, Available).Mode; }
 int PianoBootSelectSplashFromFdt(const void *Fdt, size_t Available) { return Walk(Fdt, Available).Splash; }
+int PianoBootSelectKeysFromFdt(const void *Fdt, size_t Available) { return Walk(Fdt, Available).Keys; }
 int PianoEarlySplashAllowed(const void *Fdt) {
   uint64_t Address = (uintptr_t)Fdt;
   if ((Address & 7) || Address < KERNEL_FIRST || !Range(Address, 40, KERNEL_END)) return 0;
   return Walk(Fdt, (size_t)(KERNEL_END - Address < PIANO_SELECT_MAX_FDT ? KERNEL_END - Address : PIANO_SELECT_MAX_FDT)).Splash;
+}
+int PianoEarlyKeysAllowed(const void *Fdt) {
+  uint64_t Address = (uintptr_t)Fdt;
+  if ((Address & 7) || Address < KERNEL_FIRST || !Range(Address, 40, KERNEL_END)) return 0;
+  return Walk(Fdt, (size_t)(KERNEL_END - Address < PIANO_SELECT_MAX_FDT ? KERNEL_END - Address : PIANO_SELECT_MAX_FDT)).Keys;
 }
 
 int PianoBootSelectMetadataValid(const PIANO_BOOT_SELECT_META *M, uint64_t SelectorBytes) {
@@ -213,5 +236,11 @@ int PianoBootSelectEntry(const PIANO_BOOT_SELECT_META *M, const void *Fdt, uint6
   if(!Requested && R.Mode!=PIANO_SELECT_RECOVERY)Trace(4,Base,Address);
   // Preserve the exact request target for the product policy. Consumption on
   // persistent storage remains a separate operation.
-  return Requested ? (int)Requested : R.Mode == PIANO_SELECT_RECOVERY ? PIANO_SELECT_RECOVERY : PIANO_SELECT_NORMAL;
+  unsigned Target = Requested ? Requested : R.Mode == PIANO_SELECT_RECOVERY ? PIANO_SELECT_RECOVERY : PIANO_SELECT_NORMAL;
+#if defined(__aarch64__) && defined(PIANO_EARLY_CHOOSER)
+  // This picker retains ABL's framebuffer and uses no EDK2 drivers. A choice
+  // is local to this boot; neither NEXT page nor any partition is written.
+  Target = PianoEarlyChoose(Fdt, Target);
+#endif
+  return (int)Target;
 }

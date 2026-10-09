@@ -29,6 +29,9 @@ int PianoBootSelectEntry(const PIANO_BOOT_SELECT_META *Meta, const void *Fdt,
   uint64_t ImageBase, uint64_t SelectorBytes);
 int PianoEarlySplashAllowed(const void *Fdt);
 int PianoBootSelectSplashFromFdt(const void *Fdt, size_t Available);
+int PianoBootSelectKeysFromFdt(const void *Fdt, size_t Available);
+int PianoEarlyKeysAllowed(const void *Fdt);
 void PianoEarlyDrawSplash(const void *Fdt);
+unsigned PianoEarlyChoose(const void *Fdt, unsigned DefaultTarget);
 void PianoBootSelectCleanPoC(void *Start, uint64_t Bytes);
 #endif

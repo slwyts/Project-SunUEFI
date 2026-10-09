@@ -54,8 +54,8 @@ _start:
   mov x2, x22
   bl PianoBootSelectTrace
 .Ltrace_stock_done:
-  // Enter the stock primary_entry directly. No display access or writes to
-  // executable kernel pages are needed on Android/stock-Recovery passthrough.
+  // Enter the stock primary_entry directly after the inherited-framebuffer
+  // picker. Stock Recovery bypasses that picker. No executable kernel writes.
   ldr w8, [x20, #44]
   sbfx x8, x8, #0, #26
   add x4, x19, #4
