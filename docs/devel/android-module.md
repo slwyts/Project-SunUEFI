@@ -71,3 +71,5 @@ SukiSU 安装、模块激活和 WebUI 状态读取已在设备上使用。Kernel
 GitHub Actions 的 `uefi` 和 `debian-gnome` 目标同一轮构建模块，独立上传 ZIP、构建清单和摘要。它们使用相同的构建入口，无需先从设备导出已有核心。模块安装合体 BOOT 与首次分区是两件事：安装引导不会创建 ESP／root；存储页的新分区流程仍需实机验证。
 
 原厂 F2FS 挂载前扩容仍由系统负责，不能用离线工具直接调整已挂载的 Android 数据分区。存储细节见 [Android 存储扩容](android-storage.md)，BOOT 包装和无损重建见 [原生重打包工具](android-boot-repack.md)，启动路线与原厂 Recovery 优先规则见 [重启请求](reboot-request.md)。
+
+ESP 更新会从当前设备的原厂 persist 读取蓝牙地址，写入最终 Linux 启动文件的标准 `local-bd-address` 属性。公开镜像不包含某台设备的地址；原始镜像先完成读回检查，再生成并检查设备专属启动文件。

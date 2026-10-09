@@ -24,9 +24,15 @@ def build(output, arch, compiler=None, sysroot=None):
     if not cc:
         raise ValueError('Native storage compiler is unavailable')
     libmd = ROOT / 'upstream/simple-init/libs/libmd'
-    sources = [ROOT / 'android/native/piano-storage.c', libmd / 'src/sha2.c']
+    libfdt = ROOT / 'upstream/dtc/libfdt'
+    sources = [ROOT / 'android/native/piano-storage.c',
+               ROOT / 'android/native/piano-bluetooth-provision.c',
+               libmd / 'src/sha2.c', libmd / 'src/sha1.c']
+    sources += [libfdt / name for name in ('fdt.c', 'fdt_ro.c', 'fdt_wip.c',
+                'fdt_sw.c', 'fdt_rw.c', 'fdt_strerror.c', 'fdt_empty_tree.c',
+                'fdt_addresses.c', 'fdt_overlay.c', 'fdt_check.c')]
     flags = ['-O2', '-std=c11', '-D_DEFAULT_SOURCE', '-Wall', '-Wextra', '-Werror',
-             '-I' + str(libmd / 'include')]
+             '-I' + str(libmd / 'include'), '-I' + str(libfdt)]
     if arch == 'aarch64':
         flags += ['-static']
         if 'clang' in Path(cc).name:
@@ -47,10 +53,15 @@ def build(output, arch, compiler=None, sysroot=None):
     if arch == 'aarch64' and any(struct.unpack_from('<I', data, phoff + i * phsize)[0] == 3 for i in range(phcount)):
         raise ValueError('Android storage executable must be static')
     shutil.copy2(libmd / 'COPYING', output / 'COPYING.libmd')
+    shutil.copy2(ROOT / 'upstream/dtc/BSD-2-Clause', output / 'COPYING.libfdt')
     meta = {'schema_version': 1, 'arch': arch, 'device_write_performed': False,
-            'commands': ['select', 'sources', 'plan', 'describe', 'validate', 'facts', 'apply', 'flash', 'check-project','check-root'],
+            'commands': ['select', 'sources', 'plan', 'describe', 'validate', 'facts', 'apply', 'flash', 'check-project','check-root',
+                         'check-bluetooth-address', 'provision-bluetooth'],
             'binary': {'file': binary.name, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()},
-            'sources': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}}
+            'sources': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in
+                        [*sources, ROOT / 'android/native/piano-bluetooth-provision.h',
+                         *(libfdt / name for name in ('fdt.h','libfdt.h','libfdt_env.h','libfdt_internal.h')),
+                         libmd / 'include/sha1.h', ROOT / 'upstream/dtc/BSD-2-Clause']}}
     (output / 'manifest.json').write_text(json.dumps(meta, indent=2) + '\n')
     return meta
 

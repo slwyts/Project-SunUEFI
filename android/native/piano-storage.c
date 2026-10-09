@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <unistd.h>
+#include "piano-bluetooth-provision.h"
 
 #define MAX_TABLE 32768u
 #define MAX_SECTOR 4096u
@@ -993,6 +994,17 @@ int main(int argc, char **argv) {
   }
   need(getuid() == 0 || offline, "需要 Root 权限。");
   need(argc >= 2, "缺少操作参数。");
+  if (!strcmp(argv[1], "check-bluetooth-address")) {
+    need(argc == 3, "Usage: check-bluetooth-address FACTORY_RAW6");
+    piano_check_bluetooth_address(argv[2]);
+    return 0;
+  }
+  if (!strcmp(argv[1], "provision-bluetooth")) {
+    need(argc == 5 && !strcmp(argv[4], "--execute"),
+         "Usage: provision-bluetooth LINUX_BOOT FACTORY_RAW6 --execute");
+    piano_provision_bluetooth(argv[2], argv[3]);
+    return 0;
+  }
   if (!strcmp(argv[1], "select")) {
     need(argc == 5, "Usage: select esp|root FILE_NAME_UTF8_HEX FILE_BYTES");
     select_image(argv[2], argv[3], argv[4]);
