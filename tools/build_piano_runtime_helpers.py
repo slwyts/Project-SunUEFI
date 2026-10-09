@@ -35,7 +35,7 @@ PEN_SOURCE_FILES=('Makefile','piano-pen-frame.c','piano-pen-frame.h',
  'piano-pen-decoder.hpp','piano-pen-offline.cpp','piano-pen-owner.c',
  'piano-pen-owner.h','Apache-2.0.txt','OPEN_CORE_ORIGIN.txt')
 PEN_DOCUMENTS=('Apache-2.0.txt','OPEN_CORE_ORIGIN.txt')
-PEN_RUNTIME_PATHS={'usr/bin/piano-pen-offline','usr/bin/piano-pen-canvas','usr/lib/piano/pen-bluetooth','usr/lib/piano/touch-input'}|{
+PEN_RUNTIME_PATHS={'usr/bin/piano-pen-offline','usr/bin/piano-pen-canvas','usr/lib/piano/pen-bluetooth','usr/lib/piano/touch-input','usr/share/piano/pen/p81c-radio.json'}|{
  'usr/share/doc/piano-pen-offline/'+name for name in PEN_DOCUMENTS}
 TOOL_PINS={'clang':'939a882527432ec23b094c289e7f170bf2d6ec282e74dde75e31b08602fa3eae',
  'ld.lld':'57b6c64db534793f05918a6e935c900e9938bd64d0ac95933285930b568387ea',
@@ -226,6 +226,12 @@ def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None):
         'file':str(copied_script.relative_to(output)),'bytes':copied_script.stat().st_size,
         'sha256':sha(copied_script),'mode':0o755,'source_kind':'project-pen-control',
         'source_path':'linux/userspace/pen/piano-pen-bluetooth.py'}
+    profile=ROOT/'linux/bsp/common/usr/share/piano/pen/p81c-radio.json';inputs[str(profile)]=sha(profile)
+    copied_profile=copied/profile.name;shutil.copyfile(profile,copied_profile)
+    files['usr/share/piano/pen/p81c-radio.json']={
+        'file':str(copied_profile.relative_to(output)),'bytes':copied_profile.stat().st_size,
+        'sha256':sha(copied_profile),'mode':0o644,'source_kind':'board-pen-radio-profile',
+        'source_path':'linux/bsp/common/usr/share/piano/pen/p81c-radio.json'}
     canvas=source/'piano-pen-canvas.py';inputs[str(canvas)]=sha(canvas)
     copied_canvas=copied/canvas.name;shutil.copyfile(canvas,copied_canvas)
     files['usr/bin/piano-pen-canvas']={
