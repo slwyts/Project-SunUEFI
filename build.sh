@@ -9,7 +9,8 @@ case "$command" in
   check) python3 tools/check_host.py --group portable "$@" ;;
   uefi) make uefi ;;
   trampoline) python3 tools/package_product_trampoline.py "$@" ;;
-  module) python3 tools/build_android_module.py "$@" ;;
+  module) python3 tools/build_android_product_module.py "$@" ;;
+  module-package) python3 tools/build_android_module.py "$@" ;;
   boot-request) python3 tools/build_boot_request.py "$@" ;;
   boot-repack) python3 tools/build_boot_repack.py "$@" ;;
   ffmpeg) python3 tools/build_ffmpeg_packages.py "$@" ;;
@@ -106,6 +107,7 @@ PY_RELEASE_SOURCE
   all)
     "$0" sources
     "$0" uefi
+    "$0" module
     "$0" linux
     "$0" mesa
     "$0" sensors
@@ -115,7 +117,7 @@ PY_RELEASE_SOURCE
   install) python3 tools/install_piano.py "$@" ;;
   installer) python3 tools/export_installer.py "$@" ;;
   help|-h|--help)
-    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|boot-request|boot-repack|linux|mesa|sensors|ffmpeg|gsd|mutter|bsp|rootfs|release-rootfs|package|all|installer|install' \
+    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|module-package|boot-request|boot-repack|linux|mesa|sensors|ffmpeg|gsd|mutter|bsp|rootfs|release-rootfs|package|all|installer|install' \
       'Full builds need the documented builder environment; rootfs/Mesa/sensors run in a root ARM64 build container.' \
       'release-rootfs reads its kernel source worktree from build/release-7.2.9/source-manifest.json.' \
       'Building never partitions or flashes a tablet. install is a separate explicit command.' ;;

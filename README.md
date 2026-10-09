@@ -2,7 +2,7 @@
 
 小米平板 8 Pro（代号 `piano`，骁龙 8 至尊版 / SM8750）的统一 UEFI 与 Linux 适配项目。
 
-平板的原厂 Android 保持不动。SunUEFI 在它旁边加入一套开源 UEFI（EDK2），让同一块平板可以从内部存储直接启动 Debian 和 GNOME，不需要每次接电脑。项目的长期目标是通过这一套 UEFI，在这台平板上获得完整的 Linux 与 Windows 使用体验；Linux 已经能日常操作，Windows 还没有启动过。
+平板的原厂 Android 基本保持不动。SunUEFI 在它旁边加入一套2nd UEFI/EDK2 （通过patch原厂boot.img的kernel部分与UEFI在bin层面融合以避开原厂abl的bug导致间接性recovery.img其kernel.size不得大于0问题），让同一块平板可以从内部存储直接启动其他系统（如Debian），同时获得丝滑的无缝多系统体验。项目的长期目标是通过这一套 UEFI 和针对具体系统的针对性全方位硬件适配与调教，在这台平板上取得完整的 Linux 与 Windows 使用体验；Linux 已经能日常操作，Windows 还没有启动过。
 
 ## 现在能做什么
 
@@ -141,9 +141,9 @@ SunUEFI 运行时在后台提供一个 USB Fastboot 服务，设备名为 `SunUE
 
 安装器的完整说明见[下载包中的安装入口](docs/user/install-from-artifact.md)。
 
-已经安装合体 BOOT 的设备，可以在 SukiSU 中安装 **SunUEFI 引导助手 0.3.0 ZIP**，正常重启后点击模块卡片上的 **打开 WebUI**。页面提供启动选择、存储和维护功能，系统更新后可重新安装引导；详见 [Android 引导助手](docs/devel/android-module.md)。
+同一轮构建还提供 `piano-android-module-目标-提交号`，里面有 **SunUEFI 引导助手 ZIP**。把 ZIP 传到平板，在 SukiSU 的模块页面安装，正常重启后点击 **打开 WebUI**，就可以选择 Android／UEFI、查看独立存储分区和维护引导。
 
-合体 BOOT 的首次安装尚未集成到安装器，模块中的新分区管理也还没有完成实机验证。维护者可用 `./build.sh trampoline` 和 `./build.sh boot-repack` 生成合体 BOOT，步骤见[原生 BOOT 重打包](docs/devel/android-boot-repack.md)。临时体验入口见[快速体验](docs/user/getting-started.md)。
+模块会从平板当前 BOOT 提取 Android 内核并安装开机选择器；已有 SunUEFI 时保留当前选择并更新核心。它默认进入 Android，不自动分区。HyperOS 更新后，在维护页点击 **重新安装引导**，即可使用更新后的内核重新打包。当前支持的 BOOT 格式和其他管理器的用法见 [Android 引导助手](docs/devel/android-module.md)。Linux 仍需要前面的 ESP／root 安装步骤，模块中的新分区管理尚未完成实机验证。临时体验入口见[快速体验](docs/user/getting-started.md)。
 
 ### 回到 Android
 
@@ -168,11 +168,14 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
   source .venv/bin/activate
   python -m pip install -r requirements-build.txt
   ./build.sh uefi
+  ./build.sh module
   ./build.sh installer --product artifacts/product/PianoUEFI-product.img --output artifacts/installer-uefi
 '
 ```
 
-完整的 Debian / GNOME 系统包需要 ARM64 构建机，以及允许 chroot 的 `--privileged` 容器，依次运行 `./build.sh linux`、`mesa`、`sensors`、`release-rootfs`、`package`、`installer`。检查可以不连接平板：`./build.sh check`。完整流程、输入材料和各步骤的输出位置见[构建手册](docs/devel/building.md)与[公开构建链](docs/devel/public-build.md)。
+模块输出在 `artifacts/android/`，与 `artifacts/product/` 中的 UEFI 使用同一份核心。GitHub Actions 的 `uefi` 和 `debian-gnome` 目标都会同时构建并上传模块。
+
+完整的 Debian / GNOME 系统包需要 ARM64 构建机，以及允许 chroot 的 `--privileged` 容器，依次运行 `./build.sh linux`、`mesa`、`sensors`、`release-rootfs`、`package`、`installer`。需要主机检查时手动运行 `./build.sh check`，不用连接平板。完整流程、输入材料和各步骤的输出位置见[构建手册](docs/devel/building.md)与[公开构建链](docs/devel/public-build.md)。
 
 ## 项目站在哪些项目之上
 

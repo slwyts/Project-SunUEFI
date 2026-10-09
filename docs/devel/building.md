@@ -6,7 +6,7 @@
 
 ```sh
 ./build.sh sources     # 取得固定版本的上游子模块，不递归下载测试数据
-./build.sh check       # 不需要平板的公开主机检查
+./build.sh check       # 按需手动运行主机检查，不需要平板
 ```
 
 上游源码放在 `upstream/`，保持固定提交。本地修改在 `patches/`、`uefi/`、`linux/`、`tools/`。构建在 `build/` 下的副本里应用补丁，不要改构建副本。
@@ -31,11 +31,14 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
   source .venv/bin/activate
   python -m pip install -r requirements-build.txt
   ./build.sh uefi
+  ./build.sh module
   ./build.sh installer --product artifacts/product/PianoUEFI-product.img --output artifacts/installer-uefi
 '
 ```
 
 `./build.sh uefi` 使用 `vendor/piano` 的板级输入和 `patches/firmware`，输出 `artifacts/product/PianoUEFI-product.img` 与 `manifest.json`。完整 UEFI 构建还需要本地提取的原厂材料，见[本地输入](local-inputs.md)。
+
+`./build.sh module` 读取刚构建的产品，编译前置选择器和六个静态 ARM64 工具，生成 `artifacts/android/SunUEFI-Piano-版本.zip`、`manifest.json` 与 `SHA256SUMS`。它不需要平板、原厂 BOOT 或私有采集目录；Android 内核在模块安装时从设备当前 BOOT 提取。构建机可以是 x86_64 或 ARM64，默认从经过签名校验的 Debian ARM64 软件包准备编译 sysroot，不执行其中的 ARM64 程序。具体输入和安装行为见 [Android 引导助手](android-module.md)。
 
 ## 完整 Debian / GNOME
 
@@ -67,14 +70,17 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
 ./build.sh trampoline --stock-boot 当前ROM的boot.img --output 输出目录   # 生成前置选择器入口
 ./build.sh boot-repack                                                   # 编译原生 BOOT 重打包 / 还原工具
 ./build.sh boot-request --sysroot ...                                    # 编译 piano-boot-request
-./build.sh module --inspect                                              # 列出 Android 模块的缺项，不生成 ZIP
+./build.sh module                                                        # 从当前 UEFI 产品编译并打包 Android 模块
+./build.sh module-package --inspect                                      # 低层打包工具：只检查已有输入
 ```
 
-在线安装、OTA 自动化和请求自动清除尚未完成，见[原生 BOOT 重打包](android-boot-repack.md)、[Android 模块](android-module.md)。
+模块支持从当前原厂 BOOT 安装合体引导、更新已有核心，以及在系统更新后手动重新安装。它不自动处理 OTA、修改非活动槽或创建分区；一次性请求自动清除也尚未完成。见[原生 BOOT 重打包](android-boot-repack.md)、[Android 模块](android-module.md)。
 
 ## CI
 
-GitHub Actions 的 **Build products** 提供 `uefi`、`linux`、`debian-gnome` 三个目标，产物为 `piano-目标-提交号`（含 `install.sh`、`install.cmd`、安装器和 `INSTALL.md`；`debian-gnome` 另有 `bundle/`），日志为 `piano-build-records-目标-提交号`。依赖和来源记录见[公开构建链](public-build.md)。
+GitHub Actions 的 **Build products** 提供 `uefi`、`linux`、`debian-gnome` 三个目标。`uefi` 和 `debian-gnome` 的安装包为 `piano-目标-提交号`（含 `install.sh`、`install.cmd`、安装器和 `INSTALL.md`；`debian-gnome` 另有 `bundle/`），同一轮的模块包单独上传为 `piano-android-module-目标-提交号`。模块包中包含 ZIP、构建清单和 SHA256 校验文件；日志为 `piano-build-records-目标-提交号`。
+
+不再单独运行 `host-checks.yml` 的 portable 检查。需要对应检查时，在本地运行 `./build.sh check`。依赖和来源记录见[公开构建链](public-build.md)。
 
 ## 继续阅读
 

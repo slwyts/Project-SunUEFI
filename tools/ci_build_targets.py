@@ -16,14 +16,18 @@ FULL_FILES = {'.github/workflows/build-products.yml', '.gitmodules',
               'docs/user/install-from-artifact.md'}
 FULL_PREFIXES = ('tools/', 'config/', 'containers/', 'linux/',
                  'vendor/piano-linux/', 'patches/', 'upstream/')
-UEFI_FILES = {'requirements-build.txt', 'upstream/Mu-Silicium', 'upstream/simple-init',
+UEFI_FILES = {'requirements-build.txt', 'tools/build_android_product_module.py',
+              'tools/build_android_module.py', 'tools/build_boot_repack.py',
+              'tools/build_boot_request.py', 'tools/build_storage.py',
+              'tools/build_resize_f2fs.py', 'tools/build_e2fs_tools.py',
+              'tools/android/piano_resize_f2fs.c', 'upstream/Mu-Silicium', 'upstream/simple-init',
               'tools/build_product.sh', 'tools/build_simpleinit.sh', 'tools/build_stage0.sh',
               'tools/firmware_workspace.py', 'tools/apply_firmware_patches.py',
               'tools/prepare_simpleinit.py', 'tools/simpleinit_build_identity.py',
               'tools/prepare_product.py', 'tools/prepare_nv_runtime_guard.py',
               'tools/package_product.py', 'tools/build_integrity.py',
               'tools/product_payload_digest.py', 'tools/piano_vendor_inputs.py'}
-UEFI_PREFIXES = ('uefi/', 'vendor/piano/', 'patches/firmware/',
+UEFI_PREFIXES = ('android/', 'uefi/', 'vendor/piano/', 'patches/firmware/',
                  'tools/prepare_product_')
 DRAFT_PREFIXES = ('patches/linux/7.2.9/drafts/', 'linux/dts/drafts/')
 

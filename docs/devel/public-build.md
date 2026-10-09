@@ -7,7 +7,9 @@
 | `./build.sh sources` | 取得必要的固定上游源码，避免递归下载不参与编译的测试/fuzz资料 |
 | `./build.sh check` | 运行明确登记的主机检查 |
 | `./build.sh uefi` | 使用 vendor 板级材料与固件补丁构建唯一产品 |
-| `./build.sh linux` | 重建公开基线+八个补丁的源码，编译 LABEL 根策略的内核与模块 |
+| `./build.sh module` | 从当前 UEFI 产品构建同一核心的 Android 引导助手 ZIP 与静态 ARM64 工具 |
+| `./build.sh module-package --inspect` | 低层打包工具，只检查已有模块输入 |
+| `./build.sh linux` | 重建公开内核基线并应用登记的补丁，编译 LABEL 根策略的内核与模块 |
 | `./build.sh mesa` | 在 ARM64 Debian 构建容器中编译该发行版的 Piano Mesa 包 |
 | `./build.sh gsd --sysroot 已完成的基础根目录` | 在独立副本中编译 Debian GNOME 自动亮度策略包；不修改提供的根目录 |
 | `./build.sh rootfs --distro ID --desktop ID --plan` | 选择基础发行版与桌面，列出真实输入和包管理步骤；`--execute` 才构建 |
@@ -35,6 +37,8 @@ UEFI 已在原准备环境中用新的 vendor 输入重建成功。内核完整�
 
 `containers/Dockerfile` 固定基础镜像；APT 实际包版本另记录，尚未固定完整软件仓库快照。CI 只构建和上传文件，不连接设备。失败输出带 `.incomplete` 或失败记录，安装器拒绝半成品。
 
+Android 模块使用同一轮 `artifacts/product/` 的固件载荷，安装时从平板当前 BOOT 提取 Android 内核。公共构建不需要原厂 BOOT 或设备私有采集目录；默认 ARM64 sysroot 从经签名校验的 Debian 软件包解包，e2fsprogs 按固定官方来源编译。模块 ZIP 附带原生工具与依赖许可、来源和构建记录，输出在 `artifacts/android/`。详见 [Android 引导助手](android-module.md)。
+
 UEFI 镜像、ESP 镜像与 root 归档是不同发布文件。所有发行版共用 UEFI 和板级内核，但编译型 Mesa/runtime 包必须匹配发行版、架构和 ABI；公共配置层可以复用。
 
 ## 下载包结构
@@ -43,13 +47,17 @@ UEFI 镜像、ESP 镜像与 root 归档是不同发布文件。所有发行版�
 
 `build-products.yml` 的成功产物 `piano-TARGET-COMMIT` 直接包含 `install.sh`、`install.cmd`、原样复制的 `install_piano.py`、启动检查器、`INSTALL.md`、`installer-record.json` 和 `SHA256SUMS`。完整 `debian-gnome` 构建还包含 `bundle/` 下的原始 manifest 与磁盘镜像；日志和内核独立放在 `piano-build-records-TARGET-COMMIT`。
 
+`uefi` 和 `debian-gnome` 还单独上传 `piano-android-module-TARGET-COMMIT`，其中包含同一轮构建的 `SunUEFI-Piano-版本.zip`、`manifest.json` 和 `SHA256SUMS`。纯 `linux` 目标只构建内核，不生成模块。
+
 `uefi` 构建带 `PianoUEFI-product.img` 与 `uefi-manifest.json`，没有伪造的 ESP/root manifest；`linux` 构建的内核输出在记录包，安装工具本身不代表已构建完整系统。直接运行启动脚本只显示帮助，明确给出序列号后才检查设备，实际写入需要 `apply --execute`。首次分区与 Recovery 写入继续由原安装器拒绝。
 
 main push 涉及 Linux/BSP、root、打包/安装器、公共构建配置或固定来源时，自动只选
-`debian-gnome`，一次生成 UEFI、ESP/root 与安装脚本；该目标已经包含 UEFI/kernel，
+`debian-gnome`，一次生成 UEFI、Android 模块、ESP/root 与安装脚本；该目标已经包含 UEFI/kernel，
 不会再并行重复构建。纯 UEFI 来源/构建变化只选 `uefi`，普通文档变化不构建产品。
 手动仍可明确选择 `uefi`、`linux` 或 `debian-gnome`；选择规则不代表远端构建已经成功。
 过时构建按最终target取消，纯UEFI push不会取消正在运行的完整系统构建。
+
+已移除独立的 `host-checks.yml` portable 工作流。主机检查仍可按需通过本地 `./build.sh check` 运行，不会因为产品构建而重复运行整套检查。
 
 发布 initramfs 使用根系统从已认证 Debian APT 安装的 ARM64 `busybox-static`，
 版本与摘要写入 `initramfs/busybox-source.json` 和 manifest。该包不带 `mountpoint`

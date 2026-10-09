@@ -19,7 +19,7 @@ on:
       - 'linux/**'
       - 'tools/**'
       - 'upstream/**'
-      - 'android/native/piano-boot-request.c'
+      - 'android/**'
       - 'docs/user/install-from-artifact.md'
   workflow_dispatch:
     inputs:
@@ -54,7 +54,7 @@ jobs:
     if: needs.select.outputs.has_build == 'true'
     concurrency:
       group: build-products-${{ github.ref }}-${{ matrix.target }}
-      cancel-in-progress: false
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
@@ -94,6 +94,7 @@ jobs:
               case "$SUNUEFI_BUILD_TARGET" in
                 uefi)
                   ./build.sh uefi
+                  ./build.sh module
                   ./build.sh installer --product artifacts/product/PianoUEFI-product.img
                   ;;
                 linux)
@@ -101,6 +102,7 @@ jobs:
                   ;;
                 debian-gnome)
                   ./build.sh uefi
+                  ./build.sh module
                   ./build.sh linux
                   ./build.sh mesa
                   ./build.sh sensors
@@ -122,6 +124,15 @@ jobs:
         with:
           name: piano-${{ env.SUNUEFI_BUILD_TARGET }}-${{ github.sha }}
           path: artifacts/installer/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Downloadable Android boot assistant module
+        if: matrix.target != 'linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: piano-android-module-${{ env.SUNUEFI_BUILD_TARGET }}-${{ github.sha }}
+          path: artifacts/android/
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -184,6 +195,8 @@ jobs:
             build/distros/release-7.2.9/packages.tsv
             build/distros/release-7.2.9/adapters/manifest.json
             build/distros/release-7.2.9/runtime/manifest.json
+            artifacts/android/manifest.json
+            build/android-product-module/manifest.json
             artifacts/product/manifest.json
             artifacts/kernels/release-7.2.9/Image
             artifacts/kernels/release-7.2.9/config
