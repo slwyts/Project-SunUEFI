@@ -1,6 +1,8 @@
 # Piano 触控笔协议与原厂算法
 
-2026-10-09。已从同版本原厂 `OS3.0.309.0.WPYCNXM` ROM 定向提取触控 HAL，并做静态核对。本机120Hz冷启动下的标准笔输入已能绘画，位置与压力线宽正常；144Hz、完整掌压和附加手势仍需完善。本文保留原厂协议分析与实际接线过程。
+更新：2026-10-10。默认内核已采用 120 Hz 启动，标准笔输入可定位和压感绘画，碰屏误输入加号已修正，轻捏按键和笔端震动可用。144 Hz 笔输入、完整掌压、笔身滑动及应用快捷手势仍需完善。
+
+下文保留移植过程的协议记录。原厂依据来自同版本 `OS3.0.309.0.WPYCNXM` ROM 的触控 HAL、公开驱动和真实操作采集。
 
 ## 屏幕数据与 BLE 分开处理
 
@@ -8,7 +10,7 @@
 
 原厂 HAL 读取 `/dev/xiaomi-touch` 的 frame/raw 共享区。最终点有两条上报路径：v1 写 Linux `input_event`；v2 写 point 共享区并以 `UPDATE_REPORT_POINT` 触发上报。[mmap/ioctl](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/xiaomi/xiaomi_touch_operations.c#L169)、[内核 point receiver](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/xiaomi/xiaomi_touch_device.c#L41)。两份 Piano ini 配置 v1，具体依据见下文。不能把 HAL 输出结构按偏移当作 SPI 帧来读。
 
-已保存的 Focus Pen Pro BLE descriptor 只有 mouse/keyboard/sensor Input，没有 Digitizer、Output、Feature 或标准 FF。Android 已确认 Report5 携带真实笔尖压力，Report2 的 `02 6e`／`02 00` 对应轻捏 `KEY_F19` DOWN／UP；Report6 是独立姿态数据。Linux 在120Hz冷启动下已经收到 Report5 压力和 type29，并通过标准手写笔设备完成定位与压感绘画。悬停、倾角方向和完整掌压仍需进一步对照；轻捏协议已识别不代表桌面快捷键或笔端振动联动已完成。
+已保存的 Focus Pen Pro BLE descriptor 只有 mouse/keyboard/sensor Input，没有 Digitizer、Output、Feature 或标准 FF。Android 已确认 Report5 携带真实笔尖压力，Report2 的 `02 6e`／`02 00` 对应轻捏 `KEY_F19` DOWN／UP；Report6 是独立姿态数据。Linux 在120Hz冷启动下已经收到 Report5 压力和 type29，并通过标准手写笔设备完成定位与压感绘画。悬停、倾角方向和完整掌压仍需进一步对照。轻捏已接入标准笔侧键，笔端振动初始化已恢复，应用快捷动作仍需明确映射。
 
 ## IC 扫描模式与原厂开关条件
 
@@ -187,7 +189,7 @@ CPU前缀仍不能交给完整 `parse_data_package`：该函数还读取真实�
 
 Linux此前显示144Hz、hand180、pen240。两边笔扫描率相同；这一次原厂在120Hz正常用笔的记录不能证明Piano在144Hz禁止笔输入。为进一步比较，需要让Linux原生KMS第一次启用就选择120，而不能在当前有黑屏问题的运行状态中热切。
 
-当前590内核配置使用 `CONFIG_CMDLINE_FORCE=y`，因此只给ESP的boot header追加video参数不会生效；Mutter默认又选择DRM preferred模式。冷启动候选只交换Piano面板模式表的144／120顺序，使120成为preferred，并保留全部模式。候选仅用于此项对照，正式默认仍为144Hz；构建来源在 `build/panel-cold120-candidate/`。原厂触控portrait尺寸2136×3200与Linux原生显示模式3200×2136不同，不能用错video参数。
+当前590内核配置使用 `CONFIG_CMDLINE_FORCE=y`，因此只给ESP的boot header追加video参数不会生效；Mutter默认又选择DRM preferred模式。冷启动候选只交换Piano面板模式表的144／120顺序，使120成为preferred，并保留全部模式。当时的候选用于此项对照；2026-10-10 已将 120 Hz 纳入默认内核，保留其他模式；构建来源在 `build/panel-cold120-candidate/`。原厂触控portrait尺寸2136×3200与Linux原生显示模式3200×2136不同，不能用错video参数。
 
 触控面板监听生命周期修复已经从draft转为正式 [`0020-nvt-panel-follower-lifetime.patch`](../../patches/linux/7.2.9/0020-nvt-panel-follower-lifetime.patch)，纳入默认内核源码准备流程。它只修注销与释放顺序，不启用笔接口或改变刷新率；新源码树已生成，完整新内核部署仍需后续构建。
 
@@ -198,4 +200,19 @@ Linux此前显示144Hz、hand180、pen240。两边笔扫描率相同；这一次
 
 `piano-touch-view` 的同一poll线程接入只读HID压力与THP矩阵，创建标准独立tablet-tool输入节点。系统实际识别 `ID_INPUT_TABLET=1`；Gtk GestureStylus画板收到真实落笔/抬笔与压力，画出了粗细变化的21笔线条，操作者确认位置与笔尖一致。原始截图和输出保存在本地 `private/analysis/piano-pen-live-drawing-20261009/`。设备上的现有触控服务已经采用笔输入程序，不依赖三分钟采集进程。
 
-当前仍不把type29的一份手指quarter伪装成完整type3矩阵；同时手指/笔与完整掌压需要继续接线。两份2KiB数字校准已进入BSP，按Touch LCDid选择，完整原厂ini与紧凑配置在同一实际序列上的输出逐字段相同。新runtime builder默认链接同一笔核心，源程序和桌面偏好不另分测试镜像。显示默认120策略与默认内核的磁吸/活动状态接口还需统一到后续发布构建；当前实机仍保留120冷启动对照模块，不能把144行为报告为已修复。
+当前仍不把type29的一份手指quarter伪装成完整type3矩阵；同时手指/笔与完整掌压需要继续接线。两份2KiB数字校准已进入BSP，按Touch LCDid选择，完整原厂ini与紧凑配置在同一实际序列上的输出逐字段相同。新runtime builder默认链接同一笔核心，源程序和桌面偏好不另分测试镜像。2026-10-10 已将 120 Hz 默认显示策略和笔输入统一到默认内核及运行时包，144 Hz 笔输入仍未修复。
+
+
+## 加号与轻捏反馈修正
+
+2026-10-10 的默认内核补丁 `0021-hid-xiaomi-p81c-pressure-not-keyboard.patch`
+针对 P81C 的私有压力报告，阻止它被当作键盘加号输入；报告仍交给现有笔输入程序
+读取。轻捏通过标准 `BTN_STYLUS` 上报，不向普通键盘输入快捷字符。
+
+现有触控服务同时跟随真实 BlueZ 连接，使用 BSP 中的 `p81c-radio.json` 完成
+无线参数、轻捏阈值和振动等级初始化；断线重连后重新应用。它没有新增独立地址
+服务或第二个 THP 读取者。增量运行时包也包含这些参数文件，避免只更新程序而遗漏配置。
+
+当前内核 `7.2.9-piano-gnome-gd33a42990baf` 已能正常画线并显示压感变化，
+碰屏不再输入加号，轻捏恢复笔端震动。自带 GTK 画板只在笔输入时隐藏指针，
+鼠标和触控板的指针保持正常；其他应用的笔指针由各自应用与合成器决定。

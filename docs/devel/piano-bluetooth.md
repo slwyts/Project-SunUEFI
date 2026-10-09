@@ -1,73 +1,55 @@
 # Piano 蓝牙地址
 
-2026-10-08，设备 owner 已将本机地址写入实际 Linux 启动的内嵌 DTB，并正常
-`systemctl reboot`。这次冷启动在 `7.2.9-piano-gnome-g7fff463f0630` 自动出现
-BlueZ public controller、`Powered: yes` / `PowerState: on`，unconfigured index
-list 为 0；实际 DT 属性路径也已读回。记录位于本机
-`private/provisioning/recovery-priority-20261008/bluez-persistent-cold-boot.txt`，
-不在公开文档展示 MAC。这证明本机 DT provider 和标准 QCA 开机配置链已工作，
-没有验证本轮扫描、配对、连接或音频/HID profile 的实际使用。
+公共镜像不包含某台平板的蓝牙地址。电脑安装器和 Android 模块在更新 ESP 时，自动读取本机原厂地址，写入 Linux 启动文件的标准设备树属性。用户无需填写 MAC 地址，Linux 启动后直接使用原生 QCA 驱动和 BlueZ。
 
-此前 fresh root 的 UART/固件初始化成功、rfkill 未阻止无线，但 management
-接口报告 `Unconfigured / missing public-address`，BlueZ 没有 Adapter1。
-修正使用每台设备的原厂地址；通用包不包含固定／随机地址。
+## 地址来源与内核接口
 
-通用板级源码的 `&uart14/bluetooth` 不填写本机 `local-bd-address`。`btqca.c` 的
-`qca_check_bdaddr()` 在 controller 地址仍等于 NVM tag2 默认值时设置
-`HCI_QUIRK_USE_BDADDR_PROPERTY`；`hci_sync.c` 随后读取 controller firmware
-node 的 `local-bd-address` 并通过已有 `qca_set_bdaddr()` 写入控制器。
-未取得有效 public address 时，`mgmt.c:get_missing_options()` 会保留缺地址标志，
-控制器不能作为正常 adapter 使用。固件完成日志本身不证明该地址已配置。
+同机原厂 Android 的 `BluetoothAddress::GetLocalAddress` 从
+`/mnt/vendor/persist/bluetooth/.bt_nv.bin` 读取六字节地址，再反转字节顺序。
+已核对的原厂文件是 raw6 格式，没有额外记录头；Android 的 AIDL 实现依赖这份
+QTI HIDL 库。分析依据是原厂 `OS3.0.309.0.WPYCNXM` 的实际二进制与 persist 文件，
+没有假定芯片提供可直接读取的 OTP 地址。
 
-标准 ABI 是 **6 字节、最低有效字节在前** 的 `local-bd-address`，见
-[上游 binding](https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/net/bluetooth/bluetooth-controller.yaml)。
-Piano 当前 QCA driver 不读取 `nvmem-cells / bd-address`；已有该接口的是 TI
-`hci_ll`，不能只加一个 DT cell 就声称 QCA 已接入。也不能用
-`qcom,local-bd-address-broken` 代替地址来源；它仅处理已有地址的错误字节序。
+Linux 的 `hci_qca.c` / `btqca.c` 在控制器仍使用固件默认地址时，要求引导端提供
+`local-bd-address`。HCI 核心读取该属性，再调用已有的 `qca_set_bdaddr()`。
+这是六字节、低字节在前的标准属性，见
+[通用蓝牙设备树绑定](https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/net/bluetooth/bluetooth-controller.yaml)
+和 [WCN7850 绑定](https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/net/bluetooth/qcom,wcn7850-bt.yaml)。
+原厂文件按人类地址顺序保存，因此安装时反转一次。
 
-旧 7.2.6 的用户扫描成功记录存在。已查旧、新 root 的 `brhbtnv20.bin` SHA 均为
-`8fe2ef20d2dca6532498ff383e0599846f872df3e188054d6086a116e5cf76b2`，
-`btqca.c` 也相同；旧 radio 脚本／service 没有发现 BDAddr 导入动作。
-这些证据保留旧成功事实，但没有证明当时地址来自哪个接口。2026-10-03 采集的
-原厂 DTB 没有找到 BDAddr 属性，properties.json 也没有采集蓝牙属性。
+当前 QCA 驱动没有读取蓝牙地址的 NVMEM／OTP provider。仅添加 `nvmem-cells`
+不能接通一个不存在的读取路径，`qcom,local-bd-address-broken` 也不能代替地址来源。
+若缺少地址，固件下载和 UART 初始化可以成功，但控制器会保持 unconfigured，
+BlueZ 不会提供可用适配器。
 
-本轮设备 owner 已将原厂 persist 以 `ro,noload` 挂载，取回
-`/bluetooth/.bt_nv.bin` 后卸载。实际文件为 **6 字节 raw BDAddr，人类／MSB
-顺序**，没有 BTNV1/TLV header。真实 ROM 的
-`android.hardware.bluetooth@1.0-impl-qti.so` 中 `BluetoothAddress::GetLocalAddress`
-构造 `/mnt/vendor/persist/bluetooth/.bt_nv.bin`，读取 6 字节，反转后复制到 QTI
-输出。其 ASCII address 路径同样是解析六字节后反转，因此原始文件的顺序与
-人类地址相同，Linux `local-bd-address` 应写入这六字节的逆序。
-AIDL 实现实际依赖该 1.0 实现；不是套用其他设备的旧 NV record 格式。
+## 安装与更新
 
-文件已核对非全零／全 FF、unicast/universal、不是 QTI 拒绝的 sentinel。
-地址只在本机 private 记录中。Root 可用标准 `btmgmt public-addr` 做一次控制器
-定位对照；它仍是临时配置，不能替代产品的自动地址来源。
-真实库来自固定原厂 OTA 的两个 SHA 校验 operation，未执行 vendor ELF；
-源路径、函数地址、读取／交换指令和格式结果保存在本机分析记录中。
+UEFI 的 `PianoEspBootSource` 读取 `EFI/Piano/stable/boot.img`，
+`PianoRawLinuxBoot` 使用其中的 BOOTv2 内嵌 DTB。**只更新 ESP 的 `board.dtb`
+不会改变这条启动路径。** 更新内核时必须从实际启动文件保留设备属性，或者重新
+运行地址配置步骤。
 
-最小持久方案是显式安装／升级时只读取得本机 persist 文件，生成含标准
-`local-bd-address` 的设备 DTB，再放入实际启动的 `boot.img`。当前
-`PianoEspBootSource` 读取 `\EFI\Piano\stable\boot.img`；`PianoRawLinuxBoot`
-消费 BOOTv2 内嵌 DTB，再处理 panel/chosen/initrd。**单独替换 ESP 的
-`board.dtb` 不会改变该启动路径。** `package_release.py` 已使用固定 AOSP
-mkbootimg 制作 BOOTv2/4096；设备配置应复用同一格式，保留 kernel/initrd
-字节与命令行，记录原／派生 DTB 和 boot SHA，并在后续显式升级重新配置。
+* 电脑安装器使用 [`tools/provision_piano_bluetooth.py`](../../tools/provision_piano_bluetooth.py)。
+* Android 模块由 `storage-operations.sh` 读取已挂载的原厂 persist，调用
+  [`piano-bluetooth-provision.c`](../../android/native/piano-bluetooth-provision.c)
+  提供的 `piano-storage provision-bluetooth` 操作。
 
-默认 product FDF 集成的是 `FatPkg/EnhancedFatDxe/Fat.inf`，尚未集成 ext4
-读取链。UEFI 每次直接读 persist 需要另补 ext4 provider 与资源退出路径，范围
-更大；本轮优先正式一次安装生成设备 DTB，通用固件和公开 DTS 不写地址。
-正常启动仍由标准 QCA firmware-property 读取路径取得地址，不加隐藏 daemon、
-随机 fallback、虚拟 adapter 或第二个 kernel profile。独立 `tools/provision_piano_bluetooth.py` 使用纯 Python 和现有 FDT parser/
-writer，保持完整 BOOTv2 header（仅 DTB size/AOSP SHA1 ID 更新）、kernel、
-initramfs 与命令行，并检查 DT 仅改变目标地址属性。无需克隆 AOSP 或 host FAT
-工具。`export_installer.py` 同时导出 helper/FDT 模块并校验三份 Python source。
+两条路径均保留内核、initramfs、命令行及其余设备树内容，只写目标蓝牙节点的
+`local-bd-address`，更新 BOOTv2 的 DTB 大小和 AOSP SHA1。
+模块使用固定上游 libfdt 与 libmd；原始镜像完成读回检查后，原子替换派生的启动文件并同步。
+原文件和设备专属文件分别记录摘要，不把修改后的文件继续当作原始通用镜像。
+地址配置失败会明确报告，不生成随机地址。
 
-standalone `apply --execute` 先刷 generic ESP/root 并逐项记录 prefix readback，
-回到正常 Android 后只读 raw6，挂载 `sunuefi_esp` 更新实际 boot.img、sync/核对
-文件 SHA，再卸载。最终报告明确 ESP 已与 generic 不同；配置失败时保留已经
-完成的 generic 读回阶段。`provision-bluetooth --execute` 只补配置，不重刷 root。
-helper 已用本机真实 BOOTv2/raw6 生成文件并核对组件；Root 手动部署到项目 ESP
-后，本机地址 DTB 的冷启动已完成上述验证。standalone Android 安装／升级流程
-仍未实机运行，不能用此次手动部署证明它已经完成；扫描／连接与各 profile 的
-实际使用也分别待验证。
+UEFI 当前没有用于读取原厂 persist 的 ext4 文件系统链，安装时配置一次可以避免
+为此增加启动期存储依赖。Linux 无需地址配置守护进程、BlueZ 补丁或额外的虚拟适配器。
+公共 DTS 和发布包保持通用，每台设备在安装时使用自己的原厂地址。
+
+## 当前设备结果
+
+2026-10-10，`7.2.9-piano-gnome-gd33a42990baf` 正常重启后自动出现蓝牙适配器，
+状态为 `Powered: yes`，无需再次执行临时地址命令。蓝牙手写笔连接、压感绘画和
+轻捏反馈可用，具体输入实现见 [触控笔协议](piano-pen-protocol.md)。
+
+此前替换内核时误用未配置地址的通用 DTB，曾导致适配器消失；补回实际启动文件的
+标准属性后恢复。新模块已包含自动配置步骤，但本次没有为了验证它重新刷写整套
+ESP／root，不能把独立工具与正常重启的结果扩大为完整刷写流程的实测。

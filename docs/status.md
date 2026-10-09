@@ -1,12 +1,12 @@
 # 项目状态
 
-更新日期：2026-10-09。本页按功能列出当前状态。首页的表格是它的简化版；各项的技术细节在 `docs/devel/` 的对应页面中。
+更新日期：2026-10-10。本页按功能列出当前状态。首页的表格是它的简化版；各项的技术细节在 `docs/devel/` 的对应页面中。
 
 ## 测试设备
 
 所有结果来自同一台小米平板 8 Pro（`piano`，型号 `25091RP04C`，SM8750P，16 GB 内存），原厂 Android 16（`OS3.0.309.0.WPYCNXM`），Bootloader 已解锁，当前运行使用 CSOT 面板配置（由原厂引导程序传来的标识选择，不等同于对物理供应商的识别）。Linux 对面板的选择见[面板选择](devel/panel-selection.md)；其他面板、内存容量和 ROM 版本没有测试过。
 
-这台机器划出了 `sunuefi_esp`（512 MiB FAT32，4 KiB 扇区，与 UFS 逻辑扇区一致）和 `sunuefi_root`（63.5 GiB ext4），安装了 Debian 13 / GNOME。当前 Linux 内核为 `7.2.9-piano-gnome-gc8bf8df4d2ca`，从合体 BOOT 经 UEFI 启动，已实际来回切换 Android 与 Linux。
+这台机器划出了 `sunuefi_esp`（512 MiB FAT32，4 KiB 扇区，与 UFS 逻辑扇区一致）和 `sunuefi_root`（63.5 GiB ext4），安装了 Debian 13 / GNOME。当前 Linux 内核为 `7.2.9-piano-gnome-gd33a42990baf`，从合体 BOOT 经 UEFI 启动，已实际来回切换 Android 与 Linux。
 
 ## 启动与安装
 
@@ -17,10 +17,10 @@
 | Linux 返回 Android | 可用。`piano-next-boot android --reboot`，见[Linux 下次启动入口](devel/linux-next-boot.md) |
 | 原厂 Recovery | 保留。`reboot recovery` 进入 Mi Recovery。持久 Linux 偏好与 Recovery 同时存在时的行为还没有在设备上试过 |
 | 独立 Recovery 安装 | 不可用。ABL 对“Recovery 自带内核”的分支不加载 vendor_boot 和 pvmfw，启动停在 Fastboot；合体 BOOT 走普通启动路径，绕开了这个问题。安装器拒绝 `--recovery` |
-| 启动路线管理 | 已有：保存、读取、`piano-boot-request`、`piano-next-boot`。未做：菜单选择自动记录、一次性请求自动清除、与 OTA 联动 |
-| 合体 BOOT 在线安装 | 原生重打包工具已能无损还原真实原厂 BOOT，在线写入、OTA 后重打包尚未做进安装器。见[原生 BOOT 重打包](devel/android-boot-repack.md) |
+| 启动路线管理 | 模块保存 Android／UEFI 路线，普通开机沿用；前置选择页显示约三秒，音量键可临时改选，电源键确认。临时选择不改保存的路线 |
+| 合体 BOOT 在线安装 | 模块从当前 BOOT 提取 Android 内核并安装或更新同一份 UEFI 核心；HyperOS 更新后可点击“重新安装引导”。已有核心升级已在设备上完成，所有 OTA 场景尚未覆盖。见[原生 BOOT 重打包](devel/android-boot-repack.md) |
 | 一键安装器 | 只更新已有的 `sunuefi_esp` 与 `sunuefi_root`，并写入本机蓝牙地址。新平板首次分区返回 `NEW_INSTALL_NOT_READY` |
-| Android Root 模块 | `./build.sh module --inspect` 只列出缺项，没有可安装 ZIP。WebUI 为预览 |
+| Android Root 模块 | 提供可安装 ZIP，包含启动选择、引导检查、重新安装和独立存储管理。SukiSU 安装和 WebUI 可用；新分区、调整容量和删除归还空间的写入流程仍需实机验证，见[引导助手](devel/android-module.md) |
 
 ## UEFI
 
@@ -39,13 +39,13 @@
 
 | 项目 | 状态 | 已知问题 |
 | --- | --- | --- |
-| 显示 | 3200×2136 144 Hz，手动亮度 | 完整关闭显示链路后恢复仍可能黑屏；电源键当前只关闭背光。HDR、12-bit、VRR 未完成 |
+| 显示 | 3200×2136，默认 120 Hz，手动亮度；保留其他显示模式 | 切换刷新率或完整关闭显示链路后恢复仍可能黑屏；电源键当前只关闭背光。HDR、12-bit、VRR 未完成 |
 | GPU | Adreno 加速的 GNOME | 部分 GTK 窗口连续缩放约 30 次/秒画面提交，需继续区分客户端处理和帧回调等待；见[窗口缩放](devel/piano-window-resize.md) |
 | 触屏 | 点按、拖动、长按、手势，约 144 Hz | 360 Hz 未实现；依赖主机端触点算法和 uinput |
 | 键盘 / 触控板 | 可用，键盘背光走 UPower / GNOME | 特殊键和睡眠恢复未完成 |
-| 触控笔 | 120 Hz 启动时可定位和压感绘画，使用标准手写笔输入；轻捏按键报告可读 | 144 Hz 笔输入、完整掌压、快捷手势、震动与无线充电仍需完善；热切刷新率可能黑屏，见[笔协议](devel/piano-pen-protocol.md) |
+| 触控笔 | 默认 120 Hz 下可定位和压感绘画，使用标准手写笔输入；轻捏按键与笔端震动可用，已修正碰屏输入加号 | 144 Hz 笔输入、完整掌压、笔身滑动与应用快捷手势、无线充电仍需完善；热切刷新率可能黑屏，见[笔协议](devel/piano-pen-protocol.md) |
 | Wi-Fi | 可用 | 新系统需自行保存网络连接 |
-| 蓝牙 | 可用 | 安装器自动配置本机地址，手工部署方式见[蓝牙地址](devel/piano-bluetooth.md) |
+| 蓝牙 | 可用，正常重启后自动启用 | 电脑安装器和 Android 模块更新 ESP 时自动配置本机地址；手工部署时也需保留此属性，见[蓝牙地址](devel/piano-bluetooth.md) |
 | 扬声器 | 四路都能发声，沿用原厂功放增益 235 | 睡眠恢复未测 |
 | 麦克风 | 录音、原生单声道 ALSA / PipeWire 输入 | 底噪与桌面电平待调 |
 | 相机 | 前后路预览、录像，CAMSS/TFE 硬件 ISP | 曝光、对焦和首帧处理仍在改善；3A 为软件实现，与原厂画质有差距。见[相机与闪光灯](devel/piano-camera-flash.md)，手动接口见[相机控制](devel/piano-camera-controls.md) |
