@@ -1,0 +1,36 @@
+From: Project SunUEFI
+Subject: [PATCH] sensors: match GTK build dependencies to installed Mesa
+
+The shared CI builder installs backported Mesa GBM/Gallium while building
+Mesa. iio-sensor-proxy's GTK build dependency then pulls EGL/GLX
+from stable by default, whose exact-version dependencies conflict with
+the installed Mesa. Install the three missing Mesa siblings at the
+installed Gallium version before resolving the IIO build dependencies.
+Keep all other packages on their normal APT policy. A standalone sensors
+build without Mesa installed keeps the ordinary stable dependency path.
+
+--- a/scripts/build-sensors-debs.sh
++++ b/scripts/build-sensors-debs.sh
+@@ -67,5 +67,5 @@
+ build() {
+-    local name=$1 message=$2 patch
++    local name=$1 message=$2 patch mesa_version
+     cd "$BUILD_ROOT/$name"
+     mkdir -p debian/patches
+     for patch in "$REPO/patches/$name"/*.patch; do
+@@ -82,6 +82,15 @@
+         DEBFULLNAME='piano mainline contributors' DEBEMAIL='piano@localhost' \
+             dch --local +piano --distribution trixie "$message"
+     fi
++    # GTK's build dependencies need EGL/GLX/DRI from the same Mesa as GBM
++    # and Gallium already installed by the Mesa build in the shared builder.
++    if [ "$name" = iio-sensor-proxy ] && \
++            mesa_version=$(dpkg-query -W -f='${Version}' mesa-libgallium 2>/dev/null); then
++        apt-get install -y --no-install-recommends \
++            "libegl-mesa0=$mesa_version" \
++            "libglx-mesa0=$mesa_version" \
++            "libgl1-mesa-dri=$mesa_version"
++    fi
+     mk-build-deps -i -r -t 'apt-get -y --no-install-recommends' debian/control
+     DEB_BUILD_OPTIONS="${DEB_BUILD_OPTIONS:-nocheck parallel=$(nproc)}" DEB_BUILD_PROFILES=nocheck \
+         dpkg-buildpackage -b -uc -us
