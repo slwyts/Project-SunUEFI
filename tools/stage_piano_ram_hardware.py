@@ -56,6 +56,9 @@ def adapt(name, data):
                             'modprobe --ignore-install phy_qcom_qmp_pcie\n'
                             '# Normal PHY/host probing enumerates the real PCI endpoint first.\n'
                             + GUARD + 'radio --wait-seconds 30')
+        text += ('\n# Supply missing factory identity once, before BlueZ takes over.\n'
+                 '/usr/bin/python3 /usr/lib/piano/bluetooth-address.py ||\n'
+                 '    echo "WARN: Bluetooth factory address initialization failed" >&2\n')
     elif name == 'display-start':
         # Register snapshots do not prepare a domain or authorize its owner.
         # Keep them in the standalone diagnostic CLI, off the boot path.
@@ -135,6 +138,7 @@ def build(output, source, rootfs=None):
     for relative in ('etc/modprobe.d/piano.conf',
                      'etc/modules-load.d/piano-rgb.conf',
                      'etc/modules-load.d/piano-bluetooth.conf',
+                     'usr/lib/piano/bluetooth-address.py',
                      'usr/share/piano/pen/p81c-radio.json',
                      'usr/share/piano/pen/calibration/piano-boe.ini',
                      'usr/share/piano/pen/calibration/piano-csot.ini',

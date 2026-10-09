@@ -420,6 +420,20 @@
       "source_sha256": "74355721f6bbfce2363beff584b39d42befa6c73cd5835b93efbea9dacd8a5b3",
       "source_git_mode": "100644",
       "license": "MIT"
+    },
+    {
+      "group": "common",
+      "path": "usr/lib/piano/bluetooth-address.py",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "9d85065bec2d2a610feca22299e854811f5ed66a7d2224132b698be2ed733a6c",
+      "source": "linux/bsp/common/usr/lib/piano/bluetooth-address.py",
+      "source_sha256": "9d85065bec2d2a610feca22299e854811f5ed66a7d2224132b698be2ed733a6c",
+      "source_git_mode": "100644",
+      "license": "MIT",
+      "source_component": "Project SunUEFI"
     }
   ],
   "excluded": [

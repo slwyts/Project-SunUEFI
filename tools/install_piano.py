@@ -543,39 +543,10 @@ def bundle_boot(directory):
     return data
 
 
-class ProvisioningError(ValueError):
-    def __init__(self, message, report):
-        super().__init__(message)
-        self.report = report
-
-
 def apply_installation(device, plan, bundle_dir, execute=False, recovery=False, ssh_public_key=None):
-    # Keep generic flash/readback and the later per-device filesystem change
-    # distinct. A failed provisioning step must not erase the completed stage.
-    if plan.get('gpt', {}).get('mode') == 'fresh':
-        return apply_update(device, plan, bundle_dir, execute, recovery, ssh_public_key)
-    boot = bundle_boot(bundle_dir)
-    generic = apply_update(device, plan, bundle_dir, execute, recovery, ssh_public_key)
-    if not execute:
-        return {**generic, 'device_provisioning_pending': True, 'factory_source': FACTORY_PATH}
-    try:
-        provision = device.provision_bluetooth(boot)
-    except (ValueError, OSError, subprocess.SubprocessError) as error:
-        raise ProvisioningError(str(error), {'status': ('IMAGES_UPDATE_VERIFIED_DEVICE_PROVISION_FAILED' if ssh_public_key is not None
-                                                       else 'GENERIC_UPDATE_VERIFIED_DEVICE_PROVISION_FAILED'),
-            ('disk_update' if ssh_public_key is not None else 'generic_update'): generic,
-            ('image_readback_completed_before_bluetooth_provision' if ssh_public_key is not None
-             else 'generic_readback_completed_before_provision'): True,
-            'device_provisioning': {'status': 'FAILED', 'reason': str(error)},
-            'esp_equals_generic_after_provision': None, 'device_writes': True,
-            'linux_boot_verified': False}) from error
-    return {'status': ('UPDATE_IMAGES_VERIFIED_DEVICE_DTB_PROVISIONED' if ssh_public_key is not None
-                      else 'UPDATE_GENERIC_VERIFIED_DEVICE_DTB_PROVISIONED'),
-            ('disk_update' if ssh_public_key is not None else 'generic_update'): generic,
-            ('image_readback_completed_before_bluetooth_provision' if ssh_public_key is not None
-             else 'generic_readback_completed_before_provision'): True, 'device_provisioning': provision,
-            'esp_equals_generic_after_provision': False, 'device_writes': True,
-            'gpt_changed': False, 'linux_boot_verified': False, 'recovery_written': False}
+    # Linux's BSP obtains the factory identity at boot, including after a raw
+    # ESP flash. Installing generic images does not require Android persist.
+    return apply_update(device, plan, bundle_dir, execute, recovery, ssh_public_key)
 
 
 def main():
@@ -620,13 +591,6 @@ def main():
             with args.output.open('x') as stream:
                 stream.write(text)
         print(text, end='')
-    except ProvisioningError as error:
-        text = json.dumps(error.report, indent=2, sort_keys=True) + '\n'
-        if args.output:
-            with args.output.open('x') as stream:
-                stream.write(text)
-        print(text, end='')
-        parser.exit(1, str(error) + '\n')
     except (ValueError, OSError, KeyError, subprocess.SubprocessError) as error:
         parser.exit(1, str(error) + '\n')
 

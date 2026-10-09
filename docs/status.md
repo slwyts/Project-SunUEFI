@@ -19,7 +19,7 @@
 | 独立 Recovery 安装 | 不可用。ABL 对“Recovery 自带内核”的分支不加载 vendor_boot 和 pvmfw，启动停在 Fastboot；合体 BOOT 走普通启动路径，绕开了这个问题。安装器拒绝 `--recovery` |
 | 启动路线管理 | 模块保存 Android／UEFI 路线，普通开机沿用；前置选择页显示约三秒，音量键可临时改选，电源键确认。临时选择不改保存的路线 |
 | 合体 BOOT 在线安装 | 模块从当前 BOOT 提取 Android 内核并安装或更新同一份 UEFI 核心；HyperOS 更新后可点击“重新安装引导”。已有核心升级已在设备上完成，所有 OTA 场景尚未覆盖。见[原生 BOOT 重打包](devel/android-boot-repack.md) |
-| 一键安装器 | 只更新已有的 `sunuefi_esp` 与 `sunuefi_root`，并写入本机蓝牙地址。新平板首次分区返回 `NEW_INSTALL_NOT_READY` |
+| 一键安装器 | 更新已有的 `sunuefi_esp` 与 `sunuefi_root`；蓝牙地址由 Linux 自动读取，不依赖安装阶段配置。新平板首次分区返回 `NEW_INSTALL_NOT_READY` |
 | Android Root 模块 | 提供可安装 ZIP，包含启动选择、引导检查、重新安装和独立存储管理。SukiSU 安装和 WebUI 可用；新分区、调整容量和删除归还空间的写入流程仍需实机验证，见[引导助手](devel/android-module.md) |
 
 ## UEFI
@@ -45,7 +45,7 @@
 | 键盘 / 触控板 | 可用，键盘背光走 UPower / GNOME | 特殊键和睡眠恢复未完成 |
 | 触控笔 | 默认 120 Hz 下可定位和压感绘画，使用标准手写笔输入；轻捏按键与笔端震动可用，已修正碰屏输入加号 | 144 Hz 笔输入、完整掌压、笔身滑动与应用快捷手势、无线充电仍需完善；热切刷新率可能黑屏，见[笔协议](devel/piano-pen-protocol.md) |
 | Wi-Fi | 可用 | 新系统需自行保存网络连接 |
-| 蓝牙 | 可用，正常重启后自动启用 | 电脑安装器和 Android 模块更新 ESP 时自动配置本机地址；手工部署时也需保留此属性，见[蓝牙地址](devel/piano-bluetooth.md) |
+| 蓝牙 | 可用，启动时自动读取本机原厂地址，手工刷通用 ESP 也可初始化 | 原厂地址缺失时提供稳定硬件标识派生方案，见[蓝牙地址](devel/piano-bluetooth.md) |
 | 扬声器 | 四路都能发声，沿用原厂功放增益 235 | 睡眠恢复未测 |
 | 麦克风 | 录音、原生单声道 ALSA / PipeWire 输入 | 底噪与桌面电平待调 |
 | 相机 | 前后路预览、录像，CAMSS/TFE 硬件 ISP | 曝光、对焦和首帧处理仍在改善；3A 为软件实现，与原厂画质有差距。见[相机与闪光灯](devel/piano-camera-flash.md)，手动接口见[相机控制](devel/piano-camera-controls.md) |

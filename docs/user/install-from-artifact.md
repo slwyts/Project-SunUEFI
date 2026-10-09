@@ -49,9 +49,9 @@ sh install.sh apply --serial 序列号 --plan update-plan.json --ssh-public-key 
 
 ## 它会做什么
 
-安装器核对 GPT、设备身份、分区容量和镜像哈希，只更新 `sunuefi_esp` 和 `sunuefi_root`，然后回到 Android 读回检查。接着读出本机的原厂蓝牙地址，写入 ESP 里 Linux `boot.img` 的设备树，让蓝牙控制器有自己的地址。通用包里没有这个地址，所以安装后 ESP 与下载包不再逐字节相同，这是正常的。
+安装器核对 GPT、设备身份、分区容量和镜像哈希，只更新 `sunuefi_esp` 和 `sunuefi_root`，然后回到 Android 读回检查。当前 Linux 在启动时自动读取本机蓝牙地址，不需要安装器预先修改 ESP。
 
-已经装好相同的系统、只想补上蓝牙地址时：
+使用没有自动地址初始化的旧系统时，可以单独补上设备树地址。当前系统无需这一步：
 
 ```sh
 sh install.sh provision-bluetooth --serial 序列号

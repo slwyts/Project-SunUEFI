@@ -8,7 +8,6 @@ STATE=/data/adb/piano-sunuefi/storage
 NATIVE="$MODDIR/bin/piano-storage"
 RESIZER="$MODDIR/bin/piano-resize-f2fs"
 REQUEST="$MODDIR/bin/piano-boot-request"
-FACTORY_BT=/mnt/vendor/persist/bluetooth/.bt_nv.bin
 RECEIPT="$STATE/android-expansion.json"
 mkdir -p "$STATE"
 chmod 700 "$STATE"
@@ -101,22 +100,6 @@ check_android() {
     echo '请先在启动页选择 Android，再删除 Linux 分区。' >&2; return 1;
   }
 }
-provision_bluetooth() (
-  # The raw release ESP is portable. Derive its controller address from this
-  # tablet's original Android persist only after native image readback passes.
-  # This changes only the standard DT property in the project BOOTv2 file.
-  esp="$STATE/$job.esp"
-  mkdir "$esp"
-  mounted=false
-  trap 'if [ "$mounted" = true ]; then umount "$esp"; fi; rmdir "$esp"' EXIT
-  mount -t vfat -o rw,nodev,nosuid,noexec /dev/block/by-name/sunuefi_esp "$esp"
-  mounted=true
-  "$NATIVE" provision-bluetooth "$esp/EFI/Piano/stable/boot.img" "$FACTORY_BT" --execute \
-    > "$STATE/$job.bluetooth-provision.json"
-  sync
-  umount "$esp"
-  mounted=false
-)
 run_job() {
   writer=
   interrupted() {
@@ -143,9 +126,6 @@ run_job() {
   restart=false
   case "$op" in
     1)
-      # Fail before either image is written when the real factory identity is
-      # unavailable. Never generate a shared or random controller address.
-      "$NATIVE" check-bluetooth-address "$FACTORY_BT" > "$STATE/$job.bluetooth-source.json"
       progress running 5 '正在刷写 ESP 和 Linux 系统。'
       "$NATIVE" flash "$plan" --execute > "$STATE/$job.result.json" 2> "$STATE/$job.transfer.log" &
       writer=$!
@@ -167,8 +147,6 @@ EOF
       done
       wait "$writer"
       writer=
-      progress running 97 '正在写入本机蓝牙参数。'
-      provision_bluetooth
       ;;
     2)
       if [ "$userdata_bytes" -gt 0 ]; then
@@ -240,7 +218,7 @@ EOF
     *) echo '不支持此存储操作。' >&2; return 1 ;;
   esac
   case "$op" in
-    1) message='ESP 和 Linux 已写入，本机蓝牙参数已配置。' ;;
+    1) message='ESP 和 Linux 已写入，读回检查完成。' ;;
     2) message='分区已建立。请正常重启，再刷写 ESP 和 Linux 镜像。' ;;
     3) message='root 容量已调整。需要重启时，请正常重启后继续。' ;;
     4) message='SunUEFI 分区已删除，Android 数据分区保持原大小。' ;;

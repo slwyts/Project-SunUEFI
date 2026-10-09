@@ -213,9 +213,11 @@ class InstallerTests(unittest.TestCase):
             plan = install.make_plan(snapshot, bundle)
             hashes = {value['partition']: value['sha256'] for value in plan['bundle']['images'].values()}
             fake = FakeDevice(snapshot, hashes)
-            result = install.apply_update(fake, plan, bundle)
+            # The normal installer must also work without an Android factory
+            # address provider: Linux configures controller identity at boot.
+            result = install.apply_installation(fake, plan, bundle)
             self.assertFalse(result['device_writes']);self.assertEqual(fake.events, ['inspect'])
-            fake.events.clear();result = install.apply_update(fake, plan, bundle, execute=True)
+            fake.events.clear();result = install.apply_installation(fake, plan, bundle, execute=True)
             self.assertEqual(result['status'], 'UPDATE_PREFIX_READBACK_VERIFIED')
             self.assertEqual([event for event in fake.events if isinstance(event, tuple) and event[0] == 'flash'],
                              [('flash', 'sunuefi_esp'), ('flash', 'sunuefi_root')])

@@ -10,6 +10,8 @@
 
 蓝牙 HID 使用标准 `etc/modules-load.d/piano-bluetooth.conf` 加载 `uhid`，这是 Project SunUEFI 的本地配置。内核对应 `linux/configs/piano-bluetooth.config`，Full / Next 构建只允许新增 `CONFIG_UHID=m`；模块必须匹配目标内核。该配置解决 BlueZ 创建 HID 输入设备的前提，不代表笔尖坐标、压力或倾斜已经支持。
 
+`usr/lib/piano/bluetooth-address.py` 由现有无线初始化脚本运行一次，只为缺少地址的板载控制器读取原厂 persist。原厂地址不可用时使用 SoC 型号与序列号派生稳定地址；已配置的控制器直接跳过。该程序使用标准 Bluetooth MGMT，不增加常驻服务，也不写原厂分区。Python 和挂载工具由发行版配方声明，手工刷写通用 ESP 不再需要预先填写地址。
+
 UCM 打开四路真实扬声器，PipeWire 的普通立体声流使用标准 `simple` 混音将左右各复制到同侧两只扬声器；日常界面只有一个真实输出。麦克风使用原生单声道 PCM，DMIC2/DEC0 提供信号，桌面输入为 MONO；没有静音 AUX 载体或额外虚拟设备。默认 Volume 98（+14 dB），底噪仍需调校。UCM 差异保存在 `patches/0001-ucm-piano-microphone-and-speakers.patch`，原始、补丁和派生文件哈希均有记录；音频配置也由 `stage_piano_ram_hardware.py` 安装。显示服务只保留通用 display-manager 顺序，相机 modprobe 去掉 Debian 特定路径。
 
 不提取桌面/GDM/dconf、账号、machine-id、SSH、软件源、fstab/swapfile/userdata、qbootctl 写槽或固定 USB 地址策略。`80-drivers.rules` 会覆盖 systemd 同名规则并广泛禁止自动加载，因此未纳入；不能把这份配置包当作已经验证的完整 BSP。

@@ -72,4 +72,4 @@ GitHub Actions 的 `uefi` 和 `debian-gnome` 目标同一轮构建模块，独�
 
 原厂 F2FS 挂载前扩容仍由系统负责，不能用离线工具直接调整已挂载的 Android 数据分区。存储细节见 [Android 存储扩容](android-storage.md)，BOOT 包装和无损重建见 [原生重打包工具](android-boot-repack.md)，启动路线与原厂 Recovery 优先规则见 [重启请求](reboot-request.md)。
 
-ESP 更新会从当前设备的原厂 persist 读取蓝牙地址，写入最终 Linux 启动文件的标准 `local-bd-address` 属性。公开镜像不包含某台设备的地址；原始镜像先完成读回检查，再生成并检查设备专属启动文件。
+ESP／root 刷写不再要求模块预先写入蓝牙地址。当前 Linux BSP 在无线初始化时自动读取原厂 persist；原厂地址缺失时可从硬件标识派生稳定地址。公开镜像保持通用，手工刷写也使用同一条初始化路径，见[蓝牙地址](piano-bluetooth.md)。
