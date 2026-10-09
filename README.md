@@ -2,7 +2,7 @@
 
 小米平板 8 Pro（代号 `piano`，骁龙 8 至尊版 / SM8750）的统一 UEFI 与 Linux 适配项目。
 
-平板的原厂 Android 基本保持不动。SunUEFI 在它旁边加入一套2nd UEFI/EDK2 （通过patch原厂boot.img的kernel部分与UEFI在bin层面融合以避开原厂abl的bug导致间接性recovery.img其kernel.size不得大于0问题），让同一块平板可以从内部存储直接启动其他系统（如Debian），同时获得丝滑的无缝多系统体验。项目的长期目标是通过这一套 UEFI 和针对具体系统的针对性全方位硬件适配与调教，在这台平板上取得完整的 Linux 与 Windows 使用体验；Linux 已经能日常操作，Windows 还没有启动过。
+平板的原厂 Android 基本保持不动。SunUEFI 在它旁边加入一套 UEFI（EDK2），与原厂内核共用同一个 BOOT 镜像（原厂 ABL 在 recovery 自带内核时不会加载 pvmfw、导致 Recovery 无法启动，替换 BOOT 内核又会让 HyperOS 起不来，所以选择器和 UEFI 附在原厂内核之后），让同一块平板可以从内部存储直接启动其他系统（如 Debian），同时保留原厂 Android 的日常启动与 Recovery；Linux 已经能体验近乎完美，Windows 还在计划之中
 
 ## 现在能做什么
 
