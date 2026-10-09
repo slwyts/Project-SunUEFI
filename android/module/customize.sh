@@ -3,6 +3,22 @@ SKIPMOUNT=true
 PROPFILE=false
 POSTFSDATA=false
 LATESTARTSERVICE=false
+if [ -f "$MODPATH/installed-core.json" ]; then
+  . "$MODPATH/common.sh"
+  piano_current_identity install || abort "当前 Android 未正常启动。"
+  set_perm "$MODPATH/bin/piano-boot-repack" 0 0 0755
+  set_perm "$MODPATH/bin/piano-boot-request" 0 0 0755
+  "$MODPATH/bin/piano-boot-repack" adopt --boot-device "$bootdev" --active-slot "$slot" \
+    --policy "$MODPATH/policy.json" --state-output "$MODPATH/install-state.json" ||
+    abort "没有找到与模块匹配的 SunUEFI 引导。"
+  set_perm_recursive "$MODPATH" 0 0 0755 0644
+  set_perm "$MODPATH/bin/piano-boot-repack" 0 0 0755
+  set_perm "$MODPATH/bin/piano-boot-request" 0 0 0755
+  set_perm "$MODPATH/action.sh" 0 0 0755
+  set_perm "$MODPATH/manager.sh" 0 0 0755
+  ui_print "引导助手已安装。打开模块页面即可选择启动目标。"
+  return 0
+fi
 ui_print "SunUEFI: current-ROM BOOT installation"
 [ "$BOOTMODE" = true ] || abort "Install from the module manager in a normally booted Android ROM."
 [ "${ARCH:-}" = arm64 ] || abort "This module requires ARM64 Android."

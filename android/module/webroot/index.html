@@ -2,41 +2,38 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'">
   <title>SunUEFI</title>
   <link rel="stylesheet" href="style.css">
   <script src="main.js" defer></script>
 </head>
 <body>
-  <main>
-    <header>
-      <p class="eyebrow">PROJECT SUNUEFI · PIANO</p>
-      <h1>选择下一次启动</h1>
-      <p class="intro">默认进入 Android。确认的持久选择会继续生效，直到重新改选；原厂恢复入口仍需独立验证。</p>
-    </header>
-    <section class="status" aria-live="polite">
-      <span class="dot" aria-hidden="true"></span>
-      <div><strong id="status-title">源码预览，启动请求尚未就绪</strong><p id="status-detail">正在读取本地模块信息。</p></div>
-    </section>
-    <section class="choices" aria-label="启动目标">
-      <article>
-        <span class="number">01</span><h2>UEFI</h2>
-        <p>进入 SunUEFI 菜单，选择系统或打开设置。</p>
-        <button id="request-uefi" data-target="uefi" disabled>请求启动 UEFI</button>
-      </article>
-      <article>
-        <span class="number">02</span><h2>Linux</h2>
-        <p>通过同一 UEFI 核心进入已安装的 Linux。</p>
-        <button id="request-linux" data-target="linux" disabled>请求启动 Linux</button>
-      </article>
-    </section>
-    <section class="preview">
-      <label for="preview-target">只读预览</label>
-      <select id="preview-target"><option value="uefi">UEFI 请求</option><option value="linux">Linux 请求</option><option value="setup">UEFI 设置请求</option></select>
-      <p id="preview-detail">预览不会写入请求，也不会重启。</p>
-    </section>
-    <footer>本页尚未连接管理器 bridge。原生持久请求接口已实现，在线读写与 Recovery 仍待实机验证；本页不会自行写入或重启。</footer>
-  </main>
+<main>
+  <header class="page-header">
+    <div><p class="eyebrow" data-i18n="assistant">引导助手</p><h1>SunUEFI</h1></div>
+    <button id="language" class="language" aria-label="Switch language">EN</button>
+  </header>
+  <div class="status-line"><span class="status-dot" aria-hidden="true"></span><span data-i18n="current">当前系统</span><strong>Android</strong><span id="health" class="health" data-i18n="reading">读取中</span></div>
+  <section class="boot-card" aria-labelledby="choose-title">
+    <h2 id="choose-title" data-i18n="choose">选择启动系统</h2>
+    <fieldset class="routes"><legend class="visually-hidden" data-i18n="choose">选择启动系统</legend>
+      <label class="route"><input type="radio" name="route" value="android" checked><span class="route-content"><span class="route-icon android-icon" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M8 13h16v10H8zM10 11a6 6 0 0 1 12 0M10 4l-2-3m14 3 2-3M5 14v8m22-8v8M12 23v5m8-5v5"/><path class="eyes" d="M12 9h.1M20 9h.1"/></svg></span><span class="route-copy"><strong>Android</strong><small>HyperOS</small></span><span class="radio-mark" aria-hidden="true"></span></span></label>
+      <label class="route"><input type="radio" name="route" value="uefi"><span class="route-content"><span class="route-icon uefi-icon" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="4" y="5" width="24" height="17" rx="3"/><path d="M12 27h8m-4-5v5m-8-17 4 3-4 3m8 0h7"/></svg></span><span class="route-copy"><strong>UEFI</strong><small data-i18n="uefiDesc">Linux 与启动菜单</small></span><span class="radio-mark" aria-hidden="true"></span></span></label>
+    </fieldset>
+    <fieldset id="entry-group" class="entry-group" hidden><legend data-i18n="entry">进入</legend><div id="entries" class="entries"></div></fieldset>
+    <p id="remember" class="hint" data-i18n="remember">以后开机沿用此选择；只选择不会立即生效。</p>
+    <button id="restart" class="primary" disabled><span data-i18n="restart">保存并重启</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg></button>
+  </section>
+  <section class="tools" aria-labelledby="tools-title"><h2 id="tools-title" data-i18n="tools">引导维护</h2>
+    <div class="tool-list">
+      <button id="check" class="tool"><span class="tool-symbol" aria-hidden="true">✓</span><span class="tool-copy"><strong data-i18n="check">检查引导</strong><small data-i18n="checkDesc">检查安装状态和启动选择</small></span><span class="chevron" aria-hidden="true">›</span></button>
+      <button id="reinstall" class="tool"><span class="tool-symbol" aria-hidden="true">↻</span><span class="tool-copy"><strong data-i18n="reinstall">重新安装引导</strong><small data-i18n="reinstallDesc">HyperOS 更新后使用</small></span><span class="chevron" aria-hidden="true">›</span></button>
+    </div>
+  </section>
+  <p id="message" role="status" aria-live="polite"></p>
+  <details><summary data-i18n="details">设备信息</summary><dl id="details"></dl></details>
+  <dialog id="install-dialog" aria-labelledby="install-title"><h2 id="install-title" data-i18n="installTitle">重新安装引导？</h2><p data-i18n="installBody">从当前 HyperOS 提取内核并重新打包引导镜像，保留启动选择。Android 数据不会被清除。</p><div class="dialog-actions"><button id="cancel-install" data-i18n="cancel">取消</button><button id="confirm-install" class="primary" data-i18n="confirm">重新安装</button></div></dialog>
+</main>
 </body>
 </html>

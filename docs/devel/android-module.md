@@ -1,37 +1,49 @@
-# Android 模块
+# Android 引导助手
 
-模块源码位于 `android/module/`，面向 Magisk / KernelSU 管理器。普通启动保留 Android，UEFI 使用独立的明确请求。原厂 Mi Recovery 已在target0验证；持久Linux偏好与`reboot recovery`组合仍待实机检查，新增的Recovery优先源码和证据见[重启请求说明](reboot-request.md)。[原生工具](android-boot-repack.md)已接通当前槽的在线身份检查、明确写入／读回、还原与持久请求接口，并验证真实 BOOT 文件无损还原及 CRC 改选。在线设备执行和同包装的启动／Recovery 证明尚未完成，因此仍不能生成可安装 ZIP。
+SunUEFI 引导助手在 Android 中提供启动选择和引导维护。目前的 0.2.0 模块用于已经安装 SunUEFI 合体 BOOT 的设备：安装时只读取并识别现有引导，不会首次刷入 UEFI，也不会分区或清除数据。
 
-先检查当前产品：
+## 使用
+
+在 SukiSU 的模块页面安装 ZIP，正常重启后点击模块卡片上的 **打开 WebUI**。页面提供 Android、UEFI 两条启动路线。选择 UEFI 后，已安装的 Linux 会默认选中并直接启动；启动菜单作为另一入口保留。没有 Linux 启动文件时，仅显示启动菜单。选择目标后点击 **保存并重启**，以后普通开机和重启沿用该选择，直到再次更改。
+
+原厂 `reboot recovery` 仍进入 Mi Recovery。当前早期选择器没有实现开机按键覆盖：如果保存的是 Android，开机时不能靠音量键临时改走 Linux，需要先在 Android 中更改选择。固件设置的独立入口尚未开放。
+
+页面支持中文和英文。打开页面先读取轻量状态；**检查引导** 才进行完整的只读 BOOT 检查。管理器的 **执行** 按钮只显示当前选择和使用提示，不重启，也不输出原生工具的 JSON。
+
+**重新安装引导** 用于 HyperOS 更新后的恢复。若当前 BOOT 仍是匹配的 SunUEFI 合体镜像，操作只重新识别现有引导；若 OTA 已换回受支持的原厂 BOOT，则从当前活动槽提取新内核，嵌入模块携带的同一套 SunUEFI 核心，并恢复先前选择。它不会自动接管 OTA，也不会预先修改非活动槽。卸载这个助手仅删除模块，现有 BOOT 和启动选择保留；需要返回 Android 时，应先在页面中选择 Android。
+
+SukiSU 安装、模块激活和 WebUI 状态读取已在设备上使用。KernelSU 提供同类 [WebUI 接口](https://kernelsu.org/guide/module-webui.html)；官方 Magisk 的模块 Action 可显示提示，图形页面需要 [MMRL](https://mmrl.dev/) 等宿主，其他宿主尚未做兼容验证。
+
+## 维护与构建
+
+源码位于 `android/module/`，原生工具位于 `android/native/`。`manager.sh` 连接 WebUI 与原生工具：轻量读取使用 `piano-boot-request`；完整检查、识别已有引导、重新打包和改选使用 `piano-boot-repack`。写入前仍核对当前槽位、ROM、原镜像与模块拥有的包装，完成后同步并读回；不写 Recovery、vbmeta、GPT 或 userdata。内核来自设备当前 BOOT，ZIP 不携带旧 ROM 的原厂内核。
+
+打包有两个独立模式，不应混用资格记录。
+
+**已有引导助手** 使用 `adopt` 导出的同一核心载荷目录、对应原生工具及策略文件：
+
+```sh
+python3 tools/build_android_module.py \
+  --installed-core path/to/exported-payloads \
+  --native-tool path/to/piano-boot-repack \
+  --native-manifest path/to/policy.json \
+  --request-tool path/to/piano-boot-request \
+  --output artifacts/android/SunUEFI-Piano.zip
+```
+
+安装程序以只读 `adopt` 识别当前 BOOT，校验嵌入的核心与包内载荷匹配，并保存安装状态。因此它不能用来给没有合体 BOOT 的新设备首次安装。
+
+**首次安装模式** 从产品镜像和 selector 构建完整安装包，仍要求对应工具、载荷及设备资格证明：
 
 ```sh
 python3 tools/build_android_module.py --inspect
-```
 
-检查会验证产品 manifest、FD、BootShim 和 APPv1，并列出缺少的 selector、原生工具及设备证明。不会读取设备、下载旧 ROM 或写出 ZIP。后续具备真实输入时的入口：
-
-```sh
 python3 tools/build_android_module.py --product artifacts/product \
   --selector path/to/selector.bin --selector-manifest path/to/selector.json \
   --native-tool path/to/piano-boot-repack --native-manifest path/to/native.json \
-  --output artifacts/android/SunUEFI-piano.zip
+  --output artifacts/android/SunUEFI-Piano-install.zip
 ```
 
-ZIP 只携带当前产品的 BootShim、FD、APP、早期 selector 和经测试的 ARM64 静态 ELF 工具，不携带原厂 BOOT/REC/内核。`selector.json` 记录 schema/interface 1、selector 大小、内存占用、metadata 偏移与 SHA、FD/APP SHA、BOOT v4、APP/wrapper ABI 1，以及 `entry_policy: explicit-request-only`、`request_bootarg: sunuefi.boot=uefi`、`persistent_uefi_request: false`。诊断包的持久 UEFI 标志不能作为日常模块入口。工具证明必须对应相同 payload、工具 SHA 与测试，另附 Android 旁路、持久请求处理与 CRC 改选和原厂 Recovery 保留的设备证据；三个标志 `device_passthrough_verified`、`request_handling_verified`、`standard_recovery_preserved` 缺一不可。
+该模式的全部资格证明尚未完成，原有安装门禁继续保留。助手的安装成功不等于首次安装模式已经具备这些证明；`--candidate` 也只输出候选包，不解除写入门禁。首次安装同样不提供自动缩容或分区。
 
-安装只允许正常启动完成的 piano Android、解锁状态和活动槽 `_a/_b`。原生 `probe` 读取当前 BOOT；ROM、bootimage 属性和实际 footer 指纹分别记录，不要求属性与 footer 版本相等。`repack` 写前重新核对身份与 source SHA，成功后 fsync 并完整读回。原生 `request --target android/uefi/linux/setup --preview` 只读；`--execute` 只为当前模块拥有的包装更新双页 NEXTv1，选择持续到下次明确改选，Android target0 清除 UEFI 路线。没有请求自动消费、misc/PMIC 写入或自动重启。接口在 [`native-interface.json`](../../android/module/native-interface.json)；在线读写、持久选择后的标准 Recovery 与同包装启动仍需实机证明。
-`webroot/` 已提供状态、UEFI/Linux 两个按钮和只读目标预览。在线原生接口已实现；管理器 bridge 和设备证明尚未连接，按钮默认禁用；本地 JSON 只是包的信息，不是设备实时状态。页面没有内联 root 命令，只预留调用受限 `action.sh status/preview/request` 的适配接口；`action.sh` 无参数时仅显示状态。KernelSU 使用官方 [WebUI 目录与 API](https://kernelsu.org/guide/module-webui.html)；Magisk 可用模块 Action 入口，图形页面还需 [MMRL](https://mmrl.dev/) 等外部宿主，当前未做宿主兼容测试。
-
-升级 OTA 后，应先正常启动新 Android，再重新安装模块。安装始终读取当时的活动 BOOT，不预写 OTA 的非活动槽；自动 OTA 适配还没完成。如果 OTA 保留了旧包装，工具应拒绝嵌套包装，由使用者先恢复当前 ROM 的原始 BOOT，再重新安装。
-
-已有 `sunuefi_esp`、`sunuefi_root` 成对存在时，跳过分区步骤；只存在一个则停止。两者都没有时，音量上键轮换 No / 32 / 64 / 128 GiB root，音量下键选择，另外留 512 MiB ESP；超时选择 No。任何非零容量现在都会在 BOOT、F2FS、GPT 写入前停止。真正执行需要验证过的在线 F2FS 缩容工具、两个明文超级块检查、主备 GPT 核对，并分为缩容后重启、GPT 更新后再次重启两个阶段；没有 `dd` 或强制缩容退路。
-
-卸载也交给原生 `restore`：从当前包装内保存的原内核、header/footer、布局及必要填充重建，验证与原镜像 SHA 一致后写回。模块不另存整个原厂分区；当前 ROM、槽位或镜像身份发生变化时必须拒绝，不能用旧 ROM 内容覆盖 OTA 新 BOOT。
-
-安装格式使用管理器的 `customize.sh`，不支持 Recovery 安装；遵循 [Magisk 模块说明](https://topjohnwu.github.io/Magisk/guides.html) 与 [KernelSU 模块说明](https://kernelsu.org/guide/module.html)。本地检查：
-
-```sh
-python3 tests/unit/test_android_module.py
-```
-
-测试使用临时夹具验证篡改、路径越界、ELF 入口、打包门禁、音量选择和默认禁用的请求接口，不执行 Android 工具或访问设备。下一步由设备 owner 先做当前槽的只读 probe/status，再单独安排写入／读回、还原及同包装的 Android、持久请求和标准 Recovery；主机检查不能替代这一步。
+BOOT 包装、无损重建和请求页格式见 [原生重打包工具](android-boot-repack.md)；启动路线与原厂 Recovery 优先规则见 [重启请求](reboot-request.md)。命令分类与两种打包模式记录在 [`native-interface.json`](../../android/module/native-interface.json)。

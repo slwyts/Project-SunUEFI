@@ -470,6 +470,7 @@ struct identity { char slot[16], node[64], rom[1024], bootprop[1024]; };
 struct snapshot { struct identity id; struct stat st; int fd; struct blob bytes; struct boot boot; char sha[65]; };
 struct options {
   const char *action, *device, *slot, *rom, *bootprop, *policy, *output, *source, *state, *state_output, *payload, *target, *input;
+  const char *payload_output;
   int execute, preview, reject_wrapped, require_ready, read_only;
 };
 static void property(const char *name, char *value, size_t capacity) {
@@ -539,6 +540,16 @@ static struct snapshot snapshot(const struct options *o) {
   s.bytes.size = (size_t)capacity; s.bytes.data = malloc(s.bytes.size); require(s.bytes.data != NULL, "out of memory");
   read_exact(s.fd, s.bytes.data, s.bytes.size, 0); hash_hex(s.bytes.data, s.bytes.size, s.sha);
   s.boot = parse_boot(&s.bytes, 0); return s;
+}
+static void check_snapshot_current(const struct options *o, const struct snapshot *s) {
+  struct identity id = current_identity(o, 0); char hash[65];
+  require(!strcmp(id.slot, s->id.slot) && !strcmp(id.node, s->id.node) &&
+          !strcmp(id.rom, s->id.rom) && !strcmp(id.bootprop, s->id.bootprop), "Android identity changed during BOOT validation");
+  int fd = open(id.node, O_RDONLY | O_CLOEXEC); struct stat st; uint64_t capacity = 0;
+  require(fd >= 0 && !fstat(fd, &st) && S_ISBLK(st.st_mode) && st.st_rdev == s->st.st_rdev &&
+          !ioctl(fd, BLKGETSIZE64, &capacity) && capacity == s->bytes.size, "active BOOT changed during validation");
+  fd_hash(fd, s->bytes.size, hash); close(fd);
+  require(!strcmp(hash, s->sha), "active BOOT source hash changed during validation");
 }
 static void identity_fields(FILE *f, const struct snapshot *s) {
   fputs("\"active_slot\":", f); quote(f, s->id.slot); fputs(",\"boot_device\":", f); quote(f, s->id.node);
@@ -644,6 +655,50 @@ static struct blob payload(const struct json *policy, const char *directory, con
   require(json_number(policy, object, "bytes") == b.size, "module payload size differs");
   string_matches(policy, object, "sha256", hash); return b;
 }
+struct components { struct blob selector, shim, fd, app; uint64_t memory, metadata; };
+static void check_payload_blob(const struct json *policy, const char *name, const struct blob *b) {
+  int object = member(policy, member(policy, 0, "payloads"), name); char hash[65];
+  require(json_number(policy, object, "bytes") == b->size, "embedded module payload size differs from policy");
+  hash_hex(b->data, b->size, hash); string_matches(policy, object, "sha256", hash);
+}
+/* restore() must have validated every catalog extent before this is called.
+ * The normalized full wrapper comparison also covers padding and AVB metadata,
+ * so a valid self-described catalog alone cannot authorize an arbitrary carrier. */
+static struct components check_wrapper_policy(const struct json *policy, const struct blob *wrapped,
+                                              const struct blob *original, const unsigned char *m) {
+  const unsigned char *k = wrapped->data + PAGE, *c = catalog(wrapped, m);
+  struct components p = {
+    .selector = { .size = (size_t)le64(c + 72) },
+    .shim = { .data = (unsigned char *)k + le64(m + 48), .size = (size_t)le64(m + 56) },
+    .fd = { .data = (unsigned char *)k + le64(m + 48) + le64(m + 56), .size = (size_t)le64(m + 64) },
+    .app = { .data = (unsigned char *)k + le64(m + 72), .size = (size_t)le64(m + 80) },
+    .memory = le64(c + 80), .metadata = le64(c + 88)
+  };
+  int selector_meta = member(policy, 0, "selector");
+  require(json_number(policy, selector_meta, "memory_bytes") == p.memory &&
+          json_number(policy, selector_meta, "metadata_offset") == p.metadata, "embedded selector layout differs from policy");
+  p.selector.data = malloc(p.selector.size); require(p.selector.data != NULL, "out of memory");
+  memcpy(p.selector.data, k + le64(m + 24), p.selector.size); memset(p.selector.data + p.metadata, 0, 128);
+  check_payload_blob(policy, "selector.bin", &p.selector); check_payload_blob(policy, "shim.bin", &p.shim);
+  check_payload_blob(policy, "fd.bin", &p.fd); check_payload_blob(policy, "app.bin", &p.app);
+  struct boot stock = parse_boot(original, 1);
+  struct blob expected = repack(original, &stock, &p.selector, p.memory, p.metadata, &p.shim, &p.fd, &p.app);
+  char actual_hash[65], expected_hash[65]; wrapper_hash(wrapped, m, actual_hash); hash_hex(expected.data, expected.size, expected_hash);
+  require(wrapped->size == expected.size && !strcmp(actual_hash, expected_hash), "current wrapper differs from the policy's canonical carrier");
+  free(expected.data); return p;
+}
+static void payload_descriptor_fields(FILE *f, const struct blob *wrapped, const unsigned char *m) {
+  const unsigned char *c = catalog(wrapped, m); char hash[65];
+  static const char *names[] = {"selector.bin", "shim.bin", "fd.bin", "app.bin"};
+  uint64_t sizes[] = {le64(c + 72), le64(m + 56), le64(m + 64), le64(m + 80)};
+  fprintf(f, "\"selector\":{\"memory_bytes\":%" PRIu64 ",\"metadata_offset\":%" PRIu64 "},\"payloads\":{", le64(c + 80), le64(c + 88));
+  for (unsigned i = 0; i < 4; i++) {
+    if (i) fputc(',', f);
+    hex(c + 160 + 32 * i, hash); quote(f, names[i]);
+    fprintf(f, ":{\"bytes\":%" PRIu64 ",\"sha256\":\"%s\"}", sizes[i], hash);
+  }
+  fputc('}', f);
+}
 static void check_owned(const struct json *state, const struct snapshot *s, const unsigned char *m) {
   check_identity(state, s); char hash[65];
   string_matches(state, 0, "wrapper", "SPLITv1+RSTRv1"); wrapper_hash(&s->bytes, m, hash);
@@ -691,10 +746,17 @@ static void sync_parent(const char *path) {
 }
 static struct blob installation_state(const struct snapshot *s, const struct blob *wrapped, const unsigned char *m, const char *status) {
   struct blob b = {0}; FILE *f = open_memstream((char **)&b.data, &b.size); require(f != NULL, "metadata allocation failed");
-  char wrapper[65], app[65]; wrapper_hash(wrapped, m, wrapper); hex(m + 96, app);
+  char wrapper[65], app[65], source[65], current[65]; wrapper_hash(wrapped, m, wrapper); hex(m + 96, app);
+  hex(catalog(wrapped, m) + 96, source); hash_hex(wrapped->data, wrapped->size, current);
+  struct request_state r = read_requests(wrapped, m);
   fputs("{\"schema_version\":1,\"status\":", f); quote(f, status); fputc(',', f); identity_fields(f, s);
   fprintf(f, ",\"wrapper\":\"SPLITv1+RSTRv1\",\"source_sha256\":\"%s\",\"wrapper_sha256\":\"%s\",\"app_sha256\":\"%s\","
-          "\"request_policy\":\"persistent-until-changed\",\"full_partition_backup\":false}\n", s->sha, wrapper, app);
+          "\"current_boot_sha256\":\"%s\",\"request_target\":%u,\"request_sequence\":%" PRIu64 ","
+          "\"request_policy\":\"persistent-until-changed\",\"restored_source_verified\":true,"
+          "\"canonical_wrapper_verified\":true,\"boot_written\":%s,\"read_only\":%s,\"full_partition_backup\":false,",
+          source, wrapper, app, current, r.target[r.newest], r.sequence[r.newest],
+          !strcmp(status, "WRITTEN_READBACK_VERIFIED") ? "true" : "false", !strcmp(status, "ADOPTED_READ_ONLY_VERIFIED") ? "true" : "false");
+  payload_descriptor_fields(f, wrapped, m); fputs("}\n", f);
   require(!fclose(f), "metadata formatting failed"); return b;
 }
 static void finish_state(const char *path, const struct blob *b) {
@@ -705,6 +767,54 @@ static void finish_state(const char *path, const struct blob *b) {
 static void emit_result(const struct blob *b, const char *path) {
   if (path) { save(path, b); sync_parent(path); }
   require(fwrite(b->data, 1, b->size, stdout) == b->size, "JSON output failed");
+}
+static void save_or_match(const char *path, const struct blob *b) {
+  struct stat st;
+  if (!lstat(path, &st)) {
+    struct blob existing = load(path, b->size);
+    require(existing.size == b->size && !memcmp(existing.data, b->data, b->size), "existing export file differs from validated payload");
+    free(existing.data); return;
+  }
+  require(errno == ENOENT, "cannot inspect payload export path"); save(path, b); sync_parent(path);
+}
+static void export_payloads(const char *directory, const struct components *p, const struct blob *wrapped, const unsigned char *m) {
+  if (!directory) return;
+  if (mkdir(directory, 0700)) require(errno == EEXIST, "cannot create payload export directory");
+  struct stat st; require(!lstat(directory, &st) && S_ISDIR(st.st_mode), "payload export directory must be a real directory");
+  const char *names[] = {"selector.bin", "shim.bin", "fd.bin", "app.bin"};
+  const struct blob *blobs[] = {&p->selector, &p->shim, &p->fd, &p->app}; char path[4096];
+  for (unsigned i = 0; i < 4; i++) {
+    require(snprintf(path, sizeof(path), "%s/%s", directory, names[i]) < (int)sizeof(path), "payload export path is too long");
+    save_or_match(path, blobs[i]);
+  }
+  struct blob descriptor = {0}; FILE *f = open_memstream((char **)&descriptor.data, &descriptor.size);
+  require(f != NULL, "descriptor allocation failed");
+  fputs("{\"schema_version\":1,\"interface_version\":1,\"wrapper_version\":1,\"app_abi\":1,"
+        "\"wrapper\":\"SPLITv1+RSTRv1\",\"stock_kernel_bundled\":false,\"full_partition_backup\":false,", f);
+  payload_descriptor_fields(f, wrapped, m); fputs("}\n", f); require(!fclose(f), "descriptor formatting failed");
+  require(snprintf(path, sizeof(path), "%s/payload-descriptor.json", directory) < (int)sizeof(path), "descriptor path is too long");
+  save_or_match(path, &descriptor); free(descriptor.data);
+}
+static int file_adopt(const struct options *o, const struct json *policy) {
+  require(!o->execute && !o->device && !o->slot && !o->rom && !o->bootprop && !o->source && !o->state && !o->payload && !o->target && !o->output,
+          "file adopt is read-only and accepts input, policy, optional state-output and payload-output-dir");
+  struct blob wrapped = load(o->input, BOOT_BYTES); struct boot boot = parse_boot(&wrapped, 0);
+  const unsigned char *m = find_split(&wrapped, &boot); uint64_t bytes, records;
+  struct blob original = restore(&wrapped, &boot, m, &bytes, &records);
+  struct components p = check_wrapper_policy(policy, &wrapped, &original, m);
+  char source[65], current[65], immutable[65], app[65]; hash_hex(original.data, original.size, source);
+  hash_hex(wrapped.data, wrapped.size, current); wrapper_hash(&wrapped, m, immutable); hex(m + 96, app);
+  struct request_state r = read_requests(&wrapped, m); struct blob result = {0};
+  FILE *f = open_memstream((char **)&result.data, &result.size); require(f != NULL, "metadata allocation failed");
+  fprintf(f, "{\"schema_version\":1,\"status\":\"FILE_WRAPPER_VALIDATED\",\"wrapper\":\"SPLITv1+RSTRv1\","
+          "\"source_sha256\":\"%s\",\"current_boot_sha256\":\"%s\",\"wrapper_sha256\":\"%s\",\"app_sha256\":\"%s\","
+          "\"boot_bytes\":%zu,\"restore_catalog_bytes\":%" PRIu64 ",\"padding_records\":%" PRIu64 ","
+          "\"request_target\":%u,\"request_sequence\":%" PRIu64 ",\"restored_source_verified\":true,\"canonical_wrapper_verified\":true,"
+          "\"read_only\":true,\"boot_written\":false,\"full_partition_backup\":false,\"device_operation_performed\":false,",
+          source, current, immutable, app, wrapped.size, bytes, records, r.target[r.newest], r.sequence[r.newest]);
+  payload_descriptor_fields(f, &wrapped, m); fputs("}\n", f); require(!fclose(f), "metadata formatting failed");
+  export_payloads(o->payload_output, &p, &wrapped, m); emit_result(&result, o->state_output);
+  free(result.data); free(p.selector.data); free(original.data); free(wrapped.data); return 0;
 }
 static int online_main(int argc, char **argv) {
   struct options o = { .action = argv[1] };
@@ -728,16 +838,17 @@ static int online_main(int argc, char **argv) {
     else if (!strcmp(name, "--installed-state")) field = &o.state;
     else if (!strcmp(name, "--state-output")) field = &o.state_output;
     else if (!strcmp(name, "--payload-dir")) field = &o.payload;
+    else if (!strcmp(name, "--payload-output-dir")) field = &o.payload_output;
     else if (!strcmp(name, "--target")) field = &o.target;
     else if (!strcmp(name, "--input")) field = &o.input;
     require(field && !*field, "unknown/duplicate interface option"); *field = value;
   }
   require(!(o.execute && (o.preview || o.read_only)), "write and read-only modes conflict");
   require(!strcmp(o.action, "status") || !strcmp(o.action, "probe") || !strcmp(o.action, "repack") ||
-          !strcmp(o.action, "restore") || !strcmp(o.action, "request"), "unknown command");
+          !strcmp(o.action, "restore") || !strcmp(o.action, "request") || !strcmp(o.action, "adopt"), "unknown command");
   /* A real wrapped file can exercise the same persistent CRC writer, without Android or fake block nodes. */
-  if (o.input) {
-    require(!strcmp(o.action, "request") && !o.device && !o.slot && !o.policy && !o.state && !o.execute,
+  if (o.input && !strcmp(o.action, "request")) {
+    require(!o.device && !o.slot && !o.policy && !o.state && !o.execute && !o.payload_output,
             "file request uses --input/--output, never --execute or device identities");
     struct blob b = load(o.input, BOOT_BYTES); struct boot boot = parse_boot(&b, 0); const unsigned char *m = find_split(&b, &boot);
     uint64_t bytes, records; struct blob original = restore(&b, &boot, m, &bytes, &records); free(original.data);
@@ -751,6 +862,11 @@ static int online_main(int argc, char **argv) {
   }
   struct json policy = {0}; read_json(o.policy, &policy); check_policy(&policy); int ready = policy_ready(&policy);
   require(!o.require_ready || ready, "module remains unverified: actual online writes, persistent request handling and stock Recovery evidence are required");
+  if (o.input) {
+    require(!strcmp(o.action, "adopt"), "policy file input mode only supports adopt");
+    int result = file_adopt(&o, &policy); free(policy.text.data); return result;
+  }
+  require(!o.payload_output || !strcmp(o.action, "adopt"), "only adopt exports payloads");
   require(!o.execute || !strcmp(o.action, "repack") || !strcmp(o.action, "restore") || !strcmp(o.action, "request"), "this command is read-only");
   if (!strcmp(o.action, "status") && !o.device) {
     printf("{\"status\":\"%s\",\"interface_version\":1,\"module_ready\":%s,\"online_interface_implemented\":true,"
@@ -765,7 +881,16 @@ static int online_main(int argc, char **argv) {
   if (m) original = restore(&s.bytes, &s.boot, m, &catalog_bytes, &records);
   else require(s.boot.avb.hash_matches, "stock BOOT data hash mismatch");
   require(!o.reject_wrapped || !m, "active BOOT is already wrapped");
-  if (!strcmp(o.action, "repack")) {
+  if (!strcmp(o.action, "adopt")) {
+    require(m && !o.execute && !o.output && !o.source && !o.payload && !o.target && o.state_output,
+            "adopt needs a wrapped current BOOT and state-output; BOOT is read-only");
+    struct components p = check_wrapper_policy(&policy, &s.bytes, &original, m);
+    if (o.state) { struct json state = {0}; read_json(o.state, &state); check_owned(&state, &s, m); free(state.text.data); }
+    check_snapshot_current(&o, &s);
+    export_payloads(o.payload_output, &p, &s.bytes, m);
+    struct blob state = installation_state(&s, &s.bytes, m, "ADOPTED_READ_ONLY_VERIFIED");
+    finish_state(o.state_output, &state); emit_result(&state, NULL); free(state.data); free(p.selector.data);
+  } else if (!strcmp(o.action, "repack")) {
     require(!m && o.execute && o.source && o.state_output && o.payload && !o.output && !o.state, "repack needs unwrapped source metadata, payloads, state output and --execute");
     struct json source = {0}; read_json(o.source, &source); check_identity(&source, &s); string_matches(&source, 0, "source_sha256", s.sha);
     struct blob sel = payload(&policy, o.payload, "selector.bin", 65536), shim = payload(&policy, o.payload, "shim.bin", 1024 * 1024);
@@ -828,7 +953,7 @@ static int online_main(int argc, char **argv) {
 
 int main(int argc, char **argv) {
   require(!atexit(reset_ro), "cannot register BOOT readonly cleanup");
-  int online = argc >= 2 && !strcmp(argv[1], "request");
+  int online = argc >= 2 && (!strcmp(argv[1], "request") || !strcmp(argv[1], "adopt"));
   for (int i = 2; i < argc; i++)
     if (!strcmp(argv[i], "--boot-device") || !strcmp(argv[i], "--policy")) online = 1;
   if (online) return online_main(argc, argv);
@@ -838,8 +963,10 @@ int main(int argc, char **argv) {
          "piano-boot-repack repack --input STOCK.img --output NEW.img --selector FILE\n"
          "  --selector-memory-bytes N --selector-metadata-offset N --shim FILE --fd FILE --app FILE\n"
          "piano-boot-repack restore --input WRAPPED.img --output RESTORED.img\n"
+         "piano-boot-repack adopt --input WRAPPED.img --policy FILE [--state-output FILE] [--payload-output-dir DIR]\n"
          "piano-boot-repack request --input WRAPPED.img --output NEW.img --target android|uefi|linux|setup\n"
          "Android: probe/status --boot-device /dev/block/by-name/boot_a|boot_b --active-slot _a|_b --policy FILE\n"
+         "Android: adopt --boot-device ... --active-slot ... --policy FILE --state-output FILE [--payload-output-dir DIR]\n"
          "repack/restore/request online writes require --execute and current-ROM metadata/state.\n"
          "No inactive-slot, Recovery, vbmeta, GPT, OTA automation or automatic reboot.");
     return 0;
@@ -864,7 +991,7 @@ int main(int argc, char **argv) {
   if (!strcmp(action, "status")) {
     require(argc == 2, "status policy mode requires --policy");
     puts("{\"status\":\"ONLINE_INTERFACE_NOT_DEVICE_VERIFIED\",\"wrapper\":\"SPLITv1+RSTRv1\","
-         "\"commands\":[\"status\",\"probe\",\"repack\",\"restore\",\"request\"],\"device_execution_ready\":false,"
+         "\"commands\":[\"status\",\"probe\",\"adopt\",\"repack\",\"restore\",\"request\"],\"device_execution_ready\":false,"
          "\"online_interface_implemented\":true,\"request_policy\":\"persistent-until-changed\","
          "\"ota_automatic\":false,\"full_partition_backup\":false}"); return 0;
   }

@@ -16,7 +16,7 @@ TESTS = ('lossless_roundtrip', 'current_source_guard', 'active_slot_guard',
          'payload_tamper_rejected', 'request_owned_wrapper_only', 'request_persistent_reselection_crc',
          'missing_request_stock_passthrough')
 DEVICE_PROOFS = ('device_passthrough_verified', 'request_handling_verified', 'standard_recovery_preserved')
-SOURCE_FILES = ('module.prop', 'common.sh', 'customize.sh', 'uninstall.sh',
+SOURCE_FILES = ('module.prop', 'common.sh', 'customize.sh', 'uninstall.sh', 'manager.sh',
                 'native-interface.json', 'skip_mount', 'action.sh',
                 'webroot/index.html', 'webroot/style.css', 'webroot/main.js',
                 'META-INF/com/google/android/update-binary',
@@ -149,7 +149,7 @@ def native_proof(tool, manifest, payloads, selector):
     require(proof.get('schema_version') == 1 and proof.get('interface_version') == 1,
             'Unsupported native proof/interface')
     checked(data, proof.get('executable'), 'Native tool')
-    require(set(proof.get('commands', [])) == set(COMMANDS), 'Native interface commands are incomplete')
+    require(set(COMMANDS).issubset(proof.get('commands', [])), 'Native interface commands are incomplete')
     require(proof.get('request_policy') == 'persistent-until-changed', 'Native proof must describe persistent requests')
     expected = {name: digest(raw) for name, raw in {**payloads, 'selector.bin': selector}.items()}
     require(proof.get('payload_sha256') == expected, 'Native proof belongs to different payloads')
@@ -212,7 +212,47 @@ def inspect(args):
     return report, payloads, native
 
 
+def package_installed(args):
+    """Package a manager for an already installed, validated shared core."""
+    folder = args.installed_core.resolve()
+    descriptor = read_json(folder / 'payload-descriptor.json')
+    native = read_file(args.native_tool)
+    request = read_file(args.request_tool)
+    arm64_executable(native)
+    arm64_executable(request)
+    policy = read_json(args.native_manifest)
+    checked(native, policy['tool'], 'Native tool')
+    entries = {name: read_file(ROOT / 'android/module' / name) for name in SOURCE_FILES}
+    for name in ('selector.bin', 'shim.bin', 'fd.bin', 'app.bin'):
+        data = read_file(folder / name)
+        checked(data, policy['payloads'][name], name)
+        entries['payload/' + name] = data
+    entries['bin/piano-boot-repack'] = native
+    entries['bin/piano-boot-request'] = request
+    entries['policy.json'] = (json.dumps(policy, indent=2) + '\n').encode()
+    entries['installed-core.json'] = (json.dumps(descriptor, indent=2) + '\n').encode()
+    entries['licenses/COPYING.libmd'] = read_file(ROOT / 'upstream/simple-init/libs/libmd/COPYING')
+    output = args.output.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(output, 'x', zipfile.ZIP_DEFLATED) as archive:
+        for name, data in sorted(entries.items()):
+            item = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
+            item.create_system = 3
+            executable = name.endswith('.sh') or name.startswith('bin/') or name.endswith('/update-binary')
+            item.external_attr = (0o100755 if executable else 0o100644) << 16
+            item.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(item, data)
+    return {'artifact_kind': 'installed-core-module', 'zip': str(output),
+            'zip_sha256': digest(output.read_bytes()), 'stock_kernel_bundled': False,
+            'installation': 'read-only adoption of matching current BOOT',
+            'ota': 'repack current active-slot stock BOOT using the same core'}
+
+
 def package(args):
+    if getattr(args, 'installed_core', None):
+        require(args.native_tool and args.native_manifest and args.request_tool and args.output,
+                'Installed core needs native tool/policy, request tool and output')
+        return package_installed(args)
     report, payloads, native = inspect(args)
     if args.inspect:
         return report
@@ -283,6 +323,8 @@ def package(args):
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument('--product', type=Path, default=ROOT / 'artifacts/product')
+    result.add_argument('--installed-core', type=Path, help='Validated adopt-exported payload directory')
+    result.add_argument('--request-tool', type=Path)
     result.add_argument('--selector', type=Path)
     result.add_argument('--selector-manifest', type=Path)
     result.add_argument('--native-tool', type=Path)

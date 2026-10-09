@@ -2,21 +2,22 @@
   "schema_version": 1,
   "interface_version": 1,
   "tool": "piano-boot-repack",
-  "implementation_status": "ONLINE_INTERFACE_IMPLEMENTED_NOT_DEVICE_VERIFIED",
+  "implementation_status": "ONLINE_INTERFACE_WITH_INSTALLED_CORE_HELPER",
   "device_passthrough_verified": false,
   "request_handling_verified": false,
   "standard_recovery_preserved": false,
-  "webui_bridge_verified": false,
+  "webui_bridge_verified": true,
   "partition_execution_ready": false,
   "commands": {
     "status": "Read-only policy/tool/current-owned-wrapper status. --require-ready requires the actual online-write tests, Android passthrough, persistent re-selection/CRC and standard Recovery evidence; source implementation does not set these proofs.",
     "probe": "Read only active BOOT and current Android identity. Reject unknown headers, nested wrappers, malformed layout, slot changes and incompatible GKI. Emit bounded reconstruction metadata, never a whole stock BOOT copy.",
     "repack": "Extract the active current-ROM GKI, embed the explicit same-product selector/BootShim/FD/APP and SPLITv1+RSTRv1. --execute re-reads source hash, slot, ROM and bootimage property independently, writes only exact active BOOT then fsyncs and verifies complete readback. No inactive-slot, REC, vbmeta or GPT write.",
     "restore": "Verify the currently active wrapper belongs to the same current ROM and source identity. Reconstruct the original kernel/header/footer from embedded original bytes and metadata; verify exact original-image SHA before writing/readback. Refuse an OTA or changed slot; never restore a historical ROM image.",
-    "request": "Preview or, with --execute, update only one older/invalid owned NEXTv1 page using shared BootRequest CRC and generation validation, fsync and verify complete BOOT readback. The route persists until another explicit selection (including Android target 0); status never consumes it. No misc/PMIC write or automatic reboot."
+    "request": "Preview or, with --execute, update only one older/invalid owned NEXTv1 page using shared BootRequest CRC and generation validation, fsync and verify complete BOOT readback. The route persists until another explicit selection (including Android target 0); status never consumes it. No misc/PMIC write or automatic reboot.",
+    "adopt": "Read-only recognition of an already wrapped active BOOT with exactly matching selector/BootShim/FD/APP. Validate lossless stock reconstruction and normalized wrapper identity, recheck active-slot Android identity, then save installation state. Reject --execute; no BOOT write."
   },
-  "entry_policy": "Without a valid owned request, NORMAL and REC pass through to the current ROM GKI. The persistent target can be changed to Android/UEFI/Linux/setup using the two NEXTv1 pages after the original Image span. The current source implements active-slot-only online guards and lossless RSTRv1 restore; Android write/boot/restore and standard Mi Recovery remain device-unverified. sunuefi.boot=uefi is a host diagnostic override.",
-  "webui": "KernelSU webroot and Magisk action.sh provide bounded status/preview/request entry points. An actual manager bridge and device evidence are still required before WebUI buttons are enabled; no root-command strings or automatic reboot are embedded in JavaScript.",
+  "entry_policy": "A valid owned persistent request selects Android, UEFI menu or the installed Stable Linux entry; ordinary boots reuse that selection until another explicit change. Standard Recovery takes priority and passes through to the current ROM GKI. The early selector does not yet provide a volume-key override of the saved Android route. Setup target 3 exists in the native format but is not exposed by the helper.",
+  "webui": "Installed-core helper provides Android/UEFI radio selection and one save-and-reboot action, with Chinese and English text. It uses the official KernelSU WebUI exec bridge through bounded action.sh operations. Opening the page uses quick-status; Check boot requests a complete read-only native status. UEFI entries are returned by the backend: menu plus Linux only when the matching Stable Linux boot file and ESP/root pair exist. Arbitrary ESP entries are not selectable yet. The manager Action button without arguments prints a plain-language summary and never reboots.",
   "reconstruction": {
     "wrapper_magic": "SUNUEFI-SPLITv1",
     "storage": "One original GKI, full original BOOT/GKI headers and nonzero tail blocks with offsets are retained in SPLITv1+RSTRv1; zeros are reconstructed and original complete BOOT SHA256 is checked. Online installation state binds current ROM, independent bootimage property, actual footer fingerprint, active BOOT node/rdev and the immutable wrapper hash with only its two NEXT pages normalized. Request changes intentionally need not match the wrapper AVB data hash.",
@@ -64,7 +65,8 @@
       "probe",
       "repack",
       "restore",
-      "request"
+      "request",
+      "adopt"
     ],
     "wrapper_magic": "SUNUEFI-SPLITv1",
     "restore_catalog_magic": "SUNUEFI-RSTRv1",
@@ -72,6 +74,23 @@
     "details": "docs/devel/android-boot-repack.md"
   },
   "request_policy": "persistent-until-changed",
-  "package_readiness": "A validation-candidate ZIP may contain the real same-product payloads and tool, but its installer keeps native/device readiness checks and refuses BOOT writes. A production module requires actual same-payload qualification.",
-  "root_preservation": "Dynamic repack retains the current raw ARM64 GKI bytes, including compatible KernelSU code, and leaves init_boot/vendor_boot/REC/vbmeta untouched. Unsupported current-BOOT layout or AVB metadata is refused; this is not a replacement CI kernel."
+  "package_readiness": "Installed-core helper 0.2.0 packages matching adopt-exported payloads and tools for an already installed shared BOOT. Its installation is read-only and has been installed and activated in SukiSU. The independent first-install package retains --require-ready and its same-payload native/device proof requirements; incomplete proof flags remain false, and a candidate ZIP does not waive those requirements.",
+  "root_preservation": "Dynamic repack retains the current raw ARM64 GKI bytes, including compatible KernelSU code, and leaves init_boot/vendor_boot/REC/vbmeta untouched. Unsupported current-BOOT layout or AVB metadata is refused; this is not a replacement CI kernel.",
+  "qualification_scope": "Top-level device proof flags belong to the separately gated first-install package. Installed-core helper use does not set or replace those proofs.",
+  "installed_core_helper": {
+    "version": "0.2.0",
+    "installation": "Read-only adopt of a matching existing shared BOOT; not a first UEFI installation.",
+    "verified_manager": "SukiSU",
+    "webui_bridge_verified": true,
+    "manager_action": "Plain-language read-only summary, no JSON dump or restart.",
+    "quick_status": "Read owned request pages and read-only check of the actual EFI/Piano/stable/boot.img entry; does not hash the whole BOOT.",
+    "check_boot": "Complete read-only native status; does not silently create installation state.",
+    "switch": "Guarded persistent request write followed by ordinary reboot. Supported helper targets: android, uefi and installed Stable Linux.",
+    "setup_available": false,
+    "reinstall_existing_wrapper": "Read-only adopt of the matching wrapper; no nested repack.",
+    "reinstall_after_ota": "Probe and repack supported current active-slot stock BOOT using current-ROM GKI and the same packaged core; restore saved preference. No automatic OTA hook or inactive-slot write.",
+    "ota_repack_device_verified": false,
+    "uninstall": "Remove helper only. Existing BOOT and persistent route remain unchanged.",
+    "automatic_partition_operations": false
+  }
 }

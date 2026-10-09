@@ -1,6 +1,10 @@
 #!/system/bin/sh
 # Uninstallation may restore only an intact wrapper belonging to this exact current ROM.
 MODPATH=${0%/*}
+if [ -f "$MODPATH/installed-core.json" ]; then
+  echo "已移除引导助手，BOOT 保持原样。"
+  exit 0
+fi
 ui_print() { echo "$*"; }
 . "$MODPATH/common.sh"
 [ -f "$MODPATH/module-policy.sh" ] && [ -f "$MODPATH/install-state.json" ] || {

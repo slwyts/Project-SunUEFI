@@ -1,6 +1,19 @@
 #!/system/bin/sh
 # No argument is a read-only status action for Magisk's module Action button.
 MODPATH=${0%/*}
+if [ -f "$MODPATH/installed-core.json" ]; then
+  if [ "$#" = 0 ]; then
+    exec /system/bin/sh "$MODPATH/manager.sh" summary
+  fi
+  exec /system/bin/sh "$MODPATH/manager.sh" "$@"
+fi
+if [ "$#" = 0 ]; then
+  case "${PIANO_LANG:-$(getprop persist.sys.locale)}" in
+    en*) echo 'SunUEFI Boot Helper'; echo 'Open WebUI on the module card to view or change boot settings.' ;;
+    *) echo 'SunUEFI 引导助手'; echo '请点击模块卡片上的“打开 WebUI”查看或更改启动设置。' ;;
+  esac
+  exit 0
+fi
 ui_print() { echo "$*" >&2; }
 operation=${1:-status}
 target=${2:-}
