@@ -38,9 +38,11 @@ Android 轻捏已经捕获到真实 `02 6e`／`02 00` Report2，与 `KEY_F19` �
 
 ## 构建与校准打包入口
 
-现有 `tools/build_release_helpers.py` 与 `tools/build_piano_runtime_helpers.py` 编译单文件 C runtime；这个多文件 C++ 核心尚未接入默认构建。独立 `Makefile` 已能生成库和离线工具；下一步应由两者共用一处 pen 编译函数，调用这一构建入口：C 编译现有 frame 校验器，C++20 编译 core/decoder/offline，再生成供同一 touch owner 链接的库和离线工具。不要再加 systemd unit。`runtime.stage()` 的文件列表与 manifest 一起更新，rootfs 继续从现有 runtime bundle 安装。
+`tools/build_release_helpers.py` 与 `tools/build_piano_runtime_helpers.py` 已共用 `build_pen_core()`，从源码副本调用这里的 Makefile。默认 native runtime bundle 包含 `/usr/bin/piano-pen-offline`，以及 Apache-2.0 许可和来源说明。编译清单记录 C／C++ 源码、头文件、Makefile、实际工具链和目标静态 C++ 库；离线工具是 ARM64 静态程序，构建不需要原厂 ini。
 
-原生 ELF 不能放进现有 `Architecture: all` 配置包。`tools/package_bsp.py` 当前只接受配置文件；本地编译程序继续放在 native runtime 层。ini 本身是架构无关数据，但需要作为明确的原厂输入单独登记，安装到 `/usr/share/piano/pen/calibration/`。构建应显式接收含 BOE／CSOT 两份实际 ini 的输入目录，记录 ROM 版本、来源及文件摘要，不能默认读取某台开发电脑的 `private/` 路径。当前公开 `piano-firmware` 输入有触控固件 bin，但没有这两份 ini；本地和 CI 必须使用同一份明确的校准输入，不能各自从隐藏目录补文件。这些打包接线尚未实现。
+`libpiano-pen-core.a` 留在构建目录，供以后链接到现有触控进程，不安装进系统。当前触控服务的默认行为没有改变，没有新增 systemd unit，也没有自动开启绘画输入。rootfs 通过现有 `runtime.stage()` 安装工具并保留来源记录。
+
+原生 ELF 不能放进现有 `Architecture: all` 配置包。`tools/package_bsp.py` 当前只接受配置文件；原生程序放在 native runtime 层。ini 本身是架构无关数据，但需要作为明确的原厂输入单独登记，安装到 `/usr/share/piano/pen/calibration/`。构建应显式接收含 BOE／CSOT 两份实际 ini 的输入目录，记录 ROM 版本、来源及文件摘要，不能默认读取某台开发电脑的 `private/` 路径。当前公开 `piano-firmware` 输入有触控固件 bin，但没有这两份 ini；本地和 CI 必须使用同一份明确的校准输入，不能各自从隐藏目录补文件。校准数据的自动提取与打包尚未接入；缺失校准时不会自动使用另一面板的配置。
 
 ## 保留的原厂算法 worker
 

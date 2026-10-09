@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import struct
 import subprocess
@@ -29,6 +30,12 @@ PUBLIC_SOURCES={
  'piano-pd-locator':('initramfs/pd-locator/piano-pd-locator.c','8de9d2840a896b4bd6c90bd4b124479d2f142e9e85420f2022894bb32fc8dde8','usr/sbin/piano-pd-locator')}
 BSP_SOURCES={
  'piano-camera-ctl':('linux/userspace/piano-camera-ctl.c',None,'usr/bin/piano-camera-ctl')}
+PEN_SOURCE_FILES=('Makefile','piano-pen-frame.c','piano-pen-frame.h',
+ 'piano-pen-core.cpp','piano-pen-core.h','piano-pen-decoder.cpp',
+ 'piano-pen-decoder.hpp','piano-pen-offline.cpp','Apache-2.0.txt','OPEN_CORE_ORIGIN.txt')
+PEN_DOCUMENTS=('Apache-2.0.txt','OPEN_CORE_ORIGIN.txt')
+PEN_RUNTIME_PATHS={'usr/bin/piano-pen-offline'}|{
+ 'usr/share/doc/piano-pen-offline/'+name for name in PEN_DOCUMENTS}
 TOOL_PINS={'clang':'939a882527432ec23b094c289e7f170bf2d6ec282e74dde75e31b08602fa3eae',
  'ld.lld':'57b6c64db534793f05918a6e935c900e9938bd64d0ac95933285930b568387ea',
  'llvm-strip':'629062ddc62f936d7f07418099d202850e18b222217a85f419552fa25d3eb4ec'}
@@ -152,11 +159,80 @@ def verify_elf(path):
     return {'bytes':len(raw),'sha256':sha(path),'machine':183,'static_no_pt_interp':True}
 
 
+def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None):
+    """Build the same offline C/C++ sources in both runtime pipelines; no ini input."""
+    output=Path(output).resolve();env=os.environ.copy() if env is None else env
+    source=ROOT/'linux/userspace/pen';copied=output/'pen-source';built=output/'pen-core'
+    copied.mkdir();built.mkdir()
+    inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
+    for name in PEN_SOURCE_FILES:
+        original=source/name;inputs[str(original)]=sha(original)
+        shutil.copyfile(original,copied/name)
+    compiler=Path(cc_flags[0]).resolve();flags=list(map(str,cc_flags[1:]))
+    if 'clang' in compiler.name:
+        cxx=[str(compiler),'--driver-mode=g++',*flags]
+    else:
+        paired=compiler.with_name(re.sub(r'gcc(?=(?:-\d+)?$)','g++',compiler.name)) if re.search(r'gcc(?:-\d+)?$',compiler.name) else None
+        if paired and paired.is_file():
+            cxx=[str(paired),*flags]
+        else:
+            clang=shutil.which('clang',path=env.get('PATH'))
+            if not clang:raise ValueError('Pen core needs the matching G++ compiler or Clang with ARM64 C++ development files')
+            cxx=[clang,'--driver-mode=g++','--target=aarch64-linux-gnu']
+            if sysroot:cxx+=['--sysroot='+str(sysroot),'--gcc-toolchain='+str(Path(sysroot)/'usr')]
+            cxx += [f for f in flags if not f.startswith(('--sysroot=','--gcc-toolchain=','--target='))]
+    archiver=shutil.which('llvm-ar',path=env.get('PATH')) or shutil.which('ar',path=env.get('PATH'))
+    make=shutil.which('make',path=env.get('PATH'))
+    if not archiver or not make:raise ValueError('Pen core needs make and llvm-ar or ar')
+    toolchain={}
+    for name,command in (('cc',[str(compiler)]),('cxx',cxx[:2] if '--driver-mode=g++' in cxx else cxx[:1]),('ar',[archiver]),('make',[make])):
+        path=Path(command[0]).resolve();inputs[str(path)]=sha(path)
+        toolchain[name]={'path':str(path),'sha256':sha(path),
+                         'version':capture([*command,'--version'],env=env).splitlines()[0]}
+    # Record the selected target static C++ library and its real headers. Clang
+    # uses the supplied GNU sysroot, rather than the host's C++ runtime.
+    for library in ('libstdc++.a','libgcc.a','libgcc_eh.a'):
+        selected=Path(capture([*cxx,'-print-file-name='+library],env=env))
+        if not selected.is_file():raise ValueError('ARM64 static C++ sysroot missing '+library)
+        selected=selected.resolve();inputs[str(selected)]=sha(selected)
+        toolchain[library]={'path':str(selected),'sha256':sha(selected)}
+    if sysroot:
+        for folder in (Path(sysroot)/'usr/include/c++',Path(sysroot)/'usr/include/aarch64-linux-gnu/c++'):
+            inputs.update({str(folder/name):digest for name,digest in tree_files(folder).items()})
+    command=[make,'-C',copied,'OUT='+str(built),
+             'CC='+shlex.join([str(compiler),*flags]),'CXX='+shlex.join(cxx),
+             'AR='+archiver,'CPPFLAGS=','CFLAGS=','CXXFLAGS=',
+             'LDFLAGS=-static','LDLIBS=-lm']
+    log=output/'pen-build.log';run(command,env,log)
+    binary=built/'piano-pen-offline';item=verify_elf(binary)
+    help_result=subprocess.run(([str(emulator)] if emulator else [])+[str(binary),'--help'],
+                               env=env,capture_output=True,text=True,timeout=10,check=True)
+    item.update(file=str(binary.relative_to(output)),mode=0o755,
+                source_kind='project-pen-offline',source_path='linux/userspace/pen',
+                source_files={str(Path(path).relative_to(ROOT)):digest for path,digest in inputs.items()
+                              if Path(path).is_relative_to(source)},
+                compile_exit_code=0,help_exit_code=help_result.returncode,help_no_device_access=True)
+    files={'usr/bin/piano-pen-offline':item}
+    for name in PEN_DOCUMENTS:
+        path=copied/name
+        files['usr/share/doc/piano-pen-offline/'+name]={
+            'file':str(path.relative_to(output)),'bytes':path.stat().st_size,'sha256':sha(path),'mode':0o644}
+    for path,digest in inputs.items():
+        if sha(Path(path))!=digest:raise ValueError('Pen build input changed: '+path)
+    archive=built/'libpiano-pen-core.a'
+    record={'inputs':inputs,'toolchain':toolchain,'build_command':list(map(str,command)),
+            'archive':{'file':str(archive.relative_to(output)),'bytes':archive.stat().st_size,
+                       'sha256':sha(archive),'installed':False},
+            'ini_required_at_build':False,'device_operation':False,'drawing_input_enabled':False}
+    (output/'pen-manifest.json').write_text(json.dumps(record,indent=2)+'\n')
+    return files,record
+
+
 def stage(output,destination):
     if not destination.resolve().is_relative_to(ROOT/'build/distros'):raise ValueError('Stage only into a derived workspace distro')
     manifest=json.loads((output/'manifest.json').read_text());files=manifest['runtime_files'];release=manifest['kernel']['release']
     if not re.fullmatch(r'[a-zA-Z0-9_.+-]{1,128}',release):raise ValueError('Unsafe runtime kernel release')
-    expected={row[2]for row in (PUBLIC_SOURCES|BSP_SOURCES).values()}|{'usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin','usr/lib/modules/'+release+'/updates/v4l2loopback.ko'}
+    expected={row[2]for row in (PUBLIC_SOURCES|BSP_SOURCES).values()}|PEN_RUNTIME_PATHS|{'usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin','usr/lib/modules/'+release+'/updates/v4l2loopback.ko'}
     if set(files)!=expected:raise ValueError('Runtime bundle source/install paths differ from the exact contract')
     if not(destination/'usr/lib/modules'/release/'kernel').is_dir():raise ValueError('Stage the matching full kernel module tree first')
     # Prevalidate the entire generation before changing any destination file.
@@ -168,7 +244,7 @@ def stage(output,destination):
     for name,row in files.items():
         target=destination/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(output/row['file'],target);target.chmod(row['mode'])
     subprocess.run(['depmod','-b',str(destination),'-m','/usr/lib/modules',manifest['kernel']['release']],check=True)
-    record={'status':'REAL_RUNTIME_STAGED_NOT_DEVICE_TESTED','bundle_manifest_sha256':sha(output/'manifest.json'),'kernel':manifest['kernel'],'files':files,'device_tested':False}
+    record={'status':'REAL_RUNTIME_STAGED_NOT_DEVICE_TESTED','bundle_manifest_sha256':sha(output/'manifest.json'),'kernel':manifest['kernel'],'files':files,'pen_core':manifest['pen_core'],'device_tested':False}
     p=destination/'usr/share/piano-provenance/runtime-helpers.json';p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(record,indent=2)+'\n')
     return record
 
@@ -240,6 +316,8 @@ def build(args):
         if name=='piano-touch-view':row.update(touch_provenance)
         if name=='piano-camerad':row.update(camera_provenance)
         if name in BSP_SOURCES:row.update(source_kind='project-bsp',source_path=path)
+    pen_files,pen_record=build_pen_core(output,flags,sysroot,env,qemu)
+    files.update(pen_files);inputs.update(pen_record['inputs'])
     wrapper=output/'host-bin';wrapper.mkdir();exe=wrapper/'alsatplg';launch=[alsa['loader'],'--library-path',str(alsa_root/'usr/lib/x86_64-linux-gnu'),str(alsa_root/'usr/bin/alsatplg')]
     import shlex
     exe.write_text('#!/bin/sh\nexec '+shlex.join(launch)+' "$@"\n');exe.chmod(0o755);top_env=env.copy();top_env['PATH']=str(wrapper)+os.pathsep+top_env['PATH']
@@ -259,7 +337,7 @@ def build(args):
     for name,pin in inputs.items():
         if sha(Path(name))!=pin:raise ValueError('Runtime build input changed: '+name)
     kernel_identity(args.kernel_build.resolve(),source,args.kernel_commit,args.kernel_release)
-    manifest={'status':'RUNTIME_COMPILED_NOT_DEVICE_TESTED','public_commit':PUBLIC_COMMIT,'uapi_commit':UAPI_COMMIT,'uapi_sha256':UAPI_DIGEST,'macros_commit':MACROS_COMMIT,'v4l2_commit':LOOP_COMMIT,'kernel':identity,'inputs':inputs,'runtime_files':files,'hardware_verified':False,'device_operation':False,'known_topology_limit':'ALSA decoded config does not recompile vendor data; original public config matches known binary SHA and decodes successfully'}
+    manifest={'status':'RUNTIME_COMPILED_NOT_DEVICE_TESTED','public_commit':PUBLIC_COMMIT,'uapi_commit':UAPI_COMMIT,'uapi_sha256':UAPI_DIGEST,'macros_commit':MACROS_COMMIT,'v4l2_commit':LOOP_COMMIT,'kernel':identity,'inputs':inputs,'runtime_files':files,'pen_core':pen_record,'hardware_verified':False,'device_operation':False,'known_topology_limit':'ALSA decoded config does not recompile vendor data; original public config matches known binary SHA and decodes successfully'}
     (output/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     if args.stage_rootfs:stage(output,args.stage_rootfs.resolve())
     return manifest

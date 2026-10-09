@@ -161,6 +161,8 @@ CPU前缀仍不能交给完整 `parse_data_package`：该函数还读取真实�
 
 在仓库根目录运行 `make -C linux/userspace/pen`，生成 `build/pen-core/libpiano-pen-core.a` 与 `build/pen-core/piano-pen-offline`。C ABI 用于随后接入已有触控进程，离线工具不创建输入设备。BLE 时间戳必须采用 `CLOCK_BOOTTIME`，与 NTP记录的 `ktime_get_boottime()` 同源；不能在睡眠后混用 MONOTONIC 时间。选择原厂校准应以触控控制器的 LCD ID／实际工厂配置为依据，不能根据显示面板标签代选。当前触控 LCD ID为1，加载 BOE触控固件，即便显示链路采用 CSOT配置。
 
-默认 rootfs 尚未包含该核心。最小接线是在 `tools/build_piano_runtime_helpers.py` 添加共享 pen 编译函数，由 `tools/build_release_helpers.py` 复用上述 Makefile；`runtime.stage()` 同时登记程序和来源，rootfs继续安装同一 runtime bundle。静态库作为构建输入链接到原有触控进程，诊断 CLI按需安装；不新增后台服务或第二个 THP reader。`tools/stage_piano_ram_hardware.py` 继续只处理已有脚本与配置，不承担 C++编译。
+两个 runtime builder 已通过 `tools/build_piano_runtime_helpers.py` 中的 `build_pen_core()` 共用上述 Makefile。默认 native runtime bundle安装 `/usr/bin/piano-pen-offline`、Apache-2.0 许可与来源说明；manifest记录多文件源码、头文件、实际编译器和目标静态 C++ 库，`runtime.stage()`把来源记录一并放入 rootfs。构建不读取 ini或设备。Clang使用目标 GNU sysroot 的 C++ 开发文件；GCC优先使用配套 G++，缺失时使用已有 Clang与同一目标 sysroot。
 
-`tools/package_bsp.py` 当前是架构无关配置包，拒绝 ELF程序，原生程序应留在 runtime层。原厂 ini是架构无关数据，但当前公开 `piano-firmware` 只有触控固件 bin，没有这两份校准文件。构建应显式接收 BOE／CSOT校准输入及 ROM来源、文件摘要，安装到 `/usr/share/piano/pen/calibration/`，本地和 CI使用同样输入。不能默认取某台开发电脑的 `private/` 文件，或在缺失时静默套用另一面板的位置表。这一打包接线仍待实现。
+静态库作为构建输出保留，后续才能链接到原有触控进程；当前没有改变该进程的默认行为或启用绘画输入，也没有新增后台服务或第二个 THP reader。`tools/stage_piano_ram_hardware.py` 继续只处理已有脚本与配置，不承担 C++编译。
+
+`tools/package_bsp.py` 当前是架构无关配置包，拒绝 ELF程序，原生程序应留在 runtime层。原厂 ini是架构无关数据，但当前公开 `piano-firmware` 只有触控固件 bin，没有这两份校准文件。构建应显式接收 BOE／CSOT校准输入及 ROM来源、文件摘要，安装到 `/usr/share/piano/pen/calibration/`，本地和 CI使用同样输入。不能默认取某台开发电脑的 `private/` 文件，或在缺失时静默套用另一面板的位置表。校准数据的自动提取与打包仍待接入，离线工具可以先由调用者提供实际 ini使用。

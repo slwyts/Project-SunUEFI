@@ -88,6 +88,8 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
         if name in runtime.BSP_SOURCES:
             item.update(source_kind='project-bsp', source_path=relative)
         files[destination] = item
+    pen_files, pen_record = runtime.build_pen_core(output, flags, sysroot, emulator=emulator)
+    files.update(pen_files)
     run(['bash', public / 'scripts/build-topology.sh', macros, output / 'firmware'])
     topology = output / 'firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'
     if runtime.sha(topology) != runtime.TOPOLOGY_PIN:
@@ -114,7 +116,8 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
     if runtime.kernel_identity(kernel_build, source, commit, release) != identity:
         raise ValueError('Kernel source/ABI changed during runtime helper build')
     result = {'status': 'RUNTIME_COMPILED_NOT_DEVICE_TESTED', 'kernel': identity,
-        'public_commit': runtime.PUBLIC_COMMIT, 'runtime_files': files,
+        'public_commit': runtime.PUBLIC_COMMIT, 'runtime_files': files, 'pen_core': pen_record,
+        'producer': {'file': 'tools/build_release_helpers.py', 'sha256': runtime.sha(Path(__file__))},
         'uapi_sha256': uapi_digest, 'uapi_source_commit': commit, 'macros_commit': runtime.MACROS_COMMIT,
         'v4l2_commit': runtime.LOOP_COMMIT, 'hardware_verified': False,
         'toolchain': {'compiler': compiler, 'compiler_sha256': runtime.sha(Path(compiler)),
