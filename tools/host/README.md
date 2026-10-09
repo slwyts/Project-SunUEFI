@@ -41,6 +41,12 @@ notification subscription on exit and does not own the touch FIFO or generate
 input events. A successful response confirms control communication, not drawing
 support. See [pen protocol](../../docs/devel/piano-pen-protocol.md).
 
+`--send-dock-state` additionally reads the real `SW_PEN_INSERTED` switch from
+the Piano pen-dock driver and sends OEM `51 01` with detached=1/attached=0.
+It fails if the switch is unavailable instead of assuming the pen was removed.
+This sends one observed state; it is not a complete OEM initialization sequence
+or a persistent dock monitor. The dock driver is currently a separate candidate.
+
 `piano_gamma_probe.py` reads the current Mutter CRTCs and Gamma ramps by default.
 Explicit `--probe identity|warm --crtc ACTUAL_ID --backup NEW_FILE` requests a short
 standard Gamma change and restores the original ramps in `finally`. A failed

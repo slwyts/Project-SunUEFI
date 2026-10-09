@@ -6,7 +6,9 @@ Run on the tablet as root for --forward-stationary. This diagnostic does not
 pair a pen, read the touch FIFO, change scan mode, or create input devices.
 """
 import argparse
+import fcntl
 import json
+import os
 from pathlib import Path
 import signal
 import time
@@ -16,12 +18,36 @@ FE12 = '0000fe12-aa6c-462a-964a-7f2ed5b3e512'
 STATIONARY = Path('/proc/nvt_thp_pen_stationary')
 
 
+def dock_inserted():
+    """Read the driver's real EV_SW state; absence is an error, not detached."""
+    matches = []
+    for event in Path('/sys/class/input').glob('event*'):
+        try:
+            name = (event / 'device/name').read_text().strip()
+        except FileNotFoundError:
+            continue
+        if name == 'Xiaomi Piano Pen Dock':
+            matches.append(event)
+    if len(matches) != 1:
+        raise RuntimeError('expected one real Piano pen-dock input switch')
+    fd = os.open('/dev/input/' + matches[0].name, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        bits = bytearray(8)
+        # Linux EVIOCGSW(8); SW_PEN_INSERTED is bit 15.
+        fcntl.ioctl(fd, 0x8008451b, bits, True)
+        return bool(int.from_bytes(bits, 'little') & (1 << 15))
+    finally:
+        os.close(fd)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--address', required=True, help='connected pen Bluetooth address')
     parser.add_argument('--seconds', type=float, default=30)
     parser.add_argument('--screen-on', action='store_true', help='send OEM 61 01 01')
     parser.add_argument('--query-state', action='store_true', help='send OEM 52 00')
+    parser.add_argument('--send-dock-state', action='store_true',
+                        help='send OEM 51 01 with the actual SW_PEN_INSERTED state')
     parser.add_argument('--forward-stationary', action='store_true',
                         help='forward only actual D2/53 01 state to the NVT driver')
     args = parser.parse_args()
@@ -108,6 +134,11 @@ def main():
             command('610101')
         if args.query_state:
             command('5200')
+        if args.send_dock_state:
+            attached = dock_inserted()
+            # OEM Hall protocol: detached1 / attached0.
+            command('5101' + ('00' if attached else '01'))
+            emit('dock_forwarded', attached=attached, source='SW_PEN_INSERTED')
         emit('ready', forward_stationary=args.forward_stationary)
         deadline = time.monotonic() + args.seconds
         context = GLib.MainContext.default()
