@@ -1,0 +1,45 @@
+From: Project SunUEFI <source-preparation@example.invalid>
+Subject: [PATCH] drm/panel: prefer the validated Piano 120 Hz cold-start mode
+
+Factory Android pen-in-range captures use LCD 120 Hz, hand scan 60 Hz and
+pen scan 240 Hz. Linux pen frames have also been observed at a 120 Hz
+cold start, while the 144 Hz path and live refresh changes remain under
+investigation. Prefer that existing mode for the Piano board so the
+normal product does not require an ABI-specific replacement panel module.
+
+Identify the board through its root DT compatible. Do not force a panel
+vendor or remove modes; BOE and CSOT still use their own timing sequences.
+Other NT36532 boards retain their original first-mode preference.
+
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+@@ -198,7 +198,20 @@
+ {
+ 	struct nt36532 *ctx = to_nt36532(panel);
+ 	const struct panel_info *panel_info = ctx->panel_info;
++	unsigned int preferred = 0;
+ 	unsigned int i;
++
++	/* Piano's validated pen scan uses a 120 Hz cold-start display mode.
++	 * Keep every advertised mode and each panel vendor's own sequence.
++	 */
++	if (of_machine_is_compatible("xiaomi,piano")) {
++		for (i = 0; i < panel_info->num_modes; i++) {
++			if (drm_mode_vrefresh(&panel_info->modes[i]) == 120) {
++				preferred = i;
++				break;
++			}
++		}
++	}
+ 
+ 	for (i = 0; i < panel_info->num_modes; i++) {
+ 		struct drm_display_mode *mode;
+@@ -208,7 +221,7 @@
+ 			return -ENOMEM;
+ 
+ 		mode->type = DRM_MODE_TYPE_DRIVER;
+-		if (i == 0)
++		if (i == preferred)
+ 			mode->type |= DRM_MODE_TYPE_PREFERRED;
+ 
+ 		drm_mode_set_name(mode);

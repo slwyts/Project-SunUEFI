@@ -7,7 +7,7 @@
     "stable_source": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
     "stable_commit": "5fce161649b4d779d1b76d9fcd52dc77779774b8",
     "stable_version": "7.2.9",
-    "target_tree": "5eb99a2c0f6b016cd7034a044f16659643bd168c",
+    "target_tree": "a2dbc1bcd711ab24ba6ac611f9cdfc97e4e89eef",
     "cpu_model_overlay": "linux/dts/piano-cpu-model.dtso",
     "additional_dtb_overlays": [
       "linux/dts/piano-board-identity.dtso",
@@ -16,7 +16,13 @@
       "linux/dts/piano-camera-flash.dtso",
       "linux/dts/piano-camera-privacy-led.dtso"
     ],
-    "root_policy": "LABEL=PIANOROOT"
+    "root_policy": "LABEL=PIANOROOT",
+    "preferred_display_mode": {
+      "board_compatible": "xiaomi,piano",
+      "refresh_hz": 120,
+      "preserve_other_modes": true,
+      "panel_vendor": "auto"
+    }
   },
   "debian": {
     "source": "upstream/debian-piano-current",
