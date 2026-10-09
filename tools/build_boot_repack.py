@@ -156,9 +156,10 @@ def build(output, arch, compiler=None, sysroot=None):
     shutil.copy2(ROOT / 'android/native/jsmn-source.json', output / 'jsmn-source.json')
     record = {'schema_version': 1, 'interface_version': 1,
               'status': 'NATIVE_ONLINE_INTERFACE_BUILT_NOT_DEVICE_VERIFIED', 'arch': arch,
-              'commands': ['status', 'probe', 'adopt', 'repack', 'restore', 'request'], 'file_mode_only': False,
+              'commands': ['status', 'probe', 'adopt', 'repack', 'upgrade', 'restore', 'request'], 'file_mode_only': False,
               'read_only_adoption': True, 'adoption_policy_payload_matching': True,
               'adoption_full_stock_reconstruction': True, 'adoption_payload_export': True,
+              'core_upgrade_implemented': True, 'upgrade_preserves_stock_and_request': True,
               'wrapper': 'SPLITv1+RSTRv1', 'supported_boot_headers': [4],
               'compiler': cc, 'compiler_version': subprocess.check_output([cc, '--version'], env=env, text=True).splitlines()[0],
               'compile_command': [cc, *flags, *map(str, sources), '-o', str(binary)],

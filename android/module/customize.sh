@@ -4,13 +4,48 @@ PROPFILE=false
 POSTFSDATA=false
 LATESTARTSERVICE=true
 if [ -f "$MODPATH/installed-core.json" ]; then
+  [ "$BOOTMODE" = true ] || abort "请在正常启动的 Android 模块管理器中安装。"
+  [ "${ARCH:-}" = arm64 ] || abort "此模块需要 ARM64 Android。"
   . "$MODPATH/common.sh"
   piano_current_identity install || abort "当前 Android 未正常启动。"
   set_perm "$MODPATH/bin/piano-boot-repack" 0 0 0755
   set_perm "$MODPATH/bin/piano-boot-request" 0 0 0755
-  "$MODPATH/bin/piano-boot-repack" adopt --boot-device "$bootdev" --active-slot "$slot" \
-    --policy "$MODPATH/policy.json" --state-output "$MODPATH/install-state.json" > /dev/null ||
-    abort "没有找到与模块匹配的 SunUEFI 引导。"
+  repack="$MODPATH/bin/piano-boot-repack"
+  work="$MODPATH/.work"
+  mkdir -p "$work"
+  ui_print "正在识别当前 Android 引导。"
+  if grep -Eq '"generic_core"[[:space:]]*:[[:space:]]*true' "$MODPATH/installed-core.json"; then
+    "$repack" status --boot-device "$bootdev" --active-slot "$slot" --policy "$MODPATH/policy.json" > "$work/status.json" ||
+      abort "无法识别当前 BOOT，尚未写入。"
+    if grep -q '"wrapped":true' "$work/status.json"; then
+      if "$repack" adopt --boot-device "$bootdev" --active-slot "$slot" --policy "$MODPATH/policy.json"         --state-output "$MODPATH/install-state.json" > /dev/null 2> "$work/adopt.log"; then
+        ui_print "当前引导已是相同核心，保留现有启动选择。"
+      else
+        ui_print "正在更新 SunUEFI，保留当前 Android 内核和启动选择。"
+        # Manual BOOT installations may not have an old module record. The
+        # upgrade command validates and reconstructs the actual current carrier
+        # and rechecks its full source and device identity before writing.
+        "$repack" upgrade --boot-device "$bootdev" --active-slot "$slot" --policy "$MODPATH/policy.json"           --payload-dir "$MODPATH/payload" --state-output "$MODPATH/install-state.json" --execute > /dev/null ||
+          abort "引导更新未完成，请查看上面的原因。"
+      fi
+    else
+      ui_print "正在安装开机选择器，保留当前 Android 内核，默认进入 Android。"
+      "$repack" probe --boot-device "$bootdev" --active-slot "$slot"         --rom-fingerprint "$rom_fingerprint" --boot-fingerprint "$boot_fingerprint"         --policy "$MODPATH/policy.json" --output "$work/current.json" --reject-wrapped > /dev/null ||
+        abort "当前 BOOT 格式不受支持，尚未写入。"
+      "$repack" repack --boot-device "$bootdev" --active-slot "$slot"         --source-metadata "$work/current.json" --payload-dir "$MODPATH/payload"         --policy "$MODPATH/policy.json" --state-output "$MODPATH/install-state.json" --execute > /dev/null ||
+        abort "引导安装未完成，请查看上面的原因。"
+    fi
+  else
+    "$repack" adopt --boot-device "$bootdev" --active-slot "$slot"       --policy "$MODPATH/policy.json" --state-output "$MODPATH/install-state.json" > /dev/null ||
+      abort "没有找到与模块匹配的 SunUEFI 引导。"
+  fi
+  # Preserve the actual boot preference across module upgrades and later OTA
+  # stock-BOOT replacement; the installer never infers it from a stale UI.
+  choice=$("$MODPATH/bin/piano-boot-request" status --device "$bootdev") || abort "无法读取已安装引导的启动选择。"
+  selected=$(printf '%s' "$choice" | sed -n 's/.*"target":\([0-3]\).*/\1/p')
+  case "$selected" in 0) preferred=android ;; 1) preferred=uefi ;; 2) preferred=linux ;; 3) preferred=setup ;; *) abort "启动选择格式无效。" ;; esac
+  printf '%s\n' "$preferred" > "$MODPATH/.preferred-target"
+  rm -f "$work/current.json" "$work/status.json" "$work/adopt.log"
   set_perm_recursive "$MODPATH" 0 0 0755 0644
   set_perm "$MODPATH/bin/piano-boot-repack" 0 0 0755
   set_perm "$MODPATH/bin/piano-boot-request" 0 0 0755

@@ -255,9 +255,9 @@ def package_installed(args):
             item.external_attr = (0o100755 if executable else 0o100644) << 16
             item.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(item, data)
-    return {'artifact_kind': 'installed-core-module', 'zip': str(output),
+    return {'artifact_kind': 'android-product-module' if descriptor.get('generic_core') else 'installed-core-module', 'zip': str(output),
             'zip_sha256': digest(output.read_bytes()), 'stock_kernel_bundled': False,
-            'installation': 'read-only adoption of matching current BOOT',
+            'installation': 'current-ROM installation or core upgrade' if descriptor.get('generic_core') else 'read-only adoption of matching current BOOT',
             'ota': 'repack current active-slot stock BOOT using the same core'}
 
 

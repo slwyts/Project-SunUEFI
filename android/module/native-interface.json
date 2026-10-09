@@ -2,7 +2,7 @@
   "schema_version": 1,
   "interface_version": 1,
   "tool": "piano-boot-repack",
-  "implementation_status": "ONLINE_INTERFACE_WITH_INSTALLED_CORE_HELPER",
+  "implementation_status": "ONLINE_GENERIC_PRODUCT_MODULE",
   "device_passthrough_verified": false,
   "request_handling_verified": false,
   "standard_recovery_preserved": false,
@@ -14,7 +14,8 @@
     "repack": "Extract the active current-ROM GKI, embed the explicit same-product selector/BootShim/FD/APP and SPLITv1+RSTRv1. --execute re-reads source hash, slot, ROM and bootimage property independently, writes only exact active BOOT then fsyncs and verifies complete readback. No inactive-slot, REC, vbmeta or GPT write.",
     "restore": "Verify the currently active wrapper belongs to the same current ROM and source identity. Reconstruct the original kernel/header/footer from embedded original bytes and metadata; verify exact original-image SHA before writing/readback. Refuse an OTA or changed slot; never restore a historical ROM image.",
     "request": "Preview or, with --execute, update only one older/invalid owned NEXTv1 page using shared BootRequest CRC and generation validation, fsync and verify complete BOOT readback. The route persists until another explicit selection (including Android target 0); status never consumes it. No misc/PMIC write or automatic reboot.",
-    "adopt": "Read-only recognition of an already wrapped active BOOT with exactly matching selector/BootShim/FD/APP. Validate lossless stock reconstruction and normalized wrapper identity, recheck active-slot Android identity, then save installation state. Reject --execute; no BOOT write."
+    "adopt": "Read-only recognition of an already wrapped active BOOT with exactly matching selector/BootShim/FD/APP. Validate lossless stock reconstruction and normalized wrapper identity, recheck active-slot Android identity, then save installation state. Reject --execute; no BOOT write.",
+    "upgrade": "Restore and validate the actual old SPLITv1+RSTRv1 carrier, rebuild its canonical bytes, repack the current original GKI with the new module core, preserve the valid NEXT target with a new generation/CRC, then recheck live source/slot/ROM/device and write/read back only active BOOT. Optional old installed-state must match when supplied."
   },
   "entry_policy": "A valid owned persistent request selects Android, UEFI menu or the installed Stable Linux entry; ordinary boots reuse that selection until another explicit change. Standard Recovery takes priority and passes through to the current ROM GKI. The early selector does not yet provide a volume-key override of the saved Android route. Setup target 3 exists in the native format but is not exposed by the helper.",
   "webui": "Installed-core helper provides Android/UEFI radio selection and one save-and-reboot action, with Chinese and English text. It uses the official KernelSU WebUI exec bridge through bounded action.sh operations. Opening the page uses quick-status; Check boot requests a complete read-only native status. UEFI entries are returned by the backend: menu plus Linux only when the matching Stable Linux boot file and ESP/root pair exist. Arbitrary ESP entries are not selectable yet. The manager Action button without arguments prints a plain-language summary and never reboots.",
@@ -66,7 +67,8 @@
       "repack",
       "restore",
       "request",
-      "adopt"
+      "adopt",
+      "upgrade"
     ],
     "wrapper_magic": "SUNUEFI-SPLITv1",
     "restore_catalog_magic": "SUNUEFI-RSTRv1",
@@ -74,12 +76,12 @@
     "details": "docs/devel/android-boot-repack.md"
   },
   "request_policy": "persistent-until-changed",
-  "package_readiness": "Installed-core helper 0.2.0 packages matching adopt-exported payloads and tools for an already installed shared BOOT. Its installation is read-only and has been installed and activated in SukiSU. The independent first-install package retains --require-ready and its same-payload native/device proof requirements; incomplete proof flags remain false, and a candidate ZIP does not waive those requirements.",
+  "package_readiness": "The product pipeline builds a generic Android module from the same UEFI product and public ARM64 dependencies. Installer uses runtime source/device/layout validation. Legacy qualification booleans are not fabricated as passed.",
   "root_preservation": "Dynamic repack retains the current raw ARM64 GKI bytes, including compatible KernelSU code, and leaves init_boot/vendor_boot/REC/vbmeta untouched. Unsupported current-BOOT layout or AVB metadata is refused; this is not a replacement CI kernel.",
-  "qualification_scope": "Top-level device proof flags belong to the separately gated first-install package. Installed-core helper use does not set or replace those proofs.",
+  "qualification_scope": "Top-level qualification flags describe the legacy optional --require-ready interface; generic installation uses live layout, identity, source recheck and complete write/readback checks instead.",
   "installed_core_helper": {
-    "version": "0.3.0",
-    "installation": "Read-only adopt of a matching existing shared BOOT; not a first UEFI installation.",
+    "version": "0.4.0",
+    "installation": "Use supported current stock BOOT for first installation; adopt identical core; upgrade known validated previous core. Keep current GKI and Android data.",
     "verified_manager": "SukiSU",
     "webui_bridge_verified": true,
     "manager_action": "Plain-language read-only summary, no JSON dump or restart.",
@@ -87,7 +89,7 @@
     "check_boot": "Complete read-only native status; does not silently create installation state.",
     "switch": "Guarded persistent request write followed by ordinary reboot. Supported helper targets: android, uefi and installed Stable Linux.",
     "setup_available": false,
-    "reinstall_existing_wrapper": "Read-only adopt of the matching wrapper; no nested repack.",
+    "reinstall_existing_wrapper": "Read-only adoption when the installed core matches; module installation upgrades a different supported previous core.",
     "reinstall_after_ota": "Probe and repack supported current active-slot stock BOOT using current-ROM GKI and the same packaged core; restore saved preference. No automatic OTA hook or inactive-slot write.",
     "ota_repack_device_verified": false,
     "uninstall": "Remove helper only. Existing BOOT and persistent route remain unchanged.",

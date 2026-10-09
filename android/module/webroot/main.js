@@ -62,7 +62,7 @@ if (typeof document !== 'undefined') {
     $('details').replaceChildren();
     const target = status && status.request_target;
     const saved = target === 0 ? 'Android' : target > 0 ? 'UEFI · ' + destinationName(target === 2 ? 'linux' : target === 3 ? 'setup' : 'uefi') : t('unknown');
-    for (const [key,value] of [['slot', status && status.slot || t('unknown')],['savedRoute',saved],['version','0.3.0']]) {
+    for (const [key,value] of [['slot', status && status.slot || t('unknown')],['savedRoute',saved],['version','0.4.0']]) {
       const row = document.createElement('div'), label = document.createElement('dt'), text = document.createElement('dd');
       label.textContent = t(key); text.textContent = value; row.append(label,text); $('details').append(row);
     }
