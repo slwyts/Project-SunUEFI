@@ -9,11 +9,20 @@
   <script src="main.js" defer></script>
 </head>
 <body>
+<nav class="tabs" aria-label="SunUEFI" role="tablist">
+  <div class="rail-brand" aria-hidden="true"><img src="sun.svg" alt=""><span>SunUEFI</span></div>
+  <button id="tab-boot" role="tab" aria-selected="true" aria-controls="panel-boot" data-tab="boot"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v8m-5-5a8 8 0 1 0 10 0"/></svg></span><span data-i18n="tabBoot">启动</span></button>
+  <button id="tab-storage" role="tab" aria-selected="false" aria-controls="panel-storage" data-tab="storage" tabindex="-1"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="7" rx="2"/><rect x="4" y="14" width="16" height="7" rx="2"/><path d="M7 6h.1M7 17h.1m5-11h5m-5 11h5"/></svg></span><span data-i18n="tabStorage">存储</span></button>
+  <button id="tab-maintenance" role="tab" aria-selected="false" aria-controls="panel-maintenance" data-tab="maintenance" tabindex="-1"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4a6 6 0 0 0-7 7L3 16a3 3 0 0 0 4 4l5-5a6 6 0 0 0 8-7l-4 4-4-4 4-4z"/></svg></span><span data-i18n="tabMaintenance">维护</span></button>
+</nav>
 <main>
   <header class="page-header">
-    <div><p class="eyebrow" data-i18n="assistant">引导助手</p><h1>SunUEFI</h1></div>
+    <div><p class="eyebrow"><img src="sun.svg" alt="">SunUEFI</p><h1 id="page-title" data-i18n="tabBoot">启动</h1></div>
     <button id="language" class="language" aria-label="Switch language">EN</button>
   </header>
+
+
+  <div id="panel-boot" role="tabpanel" aria-labelledby="tab-boot">
   <div class="status-line"><span class="status-dot" aria-hidden="true"></span><span data-i18n="current">当前系统</span><strong>Android</strong><span id="health" class="health" data-i18n="reading">读取中</span></div>
   <section class="boot-card" aria-labelledby="choose-title">
     <h2 id="choose-title" data-i18n="choose">选择启动系统</h2>
@@ -25,15 +34,37 @@
     <p id="remember" class="hint" data-i18n="remember">以后开机沿用此选择；只选择不会立即生效。</p>
     <button id="restart" class="primary" disabled><span data-i18n="restart">保存并重启</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg></button>
   </section>
+  </div>
+  <div id="panel-storage" role="tabpanel" aria-labelledby="tab-storage" hidden>
+    <section class="boot-card storage-card"><div class="section-heading"><h2 data-i18n="storageTitle">独立存储分区</h2><button id="storage-refresh" class="quiet" data-i18n="refresh">刷新</button></div><div id="partition-list" class="partition-list"></div></section>
+    <section class="boot-card storage-card"><h2 data-i18n="flashTitle">安装或更新系统</h2>
+      <div class="image-choices">
+        <div class="image-choice"><div><strong data-i18n="espImage">ESP 镜像</strong><p id="source-esp" data-i18n="notSelected">尚未选择</p></div><button id="choose-esp" class="quiet" data-i18n="selectFile">选择本地镜像</button><input id="file-esp" type="file" accept=".img,application/octet-stream" hidden></div>
+        <div class="image-choice"><div><strong data-i18n="rootImage">root 镜像</strong><p id="source-root" data-i18n="notSelected">尚未选择</p></div><button id="choose-root" class="quiet" data-i18n="selectFile">选择本地镜像</button><input id="file-root" type="file" accept=".img,application/octet-stream" hidden></div>
+      </div>
+      <button id="storage-flash" class="primary" data-i18n="flash">安装所选镜像</button><p id="flash-reason" class="hint"></p>
+    </section>
+    <section class="boot-card storage-card"><h2 data-i18n="partitionTitle">分区管理</h2>
+      <div class="partition-tools">
+        <button id="storage-create" class="tool"><span class="tool-copy"><strong data-i18n="create">创建独立分区</strong><small id="create-reason"></small></span><span class="chevron" aria-hidden="true">›</span></button>
+        <button id="storage-resize" class="tool"><span class="tool-copy"><strong data-i18n="resize">调整 root 容量</strong><small id="resize-reason"></small></span><span class="chevron" aria-hidden="true">›</span></button>
+      </div>
+      <details class="advanced"><summary data-i18n="advanced">高级操作</summary><button id="storage-delete" class="danger" data-i18n="delete">删除并归还 Android 空间</button><p id="delete-reason" class="hint"></p></details>
+    </section>
+  </div>
+  <div id="panel-maintenance" role="tabpanel" aria-labelledby="tab-maintenance" hidden>
   <section class="tools" aria-labelledby="tools-title"><h2 id="tools-title" data-i18n="tools">引导维护</h2>
     <div class="tool-list">
       <button id="check" class="tool"><span class="tool-symbol" aria-hidden="true">✓</span><span class="tool-copy"><strong data-i18n="check">检查引导</strong><small data-i18n="checkDesc">检查安装状态和启动选择</small></span><span class="chevron" aria-hidden="true">›</span></button>
       <button id="reinstall" class="tool"><span class="tool-symbol" aria-hidden="true">↻</span><span class="tool-copy"><strong data-i18n="reinstall">重新安装引导</strong><small data-i18n="reinstallDesc">HyperOS 更新后使用</small></span><span class="chevron" aria-hidden="true">›</span></button>
     </div>
   </section>
+  </div>
+  <button id="storage-reboot" class="primary" data-i18n="storageReboot" hidden>重启完成空间归还</button>
   <p id="message" role="status" aria-live="polite"></p>
-  <details><summary data-i18n="details">设备信息</summary><dl id="details"></dl></details>
+  <details id="device-details" hidden><summary data-i18n="details">设备信息</summary><dl id="details"></dl></details>
   <dialog id="install-dialog" aria-labelledby="install-title"><h2 id="install-title" data-i18n="installTitle">重新安装引导？</h2><p data-i18n="installBody">从当前 HyperOS 提取内核并重新打包引导镜像，保留启动选择。Android 数据不会被清除。</p><div class="dialog-actions"><button id="cancel-install" data-i18n="cancel">取消</button><button id="confirm-install" class="primary" data-i18n="confirm">重新安装</button></div></dialog>
+  <dialog id="storage-dialog" aria-labelledby="storage-dialog-title"><h2 id="storage-dialog-title"></h2><p id="storage-warning"></p><div id="storage-size-choice" hidden><p class="hint" data-i18n="rootSize">root 目标容量</p><div class="sizes" role="group" aria-label="Root size"><button data-size="32" aria-pressed="false">32 GiB</button><button data-size="64" aria-pressed="true">64 GiB</button><button data-size="128" aria-pressed="false">128 GiB</button></div></div><dl id="storage-plan-details"></dl><div class="dialog-actions"><button id="storage-cancel" data-i18n="cancel">取消</button><button id="storage-confirm" class="primary" data-i18n="continue">继续</button></div></dialog>
 </main>
 </body>
 </html>

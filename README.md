@@ -25,7 +25,7 @@
 
 ```mermaid
 flowchart LR
-    A["原厂引导程序<br/>XBL / ABL"] --> B["合体 BOOT 中的选择器"]
+    A["原厂引导程序<br/>XBL / ABL"] --> B["合体 BOOT 中的选择页<br/>Android / UEFI · 3 秒"]
     B -->|"Android"| C["原厂 Android 内核<br/>HyperOS"]
     B -->|"Linux / 菜单"| D["SunUEFI (EDK2)"]
     D --> E["ESP 中的 Linux 内核<br/>sunuefi_esp"]
@@ -34,17 +34,17 @@ flowchart LR
     D -.->|"目标，尚未实现"| H["Windows"]
 ```
 
-选择器读取一条保存好的“下次走哪条路”。Android 路线直接把控制权交给原厂内核，不会先运行 UEFI；Linux 或菜单路线才进入完整的 UEFI。Linux 的内核放在一个小的 FAT32 分区 `sunuefi_esp` 中（ESP，EFI 系统分区，UEFI 约定存放启动文件的分区），系统和应用放在单独的 ext4 分区 `sunuefi_root`，所以不需要每次把整个桌面解压到内存。
+选择器先显示 Android／UEFI 开机选择页，倒计时约三秒后沿用保存的路线。Android 路线直接把控制权交给原厂内核，不会先运行 UEFI；Linux 或菜单路线才进入完整的 UEFI。Linux 的内核放在一个小的 FAT32 分区 `sunuefi_esp` 中（ESP，EFI 系统分区，UEFI 约定存放启动文件的分区），系统和应用放在单独的 ext4 分区 `sunuefi_root`，所以不需要每次把整个桌面解压到内存。
 
 ### 启动路线会被记住
 
 选择保存在合体 BOOT 自己的一小块记录区里，由项目工具读写，不依赖 PMIC 寄存器。普通重启会沿用上一次的选择；没有有效记录时默认进入 Android。目前已经能用的是：
 
-* 在 Android 一侧保存路线，重启后进入 Linux。
+* 在 Android 的 SunUEFI 引导助手中选择 Android 或 UEFI，保存并重启；已安装 Linux 时可以直接进入 Linux。
 * 在 Linux 里执行 `piano-next-boot android --reboot` 回到 Android。
 * 用 Android 标准的 `reboot recovery` 进入小米原厂 Recovery，不改动已保存的路线。
 
-还没有做的是：自动记住 UEFI 菜单里的每一次选择、一次性请求用完后自动清除，以及和系统更新（OTA）配合的 Root 模块。细节见[启动状态与切换](docs/devel/reboot-request.md)和[Linux 下次启动入口](docs/devel/linux-next-boot.md)。
+引导助手提供中文／英文 WebUI 和系统更新后重新安装引导的入口：使用当前 HyperOS 的内核重新打包，保留启动选择。它尚未自动接管 OTA；自动记住 UEFI 菜单里的每次选择和一次性请求也没有完成。使用方法见 [Android 引导助手](docs/devel/android-module.md)，底层实现见[启动状态与切换](docs/devel/reboot-request.md)和[Linux 下次启动入口](docs/devel/linux-next-boot.md)。
 
 ### UEFI 里的 Fastboot
 
@@ -141,7 +141,9 @@ SunUEFI 运行时在后台提供一个 USB Fastboot 服务，设备名为 `SunUE
 
 安装器的完整说明见[下载包中的安装入口](docs/user/install-from-artifact.md)。
 
-合体 BOOT 还没有集成到安装器，Android 端的 KernelSU / Magisk 模块（含 WebUI）也还没有可安装的 ZIP。合体 BOOT 目前由维护者用 `./build.sh trampoline` 和 `./build.sh boot-repack` 生成并写入 BOOT 分区，步骤和限制见[原生 BOOT 重打包](docs/devel/android-boot-repack.md)。不想改动 BOOT 的话，可以按[快速体验](docs/user/getting-started.md)用 `fastboot boot` 临时加载固件，重启后即恢复。
+已经安装合体 BOOT 的设备，可以在 SukiSU 中安装 **SunUEFI 引导助手 0.3.0 ZIP**，正常重启后点击模块卡片上的 **打开 WebUI**。页面提供启动选择、存储和维护功能，系统更新后可重新安装引导；详见 [Android 引导助手](docs/devel/android-module.md)。
+
+合体 BOOT 的首次安装尚未集成到安装器，模块中的新分区管理也还没有完成实机验证。维护者可用 `./build.sh trampoline` 和 `./build.sh boot-repack` 生成合体 BOOT，步骤见[原生 BOOT 重打包](docs/devel/android-boot-repack.md)。临时体验入口见[快速体验](docs/user/getting-started.md)。
 
 ### 回到 Android
 

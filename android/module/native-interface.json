@@ -78,7 +78,7 @@
   "root_preservation": "Dynamic repack retains the current raw ARM64 GKI bytes, including compatible KernelSU code, and leaves init_boot/vendor_boot/REC/vbmeta untouched. Unsupported current-BOOT layout or AVB metadata is refused; this is not a replacement CI kernel.",
   "qualification_scope": "Top-level device proof flags belong to the separately gated first-install package. Installed-core helper use does not set or replace those proofs.",
   "installed_core_helper": {
-    "version": "0.2.0",
+    "version": "0.3.0",
     "installation": "Read-only adopt of a matching existing shared BOOT; not a first UEFI installation.",
     "verified_manager": "SukiSU",
     "webui_bridge_verified": true,
@@ -91,6 +91,27 @@
     "reinstall_after_ota": "Probe and repack supported current active-slot stock BOOT using current-ROM GKI and the same packaged core; restore saved preference. No automatic OTA hook or inactive-slot write.",
     "ota_repack_device_verified": false,
     "uninstall": "Remove helper only. Existing BOOT and persistent route remain unchanged.",
-    "automatic_partition_operations": false
+    "automatic_partition_operations": false,
+    "early_chooser": {
+      "normal_boot": "Three-second Android/UEFI choice before full EDK2; default Android route visible and passes through to stock GKI.",
+      "android_default_device_verified": true,
+      "key_override_device_verified": true,
+      "temporary_selection": "Volume Up Android; Volume Down UEFI/Linux; Power confirm. Does not change persistent preference.",
+      "temporary_uefi_linux_boot_verified": true,
+      "timeout_start": "After the first frame has been drawn and cleaned to memory."
+    },
+    "storage": {
+      "tabs": [
+        "boot",
+        "storage",
+        "maintenance"
+      ],
+      "status": "Actual named partitions and filesystem signatures",
+      "images": "Native Android local-file picker; two selected raw sources; bounded write to ESP/root with SHA readback.",
+      "root_resize": "Bundled static e2fsprogs; keep start, shrink filesystem before GPT, grow GPT before filesystem.",
+      "create": "Free extent or native online F2FS shrink before GPT changes.",
+      "delete_return": "Remove contiguous project partitions, extend userdata end, verify OEM F2FS grow after normal Android boot.",
+      "device_write_validation": "Read-only plans validated; this implementation has not destructively resized/deleted/flashed device OS partitions."
+    }
   }
 }

@@ -10,6 +10,12 @@ policy="$MODPATH/policy.json"
 state="$MODPATH/install-state.json"
 operation=${1:-status}
 target=${2:-}
+case "$operation" in
+ switch|reinstall)
+  [ ! -d /data/adb/piano-sunuefi/storage/lock ] || {
+   echo '存储操作正在进行，请完成后再切换系统或重新安装引导。' >&2; exit 1;
+  } ;;
+esac
 
 # This checks the installed entry, not a partition name or an arbitrary EFI file.
 # The current core's Linux request selects this path; other ESP entries are not
@@ -43,7 +49,9 @@ piano_quick_status() {
   state_available=false
   [ ! -f "$state" ] || state_available=true
   linux_available=false; linux_checked=true
-  if piano_installed_linux; then
+  if [ -d /data/adb/piano-sunuefi/storage/lock ]; then
+    linux_checked=false
+  elif piano_installed_linux; then
     linux_available=true
   else
     [ "$?" = 1 ] || linux_checked=false
@@ -61,6 +69,25 @@ piano_quick_status() {
 }
 
 case "$operation" in
+ storage-reboot)
+  [ -f /data/adb/piano-sunuefi/storage/android-expansion.json ] || exit 2
+  current=$("$request" status --device "$bootdev")
+  printf '%s' "$current" | grep -Eq '"target"[[:space:]]*:[[:space:]]*0([,}])' || {
+   echo '请先恢复 Android 启动选择。' >&2; exit 2;
+  }
+  (sleep 1; /system/bin/reboot) >/dev/null 2>&1 </dev/null &
+  echo '{"status":"rebooting"}' ;;
+ storage-status)
+  exec /system/bin/sh "$MODPATH/storage.sh" status ;;
+ storage-select)
+  exec /system/bin/sh "$MODPATH/storage-operations.sh" select "$target" "${3:-}" "${4:-}" ;;
+ storage-plan)
+  case "$target" in flash|create|resize|delete|delete-return) ;; *) exit 2 ;; esac
+  exec /system/bin/sh "$MODPATH/storage-operations.sh" plan "$target" "${3:-}" ;;
+ storage-execute)
+  exec /system/bin/sh "$MODPATH/storage-operations.sh" execute "$target" --confirm ;;
+ storage-job)
+  exec /system/bin/sh "$MODPATH/storage-operations.sh" job "$target" ;;
  quick-status)
   piano_quick_status ;;
  summary)

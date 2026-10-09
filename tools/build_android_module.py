@@ -16,9 +16,9 @@ TESTS = ('lossless_roundtrip', 'current_source_guard', 'active_slot_guard',
          'payload_tamper_rejected', 'request_owned_wrapper_only', 'request_persistent_reselection_crc',
          'missing_request_stock_passthrough')
 DEVICE_PROOFS = ('device_passthrough_verified', 'request_handling_verified', 'standard_recovery_preserved')
-SOURCE_FILES = ('module.prop', 'common.sh', 'customize.sh', 'uninstall.sh', 'manager.sh',
+SOURCE_FILES = ('module.prop', 'common.sh', 'customize.sh', 'uninstall.sh', 'manager.sh', 'storage.sh', 'storage-operations.sh', 'service.sh',
                 'native-interface.json', 'skip_mount', 'action.sh',
-                'webroot/index.html', 'webroot/style.css', 'webroot/main.js',
+                'webroot/index.html', 'webroot/style.css', 'webroot/main.js', 'webroot/sun.svg',
                 'META-INF/com/google/android/update-binary',
                 'META-INF/com/google/android/updater-script')
 
@@ -229,6 +229,19 @@ def package_installed(args):
         entries['payload/' + name] = data
     entries['bin/piano-boot-repack'] = native
     entries['bin/piano-boot-request'] = request
+    for option, name in (('storage_tool', 'piano-storage'), ('resize_tool', 'piano-resize-f2fs')):
+        path = getattr(args, option, None)
+        if path:
+            data = read_file(path)
+            arm64_executable(data)
+            entries['bin/' + name] = data
+    if getattr(args, 'e2fs_tools', None):
+        for name in ('e2fsck','resize2fs'):
+            data = read_file(args.e2fs_tools / name)
+            arm64_executable(data)
+            entries['bin/' + name] = data
+        entries['licenses/NOTICE.e2fsprogs'] = read_file(args.e2fs_tools / 'NOTICE.e2fsprogs')
+        entries['licenses/e2fsprogs-build.json'] = read_file(args.e2fs_tools / 'manifest.json')
     entries['policy.json'] = (json.dumps(policy, indent=2) + '\n').encode()
     entries['installed-core.json'] = (json.dumps(descriptor, indent=2) + '\n').encode()
     entries['licenses/COPYING.libmd'] = read_file(ROOT / 'upstream/simple-init/libs/libmd/COPYING')
@@ -324,6 +337,9 @@ def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument('--product', type=Path, default=ROOT / 'artifacts/product')
     result.add_argument('--installed-core', type=Path, help='Validated adopt-exported payload directory')
+    result.add_argument('--storage-tool', type=Path, help='Static ARM64 partition/image tool')
+    result.add_argument('--e2fs-tools', type=Path, help='Static ARM64 e2fsck/resize2fs build directory with NOTICE')
+    result.add_argument('--resize-tool', type=Path, help='Static ARM64 online F2FS shrink helper')
     result.add_argument('--request-tool', type=Path)
     result.add_argument('--selector', type=Path)
     result.add_argument('--selector-manifest', type=Path)

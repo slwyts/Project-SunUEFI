@@ -1,6 +1,6 @@
 id=piano_sunuefi
 name=SunUEFI 引导助手
-version=0.2.0
-versionCode=2
+version=0.3.0
+versionCode=3
 author=Project SunUEFI
 description=切换 Android／UEFI，检查引导，系统更新后重新安装。
