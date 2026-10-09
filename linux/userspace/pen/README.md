@@ -1,8 +1,8 @@
 # Piano 手写笔核心
 
-这里保存 Piano 的独立开源笔解码核心、离线工具及保留的原厂算法诊断 worker。它们不会启动第二个触控服务，也不会自行读取 THP FIFO 或向桌面注入输入。
+这里保存 Piano 的开源笔解码核心、触控进程内的笔输入接线、离线工具，以及保留的原厂算法诊断 worker。笔和手指共用现有 THP 数据读取进程，不增加第二个触控流读取者。
 
-**Linux 目前仍不能用这支笔绘画。** Android 的真实压力来源与轻捏报告已经确认，开源核心也已完成编译和原厂校准读取；Linux 已收到 Report2 轻捏按键和 Report6 姿态报告，但仍未收到 Report5 压力或屏幕笔 type29；触控采集仍只有手指 type3。解码代码准备好，不等于已经得到真实笔输入。
+**标准笔输入已能绘画，位置正确，线宽随压力变化。** 当前结果来自本机 120 Hz 冷启动环境，Linux 已收到真实 Report5 压力和屏幕 type29 矩阵。144 Hz 下的笔输入尚未确认；轻捏桌面动作和笔端振动仍未集成。
 
 ## 开源实现
 
@@ -28,7 +28,20 @@ build/pen-core/piano-pen-offline --ini ACTUAL.ini --config
 build/pen-core/piano-pen-offline --ini ACTUAL.ini --pressure-max-age-ns N --events ACTUAL.tsv
 ```
 
-事件文件每行使用同一 BOOTTIME 时基：`时间戳 report5|raw29 捕获文件`，或者 `时间戳 reset -`。未知字段输出 `null`。工具已经读取 BOE／CSOT 实际配置，并处理原厂采集的651个真实压力报告；没有制作 raw29 测试帧，也尚未处理真实笔矩阵。膜／悬浮专用分支、完整掌压干扰和最终桌面事件仍需要实机对照。
+事件文件每行使用同一 BOOTTIME 时基：`时间戳 report5|raw29 捕获文件`，或者 `时间戳 reset -`。未知字段输出 `null`。工具已经读取 BOE／CSOT 实际配置、原厂651个真实压力报告，以及 Linux 的实际 type29／Report5 序列。后者得到1177帧有效坐标与倾角，其中896帧同时具有有效压力；没有制作 raw29 测试帧。膜／悬浮专用分支、完整掌压干扰与边缘体验仍需要实机对照。
+
+## 同一触控进程中的笔输入
+
+`piano-pen-owner.c/.h` 将只读蓝牙 HID 压力、已由触控进程读取的 type29、同源 BOOTTIME 时间戳与标准 tablet-tool 输入连接起来。只有显式提供实际校准和压力有效期时才启用笔路径；没有笔参数时保留原有手指行为。正常 runtime 已编入该功能，不需要额外编译另一份触控程序。
+
+```sh
+piano-touch-view input --seconds 0 \
+  --pen-ini /path/to/ACTUAL.ini --pen-pressure-max-age-ms 100 --pen-input
+```
+
+100ms是调用者选择的有效期，不能称为原厂参数。可加 `--pen-json` 输出诊断；未知压力不伪造为0，退出、流中断和 epoch改变会释放工具与按键状态。输入保持真实压力0..16383，横向坐标由 portrait输出转换为 `X=portraitY`、`Y=213599-portraitX`，倾角同步转换。已有实机确认的位置与线宽变化来自这条标准输入路径。
+
+该路径不设置笔扫描或显示模式。启动时的实际校准选择与无线／磁吸状态仍由现有硬件启动逻辑协调，不能仅凭程序编译成功就忽略这些条件。
 
 ## 原厂协议进展
 
@@ -42,7 +55,7 @@ Android 轻捏已经捕获到真实 `02 6e`／`02 00` Report2，与 `KEY_F19` �
 
 无线参数保存在 [`p81c-radio.json`](../../bsp/common/usr/share/piano/pen/p81c-radio.json)，依据本机 `OS3.0.309.0.WPYCNXM` 的原厂服务实际发送结果整理，与解算用的 BOE／CSOT ini不同。这个原厂版本的运行时 `TIME_STAMP` 是1745566508，实际选择普通参数表；不能把屏幕144Hz直接当作笔的频率参数。
 
-完整初始化已在 Linux 收到全部回应。随后真实划线采集中，Report5仍为0，1728条屏幕记录仍全部为type3；因此初始化已经实现，但还不能绘画。下一步需要核对原厂用笔时的显示／触控扫描协调。工具不读THP流、不改变显示模式、不生成输入设备，也未作为新后台服务启用。
+完整初始化已在 Linux 收到全部回应。此前144Hz环境仍没有笔矩阵和压力；随后120Hz冷启动环境已经取得真实 type29与Report5，并完成标准笔输入绘画。显示／触控扫描协调仍需继续对照，不能据此断言144Hz硬件禁止笔输入。无线初始化工具不读取THP流、不改变显示模式、不生成输入设备，也不作为新的后台服务运行。
 
 已安装磁吸候选和活动状态接口的设备，可显式运行：
 
@@ -58,7 +71,7 @@ sudo /usr/lib/piano/pen-bluetooth --address YOUR_PEN_ADDRESS \
 
 `tools/build_release_helpers.py` 与 `tools/build_piano_runtime_helpers.py` 已共用 `build_pen_core()`，从源码副本调用这里的 Makefile。默认 native runtime bundle 包含 `/usr/bin/piano-pen-offline`、`/usr/lib/piano/pen-bluetooth`，以及 Apache-2.0 许可和来源说明。编译清单记录 C／C++ 源码、头文件、Makefile、实际工具链和目标静态 C++ 库；离线工具是 ARM64 静态程序，构建不需要原厂 ini。
 
-`libpiano-pen-core.a` 留在构建目录，供以后链接到现有触控进程，不安装进系统。当前触控服务的默认行为没有改变，没有新增 systemd unit，也没有自动开启绘画输入。rootfs 通过现有 `runtime.stage()` 安装工具并保留来源记录。
+`libpiano-pen-core.a` 包含 C 编译的 owner／frame 与 C++ 编译的 core／decoder，已经静态链接到正常构建的 `piano-touch-view`，库文件本身不安装进系统。触控源码和入口包装保留 C ABI，最终链接使用同一目标 sysroot 的 C++ 链接器。rootfs 通过现有 `runtime.stage()` 安装程序并保留补丁、owner 和核心源码的来源记录。
 
 原生 ELF 不能放进现有 `Architecture: all` 配置包。`tools/package_bsp.py` 当前只接受配置文件；原生程序放在 native runtime 层。ini 本身是架构无关数据，但需要作为明确的原厂输入单独登记，安装到 `/usr/share/piano/pen/calibration/`。构建应显式接收含 BOE／CSOT 两份实际 ini 的输入目录，记录 ROM 版本、来源及文件摘要，不能默认读取某台开发电脑的 `private/` 路径。当前公开 `piano-firmware` 输入有触控固件 bin，但没有这两份 ini；本地和 CI 必须使用同一份明确的校准输入，不能各自从隐藏目录补文件。校准数据的自动提取与打包尚未接入；缺失校准时不会自动使用另一面板的配置。
 

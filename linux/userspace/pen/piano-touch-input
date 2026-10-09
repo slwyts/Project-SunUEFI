@@ -1,0 +1,20 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# One THP reader; select calibration using the actual touch controller LCD ID.
+set -eu
+lcd_id=$(awk '/^lcd_id:/{print $2}' /proc/nvt_thp_status 2>/dev/null || true)
+case "$lcd_id" in
+  0) calibration=/usr/share/piano/pen/calibration/piano-csot.ini ;;
+  1) calibration=/usr/share/piano/pen/calibration/piano-boe.ini ;;
+  *) calibration= ;;
+esac
+if [ -n "$calibration" ] && [ -r "$calibration" ]; then
+  if echo 3 > /proc/nvt_thp_stylus; then
+    exec /usr/bin/piano-touch-view input --seconds 0 \
+      --pen-ini "$calibration" --pen-pressure-max-age-ms 100 --pen-input
+  fi
+  echo 'piano-touch: pen scanning unavailable; starting finger input' >&2
+else
+  echo 'piano-touch: no calibration for the actual touch LCD ID; starting finger input' >&2
+fi
+exec /usr/bin/piano-touch-view input --seconds 0

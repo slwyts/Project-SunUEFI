@@ -1,0 +1,237 @@
+From: Project SunUEFI
+Subject: [PATCH] input: connect real pen pressure and frames in the touch owner
+
+Apply after the current observability and raw-capture patches.
+Prerequisite derived source SHA256: 3074eedafe2230430e681560b1e1a95af57672d270d394e80a28569ee66cfe63
+
+One existing THP FIFO reader polls read-only Bluetooth HID matching22/5081.
+CLOCK_BOOTTIME aligns actual Report5 receipts and NTP1 frame timestamps.
+The optional explicit --pen-input path uses the real calibrated core and
+standard tablet-tool uinput. Missing pressure releases contact under the
+caller-supplied timeout, without inventing a zero pressure value. Epoch,
+transport loss and owner exit release state. Type29 is not a type3 hand
+matrix; simultaneous hand-quarter input remains unimplemented.
+No Bluetooth setup or scan/display writes are added. No pen options means
+no pen/HID/uinput setup. The input path requires actual ini and explicitTTL.
+
+--- a/initramfs/touch-view/piano-touch-view.c
++++ b/initramfs/touch-view/piano-touch-view.c
+@@ -63,6 +63,7 @@
+ #include <unistd.h>
+ #include <linux/fb.h>
+ #include <linux/uinput.h>
++#include "piano-pen-owner.h"
+ 
+ #define STREAM_PATH "/proc/nvt_thp_stream"
+ #define CONTROL_PATH "/proc/nvt_thp_raw"
+@@ -95,7 +96,12 @@
+ 	int diagnostics;
+ 	const char *capture_file;
+ 	int capture_seconds;
+-} opt = { MODE_STATS, 30, 200, 32, 0, 0, 0, 1, -1, 0, NULL, 5 };
++	const char *pen_ini, *pen_hidraw;
++	uint64_t pen_age_ns;
++	int pen_age_set, pen_input, pen_json;
++} opt = { MODE_STATS, 30, 200, 32, 0, 0, 0, 1, -1, 0, NULL, 5, NULL, NULL, 0, 0, 0, 0 };
++
++static struct piano_pen_owner *pen_owner;
+ 
+ static struct {
+ 	unsigned long records, bad_magic, flag_valid, csum_ok, csum_bad;
+@@ -328,6 +334,28 @@
+ 	raw_capture.records++;
+ 	if (flen >= TRANSPORT_LEN + PAYLOAD_MIN)
+ 		raw_capture.types[record[hlen + TRANSPORT_LEN + 56]]++;
++}
++
++static void pen_number(const char *name, int value, int known)
++{
++	fprintf(stderr, ",\"%s\":", name);
++	if (known)
++		fprintf(stderr, "%d", value);
++	else
++		fputs("null", stderr);
++}
++
++static void pen_diagnostic(const struct piano_pen_output *out)
++{
++	fprintf(stderr, "{\"kind\":\"piano_pen_decoded\",\"orientation\":\"portrait\","
++		"\"timestamp_ns\":%llu,\"valid\":%u,\"frame_no\":%u",
++		(unsigned long long)out->timestamp_ns, out->valid, out->frame_no);
++	pen_number("x", out->x, out->valid & PIANO_PEN_COORDINATES_VALID);
++	pen_number("y", out->y, out->valid & PIANO_PEN_COORDINATES_VALID);
++	pen_number("pressure", out->pressure, out->valid & PIANO_PEN_PRESSURE_VALID);
++	pen_number("tilt_x", out->tilt_x, out->valid & PIANO_PEN_TILT_VALID);
++	pen_number("tilt_y", out->tilt_y, out->valid & PIANO_PEN_TILT_VALID);
++	fputs("}\n", stderr);
+ }
+ 
+ static int write_control(int value)
+@@ -1024,6 +1052,8 @@
+ 	      "       [--type N] [--threshold T] [--reference N] [--invert]\n"
+ 	      "       [--diagnostics N] (JSON every N seconds; default off)\n"
+ 	      "       [--capture FILE] [--capture-seconds N] (1..10s, default5s, max16MiB)\n"
++	      "       [--pen-ini FILE --pen-pressure-max-age-ms N] [--pen-hidraw FILE]\n"
++	      "       [--pen-input] (live input mode) [--pen-json] (native portrait diagnostics)\n"
+ 	      "       [--swap-xy] [--flip-x] [--flip-y]\n", stderr);
+ 	exit(2);
+ }
+@@ -1061,6 +1091,25 @@
+ 			opt.capture_file = argv[++i];
+ 		else if (!strcmp(argv[i], "--capture-seconds") && i + 1 < argc)
+ 			opt.capture_seconds = atoi(argv[++i]);
++		else if (!strcmp(argv[i], "--pen-ini") && i + 1 < argc)
++			opt.pen_ini = argv[++i];
++		else if (!strcmp(argv[i], "--pen-hidraw") && i + 1 < argc)
++			opt.pen_hidraw = argv[++i];
++		else if (!strcmp(argv[i], "--pen-pressure-max-age-ms") && i + 1 < argc) {
++			char *end;
++			const char *value = argv[++i];
++			errno = 0;
++			unsigned long long age = strtoull(value, &end, 10);
++			if (errno || !value[0] || value[0] == '-' || *end ||
++			    age > UINT64_MAX / 1000000ULL)
++				usage();
++			opt.pen_age_ns = age * 1000000ULL;
++			opt.pen_age_set = 1;
++		}
++		else if (!strcmp(argv[i], "--pen-input"))
++			opt.pen_input = 1;
++		else if (!strcmp(argv[i], "--pen-json"))
++			opt.pen_json = 1;
+ 		else if (!strcmp(argv[i], "--type") && i + 1 < argc)
+ 			opt.type = strtol(argv[++i], NULL, 0);
+ 		else if (!strcmp(argv[i], "--invert"))
+@@ -1078,6 +1127,27 @@
+ 	    opt.type >= MAX_TYPES || opt.diagnostics < 0 ||
+ 	    opt.capture_seconds < 1 || opt.capture_seconds > 10)
+ 		usage();
++	if ((opt.pen_ini && !opt.pen_age_set) ||
++	    (!opt.pen_ini && (opt.pen_age_set || opt.pen_input || opt.pen_json || opt.pen_hidraw)) ||
++	    (opt.pen_input && (opt.mode != MODE_INPUT || !opt.pen_age_ns)))
++		usage();
++	if (opt.pen_ini && getenv("PIANO_THP_STREAM")) {
++		fputs("Use piano-pen-offline for captured pressure/frame replay; live HID timestamps cannot be mixed with old NTP1 records\n", stderr);
++		return 1;
++	}
++	if (opt.pen_ini) {
++		pen_owner = piano_pen_owner_create(opt.pen_ini, opt.pen_hidraw, opt.pen_age_ns);
++		if (!pen_owner)
++			return 1;
++		if (opt.pen_input) {
++			ret = piano_pen_owner_enable_input(pen_owner);
++			if (ret) {
++				fprintf(stderr, "pen input setup: %s\n", strerror(-ret));
++				piano_pen_owner_destroy(pen_owner);
++				return 1;
++			}
++		}
++	}
+ 	ref_type = opt.type;
+ 	ret = capture_open();
+ 	if (ret) {
+@@ -1098,6 +1168,7 @@
+ 		if (ret) {
+ 			fprintf(stderr, "/dev/uinput: %s (modprobe uinput)\n",
+ 				strerror(-ret));
++			piano_pen_owner_destroy(pen_owner);
+ 			return 1;
+ 		}
+ 		fprintf(stderr, "uinput touchscreen created (%dx%d)\n",
+@@ -1109,11 +1180,14 @@
+ 	fd = open(replay ? replay : STREAM_PATH, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+ 	if (fd < 0) {
+ 		perror(replay ? replay : STREAM_PATH);
++		piano_pen_owner_destroy(pen_owner);
+ 		return 1;
+ 	}
+ 	ret = replay ? 0 : write_control(1);
+ 	if (ret) {
+ 		fprintf(stderr, "%s: %s\n", CONTROL_PATH, strerror(-ret));
++		close(fd);
++		piano_pen_owner_destroy(pen_owner);
+ 		return 1;
+ 	}
+ 	fprintf(stderr, "capturing; keep fingers off the screen for the reference\n");
+@@ -1128,16 +1202,19 @@
+ 		raw_capture.active = 1;
+ 	}
+ 	while (running && (!opt.seconds || now_s() - start < opt.seconds)) {
+-		struct pollfd pfd[2] = {
++		struct pollfd pfd[3] = {
+ 			{ .fd = fd, .events = POLLIN },
+ 			{ .fd = interactive ? STDIN_FILENO : -1, .events = POLLIN },
++			{ .fd = piano_pen_owner_poll_fd(pen_owner), .events = POLLIN },
+ 		};
+ 		ssize_t n;
+ 		size_t off = 0;
+ 
+-		ret = poll(pfd, 2, 200);
++		ret = poll(pfd, 3, opt.pen_input ? 10 : 200);
+ 		if (ret < 0 && errno != EINTR)
+ 			break;
++		if (ret > 0)
++			piano_pen_owner_read_hid(pen_owner, pfd[2].revents);
+ 		if (ret > 0 && (pfd[1].revents & (POLLIN | POLLHUP))) {
+ 			char line[64];
+ 
+@@ -1175,7 +1252,25 @@
+ 				st.flag_valid++;
+ 			observe_record(h);
+ 			capture_record(h, hlen, flen);
+-			handle_frame(h + hlen, flen);
++			struct piano_pen_output pen_output;
++			int pen_ret = piano_pen_owner_record(pen_owner, h + hlen, flen,
++				le64(h + 16), le16(h + 26), &pen_output);
++			if (pen_ret > 0 && opt.pen_json)
++				pen_diagnostic(&pen_output);
++			/* Type29 has four pen matrices and one hand quarter, not the
++			 * contiguous type3 hand matrix. Never feed it to that decoder.
++			 * Full concurrent hand-quarter integration remains separate work.
++			 */
++			if (pen_owner && flen >= TRANSPORT_LEN + 57 &&
++			    h[hlen + TRANSPORT_LEN + 56] == 29) {
++				st.types[29]++;
++				if (pen_ret > 0 && opt.mode == MODE_INPUT) {
++					int active = track(NULL, 0);
++					ui_report(active);
++				}
++			} else {
++				handle_frame(h + hlen, flen);
++			}
+ 			off += hlen + flen;
+ 		}
+ 		memmove(buf, buf + off, have - off);
+@@ -1187,10 +1282,24 @@
+ 		}
+ 		if (opt.diagnostics && now_s() - start - diag.previous_time >= opt.diagnostics)
+ 			print_diagnostics(now_s() - start, 0);
++		piano_pen_owner_tick(pen_owner);
+ 		if (raw_capture.active && now_s() - raw_capture.start >= opt.capture_seconds)
+ 			capture_finish("time_limit");
+ 	}
+ 
++	struct piano_pen_owner_stats pen_stats = { 0 };
++	piano_pen_owner_stats(pen_owner, &pen_stats);
++	if (pen_owner)
++		fprintf(stderr, "pen: report5=%llu decoded29=%llu rejected=%llu input=%llu input_errors=%llu policy_contact_releases=%llu policy_stream_releases=%llu\n",
++			(unsigned long long)pen_stats.reports5,
++			(unsigned long long)pen_stats.frames29,
++			(unsigned long long)pen_stats.rejected_frames,
++			(unsigned long long)pen_stats.input_frames,
++			(unsigned long long)pen_stats.input_errors,
++			(unsigned long long)pen_stats.policy_contact_releases,
++			(unsigned long long)pen_stats.policy_stream_releases);
++	piano_pen_owner_destroy(pen_owner);
++	pen_owner = NULL;
+ 	capture_finish("owner_stopped");
+ 	if (!replay)
+ 		write_control(0);
+@@ -1205,5 +1314,5 @@
+ 	}
+ 	print_stats(now_s() - start);
+ 	print_diagnostics(now_s() - start, 1);
+-	return st.csum_ok ? 0 : 3;
+-}
++	return st.csum_ok || pen_stats.frames29 ? 0 : 3;
++}

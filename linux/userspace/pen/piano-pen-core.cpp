@@ -120,19 +120,28 @@ Calibration calibration(const Ini &ini, int vendor, piano_pen_orientation orient
     Calibration out{};
     auto &p = out.profile;
     p.coordinate_resolution = value(ini, "project_infor.super_resolution");
-    const auto mx = array(ini, "mapping.default_mapping_x", 2400);
-    const auto my = array(ini, "mapping.default_mapping_y", 2400);
-    for (size_t row = 0; row < 40; ++row) {
-        p.mapping_40[row] = mx[row * 60];
-        for (size_t col = 0; col < 60; ++col)
-            if (mx[row * 60 + col] != p.mapping_40[row])
-                throw std::runtime_error("actual mapping_x is not separable into40 rows");
-    }
-    for (size_t col = 0; col < 60; ++col) {
-        p.mapping_60[col] = my[col];
-        for (size_t row = 0; row < 40; ++row)
-            if (my[row * 60 + col] != p.mapping_60[col])
-                throw std::runtime_error("actual mapping_y is not separable into60 columns");
+    if (ini.contains("calibration.format_version")) {
+        if (value(ini, "calibration.format_version") != 1)
+            throw std::runtime_error("unsupported numeric calibration format");
+        const auto mx = array(ini, "mapping.mapping_40", 40);
+        const auto my = array(ini, "mapping.mapping_60", 60);
+        std::copy(mx.begin(), mx.end(), p.mapping_40.begin());
+        std::copy(my.begin(), my.end(), p.mapping_60.begin());
+    } else {
+        const auto mx = array(ini, "mapping.default_mapping_x", 2400);
+        const auto my = array(ini, "mapping.default_mapping_y", 2400);
+        for (size_t row = 0; row < 40; ++row) {
+            p.mapping_40[row] = mx[row * 60];
+            for (size_t col = 0; col < 60; ++col)
+                if (mx[row * 60 + col] != p.mapping_40[row])
+                    throw std::runtime_error("actual mapping_x is not separable into40 rows");
+        }
+        for (size_t col = 0; col < 60; ++col) {
+            p.mapping_60[col] = my[col];
+            for (size_t row = 0; row < 40; ++row)
+                if (my[row * 60 + col] != p.mapping_60[col])
+                    throw std::runtime_error("actual mapping_y is not separable into60 columns");
+        }
     }
     const auto valid_mapping = [](const auto &map, int extent) {
         return map.front() >= 0 && map.back() < extent &&

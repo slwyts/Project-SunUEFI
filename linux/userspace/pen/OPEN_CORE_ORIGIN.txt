@@ -10,14 +10,21 @@ Piano's original ALG instruction trace confirms row-first mapping_x, first-row
 mapping_y, average node pitch and the final portrait axes. No proprietary ALG,
 HAL or firmware ini is embedded or needed at link time.
 
+The packaged profiles use Project SunUEFI's format_version=1 numeric facts:
+only the decoder's scalar calibration keys, two six-point edge/tilt curves,
+and the separable 40/60-axis maps. tools/extract_piano_pen_calibration.py derives
+them from an ini supplied by the caller and records the ROM and source SHA256.
+The original expanded factory ini remains a supported input. Touch LCDid 0
+selects CSOT and LCDid 1 selects BOE; the display-panel label is independent.
+
 piano-pen-core.h exposes an offline C ABI for the existing single FIFO owner.
 The existing BSD-2-Clause-Patent piano-pen-frame adapter validates original
 payload checksums and the four actual mutual quarters. Actual BLE report5
 pressure is separate from raw29 metadata and has caller-supplied CLOCK_BOOTTIME timestamps
 and freshness policy. Missing data has no validity bit; it is never invented.
 
-The CLI reads only supplied regular capture files and external ini. It does
-not open the THP FIFO, configure Bluetooth, control hardware, create uinput,
+The offline CLI reads only supplied regular capture files and a calibration
+profile. It does not open the THP FIFO, configure Bluetooth, control hardware, create uinput,
 or rotate data into a desktop coordinate space. Its native output is portrait
 X0..213599/Y0..319999; no extra swap, transpose or report-factor10 division.
 

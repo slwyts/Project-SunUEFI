@@ -1,6 +1,6 @@
 # Piano 触控笔协议与原厂算法
 
-2026-10-09。已从同版本原厂 `OS3.0.309.0.WPYCNXM` ROM 定向提取触控 HAL，并做静态核对。屏幕笔输入仍未实现，不因 BLE 配对、HAL 文件存在或符号解析成功而报告可用。
+2026-10-09。已从同版本原厂 `OS3.0.309.0.WPYCNXM` ROM 定向提取触控 HAL，并做静态核对。本机120Hz冷启动下的标准笔输入已能绘画，位置与压力线宽正常；144Hz、完整掌压和附加手势仍需完善。本文保留原厂协议分析与实际接线过程。
 
 ## 屏幕数据与 BLE 分开处理
 
@@ -8,7 +8,7 @@
 
 原厂 HAL 读取 `/dev/xiaomi-touch` 的 frame/raw 共享区。最终点有两条上报路径：v1 写 Linux `input_event`；v2 写 point 共享区并以 `UPDATE_REPORT_POINT` 触发上报。[mmap/ioctl](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/xiaomi/xiaomi_touch_operations.c#L169)、[内核 point receiver](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/xiaomi/xiaomi_touch_device.c#L41)。两份 Piano ini 配置 v1，具体依据见下文。不能把 HAL 输出结构按偏移当作 SPI 帧来读。
 
-已保存的 Focus Pen Pro BLE descriptor 只有 mouse/keyboard/sensor Input，没有 Digitizer、Output、Feature 或标准 FF。Android 已确认 Report5 携带真实笔尖压力，Report2 的 `02 6e`／`02 00` 对应轻捏 `KEY_F19` DOWN／UP；Report6 是独立姿态数据。Linux 已实机收到 Report2 轻捏和 Report6 姿态报告，但尚未收到 Report5 压力或屏幕 type29，因此目前不能绘画。屏幕位置与 hover 仍需真实屏幕矩阵和事件对照；轻捏协议已识别不代表桌面快捷键或笔端振动联动已完成。
+已保存的 Focus Pen Pro BLE descriptor 只有 mouse/keyboard/sensor Input，没有 Digitizer、Output、Feature 或标准 FF。Android 已确认 Report5 携带真实笔尖压力，Report2 的 `02 6e`／`02 00` 对应轻捏 `KEY_F19` DOWN／UP；Report6 是独立姿态数据。Linux 在120Hz冷启动下已经收到 Report5 压力和 type29，并通过标准手写笔设备完成定位与压感绘画。悬停、倾角方向和完整掌压仍需进一步对照；轻捏协议已识别不代表桌面快捷键或笔端振动联动已完成。
 
 ## IC 扫描模式与原厂开关条件
 
@@ -18,7 +18,7 @@
 
 实际开启分为两步：[扩展命令04](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/p81/nt36532/nt36xxx_ext_proc.c#L1356)发送 `50 BF 04 00 01 00`，使能笔扫描；随后[型号命令](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/p81/nt36532/nt36xxx_ext_proc.c#L663)发送 `50 7B 03` 选择P81C，并等待控制器ACK。关闭扫描将扩展命令04的值改为0。当前Linux的 `/proc/nvt_thp_stylus` 已包含这组命令、ACK和恢复路径，但默认启动没有请求开启扫描；读取该节点得到的是已成功请求的缓存值，不是控制器硬件状态查询。
 
-后续应在现有触控进程内按真实连接、充电和屏幕状态管理P81C扫描，不新增服务或第二个FIFO读取者。开启扫描也不等于笔输入可用：Linux 已有 Report2／Report6，但仍没有 Report5 压力与 type29，不能绘画。`0x440` 的真实发送者已定位为 `com.android.bluetooth` 的原生 HID 处理，开源离线核心已能读取实际校准和压力报告；还需打通 Linux 矩阵输入与同源时序，再接标准 pen 输入，不能填猜测坐标或压力。
+后续应在现有触控进程内按真实连接、充电和屏幕状态管理P81C扫描，不新增服务或第二个FIFO读取者。开启扫描本身不是绘画支持的证明：随后120Hz冷启动已取得 Report5与type29，标准输入也已完成实际绘画。`0x440` 的真实发送者已定位为 `com.android.bluetooth` 的原生 HID 处理，开源离线核心已能读取实际校准和压力报告；Linux矩阵与压力现由同一进程处理，并接标准pen输入；未知值仍不补造坐标或压力。
 
 ## 实际提取的 HAL 链
 
@@ -153,7 +153,7 @@ worker的 `--decode29` 接受已捕获的原始包；`--prepare29` 还需要真�
 
 2026-10-09已完成原厂 Binder／uprobe 定向记录：先捕获175次 mode1088、length15的真实调用，再采集651个完整 Report5 压力报告。离线核心逐条读取真实15字节数据，记录中的压力范围为0..12288，包括32次真实零值；没有构造替代报告。原始记录在本地 `private/analysis/piano-pen-live-20261009/android-pressure2/`，原生发送者指令与字段依据在 `private/analysis/piano-pen-producer-20261009/`。临时追踪工具只用于开发，不加入产品。
 
-CPU前缀仍不能交给完整 `parse_data_package`：该函数还读取真实主触摸/SC缓冲与噪声状态。独立开源核心不依赖这一闭源入口。最新 Linux 操作窗口内收到496条 HID 报告：488条长度21的 Report6 姿态，以及8条长度2的 Report2（`02 6e`／`02 00`，四对轻捏按下／松开）；Report5 为0，同步捕获的1728条 NVT记录全部为 type3。具体结果保存在本地 `private/analysis/piano-pen-live-20261009/linux-capture5-result.json`。这证明蓝牙 HID 并非整条不通，当前缺口是压力报告与屏幕笔矩阵，尚未生成绘画输入。轻捏报告已收到，但还没有映射桌面操作或笔端振动。
+CPU前缀仍不能交给完整 `parse_data_package`：该函数还读取真实主触摸/SC缓冲与噪声状态。独立开源核心不依赖这一闭源入口。早期144Hz Linux 操作窗口内收到496条 HID 报告：488条长度21的 Report6 姿态，以及8条长度2的 Report2（`02 6e`／`02 00`，四对轻捏按下／松开）；Report5 为0，同步捕获的1728条 NVT记录全部为 type3。具体结果保存在本地 `private/analysis/piano-pen-live-20261009/linux-capture5-result.json`。这轮证明蓝牙 HID 并非整条不通，当时仍缺压力报告与屏幕笔矩阵；后续120Hz结果见文末。轻捏报告已收到，但还没有映射桌面操作或笔端振动。
 
 ## 独立开源核心与打包入口
 
@@ -190,3 +190,12 @@ Linux此前显示144Hz、hand180、pen240。两边笔扫描率相同；这一次
 当前590内核配置使用 `CONFIG_CMDLINE_FORCE=y`，因此只给ESP的boot header追加video参数不会生效；Mutter默认又选择DRM preferred模式。冷启动候选只交换Piano面板模式表的144／120顺序，使120成为preferred，并保留全部模式。候选仅用于此项对照，正式默认仍为144Hz；构建来源在 `build/panel-cold120-candidate/`。原厂触控portrait尺寸2136×3200与Linux原生显示模式3200×2136不同，不能用错video参数。
 
 触控面板监听生命周期修复已经从draft转为正式 [`0020-nvt-panel-follower-lifetime.patch`](../../patches/linux/7.2.9/0020-nvt-panel-follower-lifetime.patch)，纳入默认内核源码准备流程。它只修注销与释放顺序，不启用笔接口或改变刷新率；新源码树已生成，完整新内核部署仍需后续构建。
+
+
+## 标准桌面输入已接通
+
+120Hz冷启动后，真实cap7的10秒持久采集包含1423条type29及421条15字节Report5。剔除10条校验损坏包，并单列2条尚不支持的quarter5，开源核心处理1411条支持包，1177条有坐标/倾角，939条压力有效；原始时间间隔中位4.175ms。100ms压力有效期是当前调用者策略，不是原厂参数。
+
+`piano-touch-view` 的同一poll线程接入只读HID压力与THP矩阵，创建标准独立tablet-tool输入节点。系统实际识别 `ID_INPUT_TABLET=1`；Gtk GestureStylus画板收到真实落笔/抬笔与压力，画出了粗细变化的21笔线条，操作者确认位置与笔尖一致。原始截图和输出保存在本地 `private/analysis/piano-pen-live-drawing-20261009/`。设备上的现有触控服务已经采用笔输入程序，不依赖三分钟采集进程。
+
+当前仍不把type29的一份手指quarter伪装成完整type3矩阵；同时手指/笔与完整掌压需要继续接线。两份2KiB数字校准已进入BSP，按Touch LCDid选择，完整原厂ini与紧凑配置在同一实际序列上的输出逐字段相同。新runtime builder默认链接同一笔核心，源程序和桌面偏好不另分测试镜像。显示默认120策略与默认内核的磁吸/活动状态接口还需统一到后续发布构建；当前实机仍保留120冷启动对照模块，不能把144行为报告为已修复。

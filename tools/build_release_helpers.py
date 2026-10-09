@@ -66,6 +66,8 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
     emulator = None if native else shutil.which('qemu-aarch64-static') or shutil.which('qemu-aarch64')
     if not native and not emulator:
         raise ValueError('AArch64 helper checks need qemu-aarch64 on this host')
+    pen_files, pen_record = runtime.build_pen_core(output, flags, sysroot, emulator=emulator)
+    files.update(pen_files)
     for name, (relative, digest, destination) in (runtime.PUBLIC_SOURCES | runtime.BSP_SOURCES).items():
         original = (ROOT if name in runtime.BSP_SOURCES else public) / relative
         if name in runtime.BSP_SOURCES:
@@ -75,10 +77,13 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
         source_file = touch if name == 'piano-touch-view' else camera if name == 'piano-camerad' else original
         entry, obj, binary = output / (name + '-entry.c'), output / (name + '.o'), output / name
         entry.write_text(runtime.entry_source(name))
-        run([*flags, '-isystem', uapi / 'include', '-Dmain=PianoOriginalMain',
-             '-c', source_file, '-o', obj])
-        run([*flags, '-static', entry, obj, '-lm', '-o', binary])
-        item = runtime.verify_elf(binary)
+        if name == 'piano-touch-view':
+            item = runtime.build_touch_binary(output, flags, uapi, source_file, pen_record)
+        else:
+            run([*flags, '-isystem', uapi / 'include', '-Dmain=PianoOriginalMain',
+                 '-c', source_file, '-o', obj])
+            run([*flags, '-static', entry, obj, '-lm', '-o', binary])
+            item = runtime.verify_elf(binary)
         run(([emulator] if emulator else []) + [binary, '--help'])
         item.update(file=name, mode=0o755, source_sha256=digest, help_no_device_access=True)
         if name == 'piano-touch-view':
@@ -88,8 +93,6 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
         if name in runtime.BSP_SOURCES:
             item.update(source_kind='project-bsp', source_path=relative)
         files[destination] = item
-    pen_files, pen_record = runtime.build_pen_core(output, flags, sysroot, emulator=emulator)
-    files.update(pen_files)
     run(['bash', public / 'scripts/build-topology.sh', macros, output / 'firmware'])
     topology = output / 'firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'
     if runtime.sha(topology) != runtime.TOPOLOGY_PIN:

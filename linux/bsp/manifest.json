@@ -161,11 +161,12 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "2dbd65b5c8f66455a9122801b5d76fca1c22ea3f147c8cd95e9f3074b06ea75e",
-      "source": "rootfs/overlay/usr/lib/systemd/system/piano-touch.service",
-      "source_sha256": "2dbd65b5c8f66455a9122801b5d76fca1c22ea3f147c8cd95e9f3074b06ea75e",
+      "sha256": "67e945a8fc6e8fdcb3c323331eebb8dde0a08d84db0051aea8832ffe5486e7ae",
+      "source": "linux/bsp/common/usr/lib/systemd/system/piano-touch.service",
+      "source_sha256": "67e945a8fc6e8fdcb3c323331eebb8dde0a08d84db0051aea8832ffe5486e7ae",
       "source_git_mode": "100644",
-      "license": "MIT"
+      "license": "MIT",
+      "source_component": "Project SunUEFI (based on blu-sharky/debian-piano)"
     },
     {
       "group": "common",
@@ -391,6 +392,34 @@
       "source_sha256": "7b6217672cec5b97e018eb4383a5da245adaea812c68d9da91f9cac8c1e8cd63",
       "source_git_mode": "100644",
       "license": "BSD-2-Clause-Patent"
+    },
+    {
+      "group": "common",
+      "path": "usr/share/piano/pen/calibration/piano-boe.ini",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "c0776a35d8e12054553aac794056e7d332bc487cc48e926f774748408641ed50",
+      "source": "linux/bsp/common/usr/share/piano/pen/calibration/piano-boe.ini",
+      "source_component": "Project SunUEFI numeric calibration facts",
+      "source_sha256": "c0776a35d8e12054553aac794056e7d332bc487cc48e926f774748408641ed50",
+      "source_git_mode": "100644",
+      "license": "MIT"
+    },
+    {
+      "group": "common",
+      "path": "usr/share/piano/pen/calibration/piano-csot.ini",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "74355721f6bbfce2363beff584b39d42befa6c73cd5835b93efbea9dacd8a5b3",
+      "source": "linux/bsp/common/usr/share/piano/pen/calibration/piano-csot.ini",
+      "source_component": "Project SunUEFI numeric calibration facts",
+      "source_sha256": "74355721f6bbfce2363beff584b39d42befa6c73cd5835b93efbea9dacd8a5b3",
+      "source_git_mode": "100644",
+      "license": "MIT"
     }
   ],
   "excluded": [

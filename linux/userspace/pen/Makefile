@@ -10,7 +10,7 @@ CXXFLAGS ?= -O2 -Wall -Wextra
 LDFLAGS ?=
 LDLIBS ?=
 
-OBJECTS = $(OUT)/piano-pen-frame.o $(OUT)/piano-pen-core.o $(OUT)/piano-pen-decoder.o
+OBJECTS = $(OUT)/piano-pen-frame.o $(OUT)/piano-pen-core.o $(OUT)/piano-pen-decoder.o $(OUT)/piano-pen-owner.o
 DEPENDENCIES = $(OBJECTS:.o=.d) $(OUT)/piano-pen-offline.d
 
 .PHONY: all clean
@@ -20,6 +20,9 @@ $(OUT):
 	mkdir -p "$@"
 
 $(OUT)/piano-pen-frame.o: piano-pen-frame.c piano-pen-frame.h | $(OUT)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(OUT)/piano-pen-owner.o: piano-pen-owner.c piano-pen-owner.h piano-pen-core.h | $(OUT)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(OUT)/%.o: %.cpp | $(OUT)

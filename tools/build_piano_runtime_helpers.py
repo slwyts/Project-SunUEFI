@@ -32,9 +32,10 @@ BSP_SOURCES={
  'piano-camera-ctl':('linux/userspace/piano-camera-ctl.c',None,'usr/bin/piano-camera-ctl')}
 PEN_SOURCE_FILES=('Makefile','piano-pen-frame.c','piano-pen-frame.h',
  'piano-pen-core.cpp','piano-pen-core.h','piano-pen-decoder.cpp',
- 'piano-pen-decoder.hpp','piano-pen-offline.cpp','Apache-2.0.txt','OPEN_CORE_ORIGIN.txt')
+ 'piano-pen-decoder.hpp','piano-pen-offline.cpp','piano-pen-owner.c',
+ 'piano-pen-owner.h','Apache-2.0.txt','OPEN_CORE_ORIGIN.txt')
 PEN_DOCUMENTS=('Apache-2.0.txt','OPEN_CORE_ORIGIN.txt')
-PEN_RUNTIME_PATHS={'usr/bin/piano-pen-offline','usr/lib/piano/pen-bluetooth'}|{
+PEN_RUNTIME_PATHS={'usr/bin/piano-pen-offline','usr/lib/piano/pen-bluetooth','usr/lib/piano/touch-input'}|{
  'usr/share/doc/piano-pen-offline/'+name for name in PEN_DOCUMENTS}
 TOOL_PINS={'clang':'939a882527432ec23b094c289e7f170bf2d6ec282e74dde75e31b08602fa3eae',
  'ld.lld':'57b6c64db534793f05918a6e935c900e9938bd64d0ac95933285930b568387ea',
@@ -45,6 +46,7 @@ TOPOLOGY_PIN='6b10e42b5d0b4242004c750613462c2ccd7d37cd180ca842abbb431bda6057bb'
 DEFAULT_RELEASE='7.2.6-piano-gnome-00061-g352508459733'
 TOUCH_DIAGNOSTICS_PATCH=ROOT/'tools/patches/piano-touch-view-observability.patch'
 TOUCH_CAPTURE_PATCH=ROOT/'tools/patches/piano-touch-view-raw-capture.patch'
+TOUCH_PEN_PATCH=ROOT/'tools/patches/piano-touch-view-pen-owner.patch'
 CAMERAD_CCM_PATCH=ROOT/'tools/patches/piano-camerad-writable-ccm.patch'
 CAMERAD_AE_PATCH=ROOT/'tools/patches/piano-camerad-stable-ae.patch'
 CAMERAD_FRAME_PATCH=ROOT/'tools/patches/piano-camerad-frame-integrity.patch'
@@ -73,20 +75,25 @@ def entry_source(name):
     signature='int PianoOriginalMain(int,char **);'if name in ('piano-touch-view','piano-camera-ctl')else'int PianoOriginalMain(void);'
     normal='return PianoOriginalMain(argc,argv);'if name in ('piano-touch-view','piano-camera-ctl')else'if(argc!=1){fprintf(stderr,"Use --help or no arguments.\\n");return 2;} return PianoOriginalMain();'
     description=' Optional --diagnostics N emits touch JSON; --capture FILE saves this reader\'s complete raw records with --capture-seconds N (1..10, default5, max16MiB). Both default off.'if name=='piano-touch-view'else''
+    if name=='piano-touch-view':description+=' --pen-ini ACTUAL.ini --pen-pressure-max-age-ms N enables the calibrated pen owner; add --pen-input in input mode for tablet-tool events, or --pen-json for diagnostics. No pen options means no pen/HID setup.'
     if name=='piano-camera-ctl':description=' caps|get rear|front; set rear|front ae|awb|af auto|manual; set rear|front exposure|analog-gain|digital-gain|red-balance|blue-balance|focus INTEGER; set rear|front exposure-time-ns NANOSECONDS quantizes to the verified active sensor mode.'
     return '#include <stdio.h>\n#include <string.h>\n'+signature+'\nint main(int argc,char **argv){if(argc==2 && !strcmp(argv[1],"--help")){puts("'+name+': Linux Piano runtime helper; --help performs no device access.'+description+'");return 0;}'+normal+'}\n'
 
 
 def derive_touch_source(public, output):
-    """Apply optional diagnostics/capture to the same verified public copy."""
+    """Apply diagnostics/capture and the pen bridge to one public source copy."""
     relative,pin,_=PUBLIC_SOURCES['piano-touch-view'];original=Path(public)/relative
     if sha(original)!=pin:raise ValueError('Public touch source changed')
     folder=Path(output)/'piano-touch-source';target=folder/relative
     target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,target)
     patches=[]
-    for patch in (TOUCH_DIAGNOSTICS_PATCH,TOUCH_CAPTURE_PATCH):
-        for options in (['--check'],[]):
-            subprocess.run(['git','apply','--no-index','--unidiff-zero',*options,str(patch)],cwd=folder,check=True)
+    for patch in (TOUCH_DIAGNOSTICS_PATCH,TOUCH_CAPTURE_PATCH,TOUCH_PEN_PATCH):
+        if patch==TOUCH_PEN_PATCH:
+            subprocess.run(['patch','--batch','--forward','--fuzz=0',
+                            '--no-backup-if-mismatch','-p1','-i',str(patch)],cwd=folder,check=True)
+        else:
+            for options in (['--check'],[]):
+                subprocess.run(['git','apply','--no-index','--unidiff-zero',*options,str(patch)],cwd=folder,check=True)
         patches.append({'file':str(patch.relative_to(ROOT)),'sha256':sha(patch)})
     return target,{'public_source_sha256':pin,'patch_sha256':sha(TOUCH_DIAGNOSTICS_PATCH),
                   'patches':patches,'effective_source_sha256':sha(target)}
@@ -219,6 +226,12 @@ def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None):
         'file':str(copied_script.relative_to(output)),'bytes':copied_script.stat().st_size,
         'sha256':sha(copied_script),'mode':0o755,'source_kind':'project-pen-control',
         'source_path':'linux/userspace/pen/piano-pen-bluetooth.py'}
+    frontend=source/'piano-touch-input';inputs[str(frontend)]=sha(frontend)
+    copied_frontend=copied/frontend.name;shutil.copyfile(frontend,copied_frontend)
+    files['usr/lib/piano/touch-input']={
+        'file':str(copied_frontend.relative_to(output)),'bytes':copied_frontend.stat().st_size,
+        'sha256':sha(copied_frontend),'mode':0o755,'source_kind':'project-touch-input',
+        'source_path':'linux/userspace/pen/piano-touch-input'}
     for name in PEN_DOCUMENTS:
         path=copied/name
         files['usr/share/doc/piano-pen-offline/'+name]={
@@ -227,11 +240,35 @@ def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None):
         if sha(Path(path))!=digest:raise ValueError('Pen build input changed: '+path)
     archive=built/'libpiano-pen-core.a'
     record={'inputs':inputs,'toolchain':toolchain,'build_command':list(map(str,command)),
+            'cxx_command':cxx,
             'archive':{'file':str(archive.relative_to(output)),'bytes':archive.stat().st_size,
                        'sha256':sha(archive),'installed':False},
             'ini_required_at_build':False,'device_operation':False,'drawing_input_enabled':False}
     (output/'pen-manifest.json').write_text(json.dumps(record,indent=2)+'\n')
     return files,record
+
+
+def build_touch_binary(output, cc_flags, uapi, source, pen_record, env=None, linker_flags=()):
+    """Keep the public touch/entry C ABI; link the shared C++ pen archive last."""
+    output=Path(output);env=os.environ.copy() if env is None else env
+    entry=output/'piano-touch-view-entry.c';entry.write_text(entry_source('piano-touch-view'))
+    obj=output/'piano-touch-view.o';entry_obj=output/'piano-touch-view-entry.o'
+    binary=output/'piano-touch-view';log=output/'build.log'
+    archive=output/pen_record['archive']['file']
+    run([*cc_flags,'-isystem',Path(uapi)/'include','-I',output/'pen-source',
+         '-Dmain=PianoOriginalMain','-c',source,'-o',obj],env,log)
+    # A C++ link driver must not compile the C wrapper: its external entry
+    # would otherwise be mangled and fail to match PianoOriginalMain.
+    run([*cc_flags,'-c',entry,'-o',entry_obj],env,log)
+    run([*pen_record['cxx_command'],*linker_flags,'-static',entry_obj,obj,archive,
+         '-lm','-o',binary],env,log)
+    row=verify_elf(binary)
+    row.update(entry_sha256=sha(entry),entry_compile_language='c',final_link_language='c++',
+               pen_archive_sha256=pen_record['archive']['sha256'],
+               pen_source_files={str(Path(path).relative_to(ROOT)):digest
+                                 for path,digest in pen_record['inputs'].items()
+                                 if Path(path).is_relative_to(ROOT/'linux/userspace/pen')})
+    return row
 
 
 def stage(output,destination):
@@ -269,6 +306,7 @@ def build(args):
     inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
     inputs[str(TOUCH_DIAGNOSTICS_PATCH)]=sha(TOUCH_DIAGNOSTICS_PATCH)
     inputs[str(TOUCH_CAPTURE_PATCH)]=sha(TOUCH_CAPTURE_PATCH)
+    inputs[str(TOUCH_PEN_PATCH)]=sha(TOUCH_PEN_PATCH)
     for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH,CAMERAD_FRAME_PATCH,CAMERAD_MANUAL_PATCH,CAMERAD_TIMING_PATCH):
         inputs[str(patch)]=sha(patch)
     for name,pin in TOOL_PINS.items():
@@ -311,19 +349,23 @@ def build(args):
     flags=[tools/'clang','--target=aarch64-linux-gnu','--sysroot='+str(sysroot),'--gcc-toolchain='+str(sysroot/'usr'),'-O2','-Wall','-Wextra','-Werror']
     touch_source,touch_provenance=derive_touch_source(public,output)
     camera_source,camera_provenance=derive_camerad_source(public,output)
+    pen_files,pen_record=build_pen_core(output,flags,sysroot,env,qemu)
+    files.update(pen_files);inputs.update(pen_record['inputs'])
     for name,(path,pin,destination)in (PUBLIC_SOURCES|BSP_SOURCES).items():
         entry=output/(name+'-entry.c');entry.write_text(entry_source(name));obj=output/(name+'.o');binary=output/name
         effective_source=touch_source if name=='piano-touch-view'else camera_source if name=='piano-camerad'else(ROOT/path if name in BSP_SOURCES else public/path)
         if name in BSP_SOURCES:pin=inputs[str(ROOT/path)]
-        run([*flags,'-isystem',uapi/'include','-Dmain=PianoOriginalMain','-c',effective_source,'-o',obj],env,log)
-        run([*flags,'-fuse-ld=lld','-static',entry,obj,'-lm','-o',binary],env,log)
-        row=verify_elf(binary);help_result=subprocess.run([str(qemu),str(binary),'--help'],capture_output=True,text=True,timeout=10,check=True)
+        if name=='piano-touch-view':
+            row=build_touch_binary(output,flags,uapi,effective_source,pen_record,env,('-fuse-ld=lld',))
+        else:
+            run([*flags,'-isystem',uapi/'include','-Dmain=PianoOriginalMain','-c',effective_source,'-o',obj],env,log)
+            run([*flags,'-fuse-ld=lld','-static',entry,obj,'-lm','-o',binary],env,log)
+            row=verify_elf(binary)
+        help_result=subprocess.run([str(qemu),str(binary),'--help'],capture_output=True,text=True,timeout=10,check=True)
         row.update({'file':name,'mode':0o755,'source_sha256':pin,'entry_sha256':sha(entry),'compile_exit_code':0,'help_exit_code':help_result.returncode,'help_no_device_access':True});files[destination]=row
         if name=='piano-touch-view':row.update(touch_provenance)
         if name=='piano-camerad':row.update(camera_provenance)
         if name in BSP_SOURCES:row.update(source_kind='project-bsp',source_path=path)
-    pen_files,pen_record=build_pen_core(output,flags,sysroot,env,qemu)
-    files.update(pen_files);inputs.update(pen_record['inputs'])
     wrapper=output/'host-bin';wrapper.mkdir();exe=wrapper/'alsatplg';launch=[alsa['loader'],'--library-path',str(alsa_root/'usr/lib/x86_64-linux-gnu'),str(alsa_root/'usr/bin/alsatplg')]
     import shlex
     exe.write_text('#!/bin/sh\nexec '+shlex.join(launch)+' "$@"\n');exe.chmod(0o755);top_env=env.copy();top_env['PATH']=str(wrapper)+os.pathsep+top_env['PATH']
