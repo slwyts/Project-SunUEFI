@@ -45,7 +45,8 @@ FLASH_OVERRIDES={
  'CONFIG_V4L2_FLASH_LED_CLASS':'m','CONFIG_VIDEO_V4L2_SUBDEV_API':'y',
 }
 EARLY_CPUCP_OVERRIDES={'CONFIG_QCOM_CPUCP_MBOX':'y'}
-ALLOWED_OVERRIDES={'CONFIG_UHID':'m',**FLASH_OVERRIDES,**EARLY_CPUCP_OVERRIDES}
+BLUETOOTH_OVERRIDES={'CONFIG_UHID':'m','CONFIG_HID_XIAOMI':'m'}
+ALLOWED_OVERRIDES={**BLUETOOTH_OVERRIDES,**FLASH_OVERRIDES,**EARLY_CPUCP_OVERRIDES}
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -80,7 +81,7 @@ def command_line(fragment,public,root_policy):
 
 def module_overrides(fragment,kind='bluetooth'):
     lines=[line.strip()for line in fragment.splitlines()if line.strip()and not line.lstrip().startswith('#')]
-    expected={'CONFIG_UHID':'m'}if kind=='bluetooth'else FLASH_OVERRIDES if kind=='flash'else EARLY_CPUCP_OVERRIDES if kind=='early-cpucp'else None
+    expected=BLUETOOTH_OVERRIDES if kind=='bluetooth'else FLASH_OVERRIDES if kind=='flash'else EARLY_CPUCP_OVERRIDES if kind=='early-cpucp'else None
     if expected is None or lines!=[key+'='+value for key,value in expected.items()]:raise ValueError('Unexpected '+kind+' configuration fragment')
     return dict(expected)
 

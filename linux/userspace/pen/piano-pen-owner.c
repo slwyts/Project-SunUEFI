@@ -25,6 +25,7 @@ struct piano_pen_owner {
     char *hidraw;
     uint64_t retry_at, max_age, last_frame, last_pressure;
     int hid_fd, input_fd, tool_present, contact_present, have_frame, release_pending;
+    int squeeze_down, squeeze_reported;
 };
 
 static uint64_t owner_boot_ns(void)
@@ -53,6 +54,7 @@ static void release_tool(struct piano_pen_owner *p)
         return;
     struct input_event events[] = {
         { .type = EV_KEY, .code = BTN_TOUCH, .value = 0 },
+        { .type = EV_KEY, .code = BTN_STYLUS, .value = 0 },
         { .type = EV_KEY, .code = BTN_TOOL_PEN, .value = 0 },
         { .type = EV_SYN, .code = SYN_REPORT, .value = 0 }
     };
@@ -63,6 +65,7 @@ static void release_tool(struct piano_pen_owner *p)
     }
     p->tool_present = 0;
     p->contact_present = 0;
+    p->squeeze_reported = 0;
     p->release_pending = 0;
 }
 
@@ -72,6 +75,7 @@ static void reset_owner(struct piano_pen_owner *p)
     piano_pen_core_reset(p->core);
     p->have_frame = 0;
     p->last_pressure = 0;
+    p->squeeze_down = 0;
 }
 
 static int matching_hid(const char *path)
@@ -174,6 +178,25 @@ int piano_pen_owner_poll_fd(struct piano_pen_owner *p)
     return p->hid_fd;
 }
 
+static void report_squeeze(struct piano_pen_owner *p, int down)
+{
+    p->squeeze_down = down;
+    /* Tool buttons belong to the actual tablet tool. No global keyboard
+     * shortcut is emitted while the pen is outside the display's range.
+     */
+    int value = p->tool_present && down;
+    if (p->input_fd < 0 || value == p->squeeze_reported)
+        return;
+    struct input_event events[] = {
+        { .type = EV_KEY, .code = BTN_STYLUS, .value = value },
+        { .type = EV_SYN, .code = SYN_REPORT, .value = 0 }
+    };
+    if (input_events(p, events, sizeof(events) / sizeof(events[0])))
+        p->stats.input_errors++;
+    else
+        p->squeeze_reported = value;
+}
+
 void piano_pen_owner_read_hid(struct piano_pen_owner *p, short revents)
 {
     if (!p || p->hid_fd < 0)
@@ -192,6 +215,14 @@ void piano_pen_owner_read_hid(struct piano_pen_owner *p, short revents)
             return;
         if (bytes <= 0)
             goto disconnected;
+        if (bytes == 2 && report[0] == 2) {
+            /* Actual P81C captures: 02 6e squeeze, 02 00 release.
+             * Other report values are not invented slider/button events.
+             */
+            if (report[1] == 0x6e || report[1] == 0)
+                report_squeeze(p, report[1] == 0x6e);
+            continue;
+        }
         if (report[0] != 5)
             continue;
         uint64_t receipt = owner_boot_ns();
@@ -363,6 +394,7 @@ int piano_pen_owner_input_open(struct piano_pen_owner *p,
     struct uinput_setup device = { 0 };
     if (ioctl(fd, UI_SET_EVBIT, EV_KEY) || ioctl(fd, UI_SET_EVBIT, EV_ABS) ||
         ioctl(fd, UI_SET_KEYBIT, BTN_TOOL_PEN) || ioctl(fd, UI_SET_KEYBIT, BTN_TOUCH) ||
+        ioctl(fd, UI_SET_KEYBIT, BTN_STYLUS) ||
         ioctl(fd, UI_SET_PROPBIT, INPUT_PROP_DIRECT)) {
         ret = -errno;
         goto failed;
@@ -409,11 +441,12 @@ int piano_pen_owner_input_report(struct piano_pen_owner *p,
     if (proximity && (!(out->valid & PIANO_PEN_COORDINATES_VALID) ||
         x < 0 || x > p->area.x_max || y < 0 || y > p->area.y_max))
         return -ERANGE;
-    struct input_event events[9];
+    struct input_event events[10];
     size_t n = 0;
 #define ADD(t, c, v) events[n++] = (struct input_event){ .type = (t), .code = (c), .value = (v) }
     ADD(EV_KEY, BTN_TOUCH, contact);
     ADD(EV_KEY, BTN_TOOL_PEN, proximity);
+    ADD(EV_KEY, BTN_STYLUS, proximity && p->squeeze_down);
     if (proximity) {
         ADD(EV_ABS, ABS_X, x);
         ADD(EV_ABS, ABS_Y, y);
@@ -430,6 +463,7 @@ int piano_pen_owner_input_report(struct piano_pen_owner *p,
     if (!ret) {
         p->tool_present = proximity;
         p->contact_present = contact;
+        p->squeeze_reported = proximity && p->squeeze_down;
     }
     return ret;
 }

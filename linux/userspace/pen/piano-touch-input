@@ -2,6 +2,13 @@
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 # One THP reader; select calibration using the actual touch controller LCD ID.
 set -eu
+# This companion shares piano-touch.service's process group. It does not read
+# THP data or emit input; it restores actual pen radio/haptic settings after
+# BlueZ reconnects. systemd stops it together with the touch owner.
+if [ -x /usr/lib/piano/pen-bluetooth ] && [ -r /usr/share/piano/pen/p81c-radio.json ]; then
+  /usr/lib/piano/pen-bluetooth --profile /usr/share/piano/pen/p81c-radio.json \
+    --stationary-device /proc/nvt_thp_pen_stationary --follow &
+fi
 lcd_id=$(awk '/^lcd_id:/{print $2}' /proc/nvt_thp_status 2>/dev/null || true)
 case "$lcd_id" in
   0) calibration=/usr/share/piano/pen/calibration/piano-csot.ini ;;

@@ -1,0 +1,141 @@
+From: Project SunUEFI
+Subject: [PATCH] HID: xiaomi: keep P81C pressure reports out of keyboard input
+
+The captured Focus Pen Pro report map describes its private 14-byte Report 5
+pressure packet using keyboard Usage 0x57 (keypad plus). The generic parser
+therefore emits repeated plus presses while the tip touches the display.
+
+Reject only the two known private fields from input mapping. hidraw continues
+to receive the original reports for the existing pressure/THP tablet owner.
+The tablet owner consumes real Report 2 squeeze events as BTN_STYLUS, so
+do not also emit the same F19 as a global key. All other usages stay intact;
+do not hide plus keys globally or replace the device's current Report Map.
+The Bluetooth vendor ID is 0x0022, distinct from Xiaomi's USB vendor ID.
+
+Source: actual P81C 137-byte Report Map and 15-byte Report 5 captures;
+Linux HID input_mapping / hidraw fanout.
+
+--- a/drivers/hid/hid-ids.h
++++ b/drivers/hid/hid-ids.h
+@@ -1573,6 +1573,9 @@
+ #define USB_VENDOR_ID_XAT	0x2505
+ #define USB_DEVICE_ID_XAT_CSR	0x0220
+ 
++#define BT_VENDOR_ID_XIAOMI_P81C		0x0022
++#define BT_DEVICE_ID_XIAOMI_P81C		0x5081
++
+ #define USB_VENDOR_ID_XIAOMI		0x2717
+ #define USB_DEVICE_ID_MI_SILENT_MOUSE	0x5014
+ 
+--- a/drivers/hid/hid-xiaomi.c
++++ b/drivers/hid/hid-xiaomi.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * HID driver for Xiaomi Mi Dual Mode Wireless Mouse Silent Edition
++ * HID quirks for Xiaomi mice and Focus Pen Pro
+  *
+  * Copyright (c) 2021 Ilya Skriblovsky
+  */
+@@ -76,8 +76,75 @@
+ 	return rdesc;
+ }
+ 
++/* P81C exposes its private 14-byte pressure packet as keyboard Usage 0x57.
++ * Keep that packet available to hidraw; it must never become KEY_KPPLUS.
++ * Match the parsed layout, rather than replacing a firmware report map.
++ * Report 2's real squeeze button is consumed by the tablet-tool owner.
++ */
++static int xiaomi_input_mapping(struct hid_device *hdev, struct hid_input *hi,
++			       struct hid_field *field, struct hid_usage *usage,
++			       unsigned long **bit, int *max)
++{
++	struct hid_report *report = field->report;
++	struct hid_field *first, *second;
++
++	if (hdev->bus != BUS_BLUETOOTH ||
++	    hdev->vendor != BT_VENDOR_ID_XIAOMI_P81C ||
++	    hdev->product != BT_DEVICE_ID_XIAOMI_P81C ||
++	    report->type != HID_INPUT_REPORT)
++		return 0;
++
++	/* The real squeeze report is forwarded as BTN_STYLUS by the same
++	 * pressure/THP tablet owner. Do not also expose F19 as a global key.
++	 * Preserve every other usage of this one-byte keyboard array.
++	 */
++	if (report->id == 2 && report->size == 8 && report->maxfield == 1 &&
++	    usage->hid == (HID_UP_KEYBOARD | 0x6e) &&
++	    field->report_size == 8 && field->report_count == 1 &&
++	    field->logical_minimum == 0x4b && field->logical_maximum == 0x6e &&
++	    field->flags == 0)
++		return -1;
++
++	if (report->id != 5 ||
++	    report->size != 112 || report->maxfield != 2 ||
++	    usage->hid != (HID_UP_KEYBOARD | 0x57))
++		return 0;
++
++	first = report->field[0];
++	second = report->field[1];
++	if (first->report_offset != 0 || first->report_size != 16 ||
++	    first->report_count != 4 || first->logical_minimum != 0 ||
++	    first->logical_maximum != 16384 ||
++	    second->report_offset != 64 || second->report_size != 8 ||
++	    second->report_count != 6 || second->logical_minimum != 0 ||
++	    second->logical_maximum != 255 ||
++	    first->flags != (HID_MAIN_ITEM_VARIABLE | HID_MAIN_ITEM_RELATIVE) ||
++	    second->flags != (HID_MAIN_ITEM_VARIABLE | HID_MAIN_ITEM_RELATIVE))
++		return 0;
++
++	return -1;
++}
++
++static int xiaomi_probe(struct hid_device *hdev, const struct hid_device_id *id)
++{
++	int ret;
++
++	/* Keep the independent mouse and keyboard applications as hid-generic
++	 * exposed them; combining them would change libinput classification.
++	 */
++	if (hdev->vendor == BT_VENDOR_ID_XIAOMI_P81C &&
++	    hdev->product == BT_DEVICE_ID_XIAOMI_P81C)
++		hdev->quirks |= HID_QUIRK_INPUT_PER_APP;
++
++	ret = hid_parse(hdev);
++	if (ret)
++		return ret;
++	return hid_hw_start(hdev, HID_CONNECT_DEFAULT);
++}
++
+ static const struct hid_device_id xiaomi_devices[] = {
+ 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_XIAOMI, USB_DEVICE_ID_MI_SILENT_MOUSE) },
++	{ HID_BLUETOOTH_DEVICE(BT_VENDOR_ID_XIAOMI_P81C, BT_DEVICE_ID_XIAOMI_P81C) },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(hid, xiaomi_devices);
+@@ -85,10 +152,12 @@
+ static struct hid_driver xiaomi_driver = {
+ 	.name = "xiaomi",
+ 	.id_table = xiaomi_devices,
++	.probe = xiaomi_probe,
+ 	.report_fixup = xiaomi_report_fixup,
++	.input_mapping = xiaomi_input_mapping,
+ };
+ module_hid_driver(xiaomi_driver);
+ 
+ MODULE_LICENSE("GPL");
+ MODULE_AUTHOR("Ilya Skriblovsky <IlyaSkriblovsky@gmail.com>");
+-MODULE_DESCRIPTION("Fixing side buttons of Xiaomi Mi Silent Mouse");
++MODULE_DESCRIPTION("HID quirks for Xiaomi mice and Focus Pen Pro");
+--- a/drivers/hid/Kconfig
++++ b/drivers/hid/Kconfig
+@@ -540,7 +540,8 @@
+ 	tristate "Xiaomi"
+ 	help
+ 	  Adds support for side buttons of Xiaomi Mi Dual Mode Wireless
+-	  Mouse Silent Edition.
++	  Mouse Silent Edition and prevents private Focus Pen Pro pressure
++	  reports from being interpreted as keyboard plus keys.
+ 
+ config HID_GYRATION
+ 	tristate "Gyration remote control"

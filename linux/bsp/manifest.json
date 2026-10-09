@@ -54,10 +54,10 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "5c3195fd5776a09fed535213a51d25a29fbbe64f8300d26d80d5f835a1944429",
+      "sha256": "d135aac56bb9c4d2d4675b5a6d98d7d9adfe7a4910ac6f34c23b583faf6aaf8b",
       "source": "linux/bsp/common/etc/modules-load.d/piano-bluetooth.conf",
       "source_component": "Project SunUEFI",
-      "source_sha256": "5c3195fd5776a09fed535213a51d25a29fbbe64f8300d26d80d5f835a1944429",
+      "source_sha256": "d135aac56bb9c4d2d4675b5a6d98d7d9adfe7a4910ac6f34c23b583faf6aaf8b",
       "source_git_mode": "100644",
       "license": "NOASSERTION"
     },

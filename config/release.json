@@ -7,7 +7,7 @@
     "stable_source": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
     "stable_commit": "5fce161649b4d779d1b76d9fcd52dc77779774b8",
     "stable_version": "7.2.9",
-    "target_tree": "37acfa64bbb2cb7cf2e5c114c2dda84eeb1dea46",
+    "target_tree": "5eb99a2c0f6b016cd7034a044f16659643bd168c",
     "cpu_model_overlay": "linux/dts/piano-cpu-model.dtso",
     "additional_dtb_overlays": [
       "linux/dts/piano-board-identity.dtso",
@@ -47,7 +47,9 @@
       "ibus-libpinyin",
       "ibus-gtk",
       "ibus-gtk3",
-      "ibus-gtk4"
+      "ibus-gtk4",
+      "gir1.2-gtk-4.0",
+      "python3-gi-cairo"
     ]
   },
   "firmware": {

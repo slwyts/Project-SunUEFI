@@ -2,7 +2,7 @@
 
 这里保存 Piano 的开源笔解码核心、触控进程内的笔输入接线、离线工具，以及保留的原厂算法诊断 worker。笔和手指共用现有 THP 数据读取进程，不增加第二个触控流读取者。
 
-**标准笔输入已能绘画，位置正确，线宽随压力变化。** 当前结果来自本机 120 Hz 冷启动环境，Linux 已收到真实 Report5 压力和屏幕 type29 矩阵。144 Hz 下的笔输入尚未确认；轻捏桌面动作和笔端振动仍未集成。
+**标准笔输入已能绘画，位置正确，线宽随压力变化。** 当前结果来自本机 120 Hz 冷启动环境，Linux 已收到真实 Report5 压力和屏幕 type29 矩阵。144 Hz 下的笔输入尚未确认；轻捏按键、重连后的反馈参数和画板笔光标已写入默认源码；新版本仍需实机确认，应用的具体动作不在硬件解码层硬编码。
 
 ## 开源实现
 
@@ -47,7 +47,7 @@ piano-touch-view input --seconds 0 \
 
 原厂压力 producer 是 `com.android.bluetooth` 的 `bt_main_thread`，通过原生 `libbluetooth_jni.so` 接收 Report5，将每个原始字节零扩展为 int32，调用 `setModeLongValue(0,1088,15,values)`。触控服务随后构造 common7／`0x440` 并直接交给算法；这条路径绕过内核 common queue。Android 的专用分支会跳过普通 UHID 转发，解释了同轮 hidraw 报告数为0；不能据此认定 Linux BlueZ 的路由也相同。
 
-Android 轻捏已经捕获到真实 `02 6e`／`02 00` Report2，与 `KEY_F19` 的 DOWN／UP 和 `MSC_SCAN=0007006e` 对应。Report6 是独立姿态数据，不是压力或轻捏。Linux 已接收到相同轻捏 Report2，以及长度21的 Report6 姿态报告，说明蓝牙 HID 通道确实有数据。轻捏的桌面动作、姿态用途和笔端振动仍未集成，不能把报告已收到写成这些功能已可用。
+Android 轻捏已经捕获到真实 `02 6e`／`02 00` Report2，与 `KEY_F19` 的 DOWN／UP 和 `MSC_SCAN=0007006e` 对应。Report6 是独立姿态数据，不是压力或轻捏。Linux 已接收到相同轻捏 Report2，以及长度21的 Report6 姿态报告，说明蓝牙 HID 通道确实有数据。默认输入 owner 只将真实 `02 6e`／`02 00` 转成 `BTN_STYLUS`，与真实工具接近状态一起上报；Report6 和未知笔身滑动字段不会伪造成滚轮。对应 HID 补丁去掉同一个 F19 的键盘重复输出。桌面动作由应用的标准笔按钮接口处理，具体动作与笔端物理反馈仍需实机确认。
 
 ## 原厂无线初始化
 
@@ -65,11 +65,21 @@ sudo /usr/lib/piano/pen-bluetooth --address YOUR_PEN_ADDRESS \
   --stationary-device /proc/nvt_thp_pen_stationary
 ```
 
-运行需要 Python GI与BlueZ，并且笔已经连接。缺少真实磁吸开关时会报错，不假定笔已取下。临时对照期间使用候选模块；默认发布内核尚未包含这两个接口。
+运行需要 Python GI与BlueZ，并且笔已经连接。磁吸和静止接口为可选：缺少真实磁吸开关时，不发送猜测的磁吸状态，但仍初始化笔的无线与轻捏反馈参数。临时对照期间使用候选模块；默认发布内核尚未包含这两个接口。
+
+## HID 报告与桌面行为
+
+P81C 的真实 137 字节 HID Report Map 将私有 Report5 数据放在键盘 Usage Page 的 `0x57`，Linux 通用 HID 会将它映射为 `KEY_KPPLUS`。压力包的四个 16 位字段和六个 8 位字段不是十个加号按键。默认内核的 [`0021` 补丁](../../../patches/linux/7.2.9/0021-hid-xiaomi-p81c-pressure-not-keyboard.patch) 扩展现有 `hid-xiaomi`，按真实 Bluetooth VID/PID、Report ID 和字段布局跳过这条错误键盘映射，保留原始 hidraw 数据给压力 owner。它不替换整份描述符，不全局屏蔽 `+`，也不影响键盘保护套。
+
+真实轻捏从 Report2 接入同一个 tablet-tool 节点的 `BTN_STYLUS`，笔在有效范围内时才发给应用；抬出范围、断连、流中断时释放按钮。内核不再同时发送相同 F19 全局按键。普通应用可把它用作侧键或上下文菜单；绘图应用可绑定工具栏或工具切换。笔身上下滑尚无已确认的原始字段，暂不生成滚轮或笔刷大小快捷键。
+
+`piano-touch-input` 在现有触控服务中启动 `pen-bluetooth --follow` 伴随进程。它只走 BlueZ，不读取 THP、也不生成键鼠输入；真实连接和 `ServicesResolved` 后完成初始化，断连后等待下一次连接重新发送反馈参数。磁吸状态只在真实开关存在时转发；没有磁吸／静止接口不阻塞已知的 BLE 功能。它支持当前笔返回的设备版本，不把 Modalias 硬锁到旧 `d0001`。`DA 01 01` 说明反馈设置被接收，物理震动仍需要实际轻捏确认。
+
+笔尖位置、压力和悬停仍通过标准 tablet-tool 接口输出。光标外观由桌面和应用决定，不能靠把笔伪装成触摸屏解决。`piano-pen-canvas` 在自己的画布内对真实笔事件使用隐藏光标，鼠标／触控板事件恢复普通光标，画布之外不改桌面全局设置。其他应用的笔光标遵循各自设置。
 
 ## 构建与校准打包入口
 
-`tools/build_release_helpers.py` 与 `tools/build_piano_runtime_helpers.py` 已共用 `build_pen_core()`，从源码副本调用这里的 Makefile。默认 native runtime bundle 包含 `/usr/bin/piano-pen-offline`、`/usr/lib/piano/pen-bluetooth`，以及 Apache-2.0 许可和来源说明。编译清单记录 C／C++ 源码、头文件、Makefile、实际工具链和目标静态 C++ 库；离线工具是 ARM64 静态程序，构建不需要原厂 ini。
+`tools/build_release_helpers.py` 与 `tools/build_piano_runtime_helpers.py` 已共用 `build_pen_core()`，从源码副本调用这里的 Makefile。默认 native runtime bundle 包含 `/usr/bin/piano-pen-offline`、`/usr/bin/piano-pen-canvas`、`/usr/lib/piano/pen-bluetooth`，以及 Apache-2.0 许可和来源说明。编译清单记录 C／C++ 源码、头文件、Makefile、实际工具链和目标静态 C++ 库；离线工具是 ARM64 静态程序，构建不需要原厂 ini。
 
 `libpiano-pen-core.a` 包含 C 编译的 owner／frame 与 C++ 编译的 core／decoder，已经静态链接到正常构建的 `piano-touch-view`，库文件本身不安装进系统。触控源码和入口包装保留 C ABI，最终链接使用同一目标 sysroot 的 C++ 链接器。rootfs 通过现有 `runtime.stage()` 安装程序并保留补丁、owner 和核心源码的来源记录。
 
