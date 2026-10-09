@@ -179,3 +179,14 @@ CPU前缀仍不能交给完整 `parse_data_package`：该函数还读取真实�
 普通重启返回Linux后，完整序列收到所有查询和设置回应。随后按平板按钮倒计时做真实悬停和划线，得到4条Report2、Report5为0，1728条THP记录全部为type3。结果保存在同目录 `result.json`。完整无线初始化已经完成，绘画数据仍未产生；这条差异不能继续当作已证明的唯一根因。
 
 下一步核对原厂笔扫描与显示时序。Linux实际控制器读取为game_mode0、hand_scan_rate180、pen_scan_rate240；不能归因为游戏模式1。原厂扩展命令0x0f是游戏模式布尔量，不能猜成LCD刷新率枚举。同机原厂笔服务接收PEN_FPS事件并映射到60／90桶，用于蓝牙时序；该处理本身未调用显示服务切换到60／120Hz。是否由其他原厂显示／触控模块协调，以及实际IC通知命令，仍需进一步核对。
+
+
+## 原厂实际用笔时的扫描状态
+
+2026-10-09在原厂Android保持当前显示设置时，用 `NVTCapacitivePenP81c` 的真实 `BTN_TOOL_PEN` 事件触发一次只读快照。实际显示activeMode1为120Hz，控制器hand_scan_rate60、pen_scan_rate240、op_mode1；此前空闲状态读过hand120／op_mode2，唤醒后的另一份读数为hand144／op_mode2。扫描数值会随实际状态变化，不能只根据一个手指扫描值判断LCD模式。记录保存在本地 `private/analysis/piano-pen-android-scan-20261009/comparison.json`。
+
+Linux此前显示144Hz、hand180、pen240。两边笔扫描率相同；这一次原厂在120Hz正常用笔的记录不能证明Piano在144Hz禁止笔输入。为进一步比较，需要让Linux原生KMS第一次启用就选择120，而不能在当前有黑屏问题的运行状态中热切。
+
+当前590内核配置使用 `CONFIG_CMDLINE_FORCE=y`，因此只给ESP的boot header追加video参数不会生效；Mutter默认又选择DRM preferred模式。冷启动候选只交换Piano面板模式表的144／120顺序，使120成为preferred，并保留全部模式。候选仅用于此项对照，正式默认仍为144Hz；构建来源在 `build/panel-cold120-candidate/`。原厂触控portrait尺寸2136×3200与Linux原生显示模式3200×2136不同，不能用错video参数。
+
+触控面板监听生命周期修复已经从draft转为正式 [`0020-nvt-panel-follower-lifetime.patch`](../../patches/linux/7.2.9/0020-nvt-panel-follower-lifetime.patch)，纳入默认内核源码准备流程。它只修注销与释放顺序，不启用笔接口或改变刷新率；新源码树已生成，完整新内核部署仍需后续构建。

@@ -1,7 +1,7 @@
 From: Project SunUEFI
 Subject: [PATCH] input: nt36532e: detach the panel follower before cleanup
 
-DRAFT: not in the release patch list. Base5902d3af6f62; applies after0019.
+Apply independently to the default Linux7.2.9 Piano source5902d3af6f62.
 The follower is embedded in manually allocated ts. A devm follower action
 runs only after probe returns an error or remove returns, when ts has already
 been freed. Use explicit add/remove ownership and a registration flag.
@@ -12,6 +12,10 @@ flag. remove and shutdown detach first, preserving valid callback resources.
 The standard remove helper synchronizes via panel->follower_lock and invokes
 unprepare while the controller context is alive. Do not suppress callbacks
 or retain a second devm removal action. Firmware/pen commands are unchanged.
+
+Source: drivers/gpu/drm/drm_panel.c, drm_panel_add_follower() and
+drm_panel_remove_follower(); nt36xxx.c manual probe/remove lifetime.
+The listener is part of ts, so its cleanup must finish before kfree(ts).
 
 --- a/drivers/input/touchscreen/nt36532e/nt36xxx.c
 +++ b/drivers/input/touchscreen/nt36532e/nt36xxx.c

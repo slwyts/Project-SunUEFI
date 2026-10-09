@@ -41,7 +41,7 @@ TARGETS[DEFAULT_TARGET] = {
     **TARGETS['kernel69'],
     'series_target': 'kernel69',
     'patch_tree': TARGETS['kernel69']['target_tree'],
-    'target_tree': 'a922cff1009a4a81f5c13433fa9e527f0421bf14',
+    'target_tree': '37acfa64bbb2cb7cf2e5c114c2dda84eeb1dea46',
     'stable_commit': '5fce161649b4d779d1b76d9fcd52dc77779774b8',
     'stable_tree': 'c278d1443495d2a1a07fff2bcfb286b5c35baaea',
     'stable_version': '7.2.9',
@@ -114,6 +114,10 @@ TARGETS[DEFAULT_TARGET] = {
     'piano_privacy_led_patch': {
         'file': 'patches/linux/7.2.9/0016-piano-camera-privacy-led.patch',
         'sha256': '34419a7bb108d0c73c61cc9f8991a81204f689dadce008d3db4b3b6a9ec842b4',
+    },
+    'nvt_panel_follower_patch': {
+        'file': 'patches/linux/7.2.9/0020-nvt-panel-follower-lifetime.patch',
+        'sha256': '140a47b258b32d2cc8b90b3793fb550bcf179bdac1866b37f4275f4184252623',
     },
     'dsi_stop_order_patch': {
         'file': 'patches/linux/7.2.9/0008-dsi-bonded-stop-slave-first.patch',
@@ -282,7 +286,7 @@ def write_manifest(path, record):
 
 def update_patches(root, policy):
     result = {}
-    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch', 'va_clock_order_patch', 'gcv2_backend_patch', 'gcv2_catalog_patch', 'dsi_stop_order_patch', 'dsi_fixed_bpc_patch', 'flash_torch_rounding_patch', 'dsi_video_phases_patch', 'dsi_post_hs_sync_patch', 'va_mono_patch', 'piano_panel_reset_patch', 'dsi_post_resync_reset_patch', 'piano_privacy_led_patch'):
+    for key in ('conflict_resolution', 'cpu_model_patch', 'fastrpc_dma_patch', 'panel_depth_patch', 'flash_cleanup_patch', 'va_clock_order_patch', 'gcv2_backend_patch', 'gcv2_catalog_patch', 'dsi_stop_order_patch', 'dsi_fixed_bpc_patch', 'flash_torch_rounding_patch', 'dsi_video_phases_patch', 'dsi_post_hs_sync_patch', 'va_mono_patch', 'piano_panel_reset_patch', 'dsi_post_resync_reset_patch', 'piano_privacy_led_patch', 'nvt_panel_follower_patch'):
         if key not in policy:
             continue
         row = policy[key]
@@ -340,6 +344,7 @@ def merge_stable(work, policy, paths):
         ('piano_panel_reset_patch', 'fix(drm): use factory reset sequence for Piano panels', 'piano_panel_reset_commit'),
         ('dsi_post_resync_reset_patch', 'fix(drm): reset SM8750 bonded controllers after PHY sync', 'dsi_post_resync_reset_commit'),
         ('piano_privacy_led_patch', 'feat(media): wire shared Piano camera privacy indicator', 'piano_privacy_led_commit'),
+        ('nvt_panel_follower_patch', 'fix(input): detach NVT panel follower before cleanup', 'nvt_panel_follower_commit'),
     ):
         if key not in paths:
             continue
