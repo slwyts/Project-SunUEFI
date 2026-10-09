@@ -59,6 +59,8 @@ class Canvas(Gtk.Application):
         window.present()
 
     def pointer_event(self, controller, event):
+        if event is None:
+            return False
         device = event.get_device()
         if device is None:
             return False
