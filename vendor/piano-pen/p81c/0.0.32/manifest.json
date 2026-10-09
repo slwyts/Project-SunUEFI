@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "device": "Xiaomi Focus Pen Pro",
+  "firmware_family": "P81C",
+  "version": "0.0.32",
+  "capture_date": "2026-10-10",
+  "source": "Xiaomi Bluetooth extension OTA cache during Android update",
+  "source_package": {
+    "name": "com.xiaomi.bluetooth",
+    "version_name": "16",
+    "version_code": 36
+  },
+  "download_url": "https://cdn.cnbj1.fds.api.mi-img.com/ota-packages/20Kf_XW_P81C_Pen_FW_User_V0.0.32.zip",
+  "ota_short_md5": "25fc9fc49b",
+  "license": "No redistribution license was included in the OTA package; these are original vendor bytes, not project-authored code.",
+  "files": {
+    "20Kf_XW_P81C_Pen_FW_User_V0.0.32.zip": {
+      "bytes": 453878,
+      "sha256": "b32f48383aed9df8d9cb4b1fba408669d5058dbc0fafc0192ba2c826f0bdd2ab",
+      "md5": "25fc9fc49b0b333ef5c28852d237bb97"
+    },
+    "XW_P81C_Pen_FW_User_V0.0.32.img": {
+      "bytes": 710312,
+      "sha256": "7d05be949d58e937164782844216ad34cb669bc8cd1619ff29c49eea62902606",
+      "md5": "45323e1252be1a79c4fc3e2e46cd9aec"
+    }
+  }
+}
