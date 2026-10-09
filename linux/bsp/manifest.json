@@ -377,6 +377,20 @@
       "source_sha256": "5a8f02dba36412c89cad50ba3c261250b6bbe596f2ad0cccebfe5c854b5fbcd0",
       "source_git_mode": "100644",
       "license": "MIT"
+    },
+    {
+      "group": "common",
+      "path": "usr/share/piano/pen/p81c-radio.json",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "7b6217672cec5b97e018eb4383a5da245adaea812c68d9da91f9cac8c1e8cd63",
+      "source": "linux/bsp/common/usr/share/piano/pen/p81c-radio.json",
+      "source_component": "Project SunUEFI",
+      "source_sha256": "7b6217672cec5b97e018eb4383a5da245adaea812c68d9da91f9cac8c1e8cd63",
+      "source_git_mode": "100644",
+      "license": "BSD-2-Clause-Patent"
     }
   ],
   "excluded": [

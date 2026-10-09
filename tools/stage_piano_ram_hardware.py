@@ -135,6 +135,7 @@ def build(output, source, rootfs=None):
     for relative in ('etc/modprobe.d/piano.conf',
                      'etc/modules-load.d/piano-rgb.conf',
                      'etc/modules-load.d/piano-bluetooth.conf',
+                     'usr/share/piano/pen/p81c-radio.json',
                      'etc/pipewire/client.conf.d/60-piano-audio.conf',
                      'etc/pipewire/pipewire-pulse.conf.d/60-piano-audio.conf',
                      'etc/wireplumber/wireplumber.conf.d/50-piano-audio.conf',

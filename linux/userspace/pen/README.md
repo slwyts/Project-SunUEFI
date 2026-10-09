@@ -36,9 +36,27 @@ build/pen-core/piano-pen-offline --ini ACTUAL.ini --pressure-max-age-ns N --even
 
 Android 轻捏已经捕获到真实 `02 6e`／`02 00` Report2，与 `KEY_F19` 的 DOWN／UP 和 `MSC_SCAN=0007006e` 对应。Report6 是独立姿态数据，不是压力或轻捏。Linux 已接收到相同轻捏 Report2，以及长度21的 Report6 姿态报告，说明蓝牙 HID 通道确实有数据。轻捏的桌面动作、姿态用途和笔端振动仍未集成，不能把报告已收到写成这些功能已可用。
 
+## 原厂无线初始化
+
+[`piano-pen-bluetooth.py`](piano-pen-bluetooth.py) 使用系统 BlueZ 完成原厂控制序列：读取笔信息、两轮分配 ID并设置参数／频率／电压、发送时间戳和真实磁吸状态，最后设置轻捏与屏幕状态。每一步等待实际回应，ID来自笔的回应，主机地址来自当前蓝牙适配器；不内嵌配对密钥或设备地址。
+
+无线参数保存在 [`p81c-radio.json`](../../bsp/common/usr/share/piano/pen/p81c-radio.json)，依据本机 `OS3.0.309.0.WPYCNXM` 的原厂服务实际发送结果整理，与解算用的 BOE／CSOT ini不同。这个原厂版本的运行时 `TIME_STAMP` 是1745566508，实际选择普通参数表；不能把屏幕144Hz直接当作笔的频率参数。
+
+完整初始化已在 Linux 收到全部回应。随后真实划线采集中，Report5仍为0，1728条屏幕记录仍全部为type3；因此初始化已经实现，但还不能绘画。下一步需要核对原厂用笔时的显示／触控扫描协调。工具不读THP流、不改变显示模式、不生成输入设备，也未作为新后台服务启用。
+
+已安装磁吸候选和活动状态接口的设备，可显式运行：
+
+```sh
+sudo /usr/lib/piano/pen-bluetooth --address YOUR_PEN_ADDRESS \
+  --profile /usr/share/piano/pen/p81c-radio.json \
+  --stationary-device /proc/nvt_thp_pen_stationary
+```
+
+运行需要 Python GI与BlueZ，并且笔已经连接。缺少真实磁吸开关时会报错，不假定笔已取下。临时对照期间使用候选模块；默认发布内核尚未包含这两个接口。
+
 ## 构建与校准打包入口
 
-`tools/build_release_helpers.py` 与 `tools/build_piano_runtime_helpers.py` 已共用 `build_pen_core()`，从源码副本调用这里的 Makefile。默认 native runtime bundle 包含 `/usr/bin/piano-pen-offline`，以及 Apache-2.0 许可和来源说明。编译清单记录 C／C++ 源码、头文件、Makefile、实际工具链和目标静态 C++ 库；离线工具是 ARM64 静态程序，构建不需要原厂 ini。
+`tools/build_release_helpers.py` 与 `tools/build_piano_runtime_helpers.py` 已共用 `build_pen_core()`，从源码副本调用这里的 Makefile。默认 native runtime bundle 包含 `/usr/bin/piano-pen-offline`、`/usr/lib/piano/pen-bluetooth`，以及 Apache-2.0 许可和来源说明。编译清单记录 C／C++ 源码、头文件、Makefile、实际工具链和目标静态 C++ 库；离线工具是 ARM64 静态程序，构建不需要原厂 ini。
 
 `libpiano-pen-core.a` 留在构建目录，供以后链接到现有触控进程，不安装进系统。当前触控服务的默认行为没有改变，没有新增 systemd unit，也没有自动开启绘画输入。rootfs 通过现有 `runtime.stage()` 安装工具并保留来源记录。
 

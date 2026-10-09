@@ -34,7 +34,7 @@ PEN_SOURCE_FILES=('Makefile','piano-pen-frame.c','piano-pen-frame.h',
  'piano-pen-core.cpp','piano-pen-core.h','piano-pen-decoder.cpp',
  'piano-pen-decoder.hpp','piano-pen-offline.cpp','Apache-2.0.txt','OPEN_CORE_ORIGIN.txt')
 PEN_DOCUMENTS=('Apache-2.0.txt','OPEN_CORE_ORIGIN.txt')
-PEN_RUNTIME_PATHS={'usr/bin/piano-pen-offline'}|{
+PEN_RUNTIME_PATHS={'usr/bin/piano-pen-offline','usr/lib/piano/pen-bluetooth'}|{
  'usr/share/doc/piano-pen-offline/'+name for name in PEN_DOCUMENTS}
 TOOL_PINS={'clang':'939a882527432ec23b094c289e7f170bf2d6ec282e74dde75e31b08602fa3eae',
  'ld.lld':'57b6c64db534793f05918a6e935c900e9938bd64d0ac95933285930b568387ea',
@@ -213,6 +213,12 @@ def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None):
                               if Path(path).is_relative_to(source)},
                 compile_exit_code=0,help_exit_code=help_result.returncode,help_no_device_access=True)
     files={'usr/bin/piano-pen-offline':item}
+    script=source/'piano-pen-bluetooth.py';inputs[str(script)]=sha(script)
+    copied_script=copied/script.name;shutil.copyfile(script,copied_script)
+    files['usr/lib/piano/pen-bluetooth']={
+        'file':str(copied_script.relative_to(output)),'bytes':copied_script.stat().st_size,
+        'sha256':sha(copied_script),'mode':0o755,'source_kind':'project-pen-control',
+        'source_path':'linux/userspace/pen/piano-pen-bluetooth.py'}
     for name in PEN_DOCUMENTS:
         path=copied/name
         files['usr/share/doc/piano-pen-offline/'+name]={
