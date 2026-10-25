@@ -4,8 +4,8 @@
   "kernel_version": "7.3.0",
   "base_commit": "c03c1a14507dfaf8b856c2608f9ac216021fc222",
   "base_tree": "30fd2ef82912c26cf3a58ad0ba6afc375fa851ac",
-  "target_tree": "4b127fa70ffa79e78a259c8289ef7e632822edec",
-  "original_target_commit": "892a593ae83389a645076451ba27221504d3dc33",
+  "target_tree": "2aa1815b3e5c97943d522dd176f3d059c0c268eb",
+  "original_target_commit": "9d00bb4aa4a47a3b18da35b9ac1317ec72173e20",
   "source_url": "https://github.com/torvalds/linux.git",
   "patches": [
     {
@@ -207,6 +207,14 @@
       "original_parent": "220cdeac7e4ec4e1a8bc4c2400c71fa00b21b084",
       "committer_date": "2026-10-25T12:04:07+00:00",
       "tree": "4b127fa70ffa79e78a259c8289ef7e632822edec"
+    },
+    {
+      "file": "0026-mca-recover-pd-input.patch",
+      "sha256": "e51e2b096f5f05cbb0dcd8d72185b2c0d4210fba283dba21466bf2b123038deb",
+      "original_commit": "9d00bb4aa4a47a3b18da35b9ac1317ec72173e20",
+      "original_parent": "892a593ae83389a645076451ba27221504d3dc33",
+      "committer_date": "2026-10-25T14:59:44Z",
+      "tree": "2aa1815b3e5c97943d522dd176f3d059c0c268eb"
     }
   ],
   "provenance": {
