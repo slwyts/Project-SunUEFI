@@ -4,8 +4,8 @@
   "kernel_version": "7.3.0",
   "base_commit": "c03c1a14507dfaf8b856c2608f9ac216021fc222",
   "base_tree": "30fd2ef82912c26cf3a58ad0ba6afc375fa851ac",
-  "target_tree": "4a5923915b4214f850287fc51c658781dc54a195",
-  "original_target_commit": "220cdeac7e4ec4e1a8bc4c2400c71fa00b21b084",
+  "target_tree": "4b127fa70ffa79e78a259c8289ef7e632822edec",
+  "original_target_commit": "892a593ae83389a645076451ba27221504d3dc33",
   "source_url": "https://github.com/torvalds/linux.git",
   "patches": [
     {
@@ -199,6 +199,14 @@
       "original_parent": "57b1e6db5a831d416ad438b7490144e6f8ee6af9",
       "committer_date": "2026-10-22T18:25:53+08:00",
       "tree": "4a5923915b4214f850287fc51c658781dc54a195"
+    },
+    {
+      "file": "0025-ucsi-clear-released-connectors.patch",
+      "sha256": "1db7e75f8f680d1320c18e94b2a581fd020e5244ced35035950170d741c9b327",
+      "original_commit": "892a593ae83389a645076451ba27221504d3dc33",
+      "original_parent": "220cdeac7e4ec4e1a8bc4c2400c71fa00b21b084",
+      "committer_date": "2026-10-25T12:04:07+00:00",
+      "tree": "4b127fa70ffa79e78a259c8289ef7e632822edec"
     }
   ],
   "provenance": {
