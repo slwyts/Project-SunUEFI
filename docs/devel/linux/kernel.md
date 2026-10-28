@@ -135,11 +135,18 @@ Piano 的原厂认证顺序是命令 7、命令 6，不发送会使固件后续 
 档位，仍由既有充电策略选择降压或 SC8541 直充通路，保留电池电压、温度和
 电流限制。
 
-USB-A 充电器经拓展坞切换时仍可能触发原厂 ADSP 的 `charger_process / TCPC_0`
-崩溃。ADSP 恢复还会同步注销 ASoC 声卡；音频进程保留已移除声卡的句柄时，
+0028 对照原厂 `qcom_subpmic_sync_cfg_work()`，把已有设备树节点
+`mca,qcom_subpmic` 的 OTG 配置通过 `0x201a` 同步给 ADSP。四个小端 32 位
+字段依次为 `otg_boost_src`、`gpio_chip_type`、`vdd_boost_en`、`otg_ovp_en`；
+Piano 的前两项为 0、1，后两项 GPIO 未配置，沿用原厂的 `-1`。
+驱动只接受这组接线，每次 ADSP 启动后重新同步，失败时保留普通充电并重试。
+漏掉初始化时，固件的 `mca_misc_enable_usb_otg()` 会报告 `gpio not init`，
+重试超时返回 `FFFF`，在拔掉供电角色的拓展坞时导致 `TCPC_0` 崩溃。
+
+ADSP 崩溃恢复还会同步注销 ASoC 声卡；音频进程保留已移除声卡的句柄时，
 `snd_card_disconnect_sync()` 会等待句柄关闭，进而阻塞 PDR 与 ADSP 重启。
-此时充电属性返回 `-ENODEV`，需要与正常的功耗和温度限流区分。
-这条恢复路径的处理记录在 [Issue #4](https://github.com/slwyts/Project-SunUEFI/issues/4)。
+此时充电属性返回 `-ENODEV`，需要与正常的功耗和温度限流区分。0028 处理
+上述 OTG 初始化触发源，没有改变声卡注销和 DMA 资源释放的等待条件。
 
 Linux 的电池充电电流从 38°C 以上每升高 1°C 下调 300 mA，普通 PD 在
 47°C 起降至 500 mA；降温后每 30 秒最多恢复一级，并留出 1°C 的回差。

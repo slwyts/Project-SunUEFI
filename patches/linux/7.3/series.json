@@ -4,8 +4,8 @@
   "kernel_version": "7.3.0",
   "base_commit": "c03c1a14507dfaf8b856c2608f9ac216021fc222",
   "base_tree": "30fd2ef82912c26cf3a58ad0ba6afc375fa851ac",
-  "target_tree": "d2d5a2393f557fed97e2d8a5cb020961f8b5408a",
-  "original_target_commit": "3176c9930508dac813a7ab8bc38739b0cb47297e",
+  "target_tree": "78e5f4edfacd2e5310f9461052cfd34ef91e3f18",
+  "original_target_commit": "c474d439f79df18b44bf5e93926fc8affbdb2fa6",
   "source_url": "https://github.com/torvalds/linux.git",
   "patches": [
     {
@@ -223,6 +223,14 @@
       "original_parent": "9d00bb4aa4a47a3b18da35b9ac1317ec72173e20",
       "committer_date": "2026-10-28T14:11:38Z",
       "tree": "d2d5a2393f557fed97e2d8a5cb020961f8b5408a"
+    },
+    {
+      "file": "0028-power-piano-otg-configuration.patch",
+      "sha256": "d9506ab06591842d5d5b533d804a7454fdf1d2efc0c561235461bf6644a35f86",
+      "original_commit": "c474d439f79df18b44bf5e93926fc8affbdb2fa6",
+      "original_parent": "3176c9930508dac813a7ab8bc38739b0cb47297e",
+      "committer_date": "2026-10-28T15:31:00Z",
+      "tree": "78e5f4edfacd2e5310f9461052cfd34ef91e3f18"
     }
   ],
   "provenance": {
