@@ -135,6 +135,12 @@ Piano 的原厂认证顺序是命令 7、命令 6，不发送会使固件后续 
 档位，仍由既有充电策略选择降压或 SC8541 直充通路，保留电池电压、温度和
 电流限制。
 
+USB-A 充电器经拓展坞切换时仍可能触发原厂 ADSP 的 `charger_process / TCPC_0`
+崩溃。ADSP 恢复还会同步注销 ASoC 声卡；音频进程保留已移除声卡的句柄时，
+`snd_card_disconnect_sync()` 会等待句柄关闭，进而阻塞 PDR 与 ADSP 重启。
+此时充电属性返回 `-ENODEV`，需要与正常的功耗和温度限流区分。
+这条恢复路径的处理记录在 [Issue #4](https://github.com/slwyts/Project-SunUEFI/issues/4)。
+
 Linux 的电池充电电流从 38°C 以上每升高 1°C 下调 300 mA，普通 PD 在
 47°C 起降至 500 mA；降温后每 30 秒最多恢复一级，并留出 1°C 的回差。
 这项调节不降低 USB 输入电流上限。判断断连需要结合输入电压、电流和
