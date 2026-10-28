@@ -16,13 +16,13 @@ ADSP，不改其他设备固件，也不写入 Android 固件分区。
 同一条 5 V 连接的输入电流从约 0.5 A 恢复到 1.49 A；原厂同线约为
 1.59 A。这是普通 PD 充电修复，不代表已测得小米高压快充。
 
-内核 MiPPS 认证候选位于
-[`0040-power-piano-native-mipps.patch`](../../../patches/linux/7.2.9/drafts/0040-power-piano-native-mipps.patch)。
-该候选应用在默认的 `0041`、`0042` 补丁之后。它在现有充电工作队列内完成 HMAC-SHA256 挑战应答，使用标准
-`power_supply` 的 `authentic` 属性报告结果，不另装认证服务，也不改动
-充电电流和温控上限。候选已在设备上加载并完成普通 PD 启动；小米充电器
-认证尚未实测，未加入默认发布补丁序列。当前要求 ADSP 提供有效的小米
-SVID 和充电器 ID；固件漏报身份时的处理还需继续对照原厂。
+默认内核的 MiPPS 认证位于
+[`0027-power-piano-mipps-authentication.patch`](../../../patches/linux/7.3/0027-power-piano-mipps-authentication.patch)。
+它在现有充电工作队列内完成 HMAC-SHA256 挑战应答，使用标准
+`power_supply` 的 `authentic` 属性报告结果，不另装认证服务。固件漏报身份时，
+仅用真实挑战的应答恢复并校验 ID；无法认证就继续普通 PD/PPS。
+认证与电压请求沿用同一个固件协议版本转换，不改动充电电流和温控上限。
+命令顺序、来源和限制见[内核说明](../../../docs/devel/linux/kernel.md#usb-type-c)。
 
 这些文件是 Qualcomm／小米的专有固件，不适用 SunUEFI 的源码许可。
 未取得额外再分发授权；保留原权利人的权利，仅用于该设备的硬件运行。

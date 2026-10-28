@@ -1,19 +1,28 @@
-From 0c6a3ecae09f0c9e369195caa176ce070dd867f2 Mon Sep 17 00:00:00 2001
+From 3176c9930508dac813a7ab8bc38739b0cb47297e Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
-Date: Tue, 20 Oct 2026 06:14:46 +0800
-Subject: [PATCH] power: piano: authenticate identified MiPPS adapters in
- kernel
+Date: Wed, 28 Oct 2026 14:11:38 +0000
+Subject: [PATCH] power: supply: piano_mca: authenticate Xiaomi chargers before
+ PPS
 
-Apply after the SC96231/pen-resume production patches. Adapter identity must still be reported by ADSP; high-voltage adapter acceptance remains pending.
+Complete MiPPS challenge/response in the charger workqueue. Recover
+omitted adapter identities only after validating a fresh challenge,
+preserve USB data roles, and use the stock Piano command order so
+authenticated adapters expose their PPS capabilities.
+
+Keep existing charge-current and thermal limits, with ordinary PD/PPS
+fallback on failure. Invalidate authentication when the ADSP restarts
+or a source is unplugged, including short replug intervals.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
 ---
  drivers/power/supply/Kconfig           |   1 +
- drivers/power/supply/piano_mca.c       | 309 ++++++++++++++-----------
- drivers/power/supply/piano_mca_mipps.h | 132 +++++++++++
- 3 files changed, 312 insertions(+), 130 deletions(-)
+ drivers/power/supply/piano_mca.c       | 404 ++++++++++++++++---------
+ drivers/power/supply/piano_mca_mipps.h | 132 ++++++++
+ 3 files changed, 394 insertions(+), 143 deletions(-)
  create mode 100644 drivers/power/supply/piano_mca_mipps.h
 
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
-index d5f91b4d268..2d87dda5ec2 100644
+index 0e21baccd..e9873e3b2 100644
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
 @@ -211,6 +211,7 @@ config BATTERY_PMU
@@ -25,7 +34,7 @@ index d5f91b4d268..2d87dda5ec2 100644
  	  Say Y here to enable telemetry from the Xiaomi Pad 8 Pro charger
  	  stack, which the ADSP firmware exposes through Xiaomi's MCA property
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 1c54dc71e7b..59bb47f30c6 100644
+index 4c1944127..763128426 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -21,8 +21,8 @@
@@ -66,7 +75,7 @@ index 1c54dc71e7b..59bb47f30c6 100644
   * Command n (1-8) goes to property 0x21003 + n - 1, as in the stock
   * adsp_pd_protocol_request_vdm_cmd().
   */
-@@ -240,7 +244,7 @@ MODULE_PARM_DESC(hv_charge,
+@@ -242,7 +246,7 @@ MODULE_PARM_DESC(hv_charge,
  static bool mipps_auth;
  module_param(mipps_auth, bool, 0444);
  MODULE_PARM_DESC(mipps_auth,
@@ -75,17 +84,30 @@ index 1c54dc71e7b..59bb47f30c6 100644
  
  /*
   * cp_charge: direct charging through the SC8541 2:1 switched-capacitor
-@@ -481,7 +485,8 @@ struct piano_mca {
+@@ -483,7 +487,9 @@ struct piano_mca {
  	u32 cp_ibus_cap;	/* learned from a source dropping out, 0 if none */
  	unsigned long cp_off_at;	/* jiffies when the source went away */
  	unsigned long cp_on_at;		/* jiffies when it came */
 -	bool auth_ok;		/* xiaomi-mipps-auth reported the adapter verified */
 +	bool auth_ok;		/* adapter response matched our fresh challenge */
++	unsigned int auth_generation;
 +	bool mipps_attempted;	/* one exchange per physical attachment */
  	struct mutex pen_boost_lock;
  	bool pen_boost_on;
  	unsigned int pdr_generation;
-@@ -540,6 +545,8 @@ static void piano_mca_pdr_notify(void *priv, int state)
+@@ -503,6 +509,11 @@ struct piano_mca {
+ 	int dbg_ret;
+ };
+ 
++static bool piano_mca_authenticated(struct piano_mca *mca)
++{
++	return mca->auth_ok && mca->auth_generation == READ_ONCE(mca->pdr_generation);
++}
++
+ static void piano_mca_callback(const void *data, size_t len, void *priv)
+ {
+ 	struct piano_mca *mca = priv;
+@@ -542,6 +553,8 @@ static void piano_mca_pdr_notify(void *priv, int state)
  	/* A restarted ADSP is back on its defaults */
  	mca->icl_set_ma = 0;
  	mca->fcc_set_ma = 0;
@@ -94,27 +116,22 @@ index 1c54dc71e7b..59bb47f30c6 100644
  	mca->hv = MCA_HV_OFF;
  	mca->hv_renegs = 0;
  	mod_delayed_work(system_percpu_wq, &mca->poll, 0);
-@@ -945,6 +952,157 @@ static int piano_mca_register_pen_supply(struct piano_mca *mca)
+@@ -947,6 +960,203 @@ static int piano_mca_register_pen_supply(struct piano_mca *mca)
  	return PTR_ERR_OR_ZERO(rdev);
  }
  
 +/*
-+ * MiPPS adapter authentication, ported from ianchb/xiaomi-mipps-auth
-+ * 9176efbdf276b874fc0a97912a914449a88155fb. This is only the adapter
-+ * challenge/response, not that project's separate fuel-gauge authentication.
-+ *
-+ * Run on the existing charger work item before high-voltage/direct charging.
-+ * The ADSP owns PD packet transport; no userspace polling or service is needed.
-+ * Voltage, thermal and current limits remain with the normal charger policy.
++ * MiPPS challenge/response from xiaomi-mipps-auth, with Piano's stock
++ * command order. The transport and charging policy remain in this driver.
 + */
-+static int piano_mca_vdm(struct piano_mca *mca, unsigned int cmd,
-+			 const u8 *bytes, u32 flag, unsigned int settle_ms)
++static int piano_mca_vdm(struct piano_mca *mca, unsigned int generation,
++			 unsigned int cmd, const u8 *bytes, u32 flag)
 +{
 +	__le32 payload[MCA_VDM_LEN / 4] = {};
 +	unsigned long deadline;
 +	size_t len = sizeof(payload[0]);
-+	__le32 state;
-+	int i, ret;
++	__le32 state, vbus;
++	int attempt, i, ret;
 +
 +	if (bytes) {
 +		for (i = 0; i < ARRAY_SIZE(payload); i++)
@@ -124,28 +141,74 @@ index 1c54dc71e7b..59bb47f30c6 100644
 +		payload[0] = cpu_to_le32(flag);
 +	}
 +
-+	ret = piano_mca_write(mca, MCA_PROP_VDM_BASE + cmd - 1, payload, len);
-+	if (ret)
-+		return ret;
-+
-+	msleep(settle_ms);
-+	/* Stock treats these two flag commands as notifications without a reply. */
-+	if (cmd == 6 || cmd == 7)
-+		return 0;
-+
-+	deadline = jiffies + msecs_to_jiffies(2000);
-+	do {
-+		if (piano_mca_read_u32(mca, MCA_PROP_BUS_VOLT) < MCA_VBUS_ONLINE_UV)
++	/* Stock batterysecret retries an unanswered command once. */
++	for (attempt = 0; attempt < 2; attempt++) {
++		if (generation != READ_ONCE(mca->pdr_generation))
 +			return -ENODEV;
-+		ret = piano_mca_read(mca, MCA_PROP_UVDM_STATE, &state, sizeof(state));
++		ret = piano_mca_write(mca, MCA_PROP_VDM_BASE + cmd - 1,
++				      payload, len);
 +		if (ret)
 +			return ret;
-+		if (le32_to_cpu(state) == cmd)
-+			return 0;
-+		msleep(20);
-+	} while (time_before(jiffies, deadline));
-+
++		msleep(cmd == 4 || cmd == 5 ? 500 : 5);
++		deadline = jiffies + msecs_to_jiffies(1000);
++		do {
++			if (generation != READ_ONCE(mca->pdr_generation))
++				return -ENODEV;
++			ret = piano_mca_read(mca, MCA_PROP_BUS_VOLT, &vbus, sizeof(vbus));
++			if (ret || le32_to_cpu(vbus) < MCA_VBUS_ONLINE_UV)
++				return ret ?: -ENODEV;
++			ret = piano_mca_read(mca, MCA_PROP_UVDM_STATE, &state, sizeof(state));
++			if (ret)
++				return ret;
++			if (le32_to_cpu(state) == cmd)
++				return 0;
++			msleep(20);
++		} while (time_before(jiffies, deadline));
++	}
 +	return -ETIMEDOUT;
++}
++
++static bool piano_mca_mipps_digest(struct piano_mca *mca,
++				  const struct piano_mipps_key *key,
++				  u8 message[20], const u8 response[MCA_VDM_LEN],
++				  u8 digest[SHA256_DIGEST_SIZE], u32 *adapter_id,
++				  unsigned int generation)
++{
++	struct hmac_sha256_key prepared;
++	u32 id;
++	bool matched = false;
++
++	hmac_sha256_preparekey(&prepared, key->key, sizeof(key->key));
++	put_unaligned_be32(*adapter_id, message + MCA_VDM_LEN);
++	hmac_sha256(&prepared, message, 20, digest);
++	if (*adapter_id && !memcmp(response, digest, MCA_VDM_LEN)) {
++		matched = true;
++		goto out;
++	}
++
++	/*
++	 * Firmware can omit or retain an old ID. Recover it only from a valid
++	 * answer to our fresh random challenge, never from a cached identity.
++	 * Limit work to 65536 guesses; reported 32-bit IDs are checked above.
++	 * No match simply leaves this source on ordinary PD/PPS.
++	 */
++	for (id = 0; id < 65536; id++) {
++		if (!(id & 255)) {
++			if (generation != READ_ONCE(mca->pdr_generation))
++				break;
++			cond_resched();
++		}
++		put_unaligned_be32(id, message + MCA_VDM_LEN);
++		hmac_sha256(&prepared, message, 20, digest);
++		if (!memcmp(response, digest, MCA_VDM_LEN)) {
++			*adapter_id = id;
++			matched = true;
++			break;
++		}
++	}
++ out:
++	memzero_explicit(&prepared, sizeof(prepared));
++	return matched;
 +}
 +
 +static void piano_mca_mipps_authenticate(struct piano_mca *mca)
@@ -153,52 +216,55 @@ index 1c54dc71e7b..59bb47f30c6 100644
 +	struct piano_mca_pdo pdos[MCA_PD_MAX_PDOS];
 +	const struct piano_mipps_key *key;
 +	u8 message[20], digest[SHA256_DIGEST_SIZE], response[MCA_VDM_LEN];
-+	__le32 words[MCA_VDM_LEN / 4];
++	__le32 words[MCA_VDM_LEN / 4], version, vbus;
++	unsigned int generation = READ_ONCE(mca->pdr_generation);
 +	u32 adapter_id;
-+	unsigned int key_index;
-+	bool matched = false;
++	bool discovered = false, capable = false;
 +	int i, ret;
 +
-+	if (!mipps_auth || mca->mipps_attempted || mca->auth_ok ||
++	if (!mipps_auth || mca->mipps_attempted || piano_mca_authenticated(mca) ||
 +	    mca->hv != MCA_HV_OFF || mca->cp != MCA_CP_OFF ||
 +	    (mca->real_type != MCA_TYPE_PD &&
 +	     mca->real_type != MCA_TYPE_PD_VERIFY &&
 +	     mca->real_type != MCA_TYPE_PD_PPS))
 +		return;
-+
-+	/* Do not role-swap or send vendor commands to PCs or other PD sources. */
-+	if (piano_mca_read_u32(mca, MCA_PROP_ADAPTER_SVID) != 0x2717)
++	if (piano_mca_read(mca, MCA_PROP_PDOS, pdos, sizeof(pdos)))
 +		return;
-+	adapter_id = piano_mca_read_u32(mca, MCA_PROP_ADAPTER_ID);
-+	if (!adapter_id ||
-+	    piano_mca_read(mca, MCA_PROP_PDOS, pdos, sizeof(pdos)) ||
-+	    !le32_to_cpu(pdos[1].max_mv))
++	for (i = 0; i < MCA_PD_MAX_PDOS; i++)
++		capable |= le32_to_cpu(pdos[i].max_mv) > 5000;
++	if (!capable)
 +		return;
 +
 +	mca->mipps_attempted = true;
 +	ret = piano_mca_write_u32(mca, MCA_PROP_VERIFY_PROCESS, 1);
 +	if (ret)
 +		goto out;
++
++	/* A Xiaomi VDM query works as UFP too. Never swap PC/hub data roles. */
++	ret = piano_mca_vdm(mca, generation, 1, NULL, 0);
++	if (ret)
++		goto finish;
++	ret = piano_mca_read(mca, MCA_PROP_VDM_VERSION, &version, sizeof(version));
++	if (ret || !le32_to_cpu(version) || le32_to_cpu(version) == U32_MAX) {
++		ret = ret ?: -ENODEV;
++		goto finish;
++	}
++	discovered = true;
 +	ret = piano_mca_write_u32(mca, MCA_PROP_PD_VERIFIED, 0);
 +	if (ret)
 +		goto finish;
-+
-+	key_index = get_random_u32_below(ARRAY_SIZE(piano_mipps_keys));
-+	key = &piano_mipps_keys[key_index];
-+	get_random_bytes(message, MCA_VDM_LEN);
-+	put_unaligned_be32(adapter_id, message + MCA_VDM_LEN);
-+	hmac_sha256_usingrawkey(key->key, sizeof(key->key),
-+				message, sizeof(message), digest);
-+
-+	for (i = 1; i <= 3; i++) {
-+		ret = piano_mca_vdm(mca, i, NULL, 0, 5);
++	for (i = 2; i <= 3; i++) {
++		ret = piano_mca_vdm(mca, generation, i, NULL, 0);
 +		if (ret)
 +			goto finish;
 +	}
-+	ret = piano_mca_vdm(mca, 4, key->seed, 0, 500);
++
++	key = &piano_mipps_keys[get_random_u32_below(ARRAY_SIZE(piano_mipps_keys))];
++	get_random_bytes(message, MCA_VDM_LEN);
++	ret = piano_mca_vdm(mca, generation, 4, key->seed, 0);
 +	if (ret)
 +		goto finish;
-+	ret = piano_mca_vdm(mca, 5, message, 0, 500);
++	ret = piano_mca_vdm(mca, generation, 5, message, 0);
 +	if (ret)
 +		goto finish;
 +	ret = piano_mca_read(mca, MCA_PROP_VDM_AUTH, words, sizeof(words));
@@ -206,62 +272,148 @@ index 1c54dc71e7b..59bb47f30c6 100644
 +		goto finish;
 +	for (i = 0; i < ARRAY_SIZE(words); i++)
 +		put_unaligned_be32(le32_to_cpu(words[i]), response + 4 * i);
-+	matched = !memcmp(response, digest, sizeof(response));
-+	ret = piano_mca_vdm(mca, 6, NULL, matched, 100);
-+	if (ret)
-+		goto finish;
-+	if (!matched) {
-+		piano_mca_vdm(mca, 7, NULL, 0, 100);
++	adapter_id = piano_mca_read_u32(mca, MCA_PROP_ADAPTER_ID);
++	if (!piano_mca_mipps_digest(mca, key, message, response, digest,
++				    &adapter_id, generation)) {
 +		ret = -EKEYREJECTED;
 +		goto finish;
 +	}
-+	ret = piano_mca_vdm(mca, 8, digest + MCA_VDM_LEN, 0, 5);
++
++	/* Piano batterysecret sends 7 then 6. Command 8 stalls this firmware. */
++	ret = piano_mca_vdm(mca, generation, 7, NULL, 1);
++	ret = ret ?: piano_mca_vdm(mca, generation, 6, NULL, 1);
 +	if (ret)
 +		goto finish;
-+	ret = piano_mca_vdm(mca, 7, NULL, 1, 100);
-+	if (ret)
-+		goto finish;
-+	if (piano_mca_read_u32(mca, MCA_PROP_ADAPTER_ID) != adapter_id ||
-+	    piano_mca_read_u32(mca, MCA_PROP_BUS_VOLT) < MCA_VBUS_ONLINE_UV) {
-+		ret = -ENODEV;
++	ret = piano_mca_read(mca, MCA_PROP_BUS_VOLT, &vbus, sizeof(vbus));
++	if (ret || le32_to_cpu(vbus) < MCA_VBUS_ONLINE_UV ||
++	    generation != READ_ONCE(mca->pdr_generation)) {
++		ret = ret ?: -ENODEV;
 +		goto finish;
 +	}
 +	ret = piano_mca_write_u32(mca, MCA_PROP_PD_VERIFIED, 1);
 +	if (!ret) {
++		mca->auth_generation = generation;
 +		mca->auth_ok = true;
 +		mca->auth_at = jiffies;
 +		mca->auth_tried = false;
 +	}
-+finish:
-+	if (ret) {
-+		piano_mca_write_u32(mca, MCA_PROP_PD_VERIFIED, 0);
-+		piano_mca_vdm(mca, 7, NULL, 0, 100);
++ finish:
++	if (generation == READ_ONCE(mca->pdr_generation)) {
++		if (ret && discovered) {
++			piano_mca_write_u32(mca, MCA_PROP_PD_VERIFIED, 0);
++			piano_mca_vdm(mca, generation, 7, NULL, 0);
++		}
++		piano_mca_write_u32(mca, MCA_PROP_VERIFY_PROCESS, 0);
 +	}
-+	piano_mca_write_u32(mca, MCA_PROP_VERIFY_PROCESS, 0);
 +	memzero_explicit(message, sizeof(message));
 +	memzero_explicit(digest, sizeof(digest));
 +	memzero_explicit(response, sizeof(response));
-+out:
-+	if (ret)
-+		dev_info(mca->dev, "MiPPS authentication failed (%d); using standard PD/PPS\n", ret);
-+	else
-+		dev_info(mca->dev, "MiPPS adapter authenticated\n");
++ out:
++	if (!ret)
++		dev_info(mca->dev, "MiPPS adapter %08x authenticated\n", adapter_id);
++	else if (discovered)
++		dev_info(mca->dev,
++			 "MiPPS authentication failed (%d); using standard PD/PPS\n", ret);
 +	power_supply_changed(mca->usb);
 +}
 +
  static const char *piano_mca_type_name(u32 type)
  {
  	return type < MCA_TYPE_MAX ? mca_real_type_names[type] : NULL;
-@@ -1439,7 +1597,7 @@ static u32 piano_mca_cp_apdo(struct piano_mca *mca, u32 start_mv, u32 *max_mv)
+@@ -1091,8 +1301,15 @@ static bool piano_mca_is_pd(u32 real_type)
+ 	       real_type == MCA_TYPE_PD_PPS;
+ }
+ 
++enum piano_mca_ucsi_state {
++	MCA_UCSI_UNAVAILABLE,
++	MCA_UCSI_OFFLINE,
++	MCA_UCSI_CONNECTED,
++	MCA_UCSI_PD_SINK,
++};
++
+ /* The UCSI supply belongs to another child of this PMIC GLINK instance. */
+-static int piano_mca_pd_supply(struct power_supply *psy, void *data)
++static int piano_mca_ucsi_status(struct power_supply *psy, void *data)
+ {
+ 	struct piano_mca *mca = data;
+ 	struct device *parent = psy->dev.parent;
+@@ -1101,21 +1318,22 @@ static int piano_mca_pd_supply(struct power_supply *psy, void *data)
+ 	/* UCSI frees its connector data after unregistering this supply. */
+ 	guard(rwsem_read)(&psy->epc_sem);
+ 	if (psy->removing)
+-		return 0;
++		return MCA_UCSI_UNAVAILABLE;
+ 	if (psy == mca->usb || !parent || parent->parent != mca->dev->parent ||
+ 	    psy->desc->type != POWER_SUPPLY_TYPE_USB)
+-		return 0;
+-	if (power_supply_get_property(psy, POWER_SUPPLY_PROP_ONLINE, &val) ||
+-	    !val.intval)
+-		return 0;
++		return MCA_UCSI_UNAVAILABLE;
++	if (power_supply_get_property(psy, POWER_SUPPLY_PROP_ONLINE, &val))
++		return MCA_UCSI_UNAVAILABLE;
++	if (!val.intval)
++		return MCA_UCSI_OFFLINE;
+ 	if (power_supply_get_property(psy, POWER_SUPPLY_PROP_USB_TYPE, &val) ||
+ 	    (val.intval != POWER_SUPPLY_USB_TYPE_PD &&
+ 	     val.intval != POWER_SUPPLY_USB_TYPE_PD_PPS))
+-		return 0;
++		return MCA_UCSI_CONNECTED;
+ 	if (power_supply_get_property(psy, POWER_SUPPLY_PROP_STATUS, &val) ||
+ 	    val.intval != POWER_SUPPLY_STATUS_CHARGING)
+-		return 0;
+-	return 1;
++		return MCA_UCSI_CONNECTED;
++	return MCA_UCSI_PD_SINK;
+ }
+ 
+ /*
+@@ -1138,7 +1356,7 @@ static int piano_mca_read_type(struct piano_mca *mca, u32 *type)
+ 	*type = le32_to_cpu(val);
+ 	if (*type != MCA_TYPE_UNKNOWN)
+ 		return 0;
+-	if (power_supply_for_each_psy(mca, piano_mca_pd_supply) != 1)
++	if (power_supply_for_each_psy(mca, piano_mca_ucsi_status) != MCA_UCSI_PD_SINK)
+ 		return 0;
+ 
+ 	ret = piano_mca_read(mca, MCA_PROP_PD_STATE, &val, sizeof(val));
+@@ -1213,7 +1431,7 @@ static int piano_mca_request_volt(struct piano_mca *mca, u32 mv)
+  */
+ static bool piano_mca_auth_pending(struct piano_mca *mca)
+ {
+-	return mipps_auth && mca->auth_ok &&
++	return mipps_auth && piano_mca_authenticated(mca) &&
+ 	       !time_after(mca->cp_on_at, mca->auth_at) &&
+ 	       time_before(jiffies, mca->auth_at +
+ 				    msecs_to_jiffies(MCA_AUTH_RESET_WAIT_MS));
+@@ -1511,7 +1729,7 @@ static u32 piano_mca_cp_apdo(struct piano_mca *mca, u32 start_mv, u32 *max_mv)
  /* The ADSP holds the adapter verified until the next authentication */
  static bool piano_mca_adapter_verified(struct piano_mca *mca)
  {
 -	return mipps_auth &&
-+	return mipps_auth && mca->auth_ok &&
++	return mipps_auth && piano_mca_authenticated(mca) &&
  	       piano_mca_read_u32(mca, MCA_PROP_PD_VERIFIED) == 1;
  }
  
-@@ -1782,8 +1940,10 @@ static void piano_mca_poll(struct work_struct *work)
+@@ -1527,7 +1745,7 @@ static bool piano_mca_cp_after_auth(struct piano_mca *mca)
+ 	if (!mipps_auth || mca->hv == MCA_HV_REQUESTED ||
+ 	    mca->vbus_uv >= MCA_HV_VBUS_5V_MAX_UV)
+ 		return false;
+-	if (mca->auth_ok && time_after(mca->cp_on_at, mca->auth_at))
++	if (piano_mca_authenticated(mca) && time_after(mca->cp_on_at, mca->auth_at))
+ 		return true;
+ 	if (piano_mca_auth_pending(mca) && mca->auth_tried)
+ 		return false;
+@@ -1585,7 +1803,7 @@ static void piano_mca_cp_try_start(struct piano_mca *mca)
+ 	    piano_mca_read_u32(mca, MCA_PROP_VERIFY_PROCESS))
+ 		return;
+ 	/* PD requests in the middle of the authentication break it */
+-	if (mipps_auth && !mca->auth_ok &&
++	if (mipps_auth && !piano_mca_authenticated(mca) &&
+ 	    time_before(jiffies, mca->cp_on_at +
+ 				 msecs_to_jiffies(MCA_CP_AUTH_WAIT_MS)))
+ 		return;
+@@ -1855,8 +2073,10 @@ static void piano_mca_poll(struct work_struct *work)
  	if (online && !mca->online) {
  		/* away longer than a reset takes: another attach */
  		if (time_after(jiffies, mca->cp_off_at +
@@ -273,7 +425,23 @@ index 1c54dc71e7b..59bb47f30c6 100644
  		mca->cp_on_at = jiffies;
  		/* a voltage change under way breaks the identity exchange */
  		if (mipps_auth)
-@@ -1817,6 +1977,7 @@ static void piano_mca_poll(struct work_struct *work)
+@@ -1887,6 +2107,15 @@ static void piano_mca_poll(struct work_struct *work)
+ 	mutex_unlock(&mca->pen_boost_lock);
+ 
+ 	if (!online) {
++		/* UCSI ONLINE follows the connector, not VBUS. Preserve an
++		 * authentication reset only while its cable remains connected.
++		 * A physical replug needs a fresh challenge even within 10 s.
++		 */
++		if (!piano_mca_auth_pending(mca) ||
++		    power_supply_for_each_psy(mca, piano_mca_ucsi_status) < MCA_UCSI_CONNECTED) {
++			mca->auth_ok = false;
++			mca->mipps_attempted = false;
++		}
+ 		piano_mca_cp_learn_drop(mca);
+ 		piano_mca_cp_stop(mca, "detached");
+ 		mca->cp = MCA_CP_OFF;
+@@ -1902,6 +2131,7 @@ static void piano_mca_poll(struct work_struct *work)
  	} else if (charge_policy && piano_mca_cp_active(mca)) {
  		piano_mca_cp_step(mca);
  	} else if (charge_policy) {
@@ -281,17 +449,17 @@ index 1c54dc71e7b..59bb47f30c6 100644
  		piano_mca_cp_try_start(mca);
  		if (!piano_mca_cp_active(mca))
  			piano_mca_apply_policy(mca);
-@@ -1881,6 +2042,9 @@ static int piano_mca_usb_get_property(struct power_supply *psy,
+@@ -1967,6 +2197,9 @@ static int piano_mca_usb_get_property(struct power_supply *psy,
  	case POWER_SUPPLY_PROP_USB_TYPE:
  		val->intval = piano_mca_usb_type(mca->real_type);
  		break;
 +	case POWER_SUPPLY_PROP_AUTHENTIC:
-+		val->intval = mca->online && mca->auth_ok;
++		val->intval = mca->online && piano_mca_authenticated(mca);
 +		break;
  	default:
  		return -EINVAL;
  	}
-@@ -1894,6 +2058,7 @@ static const enum power_supply_property piano_mca_usb_props[] = {
+@@ -1980,6 +2213,7 @@ static const enum power_supply_property piano_mca_usb_props[] = {
  	POWER_SUPPLY_PROP_CURRENT_NOW,
  	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
  	POWER_SUPPLY_PROP_USB_TYPE,
@@ -299,7 +467,7 @@ index 1c54dc71e7b..59bb47f30c6 100644
  };
  
  static const struct power_supply_desc piano_mca_usb_desc = {
-@@ -1936,20 +2101,7 @@ static const struct attribute_group piano_mca_usb_group = {
+@@ -2022,20 +2256,7 @@ static const struct attribute_group piano_mca_usb_group = {
  	.attrs = piano_mca_usb_attrs,
  };
  
@@ -321,7 +489,7 @@ index 1c54dc71e7b..59bb47f30c6 100644
  static struct piano_mca *piano_mca_from_dev(struct device *dev)
  {
  	return power_supply_get_drvdata(to_power_supply(dev));
-@@ -1988,52 +2140,7 @@ static ssize_t request_vdm_cmd_show(struct device *dev,
+@@ -2074,52 +2295,7 @@ static ssize_t request_vdm_cmd_show(struct device *dev,
  	}
  }
  
@@ -375,7 +543,7 @@ index 1c54dc71e7b..59bb47f30c6 100644
  
  static ssize_t piano_mca_show_u32(struct device *dev, char *buf, u32 prop,
  				  const char *fmt)
-@@ -2048,19 +2155,6 @@ static ssize_t piano_mca_show_u32(struct device *dev, char *buf, u32 prop,
+@@ -2134,19 +2310,6 @@ static ssize_t piano_mca_show_u32(struct device *dev, char *buf, u32 prop,
  	return sysfs_emit(buf, fmt, le32_to_cpu(val));
  }
  
@@ -395,7 +563,7 @@ index 1c54dc71e7b..59bb47f30c6 100644
  static ssize_t adapter_id_show(struct device *dev,
  			       struct device_attribute *attr, char *buf)
  {
-@@ -2107,22 +2201,7 @@ static ssize_t pd_verifed_show(struct device *dev,
+@@ -2193,22 +2356,7 @@ static ssize_t pd_verifed_show(struct device *dev,
  	return piano_mca_show_u32(dev, buf, MCA_PROP_PD_VERIFIED, "%u\n");
  }
  
@@ -419,7 +587,7 @@ index 1c54dc71e7b..59bb47f30c6 100644
  
  static ssize_t verify_process_show(struct device *dev,
  				   struct device_attribute *attr, char *buf)
-@@ -2130,20 +2209,7 @@ static ssize_t verify_process_show(struct device *dev,
+@@ -2216,20 +2364,7 @@ static ssize_t verify_process_show(struct device *dev,
  	return piano_mca_show_u32(dev, buf, MCA_PROP_VERIFY_PROCESS, "%u\n");
  }
  
@@ -441,7 +609,7 @@ index 1c54dc71e7b..59bb47f30c6 100644
  
  static ssize_t data_role_show(struct device *dev,
  			      struct device_attribute *attr, char *buf)
-@@ -2166,25 +2232,7 @@ static ssize_t data_role_show(struct device *dev,
+@@ -2252,25 +2387,7 @@ static ssize_t data_role_show(struct device *dev,
  	}
  }
  
@@ -468,7 +636,7 @@ index 1c54dc71e7b..59bb47f30c6 100644
  
  static struct attribute *piano_mca_xiaomi_attrs[] = {
  	&dev_attr_request_vdm_cmd.attr,
-@@ -2201,7 +2249,8 @@ static struct attribute *piano_mca_xiaomi_attrs[] = {
+@@ -2287,7 +2404,8 @@ static struct attribute *piano_mca_xiaomi_attrs[] = {
  static umode_t piano_mca_xiaomi_visible(struct kobject *kobj,
  					struct attribute *attr, int n)
  {
@@ -480,13 +648,13 @@ index 1c54dc71e7b..59bb47f30c6 100644
  static const struct attribute_group piano_mca_xiaomi_group = {
 diff --git a/drivers/power/supply/piano_mca_mipps.h b/drivers/power/supply/piano_mca_mipps.h
 new file mode 100644
-index 00000000000..e9f940ec00f
+index 000000000..b286fc322
 --- /dev/null
 +++ b/drivers/power/supply/piano_mca_mipps.h
 @@ -0,0 +1,132 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +/* MiPPS protocol constants from ianchb/xiaomi-mipps-auth,
-+ * commit 9176efbdf276b874fc0a97912a914449a88155fb (GPL-2.0-only).
++ * GPL-2.0-only; source revisions are recorded in the patch series.
 + * These are charger protocol constants, not device-specific credentials.
 + */
 +struct piano_mipps_key {
@@ -617,5 +785,5 @@ index 00000000000..e9f940ec00f
 +	},
 +};
 -- 
-2.56.0
+2.47.3
 
