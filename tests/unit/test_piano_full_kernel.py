@@ -36,6 +36,27 @@ class PianoFullKernelTests(unittest.TestCase):
             if changed!=updated:
                 with self.subTest(symbol=name),self.assertRaises(ValueError):full.validate_config(changed,public,command,modules)
 
+    def test_filesystem_fragment_matches_overrides(self):
+        fragment=(ROOT/'linux/configs/piano-filesystem.config').read_text()
+        modules=full.module_overrides(fragment,'filesystem')
+        for symbol in ('CONFIG_EXFAT_FS','CONFIG_NTFS3_FS','CONFIG_NTFS3_LZX_XPRESS','CONFIG_NLS_UTF8'):
+            self.assertEqual(modules[symbol],'y')
+        self.assertEqual(len(modules),len(full.FILESYSTEM_OVERRIDES))
+        for bad in ('CONFIG_EXFAT_FS=m\n',
+                    'CONFIG_EXFAT_FS=y\nCONFIG_NTFS3_FS=y\nCONFIG_NTFS3_LZX_XPRESS=y\nCONFIG_NLS_UTF8=m\n'):
+            with self.subTest(fragment=bad),self.assertRaises(ValueError):full.module_overrides(bad,'filesystem')
+        for key,value in modules.items():
+            self.assertEqual(full.ALLOWED_OVERRIDES[key],value)
+            self.assertEqual(full.REQUIRED[key.removeprefix('CONFIG_')],value)
+
+    def test_filesystem_and_bluetooth_in_allowed_overrides(self):
+        for key,value in full.FILESYSTEM_OVERRIDES.items():
+            self.assertIn(key,full.ALLOWED_OVERRIDES)
+            self.assertEqual(full.ALLOWED_OVERRIDES[key],value)
+        for key,value in full.BLUETOOTH_OVERRIDES.items():
+            self.assertIn(key,full.ALLOWED_OVERRIDES)
+            self.assertEqual(full.ALLOWED_OVERRIDES[key],value)
+
     def test_real_generated_full_config_preserves_public_profile(self):
         full.verify_source();public=(full.WORK/'arch/arm64/configs/piano_rootfs.config').read_text()
         command=full.command_line((ROOT/'linux/configs/piano-full.config').read_text(),public,'ram')
