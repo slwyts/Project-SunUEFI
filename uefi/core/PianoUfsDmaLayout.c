@@ -55,22 +55,30 @@ EFI_STATUS PianoUfsCheckReadResponse(CONST VOID *Trd,CONST VOID *Ucd,UINT8 Tag,U
   CONST UINT8 *T=Trd,*R=(CONST UINT8 *)Ucd+PIANO_UFS_RESPONSE_OFFSET;*Transferred=0;
   if((ReadLe32(T+8)&0xFF)!=0 || (R[0]&0x3F)!=0x21 || R[3]!=Tag || R[6]!=0 || R[7]!=0)return EFI_DEVICE_ERROR;
   UINT32 Residual=ReadBe32(R+12);
-  // Overflow cannot fit our PRDT. Residual is valid only for underflow.
-  if((R[1]&0x40) || Residual>Requested || (Residual && !(R[1]&0x20)))return EFI_COMPROMISED_DATA;
+  // Some devices omit the underflow flag. Never accept overflow or an unbounded residual.
+  if((R[1]&0x40) || Residual>Requested)return EFI_COMPROMISED_DATA;
   *Transferred=Requested-Residual;return EFI_SUCCESS;
+}
+BOOLEAN PianoUfsReadSense(CONST VOID *Ucd,UINT8 *Key,UINT8 *Asc,UINT8 *Ascq) {
+  if(Key)*Key=0xFF;if(Asc)*Asc=0xFF;if(Ascq)*Ascq=0xFF;
+  if(Ucd==NULL || Key==NULL || Asc==NULL || Ascq==NULL)return FALSE;
+  CONST UINT8 *R=(CONST UINT8 *)Ucd+PIANO_UFS_RESPONSE_OFFSET;
+  UINTN Length=((UINTN)R[32]<<8)|R[33],Segment=((UINTN)R[10]<<8)|R[11];
+  if(Length>30 || Segment!=Length+2)return FALSE;
+  UINT8 Format=R[34]&0x7F;
+  if((Format==0x70 || Format==0x71) && Length>=14){*Key=R[36]&15;*Asc=R[46];*Ascq=R[47];}
+  else if((Format==0x72 || Format==0x73) && Length>=8){*Key=R[35]&15;*Asc=R[36];*Ascq=R[37];}
+  else return FALSE;
+  return TRUE;
 }
 BOOLEAN PianoUfsReadRetryable(CONST VOID *Trd,CONST VOID *Ucd,UINT8 Tag,UINT8 Lun,UINT32 Requested) {
   if(Trd==NULL || Ucd==NULL)return FALSE;
   CONST UINT8 *T=Trd,*R=(CONST UINT8 *)Ucd+PIANO_UFS_RESPONSE_OFFSET;
-  if((ReadLe32(T+8)&0xFF)!=0 || (R[0]&0x3F)!=0x21 || R[2]!=Lun || R[3]!=Tag || R[6]!=0 || R[7]!=2)return FALSE;
+  // Target Failure (1) can carry CHECK CONDITION sense; unknown response codes cannot.
+  if((ReadLe32(T+8)&0xFF)!=0 || (R[0]&0x3F)!=0x21 || R[2]!=Lun || R[3]!=Tag || R[6]>1 || R[7]!=2)return FALSE;
   UINT32 Residual=ReadBe32(R+12);
-  if((R[1]&0x40) || Residual>Requested || (Residual && !(R[1]&0x20)))return FALSE;
-  UINTN Length=((UINTN)R[32]<<8)|R[33],Segment=((UINTN)R[10]<<8)|R[11];
-  if(Length>30 || Segment!=Length+2)return FALSE;
-  UINT8 Format=R[34]&0x7F,Key,Asc,Ascq;
-  if((Format==0x70 || Format==0x71) && Length>=14){Key=R[36]&15;Asc=R[46];Ascq=R[47];}
-  else if((Format==0x72 || Format==0x73) && Length>=8){Key=R[35]&15;Asc=R[36];Ascq=R[37];}
-  else return FALSE;
+  if((R[1]&0x40) || Residual>Requested)return FALSE;
+  UINT8 Key,Asc,Ascq;if(!PianoUfsReadSense(Ucd,&Key,&Asc,&Ascq))return FALSE;
   // UNIT ATTENTION acknowledges reset/power/parameter changes. NOT READY is
   // retryable only for the standard "logical unit is becoming ready" sense.
   return Key==6 || (Key==2 && Asc==4 && Ascq==1);
