@@ -84,6 +84,7 @@ STATIC EFI_STATUS mWindowTransportStatus=EFI_NOT_STARTED;
 #include <Library/IoLib.h>
 #include <Library/DebugLib.h>
 #include <Library/MemoryAllocationLib.h>
+#include <Library/PrintLib.h>
 #ifdef PIANO_UFS_BLOCKIO
 #include "PianoReadOnlyBlock.h"
 #include "PianoUfsShutdown.h"
@@ -116,6 +117,23 @@ STATIC EFI_STATUS mTests[8],mWriteTests[8];
 STATIC UINTN mLunCount;
 STATIC CONST CHAR8 *mStartupStage="UFS";
 CONST CHAR8 *PianoUfsStartupStage(VOID){return mStartupStage;}
+STATIC CONST CHAR8 *mCapacityStages[]={
+  "UFS CAPACITY 0","UFS CAPACITY 1","UFS CAPACITY 2","UFS CAPACITY 3",
+  "UFS CAPACITY 4","UFS CAPACITY 5","UFS CAPACITY 6","UFS CAPACITY 7"};
+STATIC struct {
+  BOOLEAN Present;
+  CONST CHAR8 *Stage;
+  UINT8 Lun,Ocs,Type,Response,Status,Key,Asc,Ascq,Flags,PowerMode;
+  UINT32 Residual;
+} mReadFailure;
+CONST CHAR8 *PianoUfsStartupDiagnostic(VOID){
+  STATIC CHAR8 Text[80];
+  if(!mReadFailure.Present || mReadFailure.Stage!=mStartupStage)return NULL;
+  AsciiSPrint(Text,sizeof(Text),"L%u OCS%02x T%02x R%02x S%02x K%02x A%02x Q%02x F%02x N%u P%02x",
+    mReadFailure.Lun,mReadFailure.Ocs,mReadFailure.Type,mReadFailure.Response,mReadFailure.Status,
+    mReadFailure.Key,mReadFailure.Asc,mReadFailure.Ascq,mReadFailure.Flags,mReadFailure.Residual,mReadFailure.PowerMode);
+  return Text;
+}
 STATIC UINT32 mSavedBase,mSavedUpper,mSavedRun,mSavedTaskRun,mSavedInterrupt;
 STATIC BOOLEAN mInstalled;
 STATIC BOOLEAN mEverInstalled;
@@ -177,8 +195,8 @@ STATIC UINT32 Read(UINT32 Offset){return MmioRead32(HCI+Offset);}
 STATIC VOID Write(UINT32 Offset,UINT32 Value){MmioWrite32(HCI+Offset,Value);MemoryFence();}
 STATIC UINT32 EngineLe32(CONST UINT8 *P){return P[0]|((UINT32)P[1]<<8)|((UINT32)P[2]<<16)|((UINT32)P[3]<<24);}
 STATIC UINT32 EngineBe32(CONST UINT8 *P){return ((UINT32)P[0]<<24)|((UINT32)P[1]<<16)|((UINT32)P[2]<<8)|P[3];}
-STATIC VOID LogUpiu(UINTN Level,CONST CHAR8 *Name,CONST CHAR8 *Kind,CONST UINT8 *P) {
-  for(UINTN I=0;I<32;I+=8)
+STATIC VOID LogUpiu(UINTN Level,CONST CHAR8 *Name,CONST CHAR8 *Kind,CONST UINT8 *P,UINTN Bytes) {
+  for(UINTN I=0;I<Bytes;I+=8)
     DEBUG((Level,"SUNUEFI_UFS_UPIU command=%a kind=%a offset=%u bytes=%02x %02x %02x %02x %02x %02x %02x %02x\n",
       Name,Kind,(UINT32)I,P[I],P[I+1],P[I+2],P[I+3],P[I+4],P[I+5],P[I+6],P[I+7]));
 }
@@ -236,7 +254,7 @@ STATIC EFI_STATUS Submit(CONST CHAR8 *Name,UINT8 Tag,BOOLEAN Nop) {
   if(Read(0x58) || Read(0x78) || !(Read(0x34)&1) || (Read(0x30)&0xF)!=0xF)return EFI_NOT_READY;
   UINTN TraceLevel=(!AsciiStrCmp(Name,"BLOCKIO_READ")||!AsciiStrCmp(Name,"PARTITION_WRITE_FUA")||
     !AsciiStrCmp(Name,"PARTITION_SYNC"))?DEBUG_VERBOSE:DEBUG_WARN;
-  LogUpiu(TraceLevel,Name,"request",mUcd.Cpu);
+  LogUpiu(TraceLevel,Name,"request",mUcd.Cpu,32);
   UINT8 *Request=mUcd.Cpu;
   if(!(Request[0]==0 || Request[0]==1 || Request[0]==0x16))return EFI_ACCESS_DENIED;
   if(Request[0]==1 && !(Request[16]==0xA0 || Request[16]==0x9E || Request[16]==0x28 || Request[16]==0x5A ||
@@ -364,14 +382,15 @@ STATIC EFI_STATUS Submit(CONST CHAR8 *Name,UINT8 Tag,BOOLEAN Nop) {
   }
   if(EFI_ERROR(Status)) {
     TraceLevel=DEBUG_WARN;
-    LogUpiu(TraceLevel,Name,"failed-request",Request);
+    LogUpiu(TraceLevel,Name,"failed-request",Request,32);
   }
   DEBUG((TraceLevel,"SUNUEFI_UFS_DMA_COMPLETE command=%a status=%r ocs=%02x response_type=%02x tag=%u response=%02x is=%08x hcs=%08x\n",
     Name,Status,Ocs,R[0],R[3],R[6],Read(0x20),Read(0x30)));
-  LogUpiu(TraceLevel,Name,"response",R);
+  LogUpiu(TraceLevel,Name,"response",R,Request[0]==1 && EFI_ERROR(Status)?64:32);
   if(Request[0]==1) {
-    DEBUG((TraceLevel,"SUNUEFI_UFS_SCSI_RESPONSE command=%a lun=%u status=%02x flags=%02x residual=%u sense_length=%u key=%02x asc=%02x ascq=%02x\n",
-      Name,R[2],R[7],R[1],EngineBe32(R+12),((UINT16)R[32]<<8)|R[33],R[36]&15,R[46],R[47]));
+    UINT8 Key,Asc,Ascq;BOOLEAN Sense=PianoUfsReadSense(mUcd.Cpu,&Key,&Asc,&Ascq);
+    DEBUG((TraceLevel,"SUNUEFI_UFS_SCSI_RESPONSE command=%a lun=%u status=%02x flags=%02x residual=%u sense_length=%u sense_valid=%u key=%02x asc=%02x ascq=%02x\n",
+      Name,R[2],R[7],R[1],EngineBe32(R+12),((UINT16)R[32]<<8)|R[33],Sense,Key,Asc,Ascq));
     return Status;
   }
   if(EFI_ERROR(Status))return Status;
@@ -397,26 +416,41 @@ STATIC EFI_STATUS Submit(CONST CHAR8 *Name,UINT8 Tag,BOOLEAN Nop) {
     R[32+6],R[32+7],R[32+0x10],R[32+0x11],R[32+0x18],R[32+0x19]));
   return EFI_SUCCESS;
 }
+STATIC VOID RecordCommandFailure(EFI_STATUS Status,UINT8 Lun) {
+  mReadFailure.Present=EFI_ERROR(Status);
+  if(!mReadFailure.Present)return;
+  mReadFailure.Stage=mStartupStage;
+  CONST UINT8 *R=(UINT8 *)mUcd.Cpu+PIANO_UFS_RESPONSE_OFFSET;
+  mReadFailure.Lun=Lun;mReadFailure.Ocs=(UINT8)EngineLe32((UINT8 *)mTrl.Cpu+8);
+  mReadFailure.Type=R[0];mReadFailure.Response=R[6];mReadFailure.Status=R[7];
+  mReadFailure.Flags=R[1];mReadFailure.Residual=EngineBe32(R+12);
+  mReadFailure.PowerMode=mPowerMode<=0xFF?(UINT8)mPowerMode:0xFF;
+  (VOID)PianoUfsReadSense(mUcd.Cpu,&mReadFailure.Key,&mReadFailure.Asc,&mReadFailure.Ascq);
+}
 STATIC EFI_STATUS ReadStablePowerMode(UINT8 *Tag) {
   for(UINTN Attempt=0;Attempt<3;++Attempt){
     mPowerMode=MAX_UINT32;
     UINT8 Current=(*Tag)++;
     EFI_STATUS Status=PianoUfsBuildReadPowerMode(mTrl.Cpu,mTrl.Bytes,mUcd.Cpu,mUcd.Bytes,mUcd.DeviceAddress,Current);
     if(!EFI_ERROR(Status))Status=Submit("QUERY_READ_CURRENT_POWER_MODE",Current,FALSE);
+    RecordCommandFailure(Status,0);
     if(EFI_ERROR(Status))return Status;
     // Pre-Active/Pre-Sleep/Pre-PowerDown are observations, not permission to
     // issue another transition. Wait a bounded time for a stable state.
     if(mPowerMode!=0x10 && mPowerMode!=0x20 && mPowerMode!=0x30)return EFI_SUCCESS;
     if(Attempt<2)gBS->Stall(10000);
   }
-  return EFI_NOT_READY;
+  RecordCommandFailure(EFI_NOT_READY,0);return EFI_NOT_READY;
 }
 STATIC EFI_STATUS EnsureDeviceActive(VOID) {
+  mStartupStage="UFS POWER";mReadFailure.Present=FALSE;
   UINT8 Tag=6;
   EFI_STATUS Status=ReadStablePowerMode(&Tag);
   if(EFI_ERROR(Status))return Status;
   if(mPowerMode==0 || mPowerMode==0x11)return EFI_SUCCESS;
-  if(mPowerMode!=0x22 && mPowerMode!=0x33)return EFI_NOT_READY;
+  if(mPowerMode!=0x22 && mPowerMode!=0x33){
+    RecordCommandFailure(EFI_NOT_READY,0);return EFI_NOT_READY;
+  }
   // Only a proven Sleep/PowerDown state permits this existing no-data Active
   // command. It changes device power, never a logical unit's blocks.
   for(UINTN Attempt=0;Attempt<3;++Attempt){
@@ -428,26 +462,29 @@ STATIC EFI_STATUS EnsureDeviceActive(VOID) {
       if(R[2]!=0xD0 || (R[1]&0x60) || EngineBe32(R+12) ||
          R[10] || R[11] || R[32] || R[33] || mTransferred)Status=EFI_DEVICE_ERROR;
     }
+    RecordCommandFailure(Status,0xD0);
     if(!EFI_ERROR(Status))break;
-    UINT8 Key,Asc,Ascq;
-    if(Status!=EFI_DEVICE_ERROR || Attempt==2 ||
-       !PianoUfsReadSense(mUcd.Cpu,&Key,&Asc,&Ascq) || Key!=6 ||
+    if(Status!=EFI_DEVICE_ERROR || Attempt==2 || mReadFailure.Key!=6 ||
        !PianoUfsReadRetryable(mTrl.Cpu,mUcd.Cpu,Current,0xD0,0))return Status;
     gBS->Stall(10000);
   }
   if(EFI_ERROR(Status))return Status;
   // Submit proves quiescence and completes UCD/UTRD before this next query.
   Status=ReadStablePowerMode(&Tag);
-  if(!EFI_ERROR(Status) && mPowerMode!=0 && mPowerMode!=0x11)Status=EFI_NOT_READY;
+  if(!EFI_ERROR(Status) && mPowerMode!=0 && mPowerMode!=0x11){
+    Status=EFI_NOT_READY;RecordCommandFailure(Status,0);
+  }
   return Status;
 }
 STATIC EFI_STATUS ReadScsi(CONST CHAR8 *Name,UINT8 Tag,UINT8 Lun,PIANO_UFS_READ_COMMAND Command,UINT32 Lba,UINT32 Bytes) {
+  mReadFailure.Present=FALSE;
   for(UINTN Attempt=0;Attempt<3;++Attempt) {
     ZeroMem(mData.Cpu,mData.Bytes);
     EFI_STATUS Status=PianoUfsBuildReadCommand(mTrl.Cpu,mTrl.Bytes,mUcd.Cpu,mUcd.Bytes,mUcd.DeviceAddress,
       mData.DeviceAddress,Bytes,Tag,Lun,Command,Lba,Command==PianoUfsReadLba10?1:0);
     if(EFI_ERROR(Status))return Status;
     Status=Submit(Name,Tag,FALSE);
+    RecordCommandFailure(Status,Lun);
     if(Status!=EFI_DEVICE_ERROR || !PianoUfsReadRetryable(mTrl.Cpu,mUcd.Cpu,Tag,Lun,Bytes) || Attempt==2)return Status;
     DEBUG((DEBUG_WARN,"SUNUEFI_UFS_READ_RETRY command=%a lun=%u attempt=%u completed_check_condition=1\n",Name,Lun,(UINT32)Attempt+1));
     // Submit has proved both queues stopped and completed every DMA buffer.
@@ -458,6 +495,7 @@ STATIC EFI_STATUS ReadScsi(CONST CHAR8 *Name,UINT8 Tag,UINT8 Lun,PIANO_UFS_READ_
   return EFI_DEVICE_ERROR;
 }
 STATIC EFI_STATUS ReadLunCapacity(VOID) {
+  mStartupStage="UFS DATA DMA";
   EFI_STATUS Status=PianoDmaAllocate(&mDevice,4096,4096,32,
 #if defined(PIANO_UFS_WRITE_TEST) || defined(PIANO_UFS_BOUNDED_VOLUME) || PIANO_UFS_PRODUCT_STORAGE
     PianoDmaBidirectional,
@@ -466,6 +504,7 @@ STATIC EFI_STATUS ReadLunCapacity(VOID) {
 #endif
     &mData);if(EFI_ERROR(Status))return Status;
   Status=PianoDmaMap(&mData);if(EFI_ERROR(Status))return Status;
+  mStartupStage="UFS LUNS";
   Status=ReadScsi("REPORT_LUNS",10,0,PianoUfsReportLuns,0,4096);
   DEBUG((DEBUG_WARN,"SUNUEFI_UFS_REPORT_LUNS_RESULT %r transferred=%u\n",Status,mTransferred));if(EFI_ERROR(Status))return Status;
   UINT8 Luns[8];UINTN Count;
@@ -474,6 +513,7 @@ STATIC EFI_STATUS ReadLunCapacity(VOID) {
   DEBUG((DEBUG_WARN,"SUNUEFI_UFS_LUN_COUNT count=%u\n",(UINT32)Count));
   for(UINTN I=0;I<Count;++I) {
     UINT64 Last;UINT32 Block;
+    mStartupStage=mCapacityStages[Luns[I]];
     Status=ReadScsi("READ_CAPACITY_16",20+I,Luns[I],PianoUfsReadCapacity16,0,32);
     if(!EFI_ERROR(Status))Status=PianoUfsParseCapacity(mData.Cpu,mTransferred,&Last,&Block);
     DEBUG((DEBUG_WARN,"SUNUEFI_UFS_CAPACITY lun=%u status=%r last_lba=%lx block_bytes=%u\n",Luns[I],Status,
@@ -1084,6 +1124,7 @@ EFI_STATUS PianoUfsReadOnlyDmaExperiment(CONST VOID *Fdt) {
   if(mWindowEntered)return EFI_ACCESS_DENIED;mWindowEntered=TRUE;
 #endif
   mDevice=(PIANO_DMA_DEVICE){.Name="ufs",.StreamId=0x60,.AddressBits=32,.CacheLine=64};
+  mReadFailure.Present=FALSE;
   ZeroMem(&mTrl,sizeof(mTrl));ZeroMem(&mUcd,sizeof(mUcd));ZeroMem(&mData,sizeof(mData));mInstalled=FALSE;mPowerMode=MAX_UINT32;mLunCount=0;
   ZeroMem(&mContext,sizeof(mContext));
   mStartupStage="UFS LINK";
@@ -1112,6 +1153,7 @@ EFI_STATUS PianoUfsReadOnlyDmaExperiment(CONST VOID *Fdt) {
   // Descriptors may respond even while asleep. Check the mandatory power
   // attribute before descriptor and SCSI access, not only after query errors.
   Status=EnsureDeviceActive();
+  DEBUG((DEBUG_WARN,"SUNUEFI_UFS_POWER_READY status=%r mode=%08x\n",Status,mPowerMode));
   if(EFI_ERROR(Status))goto Exit;
   // Like the kernel's descriptor query path, allow three bounded read retries.
   // Never retry a timed-out or malformed transport, only a completed general

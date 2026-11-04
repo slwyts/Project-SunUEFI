@@ -34,6 +34,7 @@ VOID PianoProbeUfs(CONST VOID *Fdt);
 VOID PianoUfsSetProbeAction(EFI_STATUS (*Action)(CONST VOID *));
 EFI_STATUS PianoUfsReadOnlyDmaExperiment(CONST VOID *Fdt);
 CONST CHAR8 *PianoUfsStartupStage(VOID);
+CONST CHAR8 *PianoUfsStartupDiagnostic(VOID);
 EFI_STATUS PianoStartKeys(CONST VOID *Fdt);
 STATIC PIANO_PRODUCT_OWNERS mOwners;
 STATIC PIANO_LATE_HANDOFF mLateHandoff;
@@ -177,6 +178,17 @@ STATIC VOID FailStop(EFI_STATUS Status) {
     else if(!AsciiStrCmp(mBootLogStage,"USB"))Detail=L"USB 初始化失败";
     else if(!AsciiStrCmp(mBootLogStage,"INPUT"))Detail=L"输入初始化失败";
     else if(!AsciiStrCmp(mBootLogStage,"PAYLOAD"))Detail=L"引导文件不可用";
+    CHAR16 StorageDetail[112];
+    if(!mUfsStarted && !AsciiStrnCmp(mBootLogStage,"UFS",3)){
+      CONST CHAR8 *Diagnostic=PianoUfsStartupDiagnostic();
+      if(Diagnostic && Diagnostic[0]){
+        UINTN I=0,J=0;
+        while(Detail[I] && I<ARRAY_SIZE(StorageDetail)-3){StorageDetail[I]=Detail[I];++I;}
+        StorageDetail[I++]=' ';StorageDetail[I++]=' ';
+        while(Diagnostic[J] && I<ARRAY_SIZE(StorageDetail)-1)StorageDetail[I++]=(UINT8)Diagnostic[J++];
+        StorageDetail[I]=0;Detail=StorageDetail;
+      }
+    }
     if(BootLogAlive())(VOID)PianoProductBootLogMessage(L"未能启动系统",Detail,Status,TRUE);
     DEBUG((DEBUG_ERROR,"PIANO_START_FAILED stage=%a status=%r recovery=hold-power-reboot-volume-up-Android\n",mBootLogStage,Status));
   }

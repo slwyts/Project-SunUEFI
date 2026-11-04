@@ -26,6 +26,7 @@ STATIC BOOLEAN RetainedSmmu,RetainedMapping,RetainedClock;
 STATIC UINT32 ObserveInject;
 
 BOOLEAN PianoProductDisplayRetained(VOID){return FALSE;}
+CONST CHAR8 *PianoUfsStartupDiagnostic(VOID){return NULL;}
 INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
 INTN EFIAPI AsciiStrnCmp(CONST CHAR8 *A,CONST CHAR8 *B,UINTN N){return strncmp(A,B,N);}
 EFI_STATUS PianoProductDisplayCheckpoint(CONST CHAR8 *Name,UINT32 Stage){(VOID)Name;(VOID)Stage;return EFI_SUCCESS;}
