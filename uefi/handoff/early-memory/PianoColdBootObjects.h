@@ -13,7 +13,10 @@
 #define PIANO_COLD_DTB_MAX 0x200000U
 #define PIANO_COLD_READ_MAX 256U
 #define PIANO_COLD_TOTAL_MAX (2U*PIANO_COLD_DTB_MAX+0x10000U)
-#define PIANO_COLD_MAX_USECS 2000000U
+// The shared window includes all guarded factory-tree passes and the SMEM
+// capture between them, before the MMU/data cache is enabled. Keep it finite;
+// the independent byte budget and every per-batch state check still apply.
+#define PIANO_COLD_MAX_USECS (30U*1000000U)
 #define PIANO_COLD_OBJECT_HOB_GUID {0x3025a79b,0x7ed3,0x4f6b,{0x90,0x50,0x43,0x4f,0x4c,0x44,0x30,0x31}}
 // Preserve the legacy magic/DTB/EL prefix, and ARM64 image header offset56.
 // Counter is same-boot metadata, CRC is structural integrity, neither ownership.

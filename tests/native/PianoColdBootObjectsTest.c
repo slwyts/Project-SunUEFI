@@ -29,7 +29,14 @@ EFI_STATUS PianoColdHostCpu(PIANO_COLD_CPU *C){
  *C=(PIANO_COLD_CPU){0xa7110000,0xa764c000,4,0x30d01808,0xa7100800,0x3c0,1,0x81200000,0,++Counter,1000000000};
  if(Case==1)C->El=8;if(Case==2)C->Sctlr|=BIT0;if(Case==3)C->Sp=0xa8000000;if(Case==4)C->Pc=0xa8000000;
  if(Case==17&&Loads)C->Vbar+=2048;
- if(Case==18&&Loads)Counter=C->Counter=2000002000;
+ if((Case==18||Case==34)&&Loads){
+  // Derive both edges from the real configured deadline and fixture clock.
+  // Rounding upward ensures that the exact deadline is never below it by
+  // one fractional tick when the counter is converted back to microseconds.
+  UINT64 Usecs=PIANO_COLD_MAX_USECS-(Case==34?1U:0U);
+  UINT64 Ticks=(Usecs*C->Frequency+999999ULL)/1000000ULL;
+  Counter=C->Counter=mCold.Cpu.Counter+Ticks;
+ }
  if(Case>=30&&Case<=33&&Loads&&!NativeChanged){
   // The batch CPU check must still reject a changed underlying native
   // descriptor after its unique FD/stack lookup has been cached.
@@ -150,6 +157,25 @@ static VOID LayoutStringBoundaries(VOID){
  assert(Fixture.NodeBoundaryReads==0&&Fixture.TableBoundaryReads==1);
 }
 
+static VOID ReadBudgetBoundaries(VOID){
+ // Exercise the real ColdRead guards using an already admitted address.
+ // Seed only the accounting edge, then restore the complete diagnostic report
+ // so these rejected calls cannot affect the later publication assertions.
+ PIANO_COLD_BOOT_OBJECT_REPORT Saved=mCold;
+ UINTN ActualLoads=Loads;
+ UINT32 Out[2]={0x12345678,0x9abcdef0};
+ mCold.Loads=PIANO_COLD_TOTAL_MAX/4-1;
+ assert(ColdRead(PIANO_COLD_HANDOFF_ADDRESS,sizeof(Out),Out)==EFI_TIMEOUT);
+ assert(mCold.Loads==PIANO_COLD_TOTAL_MAX/4-1&&Loads==ActualLoads);
+ assert(mCold.GuardBatches==Saved.GuardBatches&&Out[0]==0x12345678&&Out[1]==0x9abcdef0);
+
+ mCold.Loads=PIANO_COLD_TOTAL_MAX/4;
+ assert(ColdRead(PIANO_COLD_HANDOFF_ADDRESS,sizeof(Out[0]),Out)==EFI_TIMEOUT);
+ assert(mCold.Loads==PIANO_COLD_TOTAL_MAX/4&&Loads==ActualLoads);
+ assert(mCold.GuardBatches==Saved.GuardBatches&&Out[0]==0x12345678&&Out[1]==0x9abcdef0);
+ mCold=Saved;
+}
+
 static VOID Run(UINTN N){Case=N;MakeDtb();Handoff=(PIANO_COLD_BOOT_HANDOFF){.Magic=PIANO_COLD_HANDOFF_MAGIC,.Dtb=0xa8500000,.EntryEl=4,.ExtensionMagic=PIANO_COLD_EXTENSION_MAGIC,.Version=1,.Bytes=144,.Counter=10,.Frequency=1000000000,.ShimBase=0xa8000000,.ShimBytes=0x400,.FdSource=0xa8000400,.FdBase=0xa7100000,.FdBytes=0x300000,.EntrySp=0xa9000000,.EntryPc=0xa8000040,.Flags=127};
  if(N==24||N==26){FILE *F=fopen(ActualDtb,"rb");assert(F);DtbBytes=(UINT32)fread(Dtb,1,PIANO_COLD_DTB_MAX,F);assert(feof(F)&&(N==26||DtbBytes==1110810));fclose(F);}
  if(N==25){UINT32 Strings=(UINT32)Dtb[12]<<24|((UINT32)Dtb[13]<<16)|((UINT32)Dtb[14]<<8)|Dtb[15];UINT32 Bytes=DtbBytes-Strings-1;memmove(Dtb+Strings+2,Dtb+Strings,Bytes);DtbBytes=Strings+2+Bytes;Be(Dtb+4,DtbBytes);Be(Dtb+12,Strings+2);Be(Dtb+32,Bytes);assert(Dtb[DtbBytes-1]==0&&(DtbBytes&3));}
@@ -163,13 +189,16 @@ static VOID Run(UINTN N){Case=N;MakeDtb();Handoff=(PIANO_COLD_BOOT_HANDOFF){.Mag
  if(N==13)Handoff.Counter=2000;if(N==14)Shim[56]^=1;if(N==19)Dtb[0]^=1;if(N==20)Be(Dtb+20,18);
  Handoff.Crc32=PianoColdHandoffCrc(&Handoff);if(N==21)Handoff.Crc32^=1;
  EFI_STATUS E=PianoColdBootObjectsObserve();CONST PIANO_COLD_BOOT_OBJECT_REPORT *R=PianoColdBootObjectsReport();
+ if(N==0)ReadBudgetBoundaries();
+ if(N==18)assert(E==EFI_TIMEOUT&&R->Reason==PianoColdReasonBudget&&R->ElapsedUsecs==PIANO_COLD_MAX_USECS&&Loads==36&&R->GuardBatches==1);
+ if(N==34)assert(E==EFI_SUCCESS&&R->ElapsedUsecs==PIANO_COLD_MAX_USECS-1);
  if(N==26){assert(E==EFI_SUCCESS);PIANO_MEMORY_LAYOUT First,Second;
   assert(PianoColdBootObjectsMemoryLayout(&First)==EFI_SUCCESS);
   EFI_STATUS Repeat=PianoColdBootObjectsMemoryLayout(&Second);if(Repeat!=EFI_SUCCESS)fprintf(stderr,"capture repeat status=%llx loads=%u usecs=%llu batches=%u\n",(unsigned long long)Repeat,R->Loads,(unsigned long long)R->ElapsedUsecs,R->GuardBatches);assert(Repeat==EFI_SUCCESS&&!memcmp(&First,&Second,sizeof(First)));
   assert(First.RamCount&&First.ReservedCount>=47&&First.FutureLinuxDynamicConstraints==14&&PianoColdBootObjectsValidate(R)==EFI_SUCCESS);
   printf("Complete factory DT guarded memory capture: bytes%u RAM%u fixed%u future%u batches%u words%u limit%u\n",DtbBytes,First.RamCount,First.ReservedCount,First.FutureLinuxDynamicConstraints,R->GuardBatches,R->Loads,PIANO_COLD_TOTAL_MAX/4);fflush(stdout);return;
  }
- if(N==0||N==12||N==22||N==23||N==18||N==5||N==24||N==25||N==27){
+ if(N==0||N==12||N==22||N==23||N==18||N==5||N==24||N==25||N==27||N==34){
   if(N!=18&&N!=5)assert(E==EFI_SUCCESS&&R->Coherent&&R->Epoch==10&&R->DtbBytes==DtbBytes&&R->InitrdStart==(N==24?0xb5d77000:0xa8600000)&&R->InitrdEnd==(N==24?0xb7ffe7dc:0xa8700000)&&R->Count==13&&PianoColdBootObjectsValidate(R)==EFI_SUCCESS);
   else assert(E!=EFI_SUCCESS&&!R->Coherent&&PianoColdBootObjectsValidate(R)==EFI_NOT_READY);
   VOID *Space=mmap((VOID*)0xbd980000,0x10000,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE,-1,0);assert(Space==(VOID*)0xbd980000);
@@ -200,7 +229,7 @@ int main(int Argc,char **Argv){
  BOOLEAN Synthetic=!strcmp(Argv[1],"--synthetic");
  ActualDtb=Synthetic?NULL:Argv[1];
  UINTN Cases=0;
- for(UINTN I=0;I<34;++I){
+ for(UINTN I=0;I<35;++I){
   if(I==26||(Synthetic&&I==24))continue; // Case26 is the separate memory-pair fixture.
   pid_t P=fork();assert(P>=0);
   if(!P){Run(I);_exit(0);}
