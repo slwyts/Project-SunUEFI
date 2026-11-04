@@ -2,7 +2,7 @@
 #ifndef SUNUEFI_PIANOCPUINPUT_H
 #define SUNUEFI_PIANOCPUINPUT_H
 #include <Uefi.h>
-#define PIANO_CPU_INPUT_LOW_BYTES (64ULL*1024*1024)
+#define PIANO_CPU_INPUT_LOW_BYTES (128ULL*1024*1024)
 #define PIANO_CPU_INPUT_MAX_BYTES (1024ULL*1024*1024)
 #define PIANO_CPU_INPUT_CHUNK 65536U
 // Same live proof used by Linux EFI handoff; no second ready flag or planner.
@@ -24,8 +24,9 @@ typedef struct {
  EFI_STATUS (*ValidateBuffer)(VOID *,CONST PIANO_LINUX_MEMORY_PROOF *,
    CONST VOID *Producer,VOID *SourceOwner,CONST VOID *Base,UINT64 Bytes);
 } PIANO_CPU_INPUT_ENV;
-// <=64MiB keeps the legacy CPU path when Env is NULL. Above that, all real
-// callbacks and a validated full-memory proof are mandatory; max is 1GiB.
+// <=128MiB uses the existing native low heaps; file sources allocate their
+// actual size through Boot Services and retain allocation/ownership failures.
+// Above that, all real callbacks and a full-memory proof remain mandatory.
 EFI_STATUS PianoCpuInputAuthorize(CONST PIANO_CPU_INPUT_ENV *,UINT64 Bytes,PIANO_LINUX_MEMORY_PROOF *);
 EFI_STATUS PianoCpuInputValidateBuffer(CONST PIANO_CPU_INPUT_ENV *,CONST PIANO_LINUX_MEMORY_PROOF *,
   CONST VOID *Producer,VOID *Owner,CONST VOID *Base,UINT64 Bytes);

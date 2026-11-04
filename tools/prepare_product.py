@@ -20,6 +20,7 @@ import piano_display_mapping as display_mapping
 import piano_vendor_inputs as vendor_inputs
 
 CORE_GUID='35E0D1B5-93CE-4D6A-9A93-6ADAA3F26C40'
+OS_BOOT_SOURCE_BUDGET=128*1024*1024
 SOURCE_NAMES=(
     'PianoProductCore.c','PianoBootOptions.c','PianoProductBootLog.c','PianoProductDisplayObserve.c','PianoDisplaySmmuObserve.c','PianoFrameBufferMappingObserve.c','PianoDisplayClockObserve.c','PianoProductDisplayOwner.c','PianoDisplayClockLease.c','PianoDisplayClockRead.c','PianoBootPolicy.c','PianoFvApplication.c','PianoProductPayload.c','PianoProductOwners.c','PianoRamPartition.c','PianoProductSmem.c',
     'NativeProbe.c','PianoKeys.c','PianoFaultRecovery.c',
@@ -149,7 +150,7 @@ def prepare_os_boot(root,app):
         shutil.copyfile(path,destination)
     return {'status':'SHARED_IMPLEMENTATION_COMPILED_PLATFORM_NOT_READY',
             'platform_bound':False,'full_ddr_verified':False,'start_enabled':False,
-            'configured_source_budget_bytes':64*1024*1024,
+            'configured_source_budget_bytes':OS_BOOT_SOURCE_BUDGET,
             'sources':list(OS_BOOT_INF_SOURCES),
             'canonical_files':{name:sha(path)for name,path in sorted(files.items())},
             'shared_headers':{name:sha(path)for name,path in sorted(headers.items())}}
@@ -224,7 +225,7 @@ def backend_status():
       'usb_device_fastboot':{'status':'RESIDENT_SERVICE','physical_evidence':'Fastboot responds in product menu, Setup and Shell; clean DMA/SMMU/clock retirement before Linux','navigation_commands':['oem setup','oem shell','oem simpleinit'],'navigation_physical_validation':True,'current_download_limit_bytes':67108864,'target_download_limit_bytes':1073741824,'known_issue':'first Shell bulk-IN response has stalled on-device; reconnection behavior not resolved'},
       'usb_host':{'status':'NOT_READY','missing':'actual Host PCI_IO/NC common DMA and Type-C/VBUS ownership backend; standard consumers linked'},
       'debug_logs_screenshot':{'status':'IMPLEMENTED_FASTBOOT','physical_evidence':'test82 ramlog and84 screenshot; product UI snapshots untested'},
-      'efi_android_linux_boot':{'status':'PARTIAL','shared_os_loader':'COMPILED_PLATFORM_NOT_READY','source_budget_bytes':67108864,'platform_bound':False,'full_ddr_verified':False,'missing':'approved SFS/path source, independent BS fence, actual full-DDR and all-owner EFI handoff binding; generic Android/Recovery/Windows handoff'},
+      'efi_android_linux_boot':{'status':'PARTIAL','shared_os_loader':'COMPILED_PLATFORM_NOT_READY','source_budget_bytes':OS_BOOT_SOURCE_BUDGET,'platform_bound':False,'full_ddr_verified':False,'missing':'approved SFS/path source, independent BS fence, actual full-DDR and all-owner EFI handoff binding; generic Android/Recovery/Windows handoff'},
       'os_exit':{'status':'NATIVE_LATE_APP_HOOK_AND_ROOT_PROVIDER_BOUND_UNTESTED','os_image_armed':False,'full_ddr_verified':False,'missing':'live full-DDR authority, actual selected OS Arm and device acceptance'},
     }
 

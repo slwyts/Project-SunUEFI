@@ -197,6 +197,25 @@ int main(void){
   Before=Calls;assert(PianoEspBootRelease(&S)==EFI_ACCESS_DENIED&&Calls==Before);
   // Test-fixture reclamation only, after proving production release cannot retry.
   free(S.File.Exit);free(S.File.Data);
+  // The complete128MiB file is a normal low-heap allocation, not a forged
+  // full-DDR authorization. SHA, ownership and clearing use the real code.
+  ContentBytes=PIANO_CPU_INPUT_LOW_BYTES;Content=malloc(ContentBytes);assert(Content);
+  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};
+  assert(PianoEspBootLoad(&S,&Cpu)==EFI_SUCCESS&&S.File.Bytes==128ULL*1024*1024);
+  assert(Allocations==1&&S.File.Chunks==2048&&Slices>=2048&&!MemoryChecks&&!BufferValidations&&!S.File.Memory.FullDdr);
+  assert(!memcmp(S.File.Sha256,Expected,32)&&PianoEspBootOwned(&S,S.Owner));
+  assert(PianoEspBootRelease(&S)==EFI_SUCCESS&&PianoEspBootReleased(&S)&&Frees==1);
+  // Reject an oversized file before allocating or reading any file data.
+  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};++ContentBytes;
+  assert(PianoEspBootLoad(&S,&Cpu)==EFI_BAD_BUFFER_SIZE&&!Reads&&!Allocations&&!S.Loaded&&!S.Retained&&S.File.Consumed);
+  --ContentBytes;
+  // Fragmentation/allocation failure remains a closed, retained source;
+  // no read, partial launch, or unacknowledged buffer release may follow.
+  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};Case=38;
+  assert(PianoEspBootLoad(&S,&Cpu)==EFI_OUT_OF_RESOURCES&&S.Retained&&S.File.Retained);
+  assert(!Reads&&!Allocations&&!Frees&&!S.Loaded&&!S.Owner&&!S.File.Ready&&!S.File.Data);
+  Before=Calls;assert(PianoEspBootRelease(&S)!=EFI_SUCCESS&&Calls==Before);
+  free(S.File.Exit);free(Content);Content=SmallContent;ContentBytes=sizeof(SmallContent);
   puts("Actual ESP + FileSource + CpuInput PASS: fresh UUID/geometry, parent bounds, ambiguity, read-only opens on RW media, instance changes, missing-file retry, SHA, ownership and cleanup; no device");
   return 0;
 }

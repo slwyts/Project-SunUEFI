@@ -80,6 +80,8 @@ PianoProductCoreEntry (uefi/core/PianoProductCore.c)
 
 `LinuxBoot.efi` 通过 Runtime 协议的 APP 入口同步调用驻留核心。核心确认调用者是当前 systemd-boot 的真实子应用后，沿用 `PianoRawLinuxBoot.c` 的文件加载和内核交接：读取 `/EFI/Piano/stable/boot.img`，复制内核、设备树和 initramfs，保留运行时面板与 Gunyah 修正，再关闭 USB、存储、输入、时钟和 SMMU。
 
+ESP 中的 Linux `boot.img` 总容器上限为 128 MiB，打包入口 `./build.sh package` 和 `./build.sh esp` 会核对该上限。initramfs 的压缩后上限仍为 16 MiB，内核和设备树仍须满足各自的交接窗口。UEFI Fastboot 的单次 USB 下载上限保持 64 MiB，超过此大小的 Linux 容器需从 ESP 启动。
+
 源文件与内存归属仍由核心检查，`ExitBootServices` 则使用当前最内层启动应用的真实句柄和已保存的加载身份。进入资源关闭流程后出错便停止，不返回仍可能持有文件句柄的 systemd-boot。
 
 当前 EFI 内存映射只包含固件工作区，尚不是完整 DDR 映射；Linux EFI stub 会按 EFI 内存映射重新发现内存，因此该启动项使用 `efi` 调用启动应用，不直接使用 `linux`、`initrd` 或 `devicetree` 条目。这保留现有 Linux 设备树中的完整内存布局。

@@ -24,7 +24,7 @@ EFI_STATUS PianoCpuImageLoanInitialize(PIANO_CPU_IMAGE_LOAN *);
 EFI_STATUS PianoCpuImageLoanBegin(PIANO_CPU_IMAGE_LOAN *,CONST PIANO_LAUNCH_BLOB *,
   VOID *AlreadyOwned,PIANO_BOOT_RANGE,UINT64 MaxBytes,CONST VOID **View,VOID **Token);
 // Large source variant uses the same live memory proof/owner validator as
-// FileSource/LinuxSession. NULL Cpu retains64MiB; no new source allocation.
+// FileSource/LinuxSession. NULL Cpu uses the native low-heap cap; no new allocation.
 EFI_STATUS PianoCpuImageLoanBeginWithCpu(PIANO_CPU_IMAGE_LOAN *,CONST PIANO_LAUNCH_BLOB *,
   VOID *AlreadyOwned,PIANO_BOOT_RANGE,UINT64 MaxBytes,CONST PIANO_CPU_INPUT_ENV *,CONST VOID **View,VOID **Token);
 // CPU-only bounded copies; destination cannot alias source/session storage.

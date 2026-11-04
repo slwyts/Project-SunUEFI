@@ -6,6 +6,63 @@ import unittest
 ROOT=Path(__file__).resolve().parents[2]
 INC=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 class ProductOwnersTests(unittest.TestCase):
+    def test_actual_raw_linux_payload_budget(self):
+        source=(ROOT/'uefi/core/PianoRawLinuxBoot.c').read_text()
+        start=source.index('STATIC EFI_STATUS Parse(')
+        parse=source[start:source.index('\nSTATIC EFI_STATUS Ready(',start)]
+        limits='\n'.join(line for line in source.splitlines() if line.startswith('#define RAW_'))
+        with tempfile.TemporaryDirectory(prefix='piano-raw-budget-') as directory:
+            native=Path(directory)/'budget.c';binary=Path(directory)/'budget'
+            native.write_text('''#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+#undef NULL
+#include <Uefi.h>
+'''+ '#include "'+str(ROOT/'uefi/core/PianoFastbootBoot.h')+'"\n'
+                '#include "'+str(ROOT/'uefi/core/PianoFastboot.h')+'"\n'
+                '#include "'+str(ROOT/'uefi/core/PianoCpuInput.h')+'"\n'+limits+r'''
+VOID *EFIAPI CopyMem(VOID *D,CONST VOID *S,UINTN N){return memcpy(D,S,N);}
+VOID *EFIAPI ZeroMem(VOID *D,UINTN N){return memset(D,0,N);}
+INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
+UINT32 EFIAPI ReadUnaligned32(CONST UINT32 *P){UINT32 V;memcpy(&V,P,sizeof(V));return V;}
+UINT64 EFIAPI ReadUnaligned64(CONST UINT64 *P){UINT64 V;memcpy(&V,P,sizeof(V));return V;}
+'''+parse+r'''
+static UINT8 Header[1660],Image[64];
+static VOID Put(UINT8 *P,UINTN At,UINTN Bytes,UINT64 V){
+  for(UINTN I=0;I<Bytes;++I)P[At+I]=(UINT8)(V>>(I*8));
+}
+static VOID Layout(UINT64 Total,UINT32 Initrd,UINT32 Dtb){
+  memset(Header,0,sizeof(Header));memset(Image,0,sizeof(Image));
+  memcpy(Header,"ANDROID!",8);Put(Header,8,4,Total-4096-Initrd-Dtb);
+  Put(Header,16,4,Initrd);Put(Header,36,4,4096);Put(Header,40,4,2);
+  Put(Header,1644,4,sizeof(Header));Put(Header,1648,4,Dtb);
+  Put(Image,8,8,0x80000);Put(Image,16,8,Total-4096-Initrd-Dtb);memcpy(Image+56,"ARMd",4);
+}
+static EFI_STATUS Read(VOID *C,UINT64 At,UINTN N,VOID *Out){
+  (VOID)C;
+  if(!At&&N<=sizeof(Header)){memcpy(Out,Header,N);return EFI_SUCCESS;}
+  if(At==4096&&N<=sizeof(Image)){memcpy(Out,Image,N);return EFI_SUCCESS;}
+  return EFI_ACCESS_DENIED;
+}
+int main(void){
+  const UINT64 MiB=1024*1024;PIANO_BOOT_IMAGE Parsed;
+  PIANO_BOOT_SOURCE Source={NULL,Read,PIANO_CPU_INPUT_LOW_BYTES};
+  assert(Source.Bytes==128*MiB&&PIANO_FASTBOOT_MAX_DOWNLOAD==64*MiB);
+  Layout(Source.Bytes,16*MiB,MiB);assert(Parse(&Source,&Parsed)==EFI_SUCCESS);
+  Source.Bytes+=4096;Layout(Source.Bytes,16*MiB,MiB);
+  assert(Parse(&Source,&Parsed)==EFI_UNSUPPORTED);Source.Bytes-=4096;
+  Layout(Source.Bytes,16*MiB+4096,MiB);assert(Parse(&Source,&Parsed)==EFI_UNSUPPORTED);
+  Layout(Source.Bytes,16*MiB,RAW_DTB_MAX-0x10000+4096);assert(Parse(&Source,&Parsed)==EFI_UNSUPPORTED);
+  Layout(Source.Bytes,16*MiB,MiB);Put(Image,16,8,RAW_DTB-RAW_KERNEL);
+  assert(Parse(&Source,&Parsed)==EFI_COMPROMISED_DATA);
+  puts("Actual RawLinux parser: ESP128MiB, USB64MiB, oversized source/initrd/DTB and kernel-span boundaries");
+  return 0;
+}
+''')
+            subprocess.run(['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror',
+                '-fsanitize=address,undefined','-fno-pie','-no-pie','-I'+str(INC),'-I'+str(INC/'X64'),
+                str(native),str(ROOT/'uefi/core/PianoFastbootBoot.c'),'-o',str(binary)],check=True)
+            subprocess.run([str(binary)],check=True)
     def test_actual_raw_linux_clean_ledger(self):
         # Compile the production CPU-only handoff predicate with the actual
         # owner manager; ARM entry/MMIO and image copying are outside this test.

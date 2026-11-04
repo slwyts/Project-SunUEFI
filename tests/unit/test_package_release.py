@@ -273,6 +273,14 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertFalse((self.args.output / 'manifest.json').exists())
         self.assertFalse((self.args.output / 'SHA256SUMS').exists())
 
+    def test_boot_parser_rejects_container_above_128_mib(self):
+        boot = self.base / 'oversized.img'
+        with boot.open('wb') as stream:
+            stream.write(b'ANDROID!')
+            stream.truncate(128 * pr.MIB + 1)
+        with self.assertRaisesRegex(ValueError, '128 MiB ESP load budget'):
+            pr.verify_boot(boot, (self.kernel / 'Image', self.initrd, self.dtb))
+
     def test_boot_parser_rejects_wrong_sizes_trailing_and_changed_bytes(self):
         data = bytearray(4096)
         data[:8] = b'ANDROID!'

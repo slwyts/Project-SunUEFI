@@ -31,8 +31,8 @@ typedef struct {
  EFI_STATUS (*PrepareHandoff)(VOID *,CONST PIANO_LINUX_MEMORY_PROOF *,PIANO_LINUX_RETIRE_PROOF *);
  EFI_STATUS (*ValidateRetired)(VOID *,CONST PIANO_LINUX_RETIRE_PROOF *);
  VOID (*FailStop)(VOID *,EFI_STATUS); // CPU-only, never returns; EBS/unknown only
- UINT64 MaxSourceBytes; // zero defaults64MiB, hard cap1GiB, not transport advert
- CONST PIANO_CPU_INPUT_ENV *Cpu; // required above64MiB; actual source owner checks
+ UINT64 MaxSourceBytes; // zero defaults128MiB, hard cap1GiB, not transport advert
+ CONST PIANO_CPU_INPUT_ENV *Cpu; // required above128MiB; actual source owner checks
  PIANO_OS_HANDOFF_MODE HandoffMode;
  EFI_STATUS (*NativeLateArm)(VOID *,EFI_HANDLE,CONST EFI_LOADED_IMAGE_PROTOCOL *);
  EFI_STATUS (*NativeLateDisarm)(VOID *,EFI_HANDLE);

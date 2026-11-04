@@ -32,7 +32,7 @@ EFI_STATUS PianoFastbootDownloadBlobBind(PIANO_FASTBOOT_DOWNLOAD_BLOB *State,
   PIANO_FASTBOOT *Source,VOID *QuietContext,PIANO_DOWNLOAD_QUIET ReadyToTake,
   EFI_FREE_POOL ReleasePool,PIANO_LAUNCH_BLOB *Blob);
 // Same quiet/take/ACK/DMA semantics, optional Root-owned large CPU policy.
-// NULL policy caps admission at64MiB. Does not advertise/allocate high RAM.
+// NULL policy uses the native CPU heap budget; the USB engine stays64MiB.
 EFI_STATUS PianoFastbootDownloadBlobBindWithCpu(PIANO_FASTBOOT_DOWNLOAD_BLOB *,
   PIANO_FASTBOOT *,VOID *,PIANO_DOWNLOAD_QUIET,EFI_FREE_POOL,
   CONST PIANO_CPU_INPUT_ENV *,PIANO_LAUNCH_BLOB *);

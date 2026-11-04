@@ -326,6 +326,7 @@ def pinned_mkbootimg():
 
 
 def verify_boot(path, inputs):
+    require(path.stat().st_size <= 128 * MIB, 'Linux boot container exceeds the 128 MiB ESP load budget')
     data = path.read_bytes()
     require(len(data) >= 1660 and data[:8] == b'ANDROID!', 'Invalid boot container')
     ksize, _, rsize, _, second, _, _, page, version = struct.unpack_from('<9I', data, 8)

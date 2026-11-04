@@ -8,7 +8,7 @@
 typedef struct {
   VOID *Context;EFI_BOOT_SERVICES *Services;
   BOOLEAN(*BootServicesAlive)(VOID *); // real caller CPU-only EBS/lifetime fence
-  CONST PIANO_CPU_INPUT_ENV *Cpu; // copied; NULL keeps the legacy64MiB cap
+  CONST PIANO_CPU_INPUT_ENV *Cpu; // copied; NULL keeps the native low-heap cap
 } PIANO_BOOT_FILE_ENV;
 typedef struct {
   EFI_HANDLE FileSystem;
@@ -39,7 +39,7 @@ EFI_STATUS PianoBootFileExport(PIANO_BOOT_FILE_SOURCE *,PIANO_BOOT_SOURCE *,PIAN
 // Release untaken snapshot; refuses outstanding Owner/Loan. Blob owner uses
 // ZeroRelease after Unborrow, or Restore to return unchanged source to caller.
 EFI_STATUS PianoBootFileDispose(PIANO_BOOT_FILE_SOURCE *);
-// Same env and explicit paths, sum(MaxBytes)<=Budget. >64MiB needs the actual
+// Same env and explicit paths, sum(MaxBytes)<=Budget. >128MiB needs the actual
 // validated full-memory and buffer-owner callbacks; absolute cap1GiB. No EBS.
 EFI_STATUS PianoBootFileLoadBundle(PIANO_BOOT_FILE_SOURCE *,UINTN Count,CONST PIANO_BOOT_FILE_ENV *,
   CONST PIANO_BOOT_FILE_SPEC *,UINT64 Budget,PIANO_BOOT_SOURCE *,PIANO_LAUNCH_BLOB *);

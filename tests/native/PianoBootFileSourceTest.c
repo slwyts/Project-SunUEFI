@@ -37,7 +37,7 @@ static EFI_STATUS EFIAPI Create(UINT32 Type,EFI_TPL T,EFI_EVENT_NOTIFY N,CONST V
 static VOID Exit(void){Fence->Notify(Fence,Fence->Context);Services=FALSE;}
 static EFI_STATUS EFIAPI CloseEvent(EFI_EVENT E){Check();Closes++;if(Case==16)return EFI_WARN_STALE_DATA;free(E);return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI Handle(EFI_HANDLE H,EFI_GUID *G,VOID **Out){Check();assert(H==(VOID *)7&&G==&gEfiSimpleFileSystemProtocolGuid);*Out=Case==18&&Reads?&Other:&Sfs;return EFI_SUCCESS;}
-static EFI_STATUS EFIAPI Allocate(EFI_MEMORY_TYPE T,UINTN N,VOID **Out){Check();assert(T==EfiLoaderData&&N==ContentBytes);assert(Allocations<4);*Out=malloc(N);Pools[Allocations]=*Out;PoolSizes[Allocations++]=N;return EFI_SUCCESS;}
+static EFI_STATUS EFIAPI Allocate(EFI_MEMORY_TYPE T,UINTN N,VOID **Out){Check();assert(T==EfiLoaderData&&N==ContentBytes);if(Case==38){*Out=NULL;return EFI_OUT_OF_RESOURCES;}assert(Allocations<4);*Out=malloc(N);Pools[Allocations]=*Out;PoolSizes[Allocations++]=N;return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI Free(VOID *P){Check();Frees++;if(Case==15)return EFI_WARN_STALE_DATA;BOOLEAN Found=FALSE;for(UINTN I=0;I<Allocations;I++)if(Pools[I]==P){Found=TRUE;for(UINTN Q=0;Q<PoolSizes[I];Q++)assert(((UINT8 *)P)[Q]==0);}assert(Found);free(P);return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI CloseFile(EFI_FILE_PROTOCOL *P){Check();assert(P==&File);FileCloses++;return Case==13?EFI_WARN_STALE_DATA:EFI_SUCCESS;}
 static EFI_STATUS EFIAPI CloseRoot(EFI_FILE_PROTOCOL *P){Check();assert(P==&Root);RootCloses++;return Case==14?EFI_DEVICE_ERROR:EFI_SUCCESS;}

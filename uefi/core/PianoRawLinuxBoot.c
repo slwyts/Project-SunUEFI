@@ -89,8 +89,9 @@ STATIC EFI_STATUS OwnedRead(VOID *C,UINT64 O,UINTN N,VOID *B){RAW_STATE *S=C;
  return S==&mRaw&&S->Captured?S->Blob.Read(S->Blob.Context,S->Token,O,N,B):EFI_ACCESS_DENIED;}
 STATIC EFI_STATUS Parse(CONST PIANO_BOOT_SOURCE *Source,PIANO_BOOT_IMAGE *P){
  EFI_STATUS E=PianoFastbootBootParse(Source,P);if(E!=EFI_SUCCESS)return E;
- if(Source->Bytes>PIANO_FASTBOOT_MAX_DOWNLOAD||P->Kind!=PianoBootAndroid||P->Version!=2||
-    P->Kernel.Bytes<64||P->Kernel.Bytes>PIANO_FASTBOOT_MAX_DOWNLOAD||!P->Ramdisk.Bytes||P->Ramdisk.Bytes>RAW_INITRD_MAX||
+ // ESP payloads use the native CPU heap budget; USB admission stays64MiB.
+ if(Source->Bytes>PIANO_CPU_INPUT_LOW_BYTES||P->Kind!=PianoBootAndroid||P->Version!=2||
+    P->Kernel.Bytes<64||P->Kernel.Bytes>PIANO_CPU_INPUT_LOW_BYTES||!P->Ramdisk.Bytes||P->Ramdisk.Bytes>RAW_INITRD_MAX||
     P->Dtb.Bytes<40||P->Dtb.Bytes>RAW_DTB_MAX-0x10000||P->Second.Bytes||P->RecoveryDtbo.Bytes||P->Signature.Bytes||P->Trailing.Bytes)
    return EFI_UNSUPPORTED;
  UINT8 H[64];E=Source->Read(Source->Context,P->Kernel.Offset,sizeof(H),H);if(E!=EFI_SUCCESS)return E;
