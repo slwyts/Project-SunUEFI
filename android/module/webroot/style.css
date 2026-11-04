@@ -128,6 +128,10 @@ body.working #message { position:fixed; z-index:20; bottom:22px; left:50%; trans
 .image-choice strong { font-size:16px; font-weight:500; }
 .image-choice p { font-size:13px; color:var(--muted); margin:7px 0 0; overflow-wrap:anywhere; }
 .image-choice .quiet { flex-shrink:0; }
+.image-update { display:flex; align-items:center; gap:10px; min-height:48px; width:max-content; max-width:100%; margin-top:4px; color:#386b60; font-size:14px; cursor:pointer; touch-action:manipulation; }
+.image-update input { width:22px; height:22px; margin:0; accent-color:var(--accent); cursor:inherit; }
+.image-update input:focus-visible { outline:3px solid #92c7c1; outline-offset:3px; }
+.image-update input:disabled + span { opacity:.55; }
 .partition-tools .tool { border-radius:18px; padding:18px 14px; }
 .partition-tools .tool:disabled { opacity:.7; }
 .partition-tools .tool:disabled .chevron { display:none; }

@@ -127,7 +127,7 @@ run_job() {
   restart=false
   case "$op" in
     1)
-      progress running 5 '正在刷写 ESP 和 Linux 系统。'
+      progress running 5 '正在刷写所选镜像。'
       "$NATIVE" flash "$plan" --execute > "$STATE/$job.result.json" 2> "$STATE/$job.transfer.log" &
       writer=$!
       while kill -0 "$writer" 2>/dev/null; do
@@ -218,7 +218,7 @@ EOF
     *) echo '不支持此存储操作。' >&2; return 1 ;;
   esac
   case "$op" in
-    1) message='ESP 和 Linux 已写入，读回检查完成。' ;;
+    1) message='所选镜像已写入，读回检查完成。' ;;
     2) message='分区已建立。请正常重启，再刷写 ESP 和 Linux 镜像。' ;;
     3) message='root 容量已调整。需要重启时，请正常重启后继续。' ;;
     4) message='SunUEFI 分区已删除，Android 数据分区保持原大小。' ;;
@@ -241,9 +241,15 @@ case "${1:-}" in
     ;;
   plan)
     operation=${2:-}; value=${3:-}
+    images=
     case "$operation" in
       create|resize) case "$value" in 32|64|128|256) ;; *) echo '请选择 32、64、128 或 256 GiB。' >&2; exit 2 ;; esac ;;
-      flash|delete|delete-return) value=0 ;;
+      flash)
+        images=${value:-both}
+        case "$images" in esp|root|both) ;; *) echo '请选择本次更新的镜像。' >&2; exit 2 ;; esac
+        value=0
+        ;;
+      delete|delete-return) value=0 ;;
       *) echo '不支持此存储操作。' >&2; exit 2 ;;
     esac
     lock; trap 'unlock' EXIT
@@ -259,7 +265,9 @@ case "${1:-}" in
       # 2199023255040 upper bound to -512, rejecting even 512-block sections.
       # piano-storage validates this uint64 value again before planning.
     fi
-    if [ -n "$section_bytes" ]; then
+    if [ "$operation" = flash ]; then
+      "$NATIVE" plan flash 0 "$STATE/$job.plan" --images "$images" > "$STATE/$job.description.json"
+    elif [ -n "$section_bytes" ]; then
       "$NATIVE" plan "$operation" "$value" "$STATE/$job.plan" --userdata-section-bytes "$section_bytes" > "$STATE/$job.description.json"
     else
       "$NATIVE" plan "$operation" "$value" "$STATE/$job.plan" > "$STATE/$job.description.json"
@@ -322,5 +330,5 @@ case "${1:-}" in
     fi
     cat "$STATE/$job.progress.json"
     ;;
-  *) echo 'Usage: storage-operations.sh select esp|root NAME_HEX BYTES | plan OP [GiB] | execute PLAN_ID --confirm | job JOB_ID' >&2; exit 2 ;;
+  *) echo 'Usage: storage-operations.sh select esp|root NAME_HEX BYTES | plan flash [esp|root|both] | plan OP [GiB] | execute PLAN_ID --confirm | job JOB_ID' >&2; exit 2 ;;
 esac

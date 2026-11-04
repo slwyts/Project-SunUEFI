@@ -110,7 +110,7 @@
         "maintenance"
       ],
       "status": "Actual named partitions and filesystem signatures",
-      "images": "Native Android local-file picker; raw or Android sparse sources; check expanded bounds, stream RAW/FILL/DONT_CARE with CRC validation, and verify expanded SHA readback on ESP/root.",
+      "images": "Native Android local-file picker; explicitly select ESP, root or both for each update. Only selected sources and destinations are opened for flashing; unselected partitions are preserved. The hashed v3 plan binds this selection. Raw or Android sparse sources check expanded bounds, stream RAW/FILL/DONT_CARE with CRC validation, and verify expanded SHA readback.",
       "root_resize": "Bundled static e2fsprogs; keep start, shrink filesystem before GPT, grow GPT before filesystem.",
       "create": "Free extent or native online F2FS shrink before GPT changes.",
       "delete_return": "Remove contiguous project partitions, extend userdata end, verify OEM F2FS grow after normal Android boot.",

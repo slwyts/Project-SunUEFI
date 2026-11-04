@@ -26,6 +26,7 @@
 static char source_root[PATH_MAX] = "/sdcard";
 static char selection_dir[PATH_MAX] = SOURCE_STATE;
 enum { FLASH = 1, CREATE, RESIZE, DELETE, DELETE_RETURN };
+enum { IMAGE_ESP = 1, IMAGE_ROOT = 2, IMAGE_BOTH = IMAGE_ESP | IMAGE_ROOT };
 struct gpt {
   uint64_t bytes;
   uint32_t sector, table_bytes;
@@ -45,12 +46,13 @@ struct selection {
 struct plan {
   unsigned char magic[16];
   uint32_t operation, root_gib, esp_index, root_index, userdata_index;
+  uint32_t flash_images;
   uint64_t userdata_bytes, root_bytes;
   struct gpt before, after;
   struct image esp_image, root_image;
   unsigned char digest[32];
 };
-static const unsigned char magic[16] = "SUNUEFI-STORv2";
+static const unsigned char magic[16] = "SUNUEFI-STORv3";
 static const unsigned char esp_type[16] = {0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8,
                                            0xd2, 0x11, 0xba, 0x4b, 0,    0xa0,
                                            0xc9, 0x3e, 0xc9, 0x3b};
@@ -319,14 +321,16 @@ static int sparse_scan(int fd, uint64_t bytes, uint64_t capacity,
        "稀疏镜像总长度或展开长度不一致。");
   return 1;
 }
-static void flash_progress(const char *kind, uint64_t done, uint64_t total) {
-  unsigned base = !strcmp(kind, "esp") ? 5 : 15;
-  unsigned span = !strcmp(kind, "esp") ? 10 : 80;
+static void flash_progress(const char *kind, uint64_t done, uint64_t total,
+                           unsigned images) {
+  unsigned base = images != IMAGE_BOTH || !strcmp(kind, "esp") ? 5 : 15;
+  unsigned span = images != IMAGE_BOTH ? 90 : !strcmp(kind, "esp") ? 10 : 80;
   fprintf(stderr, "progress:%s:%" PRIu64 ":%" PRIu64 ":%u\n",
           kind, done, total, base + (unsigned)(done * span / total));
 }
 static void sparse_stream(int src, int dst, const struct sparse_image *s,
-                          const char *kind, unsigned char digest[32]) {
+                          const char *kind, unsigned images,
+                          unsigned char digest[32]) {
   unsigned char *buf = malloc(4 * MIB), c[12], fill[4];
   uint32_t table[256], state = ~0u;
   int check_crc = s->has_crc || s->checksum;
@@ -387,7 +391,7 @@ static void sparse_stream(int src, int dst, const struct sparse_image *s,
         done += take;
         pos += take;
         if (dst >= 0)
-          flash_progress(kind, done, s->expanded);
+          flash_progress(kind, done, s->expanded, images);
       }
     }
     at += u32(c + 8);
@@ -424,7 +428,7 @@ static int image_open(const char *path, struct image *out, const char *kind,
   if (!compressed)
     io(fd, b, sizeof(b), 0, 0);
   else if (sparse.has_crc || sparse.checksum)
-    sparse_stream(fd, -1, &sparse, NULL, NULL);
+    sparse_stream(fd, -1, &sparse, NULL, 0, NULL);
   if (!strcmp(kind, "esp")) {
     unsigned sector = (unsigned)b[11] | (unsigned)b[12] << 8;
     uint64_t sectors = u32(b + 32);
@@ -487,11 +491,12 @@ static uint64_t align_up(uint64_t n, uint64_t alignment) {
 static int selected_image(const char *kind, struct image *out,
                           uint64_t capacity);
 static void make_plan(struct plan *p, unsigned op, unsigned gib,
-                      uint64_t userdata_section_bytes) {
+                      uint64_t userdata_section_bytes, unsigned images) {
   memset(p, 0, sizeof(*p));
   memcpy(p->magic, magic, 16);
   p->operation = op;
   p->root_gib = gib;
+  p->flash_images = op == FLASH ? images : 0;
   int fd = disk_open(0);
   read_gpt(fd, &p->before);
   close(fd);
@@ -510,10 +515,14 @@ static void make_plan(struct plan *p, unsigned op, unsigned gib,
          "SunUEFI 分区类型与 ESP/root 不匹配。");
   if (op == FLASH) {
     need(pair, "需要先建立 SunUEFI 分区。");
-    fd = selected_image("esp", &p->esp_image, part_bytes(g, p->esp_index));
-    close(fd);
-    fd = selected_image("root", &p->root_image, part_bytes(g, p->root_index));
-    close(fd);
+    if (images & IMAGE_ESP) {
+      fd = selected_image("esp", &p->esp_image, part_bytes(g, p->esp_index));
+      close(fd);
+    }
+    if (images & IMAGE_ROOT) {
+      fd = selected_image("root", &p->root_image, part_bytes(g, p->root_index));
+      close(fd);
+    }
   } else if (op == DELETE || op == DELETE_RETURN) {
     need(pair, "没有可删除的 SunUEFI 分区。");
     if (op == DELETE_RETURN) {
@@ -877,7 +886,7 @@ static void select_image(const char *kind, const char *hex, const char *size) {
 static int selected_image(const char *kind, struct image *out,
                           uint64_t capacity) {
   struct selection selection;
-  need(read_selection(kind, &selection), "请先选择 ESP 和 root 镜像文件。");
+  need(read_selection(kind, &selection), "请先选择要写入的镜像文件。");
   struct stat st;
   need(!lstat(selection.image.path, &st) &&
            identity_matches(&selection.image, &st),
@@ -915,6 +924,16 @@ static void load_plan(const char *path, struct plan *p) {
   need(!memcmp(p->magic, magic, 16) && p->operation >= FLASH &&
            p->operation <= DELETE_RETURN,
        "不支持此存储计划。");
+  need(p->operation == FLASH
+           ? p->flash_images && !(p->flash_images & ~IMAGE_BOTH)
+           : p->flash_images == 0,
+       "计划中的镜像范围无效，请重新预览操作。");
+  need((p->flash_images & IMAGE_ESP) ||
+           zero((const unsigned char *)&p->esp_image, sizeof(p->esp_image)),
+       "计划中的 ESP 镜像与写入范围不一致。");
+  need((p->flash_images & IMAGE_ROOT) ||
+           zero((const unsigned char *)&p->root_image, sizeof(p->root_image)),
+       "计划中的 root 镜像与写入范围不一致。");
   unsigned char digest[32];
   plan_hash(p, digest);
   need(!memcmp(digest, p->digest, 32), "计划文件损坏，请重新预览操作。");
@@ -950,12 +969,24 @@ static void describe(const struct plan *p) {
         p->userdata_bytes - part_bytes(&p->before, p->userdata_index));
   if (p->operation == FLASH) {
     struct selection selection = {0};
-    printf(",\"sources\":[");
-    selection.image = p->esp_image;
-    image_selection_json("esp", &selection, 1);
-    putchar(',');
-    selection.image = p->root_image;
-    image_selection_json("root", &selection, 1);
+    printf(",\"flash_images\":[");
+    if (p->flash_images & IMAGE_ESP)
+      printf("\"esp\"");
+    if (p->flash_images == IMAGE_BOTH)
+      putchar(',');
+    if (p->flash_images & IMAGE_ROOT)
+      printf("\"root\"");
+    printf("],\"sources\":[");
+    if (p->flash_images & IMAGE_ESP) {
+      selection.image = p->esp_image;
+      image_selection_json("esp", &selection, 1);
+    }
+    if (p->flash_images == IMAGE_BOTH)
+      putchar(',');
+    if (p->flash_images & IMAGE_ROOT) {
+      selection.image = p->root_image;
+      image_selection_json("root", &selection, 1);
+    }
     putchar(']');
   }
   puts("}");
@@ -1017,8 +1048,23 @@ static void apply(const struct plan *p, const char *backup) {
          reread ? "true" : "false");
 }
 static int project_open(const struct plan *p, unsigned index, int writing) {
-  need(!offline, "离线模式不打开真实分区。");
+  need(index == p->esp_index || index == p->root_index,
+       "只能打开 SunUEFI 的 ESP 或 root 分区。");
   const char *name = index == p->esp_index ? "sunuefi_esp" : "sunuefi_root";
+  if (offline) {
+    const char *kind = index == p->esp_index ? "esp" : "root";
+    char path[PATH_MAX];
+    need(snprintf(path, sizeof(path), "%s.%s", disk_path, kind) <
+             (int)sizeof(path),
+         "离线分区路径过长。");
+    int fd = open(path, (writing ? O_RDWR : O_RDONLY) | O_CLOEXEC | O_NOFOLLOW);
+    struct stat st;
+    need(fd >= 0 && !fstat(fd, &st) && S_ISREG(st.st_mode) &&
+             st.st_size >= 0 &&
+             (uint64_t)st.st_size == part_bytes(&p->before, index),
+         "离线分区必须是容量与 GPT 一致的普通文件。");
+    return fd;
+  }
   char alias[128], path[4096], sys[4096], text[64];
   snprintf(alias, sizeof(alias), "/dev/block/by-name/%s", name);
   need(realpath(alias, path) != NULL,
@@ -1073,9 +1119,11 @@ static void flash(const struct plan *p) {
   const char *kinds[2] = {"esp", "root"};
   unsigned indexes[2] = {p->esp_index, p->root_index};
   int src[2], dst[2];
-  // Validate both sources and both destinations before either partition
-  // changes.
+  // Validate every selected source and destination before any write. An
+  // unselected partition is never opened, even if its old image is missing.
   for (unsigned i = 0; i < 2; i++) {
+    if (!(p->flash_images & (1u << i)))
+      continue;
     src[i] = image_open(paths[i], &info[i], kinds[i],
                         part_bytes(&p->before, indexes[i]));
     need(!memcmp(&info[i], wanted[i], sizeof(info[i])),
@@ -1085,6 +1133,8 @@ static void flash(const struct plan *p) {
   unsigned char *buf = malloc(4 * MIB);
   need(buf != NULL, "分配刷写缓冲区失败。");
   for (unsigned i = 0; i < 2; i++) {
+    if (!(p->flash_images & (1u << i)))
+      continue;
     struct sparse_image sparse;
     unsigned char prefix[4096], expanded_sha[32];
     int compressed = sparse_scan(src[i], info[i].bytes,
@@ -1093,7 +1143,8 @@ static void flash(const struct plan *p) {
     uint64_t expanded = compressed ? sparse.expanded : info[i].bytes;
     uint64_t done = 0;
     if (compressed)
-      sparse_stream(src[i], dst[i], &sparse, kinds[i], expanded_sha);
+      sparse_stream(src[i], dst[i], &sparse, kinds[i], p->flash_images,
+                    expanded_sha);
     while (!compressed && done < info[i].bytes) {
       size_t n = info[i].bytes - done > 4 * MIB
                      ? 4 * MIB
@@ -1101,7 +1152,7 @@ static void flash(const struct plan *p) {
       io(src[i], buf, n, done, 0);
       io(dst[i], buf, n, done, 1);
       done += n;
-      flash_progress(kinds[i], done, info[i].bytes);
+      flash_progress(kinds[i], done, info[i].bytes, p->flash_images);
     }
     need(!fsync(dst[i]), "镜像写入同步失败。");
     unsigned char got[32];
@@ -1126,6 +1177,8 @@ static unsigned number(const char *text) {
 }
 int main(int argc, char **argv) {
   uint64_t userdata_section_bytes = 0;
+  unsigned images = IMAGE_BOTH;
+  int images_specified = 0;
   if (argc >= 4 && !strcmp(argv[argc - 3], "--offline")) {
     offline = 1;
     need(realpath(argv[argc - 2], disk_path) != NULL, "找不到离线磁盘文件。");
@@ -1153,6 +1206,19 @@ int main(int argc, char **argv) {
          "F2FS section 大小无效。");
     argc -= 2;
   }
+  if (argc >= 4 && !strcmp(argv[argc - 2], "--images")) {
+    images = !strcmp(argv[argc - 1], "esp")    ? IMAGE_ESP
+             : !strcmp(argv[argc - 1], "root") ? IMAGE_ROOT
+             : !strcmp(argv[argc - 1], "both") ? IMAGE_BOTH
+                                                : 0;
+    need(images != 0, "请选择 ESP、root 或两份镜像。");
+    images_specified = 1;
+    argc -= 2;
+  }
+  need(!images_specified ||
+           (argc >= 3 && !strcmp(argv[1], "plan") &&
+            !strcmp(argv[2], "flash")),
+       "镜像范围只用于刷写计划。");
   need(getuid() == 0 || offline, "需要 Root 权限。");
   need(argc >= 2, "缺少操作参数。");
   if (!strcmp(argv[1], "select")) {
@@ -1168,7 +1234,7 @@ int main(int argc, char **argv) {
   struct plan *p = calloc(1, sizeof(*p));
   need(p != NULL, "分配计划缓冲区失败。");
   if (!strcmp(argv[1], "plan")) {
-    need(argc == 5, "Usage: plan OP ROOT_GIB PLANFILE");
+    need(argc == 5, "Usage: plan OP ROOT_GIB PLANFILE [--images esp|root|both]");
     unsigned op = !strcmp(argv[2], "flash")           ? FLASH
                   : !strcmp(argv[2], "create")        ? CREATE
                   : !strcmp(argv[2], "resize")        ? RESIZE
@@ -1181,7 +1247,7 @@ int main(int argc, char **argv) {
              ? gib == 32 || gib == 64 || gib == 128 || gib == 256
              : gib == 0,
          "容量必须是 32、64、128 或 256 GiB。");
-    make_plan(p, op, gib, userdata_section_bytes);
+    make_plan(p, op, gib, userdata_section_bytes, images);
     save_plan(argv[4], p);
     describe(p);
   } else {

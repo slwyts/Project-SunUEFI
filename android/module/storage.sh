@@ -102,7 +102,7 @@ case "$layout" in
     [ "$backend" = false ] || delete=true
     if [ "$backend" = true ] && [ -x "$MODDIR/bin/piano-resize-f2fs" ]; then release=true; fi
     available=$(printf '%s' "$sources" | grep -o '"selected":true,"available":true' | wc -l)
-    [ "$backend" = false ] || [ "$available" -ne 2 ] || flash=true
+    [ "$backend" = false ] || [ "$available" -lt 1 ] || flash=true
     create=false
     ;;
   absent) resize=false ;;
@@ -127,7 +127,7 @@ fi
 if [ "$flash" = false ]; then
   if [ "$layout" != existing ]; then flash_reason='需要先建立完整的 ESP 和 root 分区。'
   elif [ "$backend" = false ]; then flash_reason='请更新模块以安装存储组件。'
-  else flash_reason='请先选择设备上的 ESP 和 root 镜像文件。'; fi
+  else flash_reason='请先选择启动镜像（ESP）或系统镜像（root）。'; fi
 fi
 if [ "$delete" = false ]; then delete_reason='当前没有可删除的完整 SunUEFI 分区。'; fi
 if [ "$release" = false ]; then

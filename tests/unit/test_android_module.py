@@ -265,8 +265,20 @@ class AndroidModuleTests(unittest.TestCase):
             assert.deepEqual(await m.nativeAction('quick-status'),{wrapped:true,bootloader_confirm_required:true});
             for (const args of [['switch','uefi;bad'], ['storage-execute','bad;id'],
                 ['storage-plan','create','$(id)'], ['storage-select','esp','3b6964','-1'],
+                ['storage-plan','flash'], ['storage-plan','flash','none'],
+                ['storage-plan','flash','esp;id'], ['storage-plan','flash','32'],
                 ['confirm-bootloader']]) await assert.rejects(m.nativeAction(...args));
             assert.equal(calls,1);
+            const planned=[];
+            window.ksu.exec=(command,_options,callback)=>{
+              planned.push(command);
+              window[callback](0,JSON.stringify({plan_id:'test-plan'}),'');
+            };
+            for (const scope of ['esp','root','both']) {
+              assert.deepEqual(await m.nativeAction('storage-plan','flash',scope),{plan_id:'test-plan'});
+            }
+            assert.deepEqual(planned,['esp','root','both'].map(scope=>
+              '/system/bin/sh /data/adb/modules/piano_sunuefi/action.sh storage-plan flash '+scope));
             window.ksu.exec=(_command,_options,callback)=>window[callback](1,'','已按音量上取消，尚未写入。');
             await assert.rejects(m.nativeAction('reinstall'),/音量上取消/);
           }

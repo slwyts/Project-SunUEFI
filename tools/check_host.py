@@ -67,11 +67,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--group', choices=('portable', 'python-all'), default='portable')
     parser.add_argument('--list', action='store_true', help='List files without running tests')
+    parser.add_argument('--pattern', action='append', help='Select test filenames within the group; may be repeated')
     parser.add_argument('--timeout', type=int, default=120, help='Per-file timeout in seconds')
     args = parser.parse_args(argv)
     if args.timeout <= 0:
         parser.error('--timeout must be positive')
     paths = checks(ROOT, args.group)
+    if args.pattern:
+        paths = [path for path in paths if any(path.match(pattern) for pattern in args.pattern)]
     if not paths:
         parser.error('No checks selected')
     if args.list:
