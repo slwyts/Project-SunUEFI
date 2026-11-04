@@ -14,6 +14,9 @@
 STATIC PIANO_COLD_MEMORY_REPORT mCold;
 STATIC EFI_GUID mGuid=PIANO_COLD_MEMORY_HOB_GUID;
 STATIC EFI_STATUS mCapture=EFI_NOT_STARTED;
+STATIC CONST CHAR8 *mCaptureStage="not-started",*mDtbStage="not-started";
+STATIC EFI_STATUS mDtbStatus=EFI_NOT_STARTED;
+STATIC UINTN mCaptureIndex=MAX_UINTN,mDtbIndex=MAX_UINTN;
 STATIC BOOLEAN mBusy;
 STATIC UINT64 mMapBuffer[8192];
 STATIC UINTN mMapBytes,mMapStride;
@@ -25,20 +28,151 @@ STATIC BOOLEAN LayoutCovers(CONST PIANO_MEMORY_LAYOUT *L,UINT64 Base,UINT64 Byte
  if(!Span(Base,Bytes))return FALSE;UINT64 End=Base+Bytes;
  while(Base<End){UINT64 Next=Base;for(UINTN I=0;I<L->RamCount;++I){CONST PIANO_MEMORY_SPAN *R=&L->Ram[I];if(Span(R->Base,R->Bytes)&&Base>=R->Base&&Base-R->Base<R->Bytes&&R->Base+R->Bytes>Next)Next=R->Base+R->Bytes;}if(Next==Base)return FALSE;Base=MIN(Next,End);}return TRUE;
 }
+STATIC EFI_STATUS CaptureResult(CONST CHAR8 *Stage,EFI_STATUS Status){
+ mCaptureStage=Stage;
+ mCapture=Status;
+ return Status;
+}
+
 STATIC EFI_STATUS Capture(VOID){
- if(mCapture!=EFI_NOT_STARTED)return mCapture;mCapture=EFI_NOT_FOUND;
- VOID *Hob=GetFirstGuidHob(&mGuid);if(!Hob)return mCapture;
- EFI_HOB_GUID_TYPE *G=Hob;if(G->Header.HobLength!=sizeof(*G)+sizeof(mCold)||G->Header.Reserved||GetNextGuidHob(&mGuid,(UINT8 *)G+G->Header.HobLength))return mCapture=EFI_COMPROMISED_DATA;
+ if(mCapture!=EFI_NOT_STARTED)return mCapture;
+ mCaptureIndex=MAX_UINTN;
+ mCapture=EFI_NOT_FOUND;
+ mCaptureStage="cold-hob";
+
+ VOID *Hob=GetFirstGuidHob(&mGuid);
+ if(!Hob)return mCapture;
+ EFI_HOB_GUID_TYPE *G=Hob;
+ if(G->Header.HobLength!=sizeof(*G)+sizeof(mCold)||G->Header.Reserved||
+    GetNextGuidHob(&mGuid,(UINT8 *)G+G->Header.HobLength))
+  return CaptureResult("cold-hob-shape",EFI_COMPROMISED_DATA);
+
  CopyMem(&mCold,GET_GUID_HOB_DATA(G),sizeof(mCold));
- if(mCold.Version!=1||mCold.Bytes!=sizeof(mCold)||mCold.Reserved||mCold.Crc32!=PianoColdMemoryCrc(&mCold)||mCold.PublishStatus!=EFI_SUCCESS||mCold.Status!=EFI_SUCCESS||!mCold.BootEpoch||!mCold.InputFingerprint||
-    !mCold.NativeCount||mCold.NativeCount>mCold.Count||mCold.Count>=MAX_ARM_MEMORY_REGION_DESCRIPTOR_COUNT||!mCold.Layout.RamCount||mCold.Layout.RamCount>PIANO_MEMORY_LAYOUT_MAX_RAM||mCold.Layout.ReservedCount>PIANO_MEMORY_LAYOUT_MAX_RESERVED||mCold.Layout.Reserved||!mCold.Layout.DramBytes)return mCapture=EFI_NOT_READY;
+ // Preserve the existing rejection and its order; retain the first failing
+ // condition so status works even when the RAM console has no valid header.
+ if(mCold.Version!=1)return CaptureResult("cold-version",EFI_NOT_READY);
+ if(mCold.Bytes!=sizeof(mCold))return CaptureResult("cold-bytes",EFI_NOT_READY);
+ if(mCold.Reserved)return CaptureResult("cold-reserved",EFI_NOT_READY);
+ if(mCold.Crc32!=PianoColdMemoryCrc(&mCold))return CaptureResult("cold-crc",EFI_NOT_READY);
+ if(mCold.PublishStatus!=EFI_SUCCESS)return CaptureResult("cold-publish",EFI_NOT_READY);
+ if(mCold.Status!=EFI_SUCCESS)return CaptureResult("cold-status",EFI_NOT_READY);
+ if(!mCold.BootEpoch)return CaptureResult("cold-epoch",EFI_NOT_READY);
+ if(!mCold.InputFingerprint)return CaptureResult("cold-fingerprint",EFI_NOT_READY);
+ if(!mCold.NativeCount||mCold.NativeCount>mCold.Count||mCold.Count>=MAX_ARM_MEMORY_REGION_DESCRIPTOR_COUNT)
+  return CaptureResult("cold-counts",EFI_NOT_READY);
+ if(!mCold.Layout.RamCount||mCold.Layout.RamCount>PIANO_MEMORY_LAYOUT_MAX_RAM||
+    mCold.Layout.ReservedCount>PIANO_MEMORY_LAYOUT_MAX_RESERVED)
+  return CaptureResult("cold-layout-counts",EFI_NOT_READY);
+ if(mCold.Layout.Reserved)return CaptureResult("cold-layout-reserved",EFI_NOT_READY);
+ if(!mCold.Layout.DramBytes)return CaptureResult("cold-ram-bytes",EFI_NOT_READY);
+
  // The independent cold object HOB identifies the very same BootShim entry.
- EFI_GUID ObjectsGuid=PIANO_COLD_OBJECT_HOB_GUID;VOID *ObjectHob=GetFirstGuidHob(&ObjectsGuid);if(!ObjectHob)return mCapture=EFI_NOT_READY;
- EFI_HOB_GUID_TYPE *O=ObjectHob;if(O->Header.HobLength!=sizeof(*O)+sizeof(PIANO_COLD_BOOT_OBJECT_REPORT)||GetNextGuidHob(&ObjectsGuid,(UINT8 *)O+O->Header.HobLength))return mCapture=EFI_COMPROMISED_DATA;
+ EFI_GUID ObjectsGuid=PIANO_COLD_OBJECT_HOB_GUID;
+ VOID *ObjectHob=GetFirstGuidHob(&ObjectsGuid);
+ if(!ObjectHob)return CaptureResult("objects-hob",EFI_NOT_READY);
+ EFI_HOB_GUID_TYPE *O=ObjectHob;
+ if(O->Header.HobLength!=sizeof(*O)+sizeof(PIANO_COLD_BOOT_OBJECT_REPORT)||
+    GetNextGuidHob(&ObjectsGuid,(UINT8 *)O+O->Header.HobLength))
+  return CaptureResult("objects-hob-shape",EFI_COMPROMISED_DATA);
+
  CONST PIANO_COLD_BOOT_OBJECT_REPORT *Objects=GET_GUID_HOB_DATA(O);
- if(PianoColdBootObjectsValidate(Objects)!=EFI_SUCCESS||!Objects->Published||Objects->PublishStatus!=EFI_SUCCESS||Objects->Epoch!=mCold.BootEpoch)return mCapture=EFI_NOT_READY;
- for(UINTN I=0;I<mCold.Count;++I){CONST EFI_MEMORY_REGION_DESCRIPTOR *R=&mCold.Rows[I];if(!Span(R->Address,R->Length)||(R->Address|R->Length)&4095)return mCapture=EFI_COMPROMISED_DATA;}
- return mCapture=EFI_SUCCESS;
+ if(PianoColdBootObjectsValidate(Objects)!=EFI_SUCCESS)return CaptureResult("objects-validation",EFI_NOT_READY);
+ if(!Objects->Published)return CaptureResult("objects-published",EFI_NOT_READY);
+ if(Objects->PublishStatus!=EFI_SUCCESS)return CaptureResult("objects-publish",EFI_NOT_READY);
+ if(Objects->Epoch!=mCold.BootEpoch)return CaptureResult("objects-epoch",EFI_NOT_READY);
+
+ for(UINTN I=0;I<mCold.Count;++I){
+  CONST EFI_MEMORY_REGION_DESCRIPTOR *R=&mCold.Rows[I];
+  if(!Span(R->Address,R->Length)||(R->Address|R->Length)&4095){
+   mCaptureIndex=I;
+   return CaptureResult("cold-row",EFI_COMPROMISED_DATA);
+  }
+ }
+ return CaptureResult("ready",EFI_SUCCESS);
+}
+
+STATIC EFI_STATUS DiagnosticHob(CONST EFI_GUID *Guid,UINTN Bytes,CONST VOID **Data){
+ *Data=NULL;
+ EFI_HOB_GUID_TYPE *Hob=GetFirstGuidHob(Guid);
+ if(!Hob)return EFI_NOT_FOUND;
+ if(Hob->Header.HobLength!=sizeof(*Hob)+Bytes||Hob->Header.Reserved||
+    GetNextGuidHob(Guid,(UINT8 *)Hob+Hob->Header.HobLength))return EFI_COMPROMISED_DATA;
+ *Data=GET_GUID_HOB_DATA(Hob);
+ return EFI_SUCCESS;
+}
+
+VOID PianoProductMemoryGetDiagnostic(PIANO_PRODUCT_MEMORY_DIAGNOSTIC *Report){
+ if(!Report)return;
+ ZeroMem(Report,sizeof(*Report));
+ Report->CaptureStage=mCaptureStage;
+ Report->CaptureStatus=mCapture;
+ Report->CaptureIndex=mCaptureIndex;
+ Report->DtbStage=mDtbStage;
+ Report->DtbStatus=mDtbStatus;
+ Report->DtbIndex=mDtbIndex;
+
+ // Inspect only existing HOB payloads. Values remain visible when their CRC
+ // or producer status is bad; the companion status never grants authority.
+ CONST VOID *Data;
+ Report->ColdStatus=Report->ColdPublishStatus=EFI_NOT_FOUND;
+ Report->ColdHobStatus=DiagnosticHob(&mGuid,sizeof(PIANO_COLD_MEMORY_REPORT),&Data);
+ if(Report->ColdHobStatus==EFI_SUCCESS){
+  CONST PIANO_COLD_MEMORY_REPORT *Cold=Data;
+  if(Cold->Version!=1||Cold->Bytes!=sizeof(*Cold)||Cold->Reserved||
+     Cold->Crc32!=PianoColdMemoryCrc(Cold))Report->ColdHobStatus=EFI_COMPROMISED_DATA;
+  Report->ColdStatus=Cold->Status;
+  Report->ColdPublishStatus=Cold->PublishStatus;
+  Report->ColdNativeCount=Cold->NativeCount;
+  Report->ColdCount=Cold->Count;
+  Report->ColdRamCount=Cold->Layout.RamCount;
+  Report->ColdReservedCount=Cold->Layout.ReservedCount;
+  Report->ColdEpoch=Cold->BootEpoch;
+  Report->ColdDramBytes=Cold->Layout.DramBytes;
+  Report->ColdInputFingerprint=Cold->InputFingerprint;
+ }
+
+ EFI_GUID ObjectsGuid=PIANO_COLD_OBJECT_HOB_GUID;
+ Report->ObjectsValidateStatus=Report->ObjectsStatus=Report->ObjectsPublishStatus=EFI_NOT_FOUND;
+ Report->ObjectsHandoffStatus=Report->ObjectsDtbStatus=EFI_NOT_FOUND;
+ Report->ObjectsHobStatus=DiagnosticHob(&ObjectsGuid,sizeof(PIANO_COLD_BOOT_OBJECT_REPORT),&Data);
+ if(Report->ObjectsHobStatus==EFI_SUCCESS){
+  CONST PIANO_COLD_BOOT_OBJECT_REPORT *Objects=Data;
+  Report->ObjectsValidateStatus=PianoColdBootObjectsValidate(Objects);
+  Report->ObjectsStatus=Objects->Status;
+  Report->ObjectsPublishStatus=Objects->PublishStatus;
+  Report->ObjectsHandoffStatus=Objects->HandoffStatus;
+  Report->ObjectsDtbStatus=Objects->DtbStatus;
+  Report->ObjectsReason=Objects->Reason;
+  Report->ObjectsCount=Objects->Count;
+  Report->ObjectsEpoch=Objects->Epoch;
+  Report->ObjectsPublished=Objects->Published;
+  Report->ObjectsCoherent=Objects->Coherent;
+ }
+
+ EFI_GUID EarlyGuid=PIANO_EARLY_MEMORY_HOB_GUID;
+ Report->EarlyStatus=Report->EarlyPublishStatus=Report->SmemStatus=EFI_NOT_FOUND;
+ Report->EarlyHobStatus=DiagnosticHob(&EarlyGuid,sizeof(PIANO_EARLY_MEMORY_REPORT),&Data);
+ if(Report->EarlyHobStatus==EFI_SUCCESS){
+  CONST PIANO_EARLY_MEMORY_REPORT *Early=Data;
+  if(Early->Version!=PIANO_EARLY_MEMORY_VERSION||Early->Bytes!=sizeof(*Early)||Early->Reserved||
+     Early->ReportCrc32!=PianoEarlyMemoryReportCrc32(Early))Report->EarlyHobStatus=EFI_COMPROMISED_DATA;
+  Report->EarlyStatus=Early->Status;
+  Report->EarlyPublishStatus=Early->PublishStatus;
+  Report->EarlyFinished=Early->Finished;
+  Report->EarlyPublished=Early->Published;
+  Report->EarlyColdStateVerified=Early->ColdStateVerified;
+  Report->EarlyRecoveredFaults=Early->RecoveredFaults;
+  Report->EarlyRawPayloadBytes=Early->RawPayloadBytes;
+  Report->SmemStatus=Early->Smem.Status;
+  Report->SmemReason=Early->Smem.Reason;
+  Report->SmemRamVersion=Early->Smem.RamVersion;
+  Report->SmemBankCount=Early->Smem.BankCount;
+  Report->SmemRawEntryCount=Early->Smem.RawEntryCount;
+  Report->SmemParsed=Early->Smem.Parsed;
+  Report->RawPayloadCoherent=Early->RawPayloadCoherent;
+  Report->SmemRepeatedMetadataEqual=Early->Smem.RepeatedMetadataEqual;
+  Report->SmemRepeatedPayloadEqual=Early->Smem.RepeatedPayloadEqual;
+ }
 }
 STATIC EFI_MEMORY_DESCRIPTOR *Descriptor(UINTN I){return (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mMapBuffer+I*mMapStride);}
 STATIC EFI_STATUS Snapshot(VOID){
@@ -198,13 +332,56 @@ EFI_STATUS PianoProductMemoryValidate(VOID *Context,CONST PIANO_LINUX_MEMORY_PRO
  return EFI_SUCCESS;
 }
 STATIC EFI_STATUS TreeRead(VOID *Context,UINT32 At,UINTN Bytes,VOID *Out){CopyMem(Out,(CONST UINT8 *)Context+At,Bytes);return EFI_SUCCESS;}
+
+STATIC EFI_STATUS DtbResult(CONST CHAR8 *Stage,EFI_STATUS Status){
+ mDtbStage=Stage;
+ mDtbStatus=Status;
+ return Status;
+}
+
 EFI_STATUS PianoProductMemoryValidateDtb(CONST VOID *Tree,UINTN Bytes){
- if(!Tree||Bytes<40||Bytes>0x200000||FdtCheckHeader(Tree)||FdtTotalSize(Tree)>Bytes)return EFI_INVALID_PARAMETER;
- if(mBusy)return EFI_ALREADY_STARTED;mBusy=TRUE;EFI_STATUS S=Capture();PIANO_MEMORY_LAYOUT Linux;
- if(S==EFI_SUCCESS)S=PianoMemoryLayoutRead(TreeRead,(VOID *)Tree,FdtTotalSize(Tree),&Linux);
- if(S==EFI_SUCCESS&&(Linux.DramBytes!=mCold.Layout.DramBytes))S=EFI_ACCESS_DENIED;
- if(S==EFI_SUCCESS)for(UINTN I=0;I<Linux.RamCount;++I)if(!LayoutCovers(&mCold.Layout,Linux.Ram[I].Base,Linux.Ram[I].Bytes)){S=EFI_ACCESS_DENIED;break;}
- if(S==EFI_SUCCESS)S=Snapshot();
- if(S==EFI_SUCCESS)for(UINTN I=0;I<Linux.ReservedCount;++I){CONST PIANO_MEMORY_SPAN *R=&Linux.Fixed[I];S=Reserved(R->Base,R->Bytes,(R->Flags&PIANO_MEMORY_LAYOUT_CMA)!=0,TRUE);if(S!=EFI_SUCCESS)break;}
- mBusy=FALSE;return S;
+ mDtbIndex=MAX_UINTN;
+ if(!Tree||Bytes<40||Bytes>0x200000||FdtCheckHeader(Tree)||FdtTotalSize(Tree)>Bytes)
+  return DtbResult("header",EFI_INVALID_PARAMETER);
+ if(mBusy)return DtbResult("busy",EFI_ALREADY_STARTED);
+
+ mBusy=TRUE;
+ mDtbStage="capture";
+ EFI_STATUS S=Capture();
+ PIANO_MEMORY_LAYOUT Linux;
+ if(S==EFI_SUCCESS){
+  mDtbStage="layout";
+  S=PianoMemoryLayoutRead(TreeRead,(VOID *)Tree,FdtTotalSize(Tree),&Linux);
+ }
+ if(S==EFI_SUCCESS&&Linux.DramBytes!=mCold.Layout.DramBytes){
+  mDtbStage="ram-size";
+  S=EFI_ACCESS_DENIED;
+ }
+ if(S==EFI_SUCCESS){
+  for(UINTN I=0;I<Linux.RamCount;++I){
+   if(!LayoutCovers(&mCold.Layout,Linux.Ram[I].Base,Linux.Ram[I].Bytes)){
+    mDtbIndex=I;
+    mDtbStage="ram-range";
+    S=EFI_ACCESS_DENIED;
+    break;
+   }
+  }
+ }
+ if(S==EFI_SUCCESS){
+  mDtbStage="snapshot";
+  S=Snapshot();
+ }
+ if(S==EFI_SUCCESS){
+  for(UINTN I=0;I<Linux.ReservedCount;++I){
+   CONST PIANO_MEMORY_SPAN *R=&Linux.Fixed[I];
+   S=Reserved(R->Base,R->Bytes,(R->Flags&PIANO_MEMORY_LAYOUT_CMA)!=0,TRUE);
+   if(S!=EFI_SUCCESS){
+    mDtbIndex=I;
+    mDtbStage="reservation";
+    break;
+   }
+  }
+ }
+ mBusy=FALSE;
+ return DtbResult(S==EFI_SUCCESS?"ready":mDtbStage,S);
 }

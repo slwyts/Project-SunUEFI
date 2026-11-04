@@ -108,6 +108,56 @@ STATIC VOID BootLogReturned(VOID) {
     mBootLogExitEvent=NULL;
   }
 }
+STATIC EFI_STATUS ProductReportStatus(VOID *Context,PIANO_FB_SEND Send,VOID *SendContext) {
+  if(Context!=NULL || Send==NULL)return EFI_INVALID_PARAMETER;
+  if(!BootLogAlive())return EFI_ABORTED;
+
+  // Export saved startup evidence independently of the ramoops console. These
+  // getters do not reread SMEM, probe devices, or authorize a Linux handoff.
+  PIANO_PRODUCT_MEMORY_DIAGNOSTIC Memory;
+  PIANO_DEVICE_TREE_FIXUP_DIAGNOSTIC Fixup;
+  PianoProductMemoryGetDiagnostic(&Memory);
+  PianoDeviceTreeFixupGetDiagnostic(&Fixup);
+
+  // Fastboot INFO payloads are at most 64 bytes, including the INFO prefix.
+  // The USB service has space for these rows plus its transport/log status.
+  CHAR8 Lines[24][64];
+  UINTN Count=0;
+#define STATUS_LINE(...) AsciiSPrint(Lines[Count++],sizeof(Lines[0]),__VA_ARGS__)
+  STATUS_LINE("INFOfixup stage=%a calls=%u",Fixup.Stage,Fixup.Calls);
+  STATUS_LINE("INFOfixup status=%016lx flags=%x",Fixup.Status,Fixup.Flags);
+  STATUS_LINE("INFOmem capture=%a",Memory.CaptureStage);
+  STATUS_LINE("INFOmem status=%016lx index=%lx",Memory.CaptureStatus,Memory.CaptureIndex);
+  STATUS_LINE("INFOdtb stage=%a",Memory.DtbStage);
+  STATUS_LINE("INFOdtb status=%016lx index=%lx",Memory.DtbStatus,Memory.DtbIndex);
+  STATUS_LINE("INFOcold hob=%016lx state=%016lx",Memory.ColdHobStatus,Memory.ColdStatus);
+  STATUS_LINE("INFOcold publish=%016lx",Memory.ColdPublishStatus);
+  STATUS_LINE("INFOcold native=%u rows=%u",Memory.ColdNativeCount,Memory.ColdCount);
+  STATUS_LINE("INFOcold ram=%u reserved=%u",Memory.ColdRamCount,Memory.ColdReservedCount);
+  STATUS_LINE("INFOcold bytes=%lx",Memory.ColdDramBytes);
+  STATUS_LINE("INFOcold epoch=%lx input=%lx",Memory.ColdEpoch,Memory.ColdInputFingerprint);
+  STATUS_LINE("INFOobjects hob=%016lx valid=%016lx",Memory.ObjectsHobStatus,Memory.ObjectsValidateStatus);
+  STATUS_LINE("INFOobjects state=%016lx publish=%016lx",Memory.ObjectsStatus,Memory.ObjectsPublishStatus);
+  STATUS_LINE("INFOobjects reason=%u count=%u",Memory.ObjectsReason,Memory.ObjectsCount);
+  STATUS_LINE("INFOobjects epoch=%lx",Memory.ObjectsEpoch);
+  STATUS_LINE("INFOobjects handoff=%016lx dtb=%016lx",Memory.ObjectsHandoffStatus,Memory.ObjectsDtbStatus);
+  STATUS_LINE("INFOearly hob=%016lx state=%016lx",Memory.EarlyHobStatus,Memory.EarlyStatus);
+  STATUS_LINE("INFOearly publish=%016lx smem=%016lx",Memory.EarlyPublishStatus,Memory.SmemStatus);
+  STATUS_LINE("INFOflags op=%u oc=%u ef=%u ep=%u ec=%u",Memory.ObjectsPublished,Memory.ObjectsCoherent,Memory.EarlyFinished,Memory.EarlyPublished,Memory.EarlyColdStateVerified);
+  STATUS_LINE("INFOearly payload=%u faults=%u",Memory.EarlyRawPayloadBytes,Memory.EarlyRecoveredFaults);
+  STATUS_LINE("INFOsmem version=%u banks=%u entries=%u",Memory.SmemRamVersion,Memory.SmemBankCount,Memory.SmemRawEntryCount);
+  STATUS_LINE("INFOsmem reason=%u parsed=%u payload=%u",Memory.SmemReason,Memory.SmemParsed,Memory.RawPayloadCoherent);
+  STATUS_LINE("INFOsmem metadata=%u repeated=%u early=%016lx",Memory.SmemRepeatedMetadataEqual,Memory.SmemRepeatedPayloadEqual,PianoProductEarlySmemStatus());
+#undef STATUS_LINE
+
+  for(UINTN Index=0;Index<Count;++Index) {
+    if(!BootLogAlive())return EFI_ABORTED;
+    EFI_STATUS Status=Send(SendContext,Lines[Index],AsciiStrLen(Lines[Index]));
+    if(!BootLogAlive())return EFI_ABORTED;
+    if(Status!=EFI_SUCCESS)return Status;
+  }
+  return EFI_SUCCESS;
+}
 STATIC EFI_STATUS ProductDebugReplay(VOID *Context) {
   if(Context!=NULL)return EFI_INVALID_PARAMETER;
   EFI_STATUS Memory=PianoProductSmemReemit(NULL);
@@ -441,7 +491,7 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   mCounterFrequency=GetPerformanceCounterProperties(&mCounterStart,&mCounterEnd);
   if(!mCounterFrequency || mCounterStart==mCounterEnd)FailStop(EFI_UNSUPPORTED);
   PIANO_DWC3_SERVICE_CONFIG UsbConfig={.Context=NULL,.NowUs=NowUs,.Storage=Storage,
-    .BeforeRamlog=ProductDebugReplay};
+    .BeforeRamlog=ProductDebugReplay,.ReportStatus=ProductReportStatus};
   BootLogStage("USB",EFI_NOT_STARTED);
   Status=PianoRawLinuxRegister(Image,SystemTable);if(Status!=EFI_SUCCESS)FailStop(Status);
   Status=PianoUsbControllerServiceStart(Fdt,&UsbConfig);BootLogStage("USB",Status);

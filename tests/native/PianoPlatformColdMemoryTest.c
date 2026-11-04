@@ -34,7 +34,8 @@ static PIANO_COLD_BOOT_OBJECT_REPORT Objects;
 static PIANO_EARLY_MEMORY_REPORT Early;
 static struct {EFI_HOB_GUID_TYPE H;PIANO_COLD_MEMORY_REPORT R;} MemoryHob;
 static struct {EFI_HOB_GUID_TYPE H;PIANO_COLD_BOOT_OBJECT_REPORT R;} ObjectsHob;
-static EFI_GUID MemoryGuid=PIANO_COLD_MEMORY_HOB_GUID,ObjectsGuid=PIANO_COLD_OBJECT_HOB_GUID;
+static struct {EFI_HOB_GUID_TYPE H;PIANO_EARLY_MEMORY_REPORT R;} EarlyHob;
+static EFI_GUID MemoryGuid=PIANO_COLD_MEMORY_HOB_GUID,ObjectsGuid=PIANO_COLD_OBJECT_HOB_GUID,EarlyGuid=PIANO_EARLY_MEMORY_HOB_GUID;
 static EFI_MEMORY_DESCRIPTOR Map[256];static UINTN MapCount,Case,Layouts,ProtocolLookups;
 static VOID *Tree;static UINT32 TreeBytes;
 static BOOLEAN Selected,Published;
@@ -53,7 +54,7 @@ CONST PIANO_EARLY_MEMORY_REPORT *PianoEarlyMemoryReport(VOID){return &Early;}
 VOID GetMemoryMap(EFI_MEMORY_REGION_DESCRIPTOR **M,UINT8 *N){FixtureNativeMap(M,N);}
 EFI_STATUS PianoProductSelectMemoryMap(EFI_MEMORY_REGION_DESCRIPTOR *M,UINT8 N){assert(!Selected&&M&&N);Selected=TRUE;return EFI_SUCCESS;}
 VOID *EFIAPI BuildGuidHob(CONST EFI_GUID *G,UINTN N){assert(!memcmp(G,&MemoryGuid,sizeof(*G))&&N==sizeof(MemoryHob.R)&&!Published);Published=TRUE;MemoryHob.H=(EFI_HOB_GUID_TYPE){.Header={EFI_HOB_TYPE_GUID_EXTENSION,sizeof(MemoryHob),0},.Name=*G};return &MemoryHob.R;}
-VOID *EFIAPI GetFirstGuidHob(CONST EFI_GUID *G){if(!memcmp(G,&MemoryGuid,sizeof(*G)))return Published?&MemoryHob:NULL;if(!memcmp(G,&ObjectsGuid,sizeof(*G)))return &ObjectsHob;return NULL;}
+VOID *EFIAPI GetFirstGuidHob(CONST EFI_GUID *G){if(!memcmp(G,&MemoryGuid,sizeof(*G)))return Published?&MemoryHob:NULL;if(!memcmp(G,&ObjectsGuid,sizeof(*G)))return &ObjectsHob;if(!memcmp(G,&EarlyGuid,sizeof(*G)))return &EarlyHob;return NULL;}
 VOID *EFIAPI GetNextGuidHob(CONST EFI_GUID *G,CONST VOID *H){(void)G;(void)H;return NULL;}
 static VOID Le32(UINT8 *P,UINT32 V){for(UINTN I=0;I<4;I++)P[I]=(UINT8)(V>>(I*8));}
 static VOID Be64(UINT8 *P,UINT64 V){for(UINTN I=0;I<8;I++)P[I]=(UINT8)(V>>(56-I*8));}
@@ -81,6 +82,10 @@ static VOID Setup(VOID){
 }
 static VOID Run(VOID){
  Setup();
+ PIANO_PRODUCT_MEMORY_DIAGNOSTIC Diagnostic;
+ PianoProductMemoryGetDiagnostic(&Diagnostic);
+ assert(Diagnostic.CaptureStatus==EFI_NOT_STARTED&&!strcmp(Diagnostic.CaptureStage,"not-started"));
+ assert(Diagnostic.DtbStatus==EFI_NOT_STARTED&&Diagnostic.ColdHobStatus==EFI_NOT_FOUND&&!Layouts&&!ProtocolLookups);
  if(Case>=14){
   UINTN Heap=0;for(;Heap<ARRAY_SIZE(FixtureNativeRows);++Heap)if(!strcmp(FixtureNativeRows[Heap].Name,"DXE_Heap"))break;assert(Heap<ARRAY_SIZE(FixtureNativeRows));
   if(Case==14){FixtureNativeRows[Heap].Address+=4096;FixtureNativeRows[Heap].Length-=8192;}
@@ -97,11 +102,30 @@ static VOID Run(VOID){
  assert(UnknownReserved&&Expanded);
  UINT64 HobHeap=0;for(UINTN I=0;I<R->NativeCount;++I)if(!strcmp(R->Rows[I].Name,"DXE_Heap"))HobHeap=R->Rows[I].Address;assert(HobHeap);
  Object(PianoColdObjectHobHeap,HobHeap,4096);Objects.Published=TRUE;Objects.PublishStatus=EFI_SUCCESS;Objects.ReportCrc32=PianoColdObjectsCrc(&Objects);ObjectsHob.H=(EFI_HOB_GUID_TYPE){.Header={EFI_HOB_TYPE_GUID_EXTENSION,sizeof(ObjectsHob),0},.Name=ObjectsGuid};ObjectsHob.R=Objects;
+ EarlyHob.H=(EFI_HOB_GUID_TYPE){.Header={EFI_HOB_TYPE_GUID_EXTENSION,sizeof(EarlyHob),0},.Name=EarlyGuid};
+ EarlyHob.R=Early;EarlyHob.R.Version=PIANO_EARLY_MEMORY_VERSION;EarlyHob.R.Bytes=sizeof(EarlyHob.R);
+ EarlyHob.R.Published=TRUE;EarlyHob.R.PublishStatus=EFI_SUCCESS;EarlyHob.R.ReportCrc32=PianoEarlyMemoryReportCrc32(&EarlyHob.R);
+ PianoProductMemoryGetDiagnostic(&Diagnostic);
+ assert(Diagnostic.CaptureStatus==EFI_NOT_STARTED&&Diagnostic.ColdHobStatus==EFI_SUCCESS&&Layouts==2&&!ProtocolLookups);
+ assert(Diagnostic.ColdStatus==R->Status&&Diagnostic.ColdPublishStatus==R->PublishStatus&&Diagnostic.ColdEpoch==R->BootEpoch);
+ assert(Diagnostic.ColdCount==R->Count&&Diagnostic.ColdNativeCount==R->NativeCount&&Diagnostic.ColdDramBytes==R->Layout.DramBytes);
+ assert(Diagnostic.ObjectsValidateStatus==EFI_SUCCESS&&Diagnostic.EarlyHobStatus==EFI_SUCCESS&&Diagnostic.SmemStatus==EFI_SUCCESS);
+ assert(Diagnostic.EarlyPublished&&Diagnostic.EarlyColdStateVerified&&Diagnostic.SmemParsed&&Diagnostic.RawPayloadCoherent);
+ if(Case==17){R->Status=EFI_NOT_READY;R->Crc32=PianoColdMemoryCrc(R);}
+ if(Case==18)R->Crc32^=1;
  if(Case==4){ObjectsHob.R.Epoch++;ObjectsHob.R.ReportCrc32=PianoColdObjectsCrc(&ObjectsHob.R);}
  if(Case==5)for(UINTN I=0;I<MapCount;++I)if(Map[I].PhysicalStart<=0xd00000000ULL&&0xd00000000ULL-Map[I].PhysicalStart<Map[I].NumberOfPages*4096&&Map[I].Type==EfiLoaderData){Map[I].Type=EfiConventionalMemory;break;}
  if(Case==7)PageTable[52]=0;
  if(Case==10)PageTable[52]&=~(7ULL<<2);if(Case==11)PageTable[52]+=1ULL<<30;
  PIANO_LINUX_MEMORY_PROOF Proof;S=PianoProductMemoryCheck(NULL,&Proof);
+ if(Case==17||Case==18){
+  assert(S==EFI_NOT_READY&&!Proof.FullDdr);
+  PianoProductMemoryGetDiagnostic(&Diagnostic);
+  assert(Diagnostic.CaptureStatus==S&&!strcmp(Diagnostic.CaptureStage,Case==17?"cold-status":"cold-crc"));
+  assert(Diagnostic.ColdHobStatus==(Case==17?EFI_SUCCESS:EFI_COMPROMISED_DATA));
+  assert(Diagnostic.ColdStatus==(Case==17?EFI_NOT_READY:EFI_SUCCESS));
+  return;
+ }
  if((Case>=4&&Case<=7)||Case==10||Case==11){assert(S!=EFI_SUCCESS&&!Proof.FullDdr);return;}
  assert(S==EFI_SUCCESS&&Proof.FullDdr&&Proof.OwnershipVerified&&Proof.NormalBytes<Proof.DramBytes&&!ProtocolLookups);
  assert(PianoProductMemoryValidate(NULL,&Proof)==EFI_SUCCESS);
@@ -114,7 +138,10 @@ static VOID Run(VOID){
   for(;Node>=0;Node=FdtNextSubnode(Tree,Node)){Reg=(UINT8 *)FdtGetProp(Tree,Node,"reg",&N);if(Reg&&N==16)break;}assert(Reg&&N==16);
   Be64(Reg,Base);Be64(Reg+8,4096);
   S=PianoProductMemoryValidateDtb(Tree,TreeBytes);assert(Case==12?S==EFI_ACCESS_DENIED:S==EFI_SUCCESS);
+  PianoProductMemoryGetDiagnostic(&Diagnostic);
+  assert(Diagnostic.DtbStatus==S&&!strcmp(Diagnostic.DtbStage,Case==12?"reservation":"ready"));
+  assert(Case==12?Diagnostic.DtbIndex!=MAX_UINTN:Diagnostic.DtbIndex==MAX_UINTN);
  }
  if(Case==9){UINT32 Struct=((UINT8 *)Tree)[8]<<24|((UINT8 *)Tree)[9]<<16|((UINT8 *)Tree)[10]<<8|((UINT8 *)Tree)[11];((UINT8 *)Tree)[Struct]^=1;assert(PianoProductMemoryValidateDtb(Tree,TreeBytes)!=EFI_SUCCESS);}
 }
-int main(int Argc,char **Argv){assert(Argc==2);FILE *F=fopen(Argv[1],"rb");assert(F);fseek(F,0,SEEK_END);TreeBytes=(UINT32)ftell(F);rewind(F);Tree=malloc(TreeBytes);assert(fread(Tree,1,TreeBytes,F)==TreeBytes);fclose(F);for(Case=0;Case<17;Case++){pid_t P=fork();assert(P>=0);if(!P){Run();_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status)||WEXITSTATUS(Status)){fprintf(stderr,"cold-memory case %lu failed\n",(unsigned long)Case);return 1;}}free(Tree);puts("Factory 24GB source vs legacy 16GB SMEM: actual cold producer, reserved unknown records, immutable HOB/epoch, real live-map/cache/permission checks and allocator changes: 17 cases passed");return 0;}
+int main(int Argc,char **Argv){assert(Argc==2);FILE *F=fopen(Argv[1],"rb");assert(F);fseek(F,0,SEEK_END);TreeBytes=(UINT32)ftell(F);rewind(F);Tree=malloc(TreeBytes);assert(fread(Tree,1,TreeBytes,F)==TreeBytes);fclose(F);for(Case=0;Case<19;Case++){pid_t P=fork();assert(P>=0);if(!P){Run();_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status)||WEXITSTATUS(Status)){fprintf(stderr,"cold-memory case %lu failed\n",(unsigned long)Case);return 1;}}free(Tree);puts("Factory 24GB source vs legacy 16GB SMEM: actual cold producer, reserved unknown records, immutable HOB/epoch, real live-map/cache/permission checks and read-only diagnostics: 19 cases passed");return 0;}

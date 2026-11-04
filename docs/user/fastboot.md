@@ -21,6 +21,8 @@ fastboot -s SunUEFI-piano getvar storage-policy
 fastboot -s SunUEFI-piano oem status
 ```
 
+`oem status` 还会输出最近一次设备树修正的失败阶段、冷启动内存检查结果，以及最近一次日志快照的状态和缓冲区头。日志无法导出时也可以读取这些信息；查询不会重新探测硬件或改变启动条件。
+
 ## 日志和截图
 
 ```sh

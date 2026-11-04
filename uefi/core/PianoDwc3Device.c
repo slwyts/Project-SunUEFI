@@ -82,7 +82,8 @@ STATIC UINT64 mBulkOutBytes,mBulkInBytes;
 typedef struct FB_FRAME {struct FB_FRAME *Next;UINTN Bytes,Offset;UINT8 Data[1];} FB_FRAME;
 STATIC FB_FRAME *mFrames,*mFramesTail;
 STATIC UINTN mFrameCount,mFrameBytes,mInFlightBytes;
-#define FB_QUEUE_FRAMES 16U
+// Status includes bounded startup reports even when the RAM console is absent.
+#define FB_QUEUE_FRAMES 32U
 #define FB_QUEUE_BYTES (PIANO_FASTBOOT_MAX_DOWNLOAD+1024U)
 EFI_STATUS PianoDwc3SetBootForExperiment(CONST PIANO_FB_BOOT *Boot) {
   if(mExperimentRunning)return EFI_NOT_READY;
@@ -136,6 +137,9 @@ STATIC UINT8 *mLogSnapshot;
 STATIC UINT32 mLogBytes,mLogCrc,mLogGeneration;
 STATIC UINT16 mLogFlags;
 STATIC BOOLEAN mLogValid;
+STATIC EFI_STATUS mLogSnapshotStatus=EFI_NOT_STARTED;
+STATIC CONST CHAR8 *mLogSnapshotStage="not-started";
+STATIC UINT32 mLogSignature,mLogStart,mLogSize;
 STATIC UINT32 mDeviceEvents,mSetupEvents,mDiagReplies;
 STATIC UINT32 Dr(UINT32 Offset){return MmioRead32(DW+Offset);}
 STATIC VOID Dw(UINT32 Offset,UINT32 Value){MmioWrite32(DW+Offset,Value);MemoryFence();}
@@ -152,10 +156,15 @@ STATIC UINT32 DiagCrc(CONST UINT8 *P,UINTN Bytes) {
 STATIC EFI_STATUS SnapshotConsole(CONST volatile UINT32 *Header) {
   CONST UINTN Capacity=0x200000-12;
   mLogValid=FALSE;
-  if(mLogSnapshot==NULL){mLogSnapshot=AllocatePool(USB_DIAG_LOG_BYTES);if(mLogSnapshot==NULL)return EFI_OUT_OF_RESOURCES;}
+  mLogSnapshotStage="allocate";
+  mLogSnapshotStatus=EFI_OUT_OF_RESOURCES;
+  if(mLogSnapshot==NULL){mLogSnapshot=AllocatePool(USB_DIAG_LOG_BYTES);if(mLogSnapshot==NULL)return mLogSnapshotStatus;}
   for(UINTN Attempt=0;Attempt<3;++Attempt) {
     UINT32 Signature=Header[0],Start=Header[1],Size=Header[2];MemoryFence();
-    if(Signature!=0x43474244 || Start>=Capacity || Size>Capacity || Start>Size)return EFI_COMPROMISED_DATA;
+    mLogSignature=Signature;mLogStart=Start;mLogSize=Size;
+    mLogSnapshotStage="header";
+    mLogSnapshotStatus=EFI_COMPROMISED_DATA;
+    if(Signature!=0x43474244 || Start>=Capacity || Size>Capacity || Start>Size)return mLogSnapshotStatus;
     UINTN Bytes=MIN((UINTN)Size,(UINTN)USB_DIAG_LOG_BYTES),Offset=(Start+Capacity-Bytes)%Capacity;
     CONST volatile UINT8 *Ring=(CONST volatile UINT8 *)Header+12;
     for(UINTN I=0;I<Bytes;++I)mLogSnapshot[I]=Ring[(Offset+I)%Capacity];
@@ -170,10 +179,13 @@ STATIC EFI_STATUS SnapshotConsole(CONST volatile UINT32 *Header) {
     mLogFlags=(Size>USB_DIAG_LOG_BYTES?1:0)|(Found?2:0);
     if(++mLogGeneration==0)++mLogGeneration;
     mLogValid=TRUE;
+    mLogSnapshotStage="ready";
+    mLogSnapshotStatus=EFI_SUCCESS;
     DEBUG((DEBUG_WARN,"SUNUEFI_USB_DIAG_SNAPSHOT generation=%u bytes=%u crc32=%08x flags=%x\n",mLogGeneration,mLogBytes,mLogCrc,mLogFlags));
     return EFI_SUCCESS;
   }
-  return EFI_NOT_READY;
+  mLogSnapshotStage="unstable";
+  return mLogSnapshotStatus=EFI_NOT_READY;
 }
 STATIC EFI_STATUS DiagnosticSetup(CONST UINT8 U[8],UINT8 *Data,UINTN Capacity,UINTN *Bytes,
                                   PIANO_USB_CONTROL_ACTION *Action) {
@@ -308,6 +320,10 @@ STATIC VOID FastHex(UINT32 Value,CHAR8 *Out) {
   for(UINTN I=0;I<8;++I)Out[I]=Digits[(Value>>((7-I)*4))&15];
   Out[8]=0;
 }
+STATIC VOID FastHex64(UINT64 Value,CHAR8 *Out) {
+  FastHex((UINT32)(Value>>32),Out);
+  FastHex((UINT32)Value,Out+8);
+}
 STATIC EFI_STATUS FastbootQuery(VOID *Context,CONST CHAR8 *Name,CHAR8 Value[60]) {
   (VOID)Context;
   if(!AsciiStrCmp(Name,"SunUEFI:log-size"))FastHex(mFastLogBytes,Value);
@@ -328,6 +344,7 @@ STATIC EFI_STATUS FastbootQuery(VOID *Context,CONST CHAR8 *Name,CHAR8 Value[60])
 #if PIANO_USB_SERVICE
 STATIC EFI_STATUS ServiceRequestUi(UINT32 Action);
 STATIC EFI_STATUS ServiceBeforeRamlog(BOOLEAN *ServicesLost);
+STATIC EFI_STATUS ServiceReportStatus(BOOLEAN *ServicesLost);
 #endif
 STATIC EFI_STATUS FastbootDiagnostic(VOID *Context,PIANO_FASTBOOT *State,CONST CHAR8 *Cmd) {
   (VOID)Context;
@@ -382,6 +399,26 @@ STATIC EFI_STATUS FastbootDiagnostic(VOID *Context,PIANO_FASTBOOT *State,CONST C
     EFI_STATUS S=FastbootSend(NULL,Row,AsciiStrLen(Row));if(EFI_ERROR(S))return S;
     CopyMem(Row,"INFODCFG:",9);FastHex(Dr(0xC700),Row+9);
     S=FastbootSend(NULL,Row,AsciiStrLen(Row));if(EFI_ERROR(S))return S;
+
+    // These are the last snapshot attempt's saved values, not another read of
+    // reserved RAM. Status remains usable when the console cannot be exported.
+    CHAR8 Log[64]="INFOlog-header sig=";
+    FastHex(mLogSignature,Log+19);CopyMem(Log+27," start=",7);
+    FastHex(mLogStart,Log+34);CopyMem(Log+42," size=",6);
+    FastHex(mLogSize,Log+48);
+    S=FastbootSend(NULL,Log,AsciiStrLen(Log));if(EFI_ERROR(S))return S;
+    CHAR8 Snapshot[64]="INFOlog-snapshot ";
+    UINTN StageBytes=AsciiStrLen(mLogSnapshotStage);
+    CopyMem(Snapshot+17,mLogSnapshotStage,StageBytes);
+    CopyMem(Snapshot+17+StageBytes," status=",8);
+    FastHex64((UINT64)mLogSnapshotStatus,Snapshot+25+StageBytes);
+    S=FastbootSend(NULL,Snapshot,AsciiStrLen(Snapshot));if(EFI_ERROR(S))return S;
+#if PIANO_USB_SERVICE
+    BOOLEAN ServicesLost=FALSE;
+    S=ServiceReportStatus(&ServicesLost);
+    if(ServicesLost)return EFI_ABORTED;
+    if(S!=EFI_SUCCESS)return FastbootSend(NULL,"FAILstatus report unavailable",29);
+#endif
     return FastbootSend(NULL,"OKAY",4);
   }
   return EFI_UNSUPPORTED;
@@ -861,6 +898,30 @@ STATIC EFI_STATUS ServiceBeforeRamlog(BOOLEAN *ServicesLost) {
   EFI_STATUS S=Callback(mService.Config.Context); // Once per command, before snapshot.
   *ServicesLost=mService.State.ServicesLost;if(*ServicesLost)return EFI_ABORTED;
   return S==EFI_SUCCESS?EFI_SUCCESS:EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
+}
+STATIC EFI_STATUS ServiceStatusSend(VOID *Context,CONST VOID *Data,UINTN Bytes) {
+  (VOID)Context;
+  // The callback may observe EBS while producing a row. Refuse further queue
+  // allocation and DMA work as soon as the existing service fence is raised.
+  if(mService.State.ServicesLost)return EFI_ABORTED;
+  if(!ServiceAtApp())return EFI_UNSUPPORTED;
+  if(mService.State.ServicesLost)return EFI_ABORTED;
+  if(!Data || Bytes<4 || Bytes>64 || CompareMem(Data,"INFO",4))return EFI_INVALID_PARAMETER;
+  if(!mService.State.Started || mService.State.Phase!=PianoUsbServiceListening ||
+     mService.State.Retained || !mExperimentRunning)return EFI_NOT_READY;
+  return FastbootSend(NULL,Data,Bytes);
+}
+STATIC EFI_STATUS ServiceReportStatus(BOOLEAN *ServicesLost) {
+  *ServicesLost=mService.State.ServicesLost;if(*ServicesLost)return EFI_ABORTED;
+  if(!mService.Config.ReportStatus)return EFI_SUCCESS;
+  if(!mService.State.Started || mService.State.Phase!=PianoUsbServiceListening ||
+     mService.State.Retained || !mExperimentRunning)return EFI_NOT_READY;
+  if(!ServiceAtApp())return EFI_UNSUPPORTED;
+  *ServicesLost=mService.State.ServicesLost;if(*ServicesLost)return EFI_ABORTED;
+
+  EFI_STATUS Status=mService.Config.ReportStatus(mService.Config.Context,ServiceStatusSend,NULL);
+  *ServicesLost=mService.State.ServicesLost;if(*ServicesLost)return EFI_ABORTED;
+  return Status==EFI_SUCCESS?EFI_SUCCESS:EFI_ERROR(Status)?Status:EFI_DEVICE_ERROR;
 }
 STATIC BOOLEAN SameUiRuntime(CONST PIANO_PRODUCT_RUNTIME_PROTOCOL *A,CONST PIANO_PRODUCT_RUNTIME_PROTOCOL *B) {
   return A->Revision==B->Revision && A->Pump==B->Pump && A->BootServicesAlive==B->BootServicesAlive &&

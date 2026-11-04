@@ -58,6 +58,9 @@ int main(void){
   Services.InstallConfigurationTable=Table;
   assert(PianoDeviceTreeFixupInstall(Alive,Reserved)==EFI_SUCCESS&&Protocol&&Protocol->Revision==EFI_DT_FIXUP_PROTOCOL_REVISION);
   assert(PianoDeviceTreeFixupInstall(Alive,Reserved)==EFI_ALREADY_STARTED);
+  PIANO_DEVICE_TREE_FIXUP_DIAGNOSTIC Diagnostic;
+  PianoDeviceTreeFixupGetDiagnostic(&Diagnostic);
+  assert(!strcmp(Diagnostic.Stage,"not-started")&&Diagnostic.Status==EFI_NOT_STARTED&&!Diagnostic.Calls);
   mObjectsStatus=mObjectsValidation=EFI_SUCCESS;mObjects.Coherent=TRUE;
   mObjects.FactoryPanel=PianoFactoryPanelBoe;mObjects.Gunyah.Valid=TRUE;mObjects.Gunyah.VmId=42;
   memset(mObjects.Gunyah.Resources,0x34,sizeof(mObjects.Gunyah.Resources));
@@ -65,6 +68,9 @@ int main(void){
   UINTN Bytes=MakeTree(),Size=Bytes;memcpy(Original,Tree,Bytes);
   assert(Protocol->Fixup(Protocol,Tree,&Size,EFI_DT_APPLY_FIXUPS|EFI_DT_RESERVE_MEMORY)==EFI_BUFFER_TOO_SMALL);
   assert(Size>Bytes&&Size<=sizeof(Tree)&&!memcmp(Tree,Original,Bytes)&&!Reservations&&!Tables);
+  PianoDeviceTreeFixupGetDiagnostic(&Diagnostic);
+  assert(!strcmp(Diagnostic.Stage,"padding")&&Diagnostic.Status==EFI_BUFFER_TOO_SMALL&&Diagnostic.Calls==1);
+  assert(Diagnostic.Flags==(EFI_DT_APPLY_FIXUPS|EFI_DT_RESERVE_MEMORY)&&!Reservations&&!Tables);
   assert(Protocol->Fixup(Protocol,Tree,&Size,EFI_DT_APPLY_FIXUPS|EFI_DT_RESERVE_MEMORY)==EFI_SUCCESS&&Reservations==1&&!Tables);
   int Panel=fdt_path_offset(Tree,"/panel"),Rm=fdt_path_offset(Tree,"/gunyah"),Chosen=fdt_path_offset(Tree,"/chosen"),Length;
   assert(!strcmp(fdt_getprop(Tree,Panel,"compatible",NULL),"xiaomi,piano-boe-nt36532"));
@@ -73,6 +79,8 @@ int main(void){
   assert(!fdt_getprop(Tree,Chosen,"linux,uefi-system-table",NULL)&&!fdt_getprop(Tree,Chosen,"linux,initrd-start",NULL));
   Size=sizeof(Tree);ReserveStatus=EFI_NOT_READY;
   assert(Protocol->Fixup(Protocol,Tree,&Size,EFI_DT_RESERVE_MEMORY|EFI_DT_INSTALL_TABLE)==EFI_NOT_READY&&!Tables&&Reservations==2);
+  PianoDeviceTreeFixupGetDiagnostic(&Diagnostic);
+  assert(!strcmp(Diagnostic.Stage,"reservations")&&Diagnostic.Status==EFI_NOT_READY&&Reservations==2&&!Tables);
   ReserveStatus=EFI_SUCCESS;
   assert(Protocol->Fixup(Protocol,Tree,&Size,EFI_DT_RESERVE_MEMORY|EFI_DT_INSTALL_TABLE)==EFI_SUCCESS&&Tables==1&&LastTable==Tree);
   MakeTree();mObjects.Gunyah.Valid=FALSE;Size=sizeof(Tree);
@@ -81,5 +89,7 @@ int main(void){
   assert(Protocol->Fixup(Protocol,Tree,&Size,0x8000)==EFI_INVALID_PARAMETER);
   Tpl=TPL_NOTIFY;assert(Protocol->Fixup(Protocol,Tree,&Size,EFI_DT_RESERVE_MEMORY)==EFI_UNSUPPORTED);Tpl=TPL_APPLICATION;
   Live=FALSE;assert(Protocol->Fixup(Protocol,Tree,&Size,EFI_DT_RESERVE_MEMORY)==EFI_NOT_READY);
+  PianoDeviceTreeFixupGetDiagnostic(&Diagnostic);
+  assert(!strcmp(Diagnostic.Stage,"alive")&&Diagnostic.Status==EFI_NOT_READY);
   puts("Actual EFI DT fixup: padding retry, runtime panel/Gunyah, stale EFI cleanup and reservation refusal passed");return 0;
 }

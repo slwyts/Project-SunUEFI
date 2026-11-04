@@ -15,6 +15,15 @@ struct EFI_DT_FIXUP_PROTOCOL {
   EFI_STATUS (EFIAPI *Fixup)(EFI_DT_FIXUP_PROTOCOL *,VOID *,UINTN *,UINT32);
 };
 
+// Latest protocol call only; retrieving this state does not repeat a fixup.
+typedef struct {
+  CONST CHAR8 *Stage;
+  EFI_STATUS Status;
+  UINT32 Flags, Calls;
+} PIANO_DEVICE_TREE_FIXUP_DIAGNOSTIC;
+
+VOID PianoDeviceTreeFixupGetDiagnostic(PIANO_DEVICE_TREE_FIXUP_DIAGNOSTIC *Report);
+
 // ValidateReserved checks the caller's complete DT against the platform's real
 // EFI memory map. A fixed reservation already excluded there needs no second
 // allocation; an unrepresented range must fail rather than be ignored.
