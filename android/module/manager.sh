@@ -18,9 +18,7 @@ case "$operation" in
   } ;;
 esac
 
-# This checks the installed entry, not a partition name or an arbitrary EFI file.
-# The current core's Linux request selects this path; other ESP entries are not
-# selectable by the request protocol yet. The mount never writes to the ESP.
+# Check the installed boot manager and Linux entry on a read-only mount.
 piano_installed_linux() (
   [ -b /dev/block/by-name/sunuefi_esp ] &&
     [ -b /dev/block/by-name/sunuefi_root ] || exit 1
@@ -29,7 +27,7 @@ piano_installed_linux() (
   trap '[ "$mounted" = false ] || umount "$dir"; rmdir "$dir"' EXIT
   mount -t vfat -o ro,nosuid,nodev,noexec /dev/block/by-name/sunuefi_esp "$dir" 2>/dev/null || exit 2
   mounted=true
-  [ -s "$dir/EFI/Piano/stable/boot.img" ]
+  piano_esp_linux_present "$dir"
 )
 
 piano_quick_status() {
