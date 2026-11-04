@@ -13,6 +13,7 @@
 #include "PianoReset.h"
 #include "PianoNvFile.h"
 #include "PianoProductBootObjects.h"
+#include "PianoProductMemory.h"
 #include "PianoProductBootLog.h"
 #include "PianoProductDisplayObserve.h"
 #include "PianoDisplaySmmuObserve.h"
@@ -20,7 +21,9 @@
 #include "PianoDisplayClockObserve.h"
 #include "PianoProductDisplayOwner.h"
 #include "LateHandoff/PianoLateHandoff.h"
+#include "LateHandoff/PianoDeviceTreeFixup.h"
 #include <Guid/EventGroup.h>
+#include <Guid/Fdt.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/BaseLib.h>
@@ -208,18 +211,6 @@ STATIC BOOLEAN LateServicesAlive(VOID *Context) {
 STATIC VOID LateFailStop(VOID *Context,EFI_STATUS Status) {
   (VOID)Context;FailStop(Status);
 }
-STATIC EFI_STATUS LateMemoryUnavailable(VOID *Context,PIANO_LINUX_MEMORY_PROOF *Report) {
-  (VOID)Context;
-  if(Report==NULL)return EFI_INVALID_PARAMETER;
-  ZeroMem(Report,sizeof(*Report));Report->Revision=1;Report->Status=EFI_NOT_READY;
-  // The actual cold observer is bound, but the full-DDR ownership authority
-  // and dynamic-reservation placements have not been established on-device.
-  // A late exit provider cannot turn those diagnostic snapshots into permission.
-  return EFI_NOT_READY;
-}
-STATIC EFI_STATUS LateValidateMemory(VOID *Context,CONST PIANO_LINUX_MEMORY_PROOF *Report) {
-  (VOID)Context;(VOID)Report;return EFI_NOT_READY;
-}
 EFI_STATUS PianoProductLateArm(VOID *Context,EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *Identity) {
   (VOID)Context;
   if(Image==NULL || Identity==NULL)return EFI_INVALID_PARAMETER;
@@ -317,6 +308,53 @@ STATIC EFI_STATUS StartInstalledLinux(VOID *Context,PIANO_PRODUCT_RUNTIME_PROTOC
   Status=CompleteCoreAction((EFI_HANDLE)Context,Runtime,Child);
   // Only a failure before retirement can return to the still-running manager.
   mSystemdEntering=FALSE;return Status;
+}
+STATIC BOOLEAN EfiLoadedValid(CONST EFI_LOADED_IMAGE_PROTOCOL *L){
+  return L && L->Revision>=EFI_LOADED_IMAGE_PROTOCOL_REVISION && L->SystemTable==gST &&
+    L->ImageBase && L->ImageSize && L->ImageSize<=MAX_UINTN-(UINTN)L->ImageBase &&
+    L->ImageCodeType==EfiLoaderCode && L->ImageDataType==EfiLoaderData;
+}
+STATIC EFI_STATUS ValidateEfiDeviceTree(VOID){
+  if(gST->NumberOfTableEntries>1024 || (gST->NumberOfTableEntries&&!gST->ConfigurationTable))return EFI_COMPROMISED_DATA;
+  CONST VOID *Tree=NULL;
+  for(UINTN I=0;I<gST->NumberOfTableEntries;++I){
+    if(!CompareMem(&gST->ConfigurationTable[I].VendorGuid,&gFdtTableGuid,sizeof(EFI_GUID))){
+      if(Tree)return EFI_COMPROMISED_DATA;Tree=gST->ConfigurationTable[I].VendorTable;
+    }
+  }
+  if(!Tree||((UINTN)Tree&7)||FdtCheckHeader(Tree)||FdtTotalSize(Tree)>0x200000)return EFI_NOT_READY;
+  return PianoProductMemoryValidateDtb(Tree,FdtTotalSize(Tree));
+}
+STATIC EFI_STATUS ValidateInstalledEfiImage(VOID *Context,EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *Identity){
+  if(!mSystemdActive || mSystemdEntering || !Image || Image==Context || Image==mSystemdApplication.Image ||
+     !mSystemdEsp || !mSystemdApplication.Busy || !mSystemdApplication.StartCalled ||
+     mSystemdApplication.StartReturned || mSystemdApplication.EbsObserved || mSystemdApplication.Retained)
+    return EFI_ACCESS_DENIED;
+  CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();
+  if(!Policy || Policy->RequestedCoreAction!=PianoUsbServiceActionBoot || Policy->Retained || Policy->ServicesLost ||
+     Policy->Dispatching || Policy->Pumping || Policy->ActiveAction!=PIANO_PRODUCT_ACTION_NONE)return EFI_NOT_READY;
+  EFI_LOADED_IMAGE_PROTOCOL *Manager=NULL,*Current=NULL;
+  EFI_STATUS Status=gBS->HandleProtocol(mSystemdApplication.Image,&gEfiLoadedImageProtocolGuid,(VOID **)&Manager);
+  if(!BootLogAlive())return EFI_ABORTED;if(Status!=EFI_SUCCESS)return Status;
+  if(!EfiLoadedValid(Manager) || Manager!=mSystemdApplication.LoadedIdentity ||
+     Manager->ImageBase!=mSystemdApplication.BaseIdentity || Manager->ImageSize!=mSystemdApplication.SizeIdentity ||
+     Manager->ParentHandle!=(EFI_HANDLE)Context || Manager->DeviceHandle!=mSystemdEsp)return EFI_ACCESS_DENIED;
+  EFI_HANDLE Seen[4];EFI_HANDLE CurrentImage=Image;
+  // BLS loads the kernel directly. A UKI may additionally load its embedded
+  // kernel from memory; only that inner frame may lack a filesystem handle.
+  for(UINTN Depth=0;Depth<ARRAY_SIZE(Seen);++Depth){
+    for(UINTN N=0;N<Depth;++N)if(Seen[N]==CurrentImage)return EFI_ACCESS_DENIED;
+    Seen[Depth]=CurrentImage;
+    Status=gBS->HandleProtocol(CurrentImage,&gEfiLoadedImageProtocolGuid,(VOID **)&Current);
+    if(!BootLogAlive())return EFI_ABORTED;if(Status!=EFI_SUCCESS)return Status;
+    if(!EfiLoadedValid(Current) || (!Depth && Current!=Identity) ||
+       (Current->DeviceHandle && Current->DeviceHandle!=mSystemdEsp))return EFI_ACCESS_DENIED;
+    if(Current->ParentHandle==mSystemdApplication.Image)
+      return Current->DeviceHandle==mSystemdEsp?ValidateEfiDeviceTree():EFI_ACCESS_DENIED;
+    if(!Current->ParentHandle || Current->ParentHandle==(EFI_HANDLE)Context)return EFI_ACCESS_DENIED;
+    CurrentImage=Current->ParentHandle;
+  }
+  return EFI_ACCESS_DENIED;
 }
 EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *SystemTable) {
   if(Image==NULL || SystemTable==NULL)return EFI_INVALID_PARAMETER;
@@ -437,13 +475,14 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
     .Runtime=Runtime,.InputContext=NULL,.StopInput=StopInput,
     .DisplayContext=mDisplayStartup.LeaseContext,.StopDisplay=PianoProductDisplayStop,.DisplayStartup=mDisplayStartup};
   Status=PianoProductOwnersInitialize(&mOwners,&Config);if(Status!=EFI_SUCCESS)FailStop(Status);
-  PIANO_LATE_HANDOFF_ENV Late={.Context=NULL,.Services=gBS,.SystemTable=SystemTable,
+  PIANO_LATE_HANDOFF_ENV Late={.Context=Image,.Services=gBS,.SystemTable=SystemTable,
     .ParentImage=Image,.Owners=&mOwners,.BootServicesAlive=LateServicesAlive,
-    .CheckMemory=LateMemoryUnavailable,.ValidateMemory=LateValidateMemory,.FailStop=LateFailStop,
-    .ValidateRaw=PianoRawLinuxPrepared};
+    .CheckMemory=PianoProductMemoryCheck,.ValidateMemory=PianoProductMemoryValidate,.FailStop=LateFailStop,
+    .ValidateRaw=PianoRawLinuxPrepared,.ValidateEfiImage=ValidateInstalledEfiImage};
   Status=PianoLateHandoffInitialize(&mLateHandoff,&Late);if(Status!=EFI_SUCCESS)FailStop(Status);
+  Status=PianoDeviceTreeFixupInstall(BootLogAlive,PianoProductMemoryValidateDtb);if(Status!=EFI_SUCCESS)FailStop(Status);
   Status=PianoBootPolicySetLinuxEntry(StartInstalledLinux,Image);if(Status!=EFI_SUCCESS)FailStop(Status);
-  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_LATE_EXIT provider_bound=1 phase=unarmed full_ddr_ready=0\n"));
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_LATE_EXIT provider_bound=1 phase=unarmed standard_efi=1\n"));
   Status=PianoBootPolicyStartupWindow(3000);
   if(Status!=EFI_SUCCESS)FailStop(Status);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_BOOT_WINDOW status=%r budget_ms=3000 f12_setup=1 esc_boot_menu=1 volume_boot_menu=%u usb_pumped=%u entry_hint=%u default_action=%u target=%u\n",Status,
@@ -465,6 +504,10 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
           Status=PianoApplicationRunFile(Image,mSystemdEsp,L"\\EFI\\BOOT\\BOOTAA64.EFI",NULL,0x400000,&mSystemdApplication);
           mSystemdActive=FALSE;
           if(mSystemdApplication.Retained)FailStop(Status);
+          if(mLateHandoff.Retained || mLateHandoff.RetireCalls || mLateHandoff.Phase==PianoExitClean)FailStop(Status);
+          if(mLateHandoff.Phase==PianoExitArmed){
+            EFI_STATUS Disarm=PianoLateHandoffDisarm(&mLateHandoff);if(Disarm!=EFI_SUCCESS)FailStop(Disarm);
+          }
         }
         DEBUG((DEBUG_WARN,"PIANO_SYSTEMD_BOOT_RETURN status=%r\n",Status));
         mSystemdEsp=NULL;

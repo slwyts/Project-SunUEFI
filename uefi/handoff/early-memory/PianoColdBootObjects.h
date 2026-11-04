@@ -3,6 +3,7 @@
 #include "PianoEarlyMemory.h"
 #include "PianoFactoryPanel.h"
 #include <Library/MemoryMapLib.h>
+#include "PianoMemoryLayout.h"
 #define PIANO_COLD_OBJECT_VERSION 4U
 #define PIANO_COLD_HANDOFF_ADDRESS 0xa7fff000ULL
 #define PIANO_COLD_HANDOFF_MAGIC 0x534e554546494448ULL
@@ -70,6 +71,10 @@ EFI_STATUS PianoColdBootObjectsObserve(VOID);
 // After the one real HobConstructor: frozen typed object input, never resources.
 EFI_STATUS PianoColdBootObjectsPublishHob(VOID);
 CONST PIANO_COLD_BOOT_OBJECT_REPORT *PianoColdBootObjectsReport(VOID);
+// Only the admitted same-boot BootShim/ABL tree supplies physical RAM. This
+// captures its complete memory/reservation semantics twice under the existing
+// SEC read guard, and rechecks the handoff/epoch. OS files cannot call it in DXE.
+EFI_STATUS PianoColdBootObjectsMemoryLayout(PIANO_MEMORY_LAYOUT *Layout);
 // Consumer validates exact layout/CRC before importing these occupied spans.
 // The output contains no allocator, cache, high-DDR or full-owner authority.
 EFI_STATUS PianoColdBootObjectsValidate(CONST PIANO_COLD_BOOT_OBJECT_REPORT *);

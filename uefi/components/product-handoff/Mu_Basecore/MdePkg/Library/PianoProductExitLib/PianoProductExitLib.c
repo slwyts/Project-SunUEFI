@@ -15,7 +15,7 @@ STATIC BOOLEAN mBusy,mClean;
 STATIC BOOLEAN SameImage(EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *L){
  return Image==mImage&&L==mIdentity&&L&&L->ImageBase==mLoaded.ImageBase&&L->ImageSize==mLoaded.ImageSize&&
    L->ParentHandle==mLoaded.ParentHandle&&L->ImageCodeType==mLoaded.ImageCodeType&&L->ImageDataType==mLoaded.ImageDataType&&
-   L->SystemTable==mLoaded.SystemTable&&L->Revision==mLoaded.Revision;
+   L->SystemTable==mLoaded.SystemTable&&L->Revision==mLoaded.Revision&&L->DeviceHandle==mLoaded.DeviceHandle;
 }
 STATIC VOID Stop(EFI_STATUS Status){
  if(mExit&&mFunctions.FailStop)mFunctions.FailStop(mExit,Status);
@@ -23,19 +23,22 @@ STATIC VOID Stop(EFI_STATUS Status){
 }
 EFI_STATUS EFIAPI PianoProductBeforeExitBootServices(EFI_HANDLE Image,
  CONST EFI_LOADED_IMAGE_PROTOCOL *L,EFI_TPL Tpl,UINTN Key,UINTN Current,BOOLEAN Before){
+ if(mBusy)Stop(EFI_ALREADY_STARTED);
+ if(mClean){
+   // Once devices are retired, returning to a boot manager would let it use
+   // stopped I/O. Only the same live OS image may retry an outdated map key.
+   if(Tpl!=TPL_APPLICATION)Stop(EFI_UNSUPPORTED);
+   if(!Image||!L||!L->ImageBase||!L->ImageSize||!SameImage(Image,L))Stop(EFI_ACCESS_DENIED);
+   if(!mExit||CompareMem(mExit,&mFunctions,sizeof(mFunctions)))Stop(EFI_COMPROMISED_DATA);
+   UINT64 Epoch=0;EFI_STATUS E=mFunctions.ObserveClean(mExit,Image,L,&Epoch);
+   if(E!=EFI_SUCCESS||Epoch!=mEpoch)Stop(E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);
+   return Key==Current?EFI_SUCCESS:EFI_INVALID_PARAMETER;
+ }
  if(Tpl!=TPL_APPLICATION)return EFI_UNSUPPORTED;
  if(!Image||!L||!L->ImageBase||!L->ImageSize)return EFI_ACCESS_DENIED;
  // Reject an already stale key before any protocol call, Before notification,
  // timer change or device retirement. A standard caller can obtain a new map.
  if(Key!=Current)return EFI_INVALID_PARAMETER;
- if(mBusy)Stop(EFI_ALREADY_STARTED);
- if(mClean){
-   if(!SameImage(Image,L))return EFI_ACCESS_DENIED;
-   if(!mExit||CompareMem(mExit,&mFunctions,sizeof(mFunctions)))Stop(EFI_COMPROMISED_DATA);
-   UINT64 Epoch=0;EFI_STATUS E=mFunctions.ObserveClean(mExit,Image,L,&Epoch);
-   if(E!=EFI_SUCCESS||Epoch!=mEpoch)Stop(E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);
-   return EFI_SUCCESS;
- }
  if(Before)return EFI_NOT_READY; // Never discover/retire after Before attempt.
  if(!gBS||!gST||gST->BootServices!=gBS||gBS->Hdr.Signature!=EFI_BOOT_SERVICES_SIGNATURE||!gBS->LocateProtocol)return EFI_NOT_READY;
  PIANO_PRODUCT_EXIT_PROTOCOL *Found=NULL;
@@ -52,4 +55,8 @@ EFI_STATUS EFIAPI PianoProductBeforeExitBootServices(EFI_HANDLE Image,
  if(E!=EFI_SUCCESS||!Epoch)Stop(E==EFI_SUCCESS?EFI_COMPROMISED_DATA:E);
  mImage=Image;mIdentity=L;mLoaded=*L;mEpoch=Epoch;mClean=TRUE;mBusy=FALSE;
  return EFI_SUCCESS;
+}
+EFI_STATUS EFIAPI PianoProductExitBootServicesResult(EFI_STATUS Status,BOOLEAN StaleMapKey){
+ if(mClean&&Status!=EFI_SUCCESS&&(Status!=EFI_INVALID_PARAMETER||!StaleMapKey))Stop(Status);
+ return Status;
 }

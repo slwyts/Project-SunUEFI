@@ -53,19 +53,43 @@ STATIC EFI_STATUS EFIAPI LateObserve(PIANO_PRODUCT_EXIT_PROTOCOL *P,EFI_HANDLE I
   *Epoch=S->RawMode?S->RawSnapshot.Epoch:S->ResetMode?1:S->Memory.BootEpoch;return EFI_SUCCESS; // no BS, HAL or provider lookup
 }
 STATIC VOID EFIAPI LateFail(PIANO_PRODUCT_EXIT_PROTOCOL *P,EFI_STATUS E){LateStop(BASE_CR(P,PIANO_LATE_HANDOFF,Protocol),E);}
+STATIC EFI_STATUS LateArmCurrent(PIANO_LATE_HANDOFF *S,EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *L){
+ if(!S->Env.ValidateEfiImage||!Image||!L)return EFI_ACCESS_DENIED;
+ if(L->Revision<EFI_LOADED_IMAGE_PROTOCOL_REVISION||L->SystemTable!=S->Env.SystemTable||
+    !L->ImageBase||!L->ImageSize||L->ImageSize>MAX_UINTN-(UINTN)L->ImageBase||
+    L->ImageCodeType!=EfiLoaderCode||L->ImageDataType!=EfiLoaderData)return EFI_COMPROMISED_DATA;
+ EFI_STATUS E=LateApp(S);if(E!=EFI_SUCCESS)return E;
+ E=S->Env.ValidateEfiImage(S->Env.Context,Image,L);if(!LateLive(S))return EFI_ABORTED;
+ if(E!=EFI_SUCCESS)return EFI_ERROR(E)?E:EFI_DEVICE_ERROR;
+ E=LateMemory(S,&S->Memory);if(E!=EFI_SUCCESS)return E;
+ E=PianoProductOwnersRequestEfiBoot(S->Env.Owners,Image,L);if(!LateLive(S))return EFI_ABORTED;
+ if(E!=EFI_SUCCESS)return EFI_ERROR(E)?E:EFI_DEVICE_ERROR;
+ S->Image=Image;S->Identity=L;S->Loaded=*L;S->OwnerConfig=S->Env.Owners->Config;
+ S->Phase=PianoExitArmed;return EFI_SUCCESS;
+}
+STATIC EFI_STATUS LateRefuseBeforeRetire(PIANO_LATE_HANDOFF *S,EFI_STATUS Status){
+ // systemd-boot may keep running and unload this failed kernel before trying
+ // another entry. Cancel only an untouched EFI request, while its identity is
+ // still live; the first device retirement makes failure terminal instead.
+ if(!S->RetireCalls&&!S->RawMode&&!S->ResetMode&&S->Env.Owners->Report.Origin==PianoProductRequestEfi){
+   EFI_STATUS Disarm=PianoLateHandoffDisarm(S);if(Disarm!=EFI_SUCCESS)LateStop(S,Disarm);
+ }
+ return S->Status=Status;
+}
 STATIC EFI_STATUS EFIAPI LateEnter(PIANO_PRODUCT_EXIT_PROTOCOL *P,EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *L,UINTN MapKey){
  PIANO_LATE_HANDOFF *S=BASE_CR(P,PIANO_LATE_HANDOFF,Protocol);
  if(S->Signature!=LATE_SIG||S->Retained||!S->Installed)return EFI_NOT_READY;
  if(S->Busy)return EFI_ALREADY_STARTED;
+ if(S->Phase==PianoExitUnarmed){EFI_STATUS E=LateArmCurrent(S,Image,L);if(E!=EFI_SUCCESS)return E;}
  if(S->Phase!=PianoExitArmed||!LateIdentity(S,Image,L))return EFI_ACCESS_DENIED;
   if(S->RawMode||S->ResetMode){
     if(!LateLive(S)||(S->RawMode&&!LateRaw(S))||!LateClean(S))return EFI_ACCESS_DENIED;
    S->CallerMapKey=MapKey;++S->ExitCalls;S->Phase=PianoExitClean;return S->Status=EFI_SUCCESS;
  }
- EFI_STATUS E=LateApp(S);if(E!=EFI_SUCCESS)return E;
- if(CompareMem(&S->Env.Owners->Config,&S->OwnerConfig,sizeof(S->OwnerConfig)))return EFI_COMPROMISED_DATA;
- PIANO_LINUX_MEMORY_PROOF Fresh;E=LateMemory(S,&Fresh);if(E!=EFI_SUCCESS)return E;
- if(Fresh.BootEpoch!=S->Memory.BootEpoch||Fresh.DramBytes!=S->Memory.DramBytes)return EFI_NOT_READY;
+ EFI_STATUS E=LateApp(S);if(E!=EFI_SUCCESS)return LateRefuseBeforeRetire(S,E);
+ if(CompareMem(&S->Env.Owners->Config,&S->OwnerConfig,sizeof(S->OwnerConfig)))return LateRefuseBeforeRetire(S,EFI_COMPROMISED_DATA);
+ PIANO_LINUX_MEMORY_PROOF Fresh;E=LateMemory(S,&Fresh);if(E!=EFI_SUCCESS)return LateRefuseBeforeRetire(S,E);
+ if(Fresh.BootEpoch!=S->Memory.BootEpoch||Fresh.DramBytes!=S->Memory.DramBytes)return LateRefuseBeforeRetire(S,EFI_NOT_READY);
  S->Busy=TRUE;S->Phase=PianoExitRetiring;S->CallerMapKey=MapKey;++S->ExitCalls;++S->RetireCalls;
  E=PianoProductOwnersRetire(S->Env.Owners);
  if(E!=EFI_SUCCESS||!LateLive(S))LateStop(S,E==EFI_SUCCESS?EFI_ABORTED:E);
@@ -110,6 +134,9 @@ EFI_STATUS PianoLateHandoffDisarm(PIANO_LATE_HANDOFF *S){
  if(!S||S->Signature!=LATE_SIG||!S->Installed)return EFI_INVALID_PARAMETER;
   if(S->Phase!=PianoExitArmed||S->Busy||S->Retained||S->RetireCalls||S->RawMode||S->ResetMode)return EFI_ACCESS_DENIED;
  EFI_STATUS E=LateApp(S);if(E!=EFI_SUCCESS)return E;
+ if(S->Env.Owners->Report.Origin==PianoProductRequestEfi){
+   E=PianoProductOwnersCancelEfiBoot(S->Env.Owners,S->Image,S->Identity);if(E!=EFI_SUCCESS)return E;
+ }
  S->Image=NULL;S->Identity=NULL;ZeroMem(&S->Loaded,sizeof(S->Loaded));ZeroMem(&S->Memory,sizeof(S->Memory));
  S->Phase=PianoExitUnarmed;return S->Status=EFI_SUCCESS;
 }

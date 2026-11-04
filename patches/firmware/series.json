@@ -5,7 +5,7 @@
       "repository": "upstream/Mu-Silicium/Mu_Basecore",
       "base_commit": "cfb93724a06ff86ff5ba971413368a7809ee42a5",
       "patch": "mu-basecore.patch",
-      "sha256": "f921c45227afe470d3368389409664c463fdb7e158d29e64c3db746c0e538adb"
+      "sha256": "f95c8fbf1988f5cf6a4ae8224f496e46f349bb760e7d89dc020fd15f13d0b0ed"
     },
     {
       "repository": "upstream/Mu-Silicium",

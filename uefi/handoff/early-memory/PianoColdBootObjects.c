@@ -14,6 +14,8 @@ STATIC_ASSERT(OFFSET_OF(PIANO_COLD_BOOT_HANDOFF,Crc32)==128,"shim CRC");
 STATIC_ASSERT(OFFSET_OF(PIANO_COLD_BOOT_HANDOFF,EntryPc)==136,"shim PC");
 STATIC_ASSERT(sizeof(PIANO_COLD_BOOT_OBJECT_REPORT)+sizeof(EFI_HOB_GUID_TYPE)<65536,"typed HOB size");
 STATIC PIANO_COLD_BOOT_OBJECT_REPORT mCold;
+STATIC PIANO_MEMORY_LAYOUT mColdMemoryLayout;
+STATIC BOOLEAN mColdMemoryLayoutValid;
 STATIC UINT32 mColdScratch[PIANO_COLD_READ_MAX/4];
 STATIC PIANO_COLD_BATCH_STATE mColdBatch;
 typedef struct {UINT32 Start,Bytes;BOOLEAN Valid;UINT8 Data[256];} COLD_CACHE;
@@ -269,3 +271,27 @@ EFI_STATUS PianoColdBootObjectsPublishHob(VOID){
  mCold.Published=TRUE;mCold.PublishStatus=EFI_SUCCESS;mCold.ReportCrc32=PianoColdObjectsCrc(&mCold);CopyMem(Data,&mCold,sizeof(mCold));return EFI_SUCCESS;
 }
 CONST PIANO_COLD_BOOT_OBJECT_REPORT *PianoColdBootObjectsReport(VOID){return &mCold;}
+STATIC EFI_STATUS ColdMemoryRead(VOID *Context,UINT32 At,UINTN Bytes,VOID *Out){(VOID)Context;return ColdDtbRead(At,Bytes,Out);}
+EFI_STATUS PianoColdBootObjectsMemoryLayout(PIANO_MEMORY_LAYOUT *Layout){
+ if(!Layout)return EFI_INVALID_PARAMETER;ZeroMem(Layout,sizeof(*Layout));
+ if(!mCold.Finished||mCold.Status!=EFI_SUCCESS||!mCold.Coherent||mCold.Published||PianoColdBootObjectsValidate(&mCold)!=EFI_SUCCESS)return EFI_NOT_READY;
+ PIANO_MEMORY_LAYOUT Second;PIANO_COLD_BOOT_HANDOFF Handoff;
+ if(mColdMemoryLayoutValid){
+  // A completed pair is immutable producer data. Authorization rechecks the
+  // entry record and current cold CPU phase rather than spending the bounded
+  // physical-read budget on another identical pair of whole-tree traversals.
+  EFI_STATUS S=ColdStable(PIANO_COLD_HANDOFF_ADDRESS,sizeof(Handoff),&Handoff);
+  if(S==EFI_SUCCESS&&CompareMem(&Handoff,&mCold.Handoff,sizeof(Handoff)))S=EFI_MEDIA_CHANGED;
+  if(S==EFI_SUCCESS)S=ColdFresh();mCold.ReportCrc32=PianoColdObjectsCrc(&mCold);
+  if(S==EFI_SUCCESS)CopyMem(Layout,&mColdMemoryLayout,sizeof(*Layout));return S;
+ }
+ ZeroMem(&mColdStructCache,sizeof(mColdStructCache));ZeroMem(&mColdStringCache,sizeof(mColdStringCache));
+ EFI_STATUS S=PianoMemoryLayoutRead(ColdMemoryRead,NULL,mCold.DtbBytes,Layout);
+ if(S==EFI_SUCCESS){ZeroMem(&mColdStructCache,sizeof(mColdStructCache));ZeroMem(&mColdStringCache,sizeof(mColdStringCache));S=PianoMemoryLayoutRead(ColdMemoryRead,NULL,mCold.DtbBytes,&Second);}
+ if(S==EFI_SUCCESS&&CompareMem(Layout,&Second,sizeof(Second)))S=EFI_MEDIA_CHANGED;
+ if(S==EFI_SUCCESS)S=ColdStable(PIANO_COLD_HANDOFF_ADDRESS,sizeof(Handoff),&Handoff);
+ if(S==EFI_SUCCESS&&CompareMem(&Handoff,&mCold.Handoff,sizeof(Handoff)))S=EFI_MEDIA_CHANGED;
+ if(S==EFI_SUCCESS)S=ColdFresh();mCold.ReportCrc32=PianoColdObjectsCrc(&mCold);
+ if(S==EFI_SUCCESS){CopyMem(&mColdMemoryLayout,Layout,sizeof(*Layout));mColdMemoryLayoutValid=TRUE;}
+ else ZeroMem(Layout,sizeof(*Layout));ZeroMem(&Second,sizeof(Second));return S;
+}

@@ -14,14 +14,19 @@ EFI_GUID gEfiLoadedImageProtocolGuid={.Data1=1};
 STATIC EFI_BOOT_SERVICES Services;
 STATIC EFI_SYSTEM_TABLE System;
 STATIC EFI_LOADED_IMAGE_PROTOCOL ChildLoaded;
+STATIC EFI_LOADED_IMAGE_PROTOCOL ManagerLoaded,InnerLoaded;
+STATIC UINT32 DeviceTree[10];
+STATIC EFI_CONFIGURATION_TABLE FdtTable;
+EFI_GUID gFdtTableGuid={.Data1=2};
 STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL Runtime;
 STATIC PIANO_BOOT_POLICY_REPORT Policy;
 STATIC PIANO_RAW_LINUX_REPORT Raw;
 STATIC jmp_buf Escape;
-STATIC UINTN CoreId,ManagerId,ChildId,EspId,OtherId,FileId,TokenId;
+STATIC UINTN CoreId,ManagerId,ChildId,InnerId,EspId,OtherId,FileId,TokenId;
 #define CORE ((EFI_HANDLE)&CoreId)
 #define MANAGER ((EFI_HANDLE)&ManagerId)
 #define CHILD ((EFI_HANDLE)&ChildId)
+#define INNER ((EFI_HANDLE)&InnerId)
 #define ESP ((EFI_HANDLE)&EspId)
 #define OTHER ((EFI_HANDLE)&OtherId)
 enum { RESOLVE=1,LOAD,REQUEST,DISCARD,RETIRE,PREPARE,ARM,ENTER };
@@ -31,9 +36,16 @@ STATIC BOOLEAN NullLoaded,RetainedFile,DirtyRetirement,EnterReturns;
 
 STATIC VOID Record(UINT32 Call){assert(Count<ARRAY_SIZE(Calls));Calls[Count++]=Call;}
 STATIC EFI_STATUS EFIAPI Handle(EFI_HANDLE Image,EFI_GUID *Guid,VOID **Interface){
-  assert(Image==CHILD&&Guid==&gEfiLoadedImageProtocolGuid);++Handles;
-  *Interface=NullLoaded?NULL:&ChildLoaded;return HandleStatus;
+  assert(Guid==&gEfiLoadedImageProtocolGuid);++Handles;
+  if(Image==MANAGER)*Interface=&ManagerLoaded;
+  else if(Image==INNER)*Interface=&InnerLoaded;
+  else {assert(Image==CHILD);*Interface=NullLoaded?NULL:&ChildLoaded;}
+  return HandleStatus;
 }
+INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
+UINT32 EFIAPI Fdt32ToCpu(UINT32 V){return __builtin_bswap32(V);}
+INT32 EFIAPI FdtCheckHeader(CONST VOID *Tree){assert(Tree==DeviceTree);return 0;}
+EFI_STATUS PianoProductMemoryValidateDtb(CONST VOID *Tree,UINTN Bytes){assert(Tree==DeviceTree&&Bytes==sizeof(DeviceTree));return EFI_SUCCESS;}
 CONST PIANO_BOOT_POLICY_REPORT *PianoBootPolicyReport(VOID){return &Policy;}
 EFI_STATUS PianoProductOwnersResolveReturnedAction(PIANO_PRODUCT_OWNERS *Owners){
   assert(Owners==&mOwners);Record(RESOLVE);
@@ -112,6 +124,13 @@ STATIC VOID Reset(VOID){
   ChildLoaded=(EFI_LOADED_IMAGE_PROTOCOL){.Revision=EFI_LOADED_IMAGE_PROTOCOL_REVISION,
     .ParentHandle=MANAGER,.DeviceHandle=ESP,.SystemTable=&System,.ImageBase=&ChildId,
     .ImageSize=4096,.ImageCodeType=EfiLoaderCode,.ImageDataType=EfiLoaderData};
+  ManagerLoaded=ChildLoaded;ManagerLoaded.ParentHandle=CORE;
+  ManagerLoaded.ImageBase=&ManagerId;
+  mSystemdApplication.LoadedIdentity=&ManagerLoaded;mSystemdApplication.BaseIdentity=ManagerLoaded.ImageBase;
+  mSystemdApplication.SizeIdentity=ManagerLoaded.ImageSize;mSystemdApplication.Busy=TRUE;
+  InnerLoaded=ChildLoaded;InnerLoaded.ImageBase=&InnerId;
+  memset(DeviceTree,0,sizeof(DeviceTree));DeviceTree[1]=__builtin_bswap32(sizeof(DeviceTree));
+  FdtTable=(EFI_CONFIGURATION_TABLE){gFdtTableGuid,DeviceTree};System.ConfigurationTable=&FdtTable;System.NumberOfTableEntries=1;
   Policy.RequestedCoreAction=PianoUsbServiceActionBoot;
   Count=Handles=Resolves=FailAt=UsbArrival=0;LoadStatus=HandleStatus=StageStatus=EFI_SUCCESS;
   FailureStatus=EFI_NOT_STARTED;NullLoaded=RetainedFile=DirtyRetirement=EnterReturns=FALSE;
@@ -184,6 +203,22 @@ STATIC VOID HostPriority(VOID){
   CONST UINT32 AtRetire[]={RESOLVE,LOAD,RESOLVE,REQUEST,RETIRE,DISCARD};
   Sequence(AtRetire,ARRAY_SIZE(AtRetire));assert(FailureStatus==EFI_ABORTED);
 }
+STATIC VOID EfiAdmission(VOID){
+  Reset();assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)==EFI_SUCCESS&&!Count);
+  Reset();ChildLoaded.ParentHandle=INNER;ChildLoaded.DeviceHandle=NULL;
+  assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)==EFI_SUCCESS&&!Count);
+#define BAD_EFI(Change) do{Reset();Change;assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)!=EFI_SUCCESS&&!Count);}while(0)
+  BAD_EFI(mSystemdActive=FALSE);BAD_EFI(mSystemdApplication.StartReturned=TRUE);
+  BAD_EFI(mSystemdApplication.Busy=FALSE);BAD_EFI(mSystemdApplication.EbsObserved=TRUE);
+  BAD_EFI(ManagerLoaded.ParentHandle=OTHER);BAD_EFI(ManagerLoaded.DeviceHandle=OTHER);
+  BAD_EFI(mSystemdApplication.LoadedIdentity=&ChildLoaded);BAD_EFI(ManagerLoaded.ImageSize++);
+  BAD_EFI(ChildLoaded.DeviceHandle=OTHER);BAD_EFI(ChildLoaded.ParentHandle=CORE);
+  BAD_EFI(ChildLoaded.ParentHandle=CHILD);BAD_EFI(ChildLoaded.DeviceHandle=NULL);
+  BAD_EFI(ChildLoaded.ParentHandle=INNER;InnerLoaded.ParentHandle=CHILD);
+  BAD_EFI(ChildLoaded.ParentHandle=INNER;InnerLoaded.DeviceHandle=OTHER);
+  BAD_EFI(System.NumberOfTableEntries=0);BAD_EFI(Policy.RequestedCoreAction=PianoUsbServiceActionReboot);
+#undef BAD_EFI
+}
 int main(int Argc,char **Argv){
   assert(Argc==2);
   if(!strcmp(Argv[1],"admission"))Admission();
@@ -191,6 +226,7 @@ int main(int Argc,char **Argv){
   else if(!strcmp(Argv[1],"fatal-failures"))FatalFailures();
   else if(!strcmp(Argv[1],"handoff-order"))HandoffOrder();
   else if(!strcmp(Argv[1],"host-priority"))HostPriority();
+  else if(!strcmp(Argv[1],"efi-admission"))EfiAdmission();
   else assert(!"unknown test case");
   puts("Actual resident Core synchronous Linux entry passed");return 0;
 }

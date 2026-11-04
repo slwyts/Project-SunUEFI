@@ -30,9 +30,7 @@ class ProductBootLogLifecycleTests(unittest.TestCase):
                 target = mirror / path.relative_to(app)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.symlink_to(path)
-            (mirror / 'LateHandoff').mkdir()
-            (mirror / 'LateHandoff/PianoLateHandoff.h').write_bytes(
-                (ROOT / 'uefi/components/product-handoff/PianoLateHandoff.h').read_bytes())
+            (mirror / 'LateHandoff').symlink_to(ROOT / 'uefi/components/product-handoff', target_is_directory=True)
             (mirror / 'OsBoot').symlink_to(ROOT / 'uefi/components/os-boot', target_is_directory=True)
             (mirror / 'Components').mkdir()
             (mirror / 'Components/os-boot').symlink_to(ROOT / 'uefi/components/os-boot', target_is_directory=True)

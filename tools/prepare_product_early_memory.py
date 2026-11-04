@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bind a pinned product SEC observer; no device operation or DDR expansion."""
+"""Bind the cold SEC memory producer before the sole MemoryPeim call."""
 from pathlib import Path
 import hashlib
 import shutil
@@ -20,11 +20,15 @@ SEC_FILES={
 }
 EARLY_FILES=('PianoEarlyMemory.c','PianoEarlyMemory.h','PianoSecRead32.S',
              'PianoSmemRam.c','PianoSmemRam.h','PianoSmemDescriptor.c','PianoSmemDescriptor.h',
-             'PianoColdBootObjects.c','PianoColdBootObjects.h','PianoColdBootObjectsContract.c','PianoColdSecRead256.S','PianoFactoryPanel.h')
+             'PianoColdBootObjects.c','PianoColdBootObjects.h','PianoColdBootObjectsContract.c','PianoColdSecRead256.S','PianoFactoryPanel.h',
+             'PianoMemoryLayout.c','PianoMemoryLayout.h','PianoColdMemory.c','PianoColdMemory.h')
+EARLY_CORE_FILES=('PianoPlatformMemoryContract.c','PianoPlatformMemoryContract.h','PianoRamPartition.h')
 OBJECT_DXE_FILES={'PianoProductBootObjects.c':'uefi/core/PianoProductBootObjects.c',
                  'PianoProductBootObjects.h':'uefi/core/PianoProductBootObjects.h',
                  'PianoColdBootObjects.h':'uefi/handoff/early-memory/PianoColdBootObjects.h',
                  'PianoFactoryPanel.h':'uefi/handoff/early-memory/PianoFactoryPanel.h',
+                 'PianoColdMemory.h':'uefi/handoff/early-memory/PianoColdMemory.h',
+                 'PianoMemoryLayout.h':'uefi/handoff/early-memory/PianoMemoryLayout.h',
                  'PianoColdBootObjectsContract.c':'uefi/handoff/early-memory/PianoColdBootObjectsContract.c'}
 OBJECT_DXE_SOURCES=('PianoProductBootObjects.c','PianoColdBootObjectsContract.c')
 
@@ -39,7 +43,8 @@ def sec_inf(text):
         raise ValueError('SEC INF drift')
     text=text.replace('BASE_NAME                      = Sec','BASE_NAME                      = PianoProductSec')
     text=text.replace('9AFFB503-E643-4141-8B90-17E8588B1D35','892BCA3B-55ED-4F2B-8750-534543504941')
-    text=text.replace('  Sec.c','  Sec.c\n  PianoEarlyMemory.c\n  PianoSmemRam.c\n  PianoSmemDescriptor.c\n  PianoColdBootObjects.c\n  PianoColdBootObjectsContract.c',1)
+    text=text.replace('  Sec.c','  Sec.c\n  PianoEarlyMemory.c\n  PianoSmemRam.c\n  PianoSmemDescriptor.c\n  PianoColdBootObjects.c\n  PianoColdBootObjectsContract.c\n  PianoMemoryLayout.c\n  PianoColdMemory.c\n  PianoPlatformMemoryContract.c',1)
+    text=text.replace('[LibraryClasses]\n','[LibraryClasses]\n  FdtLib\n  BaseLib\n  MemoryMapLib\n',1)
     return text.replace('  AArch64/ArchSec.c','  PianoSecRead32.S\n  PianoColdSecRead256.S\n  AArch64/ArchSec.c',1)+tail
 
 
@@ -48,20 +53,22 @@ def sec_source(text):
     text,tail=split_source_tail(text)
     if hashlib.sha256(text.encode()).hexdigest()!=SEC_SOURCE:
         raise ValueError('SEC source drift: re-audit first MemoryPeim ordering')
-    text=text.replace('#include "Sec.h"','#include "Sec.h"\n#include "PianoEarlyMemory.h"\n#include "PianoColdBootObjects.h"',1)
+    text=text.replace('#include "Sec.h"','#include "Sec.h"\n#include "PianoEarlyMemory.h"\n#include "PianoColdBootObjects.h"\n#include "PianoColdMemory.h"',1)
     anchor='  // Locate "DXE Heap" Memory Region'
     if text.count(anchor)!=1:
         raise ValueError('SEC first memory boundary ambiguous')
-    text=text.replace(anchor,'  // Product SEC observation before the first PHIT/MMU. Failures keep\n'
-        '  // the native low map; observation never authorizes high DDR.\n'
+    text=text.replace(anchor,'  // Capture the admitted ABL tree and current occupied objects before\n'
+        '  // the first PHIT/MMU. Failed composition retains the native map.\n'
         '  PianoColdBootObjectsObserve ();\n'
-        '  PianoEarlyMemoryObserveCold ();\n\n'+anchor,1)
+        '  PianoEarlyMemoryObserveCold ();\n'
+        '  PianoColdMemoryPrepare ();\n\n'+anchor,1)
     anchor='  PrePeiSetHobList (HobList);'
     if text.count(anchor)!=1:
         raise ValueError('SEC PHIT publication boundary ambiguous')
-    text=text.replace(anchor,anchor+'\n\n  // Immutable diagnostic HOB, not RAM/resource/allocation authority.\n'
+    text=text.replace(anchor,anchor+'\n\n  // Freeze the observations and selected cold descriptor contract.\n'
         '  PianoEarlyMemoryPublishHob ();\n'
-        '  PianoColdBootObjectsPublishHob ();',1)
+        '  PianoColdBootObjectsPublishHob ();\n'
+        '  PianoColdMemoryPublishHob ();',1)
     if text.count('Status = MemoryPeim (UefiMemoryBase, UefiMemorySize);')!=1:
         raise ValueError('SEC must call the original MemoryPeim exactly once')
     return text+tail
@@ -93,6 +100,24 @@ def bind_object_sources(text):
     return text.replace('[Sources]\n','[Sources]\n'+''.join('  '+name+'\n'for name in OBJECT_DXE_SOURCES),1)
 
 
+def bind_memory_map(text):
+    """Select the static SEC contract before the sole MemoryPeim call."""
+    old='VOID GetMemoryMap (OUT EFI_MEMORY_REGION_DESCRIPTOR **Map, OUT UINT8 *Count) {\n  *Map = gMemoryDescriptor; *Count = ARRAY_SIZE (gMemoryDescriptor);\n}'
+    if text.count(old)!=1:
+        raise ValueError('Product native GetMemoryMap boundary drift')
+    new='STATIC EFI_MEMORY_REGION_DESCRIPTOR *mPianoSelectedMap;\nSTATIC UINT8 mPianoSelectedCount;\nEFI_STATUS PianoProductSelectMemoryMap(EFI_MEMORY_REGION_DESCRIPTOR *Map,UINT8 Count) {\n  if(mPianoSelectedMap||!Map||!Count||Count>=MAX_ARM_MEMORY_REGION_DESCRIPTOR_COUNT)return EFI_NOT_READY;\n  mPianoSelectedMap=Map;mPianoSelectedCount=Count;return EFI_SUCCESS;\n}\nVOID GetMemoryMap (OUT EFI_MEMORY_REGION_DESCRIPTOR **Map, OUT UINT8 *Count) {\n  *Map=mPianoSelectedMap?mPianoSelectedMap:gMemoryDescriptor;\n  *Count=mPianoSelectedMap?mPianoSelectedCount:ARRAY_SIZE(gMemoryDescriptor);\n}'
+    return text.replace(old,new,1)
+
+
+def unbind_memory_map(text):
+    original='VOID GetMemoryMap (OUT EFI_MEMORY_REGION_DESCRIPTOR **Map, OUT UINT8 *Count) {\n  *Map = gMemoryDescriptor; *Count = ARRAY_SIZE (gMemoryDescriptor);\n}'
+    bound=bind_memory_map(original)
+    if bound in text:
+        if text.count(bound)!=1:raise ValueError('Duplicate product SEC map selector')
+        return text.replace(bound,original,1)
+    return text
+
+
 def prepare(root=ROOT,target=None):
     root=Path(root);target=Path(target) if target else root/'uefi/platforms/pianoProductPkg'
     source=root/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Sec'
@@ -101,6 +126,11 @@ def prepare(root=ROOT,target=None):
     destination=target/'Sec'
     if destination.exists():
         raise ValueError('Early SEC already staged; rebuild product preparation')
+    memory_map=target/'Library/MemoryMapLib/MemoryMapLib.c'
+    # Minimal staging fixtures omit the platform library. Real product builds
+    # always carry it and bind the only actual MemoryPeim descriptor provider.
+    if memory_map.exists():
+        memory_map.write_text(bind_memory_map(memory_map.read_text()))
     dsc=target/'pianoProduct.dsc';fdf=target/'pianoProduct.fdf'
     dsc_text=dsc.read_text();fdf_text=fdf.read_text()
     original='  INF SiliciumPkg/Sec/Sec.inf'
@@ -112,6 +142,8 @@ def prepare(root=ROOT,target=None):
     (destination/'Sec.c').write_text(transformed)
     for name in EARLY_FILES:
         shutil.copyfile(root/'uefi/handoff/early-memory'/name,destination/name)
+    for name in EARLY_CORE_FILES:
+        shutil.copyfile(root/'uefi/core'/name,destination/name)
     (destination/'Sec.inf').write_text(sec_inf(inputs['Sec.inf'].decode()))
     dsc.write_text(dsc_text+'\n[Components]\n  pianoProductPkg/Sec/Sec.inf {\n'
         '    <LibraryClasses>\n'
@@ -127,6 +159,7 @@ def prepare(root=ROOT,target=None):
         inf=app/'ProductCore.inf';inf.write_text(bind_object_sources(inf.read_text()))
     staged={str(path.relative_to(target)):sha(path)for path in sorted(destination.rglob('*'))if path.is_file()}
     if app.exists():staged.update({str((app/name).relative_to(target)):sha(app/name)for name in OBJECT_DXE_FILES})
+    if memory_map.exists():staged['Library/MemoryMapLib/MemoryMapLib.c']=sha(memory_map)
     if source_inputs(source)[1]!=actual:
         raise ValueError('Original SEC sources changed during preparation')
     return {'status':'COLD_SEC_OBSERVER_BOUND_NOT_HARDWARE_VERIFIED',
@@ -136,6 +169,8 @@ def prepare(root=ROOT,target=None):
         'hob_guid':'495ec035-44a5-4f17-8750-5049414e4f31',
         'objects_hob_guid':'3025a79b-7ed3-4f6b-9050-434f4c443031',
         'bootshim_sha256':shim_sha,'objects_observation_bound':True,
+        'complete_memory_map_bound':memory_map.exists(),
+        'memory_hob_guid':'85e26af7-1b65-4805-b821-4d454d504941',
         'high_ddr_published':False,'memory_ownership_granted':False,
         'fallback':'unchanged corrected native low memory table',
         'files':staged}
@@ -151,6 +186,14 @@ def verify(root,target,record):
     expected['Sec/Sec.c']=hashlib.sha256(sec_source(inputs['Sec.c'].decode()).encode()).hexdigest()
     expected['Sec/Sec.inf']=hashlib.sha256(sec_inf(inputs['Sec.inf'].decode()).encode()).hexdigest()
     expected.update({'Sec/'+name:sha(root/'uefi/handoff/early-memory'/name)for name in EARLY_FILES})
+    expected.update({'Sec/'+name:sha(root/'uefi/core'/name)for name in EARLY_CORE_FILES})
+    memory_map=target/'Library/MemoryMapLib/MemoryMapLib.c'
+    if memory_map.exists():
+        text=memory_map.read_text();original=unbind_memory_map(text)
+        if original==text or bind_memory_map(original)!=text:raise ValueError('Product SEC complete memory map provider missing or stale')
+        expected['Library/MemoryMapLib/MemoryMapLib.c']=sha(memory_map)
+    if record.get('complete_memory_map_bound')!=memory_map.exists() or record.get('memory_hob_guid')!='85e26af7-1b65-4805-b821-4d454d504941':
+        raise ValueError('Product SEC complete memory map binding differs')
     app=target/'Applications/ProductCore'
     if app.exists():expected.update({str((app/name).relative_to(target)):sha(root/canonical)for name,canonical in OBJECT_DXE_FILES.items()})
     if record.get('files')!=expected or record.get('high_ddr_published')is not False or record.get('memory_ownership_granted')is not False:

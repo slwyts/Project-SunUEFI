@@ -29,7 +29,7 @@ static EFI_BLOCK_IO_MEDIA ParentMedia;
 static PARENT_PATH ParentPath;
 static EFI_HANDLE *HandleAllocation,*ParentHandleAllocation;
 static UINTN HandleCount,ParentHandleCount,HandleFrees,ParentFrees,VolumeChecks;
-static BOOLEAN ChangeAfterRead,ChangeBothAfterRead,ChangeParentAfterRead,ChangeInstanceAfterRead,ChangeParentInstanceAfterRead,MissingFile;
+static BOOLEAN ChangeAfterRead,ChangeBothAfterRead,ChangeParentAfterRead,ChangeInstanceAfterRead,ChangeParentInstanceAfterRead,MissingFile,CheckingPresence;
 
 static EFI_DEVICE_PATH_PROTOCOL Header(UINT8 T,UINT8 S,UINTN N){
   return (EFI_DEVICE_PATH_PROTOCOL){T,S,{(UINT8)N,(UINT8)(N>>8)}};
@@ -69,14 +69,16 @@ static EFI_STATUS EFIAPI EspFree(VOID *P){
   return Free(P);
 }
 static EFI_STATUS EFIAPI EspOpen(EFI_FILE_PROTOCOL *P,EFI_FILE_PROTOCOL **Out,CHAR16 *Path,UINT64 Mode,UINT64 Attr){
-  static CONST CHAR16 ExpectedPath[]=L"\\EFI\\Piano\\stable\\boot.img";
-  assert(!memcmp(Path,ExpectedPath,sizeof(ExpectedPath))&&Mode==EFI_FILE_MODE_READ&&!Attr);
+  static CONST CHAR16 RawPath[]=L"\\EFI\\Piano\\stable\\boot.img";
+  static CONST CHAR16 EfiPath[]=L"\\EFI\\BOOT\\BOOTAA64.EFI";
+  CONST CHAR16 *ExpectedPath=CheckingPresence?EfiPath:RawPath;
+  assert(!memcmp(Path,ExpectedPath,CheckingPresence?sizeof(EfiPath):sizeof(RawPath))&&Mode==EFI_FILE_MODE_READ&&!Attr);
   if(MissingFile){++Opens;*Out=NULL;return EFI_NOT_FOUND;}return Open(P,Out,Path,Mode,Attr);
 }
 static VOID EspSetup(VOID){
   Case=Reads=Seeks=Opens=Roots=FileCloses=RootCloses=Allocations=Frees=Closes=Calls=Infos=0;
   Slices=MemoryChecks=MemoryValidations=BufferValidations=HandleFrees=ParentFrees=VolumeChecks=0;
-  Services=TRUE;ChangeAfterRead=ChangeBothAfterRead=ChangeParentAfterRead=ChangeInstanceAfterRead=ChangeParentInstanceAfterRead=MissingFile=FALSE;
+  Services=TRUE;ChangeAfterRead=ChangeBothAfterRead=ChangeParentAfterRead=ChangeInstanceAfterRead=ChangeParentInstanceAfterRead=MissingFile=CheckingPresence=FALSE;
   HandleCount=ParentHandleCount=1;HandleAllocation=ParentHandleAllocation=NULL;Fence=NULL;
   memset(Pools,0,sizeof(Pools));Setup();gBS=&Bs;Bs.LocateHandleBuffer=Locate;Bs.HandleProtocol=EspHandle;Bs.FreePool=EspFree;Root.Open=EspOpen;
   Partition=(EFI_PARTITION_INFO_PROTOCOL){.Revision=EFI_PARTITION_INFO_PROTOCOL_REVISION,.Type=PARTITION_TYPE_GPT};
@@ -104,6 +106,10 @@ int main(void){
   assert(!Roots&&!Opens&&!Reads&&!Allocations&&PianoEspBootDiscovery()->Open==EFI_NOT_STARTED);
   EspSetup();HandleCount=257;Esp=(VOID *)0xbad;
   assert(PianoEspBootFind(&Esp)==EFI_COMPROMISED_DATA&&!Esp&&HandleFrees==1&&!Roots&&!Opens);
+  EspSetup();CheckingPresence=TRUE;
+  assert(PianoEspBootPresent()==EFI_SUCCESS&&Opens==1&&!Reads&&!Allocations&&FileCloses==1&&RootCloses==1);
+  EspSetup();CheckingPresence=MissingFile=TRUE;
+  assert(PianoEspBootPresent()==EFI_NOT_FOUND&&Opens==1&&!Reads&&!Allocations&&!FileCloses&&RootCloses==1);
   EspSetup();PIANO_ESP_BOOT_SOURCE S={0};assert(PianoEspBootLoad(&S,&Cpu)==EFI_SUCCESS);
   assert(HandleFrees==1&&Roots==1&&Opens==1&&FileCloses==1&&RootCloses==1&&!S.File.File&&!S.File.Root);
   assert(S.File.Bytes==ContentBytes&&!memcmp(S.File.Sha256,Expected,32)&&Slices>=3&&VolumeChecks==2);

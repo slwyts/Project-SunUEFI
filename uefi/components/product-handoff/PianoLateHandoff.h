@@ -12,6 +12,9 @@ typedef struct {
  EFI_STATUS (*ValidateMemory)(VOID *,CONST PIANO_LINUX_MEMORY_PROOF *);
  VOID (*FailStop)(VOID *,EFI_STATUS); // runtime-safe, must not return
  BOOLEAN (*ValidateRaw)(CONST PIANO_RAW_LINUX_REPORT *,CONST PIANO_PRODUCT_OWNERS *,EFI_HANDLE);
+ // The resident Core validates its active boot manager and the native current
+ // image chain. Called only before retirement, never on a stale-map retry.
+ EFI_STATUS (*ValidateEfiImage)(VOID *,EFI_HANDLE,CONST EFI_LOADED_IMAGE_PROTOCOL *);
 } PIANO_LATE_HANDOFF_ENV;
 typedef struct {
  UINT32 Signature;PIANO_PRODUCT_EXIT_PROTOCOL Protocol;PIANO_LATE_HANDOFF_ENV Env;

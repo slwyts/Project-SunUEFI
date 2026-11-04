@@ -23,9 +23,7 @@ class ProductCoreTests(unittest.TestCase):
             target = mirror / path.relative_to(app)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.symlink_to(path)
-        (mirror / 'LateHandoff').mkdir()
-        (mirror / 'LateHandoff/PianoLateHandoff.h').symlink_to(
-            ROOT / 'uefi/components/product-handoff/PianoLateHandoff.h')
+        (mirror / 'LateHandoff').symlink_to(ROOT / 'uefi/components/product-handoff', target_is_directory=True)
         (mirror / 'OsBoot').symlink_to(ROOT / 'uefi/components/os-boot', target_is_directory=True)
         (mirror / 'Components').mkdir()
         (mirror / 'Components/os-boot').symlink_to(ROOT / 'uefi/components/os-boot', target_is_directory=True)
@@ -66,3 +64,6 @@ class ProductCoreTests(unittest.TestCase):
 
     def test_host_priority_returns_before_retirement(self):
         self.run_case('host-priority')
+
+    def test_standard_efi_requires_actual_active_manager_descendant(self):
+        self.run_case('efi-admission')

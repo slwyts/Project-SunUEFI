@@ -19,7 +19,8 @@ EFI_STATUS PianoEspBootLoad(PIANO_ESP_BOOT_SOURCE *,CONST PIANO_CPU_INPUT_ENV *)
 // Return the unique current ESP filesystem handle after the same full partition,
 // parent and media checks, without opening or reading any file.
 EFI_STATUS PianoEspBootFind(EFI_HANDLE *Esp);
-// Check the actual boot file without loading its contents or changing media.
+// Check EFI/BOOT/BOOTAA64.EFI without loading it or changing media. The raw
+// compatibility loader above continues to use EFI/Piano/stable/boot.img.
 EFI_STATUS PianoEspBootPresent(VOID);
 typedef struct {
  EFI_STATUS Locate,Open;

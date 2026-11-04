@@ -76,15 +76,15 @@ PianoProductCoreEntry (uefi/core/PianoProductCore.c)
 
 ## ESP 启动文件与系统交接
 
-启动 Linux 时，固件在唯一的 `sunuefi_esp` 分区上加载 `/EFI/BOOT/BOOTAA64.EFI`，并保留真实的 ESP 设备句柄。systemd-boot 读取 `loader.conf`，默认直接执行 Debian 条目中的 `/EFI/Piano/LinuxBoot.efi`。完整文件布局见[启动架构](architecture.md#存储布局)。
+启动 Linux 时，固件在唯一的 `sunuefi_esp` 分区上加载 `/EFI/BOOT/BOOTAA64.EFI`，并保留真实的 ESP 设备句柄。systemd-boot 读取 `loader.conf` 和启动项。标准 EFI 启动项分别用 `linux`、`initrd`、`devicetree` 指定带 EFI stub 的 ARM64 内核、初始文件系统和设备树，由 systemd-boot 直接装载。完整文件布局见[启动架构](architecture.md#存储布局)。
 
-`LinuxBoot.efi` 通过 Runtime 协议的 APP 入口同步调用驻留核心。核心确认调用者是当前 systemd-boot 的真实子应用后，沿用 `PianoRawLinuxBoot.c` 的文件加载和内核交接：读取 `/EFI/Piano/stable/boot.img`，复制内核、设备树和 initramfs，保留运行时面板与 Gunyah 修正，再关闭 USB、存储、输入、时钟和 SMMU。
+固件通过 `EFI_DT_FIXUP_PROTOCOL` 为装载的设备树应用同次启动的面板与 Gunyah 修正，并检查保留区。Linux EFI stub 负责填写 EFI 内存图和 initrd 信息。SEC 从本次 ABL 传入的 Factory DT 读取完整 RAM，结合 SMEM、原生固件区域和冷启动对象生成内存表；新增普通 RAM 保持为 `EfiLoaderData`，不进入固件分配池。退出前再次核对真实 EFI/GCD 描述符及页表的恒等映射和缓存属性，再交给 Linux 回收。
+
+现有 Debian 镜像仍可使用 `/EFI/Piano/LinuxBoot.efi`。该应用通过 Runtime 协议的 APP 入口同步调用驻留核心。核心确认调用者是当前 systemd-boot 的真实子应用后，沿用 `PianoRawLinuxBoot.c` 的文件加载和内核交接：读取 `/EFI/Piano/stable/boot.img`，复制内核、设备树和 initramfs，保留运行时面板与 Gunyah 修正，再关闭 USB、存储、输入、时钟和 SMMU。
 
 ESP 中的 Linux `boot.img` 总容器上限为 128 MiB，打包入口 `./build.sh package` 和 `./build.sh esp` 会核对该上限。initramfs 的压缩后上限仍为 16 MiB，内核和设备树仍须满足各自的交接窗口。UEFI Fastboot 的单次 USB 下载上限保持 64 MiB，超过此大小的 Linux 容器需从 ESP 启动。
 
-源文件与内存归属仍由核心检查，`ExitBootServices` 则使用当前最内层启动应用的真实句柄和已保存的加载身份。进入资源关闭流程后出错便停止，不返回仍可能持有文件句柄的 systemd-boot。
-
-当前 EFI 内存映射只包含固件工作区，尚不是完整 DDR 映射；Linux EFI stub 会按 EFI 内存映射重新发现内存，因此该启动项使用 `efi` 调用启动应用，不直接使用 `linux`、`initrd` 或 `devicetree` 条目。这保留现有 Linux 设备树中的完整内存布局。
+两种路径的 `ExitBootServices` 都使用当前最内层启动应用的真实句柄和已保存的加载身份。标准 EFI 路径还检查该应用到当前 systemd-boot 的父链及 ESP 身份。开始关闭资源前的拒绝允许启动管理器重试其他内核；进入关闭流程后出错便停止，不能返回仍可能持有文件句柄的 systemd-boot。MapKey 变化后的重试不再进行文件操作、分配或重复关闭硬件。
 
 ## UEFI 核心代码结构
 

@@ -81,4 +81,6 @@ sunuefi_esp/
     └── entries/debian.conf
 ```
 
-systemd-boot 默认直接执行 Debian 启动项。该启动应用调用驻留核心，读取 `boot.img`、准备设备树并安全退出 ExitBootServices，最后进入 Linux。启动管理器运行时存储保持可读，内核交接前才关闭硬件。内存与退出身份的处理见 [UEFI 核心](uefi-core.md#esp-启动文件与系统交接)。
+上面的布局是现有 Debian 镜像。标准 EFI 系统也可在同一 ESP 中放置独立内核、initrd 和 DTB，在 `loader/entries/*.conf` 中分别通过 `linux`、`initrd`、`devicetree` 引用；systemd-boot 直接进入内核的 EFI stub。NixOS 使用这条标准路径，文件由 NixOS 的 systemd-boot 模块管理。
+
+Debian 启动应用继续调用驻留核心读取 `boot.img`。两种路径都在内核交接前关闭硬件，启动管理器运行时存储保持可读。内存与退出身份的处理见 [UEFI 核心](uefi-core.md#esp-启动文件与系统交接)。

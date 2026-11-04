@@ -11,6 +11,19 @@ def function(text,name):
  while depth:depth+=(text[end]=='{')-(text[end]=='}');end+=1
  return text[m.start():end]
 class LateHandoffTests(unittest.TestCase):
+ def test_actual_standard_device_tree_fixup(self):
+  inc=BASE/'MdePkg/Include';fdt=BASE/'MdePkg/Library/BaseFdtLib/libfdt/libfdt'
+  with tempfile.TemporaryDirectory(prefix='piano-dt-fixup-')as directory:
+   exe=Path(directory)/'fixup'
+   command=['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-misleading-indentation',
+    '-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-fsanitize=address,undefined','-fno-pie','-no-pie',
+    '-I'+str(inc),'-I'+str(inc/'X64'),'-I'+str(ROOT/'uefi/core'),'-I'+str(ROOT/'uefi/handoff/early-memory'),'-I'+str(fdt),
+    '-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),
+    str(ROOT/'tests/native/PianoDeviceTreeFixupTest.c'),str(ROOT/'tests/native/PianoLinuxFdtHost.c'),
+    str(ROOT/'uefi/core/PianoPanelSelection.c'),str(ROOT/'uefi/components/product-handoff/PianoDeviceTreeFixup.c')]
+   command +=[str(fdt/name)for name in ('fdt.c','fdt_ro.c','fdt_rw.c','fdt_wip.c','fdt_sw.c','fdt_check.c','fdt_empty_tree.c')]
+   subprocess.run(command+['-o',str(exe)],check=True,timeout=60)
+   subprocess.run([str(exe)],check=True,timeout=60)
  def original_sources(self):
   return {name:subprocess.check_output(['git','-C',str(BASE),'show','HEAD:'+name[len(prepare.BASE):]])for name in prepare.PINS}
  def test_original_and_installed_footer_comments_keep_exact_hooks(self):
@@ -64,6 +77,8 @@ class LateHandoffTests(unittest.TestCase):
    text=installed[dxe].decode().replace('\r\n','\n')
    mutations=(text.replace(prepare.EXIT_HOOK,'',1),text.replace(prepare.EXIT_HOOK,prepare.EXIT_HOOK*2,1),
      text.replace('MapKey, CorePianoCurrentMemoryMapKey ()','MapKey, 0'),
+     text.replace(prepare.EXIT_RESULT_HOOK,prepare.EXIT_RESULT_ORIGINAL,1),
+     text.replace(prepare.EXIT_RESULT_HOOK,prepare.EXIT_RESULT_HOOK*2,1),
      text.replace(prepare.EXIT_HOOK,'',1)+prepare.EXIT_HOOK)
    for changed in mutations:
     (root/dxe).write_text(changed)
@@ -114,7 +129,7 @@ class LateHandoffTests(unittest.TestCase):
      str(ROOT/'uefi/components/product-handoff/Mu_Basecore/MdePkg/Library/PianoProductExitLib/PianoProductExitLib.c'),
      str(ROOT/'uefi/components/os-boot/PianoCpuInput.c'),'-lcrypto','-o',str(exe)]
    subprocess.run(command,check=True,timeout=60)
-   for case in (*range(30),40,41):subprocess.run([str(exe),str(case)],check=True,timeout=60)
+   for case in (*range(30),40,41,*range(50,71)):subprocess.run([str(exe),str(case)],check=True,timeout=60)
    native=p/'native-launch';joint=list(command)
    joint[joint.index(str(ROOT/'tests/native/PianoLateHandoffTest.c'))]=str(ROOT/'tests/native/PianoNativeLaunchTest.c')
    joint[joint.index('-o')+1]=str(native)
@@ -134,10 +149,11 @@ class LateHandoffTests(unittest.TestCase):
  def test_actual_aarch64_sources_and_no_current_mu_mutation(self):
   before={name:(ROOT/name).read_bytes()for name in prepare.PINS}
   inc=BASE/'MdePkg/Include';shared=ROOT/'uefi/components/product-handoff/Mu_Basecore/MdePkg/Include'
-  for name in ('PianoLateHandoff.c','Mu_Basecore/MdePkg/Library/PianoProductExitLib/PianoProductExitLib.c','Mu_Basecore/MdePkg/Library/PianoProductExitLibNull/PianoProductExitLibNull.c'):
+  for name in ('PianoLateHandoff.c','PianoDeviceTreeFixup.c','Mu_Basecore/MdePkg/Library/PianoProductExitLib/PianoProductExitLib.c','Mu_Basecore/MdePkg/Library/PianoProductExitLibNull/PianoProductExitLibNull.c'):
    subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding',
      '-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-I'+str(inc),'-I'+str(inc/'AArch64'),
-     '-I'+str(shared),'-I'+str(ROOT/'uefi/core'),str(ROOT/'uefi/components/product-handoff'/name)],check=True)
+     '-I'+str(shared),'-I'+str(ROOT/'uefi/core'),'-I'+str(ROOT/'uefi/handoff/early-memory'),
+     '-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),str(ROOT/'uefi/components/product-handoff'/name)],check=True)
   report=prepare.prepare(apply=False);self.assertFalse(report['product_provider_bound'])
   self.assertEqual(before,{name:(ROOT/name).read_bytes()for name in prepare.PINS})
 if __name__=='__main__':unittest.main()

@@ -14,7 +14,7 @@ from prepare_product_pump import prepare as prepare_pump
 from product_payload_digest import digest_header
 from simpleinit_build_identity import inspect as inspect_simpleinit
 from prepare_gui_profile import SETUP_DSC_ADDITIONS, SETUP_FV_MODULES
-from prepare_product_early_memory import prepare as prepare_early_memory, verify as verify_early_memory
+from prepare_product_early_memory import prepare as prepare_early_memory, verify as verify_early_memory, unbind_memory_map
 from prepare_product_handoff import prepare as prepare_handoff, stage_provider, verify_provider
 import piano_display_mapping as display_mapping
 import piano_vendor_inputs as vendor_inputs
@@ -22,7 +22,7 @@ import piano_vendor_inputs as vendor_inputs
 CORE_GUID='35E0D1B5-93CE-4D6A-9A93-6ADAA3F26C40'
 OS_BOOT_SOURCE_BUDGET=128*1024*1024
 SOURCE_NAMES=(
-    'PianoProductCore.c','PianoBootOptions.c','PianoProductBootLog.c','PianoProductDisplayObserve.c','PianoDisplaySmmuObserve.c','PianoFrameBufferMappingObserve.c','PianoDisplayClockObserve.c','PianoProductDisplayOwner.c','PianoDisplayClockLease.c','PianoDisplayClockRead.c','PianoBootPolicy.c','PianoFvApplication.c','PianoProductPayload.c','PianoProductOwners.c','PianoRamPartition.c','PianoProductSmem.c',
+    'PianoProductCore.c','PianoBootOptions.c','PianoProductBootLog.c','PianoProductDisplayObserve.c','PianoDisplaySmmuObserve.c','PianoFrameBufferMappingObserve.c','PianoDisplayClockObserve.c','PianoProductDisplayOwner.c','PianoDisplayClockLease.c','PianoDisplayClockRead.c','PianoBootPolicy.c','PianoFvApplication.c','PianoProductPayload.c','PianoProductOwners.c','PianoRamPartition.c','PianoProductSmem.c','PianoProductMemory.c',
     'NativeProbe.c','PianoKeys.c','PianoFaultRecovery.c',
     'PianoSmmu.c','PianoDma.c','PianoOwnedSmmu.c','PianoIoPageTable.c',
     'PianoUfsProbe.c','PianoUfsReadOnlyDma.c','PianoUfsDmaLayout.c','PianoGpt.c','PianoReadOnlyBlock.c',
@@ -39,9 +39,9 @@ PRODUCT_COMPONENTS={
 COMPONENT_C_SOURCES=tuple(name for names in PRODUCT_COMPONENTS.values() for name in names if name.endswith('.c'))
 OS_BOOT_SOURCES=('PianoBootFileSource.c','PianoCpuImageLoan.c','PianoLinuxEfiSession.c','PianoCpuInput.c','PianoEspBootSource.c')
 OS_BOOT_HEADERS=tuple(name[:-2]+'.h' for name in OS_BOOT_SOURCES)
-LATE_HANDOFF_INF_SOURCES=('LateHandoff/PianoLateHandoff.c','LateHandoff/PianoLateHandoff.h')
+LATE_HANDOFF_INF_SOURCES=tuple('LateHandoff/'+name for name in ('PianoLateHandoff.c','PianoLateHandoff.h','PianoDeviceTreeFixup.c','PianoDeviceTreeFixup.h'))
 OS_BOOT_INF_SOURCES=tuple('Components/os-boot/'+name for name in (*OS_BOOT_SOURCES,*OS_BOOT_HEADERS))
-OBSERVATION_FAMILIES={'early-memory':('PianoSmemRam.c','PianoSmemRam.h'),
+OBSERVATION_FAMILIES={'early-memory':('PianoSmemRam.c','PianoSmemRam.h','PianoMemoryLayout.c','PianoMemoryLayout.h'),
                       'guarded-read':('PianoGuardedRead.c','PianoGuardedRead.h'),
                       'display-rail':('PianoDisplayRailObserve.c','PianoDisplayRailObserve.h','PianoDisplayNonGdscClock.c','PianoDisplayNonGdscClock.h')}
 OBSERVATION_INF_SOURCES=tuple(name for names in OBSERVATION_FAMILIES.values() for name in names)
@@ -71,7 +71,7 @@ def verify_display_mapping(root,target,record):
         raise ValueError('Product display mapping binding or readiness metadata changed')
     memory=Path(target)/'Library/MemoryMapLib/MemoryMapLib.c'
     if memory.is_symlink()or not memory.is_file():raise ValueError('Product display mapping source missing or unowned')
-    return display_mapping.verify(root,memory.read_text(),record['candidate'])
+    return display_mapping.verify(root,unbind_memory_map(memory.read_text()),record['candidate'])
 
 
 def observation_directory(root,family):

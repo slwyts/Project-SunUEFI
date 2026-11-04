@@ -158,7 +158,7 @@ EFI_STATUS PianoEspBootPresent(VOID) {
  E=Selected.Sfs->OpenVolume(Selected.Sfs,&Root);
  if(E!=EFI_SUCCESS)return E;
  if(!Root)return EFI_COMPROMISED_DATA;
- E=Root->Open(Root,&File,L"\\EFI\\Piano\\stable\\boot.img",EFI_FILE_MODE_READ,0);
+ E=Root->Open(Root,&File,L"\\EFI\\BOOT\\BOOTAA64.EFI",EFI_FILE_MODE_READ,0);
  mDiscovery.Open=E;
  if(E==EFI_SUCCESS&&!File)E=EFI_COMPROMISED_DATA;
  if(File){EFI_STATUS Close=File->Close(File);if(Close!=EFI_SUCCESS)E=Close;}
