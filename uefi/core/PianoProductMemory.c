@@ -10,7 +10,26 @@
 #include <Library/HobLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/BaseLib.h>
+#include <Library/DebugLib.h>
 #include <Library/FdtLib.h>
+typedef struct {UINT64 El,Sctlr,Tcr,Ttbr0,Ttbr1,Mair;} CPU_MAP;
+typedef struct {
+ UINTN Index;
+ UINT64 Base,Pages,Attributes;
+ UINT32 Type;
+} MEMORY_CHECK_DESCRIPTOR;
+typedef struct {
+ CONST CHAR8 *Stage;
+ EFI_STATUS Status,GcdStatus;
+ UINTN ColdIndex,OtherIndex,MapBytes,MapStride,Level,EntryIndex;
+ UINT64 Base,Bytes,Position,Table,Entry,Again,Par;
+ BOOLEAN TableKnown,ParValid;
+ MEMORY_CHECK_DESCRIPTOR Descriptor,TableDescriptor;
+ CPU_MAP Cpu,After;
+ EFI_GCD_MEMORY_SPACE_DESCRIPTOR Gcd;
+} MEMORY_CHECK_DIAGNOSTIC;
+STATIC MEMORY_CHECK_DIAGNOSTIC mCheck={.Stage="not-started",.Status=EFI_NOT_STARTED};
+STATIC BOOLEAN mChecking;
 STATIC PIANO_COLD_MEMORY_REPORT mCold;
 STATIC EFI_GUID mGuid=PIANO_COLD_MEMORY_HOB_GUID;
 STATIC EFI_STATUS mCapture=EFI_NOT_STARTED;
@@ -20,6 +39,50 @@ STATIC UINTN mCaptureIndex=MAX_UINTN,mDtbIndex=MAX_UINTN;
 STATIC BOOLEAN mBusy;
 STATIC UINT64 mMapBuffer[8192];
 STATIC UINTN mMapBytes,mMapStride;
+
+STATIC EFI_STATUS CheckResult(CONST CHAR8 *Stage,EFI_STATUS Status){
+ if(mChecking){mCheck.Stage=Stage;mCheck.Status=Status;}
+ return Status;
+}
+
+STATIC VOID CheckDescriptor(MEMORY_CHECK_DESCRIPTOR *Out,CONST EFI_MEMORY_DESCRIPTOR *Descriptor){
+ if(!mChecking)return;
+ ZeroMem(Out,sizeof(*Out));
+ Out->Index=MAX_UINTN;
+ if(!Descriptor)return;
+ Out->Index=((CONST UINT8 *)Descriptor-(CONST UINT8 *)mMapBuffer)/mMapStride;
+ Out->Base=Descriptor->PhysicalStart;
+ Out->Pages=Descriptor->NumberOfPages;
+ Out->Type=Descriptor->Type;
+ Out->Attributes=Descriptor->Attribute;
+}
+
+STATIC VOID CheckRange(UINT64 Base,UINT64 Bytes,UINTN ColdIndex){
+ if(!mChecking)return;
+ mCheck.Base=Base;mCheck.Bytes=Bytes;mCheck.ColdIndex=ColdIndex;
+}
+
+VOID PianoProductMemoryReemitDiagnostic(VOID){
+ // All values were saved at their original validation reads. In particular,
+ // replay never walks a PTE or retries a failed memory-map/CPU observation.
+ DEBUG((DEBUG_WARN,"PIANO_MEMORY_CHECK stage=%a status=%r cold=%lx other=%lx map_bytes=%lx stride=%lx\n",
+  mCheck.Stage,mCheck.Status,(UINT64)mCheck.ColdIndex,(UINT64)mCheck.OtherIndex,(UINT64)mCheck.MapBytes,(UINT64)mCheck.MapStride));
+ DEBUG((DEBUG_WARN,"PIANO_MEMORY_RANGE base=%lx bytes=%lx position=%lx\n",mCheck.Base,mCheck.Bytes,mCheck.Position));
+ DEBUG((DEBUG_WARN,"PIANO_MEMORY_DESCRIPTOR index=%lx base=%lx bytes=%lx pages=%lx type=%u attrs=%lx\n",
+  (UINT64)mCheck.Descriptor.Index,mCheck.Descriptor.Base,mCheck.Descriptor.Pages*4096,mCheck.Descriptor.Pages,mCheck.Descriptor.Type,mCheck.Descriptor.Attributes));
+ DEBUG((DEBUG_WARN,"PIANO_MEMORY_CPU el=%lx sctlr=%lx tcr=%lx ttbr0=%lx ttbr1=%lx mair=%lx\n",
+  mCheck.Cpu.El,mCheck.Cpu.Sctlr,mCheck.Cpu.Tcr,mCheck.Cpu.Ttbr0,mCheck.Cpu.Ttbr1,mCheck.Cpu.Mair));
+ DEBUG((DEBUG_WARN,"PIANO_MEMORY_CPU_AFTER el=%lx sctlr=%lx tcr=%lx ttbr0=%lx ttbr1=%lx mair=%lx\n",
+  mCheck.After.El,mCheck.After.Sctlr,mCheck.After.Tcr,mCheck.After.Ttbr0,mCheck.After.Ttbr1,mCheck.After.Mair));
+ DEBUG((DEBUG_WARN,"PIANO_MEMORY_TABLE page=%lx level=%lx slot=%lx known=%u par_valid=%u par=%lx\n",
+  mCheck.Table,(UINT64)mCheck.Level,(UINT64)mCheck.EntryIndex,mCheck.TableKnown,mCheck.ParValid,mCheck.Par));
+ DEBUG((DEBUG_WARN,"PIANO_MEMORY_TABLE_DESCRIPTOR index=%lx base=%lx pages=%lx type=%u attrs=%lx\n",
+  (UINT64)mCheck.TableDescriptor.Index,mCheck.TableDescriptor.Base,mCheck.TableDescriptor.Pages,mCheck.TableDescriptor.Type,mCheck.TableDescriptor.Attributes));
+ DEBUG((DEBUG_WARN,"PIANO_MEMORY_PTE first=%lx again=%lx\n",mCheck.Entry,mCheck.Again));
+ DEBUG((DEBUG_WARN,"PIANO_MEMORY_GCD status=%r base=%lx bytes=%lx type=%u attrs=%lx\n",
+  mCheck.GcdStatus,mCheck.Gcd.BaseAddress,mCheck.Gcd.Length,mCheck.Gcd.GcdMemoryType,mCheck.Gcd.Attributes));
+}
+
 STATIC BOOLEAN Span(UINT64 Base,UINT64 Bytes){return Bytes&&Base<=MAX_UINT64-Bytes;}
 STATIC BOOLEAN Overlap(UINT64 A,UINT64 N,UINT64 B,UINT64 Z){return A<B+Z&&B<A+N;}
 STATIC BOOLEAN Reclaimable(UINT32 Type){return Type==EfiLoaderCode||Type==EfiLoaderData||Type==EfiBootServicesCode||Type==EfiBootServicesData||Type==EfiConventionalMemory||Type==EfiACPIReclaimMemory;}
@@ -178,13 +241,30 @@ VOID PianoProductMemoryGetDiagnostic(PIANO_PRODUCT_MEMORY_DIAGNOSTIC *Report){
 }
 STATIC EFI_MEMORY_DESCRIPTOR *Descriptor(UINTN I){return (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mMapBuffer+I*mMapStride);}
 STATIC EFI_STATUS Snapshot(VOID){
- if(!Live())return EFI_NOT_READY;UINTN Key;UINT32 Version;mMapBytes=sizeof(mMapBuffer);mMapStride=0;
+ if(!Live())return CheckResult("snapshot-live",EFI_NOT_READY);
+ UINTN Key;UINT32 Version;mMapBytes=sizeof(mMapBuffer);mMapStride=0;
  EFI_STATUS S=gBS->GetMemoryMap(&mMapBytes,(EFI_MEMORY_DESCRIPTOR *)mMapBuffer,&Key,&mMapStride,&Version);
- if(S!=EFI_SUCCESS)return S;if(!Live()||Version!=EFI_MEMORY_DESCRIPTOR_VERSION||mMapStride<sizeof(EFI_MEMORY_DESCRIPTOR)||mMapStride>256||mMapBytes%mMapStride)return EFI_COMPROMISED_DATA;
- UINTN Count=mMapBytes/mMapStride;if(!Count)return EFI_NOT_READY;
- for(UINTN I=0;I<Count;++I){EFI_MEMORY_DESCRIPTOR *A=Descriptor(I);if(!A->NumberOfPages||A->NumberOfPages>MAX_UINT64/4096||!Span(A->PhysicalStart,A->NumberOfPages*4096)||(A->PhysicalStart&4095)||A->Type>=EfiMaxMemoryType)return EFI_COMPROMISED_DATA;
-  for(UINTN J=0;J<I;++J){EFI_MEMORY_DESCRIPTOR *B=Descriptor(J);if(Overlap(A->PhysicalStart,A->NumberOfPages*4096,B->PhysicalStart,B->NumberOfPages*4096))return EFI_COMPROMISED_DATA;}
- }return EFI_SUCCESS;
+ if(mChecking){mCheck.MapBytes=mMapBytes;mCheck.MapStride=mMapStride;}
+ if(S!=EFI_SUCCESS)return CheckResult("snapshot-map",S);
+ if(!Live()||Version!=EFI_MEMORY_DESCRIPTOR_VERSION||mMapStride<sizeof(EFI_MEMORY_DESCRIPTOR)||mMapStride>256||mMapBytes%mMapStride)
+  return CheckResult("snapshot-shape",EFI_COMPROMISED_DATA);
+ UINTN Count=mMapBytes/mMapStride;
+ if(!Count)return CheckResult("snapshot-empty",EFI_NOT_READY);
+
+ for(UINTN I=0;I<Count;++I){
+  EFI_MEMORY_DESCRIPTOR *A=Descriptor(I);
+  CheckDescriptor(&mCheck.Descriptor,A);
+  if(!A->NumberOfPages||A->NumberOfPages>MAX_UINT64/4096||!Span(A->PhysicalStart,A->NumberOfPages*4096)||(A->PhysicalStart&4095)||A->Type>=EfiMaxMemoryType)
+   return CheckResult("snapshot-descriptor",EFI_COMPROMISED_DATA);
+  for(UINTN J=0;J<I;++J){
+   EFI_MEMORY_DESCRIPTOR *B=Descriptor(J);
+   if(Overlap(A->PhysicalStart,A->NumberOfPages*4096,B->PhysicalStart,B->NumberOfPages*4096)){
+    if(mChecking)mCheck.OtherIndex=J;
+    return CheckResult("snapshot-overlap",EFI_COMPROMISED_DATA);
+   }
+  }
+ }
+ return EFI_SUCCESS;
 }
 STATIC EFI_MEMORY_DESCRIPTOR *At(UINT64 Address){for(UINTN I=0;I<mMapBytes/mMapStride;++I){EFI_MEMORY_DESCRIPTOR *D=Descriptor(I);if(Address>=D->PhysicalStart&&Address-D->PhysicalStart<D->NumberOfPages*4096)return D;}return NULL;}
 STATIC BOOLEAN HoldingCovers(UINT64 Base,UINT64 Bytes){
@@ -196,20 +276,21 @@ STATIC BOOLEAN HoldingCovers(UINT64 Base,UINT64 Bytes){
  }return TRUE;
 }
 STATIC EFI_STATUS Reserved(UINT64 Base,UINT64 Bytes,BOOLEAN Cma,BOOLEAN FinalTree){
- if(!Bytes)return EFI_SUCCESS;if(!Span(Base,Bytes))return EFI_COMPROMISED_DATA;
+ if(!Bytes)return EFI_SUCCESS;if(!Span(Base,Bytes))return CheckResult("reservation-span",EFI_COMPROMISED_DATA);
  for(UINTN I=0;I<mMapBytes/mMapStride;++I){EFI_MEMORY_DESCRIPTOR *D=Descriptor(I);if(!Overlap(Base,Bytes,D->PhysicalStart,D->NumberOfPages*4096))continue;
+  CheckDescriptor(&mCheck.Descriptor,D);
+  if(mChecking)mCheck.Position=MAX(Base,D->PhysicalStart);
   if(FinalTree&&Reclaimable(D->Type)){
    UINT64 Begin=MAX(Base,D->PhysicalStart),End=MIN(Base+Bytes,D->PhysicalStart+D->NumberOfPages*4096);
    // An arbitrary active low-heap allocation is not ours to give to a DT
    // reservation. Only the cold producer's still-exclusive holding span may
    // supply a new reservation; the standard allocator cannot have reused it.
-   if(D->Type!=EfiLoaderData||!HoldingCovers(Begin,End-Begin))return EFI_ACCESS_DENIED;
+   if(D->Type!=EfiLoaderData||!HoldingCovers(Begin,End-Begin))return CheckResult("reservation-owner",EFI_ACCESS_DENIED);
   }
-  else if(Cma){if(D->Type!=EfiLoaderData&&D->Type!=EfiReservedMemoryType)return EFI_ACCESS_DENIED;}
-  else if(Reclaimable(D->Type))return EFI_ACCESS_DENIED;
+  else if(Cma){if(D->Type!=EfiLoaderData&&D->Type!=EfiReservedMemoryType)return CheckResult("reservation-cma",EFI_ACCESS_DENIED);}
+  else if(Reclaimable(D->Type))return CheckResult("reservation-reclaimable",EFI_ACCESS_DENIED);
  }return EFI_SUCCESS;
 }
-typedef struct {UINT64 El,Sctlr,Tcr,Ttbr0,Ttbr1,Mair;} CPU_MAP;
 STATIC EFI_STATUS CpuMap(CPU_MAP *C){
 #ifdef PIANO_PRODUCT_MEMORY_HOST_TEST
  extern EFI_STATUS PianoMemoryHostCpu(UINT64 *);return PianoMemoryHostCpu(&C->El);
@@ -229,59 +310,94 @@ STATIC BOOLEAN CpuGeometry(CONST CPU_MAP *C){
   !(C->Tcr&(BIT7|BIT37|BIT38|BIT39|BIT40|BIT59))&&((C->Tcr>>14)&3)==0&&!(C->Ttbr0&0xfff);
 }
 STATIC EFI_STATUS TablePage(UINT64 Page){
+ if(mChecking){
+  mCheck.Table=Page;mCheck.TableKnown=FALSE;mCheck.ParValid=FALSE;
+  mCheck.Par=mCheck.Entry=mCheck.Again=0;mCheck.EntryIndex=MAX_UINTN;
+ }
  BOOLEAN Known=FALSE;
  for(UINTN I=0;I<mCold.NativeCount;++I){CONST EFI_MEMORY_REGION_DESCRIPTOR *R=&mCold.Rows[I];
   if((!AsciiStrCmp(R->Name,"MMU_PageTables")||!AsciiStrCmp(R->Name,"DXE_Heap")||!AsciiStrCmp(R->Name,"DXE_Heap_Upper"))&&
      Page>=R->Address&&Page-R->Address<=R->Length&&4096<=R->Length-(Page-R->Address))Known=TRUE;
  }
  EFI_MEMORY_DESCRIPTOR *D=At(Page);
+ if(mChecking)mCheck.TableKnown=Known;
+ CheckDescriptor(&mCheck.TableDescriptor,D);
  if(!Known||!D||D->PhysicalStart+D->NumberOfPages*4096-Page<4096||
-    (D->Type!=EfiReservedMemoryType&&D->Type!=EfiBootServicesData&&D->Type!=EfiRuntimeServicesData))return EFI_ACCESS_DENIED;
+    (D->Type!=EfiReservedMemoryType&&D->Type!=EfiBootServicesData&&D->Type!=EfiRuntimeServicesData))
+  return CheckResult("table-ledger",EFI_ACCESS_DENIED);
 #if defined(__aarch64__) && !defined(PIANO_PRODUCT_MEMORY_HOST_TEST)
  // Prove the low table page itself readable and identity mapped before its
  // first software load. No high-DDR data is accessed by this verifier.
  UINT64 Mask,Old,Par;__asm__ volatile("mrs %0, daif\n msr daifset, #15\n mrs %1, par_el1\n at s1e1r, %3\n isb\n mrs %2, par_el1\n msr par_el1, %1\n msr daif, %0"
   :"=&r"(Mask),"=&r"(Old),"=&r"(Par):"r"(Page):"memory");
- if((Par&1)||(Par&0x000ffffffffff000ULL)!=Page||(UINT8)(Par>>56)!=0xff)return EFI_NO_MAPPING;
+ if(mChecking){mCheck.Par=Par;mCheck.ParValid=TRUE;}
+ if((Par&1)||(Par&0x000ffffffffff000ULL)!=Page||(UINT8)(Par>>56)!=0xff)
+  return CheckResult("table-translation",EFI_NO_MAPPING);
 #endif
  return EFI_SUCCESS;
 }
 STATIC EFI_STATUS NormalMapping(CONST CPU_MAP *C,UINT64 Base,UINT64 Bytes){
- if(!Span(Base,Bytes))return EFI_COMPROMISED_DATA;UINTN Bits=64-(C->Tcr&63);
+ if(!Span(Base,Bytes))return CheckResult("mapping-span",EFI_COMPROMISED_DATA);
+ UINTN Bits=64-(C->Tcr&63);
  STATIC CONST UINT8 PhysicalBits[]={32,36,40,42,44,48};
  UINTN StartLevel=4-((Bits-12+8)/9);UINT64 End=Base+Bytes;
- if(End>(1ULL<<Bits)||End>(1ULL<<PhysicalBits[(C->Tcr>>32)&7]))return EFI_UNSUPPORTED;
+ if(End>(1ULL<<Bits)||End>(1ULL<<PhysicalBits[(C->Tcr>>32)&7]))
+  return CheckResult("mapping-width",EFI_UNSUPPORTED);
  while(Base<End){UINT64 Table=C->Ttbr0&0x0000fffffffff000ULL;BOOLEAN Leaf=FALSE;
-  for(UINTN Level=StartLevel;Level<4;++Level){EFI_STATUS S=TablePage(Table);if(S!=EFI_SUCCESS)return S;
+  if(mChecking)mCheck.Position=Base;
+  for(UINTN Level=StartLevel;Level<4;++Level){
+   if(mChecking)mCheck.Level=Level;
+   EFI_STATUS S=TablePage(Table);if(S!=EFI_SUCCESS)return S;
    UINTN Shift=12+9*(3-Level),Index=(Base>>Shift)&511;UINT64 Value,Again;
+   if(mChecking)mCheck.EntryIndex=Index;
 #ifdef PIANO_PRODUCT_MEMORY_HOST_TEST
    extern EFI_STATUS PianoMemoryHostTableEntry(UINT64,UINTN,UINT64 *);
-   S=PianoMemoryHostTableEntry(Table,Index,&Value);if(S!=EFI_SUCCESS)return S;
-   S=PianoMemoryHostTableEntry(Table,Index,&Again);if(S!=EFI_SUCCESS)return S;
+   S=PianoMemoryHostTableEntry(Table,Index,&Value);
+   if(S!=EFI_SUCCESS)return CheckResult("pte-read",S);
+   if(mChecking)mCheck.Entry=Value;
+   S=PianoMemoryHostTableEntry(Table,Index,&Again);
+   if(S!=EFI_SUCCESS)return CheckResult("pte-repeat-read",S);
 #else
    volatile UINT64 *Entry=(volatile UINT64 *)(UINTN)(Table+Index*8);Value=*Entry;Again=*Entry;
 #endif
-   if(Value!=Again)return EFI_NOT_READY;UINTN Kind=Value&3;
+   if(mChecking){mCheck.Entry=Value;mCheck.Again=Again;}
+   if(Value!=Again)return CheckResult("pte-changed",EFI_NOT_READY);
+   UINTN Kind=Value&3;
    if(Level<3&&Kind==3){Table=Value&0x0000fffffffff000ULL;continue;}
-   if((Level==0)||(Level==3?Kind!=3:Kind!=1)||!(Value&BIT10))return EFI_NO_MAPPING;
+   if((Level==0)||(Level==3?Kind!=3:Kind!=1)||!(Value&BIT10))
+    return CheckResult("pte-leaf",EFI_NO_MAPPING);
    UINT64 Block=1ULL<<Shift,Mask=Block-1,Physical=(Value&0x0000fffffffff000ULL&~Mask)|(Base&Mask);
-   if(Physical!=Base||((C->Mair>>(((Value>>2)&7)*8))&255)!=0xff)return EFI_NO_MAPPING;
+   if(Physical!=Base||((C->Mair>>(((Value>>2)&7)*8))&255)!=0xff)
+    return CheckResult("pte-identity-cache",EFI_NO_MAPPING);
    Base=MIN(End,(Base&~Mask)+Block);Leaf=TRUE;break;
-  }if(!Leaf)return EFI_NO_MAPPING;
+  }if(!Leaf)return CheckResult("pte-no-leaf",EFI_NO_MAPPING);
  }return EFI_SUCCESS;
 }
 STATIC EFI_STATUS FullMap(UINT64 *Normal){
  EFI_STATUS S;*Normal=0;
- CPU_MAP Cpu,After;S=CpuMap(&Cpu);if(S!=EFI_SUCCESS)return S;if(!CpuGeometry(&Cpu))return EFI_UNSUPPORTED;
+ CPU_MAP Cpu={0},After={0};
+ S=CpuMap(&Cpu);
+ if(mChecking)mCheck.Cpu=Cpu;
+ if(S!=EFI_SUCCESS)return CheckResult("cpu-read",S);
+ if(!CpuGeometry(&Cpu))return CheckResult("cpu-geometry",EFI_UNSUPPORTED);
  // Newly described normal DDR remains the producer's LoaderData allocation.
  // It is not silently made Conventional, even when absent from legacy SMEM.
  for(UINTN I=mCold.NativeCount;I<mCold.Count;++I){CONST EFI_MEMORY_REGION_DESCRIPTOR *R=&mCold.Rows[I];UINT64 Position=R->Address,End=Position+R->Length;
-  while(Position<End){EFI_MEMORY_DESCRIPTOR *D=At(Position);if(!D||D->Type!=(UINT32)R->MemoryType)return EFI_NOT_READY;Position=MIN(End,D->PhysicalStart+D->NumberOfPages*4096);}
+  CheckRange(R->Address,R->Length,I);
+  while(Position<End){
+   EFI_MEMORY_DESCRIPTOR *D=At(Position);CheckDescriptor(&mCheck.Descriptor,D);
+   if(mChecking)mCheck.Position=Position;
+   if(!D||D->Type!=(UINT32)R->MemoryType)return CheckResult("added-row-type",EFI_NOT_READY);
+   Position=MIN(End,D->PhysicalStart+D->NumberOfPages*4096);
+  }
  }
  for(UINTN I=0;I<mCold.NativeCount;++I){CONST EFI_MEMORY_REGION_DESCRIPTOR *R=&mCold.Rows[I];
   if(R->MemoryType==EfiRuntimeServicesCode||R->MemoryType==EfiRuntimeServicesData){
+   CheckRange(R->Address,R->Length,I);
    for(UINT64 Position=R->Address,End=Position+R->Length;Position<End;){EFI_MEMORY_DESCRIPTOR *D=At(Position);
-    if(!D||(D->Type!=EfiRuntimeServicesCode&&D->Type!=EfiRuntimeServicesData))return EFI_NOT_READY;
+    CheckDescriptor(&mCheck.Descriptor,D);
+    if(mChecking)mCheck.Position=Position;
+    if(!D||(D->Type!=EfiRuntimeServicesCode&&D->Type!=EfiRuntimeServicesData))return CheckResult("runtime-row-type",EFI_NOT_READY);
     Position=MIN(End,D->PhysicalStart+D->NumberOfPages*4096);
    }
   }
@@ -290,43 +406,65 @@ STATIC EFI_STATUS FullMap(UINT64 *Normal){
  // excluded owners may be absent from GetMemoryMap; an unexplained hole is
  // not silently treated as Reserved or as a successful full-DDR description.
  for(UINTN I=0;I<mCold.Layout.RamCount;++I){CONST PIANO_MEMORY_SPAN *R=&mCold.Layout.Ram[I];
-  if(R->Base>MAX_UINT64-4095)return EFI_COMPROMISED_DATA;
+  CheckRange(R->Base,R->Bytes,MAX_UINTN);
+  if(R->Base>MAX_UINT64-4095)return CheckResult("ram-alignment",EFI_COMPROMISED_DATA);
   UINT64 Position=(R->Base+4095)&~4095ULL,End=(R->Base+R->Bytes)&~4095ULL;
   while(Position<End){EFI_MEMORY_DESCRIPTOR *D=At(Position);UINT64 Next=Position;
+   CheckDescriptor(&mCheck.Descriptor,D);
+   if(mChecking)mCheck.Position=Position;
    if(D)Next=D->PhysicalStart+D->NumberOfPages*4096;
    else for(UINTN J=0;J<mCold.NativeCount;++J){CONST EFI_MEMORY_REGION_DESCRIPTOR *N=&mCold.Rows[J];
     if((N->MemoryType==EfiReservedMemoryType||N->HobOption==NoHob||N->ResourceType!=SYS_MEM)&&Position>=N->Address&&Position-N->Address<N->Length)Next=MAX(Next,N->Address+N->Length);
    }
-   if(Next==Position)return EFI_NOT_READY;Position=MIN(Next,End);
+   if(Next==Position)return CheckResult("ram-hole",EFI_NOT_READY);Position=MIN(Next,End);
   }
  }
- for(UINTN I=0;I<mCold.Layout.ReservedCount;++I){CONST PIANO_MEMORY_SPAN *R=&mCold.Layout.Fixed[I];S=Reserved(R->Base,R->Bytes,(R->Flags&PIANO_MEMORY_LAYOUT_CMA)!=0,FALSE);if(S!=EFI_SUCCESS)return S;}
+ for(UINTN I=0;I<mCold.Layout.ReservedCount;++I){CONST PIANO_MEMORY_SPAN *R=&mCold.Layout.Fixed[I];CheckRange(R->Base,R->Bytes,MAX_UINTN);S=Reserved(R->Base,R->Bytes,(R->Flags&PIANO_MEMORY_LAYOUT_CMA)!=0,FALSE);if(S!=EFI_SUCCESS)return S;}
  // Every fixed/unknown/cold owner represented as Reserved stays excluded.
- for(UINTN I=0;I<mCold.Count;++I){CONST EFI_MEMORY_REGION_DESCRIPTOR *R=&mCold.Rows[I];if(R->MemoryType==EfiReservedMemoryType){S=Reserved(R->Address,R->Length,FALSE,FALSE);if(S!=EFI_SUCCESS)return S;}}
+ for(UINTN I=0;I<mCold.Count;++I){CONST EFI_MEMORY_REGION_DESCRIPTOR *R=&mCold.Rows[I];if(R->MemoryType==EfiReservedMemoryType){CheckRange(R->Address,R->Length,I);S=Reserved(R->Address,R->Length,FALSE,FALSE);if(S!=EFI_SUCCESS)return S;}}
  for(UINTN I=0;I<mMapBytes/mMapStride;++I){EFI_MEMORY_DESCRIPTOR *D=Descriptor(I);UINT64 Bytes=D->NumberOfPages*4096;
+  CheckRange(D->PhysicalStart,Bytes,MAX_UINTN);
+  CheckDescriptor(&mCheck.Descriptor,D);
   BOOLEAN Runtime=D->Type==EfiRuntimeServicesCode||D->Type==EfiRuntimeServicesData;
-  if(((D->Attribute&EFI_MEMORY_RUNTIME)!=0)!=Runtime)return EFI_COMPROMISED_DATA;
+  if(((D->Attribute&EFI_MEMORY_RUNTIME)!=0)!=Runtime)return CheckResult("runtime-attribute",EFI_COMPROMISED_DATA);
   if(!Reclaimable(D->Type)&&!Runtime)continue;
-  if(!LayoutCovers(&mCold.Layout,D->PhysicalStart,Bytes)||(D->Attribute&EFI_MEMORY_RP)||(D->Attribute&(EFI_MEMORY_UC|EFI_MEMORY_WC|EFI_MEMORY_WT|EFI_MEMORY_WB))!=EFI_MEMORY_WB)return EFI_NOT_READY;
+  if(!LayoutCovers(&mCold.Layout,D->PhysicalStart,Bytes)||(D->Attribute&EFI_MEMORY_RP)||(D->Attribute&(EFI_MEMORY_UC|EFI_MEMORY_WC|EFI_MEMORY_WT|EFI_MEMORY_WB))!=EFI_MEMORY_WB)
+   return CheckResult("descriptor-ram-cache",EFI_NOT_READY);
   S=NormalMapping(&Cpu,D->PhysicalStart,Bytes);if(S!=EFI_SUCCESS)return S;
   for(UINT64 Position=D->PhysicalStart,End=Position+Bytes;Position<End;){EFI_GCD_MEMORY_SPACE_DESCRIPTOR G={0};S=gDS->GetMemorySpaceDescriptor(Position,&G);
-   if(S!=EFI_SUCCESS)return S;if(!Live()||G.GcdMemoryType!=EfiGcdMemoryTypeSystemMemory||!Span(G.BaseAddress,G.Length)||Position<G.BaseAddress||Position-G.BaseAddress>=G.Length||(G.Attributes&EFI_MEMORY_RP)||(G.Attributes&(EFI_MEMORY_UC|EFI_MEMORY_WC|EFI_MEMORY_WT|EFI_MEMORY_WB))!=EFI_MEMORY_WB)return EFI_NOT_READY;
+   if(mChecking){mCheck.Position=Position;mCheck.GcdStatus=S;mCheck.Gcd=G;}
+   if(S!=EFI_SUCCESS)return CheckResult("gcd-read",S);
+   if(!Live()||G.GcdMemoryType!=EfiGcdMemoryTypeSystemMemory||!Span(G.BaseAddress,G.Length)||Position<G.BaseAddress||Position-G.BaseAddress>=G.Length||(G.Attributes&EFI_MEMORY_RP)||(G.Attributes&(EFI_MEMORY_UC|EFI_MEMORY_WC|EFI_MEMORY_WT|EFI_MEMORY_WB))!=EFI_MEMORY_WB)
+    return CheckResult("gcd-range-cache",EFI_NOT_READY);
    Position=MIN(End,G.BaseAddress+G.Length);
   }
-  if(Reclaimable(D->Type)){if(*Normal>MAX_UINT64-Bytes)return EFI_COMPROMISED_DATA;*Normal+=Bytes;}
- }S=CpuMap(&After);if(S!=EFI_SUCCESS)return S;if(CompareMem(&Cpu,&After,sizeof(Cpu)))return EFI_NOT_READY;
- return *Normal?EFI_SUCCESS:EFI_NOT_READY;
+  if(Reclaimable(D->Type)){if(*Normal>MAX_UINT64-Bytes)return CheckResult("normal-overflow",EFI_COMPROMISED_DATA);*Normal+=Bytes;}
+ }
+ S=CpuMap(&After);
+ if(mChecking)mCheck.After=After;
+ if(S!=EFI_SUCCESS)return CheckResult("cpu-after-read",S);
+ if(CompareMem(&Cpu,&After,sizeof(Cpu)))return CheckResult("cpu-changed",EFI_NOT_READY);
+ return *Normal?EFI_SUCCESS:CheckResult("normal-empty",EFI_NOT_READY);
 }
 EFI_STATUS PianoProductMemoryCheck(VOID *Context,PIANO_LINUX_MEMORY_PROOF *Proof){
  (VOID)Context;if(!Proof)return EFI_INVALID_PARAMETER;ZeroMem(Proof,sizeof(*Proof));Proof->Revision=1;Proof->Status=EFI_NOT_READY;
- if(mBusy)return Proof->Status=EFI_ALREADY_STARTED;mBusy=TRUE;EFI_STATUS S=Capture();UINT64 Normal=0;
+ if(mBusy)return Proof->Status=EFI_ALREADY_STARTED;
+ mBusy=TRUE;mChecking=TRUE;
+ ZeroMem(&mCheck,sizeof(mCheck));
+ mCheck.Stage="capture";mCheck.Status=mCheck.GcdStatus=EFI_NOT_STARTED;
+ mCheck.ColdIndex=mCheck.OtherIndex=mCheck.Level=mCheck.EntryIndex=MAX_UINTN;
+ mCheck.Descriptor.Index=mCheck.TableDescriptor.Index=MAX_UINTN;
+ EFI_STATUS S=Capture();UINT64 Normal=0;
+ if(S!=EFI_SUCCESS)CheckResult("capture",S);
  if(S==EFI_SUCCESS)S=Snapshot();if(S==EFI_SUCCESS)S=FullMap(&Normal);
  if(S==EFI_SUCCESS){Proof->BootEpoch=mCold.BootEpoch;Proof->DramBytes=mCold.Layout.DramBytes;Proof->NormalBytes=Normal;
   // These follow the independent range, reservation, allocation and live
   // permission checks above. Dynamic DT requests are future memblock work;
   // there is no fabricated UEFI placement or high-memory allocator transfer.
   Proof->FullDdr=Proof->FixedReservations=Proof->DynamicReservations=Proof->RuntimeRegions=Proof->CacheVerified=Proof->OwnershipVerified=TRUE;
- }Proof->Status=S;mBusy=FALSE;return S;
+ }
+ if(S==EFI_SUCCESS)CheckResult("ready",S);
+ Proof->Status=S;mChecking=FALSE;mBusy=FALSE;return S;
 }
 EFI_STATUS PianoProductMemoryValidate(VOID *Context,CONST PIANO_LINUX_MEMORY_PROOF *Proof){
  if(!Proof)return EFI_INVALID_PARAMETER;PIANO_LINUX_MEMORY_PROOF Fresh;EFI_STATUS S=PianoProductMemoryCheck(Context,&Fresh);if(S!=EFI_SUCCESS)return S;

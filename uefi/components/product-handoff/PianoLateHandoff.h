@@ -16,6 +16,15 @@ typedef struct {
  // image chain. Called only before retirement, never on a stale-map retry.
  EFI_STATUS (*ValidateEfiImage)(VOID *,EFI_HANDLE,CONST EFI_LOADED_IMAGE_PROTOCOL *);
 } PIANO_LATE_HANDOFF_ENV;
+// Latest provider entry and the first check that refused it. These values are
+// diagnostic only; no saved status substitutes for a fresh handoff check.
+typedef struct {
+ CONST CHAR8 *Stage;
+ EFI_STATUS Status,Result;
+ EFI_HANDLE Image;
+ PIANO_PRODUCT_EXIT_PHASE Phase;
+ UINT32 EnterCalls,ExitCalls,RetireCalls;
+} PIANO_LATE_HANDOFF_DIAGNOSTIC;
 typedef struct {
  UINT32 Signature;PIANO_PRODUCT_EXIT_PROTOCOL Protocol;PIANO_LATE_HANDOFF_ENV Env;
  EFI_HANDLE ProtocolHandle,Image;CONST EFI_LOADED_IMAGE_PROTOCOL *Identity;
@@ -25,7 +34,11 @@ typedef struct {
  UINT32 ExitCalls,RetireCalls;UINTN CallerMapKey;
  BOOLEAN Busy,Installed,Retained;
   BOOLEAN RawMode,ResetMode;CONST PIANO_RAW_LINUX_REPORT *Raw;PIANO_RAW_LINUX_REPORT RawSnapshot;
+ PIANO_LATE_HANDOFF_DIAGNOSTIC Diagnostic;
 } PIANO_LATE_HANDOFF;
+// Replay saved CPU/RAM state only: no protocol lookup, memory-map capture or
+// Boot Services call. The caller owns the lifetime of State and its console.
+VOID PianoLateHandoffReemitDiagnostic(CONST PIANO_LATE_HANDOFF *State);
 // Driver-lifetime singleton Root authority. Initialize/install once, then Arm
 // the actual selected loaded child before StartImage; default remains unarmed.
 EFI_STATUS PianoLateHandoffInitialize(PIANO_LATE_HANDOFF *,CONST PIANO_LATE_HANDOFF_ENV *);

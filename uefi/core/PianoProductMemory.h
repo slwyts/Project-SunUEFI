@@ -27,6 +27,8 @@ typedef struct {
 } PIANO_PRODUCT_MEMORY_DIAGNOSTIC;
 
 VOID PianoProductMemoryGetDiagnostic(PIANO_PRODUCT_MEMORY_DIAGNOSTIC *Report);
+// Replay the latest saved live-map check; no fresh map, CPU or table reads.
+VOID PianoProductMemoryReemitDiagnostic(VOID);
 
 // Check the cold producer's map against the live EFI allocation ledger. These
 // functions allocate no pages and never convert or release occupied memory.

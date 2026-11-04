@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #undef NULL
@@ -27,9 +28,53 @@ VOID *EFIAPI ZeroMem(VOID *D,UINTN N){return memset(D,0,N);}
 INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
 INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
 UINTN EFIAPI AsciiStrLen(CONST CHAR8 *A){return strlen(A);}
-BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
-BOOLEAN EFIAPI DebugPrintLevelEnabled(CONST UINTN L){(void)L;return FALSE;}
-VOID EFIAPI DebugPrint(UINTN L,CONST CHAR8 *F,...){(void)L;(void)F;}
+static BOOLEAN Replaying;
+static UINTN CpuReads,TableReads,MapReads,GcdReads,UnstableReads;
+static CONST CHAR8 *ReplayStage;
+static EFI_STATUS ReplayStatus,ReplayGcdStatus;
+static UINT64 ReplayDescriptorBase,ReplayDescriptorPages,ReplayDescriptorAttributes;
+static UINT32 ReplayDescriptorType;
+static UINT64 ReplayCpu[6],ReplayTable,ReplaySlot,ReplayPte,ReplayAgain,ReplayGcdAttributes;
+BOOLEAN EFIAPI DebugPrintEnabled(VOID){return Replaying;}
+BOOLEAN EFIAPI DebugPrintLevelEnabled(CONST UINTN L){(void)L;return Replaying;}
+VOID EFIAPI DebugPrint(UINTN L,CONST CHAR8 *F,...){
+ (void)L;
+ assert(Replaying);
+ va_list Arguments;va_start(Arguments,F);
+ if(strstr(F,"PIANO_MEMORY_CHECK stage=")){
+  ReplayStage=va_arg(Arguments,CONST CHAR8 *);
+  ReplayStatus=va_arg(Arguments,EFI_STATUS);
+ }else if(strstr(F,"PIANO_MEMORY_DESCRIPTOR index=")){
+  (void)va_arg(Arguments,UINT64);
+  ReplayDescriptorBase=va_arg(Arguments,UINT64);
+  (void)va_arg(Arguments,UINT64);
+  ReplayDescriptorPages=va_arg(Arguments,UINT64);
+  ReplayDescriptorType=va_arg(Arguments,UINT32);
+  ReplayDescriptorAttributes=va_arg(Arguments,UINT64);
+ }else if(strstr(F,"PIANO_MEMORY_CPU el=")){
+  for(UINTN I=0;I<ARRAY_SIZE(ReplayCpu);++I)ReplayCpu[I]=va_arg(Arguments,UINT64);
+ }else if(strstr(F,"PIANO_MEMORY_TABLE page=")){
+  ReplayTable=va_arg(Arguments,UINT64);
+  (void)va_arg(Arguments,UINT64);
+  ReplaySlot=va_arg(Arguments,UINT64);
+ }else if(strstr(F,"PIANO_MEMORY_PTE first=")){
+  ReplayPte=va_arg(Arguments,UINT64);ReplayAgain=va_arg(Arguments,UINT64);
+ }else if(strstr(F,"PIANO_MEMORY_GCD status=")){
+  ReplayGcdStatus=va_arg(Arguments,EFI_STATUS);
+  (void)va_arg(Arguments,UINT64);(void)va_arg(Arguments,UINT64);(void)va_arg(Arguments,UINT32);
+  ReplayGcdAttributes=va_arg(Arguments,UINT64);
+ }
+ va_end(Arguments);
+}
+
+static VOID ReplayCheck(CONST CHAR8 *Stage,EFI_STATUS Status){
+ UINTN Cpu=CpuReads,Tables=TableReads,Maps=MapReads,Gcd=GcdReads;
+ ReplayStage=NULL;Replaying=TRUE;
+ PianoProductMemoryReemitDiagnostic();
+ Replaying=FALSE;
+ assert(ReplayStage&&!strcmp(ReplayStage,Stage)&&ReplayStatus==Status);
+ assert(CpuReads==Cpu&&TableReads==Tables&&MapReads==Maps&&GcdReads==Gcd);
+}
 static PIANO_COLD_BOOT_OBJECT_REPORT Objects;
 static PIANO_EARLY_MEMORY_REPORT Early;
 static struct {EFI_HOB_GUID_TYPE H;PIANO_COLD_MEMORY_REPORT R;} MemoryHob;
@@ -40,8 +85,8 @@ static EFI_MEMORY_DESCRIPTOR Map[256];static UINTN MapCount,Case,Layouts,Protoco
 static VOID *Tree;static UINT32 TreeBytes;
 static BOOLEAN Selected,Published;
 static UINT64 PageTable[512];
-EFI_STATUS PianoMemoryHostCpu(UINT64 *C){C[0]=4;C[1]=5;C[2]=28ULL|(3ULL<<32);C[3]=0xa7602000;C[4]=0;C[5]=0xff00;return EFI_SUCCESS;}
-EFI_STATUS PianoMemoryHostTableEntry(UINT64 Table,UINTN Index,UINT64 *Value){assert(Table==0xa7602000&&Index<512);*Value=PageTable[Index];return EFI_SUCCESS;}
+EFI_STATUS PianoMemoryHostCpu(UINT64 *C){CpuReads++;C[0]=4;C[1]=5;C[2]=28ULL|(3ULL<<32);C[3]=Case==22?0xa8000000:0xa7602000;C[4]=0;C[5]=0xff00;return EFI_SUCCESS;}
+EFI_STATUS PianoMemoryHostTableEntry(UINT64 Table,UINTN Index,UINT64 *Value){TableReads++;assert(Table==0xa7602000&&Index<512);*Value=PageTable[Index];if(Case==20&&Index==52&&(UnstableReads++&1))*Value^=BIT11;return EFI_SUCCESS;}
 static EFI_BOOT_SERVICES Boot;static EFI_SYSTEM_TABLE System;static EFI_DXE_SERVICES Dxe;
 EFI_BOOT_SERVICES *gBS=&Boot;EFI_SYSTEM_TABLE *gST=&System;EFI_DXE_SERVICES *gDS=&Dxe;
 static EFI_STATUS ReadTree(VOID *C,UINT32 At,UINTN N,VOID *Out){assert(At<=TreeBytes&&N<=TreeBytes-At&&N<=256);memcpy(Out,(UINT8 *)C+At,N);return EFI_SUCCESS;}
@@ -59,8 +104,9 @@ VOID *EFIAPI GetNextGuidHob(CONST EFI_GUID *G,CONST VOID *H){(void)G;(void)H;ret
 static VOID Le32(UINT8 *P,UINT32 V){for(UINTN I=0;I<4;I++)P[I]=(UINT8)(V>>(I*8));}
 static VOID Be64(UINT8 *P,UINT64 V){for(UINTN I=0;I<8;I++)P[I]=(UINT8)(V>>(56-I*8));}
 static VOID Le64(UINT8 *P,UINT64 V){Le32(P,(UINT32)V);Le32(P+4,(UINT32)(V>>32));}
-static EFI_STATUS EFIAPI GetMap(UINTN *Bytes,EFI_MEMORY_DESCRIPTOR *Out,UINTN *Key,UINTN *Stride,UINT32 *Version){UINTN Need=MapCount*sizeof(*Map);*Stride=sizeof(*Map);*Version=EFI_MEMORY_DESCRIPTOR_VERSION;*Key=1;if(*Bytes<Need){*Bytes=Need;return EFI_BUFFER_TOO_SMALL;}memcpy(Out,Map,Need);*Bytes=Need;return EFI_SUCCESS;}
+static EFI_STATUS EFIAPI GetMap(UINTN *Bytes,EFI_MEMORY_DESCRIPTOR *Out,UINTN *Key,UINTN *Stride,UINT32 *Version){MapReads++;UINTN Need=MapCount*sizeof(*Map);*Stride=sizeof(*Map);*Version=Case==21?0:EFI_MEMORY_DESCRIPTOR_VERSION;*Key=1;if(*Bytes<Need){*Bytes=Need;return EFI_BUFFER_TOO_SMALL;}memcpy(Out,Map,Need);*Bytes=Need;return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI GetGcd(EFI_PHYSICAL_ADDRESS At,EFI_GCD_MEMORY_SPACE_DESCRIPTOR *D){
+ GcdReads++;
  for(UINTN I=0;I<MapCount;I++)if(At>=Map[I].PhysicalStart&&At-Map[I].PhysicalStart<Map[I].NumberOfPages*4096){*D=(EFI_GCD_MEMORY_SPACE_DESCRIPTOR){.BaseAddress=Map[I].PhysicalStart,.Length=Map[I].NumberOfPages*4096,.GcdMemoryType=EfiGcdMemoryTypeSystemMemory,.Attributes=Case==6?EFI_MEMORY_WT:EFI_MEMORY_WB};return EFI_SUCCESS;}return EFI_NOT_FOUND;
 }
 static EFI_STATUS EFIAPI Locate(EFI_GUID *G,VOID *R,VOID **Out){(void)G;(void)R;ProtocolLookups++;*Out=NULL;return EFI_NOT_FOUND;}
@@ -117,19 +163,44 @@ static VOID Run(VOID){
  if(Case==5)for(UINTN I=0;I<MapCount;++I)if(Map[I].PhysicalStart<=0xd00000000ULL&&0xd00000000ULL-Map[I].PhysicalStart<Map[I].NumberOfPages*4096&&Map[I].Type==EfiLoaderData){Map[I].Type=EfiConventionalMemory;break;}
  if(Case==7)PageTable[52]=0;
  if(Case==10)PageTable[52]&=~(7ULL<<2);if(Case==11)PageTable[52]+=1ULL<<30;
+ if(Case==19)Map[MapCount++]=(EFI_MEMORY_DESCRIPTOR){.Type=EfiMemoryMappedIO,.PhysicalStart=0x70000000,.NumberOfPages=1,.Attribute=EFI_MEMORY_RUNTIME|EFI_MEMORY_UC};
  PIANO_LINUX_MEMORY_PROOF Proof;S=PianoProductMemoryCheck(NULL,&Proof);
  if(Case==17||Case==18){
   assert(S==EFI_NOT_READY&&!Proof.FullDdr);
+  ReplayCheck("capture",S);
   PianoProductMemoryGetDiagnostic(&Diagnostic);
   assert(Diagnostic.CaptureStatus==S&&!strcmp(Diagnostic.CaptureStage,Case==17?"cold-status":"cold-crc"));
   assert(Diagnostic.ColdHobStatus==(Case==17?EFI_SUCCESS:EFI_COMPROMISED_DATA));
   assert(Diagnostic.ColdStatus==(Case==17?EFI_NOT_READY:EFI_SUCCESS));
   return;
  }
- if((Case>=4&&Case<=7)||Case==10||Case==11){assert(S!=EFI_SUCCESS&&!Proof.FullDdr);return;}
+ if((Case>=4&&Case<=7)||Case==10||Case==11){
+  assert(S!=EFI_SUCCESS&&!Proof.FullDdr);
+  CONST CHAR8 *Stage=Case==4?"capture":Case==5?"added-row-type":Case==6?"gcd-range-cache":Case==7?"pte-leaf":"pte-identity-cache";
+  ReplayCheck(Stage,S);
+  if(Case==5)assert(ReplayDescriptorType==EfiConventionalMemory&&ReplayDescriptorPages);
+  if(Case==6)assert(ReplayGcdStatus==EFI_SUCCESS&&ReplayGcdAttributes==EFI_MEMORY_WT);
+  if(Case==7||Case==10||Case==11){
+   assert(ReplayTable==0xa7602000&&ReplaySlot==52&&ReplayPte==ReplayAgain);
+   assert(ReplayCpu[0]==4&&ReplayCpu[2]==(28ULL|(3ULL<<32))&&ReplayCpu[5]==0xff00);
+  }
+  return;
+ }
+ if(Case>=19){
+  assert(S!=EFI_SUCCESS&&!Proof.FullDdr);
+  ReplayCheck(Case==19?"runtime-attribute":Case==20?"pte-changed":Case==21?"snapshot-shape":"table-ledger",S);
+  if(Case==19)assert(S==EFI_COMPROMISED_DATA&&ReplayDescriptorBase==0x70000000&&ReplayDescriptorType==EfiMemoryMappedIO&&ReplayDescriptorAttributes==(EFI_MEMORY_RUNTIME|EFI_MEMORY_UC));
+  if(Case==20)assert(S==EFI_NOT_READY&&ReplayPte!=ReplayAgain&&ReplaySlot==52);
+  if(Case==21)assert(S==EFI_COMPROMISED_DATA&&!CpuReads&&!TableReads&&!GcdReads);
+  if(Case==22)assert(S==EFI_ACCESS_DENIED&&ReplayTable==0xa8000000&&!TableReads);
+  return;
+ }
  assert(S==EFI_SUCCESS&&Proof.FullDdr&&Proof.OwnershipVerified&&Proof.NormalBytes<Proof.DramBytes&&!ProtocolLookups);
+ ReplayCheck("ready",EFI_SUCCESS);
  assert(PianoProductMemoryValidate(NULL,&Proof)==EFI_SUCCESS);
  assert(PianoProductMemoryValidateDtb(Tree,TreeBytes)==EFI_SUCCESS);
+ // The separate DTB snapshot must not erase the last complete live-map check.
+ ReplayCheck("ready",EFI_SUCCESS);
  if(Case==8){UINTN I;for(I=0;I<MapCount;++I)if(Map[I].Type==EfiConventionalMemory)break;assert(I<MapCount);EFI_MEMORY_DESCRIPTOR Rest=Map[I];assert(Rest.NumberOfPages>1);Map[I].Type=EfiLoaderData;Map[I].NumberOfPages=1;Rest.PhysicalStart+=4096;Rest.NumberOfPages--;Map[MapCount++]=Rest;assert(PianoProductMemoryValidate(NULL,&Proof)==EFI_SUCCESS);}
  if(Case==12||Case==13){UINT64 Base=0;UINTN I;
   for(I=0;I<MapCount;++I)if((Case==12&&Map[I].Type==EfiConventionalMemory)||(Case==13&&Map[I].Type==EfiLoaderData&&Map[I].PhysicalStart>=0xa00000000ULL)){Base=Map[I].PhysicalStart;break;}
@@ -144,4 +215,4 @@ static VOID Run(VOID){
  }
  if(Case==9){UINT32 Struct=((UINT8 *)Tree)[8]<<24|((UINT8 *)Tree)[9]<<16|((UINT8 *)Tree)[10]<<8|((UINT8 *)Tree)[11];((UINT8 *)Tree)[Struct]^=1;assert(PianoProductMemoryValidateDtb(Tree,TreeBytes)!=EFI_SUCCESS);}
 }
-int main(int Argc,char **Argv){assert(Argc==2);FILE *F=fopen(Argv[1],"rb");assert(F);fseek(F,0,SEEK_END);TreeBytes=(UINT32)ftell(F);rewind(F);Tree=malloc(TreeBytes);assert(fread(Tree,1,TreeBytes,F)==TreeBytes);fclose(F);for(Case=0;Case<19;Case++){pid_t P=fork();assert(P>=0);if(!P){Run();_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status)||WEXITSTATUS(Status)){fprintf(stderr,"cold-memory case %lu failed\n",(unsigned long)Case);return 1;}}free(Tree);puts("Factory 24GB source vs legacy 16GB SMEM: actual cold producer, reserved unknown records, immutable HOB/epoch, real live-map/cache/permission checks and read-only diagnostics: 19 cases passed");return 0;}
+int main(int Argc,char **Argv){assert(Argc==2);FILE *F=fopen(Argv[1],"rb");assert(F);fseek(F,0,SEEK_END);TreeBytes=(UINT32)ftell(F);rewind(F);Tree=malloc(TreeBytes);assert(fread(Tree,1,TreeBytes,F)==TreeBytes);fclose(F);for(Case=0;Case<23;Case++){pid_t P=fork();assert(P>=0);if(!P){Run();_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status)||WEXITSTATUS(Status)){fprintf(stderr,"cold-memory case %lu failed\n",(unsigned long)Case);return 1;}}free(Tree);puts("Factory 24GB source vs legacy 16GB SMEM: actual cold producer, immutable HOB/epoch, live-map/cache/permission checks and saved diagnostic replay: 23 cases passed");return 0;}

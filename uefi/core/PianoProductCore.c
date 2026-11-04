@@ -45,6 +45,8 @@ STATIC PIANO_LATE_HANDOFF mLateHandoff;
 STATIC PIANO_FV_APPLICATION mSystemdApplication;
 STATIC EFI_HANDLE mSystemdEsp;
 STATIC BOOLEAN mSystemdActive,mSystemdEntering;
+STATIC CONST CHAR8 *mEfiImageStage="not-started";
+STATIC EFI_STATUS mEfiImageStatus=EFI_NOT_STARTED;
 STATIC BOOLEAN mUfsAttempted,mUfsStarted,mInputStarted;
 STATIC EFI_STATUS mUfsStatus=EFI_NOT_STARTED;
 STATIC UINT64 mCounterFrequency,mCounterStart,mCounterEnd;
@@ -168,6 +170,11 @@ STATIC EFI_STATUS ProductDebugReplay(VOID *Context) {
   EFI_STATUS DisplayOwner=PianoProductDisplayReplay();
   (VOID)PianoProductBootObjectsReemit(BootLogAlive);
   if(!BootLogAlive())return EFI_ABORTED;
+  // Replay the saved handoff checks last so a bounded RAM-log tail retains
+  // the actual refusal even after the startup inventories above are repeated.
+  DEBUG((DEBUG_WARN,"PIANO_EFI_IMAGE_SAVED stage=%a status=%r\n",mEfiImageStage,mEfiImageStatus));
+  PianoProductMemoryReemitDiagnostic();
+  PianoLateHandoffReemitDiagnostic(&mLateHandoff);
   if(PianoProductDisplayRetained())return Display==EFI_SUCCESS?EFI_COMPROMISED_DATA:Display;
   if(PianoDisplaySmmuRetained())return Translation==EFI_SUCCESS?EFI_COMPROMISED_DATA:Translation;
   if(PianoFrameBufferMappingRetained())return CpuMapping==EFI_SUCCESS?EFI_COMPROMISED_DATA:CpuMapping;
@@ -375,36 +382,40 @@ STATIC EFI_STATUS ValidateEfiDeviceTree(VOID){
   if(!Tree||((UINTN)Tree&7)||FdtCheckHeader(Tree)||FdtTotalSize(Tree)>0x200000)return EFI_NOT_READY;
   return PianoProductMemoryValidateDtb(Tree,FdtTotalSize(Tree));
 }
+STATIC EFI_STATUS EfiImageResult(CONST CHAR8 *Stage,EFI_STATUS Status){
+  mEfiImageStage=Stage;mEfiImageStatus=Status;
+  return Status;
+}
 STATIC EFI_STATUS ValidateInstalledEfiImage(VOID *Context,EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *Identity){
   if(!mSystemdActive || mSystemdEntering || !Image || Image==Context || Image==mSystemdApplication.Image ||
      !mSystemdEsp || !mSystemdApplication.Busy || !mSystemdApplication.StartCalled ||
      mSystemdApplication.StartReturned || mSystemdApplication.EbsObserved || mSystemdApplication.Retained)
-    return EFI_ACCESS_DENIED;
+    return EfiImageResult("manager-state",EFI_ACCESS_DENIED);
   CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();
   if(!Policy || Policy->RequestedCoreAction!=PianoUsbServiceActionBoot || Policy->Retained || Policy->ServicesLost ||
-     Policy->Dispatching || Policy->Pumping || Policy->ActiveAction!=PIANO_PRODUCT_ACTION_NONE)return EFI_NOT_READY;
+     Policy->Dispatching || Policy->Pumping || Policy->ActiveAction!=PIANO_PRODUCT_ACTION_NONE)return EfiImageResult("policy",EFI_NOT_READY);
   EFI_LOADED_IMAGE_PROTOCOL *Manager=NULL,*Current=NULL;
   EFI_STATUS Status=gBS->HandleProtocol(mSystemdApplication.Image,&gEfiLoadedImageProtocolGuid,(VOID **)&Manager);
-  if(!BootLogAlive())return EFI_ABORTED;if(Status!=EFI_SUCCESS)return Status;
+  if(!BootLogAlive())return EFI_ABORTED;if(Status!=EFI_SUCCESS)return EfiImageResult("manager-protocol",Status);
   if(!EfiLoadedValid(Manager) || Manager!=mSystemdApplication.LoadedIdentity ||
      Manager->ImageBase!=mSystemdApplication.BaseIdentity || Manager->ImageSize!=mSystemdApplication.SizeIdentity ||
-     Manager->ParentHandle!=(EFI_HANDLE)Context || Manager->DeviceHandle!=mSystemdEsp)return EFI_ACCESS_DENIED;
+     Manager->ParentHandle!=(EFI_HANDLE)Context || Manager->DeviceHandle!=mSystemdEsp)return EfiImageResult("manager-identity",EFI_ACCESS_DENIED);
   EFI_HANDLE Seen[4];EFI_HANDLE CurrentImage=Image;
   // BLS loads the kernel directly. A UKI may additionally load its embedded
   // kernel from memory; only that inner frame may lack a filesystem handle.
   for(UINTN Depth=0;Depth<ARRAY_SIZE(Seen);++Depth){
-    for(UINTN N=0;N<Depth;++N)if(Seen[N]==CurrentImage)return EFI_ACCESS_DENIED;
+    for(UINTN N=0;N<Depth;++N)if(Seen[N]==CurrentImage)return EfiImageResult("parent-cycle",EFI_ACCESS_DENIED);
     Seen[Depth]=CurrentImage;
     Status=gBS->HandleProtocol(CurrentImage,&gEfiLoadedImageProtocolGuid,(VOID **)&Current);
-    if(!BootLogAlive())return EFI_ABORTED;if(Status!=EFI_SUCCESS)return Status;
+    if(!BootLogAlive())return EFI_ABORTED;if(Status!=EFI_SUCCESS)return EfiImageResult("child-protocol",Status);
     if(!EfiLoadedValid(Current) || (!Depth && Current!=Identity) ||
-       (Current->DeviceHandle && Current->DeviceHandle!=mSystemdEsp))return EFI_ACCESS_DENIED;
+       (Current->DeviceHandle && Current->DeviceHandle!=mSystemdEsp))return EfiImageResult("child-identity",EFI_ACCESS_DENIED);
     if(Current->ParentHandle==mSystemdApplication.Image)
-      return Current->DeviceHandle==mSystemdEsp?ValidateEfiDeviceTree():EFI_ACCESS_DENIED;
-    if(!Current->ParentHandle || Current->ParentHandle==(EFI_HANDLE)Context)return EFI_ACCESS_DENIED;
+      return EfiImageResult("device-tree",Current->DeviceHandle==mSystemdEsp?ValidateEfiDeviceTree():EFI_ACCESS_DENIED);
+    if(!Current->ParentHandle || Current->ParentHandle==(EFI_HANDLE)Context)return EfiImageResult("parent",EFI_ACCESS_DENIED);
     CurrentImage=Current->ParentHandle;
   }
-  return EFI_ACCESS_DENIED;
+  return EfiImageResult("parent-depth",EFI_ACCESS_DENIED);
 }
 EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *SystemTable) {
   if(Image==NULL || SystemTable==NULL)return EFI_INVALID_PARAMETER;
