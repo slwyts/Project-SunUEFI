@@ -428,8 +428,14 @@ STATIC EFI_STATUS FullMap(UINT64 *Normal){
   BOOLEAN Runtime=D->Type==EfiRuntimeServicesCode||D->Type==EfiRuntimeServicesData;
   if(((D->Attribute&EFI_MEMORY_RUNTIME)!=0)!=Runtime)return CheckResult("runtime-attribute",EFI_COMPROMISED_DATA);
   if(!Reclaimable(D->Type)&&!Runtime)continue;
-  if(!LayoutCovers(&mCold.Layout,D->PhysicalStart,Bytes)||(D->Attribute&EFI_MEMORY_RP)||(D->Attribute&(EFI_MEMORY_UC|EFI_MEMORY_WC|EFI_MEMORY_WT|EFI_MEMORY_WB))!=EFI_MEMORY_WB)
-   return CheckResult("descriptor-ram-cache",EFI_NOT_READY);
+  if(!LayoutCovers(&mCold.Layout,D->PhysicalStart,Bytes))
+   return CheckResult("descriptor-ram-range",EFI_NOT_READY);
+  // GetMemoryMap describes supported capabilities, not necessarily the
+  // current mapping. Cache and protection capabilities may coexist. Require
+  // WB support here; the PTE and GCD checks below prove the active cache mode
+  // and read access without treating an RP capability as current protection.
+  if(!(D->Attribute&EFI_MEMORY_WB))
+   return CheckResult("descriptor-wb-capability",EFI_NOT_READY);
   S=NormalMapping(&Cpu,D->PhysicalStart,Bytes);if(S!=EFI_SUCCESS)return S;
   for(UINT64 Position=D->PhysicalStart,End=Position+Bytes;Position<End;){EFI_GCD_MEMORY_SPACE_DESCRIPTOR G={0};S=gDS->GetMemorySpaceDescriptor(Position,&G);
    if(mChecking){mCheck.Position=Position;mCheck.GcdStatus=S;mCheck.Gcd=G;}

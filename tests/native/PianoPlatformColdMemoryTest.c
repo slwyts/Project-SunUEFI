@@ -85,7 +85,12 @@ static EFI_MEMORY_DESCRIPTOR Map[256];static UINTN MapCount,Case,Layouts,Protoco
 static VOID *Tree;static UINT32 TreeBytes;
 static BOOLEAN Selected,Published;
 static UINT64 PageTable[512];
-EFI_STATUS PianoMemoryHostCpu(UINT64 *C){CpuReads++;C[0]=4;C[1]=5;C[2]=28ULL|(3ULL<<32);C[3]=Case==22?0xa8000000:0xa7602000;C[4]=0;C[5]=0xff00;return EFI_SUCCESS;}
+EFI_STATUS PianoMemoryHostCpu(UINT64 *C){
+ CpuReads++;C[0]=4;C[1]=5;C[2]=28ULL|(3ULL<<32);C[3]=Case==22?0xa8000000:0xa7602000;C[4]=0;C[5]=0xff00;
+ if(Case==24)C[5]|=0xbbULL<<16; // An actual Normal WT MAIR slot.
+ if(Case==25)C[5]|=0x44ULL<<24; // An actual Normal non-cacheable MAIR slot.
+ return EFI_SUCCESS;
+}
 EFI_STATUS PianoMemoryHostTableEntry(UINT64 Table,UINTN Index,UINT64 *Value){TableReads++;assert(Table==0xa7602000&&Index<512);*Value=PageTable[Index];if(Case==20&&Index==52&&(UnstableReads++&1))*Value^=BIT11;return EFI_SUCCESS;}
 static EFI_BOOT_SERVICES Boot;static EFI_SYSTEM_TABLE System;static EFI_DXE_SERVICES Dxe;
 EFI_BOOT_SERVICES *gBS=&Boot;EFI_SYSTEM_TABLE *gST=&System;EFI_DXE_SERVICES *gDS=&Dxe;
@@ -107,7 +112,11 @@ static VOID Le64(UINT8 *P,UINT64 V){Le32(P,(UINT32)V);Le32(P+4,(UINT32)(V>>32));
 static EFI_STATUS EFIAPI GetMap(UINTN *Bytes,EFI_MEMORY_DESCRIPTOR *Out,UINTN *Key,UINTN *Stride,UINT32 *Version){MapReads++;UINTN Need=MapCount*sizeof(*Map);*Stride=sizeof(*Map);*Version=Case==21?0:EFI_MEMORY_DESCRIPTOR_VERSION;*Key=1;if(*Bytes<Need){*Bytes=Need;return EFI_BUFFER_TOO_SMALL;}memcpy(Out,Map,Need);*Bytes=Need;return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI GetGcd(EFI_PHYSICAL_ADDRESS At,EFI_GCD_MEMORY_SPACE_DESCRIPTOR *D){
  GcdReads++;
- for(UINTN I=0;I<MapCount;I++)if(At>=Map[I].PhysicalStart&&At-Map[I].PhysicalStart<Map[I].NumberOfPages*4096){*D=(EFI_GCD_MEMORY_SPACE_DESCRIPTOR){.BaseAddress=Map[I].PhysicalStart,.Length=Map[I].NumberOfPages*4096,.GcdMemoryType=EfiGcdMemoryTypeSystemMemory,.Attributes=Case==6?EFI_MEMORY_WT:EFI_MEMORY_WB};return EFI_SUCCESS;}return EFI_NOT_FOUND;
+ UINT64 Attributes=EFI_MEMORY_WB;
+ if(Case==6||Case==26)Attributes=EFI_MEMORY_WT;
+ if(Case==27)Attributes=EFI_MEMORY_UC;
+ if(Case==28)Attributes=EFI_MEMORY_WB|EFI_MEMORY_RP;
+ for(UINTN I=0;I<MapCount;I++)if(At>=Map[I].PhysicalStart&&At-Map[I].PhysicalStart<Map[I].NumberOfPages*4096){*D=(EFI_GCD_MEMORY_SPACE_DESCRIPTOR){.BaseAddress=Map[I].PhysicalStart,.Length=Map[I].NumberOfPages*4096,.GcdMemoryType=EfiGcdMemoryTypeSystemMemory,.Attributes=Attributes};return EFI_SUCCESS;}return EFI_NOT_FOUND;
 }
 static EFI_STATUS EFIAPI Locate(EFI_GUID *G,VOID *R,VOID **Out){(void)G;(void)R;ProtocolLookups++;*Out=NULL;return EFI_NOT_FOUND;}
 static VOID Object(PIANO_COLD_OBJECT_ROLE Role,UINT64 Base,UINT64 Bytes){Objects.Objects[Objects.Count++]=(PIANO_COLD_BOOT_OBJECT){Base,Bytes,Role,0};}
@@ -164,6 +173,16 @@ static VOID Run(VOID){
  if(Case==7)PageTable[52]=0;
  if(Case==10)PageTable[52]&=~(7ULL<<2);if(Case==11)PageTable[52]+=1ULL<<30;
  if(Case==19)Map[MapCount++]=(EFI_MEMORY_DESCRIPTOR){.Type=EfiMemoryMappedIO,.PhysicalStart=0x70000000,.NumberOfPages=1,.Attribute=EFI_MEMORY_RUNTIME|EFI_MEMORY_UC};
+ if(Case>=23){
+  // GetMemoryMap advertises supported modes, while MAIR/PTE and the GCD
+  // Attributes below describe what the CPU is actually using right now.
+  UINT64 Capabilities=EFI_MEMORY_UC|EFI_MEMORY_WC|EFI_MEMORY_WT|EFI_MEMORY_WB|EFI_MEMORY_WP|EFI_MEMORY_RP;
+  if(Case==29)Capabilities&=~EFI_MEMORY_WB;
+  for(UINTN I=0;I<MapCount;++I)Map[I].Attribute=(Map[I].Attribute&~EFI_MEMORY_WB)|Capabilities;
+  if(Case==24)PageTable[52]=(PageTable[52]&~(7ULL<<2))|(2ULL<<2);
+  if(Case==25)PageTable[52]=(PageTable[52]&~(7ULL<<2))|(3ULL<<2);
+  if(Case==30)PageTable[52]&=~BIT10; // No hardware AF handling in this geometry.
+ }
  PIANO_LINUX_MEMORY_PROOF Proof;S=PianoProductMemoryCheck(NULL,&Proof);
  if(Case==17||Case==18){
   assert(S==EFI_NOT_READY&&!Proof.FullDdr);
@@ -186,13 +205,30 @@ static VOID Run(VOID){
   }
   return;
  }
- if(Case>=19){
+ if(Case>=19&&Case<=22){
   assert(S!=EFI_SUCCESS&&!Proof.FullDdr);
   ReplayCheck(Case==19?"runtime-attribute":Case==20?"pte-changed":Case==21?"snapshot-shape":"table-ledger",S);
   if(Case==19)assert(S==EFI_COMPROMISED_DATA&&ReplayDescriptorBase==0x70000000&&ReplayDescriptorType==EfiMemoryMappedIO&&ReplayDescriptorAttributes==(EFI_MEMORY_RUNTIME|EFI_MEMORY_UC));
   if(Case==20)assert(S==EFI_NOT_READY&&ReplayPte!=ReplayAgain&&ReplaySlot==52);
   if(Case==21)assert(S==EFI_COMPROMISED_DATA&&!CpuReads&&!TableReads&&!GcdReads);
   if(Case==22)assert(S==EFI_ACCESS_DENIED&&ReplayTable==0xa8000000&&!TableReads);
+  return;
+ }
+ if(Case>=24){
+  assert(S!=EFI_SUCCESS&&!Proof.FullDdr);
+  CONST CHAR8 *Stage=Case<=25?"pte-identity-cache":Case<=28?"gcd-range-cache":Case==29?"descriptor-wb-capability":"pte-leaf";
+  ReplayCheck(Stage,S);
+  if(Case==24||Case==25){
+   assert(S==EFI_NO_MAPPING&&ReplaySlot==52&&ReplayPte==ReplayAgain);
+   UINTN Attribute=(ReplayPte>>2)&7;
+   assert(((ReplayCpu[5]>>(Attribute*8))&255)==(Case==24?0xbb:0x44));
+  }
+  if(Case>=26&&Case<=28){
+   assert(S==EFI_NOT_READY&&ReplayGcdStatus==EFI_SUCCESS);
+   assert(ReplayGcdAttributes==(Case==26?EFI_MEMORY_WT:Case==27?EFI_MEMORY_UC:(EFI_MEMORY_WB|EFI_MEMORY_RP)));
+  }
+  if(Case==29)assert(S==EFI_NOT_READY&&!(ReplayDescriptorAttributes&EFI_MEMORY_WB));
+  if(Case==30)assert(S==EFI_NO_MAPPING&&ReplaySlot==52&&!(ReplayPte&BIT10));
   return;
  }
  assert(S==EFI_SUCCESS&&Proof.FullDdr&&Proof.OwnershipVerified&&Proof.NormalBytes<Proof.DramBytes&&!ProtocolLookups);
@@ -215,4 +251,4 @@ static VOID Run(VOID){
  }
  if(Case==9){UINT32 Struct=((UINT8 *)Tree)[8]<<24|((UINT8 *)Tree)[9]<<16|((UINT8 *)Tree)[10]<<8|((UINT8 *)Tree)[11];((UINT8 *)Tree)[Struct]^=1;assert(PianoProductMemoryValidateDtb(Tree,TreeBytes)!=EFI_SUCCESS);}
 }
-int main(int Argc,char **Argv){assert(Argc==2);FILE *F=fopen(Argv[1],"rb");assert(F);fseek(F,0,SEEK_END);TreeBytes=(UINT32)ftell(F);rewind(F);Tree=malloc(TreeBytes);assert(fread(Tree,1,TreeBytes,F)==TreeBytes);fclose(F);for(Case=0;Case<23;Case++){pid_t P=fork();assert(P>=0);if(!P){Run();_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status)||WEXITSTATUS(Status)){fprintf(stderr,"cold-memory case %lu failed\n",(unsigned long)Case);return 1;}}free(Tree);puts("Factory 24GB source vs legacy 16GB SMEM: actual cold producer, immutable HOB/epoch, live-map/cache/permission checks and saved diagnostic replay: 23 cases passed");return 0;}
+int main(int Argc,char **Argv){assert(Argc==2);FILE *F=fopen(Argv[1],"rb");assert(F);fseek(F,0,SEEK_END);TreeBytes=(UINT32)ftell(F);rewind(F);Tree=malloc(TreeBytes);assert(fread(Tree,1,TreeBytes,F)==TreeBytes);fclose(F);for(Case=0;Case<31;Case++){pid_t P=fork();assert(P>=0);if(!P){Run();_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status)||WEXITSTATUS(Status)){fprintf(stderr,"cold-memory case %lu failed\n",(unsigned long)Case);return 1;}}free(Tree);puts("Factory 24GB source vs legacy 16GB SMEM: actual cold producer, capability/current-cache distinction, permission checks and saved diagnostic replay: 31 cases passed");return 0;}
