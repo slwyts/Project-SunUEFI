@@ -4,6 +4,7 @@
 #include "PianoProductPayload.h"
 #include "PianoProductOwners.h"
 #include "PianoRawLinuxBoot.h"
+#include "Components/os-boot/PianoEspBootSource.h"
 #include "PianoFastbootBlockRead.h"
 #include "PianoKeysLifecycle.h"
 #include "PianoRamPartition.h"
@@ -38,6 +39,9 @@ CONST CHAR8 *PianoUfsStartupDiagnostic(VOID);
 EFI_STATUS PianoStartKeys(CONST VOID *Fdt);
 STATIC PIANO_PRODUCT_OWNERS mOwners;
 STATIC PIANO_LATE_HANDOFF mLateHandoff;
+STATIC PIANO_FV_APPLICATION mSystemdApplication;
+STATIC EFI_HANDLE mSystemdEsp;
+STATIC BOOLEAN mSystemdActive,mSystemdEntering;
 STATIC BOOLEAN mUfsAttempted,mUfsStarted,mInputStarted;
 STATIC EFI_STATUS mUfsStatus=EFI_NOT_STARTED;
 STATIC UINT64 mCounterFrequency,mCounterStart,mCounterEnd;
@@ -250,6 +254,70 @@ STATIC EFI_STATUS StopInput(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Rep
   Report->Protocols=Keys.Disconnect!=EFI_SUCCESS?Keys.Disconnect:Keys.Uninstall!=EFI_SUCCESS?Keys.Uninstall:Keys.WaitClose;
   Report->Status=Status;if(Status==EFI_SUCCESS && Keys.Clean)mInputStarted=FALSE;return Status;
 }
+// The same installed-image and USB paths retain the existing retirement order.
+STATIC EFI_STATUS CompleteCoreAction(EFI_HANDLE Image,PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime,EFI_HANDLE ExitImage) {
+  EFI_STATUS Status=PianoProductOwnersResolveReturnedAction(&mOwners);
+  if(ExitImage!=Image && Status==EFI_SUCCESS && mOwners.Report.Origin!=PianoProductRequestFile)return EFI_ABORTED;
+  BOOLEAN FileLoaded=FALSE;
+  if(Status==EFI_NOT_READY&&PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionBoot) {
+    (VOID)PianoProductBootLogMessage(L"正在读取启动镜像",L"请稍候",EFI_SUCCESS,FALSE);
+    VOID *FileContext=NULL,*FileToken=NULL;
+    EFI_STATUS Load=PianoRawLinuxLoadStable(Runtime,&FileContext,&FileToken);
+    DEBUG((DEBUG_WARN,"PIANO_PRODUCT_ESP_STABLE_LOAD status=%r path=EFI/Piano/stable/boot.img\n",Load));
+    if(PianoRawLinuxStableRetained())FailStop(Load);
+    FileLoaded=Load==EFI_SUCCESS;
+    // Loading pumps the real USB service. A host action may now take priority.
+    Status=PianoProductOwnersResolveReturnedAction(&mOwners);
+    if(Status==EFI_NOT_READY&&FileLoaded)Status=PianoProductOwnersRequestFileBoot(&mOwners,FileContext,FileToken);
+    if(Status==EFI_NOT_READY&&!FileLoaded) {
+      return Load;
+    }
+  }
+  if(Status!=EFI_SUCCESS)FailStop(Status);
+  if(FileLoaded&&mOwners.Report.Origin!=PianoProductRequestFile) {
+    Status=PianoRawLinuxDiscardStable();if(Status!=EFI_SUCCESS)FailStop(Status);FileLoaded=FALSE;
+  }
+  if(ExitImage!=Image && mOwners.Report.Origin!=PianoProductRequestFile)return EFI_ABORTED;
+  (VOID)PianoProductBootLogMessage(L"正在交接系统",L"正在保存设置并关闭存储",EFI_SUCCESS,FALSE);
+  Status=PianoProductOwnersRetire(&mOwners);
+  if(Status==EFI_NOT_READY&&FileLoaded&&mOwners.Report.Origin==PianoProductRequestUsb) {
+    Status=PianoRawLinuxDiscardStable();if(Status!=EFI_SUCCESS)FailStop(Status);
+    if(ExitImage!=Image)FailStop(EFI_ABORTED);
+    Status=PianoProductOwnersRetire(&mOwners);
+  }
+  if(Status!=EFI_SUCCESS || !mOwners.Report.Clean)FailStop(Status);
+  if(mOwners.Report.AllowedAction==PianoUsbServiceActionReboot || mOwners.Report.AllowedAction==PianoUsbServiceActionContinue) {
+    Status=PianoLateHandoffArmReset(&mLateHandoff,Image);
+    if(Status==EFI_SUCCESS)Status=PianoResetExecute(&mOwners,Image);
+    FailStop(Status);
+  }
+  if(mOwners.Report.AllowedAction==PianoUsbServiceActionBoot){
+    CONST PIANO_RAW_LINUX_REPORT *Raw=NULL;
+    Status=PianoRawLinuxPrepare(&mOwners,Image,ExitImage,&Raw);
+    if(Status==EFI_SUCCESS)Status=PianoLateHandoffArmRaw(&mLateHandoff,ExitImage,Raw);
+    if(Status==EFI_SUCCESS)Status=PianoRawLinuxEnter(Raw);
+    FailStop(Status==EFI_SUCCESS?EFI_ABORTED:Status);
+  }
+  FailStop(EFI_UNSUPPORTED);
+  return EFI_ABORTED;
+}
+STATIC EFI_STATUS StartInstalledLinux(VOID *Context,PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime,EFI_HANDLE Child) {
+  if(!mSystemdActive)return EFI_NOT_STARTED;
+  if(mSystemdEntering || !Child || !mSystemdApplication.StartCalled || mSystemdApplication.StartReturned ||
+     mSystemdApplication.Retained || !mSystemdApplication.Image || !mSystemdEsp)return EFI_ACCESS_DENIED;
+  EFI_LOADED_IMAGE_PROTOCOL *Loaded=NULL;
+  EFI_STATUS Status=gBS->HandleProtocol(Child,&gEfiLoadedImageProtocolGuid,(VOID **)&Loaded);
+  if(Status!=EFI_SUCCESS)return Status;
+  if(!Loaded || Loaded->Revision<EFI_LOADED_IMAGE_PROTOCOL_REVISION ||
+     Loaded->ParentHandle!=mSystemdApplication.Image || Loaded->DeviceHandle!=mSystemdEsp ||
+     Loaded->SystemTable!=gST || !Loaded->ImageBase || !Loaded->ImageSize ||
+     Loaded->ImageSize>MAX_UINTN-(UINTN)Loaded->ImageBase ||
+     Loaded->ImageCodeType!=EfiLoaderCode || Loaded->ImageDataType!=EfiLoaderData)return EFI_ACCESS_DENIED;
+  mSystemdEntering=TRUE;
+  Status=CompleteCoreAction((EFI_HANDLE)Context,Runtime,Child);
+  // Only a failure before retirement can return to the still-running manager.
+  mSystemdEntering=FALSE;return Status;
+}
 EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *SystemTable) {
   if(Image==NULL || SystemTable==NULL)return EFI_INVALID_PARAMETER;
   BootLogStart();
@@ -374,6 +442,7 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
     .CheckMemory=LateMemoryUnavailable,.ValidateMemory=LateValidateMemory,.FailStop=LateFailStop,
     .ValidateRaw=PianoRawLinuxPrepared};
   Status=PianoLateHandoffInitialize(&mLateHandoff,&Late);if(Status!=EFI_SUCCESS)FailStop(Status);
+  Status=PianoBootPolicySetLinuxEntry(StartInstalledLinux,Image);if(Status!=EFI_SUCCESS)FailStop(Status);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_LATE_EXIT provider_bound=1 phase=unarmed full_ddr_ready=0\n"));
   Status=PianoBootPolicyStartupWindow(3000);
   if(Status!=EFI_SUCCESS)FailStop(Status);
@@ -387,49 +456,29 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
     Status=PianoBootPolicyRun();
     PianoDwc3ServiceReplayStartup();
     if(Status==EFI_END_OF_FILE) {
-      // An acknowledged host action can arrive while a UI return is pending.
-      // Observe its real service ledger before using an older UI reason.
       Status=PianoProductOwnersResolveReturnedAction(&mOwners);
-      BOOLEAN FileLoaded=FALSE;
-      if(Status==EFI_NOT_READY&&PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionBoot) {
-        (VOID)PianoProductBootLogMessage(L"正在读取启动镜像",L"请稍候",EFI_SUCCESS,FALSE);
-        VOID *FileContext=NULL,*FileToken=NULL;
-        EFI_STATUS Load=PianoRawLinuxLoadStable(Runtime,&FileContext,&FileToken);
-        DEBUG((DEBUG_WARN,"PIANO_PRODUCT_ESP_STABLE_LOAD status=%r path=EFI/Piano/stable/boot.img\n",Load));
-        if(PianoRawLinuxStableRetained())FailStop(Load);
-        FileLoaded=Load==EFI_SUCCESS;
-        // Loading pumps the real USB service. A host action may now take priority.
+      if(Status==EFI_NOT_READY && PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionBoot) {
+        (VOID)PianoProductBootLogMessage(L"正在启动系统",L"请稍候",EFI_SUCCESS,FALSE);
+        Status=PianoEspBootFind(&mSystemdEsp);
+        if(Status==EFI_SUCCESS) {
+          mSystemdActive=TRUE;
+          Status=PianoApplicationRunFile(Image,mSystemdEsp,L"\\EFI\\BOOT\\BOOTAA64.EFI",NULL,0x400000,&mSystemdApplication);
+          mSystemdActive=FALSE;
+          if(mSystemdApplication.Retained)FailStop(Status);
+        }
+        DEBUG((DEBUG_WARN,"PIANO_SYSTEMD_BOOT_RETURN status=%r\n",Status));
+        mSystemdEsp=NULL;
+        // A returned manager never authorized retirement. Preserve a real
+        // host request that arrived while its files or menu were in use.
         Status=PianoProductOwnersResolveReturnedAction(&mOwners);
-        if(Status==EFI_NOT_READY&&FileLoaded)Status=PianoProductOwnersRequestFileBoot(&mOwners,FileContext,FileToken);
-        if(Status==EFI_NOT_READY&&!FileLoaded) {
+        if(Status==EFI_NOT_READY) {
           Status=PianoBootPolicyCancelStable();if(Status!=EFI_SUCCESS)FailStop(Status);
           continue;
         }
       }
       if(Status!=EFI_SUCCESS)FailStop(Status);
-      if(FileLoaded&&mOwners.Report.Origin!=PianoProductRequestFile) {
-        Status=PianoRawLinuxDiscardStable();if(Status!=EFI_SUCCESS)FailStop(Status);FileLoaded=FALSE;
-      }
-      (VOID)PianoProductBootLogMessage(L"正在交接系统",L"正在保存设置并关闭存储",EFI_SUCCESS,FALSE);
-      Status=PianoProductOwnersRetire(&mOwners);
-      if(Status==EFI_NOT_READY&&FileLoaded&&mOwners.Report.Origin==PianoProductRequestUsb) {
-        Status=PianoRawLinuxDiscardStable();if(Status!=EFI_SUCCESS)FailStop(Status);
-        Status=PianoProductOwnersRetire(&mOwners);
-      }
-      if(Status!=EFI_SUCCESS || !mOwners.Report.Clean)FailStop(Status);
-      if(mOwners.Report.AllowedAction==PianoUsbServiceActionReboot || mOwners.Report.AllowedAction==PianoUsbServiceActionContinue) {
-        Status=PianoLateHandoffArmReset(&mLateHandoff,Image);
-        if(Status==EFI_SUCCESS)Status=PianoResetExecute(&mOwners,Image);
-        FailStop(Status);
-      }
-      if(mOwners.Report.AllowedAction==PianoUsbServiceActionBoot){
-        CONST PIANO_RAW_LINUX_REPORT *Raw=NULL;
-        Status=PianoRawLinuxPrepare(&mOwners,Image,&Raw);
-        if(Status==EFI_SUCCESS)Status=PianoLateHandoffArmRaw(&mLateHandoff,Image,Raw);
-        if(Status==EFI_SUCCESS)Status=PianoRawLinuxEnter(Raw);
-        FailStop(Status==EFI_SUCCESS?EFI_ABORTED:Status);
-      }
-      FailStop(EFI_UNSUPPORTED);
+      Status=CompleteCoreAction(Image,Runtime,Image);
+      FailStop(Status==EFI_SUCCESS?EFI_ABORTED:Status);
     }
     if(Status!=EFI_SUCCESS && Status!=EFI_ABORTED)FailStop(Status);
     Status=Runtime->Pump(Runtime,PIANO_PRODUCT_PUMP_APP,1000);

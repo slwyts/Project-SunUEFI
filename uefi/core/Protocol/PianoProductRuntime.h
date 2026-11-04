@@ -7,7 +7,7 @@
 
 #define PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID \
   {0x618c4e8d,0x29ab,0x4fdc,{0xa4,0x13,0x60,0x2b,0x46,0x39,0x72,0xa1}}
-#define PIANO_PRODUCT_RUNTIME_REVISION 1ULL
+#define PIANO_PRODUCT_RUNTIME_REVISION 2ULL
 #define PIANO_PRODUCT_PUMP_WAIT_EVENT BIT0
 #define PIANO_PRODUCT_PUMP_GUI        BIT1
 #define PIANO_PRODUCT_PUMP_APP        BIT2
@@ -58,5 +58,9 @@ struct PIANO_PRODUCT_RUNTIME_PROTOCOL {
   // Parent supervisor alone consumes an action; a stale sequence must not
   // clear a newer request. GUI cooperatively exits without acknowledging.
   EFI_STATUS (EFIAPI *AckAction)(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT64 Sequence);
+  // Synchronous APP-only entry from the running boot manager's Linux child.
+  // Core loads the installed image, retires its real owners and enters Linux.
+  // This is never called from a pump or a key/event notification.
+  EFI_STATUS (EFIAPI *StartLinux)(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,EFI_HANDLE Image);
 };
 #endif

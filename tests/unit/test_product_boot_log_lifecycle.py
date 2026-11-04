@@ -34,6 +34,8 @@ class ProductBootLogLifecycleTests(unittest.TestCase):
             (mirror / 'LateHandoff/PianoLateHandoff.h').write_bytes(
                 (ROOT / 'uefi/components/product-handoff/PianoLateHandoff.h').read_bytes())
             (mirror / 'OsBoot').symlink_to(ROOT / 'uefi/components/os-boot', target_is_directory=True)
+            (mirror / 'Components').mkdir()
+            (mirror / 'Components/os-boot').symlink_to(ROOT / 'uefi/components/os-boot', target_is_directory=True)
             (mirror / 'uefi-app').symlink_to(app, target_is_directory=True)
             compiled = subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
                             '-Wno-misleading-indentation', '-fshort-wchar',

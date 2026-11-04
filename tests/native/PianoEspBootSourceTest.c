@@ -98,6 +98,12 @@ static VOID EspSetup(VOID){
 }
 int main(void){
   PIANO_CPU_INPUT_ENV Cpu={.BootServicesAlive=Live,.ServiceSlice=CpuSlice};
+  EspSetup();EFI_HANDLE Esp=(VOID *)0xbad;MissingFile=TRUE;
+  assert(PianoEspBootFind(NULL)==EFI_INVALID_PARAMETER&&!Calls);
+  assert(PianoEspBootFind(&Esp)==EFI_SUCCESS&&Esp==(VOID *)7&&HandleFrees==1&&ParentFrees==1);
+  assert(!Roots&&!Opens&&!Reads&&!Allocations&&PianoEspBootDiscovery()->Open==EFI_NOT_STARTED);
+  EspSetup();HandleCount=257;Esp=(VOID *)0xbad;
+  assert(PianoEspBootFind(&Esp)==EFI_COMPROMISED_DATA&&!Esp&&HandleFrees==1&&!Roots&&!Opens);
   EspSetup();PIANO_ESP_BOOT_SOURCE S={0};assert(PianoEspBootLoad(&S,&Cpu)==EFI_SUCCESS);
   assert(HandleFrees==1&&Roots==1&&Opens==1&&FileCloses==1&&RootCloses==1&&!S.File.File&&!S.File.Root);
   assert(S.File.Bytes==ContentBytes&&!memcmp(S.File.Sha256,Expected,32)&&Slices>=3&&VolumeChecks==2);
@@ -158,6 +164,8 @@ int main(void){
   }
     EFI_STATUS E=PianoEspBootLoad(&S,&Cpu);assert(E==(I==21||I==22?EFI_COMPROMISED_DATA:EFI_NOT_FOUND));
     assert(!Opens&&!Roots&&!Reads&&!Allocations&&!S.Loaded&&!S.Owner&&!S.Retained&&HandleFrees==1);
+    Esp=(VOID *)0xbad;assert(PianoEspBootFind(&Esp)==E&&!Esp&&HandleFrees==2);
+    assert(!Opens&&!Roots&&!Reads&&!Allocations);
   }
   EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};ChangeAfterRead=TRUE;
   assert(PianoEspBootLoad(&S,&Cpu)==EFI_MEDIA_CHANGED&&!S.Loaded&&!S.Retained&&S.File.Consumed&&Frees==1&&Closes==1);

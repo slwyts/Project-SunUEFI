@@ -41,6 +41,8 @@ STATIC UINTN mKeysCount;
 STATIC volatile BOOLEAN mStartupWindow;
 STATIC BOOLEAN mStartupWindowUsed;
 STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime;
+STATIC EFI_STATUS (*mLinuxEntry)(VOID *,PIANO_PRODUCT_RUNTIME_PROTOCOL *,EFI_HANDLE);
+STATIC VOID *mLinuxContext;
 STATIC CONST PIANO_SMMU_RETIRED_USB_PROOF *mStartupUsbProof;
 STATIC CONST VOID *mStartupUsbFdt;
 BOOLEAN PianoSetStandardKeyNavigation(BOOLEAN Enable);
@@ -261,7 +263,22 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
   }
   mReport.Pumping=FALSE;return mReport.LastPump=Exact(S);
 }
-STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime={PIANO_PRODUCT_RUNTIME_REVISION,Pump,Alive,Request,Pending,Ack};
+STATIC EFI_STATUS EFIAPI StartLinux(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,EFI_HANDLE Image) {
+  if(This!=&mRuntime || !Image)return EFI_INVALID_PARAMETER;
+  EFI_STATUS Status=AtApp();if(Status!=EFI_SUCCESS)return Status;
+  if(mReport.Retained || mReport.Pumping || mReport.Dispatching ||
+     mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE || mReport.PendingAction!=PIANO_PRODUCT_ACTION_NONE)return EFI_NOT_READY;
+  if(!mLinuxEntry || mReport.RequestedCoreAction!=PianoUsbServiceActionBoot)return EFI_NOT_STARTED;
+  return mLinuxEntry(mLinuxContext,This,Image);
+}
+STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime={PIANO_PRODUCT_RUNTIME_REVISION,Pump,Alive,Request,Pending,Ack,StartLinux};
+EFI_STATUS PianoBootPolicySetLinuxEntry(EFI_STATUS (*Start)(VOID *,PIANO_PRODUCT_RUNTIME_PROTOCOL *,EFI_HANDLE),VOID *Context) {
+  if(!Start || !Context)return EFI_INVALID_PARAMETER;
+  if(!mReport.Initialized || !mReport.ProtocolInstalled)return EFI_NOT_READY;
+  EFI_STATUS Status=AtApp();if(Status!=EFI_SUCCESS)return Status;
+  if(mLinuxEntry)return EFI_ALREADY_STARTED;
+  mLinuxEntry=Start;mLinuxContext=Context;return EFI_SUCCESS;
+}
 STATIC EFI_STATUS RetireEsc(VOID) {
   if(mReport.Retained)return EFI_COMPROMISED_DATA;
   for(UINTN I=0;I<mKeysCount;++I){

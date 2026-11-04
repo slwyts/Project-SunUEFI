@@ -45,6 +45,7 @@
     "snapshot": null,
     "archive_signature_verification": "upstream debootstrap keyring and APT defaults; never disabled",
     "extra_packages": [
+      "systemd-boot-efi",
       "libcanberra-pulse",
       "rtkit",
       "build-essential",

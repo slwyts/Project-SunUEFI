@@ -86,6 +86,10 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
 python3 tools/package_sparse_images.py --bundle artifacts/release --output artifacts/fastboot-sparse
 ```
 
+已有根系统时，运行 `./build.sh esp` 只生成启动镜像，不重新导出 root 镜像。
+启动镜像包含 systemd-boot、对应产品固件的 Linux EFI 启动应用及内核载荷。
+默认从根系统的 `systemd-boot-efi` 包读取引导器；使用单独提取的 ARM64 引导器时，传入 `--systemd-boot /path/to/systemd-bootaa64.efi`。
+
 基础根系统已经构建过时，用 `./build.sh release-rootfs --resume` 更新内核、硬件包和配置，不重新运行 debootstrap。`./build.sh rootfs --distro ID --desktop ID --plan` 会列出其他发行版和桌面组合的计划，目前只有上表的四个目标能完整构建。
 
 本地和 GitHub 的完整构建走同一个 `release-rootfs` 入口。默认系统包含中文界面、拼音输入法、Chromium、GNOME 动画、蓝牙地址自动初始化和触控笔组件。根系统生成后会检查这些软件包和必需文件，结果记录在 `manifest.json` 的 `default_system`，缺少任何一项构建就失败。

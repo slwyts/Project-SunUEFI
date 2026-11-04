@@ -10,20 +10,49 @@ class ProductOwnersTests(unittest.TestCase):
         # Compile the production CPU-only handoff predicate with the actual
         # owner manager; ARM entry/MMIO and image copying are outside this test.
         source=(ROOT/'uefi/core/PianoRawLinuxBoot.c').read_text()
-        start=source.index('STATIC BOOLEAN Clean(');body=source.index('{',start)
-        end=body+1;depth=1
-        while depth:
-            depth+=(source[end]=='{')-(source[end]=='}');end+=1
-        clean=source[start:end].replace('BOOLEAN Clean(','BOOLEAN RawOwnersClean(',1)
+        def function(text, name):
+            start=text.index(name+'(');start=text.rfind('\n',0,start)+1;body=text.index('{',start)
+            end=body+1;depth=1
+            while depth:
+                depth+=(text[end]=='{')-(text[end]=='}');end+=1
+            return text[start:end]
+        clean=function(source,'Clean').replace('BOOLEAN Clean(','BOOLEAN RawOwnersClean(',1)
+        state=source[source.index('typedef struct {'):source.index('} RAW_STATE;')+len('} RAW_STATE;')]
+        predicates='\n'.join(function(source,name)for name in ('SameImage','SameExitImage','PianoRawLinuxPrepared')).replace('Clean(O)','RawOwnersClean(O)')
+        released=function((ROOT/'uefi/components/os-boot/PianoEspBootSource.c').read_text(),'PianoEspBootReleased')
         fixture=ROOT/'tests/native/PianoProductOwnersTest.c'
         with tempfile.TemporaryDirectory(prefix='piano-raw-owners-') as directory:
             native=Path(directory)/'raw-clean.c';binary=Path(directory)/'raw-clean'
             native.write_text('#define main OriginalOwnersMain\n#include "'+str(fixture)+'"\n#undef main\n'
-                'static struct { BOOLEAN FileMode; VOID *Token; } mRaw;\n'+clean+r'''
+                '#include "'+str(ROOT/'uefi/core/PianoRawLinuxBoot.h')+'"\n'
+                '#include "'+str(ROOT/'uefi/core/PianoFastbootDownloadBlob.h')+'"\n'
+                '#include "'+str(ROOT/'uefi/components/os-boot/PianoEspBootSource.h')+'"\n'
+                +state+'\nstatic RAW_STATE mRaw;\n'+clean+'\n'+released+'\n'+predicates+r'''
 int main(void) {
-  fresh();mRaw.FileMode=FALSE;BootAction.Context=&mRaw;mRaw.Token=BootAction.Token;
+  fresh();mRaw.FileMode=FALSE;BootAction.Context=&mRaw;BootAction.Token=&mRaw.Adapter;mRaw.Token=BootAction.Token;
   initialize_action(PianoUsbServiceActionBoot);assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS);
   assert(RawOwnersClean(&Owners));
+  EFI_SYSTEM_TABLE Table={0};EFI_LOADED_IMAGE_PROTOCOL Core={.Revision=EFI_LOADED_IMAGE_PROTOCOL_REVISION,
+    .SystemTable=&Table,.ParentHandle=(VOID *)0x100,.DeviceHandle=(VOID *)0x101,
+    .ImageBase=(VOID *)0x100000,.ImageSize=4096,.ImageCodeType=EfiLoaderCode,.ImageDataType=EfiLoaderData},Exit=Core;
+  Exit.ParentHandle=(VOID *)0x333;Exit.ImageBase=(VOID *)0x200000;
+  mRaw.Image=(VOID *)0x222;mRaw.Identity=&Core;mRaw.Loaded=Core;
+  mRaw.ExitImage=(VOID *)0x111;mRaw.ExitIdentity=&Exit;mRaw.ExitLoaded=Exit;mRaw.Prepared=TRUE;
+  mRaw.Report=(PIANO_RAW_LINUX_REPORT){.Image=mRaw.Image,.Identity=&Core,.ExitImage=mRaw.ExitImage,.ExitIdentity=&Exit};
+  mRaw.Owners=&Owners;mRaw.Clean=Owners.Report;mRaw.Config=Owners.Config;
+  mRaw.Loan=(VOID *)0x991;mRaw.View=(VOID *)0x992;mRaw.Adapter.Taken=TRUE;mRaw.Adapter.ActiveLoan=mRaw.Loan;mRaw.Adapter.Owned=(VOID *)mRaw.View;
+  EFI_BOOT_SERVICES *SavedServices=gBS;gBS=(VOID *)1;UINTN SavedCalls=Calls;
+  assert(PianoRawLinuxPrepared(&mRaw.Report,&Owners,mRaw.Image));
+  EFI_LOADED_IMAGE_PROTOCOL SavedExit=Exit;
+  for(UINTN I=0;I<8;++I){Exit=SavedExit;switch(I){
+    case 0:Exit.Revision++;break;case 1:Exit.ImageBase=(VOID *)0xdead;break;case 2:Exit.ImageSize++;break;
+    case 3:Exit.SystemTable=NULL;break;case 4:Exit.ParentHandle=NULL;break;case 5:Exit.DeviceHandle=NULL;break;
+    case 6:Exit.ImageCodeType=EfiBootServicesCode;break;case 7:Exit.ImageDataType=EfiBootServicesData;break;
+  }assert(!PianoRawLinuxPrepared(&mRaw.Report,&Owners,mRaw.Image));}
+  Exit=SavedExit;mRaw.Report.ExitImage=mRaw.Image;assert(!PianoRawLinuxPrepared(&mRaw.Report,&Owners,mRaw.Image));mRaw.Report.ExitImage=mRaw.ExitImage;
+  mRaw.Report.ExitIdentity=&Core;assert(!PianoRawLinuxPrepared(&mRaw.Report,&Owners,mRaw.Image));mRaw.Report.ExitIdentity=&Exit;
+  Core.ImageBase=NULL;assert(!PianoRawLinuxPrepared(&mRaw.Report,&Owners,mRaw.Image));Core=mRaw.Loaded;
+  assert(PianoRawLinuxPrepared(&mRaw.Report,&Owners,mRaw.Image)&&Calls==SavedCalls);gBS=SavedServices;
   fresh();without_usb();mRaw.FileMode=TRUE;mRaw.Token=(VOID *)0x702;
   assert(PianoProductOwnersInitialize(&Owners,&Config)==EFI_SUCCESS);
   Policy.RequestedCoreAction=PianoUsbServiceActionBoot;
@@ -40,7 +69,7 @@ int main(void) {
   StartupProof.TablePhysical+=4096;assert(!RawOwnersClean(&Owners));StartupProof.TablePhysical-=4096;
   Owners.Report.RetiredMask|=PIANO_OWNER_USB;assert(!RawOwnersClean(&Owners));Owners.Report.RetiredMask&=~PIANO_OWNER_USB;
   assert(RawOwnersClean(&Owners)&&StartupValidations==Checks);
-  puts("Actual RawLinux Clean: normal USB boot and accepted startup-absent ESP; forged Stop/ACK, lost proof, changed token/peer/mask refused; CPU-only");
+  puts("Actual RawLinux Clean/Prepared: Core ownership, distinct current exit identity, CPU-only mutation checks, USB and startup-absent ESP retirement");
   return 0;
 }
 ''')

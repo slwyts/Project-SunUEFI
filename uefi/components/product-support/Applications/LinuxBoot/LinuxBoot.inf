@@ -11,3 +11,4 @@
 [LibraryClasses]
   UefiApplicationEntryPoint
   PianoProductPumpLib
+  UefiBootServicesTableLib

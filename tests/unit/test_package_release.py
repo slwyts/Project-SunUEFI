@@ -41,6 +41,13 @@ class ReleasePackageTests(unittest.TestCase):
         self.uefi = self.base / 'uefi/PianoUEFI-product.img'
         self.uefi.parent.mkdir()
         self.uefi.write_bytes(b'ANDROID!' + b'FIXTURE ONLY')
+        efi = bytearray(data)
+        efi[56:60] = bytes(4)  # EFI application fixture, not a Linux kernel.
+        self.systemd_boot = self.base / 'systemd-bootaa64.efi'
+        self.systemd_boot.write_bytes(efi)
+        self.linux_loader = self.uefi.parent / 'PianoLinuxBoot.efi'
+        efi[64:81] = b'LINUX APP FIXTURE'
+        self.linux_loader.write_bytes(efi)
         self.dtb = self.base / 'dtb/board.dtb'
         self.dtb.parent.mkdir()
         self.dtb.write_bytes(struct.pack('>10I', 0xd00dfeed, 72, 56, 72, 40, 17, 16, 0, 0, 16)
@@ -50,13 +57,15 @@ class ReleasePackageTests(unittest.TestCase):
         self.initrd.write_bytes(gzip.compress(make_newc([
             {'name': 'init', 'mode': stat.S_IFREG | 0o755, 'data': b'#!/bin/sh\n'},
             {'name': 'etc/piano/kernel-release', 'mode': stat.S_IFREG | 0o644, 'data': b'6.6-fixture\n'}]), mtime=0))
-        self.write_manifest(self.uefi.parent, {'files': {self.uefi.name: {'sha256': pr.sha(self.uefi)}}})
+        self.write_manifest(self.uefi.parent, {'files': {self.uefi.name: {'sha256': pr.sha(self.uefi)},
+                                                       self.linux_loader.name: {'sha256': pr.sha(self.linux_loader)}}})
         self.write_manifest(self.kernel, {'kernel_release': '6.6-fixture', 'root_policy': 'LABEL=PIANOROOT',
                                          'source_clean': True, 'image': {'sha256': pr.sha(self.kernel / 'Image')}})
         self.write_manifest(self.dtb.parent, {'output': 'board.dtb', 'output_sha256': pr.sha(self.dtb)})
         self.write_manifest(self.initrd.parent, {'kernel_release': '6.6-fixture', 'initramfs_sha256': pr.sha(self.initrd)})
         self.args = pr.parser().parse_args(['--uefi', str(self.uefi), '--kernel', str(self.kernel), '--dtb', str(self.dtb),
                                           '--initramfs', str(self.initrd), '--rootfs', str(self.root), '--output', str(self.base / 'bundle')])
+        self.args.systemd_boot = self.systemd_boot
 
     def tearDown(self):
         self.temp.cleanup()
@@ -141,6 +150,111 @@ class ReleasePackageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Missing host tools'):
                 pr.package(self.args)
         self.assertFalse(self.args.output.exists())
+
+    def test_boot_manager_and_linux_loader_require_arm64_efi(self):
+        for path in (self.systemd_boot, self.linux_loader):
+            original = path.read_bytes()
+            for malformed in (b'NOT AN EFI APPLICATION',
+                              original[:132] + struct.pack('<H', 0x8664) + original[134:]):
+                with self.subTest(path=path.name, header=malformed[:2]):
+                    path.write_bytes(malformed)
+                    with self.assertRaises(ValueError):
+                        pr.package(self.args)
+                    self.assertFalse(self.args.output.exists())
+            path.write_bytes(original)
+            path.unlink()
+            with self.assertRaisesRegex(ValueError, 'regular EFI application'):
+                pr.package(self.args)
+            self.assertFalse(self.args.output.exists())
+            path.write_bytes(original)
+
+    def test_linux_loader_must_match_product_manifest(self):
+        self.linux_loader.write_bytes(self.systemd_boot.read_bytes())
+        with self.assertRaisesRegex(ValueError, 'hash disagrees with manifest'):
+            pr.package(self.args)
+        self.assertFalse(self.args.output.exists())
+
+    @unittest.skipUnless(all(shutil.which(t) for t in ('mkfs.vfat', 'mmd', 'mcopy')), 'FAT tools unavailable')
+    def test_real_esp_boot_chain_defaults_overrides_and_root_unchanged(self):
+        try:
+            pr.pinned_mkbootimg()
+        except (ValueError, OSError, subprocess.SubprocessError) as error:
+            self.skipTest('Pinned local mkbootimg unavailable: ' + str(error))
+        default_manager = self.root / 'usr/lib/systemd/boot/efi/systemd-bootaa64.efi'
+        default_manager.parent.mkdir(parents=True)
+        shutil.copyfile(self.systemd_boot, default_manager)
+        override_loader = self.base / 'loader-override.efi'
+        shutil.copyfile(self.linux_loader, override_loader)
+        self.args.esp_only = True
+        self.args.esp_size_mib = 512
+        # Even explicit root export options must not rebuild a root in this mode.
+        self.args.root_size_mib = 64
+        self.args.root_archive = True
+        before = {p.relative_to(self.root).as_posix(): (p.stat().st_size, pr.sha(p))
+                  for p in self.root.rglob('*') if p.is_file()}
+        for overrides in (False, True):
+            with self.subTest(overrides=overrides):
+                self.args.output = self.base / ('bundle-override' if overrides else 'bundle-default')
+                if overrides:
+                    self.args.systemd_boot = self.systemd_boot
+                    self.args.linux_loader = override_loader
+                else:
+                    # Existing callers may have no newly introduced attributes.
+                    del self.args.systemd_boot
+                    del self.args.linux_loader
+                with patch.object(pr, 'archive_root', side_effect=AssertionError('ESP must not archive root')), \
+                     patch.object(pr, 'ext4', side_effect=AssertionError('ESP must not rebuild root')):
+                    result = pr.package(self.args)
+                self.assertEqual(set(result['files']), {'PianoUEFI-product.img', 'boot.img', 'esp.img'})
+                self.assertIsNone(result['partitions']['root']['capacity_bytes'])
+                self.assertIsNone(result['metadata']['archive'])
+                self.assertIsNone(result['metadata']['ext4'])
+                expected = {
+                    '/EFI/BOOT/BOOTAA64.EFI': self.systemd_boot.read_bytes(),
+                    '/EFI/Piano/LinuxBoot.efi': self.linux_loader.read_bytes(),
+                    '/EFI/Piano/stable/Image': (self.kernel / 'Image').read_bytes(),
+                    '/EFI/Piano/stable/board.dtb': self.dtb.read_bytes(),
+                    '/EFI/Piano/stable/initramfs': self.initrd.read_bytes(),
+                    '/EFI/Piano/stable/boot.img': (self.args.output / 'boot.img').read_bytes(),
+                    '/loader/loader.conf': b'default debian.conf\ntimeout 0\neditor no\nauto-entries no\nauto-firmware no\nconsole-mode keep\n',
+                    '/loader/entries/debian.conf': b'title Debian\nefi /EFI/Piano/LinuxBoot.efi\n',
+                }
+                self.assertEqual(set(result['esp_files']), set(expected))
+                for name, data in expected.items():
+                    readback = self.base / 'fat-readback'
+                    pr.run(['mcopy', '-i', self.args.output / 'esp.img', '::' + name, readback])
+                    self.assertEqual(readback.read_bytes(), data, name)
+                    readback.unlink()
+                for name, source in (('systemd_boot', self.systemd_boot if overrides else default_manager),
+                                     ('linux_loader', override_loader if overrides else self.linux_loader)):
+                    self.assertEqual(result['components'][name], {'source': str(source),
+                        'bytes': source.stat().st_size, 'sha256': pr.sha(source)})
+                self.assertFalse((self.args.output / '.incomplete').exists())
+                self.assertTrue((self.args.output / 'SHA256SUMS').is_file())
+        self.assertEqual(before, {p.relative_to(self.root).as_posix(): (p.stat().st_size, pr.sha(p))
+                                for p in self.root.rglob('*') if p.is_file()})
+
+    @unittest.skipUnless(all(shutil.which(t) for t in ('mkfs.vfat', 'mmd', 'mcopy')), 'FAT tools unavailable')
+    def test_corrupt_efi_readback_cannot_complete_esp(self):
+        try:
+            pr.pinned_mkbootimg()
+        except (ValueError, OSError, subprocess.SubprocessError) as error:
+            self.skipTest('Pinned local mkbootimg unavailable: ' + str(error))
+        self.args.esp_only = True
+        actual_run = pr.run
+
+        def corrupt_readback(argv, **kwargs):
+            result = actual_run(argv, **kwargs)
+            if str(argv[0]) == 'mcopy' and str(argv[-2]) == '::/EFI/BOOT/BOOTAA64.EFI':
+                Path(argv[-1]).write_bytes(b'CORRUPT FIXTURE')
+            return result
+
+        with patch.object(pr, 'run', side_effect=corrupt_readback):
+            with self.assertRaisesRegex(ValueError, 'ESP file readback differs: BOOTAA64.EFI'):
+                pr.package(self.args)
+        self.assertTrue((self.args.output / '.incomplete').is_file())
+        self.assertFalse((self.args.output / 'manifest.json').exists())
+        self.assertFalse((self.args.output / 'SHA256SUMS').exists())
 
     def test_cross_manifest_kernel_binding_refused(self):
         self.write_manifest(self.initrd.parent, {'kernel_release': '6.6-fixture', 'initramfs_sha256': pr.sha(self.initrd),

@@ -19,6 +19,9 @@
                        ├─► 显示 SimpleInit 图形菜单
                        │
                        ▼ 启动 Linux
+                     systemd-boot (/EFI/BOOT/BOOTAA64.EFI)
+                       │ 默认 Debian 启动项
+                       ▼ LinuxBoot.efi 请求驻留核心启动
                      读取 sunuefi_esp 中的 /EFI/Piano/stable/boot.img
                        │
                        ▼ ExitBootServices 安全退出
@@ -64,13 +67,18 @@ SunUEFI 提供与原厂 Bootloader 不同的 Fastboot 服务：
 
 ```
 sunuefi_esp/
-└── EFI/
-    └── Piano/
-        └── stable/
-            ├── Image          # Linux 内核
-            ├── board.dtb      # 经清理与合成的设备树
-            ├── initramfs      # 启动阶段内存盘
-            └── boot.img       # 组合启动镜像
+├── EFI/
+│   ├── BOOT/BOOTAA64.EFI       # systemd-boot
+│   └── Piano/
+│       ├── LinuxBoot.efi      # Debian 启动应用
+│       └── stable/
+│           ├── Image
+│           ├── board.dtb
+│           ├── initramfs
+│           └── boot.img       # Linux 组合启动镜像
+└── loader/
+    ├── loader.conf
+    └── entries/debian.conf
 ```
 
-系统交接前，UEFI 读取 `boot.img`，校验内存范围并安全退出 ExitBootServices，最后将控制权移交 Linux 内核。
+systemd-boot 默认直接执行 Debian 启动项。该启动应用调用驻留核心，读取 `boot.img`、准备设备树并安全退出 ExitBootServices，最后进入 Linux。启动管理器运行时存储保持可读，内核交接前才关闭硬件。内存与退出身份的处理见 [UEFI 核心](uefi-core.md#esp-启动文件与系统交接)。

@@ -76,20 +76,13 @@ PianoProductCoreEntry (uefi/core/PianoProductCore.c)
 
 ## ESP 启动文件与系统交接
 
-启动 Linux 时，UEFI 从独立分区的 `sunuefi_esp` 读取启动文件，固定目录布局如下：
+启动 Linux 时，固件在唯一的 `sunuefi_esp` 分区上加载 `/EFI/BOOT/BOOTAA64.EFI`，并保留真实的 ESP 设备句柄。systemd-boot 读取 `loader.conf`，默认直接执行 Debian 条目中的 `/EFI/Piano/LinuxBoot.efi`。完整文件布局见[启动架构](architecture.md#存储布局)。
 
-```
-sunuefi_esp/
-└── EFI/
-    └── Piano/
-        └── stable/
-            ├── Image          # ARM64 Linux 内核二进制
-            ├── board.dtb      # 经清理与合成的设备树
-            ├── initramfs      # 启动阶段初始化内存盘
-            └── boot.img       # 组合启动镜像
-```
+`LinuxBoot.efi` 通过 Runtime 协议的 APP 入口同步调用驻留核心。核心确认调用者是当前 systemd-boot 的真实子应用后，沿用 `PianoRawLinuxBoot.c` 的文件加载和内核交接：读取 `/EFI/Piano/stable/boot.img`，复制内核、设备树和 initramfs，保留运行时面板与 Gunyah 修正，再关闭 USB、存储、输入、时钟和 SMMU。
 
-固件在 `uefi/components/linux-loader/` 与 `uefi/components/os-boot/` 中将内核、设备树与 initramfs 装载至指定物理内存，将启动参数写入设备树 `/chosen` 节点，完成 ExitBootServices 后将处理器执行权正式交接给 Linux 内核。
+源文件与内存归属仍由核心检查，`ExitBootServices` 则使用当前最内层启动应用的真实句柄和已保存的加载身份。进入资源关闭流程后出错便停止，不返回仍可能持有文件句柄的 systemd-boot。
+
+当前 EFI 内存映射只包含固件工作区，尚不是完整 DDR 映射；Linux EFI stub 会按 EFI 内存映射重新发现内存，因此该启动项使用 `efi` 调用启动应用，不直接使用 `linux`、`initrd` 或 `devicetree` 条目。这保留现有 Linux 设备树中的完整内存布局。
 
 ## UEFI 核心代码结构
 

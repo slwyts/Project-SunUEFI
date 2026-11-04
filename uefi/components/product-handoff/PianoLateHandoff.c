@@ -39,9 +39,11 @@ STATIC BOOLEAN LateClean(PIANO_LATE_HANDOFF *S){
  (R->RegisteredStartedMask|R->RegisteredAbsentMask)==PIANO_OWNER_ALL_MASK&&
  !CompareMem(R,&S->CleanOwners,sizeof(*R));
 }
-STATIC BOOLEAN LateRaw(PIANO_LATE_HANDOFF *S){return S->RawMode&&S->Image==S->Env.ParentImage&&S->Raw&&S->Env.ValidateRaw&&
+STATIC BOOLEAN LateRaw(PIANO_LATE_HANDOFF *S){return S->RawMode&&S->Raw&&S->Env.ValidateRaw&&
+ S->RawSnapshot.Image==S->Env.ParentImage&&S->RawSnapshot.ExitImage==S->Image&&S->RawSnapshot.ExitIdentity==S->Identity&&
+ LateIdentity(S,S->Image,S->Identity)&&S->Identity->DeviceHandle==S->Loaded.DeviceHandle&&
  !CompareMem(S->Raw,&S->RawSnapshot,sizeof(S->RawSnapshot))&&S->RawSnapshot.Epoch&&
- S->Env.ValidateRaw(S->Raw,S->Env.Owners,S->Image);}
+ S->Env.ValidateRaw(S->Raw,S->Env.Owners,S->Env.ParentImage);}
 STATIC EFI_STATUS EFIAPI LateObserve(PIANO_PRODUCT_EXIT_PROTOCOL *P,EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *L,UINT64 *Epoch){
  PIANO_LATE_HANDOFF *S=BASE_CR(P,PIANO_LATE_HANDOFF,Protocol);
  if(S->Signature!=LATE_SIG||!Epoch||LateOverlap(Epoch,sizeof(*Epoch),S,sizeof(*S))||
@@ -112,16 +114,17 @@ EFI_STATUS PianoLateHandoffDisarm(PIANO_LATE_HANDOFF *S){
  S->Phase=PianoExitUnarmed;return S->Status=EFI_SUCCESS;
 }
 EFI_STATUS PianoLateHandoffArmRaw(PIANO_LATE_HANDOFF *S,EFI_HANDLE Image,CONST PIANO_RAW_LINUX_REPORT *R){
- if(!S||S->Signature!=LATE_SIG||!S->Installed||S->Retained||!R||!S->Env.ValidateRaw||Image!=S->Env.ParentImage)return EFI_ACCESS_DENIED;
+ if(!S||S->Signature!=LATE_SIG||!S->Installed||S->Retained||!R||!S->Env.ValidateRaw||!Image||R->ExitImage!=Image||R->Image!=S->Env.ParentImage)return EFI_ACCESS_DENIED;
  if(S->Phase!=PianoExitUnarmed||S->Busy||S->RawMode)return EFI_ALREADY_STARTED;
  EFI_STATUS E=LateApp(S);if(E!=EFI_SUCCESS)return E;
  // The Root-installed callback accepts only its own live download session;
  // a caller-created report or boolean readiness flag cannot arm raw EBS.
- if(!S->Env.ValidateRaw(R,S->Env.Owners,Image))return EFI_ACCESS_DENIED;
+ if(!S->Env.ValidateRaw(R,S->Env.Owners,S->Env.ParentImage))return EFI_ACCESS_DENIED;
  EFI_LOADED_IMAGE_PROTOCOL *L=NULL;E=S->Env.Services->HandleProtocol(Image,&gEfiLoadedImageProtocolGuid,(VOID **)&L);
  if(E!=EFI_SUCCESS||!LateLive(S))return E==EFI_SUCCESS?EFI_ABORTED:E;
- if(!L||L!=R->Identity||R->Image!=Image||R->Revision!=1||!R->Epoch||!R->Token||
- L->SystemTable!=S->Env.SystemTable||!L->ImageBase||!L->ImageSize||L->ImageCodeType!=EfiLoaderCode||L->ImageDataType!=EfiLoaderData)return EFI_COMPROMISED_DATA;
+ if(!L||L!=R->ExitIdentity||!R->Identity||R->Revision!=1||!R->Epoch||!R->Token||
+ L->Revision<EFI_LOADED_IMAGE_PROTOCOL_REVISION||L->SystemTable!=S->Env.SystemTable||!L->ImageBase||!L->ImageSize||
+ L->ImageSize>MAX_UINTN-(UINTN)L->ImageBase||L->ImageCodeType!=EfiLoaderCode||L->ImageDataType!=EfiLoaderData)return EFI_COMPROMISED_DATA;
  S->OwnerConfig=S->Env.Owners->Config;S->CleanOwners=S->Env.Owners->Report;
  if(!LateClean(S))return EFI_ACCESS_DENIED;
  S->Image=Image;S->Identity=L;S->Loaded=*L;S->Raw=R;S->RawSnapshot=*R;S->RawMode=TRUE;

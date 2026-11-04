@@ -24,3 +24,7 @@ EFI_STATUS PianoFvApplicationRun(EFI_HANDLE Parent,CONST EFI_GUID *File,
 // helper neither takes/free that source nor claims it belongs to an FV.
 EFI_STATUS PianoApplicationRunBuffer(EFI_HANDLE Parent,CONST VOID *Image,UINTN Bytes,
   CONST CHAR16 *Options,UINT64 MaxLoadedBytes,PIANO_FV_APPLICATION *Context);
+// Load from a real filesystem device path so the child can reopen its volume.
+// Shared owners remain live; this helper grants no OS handoff permission.
+EFI_STATUS PianoApplicationRunFile(EFI_HANDLE Parent,EFI_HANDLE Device,CONST CHAR16 *Path,
+  CONST CHAR16 *Options,UINT64 MaxLoadedBytes,PIANO_FV_APPLICATION *Context);

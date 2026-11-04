@@ -16,6 +16,9 @@ typedef struct {
   BOOLEAN Loaded,Released,Retained;
 } PIANO_ESP_BOOT_SOURCE;
 EFI_STATUS PianoEspBootLoad(PIANO_ESP_BOOT_SOURCE *,CONST PIANO_CPU_INPUT_ENV *);
+// Return the unique current ESP filesystem handle after the same full partition,
+// parent and media checks, without opening or reading any file.
+EFI_STATUS PianoEspBootFind(EFI_HANDLE *Esp);
 // Check the actual boot file without loading its contents or changing media.
 EFI_STATUS PianoEspBootPresent(VOID);
 typedef struct {

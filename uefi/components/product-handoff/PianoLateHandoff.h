@@ -27,9 +27,9 @@ typedef struct {
 // the actual selected loaded child before StartImage; default remains unarmed.
 EFI_STATUS PianoLateHandoffInitialize(PIANO_LATE_HANDOFF *,CONST PIANO_LATE_HANDOFF_ENV *);
 EFI_STATUS PianoLateHandoffArm(PIANO_LATE_HANDOFF *,EFI_HANDLE ChildImage);
-// Core-only fixed-window raw boot after actual manager retirement. This does
-// not create a full-DDR EFI memory proof or admit a child EFI application.
-EFI_STATUS PianoLateHandoffArmRaw(PIANO_LATE_HANDOFF *,EFI_HANDLE CoreImage,CONST PIANO_RAW_LINUX_REPORT *);
+// Core-owned fixed-window raw boot after actual manager retirement, bound to
+// the current ExitImage. This does not grant full-DDR EFI OS memory permission.
+EFI_STATUS PianoLateHandoffArmRaw(PIANO_LATE_HANDOFF *,EFI_HANDLE ExitImage,CONST PIANO_RAW_LINUX_REPORT *);
 // Root-only reset after actual service retirement. No OS memory permission.
 EFI_STATUS PianoLateHandoffArmReset(PIANO_LATE_HANDOFF *,EFI_HANDLE CoreImage);
 // Ordinary returned child only, before any retirement. Unknown/partial or
