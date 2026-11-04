@@ -21,6 +21,13 @@ KDE_PACKAGES = [
 GNOME_PATHS = (
     'etc/gdm3', 'etc/dconf', 'usr/share/glib-2.0/schemas/90_piano.gschema.override',
     'usr/lib/systemd/user/piano-power-button.service', 'usr/lib/piano/power-button',
+    # KDE uses powerdevil, so the tuned profiles and their GNOME mapping go away
+    # with the rest of the GNOME-only overlay.
+    'usr/lib/tuned/profiles/piano-power-saver',
+    'usr/lib/tuned/profiles/piano-balanced',
+    'usr/lib/tuned/profiles/piano-performance',
+    'etc/tuned/piano-ppd.conf',
+    'usr/lib/systemd/system/tuned-ppd.service.d',
     'etc/systemd/user/graphical-session.target.wants/piano-power-button.service',
     'etc/systemd/logind.conf.d/piano.conf', 'etc/udev/rules.d/70-piano-power-button.rules',
 )
