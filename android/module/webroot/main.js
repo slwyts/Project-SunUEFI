@@ -14,7 +14,7 @@ function nativeAction(action, target, extra, bytes) {
   let valid = ['quick-status','status','reinstall','storage-status','storage-reboot'].includes(action) && !target && !extra;
   if (action === 'switch') valid = targets.has(target) && !extra;
   if (action === 'storage-select') valid = ['esp','root'].includes(target) && /^[0-9a-f]{2,2048}$/.test(extra || '') && /^[0-9]{1,13}$/.test(String(bytes || ''));
-  if (action === 'storage-plan') valid = target === 'flash' ? ['esp','root','both'].includes(extra) : ['create','resize'].includes(target) ? ['32','64','128','256'].includes(String(extra)) : ['delete','delete-return'].includes(target) && !extra;
+  if (action === 'storage-plan') valid = target === 'flash' ? ['esp','root','both'].includes(extra) : ['create','resize'].includes(target) ? ['32','64','128','256','512'].includes(String(extra)) : ['delete','delete-return'].includes(target) && !extra;
   if (action === 'storage-execute' || action === 'storage-job') valid = /^[a-zA-Z0-9_-]{1,80}$/.test(target || '') && !extra;
   if (!valid) return Promise.reject(new Error(t('failed')));
   if (!window.ksu || typeof window.ksu.exec !== 'function') return Promise.reject(new Error(t('manager')));

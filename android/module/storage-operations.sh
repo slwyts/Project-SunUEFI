@@ -243,7 +243,7 @@ case "${1:-}" in
     operation=${2:-}; value=${3:-}
     images=
     case "$operation" in
-      create|resize) case "$value" in 32|64|128|256) ;; *) echo '请选择 32、64、128 或 256 GiB。' >&2; exit 2 ;; esac ;;
+      create|resize) case "$value" in 32|64|128|256|512) ;; *) echo '请选择 32、64、128、256 或 512 GiB。' >&2; exit 2 ;; esac ;;
       flash)
         images=${value:-both}
         case "$images" in esp|root|both) ;; *) echo '请选择本次更新的镜像。' >&2; exit 2 ;; esac

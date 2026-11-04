@@ -1244,9 +1244,9 @@ int main(int argc, char **argv) {
     need(op != 0, "不支持此存储操作。");
     unsigned gib = number(argv[3]);
     need((op == CREATE || op == RESIZE)
-             ? gib == 32 || gib == 64 || gib == 128 || gib == 256
+             ? gib == 32 || gib == 64 || gib == 128 || gib == 256 || gib == 512
              : gib == 0,
-         "容量必须是 32、64、128 或 256 GiB。");
+         "容量必须是 32、64、128、256 或 512 GiB。");
     make_plan(p, op, gib, userdata_section_bytes, images);
     save_plan(argv[4], p);
     describe(p);

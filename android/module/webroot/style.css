@@ -97,8 +97,8 @@ body { padding-bottom:calc(86px + env(safe-area-inset-bottom)); }
 .partition strong { display:block; font-size:25px; font-weight:550; margin:0 0 8px; }
 .partition p { font-size:13px; color:var(--muted); margin:0; }
 .storage-card .hint { margin-top:0; }
-.sizes { display:flex; gap:9px; margin-bottom:18px; }
-.sizes button { flex:1; min-height:48px; padding:10px; border-radius:17px; color:#515761; background:#f2f3f5; border:1px solid transparent; }
+.sizes { display:flex; flex-wrap:wrap; gap:9px; margin-bottom:18px; }
+.sizes button { flex:1 1 64px; min-height:48px; padding:10px 6px; white-space:nowrap; border-radius:17px; color:#515761; background:#f2f3f5; border:1px solid transparent; }
 .sizes button[aria-pressed="true"] { color:#1a695b; background:#e7f3ef; border-color:#a8cdbf; }
 .storage-actions { display:flex; gap:12px; }
 .storage-actions button { flex:1; min-height:52px; border-radius:18px; background:#f0f3f2; color:#386b60; font-size:16px; }
