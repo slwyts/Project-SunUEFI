@@ -138,8 +138,8 @@ STATIC EFI_STATUS ProductReportStatus(VOID *Context,PIANO_FB_SEND Send,VOID *Sen
   STATUS_LINE("INFOcold epoch=%lx input=%lx",Memory.ColdEpoch,Memory.ColdInputFingerprint);
   STATUS_LINE("INFOobjects hob=%016lx valid=%016lx",Memory.ObjectsHobStatus,Memory.ObjectsValidateStatus);
   STATUS_LINE("INFOobjects state=%016lx publish=%016lx",Memory.ObjectsStatus,Memory.ObjectsPublishStatus);
-  STATUS_LINE("INFOobjects reason=%u count=%u",Memory.ObjectsReason,Memory.ObjectsCount);
-  STATUS_LINE("INFOobjects epoch=%lx",Memory.ObjectsEpoch);
+  STATUS_LINE("INFOobjects reason=%u count=%u loads=%u",Memory.ObjectsReason,Memory.ObjectsCount,Memory.ObjectsLoads);
+  STATUS_LINE("INFOobjects epoch=%lx usecs=%lu",Memory.ObjectsEpoch,Memory.ObjectsElapsedUsecs);
   STATUS_LINE("INFOobjects handoff=%016lx dtb=%016lx",Memory.ObjectsHandoffStatus,Memory.ObjectsDtbStatus);
   STATUS_LINE("INFOearly hob=%016lx state=%016lx",Memory.EarlyHobStatus,Memory.EarlyStatus);
   STATUS_LINE("INFOearly publish=%016lx smem=%016lx",Memory.EarlyPublishStatus,Memory.SmemStatus);

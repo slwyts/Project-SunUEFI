@@ -7,14 +7,15 @@ ROOT=Path(__file__).resolve().parents[2];BASE=ROOT/'upstream/Mu-Silicium/Mu_Base
 class ColdBootObjectsTests(unittest.TestCase):
  def includes(self,arch):return (BASE/'MdePkg/Include',BASE/'MdePkg/Include'/arch,BASE/'MdeModulePkg/Include',BASE/'EmbeddedPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include')
  def test_actual_collector_native_map_and_hob(self):
-  if not (ROOT/'private/captures/2026-10-03-piano/live.dtb').is_file():
-   self.skipTest('Optional captured factory DT is unavailable')
+  captured=ROOT/'private/captures/2026-10-03-piano/live.dtb'
   with tempfile.TemporaryDirectory(prefix='cold-objects-')as td:
    exe=Path(td)/'objects';cmd=['cc','-std=gnu11','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-missing-field-initializers','-Wno-unused-parameter','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-I',str(ROOT/'uefi/handoff/early-memory'),'-include',str(ROOT/'tests/native/PianoCmaPcdShim.h'),'-D_PCD_VALUE_PcdFdBaseAddress=0xA7100000ULL','-D_PCD_VALUE_PcdFdSize=0x300000U','-D_PCD_VALUE_PcdCPUCoresStackBase=0xA760D000ULL','-D_PCD_VALUE_PcdCPUCorePrimaryStackSize=0x40000U']
    for p in self.includes('X64'):cmd+=['-I',str(p)]
-   cmd+=[str(ROOT/'tests/native/PianoColdBootObjectsTest.c'),str(ROOT/'uefi/handoff/early-memory/PianoColdBootObjectsContract.c'),str(ROOT/'uefi/handoff/early-memory/PianoMemoryLayout.c'),str(ROOT/'uefi/core/PianoProductBootObjects.c'),str(ROOT/'build/firmware-workspace/uefi/platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),'-Wl,--gc-sections','-o',str(exe)]
+   native=ROOT/'build/firmware-workspace/uefi/platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'
+   if not native.is_file():native=ROOT/'uefi/platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c'
+   cmd+=[str(ROOT/'tests/native/PianoColdBootObjectsTest.c'),str(ROOT/'uefi/handoff/early-memory/PianoColdBootObjectsContract.c'),str(ROOT/'uefi/handoff/early-memory/PianoMemoryLayout.c'),str(ROOT/'uefi/core/PianoProductBootObjects.c'),str(native),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),'-Wl,--gc-sections','-o',str(exe)]
    p=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(p.returncode,0,(p.stdout+p.stderr)[:12000])
-   p=subprocess.run([str(exe),str(ROOT/'private/captures/2026-10-03-piano/live.dtb')],capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
+   p=subprocess.run([str(exe),str(captured)if captured.is_file()else'--synthetic'],capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
  def test_complete_factory_memory_guarded_capture_budget(self):
   import sys,struct
   sys.path.insert(0,str(ROOT/'tools'))

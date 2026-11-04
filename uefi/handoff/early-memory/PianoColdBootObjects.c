@@ -23,6 +23,7 @@ STATIC COLD_CACHE mColdStructCache,mColdStringCache;
 STATIC UINT32 mColdStructStart,mColdStructEnd,mColdStringStart,mColdStringEnd;
 STATIC_ASSERT(OFFSET_OF(PIANO_COLD_BATCH_STATE,Words)==88,"batch ASM words");
 STATIC EFI_MEMORY_REGION_DESCRIPTOR *mColdMap;STATIC UINT8 mColdCount;
+STATIC CONST EFI_MEMORY_REGION_DESCRIPTOR *mColdFirmware,*mColdStack;
 STATIC UINT64 mColdDtbBase,mColdDtbBytes,mColdDtbReadBytes;
 STATIC EFI_GUID mColdGuid=PIANO_COLD_OBJECT_HOB_GUID;
 STATIC BOOLEAN ColdSpan(UINT64 B,UINT64 N,UINT64 A,UINT64 Z){return B&&N&&B<=MAX_UINT64-N&&Z&&A>=B&&A-B<=N&&Z<=N-(A-B);}
@@ -42,6 +43,12 @@ STATIC CONST EFI_MEMORY_REGION_DESCRIPTOR *ColdNamed(CONST CHAR8 *Name){
  CONST EFI_MEMORY_REGION_DESCRIPTOR *R=NULL;for(UINTN I=0;I<mColdCount;++I)if(!AsciiStrCmp(mColdMap[I].Name,Name)){if(R)return NULL;R=&mColdMap[I];}return R;
 }
 STATIC BOOLEAN ColdKnown(CONST CHAR8 *Name,UINT64 A,UINT64 N){CONST EFI_MEMORY_REGION_DESCRIPTOR *R=ColdNamed(Name);return R&&ColdSpan(R->Address,R->Length,A,N);}
+STATIC BOOLEAN ColdPhaseRange(CONST EFI_MEMORY_REGION_DESCRIPTOR *Region,CONST CHAR8 *Name,UINT64 Address,UINT64 Bytes){
+ // Observe resolved each name uniquely in the native table. Keep checking the
+ // actual descriptor and CPU address on every batch without rescanning all
+ // unrelated native rows while the data cache is still disabled.
+ return Region&&!AsciiStrCmp(Region->Name,Name)&&ColdSpan(Region->Address,Region->Length,Address,Bytes);
+}
 STATIC BOOLEAN ColdInput(UINT64 A,UINT64 N){return ColdKnown("Kernel",A,N)||ColdKnown("DXE_Heap",A,N)||ColdKnown("DXE_Heap_Upper",A,N);}
 STATIC BOOLEAN ColdSource(UINT64 A,UINT64 N){return ColdInput(A,N)||ColdKnown("FD_Reserved",A,N)||ColdKnown("UEFI_FD",A,N);}
 STATIC EFI_STATUS ColdAdd(PIANO_COLD_OBJECT_ROLE Role,UINT64 B,UINT64 N){
@@ -53,7 +60,7 @@ STATIC EFI_STATUS ColdFresh(VOID){
  if(C.Counter>=mCold.Cpu.Counter){mCold.ElapsedTicks=C.Counter-mCold.Cpu.Counter;if(C.Frequency)mCold.ElapsedUsecs=mCold.ElapsedTicks<=MAX_UINT64/1000000?mCold.ElapsedTicks*1000000/C.Frequency:MAX_UINT64;}
  if(C.El!=4||C.SpSel!=1||(C.Sctlr&(BIT0|BIT2))||C.Sctlr!=mCold.Cpu.Sctlr||C.Vbar!=mCold.Cpu.Vbar||C.Daif!=mCold.Cpu.Daif||
     C.Ttbr0!=mCold.Cpu.Ttbr0||C.Ttbr1!=mCold.Cpu.Ttbr1||C.Frequency!=mCold.Cpu.Frequency||
-    !ColdKnown("UEFI_FD",C.Pc,4)||!ColdKnown("UEFI_Stack",C.Sp-1,1))return EFI_NOT_READY;
+    !ColdPhaseRange(mColdFirmware,"UEFI_FD",C.Pc,4)||!ColdPhaseRange(mColdStack,"UEFI_Stack",C.Sp-1,1))return EFI_NOT_READY;
  if(!C.Frequency||C.Frequency>1000000000ULL||C.Counter<mCold.Cpu.Counter||mCold.ElapsedUsecs>=PIANO_COLD_MAX_USECS||mCold.Loads>=PIANO_COLD_TOTAL_MAX/4)return EFI_TIMEOUT;
  return EFI_SUCCESS;
 }
@@ -91,7 +98,20 @@ STATIC EFI_STATUS ColdDtbRead(UINT32 At,UINTN N,VOID *Out){
 }
 STATIC EFI_STATUS ColdDtbWord(UINT32 At,UINT32 *V){UINT8 B[4];EFI_STATUS E=ColdDtbRead(At,4,B);if(E==EFI_SUCCESS)*V=ColdBe(B);return E;}
 STATIC EFI_STATUS ColdString(UINT32 At,UINT32 Limit,CHAR8 *Name,UINTN Capacity,UINT32 *Used){
- for(UINT32 I=0;I<Capacity&&At<=Limit&&I<Limit-At;++I){EFI_STATUS E=ColdDtbRead(At+I,1,&Name[I]);if(E!=EFI_SUCCESS)return E;if(!Name[I]){*Used=I+1;return EFI_SUCCESS;}}return EFI_COMPROMISED_DATA;
+ // ColdDtbRead already fetches aligned 256-byte cache windows. Consume one
+ // window at a time instead of calling its guarded adapter for every byte.
+ // Stop at the same NUL/capacity/end boundaries and never prefetch a new page
+ // merely to finish the unused tail of a short name.
+ UINTN Done=0;
+ while(Done<Capacity&&At<Limit&&Done<Limit-At){
+  UINT32 Here=At+(UINT32)Done;
+  UINTN Bytes=MIN(Capacity-Done,MIN((UINTN)(Limit-Here),(UINTN)(256-(Here&255))));
+  EFI_STATUS E=ColdDtbRead(Here,Bytes,Name+Done);
+  if(E!=EFI_SUCCESS)return E;
+  for(UINTN I=0;I<Bytes;++I)if(!Name[Done+I]){*Used=(UINT32)(Done+I+1);return EFI_SUCCESS;}
+  Done+=Bytes;
+ }
+ return EFI_COMPROMISED_DATA;
 }
 typedef struct {UINT8 Header[40];UINT32 Bytes;UINT64 Start,End;
  UINT32 Panel,BootargsBytes,BootargsCrc32,PanelArguments;} COLD_DTB;
@@ -222,6 +242,9 @@ STATIC EFI_STATUS ColdFinish(EFI_STATUS E,PIANO_COLD_OBJECT_REASON Reason){mCold
 EFI_STATUS PianoColdBootObjectsObserve(VOID){
  if(mCold.Attempted)return EFI_ALREADY_STARTED;ZeroMem(&mCold,sizeof(mCold));mCold.Attempted=TRUE;mCold.Version=PIANO_COLD_OBJECT_VERSION;mCold.Bytes=sizeof(mCold);mCold.HandoffStatus=mCold.DtbStatus=mCold.PublishStatus=EFI_NOT_STARTED;
  GetMemoryMap(&mColdMap,&mColdCount);if(!mColdMap||!mColdCount)return ColdFinish(EFI_NOT_READY,PianoColdReasonLayout);
+ // The native descriptor table is the fixed input for this entire cold phase.
+ // Resolve uniqueness once; ColdFresh still validates live CPU/range state.
+ mColdFirmware=ColdNamed("UEFI_FD");mColdStack=ColdNamed("UEFI_Stack");
  EFI_STATUS E=ColdCpu(&mCold.Cpu);if(E!=EFI_SUCCESS)return ColdFinish(E,PianoColdReasonCpu);
  if(mCold.Cpu.El!=4||mCold.Cpu.SpSel!=1||(mCold.Cpu.Sctlr&(BIT0|BIT2))||(mCold.Cpu.Vbar&2047)||
     !ColdKnown("UEFI_FD",mCold.Cpu.Pc,4)||!ColdKnown("UEFI_Stack",mCold.Cpu.Sp-1,1)||

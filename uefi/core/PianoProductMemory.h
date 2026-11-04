@@ -15,8 +15,8 @@ typedef struct {
   EFI_STATUS ObjectsHobStatus, ObjectsValidateStatus;
   EFI_STATUS ObjectsStatus, ObjectsPublishStatus;
   EFI_STATUS ObjectsHandoffStatus, ObjectsDtbStatus;
-  UINT32 ObjectsReason, ObjectsCount;
-  UINT64 ObjectsEpoch;
+  UINT32 ObjectsReason, ObjectsCount, ObjectsLoads;
+  UINT64 ObjectsEpoch, ObjectsElapsedUsecs;
   BOOLEAN ObjectsPublished, ObjectsCoherent;
   EFI_STATUS EarlyHobStatus, EarlyStatus, EarlyPublishStatus, SmemStatus;
   UINT32 EarlyRecoveredFaults, EarlyRawPayloadBytes;

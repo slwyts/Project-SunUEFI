@@ -144,7 +144,9 @@ VOID PianoProductMemoryGetDiagnostic(PIANO_PRODUCT_MEMORY_DIAGNOSTIC *Report){
   Report->ObjectsDtbStatus=Objects->DtbStatus;
   Report->ObjectsReason=Objects->Reason;
   Report->ObjectsCount=Objects->Count;
+  Report->ObjectsLoads=Objects->Loads;
   Report->ObjectsEpoch=Objects->Epoch;
+  Report->ObjectsElapsedUsecs=Objects->ElapsedUsecs;
   Report->ObjectsPublished=Objects->Published;
   Report->ObjectsCoherent=Objects->Coherent;
  }

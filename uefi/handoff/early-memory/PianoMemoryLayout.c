@@ -9,7 +9,21 @@ STATIC UINT64 Be(CONST UINT8 *P,UINTN N){UINT64 V=0;for(UINTN I=0;I<N;++I)V=(V<<
 STATIC EFI_STATUS Read(READER *R,UINT32 At,UINTN N,VOID *Out){if(!N||N>256||At>R->Bytes||N>R->Bytes-At)return EFI_COMPROMISED_DATA;return R->Read(R->Context,At,N,Out);}
 STATIC EFI_STATUS Word(READER *R,UINT32 At,UINT32 *V){UINT8 B[4];EFI_STATUS S=Read(R,At,4,B);if(S==EFI_SUCCESS)*V=(UINT32)Be(B,4);return S;}
 STATIC EFI_STATUS String(READER *R,UINT32 At,UINT32 End,CHAR8 *Out,UINT32 Capacity,UINT32 *Used){
- for(UINT32 X=0;X<Capacity&&At<End&&X<End-At;++X){EFI_STATUS S=Read(R,At+X,1,&Out[X]);if(S!=EFI_SUCCESS)return S;if(!Out[X]){*Used=X+1;return EFI_SUCCESS;}}return EFI_COMPROMISED_DATA;
+ UINT32 Done=0;
+ while(Done<Capacity&&At<End&&Done<End-At){
+  UINT32 Here=At+Done;
+  // The cold reader already fills an aligned 256-byte cache block. Consume
+  // its bytes together without crossing that block, the string table, or Out.
+  UINT32 Bytes=MIN(256U-(Here&255U),MIN(Capacity-Done,End-Here));
+  EFI_STATUS S=Read(R,Here,Bytes,Out+Done);
+  if(S!=EFI_SUCCESS)return S;
+
+  for(UINT32 I=0;I<Bytes;++I){
+   if(!Out[Done+I]){*Used=Done+I+1;return EFI_SUCCESS;}
+  }
+  Done+=Bytes;
+ }
+ return EFI_COMPROMISED_DATA;
 }
 STATIC EFI_STATUS Add(PIANO_MEMORY_SPAN *Rows,UINT32 *Count,UINT32 Max,UINT64 Base,UINT64 Bytes,UINT32 Flags){
  if(!Bytes)return EFI_SUCCESS;if(Base>MAX_UINT64-Bytes||*Count>=Max)return EFI_COMPROMISED_DATA;
