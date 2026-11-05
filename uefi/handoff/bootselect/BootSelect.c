@@ -16,7 +16,7 @@ static void Trace(unsigned Stage,uint64_t Base,uint64_t Dtb) {
 }
 
 typedef struct {
-  int Valid, Mode, Splash, StockRecovery, Keys;
+  int Valid, Mode, Splash, StockRecovery, StockCharging, Keys;
   uint32_t Total;
   uint64_t Initrd, InitrdBytes;
 } FDT_RESULT;
@@ -38,15 +38,16 @@ static int Overlap(uint64_t A, uint64_t N, uint64_t B, uint64_t M) {
 }
 static int Space(uint8_t C) { return C == ' ' || C == '\t' || C == '\n' || C == '\r'; }
 
-static int BootArgs(const uint8_t *P, uint32_t N, int *StockRecovery) {
+static int BootArgs(const uint8_t *P, uint32_t N, int *StockRecovery, int *StockCharging) {
   // The exact stock marker is present in both captured ABL MNTParam and the
   // real Mi Recovery kernel cmdline. It must take priority over persistent
   // NEXT requests. Other recovery-looking names are not inferred.
   static const char Key[] = "sunuefi.boot";
   static const char StockKey[] = "bootmonitor.bootmode";
   uint32_t I = 0, Seen = 0, StockSeen = 0;
-  int ExplicitUefi = 0, StockValue = 0;
+  int ExplicitUefi = 0, StockValue = 0, ChargingValue = 0;
   *StockRecovery = 0;
+  *StockCharging = 0;
   if (!N || N > 16384 || P[N - 1]) return PIANO_SELECT_NORMAL;
   for (I = 0; I + 1 < N; ++I) if (!P[I]) return PIANO_SELECT_NORMAL;
   I = 0;
@@ -64,10 +65,12 @@ static int BootArgs(const uint8_t *P, uint32_t N, int *StockRecovery) {
     if (Length >= K && Equal(P + Start, K, StockKey) && (Length == K || P[Start + K] == '=')) {
       ++StockSeen;
       StockValue = Length == K + 9 && P[Start + K] == '=' && Equal(P + Start + K + 1, 8, "recovery");
+      ChargingValue = Length == K + 12 && P[Start + K] == '=' && Equal(P + Start + K + 1, 11, "poweroff_cg");
     }
   }
   *StockRecovery = StockSeen == 1 && StockValue;
-  return !*StockRecovery && Seen == 1 && ExplicitUefi ? PIANO_SELECT_RECOVERY : PIANO_SELECT_NORMAL;
+  *StockCharging = StockSeen == 1 && ChargingValue;
+  return !*StockRecovery && !*StockCharging && Seen == 1 && ExplicitUefi ? PIANO_SELECT_RECOVERY : PIANO_SELECT_NORMAL;
 }
 
 /* One bounded read-only walker serves mode selection, initrd and splash proof. */
@@ -81,7 +84,7 @@ static FDT_RESULT Walk(const void *Pointer, size_t Available) {
   uint64_t InitrdStart = 0, InitrdEnd = 0;
   uint8_t Kind[64];
   int SplashReg = 0, ControllerReg = 0, Ee = 0, Bus = 0;
-  int Finished = 0, Mode = PIANO_SELECT_NORMAL, StockRecovery = 0;
+  int Finished = 0, Mode = PIANO_SELECT_NORMAL, StockRecovery = 0, StockCharging = 0;
   if (!P || Available < 40 || Be32(P) != 0xD00DFEEDU) return R;
   Total = Be32(P + 4); Structure = Be32(P + 8); Strings = Be32(P + 12); Reserve = Be32(P + 16);
   StringBytes = Be32(P + 32); StructureBytes = Be32(P + 36);
@@ -128,7 +131,7 @@ static FDT_RESULT Walk(const void *Pointer, size_t Available) {
       if (NameEnd == StringBytes) return R;
       Name = P + Strings + NameOffset; Value = P + Cursor;
       if (Depth == 2 && Kind[1] == 1) {
-        if (Equal(Name, NameEnd - NameOffset, "bootargs")) { ++Args; Mode = BootArgs(Value, Bytes, &StockRecovery); }
+        if (Equal(Name, NameEnd - NameOffset, "bootargs")) { ++Args; Mode = BootArgs(Value, Bytes, &StockRecovery, &StockCharging); }
         else if (Equal(Name, NameEnd - NameOffset, "linux,initrd-start")) {
           if ((Bytes != 4 && Bytes != 8) || StartSeen++) return R;
           InitrdStart = Bytes == 8 ? Be64(Value) : Be32(Value);
@@ -166,6 +169,7 @@ static FDT_RESULT Walk(const void *Pointer, size_t Available) {
   R.Valid = 1; R.Total = Total;
   R.Mode = Chosen == 1 && Args == 1 ? Mode : PIANO_SELECT_NORMAL;
   R.StockRecovery = Chosen == 1 && Args == 1 && StockRecovery;
+  R.StockCharging = Chosen == 1 && Args == 1 && StockCharging;
   R.Splash = Reserved == 1 && SplashNodes == 1 && SplashRegs == 1 && SplashReg;
   R.Keys = Controllers == 1 && ControllerRegs == 1 && Ees == 1 && Buses == 1 && ControllerReg && Ee && Bus;
   R.Initrd = InitrdStart; R.InitrdBytes = StartSeen ? InitrdEnd - InitrdStart : 0;
@@ -227,6 +231,13 @@ int PianoBootSelectEntry(const PIANO_BOOT_SELECT_META *M, const void *Fdt, uint6
   R = Walk(Fdt, (size_t)(KERNEL_END - Address < PIANO_SELECT_MAX_FDT ? KERNEL_END - Address : PIANO_SELECT_MAX_FDT));
   if(!R.Valid || !PianoBootSelectRecoveryLayout(M, Base, SelectorBytes, Address, R.Total, R.Initrd, R.InitrdBytes))
     return PIANO_SELECT_NORMAL;
+  // ABL explicitly marks power-off charging with this same bootmode key.
+  // Enter the untouched stock kernel before the picker, keys or NEXT reads;
+  // Android retains its original charging animation and power-on behavior.
+  if(R.StockCharging) {
+    Trace(4,Base,Address);
+    return PIANO_SELECT_NORMAL;
+  }
   // Recovery ignores the saved NEXT route and persistent UEFI bootarg. Keep
   // the early picker so only a deliberate key choice can override Recovery.
   if(R.StockRecovery) {

@@ -87,6 +87,26 @@ class BootSelectTests(unittest.TestCase):
                 self.assertEqual(self.parse(dtb(args)), 0)
         self.assertEqual(self.parse(dtb(duplicate=True)), 0)
 
+    def test_only_exact_unique_stock_charging_mode_bypasses_uefi_request(self):
+        for args in (b'bootmonitor.bootmode=poweroff_cg sunuefi.boot=uefi\0',
+                     b'sunuefi.boot=uefi\tbootmonitor.bootmode=poweroff_cg\r\n\0'):
+            with self.subTest(args=args):
+                self.assertEqual(self.parse(dtb(args)), 0)
+
+        # Similar names and ambiguous stock modes must retain the normal
+        # selector policy, including an otherwise valid explicit UEFI request.
+        for mode in (b'bootmonitor.bootmode=normal',
+                     b'bootmonitor.bootmode=poweroff_cg_extra',
+                     b'bootmonitor.bootmode=xpoweroff_cg',
+                     b'xbootmonitor.bootmode=poweroff_cg',
+                     b'androidboot.mode=charger',
+                     b'bootmonitor.bootmode',
+                     b'bootmonitor.bootmode=poweroff_cg bootmonitor.bootmode=normal',
+                     b'bootmonitor.bootmode=normal bootmonitor.bootmode=poweroff_cg',
+                     b'bootmonitor.bootmode=poweroff_cg bootmonitor.bootmode=poweroff_cg'):
+            with self.subTest(mode=mode):
+                self.assertEqual(self.parse(dtb(mode + b' sunuefi.boot=uefi\0')), 1)
+
     def test_entry_reads_request_pages_and_preserves_both_stock_modes(self):
         libc = ctypes.CDLL(None)
         libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
@@ -122,6 +142,34 @@ class BootSelectTests(unittest.TestCase):
             ctypes.memmove(tree, data, len(data))
             self.assertEqual(self.lib.PianoBootSelectEntry(ctypes.byref(m), tree, base, 0x4000), 0)
             self.assertEqual(ctypes.string_at(base+0x2000, 0x2000), saved)
+
+            # Charger boot goes straight to the stock entry even when a valid
+            # saved target and a persistent UEFI bootarg both request SunUEFI.
+            # Neither NEXT nor the ABL device tree is consumed or rewritten.
+            for target in (1, 2, 3):
+                data = dtb(b'bootmonitor.bootmode=poweroff_cg sunuefi.boot=uefi\0')
+                ctypes.memmove(tree, data, len(data))
+                ctypes.memmove(base+0x3000, page(2, target), 64)
+                before_pages = ctypes.string_at(base+0x2000, 0x2000)
+                before_tree = ctypes.string_at(tree, len(data))
+                with self.subTest(charging_target=target):
+                    self.assertEqual(self.lib.PianoBootSelectEntry(ctypes.byref(m), tree, base, 0x4000), 0)
+                    self.assertEqual(ctypes.string_at(base+0x2000, 0x2000), before_pages)
+                    self.assertEqual(ctypes.string_at(tree, len(data)), before_tree)
+
+            # Invalid/ambiguous charging arguments do not suppress the saved
+            # target. This also distinguishes malformed-string fallback from
+            # a charging bypass, since both parse to NORMAL on their own.
+            for data in (dtb(b'bootmonitor.bootmode=poweroff_cg_extra\0'),
+                         dtb(b'bootmonitor.bootmode=poweroff_cg bootmonitor.bootmode=normal\0'),
+                         dtb(b'bootmonitor.bootmode=poweroff_cg\0hidden\0'),
+                         dtb(b'bootmonitor.bootmode=poweroff_cg'),
+                         dtb(b'bootmonitor.bootmode=poweroff_cg\0', duplicate=True)):
+                ctypes.memmove(tree, data, len(data))
+                with self.subTest(charging_arguments=data):
+                    self.assertEqual(self.lib.PianoBootSelectEntry(ctypes.byref(m), tree, base, 0x4000), 3)
+            ctypes.memmove(base+0x2000, saved, len(saved))
+
             data = dtb(b'bootmonitor.bootmode=normal\0')
             ctypes.memmove(tree, data, len(data))
             ctypes.memmove(base+0x2000, page(2, 0), 64)
@@ -232,13 +280,29 @@ class BootSelectTests(unittest.TestCase):
                  shim, 0x100, 0x300000, app, 64, total)
         frontend[values['bootselect_metadata']:values['bootselect_metadata'] + 128] = bytes(m)
         frontend.extend(b'\0' * (span - len(frontend)))
-        blob = out / 'frontend.bin'; blob.write_bytes(frontend)
-        for mode in ('normal', 'recovery'):
+        blob = out / 'frontend.bin'
+        for mode in ('normal', 'recovery', 'charging'):
+            scenario_frontend = bytearray(frontend)
+            if mode == 'charging':
+                # Trap any picker entry in this temporary binary copy. A
+                # NORMAL result alone would not prove that no picker drew or
+                # initialized keys before continuing to the original kernel.
+                chooser = values['PianoEarlyChoose']
+                self.assertEqual(chooser % 4, 0)
+                self.assertLessEqual(chooser + 4, len(binary))
+                struct.pack_into('<I', scenario_frontend, chooser, 0xd4200000)  # BRK #0
+            blob.write_bytes(scenario_frontend)
+
             # FDT guarantees 4-byte property alignment, not 8-byte alignment.
             # The extra spaces place these 64-bit initrd cells at offset % 8=4.
             # Run with SCTLR.A=1 so the compiler cannot silently widen readers.
             args = b'sunuefi.boot=uefi    \0' if mode == 'recovery' else b'bootmonitor.bootmode=normal    \0'
+            if mode == 'charging':
+                args = b'bootmonitor.bootmode=poweroff_cg sunuefi.boot=uefi\0'
             data = dtb(args, initrd=(0xB6000000, 0xB6010000))
+            if data.index(struct.pack('>Q', 0xB6000000)) % 8 != 4:
+                args = args[:-1] + b'    \0'
+                data = dtb(args, initrd=(0xB6000000, 0xB6010000))
             self.assertEqual(data.index(struct.pack('>Q', 0xB6000000)) % 8, 4)
             tree = out / 'tree.bin'; tree.write_bytes(data)
             source = out / 'harness.S'
@@ -252,7 +316,8 @@ class BootSelectTests(unittest.TestCase):
                                      '-nodefaults', '-serial', 'none', '-monitor', 'none',
                                      '-semihosting-config', 'enable=on,target=native', '-kernel', elf], capture_output=True, text=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('PASS ' + mode, result.stdout + result.stderr)
+            expected = 'normal' if mode == 'charging' else mode
+            self.assertIn('PASS ' + expected, result.stdout + result.stderr)
 
 
 HARNESS = r'''
