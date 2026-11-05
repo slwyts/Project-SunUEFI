@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <setjmp.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -9,6 +10,7 @@
 #include "../../uefi/core/PianoKeys.c"
 EFI_BOOT_SERVICES *gBS;static EFI_BOOT_SERVICES bs;
 EFI_GUID gEfiSimpleTextInProtocolGuid={0};EFI_GUID gEfiDevicePathProtocolGuid={0};
+EFI_GUID gEfiSimpleTextInputExProtocolGuid={0};EFI_GUID gEfiConsoleInDeviceGuid={0};
 static unsigned step,failure;static EFI_STATUS injected;static EFI_TPL current;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN L){return FALSE;}
@@ -20,15 +22,26 @@ static EFI_STATUS result(unsigned expected){assert(current==TPL_APPLICATION && +
 static EFI_STATUS EFIAPI timer(EFI_EVENT E,EFI_TIMER_DELAY D,UINT64 T){assert(E==(VOID*)1 && D==TimerCancel && !T);return result(1);}
 static EFI_STATUS EFIAPI close_event(EFI_EVENT E){return result(E==(VOID*)1?2:5);}
 static EFI_STATUS EFIAPI disconnect(EFI_HANDLE H,EFI_HANDLE D,EFI_HANDLE C){assert(H==(VOID*)2 && !D && !C);return result(3);}
-static EFI_STATUS EFIAPI uninstall(EFI_HANDLE H,...){assert(H==(VOID*)2);return result(4);}
+static EFI_STATUS EFIAPI notice(EFI_KEY_DATA *Key){(VOID)Key;return EFI_SUCCESS;}
+static EFI_STATUS EFIAPI uninstall(EFI_HANDLE H,...){
+ assert(H==(VOID*)2);va_list args;va_start(args,H);
+ assert(va_arg(args,EFI_GUID*)==&gEfiSimpleTextInProtocolGuid && va_arg(args,VOID*)==&mInput);
+ assert(va_arg(args,EFI_GUID*)==&gEfiSimpleTextInputExProtocolGuid && va_arg(args,VOID*)==&mInputEx);
+ assert(va_arg(args,EFI_GUID*)==&gEfiConsoleInDeviceGuid && va_arg(args,VOID*)==NULL);
+ assert(va_arg(args,EFI_GUID*)==&gEfiDevicePathProtocolGuid && va_arg(args,VOID*)==&mPath);
+ assert(va_arg(args,VOID*)==NULL);va_end(args);return result(4);
+}
 static void run(unsigned mode){
  memset(&bs,0,sizeof(bs));gBS=&bs;bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore;bs.SetTimer=timer;bs.CloseEvent=close_event;
  bs.DisconnectController=disconnect;bs.UninstallMultipleProtocolInterfaces=uninstall;
- current=TPL_APPLICATION;mPoll=(VOID*)1;mHandle=(VOID*)2;mInput.WaitForKey=(VOID*)3;
+ current=TPL_APPLICATION;mPoll=(VOID*)1;mHandle=(VOID*)2;mInput.WaitForKey=mInputEx.WaitForKeyEx=(VOID*)3;
+ mNotifies[0].Function=notice;
  failure=mode?((mode-1)%5)+1:0;injected=mode>5?EFI_WARN_STALE_DATA:EFI_DEVICE_ERROR;
  PIANO_KEYS_RETIRE_REPORT report;EFI_STATUS s=PianoStopKeysForProduct(&report);
- if(!mode){assert(s==EFI_SUCCESS && report.Clean && report.Returned && !report.Retained && !mPoll && !mHandle && !mInput.WaitForKey && step==5);}
+ if(!mode){assert(s==EFI_SUCCESS && report.Clean && report.Returned && !report.Retained && !mPoll && !mHandle && !mInput.WaitForKey && !mInputEx.WaitForKeyEx && !mNotifies[0].Function && step==5);}
  else{assert(s==EFI_DEVICE_ERROR && report.Retained && !report.Clean && step==failure);unsigned old=step;
+  assert(mInputEx.WaitForKeyEx==(VOID*)3);
+  assert(mNotifies[0].Function==notice);
   assert(PianoStopKeysForProduct(&report)==EFI_ACCESS_DENIED && step==old);}
 }
 int main(void){for(unsigned mode=0;mode<=10;mode++){pid_t p=fork();assert(p>=0);if(!p){run(mode);_exit(0);}int status;assert(waitpid(p,&status,0)==p && WIFEXITED(status) && !WEXITSTATUS(status));}

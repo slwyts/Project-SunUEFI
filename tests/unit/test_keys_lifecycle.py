@@ -7,13 +7,21 @@ INC=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 
 
 class KeysLifecycleTests(unittest.TestCase):
-    def test_actual_gpio_driver_stop(self):
+    def run_native(self, name):
         with tempfile.TemporaryDirectory(prefix='keys-lifecycle-') as tmp:
             exe=str(Path(tmp)/'stop')
             subprocess.run(['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter',
                 '-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-fsanitize=address,undefined','-fno-pie','-no-pie',
-                '-I',str(INC),'-I',str(INC/'X64'),str(ROOT/'tests/native/PianoKeysLifecycleTest.c'),'-o',exe],check=True)
+                '-I',str(INC),'-I',str(INC/'X64'),
+                '-I',str(ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdeModulePkg/Include'),
+                str(ROOT/'tests/native'/name),'-o',exe],check=True)
             subprocess.run([exe],check=True)
+
+    def test_actual_gpio_driver_stop(self):
+        self.run_native('PianoKeysLifecycleTest.c')
+
+    def test_shared_console_input_and_readonly_transport(self):
+        self.run_native('test_readonly_keys.c')
 
 
 if __name__=='__main__':unittest.main()

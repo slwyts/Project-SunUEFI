@@ -20,6 +20,7 @@
 #include <Library/UefiBootServicesTableLib.h>
 
 EFI_BOOT_SERVICES *gBS;
+EFI_SYSTEM_TABLE *gST;static EFI_SYSTEM_TABLE system_table;
 EFI_GUID gEfiLoadedImageProtocolGuid={.Data1=1},gEfiFirmwareVolume2ProtocolGuid={.Data1=2},gEfiEventExitBootServicesGuid={.Data1=3},gEfiSimpleTextInputExProtocolGuid={.Data1=4};
 EFI_GUID gEfiHiiDatabaseProtocolGuid={.Data1=5},gEfiHiiStringProtocolGuid={.Data1=6},gEfiHiiFontProtocolGuid={.Data1=7},gEfiHiiConfigRoutingProtocolGuid={.Data1=8},gEfiFormBrowser2ProtocolGuid={.Data1=9},gEdkiiFormDisplayEngineProtocolGuid={.Data1=10},gEfiVariableArchProtocolGuid={.Data1=11},gEfiVariableWriteArchProtocolGuid={.Data1=12};
 static UINT32 scenario;static EFI_TPL tpl=TPL_APPLICATION;static PIANO_PRODUCT_RUNTIME_PROTOCOL *runtime;
@@ -127,7 +128,7 @@ static EFI_STATUS EFIAPI locate(EFI_GUID *Guid,VOID *Registration,VOID **Out){
 }
 static EFI_STATUS EFIAPI locate_handles(EFI_LOCATE_SEARCH_TYPE Type,EFI_GUID *Guid,VOID *Key,UINTN *Count,EFI_HANDLE **Out){
   assert(Type==ByProtocol);*Count=0;*Out=NULL;
-  if(Guid==&gEfiSimpleTextInputExProtocolGuid){if(!keyboard_live)return EFI_NOT_FOUND;if(scenario==13){*Count=1;return EFI_SUCCESS;}*Count=1;*Out=pool(sizeof(EFI_HANDLE));(*Out)[0]=(VOID *)200;return EFI_SUCCESS;}
+  if(Guid==&gEfiSimpleTextInputExProtocolGuid){assert(!gST->ConsoleInHandle);if(!keyboard_live)return EFI_NOT_FOUND;if(scenario==13){*Count=1;return EFI_SUCCESS;}*Count=1;*Out=pool(sizeof(EFI_HANDLE));(*Out)[0]=(VOID *)200;return EFI_SUCCESS;}
   assert(Guid==&gEfiFirmwareVolume2ProtocolGuid);
   if(scenario==19){*Count=1;return EFI_SUCCESS;}
   if(scenario==20){*Out=pool(sizeof(EFI_HANDLE));return EFI_SUCCESS;}
@@ -136,7 +137,7 @@ static EFI_STATUS EFIAPI locate_handles(EFI_LOCATE_SEARCH_TYPE Type,EFI_GUID *Gu
 }
 static EFI_STATUS EFIAPI handle(EFI_HANDLE Handle,EFI_GUID *Guid,VOID **Out){
   *Out=NULL;
-  if(Guid==&gEfiSimpleTextInputExProtocolGuid){assert(Handle==(VOID *)200);if(!keyboard_live)return EFI_UNSUPPORTED;if(scenario==26 && key_reg)return EFI_SUCCESS;*Out=keyboard;return EFI_SUCCESS;}
+  if(Guid==&gEfiSimpleTextInputExProtocolGuid){assert(Handle==(VOID *)200 || (scenario>=151 && Handle==(VOID *)201));if(!keyboard_live)return EFI_UNSUPPORTED;if(scenario==26 && key_reg)return EFI_SUCCESS;*Out=keyboard;return EFI_SUCCESS;}
   if(Guid==&gEfiFirmwareVolume2ProtocolGuid){assert(Handle==(VOID *)300);*Out=&fv;return EFI_SUCCESS;}
   assert(Guid==&gEfiLoadedImageProtocolGuid && Handle==(VOID *)400);
   if(!image_live)return EFI_INVALID_PARAMETER;
@@ -144,6 +145,7 @@ static EFI_STATUS EFIAPI handle(EFI_HANDLE Handle,EFI_GUID *Guid,VOID **Out){
 }
 static EFI_STATUS EFIAPI register_key(EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *This,EFI_KEY_DATA *Key,EFI_KEY_NOTIFY_FUNCTION Notify,VOID **Token){
   assert(This==keyboard && (Key->Key.ScanCode==SCAN_F12 || Key->Key.ScanCode==SCAN_ESC || Key->Key.ScanCode==SCAN_UP || Key->Key.ScanCode==SCAN_DOWN) && !Key->Key.UnicodeChar);
+  if(scenario==152 && key_reg)assert(key_unreg==1);
   if(Key->Key.ScanCode==SCAN_F12)key_callback=Notify;
   else if(Key->Key.ScanCode==SCAN_ESC){assert(scenario>=64);escape_callback=Notify;}
   else {assert(scenario>=89&&navigation);volume_callback=Notify;}
@@ -274,7 +276,8 @@ EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){
 }
 EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RETIRE_REPORT *Report){(void)Reason;(void)Report;++stops;assert(!"UI return must not stop shared USB");return EFI_DEVICE_ERROR;}
 int main(int argc,char **argv){
-  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=150);
+  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=152);
+  gST=&system_table;if(scenario==151)gST->ConsoleInHandle=(VOID *)201;
   gBS=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);assert(gBS!=MAP_FAILED);
   *gBS=(EFI_BOOT_SERVICES){.RaiseTPL=raise,.RestoreTPL=restore,.CreateEventEx=create_ex,.CreateEvent=create,.CloseEvent=close_event,
     .RegisterProtocolNotify=notify,.InstallProtocolInterface=install,.UninstallProtocolInterface=uninstall,.LocateProtocol=locate,
@@ -290,6 +293,12 @@ int main(int argc,char **argv){
   if(scenario==13){assert(S==EFI_COMPROMISED_DATA && PianoBootPolicyReport()->Retained);goto Done;}
   if(scenario>=23 && scenario<=25){assert(S==EFI_COMPROMISED_DATA && PianoBootPolicyReport()->Retained && !starts);goto Done;}
   assert(S==EFI_SUCCESS && runtime && key_reg==1);
+  if(scenario>=151) {
+    assert(PianoBootPolicyReport()->KeyboardProviders==1);
+    if(scenario==152)gST->ConsoleInHandle=(VOID *)201;
+    assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_APP,1000)==EFI_SUCCESS && key_reg==(scenario==151?1:2));
+    assert(PianoBootPolicyStop()==EFI_SUCCESS && key_unreg==key_reg && !runtime);goto Done;
+  }
   if(scenario>=148){
     assert(runtime->Revision==2&&runtime->StartLinux);
     assert(PianoBootPolicySetLinuxEntry(NULL,(VOID *)888)==EFI_INVALID_PARAMETER);

@@ -137,15 +137,29 @@ STATIC EFI_STATUS RegisterEsc(UINTN I) {
 STATIC VOID EFIAPI KeysChanged(EFI_EVENT Event,VOID *Context){(VOID)Event;(VOID)Context;mKeysDirty=TRUE;}
 STATIC VOID EFIAPI Ebs(EFI_EVENT Event,VOID *Context){(VOID)Event;(VOID)Context;mStartupWindow=FALSE;mAlive=FALSE;mReport.ServicesLost=TRUE;mReport.IdleKnown=FALSE;}
 STATIC EFI_STATUS RefreshKeys(VOID) {
+  // ConSplitter forwards notifications to its physical inputs. Subscribe to
+  // the standard console once, or use physical providers when it has no Ex.
+  EFI_HANDLE Preferred=NULL;
+  if(gST && gST->ConsoleInHandle) {
+    EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *Console=NULL;
+    EFI_STATUS S=gBS->HandleProtocol(gST->ConsoleInHandle,&gEfiSimpleTextInputExProtocolGuid,(VOID **)&Console);RequireAlive();
+    if(S==EFI_SUCCESS && Console && Console->RegisterKeyNotify && Console->UnregisterKeyNotify)Preferred=gST->ConsoleInHandle;
+  }
   // Protocol removal does not signal RegisterProtocolNotify. Fresh lookup on
   // every APP slice prevents using a retired or replaced keyboard instance.
   for(UINTN I=0;I<mKeysCount;) {
     EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *Fresh=NULL;
     EFI_STATUS S=gBS->HandleProtocol(mKeys[I].Handle,&gEfiSimpleTextInputExProtocolGuid,(VOID **)&Fresh);RequireAlive();
     if(S==EFI_SUCCESS && Fresh==mKeys[I].Input && Fresh && Fresh->UnregisterKeyNotify==mKeys[I].Unregister){
-      if(mStartupWindow && !mKeys[I].Notify[1]){S=RegisterEsc(I);if(S!=EFI_SUCCESS)return mReport.KeyStatus=S;}
-      ++I;continue;}
-    if((S==EFI_SUCCESS && (!Fresh || Fresh==mKeys[I].Input)) ||
+      if(!Preferred || mKeys[I].Handle==Preferred) {
+        if(mStartupWindow && !mKeys[I].Notify[1]){S=RegisterEsc(I);if(S!=EFI_SUCCESS)return mReport.KeyStatus=S;}
+        ++I;continue;
+      }
+      for(UINTN J=0;J<4;++J)if(mKeys[I].Notify[J]) {
+        S=Fresh->UnregisterKeyNotify(Fresh,mKeys[I].Notify[J]);RequireAlive();
+        if(S!=EFI_SUCCESS){mReport.Retained=TRUE;return mReport.KeyStatus=Exact(S);}mKeys[I].Notify[J]=NULL;
+      }
+    }else if((S==EFI_SUCCESS && (!Fresh || Fresh==mKeys[I].Input)) ||
        (S!=EFI_SUCCESS && S!=EFI_NOT_FOUND && S!=EFI_UNSUPPORTED && S!=EFI_INVALID_PARAMETER)){
       mReport.Retained=TRUE;return mReport.KeyStatus=S==EFI_SUCCESS?EFI_COMPROMISED_DATA:Exact(S);
     }
@@ -157,7 +171,9 @@ STATIC EFI_STATUS RefreshKeys(VOID) {
   mReport.KeyboardProviders=(UINT32)mKeysCount;
   if(!mKeysDirty)return EFI_SUCCESS;
   mKeysDirty=FALSE;
-  EFI_HANDLE *Handles=NULL;UINTN Count=0;EFI_STATUS S=gBS->LocateHandleBuffer(ByProtocol,&gEfiSimpleTextInputExProtocolGuid,NULL,&Count,&Handles);RequireAlive();
+  EFI_HANDLE *Handles=NULL;UINTN Count=0;EFI_STATUS S=EFI_SUCCESS;
+  if(Preferred){Handles=&Preferred;Count=1;}
+  else {S=gBS->LocateHandleBuffer(ByProtocol,&gEfiSimpleTextInputExProtocolGuid,NULL,&Count,&Handles);RequireAlive();}
   if(S==EFI_NOT_FOUND && !Count && !Handles)return mReport.KeyStatus=EFI_NOT_READY;
   if((Count && !Handles) || (!Count && Handles) || Count>256 || (S!=EFI_SUCCESS && (Count || Handles))){mReport.Retained=TRUE;return mReport.KeyStatus=EFI_COMPROMISED_DATA;}
   if(S!=EFI_SUCCESS)return mReport.KeyStatus=Exact(S);
@@ -180,7 +196,7 @@ STATIC EFI_STATUS RefreshKeys(VOID) {
     mKeys[mKeysCount].Handle=Handles[I];mKeys[mKeysCount].Input=Input;ZeroMem(mKeys[mKeysCount].Notify,sizeof(mKeys[mKeysCount].Notify));mKeys[mKeysCount].Notify[0]=Token;mKeys[mKeysCount].Unregister=Input->UnregisterKeyNotify;++mKeysCount;
     if(mStartupWindow){WindowFailure=RegisterEsc(mKeysCount-1);if(WindowFailure!=EFI_SUCCESS)break;}
   }
-  EFI_STATUS Free=Handles?gBS->FreePool(Handles):EFI_SUCCESS;RequireAlive();if(Free!=EFI_SUCCESS)mReport.Retained=TRUE;
+  EFI_STATUS Free=Handles && !Preferred?gBS->FreePool(Handles):EFI_SUCCESS;RequireAlive();if(Free!=EFI_SUCCESS)mReport.Retained=TRUE;
   mReport.KeyboardProviders=(UINT32)mKeysCount;
   return mReport.KeyStatus=mReport.Retained?EFI_COMPROMISED_DATA:WindowFailure!=EFI_SUCCESS?WindowFailure:mKeysCount?EFI_SUCCESS:EFI_NOT_READY;
 }

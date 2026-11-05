@@ -244,7 +244,7 @@ def main():
         shutil.copyfile(root/'uefi/core/PianoKeys.c',app/'PianoKeys.c')
         shutil.copyfile(root/'uefi/core/PianoKeysLifecycle.h',app/'PianoKeysLifecycle.h')
         path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoKeys.c').replace('  DebugLib','  DebugLib\n  IoLib')
-        text+='  gEfiSimpleTextInProtocolGuid\n  gEfiDevicePathProtocolGuid\n';path.write_text(text)
+        text+='  gEfiSimpleTextInProtocolGuid\n  gEfiSimpleTextInputExProtocolGuid\n  gEfiDevicePathProtocolGuid\n';path.write_text(text)
         path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)',
             'EFI_STATUS PianoStartKeys (CONST VOID *Fdt);\nVOID PianoStopKeys (VOID);\n#pragma pack(1)',1)
         text=text.replace('  Status=gBS->LoadImage (FALSE,ImageHandle',

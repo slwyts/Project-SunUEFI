@@ -40,6 +40,7 @@ EFI_STATUS PianoUfsReadOnlyDmaExperiment(CONST VOID *Fdt);
 CONST CHAR8 *PianoUfsStartupStage(VOID);
 CONST CHAR8 *PianoUfsStartupDiagnostic(VOID);
 EFI_STATUS PianoStartKeys(CONST VOID *Fdt);
+BOOLEAN PianoSetStandardKeyNavigation(BOOLEAN Enable);
 STATIC PIANO_PRODUCT_OWNERS mOwners;
 STATIC PIANO_LATE_HANDOFF mLateHandoff;
 STATIC PIANO_FV_APPLICATION mSystemdApplication;
@@ -561,6 +562,7 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
         (VOID)PianoProductBootLogMessage(L"正在启动系统",L"请稍候",EFI_SUCCESS,FALSE);
         Status=PianoEspBootFind(&mSystemdEsp);
         if(Status==EFI_SUCCESS) {
+          BOOLEAN PreviousNavigation=PianoSetStandardKeyNavigation(TRUE);
           mSystemdActive=TRUE;
           Status=PianoApplicationRunFile(Image,mSystemdEsp,L"\\EFI\\BOOT\\BOOTAA64.EFI",NULL,0x400000,&mSystemdApplication);
           mSystemdActive=FALSE;
@@ -569,6 +571,7 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
           if(mLateHandoff.Phase==PianoExitArmed){
             EFI_STATUS Disarm=PianoLateHandoffDisarm(&mLateHandoff);if(Disarm!=EFI_SUCCESS)FailStop(Disarm);
           }
+          PianoSetStandardKeyNavigation(PreviousNavigation);
         }
         DEBUG((DEBUG_WARN,"PIANO_SYSTEMD_BOOT_RETURN status=%r\n",Status));
         mSystemdEsp=NULL;
