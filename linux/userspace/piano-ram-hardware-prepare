@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Scoped, fresh Linux-owned DMA evidence for the Piano RAM-root service chain.
+"""Scoped, fresh Linux-owned DMA evidence for the Piano service chain.
 
 No raw register access, stream programming, block access or cached ready marker.
 The six-master parser is the same reviewed implementation used on the host.
@@ -102,7 +102,17 @@ def read_routes(module, devices, sysfs=Path('/sys')):
     return result
 
 
-def require_ram(proc=Path('/proc'), run=Path('/run')):
+def require_ram(proc=Path('/proc'), run=Path('/run'), sysfs=Path('/sys')):
+    booted = run / 'booted-system'
+    if booted.is_symlink():
+        # NixOS stage 1 validates the root; check its board and booted module ABI.
+        compatible = (sysfs / 'firmware/devicetree/base/compatible').read_bytes().split(b'\0')
+        if b'xiaomi,piano' not in compatible:
+            raise Refused('hardware is not Xiaomi Pad 8 Pro (piano)')
+        if not (booted / 'kernel-modules/lib/modules' / os.uname().release).is_dir():
+            raise Refused('matching booted NixOS kernel modules are missing')
+        return
+
     words = (proc / 'cmdline').read_text().split()
     if any(word.startswith('root=') for word in words):
         raise Refused('block-root command line is forbidden for the RAM-root hardware entry')

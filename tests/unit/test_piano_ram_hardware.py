@@ -51,6 +51,39 @@ class RamHardwareTests(unittest.TestCase):
             query.return_value = 'different\n'
             with self.assertRaises(hardware.Refused): hardware.require_ram(proc, self.run)
 
+    def test_nixos_requires_piano_and_matching_booted_kernel_modules(self):
+        booted = self.path / 'booted-system'
+        modules = booted / 'kernel-modules/lib/modules' / os.uname().release
+        modules.mkdir(parents=True)
+        (self.run / 'booted-system').symlink_to(booted)
+        compatible = self.sysfs / 'firmware/devicetree/base/compatible'
+        compatible.parent.mkdir(parents=True)
+        compatible.write_bytes(b'xiaomi,piano\0qcom,sm8750\0')
+
+        # NixOS needs neither the Debian root policy nor its runtime markers.
+        proc = self.path / 'missing-proc'
+        hardware.require_ram(proc, self.run, self.sysfs)
+        compatible.write_bytes(b'qcom,sm8750\0')
+        with self.assertRaisesRegex(hardware.Refused, 'hardware is not'):
+            hardware.require_ram(proc, self.run, self.sysfs)
+        compatible.write_bytes(b'xiaomi,piano\0qcom,sm8750\0')
+        modules.rename(modules.with_name(modules.name + '-other'))
+        with self.assertRaisesRegex(hardware.Refused, 'kernel modules are missing'):
+            hardware.require_ram(proc, self.run, self.sysfs)
+
+    def test_without_nixos_symlink_ram_root_policy_still_applies(self):
+        (self.run / 'booted-system').mkdir()
+        proc = self.path / 'proc'
+        proc.mkdir()
+        (proc / 'cmdline').write_text('piano.root=ram')
+        (proc / 'mounts').write_text('rootfs / rootfs rw 0 0\n')
+        (self.run / 'piano-root-mode').write_text('ram')
+        with mock.patch.object(Path, 'is_dir', return_value=True):
+            hardware.require_ram(proc, self.run, self.sysfs)
+        (proc / 'cmdline').write_text('piano.root=ram root=/dev/sda4')
+        with self.assertRaisesRegex(hardware.Refused, 'block-root command line'):
+            hardware.require_ram(proc, self.run, self.sysfs)
+
     def setUp(self):
         (ROOT / 'build/distros').mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / 'build', prefix='ram-hardware-test-')
