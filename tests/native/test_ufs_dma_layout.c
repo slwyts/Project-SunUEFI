@@ -49,19 +49,56 @@ int main(void){
   assert(PianoUfsCheckReadResponse(trd,ucd,11,4096,&transferred)==EFI_SUCCESS && transferred==4096);
   r[1]=0x20;Be32(r+12,4000);
   assert(PianoUfsCheckReadResponse(trd,ucd,11,4096,&transferred)==EFI_SUCCESS && transferred==96);
-  r[1]=0;assert(PianoUfsCheckReadResponse(trd,ucd,11,4096,&transferred)==EFI_COMPROMISED_DATA);
+  r[1]=0;assert(PianoUfsCheckReadResponse(trd,ucd,11,4096,&transferred)==EFI_SUCCESS && transferred==96);
+  r[1]=0x40;assert(PianoUfsCheckReadResponse(trd,ucd,11,4096,&transferred)==EFI_COMPROMISED_DATA && transferred==0);
+  r[1]=0;Be32(r+12,4097);
+  assert(PianoUfsCheckReadResponse(trd,ucd,11,4096,&transferred)==EFI_COMPROMISED_DATA && transferred==0);
+  Be32(r+12,4000);
+  assert(PianoUfsCheckReadResponse(trd,ucd,12,4096,&transferred)==EFI_DEVICE_ERROR && transferred==0);
   r[7]=2;assert(PianoUfsCheckReadResponse(trd,ucd,11,4096,&transferred)==EFI_DEVICE_ERROR);
-  r[2]=0;Be32(r+12,0);Be16(r+10,20);Be16(r+32,18);r[34]=0x70;r[36]=6;r[46]=0x29;
+  r[2]=0;Be16(r+10,20);Be16(r+32,18);r[34]=0x70;r[36]=6;r[46]=0x29;
   assert(PianoUfsReadRetryable(trd,ucd,11,0,4096));
+  r[6]=1;assert(PianoUfsReadRetryable(trd,ucd,11,0,4096));
+  assert(!PianoUfsReadRetryable(trd,ucd,12,0,4096));
+  assert(!PianoUfsReadRetryable(trd,ucd,11,1,4096));
+  Le32(trd+8,1);assert(!PianoUfsReadRetryable(trd,ucd,11,0,4096));Le32(trd+8,0);
+  r[0]=0x36;assert(!PianoUfsReadRetryable(trd,ucd,11,0,4096));r[0]=0x21;
+  r[7]=0;
+  assert(PianoUfsCheckReadResponse(trd,ucd,11,4096,&transferred)==EFI_DEVICE_ERROR && transferred==0);
+  assert(!PianoUfsReadRetryable(trd,ucd,11,0,4096));r[7]=2;
+  r[6]=2;assert(!PianoUfsReadRetryable(trd,ucd,11,0,4096));
+  r[6]=0xFF;assert(!PianoUfsReadRetryable(trd,ucd,11,0,4096));r[6]=0;
+  r[1]=0x40;assert(!PianoUfsReadRetryable(trd,ucd,11,0,4096));r[1]=0;
+  Be32(r+12,4097);assert(!PianoUfsReadRetryable(trd,ucd,11,0,4096));Be32(r+12,4000);
   assert(!PianoUfsReadRetryable(trd,ucd,12,0,4096));
   assert(!PianoUfsReadRetryable(trd,ucd,11,1,4096));
   Le32(trd+8,1);assert(!PianoUfsReadRetryable(trd,ucd,11,0,4096));Le32(trd+8,0);
   r[36]=3;assert(!PianoUfsReadRetryable(trd,ucd,11,0,4096));
   r[36]=2;r[46]=4;r[47]=1;assert(PianoUfsReadRetryable(trd,ucd,11,0,4096));
   r[47]=2;assert(!PianoUfsReadRetryable(trd,ucd,11,0,4096));
-  Be16(r+32,30);assert(!PianoUfsReadRetryable(trd,ucd,11,0,4096));
-  Be16(r+10,10);Be16(r+32,8);r[34]=0x72;r[35]=6;
-  assert(PianoUfsReadRetryable(trd,ucd,11,0,4096));
+  r[6]=1;assert(!PianoUfsReadRetryable(trd,ucd,11,0,4096));r[6]=0;
+  UINT8 key,asc,ascq;
+  for(UINT8 format=0x70;format<=0x73;++format){
+    BOOLEAN fixed=format<0x72;Be16(r+10,fixed?20:10);Be16(r+32,fixed?18:8);r[34]=format;
+    if(fixed){r[36]=6;r[46]=0x29;r[47]=0;}
+    else {r[35]=6;r[36]=0x29;r[37]=0;}
+    assert(PianoUfsReadSense(ucd,&key,&asc,&ascq) && key==6 && asc==0x29 && ascq==0);
+    assert(PianoUfsReadRetryable(trd,ucd,11,0,4096));
+    r[6]=1;assert(PianoUfsReadRetryable(trd,ucd,11,0,4096));r[6]=0;
+  }
+  CONST struct {UINT8 Format;UINT16 Length,Segment;} InvalidSense[]={
+    {0x70,31,33},{0x70,30,20},{0x70,13,15},{0x71,13,15},
+    {0x72,7,9},{0x73,7,9},{0x72,8,11},{0x7F,18,20},{0x70,0,0}};
+  for(UINTN i=0;i<ARRAY_SIZE(InvalidSense);++i){
+    r[34]=InvalidSense[i].Format;Be16(r+32,InvalidSense[i].Length);Be16(r+10,InvalidSense[i].Segment);
+    key=asc=ascq=0;
+    assert(!PianoUfsReadSense(ucd,&key,&asc,&ascq) && key==0xFF && asc==0xFF && ascq==0xFF);
+    assert(!PianoUfsReadRetryable(trd,ucd,11,0,4096));
+  }
+  key=asc=ascq=0;
+  assert(!PianoUfsReadSense(NULL,&key,&asc,&ascq) && key==0xFF && asc==0xFF && ascq==0xFF);
+  asc=ascq=0;
+  assert(!PianoUfsReadSense(ucd,NULL,&asc,&ascq) && asc==0xFF && ascq==0xFF);
   UINT8 data[4096],luns[8];UINTN count;ZeroMem(data,sizeof(data));Be32(data,24);
   data[9]=0;data[17]=2;data[24]=0xc1;data[25]=0x81;
   assert(PianoUfsParseLuns(data,sizeof(data),luns,&count)==EFI_SUCCESS && count==2 && luns[1]==2);

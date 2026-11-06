@@ -7,8 +7,8 @@ EFI_STATUS PianoUfsBuildNop(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN UcdBytes,
 EFI_STATUS PianoUfsBuildReadDescriptor(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN UcdBytes,UINT64 UcdIova,
                                       UINT8 Tag,UINT8 Idn,UINT8 Index,UINT16 Bytes);
 EFI_STATUS PianoUfsCheckNop(CONST VOID *Utrd,CONST VOID *Ucd,UINT8 Tag);
-// Sole attribute diagnostic: READ bCurrentPowerMode (IDN 2), available even
-// while asleep. No arbitrary attribute or attribute-write constructor.
+// Startup power check: READ bCurrentPowerMode (IDN 2), available in any power mode.
+// No arbitrary attribute or attribute-write constructor.
 EFI_STATUS PianoUfsBuildReadPowerMode(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN UcdBytes,UINT64 UcdIova,UINT8 Tag);
 // Resume prerequisite only: START STOP UNIT Active on device WLUN D0,
 // expected length zero, no PRDT and no DATA OUT. Not a block write interface.
@@ -18,7 +18,11 @@ EFI_STATUS PianoUfsBuildReadCommand(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN U
                                   UINT64 UcdIova,UINT64 DataIova,UINT32 DataBytes,
                                   UINT8 Tag,UINT8 Lun,PIANO_UFS_READ_COMMAND Command,UINT32 Lba,UINT16 Blocks);
 EFI_STATUS PianoUfsCheckReadResponse(CONST VOID *Utrd,CONST VOID *Ucd,UINT8 Tag,UINT32 Requested,UINT32 *Transferred);
-// Completed, identity-matched read commands only. Never retry a transport error.
+// Decode bounded fixed/descriptor sense. Invalid input sets available outputs to FF.
+BOOLEAN PianoUfsReadSense(CONST VOID *Ucd,UINT8 *Key,UINT8 *Asc,UINT8 *Ascq);
+// Classify completed, identity-matched CHECK CONDITION replies with response 0 or 1.
+// Bounded read callers and no-data SSU UNIT ATTENTION handling may reuse this.
+// Callers restrict commands and retry counts; transport errors remain ineligible.
 BOOLEAN PianoUfsReadRetryable(CONST VOID *Utrd,CONST VOID *Ucd,UINT8 Tag,UINT8 Lun,UINT32 Requested);
 EFI_STATUS PianoUfsParseCacheMode(CONST VOID *Data,UINTN Bytes,BOOLEAN *WriteProtected,BOOLEAN *Fua,BOOLEAN *WriteCache,BOOLEAN *ReadCacheDisabled);
 EFI_STATUS PianoUfsBuildReadWriteProtectFlag(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN UcdBytes,UINT64 UcdIova,UINT8 Tag,UINT8 Idn);
