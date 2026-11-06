@@ -4,8 +4,8 @@
   "kernel_version": "7.3.0",
   "base_commit": "c03c1a14507dfaf8b856c2608f9ac216021fc222",
   "base_tree": "30fd2ef82912c26cf3a58ad0ba6afc375fa851ac",
-  "target_tree": "4a5923915b4214f850287fc51c658781dc54a195",
-  "original_target_commit": "220cdeac7e4ec4e1a8bc4c2400c71fa00b21b084",
+  "target_tree": "78e5f4edfacd2e5310f9461052cfd34ef91e3f18",
+  "original_target_commit": "c474d439f79df18b44bf5e93926fc8affbdb2fa6",
   "source_url": "https://github.com/torvalds/linux.git",
   "patches": [
     {
@@ -199,6 +199,38 @@
       "original_parent": "57b1e6db5a831d416ad438b7490144e6f8ee6af9",
       "committer_date": "2026-10-22T18:25:53+08:00",
       "tree": "4a5923915b4214f850287fc51c658781dc54a195"
+    },
+    {
+      "file": "0025-ucsi-clear-released-connectors.patch",
+      "sha256": "1db7e75f8f680d1320c18e94b2a581fd020e5244ced35035950170d741c9b327",
+      "original_commit": "892a593ae83389a645076451ba27221504d3dc33",
+      "original_parent": "220cdeac7e4ec4e1a8bc4c2400c71fa00b21b084",
+      "committer_date": "2026-10-25T12:04:07+00:00",
+      "tree": "4b127fa70ffa79e78a259c8289ef7e632822edec"
+    },
+    {
+      "file": "0026-mca-recover-pd-input.patch",
+      "sha256": "e51e2b096f5f05cbb0dcd8d72185b2c0d4210fba283dba21466bf2b123038deb",
+      "original_commit": "9d00bb4aa4a47a3b18da35b9ac1317ec72173e20",
+      "original_parent": "892a593ae83389a645076451ba27221504d3dc33",
+      "committer_date": "2026-10-25T14:59:44Z",
+      "tree": "2aa1815b3e5c97943d522dd176f3d059c0c268eb"
+    },
+    {
+      "file": "0027-power-piano-mipps-authentication.patch",
+      "sha256": "2e935e1fc56054845884f18a43cf75ace20da58e4354eb20f7f8809e207922d0",
+      "original_commit": "3176c9930508dac813a7ab8bc38739b0cb47297e",
+      "original_parent": "9d00bb4aa4a47a3b18da35b9ac1317ec72173e20",
+      "committer_date": "2026-10-28T14:11:38Z",
+      "tree": "d2d5a2393f557fed97e2d8a5cb020961f8b5408a"
+    },
+    {
+      "file": "0028-power-piano-otg-configuration.patch",
+      "sha256": "d9506ab06591842d5d5b533d804a7454fdf1d2efc0c561235461bf6644a35f86",
+      "original_commit": "c474d439f79df18b44bf5e93926fc8affbdb2fa6",
+      "original_parent": "3176c9930508dac813a7ab8bc38739b0cb47297e",
+      "committer_date": "2026-10-28T15:31:00Z",
+      "tree": "78e5f4edfacd2e5310f9461052cfd34ef91e3f18"
     }
   ],
   "provenance": {
@@ -536,6 +568,15 @@
         "bcf730279a854ce7a7f586c68d8064726e48ffff",
         "2b139af3cfefe0b79fb33e1b207eac3ea2812678"
       ]
+    },
+    "mipps_authentication": {
+      "source_url": "https://github.com/ianchb/xiaomi-mipps-auth",
+      "source_commit": "9176efbdf276b874fc0a97912a914449a88155fb",
+      "piano_source_url": "https://github.com/blu-sharky/piano-mipps-auth",
+      "piano_source_commit": "ccdc3ce7f5200ef736d7d552eb7b387ea3bb6fd9",
+      "license": "GPL-2.0-only",
+      "stock_reference": "Piano batterysecret command order: remove compensation (7), verified (6), no reverse authentication (8).",
+      "modifications": "Native workqueue authentication, fresh challenge validation and bounded identity recovery, no data-role swap, normal PD/PPS fallback."
     }
   }
 }

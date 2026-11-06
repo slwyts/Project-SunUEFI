@@ -1,0 +1,153 @@
+From c474d439f79df18b44bf5e93926fc8affbdb2fa6 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 28 Oct 2026 15:31:00 +0000
+Subject: [PATCH] power: supply: piano_mca: initialize the factory USB OTG
+ configuration
+
+Send the board's OTG configuration through the stock 0x201a property as
+qcom_subpmic_sync_cfg_work does on Android. Piano uses boost source 0,
+GPIO chip type 1 and no external boost/OVP enable GPIOs. Read those values
+from the existing factory device-tree node and refuse other wiring.
+
+Without this synchronization the ADSP reports "gpio not init" from
+mca_misc_enable_usb_otg, times out with status FFFF and terminates the TCPC
+main loop when a source-role dock is detached. The ensuing ADSP recovery
+also tears down the audio service and can remain blocked by open ALSA
+control handles.
+
+Synchronize once per ADSP generation and retry a failed exchange without
+blocking ordinary charging. Restrict the write path to the parsed board
+configuration; keep voltage, current and temperature policy unchanged.
+---
+ drivers/power/supply/piano_mca.c | 69 +++++++++++++++++++++++++++++++-
+ 1 file changed, 67 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 763128426..6d1536fb2 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -94,6 +94,7 @@ struct piano_mca_pdo {
+ #define MCA_PROP_VDM_REMOVE_COMP 0x21009
+ #define MCA_PROP_VDM_REVERSE	0x2100a
+ #define MCA_PROP_DATA_ROLE	0x2100c	/* 1 UFP, 2 DFP; write asks a swap */
++#define MCA_PROP_OTG_CONFIG	0x0201a
+ #define MCA_PROP_PD_STATE	0x2100d
+ #define MCA_PD_SNK_READY		2
+ #define MCA_PROP_ADAPTER_ID	0x2100e
+@@ -445,6 +446,9 @@ struct mca_resp {
+ struct piano_mca {
+ 	struct device *dev;
+ 	u32 pd_protocol_version;
++	__le32 otg_config[4];
++	bool otg_config_valid;
++	unsigned int otg_config_generation;
+ 	struct pmic_glink_client *client;
+ 	struct mutex lock;
+ 	struct completion ack;
+@@ -764,11 +768,15 @@ static bool piano_mca_pps_word_ok(u32 val)
+ 	       ma <= MCA_CP_PPS_MAX_MA;
+ }
+ 
+-static bool piano_mca_write_allowed(u32 prop, const void *data, size_t len)
++static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
++				    const void *data, size_t len)
+ {
+ 	u32 val = len == sizeof(u32) ? get_unaligned_le32(data) : 0;
+ 
+ 	switch (prop) {
++	case MCA_PROP_OTG_CONFIG:
++		return mca->otg_config_valid && len == sizeof(mca->otg_config) &&
++		       !memcmp(data, mca->otg_config, len);
+ 	case MCA_PROP_BOOST_ENABLE:
+ 		/* Wireless pen supply 1, client 2. Never select USB OTG. */
+ 		return len == sizeof(u32) && (val == 0x20100 || val == 0x20101);
+@@ -815,7 +823,7 @@ static int piano_mca_write(struct piano_mca *mca, u32 prop, const void *data,
+ {
+ 	u8 buf[MCA_VDM_LEN];
+ 
+-	if (len > sizeof(buf) || !piano_mca_write_allowed(prop, data, len))
++	if (len > sizeof(buf) || !piano_mca_write_allowed(mca, prop, data, len))
+ 		return -EPERM;
+ 
+ 	memcpy(buf, data, len);
+@@ -829,6 +837,61 @@ static int piano_mca_write_u32(struct piano_mca *mca, u32 prop, u32 val)
+ 	return piano_mca_write(mca, prop, &data, sizeof(data));
+ }
+ 
++/*
++ * Stock qcom_subpmic_sync_cfg_work sends this four-word board configuration
++ * before USB OTG is used. Without it, mca_misc_enable_usb_otg waits for
++ * GPIO initialization and the TCPC state machine fails on source detach.
++ * Piano uses the PMIC boost through the charge-pump input gate, without
++ * either optional external enable GPIO. Keep the factory DT as the source
++ * of the wiring, and do not send a configuration for other hardware.
++ */
++static void piano_mca_parse_otg_config(struct piano_mca *mca)
++{
++	struct device_node *np;
++	u32 source, chip, boost_gpio = U32_MAX, ovp_gpio = U32_MAX;
++	int ret;
++
++	np = of_find_compatible_node(NULL, NULL, "mca,qcom_subpmic");
++	if (!np)
++		return;
++	ret = of_property_read_u32(np, "otg_boost_src", &source);
++	ret = ret ?: of_property_read_u32(np, "gpio_chip_type", &chip);
++	of_property_read_u32(np, "vdd_boost_en", &boost_gpio);
++	of_property_read_u32(np, "otg_ovp_en", &ovp_gpio);
++	of_node_put(np);
++	if (ret || source != 0 || chip != 1 ||
++	    boost_gpio != U32_MAX || ovp_gpio != U32_MAX) {
++		dev_warn(mca->dev, "unsupported USB OTG board configuration\n");
++		return;
++	}
++	mca->otg_config[0] = cpu_to_le32(source);
++	mca->otg_config[1] = cpu_to_le32(chip);
++	mca->otg_config[2] = cpu_to_le32(boost_gpio);
++	mca->otg_config[3] = cpu_to_le32(ovp_gpio);
++	mca->otg_config_valid = true;
++	mca->otg_config_generation = U32_MAX;
++}
++
++static void piano_mca_sync_otg_config(struct piano_mca *mca)
++{
++	unsigned int generation = READ_ONCE(mca->pdr_generation);
++	int ret;
++
++	if (!mca->otg_config_valid || !READ_ONCE(mca->service_up) ||
++	    mca->otg_config_generation == generation)
++		return;
++	ret = piano_mca_write(mca, MCA_PROP_OTG_CONFIG, mca->otg_config,
++			      sizeof(mca->otg_config));
++	if (ret) {
++		dev_warn_ratelimited(mca->dev, "failed to configure USB OTG: %d\n", ret);
++		return;
++	}
++	if (generation == READ_ONCE(mca->pdr_generation)) {
++		mca->otg_config_generation = generation;
++		dev_info(mca->dev, "USB OTG board configuration synchronized\n");
++	}
++}
++
+ static u32 piano_mca_read_u32(struct piano_mca *mca, u32 prop)
+ {
+ 	__le32 val;
+@@ -2049,6 +2112,7 @@ static void piano_mca_poll(struct work_struct *work)
+ 	bool online, changed;
+ 	u32 real_type = MCA_TYPE_UNKNOWN;
+ 
++	piano_mca_sync_otg_config(mca);
+ 	mca->vbus_uv = piano_mca_read_u32(mca, MCA_PROP_BUS_VOLT);
+ 	online = mca->vbus_uv >= MCA_VBUS_ONLINE_UV;
+ 
+@@ -2599,6 +2663,7 @@ static int piano_mca_probe(struct auxiliary_device *adev,
+ 		return dev_err_probe(dev, -EINVAL, "unsupported MCA PD protocol\n");
+ 	dev_info(dev, "MCA PD protocol version %u\n", mca->pd_protocol_version);
+ 	mca->hv_retry = jiffies;
++	piano_mca_parse_otg_config(mca);
+ 	mutex_init(&mca->lock);
+ 	mutex_init(&mca->pen_boost_lock);
+ 	init_completion(&mca->ack);
+-- 
+2.47.3
+

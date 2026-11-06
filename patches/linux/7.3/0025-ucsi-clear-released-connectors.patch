@@ -1,0 +1,28 @@
+From 892a593ae83389a645076451ba27221504d3dc33 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 25 Oct 2026 12:04:07 +0000
+Subject: [PATCH] fix(usb): clear UCSI connectors after unregister
+
+The PMIC GLINK transport reuses its UCSI instance across ADSP restarts.
+If the next initialization fails before allocating connectors, the old
+connector pointer survives and a subsequent unregister dereferences freed
+memory. Clear it after freeing the array so recovery can safely retry.
+---
+ drivers/usb/typec/ucsi/ucsi.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/usb/typec/ucsi/ucsi.c b/drivers/usb/typec/ucsi/ucsi.c
+index 04c86185c..239693f92 100644
+--- a/drivers/usb/typec/ucsi/ucsi.c
++++ b/drivers/usb/typec/ucsi/ucsi.c
+@@ -2409,6 +2409,7 @@ void ucsi_unregister(struct ucsi *ucsi)
+ 	}
+ 
+ 	kfree(ucsi->connector);
++	ucsi->connector = NULL;
+ }
+ EXPORT_SYMBOL_GPL(ucsi_unregister);
+ 
+-- 
+2.47.3
+

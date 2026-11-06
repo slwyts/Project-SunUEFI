@@ -24,7 +24,7 @@ SunUEFI 站在这些项目之上：EDK2 / Mu-Silicium 提供 UEFI 基础和高�
 
 小米平板相关参考还包括 [code002-2/Xiaomi-pad-6s-pro-Linux](https://github.com/code002-2/Xiaomi-pad-6s-pro-Linux/tree/053169b1ed48335d8139694ea6ccaacf52462dd9) 及其引用的 [debian-sheng](https://github.com/ianchb/debian-sheng)、[xiaomi-mipps-auth](https://github.com/ianchb/xiaomi-mipps-auth/tree/9176efbdf276b874fc0a97912a914449a88155fb) 和 [xiaomi-sheng-fingerprint](https://github.com/ianchb/xiaomi-sheng-fingerprint/tree/76e7301163b0e708f609c9864b3e5833e9f57402)。分别用于多发行版集成、MiPPS 认证和标准 libfprint/fprintd 接入的参考。指纹项目使用 FPC1553，Piano 原厂使用 Goodix，不能直接互换传感器协议。MiPPS 工具标注 GPL-2.0-only；指纹后端为 Apache-2.0，libfprint/fprintd 补丁及 QTEE 依赖遵循各自许可。
 
-内核 MiPPS [候选补丁](patches/linux/7.2.9/drafts/0040-power-piano-native-mipps.patch)移植了上述 `xiaomi-mipps-auth` 的协议常量、挑战应答顺序和摘要计算，保留 GPL-2.0-only。另查阅 [blu-sharky/piano-mipps-auth](https://github.com/blu-sharky/piano-mipps-auth/tree/ccdc3ce7f5200ef736d7d552eb7b387ea3bb6fd9) 对 Piano 固件漏报充电器身份的处理；该身份恢复逻辑尚未移植。候选的实际支持范围见 [ADSP 配套说明](vendor/firmware/hyperos4-adsp/README.md)。
+内核 MiPPS [补丁](patches/linux/7.3/0027-power-piano-mipps-authentication.patch)移植了上述 `xiaomi-mipps-auth` 的协议常量和摘要计算，并参考 [blu-sharky/piano-mipps-auth](https://github.com/blu-sharky/piano-mipps-auth) 对 Piano 固件漏报充电器身份的处理及原厂命令顺序，保留 GPL-2.0-only。认证在内核工作队列中完成，不安装上游的用户空间服务、状态文件和通知。来源提交记录在[内核补丁清单](patches/linux/7.3/series.json)的 `mipps_authentication` 中，协议与限制见[内核说明](docs/devel/linux/kernel.md#usb-type-c)。
 
 HyperOS 4 的 [ADSP](vendor/firmware/hyperos4-adsp/README.md) 和
 [CDSP](vendor/firmware/hyperos4-cdsp/README.md) 固件来自本机原厂固件分区，

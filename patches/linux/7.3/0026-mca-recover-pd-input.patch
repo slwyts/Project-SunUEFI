@@ -1,0 +1,162 @@
+From 9d00bb4aa4a47a3b18da35b9ac1317ec72173e20 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 25 Oct 2026 14:59:44 +0000
+Subject: [PATCH] power: supply: piano_mca: recover unknown PD input
+ classification
+
+REAL_TYPE can stay Unknown after reconnect despite an active PD sink.
+Require the sibling UCSI power supply to report online PD charging, the
+stock SNK_Ready state and a valid fixed 5 V source PDO before recovering
+ordinary PD classification. Preserve all existing source and temperature
+limits, and skip policy changes when the type read fails.
+
+When classification recovers after an Unknown sample blocked high voltage,
+allow a delayed retry within the existing per-attach retry budget.
+
+
+
+Hold the power-supply removal semaphore while checking the UCSI peer,
+so ADSP recovery cannot free connector data during the property reads.
+---
+ drivers/power/supply/piano_mca.c | 90 +++++++++++++++++++++++++++++++-
+ 1 file changed, 88 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 1c54dc71e..4c1944127 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -90,6 +90,8 @@ struct piano_mca_pdo {
+ #define MCA_PROP_VDM_REMOVE_COMP 0x21009
+ #define MCA_PROP_VDM_REVERSE	0x2100a
+ #define MCA_PROP_DATA_ROLE	0x2100c	/* 1 UFP, 2 DFP; write asks a swap */
++#define MCA_PROP_PD_STATE	0x2100d
++#define MCA_PD_SNK_READY		2
+ #define MCA_PROP_ADAPTER_ID	0x2100e
+ #define MCA_PROP_ADAPTER_SVID	0x2100f
+ #define MCA_PROP_PD_VERIFIED	0x21010
+@@ -1089,6 +1091,76 @@ static bool piano_mca_is_pd(u32 real_type)
+ 	       real_type == MCA_TYPE_PD_PPS;
+ }
+ 
++/* The UCSI supply belongs to another child of this PMIC GLINK instance. */
++static int piano_mca_pd_supply(struct power_supply *psy, void *data)
++{
++	struct piano_mca *mca = data;
++	struct device *parent = psy->dev.parent;
++	union power_supply_propval val;
++
++	/* UCSI frees its connector data after unregistering this supply. */
++	guard(rwsem_read)(&psy->epc_sem);
++	if (psy->removing)
++		return 0;
++	if (psy == mca->usb || !parent || parent->parent != mca->dev->parent ||
++	    psy->desc->type != POWER_SUPPLY_TYPE_USB)
++		return 0;
++	if (power_supply_get_property(psy, POWER_SUPPLY_PROP_ONLINE, &val) ||
++	    !val.intval)
++		return 0;
++	if (power_supply_get_property(psy, POWER_SUPPLY_PROP_USB_TYPE, &val) ||
++	    (val.intval != POWER_SUPPLY_USB_TYPE_PD &&
++	     val.intval != POWER_SUPPLY_USB_TYPE_PD_PPS))
++		return 0;
++	if (power_supply_get_property(psy, POWER_SUPPLY_PROP_STATUS, &val) ||
++	    val.intval != POWER_SUPPLY_STATUS_CHARGING)
++		return 0;
++	return 1;
++}
++
++/*
++ * REAL_TYPE can remain Unknown after a PD reconnect. The stock
++ * qcom_adsp_pd_protocol driver names PD_STATE 2 "SNK_Ready", but the state
++ * and cached PDOs alone do not establish a current PD connection. Also
++ * require UCSI to report an online PD sink with its charging path enabled.
++ * Classify it conservatively as ordinary PD; the existing policy still
++ * checks source PDOs and temperature before negotiating voltage/current.
++ */
++static int piano_mca_read_type(struct piano_mca *mca, u32 *type)
++{
++	struct piano_mca_pdo pdos[MCA_PD_MAX_PDOS];
++	__le32 val;
++	int ret, i;
++
++	ret = piano_mca_read(mca, MCA_PROP_REAL_TYPE, &val, sizeof(val));
++	if (ret)
++		return ret;
++	*type = le32_to_cpu(val);
++	if (*type != MCA_TYPE_UNKNOWN)
++		return 0;
++	if (power_supply_for_each_psy(mca, piano_mca_pd_supply) != 1)
++		return 0;
++
++	ret = piano_mca_read(mca, MCA_PROP_PD_STATE, &val, sizeof(val));
++	if (ret || le32_to_cpu(val) != MCA_PD_SNK_READY)
++		return ret;
++	ret = piano_mca_read(mca, MCA_PROP_PDOS, pdos, sizeof(pdos));
++	if (ret)
++		return ret;
++
++	for (i = 0; i < MCA_PD_MAX_PDOS; i++) {
++		u32 ma = le32_to_cpu(pdos[i].max_ma);
++
++		if (le32_to_cpu(pdos[i].min_mv) == 5000 &&
++		    le32_to_cpu(pdos[i].max_mv) == 5000 &&
++		    ma >= MCA_ICL_MIN_MA && ma <= 5000) {
++			*type = MCA_TYPE_PD;
++			break;
++		}
++	}
++	return 0;
++}
++
+ /*
+  * Current a PD source offers at 9 V, 0 if none: its fixed 9 V PDO when it
+  * has one, as stock prefers, otherwise a PPS APDO whose range covers 9 V
+@@ -1766,7 +1838,8 @@ static void piano_mca_poll(struct work_struct *work)
+ 	if (online) {
+ 		mca->ibus_ua = piano_mca_read_u32(mca, MCA_PROP_BUS_CURR);
+ 		mca->icl_ma = piano_mca_read_u32(mca, MCA_PROP_ICL);
+-		real_type = piano_mca_read_u32(mca, MCA_PROP_REAL_TYPE);
++		if (piano_mca_read_type(mca, &real_type))
++			goto requeue;
+ 	} else {
+ 		mca->ibus_ua = 0;
+ 		mca->icl_ma = 0;
+@@ -1789,6 +1862,18 @@ static void piano_mca_poll(struct work_struct *work)
+ 		if (mipps_auth)
+ 			mca->hv_retry = jiffies + msecs_to_jiffies(MCA_HV_AUTH_WAIT_MS);
+ 	}
++	/* A restored PD classification must not stay blocked by an earlier
++	 * Unknown sample. Keep the same bounded retry budget until detach.
++	 */
++	if (online && piano_mca_is_pd(real_type) &&
++	    !piano_mca_is_pd(mca->real_type) && mca->hv == MCA_HV_BLOCKED &&
++	    mca->hv_renegs < MCA_HV_RENEG_MAX) {
++		mca->hv_renegs++;
++		mca->hv = MCA_HV_OFF;
++		if (time_before(mca->hv_retry,
++				jiffies + msecs_to_jiffies(MCA_HV_RENEG_MS)))
++			mca->hv_retry = jiffies + msecs_to_jiffies(MCA_HV_RENEG_MS);
++	}
+ 	mca->online = online;
+ 	mca->real_type = real_type;
+ 
+@@ -1824,6 +1909,7 @@ static void piano_mca_poll(struct work_struct *work)
+ 	if (changed)
+ 		power_supply_changed(mca->usb);
+ 
++requeue:
+ 	if (mca->service_up)
+ 		schedule_delayed_work(&mca->poll,
+ 				      msecs_to_jiffies(piano_mca_cp_active(mca) ?
+@@ -1912,7 +1998,7 @@ static const struct power_supply_desc piano_mca_usb_desc = {
+ 	.get_property = piano_mca_usb_get_property,
+ };
+ 
+-/* The ADSP's own name of the charger type, finer than usb_type */
++/* Effective charger type, finer than usb_type */
+ static ssize_t charger_type_show(struct device *dev,
+ 				 struct device_attribute *attr, char *buf)
+ {
+-- 
+2.47.3
+
