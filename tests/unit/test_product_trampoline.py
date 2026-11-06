@@ -27,6 +27,34 @@ def components():
 
 
 class TrampolinePackageTests(unittest.TestCase):
+    def test_piano_fingerprint_accepts_chinese_and_global_products(self):
+        for prefix in ('Xiaomi/piano/piano:', 'Xiaomi/piano_global/piano:'):
+            for suffix in ('15/build/incremental:user/release-keys',
+                           '16/build/incremental:user/release-keys', 'x'):
+                with self.subTest(fingerprint=prefix + suffix):
+                    self.assertTrue(module.piano_fingerprint(prefix + suffix))
+
+    def test_piano_fingerprint_rejects_wrong_identity_and_empty_or_nul_suffix(self):
+        fingerprints = (
+            'Other/piano/piano:15/build',
+            'xiaomi/piano/piano:15/build',
+            'Xiaomi/piano_pro/piano:15/build',
+            'Xiaomi/piano_global_extra/piano:15/build',
+            'Xiaomi/piano_globalish/piano:15/build',
+            'Xiaomi/piano/piano_global:15/build',
+            'Xiaomi/piano_global/pianox:15/build',
+            'Xiaomi/piano/other:15/build',
+            'Xiaomi/piano/piano/15/build',
+            'Xiaomi/piano/piano:',
+            'Xiaomi/piano_global/piano:',
+            'Xiaomi/piano/piano:\0',
+            'Xiaomi/piano_global/piano:15/build\0extra',
+            'Xiaomi/piano/piano:15/build\0',
+        )
+        for fingerprint in fingerprints:
+            with self.subTest(fingerprint=fingerprint):
+                self.assertFalse(module.piano_fingerprint(fingerprint))
+
     def test_original_kernel_and_bss_are_preserved_and_restorable(self):
         stock = original();shim, fd, app = components()
         selector = bytes(512);symbols = {'__image_end': 512+8192, 'bootselect_metadata': 256}

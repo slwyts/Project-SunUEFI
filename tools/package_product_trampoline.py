@@ -30,6 +30,12 @@ def align(size, unit=PAGE):
     return (size + unit - 1) // unit * unit
 
 
+def piano_fingerprint(value):
+    prefixes = ('Xiaomi/piano/piano:', 'Xiaomi/piano_global/piano:')
+    return '\0' not in value and any(value.startswith(prefix) and len(value) > len(prefix)
+                                     for prefix in prefixes)
+
+
 def stock_kernel(data):
     require(len(data) >= PAGE and data[:8] == b'ANDROID!', 'Not an Android boot image')
     size, ramdisk, version = struct.unpack_from('<I', data, 8)[0], struct.unpack_from('<I', data, 12)[0], struct.unpack_from('<I', data, 40)[0]
@@ -199,7 +205,7 @@ def package(stock, product, output, uefi_request=False):
     info = subprocess.check_output(command + ['info_image', '--image', str(stock)], text=True)
     rollback = int(re.search(r'^Rollback Index:\s+(\d+)', info, re.M).group(1))
     props = re.findall(r"^    Prop: ([^ ]+) -> '([^']*)'$", info, re.M)
-    require(any(k == 'com.android.build.boot.fingerprint' and v.startswith('Xiaomi/piano/') for k, v in props), 'Stock input is not the supported Piano ROM family')
+    require(any(k == 'com.android.build.boot.fingerprint' and piano_fingerprint(v) for k, v in props), 'Stock input is not the supported Piano ROM family')
     args = command + ['add_hash_footer', '--image', str(image), '--dynamic_partition_size', '--partition_name', 'boot',
                       '--algorithm', 'NONE', '--flags', '0', '--rollback_index', str(rollback), '--salt', '']
     for key, value in props:

@@ -122,6 +122,14 @@ static int64_t branch_target(uint32_t code) {
   if (delta & 0x2000000u) delta -= 0x4000000u;
   return 4 + delta * 4;
 }
+static int piano_fingerprint(const unsigned char *value, size_t bytes) {
+  static const char *prefixes[] = { "Xiaomi/piano/piano:", "Xiaomi/piano_global/piano:" };
+  for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+    size_t prefix = strlen(prefixes[i]);
+    if (bytes > prefix && !memcmp(value, prefixes[i], prefix)) return 1;
+  }
+  return 0;
+}
 
 static struct avb parse_avb(const struct blob *b, int require_hash) {
   require(b->size >= PAGE + 64, "BOOT is too small");
@@ -169,7 +177,7 @@ static struct avb parse_avb(const struct blob *b, int require_hash) {
       if (key == strlen(wanted) && !memcmp(d + 32, wanted, key)) {
         require(value >= 13 && value < sizeof(a.fingerprint) &&
                 !memchr(d + 33 + key, 0, (size_t)value) &&
-                !memcmp(d + 33 + key, "Xiaomi/piano/", 13), "BOOT is not the supported Piano ROM family");
+                piano_fingerprint(d + 33 + key, (size_t)value), "BOOT is not the supported Piano ROM family");
         memcpy(a.fingerprint, d + 33 + key, (size_t)value);
         fingerprint++;
       }
