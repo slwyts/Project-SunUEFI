@@ -1,3 +1,0 @@
-# The legacy 80-drivers.rules excludes all OF modules. This validated I2C
-# peripheral may use normal modalias loading when its DT node is present.
-ACTION=="add", SUBSYSTEM=="i2c", ENV{MODALIAS}=="of:N*T*Csouthchip,sc96231", RUN{builtin}+="kmod load"
