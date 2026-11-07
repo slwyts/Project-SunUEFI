@@ -16,6 +16,10 @@ CANDIDATE = ROOT / 'artifacts/kernels/next-full/498569101e34'
 
 
 class PianoNextFullTests(unittest.TestCase):
+    def setUp(self):
+        if not (next_full.WORK / '.git').exists() or not (CANDIDATE / 'manifest.json').exists():
+            self.skipTest('needs the Next kernel worktree and its build from tools/build_piano_next_full.py')
+
     def test_actual_canonical_source_and_complete_config(self):
         proof = next_full.source_proof()
         self.assertEqual(proof['source_commit'], next_full.COMMIT)

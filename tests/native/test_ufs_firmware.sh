@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Host-only behavior/ABI checks; never prepares a profile or contacts a device.
 set -euo pipefail
+case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_fs_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_fs_root"
 sun_fs_includes=(
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include
-  -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/X64
+  -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/$sun_bind
   -I upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include
   -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include
+  -I uefi/components/ext4
 )
 for sun_fs_test in ufs_filesystems ufs_blockio_lifetime launch_shell; do
   cc -std=gnu11 -fshort-wchar -g -fsanitize=address,undefined -fno-pie -no-pie \
@@ -20,11 +22,12 @@ sun_fs_arm_includes=(
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/AArch64
   -I upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include
   -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include
+  -I uefi/components/ext4
 )
-build/host-tools/usr/bin/clang --target=aarch64-windows-msvc -fshort-wchar \
+"${SUNUEFI_TOOLCHAIN_ROOT:-build/host-tools/usr}/bin/clang" --target=aarch64-windows-msvc -fshort-wchar \
   -ffreestanding -fsyntax-only -Wall -Wextra -Werror -Wno-unused-parameter "${sun_fs_arm_includes[@]}" \
   uefi/core/PianoUfsFileSystemProbe.c uefi/core/PianoLaunchShell.c
-build/host-tools/usr/bin/clang --target=aarch64-windows-msvc -fshort-wchar \
+"${SUNUEFI_TOOLCHAIN_ROOT:-build/host-tools/usr}/bin/clang" --target=aarch64-windows-msvc -fshort-wchar \
   -ffreestanding -fsyntax-only -Wall -Wextra -Werror -Wno-unused-parameter -DPIANO_UFS_BLOCKIO -DPIANO_UFS_FILESYSTEMS -DPIANO_UFS_SHELL \
   "${sun_fs_arm_includes[@]}" uefi/core/PianoUfsReadOnlyDma.c
 python3 -m py_compile tools/prepare_gui_profile.py

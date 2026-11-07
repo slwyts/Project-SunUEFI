@@ -56,6 +56,26 @@ int piano_pen_core_process29(struct piano_pen_core *core, const uint8_t *payload
     size_t bytes, uint64_t timestamp_ns, struct piano_pen_output *output,
     char *error, size_t error_size);
 
+/* BLE Report2 value; P81C 0.0.32 sends only these (touch task VA 0x3e318..0x3e5a6) */
+enum piano_pen_body_gesture {
+    PIANO_PEN_BODY_RELEASE = 0x00,
+    PIANO_PEN_BODY_DOUBLE_TAP = 0x58,
+    PIANO_PEN_BODY_SLIDE_DOWN = 0x5b,
+    PIANO_PEN_BODY_SLIDE_UP = 0x61,
+    PIANO_PEN_BODY_SQUEEZE = 0x6e
+};
+static inline const char *piano_pen_body_gesture_name(uint8_t value)
+{
+    switch (value) {
+    case PIANO_PEN_BODY_RELEASE: return "release";
+    case PIANO_PEN_BODY_DOUBLE_TAP: return "double_tap";
+    case PIANO_PEN_BODY_SLIDE_DOWN: return "slide_down";
+    case PIANO_PEN_BODY_SLIDE_UP: return "slide_up";
+    case PIANO_PEN_BODY_SQUEEZE: return "squeeze";
+    default: return 0;
+    }
+}
+
 #ifdef __cplusplus
 }
 #endif

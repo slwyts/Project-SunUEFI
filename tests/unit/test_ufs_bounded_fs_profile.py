@@ -29,6 +29,8 @@ class ProfileTests(unittest.TestCase):
         self.assertLess(out.index('PianoProbeUfs(Fdt);'),out.index('Status=PianoUfsRunBoundedFileSystemTest();'))
         for symbol in ('LoadImage','StartImage','UnloadImage'):self.assertNotIn(symbol,out)
         self.assertIn('while(TRUE){gBS->Stall(100000);}',out)
+@unittest.skipUnless((ROOT/'artifacts/ufs/test-window/manifest.json').is_file() and (ROOT/'private/captures/ufs-test-area-1/manifest.json').is_file(),
+                     'local UFS test-window image or private real capture absent')
 class ImageTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.folder=Path(self.tmp.name)/'image';shutil.copytree(ROOT/'artifacts/ufs/test-window',self.folder)

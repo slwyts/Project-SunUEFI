@@ -30,6 +30,16 @@ EFI_STATUS CoreCheckEvent(EFI_EVENT Event){assert(Event==(VOID*)1&&current_tpl==
  return wait_ready?EFI_SUCCESS:EFI_NOT_READY;
 }
 EFI_STATUS CoreSignalEvent(EFI_EVENT Event){assert(Event==gIdleLoopEvent&&!mReport.IdleBulkActive&&!mPending[3]);++idles;wait_ready=TRUE;return EFI_SUCCESS;}
+static VOID PianoPogoPump(VOID){}
+static VOID PianoTouchPump(VOID){}
+static VOID PianoRawLinuxReplayStable(VOID){}
+// The USB service runs, so no startup-failure proof is recorded
+static CONST PIANO_SMMU_RETIRED_USB_PROOF *mStartupUsbProof;
+static EFI_STATUS StartupUsbAbsent(VOID){assert(!"running USB service has no startup-failure proof");return EFI_ABORTED;}
+// Idle NV saves have no file backend in this fixture
+static UINT64 GetPerformanceCounter(VOID){return fake_now;}
+static UINT64 GetTimeInNanoSecond(UINT64 Ticks){return Ticks*1000;}
+static EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){assert(!Freeze);return EFI_NOT_STARTED;}
 #include "PianoActualBulkIdlePipeline.h"
 EFI_STATUS EFIAPI PianoProductPumpLibDestructor(EFI_HANDLE,EFI_SYSTEM_TABLE *);
 int main(VOID){

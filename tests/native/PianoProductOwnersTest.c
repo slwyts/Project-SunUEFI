@@ -56,9 +56,22 @@ EFI_STATUS PianoUfsAcceptRetiredUsb(CONST PIANO_SMMU_RETIRED_USB_PROOF *Proof){a
 EFI_STATUS PianoUfsBlockIoPrepareForReset(VOID){assert(Tpl==TPL_CALLBACK && !BridgeLive && AcceptStatus==EFI_SUCCESS);record('p');raise(TPL_CALLBACK);return PrepareStatus;}
 EFI_STATUS PianoUfsBlockIoShutdownForReset(VOID){assert(Tpl==TPL_CALLBACK && PrepareStatus==EFI_SUCCESS);record('s');return ShutdownStatus;}
 CONST PIANO_UFS_RESET_REPORT *PianoUfsResetShutdownReport(VOID){return ReportAbsent?NULL:&UfsReport;}
+static PIANO_PRODUCT_INPUT_RETIRE_REPORT PogoReport;static EFI_STATUS PogoStatus;
+static BOOLEAN PogoEbs;
+static EFI_STATUS stop_pogo(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Report){assert(Context==(VOID *)0x55 && Tpl==TPL_APPLICATION && Owners.Report.InputStopped && !Owners.Report.DisplayStopped);record('K');*Report=PogoReport;if(PogoEbs)PianoProductOwnersFenceExit(&Owners);return PogoStatus;}
+static VOID with_pogo(VOID){Config.StartedOwnerMask|=PIANO_OWNER_POGO;Config.AbsentOwnerMask&=~PIANO_OWNER_POGO;Config.PogoContext=(VOID *)0x55;Config.StopPogo=stop_pogo;
+  PogoReport=(PIANO_PRODUCT_INPUT_RETIRE_REPORT){.Revision=1,.Started=TRUE,.Returned=TRUE,.Clean=TRUE};PogoStatus=EFI_SUCCESS;PogoEbs=FALSE;}
+static PIANO_PRODUCT_INPUT_RETIRE_REPORT TouchReport;static EFI_STATUS TouchStatus;
+static BOOLEAN TouchEbs;
+static EFI_STATUS stop_touch(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Report){
+  assert(Context==(VOID *)0x66 && Tpl==TPL_APPLICATION && Owners.Report.InputStopped && !Owners.Report.DisplayStopped);
+  assert(!(Owners.Report.RegisteredStartedMask&PIANO_OWNER_POGO)||Owners.Report.PogoStopped);
+  record('T');*Report=TouchReport;if(TouchEbs)PianoProductOwnersFenceExit(&Owners);return TouchStatus;}
+static VOID with_touch(VOID){Config.StartedOwnerMask|=PIANO_OWNER_TOUCH;Config.AbsentOwnerMask&=~PIANO_OWNER_TOUCH;Config.TouchContext=(VOID *)0x66;Config.StopTouch=stop_touch;
+  TouchReport=(PIANO_PRODUCT_INPUT_RETIRE_REPORT){.Revision=1,.Started=TRUE,.Returned=TRUE,.Clean=TRUE};TouchStatus=EFI_SUCCESS;TouchEbs=FALSE;}
 static EFI_STATUS stop_input(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Report){assert(Context==(VOID *)0x789 && Tpl==TPL_APPLICATION && Owners.Report.UfsStopped && UfsReport.Clean && !Policy.ProtocolInstalled);record('I');*Report=InputReport;if(InputEbs)PianoProductOwnersFenceExit(&Owners);if(InputBadTpl)Tpl=TPL_CALLBACK;return InputStatus;}
 static EFI_STATUS stop_display(VOID *Context,PIANO_PRODUCT_DISPLAY_RETIRE_REPORT *Report){
-  assert(Context==(VOID *)0x999&&Tpl==TPL_APPLICATION&&Owners.Report.InputStopped&&Owners.Report.UfsStopped&&!Owners.Report.OuterTplHeld&&Calls&&Order[Calls-1]=='I');record('D');
+  assert(Context==(VOID *)0x999&&Tpl==TPL_APPLICATION&&Owners.Report.InputStopped&&Owners.Report.UfsStopped&&!Owners.Report.OuterTplHeld&&Calls&&(Order[Calls-1]=='I'||Order[Calls-1]=='K'||Order[Calls-1]=='T'));record('D');
   if(DisplayReentry)assert(PianoProductOwnersRetire(&Owners)==EFI_ALREADY_STARTED);
   *Report=DisplayReport;if(DisplayEbs){PianoProductOwnersFenceExit(&Owners);gBS=(VOID *)1;}if(DisplayBadTpl)Tpl=TPL_CALLBACK;return DisplayStatus;
 }
@@ -76,7 +89,7 @@ static VOID fresh(VOID) {
   InputReport=(PIANO_PRODUCT_INPUT_RETIRE_REPORT){.Revision=1,.Started=TRUE,.Returned=TRUE,.Clean=TRUE};
   BootAction=(PIANO_FB_BOOT_ACTION){.Context=(VOID *)0x1122,.Token=(VOID *)0x3344,.Taken=TRUE,.Proof={.AckCompleted=TRUE,.QueueEmpty=TRUE,.DeviceHalted=TRUE,.DmaFreed=TRUE,.DispatchFrozen=TRUE,.AckBytes=4,.DmaBuffersFreed=9}};
   Storage=(PIANO_FB_STORAGE){(VOID *)0x456,ready,info,read_blocks};Runtime=(PIANO_PRODUCT_RUNTIME_PROTOCOL){.Revision=PIANO_PRODUCT_RUNTIME_REVISION,.RequestAction=request};
-  Config=(PIANO_PRODUCT_OWNERS_CONFIG){.Revision=1,.Fdt=(VOID *)0x123,.ExpectedOwnerMask=PIANO_OWNER_ALL_MASK,.StartedOwnerMask=PIANO_OWNER_CORE_MASK,.AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|PIANO_OWNER_POGO|PIANO_OWNER_DISPLAY,.Runtime=&Runtime,.InputContext=(VOID *)0x789,.StopInput=stop_input,.DisplayStartup={.Revision=1,.KnownNoSideEffects=TRUE,.Status=EFI_NOT_STARTED}};
+  Config=(PIANO_PRODUCT_OWNERS_CONFIG){.Revision=1,.Fdt=(VOID *)0x123,.ExpectedOwnerMask=PIANO_OWNER_ALL_MASK,.StartedOwnerMask=PIANO_OWNER_CORE_MASK,.AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|PIANO_OWNER_POGO|PIANO_OWNER_TOUCH|PIANO_OWNER_DISPLAY,.Runtime=&Runtime,.InputContext=(VOID *)0x789,.StopInput=stop_input,.DisplayStartup={.Revision=1,.KnownNoSideEffects=TRUE,.Status=EFI_NOT_STARTED}};
   Bs.RaiseTPL=raise;Bs.RestoreTPL=restore;Bs.CreateEventEx=create;Bs.CloseEvent=close;Bs.LocateProtocol=locate;gBS=&Bs;
 }
 static VOID without_usb(VOID){
@@ -167,7 +180,7 @@ int main(void) {
   assert(PianoProductOwnersResolveReturnedAction(&Owners)==EFI_COMPROMISED_DATA && Owners.Report.Retained && !Calls);++Cases;
   assert(Cases==100); // Preserve every existing workflow/regression above.
   for(UINTN I=PianoUsbServiceActionContinue;I<=PianoUsbServiceActionFault;++I){fresh();with_display();DisplayReentry=TRUE;initialize_action((PIANO_USB_SERVICE_ACTION)I);
-    assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS&&Owners.Report.DisplayStopped&&Owners.Report.Clean&&Owners.Report.RetiredMask==PIANO_OWNER_SUPPORTED_MASK);
+    assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS&&Owners.Report.DisplayStopped&&Owners.Report.Clean&&Owners.Report.RetiredMask==(PIANO_OWNER_SUPPORTED_MASK&~(PIANO_OWNER_POGO|PIANO_OWNER_TOUCH)));
     assert(!strcmp(Order,I==PianoUsbServiceActionBoot?"PUBRXApsIDM":"PURXApsIDM")&&Tpl==TPL_APPLICATION&&Owners.Report.Display.ReleaseAfterTotal[0]==9);
     UINTN C=Calls;assert(PianoProductOwnersRetire(&Owners)==EFI_ACCESS_DENIED&&Calls==C);Cases++;}
   for(UINTN I=0;I<14;++I){fresh();with_display();switch(I){
@@ -227,7 +240,7 @@ int main(void) {
   assert(PianoProductOwnersResolveReturnedAction(&Owners)==EFI_SUCCESS&&Owners.Report.Origin==PianoProductRequestFile);
   assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS&&Owners.Report.AllowedAction==PianoUsbServiceActionBoot&&Owners.Report.Clean);
   assert(!strcmp(Order,"PURXApsIDM")&&!Owners.Report.BootActionConsumed&&!Owners.Report.Boot.Token&&!Owners.Report.Boot.Context&&!Requests);
-  assert(Owners.Report.FileContext==(VOID *)0x701&&Owners.Report.FileToken==(VOID *)0x702&&Owners.Report.RetiredMask==PIANO_OWNER_SUPPORTED_MASK);Cases++;
+  assert(Owners.Report.FileContext==(VOID *)0x701&&Owners.Report.FileToken==(VOID *)0x702&&Owners.Report.RetiredMask==(PIANO_OWNER_SUPPORTED_MASK&~(PIANO_OWNER_POGO|PIANO_OWNER_TOUCH)));Cases++;
   for(UINTN I=0;I<3;++I){fresh();assert(PianoProductOwnersInitialize(&Owners,&Config)==EFI_SUCCESS);Policy.RequestedCoreAction=PianoUsbServiceActionBoot;
     assert(PianoProductOwnersRequestFileBoot(&Owners,(VOID *)0x701,(VOID *)0x702)==EFI_SUCCESS);
     if(I==0)Policy.RequestedCoreAction=PianoUsbServiceActionNone;
@@ -288,6 +301,28 @@ int main(void) {
     if(I==4)assert(!strcmp(Order,"P")&&!Owners.Report.BridgeStopped);
     if(I==5)assert(!strcmp(Order,"PXA")&&!Owners.Report.UfsStopped);
     Cases++;}
+  // Input backends retire after physical keys and before Display. An unclean
+  // release must retain resources and refuse handoff even without DMA.
+  fresh();with_pogo();Config.StopPogo=NULL;assert(PianoProductOwnersInitialize(&Owners,&Config)==EFI_INVALID_PARAMETER);Cases++;
+  for(UINTN I=PianoUsbServiceActionContinue;I<=PianoUsbServiceActionBoot;++I){fresh();with_pogo();with_display();initialize_action((PIANO_USB_SERVICE_ACTION)I);
+    assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS&&Owners.Report.PogoStopped&&Owners.Report.Clean&&Owners.Report.RetiredMask==(PIANO_OWNER_SUPPORTED_MASK&~PIANO_OWNER_TOUCH));
+    assert(strstr(Order,"IKD")!=NULL);Cases++;}
+  for(UINTN I=0;I<6;++I){fresh();with_pogo();initialize_action(PianoUsbServiceActionReboot);
+    switch(I){case 0:PogoReport.Clean=FALSE;break;case 1:PogoReport.Retained=TRUE;break;case 2:PogoReport.Returned=FALSE;break;
+      case 3:PogoReport.Protocols=EFI_DEVICE_ERROR;break;case 4:PogoStatus=EFI_DEVICE_ERROR;break;case 5:PogoReport.Revision=0;break;}
+    must_retain();assert(!Owners.Report.PogoStopped&&!(Owners.Report.RetiredMask&PIANO_OWNER_POGO));
+    assert(strstr(Order,"IK")&&!Owners.Report.ManagerEventClosed);Cases++;}
+  // Boot Services lost during the callback still stops the ledger
+  fresh();with_pogo();initialize_action(PianoUsbServiceActionReboot);PogoEbs=TRUE;must_retain();assert(!Owners.Report.PogoStopped);Cases++;
+  fresh();with_touch();Config.StopTouch=NULL;assert(PianoProductOwnersInitialize(&Owners,&Config)==EFI_INVALID_PARAMETER);Cases++;
+  for(UINTN I=PianoUsbServiceActionContinue;I<=PianoUsbServiceActionBoot;++I){fresh();with_pogo();with_touch();with_display();initialize_action((PIANO_USB_SERVICE_ACTION)I);
+    assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS&&Owners.Report.TouchStopped&&Owners.Report.Clean&&Owners.Report.RetiredMask==PIANO_OWNER_SUPPORTED_MASK);
+    assert(strstr(Order,"IKTD")!=NULL);Cases++;}
+  for(UINTN I=0;I<3;++I){fresh();with_touch();initialize_action(PianoUsbServiceActionReboot);
+    switch(I){case 0:TouchReport.Clean=FALSE;TouchReport.Retained=TRUE;break;case 1:TouchReport.Protocols=EFI_DEVICE_ERROR;break;case 2:TouchStatus=EFI_DEVICE_ERROR;break;}
+    must_retain();assert(!Owners.Report.TouchStopped&&!(Owners.Report.RetiredMask&PIANO_OWNER_TOUCH));
+    assert(strstr(Order,"IT")&&!Owners.Report.ManagerEventClosed);Cases++;}
+  fresh();with_touch();initialize_action(PianoUsbServiceActionReboot);TouchEbs=TRUE;must_retain();assert(!Owners.Report.TouchStopped);Cases++;
   printf("Actual product owners: %llu cases PASS (100 original retained); full masks, typed Display startup/ordinary+alternate refs, Policy/USB/proof/bridge/UFS/Input/Display/Event order, APP/partial/duplicate/stale/warning/EBS retention; no native/reset/image calls in manager.\n",(unsigned long long)Cases);
   return 0;
 }

@@ -1,4 +1,5 @@
 """Exact display mapping candidate source, drift/refusal and actual Mu tests."""
+import platform
 import copy
 import os
 import re
@@ -10,9 +11,12 @@ import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
+TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
 BASE=ROOT/'upstream/Mu-Silicium/Mu_Basecore'
 sys.path.insert(0,str(ROOT/'tools'))
 import piano_display_mapping as mapping
+from firmware_workspace import active_root
 
 
 def actual_function(text,name):
@@ -25,15 +29,20 @@ def actual_function(text,name):
 
 
 class DisplayMappingTests(unittest.TestCase):
+    def setUp(self):
+        # prepare_product writes the product memory map and staged ClockDxe into the firmware workspace
+        self.root=active_root(ROOT)
+        if not (self.root/mapping.NATIVE).is_file():self.skipTest('firmware workspace not prepared; run ./build.sh uefi')
+
     def fixture(self,directory):
         root=Path(directory)
-        for path in mapping.source_files(ROOT)+(ROOT/mapping.NATIVE,):
-            target=root/path.relative_to(ROOT);target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
+        for path in mapping.source_files(self.root)+(self.root/mapping.NATIVE,):
+            target=root/path.relative_to(self.root);target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
         return root
 
     def test_pinned_prepare_verify_and_small_fixture_drift(self):
-        native=mapping.original_native(ROOT);text,record=mapping.prepare(ROOT,native)
-        self.assertTrue(mapping.verify(ROOT,text,record));self.assertEqual(record['candidate_rows'],53)
+        native=mapping.original_native(self.root);text,record=mapping.prepare(self.root,native)
+        self.assertTrue(mapping.verify(self.root,text,record));self.assertEqual(record['candidate_rows'],53)
         self.assertEqual([r['size'] for r in record['windows']],[0x1f5000,0x94000,0x20000,0x3000])
         self.assertFalse(record['hardware_verified']);self.assertFalse(record['register_access_authorized'])
         with tempfile.TemporaryDirectory(prefix='display-pin-')as directory:
@@ -51,13 +60,13 @@ class DisplayMappingTests(unittest.TestCase):
                 with self.assertRaises(ValueError):mapping.verify(root,text,record)
                 path.write_bytes(original)
         for changed in (text.replace('0x1F5000','0x1F4000'),text.replace('EfiMemoryMappedIO','EfiConventionalMemory'),text+'\n',text+mapping.MARKER):
-            with self.assertRaises(ValueError):mapping.verify(ROOT,changed,record)
+            with self.assertRaises(ValueError):mapping.verify(self.root,changed,record)
         changed=copy.deepcopy(record);changed['hardware_verified']=True
-        with self.assertRaises(ValueError):mapping.verify(ROOT,text,changed)
-        with self.assertRaises(ValueError):mapping.prepare(ROOT,native+'\n')
+        with self.assertRaises(ValueError):mapping.verify(self.root,text,changed)
+        with self.assertRaises(ValueError):mapping.prepare(self.root,native+'\n')
 
     def test_semantic_owner_bounds_and_raw_reg_refusals(self):
-        inputs={p:(ROOT/p).read_bytes()for p in mapping.PINS if p!=mapping.NATIVE};native=mapping.original_native(ROOT).encode()
+        inputs={p:(self.root/p).read_bytes()for p in mapping.PINS if p!=mapping.NATIVE};native=mapping.original_native(self.root).encode()
         for name,path,base,raw_size,page_size in mapping.WINDOWS:
             with self.assertRaisesRegex(ValueError,'conflicts'):mapping.validate(inputs,native,[{'name':'owned-page','base':base+page_size-1,'size':1}])
         for owner in ({'name':'overflow','base':(1<<64)-1,'size':1},{'name':'zero','base':0,'size':0},{'name':'extra','base':0,'size':1,'ready':True}):
@@ -76,7 +85,7 @@ class DisplayMappingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'CESTA exact'):mapping.validate(changed,native)
 
     def test_actual_mu_hobs_typed_rows_and_arm_mmu_device(self):
-        native=mapping.original_native(ROOT);expanded,record=mapping.prepare(ROOT,native)
+        native=mapping.original_native(self.root);expanded,record=mapping.prepare(self.root,native)
         mmu=(ROOT/'upstream/Mu-Silicium/Mu_Basecore/UefiCpuPkg/Library/ArmMmuLib/AArch64/ArmMmuLibCore.c').read_text()
         cpu=(ROOT/'upstream/Mu-Silicium/Mu_Basecore/ArmPkg/Drivers/CpuDxe/AArch64/Mmu.c').read_text()
         gcd=(ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdeModulePkg/Core/Dxe/Gcd/Gcd.c').read_text()
@@ -91,14 +100,14 @@ class DisplayMappingTests(unittest.TestCase):
             header+=actual_function(gcd,'CoreConvertResourceDescriptorHobAttributesToCapabilities')+'\n'+actual_function(cpu,'PageAttributeToGcdAttribute')+'\n'
             header+='STATIC EFI_GCD_MEMORY_TYPE ActualHobMmioType(EFI_RESOURCE_TYPE Type){EFI_GCD_MEMORY_TYPE GcdMemoryType=EfiGcdMemoryTypeNonExistent;switch(Type){'+branch.replace('ResourceHob->ResourceType','Type')+'default:break;}return GcdMemoryType;}\n'
             (temp/'PianoDisplayActualGcd.h').write_text(header)
-            exe=temp/'mapping';includes=[temp,BASE/'MdePkg/Include',BASE/'MdePkg/Include/X64',BASE/'MdeModulePkg/Include',BASE/'UefiCpuPkg/Include',BASE/'EmbeddedPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include']
+            exe=temp/'mapping';includes=[temp,BASE/'MdePkg/Include',BASE/'MdePkg/Include'/HOST_PROCESSOR_BIND,BASE/'MdeModulePkg/Include',BASE/'UefiCpuPkg/Include',BASE/'EmbeddedPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include']
             cmd=['cc','-std=gnu11','-fshort-wchar','-g','-fsanitize=address,undefined','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-include',str(ROOT/'tests/native/PianoCmaPcdShim.h')]
             for include in includes:cmd+=['-I',str(include)]
             cmd+=[str(ROOT/'tests/native/PianoDisplayMappingContractTest.c'),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),'-Wl,--gc-sections','-o',str(exe)]
             build=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(build.returncode,0,build.stdout+build.stderr)
             run=subprocess.run([str(exe)],capture_output=True,text=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'});self.assertEqual(run.returncode,0,run.stdout+run.stderr);print(run.stdout.strip())
             inc=BASE/'MdePkg/Include'
-            subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-I'+str(inc),'-I'+str(inc/'AArch64'),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),str(temp/'PianoDisplayCandidate.c')],check=True)
+            subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-I'+str(inc),'-I'+str(inc/'AArch64'),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),str(temp/'PianoDisplayCandidate.c')],check=True)
 
 
 if __name__=='__main__':unittest.main()

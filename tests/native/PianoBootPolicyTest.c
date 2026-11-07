@@ -47,6 +47,8 @@ static EFI_STATUS LinuxEntry(VOID *Context,PIANO_PRODUCT_RUNTIME_PROTOCOL *Runti
 EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){(void)Freeze;return EFI_NOT_STARTED;}
 VOID PianoDwc3ServiceReplayStartup(VOID){}
 VOID PianoRawLinuxReplayStable(VOID){}
+VOID PianoPogoPump(VOID){}
+VOID PianoTouchPump(VOID){}
 UINT64 EFIAPI GetPerformanceCounterProperties(UINT64 *First,UINT64 *Last){*First=scenario==71?MAX_UINT64:0;*Last=scenario==71?0:MAX_UINT64;return scenario==74?0:1000000;}
 UINT64 EFIAPI GetPerformanceCounter(VOID){return scenario==71?MAX_UINT64-window_clock:window_clock;}
 UINT64 EFIAPI GetTimeInNanoSecond(UINT64 Ticks){return Ticks*1000;}

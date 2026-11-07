@@ -1,5 +1,7 @@
 """Execute exact patched upstream wait/prompt/menu/cleanup code on the host."""
+import platform
 import importlib.util
+import json
 from pathlib import Path
 import re
 import shutil
@@ -9,9 +11,9 @@ import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 sys.path.insert(0,str(ROOT/'tools'))
 import prepare_product_ui as prepare
-from firmware_workspace import active_root
 BASE=ROOT/prepare.BASE
 
 def function(text,name):
@@ -22,8 +24,7 @@ def function(text,name):
         depth+=(text[end]=='{')-(text[end]=='}');end+=1
     return text[m.start():end]
 
-def generated():
-    root=active_root(ROOT)
+def generated(root):
     display=(root/(prepare.DISPLAY+'FormDisplay.c')).read_text()
     cdl=(root/(prepare.CDL+'CustomizedDisplayLibInternal.c')).read_text()
     shell=(root/(prepare.SHELL+'Shell.c')).read_text()
@@ -117,11 +118,17 @@ class ProductUiTests(unittest.TestCase):
                 with self.assertRaises(ValueError):prepare.prepare(root,apply=True,check_pins=False)
                 self.assertEqual(snapshot,{p:p.read_bytes()for p in root.rglob('*')if p.is_file()})
     def test_actual_source_normal_cleanup(self):
-        prepare.prepare(active_root(ROOT),apply=False)
         with tempfile.TemporaryDirectory(prefix='piano-product-ui-')as out:
-            out=Path(out);(out/'PianoActualProductUi.h').write_text(generated())
+            # Pinned upstream files, the recorded firmware patches, then the hooks, as the build does
+            root=self.fixture(Path(out)/'fixture')
+            for row in json.loads((ROOT/'patches/firmware/series.json').read_text())['patches']:
+                repo=root/row['repository']
+                names=sorted(str(path.relative_to(repo))for path in repo.rglob('*')if path.is_file())if repo.is_dir()else[]
+                if names:subprocess.run(['git','apply',*('--include='+name for name in names),str(ROOT/'patches/firmware'/row['patch'])],cwd=repo,check=True)
+            prepare.prepare(root,apply=True,check_pins=False)
+            out=Path(out);(out/'PianoActualProductUi.h').write_text(generated(root))
             exe=out/'ui';include=BASE/'MdePkg/Include'
-            build=subprocess.run(['cc','-std=gnu11','-DENABLE_UEFI','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-unused-label','-fsanitize=address,undefined','-g','-fno-pie','-no-pie','-I'+str(include),'-I'+str(include/'X64'),'-I'+str(out),str(ROOT/'tests/native/PianoProductUiTest.c'),'-o',str(exe)],capture_output=True,text=True)
+            build=subprocess.run(['cc','-std=gnu11','-DENABLE_UEFI','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-unused-label','-fsanitize=address,undefined','-g','-fno-pie','-no-pie','-I'+str(include),'-I'+str(include/HOST_PROCESSOR_BIND),'-I'+str(out),str(ROOT/'tests/native/PianoProductUiTest.c'),'-o',str(exe)],capture_output=True,text=True)
             self.assertEqual(build.returncode,0,build.stdout+build.stderr)
             run=subprocess.run([str(exe)],capture_output=True,text=True)
             self.assertEqual(run.returncode,0,run.stdout+run.stderr);print(run.stdout.strip())

@@ -104,6 +104,55 @@ STATIC VOID TestTouchAndDetach(VOID) {
   assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS&&!C.ControlCount); // same status coalesces.
 }
 
+// The cover touchpad drives a relative pointer: motion from one tracked
+// finger, a short light tap is one click (press, then release on the next
+// read), the pad buttons map to left/right, a long touch is not a click
+STATIC VOID TouchFrame(UINT8 *F, UINT8 Buttons, UINT8 Count, UINT8 Id, UINT16 X, UINT16 Y) {
+  Frame(F); F[3]=0x19; F[4]=Buttons; if(Count) { Contact(F+5,Id,X,Y); } F[29]=Count;
+}
+STATIC VOID TestTouchPointer(VOID) {
+  PIANO_POGO_INPUT C; UINT8 F[68]; EFI_SIMPLE_POINTER_STATE M; PianoPogoReset(&C);
+  C.NowUs=1000; TouchFrame(F,0,1,1,100,100); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_NOT_READY);
+  C.NowUs=20000; TouchFrame(F,0,1,1,130,90); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_SUCCESS && M.RelativeMovementX==30 && M.RelativeMovementY==-6 && !M.LeftButton);
+  C.NowUs=60000; TouchFrame(F,0,0,0,0,0); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_SUCCESS && M.LeftButton && !M.RelativeMovementX);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_SUCCESS && !M.LeftButton);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_NOT_READY);
+  // A frame whose contact has Tip Switch but no confidence neither moves nor
+  // ends the touch; the lift after it is still a tap
+  C.NowUs=62000; TouchFrame(F,0,1,7,200,200); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  C.NowUs=64000; TouchFrame(F,0,1,7,600,600); F[5]=1; assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_NOT_READY);
+  C.NowUs=66000; TouchFrame(F,0,1,7,200,200); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_NOT_READY);
+  C.NowUs=68000; TouchFrame(F,0,0,0,0,0); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_SUCCESS && M.LeftButton);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_SUCCESS && !M.LeftButton);
+  // A held touch is not a tap; a new contact ID restarts tracking, no jump
+  C.NowUs=100000; TouchFrame(F,0,1,2,500,500); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  C.NowUs=200000; TouchFrame(F,0,1,3,900,900); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_NOT_READY);
+  C.NowUs=600000; TouchFrame(F,0,0,0,0,0); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_NOT_READY);
+  // A large movement is not a tap either
+  C.NowUs=700000; TouchFrame(F,0,1,4,100,100); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  C.NowUs=710000; TouchFrame(F,0,1,4,300,100); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  C.NowUs=720000; TouchFrame(F,0,0,0,0,0); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_SUCCESS && M.RelativeMovementX==200 && !M.LeftButton);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_NOT_READY);
+  // Pad button: pressed while touching, released, then lifted: no extra tap
+  C.NowUs=800000; TouchFrame(F,1,1,5,100,100); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_SUCCESS && M.LeftButton);
+  C.NowUs=810000; TouchFrame(F,0,1,5,100,100); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_SUCCESS && !M.LeftButton);
+  C.NowUs=820000; TouchFrame(F,0,0,0,0,0); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_NOT_READY);
+  C.NowUs=900000; TouchFrame(F,2,1,6,10,10); assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS);
+  assert(PianoPogoReadPointer(&C,&M)==EFI_SUCCESS && M.RightButton && !M.LeftButton);
+}
+
 STATIC PIANO_POGO_ADAPTER *Active;
 STATIC UINTN Notified,Signals;
 STATIC EFI_STATUS EFIAPI Notify(EFI_KEY_DATA *Key) {
@@ -144,6 +193,6 @@ STATIC VOID TestAuthAndPiRead(VOID) {
 }
 
 int main(void) {
-  TestKeys(); TestPackedAndAtomic(); TestRolloverAndQueues(); TestTouchAndDetach(); TestProtocols(); TestAuthAndPiRead();
+  TestKeys(); TestPackedAndAtomic(); TestRolloverAndQueues(); TestTouchAndDetach(); TestTouchPointer(); TestProtocols(); TestAuthAndPiRead();
   puts("Piano Pogo real UEFI ABI: packed/key/pointer/touch/control/bounds/queue/notify/PI read PASS"); return 0;
 }

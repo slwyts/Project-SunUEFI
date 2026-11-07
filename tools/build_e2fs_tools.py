@@ -53,7 +53,7 @@ def build(output, sysroot, cache, jobs):
     workspace = output / 'workspace'
     workspace.mkdir(exist_ok=True)
     env = os.environ.copy()
-    bundled = ROOT / 'build/host-tools/usr'
+    bundled = Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT', ROOT / 'build/host-tools/usr'))
     env['PATH'] = str(bundled / 'bin') + os.pathsep + env.get('PATH', '')
     env['LD_LIBRARY_PATH'] = str(bundled / 'lib') + os.pathsep + env.get('LD_LIBRARY_PATH', '')
     compiler = shutil.which('clang', path=env['PATH'])

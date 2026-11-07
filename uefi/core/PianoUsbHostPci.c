@@ -40,7 +40,8 @@ STATIC BOOLEAN CommonCap(PIANO_USB_HOST_PCI *C) {
 STATIC BOOLEAN CommonMemory(PIANO_USB_HOST_PCI *C,UINT64 AttributesValue) {
   UINT64 Cache=AttributesValue&(EFI_MEMORY_UC|EFI_MEMORY_WC|EFI_MEMORY_WT|EFI_MEMORY_WB);
   if(!Cache || (Cache&(Cache-1)) || (AttributesValue&(EFI_MEMORY_RO|EFI_MEMORY_RP)))return FALSE;
-  return (C->Backend.Capabilities&PIANO_USB_HOST_COMMON_COHERENT)!=0 || Cache==EFI_MEMORY_UC;
+  // AArch64 WC is Normal non-cacheable; UC is Device memory, where ZeroMem's DC ZVA faults
+  return (C->Backend.Capabilities&PIANO_USB_HOST_COMMON_COHERENT)!=0 || Cache==EFI_MEMORY_UC || Cache==EFI_MEMORY_WC;
 }
 STATIC EFI_STATUS Range(EFI_PCI_IO_PROTOCOL_WIDTH Width,UINT64 Offset,UINTN Count,UINTN Limit,UINTN *Unit) {
   if((UINTN)Width>=EfiPciIoWidthMaximum)return EFI_INVALID_PARAMETER;
@@ -125,6 +126,7 @@ STATIC EFI_STATUS EFIAPI UnsupportedPoll(EFI_PCI_IO_PROTOCOL *This,EFI_PCI_IO_PR
                                          UINT64 Offset,UINT64 Mask,UINT64 Value,UINT64 Delay,UINT64 *Result) {return Device(This)?EFI_UNSUPPORTED:EFI_INVALID_PARAMETER;}
 STATIC EFI_STATUS EFIAPI UnsupportedCopy(EFI_PCI_IO_PROTOCOL *This,EFI_PCI_IO_PROTOCOL_WIDTH Width,
                                          UINT8 DestBar,UINT64 Dest,UINT8 SrcBar,UINT64 Src,UINTN Count) {return Device(This)?EFI_UNSUPPORTED:EFI_INVALID_PARAMETER;}
+STATIC EFI_STATUS Drain(PIANO_USB_HOST_PCI *C);
 STATIC EFI_STATUS EFIAPI Attributes(EFI_PCI_IO_PROTOCOL *This,EFI_PCI_IO_PROTOCOL_ATTRIBUTE_OPERATION Op,
                                     UINT64 Bits,UINT64 *Result) {
   PIANO_USB_HOST_PCI *C=Device(This);EFI_STATUS S;
@@ -151,6 +153,8 @@ STATIC EFI_STATUS EFIAPI Attributes(EFI_PCI_IO_PROTOCOL *This,EFI_PCI_IO_PROTOCO
     if(EFI_ERROR(S))C->ControllerUncertain=TRUE;
   }
   if(!EFI_ERROR(S))C->Attributes=Next;
+  // Bus master off proved the halt: release held common buffers
+  if(!EFI_ERROR(S) && !(Next&EFI_PCI_IO_ATTRIBUTE_BUS_MASTER) && PianoUsbHostPciHasDeferred(C))(VOID)Drain(C);
   C->Busy=FALSE;return S;
 }
 STATIC EFI_STATUS EFIAPI PciRead(EFI_PCI_IO_PROTOCOL *This,EFI_PCI_IO_PROTOCOL_WIDTH Width,
@@ -190,9 +194,15 @@ STATIC BOOLEAN Overlap(VOID *A,UINTN An,VOID *B,UINTN Bn) {
   return Ap<=Bp?Bp-Ap<An:Ap-Bp<Bn;
 }
 STATIC UINTN AllocationFor(PIANO_USB_HOST_PCI *C,VOID *Cpu,UINTN Bytes) {
-  for(UINTN I=0;I<C->Limits.Allocations;++I)if(C->Allocation[I].Used &&
+  for(UINTN I=0;I<C->Limits.Allocations;++I)if(C->Allocation[I].Used && !C->Allocation[I].FreePending &&
     Contains(C->Allocation[I].Cpu,C->Allocation[I].Pages*4096,Cpu,Bytes))return I;
   return NO_ALLOCATION;
+}
+BOOLEAN PianoUsbHostPciHasDeferred(CONST PIANO_USB_HOST_PCI *C) {
+  if(C==NULL || C->Signature!=HOST_PCI_SIGNATURE)return FALSE;
+  for(UINTN I=0;I<C->Limits.Mappings;++I)if(C->Mapping[I].Used && C->Mapping[I].Deferred)return TRUE;
+  for(UINTN I=0;I<C->Limits.Allocations;++I)if(C->Allocation[I].Used && C->Allocation[I].FreePending)return TRUE;
+  return FALSE;
 }
 STATIC VOID ReleaseMap(PIANO_USB_HOST_PCI *C,PIANO_USB_HOST_MAPPING *M) {
   if(M->Allocation<C->Limits.Allocations && C->Allocation[M->Allocation].References)
@@ -206,6 +216,8 @@ STATIC EFI_STATUS RetireMap(PIANO_USB_HOST_PCI *C,PIANO_USB_HOST_MAPPING *M,BOOL
       C->Mapping[I].Quarantined=TRUE;M->Quarantined=TRUE;return EFI_DEVICE_ERROR;
     }
   if(M->Common || M->Quarantined || C->ControllerUncertain || Recovery)S=Quiet(C);
+  // The running controller may still read it: keep it mapped until the halt
+  if(S==EFI_NOT_READY && M->Common && !M->Quarantined && !C->ControllerUncertain && !Recovery){M->Deferred=TRUE;return EFI_SUCCESS;}
   if(!EFI_ERROR(S)) {
     if(M->Native==NULL)S=EFI_DEVICE_ERROR;
     else S=C->Backend.Retire==NULL?EFI_NOT_READY:C->Backend.Retire(C->Backend.Context,M->Native,!M->Common && !M->Quarantined && !Recovery);
@@ -276,7 +288,7 @@ STATIC EFI_STATUS EFIAPI Map(EFI_PCI_IO_PROTOCOL *This,EFI_PCI_IO_PROTOCOL_OPERA
 }
 STATIC EFI_STATUS EFIAPI Unmap(EFI_PCI_IO_PROTOCOL *This,VOID *Token) {
   PIANO_USB_HOST_PCI *C=Device(This);EFI_STATUS S=Enter(C);if(EFI_ERROR(S))return S;
-  UINTN I=0;while(I<C->Limits.Mappings && (!C->Mapping[I].Used || C->Mapping[I].Key!=(UINTN)Token))++I;
+  UINTN I=0;while(I<C->Limits.Mappings && (!C->Mapping[I].Used || C->Mapping[I].Deferred || C->Mapping[I].Key!=(UINTN)Token))++I;
   S=Token==NULL || I==C->Limits.Mappings?EFI_INVALID_PARAMETER:RetireMap(C,&C->Mapping[I],FALSE);
   C->Busy=FALSE;return S;
 }
@@ -311,7 +323,13 @@ STATIC EFI_STATUS EFIAPI Allocate(EFI_PCI_IO_PROTOCOL *This,EFI_ALLOCATE_TYPE Ty
 }
 STATIC EFI_STATUS FreeSpan(PIANO_USB_HOST_PCI *C,UINTN Index,VOID *Cpu,UINTN Pages) {
   PIANO_USB_HOST_ALLOCATION *A=&C->Allocation[Index];UINTN Bytes=Pages*4096;
-  if(A->References)return EFI_ACCESS_DENIED;
+  if(A->References) {
+    // Only held (deferred) mappings left: hold the whole allocation as well
+    UINTN Held=0;
+    for(UINTN I=0;I<C->Limits.Mappings;++I)if(C->Mapping[I].Used && C->Mapping[I].Deferred && C->Mapping[I].Allocation==Index)++Held;
+    if(Held!=A->References || A->Quarantined || Cpu!=A->Cpu || Pages!=A->Pages)return EFI_ACCESS_DENIED;
+    A->FreePending=TRUE;return EFI_SUCCESS;
+  }
   if(A->Native==NULL || A->Cpu==NULL || ((UINTN)A->Cpu&4095) || ((UINTN)Cpu&4095) ||
      A->Pages>MAX_UINTN/4096 || A->Pages*4096>MAX_UINTN-(UINTN)A->Cpu)return EFI_DEVICE_ERROR;
   for(UINTN I=0;I<C->Limits.Allocations;++I)
@@ -332,6 +350,18 @@ STATIC EFI_STATUS FreeSpan(PIANO_USB_HOST_PCI *C,UINTN Index,VOID *Cpu,UINTN Pag
   else if(!After){A->Pages=Before;A->Quarantined=FALSE;}
   else {C->Allocation[Split]=*A;C->Allocation[Split].Cpu=(UINT8 *)Cpu+Bytes;C->Allocation[Split].Pages=After;C->Allocation[Split].Quarantined=FALSE;A->Pages=Before;A->Quarantined=FALSE;}
   return EFI_SUCCESS;
+}
+// Caller holds Busy; the controller must be halted
+STATIC EFI_STATUS Drain(PIANO_USB_HOST_PCI *C) {
+  EFI_STATUS Result=Quiet(C),S;if(EFI_ERROR(Result))return Result;
+  for(UINTN I=0;I<C->Limits.Mappings;++I)if(C->Mapping[I].Used && C->Mapping[I].Deferred && !C->Mapping[I].Quarantined) {
+    S=RetireMap(C,&C->Mapping[I],TRUE);if(EFI_ERROR(S))Result=S;
+  }
+  for(UINTN I=0;I<C->Limits.Allocations;++I)
+    if(C->Allocation[I].Used && C->Allocation[I].FreePending && !C->Allocation[I].References && !C->Allocation[I].Quarantined) {
+      S=FreeSpan(C,I,C->Allocation[I].Cpu,C->Allocation[I].Pages);if(EFI_ERROR(S))Result=S;
+    }
+  return Result;
 }
 STATIC EFI_STATUS EFIAPI Free(EFI_PCI_IO_PROTOCOL *This,UINTN Pages,VOID *Cpu) {
   PIANO_USB_HOST_PCI *C=Device(This);
@@ -392,7 +422,7 @@ EFI_STATUS PianoUsbHostPciRecover(PIANO_USB_HOST_PCI *C) {
     C->Attributes&=~(UINT64)EFI_PCI_IO_ATTRIBUTE_BUS_MASTER;
   }
   S=Quiet(C);if(EFI_ERROR(S)){C->Busy=FALSE;return S;}
-  EFI_STATUS Result=EFI_SUCCESS;C->ControllerUncertain=FALSE;
+  EFI_STATUS Result=Drain(C);C->ControllerUncertain=FALSE;
   for(UINTN I=0;I<C->Limits.Mappings;++I)if(C->Mapping[I].Used && C->Mapping[I].Quarantined) {
     S=RetireMap(C,&C->Mapping[I],TRUE);if(EFI_ERROR(S))Result=S;
   }

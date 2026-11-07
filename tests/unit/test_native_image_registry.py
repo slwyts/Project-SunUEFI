@@ -1,4 +1,5 @@
 """Actual native loader records only returned successful image handles."""
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -6,6 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
 INC = ROOT / 'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 
 class NativeImageRegistryTests(unittest.TestCase):
@@ -65,7 +67,7 @@ int main(void){
             exe = d / 'registry'
             result = subprocess.run(['cc', '-std=gnu11', '-fshort-wchar', '-Wall', '-Wextra', '-Werror',
                 '-Wno-misleading-indentation', '-fsanitize=address,undefined', '-fno-pie', '-no-pie',
-                '-I'+str(INC), '-I'+str(INC/'X64'), str(d/'test.c'), '-o', str(exe)], capture_output=True, text=True)
+                '-I'+str(INC), '-I'+str(INC/HOST_PROCESSOR_BIND), str(d/'test.c'), '-o', str(exe)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
             subprocess.run([str(exe)], check=True)
 

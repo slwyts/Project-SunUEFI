@@ -1,6 +1,7 @@
 """Actual overlay preservation and RAM-entry block-root refusal, no device."""
 from pathlib import Path
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,7 +16,8 @@ class PianoFullUserspaceTests(unittest.TestCase):
     def test_complete_real_overlay_keeps_hardware_services_and_replaces_only_root_policy(self):
         source=ROOT/'upstream/debian-piano-current'
         if not source.is_dir():self.skipTest('Pinned source not fetched')
-        with tempfile.TemporaryDirectory(dir=ROOT/'build',prefix='full-user-test-')as temporary:
+        (ROOT/'build/distros').mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ROOT/'build/distros',prefix='full-user-test-')as temporary:
             target=Path(temporary)/'rootfs';target.mkdir()
             result=stage.stage(target,source)
             for name in ('display-start','touch-start','keyboard-start','radio-start','adsp-start','audio-start','video-start','camera-start'):
@@ -33,8 +35,10 @@ class PianoFullUserspaceTests(unittest.TestCase):
             self.assertFalse(result['piano_boot_verified'])
             subprocess.run(['bash','-n',str(target/'pianoinit')],check=True)
 
+    @unittest.skipUnless(shutil.which('bwrap'),'bwrap required')
     def test_actual_entry_refuses_android_root_before_any_mount(self):
         script=ROOT/'linux/userspace/pianoinit'
+        (ROOT/'build').mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=ROOT/'build',prefix='ram-entry-test-')as temporary:
             path=Path(temporary);(path/'proc').mkdir();(path/'usr').mkdir()
             (path/'bin').symlink_to('usr/bin');(path/'lib').symlink_to('usr/lib');(path/'lib64').symlink_to('usr/lib')

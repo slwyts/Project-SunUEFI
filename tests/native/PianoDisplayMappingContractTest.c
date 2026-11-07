@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Real Mu MemoryPeim/AddHob and actual ArmMmu attribute conversion; no target.
-#define main PianoUnusedCmaMain
 #include "PianoCmaHobTest.c"
-#undef main
 #include <AArch64/AArch64.h>
 #include <AArch64/AArch64Mmu.h>
 #include <PiDxe.h>
@@ -47,7 +45,7 @@ int main(VOID){
     assert(R->Address==bases[I]&&R->Length==lengths[I]&&R->HobOption==AddDev&&R->ResourceType==MMAP_IO&&
       R->ResourceAttribute==EFI_RESOURCE_ATTRIBUTE_UNCACHEABLE&&R->MemoryType==EfiMemoryMappedIO&&R->ArmAttributes==ARM_MEMORY_REGION_ATTRIBUTE_DEVICE);
   }
-  setup(FALSE);memcpy(rows,Generated,C*sizeof(*rows));count=C;
+  setup();memcpy(rows,Generated,C*sizeof(*rows));count=C;
   assert(MemoryPeim(0,0)==EFI_SUCCESS&&mmu_calls==1);CheckHobs();
   for(UINTN I=0;I<4;++I){CONST ARM_MEMORY_REGION_DESCRIPTOR *M=mapped_at(bases[I]);
     assert(M&&M->PhysicalBase==M->VirtualBase&&M->Length==lengths[I]&&M->Attributes==ARM_MEMORY_REGION_ATTRIBUTE_DEVICE);

@@ -1,4 +1,5 @@
 """Actual UEFI C, no hardware. Architecture object inspection is ARM64."""
+import platform
 import os
 from pathlib import Path
 import subprocess
@@ -6,6 +7,8 @@ import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
+TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
 INCLUDE=ROOT/"upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include"
 SOURCE=ROOT/"uefi/core/PianoHighRamProbe.c"
 
@@ -17,7 +20,7 @@ class HighRamProbeTests(unittest.TestCase):
                 exe=Path(directory)/f"probe-{probe}-{pattern}"
                 command=["cc","-std=c11","-Wall","-Wextra","-Werror","-Wno-misleading-indentation","-g","-fshort-wchar","-fsanitize=address,undefined","-fno-pie","-no-pie",
                     f"-DPIANO_HIGH_RAM_PROBE_EXPERIMENT={probe}",f"-DPIANO_HIGH_RAM_PATTERN_EXPERIMENT={pattern}",
-                    "-I"+str(INCLUDE),"-I"+str(INCLUDE/"X64"),"-I"+str(ROOT/"uefi/core"),
+                    "-I"+str(INCLUDE),"-I"+str(INCLUDE/HOST_PROCESSOR_BIND),"-I"+str(ROOT/"uefi/core"),
                     str(ROOT/"tests/native/PianoHighRamProbeTest.c"),str(SOURCE),"-o",str(exe)]
                 build=subprocess.run(command,capture_output=True,text=True)
                 self.assertEqual(build.returncode,0,build.stdout+build.stderr)
@@ -26,7 +29,7 @@ class HighRamProbeTests(unittest.TestCase):
                 self.assertIn("PianoHighRamProbe actual C PASS",run.stdout);print(probe,pattern,run.stdout.strip())
 
     def test_actual_aarch64_instructions_default_absence_and_no_mapping_writes(self):
-        host=ROOT/"build/host-tools/usr";environment={**os.environ,"LD_LIBRARY_PATH":str(host/"lib")}
+        host=TOOLCHAIN;environment={**os.environ,"LD_LIBRARY_PATH":str(host/"lib")}
         with tempfile.TemporaryDirectory(prefix="high-probe-arm64-")as directory:
             for probe,pattern in ((0,0),(1,0),(1,1)):
                 obj=Path(directory)/f"probe-{probe}-{pattern}.o"

@@ -20,6 +20,8 @@
 #include "PianoFrameBufferMappingObserve.h"
 #include "PianoDisplayClockObserve.h"
 #include "PianoProductDisplayOwner.h"
+#include "PianoPogoService.h"
+#include "PianoTouchService.h"
 #include "LateHandoff/PianoLateHandoff.h"
 #include "LateHandoff/PianoDeviceTreeFixup.h"
 #include <Guid/EventGroup.h>
@@ -221,7 +223,7 @@ STATIC VOID ObserveNative(CONST CHAR8 *Name,BOOLEAN Before) {
 STATIC VOID ReportRequiredBackends(VOID) {
   // Required remains true. Missing real hardware/startup is visible rather
   // than converted into a silent build-time feature switch or fake Ready.
-  STATIC CONST CHAR8 *Names[]={"touchscreen","pogo_keyboard_touchpad","usb_host","runtime_nv_write","ufs_blockio_write","download_1GiB","general_os_boot"};
+  STATIC CONST CHAR8 *Names[]={"touchscreen","runtime_nv_write","ufs_blockio_write","download_1GiB","general_os_boot"};
   for(UINTN I=0;I<ARRAY_SIZE(Names);++I)
     DEBUG((DEBUG_WARN,"PIANO_PRODUCT_BACKEND name=%a required=1 initialized=0 status=%r release_ready=0\n",Names[I],EFI_NOT_READY));
 }
@@ -238,9 +240,11 @@ STATIC VOID FailStop(EFI_STATUS Status) {
      !PianoProductDisplayOwnerRetained()){
     BootLogStage(mBootLogStage,Status);
     CONST CHAR16 *Detail=mHandoffFailure?mHandoffFailure:L"启动菜单退出失败";
-    if(mOwners.Report.Retained){
+    if(PianoUsbControllerHostBlocked())Detail=L"USB 设备仍在使用，未能安全断开";
+    else if(mOwners.Report.Retained){
       if(EFI_ERROR(mOwners.Report.NvStatus)&&mOwners.Report.NvStatus!=EFI_NOT_STARTED)Detail=L"设置未能保存";
       else if(EFI_ERROR(mOwners.Report.FilesystemsStatus))Detail=L"仍有文件或驱动没有关闭";
+      else if(mOwners.Report.Usb.HostWasActive&&mOwners.Report.Usb.HostStopStatus!=EFI_SUCCESS)Detail=L"USB 设备仍在使用，未能安全断开";
       else Detail=mOwners.Report.Ufs.Failed?L"存储驱动未能安全退出":L"系统交接失败";
     }else if(!AsciiStrnCmp(mBootLogStage,"UFS",3))Detail=L"存储初始化失败";
     else if(!AsciiStrCmp(mBootLogStage,"USB"))Detail=L"USB 初始化失败";
@@ -539,13 +543,19 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   EFI_GUID Guid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime=NULL;
   Status=gBS->LocateProtocol(&Guid,NULL,(VOID **)&Runtime);
   if(Status!=EFI_SUCCESS || Runtime==NULL || Runtime->Revision!=PIANO_PRODUCT_RUNTIME_REVISION)FailStop(EFI_NOT_READY);
+  // Keyboard and touchscreen are only armed here; their first hardware access
+  // happens in the shared pump after the owner ledger below registers them
+  EFI_STATUS PogoStart=PianoPogoStart(Fdt);BOOLEAN PogoStarted=PogoStart==EFI_SUCCESS;
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_POGO_START status=%r owner=%u\n",PogoStart,PogoStarted));
+  EFI_STATUS TouchStart=PianoTouchStart(Fdt);BOOLEAN TouchStarted=TouchStart==EFI_SUCCESS;
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_TOUCH_START status=%r owner=%u\n",TouchStart,TouchStarted));
   // Extra owner bits are explicitly unstarted in this integration. Their
   // hardware backend is still incomplete; the manifest must disclose that.
   PIANO_PRODUCT_OWNERS_CONFIG Config={.Revision=1,.Fdt=Fdt,.ExpectedOwnerMask=PIANO_OWNER_ALL_MASK,
-    .StartedOwnerMask=(PIANO_OWNER_CORE_MASK&~(UsbStarted?0:PIANO_OWNER_USB))|(mDisplayStartup.Held?PIANO_OWNER_DISPLAY:0),
-    .AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|PIANO_OWNER_POGO|(UsbStarted?0:PIANO_OWNER_USB)|(mDisplayStartup.Held?0:PIANO_OWNER_DISPLAY),
+    .StartedOwnerMask=(PIANO_OWNER_CORE_MASK&~(UsbStarted?0:PIANO_OWNER_USB))|(mDisplayStartup.Held?PIANO_OWNER_DISPLAY:0)|(PogoStarted?PIANO_OWNER_POGO:0)|(TouchStarted?PIANO_OWNER_TOUCH:0),
+    .AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|(PogoStarted?0:PIANO_OWNER_POGO)|(TouchStarted?0:PIANO_OWNER_TOUCH)|(UsbStarted?0:PIANO_OWNER_USB)|(mDisplayStartup.Held?0:PIANO_OWNER_DISPLAY),
     .StartupUsbProof=UsbStarted?NULL:&mStartupUsbProof,
-    .Runtime=Runtime,.InputContext=NULL,.StopInput=StopInput,
+    .Runtime=Runtime,.InputContext=NULL,.StopInput=StopInput,.PogoContext=NULL,.StopPogo=PianoPogoStop,.TouchContext=NULL,.StopTouch=PianoTouchStop,
     .DisplayContext=mDisplayStartup.LeaseContext,.StopDisplay=PianoProductDisplayStop,.DisplayStartup=mDisplayStartup};
   Status=PianoProductOwnersInitialize(&mOwners,&Config);if(Status!=EFI_SUCCESS)FailStop(Status);
   PIANO_LATE_HANDOFF_ENV Late={.Context=Image,.Services=gBS,.SystemTable=SystemTable,
@@ -568,6 +578,17 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
     Status=PianoBootPolicyRun();
     PianoDwc3ServiceReplayStartup();
     if(Status==EFI_END_OF_FILE) {
+      // Leave the USB host role before any exit is latched, so a busy device can be retried
+      EFI_STATUS Host=PianoUsbControllerServiceLeaveHost();
+      if(Host==EFI_NOT_READY) {
+        (VOID)PianoProductBootLogMessage(L"USB 设备仍在使用",L"请拔下 USB 设备后重试",Host,FALSE);
+        gBS->Stall(2000000);
+        Status=PianoBootPolicyCancelExit();if(Status!=EFI_SUCCESS)FailStop(Status);
+        continue;
+      }
+      if(Host!=EFI_SUCCESS)FailStop(Host);
+      // An acknowledged host action can arrive while a UI return is pending.
+      // Observe its real service ledger before using an older UI reason.
       Status=PianoProductOwnersResolveReturnedAction(&mOwners);
       if(Status==EFI_NOT_READY && PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionBoot) {
         (VOID)PianoProductBootLogMessage(L"正在启动系统",L"请稍候",EFI_SUCCESS,FALSE);

@@ -2,22 +2,22 @@
 /dts-v1/;
 /plugin/;
 
-#include <dt-bindings/clock/qcom,sm8750-gcc.h>
-#include <dt-bindings/dma/qcom-gpi.h>
-#include <dt-bindings/interconnect/qcom,icc.h>
-#include <dt-bindings/interconnect/qcom,sm8750-rpmh.h>
-
 /*
- * Controller-only draft for the factory SE15 / QUP2 SE7 / CS0 IR path.
+ * IR transmitter on the factory SE15 / QUP2 SE7 / CS0 path, GPIO28-31.
  * Source: selected Android final DT and current sm8750.dtsi spi15.
+ * Cell values below use the mainline SM8750 GCC/interconnect/GPI bindings.
  * The base already provides the standard QUP2 wrapper, GPI2 and Linux-owned
  * IOMMU routes. Do not replace those shared providers or their channel mask.
- * The transmitter stays disabled until its standard LIRC driver, waveform
- * and lack of a software-controlled supply have been handled explicitly.
+ *
+ * The transmitter uses the upstream ir-spi-led driver (rc-core/LIRC). The
+ * stock board has no software-controlled IR supply and the stock HAL never
+ * touches one, so the driver's optional irda_regulator resolves to the
+ * kernel's dummy regulator. Spaces are low, as in the stock encoder; the
+ * stock 40% duty is available at runtime through LIRC_SET_SEND_DUTY_CYCLE.
  */
 / {
 	fragment@0 {
-		target = <&piano_tlmm_ml>;
+		target-path = "/soc/pinctrl@f100000";
 		__overlay__ {
 			piano_ir_spi15_default: ir-spi15-default-state {
 				pins = "gpio28", "gpio29", "gpio30", "gpio31";
@@ -40,17 +40,13 @@
 		__overlay__ {
 			compatible = "qcom,geni-spi";
 			/* Keep the factory physical range and GIC SPI462 unchanged. */
-			clocks = <&gcc GCC_QUPV3_WRAP2_S7_CLK>;
+			clocks = <&gcc 123>; /* GCC_QUPV3_WRAP2_S7_CLK */
 			clock-names = "se";
-			interconnects = <&clk_virt MASTER_QUP_CORE_2 QCOM_ICC_TAG_ALWAYS
-					 &clk_virt SLAVE_QUP_CORE_2 QCOM_ICC_TAG_ALWAYS>,
-					<&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ALWAYS
-					 &config_noc SLAVE_QUP_2 QCOM_ICC_TAG_ALWAYS>,
-					<&aggre2_noc MASTER_QUP_2 QCOM_ICC_TAG_ALWAYS
-					 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>;
+			interconnects = <&clk_virt 2 7 &clk_virt 5 7>,
+					<&gem_noc 2 7 &config_noc 20 7>,
+					<&aggre2_noc 1 7 &mc_virt 1 7>;
 			interconnect-names = "qup-core", "qup-config", "qup-memory";
-			dmas = <&gpi_dma2 0 7 QCOM_GPI_SPI>,
-			       <&gpi_dma2 1 7 QCOM_GPI_SPI>;
+			dmas = <&gpi_dma2 0 7 1>, <&gpi_dma2 1 7 1>; /* QCOM_GPI_SPI */
 			dma-names = "tx", "rx";
 			pinctrl-names = "default", "sleep";
 			pinctrl-0 = <&piano_ir_spi15_default>;
@@ -62,8 +58,9 @@
 	fragment@2 {
 		target-path = "/soc/qcom,qupv3_2_geni_se@8c0000/spi@89c000/ir-spi@0";
 		__overlay__ {
+			/* reg 0 and the factory 19.2 MHz spi-max-frequency stay. */
 			compatible = "ir-spi-led";
-			status = "disabled";
+			status = "okay";
 		};
 	};
 };

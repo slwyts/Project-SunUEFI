@@ -69,7 +69,7 @@ def main():
     out=root/'build/kernels'/args.profile/args.mode;out.mkdir(parents=True,exist_ok=True)
     artifacts=root/'artifacts/kernels'/args.profile/args.mode;artifacts.mkdir(parents=True,exist_ok=True)
     (artifacts/'manifest.json').unlink(missing_ok=True)
-    env=os.environ.copy();bundled=root/'build/host-tools/usr'
+    env=os.environ.copy();bundled=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',root/'build/host-tools/usr'))
     if (bundled/'bin/clang').exists():
         env['PATH']=str(bundled/'bin')+os.pathsep+env['PATH']
         env['LD_LIBRARY_PATH']=str(bundled/'lib')+(os.pathsep+env['LD_LIBRARY_PATH'] if env.get('LD_LIBRARY_PATH') else '')

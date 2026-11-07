@@ -11,7 +11,7 @@
 #include <Guid/EventGroup.h>
 EFI_BOOT_SERVICES *gBS;EFI_SYSTEM_TABLE *gST;
 EFI_GUID gEfiEventExitBootServicesGuid=EFI_EVENT_GROUP_EXIT_BOOT_SERVICES;
-EFI_GUID gEfiSimpleTextInProtocolGuid={.Data1=1},gEfiSimpleTextInputExProtocolGuid={.Data1=2},gEfiSimplePointerProtocolGuid={.Data1=3},gEfiAbsolutePointerProtocolGuid={.Data1=4},gEfiDevicePathProtocolGuid={.Data1=5};
+EFI_GUID gEfiSimpleTextInProtocolGuid={.Data1=1},gEfiSimpleTextInputExProtocolGuid={.Data1=2},gEfiSimplePointerProtocolGuid={.Data1=3},gEfiAbsolutePointerProtocolGuid={.Data1=4},gEfiDevicePathProtocolGuid={.Data1=5},gEfiConsoleInDeviceGuid={.Data1=6};
 VOID *EFIAPI CopyMem(VOID *D,CONST VOID *S,UINTN N){return memcpy(D,S,N);}VOID *EFIAPI ZeroMem(VOID *D,UINTN N){return memset(D,0,N);}INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
 typedef struct {UINT32 Type;EFI_EVENT_NOTIFY Fn;VOID *Context;} EVENT;
 static EFI_BOOT_SERVICES Bs;static EFI_SYSTEM_TABLE St;static PIANO_POGO_DXE Driver;static PIANO_POGO_DXE *Current=&Driver;
@@ -27,8 +27,11 @@ static EFI_STATUS EFIAPI Close(EFI_EVENT Value){Alive();Closes++;if(Case==12&&Cl
 static EFI_STATUS EFIAPI Timer(EFI_EVENT E,EFI_TIMER_DELAY Mode,UINT64 Value){Alive();assert(E==Current->Timer);assert((Mode==TimerPeriodic&&Value==10000)||(Mode==TimerCancel&&Value==0));return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI Signal(EFI_EVENT E){Alive();assert(E!=NULL);Signals++;return Case==16?EFI_WARN_STALE_DATA:EFI_SUCCESS;}
 static VOID VerifyTuple(va_list V){
-  EFI_GUID *G;unsigned N=0;VOID *Expected[]={&Current->Path,&Current->Adapter.Text,&Current->Adapter.TextEx,&Current->Adapter.Pointer,&Current->Adapter.Absolute};
-  while((G=va_arg(V,EFI_GUID *))){(void)G;assert(N<5&&va_arg(V,VOID *)==Expected[N]);N++;}assert(N==5);
+  // DevicePath, SimpleTextIn, SimpleTextInEx, SimplePointer and the
+  // ConsoleInDevice marker; the touchpad is not an absolute pointer
+  EFI_GUID *G;unsigned N=0;VOID *Expected[]={&Current->Path,&Current->Adapter.Text,&Current->Adapter.TextEx,&Current->Adapter.Pointer,NULL};
+  EFI_GUID *Guids[]={&gEfiDevicePathProtocolGuid,&gEfiSimpleTextInProtocolGuid,&gEfiSimpleTextInputExProtocolGuid,&gEfiSimplePointerProtocolGuid,&gEfiConsoleInDeviceGuid};
+  while((G=va_arg(V,EFI_GUID *))){assert(N<5&&G==Guids[N]&&va_arg(V,VOID *)==Expected[N]);N++;}assert(N==5);
 }
 static EFI_STATUS EFIAPI Install(EFI_HANDLE *H,...){Alive();Installs++;va_list V;va_start(V,H);VerifyTuple(V);va_end(V);*H=(VOID *)77;return Case==11?EFI_WARN_STALE_DATA:EFI_SUCCESS;}
 static EFI_STATUS EFIAPI Uninstall(EFI_HANDLE H,...){Alive();Uninstalls++;assert(H==(VOID *)77);va_list V;va_start(V,H);VerifyTuple(V);va_end(V);return Case==14?EFI_ACCESS_DENIED:EFI_SUCCESS;}
@@ -51,7 +54,7 @@ static VOID Run(UINTN C){
   EFI_STATUS S=PianoPogoDxeStart(&Driver,&B,&Mode);
   if(C==0){assert(S==EFI_NOT_READY&&!Creates&&!Installs&&!Reads);return;}
   if(C>=9&&C<=11){assert(S!=EFI_SUCCESS&&Driver.Report.Retained);UINTN Before=Calls;assert(PianoPogoDxeStop(&Driver)!=EFI_SUCCESS&&!Closes&&!Uninstalls);assert(Calls>=Before);return;}
-  assert(S==EFI_SUCCESS&&Installs==1&&Creates==6&&Driver.Report.Published);
+  assert(S==EFI_SUCCESS&&Installs==1&&Creates==5&&Driver.Report.Published);
   assert(PianoPogoDxeStart(&Driver,&B,&Mode)==EFI_ALREADY_STARTED);
   EFI_KEY_DATA K={0};K.Key.ScanCode=SCAN_F12;VOID *Handle=NULL,*Again=NULL;
   assert(Driver.Adapter.TextEx.RegisterKeyNotify(&Driver.Adapter.TextEx,&K,Notice,&Handle)==EFI_SUCCESS&&Handle);
@@ -75,7 +78,7 @@ static VOID Run(UINTN C){
   if(C==19){Exit();UINTN Before=Calls;Notify(Driver.Timer);assert(PianoPogoDxePump(&Driver)==EFI_ABORTED&&PianoPogoDxeStop(&Driver)==EFI_ABORTED&&Calls==Before);return;}
   S=PianoPogoDxeStop(&Driver);
   if(C==12||C==13||C==14||C==15){assert(S!=EFI_SUCCESS&&Driver.Report.Retained);UINTN Before=Calls+Stops;assert(PianoPogoDxeStop(&Driver)!=EFI_SUCCESS);if(C==15)assert(Calls+Stops==Before);return;}
-  assert(S==EFI_SUCCESS&&Stops==1&&Uninstalls==1&&Closes==6&&Driver.Report.Stopped&&!Driver.Report.Published&&!Driver.Report.Retained);
+  assert(S==EFI_SUCCESS&&Stops==1&&Uninstalls==1&&Closes==5&&Driver.Report.Stopped&&!Driver.Report.Published&&!Driver.Report.Retained);
   UINTN Before=Calls;assert(PianoPogoDxeStop(&Driver)==EFI_SUCCESS&&Calls==Before);assert(Driver.Adapter.TextEx.ReadKeyStrokeEx(&Driver.Adapter.TextEx,&K)==EFI_NOT_READY);
 }
 int main(void){for(UINTN C=0;C<23;C++){pid_t P=fork();assert(P>=0);if(!P){Run(C);_exit(0);}int S;waitpid(P,&S,0);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"pogo producer case %llu failed\n",(unsigned long long)C);return 1;}}puts("Actual pogo EFI producer: 23 fork readiness/publish/APP report/timer-only/wait events/F12 callback/same+cross-instance ABA/checked-stop/warnings/EBS cases passed; synthetic host backend only, no real wire input");return 0;}

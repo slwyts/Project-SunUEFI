@@ -43,6 +43,8 @@ typedef struct {
   BOOLEAN DeviceHalted,DmaFreed;
   UINT32 DmaBuffersFreed,QueuedEvents;
   UINT64 OutBytes,InBytes;
+  // xHCI host role: Fastboot is offline and Listening only means the owner is alive
+  BOOLEAN HostActive;
 } PIANO_DWC3_SERVICE_STATUS;
 // Device-produced rollback evidence for the exact CSFTRST timeout before any
 // service DMA allocation. StartupStatus does not masquerade as CleanupStatus.

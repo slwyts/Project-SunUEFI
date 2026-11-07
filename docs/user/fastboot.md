@@ -12,6 +12,8 @@ UEFI Fastboot 是 SunUEFI 运行期间在后台提供的 USB Fastboot 服务，�
 
 下面所有命令都带 `-s SunUEFI-piano`，确保操作的是 UEFI 服务，而不是原厂 Bootloader。服务在 UEFI 菜单、固件设置和 Shell 里一直保持连接，切换页面不会退出。
 
+USB 口插着 OTG 转接头和键盘、U 盘等设备时，这个口给这些设备使用，UEFI Fastboot 不在线。拔下设备、接回电脑后恢复。
+
 ## 查看状态
 
 ```sh

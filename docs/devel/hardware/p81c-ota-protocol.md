@@ -106,6 +106,9 @@ P81C 的 PnP ID 为 VID `0x0022`、PID `0x5081`。`oobhelper/a.java:116` 从 Dev
 | `5B 01 enabled` | 开关加速度计／陀螺仪通道 | `DB 01 status` | 同文件 `:644`、`:1547` |
 | `61 01 enabled` | 通知屏幕状态 | `E1 00` | 同文件 `:654`、`:1603` |
 | `62 01 state` | 通知报点／抬起移动状态 | `E2 00` | 同文件 `:656`、`:1608` |
+| `63 01 enabled` | 开关笔身滑动；笔开机默认开 | `E3 01 status`，1 成功 | `SET_SLIDE_STATE_ENABLE_CMD`、`STYLUS_SLIDE_REPORT`；笔固件处理函数 VA `0x41600` |
+| `64 01 enabled` | 笔身手势总开关；笔开机默认开 | 笔固件回复 `E4 01 01` | 笔固件处理函数 VA `0x415C4`，原厂客户端未见发送 |
+| `6F 01 x` | 复位笔 | 回复 `EF 00` 后延时复位 | 笔固件处理函数 VA `0x413B0`；不能发送 |
 
 `feature0.bit0` 表示无线充电能力；`feature1.bit0` 表示 Haptic，`feature1.bit1` 表示高频压力能力。`state0.bit0` 是充电 IC、`.bit2` 是无线充 IC、`.bit5` 是压力 IC、`.bit6` 是触摸 IC 的工作状态。这些是笔回复的数据，不能用配置文件伪造为支持。
 

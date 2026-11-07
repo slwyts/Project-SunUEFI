@@ -58,7 +58,8 @@ class BootSelectTests(unittest.TestCase):
         cls.base = Path(cls.temp.name)
         stub=cls.base/'trace-stub.c'
         stub.write_text('#include <stdint.h>\nvoid PianoBootSelectTrace(unsigned S,uint64_t B,uint64_t D){(void)S;(void)B;(void)D;}\n')
-        subprocess.run([tool('cc'), '-shared', '-fPIC', '-O2', '-std=c11', '-Wall', '-Wextra', '-Werror',
+        # EL1-only register reads under __aarch64__ would trap in this host process
+        subprocess.run([tool('cc'), '-U__aarch64__', '-shared', '-fPIC', '-O2', '-std=c11', '-Wall', '-Wextra', '-Werror',
                         SOURCE / 'BootSelect.c', SOURCE / 'BootRequest.c', stub, '-o', cls.base / 'parser.so'], check=True)
         cls.lib = ctypes.CDLL(str(cls.base / 'parser.so'))
         cls.lib.PianoBootSelectParseFdt.argtypes = [ctypes.c_void_p, ctypes.c_size_t]

@@ -75,7 +75,7 @@ def inputs(root,profile):
             files.add(path)
         for target in (platform,root/'uefi/platforms/pianoProductPkg'):
             verify_provider(root,target/'Applications/ProductCore',prepared.get('late_provider',{}))
-        for folder in ('uefi/components/product-pump','uefi/components/product-support','uefi/components/product-handoff','uefi/components/ext4','uefi/components/simple-init','uefi/components/nv','uefi/components/reset'):
+        for folder in ('uefi/components/product-pump','uefi/components/product-support','uefi/components/product-handoff','uefi/components/ext4','uefi/components/simple-init','uefi/components/nv','uefi/components/reset','uefi/components/usb-host','uefi/components/pogo-product','uefi/components/touch-product'):
             files.update(path for path in (root/folder).rglob('*') if path.is_file())
         for relative in ('config/piano-product.json','build/product/prepared-manifest.json',
                          'tools/prepare_product.py','tools/build_product.sh','tools/firmware_workspace.py','tools/package_product.py',

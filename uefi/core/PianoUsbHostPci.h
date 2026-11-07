@@ -9,7 +9,7 @@
 #define PIANO_USB_HOST_DMA_BUDGET 0x01000000U
 #define PIANO_USB_HOST_DMA_STREAMING BIT0
 #define PIANO_USB_HOST_COMMON_COHERENT BIT1
-#define PIANO_USB_HOST_COMMON_UNCACHED BIT2
+#define PIANO_USB_HOST_COMMON_UNCACHED BIT2 // EFI_MEMORY_UC or EFI_MEMORY_WC
 #define PIANO_USB_HOST_PARTIAL_FREE BIT3
 
 // No callback may report success before the real operation is complete.
@@ -51,13 +51,13 @@ typedef struct {
 } PIANO_USB_HOST_PCI_BACKEND;
 typedef struct {UINTN Bytes,Allocations,Mappings;} PIANO_USB_HOST_PCI_LIMITS;
 typedef struct {
-  BOOLEAN Used,Quarantined;
+  BOOLEAN Used,Quarantined,FreePending;
   VOID *Cpu,*Native;
   UINTN Pages,References;
   UINT64 MemoryAttributes;
 } PIANO_USB_HOST_ALLOCATION;
 typedef struct {
-  BOOLEAN Used,Quarantined,Common;
+  BOOLEAN Used,Quarantined,Common,Deferred;
   UINTN Key,Charge,Allocation;
   VOID *Cpu,*Native;
   UINTN Bytes;
@@ -83,6 +83,10 @@ EFI_STATUS PianoUsbHostPciInit(PIANO_USB_HOST_PCI *Context,
                               CONST PIANO_USB_HOST_PCI_LIMITS *Limits OPTIONAL);
 // Explicitly halted recovery only. Retains anything whose release is uncertain.
 EFI_STATUS PianoUsbHostPciRecover(PIANO_USB_HOST_PCI *Context);
+// A common-buffer Unmap/FreeBuffer while the controller runs is accepted but
+// held: pages stay mapped and allocated until bus master is disabled
+// (controller halted) or Recover runs
+BOOLEAN PianoUsbHostPciHasDeferred(CONST PIANO_USB_HOST_PCI *Context);
 BOOLEAN PianoUsbHostPciHasQuarantine(CONST PIANO_USB_HOST_PCI *Context);
 // Separate from normal DWORD writes: never defers CRCR's single-DWORD controls.
 EFI_STATUS PianoUsbHostPciWrite64HiLo(PIANO_USB_HOST_PCI *Context,UINT32 Offset,UINT64 Value);

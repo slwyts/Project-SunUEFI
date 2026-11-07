@@ -1,8 +1,13 @@
 """Actual combined clock pipeline; only machine/EFI/native ARM boundaries mocked."""
+import platform
 from pathlib import Path
-import hashlib,os,re,subprocess,tempfile,unittest
+import hashlib,os,re,subprocess,sys,tempfile,unittest
 from piano_mu_map_fixture import write_mu_map_fixture
 ROOT=Path(__file__).resolve().parents[2];BASE=ROOT/'upstream/Mu-Silicium/Mu_Basecore'
+sys.path.insert(0,str(ROOT/'tools'))
+import piano_vendor_inputs as vendor
+from piano_inherited_clock import derive
+HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 def function(text,name):
  match=re.search(r'(?:STATIC\s+)?(?:VOID|BOOLEAN|EFI_STATUS)\s+'+re.escape(name)+r'\s*\([^)]*\)\s*\{',text)
  if not match:raise AssertionError('missing actual Root function '+name)
@@ -32,8 +37,10 @@ class DisplayClockPipelineTests(unittest.TestCase):
    # use UBSAN here without weakening either source's real address contract.
    # Separate actual Lease/Reader/Guard tests retain their ASAN coverage.
    exe=d/'pipeline';cmd=['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-g','-DPIANO_DISPLAY_CLOCK_HOST_TEST=1','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie']
-   for p in (BASE/'MdePkg/Include',BASE/'MdePkg/Include/X64',BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',ROOT/'uefi/components/guarded-read',ROOT/'uefi/core',d):cmd+=['-I',str(p)]
+   for p in (BASE/'MdePkg/Include',BASE/'MdePkg/Include'/HOST_PROCESSOR_BIND,BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',ROOT/'uefi/components/guarded-read',ROOT/'uefi/core',d):cmd+=['-I',str(p)]
    cmd+=[str(ROOT/'tests/native/PianoDisplayClockPipelineTest.c'),str(ROOT/'uefi/core/PianoDisplayClockRead.c'),str(ROOT/'uefi/core/PianoDisplayClockLease.c'),'-lcrypto','-o',str(exe)]
    p=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr)
-   p=subprocess.run([str(exe),str(ROOT/'upstream/Mu-Silicium/Binaries/piano/ProductFoundation/ClockDxe/ClockDxe.efi')],capture_output=True,text=True,env={**os.environ,'UBSAN_OPTIONS':'halt_on_error=1:print_stacktrace=1'});self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
+   # Same ClockDxe bytes that prepare_product stages from the vendor bundle
+   clock=Path(directory)/'ClockDxe.efi';clock.write_bytes(derive(vendor.load(ROOT)['native_drivers']['ClockDxe']['pe_path'].read_bytes())[0])
+   p=subprocess.run([str(exe),str(clock)],capture_output=True,text=True,env={**os.environ,'UBSAN_OPTIONS':'halt_on_error=1:print_stacktrace=1'});self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
 if __name__=='__main__':unittest.main()

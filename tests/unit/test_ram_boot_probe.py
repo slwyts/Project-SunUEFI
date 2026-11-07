@@ -1,4 +1,5 @@
 """Build the actual AA64 PE and test probe C on host; no device execution."""
+import platform
 import importlib.util
 from pathlib import Path
 import subprocess
@@ -6,6 +7,7 @@ import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 INC=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 spec=importlib.util.spec_from_file_location('ram_probe_builder',ROOT/'tools/build_ram_boot_probe.py')
 builder=importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
@@ -16,7 +18,7 @@ class RamBootProbeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='ram-probe-tests-') as tmp:
             binary=str(Path(tmp)/'probe')
             subprocess.run(['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror',
-                '-fsanitize=address,undefined','-fno-pie','-no-pie','-I',str(INC),'-I',str(INC/'X64'),
+                '-fsanitize=address,undefined','-fno-pie','-no-pie','-U__aarch64__','-I',str(INC),'-I',str(INC/HOST_PROCESSOR_BIND),
                 str(ROOT/'tests/native/PianoRamBootProbeTest.c'),'-o',binary],check=True)
             subprocess.run([binary],check=True)
 

@@ -1,0 +1,56 @@
+--- a/MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassBoot.c
++++ b/MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassBoot.c
+@@ -114,7 +114,7 @@
+         // If MediaChange, reset ReadOnly and new MediaId
+         //
+         Status          = EFI_MEDIA_CHANGED;
+-        Media->ReadOnly = FALSE;
++        Media->ReadOnly = TRUE;
+         Media->MediaId++;
+       } else if (SenseData.Asc == USB_BOOT_ASC_NOT_READY) {
+         Status = EFI_NOT_READY;
+@@ -598,8 +598,9 @@
+   // Section 8.2.10 of SCSI-2 Spec.
+   // BIT7 of this byte is indicates whether the medium is write protected.
+   //
++  // Piano policy: USB media are always read-only
+   if (!EFI_ERROR (Status)) {
+-    Media->ReadOnly = (BOOLEAN)((ModeParaHeader.DevicePara & BIT7) != 0);
++    Media->ReadOnly = TRUE;
+   }
+ 
+   return Status;
+--- a/MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassImpl.c
++++ b/MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassImpl.c
+@@ -300,20 +300,10 @@
+   }
+ 
+   //
+-  // Try to write the data even the device is marked as ReadOnly,
+-  // and clear the status should the write succeed.
++  // Piano policy: USB media are read-only, no WRITE command is ever sent
+   //
+-  if (UsbMass->Cdb16Byte) {
+-    Status = UsbBootReadWriteBlocks16 (UsbMass, TRUE, Lba, TotalBlock, Buffer);
+-  } else {
+-    Status = UsbBootReadWriteBlocks (UsbMass, TRUE, (UINT32)Lba, TotalBlock, Buffer);
+-  }
++  Status = EFI_WRITE_PROTECTED;
+ 
+-  if (EFI_ERROR (Status)) {
+-    DEBUG ((DEBUG_ERROR, "UsbMassWriteBlocks: UsbBootWriteBlocks (%r) -> Reset\n", Status));
+-    UsbMassReset (This, TRUE);
+-  }
+-
+ ON_EXIT:
+   gBS->RestoreTPL (OldTpl);
+   return Status;
+@@ -367,7 +357,7 @@
+   //
+   Media->MediaPresent     = FALSE;
+   Media->LogicalPartition = FALSE;
+-  Media->ReadOnly         = FALSE;
++  Media->ReadOnly         = TRUE;
+   Media->WriteCaching     = FALSE;
+   Media->IoAlign          = 0;
+   Media->MediaId          = 1;

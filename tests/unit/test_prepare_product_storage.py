@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT/'tools'))
 import prepare_product_storage as product
 
 
+@unittest.skipUnless((ROOT/'private/captures/ufs-test-area-1/manifest.json').is_file(), 'private real capture absent')
 class ProductStorageProposalTests(unittest.TestCase):
     def setUp(self):
         self.blobs = product.verify_capture()

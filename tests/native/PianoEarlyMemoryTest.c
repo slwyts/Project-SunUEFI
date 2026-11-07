@@ -124,7 +124,7 @@ int main(void){
   counter=mStart+frequency/10;assert(TryRead(&mReport,PIANO_SMEM_BASE,4,output)==EFI_TIMEOUT);++cases;
   counter=mStart-1;assert(TryRead(&mReport,PIANO_SMEM_BASE,4,output)==EFI_TIMEOUT);++cases;
   // Consume the actual product SEC body and actual HOB/MemoryPeim once.
-  reset_cold();setup(FALSE);EFI_MEMORY_REGION_DESCRIPTOR *Product;UINT8 N;
+  reset_cold();setup();EFI_MEMORY_REGION_DESCRIPTOR *Product;UINT8 N;
   PianoProductLowGetMemoryMap(&Product,&N);memcpy(rows,Product,N*sizeof(*rows));count=N;hob_list=NULL;
   assert(PianoBoundInitializeMemory()==EFI_SUCCESS&&mmu_calls==1&&mReport.Published);++cases;
   assert(arena_base==0xBD980000&&arena_end==0xD4E23000&&!mReport.HighDdrPublished);++cases;
@@ -138,7 +138,7 @@ int main(void){
   assert(diagnostic_hobs==1&&PianoEarlyMemoryPublishHob()==EFI_NOT_READY);++cases;
   before=load_calls;cpu_sctlr=1;assert(PianoEarlyMemoryObserveCold()==EFI_ALREADY_STARTED&&load_calls==before);++cases;
   // Failed discovery still publishes evidence and uses the unchanged low map.
-  reset_cold();failed_pa=PIANO_SMEM_BASE+0x5c;setup(FALSE);
+  reset_cold();failed_pa=PIANO_SMEM_BASE+0x5c;setup();
   memcpy(rows,Product,N*sizeof(*rows));count=N;hob_list=NULL;
   assert(PianoBoundInitializeMemory()==EFI_SUCCESS&&mmu_calls==1&&mReport.Published);
   assert(mReport.Status==EFI_DEVICE_ERROR&&mReport.RecoveredFaults==1&&!mReport.HighDdrPublished);++cases;

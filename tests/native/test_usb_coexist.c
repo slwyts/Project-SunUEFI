@@ -39,6 +39,8 @@ CONST VOID *EFIAPI FdtGetProp(CONST VOID *Fdt,INT32 Node,CONST CHAR8 *Name,INT32
   assert(Fdt==(VOID *)123 && Node==1);if(!strcmp(Name,"reg")){*Bytes=16;return Reg;}assert(!strcmp(Name,"iommus"));*Bytes=12;return Iommu;
 }
 VOID PianoProbeUsbPower(CONST VOID *Fdt){assert(Fdt==(VOID *)123);}
+EFI_STATUS PianoUsbPhyStart(EFI_CLOCK_PROTOCOL *Clock){assert(Clock==&clock);return EFI_SUCCESS;}
+EFI_STATUS PianoUsbPhyStop(VOID){return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI locate_clock(EFI_GUID *Guid,VOID *Registration,VOID **Interface){*Interface=&clock;return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI clock_id(EFI_CLOCK_PROTOCOL *C,CONST CHAR8 *Name,UINTN *Id){assert(C==&clock);*Id=!strcmp(Name,"gcc_usb30_prim_gdsc")?100:!strcmp(Name,"gcc_usb3_phy_gdsc")?101:next_clock++;return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI clock_enable(EFI_CLOCK_PROTOCOL *C,UINTN Id){assert(C==&clock);if(Id==100)domain=TRUE;else if(Id==101){assert(domain);phy_domain=TRUE;}else {assert(Id<PIANO_USB_CLOCK_COUNT && domain && phy_domain);held|=1U<<Id;}return EFI_SUCCESS;}

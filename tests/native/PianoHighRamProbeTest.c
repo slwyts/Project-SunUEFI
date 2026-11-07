@@ -232,7 +232,12 @@ STATIC VOID Pattern(VOID) {
     assert(PianoHighRamPattern4K(&E,&P,PIANO_HIGH_RAM_BASE,&R)==EFI_UNSUPPORTED && !M.StateCalls&&!M.ReadCalls&&!M.WriteCalls);
     assert(R.Reasons&PianoHighPatternDisabled);return;
   }
+  // Snapshot buffers must sit below the probed window; MAP_32BIT exists only on x86_64
+#ifdef MAP_32BIT
   UINT8 *Buffers=mmap(NULL,8192,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_32BIT,-1,0);
+#else
+  UINT8 *Buffers=mmap((VOID *)0x100000000ULL,8192,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE,-1,0);
+#endif
   assert(Buffers!=MAP_FAILED && (UINTN)Buffers+8192<PIANO_HIGH_RAM_BASE);
   P.SavedPage=Buffers;P.WorkPage=Buffers+4096;P.BufferBytes=4096;P.GcdOwner=(VOID *)0xbeef;
   P.Read=Read;P.Write=Write;P.CleanToPoc=Clean;P.ExplicitEnable=TRUE;

@@ -46,6 +46,8 @@ STATIC VOID *mLinuxContext;
 STATIC CONST PIANO_SMMU_RETIRED_USB_PROOF *mStartupUsbProof;
 STATIC CONST VOID *mStartupUsbFdt;
 BOOLEAN PianoSetStandardKeyNavigation(BOOLEAN Enable);
+VOID PianoPogoPump(VOID);
+VOID PianoTouchPump(VOID);
 STATIC EFI_STATUS Exact(EFI_STATUS S){return S==EFI_SUCCESS?S:EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
 STATIC VOID RetainAndHalt(VOID){mReport.Retained=TRUE;
 #ifdef __aarch64__
@@ -238,6 +240,11 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
   if(mReport.Retained){mReport.Pumping=FALSE;return EFI_COMPROMISED_DATA;}
   PianoDwc3ServiceReplayStartup();
   PianoRawLinuxReplayStable();
+  // Keyboard and touch do one synchronous transfer per call, so they run only
+  // where the USB role poll runs. Runtime reads take about 0.7 ms (keyboard)
+  // and 2.6 ms (touch); bring-up keeps Linux's transfer sizes and can take
+  // up to about 30 ms per call
+  if(Reason&(PIANO_PRODUCT_PUMP_WAIT_EVENT|PIANO_PRODUCT_PUMP_GUI)){PianoPogoPump();PianoTouchPump();}
   if(mStartupUsbProof){
     S=StartupUsbAbsent();
     if(S==EFI_SUCCESS){
@@ -527,6 +534,15 @@ EFI_STATUS PianoBootPolicyCancelStable(VOID) {
   if(mReport.Retained||mReport.Pumping||mReport.Dispatching||mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE||
      mReport.RequestedCoreAction!=PianoUsbServiceActionBoot||mReport.PendingAction!=PIANO_PRODUCT_ACTION_NONE)return EFI_ACCESS_DENIED;
   mReport.RequestedCoreAction=PianoUsbServiceActionNone;
+  return Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT);
+}
+EFI_STATUS PianoBootPolicyCancelExit(VOID) {
+  EFI_STATUS S=AtApp();if(S!=EFI_SUCCESS)return S;
+  PIANO_USB_SERVICE_ACTION A=mReport.RequestedCoreAction;
+  if(mReport.Retained||mReport.Pumping||mReport.Dispatching||mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE||
+     (A!=PianoUsbServiceActionBoot&&A!=PianoUsbServiceActionReboot&&A!=PianoUsbServiceActionContinue)||
+     mReport.PendingAction!=PIANO_PRODUCT_ACTION_NONE)return EFI_ACCESS_DENIED;
+  mReport.RequestedCoreAction=PianoUsbServiceActionNone;mReport.RequestedResetTarget=0;
   return Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT);
 }
 EFI_STATUS PianoBootPolicyStop(VOID) {

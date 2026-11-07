@@ -12,6 +12,7 @@
   "frequency_interval": "2800",
   "voltage": "2800",
   "double_tap": true,
+  "slide": true,
   "squeeze_motor_level": 3,
   "squeeze_threshold_down": 600,
   "squeeze_threshold_up": 300

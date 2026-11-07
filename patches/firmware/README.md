@@ -1,6 +1,6 @@
 # 固件上游补丁
 
-三份标准 Git patch 固定于 `series.json` 指定的上游提交，记录 SHA256。它们保存 Mu Basecore、Mu Silicium 库绑定和 SimpleInit 的现有接入改动。产品构建先应用这些补丁，再由原准备工具复制本项目组件并核对安装后的源码。
+标准 Git patch 固定于 `series.json` 指定的上游提交，记录 SHA256。它们保存 Mu Basecore、Mu Silicium 库绑定和 SimpleInit 的接入改动；`mu-basecore/cfb9372/` 下是 USB 主机用到的 U 盘只读补丁。产品构建先应用这些补丁，再由原准备工具复制本项目组件并核对安装后的源码。
 
 `apply_firmware_patches.py` 只接受完整可应用或完整已应用的状态；未知修改会报冲突，不自动重置工作区。三份补丁已在各自干净的基线工作树上应用，并核对修改后文件与现有编译来源一致。
 

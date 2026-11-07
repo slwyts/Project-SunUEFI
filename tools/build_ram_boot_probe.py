@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import struct
 import subprocess
 import tempfile
@@ -23,7 +24,7 @@ def build(output):
     source = ROOT/'uefi/core/PianoRamBootProbe.c'
     header = source.with_suffix('.h')
     includes = ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
-    host = ROOT/'build/host-tools/usr'
+    host = Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT', ROOT/'build/host-tools/usr'))
     env = {**os.environ, 'LD_LIBRARY_PATH': str(host/'lib')}
     output.mkdir(parents=True)
     with tempfile.TemporaryDirectory(prefix='probe-build-') as temporary:
@@ -41,7 +42,7 @@ def build(output):
         # Verify the actual parser accepts the product; not just file magic.
         inspector = Path(temporary)/'inspect'
         subprocess.run(['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror',
-            '-I',str(includes),'-I',str(includes/'X64'),
+            '-I',str(includes),'-I',str(includes/('AArch64' if platform.machine() in ('aarch64','arm64') else 'X64')),
             str(ROOT/'tools/inspect_fastboot_boot.c'),'-o',str(inspector)],check=True)
         parsed = subprocess.run([str(inspector),str(binary)],check=True,capture_output=True,text=True).stdout
         raw = binary.read_bytes()

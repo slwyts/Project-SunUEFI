@@ -1,281 +1,321 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Independently written bounded fixed transaction, based on GENI register and
-// I2C command facts. No Linux driver implementation or OEM function is called.
+// Register offsets, opcodes, packing and SCL timing follow Linux 7.3
+// i2c-qcom-geni.c, qcom-geni-se.c and geni-se.h; written independently
 #include "PianoGeniI2cPio.h"
 
-#define SIGNATURE SIGNATURE_32('P','G','I','P')
-#define ACTIVE (BIT0|BIT12)
-#define DONE BIT0
-#define CANCEL BIT4
-#define ABORT BIT5
-#define RX_READY (BIT26|BIT27)
-#define TX_READY BIT30
-#define ERRORS (BIT1|BIT2|BIT3|BIT9|BIT10|BIT11|BIT12|BIT13|BIT14|BIT24|BIT25|BIT28|BIT29)
-#define OWN_IRQ (DONE|CANCEL|ABORT|RX_READY|TX_READY|ERRORS)
-#define TX_WORDS 0x0FFFFFFFU
-#define RX_WORDS 0x01FFFFFFU
-#define PACK0 0x0007F8FEU
-#define PACK1 0x000FFEFEU
+#define GENI_OUTPUT_CTRL   0x024U
+#define GENI_CGC_CTRL      0x028U
+#define GENI_STATUS        0x040U
+#define GENI_M_CLK_CFG     0x048U
+#define GENI_IF_DISABLE_RO 0x064U
+#define GENI_FW_REVISION   0x068U
+#define GENI_CLK_SEL       0x07CU
+#define GENI_BYTE_GRAN     0x254U
+#define GENI_DMA_MODE_EN   0x258U
+#define GENI_TX_PACKING0   0x260U
+#define GENI_TX_PACKING1   0x264U
+#define I2C_TX_TRANS_LEN   0x26CU
+#define I2C_RX_TRANS_LEN   0x270U
+#define I2C_SCL_COUNTERS   0x278U
+#define GENI_RX_PACKING0   0x284U
+#define GENI_RX_PACKING1   0x288U
+#define GENI_M_CMD0        0x600U
+#define GENI_M_CMD_CTRL    0x604U
+#define GENI_M_IRQ_STATUS  0x610U
+#define GENI_M_IRQ_EN      0x614U
+#define GENI_M_IRQ_CLEAR   0x618U
+#define GENI_S_IRQ_STATUS  0x640U
+#define GENI_TX_FIFO       0x700U
+#define GENI_RX_FIFO       0x780U
+#define GENI_TX_FIFO_STAT  0x800U
+#define GENI_RX_FIFO_STAT  0x804U
+#define GENI_TX_WATERMARK  0x80CU
+#define GENI_RX_WATERMARK  0x810U
+#define GENI_RX_RFR_WM     0x814U
+#define GENI_IOS           0x908U
+#define GENI_GSI_EVENT_EN  0xE18U
+#define GENI_SE_IRQ_EN     0xE1CU
+#define GENI_HW_PARAM_0    0xE24U
+#define GENI_HW_PARAM_1    0xE28U
 
-STATIC VOID Clear(VOID *Pointer,UINTN Bytes) {
-  for(UINTN I=0;I<Bytes;++I)((volatile UINT8 *)Pointer)[I]=0;
-}
-EFI_STATUS PianoGeniI2cPioBuildRuntimePacket(PIANO_GENI_RUNTIME_PACKET *P) {
-  if(P==NULL)return EFI_INVALID_PARAMETER;
-  *P=(PIANO_GENI_RUNTIME_PACKET){1,0x4c,(1U<<27)|(0x4cU<<9)|BIT2,68,(2U<<27)|(0x4cU<<9)};
-  return EFI_SUCCESS;
-}
+#define M_ACTIVE      BIT0
+#define S_ACTIVE      BIT12
+#define IRQ_DONE      BIT0
+#define IRQ_CANCEL    BIT4
+#define IRQ_ABORT     BIT5
+#define IRQ_NACK      BIT10
+#define IRQ_RX_WM     BIT26
+#define IRQ_RX_LAST   BIT27
+#define IRQ_TX_WM     BIT30
+// Overrun, illegal command, failure, GP IRQ0..5 (NACK, bus protocol,
+// arbitration) and the four FIFO access errors
+#define IRQ_ERRORS    (BIT1|BIT2|BIT3|BIT9|BIT10|BIT11|BIT12|BIT13|BIT14|BIT24|BIT25|BIT28|BIT29)
+#define IRQ_USED      (IRQ_DONE|IRQ_CANCEL|IRQ_ABORT|IRQ_ERRORS|IRQ_RX_WM|IRQ_RX_LAST|IRQ_TX_WM)
+#define CMD_CANCEL    BIT2
+#define CMD_ABORT     BIT1
+#define OP_WRITE      1U
+#define OP_READ       2U
+#define OP_STOP_ON_BUS 7U
+#define STOP_STRETCH  BIT2
+#define TX_WORDS      0x0FFFFFFFU
+#define RX_WORDS      0x01FFFFFFU
+#define IO_OUTPUT_ALL 0x7FU
+#define CGC_ALL       0x7FU
+#define PACKING0      0x0007F8FEU
+#define PACKING1      0x000FFEFEU
+#define MAX_PHASE     4096U
+#define RECOVER_US    2000U
+
+STATIC EFI_STATUS Exact(EFI_STATUS S){return S==EFI_SUCCESS?S:EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
 STATIC BOOLEAN ValidIo(CONST PIANO_GENI_PIO_IO *Io) {
   return Io!=NULL && Io->Base==PIANO_GENI_SE6_BASE && Io->Bytes==PIANO_GENI_SE6_BYTES && Io->Read32!=NULL;
 }
+STATIC EFI_STATUS Rd(PIANO_GENI_I2C *I,UINT32 Offset,UINT32 *Value){return Exact(I->Io.Read32(I->Io.Context,Offset,Value));}
+STATIC EFI_STATUS Wr(PIANO_GENI_I2C *I,UINT32 Offset,UINT32 Value){return Exact(I->Io.Write32(I->Io.Context,Offset,Value));}
+
 EFI_STATUS PianoGeniI2cPioCapture(CONST PIANO_GENI_PIO_IO *Io,PIANO_GENI_PIO_SNAPSHOT *S) {
-  if(!ValidIo(Io) || S==NULL)return EFI_INVALID_PARAMETER;
-  Clear(S,sizeof(*S));
   STATIC CONST UINT32 Offset[]={0x68,0x64,0x40,0x258,0xe18,0xe1c,0x7c,0x48,0x278,0x254,
     0x260,0x264,0x284,0x288,0xe24,0xe28,0x908,0x610,0x640,0x614,0x604,0x634,0x800,0x804,0x80c,0x810,0x26c,0x270,0x600,0x630};
+  if(!ValidIo(Io) || S==NULL)return EFI_INVALID_PARAMETER;
   UINT32 *Field[]={&S->Firmware,&S->InterfaceDisable,&S->Status,&S->DmaMode,&S->Events,&S->IrqRoute,
     &S->ClockSelect,&S->MasterClock,&S->SclCounters,&S->ByteGran,&S->TxPack[0],&S->TxPack[1],&S->RxPack[0],&S->RxPack[1],
     &S->HwTx,&S->HwRx,&S->IoLines,&S->MasterIrq,&S->SecondaryIrq,&S->MasterIrqEnable,&S->MasterControl,&S->SecondaryControl,
     &S->TxFifo,&S->RxFifo,&S->TxWatermark,&S->RxWatermark,&S->TxLength,&S->RxLength,&S->MasterCommand,&S->SecondaryCommand};
   STATIC_ASSERT(ARRAY_SIZE(Field)==ARRAY_SIZE(Offset),"snapshot/register count");
+  for(UINTN I=0;I<ARRAY_SIZE(Offset);++I)*Field[I]=0;
   for(UINTN I=0;I<ARRAY_SIZE(Offset);++I) {
-    EFI_STATUS R=Io->Read32(Io->Context,Offset[I],Field[I]);
-    if(R!=EFI_SUCCESS){Clear(S,sizeof(*S));return EFI_ERROR(R)?R:EFI_DEVICE_ERROR;}
+    EFI_STATUS R=Exact(Io->Read32(Io->Context,Offset[I],Field[I]));
+    if(R!=EFI_SUCCESS)return R;
   }
   return EFI_SUCCESS;
 }
-STATIC UINT32 Depth(UINT32 Hw){return (Hw>>16)&0xff;}
-STATIC EFI_STATUS Configuration(CONST PIANO_GENI_PIO_CONTRACT *C,CONST PIANO_GENI_PIO_SNAPSHOT *S) {
-  if(C==NULL || S==NULL)return EFI_INVALID_PARAMETER;
-  if(C->ExplicitEnable!=TRUE || C->MappedDeviceMemoryVerified!=TRUE || C->ExclusiveOwnerVerified!=TRUE ||
-     C->ExistingRuntimeVerified!=TRUE || C->ClockRateAndMuxVerified!=TRUE || C->SupplyAndGpioVerified!=TRUE ||
-     C->FirmwareAndPackingVerified!=TRUE || C->BoundedCallbacksVerified!=TRUE)return EFI_NOT_READY;
-  if(!C->Firmware || C->Firmware==MAX_UINT32 || ((C->Firmware>>8)&0xff)!=3 || S->Firmware!=C->Firmware ||
-     S->ClockSelect!=C->ClockSelect || C->ClockSelect>7 || S->MasterClock!=C->MasterClock || !(C->MasterClock&BIT0) ||
-     !C->SclCounters || S->SclCounters!=C->SclCounters)return EFI_COMPROMISED_DATA;
-  if(S->InterfaceDisable&BIT0 || S->DmaMode || S->Events || S->IrqRoute ||
-     S->ByteGran || S->TxPack[0]!=PACK0 || S->RxPack[0]!=PACK0 || S->TxPack[1]!=PACK1 || S->RxPack[1]!=PACK1 ||
-     ((S->HwTx>>24)&0x3f)!=32 || ((S->HwRx>>24)&0x3f)!=32 || !Depth(S->HwTx) || !Depth(S->HwRx))return EFI_UNSUPPORTED;
-  return EFI_SUCCESS;
-}
-EFI_STATUS PianoGeniI2cPioValidate(CONST PIANO_GENI_PIO_CONTRACT *C,CONST PIANO_GENI_PIO_SNAPSHOT *S) {
-  EFI_STATUS R=Configuration(C,S);if(R!=EFI_SUCCESS)return R;
-  if((S->Status&ACTIVE) || S->MasterControl || S->SecondaryControl || S->MasterIrq || S->SecondaryIrq ||
-     (S->TxFifo&TX_WORDS) || (S->RxFifo&RX_WORDS) || (S->IoLines&3)!=3)return EFI_NOT_READY;
-  return EFI_SUCCESS;
-}
-EFI_STATUS PianoGeniI2cPioInitialize(PIANO_GENI_I2C_PIO *P,CONST PIANO_GENI_PIO_IO *Io,CONST PIANO_GENI_PIO_CONTRACT *C) {
-  if(P==NULL || Io==NULL || C==NULL)return EFI_INVALID_PARAMETER;
-  if(P->Signature)return EFI_ALREADY_STARTED;
-  if(!PIANO_GENI_I2C_PIO_EXPERIMENT)return EFI_UNSUPPORTED;
-  if(!ValidIo(Io) || Io->Write32==NULL || Io->NowUs==NULL)return EFI_INVALID_PARAMETER;
-  // Do not even touch registers until the caller has supplied all attestations.
-  if(C->ExplicitEnable!=TRUE || C->MappedDeviceMemoryVerified!=TRUE || C->ExclusiveOwnerVerified!=TRUE ||
-     C->ExistingRuntimeVerified!=TRUE || C->ClockRateAndMuxVerified!=TRUE || C->SupplyAndGpioVerified!=TRUE ||
-     C->FirmwareAndPackingVerified!=TRUE || C->BoundedCallbacksVerified!=TRUE)return EFI_NOT_READY;
-  PIANO_GENI_PIO_SNAPSHOT S;EFI_STATUS R=PianoGeniI2cPioCapture(Io,&S);
-  if(R==EFI_SUCCESS)R=PianoGeniI2cPioValidate(C,&S);
-  if(R!=EFI_SUCCESS)return R;
-  Clear(P,sizeof(*P));P->Signature=SIGNATURE;P->Io=*Io;P->Contract=*C;P->Before=S;
-  P->LastTime=Io->NowUs(Io->Context);P->Clean=TRUE;P->LastStatus=EFI_SUCCESS;
-  return EFI_SUCCESS;
-}
-STATIC EFI_STATUS Budget(PIANO_GENI_I2C_PIO *P) {
-  UINT64 Now=P->Io.NowUs(P->Io.Context);
-  if(Now<P->LastTime){P->ClockBroken=TRUE;return EFI_COMPROMISED_DATA;}
-  P->LastTime=Now;return Now>=P->Deadline?EFI_TIMEOUT:EFI_SUCCESS;
-}
-STATIC EFI_STATUS Read(PIANO_GENI_I2C_PIO *P,UINT32 Offset,UINT32 *Value) {
-  EFI_STATUS Limit=Budget(P);if(Limit!=EFI_SUCCESS)return Limit;
-  EFI_STATUS R=P->Io.Read32(P->Io.Context,Offset,Value);
-  Limit=Budget(P);if(Limit!=EFI_SUCCESS)return Limit;
-  return R==EFI_SUCCESS?R:EFI_ERROR(R)?R:EFI_DEVICE_ERROR;
-}
-STATIC EFI_STATUS Write(PIANO_GENI_I2C_PIO *P,UINT32 Offset,UINT32 Value) {
-  EFI_STATUS Limit=Budget(P);if(Limit!=EFI_SUCCESS)return Limit;
-  P->Touched=TRUE;P->Clean=FALSE;
-  if(Offset==0x600){++P->CommandsAttempted;P->CurrentCommand=Value;P->CommandAttempted=TRUE;P->BusMayBeHeld=TRUE;}
-  if(Offset==0x700)++P->TxWordsAttempted;
-  EFI_STATUS R=P->Io.Write32(P->Io.Context,Offset,Value);
-  Limit=Budget(P);if(Limit!=EFI_SUCCESS)return Limit;
-  return R==EFI_SUCCESS?R:EFI_ERROR(R)?R:EFI_DEVICE_ERROR;
-}
-STATIC EFI_STATUS EFIAPI SessionRead(VOID *Context,UINT32 Offset,UINT32 *Value){return Read(Context,Offset,Value);}
-STATIC EFI_STATUS CaptureSession(PIANO_GENI_I2C_PIO *P,PIANO_GENI_PIO_SNAPSHOT *S) {
-  PIANO_GENI_PIO_IO Io=P->Io;Io.Context=P;Io.Read32=SessionRead;
-  return PianoGeniI2cPioCapture(&Io,S);
-}
-STATIC EFI_STATUS Time(PIANO_GENI_I2C_PIO *P,UINT64 Limit,BOOLEAN Cleanup) {
-  UINT32 *Count=Cleanup?&P->CleanupPolls:&P->Polls;
-  if(++*Count>(Cleanup?PIANO_GENI_CLEANUP_LIMIT:PIANO_GENI_POLL_LIMIT))return EFI_TIMEOUT;
-  UINT64 Now=P->Io.NowUs(P->Io.Context);
-  if(Now<P->LastTime){P->ClockBroken=TRUE;return EFI_COMPROMISED_DATA;}
-  P->LastTime=Now;return Now>=Limit?EFI_TIMEOUT:EFI_SUCCESS;
-}
-STATIC EFI_STATUS ClearIrq(PIANO_GENI_I2C_PIO *P,UINT32 Irq) {
-  if(Irq&~OWN_IRQ)return EFI_COMPROMISED_DATA;
-  return Irq?Write(P,0x618,Irq):EFI_SUCCESS;
-}
-STATIC EFI_STATUS Drain(PIANO_GENI_I2C_PIO *P,UINT32 Fifo,UINT8 *Frame,BOOLEAN Discard) {
-  UINT32 Words=Fifo&RX_WORDS,Bytes=Words*4;
-  if(Words>Depth(P->Before.HwRx))return EFI_COMPROMISED_DATA;
-  if(!Words)return EFI_SUCCESS; // Empty FIFO metadata cannot authorize a pop.
-  if(Fifo&BIT31) {
-    UINT32 Last=(Fifo>>28)&7;
-    // Native RVA6FD0 explicitly uses wc*4+last_valid-4. Zero/out-of-range
-    // encodings are not guessed to mean a full word.
-    if(Last<1 || Last>4)return EFI_COMPROMISED_DATA;
-    Bytes-=4-Last;
+
+STATIC EFI_STATUS Program(PIANO_GENI_I2C *I,UINT32 Offset,UINT32 Value) {
+  UINT32 Old=0,Back=0;EFI_STATUS S=Rd(I,Offset,&Old);
+  if(S!=EFI_SUCCESS)return S;
+  BOOLEAN Known=FALSE;
+  for(UINT32 N=0;N<I->SavedCount;++N)if(I->SavedOffset[N]==Offset)Known=TRUE;
+  if(!Known) {
+    if(I->SavedCount==PIANO_GENI_SAVED_REGISTERS)return EFI_OUT_OF_RESOURCES;
+    I->SavedOffset[I->SavedCount]=Offset;I->SavedValue[I->SavedCount]=Old;++I->SavedCount;
   }
-  if(!Discard && Bytes>PIANO_GENI_RUNTIME_BYTES-P->Received)return EFI_BAD_BUFFER_SIZE;
-  for(UINT32 I=0;I<Words;++I) {
-    UINT32 Word;EFI_STATUS R=Read(P,0x780,&Word);if(R!=EFI_SUCCESS)return R;
-    UINT32 Count=MIN(Bytes,4U);
-    for(UINT32 J=0;J<Count;++J)if(!Discard)Frame[P->Received++]=(UINT8)(Word>>(8*J));
-    Bytes-=Count;
-  }
-  return EFI_SUCCESS;
+  if(Old==Value)return EFI_SUCCESS;
+  S=Wr(I,Offset,Value);if(S!=EFI_SUCCESS)return S;
+  S=Rd(I,Offset,&Back);if(S!=EFI_SUCCESS)return S;
+  return Back==Value?EFI_SUCCESS:EFI_DEVICE_ERROR;
 }
-STATIC EFI_STATUS Poll(PIANO_GENI_I2C_PIO *P,BOOLEAN Rx,UINT8 *Frame) {
-  BOOLEAN Sent=FALSE;
+
+// Linux tables: 19.2 MHz {div 1, high 2, low 8, cycle 18} and 32 MHz
+// {div 2, high 3, low 5, cycle 15} give 1 MHz; 400 kHz/100 kHz likewise
+STATIC EFI_STATUS Timing(UINT32 SourceHz,UINT32 BusHz,UINT32 *Divider,UINT32 *Counters) {
+  STATIC CONST struct {UINT32 Bus,Div,High,Low,Cycle;} T19[]={
+    {100000,7,10,12,26},{400000,2,5,11,22},{1000000,1,2,8,18}};
+  STATIC CONST struct {UINT32 Bus,Div,High,Low,Cycle;} T32[]={
+    {100000,12,9,10,26},{400000,4,3,9,19},{1000000,2,3,5,15}};
+  for(UINTN N=0;N<3;++N) {
+    if(SourceHz==32000000U && T32[N].Bus==BusHz) {
+      *Divider=T32[N].Div;*Counters=(T32[N].High<<20)|(T32[N].Low<<10)|T32[N].Cycle;return EFI_SUCCESS;
+    }
+    if(T19[N].Bus!=BusHz)continue;
+    // Any other source is divided down to at most 19.2 MHz so the SCL stays
+    // at or below the Linux 19.2 MHz timing for the same bus speed
+    UINT32 Scale=(SourceHz+19200000U-1)/19200000U;
+    if(!Scale || Scale*T19[N].Div>0xFFFU)return EFI_UNSUPPORTED;
+    *Divider=Scale*T19[N].Div;*Counters=(T19[N].High<<20)|(T19[N].Low<<10)|T19[N].Cycle;return EFI_SUCCESS;
+  }
+  return EFI_UNSUPPORTED;
+}
+
+EFI_STATUS PianoGeniI2cOpen(PIANO_GENI_I2C *I,CONST PIANO_GENI_PIO_IO *Io,UINT32 SourceHz,UINT32 BusHz) {
+  if(I==NULL || !ValidIo(Io) || Io->Write32==NULL || Io->NowUs==NULL || SourceHz<1000000U)return EFI_INVALID_PARAMETER;
+  for(UINTN N=0;N<sizeof(*I);++N)((volatile UINT8 *)I)[N]=0;
+  I->Io=*Io;I->SourceHz=SourceHz;I->LastStatus=EFI_NOT_STARTED;I->CloseStatus=EFI_NOT_STARTED;
+  UINT32 Divider=0,Counters=0,Status=0,Hw0=0,Hw1=0,Value=0;
+  EFI_STATUS S=Timing(SourceHz,BusHz,&Divider,&Counters);if(S!=EFI_SUCCESS)return S;
+  // Identity checks are reads only. A GSI-only SE (FIFO interface disabled)
+  // belongs to the GPI DMA path; it is reported, never reconfigured here
+  if((S=Rd(I,GENI_FW_REVISION,&I->Firmware))!=EFI_SUCCESS ||
+     (S=Rd(I,GENI_IF_DISABLE_RO,&I->InterfaceDisable))!=EFI_SUCCESS ||
+     (S=Rd(I,GENI_STATUS,&Status))!=EFI_SUCCESS ||
+     (S=Rd(I,GENI_HW_PARAM_0,&Hw0))!=EFI_SUCCESS || (S=Rd(I,GENI_HW_PARAM_1,&Hw1))!=EFI_SUCCESS)return S;
+  if(((I->Firmware>>8)&0xFFU)!=PIANO_GENI_PROTOCOL_I2C || (I->InterfaceDisable&BIT0))return EFI_UNSUPPORTED;
+  if(Status&(M_ACTIVE|S_ACTIVE))return EFI_NOT_READY;
+  I->TxDepth=(Hw0>>16)&0xFFU;I->RxDepth=(Hw1>>16)&0xFFU;
+  if(((Hw0>>24)&0x3FU)!=32 || ((Hw1>>24)&0x3FU)!=32 || I->TxDepth<4 || I->RxDepth<4)return EFI_UNSUPPORTED;
+  S=Rd(I,GENI_OUTPUT_CTRL,&Value);if(S!=EFI_SUCCESS)return S;
+  if((S=Program(I,GENI_OUTPUT_CTRL,Value|IO_OUTPUT_ALL))!=EFI_SUCCESS)goto Fail;
+  S=Rd(I,GENI_CGC_CTRL,&Value);if(S!=EFI_SUCCESS)goto Fail;
+  if((S=Program(I,GENI_CGC_CTRL,Value|CGC_ALL))!=EFI_SUCCESS)goto Fail;
+  S=Rd(I,GENI_DMA_MODE_EN,&Value);if(S!=EFI_SUCCESS)goto Fail;
+  if((S=Program(I,GENI_DMA_MODE_EN,Value&~BIT0))!=EFI_SUCCESS ||
+     (S=Program(I,GENI_GSI_EVENT_EN,0))!=EFI_SUCCESS ||
+     // Polled only: no M/S/DMA interrupt is routed to the GIC line
+     (S=Program(I,GENI_SE_IRQ_EN,0))!=EFI_SUCCESS ||
+     (S=Program(I,GENI_CLK_SEL,0))!=EFI_SUCCESS ||
+     (S=Program(I,GENI_M_CLK_CFG,(Divider<<4)|BIT0))!=EFI_SUCCESS ||
+     (S=Program(I,I2C_SCL_COUNTERS,Counters))!=EFI_SUCCESS ||
+     (S=Program(I,GENI_TX_PACKING0,PACKING0))!=EFI_SUCCESS || (S=Program(I,GENI_TX_PACKING1,PACKING1))!=EFI_SUCCESS ||
+     (S=Program(I,GENI_RX_PACKING0,PACKING0))!=EFI_SUCCESS || (S=Program(I,GENI_RX_PACKING1,PACKING1))!=EFI_SUCCESS ||
+     (S=Program(I,GENI_BYTE_GRAN,0))!=EFI_SUCCESS ||
+     (S=Program(I,GENI_TX_WATERMARK,0))!=EFI_SUCCESS ||
+     (S=Program(I,GENI_RX_WATERMARK,I->RxDepth-1))!=EFI_SUCCESS ||
+     (S=Program(I,GENI_RX_RFR_WM,I->RxDepth))!=EFI_SUCCESS)goto Fail;
+  S=Rd(I,GENI_M_IRQ_EN,&Value);if(S!=EFI_SUCCESS)goto Fail;
+  if((S=Program(I,GENI_M_IRQ_EN,Value|IRQ_USED))!=EFI_SUCCESS)goto Fail;
+  // Per-transfer lengths are changed later; save their originals now
+  if((S=Program(I,I2C_TX_TRANS_LEN,0))!=EFI_SUCCESS || (S=Program(I,I2C_RX_TRANS_LEN,0))!=EFI_SUCCESS)goto Fail;
+  if((S=Wr(I,GENI_M_IRQ_CLEAR,MAX_UINT32))!=EFI_SUCCESS)goto Fail;
+  I->Open=TRUE;I->LastStatus=EFI_SUCCESS;return EFI_SUCCESS;
+Fail:
+  I->Open=TRUE;I->LastStatus=S;
+  if(PianoGeniI2cClose(I)!=EFI_SUCCESS)I->Broken=TRUE;
+  return S;
+}
+
+STATIC BOOLEAN Late(PIANO_GENI_I2C *I,UINT64 Deadline){return I->Io.NowUs(I->Io.Context)>=Deadline;}
+
+// Cancel, then abort, only a command this master started. No bus clear or
+// secondary sequencer reset is attempted; a stuck engine marks Broken
+STATIC EFI_STATUS Recover(PIANO_GENI_I2C *I) {
+  UINT32 Status=0,Irq=0,Fifo=0,Word=0;EFI_STATUS S;
+  for(UINTN Phase=0;Phase<3;++Phase) {
+    if((S=Rd(I,GENI_STATUS,&Status))!=EFI_SUCCESS)return S;
+    if(!(Status&M_ACTIVE))break;
+    if(Phase==2){I->Broken=TRUE;return EFI_DEVICE_ERROR;}
+    if((S=Wr(I,GENI_M_CMD_CTRL,Phase==0?CMD_CANCEL:CMD_ABORT))!=EFI_SUCCESS)return S;
+    UINT64 Deadline=I->Io.NowUs(I->Io.Context)+RECOVER_US;
+    for(;;) {
+      if((S=Rd(I,GENI_M_IRQ_STATUS,&Irq))!=EFI_SUCCESS || (S=Rd(I,GENI_STATUS,&Status))!=EFI_SUCCESS)return S;
+      if((Irq&(Phase==0?IRQ_CANCEL:IRQ_ABORT)) || !(Status&M_ACTIVE) || Late(I,Deadline))break;
+    }
+  }
+  if((S=Wr(I,GENI_TX_WATERMARK,0))!=EFI_SUCCESS)return S;
+  for(UINT32 N=0;N<2*I->RxDepth+2;++N) {
+    if((S=Rd(I,GENI_RX_FIFO_STAT,&Fifo))!=EFI_SUCCESS)return S;
+    if(!(Fifo&RX_WORDS))break;
+    if((S=Rd(I,GENI_RX_FIFO,&Word))!=EFI_SUCCESS)return S;
+  }
+  if((S=Rd(I,GENI_RX_FIFO_STAT,&Fifo))!=EFI_SUCCESS)return S;
+  UINT32 Tx=0;if((S=Rd(I,GENI_TX_FIFO_STAT,&Tx))!=EFI_SUCCESS)return S;
+  if((Fifo&RX_WORDS) || (Tx&TX_WORDS)){I->Broken=TRUE;return EFI_DEVICE_ERROR;}
+  return Wr(I,GENI_M_IRQ_CLEAR,MAX_UINT32);
+}
+
+// I2C_STOP_ON_BUS from i2c-qcom-geni.c: ends a bus left held after a
+// STOP_STRETCH write whose repeated-start read failed
+STATIC EFI_STATUS StopOnBus(PIANO_GENI_I2C *I) {
+  UINT32 Irq=0;EFI_STATUS S;
+  if((S=Wr(I,GENI_M_IRQ_CLEAR,MAX_UINT32))!=EFI_SUCCESS || (S=Wr(I,GENI_M_CMD0,OP_STOP_ON_BUS<<27))!=EFI_SUCCESS)return S;
+  UINT64 Deadline=I->Io.NowUs(I->Io.Context)+RECOVER_US;
   for(;;) {
-    EFI_STATUS R=Time(P,P->Deadline-PIANO_GENI_CLEANUP_US,FALSE);if(R!=EFI_SUCCESS)return R;
-    UINT32 Irq,Status,Fifo,Tx,Firmware,Dma,Events,Route,Command,Secondary;
-    if((R=Read(P,0x610,&Irq))!=EFI_SUCCESS || (R=Read(P,0x40,&Status))!=EFI_SUCCESS ||
-       (R=Read(P,0x804,&Fifo))!=EFI_SUCCESS || (R=Read(P,0x800,&Tx))!=EFI_SUCCESS ||
-       (R=Read(P,0x68,&Firmware))!=EFI_SUCCESS || (R=Read(P,0x258,&Dma))!=EFI_SUCCESS ||
-       (R=Read(P,0xe18,&Events))!=EFI_SUCCESS || (R=Read(P,0xe1c,&Route))!=EFI_SUCCESS ||
-       (R=Read(P,0x600,&Command))!=EFI_SUCCESS || (R=Read(P,0x630,&Secondary))!=EFI_SUCCESS)return R;
-    UINT32 Expected=(Rx?2U:1U)<<27;Expected|=0x4cU<<9;if(!Rx)Expected|=BIT2;
-    if(Status&BIT12 || Irq&~OWN_IRQ || Firmware!=P->Contract.Firmware || Dma || Events || Route ||
-       Command!=Expected || Secondary!=P->Before.SecondaryCommand){P->OwnershipLost=TRUE;return EFI_COMPROMISED_DATA;}
-    if(Irq&(ERRORS|CANCEL|ABORT))return EFI_DEVICE_ERROR;
-    if(!Rx) {
-      if(Fifo&RX_WORDS)return EFI_COMPROMISED_DATA;
-      if((Irq&DONE) && !Sent)return EFI_BAD_BUFFER_SIZE;
-      if((Irq&TX_READY) && !Sent) {
-        if(Tx&TX_WORDS)return EFI_COMPROMISED_DATA;
-        R=Write(P,0x700,0x4c);if(R!=EFI_SUCCESS)return R;Sent=TRUE;
+    if((S=Rd(I,GENI_M_IRQ_STATUS,&Irq))!=EFI_SUCCESS)return S;
+    if(Irq&IRQ_DONE)return Wr(I,GENI_M_IRQ_CLEAR,Irq);
+    if(Irq&(IRQ_ERRORS|IRQ_CANCEL|IRQ_ABORT) || Late(I,Deadline))return EFI_DEVICE_ERROR;
+  }
+}
+
+STATIC EFI_STATUS WritePhase(PIANO_GENI_I2C *I,UINT8 Address,CONST UINT8 *Data,UINTN Bytes,BOOLEAN Stretch,UINT64 Deadline) {
+  UINTN Sent=0;UINT32 Irq=0,Tx=0;EFI_STATUS S;
+  if((S=Wr(I,I2C_TX_TRANS_LEN,(UINT32)Bytes))!=EFI_SUCCESS ||
+     (S=Wr(I,GENI_M_CMD0,(OP_WRITE<<27)|((UINT32)Address<<9)|(Stretch?STOP_STRETCH:0)))!=EFI_SUCCESS ||
+     (S=Wr(I,GENI_TX_WATERMARK,1))!=EFI_SUCCESS)return S;
+  for(;;) {
+    if(Late(I,Deadline))return EFI_TIMEOUT;
+    if((S=Rd(I,GENI_M_IRQ_STATUS,&Irq))!=EFI_SUCCESS)return S;
+    I->LastIrq=Irq;
+    if(Irq&(IRQ_ERRORS|IRQ_CANCEL|IRQ_ABORT))return (Irq&IRQ_NACK)?EFI_NO_RESPONSE:EFI_DEVICE_ERROR;
+    if(Sent<Bytes) {
+      if((S=Rd(I,GENI_TX_FIFO_STAT,&Tx))!=EFI_SUCCESS)return S;
+      UINT32 Used=Tx&TX_WORDS;
+      if(Used>I->TxDepth)return EFI_DEVICE_ERROR;
+      for(UINT32 Free=I->TxDepth-Used;Free && Sent<Bytes;--Free) {
+        UINT32 Word=0;
+        for(UINT32 B=0;B<4 && Sent<Bytes;++B)Word|=(UINT32)Data[Sent++]<<(8*B);
+        if((S=Wr(I,GENI_TX_FIFO,Word))!=EFI_SUCCESS)return S;
       }
-    } else if((Irq&(RX_READY|DONE)) || (Fifo&RX_WORDS)) {
-      R=Drain(P,Fifo,Frame,FALSE);if(R!=EFI_SUCCESS)return R;
+      if(Sent==Bytes && (S=Wr(I,GENI_TX_WATERMARK,0))!=EFI_SUCCESS)return S;
     }
-    R=ClearIrq(P,Irq);if(R!=EFI_SUCCESS)return R;
-    if(Irq&DONE) {
-      if((Status&ACTIVE) || (Tx&TX_WORDS))return EFI_COMPROMISED_DATA;
-      return Rx && P->Received!=PIANO_GENI_RUNTIME_BYTES?EFI_BAD_BUFFER_SIZE:EFI_SUCCESS;
+    if(Irq&IRQ_DONE) {
+      if((S=Wr(I,GENI_M_IRQ_CLEAR,Irq))!=EFI_SUCCESS)return S;
+      return Sent==Bytes?EFI_SUCCESS:EFI_DEVICE_ERROR;
     }
+    if(Irq&(IRQ_TX_WM|IRQ_RX_WM|IRQ_RX_LAST) && (S=Wr(I,GENI_M_IRQ_CLEAR,Irq&(IRQ_TX_WM|IRQ_RX_WM|IRQ_RX_LAST)))!=EFI_SUCCESS)return S;
   }
 }
-STATIC EFI_STATUS Quiet(PIANO_GENI_I2C_PIO *P,BOOLEAN *IsQuiet) {
-  UINT32 Status,Lines;EFI_STATUS R;
-  *IsQuiet=FALSE;
-  if((R=Read(P,0x40,&Status))!=EFI_SUCCESS || (R=Read(P,0x908,&Lines))!=EFI_SUCCESS)return R;
-  *IsQuiet=!(Status&ACTIVE) && (Lines&3)==3;return EFI_SUCCESS;
+
+STATIC EFI_STATUS Drain(PIANO_GENI_I2C *I,UINT8 *Data,UINTN Bytes,UINTN *Received) {
+  UINT32 Fifo=0,Word=0;EFI_STATUS S=Rd(I,GENI_RX_FIFO_STAT,&Fifo);if(S!=EFI_SUCCESS)return S;
+  UINT32 Words=Fifo&RX_WORDS;if(Words>I->RxDepth)return EFI_DEVICE_ERROR;
+  for(UINT32 N=0;N<Words;++N) {
+    if((S=Rd(I,GENI_RX_FIFO,&Word))!=EFI_SUCCESS)return S;
+    if(*Received>=Bytes)return EFI_BUFFER_TOO_SMALL; // more data than requested
+    for(UINT32 B=0;B<4 && *Received<Bytes;++B)Data[(*Received)++]=(UINT8)(Word>>(8*B));
+  }
+  return EFI_SUCCESS;
 }
-STATIC EFI_STATUS StopCommand(PIANO_GENI_I2C_PIO *P) {
-  BOOLEAN IsQuiet;EFI_STATUS R=Quiet(P,&IsQuiet);
-  if(R!=EFI_SUCCESS)return R;
-  if(IsQuiet)return EFI_SUCCESS;
-  // Only cancel/abort the command this session attempted; no bus-clear,
-  // STOP opcode, secondary sequencer reset or force-default/GPIO operation.
-  if(!P->CommandAttempted)return EFI_ACCESS_DENIED;
-  for(UINTN Phase=0;Phase<2;++Phase) {
-    R=Write(P,0x604,Phase==0?BIT2:BIT1);if(R!=EFI_SUCCESS)return R;
-    UINT64 Limit=Phase==0?P->Deadline-PIANO_GENI_CLEANUP_US/2:P->Deadline;
-    for(UINTN I=0;I<PIANO_GENI_CLEANUP_LIMIT/2;++I) {
-      R=Quiet(P,&IsQuiet);if(R!=EFI_SUCCESS)return R;
-      if(IsQuiet)return EFI_SUCCESS;
-      R=Time(P,Limit,TRUE);if(R!=EFI_SUCCESS)break;
+
+STATIC EFI_STATUS ReadPhase(PIANO_GENI_I2C *I,UINT8 Address,UINT8 *Data,UINTN Bytes,UINT64 Deadline) {
+  UINTN Received=0;UINT32 Irq=0;EFI_STATUS S;
+  if((S=Wr(I,I2C_RX_TRANS_LEN,(UINT32)Bytes))!=EFI_SUCCESS ||
+     (S=Wr(I,GENI_M_CMD0,(OP_READ<<27)|((UINT32)Address<<9)))!=EFI_SUCCESS)return S;
+  for(;;) {
+    if(Late(I,Deadline))return EFI_TIMEOUT;
+    if((S=Rd(I,GENI_M_IRQ_STATUS,&Irq))!=EFI_SUCCESS)return S;
+    I->LastIrq=Irq;
+    if(Irq&(IRQ_ERRORS|IRQ_CANCEL|IRQ_ABORT))return (Irq&IRQ_NACK)?EFI_NO_RESPONSE:EFI_DEVICE_ERROR;
+    if((S=Drain(I,Data,Bytes,&Received))!=EFI_SUCCESS)return S;
+    if(Irq&IRQ_DONE) {
+      // Data words can still sit in the FIFO when DONE is raised
+      if((S=Drain(I,Data,Bytes,&Received))!=EFI_SUCCESS)return S;
+      if((S=Wr(I,GENI_M_IRQ_CLEAR,Irq))!=EFI_SUCCESS)return S;
+      return Received==Bytes?EFI_SUCCESS:EFI_END_OF_FILE;
     }
+    if(Irq&(IRQ_TX_WM|IRQ_RX_WM|IRQ_RX_LAST) && (S=Wr(I,GENI_M_IRQ_CLEAR,Irq&(IRQ_TX_WM|IRQ_RX_WM|IRQ_RX_LAST)))!=EFI_SUCCESS)return S;
   }
-  return EFI_TIMEOUT;
 }
-STATIC EFI_STATUS Restore(PIANO_GENI_I2C_PIO *P,UINT32 Offset,UINT32 Value) {
-  EFI_STATUS R=Write(P,Offset,Value);UINT32 Actual;
-  if(R!=EFI_SUCCESS)return R;
-  R=Read(P,Offset,&Actual);return R!=EFI_SUCCESS?R:Actual!=Value?EFI_COMPROMISED_DATA:EFI_SUCCESS;
-}
-STATIC EFI_STATUS Cleanup(PIANO_GENI_I2C_PIO *P) {
-  PIANO_GENI_PIO_SNAPSHOT Current;
-  EFI_STATUS R=CaptureSession(P,&Current);if(R!=EFI_SUCCESS)return R;
-  R=Configuration(&P->Contract,&Current);
-  if(R!=EFI_SUCCESS || (Current.Status&BIT12) || Current.SecondaryCommand!=P->Before.SecondaryCommand ||
-     ((Current.Status&BIT0 || (Current.IoLines&3)!=3) && Current.MasterCommand!=P->CurrentCommand)) {
-    P->OwnershipLost=TRUE;return EFI_ACCESS_DENIED;
-  }
-  R=StopCommand(P);if(R!=EFI_SUCCESS)return R;
-  UINT32 Fifo,Irq;
-  if((R=Read(P,0x804,&Fifo))!=EFI_SUCCESS || (R=Drain(P,Fifo,NULL,TRUE))!=EFI_SUCCESS ||
-     (R=Read(P,0x610,&Irq))!=EFI_SUCCESS || (R=ClearIrq(P,Irq))!=EFI_SUCCESS)return R;
-  // Restore only the local per-transfer registers we changed, after quiet.
-  if((R=Restore(P,0x80c,P->Before.TxWatermark))!=EFI_SUCCESS ||
-     (R=Restore(P,0x810,P->Before.RxWatermark))!=EFI_SUCCESS ||
-     (R=Restore(P,0x26c,P->Before.TxLength))!=EFI_SUCCESS ||
-     (R=Restore(P,0x270,P->Before.RxLength))!=EFI_SUCCESS ||
-     (R=Restore(P,0x614,P->Before.MasterIrqEnable))!=EFI_SUCCESS)return R;
-  R=CaptureSession(P,&P->After);if(R!=EFI_SUCCESS)return R;
-  R=PianoGeniI2cPioValidate(&P->Contract,&P->After);
-  if(R==EFI_SUCCESS){P->BusMayBeHeld=FALSE;P->Clean=TRUE;}return R;
-}
-EFI_STATUS EFIAPI PianoGeniI2cPioReadRuntime(VOID *Context,UINT64 Deadline,UINT8 Frame[68],UINTN *BytesRead) {
-  PIANO_GENI_I2C_PIO *P=Context;
-  if(P==NULL || Frame==NULL || BytesRead==NULL)return EFI_INVALID_PARAMETER;
-  *BytesRead=0;Clear(Frame,68);
-  if(!PIANO_GENI_I2C_PIO_EXPERIMENT)return EFI_UNSUPPORTED;
-  if(P->Signature!=SIGNATURE)return EFI_NOT_READY;
-  if(P->InRead)return EFI_NOT_READY;
-  if(P->Failed || P->Quarantined)return EFI_ABORTED;
-  if(P->Attempts>=64)return EFI_OUT_OF_RESOURCES;
-  if(!ValidIo(&P->Io) || P->Io.Write32==NULL || P->Io.NowUs==NULL){
-    P->Failed=P->Quarantined=TRUE;P->Clean=FALSE;P->LastStatus=EFI_COMPROMISED_DATA;return EFI_COMPROMISED_DATA;
-  }
-  P->InRead=TRUE;P->Received=P->Polls=P->CleanupPolls=0;P->Touched=FALSE;P->CommandAttempted=FALSE;P->OwnershipLost=FALSE;
-  UINT8 Work[68]={0};EFI_STATUS R;
-  UINT64 Now=P->Io.NowUs(P->Io.Context);
-  if(Now<P->LastTime){P->ClockBroken=P->Quarantined=TRUE;P->Clean=FALSE;R=EFI_COMPROMISED_DATA;goto Done;}
-  if(Deadline<=Now || Deadline-Now>PIANO_GENI_TOTAL_US || Deadline-Now<=PIANO_GENI_CLEANUP_US) {
-    R=EFI_INVALID_PARAMETER;goto Done;
-  }
-  P->LastTime=Now;P->Deadline=Deadline;
-  R=CaptureSession(P,&P->Before);
-  if(R==EFI_SUCCESS)R=PianoGeniI2cPioValidate(&P->Contract,&P->Before);
-  if(R!=EFI_SUCCESS){P->Quarantined=TRUE;P->Clean=FALSE;goto Done;}
-  ++P->Attempts;PIANO_GENI_RUNTIME_PACKET Packet;PianoGeniI2cPioBuildRuntimePacket(&Packet);
-  R=Time(P,P->Deadline-PIANO_GENI_CLEANUP_US,FALSE);if(R!=EFI_SUCCESS)goto Done;
-  if((R=Write(P,0x614,OWN_IRQ))!=EFI_SUCCESS || (R=Write(P,0x80c,1))!=EFI_SUCCESS ||
-     (R=Write(P,0x810,1))!=EFI_SUCCESS || (R=Write(P,0x26c,Packet.TxLength))!=EFI_SUCCESS)goto Stop;
-  R=Time(P,P->Deadline-PIANO_GENI_CLEANUP_US,FALSE);if(R!=EFI_SUCCESS)goto Stop;
-  R=Write(P,0x600,Packet.TxCommand);if(R!=EFI_SUCCESS)goto Stop;
-  R=Poll(P,FALSE,Work);if(R!=EFI_SUCCESS)goto Stop;
-  // STOP_STRETCH intentionally leaves the bus held. Recheck configuration and
-  // ownership without requiring idle-high lines before the repeated START.
-  R=CaptureSession(P,&P->After);
-  if(R==EFI_SUCCESS)R=Configuration(&P->Contract,&P->After);
-  if(R!=EFI_SUCCESS || (P->After.Status&ACTIVE) || P->After.MasterIrq || P->After.SecondaryIrq ||
-     P->After.MasterControl || P->After.SecondaryControl || P->After.MasterCommand!=Packet.TxCommand ||
-     P->After.SecondaryCommand!=P->Before.SecondaryCommand || (P->After.TxFifo&TX_WORDS) || (P->After.RxFifo&RX_WORDS)) {
-    P->OwnershipLost=TRUE;if(R==EFI_SUCCESS)R=EFI_COMPROMISED_DATA;goto Stop;
-  }
-  if((R=Write(P,0x80c,0))!=EFI_SUCCESS || (R=Write(P,0x270,Packet.RxLength))!=EFI_SUCCESS)goto Stop;
-  R=Time(P,P->Deadline-PIANO_GENI_CLEANUP_US,FALSE);if(R!=EFI_SUCCESS)goto Stop;
-  R=Write(P,0x600,Packet.RxCommand);if(R!=EFI_SUCCESS)goto Stop;
-  R=Poll(P,TRUE,Work);
-Stop:
-  if(P->OwnershipLost){P->CleanupStatus=EFI_ACCESS_DENIED;P->Quarantined=TRUE;P->Clean=FALSE;}
-  else if(P->Touched) {
-    P->CleanupStatus=Cleanup(P);
-    if(P->CleanupStatus!=EFI_SUCCESS){P->Quarantined=TRUE;P->Clean=FALSE;}
-    if(R==EFI_SUCCESS && P->CleanupStatus!=EFI_SUCCESS)R=P->CleanupStatus;
-  }
-  Now=P->Io.NowUs(P->Io.Context);
-  if(Now<P->LastTime){P->ClockBroken=TRUE;R=EFI_COMPROMISED_DATA;}
-  else if(Now>Deadline)R=EFI_TIMEOUT;
-  P->LastTime=Now;
-  if(P->ClockBroken){P->Quarantined=TRUE;P->Clean=FALSE;}
-  if(R==EFI_SUCCESS){for(UINTN I=0;I<68;++I)Frame[I]=Work[I];*BytesRead=68;}
+
+EFI_STATUS PianoGeniI2cTransfer(PIANO_GENI_I2C *I,UINT8 Address,CONST UINT8 *Write,UINTN WriteBytes,
+                                UINT8 *Read,UINTN ReadBytes,UINT32 TimeoutUs) {
+  if(I==NULL || Address>0x7F || (!WriteBytes && !ReadBytes) || WriteBytes>MAX_PHASE || ReadBytes>MAX_PHASE ||
+     (WriteBytes && Write==NULL) || (ReadBytes && Read==NULL) || !TimeoutUs || TimeoutUs>1000000U)return EFI_INVALID_PARAMETER;
+  if(!I->Open || I->Broken)return EFI_NOT_READY;
+  UINT32 Status=0,Ios=0;EFI_STATUS S;BOOLEAN Started=FALSE,Stretched=FALSE;
+  ++I->Transfers;
+  if((S=Rd(I,GENI_STATUS,&Status))!=EFI_SUCCESS || (S=Rd(I,GENI_IOS,&Ios))!=EFI_SUCCESS)goto Done;
+  I->LastGeniStatus=Status;I->LastIos=Ios;
+  // Never start on an active engine or a bus another master holds low; such
+  // a command is not ours, so it is neither cancelled nor drained below
+  if(Status&(M_ACTIVE|S_ACTIVE) || (Ios&3)!=3){S=EFI_NOT_READY;goto Done;}
+  Started=TRUE;
+  if((S=Wr(I,GENI_M_IRQ_CLEAR,MAX_UINT32))!=EFI_SUCCESS)goto Done;
+  UINT64 Deadline=I->Io.NowUs(I->Io.Context)+TimeoutUs;
+  if(WriteBytes){S=WritePhase(I,Address,Write,WriteBytes,ReadBytes!=0,Deadline);Stretched=S==EFI_SUCCESS && ReadBytes;}
+  if(S==EFI_SUCCESS && ReadBytes)S=ReadPhase(I,Address,Read,ReadBytes,Deadline);
 Done:
-  Clear(Work,sizeof(Work));P->LastStatus=R;
-  if(R!=EFI_SUCCESS)P->Failed=TRUE;
-  P->InRead=FALSE;return R;
+  if(S!=EFI_SUCCESS) {
+    ++I->Failures;
+    if(Started && Recover(I)!=EFI_SUCCESS)I->Broken=TRUE;
+    if(Stretched && !I->Broken && StopOnBus(I)!=EFI_SUCCESS && Recover(I)!=EFI_SUCCESS)I->Broken=TRUE;
+    if(Read!=NULL)for(UINTN N=0;N<ReadBytes;++N)((volatile UINT8 *)Read)[N]=0;
+  }
+  return I->LastStatus=S;
+}
+
+EFI_STATUS PianoGeniI2cClose(PIANO_GENI_I2C *I) {
+  if(I==NULL)return EFI_INVALID_PARAMETER;
+  // A closed handle keeps the result of its last restore (also the one made
+  // by a failed Open), so a later Close never reports a clean SE by default
+  if(!I->Open)return I->CloseStatus==EFI_NOT_STARTED?EFI_SUCCESS:I->CloseStatus;
+  EFI_STATUS Result=Recover(I);
+  // Never reprogram clock, DMA mode or packing under a command that cancel
+  // and abort could not stop
+  if(Result!=EFI_SUCCESS){I->Broken=TRUE;I->Open=FALSE;return I->CloseStatus=Result;}
+  for(UINT32 N=I->SavedCount;N>0;--N) {
+    UINT32 Back=0;EFI_STATUS S=Wr(I,I->SavedOffset[N-1],I->SavedValue[N-1]);
+    if(S==EFI_SUCCESS)S=Rd(I,I->SavedOffset[N-1],&Back);
+    if(S==EFI_SUCCESS && Back!=I->SavedValue[N-1])S=EFI_DEVICE_ERROR;
+    if(S!=EFI_SUCCESS && Result==EFI_SUCCESS)Result=S;
+  }
+  I->Open=FALSE;I->SavedCount=0;
+  return I->CloseStatus=Result;
 }

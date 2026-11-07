@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+# piano-touch-view creates the touchscreen and the pen as two uinput nodes
+# without a phys path. libinput's own group rule only runs for nodes with one
+# (udev/80-libinput-device-groups.rules.in#L4), so each node would get a group
+# of its own (evdev_set_device_group, src/evdev.c#L2075). libinput pairs a pen
+# with the first touchscreen or external touchpad it sees and only moves to a
+# device in the same group (tablet_setup_touch_arbitration,
+# src/evdev-tablet.c#L2465; commit 898f80fa, libinput 1.24). One group keeps
+# the pen paired with this screen, so libinput ignores touches beside the pen
+# while it is in proximity. Lines refer to libinput 1.30.4:
+# https://gitlab.freedesktop.org/libinput/libinput/-/blob/1.30.4/src/evdev-tablet.c#L2465
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="piano NT36532 THP touchscreen|Piano Focus Pen Pro", ENV{LIBINPUT_DEVICE_GROUP}="piano-touchscreen"

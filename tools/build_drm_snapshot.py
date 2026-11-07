@@ -26,7 +26,7 @@ def build(output, kernel_source, sysroot, cc):
     if not kernel_source.is_relative_to(ROOT / 'build/kernel-worktrees'):
         raise ValueError('Export UAPI from a prepared kernel build worktree')
     env = os.environ.copy()
-    bundled = ROOT / 'build/host-tools/usr'
+    bundled = Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT', ROOT / 'build/host-tools/usr'))
     if (bundled / 'bin').is_dir():
         env['PATH'] = str(bundled / 'bin') + os.pathsep + env.get('PATH', '')
         env['LD_LIBRARY_PATH'] = str(bundled / 'lib') + os.pathsep + env.get('LD_LIBRARY_PATH', '')

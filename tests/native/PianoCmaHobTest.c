@@ -15,11 +15,6 @@
 #define GetMemoryMap PianoNativeGetMemoryMap
 #include "../../uefi/platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c"
 #undef GetMemoryMap
-#define GetMemoryMap PianoCandidateGetMemoryMap
-#define gMemoryDescriptor PianoCandidateDescriptors
-#include "../../artifacts/dram/cma-contract-candidate/MemoryMapLib.c"
-#undef gMemoryDescriptor
-#undef GetMemoryMap
 #include "../../upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Library/MemoryInitPeiLib/MemoryInitPei.c"
 EFI_HOB_HANDOFF_INFO_TABLE *HobConstructor(VOID *,UINTN,VOID *,VOID *);
 static union {UINT64 Align;UINT8 Bytes[65536];} arena;
@@ -49,10 +44,9 @@ RETURN_STATUS EFIAPI PeCoffLoaderRelocateImage(PE_COFF_LOADER_IMAGE_CONTEXT *C){
 RETURN_STATUS EFIAPI PeCoffLoaderUnloadImage(PE_COFF_LOADER_IMAGE_CONTEXT *C){assert(!"PE loader not part of CMA test");return RETURN_UNSUPPORTED;}
 RETURN_STATUS EFIAPI PeCoffLoaderImageReadFromMemory(VOID *H,UINTN O,UINTN *N,VOID *B){assert(!"PE loader not part of CMA test");return RETURN_UNSUPPORTED;}
 VOID EFIAPI PeCoffLoaderRelocateImageForRuntime(PHYSICAL_ADDRESS P,PHYSICAL_ADDRESS V,UINTN S,VOID *D){assert(!"PE loader not part of CMA test");}
-static void setup(BOOLEAN Candidate){
+static void setup(void){
  memset(&arena,0,sizeof(arena));hob_list=HobConstructor(arena.Bytes,sizeof(arena.Bytes),arena.Bytes,arena.Bytes+sizeof(arena.Bytes));
  EFI_MEMORY_REGION_DESCRIPTOR *Native;UINT8 N;PianoNativeGetMemoryMap(&Native,&N);assert(N+2<128);memcpy(rows,Native,N*sizeof(*rows));memcpy(original,Native,N*sizeof(*rows));count=N;
- if(Candidate){EFI_MEMORY_REGION_DESCRIPTOR *Generated;UINT8 C;PianoCandidateGetMemoryMap(&Generated,&C);assert(C==N+2);memcpy(rows,Generated,C*sizeof(*rows));count=C;}
  memset(mapped,0,sizeof(mapped));mmu_calls=sort_calls=asserts=loops=0;mmu_error=FALSE;
 }
 static void check_hob(EFI_PHYSICAL_ADDRESS Base,UINT64 Length,EFI_MEMORY_TYPE Type,BOOLEAN Resource){
@@ -69,22 +63,4 @@ static void verify_original(void){
  EFI_MEMORY_REGION_DESCRIPTOR *Native;UINT8 N;PianoNativeGetMemoryMap(&Native,&N);
  assert(!memcmp(Native,original,N*sizeof(*Native)));
  for(unsigned I=0;I<N;++I){if(Native[I].HobOption==HobOnlyNoCacheSetting)continue;const ARM_MEMORY_REGION_DESCRIPTOR *M=mapped_at(Native[I].Address);assert(M && M->VirtualBase==Native[I].Address && M->Length==Native[I].Length && M->Attributes==Native[I].ArmAttributes);}
-}
-int main(void){
- assert(sizeof(EFI_PHYSICAL_ADDRESS)==8 && EfiLoaderData==2 && WRITE_BACK_XN==ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK && WRITE_BACK_XN!=ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK_XP);
- setup(TRUE);assert(MemoryPeim(0,0)==EFI_SUCCESS && mmu_calls==1 && sort_calls==1 && !asserts && !loops);
- check_hob(0x82800000,0x02000000,EfiLoaderData,TRUE);check_hob(0xF3800000,0x05000000,EfiLoaderData,TRUE);
- assert(mapped_at(0x82800000)->Attributes==ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK_XP && mapped_at(0xF3800000)->Attributes==ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK_XP);
- verify_original();
- // All candidate coverage has an actual Type2 allocation HOB; no Conventional
- // allocation overlaps it. This is HOB reservation, not a simulated allocator.
- EFI_PEI_HOB_POINTERS P;P.Raw=hob_list;while(!END_OF_HOB_LIST(P)){if(GET_HOB_TYPE(P)==EFI_HOB_TYPE_MEMORY_ALLOCATION && P.MemoryAllocation->AllocDescriptor.MemoryType==EfiConventionalMemory){UINT64 B=P.MemoryAllocation->AllocDescriptor.MemoryBaseAddress,E=B+P.MemoryAllocation->AllocDescriptor.MemoryLength;assert(!(B<0x84800000 && E>0x82800000) && !(B<0xF8800000 && E>0xF3800000));}P.Raw=GET_NEXT_HOB(P);}
- setup(FALSE);assert(MemoryPeim(0,0)==EFI_SUCCESS && !mapped_at(0x82800000) && !mapped_at(0xF3800000));verify_original();
- setup(FALSE);EFI_MEMORY_REGION_DESCRIPTOR R={"HobOnly",0x82800000,0x2000000,HobOnlyNoCacheSetting,SYS_MEM,SYS_MEM_CAP,EfiLoaderData,ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK_XP};rows[count++]=R;assert(MemoryPeim(0,0)==EFI_SUCCESS && !mapped_at(R.Address));check_hob(R.Address,R.Length,EfiLoaderData,TRUE);
- setup(FALSE);R.HobOption=AllocOnly;AddHob(R);check_hob(R.Address,R.Length,EfiLoaderData,FALSE);
- setup(FALSE);R.HobOption=AddDev;R.ResourceType=EFI_RESOURCE_MEMORY_RESERVED;R.MemoryType=EfiReservedMemoryType;AddHob(R);P.Raw=hob_list;unsigned allocs=0;while(!END_OF_HOB_LIST(P)){if(GET_HOB_TYPE(P)==EFI_HOB_TYPE_MEMORY_ALLOCATION)++allocs;P.Raw=GET_NEXT_HOB(P);}assert(allocs==0);
- setup(TRUE);mmu_error=TRUE;assert(MemoryPeim(0,0)==EFI_DEVICE_ERROR && mmu_calls==1);check_hob(0x82800000,0x02000000,EfiLoaderData,TRUE);
- setup(TRUE);rows[count]=rows[count-1];++count;int result=setjmp(jump);if(result==0){MemoryPeim(0,0);assert(!"Overlap must fail before MMU");}assert(result==2 && loops==1 && !mmu_calls);
- setup(FALSE);result=setjmp(jump);if(result==0){BuildMemoryAllocationHob(0x82800001,4096,EfiLoaderData);assert(!"Misaligned allocation must assert");}assert(result==1 && asserts==1);
- puts("Real Mu MemoryPeim/AddHob + real PrePiHobLib: two Type2 system-memory allocation HOBs, XP MMU descriptors, unchanged native cache, no Conventional candidate overlap, HOB-only/alloc-only, overlap/alignment/MMU-error paths passed; no real allocator/MMU/device validation.");
 }

@@ -7,6 +7,8 @@ import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
+CLIENT = ROOT / 'linux/userspace/fingerprint'
+CLIENT_SOURCES = [CLIENT / 'piano-goodix-protocol.c', CLIENT / 'piano-goodix.c']
 RUNTIME_PATHS = {
     'usr/local/sbin/piano-fingerprint-ctl',
     'usr/share/piano-provenance/fingerprint.json',
@@ -21,7 +23,8 @@ def digest(path):
 def source_inputs():
     return {
         'config_sha256': digest(ROOT / 'config/fingerprint.json'),
-        'client_sha256': digest(ROOT / 'linux/userspace/fingerprint/piano-goodix.c'),
+        'client_sources_sha256': {path.name: digest(path) for path in
+                                  [*CLIENT_SOURCES, CLIENT / 'piano-goodix-protocol.h']},
         'builder_sha256': digest(Path(__file__)),
         'firmware_manifest_sha256': digest(
             ROOT / 'vendor/firmware/hyperos4-fingerprint/manifest.json'),
@@ -66,7 +69,7 @@ def build(output, flags, emulator=None):
         *[qcbor / 'src' / name for name in (
             'UsefulBuf.c', 'qcbor_encode.c', 'qcbor_decode.c',
             'qcbor_err_to_str.c', 'ieee754.c')],
-        ROOT / 'linux/userspace/fingerprint/piano-goodix.c',
+        *CLIENT_SOURCES,
     ]
     work = output / 'fingerprint'
     work.mkdir()
@@ -77,7 +80,7 @@ def build(output, flags, emulator=None):
                    *['-I' + str(p) for p in includes],
                    '-c', original, '-o', obj]
         # Imported Qualcomm sources retain their own warning policy.
-        if original != originals[-1]:
+        if original not in CLIENT_SOURCES:
             command = [arg for arg in command if arg != '-Werror']
         subprocess.run(command, check=True)
         objects.append(obj)
@@ -99,12 +102,12 @@ def build(output, flags, emulator=None):
         'inputs': inputs,
         'sources': cfg['sources'],
         'client_source': 'linux/userspace/fingerprint/piano-goodix.c',
-        'client_sha256': digest(originals[-1]),
+        'client_sha256': digest(CLIENT / 'piano-goodix.c'),
         'source_files': {str(p.relative_to(ROOT)): digest(p) for p in originals},
         'firmware': json.loads(
             (ROOT / 'vendor/firmware/hyperos4-fingerprint/manifest.json').read_text())['files'],
-        'operations': ['info', 'initialize', 'prepare-auth', 'watch', 'list'],
-        'enrollment_supported': False, 'authentication_supported': False,
+        'operations': ['info', 'initialize', 'prepare-auth', 'watch', 'list', 'verify'],
+        'enrollment_supported': False,
     }
     if source_inputs() != inputs:
         raise ValueError('Fingerprint sources changed during compilation')

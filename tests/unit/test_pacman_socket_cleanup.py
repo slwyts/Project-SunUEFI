@@ -11,7 +11,8 @@ from build_chroot import remove_pacman_sockets
 
 class PacmanSocketCleanupTests(unittest.TestCase):
     def test_dead_socket_removed_and_keyring_preserved(self):
-        with tempfile.TemporaryDirectory(prefix='/tmp/opencode/piano-keyring-') as folder:
+        # /tmp keeps the socket path under the AF_UNIX length limit
+        with tempfile.TemporaryDirectory(prefix='piano-keyring-', dir='/tmp') as folder:
             root = Path(folder)
             keyring = root / 'etc/pacman.d/gnupg'
             keyring.mkdir(parents=True)

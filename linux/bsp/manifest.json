@@ -400,10 +400,10 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "7b6217672cec5b97e018eb4383a5da245adaea812c68d9da91f9cac8c1e8cd63",
+      "sha256": "e224f9402bfa96e39ebd9cbe12b571afa0c36ac1545a5e11bd73ce3a97e2acfc",
       "source": "linux/bsp/common/usr/share/piano/pen/p81c-radio.json",
       "source_component": "Project SunUEFI",
-      "source_sha256": "7b6217672cec5b97e018eb4383a5da245adaea812c68d9da91f9cac8c1e8cd63",
+      "source_sha256": "e224f9402bfa96e39ebd9cbe12b571afa0c36ac1545a5e11bd73ce3a97e2acfc",
       "source_git_mode": "100644",
       "license": "BSD-2-Clause-Patent"
     },
@@ -460,6 +460,20 @@
       "source": "linux/bsp/common/etc/udev/rules.d/79-piano-pen-charger.rules",
       "source_component": "Project SunUEFI",
       "source_sha256": "73129f8e24d641a516eb01753493327985c60edfa3e2870f3c9c6d6a59378bc7",
+      "source_git_mode": "100644",
+      "license": "BSD-2-Clause-Patent"
+    },
+    {
+      "group": "common",
+      "path": "etc/udev/rules.d/79-piano-ir.rules",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "3fec27e7d22be9bdd10e1dfd9d31528eda5177d5733b6cfd46854ae0e1df1f27",
+      "source": "linux/bsp/common/etc/udev/rules.d/79-piano-ir.rules",
+      "source_component": "Project SunUEFI",
+      "source_sha256": "3fec27e7d22be9bdd10e1dfd9d31528eda5177d5733b6cfd46854ae0e1df1f27",
       "source_git_mode": "100644",
       "license": "BSD-2-Clause-Patent"
     },
@@ -532,6 +546,20 @@
       "license": "MIT",
       "sha256": "261a13bc05d2d21b2d1bb346a388f947f802c62e1134e401b0cfe8fe75615819",
       "source_sha256": "261a13bc05d2d21b2d1bb346a388f947f802c62e1134e401b0cfe8fe75615819"
+    },
+    {
+      "group": "common",
+      "path": "etc/udev/rules.d/79-piano-pen-touch-group.rules",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "source": "linux/bsp/common/etc/udev/rules.d/79-piano-pen-touch-group.rules",
+      "source_component": "Project SunUEFI",
+      "source_git_mode": "100644",
+      "license": "MIT",
+      "sha256": "2cada8784411ac963305b3e925bfcee04481f1f3ee0e15a35b14448a6973d1c5",
+      "source_sha256": "2cada8784411ac963305b3e925bfcee04481f1f3ee0e15a35b14448a6973d1c5"
     }
   ],
   "excluded": [

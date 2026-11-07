@@ -14,6 +14,10 @@
 #define PIANO_POGO_MAX_REPORTS 16
 #define PIANO_POGO_TOUCH_MAX_X 3199
 #define PIANO_POGO_TOUCH_MAX_Y 2135
+// Touchpad descriptor: 3199 x 2135 over 94 mm x 42 mm. Relative motion is
+// reported in X counts on both axes (Y is rescaled), one unit per 1/34 mm
+#define PIANO_POGO_TOUCH_COUNTS_PER_MM_X 34
+#define PIANO_POGO_TOUCH_COUNTS_PER_MM_Y 51
 
 typedef enum {
   PianoPogoConsumer,
@@ -53,6 +57,15 @@ typedef struct {
   UINT8 PrimaryContactId, ContactCount;
   PIANO_POGO_CONTACT Contacts[3];
   UINT32 AcceptedFrames, RejectedFrames, QueueOverflows, DroppedControls;
+  // Touchpad as a relative pointer: the caller stores the frame time in NowUs
+  // before feeding; one finger moving produces deltas, a short light tap
+  // produces one left click, the pad buttons map to left/right
+  UINT64 NowUs, TouchDownUs;
+  BOOLEAN TrackKnown, TouchDown, TouchClicked, TapRelease;
+  UINT8 TrackId, TouchButtons, MaxContacts;
+  UINT16 TrackX, TrackY;
+  UINT32 TouchTravel;
+  INT32 TouchYRemainder;
 } PIANO_POGO_INPUT;
 
 VOID PianoPogoReset(IN OUT PIANO_POGO_INPUT *Input);

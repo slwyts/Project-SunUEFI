@@ -1,4 +1,5 @@
 """Actual Core startup-display callbacks with host UEFI boundaries, no device."""
+import platform
 import os
 from pathlib import Path
 import subprocess
@@ -6,13 +7,14 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
 WS = ROOT / 'upstream/Mu-Silicium'
 
 
 class ProductBootLogLifecycleTests(unittest.TestCase):
     def test_actual_core_display_event_lifetime(self):
         includes = [WS / 'Mu_Basecore/MdePkg/Include',
-                    WS / 'Mu_Basecore/MdePkg/Include/X64',
+                    WS / 'Mu_Basecore/MdePkg/Include'/HOST_PROCESSOR_BIND,
                     WS / 'Mu_Basecore/MdeModulePkg/Include',
                     WS / 'Silicon/Qualcomm/QcomPkg/Include',
                     WS / 'Silicon/Silicium/SiliciumPkg/Include',
@@ -20,6 +22,8 @@ class ProductBootLogLifecycleTests(unittest.TestCase):
                     ROOT / 'uefi/components/product-handoff/Mu_Basecore/MdePkg/Include',
                     ROOT / 'uefi/components/nv',
                     ROOT / 'uefi/components/reset',
+                    ROOT / 'uefi/components/pogo-product',
+                    ROOT / 'uefi/components/touch-product',
                     ROOT / 'uefi/handoff/early-memory']
         with tempfile.TemporaryDirectory(prefix='piano-core-bootlog-') as temporary:
             executable = Path(temporary) / 'lifecycle'
@@ -35,7 +39,8 @@ class ProductBootLogLifecycleTests(unittest.TestCase):
             (mirror / 'Components').mkdir()
             (mirror / 'Components/os-boot').symlink_to(ROOT / 'uefi/components/os-boot', target_is_directory=True)
             (mirror / 'uefi-app').symlink_to(app, target_is_directory=True)
-            compiled = subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
+            # Host build takes the non-AArch64 branches, EL1 DAIF access traps at EL0
+            compiled = subprocess.run(['cc', '-U__aarch64__', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
                             '-Wno-misleading-indentation', '-fshort-wchar',
                             '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',
                             '-fsanitize=address,undefined', '-fno-pie', '-no-pie',

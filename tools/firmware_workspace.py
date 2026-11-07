@@ -152,8 +152,9 @@ def prepare(root=ROOT):
         _link(workspace / relative, root / relative)
     for relative in ('.venv', 'build/host-tools'):
         _link(workspace / relative, root / relative)
-    # Product display preparation only reads these fixed reference sources.
-    for relative in ('upstream/linux-piano', 'upstream/dtc'):
+    # Display preparation and the keyboard/touch firmware only read these
+    # fixed reference sources
+    for relative in ('upstream/linux-piano', 'upstream/dtc', 'upstream/piano-firmware-current'):
         if (root / relative).is_dir():
             _link(workspace / relative, root / relative)
     return workspace

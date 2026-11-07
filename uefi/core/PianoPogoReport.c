@@ -153,6 +153,53 @@ STATIC VOID Mouse(PIANO_POGO_INPUT *Input, CONST UINT8 *P) {
   Input->RelativePending=TRUE;
 }
 
+#define TAP_US 250000U
+#define TAP_TRAVEL 80U // about 2 mm of finger travel on the cover touchpad
+
+// One tracked finger moves the pointer by its coordinate change; changing the
+// tracked contact restarts tracking without a jump. A light single-finger
+// touch shorter than TAP_US is one left click (press now, release on the next
+// GetState); the pad's own buttons map directly
+STATIC VOID TouchPointer(PIANO_POGO_INPUT *Input, CONST UINT8 *P, INTN Pick, BOOLEAN Lifted) {
+  UINT8 Buttons=(UINT8)(P[1]&3);
+  if (Buttons!=Input->TouchButtons) {
+    Input->TouchButtons=Buttons; Input->Relative.LeftButton=(Buttons&1)!=0; Input->Relative.RightButton=(Buttons&2)!=0;
+    Input->RelativePending=TRUE; if (Buttons) { Input->TouchClicked=TRUE; }
+  }
+  if (Pick>=0 && P[26]) {
+    CONST PIANO_POGO_CONTACT *C=&Input->Contacts[Pick];
+    if (!Input->TouchDown) {
+      Input->TouchDown=TRUE; Input->TouchDownUs=Input->NowUs; Input->TouchTravel=0; Input->MaxContacts=0; Input->TouchYRemainder=0;
+      Input->TouchClicked=Buttons!=0;
+    }
+    if (P[26]>Input->MaxContacts) { Input->MaxContacts=P[26]; }
+    if (Input->TrackKnown && Input->TrackId==C->Id) {
+      INT32 Dx=(INT32)C->X-(INT32)Input->TrackX, Dy=(INT32)C->Y-(INT32)Input->TrackY;
+      // Y has 51 counts per mm against 34 on X; rescale so both axes move
+      // the pointer equally per millimetre, keeping the remainder
+      INT32 Scaled=Dy*PIANO_POGO_TOUCH_COUNTS_PER_MM_X+Input->TouchYRemainder;
+      Dy=Scaled/PIANO_POGO_TOUCH_COUNTS_PER_MM_Y; Input->TouchYRemainder=Scaled%PIANO_POGO_TOUCH_COUNTS_PER_MM_Y;
+      if (Dx||Dy) {
+        Input->Relative.RelativeMovementX=AddBounded(Input->Relative.RelativeMovementX,Dx);
+        Input->Relative.RelativeMovementY=AddBounded(Input->Relative.RelativeMovementY,Dy);
+        Input->RelativePending=TRUE;
+        UINT32 Step=(UINT32)(Dx<0?-Dx:Dx)+(UINT32)(Dy<0?-Dy:Dy);
+        Input->TouchTravel=Input->TouchTravel>MAX_UINT32-Step?MAX_UINT32:Input->TouchTravel+Step;
+      }
+    }
+    Input->TrackKnown=TRUE; Input->TrackId=C->Id; Input->TrackX=C->X; Input->TrackY=C->Y;
+    return;
+  }
+  // Only a lift (no contact with Tip Switch, descriptor bit 0) ends the touch;
+  // a frame without a confident contact keeps the previous state
+  if (!Lifted) { return; }
+  if (Input->TouchDown && !Input->TouchClicked && Input->MaxContacts==1 && Input->TouchTravel<TAP_TRAVEL &&
+      Input->NowUs>=Input->TouchDownUs && Input->NowUs-Input->TouchDownUs<TAP_US && !Input->Relative.LeftButton) {
+    Input->Relative.LeftButton=TRUE; Input->TapRelease=TRUE; Input->RelativePending=TRUE;
+  }
+  Input->TouchDown=FALSE; Input->TrackKnown=FALSE;
+}
+
 STATIC EFI_STATUS Touch(PIANO_POGO_INPUT *Input, CONST UINT8 *P) {
   UINTN I; INTN Pick=-1;
   if (P[26]>3) { return EFI_UNSUPPORTED; } // no invented fourth/eighth contact.
@@ -169,13 +216,15 @@ STATIC EFI_STATUS Touch(PIANO_POGO_INPUT *Input, CONST UINT8 *P) {
     for (I=0;I<3;I++) { if ((Input->Contacts[I].Flags&7)==7 && Input->Contacts[I].Id==Input->PrimaryContactId) { Pick=(INTN)I; break; } }
   }
   Input->ContactCount=P[26];
+  BOOLEAN Lifted=TRUE;
+  for (I=0;I<P[26];I++) { if (Input->Contacts[I].Flags&1) { Lifted=FALSE; } }
   if (Pick>=0 && P[26]) {
     Input->Absolute.CurrentX=Input->Contacts[Pick].X; Input->Absolute.CurrentY=Input->Contacts[Pick].Y;
     Input->PrimaryContactKnown=TRUE; Input->PrimaryContactId=Input->Contacts[Pick].Id;
     Input->Absolute.ActiveButtons=EFI_ABSP_TouchActive|((P[1]&2)?EFI_ABS_AltActive:0);
   } else { Input->PrimaryContactKnown=FALSE; Input->Absolute.ActiveButtons=0; }
   Input->Absolute.CurrentZ=0; // source descriptor says constant pressure; no fake pressure axis.
-  Input->AbsolutePending=TRUE; return EFI_SUCCESS;
+  Input->AbsolutePending=TRUE; TouchPointer(Input,P,P[26]?Pick:-1,Lifted); return EFI_SUCCESS;
 }
 
 STATIC INT16 Axis12(UINT8 Low, UINT8 High) {
@@ -198,6 +247,7 @@ STATIC BOOLEAN Vendor(PIANO_POGO_INPUT *Input, CONST UINT8 *P, UINTN Len) {
         Input->Relative.RelativeMovementX=Input->Relative.RelativeMovementY=Input->Relative.RelativeMovementZ=0;
         Input->Relative.LeftButton=Input->Relative.RightButton=FALSE; Input->RelativePending=TRUE;
         Input->Absolute.ActiveButtons=0; Input->AbsolutePending=TRUE; Input->PrimaryContactKnown=FALSE;
+        Input->TouchDown=Input->TrackKnown=Input->TapRelease=FALSE; Input->TouchButtons=0;
       }
       break;
     case 0x64:
@@ -257,7 +307,10 @@ EFI_STATUS PianoPogoReadControl(PIANO_POGO_INPUT *Input, PIANO_POGO_CONTROL_EVEN
 EFI_STATUS PianoPogoReadPointer(PIANO_POGO_INPUT *Input, EFI_SIMPLE_POINTER_STATE *State) {
   if(Input==NULL||State==NULL) { return EFI_INVALID_PARAMETER; } if(!Input->RelativePending) { return EFI_NOT_READY; }
   *State=Input->Relative; Input->Relative.RelativeMovementX=Input->Relative.RelativeMovementY=Input->Relative.RelativeMovementZ=0;
-  Input->RelativePending=FALSE; return EFI_SUCCESS;
+  // A tap reports one press; the following read reports the release
+  if(Input->TapRelease) { Input->TapRelease=FALSE; Input->Relative.LeftButton=(Input->TouchButtons&1)!=0; Input->RelativePending=TRUE; }
+  else { Input->RelativePending=FALSE; }
+  return EFI_SUCCESS;
 }
 EFI_STATUS PianoPogoReadAbsolute(PIANO_POGO_INPUT *Input, EFI_ABSOLUTE_POINTER_STATE *State) {
   if(Input==NULL||State==NULL) { return EFI_INVALID_PARAMETER; } if(!Input->AbsolutePending) { return EFI_NOT_READY; }

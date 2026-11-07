@@ -113,7 +113,7 @@ def roundtrip(binary, stock, selector_dir, product, app, output, runner=None):
 def build(output, arch, compiler=None, sysroot=None):
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    bundled = ROOT / 'build/host-tools/usr'
+    bundled = Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT', ROOT / 'build/host-tools/usr'))
     env = os.environ.copy()
     if (bundled / 'bin').is_dir():
         env['PATH'] = str(bundled / 'bin') + os.pathsep + env.get('PATH', '')

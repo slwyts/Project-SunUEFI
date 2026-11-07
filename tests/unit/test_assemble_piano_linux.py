@@ -23,9 +23,12 @@ LIB = ROOT / 'upstream/dtc/libfdt/libfdt.so.1.8.1'
 class AssemblePianoLinuxTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.kernels = {family: assemble.kernel(path, family) for family, path in assemble.DEFAULT_KERNELS.items()}
+        sealed = all((path / 'manifest.json').exists() for path in assemble.DEFAULT_KERNELS.values())
+        cls.kernels = {family: assemble.kernel(path, family) for family, path in assemble.DEFAULT_KERNELS.items()} if sealed else None
 
     def test_actual_sealed_kernels_are_full_efi_and_debug_limit_disclosed(self):
+        if self.kernels is None:
+            self.skipTest('needs the sealed stable and Next kernels under artifacts/kernels')
         self.assertEqual(len(self.kernels), 2)
         for family, kernel in self.kernels.items():
             self.assertEqual(kernel['source_commit'], assemble.COMMITS[family])
@@ -38,6 +41,8 @@ class AssemblePianoLinuxTests(unittest.TestCase):
     def test_actual_full_dtb_chain_and_stage_mutation_rejected(self):
         manifests = [ROOT / 'private/analysis' / name / 'manifest.json' for name in DT_DIRS]
         dtb = manifests[-1].parent / 'Piano-full-linux-managed-dsp-pcie.dtb'
+        if not LIB.exists() or not dtb.exists() or not all(path.exists() for path in manifests):
+            self.skipTest('needs the private device tree folds and a built upstream/dtc libfdt')
         if assemble.DEBIAN_COMMIT != DT_COMMIT:
             with self.assertRaisesRegex(ValueError, 'complete fold provenance'):
                 assemble.device_tree(dtb, manifests, LIB)
@@ -59,6 +64,8 @@ class AssemblePianoLinuxTests(unittest.TestCase):
     def test_obsolete_root_missing_final_releases_is_rejected_before_big_read(self):
         root = ROOT / 'build/distros/debian13-piano-full'
         old = ROOT / 'artifacts/linux-full-rootfs/gnome-20261006-runtime-complete'
+        if not (old / 'manifest.json').exists():
+            self.skipTest('needs the sealed GNOME full root under artifacts/linux-full-rootfs')
         before = assemble.sha_file(old / 'manifest.json')
         with self.assertRaisesRegex(ValueError, 'Required regular root member missing'):
             assemble.payload(old, root, self.kernels)
@@ -68,6 +75,8 @@ class AssemblePianoLinuxTests(unittest.TestCase):
         payload = b'compressed-root-fixture';entry = b'#!/bin/sh\nexit 1\n'
         digest = lambda data: hashlib.sha256(data).hexdigest()
         root = {'archive_sha256': digest(payload), 'archive_bytes': len(payload), 'regular_page_budget_bytes': 4096}
+        if not (ROOT / 'build/linux-ram/busybox').exists():
+            self.skipTest('needs the static ARM64 busybox at build/linux-ram/busybox')
         with tempfile.TemporaryDirectory(prefix='assemble-cpio-') as directory:
             folder = Path(directory);archive = folder / 'initramfs.cpio'
             def make(busybox):

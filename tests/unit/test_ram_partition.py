@@ -1,4 +1,5 @@
 """Actual native RAM inventory guards with a substituted ARM call boundary."""
+import platform
 import os
 from pathlib import Path
 import subprocess
@@ -6,13 +7,16 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
+TOOLCHAIN = Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT', ROOT / 'build/host-tools/usr'))
 INCLUDE = ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 CRYPTO = ROOT/'upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include'
 SOURCE = ROOT/'uefi/core'
 # Explicit pending source permits isolated verification while the product inputs are frozen.
 IMPLEMENTATION = Path(os.environ.get('PIANO_RAM_PARTITION_TEST_SOURCE', str(SOURCE/'PianoRamPartition.c'))).resolve()
 RAW402 = ROOT/'private/analysis/usb-live-test95/ram402.bin'
-PE = ROOT/'upstream/Mu-Silicium/Binaries/piano/Stage0/EnvDxeEnhanced/EnvDxeEnhanced.efi'
+# prepare_product stages these bytes unchanged
+PE = ROOT/'vendor/piano/early-dxe/EnvDxeEnhanced/EnvDxeEnhanced.efi'
 
 
 class RamPartitionTests(unittest.TestCase):
@@ -22,7 +26,7 @@ class RamPartitionTests(unittest.TestCase):
             args = ['cc', '-std=gnu11', '-fshort-wchar', '-Wall', '-Wextra', '-Werror',
                     '-Wno-misleading-indentation', '-fsanitize=address,undefined',
                     '-fno-pie', '-no-pie', '-g', '-DPIANO_RAM_PARTITION_HOST_TEST=1']
-            for path in (INCLUDE, INCLUDE/'X64', CRYPTO, SOURCE):
+            for path in (INCLUDE, INCLUDE/HOST_PROCESSOR_BIND, CRYPTO, SOURCE):
                 args += ['-I', str(path)]
             args += [str(ROOT/'tests/native/PianoRamPartitionTest.c'),
                      str(IMPLEMENTATION), '-lcrypto', '-o', str(exe)]
@@ -35,7 +39,7 @@ class RamPartitionTests(unittest.TestCase):
             print(run.stdout.strip())
 
     def test_aarch64_actual_abi_compiles(self):
-        args = [str(ROOT/'build/host-tools/usr/bin/clang'),
+        args = [str(TOOLCHAIN/'bin/clang'),
                 '--target=aarch64-windows-msvc', '-ffreestanding', '-fshort-wchar',
                 '-fsyntax-only', '-Wall', '-Wextra', '-Werror',
                 '-Wno-misleading-indentation']

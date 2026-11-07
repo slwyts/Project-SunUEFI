@@ -1,4 +1,5 @@
 """Real flat collector/guard compilation and product family freshness checks."""
+import os
 from pathlib import Path
 import json
 import shutil
@@ -7,6 +8,7 @@ import tempfile
 import unittest
 import test_product_os_boot_wiring as os_wiring
 ROOT=os_wiring.ROOT;product=os_wiring.product
+TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
 
 
 class ProductObservationWiringTests(unittest.TestCase):
@@ -27,7 +29,7 @@ class ProductObservationWiringTests(unittest.TestCase):
             for name in expected:
                 if name.endswith('.c'):
                     output=root/(Path(name).stem+'.obj')
-                    subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-c','-Wall','-Wextra','-Werror','-I',str(include),'-I',str(include/'AArch64'),
+                    subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-c','-Wall','-Wextra','-Werror','-I',str(include),'-I',str(include/'AArch64'),
                         '-I',str(ROOT/'upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include'),
                         '-I',str(ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include'),
                         '-I',str(staged),str(staged/name),'-o',str(output)],check=True)

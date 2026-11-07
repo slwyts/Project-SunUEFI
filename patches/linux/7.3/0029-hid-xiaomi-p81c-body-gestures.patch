@@ -1,0 +1,100 @@
+From dc219b9e79c879585a29cd449b7989ba4c9a2d51 Mon Sep 17 00:00:00 2001
+From: YueMiyuki <76854136+YueMiyuki@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 16:30:00 +0800
+Subject: [PATCH] HID: xiaomi: map P81C body slides to page keys
+
+Report 2 of the Focus Pen Pro is a one-byte keyboard array declaring
+Usages 0x4b..0x6e. Pen firmware 0.0.32 sends only 0x6e (squeeze, held),
+0x58 (body double tap), 0x61 (slide up) and 0x5b (slide down), each
+followed by 0x00. Generic HID turns the gestures into KEY_KPENTER,
+KEY_KP9 and KEY_KP3, so a double tap presses Enter and a slide types a
+digit while Num Lock is on.
+
+Report the two slides as KEY_PAGEUP and KEY_PAGEDOWN, the keys the
+vendor system injects for document, office and browser applications.
+The squeeze and the double tap stay on hidraw for the tablet-tool owner,
+which reports them at the pen position. Drop the array usages the pen
+never sends.
+
+Source: P81C 0.0.32 touch gesture task (VA 0x3e318..0x3e5a6) and the
+vendor MIUIInput.kl and window-manager key handling for 0022:5081.
+---
+ drivers/hid/Kconfig      |  5 +++--
+ drivers/hid/hid-xiaomi.c | 39 +++++++++++++++++++++++++++++----------
+ 2 files changed, 32 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/hid/Kconfig b/drivers/hid/Kconfig
+index f8a4298ffbb84ffdc3ed15bb7aaac8540cc5cacb..2481ae88e8830aa09dd20d3ee56ea1c1d027db50 100644
+--- a/drivers/hid/Kconfig
++++ b/drivers/hid/Kconfig
+@@ -566,8 +566,9 @@ config HID_XIAOMI
+ 	tristate "Xiaomi"
+ 	help
+ 	  Adds support for side buttons of Xiaomi Mi Dual Mode Wireless
+-	  Mouse Silent Edition and prevents private Focus Pen Pro pressure
+-	  reports from being interpreted as keyboard plus keys.
++	  Mouse Silent Edition, prevents private Focus Pen Pro pressure
++	  reports from being interpreted as keyboard plus keys, and reports
++	  Focus Pen Pro body slides as Page Up and Page Down.
+ 
+ config HID_GYRATION
+ 	tristate "Gyration remote control"
+diff --git a/drivers/hid/hid-xiaomi.c b/drivers/hid/hid-xiaomi.c
+index 219fcad0864e91c8c3b106b4f74525ff73af8597..be97fd6644a7508925d1f3b717fd2565705af537 100644
+--- a/drivers/hid/hid-xiaomi.c
++++ b/drivers/hid/hid-xiaomi.c
+@@ -76,6 +76,18 @@ static const __u8 *xiaomi_report_fixup(struct hid_device *hdev, __u8 *rdesc,
+ 	return rdesc;
+ }
+ 
++/* P81C Report 2, keyboard array 0x4b..0x6e: firmware 0.0.32 sends only
++ * 0x6e squeeze, 0x58 double tap, 0x61 slide up and 0x5b slide down
++ */
++static bool xiaomi_p81c_body_keys(struct hid_report *report,
++				  struct hid_field *field)
++{
++	return report->id == 2 && report->size == 8 && report->maxfield == 1 &&
++	       field->report_size == 8 && field->report_count == 1 &&
++	       field->logical_minimum == 0x4b &&
++	       field->logical_maximum == 0x6e && field->flags == 0;
++}
++
+ /* P81C exposes its private 14-byte pressure packet as keyboard Usage 0x57.
+  * Keep that packet available to hidraw; it must never become KEY_KPPLUS.
+  * Match the parsed layout, rather than replacing a firmware report map.
+@@ -94,16 +106,23 @@ static int xiaomi_input_mapping(struct hid_device *hdev, struct hid_input *hi,
+ 	    report->type != HID_INPUT_REPORT)
+ 		return 0;
+ 
+-	/* The real squeeze report is forwarded as BTN_STYLUS by the same
+-	 * pressure/THP tablet owner. Do not also expose F19 as a global key.
+-	 * Preserve every other usage of this one-byte keyboard array.
+-	 */
+-	if (report->id == 2 && report->size == 8 && report->maxfield == 1 &&
+-	    usage->hid == (HID_UP_KEYBOARD | 0x6e) &&
+-	    field->report_size == 8 && field->report_count == 1 &&
+-	    field->logical_minimum == 0x4b && field->logical_maximum == 0x6e &&
+-	    field->flags == 0)
+-		return -1;
++	if (xiaomi_p81c_body_keys(report, field)) {
++		switch (usage->hid) {
++		case HID_UP_KEYBOARD | 0x61:	/* slide up, generic KEY_KP9 */
++			hid_map_usage_clear(hi, usage, bit, max, EV_KEY,
++					    KEY_PAGEUP);
++			return 1;
++		case HID_UP_KEYBOARD | 0x5b:	/* slide down, generic KEY_KP3 */
++			hid_map_usage_clear(hi, usage, bit, max, EV_KEY,
++					    KEY_PAGEDOWN);
++			return 1;
++		default:
++			/* 0x6e and 0x58 go to the hidraw tablet owner;
++			 * the pen never sends the other usages
++			 */
++			return -1;
++		}
++	}
+ 
+ 	if (report->id != 5 ||
+ 	    report->size != 112 || report->maxfield != 2 ||
+-- 
+2.54.0

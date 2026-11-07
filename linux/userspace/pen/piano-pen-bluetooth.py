@@ -87,8 +87,9 @@ def profile(path):
         data[key] = bytes.fromhex(data[key])
         if len(data[key]) != size:
             raise ValueError('invalid ' + key + ' size')
-    if type(data['double_tap']) is not bool:
-        raise ValueError('double_tap must be boolean')
+    for key in ('double_tap', 'slide'):
+        if type(data[key]) is not bool:
+            raise ValueError(key + ' must be boolean')
     if type(data['squeeze_motor_level']) is not int or not 0 <= data['squeeze_motor_level'] <= 5:
         raise ValueError('invalid squeeze motor level')
     for key in ('squeeze_threshold_down', 'squeeze_threshold_up'):
@@ -547,6 +548,11 @@ class Pen:
         self.follow_dock()
         self.log('radio_configured', elapsed_ms=round((time.monotonic() - started) * 1000))
         self.request(b'\x5f\x01' + bytes([int(p['double_tap'])]), b'\xdf\x01\x01', 3)
+        # The pen keeps the previous host's switch; a pen without 63 keeps its default
+        try:
+            self.request(b'\x63\x01' + bytes([int(p['slide'])]), b'\xe3\x01\x01', 3)
+        except TimeoutError:
+            self.log('slide_setting_unanswered')
         self.request(b'\x5a\x01' + bytes([p['squeeze_motor_level']]), b'\xda\x01\x01', 3)
         self.request(b'\x5c\x04' + struct.pack('>HH', p['squeeze_threshold_down'],
                      p['squeeze_threshold_up']), b'\xdc\x01\x01', 3)

@@ -1,0 +1,3 @@
+# The legacy 80-drivers.rules excludes all OF modules. Load the upstream
+# IR LED driver only when the board DT enables its SPI device.
+ACTION=="add", SUBSYSTEM=="spi", ENV{MODALIAS}=="of:N*T*Cir-spi-led", RUN{builtin}+="kmod load"

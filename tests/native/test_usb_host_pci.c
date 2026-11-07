@@ -154,10 +154,21 @@ static void common_streaming_budget(void) {
   assert(C.Pci.Unmap(&C.Pci,in)==EFI_INVALID_PARAMETER); // Cookie cannot be reused after a new map.
   assert(C.Pci.Unmap(&C.Pci,(VOID *)&F.Mapping[0])==EFI_INVALID_PARAMETER);
   assert(C.Pci.Unmap(&C.Pci,out)==EFI_SUCCESS && F.Mapping[1].Used==FALSE);
-  F.Halted=FALSE;assert(C.Pci.Unmap(&C.Pci,common)==EFI_NOT_READY && PianoUsbHostPciHasQuarantine(&C));
-  assert(C.Pci.FreeBuffer(&C.Pci,1,cpu)==EFI_ACCESS_DENIED);
-  assert(PianoUsbHostPciRecover(&C)==EFI_SUCCESS && !C.MappedBytes && !PianoUsbHostPciHasQuarantine(&C));
-  assert(C.Pci.FreeBuffer(&C.Pci,1,cpu)==EFI_SUCCESS && !C.AllocatedBytes);
+  // Running controller: a common Unmap/FreeBuffer is held, not released
+  F.Halted=FALSE;UINTN retires=F.Retires;
+  assert(C.Pci.Unmap(&C.Pci,common)==EFI_SUCCESS && !PianoUsbHostPciHasQuarantine(&C) && PianoUsbHostPciHasDeferred(&C));
+  assert(C.MappedBytes==4096 && F.Retires==retires && F.Mapping[0].Used);
+  assert(C.Pci.Unmap(&C.Pci,common)==EFI_INVALID_PARAMETER);
+  assert(C.Pci.FreeBuffer(&C.Pci,1,cpu)==EFI_SUCCESS && C.AllocatedBytes==4096 && C.Allocation[0].FreePending);
+  assert(C.Pci.FreeBuffer(&C.Pci,1,cpu)==EFI_INVALID_PARAMETER);
+  n=16;assert(C.Pci.Map(&C.Pci,EfiPciIoOperationBusMasterRead,cpu,&n,&io,&extra)==EFI_BAD_BUFFER_SIZE);
+  // Bus master off proves the halt and releases both
+  assert(C.Pci.Attributes(&C.Pci,EfiPciIoAttributeOperationDisable,EFI_PCI_IO_ATTRIBUTE_BUS_MASTER,NULL)==EFI_SUCCESS);
+  assert(!C.MappedBytes && !C.AllocatedBytes && !PianoUsbHostPciHasDeferred(&C) && !F.Mapping[0].Used && F.CopyBacks==1);
+  // A deferred buffer is also released by halted recovery
+  enable(&C);cpu=alloc(&C,1);common=mapping(&C,EfiPciIoOperationBusMasterCommonBuffer,cpu,64);F.Halted=FALSE;
+  assert(C.Pci.Unmap(&C.Pci,common)==EFI_SUCCESS && C.Pci.FreeBuffer(&C.Pci,1,cpu)==EFI_SUCCESS && C.AllocatedBytes==4096);
+  assert(PianoUsbHostPciRecover(&C)==EFI_SUCCESS && !C.MappedBytes && !C.AllocatedBytes && !PianoUsbHostPciHasDeferred(&C));
 }
 static void missing_capability_and_errors(void) {
   PIANO_USB_HOST_PCI C;FAKE F;init(&C,&F,PIANO_USB_HOST_DMA_STREAMING,8192,2);
@@ -217,6 +228,14 @@ static void invalid_native_contracts(void) {
   assert(PianoUsbHostPciRecover(&C)==EFI_DEVICE_ERROR && C.MappedBytes==8192 && !F.Retires);
   for(UINTN I=0;I<2;++I){free(F.Mapping[I].Dma);ZeroMem(&F.Mapping[I],sizeof(F.Mapping[I]));}
   init(&C,&F,caps,8192,2);F.MemoryAttributes=EFI_MEMORY_UC|EFI_MEMORY_WB;VOID *cpu;
+  assert(C.Pci.AllocateBuffer(&C.Pci,AllocateAnyPages,EfiBootServicesData,1,&cpu,0)==EFI_DEVICE_ERROR);
+  assert(PianoUsbHostPciRecover(&C)==EFI_SUCCESS);
+  // AArch64 Normal non-cacheable (EFI WC) is an uncached common buffer
+  init(&C,&F,caps,8192,2);F.MemoryAttributes=EFI_MEMORY_WC|EFI_MEMORY_XP;
+  assert(C.Pci.AllocateBuffer(&C.Pci,AllocateAnyPages,EfiBootServicesData,1,&cpu,0)==EFI_SUCCESS);
+  n=4096;assert(C.Pci.Map(&C.Pci,EfiPciIoOperationBusMasterCommonBuffer,cpu,&n,&io,&token)==EFI_SUCCESS);
+  assert(C.Pci.Unmap(&C.Pci,token)==EFI_SUCCESS && C.Pci.FreeBuffer(&C.Pci,1,cpu)==EFI_SUCCESS && !C.AllocatedBytes);
+  init(&C,&F,caps,8192,2);F.MemoryAttributes=EFI_MEMORY_WC|EFI_MEMORY_WB;
   assert(C.Pci.AllocateBuffer(&C.Pci,AllocateAnyPages,EfiBootServicesData,1,&cpu,0)==EFI_DEVICE_ERROR);
   assert(PianoUsbHostPciRecover(&C)==EFI_SUCCESS);
   init(&C,&F,PIANO_USB_HOST_DMA_STREAMING|PIANO_USB_HOST_COMMON_COHERENT,8192,2);F.MemoryAttributes=EFI_MEMORY_WB;

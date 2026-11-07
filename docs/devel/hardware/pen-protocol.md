@@ -1,6 +1,6 @@
 # Piano 触控笔协议与原厂算法
 
-更新：2026-10-25。默认 120 Hz，定位、压感绘画、144 Hz 笔输入、轻捏、震动和磁吸连接恢复可用，首次连接延迟已解决。完整掌压、笔身滑动及应用快捷手势仍需完善。
+更新：2026-10-25。默认 120 Hz，定位、压感绘画、144 Hz 笔输入、轻捏、震动和磁吸连接恢复可用，首次连接延迟已解决。掌压按接触面积识别并与笔同组交给 libinput 仲裁，阈值仍需用真实手掌数据调整，见[笔目录说明](../../../linux/userspace/pen/README.md)；轻捏、双击和笔身滑动的格式与 Linux 输出见[笔身手势](#笔身手势)。
 
 下文保留移植过程的协议记录。原厂依据来自同版本 `OS3.0.309.0.WPYCNXM` ROM 的触控 HAL、公开驱动和操作采集。
 
@@ -10,7 +10,7 @@
 
 原厂 HAL 读取 `/dev/xiaomi-touch` 的 frame/raw 共享区。最终点有两条上报路径：v1 写 Linux `input_event`；v2 写 point 共享区并以 `UPDATE_REPORT_POINT` 触发上报。[mmap/ioctl](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/xiaomi/xiaomi_touch_operations.c#L169)、[内核 point receiver](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/xiaomi/xiaomi_touch_device.c#L41)。两份 Piano ini 配置 v1，具体依据见下文。不能把 HAL 输出结构按偏移当作 SPI 帧来读。
 
-已保存的 Focus Pen Pro BLE descriptor 只有 mouse/keyboard/sensor Input，没有 Digitizer、Output、Feature 或标准 FF。Android 已确认 Report5 携带笔尖压力，Report2 的 `02 6e`／`02 00` 对应轻捏 `KEY_F19` DOWN／UP；Report6 是独立姿态数据。Linux 在120Hz冷启动下已经收到 Report5 压力和 type29，并通过标准手写笔设备完成定位与压感绘画。悬停、倾角方向和完整掌压仍需进一步对照。轻捏已接入标准笔侧键，笔端振动初始化已恢复，应用快捷动作仍需明确映射。
+已保存的 Focus Pen Pro BLE descriptor 只有 mouse/keyboard/sensor Input，没有 Digitizer、Output、Feature 或标准 FF。Android 已确认 Report5 携带笔尖压力，Report2 的 `02 6e`／`02 00` 对应轻捏 `KEY_F19` DOWN／UP；Report6 是独立姿态数据。Linux 在120Hz冷启动下已经收到 Report5 压力和 type29，并通过标准手写笔设备完成定位与压感绘画。悬停、倾角方向和完整掌压仍需进一步对照。轻捏、双击和笔身滑动同在 Report2，格式见[笔身手势](#笔身手势)。
 
 ## IC 扫描模式与原厂开关条件
 
@@ -206,7 +206,7 @@ Linux之前显示144Hz、hand180、pen240。两边笔扫描率相同；这一次
 
 2026-10-10 的默认内核补丁 `0021-hid-xiaomi-p81c-pressure-not-keyboard.patch`
 针对 P81C 的私有压力报告，阻止它被当作键盘加号输入；报告仍交给现有笔输入程序
-读取。轻捏通过标准 `BTN_STYLUS` 上报，不向普通键盘输入快捷字符。
+读取。短按轻捏上报为笔尖位置的一次点击，按住 600 ms 以上上报为标准 `BTN_STYLUS`，不向普通键盘输入快捷字符。
 
 现有触控服务同时跟随 BlueZ 连接，使用 BSP 中的 `p81c-radio.json` 完成
 无线参数、轻捏阈值和振动等级初始化；断线重连后重新应用。它没有新增独立地址
@@ -217,3 +217,72 @@ Linux之前显示144Hz、hand180、pen240。两边笔扫描率相同；这一次
 鼠标和触控板的指针保持正常；其他应用的笔指针由各自应用与合成器决定。
 
 2026-10-20 的连接抓包发现，笔会从 750 ms 省电间隔请求切到约 105 ms；内核在远端特征发现阶段因状态仍为 `BT_CONFIG` 而拒绝该请求。[`0043` 草案](../../../patches/linux/7.2.9/drafts/0043-bluetooth-early-le-parameters.patch)允许已有 LE handle 在此阶段协商，保留参数校验。草案已编译并加载；初始化仍可能等待数秒至十余秒，尚未作为默认补丁或完整延迟修复发布。
+
+
+## 笔身手势
+
+轻捏、双击笔身和笔身上下滑动都由笔自己识别，经 BLE HID Report2 发给平板。Report2 是两个字节 `02 value`：按笔的 Report Map，`value` 是一个键盘数组用法（Usage Page 7，Usage 与逻辑范围都是 `0x4B..0x6E`）。新值替换旧值，`00` 表示没有按键。P81C 0.0.32 固件只发送下表的值。
+
+| Report2 | 手势 | 笔内时序 | 通用 HID 映射 | 原厂按键 |
+| --- | --- | --- | --- | --- |
+| `02 6e` … `02 00` | 轻捏 | 按下发 `6e`，松开发 `00` | `KEY_F19`（189） | `BUTTON_7` |
+| `02 58`、`02 00` | 双击笔身 | 发 `58`，延时后发 `00` | `KEY_KPENTER`（96） | `BUTTON_8` |
+| `02 61`、`02 00` | 上滑 | 发 `61`，延时后发 `00` | `KEY_KP9`（73） | `BUTTON_9` |
+| `02 5b`、`02 00` | 下滑 | 发 `5b`，延时后发 `00` | `KEY_KP3`（81） | `BUTTON_10` |
+
+笔身滑动只给出方向，每次滑动是一次完整的按下和松开，没有距离或速度字段。
+
+### 笔固件中的依据
+
+固件按 [P81C 固件分析](p81c-firmware.md) 的方式去掉 `0x400` 字节头、映射到 VA 0。下面的 VA 加 `0x400` 即 IMG 偏移。
+
+- **Report Map**：VA `0x849A4..0x84A2C`，正好 137 字节，与平板读到的描述符相同。Report1 是鼠标（8 个按键、X、Y、滚轮），Report6 是传感器页的 20 字节数据，Report2 是上述单字节键盘数组，Report5 是压力。
+- **发送函数**：VA `0x3D8E4` 把一个字节交给 HID 发送函数 VA `0x43B74`（第二个参数为 8，即 Report2），失败最多重试 3 次并记录 `touch send code error`。全镜像对 VA `0x3D8E4` 的调用只传入 `00`、`58`、`5B`、`61`、`6E`；以 8 调用 VA `0x43B74` 的也只有这个函数。
+- **触摸手势任务**：事件位 `0x02` 是双击（VA `0x3E318` 发 `58`，日志 `double.`），`0x04` 是上滑（VA `0x3E3A2` 发 `61`，日志 `slide up`），`0x08` 是下滑（VA `0x3E42C` 发 `5B`，日志 `slide down`），`0x40` 是轻捏按下（VA `0x3E5A4` 发 `6E`），`0x80` 是轻捏松开（VA `0x3E524` 发 `00`）。双击和滑动在 VA `0x3E34C`、`0x3E3D6`、`0x3E460` 延时后发 `00`。
+- **开关**：状态块位于 RAM `0x200699D8`。`+2` 是双击开关，`+3` 是滑动开关，`+1` 是总开关；三者开机默认值都是 1（RAM 初始化数据 VA `0xAD108`）。命令表 VA `0xA57BC..0xA58A3` 中，`5F` 的处理函数 VA `0x41674` 写 `+2` 并回复 `DF 01 01`，`63` 的处理函数 VA `0x41600` 写 `+3` 并回复 `E3 01 01`，`64` 的处理函数 VA `0x415C4` 写 `+1`。回复中的状态固定为 1。这些开关在 RAM 中，换一个主机连接后仍是上一个主机设置的值；是否另存到闪存尚未追查。
+- **书写时不发手势**：每个手势都先调用 VA `0x3AB10`。它要求 RAM `0x200699B8` 已置位；VA `0x3B05C` 在笔尖有压力时清除该位，无压力的计数超过 39 后才重新置位，计数周期尚未确定。另外状态块 `+4` 必须非零，`+0x1B`（双击、滑动）或 `+0x1C`（轻捏）必须为零；这两个字节由谁写入尚未追到。被拦下时日志为 `slide up no allow.`、`double no allow.p:%d,sk:%d` 等。
+- 命令 `6F` 的处理函数 VA `0x413B0` 回复后写 `AIRCR` 复位笔，不能发送。`63`、`64`、`6F` 与其他 FE11 命令列在 [P81C 控制命令表](p81c-ota-protocol.md#日常控制与升级协议要分开)。
+
+### 原厂系统的处理
+
+来源为同机 HyperOS `OS4.0.4.0.XPYCNXM` 的 `system_ext`。
+
+- `etc/input/MIUIInput.kl` 的 `Vendor_0022_Product_5081` 把 189、96、73、81 映射为 `BUTTON_7`（轻捏）、`BUTTON_8`（双击）、`BUTTON_9`（上滑）、`BUTTON_10`（下滑）。Linux 内核 `hid_keyboard[]` 把用法 `0x6E`、`0x58`、`0x61`、`0x5B` 转成的正是这四个键码。
+- `framework/miui-services.jar` 的 `MiuiStylusTouchFilmManager` 把这四个键称为 `KEY_PINCH`、`KEY_DOUBLE_TAP`、`KEY_SLIDE_UP`、`KEY_SLIDE_DOWN`。`interceptKeyBeforeQueueing` 在游戏模式或灭屏时不处理这些键。设置项关闭时直接吞掉：`stylus_slide_option` 默认 1，`stylus_double_click_status` 默认 1，`stylus_pinch_status` 默认 5（快捷面板）。当前应用不接受该手势时同样吞掉；否则在双击、滑动按下时让平板向笔发振动命令（类型 3、4），再把键交给后续处理。`updateHapticAndDispatchStateLocked` 决定哪些应用接受：滑动给 `com.miui.creation`、短视频应用和下一条列出的阅读办公应用，双击给 `com.miui.creation` 与登记了笔身手势的应用。
+- `BaseMiuiPhoneWindowManager.interceptKeyBeforeQueueingInternal` 对 `NEED_TOUCHFLIM_KEY_APP`（微信读书、WPS、PowerPoint、腾讯文档、相册、浏览器、飞书）把下滑转成 `KEYCODE_PAGE_DOWN`、上滑转成 `KEYCODE_PAGE_UP`。
+- `MiuiStylusShortcutManager.interceptKeyByRemoteControl` 对 `etc/input/stylus_page_key_bw_config.json` 白名单中的短视频应用（排除其活动黑名单、分屏和小窗），在下滑或 Page Down 抬起时调用 `next()`，上滑或 Page Up 抬起时调用 `previous()`，即在宽度 0.65 处、高度 0.75 与 0.25 之间注入一次 60 ms 的滑动。
+- `app/BluetoothExtension` 的 `MiuiBleOobHelperService` 在连接初始化时按 `stylus_slide_option` 发送 `63 01 01` 或 `63 01 00`，回复以 `E3 01` 开头，第三个字节为 1 表示成功。
+
+### Linux 输出
+
+| 手势 | 输出 | 处理位置 |
+| --- | --- | --- |
+| 上滑 | 笔键盘节点的 `KEY_PAGEUP` | 内核 `hid-xiaomi` |
+| 下滑 | 笔键盘节点的 `KEY_PAGEDOWN` | 内核 `hid-xiaomi` |
+| 双击 | tablet-tool 节点的 `BTN_STYLUS2` 按下、抬起，仅在笔处于感应范围时 | `piano-pen-owner.c` |
+| 轻捏 | 短按是笔尖位置的一次点击，按住 600 ms 以上是 `BTN_STYLUS`，仅在感应范围时 | `piano-pen-owner.c` |
+
+内核补丁 [`0025-hid-xiaomi-p81c-body-gestures.patch`](../../../patches/linux/7.3/0025-hid-xiaomi-p81c-body-gestures.patch) 在 `xiaomi_input_mapping` 中按 Report ID、字段长度和逻辑范围识别 Report2，把 `0x61`、`0x5B` 映射为 `KEY_PAGEUP`、`KEY_PAGEDOWN`，忽略 `0x6E`、`0x58` 和笔从不发送的其余用法。滑动因此不依赖本项目的用户空间程序，换用其他发行版时仍是 Page Up／Page Down；双击不再变成回车，滑动也不随 Num Lock 输出数字。原始 Report2 仍经 hidraw 交给触控进程中的笔输入。
+
+双击是笔的第二个按钮。tablet-tool 节点上的按钮必须有笔的位置，笔离开感应范围时双击不产生输入。按 Linux 笔输入的惯例，不支持笔的应用通常把 `BTN_STYLUS` 当作中键、`BTN_STYLUS2` 当作右键；Krita、Xournal++ 等绘图应用可以把它绑定到橡皮擦或其他工具。一个新手势替换仍按住的轻捏时，按 HID 数组语义结束轻捏，但不把被打断的轻捏当作一次点击。
+
+`piano-pen-bluetooth.py` 按 `p81c-radio.json` 的 `double_tap` 与 `slide` 在初始化时发送 `5F 01 01` 和 `63 01 01`，避免笔沿用上一个主机关掉的开关；不回应 `63` 的固件保留自己的默认值，不影响其余初始化。Linux 不在手势时发送振动命令，双击和滑动没有原厂那样的笔端振动。
+
+### 平板上的检查
+
+1. 运行 `sudo libinput debug-events --show-keycodes`，在笔身上滑、下滑：笔的键盘设备应显示 `KEY_PAGEUP`／`KEY_PAGEDOWN`。如果显示 `KEY_KP9`、`KEY_KP3`，或双击时出现 `KEY_KPENTER`，说明运行的内核还没有 `0025` 补丁。
+2. 笔悬停在屏幕上方双击笔身，`libinput debug-events` 在 `Piano Focus Pen Pro` 上显示 `TABLET_TOOL_BUTTON` 的 `BTN_STYLUS2` 按下和松开；`sudo evtest` 选择同一设备可看到 `BTN_STYLUS2` 1 和 0。笔远离屏幕时双击不应有任何输出。
+3. 需要原始数据时，按 VID/PID `0022:5081` 找到 hidraw 节点，只打印 Report2：
+
+   ```sh
+   grep -l 00000022:00005081 /sys/class/hidraw/hidraw*/device/uevent
+   sudo python3 -c 'import os,sys; f=os.open(sys.argv[1], os.O_RDONLY)
+   while True:
+       r = os.read(f, 64)
+       if r[0] == 2: print(r.hex(), flush=True)' /dev/hidrawN
+   ```
+
+   hidraw 允许多个读者，这条命令不影响笔输入。书写后立即滑动不会发出报告，停笔片刻再试。
+4. `journalctl -b -u piano-touch.service | grep -e 630101 -e slide_setting_unanswered` 应找到 `"hex": "630101"` 的请求；出现 `slide_setting_unanswered` 表示这支笔的固件不回应滑动开关。
+
+把 `/usr/share/piano/pen/p81c-radio.json` 中的 `slide` 或 `double_tap` 改为 `false` 后执行 `sudo systemctl restart piano-touch.service`，可以在笔端关闭对应手势。

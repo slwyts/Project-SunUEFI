@@ -1,4 +1,6 @@
 """Actual early-memory source with byte-addressed injected reads; no device."""
+import platform
+import os
 from pathlib import Path
 import hashlib
 import subprocess
@@ -6,6 +8,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
+TOOLCHAIN = Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT', ROOT / 'build/host-tools/usr'))
 SOURCE = ROOT / 'uefi/handoff/early-memory'
 INC = ROOT / 'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 
@@ -13,24 +17,28 @@ INC = ROOT / 'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 class SmemRamTests(unittest.TestCase):
     def test_v3_current_slices_synthetic_and_physical_test95(self):
         captured = ROOT / 'private/analysis/usb-live-test95/ram402.bin'
-        self.assertEqual(hashlib.sha256(captured.read_bytes()).hexdigest(),
-                         '16aed6a815309af4109f34000f43de0058d310e293b2aecc29c6d4d9a7ed828c')
         with tempfile.TemporaryDirectory(prefix='piano-smem-v3-') as directory:
             binary = Path(directory) / 'v3'
             command = ['cc', '-std=gnu11', '-fshort-wchar', '-Wall', '-Wextra',
                        '-Werror', '-g', '-fsanitize=address,undefined', '-fno-pie', '-no-pie']
-            for path in (SOURCE, INC, INC / 'X64'):
+            for path in (SOURCE, INC, INC / HOST_PROCESSOR_BIND):
                 command += ['-I', str(path)]
             command += [str(ROOT / 'tests/native/PianoSmemRamV3Test.c'), str(SOURCE / 'PianoSmemRam.c'), '-o', str(binary)]
             subprocess.run(command, check=True, timeout=60)
-            subprocess.run([str(binary), str(captured)], check=True, timeout=60)
+            subprocess.run([str(binary)], check=True, timeout=60)
+            with self.subTest('test95 capture replay'):
+                if not captured.is_file():
+                    self.skipTest('private test95 RAM capture absent: ' + str(captured.relative_to(ROOT)))
+                self.assertEqual(hashlib.sha256(captured.read_bytes()).hexdigest(),
+                                 '16aed6a815309af4109f34000f43de0058d310e293b2aecc29c6d4d9a7ed828c')
+                subprocess.run([str(binary), str(captured)], check=True, timeout=60)
     def test_actual_source(self):
         with tempfile.TemporaryDirectory(prefix='piano-smem-ram-') as directory:
             binary = Path(directory) / 'smem'
             command = ['cc', '-std=gnu11', '-fshort-wchar', '-Wall', '-Wextra',
                        '-Werror', '-g', '-fsanitize=address,undefined',
                        '-fno-pie', '-no-pie']
-            for path in (SOURCE, INC, INC / 'X64'):
+            for path in (SOURCE, INC, INC / HOST_PROCESSOR_BIND):
                 command += ['-I', str(path)]
             command += [str(ROOT / 'tests/native/PianoSmemRamTest.c'),
                         str(SOURCE / 'PianoSmemRam.c'), '-o', str(binary)]
@@ -38,7 +46,7 @@ class SmemRamTests(unittest.TestCase):
             subprocess.run([str(binary)], check=True, timeout=60)
 
     def test_aarch64_actual_source(self):
-        command = [str(ROOT / 'build/host-tools/usr/bin/clang'),
+        command = [str(TOOLCHAIN/'bin/clang'),
                    '--target=aarch64-windows-msvc', '-ffreestanding',
                    '-fshort-wchar', '-fsyntax-only', '-Wall', '-Wextra', '-Werror']
         for path in (SOURCE, INC, INC / 'AArch64'):

@@ -63,8 +63,7 @@ class RamHardwareTests(unittest.TestCase):
                 events = trace.read_text()
                 if failure == 'none':
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertIn('WARN gpu context readback unavailable', result.stdout)
-                    self.assertIn('WARN display-active context readback unavailable', result.stdout)
+                    self.assertNotIn('diagnostic:', events)
                     self.assertIn('stage 5 display: done', result.stdout)
                     self.assertLess(events.index('msm separate_gpu_kms=1'), events.index('ktz8866'))
                     self.assertLess(events.index('ktz8866'), events.index('dispcc_sm8750'))
@@ -99,6 +98,7 @@ class RamHardwareTests(unittest.TestCase):
             with self.assertRaises(hardware.Refused): hardware.require_ram(proc, self.run)
 
     def setUp(self):
+        (ROOT / 'build/distros').mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / 'build', prefix='ram-hardware-test-')
         self.path = Path(self.temp.name)
         self.sysfs = self.path / 'sys'
@@ -197,8 +197,11 @@ class RamHardwareTests(unittest.TestCase):
                     self.assertIn(command, after)
             self.assertNotIn('devmem', after)
             self.assertNotIn('piano-smmu-ready', after)
-            self.assertIn('piano-ram-hardware-prepare --' +
-                          ('observe-scope' if name in ('video-start', 'camera-start') else 'require-scope'), after)
+            if name == 'display-start':
+                self.assertNotIn('piano-ram-hardware-prepare', after)
+            else:
+                self.assertIn('piano-ram-hardware-prepare --' +
+                              ('observe-scope' if name in ('video-start', 'camera-start', 'adsp-start') else 'require-scope'), after)
             if name == 'keyboard-start':
                 self.assertIn('--require-scope keyboard --wait-seconds 20', after)
             subprocess.run(['/bin/sh', '-n', str(self.path / 'adapters/usr/lib/piano' / name)], check=True)
@@ -208,12 +211,9 @@ class RamHardwareTests(unittest.TestCase):
             bound = 'done\n' if name == 'video-start' else 'wait_bound "$CAMSS" \'CAMSS\''
             self.assertLess(text.index(bound), text.index('--observe-scope'))
         display = (self.path / 'adapters/usr/lib/piano/display-start').read_text()
-        self.assertLess(display.index('modprobe msm $MSM_OPTIONS'), display.index('observe_scope gpu'))
-        self.assertLess(display.index('wait_bound adreno'), display.index('observe_scope gpu'))
-        self.assertNotIn('--require-scope display\n', display)
-        self.assertLess(display.index('--observe-scope mdss-prebind'), display.index('modprobe dispcc_sm8750'))
-        self.assertLess(display.index('wait_bound msm_dpu'), display.index('observe_scope display-active'))
-        self.assertEqual((self.path / 'adapters/etc/systemd/system/gdm3.service.d/20-piano-display.conf').read_text(),
+        self.assertNotIn('observe_scope', display)
+        self.assertLess(display.index('modprobe msm $MSM_OPTIONS'), display.index('modprobe dispcc_sm8750'))
+        self.assertEqual((self.path / 'adapters/etc/systemd/system/display-manager.service.d/20-piano-display.conf').read_text(),
                          '[Unit]\nRequires=piano-display.service\nAfter=piano-display.service\n')
         self.assertIn('Before=display-manager.service gdm3.service gdm.service',
                       (self.path / 'adapters/etc/systemd/system/piano-display.service.d/20-native-kms-order.conf').read_text())
@@ -247,6 +247,8 @@ class RamHardwareTests(unittest.TestCase):
             configs = {p.relative_to(dest): p.read_bytes() for p in (dest / 'etc/piano').glob('*.conf')}
             result = stage.build(self.path / 'staged-adapters', source, dest)
             for path, data in {**units, **configs}.items():
+                if str(path) in result['files']:
+                    continue
                 self.assertEqual((dest / path).read_bytes(), data)
             for path, digest in result['files'].items():
                 self.assertEqual(stage.digest((dest / path).read_bytes()), digest)

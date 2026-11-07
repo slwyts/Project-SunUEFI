@@ -1,7 +1,5 @@
 // Actual Mu HOB/MMU helper + actual SEC arena and DMA named-row selection.
-#define main PianoFrozenCmaMain
 #include "PianoCmaHobTest.c"
-#undef main
 #include <Guid/MemoryAllocationHob.h>
 EFI_GUID gEfiHobMemoryAllocStackGuid=EFI_HOB_MEMORY_ALLOC_STACK_GUID;
 EFI_GUID *EFIAPI CopyGuid(EFI_GUID *D,CONST EFI_GUID *S){memcpy(D,S,sizeof(*D));return D;}
@@ -23,7 +21,7 @@ static EFI_HOB_HANDOFF_INFO_TABLE *HostArena(VOID *Base,UINTN Bytes,VOID *Bottom
 #undef HobConstructor
 #include "PianoActualDmaHeap.h"
 int main(void){
-  setup(FALSE);EFI_MEMORY_REGION_DESCRIPTOR *Product;UINT8 N;PianoProductLowGetMemoryMap(&Product,&N);
+  setup();EFI_MEMORY_REGION_DESCRIPTOR *Product;UINT8 N;PianoProductLowGetMemoryMap(&Product,&N);
   assert(N==45);memcpy(rows,Product,N*sizeof(*rows));count=N;
   assert(PianoActualInitializeMemory()==EFI_SUCCESS);
   assert(arena_base==0xBD980000&&arena_end==0xD4E23000&&arena_bytes==0x174A3000);

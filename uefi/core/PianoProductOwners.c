@@ -28,6 +28,19 @@ STATIC EFI_STATUS AtApp(PIANO_PRODUCT_OWNERS *Owners) {
   if(Owners->Report.ServicesLost)return EFI_ACCESS_DENIED;
   return Old==TPL_APPLICATION?EFI_SUCCESS:EFI_UNSUPPORTED;
 }
+// No DMA does not make live callbacks, protocols or clock references safe.
+// Apply the same checked input-stop report to each registered input backend.
+STATIC EFI_STATUS RetireInput(PIANO_PRODUCT_OWNERS *Owners,UINT32 Owner,PIANO_PRODUCT_INPUT_STOP Stop,VOID *Context,
+                                   PIANO_PRODUCT_INPUT_RETIRE_REPORT *Report,EFI_STATUS *Status,BOOLEAN *Stopped) {
+  if(!(Owners->Report.RegisteredStartedMask&Owner))return EFI_SUCCESS;
+  EFI_STATUS S=AtApp(Owners);if(S!=EFI_SUCCESS||Owners->Report.ServicesLost)return Retain(Owners,S);
+  *Status=Stop(Context,Report);
+  if(Owners->Report.ServicesLost||*Status!=EFI_SUCCESS||Report->Revision!=1||!Report->Started||
+     !Report->Returned||!Report->Clean||Report->Retained||Report->ServicesLost||
+     Report->Status!=EFI_SUCCESS||Report->Timer!=EFI_SUCCESS||Report->Protocols!=EFI_SUCCESS)
+    return Retain(Owners,*Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:*Status);
+  *Stopped=TRUE;Owners->Report.RetiredMask|=Owner;return EFI_SUCCESS;
+}
 STATIC BOOLEAN PolicyLive(CONST PIANO_BOOT_POLICY_REPORT *Policy) {
   return Policy && Policy->Initialized && Policy->ProtocolInstalled && !Policy->ServicesLost && !Policy->Retained;
 }
@@ -99,6 +112,8 @@ EFI_STATUS PianoProductOwnersInitialize(PIANO_PRODUCT_OWNERS *Owners,CONST PIANO
   if(AbsentUsb?!StartupUsbConfig(Config):Config->StartupUsbProof!=NULL)return EFI_NOT_READY;
   if(Config->StartedOwnerMask&~PIANO_OWNER_SUPPORTED_MASK)return EFI_UNSUPPORTED;
   if(!DisplayRegistration(Config))return EFI_NOT_READY;
+  if((Config->StartedOwnerMask&PIANO_OWNER_POGO) && !Config->StopPogo)return EFI_INVALID_PARAMETER;
+  if((Config->StartedOwnerMask&PIANO_OWNER_TOUCH) && !Config->StopTouch)return EFI_INVALID_PARAMETER;
   if(!gBS || !gBS->CreateEventEx || !gBS->CloseEvent || !gBS->LocateProtocol)return EFI_UNSUPPORTED;
   EFI_STATUS S=AtApp(Owners);if(S!=EFI_SUCCESS)return S;
   CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();if(!PolicyLive(Policy))return EFI_NOT_READY;
@@ -119,7 +134,7 @@ EFI_STATUS PianoProductOwnersInitialize(PIANO_PRODUCT_OWNERS *Owners,CONST PIANO
   Owners->Report.Display.Status=Owners->Report.Display.Release=Owners->Report.Display.CounterStatus=
     Owners->Report.Display.GccReadback=Owners->Report.Display.GccReadbackEnd=Owners->Report.Display.Cleanup=EFI_NOT_STARTED;
   Owners->Report.RegisteredStartedMask=Config->StartedOwnerMask;Owners->Report.RegisteredAbsentMask=Config->AbsentOwnerMask;
-  Owners->Report.UsbStatus=EFI_NOT_STARTED;
+  Owners->Report.UsbStatus=EFI_NOT_STARTED;Owners->Report.PogoStatus=Owners->Report.TouchStatus=EFI_NOT_STARTED;
   if(AbsentUsb){Owners->UsbProof=*Config->StartupUsbProof;Owners->Report.UsbStartupFailedClean=TRUE;}
   // Runtime is not dereferenced until a fresh protocol lookup matches it.
   PIANO_PRODUCT_RUNTIME_PROTOCOL *Fresh=NULL;EFI_GUID Guid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;
@@ -396,6 +411,11 @@ EFI_STATUS PianoProductOwnersRetire(PIANO_PRODUCT_OWNERS *Owners) {
      Input->Status!=EFI_SUCCESS || Input->Timer!=EFI_SUCCESS || Input->Protocols!=EFI_SUCCESS || Owners->Report.ServicesLost)
     return Retain(Owners,S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S);
   Owners->Report.InputStopped=TRUE;Owners->Report.RetiredMask|=PIANO_OWNER_INPUT;
+  S=RetireInput(Owners,PIANO_OWNER_POGO,Owners->Config.StopPogo,Owners->Config.PogoContext,
+    &Owners->Report.Pogo,&Owners->Report.PogoStatus,&Owners->Report.PogoStopped);
+  if(S==EFI_SUCCESS)S=RetireInput(Owners,PIANO_OWNER_TOUCH,Owners->Config.StopTouch,Owners->Config.TouchContext,
+    &Owners->Report.Touch,&Owners->Report.TouchStatus,&Owners->Report.TouchStopped);
+  if(S!=EFI_SUCCESS)return S;
   if(Owners->Report.RegisteredStartedMask&PIANO_OWNER_DISPLAY){
     S=AtApp(Owners);if(S!=EFI_SUCCESS||Owners->Report.ServicesLost)return Retain(Owners,S);
     if(!Owners->Config.StopDisplay||!Owners->Config.DisplayContext)return Retain(Owners,EFI_COMPROMISED_DATA);

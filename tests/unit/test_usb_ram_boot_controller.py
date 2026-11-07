@@ -1,4 +1,5 @@
 """Actual Controller wrapper source, new isolated entry; no prod/device edits."""
+import platform
 import os
 from pathlib import Path
 import subprocess
@@ -6,8 +7,9 @@ import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 INCLUDES=[ROOT/"upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include",
-          ROOT/"upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/X64",
+          ROOT/"upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include"/HOST_PROCESSOR_BIND,
           ROOT/"upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include"]
 
 

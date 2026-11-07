@@ -21,6 +21,8 @@ MANIFESTS = [ROOT / 'private/analysis' / name / 'manifest.json' for name in (
     'piano-linux-managed-clocks-v1', 'piano-linux-managed-dsp-pcie-v4')]
 
 
+@unittest.skipUnless(BASE.exists() and LIB.exists() and all(path.exists() for path in MANIFESTS),
+                     'needs the private device tree folds and a built upstream/dtc libfdt')
 class KeyboardSuppliersTests(unittest.TestCase):
     def test_actual_fold_preserves_supplies_and_full_chain_accepts_only_exact_delta(self):
         with tempfile.TemporaryDirectory(dir=ROOT / 'private/analysis', prefix='keyboard-fold-test-') as temporary:

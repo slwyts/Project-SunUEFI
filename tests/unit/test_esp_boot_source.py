@@ -1,4 +1,5 @@
 """Current ESP geometry/identity discovery through real SFS snapshot code."""
+import platform
 from pathlib import Path
 import os
 import subprocess
@@ -6,6 +7,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
+TOOLCHAIN = Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT', ROOT / 'build/host-tools/usr'))
 
 
 class EspBootSourceTests(unittest.TestCase):
@@ -14,7 +17,7 @@ class EspBootSourceTests(unittest.TestCase):
         crypto = ROOT / 'upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include'
         sources = [ROOT / 'uefi/components/os-boot' / name for name in
                    ('PianoEspBootSource.c', 'PianoBootFileSource.c', 'PianoCpuInput.c')]
-        flags = ['-I' + str(inc), '-I' + str(inc / 'X64'), '-I' + str(crypto)]
+        flags = ['-I' + str(inc), '-I' + str(inc / HOST_PROCESSOR_BIND), '-I' + str(crypto)]
         with tempfile.TemporaryDirectory(prefix='piano-esp-source-') as tmp:
             exe = Path(tmp) / 'esp'
             subprocess.run(['cc', '-std=gnu11', '-fshort-wchar', '-Wall', '-Wextra', '-Werror',
@@ -25,7 +28,7 @@ class EspBootSourceTests(unittest.TestCase):
             subprocess.run([str(exe)], check=True,
                            env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1'})
         flags[1] = '-I' + str(inc / 'AArch64')
-        subprocess.run([str(ROOT / 'build/host-tools/usr/bin/clang'), '--target=aarch64-windows-msvc',
+        subprocess.run([str(TOOLCHAIN/'bin/clang'), '--target=aarch64-windows-msvc',
                         '-ffreestanding', '-fshort-wchar', '-fsyntax-only', '-Wall', '-Wextra', '-Werror',
                         *flags, *map(str, sources)], check=True)
 

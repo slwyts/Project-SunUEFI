@@ -34,6 +34,8 @@ VOID EFIAPI MemoryFence(VOID){__sync_synchronize();}
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
 VOID PianoProbeUsbPower(CONST VOID *Fdt){assert(Fdt==(VOID *)123);}
+EFI_STATUS PianoUsbPhyStart(EFI_CLOCK_PROTOCOL *C){assert(C==&Clock);return EFI_SUCCESS;}
+EFI_STATUS PianoUsbPhyStop(VOID){return EFI_SUCCESS;}
 INT32 EFIAPI FdtPathOffset(CONST VOID *Fdt,CONST CHAR8 *Path){(void)Path;assert(Fdt==(VOID *)123);return 1;}
 CONST VOID *EFIAPI FdtGetProp(CONST VOID *Fdt,INT32 Node,CONST CHAR8 *Name,INT32 *Bytes){
   STATIC CONST UINT8 Reg[]={0,0,0,0,0x0a,0x60,0,0,0,0,0,0,0,0,0xd9,0x3c},Iommu[]={0,0,0,1,0,0,0,0x40,0,0,0,0};

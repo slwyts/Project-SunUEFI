@@ -36,6 +36,7 @@ class BootBundleExportTests(unittest.TestCase):
         data = bytearray(40)
         struct.pack_into('>II', data, 0, 0xd00dfeed, len(data))
         self.dtb.write_bytes(data)
+        (self.root/'linux').mkdir()
         self.write(self.root/'linux/kernel-profiles.json', {'profiles': {'stable': {'commit': 'abc'}}})
         self.write(self.source/'manifest.json', {'source_commit': 'abc', 'source_dirty': False,
             'status': 'HOST_BUILT_NOT_HARDWARE_VERIFIED', 'image': {'sha256': checksums['Image']},

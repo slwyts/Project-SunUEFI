@@ -1,9 +1,14 @@
 """Real child/Rail/GCC/Reader/Guard combination; ARM and EFI are boundaries."""
+import platform
 from pathlib import Path
-import json,os,re,subprocess,tempfile,unittest
+import os,re,subprocess,sys,tempfile,unittest
 from test_display_clock_pipeline import function,object_comparison
 from piano_mu_map_fixture import write_mu_map_fixture
 ROOT=Path(__file__).resolve().parents[2];BASE=ROOT/'upstream/Mu-Silicium/Mu_Basecore'
+sys.path.insert(0,str(ROOT/'tools'))
+import piano_vendor_inputs as vendor
+from piano_inherited_clock import derive
+HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 def c_function(text,name):
  m=re.search(r'(?<![A-Za-z0-9_])(?:(?:static|STATIC)\s+)?(?:VOID|BOOLEAN|EFI_STATUS|UINT64|UINT32|UINT16|UINTN)\s+(?:EFIAPI\s+)?'+re.escape(name)+r'\s*\([^)]*\)\s*\{',text)
  if not m:raise AssertionError('missing fixture function '+name)
@@ -15,7 +20,7 @@ def c_function(text,name):
  return text[m.start():p]
 class NonGdscJointTests(unittest.TestCase):
  def test_real_child_rail_primary_reader_guard_and_observe(self):
-  inv=json.loads((ROOT/'private/analysis/native-driver-inventory.json').read_text())['drivers']
+  inv=vendor.load(ROOT)['native_drivers']
   with tempfile.TemporaryDirectory(prefix='non-gdsc-joint-')as directory:
    d=Path(directory);write_mu_map_fixture(ROOT,d/'ActualMuMemoryMap.h')
    owner=(ROOT/'uefi/core/PianoProductDisplayOwner.c').read_text();types=(ROOT/'uefi/core/PianoProductOwners.h').read_text();startup=re.search(r'typedef struct \{(?:(?!typedef struct).)*?\} PIANO_PRODUCT_DISPLAY_STARTUP_REPORT;',types,re.S);self.assertIsNotNone(startup)
@@ -54,8 +59,10 @@ static EFI_STATUS JointAt(UINTN,UINT64 *);
    native=native.replace('if(ChildCase==16)Lost();','JointMmState();if(ChildCase==16)Lost();').replace('return ChildCase==12?EFI_WARN_STALE_DATA:ChildCase==22?EFI_DEVICE_ERROR:EFI_SUCCESS;','JointMmState();return ChildCase==12?EFI_WARN_STALE_DATA:ChildCase==22?EFI_DEVICE_ERROR:EFI_SUCCESS;')
    (d/'ActualChildNativeBoundary.h').write_text(native)
    exe=d/'joint';args=['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-misleading-indentation','-Wno-implicit-fallthrough','-g','-DPIANO_DISPLAY_CLOCK_HOST_TEST=1','-DPIANO_NON_GDSC_CLOCK_HOST_TEST=1','-DNO_MSABI_VA_FUNCS','-D_PCD_GET_MODE_32_PcdMaximumAsciiStringLength=0','-D_PCD_GET_MODE_32_PcdMaximumUnicodeStringLength=0','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie']
-   for p in (BASE/'MdePkg/Include',BASE/'MdePkg/Include/X64',BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',ROOT/'uefi/components/guarded-read',ROOT/'uefi/core',ROOT/'uefi/components/display-rail',d):args+=['-I',str(p)]
+   for p in (BASE/'MdePkg/Include',BASE/'MdePkg/Include'/HOST_PROCESSOR_BIND,BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',ROOT/'uefi/components/guarded-read',ROOT/'uefi/core',ROOT/'uefi/components/display-rail',d):args+=['-I',str(p)]
    args +=[str(ROOT/'tests/native/PianoDisplayNonGdscJointTest.c'),str(ROOT/'uefi/core/PianoDisplayClockLease.c'),str(ROOT/'uefi/core/PianoDisplayClockRead.c'),str(ROOT/'uefi/core/PianoDisplayClockObserve.c'),str(ROOT/'uefi/components/display-rail/PianoDisplayNonGdscClock.c'),str(ROOT/'uefi/components/display-rail/PianoDisplayRailObserve.c'),str(BASE/'MdePkg/Library/BasePrintLib/PrintLib.c'),str(BASE/'MdePkg/Library/BasePrintLib/PrintLibInternal.c'),'-lcrypto','-o',str(exe)]
    p=subprocess.run(args,capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr)
-   p=subprocess.run([str(exe),str(ROOT/'upstream/Mu-Silicium/Binaries/piano/ProductFoundation/ClockDxe/ClockDxe.efi'),inv['NpaDxe']['pe_path'],inv['VcsDxe']['pe_path']],capture_output=True,text=True,env={**os.environ,'UBSAN_OPTIONS':'halt_on_error=1:print_stacktrace=1'});self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
+   # Same ClockDxe bytes that prepare_product stages from the vendor bundle
+   clock=Path(directory)/'ClockDxe.efi';clock.write_bytes(derive(inv['ClockDxe']['pe_path'].read_bytes())[0])
+   p=subprocess.run([str(exe),str(clock),str(inv['NpaDxe']['pe_path']),str(inv['VcsDxe']['pe_path'])],capture_output=True,text=True,env={**os.environ,'UBSAN_OPTIONS':'halt_on_error=1:print_stacktrace=1'});self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
 if __name__=='__main__':unittest.main()

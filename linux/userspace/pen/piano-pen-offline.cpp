@@ -38,9 +38,10 @@ void field(const char *name, int value, bool known) {
 void usage() {
     std::cout << "piano-pen-offline --ini ACTUAL.ini --config\n"
         "piano-pen-offline --ini ACTUAL.ini --pressure-max-age-ns N --events ACTUAL.tsv\n"
-        "Events: boottime_ns report5|raw29 CAPTURED_FILE; or boottime_ns reset -\n"
+        "Events: boottime_ns report5|report2|raw29 CAPTURED_FILE; or boottime_ns reset -\n"
         "Use CLOCK_BOOTTIME for BLE, matching NTP ktime_get_boottime; do not mix CLOCK_MONOTONIC across sleep.\n"
         "raw29 starts at original payload without257-byte transport. report5 is actual15-byte BLE data.\n"
+        "report2 is the 2-byte BLE body-gesture report; unknown values are null.\n"
         "Select the actual Touch LCDid/factory ini, not the display label. Output is portrait diagnostics only; no FIFO/device/uinput.\n"
         "Unknown values are null. Freshness is caller policy, not a claimed OEM timeout.\n";
 }
@@ -110,8 +111,17 @@ int main(int argc, char **argv) {
                 continue;
             }
             if (path.empty()) throw std::runtime_error("captured file path is missing");
-            const auto bytes = file(folder / path, kind == "report5" ? 15 : 7934);
-            if (kind == "report5") {
+            const auto bytes = file(folder / path,
+                kind == "report5" ? 15 : kind == "report2" ? 2 : 7934);
+            if (kind == "report2") {
+                if (bytes.size() != 2 || bytes[0] != 2)
+                    throw std::runtime_error("report2 must be the 2-byte report with ID 2");
+                const char *name = piano_pen_body_gesture_name(bytes[1]);
+                std::cout << "{\"kind\":\"report2\",\"timestamp_ns\":" << timestamp
+                    << ",\"value\":" << int(bytes[1]) << ",\"gesture\":";
+                if (name) std::cout << '"' << name << '"'; else std::cout << "null";
+                std::cout << "}\n";
+            } else if (kind == "report5") {
                 result = piano_pen_core_report5(core.get(), bytes.data(), bytes.size(), timestamp,
                                                 error, sizeof(error));
                 if (result) throw std::runtime_error(error);

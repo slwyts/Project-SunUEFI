@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #pragma once
-#include "../../core/PianoPogoInput.h"
+#include "PianoPogoInput.h"
 #include <Protocol/DevicePath.h>
 typedef struct {EFI_STATUS Status;BOOLEAN Quiet,Clean,Retained;} PIANO_POGO_BACKEND_STOP;
 typedef struct {
@@ -24,8 +24,10 @@ typedef struct {
   UINT32 Signature;PIANO_POGO_DXE_BACKEND Backend;PIANO_POGO_DXE_REPORT Report;
   PIANO_POGO_ADAPTER Adapter;
   EFI_SIMPLE_TEXT_INPUT_PROTOCOL OriginalText;EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL OriginalEx;
-  EFI_SIMPLE_POINTER_PROTOCOL OriginalPointer;EFI_ABSOLUTE_POINTER_PROTOCOL OriginalAbsolute;
-  EFI_HANDLE Handle;EFI_EVENT Wait[4],Timer,Exit;
+  EFI_SIMPLE_POINTER_PROTOCOL OriginalPointer;
+  // The cover touchpad is a relative pointer only; it is not published as an
+  // absolute pointer, which consumers treat as a touchscreen
+  EFI_HANDLE Handle;EFI_EVENT Wait[3],Timer,Exit;
   struct {VENDOR_DEVICE_PATH Vendor;EFI_DEVICE_PATH_PROTOCOL End;} Path;
   PIANO_POGO_DXE_NOTIFY Notify[PIANO_POGO_NOTIFIES];UINTN NotifySequence;
   PIANO_POGO_BACKEND_STOP StopReport;

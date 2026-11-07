@@ -1,12 +1,19 @@
 """Actual limited clock collector and actual guard; never physical register IO."""
+import platform
 import os
 import hashlib
 import re
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 ROOT=Path(__file__).resolve().parents[2];INC=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
+sys.path.insert(0,str(ROOT/'tools'))
+import piano_vendor_inputs as vendor
+from piano_inherited_clock import derive
+HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
+TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
 PRINT=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Library/BasePrintLib'
 SRC=ROOT/'uefi/core/PianoDisplayClockObserve.c'
 QCOM=ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include'
@@ -17,15 +24,22 @@ class DisplayClockObserveTests(unittest.TestCase):
             subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-implicit-fallthrough',
                 '-fshort-wchar','-g','-fsanitize=address,undefined','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-Wl,--gc-sections',
                 '-DNO_MSABI_VA_FUNCS','-D_PCD_GET_MODE_32_PcdMaximumAsciiStringLength=0','-D_PCD_GET_MODE_32_PcdMaximumUnicodeStringLength=0',
-                '-I'+str(INC),'-I'+str(INC/'X64'),'-I'+str(QCOM),'-I'+str(ROOT/'uefi/components/guarded-read'),str(ROOT/'tests/native/PianoDisplayClockObserveTest.c'),str(PRINT/'PrintLib.c'),str(PRINT/'PrintLibInternal.c'),'-o',str(exe)],check=True)
+                '-I'+str(INC),'-I'+str(INC/HOST_PROCESSOR_BIND),'-I'+str(QCOM),'-I'+str(ROOT/'uefi/components/guarded-read'),str(ROOT/'tests/native/PianoDisplayClockObserveTest.c'),str(PRINT/'PrintLib.c'),str(PRINT/'PrintLibInternal.c'),'-o',str(exe)],check=True)
             run=subprocess.run([str(exe)],capture_output=True,text=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'});self.assertEqual(run.returncode,0,run.stdout+run.stderr);print(run.stdout.strip())
     def test_actual_aarch64_and_fixed_declarations(self):
-        subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-misleading-indentation',
+        subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-misleading-indentation',
             '-I'+str(INC),'-I'+str(INC/'AArch64'),'-I'+str(QCOM),'-I'+str(ROOT/'uefi/components/guarded-read'),str(SRC)],check=True)
         source=SRC.read_text()
         self.assertIn('required_unfinished=1',source);self.assertIn('hardware_ready=0',source)
-        for forbidden in ('MmioWrite','SetMemory','WriteBack','MapRegion','SetMode(','PianoGuardedRead32(Token,mSpecs'):
+        for forbidden in ('MmioWrite','SetMemory','WriteBack','MapRegion','SetMode('):
             self.assertNotIn(forbidden,source)
+        # Observe loads only gated register slots; direct spec-table loads stay in the two-register GCC sampler
+        observe=source[source.index('STATIC EFI_STATUS Observe('):source.index('EFI_STATUS PianoDisplayClockObserve(')]
+        sample=source[source.index('EFI_STATUS PianoDisplayClockSampleGcc('):]
+        self.assertNotIn('PianoGuardedRead32(Token,mSpecs',observe)
+        self.assertEqual(source.count('PianoGuardedRead32(Token,mSpecs'),sample.count('PianoGuardedRead32(Token,mSpecs[I].Address'))
+        self.assertIn('PIANO_GUARDED_CONFIG C=Config(FALSE);',sample);self.assertNotIn('Config(TRUE)',sample)
+        self.assertIn('for(UINT32 I=0;I<2&&Status==EFI_SUCCESS;++I)\n        Status=PianoGuardedRead32(Token,mSpecs[I].Address',sample)
     def test_actual_lease_reader_guard_and_held_observer(self):
         # Reuse the actual pipeline's machine-boundary fixture, adding the
         # collector as a real linked consumer. No Lease/Reader algorithm is
@@ -39,7 +53,7 @@ class DisplayClockObserveTests(unittest.TestCase):
             self.assertEqual(fixture.count(old),1,'actual pipeline fixture anchor drift: '+old[:80])
             fixture=fixture.replace(old,new)
         for path in ('uefi/components/guarded-read/PianoGuardedRead.c','uefi/core/PianoDisplayClockRead.h','uefi/components/display-rail/PianoDisplayNonGdscClock.h'):
-            replace_once('"../'+path+'"','"'+str(ROOT/path)+'"')
+            replace_once('"../../'+path+'"','"'+str(ROOT/path)+'"')
         replace_once('#include "ActualClockObjectComparison.h"','#include "ActualClockObjectComparison.h"\n#include "'+str(ROOT/'uefi/core/PianoDisplayClockObserve.h')+'"\n#include "'+str(ROOT/'uefi/core/PianoProductDisplayOwner.h')+'"')
         replace_once('static BOOLEAN GlobalAlive(VOID){return Services;}',
             'BOOLEAN EFIAPI DebugPrintEnabled(VOID){return TRUE;}\n'
@@ -76,10 +90,12 @@ class DisplayClockObserveTests(unittest.TestCase):
             test=d/'ActualHeldConsumer.c';test.write_text(fixture);exe=d/'held'
             cmd=['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-g',
                 '-DPIANO_DISPLAY_CLOCK_HOST_TEST=1','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie']
-            for path in (INC,INC/'X64',INC.parent.parent/'CryptoPkg/Include',QCOM,ROOT/'uefi/components/guarded-read',ROOT/'uefi/core',d):cmd+=['-I',str(path)]
+            for path in (INC,INC/HOST_PROCESSOR_BIND,INC.parent.parent/'CryptoPkg/Include',QCOM,ROOT/'uefi/components/guarded-read',ROOT/'uefi/core',d):cmd+=['-I',str(path)]
             cmd+=[str(test),str(ROOT/'uefi/core/PianoDisplayClockRead.c'),str(ROOT/'uefi/core/PianoDisplayClockLease.c'),str(SRC),'-lcrypto','-o',str(exe)]
             result=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-            result=subprocess.run([str(exe),str(ROOT/'upstream/Mu-Silicium/Binaries/piano/ProductFoundation/ClockDxe/ClockDxe.efi')],capture_output=True,text=True,
+            # Same ClockDxe bytes that prepare_product stages from the vendor bundle
+            clock=Path(directory)/'ClockDxe.efi';clock.write_bytes(derive(vendor.load(ROOT)['native_drivers']['ClockDxe']['pe_path'].read_bytes())[0])
+            result=subprocess.run([str(exe),str(clock)],capture_output=True,text=True,
                 env={**os.environ,'UBSAN_OPTIONS':'halt_on_error=1:print_stacktrace=1'})
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             print('Actual Lease+Reader+Guard+held collector: two acquisition paths, fresh borrow/return, ref unchanged until retirement; controller/DPU loads zero')

@@ -65,7 +65,9 @@ class RamBootstrapTests(unittest.TestCase):
             applets = subprocess.check_output(prefix + ['/bin/busybox', '--list'], text=True).splitlines()
             self.assertTrue(set(boot.APPLETS).issubset(applets))
 
+    @unittest.skipUnless(shutil.which('bwrap'), 'bwrap required')
     def test_actual_bootstrap_refuses_android_root_before_mount(self):
+        (ROOT / 'build').mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=ROOT / 'build', prefix='bootstrap-policy-') as temporary:
             root = Path(temporary); (root / 'proc').mkdir(); (root / 'usr').mkdir()
             (root / 'bin').symlink_to('usr/bin'); (root / 'lib').symlink_to('usr/lib'); (root / 'lib64').symlink_to('usr/lib')

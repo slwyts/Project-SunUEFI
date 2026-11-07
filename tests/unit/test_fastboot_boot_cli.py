@@ -10,11 +10,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import argparse
 import json
 from pathlib import Path
+import shutil
 import socket
 import struct
 import subprocess
 import tempfile
 import threading
+import unittest
 
 
 def receive(sock, count):
@@ -140,6 +142,12 @@ def main():
     if args.json:
         args.json.write_text(output)
     print(output, end='')
+
+
+class FastbootBootCliTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('fastboot'), 'Android platform-tools fastboot required')
+    def test_stock_cli_framing_over_loopback(self):
+        self.assertEqual(audit()['status'], 'VERIFIED_LOCAL_CLI_FRAMING_ONLY')
 
 
 if __name__ == '__main__':

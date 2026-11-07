@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[2]
+LIVE_DTB=ROOT/"private/captures/2026-10-03-piano/live.dtb"
+EFI_TRACE=ROOT/"private/analysis/ramlog-test-85/console.txt"
 SPEC=importlib.util.spec_from_file_location("piano_dram",ROOT/"tools/plan_piano_dram.py")
 tool=importlib.util.module_from_spec(SPEC)
 with patch.object(sys,"path",[str(ROOT/"tools"),*sys.path]):SPEC.loader.exec_module(tool)
@@ -105,12 +107,13 @@ class DramPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"skipped rows"):
             tool.parse_native_c(text+'\n{"unsupported", SYMBOL, 0x1000, AddMem, 0, 0x0, 7, WRITE_BACK_XN}')
 
+    @unittest.skipUnless(LIVE_DTB.is_file() and EFI_TRACE.is_file(),"private live DTB and test85 EFI trace captures absent")
     def test_current_real_board_coverage_fixed_cma_and_native_differences(self):
-        dtb=(ROOT/"private/captures/2026-10-03-piano/live.dtb").read_bytes()
+        dtb=LIVE_DTB.read_bytes()
         self.assertEqual(tool.DTB_SHA,tool.sha(dtb))
         dt=tool.extract_dt(dtb)
         native=tool.parse_native_c((ROOT/"uefi/platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c").read_text())
-        efi=tool.parse_efi((ROOT/"private/analysis/ramlog-test-85/console.txt").read_bytes().decode(errors="replace"))
+        efi=tool.parse_efi(EFI_TRACE.read_bytes().decode(errors="replace"))
         reference=json.loads((ROOT/"uefi/platforms/pianoProbePkg/native-memory-map.json").read_text())
         result=tool.plan(dt,native,efi,reference)
         self.assertEqual(16470685696,result["raw_dram_bytes"])
@@ -126,10 +129,11 @@ class DramPlanTests(unittest.TestCase):
         self.assertEqual(0,result["invariants"]["native_cache_overrides"])
         self.assertFalse(result["hardware_verified"])
 
+    @unittest.skipUnless(LIVE_DTB.is_file(),"private live DTB capture absent")
     def test_cli_rejects_dtb_pin_drift_before_publishing(self):
         with tempfile.TemporaryDirectory()as name:
             directory=Path(name);dtb=directory/"changed.dtb";output=directory/"review.json"
-            raw=bytearray((ROOT/"private/captures/2026-10-03-piano/live.dtb").read_bytes());raw[-1]^=1
+            raw=bytearray(LIVE_DTB.read_bytes());raw[-1]^=1
             dtb.write_bytes(raw)
             with patch.object(sys,"argv",["plan_piano_dram.py","--dtb",str(dtb),"--output",str(output)]),self.assertRaises(SystemExit):tool.main()
             self.assertFalse(output.exists())

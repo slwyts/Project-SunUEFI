@@ -105,6 +105,7 @@ class BuildGateTests(unittest.TestCase):
         self.fail_image = False
         self.config = 'CONFIG_EFI=y\nCONFIG_BLK_DEV_INITRD=y\n# CONFIG_BLOCK is not set\n# CONFIG_CMDLINE_FORCE is not set\n'
         (self.root / "tools").mkdir()
+        (self.root / "linux").mkdir()
         (self.root / "linux/kernel-profiles.json").write_text(json.dumps({"repository_path": "repo", "profiles": {
             "stable": {"commit": self.pin, "branch": "piano-stable", "base_commit": self.base,
                        "base_config": "piano_defconfig"}}}))

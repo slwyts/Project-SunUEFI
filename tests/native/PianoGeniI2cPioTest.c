@@ -1,176 +1,121 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Actual fixed PIO source with synthetic registers; never MMIO/devices.
+// Host model of a GENI I2C serial engine driving the real PianoGeniI2cPio.c:
+// FIFO words, command completion, NACK, a stuck command and register restore
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoGeniI2cPio.c"
+#include "PianoGeniI2cPio.h"
 
-typedef struct {
-  UINT32 Reg[0x4000/4];
-  UINT8 Payload[68];
-  UINT64 Now;
-  UINT32 Reads,Writes,Commands,FifoWrites,FifoReads,Phase,Index,Received;
-  UINT32 CancelWrites,AbortWrites,FailOffset,FailWriteNumber;
-  UINT32 ReadLength,CallbackDelay;
-  UINT32 WritesAtQuietFailure;
-  BOOLEAN Nack,Short,Overread,UnknownIrq,Hang,CancelHang,AbortHang,Freeze,Backwards,BadRestore,ModeChanged,RxModeChanged,ForeignCommand;
-  BOOLEAN FailQuiet,ArmQuietFailure,QuietFailureReady;
-} HARDWARE;
-static HARDWARE h;
-static PIANO_GENI_I2C_PIO p;
-static PIANO_GENI_PIO_CONTRACT contract;
-static PIANO_GENI_PIO_IO io;
-static UINT32 txcmd,rxcmd;
+#define REGS (PIANO_GENI_SE6_BYTES/4)
+static UINT32 Reg[REGS],Original[REGS];
+static UINT64 Clock;
+static unsigned Writes,Cancels,Aborts;
+// Slave model at 0x4C: records writes, answers reads from Answer
+static UINT8 Received[1024],Answer[128];static UINTN ReceivedBytes,AnswerBytes,AnswerPos;
+static int Nack,NackRead,Stuck,CancelWorks,CommandOp,CommandStretch,WriteLeft,ReadLeft;static unsigned Stops;
+static UINT32 RxFifo[64];static unsigned RxCount;
 
-static UINT64 EFIAPI now(void *unused){
-  if(h.Backwards && h.Phase==3)return 0;
-  if(!h.Freeze)h.Now+=1;
-  return h.Now;
+static UINT32 *R(UINT32 Offset){assert(Offset<PIANO_GENI_SE6_BYTES && !(Offset&3));return &Reg[Offset/4];}
+static void Finish(void){*R(0x40)&=~BIT0;*R(0x610)|=BIT0;}
+static void FillRx(void){
+  while(ReadLeft>0 && RxCount<16){
+    UINT32 Word=0;for(int B=0;B<4 && ReadLeft>0;++B,--ReadLeft)Word|=(UINT32)Answer[AnswerPos++%AnswerBytes]<<(8*B);
+    RxFifo[RxCount++]=Word;
+  }
+  if(!ReadLeft && CommandOp==2 && !Stuck)Finish();
 }
-static EFI_STATUS EFIAPI read32(void *unused,UINT32 offset,UINT32 *v){
-  assert(!(offset&3) && offset<0x4000);++h.Reads;
-  assert(offset<0x1000); // Firmware/program RAM is never touched.
-  if(offset==0x40 && h.QuietFailureReady){h.WritesAtQuietFailure=h.Writes;return EFI_DEVICE_ERROR;}
-  if(h.FailOffset==offset)return EFI_DEVICE_ERROR;
-  // The cleanup Capture ends with lengths/M_CMD0/S_CMD0. Fail only the
-  // following Quiet status read, after that capture succeeded completely.
-  if(h.FailQuiet && h.Phase==3 && offset==0x270)h.ArmQuietFailure=TRUE;
-  if(h.ArmQuietFailure && offset==0x630)h.QuietFailureReady=TRUE;
-  if(offset==0x780){
-    assert(h.Phase==3 && (h.Reg[0x804/4]&RX_WORDS));++h.FifoReads;h.Now+=h.CallbackDelay;
-    *v=0;
-    for(UINT32 j=0;j<4 && h.Index<h.Received;++j)*v|=(UINT32)h.Payload[h.Index++%68]<<(8*j);
-    UINT32 remain=h.Received-h.Index,words=(remain+3)/4;
-    h.Reg[0x804/4]=words?BIT31|((remain%4?remain%4:4)<<28)|words:0;
+static EFI_STATUS EFIAPI Read32(VOID *Context,UINT32 Offset,UINT32 *Value){
+  assert(Context==(VOID *)Reg);
+  if(Offset==0x804){*Value=RxCount;return EFI_SUCCESS;}
+  if(Offset==0x780){assert(RxCount);*Value=RxFifo[0];memmove(RxFifo,RxFifo+1,--RxCount*4);FillRx();return EFI_SUCCESS;}
+  if(Offset==0x800){*Value=0;return EFI_SUCCESS;}
+  Clock+=3;*Value=*R(Offset);return EFI_SUCCESS;
+}
+static EFI_STATUS EFIAPI Write32(VOID *Context,UINT32 Offset,UINT32 Value){
+  assert(Context==(VOID *)Reg);++Writes;
+  switch(Offset){
+  case 0x618:*R(0x610)&=~Value;return EFI_SUCCESS;
+  case 0x600:
+    assert(!(*R(0x40)&BIT0));CommandOp=(int)(Value>>27);CommandStretch=(Value&BIT2)!=0;
+    if(CommandOp==7){++Stops;*R(0x40)|=BIT0;Finish();return EFI_SUCCESS;}
+    assert(((Value>>9)&0x7F)==0x4C || Nack);
+    *R(0x600)=Value;*R(0x40)|=BIT0;
+    if(Nack || (NackRead && CommandOp==2)){*R(0x610)|=BIT10|BIT3;if(!Stuck)Finish();return EFI_SUCCESS;}
+    if(CommandOp==1){WriteLeft=(int)*R(0x26C);if(!WriteLeft && !Stuck)Finish();}
+    else {ReadLeft=(int)*R(0x270);AnswerPos=0;FillRx();}
     return EFI_SUCCESS;
+  case 0x700:
+    assert(CommandOp==1 && WriteLeft>0);
+    for(int B=0;B<4 && WriteLeft>0;++B,--WriteLeft)Received[ReceivedBytes++]=(UINT8)(Value>>(8*B));
+    if(!WriteLeft && !Stuck)Finish();
+    return EFI_SUCCESS;
+  case 0x604:
+    if(Value&BIT2){++Cancels;if(CancelWorks){*R(0x40)&=~BIT0;*R(0x610)|=BIT4;}}
+    if(Value&BIT1){++Aborts;if(CancelWorks>1){*R(0x40)&=~BIT0;*R(0x610)|=BIT5;}}
+    return EFI_SUCCESS;
+  default:*R(Offset)=Value;return EFI_SUCCESS;
   }
-  *v=h.Reg[offset/4];return EFI_SUCCESS;
 }
-static EFI_STATUS EFIAPI write32(void *unused,UINT32 offset,UINT32 value){
-  ++h.Writes;assert(!(offset&3));
-  // Exactly the fixed transaction's local configuration, IRQ W1C/FIFO and
-  // primary cancel/abort registers. No clocks/packing/GPIO/FW/GPI/DMA writes.
-  assert(offset==0x614 || offset==0x80c || offset==0x810 || offset==0x26c ||
-    offset==0x270 || offset==0x600 || offset==0x700 || offset==0x618 || offset==0x604);
-  if(h.FailWriteNumber==h.Writes)return EFI_DEVICE_ERROR;
-  if(offset==0x600){
-    assert(value==txcmd || value==rxcmd);++h.Commands;h.Reg[offset/4]=value;
-    if(value==txcmd){assert(h.Commands&1);h.Phase=1;h.Reg[0x610/4]=TX_READY;h.Reg[0x40/4]=BIT0;h.Reg[0x908/4]=0;}
-    else {
-      assert(!(h.Commands&1));h.Phase=3;
-      h.Received=h.Short?64:h.Overread?72:h.ReadLength?h.ReadLength:68;h.Index=0;
-      if(h.Hang){h.Reg[0x610/4]=0;h.Reg[0x804/4]=0;h.Reg[0x40/4]=BIT0;h.Reg[0x908/4]=0;}
-      else {h.Reg[0x610/4]=h.Nack?BIT10:h.UnknownIrq?BIT20:DONE|RX_READY;
-        h.Reg[0x804/4]=BIT31|((h.Received%4?h.Received%4:4)<<28)|((h.Received+3)/4);h.Reg[0x40/4]=0;h.Reg[0x908/4]=3;}
-      if(h.RxModeChanged)h.Reg[0xe18/4]=1;
-      if(h.ForeignCommand)h.Reg[0x600/4]^=0x200;
-    }
-  } else if(offset==0x700){
-    assert(value==0x4c && h.Phase==1);++h.FifoWrites;h.Phase=2;
-    h.Reg[0x610/4]=DONE;h.Reg[0x40/4]=0;h.Reg[0x800/4]=0;
-    if(h.ModeChanged)h.Reg[0xe18/4]=1;
-  } else if(offset==0x618){assert(!(value&~OWN_IRQ));h.Reg[offset/4]=value;h.Reg[0x610/4]&=~value;}
-  else if(offset==0x604){
-    assert(value==BIT2 || value==BIT1);
-    if(value==BIT2)++h.CancelWrites;else ++h.AbortWrites;
-    if((value==BIT2 && h.CancelHang) || (value==BIT1 && h.AbortHang))return EFI_SUCCESS;
-    h.Reg[0x40/4]=0;h.Reg[0x908/4]=3;h.Reg[offset/4]=0;
-    h.Reg[0x610/4]=value==BIT2?CANCEL:ABORT;
-  } else {
-    if(h.BadRestore && h.Phase==3 && offset==0x80c && value==7)value^=1;
-    h.Reg[offset/4]=value;
-  }
-  return EFI_SUCCESS;
+static UINT64 EFIAPI Now(VOID *Context){assert(Context==(VOID *)Reg);return Clock++;}
+static void Reset(UINT32 InterfaceDisable,UINT32 Protocol){
+  memset(Reg,0,sizeof(Reg));*R(0x68)=(Protocol<<8)|0x04;*R(0x64)=InterfaceDisable;
+  *R(0xE24)=(32U<<24)|(16U<<16);*R(0xE28)=(32U<<24)|(16U<<16);*R(0x908)=3;
+  *R(0x258)=1;*R(0x614)=0x1234;*R(0x260)=0xDEAD;*R(0x48)=0x70;*R(0x24)=0;
+  memcpy(Original,Reg,sizeof(Reg));Writes=Cancels=Aborts=0;ReceivedBytes=0;Nack=Stuck=0;CancelWorks=1;RxCount=0;Clock=0;
 }
-static void initial(void){
-  memset(&h,0,sizeof(h));memset(&p,0,sizeof(p));h.Now=100;h.FailOffset=MAX_UINT32;
-  for(UINT32 i=0;i<68;++i)h.Payload[i]=(UINT8)(i*7+3);
-  h.Reg[0x68/4]=0x301;h.Reg[0x48/4]=0x11;h.Reg[0x278/4]=0x202012;
-  h.Reg[0x260/4]=h.Reg[0x284/4]=PACK0;h.Reg[0x264/4]=h.Reg[0x288/4]=PACK1;
-  h.Reg[0xe24/4]=h.Reg[0xe28/4]=(32U<<24)|(32U<<16);h.Reg[0x908/4]=3;
-  h.Reg[0x614/4]=0x55;h.Reg[0x80c/4]=7;h.Reg[0x810/4]=8;h.Reg[0x26c/4]=23;h.Reg[0x270/4]=29;
-  contract=(PIANO_GENI_PIO_CONTRACT){.Firmware=0x301,.MasterClock=0x11,.SclCounters=0x202012,
-    .ExplicitEnable=TRUE,.MappedDeviceMemoryVerified=TRUE,.ExclusiveOwnerVerified=TRUE,.ExistingRuntimeVerified=TRUE,
-    .ClockRateAndMuxVerified=TRUE,.SupplyAndGpioVerified=TRUE,.FirmwareAndPackingVerified=TRUE,.BoundedCallbacksVerified=TRUE};
-  io=(PIANO_GENI_PIO_IO){.Base=PIANO_GENI_SE6_BASE,.Bytes=PIANO_GENI_SE6_BYTES,.Read32=read32,.Write32=write32,.NowUs=now};
-  PIANO_GENI_RUNTIME_PACKET packet;assert(PianoGeniI2cPioBuildRuntimePacket(&packet)==EFI_SUCCESS);
-  txcmd=packet.TxCommand;rxcmd=packet.RxCommand;
-}
-static EFI_STATUS run(void){
-  UINT8 frame[68];memset(frame,0xa5,sizeof(frame));UINTN n=123;
-  EFI_STATUS r=PianoGeniI2cPioReadRuntime(&p,h.Now+10000,frame,&n);
-  if(r==EFI_SUCCESS){assert(n==68 && !memcmp(frame,h.Payload,68) && p.Clean && !p.Quarantined);}
-  else {assert(n==0);for(UINT32 i=0;i<68;++i)assert(!frame[i]);}
-  return r;
-}
-static void start(void){assert(PianoGeniI2cPioInitialize(&p,&io,&contract)==EFI_SUCCESS && !h.Writes && !h.Commands);}
-static void failed(EFI_STATUS expected,BOOLEAN quarantined){
-  EFI_STATUS actual=run();
-  if(actual!=expected || !p.Failed || p.Quarantined!=quarantined)
-    fprintf(stderr,"PIO fixture failure expected=%lx actual=%lx qr=%u/%u cmds=%u phase=%u lost=%u cleanup=%lx\n",
-      (unsigned long)expected,(unsigned long)actual,quarantined,p.Quarantined,h.Commands,h.Phase,p.OwnershipLost,(unsigned long)p.CleanupStatus);
-  assert(actual==expected && p.Failed && p.Quarantined==quarantined);
-  assert(p.Polls<=PIANO_GENI_POLL_LIMIT+1 && p.CleanupPolls<=PIANO_GENI_CLEANUP_LIMIT+1);
-  unsigned reads=h.Reads,writes=h.Writes;assert(run()==EFI_ABORTED && h.Reads==reads && h.Writes==writes);
-  assert(PianoGeniI2cPioInitialize(&p,&io,&contract)==EFI_ALREADY_STARTED);
-}
+static PIANO_GENI_PIO_IO Io={PIANO_GENI_SE6_BASE,PIANO_GENI_SE6_BYTES,(VOID *)Reg,Read32,Write32,Now};
+
 int main(void){
-  initial();PIANO_GENI_RUNTIME_PACKET packet;
-  assert(PianoGeniI2cPioBuildRuntimePacket(NULL)==EFI_INVALID_PARAMETER);
-  assert(PianoGeniI2cPioBuildRuntimePacket(&packet)==EFI_SUCCESS && packet.TxLength==1 && packet.TxWord==0x4c && packet.RxLength==68);
-  assert(packet.TxCommand==0x08009804 && packet.RxCommand==0x10009800);
-  PIANO_GENI_PIO_SNAPSHOT snap;assert(PianoGeniI2cPioCapture(&io,&snap)==EFI_SUCCESS && !h.Writes && !h.FifoReads);
-  assert(PianoGeniI2cPioValidate(&contract,&snap)==EFI_SUCCESS);
-  if(!PIANO_GENI_I2C_PIO_EXPERIMENT){
-    unsigned reads=h.Reads;assert(PianoGeniI2cPioInitialize(&p,&io,&contract)==EFI_UNSUPPORTED);
-    assert(run()==EFI_UNSUPPORTED && h.Reads==reads && !h.Writes && !h.Commands);
-    puts("GENI PIO default-off: pure fixed packet/read-only snapshot; no transaction callbacks invoked.");return 0;
+  PIANO_GENI_I2C I;UINT8 Data[600],In[68];
+  // GSI-only and non-I2C engines are reported without any register write
+  Reset(BIT0,3);assert(PianoGeniI2cOpen(&I,&Io,19200000,1000000)==EFI_UNSUPPORTED && Writes==0);
+  Reset(0,2);assert(PianoGeniI2cOpen(&I,&Io,19200000,1000000)==EFI_UNSUPPORTED && Writes==0);
+  Reset(0,3);*R(0x40)=BIT0;assert(PianoGeniI2cOpen(&I,&Io,19200000,1000000)==EFI_NOT_READY && Writes==0);
+  // FIFO mode, Linux 8-bit packing and the 19.2 MHz 1 MHz timing
+  Reset(0,3);assert(PianoGeniI2cOpen(&I,&Io,19200000,1000000)==EFI_SUCCESS);
+  assert(*R(0x258)==0 && *R(0x260)==0x7F8FE && *R(0x264)==0xFFEFE && *R(0x284)==0x7F8FE && *R(0x288)==0xFFEFE);
+  assert(*R(0x48)==((1U<<4)|1) && *R(0x278)==((2U<<20)|(8U<<10)|18) && *R(0x24)==0x7F && I.TxDepth==16);
+  // A 513-byte bootrom packet goes out byte for byte
+  for(unsigned N=0;N<513;++N)Data[N]=(UINT8)(N*7+1);
+  assert(PianoGeniI2cTransfer(&I,0x4C,Data,513,NULL,0,20000)==EFI_SUCCESS);
+  assert(ReceivedBytes==513 && !memcmp(Received,Data,513) && CommandOp==1 && !CommandStretch);
+  // Register write, repeated start, 68-byte report read
+  for(unsigned N=0;N<68;++N){Answer[N]=(UINT8)(0x57+N);}
+  AnswerBytes=68;ReceivedBytes=0;
+  UINT8 Register=0x4C;
+  assert(PianoGeniI2cTransfer(&I,0x4C,&Register,1,In,68,4000)==EFI_SUCCESS);
+  assert(ReceivedBytes==1 && Received[0]==0x4C && !memcmp(In,Answer,68) && CommandOp==2);
+  // NACK: reported, engine recovered, next transfer works
+  Nack=1;assert(PianoGeniI2cTransfer(&I,0x4C,Data,2,NULL,0,5000)==EFI_NO_RESPONSE && !I.Broken);
+  Nack=0;ReceivedBytes=0;assert(PianoGeniI2cTransfer(&I,0x4C,Data,2,NULL,0,5000)==EFI_SUCCESS && ReceivedBytes==2);
+  // A repeated-start read that fails after the stretched write ends with a bus STOP
+  NackRead=1;assert(PianoGeniI2cTransfer(&I,0x4C,&Register,1,In,68,5000)==EFI_NO_RESPONSE && Stops==1 && !I.Broken);
+  NackRead=0;assert(PianoGeniI2cTransfer(&I,0x4C,Data,2,NULL,0,5000)==EFI_SUCCESS && Stops==1);
+  // A command that never completes times out and is cancelled
+  Stuck=1;assert(PianoGeniI2cTransfer(&I,0x4C,Data,8,NULL,0,500)==EFI_TIMEOUT && Cancels==1 && !I.Broken);
+  // If neither cancel nor abort stops it, the engine is marked broken
+  CancelWorks=0;assert(PianoGeniI2cTransfer(&I,0x4C,Data,8,NULL,0,500)==EFI_TIMEOUT && Aborts==1 && I.Broken);
+  assert(PianoGeniI2cTransfer(&I,0x4C,Data,8,NULL,0,500)==EFI_NOT_READY);
+  // Close restores every register Open changed
+  CancelWorks=2;*R(0x40)&=~BIT0;Stuck=0;
+  assert(PianoGeniI2cClose(&I)==EFI_SUCCESS);
+  for(unsigned N=0;N<REGS;++N){
+    UINT32 Offset=N*4;
+    if(Offset==0x40||Offset==0x600||Offset==0x604||Offset==0x610||Offset==0x80C)continue;
+    if(Reg[N]!=Original[N]){printf("offset %x %x!=%x\n",Offset,Reg[N],Original[N]);assert(0);}
   }
-  for(unsigned bit=0;bit<8;++bit){
-    initial();BOOLEAN *gate[]={&contract.ExplicitEnable,&contract.MappedDeviceMemoryVerified,&contract.ExclusiveOwnerVerified,
-      &contract.ExistingRuntimeVerified,&contract.ClockRateAndMuxVerified,&contract.SupplyAndGpioVerified,
-      &contract.FirmwareAndPackingVerified,&contract.BoundedCallbacksVerified};*gate[bit]=FALSE;
-    assert(PianoGeniI2cPioInitialize(&p,&io,&contract)==EFI_NOT_READY && !h.Reads && !h.Writes);
-  }
-  initial();start();assert(run()==EFI_SUCCESS && h.Commands==2 && h.FifoWrites==1 && h.FifoReads==17);
-  assert(h.Reg[0x614/4]==0x55 && h.Reg[0x80c/4]==7 && h.Reg[0x810/4]==8 && h.Reg[0x26c/4]==23 && h.Reg[0x270/4]==29);
-  assert(!p.BusMayBeHeld && p.CleanupStatus==EFI_SUCCESS && !p.Failed);
-  initial();start();h.Short=TRUE;failed(EFI_BAD_BUFFER_SIZE,FALSE);
-  initial();start();h.ReadLength=66;failed(EFI_BAD_BUFFER_SIZE,FALSE);assert(p.Received==66 && h.FifoReads==17);
-  initial();start();h.Overread=TRUE;failed(EFI_BAD_BUFFER_SIZE,FALSE);
-  initial();start();h.Nack=TRUE;failed(EFI_DEVICE_ERROR,FALSE);
-  initial();start();h.Nack=h.FailQuiet=TRUE;failed(EFI_DEVICE_ERROR,TRUE);
-  assert(h.QuietFailureReady && h.Writes==h.WritesAtQuietFailure && !h.CancelWrites && !h.AbortWrites);
-  initial();start();h.UnknownIrq=TRUE;failed(EFI_COMPROMISED_DATA,TRUE);
-  assert(p.OwnershipLost && !h.CancelWrites && !h.AbortWrites);
-  initial();start();h.ModeChanged=TRUE;failed(EFI_COMPROMISED_DATA,TRUE);
-  assert(h.Commands==1 && p.OwnershipLost && !h.CancelWrites && !h.AbortWrites);
-  initial();start();h.RxModeChanged=TRUE;failed(EFI_COMPROMISED_DATA,TRUE);
-  assert(h.Commands==2 && p.OwnershipLost && !h.FifoReads && !h.CancelWrites && !h.AbortWrites);
-  initial();start();h.ForeignCommand=TRUE;failed(EFI_COMPROMISED_DATA,TRUE);
-  assert(p.OwnershipLost && !h.FifoReads && !h.CancelWrites && !h.AbortWrites);
-  initial();start();h.Hang=TRUE;failed(EFI_TIMEOUT,FALSE);assert(h.CancelWrites==1 && !h.AbortWrites);
-  initial();start();h.Hang=h.CancelHang=TRUE;failed(EFI_TIMEOUT,FALSE);assert(h.CancelWrites==1 && h.AbortWrites==1);
-  initial();start();h.Hang=h.CancelHang=h.AbortHang=TRUE;failed(EFI_TIMEOUT,TRUE);
-  initial();start();h.Hang=h.Freeze=TRUE;failed(EFI_TIMEOUT,FALSE);assert(p.Polls==PIANO_GENI_POLL_LIMIT+1);
-  initial();start();h.Backwards=TRUE;failed(EFI_COMPROMISED_DATA,TRUE);
-  initial();start();h.BadRestore=TRUE;failed(EFI_COMPROMISED_DATA,TRUE);
-  initial();start();h.FailWriteNumber=5;failed(EFI_DEVICE_ERROR,FALSE);assert(p.CommandsAttempted==1 && !h.Commands);
-  initial();start();h.FailOffset=0x780;failed(EFI_DEVICE_ERROR,TRUE);
-  initial();start();h.CallbackDelay=10000;failed(EFI_TIMEOUT,TRUE);
-  assert(h.FifoReads==1 && p.Received==0 && !h.CancelWrites && !h.AbortWrites);
-  initial();start();h.Reg[0x68/4]=0;failed(EFI_COMPROMISED_DATA,TRUE);assert(!h.Writes);
-  initial();start();h.Reg[0x40/4]=BIT12;failed(EFI_NOT_READY,TRUE);assert(!h.Writes);
-  initial();start();p.InRead=TRUE;assert(run()==EFI_NOT_READY && !h.Writes);p.InRead=FALSE;p.Attempts=64;assert(run()==EFI_OUT_OF_RESOURCES && !h.Writes);
-  initial();io.Base++;assert(PianoGeniI2cPioInitialize(&p,&io,&contract)==EFI_INVALID_PARAMETER && !h.Reads);
-  initial();io.Bytes-=4;assert(PianoGeniI2cPioCapture(&io,&snap)==EFI_INVALID_PARAMETER && !h.Reads);
-  const UINT32 offsets[]={0x68,0x64,0x258,0xe18,0xe1c,0x254,0x260,0x288,0x908,0x800,0x804,0x604,0x634,0x640};
-  for(unsigned i=0;i<ARRAY_SIZE(offsets);++i){
-    initial();h.Reg[offsets[i]/4]^=1;
-    assert(PianoGeniI2cPioInitialize(&p,&io,&contract)!=EFI_SUCCESS && !h.Writes);
-  }
-  initial();h.FailOffset=0x68;assert(PianoGeniI2cPioInitialize(&p,&io,&contract)==EFI_DEVICE_ERROR && !h.Writes);
-  puts("GENI PIO opt-in actual source: fixed repeated-start read68, all gates, fresh firmware/ownership, short/overread/NACK, timeout/cancel/abort, frozen/backward clock, quarantine and restore proof passed.");
+  // Bad arguments never reach the engine
+  Reset(0,3);assert(PianoGeniI2cOpen(&I,&Io,19200000,1000000)==EFI_SUCCESS);
+  assert(PianoGeniI2cTransfer(&I,0x80,Data,1,NULL,0,500)==EFI_INVALID_PARAMETER);
+  assert(PianoGeniI2cTransfer(&I,0x4C,NULL,1,NULL,0,500)==EFI_INVALID_PARAMETER);
+  assert(PianoGeniI2cOpen(&I,&Io,19200000,3400000)==EFI_UNSUPPORTED);
+  // Close leaves the configuration alone while a command cannot be stopped
+  Reset(0,3);assert(PianoGeniI2cOpen(&I,&Io,19200000,1000000)==EFI_SUCCESS);
+  Stuck=1;CancelWorks=0;assert(PianoGeniI2cTransfer(&I,0x4C,Data,8,NULL,0,500)==EFI_TIMEOUT && I.Broken);
+  UINT32 Clock48=*R(0x48);assert(Clock48!=Original[0x48/4]);
+  assert(PianoGeniI2cClose(&I)==EFI_DEVICE_ERROR && *R(0x48)==Clock48 && *R(0x258)==0 && !I.Open);
+  assert(PianoGeniI2cClose(&I)==EFI_DEVICE_ERROR);
+  puts("Piano GENI I2C FIFO engine: open/identity/packing/write513/write-read/NACK/timeout/abort/restore PASS");
   return 0;
 }

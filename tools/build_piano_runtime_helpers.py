@@ -49,6 +49,7 @@ TOUCH_CAPTURE_PATCH=ROOT/'tools/patches/piano-touch-view-raw-capture.patch'
 TOUCH_PEN_PATCH=ROOT/'tools/patches/piano-touch-view-pen-owner.patch'
 TOUCH_EPOCH_PATCH=ROOT/'tools/patches/piano-touch-view-epoch-reset.patch'
 TOUCH_LINE_NOISE_PATCH=ROOT/'tools/patches/piano-touch-view-line-noise.patch'
+TOUCH_PALM_PATCH=ROOT/'tools/patches/piano-touch-view-palm-rejection.patch'
 CAMERAD_CCM_PATCH=ROOT/'tools/patches/piano-camerad-writable-ccm.patch'
 CAMERAD_AE_PATCH=ROOT/'tools/patches/piano-camerad-stable-ae.patch'
 CAMERAD_FRAME_PATCH=ROOT/'tools/patches/piano-camerad-frame-integrity.patch'
@@ -90,8 +91,8 @@ def derive_touch_source(public, output):
     folder=Path(output)/'piano-touch-source';target=folder/relative
     target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,target)
     patches=[]
-    for patch in (TOUCH_DIAGNOSTICS_PATCH,TOUCH_CAPTURE_PATCH,TOUCH_PEN_PATCH,TOUCH_EPOCH_PATCH,TOUCH_LINE_NOISE_PATCH):
-        if patch==TOUCH_PEN_PATCH:
+    for patch in (TOUCH_DIAGNOSTICS_PATCH,TOUCH_CAPTURE_PATCH,TOUCH_PEN_PATCH,TOUCH_EPOCH_PATCH,TOUCH_LINE_NOISE_PATCH,TOUCH_PALM_PATCH):
+        if patch in (TOUCH_PEN_PATCH,TOUCH_PALM_PATCH):
             subprocess.run(['patch','--batch','--forward','--fuzz=0',
                             '--no-backup-if-mismatch','-p1','-i',str(patch)],cwd=folder,check=True)
         else:
@@ -320,12 +321,14 @@ def build(args):
     uapi=args.uapi.resolve();uapi_rows=tree_files(uapi/'include')
     if tree_digest(uapi_rows)!=UAPI_DIGEST:raise ValueError('3525 UAPI header generation changed')
     repository(args.macros.resolve(),MACROS_COMMIT);repository(args.v4l2_source.resolve(),LOOP_COMMIT)
-    tools=ROOT/'build/host-tools/usr/bin';env=os.environ.copy();env['PATH']=str(tools)+os.pathsep+env['PATH'];env['LD_LIBRARY_PATH']=str(ROOT/'build/host-tools/usr/lib')
+    toolroot=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
+    tools=toolroot/'bin';env=os.environ.copy();env['PATH']=str(tools)+os.pathsep+env['PATH'];env['LD_LIBRARY_PATH']=str(toolroot/'lib')
     inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
     inputs[str(TOUCH_DIAGNOSTICS_PATCH)]=sha(TOUCH_DIAGNOSTICS_PATCH)
     inputs[str(TOUCH_CAPTURE_PATCH)]=sha(TOUCH_CAPTURE_PATCH)
     inputs[str(TOUCH_PEN_PATCH)]=sha(TOUCH_PEN_PATCH)
     inputs[str(TOUCH_EPOCH_PATCH)]=sha(TOUCH_EPOCH_PATCH)
+    inputs[str(TOUCH_PALM_PATCH)]=sha(TOUCH_PALM_PATCH)
     for patch in (CAMERAD_CCM_PATCH,CAMERAD_AE_PATCH,CAMERAD_FRAME_PATCH,CAMERAD_MANUAL_PATCH,CAMERAD_TIMING_PATCH):
         inputs[str(patch)]=sha(patch)
     for name,pin in TOOL_PINS.items():

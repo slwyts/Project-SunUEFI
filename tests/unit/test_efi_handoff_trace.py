@@ -14,7 +14,8 @@ class EfiTraceSourceTests(unittest.TestCase):
             self.skipTest("host C compiler unavailable")
         with tempfile.TemporaryDirectory() as directory:
             binary = Path(directory) / "efi-trace-test"
-            build = subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+            # Host build takes the non-AArch64 branch, CurrentEL and DAIF reads trap at EL0
+            build = subprocess.run([compiler, "-U__aarch64__", "-std=c11", "-Wall", "-Wextra", "-Werror",
                 "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-I", str(ROOT / "tests/native"),
                 str(ROOT / "tests/native/test_efi_handoff_trace.c"), "-lz", "-o", str(binary)], capture_output=True, text=True)
             self.assertEqual(0, build.returncode, build.stderr)

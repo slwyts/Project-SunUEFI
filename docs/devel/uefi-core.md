@@ -47,11 +47,11 @@ PianoProductCoreEntry (uefi/core/PianoProductCore.c)
 
 在启动 Linux 或执行重启前，UEFI 必须安全断开硬件并退出 ExitBootServices，防止发生外设总线冲突：
 
-1. **USB 控制器断开**：停止 DWC3 端点传输，清空事件环，释放 USB DMA 缓冲区；
+1. **USB 控制器断开**：停止 DWC3 端点传输，清空事件环，释放 USB DMA 缓冲区；USB 口处于主机模式时，先断开 USB 设备驱动，停止并复位 xHCI；
 2. **UFS 存储安全退出**：完成已排队的传输，同步缓存，安全断开 UFS 控制器通道；
-3. **时钟与电源释放**：释放显示时钟、SE6 串行引擎等临时占用的外设时钟资源；
+3. **时钟与电源释放**：释放显示时钟；磁吸键盘的 MCU 回到复位，恢复 L11B/L14B 的 RPMh 投票、引脚和 SE6 寄存器；触屏恢复引脚和 SE2 寄存器；再释放 QUP1 时钟引用。键盘和触屏不使用 DMA，没能恢复的项目记入日志，交接继续；
 4. **SMMU 保护解除**：安全解绑 DMA 地址映射，释放页表；
-5. **安全拒绝交接**：若在任何一步无法确认设备已干净停止，固件将拒绝交接并保持当前状态，严禁强行释放可能仍在被硬件 DMA 访问的物理内存。
+5. **安全拒绝交接**：使用 DMA 的设备（USB、UFS、显示）在任何一步无法确认已干净停止时，固件拒绝交接并保持当前状态，严禁强行释放可能仍在被硬件 DMA 访问的物理内存。
 
 ## 常驻 USB Fastboot 服务
 
@@ -70,7 +70,7 @@ PianoProductCoreEntry (uefi/core/PianoProductCore.c)
 
 固件整合了定制的 SimpleInit 图形菜单，针对 3200×2136 分辨率的平板屏幕进行四倍字体放大：
 
-* **交互操作**：支持实体按键操作，音量＋/－键移动焦点，电源键确认，双击音量键返回；
+* **交互操作**：支持实体按键操作，音量＋/－键移动焦点，电源键确认，双击音量键返回；官方磁吸键盘、触控板和触屏在后台初始化后可用，见 [UEFI 设置页面](boot/uefi-console.md#官方磁吸键盘与触控板)；
 * **菜单选项**：启动 Linux、进入 Android、固件设置（Setup）、命令行（Shell）；
 * **进度显示**：启动画面实时显示底层硬件初始化的分阶段进度，避免长时间黑屏。
 
@@ -98,7 +98,10 @@ ESP 中的 Linux `boot.img` 总容器上限为 128 MiB，打包入口 `./build.s
 | `uefi/components/os-boot/` | 操作系统启动文件解析、内存租用与启动会话控制 |
 | `uefi/components/linux-loader/` | Linux 内核与设备树装载器 |
 | `uefi/components/product-handoff/` | 固件交接、晚期内存验证与退出钩子 |
+| `uefi/components/pogo-product/` | 官方磁吸键盘与触控板：QUP1 SE6 I²C、MCU 固件下载、标准输入协议与退出前释放 |
+| `uefi/components/touch-product/` | 触屏：QUP1 SE2 SPI、触控固件下载、原始矩阵到触点、`AbsolutePointer` 与退出前释放 |
 | `uefi/components/product-support/` | GOP 显示适配、内存日志打印与 BDS 支持库 |
+| `uefi/components/usb-host/` | USB 主机模式：Type-C 状态读取、xHCI 与 DMA |
 | `uefi/components/simple-init/` | SimpleInit 菜单与图形渲染组件 |
 | `uefi/handoff/bootselect/` | 合体 BOOT 开机前置选择器与按键捕获 |
 | `uefi/handoff/bootshim/` | 引导垫片与早期内存环境搭建 |

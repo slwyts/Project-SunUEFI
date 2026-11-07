@@ -1,30 +1,16 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Fixed SE6/slave4c runtime diagnostic. No OEM ABI, firmware/power or DMA API.
+// GENI I2C master in FIFO/PIO mode. Never loads SE firmware, changes the
+// FIFO/GSI selection or maps DMA
 #pragma once
 #include <Uefi.h>
-#ifndef PIANO_GENI_I2C_PIO_EXPERIMENT
-#define PIANO_GENI_I2C_PIO_EXPERIMENT 0
-#endif
-#if PIANO_GENI_I2C_PIO_EXPERIMENT != 0 && PIANO_GENI_I2C_PIO_EXPERIMENT != 1
-#error PIANO_GENI_I2C_PIO_EXPERIMENT must be 0 or 1
-#endif
 
 #define PIANO_GENI_SE6_BASE 0xA98000U
 #define PIANO_GENI_SE6_BYTES 0x4000U
-#define PIANO_GENI_RUNTIME_BYTES 68U
-#define PIANO_GENI_TOTAL_US 10000U
-#define PIANO_GENI_CLEANUP_US 1000U
-#define PIANO_GENI_POLL_LIMIT 4096U
-#define PIANO_GENI_CLEANUP_LIMIT 512U
+#define PIANO_GENI_PROTOCOL_I2C 3U
+#define PIANO_GENI_SAVED_REGISTERS 28U
 
-typedef struct {
-  UINT32 TxLength,TxWord,TxCommand,RxLength,RxCommand;
-} PIANO_GENI_RUNTIME_PACKET;
-// Pure, argument-free builder; cannot select another slave/register/length.
-EFI_STATUS PianoGeniI2cPioBuildRuntimePacket(OUT PIANO_GENI_RUNTIME_PACKET *Packet);
-
-// Callbacks access only the exact, independently mapped SE6 window. They must
-// return synchronously and boundedly. No built-in pointer dereference/MMIO.
+// Register access goes through the caller so host tests can model the SE and
+// the product can keep every access inside the fixed, mapped SE window
 typedef EFI_STATUS (EFIAPI *PIANO_GENI_READ32)(VOID *Context,UINT32 Offset,UINT32 *Value);
 typedef EFI_STATUS (EFIAPI *PIANO_GENI_WRITE32)(VOID *Context,UINT32 Offset,UINT32 Value);
 typedef UINT64 (EFIAPI *PIANO_GENI_NOW_US)(VOID *Context);
@@ -44,34 +30,28 @@ typedef struct {
   UINT32 TxFifo,RxFifo,TxWatermark,RxWatermark,TxLength,RxLength;
   UINT32 MasterCommand,SecondaryCommand;
 } PIANO_GENI_PIO_SNAPSHOT;
-// Explicit read-only capture remains available with the experiment disabled.
-// It does not read FIFO data (reading RX data consumes it), call native open,
-// change a clock/GPIO, or load SE microcode.
+// Read-only register capture for logs; never pops the RX FIFO
 EFI_STATUS PianoGeniI2cPioCapture(IN CONST PIANO_GENI_PIO_IO *Io,OUT PIANO_GENI_PIO_SNAPSHOT *Snapshot);
 
 typedef struct {
-  UINT32 Firmware,ClockSelect,MasterClock,SclCounters;
-  BOOLEAN ExplicitEnable,MappedDeviceMemoryVerified,ExclusiveOwnerVerified;
-  BOOLEAN ExistingRuntimeVerified,ClockRateAndMuxVerified,SupplyAndGpioVerified;
-  BOOLEAN FirmwareAndPackingVerified,BoundedCallbacksVerified;
-} PIANO_GENI_PIO_CONTRACT;
-// Caller attestations alone are not hardware proof. Full FW/clock words must
-// come from the next physical snapshot, not guessed Linux/native instances.
-EFI_STATUS PianoGeniI2cPioValidate(IN CONST PIANO_GENI_PIO_CONTRACT *Contract,IN CONST PIANO_GENI_PIO_SNAPSHOT *Snapshot);
-
-typedef struct {
-  UINT32 Signature;
   PIANO_GENI_PIO_IO Io;
-  PIANO_GENI_PIO_CONTRACT Contract;
-  PIANO_GENI_PIO_SNAPSHOT Before,After;
-  UINT64 LastTime,Deadline;
-  UINT32 Attempts,CommandsAttempted,TxWordsAttempted,CurrentCommand,Received,Polls,CleanupPolls;
-  EFI_STATUS LastStatus,CleanupStatus;
-  BOOLEAN InRead,Failed,Quarantined,Touched,CommandAttempted,OwnershipLost,BusMayBeHeld,Clean,ClockBroken;
-} PIANO_GENI_I2C_PIO;
-// Context must be new zeroed storage. Reinitializing an existing ledger fails.
-EFI_STATUS PianoGeniI2cPioInitialize(OUT PIANO_GENI_I2C_PIO *Pio,IN CONST PIANO_GENI_PIO_IO *Io,IN CONST PIANO_GENI_PIO_CONTRACT *Contract);
-// One fixed write1(register4c)/repeated START/read68/STOP; no raw write API.
-// Deadline is absolute monotonic time, at most 10ms from entry, including
-// reserved cleanup. Frame/count are exposed only after complete clean proof.
-EFI_STATUS EFIAPI PianoGeniI2cPioReadRuntime(VOID *Context,UINT64 DeadlineUs,UINT8 Frame[PIANO_GENI_RUNTIME_BYTES],UINTN *BytesRead);
+  BOOLEAN Open,Broken;
+  UINT32 Firmware,InterfaceDisable,TxDepth,RxDepth,SourceHz;
+  // Every register Open changes, with its original value, restored by Close
+  UINT32 SavedOffset[PIANO_GENI_SAVED_REGISTERS],SavedValue[PIANO_GENI_SAVED_REGISTERS];
+  UINT32 SavedCount;
+  UINT32 Transfers,Failures,LastIrq,LastGeniStatus,LastIos;
+  EFI_STATUS LastStatus,CloseStatus;
+} PIANO_GENI_I2C;
+
+// EFI_UNSUPPORTED with no register written when the SE is not I2C or is
+// GSI-only; EFI_NOT_READY when another command is active
+EFI_STATUS PianoGeniI2cOpen(OUT PIANO_GENI_I2C *I2c,IN CONST PIANO_GENI_PIO_IO *Io,IN UINT32 SourceHz,IN UINT32 BusHz);
+// One write, one read, or a write followed by a repeated-start read. Every
+// wait is bounded by TimeoutUs; on error the command is cancelled or aborted
+// and the FIFOs drained. Lengths are limited to 4 KiB per phase
+EFI_STATUS PianoGeniI2cTransfer(IN OUT PIANO_GENI_I2C *I2c,IN UINT8 Address,
+  IN CONST UINT8 *Write OPTIONAL,IN UINTN WriteBytes,OUT UINT8 *Read OPTIONAL,IN UINTN ReadBytes,IN UINT32 TimeoutUs);
+// Requires an idle engine (cancels a leftover command), restores every saved
+// register in reverse order and verifies each readback
+EFI_STATUS PianoGeniI2cClose(IN OUT PIANO_GENI_I2C *I2c);

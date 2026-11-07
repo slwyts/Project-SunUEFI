@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Host-only tests of the actual shared DMA/SMMU and read-only UFS sources.
 set -euo pipefail
+case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_dma_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_dma_root"
 sun_dma_includes=(
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include
-  -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/X64
+  -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/$sun_bind
   -I upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include
   -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include
+  -I uefi/components/ext4
 )
 for sun_dma_test in dma smmu_snapshot io_pgtable owned_smmu ufs_dma_layout ufs_readonly_dma ufs_probe gpt readonly_block; do
   cc -std=gnu11 -fshort-wchar -g -fsanitize=address,undefined -fno-pie -no-pie \

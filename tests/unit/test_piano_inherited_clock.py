@@ -1,9 +1,9 @@
 """Exact captured-PE derivation; no firmware build, execution or device access."""
 import hashlib
 import importlib.util
-import json
 from pathlib import Path
 import struct
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -11,13 +11,14 @@ ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location('inherited_clock', ROOT / 'tools/piano_inherited_clock.py')
 CLOCK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CLOCK)
+sys.path.insert(0, str(ROOT / 'tools'))
+import piano_vendor_inputs as vendor
 
 
 class InheritedClockTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        catalog = json.loads((ROOT / 'private/analysis/native-driver-inventory.json').read_text())
-        cls.source = Path(catalog['drivers']['ClockDxe']['pe_path'])
+        cls.source = vendor.load(ROOT)['native_drivers']['ClockDxe']['pe_path']
         cls.original = cls.source.read_bytes()
 
     def test_exact_startup_deferral_and_unchanged_runtime_abi(self):

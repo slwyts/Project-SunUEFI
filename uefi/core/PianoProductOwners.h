@@ -15,8 +15,9 @@
 #define PIANO_OWNER_GPI       BIT6
 #define PIANO_OWNER_POGO      BIT7
 #define PIANO_OWNER_DISPLAY   BIT8
+#define PIANO_OWNER_TOUCH     BIT9
 #define PIANO_OWNER_CORE_MASK (PIANO_OWNER_USB|PIANO_OWNER_UFS|PIANO_OWNER_BRIDGE|PIANO_OWNER_POLICY|PIANO_OWNER_INPUT)
-#define PIANO_OWNER_SUPPORTED_MASK (PIANO_OWNER_CORE_MASK|PIANO_OWNER_DISPLAY)
+#define PIANO_OWNER_SUPPORTED_MASK (PIANO_OWNER_CORE_MASK|PIANO_OWNER_DISPLAY|PIANO_OWNER_POGO|PIANO_OWNER_TOUCH)
 #define PIANO_OWNER_ALL_MASK  (PIANO_OWNER_SUPPORTED_MASK|PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|PIANO_OWNER_POGO)
 typedef struct {
   UINT32 Revision;
@@ -57,6 +58,11 @@ typedef struct {
   PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime;
   VOID *InputContext;
   PIANO_PRODUCT_INPUT_STOP StopInput;
+  // Required when PIANO_OWNER_POGO / PIANO_OWNER_TOUCH is started
+  VOID *PogoContext;
+  PIANO_PRODUCT_INPUT_STOP StopPogo;
+  VOID *TouchContext;
+  PIANO_PRODUCT_INPUT_STOP StopTouch;
   VOID *DisplayContext;
   PIANO_PRODUCT_DISPLAY_STOP StopDisplay;
   PIANO_PRODUCT_DISPLAY_STARTUP_REPORT DisplayStartup;
@@ -82,15 +88,15 @@ typedef struct {
   EFI_HANDLE EfiImage;
   CONST EFI_LOADED_IMAGE_PROTOCOL *EfiIdentity;
   BOOLEAN Initialized,Busy,ServicesLost,Retained,Clean,PolicyStopped;
-  BOOLEAN UsbStopped,UsbStartupFailedClean,ProofAccepted,BridgeStopped,UfsStopped,InputStopped,DisplayStopped;
+  BOOLEAN UsbStopped,UsbStartupFailedClean,ProofAccepted,BridgeStopped,UfsStopped,InputStopped,DisplayStopped,PogoStopped,TouchStopped;
   BOOLEAN BootActionConsumed,OuterTplHeld,ManagerEventClosed;
   EFI_STATUS Status,PolicyStatus,UsbStatus,ProofStatus,AcceptStatus;
-  EFI_STATUS PrepareStatus,ShutdownStatus,InputStatus,DisplayStatus,EventStatus;
+  EFI_STATUS PrepareStatus,ShutdownStatus,InputStatus,DisplayStatus,EventStatus,PogoStatus,TouchStatus;
   EFI_STATUS NvStatus,FilesystemsStatus;
   UINT32 RegisteredStartedMask,RegisteredAbsentMask,RetiredMask;
   PIANO_USB_SERVICE_RETIRE_REPORT Usb;
   PIANO_UFS_RESET_REPORT Ufs;
-  PIANO_PRODUCT_INPUT_RETIRE_REPORT Input;
+  PIANO_PRODUCT_INPUT_RETIRE_REPORT Input,Pogo,Touch;
   PIANO_PRODUCT_DISPLAY_RETIRE_REPORT Display;
   PIANO_FB_BOOT_ACTION Boot;
 } PIANO_PRODUCT_OWNERS_REPORT;

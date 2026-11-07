@@ -1,4 +1,5 @@
 """Product's real SEC hook + source/ASM; no physical target execution."""
+import platform
 from pathlib import Path
 import os
 import re
@@ -10,10 +11,13 @@ import shutil
 import hashlib
 
 ROOT=Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
+TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
 BASE=ROOT/'upstream/Mu-Silicium/Mu_Basecore'
 sys.path.insert(0,str(ROOT/'tools'))
 from prepare_product_early_memory import prepare,sec_source,verify,source_inputs,EARLY_CORE_FILES
 from prepare_product import fix_product_low_heap
+import piano_vendor_inputs as vendor_inputs
 from test_product_low_memory import function
 
 
@@ -82,7 +86,8 @@ class EarlyMemoryTests(unittest.TestCase):
         if not (ROOT/'private/captures/2026-10-03-piano/live.dtb').is_file():
             self.skipTest('Optional captured factory DT is unavailable')
         original=(ROOT/'uefi/platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c').read_text()
-        low,_=fix_product_low_heap(original,(ROOT/'private/captures/2026-10-03-piano/live.dtb').read_bytes())
+        # Same board DTB that prepare_product passes to fix_product_low_heap
+        low,_=fix_product_low_heap(original,vendor_inputs.load(ROOT)['board_dtb'])
         (ROOT/'build/product-low-memory-test.c').write_text(low)
         source=(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Sec/Sec.c').read_text()
         old=function(source,'InitializeMemory').replace('InitializeMemory','PianoActualInitializeMemory')
@@ -102,7 +107,7 @@ class EarlyMemoryTests(unittest.TestCase):
             (path/'PianoFrozenLowFixture.h').write_text(
                 (ROOT/'tests/native/PianoProductLowMemoryTest.c').read_text().replace('int main(void)','int PianoFrozenLowMain(void)',1))
             exe=path/'early'
-            includes=[BASE/'MdePkg/Include',BASE/'MdePkg/Include/X64',BASE/'MdeModulePkg/Include',
+            includes=[BASE/'MdePkg/Include',BASE/'MdePkg/Include'/HOST_PROCESSOR_BIND,BASE/'MdeModulePkg/Include',
                 BASE/'UefiCpuPkg/Include',BASE/'EmbeddedPkg/Include',
                 ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include',ROOT/'tests/native',path]
             command=['cc','-std=gnu11','-fshort-wchar','-g','-fsanitize=address,undefined',
@@ -120,11 +125,11 @@ class EarlyMemoryTests(unittest.TestCase):
     def test_real_aarch64_read_fixup_object(self):
         source=ROOT/'uefi/handoff/early-memory'
         inc=BASE/'MdePkg/Include'
-        clang=ROOT/'build/host-tools/usr/bin/clang'
+        clang=TOOLCHAIN/'bin/clang'
         with tempfile.TemporaryDirectory(prefix='piano-sec-asm-')as directory:
             obj=Path(directory)/'read.obj'
             subprocess.run([str(clang),'--target=aarch64-windows-msvc','-c',str(source/'PianoSecRead32.S'),'-o',str(obj)],check=True)
-            dis=subprocess.run([str(ROOT/'build/host-tools/usr/bin/llvm-objdump'),'-d',str(obj)],check=True,capture_output=True,text=True).stdout
+            dis=subprocess.run([str(TOOLCHAIN/'bin/llvm-objdump'),'-d',str(obj)],check=True,capture_output=True,text=True).stdout
             self.assertRegex(dis,r'0000000000000800 <PianoSecReadVectors>')
             for instruction in ('ldr\tw9, [x0]','mrs\tx10, ESR_EL1','mrs\tx11, FAR_EL1',
                                 'msr\tELR_EL1, x13','msr\tVBAR_EL1, x20','eret'):
@@ -145,7 +150,7 @@ class EarlyMemoryTests(unittest.TestCase):
             vbar_restore=next(pc for pc,text in instructions.items()if text=='msr\tVBAR_EL1, x20')
             daif_restore=next(pc for pc,text in instructions.items()if text=='msr\tDAIF, x19')
             self.assertLess(vbar_restore,daif_restore)
-            rel=subprocess.run([str(ROOT/'build/host-tools/usr/bin/llvm-objdump'),'-r',str(obj)],check=True,capture_output=True,text=True).stdout
+            rel=subprocess.run([str(TOOLCHAIN/'bin/llvm-objdump'),'-r',str(obj)],check=True,capture_output=True,text=True).stdout
             self.assertIn('PianoSecReadActiveState',rel)
             self.assertIn('PianoSecReadFatal',rel)
             for name in ('PianoEarlyMemory.c','PianoSmemRam.c','PianoSmemDescriptor.c'):
@@ -182,7 +187,7 @@ class EarlyMemoryTests(unittest.TestCase):
             record=prepare(ROOT,target);self.assertTrue(verify(ROOT,target,record))
             (app/'PianoSmemRam.h').write_bytes((ROOT/'uefi/handoff/early-memory/PianoSmemRam.h').read_bytes())
             for name in OBJECT_DXE_SOURCES:
-                args=[str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-misleading-indentation']
+                args=[str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-misleading-indentation']
                 for path in (BASE/'MdePkg/Include',BASE/'MdePkg/Include/AArch64',ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include',app):args+=['-I',str(path)]
                 subprocess.run(args+[str(app/name)],check=True)
             sources=(app/'ProductCore.inf').read_text().split('[Sources]\n',1)[1].split('[',1)[0]

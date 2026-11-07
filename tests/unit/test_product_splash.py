@@ -1,10 +1,13 @@
 """Actual GOP renderer pixels/fences and canonical single-product source wiring."""
+import platform
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 ROOT=Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
+TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
 LIB=ROOT/'uefi/components/product-support/Library/ProductBootManagerLib'
 INC=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 
@@ -16,20 +19,21 @@ class ProductSplashTests(unittest.TestCase):
             exe=Path(temporary)/'splash'
             subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Werror','-Wno-misleading-indentation',
                 '-fshort-wchar','-fsanitize=address,undefined','-fno-pie','-no-pie',
-                '-I'+str(INC),'-I'+str(INC/'X64'),str(ROOT/'tests/native/PianoProductSplashTest.c'),
+                '-I'+str(INC),'-I'+str(INC/HOST_PROCESSOR_BIND),str(ROOT/'tests/native/PianoProductSplashTest.c'),
                 str(LIB/'ProductSplash.c'),'-o',str(exe)],check=True)
             run=subprocess.run([str(exe),str(output/'product-splash-3200x2136.ppm')],capture_output=True,text=True,
                 env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'})
             self.assertEqual(run.returncode,0,run.stdout+run.stderr)
             print(run.stdout.strip())
-        subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc',
+        subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc',
             '-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror',
             '-I'+str(INC),'-I'+str(INC/'AArch64'),str(LIB/'ProductSplash.c')],check=True)
-        subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc',
+        subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc',
             '-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-misleading-indentation',
             '-I'+str(INC),'-I'+str(INC/'AArch64'),
             '-I'+str(ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdeModulePkg/Include'),
             '-I'+str(ROOT/'upstream/Mu-Silicium/Common/Mu/MsCorePkg/Include'),
+            '-I'+str(ROOT/'uefi/components/product-pump/Mu_Basecore/MdePkg/Include'),'-I'+str(ROOT/'uefi/core'),
             str(LIB/'ProductBootManagerLib.c')],check=True)
 
     def test_actual_inf_bds_hook_and_freshness_inputs(self):

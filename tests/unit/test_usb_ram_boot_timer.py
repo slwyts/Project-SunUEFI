@@ -3,6 +3,7 @@
 PIANO_RAM_BOOT_TIMER_SOURCE may select a newly generated Stage0 source. The
 default uses real prepare in a temporary repository, never current staging.
 """
+import platform
 import hashlib
 import contextlib
 import importlib.util
@@ -17,6 +18,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
 DEFAULT_SOURCE = ROOT / "upstream/Mu-Silicium/Platforms/Xiaomi/pianoGuiPkg/Library/Stage0BootManagerLib/Stage0BootManagerLib.c"
 
 
@@ -138,7 +140,7 @@ class UsbRamBootTimerTests(unittest.TestCase):
             command = [os.environ.get("CC", "cc"), "-std=gnu11", "-fshort-wchar", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
                        "-g", "-fsanitize=address,undefined", "-fno-pie", "-no-pie"]
             for include in (ROOT / "uefi/core", ROOT / "upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include",
-                            ROOT / "upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/X64"):
+                            ROOT / "upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include"/HOST_PROCESSOR_BIND):
                 command += ["-I", str(include)]
             command += [str(c_file), "-o", str(binary)]
             build = subprocess.run(command, text=True, capture_output=True)

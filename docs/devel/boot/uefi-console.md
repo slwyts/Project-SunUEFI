@@ -27,7 +27,114 @@ SimpleInit 提供触摸尺寸的图形菜单；TianoCore 设置页面使用 UEFI
 合体 BOOT 的实机检查确认四倍字号、常用菜单中文、音量键移动、电源键确认
 与双音量键返回均可使用。菜单、设置和 Shell 切换时保留同一个 Fastboot 服务。
 Shell 首次连接曾发生 bulk IN 响应停滞，重新连接行为仍需修正。
-触屏、磁吸键盘及触控板的 UEFI 驱动尚未完成，Linux 下可用不等于 UEFI 下可用。
+磁吸键盘和触控板、触屏见后面两节。
+
+## 官方磁吸键盘与触控板
+
+固件在后台初始化键盘套里的 Nanosic WN8030 微控制器，进入菜单后大约
+1.5 秒接入，这段时间和之后音量键、电源键照常可用。键盘以标准
+`SimpleTextIn` 和 `SimpleTextInEx` 发布，并带 `ConsoleInDevice` 标记，
+SimpleInit、固件设置和 Shell 都通过标准控制台读到它。顶排没有功能键，
+右 Ctrl 加 `1` 到 `0`、`-`、`=` 输出 F1 到 F12，与 Linux 相同，因此
+右 Ctrl + `=` 是 F12，可以进入固件设置。Caps Lock 灯跟随锁定状态，
+按键不自动连发。实现已编译进产品镜像，尚未在平板上验证。
+
+触控板以标准 `SimplePointer` 发布：单指移动光标，轻点一下是左键，
+按下触控板是左键或右键。它不作为绝对坐标设备发布，因为菜单会把绝对
+坐标当成触屏点按。SimpleInit 按“移动量 × `gui.mouse_scale` ÷ 分辨率”
+换算光标，触控板报告的分辨率为 1，一个计数移动一个像素，横向划过整块
+触控板约等于屏幕宽度；纵向计数按物理尺寸换算成与横向相同的比例。
+
+初始化顺序与 Linux 7.3 的 `hid-nanosic-wn8030` 驱动一致：打开 QUP1
+wrapper 与 SE6 的时钟，GPIO56/57 复用到 SE6；GPIO188 复位和 GPIO3 睡眠
+（均低有效）先保持有效，经 RPMh 先打开 L11B 1.8 V，再打开 L14B 3.3 V；
+释放复位，等待 500 ms 让 bootrom 启动，释放睡眠，确认 bootrom ID 为
+`0xC8`、状态为 0，下载 RAM 固件（头部和每包 503 字节的代码，每次写入后
+等待 3 ms），校验状态为 3 后启动固件，然后在 GPIO97 的上升沿读取 68 字节
+报告。键盘接上时发送打开触控板和键盘供电的命令，此后每 12 秒重发键盘
+供电请求。整个过程是由共享 pump 推进的状态机，只在等待事件和菜单刷新时
+运行，每次最多执行一次 I²C 传输，不会阻塞菜单、设置、Shell 或 Fastboot。
+
+传输使用 SE6 的 GENI I²C FIFO 接口，1 MHz，由 CPU 轮询，不使用 DMA，
+所以不新增 SMMU 上下文。SE6 必须已经由引导程序载入 I²C 协议固件并开放
+FIFO 接口；如果它只开放 GSI 接口，固件只读取状态、不改动它，键盘在 UEFI
+中不可用，Linux 照常使用。MCU 的 RAM 固件来自固定版本的
+`upstream/piano-firmware-current` 中的 `nanosic/MCU_Upgrade.bin`，也就是
+Linux 根系统使用的同一文件；`tools/prepare_product.py` 按该仓库的
+`firmware/SHA256SUMS` 核对后生成头文件嵌入固件，生成文件不提交。
+
+任何一步失败，固件立即释放已经占用的资源，不发布输入设备，只保留音量键
+和电源键。RAM 日志中的 `PIANO_POGO_UNAVAILABLE` 写明失败步骤和原因，
+例如 `se6-gsi-only`、`boot-id`、`verify` 或 `transport`；`PIANO_POGO_SE6`
+记录 SE6 的协议、FIFO 设置和时钟频率，`PIANO_POGO_READY` 和
+`PIANO_POGO_COVER` 记录接入和键盘连接。没有键盘时 MCU 照常启动，只是没有
+按键输入。
+
+进入 Linux 或重启前，固件卸载输入协议，按 Linux 关机顺序让 MCU 进入睡眠
+和复位，等待 10 ms，恢复 L14B、L11B 的原 RPMh 投票，恢复引脚和 GPIO97
+的中断配置，恢复 SE6 寄存器，最后释放本固件持有的时钟引用。Linux 驱动
+探测时会重新上电、复位并下载固件，看到的状态与其他启动方式相同。这条
+路径不使用 DMA，也没有 SMMU 上下文，某一项没能恢复时不阻止启动：日志里的
+`PIANO_POGO_RELEASE` 列出没有恢复的项目。输入协议、引脚、电源或时钟未能安全退出时拒绝交接，保留资源并显示恢复操作。
+
+源码位置：
+
+* `uefi/components/pogo-product/`：资源占用与释放、MCU 下载格式、启动状态机和输入协议。
+* `uefi/core/PianoGeniI2cPio.c`：GENI I²C FIFO 传输，所有等待都有时限。
+* `uefi/core/PianoPogoReport.c`、`uefi/core/PianoPogoInput.c`：报告解析、按键映射和触控板指针。
+
+## 触屏
+
+屏幕的 NT36532E 是触控与显示一体的芯片，没有内置触控固件。固件在后台
+给它下载触控固件，完成后触屏以标准 `AbsolutePointer` 发布，坐标范围与 3200×2136 横屏画布相同，SimpleInit 直接用它点按。
+只跟踪一个触点。SimpleInit 把每个新坐标都当成一次点按，所以每次触摸只在
+抬起时报告一次，位置取按下点；移动超过一个传感器间距的触摸不算点按，
+菜单里不能拖动或滚动，多指手势也不可用。实现已编译进产品镜像，尚未在平板上验证。
+
+初始化严格按 Linux 7.3 `nt36xxx` 驱动在“没有可跟随的 DRM 面板”时的探测
+顺序进行，这正是屏幕已由引导程序点亮时的情形：写 `0x7FFF80 = 0x5A`
+做引擎复位，等 10 ms；依次用三组芯片 ID 寄存器读取并匹配 NT36532，每组
+最多 5 次，每次先做 bootloader 复位；读 `ENB_CASC` 判断单芯片或级联；
+然后执行 `nvt_download_firmware_hw_crc`：bootloader 复位，写 ILM/DLM 的
+目标地址、长度和 CRC，打开自动复制，按 63 KiB 分块写入全部分区，等待
+自动复制完成，打开固件 CRC 校验，置 `BOOT_RDY`，确认复位状态在
+`0xA0`–`0xAF`，失败时整体重试，共 3 次；最后读取帧长度和固件信息。
+与 Linux 驱动一样，不操作任何复位 GPIO、稳压器或面板命令。
+
+触控固件按 GPIO100（触控 lcd-id）选择：0 用
+`novatek/novatek_nt36532_piano_fw_csot.bin`，1 用
+`novatek/novatek_nt36532_piano_fw_boe.bin`，与 Linux 设备树的
+`firmware-name` 顺序相同。两份文件来自固定版本的
+`upstream/piano-firmware-current`，`tools/prepare_product.py` 按
+`firmware/SHA256SUMS` 核对后嵌入，`PIANO_TOUCH_FIRMWARE` 日志记录所选
+文件的 SHA-256。
+
+传输使用 QUP1 SE2 的 GENI SPI FIFO 接口，模式 0，最高 19.2 MHz，由 CPU
+轮询，不使用 DMA。SE2 只开放 GSI 接口时，固件只读取状态，触屏在 UEFI
+中不可用，日志写 `se2-gsi-only`。运行时在 GPIO162 的上升沿读取一帧原始
+矩阵（最多每秒约 60 帧），算法移植自 `piano-touch-view`：锁定非笔的
+主帧类型，取 32 帧中值作基线，去除行列共模噪声，在 3×3 邻域找超过阈值
+200 的峰并求加权质心，再映射到屏幕坐标（Y 轴翻转）；静止时基线缓慢跟随
+漂移。pump 只在等待事件和菜单刷新时推进触屏：下载期间每次写一个分块（19.2 MHz
+下约 30 ms），之后每次最多读一帧。
+
+失败时固件释放已占用的资源，不发布触屏，`PIANO_TOUCH_UNAVAILABLE` 写明
+步骤和原因，例如 `se2-gsi-only`、`chip-id`、`firmware-start` 或
+`transport`；`PIANO_TOUCH_SE2`、`PIANO_TOUCH_CHIP_ID`、
+`PIANO_TOUCH_DOWNLOAD`、`PIANO_TOUCH_READY` 记录各阶段结果。连续出现看门狗
+帧时按 Linux 的做法重新下载。
+
+进入 Linux 或重启前，固件卸载触屏协议，恢复 SPI 与中断引脚、GPIO162 的
+中断配置和 SE2 寄存器，释放时钟引用；不向芯片发送命令，Linux 驱动关机时
+同样不发。Linux 探测时会再次复位并下载固件。这条路径不使用 DMA，某一项
+没能恢复时在 `PIANO_TOUCH_RELEASE` 中列出原因并拒绝交接，不把未关闭的输入协议或时钟交给系统。
+
+源码位置：
+
+* `uefi/components/touch-product/PianoTouchService.c`：资源占用与释放、探测与下载状态机、`AbsolutePointer`。
+* `uefi/components/touch-product/PianoGeniSpiPio.c`：GENI SPI FIFO 传输。
+* `uefi/components/touch-product/PianoTouchNvt.c`：固件分区解析与芯片表。
+* `uefi/components/touch-product/PianoTouchMatrix.c`：原始矩阵到触点。
 
 ## 启动项与横屏
 
@@ -150,3 +257,61 @@ PHY 是 8 位寄存器，32 位读取会复制字节，例如写入 `1` 返回 `
 协议内容改为 `DEBUG_VERBOSE`，需要逐次 DMA 记录时可在调试构建中开启。
 分配、映射、退出和错误记录继续保留，失败请求与响应仍会输出。
 这样可以避免读取 Linux 文件时覆盖前面的 USB 初始化现场。
+
+## USB 主机
+
+在 SimpleInit、固件设置或 Shell 里插上 OTG 转接头连接的键盘、鼠标、Hub 或
+U 盘，固件把平板的 USB 口从设备模式切换为主机模式，拔下后切回 UEFI
+Fastboot。实现已编译进产品镜像，尚未在平板上验证。
+
+角色由 PMIC 的 Type-C 状态决定。固件通过 SPMI 只读通道读取 PMIH010X
+充电模块的 Type-C 寄存器，布局取自本机原厂 UEFI 的 PmicDxe：类型 `0x02`、
+子类型 `0x7f`/`0xa8`/`0xba` 的充电外设之后 `+0x600` 是 Type-C 块，`+0x08`
+的 Rd 位表示接入的是 USB 设备，`+0x0B` 的位 0、位 1 是接入和插头方向。
+只有 PMIC 型号为 `0x47` 或 `0x56` 时才这样读取，其他型号保持设备模式。
+连续两次、相隔 250 ms 读到“接入 USB 设备”才切到主机，切回时同样需要两次。
+切换只在界面通过 `WaitForEvent` 等待输入时进行；开机倒计时和读取启动文件
+不经过这个等待，不会切换，Shell 命令只有在等待按键时才可能切换。PMIC 同时
+报告对方的 Rp（电脑或充电器在供电）时，始终保持设备模式。
+
+切到主机时，常驻 USB 服务先按原有流程停止 Fastboot，释放 9 个 DMA 缓冲区并
+确认控制器停下；时钟、PHY 和 USB0 的 SMMU 页表继续由同一个 USB 服务持有。
+随后按原厂 UsbConfigDxe 的 `Usb30InitHost` 写 DWC3 全局寄存器（另按 Linux
+对本机设备树的处理设置 `GCTL.DSBLCLKGTNG` 和 `GUCTL.HSTINAUTORETRY`），把 xHCI
+寄存器窗口（`0x0A600000` 起 32 KiB）通过 `PianoUsbHostPci` 交给标准
+XhciDxe，再由 UsbBus、UsbKb、UsbMouse、UsbMassStorage 接管设备。DMA 只经过
+USB0 的 SMMU 页表：XhciDxe 的环和上下文放在改成非缓存（`EFI_MEMORY_WC`）的
+页上，数据传输经由每次主机会话只映射一次的 1 MiB 中转区复制，并显式维护缓存。
+
+U 盘在 UEFI 里只读。固件补丁让 UsbMassStorageDxe 的 `WriteBlocks` 直接返回
+写保护，并把介质报告为只读，不会向 U 盘发送 WRITE 命令。
+
+固件不控制 VBUS。原厂 PmicDxe 的 VBUS 开关函数是空函数，原厂 UEFI 也不写
+OTG 命令寄存器，所以这里不新增 PMIC 写入。PMIC 是否会自行给不带电源的设备
+供电还没有实机结论；每次 Type-C 状态变化时，日志 `SUNUEFI_USB_TYPEC_POWER`
+记录 DCDC 和 USBIN 的只读状态，`SUNUEFI_USB_TYPEC_MODE` 记录 Type-C 端口模式
+配置，用来判断有没有输出 5 V、端口是否只作受电方。
+
+不做 USB PD 协商，也不交换数据角色：带电源的 USB-C 扩展坞给平板供电时，
+平板是受电方和设备，扩展坞上的设备不会出现。QMP PHY 的通道方向沿用开机时
+的设置，插头方向不同时 USB 3 设备会以 USB 2 速度工作。
+
+启动 Linux、重启或关机前，USB 服务先退出主机模式：断开 XhciDxe 及其上层驱动，
+确认 PCI I/O 层没有剩余映射和分配，停止并复位 xHCI，撤销中转区映射，把 DWC3
+寄存器恢复为设备模式的值，然后照常关闭 SMMU、PHY 和时钟。Linux 看到的控制器
+状态与没插过 USB 设备时相同。这一步在任何退出动作开始前进行：还有文件或驱动
+占用 U 盘时，屏幕提示拔下 USB 设备后重试并回到菜单，拔下后可以直接再次启动。
+无法确认 xHCI 已停下、DMA 可能仍在进行时拒绝交接，屏幕显示“USB 设备仍在使用，
+未能安全断开”。
+
+日志里 `SUNUEFI_USB_TYPEC`、`SUNUEFI_USB_ROLE`、`SUNUEFI_USB_HOST_*` 记录
+检测结果、切换过程和 xHCI 能力寄存器。主机模式下 UEFI Fastboot 不在线，
+拔下 USB 设备、接回电脑后用 `fastboot -s SunUEFI-piano oem ramlog` 取回。
+
+源码位置：
+
+* `uefi/components/usb-host/PianoUsbTypec.c`：Type-C 状态读取。
+* `uefi/components/usb-host/PianoUsbHost.c`：主机模式寄存器、DMA 和退出。
+* `uefi/core/PianoUsbController.c`：设备与主机角色切换。
+* `uefi/core/PianoUsbHostPci.c`：PCI I/O 层，控制器运行中释放的共享缓冲区保留到 xHCI 停下后再释放。
+* `patches/firmware/mu-basecore/cfb9372/`：U 盘只读。

@@ -13,6 +13,24 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 import build_piano_runtime_helpers as runtime
 
+PEN = ROOT / 'linux/userspace/pen'
+# Without pen options the reader never creates the pen owner; these only satisfy the link
+PEN_OWNER_STUBS = r'''
+#include "piano-pen-owner.h"
+struct piano_pen_owner *piano_pen_owner_create(const char *i, const char *h, uint64_t a)
+{ (void)i; (void)h; (void)a; return NULL; }
+void piano_pen_owner_destroy(struct piano_pen_owner *o) { (void)o; }
+int piano_pen_owner_poll_fd(struct piano_pen_owner *o) { (void)o; return -1; }
+void piano_pen_owner_read_hid(struct piano_pen_owner *o, short r) { (void)o; (void)r; }
+void piano_pen_owner_tick(struct piano_pen_owner *o) { (void)o; }
+int piano_pen_owner_record(struct piano_pen_owner *o, const uint8_t *f, size_t b,
+    uint64_t t, uint16_t s, struct piano_pen_output *out)
+{ (void)o; (void)f; (void)b; (void)t; (void)s; (void)out; return 0; }
+void piano_pen_owner_stats(const struct piano_pen_owner *o, struct piano_pen_owner_stats *s)
+{ (void)o; (void)s; }
+int piano_pen_owner_enable_input(struct piano_pen_owner *o) { (void)o; return -1; }
+'''
+
 
 def record(sequence, timestamp, frame_type=3, epoch=False):
     payload = bytearray(72)
@@ -43,8 +61,10 @@ class PianoTouchObservabilityTests(unittest.TestCase):
         public = ROOT / 'upstream/debian-piano-current'
         cls.source, cls.provenance = runtime.derive_touch_source(public, cls.folder)
         cls.binary = cls.folder / 'piano-touch-view'
-        subprocess.run([compiler, '-O2', '-Wall', '-Wextra', '-Werror',
-                        str(cls.source), '-o', str(cls.binary)], check=True)
+        cls.stubs = cls.folder / 'pen-owner-stubs.c'
+        cls.stubs.write_text(PEN_OWNER_STUBS)
+        subprocess.run([compiler, '-O2', '-Wall', '-Wextra', '-Werror', '-I', str(PEN),
+                        str(cls.source), str(cls.stubs), '-lm', '-o', str(cls.binary)], check=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -97,7 +117,8 @@ class PianoTouchObservabilityTests(unittest.TestCase):
         row = reports[0]
         self.assertEqual(row['records'], 6)
         self.assertEqual(row['type_skips'], 1)
-        self.assertEqual(row['algorithm_frames'], 4)
+        # the epoch frame restarts type probing and the reference, so it is not decoded
+        self.assertEqual(row['algorithm_frames'], 3)
         self.assertEqual(row['sequence_gaps'], 1)
         self.assertEqual(row['sequence_reorders'], 1)
         self.assertEqual(row['timestamp_reorders'], 1)
@@ -139,8 +160,8 @@ int main(void)
 }
 ''')
         binary = self.folder / 'syn-test'
-        subprocess.run([shutil.which('cc'), '-O2', '-Wall', '-Wextra', '-Werror',
-                        str(driver), '-o', str(binary)], check=True)
+        subprocess.run([shutil.which('cc'), '-O2', '-Wall', '-Wextra', '-Werror', '-I', str(PEN),
+                        str(driver), str(self.stubs), '-lm', '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True, timeout=5)
 
 

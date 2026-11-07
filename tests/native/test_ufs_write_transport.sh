@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Host-only. No prepare CLI, staged firmware, controller/device or real writes.
 set -euo pipefail
+case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_transport_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_transport_root"
+if [[ ! -f private/captures/ufs-test-area-1/manifest.json ]]; then
+  echo "Skipped: private real capture private/captures/ufs-test-area-1 absent"
+  exit 0
+fi
 sun_transport_tmp="$(mktemp -d build/ufs-write-host.XXXXXX)"
 trap 'rm -rf -- "$sun_transport_tmp"' EXIT
 # Render the pinned, verified PC bytes into this disposable host-test include.
@@ -17,10 +22,11 @@ PY
 sun_transport_includes=(
   -I "$sun_transport_tmp"
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include
-  -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/X64
+  -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/$sun_bind
   -I upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include
   -I upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include
   -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include
+  -I uefi/components/ext4
 )
 for sun_transport_mode in restore preflight; do
   sun_transport_define=()
@@ -38,9 +44,10 @@ sun_transport_arm_includes=(
   -I upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include
   -I upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include
   -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include
+  -I uefi/components/ext4
 )
 for sun_transport_mode in PIANO_UFS_WRITE_PREFLIGHT PIANO_UFS_WRITE_RESTORE_TEST; do
-  build/host-tools/usr/bin/clang --target=aarch64-windows-msvc -fshort-wchar -ffreestanding -fsyntax-only -Wall -Wextra -Werror -Wno-unused-parameter \
+  "${SUNUEFI_TOOLCHAIN_ROOT:-build/host-tools/usr}/bin/clang" --target=aarch64-windows-msvc -fshort-wchar -ffreestanding -fsyntax-only -Wall -Wextra -Werror -Wno-unused-parameter \
     -DPIANO_UFS_BLOCKIO=1 -DPIANO_UFS_WRITE_TEST=1 -D"$sun_transport_mode"=1 \
     "${sun_transport_arm_includes[@]}" uefi/core/PianoUfsReadOnlyDma.c
 done

@@ -7,7 +7,7 @@
     "stable_source": "https://github.com/torvalds/linux.git",
     "stable_commit": "c03c1a14507dfaf8b856c2608f9ac216021fc222",
     "stable_version": "7.3.0",
-    "target_tree": "78e5f4edfacd2e5310f9461052cfd34ef91e3f18",
+    "target_tree": "2e8d0fea31465c53a9b3d627a2f1226ffd9b3e66",
     "cpu_model_overlay": "linux/dts/piano-cpu-model.dtso",
     "additional_dtb_overlays": [
       "linux/dts/piano-cma.dtso",
@@ -25,7 +25,8 @@
       "linux/dts/piano-touch-panel.dtso",
       "linux/dts/piano-pen-dock.dtso",
       "linux/dts/piano-pen-charger.dtso",
-      "linux/dts/piano-bluetooth-nvm.dtso"
+      "linux/dts/piano-bluetooth-nvm.dtso",
+      "linux/dts/piano-ir-spi-controller.dtso"
     ],
     "root_policy": "LABEL=PIANOROOT",
     "preferred_display_mode": {

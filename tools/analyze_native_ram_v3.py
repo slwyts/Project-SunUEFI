@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -12,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ENV_SHA = '593d9e766c0070e01d4c6684b7bb8050f32f77ea3ca300c6a110ad3903de17e3'
 RAM_SHA = '16aed6a815309af4109f34000f43de0058d310e293b2aecc29c6d4d9a7ed828c'
 SIII_SHA = '313b218fd801ca2d9cba0450e8e4b97c046ef77443e24909c0d66234959053bc'
+# prepare_product stages these bytes unchanged
+ENV_PE = ROOT / 'vendor/piano/early-dxe/EnvDxeEnhanced/EnvDxeEnhanced.efi'
 OPCODES = {
     0x8b58: 0x7100051f,  # version == 1 selects the separate 64-byte path
     0x8ba8: 0x9100c2bb,  # cursor = payload + 0x30 = entry + 0x18
@@ -43,8 +46,7 @@ def pinned(path, digest):
 
 
 def analyze():
-    native = ROOT / 'upstream/Mu-Silicium/Binaries/piano/Stage0/EnvDxeEnhanced/EnvDxeEnhanced.efi'
-    image = pinned(native, ENV_SHA)
+    image = pinned(ENV_PE, ENV_SHA)
     pe = struct.unpack_from('<I', image, 0x3c)[0]
     count, optional = struct.unpack_from('<H', image, pe + 6)[0], struct.unpack_from('<H', image, pe + 20)[0]
     for i in range(count):
@@ -111,10 +113,10 @@ def main():
     args = parser.parse_args()
     print(json.dumps(analyze(), indent=2))
     if args.disassemble:
-        native = ROOT / 'upstream/Mu-Silicium/Binaries/piano/Stage0/EnvDxeEnhanced/EnvDxeEnhanced.efi'
+        toolchain = Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT', ROOT / 'build/host-tools/usr'))
         for start, stop in ((0x22f4, 0x251c), (0x8638, 0x8880), (0x8a74, 0x8cd8)):
-            subprocess.run([str(ROOT / 'build/host-tools/usr/bin/llvm-objdump'), '-d',
-                            f'--start-address={start}', f'--stop-address={stop}', str(native)], check=True)
+            subprocess.run([str(toolchain / 'bin/llvm-objdump'), '-d',
+                            f'--start-address={start}', f'--stop-address={stop}', str(ENV_PE)], check=True)
 
 
 if __name__ == '__main__':

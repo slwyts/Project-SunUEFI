@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Host-only verification of firmware code; no adb/fastboot/device access.
 set -euo pipefail
+case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_root"
 sun_flags=(-std=gnu11 -fshort-wchar -ffunction-sections -fdata-sections
   -Wall -Wextra -Werror -Wno-unused-parameter
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include
-  -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/X64
+  -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/$sun_bind
+  -I upstream/Mu-Silicium/Mu_Basecore/MdeModulePkg/Include
   -I upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include
   -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include)
 mkdir -p build

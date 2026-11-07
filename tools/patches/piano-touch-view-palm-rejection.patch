@@ -1,0 +1,333 @@
+From: Project SunUEFI
+Subject: [PATCH] input: report contact size and reject palms
+
+Apply after the observability, raw-capture, pen-owner, epoch-reset and
+line-noise patches.
+
+Each touch peak is measured over the 4-connected cells at or above the
+touch threshold. The finger node reports ABS_MT_TOUCH_MAJOR/MINOR and
+ABS_MT_TOOL_TYPE. A contact area of PALM_AREA_CELLS sensor cells or more,
+palm_area_num_level2 of the stock touch configuration, is MT_TOOL_PALM,
+one contact per palm area, and stays a palm until lifted. Palms never
+press BTN_TOUCH. Contacts still down when a pen frame arrives are lifted
+as palms, so libinput cancels them instead of delivering a tap.
+
+The position axes now carry 13 units/mm from the 239x163 mm panel mode,
+which libinput uses to place its pen arbitration area.
+
+--- a/initramfs/touch-view/piano-touch-view.c
++++ b/initramfs/touch-view/piano-touch-view.c
+@@ -51,6 +51,7 @@
+ 
+ #include <errno.h>
+ #include <fcntl.h>
++#include <math.h>
+ #include <poll.h>
+ #include <signal.h>
+ #include <stdint.h>
+@@ -77,6 +78,17 @@
+ #define TYPE_PROBE_FRAMES 16
+ #define SCREEN_W 3200
+ #define SCREEN_H 2136
++/* PIANO_MODE width_mm/height_mm in patches/linux/7.3/0002-display.patch */
++#define PANEL_W_MM 239
++#define PANEL_H_MM 163
++/* touch units per mm, 3200/239 and 2136/163 */
++#define SCREEN_RES 13
++/* Cells in a palm: palm_area_num_level2 of the stock
++ * /odm/firmware/piano_nova_{boe,csot}_thp_config.ini, same 60x40 matrix.
++ * Its palm_neg_area_num_level2 is not counted here. In evtest,
++ * ABS_MT_TOUCH_MAJOR * ABS_MT_TOUCH_MINOR / 3500 is about the cell count
++ */
++#define PALM_AREA_CELLS 70
+ /* a contact moving further than this between frames is a new finger */
+ #define TRACK_MAX_DIST 400
+ 
+@@ -143,11 +155,14 @@
+ 	size_t size;
+ } fb;
+ 
+-/* contacts tracked across frames, in SCREEN_W x SCREEN_H coordinates */
++/* contacts tracked across frames, in SCREEN_W x SCREEN_H coordinates;
++ * a palm stays a palm until lifted
++ */
+ static struct {
+ 	int next_id;
+ 	struct {
+ 		int active, id, x, y, px, py, fresh, ended;
++		int major, minor, palm, palm_sent;
+ 	} slot[MAX_POINTS];
+ } trk;
+ 
+@@ -474,16 +489,81 @@
+ struct point {
+ 	double x, y;	/* column, row in sensor pitch units */
+ 	int peak;
++	double major_mm, minor_mm;
++	int palm;
+ };
+ 
+-static int find_points(struct point *pts)
++/* 4-connected cells at or above the touch threshold around a peak. The
++ * cell count decides a palm; MAJOR/MINOR are 4 standard deviations of a
++ * filled ellipse. Every peak in a palm area is the palm
++ */
++static struct contact_area {
++	double x, y, weight;	/* delta-weighted centre, sensor pitch units */
++	double major_mm, minor_mm;
++	int palm, reported;
++} areas[MAX_POINTS];
++static unsigned char area_of[MAX_NODES];
++
++static void measure_area(int start, int label)
+ {
+-	int r, c, dr, dc, n = 0;
++	static const int step_r[] = { -1, 1, 0, 0 }, step_c[] = { 0, 0, -1, 1 };
++	static int queue[MAX_NODES];
++	struct contact_area *a = &areas[label - 1];
++	double cell_w = (double)PANEL_W_MM / st.cols, cell_h = (double)PANEL_H_MM / st.rows;
++	double n = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
++	double vx, vy, cxy, mid, half;
++	int head = 0, tail = 0, k;
++
++	memset(a, 0, sizeof(*a));
++	area_of[start] = label;
++	queue[tail++] = start;
++	while (head < tail) {
++		int node = queue[head++], r = node / st.cols, c = node % st.cols;
++		double x = (c + 0.5) * cell_w, y = (r + 0.5) * cell_h;
+ 
++		n++;
++		sx += x;
++		sy += y;
++		sxx += x * x;
++		syy += y * y;
++		sxy += x * y;
++		a->weight += delta[node];
++		a->x += delta[node] * (c + 0.5);
++		a->y += delta[node] * (r + 0.5);
++		for (k = 0; k < 4; k++) {
++			int rr = r + step_r[k], cc = c + step_c[k], next;
++
++			if (rr < 0 || cc < 0 || rr >= st.rows || cc >= st.cols)
++				continue;
++			next = rr * st.cols + cc;
++			if (area_of[next] || delta[next] < opt.threshold)
++				continue;
++			area_of[next] = label;
++			queue[tail++] = next;
++		}
++	}
++	a->x /= a->weight;
++	a->y /= a->weight;
++	vx = sxx / n - (sx / n) * (sx / n) + cell_w * cell_w / 12;
++	vy = syy / n - (sy / n) * (sy / n) + cell_h * cell_h / 12;
++	cxy = sxy / n - (sx / n) * (sy / n);
++	mid = (vx + vy) / 2;
++	half = sqrt((vx - vy) * (vx - vy) / 4 + cxy * cxy);
++	a->major_mm = 4 * sqrt(mid + half);
++	a->minor_mm = mid > half ? 4 * sqrt(mid - half) : 0;
++	a->palm = n >= PALM_AREA_CELLS;
++}
++
++static int find_points(struct point *pts)
++{
++	int r, c, dr, dc, n = 0, used = 0;
++
++	memset(area_of, 0, (size_t)st.rows * st.cols);
+ 	for (r = 0; r < st.rows; r++) {
+ 		for (c = 0; c < st.cols; c++) {
+ 			int v = delta[r * st.cols + c], is_peak = 1;
+ 			double sw = 0, sx = 0, sy = 0;
++			struct contact_area *area;
+ 
+ 			if (v < opt.threshold)
+ 				continue;
+@@ -504,6 +584,28 @@
+ 				}
+ 			if (!is_peak)
+ 				continue;
++			if (!area_of[r * st.cols + c]) {
++				/* each new area yields a point, so MAX_POINTS
++				 * areas already fill every point slot */
++				if (used == MAX_POINTS)
++					continue;
++				measure_area(r * st.cols + c, ++used);
++			}
++			area = &areas[area_of[r * st.cols + c] - 1];
++			if (area->palm) {
++				/* one contact per palm, at the centre of its area */
++				if (area->reported || n >= MAX_POINTS)
++					continue;
++				area->reported = 1;
++				pts[n].x = area->x;
++				pts[n].y = area->y;
++				pts[n].peak = v;
++				pts[n].major_mm = area->major_mm;
++				pts[n].minor_mm = area->minor_mm;
++				pts[n].palm = 1;
++				n++;
++				continue;
++			}
+ 			for (dr = -1; dr <= 1; dr++)
+ 				for (dc = -1; dc <= 1; dc++) {
+ 					int rr = r + dr, cc = c + dc, w;
+@@ -522,6 +624,9 @@
+ 				pts[n].x = sx / sw;
+ 				pts[n].y = sy / sw;
+ 				pts[n].peak = v;
++				pts[n].major_mm = area->major_mm;
++				pts[n].minor_mm = area->minor_mm;
++				pts[n].palm = 0;
+ 				n++;
+ 			}
+ 		}
+@@ -625,6 +730,15 @@
+ 		*y = 0;
+ 	if (*y >= height)
+ 		*y = height - 1;
++}
++
++/* contact sizes in touch units, at most the screen diagonal */
++#define TOUCH_SIZE_MAX 3848
++static int touch_units(double mm)
++{
++	double units = mm * SCREEN_RES + 0.5;
++
++	return units > TOUCH_SIZE_MAX ? TOUCH_SIZE_MAX : (int)units;
+ }
+ 
+ /* match this frame's contacts to the slots of the previous one */
+@@ -661,6 +775,9 @@
+ 		trk.slot[s].py = trk.slot[s].y;
+ 		trk.slot[s].x = px[best];
+ 		trk.slot[s].y = py[best];
++		trk.slot[s].major = touch_units(pts[best].major_mm);
++		trk.slot[s].minor = touch_units(pts[best].minor_mm);
++		trk.slot[s].palm |= pts[best].palm;
+ 	}
+ 	for (i = 0; i < n; i++) {
+ 		if (taken[i])
+@@ -674,12 +791,29 @@
+ 		trk.slot[s].id = trk.next_id++ & 0xffff;
+ 		trk.slot[s].x = trk.slot[s].px = px[i];
+ 		trk.slot[s].y = trk.slot[s].py = py[i];
++		trk.slot[s].major = touch_units(pts[i].major_mm);
++		trk.slot[s].minor = touch_units(pts[i].minor_mm);
++		trk.slot[s].palm = pts[i].palm;
++		trk.slot[s].palm_sent = 0;
+ 	}
+ 	for (s = 0; s < MAX_POINTS; s++)
+ 		active += trk.slot[s].active;
+ 	return active;
+ }
+ 
++/* contacts down when the pen arrives are the hand holding it: lift them
++ * as palms so libinput cancels them instead of delivering a tap
++ */
++static int release_as_palms(void)
++{
++	int s;
++
++	for (s = 0; s < MAX_POINTS; s++)
++		if (trk.slot[s].active)
++			trk.slot[s].palm = 1;
++	return track(NULL, 0);
++}
++
+ static void fb_line(int x0, int y0, int x1, int y1, int radius, uint32_t color)
+ {
+ 	int dx = x1 - x0, dy = y1 - y0;
+@@ -754,12 +888,13 @@
+ 	int reported_touch;
+ } ui = { .fd = -1 };
+ 
+-static void ui_abs(int code, int min, int max)
++static void ui_abs(int code, int min, int max, int resolution)
+ {
+ 	struct uinput_abs_setup a = { .code = code };
+ 
+ 	a.absinfo.minimum = min;
+ 	a.absinfo.maximum = max;
++	a.absinfo.resolution = resolution;
+ 	if (ioctl(ui.fd, UI_ABS_SETUP, &a))
+ 		perror("UI_ABS_SETUP");
+ }
+@@ -782,12 +917,21 @@
+ 	ioctl(ui.fd, UI_SET_ABSBIT, ABS_MT_TRACKING_ID);
+ 	ioctl(ui.fd, UI_SET_ABSBIT, ABS_MT_POSITION_X);
+ 	ioctl(ui.fd, UI_SET_ABSBIT, ABS_MT_POSITION_Y);
+-	ui_abs(ABS_X, 0, SCREEN_W - 1);
+-	ui_abs(ABS_Y, 0, SCREEN_H - 1);
+-	ui_abs(ABS_MT_SLOT, 0, MAX_POINTS - 1);
+-	ui_abs(ABS_MT_TRACKING_ID, 0, 0xffff);
+-	ui_abs(ABS_MT_POSITION_X, 0, SCREEN_W - 1);
+-	ui_abs(ABS_MT_POSITION_Y, 0, SCREEN_H - 1);
++	ioctl(ui.fd, UI_SET_ABSBIT, ABS_MT_TOUCH_MAJOR);
++	ioctl(ui.fd, UI_SET_ABSBIT, ABS_MT_TOUCH_MINOR);
++	ioctl(ui.fd, UI_SET_ABSBIT, ABS_MT_TOOL_TYPE);
++	/* libinput sizes its pen arbitration area with this resolution
++	 * (tablet_calculate_arbitration_rect, libinput 1.30.4)
++	 */
++	ui_abs(ABS_X, 0, SCREEN_W - 1, SCREEN_RES);
++	ui_abs(ABS_Y, 0, SCREEN_H - 1, SCREEN_RES);
++	ui_abs(ABS_MT_SLOT, 0, MAX_POINTS - 1, 0);
++	ui_abs(ABS_MT_TRACKING_ID, 0, 0xffff, 0);
++	ui_abs(ABS_MT_POSITION_X, 0, SCREEN_W - 1, SCREEN_RES);
++	ui_abs(ABS_MT_POSITION_Y, 0, SCREEN_H - 1, SCREEN_RES);
++	ui_abs(ABS_MT_TOUCH_MAJOR, 0, TOUCH_SIZE_MAX, SCREEN_RES);
++	ui_abs(ABS_MT_TOUCH_MINOR, 0, TOUCH_SIZE_MAX, SCREEN_RES);
++	ui_abs(ABS_MT_TOOL_TYPE, 0, MT_TOOL_MAX, 0);
+ 	us.id.bustype = BUS_SPI;
+ 	us.id.vendor = 0x0603;	/* Novatek */
+ 	us.id.product = 0x6532;
+@@ -837,6 +981,14 @@
+ 		if (!trk.slot[s].active && !trk.slot[s].ended)
+ 			continue;
+ 		ui_emit(EV_ABS, ABS_MT_SLOT, s);
++		/* libinput reads the tool type when a touch begins and cancels
++		 * a touch that turns into a palm (src/evdev-fallback.c)
++		 */
++		if (trk.slot[s].fresh || (trk.slot[s].palm && !trk.slot[s].palm_sent)) {
++			ui_emit(EV_ABS, ABS_MT_TOOL_TYPE,
++				trk.slot[s].palm ? MT_TOOL_PALM : MT_TOOL_FINGER);
++			trk.slot[s].palm_sent = trk.slot[s].palm;
++		}
+ 		if (trk.slot[s].ended) {
+ 			ui_emit(EV_ABS, ABS_MT_TRACKING_ID, -1);
+ 			continue;
+@@ -845,7 +997,12 @@
+ 			ui_emit(EV_ABS, ABS_MT_TRACKING_ID, trk.slot[s].id);
+ 		ui_emit(EV_ABS, ABS_MT_POSITION_X, trk.slot[s].x);
+ 		ui_emit(EV_ABS, ABS_MT_POSITION_Y, trk.slot[s].y);
+-		if (first < 0)
++		ui_emit(EV_ABS, ABS_MT_TOUCH_MAJOR, trk.slot[s].major);
++		ui_emit(EV_ABS, ABS_MT_TOUCH_MINOR, trk.slot[s].minor);
++		/* palms never press BTN_TOUCH or move the single-touch axes */
++		if (trk.slot[s].palm)
++			active--;
++		else if (first < 0)
+ 			first = s;
+ 	}
+ 	if (first >= 0) {
+@@ -1001,8 +1158,9 @@
+ 		if (count && now_s() - last_print > 0.1) {
+ 			printf("frame %5u:", st.last_frame_no);
+ 			for (i = 0; i < count; i++)
+-				printf("  [%d] col %.2f row %.2f peak %d", i,
+-				       pts[i].x, pts[i].y, pts[i].peak);
++				printf("  [%d] col %.2f row %.2f peak %d major %.1fmm minor %.1fmm%s", i,
++				       pts[i].x, pts[i].y, pts[i].peak, pts[i].major_mm,
++				       pts[i].minor_mm, pts[i].palm ? " palm" : "");
+ 			putchar('\n');
+ 			fflush(stdout);
+ 			last_print = now_s();
+@@ -1315,7 +1473,7 @@
+ 			    h[hlen + TRANSPORT_LEN + 56] == 29) {
+ 				st.types[29]++;
+ 				if (pen_ret > 0 && opt.mode == MODE_INPUT) {
+-					int active = track(NULL, 0);
++					int active = release_as_palms();
+ 					ui_report(active);
+ 				}
+ 			} else {

@@ -21,7 +21,7 @@ class ProductBuilderTests(unittest.TestCase):
         self.assertNotIn('RamApp.c',inf)
         for forbidden in ('PianoUsbUfsFetch.c','PianoUsbRamBoot.c','PianoUfsWriteTest.c','PianoDmaSelfTest.c'):
             self.assertNotIn(forbidden,inf)
-        for required in ('PIANO_USB_SERVICE=1','PIANO_USB_EP0=1','PIANO_USB_FASTBOOT=1','PIANO_USB_SCREENSHOT=1','PIANO_USB_UFS_FETCH=1','PIANO_USB_RAM_BOOT=1','PIANO_UFS_BLOCKIO=1'):
+        for required in ('PIANO_USB_SERVICE=1','PIANO_USB_EP0=1','PIANO_USB_FASTBOOT=1','PIANO_USB_SCREENSHOT=1','PIANO_USB_UFS_FETCH=1','PIANO_USB_RAM_BOOT=1','PIANO_UFS_BLOCKIO=1','PIANO_USB_HOST=1'):
             self.assertIn(required,product.PRODUCT_FLAGS)
 
     def test_enabled_contract_does_not_claim_incomplete_backends_ready(self):
@@ -33,7 +33,11 @@ class ProductBuilderTests(unittest.TestCase):
         self.assertEqual(backends['ufs_blockio_read_write']['status'],'RESERVED_VOLUME_BACKEND_UNPROVISIONED')
         self.assertEqual(backends['ufs_blockio_read_write']['original_media'],'READ_ONLY')
         for feature in ('pogo_keyboard_touchpad','touchscreen','usb_host'):
-            self.assertEqual(backends[feature]['status'],'NOT_READY')
+            self.assertEqual(backends[feature]['status'],'IMPLEMENTED_UNTESTED')
+        for feature in ('pogo_keyboard_touchpad','touchscreen'):
+            self.assertIn('no DMA',backends[feature]['transport'])
+        self.assertEqual(backends['usb_host']['mass_storage'],'READ_ONLY')
+        self.assertFalse(backends['usb_host']['vbus_control'])
         self.assertEqual(backends['usb_device_fastboot']['current_download_limit_bytes'],64*1024*1024)
         self.assertEqual(backends['usb_device_fastboot']['target_download_limit_bytes'],1024*1024*1024)
 

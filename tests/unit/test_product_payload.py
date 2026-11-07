@@ -1,3 +1,5 @@
+import platform
+import os
 import importlib.util
 from pathlib import Path
 import struct
@@ -5,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 ROOT=Path(__file__).resolve().parents[2]
+HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
+TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
 spec=importlib.util.spec_from_file_location('product_digest',ROOT/'tools/product_payload_digest.py')
 digest=importlib.util.module_from_spec(spec);spec.loader.exec_module(digest)
 
@@ -28,12 +32,12 @@ class ProductPayloadTests(unittest.TestCase):
             header,info=digest.digest_header(app);self.assertEqual(info['app_bytes'],4096)
             (folder/'PianoProductSimpleInitDigest.h').write_text(header)
             executable=folder/'test'
-            flags=['-I',str(folder),'-I',str(inc),'-I',str(inc/'X64')]
+            flags=['-I',str(folder),'-I',str(inc),'-I',str(inc/HOST_PROCESSOR_BIND)]
             for path in extra:flags+=['-I',str(path)]
             subprocess.run(['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-pie','-no-pie',*flags,str(ROOT/'tests/native/PianoProductPayloadTest.c'),'-lcrypto','-o',str(executable)],check=True)
             subprocess.run([str(executable),str(app)],check=True)
-            flags[flags.index(str(inc/'X64'))]=str(inc/'AArch64')
-            subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror',*flags,str(ROOT/'uefi/core/PianoProductPayload.c')],check=True)
+            flags[flags.index(str(inc/HOST_PROCESSOR_BIND))]=str(inc/'AArch64')
+            subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror',*flags,str(ROOT/'uefi/core/PianoProductPayload.c')],check=True)
 
 
 if __name__=='__main__':unittest.main()

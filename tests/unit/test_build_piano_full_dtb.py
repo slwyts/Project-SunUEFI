@@ -35,6 +35,7 @@ class FullDtbRuntimeTests(unittest.TestCase):
     def parsed(self, model):
         return tool.read_fdt(tool.write_fdt(model))
 
+    @unittest.skipUnless(LIB.exists(), 'built upstream/dtc libfdt required')
     def test_actual_libfdt_rejects_bad_header(self):
         blob = tool.write_fdt(self.model())
         self.assertEqual(tool.libcheck(blob, LIB)['tree'], self.model()['tree'])

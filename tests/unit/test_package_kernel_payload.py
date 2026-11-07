@@ -67,6 +67,7 @@ class PayloadPackageTests(unittest.TestCase):
         self.init_meta = {"profile": "stable", "mode": "ram", "source_commit": self.pin,
                           "kernel_image": {"sha256": sha(self.kernel)},
                           "initramfs": {"sha256": sha(self.initrd)}}
+        (self.root / "linux").mkdir()
         (self.root / "linux/kernel-profiles.json").write_text(json.dumps({"profiles": {"stable": {"commit": self.pin}}}))
         self.dtb = self.root / "explicit-board.dtb"
         structure = struct.pack(">I", 1) + b"\0" * 4 + struct.pack(">II", 2, 9)

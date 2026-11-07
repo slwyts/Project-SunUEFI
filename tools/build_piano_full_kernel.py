@@ -51,6 +51,7 @@ BLUETOOTH_OVERRIDES={'CONFIG_UHID':'m','CONFIG_HID_XIAOMI':'m',
 FILESYSTEM_OVERRIDES={'CONFIG_EXFAT_FS':'y','CONFIG_NTFS3_FS':'y',
                       'CONFIG_NTFS3_LZX_XPRESS':'y','CONFIG_NLS_UTF8':'y'}
 PEN_DOCK_OVERRIDES={'CONFIG_INPUT_XIAOMI_PIANO_PEN_DOCK':'m', 'CONFIG_CHARGER_SC96231':'m'}
+IR_OVERRIDES={'CONFIG_LIRC':'y','CONFIG_IR_SPI':'m'}
 USERSPACE_SECURITY_OVERRIDES={'CONFIG_SECURITY_LANDLOCK':'y'}
 SLEEP_OVERRIDES={'CONFIG_QCOM_SMP2P_SLEEPSTATE':'y',
                  'CONFIG_RTC_HCTOSYS':'n','CONFIG_RTC_SYSTOHC':'n'}
@@ -83,7 +84,7 @@ PLATFORM_OVERRIDES.update({key: 'm' for key in (
     'CONFIG_NFT_FIB_IPV4', 'CONFIG_NFT_FIB_IPV6', 'CONFIG_NFT_FIB_INET', 'CONFIG_NFT_COMPAT',
     'CONFIG_CRYPTO_USER_API_HASH', 'CONFIG_CRYPTO_USER_API_SKCIPHER')})
 PLATFORM_OVERRIDES.update({'CONFIG_FTRACE': 'y', 'CONFIG_ENABLE_DEFAULT_TRACERS': 'y'})
-ALLOWED_OVERRIDES={**BLUETOOTH_OVERRIDES,**FILESYSTEM_OVERRIDES,**PEN_DOCK_OVERRIDES,**FLASH_OVERRIDES,**EARLY_CPUCP_OVERRIDES,
+ALLOWED_OVERRIDES={**BLUETOOTH_OVERRIDES,**FILESYSTEM_OVERRIDES,**PEN_DOCK_OVERRIDES,**IR_OVERRIDES,**FLASH_OVERRIDES,**EARLY_CPUCP_OVERRIDES,
                    **USERSPACE_SECURITY_OVERRIDES,**SLEEP_OVERRIDES,**PM_DEBUG_OVERRIDES,**PLATFORM_OVERRIDES}
 
 
@@ -119,7 +120,7 @@ def command_line(fragment,public,root_policy):
 
 def module_overrides(fragment,kind='bluetooth'):
     lines=[line.strip()for line in fragment.splitlines()if line.strip()and not line.lstrip().startswith('#')]
-    expected=BLUETOOTH_OVERRIDES if kind=='bluetooth'else FILESYSTEM_OVERRIDES if kind=='filesystem'else PEN_DOCK_OVERRIDES if kind=='pen-dock'else FLASH_OVERRIDES if kind=='flash'else EARLY_CPUCP_OVERRIDES if kind=='early-cpucp'else USERSPACE_SECURITY_OVERRIDES if kind=='userspace-security'else SLEEP_OVERRIDES if kind=='sleep'else PLATFORM_OVERRIDES if kind=='platform'else None
+    expected=BLUETOOTH_OVERRIDES if kind=='bluetooth'else FILESYSTEM_OVERRIDES if kind=='filesystem'else PEN_DOCK_OVERRIDES if kind=='pen-dock'else IR_OVERRIDES if kind=='ir'else FLASH_OVERRIDES if kind=='flash'else EARLY_CPUCP_OVERRIDES if kind=='early-cpucp'else USERSPACE_SECURITY_OVERRIDES if kind=='userspace-security'else SLEEP_OVERRIDES if kind=='sleep'else PLATFORM_OVERRIDES if kind=='platform'else None
     if expected is None or lines!=[key+'='+value for key,value in expected.items()]:raise ValueError('Unexpected '+kind+' configuration fragment')
     return dict(expected)
 
@@ -195,7 +196,7 @@ def validate_config(config,public,expected_command,modules=None):
 
 
 def toolchain():
-    env=os.environ.copy();bundled=ROOT/'build/host-tools/usr'
+    env=os.environ.copy();bundled=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
     env['PATH']=str(bundled/'bin')+os.pathsep+env.get('PATH','')
     env['LD_LIBRARY_PATH']=str(bundled/'lib')+(os.pathsep+env['LD_LIBRARY_PATH']if env.get('LD_LIBRARY_PATH')else '')
     names=('clang','ld.lld','llvm-ar','llvm-nm','llvm-objcopy','llvm-strip','make','bison','flex','bc','depmod')
@@ -254,13 +255,14 @@ def main():
     verify_source(work,commit);public=work/'arch/arm64/configs/piano_rootfs.config';fragment=ROOT/'linux/configs/piano-full.config'
     root_command=command_line(fragment.read_text(),public.read_text(),args.root)
     bluetooth=ROOT/'linux/configs/piano-bluetooth.config';flash=ROOT/'linux/configs/piano-flash.config'
-    pen_dock=ROOT/'linux/configs/piano-pen-dock.config'
+    pen_dock=ROOT/'linux/configs/piano-pen-dock.config';ir=ROOT/'linux/configs/piano-ir.config'
     early_cpucp=ROOT/'linux/configs/piano-cpucp-early.config'
     userspace_security=ROOT/'linux/configs/piano-userspace-security.config'
     sleep=ROOT/'linux/configs/piano-sleep.config'
     filesystem=ROOT/'linux/configs/piano-filesystem.config'
     modules={**module_overrides(bluetooth.read_text()),**module_overrides(filesystem.read_text(),'filesystem'),
              **module_overrides(pen_dock.read_text(),'pen-dock'),
+             **module_overrides(ir.read_text(),'ir'),
              **module_overrides(flash.read_text(),'flash'),
              **module_overrides(early_cpucp.read_text(),'early-cpucp'),
              **module_overrides(userspace_security.read_text(),'userspace-security'),

@@ -19,4 +19,4 @@
 
 ## UEFI 里的键盘
 
-UEFI 阶段的输入解析器已经加入同样的映射，但官方键盘的底层接入没有完成，BIOS 菜单里还不能用，见[已知问题](known-issues.md#uefi-菜单与-usb)。
+UEFI 菜单里还不能用官方键盘，要用音量键和电源键操作，见[已知问题](known-issues.md#uefi-菜单与-usb)。
