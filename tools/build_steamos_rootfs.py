@@ -148,6 +148,29 @@ def kde_package_is_current(package_dir, recipe):
             bool(record.get('packages')))
 
 
+def kde_repository_package_works(root, name):
+    """Reuse Valve's matching package when its Qt relocations resolve."""
+    item = next(p for p in json.loads((ROOT / 'config/steamos.json').read_text())['kde_packages']
+                if p['name'] == name)
+    installed = subprocess.run(['chroot', root, 'pacman', '-Q', name], capture_output=True, text=True)
+    if installed.returncode or installed.stdout.split()[1].rsplit('-', 1)[0] != item['version']:
+        return False
+    files = subprocess.check_output(['chroot', root, 'pacman', '-Qlq', name], text=True).splitlines()
+    checked = 0
+    for name in files:
+        path = root / name.lstrip('/')
+        if not path.is_file() or path.is_symlink() or '.so' not in path.name:
+            continue
+        if path.open('rb').read(4) != b'\x7fELF':
+            continue
+        result = subprocess.run(['chroot', root, 'ldd', '-r', name], capture_output=True, text=True)
+        if result.returncode or any(word in result.stdout + result.stderr
+                                   for word in ('not found', 'undefined symbol')):
+            return False
+        checked += 1
+    return checked > 0
+
+
 def build(args):
     output = args.output.resolve()
     if os.geteuid() or not output.is_relative_to(ROOT / 'build/distros'):
@@ -259,6 +282,8 @@ done
         locale.write_text('en_US.UTF-8 UTF-8\nzh_CN.UTF-8 UTF-8\n')
         guest(['locale-gen'])
     for name in kde_recipes(output / 'kde-recipes', root):
+        if kde_repository_package_works(root, name):
+            continue
         recipe = output / 'kde-recipes' / name
         packages = output / 'packages' / name
         if not kde_package_is_current(packages, recipe):

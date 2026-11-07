@@ -201,7 +201,9 @@ def desktop_recipes(output, runtime):
         prepare = ''.join('  patch -d "$srcdir/' + name + '" -p1 < "$srcdir/' + p + '"\n'
                           for p in patch_names)
         sdk = ''
-        options = '-Ddoc=false -Dgtk-examples=false -Dinstalled-tests=false' if name == 'libfprint' else '-Dgtk_doc=false'
+        options = ('-Ddoc=false -Dgtk-examples=false -Dinstalled-tests=false '
+                   '-Dudev_rules_dir=/usr/lib/udev/rules.d -Dudev_hwdb=disabled'
+                   if name == 'libfprint' else '-Dgtk_doc=false')
         if name == 'libfprint':
             sdk = '''  mkdir -p "$srcdir/sdk/lib/pkgconfig" "$srcdir/sdk/include"
   cp "$srcdir/libpiano-goodix.a" "$srcdir/sdk/lib/"
@@ -282,7 +284,7 @@ def install_debian_desktop(root, runtime, output):
         'Cflags: -I/var/tmp/sunuefi-libfprint/sdk/include\n')
     with build_devices(root), build_resolver(root):
         subprocess.run(['chroot', root, 'apt-get', 'install', '-y', '--no-install-recommends',
-                        'build-essential', 'meson', 'ninja-build', 'pkg-config',
+                        'build-essential', 'meson', 'ninja-build', 'pkg-config', 'udev', 'libudev-dev',
                         'libglib2.0-dev', 'libgusb-dev', 'libgudev-1.0-dev',
                         'libpixman-1-dev', 'libssl-dev', 'libgirepository1.0-dev', 'fprintd'], check=True)
         subprocess.run(['chroot', root, 'env',
@@ -290,7 +292,8 @@ def install_debian_desktop(root, runtime, output):
                         'meson', 'setup', '/var/tmp/sunuefi-libfprint/build',
                         '/var/tmp/sunuefi-libfprint/libfprint', '--prefix=/usr',
                         '--libdir=lib/aarch64-linux-gnu', '--buildtype=release',
-                        '-Ddoc=false', '-Dgtk-examples=false', '-Dinstalled-tests=false'], check=True)
+                        '-Ddoc=false', '-Dgtk-examples=false', '-Dinstalled-tests=false',
+                        '-Dudev_rules_dir=/usr/lib/udev/rules.d', '-Dudev_hwdb=disabled'], check=True)
         subprocess.run(['chroot', root, 'meson', 'compile', '-C',
                         '/var/tmp/sunuefi-libfprint/build', '-j4'], check=True)
         subprocess.run(['chroot', root, 'env', 'DESTDIR=/var/tmp/sunuefi-libfprint/package',
