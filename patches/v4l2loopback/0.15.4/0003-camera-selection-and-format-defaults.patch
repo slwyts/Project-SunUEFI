@@ -1,0 +1,94 @@
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Subject: [PATCH] v4l2loopback: report camera image bounds and retain default sizes
+
+Report the current virtual capture image through read-only selection
+queries. This lets standard camera clients choose the producer's actual
+frame instead of the smallest size from its scaling range. Preserve the
+current dimension when TRY_FMT leaves width or height unspecified.
+
+Keep ordinary loopback producers unchanged, and retain the complete
+camera size range and existing buffer negotiation protections.
+
+---
+--- a/v4l2loopback.c
++++ b/v4l2loopback.c
+@@ -1220,20 +1220,26 @@
+ 
+ 	if (check_buffer_capability(dev, opener, f->type) < 0)
+ 		return -EINVAL;
++	mutex_lock(&dev->image_mutex);
+ 	if (dev->format_producer && !dev->keep_format &&
+ 	    V4L2_TYPE_IS_CAPTURE(f->type)) {
+-		u32 width = clamp_t(u32, f->fmt.pix.width, 16,
+-				    dev->producer_limits.width) & ~15U;
+-		u32 height = clamp_t(u32, f->fmt.pix.height, 4,
+-				     dev->producer_limits.height) & ~1U;
++		u32 width = f->fmt.pix.width ?: dev->pix_format.width;
++		u32 height = f->fmt.pix.height ?: dev->pix_format.height;
++		int result;
++
++		width = clamp_t(u32, width, 16, dev->producer_limits.width) & ~15U;
++		height = clamp_t(u32, height, 4, dev->producer_limits.height) & ~1U;
+ 
+ 		/* Retain the producer's colour space and exact NV12 layout. */
+ 		f->fmt.pix = dev->producer_limits;
+ 		f->fmt.pix.width = width;
+ 		f->fmt.pix.height = height;
+-		return v4l2l_fill_format(f, 16, dev->producer_limits.width,
+-				       4, dev->producer_limits.height);
+-	}
++		result = v4l2l_fill_format(f, 16, dev->producer_limits.width,
++					 4, dev->producer_limits.height);
++		mutex_unlock(&dev->image_mutex);
++		return result;
++	}
++	mutex_unlock(&dev->image_mutex);
+ 	if (v4l2l_fill_format(f, dev->min_width, dev->max_width,
+ 			      dev->min_height, dev->max_height) != 0)
+ 		return -EINVAL;
+@@ -1381,6 +1387,37 @@
+ 			       struct v4l2_fmtdesc *f)
+ {
+ 	return vidioc_enum_fmt_vid(file, fh, f);
++}
++
++/* The virtual capture source is the producer's current NV12 image, not
++ * the physical sensor's RAW bounds. No crop operation is exposed here.
++ */
++static int vidioc_g_selection(struct file *file, void *fh,
++			    struct v4l2_selection *selection)
++{
++	struct v4l2_loopback_device *dev = v4l2loopback_getdevice(file);
++	struct v4l2_loopback_opener *opener = v4l2l_f_to_opener(file, fh);
++	int result = 0;
++
++	mutex_lock(&dev->image_mutex);
++	if (!dev->format_producer)
++		result = -ENOTTY;
++	else if (selection->type != V4L2_BUF_TYPE_VIDEO_CAPTURE ||
++		 check_buffer_capability(dev, opener, selection->type) < 0 ||
++		 (selection->target != V4L2_SEL_TGT_CROP &&
++		  selection->target != V4L2_SEL_TGT_CROP_DEFAULT &&
++		  selection->target != V4L2_SEL_TGT_CROP_BOUNDS))
++		result = -EINVAL;
++	else {
++		selection->r = (struct v4l2_rect) {
++			.left = 0, .top = 0,
++			.width = dev->pix_format.width,
++			.height = dev->pix_format.height,
++		};
++		selection->flags = 0;
++	}
++	mutex_unlock(&dev->image_mutex);
++	return result;
+ }
+ 
+ static int vidioc_g_fmt_cap(struct file *file, void *fh, struct v4l2_format *f)
+@@ -3592,6 +3629,7 @@
+ 	.vidioc_g_input			= &vidioc_g_input,
+ 	.vidioc_s_input			= &vidioc_s_input,
+ 
++	.vidioc_g_selection		= &vidioc_g_selection,
+ 	.vidioc_enum_fmt_vid_cap	= &vidioc_enum_fmt_cap,
+ 	.vidioc_g_fmt_vid_cap		= &vidioc_g_fmt_cap,
+ 	.vidioc_s_fmt_vid_cap		= &vidioc_s_fmt_cap,

@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/dts-v1/;
+/plugin/;
+
+/* Match the factory rear sensor mode tables and their CSI PLL. The clock
+ * provider already supplies 19.2 MHz from TCXO without the 24 MHz PLL.
+ */
+/ {
+	fragment@0 {
+		target-path = "/soc/cci-ml@ac7b000/i2c-bus@1/camera@10";
+		__overlay__ {
+			assigned-clock-rates = <19200000>;
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc/cci-ml@ac7b000/i2c-bus@1/camera@10/port/endpoint";
+		__overlay__ {
+			link-frequencies = /bits/ 64 <857600000>;
+		};
+	};
+};

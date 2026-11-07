@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "source": {
+    "pname": "demosaic",
+    "version": "0.3.0",
+    "sha256": "1c8e7c3f4e7042d592a58e82428b4f482680715f75dd0f774664973e8a88f72f"
+  },
+  "patches": [
+    {
+      "file": "0001-fix-quad-patterns.patch",
+      "sha256": "26f4530d72c19d86c4e6b70a6b48f542c38bb4df88a207a5fc13353b6ca7e7bb"
+    }
+  ]
+}

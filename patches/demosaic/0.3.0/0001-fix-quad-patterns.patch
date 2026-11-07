@@ -1,0 +1,133 @@
+--- a/src/quad_bayer/qppg_impl.rs
++++ b/src/quad_bayer/qppg_impl.rs
+@@ -31,30 +31,27 @@
+ 
+ /// Classify a non-green pixel's position within its 2x2 same-color block.
+ fn block_corner(row: usize, col: usize, cfa: &CfaPattern) -> BlockCorner {
+-    let r4 = row % 4;
+-    let c4 = col % 4;
+-    // R block occupies (0..2, 0..2), B block occupies (2..4, 2..4) for RGGB.
+-    // Generalize: within whichever 2x2 block this pixel is in, find the local offset.
+-    let ch = cfa.color_at(row, col);
+-    // Find which corner of the 4x4 tile starts the 2x2 block containing this pixel.
+-    // For the known color, the 2x2 block is at (r4 & !1, c4 & !1) if that also has
+-    // the same color, but we need a simpler approach.
+-    let br = r4 & 1; // 0 = top row of block, 1 = bottom row
+-    let bc = c4 & 1; // 0 = left col of block, 1 = right col
+-    // But we need to check: is (r4 ^ 1, c4) the same color? If not, the block
+-    // boundary is at a different position. For quad Bayer, every 2x2 block of
+-    // the same color is aligned to even rows/cols within its quadrant.
+-
+-    // Simpler: for any non-green pixel, its 2x2 block starts at even coordinates
+-    // within the 4x4 tile. R block starts at (0,0), B block starts at (2,2).
+-    // So the local offset is (r4 % 2, c4 % 2).
+-    let _ = ch; // used conceptually above
+-    match (br, bc) {
+-        (0, 0) => BlockCorner::TopLeft,
+-        (0, 1) => BlockCorner::TopRight,
+-        (1, 0) => BlockCorner::BottomLeft,
+-        (1, 1) => BlockCorner::BottomRight,
+-        _ => unreachable!(),
++    // Derive block edges from the actual CFA, including an odd crop offset.
++    let color = cfa.color_at(row, col);
++    let bottom = cfa.color_at(row + 3, col) == color;
++    let right = cfa.color_at(row, col + 3) == color;
++    match (bottom, right) {
++        (false, false) => BlockCorner::TopLeft,
++        (false, true) => BlockCorner::TopRight,
++        (true, false) => BlockCorner::BottomLeft,
++        (true, true) => BlockCorner::BottomRight,
++    }
++}
++
++// Extend each CFA phase independently. Clamping a negative coordinate to zero
++// can substitute a red sample for a green neighbour at the image border.
++fn phase_clamp(coordinate: i32, length: usize) -> usize {
++    if coordinate < 0 {
++        coordinate.rem_euclid(4) as usize
++    } else if coordinate >= length as i32 {
++        (length as i32 - 1 - (length as i32 - 1 - coordinate).rem_euclid(4)) as usize
++    } else {
++        coordinate as usize
+     }
+ }
+ 
+@@ -83,8 +80,8 @@
+             let corner = block_corner(y, x, cfa);
+ 
+             let get = |dy: i32, dx: i32| -> f32 {
+-                let ny = (y as i32 + dy).clamp(0, h as i32 - 1) as usize;
+-                let nx = (x as i32 + dx).clamp(0, w as i32 - 1) as usize;
++                let ny = phase_clamp(y as i32 + dy, h);
++                let nx = phase_clamp(x as i32 + dx, w);
+                 input[ny * w + nx]
+             };
+ 
+@@ -180,34 +177,16 @@
+ 
+             match ch {
+                 Channel::Green => {
+-                    // Determine which green block we are in.
+-                    let r4 = y % 4;
+-                    let c4 = x % 4;
+-                    // Top-right green block: r4 < 2 && c4 >= 2
+-                    // Bottom-left green block: r4 >= 2 && c4 < 2
+-                    let in_top_right = r4 < 2 && c4 >= 2;
+-
+-                    if in_top_right {
+-                        // R from horizontal (left), B from vertical (below)
+-                        let cd_r = color_diff_axis(
+-                            input, green, w, h, cfa, y, x, Channel::Red, true,
+-                        );
+-                        output[r_off + idx] = green[idx] + cd_r;
+-                        let cd_b = color_diff_axis(
+-                            input, green, w, h, cfa, y, x, Channel::Blue, false,
+-                        );
+-                        output[b_off + idx] = green[idx] + cd_b;
+-                    } else {
+-                        // R from vertical (above), B from horizontal (right)
+-                        let cd_r = color_diff_axis(
+-                            input, green, w, h, cfa, y, x, Channel::Red, false,
+-                        );
+-                        output[r_off + idx] = green[idx] + cd_r;
+-                        let cd_b = color_diff_axis(
+-                            input, green, w, h, cfa, y, x, Channel::Blue, true,
+-                        );
+-                        output[b_off + idx] = green[idx] + cd_b;
+-                    }
++                    // A green block can have red along either axis. Its
++                    // position depends on RGGB/BGGR/GRBG/GBRG and the crop.
++                    let red_horizontal = (1..=2)
++                        .any(|offset| cfa.color_at(y, x + offset) == Channel::Red);
++                    output[r_off + idx] = green[idx] + color_diff_axis(
++                        input, green, w, h, cfa, y, x, Channel::Red, red_horizontal,
++                    );
++                    output[b_off + idx] = green[idx] + color_diff_axis(
++                        input, green, w, h, cfa, y, x, Channel::Blue, !red_horizontal,
++                    );
+                 }
+                 Channel::Red => {
+                     // Need B from diagonal neighbors.
+@@ -247,9 +226,9 @@
+     for k in -4i32..=4 {
+         if k == 0 { continue; }
+         let (ny, nx) = if horizontal {
+-            (y, (x as i32 + k).clamp(0, w as i32 - 1) as usize)
++            (y, phase_clamp(x as i32 + k, w))
+         } else {
+-            ((y as i32 + k).clamp(0, h as i32 - 1) as usize, x)
++            (phase_clamp(y as i32 + k, h), x)
+         };
+         if cfa.color_at(ny, nx) == target {
+             let nidx = ny * w + nx;
+@@ -280,8 +259,8 @@
+     for dy in -3i32..=3 {
+         for dx in -3i32..=3 {
+             if dy == 0 || dx == 0 { continue; }
+-            let ny = (y as i32 + dy).clamp(0, h as i32 - 1) as usize;
+-            let nx = (x as i32 + dx).clamp(0, w as i32 - 1) as usize;
++            let ny = phase_clamp(y as i32 + dy, h);
++            let nx = phase_clamp(x as i32 + dx, w);
+             if cfa.color_at(ny, nx) == target {
+                 let nidx = ny * w + nx;
+                 let d2 = (dy * dy + dx * dx) as f32;

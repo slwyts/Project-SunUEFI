@@ -1,0 +1,305 @@
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Subject: [PATCH] v4l2loopback: preserve camera timestamps and negotiate MMAP output
+
+Keep camera MONOTONIC timestamps and their source across OUTPUT QBUF.
+Require a newly published frame on capture STREAMON and acknowledge format
+requests through both QBUF and write. Exempt only the registered producer's
+own VMA references from the request gate; actual reallocation still waits
+for all mappings to close. Block new reader mappings during negotiation.
+
+---
+--- a/v4l2loopback.c
++++ b/v4l2loopback.c
+@@ -126,7 +126,7 @@
+ 	b->timestamp.tv_sec = ts.tv_sec;
+ 	b->timestamp.tv_usec = (ts.tv_nsec / NSEC_PER_USEC);
+ 	b->flags |= V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+-	b->flags &= ~V4L2_BUF_FLAG_TIMESTAMP_COPY;
++	b->flags &= ~(V4L2_BUF_FLAG_TIMESTAMP_COPY | V4L2_BUF_FLAG_TSTAMP_SRC_MASK);
+ }
+ 
+ #if BITS_PER_LONG == 32
+@@ -436,7 +436,12 @@
+ 			   * REQBUFS */
+ 	s64 read_position; /* sequence number of the next 'captured' frame */
+ 	unsigned int reread_count;
++	bool first_frame_pending; /* camera producer must publish after STREAMON */
+ 	enum v4l2l_io_method io_method;
++	/* VMA references, including repeated mmap/fork; protected by dev->lock.
++	 * Queue release does not remove mappings that a process still holds.
++	 */
++	int mapped_buffers[MAX_BUFFERS];
+ 
+ 	struct v4l2_fh fh;
+ };
+@@ -901,6 +906,8 @@
+ /* forward declarations */
+ static void client_usage_queue_event(struct video_device *vdev);
+ static bool any_mapped_buffer(struct v4l2_loopback_device *dev);
++static bool buffers_mapped_by_others(struct v4l2_loopback_device *dev,
++				     struct v4l2_loopback_opener *opener);
+ static void get_buffer(struct v4l2l_buffer *buf);
+ static void put_buffer(struct v4l2l_buffer *buf);
+ static int allocate_buffers(struct v4l2_loopback_device *dev,
+@@ -1253,7 +1260,8 @@
+ 	if (result)
+ 		return result;
+ 	if (!dev->format_producer || dev->format_requester ||
+-	    !has_capture_token(dev->stream_tokens) || any_mapped_buffer(dev) ||
++	    !has_capture_token(dev->stream_tokens) ||
++	    buffers_mapped_by_others(dev, dev->format_producer) ||
+ 	    (!has_capture_token(dev->format_tokens) &&
+ 	     !has_capture_token(opener->format_token))) {
+ 		mutex_unlock(&dev->image_mutex);
+@@ -1802,9 +1810,31 @@
+ {
+ 	u32 index;
+ 	for (index = 0; index < dev->buffer_count; ++index)
+-		if (dev->buffers[index].buffer.flags & V4L2_BUF_FLAG_MAPPED)
++		if (atomic_read(&dev->buffers[index].use_count))
+ 			return true;
+ 	return false;
++}
++
++/* Only the camera's own mappings may survive until SOURCE_CHANGE tells it
++ * to stop and release them. Existing reader mappings must block the request.
++ * Actual allocation still requires every mapping to have been released.
++ */
++static bool buffers_mapped_by_others(struct v4l2_loopback_device *dev,
++				     struct v4l2_loopback_opener *opener)
++{
++	bool mapped = false;
++	u32 index;
++
++	spin_lock_bh(&dev->lock);
++	for (index = 0; index < dev->buffer_count; ++index) {
++		if (atomic_read(&dev->buffers[index].use_count) !=
++		    opener->mapped_buffers[index]) {
++			mapped = true;
++			break;
++		}
++	}
++	spin_unlock_bh(&dev->lock);
++	return mapped;
+ }
+ 
+ static void get_buffer(struct v4l2l_buffer *buf)
+@@ -2062,6 +2092,26 @@
+ 	spin_unlock_bh(&dev->lock);
+ }
+ 
++/* Complete a capture-side format request only after a whole accepted frame
++ * exists and the registered camera producer has restarted OUTPUT streaming.
++ * Both standard MMAP QBUF and file-I/O publication use this same boundary.
++ */
++static void camera_format_frame_complete(struct v4l2_loopback_device *dev,
++					 struct v4l2_loopback_opener *opener,
++					 size_t bytes)
++{
++	mutex_lock(&dev->image_mutex);
++	if (dev->format_producer == opener && dev->format_requester &&
++	    (opener->stream_token & V4L2L_TOKEN_OUTPUT) &&
++	    pix_format_eq(&dev->requested_format, &dev->pix_format, 0) &&
++	    interval_eq(&dev->requested_interval, &dev->capture_param.timeperframe) &&
++	    bytes == dev->pix_format.sizeimage) {
++		dev->format_result = 0;
++		complete(&dev->format_complete);
++	}
++	mutex_unlock(&dev->image_mutex);
++}
++
+ /* put buffer to queue
+  * called on VIDIOC_QBUF
+  */
+@@ -2100,15 +2150,27 @@
+ 	case V4L2_BUF_TYPE_VIDEO_OUTPUT:
+ 		dprintkrw("QBUF(OUTPUT, index=%u) -> " BUFFER_DEBUG_FMT_STR,
+ 			  index, BUFFER_DEBUG_FMT_ARGS(buf));
+-		if (!(bufd->buffer.flags & V4L2_BUF_FLAG_TIMESTAMP_COPY) &&
+-		    (buf->timestamp.tv_sec == 0 &&
+-		     buf->timestamp.tv_usec == 0)) {
++		if (opener == dev->format_producer &&
++		    (buf->flags & V4L2_BUF_FLAG_TIMESTAMP_MASK) ==
++			    V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC) {
++			/* Copying a camera timestamp does not change its clock. COPY
++			 * and MONOTONIC are alternative timestamp types, not two
++			 * independent flags. Preserve the native source as well.
++			 */
++			bufd->buffer.timestamp = buf->timestamp;
++			bufd->buffer.flags &= ~(V4L2_BUF_FLAG_TIMESTAMP_MASK |
++					       V4L2_BUF_FLAG_TSTAMP_SRC_MASK);
++			bufd->buffer.flags |= V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC |
++				(buf->flags & V4L2_BUF_FLAG_TSTAMP_SRC_MASK);
++		} else if (!(bufd->buffer.flags & V4L2_BUF_FLAG_TIMESTAMP_COPY) &&
++			   (buf->timestamp.tv_sec == 0 &&
++			    buf->timestamp.tv_usec == 0)) {
+ 			v4l2l_get_timestamp(&bufd->buffer);
+ 		} else {
+ 			bufd->buffer.timestamp = buf->timestamp;
+ 			bufd->buffer.flags |= V4L2_BUF_FLAG_TIMESTAMP_COPY;
+-			bufd->buffer.flags &=
+-				~V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
++			bufd->buffer.flags &= ~(V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC |
++					       V4L2_BUF_FLAG_TSTAMP_SRC_MASK);
+ 		}
+ 		if (dev->pix_format_has_valid_sizeimage) {
+ 			if (buf->bytesused >= dev->pix_format.sizeimage) {
+@@ -2135,6 +2197,7 @@
+ 		buffer_written(dev, bufd);
+ 		set_done(bufd->buffer.flags);
+ 		wake_up_all(&dev->read_event);
++		camera_format_frame_complete(dev, opener, bufd->buffer.bytesused);
+ 		break;
+ 	default:
+ 		return -EINVAL;
+@@ -2151,7 +2214,8 @@
+ 	spin_lock_bh(&dev->lock);
+ 	check_timers(dev);
+ 	ret = dev->write_position > opener->read_position ||
+-	      dev->reread_count > opener->reread_count || dev->timeout_happened;
++	      (!opener->first_frame_pending &&
++	       (dev->reread_count > opener->reread_count || dev->timeout_happened));
+ 	spin_unlock_bh(&dev->lock);
+ 	return ret;
+ }
+@@ -2161,15 +2225,14 @@
+ 	struct v4l2_loopback_device *dev = v4l2loopback_getdevice(file);
+ 	struct v4l2_loopback_opener *opener =
+ 		v4l2l_f_to_opener(file, file->private_data);
+-	int pos, timeout_happened;
++	int pos, timeout_happened, result;
+ 	u32 index;
+ 
+-	if ((file->f_flags & O_NONBLOCK) &&
+-	    (dev->write_position <= opener->read_position &&
+-	     dev->reread_count <= opener->reread_count &&
+-	     !dev->timeout_happened))
++	if ((file->f_flags & O_NONBLOCK) && !can_read(dev, opener))
+ 		return -EAGAIN;
+-	wait_event_interruptible(dev->read_event, can_read(dev, opener));
++	result = wait_event_interruptible(dev->read_event, can_read(dev, opener));
++	if (result)
++		return result;
+ 
+ 	mutex_lock(&dev->image_mutex);
+ 	if (!dev->image || dev->used_buffer_count == 0) {
+@@ -2193,7 +2256,10 @@
+ 				  dev->used_buffer_count);
+ 		++opener->read_position;
+ 	}
+-	timeout_happened = dev->timeout_happened && (dev->timeout_jiffies > 0);
++	/* A timeout from before the first camera frame must not replace it. */
++	timeout_happened = !opener->first_frame_pending &&
++			   dev->timeout_happened && (dev->timeout_jiffies > 0);
++	opener->first_frame_pending = false;
+ 	dev->timeout_happened = 0;
+ 	index = dev->bufpos2index[pos];
+ 	if (timeout_happened)
+@@ -2289,12 +2355,27 @@
+ 
+ 	switch (type) {
+ 	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
+-		if (has_output_token(dev->stream_tokens) && !dev->keep_format)
++		mutex_lock(&dev->image_mutex);
++		if (has_output_token(dev->stream_tokens) && !dev->keep_format) {
++			mutex_unlock(&dev->image_mutex);
+ 			return -EIO;
++		}
+ 		if (dev->stream_tokens & token) {
++			if (dev->format_producer) {
++				/* Begin this stream at the next producer publication.
++				 * The cached format-negotiation frame belongs to S_FMT,
++				 * not to the capture that starts after it.
++				 */
++				spin_lock_bh(&dev->lock);
++				opener->read_position = dev->write_position;
++				opener->reread_count = dev->reread_count;
++				opener->first_frame_pending = true;
++				spin_unlock_bh(&dev->lock);
++			}
+ 			acquire_token(dev, opener, stream, token);
+ 			client_usage_queue_event(dev->vdev);
+ 		}
++		mutex_unlock(&dev->image_mutex);
+ 		return 0;
+ 	case V4L2_BUF_TYPE_VIDEO_OUTPUT:
+ 		if (dev->stream_tokens & token)
+@@ -2481,15 +2562,33 @@
+ static void vm_open(struct vm_area_struct *vma)
+ {
+ 	struct v4l2l_buffer *buf = vma->vm_private_data;
++	struct file *file = vma->vm_file;
++	struct v4l2_loopback_device *dev = v4l2loopback_getdevice(file);
++	struct v4l2_loopback_opener *opener =
++		v4l2l_f_to_opener(file, file->private_data);
++
+ 	MARK();
++	spin_lock_bh(&dev->lock);
+ 	get_buffer(buf);
++	if (buf != &dev->timeout_buffer)
++		opener->mapped_buffers[buf->buffer.index]++;
++	spin_unlock_bh(&dev->lock);
+ }
+ 
+ static void vm_close(struct vm_area_struct *vma)
+ {
+ 	struct v4l2l_buffer *buf = vma->vm_private_data;
++	struct file *file = vma->vm_file;
++	struct v4l2_loopback_device *dev = v4l2loopback_getdevice(file);
++	struct v4l2_loopback_opener *opener =
++		v4l2l_f_to_opener(file, file->private_data);
++
+ 	MARK();
++	spin_lock_bh(&dev->lock);
+ 	put_buffer(buf);
++	if (buf != &dev->timeout_buffer)
++		opener->mapped_buffers[buf->buffer.index]--;
++	spin_unlock_bh(&dev->lock);
+ }
+ 
+ static struct vm_operations_struct vm_ops = {
+@@ -2517,6 +2616,13 @@
+ 	result = mutex_lock_killable(&dev->image_mutex);
+ 	if (result < 0)
+ 		return result;
++	/* The requester is waiting for the producer to release and resize its
++	 * storage. Do not let a new reader mapping appear after that check.
++	 */
++	if (dev->format_requester && opener != dev->format_producer) {
++		result = -EBUSY;
++		goto exit_mmap_unlock;
++	}
+ 
+ 	if (size > dev->buffer_size) {
+ 		dprintk("mmap() attempt to map %lubytes when %ubytes are "
+@@ -2566,7 +2672,7 @@
+ 
+ 	vma->vm_ops = &vm_ops;
+ 	vma->vm_private_data = buffer;
+-	get_buffer(buffer);
++	vm_open(vma);
+ 
+ exit_mmap_unlock:
+ 	mutex_unlock(&dev->image_mutex);
+@@ -2822,19 +2928,8 @@
+ 	buffer_written(dev, &dev->buffers[index]);
+ 	set_done(b->flags);
+ 	wake_up_all(&dev->read_event);
+-	/* S_FMT on the capture side completes only after a whole frame in the
+-	 * accepted format exists and the producer has restarted OUTPUT streaming.
+-	 */
+-	mutex_lock(&dev->image_mutex);
+-	if (dev->format_producer == v4l2l_f_to_opener(file, file->private_data) &&
+-	    dev->format_requester &&
+-	    pix_format_eq(&dev->requested_format, &dev->pix_format, 0) &&
+-	    interval_eq(&dev->requested_interval, &dev->capture_param.timeperframe) &&
+-	    count == dev->pix_format.sizeimage) {
+-		dev->format_result = 0;
+-		complete(&dev->format_complete);
+-	}
+-	mutex_unlock(&dev->image_mutex);
++	camera_format_frame_complete(dev,
++			v4l2l_f_to_opener(file, file->private_data), count);
+ 
+ 	return count;
+ }

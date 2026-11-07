@@ -1,0 +1,17 @@
+[package]
+name = "piano-quad"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+demosaic = { path = "vendor/demosaic" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

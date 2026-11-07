@@ -1,9 +1,7 @@
 """Actual runtime compilation and exact kernel/stage refusal, no live root edit."""
 from pathlib import Path
 import json
-import os
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -14,28 +12,11 @@ import build_piano_runtime_helpers as runtime
 
 
 class PianoRuntimeBuilderTests(unittest.TestCase):
-    @unittest.skipUnless(shutil.which('cc'), 'Native C compiler unavailable')
-    def test_camerad_readiness_notification_without_camera_access(self):
-        source=ROOT/'upstream/debian-piano-current'/runtime.PUBLIC_SOURCES['piano-camerad'][0]
-        if not source.exists():self.skipTest('Pinned camera source not fetched')
-        with tempfile.TemporaryDirectory(prefix='camera-notify-')as directory:
-            folder=Path(directory);harness=folder/'notify.c';binary=folder/'notify'
-            harness.write_text('#define main PianoCameraDeviceMain\n#include '+json.dumps(str(source))+'\n#undef main\nint main(void){notify_ready();return 0;}\n')
-            # Production compiler warnings are covered by the canonical ARM64
-            # build above; this native harness only exercises notify_ready().
-            subprocess.run(['cc','-O2',str(harness),'-lm','-o',str(binary)],check=True)
-            for address in (str(folder/'notify.sock'),'\0piano-camera-notify-'+str(os.getpid())):
-                with self.subTest(address=address),socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM)as listener:
-                    listener.bind(address);listener.settimeout(2)
-                    env=os.environ.copy();env['NOTIFY_SOCKET']='@'+address[1:]if address[0]=='\0'else address
-                    subprocess.run([str(binary)],env=env,check=True,timeout=5)
-                    self.assertEqual(listener.recv(128),b'READY=1')
-
     def test_actual_canonical_compile_help_topology_and_module(self):
         if not(ROOT/'build/distros/piano-runtime-build/usr/lib/aarch64-linux-gnu/libc.a').exists():self.skipTest('Verified native ARM64 sysroot not prepared')
         with tempfile.TemporaryDirectory(prefix='runtime-build-test-',dir=ROOT/'build')as directory:
             output=Path(directory)/'bundle';args=runtime.parser().parse_args(['--output',str(output)])
-            manifest=runtime.build(args);self.assertEqual(len(manifest['runtime_files']),5);self.assertFalse(manifest['hardware_verified'])
+            manifest=runtime.build(args);self.assertTrue(runtime.CAMERA_RUNTIME_PATHS <= manifest['runtime_files'].keys());self.assertFalse(manifest['hardware_verified'])
             self.assertEqual(manifest['kernel']['release'],runtime.DEFAULT_RELEASE)
             for name in runtime.PUBLIC_SOURCES:self.assertTrue(runtime.verify_elf(output/name)['static_no_pt_interp'])
             module=output/'v4l2loopback/v4l2loopback.ko';self.assertEqual(runtime.modinfo(module)['vermagic'].split()[0],runtime.DEFAULT_RELEASE)
@@ -48,7 +29,7 @@ class PianoRuntimeBuilderTests(unittest.TestCase):
         if not(build/'Module.symvers').exists():self.skipTest('Full candidate kernel not built')
         with self.assertRaisesRegex(ValueError,'release differs'):runtime.kernel_identity(build,source,runtime.UAPI_COMMIT,'7.2.6-wrong')
         identity=runtime.kernel_identity(build,source,runtime.UAPI_COMMIT,runtime.DEFAULT_RELEASE);self.assertEqual(identity['commit'],runtime.UAPI_COMMIT)
-        for name in ('piano-camerad','piano-pd-locator'):
+        for name in ('piano-pd-locator',):
             text=runtime.entry_source(name);self.assertIn('PianoOriginalMain(void)',text)
             self.assertLess(text.index('"--help"'),text.index('return PianoOriginalMain()'))
         with self.assertRaises(ValueError):runtime.entry_source('untrusted-program')

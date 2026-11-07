@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "patches": [
+    {
+      "file": "0001-capture-format-negotiation.patch",
+      "sha256": "992ed075e4428aa63a5af81e96fc58d3156a36d42d3e07f0ba340c818f0ad45a"
+    },
+    {
+      "file": "0002-native-timestamps-and-mmap-handoff.patch",
+      "sha256": "341f02009ca24ffbc74e2c9e34a0b86cc9cf4a9ba44c716642f56c854a2f9aab"
+    },
+    {
+      "file": "0003-camera-selection-and-format-defaults.patch",
+      "sha256": "0ea920b212edfbea03a76d4eed1aeebca2a5fb243c58557871998202c7b9f816"
+    }
+  ]
+}

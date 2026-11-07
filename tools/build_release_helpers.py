@@ -26,6 +26,7 @@ def inputs_current(output):
     record = json.loads(path.read_text())
     return (
         record.get('producer', {}).get('sha256') == runtime.sha(Path(__file__))
+        and record.get('camera', {}).get('inputs') == runtime.camera_inputs()
         and record.get('fingerprint', {}).get('inputs')
         == build_piano_fingerprint.source_inputs()
     )
@@ -84,20 +85,20 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
         flags += ['--sysroot=' + str(sysroot)]
     files = {}
     touch, touch_record = runtime.derive_touch_source(public, output)
-    camera, camera_record = runtime.derive_camerad_source(public, output)
     native = platform.machine() in ('aarch64', 'arm64')
     emulator = None if native else shutil.which('qemu-aarch64-static') or shutil.which('qemu-aarch64')
     if not native and not emulator:
         raise ValueError('AArch64 helper checks need qemu-aarch64 on this host')
     pen_files, pen_record = runtime.build_pen_core(output, flags, sysroot, emulator=emulator)
     files.update(pen_files)
-    for name, (relative, digest, destination) in (runtime.PUBLIC_SOURCES | runtime.BSP_SOURCES).items():
-        original = (ROOT if name in runtime.BSP_SOURCES else public) / relative
-        if name in runtime.BSP_SOURCES:
-            digest = runtime.sha(original)
-        elif runtime.sha(original) != digest:
+    camera_files, camera_record = runtime.build_camera(
+        output, flags, pen_record['cxx_command'], uapi, sysroot, emulator=emulator)
+    files.update(camera_files)
+    for name, (relative, digest, destination) in runtime.PUBLIC_SOURCES.items():
+        original = public / relative
+        if runtime.sha(original) != digest:
             raise ValueError('Runtime helper source changed: ' + name)
-        source_file = touch if name == 'piano-touch-view' else camera if name == 'piano-camerad' else original
+        source_file = touch if name == 'piano-touch-view' else original
         entry, obj, binary = output / (name + '-entry.c'), output / (name + '.o'), output / name
         entry.write_text(runtime.entry_source(name))
         if name == 'piano-touch-view':
@@ -111,10 +112,6 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
         item.update(file=name, mode=0o755, source_sha256=digest, help_no_device_access=True)
         if name == 'piano-touch-view':
             item.update(touch_record)
-        if name == 'piano-camerad':
-            item.update(camera_record)
-        if name in runtime.BSP_SOURCES:
-            item.update(source_kind='project-bsp', source_path=relative)
         files[destination] = item
     fingerprint_files, fingerprint = build_piano_fingerprint.build(
         output, flags, emulator=emulator)
@@ -137,6 +134,9 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
         target = module_source / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(loop / name, target)
+    for patch in runtime.source_patches(runtime.LOOPBACK_PATCH_SERIES):
+        run(['patch', '--batch', '--forward', '--fuzz=0', '-p1',
+             '--directory', module_source, '--input', patch])
     run(['make', '-C', kernel_build, 'M=' + str(module_source), 'ARCH=arm64', 'LLVM=1', 'LOCALVERSION=', 'modules'])
     module = module_source / 'v4l2loopback.ko'
     item = modinfo(module)
@@ -149,7 +149,7 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
     if runtime.kernel_identity(kernel_build, source, commit, release) != identity:
         raise ValueError('Kernel source/ABI changed during runtime helper build')
     result = {'status': 'RUNTIME_COMPILED_NOT_DEVICE_TESTED', 'kernel': identity,
-        'public_commit': runtime.PUBLIC_COMMIT, 'runtime_files': files, 'pen_core': pen_record,
+        'public_commit': runtime.PUBLIC_COMMIT, 'runtime_files': files, 'pen_core': pen_record, 'camera': camera_record,
         'producer': {'file': 'tools/build_release_helpers.py', 'sha256': runtime.sha(Path(__file__))},
         'fingerprint': fingerprint,
         'uapi_sha256': uapi_digest, 'uapi_source_commit': commit, 'macros_commit': runtime.MACROS_COMMIT,

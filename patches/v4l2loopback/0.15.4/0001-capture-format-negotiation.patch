@@ -1,0 +1,465 @@
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Subject: [PATCH] v4l2loopback: negotiate camera producer sizes and frame intervals
+
+A camera producer registers NV12 sizes and intervals by subscribing to
+SOURCE_CHANGE before its first frame. Publish those combinations through
+standard capture enumeration and hand S_FMT/S_PARM requests to that
+producer. Complete negotiation only after the producer releases old
+buffers and writes a whole frame matching both size and interval. Reject
+live/mapped buffer changes; existing producers retain their original
+behavior.
+
+---
+--- a/v4l2loopback.c
++++ b/v4l2loopback.c
+@@ -23,6 +23,7 @@
+ #include <linux/slab.h>
+ #include <linux/fs.h>
+ #include <linux/capability.h>
++#include <linux/completion.h>
+ #include <linux/timer.h>
+ #include <linux/eventpoll.h>
+ #include <media/v4l2-ioctl.h>
+@@ -331,6 +332,13 @@
+ 	atomic_t use_count;
+ };
+ 
++/* Producer capabilities are captured before its first frame is written. */
++#define MAX_PRODUCER_FORMATS 8
++struct v4l2_loopback_producer_format {
++	struct v4l2_pix_format pix;
++	struct v4l2_fract interval;
++};
++
+ struct v4l2_loopback_device {
+ 	struct v4l2_device v4l2_dev;
+ 	struct v4l2_ctrl_handler ctrl_handler;
+@@ -386,6 +394,19 @@
+ 			    * timeout buffers */
+ 	u32 stream_tokens; /* tokens to 'start' OUTPUT, CAPTURE, or timeout
+ 			    * stream */
++
++	/* A userspace camera producer can opt into capture-side format changes
++	 * by subscribing to SOURCE_CHANGE for each NV12 size and frame interval.
++	 * The producer stops and releases its buffers before acknowledging a
++	 * request. Readers never resize storage underneath an active writer.
++	 */
++	struct v4l2_loopback_opener *format_producer, *format_requester;
++	struct v4l2_pix_format producer_limits, requested_format;
++	struct v4l2_loopback_producer_format producer_formats[MAX_PRODUCER_FORMATS];
++	unsigned int producer_format_count;
++	struct v4l2_fract requested_interval;
++	struct completion format_complete;
++	int format_result;
+ 
+ 	/* sustain framerate */
+ 	struct timer_list sustain_timer;
+@@ -932,6 +953,68 @@
+ 	return 0;
+ }
+ 
++static bool interval_eq(const struct v4l2_fract *a, const struct v4l2_fract *b)
++{
++	return (u64)a->numerator * b->denominator ==
++	       (u64)b->numerator * a->denominator;
++}
++
++/* Caller holds image_mutex. Enumerate unique rates covering this image. */
++static int producer_interval(struct v4l2_loopback_device *dev, u32 width,
++			     u32 height, unsigned int index,
++			     struct v4l2_fract *interval)
++{
++	unsigned int i, j;
++
++	for (i = 0; i < dev->producer_format_count; ++i) {
++		struct v4l2_loopback_producer_format *mode = &dev->producer_formats[i];
++
++		if (width > mode->pix.width || height > mode->pix.height)
++			continue;
++		for (j = 0; j < i; ++j) {
++			struct v4l2_loopback_producer_format *earlier =
++				&dev->producer_formats[j];
++
++			if (width <= earlier->pix.width && height <= earlier->pix.height &&
++			    interval_eq(&earlier->interval, &mode->interval))
++				break;
++		}
++		if (j < i)
++			continue;
++		if (!index--) {
++			*interval = mode->interval;
++			return 0;
++		}
++	}
++	return -EINVAL;
++}
++
++static int nearest_producer_interval(struct v4l2_loopback_device *dev, u32 width,
++				     u32 height, struct v4l2_fract *interval)
++{
++	struct v4l2_fract choice;
++	u64 requested, distance = U64_MAX;
++	unsigned int i;
++
++	mutex_lock(&dev->image_mutex);
++	if (!interval->numerator || !interval->denominator)
++		*interval = dev->capture_param.timeperframe;
++	requested = div_u64((u64)interval->numerator * NSEC_PER_SEC,
++			    interval->denominator);
++	for (i = 0; !producer_interval(dev, width, height, i, &choice); ++i) {
++		u64 period = div_u64((u64)choice.numerator * NSEC_PER_SEC,
++				     choice.denominator);
++		u64 delta = period > requested ? period - requested : requested - period;
++
++		if (delta < distance) {
++			*interval = choice;
++			distance = delta;
++		}
++	}
++	mutex_unlock(&dev->image_mutex);
++	return distance == U64_MAX ? -EINVAL : 0;
++}
++
+ static int vidioc_enum_framesizes(struct file *file, void *fh,
+ 				  struct v4l2_frmsizeenum *argp)
+ {
+@@ -941,6 +1024,19 @@
+ 	/* there can be only one... */
+ 	if (argp->index)
+ 		return -EINVAL;
++	if (dev->format_producer && !dev->keep_format &&
++	    opener != dev->format_producer) {
++		if (argp->pixel_format != dev->producer_limits.pixelformat)
++			return -EINVAL;
++		argp->type = V4L2_FRMSIZE_TYPE_STEPWISE;
++		argp->stepwise.min_width = 16;
++		argp->stepwise.max_width = dev->producer_limits.width;
++		argp->stepwise.step_width = 16;
++		argp->stepwise.min_height = 4;
++		argp->stepwise.max_height = dev->producer_limits.height;
++		argp->stepwise.step_height = 2;
++		return 0;
++	}
+ 
+ 	if (dev->keep_format || has_other_owners(opener, dev)) {
+ 		/* only current frame size supported */
+@@ -1020,7 +1116,25 @@
+ 	struct v4l2_loopback_device *dev = v4l2loopback_getdevice(file);
+ 	struct v4l2_loopback_opener *opener = v4l2l_f_to_opener(file, fh);
+ 
+-	/* there can be only one... */
++	if (dev->format_producer && !dev->keep_format &&
++	    opener != dev->format_producer) {
++		int result;
++
++		if (argp->pixel_format != dev->producer_limits.pixelformat ||
++		    argp->width < 16 || argp->width > dev->producer_limits.width ||
++		    argp->height < 4 || argp->height > dev->producer_limits.height ||
++		    (argp->width & 15) || (argp->height & 1))
++			return -EINVAL;
++
++		argp->type = V4L2_FRMIVAL_TYPE_DISCRETE;
++		mutex_lock(&dev->image_mutex);
++		result = producer_interval(dev, argp->width, argp->height,
++					   argp->index, &argp->discrete);
++		mutex_unlock(&dev->image_mutex);
++		return result;
++	}
++
++	/* The original loopback path only reports one interval. */
+ 	if (argp->index)
+ 		return -EINVAL;
+ 
+@@ -1099,6 +1213,20 @@
+ 
+ 	if (check_buffer_capability(dev, opener, f->type) < 0)
+ 		return -EINVAL;
++	if (dev->format_producer && !dev->keep_format &&
++	    V4L2_TYPE_IS_CAPTURE(f->type)) {
++		u32 width = clamp_t(u32, f->fmt.pix.width, 16,
++				    dev->producer_limits.width) & ~15U;
++		u32 height = clamp_t(u32, f->fmt.pix.height, 4,
++				     dev->producer_limits.height) & ~1U;
++
++		/* Retain the producer's colour space and exact NV12 layout. */
++		f->fmt.pix = dev->producer_limits;
++		f->fmt.pix.width = width;
++		f->fmt.pix.height = height;
++		return v4l2l_fill_format(f, 16, dev->producer_limits.width,
++				       4, dev->producer_limits.height);
++	}
+ 	if (v4l2l_fill_format(f, dev->min_width, dev->max_width,
+ 			      dev->min_height, dev->max_height) != 0)
+ 		return -EINVAL;
+@@ -1107,6 +1235,52 @@
+ 		f->fmt.pix = dev->pix_format;
+ 
+ 	return 0;
++}
++
++/* Wait without image_mutex: the producer needs that mutex to release its
++ * OUTPUT buffers, set the requested format and publish a complete first frame.
++ */
++static int negotiate_capture_format(struct v4l2_loopback_device *dev,
++				    struct v4l2_loopback_opener *opener,
++				    struct v4l2_format *format,
++				    const struct v4l2_fract *interval)
++{
++	struct v4l2_event event = { .type = V4L2_EVENT_SOURCE_CHANGE };
++	long waited;
++	int result;
++
++	result = mutex_lock_killable(&dev->image_mutex);
++	if (result)
++		return result;
++	if (!dev->format_producer || dev->format_requester ||
++	    !has_capture_token(dev->stream_tokens) || any_mapped_buffer(dev) ||
++	    (!has_capture_token(dev->format_tokens) &&
++	     !has_capture_token(opener->format_token))) {
++		mutex_unlock(&dev->image_mutex);
++		return -EBUSY;
++	}
++	if (opener->format_token)
++		release_token(dev, opener, format);
++	dev->format_requester = opener;
++	dev->requested_format = format->fmt.pix;
++	dev->requested_interval = *interval;
++	dev->format_result = -EINPROGRESS;
++	reinit_completion(&dev->format_complete);
++	event.u.src_change.changes = V4L2_EVENT_SRC_CH_RESOLUTION;
++	v4l2_event_queue_fh(&dev->format_producer->fh, &event);
++	mutex_unlock(&dev->image_mutex);
++
++	waited = wait_for_completion_interruptible_timeout(&dev->format_complete,
++							   msecs_to_jiffies(5000));
++	mutex_lock(&dev->image_mutex);
++	result = waited > 0 ? dev->format_result : waited < 0 ? waited : -ETIMEDOUT;
++	dev->format_requester = NULL;
++	if (!result) {
++		format->fmt.pix = dev->pix_format;
++		acquire_token(dev, opener, format, V4L2L_TOKEN_CAPTURE);
++	}
++	mutex_unlock(&dev->image_mutex);
++	return result;
+ }
+ 
+ /* Sets new format. Fills 'f' argument with the requested or existing format.
+@@ -1133,10 +1307,24 @@
+ 	if (opener->buffer_count > 0)
+ 		/* must free buffers before format can be set */
+ 		return -EBUSY;
++	if (dev->format_producer && V4L2_TYPE_IS_CAPTURE(f->type) &&
++	    !pix_format_eq(&dev->pix_format, &f->fmt.pix, 0)) {
++		struct v4l2_fract interval = dev->capture_param.timeperframe;
++
++		result = nearest_producer_interval(dev, f->fmt.pix.width,
++						   f->fmt.pix.height, &interval);
++		if (result)
++			return result;
++		return negotiate_capture_format(dev, opener, f, &interval);
++	}
+ 
+ 	result = mutex_lock_killable(&dev->image_mutex);
+ 	if (result < 0)
+ 		return result;
++	if (V4L2_TYPE_IS_CAPTURE(f->type) && dev->format_requester) {
++		result = -EBUSY;
++		goto exit_s_fmt_unlock;
++	}
+ 
+ 	if (opener->format_token)
+ 		release_token(dev, opener, format);
+@@ -1231,7 +1419,8 @@
+ 	 * CHECK whether this assumption is wrong,
+ 	 * or whether we have to always provide a valid format
+ 	 */
+-	f->fmt.pix = dev->pix_format;
++	f->fmt.pix = dev->format_requester && opener == dev->format_producer ?
++		dev->requested_format : dev->pix_format;
+ 	return 0;
+ }
+ 
+@@ -1284,6 +1473,8 @@
+ 	if (check_buffer_capability(dev, opener, parm->type) < 0)
+ 		return -EINVAL;
+ 	parm->parm.capture = dev->capture_param;
++	if (dev->format_requester && opener == dev->format_producer)
++		parm->parm.output.timeperframe = dev->requested_interval;
+ 	return 0;
+ }
+ 
+@@ -1305,7 +1496,27 @@
+ 
+ 	switch (parm->type) {
+ 	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
+-		set_timeperframe(dev, &parm->parm.capture.timeperframe);
++		if (dev->format_producer) {
++			struct v4l2_fract interval = parm->parm.capture.timeperframe;
++			struct v4l2_format format = {
++				.type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
++				.fmt.pix = dev->pix_format,
++			};
++			int result = nearest_producer_interval(dev, format.fmt.pix.width,
++							       format.fmt.pix.height, &interval);
++
++			if (result)
++				return result;
++			if (!interval_eq(&interval, &dev->capture_param.timeperframe)) {
++				if (opener->buffer_count)
++					return -EBUSY;
++				result = negotiate_capture_format(dev, opener, &format, &interval);
++				if (result)
++					return result;
++			}
++		} else {
++			set_timeperframe(dev, &parm->parm.capture.timeperframe);
++		}
+ 		break;
+ 	case V4L2_BUF_TYPE_VIDEO_OUTPUT:
+ 		set_timeperframe(dev, &parm->parm.output.timeperframe);
+@@ -1690,6 +1901,10 @@
+ 	result = mutex_lock_killable(&dev->image_mutex);
+ 	if (result < 0)
+ 		return result; /* -EINTR */
++	if (dev->format_requester && V4L2_TYPE_IS_CAPTURE(reqbuf->type) && req_count) {
++		result = -EBUSY;
++		goto exit_reqbufs_unlock;
++	}
+ 
+ 	/* CASE queue/dequeue timeout-buffer only: */
+ 	if (opener->format_token & V4L2L_TOKEN_TIMEOUT) {
+@@ -1708,6 +1923,8 @@
+ 		}
+ 		result = vidioc_streamoff(file, fh, reqbuf->type);
+ 		opener->buffer_count = 0;
++		if (opener == dev->format_producer)
++			opener->io_method = V4L2L_IO_NONE;
+ 		/* undocumented requirement - REQBUFS with count zero should
+ 		 * ALSO release lock on logical stream */
+ 		if (opener->format_token)
+@@ -2194,6 +2411,38 @@
+ 				  const struct v4l2_event_subscription *sub)
+ {
+ 	switch (sub->type) {
++	case V4L2_EVENT_SOURCE_CHANGE: {
++		struct v4l2_loopback_opener *opener =
++			container_of(fh, struct v4l2_loopback_opener, fh);
++		struct v4l2_loopback_device *dev =
++			container_of(fh->vdev->v4l2_dev, struct v4l2_loopback_device,
++				     v4l2_dev);
++		int result = v4l2_event_subscribe(fh, sub, 4, NULL);
++
++		if (result)
++			return result;
++		mutex_lock(&dev->image_mutex);
++		if (has_output_token(opener->format_token) &&
++		    (!dev->format_producer || dev->format_producer == opener) &&
++		    opener->io_method == V4L2L_IO_NONE && !opener->buffer_count &&
++		    dev->pix_format.pixelformat == V4L2_PIX_FMT_NV12) {
++			unsigned int count = dev->producer_format_count;
++
++			if (count == MAX_PRODUCER_FORMATS) {
++				mutex_unlock(&dev->image_mutex);
++				return -ENOSPC;
++			}
++			if (!count || (dev->pix_format.width >= dev->producer_limits.width &&
++				       dev->pix_format.height >= dev->producer_limits.height))
++				dev->producer_limits = dev->pix_format;
++			dev->format_producer = opener;
++			dev->producer_formats[count].pix = dev->pix_format;
++			dev->producer_formats[count].interval = dev->capture_param.timeperframe;
++			++dev->producer_format_count;
++		}
++		mutex_unlock(&dev->image_mutex);
++		return 0;
++	}
+ 	case V4L2_EVENT_CTRL:
+ 		return v4l2_ctrl_subscribe_event(fh, sub);
+ 	case V4L2_EVENT_PRI_CLIENT_USAGE:
+@@ -2201,6 +2450,31 @@
+ 	}
+ 
+ 	return -EINVAL;
++}
++
++static int vidioc_unsubscribe_event(struct v4l2_fh *fh,
++				    const struct v4l2_event_subscription *sub)
++{
++	struct v4l2_loopback_opener *opener =
++		container_of(fh, struct v4l2_loopback_opener, fh);
++	struct v4l2_loopback_device *dev =
++		container_of(fh->vdev->v4l2_dev, struct v4l2_loopback_device, v4l2_dev);
++	int result = v4l2_event_unsubscribe(fh, sub);
++
++	if (result || (sub->type != V4L2_EVENT_SOURCE_CHANGE &&
++		       sub->type != V4L2_EVENT_ALL))
++		return result;
++	mutex_lock(&dev->image_mutex);
++	if (dev->format_producer == opener) {
++		dev->format_producer = NULL;
++		dev->producer_format_count = 0;
++		if (dev->format_requester) {
++			dev->format_result = -ECANCELED;
++			complete(&dev->format_complete);
++		}
++	}
++	mutex_unlock(&dev->image_mutex);
++	return 0;
+ }
+ 
+ /* file operations */
+@@ -2378,6 +2652,17 @@
+ 	struct v4l2_loopback_opener *opener =
+ 		v4l2l_f_to_opener(file, file->private_data);
+ 	int result = 0;
++
++	mutex_lock(&dev->image_mutex);
++	if (dev->format_producer == opener) {
++		dev->format_producer = NULL;
++		dev->producer_format_count = 0;
++		if (dev->format_requester) {
++			dev->format_result = -ENODEV;
++			complete(&dev->format_complete);
++		}
++	}
++	mutex_unlock(&dev->image_mutex);
+ 	dprintk("close() -> dev@%p with image@%p\n", dev,
+ 		dev ? dev->image : NULL);
+ 
+@@ -2537,6 +2822,19 @@
+ 	buffer_written(dev, &dev->buffers[index]);
+ 	set_done(b->flags);
+ 	wake_up_all(&dev->read_event);
++	/* S_FMT on the capture side completes only after a whole frame in the
++	 * accepted format exists and the producer has restarted OUTPUT streaming.
++	 */
++	mutex_lock(&dev->image_mutex);
++	if (dev->format_producer == v4l2l_f_to_opener(file, file->private_data) &&
++	    dev->format_requester &&
++	    pix_format_eq(&dev->requested_format, &dev->pix_format, 0) &&
++	    interval_eq(&dev->requested_interval, &dev->capture_param.timeperframe) &&
++	    count == dev->pix_format.sizeimage) {
++		dev->format_result = 0;
++		complete(&dev->format_complete);
++	}
++	mutex_unlock(&dev->image_mutex);
+ 
+ 	return count;
+ }
+@@ -2841,6 +3139,7 @@
+ 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+ 	if (!dev)
+ 		return -ENOMEM;
++	init_completion(&dev->format_complete);
+ 
+ 	/* allocate id, if @id >= 0, we're requesting that specific id */
+ 	if (nr >= 0) {
+@@ -3235,7 +3534,7 @@
+ #endif
+ 
+ 	.vidioc_subscribe_event		= &vidioc_subscribe_event,
+-	.vidioc_unsubscribe_event	= &v4l2_event_unsubscribe,
++	.vidioc_unsubscribe_event	= &vidioc_unsubscribe_event,
+ 	// clang-format on
+ };
+ 

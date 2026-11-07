@@ -252,6 +252,27 @@ def build_devices(rootfs):
             path.unlink(missing_ok=True)
 
 
+@contextmanager
+def camera_build_sysroot(rootfs, output, run):
+    """Install camera build dependencies without adding them to the image."""
+    staging = output / 'runtime-sysroot'
+    staging.mkdir()
+    for name in ('upper', 'work', 'root'):
+        (staging / name).mkdir()
+    sysroot = staging / 'root'
+    options = f'lowerdir={rootfs},upperdir={staging / "upper"},workdir={staging / "work"}'
+    run(['mount', '-t', 'overlay', 'overlay', '-o', options, sysroot])
+    try:
+        with build_devices(sysroot), build_resolver(sysroot):
+            run(['chroot', sysroot, 'env', 'DEBIAN_FRONTEND=noninteractive',
+                 'apt-get', 'install', '-y', '--no-install-recommends',
+                 'libyuv-dev', 'libjpeg62-turbo-dev'])
+            yield sysroot
+    finally:
+        run(['umount', sysroot])
+        shutil.rmtree(staging)
+
+
 def apply_policy(rootfs, output, config):
     rootfs, _ = own_root(rootfs, output)
     storage = config['storage']
@@ -670,9 +691,10 @@ def execute(record):
             bundle = out / 'runtime'
             if record.get('resume') and bundle.is_dir():
                 shutil.rmtree(bundle)
-            run([sys.executable, ROOT / 'tools/build_release_helpers.py', '--kernel', kernel, '--source', source,
-                 '--kernel-build', record['kernel_build'], '--output', bundle, '--sysroot', rootfs,
-                 '--cc', helper_cc, '--macros', record['macros'], '--v4l2-source', record['v4l2_source']])
+            with camera_build_sysroot(rootfs, out, run) as sysroot:
+                run([sys.executable, ROOT / 'tools/build_release_helpers.py', '--kernel', kernel, '--source', source,
+                     '--kernel-build', record['kernel_build'], '--output', bundle, '--sysroot', sysroot,
+                     '--cc', helper_cc, '--macros', record['macros'], '--v4l2-source', record['v4l2_source']])
             runtime.stage(bundle, rootfs)
         from stage_piano_firmware import stage as stage_firmware
         stage_firmware(Path(record['firmware_source']), rootfs)
