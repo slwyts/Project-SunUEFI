@@ -287,7 +287,8 @@ def install_debian_desktop(root, runtime, output):
         subprocess.run(['chroot', root, 'apt-get', 'install', '-y', '--no-install-recommends',
                         'build-essential', 'meson', 'ninja-build', 'pkg-config', 'udev', 'libudev-dev',
                         'libglib2.0-dev', 'libgusb-dev', 'libgudev-1.0-dev',
-                        'libpixman-1-dev', 'libssl-dev', 'libgirepository1.0-dev', 'fprintd'], check=True)
+                        'libpixman-1-dev', 'libssl-dev', 'libgirepository1.0-dev',
+                        'fprintd', 'libpam-fprintd'], check=True)
         subprocess.run(['chroot', root, 'env',
                         'PKG_CONFIG_PATH=/var/tmp/sunuefi-libfprint/sdk/lib/pkgconfig',
                         'meson', 'setup', '/var/tmp/sunuefi-libfprint/build',
