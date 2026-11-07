@@ -2,6 +2,8 @@
 #pragma once
 #include <Library/MemoryMapLib.h>
 #include "PianoRamPartition.h"
+#include "PianoMemoryLayout.h"
+#include "PianoSmemRam.h"
 #define PIANO_PLATFORM_MEMORY_MAX_OWNERS 64U
 typedef struct {UINT64 Base,Bytes;INT32 DynamicNode;} PIANO_PLATFORM_MEMORY_OWNER;
 typedef struct {
@@ -10,6 +12,11 @@ typedef struct {
   CONST VOID *Fdt;UINTN FdtBytes;
   CONST PIANO_PLATFORM_MEMORY_OWNER *KnownOwners;UINTN OwnerCount;
   UINT64 CpuArenaBase,CpuArenaBytes; // optional, occupied CPU-only arena request
+  // Actual SEC inputs avoid inventing a native protocol inventory or holding a
+  // multi-megabyte factory tree in the firmware image. Exactly one DT/inventory
+  // source is supplied. The SMEM input remains a current-slice constraint.
+  CONST PIANO_MEMORY_LAYOUT *Layout;
+  CONST PIANO_SMEM_RAM_REPORT *ColdInventory;
 } PIANO_PLATFORM_MEMORY_INPUT;
 typedef struct {
   EFI_MEMORY_REGION_DESCRIPTOR Rows[MAX_ARM_MEMORY_REGION_DESCRIPTOR_COUNT];
@@ -18,7 +25,7 @@ typedef struct {
   // placement is invented or required by composition; actual earlier owners
   // must still be supplied/validated independently by the cold authority.
   UINT32 FutureLinuxDynamicConstraints;
-  UINT64 AddedOccupiedBytes,CpuArenaBase,CpuArenaBytes;
+  UINT64 AddedOccupiedBytes,CpuArenaBase,CpuArenaBytes,RetainedReservedBytes;
   UINT64 InputFingerprint;
   BOOLEAN Composed,ReadyForMemoryPeim,AuthorizationAttempted,Exposed;
   EFI_STATUS Status,Authorization;

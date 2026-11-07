@@ -15,6 +15,7 @@ EFI_STATUS PianoProductBootLogInitialize(EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop,
 EFI_STATUS PianoProductBootLogStage(CONST CHAR8 *Name,EFI_STATUS Status,
                                    UINT64 ElapsedMs);
 // Human-readable boot/exit progress and recovery instructions through the same GOP.
+// A failure page retains the last stage and elapsed time when its status matches.
 EFI_STATUS PianoProductBootLogMessage(CONST CHAR16 *Title,CONST CHAR16 *Detail,
                                      EFI_STATUS Status,BOOLEAN Failed);
 // Explicit diagnostic builds only: draw through the same GOP used by the

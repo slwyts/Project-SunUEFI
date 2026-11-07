@@ -326,6 +326,7 @@ def pinned_mkbootimg():
 
 
 def verify_boot(path, inputs):
+    require(path.stat().st_size <= 128 * MIB, 'Linux boot container exceeds the 128 MiB ESP load budget')
     data = path.read_bytes()
     require(len(data) >= 1660 and data[:8] == b'ANDROID!', 'Invalid boot container')
     ksize, _, rsize, _, second, _, _, page, version = struct.unpack_from('<9I', data, 8)
@@ -495,11 +496,24 @@ def package(args):
         require(embedded['etc/piano/kernel-release'].decode().strip() == release, 'Initramfs embedded release mismatch')
     require(all(n.split('/')[2] == release for n in embedded if n.startswith('lib/modules/') and len(n.split('/')) > 2), 'Initramfs module release mismatch')
     rows = scan_root(root, release)
-    build_archive = not args.root_size_mib or args.root_archive
+    systemd_boot = (Path(args.systemd_boot).absolute() if getattr(args, 'systemd_boot', None) else
+                    guest_resolve(root, '/usr/lib/systemd/boot/efi/systemd-bootaa64.efi'))
+    linux_loader = (Path(args.linux_loader).absolute() if getattr(args, 'linux_loader', None) else
+                    uefi.parent / 'PianoLinuxBoot.efi')
+    efi_sources = {}
+    for name, source in (('systemd_boot', systemd_boot), ('linux_loader', linux_loader)):
+        require(source.is_file() and not source.is_symlink(), 'Expected regular EFI application: ' + str(source))
+        info = image_info(source, kernel=False)
+        if name == 'linux_loader':
+            component(source, metas[0], info['sha256'], name)
+        efi_sources[name] = {'source': str(source), 'bytes': info['bytes'], 'sha256': info['sha256']}
+    esp_only = getattr(args, 'esp_only', False)
+    build_root = bool(args.root_size_mib) and not esp_only
+    build_archive = not esp_only and (not args.root_size_mib or args.root_archive)
     tools = ['mkfs.vfat', 'mmd', 'mcopy']
     if build_archive:
         tools += ['tar', 'zstd']
-    if args.root_size_mib:
+    if build_root:
         tools += ['mke2fs', 'debugfs']
     require(all(shutil.which(t) for t in tools), 'Missing host tools: ' + ', '.join(t for t in tools if not shutil.which(t)))
     maker, maker_source = pinned_mkbootimg()
@@ -513,6 +527,12 @@ def package(args):
     for source, name, expected in zip(sources, names, hashes):
         shutil.copyfile(source, work / name)
         require(sha(work / name) == expected, 'Source changed while copying: ' + name)
+    for name, source, filename in (('systemd_boot', systemd_boot, 'BOOTAA64.EFI'),
+                                   ('linux_loader', linux_loader, 'LinuxBoot.efi')):
+        shutil.copyfile(source, work / filename)
+        require(sha(work / filename) == efi_sources[name]['sha256'], 'Source changed while copying: ' + filename)
+    (work / 'loader.conf').write_text('default debian.conf\ntimeout 0\neditor no\nauto-entries no\nauto-firmware no\nconsole-mode keep\n')
+    (work / 'debian.conf').write_text('title Debian\nefi /EFI/Piano/LinuxBoot.efi\n')
     dtb_derivation = None
     if args.cpu_model_overlay:
         require(shutil.which('dtc') and shutil.which('fdtoverlay'), 'CPU model overlay needs dtc and fdtoverlay')
@@ -528,37 +548,44 @@ def package(args):
     run([sys.executable, maker, '--header_version', '2', '--pagesize', '4096', '--kernel', work / 'Image', '--ramdisk', work / 'initramfs', '--dtb', work / 'board.dtb', '-o', boot],
         env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
     verify_boot(boot, (work / 'Image', work / 'initramfs', work / 'board.dtb'))
-    for path in (work / 'Image', work / 'board.dtb', work / 'initramfs', boot):
+    esp_files = { '/EFI/Piano/stable/' + path.name: path
+                  for path in (work / 'Image', work / 'board.dtb', work / 'initramfs', boot) }
+    esp_files.update({'/EFI/BOOT/BOOTAA64.EFI': work / 'BOOTAA64.EFI',
+                      '/EFI/Piano/LinuxBoot.efi': work / 'LinuxBoot.efi',
+                      '/loader/loader.conf': work / 'loader.conf',
+                      '/loader/entries/debian.conf': work / 'debian.conf'})
+    for path in esp_files.values():
         os.utime(path, (max(args.epoch, 315532800),) * 2)  # FAT dates start in 1980.
     esp = output / 'esp.img'
-    require(sum((work / n).stat().st_size for n in names[1:]) + boot.stat().st_size + 2 * MIB < args.esp_size_mib * MIB, 'Payload exceeds ESP capacity')
+    require(sum(path.stat().st_size for path in esp_files.values()) + 2 * MIB < args.esp_size_mib * MIB, 'Payload exceeds ESP capacity')
     with esp.open('xb') as stream:
         stream.truncate(args.esp_size_mib * MIB)
     # Piano UFS exposes 4 KiB logical sectors; Linux rejects a smaller BPB
     # sector size even when firmware can read the filesystem.
     run(['mkfs.vfat', '--invariant', '-S', '4096', '-F', '32', '-n', 'SUNUEFI_ESP', esp])
-    run(['mmd', '-i', esp, '::/EFI', '::/EFI/Piano', '::/EFI/Piano/stable'])
-    for path in (work / 'Image', work / 'board.dtb', work / 'initramfs', boot):
-        run(['mcopy', '-m', '-i', esp, path, '::/EFI/Piano/stable/' + path.name])
+    run(['mmd', '-i', esp, '::/EFI', '::/EFI/BOOT', '::/EFI/Piano', '::/EFI/Piano/stable',
+         '::/loader', '::/loader/entries'])
+    for destination, path in esp_files.items():
+        run(['mcopy', '-m', '-i', esp, path, '::' + destination])
         verify = work / ('readback-' + path.name)
-        run(['mcopy', '-i', esp, '::/EFI/Piano/stable/' + path.name, verify])
+        run(['mcopy', '-i', esp, '::' + destination, verify])
         require(sha(verify) == sha(path), 'ESP file readback differs: ' + path.name)
     if build_archive:
         archive_root(root, output / 'root.tar.zst', args.epoch)
-    if args.root_size_mib:
+    if build_root:
         ext4(root, output / 'root.ext4.img', args.root_size_mib, args.root_selector.split('=', 1)[1], args.epoch, rows, work)
     require({n: (s.st_mode, s.st_uid, s.st_gid, s.st_size, s.st_mtime_ns, s.st_ctime_ns) for n, s in rows.items()} ==
             {n: (s.st_mode, s.st_uid, s.st_gid, s.st_size, s.st_mtime_ns, s.st_ctime_ns) for n, s in scan_root(root, release).items()}, 'Rootfs changed while packaging')
     shutil.move(work / names[0], output / names[0])
     result = {'schema_version': 1, 'status': 'HOST_BUILT_NOT_DEVICE_READY', 'kernel_release': release, 'root_policy': args.root_selector,
               'epoch': args.epoch, 'mkbootimg': maker_source, 'device_operation_performed': False, 'device_ready': False,
-              'components': {name: {'sha256': value} for name, value in zip(('uefi', 'kernel', 'dtb', 'initramfs'), hashes)},
+              'components': {**{name: {'sha256': value} for name, value in zip(('uefi', 'kernel', 'dtb', 'initramfs'), hashes)}, **efi_sources},
               'kernel_manifest_sha256': sha(kernel / 'manifest.json') if (kernel / 'manifest.json').is_file() else None,
               'partitions': {'esp': {'partlabel': 'sunuefi_esp', 'label': 'SUNUEFI_ESP', 'sector_bytes': 4096, 'capacity_bytes': esp.stat().st_size},
-                             'root': {'partlabel': 'sunuefi_root', 'label': args.root_selector.split('=', 1)[1], 'capacity_bytes': args.root_size_mib * MIB if args.root_size_mib else None}},
-              'esp_files': ['/EFI/Piano/stable/' + n for n in ('Image', 'board.dtb', 'initramfs', 'boot.img')],
+                             'root': {'partlabel': 'sunuefi_root', 'label': args.root_selector.split('=', 1)[1], 'capacity_bytes': args.root_size_mib * MIB if build_root else None}},
+              'esp_files': list(esp_files),
               'metadata': {'archive': 'numeric uid/gid, modes, symlinks, hardlinks, xattrs and ACLs; mtime normalized except /usr/lib/clock-epoch' if build_archive else None,
-                           'ext4': 'all inode uid/gid/mode/mtime and source xattrs/ACLs checked; ctime normalized; sparse source allocation not preserved'},
+                           'ext4': 'all inode uid/gid/mode/mtime and source xattrs/ACLs checked; ctime normalized; sparse source allocation not preserved' if build_root else None},
               'files': {}}
     if CLOCK_EPOCH in rows and stat.S_ISREG(rows[CLOCK_EPOCH].st_mode):
         result['clock_epoch'] = {'path': '/' + CLOCK_EPOCH,
@@ -590,8 +617,13 @@ def parser():
         ap.add_argument('--' + name + '-sha256')
     ap.add_argument('--kernel-release')
     ap.add_argument('--rootfs-manifest', type=Path)
+    ap.add_argument('--systemd-boot', type=Path,
+                    help='ARM64 systemd-boot EFI application (default: from rootfs)')
+    ap.add_argument('--linux-loader', type=Path,
+                    help='PianoLinuxBoot EFI application (default: beside UEFI image)')
     ap.add_argument('--root-selector', default='LABEL=PIANOROOT')
     ap.add_argument('--esp-size-mib', type=int, default=512)
+    ap.add_argument('--esp-only', action='store_true', help='Export the startup images without rebuilding a root image or archive')
     ap.add_argument('--root-size-mib', type=int)
     ap.add_argument('--root-archive', action='store_true',
                     help='Also export root.tar.zst when building a root.ext4.img')

@@ -12,3 +12,4 @@
   UefiBootServicesTableLib
   BaseMemoryLib
   BaseLib
+  DebugLib

@@ -149,7 +149,7 @@ CONST PIANO_UFS_RESET_REPORT *PianoUfsResetShutdownReport(VOID){return &Ufs;}
 static EFI_STATUS InputStop(VOID *C,PIANO_PRODUCT_INPUT_RETIRE_REPORT *R){(VOID)C;assert(Tpl==TPL_APPLICATION);Step('I');*R=(PIANO_PRODUCT_INPUT_RETIRE_REPORT){.Revision=1,.Started=TRUE,.Returned=TRUE,.Clean=TRUE};return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI RuntimeRequest(PIANO_PRODUCT_RUNTIME_PROTOCOL *P,UINT32 A){assert(P==&Runtime&&A==PIANO_PRODUCT_ACTION_RETURN_CORE);return EFI_SUCCESS;}
 static VOID Setup(UINT32 N){Case=N;gBS=&Bs;gDS=&Ds;Bs.RaiseTPL=Raise;Bs.RestoreTPL=Restore;Bs.LocateProtocol=Locate;Bs.CreateEventEx=Create;Bs.CloseEvent=Close;Ds.GetMemorySpaceDescriptor=Gcd;Cpu.RegisterInterruptHandler=Register;
-  Policy.Initialized=Policy.ProtocolInstalled=TRUE;Runtime.Revision=1;Runtime.RequestAction=RuntimeRequest;Usb=(PIANO_DWC3_SERVICE_STATUS){.Revision=1,.Started=TRUE,.Phase=PianoUsbServiceListening};Storage=(PIANO_FB_STORAGE){NULL,Ready,InfoStorage,ReadStorage};
+  Policy.Initialized=Policy.ProtocolInstalled=TRUE;Runtime.Revision=PIANO_PRODUCT_RUNTIME_REVISION;Runtime.RequestAction=RuntimeRequest;Usb=(PIANO_DWC3_SERVICE_STATUS){.Revision=1,.Started=TRUE,.Phase=PianoUsbServiceListening};Storage=(PIANO_FB_STORAGE){NULL,Ready,InfoStorage,ReadStorage};
   Ufs=(PIANO_UFS_RESET_REPORT){.Started=TRUE,.Prepared=TRUE,.Returned=TRUE,.Clean=TRUE,.TplHeld=TRUE,.DmaFreed=3,.Disconnected=6,.ProtocolsRemoved=7};
 }
 static VOID Run(UINT32 N){Setup(N);PIANO_PRODUCT_DISPLAY_STARTUP_REPORT Start={0};PIANO_PRODUCT_DISPLAY_RETIRE_REPORT Stop={0};

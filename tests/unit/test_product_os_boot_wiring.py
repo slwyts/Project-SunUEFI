@@ -142,7 +142,7 @@ class ProductOsBootWiringTests(unittest.TestCase):
         status=product.backend_status()['efi_android_linux_boot']
         self.assertEqual(status['shared_os_loader'],'COMPILED_PLATFORM_NOT_READY')
         self.assertFalse(status['platform_bound']);self.assertFalse(status['full_ddr_verified'])
-        self.assertEqual(status['source_budget_bytes'],64*1024*1024)
+        self.assertEqual(status['source_budget_bytes'],128*1024*1024)
 
     def test_display_mapping_freshness_and_no_readiness_promotion(self):
         for mutation in ('staged_row','target_row','generator','driver_pin','parser','binding','hardware_ready','missing_row'):

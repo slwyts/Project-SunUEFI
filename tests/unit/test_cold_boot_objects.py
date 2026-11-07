@@ -1,5 +1,5 @@
 from pathlib import Path
-import os,re,subprocess,tempfile,unittest
+import os,re,subprocess,tempfile,unittest,shutil
 import zlib
 from piano_boot_objects_asm_model import run as run_shim
 from piano_sec_batch_model import run_batch
@@ -7,12 +7,30 @@ ROOT=Path(__file__).resolve().parents[2];BASE=ROOT/'upstream/Mu-Silicium/Mu_Base
 class ColdBootObjectsTests(unittest.TestCase):
  def includes(self,arch):return (BASE/'MdePkg/Include',BASE/'MdePkg/Include'/arch,BASE/'MdeModulePkg/Include',BASE/'EmbeddedPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include')
  def test_actual_collector_native_map_and_hob(self):
+  captured=ROOT/'private/captures/2026-10-03-piano/live.dtb'
   with tempfile.TemporaryDirectory(prefix='cold-objects-')as td:
    exe=Path(td)/'objects';cmd=['cc','-std=gnu11','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-missing-field-initializers','-Wno-unused-parameter','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-I',str(ROOT/'uefi/handoff/early-memory'),'-include',str(ROOT/'tests/native/PianoCmaPcdShim.h'),'-D_PCD_VALUE_PcdFdBaseAddress=0xA7100000ULL','-D_PCD_VALUE_PcdFdSize=0x300000U','-D_PCD_VALUE_PcdCPUCoresStackBase=0xA760D000ULL','-D_PCD_VALUE_PcdCPUCorePrimaryStackSize=0x40000U']
    for p in self.includes('X64'):cmd+=['-I',str(p)]
-   cmd+=[str(ROOT/'tests/native/PianoColdBootObjectsTest.c'),str(ROOT/'uefi/handoff/early-memory/PianoColdBootObjectsContract.c'),str(ROOT/'uefi/core/PianoProductBootObjects.c'),str(ROOT/'uefi/platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),'-Wl,--gc-sections','-o',str(exe)]
+   native=ROOT/'build/firmware-workspace/uefi/platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'
+   if not native.is_file():native=ROOT/'uefi/platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c'
+   cmd+=[str(ROOT/'tests/native/PianoColdBootObjectsTest.c'),str(ROOT/'uefi/handoff/early-memory/PianoColdBootObjectsContract.c'),str(ROOT/'uefi/handoff/early-memory/PianoMemoryLayout.c'),str(ROOT/'uefi/core/PianoProductBootObjects.c'),str(native),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),'-Wl,--gc-sections','-o',str(exe)]
    p=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(p.returncode,0,(p.stdout+p.stderr)[:12000])
-   p=subprocess.run([str(exe),str(ROOT/'private/captures/2026-10-03-piano/live.dtb')],capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
+   p=subprocess.run([str(exe),str(captured)if captured.is_file()else'--synthetic'],capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
+ def test_complete_factory_memory_guarded_capture_budget(self):
+  import sys,struct
+  sys.path.insert(0,str(ROOT/'tools'))
+  from compose_piano_dtb import read_fdt,write_fdt
+  with tempfile.TemporaryDirectory(prefix='cold-memory-guard-')as td:
+   d=Path(td);tree=read_fdt((ROOT/'vendor/piano-linux/board.dtb').read_bytes())
+   tree['tree']['/chosen']['linux,initrd-start']=struct.pack('>Q',0xa8800000)
+   tree['tree']['/chosen']['linux,initrd-end']=struct.pack('>Q',0xa8900000)
+   dt=d/'factory.dtb';dt.write_bytes(write_fdt(tree))
+   exe=d/'objects';cmd=['cc','-std=gnu11','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-missing-field-initializers','-Wno-unused-parameter','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-I',str(ROOT/'uefi/handoff/early-memory'),'-include',str(ROOT/'tests/native/PianoCmaPcdShim.h'),'-D_PCD_VALUE_PcdFdBaseAddress=0xA7100000ULL','-D_PCD_VALUE_PcdFdSize=0x300000U','-D_PCD_VALUE_PcdCPUCoresStackBase=0xA760D000ULL','-D_PCD_VALUE_PcdCPUCorePrimaryStackSize=0x40000U']
+   for p in self.includes('X64'):cmd+=['-I',str(p)]
+   native=ROOT/'uefi/platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c'
+   cmd+=[str(ROOT/'tests/native/PianoColdBootObjectsTest.c'),str(ROOT/'uefi/handoff/early-memory/PianoColdBootObjectsContract.c'),str(ROOT/'uefi/handoff/early-memory/PianoMemoryLayout.c'),str(ROOT/'uefi/core/PianoProductBootObjects.c'),str(native),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),'-Wl,--gc-sections','-o',str(exe)]
+   p=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+   p=subprocess.run([str(exe),'--memory',str(dt)],capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
  def test_isolated_actual_arm64_extension_object(self):
   with tempfile.TemporaryDirectory(prefix='cold-shim-')as td:
    d=Path(td);clang=ROOT/'build/host-tools/usr/bin/clang';objdump=ROOT/'build/host-tools/usr/bin/llvm-objdump';env={**os.environ,'LD_LIBRARY_PATH':str(ROOT/'build/host-tools/usr/lib')};obj=d/'shim.o'
@@ -37,10 +55,15 @@ class ColdBootObjectsTests(unittest.TestCase):
     for p in self.includes('AArch64'):args+=['-I',str(p)]
     subprocess.run(args+[str(ROOT/'uefi/handoff/early-memory'/name)],check=True,env=env)
  def test_actual_linked_bounded_batch_vectors_fault_model(self):
+  linker=ROOT/'build/host-tools/usr/bin/ld.lld'
+  if not linker.is_file():
+   found=shutil.which('ld.lld')
+   if not found:self.skipTest('LLD ELF linker is required for the bounded vector model')
+   linker=Path(found)
   with tempfile.TemporaryDirectory(prefix='cold-batch-model-')as td:
    d=Path(td);clang=ROOT/'build/host-tools/usr/bin/clang';objdump=ROOT/'build/host-tools/usr/bin/llvm-objdump';env={**os.environ,'LD_LIBRARY_PATH':str(ROOT/'build/host-tools/usr/lib')}
    stub=d/'fatal.S';stub.write_text('.text\n.globl PianoSecReadFatal\nPianoSecReadFatal:\n brk #0\n')
-   elf=d/'batch.elf';subprocess.run([str(clang),'--target=aarch64-linux-gnu','-nostdlib','-fuse-ld='+str(ROOT/'build/host-tools/usr/bin/ld.lld'),'-Wl,-Ttext=0x100000','-Wl,--entry=PianoColdSecRead256',str(ROOT/'uefi/handoff/early-memory/PianoColdSecRead256.S'),str(stub),'-o',str(elf)],check=True,env=env)
+   elf=d/'batch.elf';subprocess.run([str(clang),'--target=aarch64-linux-gnu','-nostdlib','-fuse-ld='+str(linker),'-Wl,-Ttext=0x100000','-Wl,--entry=PianoColdSecRead256',str(ROOT/'uefi/handoff/early-memory/PianoColdSecRead256.S'),str(stub),'-o',str(elf)],check=True,env=env)
    subprocess.run([str(clang),'--target=aarch64-windows-msvc','-c',str(ROOT/'uefi/handoff/early-memory/PianoColdSecRead256.S'),'-o',str(d/'batch.obj')],check=True,env=env)
    dis=subprocess.run([str(objdump),'-d',str(elf)],check=True,capture_output=True,text=True,env=env).stdout;table=subprocess.run([str(objdump),'-t',str(elf)],check=True,capture_output=True,text=True,env=env).stdout
    symbols={m[2]:int(m[1],16)for line in table.splitlines()if(m:=re.match(r'^([0-9a-f]+).*\s(Piano\w+)$',line))}

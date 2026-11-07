@@ -20,6 +20,10 @@ typedef struct {
   // allocation, BS, device access or recursive service work. Copied at Start.
   // Exact success is required before oem ramlog freezes the RAM console.
   EFI_STATUS (*BeforeRamlog)(VOID *Context);
+  // Optional APP-only diagnostic output for the existing oem status command.
+  // Read saved RAM state only; do not pump services, probe hardware or change
+  // boot readiness. Send queues a complete Fastboot INFO frame (64 bytes max).
+  EFI_STATUS (*ReportStatus)(VOID *Context,PIANO_FB_SEND Send,VOID *SendContext);
 } PIANO_DWC3_SERVICE_CONFIG;
 typedef enum {
   PianoUsbServiceOff=0,PianoUsbServiceListening,PianoUsbServiceStopRequested,

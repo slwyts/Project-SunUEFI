@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <assert.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #undef NULL
@@ -19,6 +20,11 @@ BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
+UINTN EFIAPI AsciiSPrint(CHAR8 *Buffer,UINTN Bytes,CONST CHAR8 *Format,...){
+  if(!Bytes)return 0;
+  va_list Args;va_start(Args,Format);int N=vsnprintf(Buffer,Bytes,Format,Args);va_end(Args);
+  return N<0?0:(UINTN)N<Bytes?(UINTN)N:Bytes-1;
+}
 VOID EFIAPI MemoryFence(VOID){ }
 VOID EFIAPI CpuPause(VOID){ }
 VOID EFIAPI CpuDeadLoop(VOID){assert(!"Unexpected reset fallthrough");}
@@ -89,11 +95,14 @@ static void ConfigurePower(UINT32 Mode){
   power_mode=Mode;power_queries=ssu_commands=power_waits=pre_power_queries=ssu_unit_attentions=0;
   power_query_fail=ssu_fail=ssu_keep_mode=ssu_response_one_good=0;
   unit_attentions=read_commands=0;unit_attention_full_residual=0;
-  mPowerMode=MAX_UINT32;
+  mPowerMode=MAX_UINT32;mReadFailure.Present=FALSE;
 }
 static void ExpectPowerQuiet(void){
   assert(begins==completes&&!bell&&!run&&!task_run&&!mData.Active&&!mUcd.Active&&!mTrl.Active);
   assert(read_commands==ssu_commands);
+}
+static void ExpectPowerDiagnostic(CONST CHAR8 *Expected){
+  CONST CHAR8 *Diagnostic=PianoUfsStartupDiagnostic();assert(Diagnostic&&strstr(Diagnostic,Expected));
 }
 static void TestEnsureDeviceActive(void){
   CONST UINT32 Ready[]={0x11,0};
@@ -110,19 +119,21 @@ static void TestEnsureDeviceActive(void){
   }
   ConfigurePower(0x44);assert(EFI_ERROR(EnsureDeviceActive()));
   assert(power_queries==1&&ssu_commands==0&&mPowerMode==0x44);
-  ExpectPowerQuiet();
+  ExpectPowerDiagnostic(" P44");ExpectPowerQuiet();
 
   ConfigurePower(0x22);power_query_fail=1;assert(EFI_ERROR(EnsureDeviceActive()));
   assert(power_queries==1&&ssu_commands==0&&mPowerMode==MAX_UINT32);
+  ExpectPowerDiagnostic(" T36 Rff");ExpectPowerDiagnostic(" Pff");
   ExpectPowerQuiet();
 
   ConfigurePower(0x22);ssu_fail=1;assert(EFI_ERROR(EnsureDeviceActive()));
   assert(power_queries==1&&ssu_commands==1&&mPowerMode==0x22);
+  ExpectPowerDiagnostic("L208 OCS00 T21 R01 S02 K02 A04 Q02 F00 N0 P22");
   ExpectPowerQuiet();
 
   ConfigurePower(0x22);ssu_keep_mode=1;assert(EFI_ERROR(EnsureDeviceActive()));
   assert(power_queries==2&&ssu_commands==1&&mPowerMode==0x22);
-  ExpectPowerQuiet();
+  ExpectPowerDiagnostic(" P22");ExpectPowerQuiet();
 
   ConfigurePower(0x11);pre_power_queries=2;assert(EnsureDeviceActive()==EFI_SUCCESS);
   assert(power_queries==3&&ssu_commands==0&&power_waits==2&&mPowerMode==0x11);
@@ -136,11 +147,12 @@ static void TestEnsureDeviceActive(void){
   ExpectPowerQuiet();
   ConfigurePower(0x22);ssu_unit_attentions=3;assert(EFI_ERROR(EnsureDeviceActive()));
   assert(power_queries==1&&ssu_commands==3&&ssu_unit_attentions==0&&mPowerMode==0x22);
+  ExpectPowerDiagnostic("L208 OCS00 T21 R01 S02 K06 A29 Q00 F00 N0 P22");
   ExpectPowerQuiet();
 
   ConfigurePower(0x22);ssu_response_one_good=1;assert(EFI_ERROR(EnsureDeviceActive()));
   assert(power_queries==1&&ssu_commands==1&&mPowerMode==0x22);
-  ExpectPowerQuiet();
+  ExpectPowerDiagnostic(" R01 S00 Kff Aff Qff");ExpectPowerQuiet();
   ConfigurePower(0x11);
 }
 int main(void){
@@ -173,10 +185,14 @@ int main(void){
   assert(ReadScsi("REPORT_LUNS",17,0,PianoUfsReportLuns,0,4096)==EFI_SUCCESS && mTransferred==16);
   assert(read_commands==before+2 && unit_attentions==0 && begins==dma_before+6 && completes==begins);
   assert(!mData.Active && !mUcd.Active && !mTrl.Active && !bell);
+  assert(PianoUfsStartupDiagnostic()==NULL);
   unit_attentions=4;before=read_commands;dma_before=begins;
   assert(ReadScsi("CAPACITY",20,0,PianoUfsReadCapacity16,0,32)==EFI_DEVICE_ERROR);
   assert(read_commands==before+3 && unit_attentions==1 && begins==dma_before+9 && completes==begins);
   assert(!mData.Active && !mUcd.Active && !mTrl.Active && !bell);
+  assert(strcmp(PianoUfsStartupDiagnostic(),"L0 OCS00 T21 R00 S02 K06 A29 Q00 F00 N32 Pff")==0);
+  CONST CHAR8 *FailedStage=mStartupStage;mStartupStage="UFS BLOCKIO";
+  assert(PianoUfsStartupDiagnostic()==NULL);mStartupStage=FailedStage;
   unit_attentions=0;unit_attention_full_residual=0;
   bad_ocs=1;PianoUfsBuildNop(trl,1024,ucd,1024,mUcd.DeviceAddress,3);
   assert(Submit("BAD_OCS",3,TRUE)==EFI_DEVICE_ERROR);bad_ocs=0;timeout=1;

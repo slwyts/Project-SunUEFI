@@ -38,11 +38,14 @@ SimpleInit/LVGL 处理，物理显示模式保持原样；实机已确认横屏�
 是 Android 格式的 Linux 启动包，不能直接当作 EFI 应用交给标准启动管理器。
 产品现在先查找 ESP 和启动文件，再登记一个指向固件内
 `PianoLinuxBoot.efi` 的 Linux 启动项。该应用向驻留核心请求启动，
-随后复用同一套文件加载、安全退出和内核启动交接流程。
+随后进入 ESP 中的 systemd-boot。systemd-boot 的 Debian 条目加载 ESP 中
+同一份 `LinuxBoot.efi`，通过 APP 接口同步进入核心的文件加载与安全交接，
+不再排队或递归启动管理器。具体内存与退出身份见 [UEFI 核心](../uefi-core.md#esp-启动文件与系统交接)。
 
 入口在启动时发现并登记，普通非易失变量通过下文的文件后端保存。
-标准 EFI／UKI 系统启动交接还需要完整 EFI 内存描述，不能把 Android 格式的
-启动包改名为 `.efi` 使用。
+标准 EFI 启动项可以用 `linux`、`initrd`、`devicetree` 直接装载 Linux EFI stub。
+固件提供完整内存描述、设备树修正与安全退出；Android 格式的启动包仍须使用
+原有启动应用，不能仅改名为 `.efi`。两条路径共用同一份 UEFI 核心。
 
 ## 内置菜单与自动保存
 

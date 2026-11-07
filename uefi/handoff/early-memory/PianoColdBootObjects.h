@@ -3,6 +3,7 @@
 #include "PianoEarlyMemory.h"
 #include "PianoFactoryPanel.h"
 #include <Library/MemoryMapLib.h>
+#include "PianoMemoryLayout.h"
 #define PIANO_COLD_OBJECT_VERSION 4U
 #define PIANO_COLD_HANDOFF_ADDRESS 0xa7fff000ULL
 #define PIANO_COLD_HANDOFF_MAGIC 0x534e554546494448ULL
@@ -12,7 +13,10 @@
 #define PIANO_COLD_DTB_MAX 0x200000U
 #define PIANO_COLD_READ_MAX 256U
 #define PIANO_COLD_TOTAL_MAX (2U*PIANO_COLD_DTB_MAX+0x10000U)
-#define PIANO_COLD_MAX_USECS 2000000U
+// The shared window includes all guarded factory-tree passes and the SMEM
+// capture between them, before the MMU/data cache is enabled. Keep it finite;
+// the independent byte budget and every per-batch state check still apply.
+#define PIANO_COLD_MAX_USECS (30U*1000000U)
 #define PIANO_COLD_OBJECT_HOB_GUID {0x3025a79b,0x7ed3,0x4f6b,{0x90,0x50,0x43,0x4f,0x4c,0x44,0x30,0x31}}
 // Preserve the legacy magic/DTB/EL prefix, and ARM64 image header offset56.
 // Counter is same-boot metadata, CRC is structural integrity, neither ownership.
@@ -70,6 +74,10 @@ EFI_STATUS PianoColdBootObjectsObserve(VOID);
 // After the one real HobConstructor: frozen typed object input, never resources.
 EFI_STATUS PianoColdBootObjectsPublishHob(VOID);
 CONST PIANO_COLD_BOOT_OBJECT_REPORT *PianoColdBootObjectsReport(VOID);
+// Only the admitted same-boot BootShim/ABL tree supplies physical RAM. This
+// captures its complete memory/reservation semantics twice under the existing
+// SEC read guard, and rechecks the handoff/epoch. OS files cannot call it in DXE.
+EFI_STATUS PianoColdBootObjectsMemoryLayout(PIANO_MEMORY_LAYOUT *Layout);
 // Consumer validates exact layout/CRC before importing these occupied spans.
 // The output contains no allocator, cache, high-DDR or full-owner authority.
 EFI_STATUS PianoColdBootObjectsValidate(CONST PIANO_COLD_BOOT_OBJECT_REPORT *);

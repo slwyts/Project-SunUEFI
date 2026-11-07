@@ -44,7 +44,7 @@ UINTN CorePianoCurrentMemoryMapKey (VOID);
 EXIT_HOOK='''  // Product native APP transition before any BeforeNotify/Timer0/map teardown.
   // Legacy targets bind Null. A stale key or foreign image does not stop USB.
   if (gMemoryMapTerminated) {
-    return EFI_NOT_READY;
+    return PianoProductExitBootServicesResult (EFI_NOT_READY, FALSE);
   }
   Status = PianoProductBeforeExitBootServices (
              ImageHandle, CorePianoCurrentImageInfo (ImageHandle), gEfiCurrentTpl,
@@ -54,6 +54,9 @@ EXIT_HOOK='''  // Product native APP transition before any BeforeNotify/Timer0/m
   }
 
 '''
+EXIT_RESULT_ORIGINAL='  Status = CoreTerminateMemoryMap (MapKey);'
+EXIT_RESULT_HOOK='''  Status = CoreTerminateMemoryMap (MapKey);
+  Status = PianoProductExitBootServicesResult (Status, MapKey != CorePianoCurrentMemoryMapKey ());'''
 
 
 def transform_core(relative,raw):
@@ -67,6 +70,8 @@ def transform_core(relative,raw):
 '''
         if text.count(old)!=1:raise ValueError('Native EBS boundary drift')
         text=text.replace(old,EXIT_HOOK+old,1)
+        if text.count(EXIT_RESULT_ORIGINAL)!=1:raise ValueError('Native EBS result boundary drift')
+        text=text.replace(EXIT_RESULT_ORIGINAL,EXIT_RESULT_HOOK,1)
     elif relative.endswith('Image/Image.c'):text+='\n\n'+IMAGE_GETTER.rstrip(' \t\n')
     elif relative.endswith('Mem/Page.c'):text+='\n\n'+KEY_GETTER.rstrip(' \t\n')
     else:raise ValueError(relative)
@@ -85,8 +90,8 @@ def desired_core(root=ROOT):
             # edits to the native root function or the added hook/getters.
             newline=b'\r\n'if b'\r\n'in raw else b'\n';text=body
             if relative.endswith('DxeMain/DxeMain.c'):
-                if text.count(PROTOTYPES)!=1 or text.count(EXIT_HOOK)!=1:raise ValueError('Native Core hook drift: '+relative)
-                text=text.replace(PROTOTYPES,'',1).replace(EXIT_HOOK,'',1)
+                if text.count(PROTOTYPES)!=1 or text.count(EXIT_HOOK)!=1 or text.count(EXIT_RESULT_HOOK)!=1:raise ValueError('Native Core hook drift: '+relative)
+                text=text.replace(PROTOTYPES,'',1).replace(EXIT_HOOK,'',1).replace(EXIT_RESULT_HOOK,EXIT_RESULT_ORIGINAL,1)
             else:
                 suffix='\n\n'+(IMAGE_GETTER if relative.endswith('Image/Image.c')else KEY_GETTER).rstrip(' \t\n')
                 if not text.endswith(suffix)or text.count(suffix)!=1:raise ValueError('Native getter drift: '+relative)
@@ -149,10 +154,10 @@ def stage_provider(root,app):
         if not mirror.exists()or mirror.read_bytes()!=canonical.read_bytes():
             raise ValueError('Late provider shared header stale: '+name)
     folder.mkdir()
-    for name in ('PianoLateHandoff.c','PianoLateHandoff.h'):
+    for name in ('PianoLateHandoff.c','PianoLateHandoff.h','PianoDeviceTreeFixup.c','PianoDeviceTreeFixup.h'):
         shutil.copyfile(root/'uefi/components/product-handoff'/name,folder/name)
     return {'status':'ROOT_PROVIDER_COMPILED_NOT_PLATFORM_ARMED',
-        'sources':['LateHandoff/PianoLateHandoff.c','LateHandoff/PianoLateHandoff.h'],
+        'sources':['LateHandoff/'+name for name in ('PianoLateHandoff.c','PianoLateHandoff.h','PianoDeviceTreeFixup.c','PianoDeviceTreeFixup.h')],
         'files':{str(path.relative_to(app)):hashlib.sha256(path.read_bytes()).hexdigest()
                  for path in sorted(folder.iterdir())},'platform_bound':False}
 
@@ -160,7 +165,7 @@ def stage_provider(root,app):
 def verify_provider(root,app,record):
     root,app=Path(root),Path(app)
     expected={'LateHandoff/'+name:hashlib.sha256((root/'uefi/components/product-handoff'/name).read_bytes()).hexdigest()
-              for name in ('PianoLateHandoff.c','PianoLateHandoff.h')}
+              for name in ('PianoLateHandoff.c','PianoLateHandoff.h','PianoDeviceTreeFixup.c','PianoDeviceTreeFixup.h')}
     if record.get('files')!=expected:raise ValueError('Late provider canonical manifest differs')
     for name,digest in expected.items():
         path=app/name

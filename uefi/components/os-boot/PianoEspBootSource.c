@@ -109,6 +109,23 @@ STATIC BOOLEAN Volume(EFI_HANDLE H,ESP_IDENTITY *Id){
 #undef STAGE
  return Valid;
 }
+STATIC EFI_STATUS Find(EFI_HANDLE *Esp,ESP_IDENTITY *Selected){
+ if(!Esp)return EFI_INVALID_PARAMETER;
+ *Esp=NULL;
+ if(!gBS||!gBS->LocateHandleBuffer||!gBS->HandleProtocol||!gBS->FreePool)return EFI_UNSUPPORTED;
+ EFI_HANDLE *Handles=NULL,Found=NULL;UINTN Count=0,Matches=0;ESP_IDENTITY Before={0};
+ EFI_STATUS E=gBS->LocateHandleBuffer(ByProtocol,&gEfiSimpleFileSystemProtocolGuid,NULL,&Count,&Handles);
+ BeginDiscovery(E,Count);
+ if(E!=EFI_SUCCESS)return E;
+ if(!Handles||!Count||Count>256){if(Handles)gBS->FreePool(Handles);return EFI_COMPROMISED_DATA;}
+ for(UINTN I=0;I<Count;++I){ESP_IDENTITY Candidate;if(Volume(Handles[I],&Candidate)){Found=Handles[I];Before=Candidate;++Matches;}}
+ E=gBS->FreePool(Handles);if(E!=EFI_SUCCESS)return E;
+ mDiscovery.Matches=(UINT32)Matches;
+ if(Matches!=1)return Matches?EFI_COMPROMISED_DATA:EFI_NOT_FOUND;
+ if(Selected)*Selected=Before;
+ *Esp=Found;return EFI_SUCCESS;
+}
+EFI_STATUS PianoEspBootFind(EFI_HANDLE *Esp){return Find(Esp,NULL);}
 EFI_STATUS PianoEspBootLoad(PIANO_ESP_BOOT_SOURCE *S,CONST PIANO_CPU_INPUT_ENV *Cpu){
  if(!S||!Cpu||!Cpu->BootServicesAlive||!Cpu->ServiceSlice)return EFI_INVALID_PARAMETER;
  if(S->Loaded||S->Released||S->Retained||S->File.Retained||S->File.ServicesLost)return EFI_ALREADY_STARTED;
@@ -119,16 +136,9 @@ EFI_STATUS PianoEspBootLoad(PIANO_ESP_BOOT_SOURCE *S,CONST PIANO_CPU_INPUT_ENV *
    ZeroMem(S,sizeof(*S));
  }
  if(!Cpu->BootServicesAlive(Cpu->Context))return EFI_ABORTED;
- EFI_HANDLE *Handles=NULL,Found=NULL;UINTN Count=0,Matches=0;ESP_IDENTITY Before={0},After;
- EFI_STATUS E=gBS->LocateHandleBuffer(ByProtocol,&gEfiSimpleFileSystemProtocolGuid,NULL,&Count,&Handles);
- BeginDiscovery(E,Count);
- if(E!=EFI_SUCCESS)return E;
- if(!Handles||!Count||Count>256){if(Handles)gBS->FreePool(Handles);return EFI_COMPROMISED_DATA;}
- for(UINTN I=0;I<Count;++I){ESP_IDENTITY Candidate;if(Volume(Handles[I],&Candidate)){Found=Handles[I];Before=Candidate;++Matches;}}
- E=gBS->FreePool(Handles);if(E!=EFI_SUCCESS)return E;
- mDiscovery.Matches=(UINT32)Matches;
+ EFI_HANDLE Found=NULL;ESP_IDENTITY Before={0},After;
+ EFI_STATUS E=Find(&Found,&Before);if(E!=EFI_SUCCESS)return E;
  if(!Cpu->BootServicesAlive(Cpu->Context))return EFI_ABORTED;
- if(Matches!=1)return Matches?EFI_COMPROMISED_DATA:EFI_NOT_FOUND;
  S->Cpu=*Cpu;S->Env=(PIANO_BOOT_FILE_ENV){.Context=Cpu->Context,.Services=gBS,.BootServicesAlive=Cpu->BootServicesAlive,.Cpu=&S->Cpu};
  UINT64 Capacity=(Before.LastBlock+1)*Before.BlockBytes;
  PIANO_BOOT_FILE_SPEC Spec={Found,L"\\EFI\\Piano\\stable\\boot.img",
@@ -142,20 +152,15 @@ EFI_STATUS PianoEspBootLoad(PIANO_ESP_BOOT_SOURCE *S,CONST PIANO_CPU_INPUT_ENV *
  S->Loaded=TRUE;return EFI_SUCCESS;
 }
 EFI_STATUS PianoEspBootPresent(VOID) {
- EFI_HANDLE *Handles=NULL;UINTN Count=0,Matches=0;ESP_IDENTITY Selected={0};
- EFI_STATUS E=gBS->LocateHandleBuffer(ByProtocol,&gEfiSimpleFileSystemProtocolGuid,NULL,&Count,&Handles);
- BeginDiscovery(E,Count);
- if(E!=EFI_SUCCESS)return E;
- if(!Handles||!Count||Count>256){if(Handles)gBS->FreePool(Handles);return EFI_COMPROMISED_DATA;}
- for(UINTN I=0;I<Count;++I){ESP_IDENTITY Id;if(Volume(Handles[I],&Id)){Selected=Id;++Matches;}}
- E=gBS->FreePool(Handles);if(E!=EFI_SUCCESS)return E;
- mDiscovery.Matches=(UINT32)Matches;
- if(Matches!=1)return Matches?EFI_COMPROMISED_DATA:EFI_NOT_FOUND;
+ EFI_HANDLE Found=NULL;ESP_IDENTITY Selected={0};
+ EFI_STATUS E=Find(&Found,&Selected);if(E!=EFI_SUCCESS)return E;
  EFI_FILE_PROTOCOL *Root=NULL,*File=NULL;
  E=Selected.Sfs->OpenVolume(Selected.Sfs,&Root);
  if(E!=EFI_SUCCESS)return E;
  if(!Root)return EFI_COMPROMISED_DATA;
- E=Root->Open(Root,&File,L"\\EFI\\Piano\\stable\\boot.img",EFI_FILE_MODE_READ,0);
+ E=Root->Open(Root,&File,L"\\EFI\\BOOT\\BOOTAA64.EFI",EFI_FILE_MODE_READ,0);
+ if(E==EFI_NOT_FOUND&&!File)
+   E=Root->Open(Root,&File,L"\\EFI\\Piano\\stable\\boot.img",EFI_FILE_MODE_READ,0);
  mDiscovery.Open=E;
  if(E==EFI_SUCCESS&&!File)E=EFI_COMPROMISED_DATA;
  if(File){EFI_STATUS Close=File->Close(File);if(Close!=EFI_SUCCESS)E=Close;}

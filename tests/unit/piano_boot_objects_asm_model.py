@@ -62,5 +62,10 @@ def run(raw,dis,base,el=4,fd_bytes=0x300000,fd_base=0xa7100000):
   pc=nextpc
  handoff=bytes(region(0xa7fff000,144)[0][:144]);copied=bytes(region(fd_base,fd_bytes)[0][region(fd_base,fd_bytes)[1]:region(fd_base,fd_bytes)[1]+fd_bytes])
  assert copied==payload
- for a,n in writes:assert 0xa7fff000<=a and a+n<=0xa7fff090 or fd_base<=a and a+n<=fd_base+fd_bytes
+ for a,n in writes:
+  # The real shim also clears the independent one-shot route record at +100.
+  # Permit only that exact zeroed extent, not the rest of the handoff page.
+  assert (0xa7fff000<=a and a+n<=0xa7fff090 or
+          fd_base<=a and a+n<=fd_base+fd_bytes or
+          0xa7fff100<=a and a+n<=0xa7fff110 and read(a,n)==0)
  return handoff,mrs,steps

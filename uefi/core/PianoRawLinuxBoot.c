@@ -2,6 +2,7 @@
 #include "PianoRawLinuxBoot.h"
 #include "PianoPanelSelection.h"
 #include "PianoProductBootObjects.h"
+#include "PianoProductMemory.h"
 #include "PianoFastbootDownloadBlob.h"
 #include "Components/os-boot/PianoEspBootSource.h"
 #include <Library/UefiBootServicesTableLib.h>
@@ -22,6 +23,7 @@
 #define RAW_DTB_MAX 0x200000U
 typedef struct {
   EFI_HANDLE Image;EFI_SYSTEM_TABLE *SystemTable;EFI_LOADED_IMAGE_PROTOCOL *Identity,Loaded;
+  EFI_HANDLE ExitImage;EFI_LOADED_IMAGE_PROTOCOL *ExitIdentity,ExitLoaded;
   BOOLEAN Registered,InTake,Captured,Prepared,Entered;
   BOOLEAN FileMode,FileLoading,FileQuiet;
   PIANO_ESP_BOOT_SOURCE File;
@@ -57,6 +59,10 @@ STATIC BOOLEAN SameImage(VOID){CONST EFI_LOADED_IMAGE_PROTOCOL *L=mRaw.Identity;
  L->Revision==mRaw.Loaded.Revision&&L->ImageBase==mRaw.Loaded.ImageBase&&L->ImageSize==mRaw.Loaded.ImageSize&&
  L->SystemTable==mRaw.Loaded.SystemTable&&L->ParentHandle==mRaw.Loaded.ParentHandle&&
  L->ImageCodeType==mRaw.Loaded.ImageCodeType&&L->ImageDataType==mRaw.Loaded.ImageDataType;}
+STATIC BOOLEAN SameExitImage(VOID){CONST EFI_LOADED_IMAGE_PROTOCOL *L=mRaw.ExitIdentity;return mRaw.ExitImage&&L&&
+ L->Revision==mRaw.ExitLoaded.Revision&&L->ImageBase==mRaw.ExitLoaded.ImageBase&&L->ImageSize==mRaw.ExitLoaded.ImageSize&&
+ L->SystemTable==mRaw.ExitLoaded.SystemTable&&L->ParentHandle==mRaw.ExitLoaded.ParentHandle&&L->DeviceHandle==mRaw.ExitLoaded.DeviceHandle&&
+ L->ImageCodeType==mRaw.ExitLoaded.ImageCodeType&&L->ImageDataType==mRaw.ExitLoaded.ImageDataType;}
 STATIC BOOLEAN Clean(CONST PIANO_PRODUCT_OWNERS *O){
  if(!O)return FALSE;CONST PIANO_PRODUCT_OWNERS_REPORT *R=&O->Report;
  return R->Revision==1&&R->Initialized&&R->Phase==PianoProductOwnersClean&&R->Status==EFI_SUCCESS&&R->Clean&&
@@ -84,8 +90,9 @@ STATIC EFI_STATUS OwnedRead(VOID *C,UINT64 O,UINTN N,VOID *B){RAW_STATE *S=C;
  return S==&mRaw&&S->Captured?S->Blob.Read(S->Blob.Context,S->Token,O,N,B):EFI_ACCESS_DENIED;}
 STATIC EFI_STATUS Parse(CONST PIANO_BOOT_SOURCE *Source,PIANO_BOOT_IMAGE *P){
  EFI_STATUS E=PianoFastbootBootParse(Source,P);if(E!=EFI_SUCCESS)return E;
- if(Source->Bytes>PIANO_FASTBOOT_MAX_DOWNLOAD||P->Kind!=PianoBootAndroid||P->Version!=2||
-    P->Kernel.Bytes<64||P->Kernel.Bytes>PIANO_FASTBOOT_MAX_DOWNLOAD||!P->Ramdisk.Bytes||P->Ramdisk.Bytes>RAW_INITRD_MAX||
+ // ESP payloads use the native CPU heap budget; USB admission stays64MiB.
+ if(Source->Bytes>PIANO_CPU_INPUT_LOW_BYTES||P->Kind!=PianoBootAndroid||P->Version!=2||
+    P->Kernel.Bytes<64||P->Kernel.Bytes>PIANO_CPU_INPUT_LOW_BYTES||!P->Ramdisk.Bytes||P->Ramdisk.Bytes>RAW_INITRD_MAX||
     P->Dtb.Bytes<40||P->Dtb.Bytes>RAW_DTB_MAX-0x10000||P->Second.Bytes||P->RecoveryDtbo.Bytes||P->Signature.Bytes||P->Trailing.Bytes)
    return EFI_UNSUPPORTED;
  UINT8 H[64];E=Source->Read(Source->Context,P->Kernel.Offset,sizeof(H),H);if(E!=EFI_SUCCESS)return E;
@@ -173,7 +180,8 @@ EFI_STATUS PianoRawLinuxDiscardStable(VOID){
 }
 STATIC BOOLEAN Destination(UINT64 A,UINT64 N){
  if(!N||A>MAX_UINT64-N||Overlap(A,N,(UINTN)mRaw.View,mRaw.Blob.Bytes)||
- Overlap(A,N,(UINTN)mRaw.Loaded.ImageBase,mRaw.Loaded.ImageSize))return FALSE;
+ Overlap(A,N,(UINTN)mRaw.Loaded.ImageBase,mRaw.Loaded.ImageSize)||
+ Overlap(A,N,(UINTN)mRaw.ExitLoaded.ImageBase,mRaw.ExitLoaded.ImageSize))return FALSE;
  EFI_MEMORY_REGION_DESCRIPTOR *Map=NULL;UINT8 Count=0;GetMemoryMap(&Map,&Count);
  if(!Map)return FALSE;
  for(UINTN I=0;I<Count;++I)if(!AsciiStrCmp(Map[I].Name,"Kernel")&&Map[I].Address==RAW_KERNEL&&Map[I].Length==0x10000000&&
@@ -183,13 +191,21 @@ STATIC BOOLEAN Destination(UINT64 A,UINT64 N){
  return FALSE;
 }
 STATIC BOOLEAN Hash(CONST VOID *P,UINTN N,UINT8 Out[32]){return Sha256HashAll(P,N,Out);}
-EFI_STATUS PianoRawLinuxPrepare(PIANO_PRODUCT_OWNERS *O,EFI_HANDLE Image,CONST PIANO_RAW_LINUX_REPORT **Out){
+EFI_STATUS PianoRawLinuxPrepare(PIANO_PRODUCT_OWNERS *O,EFI_HANDLE Image,EFI_HANDLE ExitImage,CONST PIANO_RAW_LINUX_REPORT **Out){
  if(!Out)return EFI_INVALID_PARAMETER;*Out=NULL;
+ if(!ExitImage)return EFI_INVALID_PARAMETER;
  if(!mRaw.Captured||mRaw.Prepared||Image!=mRaw.Image||!Live()||!SameImage()||!Clean(O))return EFI_ACCESS_DENIED;
  if(mRaw.FileMode&&!PianoEspBootOwned(&mRaw.File,mRaw.Token))return EFI_ACCESS_DENIED;
+ EFI_LOADED_IMAGE_PROTOCOL *ExitLoaded=NULL;EFI_STATUS E=gBS->HandleProtocol(ExitImage,&gEfiLoadedImageProtocolGuid,(VOID **)&ExitLoaded);
+ if(!Live())return EFI_ABORTED;if(E!=EFI_SUCCESS)return E;
+ if(!ExitLoaded||ExitLoaded->Revision<EFI_LOADED_IMAGE_PROTOCOL_REVISION||!ExitLoaded->ImageBase||!ExitLoaded->ImageSize||
+ ExitLoaded->ImageSize>MAX_UINTN-(UINTN)ExitLoaded->ImageBase||ExitLoaded->SystemTable!=mRaw.SystemTable||
+ ExitLoaded->ImageCodeType!=EfiLoaderCode||ExitLoaded->ImageDataType!=EfiLoaderData||
+ (ExitImage==Image&&ExitLoaded!=mRaw.Identity))return EFI_COMPROMISED_DATA;
+ mRaw.ExitImage=ExitImage;mRaw.ExitIdentity=ExitLoaded;mRaw.ExitLoaded=*ExitLoaded;
  mRaw.FileQuiet=TRUE; // actual owner ledger is already clean; never pump stopped USB/policy
  UINT64 El;__asm__ volatile("mrs %0, CurrentEL":"=r"(El));if(El!=4)return EFI_UNSUPPORTED;
- PIANO_BOOT_SOURCE Source={&mRaw,OwnedRead,mRaw.Blob.Bytes};EFI_STATUS E=Parse(&Source,&mRaw.Parsed);if(E!=EFI_SUCCESS)return E;
+ PIANO_BOOT_SOURCE Source={&mRaw,OwnedRead,mRaw.Blob.Bytes};E=Parse(&Source,&mRaw.Parsed);if(E!=EFI_SUCCESS)return E;
  E=mRaw.Blob.BorrowView(mRaw.Blob.Context,mRaw.Token,(PIANO_BOOT_RANGE){0,mRaw.Blob.Bytes},&mRaw.View,&mRaw.Loan);
  if(E!=EFI_SUCCESS)return E;
  if(mRaw.FileMode){mRaw.File.View=mRaw.View;mRaw.File.Loan=mRaw.Loan;}
@@ -204,12 +220,14 @@ EFI_STATUS PianoRawLinuxPrepare(PIANO_PRODUCT_OWNERS *O,EFI_HANDLE Image,CONST P
  if(((UINTN)InputDtb&7)||FdtCheckHeader(InputDtb)||FdtTotalSize(InputDtb)!=P->Dtb.Bytes||
  FdtPathOffset(InputDtb,"/cpus")<0||FdtPathOffset(InputDtb,"/reserved-memory")<0||FdtPathOffset(InputDtb,"/__fixups__")>=0)return EFI_COMPROMISED_DATA;
  PIANO_RAW_LINUX_REPORT R={.Revision=1,.Epoch=1,.Kernel=Address,.KernelBytes=P->Kernel.Bytes,.KernelSpan=Span,
- .Dtb=RAW_DTB,.Initrd=RAW_INITRD,.InitrdBytes=P->Ramdisk.Bytes,.Image=Image,.Identity=mRaw.Identity,.Token=mRaw.Token};
+ .Dtb=RAW_DTB,.Initrd=RAW_INITRD,.InitrdBytes=P->Ramdisk.Bytes,.Image=Image,.Identity=mRaw.Identity,.Token=mRaw.Token,
+ .ExitImage=ExitImage,.ExitIdentity=mRaw.ExitIdentity};
  if(!Hash(Kernel,(UINTN)P->Kernel.Bytes,R.KernelSha)||!Hash(Bytes+P->Ramdisk.Offset,(UINTN)P->Ramdisk.Bytes,R.InitrdSha))return EFI_DEVICE_ERROR;
  CopyMem((VOID *)(UINTN)Address,Kernel,(UINTN)P->Kernel.Bytes);
  if(Span>P->Kernel.Bytes)ZeroMem((VOID *)(UINTN)(Address+P->Kernel.Bytes),(UINTN)(Span-P->Kernel.Bytes));
  CopyMem((VOID *)(UINTN)RAW_INITRD,Bytes+P->Ramdisk.Offset,(UINTN)P->Ramdisk.Bytes);
  VOID *Tree=(VOID *)(UINTN)RAW_DTB;if(FdtOpenInto(InputDtb,Tree,(INT32)Capacity))return EFI_COMPROMISED_DATA;
+ E=PianoProductMemoryApplyDtb(Tree,Capacity);if(E!=EFI_SUCCESS)return E;
  E=PianoPanelSelectDtb(Tree,Capacity);if(E!=EFI_SUCCESS)return E;
  E=PianoProductBootObjectsApplyGunyah(Tree,Capacity);if(E!=EFI_SUCCESS)return E;
  INT32 Chosen=FdtPathOffset(Tree,"/chosen");if(Chosen<0)return EFI_COMPROMISED_DATA;
@@ -222,6 +240,7 @@ EFI_STATUS PianoRawLinuxPrepare(PIANO_PRODUCT_OWNERS *O,EFI_HANDLE Image,CONST P
  STATIC CONST CHAR8 *Drop[]={"kaslr-seed","rng-seed","linux,uefi-system-table","linux,uefi-mmap-start","linux,uefi-mmap-size","linux,uefi-mmap-desc-size","linux,uefi-mmap-desc-ver"};
  for(UINTN I=0;I<ARRAY_SIZE(Drop);++I){INT32 D=FdtDelProp(Tree,Chosen,Drop[I]);if(D&&D!=-1)return EFI_COMPROMISED_DATA;}
  if(FdtPack(Tree))return EFI_COMPROMISED_DATA;R.DtbBytes=FdtTotalSize(Tree);
+ E=PianoProductMemoryValidateDtb(Tree,R.DtbBytes);if(E!=EFI_SUCCESS)return E;
  if(!Hash((VOID *)(UINTN)Address,(UINTN)R.KernelBytes,Sha)||CompareMem(Sha,R.KernelSha,32)||
  !Hash((VOID *)(UINTN)RAW_INITRD,(UINTN)R.InitrdBytes,Sha)||CompareMem(Sha,R.InitrdSha,32)||!Hash(Tree,(UINTN)R.DtbBytes,R.DtbSha))return EFI_SECURITY_VIOLATION;
  WriteBackInvalidateDataCacheRange((VOID *)(UINTN)Address,(UINTN)Span);
@@ -235,7 +254,8 @@ EFI_STATUS PianoRawLinuxPrepare(PIANO_PRODUCT_OWNERS *O,EFI_HANDLE Image,CONST P
  R.Kernel,R.KernelSpan,R.Dtb,R.DtbBytes,R.Initrd,R.InitrdBytes));return EFI_SUCCESS;
 }
 BOOLEAN PianoRawLinuxPrepared(CONST PIANO_RAW_LINUX_REPORT *R,CONST PIANO_PRODUCT_OWNERS *O,EFI_HANDLE Image){
- return R==&mRaw.Report&&mRaw.Prepared&&O==mRaw.Owners&&Image==mRaw.Image&&SameImage()&&Clean(O)&&
+ return R==&mRaw.Report&&mRaw.Prepared&&O==mRaw.Owners&&Image==mRaw.Image&&SameImage()&&SameExitImage()&&Clean(O)&&
+ R->Image==mRaw.Image&&R->Identity==mRaw.Identity&&R->ExitImage==mRaw.ExitImage&&R->ExitIdentity==mRaw.ExitIdentity&&
  !CompareMem(&O->Report,&mRaw.Clean,sizeof(mRaw.Clean))&&!CompareMem(&O->Config,&mRaw.Config,sizeof(mRaw.Config))&&
  (mRaw.FileMode?(PianoEspBootReleased(&mRaw.File)&&!mRaw.View&&!mRaw.Loan):
  (mRaw.Adapter.Taken&&!mRaw.Adapter.Consumed&&!mRaw.Adapter.Retained&&!mRaw.Adapter.ReleaseAttempted&&
@@ -255,7 +275,7 @@ EFI_STATUS PianoRawLinuxEnter(CONST PIANO_RAW_LINUX_REPORT *R){
  UINT64 Tree=R->Dtb,Entry=R->Kernel;VOID *Self=mRaw.Loaded.ImageBase;UINTN SelfBytes=(UINTN)mRaw.Loaded.ImageSize;
  for(UINTN Attempt=0;Attempt<2;++Attempt){
    Size=Capacity;E=gBS->GetMemoryMap(&Size,Map,&Key,&DescriptorSize,&Version);if(E!=EFI_SUCCESS)return E;
-   E=gBS->ExitBootServices(mRaw.Image,Key);if(E==EFI_SUCCESS){
+   E=gBS->ExitBootServices(R->ExitImage,Key);if(E==EFI_SUCCESS){
      // No calls into BS, logging or stack-based transition after MMU is off.
      WriteBackInvalidateDataCacheRange(Self,SelfBytes);RawEnter(Tree,Entry);
    }

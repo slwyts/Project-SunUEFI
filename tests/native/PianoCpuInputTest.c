@@ -35,8 +35,12 @@ static EFI_STATUS Buffer(VOID *C,CONST PIANO_LINUX_MEMORY_PROOF *P,CONST VOID *P
  return scenario==10?EFI_ACCESS_DENIED:EFI_SUCCESS;}
 int main(VOID){
  PIANO_CPU_INPUT_ENV env={source,Alive,Slice,Memory,Validate,Buffer};PIANO_LINUX_MEMORY_PROOF proof;
+ assert(PIANO_CPU_INPUT_LOW_BYTES==128ULL*1024*1024);
  assert(PianoCpuInputAuthorize(NULL,PIANO_CPU_INPUT_LOW_BYTES,&proof)==EFI_SUCCESS&&proof.Status==EFI_NOT_READY);++cases;
  assert(PianoCpuInputAuthorize(NULL,PIANO_CPU_INPUT_LOW_BYTES+1,&proof)==EFI_NOT_READY);++cases;
+ PIANO_CPU_INPUT_ENV low={.Context=source,.BootServicesAlive=Alive,.ServiceSlice=Slice};
+ assert(PianoCpuInputAuthorize(&low,PIANO_CPU_INPUT_LOW_BYTES,&proof)==EFI_SUCCESS&&!checks&&!proof.FullDdr);++cases;
+ assert(PianoCpuInputAuthorize(&low,PIANO_CPU_INPUT_LOW_BYTES+1,&proof)==EFI_NOT_READY&&!checks);++cases;
  assert(PianoCpuInputAuthorize(&env,PIANO_CPU_INPUT_MAX_BYTES+1,&proof)==EFI_BAD_BUFFER_SIZE&&!checks);++cases;
  assert(PianoCpuInputAuthorize(&env,PIANO_CPU_INPUT_MAX_BYTES,&proof)==EFI_SUCCESS&&checks==1&&validators==1);++cases;
  for(scenario=1;scenario<=7;++scenario){EFI_STATUS s=PianoCpuInputAuthorize(&env,PIANO_CPU_INPUT_MAX_BYTES,&proof);

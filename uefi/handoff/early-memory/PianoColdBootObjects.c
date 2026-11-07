@@ -14,6 +14,8 @@ STATIC_ASSERT(OFFSET_OF(PIANO_COLD_BOOT_HANDOFF,Crc32)==128,"shim CRC");
 STATIC_ASSERT(OFFSET_OF(PIANO_COLD_BOOT_HANDOFF,EntryPc)==136,"shim PC");
 STATIC_ASSERT(sizeof(PIANO_COLD_BOOT_OBJECT_REPORT)+sizeof(EFI_HOB_GUID_TYPE)<65536,"typed HOB size");
 STATIC PIANO_COLD_BOOT_OBJECT_REPORT mCold;
+STATIC PIANO_MEMORY_LAYOUT mColdMemoryLayout;
+STATIC BOOLEAN mColdMemoryLayoutValid;
 STATIC UINT32 mColdScratch[PIANO_COLD_READ_MAX/4];
 STATIC PIANO_COLD_BATCH_STATE mColdBatch;
 typedef struct {UINT32 Start,Bytes;BOOLEAN Valid;UINT8 Data[256];} COLD_CACHE;
@@ -21,6 +23,7 @@ STATIC COLD_CACHE mColdStructCache,mColdStringCache;
 STATIC UINT32 mColdStructStart,mColdStructEnd,mColdStringStart,mColdStringEnd;
 STATIC_ASSERT(OFFSET_OF(PIANO_COLD_BATCH_STATE,Words)==88,"batch ASM words");
 STATIC EFI_MEMORY_REGION_DESCRIPTOR *mColdMap;STATIC UINT8 mColdCount;
+STATIC CONST EFI_MEMORY_REGION_DESCRIPTOR *mColdFirmware,*mColdStack;
 STATIC UINT64 mColdDtbBase,mColdDtbBytes,mColdDtbReadBytes;
 STATIC EFI_GUID mColdGuid=PIANO_COLD_OBJECT_HOB_GUID;
 STATIC BOOLEAN ColdSpan(UINT64 B,UINT64 N,UINT64 A,UINT64 Z){return B&&N&&B<=MAX_UINT64-N&&Z&&A>=B&&A-B<=N&&Z<=N-(A-B);}
@@ -40,6 +43,12 @@ STATIC CONST EFI_MEMORY_REGION_DESCRIPTOR *ColdNamed(CONST CHAR8 *Name){
  CONST EFI_MEMORY_REGION_DESCRIPTOR *R=NULL;for(UINTN I=0;I<mColdCount;++I)if(!AsciiStrCmp(mColdMap[I].Name,Name)){if(R)return NULL;R=&mColdMap[I];}return R;
 }
 STATIC BOOLEAN ColdKnown(CONST CHAR8 *Name,UINT64 A,UINT64 N){CONST EFI_MEMORY_REGION_DESCRIPTOR *R=ColdNamed(Name);return R&&ColdSpan(R->Address,R->Length,A,N);}
+STATIC BOOLEAN ColdPhaseRange(CONST EFI_MEMORY_REGION_DESCRIPTOR *Region,CONST CHAR8 *Name,UINT64 Address,UINT64 Bytes){
+ // Observe resolved each name uniquely in the native table. Keep checking the
+ // actual descriptor and CPU address on every batch without rescanning all
+ // unrelated native rows while the data cache is still disabled.
+ return Region&&!AsciiStrCmp(Region->Name,Name)&&ColdSpan(Region->Address,Region->Length,Address,Bytes);
+}
 STATIC BOOLEAN ColdInput(UINT64 A,UINT64 N){return ColdKnown("Kernel",A,N)||ColdKnown("DXE_Heap",A,N)||ColdKnown("DXE_Heap_Upper",A,N);}
 STATIC BOOLEAN ColdSource(UINT64 A,UINT64 N){return ColdInput(A,N)||ColdKnown("FD_Reserved",A,N)||ColdKnown("UEFI_FD",A,N);}
 STATIC EFI_STATUS ColdAdd(PIANO_COLD_OBJECT_ROLE Role,UINT64 B,UINT64 N){
@@ -51,7 +60,7 @@ STATIC EFI_STATUS ColdFresh(VOID){
  if(C.Counter>=mCold.Cpu.Counter){mCold.ElapsedTicks=C.Counter-mCold.Cpu.Counter;if(C.Frequency)mCold.ElapsedUsecs=mCold.ElapsedTicks<=MAX_UINT64/1000000?mCold.ElapsedTicks*1000000/C.Frequency:MAX_UINT64;}
  if(C.El!=4||C.SpSel!=1||(C.Sctlr&(BIT0|BIT2))||C.Sctlr!=mCold.Cpu.Sctlr||C.Vbar!=mCold.Cpu.Vbar||C.Daif!=mCold.Cpu.Daif||
     C.Ttbr0!=mCold.Cpu.Ttbr0||C.Ttbr1!=mCold.Cpu.Ttbr1||C.Frequency!=mCold.Cpu.Frequency||
-    !ColdKnown("UEFI_FD",C.Pc,4)||!ColdKnown("UEFI_Stack",C.Sp-1,1))return EFI_NOT_READY;
+    !ColdPhaseRange(mColdFirmware,"UEFI_FD",C.Pc,4)||!ColdPhaseRange(mColdStack,"UEFI_Stack",C.Sp-1,1))return EFI_NOT_READY;
  if(!C.Frequency||C.Frequency>1000000000ULL||C.Counter<mCold.Cpu.Counter||mCold.ElapsedUsecs>=PIANO_COLD_MAX_USECS||mCold.Loads>=PIANO_COLD_TOTAL_MAX/4)return EFI_TIMEOUT;
  return EFI_SUCCESS;
 }
@@ -89,7 +98,20 @@ STATIC EFI_STATUS ColdDtbRead(UINT32 At,UINTN N,VOID *Out){
 }
 STATIC EFI_STATUS ColdDtbWord(UINT32 At,UINT32 *V){UINT8 B[4];EFI_STATUS E=ColdDtbRead(At,4,B);if(E==EFI_SUCCESS)*V=ColdBe(B);return E;}
 STATIC EFI_STATUS ColdString(UINT32 At,UINT32 Limit,CHAR8 *Name,UINTN Capacity,UINT32 *Used){
- for(UINT32 I=0;I<Capacity&&At<=Limit&&I<Limit-At;++I){EFI_STATUS E=ColdDtbRead(At+I,1,&Name[I]);if(E!=EFI_SUCCESS)return E;if(!Name[I]){*Used=I+1;return EFI_SUCCESS;}}return EFI_COMPROMISED_DATA;
+ // ColdDtbRead already fetches aligned 256-byte cache windows. Consume one
+ // window at a time instead of calling its guarded adapter for every byte.
+ // Stop at the same NUL/capacity/end boundaries and never prefetch a new page
+ // merely to finish the unused tail of a short name.
+ UINTN Done=0;
+ while(Done<Capacity&&At<Limit&&Done<Limit-At){
+  UINT32 Here=At+(UINT32)Done;
+  UINTN Bytes=MIN(Capacity-Done,MIN((UINTN)(Limit-Here),(UINTN)(256-(Here&255))));
+  EFI_STATUS E=ColdDtbRead(Here,Bytes,Name+Done);
+  if(E!=EFI_SUCCESS)return E;
+  for(UINTN I=0;I<Bytes;++I)if(!Name[Done+I]){*Used=(UINT32)(Done+I+1);return EFI_SUCCESS;}
+  Done+=Bytes;
+ }
+ return EFI_COMPROMISED_DATA;
 }
 typedef struct {UINT8 Header[40];UINT32 Bytes;UINT64 Start,End;
  UINT32 Panel,BootargsBytes,BootargsCrc32,PanelArguments;} COLD_DTB;
@@ -220,6 +242,9 @@ STATIC EFI_STATUS ColdFinish(EFI_STATUS E,PIANO_COLD_OBJECT_REASON Reason){mCold
 EFI_STATUS PianoColdBootObjectsObserve(VOID){
  if(mCold.Attempted)return EFI_ALREADY_STARTED;ZeroMem(&mCold,sizeof(mCold));mCold.Attempted=TRUE;mCold.Version=PIANO_COLD_OBJECT_VERSION;mCold.Bytes=sizeof(mCold);mCold.HandoffStatus=mCold.DtbStatus=mCold.PublishStatus=EFI_NOT_STARTED;
  GetMemoryMap(&mColdMap,&mColdCount);if(!mColdMap||!mColdCount)return ColdFinish(EFI_NOT_READY,PianoColdReasonLayout);
+ // The native descriptor table is the fixed input for this entire cold phase.
+ // Resolve uniqueness once; ColdFresh still validates live CPU/range state.
+ mColdFirmware=ColdNamed("UEFI_FD");mColdStack=ColdNamed("UEFI_Stack");
  EFI_STATUS E=ColdCpu(&mCold.Cpu);if(E!=EFI_SUCCESS)return ColdFinish(E,PianoColdReasonCpu);
  if(mCold.Cpu.El!=4||mCold.Cpu.SpSel!=1||(mCold.Cpu.Sctlr&(BIT0|BIT2))||(mCold.Cpu.Vbar&2047)||
     !ColdKnown("UEFI_FD",mCold.Cpu.Pc,4)||!ColdKnown("UEFI_Stack",mCold.Cpu.Sp-1,1)||
@@ -269,3 +294,27 @@ EFI_STATUS PianoColdBootObjectsPublishHob(VOID){
  mCold.Published=TRUE;mCold.PublishStatus=EFI_SUCCESS;mCold.ReportCrc32=PianoColdObjectsCrc(&mCold);CopyMem(Data,&mCold,sizeof(mCold));return EFI_SUCCESS;
 }
 CONST PIANO_COLD_BOOT_OBJECT_REPORT *PianoColdBootObjectsReport(VOID){return &mCold;}
+STATIC EFI_STATUS ColdMemoryRead(VOID *Context,UINT32 At,UINTN Bytes,VOID *Out){(VOID)Context;return ColdDtbRead(At,Bytes,Out);}
+EFI_STATUS PianoColdBootObjectsMemoryLayout(PIANO_MEMORY_LAYOUT *Layout){
+ if(!Layout)return EFI_INVALID_PARAMETER;ZeroMem(Layout,sizeof(*Layout));
+ if(!mCold.Finished||mCold.Status!=EFI_SUCCESS||!mCold.Coherent||mCold.Published||PianoColdBootObjectsValidate(&mCold)!=EFI_SUCCESS)return EFI_NOT_READY;
+ PIANO_MEMORY_LAYOUT Second;PIANO_COLD_BOOT_HANDOFF Handoff;
+ if(mColdMemoryLayoutValid){
+  // A completed pair is immutable producer data. Authorization rechecks the
+  // entry record and current cold CPU phase rather than spending the bounded
+  // physical-read budget on another identical pair of whole-tree traversals.
+  EFI_STATUS S=ColdStable(PIANO_COLD_HANDOFF_ADDRESS,sizeof(Handoff),&Handoff);
+  if(S==EFI_SUCCESS&&CompareMem(&Handoff,&mCold.Handoff,sizeof(Handoff)))S=EFI_MEDIA_CHANGED;
+  if(S==EFI_SUCCESS)S=ColdFresh();mCold.ReportCrc32=PianoColdObjectsCrc(&mCold);
+  if(S==EFI_SUCCESS)CopyMem(Layout,&mColdMemoryLayout,sizeof(*Layout));return S;
+ }
+ ZeroMem(&mColdStructCache,sizeof(mColdStructCache));ZeroMem(&mColdStringCache,sizeof(mColdStringCache));
+ EFI_STATUS S=PianoMemoryLayoutRead(ColdMemoryRead,NULL,mCold.DtbBytes,Layout);
+ if(S==EFI_SUCCESS){ZeroMem(&mColdStructCache,sizeof(mColdStructCache));ZeroMem(&mColdStringCache,sizeof(mColdStringCache));S=PianoMemoryLayoutRead(ColdMemoryRead,NULL,mCold.DtbBytes,&Second);}
+ if(S==EFI_SUCCESS&&CompareMem(Layout,&Second,sizeof(Second)))S=EFI_MEDIA_CHANGED;
+ if(S==EFI_SUCCESS)S=ColdStable(PIANO_COLD_HANDOFF_ADDRESS,sizeof(Handoff),&Handoff);
+ if(S==EFI_SUCCESS&&CompareMem(&Handoff,&mCold.Handoff,sizeof(Handoff)))S=EFI_MEDIA_CHANGED;
+ if(S==EFI_SUCCESS)S=ColdFresh();mCold.ReportCrc32=PianoColdObjectsCrc(&mCold);
+ if(S==EFI_SUCCESS){CopyMem(&mColdMemoryLayout,Layout,sizeof(*Layout));mColdMemoryLayoutValid=TRUE;}
+ else ZeroMem(Layout,sizeof(*Layout));ZeroMem(&Second,sizeof(Second));return S;
+}

@@ -4,6 +4,7 @@
 // pinctrl-spmi-gpio.c. No PMIC writes, IRQ reconfiguration or native PMIC init.
 #include <Uefi.h>
 #include <Protocol/SimpleTextIn.h>
+#include <Protocol/SimpleTextInEx.h>
 #include <Protocol/DevicePath.h>
 #include <Guid/ConsoleInDevice.h>
 #include <Library/UefiBootServicesTableLib.h>
@@ -17,11 +18,17 @@
 #define ARB_CFG  0x0C42D000U
 #define ARB_OBS  0x0C440000U
 #define QUEUE_SIZE 16
+#define KEY_NOTIFIES 8
 #define KEY_POWER 1
 #define KEY_DOWN  2
 #define KEY_UP    4
 
 STATIC EFI_SIMPLE_TEXT_INPUT_PROTOCOL mInput;
+STATIC EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL mInputEx;
+STATIC struct {
+  EFI_KEY_DATA Key;
+  EFI_KEY_NOTIFY_FUNCTION Function;
+} mNotifies[KEY_NOTIFIES];
 STATIC EFI_HANDLE mHandle;
 STATIC EFI_EVENT mPoll;
 STATIC EFI_INPUT_KEY mQueue[QUEUE_SIZE];
@@ -119,6 +126,15 @@ STATIC VOID Push (UINT16 Scan,CHAR16 Unicode) {
   mQueue[mTail].ScanCode=Scan;mQueue[mTail].UnicodeChar=Unicode;mTail=Next;
   DEBUG((DEBUG_WARN,"SUNUEFI_PHYSICAL_KEY scan=0x%x unicode=0x%x\n",Scan,Unicode));
   gBS->SignalEvent(mInput.WaitForKey);
+  // Poll runs at CALLBACK. Notifications neither consume nor duplicate the
+  // shared key queue used by both console input protocols.
+  EFI_KEY_DATA Key;ZeroMem(&Key,sizeof(Key));Key.Key.ScanCode=Scan;Key.Key.UnicodeChar=Unicode;
+  for(UINTN I=0;I<ARRAY_SIZE(mNotifies);++I) {
+    EFI_KEY_NOTIFY_FUNCTION Notify=mNotifies[I].Function;
+    if(Notify && mNotifies[I].Key.Key.ScanCode==Scan && mNotifies[I].Key.Key.UnicodeChar==Unicode &&
+       !(mNotifies[I].Key.KeyState.KeyShiftState&EFI_SHIFT_STATE_VALID) &&
+       !(mNotifies[I].Key.KeyState.KeyToggleState&EFI_TOGGLE_STATE_VALID))Notify(&Key);
+  }
 }
 
 BOOLEAN PianoSetStandardKeyNavigation(BOOLEAN Enable) {
@@ -170,6 +186,51 @@ STATIC EFI_STATUS EFIAPI Read (EFI_SIMPLE_TEXT_INPUT_PROTOCOL *This,EFI_INPUT_KE
   gBS->RestoreTPL(Old);return Status;
 }
 
+STATIC EFI_STATUS EFIAPI ResetEx(EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *This,BOOLEAN Extended) {
+  if(This!=&mInputEx)return EFI_INVALID_PARAMETER;
+  return Reset(&mInput,Extended);
+}
+
+STATIC EFI_STATUS EFIAPI ReadEx(EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *This,EFI_KEY_DATA *Key) {
+  if(This!=&mInputEx || Key==NULL)return EFI_INVALID_PARAMETER;
+  // Physical buttons have no shift/toggle state to report. Invalid state bits
+  // distinguish unavailable modifiers from a keyboard reporting all released.
+  ZeroMem(Key,sizeof(*Key));return Read(&mInput,&Key->Key);
+}
+
+STATIC EFI_STATUS EFIAPI SetStateEx(EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *This,EFI_KEY_TOGGLE_STATE *State) {
+  if(This!=&mInputEx || State==NULL)return EFI_INVALID_PARAMETER;
+  return EFI_UNSUPPORTED;
+}
+
+STATIC EFI_STATUS EFIAPI RegisterNotify(EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *This,EFI_KEY_DATA *Key,
+  EFI_KEY_NOTIFY_FUNCTION Function,VOID **Handle) {
+  if(This!=&mInputEx || Key==NULL || Function==NULL || Handle==NULL)return EFI_INVALID_PARAMETER;
+  *Handle=NULL;EFI_TPL Old=gBS->RaiseTPL(TPL_NOTIFY);EFI_STATUS Status=EFI_OUT_OF_RESOURCES;
+  for(UINTN I=0;I<ARRAY_SIZE(mNotifies);++I) {
+    if(mNotifies[I].Function==Function && mNotifies[I].Key.Key.ScanCode==Key->Key.ScanCode &&
+       mNotifies[I].Key.Key.UnicodeChar==Key->Key.UnicodeChar &&
+       mNotifies[I].Key.KeyState.KeyShiftState==Key->KeyState.KeyShiftState &&
+       mNotifies[I].Key.KeyState.KeyToggleState==Key->KeyState.KeyToggleState) {
+      *Handle=&mNotifies[I];Status=EFI_SUCCESS;goto Done;
+    }
+  }
+  for(UINTN I=0;I<ARRAY_SIZE(mNotifies);++I)if(!mNotifies[I].Function) {
+    mNotifies[I].Key=*Key;mNotifies[I].Function=Function;*Handle=&mNotifies[I];Status=EFI_SUCCESS;break;
+  }
+Done:
+  gBS->RestoreTPL(Old);return Status;
+}
+
+STATIC EFI_STATUS EFIAPI UnregisterNotify(EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *This,VOID *Handle) {
+  if(This!=&mInputEx || Handle==NULL)return EFI_INVALID_PARAMETER;
+  EFI_TPL Old=gBS->RaiseTPL(TPL_NOTIFY);EFI_STATUS Status=EFI_INVALID_PARAMETER;
+  for(UINTN I=0;I<ARRAY_SIZE(mNotifies);++I)if(Handle==&mNotifies[I] && mNotifies[I].Function) {
+    ZeroMem(&mNotifies[I],sizeof(mNotifies[I]));Status=EFI_SUCCESS;break;
+  }
+  gBS->RestoreTPL(Old);return Status;
+}
+
 STATIC VOID EFIAPI Wait (EFI_EVENT Event,VOID *Context) {
   if(mHead!=mTail)gBS->SignalEvent(Event);
 }
@@ -179,10 +240,12 @@ VOID PianoStopKeys (VOID) {
   if(mHandle!=NULL) {
     gBS->DisconnectController(mHandle,NULL,NULL);
     gBS->UninstallMultipleProtocolInterfaces(mHandle,&gEfiSimpleTextInProtocolGuid,&mInput,
+      &gEfiSimpleTextInputExProtocolGuid,&mInputEx,
       &gEfiConsoleInDeviceGuid,NULL,
       &gEfiDevicePathProtocolGuid,&mPath,NULL);mHandle=NULL;
   }
-  if(mInput.WaitForKey!=NULL) {gBS->CloseEvent(mInput.WaitForKey);mInput.WaitForKey=NULL;}
+  if(mInput.WaitForKey!=NULL) {gBS->CloseEvent(mInput.WaitForKey);mInput.WaitForKey=NULL;mInputEx.WaitForKeyEx=NULL;}
+  ZeroMem(mNotifies,sizeof(mNotifies));
 }
 EFI_STATUS PianoStopKeysForProduct(PIANO_KEYS_RETIRE_REPORT *Report) {
   if(Report==NULL)return EFI_INVALID_PARAMETER;
@@ -198,12 +261,14 @@ EFI_STATUS PianoStopKeysForProduct(PIANO_KEYS_RETIRE_REPORT *Report) {
   if(mHandle!=NULL) {
     Status=Report->Disconnect=gBS->DisconnectController(mHandle,NULL,NULL);if(Status!=EFI_SUCCESS)goto Failed;
     Status=Report->Uninstall=gBS->UninstallMultipleProtocolInterfaces(mHandle,&gEfiSimpleTextInProtocolGuid,&mInput,
+      &gEfiSimpleTextInputExProtocolGuid,&mInputEx,
       &gEfiConsoleInDeviceGuid,NULL,
       &gEfiDevicePathProtocolGuid,&mPath,NULL);if(Status!=EFI_SUCCESS)goto Failed;mHandle=NULL;
   }
   if(mInput.WaitForKey!=NULL) {
-    Status=Report->WaitClose=gBS->CloseEvent(mInput.WaitForKey);if(Status!=EFI_SUCCESS)goto Failed;mInput.WaitForKey=NULL;
+    Status=Report->WaitClose=gBS->CloseEvent(mInput.WaitForKey);if(Status!=EFI_SUCCESS)goto Failed;mInput.WaitForKey=NULL;mInputEx.WaitForKeyEx=NULL;
   }
+  ZeroMem(mNotifies,sizeof(mNotifies));
   Report->Returned=Report->Clean=TRUE;Report->Status=EFI_SUCCESS;return EFI_SUCCESS;
 Failed:
   mProductStopRetained=TRUE;Report->Returned=Report->Retained=TRUE;
@@ -223,9 +288,14 @@ EFI_STATUS PianoStartKeys (CONST VOID *Fdt) {
   mStandardNavigation=mEscapeChord=FALSE;
   DEBUG((DEBUG_WARN,"SUNUEFI_KEYS_INITIAL state=%u pon_apid=%u gpio_apid=%u\n",mStable,mPonApid,mGpioApid));
   mInput.Reset=Reset;mInput.ReadKeyStroke=Read;
+  mInputEx.Reset=ResetEx;mInputEx.ReadKeyStrokeEx=ReadEx;mInputEx.SetState=SetStateEx;
+  mInputEx.RegisterKeyNotify=RegisterNotify;mInputEx.UnregisterKeyNotify=UnregisterNotify;
+  ZeroMem(mNotifies,sizeof(mNotifies));
   Status=gBS->CreateEvent(EVT_NOTIFY_WAIT,TPL_NOTIFY,Wait,NULL,&mInput.WaitForKey);
   if(EFI_ERROR(Status))return Status;
+  mInputEx.WaitForKeyEx=mInput.WaitForKey;
   Status=gBS->InstallMultipleProtocolInterfaces(&mHandle,&gEfiSimpleTextInProtocolGuid,&mInput,
+    &gEfiSimpleTextInputExProtocolGuid,&mInputEx,
     &gEfiConsoleInDeviceGuid,NULL,
     &gEfiDevicePathProtocolGuid,&mPath,NULL);
   if(EFI_ERROR(Status)) {PianoStopKeys();return Status;}

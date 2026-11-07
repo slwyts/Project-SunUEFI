@@ -118,7 +118,7 @@ extern void piano_product_gui_pump(void);
 STATIC VOID Setup(UINT32 Case){
   Scenario=Case;memset(&Bs,0,sizeof(Bs));memset(&St,0,sizeof(St));gBS=&Bs;gST=&St;
   Bs.Hdr.Signature=EFI_BOOT_SERVICES_SIGNATURE;Bs.RaiseTPL=Raise;Bs.RestoreTPL=Restore;Bs.CreateEventEx=Create;Bs.CloseEvent=Close;Bs.LocateProtocol=Locate;Bs.SetWatchdogTimer=Watchdog;Bs.Stall=Stall;St.BootServices=&Bs;
-  Protocol=(PIANO_PRODUCT_RUNTIME_PROTOCOL){PIANO_PRODUCT_RUNTIME_REVISION,ProviderPump,ProviderAlive,Request,Pending,Ack};gEfiCurrentTpl=TPL_APPLICATION;gui_run=true;
+  Protocol=(PIANO_PRODUCT_RUNTIME_PROTOCOL){PIANO_PRODUCT_RUNTIME_REVISION,ProviderPump,ProviderAlive,Request,Pending,Ack,NULL};gEfiCurrentTpl=TPL_APPLICATION;gui_run=true;
 }
 STATIC VOID Run(UINT32 Case){
   Setup(Case);EFI_STATUS Status;EFI_EVENT Event=(VOID *)1;UINTN Index=99;

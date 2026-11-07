@@ -150,9 +150,15 @@ static UINTN bs_calls,event_creates,event_closes,clock_calls,proof_calls;
 static UINT64 fake_now;
 static BOOLEAN in_timer,event_failure,event_warning,timer_cancel_warning,event_close_warning,clock_warning,domain_warning;
 static VOID (EFIAPI *timer_notify)(EFI_EVENT,VOID *), (EFIAPI *exit_notify)(EFI_EVENT,VOID *);
+static VOID (*restore_tpl_hook)(VOID);
 EFI_GUID gEfiEventExitBootServicesGuid={0x27ABF055,0xB1B8,0x4C26,{0x80,0x48,0x74,0x8F,0x37,0xBA,0xA2,0xDF}};
 static EFI_TPL EFIAPI raise_tpl(EFI_TPL New){assert(!in_timer);++bs_calls;EFI_TPL Old=current_tpl;assert(New>=Old);current_tpl=New;return Old;}
-static VOID EFIAPI restore_tpl(EFI_TPL Old){assert(!in_timer);++bs_calls;assert(Old<=current_tpl);current_tpl=Old;}
+static VOID EFIAPI restore_tpl(EFI_TPL Old){
+  assert(!in_timer);++bs_calls;assert(Old<=current_tpl);current_tpl=Old;
+  // Lowering TPL can dispatch a pending ExitBootServices notification before
+  // the caller resumes. Only tests that exercise that boundary install a hook.
+  if(restore_tpl_hook)restore_tpl_hook();
+}
 static EFI_STATUS EFIAPI create_event(UINT32 Type,EFI_TPL Tpl,EFI_EVENT_NOTIFY Notify,VOID *Context,EFI_EVENT *Event) {
   assert(current_tpl==TPL_APPLICATION && !in_timer && Type==(EVT_TIMER|EVT_NOTIFY_SIGNAL) && Tpl==TPL_CALLBACK && Context==NULL);
   ++bs_calls;++event_creates;timer_notify=Notify;*Event=(VOID *)0x101;
@@ -346,6 +352,171 @@ static VOID run_ramlog(UINTN Test) {
   PIANO_USB_SERVICE_RETIRE_REPORT R;assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&R)==EFI_SUCCESS && R.Clean);
   free(Header);test_console=NULL;free_cold_model();
 }
+
+typedef enum {
+  StatusCopied,
+  StatusUnbound,
+  StatusCallbackError,
+  StatusCallbackWarning,
+  StatusExitDuringReport,
+  StatusInvalidRows,
+  StatusCachedBadConsole,
+  StatusQueueLimit,
+  StatusQueueOverflow,
+  StatusExitBeforeCallback,
+  StatusExitBeforeRow,
+  StatusCaseCount
+} STATUS_CASE;
+
+static STATUS_CASE status_case;
+static UINTN status_calls,status_calls_at_loss,status_frames_at_loss;
+static EFI_STATUS status_send_after_loss;
+
+static VOID status_restore_exit(VOID) {
+  // The seven fixed status rows precede both the report callback and its
+  // first Send. Earlier event-queue TPL restores must leave the fixture live.
+  if(mFrameCount!=7)return;
+  restore_tpl_hook=NULL;
+  exit_notify((VOID *)0x102,NULL);
+  status_calls_at_loss=bs_calls;status_frames_at_loss=mFrameCount;
+}
+
+static EFI_STATUS status_poison(VOID *Context,PIANO_FB_SEND Send,VOID *SendContext) {
+  (VOID)Context;(VOID)Send;(VOID)SendContext;
+  assert(!"status callback configuration must be copied");
+  return EFI_DEVICE_ERROR;
+}
+
+static EFI_STATUS report_status(VOID *Context,PIANO_FB_SEND Send,VOID *SendContext) {
+  assert(Context==(VOID *)0x55 && current_tpl==TPL_APPLICATION && !in_timer);
+  assert(mService.State.Busy && mService.State.Phase==PianoUsbServiceListening);
+  ++status_calls;
+
+  if(status_case==StatusExitBeforeRow){
+    restore_tpl_hook=status_restore_exit;
+    status_send_after_loss=Send(SendContext,"INFOafter restore",17);
+    assert(status_send_after_loss==EFI_ABORTED && !restore_tpl_hook);
+    assert(bs_calls==status_calls_at_loss && mFrameCount==status_frames_at_loss);
+    return EFI_SUCCESS;
+  }
+
+  if(status_case==StatusInvalidRows){
+    CHAR8 Oversize[65];memset(Oversize,'x',sizeof(Oversize));CopyMem(Oversize,"INFO",4);
+    UINTN Frames=mFrameCount;
+    assert(Send(SendContext,NULL,4)==EFI_INVALID_PARAMETER);
+    assert(Send(SendContext,"INF",3)==EFI_INVALID_PARAMETER);
+    assert(Send(SendContext,"OKAY",4)==EFI_INVALID_PARAMETER);
+    assert(Send(SendContext,Oversize,sizeof(Oversize))==EFI_INVALID_PARAMETER);
+    current_tpl=TPL_CALLBACK;
+    assert(Send(SendContext,"INFOwrong tpl",13)==EFI_UNSUPPORTED);
+    current_tpl=TPL_APPLICATION;
+    assert(mFrameCount==Frames);
+  }
+
+  if(status_case==StatusExitDuringReport){
+    assert(Send(SendContext,"INFObefore exit",15)==EFI_SUCCESS);
+    exit_notify((VOID *)0x102,NULL);
+    status_calls_at_loss=bs_calls;status_frames_at_loss=mFrameCount;
+    status_send_after_loss=Send(SendContext,"INFOafter exit",14);
+    assert(status_send_after_loss==EFI_ABORTED);
+    assert(bs_calls==status_calls_at_loss && mFrameCount==status_frames_at_loss);
+    return EFI_SUCCESS;
+  }
+
+  UINTN Rows=status_case==StatusQueueLimit?24:status_case==StatusQueueOverflow?26:2;
+  for(UINTN I=0;I<Rows;++I){
+    CHAR8 Row[32];int Bytes=snprintf(Row,sizeof(Row),"INFOmemory row %llu",(unsigned long long)I);
+    assert(Bytes>4 && (UINTN)Bytes<sizeof(Row));
+    EFI_STATUS Result=Send(SendContext,Row,(UINTN)Bytes);
+    if(Result!=EFI_SUCCESS)return Result;
+  }
+  if(status_case==StatusCallbackError)return EFI_DEVICE_ERROR;
+  if(status_case==StatusCallbackWarning)return EFI_WARN_STALE_DATA;
+  return EFI_SUCCESS;
+}
+
+static BOOLEAN status_has_frame(CONST CHAR8 *Text) {
+  for(FB_FRAME *Frame=mFrames;Frame;Frame=Frame->Next)
+    if(Frame->Bytes==strlen(Text) && !CompareMem(Frame->Data,Text,Frame->Bytes))return TRUE;
+  return FALSE;
+}
+
+static VOID run_status(STATUS_CASE Test) {
+  setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;
+  bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;
+  bs.SetTimer=set_timer;bs.CloseEvent=close_event;
+  clock.DisableClock=clock.DisableClockPowerDomain=persistent_disable;
+  status_case=Test;status_calls=status_calls_at_loss=status_frames_at_loss=0;
+  status_send_after_loss=EFI_NOT_STARTED;restore_tpl_hook=NULL;
+
+  PIANO_DWC3_SERVICE_CONFIG Config={.Context=(VOID *)0x55,.NowUs=now_us,.Storage=&backend,
+    .ReportStatus=Test==StatusUnbound?NULL:report_status};
+  assert(PianoUsbControllerServiceStart((VOID *)123,&Config)==EFI_SUCCESS);service_enumerate();
+  assert(mPersistent.Config.ReportStatus==Config.ReportStatus && mService.Config.ReportStatus==Config.ReportStatus);
+  Config.ReportStatus=status_poison;Config.Context=NULL;
+
+  if(Test==StatusCachedBadConsole){
+    // A failed snapshot must still leave diagnostic evidence. Making the live
+    // console inaccessible proves that oem status only formats that evidence.
+    UINT32 Header[]={0xdeadbeef,0x2b,0x7c};test_console=Header;
+    service_out("oem ramlog");service_ack();test_console=NULL;
+    assert(mLogSnapshotStatus==EFI_COMPROMISED_DATA && !strcmp(mLogSnapshotStage,"header"));
+  }
+
+  // Timer polling may queue the command but never invoke a report callback.
+  CopyMem(mBulkRx.Cpu,"oem status",10);DWC_TRB *Trb=mTrbs[2].Cpu;
+  Trb->Size=mPosted[2]-10;Trb->Control&=~BIT0;publish(0xC044);timer_tick();
+  assert(!status_calls);
+  current_tpl=TPL_CALLBACK;
+  assert(PianoUsbControllerServicePumpApp(1,5000)==EFI_UNSUPPORTED && !status_calls);
+  current_tpl=TPL_APPLICATION;
+  if(Test==StatusExitBeforeCallback)restore_tpl_hook=status_restore_exit;
+  EFI_STATUS Result=PianoUsbControllerServicePumpApp(1,5000);
+  assert(status_calls==((Test==StatusUnbound || Test==StatusExitBeforeCallback)?0:1));
+
+  if(Test==StatusExitDuringReport || Test==StatusExitBeforeCallback || Test==StatusExitBeforeRow){
+    assert(Result==EFI_ABORTED && mService.State.ServicesLost && mPersistent.ServicesLost);
+    assert(bs_calls==status_calls_at_loss && mFrameCount==status_frames_at_loss);
+    assert(mFrameCount==(Test==StatusExitDuringReport?8:7) && !restore_tpl_hook);
+    assert(!mPending[3] && !status_has_frame("OKAY") && !status_has_frame("FAILstatus report unavailable"));
+    free_cold_model();return;
+  }
+  if(Test==StatusQueueOverflow){
+    // Seven fixed INFO rows plus 25 accepted callback rows fill the queue;
+    // the next callback row must fail without exceeding the 32-frame bound.
+    assert(Result==EFI_OUT_OF_RESOURCES && mFrameCount==32 && !mPending[3]);
+    assert(mService.State.LastStatus==EFI_OUT_OF_RESOURCES);
+    free_cold_model();return;
+  }
+
+  assert(Result==EFI_SUCCESS && mPending[3]);
+  UINTN Frames=0;
+  for(FB_FRAME *Frame=mFrames;Frame;Frame=Frame->Next){
+    assert(Frame->Bytes>=4 && Frame->Bytes<=64);
+    ++Frames;
+  }
+  assert(Frames==mFrameCount && Frames==(Test==StatusQueueLimit?32:Test==StatusUnbound?8:10));
+  if(Test==StatusCallbackError || Test==StatusCallbackWarning){
+    assert(status_has_frame("FAILstatus report unavailable") && !status_has_frame("OKAY"));
+  }else{
+    assert(status_has_frame("OKAY") && !status_has_frame("FAILstatus report unavailable"));
+  }
+  if(Test==StatusCachedBadConsole){
+    CHAR8 Snapshot[64];
+    snprintf(Snapshot,sizeof(Snapshot),"INFOlog-snapshot header status=%016llx",(unsigned long long)EFI_COMPROMISED_DATA);
+    assert(status_has_frame("INFOlog-header sig=deadbeef start=0000002b size=0000007c"));
+    assert(status_has_frame(Snapshot));
+  }
+
+  service_ack();
+  // A report rejection must leave ordinary Fastboot commands usable.
+  service_out("getvar:version");service_ack();
+  assert(mService.State.Phase==PianoUsbServiceListening && !mService.State.Retained);
+  PIANO_USB_SERVICE_RETIRE_REPORT Retire;
+  assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&Retire)==EFI_SUCCESS && Retire.Clean);
+  free_cold_model();
+}
+
 static VOID run_idle_activity(VOID){
   setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;bs_calls=event_creates=event_closes=clock_calls=proof_calls=0;
   timer_notify=exit_notify=NULL;bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;bs.SetTimer=set_timer;bs.CloseEvent=close_event;
@@ -525,7 +696,8 @@ int USB_SERVICE_TEST_MAIN(void) {
   for(UINTN I=0;I<21;++I){pid_t P=fork();assert(P>=0);if(P==0){run_service(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB persistent service case %llu failed\n",(unsigned long long)I);return 1;}}
   for(UINTN I=0;I<11;++I){pid_t P=fork();assert(P>=0);if(P==0){run_navigation(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB product navigation case %llu failed\n",(unsigned long long)I);return 1;}}
   for(UINTN I=0;I<8;++I){pid_t P=fork();assert(P>=0);if(P==0){run_ramlog(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB before-ramlog case %llu failed\n",(unsigned long long)I);return 1;}}
-  puts("Actual Device+Controller persistent USB: 15 reset/startup-proof + 21 lifecycle + 11 navigation + 8 before-ramlog cases PASS; phase-aware reset cleanup, inactive-ring proof, active/unknown DMA rejection, strict configured-register restore and EBS halt-retain; no device.");
+  for(STATUS_CASE I=0;I<StatusCaseCount;++I){pid_t P=fork();assert(P>=0);if(P==0){run_status(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB status-report case %u failed\n",(unsigned)I);return 1;}}
+  puts("Actual Device+Controller persistent USB: 15 reset/startup-proof + 21 lifecycle + 11 navigation + 8 before-ramlog + 11 status-report cases PASS; phase-aware reset cleanup, inactive-ring proof, bounded diagnostic rows, cached console failure and EBS halt-retain; no device.");
 #else
   PIANO_USB_STARTUP_FAILURE_EVIDENCE Evidence;assert(PianoDwc3GetStartupFailureEvidence(&Evidence)==EFI_UNSUPPORTED && Evidence.Revision==1);
   (VOID)backend;PIANO_DWC3_SERVICE_STATUS S;PIANO_USB_SERVICE_RETIRE_REPORT R;PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID *)0x55,.NowUs=NULL};

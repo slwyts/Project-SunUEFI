@@ -302,7 +302,7 @@ index 3c20568655dbe5047e5618f5abce9e6a7f717b20..ac69f0393888c56488640af46e590e3f
 +  // Product native APP transition before any BeforeNotify/Timer0/map teardown.
 +  // Legacy targets bind Null. A stale key or foreign image does not stop USB.
 +  if (gMemoryMapTerminated) {
-+    return EFI_NOT_READY;
++    return PianoProductExitBootServicesResult (EFI_NOT_READY, FALSE);
 +  }
 +  Status = PianoProductBeforeExitBootServices (
 +             ImageHandle, CorePianoCurrentImageInfo (ImageHandle), gEfiCurrentTpl,
@@ -314,6 +314,14 @@ index 3c20568655dbe5047e5618f5abce9e6a7f717b20..ac69f0393888c56488640af46e590e3f
    //
    // Notify other drivers of their last chance to use boot services
    // before the memory map is terminated.
+@@ -799,6 +814,7 @@ CoreExitBootServices (
+   //
+   // Terminate memory services if the MapKey matches
+   //
+   Status = CoreTerminateMemoryMap (MapKey);
++  Status = PianoProductExitBootServicesResult (Status, MapKey != CorePianoCurrentMemoryMapKey ());
+   if (EFI_ERROR (Status)) {
+     //
 diff --git a/MdeModulePkg/Core/Dxe/Event/Event.c b/MdeModulePkg/Core/Dxe/Event/Event.c
 index c2d6c30a360a57c8e6cc5d71a295b1bf64c55e2a..7af2e279889b2ba2e8a70c321cb422eda884cdff 100644
 --- a/MdeModulePkg/Core/Dxe/Event/Event.c

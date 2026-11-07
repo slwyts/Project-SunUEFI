@@ -65,11 +65,12 @@ STATIC EFI_STATUS Begin(PIANO_FV_APPLICATION *C,EFI_HANDLE Parent,UINT64 Limit) 
   if(S==EFI_SUCCESS && C->ExitEvent==NULL){C->Retained=TRUE;return EFI_COMPROMISED_DATA;}
   return S;
 }
-STATIC EFI_STATUS Start(PIANO_FV_APPLICATION *C,CONST CHAR16 *Options,UINT64 Limit) {
+STATIC EFI_STATUS Start(PIANO_FV_APPLICATION *C,CONST CHAR16 *Options,UINT64 Limit,EFI_HANDLE Parent,EFI_HANDLE Device) {
   Alive(C);EFI_LOADED_IMAGE_PROTOCOL *L=NULL;
   EFI_STATUS S=Exact(gBS->HandleProtocol(C->Image,&gEfiLoadedImageProtocolGuid,(VOID **)&L));Alive(C);
   if(S!=EFI_SUCCESS)return S;
   if(!L || L->Revision<EFI_LOADED_IMAGE_PROTOCOL_REVISION || L->ImageCodeType!=EfiLoaderCode || !L->ImageBase || !L->ImageSize || L->ImageSize>Limit)return EFI_UNSUPPORTED;
+  if(Device && (L->DeviceHandle!=Device || L->ParentHandle!=Parent))return EFI_COMPROMISED_DATA;
   C->LoadedIdentity=L;C->BaseIdentity=L->ImageBase;C->SizeIdentity=L->ImageSize;
   if(Options) {
     UINTN Chars=0;while(Chars<2048 && Options[Chars])++Chars;if(Chars==2048)return EFI_BAD_BUFFER_SIZE;
@@ -94,7 +95,20 @@ EFI_STATUS PianoApplicationRunBuffer(EFI_HANDLE Parent,CONST VOID *Image,UINTN B
   EFI_STATUS S=Begin(C,Parent,Limit);if(S!=EFI_SUCCESS)return C && C->Signature==SIGNATURE && C->Busy?Finish(C,S):S;
   S=Exact(gBS->LoadImage(FALSE,Parent,NULL,(VOID *)Image,Bytes,&C->Image));C->Load=S;Alive(C);
   if(S==EFI_SUCCESS && !C->Image){C->Retained=TRUE;S=EFI_COMPROMISED_DATA;}
-  if(S==EFI_SUCCESS)S=Start(C,Options,Limit);
+  if(S==EFI_SUCCESS)S=Start(C,Options,Limit,NULL,NULL);
+  return Finish(C,S);
+}
+EFI_STATUS PianoApplicationRunFile(EFI_HANDLE Parent,EFI_HANDLE Device,CONST CHAR16 *Path,
+  CONST CHAR16 *Options,UINT64 Limit,PIANO_FV_APPLICATION *C) {
+  if(C && C->Signature==SIGNATURE && (C->Busy || C->Retained))return EFI_ALREADY_STARTED;
+  if(!Device || !Path || Path[0]!='\\' || !Path[1])return EFI_INVALID_PARAMETER;
+  UINTN Chars=0;while(Chars<2048 && Path[Chars])++Chars;if(Chars==2048)return EFI_BAD_BUFFER_SIZE;
+  EFI_STATUS S=Begin(C,Parent,Limit);if(S!=EFI_SUCCESS)return C && C->Signature==SIGNATURE && C->Busy?Finish(C,S):S;
+  C->PathOwned=FileDevicePath(Device,Path);Alive(C);
+  if(!C->PathOwned)return Finish(C,EFI_OUT_OF_RESOURCES);
+  S=Exact(gBS->LoadImage(FALSE,Parent,C->PathOwned,NULL,0,&C->Image));C->Load=S;Alive(C);
+  if(S==EFI_SUCCESS && !C->Image){C->Retained=TRUE;S=EFI_COMPROMISED_DATA;}
+  if(S==EFI_SUCCESS)S=Start(C,Options,Limit,Parent,Device);
   return Finish(C,S);
 }
 EFI_STATUS PianoFvApplicationRun(EFI_HANDLE Parent,CONST EFI_GUID *File,CONST CHAR16 *Options,
@@ -129,6 +143,6 @@ EFI_STATUS PianoFvApplicationRun(EFI_HANDLE Parent,CONST EFI_GUID *File,CONST CH
     break;
   }
   if(S==EFI_SUCCESS){S=Free(C,&C->SourceOwned);if(S==EFI_SUCCESS)S=Free(C,&C->PathOwned);if(S==EFI_SUCCESS)S=Free(C,&C->HandlesOwned);}
-  if(S==EFI_SUCCESS)S=Start(C,Options,Limit);
+  if(S==EFI_SUCCESS)S=Start(C,Options,Limit,NULL,NULL);
   return Finish(C,S);
 }

@@ -12,7 +12,19 @@ typedef struct {
  EFI_STATUS (*ValidateMemory)(VOID *,CONST PIANO_LINUX_MEMORY_PROOF *);
  VOID (*FailStop)(VOID *,EFI_STATUS); // runtime-safe, must not return
  BOOLEAN (*ValidateRaw)(CONST PIANO_RAW_LINUX_REPORT *,CONST PIANO_PRODUCT_OWNERS *,EFI_HANDLE);
+ // The resident Core validates its active boot manager and the native current
+ // image chain. Called only before retirement, never on a stale-map retry.
+ EFI_STATUS (*ValidateEfiImage)(VOID *,EFI_HANDLE,CONST EFI_LOADED_IMAGE_PROTOCOL *);
 } PIANO_LATE_HANDOFF_ENV;
+// Latest provider entry and the first check that refused it. These values are
+// diagnostic only; no saved status substitutes for a fresh handoff check.
+typedef struct {
+ CONST CHAR8 *Stage;
+ EFI_STATUS Status,Result;
+ EFI_HANDLE Image;
+ PIANO_PRODUCT_EXIT_PHASE Phase;
+ UINT32 EnterCalls,ExitCalls,RetireCalls;
+} PIANO_LATE_HANDOFF_DIAGNOSTIC;
 typedef struct {
  UINT32 Signature;PIANO_PRODUCT_EXIT_PROTOCOL Protocol;PIANO_LATE_HANDOFF_ENV Env;
  EFI_HANDLE ProtocolHandle,Image;CONST EFI_LOADED_IMAGE_PROTOCOL *Identity;
@@ -22,14 +34,18 @@ typedef struct {
  UINT32 ExitCalls,RetireCalls;UINTN CallerMapKey;
  BOOLEAN Busy,Installed,Retained;
   BOOLEAN RawMode,ResetMode;CONST PIANO_RAW_LINUX_REPORT *Raw;PIANO_RAW_LINUX_REPORT RawSnapshot;
+ PIANO_LATE_HANDOFF_DIAGNOSTIC Diagnostic;
 } PIANO_LATE_HANDOFF;
+// Replay saved CPU/RAM state only: no protocol lookup, memory-map capture or
+// Boot Services call. The caller owns the lifetime of State and its console.
+VOID PianoLateHandoffReemitDiagnostic(CONST PIANO_LATE_HANDOFF *State);
 // Driver-lifetime singleton Root authority. Initialize/install once, then Arm
 // the actual selected loaded child before StartImage; default remains unarmed.
 EFI_STATUS PianoLateHandoffInitialize(PIANO_LATE_HANDOFF *,CONST PIANO_LATE_HANDOFF_ENV *);
 EFI_STATUS PianoLateHandoffArm(PIANO_LATE_HANDOFF *,EFI_HANDLE ChildImage);
-// Core-only fixed-window raw boot after actual manager retirement. This does
-// not create a full-DDR EFI memory proof or admit a child EFI application.
-EFI_STATUS PianoLateHandoffArmRaw(PIANO_LATE_HANDOFF *,EFI_HANDLE CoreImage,CONST PIANO_RAW_LINUX_REPORT *);
+// Core-owned fixed-window raw boot after actual manager retirement, bound to
+// the current ExitImage. This does not grant full-DDR EFI OS memory permission.
+EFI_STATUS PianoLateHandoffArmRaw(PIANO_LATE_HANDOFF *,EFI_HANDLE ExitImage,CONST PIANO_RAW_LINUX_REPORT *);
 // Root-only reset after actual service retirement. No OS memory permission.
 EFI_STATUS PianoLateHandoffArmReset(PIANO_LATE_HANDOFF *,EFI_HANDLE CoreImage);
 // Ordinary returned child only, before any retirement. Unknown/partial or

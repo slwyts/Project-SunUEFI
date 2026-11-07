@@ -19,6 +19,9 @@
                        ├─► 显示 SimpleInit 图形菜单
                        │
                        ▼ 启动 Linux
+                     systemd-boot (/EFI/BOOT/BOOTAA64.EFI)
+                       │ 默认 Debian 启动项
+                       ▼ LinuxBoot.efi 请求驻留核心启动
                      读取 sunuefi_esp 中的 /EFI/Piano/stable/boot.img
                        │
                        ▼ ExitBootServices 安全退出
@@ -64,13 +67,20 @@ SunUEFI 提供与原厂 Bootloader 不同的 Fastboot 服务：
 
 ```
 sunuefi_esp/
-└── EFI/
-    └── Piano/
-        └── stable/
-            ├── Image          # Linux 内核
-            ├── board.dtb      # 经清理与合成的设备树
-            ├── initramfs      # 启动阶段内存盘
-            └── boot.img       # 组合启动镜像
+├── EFI/
+│   ├── BOOT/BOOTAA64.EFI       # systemd-boot
+│   └── Piano/
+│       ├── LinuxBoot.efi      # Debian 启动应用
+│       └── stable/
+│           ├── Image
+│           ├── board.dtb
+│           ├── initramfs
+│           └── boot.img       # Linux 组合启动镜像
+└── loader/
+    ├── loader.conf
+    └── entries/debian.conf
 ```
 
-系统交接前，UEFI 读取 `boot.img`，校验内存范围并安全退出 ExitBootServices，最后将控制权移交 Linux 内核。
+上面的布局是现有 Debian 镜像。标准 EFI 系统也可在同一 ESP 中放置独立内核、initrd 和 DTB，在 `loader/entries/*.conf` 中分别通过 `linux`、`initrd`、`devicetree` 引用；systemd-boot 直接进入内核的 EFI stub。NixOS 使用这条标准路径，文件由 NixOS 的 systemd-boot 模块管理。
+
+Debian 启动应用继续调用驻留核心读取 `boot.img`。两种路径都在内核交接前关闭硬件，启动管理器运行时存储保持可读。内存与退出身份的处理见 [UEFI 核心](uefi-core.md#esp-启动文件与系统交接)。

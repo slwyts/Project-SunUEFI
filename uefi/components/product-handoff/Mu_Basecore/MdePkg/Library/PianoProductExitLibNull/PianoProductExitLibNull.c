@@ -5,3 +5,4 @@ EFI_STATUS EFIAPI PianoProductBeforeExitBootServices(EFI_HANDLE Image,
  (VOID)Image;(VOID)Info;(VOID)Tpl;(VOID)Key;(VOID)Current;(VOID)Before;
  return EFI_SUCCESS;
 }
+EFI_STATUS EFIAPI PianoProductExitBootServicesResult(EFI_STATUS Status,BOOLEAN StaleMapKey){(VOID)StaleMapKey;return Status;}

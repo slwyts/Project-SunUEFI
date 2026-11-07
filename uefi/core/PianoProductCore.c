@@ -4,6 +4,7 @@
 #include "PianoProductPayload.h"
 #include "PianoProductOwners.h"
 #include "PianoRawLinuxBoot.h"
+#include "Components/os-boot/PianoEspBootSource.h"
 #include "PianoFastbootBlockRead.h"
 #include "PianoKeysLifecycle.h"
 #include "PianoRamPartition.h"
@@ -12,6 +13,7 @@
 #include "PianoReset.h"
 #include "PianoNvFile.h"
 #include "PianoProductBootObjects.h"
+#include "PianoProductMemory.h"
 #include "PianoProductBootLog.h"
 #include "PianoProductDisplayObserve.h"
 #include "PianoDisplaySmmuObserve.h"
@@ -19,7 +21,9 @@
 #include "PianoDisplayClockObserve.h"
 #include "PianoProductDisplayOwner.h"
 #include "LateHandoff/PianoLateHandoff.h"
+#include "LateHandoff/PianoDeviceTreeFixup.h"
 #include <Guid/EventGroup.h>
+#include <Guid/Fdt.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/BaseLib.h>
@@ -34,9 +38,16 @@ VOID PianoProbeUfs(CONST VOID *Fdt);
 VOID PianoUfsSetProbeAction(EFI_STATUS (*Action)(CONST VOID *));
 EFI_STATUS PianoUfsReadOnlyDmaExperiment(CONST VOID *Fdt);
 CONST CHAR8 *PianoUfsStartupStage(VOID);
+CONST CHAR8 *PianoUfsStartupDiagnostic(VOID);
 EFI_STATUS PianoStartKeys(CONST VOID *Fdt);
+BOOLEAN PianoSetStandardKeyNavigation(BOOLEAN Enable);
 STATIC PIANO_PRODUCT_OWNERS mOwners;
 STATIC PIANO_LATE_HANDOFF mLateHandoff;
+STATIC PIANO_FV_APPLICATION mSystemdApplication;
+STATIC EFI_HANDLE mSystemdEsp;
+STATIC BOOLEAN mSystemdActive,mSystemdEntering;
+STATIC CONST CHAR8 *mEfiImageStage="not-started";
+STATIC EFI_STATUS mEfiImageStatus=EFI_NOT_STARTED;
 STATIC BOOLEAN mUfsAttempted,mUfsStarted,mInputStarted;
 STATIC EFI_STATUS mUfsStatus=EFI_NOT_STARTED;
 STATIC UINT64 mCounterFrequency,mCounterStart,mCounterEnd;
@@ -50,6 +61,8 @@ STATIC EFI_EVENT mBootLogExitEvent;
 STATIC BOOLEAN mBootLogEnabled,mBootLogCounterDown;
 STATIC UINT64 mBootLogStart;
 STATIC CONST CHAR8 *mBootLogStage="PAYLOAD";
+STATIC CONST CHAR8 *mHandoffStage="not-started";
+STATIC CONST CHAR16 *mHandoffFailure;
 STATIC VOID BootLogReturned(VOID);
 STATIC VOID FailStop(EFI_STATUS Status);
 EFI_STATUS PianoRegisterLinuxBootOption(VOID);
@@ -100,6 +113,56 @@ STATIC VOID BootLogReturned(VOID) {
     mBootLogExitEvent=NULL;
   }
 }
+STATIC EFI_STATUS ProductReportStatus(VOID *Context,PIANO_FB_SEND Send,VOID *SendContext) {
+  if(Context!=NULL || Send==NULL)return EFI_INVALID_PARAMETER;
+  if(!BootLogAlive())return EFI_ABORTED;
+
+  // Export saved startup evidence independently of the ramoops console. These
+  // getters do not reread SMEM, probe devices, or authorize a Linux handoff.
+  PIANO_PRODUCT_MEMORY_DIAGNOSTIC Memory;
+  PIANO_DEVICE_TREE_FIXUP_DIAGNOSTIC Fixup;
+  PianoProductMemoryGetDiagnostic(&Memory);
+  PianoDeviceTreeFixupGetDiagnostic(&Fixup);
+
+  // Fastboot INFO payloads are at most 64 bytes, including the INFO prefix.
+  // The USB service has space for these rows plus its transport/log status.
+  CHAR8 Lines[24][64];
+  UINTN Count=0;
+#define STATUS_LINE(...) AsciiSPrint(Lines[Count++],sizeof(Lines[0]),__VA_ARGS__)
+  STATUS_LINE("INFOfixup stage=%a calls=%u",Fixup.Stage,Fixup.Calls);
+  STATUS_LINE("INFOfixup status=%016lx flags=%x",Fixup.Status,Fixup.Flags);
+  STATUS_LINE("INFOmem capture=%a",Memory.CaptureStage);
+  STATUS_LINE("INFOmem status=%016lx index=%lx",Memory.CaptureStatus,Memory.CaptureIndex);
+  STATUS_LINE("INFOdtb stage=%a",Memory.DtbStage);
+  STATUS_LINE("INFOdtb status=%016lx index=%lx",Memory.DtbStatus,Memory.DtbIndex);
+  STATUS_LINE("INFOcold hob=%016lx state=%016lx",Memory.ColdHobStatus,Memory.ColdStatus);
+  STATUS_LINE("INFOcold publish=%016lx",Memory.ColdPublishStatus);
+  STATUS_LINE("INFOcold native=%u rows=%u",Memory.ColdNativeCount,Memory.ColdCount);
+  STATUS_LINE("INFOcold ram=%u reserved=%u",Memory.ColdRamCount,Memory.ColdReservedCount);
+  STATUS_LINE("INFOcold bytes=%lx",Memory.ColdDramBytes);
+  STATUS_LINE("INFOcold epoch=%lx input=%lx",Memory.ColdEpoch,Memory.ColdInputFingerprint);
+  STATUS_LINE("INFOobjects hob=%016lx valid=%016lx",Memory.ObjectsHobStatus,Memory.ObjectsValidateStatus);
+  STATUS_LINE("INFOobjects state=%016lx publish=%016lx",Memory.ObjectsStatus,Memory.ObjectsPublishStatus);
+  STATUS_LINE("INFOobjects reason=%u count=%u loads=%u",Memory.ObjectsReason,Memory.ObjectsCount,Memory.ObjectsLoads);
+  STATUS_LINE("INFOobjects epoch=%lx usecs=%lu",Memory.ObjectsEpoch,Memory.ObjectsElapsedUsecs);
+  STATUS_LINE("INFOobjects handoff=%016lx dtb=%016lx",Memory.ObjectsHandoffStatus,Memory.ObjectsDtbStatus);
+  STATUS_LINE("INFOearly hob=%016lx state=%016lx",Memory.EarlyHobStatus,Memory.EarlyStatus);
+  STATUS_LINE("INFOearly publish=%016lx smem=%016lx",Memory.EarlyPublishStatus,Memory.SmemStatus);
+  STATUS_LINE("INFOflags op=%u oc=%u ef=%u ep=%u ec=%u",Memory.ObjectsPublished,Memory.ObjectsCoherent,Memory.EarlyFinished,Memory.EarlyPublished,Memory.EarlyColdStateVerified);
+  STATUS_LINE("INFOearly payload=%u faults=%u",Memory.EarlyRawPayloadBytes,Memory.EarlyRecoveredFaults);
+  STATUS_LINE("INFOsmem version=%u banks=%u entries=%u",Memory.SmemRamVersion,Memory.SmemBankCount,Memory.SmemRawEntryCount);
+  STATUS_LINE("INFOsmem reason=%u parsed=%u payload=%u",Memory.SmemReason,Memory.SmemParsed,Memory.RawPayloadCoherent);
+  STATUS_LINE("INFOsmem metadata=%u repeated=%u early=%016lx",Memory.SmemRepeatedMetadataEqual,Memory.SmemRepeatedPayloadEqual,PianoProductEarlySmemStatus());
+#undef STATUS_LINE
+
+  for(UINTN Index=0;Index<Count;++Index) {
+    if(!BootLogAlive())return EFI_ABORTED;
+    EFI_STATUS Status=Send(SendContext,Lines[Index],AsciiStrLen(Lines[Index]));
+    if(!BootLogAlive())return EFI_ABORTED;
+    if(Status!=EFI_SUCCESS)return Status;
+  }
+  return EFI_SUCCESS;
+}
 STATIC EFI_STATUS ProductDebugReplay(VOID *Context) {
   if(Context!=NULL)return EFI_INVALID_PARAMETER;
   EFI_STATUS Memory=PianoProductSmemReemit(NULL);
@@ -110,6 +173,11 @@ STATIC EFI_STATUS ProductDebugReplay(VOID *Context) {
   EFI_STATUS DisplayOwner=PianoProductDisplayReplay();
   (VOID)PianoProductBootObjectsReemit(BootLogAlive);
   if(!BootLogAlive())return EFI_ABORTED;
+  // Replay the saved handoff checks last so a bounded RAM-log tail retains
+  // the actual refusal even after the startup inventories above are repeated.
+  DEBUG((DEBUG_WARN,"PIANO_EFI_IMAGE_SAVED stage=%a status=%r\n",mEfiImageStage,mEfiImageStatus));
+  PianoProductMemoryReemitDiagnostic();
+  PianoLateHandoffReemitDiagnostic(&mLateHandoff);
   if(PianoProductDisplayRetained())return Display==EFI_SUCCESS?EFI_COMPROMISED_DATA:Display;
   if(PianoDisplaySmmuRetained())return Translation==EFI_SUCCESS?EFI_COMPROMISED_DATA:Translation;
   if(PianoFrameBufferMappingRetained())return CpuMapping==EFI_SUCCESS?EFI_COMPROMISED_DATA:CpuMapping;
@@ -162,13 +230,14 @@ STATIC EFI_STATUS InitUfs(CONST VOID *Fdt) {
   mUfsStarted=mUfsStatus==EFI_SUCCESS;return mUfsStatus;
 }
 STATIC VOID FailStop(EFI_STATUS Status) {
+  DEBUG((DEBUG_ERROR,"PIANO_START_FAILED stage=%a handoff=%a status=%r recovery=hold-power-reboot-volume-up-Android\n",mBootLogStage,mHandoffStage,Status));
   // A retained observer may still own an exception handler or have lost its
   // service lifetime. Do not make another display/protocol call on that path.
   if(!PianoProductDisplayRetained() && !PianoDisplaySmmuRetained() &&
      !PianoFrameBufferMappingRetained() && !PianoDisplayClockRetained() &&
      !PianoProductDisplayOwnerRetained()){
     BootLogStage(mBootLogStage,Status);
-    CONST CHAR16 *Detail=L"启动菜单退出失败";
+    CONST CHAR16 *Detail=mHandoffFailure?mHandoffFailure:L"启动菜单退出失败";
     if(mOwners.Report.Retained){
       if(EFI_ERROR(mOwners.Report.NvStatus)&&mOwners.Report.NvStatus!=EFI_NOT_STARTED)Detail=L"设置未能保存";
       else if(EFI_ERROR(mOwners.Report.FilesystemsStatus))Detail=L"仍有文件或驱动没有关闭";
@@ -177,8 +246,18 @@ STATIC VOID FailStop(EFI_STATUS Status) {
     else if(!AsciiStrCmp(mBootLogStage,"USB"))Detail=L"USB 初始化失败";
     else if(!AsciiStrCmp(mBootLogStage,"INPUT"))Detail=L"输入初始化失败";
     else if(!AsciiStrCmp(mBootLogStage,"PAYLOAD"))Detail=L"引导文件不可用";
+    CHAR16 StorageDetail[112];
+    if(!mUfsStarted && !AsciiStrnCmp(mBootLogStage,"UFS",3)){
+      CONST CHAR8 *Diagnostic=PianoUfsStartupDiagnostic();
+      if(Diagnostic && Diagnostic[0]){
+        UINTN I=0,J=0;
+        while(Detail[I] && I<ARRAY_SIZE(StorageDetail)-3){StorageDetail[I]=Detail[I];++I;}
+        StorageDetail[I++]=' ';StorageDetail[I++]=' ';
+        while(Diagnostic[J] && I<ARRAY_SIZE(StorageDetail)-1)StorageDetail[I++]=(UINT8)Diagnostic[J++];
+        StorageDetail[I]=0;Detail=StorageDetail;
+      }
+    }
     if(BootLogAlive())(VOID)PianoProductBootLogMessage(L"未能启动系统",Detail,Status,TRUE);
-    DEBUG((DEBUG_ERROR,"PIANO_START_FAILED stage=%a status=%r recovery=hold-power-reboot-volume-up-Android\n",mBootLogStage,Status));
   }
 #ifdef __aarch64__
   __asm__ volatile("msr daifset, #15" ::: "memory");
@@ -191,18 +270,6 @@ STATIC BOOLEAN LateServicesAlive(VOID *Context) {
 }
 STATIC VOID LateFailStop(VOID *Context,EFI_STATUS Status) {
   (VOID)Context;FailStop(Status);
-}
-STATIC EFI_STATUS LateMemoryUnavailable(VOID *Context,PIANO_LINUX_MEMORY_PROOF *Report) {
-  (VOID)Context;
-  if(Report==NULL)return EFI_INVALID_PARAMETER;
-  ZeroMem(Report,sizeof(*Report));Report->Revision=1;Report->Status=EFI_NOT_READY;
-  // The actual cold observer is bound, but the full-DDR ownership authority
-  // and dynamic-reservation placements have not been established on-device.
-  // A late exit provider cannot turn those diagnostic snapshots into permission.
-  return EFI_NOT_READY;
-}
-STATIC EFI_STATUS LateValidateMemory(VOID *Context,CONST PIANO_LINUX_MEMORY_PROOF *Report) {
-  (VOID)Context;(VOID)Report;return EFI_NOT_READY;
 }
 EFI_STATUS PianoProductLateArm(VOID *Context,EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *Identity) {
   (VOID)Context;
@@ -237,6 +304,130 @@ STATIC EFI_STATUS StopInput(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Rep
   Report->Timer=Keys.TimerCancel!=EFI_SUCCESS?Keys.TimerCancel:Keys.TimerClose;
   Report->Protocols=Keys.Disconnect!=EFI_SUCCESS?Keys.Disconnect:Keys.Uninstall!=EFI_SUCCESS?Keys.Uninstall:Keys.WaitClose;
   Report->Status=Status;if(Status==EFI_SUCCESS && Keys.Clean)mInputStarted=FALSE;return Status;
+}
+// The same installed-image and USB paths retain the existing retirement order.
+STATIC EFI_STATUS CompleteCoreAction(EFI_HANDLE Image,PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime,EFI_HANDLE ExitImage) {
+  EFI_STATUS Status=PianoProductOwnersResolveReturnedAction(&mOwners);
+  if(ExitImage!=Image && Status==EFI_SUCCESS && mOwners.Report.Origin!=PianoProductRequestFile)return EFI_ABORTED;
+  BOOLEAN FileLoaded=FALSE;
+  if(Status==EFI_NOT_READY&&PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionBoot) {
+    (VOID)PianoProductBootLogMessage(L"正在读取启动镜像",L"请稍候",EFI_SUCCESS,FALSE);
+    VOID *FileContext=NULL,*FileToken=NULL;
+    EFI_STATUS Load=PianoRawLinuxLoadStable(Runtime,&FileContext,&FileToken);
+    DEBUG((DEBUG_WARN,"PIANO_PRODUCT_ESP_STABLE_LOAD status=%r path=EFI/Piano/stable/boot.img\n",Load));
+    if(PianoRawLinuxStableRetained())FailStop(Load);
+    FileLoaded=Load==EFI_SUCCESS;
+    // Loading pumps the real USB service. A host action may now take priority.
+    Status=PianoProductOwnersResolveReturnedAction(&mOwners);
+    if(Status==EFI_NOT_READY&&FileLoaded)Status=PianoProductOwnersRequestFileBoot(&mOwners,FileContext,FileToken);
+    if(Status==EFI_NOT_READY&&!FileLoaded) {
+      return Load;
+    }
+  }
+  if(Status!=EFI_SUCCESS)FailStop(Status);
+  if(FileLoaded&&mOwners.Report.Origin!=PianoProductRequestFile) {
+    Status=PianoRawLinuxDiscardStable();if(Status!=EFI_SUCCESS)FailStop(Status);FileLoaded=FALSE;
+  }
+  if(ExitImage!=Image && mOwners.Report.Origin!=PianoProductRequestFile)return EFI_ABORTED;
+  (VOID)PianoProductBootLogMessage(L"正在交接系统",L"正在保存设置并关闭存储",EFI_SUCCESS,FALSE);
+  mHandoffStage="owners-retire";mHandoffFailure=L"系统资源未能安全退出";
+  Status=PianoProductOwnersRetire(&mOwners);
+  if(Status==EFI_NOT_READY&&FileLoaded&&mOwners.Report.Origin==PianoProductRequestUsb) {
+    Status=PianoRawLinuxDiscardStable();if(Status!=EFI_SUCCESS)FailStop(Status);
+    if(ExitImage!=Image)FailStop(EFI_ABORTED);
+    Status=PianoProductOwnersRetire(&mOwners);
+  }
+  if(Status!=EFI_SUCCESS || !mOwners.Report.Clean)FailStop(Status);
+  if(mOwners.Report.AllowedAction==PianoUsbServiceActionReboot || mOwners.Report.AllowedAction==PianoUsbServiceActionContinue) {
+    Status=PianoLateHandoffArmReset(&mLateHandoff,Image);
+    if(Status==EFI_SUCCESS)Status=PianoResetExecute(&mOwners,Image);
+    FailStop(Status);
+  }
+  if(mOwners.Report.AllowedAction==PianoUsbServiceActionBoot){
+    CONST PIANO_RAW_LINUX_REPORT *Raw=NULL;
+    mHandoffStage="linux-prepare";mHandoffFailure=L"Linux 内核或设备树不可用";
+    Status=PianoRawLinuxPrepare(&mOwners,Image,ExitImage,&Raw);
+    if(Status!=EFI_SUCCESS&&BootLogAlive()){
+      PIANO_PRODUCT_MEMORY_DIAGNOSTIC Memory;PianoProductMemoryGetDiagnostic(&Memory);
+      if(EFI_ERROR(Memory.CaptureStatus)&&Memory.CaptureStatus!=EFI_NOT_STARTED)mHandoffFailure=L"无法读取本机内存布局";
+      else if(EFI_ERROR(Memory.DtbStatus)&&Memory.DtbStatus!=EFI_NOT_STARTED)mHandoffFailure=L"设备树内存或保留区不匹配";
+      DEBUG((DEBUG_ERROR,"PIANO_LINUX_PREPARE_FAILED status=%r memory=%a/%r dtb=%a/%r\n",
+        Status,Memory.CaptureStage,Memory.CaptureStatus,Memory.DtbStage,Memory.DtbStatus));
+    }
+    if(Status==EFI_SUCCESS){mHandoffStage="linux-arm";mHandoffFailure=L"系统交接检查失败";Status=PianoLateHandoffArmRaw(&mLateHandoff,ExitImage,Raw);}
+    if(Status==EFI_SUCCESS){mHandoffStage="linux-enter";mHandoffFailure=L"无法退出固件服务";Status=PianoRawLinuxEnter(Raw);}
+    FailStop(Status==EFI_SUCCESS?EFI_ABORTED:Status);
+  }
+  FailStop(EFI_UNSUPPORTED);
+  return EFI_ABORTED;
+}
+STATIC EFI_STATUS StartInstalledLinux(VOID *Context,PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime,EFI_HANDLE Child) {
+  if(!mSystemdActive)return EFI_NOT_STARTED;
+  if(mSystemdEntering || !Child || !mSystemdApplication.StartCalled || mSystemdApplication.StartReturned ||
+     mSystemdApplication.Retained || !mSystemdApplication.Image || !mSystemdEsp)return EFI_ACCESS_DENIED;
+  EFI_LOADED_IMAGE_PROTOCOL *Loaded=NULL;
+  EFI_STATUS Status=gBS->HandleProtocol(Child,&gEfiLoadedImageProtocolGuid,(VOID **)&Loaded);
+  if(Status!=EFI_SUCCESS)return Status;
+  if(!Loaded || Loaded->Revision<EFI_LOADED_IMAGE_PROTOCOL_REVISION ||
+     Loaded->ParentHandle!=mSystemdApplication.Image || Loaded->DeviceHandle!=mSystemdEsp ||
+     Loaded->SystemTable!=gST || !Loaded->ImageBase || !Loaded->ImageSize ||
+     Loaded->ImageSize>MAX_UINTN-(UINTN)Loaded->ImageBase ||
+     Loaded->ImageCodeType!=EfiLoaderCode || Loaded->ImageDataType!=EfiLoaderData)return EFI_ACCESS_DENIED;
+  mSystemdEntering=TRUE;
+  Status=CompleteCoreAction((EFI_HANDLE)Context,Runtime,Child);
+  // Only a failure before retirement can return to the still-running manager.
+  mSystemdEntering=FALSE;return Status;
+}
+STATIC BOOLEAN EfiLoadedValid(CONST EFI_LOADED_IMAGE_PROTOCOL *L){
+  return L && L->Revision>=EFI_LOADED_IMAGE_PROTOCOL_REVISION && L->SystemTable==gST &&
+    L->ImageBase && L->ImageSize && L->ImageSize<=MAX_UINTN-(UINTN)L->ImageBase &&
+    L->ImageCodeType==EfiLoaderCode && L->ImageDataType==EfiLoaderData;
+}
+STATIC EFI_STATUS ValidateEfiDeviceTree(VOID){
+  if(gST->NumberOfTableEntries>1024 || (gST->NumberOfTableEntries&&!gST->ConfigurationTable))return EFI_COMPROMISED_DATA;
+  CONST VOID *Tree=NULL;
+  for(UINTN I=0;I<gST->NumberOfTableEntries;++I){
+    if(!CompareMem(&gST->ConfigurationTable[I].VendorGuid,&gFdtTableGuid,sizeof(EFI_GUID))){
+      if(Tree)return EFI_COMPROMISED_DATA;Tree=gST->ConfigurationTable[I].VendorTable;
+    }
+  }
+  if(!Tree||((UINTN)Tree&7)||FdtCheckHeader(Tree)||FdtTotalSize(Tree)>0x200000)return EFI_NOT_READY;
+  return PianoProductMemoryValidateDtb(Tree,FdtTotalSize(Tree));
+}
+STATIC EFI_STATUS EfiImageResult(CONST CHAR8 *Stage,EFI_STATUS Status){
+  mEfiImageStage=Stage;mEfiImageStatus=Status;
+  return Status;
+}
+STATIC EFI_STATUS ValidateInstalledEfiImage(VOID *Context,EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *Identity){
+  if(!mSystemdActive || mSystemdEntering || !Image || Image==Context || Image==mSystemdApplication.Image ||
+     !mSystemdEsp || !mSystemdApplication.Busy || !mSystemdApplication.StartCalled ||
+     mSystemdApplication.StartReturned || mSystemdApplication.EbsObserved || mSystemdApplication.Retained)
+    return EfiImageResult("manager-state",EFI_ACCESS_DENIED);
+  CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();
+  if(!Policy || Policy->RequestedCoreAction!=PianoUsbServiceActionBoot || Policy->Retained || Policy->ServicesLost ||
+     Policy->Dispatching || Policy->Pumping || Policy->ActiveAction!=PIANO_PRODUCT_ACTION_NONE)return EfiImageResult("policy",EFI_NOT_READY);
+  EFI_LOADED_IMAGE_PROTOCOL *Manager=NULL,*Current=NULL;
+  EFI_STATUS Status=gBS->HandleProtocol(mSystemdApplication.Image,&gEfiLoadedImageProtocolGuid,(VOID **)&Manager);
+  if(!BootLogAlive())return EFI_ABORTED;if(Status!=EFI_SUCCESS)return EfiImageResult("manager-protocol",Status);
+  if(!EfiLoadedValid(Manager) || Manager!=mSystemdApplication.LoadedIdentity ||
+     Manager->ImageBase!=mSystemdApplication.BaseIdentity || Manager->ImageSize!=mSystemdApplication.SizeIdentity ||
+     Manager->ParentHandle!=(EFI_HANDLE)Context || Manager->DeviceHandle!=mSystemdEsp)return EfiImageResult("manager-identity",EFI_ACCESS_DENIED);
+  EFI_HANDLE Seen[4];EFI_HANDLE CurrentImage=Image;
+  // BLS loads the kernel directly. A UKI may additionally load its embedded
+  // kernel from memory; only that inner frame may lack a filesystem handle.
+  for(UINTN Depth=0;Depth<ARRAY_SIZE(Seen);++Depth){
+    for(UINTN N=0;N<Depth;++N)if(Seen[N]==CurrentImage)return EfiImageResult("parent-cycle",EFI_ACCESS_DENIED);
+    Seen[Depth]=CurrentImage;
+    Status=gBS->HandleProtocol(CurrentImage,&gEfiLoadedImageProtocolGuid,(VOID **)&Current);
+    if(!BootLogAlive())return EFI_ABORTED;if(Status!=EFI_SUCCESS)return EfiImageResult("child-protocol",Status);
+    if(!EfiLoadedValid(Current) || (!Depth && Current!=Identity) ||
+       (Current->DeviceHandle && Current->DeviceHandle!=mSystemdEsp))return EfiImageResult("child-identity",EFI_ACCESS_DENIED);
+    if(Current->ParentHandle==mSystemdApplication.Image)
+      return EfiImageResult("device-tree",Current->DeviceHandle==mSystemdEsp?ValidateEfiDeviceTree():EFI_ACCESS_DENIED);
+    if(!Current->ParentHandle || Current->ParentHandle==(EFI_HANDLE)Context)return EfiImageResult("parent",EFI_ACCESS_DENIED);
+    CurrentImage=Current->ParentHandle;
+  }
+  return EfiImageResult("parent-depth",EFI_ACCESS_DENIED);
 }
 EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *SystemTable) {
   if(Image==NULL || SystemTable==NULL)return EFI_INVALID_PARAMETER;
@@ -323,7 +514,7 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   mCounterFrequency=GetPerformanceCounterProperties(&mCounterStart,&mCounterEnd);
   if(!mCounterFrequency || mCounterStart==mCounterEnd)FailStop(EFI_UNSUPPORTED);
   PIANO_DWC3_SERVICE_CONFIG UsbConfig={.Context=NULL,.NowUs=NowUs,.Storage=Storage,
-    .BeforeRamlog=ProductDebugReplay};
+    .BeforeRamlog=ProductDebugReplay,.ReportStatus=ProductReportStatus};
   BootLogStage("USB",EFI_NOT_STARTED);
   Status=PianoRawLinuxRegister(Image,SystemTable);if(Status!=EFI_SUCCESS)FailStop(Status);
   Status=PianoUsbControllerServiceStart(Fdt,&UsbConfig);BootLogStage("USB",Status);
@@ -357,12 +548,14 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
     .Runtime=Runtime,.InputContext=NULL,.StopInput=StopInput,
     .DisplayContext=mDisplayStartup.LeaseContext,.StopDisplay=PianoProductDisplayStop,.DisplayStartup=mDisplayStartup};
   Status=PianoProductOwnersInitialize(&mOwners,&Config);if(Status!=EFI_SUCCESS)FailStop(Status);
-  PIANO_LATE_HANDOFF_ENV Late={.Context=NULL,.Services=gBS,.SystemTable=SystemTable,
+  PIANO_LATE_HANDOFF_ENV Late={.Context=Image,.Services=gBS,.SystemTable=SystemTable,
     .ParentImage=Image,.Owners=&mOwners,.BootServicesAlive=LateServicesAlive,
-    .CheckMemory=LateMemoryUnavailable,.ValidateMemory=LateValidateMemory,.FailStop=LateFailStop,
-    .ValidateRaw=PianoRawLinuxPrepared};
+    .CheckMemory=PianoProductMemoryCheck,.ValidateMemory=PianoProductMemoryValidate,.FailStop=LateFailStop,
+    .ValidateRaw=PianoRawLinuxPrepared,.ValidateEfiImage=ValidateInstalledEfiImage};
   Status=PianoLateHandoffInitialize(&mLateHandoff,&Late);if(Status!=EFI_SUCCESS)FailStop(Status);
-  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_LATE_EXIT provider_bound=1 phase=unarmed full_ddr_ready=0\n"));
+  Status=PianoDeviceTreeFixupInstall(BootLogAlive,PianoProductMemoryValidateDtb);if(Status!=EFI_SUCCESS)FailStop(Status);
+  Status=PianoBootPolicySetLinuxEntry(StartInstalledLinux,Image);if(Status!=EFI_SUCCESS)FailStop(Status);
+  DEBUG((DEBUG_WARN,"PIANO_PRODUCT_LATE_EXIT provider_bound=1 phase=unarmed standard_efi=1\n"));
   Status=PianoBootPolicyStartupWindow(3000);
   if(Status!=EFI_SUCCESS)FailStop(Status);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_BOOT_WINDOW status=%r budget_ms=3000 f12_setup=1 esc_boot_menu=1 volume_boot_menu=%u usb_pumped=%u entry_hint=%u default_action=%u target=%u\n",Status,
@@ -375,49 +568,43 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
     Status=PianoBootPolicyRun();
     PianoDwc3ServiceReplayStartup();
     if(Status==EFI_END_OF_FILE) {
-      // An acknowledged host action can arrive while a UI return is pending.
-      // Observe its real service ledger before using an older UI reason.
       Status=PianoProductOwnersResolveReturnedAction(&mOwners);
-      BOOLEAN FileLoaded=FALSE;
-      if(Status==EFI_NOT_READY&&PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionBoot) {
-        (VOID)PianoProductBootLogMessage(L"正在读取启动镜像",L"请稍候",EFI_SUCCESS,FALSE);
-        VOID *FileContext=NULL,*FileToken=NULL;
-        EFI_STATUS Load=PianoRawLinuxLoadStable(Runtime,&FileContext,&FileToken);
-        DEBUG((DEBUG_WARN,"PIANO_PRODUCT_ESP_STABLE_LOAD status=%r path=EFI/Piano/stable/boot.img\n",Load));
-        if(PianoRawLinuxStableRetained())FailStop(Load);
-        FileLoaded=Load==EFI_SUCCESS;
-        // Loading pumps the real USB service. A host action may now take priority.
+      if(Status==EFI_NOT_READY && PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionBoot) {
+        (VOID)PianoProductBootLogMessage(L"正在启动系统",L"请稍候",EFI_SUCCESS,FALSE);
+        Status=PianoEspBootFind(&mSystemdEsp);
+        if(Status==EFI_SUCCESS) {
+          BOOLEAN PreviousNavigation=PianoSetStandardKeyNavigation(TRUE);
+          mSystemdActive=TRUE;
+          Status=PianoApplicationRunFile(Image,mSystemdEsp,L"\\EFI\\BOOT\\BOOTAA64.EFI",NULL,0x400000,&mSystemdApplication);
+          mSystemdActive=FALSE;
+          if(mSystemdApplication.Retained)FailStop(Status);
+          if(mLateHandoff.Retained || mLateHandoff.RetireCalls || mLateHandoff.Phase==PianoExitClean)FailStop(Status);
+          if(mLateHandoff.Phase==PianoExitArmed){
+            EFI_STATUS Disarm=PianoLateHandoffDisarm(&mLateHandoff);if(Disarm!=EFI_SUCCESS)FailStop(Disarm);
+          }
+          PianoSetStandardKeyNavigation(PreviousNavigation);
+          // Updating the firmware must not require overwriting an installed
+          // ESP. Use the existing raw loader only if no EFI manager was found;
+          // never fall through after running a failed or rejected EFI image.
+          if(Status==EFI_NOT_FOUND&&!mSystemdApplication.StartCalled){
+            mSystemdEsp=NULL;
+            Status=CompleteCoreAction(Image,Runtime,Image);
+            FailStop(Status==EFI_SUCCESS?EFI_ABORTED:Status);
+          }
+        }
+        DEBUG((DEBUG_WARN,"PIANO_SYSTEMD_BOOT_RETURN status=%r\n",Status));
+        mSystemdEsp=NULL;
+        // A returned manager never authorized retirement. Preserve a real
+        // host request that arrived while its files or menu were in use.
         Status=PianoProductOwnersResolveReturnedAction(&mOwners);
-        if(Status==EFI_NOT_READY&&FileLoaded)Status=PianoProductOwnersRequestFileBoot(&mOwners,FileContext,FileToken);
-        if(Status==EFI_NOT_READY&&!FileLoaded) {
+        if(Status==EFI_NOT_READY) {
           Status=PianoBootPolicyCancelStable();if(Status!=EFI_SUCCESS)FailStop(Status);
           continue;
         }
       }
       if(Status!=EFI_SUCCESS)FailStop(Status);
-      if(FileLoaded&&mOwners.Report.Origin!=PianoProductRequestFile) {
-        Status=PianoRawLinuxDiscardStable();if(Status!=EFI_SUCCESS)FailStop(Status);FileLoaded=FALSE;
-      }
-      (VOID)PianoProductBootLogMessage(L"正在交接系统",L"正在保存设置并关闭存储",EFI_SUCCESS,FALSE);
-      Status=PianoProductOwnersRetire(&mOwners);
-      if(Status==EFI_NOT_READY&&FileLoaded&&mOwners.Report.Origin==PianoProductRequestUsb) {
-        Status=PianoRawLinuxDiscardStable();if(Status!=EFI_SUCCESS)FailStop(Status);
-        Status=PianoProductOwnersRetire(&mOwners);
-      }
-      if(Status!=EFI_SUCCESS || !mOwners.Report.Clean)FailStop(Status);
-      if(mOwners.Report.AllowedAction==PianoUsbServiceActionReboot || mOwners.Report.AllowedAction==PianoUsbServiceActionContinue) {
-        Status=PianoLateHandoffArmReset(&mLateHandoff,Image);
-        if(Status==EFI_SUCCESS)Status=PianoResetExecute(&mOwners,Image);
-        FailStop(Status);
-      }
-      if(mOwners.Report.AllowedAction==PianoUsbServiceActionBoot){
-        CONST PIANO_RAW_LINUX_REPORT *Raw=NULL;
-        Status=PianoRawLinuxPrepare(&mOwners,Image,&Raw);
-        if(Status==EFI_SUCCESS)Status=PianoLateHandoffArmRaw(&mLateHandoff,Image,Raw);
-        if(Status==EFI_SUCCESS)Status=PianoRawLinuxEnter(Raw);
-        FailStop(Status==EFI_SUCCESS?EFI_ABORTED:Status);
-      }
-      FailStop(EFI_UNSUPPORTED);
+      Status=CompleteCoreAction(Image,Runtime,Image);
+      FailStop(Status==EFI_SUCCESS?EFI_ABORTED:Status);
     }
     if(Status!=EFI_SUCCESS && Status!=EFI_ABORTED)FailStop(Status);
     Status=Runtime->Pump(Runtime,PIANO_PRODUCT_PUMP_APP,1000);

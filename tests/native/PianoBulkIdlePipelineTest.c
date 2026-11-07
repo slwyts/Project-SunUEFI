@@ -37,7 +37,7 @@ int main(VOID){
  timer_notify=exit_notify=NULL;bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;bs.SetTimer=set_timer;bs.CloseEvent=close_event;clock.DisableClock=clock.DisableClockPowerDomain=persistent_disable;
  PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID*)0x55,.NowUs=now_us};assert(PianoUsbControllerServiceStart((VOID*)123,&C)==EFI_SUCCESS);service_enumerate();service_out("getvar:version");
  assert(mPending[3]&&mService.State.BulkActive&&!mService.Count);bs.LocateProtocol=IdleLocate;bs.Hdr.Signature=EFI_BOOT_SERVICES_SIGNATURE;system_table.BootServices=&bs;gST=&system_table;
- mReport.Initialized=mReport.ProtocolInstalled=mReport.IdleInstalled=TRUE;mRuntime=(PIANO_PRODUCT_RUNTIME_PROTOCOL){1,Pump,AliveIdle,Request,PendingIdle,AckIdle};mIdle=(PIANO_PRODUCT_IDLE_PROTOCOL){1,&mRuntime,ReadIdle};
+ mReport.Initialized=mReport.ProtocolInstalled=mReport.IdleInstalled=TRUE;mRuntime=(PIANO_PRODUCT_RUNTIME_PROTOCOL){PIANO_PRODUCT_RUNTIME_REVISION,Pump,AliveIdle,Request,PendingIdle,AckIdle,NULL};mIdle=(PIANO_PRODUCT_IDLE_PROTOCOL){1,&mRuntime,ReadIdle};
  EFI_EVENT Event=(VOID*)1;UINTN Index=99;assert(CoreWaitForEvent(1,&Event,&Index)==EFI_SUCCESS&&Index==0&&wait_checks==3&&idles==1&&mReport.PumpCalls==3);
  assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);PIANO_USB_SERVICE_RETIRE_REPORT R;assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&R)==EFI_SUCCESS&&R.Clean);free_cold_model();
  puts("Actual wait/policy/idle-client/device pipeline: inflight empty queue stays awake, completion restores idle, timer submits no commands, full stop clean");return 0;

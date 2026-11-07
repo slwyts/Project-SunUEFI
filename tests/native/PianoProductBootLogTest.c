@@ -42,14 +42,16 @@ STATIC CONST TEST_GLYPH Alphabet[]={
   {'F',{0x7f,0x09,0x09,0x09,0x01}},{'I',{0x00,0x41,0x7f,0x41,0x00}},
   {'K',{0x7f,0x08,0x14,0x22,0x41}},{'L',{0x7f,0x40,0x40,0x40,0x40}},
   {'M',{0x7f,0x02,0x0c,0x02,0x7f}},{'N',{0x7f,0x04,0x08,0x10,0x7f}},
-  {'O',{0x3e,0x41,0x41,0x41,0x3e}},{'R',{0x7f,0x09,0x19,0x29,0x46}},
+  {'O',{0x3e,0x41,0x41,0x41,0x3e}},{'Q',{0x3e,0x41,0x51,0x21,0x5e}},
+  {'R',{0x7f,0x09,0x19,0x29,0x46}},
   {'S',{0x46,0x49,0x49,0x49,0x31}},{'T',{0x01,0x01,0x7f,0x01,0x01}},
   {'U',{0x3f,0x40,0x40,0x40,0x3f}},{'V',{0x1f,0x20,0x40,0x20,0x1f}},
   {'W',{0x3f,0x40,0x38,0x40,0x3f}},{'X',{0x63,0x14,0x08,0x14,0x63}},
   {'Y',{0x07,0x08,0x70,0x08,0x07}},{'-',{8,8,8,8,8}},{' ',{0,0,0,0,0}}
 };
-STATIC VOID ExpectText(UINT32 Row,UINT32 CharacterColumn,CONST CHAR8 *Expected){
-  UINT32 Scale=Pitch/10,Y=PanelY+Row*Pitch,X=PanelX+6*Scale+CharacterColumn*6*Scale;
+STATIC VOID ExpectTextAt(UINT32 X,UINT32 Y,UINT32 Scale,CONST CHAR8 *Expected){
+  assert(Scale&&X<Width&&Y<Height&&7*Scale<=Height-Y);
+  assert(strlen(Expected)*6*Scale<=Width-X);
   for(UINT32 I=0;Expected[I];++I){UINT8 Columns[5]={0};
     for(UINT32 C=0;C<5;++C)for(UINT32 R=0;R<7;++R){
       EFI_GRAPHICS_OUTPUT_BLT_PIXEL P=Pixels[(Y+R*Scale)*Width+X+(I*6+C)*Scale];
@@ -61,6 +63,10 @@ STATIC VOID ExpectText(UINT32 Row,UINT32 CharacterColumn,CONST CHAR8 *Expected){
     }
     assert(Matched);
   }
+}
+STATIC VOID ExpectText(UINT32 Row,UINT32 CharacterColumn,CONST CHAR8 *Expected){
+  UINT32 Scale=Pitch/10,Y=PanelY+Row*Pitch,X=PanelX+6*Scale+CharacterColumn*6*Scale;
+  ExpectTextAt(X,Y,Scale,Expected);
 }
 STATIC VOID ExpectCode(UINT32 Row,CONST CHAR8 *Elapsed,CONST CHAR8 *Expected){
   UINT32 Columns=(UINT32)strlen(Elapsed);if(Columns<8)Columns=8;
@@ -98,8 +104,34 @@ int main(int Argc,char **Argv){
     assert(PianoProductBootLogStage("UFS CAPACITY",EFI_DEVICE_ERROR,528)==EFI_SUCCESS);
     assert(PianoProductBootLogStage("USB",EFI_SUCCESS,1132)==EFI_SUCCESS);
     assert(PianoProductBootLogStage("MENU",EFI_NOT_STARTED,1140)==EFI_SUCCESS);Preview(Argv[1]);
-    assert(PianoProductBootLogMessage(L"未能启动系统",L"存储驱动未能安全退出",EFI_NOT_FOUND,TRUE)==EFI_SUCCESS);
+    assert(PianoProductBootLogStage("UFS CAPACITY 0",EFI_DEVICE_ERROR,528)==EFI_SUCCESS);
+    assert(PianoProductBootLogMessage(L"未能启动系统",L"存储初始化失败  L0 OCS00 T21 R01 S02 K02 A04 Q02 F00 N0 P33",EFI_DEVICE_ERROR,TRUE)==EFI_SUCCESS);
+    UINT32 Scale=MIN(Width,Height)/440,X=Width*7/100,Y=Height*26/100;
+    ExpectTextAt(X,Y+140*Scale,Scale,"UFS CAPACITY 0");
+    ExpectTextAt(X+((UINT32)strlen("UFS CAPACITY 0")+2)*6*Scale,Y+140*Scale,Scale,"528 MS");
+    ExpectTextAt(X,Y+158*Scale,Scale,"0X8000000000000007");
     char Failure[1024];snprintf(Failure,sizeof(Failure),"%s-failure.ppm",Argv[1]);Preview(Failure);
+
+    assert(PianoProductBootLogMessage(L"未能启动系统",L"引导文件不可用",EFI_NOT_FOUND,TRUE)==EFI_SUCCESS);
+    ExpectTextAt(X,Y+140*Scale,Scale,"0X800000000000000E");
+    ExpectTextAt(X,Y+158*Scale,Scale,"                  ");
+
+    // The previous matching failed stage must not survive renderer initialization.
+    assert(PianoProductBootLogInitialize(&Gop,Alive)==EFI_SUCCESS);
+    assert(PianoProductBootLogMessage(L"未能启动系统",L"存储初始化失败",EFI_DEVICE_ERROR,TRUE)==EFI_SUCCESS);
+    ExpectTextAt(X,Y+140*Scale,Scale,"0X8000000000000007");
+    ExpectTextAt(X,Y+158*Scale,Scale,"                  ");
+
+    CONST EFI_STATUS NonFailures[]={EFI_SUCCESS,EFI_NOT_STARTED};
+    CONST CHAR8 *Codes[]={"0X0000000000000000","0X8000000000000013"};
+    for(UINTN I=0;I<ARRAY_SIZE(NonFailures);++I){
+      assert(PianoProductBootLogStage("UFS QUERY",NonFailures[I],528)==EFI_SUCCESS);
+      assert(PianoProductBootLogMessage(L"未能启动系统",L"存储初始化失败",NonFailures[I],TRUE)==EFI_SUCCESS);
+      ExpectTextAt(X,Y+140*Scale,Scale,Codes[I]);
+      ExpectTextAt(X,Y+158*Scale,Scale,"                  ");
+    }
+    assert(PianoProductBootLogMessage(L"未能启动系统",L"设备树内存或保留区不匹配",EFI_ACCESS_DENIED,TRUE)==EFI_SUCCESS);
+    char MemoryFailure[1024];snprintf(MemoryFailure,sizeof(MemoryFailure),"%s-memory.ppm",Argv[1]);Preview(MemoryFailure);
   }
   CONST UINT32 Sizes[][2]={{480,320},{800,600},{3200,320},{480,2136}};
   for(UINTN I=0;I<ARRAY_SIZE(Sizes);++I){

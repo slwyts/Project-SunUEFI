@@ -12,7 +12,7 @@ import hashlib
 ROOT=Path(__file__).resolve().parents[2]
 BASE=ROOT/'upstream/Mu-Silicium/Mu_Basecore'
 sys.path.insert(0,str(ROOT/'tools'))
-from prepare_product_early_memory import prepare,sec_source,verify,source_inputs
+from prepare_product_early_memory import prepare,sec_source,verify,source_inputs,EARLY_CORE_FILES
 from prepare_product import fix_product_low_heap
 from test_product_low_memory import function
 
@@ -23,6 +23,8 @@ class EarlyMemoryTests(unittest.TestCase):
         source=root/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Sec'
         shutil.copytree(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Sec',source)
         shutil.copytree(ROOT/'uefi/handoff/early-memory',root/'uefi/handoff/early-memory')
+        core=root/'uefi/core';core.mkdir(parents=True)
+        for name in EARLY_CORE_FILES:shutil.copyfile(ROOT/'uefi/core'/name,core/name)
         shim=root/'uefi/handoff/bootshim/BootShim.S';shim.parent.mkdir(parents=True)
         shutil.copyfile(ROOT/'uefi/handoff/bootshim/BootShim.S',shim)
         target=root/'product';target.mkdir()
@@ -77,6 +79,8 @@ class EarlyMemoryTests(unittest.TestCase):
             with self.subTest(changed=changed[-100:]),self.assertRaises(ValueError):sec_source(changed)
 
     def test_actual_sec_observer_hob_path(self):
+        if not (ROOT/'private/captures/2026-10-03-piano/live.dtb').is_file():
+            self.skipTest('Optional captured factory DT is unavailable')
         original=(ROOT/'uefi/platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c').read_text()
         low,_=fix_product_low_heap(original,(ROOT/'private/captures/2026-10-03-piano/live.dtb').read_bytes())
         (ROOT/'build/product-low-memory-test.c').write_text(low)

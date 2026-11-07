@@ -95,6 +95,7 @@ PY_RELEASE_SOURCE
       --output build/distros/release --mesa-dir build/mesa/runtime \
       --sensors-dir build/sensors/runtime --ffmpeg-dir build/ffmpeg/runtime --execute "$@" ;;
   package|esp)
+    if [[ "$command" == esp ]]; then set -- --esp-only "$@"; fi
     python3 - "$@" <<'PY_PACKAGE'
 import json, subprocess, sys
 from pathlib import Path

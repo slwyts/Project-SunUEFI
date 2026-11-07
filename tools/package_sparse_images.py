@@ -66,11 +66,17 @@ def package(bundle, output):
     record = json.loads((bundle / 'manifest.json').read_text())
     if (bundle / '.incomplete').exists():
         raise ValueError('Input bundle is incomplete')
+    if 'esp.img' not in record['files']:
+        raise ValueError('Input bundle must include esp.img')
+    names = [name for name in ('esp.img', 'root.ext4.img') if name in record['files']]
+    for name in names:
+        if not (bundle / name).is_file():
+            raise ValueError('Missing source image declared by bundle: ' + name)
     output.mkdir(parents=True, exist_ok=False)
     result = {'schema_version': 1, 'format': 'android-sparse', 'files': {},
               'kernel_release': record['kernel_release'],
               'source_manifest_sha256': digest(bundle / 'manifest.json')}
-    for name in ('esp.img', 'root.ext4.img'):
+    for name in names:
         source = bundle / name
         expected = record['files'][name]
         row = convert(source, output / name)
@@ -82,8 +88,9 @@ def package(bundle, output):
         row['sha256'] + '  ' + name + '\n' for name, row in result['files'].items()))
     (output / 'README.txt').write_text(
         'Android sparse images for factory Fastboot. Do not write with dd.\n'
-        'fastboot -s SERIAL -S 128M flash sunuefi_root root.ext4.img\n'
-        'fastboot -s SERIAL -S 128M flash sunuefi_esp esp.img\n'
+        + ''.join('fastboot -s SERIAL -S 128M flash ' + partition + ' ' + name + '\n'
+                  for name, partition in (('root.ext4.img', 'sunuefi_root'), ('esp.img', 'sunuefi_esp'))
+                  if name in result['files']) +
         'SunUEFI assistant 0.5.2 and newer also accept these images directly.\n')
     return result
 
