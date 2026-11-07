@@ -27,7 +27,7 @@ class VendorInputsTests(unittest.TestCase):
     def test_actual_bundle_has_exact_original_drivers_and_unchanged_clock_derivation(self):
         bundle = vendor.load(ROOT)
         self.assertEqual(set(bundle['native_drivers']), set(vendor.NATIVE_NAMES))
-        self.assertEqual(len(bundle['paths']), 28)
+        self.assertEqual(len(bundle['paths']), 34)
         self.assertEqual(vendor.sha(bundle['board_dtb']), vendor.BOARD_DTB_SHA256)
         self.assertEqual(vendor.sha(bundle['xbl_config_dtb']), vendor.XBL_DTB_SHA256)
         self.assertEqual(bundle['manifest']['board_dtb']['source_sha256'], vendor.BOARD_SOURCE_SHA256)
@@ -48,7 +48,7 @@ class VendorInputsTests(unittest.TestCase):
                 shutil.copytree(source / name, target / name)
             bundle = vendor.load(root)
             self.assertEqual(set(bundle['paths']), set(bundle['manifest']['files']))
-            self.assertEqual(len(bundle['native_drivers']), 13)
+            self.assertEqual(len(bundle['native_drivers']), 16)
             self.assertEqual(set(path.parts[0] for path in map(Path, bundle['paths'])), {'native', 'dtb'})
             # Unused historical material has no authority over firmware inputs.
             history = target / 'history';history.mkdir()
@@ -139,7 +139,7 @@ class VendorInputsTests(unittest.TestCase):
                 self.assertEqual(staged.read_bytes(), expected)
                 self.assertEqual(identities[name]['pe_sha256'], vendor.sha(expected))
                 self.assertEqual(identities[name]['depex_sha256'], vendor.sha(bundle['native_drivers'][name]['depex_path'].read_bytes()))
-            self.assertEqual(fdf.count('SECTION PE32'), 13)
+            self.assertEqual(fdf.count('SECTION PE32'), 16)
             self.assertTrue((app / 'NativeProbeTable.h').is_file())
 
     def test_arm64_pe_code_and_section_validation(self):

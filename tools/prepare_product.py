@@ -143,7 +143,7 @@ def os_boot_files(root):
 def shared_boot_headers(root):
     folder=root/'uefi/core'
     return {path.relative_to(folder).as_posix():path for path in folder.rglob('*')
-            if path.is_file() and path.suffix in ('.h','.inc')}
+            if path.is_file() and path.suffix in ('.h','.inc') and path.name!='NativeProbeTable.h'}
 
 
 def prepare_os_boot(root,app):
