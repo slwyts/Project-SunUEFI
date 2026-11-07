@@ -122,6 +122,7 @@ def kde_recipes(output, root):
             '-DCMAKE_TOOLCHAIN_FILE="$qt_libdir/cmake/Qt6/qt.toolchain.cmake" '
             '-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr '
             '-DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_LIBEXECDIR=lib '
+            '-DCMAKE_LIBRARY_PATH="$opengl_libdir;$glx_libdir;$qt_libdir" '
             '-DOPENGL_opengl_LIBRARY="$opengl_libdir/libOpenGL.so" '
             '-DOPENGL_glx_LIBRARY="$glx_libdir/libGLX.so" '
             '-DBUILD_TESTING=OFF -DBUILD_QCH=OFF\n'
@@ -198,7 +199,13 @@ def build(args):
                 # The VR session also claims plasma.desktop, now supplied by
                 # the ordinary Plasma package used on the tablet.
                 guest(['pacman', '-Rdd', '--noconfirm', obsolete])
-        guest(['pacman', '-Syu', '--noconfirm'])
+        # Frame's prebuilt locale subset pins its image's exact glibc version
+        # and is absent from the public repository. Replace it with the public
+        # locale package in the full upgrade, keeping glibc and locales matched.
+        if subprocess.run(['chroot', root, 'pacman', '-Qq', 'holo-glibc-locales'],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            guest(['pacman', '-R', '--noconfirm', 'holo-glibc-locales'])
+        guest(['pacman', '-Syu', '--noconfirm', 'glibc-locales'])
         packages = ['base-devel',
                'sddm', 'openssh', 'bluez', 'bluez-utils', 'networkmanager', 'wpa_supplicant',
                'alsa-utils', 'pipewire', 'pipewire-pulse', 'wireplumber',
