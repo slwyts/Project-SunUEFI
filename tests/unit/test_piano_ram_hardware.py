@@ -29,52 +29,6 @@ loader.exec_module(hardware)
 
 
 class RamHardwareTests(unittest.TestCase):
-    def test_display_real_stage_flow_survives_diagnostic_failure_but_not_driver_failure(self):
-        original = (ROOT / 'upstream/debian-piano-current/rootfs/overlay/usr/lib/piano/display-start').read_bytes()
-        script = stage.adapt('display-start', original).decode()
-        bound = ['arm-smmu/15000000.iommu', 'sm8750-gpucc/3d90000.clock-controller-ml',
-                 'arm-smmu/3da0000.iommu', 'adreno/3d00000.gpu', 'msm_dpu/ae01000.display-controller']
-        for failure in ('none', 'msm', 'gpu-binding', 'backlight', 'dsi'):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory(prefix='piano-display-flow-') as tmp:
-                root = Path(tmp); commands = root / 'commands'; commands.mkdir()
-                trace = root / 'trace'
-                for name, body in {
-                    'modprobe': 'echo "$*" >> "$TRACE"\n[ "$1" != "$FAIL_MODULE" ]\n',
-                    'sleep': 'exit 0\n',
-                    'observe': 'echo "diagnostic:$*" >> "$TRACE"\nexit 1\n',
-                }.items():
-                    path = commands / name; path.write_text('#!/bin/sh\n' + body); path.chmod(0o755)
-                for name in bound:
-                    if failure == 'gpu-binding' and name.startswith('adreno/'):
-                        continue
-                    (root / 'sys/bus/platform/drivers' / name).mkdir(parents=True)
-                (root / 'sys/bus/platform/devices').mkdir(parents=True)
-                (root / 'sys/class/backlight').mkdir(parents=True)
-                if failure != 'backlight':
-                    (root / 'sys/class/backlight/ktz8866-backlight').touch()
-                connector = root / 'sys/class/drm/card1-DSI-1'; connector.mkdir(parents=True)
-                (connector / 'enabled').write_text('disabled\n' if failure == 'dsi' else 'enabled\n')
-                translated = script.replace('/sys/', str(root / 'sys') + '/').replace('/etc/piano/', str(root / 'etc') + '/')
-                translated = translated.replace('/dev/kmsg', str(root / 'kmsg')).replace('/usr/lib/piano/piano-ram-hardware-prepare', str(commands / 'observe'))
-                executable = root / 'display-start'; executable.write_text(translated)
-                result = subprocess.run(['/bin/sh', str(executable), '--all'], capture_output=True, text=True,
-                    env={**os.environ, 'PATH': str(commands) + os.pathsep + os.environ['PATH'],
-                         'TRACE': str(trace), 'FAIL_MODULE': 'msm' if failure == 'msm' else ''}, timeout=10)
-                events = trace.read_text()
-                if failure == 'none':
-                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertNotIn('diagnostic:', events)
-                    self.assertIn('stage 5 display: done', result.stdout)
-                    self.assertLess(events.index('msm separate_gpu_kms=1'), events.index('ktz8866'))
-                    self.assertLess(events.index('ktz8866'), events.index('dispcc_sm8750'))
-                else:
-                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertNotIn('stage 5 display: done', result.stdout)
-                    if failure in ('msm', 'gpu-binding'):
-                        self.assertNotIn('ktz8866', events)
-                    if failure == 'backlight':
-                        self.assertNotIn('dispcc_sm8750', events)
-
     def test_disk_root_requires_actual_device_and_partition_identity(self):
         import os, stat
         uid = 'ffc480ed-c219-400b-a8f9-5f6805aa1f34'
@@ -183,47 +137,18 @@ class RamHardwareTests(unittest.TestCase):
             hardware.prepare(self.module, lambda *a, **k: calls.append(a), self.sysfs)
         self.assertFalse(calls)
 
-    def test_actual_public_adapters_keep_all_module_commands_and_fresh_guards(self):
+    def test_runtime_uses_packaged_services_without_ordered_module_loaders(self):
         source = ROOT / 'upstream/debian-piano-current'
         result = stage.build(self.path / 'adapters', source)
-        self.assertEqual(len(result['source_scripts']), 8)
-        for name in stage.PINS:
-            before = (source / 'rootfs/overlay/usr/lib/piano' / name).read_text()
-            after = (self.path / 'adapters/usr/lib/piano' / name).read_text()
-            for line in before.splitlines():
-                if line.strip().startswith('modprobe '):
-                    # Failure propagation is strengthened for old silent oneshots.
-                    command = line.split(' || ', 1)[0]
-                    self.assertIn(command, after)
-            self.assertNotIn('devmem', after)
-            self.assertNotIn('piano-smmu-ready', after)
-            if name == 'display-start':
-                self.assertNotIn('piano-ram-hardware-prepare', after)
-            else:
-                self.assertIn('piano-ram-hardware-prepare --' +
-                              ('observe-scope' if name in ('video-start', 'camera-start', 'adsp-start') else 'require-scope'), after)
-            if name == 'keyboard-start':
-                self.assertIn('--require-scope keyboard --wait-seconds 20', after)
-            subprocess.run(['/bin/sh', '-n', str(self.path / 'adapters/usr/lib/piano' / name)], check=True)
-        for name in ('video-start', 'camera-start'):
-            text = (self.path / 'adapters/usr/lib/piano' / name).read_text()
-            self.assertLess(text.index('echo DMA'), text.index('\nmodprobe '))
-            bound = 'done\n' if name == 'video-start' else 'wait_bound "$CAMSS" \'CAMSS\''
-            self.assertLess(text.index(bound), text.index('--observe-scope'))
-        display = (self.path / 'adapters/usr/lib/piano/display-start').read_text()
-        self.assertNotIn('observe_scope', display)
-        self.assertLess(display.index('modprobe msm $MSM_OPTIONS'), display.index('modprobe dispcc_sm8750'))
-        self.assertEqual((self.path / 'adapters/etc/systemd/system/display-manager.service.d/20-piano-display.conf').read_text(),
-                         '[Unit]\nRequires=piano-display.service\nAfter=piano-display.service\n')
-        self.assertIn('Before=display-manager.service gdm3.service gdm.service',
-                      (self.path / 'adapters/etc/systemd/system/piano-display.service.d/20-native-kms-order.conf').read_text())
-        for name in ('adsp-start', 'audio-start'):
-            text = (self.path / 'adapters/usr/lib/piano' / name).read_text()
-            self.assertIn('disabled by /etc/piano/' + name.split('-')[0] + '.conf"; exit 0;', text)
+        self.assertEqual(result['driver_loading'], 'standard-modalias')
+        for name in stage.REMOVED_SCRIPTS:
+            self.assertNotIn('usr/lib/piano/' + name + '-start', result['files'])
+        adsp = self.path / 'adapters/usr/lib/piano/piano-adsp-start'
+        self.assertNotIn('modprobe', adsp.read_text())
+        subprocess.run(['/bin/sh', '-n', str(adsp)], check=True)
+        self.assertTrue((self.path / 'adapters/usr/share/alsa/ucm2/conf.d/sm8750/Xiaomi Pad 8 Pro.conf').is_symlink())
         with self.assertRaises(ValueError):
             stage.build(self.path / 'adapters', source)
-        with self.assertRaises(ValueError):
-            stage.adapt('radio-start', b'changed source')
 
     def test_stage_preflight_rejects_guest_symlink_before_mutation(self):
         dest = ROOT / 'build/distros' / self.path.name
@@ -237,28 +162,28 @@ class RamHardwareTests(unittest.TestCase):
             (dest / 'usr').unlink()
             dest.rmdir()
 
-    def test_actual_staging_changes_only_adapters_preserves_units_and_enabled_configs(self):
+    def test_actual_staging_removes_old_loaders_and_preserves_user_configuration(self):
         with tempfile.TemporaryDirectory(dir=ROOT / 'build/distros', prefix='hardware-stage-test-') as temporary:
             dest = Path(temporary) / 'rootfs'
             dest.mkdir()
             source = ROOT / 'upstream/debian-piano-current'
             full_stage.stage(dest, source)
-            units = {p.relative_to(dest): p.read_bytes() for p in (dest / 'usr/lib/systemd/system').glob('piano-*.service')}
-            configs = {p.relative_to(dest): p.read_bytes() for p in (dest / 'etc/piano').glob('*.conf')}
+            custom = dest / 'etc/piano/user.conf'
+            custom.write_text('keep=yes\n')
             result = stage.build(self.path / 'staged-adapters', source, dest)
-            for path, data in {**units, **configs}.items():
-                if str(path) in result['files']:
-                    continue
-                self.assertEqual((dest / path).read_bytes(), data)
+            self.assertEqual(custom.read_text(), 'keep=yes\n')
+            for name in result['removed_paths']:
+                self.assertFalse((dest / name).exists())
+                self.assertFalse((dest / name).is_symlink())
             for path, digest in result['files'].items():
-                self.assertEqual(stage.digest((dest / path).read_bytes()), digest)
+                target = dest / path
+                data = str(target.readlink()).encode() if target.is_symlink() else target.read_bytes()
+                self.assertEqual(stage.digest(data), digest)
             self.assertEqual((dest / 'usr/lib/piano/piano_dma_routes.py').read_bytes(),
                              (ROOT / 'tools/check_piano_kernel_dma_routes.py').read_bytes())
             self.assertFalse(result['device_tested'])
-            (dest / 'usr/lib/systemd/system/piano-camera.service').unlink()
-            with self.assertRaises(ValueError):
-                stage.build(self.path / 'must-not-stage', source, dest)
-            self.assertFalse((self.path / 'must-not-stage').exists())
+            self.assertTrue((dest / 'etc/systemd/system/multi-user.target.wants/piano-adsp.service').is_symlink())
+            self.assertFalse((dest / 'etc/systemd/system/multi-user.target.wants/piano-touch.service').is_symlink())
 
     def context_fixture(self):
         module = hardware.context_checker(ROOT / 'tools/check_piano_kernel_contexts.py')

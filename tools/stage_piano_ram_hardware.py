@@ -7,9 +7,12 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from package_bsp import payload
+
 ROOT = Path(__file__).resolve().parents[1]
 REMOVED_SERVICES = ('display', 'radio', 'audio', 'video', 'camera', 'keyboard', 'cpufreq')
 REMOVED_SCRIPTS = ('display', 'radio', 'audio', 'video', 'camera', 'keyboard', 'touch', 'adsp', 'cpufreq')
+REMOVED_MODULE_LISTS = ('cpufreq', 'fingerprint', 'pen-dock', 'pon', 'rgb', 'rtc', 'flash')
 
 
 def digest(data):
@@ -28,7 +31,11 @@ def safe_destination(rootfs, relative):
 
 def removed_paths(rootfs):
     paths = {'etc/udev/rules.d/80-drivers.rules',
-             'etc/systemd/system/display-manager.service.d/20-piano-display.conf'}
+             'etc/systemd/system/display-manager.service.d/20-piano-display.conf',
+             'usr/lib/systemd/system/upower.service.d/20-piano-keyboard.conf',
+             'etc/piano/display.conf'}
+    for name in REMOVED_MODULE_LISTS:
+        paths.add('etc/modules-load.d/piano-' + name + '.conf')
     for name in REMOVED_SCRIPTS:
         paths.add('usr/lib/piano/' + name + '-start')
     for name in REMOVED_SERVICES:
@@ -53,11 +60,10 @@ def build(output, source, rootfs=None):
     commit = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
     if commit != pin or subprocess.check_output(['git', '-C', str(source), 'status', '--porcelain'], text=True):
         raise ValueError('public source must have the pinned clean commit')
-    files = {}
-    common = ROOT / 'linux/bsp/common'
-    for path in sorted(common.rglob('*')):
-        if path.is_file() and '__pycache__' not in path.parts:
-            files[path.relative_to(common).as_posix()] = path.read_bytes()
+    _, rows = payload(['camera'])
+    files = {row['path']: data for row, data in rows}
+    modes = {row['path']: int(row['mode'], 8) for row, _ in rows}
+    links = {row['path'] for row, _ in rows if row['type'] == 'symlink'}
     # These remain explicit diagnostics, never boot gates or module loaders.
     for relative, source_name in (
         ('usr/lib/piano/piano_dma_routes.py', 'tools/check_piano_kernel_dma_routes.py'),
@@ -77,8 +83,11 @@ def build(output, source, rootfs=None):
     for name, data in files.items():
         target = output / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
-        target.chmod(0o755 if name.startswith('usr/lib/piano/') and not name.endswith('.py') else 0o644)
+        if name in links:
+            target.symlink_to(data.decode())
+        else:
+            target.write_bytes(data)
+            target.chmod(modes.get(name, 0o644 if name.endswith('.py') else 0o755))
     subprocess.run(['/bin/sh', '-n', str(output / 'usr/lib/piano/piano-adsp-start')], check=True)
     result = {'status': 'HARDWARE_RUNTIME_STAGED', 'source_commit': commit,
               'files': {name: digest(data) for name, data in files.items()},
@@ -93,14 +102,17 @@ def build(output, source, rootfs=None):
         for name in files:
             destination = safe_destination(rootfs, name)
             if destination.is_symlink():
-                raise ValueError('Refuse writing through a guest symlink: ' + name)
+                if name not in links:
+                    raise ValueError('Refuse writing through a guest symlink: ' + name)
+                destination.unlink()
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(output / name, destination)
+            shutil.copy2(output / name, destination, follow_symlinks=False)
         wants = rootfs / 'etc/systemd/system/multi-user.target.wants'
         wants.mkdir(parents=True, exist_ok=True)
-        link = wants / 'piano-adsp.service'
-        if not link.exists() and not link.is_symlink():
-            link.symlink_to('/usr/lib/systemd/system/piano-adsp.service')
+        for unit in ('piano-adsp.service', 'piano-camerad.service'):
+            link = wants / unit
+            if not link.exists() and not link.is_symlink():
+                link.symlink_to('/usr/lib/systemd/system/' + unit)
         manifest = rootfs / 'usr/share/piano-provenance/ram-hardware.json'
         manifest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(output / 'manifest.json', manifest)

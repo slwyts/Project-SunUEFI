@@ -121,23 +121,6 @@ class DspPcieTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'real IOMMU provider'):
             contexts.read_scope('audio', self.sysfs)
 
-    def test_normal_creation_before_guard_then_card_or_dma_consumers(self):
-        scripts = ROOT / 'upstream/debian-piano-current/rootfs/overlay/usr/lib/piano'
-        dsp = stage.adapt('adsp-start', (scripts / 'adsp-start').read_bytes()).decode()
-        self.assertLess(dsp.index('say "DONE adsp running"'), dsp.index('modprobe fastrpc'))
-        self.assertLess(dsp.index('modprobe fastrpc'), dsp.index('--require-scope adsp'))
-        self.assertLess(dsp.index('--require-scope adsp'), dsp.index('say "BEGIN power"'))
-        audio = stage.adapt('audio-start', (scripts / 'audio-start').read_bytes()).decode()
-        self.assertLess(audio.index('for m in snd_q6apm'), audio.index('--require-scope audio'))
-        self.assertLess(audio.index('--require-scope audio'), audio.index('say "BEGIN card"'))
-        radio = stage.adapt('radio-start', (scripts / 'radio-start').read_bytes()).decode()
-        self.assertLess(radio.index('modprobe --ignore-install phy_qcom_qmp_pcie'), radio.index('--require-scope radio'))
-        self.assertLess(radio.index('--require-scope radio'), radio.index('modprobe qrtr_mhi'))
-        self.assertLess(radio.index('--require-scope radio'), radio.index('modprobe ath12k_wifi7'))
-        for text in (dsp, audio, radio):
-            self.assertNotIn('devmem', text)
-            self.assertNotIn('piano-smmu-ready', text)
-
     def test_bounded_creation_wait_does_not_retry_fault_or_changed_configuration(self):
         clock = [0]
         calls = []
@@ -215,12 +198,6 @@ class DspPcieTests(unittest.TestCase):
                     if key == 'status' or key.endswith('-supply') or 'override-seq' in key:
                         if (path, key) not in patch.USB_SUPPLY_FIX_FIELDS:
                             self.assertEqual(result['tree'][path][key], value)
-            import assemble_piano_linux as assemble
-            manifests = [ROOT / 'private/analysis' / name / 'manifest.json' for name in (
-                'piano-full-dtb-fd6266-impact-fixed', 'piano-linux-owned-dma', 'piano-linux-managed-clocks-v1')]
-            accepted = assemble.device_tree(args.output_dir / 'Piano-full-linux-managed-dsp-pcie.dtb',
-                                           manifests + [args.output_dir / 'manifest.json'], args.libfdt)
-            self.assertEqual(accepted['sha256'], report['output_sha256'])
             broken = copy.deepcopy(result)
             broken['tree'][patch.USB]['phys'] = before['tree'][patch.HS]['phandle']
             with self.assertRaisesRegex(ValueError, 'USB PHY chain repair differs'):

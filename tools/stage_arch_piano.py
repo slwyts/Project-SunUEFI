@@ -112,9 +112,7 @@ def stage(args):
                'hybrid-sleep.target', 'suspend-then-hibernate.target',
                'adsprpcd.service', 'adsprpcd_audiopd.service'])
         guest(['systemctl', 'enable', 'sddm' if steamos else 'gdm', 'NetworkManager', 'sshd', 'bluetooth',
-               'piano-touch', 'piano-radio', 'piano-adsp', 'piano-audio',
-               'piano-video', 'piano-camera', 'piano-camerad', 'piano-keyboard',
-               'piano-cpufreq', 'piano-hostkeys', 'adsprpcd-sensorspd'])
+               'piano-adsp', 'piano-camerad', 'piano-hostkeys', 'adsprpcd-sensorspd'])
         guest(['systemctl', 'set-default', 'graphical.target'])
         guest(['depmod', '-a', kernel['kernel_release']])
     if steamos:

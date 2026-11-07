@@ -56,7 +56,7 @@ class BspPackageTests(unittest.TestCase):
     def test_payload_tamper_refused_before_stage(self):
         copied = self.base / 'bsp'
         shutil.copytree(bsp.BSP, copied, symlinks=True)
-        (copied / 'common/etc/piano/display.conf').write_text('tampered\n')
+        (copied / 'common/etc/modprobe.d/piano.conf').write_text('tampered\n')
         args = self.args('stage', '--output', str(self.base / 'stage'))
         with patch.object(bsp, 'BSP', copied):
             with self.assertRaisesRegex(ValueError, 'payload drift'):
