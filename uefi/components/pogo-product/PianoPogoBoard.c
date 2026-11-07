@@ -57,13 +57,23 @@ EFI_STATUS PianoPogoBoardClocksOn(PIANO_POGO_BOARD *B) {
   if(B==NULL || B->Clock!=NULL)return EFI_INVALID_PARAMETER;
   EFI_STATUS S=gBS->LocateProtocol(&Guid,NULL,(VOID **)&Clock);
   if(S!=EFI_SUCCESS || Clock==NULL || Clock->Version!=0x1000b || !Clock->GetClockID || !Clock->EnableClock ||
-     !Clock->DisableClock || !Clock->IsClockEnabled || !Clock->IsClockOn || !Clock->GetClockFreqHz)return EFI_UNSUPPORTED;
+      !Clock->DisableClock || !Clock->IsClockEnabled || !Clock->IsClockOn || !Clock->GetClockFreqHz || !Clock->SetClockFreqHz)return EFI_UNSUPPORTED;
   B->Clock=Clock;
   for(UINTN I=0;I<PIANO_POGO_CLOCKS;++I) {
     BOOLEAN Enabled=FALSE,On=FALSE;
     S=Exact(Clock->GetClockID(Clock,mClockNames[I],&B->ClockIds[I]));
     if(S==EFI_SUCCESS)S=Exact(Clock->IsClockEnabled(Clock,B->ClockIds[I],&Enabled));
     if(S==EFI_SUCCESS && Enabled)B->ClockWasOn|=1U<<I;
+    if(S==EFI_SUCCESS && !Enabled && I==PIANO_POGO_CLOCKS-1){
+      UINT32 Hz=0;EFI_STATUS Rate=Clock->GetClockFreqHz(Clock,B->ClockIds[I],&Hz);
+      // The ROM getter returns NOT_STARTED when this unused domain has no
+      // active mux configuration (ClockDxe RVA 0x7628). Initialize it through
+      // the normal clock API, as the original I2C Open does, before enabling.
+      // Never reprogram an enabled consumer's unknown clock.
+      if(Rate==EFI_NOT_STARTED)S=Exact(Clock->SetClockFreqHz(Clock,B->ClockIds[I],19200000,EFI_CLOCK_FREQUENCY_HZ_EXACT,&Hz));
+      else if(Rate!=EFI_SUCCESS)S=Exact(Rate);
+      DEBUG((DEBUG_WARN,"PIANO_POGO_CLOCK_CONFIG status=%r hz=%u initialized=%u\n",S,Hz,Rate==EFI_NOT_STARTED));
+    }
     if(S==EFI_SUCCESS){S=Exact(Clock->EnableClock(Clock,B->ClockIds[I]));if(S==EFI_SUCCESS)B->ClockHeld|=1U<<I;}
     if(S==EFI_SUCCESS)S=Exact(Clock->IsClockOn(Clock,B->ClockIds[I],&On));
     DEBUG((DEBUG_WARN,"PIANO_POGO_CLOCK name=%a was_enabled=%u on=%u status=%r\n",mClockNames[I],Enabled,On,S));

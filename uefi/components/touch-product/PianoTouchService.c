@@ -86,10 +86,20 @@ STATIC EFI_STATUS ClocksOn(VOID) {
   EFI_GUID Guid=EFI_CLOCK_PROTOCOL_GUID;EFI_CLOCK_PROTOCOL *Clock=NULL;
   EFI_STATUS S=gBS->LocateProtocol(&Guid,NULL,(VOID **)&Clock);
   if(S!=EFI_SUCCESS || !Clock || Clock->Version!=0x1000b || !Clock->GetClockID || !Clock->EnableClock ||
-     !Clock->DisableClock || !Clock->IsClockOn || !Clock->GetClockFreqHz)return EFI_UNSUPPORTED;
+      !Clock->DisableClock || !Clock->IsClockEnabled || !Clock->IsClockOn || !Clock->GetClockFreqHz || !Clock->SetClockFreqHz)return EFI_UNSUPPORTED;
   mT.Clock=Clock;
   for(UINTN I=0;I<ARRAY_SIZE(mClockNames);++I) {
     BOOLEAN On=FALSE;S=Exact(Clock->GetClockID(Clock,mClockNames[I],&mT.ClockIds[I]));
+    if(S==EFI_SUCCESS && I==ARRAY_SIZE(mClockNames)-1){
+      BOOLEAN Enabled=FALSE;UINT32 Hz=0;S=Exact(Clock->IsClockEnabled(Clock,mT.ClockIds[I],&Enabled));
+      if(S==EFI_SUCCESS && !Enabled){
+        EFI_STATUS Rate=Clock->GetClockFreqHz(Clock,mT.ClockIds[I],&Hz);
+        // Configure only an unused domain with no ROM active mux record.
+        if(Rate==EFI_NOT_STARTED)S=Exact(Clock->SetClockFreqHz(Clock,mT.ClockIds[I],19200000,EFI_CLOCK_FREQUENCY_HZ_EXACT,&Hz));
+        else if(Rate!=EFI_SUCCESS)S=Exact(Rate);
+        DEBUG((DEBUG_WARN,"PIANO_TOUCH_CLOCK_CONFIG status=%r hz=%u initialized=%u\n",S,Hz,Rate==EFI_NOT_STARTED));
+      }
+    }
     if(S==EFI_SUCCESS){S=Exact(Clock->EnableClock(Clock,mT.ClockIds[I]));if(S==EFI_SUCCESS)mT.ClockHeld|=1U<<I;}
     if(S==EFI_SUCCESS)S=Exact(Clock->IsClockOn(Clock,mT.ClockIds[I],&On));
     if(S==EFI_SUCCESS && !On)S=EFI_NOT_READY;
