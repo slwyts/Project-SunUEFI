@@ -176,7 +176,7 @@ def build_camera(output, cc_flags, cxx_flags, uapi, sysroot=None, env=None,
     # builds retain their own flags; do not make old baseline warnings fatal.
     flags = [str(flag) for flag in cc_flags[1:] if flag != '-Werror']
     command = ['make', '-C', source, 'OUT=' + str(built),
-               'CC=' + str(cc_flags[0]), 'CXX=' + shlex.join(map(str, cxx_flags)),
+               'CC=' + shlex.join(map(str, cc_flags)), 'CXX=' + shlex.join(map(str, cxx_flags)),
                'CFLAGS=' + shlex.join(flags),
                'CPPFLAGS=' + shlex.join(['-isystem', str(Path(uapi) / 'include')]),
                'LDFLAGS=' + shlex.join(['-static', *linker_flags]),
