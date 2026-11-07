@@ -304,13 +304,14 @@ def install_debian_desktop(root, runtime, output):
         control = package / 'DEBIAN'
         control.mkdir()
         (control / 'control').write_text(
-            f'Package: libfprint-2-2\nVersion: {cfg["version"]}+sunuefi1\nArchitecture: arm64\n'
+            f'Package: libfprint-2-2\nVersion: 1:{cfg["version"]}+sunuefi1\nArchitecture: arm64\n'
             'Maintainer: Project SunUEFI\nDepends: libc6, libglib2.0-0t64, libgusb2, '
             'libgudev-1.0-0, libpixman-1-0, libssl3t64\n'
             'Description: libfprint with native Piano Goodix support\n')
         deb = output / f'libfprint-2-2_{cfg["version"]}+sunuefi1_arm64.deb'
         subprocess.run(['dpkg-deb', '--root-owner-group', '--build', package, deb], check=True)
         shutil.copy2(deb, work / deb.name)
-        subprocess.run(['chroot', root, 'dpkg', '-i', '/var/tmp/sunuefi-libfprint/' + deb.name], check=True)
+        subprocess.run(['chroot', root, 'env', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+                        'dpkg', '-i', '/var/tmp/sunuefi-libfprint/' + deb.name], check=True)
     desktop_service(root)
     shutil.rmtree(work)

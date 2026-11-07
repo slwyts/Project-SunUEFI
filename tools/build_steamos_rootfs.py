@@ -307,7 +307,9 @@ done
         if not (packages / 'manifest.json').is_file():
             build_arch_package.build(root, recipes / name, packages)
     mesa = output / 'packages/mesa'
-    if not (mesa / 'manifest.json').is_file():
+    turnip = root / 'usr/lib/libvulkan_freedreno.so'
+    if (not (mesa / 'manifest.json').is_file() and
+            (not turnip.is_file() or b'Adreno (TM) 830v1' not in turnip.read_bytes())):
         recipe = output / 'mesa-recipe'
         shutil.copytree(ROOT / 'linux/bsp/steamos/mesa', recipe, dirs_exist_ok=True)
         shutil.copy2(ROOT / 'upstream/piano-mesa-current/patches/0001-freedreno-Add-chip-id-support-for-A830v1.patch',
