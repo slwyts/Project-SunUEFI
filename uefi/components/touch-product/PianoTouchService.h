@@ -8,5 +8,7 @@
 EFI_STATUS PianoTouchStart(IN CONST VOID *Fdt);
 // APP-only: one bounded bring-up step or one frame read per call
 VOID PianoTouchPump(VOID);
-// No DMA is involved, so an incomplete restore is logged and handoff continues
+// Reemit saved decoder progress without touching the hardware.
+VOID PianoTouchReplay(VOID);
+// Handoff is refused if input, GPIO or clock cleanup is incomplete.
 EFI_STATUS PianoTouchStop(IN VOID *Context,OUT PIANO_PRODUCT_INPUT_RETIRE_REPORT *Report);

@@ -180,6 +180,7 @@ STATIC EFI_STATUS ProductDebugReplay(VOID *Context) {
   DEBUG((DEBUG_WARN,"PIANO_EFI_IMAGE_SAVED stage=%a status=%r\n",mEfiImageStage,mEfiImageStatus));
   PianoProductMemoryReemitDiagnostic();
   PianoLateHandoffReemitDiagnostic(&mLateHandoff);
+  PianoTouchReplay();
   if(PianoProductDisplayRetained())return Display==EFI_SUCCESS?EFI_COMPROMISED_DATA:Display;
   if(PianoDisplaySmmuRetained())return Translation==EFI_SUCCESS?EFI_COMPROMISED_DATA:Translation;
   if(PianoFrameBufferMappingRetained())return CpuMapping==EFI_SUCCESS?EFI_COMPROMISED_DATA:CpuMapping;

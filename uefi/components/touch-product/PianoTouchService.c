@@ -66,6 +66,7 @@ STATIC struct {
   EFI_ABSOLUTE_POINTER_PROTOCOL Pointer;EFI_ABSOLUTE_POINTER_MODE Mode;EFI_ABSOLUTE_POINTER_STATE State;
 } mT;
 STATIC PIANO_TOUCH_MATRIX mMatrix;
+STATIC struct {UINT8 Data[64];UINT32 Us;EFI_STATUS Status;} mFirstFrames[3];
 STATIC UINT8 mTx[PIANO_NVT_TRANSFER_LEN+2],mRx[PIANO_NVT_READ_LEN+2],mFrame[PIANO_NVT_READ_LEN];
 STATIC struct {VENDOR_DEVICE_PATH Vendor;EFI_DEVICE_PATH_PROTOCOL End;} mPath={
   {{HARDWARE_DEVICE_PATH,HW_VENDOR_DP,{sizeof(VENDOR_DEVICE_PATH),0}},
@@ -421,6 +422,7 @@ STATIC VOID Runtime(UINT64 Now) {
   EFI_STATUS Feed=PianoTouchMatrixFeed(&mMatrix,mFrame+PIANO_NVT_HEADER_LEN,mT.Payload);
   if(mT.Reads<=3){
     CONST UINT8 *P=mFrame+PIANO_NVT_HEADER_LEN;
+    CopyMem(mFirstFrames[mT.Reads-1].Data,P,64);mFirstFrames[mT.Reads-1].Us=(UINT32)(NowUs()-Begin);mFirstFrames[mT.Reads-1].Status=Feed;
     DEBUG((DEBUG_WARN,"PIANO_TOUCH_FRAME read=%u us=%lu bytes=%u status=%r checksum=%d head=%02x%02x%02x%02x payload=%02x%02x%02x%02x crc=%02x%02x length=%02x%02x%02x%02x inverse=%02x%02x rows=%u cols=%u type=%u\n",
       mT.Reads,NowUs()-Begin,(UINT32)Len,Feed,(INT32)PianoTouchPayloadChecksum(P,mT.Payload),
       mFrame[1],mFrame[2],mFrame[3],mFrame[4],P[0],P[1],P[2],P[3],P[4],P[5],P[8],P[9],P[10],P[11],P[12],P[13],P[49],P[48],P[56]));
@@ -454,6 +456,15 @@ VOID PianoTouchPump(VOID) {
   if(mT.Step==TRuntime)Runtime(Now);
   else if(Now>=mT.NextUs)BringUp(Now);
   mT.Busy=FALSE;
+}
+
+VOID PianoTouchReplay(VOID){
+  DEBUG((DEBUG_WARN,"PIANO_TOUCH_MATRIX step=%a frames=%u reads=%u errors=%u checksum_errors=%u skipped=%u probe=%u reference=%u ref_type=%d ref_frames=%u rows=%u cols=%u\n",
+    mStepNames[mT.Step],mMatrix.Frames,mT.Reads,mT.ReadErrors,mMatrix.BadChecksum,mMatrix.Skipped,mMatrix.ProbeCount,mMatrix.HaveReference,mMatrix.RefType,mMatrix.RefCount,mMatrix.Rows,mMatrix.Cols));
+  for(UINTN I=0;I<MIN(mT.Reads,ARRAY_SIZE(mFirstFrames));++I){CONST UINT8 *P=mFirstFrames[I].Data;
+    DEBUG((DEBUG_WARN,"PIANO_TOUCH_FRAME_SAVED index=%u us=%u status=%r payload=%02x%02x%02x%02x crc=%02x%02x length=%02x%02x%02x%02x inverse=%02x%02x rows=%u cols=%u type=%u\n",
+      (UINT32)I,mFirstFrames[I].Us,mFirstFrames[I].Status,P[0],P[1],P[2],P[3],P[4],P[5],P[8],P[9],P[10],P[11],P[12],P[13],P[49],P[48],P[56]));
+  }
 }
 
 EFI_STATUS PianoTouchStop(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Report) {
