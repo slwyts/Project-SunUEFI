@@ -26,7 +26,7 @@ fastboot -s SunUEFI-piano getvar product
 
 ## 显示和图形
 
-* 默认 120 Hz，可切换刷新率。12-bit / FRC 和连续可变刷新率（VRR）没有实现。
+* 默认 120 Hz，可切换刷新率。12-bit / FRC 没有实现。
 * 部分 GTK 窗口连续缩放时帧率偏低，约每秒提交 30 帧。
 * 夜灯使用通用 sRGB 配置，不是原厂校准的颜色。
 

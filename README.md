@@ -68,7 +68,7 @@ UEFI 运行时，后台常驻一个 USB Fastboot 服务（设备名 `SunUEFI-pia
 | --- | --- | --- |
 | 显示 | ✅ | 3200×2136，默认 120 Hz，可切换刷新率，十位输出 |
 | HDR 内容 | ✅ | 可播放 |
-| 12-bit / FRC、连续 VRR | ❌ | 未实现 |
+| 12-bit / FRC | ❌ | 未实现 |
 | GPU | ✅ | Adreno，Vulkan（Turnip）和 OpenGL（Freedreno）。部分 GTK 窗口连续缩放时帧率偏低 |
 | 触屏 | ✅ | 点按、拖动、长按、手势，约 144 Hz |
 | 官方键盘与触控板 | ✅ | 含键盘背光，F1–F12 用右 Ctrl 加数字键，见[键盘说明](docs/user/keyboard.md) |
@@ -92,7 +92,7 @@ UEFI 运行时，后台常驻一个 USB Fastboot 服务（设备名 `SunUEFI-pia
 
 ### 尚未完成
 
-* 12-bit / FRC、连续可变刷新率（VRR）
+* 12-bit / FRC
 * 触控笔完整掌压、笔身滑动及应用快捷手势
 * 指纹录入与认证（底层已接入，未验证）
 * 红外发射
