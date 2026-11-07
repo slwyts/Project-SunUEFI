@@ -49,7 +49,11 @@ def prepare(root, target):
     if text.count(old)!=1:raise ValueError('lwext4 fwrite error boundary changed')
     api.write_text(text.replace(old,new,1))
     inf = destination / 'PianoExt4Dxe.inf'
-    inf.write_text(inf.read_text().replace('  # LWEXT4_SOURCES', ''.join('  ' + name + '\n' for name in sources)))
+    # BaseTools expands MODULE_DIR to a package-relative path when it emits a
+    # compiler response file, unlike the absolute make variable. Use the
+    # prepared module's absolute include root in both compilation modes.
+    text = inf.read_text().replace('$(MODULE_DIR)', destination.resolve().as_posix())
+    inf.write_text(text.replace('  # LWEXT4_SOURCES', ''.join('  ' + name + '\n' for name in sources)))
     (destination / 'SOURCE.json').write_text(json.dumps(config, indent=2) + '\n')
     return {'module': 'pianoProductPkg/Drivers/PianoExt4Dxe/PianoExt4Dxe.inf',
             'source': config, 'formatting_included': False}
