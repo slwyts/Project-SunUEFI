@@ -42,6 +42,12 @@ piano_linux_available() {
 piano_check_bootloader() {
   [ "$(getprop ro.boot.flash.locked)" = 0 ] && return 0
   [ "${PIANO_CONFIRMED_UNVERIFIED_BOOTLOADER:-}" = 1 ] && return 0
+  # Root managers do not all display a child process's stderr. Publish the
+  # confirmation through their installer UI before the native key reader waits.
+  ui_print "无法确认 BL 已解锁，可能启用了状态伪装模块。"
+  ui_print "若实际未解锁、只有临时 Root，写入引导可能导致设备无法启动。"
+  ui_print "确认实际已解锁后，松开音量键，在 30 秒内按下并松开三次音量下。"
+  ui_print "按音量上取消；超时不写入 BOOT。"
   "$MODPATH/bin/piano-boot-repack" confirm-bootloader || return 1
   # Private to this operation and its child tools; never saved across boots or
   # later WebUI requests, and never used to bypass any other identity check.
