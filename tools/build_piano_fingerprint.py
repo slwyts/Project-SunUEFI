@@ -224,6 +224,7 @@ EOF
             f'url={record["url"]}\ndepends=({quoted(dependencies)})\n'
             'makedepends=(base-devel meson ninja gobject-introspection python-docutils perl)\n'
             'options=(!lto !debug)\n'
+            + ('noextract=(libpiano-goodix.a)\n' if name == 'libfprint' else '') +
             f'source=({quoted(files)})\nsha256sums=({quoted(digest(recipe / f) for f in files)})\n'
             'prepare() {\n' + (prepare or '  :\n') + '}\n'
             'build() {\n' + sdk + f'  meson setup build {name} --prefix=/usr --libdir=lib '
