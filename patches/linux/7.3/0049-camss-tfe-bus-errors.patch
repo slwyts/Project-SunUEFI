@@ -1,0 +1,302 @@
+From a858076ac1acdd26fb8b1e9d185dd963a4277aa7 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sat, 7 Nov 2026 07:14:52 +0800
+Subject: [PATCH] fix(camera): reject frames affected by TFE bus faults
+
+Handle the full SM8750 TFE980 BUS image-size, CCIF and constraint error
+interrupts independently of the CSID buffer-completion controller. Check
+pending faults under the same output lock before publishing each buffer,
+so a delayed VFE interrupt cannot make a damaged frame appear valid.
+
+Retain the error state until stream restart. Arm BUS MMIO access only
+while a write-master stream holds power, and mask and clear the final
+stream's interrupt source before the clock-off path can run.
+---
+ .../platform/qcom/camss/camss-vfe-gen4.c      | 141 +++++++++++++++++-
+ drivers/media/platform/qcom/camss/camss-vfe.c |  25 +++-
+ drivers/media/platform/qcom/camss/camss-vfe.h |   4 +
+ 3 files changed, 162 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-gen4.c b/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
+index 619d391f91d..38fd570bc9b 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
+@@ -9,13 +9,29 @@
+ #include <linux/interrupt.h>
+ #include <linux/io.h>
+ #include <linux/iopoll.h>
++#include <linux/ktime.h>
+ 
+ #include "camss.h"
+ #include "camss-isp-debug.h"
++#include "camss-trace.h"
+ #include "camss-vfe.h"
+ 
+ #define IS_VFE_980(vfe)		((vfe)->camss->res->version == CAMSS_8750)
+ 
++/* Full TFE980 TOP -> BUS error controller, independent of CSID BUF_DONE. */
++#define VFE_980_TOP_IRQ_CMD		0x007c
++#define VFE_980_TOP_IRQ_MASK		0x0080
++#define VFE_980_TOP_IRQ_CLEAR		0x0084
++#define VFE_980_TOP_IRQ_BUS		BIT(0)
++#define VFE_980_BUS_IRQ_MASK		0x0818
++#define VFE_980_BUS_IRQ_CLEAR		0x0820
++#define VFE_980_BUS_IRQ_STATUS		0x0828
++#define VFE_980_BUS_IRQ_CMD		0x0830
++#define VFE_980_BUS_CCIF_STATUS		0x0864
++#define VFE_980_BUS_SIZE_STATUS		0x0870
++#define VFE_980_BUS_ERROR_MASK		0xd0000000
++#define VFE_980_IRQ_CLEAR			BIT(0)
++
+ #define BUS_REG_BASE_980	(vfe_is_lite(vfe) ? 0x200 : 0x800)
+ #define BUS_REG_BASE_1080	(vfe_is_lite(vfe) ? 0x800 : 0x1000)
+ #define BUS_REG_BASE \
+@@ -500,11 +516,117 @@ static void vfe_pix_start(struct vfe_device *vfe, struct vfe_line *line)
+ 	camss_isp_set_live(CAMSS_ISP_VFE, vfe->base);
+ }
+ 
++/* All BUS helpers below run with output_lock held. The active-line mask is
++ * set only inside clocked WM start and cleared before the last WM stop
++ * returns. IRQ and late CSID completion paths must not touch powered-off MMIO.
++ */
++static bool vfe_has_bus_errors(struct vfe_device *vfe)
++{
++	return IS_VFE_980(vfe) && !vfe_is_lite(vfe);
++}
++
++static void vfe_bus_clear_errors(struct vfe_device *vfe, u32 status)
++{
++	writel(status, vfe->base + VFE_980_BUS_IRQ_CLEAR);
++	writel(VFE_980_IRQ_CLEAR, vfe->base + VFE_980_BUS_IRQ_CMD);
++	writel(VFE_980_TOP_IRQ_BUS, vfe->base + VFE_980_TOP_IRQ_CLEAR);
++	writel(VFE_980_IRQ_CLEAR, vfe->base + VFE_980_TOP_IRQ_CMD);
++}
++
++static u32 vfe_check_bus_error(struct vfe_device *vfe)
++{
++	u32 status, ccif, size;
++	u64 irq_ns;
++	int id;
++
++	if (!vfe_has_bus_errors(vfe) || !vfe->bus_active_lines)
++		return 0;
++
++	status = readl(vfe->base + VFE_980_BUS_IRQ_STATUS) &
++		 VFE_980_BUS_ERROR_MASK;
++	if (!status)
++		return 0;
++
++	ccif = readl(vfe->base + VFE_980_BUS_CCIF_STATUS);
++	size = readl(vfe->base + VFE_980_BUS_SIZE_STATUS);
++	irq_ns = ktime_get_ns();
++
++	/* BUS faults need not identify one WM. Reject all active outputs until
++	 * their next stream start, before acknowledging the shared error source.
++	 */
++	for (id = 0; id < vfe->res->line_num; id++) {
++		struct vfe_output *output = &vfe->line[id].output;
++
++		if (!(vfe->bus_active_lines & BIT(id)))
++			continue;
++		output->frame_timeline_error = true;
++		trace_camss_frame_error(vfe->id, id, output->frame_sequence,
++					status, irq_ns);
++	}
++	dev_err_ratelimited(vfe->camss->dev,
++			    "VFE%u BUS error %#x (CCIF %#x, size %#x)\n",
++			    vfe->id, status, ccif, size);
++	vfe_bus_clear_errors(vfe, status);
++
++	return status;
++}
++
++static void vfe_bus_start(struct vfe_device *vfe, enum vfe_line_id id)
++{
++	u32 mask;
++
++	if (!vfe_has_bus_errors(vfe))
++		return;
++
++	if (vfe->bus_active_lines) {
++		/* Record an outstanding fault for the older streams, not this one. */
++		vfe_check_bus_error(vfe);
++		vfe->bus_active_lines |= BIT(id);
++		return;
++	}
++
++	/* No WM is active: discard only our stale BUS/TOP error bits. */
++	vfe_bus_clear_errors(vfe, VFE_980_BUS_ERROR_MASK);
++	vfe->bus_active_lines = BIT(id);
++	mask = readl(vfe->base + VFE_980_BUS_IRQ_MASK);
++	writel(mask | VFE_980_BUS_ERROR_MASK,
++	       vfe->base + VFE_980_BUS_IRQ_MASK);
++	mask = readl(vfe->base + VFE_980_TOP_IRQ_MASK);
++	writel(mask | VFE_980_TOP_IRQ_BUS, vfe->base + VFE_980_TOP_IRQ_MASK);
++}
++
++static void vfe_bus_stop(struct vfe_device *vfe, enum vfe_line_id id)
++{
++	u32 mask, remaining;
++
++	if (!vfe_has_bus_errors(vfe))
++		return;
++
++	vfe_check_bus_error(vfe);
++	remaining = vfe->bus_active_lines & ~BIT(id);
++	if (remaining) {
++		vfe->bus_active_lines = remaining;
++		return;
++	}
++
++	mask = readl(vfe->base + VFE_980_TOP_IRQ_MASK);
++	writel(mask & ~VFE_980_TOP_IRQ_BUS, vfe->base + VFE_980_TOP_IRQ_MASK);
++	mask = readl(vfe->base + VFE_980_BUS_IRQ_MASK);
++	writel(mask & ~VFE_980_BUS_ERROR_MASK,
++	       vfe->base + VFE_980_BUS_IRQ_MASK);
++	vfe_bus_clear_errors(vfe, VFE_980_BUS_ERROR_MASK);
++	/* Flush the posted mask/clear writes while this WM still holds power. */
++	readl(vfe->base + VFE_980_TOP_IRQ_MASK);
++	vfe->bus_active_lines = 0;
++}
++
+ static void vfe_wm_start(struct vfe_device *vfe, u8 wm, struct vfe_line *line)
+ {
+ 	struct v4l2_pix_format_mplane *pix =
+ 		&line->video_out.active_fmt.fmt.pix_mp;
+ 
++	vfe_bus_start(vfe, line->id);
++
+ 	if (line->id == VFE_LINE_PIX) {
+ 		vfe_pix_start(vfe, line);
+ 		return;
+@@ -542,15 +664,19 @@ static void vfe_wm_start(struct vfe_device *vfe, u8 wm, struct vfe_line *line)
+ 
+ static void vfe_wm_stop(struct vfe_device *vfe, u8 wm)
+ {
++	enum vfe_line_id id = wm;
++
+ 	if (wm == VFE_LINE_PIX && !vfe_is_lite(vfe)) {
+ 		camss_isp_set_live(CAMSS_ISP_VFE, NULL);
+ 		writel(0, vfe->base + VFE_BUS_WM_CFG(FD_Y_WM));
+ 		writel(0, vfe->base + VFE_BUS_WM_CFG(FD_C_WM));
++		vfe_bus_stop(vfe, id);
+ 		return;
+ 	}
+ 
+ 	wm = RDI_WM(wm);
+ 	writel(0, vfe->base + VFE_BUS_WM_CFG(wm));
++	vfe_bus_stop(vfe, id);
+ }
+ 
+ static void vfe_wm_update(struct vfe_device *vfe, u8 wm, u32 addr,
+@@ -604,8 +730,18 @@ static void vfe_global_reset(struct vfe_device *vfe)
+ 
+ static irqreturn_t vfe_isr(int irq, void *dev)
+ {
+-	/* nop */
+-	return IRQ_HANDLED;
++	struct vfe_device *vfe = dev;
++	unsigned long flags;
++	u32 status;
++
++	if (!vfe_has_bus_errors(vfe))
++		return IRQ_HANDLED;
++
++	spin_lock_irqsave(&vfe->output_lock, flags);
++	status = vfe_check_bus_error(vfe);
++	spin_unlock_irqrestore(&vfe->output_lock, flags);
++
++	return status ? IRQ_HANDLED : IRQ_NONE;
+ }
+ 
+ static int vfe_halt(struct vfe_device *vfe)
+@@ -629,6 +765,7 @@ const struct vfe_hw_ops vfe_ops_gen4 = {
+ 	.vfe_wm_start = vfe_wm_start,
+ 	.vfe_wm_stop = vfe_wm_stop,
+ 	.vfe_buf_done = vfe_buf_done,
++	.check_bus_error = vfe_check_bus_error,
+ 	.vfe_wm_update = vfe_wm_update,
+ 	.vfe_isp_update = vfe_isp_update,
+ };
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 0f2f0277213..32b8425b6e4 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -610,7 +610,7 @@ void vfe_frame_sync(struct vfe_device *vfe, int port_id, bool start,
+ 
+ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ {
+-	struct vfe_line *line = &vfe->line[vfe->wm_output_map[wm]];
++	struct vfe_line *line;
+ 	const struct vfe_hw_ops *ops = vfe->res->hw_ops;
+ 	struct camss_buffer *ready_buf;
+ 	struct vfe_output *output;
+@@ -626,7 +626,16 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ 				    "Received wm done for unmapped index\n");
+ 		goto out_unlock;
+ 	}
+-	output = &vfe->line[vfe->wm_output_map[wm]].output;
++	line = &vfe->line[vfe->wm_output_map[wm]];
++	output = &line->output;
++
++	/* CSID forwards DMA completion independently of the VFE BUS error IRQ.
++	 * Serialize both paths so a delayed error IRQ cannot publish a bad frame.
++	 */
++	if (ops->check_bus_error) {
++		ops->check_bus_error(vfe);
++		frame_valid = !output->frame_timeline_error;
++	}
+ 
+ 	ready_buf = output->buf[0];
+ 	if (!ready_buf) {
+@@ -2043,6 +2052,14 @@ int msm_vfe_subdev_init(struct camss *camss, struct vfe_device *vfe,
+ 		}
+ 	}
+ 
++	/* A gen4 BUS interrupt may arrive as soon as request_irq succeeds.
++	 * Its zero active-line mask prevents MMIO until clocked WM start.
++	 */
++	spin_lock_init(&vfe->output_lock);
++	vfe->camss = camss;
++	vfe->id = id;
++	vfe->bus_active_lines = 0;
++
+ 	/* Interrupt */
+ 
+ 	ret = platform_get_irq_byname(pdev, res->interrupt[0]);
+@@ -2105,10 +2122,6 @@ int msm_vfe_subdev_init(struct camss *camss, struct vfe_device *vfe,
+ 	mutex_init(&vfe->stream_lock);
+ 	vfe->stream_count = 0;
+ 
+-	spin_lock_init(&vfe->output_lock);
+-
+-	vfe->camss = camss;
+-	vfe->id = id;
+ 	vfe->reg_update = 0;
+ 
+ 	for (i = VFE_LINE_RDI0; i < vfe->res->line_num; i++) {
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
+index bcbe5426772..8c151063d6e 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.h
++++ b/drivers/media/platform/qcom/camss/camss-vfe.h
+@@ -145,6 +145,8 @@ struct vfe_hw_ops {
+ 			     struct vfe_line *line);
+ 	void (*vfe_wm_stop)(struct vfe_device *vfe, u8 wm);
+ 	void (*vfe_buf_done)(struct vfe_device *vfe, int port_id);
++	/* Called with output_lock held, before a completed buffer is published. */
++	u32 (*check_bus_error)(struct vfe_device *vfe);
+ 	void (*vfe_wm_update)(struct vfe_device *vfe, u8 wm, u32 addr,
+ 			      struct vfe_line *line);
+ 	/* PIX lines with an ISP: apply vfe_line.isp (called locked, streaming) */
+@@ -189,6 +191,8 @@ struct vfe_device {
+ 	struct mutex stream_lock;
+ 	int stream_count;
+ 	spinlock_t output_lock;
++	/* Logical lines with enabled BUS write masters; protected by output_lock. */
++	u32 bus_active_lines;
+ 	enum vfe_line_id wm_output_map[MSM_VFE_IMAGE_MASTERS_NUM];
+ 	struct vfe_line line[VFE_LINE_NUM_MAX];
+ 	u32 reg_update;
+-- 
+2.56.0
+

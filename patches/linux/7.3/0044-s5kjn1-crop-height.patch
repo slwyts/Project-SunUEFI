@@ -1,0 +1,29 @@
+From 6e550da618aa0491a034cc4d88d00f2443733856 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Fri, 6 Nov 2026 20:00:00 +0800
+Subject: [PATCH] media: i2c: s5kjn1: report the current mode crop height
+
+The active crop is the sensor mode rectangle. Returning its width as
+the height makes the rectangular modes appear square to V4L2 users.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/media/i2c/s5kjn1.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/media/i2c/s5kjn1.c b/drivers/media/i2c/s5kjn1.c
+index bca4f0b91f7..e21add5666c 100644
+--- a/drivers/media/i2c/s5kjn1.c
++++ b/drivers/media/i2c/s5kjn1.c
+@@ -1100,7 +1100,7 @@ static int s5kjn1_get_selection(struct v4l2_subdev *sd,
+ 		sel->r.left = 0;
+ 		sel->r.top = 0;
+ 		sel->r.width = s5kjn1->mode->width;
+-		sel->r.height = s5kjn1->mode->width;
++		sel->r.height = s5kjn1->mode->height;
+ 		return 0;
+ 	default:
+ 		return -EINVAL;
+-- 
+2.56.0
+

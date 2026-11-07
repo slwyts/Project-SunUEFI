@@ -1,0 +1,258 @@
+From 87be85142db7745c7c0796694664d5beb7cc4eb0 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Fri, 6 Nov 2026 23:45:00 +0800
+Subject: [PATCH] media: ov32d40: keep fixed native mode timing
+
+The factory 6528x4896 mode programs HTS3920/FLL2551, while both binned
+modes use HTS1182/FLL2820. These counts do not use visible pixel/row
+units. Subtracting the output dimensions creates negative HBLANK and
+VBLANK controls and lets a stale blanking value overwrite the mode FLL.
+
+Remove those incorrect optional controls instead of inventing a timing
+multiplier. Keep each register table's fixed timing and native exposure
+counts, update the exposure range when selecting a mode, and report the
+factory nominal 10/30 fps with the pad-level frame-interval operations.
+TRY intervals follow the supplied subdev state. The intervals describe
+nominal factory modes, not measurements of a hardware frame counter.
+
+The existing three 54-write mode tables match this same-device static
+configuration exactly. The vendor FillExposureSettings writes native
+FLL and coarse integration counts without a resolution-specific scale.
+
+Source: com.qti.sensormodule.piano_ofilm_ov32d40_front_i.bin
+SHA256: 549973033b829e7fee117414dec5c2879689eee7a85cbfca801e773bfead46ee
+---
+ drivers/media/i2c/ov32d40.c | 115 +++++++++++++++++++++---------------
+ 1 file changed, 67 insertions(+), 48 deletions(-)
+
+diff --git a/drivers/media/i2c/ov32d40.c b/drivers/media/i2c/ov32d40.c
+index 0cec5294c53..467e8253643 100644
+--- a/drivers/media/i2c/ov32d40.c
++++ b/drivers/media/i2c/ov32d40.c
+@@ -37,10 +37,6 @@
+ #define OV32D40_ANA_GAIN_MAX		15872
+ #define OV32D40_ANA_GAIN_DEFAULT	7936
+ 
+-#define OV32D40_REG_FRAME_LENGTH		CCI_REG16(0x380E)
+-//#define OV32D40_REG_FRAME_LENGTH_HIGH	CCI_REG8(0x3840)
+-#define OV32D40_FRAME_LENGTH_MAX		0xffff
+-
+ /* Most likely not actual test pattern reg */
+ #define OV32D40_REG_TEST_PATTERN	CCI_REG8(0x4308)
+ 
+@@ -70,8 +66,8 @@ struct ov32d40_mode {
+ 	u32 width;
+ 	u32 height;
+ 	struct v4l2_rect crop;
+-	u32 line_length;
+ 	u32 frame_length;
++	u32 nominal_fps;
+ 	const struct ov32d40_reg_list reg_list;
+ };
+ 
+@@ -97,8 +93,6 @@ struct ov32d40 {
+ 	struct media_pad pad;
+ 	struct v4l2_ctrl_handler ctrl_handler;
+ 
+-	struct v4l2_ctrl *vblank;
+-	struct v4l2_ctrl *hblank;
+ 	struct v4l2_ctrl *exposure;
+ 
+ 	const struct ov32d40_mode *cur_mode;
+@@ -1138,8 +1132,8 @@ static const struct ov32d40_mode supported_modes[] = {
+ 			.width = 6528,
+ 			.height = 4896,
+ 		},
+-		.line_length = 3920,
+ 		.frame_length = 2551,
++		.nominal_fps = 10,
+ 		.reg_list = {
+ 			.num_of_regs = ARRAY_SIZE(ov32d40_6528x4896_regs),
+ 			.regs = ov32d40_6528x4896_regs,
+@@ -1155,8 +1149,8 @@ static const struct ov32d40_mode supported_modes[] = {
+ 			.width = 3264 * 2,
+ 			.height = 2448 * 2,
+ 		},
+-		.line_length = 1182,
+ 		.frame_length = 2820,
++		.nominal_fps = 30,
+ 		.reg_list = {
+ 			.num_of_regs = ARRAY_SIZE(ov32d40_3264x2448_regs),
+ 			.regs = ov32d40_3264x2448_regs,
+@@ -1172,8 +1166,8 @@ static const struct ov32d40_mode supported_modes[] = {
+ 			.width = 3264 * 2,
+ 			.height = 1836 * 2,
+ 		},
+-		.line_length = 1182,
+ 		.frame_length = 2820,
++		.nominal_fps = 30,
+ 		.reg_list = {
+ 			.num_of_regs = ARRAY_SIZE(ov32d40_3264x1836_regs),
+ 			.regs = ov32d40_3264x1836_regs,
+@@ -1398,7 +1392,6 @@ static int ov32d40_set_fmt(struct v4l2_subdev *sd,
+ 	struct ov32d40 *ov32d40 = to_ov32d40(sd);
+ 	const struct ov32d40_mode *mode;
+ 	struct v4l2_rect *crop;
+-	s32 vblank_def, hblank_def;
+ 	int ret = 0;
+ 
+ 	mode = v4l2_find_nearest_size(supported_modes,
+@@ -1425,15 +1418,13 @@ static int ov32d40_set_fmt(struct v4l2_subdev *sd,
+ 	} else {
+ 		ov32d40->cur_mode = mode;
+ 
+-		vblank_def = mode->frame_length - mode->height;
+-		__v4l2_ctrl_modify_range(ov32d40->vblank, vblank_def,
+-					 OV32D40_FRAME_LENGTH_MAX - mode->height, 1,
+-					 vblank_def);
+-		__v4l2_ctrl_s_ctrl(ov32d40->vblank, vblank_def);
+-
+-		hblank_def = mode->line_length - mode->width;
+-		__v4l2_ctrl_modify_range(ov32d40->hblank, hblank_def, hblank_def, 1,
+-					 hblank_def);
++		/* Exposure is counted in native sensor timing periods, not in
++		 * visible output rows. Keep the selected table's fixed FLL.
++		 */
++		ret = __v4l2_ctrl_modify_range(ov32d40->exposure,
++					       OV32D40_EXPOSURE_MIN,
++					       mode->frame_length - OV32D40_EXPOSURE_MAX_MARGIN,
++					       1, OV32D40_EXPOSURE_DEFAULT);
+ 	}
+ 
+ out_unlock:
+@@ -1496,20 +1487,8 @@ static int ov32d40_set_ctrl(struct v4l2_ctrl *ctrl)
+ 	struct ov32d40 *ov32d40 = container_of(ctrl->handler,
+ 					       struct ov32d40, ctrl_handler);
+ 	struct i2c_client *client = v4l2_get_subdevdata(&ov32d40->subdev);
+-	s32 max_expo;
+ 	int ret;
+ 
+-	/* Propagate change of current control to all related controls */
+-	if (ctrl->id == V4L2_CID_VBLANK) {
+-		/* Update max exposure while meeting expected vblanking */
+-		max_expo = ov32d40->cur_mode->height + ctrl->val -
+-			   OV32D40_EXPOSURE_MAX_MARGIN;
+-		__v4l2_ctrl_modify_range(ov32d40->exposure,
+-					 ov32d40->exposure->minimum, max_expo,
+-					 ov32d40->exposure->step,
+-					 ov32d40->exposure->default_value);
+-	}
+-
+ 	/* V4L2 controls values will be applied only when power is already up */
+ 	if (!pm_runtime_get_if_in_use(&client->dev))
+ 		return 0;
+@@ -1521,10 +1500,6 @@ static int ov32d40_set_ctrl(struct v4l2_ctrl *ctrl)
+ 	case V4L2_CID_ANALOGUE_GAIN:
+ 		ret = cci_write(ov32d40->regmap, OV32D40_REG_GAIN, ctrl->val, NULL);
+ 		break;
+-	case V4L2_CID_VBLANK:
+-		ret = cci_write(ov32d40->regmap, OV32D40_REG_FRAME_LENGTH,
+-				ov32d40->cur_mode->height + ctrl->val, NULL);
+-		break;
+ 	case V4L2_CID_TEST_PATTERN:
+ 		if (ctrl->val)
+ 			cci_write(ov32d40->regmap, CCI_REG8(0x3019), 0xf0, NULL);
+@@ -1542,6 +1517,58 @@ static int ov32d40_set_ctrl(struct v4l2_ctrl *ctrl)
+ 	return ret;
+ }
+ 
++/* The factory HTS/FLL registers count internal timing periods. Their
++ * values can be smaller than the visible width/height, so subtracting the
++ * output size does not yield V4L2 HBLANK/VBLANK. Until the pixel-array units
++ * are documented, expose the factory's fixed nominal intervals instead.
++ */
++static int ov32d40_enum_frame_interval(struct v4l2_subdev *sd,
++				       struct v4l2_subdev_state *state,
++				       struct v4l2_subdev_frame_interval_enum *fie)
++{
++	unsigned int i;
++
++	if (fie->index || fie->pad || fie->stream ||
++	    fie->code != MEDIA_BUS_FMT_SBGGR10_1X10)
++		return -EINVAL;
++
++	for (i = 0; i < ARRAY_SIZE(supported_modes); ++i) {
++		const struct ov32d40_mode *mode = &supported_modes[i];
++
++		if (fie->width == mode->width && fie->height == mode->height) {
++			fie->interval = (struct v4l2_fract){ 1, mode->nominal_fps };
++			return 0;
++		}
++	}
++	return -EINVAL;
++}
++
++static int ov32d40_get_frame_interval(struct v4l2_subdev *sd,
++				      struct v4l2_subdev_state *state,
++				      struct v4l2_subdev_frame_interval *fi)
++{
++	struct ov32d40 *ov32d40 = to_ov32d40(sd);
++	const struct ov32d40_mode *mode;
++
++	if (fi->pad || fi->stream)
++		return -EINVAL;
++
++	mutex_lock(&ov32d40->mutex);
++	if (fi->which == V4L2_SUBDEV_FORMAT_TRY) {
++		const struct v4l2_mbus_framefmt *fmt =
++			v4l2_subdev_state_get_format(state, 0);
++
++		mode = v4l2_find_nearest_size(supported_modes,
++					      ARRAY_SIZE(supported_modes), width,
++					      height, fmt->width, fmt->height);
++	} else {
++		mode = ov32d40->cur_mode;
++	}
++	fi->interval = (struct v4l2_fract){ 1, mode->nominal_fps };
++	mutex_unlock(&ov32d40->mutex);
++	return 0;
++}
++
+ static const struct v4l2_subdev_video_ops ov32d40_video_ops = {
+ 	.s_stream = ov32d40_s_stream,
+ };
+@@ -1549,6 +1576,9 @@ static const struct v4l2_subdev_video_ops ov32d40_video_ops = {
+ static const struct v4l2_subdev_pad_ops ov32d40_pad_ops = {
+ 	.enum_mbus_code = ov32d40_enum_mbus_code,
+ 	.enum_frame_size = ov32d40_enum_frame_sizes,
++	.enum_frame_interval = ov32d40_enum_frame_interval,
++	.get_frame_interval = ov32d40_get_frame_interval,
++	.set_frame_interval = ov32d40_get_frame_interval,
+ 	.get_selection = ov32d40_get_selection,
+ 	.get_fmt = ov32d40_get_fmt,
+ 	.set_fmt = ov32d40_set_fmt,
+@@ -1579,13 +1609,12 @@ static int ov32d40_initialize_controls(struct ov32d40 *ov32d40)
+ 	struct v4l2_ctrl *ctrl;
+ 	struct v4l2_fwnode_device_properties props;
+ 	s32 exposure_max;
+-	s32 vblank_def, hblank_def;
+ 	s32 pixel_rate;
+ 	int ret;
+ 
+ 	handler = &ov32d40->ctrl_handler;
+ 	mode = ov32d40->cur_mode;
+-	ret = v4l2_ctrl_handler_init(handler, 7);
++	ret = v4l2_ctrl_handler_init(handler, 5);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -1600,16 +1629,6 @@ static int ov32d40_initialize_controls(struct ov32d40 *ov32d40)
+ 	v4l2_ctrl_new_std(handler, NULL, V4L2_CID_PIXEL_RATE, 0, pixel_rate, 1,
+ 			  pixel_rate);
+ 
+-	hblank_def = mode->line_length - mode->width;
+-	ov32d40->hblank = v4l2_ctrl_new_std(handler, NULL, V4L2_CID_HBLANK,
+-					     hblank_def, hblank_def, 1, hblank_def);
+-
+-	vblank_def = mode->frame_length - mode->height;
+-	ov32d40->vblank = v4l2_ctrl_new_std(handler, &ov32d40_ctrl_ops,
+-					     V4L2_CID_VBLANK, vblank_def,
+-					     OV32D40_FRAME_LENGTH_MAX - mode->height,
+-					     1, vblank_def);
+-
+ 	exposure_max = mode->frame_length - OV32D40_EXPOSURE_MAX_MARGIN;
+ 	ov32d40->exposure = v4l2_ctrl_new_std(handler, &ov32d40_ctrl_ops,
+ 					       V4L2_CID_EXPOSURE,
+-- 
+2.56.0
+

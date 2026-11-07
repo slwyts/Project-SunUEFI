@@ -1,0 +1,36 @@
+From 3f3f891dcfc4262996f62591617fe68bb985c320 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sat, 7 Nov 2026 08:32:43 +0000
+Subject: [PATCH] fix(media): align SM8750 PIX buffers to TFE address units
+
+The gen4 TFE stores PIX image addresses and frame increments in 256-byte
+units, but CAMSS currently negotiates only 16-byte row alignment. The UV
+offset and either plane's frame increment can therefore be truncated for
+otherwise valid NV12 dimensions. At 16x4 the UV address aliases the Y base;
+at 4080x3060 it is rounded down by 192 bytes.
+
+Require 256-byte bytesperline alignment for SM8750 PIX outputs, making
+both plane offsets and frame increments exactly representable for every
+supported even height. Keep RDI and the other CAMSS generations unchanged.
+---
+ drivers/media/platform/qcom/camss/camss-vfe.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 32b8425b6e4..d836cc03bfc 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -2362,6 +2362,10 @@ static int vfe_bpl_align_pix(struct vfe_device *vfe)
+ 		 */
+ 		ret = 0;
+ 		break;
++	case CAMSS_8750:
++		/* TFE image addresses and frame increments use 256-byte units. */
++		ret = 256;
++		break;
+ 	default:
+ 		break;
+ 	}
+-- 
+2.56.0
+

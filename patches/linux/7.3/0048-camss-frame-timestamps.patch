@@ -1,0 +1,925 @@
+From cd13886a3b5e3145115a1f24793dc6a330e57430 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sat, 7 Nov 2026 07:14:52 +0800
+Subject: [PATCH] feat(camera): expose physical SOF and EOF frame timestamps
+
+Cross-stamp the SM8750 CSID980 physical counter against CLOCK_MONOTONIC
+and associate IPP/RDI0 SOF and EOF with the existing two-buffer VFE FIFO.
+Publish the actual SOF through standard FRAME_SYNC events and retain the
+physical EOF in DQBUF timestamps. Add a timestamped media-event helper
+while preserving the queue-time behavior of every existing caller.
+
+Reject discontinuous markers, invalid cross-stamps and receiver errors
+through standard V4L2 error buffers until the stream restarts. CSI SOF
+keeps its frame-start meaning; it is not labelled exposure start.
+---
+ drivers/media/platform/qcom/camss/Makefile    |   2 +
+ .../platform/qcom/camss/camss-csid-980.c      | 231 +++++++++++++++++-
+ .../media/platform/qcom/camss/camss-trace.h   |  83 +++++++
+ drivers/media/platform/qcom/camss/camss-vfe.c | 169 ++++++++++++-
+ drivers/media/platform/qcom/camss/camss-vfe.h |  15 ++
+ .../media/platform/qcom/camss/camss-video.c   |  19 ++
+ .../media/platform/qcom/camss/camss-video.h   |   7 +
+ drivers/media/platform/qcom/camss/camss.c     |  23 ++
+ drivers/media/platform/qcom/camss/camss.h     |  10 +
+ drivers/media/v4l2-core/v4l2-event.c          |  14 +-
+ include/media/v4l2-event.h                    |  15 ++
+ 11 files changed, 576 insertions(+), 12 deletions(-)
+ create mode 100644 drivers/media/platform/qcom/camss/camss-trace.h
+
+diff --git a/drivers/media/platform/qcom/camss/Makefile b/drivers/media/platform/qcom/camss/Makefile
+index 601c7f683fc..31911429d1e 100644
+--- a/drivers/media/platform/qcom/camss/Makefile
++++ b/drivers/media/platform/qcom/camss/Makefile
+@@ -1,6 +1,8 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ # Makefile for Qualcomm CAMSS driver
+ 
++ccflags-y += -I$(src)
++
+ qcom-camss-objs += \
+ 		camss.o \
+ 		camss-csid.o \
+diff --git a/drivers/media/platform/qcom/camss/camss-csid-980.c b/drivers/media/platform/qcom/camss/camss-csid-980.c
+index 56bf09d9c16..c97170c3687 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid-980.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-980.c
+@@ -11,7 +11,13 @@
+ #include <linux/interrupt.h>
+ #include <linux/io.h>
+ #include <linux/kernel.h>
++#include <linux/math64.h>
+ #include <linux/of.h>
++#include <linux/timekeeping.h>
++#include <clocksource/arm_arch_timer.h>
++#ifdef CONFIG_ARM64
++#include <asm/arch_timer.h>
++#endif
+ #include "camss.h"
+ #include "camss-csid.h"
+ #include "camss-csid-gen3.h"
+@@ -149,6 +155,31 @@
+ #define CSID_IPP_IRQ_STATUS			0xD4
+ #define CSID_IPP_IRQ_MASK			0xD8
+ #define CSID_IPP_IRQ_CLEAR			0xDC
++#define CSID_IPP_TOP_IRQ				BIT(8)
++#define CSID_PATH_SOF_IRQ				BIT(4)
++#define CSID_PATH_EOF_IRQ				BIT(3)
++/* Official CSID980 IPP and RDI0 path error masks, excluding SOF/EOF/RUP. */
++#define CSID_PATH_FATAL_IRQS			0x241C6001
++#define CSID_PATH_NON_FATAL_IRQS			0x12000000
++#define CSID_PATH_ERROR_IRQS			(CSID_PATH_FATAL_IRQS | CSID_PATH_NON_FATAL_IRQS)
++/* The official CSID980 table selects QTimer with 2 << 8. */
++#define CSID_TIMESTAMP_STROBE			(2 << 8)
++#define CSID_IPP_CURRENT_SOF			0x6A8
++#define CSID_IPP_PREVIOUS_SOF			0x6B0
++#define CSID_IPP_CURRENT_EOF			0x6B8
++#define CSID_IPP_PREVIOUS_EOF			0x6C0
++/* These RDI0 offsets are listed independently in the official CSID980 table;
++ * they are not IPP offsets shifted to a presumed RDI address range.
++ */
++#define CSID_RDI0_CURRENT_SOF			0xEA0
++#define CSID_RDI0_PREVIOUS_SOF			0xEA8
++#define CSID_RDI0_CURRENT_EOF			0xEB0
++#define CSID_RDI0_PREVIOUS_EOF			0xEB8
++#define CSID_RDI0_IRQ_MASK			0x118
++#define CSID_RDI0_IRQ_CLEAR			0x11C
++#define CSID_RDI0_TOP_IRQ			BIT(16)
++#define CSID_RDI0_IRQ_SUBSAMPLE_PATTERN		0xE50
++#define CSID_RDI0_IRQ_SUBSAMPLE_PERIOD		0xE54
+ #define CSID_RUP_AUP_IPP			BIT(0)
+ #define		IPP_CTXT_ID				0
+ /* TFE bus composite group 1 (FD_Y + FD_C) done, in CSID_BUF_DONE_IRQ_* */
+@@ -157,6 +188,155 @@
+ #define csid_port_is_ipp(csid, port) \
+ 	(!csid_is_lite(csid) && (port) == CSID_IPP_PORT)
+ 
++static bool csid_rdi_frame_timing(struct csid_device *csid, unsigned int port)
++{
++	return IS_ENABLED(CONFIG_ARM64) && csid->camss->res->version == CAMSS_8750 &&
++	       !csid_is_lite(csid) && port == 0;
++}
++
++/* The CSID QTimer strobe uses the 19.2 MHz architectural physical counter.
++ * Keep each conversion local to its IRQ: CLOCK_MONOTONIC may be NTP-slewed,
++ * while CNTPCT and the receiver latch retain their nominal tick frequency.
++ */
++#define CSID_COUNTER_RATE                   19200000U
++#define CSID_COUNTER_MAX_BRACKET            (CSID_COUNTER_RATE / 20000)
++#define CSID_COUNTER_MAX_AGE                CSID_COUNTER_RATE
++
++/* Cross-stamp P_before / ktime_get_ns() / P_after. The midpoint is an
++ * estimate inside that measured bracket, not an average IRQ delay.
++ * Reject brackets wider than 50 us and events older than one second.
++ * At normal NTP rates (+/-500 ppm), bracket, quantisation and rate error
++ * then total less than 550 us. This is not nanosecond absolute accuracy.
++ */
++static u64 csid_timestamp_ns(u64 ticks, u64 before, u64 after, u64 mono)
++{
++	u64 midpoint, age, elapsed_ns;
++
++	if (!ticks || after < before || ticks > before ||
++	    after - before > CSID_COUNTER_MAX_BRACKET)
++		return 0;
++	midpoint = before + (after - before) / 2;
++	age = midpoint - ticks;
++	if (age > CSID_COUNTER_MAX_AGE)
++		return 0;
++	elapsed_ns = div_u64(age * NSEC_PER_SEC, CSID_COUNTER_RATE);
++	if (elapsed_ns >= mono)
++		return 0;
++	return mono - elapsed_ns;
++}
++
++struct csid_frame_timestamps {
++	u64 sof, previous_sof, eof, previous_eof;
++	u64 arch_ticks, arch_after, irq_ns;
++};
++
++static u64 csid_read_timestamp(struct csid_device *csid, u32 offset)
++{
++	u32 high, low, after;
++
++	do {
++		high = readl(csid->base + offset + 4);
++		low = readl(csid->base + offset);
++		after = readl(csid->base + offset + 4);
++	} while (high != after);
++	return (u64)high << 32 | low;
++}
++
++static bool csid_read_frame_timestamps(struct csid_device *csid, unsigned int port,
++				     struct csid_frame_timestamps *time)
++{
++	unsigned int attempt;
++	u32 sof, previous_sof, eof, previous_eof;
++
++	if (!IS_ENABLED(CONFIG_ARM64) || csid->camss->res->version != CAMSS_8750)
++		return false;
++#ifdef CONFIG_ARM64
++	if (arch_timer_get_cntfrq() != CSID_COUNTER_RATE)
++		return false;
++#endif
++	if (csid_port_is_ipp(csid, port)) {
++		sof = CSID_IPP_CURRENT_SOF;
++		previous_sof = CSID_IPP_PREVIOUS_SOF;
++		eof = CSID_IPP_CURRENT_EOF;
++		previous_eof = CSID_IPP_PREVIOUS_EOF;
++	} else if (csid_rdi_frame_timing(csid, port)) {
++		sof = CSID_RDI0_CURRENT_SOF;
++		previous_sof = CSID_RDI0_PREVIOUS_SOF;
++		eof = CSID_RDI0_CURRENT_EOF;
++		previous_eof = CSID_RDI0_PREVIOUS_EOF;
++	} else {
++		return false;
++	}
++
++	/* The current and previous registers latch at frame boundaries. Check
++	 * that neither current value changed while reading its previous value.
++	 */
++	for (attempt = 0; attempt < 3; attempt++) {
++		time->sof = csid_read_timestamp(csid, sof);
++		time->previous_sof = csid_read_timestamp(csid, previous_sof);
++		time->eof = csid_read_timestamp(csid, eof);
++		time->previous_eof = csid_read_timestamp(csid, previous_eof);
++		if (time->sof == csid_read_timestamp(csid, sof) &&
++		    time->eof == csid_read_timestamp(csid, eof)) {
++#ifdef CONFIG_ARM64
++			/* QTimer and CNTPCT share the physical counter on SM8750.
++			 * Do not use CNTVCT: its hypervisor offset is independent.
++			 */
++			time->arch_ticks = __arch_counter_get_cntpct_stable();
++			time->irq_ns = ktime_get_ns();
++			time->arch_after = __arch_counter_get_cntpct_stable();
++			return true;
++#else
++			return false;
++#endif
++		}
++	}
++	return false;
++}
++
++static void csid_frame_irq(struct csid_device *csid, int port, u32 status)
++{
++	struct csid_frame_timestamps time = { 0 };
++	u64 sof_ns, eof_ns;
++	bool sof = status & CSID_PATH_SOF_IRQ;
++	bool eof = status & CSID_PATH_EOF_IRQ;
++
++	/* Frame drop/overflow can leave plausible SOF/EOF ticks. Invalidate
++	 * before publishing any markers or completing this IRQ's DMA buffer.
++	 * This must also run when the IRQ contains no SOF or EOF at all.
++	 */
++	if (status & CSID_PATH_ERROR_IRQS)
++		camss_frame_error(csid->camss, csid->id, port,
++				  status, ktime_get_ns());
++	if (!sof && !eof)
++		return;
++	if (!csid_read_frame_timestamps(csid, port, &time)) {
++		/* Zero ticks invalidate the timeline instead of inventing a time. */
++		time = (struct csid_frame_timestamps){ .irq_ns = ktime_get_ns() };
++	}
++
++	sof_ns = csid_timestamp_ns(time.sof, time.arch_ticks,
++				       time.arch_after, time.irq_ns);
++	eof_ns = csid_timestamp_ns(time.eof, time.arch_ticks,
++				       time.arch_after, time.irq_ns);
++
++	/* A delayed IRQ can contain EOF(n) and SOF(n+1). Dispatch by the
++	 * hardware timestamps, before handling the same IRQ's DMA completion.
++	 */
++	if (eof && (!sof || time.eof < time.sof))
++		camss_frame_sync(csid->camss, csid->id, port, false,
++				 time.eof, time.previous_eof, time.arch_ticks,
++				 time.arch_after, time.irq_ns, eof_ns);
++	if (sof)
++		camss_frame_sync(csid->camss, csid->id, port, true,
++				 time.sof, time.previous_sof, time.arch_ticks,
++				 time.arch_after, time.irq_ns, sof_ns);
++	if (eof && sof && time.eof >= time.sof)
++		camss_frame_sync(csid->camss, csid->id, port, false,
++				 time.eof, time.previous_eof, time.arch_ticks,
++				 time.arch_after, time.irq_ns, eof_ns);
++}
++
+ /* RDI IRQ Status in wrapper */
+ #define CSID_CSI2_RDIN_IRQ_STATUS(rdi) \
+ 	(csid_is_lite(csid) ? 0xEC : 0x114 + 0x10 * (rdi))
+@@ -282,6 +462,7 @@ static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8
+ {
+ 	u32 val;
+ 	u8 lane_cnt = csid->phy.lane_cnt;
++	bool frame_timing = csid_rdi_frame_timing(csid, port);
+ 
+ 	/* Source pads matching RDI channels on hardware.
+ 	 * E.g. Pad 1 -> RDI0, Pad 2 -> RDI1, etc.
+@@ -311,8 +492,13 @@ static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8
+ 	u32 rdi_cfg1_offset = CSID_RDI_CFG1(port);
+ 	u32 rdi_ctrl_offset = CSID_RDI_CTRL(port);
+ 
++	if (frame_timing) {
++		writel(0, csid->base + CSID_RDI0_IRQ_MASK);
++		val = readl(csid->base + CSID_TOP_IRQ_MASK) & ~CSID_RDI0_TOP_IRQ;
++		writel(val, csid->base + CSID_TOP_IRQ_MASK);
++	}
+ 	val = RDI_CFG0_TIMESTAMP_EN;
+-	val |= RDI_CFG0_TIMESTAMP_STB_SEL;
++	val |= frame_timing ? CSID_TIMESTAMP_STROBE : RDI_CFG0_TIMESTAMP_STB_SEL;
+ 	val |= RDI_CFG0_RETIME_BS;
+ 
+ 	/* note: for non-RDI path, this should be format->decode_format */
+@@ -331,6 +517,26 @@ static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8
+ 
+ 	val = 0;
+ 	writel(val, csid->base + rdi_ctrl_offset);
++	if (frame_timing && enable) {
++		/* Record the old latch values while the path is still disabled.
++		 * The same FIFO continuity checks used by IPP then detect even a
++		 * lost first SOF. Every physical frame must produce its markers.
++		 */
++		writel(1, csid->base + CSID_RDI0_IRQ_SUBSAMPLE_PATTERN);
++		writel(0, csid->base + CSID_RDI0_IRQ_SUBSAMPLE_PERIOD);
++		camss_frame_reset(csid->camss, csid->id, port,
++				  csid_read_timestamp(csid, CSID_RDI0_CURRENT_SOF),
++				  csid_read_timestamp(csid, CSID_RDI0_CURRENT_EOF));
++		writel(~0, csid->base + CSID_RDI0_IRQ_CLEAR);
++		writel(IRQ_CMD_CLEAR, csid->base + CSID_IRQ_CMD);
++		val = readl(csid->base + CSID_TOP_IRQ_MASK) | CSID_RDI0_TOP_IRQ;
++		writel(val, csid->base + CSID_TOP_IRQ_MASK);
++		/* CSID980 independently specifies the same marker/error masks
++		 * for RDI0 and IPP, including overflow and frame-drop faults.
++		 */
++		writel(INFO_RUP_DONE | CSID_PATH_SOF_IRQ | CSID_PATH_EOF_IRQ |
++		       CSID_PATH_ERROR_IRQS, csid->base + CSID_RDI0_IRQ_MASK);
++	}
+ 
+ 	val = readl(csid->base + rdi_cfg0_offset);
+ 
+@@ -378,13 +584,16 @@ static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable,
+ 	writel(0, csid->base + CSID_IPP_CTRL);
+ 
+ 	if (!enable) {
++		writel(0, csid->base + CSID_IPP_IRQ_MASK);
++		val = readl(csid->base + CSID_TOP_IRQ_MASK) & ~CSID_IPP_TOP_IRQ;
++		writel(val, csid->base + CSID_TOP_IRQ_MASK);
+ 		camss_isp_set_live(CAMSS_ISP_CSID, NULL);
+ 		val = readl(csid->base + CSID_IPP_CFG0) & ~RDI_CFG0_EN;
+ 		writel(val, csid->base + CSID_IPP_CFG0);
+ 		return;
+ 	}
+ 
+-	val = RDI_CFG0_TIMESTAMP_EN | RDI_CFG0_TIMESTAMP_STB_SEL;
++	val = RDI_CFG0_TIMESTAMP_EN | CSID_TIMESTAMP_STROBE;
+ 	val |= RDI_CFG0_RETIME_BS;	/* SOF retiming off, as downstream */
+ 	val |= format->decode_format << RDI_CFG0_DECODE_FORMAT;
+ 	val |= vc << RDI_CFG0_VC;
+@@ -407,9 +616,18 @@ static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable,
+ 	       csid->base + CSID_IPP_IRQ_COMP_CFG0);
+ 	writel(1, csid->base + CSID_IPP_IRQ_SUBSAMPLE_PATTERN);
+ 	writel(0, csid->base + CSID_IPP_IRQ_SUBSAMPLE_PERIOD);
+-	writel(INFO_RUP_DONE, csid->base + CSID_IPP_IRQ_MASK);
++	writel(0, csid->base + CSID_IPP_IRQ_MASK);
+ 
+ 	camss_isp_apply_script(CAMSS_ISP_CSID, csid->base);
++	camss_frame_reset(csid->camss, csid->id, CSID_IPP_PORT,
++			  csid_read_timestamp(csid, CSID_IPP_CURRENT_SOF),
++			  csid_read_timestamp(csid, CSID_IPP_CURRENT_EOF));
++	writel(~0, csid->base + CSID_IPP_IRQ_CLEAR);
++	writel(IRQ_CMD_CLEAR, csid->base + CSID_IRQ_CMD);
++	val = readl(csid->base + CSID_TOP_IRQ_MASK) | CSID_IPP_TOP_IRQ;
++	writel(val, csid->base + CSID_TOP_IRQ_MASK);
++	writel(INFO_RUP_DONE | CSID_PATH_SOF_IRQ | CSID_PATH_EOF_IRQ | CSID_PATH_ERROR_IRQS,
++	       csid->base + CSID_IPP_IRQ_MASK);
+ 
+ 	val = readl(csid->base + CSID_IPP_CFG0) | RDI_CFG0_EN;
+ 	writel(val, csid->base + CSID_IPP_CFG0);
+@@ -489,19 +707,22 @@ static irqreturn_t csid_isr(int irq, void *dev)
+ 	for (i = 0; i < MSM_CSID_MAX_SRC_STREAMS_980; i++) {
+ 		if (csid->phy.en_vc & BIT(i) && csid_port_is_ipp(csid, i)) {
+ 			val = readl(csid->base + CSID_IPP_IRQ_STATUS);
+-			writel(val, csid->base + CSID_IPP_IRQ_CLEAR);
+ 
+ 			if (val & INFO_RUP_DONE)
+ 				csid_subdev_reg_update(csid, i, true);
++			csid_frame_irq(csid, i, val);
++			writel(val, csid->base + CSID_IPP_IRQ_CLEAR);
+ 
+ 			if (buf_done_val & BUF_DONE_IRQ_STATUS_IPP_FD)
+ 				camss_buf_done(csid->camss, csid->id, i);
+ 		} else if (csid->phy.en_vc & BIT(i)) {
+ 			val = readl(csid->base + CSID_CSI2_RDIN_IRQ_STATUS(i));
+-			writel(val, csid->base + CSID_CSI2_RDIN_IRQ_CLEAR(i));
+ 
+ 			if (val & INFO_RUP_DONE)
+ 				csid_subdev_reg_update(csid, i, true);
++			if (csid_rdi_frame_timing(csid, i))
++				csid_frame_irq(csid, i, val);
++			writel(val, csid->base + CSID_CSI2_RDIN_IRQ_CLEAR(i));
+ 
+ 			if (buf_done_val & BIT(BUF_DONE_IRQ_STATUS_RDI_OFFSET + i))
+ 				camss_buf_done(csid->camss, csid->id, i);
+diff --git a/drivers/media/platform/qcom/camss/camss-trace.h b/drivers/media/platform/qcom/camss/camss-trace.h
+new file mode 100644
+index 00000000000..c7f789da7ab
+--- /dev/null
++++ b/drivers/media/platform/qcom/camss/camss-trace.h
+@@ -0,0 +1,83 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#undef TRACE_SYSTEM
++#define TRACE_SYSTEM camss
++
++#if !defined(_CAMSS_TRACE_H) || defined(TRACE_HEADER_MULTI_READ)
++#define _CAMSS_TRACE_H
++
++#include <linux/tracepoint.h>
++
++/* phase: 0 SOF, 1 EOF, 2 DMA completion. Preserve the raw CSID counter
++ * and the CNTPCT-before / MONOTONIC / CNTPCT-after cross-stamp so that the
++ * conversion and IRQ latency remain independently checkable on hardware.
++ */
++TRACE_EVENT(camss_frame,
++	TP_PROTO(unsigned int hw, unsigned int line, u32 sequence,
++		 unsigned int phase, u64 ticks, u64 previous, u64 arch_ticks,
++		 u64 arch_after, u64 irq_ns,
++		 int buffer, bool valid),
++	TP_ARGS(hw, line, sequence, phase, ticks, previous, arch_ticks,
++		arch_after, irq_ns, buffer, valid),
++	TP_STRUCT__entry(
++		__field(unsigned int, hw)
++		__field(unsigned int, line)
++		__field(u32, sequence)
++		__field(unsigned int, phase)
++		__field(u64, ticks)
++		__field(u64, previous)
++		__field(u64, arch_ticks)
++		__field(u64, arch_after)
++		__field(u64, irq_ns)
++		__field(int, buffer)
++		__field(bool, valid)
++	),
++	TP_fast_assign(
++		__entry->hw = hw;
++		__entry->line = line;
++		__entry->sequence = sequence;
++		__entry->phase = phase;
++		__entry->ticks = ticks;
++		__entry->previous = previous;
++		__entry->arch_ticks = arch_ticks;
++		__entry->arch_after = arch_after;
++		__entry->irq_ns = irq_ns;
++		__entry->buffer = buffer;
++		__entry->valid = valid;
++	),
++	TP_printk("hw=%u line=%u seq=%u phase=%u qtimer=%llu prev=%llu counter=%llu counter_after=%llu mono=%llu buffer=%d valid=%u",
++		  __entry->hw, __entry->line, __entry->sequence, __entry->phase,
++		  __entry->ticks, __entry->previous, __entry->arch_ticks,
++		  __entry->arch_after, __entry->irq_ns,
++		  __entry->buffer, __entry->valid)
++);
++
++TRACE_EVENT(camss_frame_error,
++	TP_PROTO(unsigned int hw, unsigned int line, u32 sequence,
++		 u32 status, u64 irq_ns),
++	TP_ARGS(hw, line, sequence, status, irq_ns),
++	TP_STRUCT__entry(
++		__field(unsigned int, hw)
++		__field(unsigned int, line)
++		__field(u32, sequence)
++		__field(u32, status)
++		__field(u64, irq_ns)
++	),
++	TP_fast_assign(
++		__entry->hw = hw;
++		__entry->line = line;
++		__entry->sequence = sequence;
++		__entry->status = status;
++		__entry->irq_ns = irq_ns;
++	),
++	TP_printk("hw=%u line=%u seq=%u status=0x%08x mono=%llu",
++		  __entry->hw, __entry->line, __entry->sequence,
++		  __entry->status, __entry->irq_ns)
++);
++
++#endif
++
++#undef TRACE_INCLUDE_PATH
++#define TRACE_INCLUDE_PATH .
++#undef TRACE_INCLUDE_FILE
++#define TRACE_INCLUDE_FILE camss-trace
++#include <trace/define_trace.h>
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index f3a665eec19..0f2f0277213 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -23,6 +23,9 @@
+ #include <media/v4l2-event.h>
+ #include <media/v4l2-subdev.h>
+ 
++#define CREATE_TRACE_POINTS
++#include "camss-trace.h"
++
+ #include "camss-vfe.h"
+ #include "camss.h"
+ 
+@@ -477,6 +480,134 @@ u32 vfe_hw_version(struct vfe_device *vfe)
+  * @vfe: VFE Device
+  * @wm: Write master id
+  */
++void vfe_frame_error(struct vfe_device *vfe, int port_id, u32 status, u64 irq_ns)
++{
++	struct vfe_output *output;
++	unsigned long flags;
++
++	if ((port_id != VFE_LINE_PIX && port_id != VFE_LINE_RDI0) ||
++	    !vfe->line[port_id].video_out.frame_sync)
++		return;
++	output = &vfe->line[port_id].output;
++	spin_lock_irqsave(&vfe->output_lock, flags);
++	if (output->state == VFE_OUTPUT_ON) {
++		output->frame_timeline_error = true;
++		trace_camss_frame_error(vfe->id, port_id, output->frame_sequence,
++					status, irq_ns);
++	}
++	spin_unlock_irqrestore(&vfe->output_lock, flags);
++}
++
++void vfe_frame_reset(struct vfe_device *vfe, int port_id,
++		     u64 sof_ticks, u64 eof_ticks)
++{
++	struct vfe_output *output;
++	unsigned long flags;
++
++	if ((port_id != VFE_LINE_PIX && port_id != VFE_LINE_RDI0) ||
++	    !vfe->line[port_id].video_out.frame_sync)
++		return;
++	output = &vfe->line[port_id].output;
++	spin_lock_irqsave(&vfe->output_lock, flags);
++	/* Capture the previous stream's last hardware values before enabling
++	 * the receiver. Even a lost first SOF then breaks the previous chain.
++	 */
++	output->last_sof_ticks = sof_ticks;
++	output->last_eof_ticks = eof_ticks;
++	output->frame_timeline_initialized = true;
++	trace_camss_frame(vfe->id, port_id, output->frame_sequence, 3,
++			  sof_ticks, eof_ticks, 0, 0, ktime_get_ns(), -1,
++			  output->state == VFE_OUTPUT_ON && !output->frame_timeline_error);
++	spin_unlock_irqrestore(&vfe->output_lock, flags);
++}
++
++/* The WM has a two-entry address FIFO. Attach SOF/EOF to those entries,
++ * rather than copying the newest SOF onto a buffer that completed earlier.
++ * A missing marker invalidates the timeline until the next stream start.
++ */
++void vfe_frame_sync(struct vfe_device *vfe, int port_id, bool start,
++		    u64 ticks, u64 previous_ticks, u64 arch_ticks,
++		    u64 arch_after, u64 irq_ns, u64 mono_ns)
++{
++	struct v4l2_event event = { .type = V4L2_EVENT_FRAME_SYNC };
++	struct camss_buffer *buffer = NULL;
++	struct vfe_line *line;
++	struct vfe_output *output;
++	unsigned long flags;
++	u32 sequence;
++	bool emit = false;
++	unsigned int i;
++
++	if (port_id != VFE_LINE_PIX && port_id != VFE_LINE_RDI0)
++		return;
++	line = &vfe->line[port_id];
++	if (!line->video_out.frame_sync)
++		return;
++	output = &line->output;
++
++	spin_lock_irqsave(&vfe->output_lock, flags);
++	if (output->state != VFE_OUTPUT_ON || !output->frame_timeline_initialized)
++		goto unlock;
++	sequence = output->frame_sequence;
++	if (start) {
++		if (ticks && ticks <= output->last_sof_ticks)
++			goto unlock;
++		if (!ticks || !mono_ns || previous_ticks != output->last_sof_ticks)
++			output->frame_timeline_error = true;
++		output->last_sof_ticks = ticks;
++		sequence = output->frame_sequence++;
++		for (i = 0; i < CAMSS_INIT_BUF_COUNT; i++) {
++			struct camss_buffer *entry = output->buf[i];
++
++			if (entry && entry->frame_started && !entry->frame_complete)
++				output->frame_timeline_error = true;
++			if (entry && !entry->frame_started && !buffer)
++				buffer = entry;
++		}
++		if (buffer) {
++			buffer->sof_ticks = ticks;
++			buffer->vb.vb2_buf.timestamp = 0;
++			buffer->frame_sequence = sequence;
++			buffer->frame_started = true;
++		}
++		emit = !output->frame_timeline_error;
++	} else {
++		if (ticks && ticks <= output->last_eof_ticks)
++			goto unlock;
++		if (!ticks || !mono_ns || previous_ticks != output->last_eof_ticks)
++			output->frame_timeline_error = true;
++		output->last_eof_ticks = ticks;
++		for (i = 0; i < CAMSS_INIT_BUF_COUNT; i++) {
++			struct camss_buffer *entry = output->buf[i];
++
++			if (entry && entry->frame_started && !entry->frame_complete) {
++				buffer = entry;
++				break;
++			}
++		}
++		if (buffer) {
++			sequence = buffer->frame_sequence;
++			if (ticks <= buffer->sof_ticks)
++				output->frame_timeline_error = true;
++			buffer->eof_ticks = ticks;
++			buffer->vb.vb2_buf.timestamp = mono_ns;
++			buffer->frame_complete = true;
++		}
++	}
++	trace_camss_frame(vfe->id, port_id, sequence, start ? 0 : 1,
++			  ticks, previous_ticks, arch_ticks,
++			  arch_after, irq_ns,
++			  buffer ? (int)buffer->vb.vb2_buf.index : -1,
++			  buffer && !output->frame_timeline_error);
++unlock:
++	spin_unlock_irqrestore(&vfe->output_lock, flags);
++	if (emit) {
++		event.u.frame_sync.frame_sequence = sequence;
++		/* FRAME_SYNC is the physical CSI SOF, not exposure SOE. */
++		v4l2_event_queue_timestamp(&line->video_out.vdev, &event, mono_ns);
++	}
++}
++
+ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ {
+ 	struct vfe_line *line = &vfe->line[vfe->wm_output_map[wm]];
+@@ -486,6 +617,7 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ 	unsigned long flags;
+ 	u32 index;
+ 	u64 ts = ktime_get_ns();
++	bool frame_valid = true;
+ 
+ 	spin_lock_irqsave(&vfe->output_lock, flags);
+ 
+@@ -503,8 +635,26 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ 		goto out_unlock;
+ 	}
+ 
+-	ready_buf->vb.vb2_buf.timestamp = ts;
++	if (!line->video_out.frame_sync)
++		ready_buf->vb.vb2_buf.timestamp = ts;
+ 	ready_buf->vb.sequence = output->sequence++;
++	if (line->video_out.frame_sync) {
++		frame_valid = ready_buf->frame_started && ready_buf->frame_complete &&
++			      ready_buf->vb.vb2_buf.timestamp && !output->frame_timeline_error;
++		if (!frame_valid) {
++			output->frame_timeline_error = true;
++			ready_buf->vb.vb2_buf.timestamp = 0;
++		}
++		if (ready_buf->frame_started)
++			ready_buf->vb.sequence = ready_buf->frame_sequence;
++		/* EOF was cross-stamped when its marker reached this FIFO entry.
++		 * Keep the physical EOF through the later DMA-completion IRQ.
++		 * The queue retains the standard TSTAMP_SRC_EOF convention.
++		 */
++		trace_camss_frame(vfe->id, line->id, ready_buf->vb.sequence, 2,
++				  ready_buf->eof_ticks, ready_buf->sof_ticks,
++				  0, 0, ts, ready_buf->vb.vb2_buf.index, frame_valid);
++	}
+ 
+ 	index = 0;
+ 	output->buf[0] = output->buf[1];
+@@ -524,7 +674,8 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ 
+ 	spin_unlock_irqrestore(&vfe->output_lock, flags);
+ 
+-	vb2_buffer_done(&ready_buf->vb.vb2_buf, VB2_BUF_STATE_DONE);
++	vb2_buffer_done(&ready_buf->vb.vb2_buf,
++			frame_valid ? VB2_BUF_STATE_DONE : VB2_BUF_STATE_ERROR);
+ 
+ 	return;
+ 
+@@ -571,6 +722,11 @@ int vfe_enable_output_v2(struct vfe_line *line)
+ 	output->state = VFE_OUTPUT_ON;
+ 
+ 	output->sequence = 0;
++	output->frame_sequence = 0;
++	output->last_sof_ticks = 0;
++	output->last_eof_ticks = 0;
++	output->frame_timeline_error = false;
++	output->frame_timeline_initialized = false;
+ 	output->wait_reg_update = 0;
+ 	reinit_completion(&output->reg_update);
+ 
+@@ -852,6 +1008,8 @@ static int vfe_disable_output(struct vfe_line *line)
+ 	for (i = 0; i < output->wm_num; i++)
+ 		vfe->res->hw_ops->vfe_wm_stop(vfe, output->wm_idx[i]);
+ 	output->gen2.active_num = 0;
++	output->frame_timeline_error = true;
++	output->frame_timeline_initialized = false;
+ 	spin_unlock_irqrestore(&vfe->output_lock, flags);
+ 
+ 	return vfe_reset(vfe);
+@@ -1242,6 +1400,9 @@ int vfe_flush_buffers(struct camss_video *vid,
+ 		vb2_buffer_done(&output->last_buffer->vb.vb2_buf, state);
+ 		output->last_buffer = NULL;
+ 	}
++	output->last_sof_ticks = 0;
++	output->last_eof_ticks = 0;
++	output->frame_timeline_error = true;
+ 
+ 	spin_unlock_irqrestore(&vfe->output_lock, flags);
+ 
+@@ -2270,6 +2431,10 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
+ 		}
+ 
+ 		video_out->ops = &vfe->video_ops;
++		video_out->frame_sync = IS_ENABLED(CONFIG_ARM64) &&
++					vfe->camss->res->version == CAMSS_8750 &&
++					!vfe->res->is_lite &&
++					(i == VFE_LINE_PIX || i == VFE_LINE_RDI0);
+ 		if (i == VFE_LINE_PIX) {
+ 			video_out->bpl_alignment = vfe_bpl_align_pix(vfe);
+ 			video_out->line_based = 1;
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
+index f0f5c76ceb4..bcbe5426772 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.h
++++ b/drivers/media/platform/qcom/camss/camss-vfe.h
+@@ -78,6 +78,12 @@ struct vfe_output {
+ 	};
+ 	enum vfe_output_state state;
+ 	unsigned int sequence;
++	/* Protected by output_lock, like the two-entry DMA buffer FIFO. */
++	u64 last_sof_ticks;
++	u64 last_eof_ticks;
++	u32 frame_sequence;
++	bool frame_timeline_error;
++	bool frame_timeline_initialized;
+ 
+ 	int wait_reg_update;
+ 	struct completion sof;
+@@ -311,6 +317,15 @@ int vfe_enable_v2(struct vfe_line *line);
+  */
+ void vfe_buf_done(struct vfe_device *vfe, int wm);
+ 
++void vfe_frame_sync(struct vfe_device *vfe, int port_id, bool start,
++		    u64 ticks, u64 previous_ticks, u64 arch_ticks,
++		      u64 arch_after, u64 irq_ns, u64 mono_ns);
++
++void vfe_frame_reset(struct vfe_device *vfe, int port_id,
++		     u64 sof_ticks, u64 eof_ticks);
++
++void vfe_frame_error(struct vfe_device *vfe, int port_id, u32 status, u64 irq_ns);
++
+ /*
+  * vfe_get_output_v2 - Get vfe output line
+  * line: VFE line
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index bbd773eeefe..1c09d0f9d11 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -11,6 +11,7 @@
+ #include <media/media-entity.h>
+ #include <media/v4l2-dev.h>
+ #include <media/v4l2-device.h>
++#include <media/v4l2-event.h>
+ #include <media/v4l2-ioctl.h>
+ #include <media/v4l2-mc.h>
+ #include <media/videobuf2-dma-sg.h>
+@@ -184,6 +185,7 @@ static int video_buf_init(struct vb2_buffer *vb)
+ static int video_buf_prepare(struct vb2_buffer *vb)
+ {
+ 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
++	struct camss_buffer *buffer = container_of(vbuf, struct camss_buffer, vb);
+ 	struct camss_video *video = vb2_get_drv_priv(vb->vb2_queue);
+ 	const struct v4l2_pix_format_mplane *format =
+ 						&video->active_fmt.fmt.pix_mp;
+@@ -197,6 +199,10 @@ static int video_buf_prepare(struct vb2_buffer *vb)
+ 	}
+ 
+ 	vbuf->field = V4L2_FIELD_NONE;
++	buffer->sof_ticks = 0;
++	buffer->eof_ticks = 0;
++	buffer->frame_started = false;
++	buffer->frame_complete = false;
+ 
+ 	return 0;
+ }
+@@ -606,6 +612,17 @@ static int video_s_input(struct file *file, void *fh, unsigned int input)
+ 	return input == 0 ? 0 : -EINVAL;
+ }
+ 
++static int video_subscribe_event(struct v4l2_fh *fh,
++				const struct v4l2_event_subscription *sub)
++{
++	struct camss_video *video = video_get_drvdata(fh->vdev);
++
++	if (!video->frame_sync || sub->type != V4L2_EVENT_FRAME_SYNC || sub->id)
++		return -EINVAL;
++
++	return v4l2_event_subscribe(fh, sub, 16, NULL);
++}
++
+ static const struct v4l2_ioctl_ops msm_vid_ioctl_ops = {
+ 	.vidioc_querycap		= video_querycap,
+ 	.vidioc_enum_fmt_vid_cap	= video_enum_fmt,
+@@ -625,6 +642,8 @@ static const struct v4l2_ioctl_ops msm_vid_ioctl_ops = {
+ 	.vidioc_enum_input		= video_enum_input,
+ 	.vidioc_g_input			= video_g_input,
+ 	.vidioc_s_input			= video_s_input,
++	.vidioc_subscribe_event		= video_subscribe_event,
++	.vidioc_unsubscribe_event	= v4l2_event_unsubscribe,
+ };
+ 
+ /* -----------------------------------------------------------------------------
+diff --git a/drivers/media/platform/qcom/camss/camss-video.h b/drivers/media/platform/qcom/camss/camss-video.h
+index d3e56e240a8..69906409f46 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.h
++++ b/drivers/media/platform/qcom/camss/camss-video.h
+@@ -23,6 +23,12 @@ struct camss_buffer {
+ 	struct vb2_v4l2_buffer vb;
+ 	dma_addr_t addr[3];
+ 	struct list_head queue;
++	/* CSID IPP frame markers for the buffer currently in the WM FIFO. */
++	u64 sof_ticks;
++	u64 eof_ticks;
++	u32 frame_sequence;
++	bool frame_started;
++	bool frame_complete;
+ };
+ 
+ struct camss_video;
+@@ -46,6 +52,7 @@ struct camss_video {
+ 	struct mutex q_lock;
+ 	unsigned int bpl_alignment;
+ 	unsigned int line_based;
++	bool frame_sync;
+ 	const struct camss_format_info *formats;
+ 	unsigned int nformats;
+ };
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index c5ec15baee0..20879c20cf8 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -5749,6 +5749,29 @@ void camss_buf_done(struct camss *camss, int hw_id, int port_id)
+ 	}
+ }
+ 
++void camss_frame_error(struct camss *camss, int hw_id, int port_id,
++		      u32 status, u64 irq_ns)
++{
++	if (hw_id < camss->res->vfe_num)
++		vfe_frame_error(&camss->vfe[hw_id], port_id, status, irq_ns);
++}
++
++void camss_frame_reset(struct camss *camss, int hw_id, int port_id,
++		      u64 sof_ticks, u64 eof_ticks)
++{
++	if (hw_id < camss->res->vfe_num)
++		vfe_frame_reset(&camss->vfe[hw_id], port_id, sof_ticks, eof_ticks);
++}
++
++void camss_frame_sync(struct camss *camss, int hw_id, int port_id, bool start,
++		      u64 ticks, u64 previous_ticks, u64 arch_ticks,
++		      u64 arch_after, u64 irq_ns, u64 mono_ns)
++{
++	if (hw_id < camss->res->vfe_num)
++		vfe_frame_sync(&camss->vfe[hw_id], port_id, start, ticks,
++			       previous_ticks, arch_ticks, arch_after, irq_ns, mono_ns);
++}
++
+ /*
+  * camss_register_entities - Register subdev nodes and create links
+  * @camss: CAMSS device
+diff --git a/drivers/media/platform/qcom/camss/camss.h b/drivers/media/platform/qcom/camss/camss.h
+index 314bd794033..175bb918d5f 100644
+--- a/drivers/media/platform/qcom/camss/camss.h
++++ b/drivers/media/platform/qcom/camss/camss.h
+@@ -179,6 +179,16 @@ int camss_vfe_get(struct camss *camss, int id);
+ void camss_vfe_put(struct camss *camss, int id);
+ void camss_delete(struct camss *camss);
+ void camss_buf_done(struct camss *camss, int hw_id, int port_id);
++
++void camss_frame_sync(struct camss *camss, int hw_id, int port_id, bool start,
++		      u64 ticks, u64 previous_ticks, u64 arch_ticks,
++		      u64 arch_after, u64 irq_ns, u64 mono_ns);
++
++void camss_frame_reset(struct camss *camss, int hw_id, int port_id,
++		      u64 sof_ticks, u64 eof_ticks);
++
++void camss_frame_error(struct camss *camss, int hw_id, int port_id,
++		      u32 status, u64 irq_ns);
+ void camss_reg_update(struct camss *camss, int hw_id,
+ 		      int port_id, bool is_clear);
+ 
+diff --git a/drivers/media/v4l2-core/v4l2-event.c b/drivers/media/v4l2-core/v4l2-event.c
+index 9dd2aaa95a6..5aa78c12887 100644
+--- a/drivers/media/v4l2-core/v4l2-event.c
++++ b/drivers/media/v4l2-core/v4l2-event.c
+@@ -150,24 +150,28 @@ static void __v4l2_event_queue_fh(struct v4l2_fh *fh,
+ 	wake_up_all(&fh->wait);
+ }
+ 
+-void v4l2_event_queue(struct video_device *vdev, const struct v4l2_event *ev)
++void v4l2_event_queue_timestamp(struct video_device *vdev, const struct v4l2_event *ev,
++				u64 monotonic_ns)
+ {
+ 	struct v4l2_fh *fh;
+ 	unsigned long flags;
+-	u64 ts;
+ 
+ 	if (vdev == NULL)
+ 		return;
+ 
+-	ts = ktime_get_ns();
+-
+ 	spin_lock_irqsave(&vdev->fh_lock, flags);
+ 
+ 	list_for_each_entry(fh, &vdev->fh_list, list)
+-		__v4l2_event_queue_fh(fh, ev, ts);
++		__v4l2_event_queue_fh(fh, ev, monotonic_ns);
+ 
+ 	spin_unlock_irqrestore(&vdev->fh_lock, flags);
+ }
++EXPORT_SYMBOL_GPL(v4l2_event_queue_timestamp);
++
++void v4l2_event_queue(struct video_device *vdev, const struct v4l2_event *ev)
++{
++	v4l2_event_queue_timestamp(vdev, ev, ktime_get_ns());
++}
+ EXPORT_SYMBOL_GPL(v4l2_event_queue);
+ 
+ void v4l2_event_queue_fh(struct v4l2_fh *fh, const struct v4l2_event *ev)
+diff --git a/include/media/v4l2-event.h b/include/media/v4l2-event.h
+index 3a0e2588361..c178b16a23a 100644
+--- a/include/media/v4l2-event.h
++++ b/include/media/v4l2-event.h
+@@ -105,6 +105,21 @@ int v4l2_event_dequeue(struct v4l2_fh *fh, struct v4l2_event *event,
+  */
+ void v4l2_event_queue(struct video_device *vdev, const struct v4l2_event *ev);
+ 
++/**
++ * v4l2_event_queue_timestamp - Queue an event with its hardware occurrence time.
++ *
++ * @vdev: pointer to &struct video_device
++ * @ev: pointer to &struct v4l2_event
++ * @monotonic_ns: occurrence time in CLOCK_MONOTONIC nanoseconds
++ *
++ * Queue the event for all subscribed file handles, preserving the supplied
++ * occurrence time instead of using the queueing time. Drivers must convert
++ * hardware timestamps to CLOCK_MONOTONIC before calling this helper.
++ * All other event fields follow v4l2_event_queue().
++ */
++void v4l2_event_queue_timestamp(struct video_device *vdev, const struct v4l2_event *ev,
++				u64 monotonic_ns);
++
+ /**
+  * v4l2_event_queue_fh - Queue events to video device.
+  *
+-- 
+2.56.0
+

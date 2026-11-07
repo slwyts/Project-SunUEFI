@@ -3,17 +3,12 @@
 /plugin/;
 
 /*
- * IR transmitter on the factory SE15 / QUP2 SE7 / CS0 path, GPIO28-31.
+ * Standard LIRC transmitter on the factory SE15 / QUP2 SE7 / CS0 IR path.
  * Source: selected Android final DT and current sm8750.dtsi spi15.
- * Cell values below use the mainline SM8750 GCC/interconnect/GPI bindings.
  * The base already provides the standard QUP2 wrapper, GPI2 and Linux-owned
  * IOMMU routes. Do not replace those shared providers or their channel mask.
- *
- * The transmitter uses the upstream ir-spi-led driver (rc-core/LIRC). The
- * stock board has no software-controlled IR supply and the stock HAL never
- * touches one, so the driver's optional irda_regulator resolves to the
- * kernel's dummy regulator. Spaces are low, as in the stock encoder; the
- * stock 40% duty is available at runtime through LIRC_SET_SEND_DUTY_CYCLE.
+ * GPIO29 is the active-high emitter input. Keep it low while the controller
+ * is idle or suspended; only the GENI controller changes these pin states.
  */
 / {
 	fragment@0 {
@@ -27,10 +22,18 @@
 			};
 
 			piano_ir_spi15_sleep: ir-spi15-sleep-state {
-				pins = "gpio28", "gpio29", "gpio30", "gpio31";
+				pins = "gpio28", "gpio30", "gpio31";
 				function = "gpio";
 				drive-strength = <2>;
 				bias-disable;
+			};
+
+			piano_ir_spi15_mosi_idle: ir-spi15-mosi-idle-state {
+				pins = "gpio29";
+				function = "gpio";
+				drive-strength = <2>;
+				bias-disable;
+				output-low;
 			};
 		};
 	};
@@ -40,17 +43,23 @@
 		__overlay__ {
 			compatible = "qcom,geni-spi";
 			/* Keep the factory physical range and GIC SPI462 unchanged. */
-			clocks = <&gcc 123>; /* GCC_QUPV3_WRAP2_S7_CLK */
+			/* GCC_QUPV3_WRAP2_S7_CLK=123; standard SM8750 binding IDs. */
+			clocks = <&gcc 123>;
 			clock-names = "se";
+			/* QUP_CORE_2 2->5, APPSS_PROC 2->QUP_2 20,
+			 * QUP_2 1->EBI1 1; QCOM_ICC_TAG_ALWAYS=7.
+			 */
 			interconnects = <&clk_virt 2 7 &clk_virt 5 7>,
 					<&gem_noc 2 7 &config_noc 20 7>,
 					<&aggre2_noc 1 7 &mc_virt 1 7>;
 			interconnect-names = "qup-core", "qup-config", "qup-memory";
-			dmas = <&gpi_dma2 0 7 1>, <&gpi_dma2 1 7 1>; /* QCOM_GPI_SPI */
+			/* QCOM_GPI_SPI=1; TX/RX on QUP2 serial engine 7. */
+			dmas = <&gpi_dma2 0 7 1>, <&gpi_dma2 1 7 1>;
 			dma-names = "tx", "rx";
-			pinctrl-names = "default", "sleep";
+			pinctrl-names = "default", "idle", "sleep";
 			pinctrl-0 = <&piano_ir_spi15_default>;
-			pinctrl-1 = <&piano_ir_spi15_sleep>;
+			pinctrl-1 = <&piano_ir_spi15_sleep &piano_ir_spi15_mosi_idle>;
+			pinctrl-2 = <&piano_ir_spi15_sleep &piano_ir_spi15_mosi_idle>;
 			status = "okay";
 		};
 	};
@@ -58,8 +67,7 @@
 	fragment@2 {
 		target-path = "/soc/qcom,qupv3_2_geni_se@8c0000/spi@89c000/ir-spi@0";
 		__overlay__ {
-			/* reg 0 and the factory 19.2 MHz spi-max-frequency stay. */
-			compatible = "ir-spi-led";
+			compatible = "xiaomi,piano-ir-spi";
 			status = "okay";
 		};
 	};

@@ -1,0 +1,35 @@
+From 38a49872335f5d9c785065431078b208a8739028 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sat, 7 Nov 2026 07:32:36 +0800
+Subject: [PATCH] fix(camera): update JN1 read-only horizontal blanking
+ metadata
+
+Register HBLANK without hardware control operations. Its fixed value
+comes from the selected sensor mode and has no writable register path.
+
+While runtime PM keeps the sensor active, changing the range used to
+call s5kjn1_set_ctrl and hit its unsupported-control error. V4L2 had
+already changed the range but retained the previous current value,
+causing frame-rate calculations to use the old line length. The NULL
+operations let V4L2 commit this mode metadata independently of power
+state while preserving the control's read-only userspace flag.
+---
+ drivers/media/i2c/s5kjn1.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/media/i2c/s5kjn1.c b/drivers/media/i2c/s5kjn1.c
+index d77aed92c78..a4255fbd933 100644
+--- a/drivers/media/i2c/s5kjn1.c
++++ b/drivers/media/i2c/s5kjn1.c
+@@ -842,7 +842,7 @@ static int s5kjn1_init_controls(struct s5kjn1 *s5kjn1)
+ 					       0, pixel_rate, 1, pixel_rate);
+ 
+ 	hblank = mode->hts - mode->width;
+-	s5kjn1->hblank = v4l2_ctrl_new_std(ctrl_hdlr, &s5kjn1_ctrl_ops,
++	s5kjn1->hblank = v4l2_ctrl_new_std(ctrl_hdlr, NULL,
+ 					   V4L2_CID_HBLANK, hblank,
+ 					   hblank, 1, hblank);
+ 	if (s5kjn1->hblank)
+-- 
+2.56.0
+

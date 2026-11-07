@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/soc/clock-controller@100000";
+		__overlay__ {
+			/*
+			 * SM8750 GCC reads its PCIe PIPE parent from clocks[3].
+			 * Connect the PHY's standard clock provider; preserve
+			 * the folded board's other seven input slots.
+			 */
+			clocks = <&bi_tcxo_div2>,
+				 <0>,
+				 <&sleep_clk>,
+				 <&pcie0_phy_ml>,
+				 <0>,
+				 <0>,
+				 <0>,
+				 <0>;
+		};
+	};
+};

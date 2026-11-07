@@ -1,0 +1,39 @@
+From 22ba6824a204ca62b4a26a0faccf966a8a3fc055 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sat, 7 Nov 2026 00:40:00 +0800
+Subject: [PATCH] media: camss: size combined image planes from the accepted
+ height
+
+The 8160x6120 NV12 mode needs 9180 luma-stride rows in its single
+allocation. Limiting that allocation to twice the old 4096-row PIX
+enumeration height truncates the buffer, even though the accepted image
+height and separate Y/C write-master heights are valid.
+
+Use twice the existing 8191-row image bound for combined semi-planar
+storage. Keep image dimensions unchanged. TFE980 FD uses separate WM7/8
+for Y/C; the official piano driver declares 9312x16384 for that output.
+---
+ drivers/media/platform/qcom/camss/camss-video.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index 7ebbed354f4..bbd773eeefe 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -23,8 +23,11 @@
+ #define CAMSS_FRAME_MIN_HEIGHT		1
+ #define CAMSS_FRAME_MAX_HEIGHT_RDI	8191
+ #define CAMSS_FRAME_MAX_HEIGHT_PIX	4096
+-/* luma plus chroma lines of a 4:2:2 semi-planar frame */
+-#define CAMSS_FRAME_MAX_LINES_PIX	(2 * CAMSS_FRAME_MAX_HEIGHT_PIX)
++/* A single memory plane can hold full-height luma and chroma.
++ * Bound the combined allocation by the accepted image height, not the
++ * older PIX enumeration limit: each hardware write master has its own height.
++ */
++#define CAMSS_FRAME_MAX_LINES_PIX	(2 * CAMSS_FRAME_MAX_HEIGHT_RDI)
+ 
+ /* -----------------------------------------------------------------------------
+  * Helper functions
+-- 
+2.56.0
+

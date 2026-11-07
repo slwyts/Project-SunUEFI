@@ -1,0 +1,70 @@
+From b28bbbf75eba03aba9fb4e5510753ce67aa7aa12 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Fri, 6 Nov 2026 06:45:20 +0800
+Subject: [PATCH] dt-bindings: leds: ir-spi: describe the Piano transmitter
+
+Describe the fixed-clock Piano SPI infrared transmitter, which uses mode 0
+and native MSB-first 32-bit words without a software-controlled supply.
+Its encoder defaults to 40 percent duty and accepts standard LIRC carrier
+and duty requests.
+---
+ .../bindings/leds/irled/ir-spi-led.yaml       | 30 +++++++++++++++----
+ 1 file changed, 25 insertions(+), 5 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/leds/irled/ir-spi-led.yaml b/Documentation/devicetree/bindings/leds/irled/ir-spi-led.yaml
+index 0297bfbb275..f83494ca256 100644
+--- a/Documentation/devicetree/bindings/leds/irled/ir-spi-led.yaml
++++ b/Documentation/devicetree/bindings/leds/irled/ir-spi-led.yaml
+@@ -13,12 +13,11 @@ description:
+   IR LED switch is connected to the MOSI line of the SPI device and the data
+   is delivered through that.
+ 
+-allOf:
+-  - $ref: /schemas/spi/spi-peripheral-props.yaml#
+-
+ properties:
+   compatible:
+-    const: ir-spi-led
++    enum:
++      - ir-spi-led
++      - xiaomi,piano-ir-spi
+ 
+   reg:
+     maxItems: 1
+@@ -42,6 +41,28 @@ required:
+ 
+ unevaluatedProperties: false
+ 
++allOf:
++  - $ref: /schemas/spi/spi-peripheral-props.yaml#
++  - if:
++      properties:
++        compatible:
++          const: xiaomi,piano-ir-spi
++    then:
++      description: |
++        Piano uses SPI mode 0, a fixed 1.92 MHz sample clock and native
++        MSB-first 32-bit words, with low-level spaces and 40 percent duty
++        by default. The
++        factory device has no described software-controlled IR supply.
++        Runtime carrier and duty requests use the normal LIRC interface.
++      properties:
++        duty-cycle: false
++        led-active-low: false
++        power-supply: false
++        spi-cpol: false
++        spi-cpha: false
++        spi-cs-high: false
++        spi-lsb-first: false
++
+ examples:
+   - |
+     spi {
+@@ -58,4 +79,3 @@ examples:
+             spi-max-frequency = <5000000>;
+         };
+     };
+-
+-- 
+2.56.0
+

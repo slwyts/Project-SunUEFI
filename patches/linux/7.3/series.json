@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "221976dba31bea0ab7be5cee3cc5caa5628e2656",
-  "original_target_commit": "e342dba15282933ef9c5efd9a85f01d13ad024f0",
+  "target_tree": "b9bf0e5a1ce1a7ab8448197912bd8d9f7dce9e8f",
+  "original_target_commit": "3f3f891dcfc4262996f62591617fe68bb985c320",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -313,28 +313,108 @@
       "tree": "fb5188400ffbc68d3077c335b2949624293e5cdf"
     },
     {
-      "file": "0039-pcie-power-before-phy.patch",
-      "sha256": "1cdb5e87d1f1fb4457fe404bc26babe64193491469e96d72f734368dcbd1374f",
-      "original_commit": "912b80ad574e53ebcad7bfe3d18f86edc59fc5a2",
+      "file": "0039-pcie-phy-reset-sequence.patch",
+      "sha256": "c7b4fc4d317cf89f9ec05b5c6e2fa5b9ec6703346989a45ceeff34d270dbba82",
+      "original_commit": "8729f36c837554f6c3d945bb5194c1d10868c640",
       "original_parent": "8e2cebb69ec3b78c73a72fda4630ee51437a70c6",
-      "committer_date": "2026-11-08T01:57:31+08:00",
-      "tree": "1ea302d3917a73f351469f70afbc27f79617bbd7"
+      "tree": "ea75460d10bce692af9c77d8a6479ee73f1da2ad",
+      "committer_date": "2026-11-08T02:32:50+08:00"
     },
     {
-      "file": "0040-qmp-pcie-teardown-reset.patch",
-      "sha256": "d01290e2cf35b75badb067c35f77de86c1f6225b778e864a9e93857ec15c4407",
-      "original_commit": "7c7ed30f6b9410e96b9865de5decd6215729aad7",
-      "original_parent": "912b80ad574e53ebcad7bfe3d18f86edc59fc5a2",
-      "committer_date": "2026-11-08T01:57:32+08:00",
-      "tree": "5a380e5cd822b131296bded3a825167a61fb00e2"
+      "file": "0040-pmic-glink-freezable-work.patch",
+      "sha256": "55b67efdfcb8d8679b3809fc3da44b812baa661de9496b481f3fdf0b48154143",
+      "original_commit": "b69346db8b755fb0659ef37571acbf7b11ceff31",
+      "original_parent": "8729f36c837554f6c3d945bb5194c1d10868c640",
+      "tree": "afda4434402d45ae96dce5dedfb632e1fc6d1a65",
+      "committer_date": "2026-11-08T02:32:50+08:00"
     },
     {
-      "file": "0041-pmic-glink-freezable-work.patch",
-      "sha256": "ab2e7586514f3fa73dac376dc877ff797951972303725b612ff5b8e8a0d09999",
-      "original_commit": "e342dba15282933ef9c5efd9a85f01d13ad024f0",
-      "original_parent": "7c7ed30f6b9410e96b9865de5decd6215729aad7",
-      "committer_date": "2026-11-08T01:57:32+08:00",
-      "tree": "221976dba31bea0ab7be5cee3cc5caa5628e2656"
+      "file": "0041-ir-spi-binding.patch",
+      "sha256": "eb5bff757c7280794126898be9a114cafa6c87a858bad8f2c7dac55936546279",
+      "original_commit": "b28bbbf75eba03aba9fb4e5510753ce67aa7aa12",
+      "original_parent": "b69346db8b755fb0659ef37571acbf7b11ceff31",
+      "tree": "e2d264517f5cd995be31a2c84fe0603672b606e1",
+      "committer_date": "2026-11-08T02:39:10+08:00"
+    },
+    {
+      "file": "0042-ir-spi-transmitter.patch",
+      "sha256": "f45ec9383fa9d2b0a7fe70d4c30d44b4d2bdfe604fdbcadf9d6864824dd2a89c",
+      "original_commit": "a8d7d1acf871332420559aa8d0ee01ce38ad3458",
+      "original_parent": "b28bbbf75eba03aba9fb4e5510753ce67aa7aa12",
+      "tree": "d2e1e313249426d2148c02a7ffeecfaa1eba963f",
+      "committer_date": "2026-11-08T02:39:10+08:00"
+    },
+    {
+      "file": "0043-spi-geni-dma-idle.patch",
+      "sha256": "7f35d953abf9470979e1e1394f2a0f4f03960e77418e84369c08406c29dde3e6",
+      "original_commit": "d59d22ed68f54887a2e99b72653e83955eb68ee0",
+      "original_parent": "a8d7d1acf871332420559aa8d0ee01ce38ad3458",
+      "tree": "85f8318d06ac37ca04aaa5e6a352769976021ac3",
+      "committer_date": "2026-11-08T02:39:10+08:00"
+    },
+    {
+      "file": "0044-s5kjn1-crop-height.patch",
+      "sha256": "6a1c9d50483cbc1ca890d65b01c2a0b73de97014d0092939fc0a14773c4c198d",
+      "original_commit": "6e550da618aa0491a034cc4d88d00f2443733856",
+      "original_parent": "d59d22ed68f54887a2e99b72653e83955eb68ee0",
+      "tree": "ace9b61be0781732a2dc00eb0f7e239459c6d9f5",
+      "committer_date": "2026-11-08T02:39:11+08:00"
+    },
+    {
+      "file": "0045-s5kjn1-factory-modes.patch",
+      "sha256": "8ab62752819181b8aefd381a4e825d44c358069fd3c44d60cd6235d35c844476",
+      "original_commit": "e486633ae39877f402aba5521cebd5b6f97ab249",
+      "original_parent": "6e550da618aa0491a034cc4d88d00f2443733856",
+      "tree": "8e676ca1e9db737c027efd764945bdc2c8b3477b",
+      "committer_date": "2026-11-08T02:39:11+08:00"
+    },
+    {
+      "file": "0046-ov32d40-mode-timing.patch",
+      "sha256": "2671212a0764c6061039b547471f281aee70fb9c0fd6d7d6f76d1b38e4193f46",
+      "original_commit": "87be85142db7745c7c0796694664d5beb7cc4eb0",
+      "original_parent": "e486633ae39877f402aba5521cebd5b6f97ab249",
+      "tree": "27017d3c6a3041ad2e8868960c6e68621bddc9a8",
+      "committer_date": "2026-11-08T02:39:11+08:00"
+    },
+    {
+      "file": "0047-camss-full-height-nv12.patch",
+      "sha256": "41e367ab4b01ab4e91603f39330a86710ad79cd483c625ef5ddf8e6e7bcfde7b",
+      "original_commit": "22ba6824a204ca62b4a26a0faccf966a8a3fc055",
+      "original_parent": "87be85142db7745c7c0796694664d5beb7cc4eb0",
+      "tree": "3a0f5e97f0ba987db6c6ea3b7912fef4e24eb70d",
+      "committer_date": "2026-11-08T02:39:11+08:00"
+    },
+    {
+      "file": "0048-camss-frame-timestamps.patch",
+      "sha256": "6e75affc2915858895bbb5ac73c947f8edfd765e80a962e4d97a6238f3004307",
+      "original_commit": "cd13886a3b5e3145115a1f24793dc6a330e57430",
+      "original_parent": "22ba6824a204ca62b4a26a0faccf966a8a3fc055",
+      "tree": "6928f160cd3ba5616812aab46a980df7bcb2f7c2",
+      "committer_date": "2026-11-08T02:39:12+08:00"
+    },
+    {
+      "file": "0049-camss-tfe-bus-errors.patch",
+      "sha256": "593af9e64bb7c3e1d55a0bad68205469d3bf7ddc8e022815395984524308f2f7",
+      "original_commit": "a858076ac1acdd26fb8b1e9d185dd963a4277aa7",
+      "original_parent": "cd13886a3b5e3145115a1f24793dc6a330e57430",
+      "tree": "8ccb21447031e0e6d002aa64b0d7c386a5efc096",
+      "committer_date": "2026-11-08T02:39:13+08:00"
+    },
+    {
+      "file": "0050-s5kjn1-readonly-hblank.patch",
+      "sha256": "14a1da394df8524cba045bdff72a9492d8d1b0ef95f903d1405db9b5d0e83c86",
+      "original_commit": "38a49872335f5d9c785065431078b208a8739028",
+      "original_parent": "a858076ac1acdd26fb8b1e9d185dd963a4277aa7",
+      "tree": "838e58989213716613f967dedde2402b366ca002",
+      "committer_date": "2026-11-08T02:39:14+08:00"
+    },
+    {
+      "file": "0051-camss-pix-alignment.patch",
+      "sha256": "02401fb002b043dd1debd573332e220e5335474bc1f61cb9231ec0b824f72c1d",
+      "original_commit": "3f3f891dcfc4262996f62591617fe68bb985c320",
+      "original_parent": "38a49872335f5d9c785065431078b208a8739028",
+      "tree": "b9bf0e5a1ce1a7ab8448197912bd8d9f7dce9e8f",
+      "committer_date": "2026-11-08T02:39:15+08:00"
     }
   ]
 }

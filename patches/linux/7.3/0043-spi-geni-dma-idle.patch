@@ -1,0 +1,170 @@
+From d59d22ed68f54887a2e99b72653e83955eb68ee0 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Fri, 6 Nov 2026 17:55:13 +0800
+Subject: [PATCH] spi: geni-qcom: retain failed DMA transfers and support idle
+ pins
+
+Do not let SPI core unmap a timed-out message until both GPI channels
+acknowledge termination. Preserve the transfer and its runtime-PM
+reference while recovery is pending.
+
+If the hardware disables its FIFO interface, require GPI channels instead
+of falling back to an unavailable FIFO and the separate SE DMA path.
+
+Support an optional idle pinctrl state for MOSI-driven transmitters.
+Wait for the serial engine to become inactive before switching pins;
+restore the default mux before the next message.
+---
+ drivers/spi/spi-geni-qcom.c | 92 ++++++++++++++++++++++++++++++-------
+ 1 file changed, 76 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/spi/spi-geni-qcom.c b/drivers/spi/spi-geni-qcom.c
+index 6c57f8309a3..40ff8414c9c 100644
+--- a/drivers/spi/spi-geni-qcom.c
++++ b/drivers/spi/spi-geni-qcom.c
+@@ -7,14 +7,17 @@
+ #include <trace/events/qcom_geni_spi.h>
+ 
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/dmaengine.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/dma/qcom-gpi-dma.h>
+ #include <linux/interrupt.h>
+ #include <linux/io.h>
++#include <linux/iopoll.h>
+ #include <linux/log2.h>
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
++#include <linux/pinctrl/consumer.h>
+ #include <linux/pm_opp.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/property.h>
+@@ -111,6 +114,7 @@ struct spi_geni_master {
+ 	int irq;
+ 	bool cs_flag;
+ 	bool abort_failed;
++	bool hardware_prepared;
+ 	struct dma_chan *tx;
+ 	struct dma_chan *rx;
+ 	int cur_xfer_mode;
+@@ -242,9 +246,67 @@ static void handle_se_timeout(struct spi_controller *spi)
+ static void handle_gpi_timeout(struct spi_controller *spi)
+ {
+ 	struct spi_geni_master *mas = spi_controller_get_devdata(spi);
++	int tx_ret, rx_ret;
+ 
+-	dmaengine_terminate_sync(mas->tx);
+-	dmaengine_terminate_sync(mas->rx);
++	/*
++	 * SPI core unmaps the message as soon as handle_err() returns. A failed
++	 * GPI STOP/RESET must not let it recycle buffers which DMA may still use.
++	 * Keep the message, mappings and runtime-PM reference until both channels
++	 * acknowledge termination. The GPI provider serializes the paired reset.
++	 */
++	do {
++		tx_ret = dmaengine_terminate_sync(mas->tx);
++		rx_ret = dmaengine_terminate_sync(mas->rx);
++		if (tx_ret || rx_ret) {
++			dev_err_ratelimited(mas->dev,
++					    "GPI termination failed (%d/%d); retaining transfer resources\n",
++					    tx_ret, rx_ret);
++			msleep(20);
++		}
++	} while (tx_ret || rx_ret);
++}
++
++static void spi_geni_wait_for_idle(struct spi_geni_master *mas)
++{
++	u32 status;
++
++	/* A DMA completion can precede the last word leaving the serial engine. */
++	while (readl_poll_timeout(mas->se.base + SE_GENI_STATUS, status,
++				  !(status & M_GENI_CMD_ACTIVE), 100, 100000)) {
++		dev_err_ratelimited(mas->dev,
++				    "Serial engine still active; retaining clocks and pin state\n");
++		geni_se_abort_m_cmd(&mas->se);
++	}
++}
++
++static int spi_geni_prepare_hardware(struct spi_controller *spi)
++{
++	struct spi_geni_master *mas = spi_controller_get_devdata(spi);
++	int ret;
++
++	ret = pinctrl_pm_select_default_state(mas->dev);
++	mas->hardware_prepared = !ret;
++	return ret;
++}
++
++static int spi_geni_unprepare_hardware(struct spi_controller *spi)
++{
++	struct spi_geni_master *mas = spi_controller_get_devdata(spi);
++	int ret;
++
++	/* SPI core also unprepares after a failed runtime resume or preparation. */
++	if (!mas->hardware_prepared)
++		return 0;
++
++	/*
++	 * Only the controller owns its pins. An optional idle state lets a MOSI
++	 * transmitter drive an inactive level between messages, before the normal
++	 * runtime-PM autosuspend delay has elapsed. Boards without it are unchanged.
++	 */
++	spi_geni_wait_for_idle(mas);
++	ret = pinctrl_pm_select_idle_state(mas->dev);
++	mas->hardware_prepared = false;
++	return ret;
+ }
+ 
+ static void spi_geni_handle_err(struct spi_controller *spi, struct spi_message *msg)
+@@ -258,6 +320,7 @@ static void spi_geni_handle_err(struct spi_controller *spi, struct spi_message *
+ 		break;
+ 	case GENI_GPI_DMA:
+ 		handle_gpi_timeout(spi);
++		spi_geni_wait_for_idle(mas);
+ 		break;
+ 	default:
+ 		dev_err(mas->dev, "Abort on Mode:%d not supported", mas->cur_xfer_mode);
+@@ -682,20 +745,13 @@ static int spi_geni_init(struct spi_geni_master *mas)
+ 	switch (fifo_disable) {
+ 	case 1:
+ 		ret = spi_geni_grab_gpi_chan(mas);
+-		if (!ret) { /* success case */
+-			mas->cur_xfer_mode = GENI_GPI_DMA;
+-			geni_se_select_mode(se, GENI_GPI_DMA);
+-			dev_dbg(mas->dev, "Using GPI DMA mode for SPI\n");
+-			break;
+-		} else if (ret == -EPROBE_DEFER) {
+-			return ret;
+-		}
+-		/*
+-		 * in case of failure to get gpi dma channel, we can still do the
+-		 * FIFO mode, so fallthrough
+-		 */
+-		dev_warn(mas->dev, "FIFO mode disabled, but couldn't get DMA, fall back to FIFO mode\n");
+-		fallthrough;
++		if (ret)
++			return dev_err_probe(mas->dev, ret,
++					     "FIFO disabled and GPI channels unavailable\n");
++		mas->cur_xfer_mode = GENI_GPI_DMA;
++		geni_se_select_mode(se, GENI_GPI_DMA);
++		dev_dbg(mas->dev, "Using GPI DMA mode for SPI\n");
++		break;
+ 
+ 	case 0:
+ 		mas->cur_xfer_mode = GENI_SE_FIFO;
+@@ -1117,6 +1173,10 @@ static int spi_geni_probe(struct platform_device *pdev)
+ 	spi->max_speed_hz = 50000000;
+ 	spi->max_dma_len = 0xffff0; /* 24 bits for tx/rx dma length */
+ 	spi->prepare_message = spi_geni_prepare_message;
++	if (device_property_match_string(dev, "pinctrl-names", "idle") >= 0) {
++		spi->prepare_transfer_hardware = spi_geni_prepare_hardware;
++		spi->unprepare_transfer_hardware = spi_geni_unprepare_hardware;
++	}
+ 	spi->transfer_one = spi_geni_transfer_one;
+ 	spi->can_dma = geni_can_dma;
+ 	spi->dma_map_dev = dev->parent;
+-- 
+2.56.0
+

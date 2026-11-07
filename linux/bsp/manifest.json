@@ -14,9 +14,9 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "3a35a44aee3cdb102d176a2b54f2a7aac4250a797f6dc3363d717bf42bcde63f",
+      "sha256": "b32a4320f016c72cfc4ee7c2e7637caf8752d69ca1fa3cd63c849269bad4cdc7",
       "source": "linux/bsp/common/etc/modprobe.d/piano.conf",
-      "source_sha256": "3a35a44aee3cdb102d176a2b54f2a7aac4250a797f6dc3363d717bf42bcde63f",
+      "source_sha256": "b32a4320f016c72cfc4ee7c2e7637caf8752d69ca1fa3cd63c849269bad4cdc7",
       "source_git_mode": "100644",
       "license": "MIT",
       "source_component": "Project SunUEFI"
