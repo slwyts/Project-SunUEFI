@@ -112,6 +112,7 @@ class ProductLowMemoryTests(unittest.TestCase):
                 expanded=True
         self.assertTrue(expanded)
         tree['tree']['/memory']['reg']=bytes(reg)
+        tree['tree']['/memory']['ddr_size']=struct.pack('>I',24)
         source,_=fix_product_low_heap((ROOT/'uefi/platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c').read_text(),data)
         libfdt=BASE/'MdePkg/Library/BaseFdtLib/libfdt/libfdt'
         with tempfile.TemporaryDirectory(prefix='piano-cold-memory-')as directory:
@@ -122,7 +123,7 @@ class ProductLowMemoryTests(unittest.TestCase):
             for include in includes:command+=['-I',str(include)]
             command+=[str(ROOT/'tests/native/PianoPlatformColdMemoryTest.c'),str(ROOT/'tests/native/PianoPlatformFdtHost.c'),str(ROOT/'uefi/core/PianoPlatformMemoryContract.c'),str(ROOT/'uefi/core/PianoProductMemory.c')]
             command+=[str(ROOT/'uefi/handoff/early-memory'/name)for name in ('PianoMemoryLayout.c','PianoColdMemory.c','PianoSmemRam.c','PianoColdBootObjectsContract.c')]
-            command+=[str(libfdt/name)for name in ('fdt.c','fdt_ro.c','fdt_check.c')]
+            command+=[str(libfdt/name)for name in ('fdt.c','fdt_ro.c','fdt_check.c','fdt_rw.c','fdt_wip.c')]
             command+=['-Wl,--gc-sections','-o',str(tmp/'memory')]
             build=subprocess.run(command,capture_output=True,text=True);self.assertEqual(build.returncode,0,build.stdout+build.stderr)
             run=subprocess.run([str(tmp/'memory'),str(dt)],capture_output=True,text=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'})

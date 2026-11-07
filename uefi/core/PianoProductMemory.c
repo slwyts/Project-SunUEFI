@@ -127,6 +127,9 @@ STATIC EFI_STATUS Capture(VOID){
     mCold.Layout.ReservedCount>PIANO_MEMORY_LAYOUT_MAX_RESERVED)
   return CaptureResult("cold-layout-counts",EFI_NOT_READY);
  if(mCold.Layout.Reserved)return CaptureResult("cold-layout-reserved",EFI_NOT_READY);
+ if((mCold.Layout.DdrProperties&~7U)||
+    (mCold.Layout.DdrRegions&~((1U<<PIANO_MEMORY_LAYOUT_MAX_DDR_REGIONS)-1)))
+  return CaptureResult("cold-ddr-metadata",EFI_COMPROMISED_DATA);
  if(!mCold.Layout.DramBytes)return CaptureResult("cold-ram-bytes",EFI_NOT_READY);
 
  // The independent cold object HOB identifies the very same BootShim entry.
@@ -478,6 +481,67 @@ EFI_STATUS PianoProductMemoryValidate(VOID *Context,CONST PIANO_LINUX_MEMORY_PRO
  return EFI_SUCCESS;
 }
 STATIC EFI_STATUS TreeRead(VOID *Context,UINT32 At,UINTN Bytes,VOID *Out){CopyMem(Out,(CONST UINT8 *)Context+At,Bytes);return EFI_SUCCESS;}
+
+STATIC VOID StoreBe(UINT8 *Out,UINT64 Value,UINTN Bytes){for(UINTN I=0;I<Bytes;++I)Out[I]=(UINT8)(Value>>(8*(Bytes-I-1)));}
+STATIC INT32 ExactMemoryNode(CONST VOID *Tree){
+ INT32 Node;
+ FdtForEachSubnode(Node,Tree,0){CONST CHAR8 *Name=FdtGetName(Tree,Node,NULL);if(Name&&!AsciiStrCmp(Name,"memory"))return Node;}
+ return Node;
+}
+EFI_STATUS PianoProductMemoryApplyDtb(VOID *Tree,UINTN Capacity){
+ if(!Tree||Capacity<40||Capacity>0x210000||FdtCheckHeader(Tree)||FdtTotalSize(Tree)>Capacity)return EFI_INVALID_PARAMETER;
+ // The shipped Linux tree retains Qualcomm's root compatible; newer trees
+ // may identify Piano directly. The frozen HOB, not either string, proves RAM.
+ if(FdtNodeOffsetByCompatible(Tree,-1,"xiaomi,piano")!=0&&
+    FdtNodeOffsetByCompatible(Tree,-1,"qcom,sun")!=0)return EFI_UNSUPPORTED;
+ if(mBusy)return EFI_ALREADY_STARTED;
+ EFI_STATUS S=Capture();if(S!=EFI_SUCCESS)return S;
+ INT32 Length;
+ CONST UINT32 *AddressCells=FdtGetProp(Tree,0,"#address-cells",&Length);
+ if(!AddressCells||Length!=4||Fdt32ToCpu(*AddressCells)!=2)return EFI_COMPROMISED_DATA;
+ CONST UINT32 *SizeCells=FdtGetProp(Tree,0,"#size-cells",&Length);
+ if(!SizeCells||Length!=4||Fdt32ToCpu(*SizeCells)!=2)return EFI_COMPROMISED_DATA;
+ // The caller owns this expanded DTB. No ESP value is used to establish RAM,
+ // and nothing here adds pages to the firmware allocator or changes its map.
+ // libfdt's /memory lookup also matches memory@<address>. Select the exact
+ // name so a unit-addressed sibling cannot survive as a second RAM source.
+ INT32 Memory=ExactMemoryNode(Tree);
+ for(UINTN Count=0;;++Count){INT32 Extra=-FDT_ERR_NOTFOUND,Node;
+   FdtForEachSubnode(Node,Tree,0){INT32 Length;CONST CHAR8 *Type=FdtGetProp(Tree,Node,"device_type",&Length);
+     CONST CHAR8 *Name=FdtGetName(Tree,Node,NULL);
+     if(Node!=Memory&&((Type&&Length==7&&!CompareMem(Type,"memory",7))||
+        (Name&&AsciiStrLen(Name)>=7&&!CompareMem(Name,"memory@",7)))){Extra=Node;break;}
+   }
+   if(Extra<0)break;
+   if(Count>=PIANO_MEMORY_LAYOUT_MAX_RAM||FdtDelNode(Tree,Extra))return EFI_COMPROMISED_DATA;
+   Memory=ExactMemoryNode(Tree);
+ }
+ if(Memory==-FDT_ERR_NOTFOUND)Memory=FdtAddSubnode(Tree,0,"memory");
+ if(Memory<0)return EFI_COMPROMISED_DATA;
+ UINT8 Reg[PIANO_MEMORY_LAYOUT_MAX_RAM*16];
+ for(UINTN I=0;I<mCold.Layout.RamCount;++I){StoreBe(Reg+I*16,mCold.Layout.Ram[I].Base,8);StoreBe(Reg+I*16+8,mCold.Layout.Ram[I].Bytes,8);}
+ if(FdtSetProp(Tree,Memory,"device_type","memory",7)||
+    FdtSetProp(Tree,Memory,"reg",Reg,(INT32)mCold.Layout.RamCount*16))return EFI_OUT_OF_RESOURCES;
+ CONST CHAR8 *Names[]={"ddr_size","ddr_manufacturer_id","ddr_device_type"};
+ CONST UINT32 Values[]={mCold.Layout.DdrSize,mCold.Layout.DdrManufacturerId,mCold.Layout.DdrDeviceType};
+ for(UINTN I=0;I<ARRAY_SIZE(Names);++I){INT32 R;
+   if(mCold.Layout.DdrProperties&(1U<<I)){UINT8 Value[4];StoreBe(Value,Values[I],4);R=FdtSetProp(Tree,Memory,Names[I],Value,4);}
+   else {R=FdtDelProp(Tree,Memory,Names[I]);if(R==-FDT_ERR_NOTFOUND)R=0;}
+   if(R)return EFI_OUT_OF_RESOURCES;
+ }
+ INT32 Ddr=FdtPathOffset(Tree,"/ddr-regions");
+ if(Ddr>=0&&FdtDelNode(Tree,Ddr))return EFI_COMPROMISED_DATA;
+ if(mCold.Layout.DdrRegions){
+   Ddr=FdtAddSubnode(Tree,0,"ddr-regions");if(Ddr<0)return EFI_OUT_OF_RESOURCES;
+   for(UINTN I=0;I<PIANO_MEMORY_LAYOUT_MAX_DDR_REGIONS;++I)if(mCold.Layout.DdrRegions&(1U<<I)){
+     CHAR8 Name[]="region0";Name[6]=(CHAR8)('0'+I);
+     if(FdtSetProp(Tree,Ddr,Name,mCold.Layout.DdrRegion[I],sizeof(mCold.Layout.DdrRegion[I])))return EFI_OUT_OF_RESOURCES;
+   }
+ }
+ DEBUG((DEBUG_WARN,"PIANO_MEMORY_DTB_APPLIED epoch=%lx ram_ranges=%u bytes=%lx ddr_size=%u metadata=%x regions=%x\n",
+   mCold.BootEpoch,mCold.Layout.RamCount,mCold.Layout.DramBytes,mCold.Layout.DdrSize,mCold.Layout.DdrProperties,mCold.Layout.DdrRegions));
+ return EFI_SUCCESS;
+}
 
 STATIC EFI_STATUS DtbResult(CONST CHAR8 *Stage,EFI_STATUS Status){
  mDtbStage=Stage;

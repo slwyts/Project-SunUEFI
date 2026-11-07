@@ -135,6 +135,40 @@ static VOID Setup(VOID){
  for(UINTN I=0;I<512;++I)PageTable[I]=((UINT64)I<<30)|BIT10|(3ULL<<8)|(1ULL<<2)|1;
  Boot.GetMemoryMap=GetMap;Boot.LocateProtocol=Locate;Dxe.GetMemorySpaceDescriptor=GetGcd;System.BootServices=&Boot;
 }
+static VOID CheckDtbInjection(CONST PIANO_MEMORY_LAYOUT *Factory){
+ UINTN Capacity=TreeBytes+0x10000;
+ VOID *Linux=malloc(Capacity);assert(Linux&&FdtOpenInto(Tree,Linux,(INT32)Capacity)==0);
+ PIANO_MEMORY_LAYOUT Before,After;
+ assert(PianoMemoryLayoutRead(ReadTree,Tree,TreeBytes,&Before)==EFI_SUCCESS);
+ INT32 Memory=FdtPathOffset(Linux,"/memory");assert(Memory>=0);
+ UINT8 WrongReg[16];Be64(WrongReg,0x80000000);Be64(WrongReg+8,0x200000000ULL);
+ UINT32 WrongSize=__builtin_bswap32(8);
+ assert(!FdtSetProp(Linux,Memory,"reg",WrongReg,sizeof(WrongReg)));
+ assert(!FdtSetProp(Linux,Memory,"ddr_size",&WrongSize,sizeof(WrongSize)));
+ INT32 Extra=FdtAddSubnode(Linux,0,"memory@dead0000");assert(Extra>=0);
+ assert(!FdtSetProp(Linux,Extra,"device_type","memory",7));
+ assert(!FdtSetProp(Linux,Extra,"reg",WrongReg,sizeof(WrongReg)));
+ INT32 Ddr=FdtPathOffset(Linux,"/ddr-regions");assert(Ddr>=0);
+ UINT8 WrongRegion[40]={0};assert(!FdtSetProp(Linux,Ddr,"region7",WrongRegion,sizeof(WrongRegion)));
+ UINTN Maps=MapReads,Cpus=CpuReads,Tables=TableReads;
+ assert(PianoProductMemoryApplyDtb(Linux,Capacity)==EFI_SUCCESS);
+ assert(MapReads==Maps&&CpuReads==Cpus&&TableReads==Tables&&Layouts==2);
+ assert(FdtPathOffset(Linux,"/memory@dead0000")==-FDT_ERR_NOTFOUND);
+ assert(!FdtPack(Linux));
+ // ReadTree bounds its source with TreeBytes. The compact fixed-size metadata
+ // replacement need not have the same size as the input distribution's tree.
+ UINT32 SavedBytes=TreeBytes;TreeBytes=FdtTotalSize(Linux);
+ assert(PianoMemoryLayoutRead(ReadTree,Linux,TreeBytes,&After)==EFI_SUCCESS);
+ assert(After.RamCount==Factory->RamCount&&After.DramBytes==Factory->DramBytes);
+ assert(!memcmp(After.Ram,Factory->Ram,sizeof(Factory->Ram)));
+ assert(After.DdrProperties==Factory->DdrProperties&&After.DdrSize==24);
+ assert(After.DdrManufacturerId==Factory->DdrManufacturerId&&After.DdrDeviceType==Factory->DdrDeviceType);
+ assert(After.DdrRegions==Factory->DdrRegions&&!memcmp(After.DdrRegion,Factory->DdrRegion,sizeof(Factory->DdrRegion)));
+ assert(After.ReservedCount==Before.ReservedCount&&After.FutureLinuxDynamicConstraints==Before.FutureLinuxDynamicConstraints);
+ assert(!memcmp(After.Fixed,Before.Fixed,sizeof(Before.Fixed)));
+ assert(PianoProductMemoryValidateDtb(Linux,TreeBytes)==EFI_SUCCESS);
+ TreeBytes=SavedBytes;free(Linux);
+}
 static VOID Run(VOID){
  Setup();
  PIANO_PRODUCT_MEMORY_DIAGNOSTIC Diagnostic;
@@ -191,6 +225,8 @@ static VOID Run(VOID){
   assert(Diagnostic.CaptureStatus==S&&!strcmp(Diagnostic.CaptureStage,Case==17?"cold-status":"cold-crc"));
   assert(Diagnostic.ColdHobStatus==(Case==17?EFI_SUCCESS:EFI_COMPROMISED_DATA));
   assert(Diagnostic.ColdStatus==(Case==17?EFI_NOT_READY:EFI_SUCCESS));
+  VOID *Copy=malloc(TreeBytes);assert(Copy);memcpy(Copy,Tree,TreeBytes);
+  assert(PianoProductMemoryApplyDtb(Copy,TreeBytes)==EFI_NOT_READY&&!memcmp(Copy,Tree,TreeBytes));free(Copy);
   return;
  }
  if((Case>=4&&Case<=7)||Case==10||Case==11){
@@ -234,7 +270,8 @@ static VOID Run(VOID){
  assert(S==EFI_SUCCESS&&Proof.FullDdr&&Proof.OwnershipVerified&&Proof.NormalBytes<Proof.DramBytes&&!ProtocolLookups);
  ReplayCheck("ready",EFI_SUCCESS);
  assert(PianoProductMemoryValidate(NULL,&Proof)==EFI_SUCCESS);
- assert(PianoProductMemoryValidateDtb(Tree,TreeBytes)==EFI_SUCCESS);
+  assert(PianoProductMemoryValidateDtb(Tree,TreeBytes)==EFI_SUCCESS);
+  if(Case==0)CheckDtbInjection(&R->Layout);
  // The separate DTB snapshot must not erase the last complete live-map check.
  ReplayCheck("ready",EFI_SUCCESS);
  if(Case==8){UINTN I;for(I=0;I<MapCount;++I)if(Map[I].Type==EfiConventionalMemory)break;assert(I<MapCount);EFI_MEMORY_DESCRIPTOR Rest=Map[I];assert(Rest.NumberOfPages>1);Map[I].Type=EfiLoaderData;Map[I].NumberOfPages=1;Rest.PhysicalStart+=4096;Rest.NumberOfPages--;Map[MapCount++]=Rest;assert(PianoProductMemoryValidate(NULL,&Proof)==EFI_SUCCESS);}

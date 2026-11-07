@@ -3,6 +3,7 @@
 #include <Uefi.h>
 #define PIANO_MEMORY_LAYOUT_MAX_RAM 32U
 #define PIANO_MEMORY_LAYOUT_MAX_RESERVED 96U
+#define PIANO_MEMORY_LAYOUT_MAX_DDR_REGIONS 8U
 #define PIANO_MEMORY_LAYOUT_CMA 1U
 // Frozen, page-aligned physical intervals. Dynamic reserved-memory requests
 // have no physical placement until Linux allocates them after ExitBootServices.
@@ -12,6 +13,9 @@ typedef struct {
  UINT64 DramBytes;
  PIANO_MEMORY_SPAN Ram[PIANO_MEMORY_LAYOUT_MAX_RAM];
  PIANO_MEMORY_SPAN Fixed[PIANO_MEMORY_LAYOUT_MAX_RESERVED];
+ UINT32 DdrSize,DdrManufacturerId,DdrDeviceType;
+ UINT32 DdrProperties,DdrRegions;
+ UINT8 DdrRegion[PIANO_MEMORY_LAYOUT_MAX_DDR_REGIONS][40];
 } PIANO_MEMORY_LAYOUT;
 
 // Read only the already-authorized tree; this callback never admits a physical

@@ -43,23 +43,33 @@ EFI_STATUS PianoMemoryLayoutRead(PIANO_MEMORY_LAYOUT_READ Callback,VOID *Context
  R.Strings=Strings;R.StringBytes=StringBytes;UINT32 ReserveEnd=MIN(Struct,Strings);BOOLEAN EndReserve=FALSE;
  for(UINT32 At=Reserve;At<=ReserveEnd&&ReserveEnd-At>=16;At+=16){UINT8 B[16];S=Read(&R,At,16,B);if(S!=EFI_SUCCESS)return S;UINT64 Base=Be(B,8),N=Be(B+8,8);if(!Base&&!N){EndReserve=TRUE;break;}S=Add(L->Fixed,&L->ReservedCount,PIANO_MEMORY_LAYOUT_MAX_RESERVED,Base,N,0);if(S!=EFI_SUCCESS)return S;}
  if(!EndReserve)return EFI_COMPROMISED_DATA;
- UINT32 At=Struct,End=Struct+StructBytes,Depth=0,RootAddress=0,RootSize=0,ReservedAddress=0,ReservedSize=0,ReservedNodes=0;
- BOOLEAN Memory=FALSE,Reserved=FALSE,MemoryType=FALSE,Reuse=FALSE,NoMap=FALSE,Pool=FALSE,Enabled=TRUE,Dynamic=FALSE,Done=FALSE;
+ UINT32 At=Struct,End=Struct+StructBytes,Depth=0,RootAddress=0,RootSize=0,ReservedAddress=0,ReservedSize=0,ReservedNodes=0,DdrNodes=0;
+ BOOLEAN Memory=FALSE,Reserved=FALSE,Ddr=FALSE,MemoryType=FALSE,Reuse=FALSE,NoMap=FALSE,Pool=FALSE,Enabled=TRUE,Dynamic=FALSE,Done=FALSE;
  UINT32 RegAt=0,RegBytes=0;
  while(At<=End&&End-At>=4){UINT32 Token;S=Word(&R,At,&Token);if(S!=EFI_SUCCESS)return S;At+=4;
   if(Token==1){CHAR8 Name[128];UINT32 Used;S=String(&R,At,End,Name,sizeof(Name),&Used);if(S!=EFI_SUCCESS)return S;if(!Depth&&Name[0])return EFI_COMPROMISED_DATA;
-   if(Depth==1){Memory=!AsciiStrCmp(Name,"memory")||(AsciiStrLen(Name)>=7&&!CompareMem(Name,"memory@",7));Reserved=!AsciiStrCmp(Name,"reserved-memory");if(Reserved&&++ReservedNodes!=1)return EFI_COMPROMISED_DATA;MemoryType=FALSE;RegAt=RegBytes=0;}
+   if(Depth==1){Memory=!AsciiStrCmp(Name,"memory")||(AsciiStrLen(Name)>=7&&!CompareMem(Name,"memory@",7));Reserved=!AsciiStrCmp(Name,"reserved-memory");Ddr=!AsciiStrCmp(Name,"ddr-regions");if((Reserved&&++ReservedNodes!=1)||(Ddr&&++DdrNodes!=1))return EFI_COMPROMISED_DATA;MemoryType=FALSE;RegAt=RegBytes=0;}
    if(Reserved&&Depth==2){Reuse=NoMap=Pool=Dynamic=FALSE;Enabled=TRUE;RegAt=RegBytes=0;}
    if(++Depth>64)return EFI_COMPROMISED_DATA;At=ALIGN_VALUE(At+Used,4);
   }else if(Token==2){
    if(!Depth)return EFI_COMPROMISED_DATA;
    if(Depth==2&&Memory){if(!MemoryType)return EFI_COMPROMISED_DATA;S=Pairs(&R,RegAt,RegBytes,L->Ram,&L->RamCount,PIANO_MEMORY_LAYOUT_MAX_RAM,0);if(S!=EFI_SUCCESS)return S;}
    if(Depth==3&&Reserved){if(Reuse&&NoMap)return EFI_COMPROMISED_DATA;if(RegBytes){S=Pairs(&R,RegAt,RegBytes,L->Fixed,&L->ReservedCount,PIANO_MEMORY_LAYOUT_MAX_RESERVED,Enabled&&Reuse&&!NoMap&&Pool?PIANO_MEMORY_LAYOUT_CMA:0);if(S!=EFI_SUCCESS)return S;}else if(Dynamic)++L->FutureLinuxDynamicConstraints;}
-   if(Depth==2)Memory=Reserved=FALSE;--Depth;
+   if(Depth==2)Memory=Reserved=Ddr=FALSE;--Depth;
   }else if(Token==3){UINT32 N,Offset;if(!Depth||End-At<8)return EFI_COMPROMISED_DATA;S=Word(&R,At,&N);if(S!=EFI_SUCCESS)return S;S=Word(&R,At+4,&Offset);if(S!=EFI_SUCCESS)return S;At+=8;if(N>End-At||Offset>=StringBytes)return EFI_COMPROMISED_DATA;
-   if(Depth==1||(Memory&&Depth==2)||(Reserved&&(Depth==2||Depth==3))){CHAR8 Name[128];UINT32 Used;S=String(&R,Strings+Offset,Strings+StringBytes,Name,sizeof(Name),&Used);if(S!=EFI_SUCCESS)return S;
+   if(Depth==1||((Memory||Ddr)&&Depth==2)||(Reserved&&(Depth==2||Depth==3))){CHAR8 Name[128];UINT32 Used;S=String(&R,Strings+Offset,Strings+StringBytes,Name,sizeof(Name),&Used);if(S!=EFI_SUCCESS)return S;
     if((Depth==1||(Reserved&&Depth==2))&&(!AsciiStrCmp(Name,"#address-cells")||!AsciiStrCmp(Name,"#size-cells"))){UINT32 V;if(N!=4)return EFI_COMPROMISED_DATA;S=Word(&R,At,&V);if(S!=EFI_SUCCESS)return S;if(Depth==1){if(!AsciiStrCmp(Name,"#address-cells"))RootAddress=V;else RootSize=V;}else{if(!AsciiStrCmp(Name,"#address-cells"))ReservedAddress=V;else ReservedSize=V;}}
     else if(Memory&&Depth==2&&!AsciiStrCmp(Name,"device_type")){CHAR8 Value[7];if(N!=7)return EFI_COMPROMISED_DATA;S=Read(&R,At,N,Value);if(S!=EFI_SUCCESS)return S;MemoryType=!CompareMem(Value,"memory",7);}
+    else if(Memory&&Depth==2&&(!AsciiStrCmp(Name,"ddr_size")||!AsciiStrCmp(Name,"ddr_manufacturer_id")||!AsciiStrCmp(Name,"ddr_device_type"))){
+     UINT32 Bit=!AsciiStrCmp(Name,"ddr_size")?BIT0:!AsciiStrCmp(Name,"ddr_manufacturer_id")?BIT1:BIT2;
+     UINT32 V;if(N!=4||(L->DdrProperties&Bit))return EFI_COMPROMISED_DATA;S=Word(&R,At,&V);if(S!=EFI_SUCCESS)return S;
+     if(Bit==BIT0)L->DdrSize=V;else if(Bit==BIT1)L->DdrManufacturerId=V;else L->DdrDeviceType=V;L->DdrProperties|=Bit;
+    }
+    else if(Ddr&&Depth==2&&AsciiStrLen(Name)>=6&&!CompareMem(Name,"region",6)){
+     if(AsciiStrLen(Name)!=7||Name[6]<'0'||(UINT32)(UINT8)Name[6]>='0'+PIANO_MEMORY_LAYOUT_MAX_DDR_REGIONS)return EFI_UNSUPPORTED;
+     UINT32 Index=(UINT32)(Name[6]-'0');if(N!=sizeof(L->DdrRegion[0])||(L->DdrRegions&(1U<<Index)))return EFI_COMPROMISED_DATA;
+     S=Read(&R,At,N,L->DdrRegion[Index]);if(S!=EFI_SUCCESS)return S;L->DdrRegions|=1U<<Index;
+    }
     else if(((Memory&&Depth==2)||(Reserved&&Depth==3))&&!AsciiStrCmp(Name,"reg")){if(RegBytes)return EFI_COMPROMISED_DATA;RegAt=At;RegBytes=N;}
     else if(Reserved&&Depth==2&&!AsciiStrCmp(Name,"ranges")&&N)return EFI_UNSUPPORTED;
     else if(Reserved&&Depth==3){

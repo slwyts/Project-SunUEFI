@@ -2,6 +2,7 @@
 #include "PianoRawLinuxBoot.h"
 #include "PianoPanelSelection.h"
 #include "PianoProductBootObjects.h"
+#include "PianoProductMemory.h"
 #include "PianoFastbootDownloadBlob.h"
 #include "Components/os-boot/PianoEspBootSource.h"
 #include <Library/UefiBootServicesTableLib.h>
@@ -226,6 +227,7 @@ EFI_STATUS PianoRawLinuxPrepare(PIANO_PRODUCT_OWNERS *O,EFI_HANDLE Image,EFI_HAN
  if(Span>P->Kernel.Bytes)ZeroMem((VOID *)(UINTN)(Address+P->Kernel.Bytes),(UINTN)(Span-P->Kernel.Bytes));
  CopyMem((VOID *)(UINTN)RAW_INITRD,Bytes+P->Ramdisk.Offset,(UINTN)P->Ramdisk.Bytes);
  VOID *Tree=(VOID *)(UINTN)RAW_DTB;if(FdtOpenInto(InputDtb,Tree,(INT32)Capacity))return EFI_COMPROMISED_DATA;
+ E=PianoProductMemoryApplyDtb(Tree,Capacity);if(E!=EFI_SUCCESS)return E;
  E=PianoPanelSelectDtb(Tree,Capacity);if(E!=EFI_SUCCESS)return E;
  E=PianoProductBootObjectsApplyGunyah(Tree,Capacity);if(E!=EFI_SUCCESS)return E;
  INT32 Chosen=FdtPathOffset(Tree,"/chosen");if(Chosen<0)return EFI_COMPROMISED_DATA;
@@ -238,6 +240,7 @@ EFI_STATUS PianoRawLinuxPrepare(PIANO_PRODUCT_OWNERS *O,EFI_HANDLE Image,EFI_HAN
  STATIC CONST CHAR8 *Drop[]={"kaslr-seed","rng-seed","linux,uefi-system-table","linux,uefi-mmap-start","linux,uefi-mmap-size","linux,uefi-mmap-desc-size","linux,uefi-mmap-desc-ver"};
  for(UINTN I=0;I<ARRAY_SIZE(Drop);++I){INT32 D=FdtDelProp(Tree,Chosen,Drop[I]);if(D&&D!=-1)return EFI_COMPROMISED_DATA;}
  if(FdtPack(Tree))return EFI_COMPROMISED_DATA;R.DtbBytes=FdtTotalSize(Tree);
+ E=PianoProductMemoryValidateDtb(Tree,R.DtbBytes);if(E!=EFI_SUCCESS)return E;
  if(!Hash((VOID *)(UINTN)Address,(UINTN)R.KernelBytes,Sha)||CompareMem(Sha,R.KernelSha,32)||
  !Hash((VOID *)(UINTN)RAW_INITRD,(UINTN)R.InitrdBytes,Sha)||CompareMem(Sha,R.InitrdSha,32)||!Hash(Tree,(UINTN)R.DtbBytes,R.DtbSha))return EFI_SECURITY_VIOLATION;
  WriteBackInvalidateDataCacheRange((VOID *)(UINTN)Address,(UINTN)Span);

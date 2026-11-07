@@ -2,6 +2,7 @@
 #include "PianoDeviceTreeFixup.h"
 #include <PianoPanelSelection.h>
 #include <PianoProductBootObjects.h>
+#include <PianoProductMemory.h>
 #include <Guid/Fdt.h>
 #include <Library/BaseLib.h>
 #include <Library/FdtLib.h>
@@ -43,8 +44,9 @@ STATIC EFI_STATUS EFIAPI Fixup(EFI_DT_FIXUP_PROTOCOL *This,VOID *Tree,UINTN *Buf
   EFI_TPL Tpl=gBS->RaiseTPL(TPL_HIGH_LEVEL);gBS->RestoreTPL(Tpl);
   if(!mAlive())return FixupResult("alive-after-tpl",EFI_ABORTED);
   if(Tpl!=TPL_APPLICATION)return FixupResult("tpl",EFI_UNSUPPORTED);
-  if(FdtCheckHeader(Tree)||FdtTotalSize(Tree)>*BufferSize||FdtTotalSize(Tree)>DTB_MAX||
-     FdtNodeOffsetByCompatible(Tree,-1,"xiaomi,piano")!=0)
+   if(FdtCheckHeader(Tree)||FdtTotalSize(Tree)>*BufferSize||FdtTotalSize(Tree)>DTB_MAX||
+      (FdtNodeOffsetByCompatible(Tree,-1,"xiaomi,piano")!=0&&
+       FdtNodeOffsetByCompatible(Tree,-1,"qcom,sun")!=0))
     return FixupResult("header",EFI_COMPROMISED_DATA);
 
   UINTN Capacity=MIN(*BufferSize,(UINTN)DTB_MAX+DTB_PADDING);
@@ -56,7 +58,9 @@ STATIC EFI_STATUS EFIAPI Fixup(EFI_DT_FIXUP_PROTOCOL *This,VOID *Tree,UINTN *Buf
     }
     if(FdtOpenInto(Tree,Tree,(INT32)Capacity))return FixupResult("expand",EFI_COMPROMISED_DATA);
 
-    EFI_STATUS Status=PianoPanelSelectDtb(Tree,Capacity);
+    EFI_STATUS Status=PianoProductMemoryApplyDtb(Tree,Capacity);
+    if(Status!=EFI_SUCCESS)return FixupResult("memory",Status);
+    Status=PianoPanelSelectDtb(Tree,Capacity);
     if(Status!=EFI_SUCCESS)return FixupResult("panel",Status);
     Status=PianoProductBootObjectsApplyGunyah(Tree,Capacity);
     if(Status!=EFI_SUCCESS)return FixupResult("gunyah",Status);

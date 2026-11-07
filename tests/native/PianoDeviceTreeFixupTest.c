@@ -24,6 +24,8 @@ VOID *EFIAPI CopyMem(VOID *To,CONST VOID *From,UINTN Bytes){return memcpy(To,Fro
 VOID *EFIAPI ZeroMem(VOID *To,UINTN Bytes){return memset(To,0,Bytes);}
 INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN Bytes){return memcmp(A,B,Bytes);}
 STATIC BOOLEAN Alive(VOID){return Live;}
+// Cold-HOB injection itself is exercised by PianoPlatformColdMemoryTest.
+EFI_STATUS PianoProductMemoryApplyDtb(VOID *Fdt,UINTN Capacity){assert(Fdt==Tree&&Capacity<=sizeof(Tree));return EFI_SUCCESS;}
 STATIC EFI_TPL EFIAPI Raise(EFI_TPL New){EFI_TPL Old=Tpl;Tpl=New;return Old;}
 STATIC VOID EFIAPI Restore(EFI_TPL Old){Tpl=Old;}
 STATIC EFI_STATUS Reserved(CONST VOID *Fdt,UINTN Bytes){

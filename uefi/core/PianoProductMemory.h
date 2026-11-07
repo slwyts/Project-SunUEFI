@@ -37,3 +37,6 @@ EFI_STATUS PianoProductMemoryValidate(VOID *Context,CONST PIANO_LINUX_MEMORY_PRO
 // The final Linux tree must describe RAM/reservations compatible with the map
 // admitted before the first MemoryPeim, including FDT reserve-map entries.
 EFI_STATUS PianoProductMemoryValidateDtb(CONST VOID *Tree,UINTN Bytes);
+// Replace only RAM and DDR metadata with the frozen same-boot ABL values.
+// Device bindings and Linux CMA requests remain in the distribution's DTB.
+EFI_STATUS PianoProductMemoryApplyDtb(VOID *Tree,UINTN Capacity);
