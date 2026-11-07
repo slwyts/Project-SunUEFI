@@ -1,6 +1,7 @@
 """Real full public config and source/module identity checks; no rebuild/device."""
 from pathlib import Path
 import importlib.util
+import json
 import shutil
 import subprocess
 import sys
@@ -10,9 +11,12 @@ from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'))
 import build_piano_full_kernel as full
-# the pinned stable kernel checkout is the same commit as full.COMMIT
-KERNEL=ROOT/'upstream/linux-piano'
-CONFIGURED='needs build/kernels/full-integration/.config from tools/build_piano_full_kernel.py'
+# Inspect the pinned configuration, not the moving reference submodule HEAD.
+MANIFEST=ROOT/'artifacts/kernels/release/manifest.json'
+RECORD=json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {}
+KERNEL=Path(RECORD.get('prepared_source_worktree',full.WORK))
+CONFIG=ROOT/'artifacts/kernels/release/config'
+CONFIGURED='needs the release kernel build (./build.sh linux)'
 
 
 class PianoFullKernelTests(unittest.TestCase):
@@ -22,11 +26,11 @@ class PianoFullKernelTests(unittest.TestCase):
 
     def test_uhid_fragment_is_the_only_local_module_override(self):
         fragment=(ROOT/'linux/configs/piano-bluetooth.config').read_text()
-        modules=full.module_overrides(fragment)
+        modules={**RECORD.get('local_module_overrides',{}),**full.module_overrides(fragment)}
         public=(KERNEL/'arch/arm64/configs/piano_rootfs.config').read_text()
-        command=full.command_line((ROOT/'linux/configs/piano-full.config').read_text(),public,'ram')
-        if not (full.OUT/'.config').exists():self.skipTest(CONFIGURED)
-        config=(full.OUT/'.config').read_text()
+        command=full.command_line((ROOT/'linux/configs/piano-full.config').read_text(),public,RECORD.get('root_policy','ram'))
+        if not CONFIG.exists():self.skipTest(CONFIGURED)
+        config=CONFIG.read_text()
         values=full.config_values(config)
         old='CONFIG_UHID='+values['CONFIG_UHID']if values['CONFIG_UHID']!='n'else '# CONFIG_UHID is not set'
         updated=config.replace(old,'CONFIG_UHID=m')
@@ -34,12 +38,13 @@ class PianoFullKernelTests(unittest.TestCase):
         self.assertEqual(requirements['UHID'],'m')
         self.assertEqual(full.config_values(full.effective_config(command,modules))['CONFIG_UHID'],'m')
         with self.assertRaisesRegex(ValueError,'module requirement'):
-            full.validate_config(config,public,command,modules)
+            full.validate_config(updated.replace('CONFIG_UHID=m','# CONFIG_UHID is not set'),public,command,modules)
         for bad in ('CONFIG_UHID=y\n','CONFIG_UHID=n\n','CONFIG_UHID=m\nCONFIG_BT_LE=y\n','CONFIG_UHID=m\nCONFIG_UHID=n\n'):
             with self.subTest(fragment=bad),self.assertRaises(ValueError):full.module_overrides(bad)
         with self.assertRaises(ValueError):full.validate_config(updated,public,command,{'CONFIG_BT_LE':'y'})
         for name,value in full.config_values(public).items():
             if name=='CONFIG_CMDLINE':continue
+            value=modules.get(name,value)
             changed=updated.replace(name+'='+value,name+'='+('n'if value!='n'else 'y'))
             if changed!=updated:
                 with self.subTest(symbol=name),self.assertRaises(ValueError):full.validate_config(changed,public,command,modules)
@@ -66,14 +71,14 @@ class PianoFullKernelTests(unittest.TestCase):
             self.assertEqual(full.ALLOWED_OVERRIDES[key],value)
 
     def test_real_generated_full_config_preserves_public_profile(self):
-        path=full.OUT/'.config'
+        path=CONFIG
         if not path.exists():self.skipTest(CONFIGURED)
-        full.verify_source();public=(full.WORK/'arch/arm64/configs/piano_rootfs.config').read_text()
-        command=full.command_line((ROOT/'linux/configs/piano-full.config').read_text(),public,'ram')
-        config=path.read_text();requirements=full.validate_config(config,public,command)
+        full.verify_source(KERNEL,RECORD['source_commit']);public=(KERNEL/'arch/arm64/configs/piano_rootfs.config').read_text()
+        command=full.command_line((ROOT/'linux/configs/piano-full.config').read_text(),public,RECORD['root_policy'])
+        config=path.read_text();modules=RECORD['local_module_overrides'];requirements=full.validate_config(config,public,command,modules)
         self.assertEqual(requirements['VIDEO_QCOM_CAMSS'],'m');self.assertEqual(requirements['DRM_MSM'],'m');self.assertEqual(requirements['SND_SOC_SC8280XP'],'m')
         for symbol in ('VIDEO_OV32D40','HID_NANOSIC_WN8030','BATTERY_PIANO_MCA','CHARGER_SC8541','QCOM_Q6V5_PAS'):
-            with self.subTest(symbol=symbol),self.assertRaises(ValueError):full.validate_config(config.replace('CONFIG_'+symbol+'=m','# CONFIG_'+symbol+' is not set'),public,command)
+            with self.subTest(symbol=symbol),self.assertRaises(ValueError):full.validate_config(config.replace('CONFIG_'+symbol+'=m','# CONFIG_'+symbol+' is not set'),public,command,modules)
 
     def test_root_policy_is_only_public_commandline_substitution(self):
         public=(KERNEL/'arch/arm64/configs/piano_rootfs.config').read_text();fragment=(ROOT/'linux/configs/piano-full.config').read_text()

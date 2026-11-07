@@ -20,7 +20,7 @@ from build_kernel import image_info
 from prepare_linux_modules import modinfo
 
 ROOT=Path(__file__).resolve().parents[1]
-COMMIT='352508459733d3e6d349ea5581a8dd2fd8bb4180'
+COMMIT=json.loads((ROOT/'config/release.json').read_text())['kernel']['public_baseline']
 BASE_COMMIT='500df175a7f9e6bc1a9c328590ca5150f84f9ff0'
 WORK=ROOT/'build/kernel-worktrees/piano-full-integration'
 OUT=ROOT/'build/kernels/full-integration'
