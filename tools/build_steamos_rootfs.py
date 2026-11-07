@@ -321,10 +321,14 @@ done
         if manager.exists():
             shutil.rmtree(manager)
         build_steamos_manager.build(root, manager)
+    else:
+        build_arch_package.install_cached(root, manager)
     if not build_steamos_gamescope.is_current(gamescope):
         if gamescope.exists():
             shutil.rmtree(gamescope)
         build_steamos_gamescope.build(root, gamescope)
+    else:
+        build_arch_package.install_cached(root, gamescope)
     ffmpeg = output / 'packages/ffmpeg'
     if not (ffmpeg / 'SOURCE.json').is_file():
         build_arch_ffmpeg.build(root, ffmpeg, resume=ffmpeg.exists())
