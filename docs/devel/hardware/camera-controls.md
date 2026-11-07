@@ -2,7 +2,7 @@
 
 相机服务提供曝光、增益、白平衡和后摄对焦的手动控制接口。正常 runtime 构建会同时生成相机服务和 `piano-camera-ctl` 客户端，rootfs 构建会将它们一起安装；手动控制复用已有相机服务的硬件连接和帧循环。
 
-`tools/patches/piano-camerad-manual-controls.patch` 应用在固定上游 `debian-piano a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45` 的 CCM、启动/稳定 3A、帧完整性三补丁之后。准确前置 camera 源码 SHA256 是 `0a96e7d4aa2dd23bd1f49cbdfae37578327f47d3a9118464cbdfd924bf9f6f1d`。它只修改已有 camerad，不改变帧格式和缓冲路径。CLI 的正式源码在 `linux/userspace/piano-camera-ctl.c`，后续正常构建安装到相机 BSP 的 `/usr/bin/piano-camera-ctl`；不要把源码文件作为 rootfs overlay 安装。
+服务和 CLI 的源码统一维护在 [`linux/userspace/camera/`](../../../linux/userspace/camera/)，两条运行库构建入口使用同一 Makefile。客户端安装到 `/usr/bin/piano-camera-ctl`；源码文件不作为 rootfs overlay 安装。
 
 现有 camerad 在自己的 poll 循环处理 `/run/piano-camerad/control.sock`，socket 为 `root:video 0660`，目录为 `root:video 0750`。没有额外服务或相机硬件 owner。先用正常相机应用开流；未开流时所有命令返回 `ENODEV`，不会暗中启动相机。
 
@@ -53,7 +53,7 @@ piano-camera-ctl set front ae auto
 
 AE、AWB、AF 各自拥有自动/手动状态；数值写入必须先把对应域切为 manual，自动算法不会覆盖该域。模式切换先读回该域的现有控件，恢复 auto 从这个状态继续。手动曝光仍保留帧统计供后摄 AF 判断稳定性。每个数值请求只写一个白名单控件，随后读回；失败保留 errno，读回不一致同时给出 requested/value 并返回错误。多个传感器/TFE 控件不构成硬件原子事务；回复丢失或读回失败后应先 `get`，再决定是否重试。
 
-两个正常 producer 顺序应用这份补丁、继续编译同一 camerad，并另编 CLI；stage 的完整文件集合包含客户端。CLI 的 main 使用 argc/argv，不复用 camerad 的 void-main wrapper。二进制不存入 Git，无需新增 systemd unit。
+两条运行库构建入口编译同一份 camerad 和 CLI，安装清单包含客户端；二进制不存入 Git，无需新增 systemd unit。
 
 2026-10-09 已使用完成的 Debian rootfs 作为 ARM64 sysroot 编译完整 runtime。相机服务与客户端随后随 `7.2.9-piano-gnome-gc8bf8df4d2ca` 部署；客户端 SHA256 为 `a2039e1415fea9a7d2640fc5a330faa3d848e0fdc780f99c6586232975de1097`。正常构建与 stage 都包含这两个静态 AArch64 程序。
 
