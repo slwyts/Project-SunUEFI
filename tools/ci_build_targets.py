@@ -29,7 +29,7 @@ UEFI_FILES = {'requirements-build.txt', 'tools/build_android_product_module.py',
               'tools/product_payload_digest.py', 'tools/piano_vendor_inputs.py'}
 UEFI_PREFIXES = ('android/', 'uefi/', 'vendor/piano/', 'patches/firmware/',
                  'tools/prepare_product_')
-DRAFT_PREFIXES = ('patches/linux/7.2.9/drafts/', 'linux/dts/drafts/')
+DRAFT_PREFIXES = ('linux/dts/drafts/',)
 DISTROS = ['debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos']
 
 

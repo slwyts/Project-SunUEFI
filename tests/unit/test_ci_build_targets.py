@@ -29,8 +29,7 @@ class CiBuildTargetsTests(unittest.TestCase):
         self.assertEqual(targets.select(['docs/user/install-from-artifact.md']), PRODUCTS)
         self.assertEqual(targets.select(['uefi/core/PianoProductCore.c', 'linux/config']), PRODUCTS)
         self.assertEqual(targets.select(['README.md', 'docs/status.md']), [])
-        self.assertEqual(targets.select(['patches/linux/7.2.9/drafts/0045-drm-igcv5-high-precision-grid.patch',
-                                         'linux/dts/drafts/piano-pen-dock.dtso']), [])
+        self.assertEqual(targets.select(['linux/dts/drafts/piano-pen-dock.dtso']), [])
         self.assertEqual(targets.select(['linux/dts/drafts/piano-pen-dock.dtso',
                                          'config/release.json']), PRODUCTS)
         self.assertEqual(targets.select([], 'debian-gnome'), ['debian-gnome'])

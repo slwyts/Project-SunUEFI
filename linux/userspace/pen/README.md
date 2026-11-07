@@ -77,7 +77,7 @@ sudo /usr/lib/piano/pen-bluetooth --address YOUR_PEN_ADDRESS \
 
 ## HID 报告与桌面行为
 
-P81C 的 137 字节 HID Report Map 将私有 Report5 数据放在键盘 Usage Page 的 `0x57`，Linux 通用 HID 会将它映射为 `KEY_KPPLUS`。压力包的四个 16 位字段和六个 8 位字段不是十个加号按键。默认内核的 [`0021` 补丁](../../../patches/linux/7.2.9/0021-hid-xiaomi-p81c-pressure-not-keyboard.patch) 扩展现有 `hid-xiaomi`，按 Bluetooth VID/PID、Report ID 和字段布局跳过这条错误键盘映射，保留原始 hidraw 数据给压力 owner。它不替换整份描述符，不全局屏蔽 `+`，也不影响键盘保护套。
+P81C 的 137 字节 HID Report Map 将私有 Report5 数据放在键盘 Usage Page 的 `0x57`，Linux 通用 HID 会将它映射为 `KEY_KPPLUS`。压力包的四个 16 位字段和六个 8 位字段不是十个加号按键。默认内核的[输入补丁](../../../patches/linux/7.3/0003-input-wireless.patch)扩展现有 `hid-xiaomi`，按 Bluetooth VID/PID、Report ID 和字段布局跳过这条错误键盘映射，保留原始 hidraw 数据给笔输入程序。它不替换整份描述符，不全局屏蔽 `+`，也不影响键盘保护套。
 
 `piano-touch-input` 在现有触控服务中启动 `pen-bluetooth --follow` 伴随进程。它只走 BlueZ，不读取 THP、也不生成键鼠输入；连接和 `ServicesResolved` 后完成初始化，断连后等待下一次连接重新发送反馈参数。磁吸状态只在开关存在时转发；没有磁吸／静止接口不阻塞已知的 BLE 功能。它支持当前笔返回的设备版本，不把 Modalias 硬锁到旧 `d0001`。`DA 01 01` 说明反馈设置被接收，物理震动仍需要轻捏确认。
 

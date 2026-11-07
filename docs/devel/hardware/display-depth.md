@@ -32,7 +32,7 @@ HyperOS 4 的配置位于 `/odm/etc/display/qdcm_calib_data_xiaomi_p81_35_02_0b_
 
 - `native_hdr` 的输出 Gamma 为 2.2，包含 P3 面板校准、17 点色调映射、实时亮度补偿和内容统计；CSOT 配置中的满屏峰值约 844.5 nit，SDR 参考峰值为 400 nit。这些是配置值，不是测试物理亮度测量。
 - HDR 模式和 intent 1 的 `standard_*` 模式配置了 LUMA dither，但 `temporalEnable=0`；配置内容不能代替播放时的寄存器状态，也不能单凭该字段认定面板 FRC。
-- [`0045` 高精度后端](../../../patches/linux/7.2.9/0045-drm-igcv5-high-precision-grid.patch)暴露均匀 1025 项 `DEGAMMA_LUT`，由驱动选取两组硬件采样点。组合 DMA 扩大到 16 KiB；实机恒等、非线性和旁路恢复已完成，提交 2142 个 word，两路 DSPP 均返回完成状态。
+- [显示补丁中的高精度后端](../../../patches/linux/7.3/0002-display.patch)暴露均匀 1025 项 `DEGAMMA_LUT`，由驱动选取两组硬件采样点。组合 DMA 扩大到 16 KiB；实机恒等、非线性和旁路恢复已完成，提交 2142 个 word，两路 DSPP 均返回完成状态。
 - Linux 7.3 的 [`0016` 补丁](../../../patches/linux/7.3/0016-drm-igcv5-high-precision-dither.patch)按原厂 IGC 控制字，在存在 Degamma LUT 时打开高精度内部抖动，强度为 4；空 LUT 仍保持旁路。该内核已启动 KDE 和 Gamescope，但活动 IGC 曲线下的物理色阶还需检查。它不改变十位 DSC，也不代表面板 FRC 或完整 HDR 已实现。
 
 ### HDR 亮度与背光

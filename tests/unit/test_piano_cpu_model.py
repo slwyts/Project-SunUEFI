@@ -1,6 +1,7 @@
 """Actual CPU metadata overlay and cpuinfo output; no device or kernel build."""
 from pathlib import Path
 import shutil
+import json
 import subprocess
 import sys
 import tempfile
@@ -9,44 +10,22 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from compose_piano_dtb import read_fdt
-import build_piano_runtime_helpers as runtime
-import build_release_helpers as helpers
 
 MODEL = 'Qualcomm Snapdragon 8 Elite Mobile Platform'
-PATCH = ROOT / 'patches/linux/7.2.9/0001-arm64-cpuinfo-read-dt-model.patch'
-SOURCE = ROOT / 'upstream/linux-piano/arch/arm64/kernel/cpuinfo.c'
+RECORD = ROOT / 'build/release/source-manifest.json'
+SOURCE = (Path(json.loads(RECORD.read_text())['worktree']) / 'arch/arm64/kernel/cpuinfo.c'
+          if RECORD.is_file() else ROOT / 'build/release/arch/arm64/kernel/cpuinfo.c')
 DTC = ROOT / 'build/kernel-topics/piano-panel/scripts/dtc/dtc'
 FDTO = DTC.with_name('fdtoverlay')
 
 
 class PianoCpuModelTests(unittest.TestCase):
-    def test_generated_stable_uapi_keeps_helper_interfaces(self):
-        old = ROOT / 'build/piano-runtime/uapi/include'
-        new = ROOT / 'build/piano-runtime/uapi-7.2.9/include'
-        candidate = ROOT / 'build/kernel-worktrees/release-7.2.9'
-        if not old.exists() or not new.exists() or not candidate.exists():
-            self.skipTest('Actual reviewed UAPI generations/candidate unavailable')
-        before, after = runtime.tree_files(old), runtime.tree_files(new)
-        changed = {name for name in before.keys() | after.keys() if before.get(name) != after.get(name)}
-        self.assertEqual(changed, {'drm/amdgpu_drm.h', 'rdma/bnxt_re-abi.h', 'linux/version.h'})
-        commit = subprocess.check_output(['git', '-C', str(candidate), 'rev-parse', 'HEAD'], text=True).strip()
-        self.assertEqual(helpers.expected_uapi_digest(candidate, commit), runtime.tree_digest(after))
-        self.assertEqual(helpers.expected_uapi_digest(ROOT / 'upstream/linux-piano', runtime.UAPI_COMMIT), runtime.tree_digest(before))
-
     @unittest.skipUnless(SOURCE.is_file() and shutil.which('cc'), 'CPU source/native compiler unavailable')
     def test_actual_cpuinfo_patch_model_and_original_fallbacks(self):
         with tempfile.TemporaryDirectory(prefix='piano-cpuinfo-') as temporary:
             folder = Path(temporary)
-            source = folder / 'arch/arm64/kernel/cpuinfo.c'
-            source.parent.mkdir(parents=True)
-            source.write_bytes(SOURCE.read_bytes())
-            subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i', str(PATCH)], cwd=folder,
-                           check=True, capture_output=True)
-            text = source.read_text()
+            text = SOURCE.read_text()
             helper = text[text.index('static void cpuinfo_show_model('):text.index('static int c_show(')]
-            prepared = ROOT / 'build/kernel-worktrees/release-7.2.9/arch/arm64/kernel/cpuinfo.c'
-            if prepared.exists():
-                self.assertEqual(prepared.read_bytes(), source.read_bytes())
             harness = folder / 'cpuinfo.c'
             harness.write_text('''
 #include <stdbool.h>

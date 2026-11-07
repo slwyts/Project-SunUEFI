@@ -84,7 +84,7 @@ v2方法 `+0x30=0x26dec` 是另一条路径：HAL `0x26804..0x26834` 以cmd2/arg
 
 ## 笔的磁吸检测、供电与连接恢复
 
-默认内核的 [`0041-power-sc96231-pen-charger.patch`](../../../patches/linux/7.2.9/0041-power-sc96231-pen-charger.patch)驱动 SC96231 发射器；[设备树覆盖](../../../linux/dts/piano-pen-charger.dtso)将 QUP2 SE5 转换为主线 I²C，总线地址为 `0x38`。不再保留两个同时占用 Hall GPIO 的驱动：充电驱动接管同一个 `Xiaomi Piano Pen Dock`，上报标准 `SW_PEN_INSERTED`。
+默认内核的[平台补丁](../../../patches/linux/7.3/0001-platform.patch)驱动 SC96231 发射器；[设备树覆盖](../../../linux/dts/piano-pen-charger.dtso)将 QUP2 SE5 转换为主线 I²C，总线地址为 `0x38`。不再保留两个同时占用 Hall GPIO 的驱动：充电驱动接管同一个 `Xiaomi Piano Pen Dock`，上报标准 `SW_PEN_INSERTED`。
 
 实现依据是同机 HyperOS 4 的最终 DTB、`sc96231_tx.ko`／`mca_wireless_revchg.ko` 的反汇编，以及一次原厂启停的函数参数采集。原厂的独立笔供电通过 ADSP HBOOST 完成：属性 `0x2010` 选择源 1，按 5.0、5.5、6.0、6.5 V 升压，间隔 20 ms；`0x200f` 的客户端 2 控制启停。该电源以标准 regulator 提供给 SC96231，不改 USB VBUS。 Piano 路径使 GPIO14 高电平启用，不能单凭旧节点的 `reverse-txon-low` 属性推断极性。
 
@@ -190,7 +190,7 @@ Linux之前显示144Hz、hand180、pen240。两边笔扫描率相同；这一次
 
 当前590内核配置使用 `CONFIG_CMDLINE_FORCE=y`，因此只给ESP的boot header追加video参数不会生效；Mutter默认又选择DRM preferred模式。冷启动草案只交换Piano面板模式表的144／120顺序，使120成为preferred，并保留全部模式。当时的草案用于此项对照；2026-10-10 已将 120 Hz 纳入默认内核，保留其他模式；构建来源在 `build/panel-cold120-candidate/`。原厂触控portrait尺寸2136×3200与Linux原生显示模式3200×2136不同，不能用错video参数。
 
-触控面板监听生命周期修复已经从draft转为正式 [`0020-nvt-panel-follower-lifetime.patch`](../../../patches/linux/7.2.9/0020-nvt-panel-follower-lifetime.patch)，纳入默认内核源码准备流程。它只修注销与释放顺序，不启用笔接口或改变刷新率；新源码树已生成，完整新内核部署仍需后续构建。
+触控面板监听生命周期修复位于[输入补丁](../../../patches/linux/7.3/0003-input-wireless.patch)，纳入默认内核源码准备流程。它只修注销与释放顺序，不启用笔接口或改变刷新率。
 
 
 ## 标准桌面输入已接通
@@ -216,7 +216,7 @@ Linux之前显示144Hz、hand180、pen240。两边笔扫描率相同；这一次
 碰屏不再输入加号，轻捏恢复笔端震动。自带 GTK 画板只在笔输入时隐藏指针，
 鼠标和触控板的指针保持正常；其他应用的笔指针由各自应用与合成器决定。
 
-2026-10-20 的连接抓包发现，笔会从 750 ms 省电间隔请求切到约 105 ms；内核在远端特征发现阶段因状态仍为 `BT_CONFIG` 而拒绝该请求。[`0043` 草案](../../../patches/linux/7.2.9/drafts/0043-bluetooth-early-le-parameters.patch)允许已有 LE handle 在此阶段协商，保留参数校验。草案已编译并加载；初始化仍可能等待数秒至十余秒，尚未作为默认补丁或完整延迟修复发布。
+连接抓包中，笔会从 750 ms 省电间隔请求切到约 105 ms；内核在远端特征发现阶段因状态仍为 `BT_CONFIG` 而拒绝该请求。初始化仍可能等待数秒至十余秒，不能把延迟全部归因于该参数请求。
 
 
 ## 笔身手势

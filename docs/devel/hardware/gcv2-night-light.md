@@ -15,7 +15,7 @@
 - 两类曲线组成一批完整颜色状态，提交到当前分配的两路 DSPP。只有共同完成才更新相应 flush；关闭曲线使用旁路状态。
 - DMA 队列失败时保留既有的生命周期和退出规则，不能释放仍可能被硬件使用的内存。
 
-IGCv5 实现位于 [`0044-drm-msm-dpu-igcv5-degamma.patch`](../../../patches/linux/7.2.9/0044-drm-msm-dpu-igcv5-degamma.patch)。设备上的恒等、非线性和旁路恢复均取得 REGDMA 完成，双 DSPP mask 为 `0x60000`。组合曲线为 1950 个 word，旁路恢复为 1558 个 word，均在缓冲区内；输出色彩精度与 HDR 映射仍须按对应功能单独验证。
+IGCv5 实现位于[显示补丁](../../../patches/linux/7.3/0002-display.patch)。设备上的恒等、非线性和旁路恢复均取得 REGDMA 完成，双 DSPP mask 为 `0x60000`。组合曲线为 1950 个 word，旁路恢复为 1558 个 word，均在缓冲区内；输出色彩精度与 HDR 映射仍须按对应功能单独验证。
 
 ## 桌面兼容
 
