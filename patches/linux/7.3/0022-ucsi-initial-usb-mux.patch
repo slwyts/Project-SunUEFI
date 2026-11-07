@@ -1,4 +1,4 @@
-From 03070a4d1f8910f4e1bb74af65366f45fe8d14c3 Mon Sep 17 00:00:00 2001
+From 4ccbd49289b74d6e91a84dd91ed6a04e4629e616 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 12:27:17 +0800
 Subject: [PATCH] usb: typec: ucsi: set USB mux mode for a partner present at
@@ -27,6 +27,3 @@ index 0a7ceb5b5d0..04c86185c3d 100644
  	if (ucsi->ops->connector_status)
  		ucsi->ops->connector_status(con);
  
--- 
-2.56.0
-

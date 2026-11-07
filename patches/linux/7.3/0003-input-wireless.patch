@@ -1,4 +1,4 @@
-From a10f1574fc3777df1620e4d5a21b486c80aeef77 Mon Sep 17 00:00:00 2001
+From 49432a187382f59cfdc4e7c560a86f339eca058b Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(input-wireless): port Piano input-wireless support to
@@ -726,10 +726,10 @@ index 48a863b245e..44fb35abfaa 100644
  obj-$(CONFIG_HID_NTI)			+= hid-nti.o
  obj-$(CONFIG_HID_NTRIG)		+= hid-ntrig.o
 diff --git a/drivers/hid/hid-ids.h b/drivers/hid/hid-ids.h
-index cb7f16d75fc..4ce0db04669 100644
+index 3b19b742d4d..4fbd4cbbe8b 100644
 --- a/drivers/hid/hid-ids.h
 +++ b/drivers/hid/hid-ids.h
-@@ -1612,6 +1612,9 @@
+@@ -1613,6 +1613,9 @@
  #define USB_VENDOR_ID_XAT	0x2505
  #define USB_DEVICE_ID_XAT_CSR	0x0220
  
@@ -8128,10 +8128,10 @@ index 00000000000..52c11349b63
 +if __name__ == "__main__":
 +    main()
 diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
-index b0107cde99f..46497fc3d42 100644
+index b25202effb0..e97c952db24 100644
 --- a/drivers/net/wireless/ath/ath12k/core.c
 +++ b/drivers/net/wireless/ath/ath12k/core.c
-@@ -536,6 +536,9 @@ int ath12k_core_fetch_bdf(struct ath12k_base *ab, struct ath12k_board_data *bd)
+@@ -538,6 +538,9 @@ int ath12k_core_fetch_bdf(struct ath12k_base *ab, struct ath12k_board_data *bd)
  		return ret;
  	}
  
@@ -8141,7 +8141,7 @@ index b0107cde99f..46497fc3d42 100644
  	bd_api = 2;
  	ret = ath12k_core_fetch_board_data_api_n(ab, bd, boardname,
  						 ATH12K_BD_IE_BOARD,
-@@ -558,6 +561,7 @@ int ath12k_core_fetch_bdf(struct ath12k_base *ab, struct ath12k_board_data *bd)
+@@ -560,6 +563,7 @@ int ath12k_core_fetch_bdf(struct ath12k_base *ab, struct ath12k_board_data *bd)
  	if (!ret)
  		goto success;
  
@@ -8149,7 +8149,7 @@ index b0107cde99f..46497fc3d42 100644
  	bd_api = 1;
  	ret = ath12k_core_fetch_board_data_api_1(ab, bd, ATH12K_DEFAULT_BOARD_FILE);
  	if (ret) {
-@@ -575,7 +579,11 @@ int ath12k_core_fetch_bdf(struct ath12k_base *ab, struct ath12k_board_data *bd)
+@@ -577,7 +581,11 @@ int ath12k_core_fetch_bdf(struct ath12k_base *ab, struct ath12k_board_data *bd)
  	}
  
  success:
@@ -8162,7 +8162,7 @@ index b0107cde99f..46497fc3d42 100644
  	return 0;
  }
  
-@@ -584,6 +592,9 @@ int ath12k_core_fetch_regdb(struct ath12k_base *ab, struct ath12k_board_data *bd
+@@ -586,6 +594,9 @@ int ath12k_core_fetch_regdb(struct ath12k_base *ab, struct ath12k_board_data *bd
  	char boardname[BOARD_NAME_SIZE], default_boardname[BOARD_NAME_SIZE];
  	int ret;
  
@@ -8172,7 +8172,7 @@ index b0107cde99f..46497fc3d42 100644
  	ret = ath12k_core_create_board_name(ab, boardname, BOARD_NAME_SIZE);
  	if (ret) {
  		ath12k_dbg(ab, ATH12K_DBG_BOOT,
-@@ -613,14 +624,20 @@ int ath12k_core_fetch_regdb(struct ath12k_base *ab, struct ath12k_board_data *bd
+@@ -615,14 +626,20 @@ int ath12k_core_fetch_regdb(struct ath12k_base *ab, struct ath12k_board_data *bd
  	if (!ret)
  		goto exit;
  
@@ -8196,7 +8196,7 @@ index b0107cde99f..46497fc3d42 100644
  	return ret;
  }
 diff --git a/drivers/net/wireless/ath/ath12k/core.h b/drivers/net/wireless/ath/ath12k/core.h
-index 93fd227b4d1..d0fb1168947 100644
+index 99d71dab7c0..4d859b41df3 100644
 --- a/drivers/net/wireless/ath/ath12k/core.h
 +++ b/drivers/net/wireless/ath/ath12k/core.h
 @@ -157,6 +157,7 @@ enum ath12k_hw_rev {
@@ -9492,6 +9492,3 @@ index d5160af60e0..0de82510b3d 100644
  	complete(&ab->wmi_ab.unified_ready);
  	return 0;
  }
--- 
-2.56.0
-

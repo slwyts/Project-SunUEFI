@@ -1,4 +1,4 @@
-From 892a593ae83389a645076451ba27221504d3dc33 Mon Sep 17 00:00:00 2001
+From 447ea07c56933261e169cbfc1a97f57962c9c497 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sun, 25 Oct 2026 12:04:07 +0000
 Subject: [PATCH] fix(usb): clear UCSI connectors after unregister
@@ -12,7 +12,7 @@ memory. Clear it after freeing the array so recovery can safely retry.
  1 file changed, 1 insertion(+)
 
 diff --git a/drivers/usb/typec/ucsi/ucsi.c b/drivers/usb/typec/ucsi/ucsi.c
-index 04c86185c..239693f92 100644
+index 04c86185c3d..239693f92de 100644
 --- a/drivers/usb/typec/ucsi/ucsi.c
 +++ b/drivers/usb/typec/ucsi/ucsi.c
 @@ -2409,6 +2409,7 @@ void ucsi_unregister(struct ucsi *ucsi)
@@ -23,6 +23,3 @@ index 04c86185c..239693f92 100644
  }
  EXPORT_SYMBOL_GPL(ucsi_unregister);
  
--- 
-2.47.3
-

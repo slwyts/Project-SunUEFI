@@ -1,4 +1,4 @@
-From 19e821eaee6ce74f9bc1fcf8830c16c28261e1d2 Mon Sep 17 00:00:00 2001
+From 33de18b304fbaf5348fa54eeccbedfe84bd0a25d Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 06:28:30 +0800
 Subject: [PATCH] tee: qcomtee: allocate large shared buffers from CMA
@@ -103,6 +103,3 @@ index b67909ef3f4..8e68d64a98d 100644
  }
  
  static void pool_op_destroy_pool(struct tee_shm_pool *pool)
--- 
-2.56.0
-

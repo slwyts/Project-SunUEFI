@@ -1,4 +1,4 @@
-From d6cf6285ac6eb22436569951f86a1787b5230cd9 Mon Sep 17 00:00:00 2001
+From 3b077224cea1a670c1a5d1899eb246444034fb18 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(media): port Piano media support to Linux 7.3
@@ -12196,6 +12196,3 @@ index d256b7ec8f8..fa5ba1bea8f 100644
  /**
   * v4l2_subdev_init - initializes the sub-device struct
   *
--- 
-2.56.0
-

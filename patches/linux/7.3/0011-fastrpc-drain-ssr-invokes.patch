@@ -1,4 +1,4 @@
-From 679af40069fab5a72bf4c3bdc76ab760ae33db63 Mon Sep 17 00:00:00 2001
+From 57f708926d6b8d3fb54d0a19bc2d19c7058dfa4f Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 00:30:00 +0800
 Subject: [PATCH] fix(fastrpc): drain active invokes before DSP context
@@ -144,6 +144,3 @@ index 2f062fdf09e..5fe8253f358 100644
  	if (cctx->fdevice)
  		misc_deregister(&cctx->fdevice->miscdev);
  
--- 
-2.56.0
-

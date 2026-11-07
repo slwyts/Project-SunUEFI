@@ -1,4 +1,4 @@
-From c2d32344450463b6a6b2bfafec0b55b3ac568656 Mon Sep 17 00:00:00 2001
+From daded53b1714bd633a4d9c2e746d5bce085aeef5 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 07:46:25 +0800
 Subject: [PATCH] remoteproc: qcom: pas: share SM8750 CDSP global sync memory
@@ -25,6 +25,3 @@ index 139137b50a5..440141d4773 100644
  };
  
  static const struct of_device_id qcom_pas_of_match[] = {
--- 
-2.56.0
-

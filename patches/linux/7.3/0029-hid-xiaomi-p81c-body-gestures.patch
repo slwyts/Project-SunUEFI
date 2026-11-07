@@ -1,4 +1,4 @@
-From dc219b9e79c879585a29cd449b7989ba4c9a2d51 Mon Sep 17 00:00:00 2001
+From cec936faf1fe5e4e56e20be1fda433429f830e0c Mon Sep 17 00:00:00 2001
 From: YueMiyuki <76854136+YueMiyuki@users.noreply.github.com>
 Date: Thu, 29 Oct 2026 16:30:00 +0800
 Subject: [PATCH] HID: xiaomi: map P81C body slides to page keys
@@ -24,7 +24,7 @@ vendor MIUIInput.kl and window-manager key handling for 0022:5081.
  2 files changed, 32 insertions(+), 12 deletions(-)
 
 diff --git a/drivers/hid/Kconfig b/drivers/hid/Kconfig
-index f8a4298ffbb84ffdc3ed15bb7aaac8540cc5cacb..2481ae88e8830aa09dd20d3ee56ea1c1d027db50 100644
+index f8a4298ffbb..2481ae88e88 100644
 --- a/drivers/hid/Kconfig
 +++ b/drivers/hid/Kconfig
 @@ -566,8 +566,9 @@ config HID_XIAOMI
@@ -40,7 +40,7 @@ index f8a4298ffbb84ffdc3ed15bb7aaac8540cc5cacb..2481ae88e8830aa09dd20d3ee56ea1c1
  config HID_GYRATION
  	tristate "Gyration remote control"
 diff --git a/drivers/hid/hid-xiaomi.c b/drivers/hid/hid-xiaomi.c
-index 219fcad0864e91c8c3b106b4f74525ff73af8597..be97fd6644a7508925d1f3b717fd2565705af537 100644
+index 219fcad0864..be97fd6644a 100644
 --- a/drivers/hid/hid-xiaomi.c
 +++ b/drivers/hid/hid-xiaomi.c
 @@ -76,6 +76,18 @@ static const __u8 *xiaomi_report_fixup(struct hid_device *hdev, __u8 *rdesc,
@@ -96,5 +96,3 @@ index 219fcad0864e91c8c3b106b4f74525ff73af8597..be97fd6644a7508925d1f3b717fd2565
  
  	if (report->id != 5 ||
  	    report->size != 112 || report->maxfield != 2 ||
--- 
-2.54.0

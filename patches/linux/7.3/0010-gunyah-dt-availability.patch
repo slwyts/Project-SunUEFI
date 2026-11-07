@@ -1,4 +1,4 @@
-From 21a155746e066cf1c6f69ab879ca971a3124e7f2 Mon Sep 17 00:00:00 2001
+From 400b6a423987471167527259da0cb8934132666d Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 15:50:00 +0000
 Subject: [PATCH] fix(gunyah): respect disabled resource manager DT nodes
@@ -29,6 +29,3 @@ index b3ec2c9685e..b409ad05a1f 100644
  	return 0;
  }
  
--- 
-2.56.0
-

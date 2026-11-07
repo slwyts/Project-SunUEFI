@@ -1,4 +1,4 @@
-From bdcb9ab6e0a81d1e4c6eb44a449752f6fd23166b Mon Sep 17 00:00:00 2001
+From 51d471b31ccf7309e7d86420efdd17627640362c Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(gunyah): port Piano gunyah support to Linux 7.3
@@ -9376,6 +9376,3 @@ index 00000000000..f6f427be5e7
 + */
 +#define GH_CAP_VCPU_TIMER_WAKEUP	0
 +#endif
--- 
-2.56.0
-

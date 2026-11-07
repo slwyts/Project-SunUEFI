@@ -1,4 +1,4 @@
-From 9c1dc6ae5f15e2187cb7641673cf01fbdfa2d777 Mon Sep 17 00:00:00 2001
+From 577ea010e6b57047475f36e3841db5b89dbfdc26 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(display): port Piano display support to Linux 7.3
@@ -4135,6 +4135,3 @@ index 53c1301dbb8..c237fe1aeee 100644
  }
  
  static const struct i2c_device_id ktz8866_ids[] = {
--- 
-2.56.0
-

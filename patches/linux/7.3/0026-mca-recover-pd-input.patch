@@ -1,4 +1,4 @@
-From 9d00bb4aa4a47a3b18da35b9ac1317ec72173e20 Mon Sep 17 00:00:00 2001
+From f325312349b57c56e7b9522d8e43ca8256c28392 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sun, 25 Oct 2026 14:59:44 +0000
 Subject: [PATCH] power: supply: piano_mca: recover unknown PD input
@@ -13,8 +13,6 @@ limits, and skip policy changes when the type read fails.
 When classification recovers after an Unknown sample blocked high voltage,
 allow a delayed retry within the existing per-attach retry budget.
 
-
-
 Hold the power-supply removal semaphore while checking the UCSI peer,
 so ADSP recovery cannot free connector data during the property reads.
 ---
@@ -22,7 +20,7 @@ so ADSP recovery cannot free connector data during the property reads.
  1 file changed, 88 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 1c54dc71e..4c1944127 100644
+index 1c54dc71e7b..4c194412708 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -90,6 +90,8 @@ struct piano_mca_pdo {
@@ -157,6 +155,3 @@ index 1c54dc71e..4c1944127 100644
  static ssize_t charger_type_show(struct device *dev,
  				 struct device_attribute *attr, char *buf)
  {
--- 
-2.47.3
-

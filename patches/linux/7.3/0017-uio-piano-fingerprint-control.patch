@@ -1,4 +1,4 @@
-From 6b9029bb823f582b5dd70bd4bb715ed1abb7b239 Mon Sep 17 00:00:00 2001
+From 37a51e9eeb058d55d267eaae3cd0f4fc63d46e3b Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 08:21:53 +0800
 Subject: [PATCH] uio: add Piano secure fingerprint power and interrupt control
@@ -268,6 +268,3 @@ index 00000000000..ce81549e257
 +MODULE_DESCRIPTION("Piano Goodix secure sensor GPIO and power control");
 +MODULE_AUTHOR("slwyts <slwyts@foxmail.com>");
 +MODULE_LICENSE("GPL");
--- 
-2.56.0
-

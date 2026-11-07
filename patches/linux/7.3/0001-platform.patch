@@ -1,4 +1,4 @@
-From 106af8abe9bed74296fba850bcf17d01c1c1809d Mon Sep 17 00:00:00 2001
+From e72eaf4a9bb8db9e337432ce381f4925c5e8dbb4 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(platform): port Piano platform support to Linux 7.3
@@ -13571,6 +13571,3 @@ index 00000000000..80ee8421bf5
 +	puts("qcom SMMU handoff and real stage1 register comparator assertions passed.");
 +	return 0;
 +}
--- 
-2.56.0
-

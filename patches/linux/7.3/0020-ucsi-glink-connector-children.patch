@@ -1,4 +1,4 @@
-From b113b8f42c73c695d7d54255e783193122aa2173 Mon Sep 17 00:00:00 2001
+From 8ad284cb380499cef94a3cddf8bdf20d4cb7ad8b Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 11:42:46 +0800
 Subject: [PATCH] usb: typec: ucsi_glink: ignore non-connector GLINK resources
@@ -22,6 +22,3 @@ index 1db0c88d817..fa7c2534b3a 100644
  		ret = fwnode_property_read_u32(fwnode, "reg", &port);
  		if (ret < 0) {
  			dev_err(dev, "missing reg property of %pOFn\n", fwnode);
--- 
-2.56.0
-

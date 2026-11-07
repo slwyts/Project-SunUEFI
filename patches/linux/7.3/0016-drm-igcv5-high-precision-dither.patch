@@ -1,4 +1,4 @@
-From 199a927f4743ebb98784073132ddd42cbcf793ea Mon Sep 17 00:00:00 2001
+From 2cad69b90cdfd7b2c2be4919da73c787918a2c52 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 05:39:50 +0800
 Subject: [PATCH] drm/msm/dpu: match Piano IGC high-precision dithering
@@ -34,6 +34,3 @@ index b083083ba48..5f1bc673338 100644
 +				IGC_DITHER_ENABLE | IGC_DITHER_STRENGTH : 0);
  	return n;
  }
--- 
-2.56.0
-

@@ -1,590 +1,244 @@
 {
   "schema_version": 1,
   "target": "release",
-  "kernel_version": "7.3.0",
-  "base_commit": "c03c1a14507dfaf8b856c2608f9ac216021fc222",
-  "base_tree": "30fd2ef82912c26cf3a58ad0ba6afc375fa851ac",
-  "target_tree": "2e8d0fea31465c53a9b3d627a2f1226ffd9b3e66",
-  "original_target_commit": "dc219b9e79c879585a29cd449b7989ba4c9a2d51",
-  "source_url": "https://github.com/torvalds/linux.git",
+  "kernel_version": "7.3.3",
+  "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
+  "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
+  "target_tree": "57092a5db46a12a7e9b61ac6783fd32fa4c722fb",
+  "original_target_commit": "cec936faf1fe5e4e56e20be1fda433429f830e0c",
+  "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
       "file": "0001-platform.patch",
-      "sha256": "8ee41cb6c83423c853647de0ca56f7ab73e2879ba5e7104bcf9ec9d8522d0eed",
-      "original_commit": "106af8abe9bed74296fba850bcf17d01c1c1809d",
-      "original_parent": "c03c1a14507dfaf8b856c2608f9ac216021fc222",
-      "committer_date": "2026-10-20T12:00:00+00:00",
-      "tree": "0c4d3009970dcae846e05de126275eb9b831a530"
+      "sha256": "bd06d1dc37565972b77c04b5c70b50c59eafcaff1a220dec55b3fa9a12a559d7",
+      "original_commit": "e72eaf4a9bb8db9e337432ce381f4925c5e8dbb4",
+      "original_parent": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
+      "committer_date": "2026-11-08T00:43:42+08:00",
+      "tree": "03cd1f5ad5da878f355eaeaf7a7d3be5e3a2f13a"
     },
     {
       "file": "0002-display.patch",
-      "sha256": "b3bd445b7af864e91edc446f727933e64e7cb7b02ced1e76605387e9e9a4004a",
-      "original_commit": "9c1dc6ae5f15e2187cb7641673cf01fbdfa2d777",
-      "original_parent": "106af8abe9bed74296fba850bcf17d01c1c1809d",
-      "committer_date": "2026-10-20T12:00:00+00:00",
-      "tree": "0c64ea08964a13b40937f87fdbe62c5a03feb322"
+      "sha256": "5eae6fca95b4b772c996c941c58ca13423c6ac2c836291791b434839579ee2c2",
+      "original_commit": "577ea010e6b57047475f36e3841db5b89dbfdc26",
+      "original_parent": "e72eaf4a9bb8db9e337432ce381f4925c5e8dbb4",
+      "committer_date": "2026-11-08T00:43:42+08:00",
+      "tree": "47cd0f4efade3c8c238ae50b669bca185dc719f4"
     },
     {
       "file": "0003-input-wireless.patch",
-      "sha256": "1ccee651df41cf14b4a5af74362732f4602734946c4af5cbf5fb2f7dafc2de39",
-      "original_commit": "a10f1574fc3777df1620e4d5a21b486c80aeef77",
-      "original_parent": "9c1dc6ae5f15e2187cb7641673cf01fbdfa2d777",
-      "committer_date": "2026-10-20T12:00:00+00:00",
-      "tree": "cef92c9eeb2dfa33620dae81256897b7d598e149"
+      "sha256": "b3cb4f645a654c94886e7c6101697c346ff70879edc8b741069eb1b3653fdf0d",
+      "original_commit": "49432a187382f59cfdc4e7c560a86f339eca058b",
+      "original_parent": "577ea010e6b57047475f36e3841db5b89dbfdc26",
+      "committer_date": "2026-11-08T00:43:42+08:00",
+      "tree": "6e10284d438a5dfb837f5880d1f28c4063a1fcf5"
     },
     {
       "file": "0004-media.patch",
-      "sha256": "78f213fe0b77dce6067cb79c4343495e16d2e77dc3d1237beec13bb96f5ca356",
-      "original_commit": "d6cf6285ac6eb22436569951f86a1787b5230cd9",
-      "original_parent": "a10f1574fc3777df1620e4d5a21b486c80aeef77",
-      "committer_date": "2026-10-20T12:00:00+00:00",
-      "tree": "719e1b758ea7d0955e893ad9388a37b3eca976d3"
+      "sha256": "55b1ea82a988aa8cd09c4696a3b04b69d092bf51145cba718ca67ccba9c42dfb",
+      "original_commit": "3b077224cea1a670c1a5d1899eb246444034fb18",
+      "original_parent": "49432a187382f59cfdc4e7c560a86f339eca058b",
+      "committer_date": "2026-11-08T00:43:42+08:00",
+      "tree": "aaafd98dc4333e8a80c6b9c9cbc1a01677b72aa9"
     },
     {
       "file": "0005-audio.patch",
-      "sha256": "96c2b89e92043057933e173183d376330491f4be744f9e6c4aaf29ae2793b3ef",
-      "original_commit": "5a47432e43099cfe86e0e2f0e821bdbb5823c128",
-      "original_parent": "d6cf6285ac6eb22436569951f86a1787b5230cd9",
-      "committer_date": "2026-10-20T12:00:00+00:00",
-      "tree": "3b247098d7e59bb70d0f2996d7b72288bfd2dadb"
+      "sha256": "191b05b323cca594c3f9e40efc7d6ed696cc7a1a9926f1f336ee9632c27e490c",
+      "original_commit": "bc6372877619ec8d4fcb87951c48f2d601f1536d",
+      "original_parent": "3b077224cea1a670c1a5d1899eb246444034fb18",
+      "committer_date": "2026-11-08T00:43:42+08:00",
+      "tree": "91e7e86851d44a12dab6a4c7e442f8e074eb7c91"
     },
     {
       "file": "0006-gunyah.patch",
-      "sha256": "bc512e66d439d37b87d081c0dbeecfd217f60a8bf8a7e8c962fecbf5a1ebbe77",
-      "original_commit": "bdcb9ab6e0a81d1e4c6eb44a449752f6fd23166b",
-      "original_parent": "5a47432e43099cfe86e0e2f0e821bdbb5823c128",
-      "committer_date": "2026-10-20T12:00:00+00:00",
-      "tree": "3257886314372e0132135c0e3b2b2991d9267b50"
+      "sha256": "eb90e99a3c8e973cbe9ea7179fbdb61b4e4ee7f8f8e3b0aa4a6bb8d77b1b821b",
+      "original_commit": "51d471b31ccf7309e7d86420efdd17627640362c",
+      "original_parent": "bc6372877619ec8d4fcb87951c48f2d601f1536d",
+      "committer_date": "2026-11-08T00:43:42+08:00",
+      "tree": "e5ced002ca13634f2e01f5fd866e9273933401f6"
     },
     {
       "file": "0007-bore.patch",
-      "sha256": "dbcea2cc9b137ddb73566cecea547faef463d594e475b5771ad05cb156ebd38b",
-      "original_commit": "2fa9735471b09fc702560ebb478a12456620eb1d",
-      "original_parent": "bdcb9ab6e0a81d1e4c6eb44a449752f6fd23166b",
-      "committer_date": "2026-10-20T12:00:00+00:00",
-      "tree": "1ab6f8bab647c498f2840224ad23b65cef1bfd8b"
+      "sha256": "86be07dee288c32cb15b75dc5f1a5fa6593cde1d1887840f6c766d32078db778",
+      "original_commit": "7c7113d4206ed8f0b0691fbc94da9d7872a37473",
+      "original_parent": "51d471b31ccf7309e7d86420efdd17627640362c",
+      "committer_date": "2026-11-08T00:43:43+08:00",
+      "tree": "adc2722e6f5ebb23e61df0ea2df89f244effeee4"
     },
     {
       "file": "0008-drm-msm-gem-api.patch",
-      "sha256": "27abd1d24481434c14ccd5c248a525984f23353b8f91ae98356b61ab11005870",
-      "original_commit": "948540b67ca51994ff799d02592856aa1e0c17a6",
-      "original_parent": "2fa9735471b09fc702560ebb478a12456620eb1d",
-      "committer_date": "2026-10-20T14:00:00+00:00",
-      "tree": "1ea36a39edfb73d90c5e7b5bdb062e8324cf3b55"
+      "sha256": "0667237de96e104540cbeee7d2b4142fbd404889bfab4d039707ccdaa5d7c748",
+      "original_commit": "41f787a6ee254c060904c4c883fa04cbdb734e4a",
+      "original_parent": "7c7113d4206ed8f0b0691fbc94da9d7872a37473",
+      "committer_date": "2026-11-08T00:43:43+08:00",
+      "tree": "e5152689631fd1502aad23987744fd0efbc0b6b6"
     },
     {
       "file": "0009-gunyah-rmap-api.patch",
-      "sha256": "b294c802fe28c3ff49b2d48ed6527beca7d3e29d09a3f5add947dcb3cfb9fe7c",
-      "original_commit": "95f8b55c62eb2cac8f331913aced9f8e5d849f70",
-      "original_parent": "948540b67ca51994ff799d02592856aa1e0c17a6",
-      "committer_date": "2026-10-20T14:10:00+00:00",
-      "tree": "bf44482de290f2793bb1c9d22f11eb275d1fee5d"
+      "sha256": "9e9e4773755ae62124ab68370e3f49178c73ed8851e40f860e91a3a3710d2288",
+      "original_commit": "9ea38a6ac6379246076863f87e92ad9c3321bc65",
+      "original_parent": "41f787a6ee254c060904c4c883fa04cbdb734e4a",
+      "committer_date": "2026-11-08T00:43:43+08:00",
+      "tree": "5330e9e430282adf3cf1b6996053a192a38ed319"
     },
     {
       "file": "0010-gunyah-dt-availability.patch",
-      "sha256": "0534e6d384d57257b8ba67a0ac6003fdecce8328a36b28e12413c828d5c199af",
-      "original_commit": "21a155746e066cf1c6f69ab879ca971a3124e7f2",
-      "original_parent": "95f8b55c62eb2cac8f331913aced9f8e5d849f70",
-      "committer_date": "2026-10-20T15:50:00+00:00",
-      "tree": "89d2aad905c7e14699f641ac3394e0a7cccc862b"
+      "sha256": "185636d2ae6c4d8e4953f010f58d3bcd07c9f91c176cb6ecca3ad598935cfb15",
+      "original_commit": "400b6a423987471167527259da0cb8934132666d",
+      "original_parent": "9ea38a6ac6379246076863f87e92ad9c3321bc65",
+      "committer_date": "2026-11-08T00:43:43+08:00",
+      "tree": "ceda454da43da8d2cb62a4070415fc1219d10261"
     },
     {
       "file": "0011-fastrpc-drain-ssr-invokes.patch",
-      "sha256": "0388cb7001807cf6692d1628ce07f6b720da23e759a962b1904431b47215ab4f",
-      "original_commit": "679af40069fab5a72bf4c3bdc76ab760ae33db63",
-      "original_parent": "21a155746e066cf1c6f69ab879ca971a3124e7f2",
-      "committer_date": "2026-10-22T00:30:00+08:00",
-      "tree": "9e708487db96356af9d4cb48218b89734445e751"
+      "sha256": "d2b626bf81442529fe239ba2ba49b3ba6e6c5a032bb6d406aac1ee45c952b226",
+      "original_commit": "57f708926d6b8d3fb54d0a19bc2d19c7058dfa4f",
+      "original_parent": "400b6a423987471167527259da0cb8934132666d",
+      "committer_date": "2026-11-08T00:43:43+08:00",
+      "tree": "461bd31dc7110f95a2b268cb259af7f194d53b67"
     },
     {
       "file": "0012-asoc-q6apm-avoid-unregistered-query.patch",
-      "sha256": "e8beaefe447f3ec3bcace66d8dde7ceac587d70c54fcec3fafc667171486d485",
-      "original_commit": "3141d26caacec6ca2ca39713ed6a05868fd54aee",
-      "original_parent": "679af40069fab5a72bf4c3bdc76ab760ae33db63",
-      "committer_date": "2026-10-21T19:19:53+00:00",
-      "tree": "d9ab27d8a094614e11a75487e507c3432a7ad176"
+      "sha256": "1853d8c264f66f01c6ea59b3bb3144ff3fda62e613eccec4af070d7bba19aa22",
+      "original_commit": "adfa5e11e2bec07f07bbdd08f811b4c75fa933c1",
+      "original_parent": "57f708926d6b8d3fb54d0a19bc2d19c7058dfa4f",
+      "committer_date": "2026-11-08T00:43:43+08:00",
+      "tree": "063538e10154b2692e37e7007aca96d269c695ed"
     },
     {
       "file": "0013-asoc-va-sm8750-core-votes.patch",
-      "sha256": "232b4eeff5030daba1de0a5aa4c0ebac27d349b235d697476f105c67d605595c",
-      "original_commit": "e355cc7a99beb1d6c244685d512696fd9925c0c2",
-      "original_parent": "3141d26caacec6ca2ca39713ed6a05868fd54aee",
-      "committer_date": "2026-10-22T04:35:06+08:00",
-      "tree": "4a2587ec3e6f43cc01696ca79613254488cf048f"
+      "sha256": "83d85f8a113652d909ec8042ec08a16e313ad25ea70033e4cfe7807ec9747b30",
+      "original_commit": "3799f48d56acc3136286a3b6beab11f9c4df7ebf",
+      "original_parent": "adfa5e11e2bec07f07bbdd08f811b4c75fa933c1",
+      "committer_date": "2026-11-08T00:43:43+08:00",
+      "tree": "d88ae8dd63b5525645d2093a4acc1bd19e2a0ccb"
     },
     {
       "file": "0014-qcomtee-large-shared-memory.patch",
-      "sha256": "94e9fcafb1ee5b1ff57cee3f93cd3127d141fb6043eed937f662bd92543f8d4e",
-      "original_commit": "19e821eaee6ce74f9bc1fcf8830c16c28261e1d2",
-      "original_parent": "e355cc7a99beb1d6c244685d512696fd9925c0c2",
-      "committer_date": "2026-10-22T06:28:54+08:00",
-      "tree": "2f33f7f070f712e5a0bea7991a19f0a76b9b5cf4"
+      "sha256": "7d141c24c3ef9277cd86c644e4a248b6321bb9775aa0fba4c5e9a9bf94b3ff9e",
+      "original_commit": "33de18b304fbaf5348fa54eeccbedfe84bd0a25d",
+      "original_parent": "3799f48d56acc3136286a3b6beab11f9c4df7ebf",
+      "committer_date": "2026-11-08T00:43:43+08:00",
+      "tree": "d84252f5cc0b009f933de535b996d56c99e1257a"
     },
     {
       "file": "0015-remoteproc-sm8750-cdsp-sync-memory.patch",
-      "sha256": "d26581e081e931d65b3f733d8a06669747db1b33244f0008762484f5383d32e3",
-      "original_commit": "c2d32344450463b6a6b2bfafec0b55b3ac568656",
-      "original_parent": "19e821eaee6ce74f9bc1fcf8830c16c28261e1d2",
-      "committer_date": "2026-10-22T07:46:25+08:00",
-      "tree": "c200de0da2aecb925a7ecf7db107be3866fcb116"
+      "sha256": "506721b10876f2a2115ff5417ed3fa182499ce449dc9c1f845398d14334c9241",
+      "original_commit": "daded53b1714bd633a4d9c2e746d5bce085aeef5",
+      "original_parent": "33de18b304fbaf5348fa54eeccbedfe84bd0a25d",
+      "committer_date": "2026-11-08T00:43:43+08:00",
+      "tree": "920875754ceeda010a70692c889a534c5c06ccce"
     },
     {
       "file": "0016-drm-igcv5-high-precision-dither.patch",
-      "sha256": "50b4e02f89ea4166ee002051bb3297e4bf75f3cf3a987a31de2981c6270c64b6",
-      "original_commit": "199a927f4743ebb98784073132ddd42cbcf793ea",
-      "original_parent": "c2d32344450463b6a6b2bfafec0b55b3ac568656",
-      "committer_date": "2026-10-22T08:11:04+08:00",
-      "tree": "438c9dcd6bd566c6f5d165e7b8c1ae14ae779185"
+      "sha256": "cb2ae234ee9deb23dc727db2147cf1db7d075eea52ca7cfec6cf8a57e8052b84",
+      "original_commit": "2cad69b90cdfd7b2c2be4919da73c787918a2c52",
+      "original_parent": "daded53b1714bd633a4d9c2e746d5bce085aeef5",
+      "committer_date": "2026-11-08T00:43:43+08:00",
+      "tree": "ceedcce8f67f9ca0ded954b35899b51471454890"
     },
     {
       "file": "0017-uio-piano-fingerprint-control.patch",
-      "sha256": "5bb219c6e9070f45400224f4889399baee435ff0fc9871c04d731850fb38330f",
-      "original_commit": "6b9029bb823f582b5dd70bd4bb715ed1abb7b239",
-      "original_parent": "199a927f4743ebb98784073132ddd42cbcf793ea",
-      "committer_date": "2026-10-22T09:07:21+08:00",
-      "tree": "6b7976cb4ee3bf8d66680c06e208bd73fabc8fe9"
+      "sha256": "177f6ad98916413169d2a583ced20651b7eb899e6cf01ef69dc8c709263e6919",
+      "original_commit": "37a51e9eeb058d55d267eaae3cd0f4fc63d46e3b",
+      "original_parent": "2cad69b90cdfd7b2c2be4919da73c787918a2c52",
+      "committer_date": "2026-11-08T00:43:44+08:00",
+      "tree": "89011db595d0cb463a0c507b5131d4ab97d0c7ad"
     },
     {
       "file": "0018-qcomtee-public-buffers-cma.patch",
-      "sha256": "ee6c3b824d509d550db71ce609b3cdf02fbdfe1057e01ffb017d117596f70c47",
-      "original_commit": "cd9cceac5bdd293a5372b272c94ab73303c3a817",
-      "original_parent": "6b9029bb823f582b5dd70bd4bb715ed1abb7b239",
-      "committer_date": "2026-10-22T10:18:53+08:00",
-      "tree": "28adb1cb8ddd7264526601e8e35177820d8434af"
+      "sha256": "072b16f98666649006eb27f7b3a02754dcc2908acd3606191ec15385fa52b32f",
+      "original_commit": "339da269a496bcbc05dc9fc2e5656b5a6c6ea423",
+      "original_parent": "37a51e9eeb058d55d267eaae3cd0f4fc63d46e3b",
+      "committer_date": "2026-11-08T00:43:44+08:00",
+      "tree": "eda523d46568d7f331ca45671787b5f481d3d7e0"
     },
     {
       "file": "0019-pmic-glink-altmode-connector-children.patch",
-      "sha256": "cb0dd641af13647717520f0b7f89f5d872b9193d72570205e92e8c1b1c0a1275",
-      "original_commit": "a37030e54e258222c175a8738c4a2d645816c289",
-      "original_parent": "cd9cceac5bdd293a5372b272c94ab73303c3a817",
-      "committer_date": "2026-10-22T11:23:20+08:00",
-      "tree": "629d9bfa1ca3af9bb0618a937f9ecaa2e96b7bb6"
+      "sha256": "a578d69cc8b98125c00b890193669200e43e680c8b56330fe807c37dee00da3e",
+      "original_commit": "9eac536e0c924795003440e97cec42759d741c54",
+      "original_parent": "339da269a496bcbc05dc9fc2e5656b5a6c6ea423",
+      "committer_date": "2026-11-08T00:43:44+08:00",
+      "tree": "2b4651203a10910762863bade85e7e1cd345e552"
     },
     {
       "file": "0020-ucsi-glink-connector-children.patch",
-      "sha256": "7baf194d0f77234036b14ef3a31246773495ba3f3072b8cc1be8b47461bab500",
-      "original_commit": "b113b8f42c73c695d7d54255e783193122aa2173",
-      "original_parent": "a37030e54e258222c175a8738c4a2d645816c289",
-      "committer_date": "2026-10-22T11:42:46+08:00",
-      "tree": "08ab72fffa4229ce59d67cda74051dffc278a53d"
+      "sha256": "96177cdd92ec841427cb6f68f3f31206bdce594bcd3963d519cf1cf0a8a8997f",
+      "original_commit": "8ad284cb380499cef94a3cddf8bdf20d4cb7ad8b",
+      "original_parent": "9eac536e0c924795003440e97cec42759d741c54",
+      "committer_date": "2026-11-08T00:43:44+08:00",
+      "tree": "3fde26ea4f2cfb0345ddfc98a29f5976135c2209"
     },
     {
       "file": "0021-ucsi-prefer-numbered-connectors.patch",
-      "sha256": "cb7e8aa267b5a28d56569700fe63c4435c0e2f7f768058d9160b77a7ed99300c",
-      "original_commit": "37817d0275707f2ec3d62725f769befa9dc2a7a0",
-      "original_parent": "b113b8f42c73c695d7d54255e783193122aa2173",
-      "committer_date": "2026-10-22T11:52:43+08:00",
-      "tree": "8629e18d01c0a8607c22b0946647593e5146b220"
+      "sha256": "add2c5d47c88fe8ad5387fdbce433af9f71a9593df11b9560acaa4aca621c85b",
+      "original_commit": "6535f06dd03a0d86f16d21e3cc2832a8385e9014",
+      "original_parent": "8ad284cb380499cef94a3cddf8bdf20d4cb7ad8b",
+      "committer_date": "2026-11-08T00:43:44+08:00",
+      "tree": "2391ef0e5fd71660cf20dc168ef32429e03d9926"
     },
     {
       "file": "0022-ucsi-initial-usb-mux.patch",
-      "sha256": "d69514f2e39773b934849ab1ce9652e6f4965de447972ff6c359bdc1430ddb99",
-      "original_commit": "03070a4d1f8910f4e1bb74af65366f45fe8d14c3",
-      "original_parent": "37817d0275707f2ec3d62725f769befa9dc2a7a0",
-      "committer_date": "2026-10-22T12:27:17+08:00",
-      "tree": "399d075608845683187ed3b6776a118e35851a39"
+      "sha256": "bd336948779b0818eff04ba4dace149cbb33fa149f6453ce0078f76b6f35b7b8",
+      "original_commit": "4ccbd49289b74d6e91a84dd91ed6a04e4629e616",
+      "original_parent": "6535f06dd03a0d86f16d21e3cc2832a8385e9014",
+      "committer_date": "2026-11-08T00:43:44+08:00",
+      "tree": "607e66ad28bae6acfbb1a274b495f632890e3831"
     },
     {
       "file": "0023-dpu-shared-video-ctl.patch",
-      "sha256": "4688bc62a99bcabab40f40eb32faf010fe892e1ef5a4116dbb07727ec86f9353",
-      "original_commit": "57b1e6db5a831d416ad438b7490144e6f8ee6af9",
-      "original_parent": "03070a4d1f8910f4e1bb74af65366f45fe8d14c3",
-      "committer_date": "2026-10-22T17:59:50+08:00",
-      "tree": "444fbef54cbc07eb2db6165eb648b99cca2236b5"
+      "sha256": "afd04d4ba70d1695399ff9bd84a714746332aacbdb5c30c08d38e768e77a3835",
+      "original_commit": "aca459ef30504fdaf0c879273025fcf373ef754b",
+      "original_parent": "4ccbd49289b74d6e91a84dd91ed6a04e4629e616",
+      "committer_date": "2026-11-08T00:43:44+08:00",
+      "tree": "5ced3c39262320be3c2c0a9f64edde2a0f943790"
     },
     {
       "file": "0024-hid-nanosic-feature-and-release.patch",
-      "sha256": "ac1d6cea90ad81e2115dc7d758d22be5c6598e9f3c088748b7854b63709cd9a7",
-      "original_commit": "220cdeac7e4ec4e1a8bc4c2400c71fa00b21b084",
-      "original_parent": "57b1e6db5a831d416ad438b7490144e6f8ee6af9",
-      "committer_date": "2026-10-22T18:25:53+08:00",
-      "tree": "4a5923915b4214f850287fc51c658781dc54a195"
+      "sha256": "914e2a72d03629a54282c844df9581b14c3ead1de58e7bade1d8b9b54f70c780",
+      "original_commit": "7b2c4d08da38b128641a62d5783e73ab349d7b5f",
+      "original_parent": "aca459ef30504fdaf0c879273025fcf373ef754b",
+      "committer_date": "2026-11-08T00:43:44+08:00",
+      "tree": "adeac5ea9c0d0eba57b6b7d02a78993739dc7111"
     },
     {
       "file": "0025-ucsi-clear-released-connectors.patch",
-      "sha256": "1db7e75f8f680d1320c18e94b2a581fd020e5244ced35035950170d741c9b327",
-      "original_commit": "892a593ae83389a645076451ba27221504d3dc33",
-      "original_parent": "220cdeac7e4ec4e1a8bc4c2400c71fa00b21b084",
-      "committer_date": "2026-10-25T12:04:07+00:00",
-      "tree": "4b127fa70ffa79e78a259c8289ef7e632822edec"
+      "sha256": "2290a6f1dcc6f5653efbbc0014b853273ff10ca2086072e5054701280bafe2eb",
+      "original_commit": "447ea07c56933261e169cbfc1a97f57962c9c497",
+      "original_parent": "7b2c4d08da38b128641a62d5783e73ab349d7b5f",
+      "committer_date": "2026-11-08T00:43:44+08:00",
+      "tree": "715f49a4e11fb7ac1eaf8ced63fff68a5b339d19"
     },
     {
       "file": "0026-mca-recover-pd-input.patch",
-      "sha256": "e51e2b096f5f05cbb0dcd8d72185b2c0d4210fba283dba21466bf2b123038deb",
-      "original_commit": "9d00bb4aa4a47a3b18da35b9ac1317ec72173e20",
-      "original_parent": "892a593ae83389a645076451ba27221504d3dc33",
-      "committer_date": "2026-10-25T14:59:44Z",
-      "tree": "2aa1815b3e5c97943d522dd176f3d059c0c268eb"
+      "sha256": "9a7e604747bc7676a536a72d12480e7e447e8bd6c8add91dad1c4312f03444b1",
+      "original_commit": "f325312349b57c56e7b9522d8e43ca8256c28392",
+      "original_parent": "447ea07c56933261e169cbfc1a97f57962c9c497",
+      "committer_date": "2026-11-08T00:43:44+08:00",
+      "tree": "1376c824d50037ee7cd7a87ca6b342648cdb51d6"
     },
     {
       "file": "0027-power-piano-mipps-authentication.patch",
-      "sha256": "2e935e1fc56054845884f18a43cf75ace20da58e4354eb20f7f8809e207922d0",
-      "original_commit": "3176c9930508dac813a7ab8bc38739b0cb47297e",
-      "original_parent": "9d00bb4aa4a47a3b18da35b9ac1317ec72173e20",
-      "committer_date": "2026-10-28T14:11:38Z",
-      "tree": "d2d5a2393f557fed97e2d8a5cb020961f8b5408a"
+      "sha256": "39c0ba804f2835f29f88697c746d6a48357c622715c7d5ef891a411f4004307d",
+      "original_commit": "97647310050b549c2da281269b7010faebb8c37e",
+      "original_parent": "f325312349b57c56e7b9522d8e43ca8256c28392",
+      "committer_date": "2026-11-08T00:43:45+08:00",
+      "tree": "fc533702de0972859e56028d27868c2cd27d41e8"
     },
     {
       "file": "0028-power-piano-otg-configuration.patch",
-      "sha256": "d9506ab06591842d5d5b533d804a7454fdf1d2efc0c561235461bf6644a35f86",
-      "original_commit": "c474d439f79df18b44bf5e93926fc8affbdb2fa6",
-      "original_parent": "3176c9930508dac813a7ab8bc38739b0cb47297e",
-      "committer_date": "2026-10-28T15:31:00Z",
-      "tree": "78e5f4edfacd2e5310f9461052cfd34ef91e3f18"
+      "sha256": "bb68177a17ccd985e759f036eeb498e3668ff0b6a23c1a32301fe57dd2e70c2c",
+      "original_commit": "e04e7e47875e30ab7a03d0c2e8712e883422e5a9",
+      "original_parent": "97647310050b549c2da281269b7010faebb8c37e",
+      "committer_date": "2026-11-08T00:43:45+08:00",
+      "tree": "5b2a8317574c5445d28f3c24c5aafb9637fdf7b7"
     },
     {
       "file": "0029-hid-xiaomi-p81c-body-gestures.patch",
-      "sha256": "6445532261838dea54bc623a8c80bfef0f2eb76cd17955cd6372584a012ce287",
-      "original_commit": "dc219b9e79c879585a29cd449b7989ba4c9a2d51",
-      "original_parent": "c474d439f79df18b44bf5e93926fc8affbdb2fa6",
-      "committer_date": "2026-11-08T00:41:09+08:00",
-      "tree": "2e8d0fea31465c53a9b3d627a2f1226ffd9b3e66"
+      "sha256": "3636bd4c7b2cb48d124d3df22108b0b73350a32176aa81c1bb2c22107258b9fd",
+      "original_commit": "cec936faf1fe5e4e56e20be1fda433429f830e0c",
+      "original_parent": "e04e7e47875e30ab7a03d0c2e8712e883422e5a9",
+      "committer_date": "2026-11-08T00:43:45+08:00",
+      "tree": "57092a5db46a12a7e9b61ac6783fd32fa4c722fb"
     }
-  ],
-  "provenance": {
-    "hardware_source": "https://github.com/blu-sharky/linux-piano.git",
-    "hardware_commit": "352508459733d3e6d349ea5581a8dd2fd8bb4180",
-    "hardware_with_project_baseline": "8524f36a34899f4e4aea9d28cbff2ddbff167dc9",
-    "project_patches": [
-      {
-        "key": "cpu_model_patch",
-        "commit": "5941a670ed1c8991666bb5185a3fe841ac03b090",
-        "source_patch": "patches/linux/7.2.9/0001-arm64-cpuinfo-read-dt-model.patch",
-        "source_sha256": "efc25dfd43e5b32ee3b46176f7ae4716dc94bb6af27f3b064ebbeccc19cfca64",
-        "rebased": false
-      },
-      {
-        "key": "fastrpc_dma_patch",
-        "commit": "5aaad17aaba9c394c15e01d9418bfd857631ce6a",
-        "source_patch": "patches/linux/7.2.9/0002-fastrpc-sm8750-translated-dma.patch",
-        "source_sha256": "e7adb9adda777279c14c7dbc473d86b9c8a240cff27344b237a5368950adafdc",
-        "rebased": false
-      },
-      {
-        "key": "panel_depth_patch",
-        "commit": "88f05e5335929d07b07337a93b06eb92a868b240",
-        "source_patch": "patches/linux/7.2.9/0003-panel-nt36532-piano-color-depth.patch",
-        "source_sha256": "0259986f0d09eb82703bcd4556306e3de4b2b20c217c82965399de28965335b7",
-        "rebased": false
-      },
-      {
-        "key": "flash_cleanup_patch",
-        "commit": "2535b8ea617513560c6bc318d135e783b7105b0d",
-        "source_patch": "patches/linux/7.2.9/0004-leds-qcom-flash-cleanup-index.patch",
-        "source_sha256": "d733ff5eabf62ff970cc0eece7580fe505dabc757b310458fc878adac0303228",
-        "rebased": false
-      },
-      {
-        "key": "va_clock_order_patch",
-        "commit": "3ca78a141e6acd3efc44afa8877c668e13cd45c5",
-        "source_patch": "patches/linux/7.2.9/0005-asoc-va-dmic-clock-before-filter.patch",
-        "source_sha256": "b59ddf79d3c2a7ce06d4759b89aae3bfba111a4cdc8a50a92b4f933bd9f32f6e",
-        "rebased": false
-      },
-      {
-        "key": "gcv2_backend_patch",
-        "commit": "de9393bae7ffaa9d6fad47bd4899c89ac840dfa0",
-        "source_patch": "patches/linux/7.2.9/0006-drm-msm-dpu-gcv2-regdma-backend.patch",
-        "source_sha256": "60768e66de73e32d0f61aad302b01d8111bb10120ca91b435064001b93533587",
-        "rebased": true
-      },
-      {
-        "key": "gcv2_catalog_patch",
-        "commit": "4b20f214b2bee3e5d2cd92dce91732cc2f4eff4e",
-        "source_patch": "patches/linux/7.2.9/0007-drm-sm8750-gcv2-catalog.patch",
-        "source_sha256": "38689e09ba31b55b077794e6e7e5b67fa67dee7b9c4c12f996c9bf28eeb441f1",
-        "rebased": false
-      },
-      {
-        "key": "dsi_stop_order_patch",
-        "commit": "c88ad763baba1a2c69c38dd5a1f1d83c69e61c8a",
-        "source_patch": "patches/linux/7.2.9/0008-dsi-bonded-stop-slave-first.patch",
-        "source_sha256": "efff8c2a9782bae290697423d071e7d98b60c02c88738421fb9a76b4b3f5c4c4",
-        "rebased": false
-      },
-      {
-        "key": "dsi_fixed_bpc_patch",
-        "commit": "a33903d20436a2db7f93ce84d630c82e982af391",
-        "source_patch": "patches/linux/7.2.9/0009-drm-msm-dsi-fixed-dsc-bpc.patch",
-        "source_sha256": "fe49a73531c9b73b222b65279529bd195d0cfb5065d1f4607acbe76de3c3c4d0",
-        "rebased": true
-      },
-      {
-        "key": "flash_torch_rounding_patch",
-        "commit": "39db87181257a1d8770f25565dfbb0fc7977e2b2",
-        "source_patch": "patches/linux/7.2.9/0010-leds-qcom-flash-torch-rounding.patch",
-        "source_sha256": "39f6e21b562b6c46b42d8be7582f2222a452b2485e01372e5b3302e44e47064e",
-        "rebased": false
-      },
-      {
-        "key": "dsi_video_phases_patch",
-        "commit": "1c803f7831ddadf0cb3fb08d9ed3a6ce6955e81e",
-        "source_patch": "patches/linux/7.2.9/0011-dsi-bridge-video-phases.patch",
-        "source_sha256": "d0a4a4c3492b9d9d07202ca926af00c5c9188f30552e5e76b4820430363b4e67",
-        "rebased": true
-      },
-      {
-        "key": "dsi_post_hs_sync_patch",
-        "commit": "6ebfba19cb7c4a43fcf2bd12b33942801c98f4f3",
-        "source_patch": "patches/linux/7.2.9/0012-dsi-sm8750-post-hs-resync.patch",
-        "source_sha256": "9866d42e9a767abf64f2ea84e5aa7855100c97b0c4e732d52d02e030a988d7bc",
-        "rebased": false
-      },
-      {
-        "key": "va_mono_patch",
-        "commit": "a10d499d020a201bc62facb53cd4447046a978f9",
-        "source_patch": "patches/linux/7.2.9/0013-asoc-piano-va-mono.patch",
-        "source_sha256": "a584675049a6677d8f5acc1c0c03dd7d29a5719551f484ff26331aedd6f81edc",
-        "rebased": false
-      },
-      {
-        "key": "piano_panel_reset_patch",
-        "commit": "cc1e4641d634a6364330052dd767043ff0fc545c",
-        "source_patch": "patches/linux/7.2.9/0014-panel-piano-factory-reset.patch",
-        "source_sha256": "4b0462125d610ac8d26f9056dfd12caab73426988538100980df3529bb26f04e",
-        "rebased": false
-      },
-      {
-        "key": "dsi_post_resync_reset_patch",
-        "commit": "1201b35ddd93276d11da0f0485f7dd61d0cc9e84",
-        "source_patch": "patches/linux/7.2.9/0015-dsi-sm8750-post-resync-controller-reset.patch",
-        "source_sha256": "80067cb42d31ef0ca012eb1e1de611b9f348194466448f982e5f1e18c9794caf",
-        "rebased": false
-      },
-      {
-        "key": "piano_privacy_led_patch",
-        "commit": "8973dc7ad75c9ac23ca217ba8669bc914a2f22d3",
-        "source_patch": "patches/linux/7.2.9/0016-piano-camera-privacy-led.patch",
-        "source_sha256": "34419a7bb108d0c73c61cc9f8991a81204f689dadce008d3db4b3b6a9ec842b4",
-        "rebased": false
-      },
-      {
-        "key": "nvt_panel_follower_patch",
-        "commit": "21cf4762f547163171f2348bfc75706376a6191e",
-        "source_patch": "patches/linux/7.2.9/0020-nvt-panel-follower-lifetime.patch",
-        "source_sha256": "140a47b258b32d2cc8b90b3793fb550bcf179bdac1866b37f4275f4184252623",
-        "rebased": false
-      },
-      {
-        "key": "p81c_pressure_hid_patch",
-        "commit": "a6ca8369af7b608efc459641817b276fa88f1b22",
-        "source_patch": "patches/linux/7.2.9/0021-hid-xiaomi-p81c-pressure-not-keyboard.patch",
-        "source_sha256": "6382c56df5ac05c01b8d663abcd01c63ba610313914d3eedaeb184d405304bb1",
-        "rebased": false
-      },
-      {
-        "key": "piano_preferred_120hz_patch",
-        "commit": "3217b9a8ff6dcc885812f012f9733a1eb78648b5",
-        "source_patch": "patches/linux/7.2.9/0022-panel-piano-prefer-120hz-cold-start.patch",
-        "source_sha256": "664fde223e7f32a81a9d45331a219becc9b04bb92f8cb284da5bedb2c88b9311",
-        "rebased": false
-      },
-      {
-        "key": "piano_function_row_patch",
-        "commit": "873136b875ea20ce200c49ca675145fa12a7a488",
-        "source_patch": "patches/linux/7.2.9/0023-nanosic-piano-right-ctrl-function-row.patch",
-        "source_sha256": "2ce7e5dfedf1711a835797c694e86374c3483ad790a145e61d87610f63f8feb4",
-        "rebased": false
-      },
-      {
-        "key": "dsi_pll_registration_patch",
-        "commit": "ec6b1fe22a6773a8b6ab19775d7639030bf0e5a2",
-        "source_patch": "patches/linux/7.2.9/0024-dsi-pll-defer-unprogrammed-clock.patch",
-        "source_sha256": "669f2257c6a904201ab842788b9b53cfe72b288ad5b9701d9e7175299b171d16",
-        "rebased": false
-      },
-      {
-        "key": "dsi_slave_restore_patch",
-        "commit": "3ee34c9b7c1aa32eb544adb6d68b6373185ec898",
-        "source_patch": "patches/linux/7.2.9/0025-dsi-sm8750-restore-bonded-slave.patch",
-        "source_sha256": "84b20af17904b785f222f722f5588b5325110beeffc1e370bc045cf43684840a",
-        "rebased": false
-      },
-      {
-        "key": "dpu_video_stop_order_patch",
-        "commit": "ce3adbce12487d5896436df7a52efd6786be9a8e",
-        "source_patch": "patches/linux/7.2.9/0026-dpu-video-stop-order.patch",
-        "source_sha256": "edfe4462cc55e16fc72fd057dfd4aeac0b49bc3b340a269407f26c289d6891c0",
-        "rebased": false
-      },
-      {
-        "key": "piano_pen_dock_patch",
-        "commit": "3a5511d6dd9bcf882cea75160b4a9a07d07301a7",
-        "source_patch": "patches/linux/7.2.9/0027-input-piano-pen-dock.patch",
-        "source_sha256": "78c434c13f745a8e47152d2c550917abf206a2250da49bbc3d7084049e483a4d",
-        "rebased": false
-      },
-      {
-        "key": "nvt_system_resume_patch",
-        "commit": "6f7d7d23eded9ce8687ca259a4020bb71dd7fb0c",
-        "source_patch": "patches/linux/7.2.9/0028-nvt-ts-system-resume-reenable.patch",
-        "source_sha256": "0139f2e4280ef7354993b174957c89e8ff3eeac451a526b874a1666c3e6439ca",
-        "rebased": false
-      },
-      {
-        "key": "pcie_active_wakeup_patch",
-        "commit": "0122a40a195089d109b71e39e7fb18b41670401f",
-        "source_patch": "patches/linux/7.2.9/0029-sm8750-pcie-active-wakeup.patch",
-        "source_sha256": "3f8583bc4395b7f7987b71f55265c35b9aafde40cfaae072b0a073a4baec20af",
-        "rebased": false
-      },
-      {
-        "key": "smp2p_sleepstate_patch",
-        "commit": "69f2641e7d08cdf5c30e89b25725abd31fbe8d9f",
-        "source_patch": "patches/linux/7.2.9/0030-soc-qcom-smp2p-sleepstate.patch",
-        "source_sha256": "0025a7f799b13233f3d7bc21fc89bc248fe8ef381954b00d5d4f183602d8d386",
-        "rebased": false
-      },
-      {
-        "key": "nanosic_backlight_default_patch",
-        "commit": "29a66cb23088ea555b058f5ef530bcb938b47abc",
-        "source_patch": "patches/linux/7.2.9/0031-hid-nanosic-piano-backlight-default.patch",
-        "source_sha256": "8451b3e8f839a9e2574c362e6ef3382ebd470546692d8de22c766f83798d43b2",
-        "rebased": false
-      },
-      {
-        "key": "q6apm_global_lifetime_patch",
-        "commit": "91e34764d31fbf2fb4d54ec96c25e69bf9990d1f",
-        "source_patch": "patches/linux/7.2.9/0032-asoc-q6apm-clear-global-on-remove.patch",
-        "source_sha256": "0478b5ee57f9890112c9bf351a0f015a6b64202de8b08470ed0bc0e730a77827",
-        "rebased": false
-      },
-      {
-        "key": "fastrpc_freezable_invoke_patch",
-        "commit": "6f4df0a0df712ec4eba45eb3e7250f204fc2a193",
-        "source_patch": "patches/linux/7.2.9/0033-fastrpc-freeze-inflight-invoke.patch",
-        "source_sha256": "74fea53dac6f21f032aef99e795c886480788d3a756e62772ebc3fb2b984c603",
-        "rebased": true
-      },
-      {
-        "key": "dsi_phy_runtime_clock_patch",
-        "commit": "c5a909728f4d7ae5581f785a2ab8972b94f793cd",
-        "source_patch": "patches/linux/7.2.9/0034-dsi-phy-runtime-interface-clock.patch",
-        "source_sha256": "51a1e4dcbf6dfdaa828907f3168846f199d8ec012e3fc6ed2d4f040102ccef03",
-        "rebased": false
-      },
-      {
-        "key": "backlight_disable_ramp_patch",
-        "commit": "0c49b7630416c11e8ed2a754038897d9c47f720c",
-        "source_patch": "patches/linux/7.2.9/0036-backlight-ktz8866-wait-disable-ramp.patch",
-        "source_sha256": "ca5637c36057a7007c90d23765333839ea194524fe87e9e5cbd39fec4a11d64a",
-        "rebased": false
-      },
-      {
-        "key": "mca_hyperos4_pd_patch",
-        "commit": "148bbef29f3e1e31857d0b31b68c91ca681dfe60",
-        "source_patch": "patches/linux/7.2.9/0039-power-piano-hyperos4-pd-protocol.patch",
-        "source_sha256": "9b6d0b7283434b2b0b44b77c0e83d1eeeedaa979f39ae802f0c13e42d95b020f",
-        "rebased": false
-      },
-      {
-        "key": "sc96231_pen_charger_patch",
-        "commit": "fa69e9e1793009265cd982ecd6fc2fb1d9759b49",
-        "source_patch": "patches/linux/7.2.9/0041-power-sc96231-pen-charger.patch",
-        "source_sha256": "d68b0b7e61fad4bb695c39add97e7c4ed19789ccda4cdf00661974d02ada0315",
-        "rebased": false
-      },
-      {
-        "key": "nvt_deferred_pen_mode_patch",
-        "commit": "c4d796793c345809f77e808fe421d1836ae641af",
-        "source_patch": "patches/linux/7.2.9/0042-input-nvt-defer-pen-mode-while-asleep.patch",
-        "source_sha256": "3f259d5b47ea78abc209925befebb29b057f41c2b33ed2a100e1882811dfe93c",
-        "rebased": false
-      },
-      {
-        "key": "piano_low_refresh_patch",
-        "commit": "7e489d81b553c2511424c8155d0ff2d528623a2c",
-        "source_patch": "patches/linux/7.2.9/0035-panel-piano-low-refresh-rates.patch",
-        "source_sha256": "640cc9d28e4bcca72ee9c0edd74a8ab36d139a88edf1cf288c2f9edfc596ae2b",
-        "rebased": false
-      },
-      {
-        "key": "piano_seamless_vfp_patch",
-        "commit": "c10279b029c66ec7efbc2d9912366989dcb133ab",
-        "source_patch": "patches/linux/7.2.9/0037-drm-piano-seamless-vfp.patch",
-        "source_sha256": "e94ba447d18b4812bf6364ae55ba3d8752b6c0d4d5bef4e42bc44f64ef202029",
-        "rebased": false
-      },
-      {
-        "key": "piano_panel_vendor_order_patch",
-        "commit": "7307673c7e4a1a7529be9f736cb40c17c7ff9880",
-        "source_patch": "patches/linux/7.2.9/0038-panel-piano-vendor-refresh-order.patch",
-        "source_sha256": "c486855fa18d59c976c83aa402b34006b736c1342884fbb109e1e72b2f1026d7",
-        "rebased": false
-      },
-      {
-        "key": "piano_igcv5_degamma_patch",
-        "commit": "58caeeb769e956901902622e0c523cff8dab90c7",
-        "source_patch": "patches/linux/7.2.9/0044-drm-msm-dpu-igcv5-degamma.patch",
-        "source_sha256": "a0ca4c9ff36e70ed7a85ec7b194ac4b2ba5bf1879b3807a8f16c442eb82135c2",
-        "rebased": false
-      },
-      {
-        "key": "piano_igcv5_precision_patch",
-        "commit": "e5663d6a63cc9604e101864599444b8988c66e47",
-        "source_patch": "patches/linux/7.2.9/0045-drm-igcv5-high-precision-grid.patch",
-        "source_sha256": "cb16a9a824128abda24ee82b768f8e73af58ef644779877257a6ca0d3a5c1243",
-        "rebased": false
-      },
-      {
-        "key": "iris_drc_patch",
-        "commit": "9b64f90a8e1c5e85baa39f89d468f2bf49b38f66",
-        "source_patch": "patches/linux/7.2.9/0046-media-iris-psc-last.patch",
-        "source_sha256": "bb78efdb9ab3511afa27f1da87d10771655afd972a9521ef70ec2a89a94bd7b7",
-        "rebased": false
-      },
-      {
-        "key": "iris_deinit_irq_patch",
-        "commit": "804a15a013e7beb13c884c9f0fff7080c7ff6fd2",
-        "source_patch": "patches/linux/7.2.9/0047-media-iris-deinit-irq-lock.patch",
-        "source_sha256": "c0080c1fa0365c8dbf05c588d5dc288b36d2739c1052e47ef463f27bdabc5095",
-        "rebased": false
-      },
-      {
-        "key": "qmp_optional_bridge_patch",
-        "commit": "181eb877efce159903866432dd3b03c268d195d3",
-        "source_patch": "patches/linux/7.2.9/0048-phy-qmp-optional-display-bridge.patch",
-        "source_sha256": "031f45d30ea6417216d795734f3c0a37011a45ff55c4159ec38ebd99ffe24850",
-        "rebased": true
-      },
-      {
-        "key": "gunyah_import_patch",
-        "commit": "4f135d25319c2ab376adc223537856e92ef010e8",
-        "source_patch": "patches/linux/7.2.9/0049-virt-gunyah-android17-import.patch",
-        "source_sha256": "d6daf98377aadba4f375055ac0e8db5eab2663f15857c3b6817095c8f9ad61af",
-        "rebased": false
-      },
-      {
-        "key": "gunyah_mainline_patch",
-        "commit": "2979356de9133c82e2c77ad99b69b107f5825ba4",
-        "source_patch": "patches/linux/7.2.9/0050-virt-gunyah-mainline-api.patch",
-        "source_sha256": "e73d289439d31b957dfe0f2a675420f463171a7dd7d8796d0696fdf9bdf62d55",
-        "rebased": false
-      }
-    ],
-    "cachyos_source": "https://github.com/CachyOS/kernel-patches",
-    "cachyos_commit": "6266b5f33f4e8caaa452174f0132c8c82f919267",
-    "cachyos_patch": "7.3/sched/0001-bore-cachy.patch",
-    "cachyos_patch_sha256": "4abd36b417f9de244c93ebecda7efbbbdea4e295db6dd4f0f00af0272805073e",
-    "gunyah_source": "https://github.com/code002-2/librevm",
-    "gunyah_commit": "56918558e2c4303cda803a655ea716869c551b71",
-    "fastrpc_ssr": {
-      "source": "https://github.com/qualcomm-linux/kernel/pull/1212",
-      "author": "Jianping Li",
-      "commits": [
-        "a0741420ba061510b843fa98e40a1c3fa513e131",
-        "bcf730279a854ce7a7f586c68d8064726e48ffff",
-        "2b139af3cfefe0b79fb33e1b207eac3ea2812678"
-      ]
-    },
-    "mipps_authentication": {
-      "source_url": "https://github.com/ianchb/xiaomi-mipps-auth",
-      "source_commit": "9176efbdf276b874fc0a97912a914449a88155fb",
-      "piano_source_url": "https://github.com/blu-sharky/piano-mipps-auth",
-      "piano_source_commit": "ccdc3ce7f5200ef736d7d552eb7b387ea3bb6fd9",
-      "license": "GPL-2.0-only",
-      "stock_reference": "Piano batterysecret command order: remove compensation (7), verified (6), no reverse authentication (8).",
-      "modifications": "Native workqueue authentication, fresh challenge validation and bounded identity recovery, no data-role swap, normal PD/PPS fallback."
-    }
-  }
+  ]
 }

@@ -4,10 +4,10 @@
     "target": "release",
     "public_baseline": "352508459733d3e6d349ea5581a8dd2fd8bb4180",
     "patch_series": "patches/linux/7.3/series.json",
-    "stable_source": "https://github.com/torvalds/linux.git",
-    "stable_commit": "c03c1a14507dfaf8b856c2608f9ac216021fc222",
-    "stable_version": "7.3.0",
-    "target_tree": "2e8d0fea31465c53a9b3d627a2f1226ffd9b3e66",
+    "stable_source": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
+    "stable_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
+    "stable_version": "7.3.3",
+    "target_tree": "57092a5db46a12a7e9b61ac6783fd32fa4c722fb",
     "cpu_model_overlay": "linux/dts/piano-cpu-model.dtso",
     "additional_dtb_overlays": [
       "linux/dts/piano-cma.dtso",
@@ -35,7 +35,7 @@
       "preserve_other_modes": true,
       "panel_vendor": "auto"
     },
-    "base_commit": "c03c1a14507dfaf8b856c2608f9ac216021fc222",
+    "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
     "localversion": "-piano-sunuefi-cachy"
   },
   "debian": {

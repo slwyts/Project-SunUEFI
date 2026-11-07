@@ -1,4 +1,4 @@
-From 3141d26caacec6ca2ca39713ed6a05868fd54aee Mon Sep 17 00:00:00 2001
+From adfa5e11e2bec07f07bbdd08f811b4c75fa933c1 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Wed, 21 Oct 2026 19:19:53 +0000
 Subject: [PATCH] ASoC: qcom: q6apm: avoid a readiness query before APR
@@ -32,6 +32,3 @@ index 240d4a469ba..6066f0a02a1 100644
  	ret = snd_soc_register_component(dev, &q6apm_audio_component, NULL, 0);
  	if (ret < 0) {
  		dev_err(dev, "failed to register q6apm: %d\n", ret);
--- 
-2.56.0
-

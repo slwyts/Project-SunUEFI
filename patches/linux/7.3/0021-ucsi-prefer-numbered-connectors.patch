@@ -1,4 +1,4 @@
-From 37817d0275707f2ec3d62725f769befa9dc2a7a0 Mon Sep 17 00:00:00 2001
+From 6535f06dd03a0d86f16d21e3cc2832a8385e9014 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 11:52:43 +0800
 Subject: [PATCH] usb: typec: ucsi: prefer explicit connector numbers over
@@ -29,6 +29,3 @@ index c1450639c79..0a7ceb5b5d0 100644
  	device_for_each_child_node(con->ucsi->dev, fwnode) {
  		ret = fwnode_property_read_u32(fwnode, "reg", &port);
  		if (ret < 0) {
--- 
-2.56.0
-

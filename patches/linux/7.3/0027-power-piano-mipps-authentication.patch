@@ -1,4 +1,4 @@
-From 3176c9930508dac813a7ab8bc38739b0cb47297e Mon Sep 17 00:00:00 2001
+From 97647310050b549c2da281269b7010faebb8c37e Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Wed, 28 Oct 2026 14:11:38 +0000
 Subject: [PATCH] power: supply: piano_mca: authenticate Xiaomi chargers before
@@ -22,7 +22,7 @@ Signed-off-by: slwyts <slwyts@foxmail.com>
  create mode 100644 drivers/power/supply/piano_mca_mipps.h
 
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
-index 0e21baccd..e9873e3b2 100644
+index 0e21baccdc4..e9873e3b2a1 100644
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
 @@ -211,6 +211,7 @@ config BATTERY_PMU
@@ -34,7 +34,7 @@ index 0e21baccd..e9873e3b2 100644
  	  Say Y here to enable telemetry from the Xiaomi Pad 8 Pro charger
  	  stack, which the ADSP firmware exposes through Xiaomi's MCA property
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 4c1944127..763128426 100644
+index 4c194412708..763128426d3 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -21,8 +21,8 @@
@@ -648,7 +648,7 @@ index 4c1944127..763128426 100644
  static const struct attribute_group piano_mca_xiaomi_group = {
 diff --git a/drivers/power/supply/piano_mca_mipps.h b/drivers/power/supply/piano_mca_mipps.h
 new file mode 100644
-index 000000000..b286fc322
+index 00000000000..b286fc322f9
 --- /dev/null
 +++ b/drivers/power/supply/piano_mca_mipps.h
 @@ -0,0 +1,132 @@
@@ -784,6 +784,3 @@ index 000000000..b286fc322
 +		},
 +	},
 +};
--- 
-2.47.3
-

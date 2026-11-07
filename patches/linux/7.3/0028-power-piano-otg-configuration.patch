@@ -1,4 +1,4 @@
-From c474d439f79df18b44bf5e93926fc8affbdb2fa6 Mon Sep 17 00:00:00 2001
+From e04e7e47875e30ab7a03d0c2e8712e883422e5a9 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Wed, 28 Oct 2026 15:31:00 +0000
 Subject: [PATCH] power: supply: piano_mca: initialize the factory USB OTG
@@ -23,7 +23,7 @@ configuration; keep voltage, current and temperature policy unchanged.
  1 file changed, 67 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 763128426..6d1536fb2 100644
+index 763128426d3..6d1536fb24e 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -94,6 +94,7 @@ struct piano_mca_pdo {
@@ -148,6 +148,3 @@ index 763128426..6d1536fb2 100644
  	mutex_init(&mca->lock);
  	mutex_init(&mca->pen_boost_lock);
  	init_completion(&mca->ack);
--- 
-2.47.3
-

@@ -1,4 +1,4 @@
-From 2fa9735471b09fc702560ebb478a12456620eb1d Mon Sep 17 00:00:00 2001
+From 7c7113d4206ed8f0b0691fbc94da9d7872a37473 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(sched): integrate CachyOS BORE 6.8.0
@@ -23,7 +23,7 @@ Subject: [PATCH] feat(sched): integrate CachyOS BORE 6.8.0
  create mode 100644 kernel/sched/bore.c
 
 diff --git a/include/linux/sched.h b/include/linux/sched.h
-index d35ae49a991..85592588479 100644
+index 78bfc0e32e5..d60284eefc4 100644
 --- a/include/linux/sched.h
 +++ b/include/linux/sched.h
 @@ -832,6 +832,31 @@ struct task_ipi_mask {
@@ -183,7 +183,7 @@ index ce1435cb08b..d1ee874aa26 100644
 +	 an unnecessarily large base slice, resulting in high scheduling
 +	 latency and poor system responsiveness.
 diff --git a/kernel/exit.c b/kernel/exit.c
-index ba1469bea8f..cebcf5ca031 100644
+index 25a68e1a960..fc0e9d168b5 100644
 --- a/kernel/exit.c
 +++ b/kernel/exit.c
 @@ -146,7 +146,11 @@ static void __unhash_process(struct release_task_post *post, struct task_struct
@@ -199,7 +199,7 @@ index ba1469bea8f..cebcf5ca031 100644
  	}
  	list_del_rcu(&p->thread_node);
 diff --git a/kernel/fork.c b/kernel/fork.c
-index 33760ece3bb..77da17b54aa 100644
+index 26b666e98bb..7168cff8465 100644
 --- a/kernel/fork.c
 +++ b/kernel/fork.c
 @@ -120,6 +120,10 @@
@@ -213,7 +213,7 @@ index 33760ece3bb..77da17b54aa 100644
  #include <trace/events/sched.h>
  
  #define CREATE_TRACE_POINTS
-@@ -2462,6 +2466,11 @@ __latent_entropy struct task_struct *copy_process(
+@@ -2465,6 +2469,11 @@ __latent_entropy struct task_struct *copy_process(
  	p->start_time = ktime_get_ns();
  	p->start_boottime = ktime_get_boottime_ns();
  
@@ -225,7 +225,7 @@ index 33760ece3bb..77da17b54aa 100644
  	/*
  	 * Make it visible to the rest of the system, but dont wake it up yet.
  	 * Need tasklist lock for parent etc handling!
-@@ -2547,7 +2556,11 @@ __latent_entropy struct task_struct *copy_process(
+@@ -2550,7 +2559,11 @@ __latent_entropy struct task_struct *copy_process(
  							 p->real_parent->signal->is_child_subreaper;
  			if (clone_flags & CLONE_AUTOREAP)
  				p->signal->autoreap = 1;
@@ -1305,6 +1305,3 @@ index 4c25fbe84fb..43b20b32fbb 100644
  
  extern int sysctl_resched_latency_warn_ms;
  extern int sysctl_resched_latency_warn_once;
--- 
-2.56.0
-

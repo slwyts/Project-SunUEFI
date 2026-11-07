@@ -1,4 +1,4 @@
-From 948540b67ca51994ff799d02592856aa1e0c17a6 Mon Sep 17 00:00:00 2001
+From 41f787a6ee254c060904c4c883fa04cbdb734e4a Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 14:00:00 +0000
 Subject: [PATCH] fix(drm/msm): adapt LUT DMA allocation to Linux 7.3
@@ -21,6 +21,3 @@ index 7b2839e0370..29e6703354d 100644
  	if (IS_ERR(dma->bo)) {
  		ret = PTR_ERR(dma->bo);
  		goto unmap;
--- 
-2.56.0
-

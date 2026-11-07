@@ -1,4 +1,4 @@
-From cd9cceac5bdd293a5372b272c94ab73303c3a817 Mon Sep 17 00:00:00 2001
+From 339da269a496bcbc05dc9fc2e5656b5a6c6ea423 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 10:18:53 +0800
 Subject: [PATCH] tee: qcomtee: use the declared CMA pool for application
@@ -89,6 +89,3 @@ index 8e68d64a98d..13cf72cec13 100644
  
  	return pool;
  }
--- 
-2.56.0
-

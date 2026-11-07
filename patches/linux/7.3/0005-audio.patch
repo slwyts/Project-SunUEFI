@@ -1,4 +1,4 @@
-From 5a47432e43099cfe86e0e2f0e821bdbb5823c128 Mon Sep 17 00:00:00 2001
+From bc6372877619ec8d4fcb87951c48f2d601f1536d Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(audio): port Piano audio support to Linux 7.3
@@ -1472,6 +1472,3 @@ index 4d48e1012cd..7acc303d479 100644
  	{}
  };
  
--- 
-2.56.0
-
