@@ -203,7 +203,7 @@ def desktop_recipes(output, runtime):
         sdk = ''
         options = ('-Ddoc=false -Dgtk-examples=false -Dinstalled-tests=false '
                    '-Dudev_rules_dir=/usr/lib/udev/rules.d -Dudev_hwdb=disabled'
-                   if name == 'libfprint' else '-Dgtk_doc=false')
+                   if name == 'libfprint' else '-Dgtk_doc=false -Dman=false')
         if name == 'libfprint':
             sdk = '''  mkdir -p "$srcdir/sdk/lib/pkgconfig" "$srcdir/sdk/include"
   cp "$srcdir/libpiano-goodix.a" "$srcdir/sdk/lib/"
