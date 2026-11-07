@@ -2,7 +2,7 @@
 # dependent native packages and the separate FEX guest runtime remain intact.
 pkgname=deckard-mesa-linux-aarch64
 pkgver=@MESA_VERSION@
-pkgrel=1.1
+pkgrel=1.2
 pkgdesc='Native SteamOS Mesa with Freedreno, Turnip and MSM GBM support'
 arch=(aarch64)
 url='https://www.mesa3d.org/'
@@ -37,6 +37,6 @@ build() {
 }
 
 package() {
-  meson install -C build --destdir "$pkgdir" --no-rebuild
+  meson install -C build --destdir "$pkgdir" --no-rebuild --skip-subprojects
   install -Dm644 mesa/docs/license.rst "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

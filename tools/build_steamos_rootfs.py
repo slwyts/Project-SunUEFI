@@ -212,7 +212,8 @@ def build(args):
         raise ValueError('Output exists; use --resume only for this same build')
     output.mkdir(parents=True, exist_ok=True)
     cfg = json.loads((ROOT / 'config/release.json').read_text())
-    base_config = json.loads((ROOT / 'config/steamos.json').read_text())['base']
+    steamos_config = json.loads((ROOT / 'config/steamos.json').read_text())
+    base_config = steamos_config['base']
     base = ROOT / 'build' / ('steamos-base-' + base_config['build'])
     base_record = prepare(base, workers=32)
     root = output / 'rootfs'
@@ -233,7 +234,7 @@ def build(args):
 
     configure_repositories(root)
     # Keep the native pacman ABI and separate FEX guest runtime. Native Mesa
-    # is rebuilt below because the Frame image does not know Piano's A830v1.
+    # is checked below for both rendering and display-buffer support.
     with build_resolver(root), guest_environment(root) as guest:
         # SunUEFI supplies the kernel, initramfs and matching loopback module.
         # Remove the headset kernel through pacman so later package updates
@@ -344,7 +345,7 @@ done
     if (not (root / 'usr/lib/dri/msm_dri.so').is_file() or
             not (root / 'usr/lib/dri/kms_swrast_dri.so').is_file() or not turnip.is_file() or
             b'Adreno (TM) 830v1' not in turnip.read_bytes()):
-        recipe = mesa_recipe(output / 'mesa-recipe', cfg['mesa'])
+        recipe = mesa_recipe(output / 'mesa-recipe', steamos_config['mesa'])
         if not kde_package_is_current(mesa, recipe):
             build_arch_package.build(root, recipe, mesa)
         else:
