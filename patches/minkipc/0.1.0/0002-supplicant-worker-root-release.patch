@@ -1,0 +1,46 @@
+--- a/libminkadaptor/src/supplicant.c
++++ b/libminkadaptor/src/supplicant.c
+@@ -158,7 +158,7 @@
+  */
+ static void *supplicant_worker(void *arg)
+ {
+-	while (1) {
++	while (!sig_pending) {
+ 		if (qcomtee_object_process_one(arg))
+ 			break;
+ 	}
+@@ -178,6 +178,7 @@
+ static void supplicant_release(void *arg)
+ {
+ 	struct supplicant *sup = (struct supplicant *)arg;
++	pthread_t current = pthread_self();
+ 	int i;
+ 
+ 	/* Here, we are sure there is no QTEE or callback object. In other
+@@ -185,12 +186,23 @@
+ 	 * or any request pending from QTEE. We issue the pthread_kill
+ 	 * and wait for the thread to get cancelled.
+ 	 */
+-	for (i = 0; i < sup->pthreads_num; i++)
+-		if (sup->pthreads[i].state)
++	for (i = 0; i < sup->pthreads_num; i++) {
++		if (!sup->pthreads[i].state)
++			continue;
++		if (pthread_equal(sup->pthreads[i].thread, current)) {
++			/* A late callback release can drop the last root reference on
++			 * this worker. It must exit without using that root again.
++			 */
++			sig_pending = 1;
++			pthread_detach(current);
++		} else {
+ 			pthread_kill(sup->pthreads[i].thread, SIGUSR1);
++		}
++	}
+ 
+ 	for (i = 0; i < sup->pthreads_num; i++)
+-		if (sup->pthreads[i].state)
++		if (sup->pthreads[i].state &&
++		    !pthread_equal(sup->pthreads[i].thread, current))
+ 			pthread_join(sup->pthreads[i].thread, NULL);
+ 
+ 	free(sup);

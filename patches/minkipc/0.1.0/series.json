@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "patches": [
+    {
+      "file": "0001-callback-output-buffer-lifetime.patch",
+      "sha256": "8ec9285ae33978d59654e0ac2720170c4f0cb909c9bd0f1154418c147ebec14f"
+    },
+    {
+      "file": "0002-supplicant-worker-root-release.patch",
+      "sha256": "22259ded5abdbaa32578df2ebc9321213d1d866ce503aa65bb8a3ed4ffc61897"
+    }
+  ]
+}

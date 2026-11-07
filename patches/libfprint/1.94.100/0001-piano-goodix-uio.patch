@@ -1,0 +1,1131 @@
+From: Cryolitia <cryolitia@gmail.com>
+Subject: [PATCH] Add named UIO discovery and the Piano Goodix fingerprint driver
+
+Use the native signed-TA backend for enrollment, verification and scoped
+Linux storage through ordinary libfprint operations. Keep hardware commands
+off the main context and wait for native cancellation and cleanup before
+completing an action. Stored print data contains only Linux UID and finger
+coordinates; templates and authentication tokens stay in the native layer.
+
+QTEE selects one Linux user group per operation. Expose verification of a
+selected print without advertising cross-user identification, so fprintd
+uses its normal enrollment and single-print verification paths.
+
+The optional static dependency enables this driver when supplied by the
+platform, while ordinary libfprint builds retain their existing drivers.
+
+diff --git a/meson.build b/meson.build
+--- a/meson.build
++++ b/meson.build
+@@ -113,6 +113,7 @@
+ 
+ # Drivers
+ drivers = get_option('drivers').split(',')
++piano_goodix_dep = dependency('piano-goodix', required: false, static: true)
+ 
+ drivers_info = {
+     'upektc_img': {},
+@@ -147,6 +148,7 @@
+     'focaltech_moc': {},
+     'mafpmoc': {},
+     'secugen': {},
++    'piano_goodix': { 'helper': ['udev', 'piano_goodix'], 'optional': not piano_goodix_dep.found() },
+ 
+     # SPI driver (non-optional if SPI is available)
+     'elanspi': { 'spi': true, 'helper': ['udev'], 'optional': not have_spi },
+@@ -243,6 +245,11 @@
+         endif
+ 
+         optional_deps += openssl_dep
++    elif i == 'piano_goodix'
++        if not piano_goodix_dep.found()
++            error('piano-goodix is required for the Piano Goodix driver')
++        endif
++        optional_deps += piano_goodix_dep
+     elif i == 'udev'
+         install_udev_rules = true
+ 
+diff --git a/libfprint/meson.build b/libfprint/meson.build
+--- a/libfprint/meson.build
++++ b/libfprint/meson.build
+@@ -139,6 +139,7 @@
+     'focaltech_moc' : files('drivers/focaltech_moc/focaltech_moc.c'),
+     'mafpmoc' : files('drivers/mafpmoc/mafpmoc.c'),
+     'secugen' : files('drivers/secugen.c'),
++    'piano_goodix' : files('drivers/piano-goodix.c'),
+ }
+ 
+ helper_sources = {
+@@ -148,6 +149,7 @@
+     'openssl': files(),
+     'pixman': files(),
+     'udev': files(),
++    'piano_goodix': files(),
+     'virtual': files('drivers/virtual-device-listener.c'),
+ }
+ 
+diff --git a/libfprint/fpi-device.h b/libfprint/fpi-device.h
+--- a/libfprint/fpi-device.h
++++ b/libfprint/fpi-device.h
+@@ -28,12 +28,14 @@
+  * FpiDeviceUdevSubtypeFlags:
+  * @FPI_DEVICE_UDEV_SUBTYPE_SPIDEV: The device requires an spidev node
+  * @FPI_DEVICE_UDEV_SUBTYPE_HIDRAW: The device requires a hidraw node
++ * @FPI_DEVICE_UDEV_SUBTYPE_UIO: The device requires a named UIO controller
+  *
+  * Bitfield of required hardware resources for a udev-backed device.
+  */
+ typedef enum {
+   FPI_DEVICE_UDEV_SUBTYPE_SPIDEV = 1 << 0,
+   FPI_DEVICE_UDEV_SUBTYPE_HIDRAW = 1 << 1,
++  FPI_DEVICE_UDEV_SUBTYPE_UIO = 1 << 2,
+ } FpiDeviceUdevSubtypeFlags;
+ 
+ /**
+@@ -45,6 +47,7 @@
+  * @udev_types: Subtypes for udev-based devices
+  * @spi_acpi_id: ACPI ID (for SPI devices)
+  * @hid_id: HID device identifier (for HID devices)
++ * @uio_name: Exact sysfs name of a UIO controller
+  *
+  * An entry in the table of supported hardware. For USB devices, the product ID
+  * and vendor ID should be provided. The optional @driver_data field defaults
+@@ -71,6 +74,7 @@
+         guint pid;
+         guint vid;
+       } hid_id;
++      const gchar *uio_name;
+     };
+   };
+   guint64 driver_data;
+diff --git a/libfprint/fpi-device.c b/libfprint/fpi-device.c
+--- a/libfprint/fpi-device.c
++++ b/libfprint/fpi-device.c
+@@ -504,6 +504,7 @@
+  * #FpDevice is of type %FP_DEVICE_TYPE_UDEV.
+  *
+  * Returns: Depends on @subtype; for SPIDEV/HIDRAW returns a path to the relevant device.
++ * UIO is matched by its name and does not expose an additional resource here.
+  */
+ gpointer
+ fpi_device_get_udev_data (FpDevice *device, FpiDeviceUdevSubtypeFlags subtype)
+@@ -520,6 +521,9 @@
+ 
+     case FPI_DEVICE_UDEV_SUBTYPE_SPIDEV:
+       return priv->udev_data.spidev_path;
++
++    case FPI_DEVICE_UDEV_SUBTYPE_UIO:
++      return NULL;
+ 
+     default:
+       g_return_val_if_reached (NULL);
+diff --git a/libfprint/fp-context.c b/libfprint/fp-context.c
+--- a/libfprint/fp-context.c
++++ b/libfprint/fp-context.c
+@@ -479,6 +479,7 @@
+ 
+     g_autoptr(GList) spidev_devices = g_udev_client_query_by_subsystem (udev_client, "spidev");
+     g_autoptr(GList) hidraw_devices = g_udev_client_query_by_subsystem (udev_client, "hidraw");
++    g_autoptr(GList) uio_devices = g_udev_client_query_by_subsystem (udev_client, "uio");
+ 
+     /* for each potential driver, try to match all requested resources. */
+     for (i = 0; i < priv->drivers->len; i++)
+@@ -492,7 +493,7 @@
+ 
+         for (entry = cls->id_table; entry->udev_types; entry++)
+           {
+-            GList *matched_spidev = NULL, *matched_hidraw = NULL;
++            GList *matched_spidev = NULL, *matched_hidraw = NULL, *matched_uio = NULL;
+ 
+             if (entry->udev_types & FPI_DEVICE_UDEV_SUBTYPE_SPIDEV)
+               {
+@@ -528,6 +529,18 @@
+                   }
+                 /* If match was not found exit */
+                 if (matched_hidraw == NULL)
++                  continue;
++              }
++            if (entry->udev_types & FPI_DEVICE_UDEV_SUBTYPE_UIO)
++              {
++                for (matched_uio = uio_devices; matched_uio; matched_uio = matched_uio->next)
++                  {
++                    const gchar *name = g_udev_device_get_sysfs_attr (matched_uio->data, "name");
++
++                    if (name && entry->uio_name && g_str_equal (name, entry->uio_name))
++                      break;
++                  }
++                if (matched_uio == NULL)
+                   continue;
+               }
+             priv->pending_devices++;
+@@ -551,12 +564,18 @@
+                 g_object_unref (matched_hidraw->data);
+                 hidraw_devices = g_list_delete_link (hidraw_devices, matched_hidraw);
+               }
++            if (matched_uio)
++              {
++                g_object_unref (matched_uio->data);
++                uio_devices = g_list_delete_link (uio_devices, matched_uio);
++              }
+           }
+       }
+ 
+     /* free all unused elemnts in both lists */
+     g_list_foreach (spidev_devices, (GFunc) g_object_unref, NULL);
+     g_list_foreach (hidraw_devices, (GFunc) g_object_unref, NULL);
++    g_list_foreach (uio_devices, (GFunc) g_object_unref, NULL);
+   }
+ #endif
+ 
+diff --git a/libfprint/drivers/piano-goodix.c b/libfprint/drivers/piano-goodix.c
+new file mode 100644
+--- /dev/null
++++ b/libfprint/drivers/piano-goodix.c
+@@ -0,0 +1,519 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* Piano's Goodix reader is controlled by a named UIO device and the signed
++ * QTEE application. The native library owns its real hardware transactions;
++ * this driver adapts those operations to libfprint without an Android HAL.
++ */
++#define FP_COMPONENT "piano_goodix"
++
++#include "drivers_api.h"
++#include <errno.h>
++#include <pwd.h>
++#include <sys/stat.h>
++#include <piano-goodix.h>
++
++typedef struct
++{
++  FpDevice parent;
++  GTask *task;
++} FpDevicePianoGoodix;
++
++typedef FpDeviceClass FpDevicePianoGoodixClass;
++
++GType fpi_device_piano_goodix_get_type (void);
++G_DEFINE_TYPE (FpDevicePianoGoodix, fpi_device_piano_goodix, FP_TYPE_DEVICE)
++
++typedef struct
++{
++  guint32 uid;
++  guint finger;
++  gchar *username;
++} StoredFinger;
++
++typedef struct
++{
++  FpiDeviceAction action;
++  GMainContext *context;
++  GCancellable *parent_cancel;
++  GCancellable *stop;
++  FpPrint *print;
++  GPtrArray *stored;
++  guint32 uid;
++  guint finger;
++  guint matched_finger;
++  guint total_stages;
++  guint completed_stages;
++  gint result;
++  gint user_cancel;
++  gboolean not_matched;
++  gboolean finished;
++} Work;
++
++typedef struct
++{
++  GTask *task;
++  enum piano_goodix_progress event;
++  guint remaining;
++} Progress;
++
++static void
++stored_finger_free (gpointer pointer)
++{
++  StoredFinger *finger = pointer;
++
++  g_free (finger->username);
++  g_free (finger);
++}
++
++static void
++work_free (gpointer pointer)
++{
++  Work *work = pointer;
++
++  g_main_context_unref (work->context);
++  g_clear_object (&work->parent_cancel);
++  g_clear_object (&work->stop);
++  g_clear_object (&work->print);
++  g_clear_pointer (&work->stored, g_ptr_array_unref);
++  g_free (work);
++}
++
++static gboolean
++user_uid (const gchar *username, guint32 *uid)
++{
++  struct passwd entry, *found = NULL;
++  gchar buffer[16384];
++
++  if (!username || !*username ||
++      getpwnam_r (username, &entry, buffer, sizeof buffer, &found) || !found ||
++      entry.pw_uid > 0x0fffffffU)
++    return FALSE;
++
++  *uid = entry.pw_uid;
++  return TRUE;
++}
++
++static gboolean
++print_coordinates (FpPrint *print, guint32 *uid, guint *finger)
++{
++  g_autoptr(GVariant) data = NULL;
++  guint32 named_uid, saved_finger;
++
++  g_object_get (print, "fpi-data", &data, NULL);
++  if (!data || !g_variant_is_of_type (data, G_VARIANT_TYPE ("(uu)")) ||
++      !user_uid (fp_print_get_username (print), &named_uid))
++    return FALSE;
++
++  g_variant_get (data, "(uu)", uid, &saved_finger);
++  *finger = saved_finger;
++  return *uid == named_uid && *finger >= 1 && *finger <= 10 &&
++         *finger == fp_print_get_finger (print);
++}
++
++static FpPrint *
++stored_print (FpDevice *device, guint32 uid, guint finger, const gchar *username)
++{
++  FpPrint *print = fp_print_new (device);
++
++  fpi_print_set_type (print, FPI_PRINT_RAW);
++  fpi_print_set_device_stored (print, TRUE);
++  fp_print_set_username (print, username);
++  fp_print_set_finger (print, finger);
++  g_object_set (print, "fpi-data", g_variant_new ("(uu)", uid, finger), NULL);
++  return print;
++}
++
++static gboolean
++parent_cancelled (Work *work)
++{
++  return g_atomic_int_get (&work->user_cancel) ||
++         (work->parent_cancel && g_cancellable_is_cancelled (work->parent_cancel));
++}
++
++static int
++should_cancel (void *context)
++{
++  GTask *task = context;
++  Work *work = g_task_get_task_data (task);
++
++  return parent_cancelled (work) || g_cancellable_is_cancelled (work->stop);
++}
++
++static gboolean
++progress_on_context (gpointer pointer)
++{
++  Progress *progress = pointer;
++  Work *work = g_task_get_task_data (progress->task);
++  FpDevice *device = g_task_get_source_object (progress->task);
++
++  /* Queued progress may follow completion. Its task reference keeps the data
++   * alive, but it must never address a subsequent libfprint operation.
++   */
++  if (work->finished || parent_cancelled (work))
++    return G_SOURCE_REMOVE;
++
++  switch (progress->event)
++    {
++    case PIANO_GOODIX_FINGER_DOWN:
++      fpi_device_report_finger_status (device, FP_FINGER_STATUS_NEEDED | FP_FINGER_STATUS_PRESENT);
++      break;
++    case PIANO_GOODIX_FINGER_UP:
++      fpi_device_report_finger_status (device, FP_FINGER_STATUS_NEEDED);
++      break;
++    case PIANO_GOODIX_ENROLL_PROGRESS:
++      if (work->action != FPI_DEVICE_ACTION_ENROLL)
++        break;
++      if (!work->total_stages || progress->remaining > work->total_stages)
++        {
++          work->total_stages = progress->remaining + 1;
++          fpi_device_set_nr_enroll_stages (device, work->total_stages);
++        }
++      /* Zero remaining is not durable enrollment: native code still has to
++       * save the template, post-enroll, and commit its Linux metadata.
++       */
++      if (progress->remaining)
++        {
++          work->completed_stages = work->total_stages - progress->remaining;
++          fpi_device_enroll_progress (device, work->completed_stages, NULL, NULL);
++        }
++      break;
++    case PIANO_GOODIX_NOT_MATCH:
++      /* Native code finishes the negative attempt and cancels safely. */
++      break;
++    case PIANO_GOODIX_RETRY:
++      if (work->action == FPI_DEVICE_ACTION_ENROLL)
++        fpi_device_enroll_progress (device, work->completed_stages, NULL,
++                                   fpi_device_retry_new (FP_DEVICE_RETRY_GENERAL));
++      /* Verification quality notifications are not completed attempts. Keep
++       * the native operation running, as its CLI does. libfprint permits one
++       * verify report per operation, including a retry report, so reporting
++       * here would prevent the eventual match from being delivered.
++       */
++      break;
++    }
++  return G_SOURCE_REMOVE;
++}
++
++static void
++progress_free (gpointer pointer)
++{
++  Progress *progress = pointer;
++
++  g_object_unref (progress->task);
++  g_free (progress);
++}
++
++static void
++native_progress (enum piano_goodix_progress event, unsigned int remaining, void *context)
++{
++  GTask *task = context;
++  Work *work = g_task_get_task_data (task);
++  Progress *progress = g_new0 (Progress, 1);
++
++  if (event == PIANO_GOODIX_NOT_MATCH)
++    work->not_matched = TRUE;
++  progress->task = g_object_ref (task);
++  progress->event = event;
++  progress->remaining = remaining;
++  GSource *source = g_idle_source_new ();
++
++  g_source_set_priority (source, G_PRIORITY_DEFAULT);
++  g_source_set_callback (source, progress_on_context, progress, progress_free);
++  g_source_attach (source, work->context);
++  g_source_unref (source);
++}
++
++static gint
++list_linux_fingers (Work *work)
++{
++  const gchar *root = "/var/lib/piano-goodix";
++  struct stat info;
++  g_autoptr(GDir) directory = NULL;
++  const gchar *name;
++
++  work->stored = g_ptr_array_new_with_free_func (stored_finger_free);
++  if (lstat (root, &info))
++    return errno == ENOENT ? 0 : -errno;
++  if (!S_ISDIR (info.st_mode) || info.st_uid != 0 || (info.st_mode & 0777) != 0700)
++    return -EACCES;
++  directory = g_dir_open (root, 0, NULL);
++  if (!directory)
++    return -EIO;
++
++  while ((name = g_dir_read_name (directory)))
++    {
++      gchar *end;
++      gchar canonical[16], lookup[16384];
++      struct passwd entry, *found = NULL;
++      guint64 uid;
++      unsigned int fingers[10];
++      size_t count = 0;
++      gint result;
++
++      if (parent_cancelled (work))
++        return -ECANCELED;
++      errno = 0;
++      uid = g_ascii_strtoull (name, &end, 10);
++      if (errno || !*name || *end || uid > 0x0fffffffU)
++        continue;
++      g_snprintf (canonical, sizeof canonical, "%u", (guint32) uid);
++      if (!g_str_equal (canonical, name))
++        continue;
++      if (getpwuid_r (uid, &entry, lookup, sizeof lookup, &found) || !found)
++        continue;
++
++      result = piano_goodix_list (uid, fingers, &count);
++      if (result == -ENOENT || result == -ENODATA)
++        continue;
++      if (result)
++        return result;
++      for (size_t i = 0; i < count; i++)
++        {
++          StoredFinger *finger = g_new0 (StoredFinger, 1);
++
++          finger->uid = uid;
++          finger->finger = fingers[i];
++          finger->username = g_strdup (entry.pw_name);
++          g_ptr_array_add (work->stored, finger);
++        }
++    }
++  return 0;
++}
++
++static void
++worker (GTask *task, gpointer source, gpointer pointer, GCancellable *cancellable)
++{
++  Work *work = pointer;
++  struct piano_goodix_options options = {
++    .should_cancel = should_cancel,
++    .progress = native_progress,
++    .context = task,
++  };
++
++  (void) source;
++  (void) cancellable;
++
++  if (should_cancel (task))
++    work->result = -ECANCELED;
++  else if (work->action == FPI_DEVICE_ACTION_ENROLL)
++    work->result = piano_goodix_enroll (work->uid, work->finger, &options);
++  else if (work->action == FPI_DEVICE_ACTION_VERIFY)
++    work->result = piano_goodix_verify (work->uid, work->finger, &work->matched_finger, &options);
++  else if (work->action == FPI_DEVICE_ACTION_DELETE)
++    work->result = piano_goodix_delete (work->uid, work->finger);
++  else
++    work->result = list_linux_fingers (work);
++
++  g_task_return_boolean (task, TRUE);
++}
++
++static GError *
++operation_error (gint result)
++{
++  if (result == -ECANCELED)
++    return g_error_new_literal (G_IO_ERROR, G_IO_ERROR_CANCELLED, "Fingerprint operation cancelled");
++  if (result == -ETIMEDOUT)
++    return fpi_device_retry_new (FP_DEVICE_RETRY_GENERAL);
++  if (result == -ENOENT || result == -ENODATA)
++    return fpi_device_error_new (FP_DEVICE_ERROR_DATA_NOT_FOUND);
++  if (result == -EEXIST)
++    return fpi_device_error_new (FP_DEVICE_ERROR_DATA_DUPLICATE);
++  if (result == -ENOSPC)
++    return fpi_device_error_new (FP_DEVICE_ERROR_DATA_FULL);
++  /* EAGAIN is temporary storage or Gatekeeper unavailability, not a bad
++   * acquisition. Reporting a scan retry would make fprintd loop immediately.
++   */
++  if (result == -EBUSY || result == -EAGAIN)
++    return fpi_device_error_new (FP_DEVICE_ERROR_BUSY);
++  if (result == -ENODEV)
++    return fpi_device_error_new (FP_DEVICE_ERROR_REMOVED);
++  return fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL,
++                                   "Fingerprint operation failed: %s", g_strerror (-result));
++}
++
++static void
++worker_done (GObject *source, GAsyncResult *result, gpointer unused)
++{
++  FpDevice *device = FP_DEVICE (source);
++  FpDevicePianoGoodix *self = (FpDevicePianoGoodix *) device;
++  GTask *task = G_TASK (result);
++  Work *work = g_task_get_task_data (task);
++  GError *error = NULL;
++
++  (void) unused;
++  g_task_propagate_boolean (task, NULL);
++  work->finished = TRUE;
++  self->task = NULL;
++  if (parent_cancelled (work) && (work->result == -ECANCELED || work->result == 0))
++    error = operation_error (-ECANCELED);
++  else if (work->not_matched && work->result == -EACCES)
++    work->matched_finger = 0;
++  else if (work->result)
++    error = operation_error (work->result);
++
++  fpi_device_report_finger_status (device, FP_FINGER_STATUS_NONE);
++  if (work->action == FPI_DEVICE_ACTION_ENROLL)
++    {
++      if (error)
++        fpi_device_enroll_complete (device, NULL, error);
++      else
++        {
++          fpi_print_set_type (work->print, FPI_PRINT_RAW);
++          fpi_print_set_device_stored (work->print, TRUE);
++          g_object_set (work->print, "fpi-data",
++                         g_variant_new ("(uu)", work->uid, work->finger), NULL);
++          fpi_device_enroll_progress (device, MAX (work->total_stages, 1), NULL, NULL);
++          fpi_device_enroll_complete (device, g_object_ref (work->print), NULL);
++        }
++    }
++  else if (work->action == FPI_DEVICE_ACTION_VERIFY)
++    {
++      if (error && error->domain == FP_DEVICE_RETRY)
++        {
++          fpi_device_verify_report (device, FPI_MATCH_ERROR, NULL, error);
++          error = NULL;
++        }
++      else if (!error)
++        {
++          fpi_device_verify_report (device, work->matched_finger == work->finger ?
++                                     FPI_MATCH_SUCCESS : FPI_MATCH_FAIL, NULL, NULL);
++        }
++      fpi_device_verify_complete (device, error);
++    }
++  else if (work->action == FPI_DEVICE_ACTION_DELETE)
++    fpi_device_delete_complete (device, error);
++  else
++    {
++      GPtrArray *prints = NULL;
++
++      if (!error)
++        {
++          prints = g_ptr_array_new_with_free_func (g_object_unref);
++          for (guint i = 0; i < work->stored->len; i++)
++            {
++              StoredFinger *finger = g_ptr_array_index (work->stored, i);
++              FpPrint *print = stored_print (device, finger->uid, finger->finger, finger->username);
++
++              g_ptr_array_add (prints, g_object_ref_sink (print));
++            }
++        }
++      fpi_device_list_complete (device, prints, error);
++    }
++
++  g_object_unref (task);
++}
++
++static void
++start (FpDevice *device)
++{
++  FpDevicePianoGoodix *self = (FpDevicePianoGoodix *) device;
++  Work *work = g_new0 (Work, 1);
++  FpiDeviceAction action = fpi_device_get_current_action (device);
++  gboolean valid = TRUE;
++
++  work->action = action;
++  work->context = g_main_context_ref_thread_default ();
++  work->parent_cancel = fpi_device_get_cancellable (device);
++  if (work->parent_cancel)
++    g_object_ref (work->parent_cancel);
++  work->stop = g_cancellable_new ();
++
++  if (action == FPI_DEVICE_ACTION_ENROLL)
++    {
++      fpi_device_get_enroll_data (device, &work->print);
++      g_object_ref (work->print);
++      work->finger = fp_print_get_finger (work->print);
++      valid = user_uid (fp_print_get_username (work->print), &work->uid) &&
++              work->finger >= 1 && work->finger <= 10;
++    }
++  else if (action == FPI_DEVICE_ACTION_VERIFY || action == FPI_DEVICE_ACTION_DELETE)
++    {
++      if (action == FPI_DEVICE_ACTION_VERIFY)
++        fpi_device_get_verify_data (device, &work->print);
++      else
++        fpi_device_get_delete_data (device, &work->print);
++      g_object_ref (work->print);
++      valid = print_coordinates (work->print, &work->uid, &work->finger);
++    }
++
++  if (!valid)
++    {
++      work_free (work);
++      fpi_device_action_error (device, fpi_device_error_new (FP_DEVICE_ERROR_DATA_INVALID));
++      return;
++    }
++
++  self->task = g_task_new (device, work->parent_cancel, worker_done, NULL);
++  g_task_set_check_cancellable (self->task, FALSE);
++  g_task_set_return_on_cancel (self->task, FALSE);
++  g_task_set_task_data (self->task, work, work_free);
++  g_task_run_in_thread (self->task, worker);
++}
++
++static void
++cancel (FpDevice *device)
++{
++  FpDevicePianoGoodix *self = (FpDevicePianoGoodix *) device;
++
++  if (self->task)
++    {
++      Work *work = g_task_get_task_data (self->task);
++
++      g_atomic_int_set (&work->user_cancel, TRUE);
++      g_cancellable_cancel (work->stop);
++    }
++}
++
++static void
++probe (FpDevice *device)
++{
++  fpi_device_probe_complete (device, "piano-goodix", NULL, NULL);
++}
++
++static void
++open_device (FpDevice *device)
++{
++  /* Native operations open and close UIO/QTEE as a single transaction. */
++  fpi_device_open_complete (device, NULL);
++}
++
++static void
++close_device (FpDevice *device)
++{
++  fpi_device_close_complete (device, NULL);
++}
++
++static const FpIdEntry driver_ids[] = {
++  { .udev_types = FPI_DEVICE_UDEV_SUBTYPE_UIO, .uio_name = "piano-goodix" },
++  { .udev_types = 0 },
++};
++
++static void
++fpi_device_piano_goodix_init (FpDevicePianoGoodix *self)
++{
++  (void) self;
++}
++
++static void
++fpi_device_piano_goodix_class_init (FpDevicePianoGoodixClass *klass)
++{
++  klass->id = FP_COMPONENT;
++  klass->full_name = "Goodix fingerprint sensor";
++  klass->type = FP_DEVICE_TYPE_UDEV;
++  klass->id_table = driver_ids;
++  klass->nr_enroll_stages = 1; /* Replaced by actual TA remaining counts. */
++  klass->scan_type = FP_SCAN_TYPE_PRESS;
++  klass->temp_hot_seconds = -1;
++  klass->probe = probe;
++  klass->open = open_device;
++  klass->close = close_device;
++  klass->enroll = start;
++  klass->verify = start;
++  /* QTEE selects one Linux UID's group per transaction. Do not advertise
++   * identify: libfprint's gallery can span users, including fprintd's
++   * duplicate check before enrollment. Verification selects one user/print.
++   */
++  klass->list = start;
++  klass->delete = start;
++  klass->cancel = cancel;
++  fpi_device_class_auto_initialize_features (klass);
++}
+diff --git a/tests/meson.build b/tests/meson.build
+--- a/tests/meson.build
++++ b/tests/meson.build
+@@ -468,3 +468,14 @@
+             'LIBFPRINT_TEST_WRAPPER=' + ' '.join(libfprint_wrapper),
+         ])
+ endif
++
++# Test the real threaded FpDevice bridge with native transaction boundaries
++# replaced by test callbacks. No sensor or secure application is accessed.
++if 'piano_goodix' in drivers
++    piano_goodix_test = executable('test-piano-goodix',
++        sources: ['test-piano-goodix.c', '../libfprint/drivers/piano-goodix.c'],
++        dependencies: libfprint_private_dep,
++        c_args: common_cflags,
++    )
++    test('piano-goodix', piano_goodix_test, suite: ['unit-tests'], env: envs)
++endif
+diff --git a/tests/test-piano-goodix.c b/tests/test-piano-goodix.c
+new file mode 100644
+--- /dev/null
++++ b/tests/test-piano-goodix.c
+@@ -0,0 +1,405 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/* Exercise the actual FpDevice bridge and GLib dispatch. Native transaction
++ * boundaries are replaced here; no test opens a UIO device or QTEE session.
++ */
++#include "drivers_api.h"
++#include <piano-goodix.h>
++#include <errno.h>
++#include <pwd.h>
++#include <unistd.h>
++
++GType fpi_device_piano_goodix_get_type (void);
++
++typedef enum {
++  MATCH, NO_MATCH, RETRY_MATCH, RETRY_NO_MATCH, RETRY_FAILURE, RETRY_CANCEL,
++  TIMEOUT, BUSY, CANCEL_SCAN, ENROLL, ENROLL_FAILURE, ENROLL_BUSY
++} Scenario;
++static Scenario scenario;
++static GThread *main_thread;
++static gboolean cleaned;
++static guint calls, retries, last_stage, progress_count, verify_reports;
++static GCancellable *cancel_scan;
++
++static void
++assert_worker (void)
++{
++  g_assert_true (g_thread_self () != main_thread);
++  calls++;
++}
++
++int
++piano_goodix_enroll (uint32_t uid, unsigned int finger, const struct piano_goodix_options *options)
++{
++  assert_worker ();
++  g_assert_cmpuint (uid, ==, getuid ());
++  g_assert_cmpuint (finger, ==, FP_FINGER_LEFT_THUMB);
++  if (scenario == ENROLL_BUSY)
++    {
++      cleaned = TRUE;
++      return -EAGAIN;
++    }
++  options->progress (PIANO_GOODIX_ENROLL_PROGRESS, 3, options->context);
++  options->progress (PIANO_GOODIX_RETRY, 0, options->context);
++  g_assert_false (options->should_cancel (options->context));
++  options->progress (PIANO_GOODIX_ENROLL_PROGRESS, 2, options->context);
++  options->progress (PIANO_GOODIX_ENROLL_PROGRESS, 1, options->context);
++  options->progress (PIANO_GOODIX_ENROLL_PROGRESS, 0, options->context);
++  cleaned = TRUE;
++  return scenario == ENROLL_FAILURE ? -EIO : 0;
++}
++
++static gboolean
++cancel_on_main (gpointer unused)
++{
++  (void) unused;
++  g_cancellable_cancel (cancel_scan);
++  return G_SOURCE_REMOVE;
++}
++
++int
++piano_goodix_verify (uint32_t uid, unsigned int finger, unsigned int *matched,
++                     const struct piano_goodix_options *options)
++{
++  assert_worker ();
++  g_assert_cmpuint (uid, ==, getuid ());
++  g_assert_cmpuint (finger, ==, FP_FINGER_LEFT_THUMB);
++  if (scenario == BUSY)
++    {
++      cleaned = TRUE;
++      return -EAGAIN;
++    }
++  options->progress (PIANO_GOODIX_FINGER_DOWN, 0, options->context);
++  if (scenario == RETRY_MATCH || scenario == RETRY_NO_MATCH ||
++      scenario == RETRY_FAILURE || scenario == RETRY_CANCEL)
++    {
++      for (guint i = 0; i < 3; i++)
++        {
++          options->progress (PIANO_GOODIX_RETRY, 0, options->context);
++          g_assert_false (options->should_cancel (options->context));
++        }
++      if (scenario == RETRY_FAILURE)
++        {
++          cleaned = TRUE;
++          return -EIO;
++        }
++    }
++  if (scenario == NO_MATCH || scenario == RETRY_NO_MATCH)
++    {
++      options->progress (PIANO_GOODIX_NOT_MATCH, 0, options->context);
++      cleaned = TRUE;
++      return -EACCES;
++    }
++  if (scenario == TIMEOUT)
++    {
++      cleaned = TRUE;
++      return -ETIMEDOUT;
++    }
++  if (scenario == CANCEL_SCAN || scenario == RETRY_CANCEL)
++    {
++      g_idle_add (cancel_on_main, NULL);
++      while (!options->should_cancel (options->context))
++        g_usleep (1000);
++      cleaned = TRUE;
++      return -ECANCELED;
++    }
++  options->progress (PIANO_GOODIX_FINGER_UP, 0, options->context);
++  *matched = FP_FINGER_LEFT_THUMB;
++  cleaned = TRUE;
++  return 0;
++}
++
++int
++piano_goodix_list (uint32_t uid, unsigned int fingers[10], size_t *count)
++{
++  (void) uid;
++  (void) fingers;
++  (void) count;
++  assert_worker ();
++  return -EIO;
++}
++
++int
++piano_goodix_delete (uint32_t uid, unsigned int finger)
++{
++  assert_worker ();
++  g_assert_cmpuint (uid, ==, getuid ());
++  g_assert_cmpuint (finger, ==, FP_FINGER_LEFT_THUMB);
++  cleaned = TRUE;
++  return 0;
++}
++
++static void
++initialized (GObject *source, GAsyncResult *result, gpointer pointer)
++{
++  GError *error = NULL;
++  FpDevice **device = pointer;
++
++  *device = FP_DEVICE (g_async_initable_new_finish (G_ASYNC_INITABLE (source), result, &error));
++  g_assert_no_error (error);
++}
++
++static FpDevice *
++new_device (void)
++{
++  FpDevice *device = NULL;
++  GError *error = NULL;
++
++  g_async_initable_new_async (fpi_device_piano_goodix_get_type (), G_PRIORITY_DEFAULT,
++                              NULL, initialized, &device, NULL);
++  while (!device)
++    g_main_context_iteration (NULL, TRUE);
++  g_assert_true (fp_device_open_sync (device, NULL, &error));
++  g_assert_no_error (error);
++  return device;
++}
++
++static FpPrint *
++new_print (FpDevice *device, gboolean enrolled)
++{
++  struct passwd *entry = getpwuid (getuid ());
++  FpPrint *print = fp_print_new (device);
++
++  g_assert_nonnull (entry);
++  fp_print_set_username (print, entry->pw_name);
++  fp_print_set_finger (print, FP_FINGER_LEFT_THUMB);
++  if (enrolled)
++    {
++      fpi_print_set_type (print, FPI_PRINT_RAW);
++      fpi_print_set_device_stored (print, TRUE);
++      g_object_set (print, "fpi-data", g_variant_new ("(uu)", (guint32) getuid (), 1U), NULL);
++    }
++  return g_object_ref_sink (print);
++}
++
++static void
++close_device (FpDevice *device)
++{
++  GError *error = NULL;
++
++  g_assert_true (fp_device_close_sync (device, NULL, &error));
++  g_assert_no_error (error);
++  g_object_unref (device);
++  while (g_main_context_pending (NULL))
++    g_main_context_iteration (NULL, FALSE);
++}
++
++static void
++progress (FpDevice *device, gint completed, FpPrint *print, gpointer unused, GError *error)
++{
++  (void) print;
++  (void) unused;
++  g_assert_true (g_thread_self () == main_thread);
++  if (error)
++    {
++      g_assert_error (error, FP_DEVICE_RETRY, FP_DEVICE_RETRY_GENERAL);
++      retries++;
++    }
++  last_stage = completed;
++  progress_count++;
++  g_assert_cmpint (completed, <=, fp_device_get_nr_enroll_stages (device));
++}
++
++static void
++reset (Scenario value)
++{
++  scenario = value;
++  cleaned = FALSE;
++  calls = retries = last_stage = progress_count = verify_reports = 0;
++}
++
++static void
++test_enroll (gconstpointer pointer)
++{
++  reset (GPOINTER_TO_INT (pointer));
++  FpDevice *device = new_device ();
++  g_autoptr(FpPrint) print = new_print (device, FALSE);
++  g_autoptr(GError) error = NULL;
++  g_autoptr(FpPrint) result = fp_device_enroll_sync (device, print, NULL, progress, NULL, &error);
++
++  g_assert_true (cleaned);
++  g_assert_cmpuint (calls, ==, 1);
++  if (scenario == ENROLL_BUSY)
++    {
++      g_assert_null (result);
++      g_assert_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_BUSY);
++      g_assert_cmpuint (progress_count, ==, 0);
++    }
++  else if (scenario == ENROLL_FAILURE)
++    {
++      g_assert_cmpuint (retries, ==, 1);
++      g_assert_null (result);
++      g_assert_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL);
++      g_assert_cmpuint (last_stage, <, 4);
++    }
++  else
++    {
++      g_assert_cmpuint (retries, ==, 1);
++      g_assert_no_error (error);
++      g_assert_nonnull (result);
++      g_assert_true (fp_print_get_device_stored (result));
++      g_assert_cmpuint (last_stage, ==, 4);
++      g_assert_cmpuint (fp_device_get_nr_enroll_stages (device), ==, 4);
++    }
++  close_device (device);
++}
++
++static void
++verify_report (FpDevice *device, FpPrint *match, FpPrint *print, gpointer unused, GError *error)
++{
++  (void) device;
++  (void) match;
++  (void) print;
++  (void) unused;
++  g_assert_true (g_thread_self () == main_thread);
++  /* Nonterminal acquisition retries must not finish or report the attempt.
++   * Deliver its single result only after the native transaction has closed.
++   */
++  g_assert_true (cleaned);
++  if (error)
++    g_assert_error (error, FP_DEVICE_RETRY, FP_DEVICE_RETRY_GENERAL);
++  verify_reports++;
++}
++
++static void
++test_verify (gconstpointer pointer)
++{
++  reset (GPOINTER_TO_INT (pointer));
++  FpDevice *device = new_device ();
++  g_autoptr(FpPrint) print = new_print (device, TRUE);
++  g_autoptr(GError) error = NULL;
++  gboolean match = FALSE;
++
++  cancel_scan = g_cancellable_new ();
++  gboolean result = fp_device_verify_sync (device, print, cancel_scan, verify_report, NULL,
++                                           &match, NULL, &error);
++  g_assert_true (cleaned);
++  g_assert_cmpuint (calls, ==, 1);
++  if (scenario == MATCH || scenario == NO_MATCH ||
++      scenario == RETRY_MATCH || scenario == RETRY_NO_MATCH)
++    {
++      g_assert_true (result);
++      g_assert_no_error (error);
++      g_assert_cmpint (match, ==, scenario == MATCH || scenario == RETRY_MATCH);
++      g_assert_cmpuint (verify_reports, ==, 1);
++    }
++  else
++    {
++      g_assert_false (result);
++      g_assert_false (match);
++      if (scenario == TIMEOUT)
++        {
++          g_assert_error (error, FP_DEVICE_RETRY, FP_DEVICE_RETRY_GENERAL);
++          g_assert_cmpuint (verify_reports, ==, 1);
++        }
++      else if (scenario == RETRY_FAILURE)
++        {
++          g_assert_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL);
++          g_assert_cmpuint (verify_reports, ==, 0);
++        }
++      else if (scenario == BUSY)
++        {
++          g_assert_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_BUSY);
++          g_assert_cmpuint (verify_reports, ==, 0);
++        }
++      else
++        {
++          g_assert_error (error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
++          g_assert_cmpuint (verify_reports, ==, 0);
++        }
++    }
++  g_clear_object (&cancel_scan);
++  close_device (device);
++}
++
++static void
++test_invalid_coordinates (void)
++{
++  reset (MATCH);
++  FpDevice *device = new_device ();
++  g_autoptr(FpPrint) print = new_print (device, TRUE);
++  g_autoptr(GError) error = NULL;
++  gboolean match;
++
++  g_object_set (print, "fpi-data", g_variant_new ("(uu)", (guint32) getuid () + 1, 1U), NULL);
++  g_assert_false (fp_device_verify_sync (device, print, NULL, NULL, NULL, &match, NULL, &error));
++  g_assert_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID);
++  g_assert_cmpuint (calls, ==, 0);
++  close_device (device);
++}
++
++static void
++test_capabilities (void)
++{
++  reset (MATCH);
++  FpDevice *device = new_device ();
++  FpDeviceFeature features = FP_DEVICE_FEATURE_VERIFY | FP_DEVICE_FEATURE_STORAGE |
++                             FP_DEVICE_FEATURE_STORAGE_LIST | FP_DEVICE_FEATURE_STORAGE_DELETE |
++                             FP_DEVICE_FEATURE_ALWAYS_ON;
++
++  g_assert_cmpuint (fp_device_get_features (device), ==, features);
++  g_assert_cmpstr (fp_device_get_driver (device), ==, "piano_goodix");
++  g_assert_cmpint (fp_device_get_scan_type (device), ==, FP_SCAN_TYPE_PRESS);
++  g_assert_cmpuint (calls, ==, 0);
++  close_device (device);
++}
++
++static void
++test_identify_not_supported (gconstpointer pointer)
++{
++  reset (MATCH);
++  FpDevice *device = new_device ();
++  g_autoptr(FpPrint) print = new_print (device, TRUE);
++  g_autoptr(GPtrArray) gallery = g_ptr_array_new ();
++  g_autoptr(GError) error = NULL;
++  g_autoptr(FpPrint) match = NULL;
++
++  if (GPOINTER_TO_INT (pointer))
++    g_ptr_array_add (gallery, print);
++  g_assert_false (fp_device_identify_sync (device, gallery, NULL, NULL, NULL, &match, NULL, &error));
++  g_assert_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_NOT_SUPPORTED);
++  g_assert_null (match);
++  g_assert_cmpuint (calls, ==, 0);
++  close_device (device);
++}
++
++static void
++test_delete (void)
++{
++  reset (MATCH);
++  FpDevice *device = new_device ();
++  g_autoptr(FpPrint) print = new_print (device, TRUE);
++  g_autoptr(GError) error = NULL;
++
++  g_assert_true (fp_device_has_feature (device, FP_DEVICE_FEATURE_STORAGE_LIST));
++  g_assert_false (fp_device_has_feature (device, FP_DEVICE_FEATURE_STORAGE_CLEAR));
++  g_assert_true (fp_device_delete_print_sync (device, print, NULL, &error));
++  g_assert_no_error (error);
++  g_assert_true (cleaned);
++  g_assert_cmpuint (calls, ==, 1);
++  close_device (device);
++}
++
++int
++main (int argc, char **argv)
++{
++  g_test_init (&argc, &argv, NULL);
++  main_thread = g_thread_self ();
++  g_test_add_data_func ("/piano-goodix/enroll/progress", GINT_TO_POINTER (ENROLL), test_enroll);
++  g_test_add_data_func ("/piano-goodix/enroll/save-failure", GINT_TO_POINTER (ENROLL_FAILURE), test_enroll);
++  g_test_add_data_func ("/piano-goodix/enroll/busy", GINT_TO_POINTER (ENROLL_BUSY), test_enroll);
++  g_test_add_data_func ("/piano-goodix/verify/match", GINT_TO_POINTER (MATCH), test_verify);
++  g_test_add_data_func ("/piano-goodix/verify/not-match", GINT_TO_POINTER (NO_MATCH), test_verify);
++  g_test_add_data_func ("/piano-goodix/verify/retry-then-match", GINT_TO_POINTER (RETRY_MATCH), test_verify);
++  g_test_add_data_func ("/piano-goodix/verify/retry-then-not-match", GINT_TO_POINTER (RETRY_NO_MATCH), test_verify);
++  g_test_add_data_func ("/piano-goodix/verify/retry-then-failure", GINT_TO_POINTER (RETRY_FAILURE), test_verify);
++  g_test_add_data_func ("/piano-goodix/verify/retry-then-cancel", GINT_TO_POINTER (RETRY_CANCEL), test_verify);
++  g_test_add_data_func ("/piano-goodix/verify/timeout", GINT_TO_POINTER (TIMEOUT), test_verify);
++  g_test_add_data_func ("/piano-goodix/verify/busy", GINT_TO_POINTER (BUSY), test_verify);
++  g_test_add_data_func ("/piano-goodix/verify/cancel-cleanup", GINT_TO_POINTER (CANCEL_SCAN), test_verify);
++  g_test_add_func ("/piano-goodix/verify/foreign-uid", test_invalid_coordinates);
++  g_test_add_func ("/piano-goodix/capabilities", test_capabilities);
++  g_test_add_data_func ("/piano-goodix/identify/empty-gallery", GINT_TO_POINTER (0), test_identify_not_supported);
++  g_test_add_data_func ("/piano-goodix/identify/populated-gallery", GINT_TO_POINTER (1), test_identify_not_supported);
++  g_test_add_func ("/piano-goodix/storage/scoped-delete", test_delete);
++  return g_test_run ();
++}

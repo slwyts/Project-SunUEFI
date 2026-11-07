@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "patches": [
+    {
+      "file": "0001-piano-goodix-uio.patch",
+      "sha256": "a3766e14211505490c126809e3c39ccaf4b8348c1c179cc6c31516ea56c7b556"
+    }
+  ]
+}

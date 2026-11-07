@@ -1,0 +1,136 @@
+--- a/libminkadaptor/src/mink_adaptor.c
++++ b/libminkadaptor/src/mink_adaptor.c
+@@ -27,6 +27,19 @@
+ 	.release = qcomtee_callback_obj_release,
+ };
+ 
++/* libqcomtee sends the response and calls cleanup on the dispatching thread.
++ * Keep output buffers per invocation until that response is sent. A callback
++ * object can be used concurrently, and nested dispatches must not replace the
++ * buffers belonging to an outer invocation.
++ */
++struct callback_invocation {
++	struct qcomtee_object *object;
++	void *allocated_bo[ObjectCounts_maxBO];
++	struct callback_invocation *previous;
++};
++
++static _Thread_local struct callback_invocation *current_callback;
++
+ /**
+  * @brief Get a QCOMTEE object from a MINK object.
+  *
+@@ -170,7 +183,7 @@
+ 			/* params[i].ubuf.addr is NULL for UBUF_OUTPUT */
+ 			ubuf_ptr = malloc(params[i].ubuf.size);
+ 			if (!ubuf_ptr)
+-				goto out_failed;
++				return Object_ERROR_MEM;
+ 
+ 			args[i].b.ptr = ubuf_ptr;
+ 			args[i].b.size = params[i].ubuf.size;
+@@ -189,14 +202,6 @@
+ 	}
+ 
+ 	return Object_OK;
+-
+-out_failed:
+-	for (i = 0; i < bo; i++) {
+-		if (allocated_bo[i])
+-			free(allocated_bo[i]);
+-	}
+-
+-	return Object_ERROR;
+ }
+ 
+ /**
+@@ -231,6 +236,10 @@
+ 		params[i].attr = QCOMTEE_OBJREF_INPUT;
+ 	}
+ 
++	/* A failed export must leave the remaining output slots releasable. */
++	FOR_ARGS(i, counts, OO) {
++		params[i].object = QCOMTEE_OBJECT_NULL;
++	}
+ 	FOR_ARGS(i, counts, OO) {
+ 		params[i].attr = QCOMTEE_OBJREF_OUTPUT;
+ 		if(qcomtee_obj_from_mink_obj(root, args[i].o, &params[i].object))
+@@ -264,14 +273,21 @@
+ 
+ 	struct qcomtee_object *root = object->root;
+ 	struct qcomtee_callback_obj *qcomtee_cbo = CALLBACKOBJ(object);
++	struct callback_invocation *invocation = calloc(1, sizeof(*invocation));
++
++	if (!invocation)
++		return Object_ERROR_MEM;
++	invocation->object = object;
++	invocation->previous = current_callback;
++	current_callback = invocation;
+ 
+ 	ObjectArg objArgs[MAX_OBJ_ARG_COUNT] = { { { 0, 0 } } };
+ 	ObjectCounts counts = get_obj_counts(params, num);
+ 
+ 	ret = object_args_from_tee_params_cb(params, num, objArgs,
+-					     qcomtee_cbo->allocated_bo);
++						     invocation->allocated_bo);
+ 	if (ret)
+-		return ret;
++		goto out_failed;
+ 
+ 	ret = Object_invoke(qcomtee_cbo->mink_obj, op, objArgs, counts);
+ 	if (!ret) {
+@@ -280,13 +296,17 @@
+ 		if (ret) {
+ 			release_qcomtee_objs(params, num,
+ 					     QCOMTEE_OBJREF_OUTPUT);
+-
+-			/* If dispatch fails, QCOMTEE doesn't call cleanup */
+-			qcomtee_callback_obj_cleanup(object, 0);
+ 		}
+ 	}
++	if (ret)
++		goto out_failed;
+ 
+ 	return ret;
++
++out_failed:
++	/* libqcomtee does not call post-response cleanup for a dispatch error. */
++	qcomtee_callback_obj_cleanup(object, ret);
++	return ret;
+ }
+ 
+ /**
+@@ -302,13 +322,16 @@
+ static void qcomtee_callback_obj_cleanup(struct qcomtee_object *object, int err)
+ {
+ 	(void)err;
+-	struct qcomtee_callback_obj *qcomtee_cbo = CALLBACKOBJ(object);
++	struct callback_invocation *invocation = current_callback;
+ 	uint32_t i = 0;
+ 
++	if (!invocation || invocation->object != object)
++		return;
++	current_callback = invocation->previous;
+ 	for (i = 0; i < ObjectCounts_maxBO; i++) {
+-		if (qcomtee_cbo->allocated_bo[i])
+-			free(qcomtee_cbo->allocated_bo[i]);
++		free(invocation->allocated_bo[i]);
+ 	}
++	free(invocation);
+ }
+ 
+ /**
+--- a/libminkadaptor/src/mink_adaptor_priv.h
++++ b/libminkadaptor/src/mink_adaptor_priv.h
+@@ -35,11 +35,6 @@
+ 
+ struct qcomtee_callback_obj {
+ 	struct qcomtee_object object;
+-	/* To satify the IDL interface, each BO argument passed to a
+-	 * to a MINK Callback Object must be initialized with a valid
+-	 * pointer. Allocated pointers are stored here to be free'd later.
+-	 */
+-	void *allocated_bo[ObjectCounts_maxBO];
+ 	Object mink_obj;
+ };
+ 

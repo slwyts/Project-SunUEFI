@@ -9,7 +9,8 @@
     "minkipc": {
       "url": "https://github.com/qualcomm/minkipc.git",
       "commit": "ce145804d9e994e0a7913f8d224d52e84bce6608",
-      "license": "LICENSE.txt"
+      "license": "LICENSE.txt",
+      "patch_series": "patches/minkipc/0.1.0/series.json"
     },
     "qcbor": {
       "url": "https://github.com/laurencelundblade/QCBOR.git",
