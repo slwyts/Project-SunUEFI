@@ -1,6 +1,15 @@
-# Piano 蓝牙地址
+# Piano 蓝牙配置
 
 公共镜像不包含某台平板的蓝牙地址。Linux 在无线初始化时自动补齐板载控制器缺少的地址，用户无需填写 MAC。安装器仍可预先写入标准设备树属性；直接刷写通用 ESP 时，Linux 也能自行完成配置。
+
+## 板级 NVM 与连接距离
+
+WCN7861 使用 p81 板级 `brhbtnv20.b2e`，蓝牙键鼠等外设的连接距离正常。
+[`piano-bluetooth-nvm.dtso`](../../../linux/dts/piano-bluetooth-nvm.dtso) 已接入共用设备树构建，只替换 NVM，rampatch 保持 `brhbtfw20.tlv`。
+
+控制器初始化时报告的 board ID 为 `0x0000`，驱动无法自动选出板级文件。
+通用 `brhbtnv20.bin` 缺少 p81 射频前端校准，会导致外设只能在约 20 cm 内连接。
+板级文件随共用固件提供，与原厂 `bluetooth_a` 中的同名文件一致；此修复不改变本机蓝牙地址的来源。
 
 ## 地址来源与内核接口
 

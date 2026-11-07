@@ -1,10 +1,10 @@
 # 项目状态
 
-更新日期：2026-10-28。本页按功能列出当前状态。首页的表格是它的简化版；各项的技术细节在 `docs/devel/` 的对应页面中。
+本页按功能列出当前状态，包含维护者与贡献者完成的适配。首页的表格是它的简化版；各项的技术细节在 `docs/devel/` 的对应页面中。
 
 ## 测试设备
 
-所有结果来自同一台小米平板 8 Pro（`piano`，型号 `25091RP04C`，SM8750P，16 GB 内存），原厂已更新到 Android 17／HyperOS 4（`OS4.0.4.0.XPYCNXM`，vendor `OS4.0.2.1.XPYCN`），Bootloader 已解锁，当前运行使用 CSOT 面板配置（由原厂引导程序传来的标识选择，不等同于对物理供应商的识别）。Linux 对面板的选择见[面板选择](devel/hardware/panel-selection.md)；其他面板、内存容量和 ROM 版本没有测试过。
+维护者使用小米平板 8 Pro（`piano`，型号 `25091RP04C`，SM8750P，16 GB 内存），原厂系统为 Android 17／HyperOS 4（`OS4.0.5.0.XPYCNXM`），Bootloader 已解锁。Linux 按原厂引导程序传来的标识选择 BOE／CSOT 面板，见[面板选择](devel/hardware/panel-selection.md)。合体 BOOT 支持国行和国际版 Piano。
 
 这台机器划出了 `sunuefi_esp`（512 MiB FAT32，4 KiB 扇区，与 UFS 逻辑扇区一致）和 `sunuefi_root`（256 GiB ext4），已运行 Debian 13 / GNOME、Nyarch / GNOME 和 SteamOS 0.6.0。默认内核为 `7.3.0-piano-sunuefi-cachy`，从合体 BOOT 经 UEFI 启动，支持来回切换 Android 与 Linux。四个发行版共用内核、BSP 和原厂 DSP 固件；root 镜像首次启动会自动扩展到分区容量。
 
@@ -26,11 +26,12 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| 存储与保护 | 能读取 UFS 的 GPT、BlockIO 和 ESP 文件；原厂关键分区由代码强制只读 |
+| 存储与保护 | 可用。探测前恢复 UFS 设备就绪状态，读取 GPT、BlockIO 和 ESP 文件；原厂关键分区由代码强制只读 |
 | 交接与退出 | 启动 Linux 前清理 USB、UFS、时钟与 SMMU，无法确认安全时拒绝交接 |
 | 显示 | 合体 BOOT 进入 UEFI 后可显示菜单；延后原厂 ClockDxe 的 CESTA/media 和 DCD 启动初始化，保留继承的显示状态。见[显示定位](devel/boot/uefi-display.md) |
 | 菜单 / Setup / Shell | SimpleInit 菜单、TianoCore 中文设置页面与四倍字号可用；音量键移动、电源键确认、双音量键返回可用，见[设置页面](devel/boot/uefi-console.md)；Shell 尚未完成实机验证 |
-| 触屏、键盘、USB Host | UEFI 阶段没有完成，不使用 Linux 的结果代替 |
+| Y700 四代触屏 | NT36536 的单指菜单点击、滑动可用，见[驱动说明](devel/hardware/y700-touch.md) |
+| Piano 触屏、键盘、USB Host | Piano 产品尚未接入这些输入后端，菜单使用音量键与电源键 |
 | UEFI Fastboot | 在菜单、固件设置和 Shell 中常驻，正常 BOOT 进入时可连接；提供日志、截图、只读 `fetch`、`stage`（≤64 MiB）、`oem boot-stable` 和重启。拒绝 `flash`/`erase`；完整命令见[UEFI Fastboot](user/fastboot.md) |
 | EFI 变量 | 保存在内存，没有持久存储 |
 | 任意 `.img` / `.efi` 启动 | 没有完成，目前只启动 ESP 中的 Linux |
@@ -45,8 +46,9 @@
 | 键盘 / 触控板 | 打字、触控板、背光和睡眠恢复可用，背光走 UPower / GNOME | — |
 | 触控笔 | 定位、压感绘画、144 Hz 笔输入、轻捏与震动；磁吸识别、笔电量、充满停电以及跨系统自动重新配对 | 完整掌压、笔身滑动及应用快捷手势仍需完善，见[笔协议](devel/hardware/pen-protocol.md) |
 | Wi-Fi | 可用 | 新系统需自行保存网络连接 |
-| 蓝牙 | 可用，启动时自动读取本机原厂地址，手工刷通用 ESP 也可初始化 | 原厂地址缺失时提供稳定硬件标识派生方案，见[蓝牙地址](devel/hardware/bluetooth.md) |
+| 蓝牙 | 可用，使用 p81 板级 NVM，已修复连接距离过短；启动时自动读取本机原厂地址 | 原厂地址缺失时提供稳定硬件标识派生方案，见[蓝牙配置](devel/hardware/bluetooth.md) |
 | Linux USB 3 | 标准 Type-C 方向和角色切换、5 Gbit/s USB 调试网络 | 首次连接时序继续核对，见[USB Type-C](devel/linux/kernel.md#usb-type-c) |
+| 外接存储 | U 盘、移动硬盘、读卡器可用，FAT32／exFAT／NTFS 读写 | — |
 | 扬声器 | 四路播放、音量调节和睡眠恢复，沿用原厂功放增益 235 | — |
 | 麦克风 | 录音、原生单声道 ALSA / PipeWire 输入及睡眠恢复，硬件增益 +40 dB | — |
 | 相机 | 前后预览、录像、自动曝光／对焦／白平衡及首帧恢复，CAMSS/TFE 硬件 ISP | 实现见[相机与闪光灯](devel/hardware/camera-flash.md)，手动接口见[相机控制](devel/hardware/camera-controls.md) |
@@ -55,7 +57,8 @@
 | 传感器 | 自动旋转、光线、距离、罗盘及标准 SensorProxy 接口 | 实现见[传感器](devel/hardware/sensors.md) |
 | 自动亮度 | 桌面联动可用，GNOME 策略沿用原厂 lux 阈值与延迟，传感器数据不做修改 | 见[自动亮度](devel/hardware/auto-brightness.md) |
 | 夜灯 / 色温 | GNOME 夜灯可用，自动生成内置屏幕的颜色配置 | 通用 sRGB 配置，不是原厂校准 |
-| 电源 | 双电池、PD 充电、UPower、合盖恢复、待机、挂起及 RTC／电源键唤醒；2 分钟熄屏，电池 5 分钟、外接电源 10 分钟自动挂起 | 不启用磁盘休眠。见[电源键](devel/hardware/power-button.md) |
+| 电源 | 双电池、PD 与小米快充、拓展坞充电和 OTG、UPower、合盖恢复、挂起及 RTC／电源键唤醒；2 分钟熄屏，电池 5 分钟、外接电源 10 分钟自动挂起 | 不启用磁盘休眠。见[电源键](devel/hardware/power-button.md) |
+| GNOME 电源模式 | 节能／平衡／性能三档可用，默认平衡，由 TuneD 与 tuned-ppd 提供 | 档位调整 CPU／GPU 上限，不改变待机功耗，见[电源模式](devel/hardware/power-profiles.md) |
 | 视频编解码 | ✅ | Iris 硬件加速与 V4L2 编解码可用，提供适配的 FFmpeg 软件包 |
 | SteamOS / Proton / FEX | ✅ | 游戏模式和桌面模式正常运行，ARM64 Proton 与 FEX 支持良好（个别游戏需自身参数，与项目本身无关） |
 | 指纹 | ⚠️ | 底层已接入，用户空间录入与认证未验证 |
