@@ -120,7 +120,7 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
     fingerprint_files['usr/local/sbin/piano-fingerprint-ctl'].update(
         runtime.verify_elf(fingerprint_binary), help_no_device_access=True)
     files.update(fingerprint_files)
-    run(['bash', public / 'scripts/build-topology.sh', macros, output / 'firmware'])
+    runtime.build_topology(public, macros, output / 'firmware')
     topology = output / 'firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'
     if runtime.sha(topology) != runtime.TOPOLOGY_PIN:
         raise ValueError('Topology bytes differ from the reviewed source build')

@@ -45,7 +45,7 @@ TOOL_PINS={'clang':'939a882527432ec23b094c289e7f170bf2d6ec282e74dde75e31b08602fa
  'llvm-strip':'629062ddc62f936d7f07418099d202850e18b222217a85f419552fa25d3eb4ec'}
 QEMU_PIN='73cc2584f119f9e74c85c0a8549dbb6fd104ae3897a06a7500797f9e5b4d0943'
 ALSA_TOOLCHAIN_PIN='09676a0fc68ee9cd5ba6684646b7e82c96e2ed5ac7ba53d639c4fe53b0612346'
-TOPOLOGY_PIN='6b10e42b5d0b4242004c750613462c2ccd7d37cd180ca842abbb431bda6057bb'
+TOPOLOGY_PIN=json.loads((ROOT/'config/release.json').read_text())['audio_topology']['sha256']
 DEFAULT_RELEASE='7.2.6-piano-gnome-00061-g352508459733'
 TOUCH_DIAGNOSTICS_PATCH=ROOT/'tools/patches/piano-touch-view-observability.patch'
 TOUCH_CAPTURE_PATCH=ROOT/'tools/patches/piano-touch-view-raw-capture.patch'
@@ -70,6 +70,21 @@ def repository(path,pin):
 
 def tree_files(folder):return {p.relative_to(folder).as_posix():sha(p)for p in sorted(folder.rglob('*'))if p.is_file()}
 def tree_digest(rows):return hashlib.sha256(json.dumps(rows,sort_keys=True).encode()).hexdigest()
+
+
+def build_topology(public, macros, destination, env=None):
+    policy=json.loads((ROOT/'config/release.json').read_text())['audio_topology']
+    source=ROOT/policy['source']
+    config=destination/'piano.conf'
+    target=destination/'qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'
+    target.parent.mkdir(parents=True,exist_ok=True)
+    with config.open('w') as output:
+        subprocess.run(['m4','-I',public/'topology','-I',macros,source],
+                       stdout=output,env=env,check=True)
+    subprocess.run(['alsatplg','-c',config,'-o',target],env=env,check=True)
+    if sha(target)!=policy['sha256']:
+        raise ValueError('Product topology differs from its recorded source build')
+    return target
 
 
 def source_patches(series):
@@ -473,7 +488,7 @@ def build(args):
     wrapper=output/'host-bin';wrapper.mkdir();exe=wrapper/'alsatplg';launch=[alsa['loader'],'--library-path',str(alsa_root/'usr/lib/x86_64-linux-gnu'),str(alsa_root/'usr/bin/alsatplg')]
     import shlex
     exe.write_text('#!/bin/sh\nexec '+shlex.join(launch)+' "$@"\n');exe.chmod(0o755);top_env=env.copy();top_env['PATH']=str(wrapper)+os.pathsep+top_env['PATH']
-    run(['bash',public/'scripts/build-topology.sh',args.macros.resolve(),output/'firmware'],top_env,log)
+    build_topology(public,args.macros.resolve(),output/'firmware',top_env)
     tplg=output/'firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'
     if sha(tplg)!=TOPOLOGY_PIN:raise ValueError('Public topology differs from validated repeat build')
     run([*launch,'-d',tplg,'-o',output/'topology-decoded.conf'],env,log)

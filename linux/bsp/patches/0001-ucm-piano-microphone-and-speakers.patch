@@ -23,7 +23,7 @@
  		PlaybackPriority 100
  		PlaybackPCM "hw:${CardId},0"
  	}
-@@ -32,10 +39,21 @@
+@@ -32,11 +39,38 @@
  SectionDevice."Mic" {
  	Comment "Internal microphone"
  
@@ -47,3 +47,20 @@
  		CapturePriority 100
  		CapturePCM "hw:${CardId},2"
  	}
+ }
++
++SectionDevice."HDMI" {
++	Comment "DisplayPort audio"
++	EnableSequence [
++		cset "name='DISPLAY_PORT_RX_0 Audio Mixer MultiMedia2' 1"
++	]
++	DisableSequence [
++		cset "name='DISPLAY_PORT_RX_0 Audio Mixer MultiMedia2' 0"
++	]
++	Value {
++		PlaybackChannels 2
++		PlaybackPriority 200
++		PlaybackPCM "hw:${CardId},1"
++		JackControl "DP0 Jack"
++	}
++}

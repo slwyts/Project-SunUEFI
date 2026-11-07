@@ -125,5 +125,9 @@
     "autologin": true,
     "password": "piano123456"
   },
-  "reproducibility": "source identities and actual package/metadata hashes recorded; complete bit reproducibility is not claimed"
+  "reproducibility": "source identities and actual package/metadata hashes recorded; complete bit reproducibility is not claimed",
+  "audio_topology": {
+    "source": "linux/bsp/topology/piano-displayport.m4",
+    "sha256": "6bedef2e832a24fccf978340ceb1724a32e045c92243dd0e1d152b289e59c6f6"
+  }
 }
