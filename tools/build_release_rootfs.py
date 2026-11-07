@@ -51,7 +51,8 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
     if desktop == 'kde':
         from prepare_debian_desktop import KDE_PACKAGES
         gnome = {'gnome', 'task-gnome-desktop', 'task-chinese-s-gnome-desktop',
-                 'ibus', 'ibus-libpinyin', 'ibus-gtk', 'ibus-gtk3', 'ibus-gtk4'}
+                 'ibus', 'ibus-libpinyin', 'ibus-gtk', 'ibus-gtk3', 'ibus-gtk4',
+                 'power-profiles-daemon'}
         config['debian']['extra_packages'] = [p for p in config['debian']['extra_packages'] if p not in gnome] + KDE_PACKAGES
     if config['debian']['apt_policy'] != 'mutable-recorded' or config['debian']['snapshot'] is not None:
         raise ValueError('Only signed mutable APT with recorded metadata is implemented; snapshot mode is not configured')
@@ -181,7 +182,12 @@ def default_system_record(rootfs, installed, config, desktop='gnome'):
         'usr/share/piano/pen/p81c-radio.json', 'usr/lib/piano/pen-bluetooth',
         'usr/lib/piano/touch-input', 'usr/bin/piano-pen-canvas',
     )
-    paths += (('etc/dconf/db/local.d/00-sunuefi', 'etc/dconf/db/local', 'etc/dconf/profile/user')
+    paths += (('etc/dconf/db/local.d/00-sunuefi', 'etc/dconf/db/local', 'etc/dconf/profile/user',
+               'usr/lib/tuned/profiles/piano-power-saver/tuned.conf',
+               'usr/lib/tuned/profiles/piano-balanced/tuned.conf',
+               'usr/lib/tuned/profiles/piano-performance/tuned.conf',
+               'etc/tuned/piano-ppd.conf',
+               'usr/lib/systemd/system/tuned-ppd.service.d/50-piano-ppd.conf')
               if desktop == 'gnome' else ('etc/sddm.conf.d/10-sunuefi.conf',))
     files = {}
     for name in paths:
