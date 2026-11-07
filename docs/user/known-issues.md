@@ -42,6 +42,11 @@ fastboot -s SunUEFI-piano getvar product
 * 红外发射没有验证。
 * Windows / WinPE 是目标，还不能启动。
 
+## 外接存储
+
+* U 盘、移动硬盘和读卡器在 Linux 里可用，FAT32、exFAT 和 NTFS 都支持读写。
+* 早期镜像只带 FAT32 支持。插上 exFAT 或 NTFS 介质时设备能识别、分区能看到，但打开会提示 `Filesystem type ... not configured in kernel`，换成包含该支持的镜像即可。不是介质或接口的问题。
+
 ## 其他
 
 * 新装系统需要自己通过 NetworkManager 保存 Wi-Fi。

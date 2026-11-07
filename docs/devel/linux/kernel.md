@@ -40,6 +40,22 @@ Linux 基线为上游 `v7.3`，提交
 具体配置位于 [`piano-platform.config`](../../../linux/configs/piano-platform.config)，
 来源及许可见 [THIRD_PARTY.md](../../../THIRD_PARTY.md)。
 
+## 可移动存储的文件系统
+
+原厂 `piano_defconfig` 只启用 `VFAT_FS`。FAT32 介质因此可以直接挂载，
+而消费级 U 盘更常见的 exFAT 和 NTFS 会在挂载阶段被拒绝，报
+`Filesystem type exfat not configured in kernel`。分区枚举本身是好的，
+`lsblk` 能看到设备，只有挂载失败。
+
+[`piano-filesystem.config`](../../../linux/configs/piano-filesystem.config)
+补齐 `EXFAT_FS`、`NTFS3_FS` 和两者挂载时都要读取的 `NLS_UTF8`。这些编进
+内核而不做成模块，理由与 `CONFIG_USB_HID` 相同：介质插入后应当直接可用，
+不应依赖之后手工加载模块。`NLS_UTF8` 是最容易漏的一项——缺它时文件系统
+检查能通过，挂载才失败，报的是 `Unable to load IO charset utf8`，看起来
+像另一个问题。
+
+新增配置只证明内核具备这些驱动，实际读写仍需插入介质确认。
+
 ## Gunyah
 
 原厂启动链已由 Gunyah 占用 EL2。这里接入其资源管理器和虚拟机接口，
