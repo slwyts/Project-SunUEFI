@@ -324,9 +324,9 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "95e319bf231e07df76e156d488c8df516545d8791f59b4cd494b9efc29ec4807",
+      "sha256": "ac6a6c39a871ba38b87a7af96050a626906d2f72706e067d9005c81b21c85a81",
       "source": "linux/bsp/common/usr/lib/systemd/system/bluetooth.service.d/20-piano-address.conf",
-      "source_sha256": "95e319bf231e07df76e156d488c8df516545d8791f59b4cd494b9efc29ec4807",
+      "source_sha256": "ac6a6c39a871ba38b87a7af96050a626906d2f72706e067d9005c81b21c85a81",
       "source_component": "Project SunUEFI",
       "source_git_mode": "100644",
       "license": "MIT"
