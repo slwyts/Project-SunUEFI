@@ -10,14 +10,14 @@
     "desktop_package_list": "https://steamdeck-images.steamos.cloud/steamdeck/20261015.100/steamdeck-20261015.100-3.9.3.manifest.pacman"
   },
   "base": {
-    "build": "20261020.6174944",
+    "build": "20261106.6191448",
     "version": "0.6.0",
-    "bundle_url": "https://steamdeck-images.steamos.cloud/vr/20261020.6174944/deckard-20261020.6174944-0.6.0.raucb",
-    "bundle_sha256": "0529e08327606ee58a4ad9115b61bf0ceff069cab2b5a4c2df8ccba3bbbc3df1",
-    "rootfs_sha256": "1404102aa560427c896e37d62e70733a4c2daf9ea1741e7bea9e3439163c71f2",
+    "bundle_url": "https://steamdeck-images.steamos.cloud/vr/20261106.6191448/deckard-20261106.6191448-0.6.0.raucb",
+    "bundle_sha256": "cca86cfcceb6f369bf9dbbc6b4c2ce6884d1418d1bca9df437dd5d4adbf38538",
+    "rootfs_sha256": "253f63735cb18eb0a5c6fa730003d8458eabec6fe331647d150b8615d4fdfa91",
     "rootfs_bytes": 10737418240,
     "stores": [
-      "https://steamdeck-images.steamos.cloud/vr/20261020.6174944/deckard-20261020.6174944-0.6.0.castr",
+      "https://steamdeck-images.steamos.cloud/vr/20261106.6191448/deckard-20261106.6191448-0.6.0.castr",
       "https://steamdeck-images.steamos.cloud/vr/chunks.castr"
     ]
   },
@@ -34,16 +34,16 @@
     "patch_series_by_abi": {
       "7": "linux/bsp/patches/ffmpeg/series.json",
       "8": "linux/bsp/patches/ffmpeg/series-8.json",
-      "9": "linux/bsp/patches/ffmpeg/series-9.json"
+      "9": "patches/ffmpeg/9.0.2/series.json"
     }
   },
   "kde_packages": [
     {
       "name": "libkscreen",
-      "version": "6.6.3",
+      "version": "6.6.5",
       "pkgrel": "3",
-      "url": "https://download.kde.org/stable/plasma/6.6.3/libkscreen-6.6.3.tar.xz",
-      "sha256": "408110fc5342a8fe1ff43f026613e0b5ad94e925e85c195a24eac142e74fd179",
+      "url": "https://download.kde.org/stable/plasma/6.6.5/libkscreen-6.6.5.tar.xz",
+      "sha256": "f2fd11f2f65ff9ca4ff3b50b9953018a929b1bf3263b32ec171c4298e4662149",
       "patches": [],
       "license": [
         "LGPL-2.0-or-later"
@@ -63,9 +63,9 @@
     },
     {
       "name": "kscreen",
-      "version": "6.6.3",
-      "url": "https://download.kde.org/stable/plasma/6.6.3/kscreen-6.6.3.tar.xz",
-      "sha256": "45f2999182eef89991812cfcf085b368d58052d21c22ab46325998aa51db13d1",
+      "version": "6.6.5",
+      "url": "https://download.kde.org/stable/plasma/6.6.5/kscreen-6.6.5.tar.xz",
+      "sha256": "753ebc00cf75359c2e7ba3aabb20ff3596d0fbbe2f0b6d3ed6098d27282a3276",
       "patches": [
         "patches/steamos/0001-kscreen-find-qt-before-qml-helper.patch"
       ],
@@ -86,10 +86,10 @@
     },
     {
       "name": "kidletime",
-      "version": "6.24.0",
+      "version": "6.26.0",
       "pkgrel": "3",
-      "url": "https://download.kde.org/stable/frameworks/6.24/kidletime-6.24.0.tar.xz",
-      "sha256": "be8ce0c791900a1f55e9973bf5faefbe172740424ac9f254ba541552ba3ccb06",
+      "url": "https://download.kde.org/stable/frameworks/6.26/kidletime-6.26.0.tar.xz",
+      "sha256": "f0efd67ee0e5b5eb9200e924e9478c1ecb179b4a38e0cf125b377e7fa373ef07",
       "patches": [],
       "license": [
         "LGPL-2.0-only",
@@ -111,10 +111,10 @@
     },
     {
       "name": "kwindowsystem",
-      "version": "6.24.0",
+      "version": "6.26.0",
       "pkgrel": "3",
-      "url": "https://download.kde.org/stable/frameworks/6.24/kwindowsystem-6.24.0.tar.xz",
-      "sha256": "2291d95836e8b81263ceea0c1ffa7cfd92773130d6edd130b439874169f13e58",
+      "url": "https://download.kde.org/stable/frameworks/6.26/kwindowsystem-6.26.0.tar.xz",
+      "sha256": "5f7962b7c986e77c5d25fa4f7d09cd89144b8781e57ebc37fd45eaec1961bb02",
       "patches": [],
       "license": [
         "LGPL-2.0-only",
@@ -139,10 +139,10 @@
     },
     {
       "name": "powerdevil",
-      "version": "6.6.3",
+      "version": "6.6.5",
       "pkgrel": "2",
-      "url": "https://download.kde.org/stable/plasma/6.6.3/powerdevil-6.6.3.tar.xz",
-      "sha256": "73e9b85dbf9791fcf22c01d67b3cf024e23fea170476f09ff8fd91b4034480e9",
+      "url": "https://download.kde.org/stable/plasma/6.6.5/powerdevil-6.6.5.tar.xz",
+      "sha256": "b125f64e73cc8dcf9e3e7e3f154f4febb4406426597cad6ebbe8c48332e35e7b",
       "patches": [],
       "license": [
         "LGPL-2.0-or-later"

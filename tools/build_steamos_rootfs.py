@@ -157,7 +157,7 @@ def build(args):
     output.mkdir(parents=True, exist_ok=True)
     cfg = json.loads((ROOT / 'config/release.json').read_text())
     base_config = json.loads((ROOT / 'config/steamos.json').read_text())['base']
-    base = ROOT / 'build' / ('steamos-base-' + base_config['version'])
+    base = ROOT / 'build' / ('steamos-base-' + base_config['build'])
     base_record = prepare(base, workers=32)
     root = output / 'rootfs'
     if not root.exists():
