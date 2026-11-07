@@ -397,6 +397,7 @@ STATIC VOID Runtime(UINT64 Now) {
   if(Since<FRAME_MIN_GAP_US || (!mT.EdgePending && Since<(mT.EdgeSeen?POLL_IRQ_STALL_US:POLL_NO_IRQ_US)))return;
   mT.EdgePending=FALSE;mT.LastReadUs=Now;++mT.Reads;
   UINTN Len=PIANO_NVT_HEADER_LEN+mT.Payload;
+  UINT64 Begin=NowUs();
   EFI_STATUS S=SetPage(mT.Map.EventBuf);
   if(S==EFI_SUCCESS){mFrame[0]=0;S=Read(mFrame,Len);}
   if(S!=EFI_SUCCESS) {
@@ -417,7 +418,14 @@ STATIC VOID Runtime(UINT64 Now) {
     mT.Attempt=0;mT.Step=TDownloadReset;return;
   }
   if(Hand)return;
-  if(PianoTouchMatrixFeed(&mMatrix,mFrame+PIANO_NVT_HEADER_LEN,mT.Payload)==EFI_SUCCESS){++mT.Frames;ReportPointer();}
+  EFI_STATUS Feed=PianoTouchMatrixFeed(&mMatrix,mFrame+PIANO_NVT_HEADER_LEN,mT.Payload);
+  if(mT.Reads<=3){
+    CONST UINT8 *P=mFrame+PIANO_NVT_HEADER_LEN;
+    DEBUG((DEBUG_WARN,"PIANO_TOUCH_FRAME read=%u us=%lu bytes=%u status=%r checksum=%d head=%02x%02x%02x%02x payload=%02x%02x%02x%02x crc=%02x%02x length=%02x%02x%02x%02x inverse=%02x%02x rows=%u cols=%u type=%u\n",
+      mT.Reads,NowUs()-Begin,(UINT32)Len,Feed,(INT32)PianoTouchPayloadChecksum(P,mT.Payload),
+      mFrame[1],mFrame[2],mFrame[3],mFrame[4],P[0],P[1],P[2],P[3],P[4],P[5],P[8],P[9],P[10],P[11],P[12],P[13],P[49],P[48],P[56]));
+  }
+  if(Feed==EFI_SUCCESS){++mT.Frames;ReportPointer();}
 }
 
 EFI_STATUS PianoTouchStart(CONST VOID *Fdt) {
@@ -469,5 +477,7 @@ EFI_STATUS PianoTouchStop(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Repor
     Report->Clean,Report->Clean?"ready":"blocked",Report->Clean?"none":"",mT.Published?"input-protocols,":"",mT.SpiRestore==EFI_SUCCESS?"":"se2-registers,",
     mT.PinsStatus==EFI_SUCCESS?"":"pins,",mT.ClocksStatus==EFI_SUCCESS?"":"clock-references,",
     mT.InputStatus,mT.SpiRestore,mT.PinsStatus,mT.ClocksStatus,mT.Frames,mT.Reads,mT.ReadErrors));
+  DEBUG((DEBUG_WARN,"PIANO_TOUCH_MATRIX frames=%u checksum_errors=%u skipped=%u probe=%u reference=%u ref_type=%d ref_frames=%u rows=%u cols=%u\n",
+    mMatrix.Frames,mMatrix.BadChecksum,mMatrix.Skipped,mMatrix.ProbeCount,mMatrix.HaveReference,mMatrix.RefType,mMatrix.RefCount,mMatrix.Rows,mMatrix.Cols));
   return Report->Status;
 }
