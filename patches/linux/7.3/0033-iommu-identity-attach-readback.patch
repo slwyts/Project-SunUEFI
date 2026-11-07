@@ -1,0 +1,197 @@
+From 62d65b5c72218b2c88517c27e438c6ad2efbc61c Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 01:57:30 +0800
+Subject: [PATCH] iommu: require requester mappings and verify identity routes
+
+Source: Cryolitia/xiaomi-piano-nixos, packages/kernel/patches/iommu-identity-attach-readback.patch
+---
+ drivers/iommu/arm/arm-smmu/arm-smmu.c | 93 +++++++++++++++++++++++++--
+ drivers/of/device.c                   |  9 ++-
+ 2 files changed, 93 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.c b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+index 54a379ccf12..83757239375 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+@@ -1221,6 +1221,67 @@ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev,
+ 	return ret;
+ }
+ 
++/* Validate the actual identity target before installing a stream route. */
++static int arm_smmu_identity_context_check(struct arm_smmu_device *smmu, u32 s2cr)
++{
++	u32 type = FIELD_GET(ARM_SMMU_S2CR_TYPE, s2cr);
++	u32 cb = FIELD_GET(ARM_SMMU_S2CR_CBNDX, s2cr);
++	u32 sctlr, cbar, fsr;
++
++	if (type == S2CR_TYPE_BYPASS)
++		return 0;
++	if (type != S2CR_TYPE_TRANS || cb >= smmu->num_context_banks)
++		return -EINVAL;
++
++	sctlr = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_SCTLR);
++	cbar = arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(cb));
++	fsr = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSR);
++	if ((sctlr & ARM_SMMU_SCTLR_M) || (fsr & ARM_SMMU_CB_FSR_FAULT) ||
++	    FIELD_GET(ARM_SMMU_CBAR_TYPE, cbar) != CBAR_TYPE_S1_TRANS_S2_BYPASS)
++		return -EIO;
++	if (sctlr != arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_SCTLR) ||
++	    cbar != arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(cb)) ||
++	    fsr != arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSR))
++		return -ESTALE;
++	return 0;
++}
++
++static int arm_smmu_identity_preflight(struct arm_smmu_master_cfg *cfg,
++				     struct iommu_fwspec *fwspec)
++{
++	struct arm_smmu_device *smmu = cfg->smmu;
++	int i, idx, ret = 0;
++
++	mutex_lock(&smmu->stream_map_mutex);
++	for_each_cfg_sme(cfg, fwspec, i, idx) {
++		struct arm_smmu_s2cr saved = smmu->s2crs[idx];
++		struct arm_smmu_s2cr *route = &smmu->s2crs[idx];
++		u32 expected;
++
++		/* Match install_s2crs without writing hardware or losing boot state. */
++		if (!saved.boot || saved.type == S2CR_TYPE_FAULT) {
++			route->type = S2CR_TYPE_BYPASS;
++			route->cbndx = 0;
++			route->privcfg = S2CR_PRIVCFG_DEFAULT;
++			route->boot = false;
++		}
++		expected = FIELD_PREP(ARM_SMMU_S2CR_TYPE, route->type) |
++			FIELD_PREP(ARM_SMMU_S2CR_CBNDX, route->cbndx) |
++			FIELD_PREP(ARM_SMMU_S2CR_PRIVCFG, route->privcfg);
++		if (smmu->impl && smmu->impl->expected_s2cr)
++			expected = smmu->impl->expected_s2cr(smmu, idx);
++		*route = saved;
++		ret = arm_smmu_identity_context_check(smmu, expected);
++		if (ret)
++			break;
++	}
++	mutex_unlock(&smmu->stream_map_mutex);
++	return ret;
++}
++
++static ssize_t piano_dma_identity_read(struct device *dev, char *buf,
++				      struct iommu_domain *domain);
++
+ static int arm_smmu_attach_dev_type(struct device *dev,
+ 				    enum arm_smmu_s2cr_type type)
+ {
+@@ -1237,16 +1298,30 @@ static int arm_smmu_attach_dev_type(struct device *dev,
+ 	if (ret < 0)
+ 		return ret;
+ 
++	if (type == S2CR_TYPE_BYPASS) {
++		ret = arm_smmu_identity_preflight(cfg, fwspec);
++		if (ret)
++			goto rpm_put;
++	}
+ 	arm_smmu_master_install_s2crs(cfg, type, 0, fwspec);
++	ret = 0;
++rpm_put:
+ 	arm_smmu_rpm_put(smmu);
+-	return 0;
++	return ret;
+ }
+ 
+ static int arm_smmu_attach_dev_identity(struct iommu_domain *domain,
+ 					struct device *dev,
+ 					struct iommu_domain *old)
+ {
+-	return arm_smmu_attach_dev_type(dev, S2CR_TYPE_BYPASS);
++	int ret;
++
++	ret = arm_smmu_attach_dev_type(dev, S2CR_TYPE_BYPASS);
++	if (!ret)
++		ret = piano_dma_identity_read(dev, NULL, domain);
++	if (ret)
++		dev_err(dev, "identity DMA route verification failed: %d\n", ret);
++	return ret;
+ }
+ 
+ static const struct iommu_domain_ops arm_smmu_identity_ops = {
+@@ -1440,11 +1515,11 @@ struct arm_smmu_device *arm_smmu_get_by_fwnode(struct fwnode_handle *fwnode)
+ }
+ 
+ /* Read-only per-master evidence. No route/context programming or ready file. */
+-static ssize_t piano_dma_identity_read(struct device *dev, char *buf)
++static ssize_t piano_dma_identity_read(struct device *dev, char *buf,
++				      struct iommu_domain *domain)
+ {
+ 	struct arm_smmu_master_cfg *cfg = dev_iommu_priv_get(dev);
+ 	struct iommu_fwspec *fw = dev_iommu_fwspec_get(dev);
+-	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
+ 	struct arm_smmu_device *smmu;
+ 	unsigned int i;
+ 	ssize_t len = 0;
+@@ -1453,13 +1528,14 @@ static ssize_t piano_dma_identity_read(struct device *dev, char *buf)
+ 	if (!cfg || !fw || domain != &arm_smmu_identity_domain)
+ 		return -EAGAIN;
+ 	smmu = cfg->smmu;
+-	if (!smmu->smrs || fw->num_ids > 16)
++	if (!smmu->smrs || (buf && fw->num_ids > 16))
+ 		return -EOPNOTSUPP;
+ 	ret = arm_smmu_rpm_get(smmu);
+ 	if (ret < 0)
+ 		return ret;
+ 	mutex_lock(&smmu->stream_map_mutex);
+-	len = sysfs_emit(buf, "piano-dma-route-v1 domain=identity ids=%u\n", fw->num_ids);
++	if (buf)
++		len = sysfs_emit(buf, "piano-dma-route-v1 domain=identity ids=%u\n", fw->num_ids);
+ 	for (i = 0; i < fw->num_ids; i++) {
+ 		struct arm_smmu_s2cr *route;
+ 		u32 smr, s2cr, expected, sctlr = 0, cbar = 0, fsr = 0;
+@@ -1526,6 +1602,8 @@ static ssize_t piano_dma_identity_read(struct device *dev, char *buf)
+ 			ret = -ESTALE;
+ 			goto out;
+ 		}
++		if (!buf)
++			continue;
+ 		len += sysfs_emit_at(buf, len,
+ 			"sid=%x mask=%x slot=%d origin=%s smr=%08x s2cr=%08x expected=%08x ",
+ 			(u32)FIELD_GET(ARM_SMMU_SMR_ID, fw->ids[i]),
+@@ -1696,7 +1774,8 @@ static int piano_dma_group_read(struct device *dev, void *opaque)
+ 		return 0;
+ 	read->seen = true;
+ 	read->length = read->context ? piano_dma_stage1_read(dev, read->buffer) :
+-		piano_dma_identity_read(dev, read->buffer);
++		piano_dma_identity_read(dev, read->buffer,
++						       iommu_get_domain_for_dev(dev));
+ 	return read->length < 0 ? read->length : 0;
+ }
+ 
+diff --git a/drivers/of/device.c b/drivers/of/device.c
+index b3dc78f2fa3..7f35ce79fc3 100644
+--- a/drivers/of/device.c
++++ b/drivers/of/device.c
+@@ -8,6 +8,7 @@
+ #include <linux/dma-direct.h> /* for bus_dma_region */
+ #include <linux/dma-map-ops.h>
+ #include <linux/init.h>
++#include <linux/pci.h>
+ #include <linux/slab.h>
+ #include <linux/platform_device.h>
+ 
+@@ -149,12 +150,16 @@ int of_dma_configure_id(struct device *dev, struct device_node *np,
+ 		coherent ? " " : " not ");
+ 
+ 	ret = of_iommu_configure(dev, np, id);
+-	if (ret == -EPROBE_DEFER) {
++	if (ret == -EPROBE_DEFER ||
++	    (ret && (of_property_present(np, "iommus") ||
++		     ((id || dev_is_pci(dev)) &&
++		      of_property_present(np, "iommu-map"))))) {
++		/* A declared IOMMU is required, even when its attach fails. */
+ 		/* Don't touch range map if it wasn't set from a valid dma-ranges */
+ 		if (set_map)
+ 			dev->dma_range_map = NULL;
+ 		kfree(map);
+-		return -EPROBE_DEFER;
++		return ret;
+ 	}
+ 	/* Take all other IOMMU errors to mean we'll just carry on without it */
+ 	dev_dbg(dev, "device is%sbehind an iommu\n",

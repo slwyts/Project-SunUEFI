@@ -1,12 +1,9 @@
 [Unit]
 Description=Piano THP multitouch input
-After=systemd-udev-trigger.service piano-display.service
+After=systemd-udev-trigger.service
 [Service]
 Type=simple
-ExecStartPre=/usr/lib/piano/touch-start
 ExecStart=/usr/lib/piano/touch-input
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=60
-[Install]
-WantedBy=multi-user.target

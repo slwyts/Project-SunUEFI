@@ -1,0 +1,81 @@
+From fde574f73162ecc246ebbaaa35fc57b23064e5ef Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 01:57:30 +0800
+Subject: [PATCH] iommu/arm-smmu-qcom: defer GPU and GMU default attachment
+
+Source: Cryolitia/xiaomi-piano-nixos, packages/kernel/patches/iommu-adreno-defer-default-domain.patch
+---
+ drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c | 9 +++++++++
+ drivers/iommu/arm/arm-smmu/arm-smmu.c      | 9 +++++++++
+ drivers/iommu/arm/arm-smmu/arm-smmu.h      | 1 +
+ 3 files changed, 19 insertions(+)
+
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+index 0ae8efe8998..76c68d95540 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+@@ -730,9 +730,17 @@ static const struct arm_smmu_impl sdm845_smmu_500_impl = {
+ #endif
+ };
+ 
++static bool qcom_adreno_smmu_is_attach_deferred(struct device *dev)
++{
++	/* GPU and GMU attach their own paging domains during driver setup. */
++	return of_device_is_compatible(dev->of_node, "qcom,adreno") ||
++		of_device_is_compatible(dev->of_node, "qcom,adreno-gmu");
++}
++
+ static const struct arm_smmu_impl qcom_adreno_smmu_v2_impl = {
+ 	.init_context = qcom_adreno_smmu_init_context,
+ 	.cfg_probe = qcom_adreno_smmuv2_cfg_probe,
++	.is_attach_deferred = qcom_adreno_smmu_is_attach_deferred,
+ 	.def_domain_type = qcom_smmu_def_domain_type,
+ 	.alloc_context_bank = qcom_adreno_smmu_alloc_context_bank,
+ 	.write_sctlr = qcom_adreno_smmu_write_sctlr,
+@@ -742,6 +750,7 @@ static const struct arm_smmu_impl qcom_adreno_smmu_v2_impl = {
+ 
+ static const struct arm_smmu_impl qcom_adreno_smmu_500_impl = {
+ 	.init_context = qcom_adreno_smmu_init_context,
++	.is_attach_deferred = qcom_adreno_smmu_is_attach_deferred,
+ 	.def_domain_type = qcom_smmu_def_domain_type,
+ 	.reset = arm_mmu500_reset,
+ 	.alloc_context_bank = qcom_adreno_smmu_alloc_context_bank,
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.c b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+index 83757239375..7491bc49f87 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+@@ -2001,6 +2001,14 @@ static void arm_smmu_get_resv_regions(struct device *dev,
+ 	iommu_dma_get_resv_regions(dev, head);
+ }
+ 
++static bool arm_smmu_is_attach_deferred(struct device *dev)
++{
++	struct arm_smmu_master_cfg *cfg = dev_iommu_priv_get(dev);
++	const struct arm_smmu_impl *impl = cfg->smmu->impl;
++
++	return impl && impl->is_attach_deferred && impl->is_attach_deferred(dev);
++}
++
+ static int arm_smmu_def_domain_type(struct device *dev)
+ {
+ 	struct arm_smmu_master_cfg *cfg = dev_iommu_priv_get(dev);
+@@ -2026,6 +2034,7 @@ static const struct iommu_ops arm_smmu_ops = {
+ 	.device_group		= arm_smmu_device_group,
+ 	.of_xlate		= arm_smmu_of_xlate,
+ 	.get_resv_regions	= arm_smmu_get_resv_regions,
++	.is_attach_deferred	= arm_smmu_is_attach_deferred,
+ 	.def_domain_type	= arm_smmu_def_domain_type,
+ 	.owner			= THIS_MODULE,
+ 	.default_domain_ops = &(const struct iommu_domain_ops) {
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.h b/drivers/iommu/arm/arm-smmu/arm-smmu.h
+index 096b87aae0f..772f03d07df 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.h
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.h
+@@ -450,6 +450,7 @@ struct arm_smmu_impl {
+ 	void (*tlb_sync)(struct arm_smmu_device *smmu, int page, int sync,
+ 			 int status);
+ 	int (*def_domain_type)(struct device *dev);
++	bool (*is_attach_deferred)(struct device *dev);
+ 	irqreturn_t (*global_fault)(int irq, void *dev);
+ 	irqreturn_t (*context_fault)(int irq, void *dev);
+ 	bool context_fault_needs_threaded_irq;

@@ -1,0 +1,116 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/dts-v1/;
+/plugin/;
+
+/* Piano's final Android DT enables DP0 at 0xaf54000 and the USB/DP combo
+ * PHY at 0x88e8000. Resources and graph follow upstream sm8750.dtsi.
+ * Numeric clock/PHY indices are from the corresponding dt-bindings headers.
+ * No cable state, lane assignment or display mode is fixed here.
+ */
+/ {
+	fragment@0 {
+		target-path = "/soc/display-subsystem@ae00000";
+		__overlay__ {
+			piano_dp0: displayport-controller@af54000 {
+				compatible = "qcom,sm8750-dp", "qcom,sm8650-dp";
+				reg = <0x0af54000 0x200>, <0x0af54200 0x200>,
+				      <0x0af55000 0xc00>, <0x0af56000 0x400>,
+				      <0x0af57000 0x400>, <0x0af58000 0x400>,
+				      <0x0af59000 0x400>, <0x0af5a000 0x600>,
+				      <0x0af5b000 0x600>;
+				interrupts-extended = <&mdss_ml 12>;
+				clocks = <&dispcc_ml 6>, <&dispcc_ml 16>,
+					 <&dispcc_ml 19>, <&dispcc_ml 22>,
+					 <&dispcc_ml 23>, <&dispcc_ml 25>;
+				clock-names = "core_iface", "core_aux", "ctrl_link",
+					      "ctrl_link_iface", "stream_pixel", "stream_1_pixel";
+				assigned-clocks = <&dispcc_ml 20>, <&dispcc_ml 24>, <&dispcc_ml 26>;
+				assigned-clock-parents = <&usb_qmp_dp_phy 1>,
+							 <&usb_qmp_dp_phy 2>, <&usb_qmp_dp_phy 2>;
+				power-domains = <&rpmhpd_ml 6>;
+				phys = <&usb_qmp_dp_phy 1>;
+				phy-names = "dp";
+				#sound-dai-cells = <0>;
+				operating-points-v2 = <&piano_dp_opp_table>;
+				status = "okay";
+
+				piano_dp_opp_table: opp-table {
+					compatible = "operating-points-v2";
+					opp-270000000 {
+						opp-hz = /bits/ 64 <270000000>;
+						required-opps = <&rpmhpd_opp_low_svs_ml>;
+					};
+					opp-540000000 {
+						opp-hz = /bits/ 64 <540000000>;
+						required-opps = <&rpmhpd_opp_svs_l1_ml>;
+					};
+					opp-810000000 {
+						opp-hz = /bits/ 64 <810000000>;
+						required-opps = <&rpmhpd_opp_nom_ml>;
+					};
+				};
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					port@0 {
+						reg = <0>;
+						piano_dp_in: endpoint {
+							remote-endpoint = <&piano_dpu_dp_out>;
+						};
+					};
+					port@1 {
+						reg = <1>;
+						piano_dp_out: endpoint {
+							data-lanes = <0 1 2 3>;
+							remote-endpoint = <&piano_qmp_dp_in>;
+						};
+					};
+				};
+			};
+		};
+	};
+	fragment@1 {
+		target-path = "/soc/display-subsystem@ae00000/display-controller@ae01000/ports";
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			port@2 {
+				reg = <2>;
+				piano_dpu_dp_out: endpoint {
+					remote-endpoint = <&piano_dp_in>;
+				};
+			};
+		};
+	};
+	fragment@2 {
+		target-path = "/soc/ssphy@88e8000/ports";
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			port@2 {
+				reg = <2>;
+				piano_qmp_dp_in: endpoint {
+					remote-endpoint = <&piano_dp_out>;
+				};
+			};
+		};
+	};
+	fragment@3 {
+		target-path = "/soc/clock-controller-ml@af00000";
+		__overlay__ {
+			clocks = <&bi_tcxo_div2>, <&bi_tcxo_ao_div2>, <&gcc 15>,
+				 <&sleep_clk>, <&mdss_dsi0_phy_ml 0>, <&mdss_dsi0_phy_ml 1>,
+				 <&mdss_dsi1_phy_ml 0>, <&mdss_dsi1_phy_ml 1>,
+				 <&usb_qmp_dp_phy 1>, <&usb_qmp_dp_phy 2>,
+				 <0>, <0>, <0>, <0>, <0>, <0>;
+		};
+	};
+	fragment@4 {
+		target-path = "/soc/qcom,dp_display@af54000";
+		__overlay__ { status = "disabled"; };
+	};
+	fragment@5 {
+		target-path = "/soc/qcom,dp_pll@88eb000";
+		__overlay__ { status = "disabled"; };
+	};
+};

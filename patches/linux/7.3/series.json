@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "57092a5db46a12a7e9b61ac6783fd32fa4c722fb",
-  "original_target_commit": "cec936faf1fe5e4e56e20be1fda433429f830e0c",
+  "target_tree": "221976dba31bea0ab7be5cee3cc5caa5628e2656",
+  "original_target_commit": "e342dba15282933ef9c5efd9a85f01d13ad024f0",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -239,6 +239,102 @@
       "original_parent": "e04e7e47875e30ab7a03d0c2e8712e883422e5a9",
       "committer_date": "2026-11-08T00:43:45+08:00",
       "tree": "57092a5db46a12a7e9b61ac6783fd32fa4c722fb"
+    },
+    {
+      "file": "0030-ath12k-tx-dma-address.patch",
+      "sha256": "26a0bb3354aeb6c988be3177a340748ff523dcee1c70ddb409eec970f9db83df",
+      "original_commit": "f3855883f488862b7b5a77bd3b7b42ad4d70ff93",
+      "original_parent": "cec936faf1fe5e4e56e20be1fda433429f830e0c",
+      "committer_date": "2026-11-08T01:57:30+08:00",
+      "tree": "8eae9f0565727d2c1f2121fc0f0f936ea8d835e4"
+    },
+    {
+      "file": "0031-ath12k-tx-stats-bounds.patch",
+      "sha256": "a7b35e8f9a1762efb96a69846977b8a54faa4e992601f99f8a4205dc505c0b6c",
+      "original_commit": "9d4dd949bcbf984398566dee8881627bc0518fe4",
+      "original_parent": "f3855883f488862b7b5a77bd3b7b42ad4d70ff93",
+      "committer_date": "2026-11-08T01:57:30+08:00",
+      "tree": "805295d10a87b454b9e14e213d6df639816389db"
+    },
+    {
+      "file": "0032-ath12k-pci-cma.patch",
+      "sha256": "7ad35dddf941294b2fe37cf7b3347f8e0b036481dfa1b0e72612089e76f497da",
+      "original_commit": "d3e19064a5e585dba10e4d488712bf56a15b555f",
+      "original_parent": "9d4dd949bcbf984398566dee8881627bc0518fe4",
+      "committer_date": "2026-11-08T01:57:30+08:00",
+      "tree": "3bb7ed8cf2ddfad39617abc4d4cbe1e35dc25c71"
+    },
+    {
+      "file": "0033-iommu-identity-attach-readback.patch",
+      "sha256": "993265563fcf0f7de938835efc43e6db37093bca113d5f66eb2bd2758a8ee8ee",
+      "original_commit": "62d65b5c72218b2c88517c27e438c6ad2efbc61c",
+      "original_parent": "d3e19064a5e585dba10e4d488712bf56a15b555f",
+      "committer_date": "2026-11-08T01:57:30+08:00",
+      "tree": "f952af0b691765918749e036d0de097779912e28"
+    },
+    {
+      "file": "0034-iommu-adreno-defer-attach.patch",
+      "sha256": "d488d0836a15cca55d408b18cefc25c3a745d8077885ce20eadfd118cac53b62",
+      "original_commit": "fde574f73162ecc246ebbaaa35fc57b23064e5ef",
+      "original_parent": "62d65b5c72218b2c88517c27e438c6ad2efbc61c",
+      "committer_date": "2026-11-08T01:57:30+08:00",
+      "tree": "f3ead72d01e6bb13ae45fb0917ae6b964080acf7"
+    },
+    {
+      "file": "0035-iommu-media-dma-domain.patch",
+      "sha256": "1073ebb19d93f2a68761f9472b62678dc4e547026e75666fc232081f2f2d29cc",
+      "original_commit": "351f397644914aacdb3bd4770458d604fa2bd5c0",
+      "original_parent": "fde574f73162ecc246ebbaaa35fc57b23064e5ef",
+      "committer_date": "2026-11-08T01:57:31+08:00",
+      "tree": "8e023bebb78e85f927141c8d8ff6265ef21a2cbe"
+    },
+    {
+      "file": "0036-bluetooth-qca-defer-power.patch",
+      "sha256": "aa45996240103a519f325dc0f29d2bf226e554338fe76dd2ce2620250c0aa2f9",
+      "original_commit": "cc707568577553cb1d7d14d6ab9fe9f3eba9a058",
+      "original_parent": "351f397644914aacdb3bd4770458d604fa2bd5c0",
+      "committer_date": "2026-11-08T01:57:31+08:00",
+      "tree": "067ecb93f4d00e9923954dd49737642e704c7d9b"
+    },
+    {
+      "file": "0037-nanosic-tablet-mode.patch",
+      "sha256": "559e598890c412528ae624efc215b4bc74f2e9c8b45f1cd3806ba044ca4df9d9",
+      "original_commit": "d11c5767de7b14972aa138f8b13b0094ce78c426",
+      "original_parent": "cc707568577553cb1d7d14d6ab9fe9f3eba9a058",
+      "committer_date": "2026-11-08T01:57:31+08:00",
+      "tree": "15879c4dc1af9cb0e94ab4c07dafc3e772cd7b6d"
+    },
+    {
+      "file": "0038-rpmsg-channel-modalias.patch",
+      "sha256": "2630cc5b1ba72bc0270f76ce2c11495c4eb1bf0e8d5e67f6702697b2a45d2db9",
+      "original_commit": "8e2cebb69ec3b78c73a72fda4630ee51437a70c6",
+      "original_parent": "d11c5767de7b14972aa138f8b13b0094ce78c426",
+      "committer_date": "2026-11-08T01:57:31+08:00",
+      "tree": "fb5188400ffbc68d3077c335b2949624293e5cdf"
+    },
+    {
+      "file": "0039-pcie-power-before-phy.patch",
+      "sha256": "1cdb5e87d1f1fb4457fe404bc26babe64193491469e96d72f734368dcbd1374f",
+      "original_commit": "912b80ad574e53ebcad7bfe3d18f86edc59fc5a2",
+      "original_parent": "8e2cebb69ec3b78c73a72fda4630ee51437a70c6",
+      "committer_date": "2026-11-08T01:57:31+08:00",
+      "tree": "1ea302d3917a73f351469f70afbc27f79617bbd7"
+    },
+    {
+      "file": "0040-qmp-pcie-teardown-reset.patch",
+      "sha256": "d01290e2cf35b75badb067c35f77de86c1f6225b778e864a9e93857ec15c4407",
+      "original_commit": "7c7ed30f6b9410e96b9865de5decd6215729aad7",
+      "original_parent": "912b80ad574e53ebcad7bfe3d18f86edc59fc5a2",
+      "committer_date": "2026-11-08T01:57:32+08:00",
+      "tree": "5a380e5cd822b131296bded3a825167a61fb00e2"
+    },
+    {
+      "file": "0041-pmic-glink-freezable-work.patch",
+      "sha256": "ab2e7586514f3fa73dac376dc877ff797951972303725b612ff5b8e8a0d09999",
+      "original_commit": "e342dba15282933ef9c5efd9a85f01d13ad024f0",
+      "original_parent": "7c7ed30f6b9410e96b9865de5decd6215729aad7",
+      "committer_date": "2026-11-08T01:57:32+08:00",
+      "tree": "221976dba31bea0ab7be5cee3cc5caa5628e2656"
     }
   ]
 }

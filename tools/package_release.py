@@ -29,6 +29,19 @@ def normalize_mainline_bindings(board):
     """Remove downstream-only bindings retained by the folded Android DT."""
     parsed = read_fdt(board.read_bytes())
     tree, changes = parsed['tree'], []
+    # A folded Android tree contains debug blocks and suppliers whose binding
+    # is not implemented by mainline. Disable those devices in the DT rather
+    # than suppressing autoload for every platform/OF device in userspace.
+    inactive_compatibles = {b'arm,coresight-static-funnel',
+                           b'arm,coresight-static-replicator', b'qcom,spmi-temp-alarm'}
+    trace_peripheral_ids = {0xbb908, 0xbb909, 0xbb961, 0xbb962, 0xbb922}
+
+    def enabled(path):
+        while path:
+            if tree[path].get('status', b'okay\0') not in (b'ok\0', b'okay\0'):
+                return False
+            path = path.rsplit('/', 1)[0]
+        return True
     legacy = (
         '/soc/qcom,sde_cesta@0x0af30000',
         '/soc/qcom,mdss_mdp@ae00000',
@@ -38,6 +51,9 @@ def normalize_mainline_bindings(board):
         '/soc/spf_core_platform',
     )
     for path, props in tree.items():
+        if props.get('iommus') == b'':
+            del props['iommus']
+            changes.append(path + ':iommus')
         if (path == '/soc/xiaomi_fingerprint' and
                 props.get('compatible') == b'xiaomi,piano-goodix-control\0'):
             # The new controller uses the real mainline supply and GPIOs.
@@ -131,6 +147,14 @@ def normalize_mainline_bindings(board):
         # slice prevents registration of the entire SDAM, including OCP.
         del props['bits']
         changes.append(path + ':bits')
+    for path, props in tree.items():
+        compatibles = props.get('compatible', b'').split(b'\0')
+        peripheral_id = props.get('arm,primecell-periphid', b'')
+        trace = (b'arm,primecell' in compatibles and len(peripheral_id) == 4 and
+                 struct.unpack('>I', peripheral_id)[0] & 0x000fffff in trace_peripheral_ids)
+        if (inactive_compatibles.intersection(compatibles) or trace) and enabled(path):
+            props['status'] = b'disabled\0'
+            changes.append(path + ':status')
     if changes:
         board.write_bytes(write_fdt(parsed))
     return {'changes': changes, 'sha256': sha(board)}

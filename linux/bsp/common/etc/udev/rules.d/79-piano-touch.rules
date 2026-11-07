@@ -1,0 +1,3 @@
+# Start the THP reader after the kernel driver publishes its stream.
+SUBSYSTEM=="spi", ATTR{modalias}=="spi:NVT-ts-spi", TAG+="systemd", ENV{SYSTEMD_READY}="0"
+SUBSYSTEM=="spi", DRIVER=="NVT-ts-spi", TEST=="/proc/nvt_thp_stream", ENV{SYSTEMD_READY}="1", ENV{SYSTEMD_WANTS}+="piano-touch.service"

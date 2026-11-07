@@ -1,0 +1,70 @@
+From d11c5767de7b14972aa138f8b13b0094ce78c426 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 01:57:31 +0800
+Subject: [PATCH] HID: nanosic: report tablet mode from keyboard attachment
+
+Source: Cryolitia/xiaomi-piano-nixos, packages/kernel/patches/nanosic-tablet-mode-switch.patch
+---
+ drivers/hid/hid-nanosic-wn8030.c | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/drivers/hid/hid-nanosic-wn8030.c b/drivers/hid/hid-nanosic-wn8030.c
+index ff14a782555..8b53dcc2e4f 100644
+--- a/drivers/hid/hid-nanosic-wn8030.c
++++ b/drivers/hid/hid-nanosic-wn8030.c
+@@ -77,6 +77,7 @@ struct nanosic_wn8030 {
+ 	struct i2c_client *client;
+ 	struct hid_device *hid_keyboard;
+ 	struct hid_device *hid_touchpad;
++	struct input_dev *mode_input;
+ 
+ 	struct gpio_desc *status_gpio;
+ 	struct gpio_desc *sleep_gpio;
+@@ -1061,6 +1062,10 @@ static void nanosic_wn8030_handle_vendor(struct nanosic_wn8030 *nanosic,
+ 		if (notify_plugin) {
+ 			u16 hinge_flags;
+ 
++			input_report_switch(nanosic->mode_input, SW_TABLET_MODE,
++					    !plugin_attached);
++			input_sync(nanosic->mode_input);
++
+ 			hinge_flags = plugin_attached ?
+ 				NANOSIC_HINGE_SAMPLE_ATTACHED : 0;
+ 			nanosic_wn8030_publish_hinge(nanosic, hinge_flags,
+@@ -1581,6 +1586,10 @@ static int nanosic_wn8030_hall_connect(struct input_handler *handler,
+ 	struct input_handle *handle = &nanosic->hall_handle;
+ 	int ret;
+ 
++	/* Attachment state is an output, not a keyboard-inhibit input. */
++	if (dev == nanosic->mode_input)
++		return -ENODEV;
++
+ 	if (handle->dev)
+ 		return -EEXIST;
+ 
+@@ -1962,6 +1971,25 @@ static int nanosic_wn8030_probe(struct i2c_client *client)
+ 	if (ret)
+ 		goto err_micmute_led;
+ 
++	/* Keep the mode switch present when the detachable HID devices leave. */
++	nanosic->mode_input = devm_input_allocate_device(nanosic->dev);
++	if (!nanosic->mode_input) {
++		ret = -ENOMEM;
++		goto err_kbd_backlight_led;
++	}
++
++	nanosic->mode_input->name = "Nanosic WN8030 tablet mode";
++	nanosic->mode_input->id.bustype = BUS_I2C;
++	input_set_capability(nanosic->mode_input, EV_SW, SW_TABLET_MODE);
++	input_report_switch(nanosic->mode_input, SW_TABLET_MODE,
++			    !nanosic->keyboard_attached);
++
++	ret = input_register_device(nanosic->mode_input);
++	if (ret) {
++		dev_err(nanosic->dev, "failed to register tablet mode switch\n");
++		goto err_kbd_backlight_led;
++	}
++
+ 	ret = input_register_handler(&nanosic->hall_handler);
+ 	if (ret) {
+ 		dev_err(nanosic->dev, "failed to register hall state handler\n");

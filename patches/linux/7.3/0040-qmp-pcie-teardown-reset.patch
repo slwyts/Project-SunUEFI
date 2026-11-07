@@ -1,0 +1,32 @@
+From 7c7ed30f6b9410e96b9865de5decd6215729aad7 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 01:57:32 +0800
+Subject: [PATCH] phy: qcom-qmp-pcie: honor the BCR bypass during teardown
+
+Source: Cryolitia/xiaomi-piano-nixos, packages/kernel/patches/qmp-pcie-honor-skip-bcr.patch
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-pcie.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c b/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
+index f63668018b8..f42d87afff4 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
+@@ -5767,7 +5767,7 @@ static int qmp_pcie_init(struct phy *phy)
+ 	return 0;
+ 
+ err_assert_reset:
+-	if (!qmp->skip_init)
++	if (!qmp->skip_init && !piano_skip_bcr)
+ 		reset_control_bulk_assert(cfg->num_resets, qmp->resets);
+ err_disable_regulators:
+ 	regulator_bulk_disable(cfg->num_vregs, qmp->vregs);
+@@ -5782,7 +5782,7 @@ static int qmp_pcie_exit(struct phy *phy)
+ 
+ 	if (qmp->nocsr_reset)
+ 		reset_control_assert(qmp->nocsr_reset);
+-	else
++	else if (!piano_skip_bcr)
+ 		reset_control_bulk_assert(cfg->num_resets, qmp->resets);
+ 
+ 	clk_bulk_disable_unprepare(ARRAY_SIZE(qmp_pciephy_clk_l), qmp->clks);
