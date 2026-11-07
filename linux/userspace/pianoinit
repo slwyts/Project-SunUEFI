@@ -41,10 +41,6 @@ tar --one-file-system --exclude=./sysroot --exclude=./proc --exclude=./sys \
 mkdir -p /sysroot/dev /sysroot/proc /sysroot/sys /sysroot/run /sysroot/tmp
 chmod 1777 /sysroot/tmp
 for virtual in dev proc sys run; do mount --move "/$virtual" "/sysroot/$virtual"; done
-# The full published userspace service graph remains installed. Hardware
-# bootstrap is a separate audited script; never claim a SMMU-ready marker just
-# because the RAM root exists. No unvalidated UFS CLKREF/devmem write here.
-[ -x /sysroot/usr/lib/piano/piano-ram-hardware-prepare ] || fail 'Audited hardware preparation is missing'
-chroot /sysroot /usr/lib/piano/piano-ram-hardware-prepare || fail 'Hardware preparation failed'
+# The kernel and udev resolve hardware dependencies after systemd starts.
 log 'RAM_ROOT_READY: handing PID1 to Debian systemd; Android data untouched'
 exec switch_root /sysroot /usr/lib/systemd/systemd

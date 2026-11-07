@@ -217,7 +217,9 @@ class ReleasePackageTests(unittest.TestCase):
                     '/EFI/Piano/stable/initramfs': self.initrd.read_bytes(),
                     '/EFI/Piano/stable/boot.img': (self.args.output / 'boot.img').read_bytes(),
                     '/loader/loader.conf': b'default linux.conf\ntimeout 0\neditor no\nauto-entries no\nauto-firmware no\nconsole-mode keep\n',
-                    '/loader/entries/linux.conf': 'title 启动 Linux\nefi /EFI/Piano/LinuxBoot.efi\n'.encode(),
+                    '/loader/entries/linux.conf': ('title 启动 Linux\nlinux /EFI/Piano/stable/Image\n'
+                                                   'initrd /EFI/Piano/stable/initramfs\n'
+                                                   'devicetree /EFI/Piano/stable/board.dtb\n').encode(),
                 }
                 self.assertEqual(set(result['esp_files']), set(expected))
                 for name, data in expected.items():

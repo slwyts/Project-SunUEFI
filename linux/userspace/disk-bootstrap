@@ -137,7 +137,6 @@ mount -t ext4 -o ro "$rootdev" /sysroot || fail 'Read-only Linux mount failed'
 [ -x /sysroot/usr/lib/systemd/systemd ] || fail 'Real systemd is missing'
 [ -d "/sysroot/usr/lib/modules/$release" ] || fail 'Matching distro modules are missing'
 [ ! -f /sysroot/etc/initrd-release ] || fail 'Root is initrd-only'
-[ -x /sysroot/usr/lib/piano/piano-disk-hardware-prepare ] || fail 'Hardware preparation is missing'
 verify_device || fail 'Root identity changed before writable mount'
 mount -o remount,rw /sysroot || fail 'Writable Linux mount failed'
 mkdir -p /sysroot/dev /sysroot/proc /sysroot/sys /sysroot/run /sysroot/tmp || fail 'Root mountpoints failed'
@@ -147,7 +146,6 @@ printf '%s\n' "$rootdev" >/run/piano-root-device || fail 'Cannot record root dev
 for virtual in dev proc sys run; do
     mount --move "/$virtual" "/sysroot/$virtual" || fail "Cannot move $virtual"
 done
-chroot /sysroot /usr/lib/piano/piano-disk-hardware-prepare || fail 'Hardware preparation failed'
 log "DISK_ROOT_READY: starting systemd on $root_identity"
 if [ -f /etc/piano/boot-task-snapshot ]; then
     # Run from the real root, so this process survives the initramfs removal.

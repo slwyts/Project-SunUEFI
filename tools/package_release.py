@@ -556,7 +556,9 @@ def package(args):
         shutil.copyfile(source, work / filename)
         require(sha(work / filename) == efi_sources[name]['sha256'], 'Source changed while copying: ' + filename)
     (work / 'loader.conf').write_text('default linux.conf\ntimeout 0\neditor no\nauto-entries no\nauto-firmware no\nconsole-mode keep\n')
-    (work / 'linux.conf').write_text('title 启动 Linux\nefi /EFI/Piano/LinuxBoot.efi\n')
+    (work / 'linux.conf').write_text('title 启动 Linux\nlinux /EFI/Piano/stable/Image\n'
+                                   'initrd /EFI/Piano/stable/initramfs\n'
+                                   'devicetree /EFI/Piano/stable/board.dtb\n')
     dtb_derivation = None
     if args.cpu_model_overlay:
         require(shutil.which('dtc') and shutil.which('fdtoverlay'), 'CPU model overlay needs dtc and fdtoverlay')

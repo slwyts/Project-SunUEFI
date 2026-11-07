@@ -33,6 +33,7 @@ def removed_paths(rootfs):
     paths = {'etc/udev/rules.d/80-drivers.rules',
              'etc/udev/rules.d/79-piano-ir.rules',
              'etc/udev/rules.d/79-piano-pen-charger.rules',
+             'usr/lib/piano/piano-disk-hardware-prepare',
              'etc/systemd/system/display-manager.service.d/20-piano-display.conf',
              'usr/lib/systemd/system/upower.service.d/20-piano-keyboard.conf',
              'etc/piano/display.conf'}
