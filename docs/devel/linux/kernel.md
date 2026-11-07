@@ -1,7 +1,7 @@
 # 内核来源与配置
 
 Debian GNOME、Debian KDE、Nyarch GNOME 和 SteamOS 共用同一套设备内核。
-默认构建使用正式版 Linux 7.3，版本名为 `7.3.0-piano-sunuefi-cachy`。
+默认构建使用稳定版 Linux 7.3.3，版本名为 `7.3.3-piano-sunuefi-cachy`。
 桌面名称属于 root 镜像，内核名称不带 `gnome` 或构建目录的 Git 后缀。
 
 ## 源码与硬件适配
