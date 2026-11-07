@@ -34,7 +34,8 @@ class ProductCoreTests(unittest.TestCase):
                     ROOT / 'uefi/components/guarded-read',
                     ROOT / 'uefi/components/product-handoff/Mu_Basecore/MdePkg/Include',
                     ROOT / 'uefi/components/nv', ROOT / 'uefi/components/reset',
-                    ROOT / 'uefi/handoff/early-memory', mirror]
+                     ROOT / 'uefi/handoff/early-memory', ROOT / 'uefi/components/pogo-product',
+                     ROOT / 'uefi/components/touch-product', mirror]
         compiled = subprocess.run(
             ['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-Wno-misleading-indentation',
              '-fshort-wchar', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',
