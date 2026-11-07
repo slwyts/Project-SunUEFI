@@ -74,8 +74,7 @@ Linux 根系统使用的同一文件；`tools/prepare_product.py` 按该仓库�
 和复位，等待 10 ms，恢复 L14B、L11B 的原 RPMh 投票，恢复引脚和 GPIO97
 的中断配置，恢复 SE6 寄存器，最后释放本固件持有的时钟引用。Linux 驱动
 探测时会重新上电、复位并下载固件，看到的状态与其他启动方式相同。这条
-路径不使用 DMA，也没有 SMMU 上下文，某一项没能恢复时不阻止启动：日志里的
-`PIANO_POGO_RELEASE` 列出没有恢复的项目。输入协议、引脚、电源或时钟未能安全退出时拒绝交接，保留资源并显示恢复操作。
+路径不使用 DMA，也没有 SMMU 上下文。`PIANO_POGO_RELEASE` 列出没有恢复的项目；输入协议、引脚、电源或时钟未能安全退出时拒绝交接，保留资源并显示恢复操作。
 
 源码位置：
 
@@ -89,14 +88,14 @@ Linux 根系统使用的同一文件；`tools/prepare_product.py` 按该仓库�
 给它下载触控固件，完成后触屏以标准 `AbsolutePointer` 发布，坐标范围与 3200×2136 横屏画布相同，SimpleInit 直接用它点按。
 只跟踪一个触点。SimpleInit 把每个新坐标都当成一次点按，所以每次触摸只在
 抬起时报告一次，位置取按下点；移动超过一个传感器间距的触摸不算点按，
-菜单里不能拖动或滚动，多指手势也不可用。实现已编译进产品镜像，尚未在平板上验证。
+菜单里不能拖动或滚动，多指手势也不可用。实机能够下载固件并读取芯片信息，但大帧校验仍有错误，尚不能用于菜单点按。
 
 初始化严格按 Linux 7.3 `nt36xxx` 驱动在“没有可跟随的 DRM 面板”时的探测
 顺序进行，这正是屏幕已由引导程序点亮时的情形：写 `0x7FFF80 = 0x5A`
 做引擎复位，等 10 ms；依次用三组芯片 ID 寄存器读取并匹配 NT36532，每组
 最多 5 次，每次先做 bootloader 复位；读 `ENB_CASC` 判断单芯片或级联；
 然后执行 `nvt_download_firmware_hw_crc`：bootloader 复位，写 ILM/DLM 的
-目标地址、长度和 CRC，打开自动复制，按 63 KiB 分块写入全部分区，等待
+目标地址、长度和 CRC，打开自动复制，按 512 字节分块写入全部分区，等待
 自动复制完成，打开固件 CRC 校验，置 `BOOT_RDY`，确认复位状态在
 `0xA0`–`0xAF`，失败时整体重试，共 3 次；最后读取帧长度和固件信息。
 与 Linux 驱动一样，不操作任何复位 GPIO、稳压器或面板命令。
@@ -109,17 +108,16 @@ Linux 根系统使用的同一文件；`tools/prepare_product.py` 按该仓库�
 `firmware/SHA256SUMS` 核对后嵌入，`PIANO_TOUCH_FIRMWARE` 日志记录所选
 文件的 SHA-256。
 
-传输使用 QUP1 SE2 的 GENI SPI FIFO 接口，模式 0，最高 19.2 MHz，由 CPU
-轮询，不使用 DMA。SE2 只开放 GSI 接口时，固件只读取状态，触屏在 UEFI
-中不可用，日志写 `se2-gsi-only`。运行时在 GPIO162 的上升沿读取一帧原始
-矩阵（最多每秒约 60 帧），算法移植自 `piano-touch-view`：锁定非笔的
+SE2 只开放 GSI 接口，产品不改写该接口，使用 GPIO40/41/42/43 的模式 0
+软件 SPI，不使用 DMA。保留引脚配置，退出时恢复。运行时通过 GPIO162
+的上升沿锁存状态读取一帧原始矩阵；没有锁存事件时低频轮询。
+算法移植自 `piano-touch-view`：锁定非笔的
 主帧类型，取 32 帧中值作基线，去除行列共模噪声，在 3×3 邻域找超过阈值
 200 的峰并求加权质心，再映射到屏幕坐标（Y 轴翻转）；静止时基线缓慢跟随
-漂移。pump 只在等待事件和菜单刷新时推进触屏：下载期间每次写一个分块（19.2 MHz
-下约 30 ms），之后每次最多读一帧。
+漂移。pump 只在等待事件和菜单刷新时推进触屏：下载期间每次写一个分块，之后每次最多读一帧。软件 SPI 读取 BOE 的 5449 字节帧约需 41 ms；这不是已实现的触点上报速率。
 
 失败时固件释放已占用的资源，不发布触屏，`PIANO_TOUCH_UNAVAILABLE` 写明
-步骤和原因，例如 `se2-gsi-only`、`chip-id`、`firmware-start` 或
+步骤和原因，例如 `chip-id`、`firmware-start` 或
 `transport`；`PIANO_TOUCH_SE2`、`PIANO_TOUCH_CHIP_ID`、
 `PIANO_TOUCH_DOWNLOAD`、`PIANO_TOUCH_READY` 记录各阶段结果。连续出现看门狗
 帧时按 Linux 的做法重新下载。
@@ -131,8 +129,7 @@ Linux 根系统使用的同一文件；`tools/prepare_product.py` 按该仓库�
 
 源码位置：
 
-* `uefi/components/touch-product/PianoTouchService.c`：资源占用与释放、探测与下载状态机、`AbsolutePointer`。
-* `uefi/components/touch-product/PianoGeniSpiPio.c`：GENI SPI FIFO 传输。
+* `uefi/components/touch-product/PianoTouchService.c`：GPIO SPI、资源占用与释放、探测与下载状态机、`AbsolutePointer`。
 * `uefi/components/touch-product/PianoTouchNvt.c`：固件分区解析与芯片表。
 * `uefi/components/touch-product/PianoTouchMatrix.c`：原始矩阵到触点。
 
@@ -145,9 +142,10 @@ SimpleInit/LVGL 处理，物理显示模式保持原样；实机已确认横屏�
 是 Android 格式的 Linux 启动包，不能直接当作 EFI 应用交给标准启动管理器。
 产品现在先查找 ESP 和启动文件，再登记一个指向固件内
 `PianoLinuxBoot.efi` 的 Linux 启动项。该应用向驻留核心请求启动，
-随后进入 ESP 中的 systemd-boot。systemd-boot 的 Debian 条目加载 ESP 中
-同一份 `LinuxBoot.efi`，通过 APP 接口同步进入核心的文件加载与安全交接，
-不再排队或递归启动管理器。具体内存与退出身份见 [UEFI 核心](../uefi-core.md#esp-启动文件与系统交接)。
+随后进入 ESP 中的 systemd-boot。默认 `linux.conf` 直接加载内核 EFI stub、
+initramfs 和 DTB；旧启动项仍可加载 ESP 中的 `LinuxBoot.efi`，通过 APP
+接口同步进入核心读取 `boot.img`，不递归启动管理器。具体内存与退出身份见
+[UEFI 核心](../uefi-core.md#esp-启动文件与系统交接)。
 
 入口在启动时发现并登记，普通非易失变量通过下文的文件后端保存。
 标准 EFI 启动项可以用 `linux`、`initrd`、`devicetree` 直接装载 Linux EFI stub。

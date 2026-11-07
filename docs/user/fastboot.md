@@ -49,7 +49,7 @@ fastboot -s SunUEFI-piano fetch 分区名 文件
 
 | 命令 | 作用 |
 | --- | --- |
-| `oem boot-stable` | 读取 ESP 里的 `\EFI\Piano\stable\boot.img`，启动 Linux |
+| `oem boot-stable` | 从启动镜像（ESP）进入 systemd-boot，启动 Linux；旧安装沿用 `boot.img` 入口 |
 | `oem setup`、`oem shell`、`oem simpleinit` | 切换到 UEFI 设置、Shell 或 SimpleInit 菜单 |
 | `reboot` | 释放 USB、存储、时钟和 SMMU 后重启，沿用已保存的启动路线 |
 | `continue` | 同样重启，不改变启动选择，也不会直接启动 Linux |

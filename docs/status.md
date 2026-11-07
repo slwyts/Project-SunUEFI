@@ -14,6 +14,7 @@
 | --- | --- |
 | 合体 BOOT：Android 直通 | 可用。普通开机进入原厂 Android |
 | 合体 BOOT：保存 Linux 路线并重启 | 可用。路线在 Android 侧保存，重启后经 UEFI 进入内部磁盘 Linux |
+| 标准 EFI 启动 | systemd-boot 直接加载内核 EFI stub、initramfs 和 DTB，内存布局由同次启动的原厂设备树和 SMEM 提供；旧 ESP 保留兼容入口 |
 | Linux 返回 Android | 可用。`piano-next-boot android --reboot`，见[Linux 下次启动入口](devel/boot/linux-next-boot.md) |
 | 原厂 Recovery | 保留。`reboot recovery` 进入 Mi Recovery。持久 Linux 偏好与 Recovery 同时存在时的行为还没有在设备上试过 |
 | 独立 Recovery 安装 | 不可用。ABL 对“Recovery 自带内核”的分支不加载 vendor_boot 和 pvmfw，启动停在 Fastboot；合体 BOOT 走普通启动路径，绕开了这个问题。安装器拒绝 `--recovery` |
@@ -31,9 +32,9 @@
 | 显示 | 合体 BOOT 进入 UEFI 后可显示菜单；延后原厂 ClockDxe 的 CESTA/media 和 DCD 启动初始化，保留继承的显示状态。见[显示定位](devel/boot/uefi-display.md) |
 | 菜单 / Setup / Shell | SimpleInit 菜单、TianoCore 中文设置页面与四倍字号可用；音量键移动、电源键确认、双音量键返回可用，见[设置页面](devel/boot/uefi-console.md)；Shell 尚未完成实机验证 |
 | Y700 四代触屏 | NT36536 的单指菜单点击、滑动可用，见[驱动说明](devel/hardware/y700-touch.md) |
-| Piano 触屏、键盘、USB Host | Piano 产品尚未接入这些输入后端，菜单使用音量键与电源键 |
+| Piano 触屏、键盘、USB Host | 产品已包含输入后端；触屏大帧读取仍有校验错误，键盘导航和 USB Host 尚未完成实机检查。菜单继续使用音量键与电源键 |
 | UEFI Fastboot | 在菜单、固件设置和 Shell 中常驻，正常 BOOT 进入时可连接；提供日志、截图、只读 `fetch`、`stage`（≤64 MiB）、`oem boot-stable` 和重启。拒绝 `flash`/`erase`；完整命令见[UEFI Fastboot](user/fastboot.md) |
-| EFI 变量 | 保存在内存，没有持久存储 |
+| EFI 变量 | 普通非易失变量保存在 `persist/sunuefi/` 的双副本文件中；退出 Boot Services 后不再写 UFS，见[变量保存](devel/boot/uefi-console.md#persist-中的-uefi-变量) |
 | 任意 `.img` / `.efi` 启动 | 没有完成，目前只启动 ESP 中的 Linux |
 
 ## Linux 与硬件
@@ -61,8 +62,8 @@
 | GNOME 电源模式 | 节能／平衡／性能三档可用，默认平衡，由 TuneD 与 tuned-ppd 提供 | 档位调整 CPU／GPU 上限，不改变待机功耗，见[电源模式](devel/hardware/power-profiles.md) |
 | 视频编解码 | ✅ | Iris 硬件加速与 V4L2 编解码可用，提供适配的 FFmpeg 软件包 |
 | SteamOS / Proton / FEX | ✅ | 游戏模式和桌面模式正常运行，ARM64 Proton 与 FEX 支持良好（个别游戏需自身参数，与项目本身无关） |
-| 指纹 | ⚠️ | 底层已接入，用户空间录入与认证未验证 |
-| 红外 / RGB 灯 | RGB 灯接口出现，红外 LIRC 候选已准备 | 红外发射未验证 |
+| 指纹 | Linux 独立录入、保存与认证，标准 libfprint／fprintd 接口 | 不读取 Android 的指纹模板，不提供跨用户识别；见[指纹实现](devel/hardware/led-ir-fingerprint.md#侧指纹) |
+| 红外 / RGB 灯 | RGB 标准 LED 接口、红外标准 LIRC 驱动和原厂波形量化已接入 | 红外光学输出未测量 |
 | 默认桌面 | 中文界面、拼音输入法、Chromium 浏览器，GNOME 动画开启 | — |
 | Windows / WinPE | 目标 | 未启动 |
 

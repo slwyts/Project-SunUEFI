@@ -86,7 +86,7 @@ UEFI 运行时，后台常驻一个 USB Fastboot 服务（设备名 `SunUEFI-pia
 | SteamOS / Proton / FEX | ✅ | 游戏模式和桌面模式可用，支持常见 Windows 游戏（部分游戏需游戏自身参数，如原神） |
 | Y700 四代 UEFI 触屏 | ✅ | NT36536 单指菜单点击与滑动，见[驱动说明](docs/devel/hardware/y700-touch.md) |
 | Piano UEFI 阶段的触屏、键盘、USB Host | ❌ | 菜单用音量键和电源键操作 |
-| 指纹 | ⚠️ | 底层已接入，用户空间录入与认证未验证 |
+| 指纹 | ✅ | 标准 libfprint／fprintd，Linux 独立录入、保存和认证，不使用 Android 的指纹模板 |
 | 红外发射 | ❌ | 未验证 |
 | Windows / WinPE | ❌ | 目标，未启动 |
 
@@ -96,7 +96,6 @@ UEFI 运行时，后台常驻一个 USB Fastboot 服务（设备名 `SunUEFI-pia
 
 * 12-bit / FRC
 * 触控笔完整掌压、笔身滑动及应用快捷手势
-* 指纹录入与认证（底层已接入，未验证）
 * 红外发射
 * UEFI 阶段的触屏、官方键盘与 USB Host
 * Windows / WinPE 启动
