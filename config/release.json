@@ -24,7 +24,8 @@
       "linux/dts/piano-camera-privacy-led.dtso",
       "linux/dts/piano-touch-panel.dtso",
       "linux/dts/piano-pen-dock.dtso",
-      "linux/dts/piano-pen-charger.dtso"
+      "linux/dts/piano-pen-charger.dtso",
+      "linux/dts/piano-bluetooth-nvm.dtso"
     ],
     "root_policy": "LABEL=PIANOROOT",
     "preferred_display_mode": {
