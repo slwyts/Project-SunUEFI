@@ -615,7 +615,9 @@ STATIC EFI_STATUS Event(UINT32 E) {
     return EFI_SUCCESS;
   }
   UINT8 Ep=(E>>1)&31,Type=(E>>6)&15,Status=(E>>12)&15;
-  if(Ep<2 || Type==7 || (Status&1))DEBUG((DEBUG_WARN,"SUNUEFI_USB_EP_EVENT ep=%u type=%u status=%u raw=%08x\n",Ep,Type,Status,E));
+  // Status bit0 is an error on XferComplete, but ordinary transfer-active
+  // state on XferNotReady. Do not fill the RAM log with idle bulk polling.
+  if(Ep<2 || Type==7 || (Type==1 && (Status&1)))DEBUG((DEBUG_WARN,"SUNUEFI_USB_EP_EVENT ep=%u type=%u status=%u raw=%08x\n",Ep,Type,Status,E));
   if(Ep>1) {
 #if PIANO_USB_FASTBOOT
     if(Ep>3)return EFI_UNSUPPORTED;
