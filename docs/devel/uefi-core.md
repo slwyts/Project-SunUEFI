@@ -78,9 +78,13 @@ PianoProductCoreEntry (uefi/core/PianoProductCore.c)
 
 启动 Linux 时，固件在唯一的 `sunuefi_esp` 分区上加载 `/EFI/BOOT/BOOTAA64.EFI`，并保留真实的 ESP 设备句柄。systemd-boot 读取 `loader.conf` 和启动项。标准 EFI 启动项分别用 `linux`、`initrd`、`devicetree` 指定带 EFI stub 的 ARM64 内核、初始文件系统和设备树，由 systemd-boot 直接装载。完整文件布局见[启动架构](architecture.md#存储布局)。
 
-固件通过 `EFI_DT_FIXUP_PROTOCOL` 为装载的设备树应用同次启动的面板与 Gunyah 修正，并检查保留区。Linux EFI stub 负责填写 EFI 内存图和 initrd 信息。SEC 从本次 ABL 传入的 Factory DT 读取完整 RAM，结合 SMEM、原生固件区域和冷启动对象生成内存表；新增普通 RAM 保持为 `EfiLoaderData`，不进入固件分配池。退出前再次核对真实 EFI/GCD 描述符及页表的恒等映射和缓存属性，再交给 Linux 回收。
+固件通过 `EFI_DT_FIXUP_PROTOCOL` 为装载的设备树应用同次启动的内存、面板与 Gunyah 修正，并检查保留区。Linux EFI stub 负责填写 EFI 内存图和 initrd 信息。SEC 从本次 ABL 传入的最终设备树读取完整 RAM，结合 SMEM、原生固件区域和冷启动对象生成内存表；新增普通 RAM 保持为 `EfiLoaderData`，不进入固件分配池。退出前再次核对真实 EFI/GCD 描述符及页表的恒等映射和缓存属性，再交给 Linux 回收。
+
+`PianoProductMemoryApplyDtb()` 使用带 CRC 与同次启动标识的早期采集结果，替换 Linux DTB 的 `/memory/reg`、DDR 容量／厂商／类型和 `/ddr-regions`，移除多余的 memory 节点。标准 EFI 和旧 `boot.img` 共用此函数，不按内存容量制作镜像，也不在安装时改写 ESP。Linux 的硬件节点、CMA 请求与保留区保持原样；交接前的检查会拒绝不兼容的保留区，而不是把 EFI 空闲页误当作物理总内存。
 
 现有 Debian 镜像仍可使用 `/EFI/Piano/LinuxBoot.efi`。该应用通过 Runtime 协议的 APP 入口同步调用驻留核心。核心确认调用者是当前 systemd-boot 的真实子应用后，沿用 `PianoRawLinuxBoot.c` 的文件加载和内核交接：读取 `/EFI/Piano/stable/boot.img`，复制内核、设备树和 initramfs，保留运行时面板与 Gunyah 修正，再关闭 USB、存储、输入、时钟和 SMMU。
+
+已有 ESP 仅包含 `boot.img` 时，固件在未找到且从未执行 `BOOTAA64.EFI` 的情况下直接使用旧加载器，用户无需重装系统。EFI 引导器已经运行后发生的错误不会静默切换加载路径。准备内核、核对交接身份和退出固件服务的失败分别记录阶段；内存采集与设备树保留区错误显示对应原因及回到 Android 的操作。
 
 ESP 中的 Linux `boot.img` 总容器上限为 128 MiB，打包入口 `./build.sh package` 和 `./build.sh esp` 会核对该上限。initramfs 的压缩后上限仍为 16 MiB，内核和设备树仍须满足各自的交接窗口。UEFI Fastboot 的单次 USB 下载上限保持 64 MiB，超过此大小的 Linux 容器需从 ESP 启动。
 
