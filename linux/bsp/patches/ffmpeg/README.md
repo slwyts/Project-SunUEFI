@@ -6,7 +6,7 @@ stateful V4L2 decoder fixes:
 | Target | Source and patch series | Package builder |
 | --- | --- | --- |
 | Debian GNOME / KDE | FFmpeg 7.1.5, `series.json` | `tools/build_ffmpeg_packages.py` |
-| SteamOS | FFmpeg 7.1.5, `series.json` | `tools/build_arch_ffmpeg.py` |
+| SteamOS | FFmpeg 8.1.1, `series-8.json` | `tools/build_arch_ffmpeg.py` |
 | Nyarch | FFmpeg 9.0.2, `patches/ffmpeg/9.0.2/series.json` | `tools/build_arch_ffmpeg.py` |
 
 Arch packages preserve the installed codec configuration, dependencies,

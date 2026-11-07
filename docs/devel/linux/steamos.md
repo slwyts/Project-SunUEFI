@@ -53,6 +53,9 @@ Steam 的系统更新入口使用 pacman 软件包更新，与 KDE Discover 共�
 
 `config/steamos.json` 固定 Valve 镜像、casync 数据源、完整镜像 SHA256 和提取器提交。`config/steam-client.json` 固定公开 ARM64 handheld 客户端各个包的地址、大小和 SHA256。`config/steam-runtime.json` 固定完整 ARM64 Proton 与 Steam Linux Runtime。构建不会读取电脑或平板上已登录的 Steam 目录。
 
+基底使用 Valve 的 ARM64 `vr/main` 0.6.0，构建号 `20261106.6191448`。
+它与 Steam Deck 的 x86 版本、Frame Beta 分支分别更新，不按版本号大小混用通道。
+
 镜像默认以源码提交时间统一文件时间；显式使用 `SOURCE_DATE_EPOCH=0`
 时以一秒代替零。Qt 6.11 将为零的文件时间视为无效，SDDM 因而
 跳过全部登录配置，退回无法驱动本机显示的默认 Xorg 路径。有效时间戳
@@ -87,17 +90,16 @@ ACM 串口。串口用于独立采集内核日志；适配位于公共 BSP 的
 
 FFmpeg 默认从源码构建为原生 pacman 包并替换根系统中的版本，保留
 Valve 原包的完整编解码配置和依赖。构建器按目标系统的 FFmpeg 7、8、9
-库接口选择补丁；新版 SteamOS 软件源使用 FFmpeg 8.1，状态切换、旧帧
+库接口选择补丁；新版 SteamOS 软件源使用 FFmpeg 8.1.1，状态切换、旧帧
 缓冲区保留和 P010 十位输出补丁均有对应来源清单。遇到尚未适配的库版本
 会停止构建，不混装其他代际的共享库。
 
 这会覆盖系统 FFmpeg 及使用它的程序。Steam 或 Electron 自带的私有编解码库不属于系统包，不能用不同 ABI 的共享库强行替换；其硬件视频路径需要分别确认。
 
-Valve 原生 Mesa 不识别本机的 Adreno 830v1。ARM64 图形包因此使用
-`linux/bsp/steamos/mesa/PKGBUILD` 在 SteamOS 中重编译，加入与 Debian /
-Nyarch 相同的芯片识别补丁，保留标准 Mesa 路径和 Valve 的软件包名称。
-不向 SteamOS 安装 Debian 共享库。x86 客体图形运行库仍保留 Valve 版本，
-游戏翻译路径尚需单独验证。
+Valve 基底中的 Mesa 27.0.0-devel 已包含 Adreno 830v1，构建沿用它，不降级到
+旧适配包。只有缺少芯片支持时才通过 `linux/bsp/steamos/mesa/PKGBUILD`
+重编，保留标准路径和 Valve 软件包名称。x86 客体图形运行库仍保留 Valve
+版本，不向 SteamOS 安装 Debian 共享库。
 
 实机已运行 Plasma Wayland，OpenGL 使用 Freedreno，Vulkan 使用 Turnip；
 这些结果不能替代硬件视频解码或游戏兼容性验证。
