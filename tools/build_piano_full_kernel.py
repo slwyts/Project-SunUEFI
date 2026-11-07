@@ -122,7 +122,7 @@ def command_line(fragment,public,root_policy):
 def module_overrides(fragment,kind='bluetooth'):
     lines=[line.strip()for line in fragment.splitlines()if line.strip()and not line.lstrip().startswith('#')]
     expected=BLUETOOTH_OVERRIDES if kind=='bluetooth'else FILESYSTEM_OVERRIDES if kind=='filesystem'else PEN_DOCK_OVERRIDES if kind=='pen-dock'else IR_OVERRIDES if kind=='ir'else FLASH_OVERRIDES if kind=='flash'else EARLY_CPUCP_OVERRIDES if kind=='early-cpucp'else USERSPACE_SECURITY_OVERRIDES if kind=='userspace-security'else SLEEP_OVERRIDES if kind=='sleep'else PLATFORM_OVERRIDES if kind=='platform'else None
-    if expected is None or lines!=[key+'='+value for key,value in expected.items()]:raise ValueError('Unexpected '+kind+' configuration fragment')
+    if expected is None or len(lines)!=len(expected) or set(lines)!={key+'='+value for key,value in expected.items()}:raise ValueError('Unexpected '+kind+' configuration fragment')
     return dict(expected)
 
 

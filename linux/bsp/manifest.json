@@ -14,9 +14,9 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "b3688fbd028cd80f1833868d091a68730696f634d96a7c497b8d14b068837d46",
+      "sha256": "3a35a44aee3cdb102d176a2b54f2a7aac4250a797f6dc3363d717bf42bcde63f",
       "source": "linux/bsp/common/etc/modprobe.d/piano.conf",
-      "source_sha256": "b3688fbd028cd80f1833868d091a68730696f634d96a7c497b8d14b068837d46",
+      "source_sha256": "3a35a44aee3cdb102d176a2b54f2a7aac4250a797f6dc3363d717bf42bcde63f",
       "source_git_mode": "100644",
       "license": "MIT",
       "source_component": "Project SunUEFI"
@@ -95,11 +95,12 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "af17d2fc5c233afd93262761ac835c5496dfec4f37425e1e8a2fcc96b7571534",
-      "source": "rootfs/overlay/usr/lib/systemd/system/piano-adsp.service",
-      "source_sha256": "af17d2fc5c233afd93262761ac835c5496dfec4f37425e1e8a2fcc96b7571534",
+      "sha256": "9c109a228d402ec96e7523bb64efafb0db8fc6e2b48e14c9dc6143287b1addc5",
+      "source": "linux/bsp/common/usr/lib/systemd/system/piano-adsp.service",
+      "source_sha256": "9c109a228d402ec96e7523bb64efafb0db8fc6e2b48e14c9dc6143287b1addc5",
       "source_git_mode": "100644",
-      "license": "MIT"
+      "license": "MIT",
+      "source_component": "Project SunUEFI"
     },
     {
       "group": "common",
@@ -175,12 +176,12 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "67e945a8fc6e8fdcb3c323331eebb8dde0a08d84db0051aea8832ffe5486e7ae",
+      "sha256": "fd92190d4d6336e8ca45f0c2cf0218a793e63fdb1f7dea9acf3197185e8b428f",
       "source": "linux/bsp/common/usr/lib/systemd/system/piano-touch.service",
-      "source_sha256": "67e945a8fc6e8fdcb3c323331eebb8dde0a08d84db0051aea8832ffe5486e7ae",
+      "source_sha256": "fd92190d4d6336e8ca45f0c2cf0218a793e63fdb1f7dea9acf3197185e8b428f",
       "source_git_mode": "100644",
       "license": "MIT",
-      "source_component": "Project SunUEFI (based on blu-sharky/debian-piano)"
+      "source_component": "Project SunUEFI"
     },
     {
       "group": "common",
@@ -287,13 +288,14 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "8f276beac28fac65d84c932f4905e3d2bfe20ffdb8f09b1ad8c168737f054dbf",
-      "source": "rootfs/overlay/usr/lib/systemd/system/piano-camerad.service",
-      "source_sha256": "89be5055f92c75cff4f950e0a2e4bc588df15037b5a00c33dfb905760844032b",
+      "sha256": "b44b23058eac9b297610dde1e5facabfcfe970e0157433842fc010c16245bd3b",
+      "source": "linux/bsp/optional/camera/usr/lib/systemd/system/piano-camerad.service",
+      "source_sha256": "b44b23058eac9b297610dde1e5facabfcfe970e0157433842fc010c16245bd3b",
       "source_git_mode": "100644",
       "license": "MIT",
       "patch": "patches/0003-camera-portable-modprobe.patch",
-      "patch_sha256": "b4892c279dfdce444292ed55a61d984829815bfb567add1d508f053ea5166d5b"
+      "patch_sha256": "b4892c279dfdce444292ed55a61d984829815bfb567add1d508f053ea5166d5b",
+      "source_component": "Project SunUEFI"
     },
     {
       "group": "common",
@@ -560,6 +562,34 @@
       "license": "MIT",
       "sha256": "2cada8784411ac963305b3e925bfcee04481f1f3ee0e15a35b14448a6973d1c5",
       "source_sha256": "2cada8784411ac963305b3e925bfcee04481f1f3ee0e15a35b14448a6973d1c5"
+    },
+    {
+      "group": "common",
+      "path": "usr/lib/systemd/system/bluetooth.service.d/20-piano-address.conf",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "95e319bf231e07df76e156d488c8df516545d8791f59b4cd494b9efc29ec4807",
+      "source": "linux/bsp/common/usr/lib/systemd/system/bluetooth.service.d/20-piano-address.conf",
+      "source_sha256": "95e319bf231e07df76e156d488c8df516545d8791f59b4cd494b9efc29ec4807",
+      "source_component": "Project SunUEFI",
+      "source_git_mode": "100644",
+      "license": "MIT"
+    },
+    {
+      "group": "common",
+      "path": "etc/udev/rules.d/79-piano-touch.rules",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "cfd6d1b0e57e806f6aa2e0722ce6bd0f581efeab242a26aa6f525291b78e885c",
+      "source": "linux/bsp/common/etc/udev/rules.d/79-piano-touch.rules",
+      "source_sha256": "cfd6d1b0e57e806f6aa2e0722ce6bd0f581efeab242a26aa6f525291b78e885c",
+      "source_component": "Project SunUEFI",
+      "source_git_mode": "100644",
+      "license": "MIT"
     }
   ],
   "excluded": [
