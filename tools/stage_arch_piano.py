@@ -58,6 +58,8 @@ def stage(args):
         shutil.rmtree(current_modules)
     modules.stage(root, args.kernel, old_modules)
     runtime.stage(args.runtime.resolve(), root)
+    from build_piano_fingerprint import install_desktop
+    install_desktop(root, args.runtime.resolve(), output / 'fingerprint-packages')
     fw = ROOT / cfg['firmware']['source']
     from stage_piano_firmware import stage as stage_firmware
     stage_firmware(fw, root)

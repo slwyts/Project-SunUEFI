@@ -1,5 +1,18 @@
 {
   "schema_version": 1,
+  "desktop": {
+    "libfprint": {
+      "url": "https://gitlab.freedesktop.org/libfprint/libfprint.git",
+      "commit": "80a4b5ec612892c5c056c48dddaa561452cf37ec",
+      "version": "1.94.100",
+      "patch_series": "patches/libfprint/1.94.100/series.json"
+    },
+    "fprintd": {
+      "url": "https://gitlab.freedesktop.org/libfprint/fprintd.git",
+      "commit": "b54a007ccf58ac0ae074c7151b223f35cbd17306",
+      "version": "1.94.5"
+    }
+  },
   "sources": {
     "quic-teec": {
       "url": "https://github.com/quic/quic-teec.git",

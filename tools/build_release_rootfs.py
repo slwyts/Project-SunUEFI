@@ -696,6 +696,8 @@ def execute(record):
                      '--kernel-build', record['kernel_build'], '--output', bundle, '--sysroot', sysroot,
                      '--cc', helper_cc, '--macros', record['macros'], '--v4l2-source', record['v4l2_source']])
             runtime.stage(bundle, rootfs)
+        from build_piano_fingerprint import install_desktop
+        install_desktop(rootfs, bundle, out / 'fingerprint-packages')
         from stage_piano_firmware import stage as stage_firmware
         stage_firmware(Path(record['firmware_source']), rootfs)
         apply_policy(rootfs, out, cfg)
