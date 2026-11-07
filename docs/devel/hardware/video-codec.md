@@ -20,7 +20,7 @@ Arch 构建器读取目标系统已安装包的编译选项、依赖和版本信
 ```sh
 python tools/prepare_ffmpeg_source.py --output build/ffmpeg-source-7
 python tools/prepare_ffmpeg_source.py \
-  --series linux/bsp/patches/ffmpeg/series-9.json \
+  --series patches/ffmpeg/9.0.2/series.json \
   --output build/ffmpeg-source-9
 ```
 

@@ -1,0 +1,29 @@
+From: Project SunUEFI contributors
+Subject: [PATCH] avcodec/v4l2m2m: do not drain an unstarted encoder
+
+A muxer can reject its header after encoder initialization but before
+STREAMON. STOP cannot start a drain in that state, so waiting for LAST
+would block forever. Report EOF without polling for frames that were
+never submitted, and propagate STOP failures for a running encoder.
+
+--- a/libavcodec/v4l2_context.c
++++ b/libavcodec/v4l2_context.c
+@@ -844,10 +844,16 @@
+     int ret;
+ 
+     if (!frame) {
++        /* STOP cannot produce LAST before both queues have started. */
++        if (!ctx->streamon || !s->capture.streamon)
++            return AVERROR_EOF;
++
+         ret = v4l2_stop_encode(ctx);
+-        if (ret)
++        if (ret < 0) {
+             av_log(logger(ctx), AV_LOG_ERROR, "%s stop_encode\n", ctx->name);
+-        s->draining= 1;
++            return ret;
++        }
++        s->draining = 1;
+         return 0;
+     }
+ 

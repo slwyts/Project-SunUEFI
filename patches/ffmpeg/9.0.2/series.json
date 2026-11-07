@@ -2,7 +2,7 @@
   "schema_version": 1,
   "component": "ffmpeg-v4l2m2m",
   "upstream_version": "9.0.2",
-  "local_revision": "sunuefi3",
+  "local_revision": "sunuefi4",
   "source": {
     "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
     "filename": "ffmpeg-9.0.2.tar.xz",
@@ -11,18 +11,33 @@
   },
   "series": [
     {
-      "path": "0004-v4l2m2m-ffmpeg9-stateful.patch",
+      "path": "../../../linux/bsp/patches/ffmpeg/0004-v4l2m2m-ffmpeg9-stateful.patch",
       "sha256": "ad7b86872378f38fbbdf8a24e31726f62a765869b6f910322be6a8d8695b1a3c",
       "license": "LGPL-2.1-or-later; retain upstream file notices"
     },
     {
-      "path": "0005-v4l2m2m-orphan-capture-ffmpeg9.patch",
+      "path": "../../../linux/bsp/patches/ffmpeg/0005-v4l2m2m-orphan-capture-ffmpeg9.patch",
       "sha256": "b35c619d8467a15144db5ba58b4015884de71167f32b0c31fdb6f3b834e29bb3",
       "license": "LGPL-2.1-or-later; retain upstream file notices"
     },
     {
-      "path": "0006-v4l2m2m-p010-capture.patch",
+      "path": "../../../linux/bsp/patches/ffmpeg/0006-v4l2m2m-p010-capture.patch",
       "sha256": "2eeca4bcb88a54819c8211703eb3b6461e00a4fd122d5c405ff2764c08381044",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "0001-v4l2m2m-join-sequence-header.patch",
+      "sha256": "8a79e6ba96c0ad384cf3a61b0cf0fd2d4a577028091509672b16d90741bef7e9",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "0002-v4l2m2m-copy-visible-nv12-rows.patch",
+      "sha256": "f5c0c1d9323b9b67abb8bc9d10548f09adb488243204c837207310b80f76bb16",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "0003-v4l2m2m-stop-unstarted-encoder.patch",
+      "sha256": "63ec598d048ead5424f6cc1eb882b430ff268c368838057b439cdf98ee172c2d",
       "license": "LGPL-2.1-or-later; retain upstream file notices"
     }
   ],

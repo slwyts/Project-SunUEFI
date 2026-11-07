@@ -1,0 +1,80 @@
+From: Project SunUEFI contributors
+Subject: [PATCH] avcodec/v4l2m2m: copy visible NV12 rows into padded surfaces
+
+A driver's coded height is not the source AVFrame's allocation height.
+Copy only visible source rows, use the negotiated destination stride and
+padded Y-plane size for UV placement, and initialize device-side padding.
+This prevents 2160-line NV12 input from being overread as 2176 lines.
+
+--- a/libavcodec/v4l2_buffers.c
++++ b/libavcodec/v4l2_buffers.c
+@@ -28,6 +28,7 @@
+ #include <fcntl.h>
+ #include <poll.h>
+ #include "libavcodec/avcodec.h"
++#include "libavutil/imgutils.h"
+ #include "libavutil/attributes.h"
+ #include "libavutil/pixdesc.h"
+ #include "libavutil/refstruct.h"
+@@ -360,6 +361,49 @@
+     return 0;
+ }
+ 
++/* NV12/NV21 use one V4L2 memory plane but two image planes. The driver
++ * reports its padded surface height and stride; the AVFrame only supplies
++ * visible pixels and can have a different stride or negative linesizes.
++ */
++static int v4l2_buffer_copy_nv12(const AVFrame *frame, V4L2Buffer *out, int height)
++{
++    int stride = out->plane_info[0].bytesperline;
++    int chroma_width = AV_CEIL_RSHIFT(frame->width, 1) * 2;
++    size_t length = out->plane_info[0].length;
++    size_t y_size, uv_size, used;
++    uint8_t *destination = out->plane_info[0].mm_addr;
++
++    if (stride < chroma_width || frame->width <= 0 || frame->height <= 0 ||
++        height < frame->height)
++        return AVERROR(EINVAL);
++    y_size = (size_t)stride * height;
++    uv_size = (size_t)stride * AV_CEIL_RSHIFT(height, 1);
++    if (y_size > length || uv_size > length - y_size)
++        return AVERROR(EINVAL);
++    used = y_size + uv_size;
++
++    /* Initialize the complete device surface, including bottom/right padding
++     * and allocation alignment, without reading past the source image.
++     */
++    memset(destination, frame->color_range == AVCOL_RANGE_JPEG ? 0 : 16, y_size);
++    memset(destination + y_size, 128, uv_size);
++    memset(destination + used, 0, length - used);
++    av_image_copy_plane(destination, stride, frame->data[0], frame->linesize[0],
++                        frame->width, frame->height);
++    av_image_copy_plane(destination + y_size, stride,
++                        frame->data[1], frame->linesize[1], chroma_width,
++                        AV_CEIL_RSHIFT(frame->height, 1));
++
++    if (V4L2_TYPE_IS_MULTIPLANAR(out->buf.type)) {
++        out->planes[0].bytesused = used;
++        out->planes[0].length = length;
++    } else {
++        out->buf.bytesused = used;
++        out->buf.length = length;
++    }
++    return 0;
++}
++
+ static int v4l2_buffer_swframe_to_buf(const AVFrame *frame, V4L2Buffer *out)
+ {
+     int i, ret;
+@@ -369,6 +413,11 @@
+     int height       = V4L2_TYPE_IS_MULTIPLANAR(fmt.type) ?
+                        fmt.fmt.pix_mp.height : fmt.fmt.pix.height;
+     int is_planar_format = 0;
++
++    if (out->num_planes == 1 &&
++        (pixel_format == V4L2_PIX_FMT_NV12 || pixel_format == V4L2_PIX_FMT_NV21))
++        return v4l2_buffer_copy_nv12(frame, out, height);
++
+ 
+     switch (pixel_format) {
+     case V4L2_PIX_FMT_YUV420M:

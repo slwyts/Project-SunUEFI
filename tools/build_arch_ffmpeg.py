@@ -65,7 +65,7 @@ def build(root, output, resume=False):
     elif re.match(r'^8\.1-', upstream_version):
         series_path = source.SERIES.with_name('series-8.json')
     elif re.match(r'^9\.0\.2-', upstream_version):
-        series_path = source.SERIES.with_name('series-9.json')
+        series_path = ROOT / 'patches/ffmpeg/9.0.2/series.json'
     else:
         raise ValueError('Port the BSP fixes to the installed FFmpeg ABI before replacing ' + package_version)
     series = json.loads(series_path.read_text())
