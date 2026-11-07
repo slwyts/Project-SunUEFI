@@ -61,6 +61,8 @@ STATIC EFI_EVENT mBootLogExitEvent;
 STATIC BOOLEAN mBootLogEnabled,mBootLogCounterDown;
 STATIC UINT64 mBootLogStart;
 STATIC CONST CHAR8 *mBootLogStage="PAYLOAD";
+STATIC CONST CHAR8 *mHandoffStage="not-started";
+STATIC CONST CHAR16 *mHandoffFailure;
 STATIC VOID BootLogReturned(VOID);
 STATIC VOID FailStop(EFI_STATUS Status);
 EFI_STATUS PianoRegisterLinuxBootOption(VOID);
@@ -228,13 +230,14 @@ STATIC EFI_STATUS InitUfs(CONST VOID *Fdt) {
   mUfsStarted=mUfsStatus==EFI_SUCCESS;return mUfsStatus;
 }
 STATIC VOID FailStop(EFI_STATUS Status) {
+  DEBUG((DEBUG_ERROR,"PIANO_START_FAILED stage=%a handoff=%a status=%r recovery=hold-power-reboot-volume-up-Android\n",mBootLogStage,mHandoffStage,Status));
   // A retained observer may still own an exception handler or have lost its
   // service lifetime. Do not make another display/protocol call on that path.
   if(!PianoProductDisplayRetained() && !PianoDisplaySmmuRetained() &&
      !PianoFrameBufferMappingRetained() && !PianoDisplayClockRetained() &&
      !PianoProductDisplayOwnerRetained()){
     BootLogStage(mBootLogStage,Status);
-    CONST CHAR16 *Detail=L"启动菜单退出失败";
+    CONST CHAR16 *Detail=mHandoffFailure?mHandoffFailure:L"启动菜单退出失败";
     if(mOwners.Report.Retained){
       if(EFI_ERROR(mOwners.Report.NvStatus)&&mOwners.Report.NvStatus!=EFI_NOT_STARTED)Detail=L"设置未能保存";
       else if(EFI_ERROR(mOwners.Report.FilesystemsStatus))Detail=L"仍有文件或驱动没有关闭";
@@ -255,7 +258,6 @@ STATIC VOID FailStop(EFI_STATUS Status) {
       }
     }
     if(BootLogAlive())(VOID)PianoProductBootLogMessage(L"未能启动系统",Detail,Status,TRUE);
-    DEBUG((DEBUG_ERROR,"PIANO_START_FAILED stage=%a status=%r recovery=hold-power-reboot-volume-up-Android\n",mBootLogStage,Status));
   }
 #ifdef __aarch64__
   __asm__ volatile("msr daifset, #15" ::: "memory");
@@ -328,6 +330,7 @@ STATIC EFI_STATUS CompleteCoreAction(EFI_HANDLE Image,PIANO_PRODUCT_RUNTIME_PROT
   }
   if(ExitImage!=Image && mOwners.Report.Origin!=PianoProductRequestFile)return EFI_ABORTED;
   (VOID)PianoProductBootLogMessage(L"正在交接系统",L"正在保存设置并关闭存储",EFI_SUCCESS,FALSE);
+  mHandoffStage="owners-retire";mHandoffFailure=L"系统资源未能安全退出";
   Status=PianoProductOwnersRetire(&mOwners);
   if(Status==EFI_NOT_READY&&FileLoaded&&mOwners.Report.Origin==PianoProductRequestUsb) {
     Status=PianoRawLinuxDiscardStable();if(Status!=EFI_SUCCESS)FailStop(Status);
@@ -342,9 +345,17 @@ STATIC EFI_STATUS CompleteCoreAction(EFI_HANDLE Image,PIANO_PRODUCT_RUNTIME_PROT
   }
   if(mOwners.Report.AllowedAction==PianoUsbServiceActionBoot){
     CONST PIANO_RAW_LINUX_REPORT *Raw=NULL;
+    mHandoffStage="linux-prepare";mHandoffFailure=L"Linux 内核或设备树不可用";
     Status=PianoRawLinuxPrepare(&mOwners,Image,ExitImage,&Raw);
-    if(Status==EFI_SUCCESS)Status=PianoLateHandoffArmRaw(&mLateHandoff,ExitImage,Raw);
-    if(Status==EFI_SUCCESS)Status=PianoRawLinuxEnter(Raw);
+    if(Status!=EFI_SUCCESS&&BootLogAlive()){
+      PIANO_PRODUCT_MEMORY_DIAGNOSTIC Memory;PianoProductMemoryGetDiagnostic(&Memory);
+      if(EFI_ERROR(Memory.CaptureStatus)&&Memory.CaptureStatus!=EFI_NOT_STARTED)mHandoffFailure=L"无法读取本机内存布局";
+      else if(EFI_ERROR(Memory.DtbStatus)&&Memory.DtbStatus!=EFI_NOT_STARTED)mHandoffFailure=L"设备树内存或保留区不匹配";
+      DEBUG((DEBUG_ERROR,"PIANO_LINUX_PREPARE_FAILED status=%r memory=%a/%r dtb=%a/%r\n",
+        Status,Memory.CaptureStage,Memory.CaptureStatus,Memory.DtbStage,Memory.DtbStatus));
+    }
+    if(Status==EFI_SUCCESS){mHandoffStage="linux-arm";mHandoffFailure=L"系统交接检查失败";Status=PianoLateHandoffArmRaw(&mLateHandoff,ExitImage,Raw);}
+    if(Status==EFI_SUCCESS){mHandoffStage="linux-enter";mHandoffFailure=L"无法退出固件服务";Status=PianoRawLinuxEnter(Raw);}
     FailStop(Status==EFI_SUCCESS?EFI_ABORTED:Status);
   }
   FailStop(EFI_UNSUPPORTED);

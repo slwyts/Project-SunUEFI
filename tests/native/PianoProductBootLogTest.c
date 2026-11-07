@@ -130,6 +130,8 @@ int main(int Argc,char **Argv){
       ExpectTextAt(X,Y+140*Scale,Scale,Codes[I]);
       ExpectTextAt(X,Y+158*Scale,Scale,"                  ");
     }
+    assert(PianoProductBootLogMessage(L"未能启动系统",L"设备树内存或保留区不匹配",EFI_ACCESS_DENIED,TRUE)==EFI_SUCCESS);
+    char MemoryFailure[1024];snprintf(MemoryFailure,sizeof(MemoryFailure),"%s-memory.ppm",Argv[1]);Preview(MemoryFailure);
   }
   CONST UINT32 Sizes[][2]={{480,320},{800,600},{3200,320},{480,2136}};
   for(UINTN I=0;I<ARRAY_SIZE(Sizes);++I){
