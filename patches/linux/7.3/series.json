@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "82879a7a7bbdde75eb5c00e5537b0d258f1a3a2b",
-  "original_target_commit": "1abdd75969c8214914d9bb73d3a3f088bdd18f6a",
+  "target_tree": "9f06a6bf5a4ffd47e16c0739ec948bafb7f656c6",
+  "original_target_commit": "9243cfefba6ac7c70cfed9f9c07c93b08978651c",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -543,6 +543,54 @@
       "original_parent": "a889a64ab161c688e65919c283fda5a62923f683",
       "tree": "82879a7a7bbdde75eb5c00e5537b0d258f1a3a2b",
       "committer_date": "2026-11-09T16:52:10+08:00"
+    },
+    {
+      "file": "0040-power-mca-stop-work.patch",
+      "sha256": "f65f9ffd0e685b6193ad76f9e7e78dfb85f4e79518b6683724e688a6ad50cbab",
+      "original_commit": "9d68a9687864d082e867bce3dc171cd08e134d9f",
+      "original_parent": "1abdd75969c8214914d9bb73d3a3f088bdd18f6a",
+      "committer_date": "2026-11-08T02:10:20+08:00",
+      "tree": "3ecb727f2feae25d9ec241f2f603a064d0df357d"
+    },
+    {
+      "file": "0041-power-mipps-session-cleanup.patch",
+      "sha256": "1b720958f3cf037d568f74e92fe7367ecbc491172cedc08f18faac93bb944ff4",
+      "original_commit": "bb43bd1540b6cea45632d44a78665d901596337e",
+      "original_parent": "9d68a9687864d082e867bce3dc171cd08e134d9f",
+      "committer_date": "2026-11-08T02:49:10+08:00",
+      "tree": "0c7b1d20bc51a6576489a6c30ac30416f11fddc1"
+    },
+    {
+      "file": "0042-power-mca-connection-events.patch",
+      "sha256": "df04da4c64e6c4679de7661623ef7d5555eb1d7bd0d0b55aa8a2ec5390827234",
+      "original_commit": "e2c653992c43891e1934834785be818cfd92261c",
+      "original_parent": "bb43bd1540b6cea45632d44a78665d901596337e",
+      "committer_date": "2026-11-08T02:58:21+08:00",
+      "tree": "a78c0b126a8b8fe6148ff4ab4f2b7d59bd64b5df"
+    },
+    {
+      "file": "0043-power-sc8541-stop-watchdog.patch",
+      "sha256": "62a27872e1e499f485be87eee55b909517435ac93ba1cd3628fe52c1ca21c275",
+      "original_commit": "8cf58735f8a52c9ce794d2ddbead6974df41962b",
+      "original_parent": "e2c653992c43891e1934834785be818cfd92261c",
+      "committer_date": "2026-11-08T07:40:31+08:00",
+      "tree": "7b68f752cf7e7ec03827c27e10227ef45ce9976f"
+    },
+    {
+      "file": "0044-power-mca-direct-charge-session-pm.patch",
+      "sha256": "5b5222d7e6ece01f21ed7046c2e427e6a97416df00795d557f4c413e91bbd2fd",
+      "original_commit": "21fe65264b89453e95b8114b700e312b46e1a722",
+      "original_parent": "8cf58735f8a52c9ce794d2ddbead6974df41962b",
+      "committer_date": "2026-11-08T07:41:01+08:00",
+      "tree": "ed68741e4013280f91cf248d96353e92ec834b4e"
+    },
+    {
+      "file": "0045-power-mca-clear-proof-on-vbus-loss.patch",
+      "sha256": "3fe3d896ad282eacbef3da518e45a91694aee3ff730b7be946af6dd2ef7b3310",
+      "original_commit": "9243cfefba6ac7c70cfed9f9c07c93b08978651c",
+      "original_parent": "21fe65264b89453e95b8114b700e312b46e1a722",
+      "committer_date": "2026-11-08T09:13:00+08:00",
+      "tree": "9f06a6bf5a4ffd47e16c0739ec948bafb7f656c6"
     }
   ]
 }

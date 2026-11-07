@@ -1,0 +1,472 @@
+From bb43bd1540b6cea45632d44a78665d901596337e Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 02:49:10 +0800
+Subject: [PATCH] fix(power-supply): bind MiPPS exchanges and cleanup to GLINK
+ sessions
+
+Check the expected service generation while holding the GLINK send lock, including every VDM and authentication property write. Reject replies from an obsolete service instance.
+
+Arm cleanup before setting VERIFY_PROCESS so a lost reply cannot strand the flag. Retry failed PD_VERIFIED and VERIFY_PROCESS cleanup before continuing charging policy, and withhold authentication until cleanup is acknowledged.
+---
+ drivers/power/supply/piano_mca.c    | 146 +++++++++++++++++++++-------
+ drivers/soc/qcom/pmic_glink.c       |  52 +++++++++-
+ include/linux/soc/qcom/pmic_glink.h |   3 +
+ 3 files changed, 162 insertions(+), 39 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 95e67c0c7..5f22985c5 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -494,9 +494,10 @@ struct piano_mca {
+ 	bool auth_ok;		/* adapter response matched our fresh challenge */
+ 	unsigned int auth_generation;
+ 	bool mipps_attempted;	/* one exchange per physical attachment */
++	unsigned int mipps_generation;
++	bool mipps_cleanup_pending;	/* VERIFY_PROCESS clear not yet acknowledged */
+ 	struct mutex pen_boost_lock;
+ 	bool pen_boost_on;
+-	unsigned int pdr_generation;
+ 	unsigned int pen_boost_generation;
+ 	unsigned long auth_at;	/* jiffies when it did */
+ 	bool auth_tried;	/* direct charging asked for before any reset */
+@@ -515,7 +516,8 @@ struct piano_mca {
+ 
+ static bool piano_mca_authenticated(struct piano_mca *mca)
+ {
+-	return mca->auth_ok && mca->auth_generation == READ_ONCE(mca->pdr_generation);
++	return mca->auth_ok && !mca->mipps_cleanup_pending &&
++	       mca->auth_generation == pmic_glink_get_generation(mca->client);
+ }
+ 
+ static void piano_mca_callback(const void *data, size_t len, void *priv)
+@@ -553,7 +555,6 @@ static void piano_mca_pdr_notify(void *priv, int state)
+ 	struct piano_mca *mca = priv;
+ 
+ 	mca->service_up = state == SERVREG_SERVICE_STATE_UP;
+-	mca->pdr_generation++;
+ 	/* A restarted ADSP is back on its defaults */
+ 	mca->icl_set_ma = 0;
+ 	mca->fcc_set_ma = 0;
+@@ -686,7 +687,7 @@ static int piano_mca_pan_init(struct piano_mca *mca)
+  * to @buf; a write sends @len bytes of @buf.
+  */
+ static int piano_mca_xfer(struct piano_mca *mca, u32 opcode, u32 prop,
+-			  void *buf, size_t len)
++			  void *buf, size_t len, unsigned int generation)
+ {
+ 	struct mca_req req = {
+ 		.owner = cpu_to_le32(PMIC_GLINK_OWNER_BATTMGR),
+@@ -721,7 +722,7 @@ static int piano_mca_xfer(struct piano_mca *mca, u32 opcode, u32 prop,
+ 	reinit_completion(&mca->ack);
+ 	mca->retcode = -ETIMEDOUT;
+ 
+-	ret = pmic_glink_send(mca->client, &req, sizeof(req));
++	ret = pmic_glink_send_generation(mca->client, &req, sizeof(req), generation);
+ 	if (ret < 0)
+ 		goto out;
+ 
+@@ -729,6 +730,10 @@ static int piano_mca_xfer(struct piano_mca *mca, u32 opcode, u32 prop,
+ 		ret = -ETIMEDOUT;
+ 		goto out;
+ 	}
++	if (generation != pmic_glink_get_generation(mca->client)) {
++		ret = -ECONNRESET;
++		goto out;
++	}
+ 
+ 	ret = mca->retcode ? -EIO : 0;
+ 	if (!ret && opcode == MCA_OP_READ)
+@@ -741,7 +746,8 @@ static int piano_mca_xfer(struct piano_mca *mca, u32 opcode, u32 prop,
+ /* Read a property; up to 256 bytes are copied to @buf. */
+ static int piano_mca_read(struct piano_mca *mca, u32 prop, void *buf, size_t len)
+ {
+-	return piano_mca_xfer(mca, MCA_OP_READ, prop, buf, len);
++	return piano_mca_xfer(mca, MCA_OP_READ, prop, buf, len,
++			      pmic_glink_get_generation(mca->client));
+ }
+ 
+ /*
+@@ -817,9 +823,10 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
+ 	}
+ }
+ 
+-/* The only write path */
+-static int piano_mca_write(struct piano_mca *mca, u32 prop, const void *data,
+-			   size_t len)
++/* Every write passes the allowlist and is bound to one ADSP instance. */
++static int piano_mca_write_generation(struct piano_mca *mca, u32 prop,
++				      const void *data, size_t len,
++				      unsigned int generation)
+ {
+ 	u8 buf[MCA_VDM_LEN];
+ 
+@@ -827,7 +834,22 @@ static int piano_mca_write(struct piano_mca *mca, u32 prop, const void *data,
+ 		return -EPERM;
+ 
+ 	memcpy(buf, data, len);
+-	return piano_mca_xfer(mca, MCA_OP_WRITE, prop, buf, len);
++	return piano_mca_xfer(mca, MCA_OP_WRITE, prop, buf, len, generation);
++}
++
++static int piano_mca_write(struct piano_mca *mca, u32 prop, const void *data,
++			   size_t len)
++{
++	return piano_mca_write_generation(mca, prop, data, len,
++					  pmic_glink_get_generation(mca->client));
++}
++
++static int piano_mca_write_u32_generation(struct piano_mca *mca, u32 prop,
++					  u32 val, unsigned int generation)
++{
++	__le32 data = cpu_to_le32(val);
++
++	return piano_mca_write_generation(mca, prop, &data, sizeof(data), generation);
+ }
+ 
+ static int piano_mca_write_u32(struct piano_mca *mca, u32 prop, u32 val)
+@@ -874,7 +896,7 @@ static void piano_mca_parse_otg_config(struct piano_mca *mca)
+ 
+ static void piano_mca_sync_otg_config(struct piano_mca *mca)
+ {
+-	unsigned int generation = READ_ONCE(mca->pdr_generation);
++	unsigned int generation = pmic_glink_get_generation(mca->client);
+ 	int ret;
+ 
+ 	if (!mca->otg_config_valid || !READ_ONCE(mca->service_up) ||
+@@ -886,7 +908,7 @@ static void piano_mca_sync_otg_config(struct piano_mca *mca)
+ 		dev_warn_ratelimited(mca->dev, "failed to configure USB OTG: %d\n", ret);
+ 		return;
+ 	}
+-	if (generation == READ_ONCE(mca->pdr_generation)) {
++	if (generation == pmic_glink_get_generation(mca->client)) {
+ 		mca->otg_config_generation = generation;
+ 		dev_info(mca->dev, "USB OTG board configuration synchronized\n");
+ 	}
+@@ -911,7 +933,7 @@ static u32 piano_mca_read_u32(struct piano_mca *mca, u32 prop)
+  */
+ static int piano_mca_pen_boost_on(struct piano_mca *mca)
+ {
+-	unsigned int generation = READ_ONCE(mca->pdr_generation);
++	unsigned int generation = pmic_glink_get_generation(mca->client);
+ 	u32 mv;
+ 	int ret;
+ 
+@@ -977,7 +999,7 @@ static int piano_mca_pen_is_enabled(struct regulator_dev *rdev)
+ 	struct piano_mca *mca = rdev_get_drvdata(rdev);
+ 
+ 	return READ_ONCE(mca->pen_boost_on) &&
+-	       READ_ONCE(mca->pen_boost_generation) == READ_ONCE(mca->pdr_generation);
++	       READ_ONCE(mca->pen_boost_generation) == pmic_glink_get_generation(mca->client);
+ }
+ 
+ static const struct regulator_ops piano_mca_pen_regulator_ops = {
+@@ -1046,16 +1068,16 @@ static int piano_mca_vdm(struct piano_mca *mca, unsigned int generation,
+ 
+ 	/* Stock batterysecret retries an unanswered command once. */
+ 	for (attempt = 0; attempt < 2; attempt++) {
+-		if (generation != READ_ONCE(mca->pdr_generation))
++		if (generation != pmic_glink_get_generation(mca->client))
+ 			return -ENODEV;
+-		ret = piano_mca_write(mca, MCA_PROP_VDM_BASE + cmd - 1,
+-				      payload, len);
++		ret = piano_mca_write_generation(mca, MCA_PROP_VDM_BASE + cmd - 1,
++						 payload, len, generation);
+ 		if (ret)
+ 			return ret;
+ 		msleep(cmd == 4 || cmd == 5 ? 500 : 5);
+ 		deadline = jiffies + msecs_to_jiffies(1000);
+ 		do {
+-			if (generation != READ_ONCE(mca->pdr_generation))
++			if (generation != pmic_glink_get_generation(mca->client))
+ 				return -ENODEV;
+ 			ret = piano_mca_read(mca, MCA_PROP_BUS_VOLT, &vbus, sizeof(vbus));
+ 			if (ret || le32_to_cpu(vbus) < MCA_VBUS_ONLINE_UV)
+@@ -1097,7 +1119,7 @@ static bool piano_mca_mipps_digest(struct piano_mca *mca,
+ 	 */
+ 	for (id = 0; id < 65536; id++) {
+ 		if (!(id & 255)) {
+-			if (generation != READ_ONCE(mca->pdr_generation))
++			if (generation != pmic_glink_get_generation(mca->client))
+ 				break;
+ 			cond_resched();
+ 		}
+@@ -1114,18 +1136,55 @@ static bool piano_mca_mipps_digest(struct piano_mca *mca,
+ 	return matched;
+ }
+ 
++static int piano_mca_mipps_cleanup(struct piano_mca *mca)
++{
++	int ret;
++
++	if (!mca->mipps_cleanup_pending)
++		return 0;
++
++	/* A restarted ADSP has its own defaults. Never clear its new exchange. */
++	if (mca->mipps_generation != pmic_glink_get_generation(mca->client)) {
++		mca->mipps_cleanup_pending = false;
++		return 0;
++	}
++
++	if (!mca->auth_ok) {
++		ret = piano_mca_write_u32_generation(mca, MCA_PROP_PD_VERIFIED, 0,
++						     mca->mipps_generation);
++		if (ret)
++			goto retry;
++	}
++	ret = piano_mca_write_u32_generation(mca, MCA_PROP_VERIFY_PROCESS, 0,
++					     mca->mipps_generation);
++	if (ret)
++		goto retry;
++
++	mca->mipps_cleanup_pending = false;
++	if (mca->auth_ok)
++		power_supply_changed(mca->usb);
++	return 0;
++
++ retry:
++	dev_warn_ratelimited(mca->dev,
++			     "MiPPS verification cleanup failed (%d); retrying\n", ret);
++	return ret;
++}
++
+ static void piano_mca_mipps_authenticate(struct piano_mca *mca)
+ {
+ 	struct piano_mca_pdo pdos[MCA_PD_MAX_PDOS];
+ 	const struct piano_mipps_key *key;
+ 	u8 message[20], digest[SHA256_DIGEST_SIZE], response[MCA_VDM_LEN];
+ 	__le32 words[MCA_VDM_LEN / 4], version, vbus;
+-	unsigned int generation = READ_ONCE(mca->pdr_generation);
++	unsigned int generation = pmic_glink_get_generation(mca->client);
+ 	u32 adapter_id;
+ 	bool discovered = false, capable = false;
+-	int i, ret;
++	int cleanup_ret, i, ret;
+ 
+-	if (!mipps_auth || mca->mipps_attempted || piano_mca_authenticated(mca) ||
++	if (!mipps_auth || mca->mipps_cleanup_pending ||
++	    (mca->mipps_attempted && mca->mipps_generation == generation) ||
++	    piano_mca_authenticated(mca) ||
+ 	    mca->hv != MCA_HV_OFF || mca->cp != MCA_CP_OFF ||
+ 	    (mca->real_type != MCA_TYPE_PD &&
+ 	     mca->real_type != MCA_TYPE_PD_VERIFY &&
+@@ -1138,10 +1197,15 @@ static void piano_mca_mipps_authenticate(struct piano_mca *mca)
+ 	if (!capable)
+ 		return;
+ 
++	mca->mipps_generation = generation;
+ 	mca->mipps_attempted = true;
+-	ret = piano_mca_write_u32(mca, MCA_PROP_VERIFY_PROCESS, 1);
++	mca->auth_ok = false;
++	/* The flag may be applied even when its reply is lost. */
++	mca->mipps_cleanup_pending = true;
++	ret = piano_mca_write_u32_generation(mca, MCA_PROP_VERIFY_PROCESS, 1,
++					     generation);
+ 	if (ret)
+-		goto out;
++		goto finish;
+ 
+ 	/* A Xiaomi VDM query works as UFP too. Never swap PC/hub data roles. */
+ 	ret = piano_mca_vdm(mca, generation, 1, NULL, 0);
+@@ -1153,7 +1217,7 @@ static void piano_mca_mipps_authenticate(struct piano_mca *mca)
+ 		goto finish;
+ 	}
+ 	discovered = true;
+-	ret = piano_mca_write_u32(mca, MCA_PROP_PD_VERIFIED, 0);
++	ret = piano_mca_write_u32_generation(mca, MCA_PROP_PD_VERIFIED, 0, generation);
+ 	if (ret)
+ 		goto finish;
+ 	for (i = 2; i <= 3; i++) {
+@@ -1189,11 +1253,11 @@ static void piano_mca_mipps_authenticate(struct piano_mca *mca)
+ 		goto finish;
+ 	ret = piano_mca_read(mca, MCA_PROP_BUS_VOLT, &vbus, sizeof(vbus));
+ 	if (ret || le32_to_cpu(vbus) < MCA_VBUS_ONLINE_UV ||
+-	    generation != READ_ONCE(mca->pdr_generation)) {
++	    generation != pmic_glink_get_generation(mca->client)) {
+ 		ret = ret ?: -ENODEV;
+ 		goto finish;
+ 	}
+-	ret = piano_mca_write_u32(mca, MCA_PROP_PD_VERIFIED, 1);
++	ret = piano_mca_write_u32_generation(mca, MCA_PROP_PD_VERIFIED, 1, generation);
+ 	if (!ret) {
+ 		mca->auth_generation = generation;
+ 		mca->auth_ok = true;
+@@ -1201,20 +1265,23 @@ static void piano_mca_mipps_authenticate(struct piano_mca *mca)
+ 		mca->auth_tried = false;
+ 	}
+  finish:
+-	if (generation == READ_ONCE(mca->pdr_generation)) {
++	if (generation == pmic_glink_get_generation(mca->client)) {
+ 		if (ret && discovered) {
+-			piano_mca_write_u32(mca, MCA_PROP_PD_VERIFIED, 0);
++			piano_mca_write_u32_generation(mca, MCA_PROP_PD_VERIFIED, 0,
++						       generation);
+ 			piano_mca_vdm(mca, generation, 7, NULL, 0);
+ 		}
+-		piano_mca_write_u32(mca, MCA_PROP_VERIFY_PROCESS, 0);
+ 	}
++	cleanup_ret = piano_mca_mipps_cleanup(mca);
++	ret = ret ?: cleanup_ret;
++	if (generation != pmic_glink_get_generation(mca->client))
++		ret = -ECONNRESET;
+ 	memzero_explicit(message, sizeof(message));
+ 	memzero_explicit(digest, sizeof(digest));
+ 	memzero_explicit(response, sizeof(response));
+- out:
+ 	if (!ret)
+ 		dev_info(mca->dev, "MiPPS adapter %08x authenticated\n", adapter_id);
+-	else if (discovered)
++	else if (discovered && !mca->auth_ok)
+ 		dev_info(mca->dev,
+ 			 "MiPPS authentication failed (%d); using standard PD/PPS\n", ret);
+ 	power_supply_changed(mca->usb);
+@@ -2112,6 +2179,10 @@ static void piano_mca_poll(struct work_struct *work)
+ 	bool online, changed;
+ 	u32 real_type = MCA_TYPE_UNKNOWN;
+ 
++	/* Finish an uncertain VERIFY_PROCESS write before any charging policy. */
++	if (piano_mca_mipps_cleanup(mca))
++		goto requeue;
++
+ 	piano_mca_sync_otg_config(mca);
+ 	mca->vbus_uv = piano_mca_read_u32(mca, MCA_PROP_BUS_VOLT);
+ 	online = mca->vbus_uv >= MCA_VBUS_ONLINE_UV;
+@@ -2166,7 +2237,7 @@ static void piano_mca_poll(struct work_struct *work)
+ 	 */
+ 	mutex_lock(&mca->pen_boost_lock);
+ 	if (mca->pen_boost_on &&
+-	    mca->pen_boost_generation != READ_ONCE(mca->pdr_generation))
++	    mca->pen_boost_generation != pmic_glink_get_generation(mca->client))
+ 		piano_mca_pen_boost_on(mca);
+ 	mutex_unlock(&mca->pen_boost_lock);
+ 
+@@ -2196,9 +2267,11 @@ static void piano_mca_poll(struct work_struct *work)
+ 		piano_mca_cp_step(mca);
+ 	} else if (charge_policy) {
+ 		piano_mca_mipps_authenticate(mca);
+-		piano_mca_cp_try_start(mca);
+-		if (!piano_mca_cp_active(mca))
+-			piano_mca_apply_policy(mca);
++		if (!mca->mipps_cleanup_pending) {
++			piano_mca_cp_try_start(mca);
++			if (!piano_mca_cp_active(mca))
++				piano_mca_apply_policy(mca);
++		}
+ 	}
+ 	if (changed)
+ 		power_supply_changed(mca->usb);
+@@ -2492,6 +2565,7 @@ static void piano_mca_stop(void *data)
+ 
+ 	/* GLINK callbacks remain registered until later devres cleanup. */
+ 	disable_delayed_work_sync(&mca->poll);
++	piano_mca_mipps_cleanup(mca);
+ 	mutex_lock(&mca->pen_boost_lock);
+ 	if (mca->pen_boost_on)
+ 		piano_mca_pen_boost_off(mca);
+diff --git a/drivers/soc/qcom/pmic_glink.c b/drivers/soc/qcom/pmic_glink.c
+index 0cbc55d79..13c7ffd4d 100644
+--- a/drivers/soc/qcom/pmic_glink.c
++++ b/drivers/soc/qcom/pmic_glink.c
+@@ -44,6 +44,7 @@ struct pmic_glink {
+ 	/* serializing client_state and pdr_state updates */
+ 	struct mutex state_lock;
+ 	unsigned int client_state;
++	unsigned int generation;
+ 	unsigned int pdr_state;
+ 	bool pdr_available;
+ 
+@@ -118,14 +119,12 @@ void pmic_glink_client_register(struct pmic_glink_client *client)
+ }
+ EXPORT_SYMBOL_GPL(pmic_glink_client_register);
+ 
+-int pmic_glink_send(struct pmic_glink_client *client, void *data, size_t len)
++static int pmic_glink_send_locked(struct pmic_glink *pg, void *data, size_t len)
+ {
+-	struct pmic_glink *pg = client->pg;
+ 	bool timeout_reached = false;
+ 	unsigned long start;
+ 	int ret;
+ 
+-	guard(mutex)(&pg->state_lock);
+ 	if (!pg->ept) {
+ 		return -ECONNRESET;
+ 	}
+@@ -147,8 +146,54 @@ int pmic_glink_send(struct pmic_glink_client *client, void *data, size_t len)
+ 
+ 	return ret;
+ }
++
++int pmic_glink_send(struct pmic_glink_client *client, void *data, size_t len)
++{
++	struct pmic_glink *pg = client->pg;
++
++	guard(mutex)(&pg->state_lock);
++	return pmic_glink_send_locked(pg, data, len);
++}
+ EXPORT_SYMBOL_GPL(pmic_glink_send);
+ 
++/**
++ * pmic_glink_get_generation() - Identify the current remote service instance
++ * @client: The client whose service is being used
++ *
++ * The value changes before clients are notified of a service state transition.
++ * It can be read from a PDR callback, which must not take a sleeping lock.
++ */
++unsigned int pmic_glink_get_generation(struct pmic_glink_client *client)
++{
++	return READ_ONCE(client->pg->generation);
++}
++EXPORT_SYMBOL_GPL(pmic_glink_get_generation);
++
++/**
++ * pmic_glink_send_generation() - Send only to the expected service instance
++ * @client: The client sending the message
++ * @data: Message payload
++ * @len: Payload length
++ * @generation: Value previously returned by pmic_glink_get_generation()
++ *
++ * State transitions and the send share state_lock, so a restarted service
++ * cannot receive a message intended for its predecessor. The caller still
++ * needs to check its generation when processing a response.
++ */
++int pmic_glink_send_generation(struct pmic_glink_client *client, void *data,
++			       size_t len, unsigned int generation)
++{
++	struct pmic_glink *pg = client->pg;
++
++	guard(mutex)(&pg->state_lock);
++	if (pg->generation != generation ||
++	    pg->client_state != SERVREG_SERVICE_STATE_UP)
++		return -ECONNRESET;
++
++	return pmic_glink_send_locked(pg, data, len);
++}
++EXPORT_SYMBOL_GPL(pmic_glink_send_generation);
++
+ static int pmic_glink_rpmsg_callback(struct rpmsg_device *rpdev, void *data,
+ 				     int len, void *priv, u32 addr)
+ {
+@@ -225,6 +270,7 @@ static void pmic_glink_state_notify_clients(struct pmic_glink *pg)
+ 	}
+ 
+ 	if (new_state != pg->client_state) {
++		WRITE_ONCE(pg->generation, pg->generation + 1);
+ 		spin_lock_irqsave(&pg->client_lock, flags);
+ 		list_for_each_entry(client, &pg->clients, node)
+ 			client->pdr_notify(client->priv, new_state);
+diff --git a/include/linux/soc/qcom/pmic_glink.h b/include/linux/soc/qcom/pmic_glink.h
+index 7cddf1027..f50208825 100644
+--- a/include/linux/soc/qcom/pmic_glink.h
++++ b/include/linux/soc/qcom/pmic_glink.h
+@@ -22,6 +22,9 @@ struct pmic_glink_hdr {
+ };
+ 
+ int pmic_glink_send(struct pmic_glink_client *client, void *data, size_t len);
++unsigned int pmic_glink_get_generation(struct pmic_glink_client *client);
++int pmic_glink_send_generation(struct pmic_glink_client *client, void *data,
++			       size_t len, unsigned int generation);
+ 
+ struct pmic_glink_client *devm_pmic_glink_client_alloc(struct device *dev,
+ 						       unsigned int id,
+-- 
+2.55.0
+

@@ -1,0 +1,40 @@
+From 9243cfefba6ac7c70cfed9f9c07c93b08978651c Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 09:13:00 +0800
+Subject: [PATCH] fix(power-supply): clear MiPPS proof when VBUS disappears
+
+The CP worker can observe VBUS loss before UCSI reports disconnect.
+Retain pending firmware cleanup before discarding the local attempt,
+so subsequent connector events cannot lose PD_VERIFIED clearing.
+Handle the long-disconnect fallback in the same way.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/power/supply/piano_mca.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index e78ee14f9..43eb272e7 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -2384,6 +2384,8 @@ static void piano_mca_poll(struct work_struct *work)
+ 		/* away longer than a reset takes: another attach */
+ 		if (time_after(jiffies, mca->cp_off_at +
+ 				msecs_to_jiffies(MCA_CP_DROP_FORGET_MS))) {
++			if (mca->mipps_attempted)
++				mca->mipps_cleanup_pending = true;
+ 			mca->auth_ok = false;
+ 			mca->mipps_attempted = false;
+ 		}
+@@ -2426,6 +2428,8 @@ static void piano_mca_poll(struct work_struct *work)
+ 		 */
+ 		if (!piano_mca_auth_pending(mca) ||
+ 		    power_supply_for_each_psy(mca, piano_mca_ucsi_status) < MCA_UCSI_CONNECTED) {
++			if (mca->mipps_attempted)
++				mca->mipps_cleanup_pending = true;
+ 			mca->auth_ok = false;
+ 			mca->mipps_attempted = false;
+ 		}
+-- 
+2.55.0
+

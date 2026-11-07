@@ -1,0 +1,547 @@
+From e2c653992c43891e1934834785be818cfd92261c Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 02:58:21 +0800
+Subject: [PATCH] fix(power-supply): invalidate MCA authentication on UCSI
+ connection events
+
+Deliver physical UCSI connection changes synchronously through the power supply notifier instead of inferring attachment from sampled VBUS. Preserve every processed connection edge even when property notifications coalesce.
+
+Bind authentication attempts, VDM writes and verified results to the attachment generation. Recheck after acquiring the transaction mutex and after replies. Reset old CP/HV policy on a new attachment while retaining authentication through ordinary PD voltage resets.
+---
+ drivers/power/supply/piano_mca.c         | 183 +++++++++++++++++++----
+ drivers/power/supply/power_supply_core.c |  18 +++
+ drivers/usb/typec/ucsi/psy.c             |   8 +
+ drivers/usb/typec/ucsi/ucsi.c            |   6 +-
+ drivers/usb/typec/ucsi/ucsi.h            |   2 +
+ include/linux/power_supply.h             |   2 +
+ 6 files changed, 186 insertions(+), 33 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 5f22985c5..799a14527 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -30,6 +30,7 @@
+  * the charger type detected by the ADSP).
+  */
+ 
++#include <linux/atomic.h>
+ #include <linux/auxiliary_bus.h>
+ #include <linux/completion.h>
+ #include <linux/debugfs.h>
+@@ -43,6 +44,7 @@
+ #include <linux/regulator/driver.h>
+ #include <linux/of.h>
+ #include <linux/seq_file.h>
++#include <linux/string.h>
+ #include <linux/unaligned.h>
+ #include <linux/workqueue.h>
+ #include <linux/soc/qcom/pdr.h>
+@@ -458,6 +460,9 @@ struct piano_mca {
+ 	u8 data[MCA_DATA_LEN];
+ 	struct power_supply *usb;
+ 	struct delayed_work poll;
++	struct notifier_block connection_notifier;
++	atomic_t connection_generation;
++	unsigned int polled_connection_generation;
+ 	bool online;
+ 	int vbus_uv;
+ 	int ibus_ua;
+@@ -495,7 +500,8 @@ struct piano_mca {
+ 	unsigned int auth_generation;
+ 	bool mipps_attempted;	/* one exchange per physical attachment */
+ 	unsigned int mipps_generation;
+-	bool mipps_cleanup_pending;	/* VERIFY_PROCESS clear not yet acknowledged */
++	unsigned int mipps_connection_generation;
++	bool mipps_cleanup_pending;	/* authentication flags not yet cleared */
+ 	struct mutex pen_boost_lock;
+ 	bool pen_boost_on;
+ 	unsigned int pen_boost_generation;
+@@ -514,10 +520,51 @@ struct piano_mca {
+ 	int dbg_ret;
+ };
+ 
++static unsigned int piano_mca_connection_generation(struct piano_mca *mca)
++{
++	return atomic_read(&mca->connection_generation);
++}
++
++static int piano_mca_connection_changed(struct notifier_block *nb,
++					unsigned long event, void *data)
++{
++	struct piano_mca *mca = container_of(nb, struct piano_mca,
++						connection_notifier);
++	struct power_supply *psy = data;
++	struct device *parent = psy->dev.parent;
++
++	if (event != PSY_EVENT_CONNECTION_CHANGED ||
++	    !parent || parent->parent != mca->dev->parent ||
++	    psy->desc->type != POWER_SUPPLY_TYPE_USB ||
++	    !str_has_prefix(psy->desc->name, "ucsi-source-psy-"))
++		return NOTIFY_DONE;
++
++	/* Preserve physical changes even while the worker waits for an answer. */
++	atomic_inc(&mca->connection_generation);
++	mod_delayed_work(system_percpu_wq, &mca->poll, 0);
++	return NOTIFY_OK;
++}
++
++static void piano_mca_unregister_connection_notifier(void *data)
++{
++	struct piano_mca *mca = data;
++
++	power_supply_unreg_notifier(&mca->connection_notifier);
++}
++
++static bool piano_mca_session_valid(struct piano_mca *mca,
++				    unsigned int generation,
++				    unsigned int connection)
++{
++	return generation == pmic_glink_get_generation(mca->client) &&
++	       connection == piano_mca_connection_generation(mca);
++}
++
+ static bool piano_mca_authenticated(struct piano_mca *mca)
+ {
+ 	return mca->auth_ok && !mca->mipps_cleanup_pending &&
+-	       mca->auth_generation == pmic_glink_get_generation(mca->client);
++	       piano_mca_session_valid(mca, mca->auth_generation,
++				       mca->mipps_connection_generation);
+ }
+ 
+ static void piano_mca_callback(const void *data, size_t len, void *priv)
+@@ -687,7 +734,8 @@ static int piano_mca_pan_init(struct piano_mca *mca)
+  * to @buf; a write sends @len bytes of @buf.
+  */
+ static int piano_mca_xfer(struct piano_mca *mca, u32 opcode, u32 prop,
+-			  void *buf, size_t len, unsigned int generation)
++			  void *buf, size_t len, unsigned int generation,
++			  unsigned int connection)
+ {
+ 	struct mca_req req = {
+ 		.owner = cpu_to_le32(PMIC_GLINK_OWNER_BATTMGR),
+@@ -712,7 +760,8 @@ static int piano_mca_xfer(struct piano_mca *mca, u32 opcode, u32 prop,
+ 		memcpy(req.data, buf, len);
+ 
+ 	mutex_lock(&mca->lock);
+-	if (!mca->service_up) {
++	if (!mca->service_up ||
++	    !piano_mca_session_valid(mca, generation, connection)) {
+ 		ret = -ENODEV;
+ 		goto out;
+ 	}
+@@ -730,7 +779,7 @@ static int piano_mca_xfer(struct piano_mca *mca, u32 opcode, u32 prop,
+ 		ret = -ETIMEDOUT;
+ 		goto out;
+ 	}
+-	if (generation != pmic_glink_get_generation(mca->client)) {
++	if (!piano_mca_session_valid(mca, generation, connection)) {
+ 		ret = -ECONNRESET;
+ 		goto out;
+ 	}
+@@ -747,7 +796,8 @@ static int piano_mca_xfer(struct piano_mca *mca, u32 opcode, u32 prop,
+ static int piano_mca_read(struct piano_mca *mca, u32 prop, void *buf, size_t len)
+ {
+ 	return piano_mca_xfer(mca, MCA_OP_READ, prop, buf, len,
+-			      pmic_glink_get_generation(mca->client));
++			      pmic_glink_get_generation(mca->client),
++			      piano_mca_connection_generation(mca));
+ }
+ 
+ /*
+@@ -824,9 +874,10 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
+ }
+ 
+ /* Every write passes the allowlist and is bound to one ADSP instance. */
+-static int piano_mca_write_generation(struct piano_mca *mca, u32 prop,
+-				      const void *data, size_t len,
+-				      unsigned int generation)
++static int piano_mca_write_session(struct piano_mca *mca, u32 prop,
++				   const void *data, size_t len,
++				   unsigned int generation,
++				   unsigned int connection)
+ {
+ 	u8 buf[MCA_VDM_LEN];
+ 
+@@ -834,7 +885,26 @@ static int piano_mca_write_generation(struct piano_mca *mca, u32 prop,
+ 		return -EPERM;
+ 
+ 	memcpy(buf, data, len);
+-	return piano_mca_xfer(mca, MCA_OP_WRITE, prop, buf, len, generation);
++	return piano_mca_xfer(mca, MCA_OP_WRITE, prop, buf, len,
++			      generation, connection);
++}
++
++static int piano_mca_write_generation(struct piano_mca *mca, u32 prop,
++				      const void *data, size_t len,
++				      unsigned int generation)
++{
++	return piano_mca_write_session(mca, prop, data, len, generation,
++				       piano_mca_connection_generation(mca));
++}
++
++static int piano_mca_write_u32_session(struct piano_mca *mca, u32 prop,
++				       u32 val, unsigned int generation,
++				       unsigned int connection)
++{
++	__le32 data = cpu_to_le32(val);
++
++	return piano_mca_write_session(mca, prop, &data, sizeof(data),
++				       generation, connection);
+ }
+ 
+ static int piano_mca_write(struct piano_mca *mca, u32 prop, const void *data,
+@@ -1050,6 +1120,7 @@ static int piano_mca_register_pen_supply(struct piano_mca *mca)
+  * command order. The transport and charging policy remain in this driver.
+  */
+ static int piano_mca_vdm(struct piano_mca *mca, unsigned int generation,
++			 unsigned int connection,
+ 			 unsigned int cmd, const u8 *bytes, u32 flag)
+ {
+ 	__le32 payload[MCA_VDM_LEN / 4] = {};
+@@ -1068,16 +1139,16 @@ static int piano_mca_vdm(struct piano_mca *mca, unsigned int generation,
+ 
+ 	/* Stock batterysecret retries an unanswered command once. */
+ 	for (attempt = 0; attempt < 2; attempt++) {
+-		if (generation != pmic_glink_get_generation(mca->client))
++		if (!piano_mca_session_valid(mca, generation, connection))
+ 			return -ENODEV;
+-		ret = piano_mca_write_generation(mca, MCA_PROP_VDM_BASE + cmd - 1,
+-						 payload, len, generation);
++		ret = piano_mca_write_session(mca, MCA_PROP_VDM_BASE + cmd - 1,
++					      payload, len, generation, connection);
+ 		if (ret)
+ 			return ret;
+ 		msleep(cmd == 4 || cmd == 5 ? 500 : 5);
+ 		deadline = jiffies + msecs_to_jiffies(1000);
+ 		do {
+-			if (generation != pmic_glink_get_generation(mca->client))
++			if (!piano_mca_session_valid(mca, generation, connection))
+ 				return -ENODEV;
+ 			ret = piano_mca_read(mca, MCA_PROP_BUS_VOLT, &vbus, sizeof(vbus));
+ 			if (ret || le32_to_cpu(vbus) < MCA_VBUS_ONLINE_UV)
+@@ -1097,7 +1168,8 @@ static bool piano_mca_mipps_digest(struct piano_mca *mca,
+ 				  const struct piano_mipps_key *key,
+ 				  u8 message[20], const u8 response[MCA_VDM_LEN],
+ 				  u8 digest[SHA256_DIGEST_SIZE], u32 *adapter_id,
+-				  unsigned int generation)
++				  unsigned int generation,
++				  unsigned int connection)
+ {
+ 	struct hmac_sha256_key prepared;
+ 	u32 id;
+@@ -1119,7 +1191,7 @@ static bool piano_mca_mipps_digest(struct piano_mca *mca,
+ 	 */
+ 	for (id = 0; id < 65536; id++) {
+ 		if (!(id & 255)) {
+-			if (generation != pmic_glink_get_generation(mca->client))
++			if (!piano_mca_session_valid(mca, generation, connection))
+ 				break;
+ 			cond_resched();
+ 		}
+@@ -1178,12 +1250,14 @@ static void piano_mca_mipps_authenticate(struct piano_mca *mca)
+ 	u8 message[20], digest[SHA256_DIGEST_SIZE], response[MCA_VDM_LEN];
+ 	__le32 words[MCA_VDM_LEN / 4], version, vbus;
+ 	unsigned int generation = pmic_glink_get_generation(mca->client);
++	unsigned int connection = piano_mca_connection_generation(mca);
+ 	u32 adapter_id;
+ 	bool discovered = false, capable = false;
+ 	int cleanup_ret, i, ret;
+ 
+ 	if (!mipps_auth || mca->mipps_cleanup_pending ||
+-	    (mca->mipps_attempted && mca->mipps_generation == generation) ||
++	    (mca->mipps_attempted && mca->mipps_generation == generation &&
++	     mca->mipps_connection_generation == connection) ||
+ 	    piano_mca_authenticated(mca) ||
+ 	    mca->hv != MCA_HV_OFF || mca->cp != MCA_CP_OFF ||
+ 	    (mca->real_type != MCA_TYPE_PD &&
+@@ -1194,21 +1268,22 @@ static void piano_mca_mipps_authenticate(struct piano_mca *mca)
+ 		return;
+ 	for (i = 0; i < MCA_PD_MAX_PDOS; i++)
+ 		capable |= le32_to_cpu(pdos[i].max_mv) > 5000;
+-	if (!capable)
++	if (!capable || !piano_mca_session_valid(mca, generation, connection))
+ 		return;
+ 
+ 	mca->mipps_generation = generation;
++	mca->mipps_connection_generation = connection;
+ 	mca->mipps_attempted = true;
+ 	mca->auth_ok = false;
+ 	/* The flag may be applied even when its reply is lost. */
+ 	mca->mipps_cleanup_pending = true;
+-	ret = piano_mca_write_u32_generation(mca, MCA_PROP_VERIFY_PROCESS, 1,
+-					     generation);
++	ret = piano_mca_write_u32_session(mca, MCA_PROP_VERIFY_PROCESS, 1,
++					  generation, connection);
+ 	if (ret)
+ 		goto finish;
+ 
+ 	/* A Xiaomi VDM query works as UFP too. Never swap PC/hub data roles. */
+-	ret = piano_mca_vdm(mca, generation, 1, NULL, 0);
++	ret = piano_mca_vdm(mca, generation, connection, 1, NULL, 0);
+ 	if (ret)
+ 		goto finish;
+ 	ret = piano_mca_read(mca, MCA_PROP_VDM_VERSION, &version, sizeof(version));
+@@ -1217,21 +1292,22 @@ static void piano_mca_mipps_authenticate(struct piano_mca *mca)
+ 		goto finish;
+ 	}
+ 	discovered = true;
+-	ret = piano_mca_write_u32_generation(mca, MCA_PROP_PD_VERIFIED, 0, generation);
++	ret = piano_mca_write_u32_session(mca, MCA_PROP_PD_VERIFIED, 0,
++					  generation, connection);
+ 	if (ret)
+ 		goto finish;
+ 	for (i = 2; i <= 3; i++) {
+-		ret = piano_mca_vdm(mca, generation, i, NULL, 0);
++		ret = piano_mca_vdm(mca, generation, connection, i, NULL, 0);
+ 		if (ret)
+ 			goto finish;
+ 	}
+ 
+ 	key = &piano_mipps_keys[get_random_u32_below(ARRAY_SIZE(piano_mipps_keys))];
+ 	get_random_bytes(message, MCA_VDM_LEN);
+-	ret = piano_mca_vdm(mca, generation, 4, key->seed, 0);
++	ret = piano_mca_vdm(mca, generation, connection, 4, key->seed, 0);
+ 	if (ret)
+ 		goto finish;
+-	ret = piano_mca_vdm(mca, generation, 5, message, 0);
++	ret = piano_mca_vdm(mca, generation, connection, 5, message, 0);
+ 	if (ret)
+ 		goto finish;
+ 	ret = piano_mca_read(mca, MCA_PROP_VDM_AUTH, words, sizeof(words));
+@@ -1241,23 +1317,24 @@ static void piano_mca_mipps_authenticate(struct piano_mca *mca)
+ 		put_unaligned_be32(le32_to_cpu(words[i]), response + 4 * i);
+ 	adapter_id = piano_mca_read_u32(mca, MCA_PROP_ADAPTER_ID);
+ 	if (!piano_mca_mipps_digest(mca, key, message, response, digest,
+-				    &adapter_id, generation)) {
++				    &adapter_id, generation, connection)) {
+ 		ret = -EKEYREJECTED;
+ 		goto finish;
+ 	}
+ 
+ 	/* Piano batterysecret sends 7 then 6. Command 8 stalls this firmware. */
+-	ret = piano_mca_vdm(mca, generation, 7, NULL, 1);
+-	ret = ret ?: piano_mca_vdm(mca, generation, 6, NULL, 1);
++	ret = piano_mca_vdm(mca, generation, connection, 7, NULL, 1);
++	ret = ret ?: piano_mca_vdm(mca, generation, connection, 6, NULL, 1);
+ 	if (ret)
+ 		goto finish;
+ 	ret = piano_mca_read(mca, MCA_PROP_BUS_VOLT, &vbus, sizeof(vbus));
+ 	if (ret || le32_to_cpu(vbus) < MCA_VBUS_ONLINE_UV ||
+-	    generation != pmic_glink_get_generation(mca->client)) {
++	    !piano_mca_session_valid(mca, generation, connection)) {
+ 		ret = ret ?: -ENODEV;
+ 		goto finish;
+ 	}
+-	ret = piano_mca_write_u32_generation(mca, MCA_PROP_PD_VERIFIED, 1, generation);
++	ret = piano_mca_write_u32_session(mca, MCA_PROP_PD_VERIFIED, 1,
++					  generation, connection);
+ 	if (!ret) {
+ 		mca->auth_generation = generation;
+ 		mca->auth_ok = true;
+@@ -1265,11 +1342,15 @@ static void piano_mca_mipps_authenticate(struct piano_mca *mca)
+ 		mca->auth_tried = false;
+ 	}
+  finish:
++	if (!piano_mca_session_valid(mca, generation, connection)) {
++		mca->auth_ok = false;
++		ret = -ENODEV;
++	}
+ 	if (generation == pmic_glink_get_generation(mca->client)) {
+ 		if (ret && discovered) {
+ 			piano_mca_write_u32_generation(mca, MCA_PROP_PD_VERIFIED, 0,
+ 						       generation);
+-			piano_mca_vdm(mca, generation, 7, NULL, 0);
++			piano_mca_vdm(mca, generation, connection, 7, NULL, 0);
+ 		}
+ 	}
+ 	cleanup_ret = piano_mca_mipps_cleanup(mca);
+@@ -2173,12 +2254,35 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 	}
+ }
+ 
++static void piano_mca_sync_connection(struct piano_mca *mca)
++{
++	unsigned int connection = piano_mca_connection_generation(mca);
++
++	if (mca->polled_connection_generation == connection)
++		return;
++
++	/* VBUS may already be back: discard policy learned from the old source. */
++	mca->auth_ok = false;
++	if (mca->mipps_attempted)
++		mca->mipps_cleanup_pending = true;
++	mca->mipps_attempted = false;
++	mca->auth_tried = false;
++	piano_mca_cp_stop(mca, "connection changed");
++	mca->cp = MCA_CP_OFF;
++	mca->cp_ibus_cap = 0;
++	mca->hv = MCA_HV_OFF;
++	mca->hv_renegs = 0;
++	mca->online = false;
++	mca->polled_connection_generation = connection;
++}
++
+ static void piano_mca_poll(struct work_struct *work)
+ {
+ 	struct piano_mca *mca = container_of(work, struct piano_mca, poll.work);
+ 	bool online, changed;
+ 	u32 real_type = MCA_TYPE_UNKNOWN;
+ 
++	piano_mca_sync_connection(mca);
+ 	/* Finish an uncertain VERIFY_PROCESS write before any charging policy. */
+ 	if (piano_mca_mipps_cleanup(mca))
+ 		goto requeue;
+@@ -2241,6 +2345,9 @@ static void piano_mca_poll(struct work_struct *work)
+ 		piano_mca_pen_boost_on(mca);
+ 	mutex_unlock(&mca->pen_boost_lock);
+ 
++	if (mca->polled_connection_generation != piano_mca_connection_generation(mca))
++		goto requeue;
++
+ 	if (!online) {
+ 		/* UCSI ONLINE follows the connector, not VBUS. Preserve an
+ 		 * authentication reset only while its cable remains connected.
+@@ -2267,7 +2374,8 @@ static void piano_mca_poll(struct work_struct *work)
+ 		piano_mca_cp_step(mca);
+ 	} else if (charge_policy) {
+ 		piano_mca_mipps_authenticate(mca);
+-		if (!mca->mipps_cleanup_pending) {
++		if (!mca->mipps_cleanup_pending &&
++		    mca->polled_connection_generation == piano_mca_connection_generation(mca)) {
+ 			piano_mca_cp_try_start(mca);
+ 			if (!piano_mca_cp_active(mca))
+ 				piano_mca_apply_policy(mca);
+@@ -2743,6 +2851,7 @@ static int piano_mca_probe(struct auxiliary_device *adev,
+ 	mutex_init(&mca->pen_boost_lock);
+ 	init_completion(&mca->ack);
+ 	INIT_DELAYED_WORK(&mca->poll, piano_mca_poll);
++	atomic_set(&mca->connection_generation, 0);
+ 
+ 	/* Allocated first so it outlives the poll work on unbind */
+ 	mca->client = devm_pmic_glink_client_alloc(dev, PMIC_GLINK_OWNER_BATTMGR,
+@@ -2774,6 +2883,16 @@ static int piano_mca_probe(struct auxiliary_device *adev,
+ 			    &piano_mca_dbg_summary_fops);
+ 	devm_add_action_or_reset(dev, piano_mca_dbg_remove, mca->dbg);
+ 
++	/* Resources are ready; unregister before the earlier poll-stop action. */
++	mca->connection_notifier.notifier_call = piano_mca_connection_changed;
++	ret = power_supply_reg_notifier(&mca->connection_notifier);
++	if (ret)
++		return ret;
++	ret = devm_add_action_or_reset(dev, piano_mca_unregister_connection_notifier,
++				       mca);
++	if (ret)
++		return ret;
++
+ 	pmic_glink_client_register(mca->client);
+ 
+ 	if (pan_ack)
+diff --git a/drivers/power/supply/power_supply_core.c b/drivers/power/supply/power_supply_core.c
+index 127978564..c45a7f1e0 100644
+--- a/drivers/power/supply/power_supply_core.c
++++ b/drivers/power/supply/power_supply_core.c
+@@ -161,6 +161,24 @@ void power_supply_changed(struct power_supply *psy)
+ }
+ EXPORT_SYMBOL_GPL(power_supply_changed);
+ 
++/**
++ * power_supply_connection_changed - Report a physical connection change
++ * @psy: the power supply whose connection changed
++ *
++ * Notify listeners synchronously before queuing the ordinary property update.
++ * Unlike property notifications, connection changes must not be coalesced: a
++ * disconnect and reconnect can invalidate state even when ONLINE stays true
++ * by the time the queued update runs. Callers must be in sleepable context;
++ * listeners must not query properties requiring locks held by the caller.
++ */
++void power_supply_connection_changed(struct power_supply *psy)
++{
++	blocking_notifier_call_chain(&power_supply_notifier,
++				     PSY_EVENT_CONNECTION_CHANGED, psy);
++	power_supply_changed(psy);
++}
++EXPORT_SYMBOL_GPL(power_supply_connection_changed);
++
+ /*
+  * Notify that power supply was registered after parent finished the probing.
+  *
+diff --git a/drivers/usb/typec/ucsi/psy.c b/drivers/usb/typec/ucsi/psy.c
+index c8ebab8ba..ba8592a4e 100644
+--- a/drivers/usb/typec/ucsi/psy.c
++++ b/drivers/usb/typec/ucsi/psy.c
+@@ -353,3 +353,11 @@ void ucsi_port_psy_changed(struct ucsi_connector *con)
+ 
+ 	power_supply_changed(con->psy);
+ }
++
++void ucsi_port_psy_connection_changed(struct ucsi_connector *con)
++{
++	if (IS_ERR_OR_NULL(con->psy))
++		return;
++
++	power_supply_connection_changed(con->psy);
++}
+diff --git a/drivers/usb/typec/ucsi/ucsi.c b/drivers/usb/typec/ucsi/ucsi.c
+index 239693f92..c88cd023a 100644
+--- a/drivers/usb/typec/ucsi/ucsi.c
++++ b/drivers/usb/typec/ucsi/ucsi.c
+@@ -1390,6 +1390,9 @@ static int ucsi_check_connection(struct ucsi_connector *con)
+ 		return ret;
+ 	}
+ 
++	if (prev_state != UCSI_CONSTAT(con, CONNECTED))
++		ucsi_port_psy_connection_changed(con);
++
+ 	if (UCSI_CONSTAT(con, CONNECTED)) {
+ 		if (prev_state)
+ 			return 0;
+@@ -1493,7 +1496,8 @@ static void ucsi_handle_connector_change(struct work_struct *work)
+ 
+ 	if (change & UCSI_CONSTAT_CONNECT_CHANGE) {
+ 		typec_set_pwr_role(con->port, role);
+-		ucsi_port_psy_changed(con);
++		/* Preserve the event even if a quick reconnect is already online. */
++		ucsi_port_psy_connection_changed(con);
+ 		ucsi_partner_change(con);
+ 		ucsi_orientation(con);
+ 
+diff --git a/drivers/usb/typec/ucsi/ucsi.h b/drivers/usb/typec/ucsi/ucsi.h
+index dc594388d..3da45fd55 100644
+--- a/drivers/usb/typec/ucsi/ucsi.h
++++ b/drivers/usb/typec/ucsi/ucsi.h
+@@ -595,10 +595,12 @@ int ucsi_sync_control_common(struct ucsi *ucsi, u64 command, u32 *cci,
+ int ucsi_register_port_psy(struct ucsi_connector *con);
+ void ucsi_unregister_port_psy(struct ucsi_connector *con);
+ void ucsi_port_psy_changed(struct ucsi_connector *con);
++void ucsi_port_psy_connection_changed(struct ucsi_connector *con);
+ #else
+ static inline int ucsi_register_port_psy(struct ucsi_connector *con) { return 0; }
+ static inline void ucsi_unregister_port_psy(struct ucsi_connector *con) { }
+ static inline void ucsi_port_psy_changed(struct ucsi_connector *con) { }
++static inline void ucsi_port_psy_connection_changed(struct ucsi_connector *con) { }
+ #endif /* CONFIG_POWER_SUPPLY */
+ 
+ #if IS_ENABLED(CONFIG_TYPEC_DP_ALTMODE)
+diff --git a/include/linux/power_supply.h b/include/linux/power_supply.h
+index 0a4ea490d..36edda34d 100644
+--- a/include/linux/power_supply.h
++++ b/include/linux/power_supply.h
+@@ -229,6 +229,7 @@ enum power_supply_charge_behaviour {
+ 
+ enum power_supply_notifier_events {
+ 	PSY_EVENT_PROP_CHANGED,
++	PSY_EVENT_CONNECTION_CHANGED,
+ };
+ 
+ union power_supply_propval {
+@@ -887,6 +888,7 @@ power_supply_get_maintenance_charging_setting(struct power_supply_battery_info *
+ extern bool power_supply_battery_bti_in_range(struct power_supply_battery_info *info,
+ 					      int resistance);
+ extern void power_supply_changed(struct power_supply *psy);
++void power_supply_connection_changed(struct power_supply *psy);
+ extern int power_supply_am_i_supplied(struct power_supply *psy);
+ int power_supply_get_property_from_supplier(struct power_supply *psy,
+ 					    enum power_supply_property psp,
+-- 
+2.55.0
+
