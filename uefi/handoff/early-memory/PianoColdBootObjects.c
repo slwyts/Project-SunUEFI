@@ -185,7 +185,22 @@ STATIC EFI_STATUS ColdParseGunyah(CONST COLD_DTB *D,PIANO_GUNYAH_BOOT_INFO *Info
   if(Token==1){
    CHAR8 Name[128];UINT32 Used;
    E=ColdString(At,Limit,Name,sizeof(Name),&Used);if(E!=EFI_SUCCESS)return E;
-   if(Depth==1)Hypervisor=!AsciiStrCmp(Name,"hypervisor");
+    if(Depth==1)Hypervisor=!AsciiStrCmp(Name,"hypervisor");
+    if(Depth==1&&!Hypervisor){
+     /* Other root subtrees cannot contain /hypervisor's direct children.
+      * Skip property payloads and nested node names without fetching every
+      * property's name from the distant strings block. Alternating the two
+      * 256-byte caches for the whole SoC tree exhausted the cold deadline. */
+     UINT32 Skip=ALIGN_VALUE(At+Used,4),Nesting=1;
+     while(Nesting){UINT32 Kind;E=ColdDtbWord(Skip,&Kind);if(E!=EFI_SUCCESS)return E;Skip+=4;
+      if(Kind==1){CHAR8 Nested[128];UINT32 Taken;E=ColdString(Skip,Limit,Nested,sizeof(Nested),&Taken);if(E!=EFI_SUCCESS)return E;Skip=ALIGN_VALUE(Skip+Taken,4);if(++Nesting>64)return EFI_COMPROMISED_DATA;}
+      else if(Kind==2)--Nesting;
+      else if(Kind==3){UINT32 Bytes;if(Skip>Limit||Limit-Skip<8)return EFI_COMPROMISED_DATA;E=ColdDtbWord(Skip,&Bytes);if(E!=EFI_SUCCESS)return E;Skip+=8;if(Bytes>Limit-Skip)return EFI_COMPROMISED_DATA;Skip=ALIGN_VALUE(Skip+Bytes,4);}
+      else if(Kind!=4)return EFI_COMPROMISED_DATA;
+      if(Skip>Limit)return EFI_COMPROMISED_DATA;
+     }
+     At=Skip;continue;
+    }
    if(Hypervisor&&Depth==2){
     ZeroMem(&Child,sizeof(Child));Rm=GotReg=GotIrq=FALSE;
     VmNode=!AsciiStrCmp(Name,"qcom,gunyah-vm");
@@ -270,11 +285,16 @@ EFI_STATUS PianoColdBootObjectsObserve(VOID){
  if(A.End<=A.Start||A.End-A.Start>0x10000000||!ColdInput(A.Start,A.End-A.Start))return ColdFinish(EFI_NOT_READY,PianoColdReasonInitrd);
  CopyMem(mCold.DtbHeader,A.Header,40);mCold.DtbBytes=A.Bytes;mCold.DtbHeaderCrc32=PianoEarlyMemoryBytesCrc32(A.Header,40);mCold.InitrdStart=A.Start;mCold.InitrdEnd=A.End;
  mCold.FactoryPanel=A.Panel;mCold.FactoryBootargsBytes=A.BootargsBytes;mCold.FactoryBootargsCrc32=A.BootargsCrc32;mCold.FactoryPanelArguments=A.PanelArguments;
+ /* The required boot-object snapshot is complete here. Gunyah is optional;
+  * its independent scan must not turn a coherent chosen/initrd snapshot into
+  * a timeout merely because the complete SoC DT has many unrelated nodes. */
+ E=ColdFresh();if(E!=EFI_SUCCESS)return ColdFinish(E,PianoColdReasonCpu);
+ mCold.Coherent=TRUE;
  PIANO_GUNYAH_BOOT_INFO Ga,Gb;
  if(ColdParseGunyah(&A,&Ga)==EFI_SUCCESS&&ColdParseGunyah(&B,&Gb)==EFI_SUCCESS&&
     !CompareMem(&Ga,&Gb,sizeof(Ga)))CopyMem(&mCold.Gunyah,&Ga,sizeof(Ga));
  ColdAdd(PianoColdObjectFactoryDtb,H->Dtb,A.Bytes);ColdAdd(PianoColdObjectCombinedInitrd,A.Start,A.End-A.Start);
- E=ColdFresh();if(E!=EFI_SUCCESS)return ColdFinish(E,PianoColdReasonCpu);ColdCpu(&mCold.After);mCold.Coherent=TRUE;return ColdFinish(EFI_SUCCESS,PianoColdReasonNone);
+ ColdCpu(&mCold.After);return ColdFinish(EFI_SUCCESS,PianoColdReasonNone);
 }
 EFI_STATUS PianoColdBootObjectsPublishHob(VOID){
  if(!mCold.Finished||mCold.Published)return EFI_NOT_READY;
