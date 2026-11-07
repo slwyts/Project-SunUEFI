@@ -32,6 +32,11 @@ def inputs_current(output):
 
 
 def expected_uapi_digest(source, commit):
+    policy = json.loads((ROOT / 'config/release.json').read_text())['kernel']
+    release = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor',
+                              policy['base_commit'], commit], capture_output=True)
+    if release.returncode == 0 and policy.get('uapi_sha256'):
+        return policy['uapi_sha256']
     current = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor',
                               LINUX_73_COMMIT, commit], capture_output=True)
     if current.returncode == 0:
