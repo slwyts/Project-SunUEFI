@@ -572,6 +572,14 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
             EFI_STATUS Disarm=PianoLateHandoffDisarm(&mLateHandoff);if(Disarm!=EFI_SUCCESS)FailStop(Disarm);
           }
           PianoSetStandardKeyNavigation(PreviousNavigation);
+          // Updating the firmware must not require overwriting an installed
+          // ESP. Use the existing raw loader only if no EFI manager was found;
+          // never fall through after running a failed or rejected EFI image.
+          if(Status==EFI_NOT_FOUND&&!mSystemdApplication.StartCalled){
+            mSystemdEsp=NULL;
+            Status=CompleteCoreAction(Image,Runtime,Image);
+            FailStop(Status==EFI_SUCCESS?EFI_ABORTED:Status);
+          }
         }
         DEBUG((DEBUG_WARN,"PIANO_SYSTEMD_BOOT_RETURN status=%r\n",Status));
         mSystemdEsp=NULL;
