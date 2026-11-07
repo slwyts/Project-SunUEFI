@@ -4,7 +4,6 @@
 // chip-ID trim loop, nvt_download_firmware_hw_crc, poll info, fw info, IRQ.
 // Like that driver, no reset GPIO, regulator or panel command is touched
 #include "PianoTouchService.h"
-#include "PianoGeniSpiPio.h"
 #include "PianoTouchNvt.h"
 #include "PianoTouchMatrix.h"
 #include "PianoTouchFirmware.h"
@@ -19,7 +18,8 @@
 #include <Library/DebugLib.h>
 #include <Library/FdtLib.h>
 
-#define SPI_MAX_HZ 19200000U
+#define TOUCH_SE 0xA88000U
+#define FIRMWARE_CHUNK 512U
 #define FRAME_MIN_GAP_US 16000U
 #define POLL_NO_IRQ_US 16000U
 #define POLL_IRQ_STALL_US 100000U
@@ -60,7 +60,7 @@ STATIC struct {
   PIANO_NVT_IMAGE Image;PIANO_NVT_MAP Map;UINT32 Swrst;
   EFI_CLOCK_PROTOCOL *Clock;UINTN ClockIds[5];UINT32 ClockHeld,SeHz;
   struct {UINT32 Ctl,Io,Intr;BOOLEAN Saved,Changed;} Pins[PINS];
-  PIANO_GENI_SPI Spi;
+  struct {UINT32 Firmware,InterfaceDisable;BOOLEAN Open,Broken;} Spi;
   EFI_STATUS LastStatus,SpiRestore,PinsStatus,ClocksStatus,InputStatus;
   EFI_HANDLE Handle;EFI_EVENT Wait;
   EFI_ABSOLUTE_POINTER_PROTOCOL Pointer;EFI_ABSOLUTE_POINTER_MODE Mode;EFI_ABSOLUTE_POINTER_STATE State;
@@ -78,10 +78,6 @@ STATIC UINT64 NowUs(VOID) {
   UINT64 Ticks=mT.CounterEnd>=mT.CounterStart?Counter-mT.CounterStart:mT.CounterStart-Counter;
   return (Ticks/mT.Frequency)*1000000ULL+((Ticks%mT.Frequency)*1000000ULL)/mT.Frequency;
 }
-STATIC EFI_STATUS EFIAPI SeRead(VOID *C,UINT32 O,UINT32 *V){(VOID)C;if(O>=PIANO_GENI_SE6_BYTES||(O&3)||!V)return EFI_INVALID_PARAMETER;*V=MmioRead32(PIANO_GENI_SE2_BASE+O);return EFI_SUCCESS;}
-STATIC EFI_STATUS EFIAPI SeWrite(VOID *C,UINT32 O,UINT32 V){(VOID)C;if(O>=PIANO_GENI_SE6_BYTES||(O&3))return EFI_INVALID_PARAMETER;MmioWrite32(PIANO_GENI_SE2_BASE+O,V);MemoryFence();return EFI_SUCCESS;}
-STATIC UINT64 EFIAPI SeNow(VOID *C){(VOID)C;return NowUs();}
-
 STATIC EFI_STATUS ClocksOn(VOID) {
   EFI_GUID Guid=EFI_CLOCK_PROTOCOL_GUID;EFI_CLOCK_PROTOCOL *Clock=NULL;
   EFI_STATUS S=gBS->LocateProtocol(&Guid,NULL,(VOID **)&Clock);
@@ -117,8 +113,24 @@ STATIC EFI_STATUS WritePin(UINTN P,UINT32 Value) {
   mT.Pins[P].Changed=TRUE;MmioWrite32(CTL(mGpio[P]),Value);MemoryFence();
   return (MmioRead32(CTL(mGpio[P]))&CTL_FIELDS)==(Value&CTL_FIELDS)?EFI_SUCCESS:EFI_ACCESS_DENIED;
 }
-// qup1_se2 pinctrl from the DT: function 1, 6 mA, bias-disable
-STATIC EFI_STATUS SpiPin(UINTN P){SavePin(P);return WritePin(P,(mT.Pins[P].Ctl&~CTL_FIELDS)|(1U<<2)|(2U<<6));}
+// The Y700 driver demonstrates mode-0 GPIO SPI without touching GENI's
+// GSI-only registers. Piano's final DT maps MISO/MOSI/CLK/CS to 40/41/42/43.
+STATIC VOID Drive(UINTN P,BOOLEAN High){MmioWrite32(IO(mGpio[P]),High?BIT1:0);}
+STATIC EFI_STATUS SpiPins(VOID){
+  for(UINTN P=0;P<4;++P)SavePin(P);
+  for(UINTN P=0;P<4;++P){
+    UINT32 Value=(mT.Pins[P].Ctl&~CTL_FIELDS)|(2U<<6)|1U;
+    if(Value&BIT11)Value|=BIT12;
+    EFI_STATUS S=WritePin(P,Value);if(S!=EFI_SUCCESS)return S;
+  }
+  Drive(3,TRUE);Drive(2,FALSE);Drive(1,FALSE);
+  for(UINTN P=1;P<4;++P){
+    UINT32 Value=(mT.Pins[P].Ctl&~CTL_FIELDS)|(2U<<6)|CTL_OE|(P==3?3U:1U);
+    if(Value&BIT11)Value|=BIT12;
+    EFI_STATUS S=WritePin(P,Value);if(S!=EFI_SUCCESS)return S;
+  }
+  mT.Spi.Open=TRUE;return EFI_SUCCESS;
+}
 // gpiod GPIOD_IN: GPIO function, output disabled, pull and drive kept
 STATIC EFI_STATUS InputPin(UINTN P){SavePin(P);return WritePin(P,mT.Pins[P].Ctl&~(CTL_OE|(0xFU<<2)));}
 STATIC EFI_STATUS RestorePin(UINTN P) {
@@ -129,12 +141,23 @@ STATIC EFI_STATUS RestorePin(UINTN P) {
 }
 
 // CTP_SPI_WRITE / CTP_SPI_READ, five tries each
-STATIC UINT32 TimeoutUs(UINTN Bytes){UINT32 Hz=mT.Spi.SourceHz/(mT.Spi.Divider?mT.Spi.Divider:1);return (UINT32)(Bytes*8ULL*2000000ULL/(Hz?Hz:1)+5000);}
 // Transfers are synchronous; InTransfer only guards a callback re-entering
 STATIC EFI_STATUS Xfer(CONST UINT8 *Tx,UINT8 *Rx,UINTN Len) {
-  EFI_STATUS S=EFI_DEVICE_ERROR;mT.InTransfer=TRUE;
-  for(UINTN Try=0;Try<5 && S!=EFI_SUCCESS;++Try){S=PianoGeniSpiTransfer(&mT.Spi,Tx,Rx,Len,TimeoutUs(Len));if(mT.Spi.Broken)break;}
-  mT.InTransfer=FALSE;return S;
+  if(!mT.Spi.Open||mT.Released||!Tx||!Len||Len>sizeof(mTx))return EFI_NOT_READY;
+  mT.InTransfer=TRUE;EFI_STATUS S=EFI_SUCCESS;
+  UINT64 Deadline=NowUs()+500000;
+  Drive(3,FALSE);MicroSecondDelay(2);
+  for(UINTN At=0;At<Len;++At){
+    UINT8 Out=Tx[At],In=0;
+    for(UINTN Bit=0;Bit<8;++Bit){
+      Drive(1,(Out&0x80)!=0);Out<<=1;NanoSecondDelay(100);Drive(2,TRUE);
+      In=(UINT8)((In<<1)|(MmioRead32(IO(mGpio[0]))&1));
+      NanoSecondDelay(100);Drive(2,FALSE);
+    }
+    if(Rx)Rx[At]=In;
+    if((At&63U)==63U&&NowUs()>=Deadline){S=EFI_TIMEOUT;mT.Spi.Broken=TRUE;break;}
+  }
+  Drive(3,TRUE);MicroSecondDelay(2);mT.InTransfer=FALSE;return S;
 }
 STATIC EFI_STATUS Write(UINT8 *Buf,UINTN Len){Buf[0]|=0x80;return Xfer(Buf,NULL,Len);}
 // Buf[0] is the offset; the IC answers after one dummy byte, so Len - 1 data
@@ -198,7 +221,10 @@ STATIC EFI_STATUS Unpublish(VOID) {
 
 STATIC EFI_STATUS ReleaseHardware(VOID) {
   if(mT.Released)return mT.PinsStatus!=EFI_SUCCESS?mT.PinsStatus:mT.ClocksStatus;
-  mT.Released=TRUE;mT.SpiRestore=PianoGeniSpiClose(&mT.Spi);mT.PinsStatus=EFI_SUCCESS;mT.ClocksStatus=EFI_SUCCESS;
+  mT.Released=TRUE;
+  if(mT.Spi.Open){Drive(3,TRUE);Drive(2,FALSE);mT.Spi.Open=FALSE;}
+  // No serial-engine registers or DMA state were changed by GPIO SPI.
+  mT.SpiRestore=EFI_SUCCESS;mT.PinsStatus=EFI_SUCCESS;mT.ClocksStatus=EFI_SUCCESS;
   if(mT.IrqArmed) {
     MmioWrite32(INTR_CFG(mGpio[PIN_IRQ]),mT.Pins[PIN_IRQ].Intr);MmioWrite32(INTR_STATUS(mGpio[PIN_IRQ]),0);MemoryFence();
     if(MmioRead32(INTR_CFG(mGpio[PIN_IRQ]))!=mT.Pins[PIN_IRQ].Intr)mT.PinsStatus=EFI_DEVICE_ERROR;else mT.IrqArmed=FALSE;
@@ -245,14 +271,12 @@ STATIC VOID BringUp(UINT64 Now) {
   switch(mT.Step) {
   case TClocks: {
     if((S=ClocksOn())!=EFI_SUCCESS){Reason="qup-clocks";break;}
-    PIANO_GENI_PIO_IO Io={PIANO_GENI_SE2_BASE,PIANO_GENI_SE6_BYTES,NULL,SeRead,SeWrite,SeNow};
-    S=PianoGeniSpiOpen(&mT.Spi,&Io,mT.SeHz,SPI_MAX_HZ);
-    DEBUG((DEBUG_WARN,"PIANO_TOUCH_SE2 fw=%08x protocol=%u if_disable=%08x tx_depth=%u source_hz=%u divider=%u status=%r\n",
-      mT.Spi.Firmware,(mT.Spi.Firmware>>8)&0xFF,mT.Spi.InterfaceDisable,mT.Spi.TxDepth,mT.SeHz,mT.Spi.Divider,S));
-    // A GSI-only SE2 would need GPI DMA, which this product does not do
-    if(S==EFI_UNSUPPORTED){Reason=(mT.Spi.InterfaceDisable&BIT0)?"se2-gsi-only":"se2-not-spi";break;}
-    if(S!=EFI_SUCCESS){Reason="se2-open";break;}
-    for(UINTN P=0;P<4 && S==EFI_SUCCESS;++P)S=SpiPin(P);
+    mT.Spi.Firmware=MmioRead32(TOUCH_SE+0x68);mT.Spi.InterfaceDisable=MmioRead32(TOUCH_SE+0x64);
+    UINT32 Active=MmioRead32(TOUCH_SE+0x40);
+    if(Active&(BIT0|BIT12)){S=EFI_ACCESS_DENIED;Reason="se2-active";break;}
+    S=SpiPins();
+    DEBUG((DEBUG_WARN,"PIANO_TOUCH_SE2 fw=%08x if_disable=%08x active=%08x gpio_spi=1 dma=0 status=%r\n",
+      mT.Spi.Firmware,mT.Spi.InterfaceDisable,Active,S));
     if(S!=EFI_SUCCESS){Reason="spi-pins";break;}
     // Touch lcd-id (0 CSOT, 1 BOE) picks the firmware, as in the driver
     if((S=InputPin(PIN_LCD_ID))!=EFI_SUCCESS){Reason="lcd-id-pin";break;}
@@ -302,12 +326,12 @@ STATIC VOID BringUp(UINT64 Now) {
     if(mT.Part>=mT.Image.Count){Next=mT.Image.Cascade2ndHeader?TAutoCopyWait:TCrcEnable;mT.Polls=0;break;}
     // Size + 1 bytes per partition in 63 KiB chunks, one chunk per pump
     CONST PIANO_NVT_PARTITION *P=&mT.Image.Part[mT.Part];
-    UINT32 Total=P->Size+1,Len=MIN(Total-mT.PartOffset,PIANO_NVT_TRANSFER_LEN),Sram=P->SramAddr+mT.PartOffset,Bin=P->BinAddr+mT.PartOffset;
+    UINT32 Total=P->Size+1,Len=MIN(Total-mT.PartOffset,FIRMWARE_CHUNK),Sram=P->SramAddr+mT.PartOffset,Bin=P->BinAddr+mT.PartOffset;
     if((S=SetPage(Sram))!=EFI_SUCCESS)break;
     mTx[0]=(UINT8)(Sram&0x7F);
     for(UINT32 I=0;I<Len;++I)mTx[1+I]=Bin+I<mT.FwBytes?mT.Fw[Bin+I]:0;
     if((S=Write(mTx,Len+1))!=EFI_SUCCESS)break;
-    mT.PartOffset+=PIANO_NVT_TRANSFER_LEN;
+    mT.PartOffset+=Len;
     if(mT.PartOffset>=Total){++mT.Part;mT.PartOffset=0;}
     Next=TWrite;break;
   }
@@ -401,7 +425,7 @@ EFI_STATUS PianoTouchStart(CONST VOID *Fdt) {
   if(Fdt==NULL)return EFI_INVALID_PARAMETER;
   INT32 Bus=FdtPathOffset(Fdt,SE2_PATH),Length=0;
   CONST UINT8 *Reg=Bus<0?NULL:FdtGetProp(Fdt,Bus,"reg",&Length);
-  BOOLEAN BusOk=Reg && Length==8 && ((UINT32)Reg[0]<<24|(UINT32)Reg[1]<<16|(UINT32)Reg[2]<<8|Reg[3])==PIANO_GENI_SE2_BASE,TsOk=FALSE;
+  BOOLEAN BusOk=Reg && Length==8 && ((UINT32)Reg[0]<<24|(UINT32)Reg[1]<<16|(UINT32)Reg[2]<<8|Reg[3])==TOUCH_SE,TsOk=FALSE;
   for(UINTN I=0;I<ARRAY_SIZE(mTouchNodes) && BusOk && !TsOk;++I) {
     INT32 Ts=FdtPathOffset(Fdt,mTouchNodes[I]),StatusLength=0;
     CONST CHAR8 *Compatible=Ts<0?NULL:FdtGetProp(Fdt,Ts,"compatible",&Length);
