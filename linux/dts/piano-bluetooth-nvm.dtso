@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+/plugin/;
+
+// WCN7861 Bluetooth reports board ID 0x0000 over the PERI/EDL bring-up, so
+// btqca cannot auto-select a board NVM and loads the generic file named by the
+// base DTB (firmware-name = "brhbtnv20.bin"). The generic NVM omits this
+// board's RF front-end calibration, so transmit power collapses and Bluetooth
+// keyboards and mice only stay connected within about 20 cm.
+//
+// The brhbtnv20.b2e NVM (board 0x2e) carries the correct calibration for this
+// product; it ships in the same firmware tree as the generic file and in the
+// stock Android bluetooth_a partition, and selecting it restores normal range
+// (verified on-device). Only the NVM entry changes: firmware-name[0] is the
+// NVM and firmware-name[1] is the rampatch, so the rampatch stays
+// brhbtfw20.tlv. This mirrors the WLAN side, whose board.bin is the p81 board
+// data (bd_p81.elf) rather than a generic default.
+/ {
+    fragment@0 {
+        target-path = "/soc/qcom,qupv3_2_geni_se@8c0000/qcom,qup_uart@898000/bluetooth";
+        __overlay__ {
+            firmware-name = "brhbtnv20.b2e", "brhbtfw20.tlv";
+        };
+    };
+};
