@@ -70,17 +70,17 @@ sunuefi_esp/
 ├── EFI/
 │   ├── BOOT/BOOTAA64.EFI       # systemd-boot
 │   └── Piano/
-│       ├── LinuxBoot.efi      # Debian 启动应用
+│       ├── LinuxBoot.efi      # 旧启动项的兼容应用
 │       └── stable/
 │           ├── Image
 │           ├── board.dtb
 │           ├── initramfs
-│           └── boot.img       # Linux 组合启动镜像
+│           └── boot.img       # 旧 ESP 的组合启动镜像
 └── loader/
     ├── loader.conf
     └── entries/linux.conf
 ```
 
-上面的布局是现有 Debian 镜像。标准 EFI 系统也可在同一 ESP 中放置独立内核、initrd 和 DTB，在 `loader/entries/*.conf` 中分别通过 `linux`、`initrd`、`devicetree` 引用；systemd-boot 直接进入内核的 EFI stub。NixOS 使用这条标准路径，文件由 NixOS 的 systemd-boot 模块管理。
+四个发行版共用上面的 ESP。默认启动项在 `loader/entries/linux.conf` 中用 `linux`、`initrd`、`devicetree` 分别引用内核、initramfs 和 DTB，systemd-boot 直接进入内核的 EFI stub。NixOS 也使用这条标准路径，文件由 NixOS 的 systemd-boot 模块管理。
 
-Debian 启动应用继续调用驻留核心读取 `boot.img`。两种路径都在内核交接前关闭硬件，启动管理器运行时存储保持可读。内存与退出身份的处理见 [UEFI 核心](uefi-core.md#esp-启动文件与系统交接)。
+旧 ESP 仍可通过兼容应用调用驻留核心读取 `boot.img`；没有 EFI 管理器的旧安装沿用原有入口。两种路径都在内核交接前关闭硬件，启动管理器运行时存储保持可读。内存与退出身份的处理见 [UEFI 核心](uefi-core.md#esp-启动文件与系统交接)。
