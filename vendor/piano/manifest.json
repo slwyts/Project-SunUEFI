@@ -54,6 +54,14 @@
       "bytes": 344064,
       "sha256": "577fdab4fb956a0acf727d7b70698def1ba7658d4f5c3d8ed9509a62262ca8a1"
     },
+    "native/DALTLMM.depex": {
+      "bytes": 18,
+      "sha256": "51e48aff95a5c61299f0c6b7550d1e2348078025c313f63c206f4d6f5cf36477"
+    },
+    "native/DALTLMM.efi": {
+      "bytes": 49152,
+      "sha256": "62686cde547491a6a36b27b8e80ebabcaacc3aa46e85e1c8695904caaa281d03"
+    },
     "native/HALIOMMU.depex": {
       "bytes": 216,
       "sha256": "8d212b55931b8b7178a06d7d5ff305306299accdbd845743b3c58bdf2e62a45f"
@@ -69,6 +77,14 @@
     "native/HWIODxeDriver.efi": {
       "bytes": 32768,
       "sha256": "6717aacfe5d592e8a82d36612a597053506d9baeebc2f95d94f870cdb9a64333"
+    },
+    "native/I2C.depex": {
+      "bytes": 72,
+      "sha256": "95cfa13b1308bf157c24a44e7492c34335e9af953a0056da17fb047bdeb2dd50"
+    },
+    "native/I2C.efi": {
+      "bytes": 61440,
+      "sha256": "7edc3c4cc51825530f53e0bd616b046abad66c740b34eafad38e14a25fcf57b0"
     },
     "native/NpaDxe.depex": {
       "bytes": 2,
@@ -93,6 +109,14 @@
     "native/PwrUtilsDxe.efi": {
       "bytes": 32768,
       "sha256": "87b552c1a4ad90697f71920b8b5dbec9af90830790c7940c8fed1f92e0e7b2be"
+    },
+    "native/Qup.depex": {
+      "bytes": 72,
+      "sha256": "95cfa13b1308bf157c24a44e7492c34335e9af953a0056da17fb047bdeb2dd50"
+    },
+    "native/Qup.efi": {
+      "bytes": 28672,
+      "sha256": "e90ab77f4d3a8cb7056e467840f6f29b2b350e3d065b5c21c7426b89213c3146"
     },
     "native/RpmhDxe.depex": {
       "bytes": 36,
@@ -148,6 +172,11 @@
       "file_guid": "8e9bd160-b184-11df-94e2-0800200c9a66",
       "pe": "native/DALSys.efi"
     },
+    "DALTLMM": {
+      "depex": "native/DALTLMM.depex",
+      "file_guid": "8681cc5a-0df6-441e-b4b8-e915c538f067",
+      "pe": "native/DALTLMM.efi"
+    },
     "HALIOMMU": {
       "depex": "native/HALIOMMU.depex",
       "file_guid": "9a00771f-36d4-4dd5-8916-c48ed9b16b86",
@@ -157,6 +186,11 @@
       "depex": "native/HWIODxeDriver.depex",
       "file_guid": "af9763a2-033b-4109-8e17-56a98d380c92",
       "pe": "native/HWIODxeDriver.efi"
+    },
+    "I2C": {
+      "depex": "native/I2C.depex",
+      "file_guid": "04de8591-d2b3-4077-bbbe-b12070094eb6",
+      "pe": "native/I2C.efi"
     },
     "NpaDxe": {
       "depex": "native/NpaDxe.depex",
@@ -172,6 +206,11 @@
       "depex": "native/PwrUtilsDxe.depex",
       "file_guid": "0401b830-bff9-44a2-a5f6-95734a33c017",
       "pe": "native/PwrUtilsDxe.efi"
+    },
+    "Qup": {
+      "depex": "native/Qup.depex",
+      "file_guid": "a16b79d2-afe0-4aed-a3ab-8ce3fd0f8c71",
+      "pe": "native/Qup.efi"
     },
     "RpmhDxe": {
       "depex": "native/RpmhDxe.depex",

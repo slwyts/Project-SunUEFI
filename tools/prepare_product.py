@@ -32,6 +32,7 @@ SOURCE_NAMES=(
     'PianoPogoReport.c','PianoPogoInput.c','PianoPogoI2c.c','PianoPogoTransport.c','PianoGeniI2cPio.c','PianoUsbHostPci.c',
 )
 PRODUCT_COMPONENTS={
+    'pogo-product':('PianoPogoDxe.c','PianoPogoDxe.h','PianoPogoHardware.c','PianoPogoHardware.h'),
     'nv':('PianoNvFile.c','PianoNvFile.h'),
     'reset':('PianoReset.c','PianoReset.h'),
     'ext4':('PianoStorageIo.h','PianoStorageIo.inc','PianoExt4.h'),
@@ -47,9 +48,9 @@ OBSERVATION_FAMILIES={'early-memory':('PianoSmemRam.c','PianoSmemRam.h','PianoMe
 OBSERVATION_INF_SOURCES=tuple(name for names in OBSERVATION_FAMILIES.values() for name in names)
 PRODUCT_FLAGS=('PIANO_USB_SERVICE=1','PIANO_USB_EP0=1','PIANO_USB_FASTBOOT=1','PIANO_USB_SCREENSHOT=1',
     'PIANO_USB_UFS_FETCH=1','PIANO_USB_RAM_BOOT=1','PIANO_USB_POWER_PROBE=1','PIANO_UFS_BLOCKIO=1',
-    'PIANO_UFS_PRODUCT_STORAGE=1','PIANO_NV_BOOT_ONLY=1','PIANO_PRODUCT_NATIVE_LATE=1')
+    'PIANO_UFS_PRODUCT_STORAGE=1','PIANO_NV_BOOT_ONLY=1','PIANO_PRODUCT_NATIVE_LATE=1','PIANO_GENI_I2C_PIO_EXPERIMENT=1')
 NATIVE_NAMES=('SmemDxe','DALSys','ChipInfo','PlatformInfoDxeDriver','HWIODxeDriver','ULogDxe',
-    'CmdDbDxe','PwrUtilsDxe','RpmhDxe','NpaDxe','VcsDxe','ClockDxe','HALIOMMU')
+    'CmdDbDxe','PwrUtilsDxe','RpmhDxe','NpaDxe','VcsDxe','ClockDxe','HALIOMMU','DALTLMM','Qup','I2C')
 EARLY_DXE_SOURCE='vendor/piano/early-dxe/EnvDxeEnhanced'
 EARLY_DXE_NAMES=('EnvDxeEnhanced.inf','EnvDxeEnhanced.efi','EnvDxeEnhanced.depex')
 EARLY_DXE_PROVENANCE_SHA256='486da704630a5f2357a075554010350b8015df84f1aeb2e36bbf9b4a7695d46d'
@@ -134,7 +135,7 @@ def os_boot_files(root):
 def shared_boot_headers(root):
     folder=root/'uefi/core'
     return {path.relative_to(folder).as_posix():path for path in folder.rglob('*')
-            if path.is_file() and path.suffix in ('.h','.inc')}
+            if path.is_file() and path.suffix in ('.h','.inc') and path.name!='NativeProbeTable.h'}
 
 
 def prepare_os_boot(root,app):
@@ -212,7 +213,7 @@ def backend_status():
     return {
       'gop':{'status':'IMPLEMENTED_INHERITED_FRAMEBUFFER','physical_evidence':'test84 real GOP screenshot; product untested'},
       'physical_keys':{'status':'IMPLEMENTED_PMIC_READONLY','physical_evidence':'tests23/24; product input retirement untested'},
-      'pogo_keyboard_touchpad':{'status':'NOT_READY','missing':'verified SE6 firmware/clock ownership and live report transport'},
+      'pogo_keyboard_touchpad':{'status':'HARDWARE_BACKEND_BOUND','transport':'captured I2C setup and bounded SE6 PIO runtime; WN8030 RAM firmware from the pinned public firmware tree','physical_evidence':'ARM64 product build only; live reports and checked stop require device acceptance'},
       'touchscreen':{'status':'NOT_READY','missing':'verified GPI/PAS/DMA physical touch reports'},
       'dma_smmu':{'status':'IMPLEMENTED_STRICT_OWNERS','physical_evidence':'test91 readonly fetch and exact combined USB/UFS retirement passed; resident product retirement still untested','ram_partition_inventory':'AUDITED_NATIVE_ABI_LINKED_UNTESTED','smem_observation':'READ_ONLY_COLD_SEC_AND_DXE_BOUND_UNTESTED','sec_early_ready':False,'high_ddr_mapped':False,'high_ram_ownership_verified':False},
       'ufs_blockio_read_write':{'status':'RESERVED_VOLUME_BACKEND_UNPROVISIONED','original_media':'READ_ONLY','missing':'explicit permanent reservation, provisioning approval and product physical RW acceptance'},
@@ -417,7 +418,18 @@ def prepare(root=ROOT):
         if path.is_file() and path.suffix in ('.h','.inc'):shutil.copyfile(path,app/path.name)
     shutil.copytree(source/'Protocol',app/'Protocol')
     for component,names in PRODUCT_COMPONENTS.items():
-        for name in names:shutil.copyfile(root/'uefi/components'/component/name,app/name)
+        for name in names:
+            source_path=root/'uefi/components'/component/name
+            if component=='pogo-product':
+                (app/name).write_text(source_path.read_text().replace('../../core/',''))
+            else:shutil.copyfile(source_path,app/name)
+    firmware_config=json.loads((root/'config/release.json').read_text())['firmware']
+    firmware_root=root/firmware_config['source']
+    mcu_path=firmware_root/'firmware/nanosic/MCU_Upgrade.bin'
+    firmware_manifest=(firmware_root/firmware_config['manifest']).read_text().splitlines()
+    mcu_expected=next(row.split()[0] for row in firmware_manifest if row.split()[-1].removeprefix('./')=='nanosic/MCU_Upgrade.bin')
+    if sha(mcu_path)!=mcu_expected:raise ValueError('Keyboard MCU firmware differs from the fixed firmware manifest')
+    (app/'PianoPogoFirmware.h').write_text(vendor_inputs.c_array('mPianoPogoFirmware',mcu_path.read_bytes())+'\n')
     shutil.copyfile(root/'uefi/components/nv/Include/Protocol/PianoNvFile.h',app/'Protocol/PianoNvFile.h')
     os_boot=prepare_os_boot(root,app)
     late_provider=stage_provider(root,app)

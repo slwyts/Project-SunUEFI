@@ -13,7 +13,7 @@ from compose_piano_dtb import read_fdt
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = 'vendor/piano'
-MANIFEST_SHA256 = '2fe5b050b4843b23185082fe6816ea889f84521aecedfb4b6b10cbf654c9d35a'
+MANIFEST_SHA256 = '713247b46d5e1ccd25a9df3580a3095e691ebb552dbfacd28a1c431f20e5ef66'
 BOARD_DTB = BUNDLE + '/dtb/piano.dtb'
 BOARD_DTB_SHA256 = '82b2404bc872c1f60eb4c54c62eb9f2094b97586bdc2aeccae9765f5f258aff1'
 BOARD_SOURCE_SHA256 = 'a4b55dd3b77e69be451aaf2263c76f5496c93325767e49f748ee49570611e8d7'
@@ -21,7 +21,8 @@ XBL_DTB = BUNDLE + '/dtb/xbl-config.dtb'
 XBL_DTB_SHA256 = '634ec73dc6d69a07b5af8246e03b0d2ae84dfb9ce9901135121c220443c9cd10'
 NATIVE_NAMES = ('SmemDxe', 'DALSys', 'ChipInfo', 'PlatformInfoDxeDriver',
                 'HWIODxeDriver', 'ULogDxe', 'CmdDbDxe', 'PwrUtilsDxe',
-                'RpmhDxe', 'NpaDxe', 'VcsDxe', 'ClockDxe', 'HALIOMMU')
+                'RpmhDxe', 'NpaDxe', 'VcsDxe', 'ClockDxe', 'HALIOMMU',
+                'DALTLMM', 'Qup', 'I2C')
 SNAPSHOT_PROPERTIES = frozenset((
     'linux,initrd-start', 'linux,initrd-end', 'kaslr-seed', 'rng-seed',
     'serial-number', 'bootargs', 'linux,elfcorehdr', 'linux,usable-memory-range',

@@ -396,6 +396,7 @@ EFI_STATUS PianoProductOwnersRetire(PIANO_PRODUCT_OWNERS *Owners) {
      Input->Status!=EFI_SUCCESS || Input->Timer!=EFI_SUCCESS || Input->Protocols!=EFI_SUCCESS || Owners->Report.ServicesLost)
     return Retain(Owners,S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S);
   Owners->Report.InputStopped=TRUE;Owners->Report.RetiredMask|=PIANO_OWNER_INPUT;
+  Owners->Report.RetiredMask|=Owners->Report.RegisteredStartedMask&PIANO_OWNER_POGO;
   if(Owners->Report.RegisteredStartedMask&PIANO_OWNER_DISPLAY){
     S=AtApp(Owners);if(S!=EFI_SUCCESS||Owners->Report.ServicesLost)return Retain(Owners,S);
     if(!Owners->Config.StopDisplay||!Owners->Config.DisplayContext)return Retain(Owners,EFI_COMPROMISED_DATA);

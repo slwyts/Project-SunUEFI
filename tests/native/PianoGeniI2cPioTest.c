@@ -162,7 +162,7 @@ int main(void){
   assert(h.FifoReads==1 && p.Received==0 && !h.CancelWrites && !h.AbortWrites);
   initial();start();h.Reg[0x68/4]=0;failed(EFI_COMPROMISED_DATA,TRUE);assert(!h.Writes);
   initial();start();h.Reg[0x40/4]=BIT12;failed(EFI_NOT_READY,TRUE);assert(!h.Writes);
-  initial();start();p.InRead=TRUE;assert(run()==EFI_NOT_READY && !h.Writes);p.InRead=FALSE;p.Attempts=64;assert(run()==EFI_OUT_OF_RESOURCES && !h.Writes);
+  initial();start();p.InRead=TRUE;assert(run()==EFI_NOT_READY && !h.Writes);p.InRead=FALSE;p.Attempts=MAX_UINT32;assert(run()==EFI_OUT_OF_RESOURCES && !h.Writes);
   initial();io.Base++;assert(PianoGeniI2cPioInitialize(&p,&io,&contract)==EFI_INVALID_PARAMETER && !h.Reads);
   initial();io.Bytes-=4;assert(PianoGeniI2cPioCapture(&io,&snap)==EFI_INVALID_PARAMETER && !h.Reads);
   const UINT32 offsets[]={0x68,0x64,0x258,0xe18,0xe1c,0x254,0x260,0x288,0x908,0x800,0x804,0x604,0x634,0x640};

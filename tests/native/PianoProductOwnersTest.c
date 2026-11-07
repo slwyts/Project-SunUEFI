@@ -167,7 +167,7 @@ int main(void) {
   assert(PianoProductOwnersResolveReturnedAction(&Owners)==EFI_COMPROMISED_DATA && Owners.Report.Retained && !Calls);++Cases;
   assert(Cases==100); // Preserve every existing workflow/regression above.
   for(UINTN I=PianoUsbServiceActionContinue;I<=PianoUsbServiceActionFault;++I){fresh();with_display();DisplayReentry=TRUE;initialize_action((PIANO_USB_SERVICE_ACTION)I);
-    assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS&&Owners.Report.DisplayStopped&&Owners.Report.Clean&&Owners.Report.RetiredMask==PIANO_OWNER_SUPPORTED_MASK);
+    assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS&&Owners.Report.DisplayStopped&&Owners.Report.Clean&&Owners.Report.RetiredMask==(PIANO_OWNER_CORE_MASK|PIANO_OWNER_DISPLAY));
     assert(!strcmp(Order,I==PianoUsbServiceActionBoot?"PUBRXApsIDM":"PURXApsIDM")&&Tpl==TPL_APPLICATION&&Owners.Report.Display.ReleaseAfterTotal[0]==9);
     UINTN C=Calls;assert(PianoProductOwnersRetire(&Owners)==EFI_ACCESS_DENIED&&Calls==C);Cases++;}
   for(UINTN I=0;I<14;++I){fresh();with_display();switch(I){
@@ -227,7 +227,7 @@ int main(void) {
   assert(PianoProductOwnersResolveReturnedAction(&Owners)==EFI_SUCCESS&&Owners.Report.Origin==PianoProductRequestFile);
   assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS&&Owners.Report.AllowedAction==PianoUsbServiceActionBoot&&Owners.Report.Clean);
   assert(!strcmp(Order,"PURXApsIDM")&&!Owners.Report.BootActionConsumed&&!Owners.Report.Boot.Token&&!Owners.Report.Boot.Context&&!Requests);
-  assert(Owners.Report.FileContext==(VOID *)0x701&&Owners.Report.FileToken==(VOID *)0x702&&Owners.Report.RetiredMask==PIANO_OWNER_SUPPORTED_MASK);Cases++;
+  assert(Owners.Report.FileContext==(VOID *)0x701&&Owners.Report.FileToken==(VOID *)0x702&&Owners.Report.RetiredMask==(PIANO_OWNER_CORE_MASK|PIANO_OWNER_DISPLAY));Cases++;
   for(UINTN I=0;I<3;++I){fresh();assert(PianoProductOwnersInitialize(&Owners,&Config)==EFI_SUCCESS);Policy.RequestedCoreAction=PianoUsbServiceActionBoot;
     assert(PianoProductOwnersRequestFileBoot(&Owners,(VOID *)0x701,(VOID *)0x702)==EFI_SUCCESS);
     if(I==0)Policy.RequestedCoreAction=PianoUsbServiceActionNone;

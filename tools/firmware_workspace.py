@@ -153,7 +153,7 @@ def prepare(root=ROOT):
     for relative in ('.venv', 'build/host-tools'):
         _link(workspace / relative, root / relative)
     # Product display preparation only reads these fixed reference sources.
-    for relative in ('upstream/linux-piano', 'upstream/dtc'):
+    for relative in ('upstream/linux-piano', 'upstream/dtc', 'upstream/piano-firmware-current'):
         if (root / relative).is_dir():
             _link(workspace / relative, root / relative)
     return workspace

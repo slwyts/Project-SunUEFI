@@ -12,6 +12,7 @@
 #include "PianoProductSmem.h"
 #include "PianoReset.h"
 #include "PianoNvFile.h"
+#include "PianoPogoHardware.h"
 #include "PianoProductBootObjects.h"
 #include "PianoProductMemory.h"
 #include "PianoProductBootLog.h"
@@ -48,7 +49,7 @@ STATIC EFI_HANDLE mSystemdEsp;
 STATIC BOOLEAN mSystemdActive,mSystemdEntering;
 STATIC CONST CHAR8 *mEfiImageStage="not-started";
 STATIC EFI_STATUS mEfiImageStatus=EFI_NOT_STARTED;
-STATIC BOOLEAN mUfsAttempted,mUfsStarted,mInputStarted;
+STATIC BOOLEAN mUfsAttempted,mUfsStarted,mInputStarted,mPogoStarted;
 STATIC EFI_STATUS mUfsStatus=EFI_NOT_STARTED;
 STATIC UINT64 mCounterFrequency,mCounterStart,mCounterEnd;
 STATIC PIANO_RAM_PARTITION_REPORT mRamInventory;
@@ -299,6 +300,8 @@ STATIC EFI_STATUS StopInput(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Rep
   (VOID)Context;if(Report==NULL)return EFI_INVALID_PARAMETER;
   ZeroMem(Report,sizeof(*Report));Report->Revision=1;Report->Started=mInputStarted;
   if(!mInputStarted)return Report->Status=EFI_NOT_READY;
+  EFI_STATUS Pogo=PianoPogoHardwareStop();
+  if(Pogo!=EFI_SUCCESS){Report->Returned=Report->Retained=TRUE;return Report->Status=Pogo;}
   PIANO_KEYS_RETIRE_REPORT Keys;EFI_STATUS Status=PianoStopKeysForProduct(&Keys);
   Report->Returned=Keys.Returned;Report->Clean=Keys.Clean;Report->Retained=Keys.Retained;
   Report->Timer=Keys.TimerCancel!=EFI_SUCCESS?Keys.TimerCancel:Keys.TimerClose;
@@ -449,6 +452,8 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   ObserveDisplay("before-foundation");
   if(mStartupTarget==1)(VOID)PianoProductDisplayCheckpoint("BEFORE DRIVERS",0);
   PianoNativeSetObserver(ObserveNative);
+  Status=PianoPogoHardwarePrepare();
+  DEBUG((DEBUG_WARN,"PIANO_POGO_RAM_CONFIG status=%r\n",Status));
   PianoProbeFoundation();
   PianoNativeSetObserver(NULL);
   if(!BootLogAlive())FailStop(EFI_ABORTED);
@@ -517,6 +522,10 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
     .BeforeRamlog=ProductDebugReplay,.ReportStatus=ProductReportStatus};
   BootLogStage("USB",EFI_NOT_STARTED);
   Status=PianoRawLinuxRegister(Image,SystemTable);if(Status!=EFI_SUCCESS)FailStop(Status);
+  Status=PianoPogoHardwareStart(Fdt);
+  mPogoStarted=Status==EFI_SUCCESS;
+  DEBUG((DEBUG_WARN,"PIANO_POGO_HARDWARE_START status=%r\n",Status));
+  if(PianoPogoHardwareRetained())FailStop(Status);
   Status=PianoUsbControllerServiceStart(Fdt,&UsbConfig);BootLogStage("USB",Status);
   BOOLEAN UsbStarted=Status==EFI_SUCCESS;
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_USB_START status=%r resident_service=%u foreground_loop=0\n",Status,UsbStarted));
@@ -542,8 +551,8 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   // Extra owner bits are explicitly unstarted in this integration. Their
   // hardware backend is still incomplete; the manifest must disclose that.
   PIANO_PRODUCT_OWNERS_CONFIG Config={.Revision=1,.Fdt=Fdt,.ExpectedOwnerMask=PIANO_OWNER_ALL_MASK,
-    .StartedOwnerMask=(PIANO_OWNER_CORE_MASK&~(UsbStarted?0:PIANO_OWNER_USB))|(mDisplayStartup.Held?PIANO_OWNER_DISPLAY:0),
-    .AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|PIANO_OWNER_POGO|(UsbStarted?0:PIANO_OWNER_USB)|(mDisplayStartup.Held?0:PIANO_OWNER_DISPLAY),
+    .StartedOwnerMask=(PIANO_OWNER_CORE_MASK&~(UsbStarted?0:PIANO_OWNER_USB))|(mDisplayStartup.Held?PIANO_OWNER_DISPLAY:0)|(mPogoStarted?PIANO_OWNER_POGO:0),
+    .AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|(mPogoStarted?0:PIANO_OWNER_POGO)|(UsbStarted?0:PIANO_OWNER_USB)|(mDisplayStartup.Held?0:PIANO_OWNER_DISPLAY),
     .StartupUsbProof=UsbStarted?NULL:&mStartupUsbProof,
     .Runtime=Runtime,.InputContext=NULL,.StopInput=StopInput,
     .DisplayContext=mDisplayStartup.LeaseContext,.StopDisplay=PianoProductDisplayStop,.DisplayStartup=mDisplayStartup};

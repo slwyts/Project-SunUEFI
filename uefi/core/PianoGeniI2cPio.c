@@ -226,7 +226,7 @@ EFI_STATUS EFIAPI PianoGeniI2cPioReadRuntime(VOID *Context,UINT64 Deadline,UINT8
   if(P->Signature!=SIGNATURE)return EFI_NOT_READY;
   if(P->InRead)return EFI_NOT_READY;
   if(P->Failed || P->Quarantined)return EFI_ABORTED;
-  if(P->Attempts>=64)return EFI_OUT_OF_RESOURCES;
+  if(P->Attempts==MAX_UINT32)return EFI_OUT_OF_RESOURCES;
   if(!ValidIo(&P->Io) || P->Io.Write32==NULL || P->Io.NowUs==NULL){
     P->Failed=P->Quarantined=TRUE;P->Clean=FALSE;P->LastStatus=EFI_COMPROMISED_DATA;return EFI_COMPROMISED_DATA;
   }
