@@ -555,8 +555,8 @@ def package(args):
                                    ('linux_loader', linux_loader, 'LinuxBoot.efi')):
         shutil.copyfile(source, work / filename)
         require(sha(work / filename) == efi_sources[name]['sha256'], 'Source changed while copying: ' + filename)
-    (work / 'loader.conf').write_text('default debian.conf\ntimeout 0\neditor no\nauto-entries no\nauto-firmware no\nconsole-mode keep\n')
-    (work / 'debian.conf').write_text('title Debian\nefi /EFI/Piano/LinuxBoot.efi\n')
+    (work / 'loader.conf').write_text('default linux.conf\ntimeout 0\neditor no\nauto-entries no\nauto-firmware no\nconsole-mode keep\n')
+    (work / 'linux.conf').write_text('title 启动 Linux\nefi /EFI/Piano/LinuxBoot.efi\n')
     dtb_derivation = None
     if args.cpu_model_overlay:
         require(shutil.which('dtc') and shutil.which('fdtoverlay'), 'CPU model overlay needs dtc and fdtoverlay')
@@ -577,7 +577,7 @@ def package(args):
     esp_files.update({'/EFI/BOOT/BOOTAA64.EFI': work / 'BOOTAA64.EFI',
                       '/EFI/Piano/LinuxBoot.efi': work / 'LinuxBoot.efi',
                       '/loader/loader.conf': work / 'loader.conf',
-                      '/loader/entries/debian.conf': work / 'debian.conf'})
+                      '/loader/entries/linux.conf': work / 'linux.conf'})
     for path in esp_files.values():
         os.utime(path, (max(args.epoch, 315532800),) * 2)  # FAT dates start in 1980.
     esp = output / 'esp.img'

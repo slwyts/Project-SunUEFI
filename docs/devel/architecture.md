@@ -78,7 +78,7 @@ sunuefi_esp/
 │           └── boot.img       # Linux 组合启动镜像
 └── loader/
     ├── loader.conf
-    └── entries/debian.conf
+    └── entries/linux.conf
 ```
 
 上面的布局是现有 Debian 镜像。标准 EFI 系统也可在同一 ESP 中放置独立内核、initrd 和 DTB，在 `loader/entries/*.conf` 中分别通过 `linux`、`initrd`、`devicetree` 引用；systemd-boot 直接进入内核的 EFI stub。NixOS 使用这条标准路径，文件由 NixOS 的 systemd-boot 模块管理。

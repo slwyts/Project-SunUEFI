@@ -216,8 +216,8 @@ class ReleasePackageTests(unittest.TestCase):
                     '/EFI/Piano/stable/board.dtb': self.dtb.read_bytes(),
                     '/EFI/Piano/stable/initramfs': self.initrd.read_bytes(),
                     '/EFI/Piano/stable/boot.img': (self.args.output / 'boot.img').read_bytes(),
-                    '/loader/loader.conf': b'default debian.conf\ntimeout 0\neditor no\nauto-entries no\nauto-firmware no\nconsole-mode keep\n',
-                    '/loader/entries/debian.conf': b'title Debian\nefi /EFI/Piano/LinuxBoot.efi\n',
+                    '/loader/loader.conf': b'default linux.conf\ntimeout 0\neditor no\nauto-entries no\nauto-firmware no\nconsole-mode keep\n',
+                    '/loader/entries/linux.conf': 'title 启动 Linux\nefi /EFI/Piano/LinuxBoot.efi\n'.encode(),
                 }
                 self.assertEqual(set(result['esp_files']), set(expected))
                 for name, data in expected.items():
