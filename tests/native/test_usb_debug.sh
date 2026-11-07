@@ -14,5 +14,7 @@ cc "${sun_flags[@]}" tests/native/test_usb_debug.c -Wl,--gc-sections -lcrypto -o
 build/test-usb-debug
 cc -std=gnu11 -Wall -Wextra -Werror tests/native/test_touch_input.c -o build/test-touch-input
 build/test-touch-input
+cc -std=gnu11 -Wall -Wextra -Werror tests/native/test_y700_touch_decode.c -o build/test-y700-touch-decode
+build/test-y700-touch-decode
 cc "${sun_flags[@]}" tests/native/test_usb_power.c -Wl,--gc-sections -o build/test-usb-power
 build/test-usb-power
