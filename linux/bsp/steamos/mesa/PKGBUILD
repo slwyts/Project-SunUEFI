@@ -1,9 +1,9 @@
 # Build against SteamOS's own libraries. Keep Valve's package identity so
 # dependent native packages and the separate FEX guest runtime remain intact.
 pkgname=deckard-mesa-linux-aarch64
-pkgver=26.2.4
+pkgver=@MESA_VERSION@
 pkgrel=1.1
-pkgdesc='Native SteamOS Mesa with Piano Adreno 830v1 support'
+pkgdesc='Native SteamOS Mesa with Freedreno, Turnip and MSM GBM support'
 arch=(aarch64)
 url='https://www.mesa3d.org/'
 license=('MIT AND BSD-3-Clause AND SGI-B-2.0')
@@ -14,20 +14,18 @@ depends=(libdrm wayland libxshmfence libelf libdisplay-info libglvnd zstd
 makedepends=(base-devel meson python-mako python-packaging python-ply python-yaml
              glslang spirv-tools wayland-protocols xorgproto xcb-util-keysyms)
 options=(!lto !debug)
-source=("https://archive.mesa3d.org/mesa-$pkgver.tar.xz"
-        '0001-freedreno-Add-chip-id-support-for-A830v1.patch')
-b2sums=('28506a9366e3c031acbb52924e43b0ec098f44a3ac3bb839ec2a86fa0faf83652347704b0e58bdc447aaebae5a2a254e5456e0b893755fd7721e57d6b614ecc4'
-        'e675b526263b6e961870aec23b2f9ba0e69bdc4a52dd7503aae61a762427de7103198567c2a8c35386357855bee6f1c61dfda0500692960363363abb0decb193')
+source=(mesa.tar '@WAYLAND_PROTOCOLS_ARCHIVE@')
+sha256sums=('@MESA_SOURCE_SHA256@' '@WAYLAND_PROTOCOLS_SHA256@')
+noextract=('@WAYLAND_PROTOCOLS_ARCHIVE@')
 
 prepare() {
-  cd "mesa-$pkgver"
-  patch --forward --fuzz=0 -Np1 < ../0001-freedreno-Add-chip-id-support-for-A830v1.patch
-  echo "$pkgver-sunuefi$pkgrel" > VERSION
+  mkdir -p "$srcdir/mesa/subprojects/packagecache"
+  cp "$srcdir/@WAYLAND_PROTOCOLS_ARCHIVE@" "$srcdir/mesa/subprojects/packagecache/"
 }
 
 build() {
-  arch-meson "mesa-$pkgver" build \
-    -Dgallium-drivers=freedreno,zink -Dvulkan-drivers=freedreno \
+  arch-meson mesa build \
+    -Dgallium-drivers=freedreno,zink,softpipe -Dvulkan-drivers=freedreno \
     -Dfreedreno-kmds=msm,virtio -Dplatforms=x11,wayland \
     -Dglvnd=enabled -Dgles1=disabled -Dgles2=enabled \
     -Dllvm=disabled -Dgallium-va=disabled -Dgallium-rusticl=false \
@@ -40,5 +38,5 @@ build() {
 
 package() {
   meson install -C build --destdir "$pkgdir" --no-rebuild
-  install -Dm644 "mesa-$pkgver/docs/license.rst" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 mesa/docs/license.rst "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

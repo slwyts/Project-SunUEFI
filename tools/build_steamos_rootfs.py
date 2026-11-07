@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Assemble Valve's ARM64 userspace with the shared Piano BSP and boot files."""
 import argparse
+import configparser
 import json
 import os
 from pathlib import Path
@@ -171,6 +172,38 @@ def kde_repository_package_works(root, name):
     return checked > 0
 
 
+def mesa_recipe(output, config):
+    """Build the same native driver generation with the MSM GBM entry point."""
+    source = ROOT / 'build/source-cache/mesa-steamos'
+    if not source.exists():
+        run('git', 'init', '--bare', source)
+        run('git', '-C', source, 'remote', 'add', 'origin', config['repository'])
+    if (subprocess.check_output(['git', '-C', source, 'rev-parse',
+                                 '--is-bare-repository'], text=True).strip() != 'true' or
+            subprocess.check_output(['git', '-C', source, 'remote', 'get-url',
+                                     'origin'], text=True).strip() != config['repository']):
+        raise ValueError('Mesa source cache is not the configured bare repository')
+    if subprocess.run(['git', '-C', source, 'cat-file', '-e', config['commit']],
+                      capture_output=True).returncode:
+        run('git', '-C', source, 'fetch', '--depth=1', 'origin', config['commit'])
+    output.mkdir(parents=True, exist_ok=True)
+    archive = output / 'mesa.tar'
+    run('git', '-C', source, 'archive', '--format=tar', '--prefix=mesa/',
+        '--output=' + str(archive), config['commit'])
+    protocols = configparser.ConfigParser()
+    protocols.read_string(subprocess.check_output(
+        ['git', '-C', source, 'show', config['commit'] + ':subprojects/wayland-protocols.wrap'],
+        text=True))
+    wrap = protocols['wrap-file']
+    download(wrap['source_url'], output / wrap['source_filename'], wrap['source_hash'])
+    template = (ROOT / 'linux/bsp/steamos/mesa/PKGBUILD').read_text()
+    (output / 'PKGBUILD').write_text(template.replace(
+        '@MESA_VERSION@', config['version']).replace('@MESA_SOURCE_SHA256@', digest(archive)).replace(
+        '@WAYLAND_PROTOCOLS_ARCHIVE@', wrap['source_filename']).replace(
+        '@WAYLAND_PROTOCOLS_SHA256@', wrap['source_hash']))
+    return output
+
+
 def build(args):
     output = args.output.resolve()
     if os.geteuid() or not output.is_relative_to(ROOT / 'build/distros'):
@@ -308,13 +341,14 @@ done
             build_arch_package.build(root, recipes / name, packages)
     mesa = output / 'packages/mesa'
     turnip = root / 'usr/lib/libvulkan_freedreno.so'
-    if (not (mesa / 'manifest.json').is_file() and
-            (not turnip.is_file() or b'Adreno (TM) 830v1' not in turnip.read_bytes())):
-        recipe = output / 'mesa-recipe'
-        shutil.copytree(ROOT / 'linux/bsp/steamos/mesa', recipe, dirs_exist_ok=True)
-        shutil.copy2(ROOT / 'upstream/piano-mesa-current/patches/0001-freedreno-Add-chip-id-support-for-A830v1.patch',
-                     recipe)
-        build_arch_package.build(root, recipe, mesa)
+    if (not (root / 'usr/lib/dri/msm_dri.so').is_file() or
+            not (root / 'usr/lib/dri/kms_swrast_dri.so').is_file() or not turnip.is_file() or
+            b'Adreno (TM) 830v1' not in turnip.read_bytes()):
+        recipe = mesa_recipe(output / 'mesa-recipe', cfg['mesa'])
+        if not kde_package_is_current(mesa, recipe):
+            build_arch_package.build(root, recipe, mesa)
+        else:
+            build_arch_package.install_cached(root, mesa)
     gamescope = output / 'packages/gamescope'
     manager = output / 'packages/steamos-manager'
     if not build_steamos_manager.is_current(manager):

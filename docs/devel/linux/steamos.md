@@ -96,10 +96,14 @@ Valve 原包的完整编解码配置和依赖。构建器按目标系统的 FFmp
 
 这会覆盖系统 FFmpeg 及使用它的程序。Steam 或 Electron 自带的私有编解码库不属于系统包，不能用不同 ABI 的共享库强行替换；其硬件视频路径需要分别确认。
 
-Valve 基底中的 Mesa 27.0.0-devel 已包含 Adreno 830v1，构建沿用它，不降级到
-旧适配包。只有缺少芯片支持时才通过 `linux/bsp/steamos/mesa/PKGBUILD`
-重编，保留标准路径和 Valve 软件包名称。x86 客体图形运行库仍保留 Valve
-版本，不向 SteamOS 安装 Debian 共享库。
+Valve 基底中的 Mesa 27.0.0-devel 已包含 Adreno 830v1，游戏模式可通过 Turnip
+渲染；其原生 GL 包却缺少分离的 MSM 显示节点所需的 GBM 路径，KWin 不能
+创建显示缓冲。构建检查原生 MSM 与 KMS 缓冲接口，缺失时按
+`config/steamos.json` 固定的 Mesa 27 源码重编 Freedreno、Turnip、Zink 和
+Softpipe，不降级到旧适配包。Softpipe 保留仅显示设备的缓冲分配回退，不强制
+桌面软件渲染。Wayland 协议构建依赖取自该 Mesa 提交自身的校验清单，不替换
+系统中的 Wayland 库。包名沿用 Valve 的 `deckard-mesa-linux-aarch64`，x86
+客体图形运行库保持原样，不向 SteamOS 安装 Debian 共享库。
 
 实机已运行 Plasma Wayland，OpenGL 使用 Freedreno，Vulkan 使用 Turnip；
 这些结果不能替代硬件视频解码或游戏兼容性验证。

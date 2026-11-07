@@ -37,6 +37,11 @@
       "9": "patches/ffmpeg/9.0.2/series.json"
     }
   },
+  "mesa": {
+    "repository": "https://gitlab.freedesktop.org/mesa/mesa.git",
+    "commit": "e549b466fcf1237469b6814614d21cbcd144c30b",
+    "version": "27.0.0_devel+gite549b466fcf1"
+  },
   "kde_packages": [
     {
       "name": "libkscreen",
