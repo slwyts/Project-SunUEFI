@@ -77,19 +77,6 @@
     },
     {
       "group": "common",
-      "path": "etc/piano/display.conf",
-      "type": "file",
-      "mode": "0644",
-      "uid": 0,
-      "gid": 0,
-      "sha256": "7323b0e6285ab22493b2eb48a2ef262b5bc8ad34d15df3334b375149a1d63323",
-      "source": "rootfs/overlay/etc/piano/display.conf",
-      "source_sha256": "7323b0e6285ab22493b2eb48a2ef262b5bc8ad34d15df3334b375149a1d63323",
-      "source_git_mode": "100644",
-      "license": "MIT"
-    },
-    {
-      "group": "common",
       "path": "usr/lib/systemd/system/piano-adsp.service",
       "type": "file",
       "mode": "0644",
@@ -104,73 +91,6 @@
     },
     {
       "group": "common",
-      "path": "usr/lib/systemd/system/piano-audio.service",
-      "type": "file",
-      "mode": "0644",
-      "uid": 0,
-      "gid": 0,
-      "sha256": "9ab029cd4d4adba52dd3d769e27319c3228dc310c6570a474107065929e36a17",
-      "source": "rootfs/overlay/usr/lib/systemd/system/piano-audio.service",
-      "source_sha256": "9ab029cd4d4adba52dd3d769e27319c3228dc310c6570a474107065929e36a17",
-      "source_git_mode": "100644",
-      "license": "MIT"
-    },
-    {
-      "group": "common",
-      "path": "usr/lib/systemd/system/piano-cpufreq.service",
-      "type": "file",
-      "mode": "0644",
-      "uid": 0,
-      "gid": 0,
-      "sha256": "0f8636a50595c34f5924f9306ce8039445bc87318a7c17695bc6564d0b421b44",
-      "source": "rootfs/overlay/usr/lib/systemd/system/piano-cpufreq.service",
-      "source_sha256": "0f8636a50595c34f5924f9306ce8039445bc87318a7c17695bc6564d0b421b44",
-      "source_git_mode": "100644",
-      "license": "MIT"
-    },
-    {
-      "group": "common",
-      "path": "usr/lib/systemd/system/piano-display.service",
-      "type": "file",
-      "mode": "0644",
-      "uid": 0,
-      "gid": 0,
-      "sha256": "f2be5afd62b6ac585845eb8f1d7193860d63c88a38bff3f85d88d684477975ac",
-      "source": "rootfs/overlay/usr/lib/systemd/system/piano-display.service",
-      "source_sha256": "ed72cc0417d0627f03fd5aa0e82079db3ecf8d111d9879f4a442a7bf38cbe5ed",
-      "source_git_mode": "100644",
-      "license": "MIT",
-      "patch": "patches/0002-display-manager-neutral-order.patch",
-      "patch_sha256": "470fe48c82bd54de9ed4a92995ec3004326d2478b0cb868392a2608a6c6cea05"
-    },
-    {
-      "group": "common",
-      "path": "usr/lib/systemd/system/piano-keyboard.service",
-      "type": "file",
-      "mode": "0644",
-      "uid": 0,
-      "gid": 0,
-      "sha256": "4e31b242ee1240f8c751c234de894327c8f3191ef7998edf53b51e3f605c062b",
-      "source": "rootfs/overlay/usr/lib/systemd/system/piano-keyboard.service",
-      "source_sha256": "4e31b242ee1240f8c751c234de894327c8f3191ef7998edf53b51e3f605c062b",
-      "source_git_mode": "100644",
-      "license": "MIT"
-    },
-    {
-      "group": "common",
-      "path": "usr/lib/systemd/system/piano-radio.service",
-      "type": "file",
-      "mode": "0644",
-      "uid": 0,
-      "gid": 0,
-      "sha256": "cf26e96fcbe9bf0060778043da7f846f51a1f1241410559436fc95bd17d67932",
-      "source": "rootfs/overlay/usr/lib/systemd/system/piano-radio.service",
-      "source_sha256": "cf26e96fcbe9bf0060778043da7f846f51a1f1241410559436fc95bd17d67932",
-      "source_git_mode": "100644",
-      "license": "MIT"
-    },
-    {
-      "group": "common",
       "path": "usr/lib/systemd/system/piano-touch.service",
       "type": "file",
       "mode": "0644",
@@ -182,19 +102,6 @@
       "source_git_mode": "100644",
       "license": "MIT",
       "source_component": "Project SunUEFI"
-    },
-    {
-      "group": "common",
-      "path": "usr/lib/systemd/system/piano-video.service",
-      "type": "file",
-      "mode": "0644",
-      "uid": 0,
-      "gid": 0,
-      "sha256": "09efcb96c16c7e2f1fc939da763eb79df345ba53b0a6791008a02bc9fd507f42",
-      "source": "rootfs/overlay/usr/lib/systemd/system/piano-video.service",
-      "source_sha256": "09efcb96c16c7e2f1fc939da763eb79df345ba53b0a6791008a02bc9fd507f42",
-      "source_git_mode": "100644",
-      "license": "MIT"
     },
     {
       "group": "common",
@@ -293,8 +200,6 @@
       "source_sha256": "b44b23058eac9b297610dde1e5facabfcfe970e0157433842fc010c16245bd3b",
       "source_git_mode": "100644",
       "license": "MIT",
-      "patch": "patches/0003-camera-portable-modprobe.patch",
-      "patch_sha256": "b4892c279dfdce444292ed55a61d984829815bfb567add1d508f053ea5166d5b",
       "source_component": "Project SunUEFI"
     },
     {
@@ -310,20 +215,6 @@
       "source_git_mode": "100644",
       "license": "MIT",
       "transformation": "Public source URL/pin notice plus unmodified LICENSE text"
-    },
-    {
-      "group": "common",
-      "path": "usr/lib/systemd/system/upower.service.d/20-piano-keyboard.conf",
-      "type": "file",
-      "mode": "0644",
-      "uid": 0,
-      "gid": 0,
-      "sha256": "aaa7b46a3c1d9027c023fd698890e0fc51a278ac6e3034cda8a8354566159a9b",
-      "source": "linux/bsp/common/usr/lib/systemd/system/upower.service.d/20-piano-keyboard.conf",
-      "source_component": "Project SunUEFI",
-      "source_sha256": "aaa7b46a3c1d9027c023fd698890e0fc51a278ac6e3034cda8a8354566159a9b",
-      "source_git_mode": "100644",
-      "license": "NOASSERTION"
     },
     {
       "group": "common",
@@ -587,6 +478,20 @@
       "sha256": "cfd6d1b0e57e806f6aa2e0722ce6bd0f581efeab242a26aa6f525291b78e885c",
       "source": "linux/bsp/common/etc/udev/rules.d/79-piano-touch.rules",
       "source_sha256": "cfd6d1b0e57e806f6aa2e0722ce6bd0f581efeab242a26aa6f525291b78e885c",
+      "source_component": "Project SunUEFI",
+      "source_git_mode": "100644",
+      "license": "MIT"
+    },
+    {
+      "group": "common",
+      "path": "usr/lib/piano/piano-adsp-start",
+      "type": "file",
+      "mode": "0755",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "d70ac0df7f2929d50ed3a1c7e847df2e0fdd77699ed35a9395fa40440b0390d1",
+      "source": "linux/bsp/common/usr/lib/piano/piano-adsp-start",
+      "source_sha256": "d70ac0df7f2929d50ed3a1c7e847df2e0fdd77699ed35a9395fa40440b0390d1",
       "source_component": "Project SunUEFI",
       "source_git_mode": "100644",
       "license": "MIT"

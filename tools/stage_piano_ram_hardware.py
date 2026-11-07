@@ -58,7 +58,6 @@ def build(output, source, rootfs=None):
     for path in sorted(common.rglob('*')):
         if path.is_file() and '__pycache__' not in path.parts:
             files[path.relative_to(common).as_posix()] = path.read_bytes()
-    files['usr/lib/piano/piano-adsp-start'] = (ROOT / 'linux/userspace/piano-adsp-start').read_bytes()
     # These remain explicit diagnostics, never boot gates or module loaders.
     for relative, source_name in (
         ('usr/lib/piano/piano_dma_routes.py', 'tools/check_piano_kernel_dma_routes.py'),
