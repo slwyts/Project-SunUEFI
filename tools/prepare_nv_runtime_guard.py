@@ -9,7 +9,7 @@ from pathlib import Path
 import argparse,hashlib,json,subprocess
 ROOT=Path(__file__).resolve().parents[1]
 BASE='upstream/Mu-Silicium/Mu_Basecore'
-PIN='cfb93724a06ff86ff5ba971413368a7809ee42a5'
+PIN=json.loads((ROOT/'sources.lock.json').read_text())['Mu-Silicium/Mu_Basecore']['commit']
 FILE=BASE+'/MdeModulePkg/Universal/Variable/RuntimeDxe/Variable.c'
 from prepare_product_pump import transform
 HOOKS=[]

@@ -11,11 +11,9 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-PINS = {
-    "upstream/Mu-Silicium": "3ec9169f308c01030a7e698072aca5acb2c0a144",
-    "upstream/Mu-Silicium/Mu_Basecore": "cfb93724a06ff86ff5ba971413368a7809ee42a5",
-    "upstream/simple-init": "3d66a6e78d519dd050fbebde4db6c5ac933f9aa4",
-}
+PINS = {'upstream/'+name: row['commit'] for name, row in
+        json.loads((ROOT/'sources.lock.json').read_text()).items()
+        if name in ('Mu-Silicium', 'Mu-Silicium/Mu_Basecore', 'simple-init')}
 BASE = "upstream/Mu-Silicium/Mu_Basecore/"
 SI = "upstream/simple-init/"
 PREVIOUS_WAIT_HOOK = """    // Product library binding is Null for legacy diagnostics. Mu all-TPL

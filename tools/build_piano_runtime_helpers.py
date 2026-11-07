@@ -22,8 +22,9 @@ ROOT=Path(__file__).resolve().parents[1]
 PUBLIC_COMMIT='a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45'
 UAPI_COMMIT='352508459733d3e6d349ea5581a8dd2fd8bb4180'
 UAPI_DIGEST='c4c7b7358f4440da8832eea607ff812fb5481181401e869a34cca70bbe103d4c'
-MACROS_COMMIT='993a17dcb672357998a463a73f120064d6c74f4f'
-LOOP_COMMIT='0f9ee86760b7f2bea174b7e3e7a1d38845da0ab4'
+SOURCE_PINS=json.loads((ROOT/'sources.lock.json').read_text())
+MACROS_COMMIT=SOURCE_PINS['audioreach-topology']['commit']
+LOOP_COMMIT=SOURCE_PINS['v4l2loopback']['commit']
 PUBLIC_SOURCES={
  'piano-touch-view':('initramfs/touch-view/piano-touch-view.c','eb1bac5a7bfac3200248ebe39e8d9564bed3d7848b11655ded5d065dc0ef6e12','usr/bin/piano-touch-view'),
  'piano-camerad':('camera/piano-camerad.c','c2ab6391fa41d21d1c3e4359dc0adf671261417dbda180724faf8b2758932d47','usr/lib/piano/piano-camerad'),

@@ -12,8 +12,9 @@ from pathlib import Path
 import subprocess
 from prepare_product_pump import ROOT, BASE, SI, transform
 
-PIN = 'cfb93724a06ff86ff5ba971413368a7809ee42a5'
-SIMPLEINIT_PIN = '3d66a6e78d519dd050fbebde4db6c5ac933f9aa4'
+SOURCE_PINS = json.loads((ROOT/'sources.lock.json').read_text())
+PIN = SOURCE_PINS['Mu-Silicium/Mu_Basecore']['commit']
+SIMPLEINIT_PIN = SOURCE_PINS['simple-init']['commit']
 DISPLAY = BASE + 'MdeModulePkg/Universal/DisplayEngineDxe/'
 BROWSER = BASE + 'MdeModulePkg/Universal/SetupBrowserDxe/'
 UI = BASE + 'MdeModulePkg/Application/UiApp/'

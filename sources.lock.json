@@ -1,30 +1,30 @@
 {
   "Mu-Silicium": {
-    "commit": "3ec9169f308c01030a7e698072aca5acb2c0a144",
+    "commit": "8471e47f5248ebbffc2e6196b683204163efe155",
     "url": "https://github.com/Project-Silicium/Mu-Silicium.git"
   },
   "Mu-Silicium/Mu_Basecore": {
-    "commit": "cfb93724a06ff86ff5ba971413368a7809ee42a5",
+    "commit": "64f478939955e45faa632c160ae2a75a5ff7ef7f",
     "url": "https://github.com/microsoft/mu_basecore.git"
   },
   "Mu-Silicium/Common/Mu": {
-    "commit": "b8d46c71610318e36a661819e1e3c0b8bdda413a",
+    "commit": "566cf5c8c2c8adf8e1a337ced1d147bc6246856f",
     "url": "https://github.com/microsoft/mu_plus.git"
   },
   "Mu-Silicium/Common/Mu_OEM_Sample": {
-    "commit": "b70b4b7bb02c43bf9db2172dfb3ed0457e2361d6",
+    "commit": "9292f9254adb94c5e5bb09a370b9662fcd66a953",
     "url": "https://github.com/microsoft/mu_oem_sample.git"
   },
   "Mu-Silicium/Binaries": {
-    "commit": "a1501e0c2e642d6ac0d8f52c85af2a67b75a7799",
+    "commit": "9f4dbfd7d61acdae69fd5bb48720ce7e53711e25",
     "url": "https://github.com/Project-Silicium/Device-Binaries.git"
   },
   "Mu-Silicium/Silicium-ACPI": {
-    "commit": "2d465ad77c25de908f0ec7bdfcb57f865b61233c",
+    "commit": "f50bc115dccdea12e44efb550fd783d1daafc739",
     "url": "https://github.com/Project-Silicium/Silicium-ACPI.git"
   },
   "dtc": {
-    "commit": "f3451d12532b9d382707c458a2ae2e5aa0e1eee4",
+    "commit": "54e547173bf0f2a4cc35eba8b5738caf38b9230f",
     "url": "https://github.com/dgibson/dtc.git"
   },
   "simple-init": {
@@ -81,10 +81,10 @@
   },
   "audioreach-topology": {
     "url": "https://github.com/linux-msm/audioreach-topology.git",
-    "commit": "993a17dcb672357998a463a73f120064d6c74f4f"
+    "commit": "d6bb205aca5f4b8fa6b2f44cf8b5f6a081cbf037"
   },
   "v4l2loopback": {
     "url": "https://github.com/umlaeute/v4l2loopback.git",
-    "commit": "0f9ee86760b7f2bea174b7e3e7a1d38845da0ab4"
+    "commit": "442d720262e150084e7923068fb3c01acc42a253"
   }
 }
