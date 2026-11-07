@@ -1,6 +1,6 @@
 # Linux 7.3 发布内核
 
-从正式的 `v7.3` 提交开始，依次应用 `series.json` 中的主题补丁和接口修正：
+从稳定版 `v7.3.3` 提交开始，依次应用 `series.json` 中的主题补丁和接口修正：
 
 | 补丁 | 内容 |
 | --- | --- |
@@ -16,7 +16,11 @@
 | `0010-gunyah-dt-availability` | 尊重资源管理器节点的禁用状态，避免使用其他启动中的旧句柄，并修正设备树引用重复释放 |
 | `0023-dpu-shared-video-ctl` | 双 DSI 共用一个 CTL 时每帧只提交一次，避免从通道重复提交和待完成计数增长；超时日志附带控制器、接口和提交掩码 |
 | `0024-hid-nanosic-feature-and-release` | 触控板使用描述符声明的能力，不再查询 MCU 未实现的 HID Feature 报告；合盖释放触点时按型号发送完整报文 |
-| `0025-hid-xiaomi-p81c-body-gestures` | 触控笔笔身上滑、下滑报告为 Page Up／Page Down；双击和轻捏不再变成小键盘回车和 F19，原始报告交给笔输入程序 |
+| `0025-ucsi-clear-released-connectors` | 清空注销后的连接器指针，避免 ADSP 重启时重复释放 |
+| `0026-mca-recover-pd-input` | 修复重新连接后 PD 电源误报为 Unknown |
+| `0027-power-piano-mipps-authentication` | 小米快充认证与快速重连 |
+| `0028-power-piano-otg-configuration` | 同步原厂 OTG 配置，避免拓展坞拔出导致 ADSP 崩溃 |
+| `0029-hid-xiaomi-p81c-body-gestures` | 触控笔笔身上滑、下滑报告为 Page Up／Page Down；双击和轻捏不再变成小键盘回车和 F19，原始报告交给笔输入程序 |
 
 这些文件由迁移结果按子系统整理，不再把旧 stable 分支的回移修复
 重复合并到新主线。清单保留每一步的来源、SHA-256、提交父子关系和结果树；

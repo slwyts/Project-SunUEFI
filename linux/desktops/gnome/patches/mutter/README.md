@@ -14,7 +14,7 @@ sysroot 为输入会先克隆，再在独立 chroot 使用签名 APT 的精确 S
 
 ```sh
 sudo python3 tools/build_mutter_packages.py \
-  --sysroot build/distros/release-7.2.9/rootfs --jobs 4
+  --sysroot build/distros/release/rootfs --jobs 4
 ```
 
 已有独立 ARM64 package builder（原生或标准 QEMU binfmt）可复用，避免再次复制和安装依赖：

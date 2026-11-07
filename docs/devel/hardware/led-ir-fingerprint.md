@@ -38,7 +38,6 @@ Linux起初没有RGB，LPG的deferred-probe原因为未取得LPG chan SDAM。正
 
 在平板上按顺序检查：`dmesg | grep -i -e geni -e ir-spi` 确认控制器和发送驱动绑定，`ls /dev/lirc*` 出现设备；`ir-ctl -d /dev/lirc0 -S nec:0x04` 之类的命令发送（`ir-ctl` 在 Debian 的 `ir-keytable` 包中）；用手机摄像头对着平板的红外窗口观察闪烁，再对电视等设备实测。SE 没有被引导程序配置协议时，7.3 的 GENI 驱动会按 QUP wrapper 的 `firmware-name` 自行加载固件；当前 DT 没有这个属性，QUP1 上的触控 SPI 也不需要它。若日志出现 `Failed to read firmware-name` 或 `Invalid proto`，说明 SE7 没有以 SPI 模式交给 Linux，此时给 `qcom,qupv3_2_geni_se@8c0000` 加 `firmware-name`，并随系统提供同版原厂 ROM 的 `qupv3fw.elf`。
 
-[`piano-ir-spi-rc-core.patch`](../../../patches/linux/7.2.9/drafts/piano-ir-spi-rc-core.patch) 是按原厂 1.92 MHz、32 位打包和 40% 占空比编码的另一种实现，只针对 7.2.9，没有进入发布序列。标准驱动在实机上确认可用后删除它；只有标准波形无法被接收设备识别时，才把它移植到 7.3 并让子节点改用 `xiaomi,piano-ir-spi`。
 
 ## 侧指纹
 

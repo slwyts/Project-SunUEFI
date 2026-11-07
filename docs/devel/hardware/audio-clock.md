@@ -39,7 +39,7 @@ DAI立即解除；它没有新增DMIC启动后的有效mute窗口。优先最小
 或当前内核实现。
 
 随后默认 release 已接入
-[DMIC clock 顺序补丁](../../../patches/linux/7.2.9/0005-asoc-va-dmic-clock-before-filter.patch)：
+[音频补丁](../../../patches/linux/7.3/0005-audio.patch)中的 DMIC clock 顺序修正：
 八个原 ADC 保留， clock event 改为各自的 DAPM supply，并显式依赖
 `VA_MCLK`；supply 在 DEC MUX 前上电、后断电。补齐 PRE_PMU/PRE_PMD 的
 硬件 PGA mute，保留共享 clock 计数、原信号路线和现有 HPF 等待，不加 reset

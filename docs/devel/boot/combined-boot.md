@@ -60,7 +60,7 @@ BOOT；不能凭旧 ROM 下载或历史 BOOT 备份补齐缺失的数据。
 
 ```sh
 python tools/build_boot_repack.py --arch aarch64 \
-  --sysroot build/distros/release-7.2.9/rootfs --output build/boot-repack-native
+  --sysroot build/distros/release/rootfs --output build/boot-repack-native
 ```
 
 编译入口使用现有 clang/LLD 和 ARM64 libc/GCC sysroot，输出无 PT_INTERP 的
@@ -92,7 +92,7 @@ piano-boot-repack request --input selected-boot.img --target linux --preview
 
 ```sh
 python tools/build_boot_repack.py --arch aarch64 \
-  --sysroot build/distros/release-7.2.9/rootfs --output build/boot-repack-native-check \
+  --sysroot build/distros/release/rootfs --output build/boot-repack-native-check \
   --roundtrip-stock path/to/current-stock-boot.img \
   --selector-dir path/to/current-selector-bundle
 ```
