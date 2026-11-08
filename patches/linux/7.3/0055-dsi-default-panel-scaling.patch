@@ -1,0 +1,30 @@
+From e1b0264d055d40378d54e7a4f3e00a6ea9449752 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sun, 8 Nov 2026 16:45:11 +0800
+Subject: [PATCH] drm/bridge: default fixed DSI panel scaling to full
+
+Keep the standard full-panel source-mode policy across connector state creation and resets. Compositors can still request None for native modes.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/gpu/drm/display/drm_bridge_connector.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/gpu/drm/display/drm_bridge_connector.c b/drivers/gpu/drm/display/drm_bridge_connector.c
+index a3c3884d9cb..46838982597 100644
+--- a/drivers/gpu/drm/display/drm_bridge_connector.c
++++ b/drivers/gpu/drm/display/drm_bridge_connector.c
+@@ -277,6 +277,10 @@ drm_bridge_connector_create_state(struct drm_connector *connector)
+ 	if (IS_ERR(conn_state))
+ 		return conn_state;
+ 
++	if (connector->connector_type == DRM_MODE_CONNECTOR_DSI &&
++	    connector->scaling_mode_property)
++		conn_state->scaling_mode = DRM_MODE_SCALE_FULLSCREEN;
++
+ 	if (!bridge_connector->bridge_hdmi &&
+ 	    connector->connector_type == DRM_MODE_CONNECTOR_DSI &&
+ 	    connector->max_bpc_property &&
+-- 
+2.56.0
+

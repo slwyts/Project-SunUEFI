@@ -1,0 +1,400 @@
+From 51586cd1ddc492a3bd38b2beaaac26ff2c2f9aa2 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sun, 8 Nov 2026 16:36:59 +0800
+Subject: [PATCH] drm/msm: fit smaller source modes to bonded DSI panels
+
+Retain the panel's native refresh-specific timings in adjusted_mode and expose the standard None/Full scaling modes. Map every visible plane destination, including cursors, from requested-mode space into the physical mode before pipe splitting. Check and reserve scaler resources against those physical destinations.
+
+Advertise smaller Piano source modes at every native refresh rate without changing the DSI clock, DSC slice geometry or panel commands. Full-panel mapping keeps absolute touch coordinates aligned. Scaling-property changes trigger a modeset and mode changes reassign all planes.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ .../gpu/drm/display/drm_bridge_connector.c    | 13 ++++
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c      | 37 +++++++++-
+ drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c     | 51 +++++++++----
+ drivers/gpu/drm/msm/dsi/dsi_manager.c         | 73 +++++++++++++++++++
+ drivers/gpu/drm/panel/panel-novatek-nt36532.c | 41 ++++++++++-
+ 5 files changed, 198 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/gpu/drm/display/drm_bridge_connector.c b/drivers/gpu/drm/display/drm_bridge_connector.c
+index 3949e042b59..a3c3884d9cb 100644
+--- a/drivers/gpu/drm/display/drm_bridge_connector.c
++++ b/drivers/gpu/drm/display/drm_bridge_connector.c
+@@ -416,6 +416,19 @@ static int drm_bridge_connector_atomic_check(struct drm_connector *connector,
+ {
+ 	struct drm_bridge_connector *bridge_connector =
+ 		to_drm_bridge_connector(connector);
++	struct drm_connector_state *new_state =
++		drm_atomic_get_new_connector_state(state, connector);
++	struct drm_connector_state *old_state =
++		drm_atomic_get_old_connector_state(state, connector);
++	struct drm_crtc_state *crtc_state;
++
++	if (connector->scaling_mode_property && new_state->crtc &&
++	    new_state->scaling_mode != old_state->scaling_mode) {
++		crtc_state = drm_atomic_get_crtc_state(state, new_state->crtc);
++		if (IS_ERR(crtc_state))
++			return PTR_ERR(crtc_state);
++		crtc_state->mode_changed = true;
++	}
+ 
+ 	if (bridge_connector->bridge_hdmi)
+ 		return drm_atomic_helper_connector_hdmi_check(connector, state);
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+index 5e19d649b0a..3ed3af7010a 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -1708,6 +1708,38 @@ static bool dpu_crtc_can_update_vfp(struct drm_crtc_state *old,
+ 	return true;
+ }
+ 
++static int dpu_crtc_check_panel_fitting(struct drm_crtc_state *state)
++{
++	struct drm_connector_state *conn_state;
++	struct drm_connector *connector;
++	u32 width = state->adjusted_mode.hdisplay;
++	u32 height = state->adjusted_mode.vdisplay;
++	u32 source_width = state->mode.hdisplay, source_height = state->mode.vdisplay;
++	unsigned int scaling = DRM_MODE_SCALE_NONE;
++	int i, ret;
++
++	if (!state->enable)
++		return 0;
++	if (!source_width || !source_height || !width || !height)
++		return -EINVAL;
++	if (width == source_width && height == source_height)
++		return 0;
++
++	ret = drm_atomic_add_affected_connectors(state->state, state->crtc);
++	if (ret)
++		return ret;
++
++	for_each_new_connector_in_state(state->state, connector, conn_state, i) {
++		if (conn_state->crtc == state->crtc && connector->scaling_mode_property) {
++			scaling = conn_state->scaling_mode;
++			break;
++		}
++	}
++	if (scaling != DRM_MODE_SCALE_FULLSCREEN || source_width > width || source_height > height)
++		return -EINVAL;
++	return 0;
++}
++
+ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ 		struct drm_atomic_commit *state)
+ {
+@@ -1740,6 +1772,9 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ 	    kms->lutdma && !dpu_lutdma_ready(kms->lutdma))
+ 		return -EIO;
+ 
++	rc = dpu_crtc_check_panel_fitting(crtc_state);
++	if (rc)
++		return rc;
+ 
+ 	/* don't reallocate resources if only ACTIVE has beeen changed */
+ 	if (crtc_state->mode_changed || crtc_state->connectors_changed ||
+@@ -1749,7 +1784,7 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ 			return rc;
+ 	}
+ 
+-	if (crtc_state->planes_changed || crtc_state->zpos_changed) {
++	if (crtc_state->planes_changed || crtc_state->zpos_changed || crtc_state->mode_changed) {
+ 		if (dpu_use_virtual_planes)
+ 			rc = dpu_crtc_reassign_planes(crtc, crtc_state);
+ 		else
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+index 7b92082d35a..8818a8b5bef 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+@@ -46,6 +46,8 @@
+ 
+ #define DPU_PLANE_COLOR_FILL_FLAG	BIT(31)
+ #define DPU_ZPOS_MAX 255
++#define MAX_UPSCALE_RATIO 20
++#define MAX_DOWNSCALE_RATIO 4
+ 
+ /*
+  * Default Preload Values
+@@ -733,21 +735,11 @@ static int dpu_plane_atomic_check_pipe(struct dpu_plane *pdpu,
+ 	uint32_t supported_rotations;
+ 	const struct dpu_sspp_cfg *pipe_hw_caps;
+ 	const struct dpu_sspp_sub_blks *sblk;
++	u32 src_width, src_height, dst_width, dst_height;
+ 
+ 	pipe_hw_caps = pipe->sspp->cap;
+ 	sblk = pipe->sspp->cap->sblk;
+ 
+-	/*
+-	 * We already have verified scaling against platform limitations.
+-	 * Now check if the SSPP supports scaling at all.
+-	 */
+-	if (!(sblk->scaler_blk.len && pipe->sspp->ops.setup_scaler) &&
+-	    ((drm_rect_width(&new_plane_state->src) >> 16 !=
+-	      drm_rect_width(&new_plane_state->dst)) ||
+-	     (drm_rect_height(&new_plane_state->src) >> 16 !=
+-	      drm_rect_height(&new_plane_state->dst))))
+-		return -ERANGE;
+-
+ 	fmt = msm_framebuffer_format(new_plane_state->fb);
+ 
+ 	supported_rotations = DRM_MODE_REFLECT_MASK | DRM_MODE_ROTATE_0;
+@@ -758,6 +750,25 @@ static int dpu_plane_atomic_check_pipe(struct dpu_plane *pdpu,
+ 	pipe_cfg->rotation = drm_rotation_simplify(new_plane_state->rotation,
+ 						   supported_rotations);
+ 
++	/* Check the physical destination, including fixed-panel fitting, after
++	 * splitting and rotation. The core checks only requested-mode space.
++	 */
++	src_width = drm_rect_width(&pipe_cfg->src_rect);
++	src_height = drm_rect_height(&pipe_cfg->src_rect);
++	if (pipe_cfg->rotation & DRM_MODE_ROTATE_90)
++		swap(src_width, src_height);
++	dst_width = drm_rect_width(&pipe_cfg->dst_rect);
++	dst_height = drm_rect_height(&pipe_cfg->dst_rect);
++	if (!dst_width || !dst_height ||
++	    src_width > dst_width * MAX_DOWNSCALE_RATIO ||
++	    src_height > dst_height * MAX_DOWNSCALE_RATIO ||
++	    dst_width > src_width * MAX_UPSCALE_RATIO ||
++	    dst_height > src_height * MAX_UPSCALE_RATIO)
++		return -ERANGE;
++	if (!(sblk->scaler_blk.len && pipe->sspp->ops.setup_scaler) &&
++	    (src_width != dst_width || src_height != dst_height))
++		return -ERANGE;
++
+ 	min_src_size = MSM_FORMAT_IS_YUV(fmt) ? 2 : 1;
+ 
+ 	if (MSM_FORMAT_IS_YUV(fmt) &&
+@@ -809,9 +820,6 @@ static int dpu_plane_atomic_check_pipe(struct dpu_plane *pdpu,
+ 	return 0;
+ }
+ 
+-#define MAX_UPSCALE_RATIO	20
+-#define MAX_DOWNSCALE_RATIO	4
+-
+ static int dpu_plane_atomic_check_nosspp(struct drm_plane *plane,
+ 					 struct drm_plane_state *new_plane_state,
+ 					 const struct drm_crtc_state *crtc_state)
+@@ -924,6 +932,17 @@ static int dpu_plane_split(struct drm_plane *plane,
+ 				new_plane_state->rotation);
+ 
+ 		pipe_cfg->dst_rect = new_plane_state->dst;
++		if (mode->hdisplay != crtc_state->mode.hdisplay ||
++		    mode->vdisplay != crtc_state->mode.vdisplay) {
++			struct drm_rect *dst = &pipe_cfg->dst_rect;
++			u32 width = crtc_state->mode.hdisplay;
++			u32 height = crtc_state->mode.vdisplay;
++
++			dst->x1 = DIV_ROUND_CLOSEST_ULL((u64)dst->x1 * mode->hdisplay, width);
++			dst->x2 = DIV_ROUND_CLOSEST_ULL((u64)dst->x2 * mode->hdisplay, width);
++			dst->y1 = DIV_ROUND_CLOSEST_ULL((u64)dst->y1 * mode->vdisplay, height);
++			dst->y2 = DIV_ROUND_CLOSEST_ULL((u64)dst->y2 * mode->vdisplay, height);
++		}
+ 
+ 		DPU_DEBUG_PLANE(pdpu, "checking src " DRM_RECT_FMT
+ 				" vs clip window " DRM_RECT_FMT "\n",
+@@ -1282,7 +1301,9 @@ static int dpu_plane_virtual_assign_resources(struct drm_crtc *crtc,
+ 	fmt = msm_framebuffer_format(plane_state->fb);
+ 	reqs.yuv = MSM_FORMAT_IS_YUV(fmt);
+ 	reqs.scale = (plane_state->src_w >> 16 != plane_state->crtc_w) ||
+-		(plane_state->src_h >> 16 != plane_state->crtc_h);
++		(plane_state->src_h >> 16 != plane_state->crtc_h) ||
++		crtc_state->mode.hdisplay != crtc_state->adjusted_mode.hdisplay ||
++		crtc_state->mode.vdisplay != crtc_state->adjusted_mode.vdisplay;
+ 
+ 	reqs.rot90 = drm_rotation_90_or_270(plane_state->rotation);
+ 
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_manager.c b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+index db26f5174b8..56cd6f04bba 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_manager.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+@@ -214,6 +214,7 @@ static void dsi_mgr_phy_disable(int id)
+ 
+ struct dsi_bridge {
+ 	struct drm_bridge base;
++	struct drm_connector *connector;
+ 	int id;
+ 	bool link_ready;
+ };
+@@ -502,6 +503,63 @@ static void dsi_mgr_bridge_mode_set(struct drm_bridge *bridge,
+ 		msm_dsi_host_set_display_mode(other_dsi->host, adjusted_mode);
+ }
+ 
++static const struct drm_display_mode *
++dsi_mgr_panel_mode(struct drm_connector *connector,
++		   const struct drm_display_mode *requested)
++{
++	const struct drm_display_mode *mode, *native = NULL;
++	unsigned int width = 0, height = 0;
++	struct list_head *lists[] = { &connector->probed_modes, &connector->modes };
++	unsigned int i;
++
++	/* Fitting changes the source size, never the panel's physical timings.
++	 * All native refresh rates have the same active dimensions.
++	 */
++	for (i = 0; i < ARRAY_SIZE(lists); i++) {
++		list_for_each_entry(mode, lists[i], head) {
++			if (mode->hdisplay >= width && mode->vdisplay >= height) {
++				width = mode->hdisplay;
++				height = mode->vdisplay;
++			}
++		}
++	}
++	if (requested->hdisplay > width || requested->vdisplay > height)
++		return NULL;
++	for (i = 0; i < ARRAY_SIZE(lists); i++) {
++		list_for_each_entry(mode, lists[i], head) {
++			if (mode->hdisplay == width && mode->vdisplay == height &&
++			    drm_mode_vrefresh(mode) == drm_mode_vrefresh(requested)) {
++				native = mode;
++				break;
++			}
++		}
++		if (native)
++			break;
++	}
++	return native;
++}
++
++static int dsi_mgr_bridge_atomic_check(struct drm_bridge *bridge,
++				      struct drm_bridge_state *bridge_state,
++				      struct drm_crtc_state *crtc_state,
++				      struct drm_connector_state *conn_state)
++{
++	const struct drm_display_mode *native;
++
++	if (!conn_state->connector->scaling_mode_property)
++		return 0;
++	native = dsi_mgr_panel_mode(conn_state->connector, &crtc_state->mode);
++	if (!native)
++		return -EINVAL;
++	if (conn_state->scaling_mode == DRM_MODE_SCALE_NONE &&
++	    (native->hdisplay != crtc_state->mode.hdisplay ||
++	     native->vdisplay != crtc_state->mode.vdisplay))
++		return -EINVAL;
++
++	drm_mode_copy(&crtc_state->adjusted_mode, native);
++	return 0;
++}
++
+ static enum drm_mode_status dsi_mgr_bridge_mode_valid(struct drm_bridge *bridge,
+ 						      const struct drm_display_info *info,
+ 						      const struct drm_display_mode *mode)
+@@ -513,6 +571,13 @@ static enum drm_mode_status dsi_mgr_bridge_mode_valid(struct drm_bridge *bridge,
+ 	struct dev_pm_opp *opp;
+ 	unsigned long byte_clk_rate;
+ 
++	if (to_dsi_bridge(bridge)->connector &&
++	    to_dsi_bridge(bridge)->connector->scaling_mode_property) {
++		mode = dsi_mgr_panel_mode(to_dsi_bridge(bridge)->connector, mode);
++		if (!mode)
++			return MODE_BAD;
++	}
++
+ 	byte_clk_rate = dsi_byte_clk_get_rate(host, IS_BONDED_DSI(), mode);
+ 
+ 	opp = dev_pm_opp_find_freq_ceil(&pdev->dev, &byte_clk_rate);
+@@ -555,6 +620,7 @@ static const struct drm_bridge_funcs dsi_mgr_bridge_funcs = {
+ 	.atomic_post_disable = dsi_mgr_bridge_post_disable,
+ 	.mode_set = dsi_mgr_bridge_mode_set,
+ 	.mode_valid = dsi_mgr_bridge_mode_valid,
++	.atomic_check = dsi_mgr_bridge_atomic_check,
+ };
+ 
+ /* initialize bridge */
+@@ -590,6 +656,13 @@ int msm_dsi_manager_connector_init(struct msm_dsi *msm_dsi,
+ 		DRM_ERROR("Unable to create bridge connector\n");
+ 		return PTR_ERR(connector);
+ 	}
++	dsi_bridge->connector = connector;
++	if (connector->connector_type == DRM_MODE_CONNECTOR_DSI && IS_BONDED_DSI()) {
++		ret = drm_connector_attach_scaling_mode_property(connector,
++			BIT(DRM_MODE_SCALE_NONE) | BIT(DRM_MODE_SCALE_FULLSCREEN));
++		if (ret)
++			return ret;
++	}
+ 
+ 	/* DSC uses one fixed component depth from the attached panel. Expose
+ 	 * that exact depth; changing it would also require changing the PPS
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36532.c b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+index 03ad59adfc8..77e4be3017c 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+@@ -54,6 +54,7 @@ struct panel_info {
+ 
+ 	bool is_dual_dsi;
+ 	bool piano_reset_sequence;
++	bool supports_scaling;
+ };
+ 
+ static const struct regulator_bulk_data nt36532_supplies[] = {
+@@ -200,6 +201,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ 	const struct panel_info *panel_info = ctx->panel_info;
+ 	unsigned int preferred = 0;
+ 	unsigned int i;
++	int count = panel_info->num_modes;
+ 
+ 	/* Piano's validated pen scan uses a 120 Hz cold-start display mode.
+ 	 * Keep every advertised mode and each panel vendor's own sequence.
+@@ -227,6 +229,42 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ 		drm_mode_set_name(mode);
+ 		drm_mode_probed_add(connector, mode);
+ 	}
++	if (panel_info->supports_scaling && connector->scaling_mode_property) {
++		static const unsigned int sizes[][2] = {
++			{ 2560, 1708 }, { 2400, 1602 }, { 1920, 1280 },
++			{ 1600, 1068 }, { 1280, 854 },
++		};
++		unsigned int j;
++
++		for (i = 0; i < panel_info->num_modes; i++) {
++			for (j = 0; j < ARRAY_SIZE(sizes); j++) {
++				struct drm_display_mode *mode;
++				u64 clock;
++
++				mode = drm_mode_duplicate(connector->dev, &panel_info->modes[i]);
++				if (!mode)
++					return -ENOMEM;
++				/* These are source modes for DPU fitting. The DSI bridge
++				 * restores the native timing with the same refresh rate.
++				 */
++				mode->hdisplay = sizes[j][0];
++				mode->hsync_start = mode->hdisplay + 32;
++				mode->hsync_end = mode->hsync_start + 32;
++				mode->htotal = mode->hsync_end + 32;
++				mode->vdisplay = sizes[j][1];
++				mode->vsync_start = mode->vdisplay + 8;
++				mode->vsync_end = mode->vsync_start + 2;
++				mode->vtotal = mode->vsync_end + 16;
++				clock = (u64)mode->htotal * mode->vtotal *
++					drm_mode_vrefresh(&panel_info->modes[i]);
++				mode->clock = DIV_ROUND_CLOSEST_ULL(clock, 1000);
++				mode->type = DRM_MODE_TYPE_DRIVER;
++				drm_mode_set_name(mode);
++				drm_mode_probed_add(connector, mode);
++				count++;
++			}
++		}
++	}
+ 
+ 	connector->display_info.width_mm = panel_info->modes[0].width_mm;
+ 	connector->display_info.height_mm = panel_info->modes[0].height_mm;
+@@ -234,7 +272,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ 		connector->display_info.bpc = panel_info->dsc_cfg->bits_per_component;
+ 	ctx->connector = connector;
+ 
+-	return panel_info->num_modes;
++	return count;
+ }
+ 
+ static const struct drm_panel_funcs nt36532_panel_funcs = {
+@@ -796,6 +834,7 @@ static const struct panel_info csot_panel_info = {
+ 	.dsc_cfg = &piano_dsc_cfg,						\
+ 	.init_sequence = _init,							\
+ 	.piano_reset_sequence = true,						\
++	.supports_scaling = true,						\
+ 	.is_dual_dsi = true,							\
+ }
+ 
+-- 
+2.56.0
+

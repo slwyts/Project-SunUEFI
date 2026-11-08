@@ -96,6 +96,10 @@ def configure(rootfs, run, input_method='fcitx'):
         (f'GTK_IM_MODULE={input_method}\nQT_IM_MODULE={input_method}\n'
          if input_method == 'fcitx' else '') +
         f'XMODIFIERS=@im={input_method}\nSDL_IM_MODULE={input_method}\n')
+    # Panel source modes require fitting even when listed as driver modes.
+    # KWin otherwise explicitly requests None for every non-generated mode.
+    (input_environment.parent / '60-piano-display.conf').write_text(
+        'KWIN_DRM_FORCE_SCALING_MODE=FULL\n')
     if input_method == 'fcitx':
         autostart = rootfs / 'etc/xdg/autostart/piano-fcitx5.desktop'
         autostart.parent.mkdir(parents=True, exist_ok=True)

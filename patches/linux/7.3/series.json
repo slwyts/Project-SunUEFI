@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "f2841f2959e6d6c2c15fe7063c2fa085f9a47d79",
-  "original_target_commit": "f11e45afb3e97744e8bb63558df2db0a5419a141",
+  "target_tree": "7be95fc8b47901e3c6ef8422f633e1d21f8c8d54",
+  "original_target_commit": "e1b0264d055d40378d54e7a4f3e00a6ea9449752",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -431,6 +431,22 @@
       "original_parent": "0482074eb3ce93bdd2a4dc070b483f45ad5479fb",
       "tree": "f2841f2959e6d6c2c15fe7063c2fa085f9a47d79",
       "committer_date": "2026-11-08T16:29:18+08:00"
+    },
+    {
+      "file": "0054-dsi-fixed-panel-scaling.patch",
+      "sha256": "d4401b9a7869a22b9c861d801d3946e1faf620e68eabfabf5d063b1abd8a17d2",
+      "original_commit": "51586cd1ddc492a3bd38b2beaaac26ff2c2f9aa2",
+      "original_parent": "f11e45afb3e97744e8bb63558df2db0a5419a141",
+      "tree": "223ae093c0d0351ab1075282ff4fe2c8bcb45d23",
+      "committer_date": "2026-11-08T16:36:59+08:00"
+    },
+    {
+      "file": "0055-dsi-default-panel-scaling.patch",
+      "sha256": "0105a783878e085fffca36ec4f7b4dc4fbe1ddeeef95fb90378a2b72ecdb8247",
+      "original_commit": "e1b0264d055d40378d54e7a4f3e00a6ea9449752",
+      "original_parent": "51586cd1ddc492a3bd38b2beaaac26ff2c2f9aa2",
+      "tree": "7be95fc8b47901e3c6ef8422f633e1d21f8c8d54",
+      "committer_date": "2026-11-08T16:45:11+08:00"
     }
   ]
 }
