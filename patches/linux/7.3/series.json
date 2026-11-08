@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "7be95fc8b47901e3c6ef8422f633e1d21f8c8d54",
-  "original_target_commit": "e1b0264d055d40378d54e7a4f3e00a6ea9449752",
+  "target_tree": "4344bbcedc7d9b16a0991d24cbc8e52495656638",
+  "original_target_commit": "0155e5a062f60916d2dd1e3401ae33f3fbc4fa72",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -447,6 +447,14 @@
       "original_parent": "51586cd1ddc492a3bd38b2beaaac26ff2c2f9aa2",
       "tree": "7be95fc8b47901e3c6ef8422f633e1d21f8c8d54",
       "committer_date": "2026-11-08T16:45:11+08:00"
+    },
+    {
+      "file": "0056-rtc-efi-validate-time.patch",
+      "sha256": "7d1b494ce4d516a228c63505aed06d58b073a0ca73a75bd5e38cef9fe3cdf2c7",
+      "original_commit": "0155e5a062f60916d2dd1e3401ae33f3fbc4fa72",
+      "original_parent": "e1b0264d055d40378d54e7a4f3e00a6ea9449752",
+      "tree": "4344bbcedc7d9b16a0991d24cbc8e52495656638",
+      "committer_date": "2026-11-08T22:32:16+08:00"
     }
   ]
 }

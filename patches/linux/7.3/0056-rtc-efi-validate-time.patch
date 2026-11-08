@@ -1,0 +1,33 @@
+From 0155e5a062f60916d2dd1e3401ae33f3fbc4fa72 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sun, 8 Nov 2026 21:32:14 +0800
+Subject: [PATCH] rtc: efi: reject invalid firmware time during probe
+
+GetTime may report success while returning an invalid calendar date. Validate the converted time before registering an RTC so that an unusable firmware provider does not displace the platform RTC and fail every subsequent read.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/rtc/rtc-efi.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/rtc/rtc-efi.c b/drivers/rtc/rtc-efi.c
+index a8c18ebc559..24eeecad591 100644
+--- a/drivers/rtc/rtc-efi.c
++++ b/drivers/rtc/rtc-efi.c
+@@ -251,10 +251,13 @@ static int __init efi_rtc_probe(struct platform_device *dev)
+ 	efi_time_t eft;
+ 	efi_time_cap_t cap;
+ 	efi_bool_t enabled, pending;
++	struct rtc_time time;
+ 
+ 	/* First check if the RTC is usable */
+ 	if (efi.get_time(&eft, &cap) != EFI_SUCCESS)
+ 		return -ENODEV;
++	if (!convert_from_efi_time(&eft, &time) || rtc_valid_tm(&time))
++		return -ENODEV;
+ 
+ 	rtc = devm_rtc_allocate_device(&dev->dev);
+ 	if (IS_ERR(rtc))
+-- 
+2.56.0
+
