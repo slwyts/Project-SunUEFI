@@ -332,12 +332,17 @@ RPMB 与 Android 共用，包含全局写计数器、启动记录和安全存储
 [标准 fprintd 录入接口](https://fprint.freedesktop.org/fprintd-dev/Device.html)
 只接收手指名称，由 Polkit 授权，不提供 Gatekeeper 凭据或 HAT。
 [`libfprint 后端`](../../../patches/libfprint/1.94.100/0001-piano-goodix-uio.patch)
-直接链接同一原生 API，提供录入、单手指验证、枚举、按 UID 删除和取消；
+直接链接同一原生 API，提供录入、单手指验证、多指识别、枚举、按 UID 删除和取消；
 后端的设备私有数据只保存 Linux UID 和手指名称。fprintd 管理标准用户记录，
 密封模板仍由设备端存储管理。
 GNOME 账户设置通过标准 fprintd 接口录入，锁屏认证使用标准 PAM 链路。
 
-后端不提供 libfprint `IDENTIFY`。QTEE 每次只选择一个 Linux 用户的分组，而
-libfprint 的识别图库可能跨用户，包括 fprintd 的录入查重，因此不能声称支持该能力。
-`fprintd` 的 `any` 验证请求会由它选择并提示一个已登记手指，再执行单手指 `VERIFY`；
-原生 `verify <uid> any` 则只在该 UID 已登记的手指范围内匹配，不提供跨用户识别。
+`fprintd` 的 `any` 请求在登记多根手指后使用标准 `IDENTIFY`，可识别该用户的任一
+已登记手指。后端按图库中的 Linux UID 分组，每次只选择一个用户的 QTEE 分组，
+调用原生 `verify <uid> any`，继续校验分组、模板 ID、挑战、SID 和认证类型，
+再将结果对应回请求图库中的原始记录。指定手指的 `VERIFY` 仍只接受该手指。
+
+fprintd 在新录入前通过同一接口检查重复指纹。跨用户图库按 UID 依次执行独立采样，
+前一个用户完成不匹配后，才尝试下一个用户，因此可能需要再次轻触；认证数据错误、
+存储错误、超时和取消不会被当成不匹配继续。图库为空时会先枚举 Linux 自有记录，
+让 fprintd 识别并清理丢失主机登记信息的指纹，Android 的分组不参与识别。

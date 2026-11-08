@@ -20,13 +20,13 @@
 #define CHALLENGE UINT64_C(0x1020304050607080)
 
 enum fault { NONE, WRONG_GROUP, WRONG_TEMPLATE, WRONG_SID, WRONG_CHALLENGE,
-	     WRONG_TYPE, CONFIG_ERROR, SAVE_ERROR, POST_ERROR };
+	     WRONG_TYPE, WRONG_VERSION, CONFIG_ERROR, SAVE_ERROR, POST_ERROR };
 
 struct exchange {
 	uint8_t *buffer;
 	size_t capacity;
 	unsigned int calls, irq_calls, cancels, starts, saves, finishes, posts;
-	int enrollment, extended;
+	int enrollment, extended, other_template;
 	int32_t result_status;
 	uint8_t mistaken_touch;
 	enum fault fault;
@@ -154,7 +154,8 @@ static int command(void *context, uint32_t number, size_t bytes, int32_t *status
 	put(buffer, 0x70, exchange->enrollment ? 0 : 1);
 	put(buffer, 0x98, exchange->extended && index == 2 ? 2 : 0);
 	put(buffer, 0x80, exchange->fault == WRONG_GROUP ? GROUP + 1 : GROUP);
-	put(buffer, 0x84, exchange->fault == WRONG_TEMPLATE ? TEMPLATE + 1 : TEMPLATE);
+	put(buffer, 0x84, exchange->fault == WRONG_TEMPLATE || exchange->other_template ?
+		TEMPLATE + 1 : TEMPLATE);
 	uint16_t remaining = exchange->enrollment && index == 2 ? 2 : 0;
 
 	memcpy(buffer + 0x88, &remaining, sizeof(remaining));
@@ -166,6 +167,8 @@ static int command(void *context, uint32_t number, size_t bytes, int32_t *status
 		token(buffer + 0x2ac, exchange->fault == WRONG_TYPE ? 1 : 2,
 		      CHALLENGE + (exchange->fault == WRONG_CHALLENGE),
 		      SID + (exchange->fault == WRONG_SID));
+	if (exchange->fault == WRONG_VERSION)
+		buffer[0x2ac] = 1;
 	if (index == 2) {
 		*status = exchange->result_status;
 		buffer[0x79] = exchange->mistaken_touch;
@@ -274,7 +277,15 @@ static void authenticate(enum fault fault)
 	assert(step(&operation, &sample) == GOODIX_OPERATION_CONTINUE);
 	int result = step(&operation, &sample);
 
-	if (fault != NONE && fault != CONFIG_ERROR) {
+	if (fault == WRONG_TEMPLATE) {
+		assert(result == GOODIX_OPERATION_CONTINUE);
+		assert(sample.kind == GOODIX_OPERATION_NOT_MATCH);
+		assert(!sample.group && !sample.template_id && !operation.template_id);
+		assert(!wide(operation.hat, 9) && !exchange.finishes);
+		goodix_operation_cancel(&operation);
+		assert(step(&operation, &sample) == GOODIX_OPERATION_COMPLETE);
+		assert(sample.kind == GOODIX_OPERATION_CANCELLED);
+	} else if (fault != NONE && fault != CONFIG_ERROR) {
 		assert(result == -EACCES);
 		assert(exchange.finishes == 0);
 		goodix_operation_cancel(&operation);
@@ -300,6 +311,33 @@ static void authenticate(enum fault fault)
 		}
 	}
 	free(exchange.buffer);
+}
+
+static void invalid_identity_with_other_template(void)
+{
+	/* An unrequested template must not hide malformed authorization fields. */
+	for (enum fault fault = WRONG_GROUP; fault <= WRONG_VERSION; ++fault) {
+		if (fault == WRONG_TEMPLATE)
+			continue;
+		struct exchange exchange = { .fault = fault, .other_template = 1 };
+		struct goodix_events events;
+		struct goodix_operation operation = {0};
+		struct goodix_operation_sample sample;
+		uint32_t allowed = TEMPLATE;
+
+		setup(&exchange, &events, 0, 0);
+		assert(!goodix_operation_start_authenticate(&operation, &events, GROUP, SID,
+			CHALLENGE, &allowed, 1, 1));
+		assert(step(&operation, &sample) == GOODIX_OPERATION_WAIT_IRQ);
+		assert(step(&operation, &sample) == GOODIX_OPERATION_CONTINUE);
+		assert(step(&operation, &sample) == -EACCES);
+		assert(sample.kind != GOODIX_OPERATION_NOT_MATCH);
+		assert(!operation.template_id && !wide(operation.hat, 9) && !exchange.finishes);
+		goodix_operation_cancel(&operation);
+		assert(step(&operation, &sample) == GOODIX_OPERATION_COMPLETE);
+		assert(sample.kind == GOODIX_OPERATION_CANCELLED);
+		free(exchange.buffer);
+	}
 }
 
 static void cancellation(void)
@@ -415,6 +453,12 @@ static void retry_results(void)
 				assert(step(&operation, &sample) == GOODIX_OPERATION_COMPLETE);
 				assert(sample.kind == GOODIX_OPERATION_AUTHENTICATED);
 				assert(exchange.finishes == 1);
+			} else if (fault == WRONG_TEMPLATE) {
+				assert(result == GOODIX_OPERATION_CONTINUE);
+				assert(sample.kind == GOODIX_OPERATION_NOT_MATCH && !exchange.finishes);
+				goodix_operation_cancel(&operation);
+				assert(step(&operation, &sample) == GOODIX_OPERATION_COMPLETE);
+				assert(sample.kind == GOODIX_OPERATION_CANCELLED);
 			} else {
 				assert(result == -EACCES && !exchange.finishes);
 			}
@@ -455,6 +499,7 @@ int main(int argc, char **argv)
 	} else if (!strcmp(argv[1], "identity")) {
 		for (enum fault fault = WRONG_GROUP; fault <= CONFIG_ERROR; ++fault)
 			authenticate(fault);
+		invalid_identity_with_other_template();
 	} else if (!strcmp(argv[1], "validation")) {
 		validation();
 	} else if (!strcmp(argv[1], "quality")) {

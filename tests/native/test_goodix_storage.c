@@ -136,8 +136,8 @@ static int write_range(struct goodix_storage *storage, const char *name,
 	request->count = count;
 	request->offset = offset;
 	request->backup = backup;
-	if (count <= TZ_GPFS_FILE_SIZE)
-		memcpy(request->buf, contents, count);
+	if (count <= sizeof(buffer) - offsetof(tz_gpfile_write_req_t, buf))
+		memcpy(buffer + offsetof(tz_gpfile_write_req_t, buf), contents, count);
 	int error = dispatch(storage);
 
 	assert(((tz_gpfile_write_rsp_t *)buffer)->num_bytes_written == (error ? 0 : count));
@@ -228,14 +228,104 @@ static void names(struct goodix_storage *storage)
 	expect_file(storage->directory, "calibration", "cal", 3);
 }
 
+static void large_files(struct goodix_storage *storage, const char *directory)
+{
+	const uint32_t write_capacity = sizeof(buffer) - offsetof(tz_gpfile_write_req_t, buf);
+	const uint32_t read_capacity = sizeof(buffer) - offsetof(tz_gpfile_read_rsp_t, buf);
+	uint8_t *contents = malloc(write_capacity);
+	assert(contents);
+	for (uint32_t i = 0; i < write_capacity; i++)
+		contents[i] = (uint8_t)(i * 31 + 7);
+
+	/* The first larger-than-500-KiB write and the real full-message size
+	 * are both valid. These are synthetic bytes, never a sensor template.
+	 */
+	assert(write_capacity == 515824);
+	assert(write_range(storage, "large", contents, TZ_GPFS_FILE_SIZE + 1, 0, 0) == 0);
+	assert(read_range(storage, "large", read_capacity, 0) == 0);
+	assert(((tz_gpfile_read_rsp_t *)buffer)->num_bytes_read == TZ_GPFS_FILE_SIZE + 1);
+	assert(!memcmp(buffer + offsetof(tz_gpfile_read_rsp_t, buf), contents,
+		       TZ_GPFS_FILE_SIZE + 1));
+	assert(write_range(storage, "large", contents, write_capacity, 0, 1) == 0);
+	assert(read_range(storage, "large.bak", read_capacity, 0) == 0);
+	assert(((tz_gpfile_read_rsp_t *)buffer)->num_bytes_read == TZ_GPFS_FILE_SIZE + 1);
+
+	/* A second message appends beyond the entire listener buffer. Preserve
+	 * the first message and commit its complete backup before the new range.
+	 */
+	assert(write_range(storage, "large", contents, 4096, write_capacity, 1) == 0);
+	assert(read_range(storage, "large", write_capacity, 0) == 0);
+	assert(((tz_gpfile_read_rsp_t *)buffer)->num_bytes_read == write_capacity);
+	assert(!memcmp(buffer + offsetof(tz_gpfile_read_rsp_t, buf), contents, write_capacity));
+	assert(read_range(storage, "large", 8192, write_capacity) == 0);
+	assert(((tz_gpfile_read_rsp_t *)buffer)->num_bytes_read == 4096);
+	assert(!memcmp(buffer + offsetof(tz_gpfile_read_rsp_t, buf), contents, 4096));
+	assert(read_range(storage, "large.bak", read_capacity, 0) == 0);
+	assert(((tz_gpfile_read_rsp_t *)buffer)->num_bytes_read == write_capacity);
+	assert(!memcmp(buffer + offsetof(tz_gpfile_read_rsp_t, buf), contents, write_capacity));
+	assert(read_range(storage, "large", read_capacity, 0) == 0);
+	assert(((tz_gpfile_read_rsp_t *)buffer)->num_bytes_read == read_capacity);
+	assert(!memcmp(buffer + offsetof(tz_gpfile_read_rsp_t, buf), contents, write_capacity));
+	assert(!memcmp(buffer + offsetof(tz_gpfile_read_rsp_t, buf) + write_capacity,
+		       contents, read_capacity - write_capacity));
+
+	/* Both the old main file and the new backup now exceed one listener
+	 * message. A small range update must retain the later message's data.
+	 */
+	assert(write_range(storage, "large", "Z", 1, TZ_GPFS_FILE_SIZE + 17, 1) == 0);
+	assert(read_range(storage, "large", 1, TZ_GPFS_FILE_SIZE + 17) == 0);
+	assert(buffer[offsetof(tz_gpfile_read_rsp_t, buf)] == 'Z');
+	assert(read_range(storage, "large.bak", 8192, write_capacity) == 0);
+	assert(((tz_gpfile_read_rsp_t *)buffer)->num_bytes_read == 4096);
+	assert(!memcmp(buffer + offsetof(tz_gpfile_read_rsp_t, buf), contents, 4096));
+
+	/* Exceeding the actual shared-memory tail by one byte must still fail
+	 * before any I/O. Keep both read and write message boundaries distinct.
+	 */
+	memset(buffer, 0, sizeof(buffer));
+	tz_gpfile_write_req_t *write = (void *)buffer;
+	write->cmd_id = (tz_gpfs_msg_cmd_type)GPFS_WRITE;
+	path(write->pathname, "large");
+	write->count = write_capacity + 1;
+	assert(storage_dispatch(storage, buffer, sizeof(buffer)) == -EMSGSIZE);
+	memset(buffer, 0, sizeof(buffer));
+	tz_gpfile_read_req_t *read = (void *)buffer;
+	read->cmd_id = (tz_gpfs_msg_cmd_type)GPFS_READ;
+	path(read->pathname, "large");
+	read->count = read_capacity + 1;
+	assert(storage_dispatch(storage, buffer, sizeof(buffer)) == -EMSGSIZE);
+
+	close(storage->directory);
+	storage->directory = storage_directory(directory);
+	assert(storage->directory >= 0 && storage_claim_directory(storage->directory, 1) == 0);
+	int fd = storage_file(storage, "large", O_RDONLY);
+	struct stat st;
+	assert(fd >= 0 && !fstat(fd, &st) && st.st_size == (off_t)write_capacity + 4096);
+	close(fd);
+	assert(read_range(storage, "large", 8192, write_capacity) == 0);
+	assert(((tz_gpfile_read_rsp_t *)buffer)->num_bytes_read == 4096);
+	assert(!memcmp(buffer + offsetof(tz_gpfile_read_rsp_t, buf), contents, 4096));
+
+	/* Exercise the signed protocol offset edge with a sparse file. The
+	 * transfer remains one byte and must not allocate the hole in HLOS.
+	 */
+	if (sizeof(off_t) > sizeof(int32_t)) {
+		assert(write_range(storage, "offset-edge", "X", 1, INT32_MAX, 0) == 0);
+		assert(read_range(storage, "offset-edge", 1, INT32_MAX) == 0);
+		assert(((tz_gpfile_read_rsp_t *)buffer)->num_bytes_read == 1);
+		assert(buffer[offsetof(tz_gpfile_read_rsp_t, buf)] == 'X');
+	} else {
+		assert(write_range(storage, "offset-edge", "X", 1, INT32_MAX, 0) == EINVAL);
+	}
+	free(contents);
+}
+
 static void boundaries(struct goodix_storage *storage)
 {
 	assert(write_range(storage, "valid", "safe", 4, 0, 0) == 0);
 	assert(write_range(storage, "../outside", "x", 1, 0, 0) == EACCES);
 	assert(write_range(storage, "nested/file", "x", 1, 0, 0) == EACCES);
 	assert(write_range(storage, "valid", "x", 1, -1, 0) == EINVAL);
-	assert(write_range(storage, "valid", "x", 1, TZ_GPFS_FILE_SIZE, 0) == EINVAL);
-	assert(read_range(storage, "valid", TZ_GPFS_FILE_SIZE + 1, 0) == EINVAL);
 	assert(change_name(storage, "valid", "../outside") == EACCES);
 
 	assert(symlinkat("valid", storage->directory, "symlink") == 0);
@@ -253,11 +343,6 @@ static void boundaries(struct goodix_storage *storage)
 	assert(read_range(storage, "directory", 1, 0) == EACCES);
 	assert(mkfifoat(storage->directory, "fifo", 0600) == 0);
 	assert(read_range(storage, "fifo", 1, 0) == EACCES);
-	int fd = openat(storage->directory, "oversized", O_WRONLY | O_CREAT | O_EXCL, 0600);
-	assert(fd >= 0 && ftruncate(fd, TZ_GPFS_FILE_SIZE + 1) == 0);
-	close(fd);
-	assert(read_range(storage, "oversized", 1, 0) == EACCES);
-
 	memset(buffer, 0, sizeof(buffer));
 	((tz_gpfile_write_req_t *)buffer)->cmd_id = (tz_gpfs_msg_cmd_type)GPFS_WRITE;
 	path(((tz_gpfile_write_req_t *)buffer)->pathname, "valid");
@@ -664,6 +749,8 @@ int main(int argc, char **argv)
 	assert(storage.directory >= 0 && storage_claim_directory(storage.directory, 1) == 0);
 	if (!strcmp(argv[1], "writes"))
 		writes(&storage, argv[2]);
+	else if (!strcmp(argv[1], "large-files"))
+		large_files(&storage, argv[2]);
 	else if (!strcmp(argv[1], "names"))
 		names(&storage);
 	else if (!strcmp(argv[1], "boundaries"))

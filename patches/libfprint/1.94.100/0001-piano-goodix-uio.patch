@@ -7,9 +7,10 @@ off the main context and wait for native cancellation and cleanup before
 completing an action. Stored print data contains only Linux UID and finger
 coordinates; templates and authentication tokens stay in the native layer.
 
-QTEE selects one Linux user group per operation. Expose verification of a
-selected print without advertising cross-user identification, so fprintd
-uses its normal enrollment and single-print verification paths.
+QTEE selects one Linux user group per operation. Identify a user's enrolled
+fingers together, and try separate Linux groups only after a real negative
+match. This preserves credential isolation while letting fprintd use its
+normal multi-finger authentication and duplicate-enrollment checks.
 
 The optional static dependency enables this driver when supplied by the
 platform, while ordinary libfprint builds retain their existing drivers.
@@ -181,7 +182,7 @@ diff --git a/libfprint/drivers/piano-goodix.c b/libfprint/drivers/piano-goodix.c
 new file mode 100644
 --- /dev/null
 +++ b/libfprint/drivers/piano-goodix.c
-@@ -0,0 +1,519 @@
+@@ -0,0 +1,627 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/* Piano's Goodix reader is controlled by a named UIO device and the signed
 + * QTEE application. The native library owns its real hardware transactions;
@@ -220,6 +221,8 @@ new file mode 100644
 +  GCancellable *parent_cancel;
 +  GCancellable *stop;
 +  FpPrint *print;
++  GPtrArray *gallery;
++  GArray *identify_uids;
 +  GPtrArray *stored;
 +  guint32 uid;
 +  guint finger;
@@ -257,6 +260,8 @@ new file mode 100644
 +  g_clear_object (&work->parent_cancel);
 +  g_clear_object (&work->stop);
 +  g_clear_object (&work->print);
++  g_clear_pointer (&work->gallery, g_ptr_array_unref);
++  g_clear_pointer (&work->identify_uids, g_array_unref);
 +  g_clear_pointer (&work->stored, g_ptr_array_unref);
 +  g_free (work);
 +}
@@ -464,6 +469,54 @@ new file mode 100644
 +}
 +
 +static void
++add_identify_uid (Work *work, guint32 uid)
++{
++  for (guint i = 0; i < work->identify_uids->len; i++)
++    if (g_array_index (work->identify_uids, guint32, i) == uid)
++      return;
++  g_array_append_val (work->identify_uids, uid);
++}
++
++static gint
++identify_linux_fingers (Work *work, const struct piano_goodix_options *options)
++{
++  if (!work->gallery->len)
++    {
++      /* An empty gallery still needs to recognize Linux-owned prints that
++       * fprintd has lost, for its normal duplicate-enrollment cleanup.
++       */
++      gint result = list_linux_fingers (work);
++
++      if (result)
++        return result;
++      for (guint i = 0; i < work->stored->len; i++)
++        add_identify_uid (work, ((StoredFinger *) g_ptr_array_index (work->stored, i))->uid);
++    }
++
++  /* The TA selects one user's group per transaction. Only a completed
++   * negative attempt permits trying another group; authentication, storage
++   * and cancellation errors must retain their original meaning.
++   */
++  for (guint i = 0; i < work->identify_uids->len; i++)
++    {
++      gint result;
++
++      if (options->should_cancel (options->context))
++        return -ECANCELED;
++      work->uid = g_array_index (work->identify_uids, guint32, i);
++      work->not_matched = FALSE;
++      work->matched_finger = 0;
++      result = piano_goodix_verify (work->uid, 0, &work->matched_finger, options);
++      if (result == -EACCES && work->not_matched)
++        continue;
++      return result;
++    }
++
++  work->matched_finger = 0;
++  return 0;
++}
++
++static void
 +worker (GTask *task, gpointer source, gpointer pointer, GCancellable *cancellable)
 +{
 +  Work *work = pointer;
@@ -482,6 +535,8 @@ new file mode 100644
 +    work->result = piano_goodix_enroll (work->uid, work->finger, &options);
 +  else if (work->action == FPI_DEVICE_ACTION_VERIFY)
 +    work->result = piano_goodix_verify (work->uid, work->finger, &work->matched_finger, &options);
++  else if (work->action == FPI_DEVICE_ACTION_IDENTIFY)
++    work->result = identify_linux_fingers (work, &options);
 +  else if (work->action == FPI_DEVICE_ACTION_DELETE)
 +    work->result = piano_goodix_delete (work->uid, work->finger);
 +  else
@@ -563,6 +618,46 @@ new file mode 100644
 +        }
 +      fpi_device_verify_complete (device, error);
 +    }
++  else if (work->action == FPI_DEVICE_ACTION_IDENTIFY)
++    {
++      FpPrint *match = NULL;
++      g_autoptr(FpPrint) found = NULL;
++
++      if (!error && work->matched_finger)
++        {
++          struct passwd entry, *user = NULL;
++          gchar buffer[16384];
++
++          if (getpwuid_r (work->uid, &entry, buffer, sizeof buffer, &user) || !user)
++            error = fpi_device_error_new (FP_DEVICE_ERROR_DATA_INVALID);
++          else
++            {
++              found = g_object_ref_sink (stored_print (device, work->uid,
++                                                       work->matched_finger, user->pw_name));
++              for (guint i = 0; i < work->gallery->len; i++)
++                {
++                  FpPrint *print = g_ptr_array_index (work->gallery, i);
++                  guint32 uid;
++                  guint finger;
++
++                  if (print_coordinates (print, &uid, &finger) &&
++                      uid == work->uid && finger == work->matched_finger)
++                    {
++                      match = print;
++                      break;
++                    }
++                }
++            }
++        }
++      if (error && error->domain == FP_DEVICE_RETRY)
++        {
++          fpi_device_identify_report (device, NULL, NULL, error);
++          error = NULL;
++        }
++      else if (!error)
++        fpi_device_identify_report (device, match, found, NULL);
++      fpi_device_identify_complete (device, error);
++    }
 +  else if (work->action == FPI_DEVICE_ACTION_DELETE)
 +    fpi_device_delete_complete (device, error);
 +  else
@@ -617,6 +712,23 @@ new file mode 100644
 +        fpi_device_get_delete_data (device, &work->print);
 +      g_object_ref (work->print);
 +      valid = print_coordinates (work->print, &work->uid, &work->finger);
++    }
++  else if (action == FPI_DEVICE_ACTION_IDENTIFY)
++    {
++      GPtrArray *gallery;
++
++      fpi_device_get_identify_data (device, &gallery);
++      work->gallery = g_ptr_array_ref (gallery);
++      work->identify_uids = g_array_new (FALSE, FALSE, sizeof (guint32));
++      for (guint i = 0; valid && i < gallery->len; i++)
++        {
++          guint32 uid;
++          guint finger;
++
++          valid = print_coordinates (g_ptr_array_index (gallery, i), &uid, &finger);
++          if (valid)
++            add_identify_uid (work, uid);
++        }
 +    }
 +
 +  if (!valid)
@@ -692,10 +804,7 @@ new file mode 100644
 +  klass->close = close_device;
 +  klass->enroll = start;
 +  klass->verify = start;
-+  /* QTEE selects one Linux UID's group per transaction. Do not advertise
-+   * identify: libfprint's gallery can span users, including fprintd's
-+   * duplicate check before enrollment. Verification selects one user/print.
-+   */
++  klass->identify = start;
 +  klass->list = start;
 +  klass->delete = start;
 +  klass->cancel = cancel;
@@ -704,7 +813,7 @@ new file mode 100644
 diff --git a/tests/meson.build b/tests/meson.build
 --- a/tests/meson.build
 +++ b/tests/meson.build
-@@ -468,3 +468,14 @@
+@@ -468,3 +468,17 @@
              'LIBFPRINT_TEST_WRAPPER=' + ' '.join(libfprint_wrapper),
          ])
  endif
@@ -716,6 +825,9 @@ diff --git a/tests/meson.build b/tests/meson.build
 +        sources: ['test-piano-goodix.c', '../libfprint/drivers/piano-goodix.c'],
 +        dependencies: libfprint_private_dep,
 +        c_args: common_cflags,
++        link_args: ['-Wl,--wrap=lstat', '-Wl,--wrap=lstat64',
++                    '-Wl,--wrap=g_dir_open', '-Wl,--wrap=g_dir_read_name',
++                    '-Wl,--wrap=g_dir_close'],
 +    )
 +    test('piano-goodix', piano_goodix_test, suite: ['unit-tests'], env: envs)
 +endif
@@ -723,7 +835,7 @@ diff --git a/tests/test-piano-goodix.c b/tests/test-piano-goodix.c
 new file mode 100644
 --- /dev/null
 +++ b/tests/test-piano-goodix.c
-@@ -0,0 +1,405 @@
+@@ -0,0 +1,585 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/* Exercise the actual FpDevice bridge and GLib dispatch. Native transaction
 + * boundaries are replaced here; no test opens a UIO device or QTEE session.
@@ -732,19 +844,90 @@ new file mode 100644
 +#include <piano-goodix.h>
 +#include <errno.h>
 +#include <pwd.h>
++#include <sys/stat.h>
 +#include <unistd.h>
 +
 +GType fpi_device_piano_goodix_get_type (void);
 +
 +typedef enum {
 +  MATCH, NO_MATCH, RETRY_MATCH, RETRY_NO_MATCH, RETRY_FAILURE, RETRY_CANCEL,
-+  TIMEOUT, BUSY, CANCEL_SCAN, ENROLL, ENROLL_FAILURE, ENROLL_BUSY
++  TIMEOUT, BUSY, CANCEL_SCAN, ENROLL, ENROLL_FAILURE, ENROLL_BUSY,
++  IDENTIFY_SECOND, IDENTIFY_NO_MATCH, IDENTIFY_MIXED, IDENTIFY_MIXED_ERROR,
++  IDENTIFY_OUTSIDE, IDENTIFY_EMPTY, IDENTIFY_EMPTY_STORED
 +} Scenario;
 +static Scenario scenario;
 +static GThread *main_thread;
 +static gboolean cleaned;
 +static guint calls, retries, last_stage, progress_count, verify_reports;
++static guint identify_calls, directory_index;
++static guint32 other_uid;
++static char directory_marker;
 +static GCancellable *cancel_scan;
++
++int __wrap_lstat (const char *path, struct stat *info);
++int __wrap_lstat64 (const char *path, struct stat *info);
++GDir *__wrap_g_dir_open (const gchar *path, guint flags, GError **error);
++const gchar *__wrap_g_dir_read_name (GDir *directory);
++void __wrap_g_dir_close (GDir *directory);
++
++int __real_lstat (const char *path, struct stat *info);
++int __real_lstat64 (const char *path, struct stat *info);
++GDir *__real_g_dir_open (const gchar *path, guint flags, GError **error);
++const gchar *__real_g_dir_read_name (GDir *directory);
++void __real_g_dir_close (GDir *directory);
++
++/* Exercise the real metadata enumeration without using the host's profiles. */
++int
++__wrap_lstat (const char *path, struct stat *info)
++{
++  if (!g_str_equal (path, "/var/lib/piano-goodix"))
++    return __real_lstat (path, info);
++  if (scenario != IDENTIFY_EMPTY_STORED)
++    {
++      errno = ENOENT;
++      return -1;
++    }
++  memset (info, 0, sizeof *info);
++  info->st_mode = S_IFDIR | 0700;
++  return 0;
++}
++
++int
++__wrap_lstat64 (const char *path, struct stat *info)
++{
++  /* _FILE_OFFSET_BITS=64 may redirect the driver's lstat to this symbol. */
++  if (g_str_equal (path, "/var/lib/piano-goodix"))
++    return __wrap_lstat (path, info);
++  return __real_lstat64 (path, info);
++}
++
++GDir *
++__wrap_g_dir_open (const gchar *path, guint flags, GError **error)
++{
++  if (g_str_equal (path, "/var/lib/piano-goodix"))
++    return (GDir *) &directory_marker;
++  return __real_g_dir_open (path, flags, error);
++}
++
++const gchar *
++__wrap_g_dir_read_name (GDir *directory)
++{
++  static gchar uid[16];
++
++  if (directory != (GDir *) &directory_marker)
++    return __real_g_dir_read_name (directory);
++  if (directory_index++)
++    return NULL;
++  g_snprintf (uid, sizeof uid, "%u", (guint32) getuid ());
++  return uid;
++}
++
++void
++__wrap_g_dir_close (GDir *directory)
++{
++  if (directory != (GDir *) &directory_marker)
++    __real_g_dir_close (directory);
++}
 +
 +static void
 +assert_worker (void)
@@ -787,8 +970,32 @@ new file mode 100644
 +                     const struct piano_goodix_options *options)
 +{
 +  assert_worker ();
++  if (!finger)
++    {
++      identify_calls++;
++      g_assert_cmpuint (uid, ==, identify_calls == 2 ? other_uid : getuid ());
++      if (scenario == IDENTIFY_NO_MATCH ||
++          ((scenario == IDENTIFY_MIXED || scenario == IDENTIFY_MIXED_ERROR) && identify_calls == 1))
++        {
++          options->progress (PIANO_GOODIX_NOT_MATCH, 0, options->context);
++          cleaned = TRUE;
++          return -EACCES;
++        }
++      if (scenario == IDENTIFY_MIXED_ERROR)
++        {
++          cleaned = TRUE;
++          return -EACCES; /* An invalid HAT is not a negative match. */
++        }
++      if (scenario != CANCEL_SCAN && scenario != TIMEOUT)
++        {
++          *matched = scenario == IDENTIFY_SECOND || scenario == IDENTIFY_OUTSIDE ?
++                     FP_FINGER_RIGHT_THUMB : FP_FINGER_LEFT_THUMB;
++          cleaned = TRUE;
++          return 0;
++        }
++    }
 +  g_assert_cmpuint (uid, ==, getuid ());
-+  g_assert_cmpuint (finger, ==, FP_FINGER_LEFT_THUMB);
++  g_assert_true (!finger || finger == FP_FINGER_LEFT_THUMB);
 +  if (scenario == BUSY)
 +    {
 +      cleaned = TRUE;
@@ -838,9 +1045,13 @@ new file mode 100644
 +piano_goodix_list (uint32_t uid, unsigned int fingers[10], size_t *count)
 +{
 +  (void) uid;
-+  (void) fingers;
-+  (void) count;
 +  assert_worker ();
++  if (scenario == IDENTIFY_EMPTY_STORED)
++    {
++      fingers[0] = FP_FINGER_LEFT_THUMB;
++      *count = 1;
++      return 0;
++    }
 +  return -EIO;
 +}
 +
@@ -880,21 +1091,27 @@ new file mode 100644
 +}
 +
 +static FpPrint *
-+new_print (FpDevice *device, gboolean enrolled)
++print_for_user (FpDevice *device, guint32 uid, guint finger, gboolean enrolled)
 +{
-+  struct passwd *entry = getpwuid (getuid ());
++  struct passwd *entry = getpwuid (uid);
 +  FpPrint *print = fp_print_new (device);
 +
 +  g_assert_nonnull (entry);
 +  fp_print_set_username (print, entry->pw_name);
-+  fp_print_set_finger (print, FP_FINGER_LEFT_THUMB);
++  fp_print_set_finger (print, finger);
 +  if (enrolled)
 +    {
 +      fpi_print_set_type (print, FPI_PRINT_RAW);
 +      fpi_print_set_device_stored (print, TRUE);
-+      g_object_set (print, "fpi-data", g_variant_new ("(uu)", (guint32) getuid (), 1U), NULL);
++      g_object_set (print, "fpi-data", g_variant_new ("(uu)", uid, finger), NULL);
 +    }
 +  return g_object_ref_sink (print);
++}
++
++static FpPrint *
++new_print (FpDevice *device, gboolean enrolled)
++{
++  return print_for_user (device, getuid (), FP_FINGER_LEFT_THUMB, enrolled);
 +}
 +
 +static void
@@ -931,6 +1148,7 @@ new file mode 100644
 +  scenario = value;
 +  cleaned = FALSE;
 +  calls = retries = last_stage = progress_count = verify_reports = 0;
++  identify_calls = directory_index = 0;
 +}
 +
 +static void
@@ -1058,7 +1276,7 @@ new file mode 100644
 +{
 +  reset (MATCH);
 +  FpDevice *device = new_device ();
-+  FpDeviceFeature features = FP_DEVICE_FEATURE_VERIFY | FP_DEVICE_FEATURE_STORAGE |
++  FpDeviceFeature features = FP_DEVICE_FEATURE_VERIFY | FP_DEVICE_FEATURE_IDENTIFY | FP_DEVICE_FEATURE_STORAGE |
 +                             FP_DEVICE_FEATURE_STORAGE_LIST | FP_DEVICE_FEATURE_STORAGE_DELETE |
 +                             FP_DEVICE_FEATURE_ALWAYS_ON;
 +
@@ -1070,20 +1288,84 @@ new file mode 100644
 +}
 +
 +static void
-+test_identify_not_supported (gconstpointer pointer)
++test_identify (gconstpointer pointer)
 +{
-+  reset (MATCH);
++  reset (GPOINTER_TO_INT (pointer));
++  FpDevice *device = new_device ();
++  g_autoptr(FpPrint) print = new_print (device, TRUE);
++  g_autoptr(FpPrint) second = NULL;
++  g_autoptr(GPtrArray) gallery = g_ptr_array_new ();
++  g_autoptr(GError) error = NULL;
++  g_autoptr(FpPrint) match = NULL;
++  g_autoptr(FpPrint) found = NULL;
++
++  if (scenario != IDENTIFY_EMPTY && scenario != IDENTIFY_EMPTY_STORED)
++    {
++      g_ptr_array_add (gallery, print);
++      if (scenario == IDENTIFY_SECOND || scenario == IDENTIFY_MIXED || scenario == IDENTIFY_MIXED_ERROR)
++        {
++          guint32 uid = scenario == IDENTIFY_SECOND ? getuid () : other_uid;
++          guint finger = scenario == IDENTIFY_SECOND ? FP_FINGER_RIGHT_THUMB : FP_FINGER_LEFT_THUMB;
++
++          second = print_for_user (device, uid, finger, TRUE);
++          g_ptr_array_add (gallery, second);
++        }
++    }
++
++  cancel_scan = g_cancellable_new ();
++  gboolean result = fp_device_identify_sync (device, gallery, cancel_scan, NULL, NULL,
++                                             &match, &found, &error);
++  if (scenario == IDENTIFY_MIXED_ERROR || scenario == CANCEL_SCAN || scenario == TIMEOUT)
++    {
++      g_assert_false (result);
++      if (scenario == CANCEL_SCAN)
++        g_assert_error (error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
++      else if (scenario == TIMEOUT)
++        g_assert_error (error, FP_DEVICE_RETRY, FP_DEVICE_RETRY_GENERAL);
++      else
++        g_assert_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL);
++      g_assert_null (match);
++      g_assert_null (found);
++      g_assert_true (cleaned);
++    }
++  else
++    {
++      g_assert_true (result);
++      g_assert_no_error (error);
++      if (scenario == IDENTIFY_SECOND || scenario == IDENTIFY_MIXED)
++        g_assert_true (match == second);
++      else
++        g_assert_null (match);
++      if (scenario == IDENTIFY_NO_MATCH || scenario == IDENTIFY_EMPTY)
++        g_assert_null (found);
++      else
++        {
++          g_assert_nonnull (found);
++          g_assert_true (fp_print_get_device_stored (found));
++          g_assert_cmpint (fp_print_get_finger (found), ==,
++                           scenario == IDENTIFY_OUTSIDE || scenario == IDENTIFY_SECOND ?
++                           FP_FINGER_RIGHT_THUMB : FP_FINGER_LEFT_THUMB);
++        }
++    }
++  g_assert_cmpuint (identify_calls, ==, scenario == IDENTIFY_EMPTY ? 0 :
++                    scenario == IDENTIFY_MIXED || scenario == IDENTIFY_MIXED_ERROR ? 2 : 1);
++  g_clear_object (&cancel_scan);
++  close_device (device);
++}
++
++static void
++test_identify_invalid_coordinates (void)
++{
++  reset (IDENTIFY_SECOND);
 +  FpDevice *device = new_device ();
 +  g_autoptr(FpPrint) print = new_print (device, TRUE);
 +  g_autoptr(GPtrArray) gallery = g_ptr_array_new ();
 +  g_autoptr(GError) error = NULL;
-+  g_autoptr(FpPrint) match = NULL;
 +
-+  if (GPOINTER_TO_INT (pointer))
-+    g_ptr_array_add (gallery, print);
-+  g_assert_false (fp_device_identify_sync (device, gallery, NULL, NULL, NULL, &match, NULL, &error));
-+  g_assert_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_NOT_SUPPORTED);
-+  g_assert_null (match);
++  g_object_set (print, "fpi-data", g_variant_new ("(uu)", (guint32) getuid () + 1, 1U), NULL);
++  g_ptr_array_add (gallery, print);
++  g_assert_false (fp_device_identify_sync (device, gallery, NULL, NULL, NULL, NULL, NULL, &error));
++  g_assert_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID);
 +  g_assert_cmpuint (calls, ==, 0);
 +  close_device (device);
 +}
@@ -1110,6 +1392,8 @@ new file mode 100644
 +{
 +  g_test_init (&argc, &argv, NULL);
 +  main_thread = g_thread_self ();
++  other_uid = getuid () ? 0 : 65534;
++  g_assert_nonnull (getpwuid (other_uid));
 +  g_test_add_data_func ("/piano-goodix/enroll/progress", GINT_TO_POINTER (ENROLL), test_enroll);
 +  g_test_add_data_func ("/piano-goodix/enroll/save-failure", GINT_TO_POINTER (ENROLL_FAILURE), test_enroll);
 +  g_test_add_data_func ("/piano-goodix/enroll/busy", GINT_TO_POINTER (ENROLL_BUSY), test_enroll);
@@ -1124,8 +1408,16 @@ new file mode 100644
 +  g_test_add_data_func ("/piano-goodix/verify/cancel-cleanup", GINT_TO_POINTER (CANCEL_SCAN), test_verify);
 +  g_test_add_func ("/piano-goodix/verify/foreign-uid", test_invalid_coordinates);
 +  g_test_add_func ("/piano-goodix/capabilities", test_capabilities);
-+  g_test_add_data_func ("/piano-goodix/identify/empty-gallery", GINT_TO_POINTER (0), test_identify_not_supported);
-+  g_test_add_data_func ("/piano-goodix/identify/populated-gallery", GINT_TO_POINTER (1), test_identify_not_supported);
++  g_test_add_data_func ("/piano-goodix/identify/second-finger", GINT_TO_POINTER (IDENTIFY_SECOND), test_identify);
++  g_test_add_data_func ("/piano-goodix/identify/not-match", GINT_TO_POINTER (IDENTIFY_NO_MATCH), test_identify);
++  g_test_add_data_func ("/piano-goodix/identify/mixed-users", GINT_TO_POINTER (IDENTIFY_MIXED), test_identify);
++  g_test_add_data_func ("/piano-goodix/identify/mixed-users-auth-error", GINT_TO_POINTER (IDENTIFY_MIXED_ERROR), test_identify);
++  g_test_add_data_func ("/piano-goodix/identify/outside-gallery", GINT_TO_POINTER (IDENTIFY_OUTSIDE), test_identify);
++  g_test_add_data_func ("/piano-goodix/identify/empty-gallery", GINT_TO_POINTER (IDENTIFY_EMPTY), test_identify);
++  g_test_add_data_func ("/piano-goodix/identify/empty-gallery-stored", GINT_TO_POINTER (IDENTIFY_EMPTY_STORED), test_identify);
++  g_test_add_data_func ("/piano-goodix/identify/cancel-cleanup", GINT_TO_POINTER (CANCEL_SCAN), test_identify);
++  g_test_add_data_func ("/piano-goodix/identify/timeout", GINT_TO_POINTER (TIMEOUT), test_identify);
++  g_test_add_func ("/piano-goodix/identify/foreign-uid", test_identify_invalid_coordinates);
 +  g_test_add_func ("/piano-goodix/storage/scoped-delete", test_delete);
 +  return g_test_run ();
 +}

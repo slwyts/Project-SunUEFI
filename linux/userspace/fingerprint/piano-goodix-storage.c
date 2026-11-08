@@ -108,18 +108,60 @@ static int storage_file(struct goodix_storage *storage, const char *name, int fl
 	}
 	if (!S_ISREG(st.st_mode) || st.st_nlink != 1 || st.st_uid != geteuid() ||
 	    (st.st_mode & 0077) ||
-	    st.st_size < 0 || st.st_size > TZ_GPFS_FILE_SIZE) {
+	    st.st_size < 0) {
 		close(fd);
 		return -EACCES;
 	}
 	return fd;
 }
 
+/* Files can span several GPFS messages. Copy in the public listener's 64 KiB
+ * I/O window rather than allocating the entire file in the fingerprint process.
+ */
+static int storage_copy(int source, int destination, off_t size)
+{
+	uint8_t buffer[MAX_READ_SIZE];
+	off_t position = 0;
+	int error = 0;
+
+	while (position < size) {
+		size_t count = (uintmax_t)(size - position) < sizeof(buffer) ?
+			(size_t)(size - position) : sizeof(buffer);
+		ssize_t bytes = pread(source, buffer, count, position);
+		if (bytes < 0 && errno == EINTR)
+			continue;
+		if (bytes <= 0) {
+			error = bytes < 0 ? errno : EIO;
+			break;
+		}
+		size_t done = 0;
+		while (done < (size_t)bytes) {
+			ssize_t written = pwrite(destination, buffer + done, bytes - done,
+						 position + done);
+			if (written < 0 && errno == EINTR)
+				continue;
+			if (written <= 0) {
+				error = written < 0 ? errno : EIO;
+				break;
+			}
+			done += written;
+		}
+		if (error)
+			break;
+		position += bytes;
+	}
+	explicit_bzero(buffer, sizeof(buffer));
+	return error;
+}
+
 /* Publish a complete file only after its data is durable. All names are flat
  * components in the locked private directory; never truncate an unchecked inode.
+ * Preserve the old file, then overwrite this message's range. pwrite zero-fills
+ * any hole without allocating it in userspace.
  */
 static int storage_replace(struct goodix_storage *storage, const char *name,
-			   const void *data, size_t size)
+			   int source, off_t old_size, const void *data,
+			   size_t count, off_t offset)
 {
 	char temporary[64];
 	uint64_t random;
@@ -146,8 +188,12 @@ static int storage_replace(struct goodix_storage *storage, const char *name,
 	if (fd < 0)
 		return errno;
 
-	for (done = 0; done < size;) {
-		ssize_t bytes = write(fd, (const uint8_t *)data + done, size - done);
+	error = storage_copy(source, fd, old_size);
+	if (error)
+		goto done;
+	for (done = 0; done < count;) {
+		ssize_t bytes = pwrite(fd, (const uint8_t *)data + done,
+				       count - done, offset + done);
 		if (bytes < 0 && errno == EINTR)
 			continue;
 		if (bytes <= 0) {
@@ -177,11 +223,10 @@ done:
  * zero-fill a hole. A requested backup is committed before publishing new data.
  */
 static int storage_write(struct goodix_storage *storage, const char *name,
-			 const void *data, size_t count, size_t offset, int backup)
+			 const void *data, size_t count, off_t offset, int backup)
 {
 	struct stat st;
-	size_t old_size = 0, new_size, done = 0;
-	uint8_t *contents;
+	off_t old_size = 0;
 	int fd = storage_file(storage, name, O_RDONLY), error = 0;
 
 	if (fd >= 0) {
@@ -194,38 +239,16 @@ static int storage_write(struct goodix_storage *storage, const char *name,
 	} else if (fd != -ENOENT) {
 		return -fd;
 	}
-	new_size = count && offset + count > old_size ? offset + count : old_size;
-	contents = calloc(new_size ? new_size : 1, 1);
-	if (!contents) {
-		if (fd >= 0)
-			close(fd);
-		return ENOMEM;
-	}
-	while (done < old_size) {
-		ssize_t bytes = pread(fd, contents + done, old_size - done, done);
-		if (bytes < 0 && errno == EINTR)
-			continue;
-		if (bytes <= 0) {
-			error = bytes < 0 ? errno : EIO;
-			break;
-		}
-		done += bytes;
-	}
-	if (fd >= 0)
-		close(fd);
-	if (!error && backup) {
+	if (backup) {
 		char previous[TZ_CM_MAX_NAME_LEN + sizeof(".bak")];
 
 		snprintf(previous, sizeof(previous), "%s.bak", name);
-		error = storage_replace(storage, previous, contents, old_size);
+		error = storage_replace(storage, previous, fd, old_size, NULL, 0, 0);
 	}
-	if (!error) {
-		if (count)
-			memcpy(contents + offset, data, count);
-		error = storage_replace(storage, name, contents, new_size);
-	}
-	explicit_bzero(contents, new_size);
-	free(contents);
+	if (!error)
+		error = storage_replace(storage, name, fd, old_size, data, count, offset);
+	if (fd >= 0)
+		close(fd);
 	return error;
 }
 
@@ -370,8 +393,13 @@ static int storage_dispatch(struct goodix_storage *storage, void *buffer, size_t
 		memcpy(&read_request, buffer, sizeof(read_request));
 		offset = read_request.offset;
 		count = read_request.count;
-		if (offset < 0 || count > TZ_GPFS_FILE_SIZE ||
-		    (uint32_t)offset > TZ_GPFS_FILE_SIZE - count) {
+		/* The public header's fixed array is not a file-size limit. Legacy
+		 * Goodix uses the whole registered message and sends larger files
+		 * in offset-based chunks. Check the actual tail capacity below.
+		 */
+		uintmax_t end = (uintmax_t)(uint32_t)offset + count;
+		off_t position = (off_t)end;
+		if (offset < 0 || position < 0 || (uintmax_t)position != end) {
 			error = EINVAL;
 			goto reply;
 		}
@@ -385,11 +413,14 @@ static int storage_dispatch(struct goodix_storage *storage, void *buffer, size_t
 				error = EOPNOTSUPP;
 				goto reply;
 			}
-			error = storage_write(storage, name, request->buf, count, offset, backup);
+			error = storage_write(storage, name,
+				(uint8_t *)buffer + offsetof(tz_gpfile_write_req_t, buf),
+				count, offset, backup);
 			done = error ? 0 : count;
 			goto reply;
 		}
-		if (count > size - offsetof(tz_gpfile_read_rsp_t, buf))
+		if (size < offsetof(tz_gpfile_read_rsp_t, buf) ||
+		    count > size - offsetof(tz_gpfile_read_rsp_t, buf))
 			return -EMSGSIZE;
 		fd = storage_file(storage, name, O_RDONLY);
 		if (fd < 0) {
@@ -399,7 +430,8 @@ static int storage_dispatch(struct goodix_storage *storage, void *buffer, size_t
 		error = 0;
 		while (done < count) {
 			ssize_t bytes;
-			bytes = pread(fd, response->buf + done, count - done, offset + done);
+			bytes = pread(fd, (uint8_t *)buffer + offsetof(tz_gpfile_read_rsp_t, buf) + done,
+				      count - done, (off_t)offset + done);
 			if (bytes < 0 && errno == EINTR)
 				continue;
 			if (bytes < 0) {

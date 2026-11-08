@@ -48,6 +48,9 @@ class GoodixStorageTests(unittest.TestCase):
     def test_offset_writes_backup_and_reopen(self):
         self.check_files('writes')
 
+    def test_gpfs_message_payload_and_multi_message_file_boundaries(self):
+        self.check_files('large-files')
+
     def test_profile_rename_remove_and_diagnostic_restrictions(self):
         self.check_files('names')
 

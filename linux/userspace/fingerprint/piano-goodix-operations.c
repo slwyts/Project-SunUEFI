@@ -191,15 +191,18 @@ static int begin(struct goodix_operation *operation)
 static int authentication_result(struct goodix_operation *operation, uint32_t template_id)
 {
 	const uint8_t *hat = operation->events->buffer + 0x2ac;
-	int allowed = 0;
 
-	for (size_t i = 0; i < operation->allowed_count; ++i)
-		if (operation->allowed_templates[i] == template_id)
-			allowed = 1;
-	if (!allowed || hat[0] || wide(hat, 1) != operation->operation_id ||
+	if (hat[0] || wide(hat, 1) != operation->operation_id ||
 	    wide(hat, 9) != operation->sid || word(hat, 25) != htobe32(2))
 		return -EACCES;
-	memcpy(operation->hat, hat, sizeof(operation->hat));
+	for (size_t i = 0; i < operation->allowed_count; ++i)
+		if (operation->allowed_templates[i] == template_id) {
+			memcpy(operation->hat, hat, sizeof(operation->hat));
+			return 1;
+		}
+	/* The TA can recognize another finger in this Linux group. A valid
+	 * result outside the request's allowed IDs is a normal negative match.
+	 */
 	return 0;
 }
 
@@ -246,10 +249,14 @@ static int read_event(struct goodix_operation *operation,
 	} else {
 		if (group != operation->group || !template_id)
 			return -EACCES;
-		operation->template_id = template_id;
 		result = authentication_result(operation, template_id);
-		if (result)
+		if (result < 0)
 			return result;
+		if (!result) {
+			sample->kind = GOODIX_OPERATION_NOT_MATCH;
+			return GOODIX_OPERATION_CONTINUE;
+		}
+		operation->template_id = template_id;
 		operation->stage = UPDATE_CONFIG;
 	}
 	return GOODIX_OPERATION_CONTINUE;
