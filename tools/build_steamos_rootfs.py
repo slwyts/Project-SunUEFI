@@ -326,6 +326,18 @@ done
             build_arch_package.build(root, recipe, packages)
         else:
             build_arch_package.install_cached(root, packages)
+    ibus_recipe = output / 'ibus-recipe'
+    ibus_recipe.mkdir(exist_ok=True)
+    ibus_patch, = runtime_helpers.source_patches(ROOT / 'patches/ibus/1.5.34/series.json')
+    shutil.copy2(ibus_patch, ibus_recipe / 'keep-x11-candidate-focus.patch')
+    (ibus_recipe / 'PKGBUILD').write_text(
+        (ROOT / 'linux/bsp/steamos/ibus/PKGBUILD').read_text().replace(
+            '@CANDIDATE_PATCH_SHA256@', digest(ibus_patch)))
+    ibus = output / 'packages/ibus'
+    if not kde_package_is_current(ibus, ibus_recipe):
+        build_arch_package.build(root, ibus_recipe, ibus)
+    else:
+        build_arch_package.install_cached(root, ibus)
     power_profiles = output / 'packages/power-profiles-daemon'
     if not (power_profiles / 'manifest.json').is_file():
         build_arch_package.build(

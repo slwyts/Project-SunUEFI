@@ -1,0 +1,54 @@
+pkgname=(ibus libibus)
+pkgver=1.5.34
+pkgrel=1.2
+pkgdesc='Intelligent Input Bus'
+arch=(aarch64)
+url='https://github.com/ibus/ibus'
+license=(LGPL-2.1-or-later)
+depends=(dconf glib2 gtk3 gtk4 libnotify libx11 libxi libxfixes libxkbcommon
+         iso-codes python python-gobject wayland libdbusmenu-gtk3)
+makedepends=(base-devel vala glib2-devel gobject-introspection gtk-doc
+             unicode-cldr unicode-emoji unicode-character-database)
+options=(!lto !debug)
+source=("$url/releases/download/$pkgver/ibus-$pkgver.tar.gz"
+        keep-x11-candidate-focus.patch)
+sha256sums=('12a72210ce5250f8a66df562a75e034e67b2bce74c4df2983dc86d1154894943'
+            '@CANDIDATE_PATCH_SHA256@')
+
+prepare() {
+  cd "ibus-$pkgver"
+  patch --batch --fuzz=0 -p1 -i "$srcdir/keep-x11-candidate-focus.patch"
+}
+
+build() {
+  cd "ibus-$pkgver"
+  ./configure --prefix=/usr --sysconfdir=/etc --libexecdir=/usr/lib/ibus \
+    --enable-vala --enable-wayland --enable-dconf --enable-gtk4 \
+    --disable-gtk2 --disable-gtk-doc --disable-tests --disable-python2 \
+    --disable-python-library --disable-install-tests \
+    --with-unicode-emoji-dir=/usr/share/unicode/emoji \
+    --with-ucd-dir=/usr/share/unicode \
+    --with-emoji-annotation-dir=/usr/share/unicode/cldr/common/annotations
+  make -j4
+}
+
+package_ibus() {
+  depends+=("libibus=$pkgver")
+  make -C "ibus-$pkgver" DESTDIR="$pkgdir" install
+  mkdir -p "$srcdir/libibus/usr/lib" "$srcdir/libibus/usr/share"
+  mv "$pkgdir/usr/include" "$srcdir/libibus/usr/"
+  mv "$pkgdir"/usr/lib/libibus-1.0.so* "$srcdir/libibus/usr/lib/"
+  mv "$pkgdir/usr/lib/pkgconfig" "$srcdir/libibus/usr/lib/"
+  mv "$pkgdir/usr/lib/girepository-1.0" "$srcdir/libibus/usr/lib/"
+  mv "$pkgdir/usr/share/gir-1.0" "$srcdir/libibus/usr/share/"
+  mv "$pkgdir/usr/share/vala" "$srcdir/libibus/usr/share/"
+  for directory in "$pkgdir"/usr/lib/python3.*; do
+    [[ ! -d "$directory" ]] || mv "$directory" "$srcdir/libibus/usr/lib/"
+  done
+}
+
+package_libibus() {
+  pkgdesc='IBus client library'
+  depends=(glib2 python-gobject)
+  cp -a "$srcdir/libibus/." "$pkgdir/"
+}

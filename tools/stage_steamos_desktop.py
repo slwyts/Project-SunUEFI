@@ -60,10 +60,12 @@ def configure_package_updates(root):
     policy = root / 'etc/pacman.conf'
     text = policy.read_text()
     ignore = ('deckard-mesa-linux-aarch64 gamescope steamos-manager '
-              'ffmpeg fastrpc libssc iio-sensor-proxy')
+              'ffmpeg fastrpc libssc iio-sensor-proxy ibus libibus')
     block = ('# Piano hardware packages are updated with the BSP image.\n'
              'IgnorePkg = ' + ignore + '\n')
     if block not in text:
+        text = re.sub(r'(?m)^# Piano hardware packages are updated with the BSP image\.\n'
+                      r'IgnorePkg = [^\n]*\n', '', text)
         text = text.replace('[options]\n', '[options]\n' + block, 1)
     policy.write_text(text)
 
@@ -118,6 +120,21 @@ def configure_input_method(root):
     globals_file.write_text(text)
     for path in (config / 'plasma-localerc', globals_file, kwin):
         os.chown(path, 1000, 1000)
+
+
+def configure_bluetooth_default(root):
+    # This is Steam's own preference, not a forced BlueZ power policy.
+    # Seed only the public build root, before any account has been used.
+    path = root / 'home/piano/.local/share/Steam/config/config.vdf'
+    text = path.read_text()
+    if re.search(r'"System"\s*\{', text):
+        return
+    end = text.rfind('}')
+    if end < 0:
+        raise ValueError('Steam installation configuration has no root object')
+    path.write_text(text[:end] +
+                    '\t"System"\n\t{\n\t\t"Bluetooth"\n\t\t{\n'
+                    '\t\t\t"Enabled" "1"\n\t\t}\n\t}\n' + text[end:])
 
 
 def configure_identity(root, base, build_id):
@@ -317,6 +334,7 @@ def configure(root):
         'Type=Application\nDesktopNames=gamescope\n')
     configure_kde(root, subprocess.run, input_method='ibus')
     configure_input_method(root)
+    configure_bluetooth_default(root)
     project = Path(__file__).resolve().parents[1]
     base = json.loads((project / 'config/steamos.json').read_text())['base']
     commit = subprocess.check_output(

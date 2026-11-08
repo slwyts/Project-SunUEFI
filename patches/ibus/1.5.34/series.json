@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "patches": [
+    {
+      "file": "0001-keep-x11-candidate-focus.patch",
+      "sha256": "2556665e8596f59902955ea3c98036b88b51771f9a151dab73fdb1c692b9cfbc"
+    }
+  ]
+}

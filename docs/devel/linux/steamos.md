@@ -33,6 +33,11 @@ GTK、Qt、XIM 和 SDL 输入。构建覆盖 Frame 账号的仅英语初始值�
 重复的桌面自动启动项；退出游戏模式时清掉专用输入环境，避免影响 KDE。
 Chromium 已预装，Frame 的“安装 Chromium”应用入口不显示。
 
+IBus 的 Xwayland 候选窗使用同一会话的 X display，不创建没有父窗口的
+Wayland popup，避免显示候选时让文本框失焦、清空预编辑文字。原生
+Wayland 仍用输入法专用 surface。修复随 `ibus` 和 `libibus` 包构建，
+包更新策略保留这两个适配包。
+
 游戏模式默认开启触控板自然滚动。Steam 没有对应设置页；KDE 桌面模式可在
 系统设置的触控板页面调整，两种会话各自保存输入偏好。
 
@@ -207,6 +212,10 @@ ARM 与 Valve 两套基础库互相覆盖，不会自动迁移不同包名、版
 Wi-Fi 由 NetworkManager 与 wpa_supplicant 管理，同时设置 Steam 原生支持的
 `STEAM_USE_WPASUPPLICANT=1`。仅修改 NetworkManager 配置不够：Steam 启动
 时会按自己的偏好要求 Manager 切换后端，可能重新写回 iwd。
+
+蓝牙默认开启。Steam 在 `-steamos3` 模式下会应用自己的蓝牙偏好，构建在
+全新 `config/config.vdf` 的 `InstallConfigStore/System/Bluetooth/Enabled`
+写入 `1`。之后开关由 Steam 和桌面的正常设置管理，不用服务反复强制开电。
 
 移除 Frame 留下的系统服务与用户会话 CPU 绑核限制，让应用可使用全部八核。
 SteamOS Manager 不提供依赖 Valve A/B 分区的出厂恢复，也不提供 Steam Deck

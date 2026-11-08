@@ -1,0 +1,34 @@
+From: slwyts <slwyts@foxmail.com>
+Subject: [PATCH] ui/gtk3: show X11 context candidates on the X display
+
+Without an active input-method context, the fallback candidate window is
+created as an ordinary Wayland popup with no parent. KWin moves keyboard
+focus away from the Xwayland input field when that window is shown, then
+IBus clears the preedit on FocusOut. Typing a word only commits a space.
+
+Use the existing X display for that fallback candidate window and its
+ordinary X11 positioning path. Keep the input-method Wayland surface for
+native text-input clients.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+--- a/ui/gtk3/candidatepanel.vala
++++ b/ui/gtk3/candidatepanel.vala
+@@ -78,6 +78,17 @@
+         m_is_wayland = is_wayland;
+         m_no_wayland_panel = no_wayland_panel;
+         m_toplevel = new Gtk.Window(Gtk.WindowType.POPUP);
++#if ENABLE_XIM && USE_GDK_WAYLAND
++        if (is_wayland && no_wayland_panel) {
++            var display = BindingCommon.get_xdisplay();
++            if (display != null) {
++                // X11 contexts have no parent for a Wayland popup. Use the
++                // X display so showing candidates cannot take their focus.
++                m_toplevel.set_screen(display.get_default_screen());
++                m_is_wayland = false;
++            }
++        }
++#endif
+         m_toplevel.add_events(Gdk.EventMask.BUTTON_PRESS_MASK);
+         m_toplevel.button_press_event.connect((w, e) => {
+             if (e.button != 1 || (e.state & Gdk.ModifierType.CONTROL_MASK) == 0)
