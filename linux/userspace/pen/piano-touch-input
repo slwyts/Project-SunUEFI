@@ -16,7 +16,14 @@ case "$lcd_id" in
   *) calibration= ;;
 esac
 if [ -n "$calibration" ] && [ -r "$calibration" ]; then
-  if echo 3 > /proc/nvt_thp_stylus; then
+  mode=3
+  for identity in /sys/class/hidraw/hidraw*/device/uevent; do
+    if grep -qi '^HID_ID=0005:00000022:00004D80$' "$identity" 2>/dev/null; then
+      mode=1
+      break
+    fi
+  done
+  if echo "$mode" > /proc/nvt_thp_stylus; then
     exec /usr/bin/piano-touch-view input --seconds 0 \
       --pen-ini "$calibration" --pen-pressure-max-age-ms 100 --pen-input
   fi

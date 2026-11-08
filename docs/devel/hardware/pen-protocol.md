@@ -4,6 +4,13 @@
 
 下文保留移植过程的协议记录。原厂依据来自同版本 `OS3.0.309.0.WPYCNXM` ROM 的触控 HAL、公开驱动和操作采集。
 
+## 普通 Focus Pen（M80p）
+
+普通笔使用蓝牙 `0022:4d80`，扫描模式 1，压力范围 0..8191。
+Piano 已在 1600×1068、120 Hz 下通过普通笔的悬停、定位和线宽随压力变化
+验证。型号切换、校准来源、按键路由和其他刷新率的验证范围见
+[普通 Focus Pen](../../../linux/userspace/pen/README.md#普通-focus-pen)。
+
 ## 屏幕数据与 BLE 分开处理
 
 现有 NT36532e 内核驱动将完整 THP 帧送到 `/proc/nvt_thp_stream`。当前 `piano-touch-view` 只生成手指 MT，选型时排除笔帧。原厂 [P81 parser](https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/6957f6b646d1c919e175e6f9000eb50c8635273c/p81/nt36532/nt36xxx.c#L2954) 明确区分类型6/7/9与17/29：payload `+64` 包含压力、按钮、悬浮状态和 Tip/Ring 原始阵列，阵列起点分别为 `+26` 与 `+36`。这里没有最终 X/Y、倾角。

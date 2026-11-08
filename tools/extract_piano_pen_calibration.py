@@ -109,6 +109,23 @@ def extract(raw):
         output['stylus.stylus_' + suffix] = integer(fields, key)
     output['stylus.stylus_coor_diff'] = array(fields, 'stylus.' + prefix + '_coor_diff', 6)
     output['stylus.stylus_angle'] = array(fields, 'stylus.stylus_angle', 6)
+    # Preserve the factory's alternative pen calibration; do not substitute
+    # Sheng's board-specific values or infer a slot from its numeric suffix.
+    alternatives = []
+    for candidate in ('stylus', 'stylus_2', 'stylus_3'):
+        vendor_key = 'stylus.' + candidate + '_vendor_id'
+        if vendor_key not in fields or integer(fields, vendor_key) != 1:
+            continue
+        alternatives.append(candidate)
+        if len(alternatives) > 1:
+            raise ValueError('ambiguous M80p/vendor1 calibration')
+        dest = 'stylus.stylus_2_'
+        output[dest + 'vendor_id'] = 1
+        output[dest + 'coor_diff'] = array(fields, 'stylus.' + candidate + '_coor_diff', 6)
+        for suffix in PROFILE:
+            key = 'stylus.' + candidate + '_' + suffix
+            output[dest + suffix] = integer(fields, key if key in fields else 'stylus.stylus_' + suffix)
+
     mx = array(fields, 'mapping.default_mapping_x', 2400)
     my = array(fields, 'mapping.default_mapping_y', 2400)
     x = [mx[row * 60] for row in range(40)]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause-Patent
-"""Initialize a connected Piano Focus Pen Pro through its original BLE protocol.
+"""Connect a Piano Focus Pen; initialize Pro through its original BLE protocol.
 
 The supplied board profile contains radio parameters, never pairing keys or
 device identities. This client does not read THP frames or generate input.
@@ -328,7 +328,7 @@ class LeScan:
         if any(
                 device.get('Connected') and
                 (not address or device.get('Address', '').upper() == address.upper()) and
-                re.fullmatch(r'bluetooth:v0022p5081d[0-9a-fA-F]{4}',
+                re.fullmatch(r'bluetooth:v0022p(?:5081|4d80)d[0-9a-fA-F]{4}',
                              device.get('Modalias', ''), re.IGNORECASE)
                 for interfaces in objects.values()
                 for device in [interfaces.get('org.bluez.Device1', {})]):
@@ -342,7 +342,7 @@ class LeScan:
                     path in self.connecting or
                     (address and device.get('Address', '').upper() != address.upper()) or
                     (not address and
-                     not re.fullmatch(r'bluetooth:v0022p5081d[0-9a-fA-F]{4}',
+                     not re.fullmatch(r'bluetooth:v0022p(?:5081|4d80)d[0-9a-fA-F]{4}',
                                       device.get('Modalias', ''), re.IGNORECASE)) or
                     now < self.connect_at.get(path, 0)):
                 continue
@@ -405,11 +405,12 @@ class Pen:
                    (address is None or o['org.bluez.Device1'].get('Address', '').upper() == address.upper()) and
                    o['org.bluez.Device1'].get('Connected') and
                    o['org.bluez.Device1'].get('ServicesResolved') and
-                   re.fullmatch(r'bluetooth:v0022p5081d[0-9a-fA-F]{4}',
+                   re.fullmatch(r'bluetooth:v0022p(?:5081|4d80)d[0-9a-fA-F]{4}',
                                 o['org.bluez.Device1'].get('Modalias', ''), re.IGNORECASE)]
         if len(devices) != 1:
-            raise RuntimeError('expected one connected Focus Pen Pro')
+            raise RuntimeError('expected one connected Focus Pen')
         self.base, device = devices[0]
+        self.is_pro = 'p5081' in device['Modalias'].lower()
         self.address = device['Address']
         adapter = objects[device['Adapter']]['org.bluez.Adapter1']
         self.host_address = bytes.fromhex(adapter['Address'].replace(':', ''))
@@ -417,9 +418,9 @@ class Pen:
             raise RuntimeError('invalid actual adapter address')
         chars = {o['org.bluez.GattCharacteristic1']['UUID'].lower(): p for p, o in objects.items()
                  if p.startswith(self.base + '/') and 'org.bluez.GattCharacteristic1' in o}
-        if FE11 not in chars or FE12 not in chars:
+        if self.is_pro and (FE11 not in chars or FE12 not in chars):
             raise RuntimeError('connected pen has not exposed its control services')
-        self.write, self.notify = chars[FE11], chars[FE12]
+        self.write, self.notify = chars.get(FE11), chars.get(FE12)
         self.events = []
         self.initialized = False
         self.serial = 0
@@ -490,6 +491,8 @@ class Pen:
         return bool(properties.get('Connected') and properties.get('ServicesResolved'))
 
     def follow_dock(self):
+        if not self.is_pro:
+            return
         try:
             attached = read_dock()
         except (RuntimeError, OSError):
@@ -500,6 +503,8 @@ class Pen:
             self.log('dock_updated', attached=attached)
 
     def follow_screen(self):
+        if not self.is_pro:
+            return
         active = screen_on()
         if active is not None and active != self.last_screen:
             self.request(b'\x61\x01' + bytes([int(active)]), b'\xe1\x00', 2)
@@ -507,6 +512,8 @@ class Pen:
             self.log('screen_updated', active=active)
 
     def open(self):
+        if not self.is_pro:
+            return
         self.subscription = self.bus.signal_subscribe(
             'org.bluez', 'org.freedesktop.DBus.Properties', 'PropertiesChanged', self.notify,
             None, self.Gio.DBusSignalFlags.NONE, self.changed, None)
@@ -514,6 +521,10 @@ class Pen:
         self.notifying = True
 
     def initialize(self, p):
+        if not self.is_pro:
+            self.initialized = True
+            self.log('m80p_connected')
+            return
         started = time.monotonic()
         self.log('initialization_started')
         # Send actual wake/dock state before radio setup. The pen can retain
@@ -575,7 +586,7 @@ class Pen:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--address', help='optional paired pen address; otherwise discover one connected P81C')
+    parser.add_argument('--address', help='optional paired pen address; otherwise discover one connected Focus Pen')
     parser.add_argument('--profile', type=Path, required=True)
     parser.add_argument('--stationary-device', type=Path)
     parser.add_argument('--observe-seconds', type=float, default=10)

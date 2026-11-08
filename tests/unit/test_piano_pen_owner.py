@@ -96,6 +96,15 @@ int main(void)
     report2(0x5b); report2(0x00); dump("hold_replaced");
     report2(0x58); range(0); dump("tap_leaves_range");
     report2(0x00); report2(0x58); report2(0x00); dump("tap_out_of_range");
+    owner->product = 0x4d80;
+    range(1); dump("m80_enter");
+    report2(0x4e); dump("m80_button1");
+    report2(0); dump("m80_release1");
+    report2(0x4b); dump("m80_button2");
+    range(1); dump("m80_button2_frame");
+    report2(0x58); report2(0x6e); report2(0); dump("m80_ignores_pro");
+    range(0); dump("m80_leave");
+    report2(0x4e); report2(0); dump("m80_out_of_range");
     return 0;
 }
 '''
@@ -180,6 +189,53 @@ class PianoPenOwnerTests(unittest.TestCase):
         self.native()
         self.assertEqual(self.cases['squeeze_replaced'], [])
         self.assertEqual(self.cases['hold_replaced'], [(EV_KEY, BTN_STYLUS, 0), SYN])
+
+    def test_m80p_physical_buttons_are_not_pro_gestures(self):
+        self.native()
+        self.assertEqual(self.cases['m80_button1'],
+                         [(EV_KEY, BTN_STYLUS, 1), (EV_KEY, BTN_STYLUS2, 0), SYN])
+        self.assertEqual(self.cases['m80_button2'],
+                         [(EV_KEY, BTN_STYLUS, 0), (EV_KEY, BTN_STYLUS2, 1), SYN])
+        self.assertIn((EV_KEY, BTN_STYLUS2, 1), self.cases['m80_button2_frame'])
+        self.assertFalse(any(e == (EV_KEY, BTN_TOUCH, 1) for e in self.cases['m80_ignores_pro']))
+        self.assertEqual(self.cases['m80_out_of_range'], [])
+
+    def test_m80p_does_not_receive_pro_radio_or_haptic_commands(self):
+        module = load_bluetooth()
+        pen = module.Pen.__new__(module.Pen)
+        pen.is_pro = False
+        events = []
+        pen.log = lambda *args, **kwargs: events.append(args[0])
+        # These methods must return before touching a GATT bus or Pro profile.
+        pen.open()
+        pen.initialize({})
+        pen.follow_dock()
+        pen.follow_screen()
+        self.assertTrue(pen.initialized)
+        self.assertEqual(events, ['m80p_connected'])
+
+    def test_m80p_uses_piano_calibration_and_13_bit_pressure(self):
+        self.native()
+        for panel in ('boe', 'csot'):
+            calibration = CALIBRATION.with_name('piano-' + panel + '.ini')
+            result = subprocess.run([str(self.offline), '--ini', str(calibration),
+                                     '--vendor', '1', '--config'], check=True,
+                                    capture_output=True, text=True)
+            config = json.loads(result.stdout)
+            self.assertEqual(config['pressure_max'], 8191)
+            self.assertEqual(config['calibration_threshold'], 37)
+            self.assertEqual(config['calibration_rate'], 8)
+        folder = Path(self.workspace.name) / 'm80-pressure'
+        folder.mkdir(exist_ok=True)
+        report = folder / 'pressure.bin'
+        events = folder / 'events.tsv'
+        events.write_text('1 report5 pressure.bin\n')
+        for value in (0, 8191, 8192):
+            report.write_bytes(bytes([5, value & 255, value >> 8]) + bytes(12))
+            result = subprocess.run([str(self.offline), '--ini', str(CALIBRATION),
+                '--vendor', '1', '--pressure-max-age-ns', '100000000',
+                '--events', str(events)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0 if value <= 8191 else 1)
 
     def test_offline_tool_names_report2_values(self):
         self.native()

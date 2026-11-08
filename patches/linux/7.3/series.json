@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "221976dba31bea0ab7be5cee3cc5caa5628e2656",
-  "original_target_commit": "e342dba15282933ef9c5efd9a85f01d13ad024f0",
+  "target_tree": "3af952cb59a6a3345ebc9119b1dde314fc30b77a",
+  "original_target_commit": "3c2f55a9f3df174bcd9a735f4146c581d87956bb",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -335,6 +335,14 @@
       "original_parent": "7c7ed30f6b9410e96b9865de5decd6215729aad7",
       "committer_date": "2026-11-08T01:57:32+08:00",
       "tree": "221976dba31bea0ab7be5cee3cc5caa5628e2656"
+    },
+    {
+      "file": "0042-hid-xiaomi-focus-pen.patch",
+      "sha256": "fd45420852a92b15eea2a4ce495e2b965fe9ecb098e72f0d096f825ba362d780",
+      "original_commit": "3c2f55a9f3df174bcd9a735f4146c581d87956bb",
+      "original_parent": "e342dba15282933ef9c5efd9a85f01d13ad024f0",
+      "committer_date": "2026-11-08T22:19:23+08:00",
+      "tree": "3af952cb59a6a3345ebc9119b1dde314fc30b77a"
     }
   ]
 }

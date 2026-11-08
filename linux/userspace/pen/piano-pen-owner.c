@@ -23,7 +23,8 @@ struct piano_pen_owner {
     struct piano_pen_info info;
     struct piano_pen_owner_stats stats;
     struct piano_pen_input_area area;
-    char *hidraw;
+    char *hidraw, *ini;
+    int product, m80_buttons;
     uint64_t retry_at, max_age, last_frame, last_pressure;
     int hid_fd, notify_fd, input_fd, tool_present, contact_present, have_frame, release_pending;
     int pressure_started;
@@ -91,9 +92,10 @@ static void reset_owner(struct piano_pen_owner *p)
     p->squeeze_started = 0;
     p->squeeze_long = 0;
     p->tap_down = 0;
+    p->m80_buttons = 0;
 }
 
-static int matching_hid(const char *path)
+static int matching_hid(const char *path, int *product)
 {
     struct hidraw_devinfo info = { 0 };
     int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
@@ -101,10 +103,11 @@ static int matching_hid(const char *path)
         return -errno;
     if (ioctl(fd, HIDIOCGRAWINFO, &info) < 0 ||
         info.bustype != BUS_BLUETOOTH || info.vendor != 0x22 ||
-        info.product != 0x5081) {
+        (info.product != 0x5081 && info.product != 0x4d80)) {
         close(fd);
         return -ENODEV;
     }
+    *product = info.product;
     return fd;
 }
 
@@ -119,10 +122,14 @@ struct piano_pen_owner *piano_pen_owner_create(const char *ini,
     const char *squeeze = getenv("PIANO_PEN_SQUEEZE_ACTION");
     p->squeeze_clicks = !squeeze || strcmp(squeeze, "stylus");
     p->max_age = age;
+    p->product = 0x5081;
+    p->ini = strdup(ini);
+    if (!p->ini) { free(p); return NULL; }
     p->core = piano_pen_core_create(ini, 3, PIANO_PEN_PORTRAIT,
                                     age, error, sizeof(error));
     if (!p->core) {
         fprintf(stderr, "pen configuration: %s\n", error);
+        free(p->ini);
         free(p);
         return NULL;
     }
@@ -160,7 +167,50 @@ void piano_pen_owner_destroy(struct piano_pen_owner *p)
         close(p->notify_fd);
     piano_pen_core_destroy(p->core);
     free(p->hidraw);
+    free(p->ini);
     free(p);
+}
+
+/* Switch only after the candidate's real calibration has been validated.
+ * Recreate uinput because the two models have different pressure ranges. */
+static int select_model(struct piano_pen_owner *p, int product)
+{
+    if (p->product == product)
+        return p->input_fd < 0 && p->area.x_max > 0 ?
+            piano_pen_owner_input_open(p, &p->area) : 0;
+    char error[256];
+    int mode = product == 0x4d80 ? 1 : 3;
+    struct piano_pen_core *core = piano_pen_core_create(p->ini, mode,
+        PIANO_PEN_PORTRAIT, p->max_age, error, sizeof(error));
+    if (!core) {
+        fprintf(stderr, "pen model calibration: %s\n", error);
+        return -EINVAL;
+    }
+    int fd = open("/proc/nvt_thp_stylus", O_WRONLY | O_CLOEXEC);
+    char value = '0' + mode;
+    int ret = fd < 0 ? -errno : 0;
+    if (fd >= 0) {
+        if (write(fd, &value, 1) != 1)
+            ret = -EIO;
+        close(fd);
+    }
+    if (ret) { piano_pen_core_destroy(core); return ret; }
+    reset_owner(p);
+    int input = p->input_fd >= 0;
+    if (input) {
+        ioctl(p->input_fd, UI_DEV_DESTROY);
+        close(p->input_fd);
+        p->input_fd = -1;
+    }
+    piano_pen_core_destroy(p->core);
+    p->core = core;
+    p->product = product;
+    piano_pen_core_info(core, &p->info);
+    fprintf(stderr, "pen model: %s, scan mode %d, pressure max %d\n",
+        product == 0x4d80 ? "M80p" : "P81c", mode, p->info.pressure_max);
+    if (input && piano_pen_owner_input_open(p, &p->area))
+        return -EIO;
+    return 0;
 }
 
 int piano_pen_owner_poll_fd(struct piano_pen_owner *p)
@@ -174,31 +224,39 @@ int piano_pen_owner_poll_fd(struct piano_pen_owner *p)
         return p->notify_fd;
     p->retry_at = now + UINT64_C(1000000000);
     if (p->hidraw) {
-        int fd = matching_hid(p->hidraw);
-        if (fd >= 0)
-            p->hid_fd = fd;
+        int product;
+        int fd = matching_hid(p->hidraw, &product);
+        if (fd >= 0) {
+            if (!select_model(p, product)) p->hid_fd = fd;
+            else close(fd);
+        }
         return p->hid_fd >= 0 ? p->hid_fd : p->notify_fd;
     }
     glob_t paths = { 0 };
-    int selected = -1, matches = 0;
+    int selected = -1, matches = 0, product = 0;
     if (!glob("/dev/hidraw*", 0, NULL, &paths)) {
         for (size_t i = 0; i < paths.gl_pathc; i++) {
-            int fd = matching_hid(paths.gl_pathv[i]);
+            int candidate;
+            int fd = matching_hid(paths.gl_pathv[i], &candidate);
             if (fd < 0)
                 continue;
             matches++;
             if (selected >= 0)
                 close(fd);
-            else
+            else {
                 selected = fd;
+                product = candidate;
+            }
         }
     }
     globfree(&paths);
-    if (matches == 1)
-        p->hid_fd = selected;
+    if (matches == 1) {
+        if (!select_model(p, product)) p->hid_fd = selected;
+        else close(selected);
+    }
     else if (selected >= 0) {
         close(selected);
-        fprintf(stderr, "multiple Focus Pen Pro devices; select --pen-hidraw\n");
+        fprintf(stderr, "multiple Focus Pen devices; select --pen-hidraw\n");
     }
     if (p->hid_fd >= 0)
         fprintf(stderr, "pen: pressure transport opened at %llu ns\n",
@@ -325,6 +383,20 @@ void piano_pen_owner_read_hid(struct piano_pen_owner *p, short revents)
             return;
         if (bytes <= 0)
             goto disconnected;
+        if (bytes == 2 && report[0] == 2 && p->product == 0x4d80) {
+            /* M80p uses the keyboard-array Page Down/Page Up usages for
+             * physical barrel buttons, not P81c squeeze/tap gestures. */
+            p->m80_buttons = report[1] == 0x4e ? 1 : report[1] == 0x4b ? 2 : 0;
+            if (p->input_fd >= 0 && p->tool_present) {
+                struct input_event ev[] = {
+                    { .type = EV_KEY, .code = BTN_STYLUS, .value = !!(p->m80_buttons & 1) },
+                    { .type = EV_KEY, .code = BTN_STYLUS2, .value = !!(p->m80_buttons & 2) },
+                    { .type = EV_SYN, .code = SYN_REPORT }
+                };
+                if (input_events(p, ev, 3)) p->stats.input_errors++;
+            }
+            continue;
+        }
         if (bytes == 2 && report[0] == 2) {
             /* Keyboard array: a new value ends the previous one. The kernel
              * reports slides as page keys
@@ -545,9 +617,10 @@ int piano_pen_owner_input_open(struct piano_pen_owner *p,
         goto failed;
     device.id.bustype = BUS_VIRTUAL;
     device.id.vendor = 0x22;
-    device.id.product = 0x5081;
+    device.id.product = p->product;
     device.id.version = 1;
-    snprintf(device.name, sizeof(device.name), "Piano Focus Pen Pro");
+    snprintf(device.name, sizeof(device.name), "Piano Focus Pen%s",
+        p->product == 0x4d80 ? "" : " Pro");
     if (ioctl(fd, UI_DEV_SETUP, &device) || ioctl(fd, UI_DEV_CREATE)) {
         ret = -errno;
         goto failed;
@@ -582,9 +655,10 @@ int piano_pen_owner_input_report(struct piano_pen_owner *p,
 #define ADD(t, c, v) events[n++] = (struct input_event){ .type = (t), .code = (c), .value = (v) }
     ADD(EV_KEY, BTN_TOUCH, contact);
     ADD(EV_KEY, BTN_TOOL_PEN, proximity);
-    ADD(EV_KEY, BTN_STYLUS, proximity && p->squeeze_down &&
-        (!p->squeeze_clicks || p->squeeze_long));
-    ADD(EV_KEY, BTN_STYLUS2, proximity && p->tap_reported);
+    ADD(EV_KEY, BTN_STYLUS, proximity && (p->product == 0x4d80 ?
+        !!(p->m80_buttons & 1) : p->squeeze_down && (!p->squeeze_clicks || p->squeeze_long)));
+    ADD(EV_KEY, BTN_STYLUS2, proximity && (p->product == 0x4d80 ?
+        !!(p->m80_buttons & 2) : p->tap_reported));
     if (proximity) {
         ADD(EV_ABS, ABS_X, x);
         ADD(EV_ABS, ABS_Y, y);

@@ -4,7 +4,8 @@ Commit: 34046210932d654a4c0df0121ecc31c008f8148c
 Original files: src/nvt_stylus.hpp, src/nvt_stylus.cpp
 License: Apache-2.0 (full text in Apache-2.0.txt).
 
-Project changes replace Sheng's axis tables, dimensions, resolution, edge and
+Project changes support M80p/vendor1 and P81c/vendor3 with Piano calibration.
+They replace Sheng's axis tables, dimensions, resolution, edge and
 tilt calibration with values read from the caller's actual Piano firmware ini.
 Piano's original ALG instruction trace confirms row-first mapping_x, first-row
 mapping_y, average node pitch and the final portrait axes. No proprietary ALG,
