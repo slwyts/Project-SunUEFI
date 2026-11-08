@@ -1,0 +1,33 @@
+From aa577d764700a6d84d39892d479bb6805a1162b3 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 06:26:04 +0800
+Subject: [PATCH] drm/msm/dpu: lock the CRTC state while reading debugfs
+
+The state file calls dpu_crtc_get_intf_mode(), which reads crtc->state and requires the modeset mutex. Use the same modeset lock as the adjacent status reader so debugfs cannot race atomic commits or trigger the missing-lock warning.
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+index 953725dd15e..b1e3877bc2c 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -2078,6 +2078,7 @@ static int dpu_crtc_debugfs_state_show(struct seq_file *s, void *v)
+ 	struct drm_crtc *crtc = s->private;
+ 	struct dpu_crtc *dpu_crtc = to_dpu_crtc(crtc);
+ 
++	drm_modeset_lock_all(crtc->dev);
+ 	seq_printf(s, "client type: %d\n", dpu_crtc_get_client_type(crtc));
+ 	seq_printf(s, "intf_mode: %d\n", dpu_crtc_get_intf_mode(crtc));
+ 	seq_printf(s, "core_clk_rate: %llu\n",
+@@ -2086,6 +2087,7 @@ static int dpu_crtc_debugfs_state_show(struct seq_file *s, void *v)
+ 		   (u32)DIV_ROUND_UP_ULL(dpu_crtc->cur_perf.bw_ctl, 1000));
+ 	seq_printf(s, "max_per_pipe_ib: %u\n",
+ 				dpu_crtc->cur_perf.max_per_pipe_ib);
++	drm_modeset_unlock_all(crtc->dev);
+ 
+ 	return 0;
+ }
+-- 
+2.56.0
+

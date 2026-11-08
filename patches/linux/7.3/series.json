@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "a532092f31ef37a2569e6f15d74a8e82a7df5307",
-  "original_target_commit": "3dbac618631047e6db89b45f7bcf5c915f5c7e0f",
+  "target_tree": "3ca5fc1c7c6a0ed6e926cfedb2ace9649591755c",
+  "original_target_commit": "aa577d764700a6d84d39892d479bb6805a1162b3",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -519,6 +519,14 @@
       "original_parent": "851e6bbd6a30f2efd3cab0dc3864e27118dbcb59",
       "tree": "a532092f31ef37a2569e6f15d74a8e82a7df5307",
       "committer_date": "2026-11-09T06:01:40+08:00"
+    },
+    {
+      "file": "0065-dpu-debugfs-state-lock.patch",
+      "sha256": "de98df1944879f7c462be35a9f02297547330ae9085c43c174f7b9f7c37901d3",
+      "original_commit": "aa577d764700a6d84d39892d479bb6805a1162b3",
+      "original_parent": "3dbac618631047e6db89b45f7bcf5c915f5c7e0f",
+      "tree": "3ca5fc1c7c6a0ed6e926cfedb2ace9649591755c",
+      "committer_date": "2026-11-09T06:26:04+08:00"
     }
   ]
 }
