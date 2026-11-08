@@ -177,9 +177,7 @@ def default_system_record(rootfs, installed, config, desktop='gnome'):
         raise ValueError('Required desktop packages are not installed: ' + ', '.join(missing))
 
     paths = (
-        'usr/lib/piano/bluetooth-address.py',
         'etc/modules-load.d/piano-bluetooth.conf',
-        'usr/lib/systemd/system/bluetooth.service.d/20-piano-address.conf',
         'usr/lib/piano/piano-adsp-start', 'etc/udev/rules.d/79-piano-touch.rules',
         'usr/share/piano/pen/p81c-radio.json', 'usr/lib/piano/pen-bluetooth',
         'usr/lib/piano/touch-input', 'usr/bin/piano-pen-canvas',

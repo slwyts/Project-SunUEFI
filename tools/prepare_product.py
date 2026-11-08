@@ -32,6 +32,7 @@ SOURCE_NAMES=(
     'PianoPogoReport.c','PianoPogoInput.c','PianoPogoI2c.c','PianoGeniI2cPio.c','PianoUsbHostPci.c',
 )
 PRODUCT_COMPONENTS={
+    'board-identity':('PianoBluetoothAddress.c','PianoBluetoothAddress.h'),
     'nv':('PianoNvFile.c','PianoNvFile.h'),
     'reset':('PianoReset.c','PianoReset.h'),
     'ext4':('PianoStorageIo.h','PianoStorageIo.inc','PianoExt4.h'),

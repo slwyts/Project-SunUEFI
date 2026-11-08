@@ -18,9 +18,13 @@ class LateHandoffTests(unittest.TestCase):
    command=['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-misleading-indentation',
     '-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-fsanitize=address,undefined','-fno-pie','-no-pie',
     '-I'+str(inc),'-I'+str(inc/'X64'),'-I'+str(ROOT/'uefi/core'),'-I'+str(ROOT/'uefi/handoff/early-memory'),'-I'+str(fdt),
-    '-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),
+     '-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),
+     '-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include'),
+     '-I'+str(BASE/'CryptoPkg/Include'),
+     '-I'+str(ROOT/'uefi/components/board-identity'),
     str(ROOT/'tests/native/PianoDeviceTreeFixupTest.c'),str(ROOT/'tests/native/PianoLinuxFdtHost.c'),
-    str(ROOT/'uefi/core/PianoPanelSelection.c'),str(ROOT/'uefi/components/product-handoff/PianoDeviceTreeFixup.c')]
+     str(ROOT/'uefi/core/PianoPanelSelection.c'),str(ROOT/'uefi/components/product-handoff/PianoDeviceTreeFixup.c'),
+     str(ROOT/'uefi/components/board-identity/PianoBluetoothAddress.c')]
    command +=[str(fdt/name)for name in ('fdt.c','fdt_ro.c','fdt_rw.c','fdt_wip.c','fdt_sw.c','fdt_check.c','fdt_empty_tree.c')]
    subprocess.run(command+['-o',str(exe)],check=True,timeout=60)
    subprocess.run([str(exe)],check=True,timeout=60)
@@ -141,6 +145,9 @@ class LateHandoffTests(unittest.TestCase):
    combined[combined.index(str(ROOT/'tests/native/PianoNativeLaunchTest.c'))]=str(ROOT/'tests/native/PianoNativeLinuxSessionTest.c')
    fdt=BASE/'MdePkg/Library/BaseFdtLib/libfdt/libfdt'
    combined +=['-I'+str(ROOT/'uefi/handoff/early-memory'),'-I'+str(fdt),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include')]
+   combined +=['-I'+str(ROOT/'uefi/components/board-identity'),
+      '-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include'),
+      str(ROOT/'uefi/components/board-identity/PianoBluetoothAddress.c')]
    combined +=['-ffunction-sections','-fdata-sections','-Wl,--gc-sections',str(ROOT/'uefi/core/PianoProductBootObjects.c'),str(ROOT/'uefi/components/os-boot/PianoLinuxEfiSession.c'),str(ROOT/'uefi/core/PianoPanelSelection.c'),str(ROOT/'tests/native/PianoLinuxFdtHost.c')]
    combined +=[str(fdt/name)for name in ('fdt.c','fdt_ro.c','fdt_rw.c','fdt_wip.c','fdt_sw.c','fdt_check.c','fdt_empty_tree.c')]
    combined[combined.index('-o')+1]=str(linux)
@@ -152,7 +159,8 @@ class LateHandoffTests(unittest.TestCase):
   for name in ('PianoLateHandoff.c','PianoDeviceTreeFixup.c','Mu_Basecore/MdePkg/Library/PianoProductExitLib/PianoProductExitLib.c','Mu_Basecore/MdePkg/Library/PianoProductExitLibNull/PianoProductExitLibNull.c'):
    subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding',
      '-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-I'+str(inc),'-I'+str(inc/'AArch64'),
-     '-I'+str(shared),'-I'+str(ROOT/'uefi/core'),'-I'+str(ROOT/'uefi/handoff/early-memory'),
+      '-I'+str(shared),'-I'+str(ROOT/'uefi/core'),'-I'+str(ROOT/'uefi/handoff/early-memory'),
+      '-I'+str(ROOT/'uefi/components/board-identity'),
      '-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),str(ROOT/'uefi/components/product-handoff'/name)],check=True)
   report=prepare.prepare(apply=False);self.assertFalse(report['product_provider_bound'])
   self.assertEqual(before,{name:(ROOT/name).read_bytes()for name in prepare.PINS})

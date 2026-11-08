@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #include "PianoDeviceTreeFixup.h"
 #include <PianoPanelSelection.h>
+#include <PianoBluetoothAddress.h>
 #include <PianoProductBootObjects.h>
 #include <PianoProductMemory.h>
 #include <Guid/Fdt.h>
@@ -62,6 +63,8 @@ STATIC EFI_STATUS EFIAPI Fixup(EFI_DT_FIXUP_PROTOCOL *This,VOID *Tree,UINTN *Buf
     if(Status!=EFI_SUCCESS)return FixupResult("memory",Status);
     Status=PianoPanelSelectDtb(Tree,Capacity);
     if(Status!=EFI_SUCCESS)return FixupResult("panel",Status);
+    Status=PianoBluetoothAddressApplyDtb(Tree,Capacity);
+    if(Status!=EFI_SUCCESS)return FixupResult("bluetooth-address",Status);
     Status=PianoProductBootObjectsApplyGunyah(Tree,Capacity);
     if(Status!=EFI_SUCCESS)return FixupResult("gunyah",Status);
 

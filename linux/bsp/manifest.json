@@ -249,20 +249,6 @@
     },
     {
       "group": "common",
-      "path": "usr/lib/piano/bluetooth-address.py",
-      "type": "file",
-      "mode": "0644",
-      "uid": 0,
-      "gid": 0,
-      "sha256": "9d85065bec2d2a610feca22299e854811f5ed66a7d2224132b698be2ed733a6c",
-      "source": "linux/bsp/common/usr/lib/piano/bluetooth-address.py",
-      "source_sha256": "9d85065bec2d2a610feca22299e854811f5ed66a7d2224132b698be2ed733a6c",
-      "source_git_mode": "100644",
-      "license": "MIT",
-      "source_component": "Project SunUEFI"
-    },
-    {
-      "group": "common",
       "path": "usr/lib/piano/usb-network",
       "type": "file",
       "mode": "0755",
@@ -316,20 +302,6 @@
       "license": "MIT",
       "sha256": "2cada8784411ac963305b3e925bfcee04481f1f3ee0e15a35b14448a6973d1c5",
       "source_sha256": "2cada8784411ac963305b3e925bfcee04481f1f3ee0e15a35b14448a6973d1c5"
-    },
-    {
-      "group": "common",
-      "path": "usr/lib/systemd/system/bluetooth.service.d/20-piano-address.conf",
-      "type": "file",
-      "mode": "0644",
-      "uid": 0,
-      "gid": 0,
-      "sha256": "ac6a6c39a871ba38b87a7af96050a626906d2f72706e067d9005c81b21c85a81",
-      "source": "linux/bsp/common/usr/lib/systemd/system/bluetooth.service.d/20-piano-address.conf",
-      "source_sha256": "ac6a6c39a871ba38b87a7af96050a626906d2f72706e067d9005c81b21c85a81",
-      "source_component": "Project SunUEFI",
-      "source_git_mode": "100644",
-      "license": "MIT"
     },
     {
       "group": "common",
