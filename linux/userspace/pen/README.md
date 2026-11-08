@@ -43,6 +43,11 @@ piano-touch-view input --seconds 0 \
 
 该路径不设置笔扫描或显示模式。启动时的校准选择与无线／磁吸状态仍由现有硬件启动逻辑协调，不能仅凭程序编译成功就忽略这些条件。
 
+KDE 按 `/devices/virtual/` 路径识别 uinput，所以数位板页面会显示用户空间驱动提醒，
+不会禁用配置。笔通过标准 libinput／tablet-tool 交给 KWin，压力曲线与显示映射仍
+使用桌面设置，不在解算进程另设一套曲线。设备上的压力曲线修改已写入标准
+`kcminputrc` 并可恢复；不改总线类型或伪造硬件路径来隐藏该提醒。
+
 掌压识别在同一程序的手指解码中完成，见 [`piano-touch-view-palm-rejection.patch`](../../../tools/patches/piano-touch-view-palm-rejection.patch)。每个触点取峰值周围连通且不低于触摸阈值（默认 200）的格子，格子数达到 `PALM_AREA_CELLS`（70）的触点上报为 `MT_TOOL_PALM`，同一片手掌只占一个触点，抬起前不会变回手指，也不按下 `BTN_TOUCH`；libinput 不把它交给应用，手指变成手掌时取消已开始的触摸。70 取自原厂触控配置 `/odm/firmware/piano_nova_boe_thp_config.ini`（CSOT 版本取值相同）的 `palm_area_num_level2`。原厂按同样的 60×40 感应矩阵计数，每格约 16 mm²，70 格约 1140 mm²，相当于直径 38 mm 的圆。原厂同组还有 `palm_neg_area_num_level2=30`（负值格子数）和更大的 `palm_area_num_level1=110`；这里不统计负值格子，只用 70 格。按格子数判断，两指并拢时连成的细长区域仍是两根手指。触点大小按椭圆估算长短轴，以 `ABS_MT_TOUCH_MAJOR`／`ABS_MT_TOUCH_MINOR` 上报，单位是 13／mm（面板 239×163 mm）。type29 笔帧到来时仍按着的触点以手掌方式抬起，先落下的手不会在笔靠近时变成一次点击。BSP 的 `79-piano-pen-touch-group.rules` 把触屏和笔放进同一个 libinput 设备组，笔在感应范围内时，libinput 自带的触控仲裁忽略笔旁的新触摸。在平板上调整时，用 `evtest` 查看手指和手掌的 `ABS_MT_TOUCH_MAJOR`、`ABS_MT_TOUCH_MINOR` 与 `ABS_MT_TOOL_TYPE`，长短轴相乘再除以 3500 约等于格子数，据此调整补丁中的 `PALM_AREA_CELLS`。
 
 ## 原厂协议进展
