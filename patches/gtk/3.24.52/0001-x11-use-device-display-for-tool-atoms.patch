@@ -1,0 +1,24 @@
+From: Benjamin Otte <otte@redhat.com>
+Subject: [PATCH] x11: use the device display for tool property atoms
+
+An X11 display can be open while the default display is Wayland. Using
+the default atom converter on an XI2 property event then treats a
+GdkWaylandDisplay as GdkX11Display and crashes in g_hash_table_lookup().
+
+Backport the XI2 change from GTK 4 without removing the GTK 3 public API.
+
+Upstream: https://gitlab.gnome.org/GNOME/gtk/-/commit/920259c25070986b13675fd86f3def1b805dc00d
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+--- a/gdk/x11/gdkdevicemanager-xi2.c
++++ b/gdk/x11/gdkdevicemanager-xi2.c
+@@ -1194,7 +1194,8 @@
+                                 GUINT_TO_POINTER (ev->deviceid));
+ 
+   if (device != NULL &&
+-      ev->property == gdk_x11_get_xatom_by_name ("Wacom Serial IDs"))
++      ev->property == gdk_x11_get_xatom_by_name_for_display (gdk_device_get_display (device),
++                                                          "Wacom Serial IDs"))
+     {
+       GdkDeviceTool *tool = NULL;
+       guint serial_id = 0, tool_id = 0;

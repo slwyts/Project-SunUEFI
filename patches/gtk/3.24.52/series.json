@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "patches": [
+    {
+      "file": "0001-x11-use-device-display-for-tool-atoms.patch",
+      "sha256": "27a599dc9e565dafb6fc8df9e4ac8b9f26467f2041bb3d8494fae3b59c308b20"
+    }
+  ]
+}

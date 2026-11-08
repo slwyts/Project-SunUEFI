@@ -42,6 +42,13 @@
     "commit": "e549b466fcf1237469b6814614d21cbcd144c30b",
     "version": "27.0.0_devel+gite549b466fcf1"
   },
+  "gtk3": {
+    "version": "3.24.52",
+    "pkgrel": "1.1",
+    "url": "https://download.gnome.org/sources/gtk/3.24/gtk-3.24.52.tar.xz",
+    "sha256": "80931fa472a77b9a164f6740e3c0b444fac6770054632d35a7ff9d679e5e7b9f",
+    "patch_series": "patches/gtk/3.24.52/series.json"
+  },
   "kde_packages": [
     {
       "name": "libkscreen",

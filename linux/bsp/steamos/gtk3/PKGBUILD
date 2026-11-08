@@ -1,0 +1,61 @@
+pkgname=gtk3
+pkgver=@VERSION@
+pkgrel=@PKGREL@
+epoch=1
+pkgdesc='GObject-based multi-platform GUI toolkit'
+arch=(aarch64)
+url='https://www.gtk.org/'
+license=(LGPL-2.1-or-later)
+depends=(adwaita-fonts adwaita-icon-theme at-spi2-core cairo dconf
+         desktop-file-utils fontconfig fribidi gdk-pixbuf2 glib2 glibc harfbuzz
+         iso-codes libcloudproviders libcolord libcups libegl libepoxy libgl
+         librsvg libx11 libxcomposite libxcursor libxdamage libxext libxfixes
+         libxi libxinerama libxkbcommon libxrandr libxrender pango
+         shared-mime-info tinysparql wayland zlib gtk-update-icon-cache)
+makedepends=(base-devel meson ninja glib2-devel gobject-introspection sassc
+             wayland-protocols)
+provides=(gtk3-print-backends libgailutil-3.so libgdk-3.so libgtk-3.so)
+conflicts=(gtk3-print-backends)
+replaces=('gtk3-print-backends<=3.22.26-1')
+options=(!lto !debug)
+source=('@SOURCE_URL@' 0001-x11-use-device-display-for-tool-atoms.patch)
+sha256sums=('@SOURCE_SHA256@' '@PATCH_SHA256@')
+
+prepare() {
+  cd "gtk-$pkgver"
+  patch --batch --fuzz=0 -p1 -i "$srcdir/0001-x11-use-device-display-for-tool-atoms.patch"
+}
+
+build() {
+  arch-meson "gtk-$pkgver" build -Dbroadway_backend=true \
+    -Dcloudproviders=true -Dcolord=yes -Dtracker3=true \
+    -Dgtk_doc=false -Dman=false -Ddemos=false -Dexamples=false -Dtests=false
+  meson compile -C build -j4
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  # GTK 4 supplies the shared icon cache tool.
+  rm "$pkgdir/usr/bin/gtk-update-icon-cache"
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/libalpm/hooks/gtk-query-immodules-3.0.hook" <<'HOOK'
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Target = usr/lib/gtk-3.0/3.0.0/immodules/*.so
+
+[Action]
+Description = Probing GTK3 input method modules...
+When = PostTransaction
+Exec = /usr/bin/gtk-query-immodules-3.0 --update-cache
+HOOK
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/gtk-3.0/settings.ini" <<'SETTINGS'
+[Settings]
+gtk-icon-theme-name = Adwaita
+gtk-theme-name = Adwaita
+gtk-font-name = Adwaita Sans 11
+SETTINGS
+  install -Dm644 "$srcdir/gtk-$pkgver/COPYING" \
+    "$pkgdir/usr/share/licenses/gtk3/COPYING"
+}

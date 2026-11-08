@@ -60,7 +60,7 @@ def configure_package_updates(root):
     policy = root / 'etc/pacman.conf'
     text = policy.read_text()
     ignore = ('deckard-mesa-linux-aarch64 gamescope steamos-manager '
-              'ffmpeg fastrpc libssc iio-sensor-proxy ibus libibus')
+              'ffmpeg fastrpc libssc iio-sensor-proxy ibus libibus gtk3')
     block = ('# Piano hardware packages are updated with the BSP image.\n'
              'IgnorePkg = ' + ignore + '\n')
     if block not in text:

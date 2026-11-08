@@ -149,6 +149,20 @@ def kde_package_is_current(package_dir, recipe):
             bool(record.get('packages')))
 
 
+def gtk3_recipe(output):
+    config = json.loads((ROOT / 'config/steamos.json').read_text())['gtk3']
+    patch, = runtime_helpers.source_patches(ROOT / config['patch_series'])
+    output.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(patch, output / patch.name)
+    template = (ROOT / 'linux/bsp/steamos/gtk3/PKGBUILD').read_text()
+    for key, value in {'VERSION': config['version'], 'PKGREL': config['pkgrel'],
+                       'SOURCE_URL': config['url'], 'SOURCE_SHA256': config['sha256'],
+                       'PATCH_SHA256': digest(patch)}.items():
+        template = template.replace('@' + key + '@', value)
+    (output / 'PKGBUILD').write_text(template)
+    return output
+
+
 def kde_repository_package_works(root, name):
     """Reuse Valve's matching package when its Qt relocations resolve."""
     item = next(p for p in json.loads((ROOT / 'config/steamos.json').read_text())['kde_packages']
@@ -326,6 +340,12 @@ done
             build_arch_package.build(root, recipe, packages)
         else:
             build_arch_package.install_cached(root, packages)
+    gtk_recipe = gtk3_recipe(output / 'gtk3-recipe')
+    gtk_packages = output / 'packages/gtk3'
+    if not kde_package_is_current(gtk_packages, gtk_recipe):
+        build_arch_package.build(root, gtk_recipe, gtk_packages)
+    else:
+        build_arch_package.install_cached(root, gtk_packages)
     ibus_recipe = output / 'ibus-recipe'
     ibus_recipe.mkdir(exist_ok=True)
     ibus_patch, = runtime_helpers.source_patches(ROOT / 'patches/ibus/1.5.34/series.json')
