@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from stage_arch_piano import put
+from build_nyarch_apps import guest_environment
 from prepare_debian_desktop import configure as configure_kde
 
 # These units control Frame hardware or its A/B partition layout. Piano uses
@@ -90,9 +91,9 @@ def configure_input_method(root):
         "[desktop/ibus/general/hotkey]\ntriggers=['<Control>space']\n")
     subprocess.run(['chroot', root, 'dconf', 'update'], check=True)
     # The Frame image has an English-only user value which overrides defaults.
-    subprocess.run(['chroot', root, 'runuser', '-u', 'piano', '--',
-                    'dbus-run-session', '--', 'dconf', 'load', '/desktop/ibus/'],
-                   input=defaults, text=True, check=True)
+    with guest_environment(root) as guest:
+        guest(['runuser', '-u', 'piano', '--', 'dbus-run-session', '--',
+               'dconf', 'load', '/desktop/ibus/'], input=defaults, text=True)
     config = root / 'home/piano/.config'
     config.mkdir(parents=True, exist_ok=True)
     kwin = config / 'kwinrc'
