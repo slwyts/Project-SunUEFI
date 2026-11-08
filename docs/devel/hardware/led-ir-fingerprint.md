@@ -85,6 +85,10 @@ Linux 7.3 的 `qcomtee` 驱动提供标准 `/dev/tee0`。
 扩大到 256 MiB，保留原厂允许的分配地址范围。这部分内存空闲时仍能
 供 Linux 使用，不是永久划走的固件内存。
 
+打包时停用没有主线消费者的 Android 动态可回收池，避免它们先占满
+4 GiB 以下的可用区，导致默认池创建失败并退回 32 MiB。固定分配、
+`no-map` 固件保留区和实际用于 FastRPC 的 ADSP 池不作回收。
+
 传感器控制依据[固定 MiCode 驱动](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/45fb9bd6ae5ba2942fc1d53e4b6b46ef76992f71/drivers/input/fingerprint/mi_fp/fp_driver.c)
 提供供电、复位和中断：原厂 DT 指定 GPIO73 复位、GPIO85 IRQ，
 `fp_3v3_vreg-supply` 指向 PM-HUMU L9。认证数据由安全服务处理；

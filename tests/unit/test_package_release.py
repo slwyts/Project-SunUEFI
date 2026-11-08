@@ -73,6 +73,25 @@ class ReleasePackageTests(unittest.TestCase):
     def write_manifest(self, folder, data):
         (folder / 'manifest.json').write_text(json.dumps(data))
 
+    def test_unused_dynamic_pools_preserve_firmware_reservations(self):
+        pool = {'compatible': b'shared-dma-pool\0', 'reusable': b'',
+                'size': struct.pack('>Q', 64 * pr.MIB)}
+        tree = {'/': {}, '/reserved-memory': {},
+                '/reserved-memory/qseecom_region': dict(pool),
+                '/reserved-memory/cnss_wlan_region': {
+                    **pool, 'reg': struct.pack('>QQ', 0xf1800000, 32 * pr.MIB)},
+                '/reserved-memory/secure_cdsp_region': {**pool, 'no-map': b''},
+                '/reserved-memory/adsp_heap_region': dict(pool),
+                '/reserved-memory/linux,cma': {**pool, 'linux,cma-default': b''}}
+        self.dtb.write_bytes(pr.write_fdt({'tree': tree, 'reservations': [], 'boot_cpu': 0}))
+        result = pr.normalize_mainline_bindings(self.dtb)
+        after = pr.read_fdt(self.dtb.read_bytes())['tree']
+        self.assertEqual(result['changes'], ['/reserved-memory/qseecom_region:status'])
+        self.assertEqual(after['/reserved-memory/qseecom_region']['status'], b'disabled\0')
+        for path, props in tree.items():
+            if path != '/reserved-memory/qseecom_region':
+                self.assertEqual(after[path], props, path)
+
     def test_component_hash_cannot_override_manifest(self):
         with self.assertRaisesRegex(ValueError, 'disagrees'):
             pr.component(self.uefi, pr.record(self.uefi.parent / 'manifest.json'), '0' * 64, 'uefi')
