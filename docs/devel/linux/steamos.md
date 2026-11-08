@@ -39,9 +39,11 @@ Wayland 仍用输入法专用 surface。修复随 `ibus` 和 `libibus` 包构建
 包更新策略保留这两个适配包。
 
 GTK 3 的 XInput2 属性事件使用设备所属的 X display 查询数位笔原子，
-不使用可能是 Wayland 的默认 display。此改动回移 GTK 4 的上游修正，
-避免 IBus 同时打开两种 display 时在切换会话、虚拟终端或退出桌面时崩溃；
-不关闭 Xwayland 候选窗，也不改变触控笔设备的来源。补丁随 `gtk3` 包构建。
+不使用可能是 Wayland 的默认 display，避免 IBus 同时打开两种 display 时
+在切换会话、虚拟终端或退出桌面时崩溃。GTK 3 上游已有
+[Alynx Zhou 的对应修正](https://gitlab.gnome.org/GNOME/gtk/-/commit/c3b824a8f435dc975b2bee21a81254e3bb5a2229)，
+本地补丁保留 XI2 部分并随 `gtk3` 包构建，不关闭 Xwayland 候选窗，也不改变
+触控笔设备的来源。
 
 游戏模式默认开启触控板自然滚动。Steam 没有对应设置页；KDE 桌面模式可在
 系统设置的触控板页面调整，两种会话各自保存输入偏好。
