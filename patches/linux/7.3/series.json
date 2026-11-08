@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "221976dba31bea0ab7be5cee3cc5caa5628e2656",
-  "original_target_commit": "e342dba15282933ef9c5efd9a85f01d13ad024f0",
+  "target_tree": "7eb12e6dafce4afd59f8858587c492074fd45caf",
+  "original_target_commit": "c0e1f7d779c692e3ed45115623ccb8661c3392d8",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -335,6 +335,14 @@
       "original_parent": "7c7ed30f6b9410e96b9865de5decd6215729aad7",
       "committer_date": "2026-11-08T01:57:32+08:00",
       "tree": "221976dba31bea0ab7be5cee3cc5caa5628e2656"
+    },
+    {
+      "file": "0042-drm-piano-scaled-desktop-modes.patch",
+      "sha256": "da36823220c2e35e6927eb00f447f191fed0bb115b8117a26379e3d6746be60e",
+      "original_commit": "c0e1f7d779c692e3ed45115623ccb8661c3392d8",
+      "original_parent": "e342dba15282933ef9c5efd9a85f01d13ad024f0",
+      "committer_date": "2026-11-08T21:49:25+08:00",
+      "tree": "7eb12e6dafce4afd59f8858587c492074fd45caf"
     }
   ]
 }

@@ -1,0 +1,524 @@
+From c0e1f7d779c692e3ed45115623ccb8661c3392d8 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 8 Nov 2026 21:49:25 +0800
+Subject: [PATCH] drm: msm: support scaled Piano desktop modes without pipe
+ seams
+
+Expose 1600x1068 at 60, 90 and 120 Hz while retaining native panel
+timings through adjusted_mode. Scale derived plane destinations and
+reserve SSPP scalers using their hardware geometry.
+
+Share Piano mode definitions between the panel, DSI bridge and DPU.
+Keep QSEED 3.4 RGB 2x sampling aligned with preload seven and fetch
+one neighboring source pixel at internal splits. Program the alpha
+vertical pixel extension from the vertical configuration.
+
+Signed-off-by: Codex <codex@openai.com>
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c      |  10 ++
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_sspp.c   |   2 +-
+ drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c     |  91 +++++++++++++-
+ drivers/gpu/drm/msm/dsi/dsi_manager.c         |  24 ++++
+ drivers/gpu/drm/panel/panel-novatek-nt36532.c |  73 +++--------
+ include/drm/drm_panel_piano.h                 | 113 ++++++++++++++++++
+ 6 files changed, 253 insertions(+), 60 deletions(-)
+ create mode 100644 include/drm/drm_panel_piano.h
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+index 77bfbd02d..d40a55f9c 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -13,6 +13,7 @@
+ #include <linux/bits.h>
+ 
+ #include <drm/drm_atomic.h>
++#include <drm/drm_panel_piano.h>
+ #include <drm/drm_blend.h>
+ #include <drm/drm_crtc.h>
+ #include <drm/drm_flip_work.h>
+@@ -1645,6 +1646,11 @@ static bool dpu_crtc_can_update_vfp(struct drm_crtc_state *old,
+ 	const struct drm_display_mode *b = &new->adjusted_mode;
+ 	struct drm_encoder *encoder;
+ 
++	/* A change in desktop coordinates also reconfigures all plane scalers. */
++	if (old->mode.hdisplay != new->mode.hdisplay ||
++	    old->mode.vdisplay != new->mode.vdisplay)
++		return false;
++
+ 	if (!old->active || !new->active || !new->mode_changed ||
+ 	    new->active_changed || new->connectors_changed ||
+ 	    !!old->ctm != !!new->ctm ||
+@@ -1771,10 +1777,14 @@ static enum drm_mode_status dpu_crtc_mode_valid(struct drm_crtc *crtc,
+ {
+ 	struct dpu_kms *dpu_kms = _dpu_crtc_get_kms(crtc);
+ 	u64 adjusted_mode_clk;
++	const struct drm_display_mode *native = drm_piano_panel_native_mode(mode);
+ 
+ 	/* if there is no 3d_mux block we cannot merge LMs so we cannot
+ 	 * split the large layer into 2 LMs, filter out such modes
+ 	 */
++	if (native)
++		mode = native;
++
+ 	if (!dpu_kms->catalog->caps->has_3d_merge &&
+ 	    mode->hdisplay > dpu_kms->catalog->caps->max_mixer_width)
+ 		return MODE_BAD_HVALUE;
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_sspp.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_sspp.c
+index b5e50fc19..c1c7d3e64 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_sspp.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_sspp.c
+@@ -422,7 +422,7 @@ static void dpu_hw_sspp_setup_pe_config(struct dpu_hw_sspp *ctx,
+ 
+ 	/* color 3 */
+ 	DPU_REG_WRITE(c, SSPP_SW_PIX_EXT_C3_LR, lr_pe[3]);
+-	DPU_REG_WRITE(c, SSPP_SW_PIX_EXT_C3_TB, lr_pe[3]);
++	DPU_REG_WRITE(c, SSPP_SW_PIX_EXT_C3_TB, tb_pe[3]);
+ 	DPU_REG_WRITE(c, SSPP_SW_PIX_EXT_C3_REQ_PIXELS,
+ 			tot_req_pixels[3]);
+ }
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+index 7b92082d3..baf5b49dc 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+@@ -16,6 +16,7 @@
+ #include <drm/drm_damage_helper.h>
+ #include <drm/drm_framebuffer.h>
+ #include <drm/drm_gem_atomic_helper.h>
++#include <drm/drm_panel_piano.h>
+ 
+ #include <linux/soc/qcom/ubwc.h>
+ 
+@@ -525,9 +526,44 @@ static const struct dpu_csc_cfg *_dpu_plane_get_csc(struct dpu_sw_pipe *pipe,
+ 	return csc_ptr;
+ }
+ 
++/* Keep the two 2x RGB pipes on the same sampling grid. On Piano's
++ * QSEED 3.4, the generic preload of four repeats the first source pixel
++ * for seven output pixels. Seven starts bilinear output at that pixel.
++ * The last half-step of an internal split also needs the next source
++ * pixel; fetch it from the same plane instead of clamping at the split.
++ */
++static void dpu_plane_setup_piano_bilinear(struct dpu_hw_sspp *pipe_hw,
++		const struct dpu_sw_pipe_cfg *cfg,
++		const struct drm_plane_state *state,
++		const struct msm_format *fmt,
++		struct dpu_hw_scaler3_cfg *scale,
++		struct dpu_hw_pixel_ext *ext)
++{
++	u32 right;
++	int i;
++
++	if (!state || !state->fb || !of_machine_is_compatible("xiaomi,piano") ||
++	    pipe_hw->cap->sblk->scaler_blk.version != 0x30004 ||
++	    state->fb->modifier != DRM_FORMAT_MOD_LINEAR ||
++	    MSM_FORMAT_IS_YUV(fmt) || cfg->rotation != DRM_MODE_ROTATE_0 ||
++	    drm_rect_width(&cfg->dst_rect) != 2 * drm_rect_width(&cfg->src_rect) ||
++	    drm_rect_height(&cfg->dst_rect) != 2 * drm_rect_height(&cfg->src_rect) ||
++	    (state->src.x2 & 0xffff))
++		return;
++
++	right = cfg->src_rect.x2 < (state->src.x2 >> 16);
++	for (i = 0; i < DPU_MAX_PLANES; i++) {
++		scale->preload_x[i] = 7;
++		scale->src_width[i] += right;
++		ext->right_ftch[i] = right;
++		ext->num_ext_pxls_left[i] += right;
++	}
++}
++
+ static void _dpu_plane_setup_scaler(struct dpu_sw_pipe *pipe,
+ 		const struct msm_format *fmt, bool color_fill,
+-		struct dpu_sw_pipe_cfg *pipe_cfg)
++		struct dpu_sw_pipe_cfg *pipe_cfg,
++		const struct drm_plane_state *state)
+ {
+ 	struct dpu_hw_sspp *pipe_hw = pipe->sspp;
+ 	const struct drm_format_info *info = drm_format_info(fmt->pixel_format);
+@@ -556,6 +592,9 @@ static void _dpu_plane_setup_scaler(struct dpu_sw_pipe *pipe,
+ 	_dpu_plane_setup_pixel_ext(&scaler3_cfg, &pixel_ext,
+ 			src_width, src_height, info->hsub, info->vsub);
+ 
++	dpu_plane_setup_piano_bilinear(pipe_hw, pipe_cfg, state, fmt,
++				       &scaler3_cfg, &pixel_ext);
++
+ 	if (pipe_hw->ops.setup_pe)
+ 		pipe_hw->ops.setup_pe(pipe_hw,
+ 				&pixel_ext);
+@@ -602,7 +641,7 @@ static void _dpu_plane_color_fill_pipe(struct dpu_plane_state *pstate,
+ 	if (pipe->sspp->ops.setup_rects)
+ 		pipe->sspp->ops.setup_rects(pipe, &pipe_cfg);
+ 
+-	_dpu_plane_setup_scaler(pipe, fmt, true, &pipe_cfg);
++	_dpu_plane_setup_scaler(pipe, fmt, true, &pipe_cfg, NULL);
+ }
+ 
+ /**
+@@ -812,6 +851,38 @@ static int dpu_plane_atomic_check_pipe(struct dpu_plane *pdpu,
+ #define MAX_UPSCALE_RATIO	20
+ #define MAX_DOWNSCALE_RATIO	4
+ 
++/* drm_atomic_helper_check_plane_state() rebuilds src/dst from the UAPI
++ * properties on every check. Only transform the derived destination, leaving
++ * crtc_x/y/w/h in the desktop coordinate space across retries and commits.
++ */
++static int dpu_plane_scale_panel_destination(struct drm_plane_state *plane_state,
++					     const struct drm_crtc_state *crtc_state)
++{
++	struct drm_rect src = plane_state->src;
++	struct drm_rect *dst = &plane_state->dst;
++
++	if (!drm_piano_panel_native_mode(&crtc_state->mode))
++		return 0;
++	if (crtc_state->adjusted_mode.hdisplay != 3200 ||
++	    crtc_state->adjusted_mode.vdisplay != 2136)
++		return -EINVAL;
++
++	dst->x1 *= 2;
++	dst->y1 *= 2;
++	dst->x2 *= 2;
++	dst->y2 *= 2;
++
++	drm_rect_rotate(&src, plane_state->fb->width << 16,
++			plane_state->fb->height << 16, plane_state->rotation);
++	if (drm_rect_calc_hscale(&src, dst, FRAC_16_16(1, MAX_UPSCALE_RATIO),
++				 MAX_DOWNSCALE_RATIO << 16) < 0 ||
++	    drm_rect_calc_vscale(&src, dst, FRAC_16_16(1, MAX_UPSCALE_RATIO),
++				 MAX_DOWNSCALE_RATIO << 16) < 0)
++		return -ERANGE;
++
++	return 0;
++}
++
+ static int dpu_plane_atomic_check_nosspp(struct drm_plane *plane,
+ 					 struct drm_plane_state *new_plane_state,
+ 					 const struct drm_crtc_state *crtc_state)
+@@ -835,6 +906,10 @@ static int dpu_plane_atomic_check_nosspp(struct drm_plane *plane,
+ 	if (!new_plane_state->visible)
+ 		return 0;
+ 
++	ret = dpu_plane_scale_panel_destination(new_plane_state, crtc_state);
++	if (ret)
++		return ret;
++
+ 	pstate->stage = DPU_STAGE_0 + pstate->base.normalized_zpos;
+ 	if (pstate->stage >= pdpu->catalog->caps->max_mixer_blendstages) {
+ 		DPU_ERROR("> %d plane stages assigned\n",
+@@ -1203,6 +1278,7 @@ static int dpu_plane_atomic_check(struct drm_plane *plane,
+ 	    old_plane_state->src_h != plane_state->src_h ||
+ 	    old_plane_state->crtc_w != plane_state->crtc_w ||
+ 	    old_plane_state->crtc_h != plane_state->crtc_h ||
++	    !drm_rect_equals(&old_plane_state->dst, &plane_state->dst) ||
+ 	    msm_framebuffer_format(old_plane_state->fb) !=
+ 	    msm_framebuffer_format(plane_state->fb))
+ 		crtc_state->planes_changed = true;
+@@ -1281,8 +1357,13 @@ static int dpu_plane_virtual_assign_resources(struct drm_crtc *crtc,
+ 
+ 	fmt = msm_framebuffer_format(plane_state->fb);
+ 	reqs.yuv = MSM_FORMAT_IS_YUV(fmt);
+-	reqs.scale = (plane_state->src_w >> 16 != plane_state->crtc_w) ||
+-		(plane_state->src_h >> 16 != plane_state->crtc_h);
++	/* Scaling to a fixed panel can be required even when UAPI src/dst
++	 * sizes match. Reserve a scaler using the derived hardware geometry.
++	 */
++	reqs.scale = (drm_rect_width(&plane_state->src) >> 16 !=
++		      drm_rect_width(&plane_state->dst)) ||
++		     (drm_rect_height(&plane_state->src) >> 16 !=
++		      drm_rect_height(&plane_state->dst));
+ 
+ 	reqs.rot90 = drm_rotation_90_or_270(plane_state->rotation);
+ 
+@@ -1492,7 +1573,7 @@ static void dpu_plane_sspp_update_pipe(struct drm_plane *plane,
+ 				pipe_cfg);
+ 	}
+ 
+-	_dpu_plane_setup_scaler(pipe, fmt, false, pipe_cfg);
++	_dpu_plane_setup_scaler(pipe, fmt, false, pipe_cfg, state);
+ 
+ 	if (pipe->sspp->ops.setup_multirect)
+ 		pipe->sspp->ops.setup_multirect(
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_manager.c b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+index db26f5174..9ccd96173 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_manager.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+@@ -5,6 +5,7 @@
+ 
+ #include "drm/drm_bridge_connector.h"
+ #include <drm/display/drm_dsc.h>
++#include <drm/drm_panel_piano.h>
+ 
+ #include "msm_kms.h"
+ #include "dsi.h"
+@@ -513,6 +514,12 @@ static enum drm_mode_status dsi_mgr_bridge_mode_valid(struct drm_bridge *bridge,
+ 	struct dev_pm_opp *opp;
+ 	unsigned long byte_clk_rate;
+ 
++	const struct drm_display_mode *native = drm_piano_panel_native_mode(mode);
++
++	/* Validate the timing actually sent over DSI, including DSC geometry. */
++	if (native)
++		mode = native;
++
+ 	byte_clk_rate = dsi_byte_clk_get_rate(host, IS_BONDED_DSI(), mode);
+ 
+ 	opp = dev_pm_opp_find_freq_ceil(&pdev->dev, &byte_clk_rate);
+@@ -533,6 +540,22 @@ static enum drm_mode_status dsi_mgr_bridge_mode_valid(struct drm_bridge *bridge,
+ 	return msm_dsi_host_check_dsc(host, mode);
+ }
+ 
++static int dsi_mgr_bridge_atomic_check(struct drm_bridge *bridge,
++				       struct drm_bridge_state *bridge_state,
++				       struct drm_crtc_state *crtc_state,
++				       struct drm_connector_state *conn_state)
++{
++	const struct drm_display_mode *native;
++
++	native = drm_piano_panel_native_mode(&crtc_state->mode);
++	if (native) {
++		drm_mode_copy(&crtc_state->adjusted_mode, native);
++		drm_mode_set_crtcinfo(&crtc_state->adjusted_mode, 0);
++	}
++
++	return 0;
++}
++
+ static int dsi_mgr_bridge_attach(struct drm_bridge *bridge,
+ 				 struct drm_encoder *encoder,
+ 				 enum drm_bridge_attach_flags flags)
+@@ -555,6 +578,7 @@ static const struct drm_bridge_funcs dsi_mgr_bridge_funcs = {
+ 	.atomic_post_disable = dsi_mgr_bridge_post_disable,
+ 	.mode_set = dsi_mgr_bridge_mode_set,
+ 	.mode_valid = dsi_mgr_bridge_mode_valid,
++	.atomic_check = dsi_mgr_bridge_atomic_check,
+ };
+ 
+ /* initialize bridge */
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36532.c b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+index 03ad59adf..363fdf6f9 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+@@ -23,6 +23,7 @@
+ #include <drm/drm_mipi_dsi.h>
+ #include <drm/drm_modes.h>
+ #include <drm/drm_panel.h>
++#include <drm/drm_panel_piano.h>
+ 
+ struct nt36532 {
+ 	struct drm_panel panel;
+@@ -199,6 +200,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ 	struct nt36532 *ctx = to_nt36532(panel);
+ 	const struct panel_info *panel_info = ctx->panel_info;
+ 	unsigned int preferred = 0;
++	unsigned int count = panel_info->num_modes;
+ 	unsigned int i;
+ 
+ 	/* Piano's validated pen scan uses a 120 Hz cold-start display mode.
+@@ -228,13 +230,29 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ 		drm_mode_probed_add(connector, mode);
+ 	}
+ 
++	if (of_machine_is_compatible("xiaomi,piano") &&
++	    panel_info->modes == piano_display_modes) {
++		for (i = 0; i < panel_info->num_modes; i++) {
++			struct drm_display_mode *mode;
++
++			if (!drm_piano_panel_can_scale(&panel_info->modes[i]))
++				continue;
++			mode = drm_mode_duplicate(connector->dev, &panel_info->modes[i]);
++			if (!mode)
++				return -ENOMEM;
++			drm_piano_panel_scaled_mode(&panel_info->modes[i], mode);
++			drm_mode_probed_add(connector, mode);
++			count++;
++		}
++	}
++
+ 	connector->display_info.width_mm = panel_info->modes[0].width_mm;
+ 	connector->display_info.height_mm = panel_info->modes[0].height_mm;
+ 	if (panel_info->format == MIPI_DSI_FMT_RGB101010 && panel_info->dsc_cfg)
+ 		connector->display_info.bpc = panel_info->dsc_cfg->bits_per_component;
+ 	ctx->connector = connector;
+ 
+-	return panel_info->num_modes;
++	return count;
+ }
+ 
+ static const struct drm_panel_funcs nt36532_panel_funcs = {
+@@ -418,59 +436,6 @@ static const struct drm_dsc_config csot_dsc_cfg = {
+ 	.block_pred_enable = true,
+ };
+ 
+-/*
+- * Xiaomi Pad 8 Pro panels, following the downstream "p81 42 02 0a" (BOE)
+- * and "p81 35 02 0b" (CSOT) video mode dual-DSI DSC panel descriptions.
+- *
+- * The link runs at a fixed 1197.5 Mbps per lane and the refresh rate is
+- * selected by the horizontal front porch. With RGB101010 and 8 bpp DSC the
+- * modes below reproduce exactly that link rate. The lower refresh rates
+- * keep the 120 Hz panel timing and extend vertical blanking, as specified
+- * by the downstream dfps_immediate_porch_mode_vfp configuration.
+- */
+-#define PIANO_HDISPLAY	3200
+-#define PIANO_HSYNC	32
+-#define PIANO_HBP	32
+-#define PIANO_VDISPLAY	2136
+-#define PIANO_VFP	68
+-#define PIANO_VSYNC	2
+-#define PIANO_VBP	104
+-#define PIANO_VTOTAL	(PIANO_VDISPLAY + PIANO_VFP + PIANO_VSYNC + PIANO_VBP)
+-
+-#define PIANO_MODE(_hfp, _vfp, _vrefresh) {					\
+-	.clock = (PIANO_HDISPLAY + (_hfp) + PIANO_HSYNC + PIANO_HBP) *		\
+-		 (PIANO_VDISPLAY + (_vfp) + PIANO_VSYNC + PIANO_VBP) *		\
+-		 (_vrefresh) / 1000,						\
+-	.hdisplay = PIANO_HDISPLAY,						\
+-	.hsync_start = PIANO_HDISPLAY + (_hfp),					\
+-	.hsync_end = PIANO_HDISPLAY + (_hfp) + PIANO_HSYNC,			\
+-	.htotal = PIANO_HDISPLAY + (_hfp) + PIANO_HSYNC + PIANO_HBP,		\
+-	.vdisplay = PIANO_VDISPLAY,						\
+-	.vsync_start = PIANO_VDISPLAY + (_vfp),					\
+-	.vsync_end = PIANO_VDISPLAY + (_vfp) + PIANO_VSYNC,			\
+-	.vtotal = PIANO_VDISPLAY + (_vfp) + PIANO_VSYNC + PIANO_VBP,		\
+-	.width_mm = 239,							\
+-	.height_mm = 163,							\
+-}
+-
+-/* All low-rate modes retain the 120 Hz pixel clock and horizontal timing.
+- * Both P81_35 and P81_42 advertise 30/48/50/60/90/120/144 in the stock DT.
+- * These are fixed modes; seamless updates require DSI host/DPU support.
+- */
+-#define PIANO_VFP_MODE(_vrefresh) \
+-	PIANO_MODE(234, PIANO_VFP + PIANO_VTOTAL * 120 / (_vrefresh) - \
+-		   PIANO_VTOTAL, (_vrefresh))
+-
+-static const struct drm_display_mode piano_display_modes[] = {
+-	PIANO_MODE(42, PIANO_VFP, 144),
+-	PIANO_MODE(234, PIANO_VFP, 120),
+-	PIANO_MODE(618, PIANO_VFP, 90),
+-	PIANO_VFP_MODE(60),
+-	PIANO_VFP_MODE(50),
+-	PIANO_VFP_MODE(48),
+-	PIANO_VFP_MODE(30),
+-};
+-
+ static const struct regulator_bulk_data piano_supplies[] = {
+ 	{ .supply = "vddio" },
+ 	{ .supply = "avdd" },
+diff --git a/include/drm/drm_panel_piano.h b/include/drm/drm_panel_piano.h
+new file mode 100644
+index 000000000..60ea22be8
+--- /dev/null
++++ b/include/drm/drm_panel_piano.h
+@@ -0,0 +1,113 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef __DRM_PANEL_PIANO_H__
++#define __DRM_PANEL_PIANO_H__
++
++#include <linux/of.h>
++#include <drm/drm_modes.h>
++
++/*
++ * Xiaomi Pad 8 Pro panels, following the downstream "p81 42 02 0a" (BOE)
++ * and "p81 35 02 0b" (CSOT) video mode dual-DSI DSC panel descriptions.
++ *
++ * The link runs at a fixed 1197.5 Mbps per lane and the refresh rate is
++ * selected by the horizontal front porch. With RGB101010 and 8 bpp DSC the
++ * modes below reproduce exactly that link rate. The lower refresh rates
++ * keep the 120 Hz panel timing and extend vertical blanking, as specified
++ * by the downstream dfps_immediate_porch_mode_vfp configuration.
++ */
++#define PIANO_HDISPLAY	3200
++#define PIANO_HSYNC	32
++#define PIANO_HBP	32
++#define PIANO_VDISPLAY	2136
++#define PIANO_VFP	68
++#define PIANO_VSYNC	2
++#define PIANO_VBP	104
++#define PIANO_VTOTAL	(PIANO_VDISPLAY + PIANO_VFP + PIANO_VSYNC + PIANO_VBP)
++
++#define PIANO_MODE(_hfp, _vfp, _vrefresh) {					\
++	.clock = (PIANO_HDISPLAY + (_hfp) + PIANO_HSYNC + PIANO_HBP) *		\
++		 (PIANO_VDISPLAY + (_vfp) + PIANO_VSYNC + PIANO_VBP) *		\
++		 (_vrefresh) / 1000,						\
++	.hdisplay = PIANO_HDISPLAY,						\
++	.hsync_start = PIANO_HDISPLAY + (_hfp),					\
++	.hsync_end = PIANO_HDISPLAY + (_hfp) + PIANO_HSYNC,			\
++	.htotal = PIANO_HDISPLAY + (_hfp) + PIANO_HSYNC + PIANO_HBP,		\
++	.vdisplay = PIANO_VDISPLAY,						\
++	.vsync_start = PIANO_VDISPLAY + (_vfp),					\
++	.vsync_end = PIANO_VDISPLAY + (_vfp) + PIANO_VSYNC,			\
++	.vtotal = PIANO_VDISPLAY + (_vfp) + PIANO_VSYNC + PIANO_VBP,		\
++	.width_mm = 239,							\
++	.height_mm = 163,							\
++}
++
++/* All low-rate modes retain the 120 Hz pixel clock and horizontal timing.
++ * Both P81_35 and P81_42 advertise 30/48/50/60/90/120/144 in the stock DT.
++ * These are fixed modes; seamless updates require DSI host/DPU support.
++ */
++#define PIANO_VFP_MODE(_vrefresh) \
++	PIANO_MODE(234, PIANO_VFP + PIANO_VTOTAL * 120 / (_vrefresh) - \
++		   PIANO_VTOTAL, (_vrefresh))
++
++static const struct drm_display_mode piano_display_modes[] = {
++	PIANO_MODE(42, PIANO_VFP, 144),
++	PIANO_MODE(234, PIANO_VFP, 120),
++	PIANO_MODE(618, PIANO_VFP, 90),
++	PIANO_VFP_MODE(60),
++	PIANO_VFP_MODE(50),
++	PIANO_VFP_MODE(48),
++	PIANO_VFP_MODE(30),
++};
++
++/* The panel always receives its native timing. These modes describe the
++ * framebuffer coordinate space before the DPU's two SSPP scalers.
++ */
++static inline bool drm_piano_panel_can_scale(const struct drm_display_mode *mode)
++{
++	unsigned int refresh = drm_mode_vrefresh(mode);
++
++	return refresh == 60 || refresh == 90 || refresh == 120;
++}
++
++static inline void drm_piano_panel_scaled_mode(const struct drm_display_mode *native,
++					       struct drm_display_mode *scaled)
++{
++	drm_mode_copy(scaled, native);
++	scaled->clock = DIV_ROUND_CLOSEST(native->clock, 4);
++	scaled->hdisplay /= 2;
++	scaled->hsync_start /= 2;
++	scaled->hsync_end /= 2;
++	scaled->htotal /= 2;
++	scaled->vdisplay /= 2;
++	scaled->vsync_start /= 2;
++	scaled->vsync_end /= 2;
++	scaled->vtotal /= 2;
++	scaled->type = DRM_MODE_TYPE_DRIVER;
++	drm_mode_set_name(scaled);
++	drm_mode_set_crtcinfo(scaled, 0);
++}
++
++static inline const struct drm_display_mode *
++drm_piano_panel_native_mode(const struct drm_display_mode *mode)
++{
++	struct drm_display_mode scaled;
++	unsigned int i;
++
++	if (!of_machine_is_compatible("xiaomi,piano") ||
++	    mode->hdisplay != 1600 || mode->vdisplay != 1068)
++		return NULL;
++
++	for (i = 0; i < ARRAY_SIZE(piano_display_modes); i++) {
++		const struct drm_display_mode *native = &piano_display_modes[i];
++
++		if (!drm_piano_panel_can_scale(native))
++			continue;
++		drm_piano_panel_scaled_mode(native, &scaled);
++		if (drm_mode_match(mode, &scaled, DRM_MODE_MATCH_TIMINGS |
++				   DRM_MODE_MATCH_CLOCK | DRM_MODE_MATCH_FLAGS))
++			return native;
++	}
++
++	return NULL;
++}
++
++#endif /* __DRM_PANEL_PIANO_H__ */
