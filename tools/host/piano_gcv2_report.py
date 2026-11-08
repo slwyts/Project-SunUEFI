@@ -28,7 +28,7 @@ def main():
         if blob and 'hex' in blob:
             data = bytes.fromhex(blob['hex'])
             row['blob'] = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
-            if len(data) == 1024 * 8:
+            if row['gamma_size'] and len(data) == row['gamma_size'] * 8:
                 values = list(struct.iter_unpack('<4H', data))
                 row['blob']['channel_summary'] = [
                     {'first': values[0][n], 'last': values[-1][n],

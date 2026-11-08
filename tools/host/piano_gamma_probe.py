@@ -36,8 +36,9 @@ def bypass_backend(snapshot_path, kms_id):
     if snapshot.get('errors') != 0 or snapshot.get('atomic_cap_errno') != 0 or len(crtcs) != 1:
         raise ValueError('DRM snapshot is incomplete or does not identify the same atomic KMS CRTC')
     props = {prop['name']: prop['value'] for prop in crtcs[0]['properties']}
-    if (props.get('ACTIVE'), props.get('GAMMA_LUT'), props.get('GAMMA_LUT_SIZE')) != (1, 0, 1024):
-        raise ValueError('Actual CRTC must be active with GAMMA_LUT=0 and GAMMA_LUT_SIZE=1024')
+    if ((props.get('ACTIVE'), props.get('GAMMA_LUT')) != (1, 0) or
+            props.get('GAMMA_LUT_SIZE') not in (1024, 65536)):
+        raise ValueError('Actual CRTC must be active with GAMMA_LUT=0 and a supported Gamma size')
     return {'size': props['GAMMA_LUT_SIZE'], 'state': 'bypass', 'kms_id': kms_id,
             'snapshot': str(snapshot_path), 'snapshot_sha256': hashlib.sha256(data).hexdigest(),
             'device': snapshot.get('device')}
@@ -125,8 +126,8 @@ def main():
     if count == 0:
         bypass_backend(args.drm_snapshot, crtc['kms_id'])
         raise ValueError('Actual bypass is supported, but this Mutter 48.7 cannot safely restore it; no probe sent')
-    if count != 1024:
-        raise ValueError('Piano GCv2 probe requires the actual standard 1024-entry Gamma backend')
+    if count not in (1024, 65536):
+        raise ValueError('Piano GCv2 probe requires a supported standard Gamma size')
     saved = {'mutter_api_id': crtc['api_id'], 'kms_id': crtc['kms_id'], 'ramps': original,
              'source': 'actual Mutter GetCrtcGamma reply', 'summary': summary(original)}
     args.backup.parent.mkdir(parents=True, exist_ok=True)
