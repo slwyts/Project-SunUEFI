@@ -77,7 +77,7 @@ HyperOS 4 的配置位于 `/odm/etc/display/qdcm_calib_data_xiaomi_p81_35_02_0b_
 
 同机 HyperOS 4 在 SDR 和活动 HDR10 播放时，两路 pingpong 抖动使能寄存器（SDE 偏移 `0x6a0e0`／`0x6b0e0`）和 DSPP 抖动使能寄存器（`0x5582c`／`0x5782c`）均读回 0。HDR 播放时同时确认了 `BT2020_ITU_PQ` 图层和 `renderIntent=0x113`；属性 blob 和静态配置均不能代替这组硬件读回。
 
-更高位深的链路不存在：原厂 CSOT 节点 `qcom,mdss_dsi_p81_35_02_0b_dualdsi_dsc_vid` 写明 `qcom,mdss-dsi-bpp = 30`、`qcom,mdss-dsc-bit-per-component = 10`，DPU 的 DSC 编码器最高也只支持 10 bpc。Linux 的 CSOT 初始化序列与原厂 120 Hz 时序组的 `qcom,mdss-dsi-on-command` 逐条一致，面板若在内部做 FRC，Linux 下同样生效；BOE 序列尚未逐条对照。
+原厂没有使用更高位深的链路：CSOT 节点 `qcom,mdss_dsi_p81_35_02_0b_dualdsi_dsc_vid` 写明 `qcom,mdss-dsi-bpp = 30`、`qcom,mdss-dsc-bit-per-component = 10`，公开 DSC 延迟计算以最高 10 bpc 的硬件配置为依据。Linux 两种面板的初始化命令均与原厂 120 Hz 时序组逐条一致：CSOT 为 97 条，BOE 为 104 条，包含各自的 B2／B3 顺序。相同初始化不能单独证明内部 FRC 的有效位深或切换方式。
 
 DSPP 抖动位置来自原厂最终设备树的 `qcom,sde-dspp-dither = <0x82c 0x10007>` 和 DSPP0／DSPP1 基址 `0x55000`／`0x57000`。这两路后混合模块均关闭，不能作为原厂两位 FRC 的来源。DDIC 内部 FRC 的控制方式仍没有从公开源码或寄存器中确认。
 
