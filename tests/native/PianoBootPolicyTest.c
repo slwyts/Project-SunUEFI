@@ -29,6 +29,7 @@ static EFI_FIRMWARE_VOLUME2_PROTOCOL fv;static EFI_LOADED_IMAGE_PROTOCOL loaded;
 static BOOLEAN image_live,keyboard_live=TRUE,loan,alive=TRUE;static UINT8 payload[4096];
 static EFI_LOADED_IMAGE_PROTOCOL replacement_loaded;
 static UINTN pumps,stops,starts,loads,unloads,acquires,validates,releases,key_reg,key_unreg,frees,pool_calls;
+static UINTN pogo_pumps,touch_pumps;
 static EFI_GUID *missing_setup_guid;static EFI_STATUS missing_setup_status;static UINTN fallback_logs;
 static PIANO_SMMU_RETIRED_USB_PROOF startup_usb_proof;static UINTN proof_checks;static EFI_STATUS proof_check_status=EFI_SUCCESS;
 static UINT32 current_action,simple_runs;static VOID *image_base;static jmp_buf stop;
@@ -47,8 +48,8 @@ static EFI_STATUS LinuxEntry(VOID *Context,PIANO_PRODUCT_RUNTIME_PROTOCOL *Runti
 EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){(void)Freeze;return EFI_NOT_STARTED;}
 VOID PianoDwc3ServiceReplayStartup(VOID){}
 VOID PianoRawLinuxReplayStable(VOID){}
-VOID PianoPogoPump(VOID){}
-VOID PianoTouchPump(VOID){}
+VOID PianoPogoPump(VOID){++pogo_pumps;}
+VOID PianoTouchPump(VOID){++touch_pumps;}
 UINT64 EFIAPI GetPerformanceCounterProperties(UINT64 *First,UINT64 *Last){*First=scenario==71?MAX_UINT64:0;*Last=scenario==71?0:MAX_UINT64;return scenario==74?0:1000000;}
 UINT64 EFIAPI GetPerformanceCounter(VOID){return scenario==71?MAX_UINT64-window_clock:window_clock;}
 UINT64 EFIAPI GetTimeInNanoSecond(UINT64 Ticks){return Ticks*1000;}
@@ -451,6 +452,7 @@ int main(int argc,char **argv){
     UINT64 Sample=0;BOOLEAN Active=TRUE;assert(idle&&idle->Runtime==runtime&&idle->Read(idle,runtime,&Sample,&Active)==EFI_NOT_READY);
     assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_WAIT_EVENT,1000)==EFI_SUCCESS);
     assert(idle->Read(idle,runtime,&Sample,&Active)==EFI_SUCCESS&&Sample==1&&Active==(scenario==83));
+    assert(pogo_pumps==(scenario==83?0:1)&&touch_pumps==pogo_pumps);
     if(scenario==86){assert(PianoBootPolicyStop()==EFI_DEVICE_ERROR&&PianoBootPolicyReport()->Retained&&runtime&&idle);goto Done;}
     assert(PianoBootPolicyStop()==EFI_SUCCESS&&!runtime&&!idle&&!stops);goto Done;
   }

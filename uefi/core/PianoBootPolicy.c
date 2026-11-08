@@ -240,14 +240,10 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
   if(mReport.Retained){mReport.Pumping=FALSE;return EFI_COMPROMISED_DATA;}
   PianoDwc3ServiceReplayStartup();
   PianoRawLinuxReplayStable();
-  // Keyboard and touch do one synchronous transfer per call, so they run only
-  // where the USB role poll runs. Runtime reads take about 0.7 ms (keyboard)
-  // and 2.6 ms (touch); bring-up keeps Linux's transfer sizes and can take
-  // up to about 30 ms per call
-  if(Reason&(PIANO_PRODUCT_PUMP_WAIT_EVENT|PIANO_PRODUCT_PUMP_GUI)){PianoPogoPump();PianoTouchPump();}
   if(mStartupUsbProof){
     S=StartupUsbAbsent();
     if(S==EFI_SUCCESS){
+      if(Reason&(PIANO_PRODUCT_PUMP_WAIT_EVENT|PIANO_PRODUCT_PUMP_GUI)){PianoPogoPump();PianoTouchPump();}
       if(mReport.IdleSample==MAX_UINT64)S=EFI_OUT_OF_RESOURCES;
       else {++mReport.IdleSample;mReport.IdleBulkActive=FALSE;mReport.IdleKnown=TRUE;}
       if(S==EFI_SUCCESS && mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE &&
@@ -271,10 +267,14 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
      mReport.PendingAction>=PIANO_PRODUCT_ACTION_SIMPLEINIT && mReport.PendingAction<=PIANO_PRODUCT_ACTION_SHELL &&
      mReport.PendingAction!=mReport.ActiveAction)S=EFI_ABORTED; // cooperative UI yield, not EBS/USB shutdown
   if((S==EFI_SUCCESS || S==EFI_NOT_READY) && Status==EFI_SUCCESS && Actual.Revision==1 && Actual.Started &&
-      Actual.Phase==PianoUsbServiceListening && !Actual.Retained && !Actual.ServicesLost && !Actual.Busy){
+       Actual.Phase==PianoUsbServiceListening && !Actual.Retained && !Actual.ServicesLost && !Actual.Busy){
     if(mReport.IdleSample==MAX_UINT64)S=EFI_OUT_OF_RESOURCES;
     else {++mReport.IdleSample;mReport.IdleBulkActive=Actual.BulkActive;mReport.IdleKnown=TRUE;}
   }
+  // GPIO SPI reads can hold the CPU for 40 ms. Drain USB first and defer
+  // synchronous input work while bulk data or queued USB events need service.
+  if((S==EFI_SUCCESS || S==EFI_NOT_READY) && mReport.IdleKnown && !Actual.BulkActive && !Actual.WorkPending &&
+       (Reason&(PIANO_PRODUCT_PUMP_WAIT_EVENT|PIANO_PRODUCT_PUMP_GUI))){PianoPogoPump();PianoTouchPump();}
   // Drain USB first. Never hold off Chapter 9 enumeration or an active bulk
   // transfer for a variable snapshot. Final saving is still mandatory at exit.
   if(S==EFI_SUCCESS && mReport.IdleKnown && Actual.Configured && !Actual.BulkActive && !Actual.WorkPending){
