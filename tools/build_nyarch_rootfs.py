@@ -112,8 +112,12 @@ def build(args):
             build_arch_package.build(root, recipes / name, packages)
 
     ffmpeg = output / 'packages/ffmpeg'
-    if not (ffmpeg / 'SOURCE.json').exists():
-        build_arch_ffmpeg.build(root, ffmpeg, resume=ffmpeg.exists())
+    if not build_arch_ffmpeg.is_current(ffmpeg):
+        if ffmpeg.exists():
+            shutil.rmtree(ffmpeg)
+        build_arch_ffmpeg.build(root, ffmpeg)
+    else:
+        build_arch_package.install_cached(root, ffmpeg)
 
     kernel = ROOT / 'artifacts/kernels/release'
     source = Path(json.loads((ROOT / 'build/release/source-manifest.json').read_text())['worktree'])

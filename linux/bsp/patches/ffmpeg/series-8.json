@@ -2,7 +2,7 @@
   "schema_version": 1,
   "component": "ffmpeg-v4l2m2m",
   "upstream_version": "8.1.1",
-  "local_revision": "sunuefi3",
+  "local_revision": "sunuefi4",
   "source": {
     "url": "https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz",
     "filename": "ffmpeg-8.1.1.tar.xz",
@@ -23,6 +23,21 @@
     {
       "path": "0006-v4l2m2m-p010-capture.patch",
       "sha256": "2eeca4bcb88a54819c8211703eb3b6461e00a4fd122d5c405ff2764c08381044",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "../../../../patches/ffmpeg/9.0.2/0001-v4l2m2m-join-sequence-header.patch",
+      "sha256": "8a79e6ba96c0ad384cf3a61b0cf0fd2d4a577028091509672b16d90741bef7e9",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "../../../../patches/ffmpeg/9.0.2/0002-v4l2m2m-copy-visible-nv12-rows.patch",
+      "sha256": "28006717fe6028af22c76b9af3215dc05fc16ee7bd034d26c0ba55259ee3e2f2",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "../../../../patches/ffmpeg/9.0.2/0003-v4l2m2m-stop-unstarted-encoder.patch",
+      "sha256": "63ec598d048ead5424f6cc1eb882b430ff268c368838057b439cdf98ee172c2d",
       "license": "LGPL-2.1-or-later; retain upstream file notices"
     }
   ]

@@ -44,7 +44,7 @@ def prepare(output, apply_patches=True, series=SERIES):
             stream.extractall(temporary, filter='data')
         shutil.copytree(Path(temporary) / ('ffmpeg-' + record['upstream_version']), output)
     for row in record['series']:
-        patch = series.parent / row['path']
+        patch = (series.parent / row['path']).resolve()
         if sha(patch) != row['sha256']:
             raise ValueError('FFmpeg BSP patch checksum mismatch: ' + row['path'])
         if apply_patches:

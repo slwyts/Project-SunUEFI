@@ -8,14 +8,15 @@ This prevents 2160-line NV12 input from being overread as 2176 lines.
 
 --- a/libavcodec/v4l2_buffers.c
 +++ b/libavcodec/v4l2_buffers.c
-@@ -28,6 +28,7 @@
+@@ -24,7 +24,8 @@
+ #include <linux/videodev2.h>
+ #include <sys/ioctl.h>
+ #include <sys/mman.h>
++#include "libavutil/imgutils.h"
+ #include <unistd.h>
  #include <fcntl.h>
  #include <poll.h>
  #include "libavcodec/avcodec.h"
-+#include "libavutil/imgutils.h"
- #include "libavutil/attributes.h"
- #include "libavutil/pixdesc.h"
- #include "libavutil/refstruct.h"
 @@ -360,6 +361,49 @@
      return 0;
  }

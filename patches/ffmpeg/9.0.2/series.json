@@ -32,7 +32,7 @@
     },
     {
       "path": "0002-v4l2m2m-copy-visible-nv12-rows.patch",
-      "sha256": "f5c0c1d9323b9b67abb8bc9d10548f09adb488243204c837207310b80f76bb16",
+      "sha256": "28006717fe6028af22c76b9af3215dc05fc16ee7bd034d26c0ba55259ee3e2f2",
       "license": "LGPL-2.1-or-later; retain upstream file notices"
     },
     {

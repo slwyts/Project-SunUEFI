@@ -21,6 +21,38 @@ from build_release_rootfs import build_resolver
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def patch_series(package_version):
+    version = package_version.split(':')[-1]
+    if re.match(r'^7\.[01](?:[.\s-])', version):
+        return source.SERIES
+    if re.match(r'^8\.1(?:\.\d+)?-', version):
+        return source.SERIES.with_name('series-8.json')
+    if re.match(r'^9\.0\.2-', version):
+        return ROOT / 'patches/ffmpeg/9.0.2/series.json'
+    raise ValueError('Port the BSP fixes to the installed FFmpeg ABI before replacing ' + package_version)
+
+
+def is_current(output):
+    try:
+        record = json.loads((output / 'SOURCE.json').read_text())
+        series_path = patch_series(record['upstream_version'] + '-1')
+        series = json.loads(series_path.read_text())
+        origin = series['source']
+        archive = (next(row for row in origin['archives'] if row['filename'].endswith('.orig.tar.xz'))
+                   if 'archives' in origin else origin)
+        patches = [{'path': str((series_path.parent / row['path']).resolve().relative_to(ROOT)),
+                    'sha256': row['sha256']} for row in series['series']]
+        return (record['local_revision'] == series['local_revision'] and
+                record['archive_sha256'] == archive['sha256'] and
+                record['patches'] == patches and
+                all(source.sha(ROOT / row['path']) == row['sha256'] for row in patches) and
+                Path(record['package']).name == record['package'] and
+                source.sha(output / record['package']) == record['package_sha256'] and
+                (output / 'manifest.json').is_file())
+    except (OSError, KeyError, ValueError, json.JSONDecodeError):
+        return False
+
+
 def package_recipe(version, epoch, pkgrel, options, deps, provides):
     quote_array = lambda values: '(' + ' '.join(shlex.quote(v) for v in values) + ')'
     return (
@@ -60,14 +92,7 @@ def build(root, output, resume=False):
     deps, provides = field('DEPENDS'), field('PROVIDES')
     package_version = field('VERSION')[0]
     upstream_version = package_version.split(':')[-1]
-    if re.match(r'^7\.[01](?:[.\s-])', upstream_version):
-        series_path = source.SERIES
-    elif re.match(r'^8\.1(?:\.\d+)?-', upstream_version):
-        series_path = source.SERIES.with_name('series-8.json')
-    elif re.match(r'^9\.0\.2-', upstream_version):
-        series_path = ROOT / 'patches/ffmpeg/9.0.2/series.json'
-    else:
-        raise ValueError('Port the BSP fixes to the installed FFmpeg ABI before replacing ' + package_version)
+    series_path = patch_series(package_version)
     series = json.loads(series_path.read_text())
     version = series['upstream_version']
     # Retain Arch's package release ordering while identifying our rebuild.
@@ -81,7 +106,7 @@ def build(root, output, resume=False):
     provenance = (json.loads((output / 'source/SOURCE.json').read_text())
                   if resume else source.prepare(output / 'source', series=series_path))
     expected_patches = [
-        {'path': str((series_path.parent / row['path']).relative_to(ROOT)),
+        {'path': str((series_path.parent / row['path']).resolve().relative_to(ROOT)),
          'sha256': row['sha256']} for row in series['series']]
     if (provenance.get('patches') != expected_patches or
             provenance.get('upstream_version') != series['upstream_version']):
@@ -130,6 +155,10 @@ def build(root, output, resume=False):
                       package=package.name, package_sha256=source.sha(package),
                       installed_version=version, device_verified=False)
     (output / 'SOURCE.json').write_text(json.dumps(provenance, indent=2) + '\n')
+    (output / 'manifest.json').write_text(json.dumps({
+        'package_format': 'pacman', 'architecture': 'aarch64',
+        'recipe_sha256': source.sha(guest_work / 'PKGBUILD'),
+        'packages': {package.name: {'sha256': provenance['package_sha256']}}}, indent=2) + '\n')
     shutil.rmtree(guest_work)
     return provenance
 
