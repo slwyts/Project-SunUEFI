@@ -1,0 +1,255 @@
+From 0482074eb3ce93bdd2a4dc070b483f45ad5479fb Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sun, 8 Nov 2026 16:06:02 +0800
+Subject: [PATCH] drm/msm/dpu: program GC v2 extended dark-range samples
+
+GC v2 provides a 1024-point main grid and 256 additional points in the darkest 1/256 of the input range. Publish a uniform 65536-entry GAMMA_LUT for this backend and select both grids without discarding dark-range precision. Keep legacy GC interfaces unchanged.
+
+Append the extended samples through the indexed REGDMA ports and enable high precision only after both grids are present. The complete GC/IGC command remains below the existing 16 KiB queue buffer. Null LUTs still restore bypass.
+
+The public Qualcomm gcv2 implementation defines the command layout; Piano's factory gamma 2.2 tables and live control registers confirm the extended grid and enable bit. This does not alter the 10-bpc DSC transport or advertise FRC.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c    | 73 +++++++++++++++------
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h |  7 +-
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.c | 30 ++++++---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.h |  2 +-
+ 4 files changed, 81 insertions(+), 31 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+index 77bfbd02d49..ef6f69a485b 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -831,11 +831,34 @@ static void _dpu_crtc_get_pcc_coeff(struct drm_crtc_state *state,
+ 	cfg->b.b = CONVERT_S3_15(ctm->matrix[8]);
+ }
+ 
++static u32 dpu_crtc_gc_component(const struct drm_color_lut *lut,
++				unsigned int sample, unsigned int size,
++				unsigned int channel)
++{
++	unsigned int index = DIV_ROUND_CLOSEST_ULL((u64)sample * (size - 1), 65535);
++	u16 value;
++
++	switch (channel) {
++	case 0:
++		value = lut[index].green;
++		break;
++	case 1:
++		value = lut[index].blue;
++		break;
++	default:
++		value = lut[index].red;
++		break;
++	}
++	return drm_color_lut_extract(value, 10);
++}
++
+ static void _dpu_crtc_get_gc_lut(struct drm_crtc_state *state,
+-		struct dpu_hw_gc_lut *gc_lut)
++		struct dpu_hw_gc_lut *gc_lut, bool high_precision)
+ {
+-	struct drm_color_lut *lut;
+-	int i;
++	const struct drm_color_lut *lut;
++	u32 *channels[] = { gc_lut->c0, gc_lut->c1, gc_lut->c2 };
++	unsigned int size = drm_color_lut_size(state->gamma_lut);
++	unsigned int channel, i;
+ 	u32 val_even, val_odd;
+ 
+ 	lut = (struct drm_color_lut *)state->gamma_lut->data;
+@@ -843,21 +866,28 @@ static void _dpu_crtc_get_gc_lut(struct drm_crtc_state *state,
+ 	if (!lut)
+ 		return;
+ 
+-	/* Pack 1024 10-bit entries in 512 32-bit registers */
+-	for (i = 0; i < PGC_TBL_LEN; i++) {
+-		val_even = drm_color_lut_extract(lut[i * 2].green, 10);
+-		val_odd = drm_color_lut_extract(lut[i * 2 + 1].green, 10);
+-		gc_lut->c0[i] = val_even | (val_odd << 16);
+-		val_even = drm_color_lut_extract(lut[i * 2].blue, 10);
+-		val_odd = drm_color_lut_extract(lut[i * 2 + 1].blue, 10);
+-		gc_lut->c1[i] = val_even | (val_odd << 16);
+-		val_even = drm_color_lut_extract(lut[i * 2].red, 10);
+-		val_odd = drm_color_lut_extract(lut[i * 2 + 1].red, 10);
+-		gc_lut->c2[i] = val_even | (val_odd << 16);
++	/* Main grid spans [0, 1]. The independent dark grid spans
++	 * [0, 255/65536]. Use a uniform DRM LUT that resolves both grids.
++	 */
++	for (channel = 0; channel < 3; channel++) {
++		for (i = 0; i < PGC_TBL_LEN; i++) {
++			unsigned int even = DIV_ROUND_CLOSEST(i * 2 * 65535, 1023);
++			unsigned int odd = DIV_ROUND_CLOSEST((i * 2 + 1) * 65535, 1023);
++
++			val_even = dpu_crtc_gc_component(lut, even, size, channel);
++			val_odd = dpu_crtc_gc_component(lut, odd, size, channel);
++			channels[channel][i] = val_even | (val_odd << 16);
++		}
++		if (!high_precision)
++			continue;
++		for (i = 0; i < PGC_TBL_LEN_EXTENDED; i++) {
++			val_even = dpu_crtc_gc_component(lut, i * 2, size, channel);
++			val_odd = dpu_crtc_gc_component(lut, i * 2 + 1, size, channel);
++			gc_lut->extended[channel][i] = val_even | (val_odd << 16);
++		}
+ 	}
+ 
+-	/* Disable 8-bit rounding mode */
+-	gc_lut->flags = 0;
++	gc_lut->flags = high_precision ? PGC_HIGH_PRECISION : 0;
+ }
+ 
+ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
+@@ -899,7 +929,7 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
+ 			if (!gc_lut)
+ 				gcv2_ret = -ENOMEM;
+ 			else
+-				_dpu_crtc_get_gc_lut(state, gc_lut);
++				_dpu_crtc_get_gc_lut(state, gc_lut, gc_master->ops.setup_color);
+ 		}
+ 		if (!gcv2_ret) {
+ 			if (gc_master->ops.setup_color) {
+@@ -952,7 +982,7 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
+ 				gc_lut = kzalloc_obj(*gc_lut);
+ 				if (!gc_lut)
+ 					continue;
+-				_dpu_crtc_get_gc_lut(state, gc_lut);
++				_dpu_crtc_get_gc_lut(state, gc_lut, false);
+ 				ret = dspp->ops.setup_gc(dspp, gc_lut, ctl, 0);
+ 				kfree(gc_lut);
+ 			}
+@@ -2097,10 +2127,13 @@ struct drm_crtc *dpu_crtc_init(struct drm_device *dev, struct drm_plane *plane,
+ 		 * A GC v2 catalog entry alone does not provide gamma programming.
+ 		 */
+ 		if (dspp && dspp->ops.setup_gc) {
+-			drm_mode_crtc_set_gamma_size(crtc, DPU_GAMMA_LUT_SIZE);
++			unsigned int gamma_size = dspp->ops.setup_color ?
++				DPU_GCV2_GAMMA_LUT_SIZE : DPU_GAMMA_LUT_SIZE;
++
++			drm_mode_crtc_set_gamma_size(crtc, gamma_size);
+ 			drm_crtc_enable_color_mgmt(crtc,
+ 					dspp->ops.setup_color ? DPU_IGCV5_LUT_SIZE : 0,
+-					true, DPU_GAMMA_LUT_SIZE);
++					true, gamma_size);
+ 		} else {
+ 			drm_crtc_enable_color_mgmt(crtc, 0, true, 0);
+ 		}
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h
+index 635c37edc19..341444e227b 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h
+@@ -37,22 +37,28 @@ struct dpu_hw_pcc_cfg {
+ };
+ 
+ #define DPU_GAMMA_LUT_SIZE 1024
++#define DPU_GCV2_GAMMA_LUT_SIZE 65536
+ #define PGC_TBL_LEN 512
++#define PGC_TBL_LEN_EXTENDED 128
+ #define PGC_8B_ROUND BIT(0)
++#define PGC_HIGH_PRECISION BIT(1)
+ 
+ /**
+  * struct dpu_hw_gc_lut - gc lut feature structure
+  * @flags: flags for the feature values can be:
+  *         - PGC_8B_ROUND
++ *         - PGC_HIGH_PRECISION
+  * @c0: color0 component lut
+  * @c1: color1 component lut
+  * @c2: color2 component lut
++ * @extended: dark-range samples for each channel, packed like the main LUT
+  */
+ struct dpu_hw_gc_lut {
+ 	__u64 flags;
+ 	__u32 c0[PGC_TBL_LEN];
+ 	__u32 c1[PGC_TBL_LEN];
+ 	__u32 c2[PGC_TBL_LEN];
++	__u32 extended[3][PGC_TBL_LEN_EXTENDED];
+ };
+ 
+ /**
+@@ -121,4 +127,3 @@ struct dpu_hw_dspp *dpu_hw_dspp_init(struct drm_device *dev,
+ void dpu_hw_dspp_bind_regdma(struct dpu_hw_dspp *ctx, struct dpu_lutdma *dma);
+ 
+ #endif /*_DPU_HW_DSPP_H */
+-
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.c
+index a148b0e5983..ffca335207d 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.c
+@@ -16,6 +16,7 @@
+ #define REGDMA_SINGLE_WRITE BIT(28)
+ #define REGDMA_HW_INDEX_WRITE (BIT(28) | BIT(29))
+ #define GC_ENABLE BIT(0)
++#define GC_HIGH_PRECISION_ENABLE BIT(2)
+ #define GC_DATA_OFFSET 0x04
+ #define GC_INDEX_OFFSET 0x08
+ #define GC_CHANNEL_STRIDE 0x08
+@@ -26,16 +27,15 @@ int dpu_hw_gcv2_pack_regdma(__le32 *words, size_t capacity,
+ {
+ 	const u32 *channels[3];
+ 	unsigned int channel, entry, n = 0;
+-	unsigned int required = lut ? DPU_GCV2_LUT_WORDS : 4;
++	bool high_precision = lut && (lut->flags & PGC_HIGH_PRECISION);
++	unsigned int required = lut ? DPU_GCV2_LUT_WORDS -
++		(high_precision ? 0 : 3 * (2 + PGC_TBL_LEN_EXTENDED)) : 4;
+ 
+ 	if (!words || !dspp_mask || (dspp_mask & ~DPU_GCV2_DSPP_MASK))
+ 		return -EINVAL;
+ 	if (capacity < required)
+ 		return -ENOSPC;
+-	/* GC v2 supports a distinct extended precision mode. Its extra bits
+-	 * are not represented by dpu_hw_gc_lut, so never silently enable it.
+-	 */
+-	if (lut && lut->flags)
++	if (lut && (lut->flags & ~PGC_HIGH_PRECISION))
+ 		return -EOPNOTSUPP;
+ 
+ 	words[n++] = cpu_to_le32(REGDMA_V3_DECODE_SELECT);
+@@ -65,14 +65,26 @@ int dpu_hw_gcv2_pack_regdma(__le32 *words, size_t capacity,
+ 		for (entry = 0; entry < PGC_TBL_LEN; entry++)
+ 			words[n++] = cpu_to_le32(channels[channel][entry]);
+ 	}
++	if (high_precision) {
++		/* GC v2 appends 256 dark samples at 1/65536 input spacing. They
++		 * use the same indexed port after the main table, with no reset.
++		 */
++		for (channel = 0; channel < 3; channel++) {
++			u32 offset = DPU_GCV2_REG_BASE + channel * GC_CHANNEL_STRIDE;
++
++			words[n++] = cpu_to_le32(REGDMA_HW_INDEX_WRITE |
++						(offset + GC_DATA_OFFSET));
++			words[n++] = cpu_to_le32(PGC_TBL_LEN_EXTENDED);
++			for (entry = 0; entry < PGC_TBL_LEN_EXTENDED; entry++)
++				words[n++] = cpu_to_le32(lut->extended[channel][entry]);
++		}
++	}
+ 	words[n++] = cpu_to_le32(REGDMA_SINGLE_WRITE |
+ 				(DPU_GCV2_REG_BASE + GC_LUT_SWAP_OFFSET));
+ 	words[n++] = cpu_to_le32(BIT(0));
+ 	words[n++] = cpu_to_le32(REGDMA_SINGLE_WRITE | DPU_GCV2_REG_BASE);
+-	/* The first backend uses the genuine regular 10-bit GC v2 mode.
+-	 * BIT(2), GC_HIGHPREC_EN, deliberately stays clear.
+-	 */
+-	words[n++] = cpu_to_le32(GC_ENABLE);
++	words[n++] = cpu_to_le32(GC_ENABLE |
++				(high_precision ? GC_HIGH_PRECISION_ENABLE : 0));
+ 	return n;
+ }
+ 
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.h
+index 0bc86b38285..ca118356bc7 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.h
+@@ -10,7 +10,7 @@ struct dpu_hw_gc_lut;
+ /* DSPP selection bits in the actual REGDMA v3 command stream. */
+ #define DPU_GCV2_DSPP_MASK GENMASK(20, 17)
+ #define DPU_GCV2_REG_BASE 0x17c0
+-#define DPU_GCV2_LUT_WORDS (2 + 3 * (2 + 2 + 512) + 2 + 2)
++#define DPU_GCV2_LUT_WORDS (2 + 3 * (2 + 2 + 512 + 2 + 128) + 2 + 2)
+ 
+ /* This prepares CPU data only: no mapping, MMIO, queueing or DMA lifetime.
+  * Return the command length in dwords or a negative error. The caller must
+-- 
+2.56.0
+

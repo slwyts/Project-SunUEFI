@@ -1,0 +1,65 @@
+From f11e45afb3e97744e8bb63558df2db0a5419a141 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sun, 8 Nov 2026 16:29:18 +0800
+Subject: [PATCH] drm/msm/dpu: validate and resample variable-size color LUTs
+
+The atomic core accepts aligned blobs smaller than GAMMA_LUT_SIZE or DEGAMMA_LUT_SIZE. Interpolate smaller gamma tables onto the GC sampling grids, reject empty or one-entry gamma tables, and require the complete IGC input grid before its fixed-index packer can run.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+index ef6f69a485b..5e19d649b0a 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -835,20 +835,27 @@ static u32 dpu_crtc_gc_component(const struct drm_color_lut *lut,
+ 				unsigned int sample, unsigned int size,
+ 				unsigned int channel)
+ {
+-	unsigned int index = DIV_ROUND_CLOSEST_ULL((u64)sample * (size - 1), 65535);
+-	u16 value;
++	u64 position = (u64)sample * (size - 1);
++	u32 fraction = do_div(position, 65535);
++	unsigned int index = position, next = min(index + 1, size - 1);
++	u32 value, next_value;
+ 
+ 	switch (channel) {
+ 	case 0:
+ 		value = lut[index].green;
++		next_value = lut[next].green;
+ 		break;
+ 	case 1:
+ 		value = lut[index].blue;
++		next_value = lut[next].blue;
+ 		break;
+ 	default:
+ 		value = lut[index].red;
++		next_value = lut[next].red;
+ 		break;
+ 	}
++	value = DIV_ROUND_CLOSEST(value * (65535 - fraction) + next_value * fraction,
++				65535);
+ 	return drm_color_lut_extract(value, 10);
+ }
+ 
+@@ -1717,6 +1724,15 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ 	bool needs_dirtyfb = dpu_crtc_needs_dirtyfb(crtc_state);
+ 	struct dpu_kms *kms = _dpu_crtc_get_kms(crtc);
+ 
++	/* The core accepts smaller blobs up to the advertised maximum. GC
++	 * resamples them; the IGC backend requires its complete uniform grid.
++	 */
++	if (crtc_state->gamma_lut && drm_color_lut_size(crtc_state->gamma_lut) < 2)
++		return -EINVAL;
++	if (crtc_state->degamma_lut &&
++	    drm_color_lut_size(crtc_state->degamma_lut) != DPU_IGCV5_LUT_SIZE)
++		return -EINVAL;
++
+ 	/* A hardware failure latches the engine unusable. Do not accept a
+ 	 * later gamma update as though its transport were still initialized.
+ 	 */
+-- 
+2.56.0
+

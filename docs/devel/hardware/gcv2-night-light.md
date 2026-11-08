@@ -6,16 +6,16 @@
 
 实现对照 [MiCode 固定显示源码](https://github.com/MiCode/vendor_opensource_display-drivers/tree/aa06fd1757c28dce96fbe4e04d4530ec21b52aac)和原厂最终设备树：REGDMA3 的 MMIO 为 `0x0af80000/0x7000`，XIN 为 7，GCv2 相对 DSPP 的偏移为 `0x17c0`。启动设备树通过 [piano-regdma-resource.dtso](../../../linux/dts/piano-regdma-resource.dtso)提供命名资源。
 
-驱动使用正常 DPU GPUVM 中的 8 KiB GEM 缓冲区与 IOVA，不把 CPU 物理地址当作 DMA 地址。LUT 命令与最终描述符共享映射；描述符按照命令长度对齐。CTL 只使用 catalog 中存在的实例，寄存器范围在访问前核对。
+驱动使用正常 DPU GPUVM 中的 16 KiB GEM 缓冲区与 IOVA，不把 CPU 物理地址当作 DMA 地址。LUT 命令与最终描述符共享映射；描述符按照命令长度对齐。CTL 只使用 catalog 中存在的实例，寄存器范围在访问前核对。
 
 ## 曲线提交
 
-- GCv2 使用 1024 项标准 Gamma 曲线，转为硬件十位输出值，通过 HW-index REGDMA 写入各色表，再交换表并启用。
+- GCv2 暴露均匀 65536 项 `GAMMA_LUT`，映射为覆盖完整输入范围的 1024 个主采样点和暗部的 256 个扩展点。扩展点的输入步长约为 `1/65536`，输出仍为十位。两组采样通过同一个 HW-index 端口依次写入，再交换表并开启高精度模式；旧版 GC 仍使用 1024 项接口。
 - IGCv5 使用 1025 项均匀采样的标准 Degamma 曲线，每色保留 16 位值，映射为原厂的 257 个普通点和 128 个暗部点，通过 LUTBUS 写入。高精度扩展已启用，Linux 7.3 进一步按原厂配置打开 IGC 内部抖动；它不改变 DSC 传输位深。
 - 两类曲线组成一批完整颜色状态，提交到当前分配的两路 DSPP。只有共同完成才更新相应 flush；关闭曲线使用旁路状态。
 - DMA 队列失败时保留既有的生命周期和退出规则，不能释放仍可能被硬件使用的内存。
 
-IGCv5 实现位于[显示补丁](../../../patches/linux/7.3/0002-display.patch)。设备上的恒等、非线性和旁路恢复均取得 REGDMA 完成，双 DSPP mask 为 `0x60000`。组合曲线为 1950 个 word，旁路恢复为 1558 个 word，均在缓冲区内；输出色彩精度与 HDR 映射仍须按对应功能单独验证。
+IGCv5 实现位于[显示补丁](../../../patches/linux/7.3/0002-display.patch)，GCv2 暗部扩展位于 [`0052`](../../../patches/linux/7.3/0052-dpu-gcv2-dark-range.patch)。设备上普通 GC 配合 IGC 的恒等、非线性和旁路恢复均取得 REGDMA 完成，双 DSPP mask 为 `0x60000`。加入 GC 暗部扩展后，完整组合命令为 2532 个 word，最终描述符对齐到 10240 字节，仍在 16 KiB 缓冲区内；暗部扩展尚未启动验证。
 
 ## 桌面兼容
 

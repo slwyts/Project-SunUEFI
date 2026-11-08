@@ -9,11 +9,11 @@ Piano 的默认内核使用 RGB101010 和 DSC 1.1：输入是 **10 bpc**，压�
 | 接口 | 能力 |
 | --- | --- |
 | `max bpc` | 固定 10..10，与当前面板和 DSC 配置一致 |
-| `GAMMA_LUT` | 1024 项，GCv2 硬件输出曲线；GNOME 夜灯使用此接口 |
+| `GAMMA_LUT` | 均匀 65536 项，映射为 GCv2 的 1024 个主采样点和 256 个暗部扩展点 |
 | `DEGAMMA_LUT` | 1025 项均匀采样、每色 16 位，映射到 IGCv5 高精度曲线 |
 | `CTM` | 现有 PCC 色彩矩阵 |
 
-GC 和 IGC 在同一 REGDMA 缓冲区提交到使用的两路 DSPP，完成后一起生效。设备已完成恒等、非线性、恢复旁路的标准 LUT 更新，传输完成状态正常。实现及资源管理见 [GCv2／IGCv5 后端](gcv2-night-light.md)。
+GC 和 IGC 在同一 REGDMA 缓冲区提交到使用的两路 DSPP，完成后一起生效。普通 GC 与 IGC 已完成恒等、非线性和旁路恢复；新增 GC 暗部扩展已编译，尚未启动验证。实现及资源管理见 [GCv2／IGCv5 后端](gcv2-night-light.md)。
 
 KDE 6.6 报告色深为自动 10 位，可选范围为 `10..10`，因此不显示切换位深的控件；
 GNOME 51 也没有独立的 8／10／12 位选择器。当前 KWin 使用 `AR30` 十位主平面。
@@ -43,6 +43,7 @@ BOE、CSOT 最终设备树中每条 DSI 的时序宽度为 1600、高度为 2136
 
 - 原厂 SDR／P3 模式使用 IGCv5、GCv2 和 Gamut v4，IGC 和 GC 都开启高精度扩展。同机运行状态中 IGC 的内部 dither 开启；QDCM 配置里 `expert_*`、`hal_*`、`video*` 等模式关闭它，见[12-bit 与抖动](#12-bit-与抖动)。
 - IGC 的高精度格式是 257 个普通点加 128 个暗部扩展点，不能按均匀 385 点解释。原厂 QDCM 的 sRGB 表与普通步长 `1/256`、暗部步长 `1/1024` 对应；独立的 Gamma 2.2 表误差不超过一个十六位码值。默认后端向用户空间提供均匀 1025 点接口，再选取硬件所需的两组采样点。
+- GC 的高精度格式是 1024 个主采样点加 256 个暗部扩展点。原厂 Gamma 2.2 主表覆盖 `0..1`，暗部表覆盖约 `0..255/65536`，输出码值为 `0..82`。SDR 与活动 HDR 播放中两路 GC 控制字均为 `0x5`，两组表相同；Linux 用标准均匀 LUT 提供这两组采样，不把暗部扩展解释为 FRC。
 - 原厂 DSI 的 `hdr_properties` 描述静态原色和亮度能力；它不等于 HDMI／DP 的动态 `HDR_OUTPUT_METADATA`，也不证明 DDIC 直接接收 PQ 像素。
 - 同机 HyperOS 4 播放 HDR10 视频时，视频图层为 `BT2020_ITU_PQ`，显示输出仍为 `DISPLAY_P3`，HDR 的 render intent 为 `0x113`。两路视频平面使用 Gamut v6 三维查找表，整屏继续使用 IGCv5、GCv2 和 Gamut v4。移植时需要处理视频内容到面板输出的转换，不能把 PQ 数据直接送往现有面板链路。
 
@@ -73,11 +74,11 @@ HyperOS 4 的配置位于 `/odm/etc/display/qdcm_calib_data_xiaomi_p81_35_02_0b_
 
 不能直接打开高通普通 pingpong dither 来代替。原厂 [`_sde_encoder_setup_dither`](https://github.com/MiCode/vendor_opensource_display-drivers/blob/aa06fd1757c28dce96fbe4e04d4530ec21b52aac/msm/sde/sde_encoder.c#L4002)在 DSC10／30bpp 配置下关闭该模块，其位深表只覆盖 6／7／8 位输出。IGC 的 16 位 LUT、内部 dither 和面板 12-bit FRC 也不是同一个概念。
 
- HDR10 播放时，虽然 DRM 的 `SDE_PP_DITHER_V2` 属性包含配置，PP0／PP1 的 dither 使能寄存器（SDE 偏移 `0x6a0e0`／`0x6b0e0`）均读回 0，与原厂驱动的关闭路径一致。不能仅凭属性 blob 非空认定硬件已经启用抖动。
+同机 HyperOS 4 在 SDR 和活动 HDR10 播放时，两路 pingpong 抖动使能寄存器（SDE 偏移 `0x6a0e0`／`0x6b0e0`）和 DSPP 抖动使能寄存器（`0x5582c`／`0x5782c`）均读回 0。HDR 播放时同时确认了 `BT2020_ITU_PQ` 图层和 `renderIntent=0x113`；属性 blob 和静态配置均不能代替这组硬件读回。
 
 更高位深的链路不存在：原厂 CSOT 节点 `qcom,mdss_dsi_p81_35_02_0b_dualdsi_dsc_vid` 写明 `qcom,mdss-dsi-bpp = 30`、`qcom,mdss-dsc-bit-per-component = 10`，DPU 的 DSC 编码器最高也只支持 10 bpc。Linux 的 CSOT 初始化序列与原厂 120 Hz 时序组的 `qcom,mdss-dsi-on-command` 逐条一致，面板若在内部做 FRC，Linux 下同样生效；BOE 序列尚未逐条对照。
 
-剩下一处没有读过的是 DSPP 抖动。原厂设备树声明了 `qcom,sde-dspp-dither = <0x82c 0x10007>`，DSPP0／DSPP1 位于 SDE 偏移 `0x55000`／`0x57000`，抖动寄存器即 `0x5582c`／`0x5782c`（物理地址 `0xae5582c`／`0xae5782c`）。在 Android 上分别于普通画面和 HDR10 播放时读取这两处，并用 `piano_drm_snapshot --blobs` 导出同一时刻的 DSPP 色彩属性。两处都为 0，说明原厂没有额外的抖动，Linux 与原厂一致；开启时再按读到的位深、矩阵和时间抖动设置在 DPU 中实现，默认开启，不加开关。
+DSPP 抖动位置来自原厂最终设备树的 `qcom,sde-dspp-dither = <0x82c 0x10007>` 和 DSPP0／DSPP1 基址 `0x55000`／`0x57000`。这两路后混合模块均关闭，不能作为原厂两位 FRC 的来源。DDIC 内部 FRC 的控制方式仍没有从公开源码或寄存器中确认。
 
 原厂配置只在部分模式里要求后混合抖动。`/odm/etc/display/` 下 CSOT 的 `qdcm_calib_data_xiaomi_p81_35_02_0b_vid_mode_dualdsi_dsc_panel.json` 和 BOE 的 `p81_42_02_0a` 同名文件各有 35 个模式，抖动字段逐项相同：
 
@@ -88,9 +89,8 @@ HyperOS 4 的配置位于 `/odm/etc/display/qdcm_calib_data_xiaomi_p81_35_02_0b_
 | `GM1`、`GM2`、`GM3`、`GM11`、`GM22`、`GM33`（263～265），`smart_MC`、`smart_MC1`（258） | 关 | 关 | 开，强度 4 |
 | `expert_*`（267～269）、`hal_*`（256、257）、`video*`（259～262）、`Native_D65_*`（273）、`standard_native`（0） | 关 | 关 | 关 |
 
-开启的 `PostBlendDither` 都是同一组值：`ditherMode` 为 `LUMA`，`strengthR`／`strengthG`／`strengthB` 均为 6，`temporalEnable=0`，4×4 矩阵 `[15,7,13,5,3,11,1,9,12,4,14,6,0,8,2,10]`。小米自己的 SDR 色彩模式（intent 256～273）都不开后混合抖动，Linux 也不设置，与这些模式一致；IGC 内部抖动由 7.3 的 `0016` 补丁在存在 Degamma LUT 时按强度 4 打开。活动模式是 intent 1 或 275 时，DPU 需要按上面的值设置抖动：LUMA 模式、三个通道强度 6、这个矩阵、关闭时间抖动。
+配置中开启的 `PostBlendDither` 都是同一组值：`ditherMode` 为 `LUMA`，`strengthR`／`strengthG`／`strengthB` 均为 6，`temporalEnable=0`，4×4 矩阵 `[15,7,13,5,3,11,1,9,12,4,14,6,0,8,2,10]`。实际 SDR 和 HDR 播放中这些后混合模块仍关闭，Linux 不额外开启；IGC 内部抖动由 7.3 的 `0016` 补丁在存在 Degamma LUT 时按强度 4 打开。
 
-配置文件没有写明三件事：日常画面用哪个模式（`/product/etc/device_features/piano.xml` 的 `default_display_color_mode=3` 由 displayfeature 服务换算成模式）；`PostBlendDither` 落在 DSPP 的 `0x82c` 还是 pingpong 抖动；强度和 LUMA 模式怎样换算成寄存器位。读上面两个寄存器时，同时记下 SurfaceFlinger 当前的 render intent，并在设置里的每种色彩模式下各读一次。HDR10 播放时 PP0／PP1 已读回 0，如果此时 `0x5582c` 不为 0，这组设置就落在 DSPP。
 
 ## HDR 接入要求
 

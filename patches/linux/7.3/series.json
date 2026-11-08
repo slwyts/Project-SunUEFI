@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "b9bf0e5a1ce1a7ab8448197912bd8d9f7dce9e8f",
-  "original_target_commit": "3f3f891dcfc4262996f62591617fe68bb985c320",
+  "target_tree": "f2841f2959e6d6c2c15fe7063c2fa085f9a47d79",
+  "original_target_commit": "f11e45afb3e97744e8bb63558df2db0a5419a141",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -415,6 +415,22 @@
       "original_parent": "38a49872335f5d9c785065431078b208a8739028",
       "tree": "b9bf0e5a1ce1a7ab8448197912bd8d9f7dce9e8f",
       "committer_date": "2026-11-08T02:39:15+08:00"
+    },
+    {
+      "file": "0052-dpu-gcv2-dark-range.patch",
+      "sha256": "058d645a675e2db091079aa700f21351285ac9f1185c20c92f4cf2741aea9b8c",
+      "original_commit": "0482074eb3ce93bdd2a4dc070b483f45ad5479fb",
+      "original_parent": "3f3f891dcfc4262996f62591617fe68bb985c320",
+      "tree": "3b1bf03e435d78734ad41f534494e36cf430d9ca",
+      "committer_date": "2026-11-08T16:06:02+08:00"
+    },
+    {
+      "file": "0053-dpu-color-lut-sizes.patch",
+      "sha256": "aa2c69fe088a48b3b00712c940e067b7e55f6ef9f209753b9a264ac5f863f6ec",
+      "original_commit": "f11e45afb3e97744e8bb63558df2db0a5419a141",
+      "original_parent": "0482074eb3ce93bdd2a4dc070b483f45ad5479fb",
+      "tree": "f2841f2959e6d6c2c15fe7063c2fa085f9a47d79",
+      "committer_date": "2026-11-08T16:29:18+08:00"
     }
   ]
 }
