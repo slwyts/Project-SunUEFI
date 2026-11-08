@@ -51,6 +51,33 @@
   },
   "kde_packages": [
     {
+      "name": "kwin",
+      "version": "6.6.5",
+      "pkgrel": "2.2",
+      "url": "https://download.kde.org/stable/plasma/6.6.5/kwin-6.6.5.tar.xz",
+      "sha256": "6c187ce7a5506090b438ef900103836fa0537674dde8b31e5b497ef321643cb4",
+      "patch_series": "patches/kwin/6.6.5/series.json",
+      "license": ["LGPL-2.0-or-later"],
+      "depends": [
+        "aurorae", "breeze", "gcc-libs", "glibc", "iio-sensor-proxy",
+        "plasma-activities", "kauth", "kcmutils", "kcolorscheme", "kconfig",
+        "kcoreaddons", "kcrash", "kdbusaddons", "kdeclarative", "kdecoration",
+        "kglobalaccel", "kglobalacceld", "kguiaddons", "ki18n", "kidletime",
+        "kirigami", "kitemmodels", "knewstuff", "knighttime", "knotifications",
+        "kpackage", "kquickcharts", "kscreenlocker", "kservice", "ksvg",
+        "kwayland", "kwidgetsaddons", "kwindowsystem", "kxmlgui", "lcms2",
+        "libcanberra", "libdisplay-info", "libdrm", "libei", "libepoxy",
+        "libevdev", "libinput", "libpipewire", "libqaccessibilityclient-qt6",
+        "libxcb", "libxcvt", "libxkbcommon", "mesa", "milou",
+        "pipewire-session-manager", "libplasma", "qt6-5compat", "qt6-base",
+        "qt6-declarative", "qt6-svg", "qt6-tools", "systemd-libs", "wayland",
+        "xcb-util-keysyms", "xcb-util-wm"
+      ],
+      "makedepends": [
+        "plasma-wayland-protocols", "wayland-protocols", "xorg-xwayland"
+      ]
+    },
+    {
       "name": "libkscreen",
       "version": "6.6.5",
       "pkgrel": "3",

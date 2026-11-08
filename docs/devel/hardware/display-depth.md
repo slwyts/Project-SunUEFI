@@ -54,8 +54,8 @@ HyperOS 4 的配置位于 `/odm/etc/display/qdcm_calib_data_xiaomi_p81_35_02_0b_
 
 - `native_hdr` 的输出 Gamma 为 2.2，包含 P3 面板校准、17 点色调映射、实时亮度补偿和内容统计；CSOT 配置中的满屏峰值约 844.5 nit，SDR 参考峰值为 400 nit。这些是配置值，不是测试物理亮度测量。
 - HDR 模式和 intent 1 的 `standard_*` 模式配置了 LUMA dither，但 `temporalEnable=0`；配置内容不能代替播放时的寄存器状态，也不能单凭该字段认定面板 FRC。
-- [显示补丁中的高精度后端](../../../patches/linux/7.3/0002-display.patch)暴露均匀 1025 项 `DEGAMMA_LUT`，由驱动选取两组硬件采样点。组合 DMA 扩大到 16 KiB；实机恒等、非线性和旁路恢复已完成，提交 2142 个 word，两路 DSPP 均返回完成状态。
-- Linux 7.3 的 [`0016` 补丁](../../../patches/linux/7.3/0016-drm-igcv5-high-precision-dither.patch)按原厂 IGC 控制字，在存在 Degamma LUT 时打开高精度内部抖动，强度为 4；空 LUT 仍保持旁路。该内核已启动 KDE 和 Gamescope，但活动 IGC 曲线下的物理色阶还需检查。它不改变十位 DSC，也不代表面板 FRC 或完整 HDR 已实现。
+- [显示补丁中的高精度后端](../../../patches/linux/7.3/0002-display.patch)暴露均匀 1025 项 `DEGAMMA_LUT`，由驱动选取两组硬件采样点。当前组合 DMA 为 64 KiB，容纳两路 GC、IGC 和 Gamut 状态；实机恒等、非线性和旁路恢复已完成。
+- Linux 7.3 的 [`0016` 补丁](../../../patches/linux/7.3/0016-drm-igcv5-high-precision-dither.patch)按原厂 IGC 控制字，在存在 Degamma LUT 时打开高精度内部抖动，强度为 4；空 LUT 仍保持旁路。它不改变十位 DSC，也不提供面板 FRC 控制。
 
 ### HDR 亮度与背光
 
@@ -114,10 +114,15 @@ IGCv5 线性化、Gamut v4.3 的 17³ 色域及面板校准、GCv2 原厂曲线�
 GPU 完成这些操作，不悄悄忽略用户空间请求。普通 SDR 的标准 LUT 和夜灯接口不变。
 驱动退出或 DMA 出错继续遵守[REGDMA 的资源保留规则](gcv2-night-light.md)。
 
-SteamOS 原版 KWin 已完成 HDR／广色域启闭和 DPMS 关屏恢复。PQ 模式下两路
+SteamOS KWin 通过标准属性完成 HDR／广色域启闭、DPMS 关屏恢复和一次
+`deep` 挂起后的 RTC 唤醒。恢复前后启动 ID 一致，挂起成功计数加一，
+ADSP／CDSP 保持运行，前摄采集和麦克风录音恢复。PQ 模式下两路
 Gamut、IGC、GC 控制字分别读回 `0x1`、`0x10114`、`0x5`；关闭后全部旁路，
-REGDMA 完成状态为 `0x8`、错误状态为零。背光在 HDR 时升到 2047，关闭后恢复
-原档位；PQ 四级图样有可见亮度差异。该验证不代表逐台峰值、黑位或色准完成测量，
+REGDMA 完成状态为 `0x8`、错误状态为零。背光在 HDR 时升到 2047；
+KWin 6.6.5 的通用修正在退出 HDR 时使亮度缓存失效，
+实机背光完成 `1535 → 2047 → 1535` 切换。补丁放在
+`patches/kwin/6.6.5/`，不改动 HDR 能力判断或色彩处理接口。
+PQ 四级图样有可见亮度差异。该验证不代表逐台峰值、黑位或色准完成测量，
 也不代表十二位 FRC 已实现。BOE 的数据已按对应原厂配置生成，尚无该面板的实机结果。
 
 [`tools/android/piano_drm_snapshot.c`](../../../tools/android/piano_drm_snapshot.c)可在 Android 和 Linux 中只读导出 DRM 属性及 LUT blob。将同一画面设置下的 SDR 与 HDR 播放状态对照，同时确认活动 CRTC、HDR 图层和电源状态；blob 存在或 DMA 完成不能单独证明物理 HDR 输出。

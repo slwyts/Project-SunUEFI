@@ -87,7 +87,9 @@ def kde_recipes(output, root):
         folder = output / item['name']
         folder.mkdir(parents=True, exist_ok=True)
         q = shlex.quote
-        patches = [ROOT / p for p in item.get('patches', [])]
+        patches = (runtime_helpers.source_patches(ROOT / item['patch_series'])
+                   if item.get('patch_series') else
+                   [ROOT / p for p in item.get('patches', [])])
         for patch in patches:
             shutil.copy2(patch, folder / patch.name)
         sources = [item['url'], *[p.name for p in patches]]
@@ -167,6 +169,8 @@ def kde_repository_package_works(root, name):
     """Reuse Valve's matching package when its Qt relocations resolve."""
     item = next(p for p in json.loads((ROOT / 'config/steamos.json').read_text())['kde_packages']
                 if p['name'] == name)
+    if item.get('patch_series') or item.get('patches'):
+        return False
     installed = subprocess.run(['chroot', root, 'pacman', '-Q', name], capture_output=True, text=True)
     if installed.returncode or installed.stdout.split()[1].rsplit('-', 1)[0] != item['version']:
         return False

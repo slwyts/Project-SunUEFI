@@ -20,7 +20,7 @@
 | 独立 Recovery 安装 | 不可用。ABL 对“Recovery 自带内核”的分支不加载 vendor_boot 和 pvmfw，启动停在 Fastboot；合体 BOOT 走普通启动路径，绕开了这个问题。安装器拒绝 `--recovery` |
 | 启动路线管理 | 模块保存 Android／UEFI 路线，普通开机沿用；前置选择页显示约三秒，音量键可临时改选，电源键确认。临时选择不改保存的路线 |
 | 合体 BOOT 在线安装 | 模块从当前 BOOT 提取 Android 内核并安装或更新同一份 UEFI 核心；HyperOS 更新后可点击“重新安装引导”。已有核心升级已在设备上完成，所有 OTA 场景尚未覆盖。见[原生 BOOT 重打包](devel/boot/combined-boot.md) |
-| 一键安装器 | 更新已有的 `sunuefi_esp` 与 `sunuefi_root`；蓝牙地址由 Linux 自动读取，不依赖安装阶段配置。新平板首次分区返回 `NEW_INSTALL_NOT_READY` |
+| 一键安装器 | 更新已有的 `sunuefi_esp` 与 `sunuefi_root`；UEFI 只读原厂蓝牙地址并通过标准设备树属性传给 Linux，不依赖安装阶段配置。新平板首次分区返回 `NEW_INSTALL_NOT_READY` |
 | Android Root 模块 | 提供可安装 ZIP，包含启动选择、引导检查、重新安装和独立存储管理。SukiSU 安装和 WebUI 可用；新分区、调整容量和删除归还空间的写入流程仍需实机验证，见[引导助手](devel/boot/android-module.md) |
 
 ## UEFI
@@ -41,7 +41,7 @@
 
 | 项目 | 状态 | 已知问题 |
 | --- | --- | --- |
-| 显示 | 3200×2136，默认 120 Hz，刷新率切换、144 Hz、HDR 内容播放、十位输出、夜灯、标准 Gamma／Degamma及熄屏恢复 | 12-bit／FRC 尚未实现 |
+| 显示 | 3200×2136，默认 120 Hz，低分辨率缩放、144 Hz、KDE HDR／广色域切换、十位输出、夜灯、标准 Gamma／Degamma及熄屏恢复 | 12-bit／FRC 和色深选择尚未提供，见[显示位深](devel/hardware/display-depth.md) |
 | GPU | Adreno 加速的 GNOME | 部分 GTK 窗口连续缩放约 30 次/秒画面提交，需继续区分客户端处理和帧回调等待；见[窗口缩放](devel/hardware/window-resize.md) |
 | 触屏 | 点按、拖动、长按、手势，约 144 Hz | 360 Hz 未实现；依赖主机端触点算法和 uinput |
 | 键盘 / 触控板 | 打字、触控板、背光和睡眠恢复可用，背光走 UPower / GNOME | — |

@@ -54,13 +54,13 @@ def configure_package_updates(root):
     entry = root / 'usr/bin/steamos-update'
     entry.unlink(missing_ok=True)
     entry.symlink_to('/usr/local/libexec/piano-steamos-update')
-    # Device-specific builds are delivered with the BSP. Stock replacements
-    # lose the tablet's GPU, sensor and decoder fixes. This same policy also
-    # applies to Discover's libalpm backend.
+    # Locally patched packages are delivered with the BSP. Stock replacements
+    # lose the GPU, sensor, decoder and desktop fixes. This policy also applies
+    # to Discover's libalpm backend.
     policy = root / 'etc/pacman.conf'
     text = policy.read_text()
     ignore = ('deckard-mesa-linux-aarch64 gamescope steamos-manager '
-              'ffmpeg fastrpc libssc iio-sensor-proxy ibus libibus gtk3')
+              'ffmpeg fastrpc libssc iio-sensor-proxy ibus libibus gtk3 kwin')
     block = ('# Piano hardware packages are updated with the BSP image.\n'
              'IgnorePkg = ' + ignore + '\n')
     if block not in text:
