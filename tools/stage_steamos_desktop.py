@@ -69,8 +69,9 @@ def configure_package_updates(root):
 
 
 def configure_input_method(root):
-    # KWin starts the native Wayland input method; Xwayland uses its XIM bridge.
+    # Qt 6 prefers the compositor protocol; Qt 5 and Xwayland use IBus directly.
     put(root, 'etc/environment.d/60-piano-input-method.conf',
+        'QT_IM_MODULES=wayland;ibus\nQT_IM_MODULE=ibus\n'
         'XMODIFIERS=@im=ibus\nSDL_IM_MODULE=ibus\n'
         'LANG=zh_CN.UTF-8\nLANGUAGE=zh_CN:zh\n')
     (root / 'etc/xdg/autostart/piano-ibus.desktop').unlink(missing_ok=True)
