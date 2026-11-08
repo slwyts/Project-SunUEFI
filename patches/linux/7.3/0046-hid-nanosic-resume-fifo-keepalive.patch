@@ -1,0 +1,67 @@
+From 77c8f1d4eff820251da932f32102c5add57d6cf2 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 09:13:32 +0800
+Subject: [PATCH] fix(hid): drain Piano wake reports and restart keyboard
+ keepalive
+
+Read the first wake report on Piano so the data-ready line can fall
+before the next rising edge. Preserve Sheng's separate wake handshake.
+
+After normal wake or firmware reload, restore keyboard power and the
+periodic keepalive for an attached keyboard. Propagate reload failures.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/hid/hid-nanosic-wn8030.c | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/hid/hid-nanosic-wn8030.c b/drivers/hid/hid-nanosic-wn8030.c
+index ff14a7825..1beec3725 100644
+--- a/drivers/hid/hid-nanosic-wn8030.c
++++ b/drivers/hid/hid-nanosic-wn8030.c
+@@ -1215,13 +1215,14 @@ static irqreturn_t nanosic_wn8030_handler(int irq, void *data)
+ 	u8 buf[XM_WN8030_I2C_READ];
+ 	int len, size, off;
+ 
+-	/* After sleep pin deactivated, fw will trigger irq to notify about
+-	 * successful resume, second irq will tell about kb connection state
++	/* Sheng reports wake-up separately. Piano may already have a report
++	 * queued: read it so the data-ready line can fall before the next IRQ.
+ 	 */
+ 	if (READ_ONCE(nanosic->suspended)) {
+ 		WRITE_ONCE(nanosic->suspended, false);
+ 		schedule_work(&nanosic->input_state_work);
+-		return IRQ_HANDLED;
++		if (!nanosic->variant->packed_reports)
++			return IRQ_HANDLED;
+ 	}
+ 
+ 	ret = regmap_bulk_read(nanosic->regmap, 0x4c, buf, sizeof(buf));
+@@ -2020,6 +2021,7 @@ static void nanosic_wn8030_remove(struct i2c_client *client)
+ static int nanosic_wn8030_resume(struct device *dev)
+ {
+ 	struct nanosic_wn8030 *nanosic = dev_get_drvdata(dev);
++	int ret;
+ 
+ 	enable_irq(nanosic->client->irq);
+ 
+@@ -2033,11 +2035,15 @@ static int nanosic_wn8030_resume(struct device *dev)
+ 		gpiod_set_value_cansleep(nanosic->reset_gpio, 0);
+ 		msleep(nanosic->variant->boot_ms);
+ 		WRITE_ONCE(nanosic->suspended, false);
+-		return nanosic_wn8030_load_fw(nanosic);
++		ret = nanosic_wn8030_load_fw(nanosic);
++		if (ret)
++			return ret;
+ 	}
+ 
+ 	/* Wake up keyboard after MCU exits sleep */
+ 	nanosic_wn8030_set_kb_power(nanosic, true);
++	if (READ_ONCE(nanosic->keyboard_attached))
++		schedule_delayed_work(&nanosic->wake_worker, msecs_to_jiffies(12000));
+ 	schedule_work(&nanosic->input_state_work);
+ 
+ 	return 0;
+-- 
+2.55.0
+

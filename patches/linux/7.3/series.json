@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "9f06a6bf5a4ffd47e16c0739ec948bafb7f656c6",
-  "original_target_commit": "9243cfefba6ac7c70cfed9f9c07c93b08978651c",
+  "target_tree": "3c0805ab648b1f77fcb1f645f8fa16652dc3b865",
+  "original_target_commit": "77c8f1d4eff820251da932f32102c5add57d6cf2",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -591,6 +591,14 @@
       "original_parent": "21fe65264b89453e95b8114b700e312b46e1a722",
       "committer_date": "2026-11-08T09:13:00+08:00",
       "tree": "9f06a6bf5a4ffd47e16c0739ec948bafb7f656c6"
+    },
+    {
+      "file": "0046-hid-nanosic-resume-fifo-keepalive.patch",
+      "sha256": "d219dd177af87619c62841ee30ee37a46dee54f9b5d20cc30cf78fcc12e5446c",
+      "original_commit": "77c8f1d4eff820251da932f32102c5add57d6cf2",
+      "original_parent": "9243cfefba6ac7c70cfed9f9c07c93b08978651c",
+      "committer_date": "2026-11-08T09:13:32+08:00",
+      "tree": "3c0805ab648b1f77fcb1f645f8fa16652dc3b865"
     }
   ]
 }
