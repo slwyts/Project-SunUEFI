@@ -155,5 +155,6 @@ int main(void) {
                 '-I'+str(INC),'-I'+str(INC/'AArch64'),'-I'+str(INC.parents[1]/'CryptoPkg/Include'),
                 '-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),'-I'+str(staged),
                 '-I'+str(ROOT/'uefi/handoff/early-memory'),
+                '-I'+str(ROOT/'uefi/components/board-identity'),'-I'+str(ROOT/'uefi/components/rtc'),
                 str(ROOT/'uefi/core/PianoRawLinuxBoot.c')],check=True)
 if __name__=='__main__':unittest.main()

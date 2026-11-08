@@ -33,6 +33,7 @@ SOURCE_NAMES=(
 )
 PRODUCT_COMPONENTS={
     'board-identity':('PianoBluetoothAddress.c','PianoBluetoothAddress.h'),
+    'rtc':('PianoRtcOffset.c','PianoRtcOffset.h'),
     'nv':('PianoNvFile.c','PianoNvFile.h'),
     'reset':('PianoReset.c','PianoReset.h'),
     'ext4':('PianoStorageIo.h','PianoStorageIo.inc','PianoExt4.h'),

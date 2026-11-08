@@ -8,42 +8,36 @@
 及固件启动路径；当前的 zram 在断电后不会保存内容，不能作为休眠存储。
 仅有内核 `CONFIG_HIBERNATION=y` 不代表系统已经可以休眠。
 
-## 当前状态
+## 睡眠与唤醒
 
-2026-10-13，Nyarch 上的内核提供 `freeze mem disk`，
-`mem_sleep` 提供 `s2idle` 和 `deep`，当前默认 `deep`。
-发行版镜像仍屏蔽睡眠/休眠目标，GNOME 的电池及插电自动睡眠动作
-均为 `nothing`。合盖及电源键的现有适配只控制背光。
+默认使用 `mem/deep`，启用普通挂起，屏蔽磁盘休眠、混合睡眠及先挂起后休眠。
+RTC 闹钟和电源键唤醒已有实机结果，显示、USB 网络、音频和 DSP 可以恢复；
+长时间挂起、待机耗电及全部外设组合仍需继续检查。
+默认空闲时间、锁屏和按键策略见[电源键、合盖与睡眠](power-button.md)。
 
-RTC 节点和 `rtc_pm8xxx` 模块存在，但初始没有加载。手动加载后
-注册 `rtc0`，其定时唤醒接口可接受闹钟，设备 wakeup 已启用。
-不过硬件计数器的时间偏移尚未对齐；加载时 HCTOSYS 将系统时间
-设置到了 1970 年。测试后恢复系统时间，尚未将该模块添加到自动加载。
-后续应对照原厂持久化时间偏移，使用 RTC/nvmem 标准接口实现。
+## RTC 与原厂时间
 
-一次 `rtcwake -m freeze -s 12` 测试后 SSH 中断，随后连接到的系统
-已是新启动，未确认成功睡眠恢复。新启动的 suspend_stats 为零，
-上一启动的 journal 没有留下失败阶段；读回的 ramoops 内容被固件
-启动日志占用，未提供这次睡眠的内核调用栈。
+PMK8550 的 RTC 是持续运行的秒计数器，Android 用独立的持久化偏移得到 UTC。
+同机原厂 `time_daemon`、`libtime_genoff.so` 和文件读回确认：
+`persist/time/ats_2` 是八字节小端毫秒偏移，除以 1000 后与 PMIC 秒计数相加，
+得到 Android 的 UTC。毫秒小数在秒精度的 RTC 接口中舍去，不调整原始计数。
 
-因此当前不能启用默认自动睡眠。下一步需要捕获设备暂停阶段及
-唤醒路径，验证恢复后显示、UFS、USB、无线和输入设备仍可使用，
-再解除目标屏蔽并接入桌面现有的自动睡眠时间设置。
+`uefi/components/rtc/` 仅以只读模式打开该文件，检查精确长度和数值范围，
+将秒偏移写入独立分配的 `EfiReservedMemoryType` 页。Linux 设备树副本为该页
+创建 `nvmem-rmem` 提供者、`fixed-layout` 及四字节 `offset` 单元，通过已有的
+`nvmem-cells`／`nvmem-cell-names` 连接到 PMIC RTC。普通 EFI 与 BOOTv2
+使用同一函数；输入设备树和 Android 文件保持不变。
 
-## GNOME 锁屏与唤醒对照
+该页有 `no-map` 和 `read-only`，退出 UEFI 后仍保留，内核内存检查按保留页
+验证，不放宽对 DMA 或其他内存的检查。`rtc-pm8xxx` 使用现有 NVMEM 后端读取
+偏移，标准 `rtc0` 提供日历、相对闹钟和挂起计时，不需要 rootfs 专用校时服务。
+固件文件缺失、无效或无法分配页时跳过交接；保护的计数器缺少有效偏移时跳过
+HCTOSYS，保留相对闹钟，不把 1970 年计数当作系统日期。
 
-显示恢复修正后，测试了通过 `org.gnome.ScreenSaver.Lock` 锁屏，
-再用 Mutter 的 `PowerSaveMode` 关闭和开启显示。
-logind 报告 `LockedHint=yes`，但物理屏幕仍黑：打开显示链路
-没有唤醒 GNOME 屏保。当前助手独占读取电源键，Mutter 收不到
-对应的用户活动。
+Piano 内核启用 `RTC_HCTOSYS`，仍关闭 `RTC_SYSTOHC`；NVMEM 提供者没有写回
+回调。Linux 不改 PMIC 原始日期，也不把时间写回 Android 的 `ats_2`。
+如果 Android 尚未保存偏移，联网校时仍可设置 Linux 系统时间。
 
-`org.gnome.Mutter.IdleMonitor.ResetIdletime` 虽然能在 introspection
-中看到，仅允许设置调试环境变量后调用，不能作为产品方案。
-`ScreenSaver.SetActive(false)` 则会退出屏保和锁定状态，不能用于
-正常唤醒，不能让物理按键跳过密码认证。
-
-GNOME 标准实现通过 ScreenShield 的 `WakeUpScreen` 通知电源组件
-临时退出空闲状态。后续应从输入事件进入这条路径，同时保留
-长按关机菜单和开盖唤醒。实验运行配置已撤回，合盖和短按电源恢复
-原有的背光控制，没有部署调试环境变量、虚拟输入或自动解锁。
+Linux 7.3.3 实机已在启动时从 `rtc0` 设置正确日期，`hctosys=1`；
+日历时间与系统时间相差不超过一秒。带偏移的 `+22` 秒闹钟完成 `deep` 唤醒，
+启动 ID 不变，挂起成功计数加一、失败为零，恢复后两种时间继续一致。

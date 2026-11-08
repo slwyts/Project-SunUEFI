@@ -13,6 +13,7 @@
 #include "PianoReset.h"
 #include "PianoNvFile.h"
 #include "PianoBluetoothAddress.h"
+#include "PianoRtcOffset.h"
 #include "PianoProductBootObjects.h"
 #include "PianoProductMemory.h"
 #include "PianoProductBootLog.h"
@@ -515,6 +516,7 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   Status=PianoNvFileStart();
   DEBUG((DEBUG_WARN,"PIANO_NV_FILE_BACKEND status=%r\n",Status));
   (VOID)PianoBluetoothAddressInitialize();
+  (VOID)PianoRtcOffsetInitialize();
   Status=PianoFastbootBlockReadInit();if(Status!=EFI_SUCCESS)FailStop(Status);
   CONST PIANO_FB_STORAGE *Storage=PianoFastbootBlockReadStorage();
   if(Storage==NULL || Storage->Ready(Storage->Context)!=EFI_SUCCESS)FailStop(EFI_NOT_READY);

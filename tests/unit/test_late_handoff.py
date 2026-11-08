@@ -24,7 +24,8 @@ class LateHandoffTests(unittest.TestCase):
      '-I'+str(ROOT/'uefi/components/board-identity'),
     str(ROOT/'tests/native/PianoDeviceTreeFixupTest.c'),str(ROOT/'tests/native/PianoLinuxFdtHost.c'),
      str(ROOT/'uefi/core/PianoPanelSelection.c'),str(ROOT/'uefi/components/product-handoff/PianoDeviceTreeFixup.c'),
-     str(ROOT/'uefi/components/board-identity/PianoBluetoothAddress.c')]
+     str(ROOT/'uefi/components/board-identity/PianoBluetoothAddress.c'),
+     '-I'+str(ROOT/'uefi/components/rtc'),str(ROOT/'uefi/components/rtc/PianoRtcOffset.c')]
    command +=[str(fdt/name)for name in ('fdt.c','fdt_ro.c','fdt_rw.c','fdt_wip.c','fdt_sw.c','fdt_check.c','fdt_empty_tree.c')]
    subprocess.run(command+['-o',str(exe)],check=True,timeout=60)
    subprocess.run([str(exe)],check=True,timeout=60)
@@ -147,7 +148,8 @@ class LateHandoffTests(unittest.TestCase):
    combined +=['-I'+str(ROOT/'uefi/handoff/early-memory'),'-I'+str(fdt),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include')]
    combined +=['-I'+str(ROOT/'uefi/components/board-identity'),
       '-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include'),
-      str(ROOT/'uefi/components/board-identity/PianoBluetoothAddress.c')]
+      str(ROOT/'uefi/components/board-identity/PianoBluetoothAddress.c'),
+      '-I'+str(ROOT/'uefi/components/rtc'),str(ROOT/'uefi/components/rtc/PianoRtcOffset.c')]
    combined +=['-ffunction-sections','-fdata-sections','-Wl,--gc-sections',str(ROOT/'uefi/core/PianoProductBootObjects.c'),str(ROOT/'uefi/components/os-boot/PianoLinuxEfiSession.c'),str(ROOT/'uefi/core/PianoPanelSelection.c'),str(ROOT/'tests/native/PianoLinuxFdtHost.c')]
    combined +=[str(fdt/name)for name in ('fdt.c','fdt_ro.c','fdt_rw.c','fdt_wip.c','fdt_sw.c','fdt_check.c','fdt_empty_tree.c')]
    combined[combined.index('-o')+1]=str(linux)
@@ -161,6 +163,7 @@ class LateHandoffTests(unittest.TestCase):
      '-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-I'+str(inc),'-I'+str(inc/'AArch64'),
       '-I'+str(shared),'-I'+str(ROOT/'uefi/core'),'-I'+str(ROOT/'uefi/handoff/early-memory'),
       '-I'+str(ROOT/'uefi/components/board-identity'),
+      '-I'+str(ROOT/'uefi/components/rtc'),
      '-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),str(ROOT/'uefi/components/product-handoff'/name)],check=True)
   report=prepare.prepare(apply=False);self.assertFalse(report['product_provider_bound'])
   self.assertEqual(before,{name:(ROOT/name).read_bytes()for name in prepare.PINS})

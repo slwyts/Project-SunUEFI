@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "01db20856d7249252569fdc3fd0724f173002867",
-  "original_target_commit": "7c61bd92c40236a59cda9944595d5417dd9ebac6",
+  "target_tree": "632ecff646b8348cad0b75c52d8c470f4848cea0",
+  "original_target_commit": "066ff1a6d5761a93f04c5353a0b12f51ce577e17",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -495,6 +495,14 @@
       "original_parent": "4f0955c42cddc8a03a24d1d34f9fee2c79c3e1ff",
       "tree": "01db20856d7249252569fdc3fd0724f173002867",
       "committer_date": "2026-11-09T02:23:11+08:00"
+    },
+    {
+      "file": "0062-rtc-protected-counter-epoch.patch",
+      "sha256": "0d7d4bf6f322f4865ab4bd1572524dd241ccf197ff70cb74d599c08fb99ea306",
+      "original_commit": "066ff1a6d5761a93f04c5353a0b12f51ce577e17",
+      "original_parent": "7c61bd92c40236a59cda9944595d5417dd9ebac6",
+      "tree": "632ecff646b8348cad0b75c52d8c470f4848cea0",
+      "committer_date": "2026-11-09T03:55:38+08:00"
     }
   ]
 }

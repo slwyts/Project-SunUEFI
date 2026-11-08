@@ -2,6 +2,7 @@
 #include "PianoLinuxEfiSession.h"
 #include "../../core/PianoPanelSelection.h"
 #include <PianoBluetoothAddress.h>
+#include <PianoRtcOffset.h>
 #include "../../core/PianoProductBootObjects.h"
 #include <Guid/Fdt.h>
 #include <Guid/LinuxEfiInitrdMedia.h>
@@ -127,6 +128,7 @@ EFI_STATUS PianoLinuxEfiSessionRun(PIANO_LINUX_EFI_SESSION*S,CONST PIANO_LINUX_E
  if(FdtCheckHeader(S->FdtCopy)||FdtTotalSize(S->FdtCopy)!=D->Bytes||FdtOpenInto(S->FdtCopy,S->FdtCopy,(INT32)S->FdtCapacity)){Status=EFI_COMPROMISED_DATA;goto Done;}
  Status=PianoPanelSelectDtb(S->FdtCopy,S->FdtCapacity);if(Status!=EFI_SUCCESS)goto Done;
  Status=PianoBluetoothAddressApplyDtb(S->FdtCopy,S->FdtCapacity);if(Status!=EFI_SUCCESS)goto Done;
+ Status=PianoRtcOffsetApplyDtb(S->FdtCopy,S->FdtCapacity);if(Status!=EFI_SUCCESS)goto Done;
  Status=PianoProductBootObjectsApplyGunyah(S->FdtCopy,S->FdtCapacity);if(Status!=EFI_SUCCESS)goto Done;
  INT32 Chosen=FdtPathOffset(S->FdtCopy,"/chosen");if(Chosen<0){Status=EFI_NOT_FOUND;goto Done;}
  CONST CHAR8*Remove[]={"linux,initrd-start","linux,initrd-end","kaslr-seed","rng-seed"};for(UINTN N=0;N<4;++N){INT32 R=FdtDelProp(S->FdtCopy,Chosen,Remove[N]);if(R!=0&&R!=-1){Status=EFI_COMPROMISED_DATA;goto Done;}}

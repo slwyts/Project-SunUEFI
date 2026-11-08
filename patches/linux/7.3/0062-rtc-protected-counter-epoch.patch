@@ -1,0 +1,75 @@
+From 066ff1a6d5761a93f04c5353a0b12f51ce577e17 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 03:55:38 +0800
+Subject: [PATCH] rtc: pm8xxx: keep protected counters out of hctosys without
+ an epoch
+
+An uncalibrated protected PMIC counter remains useful for relative alarms but must not initialise the system calendar. Add a driver opt-out for hctosys and describe Piano's read-only bootloader offset through the existing NVMEM reserved-memory interface.
+---
+ Documentation/devicetree/bindings/nvmem/rmem.yaml | 1 +
+ drivers/rtc/class.c                               | 3 ++-
+ drivers/rtc/rtc-pm8xxx.c                          | 5 +++++
+ include/linux/rtc.h                               | 5 +++--
+ 4 files changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/nvmem/rmem.yaml b/Documentation/devicetree/bindings/nvmem/rmem.yaml
+index 85f9f5de390..d70ea292119 100644
+--- a/Documentation/devicetree/bindings/nvmem/rmem.yaml
++++ b/Documentation/devicetree/bindings/nvmem/rmem.yaml
+@@ -19,6 +19,7 @@ properties:
+           - mobileye,eyeq5-bootloader-config
+           - raspberrypi,bootloader-config
+           - raspberrypi,bootloader-public-key
++          - xiaomi,piano-rtc-offset
+       - const: nvmem-rmem
+ 
+   reg:
+diff --git a/drivers/rtc/class.c b/drivers/rtc/class.c
+index 01ba04028f1..6df7e0fb0bb 100644
+--- a/drivers/rtc/class.c
++++ b/drivers/rtc/class.c
+@@ -431,7 +431,8 @@ int __devm_rtc_register_device(struct module *owner, struct rtc_device *rtc)
+ 		 dev_name(&rtc->dev));
+ 
+ #ifdef CONFIG_RTC_HCTOSYS_DEVICE
+-	if (!strcmp(dev_name(&rtc->dev), CONFIG_RTC_HCTOSYS_DEVICE))
++	if (!test_bit(RTC_NO_HCTOSYS, &rtc->flags) &&
++	    !strcmp(dev_name(&rtc->dev), CONFIG_RTC_HCTOSYS_DEVICE))
+ 		rtc_hctosys(rtc);
+ #endif
+ 
+diff --git a/drivers/rtc/rtc-pm8xxx.c b/drivers/rtc/rtc-pm8xxx.c
+index e624f848c22..36fcb3908ac 100644
+--- a/drivers/rtc/rtc-pm8xxx.c
++++ b/drivers/rtc/rtc-pm8xxx.c
+@@ -639,6 +639,11 @@ static int pm8xxx_rtc_probe(struct platform_device *pdev)
+ 
+ 	rtc_dd->rtc->ops = &pm8xxx_rtc_ops;
+ 	rtc_dd->rtc->range_max = U32_MAX;
++	/* Without an epoch offset, the protected counter is only useful for
++	 * relative alarms and suspend accounting, not setting wall time.
++	 */
++	if (!rtc_dd->allow_set_time && !rtc_dd->offset)
++		set_bit(RTC_NO_HCTOSYS, &rtc_dd->rtc->flags);
+ 
+ 	if (rtc_dd->alarm_irq) {
+ 		rc = devm_request_any_context_irq(&pdev->dev, rtc_dd->alarm_irq,
+diff --git a/include/linux/rtc.h b/include/linux/rtc.h
+index c09fc22819d..7a6757ffc81 100644
+--- a/include/linux/rtc.h
++++ b/include/linux/rtc.h
+@@ -81,8 +81,9 @@ struct rtc_timer {
+ };
+ 
+ /* flags */
+-#define RTC_DEV_BUSY 0
+-#define RTC_NO_CDEV  1
++#define RTC_DEV_BUSY	0
++#define RTC_NO_CDEV	1
++#define RTC_NO_HCTOSYS	2 /* Counter has no valid calendar epoch. */
+ 
+ struct rtc_device {
+ 	struct device dev;
+-- 
+2.56.0
+

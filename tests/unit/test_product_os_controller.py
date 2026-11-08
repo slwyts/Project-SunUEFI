@@ -21,6 +21,9 @@ class ProductOsControllerTests(unittest.TestCase):
    sources=[ROOT/'tests/native/PianoProductOsJointTest.c',ROOT/'tests/native/PianoLinuxFdtHost.c',ROOT/'uefi/core/PianoProductOsController.c',ROOT/'uefi/components/os-boot/PianoBootFileSource.c',ROOT/'uefi/components/os-boot/PianoLinuxEfiSession.c',ROOT/'uefi/components/os-boot/PianoCpuInput.c',ROOT/'uefi/core/PianoPanelSelection.c',ROOT/'uefi/core/PianoFastbootBoot.c',ROOT/'uefi/core/PianoProductBootObjects.c']
    cmd=['cc','-U__aarch64__','-std=gnu11','-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-DNO_MSABI_VA_FUNCS','-DPIANO_PRODUCT_NATIVE_LATE=1','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-Wno-missing-field-initializers','-Wno-deprecated-declarations','-fsanitize=address,undefined','-fno-pie','-no-pie','-I'+str(inc),'-I'+str(inc/HOST_PROCESSOR_BIND),'-I'+str(crypto),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),'-I'+str(ROOT/'uefi/core'),'-I'+str(ROOT/'uefi/handoff/early-memory'),'-I'+str(fdt),*map(str,sources)]
    cmd += [str(fdt/name)for name in('fdt.c','fdt_ro.c','fdt_rw.c','fdt_wip.c','fdt_sw.c','fdt_check.c','fdt_empty_tree.c')]+['-lcrypto','-o',str(exe)]
+   cmd += ['-I'+str(ROOT/'uefi/components/board-identity'),str(ROOT/'uefi/components/board-identity/PianoBluetoothAddress.c'),
+           '-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include'),
+           '-I'+str(ROOT/'uefi/components/rtc'),str(ROOT/'uefi/components/rtc/PianoRtcOffset.c')]
    build=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(build.returncode,0,build.stdout+build.stderr)
    for case in range(7):
     run=subprocess.run([str(exe),str(case)],capture_output=True,text=True);self.assertEqual(run.returncode,0,f'case{case}\n'+run.stdout+run.stderr)

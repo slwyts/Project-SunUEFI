@@ -2,6 +2,7 @@
 #include "PianoRawLinuxBoot.h"
 #include "PianoPanelSelection.h"
 #include "PianoBluetoothAddress.h"
+#include "PianoRtcOffset.h"
 #include "PianoProductBootObjects.h"
 #include "PianoProductMemory.h"
 #include "PianoFastbootDownloadBlob.h"
@@ -231,6 +232,7 @@ EFI_STATUS PianoRawLinuxPrepare(PIANO_PRODUCT_OWNERS *O,EFI_HANDLE Image,EFI_HAN
  E=PianoProductMemoryApplyDtb(Tree,Capacity);if(E!=EFI_SUCCESS)return E;
  E=PianoPanelSelectDtb(Tree,Capacity);if(E!=EFI_SUCCESS)return E;
  E=PianoBluetoothAddressApplyDtb(Tree,Capacity);if(E!=EFI_SUCCESS)return E;
+ E=PianoRtcOffsetApplyDtb(Tree,Capacity);if(E!=EFI_SUCCESS)return E;
  E=PianoProductBootObjectsApplyGunyah(Tree,Capacity);if(E!=EFI_SUCCESS)return E;
  INT32 Chosen=FdtPathOffset(Tree,"/chosen");if(Chosen<0)return EFI_COMPROMISED_DATA;
  UINT64 Start=SwapBytes64(RAW_INITRD),End=SwapBytes64(RAW_INITRD+P->Ramdisk.Bytes);
