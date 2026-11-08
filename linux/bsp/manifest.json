@@ -37,20 +37,6 @@
     },
     {
       "group": "common",
-      "path": "usr/lib/systemd/system/piano-adsp.service",
-      "type": "file",
-      "mode": "0644",
-      "uid": 0,
-      "gid": 0,
-      "sha256": "9c109a228d402ec96e7523bb64efafb0db8fc6e2b48e14c9dc6143287b1addc5",
-      "source": "linux/bsp/common/usr/lib/systemd/system/piano-adsp.service",
-      "source_sha256": "9c109a228d402ec96e7523bb64efafb0db8fc6e2b48e14c9dc6143287b1addc5",
-      "source_git_mode": "100644",
-      "license": "MIT",
-      "source_component": "Project SunUEFI"
-    },
-    {
-      "group": "common",
       "path": "usr/lib/systemd/system/piano-touch.service",
       "type": "file",
       "mode": "0644",
@@ -272,8 +258,8 @@
       "source_component": "Project SunUEFI",
       "source_git_mode": "100644",
       "license": "MIT",
-      "sha256": "a542ceb7ed80049a1282b6106943736dffa586cbb5b0f5182ee366dcb6656505",
-      "source_sha256": "a542ceb7ed80049a1282b6106943736dffa586cbb5b0f5182ee366dcb6656505"
+      "sha256": "7e552036d2f8129aaa975ed7af7d670bdd522da0b76017d62c74ea8c1b6bdd25",
+      "source_sha256": "7e552036d2f8129aaa975ed7af7d670bdd522da0b76017d62c74ea8c1b6bdd25"
     },
     {
       "group": "common",
@@ -313,20 +299,6 @@
       "sha256": "cfd6d1b0e57e806f6aa2e0722ce6bd0f581efeab242a26aa6f525291b78e885c",
       "source": "linux/bsp/common/etc/udev/rules.d/79-piano-touch.rules",
       "source_sha256": "cfd6d1b0e57e806f6aa2e0722ce6bd0f581efeab242a26aa6f525291b78e885c",
-      "source_component": "Project SunUEFI",
-      "source_git_mode": "100644",
-      "license": "MIT"
-    },
-    {
-      "group": "common",
-      "path": "usr/lib/piano/piano-adsp-start",
-      "type": "file",
-      "mode": "0755",
-      "uid": 0,
-      "gid": 0,
-      "sha256": "d70ac0df7f2929d50ed3a1c7e847df2e0fdd77699ed35a9395fa40440b0390d1",
-      "source": "linux/bsp/common/usr/lib/piano/piano-adsp-start",
-      "source_sha256": "d70ac0df7f2929d50ed3a1c7e847df2e0fdd77699ed35a9395fa40440b0390d1",
       "source_component": "Project SunUEFI",
       "source_git_mode": "100644",
       "license": "MIT"

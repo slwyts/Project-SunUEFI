@@ -143,9 +143,6 @@ class RamHardwareTests(unittest.TestCase):
         self.assertEqual(result['driver_loading'], 'standard-modalias')
         for name in stage.REMOVED_SCRIPTS:
             self.assertNotIn('usr/lib/piano/' + name + '-start', result['files'])
-        adsp = self.path / 'adapters/usr/lib/piano/piano-adsp-start'
-        self.assertNotIn('modprobe', adsp.read_text())
-        subprocess.run(['/bin/sh', '-n', str(adsp)], check=True)
         self.assertTrue((self.path / 'adapters/usr/share/alsa/ucm2/conf.d/sm8750/Xiaomi Pad 8 Pro.conf').is_symlink())
         with self.assertRaises(ValueError):
             stage.build(self.path / 'adapters', source)
@@ -182,7 +179,7 @@ class RamHardwareTests(unittest.TestCase):
             self.assertEqual((dest / 'usr/lib/piano/piano_dma_routes.py').read_bytes(),
                              (ROOT / 'tools/check_piano_kernel_dma_routes.py').read_bytes())
             self.assertFalse(result['device_tested'])
-            self.assertTrue((dest / 'etc/systemd/system/multi-user.target.wants/piano-adsp.service').is_symlink())
+            self.assertFalse((dest / 'etc/systemd/system/multi-user.target.wants/piano-adsp.service').is_symlink())
             self.assertFalse((dest / 'etc/systemd/system/multi-user.target.wants/piano-touch.service').is_symlink())
 
     def context_fixture(self):

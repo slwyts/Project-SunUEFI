@@ -3,9 +3,8 @@
 Description=Piano USB NCM management network
 # Udev marks the Type-C port ready after orientation and device role are set.
 # Losing that readiness stops the gadget without blocking a cable-free boot.
-Wants=piano-adsp.service
 BindsTo=sys-subsystem-typec-devices-port0.device
-After=piano-adsp.service sys-subsystem-typec-devices-port0.device
+After=sys-subsystem-typec-devices-port0.device
 
 [Service]
 Type=oneshot

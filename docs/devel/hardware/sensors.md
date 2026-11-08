@@ -54,9 +54,9 @@ rootfs builder 核对来源字段、补丁清单与补丁哈希、每个 runtime
 
 ## 启动与设备数据
 
-启动顺序为 `piano-adsp.service` 和 `piano-sensors-import.service` → `adsprpcd-sensorspd.service` → `iio-sensor-proxy.service`。上游 sensors PD 服务已依赖 import，并排在 ADSP 之后；rootfs builder 增加 `Requires=piano-adsp.service` drop-in。补丁中的标准 `ExecStartPre` 加载 `socinfo`，然后沿用 `fastrpc` 与设备节点等待；模块名是 `socinfo`。`adsprpcd sensorspd` 启动后，上游脚本最多等待 60 秒，依次查询 accelerometer、light、proximity、compass。超时仍继续启动并记录缺失类型，所以服务 active 不代表四类传感器均正常。
+ADSP 由内核 `remoteproc` 自动启动；用户空间按 `piano-sensors-import.service` → `adsprpcd-sensorspd.service` → `iio-sensor-proxy.service` 运行。sensors PD 依赖原厂配置导入，并等待标准 FastRPC 设备节点，不依赖启动 DSP 的项目脚本。`ExecStartPre` 加载 `socinfo` 和 `fastrpc`。`adsprpcd sensorspd` 启动后，上游脚本最多等待 60 秒，依次查询 accelerometer、light、proximity、compass。超时仍继续启动并记录缺失类型，所以服务 active 不代表四类传感器均正常。
 
-上游包 mask `adsprpcd.service`（根 PD）与 `adsprpcd_audiopd.service`，并用 `/etc/udev/rules.d/59-fastrpc-remoteproc.rules` 覆盖 FastRPC 自动启动所有 DSP 的规则。只由现有 ADSP 服务启动 ADSP，再运行 sensors PD；当前音频 GPR 路径不依赖 audio PD。
+上游包 mask `adsprpcd.service`（根 PD）与 `adsprpcd_audiopd.service`，并用 `/etc/udev/rules.d/59-fastrpc-remoteproc.rules` 覆盖 FastRPC 自动启动所有 DSP 的规则。ADSP 启动由内核负责，再运行 sensors PD；当前音频 GPR 路径不依赖 audio PD。
 
 首次启动时，import 从这台平板自己的 ODM 配置、vendor 文件服务配置和 persist 注册表/校准数据生成 `/var/lib/piano-sensors` 中的副本。vendor 的 `/etc/sensors/sns_reg_config` 通过 read-only device-mapper 与 `dump.erofs` 读取，以临时文件检查非空后原子保存为 `/var/lib/piano-sensors/vendor/sns_reg_config`，并链接至 `/vendor/etc/sensors/sns_reg_config`。ODM 也使用只读映射；persist 保留 `ro,noload` 挂载，ADSP 后续更新写入导入副本。构建不复制 `内部记录目录 中的用户数据，也不随镜像分发这些配置或校准文件。
 
@@ -119,6 +119,6 @@ GNOME 的 DBus 订阅包括 gnome-shell、gsd-power 和 gsd-media-keys，`ambien
 本地原始记录位于 `内部记录目录 和 `g086-live-journal.txt`。可读取标准服务日志：
 
 ```sh
-systemctl status piano-adsp piano-sensors-import adsprpcd-sensorspd iio-sensor-proxy
-journalctl -b -u piano-adsp -u piano-sensors-import -u adsprpcd-sensorspd -u iio-sensor-proxy
+systemctl status piano-sensors-import adsprpcd-sensorspd iio-sensor-proxy
+journalctl -b -u piano-sensors-import -u adsprpcd-sensorspd -u iio-sensor-proxy
 ```

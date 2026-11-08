@@ -54,6 +54,9 @@ def normalize_mainline_bindings(board):
         if props.get('iommus') == b'':
             del props['iommus']
             changes.append(path + ':iommus')
+        if path == '/soc/remoteproc-adsp@03000000' and 'qcom,no-auto-boot' in props:
+            del props['qcom,no-auto-boot']
+            changes.append(path + ':qcom,no-auto-boot')
         if (path == '/soc/xiaomi_fingerprint' and
                 props.get('compatible') == b'xiaomi,piano-goodix-control\0'):
             # The new controller uses the real mainline supply and GPIOs.

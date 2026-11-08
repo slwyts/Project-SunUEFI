@@ -178,7 +178,7 @@ def default_system_record(rootfs, installed, config, desktop='gnome'):
 
     paths = (
         'etc/modules-load.d/piano-bluetooth.conf',
-        'usr/lib/piano/piano-adsp-start', 'etc/udev/rules.d/79-piano-touch.rules',
+        'etc/udev/rules.d/79-piano-touch.rules',
         'usr/share/piano/pen/p81c-radio.json', 'usr/lib/piano/pen-bluetooth',
         'usr/lib/piano/touch-input', 'usr/bin/piano-pen-canvas',
     )
@@ -660,8 +660,8 @@ def execute(record):
         shutil.rmtree(gsd_stage)
         if ffmpeg:
             shutil.rmtree(ffmpeg_stage)
-        put(rootfs, 'usr/lib/systemd/system/adsprpcd-sensorspd.service.d/10-piano-adsp.conf',
-            '[Unit]\nRequires=piano-adsp.service\n')
+        sensor_unit = target(rootfs, 'usr/lib/systemd/system/adsprpcd-sensorspd.service')
+        sensor_unit.write_text(sensor_unit.read_text().replace(' piano-adsp.service', ''))
         if record.get('resume') and (out / 'adapters').is_dir(): shutil.rmtree(out / 'adapters')
         if record.get('resume'):
             staged_modules = target(rootfs, 'usr/lib/modules') / m['kernel_release']

@@ -75,8 +75,7 @@ def stage(args):
     for name in ('piano-sensors-import', 'adsprpcd-sensorspd'):
         text = (sensor / ('debian/piano-sensors.' + name + '.service')).read_text()
         if name == 'adsprpcd-sensorspd':
-            text = text.replace('Requires=piano-sensors-import.service',
-                                'Requires=piano-sensors-import.service piano-adsp.service')
+            text = text.replace(' piano-adsp.service', '')
         put(root, 'usr/lib/systemd/system/' + name + '.service', text)
     put(root, 'usr/lib/systemd/system/iio-sensor-proxy.service.d/piano.conf',
         (sensor / 'iio-sensor-proxy-piano.conf').read_text())
@@ -114,7 +113,7 @@ def stage(args):
                'hybrid-sleep.target', 'suspend-then-hibernate.target',
                'adsprpcd.service', 'adsprpcd_audiopd.service'])
         guest(['systemctl', 'enable', 'sddm' if steamos else 'gdm', 'NetworkManager', 'sshd', 'bluetooth',
-               'piano-adsp', 'piano-camerad', 'piano-hostkeys', 'adsprpcd-sensorspd'])
+               'piano-camerad', 'piano-hostkeys', 'adsprpcd-sensorspd'])
         guest(['systemctl', 'set-default', 'graphical.target'])
         guest(['depmod', '-a', kernel['kernel_release']])
     if steamos:

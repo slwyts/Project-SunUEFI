@@ -10,7 +10,7 @@ import subprocess
 from package_bsp import payload
 
 ROOT = Path(__file__).resolve().parents[1]
-REMOVED_SERVICES = ('display', 'radio', 'audio', 'video', 'camera', 'keyboard', 'cpufreq')
+REMOVED_SERVICES = ('display', 'radio', 'audio', 'video', 'camera', 'keyboard', 'cpufreq', 'adsp')
 REMOVED_SCRIPTS = ('display', 'radio', 'audio', 'video', 'camera', 'keyboard', 'touch', 'adsp', 'cpufreq')
 REMOVED_MODULE_LISTS = ('cpufreq', 'fingerprint', 'pen-dock', 'pon', 'rgb', 'rtc', 'flash')
 
@@ -35,6 +35,8 @@ def removed_paths(rootfs):
              'etc/udev/rules.d/79-piano-pen-charger.rules',
              'usr/lib/piano/piano-disk-hardware-prepare',
              'usr/lib/piano/bluetooth-address.py',
+             'usr/lib/piano/piano-adsp-start',
+             'usr/lib/systemd/system/adsprpcd-sensorspd.service.d/10-piano-adsp.conf',
              'usr/lib/systemd/system/bluetooth.service.d/20-piano-address.conf',
              'etc/systemd/system/display-manager.service.d/20-piano-display.conf',
              'usr/lib/systemd/system/upower.service.d/20-piano-keyboard.conf',
@@ -93,7 +95,6 @@ def build(output, source, rootfs=None):
         else:
             target.write_bytes(data)
             target.chmod(modes.get(name, 0o644 if name.endswith('.py') else 0o755))
-    subprocess.run(['/bin/sh', '-n', str(output / 'usr/lib/piano/piano-adsp-start')], check=True)
     result = {'status': 'HARDWARE_RUNTIME_STAGED', 'source_commit': commit,
               'files': {name: digest(data) for name, data in files.items()},
               'removed_paths': removed, 'driver_loading': 'standard-modalias',
@@ -114,7 +115,7 @@ def build(output, source, rootfs=None):
             shutil.copy2(output / name, destination, follow_symlinks=False)
         wants = rootfs / 'etc/systemd/system/multi-user.target.wants'
         wants.mkdir(parents=True, exist_ok=True)
-        for unit in ('piano-adsp.service', 'piano-camerad.service'):
+        for unit in ('piano-camerad.service',):
             link = wants / unit
             if not link.exists() and not link.is_symlink():
                 link.symlink_to('/usr/lib/systemd/system/' + unit)
