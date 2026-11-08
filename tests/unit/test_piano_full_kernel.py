@@ -110,6 +110,16 @@ class PianoFullKernelTests(unittest.TestCase):
                 (work/'new').write_text('new');git('add','new');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','new head')
                 with self.assertRaisesRegex(ValueError,'HEAD drifted'):full.verify_source(work)
                 descendant=git('rev-parse','HEAD');full.verify_source(work,descendant)
+                with tempfile.TemporaryDirectory(prefix='full-release-policy-')as policy_dir:
+                    policy_root=Path(policy_dir);(policy_root/'config').mkdir()
+                    (policy_root/'config/release.json').write_text(json.dumps({'kernel':{
+                        'base_commit':commit,'target_tree':git('rev-parse','HEAD^{tree}'),
+                        'patch_series':'config/series.json'}}))
+                    (policy_root/'config/series.json').write_text(json.dumps({'original_target_commit':descendant}))
+                    (work/'new').write_text('release derivative');git('add','new')
+                    git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','release derivative')
+                    with patch.object(full,'ROOT',policy_root),patch.object(full,'COMMIT','f'*40):
+                        self.assertEqual(full.verify_source(work,git('rev-parse','HEAD')),commit)
                 disconnected=git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree','HEAD^{tree}','-m','disconnected')
                 git('checkout','--detach',disconnected)
                 with self.assertRaisesRegex(ValueError,'does not descend'):full.verify_source(work,disconnected)

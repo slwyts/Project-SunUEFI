@@ -150,6 +150,12 @@ def verify_source(work=WORK,commit=None):
         base=policy['base_commit']
     else:
         base=COMMIT
+        series=json.loads((ROOT/policy['patch_series']).read_text())
+        target=series['original_target_commit']
+        target_tree=subprocess.run(['git','rev-parse',target+'^{tree}'],cwd=work,capture_output=True,text=True)
+        if target_tree.returncode==0 and target_tree.stdout.strip()==policy['target_tree'] and \
+           subprocess.run(['git','merge-base','--is-ancestor',target,commit],cwd=work,capture_output=True).returncode==0:
+            base=policy['base_commit']
     if commit!=base and subprocess.run(['git','merge-base','--is-ancestor',base,commit],cwd=work,capture_output=True).returncode:
         raise ValueError('Kernel source does not descend from its recorded baseline')
     if text(['git','status','--porcelain=v1','--untracked-files=all'],work):raise ValueError('Full candidate source is dirty')
