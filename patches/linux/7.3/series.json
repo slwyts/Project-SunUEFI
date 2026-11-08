@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "632ecff646b8348cad0b75c52d8c470f4848cea0",
-  "original_target_commit": "066ff1a6d5761a93f04c5353a0b12f51ce577e17",
+  "target_tree": "d66d1c0aa66385eec570219211211ba2b94a43f4",
+  "original_target_commit": "851e6bbd6a30f2efd3cab0dc3864e27118dbcb59",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -503,6 +503,14 @@
       "original_parent": "7c61bd92c40236a59cda9944595d5417dd9ebac6",
       "tree": "632ecff646b8348cad0b75c52d8c470f4848cea0",
       "committer_date": "2026-11-09T03:55:38+08:00"
+    },
+    {
+      "file": "0063-apm-state-error-response.patch",
+      "sha256": "a83ce6af29ae9b4a7e6ec13170261f751914338ea8260c0f9df3abf3058e0dd5",
+      "original_commit": "851e6bbd6a30f2efd3cab0dc3864e27118dbcb59",
+      "original_parent": "066ff1a6d5761a93f04c5353a0b12f51ce577e17",
+      "tree": "d66d1c0aa66385eec570219211211ba2b94a43f4",
+      "committer_date": "2026-11-09T04:23:24+08:00"
     }
   ]
 }

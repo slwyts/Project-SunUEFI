@@ -1,0 +1,54 @@
+From 851e6bbd6a30f2efd3cab0dc3864e27118dbcb59 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 04:23:24 +0800
+Subject: [PATCH] ASoC: qcom: handle basic errors for the SPF readiness query
+
+The remote can answer GET_SPF_STATE with GPR_BASIC_RSP_RESULT before APM is registered. Complete that response instead of ignoring it until the five-second timeout. Treat AudioReach AR_ENOTEXIST as not ready so PRM uses its existing deferred probe, and preserve other DSP errors. Validate both response lengths before reading their payload.
+---
+ sound/soc/qcom/qdsp6/q6apm.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm.c b/sound/soc/qcom/qdsp6/q6apm.c
+index 45094e9ed29..c79b94d5735 100644
+--- a/sound/soc/qcom/qdsp6/q6apm.c
++++ b/sound/soc/qcom/qdsp6/q6apm.c
+@@ -27,6 +27,9 @@ struct apm_graph_mgmt_cmd {
+ 
+ #define APM_GRAPH_MGMT_PSIZE(p, n) ALIGN(struct_size(p, sub_graph_id_list, n), 8)
+ 
++/* AudioReach AR_ENOTEXIST, returned before the APM service is registered. */
++#define APM_STATE_SERVICE_NOT_FOUND 19
++
+ static struct q6apm *g_apm;
+ static DEFINE_MUTEX(g_apm_lock);
+ 
+@@ -971,6 +974,8 @@ static int apm_callback(const struct gpr_resp_pkt *data, void *priv, int op)
+ 
+ 	switch (hdr->opcode) {
+ 	case APM_CMD_RSP_GET_SPF_STATE:
++		if (data->payload_size < sizeof(u32))
++			return -EINVAL;
+ 		apm->result.opcode = hdr->opcode;
+ 		apm->result.status = 0;
+ 		/* First word of result it state */
+@@ -978,7 +983,17 @@ static int apm_callback(const struct gpr_resp_pkt *data, void *priv, int op)
+ 		wake_up(&apm->wait);
+ 		break;
+ 	case GPR_BASIC_RSP_RESULT:
++		if (data->payload_size < sizeof(*result))
++			return -EINVAL;
+ 		switch (result->opcode) {
++		case APM_CMD_GET_SPF_STATE:
++			apm->state = 0;
++			apm->result = *result;
++			/* A missing service is not ready. The probing caller defers. */
++			if (result->status == APM_STATE_SERVICE_NOT_FOUND)
++				apm->result.status = 0;
++			wake_up(&apm->wait);
++			break;
+ 		case APM_CMD_SHARED_MEM_MAP_REGIONS:
+ 		case APM_CMD_GRAPH_START:
+ 		case APM_CMD_GRAPH_OPEN:
+-- 
+2.56.0
+
