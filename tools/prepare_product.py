@@ -522,6 +522,7 @@ def prepare(root=ROOT):
 [LibraryClasses.common.DXE_CORE]
   PianoProductExitLib|MdePkg/Library/PianoProductExitLib/PianoProductExitLib.inf
 [LibraryClasses]
+  RealTimeClockLib|pianoProductPkg/Library/UnsupportedRealTimeClockLib/UnsupportedRealTimeClockLib.inf
   BootLogoLib|MdeModulePkg/Library/BootLogoLib/BootLogoLib.inf
   ShellLib|ShellPkg/Library/UefiShellLib/UefiShellLib.inf
   ShellCommandLib|ShellPkg/Library/UefiShellCommandLib/UefiShellCommandLib.inf

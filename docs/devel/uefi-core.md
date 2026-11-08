@@ -90,6 +90,8 @@ ESP 中的 Linux `boot.img` 总容器上限为 128 MiB，打包入口 `./build.s
 
 两种路径的 `ExitBootServices` 都使用当前最内层启动应用的真实句柄和已保存的加载身份。标准 EFI 路径还检查该应用到当前 systemd-boot 的父链及 ESP 身份。开始关闭资源前的拒绝允许启动管理器重试其他内核；进入关闭流程后出错便停止，不能返回仍可能持有文件句柄的 systemd-boot。MapKey 变化后的重试不再进行文件操作、分配或重复关闭硬件。
 
+固件未实现硬件日历和定时唤醒，四个 EFI 时间调用返回 `EFI_UNSUPPORTED`，并通过 `EFI_RT_PROPERTIES_TABLE` 报告。不能用开机时长拼出日期后返回成功，否则操作系统会把占位实现注册成 RTC。Linux 使用独立的 PMIC RTC；原厂时间偏移尚未换算，因此不将它的原始计数用于设置系统日期。
+
 ## UEFI 核心代码结构
 
 | 目录 | 职责 |
