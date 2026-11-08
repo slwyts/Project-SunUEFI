@@ -120,12 +120,17 @@ Valve 原包的完整编解码配置和依赖。构建器按目标系统的 FFmp
 
 Valve 基底中的 Mesa 27.0.0-devel 已包含 Adreno 830v1，游戏模式可通过 Turnip
 渲染；其原生 GL 包却缺少分离的 MSM 显示节点所需的 GBM 路径，KWin 不能
-创建显示缓冲。构建检查原生 MSM 与 KMS 缓冲接口，缺失时按
-`config/steamos.json` 固定的 Mesa 27 源码重编 Freedreno、Turnip、Zink 和
-Softpipe，不降级到旧适配包。Softpipe 保留仅显示设备的缓冲分配回退，不强制
+创建显示缓冲。构建按 `config/steamos.json` 固定的 Mesa 27 源码和补丁系列
+重编 Freedreno、Turnip、Zink 和 Softpipe，缓存按生成的构建配方与包哈希校验，
+不降级到旧适配包。Softpipe 保留仅显示设备的缓冲分配回退，不强制
 桌面软件渲染。Wayland 协议构建依赖取自该 Mesa 提交自身的校验清单，不替换
 系统中的 Wayland 库。包名沿用 Valve 的 `deckard-mesa-linux-aarch64`，x86
 客体图形运行库保持原样，不向 SteamOS 安装 Debian 共享库。
+
+Freedreno 的 renderonly 路径分配显示缓冲时，将高度补齐到 GPU 的四行存储
+边界，资源的可见尺寸保持原样。否则 2400×1602、1280×854 等模式的缓冲小于
+GPU 导入布局，会在模式切换前被 Mesa 拒绝。修正只增加缓冲尾部空间，不改变
+显示模式、DSI 时序或内核大小检查。
 
 实机已运行 Plasma Wayland，OpenGL 使用 Freedreno，Vulkan 使用 Turnip；
 这些结果不能替代硬件视频解码或游戏兼容性验证。

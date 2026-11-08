@@ -1,0 +1,31 @@
+From c7c3bca492ea376ea9a70a3c7df91e91a80ed1de Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 06:53:23 +0800
+Subject: [PATCH] freedreno: align renderonly scanout buffer height for GMEM
+ stores
+
+The fdl6 layout reserves complete four-row blocks for GMEM stores, including linear images imported from a display device. A dumb buffer allocated with an unaligned image height can therefore be smaller than the GPU layout and fail resource import. Round the allocation template height up to four rows for a6xx and newer while keeping the original resource dimensions.
+
+Generated-by: LLM
+---
+ src/gallium/drivers/freedreno/freedreno_resource.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/gallium/drivers/freedreno/freedreno_resource.c b/src/gallium/drivers/freedreno/freedreno_resource.c
+index 29134ba1337..1a0807cc398 100644
+--- a/src/gallium/drivers/freedreno/freedreno_resource.c
++++ b/src/gallium/drivers/freedreno/freedreno_resource.c
+@@ -1480,6 +1480,11 @@ fd_resource_create_with_modifiers(struct pipe_screen *pscreen,
+ 
+       /* note: alignment is wrong for a6xx */
+       scanout_templat.width0 = align(tmpl->width0, screen->info->gmem_align_w);
++      /* fdl6 reserves complete four-row GMEM store blocks, including when
++       * importing a linear buffer allocated by the display device.
++       */
++      if (is_a6xx(screen))
++         scanout_templat.height0 = align(tmpl->height0, 4);
+ 
+       scanout =
+          renderonly_scanout_for_resource(&scanout_templat, screen->ro, &handle);
+-- 
+2.56.0

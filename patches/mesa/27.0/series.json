@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "patches": [
+    {
+      "file": "0001-freedreno-renderonly-height-alignment.patch",
+      "sha256": "c5ff27aeabca500a8cf095cee1cdd5b47ed0bfee3d96c537117320bfae854976"
+    }
+  ]
+}
