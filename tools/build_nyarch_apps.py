@@ -86,6 +86,8 @@ def guest_environment(root):
                                     ('random', 1, 8), ('urandom', 1, 9)):
             run(['mknod', '-m', '666', root / 'dev' / name, 'c', major, minor])
         (root / 'dev/fd').symlink_to('/proc/self/fd')
+        for number, name in enumerate(('stdin', 'stdout', 'stderr')):
+            (root / 'dev' / name).symlink_to('/proc/self/fd/' + str(number))
         text = (root / 'etc/pacman.conf').read_text()
         (root / 'run/pacman-build.conf').write_text(
             re.sub(r'^\s*CheckSpace\s*$', '# CheckSpace (build chroot)', text, flags=re.M))
