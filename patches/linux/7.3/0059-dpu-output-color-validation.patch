@@ -1,0 +1,63 @@
+From 6e0a9b58a33ad9633cade6223e78bbb6553fe1ef Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 00:41:04 +0800
+Subject: [PATCH] drm/msm: validate fixed-panel conversion blocks and VGA
+ fitting
+
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c | 13 +++++++++++--
+ drivers/gpu/drm/panel/panel-novatek-nt36532.c    |  2 +-
+ 2 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
+index 194c242489c..5e3b75e3520 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
+@@ -74,12 +74,19 @@ void dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
+ 	struct dpu_kms *dpu_kms = to_dpu_kms(kms);
+ 	struct dpu_output_color *color;
+ 	const struct firmware *fw;
++	const struct dpu_dspp_sub_blks *sblk;
+ 	const char *name;
+ 	unsigned int panel_id;
+ 	int ret;
+ 
+ 	if (!panel || dpu_kms->output_color || !dpu_lutdma_ready(dpu_kms->lutdma) ||
+-	    dpu_kms->catalog->mdss_ver->core_major_ver != 12)
++	    dpu_kms->catalog->mdss_ver->core_major_ver != 12 ||
++	    dpu_kms->catalog->dspp_count < 2)
++		return;
++	sblk = dpu_kms->catalog->dspp[0].sblk;
++	if (!sblk || sblk->gamut.base != 0x1000 || sblk->gamut.version != 0x40003 ||
++	    sblk->igc.base != 0x1260 || sblk->igc.version != 0x50000 ||
++	    sblk->gc.base != 0x17c0 || sblk->gc.version != 0x20000)
+ 		return;
+ 	if (of_device_is_compatible(panel, "xiaomi,piano-boe-nt36532")) {
+ 		name = "qcom/sm8750/piano-boe-display.bin";
+@@ -106,7 +113,9 @@ void dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
+ 		BIT(DRM_MODE_COLORIMETRY_BT2020_RGB));
+ 	if (ret)
+ 		return;
+-	drm_connector_attach_colorspace_property(connector);
++	ret = drm_connector_attach_colorspace_property(connector);
++	if (ret)
++		return;
+ 	drm_connector_attach_hdr_output_metadata_property(connector);
+ 	color->connector = connector;
+ 	dpu_kms->output_color = color;
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36532.c b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+index 5b2f327a3ee..e2f48a98522 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+@@ -381,7 +381,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ 	if (panel_info->supports_scaling && connector->scaling_mode_property) {
+ 		static const unsigned int sizes[][2] = {
+ 			{ 2560, 1708 }, { 2400, 1602 }, { 1920, 1280 },
+-			{ 1600, 1068 }, { 1280, 854 },
++			{ 1600, 1068 }, { 1280, 854 }, { 640, 480 },
+ 		};
+ 		unsigned int j;
+ 
+-- 
+2.56.0
+

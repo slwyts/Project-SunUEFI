@@ -1,0 +1,804 @@
+From e8c00af6b31352f55752ae6030a7510928f32b12 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sun, 8 Nov 2026 23:39:32 +0800
+Subject: [PATCH] drm/msm: convert fixed-panel HDR signals through calibrated
+ DSPP color blocks
+
+---
+ drivers/gpu/drm/msm/Makefile                  |   2 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c      |  23 ++-
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h      |   1 +
+ .../gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c    |   2 +
+ .../gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h    |   2 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c    |   3 +
+ .../gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c   |  59 +++++++
+ .../gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h   |  18 ++
+ drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c       |   2 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h       |   1 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c    |  30 +++-
+ drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h    |   5 +
+ .../gpu/drm/msm/disp/dpu1/dpu_output_color.c  | 160 ++++++++++++++++++
+ .../gpu/drm/msm/disp/dpu1/dpu_output_color.h  |  25 +++
+ drivers/gpu/drm/msm/dsi/dsi_manager.c         |  13 ++
+ drivers/gpu/drm/msm/msm_kms.h                 |   3 +
+ drivers/gpu/drm/panel/panel-novatek-nt36532.c | 115 ++++++++++++-
+ 17 files changed, 456 insertions(+), 8 deletions(-)
+ create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c
+ create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h
+ create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
+ create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h
+
+diff --git a/drivers/gpu/drm/msm/Makefile b/drivers/gpu/drm/msm/Makefile
+index 89c61b0313e..fd62b93b274 100644
+--- a/drivers/gpu/drm/msm/Makefile
++++ b/drivers/gpu/drm/msm/Makefile
+@@ -91,6 +91,8 @@ msm-display-$(CONFIG_DRM_MSM_DPU) += \
+ 	disp/dpu1/dpu_hw_dspp.o \
+ 	disp/dpu1/dpu_hw_gcv2.o \
+ 	disp/dpu1/dpu_hw_igcv5.o \
++	disp/dpu1/dpu_hw_gamutv43.o \
++	disp/dpu1/dpu_output_color.o \
+ 	disp/dpu1/dpu_lutdma.o \
+ 	disp/dpu1/dpu_hw_merge3d.o \
+ 	disp/dpu1/dpu_hw_top.o \
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+index 3ed3af7010a..953725dd15e 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -25,6 +25,7 @@
+ 
+ #include "dpu_kms.h"
+ #include "dpu_lutdma.h"
++#include "dpu_output_color.h"
+ #include "dpu_hw_igcv5.h"
+ #include "dpu_hw_lm.h"
+ #include "dpu_hw_ctl.h"
+@@ -907,6 +908,8 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
+ 	struct dpu_hw_ctl *ctl;
+ 	struct dpu_hw_dspp *dspp;
+ 	struct dpu_hw_dspp *gc_master = NULL;
++	struct dpu_output_color *output_color = _dpu_crtc_get_kms(crtc)->output_color;
++	unsigned int output_mode = cstate->output_color_mode;
+ 	u32 gc_mask = 0;
+ 	int i, ret, gc_mixers = 0, gcv2_ret = 0;
+ 
+@@ -931,7 +934,7 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
+ 		gc_lut = NULL;
+ 		if (gc_mixers != cstate->num_mixers) {
+ 			gcv2_ret = -EINVAL;
+-		} else if (state->gamma_lut) {
++		} else if (state->gamma_lut && !output_mode) {
+ 			gc_lut = kzalloc_obj(*gc_lut);
+ 			if (!gc_lut)
+ 				gcv2_ret = -ENOMEM;
+@@ -939,7 +942,16 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
+ 				_dpu_crtc_get_gc_lut(state, gc_lut, gc_master->ops.setup_color);
+ 		}
+ 		if (!gcv2_ret) {
+-			if (gc_master->ops.setup_color) {
++			if (output_color) {
++				const struct drm_color_lut *igc = state->degamma_lut ?
++					state->degamma_lut->data : NULL;
++
++				gcv2_ret = dpu_lutdma_submit_output_color(gc_master->lutdma,
++					mixer[0].lm_ctl, gc_mask,
++					output_mode ? &output_color->gamma : gc_lut,
++					output_mode ? output_color->degamma[output_mode - 1] : igc,
++					output_mode ? &output_color->gamut : NULL);
++			} else if (gc_master->ops.setup_color) {
+ 				const struct drm_color_lut *igc_lut = state->degamma_lut ?
+ 					state->degamma_lut->data : NULL;
+ 
+@@ -1007,6 +1019,9 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
+ 			if (gc_master && gc_master->ops.setup_color)
+ 				ctl->ops.update_pending_flush_dspp(ctl,
+ 					mixer[i].hw_dspp->idx, DPU_DSPP_IGC);
++			if (output_color)
++				ctl->ops.update_pending_flush_dspp(ctl,
++					mixer[i].hw_dspp->idx, DPU_DSPP_GAMUT);
+ 		}
+ 	}
+ }
+@@ -1756,6 +1771,10 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ 	bool needs_dirtyfb = dpu_crtc_needs_dirtyfb(crtc_state);
+ 	struct dpu_kms *kms = _dpu_crtc_get_kms(crtc);
+ 
++	rc = dpu_output_color_check(crtc_state);
++	if (rc)
++		return rc;
++
+ 	/* The core accepts smaller blobs up to the advertised maximum. GC
+ 	 * resamples them; the IGC backend requires its complete uniform grid.
+ 	 */
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h
+index 084ea8ecfef..c0ee8a14ba3 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h
+@@ -211,6 +211,7 @@ struct dpu_crtc_state {
+ 	bool bw_control;
+ 	bool bw_split_vote;
+ 	bool vfp_update;
++	unsigned int output_color_mode;
+ 	struct drm_rect lm_bounds[CRTC_DUAL_MIXERS];
+ 
+ 	uint64_t input_fence_timeout_ns;
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
+index 9fa40480bc0..375c7c9a40c 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
+@@ -432,6 +432,8 @@ static const struct dpu_dspp_sub_blks sm8750_dspp_sblk = {
+ 		.len = 0x40, .version = 0x20000},
+ 	.igc = {.name = "igc", .base = 0x1260,
+ 		.len = 0x8, .version = 0x50000},
++	.gamut = {.name = "gamut", .base = 0x1000,
++		.len = 0x10, .version = 0x40003},
+ };
+ 
+ /*************************************************************
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
+index e41983a4941..d170add4acf 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
+@@ -84,6 +84,7 @@ enum {
+ 	DPU_DSPP_PCC = 0x1,
+ 	DPU_DSPP_GC,
+ 	DPU_DSPP_IGC,
++	DPU_DSPP_GAMUT,
+ 	DPU_DSPP_MAX
+ };
+ 
+@@ -339,6 +340,7 @@ struct dpu_dspp_sub_blks {
+ 	struct dpu_pp_blk pcc;
+ 	struct dpu_pp_blk gc;
+ 	struct dpu_pp_blk igc;
++	struct dpu_pp_blk gamut;
+ };
+ 
+ struct dpu_pingpong_sub_blks {
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
+index 548f51e54d7..be13dd930db 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
+@@ -406,6 +406,9 @@ static void dpu_hw_ctl_update_pending_flush_dspp_sub_blocks(
+ 	case DPU_DSPP_IGC:
+ 		ctx->pending_dspp_flush_mask[dspp - DSPP_0] |= BIT(2);
+ 		break;
++	case DPU_DSPP_GAMUT:
++		ctx->pending_dspp_flush_mask[dspp - DSPP_0] |= BIT(3);
++		break;
+ 	default:
+ 		return;
+ 	}
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c
+new file mode 100644
+index 00000000000..24d04bf8acd
+--- /dev/null
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c
+@@ -0,0 +1,59 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Gamut v4.3 LUTBUS programming follows Qualcomm's published driver. */
++#include <linux/bitops.h>
++#include <linux/byteorder/generic.h>
++#include <linux/errno.h>
++
++#include "dpu_hw_gcv2.h"
++#include "dpu_hw_gamutv43.h"
++
++#define GAMUT_BASE 0x1000
++#define REGDMA_DECODE_SELECT 0x18180114
++#define REGDMA_SINGLE_WRITE BIT(28)
++#define REGDMA_LUTBUS_WRITE (BIT(30) | BIT(29))
++#define GAMUT_ENABLE BIT(0)
++#define GAMUT_LUTBUS_BLOCK 1
++#define GAMUT_TRANSFER_WORDS 6
++
++static u16 gamut_component(const struct dpu_hw_gamut_lut *lut, unsigned int i)
++{
++	if (i / 3 >= DPU_GAMUTV43_ENTRIES)
++		return 0;
++	return lut->rgb[i / 3][i % 3] << 4;
++}
++
++int dpu_hw_gamutv43_pack_regdma(__le32 *words, size_t capacity,
++			      u32 dspp_mask, const struct dpu_hw_gamut_lut *lut)
++{
++	unsigned int i, n = 0;
++
++	if (!words || !dspp_mask || (dspp_mask & ~DPU_GCV2_DSPP_MASK))
++		return -EINVAL;
++	if (capacity < (lut ? DPU_GAMUTV43_LUT_WORDS : 4))
++		return -ENOSPC;
++	if (lut)
++		for (i = 0; i < DPU_GAMUTV43_ENTRIES; i++)
++			if ((lut->rgb[i][0] | lut->rgb[i][1] | lut->rgb[i][2]) > 4095)
++				return -EINVAL;
++
++	words[n++] = cpu_to_le32(REGDMA_DECODE_SELECT);
++	words[n++] = cpu_to_le32(dspp_mask);
++	if (lut) {
++		/* The four interleaved tables form a red-fastest 17^3 grid.
++		 * Pad its final three entries to a complete six-word transfer.
++		 */
++		words[n++] = cpu_to_le32(REGDMA_LUTBUS_WRITE | GAMUT_LUTBUS_BLOCK);
++		words[n++] = cpu_to_le32((GAMUT_TRANSFER_WORDS << 16) |
++					(DPU_GAMUTV43_DATA_WORDS / GAMUT_TRANSFER_WORDS));
++		for (i = 0; i < DPU_GAMUTV43_DATA_WORDS; i++)
++			words[n++] = cpu_to_le32(gamut_component(lut, i * 2) |
++					((u32)gamut_component(lut, i * 2 + 1) << 16));
++		/* The published LUTBUS residual-data workaround needs three NOPs. */
++		words[n++] = 0;
++		words[n++] = 0;
++		words[n++] = 0;
++	}
++	words[n++] = cpu_to_le32(REGDMA_SINGLE_WRITE | GAMUT_BASE);
++	words[n++] = cpu_to_le32(lut ? GAMUT_ENABLE : 0);
++	return n;
++}
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h
+new file mode 100644
+index 00000000000..1476e387b34
+--- /dev/null
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h
+@@ -0,0 +1,18 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _DPU_HW_GAMUTV43_H
++#define _DPU_HW_GAMUTV43_H
++
++#include <linux/types.h>
++
++#define DPU_GAMUTV43_ENTRIES (17 * 17 * 17)
++#define DPU_GAMUTV43_DATA_WORDS (4 * 1229 * 3 / 2)
++#define DPU_GAMUTV43_LUT_WORDS (DPU_GAMUTV43_DATA_WORDS + 9)
++
++struct dpu_hw_gamut_lut {
++	u16 rgb[DPU_GAMUTV43_ENTRIES][3];
++};
++
++int dpu_hw_gamutv43_pack_regdma(__le32 *words, size_t capacity,
++			      u32 dspp_mask, const struct dpu_hw_gamut_lut *lut);
++
++#endif
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+index d8acad21c5e..f89c9b34aa9 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+@@ -35,6 +35,7 @@
+ #include "dpu_kms.h"
+ #include "dpu_hw_dspp.h"
+ #include "dpu_lutdma.h"
++#include "dpu_output_color.h"
+ #include "dpu_plane.h"
+ #include "dpu_vbif.h"
+ #include "dpu_writeback.h"
+@@ -1077,6 +1078,7 @@ static void dpu_kms_quiesce(struct msm_kms *kms)
+ 
+ static const struct msm_kms_funcs kms_funcs = {
+ 	.hw_init         = dpu_kms_hw_init,
++	.init_output_color = dpu_output_color_init,
+ 	.irq_preinstall  = dpu_core_irq_preinstall,
+ 	.irq_postinstall = dpu_irq_postinstall,
+ 	.irq_uninstall   = dpu_core_irq_uninstall,
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h
+index a5f7779c2d0..80e2cfc370d 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h
+@@ -88,6 +88,7 @@ struct dpu_kms {
+ 	struct dpu_hw_mdp *hw_mdp;
+ 
+ 	bool has_danger_ctrl;
++	struct dpu_output_color *output_color;
+ 
+ 	struct platform_device *pdev;
+ 	bool rpm_enabled;
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
+index 29e6703354d..275c5ac5457 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
+@@ -15,6 +15,7 @@
+ #include "msm_gem.h"
+ #include "dpu_hw_gcv2.h"
+ #include "dpu_hw_igcv5.h"
++#include "dpu_hw_gamutv43.h"
+ #include "dpu_hw_vbif.h"
+ #include "dpu_kms.h"
+ #include "dpu_hw_dspp.h"
+@@ -37,7 +38,7 @@
+ #define REGDMA_LAST BIT(24)
+ #define REGDMA_CMD_WORDS GENMASK(13, 0)
+ #define REGDMA_ALIGN 256
+-#define REGDMA_BUFFER_SIZE SZ_16K
++#define REGDMA_BUFFER_SIZE SZ_64K
+ #define REGDMA_LAST_SIZE (2 * sizeof(u32))
+ 
+ struct dpu_lutdma {
+@@ -151,9 +152,10 @@ bool dpu_lutdma_ctl_valid(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl)
+ 	return ctl && queue_reg(dma, ctl->idx, REGDMA_QUEUE_RESET);
+ }
+ 
+-int dpu_lutdma_submit_color(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
++static int submit_color(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
+ 			u32 dspp_mask, const struct dpu_hw_gc_lut *gc_lut,
+-			const struct drm_color_lut *igc_lut, bool update_igc)
++			const struct drm_color_lut *igc_lut, bool update_igc,
++			const struct dpu_hw_gamut_lut *gamut, bool update_gamut)
+ {
+ 	u32 done, errors, descriptor;
+ 	__le32 *last;
+@@ -185,6 +187,13 @@ int dpu_lutdma_submit_color(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
+ 		}
+ 		words += igc_words;
+ 	}
++	if (update_gamut) {
++		ret = dpu_hw_gamutv43_pack_regdma(dma->commands + words,
++						capacity - words, dspp_mask, gamut);
++		if (ret < 0)
++			goto unlock;
++		words += ret;
++	}
+ 	ret = dpu_hw_color_regdma_last_offset(words, REGDMA_BUFFER_SIZE, &last_offset);
+ 	if (ret)
+ 		goto unlock;
+@@ -238,6 +247,21 @@ int dpu_lutdma_submit_color(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
+ 	return ret;
+ }
+ 
++int dpu_lutdma_submit_color(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
++			u32 dspp_mask, const struct dpu_hw_gc_lut *gc_lut,
++			const struct drm_color_lut *igc_lut, bool update_igc)
++{
++	return submit_color(dma, ctl, dspp_mask, gc_lut, igc_lut, update_igc, NULL, false);
++}
++
++int dpu_lutdma_submit_output_color(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
++			u32 dspp_mask, const struct dpu_hw_gc_lut *gc_lut,
++			const struct drm_color_lut *igc_lut,
++			const struct dpu_hw_gamut_lut *gamut)
++{
++	return submit_color(dma, ctl, dspp_mask, gc_lut, igc_lut, true, gamut, true);
++}
++
+ int dpu_lutdma_submit_gc(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
+ 			u32 dspp_mask, const struct dpu_hw_gc_lut *lut)
+ {
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h
+index 8eaa3209219..1bdefd0fc8d 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h
+@@ -9,6 +9,7 @@ struct dpu_lutdma;
+ struct drm_color_lut;
+ struct dpu_hw_ctl;
+ struct dpu_hw_gc_lut;
++struct dpu_hw_gamut_lut;
+ 
+ struct dpu_lutdma *dpu_lutdma_init(struct dpu_kms *kms);
+ bool dpu_lutdma_ready(struct dpu_lutdma *dma);
+@@ -17,6 +18,10 @@ bool dpu_lutdma_ctl_valid(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl);
+ int dpu_lutdma_submit_color(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
+ 			u32 dspp_mask, const struct dpu_hw_gc_lut *gc_lut,
+ 			const struct drm_color_lut *igc_lut, bool update_igc);
++int dpu_lutdma_submit_output_color(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
++			u32 dspp_mask, const struct dpu_hw_gc_lut *gc_lut,
++			const struct drm_color_lut *igc_lut,
++			const struct dpu_hw_gamut_lut *gamut);
+ void dpu_lutdma_quiesce(struct dpu_lutdma *dma);
+ int dpu_lutdma_submit_gc(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
+ 			u32 dspp_mask, const struct dpu_hw_gc_lut *lut);
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
+new file mode 100644
+index 00000000000..194c242489c
+--- /dev/null
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
+@@ -0,0 +1,160 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/firmware.h>
++#include <linux/hdmi.h>
++#include <linux/of.h>
++#include <linux/unaligned.h>
++#include <drm/drm_atomic.h>
++#include <drm/drm_connector.h>
++#include <drm/drm_managed.h>
++#include <drm/drm_property.h>
++
++#include "dpu_crtc.h"
++#include "dpu_kms.h"
++#include "dpu_lutdma.h"
++#include "dpu_output_color.h"
++
++#define COLOR_HEADER_SIZE 32
++#define COLOR_IGC_BYTES (2 * DPU_IGCV5_LUT_SIZE * sizeof(struct drm_color_lut))
++#define COLOR_GC_BYTES (3 * (PGC_TBL_LEN + PGC_TBL_LEN_EXTENDED) * sizeof(u32))
++#define COLOR_GAMUT_BYTES (DPU_GAMUTV43_ENTRIES * 3 * sizeof(u16))
++#define COLOR_FIRMWARE_SIZE (COLOR_HEADER_SIZE + COLOR_IGC_BYTES + COLOR_GC_BYTES + COLOR_GAMUT_BYTES)
++
++static int parse_color(struct dpu_output_color *color, const struct firmware *fw,
++		       unsigned int panel_id)
++{
++	const u8 *p;
++	u32 *channels[] = { color->gamma.c0, color->gamma.c1, color->gamma.c2 };
++	unsigned int table, channel, i;
++
++	if (fw->size != COLOR_FIRMWARE_SIZE || memcmp(fw->data, "DPUCOLR1", 8) ||
++	    get_unaligned_le32(fw->data + 8) != 1 ||
++	    get_unaligned_le32(fw->data + 12) != panel_id ||
++	    get_unaligned_le32(fw->data + 24) != COLOR_FIRMWARE_SIZE ||
++	    get_unaligned_le32(fw->data + 28))
++		return -EINVAL;
++	p = fw->data + COLOR_HEADER_SIZE;
++	for (table = 0; table < 2; table++) {
++		for (i = 0; i < DPU_IGCV5_LUT_SIZE; i++, p += 8) {
++			struct drm_color_lut *entry = &color->degamma[table][i];
++
++			entry->red = get_unaligned_le16(p);
++			entry->green = get_unaligned_le16(p + 2);
++			entry->blue = get_unaligned_le16(p + 4);
++			if (get_unaligned_le16(p + 6) ||
++			    (i && (entry->red < entry[-1].red ||
++				   entry->green < entry[-1].green ||
++				   entry->blue < entry[-1].blue)))
++				return -EINVAL;
++		}
++	}
++	for (channel = 0; channel < 3; channel++)
++		for (i = 0; i < PGC_TBL_LEN + PGC_TBL_LEN_EXTENDED; i++, p += 4) {
++			u32 word = get_unaligned_le32(p);
++
++			if (word & ~0x03ff03ff)
++				return -EINVAL;
++			if (i < PGC_TBL_LEN)
++				channels[channel][i] = word;
++			else
++				color->gamma.extended[channel][i - PGC_TBL_LEN] = word;
++		}
++	for (i = 0; i < DPU_GAMUTV43_ENTRIES; i++)
++		for (channel = 0; channel < 3; channel++, p += 2) {
++			color->gamut.rgb[i][channel] = get_unaligned_le16(p);
++			if (color->gamut.rgb[i][channel] > 4095)
++				return -EINVAL;
++		}
++	color->gamma.flags = PGC_HIGH_PRECISION;
++	return 0;
++}
++
++void dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
++			   const struct device_node *panel)
++{
++	struct dpu_kms *dpu_kms = to_dpu_kms(kms);
++	struct dpu_output_color *color;
++	const struct firmware *fw;
++	const char *name;
++	unsigned int panel_id;
++	int ret;
++
++	if (!panel || dpu_kms->output_color || !dpu_lutdma_ready(dpu_kms->lutdma) ||
++	    dpu_kms->catalog->mdss_ver->core_major_ver != 12)
++		return;
++	if (of_device_is_compatible(panel, "xiaomi,piano-boe-nt36532")) {
++		name = "qcom/sm8750/piano-boe-display.bin";
++		panel_id = 1;
++	} else if (of_device_is_compatible(panel, "xiaomi,piano-csot-nt36532")) {
++		name = "qcom/sm8750/piano-csot-display.bin";
++		panel_id = 2;
++	} else {
++		return;
++	}
++	ret = firmware_request_nowarn(&fw, name, kms->dev->dev);
++	if (ret) {
++		drm_dbg_kms(kms->dev, "Output color calibration unavailable: %d\n", ret);
++		return;
++	}
++	color = drmm_kzalloc(kms->dev, sizeof(*color), GFP_KERNEL);
++	ret = color ? parse_color(color, fw, panel_id) : -ENOMEM;
++	release_firmware(fw);
++	if (ret) {
++		drm_warn(kms->dev, "Invalid output color calibration: %d\n", ret);
++		return;
++	}
++	ret = drm_mode_create_hdmi_colorspace_property(connector,
++		BIT(DRM_MODE_COLORIMETRY_BT2020_RGB));
++	if (ret)
++		return;
++	drm_connector_attach_colorspace_property(connector);
++	drm_connector_attach_hdr_output_metadata_property(connector);
++	color->connector = connector;
++	dpu_kms->output_color = color;
++}
++
++int dpu_output_color_check(struct drm_crtc_state *state)
++{
++	struct msm_drm_private *priv = state->crtc->dev->dev_private;
++	struct dpu_kms *kms = to_dpu_kms(priv->kms);
++	struct dpu_crtc_state *cstate = to_dpu_crtc_state(state);
++	struct drm_connector_state *conn_state;
++	struct dpu_output_color *color = kms->output_color;
++	struct drm_connector *connector;
++	unsigned int mode = 0;
++	int ret;
++
++	if (!color)
++		return 0;
++	connector = color->connector;
++	conn_state = drm_atomic_get_connector_state(state->state, connector);
++	if (IS_ERR(conn_state))
++		return PTR_ERR(conn_state);
++	if (state->enable && conn_state->crtc == state->crtc) {
++		struct hdr_output_metadata *metadata;
++
++		if (conn_state->hdr_output_metadata &&
++		    conn_state->hdr_output_metadata->length != sizeof(*metadata))
++			return -EINVAL;
++		metadata = conn_state->hdr_output_metadata ?
++			conn_state->hdr_output_metadata->data : NULL;
++		if (metadata && (metadata->metadata_type ||
++		    metadata->hdmi_metadata_type1.metadata_type ||
++		    metadata->hdmi_metadata_type1.eotf != HDMI_EOTF_SMPTE_ST2084))
++			return -EINVAL;
++		if (metadata && conn_state->colorspace != DRM_MODE_COLORIMETRY_BT2020_RGB)
++			return -EINVAL;
++		if (conn_state->colorspace == DRM_MODE_COLORIMETRY_BT2020_RGB)
++			mode = metadata ? 1 : 2;
++		if (mode && (hweight32(state->encoder_mask) != 1 || state->ctm ||
++			     state->gamma_lut || state->degamma_lut))
++			return -EINVAL;
++	}
++	if (mode != cstate->output_color_mode)
++		state->color_mgmt_changed = true;
++	cstate->output_color_mode = mode;
++	ret = mode && !dpu_lutdma_ready(kms->lutdma) ? -EIO : 0;
++	return ret;
++}
++
++MODULE_FIRMWARE("qcom/sm8750/piano-boe-display.bin");
++MODULE_FIRMWARE("qcom/sm8750/piano-csot-display.bin");
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h
+new file mode 100644
+index 00000000000..c230cef8f1c
+--- /dev/null
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h
+@@ -0,0 +1,25 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _DPU_OUTPUT_COLOR_H
++#define _DPU_OUTPUT_COLOR_H
++
++#include <drm/drm_color_mgmt.h>
++#include "dpu_hw_dspp.h"
++#include "dpu_hw_gamutv43.h"
++#include "dpu_hw_igcv5.h"
++
++struct device_node;
++struct drm_connector;
++struct msm_kms;
++
++struct dpu_output_color {
++	struct drm_connector *connector;
++	struct dpu_hw_gc_lut gamma;
++	struct drm_color_lut degamma[2][DPU_IGCV5_LUT_SIZE];
++	struct dpu_hw_gamut_lut gamut;
++};
++
++void dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
++			   const struct device_node *panel);
++int dpu_output_color_check(struct drm_crtc_state *state);
++
++#endif
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_manager.c b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+index 56cd6f04bba..bdd6b04dbb9 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_manager.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+@@ -545,6 +545,12 @@ static int dsi_mgr_bridge_atomic_check(struct drm_bridge *bridge,
+ 				      struct drm_connector_state *conn_state)
+ {
+ 	const struct drm_display_mode *native;
++	struct drm_connector_state *old;
++
++	old = drm_atomic_get_old_connector_state(crtc_state->state, conn_state->connector);
++	if (old && (old->colorspace != conn_state->colorspace ||
++		    !drm_connector_atomic_hdr_metadata_equal(old, conn_state)))
++		crtc_state->mode_changed = true;
+ 
+ 	if (!conn_state->connector->scaling_mode_property)
+ 		return 0;
+@@ -686,6 +692,13 @@ int msm_dsi_manager_connector_init(struct msm_dsi *msm_dsi,
+ 			return ret;
+ 		connector->max_bpc = dsc->bits_per_component;
+ 	}
++	if (msm_dsi->dev->dev_private) {
++		struct msm_drm_private *priv = msm_dsi->dev->dev_private;
++
++		if (priv->kms->funcs->init_output_color)
++			priv->kms->funcs->init_output_color(priv->kms, connector,
++							  msm_dsi->next_bridge->of_node);
++	}
+ 
+ 	return 0;
+ }
+diff --git a/drivers/gpu/drm/msm/msm_kms.h b/drivers/gpu/drm/msm/msm_kms.h
+index 64106ebcd49..6acceac948c 100644
+--- a/drivers/gpu/drm/msm/msm_kms.h
++++ b/drivers/gpu/drm/msm/msm_kms.h
+@@ -25,6 +25,9 @@
+ struct msm_kms_funcs {
+ 	/* hw initialization: */
+ 	int (*hw_init)(struct msm_kms *kms);
++	/* Optional fixed-panel signal conversion, initialized before registration. */
++	void (*init_output_color)(struct msm_kms *kms, struct drm_connector *connector,
++				  const struct device_node *panel);
+ 	/* irq handling: */
+ 	void (*irq_preinstall)(struct msm_kms *kms);
+ 	int (*irq_postinstall)(struct msm_kms *kms);
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36532.c b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+index 77e4be3017c..cf1fb2dad15 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+@@ -13,6 +13,7 @@
+ #include <linux/of.h>
+ #include <linux/of_graph.h>
+ #include <linux/regulator/consumer.h>
++#include <linux/unaligned.h>
+ 
+ #include <video/mipi_display.h>
+ 
+@@ -20,6 +21,7 @@
+ #include <drm/display/drm_dsc_helper.h>
+ #include <drm/drm_connector.h>
+ #include <drm/drm_crtc.h>
++#include <drm/drm_edid.h>
+ #include <drm/drm_mipi_dsi.h>
+ #include <drm/drm_modes.h>
+ #include <drm/drm_panel.h>
+@@ -55,6 +57,8 @@ struct panel_info {
+ 	bool is_dual_dsi;
+ 	bool piano_reset_sequence;
+ 	bool supports_scaling;
++	u8 hdr_max_luminance;
++	u8 hdr_min_luminance;
+ };
+ 
+ static const struct regulator_bulk_data nt36532_supplies[] = {
+@@ -194,6 +198,107 @@ static int nt36532_unprepare(struct drm_panel *panel)
+ 	return 0;
+ }
+ 
++static void nt36532_edid_checksum(u8 *block)
++{
++	u8 sum = 0;
++	unsigned int i;
++
++	for (i = 0; i < 127; i++)
++		sum += block[i];
++	block[127] = -sum;
++}
++
++static void nt36532_update_edid(struct nt36532 *ctx, struct drm_connector *connector)
++{
++	const struct drm_display_mode *mode = &ctx->panel_info->modes[1];
++	const struct drm_edid *edid;
++	u8 data[384] = { 0 };
++	u8 *cta = data + 128, *displayid = data + 256, *timing = displayid + 8;
++	/* P3-D65 primaries from the matching stock panel calibration. */
++	static const u16 primaries[] = { 696, 328, 271, 707, 154, 61, 320, 337 };
++	unsigned int i;
++	u32 clock = mode->clock - 1;
++	u8 sum = 0;
++
++	if (!ctx->panel_info->hdr_max_luminance || !connector->colorspace_property)
++		return;
++	/* Synthesized description of the complete DPU + fixed-panel output.
++	 * The sink accepts PQ only through the driver's calibrated conversion;
++	 * the panel/DDIC and DSC transport remain native-encoded at 10 bpc.
++	 */
++	memcpy(data, "\x00\xff\xff\xff\xff\xff\xff\x00", 8);
++	data[8] = 0x61; /* XMI */
++	data[9] = 0xa9;
++	put_unaligned_le16(0x81, data + 10);
++	data[16] = 0;
++	data[17] = 35; /* 2025 panel generation, not a per-unit manufacture date. */
++	data[18] = 1;
++	data[19] = 4;
++	data[20] = DRM_EDID_INPUT_DIGITAL | DRM_EDID_DIGITAL_DEPTH_10;
++	data[21] = 24;
++	data[22] = 16;
++	data[23] = 120; /* Gamma 2.2. */
++	for (i = 0; i < ARRAY_SIZE(primaries); i++) {
++		data[27 + i] = primaries[i] >> 2;
++		data[25 + i / 4] |= (primaries[i] & 3) << (6 - 2 * (i % 4));
++	}
++	memset(data + 38, 1, 16); /* Unused standard timings. */
++	data[57] = 0xfc;
++	memcpy(data + 59, "Piano display", 13);
++	data[75] = 0xfe;
++	memcpy(data + 77, "DPU synthesis", 13);
++	data[93] = 0x10;
++	data[111] = 0x10;
++	data[126] = 2;
++	nt36532_edid_checksum(data);
++
++	cta[0] = CEA_EXT;
++	cta[1] = 3;
++	cta[2] = 15;
++	cta[4] = (7 << 5) | 3;
++	cta[5] = 5; /* Colorimetry data block. */
++	cta[6] = BIT(7); /* BT.2020 RGB. */
++	cta[8] = (7 << 5) | 6;
++	cta[9] = 6; /* HDR static metadata data block. */
++	cta[10] = BIT(0) | BIT(2); /* Traditional SDR and SMPTE ST 2084. */
++	cta[11] = BIT(0); /* Static metadata type 1. */
++	cta[12] = ctx->panel_info->hdr_max_luminance;
++	cta[13] = ctx->panel_info->hdr_max_luminance;
++	cta[14] = ctx->panel_info->hdr_min_luminance;
++	nt36532_edid_checksum(cta);
++
++	/* Native 120 Hz exceeds the base EDID's 655.35 MHz timing limit.
++	 * DisplayID type VII describes the actual clock without truncation.
++	 */
++	displayid[0] = DISPLAYID_EXT;
++	displayid[1] = 0x20;
++	displayid[2] = 23;
++	displayid[3] = 2;
++	displayid[5] = 0x22;
++	displayid[7] = 20;
++	timing[0] = clock;
++	timing[1] = clock >> 8;
++	timing[2] = clock >> 16;
++	timing[3] = BIT(7);
++	put_unaligned_le16(mode->hdisplay - 1, timing + 4);
++	put_unaligned_le16(mode->htotal - mode->hdisplay - 1, timing + 6);
++	put_unaligned_le16(mode->hsync_start - mode->hdisplay - 1, timing + 8);
++	put_unaligned_le16(mode->hsync_end - mode->hsync_start - 1, timing + 10);
++	put_unaligned_le16(mode->vdisplay - 1, timing + 12);
++	put_unaligned_le16(mode->vtotal - mode->vdisplay - 1, timing + 14);
++	put_unaligned_le16(mode->vsync_start - mode->vdisplay - 1, timing + 16);
++	put_unaligned_le16(mode->vsync_end - mode->vsync_start - 1, timing + 18);
++	for (i = 1; i < 28; i++)
++		sum += displayid[i];
++	displayid[28] = -sum;
++	nt36532_edid_checksum(displayid);
++	edid = drm_edid_alloc(data, sizeof(data));
++	if (!edid)
++		return;
++	drm_edid_connector_update(connector, edid);
++	drm_edid_free(edid);
++}
++
+ static int nt36532_get_modes(struct drm_panel *panel,
+ 			     struct drm_connector *connector)
+ {
+@@ -203,6 +308,8 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ 	unsigned int i;
+ 	int count = panel_info->num_modes;
+ 
++	nt36532_update_edid(ctx, connector);
++
+ 	/* Piano's validated pen scan uses a 120 Hz cold-start display mode.
+ 	 * Keep every advertised mode and each panel vendor's own sequence.
+ 	 */
+@@ -822,7 +929,7 @@ static const struct panel_info csot_panel_info = {
+ 	.is_dual_dsi = true,
+ };
+ 
+-#define PIANO_PANEL_INFO(_init) {						\
++#define PIANO_PANEL_INFO(_init, _peak, _black) {				\
+ 	.lanes = 4,								\
+ 	.format = MIPI_DSI_FMT_RGB101010,					\
+ 	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_CLOCK_NON_CONTINUOUS |	\
+@@ -835,14 +942,16 @@ static const struct panel_info csot_panel_info = {
+ 	.init_sequence = _init,							\
+ 	.piano_reset_sequence = true,						\
+ 	.supports_scaling = true,						\
++	.hdr_max_luminance = _peak,					\
++	.hdr_min_luminance = _black,					\
+ 	.is_dual_dsi = true,							\
+ }
+ 
+ static const struct panel_info piano_boe_panel_info =
+-	PIANO_PANEL_INFO(piano_boe_init_sequence);
++	PIANO_PANEL_INFO(piano_boe_init_sequence, 127, 78);
+ 
+ static const struct panel_info piano_csot_panel_info =
+-	PIANO_PANEL_INFO(piano_csot_init_sequence);
++	PIANO_PANEL_INFO(piano_csot_init_sequence, 130, 75);
+ 
+ static const struct of_device_id nt36532_of_match[] = {
+ 	{ .compatible = "csot,ppc100hb1-1", .data = &csot_panel_info },
+-- 
+2.56.0
+

@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "4344bbcedc7d9b16a0991d24cbc8e52495656638",
-  "original_target_commit": "0155e5a062f60916d2dd1e3401ae33f3fbc4fa72",
+  "target_tree": "c25063c1dd694b4688c87a7f4002ad2d4a81a31b",
+  "original_target_commit": "6e0a9b58a33ad9633cade6223e78bbb6553fe1ef",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -455,6 +455,30 @@
       "original_parent": "e1b0264d055d40378d54e7a4f3e00a6ea9449752",
       "tree": "4344bbcedc7d9b16a0991d24cbc8e52495656638",
       "committer_date": "2026-11-08T22:32:16+08:00"
+    },
+    {
+      "file": "0057-dpu-fixed-panel-hdr-conversion.patch",
+      "sha256": "e86c70753275b4f7bd172267c0024dfadbb773698fc25ac475c911023b79a45d",
+      "original_commit": "e8c00af6b31352f55752ae6030a7510928f32b12",
+      "original_parent": "0155e5a062f60916d2dd1e3401ae33f3fbc4fa72",
+      "tree": "067ee681f9bab4c20d0d50a5b928ef404758d67f",
+      "committer_date": "2026-11-08T23:39:32+08:00"
+    },
+    {
+      "file": "0058-panel-displayid-description.patch",
+      "sha256": "1e7870ec3108990a423c2115ee0b0943e33e5bb5b52ec2ff70e112e4b1d1fd12",
+      "original_commit": "fb656661c88c915e6a2e30412ab8597f3970ffe3",
+      "original_parent": "e8c00af6b31352f55752ae6030a7510928f32b12",
+      "tree": "4d64877d90bbade997b8a680340b4d996af327e1",
+      "committer_date": "2026-11-09T00:08:36+08:00"
+    },
+    {
+      "file": "0059-dpu-output-color-validation.patch",
+      "sha256": "e185522b2bb626003f7e2941b5c401a8be86b5b5276a856b5abe943a803da860",
+      "original_commit": "6e0a9b58a33ad9633cade6223e78bbb6553fe1ef",
+      "original_parent": "fb656661c88c915e6a2e30412ab8597f3970ffe3",
+      "tree": "c25063c1dd694b4688c87a7f4002ad2d4a81a31b",
+      "committer_date": "2026-11-09T00:41:04+08:00"
     }
   ]
 }

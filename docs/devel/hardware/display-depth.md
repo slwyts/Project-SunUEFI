@@ -12,6 +12,7 @@ Piano 的默认内核使用 RGB101010 和 DSC 1.1：输入是 **10 bpc**，压�
 | `GAMMA_LUT` | 均匀 65536 项，映射为 GCv2 的 1024 个主采样点和 256 个暗部扩展点 |
 | `DEGAMMA_LUT` | 1025 项均匀采样、每色 16 位，映射到 IGCv5 高精度曲线 |
 | `CTM` | 现有 PCC 色彩矩阵 |
+| `EDID`、`Colorspace`、`HDR_OUTPUT_METADATA` | 固定内屏的合成能力描述、BT.2020 RGB 与 PQ 输出转换；需要匹配的校准固件 |
 
 GC 和 IGC 在同一 REGDMA 缓冲区提交到使用的两路 DSPP，完成后一起生效。实机已完成暗部扩展的恒等、非线性和旁路恢复，完整曲线为 2532 个 word，旁路为 8 个 word，两路 DSPP 均返回完成状态。实现及资源管理见 [GCv2／IGCv5 后端](gcv2-night-light.md)。
 
@@ -19,11 +20,10 @@ KDE 6.6 报告色深为自动 10 位，可选范围为 `10..10`，因此不显�
 GNOME 51 也没有独立的 8／10／12 位选择器。当前 KWin 使用 `AR30` 十位主平面。
 改变传输位深还需要匹配面板命令和 DSC PPS，不能仅扩大 `max bpc` 属性范围。
 
-HDR 内容可以经合成器色调映射显示，但 DSI 尚未提供完整的 HDR 输出模式。
-KWin 报告 HDR 和广色域输出均不可用，只显示 EDR 策略；EDR 利用背光余量提高
-内容亮度，不表示面板接收 PQ／BT.2020 像素，也不是 HDR 模式开关。
-KWin 的 HDR 能力判断要求标准 Colorspace、HDR metadata 与 EDID 中的 BT.2020／PQ
-能力，当前内屏不具备这套描述和对应输出转换。接入要求见下文。
+固定内屏通过标准属性接收合成器的 PQ／BT.2020 输出，由 DPU 转换为面板原生编码，
+不是把 PQ 数据直接送入 DDIC。原版 KWin 可以切换 HDR 和广色域；合成器负责
+混合内容和色调映射，驱动负责面板信号转换。普通 SDR 默认仍走原有路径。
+EDR 是合成器利用背光余量的独立策略，不等同于这个 HDR 输出模式。
 
 ## 分辨率与刷新率
 
@@ -32,7 +32,7 @@ KWin 的 HDR 能力判断要求标准 Colorspace、HDR metadata 与 EDID 中的 
 BOE、CSOT 最终设备树中每条 DSI 的时序宽度为 1600、高度为 2136，双 DSI 合成
 完整宽度。Linux 面板模式表与这些尺寸和刷新率一致，默认选 120 Hz。
 
-内核提供 2560×1708、2400×1602、1920×1280、1600×1068、1280×854 五档低分辨率源模式，各自保留七档刷新率。DSI 桥在 `adjusted_mode` 中恢复同刷新率的原生时序，DPU 将平面和光标的目标坐标缩放到完整面板，再进行 SSPP 分配和双路裁剪。DSC 的 slice 和面板命令保持原样。
+内核提供 2560×1708、2400×1602、1920×1280、1600×1068、1280×854，以及 EDID 兼容所需的 640×480 源模式，各自保留七档刷新率。DSI 桥在 `adjusted_mode` 中恢复同刷新率的原生时序，DPU 将平面和光标的目标坐标缩放到完整面板，再进行 SSPP 分配和双路裁剪。DSC 的 slice 和面板命令保持原样。
 
 SteamOS／KDE 在 Linux 7.3.3 上已切换 1600×1068@120 和 2400×1602@60，再恢复 3200×2136@120，物理屏幕保持全屏显示。1600×1068 模式下，内核读回两路 `800×1068 → 1600×2136`，光标也缩放到物理坐标。其他组合及切换后的触摸定位仍需逐项检查。
 
@@ -93,8 +93,31 @@ DSPP 抖动位置来自原厂最终设备树的 `qcom,sde-dspp-dither = <0x82c 0
 配置中开启的 `PostBlendDither` 都是同一组值：`ditherMode` 为 `LUMA`，`strengthR`／`strengthG`／`strengthB` 均为 6，`temporalEnable=0`，4×4 矩阵 `[15,7,13,5,3,11,1,9,12,4,14,6,0,8,2,10]`。实际 SDR 和 HDR 播放中这些后混合模块仍关闭，Linux 不额外开启；IGC 内部抖动由 7.3 的 `0016` 补丁在存在 Degamma LUT 时按强度 4 打开。
 
 
-## HDR 接入要求
+## 标准 HDR 输出
 
-后续实现需要完整处理内容的传递函数、色域、面板亮度和色调映射，再通过标准 DRM/KMS 能力交给桌面使用。不能只添加 HDR 属性或虚构 EDID 来显示开关。Mutter 当前还从 EDID 联合检查 BT.2020、PQ 和静态 HDR metadata 能力；无 EDID 的内屏需要的能力描述与对应输出处理。
+面板驱动合成 EDID 1.4、CTA HDR 数据块和 DisplayID 原生时序。这是完整 DPU／
+固定内屏路径的能力描述，不是屏幕实际提供的 EDID。十位输入、P3-D65 原色、
+Gamma 2.2 和亮度来自对应原厂配置；原生 120 Hz 时钟超过基础 EDID 的
+655.35 MHz 上限，由 DisplayID type VII 完整描述。基础块中的低分辨率输入由
+DPU 全屏缩放处理，不改变 DSI／DSC 时序。KDE 的默认显示配置同时匹配旧的无 EDID
+入口和合成身份，保持 3200×2136@120、两倍缩放。
+
+匹配的 `qcom/sm8750/piano-{boe,csot}-display.bin` 提供转换数据。
+生成来源与方法见[显示校准固件](../../../vendor/firmware/piano-display/README.md)。
+固件缺失、格式错误或硬件块不匹配时不附加 HDR 属性、不生成 HDR EDID，
+普通 SDR 继续启动。能力属性在 DRM 设备注册前创建。
+
+输出状态分为三种：普通 SDR 旁路、BT.2020 SDR 和 PQ HDR。后两者依次使用
+IGCv5 线性化、Gamut v4.3 的 17³ 色域及面板校准、GCv2 原厂曲线，
+同一批 REGDMA 命令广播到两路 DSPP。转换生效时，如果合成器同时请求
+`CTM`、`GAMMA_LUT` 或 `DEGAMMA_LUT`，原子检查拒绝该组合，让合成器回退到
+GPU 完成这些操作，不悄悄忽略用户空间请求。普通 SDR 的标准 LUT 和夜灯接口不变。
+驱动退出或 DMA 出错继续遵守[REGDMA 的资源保留规则](gcv2-night-light.md)。
+
+SteamOS 原版 KWin 已完成 HDR／广色域启闭和 DPMS 关屏恢复。PQ 模式下两路
+Gamut、IGC、GC 控制字分别读回 `0x1`、`0x10114`、`0x5`；关闭后全部旁路，
+REGDMA 完成状态为 `0x8`、错误状态为零。背光在 HDR 时升到 2047，关闭后恢复
+原档位；PQ 四级图样有可见亮度差异。该验证不代表逐台峰值、黑位或色准完成测量，
+也不代表十二位 FRC 已实现。BOE 的数据已按对应原厂配置生成，尚无该面板的实机结果。
 
 [`tools/android/piano_drm_snapshot.c`](../../../tools/android/piano_drm_snapshot.c)可在 Android 和 Linux 中只读导出 DRM 属性及 LUT blob。将同一画面设置下的 SDR 与 HDR 播放状态对照，同时确认活动 CRTC、HDR 图层和电源状态；blob 存在或 DMA 完成不能单独证明物理 HDR 输出。

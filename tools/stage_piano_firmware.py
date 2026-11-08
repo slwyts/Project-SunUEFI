@@ -2,7 +2,7 @@
 """Stage the fixed upstream firmware and the selected complete Piano update."""
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 
@@ -28,6 +28,14 @@ def stage(source, rootfs):
     for name in cfg.get('overlays', []):
         manifest = ROOT / name
         data = json.loads(manifest.read_text())
+        directory = PurePosixPath(data.get('directory', '.'))
+        if directory.is_absolute() or '..' in directory.parts:
+            raise ValueError('Invalid firmware directory')
+        destination = firmware
+        for part in directory.parts:
+            destination /= part
+            if destination.is_symlink():
+                raise ValueError('Firmware destination traverses a symlink')
         for filename, item in data['files'].items():
             path = manifest.parent / filename
             if Path(filename).name != filename or path.is_symlink():
@@ -36,9 +44,10 @@ def stage(source, rootfs):
             if len(content) != item['bytes'] or hashlib.sha256(content).hexdigest() != item['sha256']:
                 raise ValueError('Firmware checksum mismatch: ' + filename)
         # Validate the whole set before replacing any file.
+        destination.mkdir(parents=True, exist_ok=True)
         for filename, item in data['files'].items():
-            shutil.copy2(manifest.parent / filename, firmware / filename)
-            hashes[filename] = item['sha256']
+            shutil.copy2(manifest.parent / filename, destination / filename)
+            hashes[(directory / filename).as_posix()] = item['sha256']
         record['overlays'].append({'manifest': name, 'rom': data['rom'],
                                   'sha256': hashlib.sha256(manifest.read_bytes()).hexdigest()})
         notice = rootfs / 'usr/share/licenses/piano-firmware' / (manifest.parent.name + '.md')

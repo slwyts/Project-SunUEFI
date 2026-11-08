@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Derive the selected desktop's base recipe without altering the upstream tree."""
 from pathlib import Path
+import copy
+import json
 import shutil
 
 GNOME_PACKAGES = {
@@ -108,7 +110,21 @@ def configure(rootfs, run, input_method='fcitx'):
             'Exec=fcitx5 -d --replace\nOnlyShowIn=KDE;\nNoDisplay=true\n')
     overlay = Path(__file__).resolve().parents[1] / 'linux/desktops/kde/config'
     for source in sorted(overlay.iterdir()):
-        shutil.copyfile(source, config / source.name)
+        if source.name != 'kwinoutputconfig.json':
+            shutil.copyfile(source, config / source.name)
+            continue
+        output_config = json.loads(source.read_text())
+        outputs = next(row['data'] for row in output_config if row['name'] == 'outputs')
+        setups = next(row['data'] for row in output_config if row['name'] == 'setups')
+        # Match the synthesized fixed-panel identity as well as old EDID-less
+        # kernels. Only the selected display exists, so setup indices differ.
+        output = copy.deepcopy(outputs[0])
+        output['edidIdentifier'] = 'XMI 129 0 0 2025 0'
+        outputs.append(output)
+        setup = copy.deepcopy(setups[0])
+        setup['outputs'][0]['outputIndex'] = len(outputs) - 1
+        setups.append(setup)
+        (config / source.name).write_text(json.dumps(output_config, indent=2) + '\n')
     # KWin chooses screen scaling from the panel dimensions. An application
     # QT_SCALE_FACTOR would double-scale Qt and leave GTK applications behind.
     run(['chroot', rootfs, 'chown', '-R', 'piano:piano', '/home/piano/.config'], check=True)

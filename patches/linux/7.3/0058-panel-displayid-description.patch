@@ -1,0 +1,166 @@
+From fb656661c88c915e6a2e30412ab8597f3970ffe3 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 00:08:36 +0800
+Subject: [PATCH] drm/panel: describe native DisplayID timings and compatible
+ fitted input
+
+---
+ drivers/gpu/drm/panel/panel-novatek-nt36532.c | 76 +++++++++++++++----
+ 1 file changed, 60 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36532.c b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+index cf1fb2dad15..5b2f327a3ee 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+@@ -59,6 +59,8 @@ struct panel_info {
+ 	bool supports_scaling;
+ 	u8 hdr_max_luminance;
+ 	u8 hdr_min_luminance;
++	u16 hdr_peak_half;
++	u16 hdr_black_half;
+ };
+ 
+ static const struct regulator_bulk_data nt36532_supplies[] = {
+@@ -213,7 +215,8 @@ static void nt36532_update_edid(struct nt36532 *ctx, struct drm_connector *conne
+ 	const struct drm_display_mode *mode = &ctx->panel_info->modes[1];
+ 	const struct drm_edid *edid;
+ 	u8 data[384] = { 0 };
+-	u8 *cta = data + 128, *displayid = data + 256, *timing = displayid + 8;
++	u8 *cta = data + 128, *displayid = data + 256, *params = displayid + 5;
++	u8 *timing = displayid + 40, *dtd = data + 54;
+ 	/* P3-D65 primaries from the matching stock panel calibration. */
+ 	static const u16 primaries[] = { 696, 328, 271, 707, 154, 61, 320, 337 };
+ 	unsigned int i;
+@@ -243,18 +246,35 @@ static void nt36532_update_edid(struct nt36532 *ctx, struct drm_connector *conne
+ 		data[25 + i / 4] |= (primaries[i] & 3) << (6 - 2 * (i % 4));
+ 	}
+ 	memset(data + 38, 1, 16); /* Unused standard timings. */
+-	data[57] = 0xfc;
+-	memcpy(data + 59, "Piano display", 13);
+-	data[75] = 0xfe;
+-	memcpy(data + 77, "DPU synthesis", 13);
+-	data[93] = 0x10;
++	/* The base block carries an existing fitted source mode. Its native
++	 * pixel format flag stays clear; DisplayID describes native 3200x2136.
++	 */
++	put_unaligned_le16(22265, dtd);
++	dtd[2] = 1600 & 255;
++	dtd[3] = 96;
++	dtd[4] = 0x60;
++	dtd[5] = 1068 & 255;
++	dtd[6] = 26;
++	dtd[7] = 0x40;
++	dtd[8] = 32;
++	dtd[9] = 32;
++	dtd[10] = 0x82;
++	dtd[12] = 239;
++	dtd[13] = 163;
++	dtd[17] = 0x18;
++	data[35] = BIT(5); /* Standard VGA input, also handled by DPU fitting. */
++	data[75] = 0xfc;
++	memcpy(data + 77, "Piano display", 13);
++	data[93] = 0xfe;
++	memcpy(data + 95, "DPU synthesis", 13);
+ 	data[111] = 0x10;
+ 	data[126] = 2;
+ 	nt36532_edid_checksum(data);
+ 
+ 	cta[0] = CEA_EXT;
+ 	cta[1] = 3;
+-	cta[2] = 15;
++	cta[2] = 18;
++	cta[3] = BIT(7); /* IT formats are underscanned. */
+ 	cta[4] = (7 << 5) | 3;
+ 	cta[5] = 5; /* Colorimetry data block. */
+ 	cta[6] = BIT(7); /* BT.2020 RGB. */
+@@ -265,6 +285,9 @@ static void nt36532_update_edid(struct nt36532 *ctx, struct drm_connector *conne
+ 	cta[12] = ctx->panel_info->hdr_max_luminance;
+ 	cta[13] = ctx->panel_info->hdr_max_luminance;
+ 	cta[14] = ctx->panel_info->hdr_min_luminance;
++	cta[15] = (7 << 5) | 2;
++	cta[16] = 0; /* Video capability data block. */
++	cta[17] = 0x4a; /* Selectable RGB quantization, underscanned input. */
+ 	nt36532_edid_checksum(cta);
+ 
+ 	/* Native 120 Hz exceeds the base EDID's 655.35 MHz timing limit.
+@@ -272,14 +295,33 @@ static void nt36532_update_edid(struct nt36532 *ctx, struct drm_connector *conne
+ 	 */
+ 	displayid[0] = DISPLAYID_EXT;
+ 	displayid[1] = 0x20;
+-	displayid[2] = 23;
++	displayid[2] = 55;
+ 	displayid[3] = 2;
+-	displayid[5] = 0x22;
+-	displayid[7] = 20;
++	params[0] = 0x21;
++	params[2] = 29;
++	put_unaligned_le16(2390, params + 3);
++	put_unaligned_le16(1630, params + 5);
++	put_unaligned_le16(3200, params + 7);
++	put_unaligned_le16(2136, params + 9);
++	params[11] = 0x88; /* Guidance luminance; panel carries no audio. */
++	for (i = 0; i < 4; i++) {
++		u16 x = primaries[i * 2] * 4, y = primaries[i * 2 + 1] * 4;
++
++		params[12 + i * 3] = x;
++		params[13 + i * 3] = (x >> 8) | ((y & 15) << 4);
++		params[14 + i * 3] = y >> 4;
++	}
++	put_unaligned_le16(ctx->panel_info->hdr_peak_half, params + 24);
++	put_unaligned_le16(ctx->panel_info->hdr_peak_half, params + 26);
++	put_unaligned_le16(ctx->panel_info->hdr_black_half, params + 28);
++	params[30] = BIT(4); /* LCD, physical native component depth unspecified. */
++	params[31] = 120;
++	displayid[37] = 0x22;
++	displayid[39] = 20;
+ 	timing[0] = clock;
+ 	timing[1] = clock >> 8;
+ 	timing[2] = clock >> 16;
+-	timing[3] = BIT(7);
++	timing[3] = BIT(7) | 8; /* Preferred, aspect ratio follows pixel dimensions. */
+ 	put_unaligned_le16(mode->hdisplay - 1, timing + 4);
+ 	put_unaligned_le16(mode->htotal - mode->hdisplay - 1, timing + 6);
+ 	put_unaligned_le16(mode->hsync_start - mode->hdisplay - 1, timing + 8);
+@@ -288,9 +330,9 @@ static void nt36532_update_edid(struct nt36532 *ctx, struct drm_connector *conne
+ 	put_unaligned_le16(mode->vtotal - mode->vdisplay - 1, timing + 14);
+ 	put_unaligned_le16(mode->vsync_start - mode->vdisplay - 1, timing + 16);
+ 	put_unaligned_le16(mode->vsync_end - mode->vsync_start - 1, timing + 18);
+-	for (i = 1; i < 28; i++)
++	for (i = 1; i < 60; i++)
+ 		sum += displayid[i];
+-	displayid[28] = -sum;
++	displayid[60] = -sum;
+ 	nt36532_edid_checksum(displayid);
+ 	edid = drm_edid_alloc(data, sizeof(data));
+ 	if (!edid)
+@@ -929,7 +971,7 @@ static const struct panel_info csot_panel_info = {
+ 	.is_dual_dsi = true,
+ };
+ 
+-#define PIANO_PANEL_INFO(_init, _peak, _black) {				\
++#define PIANO_PANEL_INFO(_init, _peak, _black, _peak_half, _black_half) {	\
+ 	.lanes = 4,								\
+ 	.format = MIPI_DSI_FMT_RGB101010,					\
+ 	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_CLOCK_NON_CONTINUOUS |	\
+@@ -944,14 +986,16 @@ static const struct panel_info csot_panel_info = {
+ 	.supports_scaling = true,						\
+ 	.hdr_max_luminance = _peak,					\
+ 	.hdr_min_luminance = _black,					\
++	.hdr_peak_half = _peak_half,					\
++	.hdr_black_half = _black_half,					\
+ 	.is_dual_dsi = true,							\
+ }
+ 
+ static const struct panel_info piano_boe_panel_info =
+-	PIANO_PANEL_INFO(piano_boe_init_sequence, 127, 78);
++	PIANO_PANEL_INFO(piano_boe_init_sequence, 127, 78, 0x6213, 0x39d3);
+ 
+ static const struct panel_info piano_csot_panel_info =
+-	PIANO_PANEL_INFO(piano_csot_init_sequence, 130, 75);
++	PIANO_PANEL_INFO(piano_csot_init_sequence, 130, 75, 0x6299, 0x39da);
+ 
+ static const struct of_device_id nt36532_of_match[] = {
+ 	{ .compatible = "csot,ppc100hb1-1", .data = &csot_panel_info },
+-- 
+2.56.0
+

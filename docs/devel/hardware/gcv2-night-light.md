@@ -1,12 +1,12 @@
 # GCv2／IGCv5 与标准色彩接口
 
-默认内核通过高通 REGDMA 提交硬件色彩查找表，提供标准 `GAMMA_LUT`、`DEGAMMA_LUT`，与现有 `CTM` 配合。GNOME 夜灯可用；这组接口是 HDR 处理的基础，完整 HDR 和 12-bit FRC 仍未实现。
+默认内核通过高通 REGDMA 提交硬件色彩查找表，提供标准 `GAMMA_LUT`、`DEGAMMA_LUT`，与现有 `CTM` 配合。GNOME 夜灯可用；固定内屏的 HDR 信号转换另见[显示位深与 HDR](display-depth.md#标准-hdr-输出)。12-bit FRC 仍未实现。
 
 ## 硬件资源
 
 实现对照 [MiCode 固定显示源码](https://github.com/MiCode/vendor_opensource_display-drivers/tree/aa06fd1757c28dce96fbe4e04d4530ec21b52aac)和原厂最终设备树：REGDMA3 的 MMIO 为 `0x0af80000/0x7000`，XIN 为 7，GCv2 相对 DSPP 的偏移为 `0x17c0`。启动设备树通过 [piano-regdma-resource.dtso](../../../linux/dts/piano-regdma-resource.dtso)提供命名资源。
 
-驱动使用正常 DPU GPUVM 中的 16 KiB GEM 缓冲区与 IOVA，不把 CPU 物理地址当作 DMA 地址。LUT 命令与最终描述符共享映射；描述符按照命令长度对齐。CTL 只使用 catalog 中存在的实例，寄存器范围在访问前核对。
+驱动使用正常 DPU GPUVM 中的 64 KiB GEM 缓冲区与 IOVA，容纳 GC、IGC 和 Gamut v4.3 的组合状态，不把 CPU 物理地址当作 DMA 地址。LUT 命令与最终描述符共享映射；描述符按照命令长度对齐。CTL 只使用 catalog 中存在的实例，寄存器范围在访问前核对。
 
 ## 曲线提交
 
@@ -21,4 +21,4 @@ IGCv5 实现位于[显示补丁](../../../patches/linux/7.3/0002-display.patch)�
 
 Mutter 的空 Gamma 恢复曾触发空数组访问，修复位于 [0001-kms-empty-gamma-bypass.patch](../../../linux/desktops/gnome/patches/mutter/0001-kms-empty-gamma-bypass.patch)，Debian 和 Nyarch 构建都包含它。
 
-内屏没有 EDID，GNOME 的颜色配置使用 colord 设备建立未校准的 sRGB 默认配置，保留用户自定义配置。它用于正常的 SDR 和夜灯联动，不声明额外 HDR 能力。色深和原厂处理的边界见[显示位深与 HDR](display-depth.md)。
+缺少显示校准固件时内屏仍没有 EDID，GNOME 的颜色配置使用 colord 设备建立未校准的 sRGB 默认配置，保留用户自定义配置。匹配校准固件时提供合成 EDID 和标准 HDR 属性；色深和原厂处理的边界见[显示位深与 HDR](display-depth.md)。
