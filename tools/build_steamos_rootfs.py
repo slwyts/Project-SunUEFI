@@ -368,11 +368,9 @@ done
     if not (ffmpeg / 'SOURCE.json').is_file():
         build_arch_ffmpeg.build(root, ffmpeg, resume=ffmpeg.exists())
     client = output / 'steam-client'
-    if not (client / 'SOURCE.json').is_file():
+    if (not (client / 'SOURCE.json').is_file() or
+            json.loads((client / 'SOURCE.json').read_text()) != prepare_steam_client.source_record()):
         prepare_steam_client.prepare(root, client)
-    if json.loads((client / 'SOURCE.json').read_text()) != json.loads(
-            (ROOT / 'config/steam-client.json').read_text()):
-        raise ValueError('Cached Steam client differs from config/steam-client.json')
     prepare_steam_client.enable_first_launch(root)
     game_runtime = output / 'steam-runtime'
     if not (game_runtime / 'SOURCE.json').is_file():

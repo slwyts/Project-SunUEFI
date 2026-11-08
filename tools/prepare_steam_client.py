@@ -15,6 +15,11 @@ from prepare_steamos_rootfs import download
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def source_record():
+    return {**json.loads((ROOT / 'config/steam-client.json').read_text()),
+            'builder_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
+
+
 def enable_first_launch(root):
     launcher = root / 'usr/lib/steam/bin_steam.sh'
     text = launcher.read_text()
@@ -48,7 +53,7 @@ done'''
 
 
 def prepare(root, output):
-    cfg = json.loads((ROOT / 'config/steam-client.json').read_text())
+    cfg = source_record()
     cache = output / 'downloads'
     tree = output / 'client'
     cache.mkdir(parents=True, exist_ok=True)
@@ -77,8 +82,10 @@ def prepare(root, output):
                 directory = entry.is_dir() or entry.filename.endswith('\\')
                 manifest_name = name.as_posix() + ('/' if directory else '')
                 timestamp = calendar.timegm((*entry.date_time, 0, 0, 0))
+                mode = entry.external_attr >> 16
                 installed[manifest_name] = (
-                    -1 if directory else entry.file_size, timestamp, entry.CRC)
+                    -1 if directory else -2 if stat.S_ISLNK(mode) else entry.file_size,
+                    timestamp, entry.CRC)
                 if directory:
                     target.mkdir(parents=True, exist_ok=True)
                     continue
@@ -86,7 +93,6 @@ def prepare(root, output):
                 if target.is_symlink() or any(p.is_symlink() for p in target.parents if p != tree):
                     raise ValueError('Steam archive writes through a symlink')
                 target.parent.mkdir(parents=True, exist_ok=True)
-                mode = entry.external_attr >> 16
                 if stat.S_ISLNK(mode):
                     link = source.read(entry).decode()
                     resolved = (target.parent / link).resolve()
@@ -104,9 +110,8 @@ def prepare(root, output):
             raise ValueError('Native client is incomplete: ' + required)
     (tree / 'package').mkdir(exist_ok=True)
     (tree / 'package/beta').write_text(cfg['channel'] + '\n')
-    # Steam's .installed file is a per-file size/time/ZIP-CRC inventory, not
-    # the download VDF. Without it the first run downloads the entire client
-    # again despite all signed-source archives already having been extracted.
+    # Steam's inventory uses -1 for directories and -2 for symlinks. A link's
+    # CRC covers its target text, not the referenced file's contents.
     inventory = 'steam_client_' + cfg['channel'] + '_' + cfg['platform'] + '.installed'
     inventory_text = ''.join(
         f'{name},{size};{timestamp};{crc}\n'
