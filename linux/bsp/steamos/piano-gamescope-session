@@ -13,4 +13,5 @@ trap 'systemctl --user stop gamescope-session.target' HUP INT TERM
 systemctl --user --wait start gamescope-session.target &
 wait
 systemctl --user stop graphical-session-pre.target
-systemctl --user unset-environment GAMESCOPE_WAYLAND_DISPLAY XDG_SESSION_TYPE QT_QPA_PLATFORM
+systemctl --user unset-environment GAMESCOPE_WAYLAND_DISPLAY XDG_SESSION_TYPE QT_QPA_PLATFORM GTK_IM_MODULE QT_IM_MODULE
+dbus-update-activation-environment --systemd GTK_IM_MODULE= QT_IM_MODULE=

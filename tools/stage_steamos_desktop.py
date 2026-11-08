@@ -68,26 +68,41 @@ def configure_package_updates(root):
 
 
 def configure_input_method(root):
-    # Use the installed IBus engine and its ordinary XIM/Qt/GTK interfaces.
+    # KWin starts the native Wayland input method; Xwayland uses its XIM bridge.
     put(root, 'etc/environment.d/60-piano-input-method.conf',
-        'GTK_IM_MODULE=ibus\nQT_IM_MODULE=ibus\n'
         'XMODIFIERS=@im=ibus\nSDL_IM_MODULE=ibus\n'
         'LANG=zh_CN.UTF-8\nLANGUAGE=zh_CN:zh\n')
-    put(root, 'etc/xdg/autostart/piano-ibus.desktop',
-        '[Desktop Entry]\nType=Application\nName=IBus\n'
-        'Exec=ibus-daemon --replace --xim\n'
-        'OnlyShowIn=KDE;\nNoDisplay=true\n')
+    (root / 'etc/xdg/autostart/piano-ibus.desktop').unlink(missing_ok=True)
+    (root / 'etc/xdg/Xwayland-session.d/10-ibus-x11').unlink(missing_ok=True)
+    put(root, 'etc/xdg/autostart/ibus.desktop',
+        '[Desktop Entry]\nType=Application\nName=IBus\nHidden=true\n')
     profile = root / 'etc/dconf/profile/user'
     text = profile.read_text() if profile.exists() else 'user-db:user\n'
     if 'system-db:local' not in text.splitlines():
         put(root, 'etc/dconf/profile/user', text.rstrip() + '\nsystem-db:local\n')
+    defaults = (
+        "[general]\npreload-engines=['pinyin', 'xkb:us::eng']\n"
+        "engines-order=['pinyin', 'xkb:us::eng']\n"
+        "[general/hotkey]\ntriggers=['<Control>space']\n")
     put(root, 'etc/dconf/db/local.d/60-piano-input-method',
-        "[desktop/ibus/general]\npreload-engines=['xkb:us::eng', 'pinyin']\n"
-        "engines-order=['xkb:us::eng', 'pinyin']\n"
+        "[desktop/ibus/general]\npreload-engines=['pinyin', 'xkb:us::eng']\n"
+        "engines-order=['pinyin', 'xkb:us::eng']\n"
         "[desktop/ibus/general/hotkey]\ntriggers=['<Control>space']\n")
     subprocess.run(['chroot', root, 'dconf', 'update'], check=True)
+    # The Frame image has an English-only user value which overrides defaults.
+    subprocess.run(['chroot', root, 'runuser', '-u', 'piano', '--',
+                    'dbus-run-session', '--', 'dconf', 'load', '/desktop/ibus/'],
+                   input=defaults, text=True, check=True)
     config = root / 'home/piano/.config'
     config.mkdir(parents=True, exist_ok=True)
+    kwin = config / 'kwinrc'
+    text = kwin.read_text() if kwin.exists() else ''
+    text = re.sub(r'(?m)^InputMethod=.*\n?', '', text)
+    if '[Wayland]' not in text:
+        text = text.rstrip() + '\n\n[Wayland]\n'
+    text = text.replace('[Wayland]\n', '[Wayland]\nInputMethod='
+                        '/usr/share/applications/org.freedesktop.IBus.Panel.Wayland.Gtk3.desktop\n', 1)
+    kwin.write_text(text)
     (config / 'plasma-localerc').write_text(
         '[Formats]\nLANG=zh_CN.UTF-8\n\n'
         '[Translations]\nLANGUAGE=zh_CN:zh\n')
@@ -99,7 +114,7 @@ def configure_input_method(root):
     else:
         text = text.rstrip() + '\n\n[Locale]\nLanguage=zh_CN:zh\n'
     globals_file.write_text(text)
-    for path in (config / 'plasma-localerc', globals_file):
+    for path in (config / 'plasma-localerc', globals_file, kwin):
         os.chown(path, 1000, 1000)
 
 
@@ -233,6 +248,10 @@ def configure_platform(root):
         autostart.write_text('\n'.join(
             'Exec=/usr/bin/steam -silent -language schinese %U' if line.startswith('Exec=') else line
             for line in text.splitlines()) + '\n')
+    # The browser is preinstalled. Shadow Frame's Discover installation link,
+    # leaving Chromium's actual application entry unchanged across updates.
+    put(root, 'usr/local/share/applications/org.chromium.Chromium.desktop',
+        '[Desktop Entry]\nType=Application\nName=Chromium\nHidden=true\n')
     # CPU policy is already configured by Piano. Do not load Valve's LAVD
     # sched_ext scheduler over the selected BORE/EEVDF kernel scheduler.
     put(root, 'etc/default/steamos-scheduler', 'GOVERNOR=schedutil\nSCHEDULER=none\n')
@@ -266,7 +285,6 @@ def configure(root):
         (root / 'etc/wireplumber/wireplumber.conf.d' / name).unlink(missing_ok=True)
     units = configure_platform(root)
     configure_package_updates(root)
-    configure_input_method(root)
     offload = root / 'etc/tmpfiles.d/steamos-offload.conf'
     offload.parent.mkdir(parents=True, exist_ok=True)
     offload.unlink(missing_ok=True)
@@ -288,13 +306,15 @@ def configure(root):
     for name in ('piano-gamescope-session', 'piano-gamescope-run',
                  'piano-gamescope-steam'):
         put(root, 'usr/local/bin/' + name, (bsp / name).read_text(), 0o755)
-    for name in ('gamescope-session.service', 'gamescope-session.target'):
+    for name in ('gamescope-session.service', 'gamescope-session.target',
+                 'gamescope-ibus.service'):
         put(root, 'etc/systemd/user/' + name, (bsp / name).read_text())
     put(root, 'usr/share/wayland-sessions/gamescope-wayland.desktop',
         '[Desktop Entry]\nName=Steam Gaming Mode\n'
         'Exec=/usr/local/bin/piano-gamescope-session\n'
         'Type=Application\nDesktopNames=gamescope\n')
     configure_kde(root, subprocess.run, input_method='ibus')
+    configure_input_method(root)
     project = Path(__file__).resolve().parents[1]
     base = json.loads((project / 'config/steamos.json').read_text())['base']
     commit = subprocess.check_output(

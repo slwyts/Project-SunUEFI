@@ -27,8 +27,11 @@ Steam 的系统更新入口使用 pacman 软件包更新，与 KDE Discover 共�
 其他库升级后，本地包仍可能需要重编。内核与 BSP 更新仍通过 SunUEFI
 助手刷写镜像。Steam 客户端自身的更新保留。
 
-默认提供 IBus 拼音，按 `Ctrl+空格` 切换中英文；KDE 与游戏模式使用
-标准 GTK、Qt、XIM 和 SDL 输入接口。
+默认提供 IBus 拼音，按 `Ctrl+空格` 切换中英文。KDE 由 KWin 启动原生
+Wayland 输入法，游戏模式由随会话停止的 `gamescope-ibus.service` 提供
+GTK、Qt、XIM 和 SDL 输入。构建覆盖 Frame 账号的仅英语初始值，不保留
+重复的桌面自动启动项；退出游戏模式时清掉专用输入环境，避免影响 KDE。
+Chromium 已预装，Frame 的“安装 Chromium”应用入口不显示。
 
 游戏模式默认开启触控板自然滚动。Steam 没有对应设置页；KDE 桌面模式可在
 系统设置的触控板页面调整，两种会话各自保存输入偏好。

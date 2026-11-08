@@ -93,7 +93,8 @@ def configure(rootfs, run, input_method='fcitx'):
     input_environment = rootfs / 'etc/environment.d/60-piano-input-method.conf'
     input_environment.parent.mkdir(parents=True, exist_ok=True)
     input_environment.write_text(
-        f'GTK_IM_MODULE={input_method}\nQT_IM_MODULE={input_method}\n'
+        (f'GTK_IM_MODULE={input_method}\nQT_IM_MODULE={input_method}\n'
+         if input_method == 'fcitx' else '') +
         f'XMODIFIERS=@im={input_method}\nSDL_IM_MODULE={input_method}\n')
     if input_method == 'fcitx':
         autostart = rootfs / 'etc/xdg/autostart/piano-fcitx5.desktop'

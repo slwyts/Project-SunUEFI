@@ -1,0 +1,7 @@
+[Unit]
+Description=Steam Gaming Mode input method
+PartOf=gamescope-session.target
+
+[Service]
+ExecStart=/usr/bin/ibus-daemon --replace --xim
+Slice=session.slice

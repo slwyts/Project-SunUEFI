@@ -13,7 +13,7 @@ unset WAYLAND_DISPLAY XDG_SESSION_TYPE
 dbus-update-activation-environment --systemd \
     DISPLAY GAMESCOPE_WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_RUNTIME_DIR \
     LANG LANGUAGE GTK_IM_MODULE QT_IM_MODULE XMODIFIERS SDL_IM_MODULE SteamDeck
-if ! ibus-daemon --daemonize --replace --xim; then
+if ! systemctl --user start gamescope-ibus.service; then
     printf '%s\n' 'IBus could not start; continuing Steam without Chinese input.' >&2
 fi
 systemd-notify --ready
