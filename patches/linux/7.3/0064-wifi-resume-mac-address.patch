@@ -1,0 +1,34 @@
+From 3dbac618631047e6db89b45f7bcf5c915f5c7e0f Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 06:01:40 +0800
+Subject: [PATCH] wifi: ath12k: retain the selected MAC when restarting
+ firmware
+
+Firmware on boards without an OTP MAC can report zeroes again after resume. Do not replace a valid address already used by the registered wiphy with zeroes and generate a different random fallback on every firmware restart. Valid firmware-provided addresses remain authoritative.
+---
+ drivers/net/wireless/ath/ath12k/wmi.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/wmi.c b/drivers/net/wireless/ath/ath12k/wmi.c
+index 0de82510b3d..aa2e8d646dd 100644
+--- a/drivers/net/wireless/ath/ath12k/wmi.c
++++ b/drivers/net/wireless/ath/ath12k/wmi.c
+@@ -7065,8 +7065,13 @@ static int ath12k_wmi_rdy_parse(struct ath12k_base *ab, u16 tag, u16 len,
+ 		rdy_parse->num_extra_mac_addr =
+ 			le32_to_cpu(fixed_param.ready_event_min.num_extra_mac_addr);
+ 
+-		ether_addr_copy(ab->mac_addr,
+-				fixed_param.ready_event_min.mac_addr.addr);
++		/* Firmware without an OTP address may report zeroes after every
++		 * restart. Keep the address already used by the registered wiphy.
++		 */
++		if (is_valid_ether_addr(fixed_param.ready_event_min.mac_addr.addr) ||
++		    !is_valid_ether_addr(ab->mac_addr))
++			ether_addr_copy(ab->mac_addr,
++					fixed_param.ready_event_min.mac_addr.addr);
+ 		ab->pktlog_defs_checksum = le32_to_cpu(fixed_param.pktlog_defs_checksum);
+ 		ab->wmi_ready = true;
+ 		break;
+-- 
+2.56.0
+

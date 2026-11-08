@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "d66d1c0aa66385eec570219211211ba2b94a43f4",
-  "original_target_commit": "851e6bbd6a30f2efd3cab0dc3864e27118dbcb59",
+  "target_tree": "a532092f31ef37a2569e6f15d74a8e82a7df5307",
+  "original_target_commit": "3dbac618631047e6db89b45f7bcf5c915f5c7e0f",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -511,6 +511,14 @@
       "original_parent": "066ff1a6d5761a93f04c5353a0b12f51ce577e17",
       "tree": "d66d1c0aa66385eec570219211211ba2b94a43f4",
       "committer_date": "2026-11-09T04:23:24+08:00"
+    },
+    {
+      "file": "0064-wifi-resume-mac-address.patch",
+      "sha256": "eaf096a1510c7c0c96c7a4e1bb4636e7c7cbef4e70d4bebbfbc9948275ed35e9",
+      "original_commit": "3dbac618631047e6db89b45f7bcf5c915f5c7e0f",
+      "original_parent": "851e6bbd6a30f2efd3cab0dc3864e27118dbcb59",
+      "tree": "a532092f31ef37a2569e6f15d74a8e82a7df5307",
+      "committer_date": "2026-11-09T06:01:40+08:00"
     }
   ]
 }
