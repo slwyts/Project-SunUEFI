@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/dts-v1/;
+/plugin/;
+
+/* The parallel cells are measurement components of one physical battery. */
+/ {
+	fragment@0 {
+		target-path = "/soc/qcom,qupv3_1_geni_se@ac0000/i2c@a94000/bq27z561_master@55";
+		piano_battery_cell0: __overlay__ {
+			ti,cell-monitor;
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc/qcom,qupv3_2_geni_se@8c0000/i2c@88c000/bq27z561_slave@55";
+		piano_battery_cell1: __overlay__ {
+			ti,cell-monitor;
+		};
+	};
+
+	fragment@2 {
+		target-path = "/";
+		__overlay__ {
+			battery {
+				compatible = "xiaomi,piano-battery";
+				power-supplies = <&piano_battery_cell0 &piano_battery_cell1>;
+			};
+		};
+	};
+};

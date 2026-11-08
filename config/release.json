@@ -8,7 +8,7 @@
     "stable_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
     "stable_version": "7.3.3",
     "uapi_sha256": "5638464826c36018483e2c06f260c1bc439fc6f66b584f56c1e76ec8846c37e5",
-    "target_tree": "5331f7d64c46e2bbb95463ed0c544296713f2777",
+    "target_tree": "3d7c6ed7944ce1f298b498a60b8f86ca2c5f7c2a",
     "cpu_model_overlay": "linux/dts/piano-cpu-model.dtso",
     "additional_dtb_overlays": [
       "linux/dts/piano-cma.dtso",
@@ -16,6 +16,7 @@
       "linux/dts/piano-pcie-clocks.dtso",
       "linux/dts/piano-usb-typec.dtso",
       "linux/dts/piano-displayport.dtso",
+      "linux/dts/piano-battery.dtso",
       "linux/dts/piano-ufs-mcq.dtso",
       "linux/dts/piano-dsp-resources.dtso",
       "linux/dts/piano-cdsp-fastrpc.dtso",

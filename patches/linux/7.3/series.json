@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "5331f7d64c46e2bbb95463ed0c544296713f2777",
-  "original_target_commit": "7d3173d0390424b12d7d4c9905ae194ddbf65f09",
+  "target_tree": "3d7c6ed7944ce1f298b498a60b8f86ca2c5f7c2a",
+  "original_target_commit": "a9eead3c1303f32558c098050e9f5c6bd6169163",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -623,6 +623,14 @@
       "original_parent": "c0ff9c1d5fa95697f0106ba245ac70b24f4fabb6",
       "committer_date": "2026-11-08T22:26:13+08:00",
       "tree": "5331f7d64c46e2bbb95463ed0c544296713f2777"
+    },
+    {
+      "file": "0050-power-piano-parallel-battery-pack.patch",
+      "sha256": "7371479c880ac79c1583ebaffb3ed9d5fad694371222289a998218babb77ce91",
+      "original_commit": "a9eead3c1303f32558c098050e9f5c6bd6169163",
+      "original_parent": "7d3173d0390424b12d7d4c9905ae194ddbf65f09",
+      "committer_date": "2026-11-08T22:28:29+08:00",
+      "tree": "3d7c6ed7944ce1f298b498a60b8f86ca2c5f7c2a"
     }
   ],
   "provenance": {
