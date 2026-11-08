@@ -1,0 +1,253 @@
+From 7d3173d0390424b12d7d4c9905ae194ddbf65f09 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 22:26:13 +0800
+Subject: [PATCH] fix(power): use real MCA charge-enable feedback
+
+HyperOS 4 returns successful empty replies for FCC and ITERM reads,
+while the model-0x56 FV getter uses twice the setter's register step.
+Treating these replies as write verification stops normal charging
+before the input current limit can be raised.
+
+Use the original setters' acknowledgments and session checks. Stop and
+resume the PMIC through its real charge-enable bit, after fresh
+temperature and normal-limit setup, and preserve pump-stop ordering on
+errors. Notify the existing gauge supply chain when measured net current
+changes direction.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/power/supply/piano_mca.c | 112 +++++++++++++++++++++----------
+ 1 file changed, 77 insertions(+), 35 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index aad1b2879..c27083565 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -60,6 +60,7 @@
+ #define MCA_OP_WRITE		2
+ 
+ /* Property ids recovered from the stock charger stack */
++#define MCA_PROP_CHARGE_ENABLE	0x2003	/* PMIC charge enable, u8 */
+ #define MCA_PROP_FCC		0x2005	/* charge current, mA */
+ #define MCA_PROP_ITERM		0x2006	/* termination current, mA */
+ #define MCA_PROP_FV		0x2007	/* normal float voltage, mV */
+@@ -181,8 +182,9 @@ MODULE_PARM_DESC(charge_policy,
+  * per degree to the fallback value, and comes back one step at a time, once
+  * the battery is a degree cooler than that step needs and at most every
+  * MCA_FCC_RAISE_MS.  Below MCA_FCC_TBAT_MIN it is the fallback value.  The
+- * ADSP's own JEITA window (0-55 degC) still applies.  Detach, unbind and
+- * ADSP restarts put the fallback value back.
++ * direct-charging policy below also applies the normal JEITA table and
++ * confirms the PMIC charge enable state. Detach and ADSP restarts discard
++ * the host's cached current settings.
+  */
+ #define MCA_FCC_MIN_MA		100
+ #define MCA_FCC_MAX_MA		3000	/* the ADSP's own nominal value */
+@@ -517,6 +519,7 @@ struct piano_mca {
+ 	u32 cp_stage;		/* even: CC, odd: CV; advances within a profile */
+ 	bool cp_cold, cp_hot;	/* temperature-stop recovery hysteresis */
+ 	bool normal_cold, normal_warm;	/* PMIC cold stop and warm-FV recovery */
++	int battery_direction;	/* sign of the last combined gauge current */
+ 	u8 normal_cool_zone, normal_hot_zone;	/* previous JEITA indices + 1 */
+ 	bool cp_thermal_stop;	/* may retry after temperature recovery */
+ 	unsigned long cp_taper_at;
+@@ -881,6 +884,9 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
+ 		return charge_current && len == sizeof(u32) &&
+ 		       ((cp_charge && val == 0) ||
+ 			(val >= MCA_FCC_MIN_MA && val <= MCA_FCC_MAX_MA));
++	case MCA_PROP_CHARGE_ENABLE:
++		return cp_charge && charge_current && len == sizeof(u8) &&
++		       *(const u8 *)data <= 1;
+ 	case MCA_PROP_FV:
+ 		/* The factory normal profiles and the firmware's default only. */
+ 		return cp_charge && charge_current && len == sizeof(u32) &&
+@@ -1777,8 +1783,8 @@ static u32 piano_mca_hv_icl(u32 real_type)
+  * charge_policy: raise the input current limit to what the detected charger
+  * type allows, never above what a PD source advertises at the voltage in
+  * use.  It does not follow the battery temperature (charge_current does), so
+- * a warm battery is not left to carry the system; JEITA stays with the ADSP,
+- * and its AICL still backs the limit off if the source sags.
++ * a warm battery is not left to carry the system. The ADSP's AICL still
++ * backs the limit off if the source sags.
+  */
+ static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat);
+ 
+@@ -1860,7 +1866,7 @@ static int piano_mca_cp_gauges(struct piano_mca *mca, int *vbat, int *ibat,
+ 			       int *tcool, int *twarm)
+ {
+ 	__le32 pack;
+-	int ret, temp;
++	int ret, temp, direction;
+ 
+ 	ret = piano_mca_gauges(vbat, ibat, tcool, twarm);
+ 	ret = ret ?: piano_mca_read(mca, MCA_PROP_PACK_TBAT, &pack, sizeof(pack));
+@@ -1869,6 +1875,16 @@ static int piano_mca_cp_gauges(struct piano_mca *mca, int *vbat, int *ibat,
+ 	temp = (s32)le32_to_cpu(pack);
+ 	*tcool = min(*tcool, temp);
+ 	*twarm = max(*twarm, temp);
++
++	/* PD setup can finish after the initial cable event. Notify only when
++	 * the measured net current changes direction, so the gauges and desktop
++	 * do not wait for their slow background poll to notice charging.
++	 */
++	direction = (*ibat > 0) - (*ibat < 0);
++	if (direction != mca->battery_direction) {
++		mca->battery_direction = direction;
++		power_supply_changed(mca->usb);
++	}
+ 	return 0;
+ }
+ 
+@@ -1962,12 +1978,39 @@ static int piano_mca_cp_normal_limits(struct piano_mca *mca, int vbat, int ibat,
+ 	return 0;
+ }
+ 
+-/* Acknowledgment and readback are both required before increasing voltage. */
++/* The enable getter really reads PMIC CHGR 0x2646 bit 0, unlike FCC/ITERM. */
++static int piano_mca_normal_enable(struct piano_mca *mca, bool enable,
++				   unsigned int generation,
++				   unsigned int connection)
++{
++	u8 requested = enable, actual;
++	int ret;
++
++	ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_CHARGE_ENABLE,
++			     &actual, sizeof(actual), generation, connection);
++	if (!ret && actual == requested)
++		return 0;
++	/* An unreadable charger may still be stopped, but must not be enabled. */
++	if (ret && enable)
++		return ret;
++	ret = piano_mca_write_session(mca, MCA_PROP_CHARGE_ENABLE,
++				      &requested, sizeof(requested),
++				      generation, connection);
++	ret = ret ?: piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_CHARGE_ENABLE,
++				    &actual, sizeof(actual), generation, connection);
++	if (ret)
++		return ret;
++	return actual == requested ? 0 : -EIO;
++}
++
++/*
++ * Use the stock setters' ACKs. FCC and ITERM reads are firmware no-ops;
++ * the model-0x56 FV getter also uses twice the setter's register scale.
++ */
+ static int piano_mca_normal_set_fv(struct piano_mca *mca, u32 mv,
+ 				   unsigned int generation,
+ 				   unsigned int connection)
+ {
+-	__le32 value;
+ 	int ret;
+ 
+ 	if (!piano_mca_session_valid(mca, generation, connection))
+@@ -1978,21 +2021,15 @@ static int piano_mca_normal_set_fv(struct piano_mca *mca, u32 mv,
+ 	/* A lost ACK can still have applied the write: discard the old cache. */
+ 	mca->fv_set_mv = 0;
+ 	ret = piano_mca_write_u32_session(mca, MCA_PROP_FV, mv, generation, connection);
+-	ret = ret ?: piano_mca_read(mca, MCA_PROP_FV, &value, sizeof(value));
+ 	if (ret)
+ 		return ret;
+ 	if (!piano_mca_session_valid(mca, generation, connection))
+ 		return -ENODEV;
+-	if (le32_to_cpu(value) != mv)
+-		return -EIO;
+ 	/* The real Piano proxy uses a four-byte mA value, with no enable bit. */
+ 	ret = piano_mca_write_u32_session(mca, MCA_PROP_ITERM, MCA_NORMAL_ITERM_MA,
+ 					  generation, connection);
+-	ret = ret ?: piano_mca_read(mca, MCA_PROP_ITERM, &value, sizeof(value));
+ 	if (ret)
+ 		return ret;
+-	if (le32_to_cpu(value) != MCA_NORMAL_ITERM_MA)
+-		return -EIO;
+ 	if (!piano_mca_session_valid(mca, generation, connection))
+ 		return -ENODEV;
+ 	if (mca->fv_generation != generation || mca->fv_connection != connection)
+@@ -2007,19 +2044,14 @@ static int piano_mca_normal_pause(struct piano_mca *mca,
+ 				  unsigned int generation,
+ 				  unsigned int connection)
+ {
+-	__le32 value;
+-	int ret;
++	int ret, fcc_ret;
+ 
+-	ret = piano_mca_write_u32_session(mca, MCA_PROP_FCC, 0,
+-					  generation, connection);
+-	ret = ret ?: piano_mca_read(mca, MCA_PROP_FCC, &value, sizeof(value));
+-	if (!ret && le32_to_cpu(value))
+-		ret = -EIO;
+-	if (!ret && !piano_mca_session_valid(mca, generation, connection))
+-		ret = -ENODEV;
++	ret = piano_mca_normal_enable(mca, false, generation, connection);
++	/* Attempt both controls even if the first command loses its ACK. */
++	fcc_ret = piano_mca_write_u32_session(mca, MCA_PROP_FCC, 0,
++					      generation, connection);
+ 	mca->fcc_set_ma = 0;
+-	/* The lowest normal FV is safe while sensor readings are unavailable. */
+-	return piano_mca_normal_set_fv(mca, 4060, generation, connection) ?: ret;
++	return ret ?: fcc_ret;
+ }
+ 
+ static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat)
+@@ -2076,13 +2108,16 @@ static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat)
+ 		piano_mca_normal_pause(mca, generation, connection);
+ 		return ret;
+ 	}
+-	if (mca->fcc_set_ma == ma)
+-		return piano_mca_session_valid(mca, generation, connection) ? 0 : -ENODEV;
+-	ret = piano_mca_write_u32_session(mca, MCA_PROP_FCC, ma,
+-					  generation, connection);
+-	if (!ret)
+-		mca->fcc_set_ma = ma;
+-	return ret;
++	if (mca->fcc_set_ma != ma)
++		ret = piano_mca_write_u32_session(mca, MCA_PROP_FCC, ma,
++						  generation, connection);
++	ret = ret ?: piano_mca_normal_enable(mca, true, generation, connection);
++	if (ret) {
++		piano_mca_normal_pause(mca, generation, connection);
++		return ret;
++	}
++	mca->fcc_set_ma = ma;
++	return 0;
+ }
+ 
+ static bool piano_mca_cp_active(struct piano_mca *mca)
+@@ -2171,6 +2206,8 @@ static int piano_mca_cp_set_buck(struct piano_mca *mca, u32 icl_ma,
+ 	ret = ret ?: piano_mca_write_u32_session(mca, MCA_PROP_FCC, fcc_ma,
+ 						 mca->cp_generation,
+ 						 mca->cp_connection_generation);
++	ret = ret ?: piano_mca_normal_enable(mca, true, mca->cp_generation,
++					     mca->cp_connection_generation);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -2372,9 +2409,12 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	ret = ret ?: piano_mca_cp_request(mca, start_mv);
+ 	if (ret) {
+ 		/* again after the adapter reset */
+-		if (!piano_mca_cp_stop(mca, "start refused") &&
+-		    piano_mca_auth_pending(mca))
+-			mca->cp = MCA_CP_OFF;
++		if (!piano_mca_cp_stop(mca, "start refused")) {
++			piano_mca_normal_pause(mca, mca->cp_generation,
++					       mca->cp_connection_generation);
++			if (piano_mca_auth_pending(mca))
++				mca->cp = MCA_CP_OFF;
++		}
+ 		return;
+ 	}
+ 
+@@ -2544,7 +2584,9 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 			if (piano_mca_cp_set_buck(mca,
+ 						  par ? MCA_CP_PAR_ICL_MA : MCA_CP_BUCK_MA,
+ 						  par ? MCA_CP_PAR_FCC_MA : MCA_CP_BUCK_MA)) {
+-				piano_mca_cp_stop(mca, "buck charger refused");
++				if (!piano_mca_cp_stop(mca, "buck charger refused"))
++					piano_mca_normal_pause(mca, mca->cp_generation,
++							       mca->cp_connection_generation);
+ 				return;
+ 			}
+ 			mca->cp_buck_par = par;
+-- 
+2.55.0
+

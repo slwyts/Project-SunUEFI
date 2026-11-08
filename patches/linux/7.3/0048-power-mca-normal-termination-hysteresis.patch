@@ -1,0 +1,198 @@
+From c0ff9c1d5fa95697f0106ba245ac70b24f4fabb6 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 18:02:33 +0800
+Subject: [PATCH] fix(power): match Piano normal termination and JEITA
+ hysteresis
+
+Confirm the actual Piano proxy and charging strategies from the active stock modules. Program the normal 472 mA termination value through the verified four-byte property and require readback in the same session before increasing current.
+
+Apply the original previous-zone JEITA boundaries and strict CP recovery comparisons, while retaining immediate cold/hot safety stops. Avoid assuming a fixed default float voltage or inventing a termination-enable command.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/power/supply/piano_mca.c | 85 +++++++++++++++++++++++---------
+ 1 file changed, 63 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 0a63a9f0b..aad1b2879 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -15,8 +15,7 @@
+  * battery, 1: wireless, 2: USB and PD).
+  *
+  * This driver replaces qcom_battmgr on this board.  By default only reads
+- * are issued and charging limits stay with the ADSP firmware defaults (float
+- * voltage 4350 mV, charge current 3000 mA, JEITA window 0-55 degC).  With
++ * are issued and charging limits stay with the ADSP firmware defaults. With
+  * charge_policy=1 it raises the input current limit by charger type, with
+  * charge_current=1 as well the charge current, and with hv_charge=1 it asks
+  * PD and PPS sources for 9 V, and with cp_charge=1 as well it charges
+@@ -62,6 +61,7 @@
+ 
+ /* Property ids recovered from the stock charger stack */
+ #define MCA_PROP_FCC		0x2005	/* charge current, mA */
++#define MCA_PROP_ITERM		0x2006	/* termination current, mA */
+ #define MCA_PROP_FV		0x2007	/* normal float voltage, mV */
+ #define MCA_PROP_ICL		0x2008	/* input current limit, mA */
+ #define MCA_PROP_PACK_TBAT	0x202a	/* degC */
+@@ -287,6 +287,7 @@ MODULE_PARM_DESC(mipps_auth,
+ #define MCA_CP_TAPER_MS		3500
+ #define MCA_CP_TAPER_DELTA_MV	9
+ #define MCA_CP_TAPER_HYS_MV	4
++#define MCA_NORMAL_ITERM_MA	472	/* normal 452 + base/flip compensation 20 */
+ 
+ struct piano_mca_cp_voltage {
+ 	u16 mv, max_ma, min_ma;
+@@ -311,6 +312,23 @@ struct piano_mca_cp_limits {
+ 	u32 ma, cv_mv, fv_mv;
+ 	bool last;
+ };
++
++struct piano_mca_jeita {
++	int low, high, low_hys, high_hys, ma, fv;
++};
++
++/* Full normal buck table, including slow-charge and stop zones. */
++static const struct piano_mca_jeita piano_mca_jeita[] = {
++	{ -65535, -9, 0, 0, 0, 4500 },
++	{ -9, 3, 1, 2, 880, 4500 },
++	{ 3, 8, 1, 2, 1768, 4500 },
++	{ 8, 13, 1, 2, 4520, 4500 },
++	{ 13, 18, 0, 2, 7232, 4500 },
++	{ 18, 35, 2, 2, 8000, 4480 },
++	{ 35, 48, 2, 0, 8000, 4480 },
++	{ 48, 55, 2, 2, 4520, 4060 },
++	{ 55, 65535, 2, 2, 0, 4060 },
++};
+ /*
+  * Stage temperature, 0.1 degC: from MCA_CP_TDIE_HOT the bus target drops
+  * MCA_CP_TDIE_STEP_MA a poll (the stage warms about 1 degC/s at 4 A), down
+@@ -499,6 +517,7 @@ struct piano_mca {
+ 	u32 cp_stage;		/* even: CC, odd: CV; advances within a profile */
+ 	bool cp_cold, cp_hot;	/* temperature-stop recovery hysteresis */
+ 	bool normal_cold, normal_warm;	/* PMIC cold stop and warm-FV recovery */
++	u8 normal_cool_zone, normal_hot_zone;	/* previous JEITA indices + 1 */
+ 	bool cp_thermal_stop;	/* may retry after temperature recovery */
+ 	unsigned long cp_taper_at;
+ 	u32 fv_set_mv;
+@@ -866,6 +885,9 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
+ 		/* The factory normal profiles and the firmware's default only. */
+ 		return cp_charge && charge_current && len == sizeof(u32) &&
+ 		       (val == 4060 || val == 4480 || val == 4500);
++	case MCA_PROP_ITERM:
++		return cp_charge && charge_current && len == sizeof(u32) &&
++		       val == MCA_NORMAL_ITERM_MA;
+ 	case MCA_PROP_PD_FIXED_VOLT:
+ 		return hv_charge && len == sizeof(u32) &&
+ 		       (val == 5000 || val == MCA_HV_MV);
+@@ -1871,11 +1893,11 @@ static void piano_mca_normal_temperature(struct piano_mca *mca, int tcool,
+ 		mca->normal_cold = false;
+ 	if (twarm >= 55)
+ 		mca->cp_hot = true;
+-	else if (twarm <= 53)
++	else if (twarm < 53)
+ 		mca->cp_hot = false;
+ 	if (twarm >= 48)
+ 		mca->normal_warm = true;
+-	else if (twarm <= 46)
++	else if (twarm < 46)
+ 		mca->normal_warm = false;
+ }
+ 
+@@ -1900,7 +1922,7 @@ static int piano_mca_cp_normal_limits(struct piano_mca *mca, int vbat, int ibat,
+ 	if (twarm >= 55)
+ 		mca->cp_hot = true;
+ 	/* Factory restart hysteresis after leaving the charging window. */
+-	if ((mca->cp_cold && tcool <= 8) || (mca->cp_hot && twarm > 53))
++	if ((mca->cp_cold && tcool <= 8) || mca->cp_hot)
+ 		return -ERANGE;
+ 	a = piano_mca_cp_temp_profile(tcool);
+ 	b = piano_mca_cp_temp_profile(mca->normal_warm ? max(twarm, 48) : twarm);
+@@ -1963,6 +1985,16 @@ static int piano_mca_normal_set_fv(struct piano_mca *mca, u32 mv,
+ 		return -ENODEV;
+ 	if (le32_to_cpu(value) != mv)
+ 		return -EIO;
++	/* The real Piano proxy uses a four-byte mA value, with no enable bit. */
++	ret = piano_mca_write_u32_session(mca, MCA_PROP_ITERM, MCA_NORMAL_ITERM_MA,
++					  generation, connection);
++	ret = ret ?: piano_mca_read(mca, MCA_PROP_ITERM, &value, sizeof(value));
++	if (ret)
++		return ret;
++	if (le32_to_cpu(value) != MCA_NORMAL_ITERM_MA)
++		return -EIO;
++	if (!piano_mca_session_valid(mca, generation, connection))
++		return -ENODEV;
+ 	if (mca->fv_generation != generation || mca->fv_connection != connection)
+ 		mca->fcc_set_ma = 0;
+ 	mca->fv_set_mv = mv;
+@@ -1992,20 +2024,10 @@ static int piano_mca_normal_pause(struct piano_mca *mca,
+ 
+ static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat)
+ {
+-	/* Piano CN buckchg JEITA. The PMIC itself remains capped at 3 A. */
+-	static const struct {
+-		int low, high, ma, fv;
+-	} jeita[] = {
+-		{ -9, 3, 880, 4500 },
+-		{ 3, 8, 1768, 4500 },
+-		{ 8, 13, 4520, 4500 },
+-		{ 13, 18, 7232, 4500 },
+-		{ 18, 48, 8000, 4480 },
+-		{ 48, 55, 4520, 4060 },
+-	};
+ 	int vbat, ibat, tcool, twarm, fv = 4500, ma = MCA_FCC_MAX_MA;
+ 	unsigned int generation = pmic_glink_get_generation(mca->client);
+ 	unsigned int connection = piano_mca_connection_generation(mca);
++	const struct piano_mca_jeita *old;
+ 	int i, cool = -1, warm = -1, ret;
+ 
+ 	ret = piano_mca_cp_gauges(mca, &vbat, &ibat, &tcool, &twarm);
+@@ -2015,20 +2037,39 @@ static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat)
+ 	}
+ 	*tbat = twarm;
+ 	piano_mca_normal_temperature(mca, tcool, twarm);
+-	for (i = 0; i < ARRAY_SIZE(jeita); i++) {
+-		if (tcool >= jeita[i].low && tcool < jeita[i].high)
++	for (i = 0; i < ARRAY_SIZE(piano_mca_jeita); i++) {
++		if (tcool >= piano_mca_jeita[i].low && tcool < piano_mca_jeita[i].high)
+ 			cool = i;
+-		if (twarm >= jeita[i].low && twarm < jeita[i].high)
++		if (twarm >= piano_mca_jeita[i].low && twarm < piano_mca_jeita[i].high)
+ 			warm = i;
+ 	}
+ 	if (cool < 0 || warm < 0 || mca->normal_cold || mca->cp_hot) {
+ 		ret = piano_mca_normal_pause(mca, generation, connection);
+ 		return ret ?: -ERANGE;
+ 	}
++	/* Factory JEITA keeps the previous row inside its extended boundaries. */
++	if (mca->normal_cool_zone) {
++		old = &piano_mca_jeita[mca->normal_cool_zone - 1];
++		if (tcool >= old->low - old->low_hys &&
++		    tcool < old->high + old->high_hys)
++			cool = mca->normal_cool_zone - 1;
++	}
++	if (mca->normal_hot_zone) {
++		old = &piano_mca_jeita[mca->normal_hot_zone - 1];
++		if (twarm >= old->low - old->low_hys &&
++		    twarm < old->high + old->high_hys)
++			warm = mca->normal_hot_zone - 1;
++	}
++	mca->normal_cool_zone = cool + 1;
++	mca->normal_hot_zone = warm + 1;
+ 	if (mca->normal_warm)
+-		warm = ARRAY_SIZE(jeita) - 1;
+-	fv = min(jeita[cool].fv, jeita[warm].fv);
+-	ma = min3(ma, jeita[cool].ma, jeita[warm].ma);
++		warm = ARRAY_SIZE(piano_mca_jeita) - 2;
++	fv = min(piano_mca_jeita[cool].fv, piano_mca_jeita[warm].fv);
++	ma = min3(ma, piano_mca_jeita[cool].ma, piano_mca_jeita[warm].ma);
++	if (!ma) {
++		ret = piano_mca_normal_pause(mca, generation, connection);
++		return ret ?: -ERANGE;
++	}
+ 	ma = min_t(u32, ma, piano_mca_policy_fcc(mca->real_type));
+ 	ret = piano_mca_normal_set_fv(mca, fv, generation, connection);
+ 	if (ret) {
+-- 
+2.55.0
+

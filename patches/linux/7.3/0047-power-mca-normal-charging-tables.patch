@@ -1,0 +1,670 @@
+From 3fa8583af9b4165bd2de302e0a18b0c9bccf91c8 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 17:07:12 +0800
+Subject: [PATCH] feat(power): apply Piano normal charging tables
+
+Use the CN normal CC/CV and JEITA tables with an 8 A combined-cell ceiling, profile-bound PMIC float voltage and confirmed 3.5 s tail-charge handover. Keep the validated bounded PMIC heat-sharing path.
+
+Bind voltage and current updates to one ADSP/connector session. Stop on missing readings, preserve temperature recovery hysteresis and use the factory SC8541 battery protections. Pause PMIC charging before suspend or teardown while host JEITA cannot run.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/power/supply/piano_mca.c      | 453 ++++++++++++++++++++------
+ drivers/power/supply/sc8541_charger.c |  16 +-
+ 2 files changed, 364 insertions(+), 105 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 43eb272e7..0a63a9f0b 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -23,7 +23,9 @@
+  * through the SC8541 switched-capacitor stage from PPS sources; with
+  * mipps_auth=1 it authenticates Xiaomi MiPPS adapters in the kernel.
+  * piano_mca_write_allowed()
+- * lists every property it can write.  With pan_ack=1 it also acknowledges
++ * lists every property it can write. Direct charging also manages the
++ * normal-table float voltage; it never selects the FFC voltage or current.
++ * With pan_ack=1 it also acknowledges
+  * the ADSP's USB-C port notifications.  The battery itself
+  * is reported by the two bq27z561 fuel gauges; this driver adds the USB
+  * input (presence from the bus voltage, bus current, input current limit and
+@@ -60,6 +62,7 @@
+ 
+ /* Property ids recovered from the stock charger stack */
+ #define MCA_PROP_FCC		0x2005	/* charge current, mA */
++#define MCA_PROP_FV		0x2007	/* normal float voltage, mV */
+ #define MCA_PROP_ICL		0x2008	/* input current limit, mA */
+ #define MCA_PROP_PACK_TBAT	0x202a	/* degC */
+ #define MCA_PROP_BOOST_ENABLE	0x200f
+@@ -257,16 +260,15 @@ MODULE_PARM_DESC(mipps_auth,
+  * stage (driver sc8541_charger), which is how stock charges fast
+  * (mca_strategy_quickchg): a PPS source is held at about twice the battery
+  * voltage and the stage halves it into the battery at twice the bus
+- * current, while the buck charger is held at MCA_CP_BUCK_MA.  The sequence
++ * current, with a bounded PMIC share. The sequence
+  * follows stock: ask the source for twice the battery voltage plus
+  * MCA_CP_DELTA_MV, enable the stage, raise the voltage MCA_CP_STEP_MV at a
+  * time until current flows, then regulate the voltage every MCA_CP_POLL_MS
+  * so the bus current stays at its target and the battery current (both
+- * gauges) below the limit of piano_mca_cp_ibat_limit().  The limits follow
+- * stock's battery tables without FFC (the charger firmware floats at
+- * 4350 mV), within a narrower window: direct charging only runs from
+- * MCA_CP_VBAT_MIN_MV to MCA_CP_VBAT_MAX_MV and from MCA_CP_TBAT_MIN to
+- * MCA_CP_TBAT_EXIT degC, and the buck charger does the rest.  The bus
++ * gauges) below the selected normal-table limit. The limits follow
++ * Piano's CN normal tables without FFC: CC/CV stages and the PMIC float
++ * voltage follow the temperature profile. The PMIC completes tail charge.
++ * Both cells and the firmware pack must provide valid readings. The bus
+  * target is cp_ibus_max, at most MCA_CP_IBUS_MAX_MA (stock div_max_curr)
+  * from a verified Xiaomi adapter and MCA_CP_THIRD_IBUS_MA (stock
+  * third_pps_ibus_max) from other PPS sources, and is lowered while the
+@@ -279,31 +281,36 @@ MODULE_PARM_DESC(mipps_auth,
+  */
+ #define MCA_CP_POLL_MS		500
+ #define MCA_CP_VBAT_MIN_MV	3500
+-#define MCA_CP_VBAT_START_MV	4100	/* only starts below this */
+-#define MCA_CP_VBAT_MAX_MV	4200
+-/* stock normal_volt_para18_35: 8 A, 7.23 A from 4150 mV */
+-#define MCA_CP_VSTEP_MV		4150
+-#define MCA_CP_VSTEP_MA		7230
+-/*
+- * Battery temperature, degC, of the coolest and the warmest of the two
+- * cells and the pack: stock batt_para_lwn allows 7.23 A from 13, 8 A from
+- * 18 and 4.52 A from 48 to 55 degC (2 degC hysteresis on the warm side).
+- */
+-#define MCA_CP_TBAT_MIN		15
+-#define MCA_CP_TBAT_FULL	18	/* MCA_CP_IBAT_REDUCED_MA below */
+-#define MCA_CP_TBAT_WARM	40	/* MCA_CP_IBAT_REDUCED_MA from */
+-#define MCA_CP_TBAT_EXIT	45
+-#define MCA_CP_TBAT_HYS		2
+-/*
+- * The pack reading follows the current within seconds (40 to 37 degC in
+- * 12 s after a step down): from MCA_CP_TBAT_WARM the limit is held
+- * reduced this long, then comes back MCA_CP_TBAT_RAMP_MA at a time
+- */
+-#define MCA_CP_TBAT_HOLD_MS	30000
+-#define MCA_CP_TBAT_RAMP_MA	500
+-#define MCA_CP_TBAT_RAMP_MS	15000
++#define MCA_CP_VBAT_MAX_MV	4500
+ #define MCA_CP_IBAT_MAX_MA	8000
+-#define MCA_CP_IBAT_REDUCED_MA	4500
++#define MCA_CP_TAPER_MA		3000
++#define MCA_CP_TAPER_MS		3500
++#define MCA_CP_TAPER_DELTA_MV	9
++#define MCA_CP_TAPER_HYS_MV	4
++
++struct piano_mca_cp_voltage {
++	u16 mv, max_ma, min_ma;
++};
++
++struct piano_mca_cp_profile {
++	int low, high;
++	u16 fv_mv;
++	u8 count;
++	struct piano_mca_cp_voltage voltage[2];
++};
++
++/* Piano CN batt_para_lwn normal tables; FFC/global 12.4 A is not used. */
++static const struct piano_mca_cp_profile piano_mca_cp_profiles[] = {
++	{ 8, 13, 4500, 1, { { 4493, 4320, 452 } } },
++	{ 13, 18, 4500, 1, { { 4493, 7100, 452 } } },
++	{ 18, 48, 4480, 2, { { 4150, 8000, 7230 }, { 4473, 7230, 452 } } },
++	{ 48, 55, 4060, 1, { { 4053, 4320, 452 } } },
++};
++
++struct piano_mca_cp_limits {
++	u32 ma, cv_mv, fv_mv;
++	bool last;
++};
+ /*
+  * Stage temperature, 0.1 degC: from MCA_CP_TDIE_HOT the bus target drops
+  * MCA_CP_TDIE_STEP_MA a poll (the stage warms about 1 degC/s at 4 A), down
+@@ -335,13 +342,10 @@ MODULE_PARM_DESC(mipps_auth,
+ #define MCA_CP_PPS_MAX_MV	10000
+ #define MCA_CP_BUCK_MA		500	/* buck input limit and charge current */
+ /*
+- * Stock (strategy_quickchg_pmic_single_cp_charging) has the buck charger
+- * carry part of the battery current next to the stage once the source
+- * gives more than MCA_CP_PAR_IBUS_MA (stage and buck charger together,
+- * which the share moving between them leaves alone) with more than
+- * MCA_CP_PAR_IBAT_MA asked of the battery: its 5000/2700 mA row, the one
+- * within 8 A, at FCC 2000 and input 1500 mA.  That moves heat from the
+- * stage to the PMIC.
++ * Retain this board's validated 2 A PMIC share to distribute heat. The
++ * stock single-CP parallel thresholds exist, but its normal/FFC gating is
++ * version-dependent: this is local sharing, not a copy of the FFC policy.
++ * Both paths remain within the same total normal-table battery budget.
+  */
+ #define MCA_CP_PAR_IBUS_MA	2700
+ #define MCA_CP_PAR_IBAT_MA	5000
+@@ -491,8 +495,15 @@ struct piano_mca {
+ 	u32 cp_ibat_trip;	/* battery current limit the trip checks against */
+ 	/* jiffies when the limit was last that high, or the stage above target */
+ 	unsigned long cp_trip_at;
+-	u32 cp_warm_ma;		/* battery limit as reduced for temperature */
+-	unsigned long cp_warm_at;	/* jiffies when it last changed */
++	u32 cp_profile;		/* temperature pair + 1; zero until first sample */
++	u32 cp_stage;		/* even: CC, odd: CV; advances within a profile */
++	bool cp_cold, cp_hot;	/* temperature-stop recovery hysteresis */
++	bool normal_cold, normal_warm;	/* PMIC cold stop and warm-FV recovery */
++	bool cp_thermal_stop;	/* may retry after temperature recovery */
++	unsigned long cp_taper_at;
++	u32 fv_set_mv;
++	unsigned int fv_generation;
++	unsigned int fv_connection;
+ 	bool cp_buck_par;	/* buck charger at MCA_CP_PAR_* */
+ 	int cp_polls;		/* while opening: tries; then: polls */
+ 	int cp_low;		/* consecutive polls below MCA_CP_LOW_IBUS_MA */
+@@ -806,7 +817,7 @@ static int piano_mca_read(struct piano_mca *mca, u32 prop, void *buf, size_t len
+ 
+ /*
+  * Every property this driver may write, with its payload length and range.
+- * Anything else (float voltage, ship mode, boost, ...) is refused, whatever
++ * Anything else (FFC voltage, ship mode, boost, ...) is refused, whatever
+  * the caller.
+  */
+ /* PPS request word: voltage in 20 mV and current in 50 mA steps */
+@@ -849,7 +860,12 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
+ 		       val >= MCA_ICL_MIN_MA && val <= MCA_ICL_HV_MAX_MA;
+ 	case MCA_PROP_FCC:
+ 		return charge_current && len == sizeof(u32) &&
+-		       val >= MCA_FCC_MIN_MA && val <= MCA_FCC_MAX_MA;
++		       ((cp_charge && val == 0) ||
++			(val >= MCA_FCC_MIN_MA && val <= MCA_FCC_MAX_MA));
++	case MCA_PROP_FV:
++		/* The factory normal profiles and the firmware's default only. */
++		return cp_charge && charge_current && len == sizeof(u32) &&
++		       (val == 4060 || val == 4480 || val == 4500);
+ 	case MCA_PROP_PD_FIXED_VOLT:
+ 		return hv_charge && len == sizeof(u32) &&
+ 		       (val == 5000 || val == MCA_HV_MV);
+@@ -1742,6 +1758,8 @@ static u32 piano_mca_hv_icl(u32 real_type)
+  * a warm battery is not left to carry the system; JEITA stays with the ADSP,
+  * and its AICL still backs the limit off if the source sags.
+  */
++static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat);
++
+ static void piano_mca_apply_policy(struct piano_mca *mca)
+ {
+ 	u32 target = piano_mca_policy_icl(mca->real_type);
+@@ -1749,8 +1767,13 @@ static void piano_mca_apply_policy(struct piano_mca *mca)
+ 	u32 hv_ma;
+ 	int ret;
+ 
+-	if (charge_current)
++	/* Keep the PMIC's tail-charge voltage in the current normal profile. */
++	if (cp_charge && charge_current) {
++		if (piano_mca_normal_buck(mca, &tbat))
++			return;
++	} else if (charge_current) {
+ 		piano_mca_apply_fcc(mca, tbat);
++	}
+ 
+ 	hv_ma = piano_mca_hv_step(mca);
+ 	if (hv_ma)
+@@ -1810,6 +1833,217 @@ static int piano_mca_gauges(int *vbat_mv, int *ibat_ma, int *tcool, int *twarm)
+ 	return 0;
+ }
+ 
++/* A failed firmware temperature read must not look like a cold, valid pack. */
++static int piano_mca_cp_gauges(struct piano_mca *mca, int *vbat, int *ibat,
++			       int *tcool, int *twarm)
++{
++	__le32 pack;
++	int ret, temp;
++
++	ret = piano_mca_gauges(vbat, ibat, tcool, twarm);
++	ret = ret ?: piano_mca_read(mca, MCA_PROP_PACK_TBAT, &pack, sizeof(pack));
++	if (ret)
++		return ret;
++	temp = (s32)le32_to_cpu(pack);
++	*tcool = min(*tcool, temp);
++	*twarm = max(*twarm, temp);
++	return 0;
++}
++
++static int piano_mca_cp_temp_profile(int temp)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(piano_mca_cp_profiles); i++)
++		if (temp >= piano_mca_cp_profiles[i].low &&
++		    temp < piano_mca_cp_profiles[i].high)
++			return i;
++	return -ERANGE;
++}
++
++/* Tighten immediately; require temperature headroom before restoring FV. */
++static void piano_mca_normal_temperature(struct piano_mca *mca, int tcool,
++					 int twarm)
++{
++	if (tcool < -9)
++		mca->normal_cold = true;
++	else if (tcool >= -8)
++		mca->normal_cold = false;
++	if (twarm >= 55)
++		mca->cp_hot = true;
++	else if (twarm <= 53)
++		mca->cp_hot = false;
++	if (twarm >= 48)
++		mca->normal_warm = true;
++	else if (twarm <= 46)
++		mca->normal_warm = false;
++}
++
++/*
++ * Evaluate the CN normal tables against both cells and the firmware pack.
++ * The colder/hotter cell may request different profiles: use the lower FV
++ * and both current limits. This extra per-cell check is local protection.
++ * CC/CV stages advance within a temperature pair, including across suspend.
++ */
++static int piano_mca_cp_normal_limits(struct piano_mca *mca, int vbat, int ibat,
++				      int tcool, int twarm,
++				      struct piano_mca_cp_limits *limits)
++{
++	const struct piano_mca_cp_profile *cold, *hot, *profile;
++	const struct piano_mca_cp_voltage *voltage;
++	u32 key, ma;
++	int a, b, stage;
++
++	piano_mca_normal_temperature(mca, tcool, twarm);
++	if (tcool < 8)
++		mca->cp_cold = true;
++	if (twarm >= 55)
++		mca->cp_hot = true;
++	/* Factory restart hysteresis after leaving the charging window. */
++	if ((mca->cp_cold && tcool <= 8) || (mca->cp_hot && twarm > 53))
++		return -ERANGE;
++	a = piano_mca_cp_temp_profile(tcool);
++	b = piano_mca_cp_temp_profile(mca->normal_warm ? max(twarm, 48) : twarm);
++	if (a < 0 || b < 0)
++		return -ERANGE;
++	mca->cp_cold = false;
++	mca->cp_hot = false;
++	cold = &piano_mca_cp_profiles[a];
++	hot = &piano_mca_cp_profiles[b];
++	profile = cold->fv_mv < hot->fv_mv ? cold : hot;
++	key = a * ARRAY_SIZE(piano_mca_cp_profiles) + b + 1;
++	if (key != mca->cp_profile) {
++		mca->cp_profile = key;
++		mca->cp_stage = 0;
++		mca->cp_taper_at = 0;
++	}
++	ma = min3(clamp(cp_ibat_max, 1000U, (u32)MCA_CP_IBAT_MAX_MA),
++		  (u32)cold->voltage[0].max_ma, (u32)hot->voltage[0].max_ma);
++	stage = min_t(u32, mca->cp_stage / 2, profile->count - 1);
++	voltage = &profile->voltage[stage];
++	if (vbat >= voltage->mv) {
++		if (ibat <= min_t(int, voltage->min_ma, ma) &&
++		    stage + 1 < profile->count) {
++			stage++;
++			mca->cp_stage = 2 * stage;
++			voltage = &profile->voltage[stage];
++		} else {
++			mca->cp_stage = max_t(u32, mca->cp_stage, 2 * stage + 1);
++		}
++	}
++	limits->ma = min_t(u32, ma, voltage->max_ma);
++	limits->last = stage + 1 == profile->count;
++	limits->cv_mv = voltage->mv - (limits->last ? MCA_CP_TAPER_DELTA_MV : 0);
++	limits->fv_mv = profile->fv_mv;
++	if (vbat >= limits->cv_mv)
++		mca->cp_stage = max_t(u32, mca->cp_stage, 2 * stage + 1);
++	return 0;
++}
++
++/* Acknowledgment and readback are both required before increasing voltage. */
++static int piano_mca_normal_set_fv(struct piano_mca *mca, u32 mv,
++				   unsigned int generation,
++				   unsigned int connection)
++{
++	__le32 value;
++	int ret;
++
++	if (!piano_mca_session_valid(mca, generation, connection))
++		return -ENODEV;
++	if (mca->fv_set_mv == mv && mca->fv_generation == generation &&
++	    mca->fv_connection == connection)
++		return 0;
++	/* A lost ACK can still have applied the write: discard the old cache. */
++	mca->fv_set_mv = 0;
++	ret = piano_mca_write_u32_session(mca, MCA_PROP_FV, mv, generation, connection);
++	ret = ret ?: piano_mca_read(mca, MCA_PROP_FV, &value, sizeof(value));
++	if (ret)
++		return ret;
++	if (!piano_mca_session_valid(mca, generation, connection))
++		return -ENODEV;
++	if (le32_to_cpu(value) != mv)
++		return -EIO;
++	if (mca->fv_generation != generation || mca->fv_connection != connection)
++		mca->fcc_set_ma = 0;
++	mca->fv_set_mv = mv;
++	mca->fv_generation = generation;
++	mca->fv_connection = connection;
++	return 0;
++}
++
++static int piano_mca_normal_pause(struct piano_mca *mca,
++				  unsigned int generation,
++				  unsigned int connection)
++{
++	__le32 value;
++	int ret;
++
++	ret = piano_mca_write_u32_session(mca, MCA_PROP_FCC, 0,
++					  generation, connection);
++	ret = ret ?: piano_mca_read(mca, MCA_PROP_FCC, &value, sizeof(value));
++	if (!ret && le32_to_cpu(value))
++		ret = -EIO;
++	if (!ret && !piano_mca_session_valid(mca, generation, connection))
++		ret = -ENODEV;
++	mca->fcc_set_ma = 0;
++	/* The lowest normal FV is safe while sensor readings are unavailable. */
++	return piano_mca_normal_set_fv(mca, 4060, generation, connection) ?: ret;
++}
++
++static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat)
++{
++	/* Piano CN buckchg JEITA. The PMIC itself remains capped at 3 A. */
++	static const struct {
++		int low, high, ma, fv;
++	} jeita[] = {
++		{ -9, 3, 880, 4500 },
++		{ 3, 8, 1768, 4500 },
++		{ 8, 13, 4520, 4500 },
++		{ 13, 18, 7232, 4500 },
++		{ 18, 48, 8000, 4480 },
++		{ 48, 55, 4520, 4060 },
++	};
++	int vbat, ibat, tcool, twarm, fv = 4500, ma = MCA_FCC_MAX_MA;
++	unsigned int generation = pmic_glink_get_generation(mca->client);
++	unsigned int connection = piano_mca_connection_generation(mca);
++	int i, cool = -1, warm = -1, ret;
++
++	ret = piano_mca_cp_gauges(mca, &vbat, &ibat, &tcool, &twarm);
++	if (ret) {
++		piano_mca_normal_pause(mca, generation, connection);
++		return ret;
++	}
++	*tbat = twarm;
++	piano_mca_normal_temperature(mca, tcool, twarm);
++	for (i = 0; i < ARRAY_SIZE(jeita); i++) {
++		if (tcool >= jeita[i].low && tcool < jeita[i].high)
++			cool = i;
++		if (twarm >= jeita[i].low && twarm < jeita[i].high)
++			warm = i;
++	}
++	if (cool < 0 || warm < 0 || mca->normal_cold || mca->cp_hot) {
++		ret = piano_mca_normal_pause(mca, generation, connection);
++		return ret ?: -ERANGE;
++	}
++	if (mca->normal_warm)
++		warm = ARRAY_SIZE(jeita) - 1;
++	fv = min(jeita[cool].fv, jeita[warm].fv);
++	ma = min3(ma, jeita[cool].ma, jeita[warm].ma);
++	ma = min_t(u32, ma, piano_mca_policy_fcc(mca->real_type));
++	ret = piano_mca_normal_set_fv(mca, fv, generation, connection);
++	if (ret) {
++		piano_mca_normal_pause(mca, generation, connection);
++		return ret;
++	}
++	if (mca->fcc_set_ma == ma)
++		return piano_mca_session_valid(mca, generation, connection) ? 0 : -ENODEV;
++	ret = piano_mca_write_u32_session(mca, MCA_PROP_FCC, ma,
++					  generation, connection);
++	if (!ret)
++		mca->fcc_set_ma = ma;
++	return ret;
++}
++
+ static bool piano_mca_cp_active(struct piano_mca *mca)
+ {
+ 	return mca->cp == MCA_CP_OPENING || mca->cp == MCA_CP_ON ||
+@@ -2006,43 +2240,15 @@ static bool piano_mca_cp_after_auth(struct piano_mca *mca)
+ 	return piano_mca_adapter_verified(mca);
+ }
+ 
+-/*
+- * Battery current limit (both cells) for the battery voltage and the
+- * coolest and warmest temperature, see MCA_CP_TBAT_* and MCA_CP_VSTEP_*
+- */
+-static u32 piano_mca_cp_ibat_limit(struct piano_mca *mca, int vbat,
+-				   int tcool, int twarm)
+-{
+-	u32 ma = clamp(cp_ibat_max, 1000U, (u32)MCA_CP_IBAT_MAX_MA);
+-
+-	if (twarm >= MCA_CP_TBAT_WARM) {
+-		mca->cp_warm_ma = MCA_CP_IBAT_REDUCED_MA;
+-		mca->cp_warm_at = jiffies;
+-	} else if (mca->cp_warm_ma < MCA_CP_IBAT_MAX_MA &&
+-		   twarm <= MCA_CP_TBAT_WARM - MCA_CP_TBAT_HYS &&
+-		   time_after(jiffies, mca->cp_warm_at +
+-			      msecs_to_jiffies(mca->cp_warm_ma == MCA_CP_IBAT_REDUCED_MA ?
+-					       MCA_CP_TBAT_HOLD_MS :
+-					       MCA_CP_TBAT_RAMP_MS))) {
+-		mca->cp_warm_ma = min(mca->cp_warm_ma + MCA_CP_TBAT_RAMP_MA,
+-				      (u32)MCA_CP_IBAT_MAX_MA);
+-		mca->cp_warm_at = jiffies;
+-	}
+-	ma = min(ma, mca->cp_warm_ma);
+-	if (tcool < MCA_CP_TBAT_FULL)
+-		ma = min_t(u32, ma, MCA_CP_IBAT_REDUCED_MA);
+-	if (vbat >= MCA_CP_VSTEP_MV)
+-		ma = min_t(u32, ma, MCA_CP_VSTEP_MA);
+-
+-	return ma;
+-}
+-
+ /* Called from the poll at 9 V on the buck charger, or right after the auth */
+ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generation)
+ {
+-	int vbat, ibat, tcool, twarm, tpack, ret;
++	struct piano_mca_cp_limits limits;
++	int vbat, ibat, tcool, twarm, ret;
+ 	u32 start_mv, ma, src_ma, max_mv = 0;
+ 
++	if (mca->cp == MCA_CP_DONE && mca->cp_thermal_stop)
++		mca->cp = MCA_CP_OFF;
+ 	if (!cp_charge || !hv_charge || !charge_current ||
+ 	    mca->cp != MCA_CP_OFF ||
+ 	    (mca->hv != MCA_HV_ON && !piano_mca_cp_after_auth(mca)))
+@@ -2052,16 +2258,17 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	mca->cp_connection_generation = mca->polled_connection_generation;
+ 	if (!piano_mca_cp_session_valid(mca))
+ 		return;
+-	if (piano_mca_gauges(&vbat, &ibat, &tcool, &twarm))
++	if (piano_mca_cp_gauges(mca, &vbat, &ibat, &tcool, &twarm))
+ 		return;
+-	tpack = (s32)piano_mca_read_u32(mca, MCA_PROP_PACK_TBAT);
+-	tcool = min(tcool, tpack);
+-	twarm = max(twarm, tpack);
+-	if (vbat < MCA_CP_VBAT_MIN_MV || vbat >= MCA_CP_VBAT_START_MV ||
+-	    tcool < MCA_CP_TBAT_MIN ||
+-	    twarm >= MCA_CP_TBAT_WARM - MCA_CP_TBAT_HYS ||
++	if (piano_mca_cp_normal_limits(mca, vbat, ibat, tcool, twarm, &limits) ||
++	    vbat < MCA_CP_VBAT_MIN_MV || vbat >= limits.cv_mv ||
+ 	    piano_mca_read_u32(mca, MCA_PROP_VERIFY_PROCESS))
+ 		return;
++	/* Complete the PMIC voltage transition before arming the pump. */
++	if (piano_mca_normal_set_fv(mca, limits.fv_mv,
++				    mca->cp_generation,
++				    mca->cp_connection_generation))
++		return;
+ 	/* PD requests in the middle of the authentication break it */
+ 	if (mipps_auth && !piano_mca_authenticated(mca) &&
+ 	    time_before(jiffies, mca->cp_on_at +
+@@ -2111,7 +2318,8 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	mca->cp_low = 0;
+ 	mca->cp_ibus_hot = mca->cp_ibus_ma;
+ 	mca->cp_ibat_trip = 0;
+-	mca->cp_warm_ma = MCA_CP_IBAT_MAX_MA;
++	mca->cp_thermal_stop = false;
++	mca->cp_taper_at = 0;
+ 	mca->cp_buck_par = false;
+ 	mca->cp = MCA_CP_OPENING;
+ 
+@@ -2136,7 +2344,8 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ /* One step of direct charging, every MCA_CP_POLL_MS */
+ static void piano_mca_cp_step(struct piano_mca *mca)
+ {
+-	int vbat, ibat, tcool, twarm, tpack, vbus_uv, ibus_ua, tdie, on, ibus, over;
++	struct piano_mca_cp_limits limits;
++	int vbat, ibat, tcool, twarm, vbus_uv, ibus_ua, tdie, on, ibus, over;
+ 	int ibat_max, target, ibus_all;
+ 	u32 mv = mca->cp_mv;
+ 	bool par;
+@@ -2145,21 +2354,41 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 		piano_mca_cp_stop(mca, "session changed");
+ 		return;
+ 	}
+-	if (piano_mca_gauges(&vbat, &ibat, &tcool, &twarm) ||
++	if (piano_mca_cp_gauges(mca, &vbat, &ibat, &tcool, &twarm) ||
+ 	    piano_mca_cp_get(mca, POWER_SUPPLY_PROP_ONLINE, &on)) {
+-		piano_mca_cp_stop(mca, "read failed");
++		if (!piano_mca_cp_stop(mca, "read failed"))
++			piano_mca_normal_pause(mca, mca->cp_generation,
++					       mca->cp_connection_generation);
+ 		return;
+ 	}
+-	tpack = (s32)piano_mca_read_u32(mca, MCA_PROP_PACK_TBAT);
+-	tcool = min(tcool, tpack);
+-	twarm = max(twarm, tpack);
+-
+-	if (vbat >= MCA_CP_VBAT_MAX_MV) {
+-		piano_mca_cp_stop(mca, "battery voltage reached");
++	if (piano_mca_cp_normal_limits(mca, vbat, ibat, tcool, twarm, &limits)) {
++		if (!piano_mca_cp_stop(mca, "battery temperature")) {
++			mca->cp_thermal_stop = true;
++			piano_mca_normal_pause(mca, mca->cp_generation,
++					       mca->cp_connection_generation);
++		}
++		return;
++	}
++	if (vbat >= limits.fv_mv) {
++		if (!piano_mca_cp_stop(mca, "normal voltage reached")) {
++			mca->cp_thermal_stop = mca->fv_set_mv > limits.fv_mv;
++			if (piano_mca_normal_set_fv(mca, limits.fv_mv,
++						    mca->cp_generation,
++						    mca->cp_connection_generation))
++				piano_mca_normal_pause(mca, mca->cp_generation,
++						       mca->cp_connection_generation);
++		}
++		return;
++	}
++	if (vbat < MCA_CP_VBAT_MIN_MV) {
++		piano_mca_cp_stop(mca, "battery voltage too low");
+ 		return;
+ 	}
+-	if (tcool < MCA_CP_TBAT_MIN || twarm >= MCA_CP_TBAT_EXIT) {
+-		piano_mca_cp_stop(mca, "battery temperature");
++	if (piano_mca_normal_set_fv(mca, limits.fv_mv, mca->cp_generation,
++				    mca->cp_connection_generation)) {
++		if (!piano_mca_cp_stop(mca, "normal voltage setting failed"))
++			piano_mca_normal_pause(mca, mca->cp_generation,
++					       mca->cp_connection_generation);
+ 		return;
+ 	}
+ 	if (piano_mca_read_u32(mca, MCA_PROP_VERIFY_PROCESS)) {
+@@ -2169,7 +2398,19 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 		return;
+ 	}
+ 
+-	ibat_max = piano_mca_cp_ibat_limit(mca, vbat, tcool, twarm);
++	ibat_max = limits.ma;
++	if (limits.last && vbat >= limits.cv_mv - MCA_CP_TAPER_HYS_MV &&
++	    ibat >= 0 && ibat < MCA_CP_TAPER_MA) {
++		if (!mca->cp_taper_at)
++			mca->cp_taper_at = jiffies;
++		if (time_after_eq(jiffies, mca->cp_taper_at +
++				  msecs_to_jiffies(MCA_CP_TAPER_MS))) {
++			piano_mca_cp_stop(mca, "normal tail charge to PMIC");
++			return;
++		}
++	} else {
++		mca->cp_taper_at = 0;
++	}
+ 	/* a lowered limit is regulated down to before it trips */
+ 	if (ibat_max >= (int)mca->cp_ibat_trip) {
+ 		mca->cp_ibat_trip = ibat_max;
+@@ -2286,7 +2527,9 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 		target = min(target, (ibat_max - (int)mca->fcc_set_ma) / 2);
+ 
+ 		over = ibus - target;
+-		if (over > 0)
++		if (vbat >= limits.cv_mv)
++			mv -= MCA_CP_REG_STEP_MV;
++		else if (over > 0)
+ 			mv -= clamp(over / MCA_CP_REG_STEP_MA * MCA_CP_REG_STEP_MV,
+ 				    MCA_CP_REG_STEP_MV, MCA_CP_REG_MAX_STEP_MV);
+ 		else if (ibat > ibat_max && mca->cp_ibat_trip <= ibat_max)
+@@ -2330,6 +2573,8 @@ static int piano_mca_sync_connection(struct piano_mca *mca)
+ 	if (ret)
+ 		return ret;
+ 	mca->cp = MCA_CP_OFF;
++	mca->cp_profile = 0;
++	mca->cp_thermal_stop = false;
+ 	mca->cp_ibus_cap = 0;
+ 	mca->hv = MCA_HV_OFF;
+ 	mca->hv_renegs = 0;
+@@ -2771,8 +3016,15 @@ static void piano_mca_stop(void *data)
+ 		piano_mca_request_volt(mca, 5000);
+ 	if (mca->icl_set_ma)
+ 		piano_mca_reset_icl(mca);
+-	if (mca->fcc_set_ma)
++	if (cp_charge && charge_current) {
++		unsigned int generation = pmic_glink_get_generation(mca->client);
++		unsigned int connection = piano_mca_connection_generation(mca);
++
++		if (piano_mca_normal_pause(mca, generation, connection))
++			dev_err(mca->dev, "failed to pause charging during teardown\n");
++	} else if (mca->fcc_set_ma) {
+ 		piano_mca_reset_fcc(mca);
++	}
+ }
+ 
+ /* debugfs: write a property id to "prop", read the raw reply from "data" */
+@@ -2920,6 +3172,13 @@ static int piano_mca_suspend(struct device *dev)
+ 	disable_delayed_work_sync(&mca->poll);
+ 	cp = piano_mca_cp_active(mca);
+ 	ret = piano_mca_cp_stop(mca, "suspend");
++	/* The host's normal JEITA cannot run while its workqueue is frozen. */
++	if (!ret && cp_charge && charge_current && mca->service_up) {
++		unsigned int generation = pmic_glink_get_generation(mca->client);
++		unsigned int connection = piano_mca_connection_generation(mca);
++
++		ret = piano_mca_normal_pause(mca, generation, connection);
++	}
+ 	if (ret) {
+ 		enable_delayed_work(&mca->poll);
+ 		mod_delayed_work(system_freezable_wq, &mca->poll, 0);
+diff --git a/drivers/power/supply/sc8541_charger.c b/drivers/power/supply/sc8541_charger.c
+index 52c1d4961..7aa48b927 100644
+--- a/drivers/power/supply/sc8541_charger.c
++++ b/drivers/power/supply/sc8541_charger.c
+@@ -65,15 +65,15 @@
+ #define SC8541_BUSOCP_STEP_MA	250
+ 
+ /*
+- * Protections programmed before switching starts.  The battery limit is
+- * far below the stock 4800 mV: the caller leaves direct charging well
+- * before the buck charger's float voltage, so this only trips if it does
+- * not.  The bus limits fit a 2:1 stage fed from an 11 V PPS source; the
+- * bus over-current limit can be raised for sources that offer more than
+- * 3 A, up to the stock value.
++ * Protections programmed before switching starts. Battery OVP and alarm
++ * use Piano's factory 4800/4600 mV thresholds. The caller regulates the
++ * normal charge voltage below these limits; the alarm only asserts INT
++ * and cannot replace software voltage regulation. The bus limits fit
++ * a 2:1 stage fed from an 11 V PPS source; the bus over-current limit can
++ * be raised for sources that offer more than 3 A, up to the stock value.
+  */
+-#define SC8541_BATOVP_MV	4300
+-#define SC8541_BATOVP_ALM_MV	4250
++#define SC8541_BATOVP_MV	4800
++#define SC8541_BATOVP_ALM_MV	4600
+ #define SC8541_BUSOVP_MV	11000
+ #define SC8541_BUSOVP_ALM_MV	10500
+ #define SC8541_BUSOCP_MA	3500
+-- 
+2.55.0
+

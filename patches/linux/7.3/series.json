@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "3c0805ab648b1f77fcb1f645f8fa16652dc3b865",
-  "original_target_commit": "77c8f1d4eff820251da932f32102c5add57d6cf2",
+  "target_tree": "5331f7d64c46e2bbb95463ed0c544296713f2777",
+  "original_target_commit": "7d3173d0390424b12d7d4c9905ae194ddbf65f09",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -599,6 +599,53 @@
       "original_parent": "9243cfefba6ac7c70cfed9f9c07c93b08978651c",
       "committer_date": "2026-11-08T09:13:32+08:00",
       "tree": "3c0805ab648b1f77fcb1f645f8fa16652dc3b865"
+    },
+    {
+      "file": "0047-power-mca-normal-charging-tables.patch",
+      "sha256": "5f0a5032ca52943363eb43c355d004e5ef52ac203f11c766204fa97c2222e46b",
+      "original_commit": "3fa8583af9b4165bd2de302e0a18b0c9bccf91c8",
+      "original_parent": "77c8f1d4eff820251da932f32102c5add57d6cf2",
+      "committer_date": "2026-11-08T17:07:12+08:00",
+      "tree": "5c2966b15ea9eee620f099eb9786c197865fdad5"
+    },
+    {
+      "file": "0048-power-mca-normal-termination-hysteresis.patch",
+      "sha256": "4e7ed9f946f7ca47c6c4e66cd31e0e8ff220d1c47939c02570142a5c94508df2",
+      "original_commit": "c0ff9c1d5fa95697f0106ba245ac70b24f4fabb6",
+      "original_parent": "3fa8583af9b4165bd2de302e0a18b0c9bccf91c8",
+      "committer_date": "2026-11-08T18:02:33+08:00",
+      "tree": "ac85e7c9325ffb763fde952de939b5d1d256fc89"
+    },
+    {
+      "file": "0049-power-mca-charge-enable-feedback.patch",
+      "sha256": "eb779b9b2060248867a9c785953f92d78a0dd39c0ca0489fbecc668a162ef14f",
+      "original_commit": "7d3173d0390424b12d7d4c9905ae194ddbf65f09",
+      "original_parent": "c0ff9c1d5fa95697f0106ba245ac70b24f4fabb6",
+      "committer_date": "2026-11-08T22:26:13+08:00",
+      "tree": "5331f7d64c46e2bbb95463ed0c544296713f2777"
     }
-  ]
+  ],
+  "provenance": {
+    "normal_charging": {
+      "reference_url": "https://github.com/turbo-boo/android_kernel_xiaomi_sm8750",
+      "reference_commit": "2788c49d61796ba8e52a9ea1b5dc83c2456c57e7",
+      "reference_paths": [
+        "drivers/power/supply/mca/mca_strategy/strategy_quickchg/mca_strategy_quickchg.c",
+        "drivers/power/supply/mca/mca_strategy/strategy_buckchg/mca_strategy_buckchg.c",
+        "drivers/power/supply/mca/mca_strategy/strategy_fg/mca_strategy_fg.c",
+        "drivers/power/supply/mca/mca_qcom_subpmic_proxy"
+      ],
+      "stock_reference": "Piano final CN device tree: lwn batt_para_lwn and normal_volt_para*, non-FFC buckchg jeita_para, SC8541 BAT_OVP 4800 mV and alarm 4600 mV.",
+      "stock_program_sha256": {
+        "mca_qcom_subpmic_proxy.ko": "99d0723ba419aa73a218480492f03259fac3e0a1733578316665cd299ec228f4",
+        "mca_strategy_buckchg.ko": "76fde4454e0890c5fd6d28f364a7114c432712e3f8d977e30e7caee4ad6023c1",
+        "mca_buckchg_jeita.ko": "ae9f5b2bf143605bb38d5221894a8bd956b03d21b68136375b8d4f7ff5a3f992",
+        "mca_strategy_quickchg.ko": "fcad16b7b03ceeef5ce17c0472ad45cca5ea9f044b5addbc57c3ee452d00a195"
+      },
+      "stock_program_checks": "Named original proxy get/set functions confirm FV 0x2007 in mV, ITERM 0x2006 in mA, FCC 0x2005, all four-byte payloads. Original buck applies normal ITERM 452+20 mA; JEITA uses previous-zone hysteresis; charge status 0x2001 equals 5 when done.",
+      "scope": "Combined-cell current capped at 8000 mA; normal FV 4060/4480/4500 mV and ITERM 472 mA. Reference topology enums and property IDs are not copied; use Piano gauges and original-program wire IDs.",
+      "firmware_property_checks": "The pinned hyperos4-adsp program confirms FCC/ITERM getters are successful no-ops. Model 0x56 FV getter uses 10 mV while its setter uses 5 mV. Charge enable 0x2003 is a one-byte boolean whose getter reads PMIC CHGR 0x2646 bit 0.",
+      "local_protection": "Use temperature extremes from both cells and firmware pack, retain validated bounded PMIC heat sharing, delay warm-FV recovery and confirm PMIC charge-enable is off before suspend or teardown. Restore only after fresh temperature and normal-limit setup."
+    }
+  }
 }
