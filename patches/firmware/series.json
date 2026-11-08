@@ -23,7 +23,7 @@
       "repository": "upstream/Mu-Silicium",
       "base_commit": "8471e47f5248ebbffc2e6196b683204163efe155",
       "patch": "mu-silicium/3ec9169/0001-close-filesystem-scan-handles.patch",
-      "sha256": "07a945eb731c489d0e269b30898aa42b74f63d4982832b79ee357a48e311a648"
+      "sha256": "4d2716e8d912983a9e53311ada77ff1880e9063f859bb23130799b1ec6a33f6f"
     },
     {
       "repository": "upstream/simple-init",
