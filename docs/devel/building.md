@@ -150,14 +150,13 @@ GitHub Actions 的 **Build products** 在 `main` 上有相关改动时自动运�
 
 `installer` 只在电脑上整理文件。它把 `install_piano.py`、启动脚本 `install.sh` 和 `install.cmd`、`INSTALL.md`、校验记录复制到一个新目录，`--bundle artifacts/release` 会把磁盘镜像一并放进 `bundle/`，`--product` 则只放 UEFI 镜像。目录必须是新的，已有的目录会被拒绝。
 
-`install` 才会连接平板，由 `tools/install_piano.py` 提供四个操作：
+`install` 才会连接平板，由 `tools/install_piano.py` 提供三个操作：
 
 | 操作 | 作用 |
 | --- | --- |
 | `inspect` | 只读检查平板的分区表（默认） |
 | `plan` | 检查平板和镜像，生成安装计划 |
 | `apply --plan 计划.json --bundle 镜像目录 --execute` | 更新已有的 `sunuefi_esp` 和 `sunuefi_root`，并读回校验 |
-| `provision-bluetooth --execute` | 为这台平板写入蓝牙配置 |
 
 命令行安装器只更新已有的独立分区，首次分区在引导助手里完成。不带 `--execute` 时不会写入任何内容。
 

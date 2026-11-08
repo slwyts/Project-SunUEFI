@@ -1,6 +1,6 @@
 # Piano 蓝牙配置
 
-公共镜像不包含某台平板的蓝牙地址。Linux 在无线初始化时自动补齐板载控制器缺少的地址，用户无需填写 MAC。安装器仍可预先写入标准设备树属性；直接刷写通用 ESP 时，Linux 也能自行完成配置。
+蓝牙地址由 Linux 启动时从原厂 `persist` 只读获取。公共镜像和 ESP 不保存某台平板的 MAC，安装器不修改设备树中的地址，用户无需预先配置。
 
 ## 板级 NVM 与连接距离
 
@@ -55,29 +55,9 @@ BlueZ 不会提供可用适配器。
 程序只在初始化期间运行，有总超时，没有新增常驻服务，也不改写 persist 或原厂 NVM。
 Python 和挂载工具依赖由各发行版 BSP 配方声明，蓝牙功能继续使用原生 HCI／BlueZ。
 
-## 安装与更新
-
-默认 systemd-boot 启动项直接读取 ESP 的 `board.dtb`；旧入口通过
-`PianoRawLinuxBoot` 使用 `boot.img` 中的 BOOTv2 内嵌 DTB。只更新独立 DTB
-不会改变旧入口。旧系统没有自动地址程序时，更新内核需保留启动文件的
-地址属性；当前 BSP 可在启动时自行配置，不再要求安装器修改通用镜像。
-
-电脑安装器和 Android 模块的默认刷写流程已取消强制地址注入，原厂地址文件缺失不会
-阻止 ESP／root 安装。对旧系统仍保留显式工具：
-
-* 电脑端 [`tools/provision_piano_bluetooth.py`](../../../tools/provision_piano_bluetooth.py)，
-  安装器的 `provision-bluetooth` 子命令可调用它。
-* Android 原生工具 [`piano-bluetooth-provision.c`](../../../android/native/piano-bluetooth-provision.c)
-  保留 `piano-storage provision-bluetooth` 命令。
-
-两条路径均保留内核、initramfs、命令行及其余设备树内容，只写目标蓝牙节点的
-`local-bd-address`，更新 BOOTv2 的 DTB 大小和 AOSP SHA1。
-Android 原生工具使用固定上游 libfdt 与 libmd，原子替换派生的启动文件并同步。
-原文件和设备专属文件分别记录摘要，不把修改后的文件继续当作原始通用镜像。
-地址配置失败会明确报告，不生成随机地址。
-
-地址初始化留在 Linux BSP，不依赖 UEFI 提前读取原厂地址，也无需修改 BlueZ。
-公共 DTS 和发布包保持通用。
+默认 systemd-boot 的独立 DTB 与旧 BOOTv2 入口共用这套初始化，不需要设备专属
+启动文件、ESP 配置记录或安装步骤。地址初始化留在 Linux BSP，不依赖 UEFI
+读取原厂分区，也无需修改 BlueZ。
 
 ## 当前设备结果
 
