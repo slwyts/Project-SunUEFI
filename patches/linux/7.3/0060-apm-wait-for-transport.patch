@@ -1,0 +1,50 @@
+From 4f0955c42cddc8a03a24d1d34f9fee2c79c3e1ff Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 02:15:41 +0800
+Subject: [PATCH] ASoC: qcom: wait for bound APR devices before querying SPF
+ state
+
+A child probe can send a synchronous query before the parent RPMsg probe returns and GLINK advertises receive intents. Try the parent and APM device locks in parent-first order, and defer until both devices are bound. This also keeps device_is_bound checks under the required locks without waiting recursively on the parent probe.
+---
+ sound/soc/qcom/qdsp6/q6apm.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm.c b/sound/soc/qcom/qdsp6/q6apm.c
+index 6066f0a02a1..c880e14e54f 100644
+--- a/sound/soc/qcom/qdsp6/q6apm.c
++++ b/sound/soc/qcom/qdsp6/q6apm.c
+@@ -166,13 +166,30 @@ static int q6apm_get_apm_state(struct q6apm *apm)
+ 
+ bool q6apm_is_adsp_ready(void)
+ {
++	struct device *dev, *parent;
+ 	bool ready = false;
+ 
+ 	/* A DSP restart removes the APM device. Keep it alive for the whole
+ 	 * query, including the synchronous command's wait for a reply. */
+ 	mutex_lock(&g_apm_lock);
+-	if (g_apm)
++	if (!g_apm)
++		goto out;
++
++	dev = g_apm->dev;
++	parent = dev->parent;
++	/* Synchronous child probes run before GLINK advertises receive intents.
++	 * Do not wait for a parent probe which is waiting for this child.
++	 */
++	if (!device_trylock(parent))
++		goto out;
++	if (!device_trylock(dev))
++		goto unlock_parent;
++	if (device_is_bound(parent) && device_is_bound(dev))
+ 		ready = q6apm_get_apm_state(g_apm) > 0;
++	device_unlock(dev);
++unlock_parent:
++	device_unlock(parent);
++out:
+ 	mutex_unlock(&g_apm_lock);
+ 
+ 	return ready;
+-- 
+2.56.0
+

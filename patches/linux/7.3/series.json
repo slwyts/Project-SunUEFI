@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "c25063c1dd694b4688c87a7f4002ad2d4a81a31b",
-  "original_target_commit": "6e0a9b58a33ad9633cade6223e78bbb6553fe1ef",
+  "target_tree": "01db20856d7249252569fdc3fd0724f173002867",
+  "original_target_commit": "7c61bd92c40236a59cda9944595d5417dd9ebac6",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -479,6 +479,22 @@
       "original_parent": "fb656661c88c915e6a2e30412ab8597f3970ffe3",
       "tree": "c25063c1dd694b4688c87a7f4002ad2d4a81a31b",
       "committer_date": "2026-11-09T00:41:04+08:00"
+    },
+    {
+      "file": "0060-apm-wait-for-transport.patch",
+      "sha256": "a8d41917da2fb1b8886806cdfde6246f603e4242d774f2136a16630710c50187",
+      "original_commit": "4f0955c42cddc8a03a24d1d34f9fee2c79c3e1ff",
+      "original_parent": "6e0a9b58a33ad9633cade6223e78bbb6553fe1ef",
+      "tree": "5fc1da00466c9868cb3a9b6741be3be55c3f9ac0",
+      "committer_date": "2026-11-09T02:15:41+08:00"
+    },
+    {
+      "file": "0061-apm-state-query-header.patch",
+      "sha256": "9000f231877319a2de94a5b7e196de29f586ab098685b4fd9b80fc26ba1def16",
+      "original_commit": "7c61bd92c40236a59cda9944595d5417dd9ebac6",
+      "original_parent": "4f0955c42cddc8a03a24d1d34f9fee2c79c3e1ff",
+      "tree": "01db20856d7249252569fdc3fd0724f173002867",
+      "committer_date": "2026-11-09T02:23:11+08:00"
     }
   ]
 }

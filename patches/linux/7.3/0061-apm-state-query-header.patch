@@ -1,0 +1,28 @@
+From 7c61bd92c40236a59cda9944595d5417dd9ebac6 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 02:23:11 +0800
+Subject: [PATCH] ASoC: qcom: use a header-only SPF readiness query
+
+The SPF status command has no apm_cmd_header payload; send the request from the registered APM service port.
+---
+ sound/soc/qcom/qdsp6/q6apm.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm.c b/sound/soc/qcom/qdsp6/q6apm.c
+index c880e14e54f..45094e9ed29 100644
+--- a/sound/soc/qcom/qdsp6/q6apm.c
++++ b/sound/soc/qcom/qdsp6/q6apm.c
+@@ -152,8 +152,8 @@ static void q6apm_put_audioreach_graph(struct kref *ref)
+ static int q6apm_get_apm_state(struct q6apm *apm)
+ {
+ 	int ret;
+-	struct gpr_pkt *pkt __free(kfree) = audioreach_alloc_apm_cmd_pkt(0,
+-								APM_CMD_GET_SPF_STATE, 0);
++	struct gpr_pkt *pkt __free(kfree) = audioreach_alloc_apm_pkt(0,
++			APM_CMD_GET_SPF_STATE, 0, apm->gdev->svc.id);
+ 	if (IS_ERR(pkt))
+ 		return PTR_ERR(pkt);
+ 
+-- 
+2.56.0
+
