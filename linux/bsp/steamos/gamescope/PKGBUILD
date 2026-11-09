@@ -1,6 +1,6 @@
 pkgname=gamescope
 pkgver=3.16.30
-pkgrel=3.6
+pkgrel=3.7
 pkgdesc='Steam gaming compositor with mobile DRM display support'
 arch=(aarch64)
 url='https://github.com/ValveSoftware/gamescope'

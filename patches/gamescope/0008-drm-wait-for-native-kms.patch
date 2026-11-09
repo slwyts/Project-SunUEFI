@@ -1,0 +1,78 @@
+From: slwyts <slwyts@foxmail.com>
+Subject: [PATCH] wlserver: wait for native KMS during automatic display selection
+
+On split display/render devices the renderer may be ready before the native
+display controller. Picking only the first KMS device can then select simpledrm,
+whose scanout formats do not support the compositor's output images.
+
+Enumerate the session's KMS devices and skip the firmware framebuffer during
+automatic selection. Dispatch session events while waiting up to ten seconds
+for the native device, and close all unselected session handles.
+
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -67,6 +67,7 @@
+ #include "drm-lease-v1-protocol.h"
+ 
+ #include <atomic>
++#include <chrono>
+ #include <thread>
+ 
+ #include "wlserver.hpp"
+@@ -2295,16 +2296,37 @@ int wlsession_open_kms( const char *device_name ) {
+ 	}
+ 	else
+ 	{
+-		ssize_t n = wlr_session_find_gpus( wlserver.wlr.session, 1, &wlserver.wlr.device );
+-		if ( n < 0 )
+-		{
+-			wl_log.errorf( "Failed to list GPUs" );
+-			return -1;
+-		}
+-		if ( n == 0 )
++		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds( 10 );
++		wl_log.infof( "Waiting for a native KMS device" );
++		while ( !wlserver.wlr.device )
+ 		{
+-			wl_log.errorf( "No GPU detected" );
+-			return -1;
++			wlr_device *devices[64] = {};
++			ssize_t n = wlr_session_find_gpus( wlserver.wlr.session, 64, devices );
++			if ( n < 0 )
++			{
++				wl_log.errorf( "Failed to list GPUs" );
++				return -1;
++			}
++			for ( ssize_t i = 0; i < n; ++i )
++			{
++				drmVersion *version = drmGetVersion( devices[i]->fd );
++				const bool native = version && strcmp( version->name, "simpledrm" ) != 0;
++				if ( version )
++					drmFreeVersion( version );
++				if ( native && !wlserver.wlr.device )
++					wlserver.wlr.device = devices[i];
++				else
++					wlr_session_close_file( wlserver.wlr.session, devices[i] );
++			}
++			if ( wlserver.wlr.device )
++				break;
++			if ( std::chrono::steady_clock::now() >= deadline )
++			{
++				wl_log.errorf( "No native KMS device appeared within ten seconds" );
++				return -1;
++			}
++			if ( wl_event_loop_dispatch( wlserver.event_loop, 100 ) < 0 && errno != EINTR )
++				return -1;
+ 		}
+ 	}
+ 
+@@ -2325,8 +2347,8 @@ void wlsession_close_kms()
+ 	if ( wlserver.wlr.device )
+ 	{
+ 		wl_list_remove( &wlserver.wlr.device_change_listener.link );
++		wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
+ 	}
+-	wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
+ 	wlserver.wlr.device = nullptr;
+ }
+ 

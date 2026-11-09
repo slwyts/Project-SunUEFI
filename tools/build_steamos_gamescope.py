@@ -21,6 +21,7 @@ PATCHES = (
     ROOT / 'patches/gamescope/0005-input-touchpad-natural-scroll.patch',
     ROOT / 'patches/gamescope/0006-input-tablet-and-accelerated-pointer.patch',
     ROOT / 'patches/gamescope/0007-compositor-preserve-input-damage.patch',
+    ROOT / 'patches/gamescope/0008-drm-wait-for-native-kms.patch',
 )
 RECIPE = ROOT / 'linux/bsp/steamos/gamescope/PKGBUILD'
 
