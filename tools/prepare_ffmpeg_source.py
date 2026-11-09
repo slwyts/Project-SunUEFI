@@ -2,12 +2,15 @@
 """Stage the fixed upstream FFmpeg source and the distro-neutral BSP patch."""
 import argparse
 import hashlib
+import http.client
 import json
 from pathlib import Path
 import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,8 +37,24 @@ def prepare(output, apply_patches=True, series=SERIES):
     cache = ROOT / 'build/source-cache' / ('ffmpeg-' + record['upstream_version'] + '-source') / archive['filename']
     cache.parent.mkdir(parents=True, exist_ok=True)
     if not cache.exists():
-        with urllib.request.urlopen(url) as response:
-            cache.write_bytes(response.read())
+        for attempt in range(3):
+            try:
+                with tempfile.TemporaryDirectory(prefix='download-', dir=cache.parent) as temporary:
+                    partial = Path(temporary) / cache.name
+                    with urllib.request.urlopen(url, timeout=60) as response, partial.open('wb') as target:
+                        shutil.copyfileobj(response, target, 1024 * 1024)
+                    if partial.stat().st_size != archive['size'] or sha(partial) != archive['sha256']:
+                        raise ValueError('FFmpeg upstream archive checksum mismatch')
+                    partial.replace(cache)
+                break
+            except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ConnectionError) as error:
+                if (isinstance(error, urllib.error.HTTPError) and
+                        error.code not in (408, 429, 500, 502, 503, 504)) or attempt == 2:
+                    raise
+                wait = 15 * (attempt + 1)
+                print(f'FFmpeg source download failed: {error}; retrying in {wait}s '
+                      f'({attempt + 2}/3).', flush=True)
+                time.sleep(wait)
     if cache.stat().st_size != archive['size'] or sha(cache) != archive['sha256']:
         raise ValueError('FFmpeg upstream archive checksum mismatch')
     patches = []
