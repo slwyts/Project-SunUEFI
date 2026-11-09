@@ -1,0 +1,43 @@
+From f520d7a7a55283605daa4af38492ea3434efb5d8 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 22:26:59 +0800
+Subject: [PATCH] dt-bindings: power: supply: bq27xxx: describe battery
+ authentication key
+
+Allow the 32-byte vendor HMAC-SHA256 key only for BQ27Z561 compatible gauges. Keep ordinary measurements independent of authentication.
+---
+ .../bindings/power/supply/bq27xxx.yaml        | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml b/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
+index a8d5cbed0ce..547ef2a662f 100644
+--- a/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
++++ b/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
+@@ -77,8 +77,27 @@ properties:
+       Retain its raw measurements as an internal monitor with unknown supply
+       type; the pack's power-supplies property references this gauge.
+ 
++  ti,authentication-key:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    minItems: 32
++    maxItems: 32
++    description: |
++      HMAC-SHA256 key provisioned by the battery vendor for the BQ27Z561
++      authentication mailbox. Only batteries with this vendor command
++      extension may use it. Successful fresh challenge verification permits
++      the gauge's fast-charge mode; ordinary measurements do not require it.
++
+ allOf:
+   - $ref: power-supply.yaml#
++  - if:
++      properties:
++        compatible:
++          not:
++            contains:
++              const: ti,bq27z561
++    then:
++      properties:
++        ti,authentication-key: false
+   - if:
+       properties:
+         compatible:

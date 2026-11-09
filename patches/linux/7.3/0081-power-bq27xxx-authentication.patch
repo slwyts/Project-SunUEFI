@@ -1,0 +1,384 @@
+From 08fa09440c54399ce090519aa4d340d664265bc5 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 22:28:31 +0800
+Subject: [PATCH] feat(power): verify BQ27Z561 battery challenges before
+ fast-charge mode
+
+Use the factory HMAC-SHA256 mailbox and authenticated mode commands behind standard power-supply properties. Keep results tied to a fresh probe or resume, reject failed or short transfers and never expose a writable authentication result.
+
+The pack reports authentic only when both bank monitors pass. A board-provided key gates this vendor extension without changing other BQ27xxx devices.
+---
+ drivers/power/supply/Kconfig               |   2 +
+ drivers/power/supply/bq27xxx_battery.c     | 222 ++++++++++++++++++++-
+ drivers/power/supply/bq27xxx_battery_i2c.c |   6 +-
+ drivers/power/supply/piano_battery.c       |   2 +
+ include/linux/power/bq27xxx_battery.h      |   5 +
+ 5 files changed, 234 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index cccddfd9de0..71081a862d1 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -333,6 +333,8 @@ config BATTERY_PIANO
+ 
+ config BATTERY_BQ27XXX
+ 	tristate "BQ27xxx battery driver"
++	select CRYPTO_LIB_SHA256
++	select CRYPTO_LIB_UTILS
+ 	help
+ 	  Say Y here to enable support for batteries with BQ27xxx chips.
+ 
+diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
+index 5c32de13c51..b9fae35c4c3 100644
+--- a/drivers/power/supply/bq27xxx_battery.c
++++ b/drivers/power/supply/bq27xxx_battery.c
+@@ -53,6 +53,11 @@
+ #include <linux/power_supply.h>
+ #include <linux/slab.h>
+ #include <linux/of.h>
++#include <linux/property.h>
++#include <linux/random.h>
++#include <linux/unaligned.h>
++#include <crypto/sha2.h>
++#include <crypto/utils.h>
+ 
+ #include <linux/power/bq27xxx_battery.h>
+ 
+@@ -81,6 +86,14 @@
+ #define BQ27Z561_FLAG_FC	BIT(5) /* Battery fully charged */
+ #define BQ27Z561_FLAG_DIS_CH	BIT(6) /* Battery is discharging */
+ 
++#define BQ27Z561_ALT_MAC		0x3e
++#define BQ27Z561_MAC_DATA		0x40
++#define BQ27Z561_MAC_CHECKSUM	0x60
++#define BQ27Z561_MAC_LENGTH	0x61
++#define BQ27Z561_FAST_ENABLE	0x003e
++#define BQ27Z561_FAST_DISABLE	0x003f
++#define BQ27Z561_AUTH_RETRY	(30 * HZ)
++
+ /* control register params */
+ #define BQ27XXX_SEALED			0x20
+ #define BQ27XXX_SET_CFGUPDATE		0x13
+@@ -1930,6 +1943,9 @@ static void bq27xxx_battery_update_unlocked(struct bq27xxx_device_info *di)
+ 		 */
+ 		if (!(di->opts & BQ27XXX_O_ZERO))
+ 			bq27xxx_battery_current_and_status(di, NULL, &status, &cache);
++	} else if (di->auth_key) {
++		di->authentic = false;
++		di->charge_mode_known = false;
+ 	}
+ 
+ 	if ((di->cache.capacity != cache.capacity) ||
+@@ -2118,6 +2134,183 @@ static int bq27xxx_simple_value(int value,
+ 	return 0;
+ }
+ 
++/* The MAC commands and authentication share one hardware mailbox. */
++static int bq27z561_set_charge_mode(struct bq27xxx_device_info *di, bool fast)
++{
++	u8 command[4] = { 0, 0, fast, 0 }, trailer[2];
++	int i, ret;
++
++	if (di->removed)
++		return -ENODEV;
++	if (fast && !di->authentic)
++		return -EACCES;
++	if (di->charge_mode_known && di->fast_charge == fast)
++		return 0;
++	put_unaligned_le16(fast ? BQ27Z561_FAST_ENABLE : BQ27Z561_FAST_DISABLE,
++			   command);
++	trailer[0] = 0xff;
++	for (i = 0; i < sizeof(command); i++)
++		trailer[0] -= command[i];
++	trailer[1] = sizeof(command) + sizeof(trailer);
++	di->charge_mode_known = false;
++	ret = di->bus.write_bulk(di, BQ27Z561_ALT_MAC, command, sizeof(command));
++	ret = ret ?: di->bus.write_bulk(di, BQ27Z561_MAC_CHECKSUM,
++					trailer, sizeof(trailer));
++	if (ret)
++		return ret;
++	di->fast_charge = fast;
++	di->charge_mode_known = true;
++	return 0;
++}
++
++static int bq27z561_authenticate(struct bq27xxx_device_info *di)
++{
++	u8 request[SHA256_DIGEST_SIZE + 4] = { 0 };
++	u8 expected[SHA256_DIGEST_SIZE], actual[SHA256_DIGEST_SIZE];
++	int i, ret;
++
++	di->authentic = false;
++	ret = bq27z561_set_charge_mode(di, false);
++	if (ret)
++		return ret;
++	get_random_bytes(request + 2, SHA256_DIGEST_SIZE);
++	request[SHA256_DIGEST_SIZE + 2] = 0xff;
++	for (i = 2; i < SHA256_DIGEST_SIZE + 2; i++)
++		request[SHA256_DIGEST_SIZE + 2] -= request[i];
++	request[SHA256_DIGEST_SIZE + 3] = sizeof(request);
++	ret = di->bus.write_bulk(di, BQ27Z561_ALT_MAC, request, sizeof(request));
++	if (ret)
++		goto out;
++	/* Match the factory host's settle time before reading the digest. */
++	msleep(2000);
++	ret = di->bus.read_bulk(di, BQ27Z561_MAC_DATA, actual, sizeof(actual));
++	if (ret)
++		goto out;
++	hmac_sha256_usingrawkey(di->auth_key, SHA256_DIGEST_SIZE, request + 2,
++			       SHA256_DIGEST_SIZE, expected);
++	if (crypto_memneq(actual, expected, sizeof(actual))) {
++		ret = -EKEYREJECTED;
++		goto out;
++	}
++	di->authentic = true;
++out:
++	memzero_explicit(request, sizeof(request));
++	memzero_explicit(expected, sizeof(expected));
++	memzero_explicit(actual, sizeof(actual));
++	return ret;
++}
++
++static void bq27z561_clear_auth_key(void *data)
++{
++	memzero_explicit(data, SHA256_DIGEST_SIZE);
++}
++
++static int bq27z561_init_authentication(struct bq27xxx_device_info *di,
++				      struct power_supply_desc *desc)
++{
++	static const char property[] = "ti,authentication-key";
++	static const enum power_supply_property auth_props[] = {
++		POWER_SUPPLY_PROP_AUTHENTIC,
++		POWER_SUPPLY_PROP_CHARGE_TYPE,
++	};
++	enum power_supply_property *props;
++	size_t size = sizeof(bq27z561_props);
++	int ret;
++
++	if (!device_property_present(di->dev, property))
++		return 0;
++	if (di->chip != BQ27Z561 || !di->bus.read_bulk || !di->bus.write_bulk ||
++	    device_property_count_u8(di->dev, property) != SHA256_DIGEST_SIZE)
++		return -EINVAL;
++	di->auth_key = devm_kmalloc(di->dev, SHA256_DIGEST_SIZE, GFP_KERNEL);
++	if (!di->auth_key)
++		return -ENOMEM;
++	ret = device_property_read_u8_array(di->dev, property, di->auth_key,
++					    SHA256_DIGEST_SIZE);
++	if (ret)
++		return ret;
++	ret = devm_add_action_or_reset(di->dev, bq27z561_clear_auth_key, di->auth_key);
++	if (ret)
++		return ret;
++	props = devm_kmalloc(di->dev, size + sizeof(auth_props), GFP_KERNEL);
++	if (!props)
++		return -ENOMEM;
++	memcpy(props, bq27z561_props, size);
++	memcpy((u8 *)props + size, auth_props, sizeof(auth_props));
++	desc->properties = props;
++	desc->num_properties += ARRAY_SIZE(auth_props);
++	desc->charge_types = BIT(POWER_SUPPLY_CHARGE_TYPE_STANDARD) |
++			     BIT(POWER_SUPPLY_CHARGE_TYPE_FAST);
++	mutex_lock(&di->lock);
++	ret = bq27z561_authenticate(di);
++	di->auth_retry_at = jiffies + BQ27Z561_AUTH_RETRY;
++	mutex_unlock(&di->lock);
++	if (ret)
++		dev_warn(di->dev,
++			 "battery authentication failed: %d; fast charging unavailable\n", ret);
++	return 0;
++}
++
++static int bq27z561_get_charge_property(struct bq27xxx_device_info *di,
++				      enum power_supply_property property,
++				      union power_supply_propval *value)
++{
++	int ret = 0;
++
++	mutex_lock(&di->lock);
++	ret = di->removed ? -ENODEV : bq27xxx_read(di, BQ27XXX_REG_FLAGS, false);
++	if (ret < 0) {
++		di->authentic = false;
++		di->charge_mode_known = false;
++		goto out;
++	}
++	ret = 0;
++	if (property == POWER_SUPPLY_PROP_AUTHENTIC && !di->authentic &&
++	    time_after_eq(jiffies, di->auth_retry_at)) {
++		ret = bq27z561_authenticate(di);
++		di->auth_retry_at = jiffies + BQ27Z561_AUTH_RETRY;
++	}
++	if (ret == -EKEYREJECTED)
++		ret = 0;
++	if (!ret && property == POWER_SUPPLY_PROP_AUTHENTIC)
++		value->intval = di->authentic;
++	else if (!ret && !di->charge_mode_known)
++		ret = -ENODATA;
++	else if (!ret)
++		value->intval = di->fast_charge ? POWER_SUPPLY_CHARGE_TYPE_FAST :
++			POWER_SUPPLY_CHARGE_TYPE_STANDARD;
++out:
++	mutex_unlock(&di->lock);
++	return ret;
++}
++
++static int bq27xxx_battery_set_property(struct power_supply *psy,
++				      enum power_supply_property property,
++				      const union power_supply_propval *value)
++{
++	struct bq27xxx_device_info *di = power_supply_get_drvdata(psy);
++	int ret;
++
++	if (!di->auth_key || property != POWER_SUPPLY_PROP_CHARGE_TYPE ||
++	    (value->intval != POWER_SUPPLY_CHARGE_TYPE_FAST &&
++	     value->intval != POWER_SUPPLY_CHARGE_TYPE_STANDARD))
++		return -EINVAL;
++	mutex_lock(&di->lock);
++	ret = bq27z561_set_charge_mode(di, value->intval == POWER_SUPPLY_CHARGE_TYPE_FAST);
++	mutex_unlock(&di->lock);
++	if (!ret)
++		power_supply_changed(psy);
++	return ret;
++}
++
++static int bq27xxx_battery_property_is_writeable(struct power_supply *psy,
++						enum power_supply_property property)
++{
++	struct bq27xxx_device_info *di = power_supply_get_drvdata(psy);
++
++	return di->auth_key && property == POWER_SUPPLY_PROP_CHARGE_TYPE;
++}
++
+ static int bq27xxx_battery_get_property(struct power_supply *psy,
+ 					enum power_supply_property psp,
+ 					union power_supply_propval *val)
+@@ -2125,6 +2318,10 @@ static int bq27xxx_battery_get_property(struct power_supply *psy,
+ 	int ret = 0;
+ 	struct bq27xxx_device_info *di = power_supply_get_drvdata(psy);
+ 
++	if (di->auth_key && (psp == POWER_SUPPLY_PROP_AUTHENTIC ||
++			    psp == POWER_SUPPLY_PROP_CHARGE_TYPE))
++		return bq27z561_get_charge_property(di, psp, val);
++
+ 	mutex_lock(&di->lock);
+ 	if (time_is_before_jiffies(di->last_update + 5 * HZ))
+ 		bq27xxx_battery_update_unlocked(di);
+@@ -2257,7 +2454,13 @@ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
+ 	psy_desc->properties = bq27xxx_chip_data[di->chip].props;
+ 	psy_desc->num_properties = bq27xxx_chip_data[di->chip].props_size;
+ 	psy_desc->get_property = bq27xxx_battery_get_property;
++	psy_desc->set_property = bq27xxx_battery_set_property;
++	psy_desc->property_is_writeable = bq27xxx_battery_property_is_writeable;
+ 	psy_desc->external_power_changed = bq27xxx_external_power_changed;
++	ret = bq27z561_init_authentication(di, psy_desc);
++	if (ret)
++		return dev_err_probe(di->dev, ret,
++				     "invalid battery authentication configuration\n");
+ 
+ 	di->bat = devm_power_supply_register(di->dev, psy_desc, &psy_cfg);
+ 	if (IS_ERR(di->bat))
+@@ -2283,6 +2486,8 @@ void bq27xxx_battery_teardown(struct bq27xxx_device_info *di)
+ 
+ 	/* Set removed to avoid bq27xxx_battery_update() re-queuing the work */
+ 	mutex_lock(&di->lock);
++	if (di->auth_key && bq27z561_set_charge_mode(di, false))
++		dev_warn(di->dev, "could not disable gauge fast-charge mode\n");
+ 	di->removed = true;
+ 	mutex_unlock(&di->lock);
+ 
+@@ -2294,15 +2499,28 @@ EXPORT_SYMBOL_GPL(bq27xxx_battery_teardown);
+ static int bq27xxx_battery_suspend(struct device *dev)
+ {
+ 	struct bq27xxx_device_info *di = dev_get_drvdata(dev);
++	int ret = 0;
+ 
+-	cancel_delayed_work(&di->work);
+-	return 0;
++	cancel_delayed_work_sync(&di->work);
++	if (di->auth_key) {
++		mutex_lock(&di->lock);
++		ret = bq27z561_set_charge_mode(di, false);
++		mutex_unlock(&di->lock);
++	}
++	return ret;
+ }
+ 
+ static int bq27xxx_battery_resume(struct device *dev)
+ {
+ 	struct bq27xxx_device_info *di = dev_get_drvdata(dev);
+ 
++	if (di->auth_key) {
++		mutex_lock(&di->lock);
++		di->authentic = false;
++		di->charge_mode_known = false;
++		di->auth_retry_at = jiffies;
++		mutex_unlock(&di->lock);
++	}
+ 	schedule_delayed_work(&di->work, 0);
+ 	return 0;
+ }
+diff --git a/drivers/power/supply/bq27xxx_battery_i2c.c b/drivers/power/supply/bq27xxx_battery_i2c.c
+index c4e7a9521d0..d1d15955da9 100644
+--- a/drivers/power/supply/bq27xxx_battery_i2c.c
++++ b/drivers/power/supply/bq27xxx_battery_i2c.c
+@@ -61,6 +61,8 @@ static int bq27xxx_battery_i2c_read(struct bq27xxx_device_info *di, u8 reg,
+ 
+ 	if (ret < 0)
+ 		return ret;
++	if (ret != ARRAY_SIZE(msg))
++		return -EIO;
+ 
+ 	if (!single)
+ 		ret = get_unaligned_le16(data);
+@@ -124,11 +126,13 @@ static int bq27xxx_battery_i2c_bulk_write(struct bq27xxx_device_info *di,
+ {
+ 	struct i2c_client *client = to_i2c_client(di->dev);
+ 	struct i2c_msg msg;
+-	u8 buf[33];
++	u8 buf[37];
+ 	int ret;
+ 
+ 	if (!client->adapter)
+ 		return -ENODEV;
++	if (len < 0 || len > sizeof(buf) - 1)
++		return -EINVAL;
+ 
+ 	buf[0] = reg;
+ 	memcpy(&buf[1], data, len);
+diff --git a/drivers/power/supply/piano_battery.c b/drivers/power/supply/piano_battery.c
+index 66ca32c523c..8cf4e0f4cfa 100644
+--- a/drivers/power/supply/piano_battery.c
++++ b/drivers/power/supply/piano_battery.c
+@@ -118,6 +118,7 @@ static int piano_battery_get_property(struct power_supply *psy,
+ 
+ 	switch (prop) {
+ 	case POWER_SUPPLY_PROP_PRESENT:
++	case POWER_SUPPLY_PROP_AUTHENTIC:
+ 		value->intval = cells[0] && cells[1];
+ 		break;
+ 	case POWER_SUPPLY_PROP_CURRENT_NOW:
+@@ -193,6 +194,7 @@ static void piano_battery_external_power_changed(struct power_supply *psy)
+ static const enum power_supply_property piano_battery_properties[] = {
+ 	POWER_SUPPLY_PROP_STATUS,
+ 	POWER_SUPPLY_PROP_PRESENT,
++	POWER_SUPPLY_PROP_AUTHENTIC,
+ 	POWER_SUPPLY_PROP_SCOPE,
+ 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+ 	POWER_SUPPLY_PROP_CURRENT_NOW,
+diff --git a/include/linux/power/bq27xxx_battery.h b/include/linux/power/bq27xxx_battery.h
+index d56e1276aaf..b1be969b9b8 100644
+--- a/include/linux/power/bq27xxx_battery.h
++++ b/include/linux/power/bq27xxx_battery.h
+@@ -64,6 +64,11 @@ struct bq27xxx_device_info {
+ 	int voltage_min_design;
+ 	int voltage_max_design;
+ 	bool removed;
++	u8 *auth_key;
++	bool authentic;
++	bool fast_charge;
++	bool charge_mode_known;
++	unsigned long auth_retry_at;
+ 	unsigned long last_update;
+ 	union power_supply_propval last_status;
+ 	struct delayed_work work;

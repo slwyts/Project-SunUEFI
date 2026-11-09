@@ -8,6 +8,10 @@
 		target-path = "/soc/qcom,qupv3_1_geni_se@ac0000/i2c@a94000/bq27z561_master@55";
 		piano_battery_cell0: __overlay__ {
 			ti,cell-monitor;
+			ti,authentication-key = [
+				02 b3 a8 5e a4 c1 a6 db 6f bd 1f d5 76 7c 1a 42
+				31 4f 37 ba 7c 94 60 c9 ed 79 a1 2b b2 b5 d9 9c
+			];
 		};
 	};
 
@@ -15,6 +19,10 @@
 		target-path = "/soc/qcom,qupv3_2_geni_se@8c0000/i2c@88c000/bq27z561_slave@55";
 		piano_battery_cell1: __overlay__ {
 			ti,cell-monitor;
+			ti,authentication-key = [
+				02 b3 a8 5e a4 c1 a6 db 6f bd 1f d5 76 7c 1a 42
+				31 4f 37 ba 7c 94 60 c9 ed 79 a1 2b b2 b5 d9 9c
+			];
 		};
 	};
 

@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "f65ac9e316f58098b24f6022bb99be5d5c2a7b65",
-  "original_target_commit": "7fb390577acb7f419b2cb892af55a56022fe7329",
+  "target_tree": "9fee6cfdb3924011e49fc25f17283627f8f4d4ff",
+  "original_target_commit": "08fa09440c54399ce090519aa4d340d664265bc5",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -639,6 +639,22 @@
       "original_parent": "a9eead3c1303f32558c098050e9f5c6bd6169163",
       "committer_date": "2026-11-09T19:33:44+08:00",
       "tree": "f65ac9e316f58098b24f6022bb99be5d5c2a7b65"
+    },
+    {
+      "file": "0080-power-bq27xxx-auth-binding.patch",
+      "sha256": "887598b893b46d03c8baf93fd54642a2cd68382ebf877757eccda7ff75f44aee",
+      "original_commit": "f520d7a7a55283605daa4af38492ea3434efb5d8",
+      "original_parent": "7fb390577acb7f419b2cb892af55a56022fe7329",
+      "committer_date": "2026-11-09T22:26:59+08:00",
+      "tree": "659fc71656984a2655b4dae360ddd1383da311d7"
+    },
+    {
+      "file": "0081-power-bq27xxx-authentication.patch",
+      "sha256": "90698bfb39ed96f6867aa2e0205515c54c67209e2645b70ffaacf93739756b73",
+      "original_commit": "08fa09440c54399ce090519aa4d340d664265bc5",
+      "original_parent": "f520d7a7a55283605daa4af38492ea3434efb5d8",
+      "committer_date": "2026-11-09T22:28:31+08:00",
+      "tree": "9fee6cfdb3924011e49fc25f17283627f8f4d4ff"
     }
   ],
   "provenance": {
@@ -662,6 +678,21 @@
       "scope": "Combined-cell current capped at 8000 mA; normal FV 4060/4480/4500 mV and ITERM 472 mA. Reference topology enums and property IDs are not copied; use Piano gauges and original-program wire IDs.",
       "firmware_property_checks": "The pinned hyperos4-adsp program confirms FCC/ITERM getters are successful no-ops. Model 0x56 FV getter uses 10 mV while its setter uses 5 mV. Charge enable 0x2003 is a one-byte boolean whose getter reads PMIC CHGR 0x2646 bit 0.",
       "local_protection": "Use temperature extremes from both cells and firmware pack, retain validated bounded PMIC heat sharing, delay warm-FV recovery and confirm PMIC charge-enable is off before suspend or teardown. Restore only after fresh temperature and normal-limit setup."
+    },
+    "battery_authentication": {
+      "reference_url": "https://github.com/ianchb/xiaomi-mipps-auth",
+      "reference_commit": "9176efbdf276b874fc0a97912a914449a88155fb",
+      "reference_path": "xiaomi-mipps-auth",
+      "factory_source_url": "https://github.com/MiCode/Xiaomi_Kernel_OpenSource",
+      "factory_source_commit": "0b426219a9a24b56c1593ebc84edb8a3f3b897b0",
+      "factory_source_path": "xiaomi-modules/mca/mca_hardware_ic/fuelgauge_ic/bq27z561/bq27z561.c",
+      "stock_rom": "OS4.0.5.0.XPYCNXM",
+      "stock_program_sha256": {
+        "batterysecret": "b4692888f6b5b86f29cbb0f2e2bb554b082079d368b77a70d7d9390bcd55ef05",
+        "bq27z561.ko": "7a76a4f20b83e4a3de197c7f8ca6bc2281072824e5d6b6ed9962d1c7af89dfdb"
+      },
+      "checks": "Piano project config selects factory HMAC-SHA256 key 1; fresh 32-byte challenges verified on both installed lwn cell-bank gauges. Vendor MAC commands 0x003e/0x003f switch FFC with a two-byte boolean payload, checksum and length. The mode getter in the stock program is cached, not a hardware readback.",
+      "scope": "Standard read-only authentic results and authenticated charge_type control; vendor key in the board DT. Does not enable FFC voltage/current in the charger policy."
     }
   }
 }
