@@ -32,7 +32,7 @@ struct piano_pen_output {
 };
 
 /* Callers select the actual Touch LCDid profile, not the display label,
- * and P81c vendor3. Both the factory ini and format_version=1 numeric facts
+ * and M80p vendor1 or P81c vendor3. Both the factory ini and format_version=1 numeric facts
  * (mapping.mapping_40 / mapping.mapping_60) are accepted. Coordinates are portrait
  * native units, not screen pixels. Unknown calibration is rejected.
  * pressure_max_age_ns is an explicit caller freshness limit, not an OEM value. */

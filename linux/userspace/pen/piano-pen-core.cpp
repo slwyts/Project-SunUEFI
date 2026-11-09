@@ -92,8 +92,8 @@ std::vector<int> array(const Ini &ini, const std::string &key, size_t count) {
 }
 struct Calibration { StylusProfile profile; piano_pen_info info; };
 Calibration calibration(const Ini &ini, int vendor, piano_pen_orientation orientation) {
-    if (orientation != PIANO_PEN_PORTRAIT || vendor != 3)
-        throw std::runtime_error("this interface requires explicit portrait P81c/vendor3");
+    if (orientation != PIANO_PEN_PORTRAIT || (vendor != 1 && vendor != 3))
+        throw std::runtime_error("expected portrait M80p/vendor1 or P81c/vendor3");
     if (value(ini, "hw.hal_row_num") != 40 || value(ini, "hw.hal_col_num") != 60 ||
         value(ini, "hw.hal_node_num") != 2400 || value(ini, "hw.display_x_resolution") != 2136 ||
         value(ini, "hw.display_y_resolution") != 3200 ||
@@ -103,7 +103,7 @@ Calibration calibration(const Ini &ini, int vendor, piano_pen_orientation orient
         value(ini, "stylus.stylus_num_col2") != 60 || value(ini, "stylus.stylus_num_row2") != 8 ||
         value(ini, "stylus.stylus_en") != 1)
         throw std::runtime_error("ini does not describe the supported Piano portrait geometry");
-    // P81c id8 chooses vendor3. This is not the stylus_3 configuration slot.
+    // Vendor IDs select calibration slots, independently of their suffix.
     std::string prefix;
     for (const auto &candidate : {"stylus", "stylus_2", "stylus_3"}) {
         const auto found = ini.find("stylus." + std::string(candidate) + "_vendor_id");
@@ -187,7 +187,7 @@ Calibration calibration(const Ini &ini, int vendor, piano_pen_orientation orient
         p.kalman_q_max <= 0 || p.kalman_lambda_min <= 0 || p.kalman_lambda_max <= 0 ||
         p.tip_pitch_40 <= 0 || p.tip_pitch_60 <= 0)
         throw std::runtime_error("actual ini calibration is unsupported");
-    out.info = {orientation, vendor, p.coordinate_resolution, 213599, 319999, 16383, -60, 60,
+    out.info = {orientation, vendor, p.coordinate_resolution, 213599, 319999, vendor == 1 ? 8191 : 16383, -60, 60,
         p.tip_pitch_40, p.tip_pitch_60, p.calibration_threshold, p.calibration_rate,
         p.mapping_40.front(), p.mapping_40.back(), p.mapping_60.front(), p.mapping_60.back()};
     return out;

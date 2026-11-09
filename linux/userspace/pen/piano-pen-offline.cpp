@@ -36,7 +36,7 @@ void field(const char *name, int value, bool known) {
     if (known) std::cout << value; else std::cout << "null";
 }
 void usage() {
-    std::cout << "piano-pen-offline --ini ACTUAL.ini --config\n"
+    std::cout << "piano-pen-offline --ini ACTUAL.ini [--vendor 1|3] --config\n"
         "piano-pen-offline --ini ACTUAL.ini --pressure-max-age-ns N --events ACTUAL.tsv\n"
         "Events: boottime_ns report5|report2|raw29 CAPTURED_FILE; or boottime_ns reset -\n"
         "Use CLOCK_BOOTTIME for BLE, matching NTP ktime_get_boottime; do not mix CLOCK_MONOTONIC across sleep.\n"
@@ -52,12 +52,19 @@ int main(int argc, char **argv) {
         std::string ini, events;
         uint64_t age = 0;
         bool config_only = false, have_age = false;
+        int vendor = 3;
         for (int i = 1; i < argc; ++i) {
             const std::string option = argv[i];
             if (option == "--help") { usage(); return 0; }
             if (option == "--config") { config_only = true; continue; }
             if (i + 1 == argc) throw std::runtime_error("option value is missing");
             if (option == "--ini") ini = argv[++i];
+            else if (option == "--vendor") {
+                const auto selected = number(argv[++i]);
+                if (selected != 1 && selected != 3)
+                    throw std::runtime_error("vendor must be 1 (M80p) or 3 (P81c)");
+                vendor = static_cast<int>(selected);
+            }
             else if (option == "--events") events = argv[++i];
             else if (option == "--pressure-max-age-ns") {
                 age = number(argv[++i]); have_age = true;
@@ -68,7 +75,7 @@ int main(int argc, char **argv) {
         }
         char error[256]{};
         std::unique_ptr<piano_pen_core, decltype(&piano_pen_core_destroy)> core(
-            piano_pen_core_create(ini.c_str(), 3, PIANO_PEN_PORTRAIT, age, error, sizeof(error)),
+            piano_pen_core_create(ini.c_str(), vendor, PIANO_PEN_PORTRAIT, age, error, sizeof(error)),
             piano_pen_core_destroy);
         if (!core) throw std::runtime_error(error);
         piano_pen_info info{};

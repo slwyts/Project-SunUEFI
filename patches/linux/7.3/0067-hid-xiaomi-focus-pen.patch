@@ -1,0 +1,99 @@
+From 1abdd75969c8214914d9bb73d3a3f088bdd18f6a Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 8 Nov 2026 22:19:24 +0800
+Subject: [PATCH] HID: xiaomi: support Focus Pen M80p input routing
+
+Match the Bluetooth M80p 0022:4d80 identity alongside P81c. Preserve
+separate HID applications, keep its private pressure packets on hidraw,
+and let the THP tablet-tool owner handle its two physical barrel buttons.
+Retain the independent focus key and existing P81c gesture mappings.
+
+The layout was checked against an actual M80p report descriptor.
+
+Signed-off-by: Codex <codex@openai.com>
+---
+ drivers/hid/hid-ids.h    |  1 +
+ drivers/hid/hid-xiaomi.c | 24 +++++++++++++++++++-----
+ 2 files changed, 20 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/hid/hid-ids.h b/drivers/hid/hid-ids.h
+index 4fbd4cbbe..3fa465b9c 100644
+--- a/drivers/hid/hid-ids.h
++++ b/drivers/hid/hid-ids.h
+@@ -1615,6 +1615,7 @@
+ 
+ #define BT_VENDOR_ID_XIAOMI_P81C		0x0022
+ #define BT_DEVICE_ID_XIAOMI_P81C		0x5081
++#define BT_DEVICE_ID_XIAOMI_M80P		0x4d80
+ 
+ #define USB_VENDOR_ID_XIAOMI		0x2717
+ #define USB_DEVICE_ID_MI_SILENT_MOUSE	0x5014
+diff --git a/drivers/hid/hid-xiaomi.c b/drivers/hid/hid-xiaomi.c
+index be97fd664..d7f096740 100644
+--- a/drivers/hid/hid-xiaomi.c
++++ b/drivers/hid/hid-xiaomi.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * HID quirks for Xiaomi mice and Focus Pen Pro
++ * HID quirks for Xiaomi mice and Focus Pens
+  *
+  * Copyright (c) 2021 Ilya Skriblovsky
+  */
+@@ -88,7 +88,7 @@ static bool xiaomi_p81c_body_keys(struct hid_report *report,
+ 	       field->logical_maximum == 0x6e && field->flags == 0;
+ }
+ 
+-/* P81C exposes its private 14-byte pressure packet as keyboard Usage 0x57.
++/* Focus Pens expose their private 14-byte pressure packet as keyboard Usage 0x57.
+  * Keep that packet available to hidraw; it must never become KEY_KPPLUS.
+  * Match the parsed layout, rather than replacing a firmware report map.
+  * Report 2's real squeeze button is consumed by the tablet-tool owner.
+@@ -102,10 +102,22 @@ static int xiaomi_input_mapping(struct hid_device *hdev, struct hid_input *hi,
+ 
+ 	if (hdev->bus != BUS_BLUETOOTH ||
+ 	    hdev->vendor != BT_VENDOR_ID_XIAOMI_P81C ||
+-	    hdev->product != BT_DEVICE_ID_XIAOMI_P81C ||
++	    (hdev->product != BT_DEVICE_ID_XIAOMI_P81C &&
++	     hdev->product != BT_DEVICE_ID_XIAOMI_M80P) ||
+ 	    report->type != HID_INPUT_REPORT)
+ 		return 0;
+ 
++	if (hdev->product == BT_DEVICE_ID_XIAOMI_M80P &&
++	    xiaomi_p81c_body_keys(report, field)) {
++		/* Physical barrel buttons are forwarded by the tablet-tool owner.
++		 * Keep the independent focus/presentation key on hid-input.
++		 */
++		if (usage->hid == (HID_UP_KEYBOARD | 0x4b) ||
++		    usage->hid == (HID_UP_KEYBOARD | 0x4e))
++			return -1;
++		return 0;
++	}
++
+ 	if (xiaomi_p81c_body_keys(report, field)) {
+ 		switch (usage->hid) {
+ 		case HID_UP_KEYBOARD | 0x61:	/* slide up, generic KEY_KP9 */
+@@ -152,7 +164,8 @@ static int xiaomi_probe(struct hid_device *hdev, const struct hid_device_id *id)
+ 	 * exposed them; combining them would change libinput classification.
+ 	 */
+ 	if (hdev->vendor == BT_VENDOR_ID_XIAOMI_P81C &&
+-	    hdev->product == BT_DEVICE_ID_XIAOMI_P81C)
++	    (hdev->product == BT_DEVICE_ID_XIAOMI_P81C ||
++	     hdev->product == BT_DEVICE_ID_XIAOMI_M80P))
+ 		hdev->quirks |= HID_QUIRK_INPUT_PER_APP;
+ 
+ 	ret = hid_parse(hdev);
+@@ -164,6 +177,7 @@ static int xiaomi_probe(struct hid_device *hdev, const struct hid_device_id *id)
+ static const struct hid_device_id xiaomi_devices[] = {
+ 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_XIAOMI, USB_DEVICE_ID_MI_SILENT_MOUSE) },
+ 	{ HID_BLUETOOTH_DEVICE(BT_VENDOR_ID_XIAOMI_P81C, BT_DEVICE_ID_XIAOMI_P81C) },
++	{ HID_BLUETOOTH_DEVICE(BT_VENDOR_ID_XIAOMI_P81C, BT_DEVICE_ID_XIAOMI_M80P) },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(hid, xiaomi_devices);
+@@ -179,4 +193,4 @@ module_hid_driver(xiaomi_driver);
+ 
+ MODULE_LICENSE("GPL");
+ MODULE_AUTHOR("Ilya Skriblovsky <IlyaSkriblovsky@gmail.com>");
+-MODULE_DESCRIPTION("HID quirks for Xiaomi mice and Focus Pen Pro");
++MODULE_DESCRIPTION("HID quirks for Xiaomi mice and Focus Pens");
