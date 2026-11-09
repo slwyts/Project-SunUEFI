@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 from build_nyarch_apps import ROOT, guest_environment, run
 from build_release_rootfs import build_resolver
@@ -35,6 +36,21 @@ def install_cached(root, output):
             raise ValueError('The cache contains no binary packages')
         with build_resolver(root), guest_environment(root) as guest:
             guest(['pacman', '-U', '--noconfirm', *packages])
+
+
+def verify_sources(guest, folder):
+    for attempt in range(3):
+        try:
+            guest(['runuser', '-u', 'sunuefi-package', '--', 'bash', '-c',
+                   'cd "$1"; makepkg --verifysource --noconfirm --nodeps', 'sources', folder])
+            return
+        except subprocess.CalledProcessError:
+            if attempt == 2:
+                raise
+            wait = 15 * (attempt + 1)
+            print(f'Package source download or verification failed; retrying in {wait}s '
+                  f'({attempt + 2}/3).', flush=True)
+            time.sleep(wait)
 
 
 def build(root, recipe, output, resume=False):
@@ -70,6 +86,7 @@ def build(root, recipe, output, resume=False):
             guest(['useradd', '-m', '-u', '60002', 'sunuefi-package'])
         guest(['chown', '-R', 'sunuefi-package:sunuefi-package', folder])
         if not (work / '.sunuefi-built').exists():
+            verify_sources(guest, folder)
             flags = ' --noextract' if resume and (work / 'src').is_dir() else ''
             guest(['runuser', '-u', 'sunuefi-package', '--', 'bash', '-c',
                    'cd "$1"; makepkg --force --noconfirm --nocheck --nodeps' + flags, 'makepkg', folder])
