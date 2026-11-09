@@ -19,9 +19,17 @@ STATIC CONST CHAR8 *mSource="unavailable";
 STATIC EFI_GUID mChipInfoGuid=EFI_CHIPINFO_PROTOCOL_GUID;
 
 STATIC BOOLEAN ValidAddress(CONST UINT8 *Address,BOOLEAN Public){
+  // QTI NVM placeholders in the MSB-first order used by both callers.
+  STATIC CONST UINT8 Defaults[][6]={
+    {0x00,0xbd,0x00,0x00,0xbd,0x00},
+    {0x66,0x55,0x44,0x33,0x22,0x11}
+  };
   UINT8 Any=0,NotFf=0;
   for(UINTN I=0;I<6;++I){Any|=Address[I];NotFf|=Address[I]^0xff;}
-  return Any&&NotFf&&!(Address[0]&(Public?3:1));
+  if(!Any||!NotFf||(Address[0]&(Public?3:1)))return FALSE;
+  for(UINTN I=0;I<ARRAY_SIZE(Defaults);++I)
+    if(!CompareMem(Address,Defaults[I],sizeof(Defaults[I])))return FALSE;
+  return TRUE;
 }
 
 STATIC EFI_STATUS FactoryAddress(UINT8 Address[6]){
@@ -82,7 +90,7 @@ STATIC EFI_STATUS ChipAddress(UINT8 Address[6]){
   Status=ChipInfo->GetSerialNumber(ChipInfo,&Serial);
   if(Status==EFI_SUCCESS)Status=ChipInfo->GetChipId(ChipInfo,&Chip);
   if(Status!=EFI_SUCCESS)return Status;
-  if(!Serial||Serial==MAX_UINT32||!Chip||Chip==MAX_UINT32)return EFI_NOT_FOUND;
+  if(!Serial||Serial==MAX_UINT32||!Chip||(UINT32)Chip==MAX_UINT32)return EFI_NOT_FOUND;
 
   // Preserve the existing SoC-derived fallback identity across rootfs changes.
   STATIC CONST CHAR8 Domain[]="SunUEFI piano Bluetooth address v1";
