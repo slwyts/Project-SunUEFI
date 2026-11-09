@@ -1,55 +1,45 @@
-# 原始 SSC 向量接口
+# 原始 SSC 报告与向量解码
 
-这份扩展准备在正常libssc中提供额外传感器事件，复用已有SUID发现、QMI传输及open/close流程。[源码补丁](../../../patches/libssc/0002-raw-vector-reports.patch)应用在libssc0.4.4及property-types修正之后；[最小客户端](../../../linux/userspace/piano-ssc-vector.c)只用公开libssc API。没有新增传感器daemon、IIO假设备或桌面策略。
+libssc 扩展复用已有 SUID 发现、QMI 传输及 open/close 流程，提供原始报告和已核对布局的向量解码。`piano-ssc-vector` 是限时诊断客户端，不作为服务自启动，也不创建 IIO 设备。
 
-默认发布配置已通过 `patches/piano-sensors/0003-libssc-raw-vector-reports.patch` 接入向量扩展和客户端，标准 ARM64 库、CLI、开发包及 GIR 使用 `+sunuefi2`。客户端的 Debian 依赖要求同版本或更新的库，避免链接旧版本缺少的公开符号。完整六包已通过 rootfs 消费函数；平板已安装新库和 CLI，三个通道的限时订阅均正常关闭。下一份 root 镜像尚未生成，不能把运行中的软件包升级视为新镜像已部署。
+共享补丁由 `config/release.json` 的 `sensors.patches` 接入 `./build.sh sensors`，经标准 Debian quilt/Meson 流程构建。`0003-libssc-raw-vector-reports.patch` 提供报告接口及客户端，对应 Debian 版本为 `0.4.4-2+piano1+sunuefi2`。
 
-## 应用接口
+## 限时读取原始报告
 
-现有`SSCSensor`新增`raw-report(sensor, guint message_id, GBytes *payload)`信号。只转发与该对象SUID匹配的报告，仅有未阻塞订阅者时才复制客户端即将释放的GArray。GBytes保持原始不可变protobuf载荷；回调内借用，需要延长使用就调用`g_bytes_ref()`。信号同步运行在现有SSC客户端的report dispatch context，GUI应用需要按自身主循环要求转交处理。原有强类型measurement信号和采样策略不变。
+使用准确的 SSC 数据类型订阅，默认读取三秒；`--seconds` 接受 1–30 秒：
 
-公开函数`ssc_sensor_decode_vector_report(message_id, payload, &error)`返回`GVariant a{sv}`，调用方拥有返回引用。它只解释已核字段的wire类型，保留全部分量，不套用光线接口的“只取第0分量”规则：
+```sh
+piano-ssc-vector --sensor cct_front --seconds 3
+piano-ssc-vector --sensor ambient_light_back --seconds 3
+piano-ssc-vector --sensor flicker --seconds 3
+```
 
-| 原始事件ID | 返回字段 | 边界 |
+客户端使用现有 `SSCSensor` 的 open/close 流程，支持 continuous 和 on-change 订阅。其他 stream type 返回不支持错误。
+
+`SSCSensor::raw-report(sensor, guint message_id, GBytes *payload)` 只转发与对象 SUID 匹配的原始报告。`GBytes` 在回调内借用，延长使用需调用 `g_bytes_ref()`。信号运行在现有 report dispatch context，GUI 应用需转交到自己的主循环。未订阅该信号时不复制载荷，原有强类型 measurement 信号和采样策略保持兼容。
+
+输出包含原始 message ID、完整 payload hex，以及已支持布局的解码结果。未知布局保留原始输出，不推测分量的物理单位。
+
+Ctrl-C 或期限到达后调用现有 close API，收到关闭回复才输出 `closed=true`。发现或 open 超时会取消，并等待最多五秒处理关闭；停止后晚到的发现结果不会继续 open。程序不会写入 registry 或运行校准。
+
+## 离线向量解码
+
+`ssc_sensor_decode_vector_report()` 返回由调用方持有的 `GVariant a{sv}`，当前解释前置色温、后置光线和防闪烁报告中已经核对的布局：
+
+| 原始事件 ID | 返回字段 | 含义边界 |
 | --- | --- | --- |
-| 1025 | `values: ad`、`accuracy: i` | protobuf field1的全部float32及field2原始int32 |
-| 769 | `field1: i`、`field2: i`、`field3: i`、`values: ad` | 三个原始int32及field4全部float32 |
+| 1025 | `values: ad`、`accuracy: i` | field1 全部 float32、field2 原始 int32 |
+| 769 | `field1: i`、`field2: i`、`field3: i`、`values: ad` | 防闪烁报告的三个原始 int32、field4 全部 float32 |
 
-float32转换为double保持数值，原始浮点位模式仍完整保存在GBytes。769的三个整数仅用字段号命名，不能把field3改名accuracy或把field1当频率。API要求完整已观察布局的scalar字段，不能据此推断所有vendor protobuf版本的required/optional声明；新布局应另核原厂解析器后扩展。
+float32 转为 double 保持数值；原始位模式仍在 `GBytes`。769 的三个整数只按字段号命名，不推断频率、精度或物理单位。未知 ID 返回 `G_IO_ERROR_NOT_SUPPORTED`，损坏或不完整的已支持布局返回 `G_IO_ERROR_INVALID_DATA`，原始载荷始终可以单独保存。
 
-未知事件ID返回`G_IO_ERROR_NOT_SUPPORTED`，缺已支持布局的必需scalar、损坏packed float或空/超过64KiB载荷返回`G_IO_ERROR_INVALID_DATA`。原始payload仍由调用方持有，可以另存或交给后续decoder。重复向量没有人为补值；空向量仍为空向量，不表示已有测量。接口不添加lux、Kelvin、Hz、校准、姿态变换或固件时间戳。
+```sh
+piano-ssc-vector --decode 1025 --payload-hex 0a04000000001003
+```
 
-## 一次性客户端
-
-在安装带新API的标准开发包后正常编译：
+手动编译仓库中的同一客户端时，使用应用上述补丁的开发库：
 
 ```sh
 cc -O2 -Wall -Wextra linux/userspace/piano-ssc-vector.c \
   -o piano-ssc-vector $(pkg-config --cflags --libs libssc gio-unix-2.0)
 ```
-
-离线解码只读取参数，不打开QMI：
-
-```sh
-./piano-ssc-vector --decode 1025 --payload-hex 0a04000000001003
-```
-
-准确data type来自SUID发现，限时订阅使用：
-
-```sh
-./piano-ssc-vector --sensor cct_front --seconds 3
-./piano-ssc-vector --sensor ambient_light_back --seconds 3
-./piano-ssc-vector --sensor flicker --seconds 3
-```
-
-客户端输出原始message ID、解出的GVariant字段和完整payload hex；配置等未知事件保持原始输出并注明不能解码。Ctrl-C或期限到达走现有close API，只有收到close完成回复才输出`closed=true`。发现/open超时先取消并保留最多5秒等待回调；停止后晚到的发现结果不会启动open，而是立即正常close。发现未返回或close仍超时会明确报错，不宣称已正常关闭。它是短时应用，不作为自启动服务。
-
-## 测试依据与范围
-
-源版本来自固定Debian`libssc_0.4.4-2.dsc`和原始tarball：DSC SHA256为`3f79e8cad936a647f2c7773c5fb2fa4fdd3a96d893f70279aa3e7a9b55023fef`，orig tar为`716d6bd6b34d2d753060c6b54c9a87e34fae75b724c763bf9ef487efa3621587`。DSC所列上游为[Codeberg libssc](https://codeberg.org/DylanVanAssche/libssc)。本机原厂`sensors.qsh.so`、`libsnsapi.so`和a8 SSC捕获用于限定数据类型与wire布局，原厂ELF没有在Linux执行。
-
-本机`a8-ssc-vendor-payloads.jsonl`中的33条支持布局已由新共享库、protobuf-c和客户端离线解码：cct_front1条1025返回`[0]`、accuracy3；后置光线1条1025返回`[0,2,0,50,1024,1024]`、accuracy3；flicker31条包含769和1025。769的field1为493，message ID仍是769。这里只确认字段和值，不为分量补物理含义。缺accuracy、截断、packed float长度3字节和未知768的最小错误检查均明确拒绝。
-
-随后标准 Debian/Meson 包构建完成，目标 GIR 同时包含正确属性类型、raw-report 和 decoder。平板运行新客户端：后置光线1025返回六值 `[7.8125,1658,60,50,1024,1024]`、accuracy3；前置色温返回 `[0]`；防闪烁收到769，field1仍为493。三个客户端均收到close完成回复，SensorProxy仍active，原有陀螺仪继续返回数据。这证明新接口实机交付和关闭流程，不确定全部物理单位，也不表示桌面策略已经完成。
-
-离线结果与source/ELF/capture哈希记录在`内部记录目录
