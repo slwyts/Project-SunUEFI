@@ -6,7 +6,7 @@ RUN if [ "$(dpkg --print-architecture)" != arm64 ]; then \
         dpkg --add-architecture arm64; \
     fi \
     && apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git make clang lld llvm nasm acpica-tools \
+    build-essential git make clang lld llvm nasm acpica-tools autoconf automake libtool \
     binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
     rustc cargo libstd-rust-dev:arm64 libyuv-dev libjpeg62-turbo-dev \
     flex bison bc libssl-dev uuid-dev zlib1g-dev libelf-dev \

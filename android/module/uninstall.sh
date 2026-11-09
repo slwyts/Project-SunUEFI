@@ -5,6 +5,8 @@ rm -f /mnt/vendor/persist/sunuefi/storage/grow.pending \
   /mnt/vendor/persist/sunuefi/storage/grow.attempt \
   /mnt/vendor/persist/sunuefi/storage/grow.log \
   /mnt/vendor/persist/sunuefi/storage/piano-resize-f2fs \
+  /mnt/vendor/persist/sunuefi/storage/fsck.f2fs \
+  /mnt/vendor/persist/sunuefi/storage/resize.f2fs \
   /metadata/sunuefi/storage-early.rc
 rmdir /mnt/vendor/persist/sunuefi/storage /metadata/sunuefi 2>/dev/null || true
 if [ -f "$MODPATH/installed-core.json" ]; then

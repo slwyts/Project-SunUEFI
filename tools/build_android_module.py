@@ -252,6 +252,13 @@ def package_installed(args):
             entries['bin/' + name] = data
         entries['licenses/NOTICE.e2fsprogs'] = read_file(args.e2fs_tools / 'NOTICE.e2fsprogs')
         entries['licenses/e2fsprogs-build.json'] = read_file(args.e2fs_tools / 'manifest.json')
+    if getattr(args, 'f2fs_tools', None):
+        for name in ('fsck.f2fs', 'resize.f2fs'):
+            data = read_file(args.f2fs_tools / name)
+            arm64_executable(data)
+            entries['bin/' + name] = data
+        entries['licenses/COPYING.f2fs-tools'] = read_file(args.f2fs_tools / 'COPYING.f2fs-tools')
+        entries['licenses/f2fs-tools-build.json'] = read_file(args.f2fs_tools / 'manifest.json')
     entries['policy.json'] = (json.dumps(policy, indent=2) + '\n').encode()
     entries['installed-core.json'] = (json.dumps(descriptor, indent=2) + '\n').encode()
     entries['licenses/COPYING.libmd'] = read_file(ROOT / 'upstream/simple-init/libs/libmd/COPYING')
@@ -351,6 +358,7 @@ def parser():
     result.add_argument('--installed-core', type=Path, help='Validated adopt-exported payload directory')
     result.add_argument('--storage-tool', type=Path, help='Static ARM64 partition/image tool')
     result.add_argument('--e2fs-tools', type=Path, help='Static ARM64 e2fsck/resize2fs build directory with NOTICE')
+    result.add_argument('--f2fs-tools', type=Path, help='Static ARM64 F2FS check and keep-layout growth tools')
     result.add_argument('--resize-tool', type=Path, help='Static ARM64 online F2FS shrink helper')
     result.add_argument('--request-tool', type=Path)
     result.add_argument('--selector', type=Path)

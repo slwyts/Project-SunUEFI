@@ -221,6 +221,7 @@ EOF
       [ "$android_grow" = true ] || {
         echo '缺少可用的早期存储维护，未删除独立分区。' >&2; return 1;
       }
+      "$RESIZER" check-grow --expect-bytes "$userdata_bytes" > "$STATE/$job.f2fs-layout.json"
       progress running 70 '正在删除 SunUEFI 分区，将空间归还 Android。'
       "$NATIVE" apply "$plan" "$STATE/$job.gpt-backup" --execute > "$STATE/$job.result.json"
       printf '{"schema_version":1,"job_id":"%s","target_userdata_bytes":%s,"created_boot_id":"%s","gpt_written":true,"pending_android_expansion":true,"android_grow_detected":%s,"libfs_mgr_sha256":"%s"}\n' \

@@ -54,12 +54,13 @@ SukiSU 安装、模块激活和 WebUI 状态读取已在设备上使用。Kernel
 ./build.sh module
 ```
 
-`tools/build_android_product_module.py` 从 `artifacts/product/` 提取同一份 `fd.bin`、`app.bin` 和 `shim.bin`，编译前置选择器，并生成以下六个静态 ARM64 工具：
+`tools/build_android_product_module.py` 从 `artifacts/product/` 提取同一份 `fd.bin`、`app.bin` 和 `shim.bin`，编译前置选择器，并生成以下静态 ARM64 工具：
 
 * `piano-boot-repack`：BOOT 识别、包装、更新和还原。
 * `piano-boot-request`：读取和修改启动记录。
 * `piano-storage`：分区状态、计划及镜像写入。
-* `piano-resize-f2fs`：Android 在线 F2FS 缩容。
+* `piano-resize-f2fs`：Android F2FS 容量检查、在线缩容和早期扩容协调。
+* `fsck.f2fs`、`resize.f2fs`：早期只读检查和保留布局的离线扩容。
 * `e2fsck`、`resize2fs`：独立 ext4 分区的检查与调整。
 
 默认编译 sysroot 从签名校验后的公共 Debian ARM64 软件包解包，不执行外来架构代码；可通过 `--sysroot` 使用已有 ARM64 开发目录。e2fsprogs 从固定的官方源码构建，ZIP 包含对应许可、来源 URL 和本项目工具源码。无需提供原厂 BOOT、旧 Android 内核或设备私有路径，ZIP 不包含原厂内核。

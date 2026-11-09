@@ -49,7 +49,7 @@ def build(output, compiler=None, sysroot=None, arch='aarch64'):
               'json_parser_sha256': hashlib.sha256((ROOT / 'android/native/jsmn.h').read_bytes()).hexdigest(),
               'binary': {'file': binary.name, 'bytes': len(data),
                          'sha256': hashlib.sha256(data).hexdigest()},
-              'commands': ['status [--expect-bytes BYTES]', 'shrink --target-bytes BYTES --execute',
+               'commands': ['status [--expect-bytes BYTES]', 'check-grow --expect-bytes BYTES', 'shrink --target-bytes BYTES --execute',
                            'grow --expect-bytes BYTES --execute', 'install-early --execute',
                            'early-status', 'early-grow --execute'],
               'device_operation_performed': False, 'writes_gpt': False}

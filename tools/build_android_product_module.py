@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import zipfile
 
+from android import build_f2fs_tools as f2fs
 import build_android_module as module
 import build_boot_repack as repack
 import build_boot_request as request
@@ -100,7 +101,11 @@ def add_licenses_and_records(output, sysroot, records):
                      'uefi/handoff/bootselect/BootRequest.c', 'uefi/handoff/bootselect/BootRequest.h',
                      'tools/build_android_product_module.py', 'tools/build_boot_repack.py',
                      'tools/build_boot_request.py', 'tools/build_storage.py',
-                     'tools/build_resize_f2fs.py', 'tools/build_e2fs_tools.py'):
+                     'tools/build_resize_f2fs.py', 'tools/build_e2fs_tools.py',
+                     'tools/android/build_f2fs_tools.py',
+                     'patches/f2fs-tools/1.17.0/series.json',
+                     'patches/f2fs-tools/1.17.0/0001-resize-keep-layout.patch',
+                     'patches/f2fs-tools/1.17.0/0002-fsck-shrunk-tail-journal.patch'):
             archive.writestr('sources/' + name, (ROOT / name).read_bytes())
 
 
@@ -154,6 +159,9 @@ def build(args):
     request_record = request.build(work / 'boot-request', 'aarch64', args.cc, sysroot)
     storage_record = storage.build(work / 'storage', 'aarch64', args.cc, sysroot)
     resize_record = resize.build(work / 'resize-f2fs', args.cc, sysroot, 'aarch64')
+    print('Building static F2FS tools with layout-preserving expansion.', flush=True)
+    f2fs_dir = work / 'f2fs-tools'
+    f2fs_record = f2fs.build(f2fs_dir, sysroot, 'aarch64', args.jobs)
     print('Building static e2fsck and resize2fs from the fixed official source archive.', flush=True)
     e2fs_dir = work / 'e2fs-tools'
     e2fs_record = e2fs.build(e2fs_dir, sysroot, args.cache, args.jobs)
@@ -166,12 +174,12 @@ def build(args):
         '--native-manifest', str(policy_path), '--request-tool', str(work / 'boot-request/piano-boot-request'),
         '--storage-tool', str(work / 'storage/piano-storage'),
         '--resize-tool', str(work / 'resize-f2fs/piano-resize-f2fs'),
-        '--e2fs-tools', str(e2fs_dir), '--output', str(pending_zip)])
+        '--e2fs-tools', str(e2fs_dir), '--f2fs-tools', str(f2fs_dir), '--output', str(pending_zip)])
     result = module.package(package_args)
     records = {'schema_version': 1, 'artifact_kind': 'android-product-module', 'generic_core': True,
                'same_product': product, 'selector': selector, 'sysroot': sysroot_record,
                'boot_repack': native, 'boot_request': request_record, 'storage': storage_record,
-               'resize_f2fs': resize_record, 'e2fsprogs': e2fs_record,
+               'resize_f2fs': resize_record, 'e2fsprogs': e2fs_record, 'f2fs_tools': f2fs_record,
                'module_sources': {name: sha(ROOT / 'android/module' / name)
                                   for name in module.SOURCE_FILES},
                'device_operation_performed': False,
@@ -183,7 +191,7 @@ def build(args):
         if archive.testzip() is not None:
             raise ValueError('Module ZIP readback failed')
         for name in ('piano-boot-repack', 'piano-boot-request', 'piano-storage',
-                     'piano-resize-f2fs', 'e2fsck', 'resize2fs'):
+                     'piano-resize-f2fs', 'e2fsck', 'resize2fs', 'fsck.f2fs', 'resize.f2fs'):
             module.arm64_executable(archive.read('bin/' + name))
         for name in ('fd.bin', 'app.bin', 'shim.bin'):
             if archive.read('payload/' + name) != payloads[name]:

@@ -7,6 +7,10 @@ int piano_f2fs_geometry(const char *mapper, const char *userdata, uint64_t expec
     (void)mapper; (void)userdata; (void)expected; (void)uuid; (void)blocks; (void)section;
     abort();
 }
+int piano_f2fs_layout_capacity(const char *mapper, uint64_t expected) {
+    (void)mapper; (void)expected;
+    abort();
+}
 
 static void check(const char *json, int accepted) {
     struct grow_request request = {0};

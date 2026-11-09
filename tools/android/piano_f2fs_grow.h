@@ -10,5 +10,6 @@ int piano_f2fs_prepare_grow(const char *mapper, const char *userdata, uint64_t e
 int piano_f2fs_early_grow(void);
 int piano_f2fs_geometry(const char *mapper, const char *userdata, uint64_t expected,
                       unsigned char uuid[16], uint64_t *blocks, uint64_t *section);
+int piano_f2fs_layout_capacity(const char *mapper, uint64_t expected);
 
 #endif

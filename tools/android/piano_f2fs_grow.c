@@ -4,7 +4,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
-#include <sched.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +20,8 @@
 
 #define EARLY_DIR "/mnt/vendor/persist/sunuefi/storage"
 #define EARLY_TOOL EARLY_DIR "/piano-resize-f2fs"
+#define EARLY_CHECK EARLY_DIR "/fsck.f2fs"
+#define EARLY_RESIZE EARLY_DIR "/resize.f2fs"
 #define EARLY_REQUEST EARLY_DIR "/grow.pending"
 #define EARLY_ATTEMPT EARLY_DIR "/grow.attempt"
 #define EARLY_LOG EARLY_DIR "/grow.log"
@@ -111,9 +112,27 @@ static int label_file(const char *path, const char *context) {
     return setxattr(path, "security.selinux", context, strlen(context) + 1, 0);
 }
 
+static int sibling_tool(const char *name, char source[PATH_BYTES]) {
+    ssize_t size = readlink("/proc/self/exe", source, PATH_BYTES - 1);
+    if (size < 0 || size >= PATH_BYTES - 1) return -1;
+    source[size] = 0;
+    char *slash = strrchr(source, '/');
+    if (!slash || snprintf(slash + 1, PATH_BYTES - (size_t)(slash + 1 - source), "%s", name) >=
+        (int)(PATH_BYTES - (size_t)(slash + 1 - source))) return -1;
+    return 0;
+}
+
+static int copy_f2fs_tool(const char *name, const char *target) {
+    char source[PATH_BYTES];
+    if (sibling_tool(name, source)) return -1;
+    if (strcmp(source, target) && copy_file(source, target, 0700)) return -1;
+    return label_file(target, "u:object_r:system_file:s0");
+}
+
 int piano_f2fs_install_early(void) {
     if (secure_dir("/mnt/vendor/persist/sunuefi") || secure_dir(EARLY_DIR) ||
         secure_dir("/metadata/sunuefi") || copy_file("/proc/self/exe", EARLY_TOOL, 0700) ||
+        copy_f2fs_tool("fsck.f2fs", EARLY_CHECK) || copy_f2fs_tool("resize.f2fs", EARLY_RESIZE) ||
         label_file(EARLY_TOOL, "u:object_r:system_file:s0") ||
         atomic_file(EARLY_RC, RC_TEXT, sizeof(RC_TEXT) - 1, 0600) ||
         label_file("/metadata/sunuefi", "u:object_r:metadata_file:s0") ||
@@ -153,7 +172,12 @@ static int same_file_contents(const char *left, const char *right) {
 }
 
 int piano_f2fs_early_ready(void) {
+    char check[PATH_BYTES], resize[PATH_BYTES];
     if (!regular_root_file(EARLY_TOOL, -1) || access(EARLY_TOOL, X_OK) ||
+        !regular_root_file(EARLY_CHECK, -1) || access(EARLY_CHECK, X_OK) ||
+        !regular_root_file(EARLY_RESIZE, -1) || access(EARLY_RESIZE, X_OK) ||
+        sibling_tool("fsck.f2fs", check) || sibling_tool("resize.f2fs", resize) ||
+        !same_file_contents(check, EARLY_CHECK) || !same_file_contents(resize, EARLY_RESIZE) ||
         !same_file_contents("/proc/self/exe", EARLY_TOOL) ||
         !regular_root_file(EARLY_RC, sizeof(RC_TEXT) - 1)) return -1;
     int fd = open(EARLY_RC, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
@@ -223,28 +247,24 @@ int piano_f2fs_prepare_grow(const char *mapper, const char *userdata, uint64_t e
     return 0;
 }
 
-static int command(char *const args[], const char *library, const char *stage) {
+static int command(char *const args[], int confirmed) {
     int input[2] = {-1, -1};
-    if (stage && pipe2(input, O_CLOEXEC)) return -1;
+    if (confirmed && pipe2(input, O_CLOEXEC)) return -1;
     pid_t pid = fork();
     if (pid < 0) {
         if (input[0] >= 0) { close(input[0]); close(input[1]); }
         return -1;
     }
     if (!pid) {
-        if (stage) {
+        if (confirmed) {
             close(input[1]);
             if (dup2(input[0], STDIN_FILENO) < 0) _exit(127);
             close(input[0]);
-            /* Keep the OEM tool's rescue log off unrelated stock files. */
-            if (unshare(CLONE_NEWNS) || mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) ||
-                mount(stage, "/mnt/rescue/fscklog", NULL, MS_BIND, NULL)) _exit(127);
         }
-        if (library) setenv("LD_LIBRARY_PATH", library, 1);
         execv(args[0], args);
         _exit(127);
     }
-    if (stage) {
+    if (confirmed) {
         close(input[0]);
         /* The original user action already confirmed this exact expansion. */
         struct sigaction ignore = { .sa_handler = SIG_IGN }, previous;
@@ -261,20 +281,12 @@ static int command(char *const args[], const char *library, const char *stage) {
 static int stage_tools(char directory[PATH_BYTES]) {
     strcpy(directory, "/dev/sunuefi-f2fs.XXXXXX");
     if (!mkdtemp(directory)) return -1;
-    char path[PATH_BYTES], source[PATH_BYTES];
-    const char *files[] = {"/apex/com.android.runtime/bin/linker64", "/system/bin/fsck.f2fs"};
-    const char *names[] = {"linker64", "resize.f2fs"};
+    char path[PATH_BYTES];
+    const char *files[] = {EARLY_CHECK, EARLY_RESIZE};
+    const char *names[] = {"fsck.f2fs", "resize.f2fs"};
     for (size_t i = 0; i < 2; ++i) {
         if (snprintf(path, sizeof(path), "%s/%s", directory, names[i]) >= (int)sizeof(path) ||
             copy_file(files[i], path, 0700)) return -1;
-    }
-    snprintf(path, sizeof(path), "%s/lib64", directory);
-    if (mkdir(path, 0700)) return -1;
-    const char *libraries[] = {"libbase.so", "libext2_uuid.so", "libsparse.so", "libc++.so", "liblog.so", "libz.so", "libc.so", "libm.so", "libdl.so"};
-    for (size_t i = 0; i < sizeof(libraries) / sizeof(libraries[0]); ++i) {
-        snprintf(source, sizeof(source), "%s/%s", i >= 6 ? "/apex/com.android.runtime/lib64/bionic" : "/system/lib64", libraries[i]);
-        if (snprintf(path, sizeof(path), "%s/lib64/%s", directory, libraries[i]) >= (int)sizeof(path) ||
-            copy_file(source, path, 0600)) return -1;
     }
     return 0;
 }
@@ -337,7 +349,7 @@ int piano_f2fs_early_grow(void) {
     /* Consume before maintenance: neither failures nor reboots repeat writes. */
     if (rename(EARLY_REQUEST, EARLY_ATTEMPT) || sync_parent(EARLY_REQUEST)) return 1;
     char mapper[PATH_BYTES], userdata[PATH_BYTES], options[8192], stage[PATH_BYTES];
-    unsigned long flags;
+    unsigned long flags = 0;
     uint64_t before, section, after;
     unsigned char uuid[16];
     struct timespec uptime;
@@ -350,6 +362,7 @@ int piano_f2fs_early_grow(void) {
         !access("/dev/.sunuefi-storage-late", F_OK) ||
         !realpath("/dev/block/by-name/userdata", userdata) || data_mount(mapper, options, &flags) ||
         piano_f2fs_geometry(mapper, userdata, request.expected, uuid, &before, &section) ||
+        piano_f2fs_layout_capacity(mapper, request.expected) ||
         memcmp(uuid, request.uuid, sizeof(uuid))) {
         errno = EINVAL;
         goto refused;
@@ -359,12 +372,11 @@ int piano_f2fs_early_grow(void) {
         return 0;
     }
     if (stage_tools(stage)) goto refused;
-    char loader[PATH_BYTES], tool[PATH_BYTES], library[PATH_BYTES];
-    if (snprintf(loader, sizeof(loader), "%s/linker64", stage) >= (int)sizeof(loader) ||
-        snprintf(tool, sizeof(tool), "%s/resize.f2fs", stage) >= (int)sizeof(tool) ||
-        snprintf(library, sizeof(library), "%s/lib64", stage) >= (int)sizeof(library)) goto refused;
-    char *probe[] = {loader, tool, "-V", NULL};
-    if (command(probe, library, NULL)) goto refused;
+    char tool[PATH_BYTES], check[PATH_BYTES];
+    if (snprintf(tool, sizeof(tool), "%s/resize.f2fs", stage) >= (int)sizeof(tool) ||
+        snprintf(check, sizeof(check), "%s/fsck.f2fs", stage) >= (int)sizeof(check)) goto refused;
+    char *probe[] = {tool, "-V", NULL};
+    if (command(probe, 0)) goto refused;
     sync();
     if (chdir("/dev") || umount2("/data", 0)) goto refused;
     fd = open(mapper, O_RDWR | O_EXCL | O_CLOEXEC);
@@ -373,14 +385,31 @@ int piano_f2fs_early_grow(void) {
         goto restore;
     }
     close(fd);
-    fprintf(stderr, "SunUEFI: userdata is offline; expanding with the stock F2FS tool.\n");
-    char *args[] = {loader, tool, mapper, NULL};
-    int result = command(args, library, stage);
+    fprintf(stderr, "SunUEFI: userdata is offline; checking the existing filesystem.\n");
+    char *check_args[] = {check, "--dry-run", "--no-kernel-check", "-N", mapper, NULL};
+    int result = command(check_args, 0);
+    if (result) {
+        fprintf(stderr, "SunUEFI: filesystem check failed (%d); no expansion started.\n", result);
+        goto restore;
+    }
+    char *plan_args[] = {tool, "-P", mapper, NULL};
+    if (command(plan_args, 1)) {
+        fprintf(stderr, "SunUEFI: the existing metadata cannot cover the requested capacity; no expansion started.\n");
+        goto restore;
+    }
+    fprintf(stderr, "SunUEFI: expanding within the existing layout; file blocks will not move.\n");
+    char *args[] = {tool, "-k", mapper, NULL};
+    result = command(args, 1);
     sync();
     if (result || piano_f2fs_geometry(mapper, userdata, request.expected, uuid, &after, &section) ||
         memcmp(uuid, request.uuid, sizeof(uuid)) || after < before ||
         request.expected - after * 4096 >= section * 4096) {
         fprintf(stderr, "SunUEFI: expansion or readback failed (%d); returning through Android's filesystem check.\n", result);
+        reboot_android();
+    }
+    result = command(check_args, 0);
+    if (result) {
+        fprintf(stderr, "SunUEFI: expanded filesystem check failed (%d); returning through Android's filesystem check.\n", result);
         reboot_android();
     }
     fprintf(stderr, "SunUEFI: both F2FS superblocks cover %" PRIu64 " bytes; UUID preserved.\n", after * 4096);

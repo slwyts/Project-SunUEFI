@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "version": "1.17.0",
+  "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/jaegeuk/f2fs-tools.git",
+  "base_commit": "83fd39a184df96db5def895ddc55bf68e720ef76",
+  "target_tree": "3c0bd773b32d51a030cefe776535e01a01738191",
+  "patches": [
+    {
+      "file": "0001-resize-keep-layout.patch",
+      "sha256": "4eb837cb1bd5e9babf5060f3269d2ce6ce5f1dd79911fdbc5c3fac2ef5704742"
+    },
+    {
+      "file": "0002-fsck-shrunk-tail-journal.patch",
+      "sha256": "e4b2cf5226877e9bd063d89e08fd70814fbfc33eea11c8cd765835bed023c60f"
+    }
+  ]
+}

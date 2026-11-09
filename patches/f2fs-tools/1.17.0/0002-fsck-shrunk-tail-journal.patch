@@ -1,0 +1,61 @@
+From 3ae4db1b7723b27225ac79583b99152dbafcb1a7 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 10 Nov 2026 00:48:09 +0800
+Subject: [PATCH] fsck.f2fs: retain SIT journal entries after a shrunk tail
+
+An online-shrunk Android volume can retain empty journal records beyond the new main area. Discard only records with no valid blocks, compact the rest without truncating later entries, and reject nonempty out-of-range records before resizing.
+---
+ fsck/mount.c | 21 ++++++++++++++++-----
+ 1 file changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/fsck/mount.c b/fsck/mount.c
+index 2fd8e1c..9dd2485 100644
+--- a/fsck/mount.c
++++ b/fsck/mount.c
+@@ -2658,7 +2658,7 @@ static int build_sit_entries(struct f2fs_sb_info *sbi)
+ 	struct seg_entry *se;
+ 	struct f2fs_sit_entry sit;
+ 	int sit_blk_cnt = SIT_BLK_CNT(sbi);
+-	unsigned int i, segno, end;
++	unsigned int i, segno, end, kept = 0;
+ 	unsigned int readed, start_blk = 0;
+ 
+ 	sit_blk = calloc(F2FS_BLKSIZE, 1);
+@@ -2704,20 +2704,31 @@ static int build_sit_entries(struct f2fs_sb_info *sbi)
+ 
+ 	for (i = 0; i < sits_in_cursum(journal); i++) {
+ 		segno = segno_in_journal(journal, i);
++		sit = sit_in_journal(journal, i);
+ 
+ 		if (segno >= MAIN_SEGS(sbi)) {
+-			MSG(0, "\tError: build_sit_entries: segno(%u) is invalid!!!\n", segno);
+-			journal->n_sits = cpu_to_le16(i);
+-			c.fix_on = 1;
++			unsigned char zero_map[SIT_VBLOCK_MAP_SIZE] = {0};
++
++			/* Online shrink can leave empty entries from the removed tail. */
++			if (GET_SIT_VBLOCKS(&sit) ||
++			    memcmp(sit.valid_map, zero_map, sizeof(zero_map))) {
++				MSG(0, "Error: Nonempty SIT journal entry outside the main area: %u\n", segno);
++				return -EINVAL;
++			}
++			MSG(0, "Info: Skip empty SIT journal entry from the old tail: %u\n", segno);
+ 			continue;
+ 		}
+ 
++		if (kept != i)
++			memcpy(&journal->sit_j.entries[kept],
++			       &journal->sit_j.entries[i], sizeof(struct sit_journal_entry));
++		kept++;
+ 		se = &sit_i->sentries[segno];
+-		sit = sit_in_journal(journal, i);
+ 
+ 		check_block_count(sbi, segno, &sit);
+ 		seg_info_from_raw_sit(sbi, se, &sit);
+ 	}
++	journal->n_sits = cpu_to_le16(kept);
+ 	return 0;
+ }
+ 
+-- 
+2.56.0
