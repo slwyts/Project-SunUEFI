@@ -1,0 +1,26 @@
+{
+  "version": "23.1.5",
+  "release_url": "https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.5",
+  "download_base": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.5/",
+  "members": [
+    "bin/clang", "bin/clang++", "bin/clang-23", "bin/ld.lld", "bin/lld",
+    "bin/llvm-ar", "bin/llvm-ranlib", "bin/llvm-nm", "bin/llvm-link",
+    "bin/llvm-objcopy", "bin/llvm-objdump", "bin/llvm-readelf", "bin/llvm-readobj",
+    "bin/llvm-strip", "bin/llvm-size", "bin/llvm-strings", "bin/llvm-symbolizer",
+    "bin/llvm-addr2line", "lib/clang/23/include"
+  ],
+  "platforms": {
+    "x86_64": {
+      "archive": "LLVM-23.1.5-Linux-X64.tar.zst",
+      "directory": "LLVM-23.1.5-Linux-X64",
+      "bytes": 1198896522,
+      "sha256": "c3107384835f788768f614db610e87fba7077f125ca950eb02a78bab0a308065"
+    },
+    "aarch64": {
+      "archive": "LLVM-23.1.5-Linux-ARM64.tar.zst",
+      "directory": "LLVM-23.1.5-Linux-ARM64",
+      "bytes": 1102367349,
+      "sha256": "830ceb70edf63849ce66e97bf85310a3bf2bdd04c860a9f2fa4ef1560e290cef"
+    }
+  }
+}

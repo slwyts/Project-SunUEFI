@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "6cc521e6391656299c53d505bc9d4993d896c99a",
-  "original_target_commit": "a20312b35e10bf3b903da5add40b9bbe1bcdca2d",
+  "target_tree": "f5a4532aafb6e75a362a459340b1b9161104efe8",
+  "original_target_commit": "0edf3c66a47a10e5e1d83be9fdb7b11303f250d7",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -663,6 +663,14 @@
       "original_parent": "08fa09440c54399ce090519aa4d340d664265bc5",
       "committer_date": "2026-11-09T23:39:17+08:00",
       "tree": "6cc521e6391656299c53d505bc9d4993d896c99a"
+    },
+    {
+      "file": "0083-build-piano-oryon-optimization.patch",
+      "sha256": "8f865402d525694f95aa10df49ddd6d2b5b4bb445489b30fa8cc993b9f9c6bf2",
+      "original_commit": "0edf3c66a47a10e5e1d83be9fdb7b11303f250d7",
+      "original_parent": "a20312b35e10bf3b903da5add40b9bbe1bcdca2d",
+      "committer_date": "2026-11-10T00:31:39+08:00",
+      "tree": "f5a4532aafb6e75a362a459340b1b9161104efe8"
     }
   ],
   "provenance": {

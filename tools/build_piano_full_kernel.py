@@ -18,6 +18,7 @@ import uuid
 
 from build_kernel import image_info
 from prepare_linux_modules import modinfo
+from host import prepare_kernel_llvm
 
 ROOT=Path(__file__).resolve().parents[1]
 COMMIT=json.loads((ROOT/'config/release.json').read_text())['kernel']['public_baseline']
@@ -66,7 +67,7 @@ PLATFORM_OVERRIDES.update({key:'y' for key in (
     'CONFIG_GUNYAH', 'CONFIG_GUNYAH_QCOM_PLATFORM',
     'CONFIG_GUNYAH_IRQFD', 'CONFIG_GUNYAH_IOEVENTFD')})
 PLATFORM_OVERRIDES.update({
-    'CONFIG_LOCALVERSION': '"-piano-sunuefi-cachy"',
+    'CONFIG_LOCALVERSION': '"-piano-sunuefi-cachy-optimize"',
     'CONFIG_LOCALVERSION_AUTO': 'n',
     'CONFIG_SCHED_BORE': 'y',
     'CONFIG_LRU_GEN': 'y',
@@ -75,6 +76,11 @@ PLATFORM_OVERRIDES.update({
     'CONFIG_HZ_300': 'y',
     'CONFIG_HZ': '300',
     'CONFIG_PREEMPT_DYNAMIC': 'y',
+    'CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE': 'n',
+    'CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3': 'y',
+    'CONFIG_ARM64_PIANO_OPTIMIZE': 'y',
+    'CONFIG_LTO_NONE': 'n',
+    'CONFIG_LTO_CLANG_THIN': 'y',
     'CONFIG_UCLAMP_TASK': 'y',
     'CONFIG_UCLAMP_TASK_GROUP': 'y',
 })
@@ -212,7 +218,9 @@ def toolchain():
     env=os.environ.copy();bundled=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
     env['PATH']=str(bundled/'bin')+os.pathsep+env.get('PATH','')
     env['LD_LIBRARY_PATH']=str(bundled/'lib')+(os.pathsep+env['LD_LIBRARY_PATH']if env.get('LD_LIBRARY_PATH')else '')
-    names=('clang','ld.lld','llvm-ar','llvm-nm','llvm-objcopy','llvm-strip','make','bison','flex','bc','depmod')
+    env=prepare_kernel_llvm.environment(env)
+    names=('clang','ld.lld','llvm-ar','llvm-nm','llvm-link','llvm-objcopy',
+           'llvm-objdump','llvm-readelf','llvm-strip','make','bison','flex','bc','depmod')
     cached=bool(env.get('CCACHE_DIR'))
     if cached:names+=('ccache',)
     binaries={name:shutil.which(name,path=env['PATH'])for name in names}
@@ -300,7 +308,7 @@ def main():
     source_base=verify_source(work,commit)
     tree=text(['git','rev-parse','HEAD^{tree}'],work)
     compiler_checkout(work,compiler,commit,tree)
-    hashes={str(path.relative_to(ROOT)):sha(path)for path in (fragment,bluetooth,filesystem,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py')}
+    hashes={str(path.relative_to(ROOT)):sha(path)for path in (fragment,bluetooth,filesystem,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/host/prepare_kernel_llvm.py',ROOT/'config/kernel-llvm.json')}
     effective_text=effective_config(root_command,modules)
     effective=out/'piano-full.effective.config';effective.write_text(effective_text)
     command=['make','-C',compiler,'O='+str(out),'ARCH=arm64','LLVM=1','LLVM_IAS=1','LOCALVERSION=']

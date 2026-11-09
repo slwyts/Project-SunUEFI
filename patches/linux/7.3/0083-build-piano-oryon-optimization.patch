@@ -1,0 +1,81 @@
+From 0edf3c66a47a10e5e1d83be9fdb7b11303f250d7 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 10 Nov 2026 00:31:39 +0800
+Subject: [PATCH] build: support O3 and Oryon tuning for Piano
+
+Add selectable O3 and SM8750 Armv8.7-A C code generation. Use the available LLVM oryon-1 scheduling model without claiming it models the second-generation cores exactly. Retain general-register-only code, pointer authentication and runtime feature handling.
+---
+ Makefile            | 3 +++
+ arch/arm64/Kconfig  | 9 +++++++++
+ arch/arm64/Makefile | 4 ++++
+ init/Kconfig        | 6 ++++++
+ 4 files changed, 22 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index a8f35bdca5d..ba4ef88824a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -932,6 +932,9 @@ KBUILD_CFLAGS	+= -fno-delete-null-pointer-checks
+ ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE
+ KBUILD_CFLAGS += -O2
+ KBUILD_RUSTFLAGS += -Copt-level=2
++else ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3
++KBUILD_CFLAGS += -O3
++KBUILD_RUSTFLAGS += -Copt-level=3
+ else ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
+ KBUILD_CFLAGS += -Os
+ KBUILD_RUSTFLAGS += -Copt-level=s
+diff --git a/arch/arm64/Kconfig b/arch/arm64/Kconfig
+index cab741a695f..61f7622ec52 100644
+--- a/arch/arm64/Kconfig
++++ b/arch/arm64/Kconfig
+@@ -1980,6 +1980,15 @@ endif # ARMV8_DEPRECATED
+ 
+ endif # COMPAT
+ 
++config ARM64_PIANO_OPTIMIZE
++	bool "Compile for the SM8750 Oryon CPUs"
++	depends on CC_IS_CLANG && ARCH_QCOM
++	help
++	  Compile C code for the Armv8.7-A instruction set and use LLVM's
++	  available Oryon scheduling model. General kernel code continues to
++	  use general-purpose registers only. This image is not suitable for
++	  older ARM64 CPUs.
++
+ menu "ARMv8.1 architectural features"
+ 
+ config ARM64_HW_AFDBM
+diff --git a/arch/arm64/Makefile b/arch/arm64/Makefile
+index 6b005c8fef7..8978a7252f9 100644
+--- a/arch/arm64/Makefile
++++ b/arch/arm64/Makefile
+@@ -54,6 +54,10 @@ endif
+ KBUILD_CFLAGS	+= $(call cc-option,-mabi=lp64)
+ KBUILD_AFLAGS	+= $(call cc-option,-mabi=lp64)
+ 
++ifeq ($(CONFIG_ARM64_PIANO_OPTIMIZE),y)
++KBUILD_CFLAGS += -march=armv8.7-a -mtune=oryon-1 -mno-outline-atomics
++endif
++
+ # Avoid generating .eh_frame* sections.
+ ifneq ($(CONFIG_UNWIND_TABLES),y)
+ KBUILD_CFLAGS	+= -fno-asynchronous-unwind-tables -fno-unwind-tables
+diff --git a/init/Kconfig b/init/Kconfig
+index 37bafffa732..137bc60e4c9 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -1683,6 +1683,12 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
+ 	  with the "-O2" compiler flag for best performance and most
+ 	  helpful compile-time warnings.
+ 
++config CC_OPTIMIZE_FOR_PERFORMANCE_O3
++	bool "Optimize for performance (-O3)"
++	help
++	  Use the compiler's additional loop and inlining optimizations.
++	  This may increase code size; measure performance on the target hardware.
++
+ config CC_OPTIMIZE_FOR_SIZE
+ 	bool "Optimize for size (-Os)"
+ 	help
+-- 
+2.56.0

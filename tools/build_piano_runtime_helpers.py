@@ -18,6 +18,7 @@ import struct
 import subprocess
 
 from prepare_linux_modules import modinfo
+from host import prepare_kernel_llvm
 
 ROOT=Path(__file__).resolve().parents[1]
 PUBLIC_COMMIT='a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45'
@@ -429,6 +430,8 @@ def build(args):
     repository(args.macros.resolve(),MACROS_COMMIT);repository(args.v4l2_source.resolve(),LOOP_COMMIT)
     tools=ROOT/'build/host-tools/usr/bin';env=os.environ.copy();env['PATH']=str(tools)+os.pathsep+env['PATH'];env['LD_LIBRARY_PATH']=str(ROOT/'build/host-tools/usr/lib')
     inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
+    for path in (Path(prepare_kernel_llvm.__file__),prepare_kernel_llvm.POLICY):
+        inputs[str(path)]=sha(path)
     inputs[str(TOUCH_DIAGNOSTICS_PATCH)]=sha(TOUCH_DIAGNOSTICS_PATCH)
     inputs[str(TOUCH_CAPTURE_PATCH)]=sha(TOUCH_CAPTURE_PATCH)
     inputs[str(TOUCH_PEN_PATCH)]=sha(TOUCH_PEN_PATCH)
@@ -501,8 +504,11 @@ def build(args):
         subprocess.run(['patch','--batch','--forward','--fuzz=0',
                         '--no-backup-if-mismatch','-p1','-i',str(patch)],
                        cwd=module_source,check=True)
-    run(['make','-C',args.kernel_build.resolve(),'M='+str(module_source),'ARCH=arm64','LLVM=1','LLVM_IAS=1','LOCALVERSION=','-j4','modules'],env,log)
-    module=module_source/'v4l2loopback.ko';run([tools/'llvm-strip','--strip-debug',module],env,log);info=modinfo(module)
+    module_env=prepare_kernel_llvm.environment(env)
+    module_compiler=Path(shutil.which('clang',path=module_env['PATH']))
+    inputs[str(module_compiler)]=sha(module_compiler)
+    run(['make','-C',args.kernel_build.resolve(),'M='+str(module_source),'ARCH=arm64','LLVM=1','LLVM_IAS=1','LOCALVERSION=','-j4','modules'],module_env,log)
+    module=module_source/'v4l2loopback.ko';run(['llvm-strip','--strip-debug',module],module_env,log);info=modinfo(module)
     if info.get('name')!='v4l2loopback'or info.get('vermagic','').split()[0]!=args.kernel_release:raise ValueError('External module does not match requested exact kernel')
     files['usr/lib/modules/'+args.kernel_release+'/updates/v4l2loopback.ko']={'file':module.relative_to(output).as_posix(),'bytes':module.stat().st_size,'sha256':sha(module),'mode':0o644,'vermagic':info['vermagic'],'source_commit':LOOP_COMMIT,'strip_debug':True,'loaded':False}
     for name,pin in inputs.items():

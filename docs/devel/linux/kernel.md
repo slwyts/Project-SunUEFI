@@ -1,7 +1,7 @@
 # 内核来源与配置
 
 Debian GNOME、Debian KDE、Nyarch GNOME 和 SteamOS 共用同一套设备内核。
-默认构建使用稳定版 Linux 7.3.3，版本名为 `7.3.3-piano-sunuefi-cachy`。
+默认构建使用稳定版 Linux 7.3.3，版本名为 `7.3.3-piano-sunuefi-cachy-optimize`。
 桌面名称属于 root 镜像，内核名称不带 `gnome` 或构建目录的 Git 后缀。
 
 ## 源码与硬件适配
@@ -60,6 +60,13 @@ Alpha 通道的纵向像素扩展也使用对应的纵向寄存器配置。
 
 具体配置位于 [`piano-platform.config`](../../../linux/configs/piano-platform.config)，
 来源及许可见 [THIRD_PARTY.md](../../../THIRD_PARTY.md)。
+
+内核与外部相机模块使用固定的 LLVM 23.1.5，下载地址和摘要见
+[`kernel-llvm.json`](../../../config/kernel-llvm.json)。编译启用 `-O3`、
+ThinLTO、`-march=armv8.7-a` 和 `-mtune=oryon-1`。后者是 LLVM 提供的
+Oryon 调度模型，不表示它完整描述了 SM8750 的第二代核心。通用内核代码仍使用
+`-mgeneral-regs-only`，保留指针认证及标准运行时指令选择；不启用硬件未提供的
+SVE／SME，也不通过编译选项调整频率或温控。
 
 ## 可移动存储的文件系统
 

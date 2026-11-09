@@ -11,6 +11,7 @@ import subprocess
 
 import build_piano_runtime_helpers as runtime
 import build_piano_fingerprint
+from host import prepare_kernel_llvm
 from prepare_linux_modules import modinfo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,10 @@ def inputs_current(output):
     record = json.loads(path.read_text())
     return (
         record.get('producer', {}).get('sha256') == runtime.sha(Path(__file__))
+        and record.get('module_toolchain_inputs') == {
+            str(path.relative_to(ROOT)): runtime.sha(path)
+            for path in (Path(prepare_kernel_llvm.__file__), prepare_kernel_llvm.POLICY)
+        }
         and record.get('camera', {}).get('inputs') == runtime.camera_inputs()
         and record.get('fingerprint', {}).get('inputs')
         == build_piano_fingerprint.source_inputs()
@@ -137,7 +142,20 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
     for patch in runtime.source_patches(runtime.LOOPBACK_PATCH_SERIES):
         run(['patch', '--batch', '--forward', '--fuzz=0', '-p1',
              '--directory', module_source, '--input', patch])
-    run(['make', '-C', kernel_build, 'M=' + str(module_source), 'ARCH=arm64', 'LLVM=1', 'LOCALVERSION=', 'modules'])
+    module_inputs = {
+        str(path.relative_to(ROOT)): runtime.sha(path)
+        for path in (Path(prepare_kernel_llvm.__file__), prepare_kernel_llvm.POLICY)
+    }
+    module_env = prepare_kernel_llvm.environment()
+    module_compiler = shutil.which('clang', path=module_env['PATH'])
+    module_toolchain = {
+        'compiler': module_compiler, 'compiler_sha256': runtime.sha(Path(module_compiler)),
+        'version': subprocess.check_output([module_compiler, '--version'],
+                                           env=module_env, text=True).splitlines()[0],
+    }
+    subprocess.run(['make', '-C', str(kernel_build), 'M=' + str(module_source),
+                    'ARCH=arm64', 'LLVM=1', 'LOCALVERSION=', 'modules'],
+                   env=module_env, check=True)
     module = module_source / 'v4l2loopback.ko'
     item = modinfo(module)
     if not item['vermagic'].startswith(release + ' '):
@@ -148,10 +166,13 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
         'source_commit': runtime.LOOP_COMMIT}
     if runtime.kernel_identity(kernel_build, source, commit, release) != identity:
         raise ValueError('Kernel source/ABI changed during runtime helper build')
+    if any(runtime.sha(ROOT / name) != digest for name, digest in module_inputs.items()):
+        raise ValueError('External module toolchain inputs changed during compilation')
     result = {'status': 'RUNTIME_COMPILED_NOT_DEVICE_TESTED', 'kernel': identity,
         'public_commit': runtime.PUBLIC_COMMIT, 'runtime_files': files, 'pen_core': pen_record, 'camera': camera_record,
         'producer': {'file': 'tools/build_release_helpers.py', 'sha256': runtime.sha(Path(__file__))},
         'fingerprint': fingerprint,
+        'module_toolchain_inputs': module_inputs, 'module_toolchain': module_toolchain,
         'uapi_sha256': uapi_digest, 'uapi_source_commit': commit, 'macros_commit': runtime.MACROS_COMMIT,
         'v4l2_commit': runtime.LOOP_COMMIT, 'hardware_verified': False,
         'toolchain': {'compiler': compiler, 'compiler_sha256': runtime.sha(Path(compiler)),
