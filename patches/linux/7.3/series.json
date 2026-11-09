@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "b0da508a1d10b5cfccb2ab93fa1c9a4177dedae8",
-  "original_target_commit": "190da1bb63c1ef6c1291b314ae26eddc41b3c1ef",
+  "target_tree": "ecbb1da73b0a95f6879a4a1045300b5d6409ed09",
+  "original_target_commit": "6dd902833b08f9c765d0cb8c0c9a38f7bdb6cd38",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -727,6 +727,14 @@
       "original_parent": "d8be4a4706d5968384bee179522c84be0a661f42",
       "committer_date": "2026-11-10T02:45:01+08:00",
       "tree": "b0da508a1d10b5cfccb2ab93fa1c9a4177dedae8"
+    },
+    {
+      "file": "0091-dpu-hdr-identity-gamma.patch",
+      "sha256": "bc5012d755aeff35d8d118bae6e9a78e913cdb33d3732654cbea914db657895a",
+      "original_commit": "6dd902833b08f9c765d0cb8c0c9a38f7bdb6cd38",
+      "original_parent": "190da1bb63c1ef6c1291b314ae26eddc41b3c1ef",
+      "committer_date": "2026-11-10T20:30:12+08:00",
+      "tree": "ecbb1da73b0a95f6879a4a1045300b5d6409ed09"
     }
   ],
   "provenance": {

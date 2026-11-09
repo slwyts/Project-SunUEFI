@@ -1,0 +1,90 @@
+From 6dd902833b08f9c765d0cb8c0c9a38f7bdb6cd38 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Tue, 10 Nov 2026 01:10:26 +0800
+Subject: [PATCH] drm/msm: accept identity gamma ramps with fixed-panel HDR
+
+A compositor may explicitly submit a linear GAMMA_LUT to preserve the
+normal white point. It requires no additional color transformation and
+must not conflict with the calibrated fixed-panel HDR conversion.
+
+Accept linear ramps with truncated or nearest-rounded 16-bit samples.
+Keep the requested atomic state intact and continue rejecting nonidentity
+ramps and other unsupported combinations rather than dropping them.
+
+Reuse the previously validated immutable ramp during page flips, checking
+new ramps and transitions from ordinary SDR before accepting them.
+---
+ .../gpu/drm/msm/disp/dpu1/dpu_output_color.c  | 43 +++++++++++++++++--
+ 1 file changed, 40 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
+index 5e3b75e3520..800117e67be 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ #include <linux/firmware.h>
+ #include <linux/hdmi.h>
++#include <linux/math64.h>
+ #include <linux/of.h>
+ #include <linux/unaligned.h>
+ #include <drm/drm_atomic.h>
+@@ -121,6 +122,31 @@ void dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
+ 	dpu_kms->output_color = color;
+ }
+ 
++static bool gamma_lut_is_identity(const struct drm_property_blob *blob)
++{
++	const struct drm_color_lut *lut;
++	unsigned int i, size;
++
++	if (!blob)
++		return true;
++	size = drm_color_lut_size(blob);
++	if (size < 2)
++		return false;
++	lut = blob->data;
++	for (i = 0; i < size; i++) {
++		u64 value = (u64)i * 65535;
++		u16 floor = div_u64(value, size - 1);
++		u16 nearest = DIV_ROUND_CLOSEST_ULL(value, size - 1);
++
++		/* Linear ramps may truncate or round their 16-bit samples. */
++		if ((lut[i].red != floor && lut[i].red != nearest) ||
++		    (lut[i].green != floor && lut[i].green != nearest) ||
++		    (lut[i].blue != floor && lut[i].blue != nearest))
++			return false;
++	}
++	return true;
++}
++
+ int dpu_output_color_check(struct drm_crtc_state *state)
+ {
+ 	struct msm_drm_private *priv = state->crtc->dev->dev_private;
+@@ -154,9 +180,20 @@ int dpu_output_color_check(struct drm_crtc_state *state)
+ 			return -EINVAL;
+ 		if (conn_state->colorspace == DRM_MODE_COLORIMETRY_BT2020_RGB)
+ 			mode = metadata ? 1 : 2;
+-		if (mode && (hweight32(state->encoder_mask) != 1 || state->ctm ||
+-			     state->gamma_lut || state->degamma_lut))
+-			return -EINVAL;
++		if (mode) {
++			struct drm_crtc_state *old_state;
++			bool gamma_already_checked;
++
++			old_state = drm_atomic_get_old_crtc_state(state->state, state->crtc);
++			/* DRM blobs are immutable; page flips can reuse a validated ramp. */
++			gamma_already_checked = to_dpu_crtc_state(old_state)->output_color_mode &&
++				old_state->gamma_lut == state->gamma_lut;
++			if (hweight32(state->encoder_mask) != 1 || state->ctm ||
++			    state->degamma_lut)
++				return -EINVAL;
++			if (!gamma_already_checked && !gamma_lut_is_identity(state->gamma_lut))
++				return -EINVAL;
++		}
+ 	}
+ 	if (mode != cstate->output_color_mode)
+ 		state->color_mgmt_changed = true;
+-- 
+2.56.0
+

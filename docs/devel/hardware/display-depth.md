@@ -117,9 +117,11 @@ DPU 全屏缩放处理，不改变 DSI／DSC 时序。KDE 的默认显示配置�
 
 输出状态分为三种：普通 SDR 旁路、BT.2020 SDR 和 PQ HDR。后两者依次使用
 IGCv5 线性化、Gamut v4.3 的 17³ 色域及面板校准、GCv2 原厂曲线，
-同一批 REGDMA 命令广播到两路 DSPP。转换生效时，如果合成器同时请求
-`CTM`、`GAMMA_LUT` 或 `DEGAMMA_LUT`，原子检查拒绝该组合，让合成器回退到
-GPU 完成这些操作，不悄悄忽略用户空间请求。普通 SDR 的标准 LUT 和夜灯接口不变。
+同一批 REGDMA 命令广播到两路 DSPP。转换生效时，空或恒等 `GAMMA_LUT` 不改变像素，仍可接受。
+`CTM`、非恒等 `GAMMA_LUT` 和 `DEGAMMA_LUT` 与输出转换共用硬件，原子检查
+拒绝这些组合，合成器需要在 GPU 完成相应调整；提交失败不会自动产生 GPU 回退。
+这兼容 GNOME 默认白点下提交的恒等 Gamma 表，夜灯和 ICC VCGT 等非恒等调整
+仍需要合成器提供对应的处理路径。普通 SDR 的标准 LUT 和夜灯接口不变。
 驱动退出或 DMA 出错继续遵守[REGDMA 的资源保留规则](gcv2-night-light.md)。
 
 SteamOS KWin 通过标准属性完成 HDR／广色域启闭、DPMS 关屏恢复和一次
