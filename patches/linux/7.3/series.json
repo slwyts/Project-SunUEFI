@@ -545,7 +545,7 @@
       "committer_date": "2026-11-09T16:52:10+08:00"
     },
     {
-      "file": "0040-power-mca-stop-work.patch",
+      "file": "0068-power-mca-stop-work.patch",
       "sha256": "f65f9ffd0e685b6193ad76f9e7e78dfb85f4e79518b6683724e688a6ad50cbab",
       "original_commit": "9d68a9687864d082e867bce3dc171cd08e134d9f",
       "original_parent": "1abdd75969c8214914d9bb73d3a3f088bdd18f6a",
@@ -553,7 +553,7 @@
       "tree": "3ecb727f2feae25d9ec241f2f603a064d0df357d"
     },
     {
-      "file": "0041-power-mipps-session-cleanup.patch",
+      "file": "0069-power-mipps-session-cleanup.patch",
       "sha256": "1b720958f3cf037d568f74e92fe7367ecbc491172cedc08f18faac93bb944ff4",
       "original_commit": "bb43bd1540b6cea45632d44a78665d901596337e",
       "original_parent": "9d68a9687864d082e867bce3dc171cd08e134d9f",
@@ -561,7 +561,7 @@
       "tree": "0c7b1d20bc51a6576489a6c30ac30416f11fddc1"
     },
     {
-      "file": "0042-power-mca-connection-events.patch",
+      "file": "0070-power-mca-connection-events.patch",
       "sha256": "df04da4c64e6c4679de7661623ef7d5555eb1d7bd0d0b55aa8a2ec5390827234",
       "original_commit": "e2c653992c43891e1934834785be818cfd92261c",
       "original_parent": "bb43bd1540b6cea45632d44a78665d901596337e",
@@ -569,7 +569,7 @@
       "tree": "a78c0b126a8b8fe6148ff4ab4f2b7d59bd64b5df"
     },
     {
-      "file": "0043-power-sc8541-stop-watchdog.patch",
+      "file": "0071-power-sc8541-stop-watchdog.patch",
       "sha256": "62a27872e1e499f485be87eee55b909517435ac93ba1cd3628fe52c1ca21c275",
       "original_commit": "8cf58735f8a52c9ce794d2ddbead6974df41962b",
       "original_parent": "e2c653992c43891e1934834785be818cfd92261c",
@@ -577,7 +577,7 @@
       "tree": "7b68f752cf7e7ec03827c27e10227ef45ce9976f"
     },
     {
-      "file": "0044-power-mca-direct-charge-session-pm.patch",
+      "file": "0072-power-mca-direct-charge-session-pm.patch",
       "sha256": "5b5222d7e6ece01f21ed7046c2e427e6a97416df00795d557f4c413e91bbd2fd",
       "original_commit": "21fe65264b89453e95b8114b700e312b46e1a722",
       "original_parent": "8cf58735f8a52c9ce794d2ddbead6974df41962b",
@@ -585,7 +585,7 @@
       "tree": "ed68741e4013280f91cf248d96353e92ec834b4e"
     },
     {
-      "file": "0045-power-mca-clear-proof-on-vbus-loss.patch",
+      "file": "0073-power-mca-clear-proof-on-vbus-loss.patch",
       "sha256": "3fe3d896ad282eacbef3da518e45a91694aee3ff730b7be946af6dd2ef7b3310",
       "original_commit": "9243cfefba6ac7c70cfed9f9c07c93b08978651c",
       "original_parent": "21fe65264b89453e95b8114b700e312b46e1a722",
@@ -593,7 +593,7 @@
       "tree": "9f06a6bf5a4ffd47e16c0739ec948bafb7f656c6"
     },
     {
-      "file": "0046-hid-nanosic-resume-fifo-keepalive.patch",
+      "file": "0074-hid-nanosic-resume-fifo-keepalive.patch",
       "sha256": "d219dd177af87619c62841ee30ee37a46dee54f9b5d20cc30cf78fcc12e5446c",
       "original_commit": "77c8f1d4eff820251da932f32102c5add57d6cf2",
       "original_parent": "9243cfefba6ac7c70cfed9f9c07c93b08978651c",
@@ -601,7 +601,7 @@
       "tree": "3c0805ab648b1f77fcb1f645f8fa16652dc3b865"
     },
     {
-      "file": "0047-power-mca-normal-charging-tables.patch",
+      "file": "0075-power-mca-normal-charging-tables.patch",
       "sha256": "5f0a5032ca52943363eb43c355d004e5ef52ac203f11c766204fa97c2222e46b",
       "original_commit": "3fa8583af9b4165bd2de302e0a18b0c9bccf91c8",
       "original_parent": "77c8f1d4eff820251da932f32102c5add57d6cf2",
@@ -609,7 +609,7 @@
       "tree": "5c2966b15ea9eee620f099eb9786c197865fdad5"
     },
     {
-      "file": "0048-power-mca-normal-termination-hysteresis.patch",
+      "file": "0076-power-mca-normal-termination-hysteresis.patch",
       "sha256": "4e7ed9f946f7ca47c6c4e66cd31e0e8ff220d1c47939c02570142a5c94508df2",
       "original_commit": "c0ff9c1d5fa95697f0106ba245ac70b24f4fabb6",
       "original_parent": "3fa8583af9b4165bd2de302e0a18b0c9bccf91c8",
@@ -617,7 +617,7 @@
       "tree": "ac85e7c9325ffb763fde952de939b5d1d256fc89"
     },
     {
-      "file": "0049-power-mca-charge-enable-feedback.patch",
+      "file": "0077-power-mca-charge-enable-feedback.patch",
       "sha256": "eb779b9b2060248867a9c785953f92d78a0dd39c0ca0489fbecc668a162ef14f",
       "original_commit": "7d3173d0390424b12d7d4c9905ae194ddbf65f09",
       "original_parent": "c0ff9c1d5fa95697f0106ba245ac70b24f4fabb6",
@@ -625,7 +625,7 @@
       "tree": "5331f7d64c46e2bbb95463ed0c544296713f2777"
     },
     {
-      "file": "0050-power-piano-parallel-battery-pack.patch",
+      "file": "0078-power-piano-parallel-battery-pack.patch",
       "sha256": "7371479c880ac79c1583ebaffb3ed9d5fad694371222289a998218babb77ce91",
       "original_commit": "a9eead3c1303f32558c098050e9f5c6bd6169163",
       "original_parent": "7d3173d0390424b12d7d4c9905ae194ddbf65f09",
