@@ -159,7 +159,7 @@ STATIC VOID BringUp(UINT64 Now) {
   }
   if(mPogo.Step==StepStopped)return;
   if(S!=EFI_SUCCESS){Unavailable(Reason,S);return;}
-  mPogo.Step=Next;mPogo.NextUs=Now+Wait;
+  mPogo.Step=Next;mPogo.NextUs=NowUs()+Wait;
 }
 
 STATIC EFI_STATUS EFIAPI BackendReady(VOID *Context) {

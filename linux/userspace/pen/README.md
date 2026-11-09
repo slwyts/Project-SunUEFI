@@ -123,7 +123,7 @@ P81C 的 137 字节 HID Report Map 将私有 Report5 数据放在键盘 Usage Pa
 | `02 61`、`02 00` | 上滑 | 笔键盘节点的 `KEY_PAGEUP` | 阅读与办公应用收到 Page Up，短视频应用切到上一条 |
 | `02 5b`、`02 00` | 下滑 | 笔键盘节点的 `KEY_PAGEDOWN` | 阅读与办公应用收到 Page Down，短视频应用切到下一条 |
 
-滑动由内核 `hid-xiaomi` 的 [`0025` 补丁](../../../patches/linux/7.3/0025-hid-xiaomi-p81c-body-gestures.patch)直接映射为 Page Up／Page Down，发给当前窗口，与键盘上的翻页键相同；它不依赖这里的程序，其他发行版使用同一内核也能得到。通用 HID 原本会把双击和滑动变成小键盘回车、`9` 和 `3`，补丁去掉了这些映射，也不再发送轻捏的 F19。
+滑动由内核 `hid-xiaomi` 的 [`0029` 补丁](../../../patches/linux/7.3/0029-hid-xiaomi-p81c-body-gestures.patch)直接映射为 Page Up／Page Down，发给当前窗口，与键盘上的翻页键相同；它不依赖这里的程序，其他发行版使用同一内核也能得到。通用 HID 原本会把双击和滑动变成小键盘回车、`9` 和 `3`，补丁去掉了这些映射，也不再发送轻捏的 F19。
 
 轻捏和双击由同一触控进程读取 hidraw，作为笔按钮发给 tablet-tool 节点，只在笔处于感应范围内时上报；抬出范围、断连、流中断时释放按钮。设置 `PIANO_PEN_SQUEEZE_ACTION=stylus` 时轻捏始终作为 `BTN_STYLUS`。不支持笔的应用通常把 `BTN_STYLUS` 当作中键、`BTN_STYLUS2` 当作右键；绘图应用可以把两个按钮绑定到橡皮擦、取色等工具。双击或滑动打断仍按住的轻捏时，轻捏结束但不算一次点击。
 

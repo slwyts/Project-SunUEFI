@@ -417,7 +417,7 @@ STATIC VOID BringUp(UINT64 Now) {
     S=EFI_SUCCESS;Next=TDownloadReset;Wait=0;
   }
   if(S!=EFI_SUCCESS){Unavailable(Reason,S);return;}
-  mT.Step=Next;mT.NextUs=Now+Wait;
+  mT.Step=Next;mT.NextUs=NowUs()+Wait;
 }
 
 STATIC VOID Runtime(UINT64 Now) {
@@ -445,7 +445,7 @@ STATIC VOID Runtime(UINT64 Now) {
   if(!Wdt)mT.WdtCount=0;
   else if(++mT.WdtCount>10) {
     mT.WdtCount=0;DEBUG((DEBUG_WARN,"PIANO_TOUCH_WDT_RECOVERY state=%02x\n",mFrame[1]));
-    if(mFrame[1]==0xFE){(VOID)WriteAddr(mT.Swrst,0xAA);mT.NextUs=Now+15000;}else mT.NextUs=Now;
+    if(mFrame[1]==0xFE){(VOID)WriteAddr(mT.Swrst,0xAA);mT.NextUs=NowUs()+15000;}else mT.NextUs=Now;
     mMatrix.Touching=FALSE;ReportPointer();
     mT.Attempt=0;mT.Step=TDownloadReset;return;
   }
