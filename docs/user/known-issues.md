@@ -6,6 +6,8 @@
 
 引导助手提供 **创建独立分区**，但新平板上的首次分区还没有在设备上验证过。平板上已经有 `sunuefi_esp` 和 `sunuefi_root` 时，直接选择镜像安装即可，不需要重新分区。分区过程中遇到问题，先回到 Android，再按[故障恢复](recovery.md)处理。
 
+元数据加密的 Android 数据分区暂时不能使用 **删除并归还 Android 空间**，按钮会禁用并显示原因。旧模块已经执行删除时，重启后仍可能只恢复分区范围而没有增加 Android 可用容量；保留现有 Android 数据，不要格式化或重复删除，更新模块后查看存储状态。
+
 ## UEFI 菜单与 USB
 
 SimpleInit 菜单和 TianoCore 设置页可以显示，用音量键移动、电源键确认。UEFI 阶段还不能使用触屏、官方键盘和 USB Host，这些功能只在 Linux 里可用。UEFI Fastboot 在菜单、固件设置和 Shell 里一直保持连接。

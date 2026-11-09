@@ -4,6 +4,7 @@
 # name encoded as UTF-8 hex plus its length. It never supplies shell paths.
 set -eu
 MODDIR=${0%/*}
+. "$MODDIR/common.sh"
 STATE=/data/adb/piano-sunuefi/storage
 NATIVE="$MODDIR/bin/piano-storage"
 RESIZER="$MODDIR/bin/piano-resize-f2fs"
@@ -50,9 +51,8 @@ android_grow_support() {
   libfs_mgr_sha=unknown
   if [ -r /system/lib64/libfs_mgr.so ]; then
     libfs_mgr_sha=$(sha256sum /system/lib64/libfs_mgr.so | cut -d ' ' -f 1)
-    # Record the library hash as evidence, not an OTA/version allowlist.
-    if [ -x /system/bin/resize.f2fs ] &&
-       grep -aFq /system/bin/resize.f2fs /system/lib64/libfs_mgr.so; then android_grow=true; fi
+    # A tool path alone does not show that this mounted device is resized.
+    if piano_android_auto_grow; then android_grow=true; fi
   fi
 }
 verify_expansion() {
@@ -85,7 +85,11 @@ verify_expansion() {
     if [ -f "$STATE/lock/job" ] && [ "$(cat "$STATE/lock/job")" = "$job" ] &&
        [ -f "$STATE/lock/boot" ] && [ "$(cat "$STATE/lock/boot")" != "$(cat /proc/sys/kernel/random/boot_id)" ]; then unlock; fi
   else
-    progress pending_android_expansion 95 '分区空间已归还，Android 文件系统尚未完成扩大。请查看详情后再继续。' false true
+    if piano_android_auto_grow; then
+      progress pending_android_expansion 95 '分区空间已归还，Android 文件系统尚未完成扩大。请查看详情后再继续。' false true
+    else
+      progress pending_android_expansion 95 'Android 文件系统尚未扩大，当前模块不能完成此扩容。请勿格式化或重复删除。' false true
+    fi
   fi
   cat "$STATE/$job.progress.json"
 }
@@ -205,6 +209,9 @@ EOF
       [ -x "$RESIZER" ] || { echo '缺少 Android 扩容检查组件。' >&2; return 1; }
       "$RESIZER" status > "$STATE/$job.f2fs-before-return.json"
       android_grow_support
+      [ "$android_grow" = true ] || {
+        echo '当前模块无法为此 Android 数据分区完成离线扩容，未删除独立分区。' >&2; return 1;
+      }
       progress running 70 '正在删除 SunUEFI 分区，将空间归还 Android。'
       "$NATIVE" apply "$plan" "$STATE/$job.gpt-backup" --execute > "$STATE/$job.result.json"
       printf '{"schema_version":1,"job_id":"%s","target_userdata_bytes":%s,"created_boot_id":"%s","gpt_written":true,"pending_android_expansion":true,"android_grow_detected":%s,"libfs_mgr_sha256":"%s"}\n' \
@@ -254,6 +261,12 @@ case "${1:-}" in
     esac
     lock; trap 'unlock' EXIT
     job=$(new_id); valid_id "$job"
+    if [ "$operation" = delete-return ]; then
+      android_grow_support
+      [ "$android_grow" = true ] || {
+        echo '当前模块无法为此 Android 数据分区完成离线扩容，不能删除并归还空间。' >&2; exit 1;
+      }
+    fi
     section_bytes=
     if [ "$operation" = create ] && [ -x "$RESIZER" ] &&
        "$RESIZER" status > "$STATE/$job.userdata.json" 2> "$STATE/$job.userdata-status.log"; then
@@ -281,6 +294,9 @@ case "${1:-}" in
       [ -x "$RESIZER" ] || { echo '当前模块缺少 Android 扩容检查组件。' >&2; exit 1; }
       "$RESIZER" status > "$STATE/$job.f2fs-before-return.json"
       android_grow_support
+      [ "$android_grow" = true ] || {
+        echo '当前模块无法为此 Android 数据分区完成离线扩容，不能删除并归还空间。' >&2; exit 1;
+      }
       printf '{"plan_id":"%s","android_grow_detected":%s,%s\n' "$job" "$android_grow" "$(sed 's/^{//' "$STATE/$job.description.json")"
     else
       printf '{"plan_id":"%s",%s\n' "$job" "$(sed 's/^{//' "$STATE/$job.description.json")"

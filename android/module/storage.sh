@@ -7,6 +7,7 @@ operation=${1:-status}
 [ "$operation" = status ] || { echo 'Only storage status is available.' >&2; exit 2; }
 [ "$(id -u)" = 0 ] || { echo 'Root permission is required.' >&2; exit 1; }
 MODDIR=${0%/*}
+. "$MODDIR/common.sh"
 backend=false; create=false; resize=false; flash=false; delete=false; release=false
 [ ! -x "$MODDIR/bin/piano-storage" ] || backend=true
 if [ "$backend" = true ] && [ -x "$MODDIR/bin/piano-resize-f2fs" ]; then create=true; fi
@@ -114,8 +115,7 @@ flash_reason=''
 delete_reason=''
 release_reason=''
 android_grow=false
-if [ -x /system/bin/resize.f2fs ] && [ -r /system/lib64/libfs_mgr.so ] &&
-   grep -aFq /system/bin/resize.f2fs /system/lib64/libfs_mgr.so; then android_grow=true; fi
+if piano_android_auto_grow; then android_grow=true; fi
 if [ "$create" = false ]; then
   if [ "$layout" != absent ]; then create_reason='已有 SunUEFI 分区，无需再次建立。'
   else create_reason='当前模块缺少 Android 数据分区调整组件。'; fi
@@ -134,7 +134,8 @@ if [ "$release" = false ]; then
   if [ "$layout" != existing ]; then release_reason='当前没有可归还的完整 SunUEFI 分区。'
   else release_reason='请更新模块以安装 Android 扩容检查组件。'; fi
 elif [ "$android_grow" = false ]; then
-  release_reason='当前系统未检测到原厂自动扩容路径；重启后会检查实际容量，未扩大时继续显示待完成。'
+  release=false
+  release_reason='当前模块无法为此 Android 数据分区完成离线扩容，不能删除并归还空间。'
 fi
 printf '{"operation":"storage-status","read_only":true,"layout":"%s","partitions":[%s,%s],"userdata":{"device":"%s","mounted_device":"%s","filesystem":"%s","mapped":%s},"active_job_id":%s,"pending_android_expansion":%s,"android_expansion":%s,"android_grow_detected":%s,"capabilities":{"status":true,"flash_existing":%s,"create":%s,"resize":%s,"delete":%s,"release_to_android":%s,"file_picker":%s,"existing_image_installation":"module","partition_management":"plan-and-confirm"},"reasons":{"flash_existing":"%s","create":"%s","resize":"%s","delete":"%s","release_to_android":"%s"},%s\n' \
   "$layout" "$esp" "$root" "$userdata_device" "$userdata_source" "$userdata_filesystem" "$userdata_mapped" "$active_job" "$pending" "$expansion" "$android_grow" "$flash" "$create" "$resize" "$delete" "$release" "$backend" "$flash_reason" "$create_reason" "$resize_reason" "$delete_reason" "$release_reason" "$(printf '%s' "$sources" | sed 's/^{//')"

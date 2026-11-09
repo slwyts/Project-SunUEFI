@@ -196,6 +196,7 @@ class AndroidStorageSizeTests(unittest.TestCase):
                         stream.write(data)
                 module = folder / 'module'
                 (module / 'bin').mkdir(parents=True)
+                shutil.copyfile(ROOT / 'android/module/common.sh', module / 'common.sh')
                 state = folder / 'state'
                 script = (ROOT / 'android/module/storage-operations.sh').read_text()
                 (module / 'storage-operations.sh').write_text(script.replace(
@@ -454,6 +455,7 @@ class AndroidStorageSizeTests(unittest.TestCase):
                 self.select_source(disk, sources, selections, kind)
             module = folder / 'module'
             (module / 'bin').mkdir(parents=True)
+            shutil.copyfile(ROOT / 'android/module/common.sh', module / 'common.sh')
             state, invocation = folder / 'state', folder / 'native-arguments'
             script = (ROOT / 'android/module/storage-operations.sh').read_text()
             (module / 'storage-operations.sh').write_text(script.replace(
@@ -490,3 +492,57 @@ class AndroidStorageSizeTests(unittest.TestCase):
                                          'plan', 'flash', scope], capture_output=True, text=True, env=env)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(invocation.exists())
+
+    def test_unavailable_android_expansion_refuses_preview_and_saved_plan(self):
+        shell = os.environ.get('MKSH') or shutil.which('mksh') or shutil.which('sh')
+        with tempfile.TemporaryDirectory(dir=self.directory) as folder:
+            folder = Path(folder)
+            original, disk, _, _ = self.flash_fixture(folder)
+            module, state = folder / 'module', folder / 'state'
+            (module / 'bin').mkdir(parents=True)
+            state.mkdir()
+            shutil.copyfile(ROOT / 'android/module/common.sh', module / 'common.sh')
+            script = (ROOT / 'android/module/storage-operations.sh').read_text()
+            script = script.replace('STATE=/data/adb/piano-sunuefi/storage',
+                                    'STATE=' + shlex.quote(str(state)))
+            (module / 'storage-operations.sh').write_text(script)
+            invocation = folder / 'native-arguments'
+            wrappers = {
+                'piano-storage': '#!/bin/sh\nprintf "%s\\n" "$1" >> ' + shlex.quote(str(invocation)) +
+                    '\nexec ' + shlex.quote(str(self.binary)) + ' "$@" --offline ' +
+                    shlex.quote(str(disk)) + ' 4096\n',
+                'piano-boot-request': '#!/bin/sh\nprintf \'{"target":0}\\n\'\n',
+                'piano-resize-f2fs': '#!/bin/sh\nprintf \'{"mapping_verified":true}\\n\'\n',
+                'getprop': '#!/bin/sh\ncase "$1" in ro.product.device) echo piano;; '
+                    'ro.boot.slot_suffix) echo _a;; esac\n',
+                'id': '#!/bin/sh\necho 0\n',
+            }
+            for name, text in wrappers.items():
+                path = module / 'bin' / name
+                path.write_text(text)
+                path.chmod(0o755)
+            env = {**os.environ, 'PATH': str(module / 'bin') + ':' + os.environ['PATH']}
+            # This host has no supported stock /data expansion path. The real
+            # shell must refuse before asking the native planner to run.
+            preview = subprocess.run([shell, str(module / 'storage-operations.sh'),
+                                      'plan', 'delete-return'], env=env,
+                                     capture_output=True, text=True)
+            self.assertNotEqual(preview.returncode, 0)
+            self.assertIn('不能删除并归还空间', preview.stderr)
+            self.assertFalse(invocation.exists())
+            self.assert_metadata_equal(disk, original)
+
+            # A plan created by an older module cannot bypass the execution check.
+            job = 'a' * 32
+            plan = state / (job + '.plan')
+            planned = self.run_native(disk, 'plan', 'delete-return', 0, plan)
+            self.assertEqual(planned.returncode, 0, planned.stderr)
+            (state / 'lock').mkdir()
+            (state / 'lock/job').write_text(job)
+            run = subprocess.run([shell, str(module / 'storage-operations.sh'),
+                                  'work', job], env=env, capture_output=True, text=True)
+            self.assertNotEqual(run.returncode, 0)
+            self.assertIn('未删除独立分区', run.stderr)
+            self.assertNotIn('apply', invocation.read_text().splitlines())
+            self.assertFalse((state / (job + '.gpt-backup')).exists())
+            self.assert_metadata_equal(disk, original)

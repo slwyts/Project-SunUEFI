@@ -546,7 +546,7 @@ static void make_plan(struct plan *p, unsigned op, unsigned gib,
              "归还范围内存在其他分区，不能覆盖。");
       }
       // Keep userdata's beginning, GUID and encryption metadata unchanged.
-      // The original Android pre-mount path expands F2FS after normal reboot;
+      // The caller must establish an offline expansion path separately;
       // GPT success by itself must not be reported as filesystem completion.
       p64(u + 40, tail);
       p->userdata_bytes = (tail - userdata_start + 1) * g->sector;

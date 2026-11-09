@@ -76,6 +76,9 @@ case "$operation" in
   printf '%s' "$current" | grep -Eq '"target"[[:space:]]*:[[:space:]]*0([,}])' || {
    echo '请先恢复 Android 启动选择。' >&2; exit 2;
   }
+  piano_android_auto_grow || {
+   echo '当前模块无法完成此 Android 数据分区的离线扩容，重复重启不会归还容量。' >&2; exit 2;
+  }
   (sleep 1; /system/bin/reboot) >/dev/null 2>&1 </dev/null &
   echo '{"status":"rebooting"}' ;;
  storage-status)

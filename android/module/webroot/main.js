@@ -146,7 +146,7 @@ if (typeof document !== 'undefined') {
     const caps = storage.capabilities || {};
     $('create-reason').textContent = storage.layout === 'existing' ? t('alreadyCreated') : caps.create ? t('createHint') : t('backendMissing');
     $('resize-reason').textContent = storage.layout !== 'existing' ? t('noPartitions') : caps.resize ? t('resizeHint') : t('backendMissing');
-    $('delete-reason').textContent = storage.layout === 'existing' ? t('deleteWarning') : t('noPartitions');
+    $('delete-reason').textContent = storage.layout !== 'existing' ? t('noPartitions') : caps.release_to_android ? t('deleteWarning') : (storage.reasons || {}).release_to_android || t('backendMissing');
     $('flash-reason').textContent = storage.layout !== 'existing' ? t('noPartitions') : !checkedImages().length || !checkedImages().every(imageAvailable) ? t('selectImages') : '';
     updateButtons();
   }

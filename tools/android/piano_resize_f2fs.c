@@ -174,7 +174,7 @@ int main(int argc, char **argv) {
     if (!execute) {
         // GPT growth can be committed while Android still uses its old mapper.
         // On the next normal boot vold recreates the complete plaintext mapping,
-        // then the OEM fs_mgr invokes resize.f2fs before mounting /data. Neither
+        // but OEM fs_mgr may skip resize.f2fs for the encrypted mapping. Neither
         // a larger GPT entry nor a larger mapper alone proves F2FS has grown.
         uint64_t filesystem_bytes = before * BLOCK_BYTES;
         int mapping_requires_reboot = mapped_bytes != raw_bytes;
