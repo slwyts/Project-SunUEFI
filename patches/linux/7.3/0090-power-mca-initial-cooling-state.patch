@@ -1,0 +1,53 @@
+From 190da1bb63c1ef6c1291b314ae26eddc41b3c1ef Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 10 Nov 2026 02:45:01 +0800
+Subject: [PATCH] power: supply: piano_mca: retain cooling requests during
+ registration
+
+Thermal registration can invoke the cooling callback before the GLINK client is ready. Retain that initial state without queueing the policy worker; the first registered service notification applies it. Keep teardown rejection separate from initialization.
+---
+ drivers/power/supply/piano_mca.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 3a3e7b38d7a..e9db8c0441b 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -485,6 +485,7 @@ struct piano_mca {
+ 	u32 *cooling_limits_ua;
+ 	unsigned int cooling_count;
+ 	unsigned long cooling_state;
++	bool policy_ready;
+ 	bool policy_stopped;
+ 	bool policy_suspended;
+ 	struct completion ack;
+@@ -2921,7 +2922,7 @@ static int piano_mca_update_charge_limit(struct piano_mca *mca, u32 old_ma)
+ 	unsigned int connection = piano_mca_connection_generation(mca);
+ 	int ret = 0;
+ 
+-	if (mca->policy_suspended)
++	if (!mca->policy_ready || mca->policy_suspended)
+ 		return 0;
+ 	if (ma < old_ma) {
+ 		bool cp_active = mca->cp == MCA_CP_OPENING || mca->cp == MCA_CP_ON;
+@@ -3559,7 +3560,6 @@ static int piano_mca_probe(struct auxiliary_device *adev,
+ 	mutex_init(&mca->lock);
+ 	mutex_init(&mca->policy_lock);
+ 	mca->charge_limit_ua = MCA_CP_IBAT_MAX_MA * 1000;
+-	mca->policy_stopped = true;
+ 	mutex_init(&mca->pen_boost_lock);
+ 	init_completion(&mca->ack);
+ 	INIT_DELAYED_WORK(&mca->poll, piano_mca_poll);
+@@ -3609,7 +3609,9 @@ static int piano_mca_probe(struct auxiliary_device *adev,
+ 	if (ret)
+ 		return ret;
+ 
+-	mca->policy_stopped = false;
++	mutex_lock(&mca->policy_lock);
++	mca->policy_ready = true;
++	mutex_unlock(&mca->policy_lock);
+ 	pmic_glink_client_register(mca->client);
+ 
+ 	if (pan_ack)
+-- 
+2.56.0

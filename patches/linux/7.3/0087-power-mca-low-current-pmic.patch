@@ -1,0 +1,26 @@
+From 61a58663732759fa5eefbdff5877c2fb413856fe Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 10 Nov 2026 02:30:19 +0800
+Subject: [PATCH] power: supply: piano_mca: keep low-current charging on the
+ PMIC
+
+Require enough total current to sustain the pump minimum bus target before changing charger state. A low cooling budget must not mark the source permanently done and prevent recovery when the limit is lifted.
+---
+ drivers/power/supply/piano_mca.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index bb7456ea5c8..ed077766345 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -2396,7 +2396,7 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	if (piano_mca_cp_gauges(mca, &vbat, &ibat, &tcool, &twarm))
+ 		return;
+ 	if (piano_mca_cp_normal_limits(mca, vbat, ibat, tcool, twarm, &limits) ||
+-	    limits.ma < MCA_CP_BUCK_MA + 2 * MCA_CP_OPEN_IBUS_MA ||
++	    limits.ma < MCA_CP_BUCK_MA + 4 * MCA_CP_OPEN_IBUS_MA ||
+ 	    vbat < MCA_CP_VBAT_MIN_MV || vbat >= limits.cv_mv ||
+ 	    piano_mca_read_u32(mca, MCA_PROP_VERIFY_PROCESS))
+ 		return;
+-- 
+2.56.0

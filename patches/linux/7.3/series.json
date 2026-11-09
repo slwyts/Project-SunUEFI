@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "f5a4532aafb6e75a362a459340b1b9161104efe8",
-  "original_target_commit": "0edf3c66a47a10e5e1d83be9fdb7b11303f250d7",
+  "target_tree": "b0da508a1d10b5cfccb2ab93fa1c9a4177dedae8",
+  "original_target_commit": "190da1bb63c1ef6c1291b314ae26eddc41b3c1ef",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -671,9 +671,74 @@
       "original_parent": "a20312b35e10bf3b903da5add40b9bbe1bcdca2d",
       "committer_date": "2026-11-10T00:31:39+08:00",
       "tree": "f5a4532aafb6e75a362a459340b1b9161104efe8"
+    },
+    {
+      "file": "0084-power-mca-cooling-binding.patch",
+      "sha256": "3fe2b3adbd2afc481b75dccec023261bf54b7c9abc20646a2d52cec920d158ce",
+      "original_commit": "604928960f67cb203725c49ec3f95cdb9e66cd7b",
+      "original_parent": "0edf3c66a47a10e5e1d83be9fdb7b11303f250d7",
+      "committer_date": "2026-11-10T02:11:16+08:00",
+      "tree": "c1aedca531590d6e8809257c22c0f96687773a5d"
+    },
+    {
+      "file": "0085-power-mca-thermal-charge-limit.patch",
+      "sha256": "d294b838396cc61ac8bd5de4c6daf141e37fd1bfe510ab03cb6e9e586109565d",
+      "original_commit": "f5201390a1ee8f318f26e1f8e1261dbe809dc499",
+      "original_parent": "604928960f67cb203725c49ec3f95cdb9e66cd7b",
+      "committer_date": "2026-11-10T02:13:47+08:00",
+      "tree": "a40670aaa58015134d3b2266675f220a79e140f7"
+    },
+    {
+      "file": "0086-power-mca-restore-pump-budget.patch",
+      "sha256": "420f5830ee0658b1770cc7f2ebaf6879ff261a52c96ebf82d8d9ec1bc5338f88",
+      "original_commit": "95d1d592d393f5dec2ebcfc512abf5ba98b22680",
+      "original_parent": "f5201390a1ee8f318f26e1f8e1261dbe809dc499",
+      "committer_date": "2026-11-10T02:21:27+08:00",
+      "tree": "8dc5271f5497216dd2e49aa526774298d1a5b32c"
+    },
+    {
+      "file": "0087-power-mca-low-current-pmic.patch",
+      "sha256": "09f1790379f816594bd2a687de63bbea61c012428f7f115470ddeabdebe4ddcc",
+      "original_commit": "61a58663732759fa5eefbdff5877c2fb413856fe",
+      "original_parent": "95d1d592d393f5dec2ebcfc512abf5ba98b22680",
+      "committer_date": "2026-11-10T02:30:19+08:00",
+      "tree": "dc7d27347a9db7433be27686a7592b89c0b90aa3"
+    },
+    {
+      "file": "0088-power-mca-preserve-stop-reason.patch",
+      "sha256": "6113c39f8279653a1fceb3b7269ffaae64b02635a4568100d8ee3f382a991216",
+      "original_commit": "5a6d01ebaaa352ecd1592cedd046dee2e3885c75",
+      "original_parent": "61a58663732759fa5eefbdff5877c2fb413856fe",
+      "committer_date": "2026-11-10T02:31:21+08:00",
+      "tree": "91d0750d84c81f2f822024be4d1fbf4a4f3efe4d"
+    },
+    {
+      "file": "0089-power-mca-clear-pump-retry.patch",
+      "sha256": "e9f8143d539dc033cc821780321413e5faec78e0fef6f725aed5fa7562cd5c4b",
+      "original_commit": "d8be4a4706d5968384bee179522c84be0a661f42",
+      "original_parent": "5a6d01ebaaa352ecd1592cedd046dee2e3885c75",
+      "committer_date": "2026-11-10T02:35:43+08:00",
+      "tree": "7677c37cc80d9289bebfdf01c8b6091a2db807f3"
+    },
+    {
+      "file": "0090-power-mca-initial-cooling-state.patch",
+      "sha256": "4eafe95d8dddb0fbe2ac84209cba642ff6160f2b75071089ef3c2ee6cf70512a",
+      "original_commit": "190da1bb63c1ef6c1291b314ae26eddc41b3c1ef",
+      "original_parent": "d8be4a4706d5968384bee179522c84be0a661f42",
+      "committer_date": "2026-11-10T02:45:01+08:00",
+      "tree": "b0da508a1d10b5cfccb2ab93fa1c9a4177dedae8"
     }
   ],
   "provenance": {
+    "charger_cooling": {
+      "stock_rom": "OS4.0.5.0.XPYCNXM",
+      "stock_dtb_sha256": "73d9beea4d8e251d03a42d9bc7331a8f274f6891d7b1f7e6668ecd6ed3eb4ca1",
+      "stock_program_sha256": {
+        "mca_charger_thermal.ko": "5bda39f6f811ae0e60bf8c908977b3724d0675ca7ef9c31c3fece85d22d41319"
+      },
+      "stock_checks": "The same-device wired_thermal table has ten columns per state; the 2:1 direct-charge column descends from 10500 through 9000, 8000, 7000, 6200, 5500, 5000, 4400, 3600, 3000, 2500, 2000, 1500, 1000 to 700 mA. Original parser uses ten-cell rows and the thermal device exposes these as discrete levels.",
+      "scope": "Use the distinct levels within the existing 8000 mA normal-mode ceiling and add zero-current stop. Standard charge_control_limit and thermal cooling constrain one combined pump/PMIC budget. No temperature-to-level map, FFC enable or higher voltage/current capability is inferred from these limits."
+    },
     "cpu_capacity": {
       "stock_rom": "OS4.0.5.0.XPYCNXM",
       "stock_dtb_sha256": "73d9beea4d8e251d03a42d9bc7331a8f274f6891d7b1f7e6668ecd6ed3eb4ca1",

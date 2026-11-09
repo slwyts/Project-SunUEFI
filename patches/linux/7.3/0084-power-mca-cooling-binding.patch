@@ -1,0 +1,55 @@
+From 604928960f67cb203725c49ec3f95cdb9e66cd7b Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 10 Nov 2026 02:11:16 +0800
+Subject: [PATCH] dt-bindings: power: describe Xiaomi MCA charger cooling
+ limits
+
+Describe descending total battery-current budgets and a standard thermal cooling controller on the MCA GLINK node. Zero disables battery charging without suspending external power.
+---
+ .../bindings/soc/qcom/qcom,pmic-glink.yaml    | 20 ++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+index b7acf4d2c4a..05dd684064a 100644
+--- a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
++++ b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+@@ -66,6 +66,22 @@ properties:
+       2, inserting one property before the data-role and source-PDO controls.
+       This must match the ADSP firmware shipped with the operating system.
+ 
++  '#cooling-cells':
++    const: 2
++
++  xiaomi,charge-current-limits-microamp:
++    $ref: /schemas/types.yaml#/definitions/uint32-array
++    minItems: 2
++    maxItems: 32
++    items:
++      maximum: 8000000
++      multipleOf: 1000
++    description: |
++      Strictly decreasing total battery charge current limits for the Xiaomi
++      MCA charger cooling states, starting with state zero. Each value includes
++      both the switched-capacitor and buck charger paths. Zero disables battery
++      charging without suspending the external power input.
++
+   regulators:
+     type: object
+     additionalProperties: false
+@@ -114,6 +130,9 @@ required:
+ 
+ additionalProperties: false
+ 
++dependencies:
++  xiaomi,charge-current-limits-microamp: ['#cooling-cells']
++
+ examples:
+   - |+
+     pmic-glink {
+@@ -156,4 +175,3 @@ examples:
+         };
+     };
+ ...
+-
+-- 
+2.56.0

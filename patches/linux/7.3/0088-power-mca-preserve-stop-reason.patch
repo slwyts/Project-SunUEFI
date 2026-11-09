@@ -1,0 +1,41 @@
+From 5a6d01ebaaa352ecd1592cedd046dee2e3885c75 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 10 Nov 2026 02:31:21 +0800
+Subject: [PATCH] power: supply: piano_mca: preserve prior nonthermal stops
+
+Limit changes may make an active pump restartable after its confirmed stop. Do not mark an already stopped source restartable: a completed tail charge or hardware fault must not be cleared by writing a current limit.
+---
+ drivers/power/supply/piano_mca.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index ed077766345..5d0a8d83ee4 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -2821,8 +2821,10 @@ static void piano_mca_poll(struct work_struct *work)
+ 	if (mca->polled_connection_generation != piano_mca_connection_generation(mca))
+ 		goto requeue;
+ 	if (online && cp_charge && charge_current && !piano_mca_charge_limit(mca)) {
++		bool cp_active = piano_mca_cp_active(mca);
++
+ 		if (!piano_mca_cp_stop(mca, "charging disabled by current limit")) {
+-			mca->cp_thermal_stop = true;
++			mca->cp_thermal_stop |= cp_active;
+ 			piano_mca_normal_pause(mca, generation,
+ 					       mca->polled_connection_generation);
+ 		}
+@@ -2921,9 +2923,11 @@ static int piano_mca_update_charge_limit(struct piano_mca *mca, u32 old_ma)
+ 	if (mca->policy_suspended)
+ 		return 0;
+ 	if (ma < old_ma) {
++		bool cp_active = piano_mca_cp_active(mca);
++
+ 		ret = piano_mca_cp_stop(mca, "charge current limit changed");
+ 		if (!ret) {
+-			mca->cp_thermal_stop = true;
++			mca->cp_thermal_stop |= cp_active;
+ 			if (mca->service_up && mca->online) {
+ 				if (!ma) {
+ 					ret = piano_mca_normal_pause(mca, generation, connection);
+-- 
+2.56.0

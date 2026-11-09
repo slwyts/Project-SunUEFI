@@ -1,0 +1,43 @@
+From d8be4a4706d5968384bee179522c84be0a661f42 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 10 Nov 2026 02:35:43 +0800
+Subject: [PATCH] power: supply: piano_mca: clear retry permission on a fresh
+ pump stop
+
+A later fault must not inherit the retry flag from an earlier thermal pause. Clear it when a live stop starts and grant it again only for a newly confirmed temperature or limit stop, not for an uncertain STOPPING state.
+---
+ drivers/power/supply/piano_mca.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 5d0a8d83ee4..3a3e7b38d7a 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -2280,6 +2280,7 @@ static int piano_mca_cp_stop(struct piano_mca *mca, const char *why)
+ 	if (!piano_mca_cp_active(mca))
+ 		return 0;
+ 
++	mca->cp_thermal_stop = false;
+ 	mca->cp = MCA_CP_STOPPING;
+ 	ret = piano_mca_cp_set_online(mca, false);
+ 	ret = ret ?: piano_mca_cp_get(mca, POWER_SUPPLY_PROP_ONLINE, &on);
+@@ -2821,7 +2822,7 @@ static void piano_mca_poll(struct work_struct *work)
+ 	if (mca->polled_connection_generation != piano_mca_connection_generation(mca))
+ 		goto requeue;
+ 	if (online && cp_charge && charge_current && !piano_mca_charge_limit(mca)) {
+-		bool cp_active = piano_mca_cp_active(mca);
++		bool cp_active = mca->cp == MCA_CP_OPENING || mca->cp == MCA_CP_ON;
+ 
+ 		if (!piano_mca_cp_stop(mca, "charging disabled by current limit")) {
+ 			mca->cp_thermal_stop |= cp_active;
+@@ -2923,7 +2924,7 @@ static int piano_mca_update_charge_limit(struct piano_mca *mca, u32 old_ma)
+ 	if (mca->policy_suspended)
+ 		return 0;
+ 	if (ma < old_ma) {
+-		bool cp_active = piano_mca_cp_active(mca);
++		bool cp_active = mca->cp == MCA_CP_OPENING || mca->cp == MCA_CP_ON;
+ 
+ 		ret = piano_mca_cp_stop(mca, "charge current limit changed");
+ 		if (!ret) {
+-- 
+2.56.0

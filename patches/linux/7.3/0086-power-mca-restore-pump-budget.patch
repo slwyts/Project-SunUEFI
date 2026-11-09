@@ -1,0 +1,46 @@
+From 95d1d592d393f5dec2ebcfc512abf5ba98b22680 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 10 Nov 2026 02:21:27 +0800
+Subject: [PATCH] power: supply: piano_mca: reopen pump after restoring its
+ budget
+
+A pump started under a smaller charge limit has a lower bus-current protection setting. Stop and reopen it after the total budget increases so source and protection limits are recalculated together.
+---
+ drivers/power/supply/piano_mca.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 7929eeb8e48..bb7456ea5c8 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -521,6 +521,7 @@ struct piano_mca {
+ 	u32 cp_ibus_ma;		/* bus current target */
+ 	u32 cp_ibus_hot;	/* the target as lowered for the stage temperature */
+ 	u32 cp_ibat_trip;	/* battery current limit the trip checks against */
++	u32 cp_start_ibat_ma;	/* budget used for the initial bus protection */
+ 	/* jiffies when the limit was last that high, or the stage above target */
+ 	unsigned long cp_trip_at;
+ 	u32 cp_profile;		/* temperature pair + 1; zero until first sample */
+@@ -2453,6 +2454,7 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	mca->cp_polls = 0;
+ 	mca->cp_low = 0;
+ 	mca->cp_ibus_hot = mca->cp_ibus_ma;
++	mca->cp_start_ibat_ma = limits.ma;
+ 	mca->cp_ibat_trip = 0;
+ 	mca->cp_thermal_stop = false;
+ 	mca->cp_taper_at = 0;
+@@ -2513,6 +2515,12 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 			mca->cp_thermal_stop = true;
+ 		return;
+ 	}
++	/* Restore a larger budget only after reprogramming bus protection. */
++	if (limits.ma > mca->cp_start_ibat_ma) {
++		if (!piano_mca_cp_stop(mca, "charge current limit restored"))
++			mca->cp_thermal_stop = true;
++		return;
++	}
+ 	if (vbat >= limits.fv_mv) {
+ 		if (!piano_mca_cp_stop(mca, "normal voltage reached")) {
+ 			mca->cp_thermal_stop = mca->fv_set_mv > limits.fv_mv;
+-- 
+2.56.0
