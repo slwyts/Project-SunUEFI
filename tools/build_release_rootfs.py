@@ -49,11 +49,10 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
     if desktop not in ('gnome', 'kde'):
         raise ValueError('Release desktop must be gnome or kde')
     if desktop == 'kde':
-        from prepare_debian_desktop import KDE_PACKAGES
-        gnome = {'gnome', 'task-gnome-desktop', 'task-chinese-s-gnome-desktop',
-                 'ibus', 'ibus-libpinyin', 'ibus-gtk', 'ibus-gtk3', 'ibus-gtk4',
-                 'power-profiles-daemon'}
-        config['debian']['extra_packages'] = [p for p in config['debian']['extra_packages'] if p not in gnome] + KDE_PACKAGES
+        from prepare_debian_desktop import GNOME_PACKAGES, KDE_PACKAGES
+        config['debian']['extra_packages'] = [
+            p for p in config['debian']['extra_packages'] if p not in GNOME_PACKAGES
+        ] + KDE_PACKAGES
     if config['debian']['apt_policy'] != 'mutable-recorded' or config['debian']['snapshot'] is not None:
         raise ValueError('Only signed mutable APT with recorded metadata is implemented; snapshot mode is not configured')
     kernel, source, output = [Path(p).resolve() for p in (kernel, source, output)]
@@ -169,6 +168,8 @@ def put(root, name, text):
 
 def default_system_record(rootfs, installed, config, desktop='gnome'):
     """Require the shipped desktop and BSP, including runtime-bundle resumes."""
+    if desktop == 'kde' and {'tuned', 'tuned-ppd'} & installed.keys():
+        raise ValueError('KDE must not retain TuneD without its GNOME profile configuration')
     required = {'systemd-sysv', 'pipewire', 'network-manager'}
     required.update({'gnome-shell', 'gdm3'} if desktop == 'gnome' else {'plasma-workspace', 'sddm', 'powerdevil'})
     required.update(config['debian']['extra_packages'])
@@ -651,6 +652,10 @@ def execute(record):
                                       for row in ffmpeg['packages'].values())
             run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get', 'install', '-y',
                  '--no-install-recommends', *cfg['debian']['extra_packages'], *local_packages])
+            if desktop == 'kde':
+                # A resumed generated KDE root may retain the old GNOME backend.
+                run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive',
+                     'apt-get', 'purge', '-y', 'tuned-ppd', 'tuned'])
             if 'chromium' in cfg['debian']['extra_packages']:
                 # The selected browser is installed before removing the old
                 # base's Firefox package. User browser profiles are untouched.

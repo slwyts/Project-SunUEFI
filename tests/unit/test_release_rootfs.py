@@ -40,9 +40,25 @@ class ReleaseRootTests(unittest.TestCase):
         self.m = {'source_commit': 'a' * 40, 'source_clean': True, 'root_policy': 'LABEL=PIANOROOT',
                   'command_line': 'rdinit=/pianoinit piano.root=LABEL=PIANOROOT', 'kernel_release': 'fixture-release'}
 
-    def planned(self):
+    def planned(self, desktop='gnome'):
         with patch.object(builder.modules, 'inspect', return_value=(self.m, 'b' * 64)), patch.object(builder, 'repository', return_value='a' * 40):
-            return builder.plan(self.kernel, self.source, self.output, root=self.root)
+            return builder.plan(self.kernel, self.source, self.output, root=self.root, desktop=desktop)
+
+    def test_kde_excludes_tuned_packages_but_gnome_keeps_them(self):
+        config = copy.deepcopy(CONFIG)
+        config['debian']['extra_packages'].extend(['tuned', 'tuned-ppd'])
+        (self.root / 'config/release.json').write_text(json.dumps(config))
+        packages = self.planned('kde')['config']['debian']['extra_packages']
+        self.assertIn('powerdevil', packages)
+        self.assertIn('chromium', packages)
+        self.assertTrue({'tuned', 'tuned-ppd'}.isdisjoint(packages))
+        self.assertFalse(any(p.startswith('ibus') or p.startswith('gnome') for p in packages))
+        self.assertTrue({'tuned', 'tuned-ppd'}.issubset(
+            self.planned()['config']['debian']['extra_packages']))
+
+    def test_kde_record_refuses_a_retained_tuned_backend(self):
+        with self.assertRaisesRegex(ValueError, 'KDE must not retain TuneD'):
+            builder.default_system_record(self.rootfs, {'tuned-ppd': 'fixture'}, CONFIG, 'kde')
 
     def policy_tree(self):
         for name in ('usr/lib/piano', 'etc/systemd/system', 'etc/ssh', 'home/piano/.ssh', 'root/.ssh', 'dev', 'proc', 'sys', 'run'):

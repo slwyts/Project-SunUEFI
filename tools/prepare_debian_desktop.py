@@ -6,10 +6,13 @@ import json
 import shutil
 
 GNOME_PACKAGES = {
-    'gdm3', 'gnome-control-center', 'gnome-session', 'gnome-settings-daemon',
+    'gdm3', 'gnome', 'task-gnome-desktop', 'gnome-control-center',
+    'gnome-session', 'gnome-settings-daemon',
     'gnome-shell', 'gnome-system-monitor', 'gnome-terminal', 'gnome-text-editor',
     'nautilus', 'evolution-data-server', 'ibus', 'ibus-libpinyin',
+    'ibus-gtk', 'ibus-gtk3', 'ibus-gtk4',
     'task-chinese-s-gnome-desktop',
+    'power-profiles-daemon', 'tuned', 'tuned-ppd',
 }
 KDE_PACKAGES = [
     'task-kde-desktop', 'plasma-workspace', 'sddm', 'dolphin', 'konsole',
@@ -23,8 +26,7 @@ KDE_PACKAGES = [
 GNOME_PATHS = (
     'etc/gdm3', 'etc/dconf', 'usr/share/glib-2.0/schemas/90_piano.gschema.override',
     'usr/lib/systemd/user/piano-power-button.service', 'usr/lib/piano/power-button',
-    # KDE uses powerdevil, so the tuned profiles and their GNOME mapping go away
-    # with the rest of the GNOME-only overlay.
+    # KDE uses PowerDevil; remove TuneD packages and their GNOME-only overlay.
     'usr/lib/tuned/profiles/piano-power-saver',
     'usr/lib/tuned/profiles/piano-balanced',
     'usr/lib/tuned/profiles/piano-performance',
