@@ -1,0 +1,240 @@
+From 7fb390577acb7f419b2cb892af55a56022fe7329 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 19:33:44 +0800
+Subject: [PATCH] fix(power): keep buck charging requests in the sampled
+ session
+
+Pass the poll ADSP and connector generations through normal CC/CV setup, PDO reads, voltage selection and current limits. Reject requests when either generation changes instead of taking a fresh session around stale source measurements.
+
+Read fallback battery temperature with an explicit result so transport errors skip the policy rather than becoming a temperature value.
+---
+ drivers/power/supply/piano_mca.c | 93 +++++++++++++++++++++-----------
+ 1 file changed, 63 insertions(+), 30 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index c2708356523..6f0c7dd89a7 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -1447,13 +1447,15 @@ static u32 piano_mca_policy_icl(u32 real_type)
+  * APDOs whose range covers 5 V (some PPS sources list only a 5-11 V APDO),
+  * or the default if there is none.
+  */
+-static u32 piano_mca_pd_5v_ma(struct piano_mca *mca)
++static u32 piano_mca_pd_5v_ma(struct piano_mca *mca, unsigned int generation,
++			     unsigned int connection)
+ {
+ 	struct piano_mca_pdo pdos[MCA_PD_MAX_PDOS];
+ 	u32 ma = U32_MAX;
+ 	int i;
+ 
+-	if (piano_mca_read(mca, MCA_PROP_PDOS, pdos, sizeof(pdos)))
++	if (piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_PDOS, pdos, sizeof(pdos),
++			    generation, connection))
+ 		return MCA_ICL_DEFAULT_MA;
+ 
+ 	for (i = 0; i < MCA_PD_MAX_PDOS; i++) {
+@@ -1525,7 +1527,8 @@ static u32 piano_mca_fcc_thermal(u32 full, int tbat)
+ 						     MCA_FCC_DEFAULT_MA;
+ }
+ 
+-static void piano_mca_apply_fcc(struct piano_mca *mca, int tbat)
++static void piano_mca_apply_fcc(struct piano_mca *mca, int tbat,
++			       unsigned int generation, unsigned int connection)
+ {
+ 	u32 full = min_t(u32, piano_mca_policy_fcc(mca->real_type),
+ 			 MCA_FCC_MAX_MA);
+@@ -1542,7 +1545,8 @@ static void piano_mca_apply_fcc(struct piano_mca *mca, int tbat)
+ 	if (target == mca->fcc_set_ma)
+ 		return;
+ 
+-	if (piano_mca_write_u32(mca, MCA_PROP_FCC, target)) {
++	if (piano_mca_write_u32_session(mca, MCA_PROP_FCC, target,
++					  generation, connection)) {
+ 		dev_warn(mca->dev, "failed to set charge current %u mA\n", target);
+ 		return;
+ 	}
+@@ -1643,14 +1647,16 @@ static int piano_mca_read_type(struct piano_mca *mca, u32 *type)
+  * has one, as stock prefers, otherwise a PPS APDO whose range covers 9 V
+  * (*pps set), capped at MCA_HV_PPS_MAX_MA.
+  */
+-static u32 piano_mca_pd_9v_ma(struct piano_mca *mca, bool *pps)
++static u32 piano_mca_pd_9v_ma(struct piano_mca *mca, bool *pps,
++			     unsigned int generation, unsigned int connection)
+ {
+ 	struct piano_mca_pdo pdos[MCA_PD_MAX_PDOS];
+ 	u32 pps_ma = 0;
+ 	int i;
+ 
+ 	*pps = false;
+-	if (piano_mca_read(mca, MCA_PROP_PDOS, pdos, sizeof(pdos)))
++	if (piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_PDOS, pdos, sizeof(pdos),
++			    generation, connection))
+ 		return 0;
+ 
+ 	for (i = 0; i < MCA_PD_MAX_PDOS; i++) {
+@@ -1674,13 +1680,17 @@ static u32 piano_mca_pd_9v_ma(struct piano_mca *mca, bool *pps)
+  * Ask the source for @mv: 9 V through the kind of object it offers it in,
+  * 5 V always as the fixed vSafe5V PDO, as stock does for PPS sources too.
+  */
+-static int piano_mca_request_volt(struct piano_mca *mca, u32 mv)
++static int piano_mca_request_volt_session(struct piano_mca *mca, u32 mv,
++					 unsigned int generation,
++					 unsigned int connection)
+ {
+ 	if (mv == MCA_HV_MV && mca->hv_pps)
+-		return piano_mca_write_u32(mca, MCA_PROP_PPS_SELECT,
+-					   piano_mca_pps_word(mv, mca->hv_pps_ma));
++		return piano_mca_write_u32_session(mca, MCA_PROP_PPS_SELECT,
++						   piano_mca_pps_word(mv, mca->hv_pps_ma),
++						   generation, connection);
+ 
+-	return piano_mca_write_u32(mca, MCA_PROP_PD_FIXED_VOLT, mv);
++	return piano_mca_write_u32_session(mca, MCA_PROP_PD_FIXED_VOLT, mv,
++					   generation, connection);
+ }
+ 
+ /*
+@@ -1700,7 +1710,8 @@ static bool piano_mca_auth_pending(struct piano_mca *mca)
+  * hv_charge state machine, one step per poll.  Returns the input current
+  * the source allows at 9 V once the bus is there, 0 while at 5 V.
+  */
+-static u32 piano_mca_hv_step(struct piano_mca *mca)
++static u32 piano_mca_hv_step(struct piano_mca *mca, unsigned int generation,
++			    unsigned int connection)
+ {
+ 	bool vbus_hv = mca->vbus_uv >= MCA_HV_VBUS_MIN_UV &&
+ 		       mca->vbus_uv <= MCA_HV_VBUS_MAX_UV;
+@@ -1708,11 +1719,14 @@ static u32 piano_mca_hv_step(struct piano_mca *mca)
+ 	u32 ma = 0;
+ 	int ret;
+ 
+-	if (!hv_charge || mca->hv == MCA_HV_BLOCKED)
++	if (!hv_charge || mca->hv == MCA_HV_BLOCKED ||
++	    !piano_mca_session_valid(mca, generation, connection))
+ 		return 0;
+ 
+ 	if (piano_mca_is_pd(mca->real_type))
+-		ma = piano_mca_pd_9v_ma(mca, &pps);
++		ma = piano_mca_pd_9v_ma(mca, &pps, generation, connection);
++	if (!piano_mca_session_valid(mca, generation, connection))
++		return 0;
+ 
+ 	/* The source must keep offering 9 V the way it was asked for */
+ 	if (mca->hv != MCA_HV_OFF && pps != mca->hv_pps)
+@@ -1727,7 +1741,8 @@ static u32 piano_mca_hv_step(struct piano_mca *mca)
+ 			return 0;
+ 		mca->hv_pps = pps;
+ 		mca->hv_pps_ma = ma;
+-		ret = piano_mca_request_volt(mca, MCA_HV_MV);
++		ret = piano_mca_request_volt_session(mca, MCA_HV_MV,
++						    generation, connection);
+ 		if (ret) {
+ 			dev_warn(mca->dev, "9 V request refused: %d (adsp %d)\n",
+ 				 ret, mca->retcode);
+@@ -1765,7 +1780,7 @@ static u32 piano_mca_hv_step(struct piano_mca *mca)
+ 
+ 	/* Not reached, dropped or refused: 5 V until detach */
+ 	dev_info(mca->dev, "back to 5 V (bus %d mV)\n", mca->vbus_uv / 1000);
+-	piano_mca_request_volt(mca, 5000);
++	piano_mca_request_volt_session(mca, 5000, generation, connection);
+ 	mca->hv = MCA_HV_BLOCKED;
+ 	return 0;
+ }
+@@ -1786,34 +1801,49 @@ static u32 piano_mca_hv_icl(u32 real_type)
+  * a warm battery is not left to carry the system. The ADSP's AICL still
+  * backs the limit off if the source sags.
+  */
+-static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat);
++static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat,
++				 unsigned int generation,
++				 unsigned int connection);
+ 
+-static void piano_mca_apply_policy(struct piano_mca *mca)
++static void piano_mca_apply_policy(struct piano_mca *mca, unsigned int generation,
++				   unsigned int connection)
+ {
+ 	u32 target = piano_mca_policy_icl(mca->real_type);
+-	int tbat = (s32)piano_mca_read_u32(mca, MCA_PROP_PACK_TBAT);
+ 	u32 hv_ma;
+-	int ret;
++	__le32 pack;
++	int tbat, ret;
++
++	/* Keep sampled source capabilities tied to the poll's original session. */
++	if (!piano_mca_session_valid(mca, generation, connection))
++		return;
+ 
+ 	/* Keep the PMIC's tail-charge voltage in the current normal profile. */
+ 	if (cp_charge && charge_current) {
+-		if (piano_mca_normal_buck(mca, &tbat))
++		if (piano_mca_normal_buck(mca, &tbat, generation, connection))
++			return;
++	} else {
++		ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_PACK_TBAT,
++				      &pack, sizeof(pack), generation, connection);
++		if (ret)
+ 			return;
+-	} else if (charge_current) {
+-		piano_mca_apply_fcc(mca, tbat);
++		tbat = (s32)le32_to_cpu(pack);
++		if (charge_current)
++			piano_mca_apply_fcc(mca, tbat, generation, connection);
+ 	}
+ 
+-	hv_ma = piano_mca_hv_step(mca);
++	hv_ma = piano_mca_hv_step(mca, generation, connection);
+ 	if (hv_ma)
+ 		target = clamp(hv_ma, MCA_ICL_MIN_MA,
+ 			       piano_mca_hv_icl(mca->real_type));
+ 	else if (piano_mca_is_pd(mca->real_type))
+-		target = clamp(piano_mca_pd_5v_ma(mca), MCA_ICL_MIN_MA, target);
++		target = clamp(piano_mca_pd_5v_ma(mca, generation, connection),
++			       MCA_ICL_MIN_MA, target);
+ 
+ 	if (target == mca->icl_set_ma)
+ 		return;
+ 
+-	ret = piano_mca_write_u32(mca, MCA_PROP_ICL, target);
++	ret = piano_mca_write_u32_session(mca, MCA_PROP_ICL, target,
++					  generation, connection);
+ 	if (ret) {
+ 		dev_warn(mca->dev, "failed to set input limit %u mA: %d\n",
+ 			 target, ret);
+@@ -2054,11 +2084,11 @@ static int piano_mca_normal_pause(struct piano_mca *mca,
+ 	return ret ?: fcc_ret;
+ }
+ 
+-static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat)
++static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat,
++				 unsigned int generation,
++				 unsigned int connection)
+ {
+ 	int vbat, ibat, tcool, twarm, fv = 4500, ma = MCA_FCC_MAX_MA;
+-	unsigned int generation = pmic_glink_get_generation(mca->client);
+-	unsigned int connection = piano_mca_connection_generation(mca);
+ 	const struct piano_mca_jeita *old;
+ 	int i, cool = -1, warm = -1, ret;
+ 
+@@ -2784,7 +2814,8 @@ static void piano_mca_poll(struct work_struct *work)
+ 			if (!piano_mca_cp_active(mca) &&
+ 			    piano_mca_session_valid(mca, generation,
+ 						    mca->polled_connection_generation))
+-				piano_mca_apply_policy(mca);
++				piano_mca_apply_policy(mca, generation,
++						       mca->polled_connection_generation);
+ 		}
+ 	}
+ 	if (changed)
+@@ -3096,7 +3127,9 @@ static void piano_mca_stop(void *data)
+ 		return;
+ 	if (mca->online &&
+ 	    (cp || mca->hv == MCA_HV_REQUESTED || mca->hv == MCA_HV_ON))
+-		piano_mca_request_volt(mca, 5000);
++		piano_mca_request_volt_session(mca, 5000,
++					      pmic_glink_get_generation(mca->client),
++					      piano_mca_connection_generation(mca));
+ 	if (mca->icl_set_ma)
+ 		piano_mca_reset_icl(mca);
+ 	if (cp_charge && charge_current) {
+-- 
+2.56.0

@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "3d7c6ed7944ce1f298b498a60b8f86ca2c5f7c2a",
-  "original_target_commit": "a9eead3c1303f32558c098050e9f5c6bd6169163",
+  "target_tree": "f65ac9e316f58098b24f6022bb99be5d5c2a7b65",
+  "original_target_commit": "7fb390577acb7f419b2cb892af55a56022fe7329",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -631,6 +631,14 @@
       "original_parent": "7d3173d0390424b12d7d4c9905ae194ddbf65f09",
       "committer_date": "2026-11-08T22:28:29+08:00",
       "tree": "3d7c6ed7944ce1f298b498a60b8f86ca2c5f7c2a"
+    },
+    {
+      "file": "0079-power-mca-buck-session.patch",
+      "sha256": "913a130e6d8709d87cbbf628dbae2230f971609c9890cc4c461270b0dad6a7f8",
+      "original_commit": "7fb390577acb7f419b2cb892af55a56022fe7329",
+      "original_parent": "a9eead3c1303f32558c098050e9f5c6bd6169163",
+      "committer_date": "2026-11-09T19:33:44+08:00",
+      "tree": "f65ac9e316f58098b24f6022bb99be5d5c2a7b65"
     }
   ],
   "provenance": {
