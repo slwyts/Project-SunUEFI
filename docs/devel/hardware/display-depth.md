@@ -81,6 +81,14 @@ HyperOS 4 的配置位于 `/odm/etc/display/qdcm_calib_data_xiaomi_p81_35_02_0b_
 
 DSPP 抖动位置来自原厂最终设备树的 `qcom,sde-dspp-dither = <0x82c 0x10007>` 和 DSPP0／DSPP1 基址 `0x55000`／`0x57000`。这两路后混合模块均关闭，不能作为原厂两位 FRC 的来源。DDIC 内部 FRC 的控制方式仍没有从公开源码或寄存器中确认。
 
+AIQE 也没有经原厂驱动启用。同机 HyperOS 4 启动时，SSIP 熔丝配置读到
+`disable=1`、`polarity=0`，驱动据此设置 `ssip_allowed=0`，不安装 AIQE
+操作和 DRM 属性；活动内屏的属性快照与此一致。设备树中的 AIQE dither
+地址不能作为它正在实现 FRC 的依据。判断路径见原厂
+[`sde_hw_check_ssip_fuse`](https://github.com/MiCode/vendor_opensource_display-drivers/blob/aa06fd1757c28dce96fbe4e04d4530ec21b52aac/msm/sde/sde_hw_catalog.c#L6327)、
+[`dspp_aiqe`](https://github.com/MiCode/vendor_opensource_display-drivers/blob/aa06fd1757c28dce96fbe4e04d4530ec21b52aac/msm/sde/sde_hw_dspp.c#L479)
+和 [`_dspp_aiqe_install_property`](https://github.com/MiCode/vendor_opensource_display-drivers/blob/aa06fd1757c28dce96fbe4e04d4530ec21b52aac/msm/sde/sde_color_processing_aiqe.c#L40)。
+
 原厂配置只在部分模式里要求后混合抖动。`/odm/etc/display/` 下 CSOT 的 `qdcm_calib_data_xiaomi_p81_35_02_0b_vid_mode_dualdsi_dsc_panel.json` 和 BOE 的 `p81_42_02_0a` 同名文件各有 35 个模式，抖动字段逐项相同：
 
 | 模式（render intent） | `PostBlendDither` | `PostBlendPaDither` | IGC 内部抖动 |
