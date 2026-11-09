@@ -56,7 +56,7 @@ class TunedProfileTest(unittest.TestCase):
         # raise the floor to the ceiling and pins the GPU. Only the ceiling is
         # written, so the floor keeps its 160 MHz default.
         for name in PROFILES:
-            self.assertNotIn('min_freq', tuned_profile(name), name)
+            self.assertNotIn(GPU + 'min_freq', tuned_profile(name), name)
 
     def test_ppd_mapping_points_at_shipped_profiles(self):
         mapping = parse_ini((OVERLAY / 'etc/tuned/piano-ppd.conf').read_text())
