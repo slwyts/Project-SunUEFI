@@ -1,0 +1,128 @@
+From a889a64ab161c688e65919c283fda5a62923f683 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 8 Nov 2026 21:49:25 +0800
+Subject: [PATCH] drm/msm/dpu: align Piano QSEED 2x sampling across pipe splits
+
+Use preload seven for linear unrotated RGB on Piano QSEED 3.4 and fetch the next source pixel at internal splits. Program alpha top/bottom pixel extension from the vertical configuration, and retain full modesets when desktop geometry changes.
+
+Signed-off-by: Codex <codex@openai.com>
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c    |  5 +++
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_sspp.c |  2 +-
+ drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c   | 42 +++++++++++++++++++--
+ 3 files changed, 45 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+index b1e3877bc2c..755a3770696 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -1697,6 +1697,11 @@ static bool dpu_crtc_can_update_vfp(struct drm_crtc_state *old,
+ 	const struct drm_display_mode *b = &new->adjusted_mode;
+ 	struct drm_encoder *encoder;
+ 
++	/* Desktop geometry changes also reconfigure the plane scalers. */
++	if (old->mode.hdisplay != new->mode.hdisplay ||
++	    old->mode.vdisplay != new->mode.vdisplay)
++		return false;
++
+ 	if (!old->active || !new->active || !new->mode_changed ||
+ 	    new->active_changed || new->connectors_changed ||
+ 	    !!old->ctm != !!new->ctm ||
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_sspp.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_sspp.c
+index b5e50fc1916..c1c7d3e64a2 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_sspp.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_sspp.c
+@@ -422,7 +422,7 @@ static void dpu_hw_sspp_setup_pe_config(struct dpu_hw_sspp *ctx,
+ 
+ 	/* color 3 */
+ 	DPU_REG_WRITE(c, SSPP_SW_PIX_EXT_C3_LR, lr_pe[3]);
+-	DPU_REG_WRITE(c, SSPP_SW_PIX_EXT_C3_TB, lr_pe[3]);
++	DPU_REG_WRITE(c, SSPP_SW_PIX_EXT_C3_TB, tb_pe[3]);
+ 	DPU_REG_WRITE(c, SSPP_SW_PIX_EXT_C3_REQ_PIXELS,
+ 			tot_req_pixels[3]);
+ }
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+index 8818a8b5bef..b3f078e1ff6 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+@@ -9,6 +9,7 @@
+ 
+ #include <linux/debugfs.h>
+ #include <linux/dma-buf.h>
++#include <linux/of.h>
+ 
+ #include <drm/drm_atomic.h>
+ #include <drm/drm_atomic_uapi.h>
+@@ -527,9 +528,41 @@ static const struct dpu_csc_cfg *_dpu_plane_get_csc(struct dpu_sw_pipe *pipe,
+ 	return csc_ptr;
+ }
+ 
++/* QSEED 3.4 needs preload seven for aligned 2x RGB sampling. Fetch the
++ * next source pixel at internal splits instead of clamping interpolation.
++ */
++static void dpu_plane_setup_piano_bilinear(struct dpu_hw_sspp *pipe_hw,
++		const struct dpu_sw_pipe_cfg *cfg,
++		const struct drm_plane_state *state,
++		const struct msm_format *fmt,
++		struct dpu_hw_scaler3_cfg *scale,
++		struct dpu_hw_pixel_ext *ext)
++{
++	u32 right;
++	int i;
++
++	if (!state || !state->fb || !of_machine_is_compatible("xiaomi,piano") ||
++	    pipe_hw->cap->sblk->scaler_blk.version != 0x30004 ||
++	    state->fb->modifier != DRM_FORMAT_MOD_LINEAR ||
++	    MSM_FORMAT_IS_YUV(fmt) || cfg->rotation != DRM_MODE_ROTATE_0 ||
++	    drm_rect_width(&cfg->dst_rect) != 2 * drm_rect_width(&cfg->src_rect) ||
++	    drm_rect_height(&cfg->dst_rect) != 2 * drm_rect_height(&cfg->src_rect) ||
++	    (state->src.x2 & 0xffff))
++		return;
++
++	right = cfg->src_rect.x2 < (state->src.x2 >> 16);
++	for (i = 0; i < DPU_MAX_PLANES; i++) {
++		scale->preload_x[i] = 7;
++		scale->src_width[i] += right;
++		ext->right_ftch[i] = right;
++		ext->num_ext_pxls_left[i] += right;
++	}
++}
++
+ static void _dpu_plane_setup_scaler(struct dpu_sw_pipe *pipe,
+ 		const struct msm_format *fmt, bool color_fill,
+-		struct dpu_sw_pipe_cfg *pipe_cfg)
++		struct dpu_sw_pipe_cfg *pipe_cfg,
++		const struct drm_plane_state *state)
+ {
+ 	struct dpu_hw_sspp *pipe_hw = pipe->sspp;
+ 	const struct drm_format_info *info = drm_format_info(fmt->pixel_format);
+@@ -558,6 +591,9 @@ static void _dpu_plane_setup_scaler(struct dpu_sw_pipe *pipe,
+ 	_dpu_plane_setup_pixel_ext(&scaler3_cfg, &pixel_ext,
+ 			src_width, src_height, info->hsub, info->vsub);
+ 
++	dpu_plane_setup_piano_bilinear(pipe_hw, pipe_cfg, state, fmt,
++				       &scaler3_cfg, &pixel_ext);
++
+ 	if (pipe_hw->ops.setup_pe)
+ 		pipe_hw->ops.setup_pe(pipe_hw,
+ 				&pixel_ext);
+@@ -604,7 +640,7 @@ static void _dpu_plane_color_fill_pipe(struct dpu_plane_state *pstate,
+ 	if (pipe->sspp->ops.setup_rects)
+ 		pipe->sspp->ops.setup_rects(pipe, &pipe_cfg);
+ 
+-	_dpu_plane_setup_scaler(pipe, fmt, true, &pipe_cfg);
++	_dpu_plane_setup_scaler(pipe, fmt, true, &pipe_cfg, NULL);
+ }
+ 
+ /**
+@@ -1513,7 +1549,7 @@ static void dpu_plane_sspp_update_pipe(struct drm_plane *plane,
+ 				pipe_cfg);
+ 	}
+ 
+-	_dpu_plane_setup_scaler(pipe, fmt, false, pipe_cfg);
++	_dpu_plane_setup_scaler(pipe, fmt, false, pipe_cfg, state);
+ 
+ 	if (pipe->sspp->ops.setup_multirect)
+ 		pipe->sspp->ops.setup_multirect(
+-- 
+2.56.0

@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "3ca5fc1c7c6a0ed6e926cfedb2ace9649591755c",
-  "original_target_commit": "aa577d764700a6d84d39892d479bb6805a1162b3",
+  "target_tree": "0f647fe9528c439a8c14829d16c64a1792c27527",
+  "original_target_commit": "a889a64ab161c688e65919c283fda5a62923f683",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -527,6 +527,14 @@
       "original_parent": "3dbac618631047e6db89b45f7bcf5c915f5c7e0f",
       "tree": "3ca5fc1c7c6a0ed6e926cfedb2ace9649591755c",
       "committer_date": "2026-11-09T06:26:04+08:00"
+    },
+    {
+      "file": "0066-dpu-piano-bilinear-sampling.patch",
+      "sha256": "73cc589b8313865c87a1736f42e63c19e8b73328b8b6c87426a40a54a9af9000",
+      "original_commit": "a889a64ab161c688e65919c283fda5a62923f683",
+      "original_parent": "aa577d764700a6d84d39892d479bb6805a1162b3",
+      "tree": "0f647fe9528c439a8c14829d16c64a1792c27527",
+      "committer_date": "2026-11-09T16:46:50+08:00"
     }
   ]
 }
