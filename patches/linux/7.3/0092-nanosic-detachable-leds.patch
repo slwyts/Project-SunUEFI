@@ -1,0 +1,326 @@
+From 79e32ae2694bd74626b78f4201719f2e7e56b560 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Tue, 10 Nov 2026 02:14:12 +0800
+Subject: [PATCH] HID: nanosic: expose cover LEDs only while attached
+
+Register the detachable cover LEDs from the existing input-state work.
+Remove them when the cover disconnects so standard desktop services see
+their actual availability.
+
+Keep requested levels in the MCU state, including an explicit zero, and
+allocate fresh LED class devices for each attachment. Quiesce event work
+before removal and release LEDs without holding the connection mutex used
+by brightness callbacks.
+---
+ drivers/hid/hid-nanosic-wn8030.c | 172 ++++++++++++++++++++++---------
+ 1 file changed, 121 insertions(+), 51 deletions(-)
+
+diff --git a/drivers/hid/hid-nanosic-wn8030.c b/drivers/hid/hid-nanosic-wn8030.c
+index 8aca510f58d..3f727919e27 100644
+--- a/drivers/hid/hid-nanosic-wn8030.c
++++ b/drivers/hid/hid-nanosic-wn8030.c
+@@ -71,6 +71,13 @@ static const char * const nanosic_wn8030_supply_names[] = {
+ 	"dvdd",		/* Digital power supply (3.3V) */
+ };
+ 
++struct nanosic_wn8030_leds {
++	struct nanosic_wn8030 *nanosic;
++	struct led_classdev micmute;
++	struct led_classdev backlight;
++	bool removing;
++};
++
+ struct nanosic_wn8030 {
+ 	struct device *dev;
+ 	const struct nanosic_wn8030_variant *variant;
+@@ -100,8 +107,10 @@ struct nanosic_wn8030 {
+ 	bool capslock_enabled;
+ 	bool micmute_key_down;
+ 	u16 fn_held;
+-	struct led_classdev micmute_led;
+-	struct led_classdev kbd_backlight_led;
++	/* Requested levels survive removal of the cover's LED devices. */
++	u8 micmute_brightness;
++	u8 kbd_backlight_brightness;
++	struct nanosic_wn8030_leds *leds;
+ 
+ 	/* Keyboard accelerometer and userspace angle policy. */
+ 	struct miscdevice hinge_misc;
+@@ -693,17 +702,21 @@ static int nanosic_wn8030_set_kbd_backlight(struct nanosic_wn8030 *nanosic,
+ 	return nanosic_wn8030_cmd(nanosic, buf);
+ }
+ 
+-static int nanosic_wn8030_sync_kbd_backlight(struct nanosic_wn8030 *nanosic)
++static int nanosic_wn8030_apply_kbd_backlight(struct nanosic_wn8030 *nanosic,
++					      u8 brightness)
+ {
+-	u8 brightness;
+-
+ 	if (!READ_ONCE(nanosic->keyboard_attached) ||
+ 	    READ_ONCE(nanosic->suspended))
+ 		return 0;
+ 
+-	brightness = READ_ONCE(nanosic->input_enabled) ?
+-			READ_ONCE(nanosic->kbd_backlight_led.brightness) : 0;
+-	return nanosic_wn8030_set_kbd_backlight(nanosic, brightness);
++	return nanosic_wn8030_set_kbd_backlight(nanosic,
++			READ_ONCE(nanosic->input_enabled) ? brightness : 0);
++}
++
++static int nanosic_wn8030_sync_kbd_backlight(struct nanosic_wn8030 *nanosic)
++{
++	return nanosic_wn8030_apply_kbd_backlight(nanosic,
++			READ_ONCE(nanosic->kbd_backlight_brightness));
+ }
+ 
+ static int nanosic_wn8030_set_caps_led(struct nanosic_wn8030 *nanosic, bool enable)
+@@ -729,13 +742,15 @@ static int nanosic_wn8030_sync_micmute_led(struct nanosic_wn8030 *nanosic, bool
+ static int nanosic_wn8030_micmute_led_set(struct led_classdev *led_cdev,
+ 					  enum led_brightness brightness)
+ {
+-	struct nanosic_wn8030 *nanosic =
+-		container_of(led_cdev, struct nanosic_wn8030, micmute_led);
++	struct nanosic_wn8030_leds *leds =
++		container_of(led_cdev, struct nanosic_wn8030_leds, micmute);
++	struct nanosic_wn8030 *nanosic = leds->nanosic;
+ 	int ret;
+ 
+ 	mutex_lock(&nanosic->conn_mutex);
+-	ret = nanosic_wn8030_sync_micmute_led(nanosic,
+-					      brightness != LED_OFF);
++	if (!leds->removing)
++		WRITE_ONCE(nanosic->micmute_brightness, brightness);
++	ret = nanosic_wn8030_sync_micmute_led(nanosic, brightness != LED_OFF);
+ 	mutex_unlock(&nanosic->conn_mutex);
+ 
+ 	return ret;
+@@ -744,20 +759,90 @@ static int nanosic_wn8030_micmute_led_set(struct led_classdev *led_cdev,
+ static int nanosic_wn8030_kbd_backlight_set(struct led_classdev *led_cdev,
+ 						    enum led_brightness brightness)
+ {
+-	struct nanosic_wn8030 *nanosic =
+-			container_of(led_cdev, struct nanosic_wn8030, kbd_backlight_led);
+-	int ret = 0;
++	struct nanosic_wn8030_leds *leds =
++		container_of(led_cdev, struct nanosic_wn8030_leds, backlight);
++	struct nanosic_wn8030 *nanosic = leds->nanosic;
++	int ret;
+ 
+ 	if (brightness > 100)
+ 		return -EINVAL;
+ 
+ 	mutex_lock(&nanosic->conn_mutex);
+-	ret = nanosic_wn8030_sync_kbd_backlight(nanosic);
++	if (!leds->removing)
++		WRITE_ONCE(nanosic->kbd_backlight_brightness, brightness);
++	ret = nanosic_wn8030_apply_kbd_backlight(nanosic, brightness);
+ 	mutex_unlock(&nanosic->conn_mutex);
+ 
+ 	return ret;
+ }
+ 
++static void nanosic_wn8030_unregister_leds(struct nanosic_wn8030 *nanosic)
++{
++	struct nanosic_wn8030_leds *leds = nanosic->leds;
++
++	if (!leds)
++		return;
++
++	mutex_lock(&nanosic->conn_mutex);
++	/* Keep requests not yet applied by LED core's brightness worker. */
++	leds->removing = true;
++	WRITE_ONCE(nanosic->micmute_brightness, READ_ONCE(leds->micmute.brightness));
++	WRITE_ONCE(nanosic->kbd_backlight_brightness, READ_ONCE(leds->backlight.brightness));
++	mutex_unlock(&nanosic->conn_mutex);
++
++	/* Unregistration turns LEDs off and waits for callbacks taking conn_mutex. */
++	led_classdev_unregister(&leds->backlight);
++	led_classdev_unregister(&leds->micmute);
++	nanosic->leds = NULL;
++	kfree(leds);
++}
++
++static int nanosic_wn8030_update_led_devices(struct nanosic_wn8030 *nanosic)
++{
++	struct nanosic_wn8030_leds *leds;
++	int ret;
++
++	if (!READ_ONCE(nanosic->keyboard_attached)) {
++		nanosic_wn8030_unregister_leds(nanosic);
++		return 0;
++	}
++	if (nanosic->leds)
++		return 0;
++
++	leds = kzalloc_obj(*leds);
++	if (!leds)
++		return -ENOMEM;
++	leds->nanosic = nanosic;
++	leds->micmute.name = "nanosic::micmute";
++	leds->micmute.max_brightness = 1;
++	leds->micmute.brightness = READ_ONCE(nanosic->micmute_brightness);
++	leds->micmute.brightness_set_blocking = nanosic_wn8030_micmute_led_set;
++	ret = led_classdev_register(nanosic->dev, &leds->micmute);
++	if (ret)
++		goto err_free;
++
++	leds->backlight.name = "nanosic::kbd_backlight";
++	leds->backlight.max_brightness = 100;
++	leds->backlight.brightness = READ_ONCE(nanosic->kbd_backlight_brightness);
++	leds->backlight.brightness_set_blocking = nanosic_wn8030_kbd_backlight_set;
++	ret = led_classdev_register(nanosic->dev, &leds->backlight);
++	if (ret) {
++		mutex_lock(&nanosic->conn_mutex);
++		leds->removing = true;
++		WRITE_ONCE(nanosic->micmute_brightness, READ_ONCE(leds->micmute.brightness));
++		mutex_unlock(&nanosic->conn_mutex);
++		led_classdev_unregister(&leds->micmute);
++		goto err_free;
++	}
++
++	nanosic->leds = leds;
++	return 0;
++
++err_free:
++	kfree(leds);
++	return ret;
++}
++
+ static bool nanosic_wn8030_report_has_key(const u8 *report, u8 usage)
+ {
+ 	int i;
+@@ -1030,7 +1115,7 @@ static void nanosic_wn8030_handle_vendor(struct nanosic_wn8030 *nanosic,
+ 			nanosic_wn8030_add_touchpad_hid(nanosic);
+ 			nanosic->keyboard_attached = true;
+ 			if (input_enabled) {
+-				u8 micmute_led = READ_ONCE(nanosic->micmute_led.brightness) ?
++				u8 micmute_led = READ_ONCE(nanosic->micmute_brightness) ?
+ 						  0xF7 : 0xF3;
+ 
+ 				nanosic_wn8030_set_indicator_led(nanosic, micmute_led);
+@@ -1062,6 +1147,8 @@ static void nanosic_wn8030_handle_vendor(struct nanosic_wn8030 *nanosic,
+ 		if (notify_plugin) {
+ 			u16 hinge_flags;
+ 
++			schedule_work(&nanosic->input_state_work);
++
+ 			input_report_switch(nanosic->mode_input, SW_TABLET_MODE,
+ 					    !plugin_attached);
+ 			input_sync(nanosic->mode_input);
+@@ -1187,7 +1274,7 @@ static int nanosic_wn8030_dispatch(struct nanosic_wn8030 *nanosic,
+ 			/* Do not send the LED command before the key release report. */
+ 			mutex_lock(&nanosic->conn_mutex);
+ 			nanosic->micmute_key_down = false;
+-			enable = READ_ONCE(nanosic->micmute_led.brightness) != LED_OFF;
++			enable = READ_ONCE(nanosic->micmute_brightness) != LED_OFF;
+ 			nanosic_wn8030_sync_micmute_led(nanosic, enable);
+ 			mutex_unlock(&nanosic->conn_mutex);
+ 		}
+@@ -1536,10 +1623,15 @@ static void nanosic_wn8030_input_state_work(struct work_struct *work)
+ 		      !READ_ONCE(nanosic->tablet_mode);
+ 	u8 caps_led;
+ 	u8 micmute_led;
++	int ret;
++
++	ret = nanosic_wn8030_update_led_devices(nanosic);
++	if (ret)
++		dev_err_ratelimited(nanosic->dev, "failed to register keyboard LEDs: %d\n", ret);
+ 
+ 	mutex_lock(&nanosic->conn_mutex);
+ 	caps_led = READ_ONCE(nanosic->capslock_enabled) ? 0xFD : 0xFC;
+-	micmute_led = READ_ONCE(nanosic->micmute_led.brightness) ? 0xF7 : 0xF3;
++	micmute_led = READ_ONCE(nanosic->micmute_brightness) ? 0xF7 : 0xF3;
+ 	if (enable != READ_ONCE(nanosic->input_enabled)) {
+ 		WRITE_ONCE(nanosic->input_enabled, enable);
+ 		if (!enable)
+@@ -1900,6 +1992,7 @@ static int nanosic_wn8030_probe(struct i2c_client *client)
+ 	INIT_WORK(&nanosic->input_state_work, nanosic_wn8030_input_state_work);
+ 	nanosic->userspace_angle_enabled = true;
+ 	nanosic->input_enabled = true;
++	nanosic->kbd_backlight_brightness = nanosic->variant->kbd_backlight_default;
+ 	nanosic->hall_handler.event = nanosic_wn8030_hall_event;
+ 	nanosic->hall_handler.connect = nanosic_wn8030_hall_connect;
+ 	nanosic->hall_handler.disconnect = nanosic_wn8030_hall_disconnect;
+@@ -1953,30 +2046,11 @@ static int nanosic_wn8030_probe(struct i2c_client *client)
+ 	if (ret)
+ 		goto err_misc;
+ 
+-	nanosic->micmute_led.name = "nanosic::micmute";
+-	nanosic->micmute_led.max_brightness = 1;
+-	nanosic->micmute_led.brightness_set_blocking =
+-		nanosic_wn8030_micmute_led_set;
+-	ret = devm_led_classdev_register(nanosic->dev, &nanosic->micmute_led);
+-	if (ret)
+-		goto err_misc;
+-
+-	nanosic->kbd_backlight_led.name = "nanosic::kbd_backlight";
+-	nanosic->kbd_backlight_led.max_brightness = 100;
+-	/* Bring the cover backlight up at the integration default instead of
+-	 * requiring the desktop to raise it from zero on every boot. */
+-	nanosic->kbd_backlight_led.brightness = nanosic->variant->kbd_backlight_default;
+-	nanosic->kbd_backlight_led.brightness_set_blocking =
+-		nanosic_wn8030_kbd_backlight_set;
+-	ret = devm_led_classdev_register(nanosic->dev, &nanosic->kbd_backlight_led);
+-	if (ret)
+-		goto err_micmute_led;
+-
+ 	/* Keep the mode switch present when the detachable HID devices leave. */
+ 	nanosic->mode_input = devm_input_allocate_device(nanosic->dev);
+ 	if (!nanosic->mode_input) {
+ 		ret = -ENOMEM;
+-		goto err_kbd_backlight_led;
++		goto err_misc;
+ 	}
+ 
+ 	nanosic->mode_input->name = "Nanosic WN8030 tablet mode";
+@@ -1988,13 +2062,13 @@ static int nanosic_wn8030_probe(struct i2c_client *client)
+ 	ret = input_register_device(nanosic->mode_input);
+ 	if (ret) {
+ 		dev_err(nanosic->dev, "failed to register tablet mode switch\n");
+-		goto err_kbd_backlight_led;
++		goto err_misc;
+ 	}
+ 
+ 	ret = input_register_handler(&nanosic->hall_handler);
+ 	if (ret) {
+ 		dev_err(nanosic->dev, "failed to register hall state handler\n");
+-		goto err_kbd_backlight_led;
++		goto err_misc;
+ 	}
+ 
+ 	ret = devm_request_threaded_irq(&client->dev, client->irq,
+@@ -2010,12 +2084,9 @@ static int nanosic_wn8030_probe(struct i2c_client *client)
+ 
+ err_input:
+ 	input_unregister_handler(&nanosic->hall_handler);
+-	cancel_work_sync(&nanosic->input_state_work);
+-err_kbd_backlight_led:
+-	devm_led_classdev_unregister(nanosic->dev, &nanosic->kbd_backlight_led);
+-err_micmute_led:
+-	devm_led_classdev_unregister(nanosic->dev, &nanosic->micmute_led);
+ err_misc:
++	disable_work_sync(&nanosic->input_state_work);
++	nanosic_wn8030_unregister_leds(nanosic);
+ 	misc_deregister(&nanosic->hinge_misc);
+ err_auth_misc:
+ 	misc_deregister(&nanosic->auth_misc);
+@@ -2029,12 +2100,11 @@ static void nanosic_wn8030_remove(struct i2c_client *client)
+ {
+ 	struct nanosic_wn8030 *nanosic = i2c_get_clientdata(client);
+ 
+-	devm_led_classdev_unregister(nanosic->dev, &nanosic->kbd_backlight_led);
+-	devm_led_classdev_unregister(nanosic->dev, &nanosic->micmute_led);
+-	input_unregister_handler(&nanosic->hall_handler);
+-	cancel_work_sync(&nanosic->input_state_work);
+ 	disable_irq(nanosic->client->irq);
+-	cancel_delayed_work_sync(&nanosic->wake_worker);
++	input_unregister_handler(&nanosic->hall_handler);
++	disable_delayed_work_sync(&nanosic->wake_worker);
++	disable_work_sync(&nanosic->input_state_work);
++	nanosic_wn8030_unregister_leds(nanosic);
+ 
+ 	misc_deregister(&nanosic->hinge_misc);
+ 	misc_deregister(&nanosic->auth_misc);
+-- 
+2.56.0
+

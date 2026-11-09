@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "ecbb1da73b0a95f6879a4a1045300b5d6409ed09",
-  "original_target_commit": "6dd902833b08f9c765d0cb8c0c9a38f7bdb6cd38",
+  "target_tree": "e188f4582c2ede46d6d5d6b8649fd0f0316a3343",
+  "original_target_commit": "79e32ae2694bd74626b78f4201719f2e7e56b560",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -735,6 +735,14 @@
       "original_parent": "190da1bb63c1ef6c1291b314ae26eddc41b3c1ef",
       "committer_date": "2026-11-10T20:30:12+08:00",
       "tree": "ecbb1da73b0a95f6879a4a1045300b5d6409ed09"
+    },
+    {
+      "file": "0092-nanosic-detachable-leds.patch",
+      "sha256": "ff3ed58147b2a54593d1c7f9ee38184cb40e0e225785f222d989fa942af139f7",
+      "original_commit": "79e32ae2694bd74626b78f4201719f2e7e56b560",
+      "original_parent": "6dd902833b08f9c765d0cb8c0c9a38f7bdb6cd38",
+      "committer_date": "2026-11-10T20:30:13+08:00",
+      "tree": "e188f4582c2ede46d6d5d6b8649fd0f0316a3343"
     }
   ],
   "provenance": {
