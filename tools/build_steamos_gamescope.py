@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import time
 
 import build_arch_package
 
@@ -66,8 +67,18 @@ def prepare(output):
     checkout(reference, 'https://github.com/hashtagbasit/SteamOS-ARM-Port.git',
              REFERENCE, 'external-and-mods/gamescope')
     checkout(upstream, 'https://github.com/ValveSoftware/gamescope.git', UPSTREAM)
-    git(upstream, 'submodule', 'update', '--init', '--depth', '1',
-        *('subprojects/' + name for name in SUBPROJECTS))
+    for attempt in range(3):
+        try:
+            git(upstream, 'submodule', 'update', '--init', '--depth', '1',
+                *('subprojects/' + name for name in SUBPROJECTS))
+            break
+        except subprocess.CalledProcessError:
+            if attempt == 2:
+                raise
+            wait = 5 * (attempt + 1)
+            print(f'Gamescope fixed subproject fetch failed; retrying in {wait}s '
+                  f'({attempt + 2}/3).', flush=True)
+            time.sleep(wait)
     output.mkdir(parents=True, exist_ok=True)
     source = output / 'gamescope-source'
     if source.exists():
