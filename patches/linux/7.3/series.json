@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "9fee6cfdb3924011e49fc25f17283627f8f4d4ff",
-  "original_target_commit": "08fa09440c54399ce090519aa4d340d664265bc5",
+  "target_tree": "6cc521e6391656299c53d505bc9d4993d896c99a",
+  "original_target_commit": "a20312b35e10bf3b903da5add40b9bbe1bcdca2d",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -655,9 +655,24 @@
       "original_parent": "f520d7a7a55283605daa4af38492ea3434efb5d8",
       "committer_date": "2026-11-09T22:28:31+08:00",
       "tree": "9fee6cfdb3924011e49fc25f17283627f8f4d4ff"
+    },
+    {
+      "file": "0082-arm64-sm8750-cpu-capacity.patch",
+      "sha256": "65cb4a74d5a14b4225ed794c100e529767cbf006bef60cae276c9e49c28219c2",
+      "original_commit": "a20312b35e10bf3b903da5add40b9bbe1bcdca2d",
+      "original_parent": "08fa09440c54399ce090519aa4d340d664265bc5",
+      "committer_date": "2026-11-09T23:39:17+08:00",
+      "tree": "6cc521e6391656299c53d505bc9d4993d896c99a"
     }
   ],
   "provenance": {
+    "cpu_capacity": {
+      "stock_rom": "OS4.0.5.0.XPYCNXM",
+      "stock_dtb_sha256": "73d9beea4d8e251d03a42d9bc7331a8f274f6891d7b1f7e6668ecd6ed3eb4ca1",
+      "stock_property_checks": "Final running /cpus nodes contain capacity-dmips-mhz 1792 for CPU0-5 and 1894 for CPU6-7. Linux arch_topology normalizes these values with each SCMI policy maximum frequency.",
+      "product_board_manifest": "vendor/piano-linux/manifest.json",
+      "scope": "Native SM8750 DTS parity only. The product board DTB already contains these capacity values; this does not change its CPU topology or establish a power-consumption improvement."
+    },
     "normal_charging": {
       "reference_url": "https://github.com/turbo-boo/android_kernel_xiaomi_sm8750",
       "reference_commit": "2788c49d61796ba8e52a9ea1b5dc83c2456c57e7",

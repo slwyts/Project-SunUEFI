@@ -71,7 +71,20 @@ BindReadOnlyPaths=/etc/tuned/piano-ppd.conf:/etc/tuned/ppd.conf
 | `.../usr/lib/systemd/system/tuned-ppd.service.d/50-piano-ppd.conf` | 把映射挂进服务 |
 | `config/release.json` 的 `debian.extra_packages` | 装 `tuned-ppd`（KDE 构建会剔除） |
 
-## 2026-11-04 实测记录
+## 内核调度接口
+
+各发行版共用的内核启用任务和 cgroup 的 `uclamp`，让应用通过
+`sched_setattr()`、systemd 通过 `CPUUtilizationMin=`／`CPUUtilizationMax=`
+提交性能提示。普通任务默认不要求最低利用率，也不限制最高利用率；实时任务
+保留内核默认的性能保障。项目没有增加统一的利用率下限、锁核策略或调参服务，
+已有的 `schedutil` 动态调频和 BORE 参数不变。启用接口本身不产生节能策略。
+
+原厂最终设备树为 CPU0–5、CPU6–7 分别提供 `capacity-dmips-mhz` 1792、1894，
+内核结合各组最高频率计算相对性能，用于选择运行任务的 CPU。发布用板级设备树
+已包含这些值，原生 SM8750 DTS 也保留相同描述；这项源码对齐没有改变产品的
+启动设备树。来源记在[内核补丁清单](../../../patches/linux/7.3/series.json)。
+
+## 实机档位切换
 
 在 Debian 13 + GNOME 48.7 上，`busctl set-property ... ActiveProfile`
 依次切三档，每档等 3 秒读 sysfs：
@@ -85,5 +98,5 @@ balanced    -> tuned=piano-balanced    p0=3532800 p6=4089600 boost=0 gpu=1100000
 GPU 下限全程保持 160000000。开机默认由 `piano-ppd.conf` 的
 `default=balanced` 决定。
 
-**注意**：这套改动只影响上限，不改变待机功耗——锁屏后的 1.07 W 与
-CPU/GPU 频率无关，见[硬件/睡眠](sleep.md)。
+档位检查只确认 CPU/GPU 上限生效，不能用来推算待机续航。熄屏但仍在运行、
+以及进入整机挂起的功耗要分别测量，见[桌面电源管理与睡眠](sleep.md)。
