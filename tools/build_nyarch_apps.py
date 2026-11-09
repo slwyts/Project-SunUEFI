@@ -17,7 +17,7 @@ import subprocess
 import sys
 import urllib.request
 
-from build_chroot import remove_pacman_sockets, stop_helpers
+from build_chroot import guest_command, remove_pacman_sockets, stop_helpers
 
 ROOT = Path(__file__).resolve().parents[1]
 APPS = ('NyarchCustomize', 'NyarchTour', 'NyarchWizard', 'NyarchScript')
@@ -104,11 +104,9 @@ def guest_environment(root):
             # /dev. Give each command its own process namespace so those
             # descendants cannot outlive the command and pin the build mounts.
             # systemd must still treat PID 1 in this namespace as a build chroot.
-            return run(['unshare', '--pid', '--fork', '--kill-child',
-                        '--mount-proc=' + str(root / 'proc'),
-                        'chroot', root, '/usr/bin/env',
-                        'SYSTEMD_OFFLINE=1', 'SYSTEMD_IN_CHROOT=1',
-                        'PATH=/usr/bin:/usr/sbin:/bin:/sbin', *args], **kwargs)
+            return run(guest_command(root, ['/usr/bin/env',
+                                           'SYSTEMD_OFFLINE=1', 'SYSTEMD_IN_CHROOT=1',
+                                           'PATH=/usr/bin:/usr/sbin:/bin:/sbin', *args]), **kwargs)
 
         yield guest
     finally:

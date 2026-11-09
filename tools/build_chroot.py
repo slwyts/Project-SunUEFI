@@ -1,4 +1,4 @@
-"""Stop helpers left inside a finished build root before unmounting its /dev."""
+"""Keep build commands and their helpers inside temporary chroot environments."""
 import os
 from pathlib import Path
 import select
@@ -6,6 +6,14 @@ import signal
 import stat
 import sys
 import time
+
+
+def guest_command(root, args):
+    """Return after the command's descendants have exited, even after chroot changes."""
+    root = Path(root)
+    return ['unshare', '--pid', '--fork', '--kill-child',
+            '--mount-proc=' + str(root / 'proc'), 'chroot', str(root),
+            *map(str, args)]
 
 
 def remove_pacman_sockets(root):
