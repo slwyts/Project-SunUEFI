@@ -14,7 +14,9 @@ TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/us
 sys.path.insert(0,str(ROOT/'tools'))
 import prepare_product as product
 import build_integrity as integrity
-from prepare_product_early_memory import prepare as prepare_early, OBJECT_DXE_FILES
+from prepare_product_early_memory import (
+    prepare as prepare_early, EARLY_CORE_FILES, OBJECT_DXE_FILES, unbind_memory_map,
+)
 from prepare_product_handoff import prepare as prepare_handoff, stage_provider
 from firmware_workspace import active_root
 
@@ -31,8 +33,11 @@ class ProductOsBootWiringTests(unittest.TestCase):
             shutil.copyfile(ROOT/relative,destination)
         shutil.copytree(ROOT/'patches/firmware',root/'patches/firmware')
         shutil.copytree(ROOT/'uefi/components/os-boot',root/'uefi/components/os-boot')
+        for name in product.PRODUCT_COMPONENTS:
+            shutil.copytree(ROOT/'uefi/components'/name,root/'uefi/components'/name)
         for family in product.OBSERVATION_FAMILIES:shutil.copytree(product.observation_directory(ROOT,family),product.observation_directory(root,family))
         shared=root/'uefi/core';shared.mkdir(parents=True)
+        for name in EARLY_CORE_FILES:shutil.copyfile(ROOT/'uefi/core'/name,shared/name)
         for name,path in product.shared_boot_headers(ROOT).items():
             target=shared/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
         for name in product.SOURCE_NAMES:(shared/name).write_bytes((ROOT/'uefi/core'/name).read_bytes())
@@ -40,6 +45,8 @@ class ProductOsBootWiringTests(unittest.TestCase):
             target=root/relative;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/relative,target)
         shutil.copytree(ROOT/'uefi/handoff/bootshim',root/'uefi/handoff/bootshim')
         app=root/'uefi/platforms/pianoProductPkg/Applications/ProductCore';app.mkdir(parents=True)
+        for component,names in product.PRODUCT_COMPONENTS.items():
+            for name in names:shutil.copyfile(ROOT/'uefi/components'/component/name,app/name)
         for name in product.SOURCE_NAMES:shutil.copyfile(shared/name,app/name)
         for name,path in product.shared_boot_headers(root).items():
             target=app/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
@@ -56,14 +63,16 @@ class ProductOsBootWiringTests(unittest.TestCase):
         target=app.parent.parent
         (target/'pianoProduct.dsc').write_text('[Components]\n')
         (target/'pianoProduct.fdf').write_text('[FV]\n  INF SiliciumPkg/Sec/Sec.inf\n')
-        early=prepare_early(root,target)
         import piano_display_mapping as display
         for path in display.source_files(prepared):
             copy=root/path.relative_to(prepared);copy.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,copy)
         for name in ('tools/compose_piano_dtb.py','tools/analyze_capture.py','tools/source_input_tail.py'):
             copy=root/name;copy.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/name,copy)
-        memory,display_candidate=display.prepare(root,display.original_native(prepared))
+        bound_memory=(prepared/display.NATIVE).read_text()
+        original=display.recover_original(unbind_memory_map(bound_memory))
+        memory,display_candidate=display.prepare(root,original)
         memory_path=target/'Library/MemoryMapLib/MemoryMapLib.c';memory_path.parent.mkdir(parents=True,exist_ok=True);memory_path.write_text(memory)
+        early=prepare_early(root,target)
         display_binding={'candidate':display_candidate,'compiled_into_product':True,'hardware_verified':False,'register_access_authorized':False}
         staged=root/'upstream/Mu-Silicium/Platforms/Xiaomi/pianoProductPkg'
         shutil.copytree(app.parent.parent,staged)
