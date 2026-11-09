@@ -44,17 +44,17 @@ STATIC CONST CHAR8 *mTouchNodes[]={SE2_PATH "/novatek@0",SE2_PATH "/touchscreen@
 
 typedef enum {
   TOff,TClocks,TEngReset,TTrimReset,TTrimRead,TDownloadReset,TDownloadCrc,TAutoCopyOn,TWrite,TAutoCopyWait,
-  TCrcEnable,TBootReady,TResetState,TInfo,TArm,TRuntime,TUnavailable,TStopped
+  TCrcEnable,TBootReady,TResetState,TInfo,TReportMode,TReportReady,TArm,TRuntime,TUnavailable,TStopped
 } T_STEP;
 STATIC CONST CHAR8 *mStepNames[]={"off","clocks","eng-reset","trim-reset","trim-read","download-reset","download-crc",
-  "auto-copy-on","write","auto-copy-wait","crc-enable","boot-ready","reset-state","info","arm","runtime","unavailable","stopped"};
+  "auto-copy-on","write","auto-copy-wait","crc-enable","boot-ready","reset-state","info","report-mode","report-ready","arm","runtime","unavailable","stopped"};
 
 STATIC struct {
-  BOOLEAN Started,Busy,InTransfer,Released,Published,Cascade,EdgeSeen,EdgePending,IrqArmed,Pending,WasTouching,Moved;
-  INT32 DownX,DownY;
+  BOOLEAN Started,Busy,InTransfer,Released,Published,Cascade,EdgeSeen,EdgePending,IrqArmed,Pending;
   T_STEP Step;
   UINT64 Frequency,CounterStart,CounterEnd,StartUs,NextUs,LastReadUs;
   UINT32 Table,Retry,Attempt,Part,PartOffset,Polls,Payload,Frames,Reads,ReadErrors,Consecutive,WdtCount,Downloads;
+  UINT32 StatePolls,StateReads,StateChanges,Peak;
   INT32 LcdId;
   CONST UINT8 *Fw;UINTN FwBytes;CONST CHAR8 *FwName;
   PIANO_NVT_IMAGE Image;PIANO_NVT_MAP Map;UINT32 Swrst;
@@ -141,7 +141,6 @@ STATIC EFI_STATUS RestorePin(UINTN P) {
   mT.Pins[P].Changed=FALSE;return EFI_SUCCESS;
 }
 
-// CTP_SPI_WRITE / CTP_SPI_READ, five tries each
 // Transfers are synchronous; InTransfer only guards a callback re-entering
 STATIC EFI_STATUS Xfer(CONST UINT8 *Tx,UINT8 *Rx,UINTN Len) {
   if(!mT.Spi.Open||mT.Released||!Tx||!Len||Len>sizeof(mTx))return EFI_NOT_READY;
@@ -171,6 +170,26 @@ STATIC EFI_STATUS Read(UINT8 *Buf,UINTN Len) {
   return S;
 }
 STATIC EFI_STATUS SetPage(UINT32 Addr){UINT8 B[3]={0xFF,(UINT8)(Addr>>15),(UINT8)(Addr>>7)};return Write(B,3);}
+STATIC EFI_STATUS ReadFrame(UINTN Len) {
+  UINT8 B[65];
+
+  // Long GPIO-SPI chip selects stall the running controller. Readdress each
+  // chunk, then let the payload checksum reject a frame changed between reads.
+  mFrame[0]=0;
+  for(UINTN At=1;At<Len;At+=sizeof(B)-1) {
+    UINT32 Address=mT.Map.EventBuf+(UINT32)At-1;
+    UINTN Bytes=MIN(Len-At,sizeof(B)-1);
+
+    EFI_STATUS S=SetPage(Address);
+    if(S!=EFI_SUCCESS)return S;
+    ZeroMem(B,sizeof(B));
+    B[0]=(UINT8)(Address&0x7F);
+    S=Read(B,Bytes+1);
+    if(S!=EFI_SUCCESS)return S;
+    CopyMem(mFrame+At,B+1,Bytes);
+  }
+  return EFI_SUCCESS;
+}
 STATIC EFI_STATUS WriteAddr(UINT32 Addr,UINT8 Data) {
   EFI_STATUS S=SetPage(Addr);if(S!=EFI_SUCCESS)return S;
   UINT8 B[2]={(UINT8)(Addr&0x7F),Data};return Write(B,2);
@@ -188,8 +207,9 @@ STATIC EFI_STATUS EFIAPI PointerReset(EFI_ABSOLUTE_POINTER_PROTOCOL *This,BOOLEA
 }
 STATIC EFI_STATUS EFIAPI PointerState(EFI_ABSOLUTE_POINTER_PROTOCOL *This,EFI_ABSOLUTE_POINTER_STATE *State) {
   if(This!=&mT.Pointer || !State)return EFI_INVALID_PARAMETER;
+  ++mT.StatePolls;
   if(!mT.Pending || mT.Released)return EFI_NOT_READY;
-  *State=mT.State;mT.Pending=FALSE;return EFI_SUCCESS;
+  *State=mT.State;mT.Pending=FALSE;++mT.StateReads;return EFI_SUCCESS;
 }
 STATIC VOID EFIAPI PointerWait(EFI_EVENT Event,VOID *Context){(VOID)Context;if(mT.Pending && !mT.Released)gBS->SignalEvent(Event);}
 STATIC EFI_STATUS Unpublish(VOID);
@@ -245,25 +265,16 @@ STATIC VOID Unavailable(CONST CHAR8 *Reason,EFI_STATUS Status) {
     Reason,mStepNames[Failed],Status,mT.Spi.Firmware,mT.Spi.InterfaceDisable,mT.LcdId,mT.FwName?mT.FwName:"none",Release));
 }
 
-// SimpleInit turns every new position into a press and release, so a held or
-// moving finger would click repeatedly. A touch is reported once, at lift, at
-// its touch-down point and only if it stayed within one sensor pitch
 STATIC VOID ReportPointer(VOID) {
-  if(mMatrix.Touching) {
-    if(!mT.WasTouching){mT.WasTouching=TRUE;mT.Moved=FALSE;mT.DownX=mMatrix.X;mT.DownY=mMatrix.Y;return;}
-    INT32 Slop=MAX(PIANO_TOUCH_SCREEN_W/(INT32)MAX(mMatrix.Cols,1U),PIANO_TOUCH_SCREEN_H/(INT32)MAX(mMatrix.Rows,1U));
-    INT32 Dx=mMatrix.X-mT.DownX,Dy=mMatrix.Y-mT.DownY;
-    if((INT64)Dx*Dx+(INT64)Dy*Dy>(INT64)Slop*Slop)mT.Moved=TRUE;
-    return;
-  }
-  if(!mT.WasTouching)return;
-  mT.WasTouching=FALSE;
-  if(mT.Moved)return;
-  // SimpleInit ignores a report at the coordinates it already has
-  UINT64 X=(UINT64)mT.DownX,Y=(UINT64)mT.DownY;
-  if(X==mT.State.CurrentX && Y==mT.State.CurrentY)X=X?X-1:X+1;
-  mT.State.CurrentX=X;mT.State.CurrentY=Y;mT.State.CurrentZ=0;mT.State.ActiveButtons=EFI_ABSP_TouchActive;
-  mT.Pending=TRUE;
+  UINT32 Buttons=mMatrix.Touching?EFI_ABSP_TouchActive:0;
+  UINT64 X=mMatrix.Touching?(UINT64)mMatrix.X:mT.State.CurrentX;
+  UINT64 Y=mMatrix.Touching?(UINT64)mMatrix.Y:mT.State.CurrentY;
+
+  mT.Peak=MAX(mT.Peak,(UINT32)MAX(mMatrix.MaxDelta,0));
+  if(Buttons==mT.State.ActiveButtons && X==mT.State.CurrentX && Y==mT.State.CurrentY)return;
+  if(Buttons!=mT.State.ActiveButtons)DEBUG((DEBUG_VERBOSE,"PIANO_TOUCH_CONTACT active=%u x=%lu y=%lu peak=%d frame=%u\n",mMatrix.Touching,X,Y,mMatrix.MaxDelta,mMatrix.LastFrameNo));
+  mT.State.CurrentX=X;mT.State.CurrentY=Y;mT.State.CurrentZ=0;mT.State.ActiveButtons=Buttons;
+  mT.Pending=TRUE;++mT.StateChanges;
 }
 
 // One bring-up action per call, then the delay the driver uses before the next
@@ -325,7 +336,7 @@ STATIC VOID BringUp(UINT64 Now) {
   case TWrite: {
     while(mT.Part<mT.Image.Count && !mT.Image.Part[mT.Part].Size)++mT.Part;
     if(mT.Part>=mT.Image.Count){Next=mT.Image.Cascade2ndHeader?TAutoCopyWait:TCrcEnable;mT.Polls=0;break;}
-    // Size + 1 bytes per partition in 63 KiB chunks, one chunk per pump
+    // Size + 1 bytes per partition, one firmware chunk per pump.
     CONST PIANO_NVT_PARTITION *P=&mT.Image.Part[mT.Part];
     UINT32 Total=P->Size+1,Len=MIN(Total-mT.PartOffset,FIRMWARE_CHUNK),Sram=P->SramAddr+mT.PartOffset,Bin=P->BinAddr+mT.PartOffset;
     if((S=SetPage(Sram))!=EFI_SUCCESS)break;
@@ -365,6 +376,27 @@ STATIC VOID BringUp(UINT64 Now) {
     ZeroMem(B,39);B[0]=PIANO_NVT_EVENT_FWINFO;
     if(Read(B,39)==EFI_SUCCESS)DEBUG((DEBUG_WARN,"PIANO_TOUCH_FW_INFO fw_ver=%02x valid=%u x_num=%u y_num=%u payload=%u\n",
       B[1],(UINT8)(B[1]+B[2])==0xFF,B[3],B[4],mT.Payload));
+    mT.Polls=0;
+    break;
+  case TReportMode:
+    if((S=SetPage(mT.Map.EventBuf))!=EFI_SUCCESS)break;
+    ZeroMem(B,6);B[0]=PIANO_NVT_EVENT_RESET_COMPLETE;if((S=Read(B,6))!=EFI_SUCCESS)break;
+    if(B[1]<0xA3 || B[1]>0xAF) {
+      if(++mT.Polls<50){Next=TReportMode;Wait=10000;break;}
+      S=EFI_TIMEOUT;Reason="firmware-calibration";break;
+    }
+    // Stock DATA_MODE_53 selects idle scans after calibration. Active scans
+    // replace the matrix faster than the GPIO transport can copy it.
+    B[0]=PIANO_NVT_EVENT_HOST_CMD;B[1]=0xBF;B[2]=0x01;B[3]=0;B[4]=2;B[5]=0;
+    S=Write(B,6);Wait=20000;mT.Polls=0;break;
+  case TReportReady:
+    if((S=SetPage(mT.Map.EventBuf))!=EFI_SUCCESS)break;
+    B[0]=PIANO_NVT_EVENT_HOST_CMD;B[1]=0xFF;if((S=Read(B,2))!=EFI_SUCCESS)break;
+    if(B[1]) {
+      if(++mT.Polls<10){Next=TReportReady;Wait=10000;break;}
+      S=EFI_TIMEOUT;Reason="report-mode";break;
+    }
+    DEBUG((DEBUG_WARN,"PIANO_TOUCH_REPORT_MODE idle=1 status=%02x\n",B[1]));
     break;
   case TArm: {
     // Rising edge latched in TLMM with delivery off; restored on release
@@ -399,8 +431,7 @@ STATIC VOID Runtime(UINT64 Now) {
   mT.EdgePending=FALSE;mT.LastReadUs=Now;++mT.Reads;
   UINTN Len=PIANO_NVT_HEADER_LEN+mT.Payload;
   UINT64 Begin=NowUs();
-  EFI_STATUS S=SetPage(mT.Map.EventBuf);
-  if(S==EFI_SUCCESS){mFrame[0]=0;S=Read(mFrame,Len);}
+  EFI_STATUS S=ReadFrame(Len);
   if(S!=EFI_SUCCESS) {
     ++mT.ReadErrors;mT.LastStatus=S;
     if(mT.Spi.Broken || ++mT.Consecutive>=MAX_READ_ERRORS)Unavailable("transport",S);
@@ -415,7 +446,7 @@ STATIC VOID Runtime(UINT64 Now) {
   else if(++mT.WdtCount>10) {
     mT.WdtCount=0;DEBUG((DEBUG_WARN,"PIANO_TOUCH_WDT_RECOVERY state=%02x\n",mFrame[1]));
     if(mFrame[1]==0xFE){(VOID)WriteAddr(mT.Swrst,0xAA);mT.NextUs=Now+15000;}else mT.NextUs=Now;
-    mMatrix.Touching=FALSE;mT.WasTouching=FALSE;
+    mMatrix.Touching=FALSE;ReportPointer();
     mT.Attempt=0;mT.Step=TDownloadReset;return;
   }
   if(Hand)return;
@@ -461,6 +492,8 @@ VOID PianoTouchPump(VOID) {
 VOID PianoTouchReplay(VOID){
   DEBUG((DEBUG_WARN,"PIANO_TOUCH_MATRIX step=%a frames=%u reads=%u errors=%u checksum_errors=%u skipped=%u probe=%u reference=%u ref_type=%d ref_frames=%u rows=%u cols=%u\n",
     mStepNames[mT.Step],mMatrix.Frames,mT.Reads,mT.ReadErrors,mMatrix.BadChecksum,mMatrix.Skipped,mMatrix.ProbeCount,mMatrix.HaveReference,mMatrix.RefType,mMatrix.RefCount,mMatrix.Rows,mMatrix.Cols));
+  DEBUG((DEBUG_WARN,"PIANO_TOUCH_INPUT frame=%u peak=%d max_peak=%u touching=%u x=%d y=%d changes=%u polls=%u consumed=%u pending=%u buttons=%u downloads=%u\n",
+    mMatrix.LastFrameNo,mMatrix.MaxDelta,mT.Peak,mMatrix.Touching,mMatrix.X,mMatrix.Y,mT.StateChanges,mT.StatePolls,mT.StateReads,mT.Pending,mT.State.ActiveButtons,mT.Downloads));
   for(UINTN I=0;I<MIN(mT.Reads,ARRAY_SIZE(mFirstFrames));++I){CONST UINT8 *P=mFirstFrames[I].Data;
     DEBUG((DEBUG_WARN,"PIANO_TOUCH_FRAME_SAVED index=%u us=%u status=%r payload=%02x%02x%02x%02x crc=%02x%02x length=%02x%02x%02x%02x inverse=%02x%02x rows=%u cols=%u type=%u\n",
       (UINT32)I,mFirstFrames[I].Us,mFirstFrames[I].Status,P[0],P[1],P[2],P[3],P[4],P[5],P[8],P[9],P[10],P[11],P[12],P[13],P[49],P[48],P[56]));

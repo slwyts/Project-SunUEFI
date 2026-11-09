@@ -58,7 +58,10 @@ STATIC VOID TestPackedAndAtomic(VOID) {
   Before=C; F[25]=0xfe;
   assert(PianoPogoFeedFrame(&C,F,68)==EFI_UNSUPPORTED); assert(C.KeyCount==Before.KeyCount && C.AcceptedFrames==Before.AcceptedFrames);
   assert(PianoPogoFeedFrame(&C,F,67)==EFI_COMPROMISED_DATA);
-  Frame(F); F[3]=5; F[6]=4; F[67]=2; Before=C;
+  Frame(F); F[3]=0x22; F[5]=0x38; F[6]=0x80; F[7]=0xa2; F[12]=3;
+  memset(F+20,0xa5,sizeof(F)-20);
+  assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS); assert(C.AttachKnown && C.Attached);
+  Frame(F); for(UINTN I=3;I<67;I+=8)F[I]=2; F[67]=5; Before=C;
   assert(PianoPogoFeedFrame(&C,F,68)==EFI_COMPROMISED_DATA); assert(C.KeyCount==Before.KeyCount);
   assert(PianoPogoFeedFrame(NULL,F,68)==EFI_INVALID_PARAMETER);
   assert(PianoPogoReadKeyEx(&C,NULL)==EFI_INVALID_PARAMETER);

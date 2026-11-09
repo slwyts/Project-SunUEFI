@@ -22,6 +22,9 @@ PRODUCT_NAVIGATION_SOURCES = (
     'upstream/simple-init/src/confd/file.c',
     'upstream/simple-init/src/filesystem/volume/uefi.c',
     'upstream/simple-init/src/filesystem/layer/uefi.c',
+    'upstream/simple-init/src/gui/drivers/uefi_keyboard.c',
+    'upstream/simple-init/src/gui/drivers/uefi_touch.c',
+    'upstream/simple-init/src/gui/drivers/uefi_pointer.c',
 )
 
 

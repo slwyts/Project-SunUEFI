@@ -30,6 +30,12 @@
       "base_commit": "3d66a6e78d519dd050fbebde4db6c5ac933f9aa4",
       "patch": "simple-init.patch",
       "sha256": "656e5898f49285a852fa2766aa14b847c476e94e6992d8f9c4f5eafe740131db"
+    },
+    {
+      "repository": "upstream/simple-init",
+      "base_commit": "3d66a6e78d519dd050fbebde4db6c5ac933f9aa4",
+      "patch": "simple-init/3d66a6e/0001-input-hotplug.patch",
+      "sha256": "95f173afe0dcdc617ef3dc88065885486538eae33573b4310d25333cd490fbfb"
     }
   ],
   "overlay_sources": [

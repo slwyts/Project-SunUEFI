@@ -267,6 +267,14 @@ VOID PianoPogoPump(VOID) {
   mPogo.Busy=FALSE;
 }
 
+VOID PianoPogoReplay(VOID) {
+  CONST PIANO_POGO_DXE_REPORT *Dxe=PianoPogoDxeReport(&mDxe);
+  CONST PIANO_POGO_INPUT *Input=&mDxe.Adapter.Core;
+  DEBUG((DEBUG_WARN,"PIANO_POGO_INPUT step=%a attached=%u known=%u frames=%u reads=%u empty=%u read_errors=%u commands=%u command_errors=%u irq_seen=%u accepted=%u rejected=%u keys=%u pointer=%u status=%r work=%u\n",
+    mStepNames[mPogo.Step],mPogo.Attached,Input->AttachKnown,mPogo.Frames,mPogo.Reads,mPogo.Empty,mPogo.ReadErrors,mPogo.Commands,mPogo.CommandErrors,
+    mPogo.Board.EdgeSeen,Input->AcceptedFrames,Input->RejectedFrames,(UINT32)Input->KeyCount,Input->RelativePending,Dxe?Dxe->Status:mPogo.DxeStatus,Dxe?Dxe->WorkPending:0));
+}
+
 EFI_STATUS PianoPogoStop(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Report) {
   (VOID)Context;if(Report==NULL)return EFI_INVALID_PARAMETER;
   ZeroMem(Report,sizeof(*Report));Report->Revision=1;Report->Started=mPogo.Started;

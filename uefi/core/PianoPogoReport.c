@@ -267,11 +267,10 @@ EFI_STATUS PianoPogoFeedFrame(PIANO_POGO_INPUT *Input, CONST UINT8 *Frame, UINTN
   if (Bytes!=PIANO_POGO_FRAME_BYTES||Frame[0]!=0x57||!Frame[2]) { Input->RejectedFrames++; return EFI_COMPROMISED_DATA; }
   Work=*Input;
   while (Offset<Bytes && Reports++<PIANO_POGO_MAX_REPORTS) {
-    CONST UINT8 *P=Frame+Offset; UINTN Size=0,I;
-    if (!P[0]) {
-      for(I=Offset;I<Bytes;I++) { if(Frame[I]) { Status=EFI_COMPROMISED_DATA; break; } }
-      break;
-    }
+    CONST UINT8 *P=Frame+Offset; UINTN Size=0;
+    // The MCU does not clear the unused tail of its fixed-size read buffer.
+    // As in the Linux dispatcher, report ID zero ends the packed reports.
+    if (!P[0]) { break; }
     switch(P[0]) {
       case 2: Size=8; break; case 5: Size=9; break; case 6: Size=5; break;
       case 0x19: Size=27; break; case 0x22: Size=16; break; case 0x23: Size=32; break;

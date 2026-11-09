@@ -183,6 +183,7 @@ STATIC EFI_STATUS ProductDebugReplay(VOID *Context) {
   PianoProductMemoryReemitDiagnostic();
   PianoLateHandoffReemitDiagnostic(&mLateHandoff);
   PianoTouchReplay();
+  PianoPogoReplay();
   if(PianoProductDisplayRetained())return Display==EFI_SUCCESS?EFI_COMPROMISED_DATA:Display;
   if(PianoDisplaySmmuRetained())return Translation==EFI_SUCCESS?EFI_COMPROMISED_DATA:Translation;
   if(PianoFrameBufferMappingRetained())return CpuMapping==EFI_SUCCESS?EFI_COMPROMISED_DATA:CpuMapping;

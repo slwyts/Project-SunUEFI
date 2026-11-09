@@ -1,0 +1,548 @@
+diff --git a/src/gui/drivers/uefi_keyboard.c b/src/gui/drivers/uefi_keyboard.c
+--- a/src/gui/drivers/uefi_keyboard.c
++++ b/src/gui/drivers/uefi_keyboard.c
+@@ -29,49 +29,47 @@
+ #include"gui/activity.h"
+ 
+ static list*kbds;
+-static void*event_reg=NULL;
+-static bool has_lr=false;
++static bool release_key=false;
++static bool reverse_tab=false;
+ static lv_indev_drv_t drv;
+ static lv_indev_t*dev;
+ struct keyboard_data{
++	EFI_HANDLE handle;
+ 	EFI_SIMPLE_TEXT_INPUT_PROTOCOL*kbd;
+-	void*pd;
+ };
++static void keyboard_refresh(void);
++static EFI_STATUS keyboard_state(struct keyboard_data*device,EFI_INPUT_KEY*state);
+ static void keyboard_read(lv_indev_drv_t*indev_drv,lv_indev_data_t*data){
+ 	list*l,*n;
+ 	EFI_INPUT_KEY p;
+ 	data->state=LV_INDEV_STATE_REL;
+ 	if(indev_drv!=&drv||!dev||dev->driver!=indev_drv)return;
++	data->continue_reading=false;
++	if(release_key){release_key=false;return;}
++	keyboard_refresh();
+ 	if(!(l=list_first(kbds))){
+-		tlog_warn("no available keyboard devices");
+-		lv_indev_enable(dev,false);
+ 		return;
+ 	}else do{
+ 		n=l->next;
+ 		LIST_DATA_DECLARE(kd,l,struct keyboard_data*);
+-		if(!kd->pd)kd->pd=kd->kbd->ReadKeyStroke;
+-		else if(kd->kbd->ReadKeyStroke!=kd->pd){
+-			tlog_warn("ReadKeyStroke changed, disable keyboard device");
+-			list_obj_del(&kbds,l,list_default_free);
+-			continue;
+-		}
+-		if(EFI_ERROR(kd->kbd->ReadKeyStroke(kd->kbd,&p)))continue;
++		if(EFI_ERROR(keyboard_state(kd,&p)))continue;
+ 		tlog_notice("PIANO_KEY_EVENT scan=0x%x unicode=0x%x",p.ScanCode,p.UnicodeChar);
+-		data->state=0;
++		data->key=0;
+ 		if(p.ScanCode!=0){
+ 			if(lv_group_get_editing(gui_grp))switch(p.ScanCode){
+-				// why UP and DOWN map to LEFT and RIGHT?
+-				// because volume keys only have UP and DOWN.
+-				case SCAN_VOLUME_UP:
+-				case SCAN_UP:data->key=has_lr?LV_KEY_UP:LV_KEY_LEFT;break;
++				case SCAN_VOLUME_UP:data->key=LV_KEY_LEFT;break;
++				case SCAN_UP:data->key=LV_KEY_UP;break;
+ 				case SCAN_BRIGHTNESS_UP:
+-				case SCAN_LEFT:data->key=LV_KEY_LEFT;has_lr=true;break;
++				case SCAN_LEFT:data->key=LV_KEY_LEFT;break;
+ 				case SCAN_PAGE_UP:data->key=LV_KEY_UP;break;
+-				case SCAN_VOLUME_DOWN:
+-				case SCAN_DOWN:data->key=has_lr?LV_KEY_DOWN:LV_KEY_RIGHT;break;
++				case SCAN_VOLUME_DOWN:data->key=LV_KEY_RIGHT;break;
++				case SCAN_DOWN:data->key=LV_KEY_DOWN;break;
+ 				case SCAN_BRIGHTNESS_DOWN:
+-				case SCAN_RIGHT:data->key=LV_KEY_RIGHT;has_lr=true;break;
++				case SCAN_RIGHT:data->key=LV_KEY_RIGHT;break;
+ 				case SCAN_PAGE_DOWN:data->key=LV_KEY_DOWN;break;
++				case SCAN_HOME:data->key=LV_KEY_HOME;break;
++				case SCAN_END:data->key=LV_KEY_END;break;
++				case SCAN_DELETE:data->key=LV_KEY_DEL;break;
+ 				case SCAN_SUSPEND:data->key=LV_KEY_ENTER;break;
+ 				case SCAN_ESC:
+ 					if(guiact_get_activities())
+@@ -88,6 +86,9 @@
+ 				case SCAN_VOLUME_DOWN:
+ 				case SCAN_BRIGHTNESS_DOWN:
+ 				case SCAN_PAGE_DOWN:data->key=LV_KEY_NEXT;break;
++				case SCAN_HOME:data->key=LV_KEY_HOME;break;
++				case SCAN_END:data->key=LV_KEY_END;break;
++				case SCAN_DELETE:data->key=LV_KEY_DEL;break;
+ 				case SCAN_SUSPEND:data->key=LV_KEY_ENTER;break;
+ 				case SCAN_ESC:
+ 					if(guiact_get_activities())
+@@ -95,9 +96,13 @@
+ 					data->key=0;
+ 			}
+ 		}else if(p.UnicodeChar!=0)switch(p.UnicodeChar){
+-			case ' ':case '\n':case '\r':data->key=LV_KEY_ENTER;break;
++			case '\t':data->key=reverse_tab?LV_KEY_PREV:LV_KEY_NEXT;break;
++			case ' ':data->key=lv_group_get_editing(gui_grp)?' ':LV_KEY_ENTER;break;
++			case '\n':case '\r':data->key=LV_KEY_ENTER;break;
+ 			default:data->key=p.UnicodeChar;
+ 		}else continue;
++		if(!data->key)continue;
++		release_key=true;
+ 		data->state=LV_INDEV_STATE_PR;
+ 		data->continue_reading=true;
+ 		return;
+@@ -108,63 +113,75 @@
+ 	LIST_DATA_DECLARE(d,f,struct keyboard_data*);
+ 	return d->kbd==(EFI_SIMPLE_TEXT_INPUT_PROTOCOL*)data;
+ }
+-static int _keyboard_register(EFI_SIMPLE_TEXT_INPUT_PROTOCOL*k){
++static int _keyboard_register(EFI_HANDLE handle,EFI_SIMPLE_TEXT_INPUT_PROTOCOL*k){
+ 	struct keyboard_data*kbd=NULL;
+ 	if(list_search_one(kbds,proto_cmp,k))return 0;
+ 	if(!(kbd=malloc(sizeof(struct keyboard_data))))return -1;
+ 	memset(kbd,0,sizeof(struct keyboard_data));
++	kbd->handle=handle;
+ 	kbd->kbd=k;
+ 	tlog_debug("found new uefi keyboard %p",kbd->kbd);
+ 	list_obj_add_new(&kbds,kbd);
+ 	if(dev)lv_indev_enable(dev,true);
+ 	return 0;
+ }
+-STATIC EFIAPI VOID keyboard_event(IN EFI_EVENT ev,IN VOID*ctx){
+-	EFI_SIMPLE_TEXT_INPUT_PROTOCOL*kbd=NULL;
+-	EFI_STATUS st=gBS->LocateProtocol(
+-		&gEfiSimpleTextInProtocolGuid,
+-		event_reg,(VOID**)&kbd
+-	);
+-	tlog_notice("receive keyboard device hot-plug event");
+-	if(!EFI_ERROR(st)&&kbd)_keyboard_register(kbd);
++/* USB removal runs at TPL_CALLBACK. Validate and read without allowing it
++ * to free the protocol between the handle lookup and the method call. */
++static EFI_STATUS keyboard_state(struct keyboard_data*device,EFI_INPUT_KEY*state){
++	EFI_SIMPLE_TEXT_INPUT_PROTOCOL*input=NULL;
++	EFI_TPL tpl=gBS->RaiseTPL(TPL_CALLBACK);
++	EFI_STATUS status=gBS->HandleProtocol(device->handle,&gEfiSimpleTextInProtocolGuid,(VOID**)&input);
++	reverse_tab=false;
++	if(!EFI_ERROR(status)&&input==device->kbd&&input->ReadKeyStroke){
++		EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL*extended=NULL;
++		EFI_STATUS found=gBS->HandleProtocol(device->handle,&gEfiSimpleTextInputExProtocolGuid,(VOID**)&extended);
++		if(!EFI_ERROR(found)&&extended&&extended->ReadKeyStrokeEx){
++			EFI_KEY_DATA key;
++			status=extended->ReadKeyStrokeEx(extended,&key);
++			if(!EFI_ERROR(status)){
++				*state=key.Key;
++				reverse_tab=(key.KeyState.KeyShiftState&EFI_SHIFT_STATE_VALID)&&
++					(key.KeyState.KeyShiftState&(EFI_LEFT_SHIFT_PRESSED|EFI_RIGHT_SHIFT_PRESSED));
++			}
++		}else status=input->ReadKeyStroke(input,state);
++	}else status=EFI_NOT_READY;
++	gBS->RestoreTPL(tpl);
++	return status;
++}
++static void keyboard_refresh(void){
++	EFI_HANDLE*hands=NULL;
++	UINTN count=0;
++	EFI_TPL tpl=gBS->RaiseTPL(TPL_CALLBACK);
++	EFI_STATUS status=gBS->LocateHandleBuffer(ByProtocol,&gEfiSimpleTextInProtocolGuid,NULL,&count,&hands);
++	if(EFI_ERROR(status)&&status!=EFI_NOT_FOUND){gBS->RestoreTPL(tpl);return;}
++	for(list*l=list_first(kbds),*next;l;l=next){
++		next=l->next;
++		struct keyboard_data*device=l->data;
++		bool present=false;
++		for(UINTN i=0;i<count;i++)if(hands[i]==device->handle){
++			EFI_SIMPLE_TEXT_INPUT_PROTOCOL*input=NULL;
++			present=!EFI_ERROR(gBS->HandleProtocol(hands[i],&gEfiSimpleTextInProtocolGuid,(VOID**)&input))&&input==device->kbd;
++			break;
++		}
++		if(!present)list_obj_del(&kbds,l,list_default_free);
++	}
++	for(UINTN i=0;i<count;i++){
++		EFI_SIMPLE_TEXT_INPUT_PROTOCOL*input=NULL;
++		if(!EFI_ERROR(gBS->HandleProtocol(hands[i],&gEfiSimpleTextInProtocolGuid,(VOID**)&input))&&input)
++			_keyboard_register(hands[i],input);
++	}
++	if(hands)gBS->FreePool(hands);
++	gBS->RestoreTPL(tpl);
+ }
+ static int keyboard_register(){
+-	bool found=false;
+-	UINTN cnt=0;
+-	EFI_HANDLE*hands=NULL;
+-	EFI_STATUS st=gBS->LocateHandleBuffer(
+-		ByProtocol,
+-		&gEfiSimpleTextInProtocolGuid,
+-		NULL,&cnt,&hands
+-	);
+-	if(EFI_ERROR(st))return trlog_warn(-1,
+-		"locate keyboard failed: %s",
+-		efi_status_to_string(st)
+-	);
+-	for(UINTN i=0;i<cnt;i++){
+-		EFI_SIMPLE_TEXT_INPUT_PROTOCOL*kbd=NULL;
+-		if(EFI_ERROR(gBS->HandleProtocol(
+-			hands[i],
+-			&gEfiSimpleTextInProtocolGuid,
+-			(VOID**)&kbd
+-		))||!kbd)continue;
+-		if(_keyboard_register(kbd)==0)found=true;
+-	}
+-	EfiCreateProtocolNotifyEvent(
+-		&gEfiSimpleTextInProtocolGuid,
+-		TPL_CALLBACK,
+-		(EFI_EVENT_NOTIFY)keyboard_event,
+-		NULL,&event_reg
+-	);
+-	if(found){
+-		lv_indev_drv_init(&drv);
+-		drv.type=LV_INDEV_TYPE_KEYPAD;
+-		drv.read_cb=keyboard_read;
+-		dev=lv_indev_drv_register(&drv);
+-		lv_indev_set_group(dev,gui_grp);
+-		return 0;
+-	}
+-	return trlog_warn(-1,"no uefi keyboard found");
++	lv_indev_drv_init(&drv);
++	drv.type=LV_INDEV_TYPE_KEYPAD;
++	drv.read_cb=keyboard_read;
++	dev=lv_indev_drv_register(&drv);
++	if(!dev)return -1;
++	lv_indev_set_group(dev,gui_grp);
++	keyboard_refresh();
++	return 0;
+ }
+ 
+ struct input_driver indrv_uefi_kbd={
+diff --git a/src/gui/drivers/uefi_touch.c b/src/gui/drivers/uefi_touch.c
+--- a/src/gui/drivers/uefi_touch.c
++++ b/src/gui/drivers/uefi_touch.c
+@@ -26,38 +26,35 @@
+ #include"defines.h"
+ #include"gui/guidrv.h"
+ #include"PianoTouchInput.h"
+-static void*event_reg=NULL;
+ static list*touchs;
+ static lv_indev_drv_t drv;
+ static lv_indev_t*dev;
+ static INT64 lx=0,ly=0;
+ static bool lp=false;
+ struct input_data{
++	EFI_HANDLE handle;
+ 	UINT64 lx,ly,mx,my,rx,ry;
+ 	UINT32 buttons;
+ 	bool sampled;
+ 	EFI_ABSOLUTE_POINTER_PROTOCOL*touch;
+-	void*pd;
+ };
+ 
++static void touch_refresh(void);
++static EFI_STATUS touch_state(struct input_data*device,EFI_ABSOLUTE_POINTER_STATE*state);
+ static void touch_read(lv_indev_drv_t*indev_drv,lv_indev_data_t*data){
+ 	list*l,*n;
+ 	EFI_ABSOLUTE_POINTER_STATE p;
+ 	if(indev_drv!=&drv||!dev||dev->driver!=indev_drv)return;
++	data->continue_reading=false;
++	touch_refresh();
+ 	if(!(l=list_first(touchs))){
+-		tlog_warn("no available touch screen devices");
+-		lv_indev_enable(dev,false);
++		lp=false;
++		data->state=LV_INDEV_STATE_REL;
+ 		return;
+ 	}else do{
+ 		n=l->next;
+ 		LIST_DATA_DECLARE(d,l,struct input_data*);
+-		if(!d->pd)d->pd=d->touch->GetState;
+-		else if(d->touch->GetState!=d->pd){
+-			tlog_warn("GetState changed, disable touch device");
+-			list_obj_del(&touchs,l,list_default_free);
+-			continue;
+-		}
+-		if(EFI_ERROR(d->touch->GetState(d->touch,&p)))continue;
++		if(EFI_ERROR(touch_state(d,&p)))continue;
+ 		if(d->sampled&&p.CurrentX==d->lx&&p.CurrentY==d->ly&&p.ActiveButtons==d->buttons)continue;
+ 		int32_t w=gui_w,h=gui_h;
+ 		if(gui_rotate==90||gui_rotate==270){w=gui_h;h=gui_w;}
+@@ -76,7 +73,7 @@
+ 	LIST_DATA_DECLARE(d,f,struct input_data*);
+ 	return d->touch==(EFI_ABSOLUTE_POINTER_PROTOCOL*)data;
+ }
+-static int _touch_register(EFI_ABSOLUTE_POINTER_PROTOCOL*touch){
++static int _touch_register(EFI_HANDLE handle,EFI_ABSOLUTE_POINTER_PROTOCOL*touch){
+ 	struct input_data*data=NULL;
+ 	if(!touch||!touch->Mode||touch->Mode->AbsoluteMaxX<=touch->Mode->AbsoluteMinX||touch->Mode->AbsoluteMaxY<=touch->Mode->AbsoluteMinY)return -1;
+ 	if(list_search_one(touchs,proto_cmp,touch))return 0;
+@@ -89,6 +86,7 @@
+ 	}
+ 	if(!(data=malloc(sizeof(struct input_data))))return -1;
+ 	memset(data,0,sizeof(struct input_data));
++	data->handle=handle;
+ 	data->touch=touch;
+ 	data->mx=data->touch->Mode->AbsoluteMinX;
+ 	data->my=data->touch->Mode->AbsoluteMinY;
+@@ -99,52 +97,52 @@
+ 	if(dev)lv_indev_enable(dev,true);
+ 	return 0;
+ }
+-STATIC EFIAPI VOID touch_event(IN EFI_EVENT ev,IN VOID*ctx){
+-	EFI_ABSOLUTE_POINTER_PROTOCOL*touch=NULL;
+-	EFI_STATUS st=gBS->LocateProtocol(
+-		&gEfiAbsolutePointerProtocolGuid,
+-		event_reg,(VOID**)&touch
+-	);
+-	tlog_notice("receive touch device hot-plug event");
+-	if(!EFI_ERROR(st)&&touch)_touch_register(touch);
++/* USB removal runs at TPL_CALLBACK. Validate and read without allowing it
++ * to free the protocol between the handle lookup and the method call. */
++static EFI_STATUS touch_state(struct input_data*device,EFI_ABSOLUTE_POINTER_STATE*state){
++	EFI_ABSOLUTE_POINTER_PROTOCOL*input=NULL;
++	EFI_TPL tpl=gBS->RaiseTPL(TPL_CALLBACK);
++	EFI_STATUS status=gBS->HandleProtocol(device->handle,&gEfiAbsolutePointerProtocolGuid,(VOID**)&input);
++	if(!EFI_ERROR(status)&&input==device->touch&&input->GetState)status=input->GetState(input,state);
++	else status=EFI_NOT_READY;
++	gBS->RestoreTPL(tpl);
++	return status;
++}
++static void touch_refresh(void){
++	EFI_HANDLE*hands=NULL;
++	UINTN count=0;
++	EFI_TPL tpl=gBS->RaiseTPL(TPL_CALLBACK);
++	EFI_STATUS status=gBS->LocateHandleBuffer(ByProtocol,&gEfiAbsolutePointerProtocolGuid,NULL,&count,&hands);
++	if(EFI_ERROR(status)&&status!=EFI_NOT_FOUND){gBS->RestoreTPL(tpl);return;}
++	for(list*l=list_first(touchs),*next;l;l=next){
++		next=l->next;
++		struct input_data*device=l->data;
++		bool present=false;
++		for(UINTN i=0;i<count;i++)if(hands[i]==device->handle){
++			EFI_ABSOLUTE_POINTER_PROTOCOL*input=NULL;
++			present=!EFI_ERROR(gBS->HandleProtocol(hands[i],&gEfiAbsolutePointerProtocolGuid,(VOID**)&input))&&input==device->touch;
++			break;
++		}
++		if(!present){lp=false;list_obj_del(&touchs,l,list_default_free);}
++	}
++	for(UINTN i=0;i<count;i++){
++		EFI_ABSOLUTE_POINTER_PROTOCOL*input=NULL;
++		if(!EFI_ERROR(gBS->HandleProtocol(hands[i],&gEfiAbsolutePointerProtocolGuid,(VOID**)&input))&&input)
++			_touch_register(hands[i],input);
++	}
++	if(hands)gBS->FreePool(hands);
++	gBS->RestoreTPL(tpl);
+ }
+ static int touch_register(){
+-	bool found=false;
+-	UINTN cnt=0;
+-	EFI_HANDLE*hands=NULL;
+-	EFI_STATUS st=gBS->LocateHandleBuffer(
+-		ByProtocol,
+-		&gEfiAbsolutePointerProtocolGuid,
+-		NULL,&cnt,&hands
+-	);
+-	if(EFI_ERROR(st))return trlog_warn(-1,
+-		"locate touch failed: %s",
+-		efi_status_to_string(st)
+-	);
+-	for(UINTN i=0;i<cnt;i++){
+-		EFI_ABSOLUTE_POINTER_PROTOCOL*touch=NULL;
+-		if(EFI_ERROR(gBS->HandleProtocol(
+-			hands[i],
+-			&gEfiAbsolutePointerProtocolGuid,
+-			(VOID**)&touch
+-		))||!touch)continue;
+-		if(_touch_register(touch)==0)found=true;
+-	}
+-	EfiCreateProtocolNotifyEvent(
+-		&gEfiAbsolutePointerProtocolGuid,
+-		TPL_CALLBACK,
+-		(EFI_EVENT_NOTIFY)touch_event,
+-		NULL,&event_reg
+-	);
+-	if(found){
+-		lv_indev_drv_init(&drv);
+-		drv.type=LV_INDEV_TYPE_POINTER;
+-		drv.read_cb=touch_read;
+-		dev=lv_indev_drv_register(&drv);
+-		return 0;
+-	}
+-	return trlog_warn(-1,"no uefi touch found");
++	lv_indev_drv_init(&drv);
++	drv.type=LV_INDEV_TYPE_POINTER;
++	drv.read_cb=touch_read;
++	dev=lv_indev_drv_register(&drv);
++	if(!dev)return -1;
++	touch_refresh();
++	return 0;
+ }
++
+ struct input_driver indrv_uefi_touch={
+ 	.name="uefi-touch",
+ 	.compatible={
+diff --git a/src/gui/drivers/uefi_pointer.c b/src/gui/drivers/uefi_pointer.c
+--- a/src/gui/drivers/uefi_pointer.c
++++ b/src/gui/drivers/uefi_pointer.c
+@@ -28,37 +28,34 @@
+ #include"gui/tools.h"
+ #include"gui/guidrv.h"
+ int gui_mouse_scale=0;
+-static void*event_reg=NULL;
+ static list*mouses;
+ static lv_indev_drv_t drv;
+ static lv_indev_t*dev;
+ static bool lp=false;
+ static INT64 lx=0,ly=0;
+ struct input_data{
++	EFI_HANDLE handle;
+ 	INT64 rx,ry;
+ 	EFI_SIMPLE_POINTER_PROTOCOL*mouse;
+-	void*pd;
+ };
++static void pointer_refresh(void);
++static EFI_STATUS pointer_state(struct input_data*device,EFI_SIMPLE_POINTER_STATE*state);
+ static void pointer_read(lv_indev_drv_t*indev_drv,lv_indev_data_t*data){
+ 	list*l,*n;
+ 	EFI_SIMPLE_POINTER_STATE p;
+ 	if(indev_drv!=&drv||!dev||dev->driver!=indev_drv)return;
++	data->continue_reading=false;
++	pointer_refresh();
+ 	if(!dev->cursor&&(lx>0||ly>0))
+ 		lv_indev_set_cursor(dev,gui_cursor);
+ 	if(!(l=list_first(mouses))){
+-		tlog_warn("no available mouse devices");
+-		lv_indev_enable(dev,false);
++		lp=false;
++		data->state=LV_INDEV_STATE_REL;
+ 		return;
+ 	}else do{
+ 		n=l->next;
+ 		LIST_DATA_DECLARE(d,l,struct input_data*);
+-		if(!d->pd)d->pd=d->mouse->GetState;
+-		else if(d->mouse->GetState!=d->pd){
+-			tlog_warn("GetState changed, disable mouse device");
+-			list_obj_del(&mouses,l,list_default_free);
+-			continue;
+-		}
+-		if(EFI_ERROR(d->mouse->GetState(d->mouse,&p)))continue;
++		if(EFI_ERROR(pointer_state(d,&p)))continue;
+ 		INT64 ix=lx+(p.RelativeMovementX*gui_mouse_scale/d->rx);
+ 		INT64 iy=ly+(p.RelativeMovementY*gui_mouse_scale/d->ry);
+ 		lx=lv_coord_border(ix,gui_w-1,0);
+@@ -75,8 +72,9 @@
+ 	LIST_DATA_DECLARE(d,f,struct input_data*);
+ 	return d->mouse==(EFI_SIMPLE_POINTER_PROTOCOL*)data;
+ }
+-static int _pointer_register(EFI_SIMPLE_POINTER_PROTOCOL*mouse){
++static int _pointer_register(EFI_HANDLE handle,EFI_SIMPLE_POINTER_PROTOCOL*mouse){
+ 	struct input_data*data=NULL;
++	if(!mouse||!mouse->Mode||!mouse->Mode->ResolutionX||!mouse->Mode->ResolutionY)return -1;
+ 	if(list_search_one(mouses,proto_cmp,mouse))return 0;
+ 	if(confd_get_boolean(
+ 		"gui.driver.pointer.use_first",
+@@ -87,6 +85,7 @@
+ 	}
+ 	if(!(data=malloc(sizeof(struct input_data))))return -1;
+ 	memset(data,0,sizeof(struct input_data));
++	data->handle=handle;
+ 	data->mouse=mouse;
+ 	data->rx=data->mouse->Mode->ResolutionX;
+ 	data->ry=data->mouse->Mode->ResolutionY;
+@@ -95,55 +94,52 @@
+ 	if(dev)lv_indev_enable(dev,true);
+ 	return 0;
+ }
+-STATIC EFIAPI VOID pointer_event(IN EFI_EVENT ev,IN VOID*ctx){
+-	EFI_SIMPLE_POINTER_PROTOCOL*mouse=NULL;
+-	EFI_STATUS st=gBS->LocateProtocol(
+-		&gEfiSimplePointerProtocolGuid,
+-		event_reg,(VOID**)&mouse
+-	);
+-	tlog_notice("receive mouse device hot-plug event");
+-	if(!EFI_ERROR(st)&&mouse)_pointer_register(mouse);
++/* USB removal runs at TPL_CALLBACK. Validate and read without allowing it
++ * to free the protocol between the handle lookup and the method call. */
++static EFI_STATUS pointer_state(struct input_data*device,EFI_SIMPLE_POINTER_STATE*state){
++	EFI_SIMPLE_POINTER_PROTOCOL*input=NULL;
++	EFI_TPL tpl=gBS->RaiseTPL(TPL_CALLBACK);
++	EFI_STATUS status=gBS->HandleProtocol(device->handle,&gEfiSimplePointerProtocolGuid,(VOID**)&input);
++	if(!EFI_ERROR(status)&&input==device->mouse&&input->GetState)status=input->GetState(input,state);
++	else status=EFI_NOT_READY;
++	gBS->RestoreTPL(tpl);
++	return status;
++}
++static void pointer_refresh(void){
++	EFI_HANDLE*hands=NULL;
++	UINTN count=0;
++	EFI_TPL tpl=gBS->RaiseTPL(TPL_CALLBACK);
++	EFI_STATUS status=gBS->LocateHandleBuffer(ByProtocol,&gEfiSimplePointerProtocolGuid,NULL,&count,&hands);
++	if(EFI_ERROR(status)&&status!=EFI_NOT_FOUND){gBS->RestoreTPL(tpl);return;}
++	for(list*l=list_first(mouses),*next;l;l=next){
++		next=l->next;
++		struct input_data*device=l->data;
++		bool present=false;
++		for(UINTN i=0;i<count;i++)if(hands[i]==device->handle){
++			EFI_SIMPLE_POINTER_PROTOCOL*input=NULL;
++			present=!EFI_ERROR(gBS->HandleProtocol(hands[i],&gEfiSimplePointerProtocolGuid,(VOID**)&input))&&input==device->mouse;
++			break;
++		}
++		if(!present){lp=false;list_obj_del(&mouses,l,list_default_free);}
++	}
++	for(UINTN i=0;i<count;i++){
++		EFI_SIMPLE_POINTER_PROTOCOL*input=NULL;
++		if(!EFI_ERROR(gBS->HandleProtocol(hands[i],&gEfiSimplePointerProtocolGuid,(VOID**)&input))&&input)
++			_pointer_register(hands[i],input);
++	}
++	if(hands)gBS->FreePool(hands);
++	gBS->RestoreTPL(tpl);
+ }
+ static int pointer_register(){
+-	bool found=false;
+-	UINTN cnt=0;
+-	EFI_HANDLE*hands=NULL;
++	lv_indev_drv_init(&drv);
++	drv.type=LV_INDEV_TYPE_POINTER;
++	drv.read_cb=pointer_read;
++	dev=lv_indev_drv_register(&drv);
++	if(!dev)return -1;
+ 	gui_mouse_scale=confd_get_integer(
+-		"gui.mouse_scale",
+-		(int)PcdGet8(PcdGuiDefaultMouseScale)
+-	);
+-	EFI_STATUS st=gBS->LocateHandleBuffer(
+-		ByProtocol,
+-		&gEfiSimplePointerProtocolGuid,
+-		NULL,&cnt,&hands
+-	);
+-	if(EFI_ERROR(st))return trlog_warn(-1,
+-		"locate pointer failed: %s",
+-		efi_status_to_string(st)
+-	);
+-	for(UINTN i=0;i<cnt;i++){
+-		EFI_SIMPLE_POINTER_PROTOCOL*mouse=NULL;
+-		if(EFI_ERROR(gBS->HandleProtocol(
+-			hands[i],
+-			&gEfiSimplePointerProtocolGuid,
+-			(VOID**)&mouse
+-		))||!mouse)continue;
+-		if(_pointer_register(mouse)==0)found=true;
+-	}
+-	EfiCreateProtocolNotifyEvent(
+-		&gEfiSimplePointerProtocolGuid,
+-		TPL_CALLBACK,
+-		(EFI_EVENT_NOTIFY)pointer_event,
+-		NULL,&event_reg
+-	);
+-	if(found){
+-		lv_indev_drv_init(&drv);
+-		drv.type=LV_INDEV_TYPE_POINTER;
+-		drv.read_cb=pointer_read;
+-		dev=lv_indev_drv_register(&drv);
+-		return 0;
+-	}
+-	return trlog_warn(-1,"no uefi pointer found");
++		"gui.mouse_scale",(int)PcdGet8(PcdGuiDefaultMouseScale));
++	pointer_refresh();
++	return 0;
+ }
+ 
+ struct input_driver indrv_uefi_pointer={

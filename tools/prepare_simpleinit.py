@@ -368,7 +368,7 @@ def main():
     owned_paths = (main_c,config_c,static_config,si/'root/etc/simpleinit.static.uefi.cfg',
                     exit_c,main_inf,si/'src/main/PianoSnapshot.c',keyboard,menu,touch,
                     si/'src/filesystem/volume/uefi.c',si/'src/filesystem/layer/uefi.c',si/'src/confd/file.c',
-                   touch.parent/'PianoTouchInput.h',gui_inf,drivers,compat_inf,
+                    touch.parent/'PianoTouchInput.h',si/'src/gui/drivers/uefi_pointer.c',gui_inf,drivers,compat_inf,
                    si/'libs/compatible/PianoQuadFloatCompat.c',arm,linux_inf,inc)
     if args.product_gui_pump:
         from simpleinit_build_identity import PRODUCT_NAVIGATION_SOURCES
