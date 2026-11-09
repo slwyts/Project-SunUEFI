@@ -21,7 +21,7 @@
 | 启动路线管理 | 模块保存 Android／UEFI 路线，普通开机沿用；前置选择页显示约三秒，音量键可临时改选，电源键确认。临时选择不改保存的路线 |
 | 合体 BOOT 在线安装 | 模块从当前 BOOT 提取 Android 内核并安装或更新同一份 UEFI 核心；HyperOS 更新后可点击“重新安装引导”。已有核心升级已在设备上完成，所有 OTA 场景尚未覆盖。见[原生 BOOT 重打包](devel/boot/combined-boot.md) |
 | 一键安装器 | 更新已有的 `sunuefi_esp` 与 `sunuefi_root`；UEFI 只读原厂蓝牙地址并通过标准设备树属性传给 Linux，不依赖安装阶段配置。新平板首次分区返回 `NEW_INSTALL_NOT_READY` |
-| Android Root 模块 | 提供可安装 ZIP，包含启动选择、引导检查、重新安装和独立存储管理。SukiSU 安装和 WebUI 可用；新分区、调整容量和删除归还空间的写入流程仍需实机验证，见[引导助手](devel/boot/android-module.md) |
+| Android Root 模块 | 提供可安装 ZIP，包含启动选择、引导检查、重新安装和独立存储管理。SukiSU 安装和 WebUI 可用；删除后的空间归还已通过早期离线 F2FS 扩容完成。新设备首次分区、root 容量调整仍需实机验证，见[引导助手](devel/boot/android-module.md) |
 
 ## UEFI
 

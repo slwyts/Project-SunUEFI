@@ -17,7 +17,7 @@ TESTS = ('lossless_roundtrip', 'current_source_guard', 'active_slot_guard',
          'missing_request_stock_passthrough')
 DEVICE_PROOFS = ('device_passthrough_verified', 'request_handling_verified', 'standard_recovery_preserved')
 SOURCE_FILES = ('module.prop', 'common.sh', 'customize.sh', 'uninstall.sh', 'manager.sh', 'storage.sh', 'storage-operations.sh', 'service.sh',
-                'native-interface.json', 'skip_mount', 'action.sh',
+                'native-interface.json', 'skip_mount', 'action.sh', 'initrc/storage.rc',
                 'webroot/index.html', 'webroot/style.css', 'webroot/main.js', 'webroot/sun.svg',
                 'META-INF/com/google/android/update-binary',
                 'META-INF/com/google/android/updater-script')

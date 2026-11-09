@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Online F2FS shrinking on Android. Never writes a GPT or a raw block device.
+// Android F2FS capacity checks, online shrinking and early offline expansion.
 #define _GNU_SOURCE
 #include <dirent.h>
 #include <errno.h>
@@ -16,6 +16,7 @@
 #include <sys/sysmacros.h>
 #include <sys/vfs.h>
 #include <unistd.h>
+#include "piano_f2fs_grow.h"
 
 #define F2FS_MAGIC 0xf2f52010U
 #define F2FS_IOC_RESIZE_FS _IOW(0xf5, 16, uint64_t)
@@ -26,7 +27,7 @@ static uint32_t le32(const unsigned char *p) {
 }
 static uint64_t le64(const unsigned char *p) { return le32(p) | (uint64_t)le32(p + 4) << 32; }
 static int supers(int fd, uint64_t *count, uint64_t *section) {
-    unsigned char a[64], b[64];
+    unsigned char a[3072], b[3072];
     if (pread(fd, a, sizeof(a), 1024) != (ssize_t)sizeof(a) ||
         pread(fd, b, sizeof(b), BLOCK_BYTES + 1024) != (ssize_t)sizeof(b)) return -1;
     if (memcmp(a, b, sizeof(a)) || le32(a) != F2FS_MAGIC || le32(a + 16) != 12 ||
@@ -128,11 +129,41 @@ static int decimal(const char *text, uint64_t *number) {
     if (errno || *end || !parsed) return -1;
     *number = parsed; return 0;
 }
+int piano_f2fs_geometry(const char *mapper_path, const char *userdata_path, uint64_t expected,
+                      unsigned char uuid[16], uint64_t *blocks, uint64_t *section) {
+    int raw = open(userdata_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int mapper = open(mapper_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    struct stat physical, mapped;
+    uint64_t raw_bytes = 0, mapped_bytes = 0;
+    int result = raw < 0 || mapper < 0 || fstat(raw, &physical) || fstat(mapper, &mapped) ||
+        !S_ISBLK(physical.st_mode) || !S_ISBLK(mapped.st_mode) ||
+        ioctl(raw, BLKGETSIZE64, &raw_bytes) || ioctl(mapper, BLKGETSIZE64, &mapped_bytes) ||
+        !mapped_bytes || mapped_bytes > raw_bytes ||
+        (expected && (raw_bytes != expected || mapped_bytes != expected)) ||
+        (mapped.st_rdev != physical.st_rdev && !mapper_is_userdata(mapper_path, physical.st_rdev, mapped_bytes)) ||
+        supers(mapper, blocks, section) || *blocks > mapped_bytes / BLOCK_BYTES ||
+        pread(mapper, uuid, 16, 1024 + 108) != 16;
+    if (raw >= 0) close(raw);
+    if (mapper >= 0) close(mapper);
+    return result ? -1 : 0;
+}
 int main(int argc, char **argv) {
-    int execute = 0; uint64_t limit = 0, expected_bytes = 0;
+    if (argc >= 2 && (!strcmp(argv[1], "install-early") || !strcmp(argv[1], "early-status") || !strcmp(argv[1], "early-grow"))) {
+        if (getuid()) return 1;
+        if (argc == 2 && !strcmp(argv[1], "early-status")) return piano_f2fs_early_ready() ? 1 : 0;
+        if (argc != 3 || strcmp(argv[2], "--execute") || !strcmp(argv[1], "early-status")) return 2;
+        int result = !strcmp(argv[1], "install-early") ? piano_f2fs_install_early() : piano_f2fs_early_grow();
+        if (result && !strcmp(argv[1], "install-early")) perror("Install early F2FS maintenance");
+        return result ? 1 : 0;
+    }
+    int execute = 0, grow = 0; uint64_t limit = 0, expected_bytes = 0;
     if (argc == 2 && !strcmp(argv[1], "status")) { /* read-only */ }
     else if (argc == 4 && !strcmp(argv[1], "status") && !strcmp(argv[2], "--expect-bytes")) {
         if (decimal(argv[3], &expected_bytes) || expected_bytes % BLOCK_BYTES) return 2;
+    }
+    else if (argc == 5 && !strcmp(argv[1], "grow") && !strcmp(argv[2], "--expect-bytes") && !strcmp(argv[4], "--execute")) {
+        if (decimal(argv[3], &expected_bytes) || expected_bytes % BLOCK_BYTES) return 2;
+        grow = 1;
     }
     else if (argc == 4 && !strcmp(argv[1], "--limit-blocks") && !strcmp(argv[3], "--execute")) {
         if (decimal(argv[2], &limit)) return 2;
@@ -142,7 +173,8 @@ int main(int argc, char **argv) {
         if (decimal(argv[3], &bytes) || bytes % BLOCK_BYTES) return 2;
         limit = bytes / BLOCK_BYTES; execute = 1;
     } else {
-        fprintf(stderr, "Usage: piano-resize-f2fs status [--expect-bytes EXPECTED_PARTITION_BYTES] | shrink --target-bytes NEW_PARTITION_BYTES --execute\n");
+        fprintf(stderr, "Usage: piano-resize-f2fs status [--expect-bytes BYTES] | shrink --target-bytes BYTES --execute | grow --expect-bytes BYTES --execute\n"
+                        "       piano-resize-f2fs install-early --execute | early-status | early-grow --execute\n");
         return 2;
     }
     if (getuid()) { fprintf(stderr, "Root permission required\n"); return 1; }
@@ -170,6 +202,17 @@ int main(int argc, char **argv) {
     uint64_t before, section;
     if (supers(mapper, &before, &section) || before > mapped_bytes / BLOCK_BYTES) {
         fprintf(stderr, "Mounted userdata plaintext F2FS superblocks differ\n"); return 1;
+    }
+    if (grow) {
+        if (raw_bytes > expected_bytes || before * BLOCK_BYTES > expected_bytes) {
+            fprintf(stderr, "Android expansion target is smaller than existing userdata\n");
+            return 3;
+        }
+        close(data); close(mapper); close(raw);
+        if (piano_f2fs_prepare_grow(mapper_path, userdata_path, expected_bytes)) {
+            perror("Prepare offline F2FS expansion"); return 1;
+        }
+        return 0;
     }
     if (!execute) {
         // GPT growth can be committed while Android still uses its old mapper.

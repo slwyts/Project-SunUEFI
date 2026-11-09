@@ -64,6 +64,14 @@ if [ -f "$MODPATH/installed-core.json" ]; then
   set_perm "$MODPATH/service.sh" 0 0 0755
   set_perm "$MODPATH/action.sh" 0 0 0755
   set_perm "$MODPATH/manager.sh" 0 0 0755
+  if [ -x /data/adb/ksud ] && /data/adb/ksud initrc --help >/dev/null 2>&1; then
+    if "$MODPATH/bin/piano-resize-f2fs" install-early --execute > /dev/null &&
+       /data/adb/ksud initrc refresh; then
+      ui_print "早期存储维护已安装，空间归还会在重启时完成。"
+    else
+      ui_print "早期存储维护未能安装；其他引导功能可继续使用，空间归还暂不可用。"
+    fi
+  fi
   ui_print "引导助手已安装。打开模块页面即可选择启动目标。"
   return 0
 fi

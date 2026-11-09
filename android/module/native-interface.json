@@ -113,8 +113,8 @@
       "images": "Native Android local-file picker; explicitly select ESP, root or both for each update. Only selected sources and destinations are opened for flashing; unselected partitions are preserved. The hashed v3 plan binds this selection. Raw or Android sparse sources check expanded bounds, stream RAW/FILL/DONT_CARE with CRC validation, and verify expanded SHA readback.",
       "root_resize": "Bundled static e2fsprogs; keep start, shrink filesystem before GPT, grow GPT before filesystem.",
       "create": "Free extent or native online F2FS shrink before GPT changes.",
-      "delete_return": "Remove contiguous project partitions, extend userdata end, verify OEM F2FS grow after normal Android boot.",
-      "device_write_validation": "Read-only plans validated; this implementation has not destructively resized/deleted/flashed device OS partitions."
+      "delete_return": "Require installed SukiSU early init import before removing contiguous project partitions. Keep userdata start, GUID and encryption; expand its end, stage one confirmed UUID/capacity request, then grow offline in late-fs using stock resize.f2fs and restore the original mount. Never unload KernelSU, force unmount or retry writes automatically.",
+      "device_write_validation": "Contiguous ESP/root deletion and GPT readback exercised on device; confirmed late-fs F2FS expansion from 219871686656 to 495286484992 bytes completed with matching plaintext mapping, equal superblocks, preserved UUID and unchanged BOOT. Credential-encrypted user files require unlock for content verification."
     }
   }
 }

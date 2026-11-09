@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Android online F2FS helper without running a device operation."""
+"""Build Android F2FS capacity tools and early maintenance; no device operation."""
 import argparse
 import hashlib
 import json
@@ -23,6 +23,7 @@ def build(output, compiler=None, sysroot=None, arch='aarch64'):
     if not cc:
         raise ValueError('F2FS helper compiler is unavailable')
     source = ROOT / 'tools/android/piano_resize_f2fs.c'
+    grow = ROOT / 'tools/android/piano_f2fs_grow.c'
     flags = ['-O2', '-std=c11', '-Wall', '-Wextra', '-Werror']
     if arch == 'aarch64':
         flags += ['-static']
@@ -35,7 +36,7 @@ def build(output, compiler=None, sysroot=None, arch='aarch64'):
         elif sysroot is not None:
             flags += ['--sysroot=' + str(sysroot.resolve())]
     binary = output / 'piano-resize-f2fs'
-    command = [cc, *flags, str(source), '-o', str(binary)]
+    command = [cc, *flags, str(source), str(grow), '-o', str(binary)]
     subprocess.run(command, env=env, check=True)
     data = binary.read_bytes()
     if data[:4] != b'\x7fELF' or (arch == 'aarch64' and int.from_bytes(data[18:20], 'little') != 183):
@@ -43,9 +44,14 @@ def build(output, compiler=None, sysroot=None, arch='aarch64'):
     record = {'arch': arch, 'compile_command': command,
               'source': str(source.relative_to(ROOT)),
               'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
+              'grow_source_sha256': hashlib.sha256(grow.read_bytes()).hexdigest(),
+              'grow_header_sha256': hashlib.sha256((grow.parent / 'piano_f2fs_grow.h').read_bytes()).hexdigest(),
+              'json_parser_sha256': hashlib.sha256((ROOT / 'android/native/jsmn.h').read_bytes()).hexdigest(),
               'binary': {'file': binary.name, 'bytes': len(data),
                          'sha256': hashlib.sha256(data).hexdigest()},
-              'commands': ['status [--expect-bytes BYTES]', 'shrink --target-bytes BYTES --execute'],
+              'commands': ['status [--expect-bytes BYTES]', 'shrink --target-bytes BYTES --execute',
+                           'grow --expect-bytes BYTES --execute', 'install-early --execute',
+                           'early-status', 'early-grow --execute'],
               'device_operation_performed': False, 'writes_gpt': False}
     (output / 'manifest.json').write_text(json.dumps(record, indent=2) + '\n')
     return record

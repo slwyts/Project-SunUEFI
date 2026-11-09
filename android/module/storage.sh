@@ -115,7 +115,7 @@ flash_reason=''
 delete_reason=''
 release_reason=''
 android_grow=false
-if piano_android_auto_grow; then android_grow=true; fi
+if piano_android_grow_ready; then android_grow=true; fi
 if [ "$create" = false ]; then
   if [ "$layout" != absent ]; then create_reason='已有 SunUEFI 分区，无需再次建立。'
   else create_reason='当前模块缺少 Android 数据分区调整组件。'; fi
@@ -135,7 +135,7 @@ if [ "$release" = false ]; then
   else release_reason='请更新模块以安装 Android 扩容检查组件。'; fi
 elif [ "$android_grow" = false ]; then
   release=false
-  release_reason='当前模块无法为此 Android 数据分区完成离线扩容，不能删除并归还空间。'
+  release_reason='早期存储维护尚未安装，请更新模块后重试。'
 fi
 printf '{"operation":"storage-status","read_only":true,"layout":"%s","partitions":[%s,%s],"userdata":{"device":"%s","mounted_device":"%s","filesystem":"%s","mapped":%s},"active_job_id":%s,"pending_android_expansion":%s,"android_expansion":%s,"android_grow_detected":%s,"capabilities":{"status":true,"flash_existing":%s,"create":%s,"resize":%s,"delete":%s,"release_to_android":%s,"file_picker":%s,"existing_image_installation":"module","partition_management":"plan-and-confirm"},"reasons":{"flash_existing":"%s","create":"%s","resize":"%s","delete":"%s","release_to_android":"%s"},%s\n' \
   "$layout" "$esp" "$root" "$userdata_device" "$userdata_source" "$userdata_filesystem" "$userdata_mapped" "$active_job" "$pending" "$expansion" "$android_grow" "$flash" "$create" "$resize" "$delete" "$release" "$backend" "$flash_reason" "$create_reason" "$resize_reason" "$delete_reason" "$release_reason" "$(printf '%s' "$sources" | sed 's/^{//')"

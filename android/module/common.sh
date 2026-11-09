@@ -39,20 +39,17 @@ piano_linux_available() {
     piano_fail "Linux requires an already installed sunuefi_esp and sunuefi_root pair."; return 1;
   }
 }
-piano_android_auto_grow() {
-  source=
-  while read -r device mountpoint filesystem remaining; do
-    if [ "$mountpoint" = /data ] && [ "$filesystem" = f2fs ]; then
-      source=$(readlink -f "$device") || return 1
-      break
+piano_android_grow_ready() (
+  tool=${MODDIR:-${MODPATH:-}}/bin/piano-resize-f2fs
+  [ -x "$tool" ] && "$tool" early-status >/dev/null 2>&1 || return 1
+  for rc in /metadata/vold/ksu/modules.rc /metadata/watchdog/ksu/modules.rc /metadata/ksu/modules.rc; do
+    if [ -s "$rc" ]; then
+      grep -qx 'import /metadata/sunuefi/storage-early.rc' "$rc"
+      return
     fi
-  done < /proc/mounts
-  # Stock fs_mgr can skip resize.f2fs for metadata-encrypted mappings.
-  # The module has no pre-mount expansion path for those devices yet.
-  case "$source" in /dev/block/sd[a-z][0-9]*) ;; *) return 1 ;; esac
-  [ -x /system/bin/resize.f2fs ] && [ -r /system/lib64/libfs_mgr.so ] &&
-    grep -aFq /system/bin/resize.f2fs /system/lib64/libfs_mgr.so
-}
+  done
+  return 1
+)
 # Inspect BLS type-1 entries as data. All payload paths stay inside the mounted
 # ESP; neither entry contents nor kernel command lines are executed.
 piano_esp_linux_present() (

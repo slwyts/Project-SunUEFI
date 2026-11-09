@@ -512,7 +512,7 @@ class AndroidStorageSizeTests(unittest.TestCase):
                     '\nexec ' + shlex.quote(str(self.binary)) + ' "$@" --offline ' +
                     shlex.quote(str(disk)) + ' 4096\n',
                 'piano-boot-request': '#!/bin/sh\nprintf \'{"target":0}\\n\'\n',
-                'piano-resize-f2fs': '#!/bin/sh\nprintf \'{"mapping_verified":true}\\n\'\n',
+                'piano-resize-f2fs': '#!/bin/sh\n[ "$1" != early-status ] || exit 1\nprintf \'{"mapping_verified":true}\\n\'\n',
                 'getprop': '#!/bin/sh\ncase "$1" in ro.product.device) echo piano;; '
                     'ro.boot.slot_suffix) echo _a;; esac\n',
                 'id': '#!/bin/sh\necho 0\n',
@@ -522,7 +522,7 @@ class AndroidStorageSizeTests(unittest.TestCase):
                 path.write_text(text)
                 path.chmod(0o755)
             env = {**os.environ, 'PATH': str(module / 'bin') + ':' + os.environ['PATH']}
-            # This host has no supported stock /data expansion path. The real
+            # This module has no installed early expansion path. The real
             # shell must refuse before asking the native planner to run.
             preview = subprocess.run([shell, str(module / 'storage-operations.sh'),
                                       'plan', 'delete-return'], env=env,

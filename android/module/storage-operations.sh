@@ -49,11 +49,9 @@ progress() {
 android_grow_support() {
   android_grow=false
   libfs_mgr_sha=unknown
-  if [ -r /system/lib64/libfs_mgr.so ]; then
-    libfs_mgr_sha=$(sha256sum /system/lib64/libfs_mgr.so | cut -d ' ' -f 1)
-    # A tool path alone does not show that this mounted device is resized.
-    if piano_android_auto_grow; then android_grow=true; fi
-  fi
+  [ ! -r /system/lib64/libfs_mgr.so ] || libfs_mgr_sha=$(sha256sum /system/lib64/libfs_mgr.so | cut -d ' ' -f 1)
+  # The native helper and the manager's early import must both be installed.
+  if piano_android_grow_ready; then android_grow=true; fi
 }
 verify_expansion() {
   if [ ! -f "$RECEIPT" ]; then
@@ -67,7 +65,7 @@ verify_expansion() {
   case "$expected" in ''|*[!0-9]*) echo 'Android 扩容目标容量无效。' >&2; return 1 ;; esac
   [ -n "$created_boot" ] || { echo 'Android 扩容记录缺少启动信息。' >&2; return 1; }
   if [ "$created_boot" = "$(cat /proc/sys/kernel/random/boot_id)" ]; then
-    progress pending_android_expansion 95 '分区空间已归还。请正常重启 Android，完成文件系统扩大。' true true
+    progress pending_android_expansion 95 '分区范围已扩大。请重启，由早期维护完成 Android 文件系统扩容。' true true
     cat "$STATE/$job.progress.json"
     return 0
   fi
@@ -85,13 +83,24 @@ verify_expansion() {
     if [ -f "$STATE/lock/job" ] && [ "$(cat "$STATE/lock/job")" = "$job" ] &&
        [ -f "$STATE/lock/boot" ] && [ "$(cat "$STATE/lock/boot")" != "$(cat /proc/sys/kernel/random/boot_id)" ]; then unlock; fi
   else
-    if piano_android_auto_grow; then
-      progress pending_android_expansion 95 '分区空间已归还，Android 文件系统尚未完成扩大。请查看详情后再继续。' false true
+    if piano_android_grow_ready; then
+      progress pending_android_expansion 95 'Android 空间归还尚未完成，请查看早期维护日志后再继续。' false true
     else
       progress pending_android_expansion 95 'Android 文件系统尚未扩大，当前模块不能完成此扩容。请勿格式化或重复删除。' false true
     fi
   fi
   cat "$STATE/$job.progress.json"
+}
+finish_expansion() {
+  [ "${2:-}" = --execute ] || { echo '请明确确认 Android 空间归还。' >&2; return 2; }
+  [ -f "$RECEIPT" ] || { echo '没有待完成的 Android 空间归还。' >&2; return 2; }
+  job=$(sed -n 's/.*"job_id":"\([0-9a-f]*\)".*/\1/p' "$RECEIPT")
+  expected=$(sed -n 's/.*"target_userdata_bytes":\([0-9][0-9]*\).*/\1/p' "$RECEIPT")
+  valid_id "$job" || { echo 'Android 扩容记录无效。' >&2; return 1; }
+  case "$expected" in ''|*[!0-9]*) echo 'Android 扩容目标容量无效。' >&2; return 1 ;; esac
+  check_android
+  piano_android_grow_ready || { echo '早期存储维护尚未安装，请更新模块。' >&2; return 1; }
+  "$RESIZER" grow --expect-bytes "$expected" --execute
 }
 check_android() {
   slot=$(getprop ro.boot.slot_suffix)
@@ -210,7 +219,7 @@ EOF
       "$RESIZER" status > "$STATE/$job.f2fs-before-return.json"
       android_grow_support
       [ "$android_grow" = true ] || {
-        echo '当前模块无法为此 Android 数据分区完成离线扩容，未删除独立分区。' >&2; return 1;
+        echo '缺少可用的早期存储维护，未删除独立分区。' >&2; return 1;
       }
       progress running 70 '正在删除 SunUEFI 分区，将空间归还 Android。'
       "$NATIVE" apply "$plan" "$STATE/$job.gpt-backup" --execute > "$STATE/$job.result.json"
@@ -219,7 +228,8 @@ EOF
       chmod 600 "$RECEIPT.tmp"
       mv "$RECEIPT.tmp" "$RECEIPT"
       sync
-      progress pending_android_expansion 95 '分区空间已归还。请正常重启 Android，完成文件系统扩大。' true true
+      "$RESIZER" grow --expect-bytes "$userdata_bytes" --execute > "$STATE/$job.early-maintenance.json"
+      progress pending_android_expansion 95 '分区范围已扩大。请重启，由早期维护完成 Android 文件系统扩容。' true true
       return 0
       ;;
     *) echo '不支持此存储操作。' >&2; return 1 ;;
@@ -234,6 +244,9 @@ EOF
 }
 
 case "${1:-}" in
+  finish-expansion)
+    finish_expansion "$@"
+    ;;
   verify-expansion)
     verify_expansion
     ;;
@@ -264,7 +277,7 @@ case "${1:-}" in
     if [ "$operation" = delete-return ]; then
       android_grow_support
       [ "$android_grow" = true ] || {
-        echo '当前模块无法为此 Android 数据分区完成离线扩容，不能删除并归还空间。' >&2; exit 1;
+        echo '缺少可用的早期存储维护，不能删除并归还空间。' >&2; exit 1;
       }
     fi
     section_bytes=
@@ -295,7 +308,7 @@ case "${1:-}" in
       "$RESIZER" status > "$STATE/$job.f2fs-before-return.json"
       android_grow_support
       [ "$android_grow" = true ] || {
-        echo '当前模块无法为此 Android 数据分区完成离线扩容，不能删除并归还空间。' >&2; exit 1;
+        echo '缺少可用的早期存储维护，不能删除并归还空间。' >&2; exit 1;
       }
       printf '{"plan_id":"%s","android_grow_detected":%s,%s\n' "$job" "$android_grow" "$(sed 's/^{//' "$STATE/$job.description.json")"
     else

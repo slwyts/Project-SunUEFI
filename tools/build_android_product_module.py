@@ -96,6 +96,7 @@ def add_licenses_and_records(output, sysroot, records):
                      'android/native/piano-bootloader.c', 'android/native/piano-bootloader.h',
                      'android/native/piano-storage.c', 'android/native/jsmn.h',
                      'android/native/jsmn-source.json', 'tools/android/piano_resize_f2fs.c',
+                     'tools/android/piano_f2fs_grow.c', 'tools/android/piano_f2fs_grow.h',
                      'uefi/handoff/bootselect/BootRequest.c', 'uefi/handoff/bootselect/BootRequest.h',
                      'tools/build_android_product_module.py', 'tools/build_boot_repack.py',
                      'tools/build_boot_request.py', 'tools/build_storage.py',

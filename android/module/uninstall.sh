@@ -1,6 +1,12 @@
 #!/system/bin/sh
 # Uninstallation may restore only an intact wrapper belonging to this exact current ROM.
 MODPATH=${0%/*}
+rm -f /mnt/vendor/persist/sunuefi/storage/grow.pending \
+  /mnt/vendor/persist/sunuefi/storage/grow.attempt \
+  /mnt/vendor/persist/sunuefi/storage/grow.log \
+  /mnt/vendor/persist/sunuefi/storage/piano-resize-f2fs \
+  /metadata/sunuefi/storage-early.rc
+rmdir /mnt/vendor/persist/sunuefi/storage /metadata/sunuefi 2>/dev/null || true
 if [ -f "$MODPATH/installed-core.json" ]; then
   echo "已移除引导助手，BOOT 保持原样。"
   exit 0
