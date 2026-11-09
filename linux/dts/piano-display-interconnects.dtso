@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/dts-v1/;
+/plugin/;
+
+/* Use the standard SM8750 MDSS/RPMh interconnect bindings from
+ * arch/arm64/boot/dts/qcom/sm8750.dtsi and
+ * include/dt-bindings/interconnect/qcom,sm8750-rpmh.h.
+ * The folded Android tree still has the downstream one-cell MMSS provider.
+ */
+/ {
+	fragment@0 {
+		target-path = "/soc/interconnect@1780000";
+		__overlay__ {
+			compatible = "qcom,sm8750-mmss-noc";
+			#interconnect-cells = <2>;
+			qcom,bcm-voters = <&apps_bcm_voter_ml>;
+			qcom,bcm-voter-names = "hlos";
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc/display-subsystem@ae00000";
+		__overlay__ {
+			/* MASTER_MDP=4, SLAVE_EBI1=1, TAG_ALWAYS=7;
+			 * MASTER_APPSS_PROC=2, SLAVE_DISPLAY_CFG=6, ACTIVE_ONLY=3.
+			 * DPU looks up these paths on its parent MDSS device.
+			 */
+			interconnects = <&mmss_noc 4 7 &mc_virt 1 7>,
+					<&gem_noc 2 3 &config_noc 6 3>;
+			interconnect-names = "mdp0-mem", "cpu-cfg";
+		};
+	};
+
+	fragment@2 {
+		target-path = "/soc/qcom,gdsc@adf134c";
+		__overlay__ {
+			/* Keep the retained camera-domain reference well formed:
+			 * downstream MASTER_CAMNOC_HF=10 and
+			 * SLAVE_MNOC_HF_MEM_NOC=557 become mainline IDs 0 and 11.
+			 */
+			interconnects = <&mmss_noc 0 7 &mmss_noc 11 7>;
+		};
+	};
+};

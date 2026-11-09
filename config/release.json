@@ -30,7 +30,8 @@
       "linux/dts/piano-pen-dock.dtso",
       "linux/dts/piano-pen-charger.dtso",
       "linux/dts/piano-bluetooth-nvm.dtso",
-      "linux/dts/piano-ir-spi-controller.dtso"
+      "linux/dts/piano-ir-spi-controller.dtso",
+      "linux/dts/piano-display-interconnects.dtso"
     ],
     "root_policy": "LABEL=PIANOROOT",
     "preferred_display_mode": {
