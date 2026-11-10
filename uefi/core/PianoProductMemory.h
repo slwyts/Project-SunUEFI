@@ -9,6 +9,9 @@ typedef struct {
   CONST CHAR8 *CaptureStage, *DtbStage;
   EFI_STATUS CaptureStatus, DtbStatus;
   UINTN CaptureIndex, DtbIndex;
+  CONST CHAR8 *CheckStage;
+  EFI_STATUS CheckStatus;
+  UINT64 CheckBase, CheckBytes;
   EFI_STATUS ColdHobStatus, ColdStatus, ColdPublishStatus;
   UINT32 ColdNativeCount, ColdCount, ColdRamCount, ColdReservedCount;
   UINT64 ColdEpoch, ColdDramBytes, ColdInputFingerprint;

@@ -39,6 +39,8 @@ BOOLEAN PianoFrameBufferMappingRetained(VOID){return RetainedMapping;}
 BOOLEAN PianoDisplayClockRetained(VOID){return RetainedClock;}
 BOOLEAN PianoProductDisplayOwnerRetained(VOID){return FALSE;}
 BOOLEAN PianoUsbControllerHostBlocked(VOID){return FALSE;}
+EFI_STATUS PianoUsbControllerRestrictToDiagnostics(VOID){assert(!"retained observers or lost services must not enter USB diagnostics");return EFI_ABORTED;}
+EFI_STATUS PianoUsbControllerPumpDiagnostics(UINTN BudgetUs){(VOID)BudgetUs;assert(!"retained observers or lost services must not pump USB");return EFI_ABORTED;}
 VOID PianoProductDisplayFenceExit(VOID){}
 UINTN EFIAPI AsciiSPrint(CHAR8 *Buffer,UINTN Size,CONST CHAR8 *Format,...){
   (VOID)Format;assert(Size==32);strcpy(Buffer,"pre:ClockDxe");return strlen(Buffer);

@@ -11,6 +11,22 @@ TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/us
 INC=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 OTHER=[ROOT/'upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include', ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include']
 class UsbServiceTests(unittest.TestCase):
+    def test_actual_fastboot_diagnostics_restriction(self):
+        with tempfile.TemporaryDirectory(prefix='piano-fastboot-diagnostics-') as directory:
+            for enabled in (0,1):
+                binary=Path(directory)/f'diagnostics-{enabled}'
+                flags=['-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter',
+                       '-g','-fsanitize=address,undefined','-fno-pie','-no-pie',
+                       f'-DPIANO_USB_SERVICE={enabled}',f'-DPIANO_USB_RAM_BOOT={enabled}']
+                for path in [INC,INC/HOST_PROCESSOR_BIND,*OTHER]: flags+=['-I',str(path)]
+                sources=[str(ROOT/'tests/native/test_fastboot.c')]
+                if enabled: sources+=[str(ROOT/'uefi/core/PianoFastbootBoot.c')]
+                subprocess.run(['cc',*flags,*sources,'-lcrypto','-o',str(binary)],check=True)
+                subprocess.run([str(binary)],check=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'})
+                if not enabled:
+                    reset=Path(directory)/'diagnostics-usb-reset'
+                    subprocess.run(['cc',*flags,str(ROOT/'tests/native/test_usb_screenshot_route.c'),'-lcrypto','-o',str(reset)],check=True)
+                    subprocess.run([str(reset)],check=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'})
     def test_actual_persistent_sources_and_default_off(self):
         with tempfile.TemporaryDirectory(prefix='piano-usb-service-') as directory:
             for enabled in (0,1):

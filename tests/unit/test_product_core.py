@@ -36,6 +36,7 @@ class ProductCoreTests(unittest.TestCase):
                     ROOT / 'uefi/components/nv', ROOT / 'uefi/components/reset',
                      ROOT / 'uefi/handoff/early-memory', ROOT / 'uefi/components/pogo-product',
                      ROOT / 'uefi/components/touch-product', mirror]
+        includes += [ROOT / 'uefi/components/board-identity', ROOT / 'uefi/components/rtc']
         compiled = subprocess.run(
             ['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-Wno-misleading-indentation',
              '-fshort-wchar', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',
@@ -68,3 +69,6 @@ class ProductCoreTests(unittest.TestCase):
 
     def test_standard_efi_requires_actual_active_manager_descendant(self):
         self.run_case('efi-admission')
+
+    def test_error_screen_uses_only_live_unretired_usb_diagnostics(self):
+        self.run_case('error-diagnostics')

@@ -13,6 +13,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <stdarg.h>
+EFI_SYSTEM_TABLE *gST;
+static EFI_SYSTEM_TABLE service_system_table;
 // The HAL fixture cannot validate a native close ledger. Model only the
 // trusted validator boundary here; its actual implementation has separate
 // owned-peer tests. This checks fresh capture, exact evidence and no replay.
@@ -141,6 +143,7 @@ static VOID setup_model(VOID) {
   hardware.Valid=TRUE;hardware.Base=0x15000000;hardware.Window=sizeof(smmu);hardware.ContextBase=0x8000;hardware.PageShift=12;hardware.Groups=4;hardware.Banks=2;hardware.Id0=4;hardware.Id1=0x20000002;
   hardware.Device[0]=bank(0,0x60,0x81000000);hardware.Device[1].Sid=0x40;hardware.RawSmr[0]=hardware.Device[0].Smr;load_hardware();
   extra_mmio_read=extra_read;gBS=&bs;gRT=&rt;bs.Stall=stall;bs.FreePool=service_pool_free;rt.ResetSystem=reset;bs.LocateProtocol=locate_clock;bs.InstallMultipleProtocolInterfaces=install;bs.UninstallMultipleProtocolInterfaces=uninstall;
+  ZeroMem(&service_system_table,sizeof(service_system_table));service_system_table.BootServices=gBS;gST=&service_system_table;
   ZeroMem(&clock,sizeof(clock));clock.Version=0x1000b;clock.GetClockID=clock.GetClockPowerDomainID=clock_id;clock.EnableClock=clock.EnableClockPowerDomain=clock_enable;clock.DisableClock=clock.DisableClockPowerDomain=clock_disable;
   lifecycle_continue=lifecycle_hold_ack=FALSE;stall_hook=tick;
 }
@@ -423,7 +426,7 @@ static EFI_STATUS report_status(VOID *Context,PIANO_FB_SEND Send,VOID *SendConte
     return EFI_SUCCESS;
   }
 
-  UINTN Rows=status_case==StatusQueueLimit?24:status_case==StatusQueueOverflow?26:2;
+  UINTN Rows=status_case==StatusQueueLimit?FB_QUEUE_FRAMES-8:status_case==StatusQueueOverflow?FB_QUEUE_FRAMES-6:2;
   for(UINTN I=0;I<Rows;++I){
     CHAR8 Row[32];int Bytes=snprintf(Row,sizeof(Row),"INFOmemory row %llu",(unsigned long long)I);
     assert(Bytes>4 && (UINTN)Bytes<sizeof(Row));
@@ -482,9 +485,8 @@ static VOID run_status(STATUS_CASE Test) {
     free_cold_model();return;
   }
   if(Test==StatusQueueOverflow){
-    // Seven fixed INFO rows plus 25 accepted callback rows fill the queue;
-    // the next callback row must fail without exceeding the 32-frame bound.
-    assert(Result==EFI_OUT_OF_RESOURCES && mFrameCount==32 && !mPending[3]);
+    // Fixed and callback INFO rows fill the queue before the next row fails.
+    assert(Result==EFI_OUT_OF_RESOURCES && mFrameCount==FB_QUEUE_FRAMES && !mPending[3]);
     assert(mService.State.LastStatus==EFI_OUT_OF_RESOURCES);
     free_cold_model();return;
   }
@@ -495,7 +497,7 @@ static VOID run_status(STATUS_CASE Test) {
     assert(Frame->Bytes>=4 && Frame->Bytes<=64);
     ++Frames;
   }
-  assert(Frames==mFrameCount && Frames==(Test==StatusQueueLimit?32:Test==StatusUnbound?8:10));
+  assert(Frames==mFrameCount && Frames==(Test==StatusQueueLimit?FB_QUEUE_FRAMES:Test==StatusUnbound?8:10));
   if(Test==StatusCallbackError || Test==StatusCallbackWarning){
     assert(status_has_frame("FAILstatus report unavailable") && !status_has_frame("OKAY"));
   }else{
@@ -684,6 +686,96 @@ static VOID run_service(UINTN Test) {
   }
   free_cold_model();
 }
+static VOID diagnostics_exit(VOID) {
+  restore_tpl_hook=NULL;
+  exit_notify((VOID *)0x102,NULL);
+}
+static VOID run_diagnostics(UINTN Test) {
+  setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;
+  bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;bs.SetTimer=set_timer;bs.CloseEvent=close_event;
+  clock.DisableClock=clock.DisableClockPowerDomain=persistent_disable;
+  PIANO_DWC3_SERVICE_CONFIG Config={.Context=(VOID *)0x55,.NowUs=now_us,.Storage=&backend};
+  assert(PianoUsbControllerServiceStart((VOID *)123,&Config)==EFI_SUCCESS);
+  assert(PianoUsbControllerPumpDiagnostics(5000)==EFI_NOT_READY);
+  UINT8 Bounce[4096];UINTN Queued=0;VOID *Payload=NULL;
+  if(Test==25){
+    service_enumerate();service_out("getvar:version");
+    assert(mPending[3] && mBulkTx.Active && mTrbs[3].Active && mFrames);
+    CopyMem(Bounce,mBulkTx.Cpu,sizeof(Bounce));Queued=mFrameCount;Payload=mPayload[3];
+  }
+  if(Test==26){
+    service_enumerate();((DWC_TRB *)mTrbs[0].Cpu)->Control&=~BIT0;service_event(1);
+    assert(mEnding[2] && mPending[2] && mTrbs[2].Active);
+  }
+  EFI_BOOT_SERVICES OtherServices=bs;EFI_SYSTEM_TABLE OtherTable=service_system_table;
+  switch(Test) {
+    case 1:mService.State.Busy=TRUE;break;
+    case 2:mService.Uncertain=TRUE;break;
+    case 3:mExperimentContractFailed=TRUE;break;
+    case 4:mPersistent.Unknown=TRUE;break;
+    case 5:mUsbCleanupBlocked=TRUE;break;
+    case 6:mPersistent.ServicesLost=TRUE;break;
+    case 7:mService.State.Retained=TRUE;break;
+    case 8:mService.State.Started=FALSE;break;
+    case 9:mService.State.Phase=PianoUsbServiceStopRequested;break;
+    case 10:mService.State.Action=PianoUsbServiceActionReboot;break;
+    case 11:mFastboot.RebootRequested=TRUE;break;
+    case 12:mFastboot.ExitRequested=TRUE;break;
+    case 13:mFastboot.Receiving=TRUE;break;
+    case 14:mFastboot.BootPreparing=TRUE;break;
+    case 15:mFastboot.BootPending=TRUE;break;
+    case 16:mFastboot.BootTransferFrozen=TRUE;break;
+    case 17:mBootAckObserved=TRUE;break;
+    case 18:mBootActionValid=TRUE;break;
+    case 19:service_system_table.BootServices=NULL;break;
+    case 20:gBS=&OtherServices;break;
+    case 21:gST=&OtherTable;break;
+    case 22:current_tpl=TPL_CALLBACK;break;
+    case 23:restore_tpl_hook=diagnostics_exit;break;
+    case 24:mService.State.ServicesLost=TRUE;break;
+  }
+  UINTN Captures=full_captures,Reads=backend_reads,Infos=backend_infos,Clocks=clock_calls,Events=event_creates;
+  EFI_STATUS Status=PianoUsbControllerRestrictToDiagnostics();
+  assert(full_captures==Captures && backend_reads==Reads && backend_infos==Infos &&
+    clock_calls==Clocks && event_creates==Events && !closes);
+  if(Test && Test!=25 && Test!=26) {
+    assert(Status!=EFI_SUCCESS && !mPersistent.DiagnosticsOnly && !mService.DiagnosticsOnly && !mFastboot.DiagnosticsOnly);
+    free_cold_model();return;
+  }
+  assert(Status==EFI_SUCCESS && mPersistent.DiagnosticsOnly && mService.DiagnosticsOnly && mFastboot.DiagnosticsOnly);
+  if(Test==25){
+    assert(mPending[3] && mBulkTx.Active && mTrbs[3].Active && mFrameCount==Queued && mPayload[3]==Payload);
+    assert(!memcmp(Bounce,mBulkTx.Cpu,sizeof(Bounce)));service_ack();
+  }
+  if(Test==26){
+    assert(mEnding[2] && mPending[2] && mTrbs[2].Active);
+    ((DWC_TRB *)mTrbs[2].Cpu)->Control&=~BIT0;service_event((8U<<24)|(7U<<6)|4);service_event(0x201);
+  }
+  // Enter before a PC enumerates, as on a failed unattended boot.
+  if(Test!=25)service_enumerate();assert(mFastboot.DiagnosticsOnly);
+  CONST CHAR8 *Blocked[]={"continue","reboot","boot","download:00000004","fetch:xbl_config_a:0x0:0x1","oem setup","oem shell","oem boot-stable"};
+  for(UINTN I=0;I<ARRAY_SIZE(Blocked);++I){
+    service_out(Blocked[I]);assert(mPending[3] && !memcmp(mBulkTx.Cpu,"FAIL",4));service_ack();
+    assert(mService.State.Phase==PianoUsbServiceListening && mService.State.Action==PianoUsbServiceActionNone);
+  }
+  service_out("getvar:max-download-size");assert(mPosted[3]==14 && !memcmp(mBulkTx.Cpu,"OKAY0x00000000",14));service_ack();
+  service_out("oem status");service_ack();
+  UINT32 *Header=calloc(1,0x200000);assert(Header);test_console=Header;
+  CONST CHAR8 *Text="SUNUEFI_RAMLOG_BEGIN\nboot failure retained\n";Header[0]=0x43474244;Header[1]=Header[2]=(UINT32)strlen(Text);CopyMem(Header+3,Text,strlen(Text));
+  service_out("oem ramlog");service_ack();assert(mFastboot.Upload && mFastboot.UploadBytes==strlen(Text) && !memcmp(mFastboot.Upload,Text,strlen(Text)));
+  service_out("upload");service_ack();
+  // Device reset and fresh SET_CONFIGURATION both call ClearFastboot.
+  ((DWC_TRB *)mTrbs[0].Cpu)->Control&=~BIT0;service_event(1);
+  ((DWC_TRB *)mTrbs[2].Cpu)->Control&=~BIT0;service_event((8U<<24)|(7U<<6)|4);service_event(0x201);service_enumerate();
+  assert(mFastboot.DiagnosticsOnly && mService.DiagnosticsOnly && mPersistent.DiagnosticsOnly);
+  service_out("reboot");assert(!memcmp(mBulkTx.Cpu,"FAIL",4));service_ack();
+  assert(PianoUsbControllerPumpDiagnostics(5000)==EFI_SUCCESS);
+  assert(full_captures==Captures && backend_reads==Reads && backend_infos==Infos && clock_calls==Clocks && event_creates==Events && !closes && !resets);
+  service_system_table.BootServices=NULL;
+  assert(PianoUsbControllerPumpDiagnostics(5000)!=EFI_SUCCESS);
+  assert(PianoDwc3ServicePumpDiagnostics(5000)!=EFI_SUCCESS);
+  free(Header);test_console=NULL;free_cold_model();
+}
 #endif
 #ifndef USB_SERVICE_TEST_MAIN
 #define USB_SERVICE_TEST_MAIN main
@@ -697,12 +789,15 @@ int USB_SERVICE_TEST_MAIN(void) {
   for(UINTN I=0;I<11;++I){pid_t P=fork();assert(P>=0);if(P==0){run_navigation(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB product navigation case %llu failed\n",(unsigned long long)I);return 1;}}
   for(UINTN I=0;I<8;++I){pid_t P=fork();assert(P>=0);if(P==0){run_ramlog(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB before-ramlog case %llu failed\n",(unsigned long long)I);return 1;}}
   for(STATUS_CASE I=0;I<StatusCaseCount;++I){pid_t P=fork();assert(P>=0);if(P==0){run_status(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB status-report case %u failed\n",(unsigned)I);return 1;}}
-  puts("Actual Device+Controller persistent USB: 15 reset/startup-proof + 21 lifecycle + 11 navigation + 8 before-ramlog + 11 status-report cases PASS; phase-aware reset cleanup, inactive-ring proof, bounded diagnostic rows, cached console failure and EBS halt-retain; no device.");
+  for(UINTN I=0;I<27;++I){pid_t P=fork();assert(P>=0);if(P==0){run_diagnostics(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB diagnostics case %u failed\n",(unsigned)I);return 1;}}
+  puts("Actual Device+Controller persistent USB: 15 reset/startup-proof + 21 lifecycle + 11 navigation + 8 before-ramlog + 11 status-report + 27 failure-diagnostics cases PASS; in-flight response/END preservation, diagnostic enumeration/reset, saved log upload and fail-closed state checks; no device.");
 #else
   PIANO_USB_STARTUP_FAILURE_EVIDENCE Evidence;assert(PianoDwc3GetStartupFailureEvidence(&Evidence)==EFI_UNSUPPORTED && Evidence.Revision==1);
   (VOID)backend;PIANO_DWC3_SERVICE_STATUS S;PIANO_USB_SERVICE_RETIRE_REPORT R;PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID *)0x55,.NowUs=NULL};
   assert(PianoUsbControllerServiceStart(NULL,&C)==EFI_UNSUPPORTED && PianoDwc3ServiceStart(NULL,NULL,&C)==EFI_UNSUPPORTED);
   assert(PianoUsbControllerServicePumpApp(1,1000)==EFI_UNSUPPORTED && PianoDwc3ServicePollBounded(1)==EFI_UNSUPPORTED);
+  assert(PianoUsbControllerRestrictToDiagnostics()==EFI_UNSUPPORTED && PianoUsbControllerPumpDiagnostics(1000)==EFI_UNSUPPORTED);
+  assert(PianoDwc3ServiceRestrictToDiagnostics()==EFI_UNSUPPORTED && PianoDwc3ServicePumpDiagnostics(1000)==EFI_UNSUPPORTED);
   assert(PianoUsbControllerServiceGetStatus(&S)==EFI_UNSUPPORTED && PianoUsbControllerServiceStop(EFI_SUCCESS,&R)==EFI_UNSUPPORTED);
   model_init();configure();cmd("oem setup","FAILcommand disabled by RAM-only policy");cmd("oem shell","FAILcommand disabled by RAM-only policy");cmd("oem simpleinit","FAILcommand disabled by RAM-only policy");
   assert(Halt()==EFI_SUCCESS);for(UINTN I=0;I<ARRAY_SIZE(all);++I){if(all[I]->Active)assert(PianoDmaComplete(all[I],EFI_SUCCESS,TRUE)==EFI_SUCCESS);assert(PianoDmaFree(all[I])==EFI_SUCCESS);}ClearFastboot();

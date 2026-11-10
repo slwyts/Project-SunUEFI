@@ -83,7 +83,7 @@ typedef struct FB_FRAME {struct FB_FRAME *Next;UINTN Bytes,Offset;UINT8 Data[1];
 STATIC FB_FRAME *mFrames,*mFramesTail;
 STATIC UINTN mFrameCount,mFrameBytes,mInFlightBytes;
 // Status includes bounded startup reports even when the RAM console is absent.
-#define FB_QUEUE_FRAMES 32U
+#define FB_QUEUE_FRAMES 48U
 #define FB_QUEUE_BYTES (PIANO_FASTBOOT_MAX_DOWNLOAD+1024U)
 EFI_STATUS PianoDwc3SetBootForExperiment(CONST PIANO_FB_BOOT *Boot) {
   if(mExperimentRunning)return EFI_NOT_READY;
@@ -393,7 +393,7 @@ STATIC EFI_STATUS FastbootDiagnostic(VOID *Context,PIANO_FASTBOOT *State,CONST C
   }
 #endif
   if(!AsciiStrCmp(Cmd,"oem status")) {
-    CONST CHAR8 *Rows[]={"INFOstorage-policy:no-persistent-writes","INFOtransport:owned-DMA-SMMU-bulk","INFOram-upload:download-or-frozen-log"};
+    CONST CHAR8 *Rows[]={"INFOstorage-policy:no-persistent-writes","INFOtransport:owned-DMA-SMMU-bulk",mFastboot.DiagnosticsOnly?"INFOram-upload:frozen-diagnostics":"INFOram-upload:download-or-frozen-log"};
     for(UINTN I=0;I<ARRAY_SIZE(Rows);++I){EFI_STATUS S=FastbootSend(NULL,Rows[I],AsciiStrLen(Rows[I]));if(EFI_ERROR(S))return S;}
     CHAR8 Row[60]="INFODSTS:";FastHex(Dr(0xC70C),Row+9);
     EFI_STATUS S=FastbootSend(NULL,Row,AsciiStrLen(Row));if(EFI_ERROR(S))return S;
@@ -855,6 +855,8 @@ Exit:
 #define SERVICE_EVENTS 64U
 STATIC struct {
   PIANO_OWNED_SMMU *Context;PIANO_DMA_DEVICE *Device;PIANO_DWC3_SERVICE_CONFIG Config;
+  EFI_BOOT_SERVICES *Services;EFI_SYSTEM_TABLE *SystemTable;
+  BOOLEAN DiagnosticsOnly;
   PIANO_DWC3_SERVICE_STATUS State;
   UINT32 Events[SERVICE_EVENTS];UINTN Head,Count;
   UINT32 OldGctl,OldDcfg,OldSize,OldLow,OldHigh,OldSessionHs,OldSessionSs,OldGusb2,OldPipe;
@@ -889,6 +891,38 @@ STATIC BOOLEAN ServiceRestoreReadback(UINT32 Offset,UINT32 Expected) {
 STATIC BOOLEAN ServiceAtApp(VOID) {
   if(mService.State.ServicesLost || gBS==NULL || gBS->RaiseTPL==NULL || gBS->RestoreTPL==NULL)return FALSE;
   EFI_TPL Old=gBS->RaiseTPL(TPL_HIGH_LEVEL);gBS->RestoreTPL(Old);return Old==TPL_APPLICATION;
+}
+STATIC BOOLEAN ServiceDiagnosticsLive(BOOLEAN CheckBusy) {
+  if(!mService.State.Started || mService.State.Phase!=PianoUsbServiceListening ||
+     mService.State.Retained || mService.State.ServicesLost || (CheckBusy && mService.State.Busy) ||
+     mService.State.Action!=PianoUsbServiceActionNone || mService.Uncertain || mExperimentContractFailed ||
+     !mExperimentRunning || mService.StartStatus!=EFI_SUCCESS || !mService.EverStarted ||
+     mFastboot.RebootRequested || mFastboot.ExitRequested || mFastboot.Receiving ||
+     mFastboot.BootPreparing || mFastboot.BootPending || mFastboot.BootTransferFrozen)return FALSE;
+#if PIANO_USB_RAM_BOOT
+  if(mBootAckObserved || mBootActionValid)return FALSE;
+#endif
+  return gBS && gBS==mService.Services && gST && gST==mService.SystemTable &&
+    gST->BootServices==gBS && gBS->RaiseTPL && gBS->RestoreTPL;
+}
+STATIC EFI_STATUS ServiceDiagnosticsReady(VOID) {
+  if(!ServiceDiagnosticsLive(TRUE))return EFI_NOT_READY;
+  if(!ServiceAtApp())return EFI_UNSUPPORTED;
+  // RestoreTPL may dispatch the EBS fence before returning to APP.
+  return ServiceDiagnosticsLive(TRUE)?EFI_SUCCESS:EFI_ABORTED;
+}
+EFI_STATUS PianoDwc3ServiceRestrictToDiagnostics(VOID) {
+  EFI_STATUS Status=ServiceDiagnosticsReady();if(Status!=EFI_SUCCESS)return Status;
+  // Queued frames already own their copies and EP3 uses a separate bounce
+  // buffer. Keep them and pending END transfers intact while limiting commands.
+  Status=PianoFastbootRestrictToDiagnostics(&mFastboot);
+  if(Status!=EFI_SUCCESS)return Status;
+  if(!ServiceDiagnosticsLive(TRUE))return EFI_ABORTED;
+  mService.DiagnosticsOnly=TRUE;return EFI_SUCCESS;
+}
+EFI_STATUS PianoDwc3ServicePumpDiagnostics(UINTN BudgetUs) {
+  if(!mService.DiagnosticsOnly || !mFastboot.DiagnosticsOnly)return EFI_NOT_READY;
+  return PianoDwc3ServicePumpApp(PIANO_PRODUCT_PUMP_APP,BudgetUs);
 }
 STATIC EFI_STATUS ServiceBeforeRamlog(BOOLEAN *ServicesLost) {
   *ServicesLost=mService.State.ServicesLost;if(*ServicesLost)return EFI_ABORTED;
@@ -1038,13 +1072,14 @@ EFI_STATUS PianoDwc3ServiceStart(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Dev
   if(Context==NULL || Device==NULL || Config==NULL || Config->NowUs==NULL)return EFI_INVALID_PARAMETER;
   if(gBS->RaiseTPL==NULL || gBS->RestoreTPL==NULL)return EFI_UNSUPPORTED;
   if(!ServiceAtApp())return EFI_UNSUPPORTED;
-  if(mExperimentRunning || mService.State.Retained || mService.State.ServicesLost)return EFI_ALREADY_STARTED;
+  if(mExperimentRunning || mService.State.Retained || mService.State.ServicesLost || mService.DiagnosticsOnly)return EFI_ALREADY_STARTED;
   if(!Context->Attached || !Context->Verified || Context->Domain==NULL || !Context->TableMemory.Signature || Context->TableMemory.Quarantined ||
      Device->Context!=Context || Device->StreamId!=0x40)return EFI_NOT_READY;
 #if PIANO_USB_RAM_BOOT
   if(mBootActionValid)return EFI_ALREADY_STARTED;
 #endif
   ZeroMem(&mService,sizeof(mService));mService.Context=Context;mService.Device=Device;mService.Config=*Config;mService.State.Revision=1;
+  mService.Services=gBS;mService.SystemTable=gST;
   mService.StartStatus=mService.CleanupStatus=EFI_NOT_READY;
   ZeroMem(&mDeviceRetire,sizeof(mDeviceRetire));
   mExperimentRunning=TRUE;mExperimentContractFailed=FALSE;mRebootAfterCleanup=FALSE;
@@ -1093,6 +1128,7 @@ EFI_STATUS PianoDwc3ServiceStart(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Dev
 EFI_STATUS PianoDwc3ServicePollBounded(UINTN MaxEvents) {
   if(!MaxEvents || MaxEvents>SERVICE_EVENTS)return EFI_INVALID_PARAMETER;
   if(!mService.State.Started || mService.State.ServicesLost || mService.State.Phase!=PianoUsbServiceListening)return EFI_NOT_READY;
+  if(mService.DiagnosticsOnly && (!mFastboot.DiagnosticsOnly || !ServiceDiagnosticsLive(FALSE)))return EFI_NOT_READY;
   UINT32 Count=Dr(0xC40C)&0xffff;if(!Count)return EFI_NOT_READY;
   if(Count>4096 || (Count&3)){mService.Uncertain=TRUE;return ServiceError(EFI_COMPROMISED_DATA);}
   EFI_STATUS S=PianoDmaSyncForCpuQuiet(&mRing);if(S!=EFI_SUCCESS){mService.Uncertain=TRUE;return ServiceError(S);}
@@ -1107,7 +1143,8 @@ EFI_STATUS PianoDwc3ServicePollBounded(UINTN MaxEvents) {
 EFI_STATUS PianoDwc3ServicePumpApp(UINT32 Reason,UINTN BudgetUs) {
   if(!Reason || (Reason&~7U) || !BudgetUs || BudgetUs>100000)return EFI_INVALID_PARAMETER;
   if(!mService.State.Started || mService.State.ServicesLost)return EFI_NOT_READY;
-  if(!ServiceAtApp())return EFI_UNSUPPORTED;
+  if(mService.DiagnosticsOnly){EFI_STATUS Ready=ServiceDiagnosticsReady();if(Ready!=EFI_SUCCESS)return Ready;}
+  else if(!ServiceAtApp())return EFI_UNSUPPORTED;
   if(mService.State.Busy)return EFI_ALREADY_STARTED;
   if(mService.State.Phase!=PianoUsbServiceListening)return mService.State.LastStatus;
   mService.State.Busy=TRUE;UINT64 Start=mService.Config.NowUs(mService.Config.Context);EFI_STATUS S=EFI_SUCCESS;
@@ -1120,7 +1157,9 @@ EFI_STATUS PianoDwc3ServicePumpApp(UINT32 Reason,UINTN BudgetUs) {
     if(!mService.Count){gBS->RestoreTPL(Old);break;}
     UINT32 E=mService.Events[mService.Head];mService.Head=(mService.Head+1)%SERVICE_EVENTS;--mService.Count;
     gBS->RestoreTPL(Old);
+    if(mService.DiagnosticsOnly && (!mFastboot.DiagnosticsOnly || !ServiceDiagnosticsLive(FALSE))){S=EFI_ABORTED;break;}
     S=Event(E);if(S!=EFI_SUCCESS){S=ServiceError(S);break;}
+    if(mService.DiagnosticsOnly && (!mFastboot.DiagnosticsOnly || !ServiceDiagnosticsLive(FALSE))){S=EFI_ABORTED;break;}
     if(mExperimentContractFailed){S=ServiceError(EFI_DEVICE_ERROR);break;}
     if(!mFrames && !mPending[3] && !mEnding[3]) {
       if(mFastboot.RebootRequested || mFastboot.ExitRequested) {
@@ -1139,6 +1178,7 @@ EFI_STATUS PianoDwc3ServicePumpApp(UINT32 Reason,UINTN BudgetUs) {
   mService.State.BulkActive=mService.State.Phase==PianoUsbServiceListening && mBulkLive &&
     (mFrames!=NULL || mPending[3] || mFastboot.Receiving);
   mService.State.OutBytes=mBulkOutBytes;mService.State.InBytes=mBulkInBytes;
+  if(mService.DiagnosticsOnly && (!mFastboot.DiagnosticsOnly || !ServiceDiagnosticsLive(FALSE)))S=EFI_ABORTED;
   mService.State.Busy=FALSE;return S;
 }
 EFI_STATUS PianoDwc3ServiceStop(EFI_STATUS Reason) {
@@ -1271,6 +1311,8 @@ VOID PianoDwc3ServiceReplayStartup(VOID){}
 EFI_STATUS PianoDwc3ServiceStart(PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D,CONST PIANO_DWC3_SERVICE_CONFIG *Config){(VOID)C;(VOID)D;(VOID)Config;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoDwc3ServicePollBounded(UINTN N){(VOID)N;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoDwc3ServicePumpApp(UINT32 Reason,UINTN BudgetUs){(VOID)Reason;(VOID)BudgetUs;return EFI_UNSUPPORTED;}
+EFI_STATUS PianoDwc3ServiceRestrictToDiagnostics(VOID){return EFI_UNSUPPORTED;}
+EFI_STATUS PianoDwc3ServicePumpDiagnostics(UINTN BudgetUs){(VOID)BudgetUs;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoDwc3ServiceStop(EFI_STATUS Reason){(VOID)Reason;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoDwc3ServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){if(S==NULL)return EFI_INVALID_PARAMETER;ZeroMem(S,sizeof(*S));S->Revision=1;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoDwc3ServiceFenceExit(VOID){return EFI_UNSUPPORTED;}

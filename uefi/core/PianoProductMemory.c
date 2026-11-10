@@ -176,6 +176,10 @@ VOID PianoProductMemoryGetDiagnostic(PIANO_PRODUCT_MEMORY_DIAGNOSTIC *Report){
  Report->DtbStage=mDtbStage;
  Report->DtbStatus=mDtbStatus;
  Report->DtbIndex=mDtbIndex;
+ Report->CheckStage=mCheck.Stage;
+ Report->CheckStatus=mCheck.Status;
+ Report->CheckBase=mCheck.Base;
+ Report->CheckBytes=mCheck.Bytes;
 
  // Inspect only existing HOB payloads. Values remain visible when their CRC
  // or producer status is bad; the companion status never grants authority.

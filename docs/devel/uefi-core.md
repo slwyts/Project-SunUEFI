@@ -66,6 +66,8 @@ PianoProductCoreEntry (uefi/core/PianoProductCore.c)
 
 该服务明确拒绝 `flash`、`erase`、`flashing` 等改写分区的危险操作，详见 [UEFI Fastboot](../user/fastboot.md)。
 
+错误提示页仅在 BootServices、USB 设备及其 SMMU 资源仍有效，且各资源尚未进入退出流程时运行诊断循环。循环绕过启动策略、输入和 USB 角色切换，只泵送现有 USB 设备。Fastboot 单向限制为状态、日志、截图及诊断快照上传，USB 重置不会解除限制。已开始资源退出、USB 保留状态不确定或 BootServices 失效时直接停止，不重新初始化控制器。状态查询同时输出保存的 EFI 镜像、设备树、内存和交接检查结果，不重新探测失败的硬件。
+
 ## SimpleInit 图形菜单与启动画面
 
 固件整合了定制的 SimpleInit 图形菜单，针对 3200×2136 分辨率的平板屏幕进行四倍字体放大：

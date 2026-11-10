@@ -35,6 +35,14 @@ VOID PianoFastbootReset(PIANO_FASTBOOT *S) {
   S->BootPending=FALSE;S->BootValidatedDownload=NULL;S->BootValidatedBytes=0;
   ZeroMem(&S->BootView,sizeof(S->BootView));ZeroMem(&S->BootProof,sizeof(S->BootProof));
 }
+EFI_STATUS PianoFastbootRestrictToDiagnostics(PIANO_FASTBOOT *S) {
+  if(S==NULL)return EFI_INVALID_PARAMETER;
+  if(S->BootPreparing || S->BootPending || S->BootTransferFrozen)return EFI_NOT_READY;
+  if(S->DiagnosticsOnly)return EFI_SUCCESS;
+  PianoFastbootReset(S);
+  S->DiagnosticsOnly=TRUE;
+  return EFI_SUCCESS;
+}
 EFI_STATUS PianoFastbootStageCopy(PIANO_FASTBOOT *S,CONST VOID *Data,UINTN Bytes) {
   if(S==NULL || Data==NULL || Bytes==0 || Bytes>PIANO_FASTBOOT_MAX_DOWNLOAD || S->Receiving)return EFI_INVALID_PARAMETER;
   if(S->BootPreparing || S->BootPending || S->BootTransferFrozen)return EFI_NOT_READY;
@@ -107,7 +115,7 @@ Rejected:
 }
 #endif
 STATIC BOOLEAN StorageReady(PIANO_FASTBOOT *S) {
-  return S->Storage.Ready!=NULL && S->Storage.Info!=NULL && S->Storage.ReadBlocks!=NULL && S->Storage.Ready(S->Storage.Context)==EFI_SUCCESS;
+  return !S->DiagnosticsOnly && S->Storage.Ready!=NULL && S->Storage.Info!=NULL && S->Storage.ReadBlocks!=NULL && S->Storage.Ready(S->Storage.Context)==EFI_SUCCESS;
 }
 STATIC BOOLEAN PartitionName(CONST CHAR8 *Name) {
   UINTN N=0;
@@ -147,8 +155,9 @@ STATIC EFI_STATUS GetVar(PIANO_FASTBOOT *S, CONST CHAR8 *Name) {
   if(Equal(Name,"version-bootloader"))return Reply(S,"OKAYSunUEFI-debug-v1");
   if(Equal(Name,"is-userspace"))return Reply(S,"OKAYno");
   if(Equal(Name,"storage-policy"))return Reply(S,"OKAYno-persistent-writes");
-  if(Equal(Name,"max-download-size"))return Reply(S,"OKAY0x04000000");
+  if(Equal(Name,"max-download-size"))return Reply(S,S->DiagnosticsOnly?"OKAY0x00000000":"OKAY0x04000000");
   if(Equal(Name,"SunUEFI:ram-boot")) {
+    if(S->DiagnosticsOnly)return Reply(S,"OKAYdisabled");
 #if PIANO_USB_RAM_BOOT
     return Reply(S,S->Boot.Ready!=NULL && S->Boot.Validate!=NULL && S->Boot.TakeAfterAck!=NULL &&
       S->Boot.MaxImageBytes!=0 && S->Boot.Ready(S->Boot.Context)==EFI_SUCCESS?"OKAYenabled":"OKAYdisabled");
@@ -161,8 +170,8 @@ STATIC EFI_STATUS GetVar(PIANO_FASTBOOT *S, CONST CHAR8 *Name) {
     return Reply(S,Result);
   }
   if(Equal(Name,"all")) {
-    STATIC CONST CHAR8 *Rows[]={"INFOproduct:piano-sunuefi","INFOversion:0.4",
-      "INFOstorage-policy:no-persistent-writes","INFOmax-download-size:0x04000000"};
+    CONST CHAR8 *Rows[]={"INFOproduct:piano-sunuefi","INFOversion:0.4",
+      "INFOstorage-policy:no-persistent-writes",S->DiagnosticsOnly?"INFOmax-download-size:0x00000000":"INFOmax-download-size:0x04000000"};
     for(UINTN I=0;I<ARRAY_SIZE(Rows);++I) {
       EFI_STATUS Status=Reply(S,Rows[I]);if(EFI_ERROR(Status))return Status;
     }
@@ -297,6 +306,9 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes)
   for(UINTN I=0;I<Bytes;++I)if(Raw[I]<0x20 || Raw[I]>0x7e)
     return Reply(S,"FAILinvalid command bytes");
   CHAR8 Cmd[65];CopyMem(Cmd,Data,Bytes);Cmd[Bytes]=0;
+  if(S->DiagnosticsOnly && AsciiStrnCmp(Cmd,"getvar:",7) && !Equal(Cmd,"upload") &&
+     !Equal(Cmd,"oem status") && !Equal(Cmd,"oem ramlog") && !Equal(Cmd,"oem screenshot"))
+    return Reply(S,"FAILonly diagnostics available after boot failure");
   if(!AsciiStrnCmp(Cmd,"getvar:",7))return GetVar(S,Cmd+7);
   if(!AsciiStrnCmp(Cmd,"download:",9))return Download(S,Cmd+9);
   if(!AsciiStrnCmp(Cmd,"fetch:",6))return Fetch(S,Cmd+6);

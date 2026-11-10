@@ -52,6 +52,8 @@ STATIC EFI_HANDLE mSystemdEsp;
 STATIC BOOLEAN mSystemdActive,mSystemdEntering;
 STATIC CONST CHAR8 *mEfiImageStage="not-started";
 STATIC EFI_STATUS mEfiImageStatus=EFI_NOT_STARTED;
+STATIC EFI_STATUS mFailureStatus=EFI_NOT_STARTED;
+STATIC BOOLEAN mFailureDiagnostics;
 STATIC BOOLEAN mUfsAttempted,mUfsStarted,mInputStarted;
 STATIC EFI_STATUS mUfsStatus=EFI_NOT_STARTED;
 STATIC UINT64 mCounterFrequency,mCounterStart,mCounterEnd;
@@ -130,7 +132,7 @@ STATIC EFI_STATUS ProductReportStatus(VOID *Context,PIANO_FB_SEND Send,VOID *Sen
 
   // Fastboot INFO payloads are at most 64 bytes, including the INFO prefix.
   // The USB service has space for these rows plus its transport/log status.
-  CHAR8 Lines[24][64];
+  CHAR8 Lines[32][64];
   UINTN Count=0;
 #define STATUS_LINE(...) AsciiSPrint(Lines[Count++],sizeof(Lines[0]),__VA_ARGS__)
   STATUS_LINE("INFOfixup stage=%a calls=%u",Fixup.Stage,Fixup.Calls);
@@ -156,6 +158,14 @@ STATIC EFI_STATUS ProductReportStatus(VOID *Context,PIANO_FB_SEND Send,VOID *Sen
   STATUS_LINE("INFOearly payload=%u faults=%u",Memory.EarlyRawPayloadBytes,Memory.EarlyRecoveredFaults);
   STATUS_LINE("INFOsmem version=%u banks=%u entries=%u",Memory.SmemRamVersion,Memory.SmemBankCount,Memory.SmemRawEntryCount);
   STATUS_LINE("INFOsmem reason=%u parsed=%u payload=%u",Memory.SmemReason,Memory.SmemParsed,Memory.RawPayloadCoherent);
+  STATUS_LINE("INFOefi %a %016lx",mEfiImageStage,mEfiImageStatus);
+  STATUS_LINE("INFOlate %a %016lx",mLateHandoff.Diagnostic.Stage,mLateHandoff.Diagnostic.Result);
+  STATUS_LINE("INFOexit phase=%u entries=%u retires=%u",mLateHandoff.Phase,mLateHandoff.Diagnostic.EnterCalls,mLateHandoff.RetireCalls);
+  STATUS_LINE("INFOcheck %a %016lx",Memory.CheckStage,Memory.CheckStatus);
+  STATUS_LINE("INFOrange base=%lx bytes=%lx",Memory.CheckBase,Memory.CheckBytes);
+  STATUS_LINE("INFOfailure stage=%a status=%016lx",mBootLogStage,mFailureStatus);
+  STATUS_LINE("INFOowners phase=%u retired=%x",mOwners.Report.Phase,mOwners.Report.RetiredMask);
+  STATUS_LINE("INFOstartup target=%u diagnostics=%u",mStartupTarget,mFailureDiagnostics);
   STATUS_LINE("INFOsmem metadata=%u repeated=%u early=%016lx",Memory.SmemRepeatedMetadataEqual,Memory.SmemRepeatedPayloadEqual,PianoProductEarlySmemStatus());
 #undef STATUS_LINE
 
@@ -235,7 +245,31 @@ STATIC EFI_STATUS InitUfs(CONST VOID *Fdt) {
   mUfsAttempted=TRUE;mUfsStatus=PianoUfsReadOnlyDmaExperiment(Fdt);
   mUfsStarted=mUfsStatus==EFI_SUCCESS;return mUfsStatus;
 }
+STATIC BOOLEAN FailureDiagnosticsSafe(VOID) {
+  if(!BootLogAlive() || !gBS->Stall || PianoProductDisplayRetained() ||
+     PianoDisplaySmmuRetained() || PianoFrameBufferMappingRetained() ||
+     PianoDisplayClockRetained() || PianoProductDisplayOwnerRetained())return FALSE;
+  CONST PIANO_PRODUCT_OWNERS_REPORT *Owners=&mOwners.Report;
+  if(Owners->Busy || Owners->Retained || Owners->Clean || Owners->ServicesLost ||
+     Owners->RetiredMask || Owners->PolicyStopped || Owners->UsbStopped ||
+     Owners->Phase>=PianoProductOwnersRetiring)return FALSE;
+  return !mLateHandoff.Busy && !mLateHandoff.Retained && !mLateHandoff.RetireCalls &&
+    mLateHandoff.Phase!=PianoExitRetiring && mLateHandoff.Phase!=PianoExitClean &&
+    mLateHandoff.Phase!=PianoExitRetained;
+}
+STATIC VOID RunFailureDiagnostics(VOID) {
+  if(!FailureDiagnosticsSafe() || PianoUsbControllerRestrictToDiagnostics()!=EFI_SUCCESS)return;
+  mFailureDiagnostics=TRUE;
+  // Keep only the existing USB worker alive. The runtime pump can touch
+  // input, storage and boot actions whose failure brought us here.
+  while(FailureDiagnosticsSafe()) {
+    if(PianoUsbControllerPumpDiagnostics(1000)!=EFI_SUCCESS || !FailureDiagnosticsSafe())break;
+    if(gBS->Stall(1000)!=EFI_SUCCESS)break;
+  }
+  mFailureDiagnostics=FALSE;
+}
 STATIC VOID FailStop(EFI_STATUS Status) {
+  mFailureStatus=Status;
   DEBUG((DEBUG_ERROR,"PIANO_START_FAILED stage=%a handoff=%a status=%r recovery=hold-power-reboot-volume-up-Android\n",mBootLogStage,mHandoffStage,Status));
   // A retained observer may still own an exception handler or have lost its
   // service lifetime. Do not make another display/protocol call on that path.
@@ -267,6 +301,7 @@ STATIC VOID FailStop(EFI_STATUS Status) {
     }
     if(BootLogAlive())(VOID)PianoProductBootLogMessage(L"未能启动系统",Detail,Status,TRUE);
   }
+  RunFailureDiagnostics();
 #ifdef __aarch64__
   __asm__ volatile("msr daifset, #15" ::: "memory");
 #endif

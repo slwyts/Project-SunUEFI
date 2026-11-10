@@ -24,6 +24,8 @@ class ProductBootLogLifecycleTests(unittest.TestCase):
                     ROOT / 'uefi/components/reset',
                     ROOT / 'uefi/components/pogo-product',
                     ROOT / 'uefi/components/touch-product',
+                    ROOT / 'uefi/components/board-identity',
+                    ROOT / 'uefi/components/rtc',
                     ROOT / 'uefi/handoff/early-memory']
         with tempfile.TemporaryDirectory(prefix='piano-core-bootlog-') as temporary:
             executable = Path(temporary) / 'lifecycle'

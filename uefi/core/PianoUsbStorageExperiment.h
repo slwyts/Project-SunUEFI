@@ -10,6 +10,9 @@ typedef struct {UINT64 Revision;EFI_STATUS (*Halt)(VOID);} PIANO_USB_SHUTDOWN;
 EFI_STATUS PianoDwc3SetStorageForExperiment(CONST PIANO_FB_STORAGE *Storage);
 EFI_STATUS PianoDwc3SetStorageCheckForExperiment(PIANO_USB_STORAGE_CHECK Check,VOID *Context);
 EFI_STATUS PianoDwc3CheckStorageForExperiment(CONST CHAR8 *Phase,BOOLEAN FullCapture);
+// Failure-screen diagnostics use only the existing live USB device owner.
+EFI_STATUS PianoUsbControllerRestrictToDiagnostics(VOID);
+EFI_STATUS PianoUsbControllerPumpDiagnostics(UINTN BudgetUs);
 // Returns after USB teardown. Combined caller shuts UFS before acting on reboot.
 EFI_STATUS PianoUsbControllerRunWithStorage(CONST VOID *Fdt,
                         CONST PIANO_FB_STORAGE *Storage,BOOLEAN *RebootRequested);
