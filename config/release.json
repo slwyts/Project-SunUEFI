@@ -8,7 +8,7 @@
     "stable_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
     "stable_version": "7.3.3",
     "uapi_sha256": "5638464826c36018483e2c06f260c1bc439fc6f66b584f56c1e76ec8846c37e5",
-    "target_tree": "b0af8c547f326062ab3fed7be2e03901132225e5",
+    "target_tree": "ada3010e4da585321686551ca60d5c6497c1377f",
     "cpu_model_overlay": "linux/dts/piano-cpu-model.dtso",
     "additional_dtb_overlays": [
       "linux/dts/piano-cma.dtso",
