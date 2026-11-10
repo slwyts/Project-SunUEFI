@@ -343,7 +343,8 @@ class InstallerTests(unittest.TestCase):
                               'int main(int argc,char **argv){uint64_t n=0,s=0;int f=open(argv[1],O_RDONLY);'
                               '(void)argc;if(f<0||supers(f,&n,&s)||n!=100000||s!=512)return 1;close(f);return 0;}\n')
             executable = tmp / 'check'
-            subprocess.run([compiler, '-std=c11', '-Wall', '-Wextra', '-Werror', str(source), '-o', str(executable)], check=True)
+            subprocess.run([compiler, '-std=c11', '-Wall', '-Wextra', '-Werror', str(source),
+                            str(ROOT / 'tools/android/piano_f2fs_grow.c'), '-o', str(executable)], check=True)
             subprocess.run([str(executable), str(image)], check=True)
             raw = bytearray(image.read_bytes());raw[5120 + 36] ^= 1;image.write_bytes(raw)
             result = subprocess.run([str(executable), str(image)], check=False)
