@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "e188f4582c2ede46d6d5d6b8649fd0f0316a3343",
-  "original_target_commit": "79e32ae2694bd74626b78f4201719f2e7e56b560",
+  "target_tree": "a27a136bb1efc39f5323a427ed71581aa44dc295",
+  "original_target_commit": "274171fbc86cb3235e14fa4dfbfe9c6b518427f7",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -743,6 +743,30 @@
       "original_parent": "6dd902833b08f9c765d0cb8c0c9a38f7bdb6cd38",
       "committer_date": "2026-11-10T20:30:13+08:00",
       "tree": "e188f4582c2ede46d6d5d6b8649fd0f0316a3343"
+    },
+    {
+      "file": "0093-power-mca-charge-inhibition.patch",
+      "sha256": "d244be68ba4ed94bb4aa34b2cad979db307580dfa65be3789a7446c050a55838",
+      "original_commit": "bafd40ed928f2c5530da909ad48c92fe184550d4",
+      "original_parent": "79e32ae2694bd74626b78f4201719f2e7e56b560",
+      "committer_date": "2026-11-10T21:00:30+08:00",
+      "tree": "0d1fc5780af6af233659537bfd74daf4345fdc1a"
+    },
+    {
+      "file": "0094-input-nt36532e-kernel-thp.patch",
+      "sha256": "6c07747b7d650eba057dc9e0ef813bff4a048f1e8b3ac14f28818efdcf1eedb1",
+      "original_commit": "8cd9e3663fb9b44f2435bf3076ed5f10f35c79b0",
+      "original_parent": "bafd40ed928f2c5530da909ad48c92fe184550d4",
+      "committer_date": "2026-11-11T01:08:27+08:00",
+      "tree": "f2ded6ae634098e2afb131c39ffb1ead783b2ad5"
+    },
+    {
+      "file": "0095-power-mca-ffc.patch",
+      "sha256": "6d4eaa3b1fb050f75f40773ee9cdac8d03edaab525d3a6ea3cd155d04e28aba4",
+      "original_commit": "274171fbc86cb3235e14fa4dfbfe9c6b518427f7",
+      "original_parent": "8cd9e3663fb9b44f2435bf3076ed5f10f35c79b0",
+      "committer_date": "2026-11-11T01:11:08+08:00",
+      "tree": "a27a136bb1efc39f5323a427ed71581aa44dc295"
     }
   ],
   "provenance": {
