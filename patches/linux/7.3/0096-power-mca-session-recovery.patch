@@ -1,0 +1,1585 @@
+From d4c0684caecc11422b7ae3977fcd4f7a38b44129 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Tue, 10 Nov 2026 23:43:19 +0800
+Subject: [PATCH] fix(power): reconcile MCA source recovery and charging stops
+
+Recalculate source current from the APDO and normal charging budget after VBUS loss instead of preserving a guessed dropout-current ceiling. Bound same-connection recovery and retain hardware-fault and completed-charge stops.
+
+Keep input and JEITA maintenance during zero-current or user inhibition, preserve stop ownership through errors and cancellation, reapply the complete PMIC enable command, and hand off to buck in the same poll. Reject unknown source/verification state, limit current before both voltage transitions, and invalidate late host caches across sessions.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/power/supply/piano_mca.c      | 338 +++++++-----
+ drivers/power/supply/piano_mca_test.c | 749 +++++++++++++++++++++++++-
+ 2 files changed, 944 insertions(+), 143 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index f9ad399b0..685a7ae05 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -394,9 +394,10 @@ static const struct piano_mca_jeita piano_mca_jeita[] = {
+ #define MCA_CP_TRIP_GRACE_MS	30000
+ #define MCA_CP_LOW_POLLS	6
+ #define MCA_CP_LOG_POLLS	20
+-/* see piano_mca_cp_learn_drop() */
+-#define MCA_CP_DROP_BACKOFF_MA	500
+-#define MCA_CP_DROP_FORGET_MS	10000
++/* Stock blocks further starts after eleven errors in one connection. */
++#define MCA_CP_MAX_ERRORS	11
++/* A prolonged VBUS loss invalidates the cached authentication. */
++#define MCA_AUTH_REATTACH_MS	10000
+ /* with mipps_auth, waits this long after attach for the authentication */
+ #define MCA_CP_AUTH_WAIT_MS	60000
+ /* an authenticated adapter resets itself within this, see piano_mca_auth_pending() */
+@@ -502,6 +503,7 @@ struct piano_mca {
+ 	bool inhibit_stopped_cp;	/* This policy requested the CP stop. */
+ 	struct notifier_block connection_notifier;
+ 	atomic_t connection_generation;
++	unsigned int polled_generation;
+ 	unsigned int polled_connection_generation;
+ 	bool online;
+ 	int vbus_uv;
+@@ -537,7 +539,7 @@ struct piano_mca {
+ 	bool normal_voltage_stop;	/* low-FV JEITA charging vote */
+ 	int battery_direction;	/* sign of the last combined gauge current */
+ 	u8 normal_cool_zone, normal_hot_zone;	/* previous JEITA indices + 1 */
+-	bool cp_thermal_stop;	/* may retry after temperature or current recovery */
++	bool cp_retry;	/* only a policy pause may restart this connection */
+ 	unsigned long cp_taper_at;
+ 	u32 fv_set_mv;
+ 	unsigned int fv_generation;
+@@ -545,8 +547,7 @@ struct piano_mca {
+ 	bool cp_buck_par;	/* buck charger at MCA_CP_PAR_* */
+ 	int cp_polls;		/* while opening: tries; then: polls */
+ 	int cp_low;		/* consecutive polls below MCA_CP_LOW_IBUS_MA */
+-	u32 cp_ibus_last;	/* stage and buck input current at the last step */
+-	u32 cp_ibus_cap;	/* learned from a source dropping out, 0 if none */
++	u32 cp_errors;		/* non-authentication VBUS losses in this connection */
+ 	unsigned long cp_off_at;	/* jiffies when the source went away */
+ 	unsigned long cp_on_at;		/* jiffies when it came */
+ 	bool auth_ok;		/* adapter response matched our fresh challenge */
+@@ -1714,6 +1715,33 @@ static int piano_mca_request_volt_session(struct piano_mca *mca, u32 mv,
+ 					 unsigned int generation,
+ 					 unsigned int connection)
+ {
++	u32 icl = piano_mca_pd_5v_ma(mca, generation, connection);
++	int ret;
++
++	if (mv == MCA_HV_MV) {
++		if (icl < MCA_ICL_MIN_MA)
++			return -EINVAL;
++		icl = min(icl, mca->hv_pps_ma);
++	}
++	icl = min(icl, piano_mca_policy_icl(mca->real_type));
++	if (mca->polled_generation != generation) {
++		/* Teardown may see a new, unsampled session: only return to safe 5 V. */
++		if (mv != 5000)
++			return -ECONNRESET;
++		icl = MCA_ICL_MIN_MA;
++	}
++	/* Lower before either transition; raise only after the contract is known. */
++	if (mca->icl_set_ma > 0)
++		icl = min_t(u32, icl, mca->icl_set_ma);
++	icl = clamp(icl, MCA_ICL_MIN_MA, MCA_ICL_HV_MAX_MA);
++	if (mca->polled_generation != generation ||
++	    mca->icl_set_ma != icl || mca->icl_ma > icl) {
++		ret = piano_mca_write_u32_session(mca, MCA_PROP_ICL, icl,
++						  generation, connection);
++		if (ret)
++			return ret;
++		mca->icl_set_ma = icl;
++	}
+ 	if (mv == MCA_HV_MV && mca->hv_pps)
+ 		return piano_mca_write_u32_session(mca, MCA_PROP_PPS_SELECT,
+ 						   piano_mca_pps_word(mv, mca->hv_pps_ma),
+@@ -1736,6 +1764,18 @@ static bool piano_mca_auth_pending(struct piano_mca *mca)
+ 				    msecs_to_jiffies(MCA_AUTH_RESET_WAIT_MS));
+ }
+ 
++/* A failed verification-state read must not authorize a PD request. */
++static int piano_mca_verifying(struct piano_mca *mca, unsigned int generation,
++			       unsigned int connection)
++{
++	__le32 verifying;
++	int ret;
++
++	ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_VERIFY_PROCESS,
++			     &verifying, sizeof(verifying), generation, connection);
++	return ret ? ret : !!le32_to_cpu(verifying);
++}
++
+ /*
+  * hv_charge state machine, one step per poll.  Returns the input current
+  * the source allows at 9 V once the bus is there, 0 while at 5 V.
+@@ -1749,9 +1789,13 @@ static u32 piano_mca_hv_step(struct piano_mca *mca, unsigned int generation,
+ 	u32 ma = 0;
+ 	int ret;
+ 
+-	if (!hv_charge || mca->hv == MCA_HV_BLOCKED ||
+-	    !piano_mca_session_valid(mca, generation, connection))
++	if (!hv_charge || !piano_mca_session_valid(mca, generation, connection))
++		return 0;
++	if (mca->hv == MCA_HV_BLOCKED) {
++		if (mca->vbus_uv > MCA_HV_VBUS_5V_MAX_UV)
++			piano_mca_request_volt_session(mca, 5000, generation, connection);
+ 		return 0;
++	}
+ 
+ 	if (piano_mca_is_pd(mca->real_type))
+ 		ma = piano_mca_pd_9v_ma(mca, &pps, generation, connection);
+@@ -1767,14 +1811,14 @@ static u32 piano_mca_hv_step(struct piano_mca *mca, unsigned int generation,
+ 		/* not in the middle of an adapter authentication */
+ 		if (!ma || time_before(jiffies, mca->hv_retry) ||
+ 		    piano_mca_auth_pending(mca) ||
+-		    piano_mca_read_u32(mca, MCA_PROP_VERIFY_PROCESS))
++		    piano_mca_verifying(mca, generation, connection))
+ 			return 0;
+ 		mca->hv_pps = pps;
+ 		mca->hv_pps_ma = ma;
+ 		ret = piano_mca_request_volt_session(mca, MCA_HV_MV,
+ 						    generation, connection);
+ 		if (ret) {
+-			dev_warn(mca->dev, "9 V request refused: %d (adsp %d)\n",
++			dev_warn(mca->dev, "failed to request 9 V: %d (adsp %d)\n",
+ 				 ret, mca->retcode);
+ 			break;
+ 		}
+@@ -1853,8 +1897,13 @@ static void piano_mca_apply_input_policy(struct piano_mca *mca,
+ 	else if (piano_mca_is_pd(mca->real_type))
+ 		target = clamp(piano_mca_pd_5v_ma(mca, generation, connection),
+ 			       MCA_ICL_MIN_MA, target);
++	/* Either contract may still be in effect while the voltage settles. */
++	if (mca->hv == MCA_HV_REQUESTED)
++		target = min(target, mca->hv_pps_ma);
++	if (mca->hv == MCA_HV_BLOCKED && mca->vbus_uv > MCA_HV_VBUS_5V_MAX_UV)
++		target = min_t(u32, target, max(mca->icl_set_ma, MCA_ICL_MIN_MA));
+ 
+-	if (target == mca->icl_set_ma)
++	if (target == mca->icl_set_ma && mca->polled_generation == generation)
+ 		return;
+ 
+ 	ret = piano_mca_write_u32_session(mca, MCA_PROP_ICL, target,
+@@ -2076,11 +2125,10 @@ static int piano_mca_normal_enable(struct piano_mca *mca, bool enable,
+ 
+ 	ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_CHARGE_ENABLE,
+ 			     &actual, sizeof(actual), generation, connection);
+-	if (!ret && actual == requested)
+-		return 0;
+ 	/* An unreadable charger may still be stopped, but must not be enabled. */
+ 	if (ret && enable)
+ 		return ret;
++	/* The getter covers CHG_EN only; the setter also configures DCDC modes. */
+ 	ret = piano_mca_write_session(mca, MCA_PROP_CHARGE_ENABLE,
+ 				      &requested, sizeof(requested),
+ 				      generation, connection);
+@@ -2273,8 +2321,7 @@ static int piano_mca_cp_request(struct piano_mca *mca, u32 mv)
+ 		return -ECONNRESET;
+ 	mv = clamp(rounddown(mv, 20), (u32)MCA_CP_PPS_MIN_MV,
+ 		   min_t(u32, mca->cp_max_mv, MCA_CP_PPS_MAX_MV));
+-	if (mv == mca->cp_mv)
+-		return 0;
++	/* Stock sends every regulation request, including an unchanged target. */
+ 
+ 	ret = piano_mca_write_u32_session(mca, MCA_PROP_PPS_SELECT,
+ 					  piano_mca_pps_word(mv, mca->cp_ma),
+@@ -2285,10 +2332,6 @@ static int piano_mca_cp_request(struct piano_mca *mca, u32 mv)
+ 	return ret;
+ }
+ 
+-/*
+- * Turn the stage off and go back to the buck charger: the next poll asks
+- * the source for 9 V again and puts the buck limits back.
+- */
+ /* Buck charger share while direct charging */
+ static int piano_mca_cp_set_buck(struct piano_mca *mca, u32 icl_ma,
+ 				 u32 fcc_ma)
+@@ -2321,7 +2364,8 @@ static int piano_mca_cp_stop(struct piano_mca *mca, const char *why)
+ 	if (!piano_mca_cp_active(mca))
+ 		return 0;
+ 
+-	mca->cp_thermal_stop = false;
++	if (mca->cp != MCA_CP_STOPPING)
++		mca->cp_retry = false;
+ 	mca->cp = MCA_CP_STOPPING;
+ 	ret = piano_mca_cp_set_online(mca, false);
+ 	ret = ret ?: piano_mca_cp_get(mca, POWER_SUPPLY_PROP_ONLINE, &on);
+@@ -2341,17 +2385,37 @@ static int piano_mca_cp_stop(struct piano_mca *mca, const char *why)
+ 	return 0;
+ }
+ 
+-/* Called with the poll drained, or by the sole charging worker. */
+-static int piano_mca_inhibit_charging(struct piano_mca *mca,
+-				     unsigned int generation,
+-				     unsigned int connection)
++/* A policy pause may retry after its condition clears, including stop errors. */
++static int piano_mca_cp_pause(struct piano_mca *mca, const char *why)
++{
++	bool retry = mca->cp_retry || mca->cp == MCA_CP_OPENING ||
++		     mca->cp == MCA_CP_ON;
++	int ret = piano_mca_cp_stop(mca, why);
++
++	mca->cp_retry = retry;
++	return ret;
++}
++
++/* Retry a changed session, but retain same-session hardware/transport faults. */
++static int piano_mca_cp_stop_io(struct piano_mca *mca, const char *why)
++{
++	return piano_mca_cp_session_valid(mca) ? piano_mca_cp_stop(mca, why) :
++		piano_mca_cp_pause(mca, why);
++}
++
++/* Called under policy_lock; source negotiation remains independent. */
++static int piano_mca_pause_charging(struct piano_mca *mca,
++				   unsigned int generation,
++				   unsigned int connection)
+ {
++	bool inhibit = READ_ONCE(mca->inhibit_charge);
+ 	int ret;
+ 
+ 	/* Remember the stop reason if confirmation must be retried. */
+-	if (mca->cp == MCA_CP_OPENING || mca->cp == MCA_CP_ON)
++	if (inhibit && (mca->cp == MCA_CP_OPENING || mca->cp == MCA_CP_ON))
+ 		mca->inhibit_stopped_cp = true;
+-	ret = piano_mca_cp_stop(mca, "charging inhibited");
++	ret = inhibit ? piano_mca_cp_stop(mca, "charging inhibited") :
++		piano_mca_cp_pause(mca, "charge current limit");
+ 	if (ret)
+ 		return ret;
+ 	if (!READ_ONCE(mca->service_up))
+@@ -2360,31 +2424,6 @@ static int piano_mca_inhibit_charging(struct piano_mca *mca,
+ 	return piano_mca_normal_pause(mca, generation, connection);
+ }
+ 
+-/*
+- * A source that drops out under direct charging (a hard reset; the request
+- * in flight may be refused first) did not take that much current, whatever
+- * it advertised: aim lower from then on, unless it is away for longer than
+- * MCA_CP_DROP_FORGET_MS (a replug).  The current is what the stage and the
+- * buck charger took together.
+- */
+-static void piano_mca_cp_learn_drop(struct piano_mca *mca)
+-{
+-	/* not the reset an authenticated adapter may do by itself */
+-	if (mca->cp != MCA_CP_ON || piano_mca_auth_pending(mca) ||
+-	    mca->cp_ibus_last <= 2 * MCA_CP_DROP_BACKOFF_MA)
+-		return;
+-
+-	mca->cp_ibus_cap = mca->cp_ibus_last - MCA_CP_DROP_BACKOFF_MA;
+-	dev_warn(mca->dev, "source dropped out at %u mA, %u mA from now on\n",
+-		 mca->cp_ibus_last, mca->cp_ibus_cap);
+-}
+-
+-/* What the source gives: its APDO current, less once it dropped out */
+-static u32 piano_mca_cp_src_ma(struct piano_mca *mca)
+-{
+-	return mca->cp_ibus_cap ? min(mca->cp_ma, mca->cp_ibus_cap) : mca->cp_ma;
+-}
+-
+ /* The PPS APDO direct charging can use, 0 if none */
+ static u32 piano_mca_cp_apdo(struct piano_mca *mca, u32 start_mv, u32 *max_mv)
+ {
+@@ -2443,9 +2482,9 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	int vbat, ibat, tcool, twarm, ret;
+ 	u32 start_mv, ma, src_ma, max_mv = 0;
+ 
+-	if (READ_ONCE(mca->inhibit_charge))
++	if (READ_ONCE(mca->inhibit_charge) || mca->cp_errors >= MCA_CP_MAX_ERRORS)
+ 		return;
+-	if (mca->cp == MCA_CP_DONE && mca->cp_thermal_stop)
++	if (mca->cp == MCA_CP_DONE && mca->cp_retry)
+ 		mca->cp = MCA_CP_OFF;
+ 	if (!cp_charge || !hv_charge || !charge_current ||
+ 	    mca->cp != MCA_CP_OFF ||
+@@ -2462,7 +2501,7 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	    limits.ma < MCA_CP_BUCK_MA + 4 * MCA_CP_OPEN_IBUS_MA ||
+ 	    piano_mca_normal_voltage_stop(mca, vbat, limits.fv_mv) ||
+ 	    vbat < MCA_CP_VBAT_MIN_MV || vbat >= limits.cv_mv ||
+-	    piano_mca_read_u32(mca, MCA_PROP_VERIFY_PROCESS))
++	    piano_mca_verifying(mca, generation, mca->cp_connection_generation))
+ 		return;
+ 	/* Complete the PMIC voltage transition before arming the pump. */
+ 	if (piano_mca_normal_set_fv(mca, limits.fv_mv,
+@@ -2482,7 +2521,7 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 
+ 	mca->cp_ma = min_t(u32, ma, MCA_CP_PPS_MAX_MA);
+ 	mca->cp_max_mv = max_mv;
+-	src_ma = piano_mca_cp_src_ma(mca);
++	src_ma = mca->cp_ma;
+ 	src_ma -= min_t(u32, src_ma, MCA_CP_BUCK_MA + 200);
+ 	mca->cp_ibus_ma = min(clamp(cp_ibus_max, 500U, (u32)MCA_CP_IBUS_MAX_MA),
+ 			      src_ma);
+@@ -2498,6 +2537,8 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	mca->cp_psy = power_supply_get_by_name("sc8541");
+ 	if (!mca->cp_psy)
+ 		return;
++	/* This is a new attempt; an earlier policy pause cannot own its faults. */
++	mca->cp_retry = false;
+ 	mca->cp = MCA_CP_STOPPING;
+ 	/* Stop this consumer before the I2C controller and stage suspend. */
+ 	if (!device_link_add(mca->dev, mca->cp_psy->dev.parent,
+@@ -2520,7 +2561,6 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	mca->cp_ibus_hot = mca->cp_ibus_ma;
+ 	mca->cp_start_ibat_ma = limits.ma;
+ 	mca->cp_ibat_trip = 0;
+-	mca->cp_thermal_stop = false;
+ 	mca->cp_taper_at = 0;
+ 	mca->cp_buck_par = false;
+ 	mca->cp = MCA_CP_OPENING;
+@@ -2533,7 +2573,7 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	ret = ret ?: piano_mca_cp_request(mca, start_mv);
+ 	if (ret) {
+ 		/* again after the adapter reset */
+-		if (!piano_mca_cp_stop(mca, "start refused")) {
++		if (!piano_mca_cp_stop_io(mca, "start refused")) {
+ 			piano_mca_normal_pause(mca, mca->cp_generation,
+ 					       mca->cp_connection_generation);
+ 			if (piano_mca_auth_pending(mca))
+@@ -2551,51 +2591,50 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ {
+ 	struct piano_mca_cp_limits limits;
+ 	int vbat, ibat, tcool, twarm, vbus_uv, ibus_ua, tdie, on, ibus, over;
+-	int ibat_max, target, ibus_all;
++	int ibat_max, target, ibus_all, verifying;
+ 	u32 mv = mca->cp_mv;
+ 	bool par;
+ 
+ 	if (!piano_mca_cp_session_valid(mca)) {
+-		piano_mca_cp_stop(mca, "session changed");
++		piano_mca_cp_pause(mca, "session changed");
+ 		return;
+ 	}
+ 	if (piano_mca_cp_gauges(mca, &vbat, &ibat, &tcool, &twarm) ||
+ 	    piano_mca_cp_get(mca, POWER_SUPPLY_PROP_ONLINE, &on)) {
+-		if (!piano_mca_cp_stop(mca, "read failed"))
++		if (!piano_mca_cp_stop_io(mca, "read failed"))
+ 			piano_mca_normal_pause(mca, mca->cp_generation,
+ 					       mca->cp_connection_generation);
+ 		return;
+ 	}
+ 	if (piano_mca_cp_normal_limits(mca, vbat, ibat, tcool, twarm, &limits)) {
+-		if (!piano_mca_cp_stop(mca, "battery temperature")) {
+-			mca->cp_thermal_stop = true;
++		if (!piano_mca_cp_pause(mca, "battery temperature")) {
+ 			piano_mca_normal_pause(mca, mca->cp_generation,
+ 					       mca->cp_connection_generation);
+ 		}
+ 		return;
+ 	}
+ 	if (piano_mca_normal_voltage_stop(mca, vbat, limits.fv_mv)) {
+-		if (!piano_mca_cp_stop(mca, "warm voltage limit")) {
+-			mca->cp_thermal_stop = true;
++		if (!piano_mca_cp_pause(mca, "warm voltage limit")) {
+ 			piano_mca_normal_pause(mca, mca->cp_generation,
+ 					       mca->cp_connection_generation);
+ 		}
+ 		return;
+ 	}
+ 	if (limits.ma < MCA_CP_BUCK_MA + 2 * MCA_CP_OPEN_IBUS_MA) {
+-		if (!piano_mca_cp_stop(mca, "charge current limit"))
+-			mca->cp_thermal_stop = true;
++		piano_mca_cp_pause(mca, "charge current limit");
+ 		return;
+ 	}
+ 	/* Restore a larger budget only after reprogramming bus protection. */
+ 	if (limits.ma > mca->cp_start_ibat_ma) {
+-		if (!piano_mca_cp_stop(mca, "charge current limit restored"))
+-			mca->cp_thermal_stop = true;
++		piano_mca_cp_pause(mca, "charge current limit restored");
+ 		return;
+ 	}
+ 	if (vbat >= limits.fv_mv) {
+-		if (!piano_mca_cp_stop(mca, "normal voltage reached")) {
+-			mca->cp_thermal_stop = mca->fv_set_mv > limits.fv_mv;
++		int ret = mca->fv_set_mv > limits.fv_mv ?
++			piano_mca_cp_pause(mca, "normal voltage reached") :
++			piano_mca_cp_stop(mca, "normal voltage reached");
++
++		if (!ret) {
+ 			if (piano_mca_normal_set_fv(mca, limits.fv_mv,
+ 						    mca->cp_generation,
+ 						    mca->cp_connection_generation))
+@@ -2610,15 +2649,19 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 	}
+ 	if (piano_mca_normal_set_fv(mca, limits.fv_mv, mca->cp_generation,
+ 				    mca->cp_connection_generation)) {
+-		if (!piano_mca_cp_stop(mca, "normal voltage setting failed"))
++		if (!piano_mca_cp_stop_io(mca, "normal voltage setting failed"))
+ 			piano_mca_normal_pause(mca, mca->cp_generation,
+ 					       mca->cp_connection_generation);
+ 		return;
+ 	}
+-	if (piano_mca_read_u32(mca, MCA_PROP_VERIFY_PROCESS)) {
++	verifying = piano_mca_verifying(mca, mca->cp_generation,
++				       mca->cp_connection_generation);
++	if (verifying) {
+ 		/* Again once it is over, but never before the stage is off. */
+-		if (!piano_mca_cp_stop(mca, "adapter authentication"))
+-			mca->cp = MCA_CP_OFF;
++		if (verifying < 0)
++			piano_mca_cp_stop_io(mca, "verification state read failed");
++		else
++			piano_mca_cp_pause(mca, "adapter authentication");
+ 		return;
+ 	}
+ 
+@@ -2655,7 +2698,7 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 	}
+ 	/* enables it while opening (then steps up next poll), else a kick */
+ 	if (piano_mca_cp_set_online(mca, true)) {
+-		piano_mca_cp_stop(mca, "stage refused");
++		piano_mca_cp_stop_io(mca, "stage refused");
+ 		return;
+ 	}
+ 	if (!on)
+@@ -2664,11 +2707,10 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 	if (piano_mca_cp_get(mca, POWER_SUPPLY_PROP_VOLTAGE_NOW, &vbus_uv) ||
+ 	    piano_mca_cp_get(mca, POWER_SUPPLY_PROP_CURRENT_NOW, &ibus_ua) ||
+ 	    piano_mca_cp_get(mca, POWER_SUPPLY_PROP_TEMP, &tdie)) {
+-		piano_mca_cp_stop(mca, "stage read failed");
++		piano_mca_cp_stop_io(mca, "stage read failed");
+ 		return;
+ 	}
+ 	ibus = ibus_ua / 1000;
+-	mca->cp_ibus_last = max(ibus + mca->ibus_ua / 1000, 0);
+ 	if (vbus_uv / 1000 > 2 * vbat + MCA_CP_VBUS_MAX_DELTA_MV) {
+ 		piano_mca_cp_stop(mca, "bus voltage too high");
+ 		return;
+@@ -2718,7 +2760,7 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 		/* only from a source that feeds both at that bus current */
+ 		ibus_all = ibus + mca->ibus_ua / 1000;
+ 		par = ibat_max > MCA_CP_PAR_IBAT_MA &&
+-		      piano_mca_cp_src_ma(mca) >=
++		      mca->cp_ma >=
+ 				MCA_CP_PAR_IBUS_MA + MCA_CP_PAR_ICL_MA + 200 &&
+ 		      (ibus_all > MCA_CP_PAR_IBUS_MA ||
+ 		       (mca->cp_buck_par &&
+@@ -2727,7 +2769,7 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 			if (piano_mca_cp_set_buck(mca,
+ 						  par ? MCA_CP_PAR_ICL_MA : MCA_CP_BUCK_MA,
+ 						  par ? MCA_CP_PAR_FCC_MA : MCA_CP_BUCK_MA)) {
+-				if (!piano_mca_cp_stop(mca, "buck charger refused"))
++				if (!piano_mca_cp_stop_io(mca, "buck charger refused"))
+ 					piano_mca_normal_pause(mca, mca->cp_generation,
+ 							       mca->cp_connection_generation);
+ 				return;
+@@ -2741,7 +2783,7 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 				 mca->fcc_set_ma, par ? " in parallel" : "");
+ 		}
+ 		/* what the source gives, less the buck charger's input */
+-		target = min(target, (int)piano_mca_cp_src_ma(mca) - 200 -
++		target = min(target, (int)mca->cp_ma - 200 -
+ 			     (mca->cp_buck_par ? MCA_CP_PAR_ICL_MA : MCA_CP_BUCK_MA));
+ 		/*
+ 		 * The stage gives the battery about twice its bus current,
+@@ -2775,10 +2817,8 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 	}
+ 
+ 	mv = clamp_t(u32, mv, 2 * vbat, 2 * vbat + MCA_CP_REQ_MAX_DELTA_MV);
+-	if (piano_mca_cp_request(mca, mv)) {
+-		piano_mca_cp_learn_drop(mca);
+-		piano_mca_cp_stop(mca, "request refused");
+-	}
++	if (piano_mca_cp_request(mca, mv))
++		piano_mca_cp_stop_io(mca, "request refused");
+ }
+ 
+ static int piano_mca_sync_connection(struct piano_mca *mca)
+@@ -2801,10 +2841,12 @@ static int piano_mca_sync_connection(struct piano_mca *mca)
+ 	mca->cp = MCA_CP_OFF;
+ 	mca->inhibit_stopped_cp = false;
+ 	mca->cp_profile = 0;
+-	mca->cp_thermal_stop = false;
+-	mca->cp_ibus_cap = 0;
++	mca->cp_retry = false;
++	mca->cp_errors = 0;
+ 	mca->hv = MCA_HV_OFF;
+ 	mca->hv_renegs = 0;
++	mca->icl_set_ma = 0;
++	mca->fcc_set_ma = 0;
+ 	mca->online = false;
+ 	mca->polled_connection_generation = connection;
+ 	return 0;
+@@ -2816,55 +2858,85 @@ static void piano_mca_poll(struct work_struct *work)
+ 	bool online, changed;
+ 	u32 real_type = MCA_TYPE_UNKNOWN;
+ 	unsigned int generation = pmic_glink_get_generation(mca->client);
++	__le32 value;
++	int ret;
+ 
+ 	mutex_lock(&mca->policy_lock);
+ 	if (mca->policy_stopped || mca->policy_suspended)
+ 		goto unlock;
++	if (mca->polled_generation != generation) {
++		/* A prior worker may have completed after the PDR callback reset. */
++		mca->icl_set_ma = 0;
++		mca->fcc_set_ma = 0;
++		mca->hv = MCA_HV_OFF;
++		mca->hv_renegs = 0;
++		mca->auth_ok = false;
++		mca->mipps_attempted = false;
++		mca->polled_generation = generation;
++	}
+ 	if (piano_mca_sync_connection(mca))
+ 		goto requeue;
+ 	/* A rapid ADSP restart must not carry the old APDO into its new session. */
+-	if (piano_mca_cp_active(mca) &&
+-	    (!piano_mca_cp_session_valid(mca) || mca->cp == MCA_CP_STOPPING)) {
+-		if (piano_mca_cp_stop(mca, "session changed"))
++	if (piano_mca_cp_active(mca) && !piano_mca_cp_session_valid(mca)) {
++		if (piano_mca_cp_pause(mca, "session changed"))
++			goto requeue;
++	} else if (mca->cp == MCA_CP_STOPPING) {
++		if (piano_mca_cp_stop(mca, "stop confirmation"))
+ 			goto requeue;
++	}
++	/* Auto may have been requested while its inhibited stop was pending. */
++	if (!READ_ONCE(mca->inhibit_charge) && mca->inhibit_stopped_cp &&
++	    mca->cp == MCA_CP_DONE) {
+ 		mca->cp = MCA_CP_OFF;
+ 		mca->inhibit_stopped_cp = false;
+ 	}
+ 	/* An uncertain authentication cleanup must not postpone stopping charge. */
+-	if (READ_ONCE(mca->inhibit_charge) &&
+-	    piano_mca_inhibit_charging(mca, generation,
+-				      mca->polled_connection_generation))
++	if (cp_charge && charge_current &&
++	    (READ_ONCE(mca->inhibit_charge) || !piano_mca_charge_limit(mca)) &&
++	    piano_mca_pause_charging(mca, generation,
++				    mca->polled_connection_generation))
+ 		goto requeue;
+ 	/* Finish an uncertain VERIFY_PROCESS write before any charging policy. */
+ 	if (piano_mca_mipps_cleanup(mca))
+ 		goto requeue;
+ 
+ 	piano_mca_sync_otg_config(mca);
+-	mca->vbus_uv = piano_mca_read_u32(mca, MCA_PROP_BUS_VOLT);
++	ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_BUS_VOLT,
++			     &value, sizeof(value), generation,
++			     mca->polled_connection_generation);
++	if (ret)
++		goto source_error;
++	mca->vbus_uv = le32_to_cpu(value);
+ 	online = mca->vbus_uv >= MCA_VBUS_ONLINE_UV;
+ 
+ 	/* The rest only means something with a source attached */
+ 	if (online) {
+-		mca->ibus_ua = piano_mca_read_u32(mca, MCA_PROP_BUS_CURR);
+-		mca->icl_ma = piano_mca_read_u32(mca, MCA_PROP_ICL);
++		ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_BUS_CURR,
++				     &value, sizeof(value), generation,
++				     mca->polled_connection_generation);
++		if (ret)
++			goto source_error;
++		mca->ibus_ua = le32_to_cpu(value);
++		ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_ICL,
++				     &value, sizeof(value), generation,
++				     mca->polled_connection_generation);
++		if (ret)
++			goto source_error;
++		mca->icl_ma = le32_to_cpu(value);
+ 		if (piano_mca_read_type(mca, &real_type))
+-			goto requeue;
++			goto source_error;
+ 	} else {
+ 		mca->ibus_ua = 0;
+ 		mca->icl_ma = 0;
+ 	}
+ 
+ 	changed = online != mca->online || real_type != mca->real_type;
+-	if (online && !mca->online && mca->cp_ibus_cap &&
+-	    time_after(jiffies, mca->cp_off_at +
+-				msecs_to_jiffies(MCA_CP_DROP_FORGET_MS)))
+-		mca->cp_ibus_cap = 0;
+ 	if (!online && mca->online)
+ 		mca->cp_off_at = jiffies;
+ 	if (online && !mca->online) {
+ 		/* away longer than a reset takes: another attach */
+ 		if (time_after(jiffies, mca->cp_off_at +
+-				msecs_to_jiffies(MCA_CP_DROP_FORGET_MS))) {
++				msecs_to_jiffies(MCA_AUTH_REATTACH_MS))) {
+ 			if (mca->mipps_attempted)
+ 				mca->mipps_cleanup_pending = true;
+ 			mca->auth_ok = false;
+@@ -2901,36 +2973,29 @@ static void piano_mca_poll(struct work_struct *work)
+ 
+ 	if (mca->polled_connection_generation != piano_mca_connection_generation(mca))
+ 		goto requeue;
+-	if (online && cp_charge && charge_current && !piano_mca_charge_limit(mca)) {
+-		bool cp_active = mca->cp == MCA_CP_OPENING || mca->cp == MCA_CP_ON;
+-
+-		if (!piano_mca_cp_stop(mca, "charging disabled by current limit")) {
+-			mca->cp_thermal_stop |= cp_active;
+-			piano_mca_normal_pause(mca, generation,
+-					       mca->polled_connection_generation);
+-		}
+-		if (changed)
+-			power_supply_changed(mca->usb);
+-		goto requeue;
+-	}
+-
+ 	if (!online) {
++		bool auth_reset = piano_mca_auth_pending(mca);
++
+ 		/* UCSI ONLINE follows the connector, not VBUS. Preserve an
+ 		 * authentication reset only while its cable remains connected.
+ 		 * A physical replug needs a fresh challenge even within 10 s.
+ 		 */
+-		if (!piano_mca_auth_pending(mca) ||
++		if (!auth_reset ||
+ 		    power_supply_for_each_psy(mca, piano_mca_ucsi_status) < MCA_UCSI_CONNECTED) {
+ 			if (mca->mipps_attempted)
+ 				mca->mipps_cleanup_pending = true;
+ 			mca->auth_ok = false;
+ 			mca->mipps_attempted = false;
+ 		}
+-		piano_mca_cp_learn_drop(mca);
+-		if (piano_mca_cp_stop(mca, "detached"))
++		/* Other faults stay DONE; only VBUS losses need bounded reopens. */
++		if ((mca->cp == MCA_CP_OPENING || mca->cp == MCA_CP_ON) &&
++		    !auth_reset && mca->cp_errors < MCA_CP_MAX_ERRORS) {
++			mca->cp_errors++;
++			dev_warn(mca->dev, "source lost during direct charging (%u errors)\n",
++				 mca->cp_errors);
++		}
++		if (piano_mca_cp_pause(mca, "source offline"))
+ 			goto requeue;
+-		mca->cp = MCA_CP_OFF;
+-		mca->inhibit_stopped_cp = false;
+ 		if (mca->icl_set_ma)
+ 			piano_mca_reset_icl(mca);
+ 		if (mca->fcc_set_ma)
+@@ -2940,13 +3005,19 @@ static void piano_mca_poll(struct work_struct *work)
+ 			mca->hv_retry = jiffies + msecs_to_jiffies(MCA_HV_RETRY_MS);
+ 		mca->hv = MCA_HV_OFF;
+ 		mca->hv_renegs = 0;
+-	} else if (charge_policy && READ_ONCE(mca->inhibit_charge)) {
++	} else if (charge_policy &&
++		   (READ_ONCE(mca->inhibit_charge) || !piano_mca_charge_limit(mca))) {
+ 		piano_mca_mipps_authenticate(mca);
+ 		if (!mca->mipps_cleanup_pending)
+ 			piano_mca_apply_policy(mca, generation,
+ 					       mca->polled_connection_generation);
+ 	} else if (charge_policy && piano_mca_cp_active(mca)) {
+ 		piano_mca_cp_step(mca);
++		if (!piano_mca_cp_active(mca) &&
++		    piano_mca_session_valid(mca, generation,
++					mca->polled_connection_generation))
++			piano_mca_apply_policy(mca, generation,
++					       mca->polled_connection_generation);
+ 	} else if (charge_policy) {
+ 		piano_mca_mipps_authenticate(mca);
+ 		if (!mca->mipps_cleanup_pending &&
+@@ -2961,6 +3032,13 @@ static void piano_mca_poll(struct work_struct *work)
+ 	}
+ 	if (changed)
+ 		power_supply_changed(mca->usb);
++	goto requeue;
++
++source_error:
++	/* A transport failure is not a measured disconnect or a new source. */
++	if (!piano_mca_cp_stop_io(mca, "source read failed"))
++		piano_mca_normal_pause(mca, generation,
++				       mca->polled_connection_generation);
+ 
+ requeue:
+ 	if (mca->service_up || mca->cp == MCA_CP_STOPPING)
+@@ -3011,11 +3089,8 @@ static int piano_mca_update_charge_limit(struct piano_mca *mca, u32 old_ma)
+ 	if (!mca->policy_ready || mca->policy_suspended)
+ 		return 0;
+ 	if (ma < old_ma) {
+-		bool cp_active = mca->cp == MCA_CP_OPENING || mca->cp == MCA_CP_ON;
+-
+-		ret = piano_mca_cp_stop(mca, "charge current limit changed");
++		ret = piano_mca_cp_pause(mca, "charge current limit changed");
+ 		if (!ret) {
+-			mca->cp_thermal_stop |= cp_active;
+ 			if (mca->service_up && mca->online) {
+ 				if (!ma) {
+ 					ret = piano_mca_normal_pause(mca, generation, connection);
+@@ -3127,12 +3202,13 @@ static int piano_mca_usb_set_property(struct power_supply *psy,
+ 	connection = piano_mca_connection_generation(mca);
+ 	if (inhibit) {
+ 		if (READ_ONCE(mca->service_up) || piano_mca_cp_active(mca))
+-			ret = piano_mca_inhibit_charging(mca, generation, connection);
++			ret = piano_mca_pause_charging(mca, generation, connection);
+ 	} else {
+ 		/* Only undo a confirmed CP stop requested by this policy. */
+-		if (mca->inhibit_stopped_cp && mca->cp == MCA_CP_DONE)
++		if (mca->inhibit_stopped_cp && mca->cp == MCA_CP_DONE) {
+ 			mca->cp = MCA_CP_OFF;
+-		mca->inhibit_stopped_cp = false;
++			mca->inhibit_stopped_cp = false;
++		}
+ 	}
+ 	/* Auto re-enters the ordinary policy with fresh gauges and its hysteresis. */
+ 	mod_delayed_work(system_freezable_wq, &mca->poll, 0);
+@@ -3639,7 +3715,6 @@ static void piano_mca_dbg_remove(void *data)
+ static int piano_mca_suspend(struct device *dev)
+ {
+ 	struct piano_mca *mca = dev_get_drvdata(dev);
+-	bool cp;
+ 	int ret = 0;
+ 
+ 	mutex_lock(&mca->policy_lock);
+@@ -3652,8 +3727,7 @@ static int piano_mca_suspend(struct device *dev)
+ 	mutex_lock(&mca->policy_lock);
+ 	if (mca->policy_stopped)
+ 		goto unlock;
+-	cp = piano_mca_cp_active(mca);
+-	ret = piano_mca_cp_stop(mca, "suspend");
++	ret = piano_mca_cp_pause(mca, "suspend");
+ 	/* The host's normal JEITA cannot run while its workqueue is frozen. */
+ 	if (!ret && cp_charge && charge_current && mca->service_up) {
+ 		unsigned int generation = pmic_glink_get_generation(mca->client);
+@@ -3667,10 +3741,6 @@ static int piano_mca_suspend(struct device *dev)
+ 		mod_delayed_work(system_freezable_wq, &mca->poll, 0);
+ 		goto unlock;
+ 	}
+-	if (cp) {
+-		mca->cp = MCA_CP_OFF;
+-		mca->inhibit_stopped_cp = false;
+-	}
+ unlock:
+ 	mutex_unlock(&mca->policy_lock);
+ 	return ret;
+diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
+index 7001028aa..d7faece6c 100644
+--- a/drivers/power/supply/piano_mca_test.c
++++ b/drivers/power/supply/piano_mca_test.c
+@@ -56,11 +56,25 @@ struct piano_mca_test {
+ 	bool lose_start_ack;
+ 	bool restart_on_pdos;
+ 	unsigned int pps_writes;
++	u32 last_pps_word;
++	unsigned int pps_write_failures;
++	unsigned int bus_read_failures;
++	unsigned int verify_read_failures;
++	u32 source_read_error;
+ 	unsigned int icl_writes;
++	int icl_write_failures;
++	unsigned int last_icl_event;
++	unsigned int last_voltage_event;
+ 	u32 icl_ma;
+ 	unsigned int fixed_voltage_writes;
++	u32 fixed_9v_ma;
++	u32 fixed_5v_ma;
++	u32 max_fixed_voltage;
+ 	unsigned int cp_stop_failures;
+ 	unsigned int cp_enable_writes;
++	u32 cp_busocp_ma;
++	unsigned int last_cp_ocp_event;
++	unsigned int last_cp_enable_event;
+ 	bool cp_enabled;
+ 	struct piano_mca_test_gauge gauge[2];
+ 	u32 vbus_uv;
+@@ -145,7 +159,18 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+ 
+ 	if (len != sizeof(*request))
+ 		return -EINVAL;
++	if (!write && property == fixture->source_read_error)
++		return -EIO;
+ 
++	if (!write && property == MCA_PROP_BUS_VOLT && fixture->bus_read_failures) {
++		fixture->bus_read_failures--;
++		return -EIO;
++	}
++	if (!write && property == MCA_PROP_VERIFY_PROCESS &&
++	    fixture->verify_read_failures) {
++		fixture->verify_read_failures--;
++		return -EIO;
++	}
+ 	if (!write && property == MCA_PROP_PACK_TBAT &&
+ 	    fixture->pack_read_failures) {
+ 		if (fixture->pack_read_failures > 0)
+@@ -246,12 +271,25 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+ 		}
+ 	} else if (write && property == MCA_PROP_ICL) {
+ 		fixture->icl_writes++;
++		if (fixture->icl_write_failures) {
++			if (fixture->icl_write_failures > 0)
++				fixture->icl_write_failures--;
++			return -EIO;
++		}
+ 		fixture->icl_ma = value;
++		fixture->last_icl_event = ++fixture->events;
+ 	} else if (write && property == MCA_PROP_PD_FIXED_VOLT) {
+ 		fixture->fixed_voltage_writes++;
++		fixture->last_voltage_event = ++fixture->events;
++		fixture->max_fixed_voltage = max(fixture->max_fixed_voltage, value);
+ 	} else if (write && property == MCA_PROP_PPS_SELECT) {
+ 		fixture->pps_writes++;
++		fixture->last_pps_word = value;
+ 		fixture->last_pps_event = ++fixture->events;
++		if (fixture->pps_write_failures) {
++			fixture->pps_write_failures--;
++			return -EIO;
++		}
+ 	} else if (write && property >= MCA_PROP_VDM_BASE &&
+ 		   property < MCA_PROP_VDM_BASE + 8) {
+ 		unsigned int i;
+@@ -292,16 +330,15 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+ 		case MCA_PROP_PDOS: {
+ 			struct piano_mca_pdo *pdo = (void *)response.data;
+ 
+-			if (fixture->only_5v) {
+-				pdo[0].min_mv = cpu_to_le32(5000);
+-				pdo[0].max_mv = cpu_to_le32(5000);
+-				pdo[0].max_ma = cpu_to_le32(3000);
++			pdo[0].min_mv = cpu_to_le32(5000);
++			pdo[0].max_mv = cpu_to_le32(5000);
++			pdo[0].max_ma = cpu_to_le32(fixture->fixed_5v_ma);
++			if (fixture->only_5v)
+ 				break;
+-			}
+ 
+ 			pdo[1].min_mv = cpu_to_le32(9000);
+ 			pdo[1].max_mv = cpu_to_le32(9000);
+-			pdo[1].max_ma = cpu_to_le32(2000);
++			pdo[1].max_ma = cpu_to_le32(fixture->fixed_9v_ma);
+ 			if (fixture->offer_cp_apdo) {
+ 				pdo[2].min_mv = cpu_to_le32(6000);
+ 				pdo[2].max_mv = cpu_to_le32(10000);
+@@ -442,6 +479,9 @@ static int piano_mca_test_init(struct kunit *test)
+ 	dev_set_drvdata(mca->dev, mca);
+ 	mca->service_up = true;
+ 	fixture->remote_generation = 1;
++	mca->polled_generation = fixture->remote_generation;
++	fixture->fixed_9v_ma = 2000;
++	fixture->fixed_5v_ma = 3000;
+ 	fixture->vbus_uv = 5000000;
+ 	fixture->pack_temp = 25;
+ 	fixture->fv_mv = 4480;
+@@ -582,12 +622,17 @@ static int piano_mca_test_cp_set(struct power_supply *psy,
+ {
+ 	struct piano_mca_test *fixture = power_supply_get_drvdata(psy);
+ 
+-	if (property == POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT)
++	if (property == POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT) {
++		fixture->cp_busocp_ma = value->intval / 1000;
++		fixture->last_cp_ocp_event = ++fixture->events;
+ 		return 0;
++	}
+ 	if (property != POWER_SUPPLY_PROP_ONLINE)
+ 		return -EINVAL;
+-	if (value->intval)
++	if (value->intval) {
+ 		fixture->cp_enable_writes++;
++		fixture->last_cp_enable_event = ++fixture->events;
++	}
+ 	if (!value->intval && fixture->cp_stop_failures) {
+ 		fixture->cp_stop_failures--;
+ 		return -EIO;
+@@ -642,6 +687,41 @@ static int piano_mca_test_start_cp(struct kunit *test)
+ 	return 0;
+ }
+ 
++static void piano_mca_cp_repeats_unchanged_pps_test(struct kunit *test)
++{
++	struct piano_mca_test *fixture = test->priv;
++	struct piano_mca *mca = &fixture->mca;
++
++	cp_charge = hv_charge = true;
++	KUNIT_ASSERT_EQ(test, piano_mca_test_start_cp(test), 0);
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_request(mca, 8000), 0);
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_request(mca, 8019), 0);
++	KUNIT_EXPECT_EQ(test, fixture->pps_writes, 2U);
++	KUNIT_EXPECT_EQ(test, fixture->last_pps_word, piano_mca_pps_word(8000, 3000));
++	KUNIT_EXPECT_EQ(test, mca->cp_mv, 8000U);
++	/* The requested current may change without changing the voltage. */
++	mca->cp_ma = 2500;
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_request(mca, 8000), 0);
++	KUNIT_EXPECT_EQ(test, fixture->pps_writes, 3U);
++	KUNIT_EXPECT_EQ(test, fixture->last_pps_word, piano_mca_pps_word(8000, 2500));
++}
++
++static void piano_mca_cp_repeat_pps_rejects_old_session_test(struct kunit *test)
++{
++	struct piano_mca_test *fixture = test->priv;
++	struct piano_mca *mca = &fixture->mca;
++
++	hv_charge = true;
++	KUNIT_ASSERT_EQ(test, piano_mca_test_start_cp(test), 0);
++	fixture->remote_generation++;
++	KUNIT_EXPECT_EQ(test, piano_mca_cp_request(mca, 8000), -ECONNRESET);
++	KUNIT_EXPECT_EQ(test, fixture->pps_writes, 0U);
++	mca->cp_generation = fixture->remote_generation;
++	atomic_inc(&mca->connection_generation);
++	KUNIT_EXPECT_EQ(test, piano_mca_cp_request(mca, 8000), -ECONNRESET);
++	KUNIT_EXPECT_EQ(test, fixture->pps_writes, 0U);
++}
++
+ static void piano_mca_thermal_prepare(struct kunit *test)
+ {
+ 	struct piano_mca_test *fixture = test->priv;
+@@ -1198,7 +1278,7 @@ static void piano_mca_api_cp_stop_failure_test(struct kunit *test)
+ 	KUNIT_EXPECT_FALSE(test, f->pmic_enabled);
+ 	KUNIT_EXPECT_EQ(test, f->fcc_ma, 0U);
+ 	KUNIT_EXPECT_EQ(test, f->icl_ma, 1500U);
+-	KUNIT_EXPECT_FALSE(test, f->mca.inhibit_stopped_cp);
++	KUNIT_EXPECT_TRUE(test, f->mca.inhibit_stopped_cp);
+ }
+ 
+ static void piano_mca_api_pdr_test(struct kunit *test)
+@@ -2105,7 +2185,658 @@ static void piano_mca_limit_during_suspend_test(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, piano_mca_charge_limit(&f->mca), 1000U);
+ }
+ 
++static int piano_mca_source_prepare(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	int ret;
++
++	ret = piano_mca_api_prepare(test);
++	ret = ret ?: piano_mca_test_start_cp(test);
++	if (ret)
++		return ret;
++	f->offer_cp_apdo = true;
++	f->mca.cp_start_ibat_ma = MCA_CP_IBAT_MAX_MA;
++	f->mca.hv = MCA_HV_ON;
++	f->mca.vbus_uv = f->vbus_uv = 9000000;
++	return 0;
++}
++
++static void piano_mca_source_drop_restores_budget_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	union power_supply_propval value = { .intval = 4000000 };
++	int n;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	f->cp_current_ua = 2271000;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_ASSERT_EQ(test, f->mca.cp, MCA_CP_ON);
++	f->vbus_uv = 0;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_ASSERT_FALSE(test, f->cp_enabled);
++	KUNIT_ASSERT_EQ(test, f->mca.cp_errors, 1U);
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 1U);
++
++	/* The advertised APDO and current charge budget determine the restart. */
++	KUNIT_ASSERT_EQ(test, power_supply_set_property(f->mca.usb,
++		POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT, &value), 0);
++	f->pack_temp = 48;
++	f->gauge[0].temp = f->gauge[1].temp = 480;
++	f->cp_current_ua = 1000000;
++	f->vbus_uv = 9000000;
++	for (n = 0; n < 6; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_ASSERT_EQ(test, f->mca.cp, MCA_CP_ON);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_ma, 6000U);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_ibus_ma, 1750U);
++	KUNIT_EXPECT_EQ(test, f->cp_busocp_ma, 2750U);
++	KUNIT_EXPECT_LT(test, f->last_cp_ocp_event, f->last_cp_enable_event);
++	KUNIT_EXPECT_EQ(test, f->fv_mv, 4060U);
++
++	f->pack_temp = 25;
++	f->gauge[0].temp = f->gauge[1].temp = 250;
++	value.intval = MCA_CP_IBAT_MAX_MA * 1000;
++	KUNIT_ASSERT_EQ(test, power_supply_set_property(f->mca.usb,
++		POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT, &value), 0);
++	for (n = 0; n < 8; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_ON);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_ibus_ma, 3750U);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_ibus_hot, 3750U);
++	KUNIT_EXPECT_EQ(test, f->cp_busocp_ma, 4750U);
++	KUNIT_EXPECT_LT(test, f->last_cp_ocp_event, f->last_cp_enable_event);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_start_ibat_ma, 8000U);
++	KUNIT_EXPECT_EQ(test, f->fv_mv, 4480U);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 1U);
++}
++
++static void piano_mca_source_drop_retry_limit_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	union power_supply_propval value = { .intval = 4000000 };
++	unsigned int enables;
++	int error, n;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	for (error = 1; error <= MCA_CP_MAX_ERRORS; error++) {
++		f->vbus_uv = 0;
++		if (error == 1)
++			f->cp_stop_failures = 1;
++		piano_mca_poll(&f->mca.poll.work);
++		KUNIT_EXPECT_EQ(test, f->mca.cp_errors, (u32)error);
++		/* Repeated offline polls and stop-confirmation retries count once. */
++		piano_mca_poll(&f->mca.poll.work);
++		KUNIT_EXPECT_EQ(test, f->mca.cp_errors, (u32)error);
++		enables = f->cp_enable_writes;
++		f->vbus_uv = 9000000;
++		for (n = 0; n < (error == 1 ? 3 : 6); n++)
++			piano_mca_poll(&f->mca.poll.work);
++		if (error < MCA_CP_MAX_ERRORS)
++			KUNIT_ASSERT_TRUE(test, piano_mca_cp_active(&f->mca));
++	}
++	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 11U);
++	KUNIT_EXPECT_FALSE(test, piano_mca_cp_active(&f->mca));
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_EQ(test, f->cp_enable_writes, enables);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 1600U);
++
++	KUNIT_ASSERT_EQ(test, power_supply_set_property(f->mca.usb,
++		POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT, &value), 0);
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 11U);
++	KUNIT_EXPECT_FALSE(test, piano_mca_cp_active(&f->mca));
++
++	/* A real connector event gives the replacement source a fresh budget. */
++	atomic_inc(&f->mca.connection_generation);
++	for (n = 0; n < 6; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 0U);
++	KUNIT_EXPECT_EQ(test, f->mca.polled_connection_generation, 1U);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_ON);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_ibus_ma, 1750U);
++}
++
++static void piano_mca_source_auth_reset_not_error_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	mipps_auth = true;
++	f->mca.auth_ok = true;
++	f->mca.auth_generation = f->remote_generation;
++	f->mca.mipps_connection_generation = 0;
++	f->mca.auth_at = f->mca.cp_on_at = jiffies;
++	KUNIT_ASSERT_TRUE(test, piano_mca_auth_pending(&f->mca));
++	f->vbus_uv = 0;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 0U);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++}
++
++static void piano_mca_source_read_error_not_drop_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	f->bus_read_failures = 1;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 0U);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_TRUE(test, f->mca.online);
++	KUNIT_EXPECT_EQ(test, f->mca.vbus_uv, 9000000);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++}
++
++static void piano_mca_source_request_error_keeps_done_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	unsigned int enables;
++	int n;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	f->pps_write_failures = 1;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_ASSERT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_ASSERT_FALSE(test, f->cp_enabled);
++	enables = f->cp_enable_writes;
++	for (n = 0; n < 6; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 0U);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_EQ(test, f->cp_enable_writes, enables);
++}
++
++static void piano_mca_zero_limit_keeps_input_and_fv_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	union power_supply_propval value = { .intval = 0 };
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	f->only_5v = true;
++	f->mca.icl_set_ma = f->icl_ma = 100;
++	KUNIT_ASSERT_EQ(test,
++		power_supply_set_property(f->mca.usb,
++			POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT, &value), 0);
++	KUNIT_ASSERT_FALSE(test, f->pmic_enabled);
++	KUNIT_ASSERT_EQ(test, f->fcc_ma, 0U);
++
++	/* A healthy 5 V source can still feed the system with charging paused. */
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 1500U);
++	KUNIT_EXPECT_FALSE(test, f->pmic_enabled);
++	KUNIT_EXPECT_EQ(test, f->fcc_ma, 0U);
++
++	/* Inhibition must also retain the current JEITA voltage vote. */
++	f->pack_temp = 48;
++	f->gauge[0].temp = f->gauge[1].temp = 480;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->fv_mv, 4060U);
++	KUNIT_EXPECT_FALSE(test, f->pmic_enabled);
++	KUNIT_EXPECT_EQ(test, f->fcc_ma, 0U);
++}
++
++/* Stop confirmation cannot clear a hardware-fault latch. */
++static void piano_mca_fault_stopping_poll_keeps_latch_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	unsigned int enables, generation, connection;
++	int n;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	KUNIT_ASSERT_EQ(test, piano_mca_test_start_cp(test), 0);
++	f->offer_cp_apdo = true;
++	f->mca.cp_start_ibat_ma = MCA_CP_IBAT_MAX_MA;
++	f->mca.hv = MCA_HV_ON;
++	f->mca.vbus_uv = f->vbus_uv = 9000000;
++	generation = f->remote_generation;
++	connection = piano_mca_connection_generation(&f->mca);
++
++	/* A real stage-temperature fault reaches cp_stop through the worker. */
++	f->cp_temp = MCA_CP_TDIE_MAX + 1;
++	f->cp_stop_failures = 1;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_ASSERT_EQ(test, f->mca.cp, MCA_CP_STOPPING);
++	KUNIT_ASSERT_TRUE(test, f->cp_enabled);
++	KUNIT_ASSERT_FALSE(test, f->mca.cp_retry);
++	enables = f->cp_enable_writes;
++	f->cp_temp = 350;
++
++	/* Allow stop confirmation and the ordinary 9 V/PPS policy to run. */
++	for (n = 0; n < 4; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->remote_generation, generation);
++	KUNIT_EXPECT_EQ(test, piano_mca_connection_generation(&f->mca), connection);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_EXPECT_FALSE(test, f->mca.cp_retry);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_EQ(test, f->cp_enable_writes, enables);
++}
++
++static void piano_mca_fault_survives_recovery_requests_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	union power_supply_propval value = { .intval = 0 };
++	unsigned int enables;
++	int n;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	f->cp_temp = MCA_CP_TDIE_MAX + 1;
++	f->cp_stop_failures = 1;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_ASSERT_EQ(test, f->mca.cp, MCA_CP_STOPPING);
++	f->cp_temp = 350;
++	enables = f->cp_enable_writes;
++	f->remote_generation += 2;
++	piano_mca_pdr_notify(&f->mca, SERVREG_SERVICE_STATE_DOWN);
++	piano_mca_pdr_notify(&f->mca, SERVREG_SERVICE_STATE_UP);
++	for (n = 0; n < 6; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++
++	f->vbus_uv = 0;
++	piano_mca_poll(&f->mca.poll.work);
++	f->vbus_uv = 9000000;
++	for (n = 0; n < 6; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_ASSERT_EQ(test, piano_mca_suspend(f->mca.dev), 0);
++	KUNIT_ASSERT_EQ(test, piano_mca_resume(f->mca.dev), 0);
++	KUNIT_ASSERT_EQ(test, power_supply_set_property(f->mca.usb,
++		POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT, &value), 0);
++	value.intval = MCA_CP_IBAT_MAX_MA * 1000;
++	KUNIT_ASSERT_EQ(test, power_supply_set_property(f->mca.usb,
++		POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT, &value), 0);
++	for (n = 0; n < 6; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_EXPECT_FALSE(test, f->mca.cp_retry);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_EQ(test, f->cp_enable_writes, enables);
++}
++
++static void piano_mca_limit_stop_error_recovers_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	union power_supply_propval value = { .intval = 4000000 };
++	int n;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	f->cp_stop_failures = 1;
++	KUNIT_ASSERT_EQ(test, power_supply_set_property(f->mca.usb,
++		POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT, &value), -EIO);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_STOPPING);
++	KUNIT_EXPECT_TRUE(test, f->mca.cp_retry);
++	for (n = 0; n < 6; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_ON);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_ibus_ma, 1750U);
++	KUNIT_EXPECT_EQ(test, f->cp_busocp_ma, 2750U);
++	KUNIT_EXPECT_LT(test, f->last_cp_ocp_event, f->last_cp_enable_event);
++}
++
++static void piano_mca_auto_waits_for_owned_stop_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	int n;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	f->cp_stop_failures = 1;
++	KUNIT_ASSERT_EQ(test, piano_mca_api_set(f,
++		POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE), -EIO);
++	KUNIT_ASSERT_TRUE(test, f->mca.inhibit_stopped_cp);
++	KUNIT_ASSERT_EQ(test, piano_mca_api_set(f,
++		POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO), 0);
++	KUNIT_EXPECT_TRUE(test, f->mca.inhibit_stopped_cp);
++	for (n = 0; n < 6; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_ON);
++	KUNIT_EXPECT_FALSE(test, f->mca.inhibit_stopped_cp);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 0U);
++}
++
++static void piano_mca_reopen_fault_has_no_old_permission_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	unsigned int enables;
++	int n;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_pause(&f->mca, "current limit"), 0);
++	KUNIT_ASSERT_TRUE(test, f->mca.cp_retry);
++	f->mca.hv = MCA_HV_ON;
++	f->cp_enabled = true;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_EXPECT_FALSE(test, f->mca.cp_retry);
++	enables = f->cp_enable_writes;
++	for (n = 0; n < 6; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_EQ(test, f->cp_enable_writes, enables);
++}
++
++static void piano_mca_composite_enable_is_reapplied_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	f->pmic_enabled = false;
++	KUNIT_ASSERT_EQ(test, piano_mca_normal_enable(&f->mca, false,
++		f->remote_generation, 0), 0);
++	KUNIT_EXPECT_EQ(test, f->pmic_disable_writes, 1U);
++	f->pmic_enabled = true;
++	KUNIT_ASSERT_EQ(test, piano_mca_normal_enable(&f->mca, true,
++		f->remote_generation, 0), 0);
++	KUNIT_EXPECT_EQ(test, f->pmic_enable_writes, 1U);
++	f->lose_pmic_enable_ack = true;
++	KUNIT_EXPECT_EQ(test, piano_mca_normal_enable(&f->mca, true,
++		f->remote_generation, 0), -ETIMEDOUT);
++}
++
++static void piano_mca_stop_hands_over_in_same_poll_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	f->pack_temp = 55;
++	f->gauge[0].temp = f->gauge[1].temp = 550;
++	f->mca.icl_set_ma = f->icl_ma = 500;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_FALSE(test, f->pmic_enabled);
++	KUNIT_EXPECT_EQ(test, f->fcc_ma, 0U);
++	KUNIT_EXPECT_EQ(test, f->fv_mv, 4060U);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 1500U);
++	KUNIT_EXPECT_EQ(test, f->fixed_voltage_writes, 1U);
++}
++
++static void piano_mca_fault_stop_then_vbus_loss_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	unsigned int enables;
++	int n;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	f->cp_temp = MCA_CP_TDIE_MAX + 1;
++	f->cp_stop_failures = 1;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_ASSERT_EQ(test, f->mca.cp, MCA_CP_STOPPING);
++	f->cp_temp = 350;
++	f->vbus_uv = 0;
++	enables = f->cp_enable_writes;
++	piano_mca_poll(&f->mca.poll.work);
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 0U);
++	f->vbus_uv = 9000000;
++	for (n = 0; n < 6; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_EXPECT_FALSE(test, f->mca.cp_retry);
++	KUNIT_EXPECT_EQ(test, f->cp_enable_writes, enables);
++}
++
++static void piano_mca_session_change_during_step_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	int n;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	f->remote_generation += 2;
++	piano_mca_cp_step(&f->mca);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_EXPECT_TRUE(test, f->mca.cp_retry);
++	for (n = 0; n < 6; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_ON);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_generation, f->remote_generation);
++}
++
++static void piano_mca_transition_respects_both_contracts_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	f->fixed_9v_ma = 1000;
++	f->mca.icl_set_ma = f->mca.icl_ma = f->icl_ma = 1500;
++	piano_mca_apply_policy(&f->mca, f->remote_generation, 0);
++	KUNIT_EXPECT_EQ(test, f->mca.hv, MCA_HV_REQUESTED);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 1000U);
++	KUNIT_EXPECT_EQ(test, f->fixed_voltage_writes, 1U);
++	KUNIT_EXPECT_LT(test, f->last_icl_event, f->last_voltage_event);
++	f->mca.vbus_uv = f->vbus_uv = 9000000;
++	piano_mca_apply_policy(&f->mca, f->remote_generation, 0);
++	KUNIT_EXPECT_EQ(test, f->mca.hv, MCA_HV_ON);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 1000U);
++}
++
++static void piano_mca_pdr_during_fv_setup_recovers_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	int n;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	f->mca.fv_generation = 0;
++	f->restart_on_iterm_write = true;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_EXPECT_TRUE(test, f->mca.cp_retry);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	for (n = 0; n < 6; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_ON);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_generation, f->remote_generation);
++}
++
++static void piano_mca_unknown_verification_blocks_pd_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	f->verify_read_failures = 1;
++	piano_mca_apply_policy(&f->mca, f->remote_generation, 0);
++	KUNIT_EXPECT_EQ(test, f->fixed_voltage_writes, 0U);
++	KUNIT_EXPECT_EQ(test, f->pps_writes, 0U);
++	KUNIT_EXPECT_EQ(test, f->mca.hv, MCA_HV_OFF);
++
++	KUNIT_ASSERT_EQ(test, piano_mca_test_start_cp(test), 0);
++	f->mca.cp_start_ibat_ma = MCA_CP_IBAT_MAX_MA;
++	f->verify_read_failures = 1;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_EXPECT_EQ(test, f->pps_writes, 0U);
++}
++
++static void piano_mca_failed_input_limit_blocks_voltage_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	f->fixed_9v_ma = 1000;
++	f->mca.icl_set_ma = f->mca.icl_ma = f->icl_ma = 1500;
++	f->icl_write_failures = -1;
++	piano_mca_apply_policy(&f->mca, f->remote_generation, 0);
++	KUNIT_EXPECT_LE(test, f->max_fixed_voltage, 5000U);
++	KUNIT_EXPECT_EQ(test, f->mca.hv, MCA_HV_BLOCKED);
++	KUNIT_EXPECT_EQ(test, f->mca.icl_set_ma, 1500);
++}
++
++static void piano_mca_source_read_fault(struct kunit *test, u32 property)
++{
++	struct piano_mca_test *f = test->priv;
++	unsigned int enables;
++	int n;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	f->source_read_error = property;
++	enables = f->cp_enable_writes;
++	for (n = 0; n < 3; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_FALSE(test, f->pmic_enabled);
++	KUNIT_EXPECT_EQ(test, f->fcc_ma, 0U);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 0U);
++	KUNIT_EXPECT_TRUE(test, f->mca.online);
++	f->source_read_error = 0;
++	for (n = 0; n < 6; n++)
++		piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_EXPECT_EQ(test, f->cp_enable_writes, enables);
++}
++
++static void piano_mca_source_current_read_fault_test(struct kunit *test)
++{
++	piano_mca_source_read_fault(test, MCA_PROP_BUS_CURR);
++}
++
++static void piano_mca_source_limit_read_fault_test(struct kunit *test)
++{
++	piano_mca_source_read_fault(test, MCA_PROP_ICL);
++}
++
++static void piano_mca_source_type_read_fault_test(struct kunit *test)
++{
++	piano_mca_source_read_fault(test, MCA_PROP_REAL_TYPE);
++}
++
++static void piano_mca_fallback_lowers_input_first_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	f->fixed_5v_ma = 500;
++	f->mca.hv = MCA_HV_ON;
++	f->mca.icl_set_ma = f->mca.icl_ma = f->icl_ma = 1600;
++	f->mca.vbus_uv = f->vbus_uv = 10000000;
++	piano_mca_apply_policy(&f->mca, f->remote_generation, 0);
++	KUNIT_EXPECT_EQ(test, f->mca.hv, MCA_HV_BLOCKED);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 500U);
++	KUNIT_EXPECT_EQ(test, f->max_fixed_voltage, 5000U);
++	KUNIT_EXPECT_LT(test, f->last_icl_event, f->last_voltage_event);
++}
++
++static void piano_mca_fallback_waits_for_five_volts_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	f->mca.hv = MCA_HV_ON;
++	f->mca.icl_set_ma = f->mca.icl_ma = f->icl_ma = 500;
++	f->mca.vbus_uv = f->vbus_uv = 10000000;
++	piano_mca_apply_policy(&f->mca, f->remote_generation, 0);
++	KUNIT_EXPECT_EQ(test, f->mca.hv, MCA_HV_BLOCKED);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 500U);
++	f->mca.vbus_uv = f->vbus_uv = 5000000;
++	piano_mca_apply_policy(&f->mca, f->remote_generation, 0);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 1500U);
++}
++
++static void piano_mca_fallback_retries_failed_limit_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	f->fixed_5v_ma = 500;
++	f->mca.hv = MCA_HV_ON;
++	f->mca.icl_set_ma = f->mca.icl_ma = f->icl_ma = 1600;
++	f->mca.vbus_uv = f->vbus_uv = 10000000;
++	f->icl_write_failures = -1;
++	piano_mca_apply_policy(&f->mca, f->remote_generation, 0);
++	KUNIT_EXPECT_EQ(test, f->fixed_voltage_writes, 0U);
++	f->icl_write_failures = 0;
++	piano_mca_apply_policy(&f->mca, f->remote_generation, 0);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 500U);
++	KUNIT_EXPECT_EQ(test, f->max_fixed_voltage, 5000U);
++	KUNIT_EXPECT_LT(test, f->last_icl_event, f->last_voltage_event);
++}
++
++static void piano_mca_new_session_reapplies_cached_input_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	hv_charge = false;
++	f->remote_generation += 2;
++	piano_mca_pdr_notify(&f->mca, SERVREG_SERVICE_STATE_DOWN);
++	piano_mca_pdr_notify(&f->mca, SERVREG_SERVICE_STATE_UP);
++	/* Model an old worker publishing its result after the PDR notification. */
++	f->mca.icl_set_ma = 1500;
++	f->mca.hv = MCA_HV_BLOCKED;
++	f->mca.cp_errors = 7;
++	f->icl_ma = f->mca.icl_ma = 500;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.polled_generation, f->remote_generation);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 1500U);
++	KUNIT_EXPECT_EQ(test, f->mca.hv, MCA_HV_OFF);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 7U);
++}
++
++static void piano_mca_new_connection_reapplies_cached_input_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	hv_charge = false;
++	f->mca.icl_set_ma = 1500;
++	f->icl_ma = f->mca.icl_ma = 500;
++	atomic_inc(&f->mca.connection_generation);
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_EQ(test, f->mca.polled_connection_generation, 1U);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 1500U);
++}
++
++static void piano_mca_unsampled_session_only_returns_to_five_volts_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	f->remote_generation += 2;
++	f->mca.icl_set_ma = f->mca.icl_ma = f->icl_ma = 1500;
++	KUNIT_EXPECT_EQ(test, piano_mca_request_volt_session(&f->mca, 9000,
++		f->remote_generation, 0), -ECONNRESET);
++	KUNIT_EXPECT_EQ(test, f->fixed_voltage_writes, 0U);
++	KUNIT_ASSERT_EQ(test, piano_mca_request_volt_session(&f->mca, 5000,
++		f->remote_generation, 0), 0);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, (u32)MCA_ICL_MIN_MA);
++	KUNIT_EXPECT_EQ(test, f->max_fixed_voltage, 5000U);
++	KUNIT_EXPECT_LT(test, f->last_icl_event, f->last_voltage_event);
++}
++
+ static struct kunit_case piano_mca_test_cases[] = {
++	KUNIT_CASE(piano_mca_unsampled_session_only_returns_to_five_volts_test),
++	KUNIT_CASE(piano_mca_new_session_reapplies_cached_input_test),
++	KUNIT_CASE(piano_mca_new_connection_reapplies_cached_input_test),
++	KUNIT_CASE(piano_mca_fallback_lowers_input_first_test),
++	KUNIT_CASE(piano_mca_fallback_waits_for_five_volts_test),
++	KUNIT_CASE(piano_mca_fallback_retries_failed_limit_test),
++	KUNIT_CASE(piano_mca_failed_input_limit_blocks_voltage_test),
++	KUNIT_CASE(piano_mca_source_current_read_fault_test),
++	KUNIT_CASE(piano_mca_source_limit_read_fault_test),
++	KUNIT_CASE(piano_mca_source_type_read_fault_test),
++	KUNIT_CASE(piano_mca_pdr_during_fv_setup_recovers_test),
++	KUNIT_CASE(piano_mca_unknown_verification_blocks_pd_test),
++	KUNIT_CASE(piano_mca_fault_stop_then_vbus_loss_test),
++	KUNIT_CASE(piano_mca_session_change_during_step_test),
++	KUNIT_CASE(piano_mca_transition_respects_both_contracts_test),
++	KUNIT_CASE(piano_mca_fault_survives_recovery_requests_test),
++	KUNIT_CASE(piano_mca_limit_stop_error_recovers_test),
++	KUNIT_CASE(piano_mca_auto_waits_for_owned_stop_test),
++	KUNIT_CASE(piano_mca_reopen_fault_has_no_old_permission_test),
++	KUNIT_CASE(piano_mca_composite_enable_is_reapplied_test),
++	KUNIT_CASE(piano_mca_stop_hands_over_in_same_poll_test),
++	KUNIT_CASE(piano_mca_zero_limit_keeps_input_and_fv_test),
++	KUNIT_CASE(piano_mca_fault_stopping_poll_keeps_latch_test),
++	KUNIT_CASE(piano_mca_source_drop_restores_budget_test),
++	KUNIT_CASE(piano_mca_source_drop_retry_limit_test),
++	KUNIT_CASE(piano_mca_source_auth_reset_not_error_test),
++	KUNIT_CASE(piano_mca_source_read_error_not_drop_test),
++	KUNIT_CASE(piano_mca_source_request_error_keeps_done_test),
++
++	KUNIT_CASE(piano_mca_cp_repeats_unchanged_pps_test),
++	KUNIT_CASE(piano_mca_cp_repeat_pps_rejects_old_session_test),
+ 	KUNIT_CASE(piano_mca_limit_preserves_inhibition_test),
+ 	KUNIT_CASE(piano_mca_limit_during_suspend_test),
+ 	KUNIT_CASE(piano_mca_thermal_restores_input_test),
+-- 
+2.55.0
+

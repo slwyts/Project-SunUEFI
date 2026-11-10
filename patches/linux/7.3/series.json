@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "d9ab95b426cb4468904cf7d59740870de385577e",
-  "original_target_commit": "f1b85887d6b40c0d5b8238e6546d4924d232db62",
+  "target_tree": "b0af8c547f326062ab3fed7be2e03901132225e5",
+  "original_target_commit": "13e5e2aff2785dbd36dbd936d65dc8859c0fcfc0",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -767,6 +767,54 @@
       "original_parent": "c4a58dd0f40a7ae35553943440fffcb1036e9064",
       "committer_date": "2026-11-10T23:45:14+08:00",
       "tree": "d9ab95b426cb4468904cf7d59740870de385577e"
+    },
+    {
+      "file": "0096-power-mca-session-recovery.patch",
+      "sha256": "fec5bb9dd72dc418c6b38e90be0e19d2b3d47bb11e2b946cb5cbc7cd1577c03e",
+      "original_commit": "d4c0684caecc11422b7ae3977fcd4f7a38b44129",
+      "original_parent": "f1b85887d6b40c0d5b8238e6546d4924d232db62",
+      "committer_date": "2026-11-10T23:49:41+08:00",
+      "tree": "9b90c73cb3784d2047502c349ad5017642a15408"
+    },
+    {
+      "file": "0097-power-bq27xxx-suspend-recovery.patch",
+      "sha256": "1f1f9f9d6191ebd2732761e4e8156aa1865f6ff90e4347632346eb7dabfe61f5",
+      "original_commit": "8ffe21256dfbafd987a464e5e3e04ed892183af9",
+      "original_parent": "d4c0684caecc11422b7ae3977fcd4f7a38b44129",
+      "committer_date": "2026-11-10T23:49:41+08:00",
+      "tree": "448d71bcb028a64b49faff84ec52e85d50102308"
+    },
+    {
+      "file": "0098-iio-piano-gen4-thermistors.patch",
+      "sha256": "21bb9ae37bbb23ac091489f91f4500e240b03e4966362675a6f9d27c3c27a218",
+      "original_commit": "b10af20777de0700c19bfdd87e702e14d55c3118",
+      "original_parent": "8ffe21256dfbafd987a464e5e3e04ed892183af9",
+      "committer_date": "2026-11-11T00:18:30+08:00",
+      "tree": "15bf2c16716bc691f3c677cdfab70c3e4ac07030"
+    },
+    {
+      "file": "0099-power-mca-full-recharge.patch",
+      "sha256": "7335d64a201a976a690a9d111f42464f149fc4fdb781ca671eddc0e790003ca2",
+      "original_commit": "2f7576b25e806f552bf218ac60f69ecd2d253a72",
+      "original_parent": "b10af20777de0700c19bfdd87e702e14d55c3118",
+      "committer_date": "2026-11-11T00:18:30+08:00",
+      "tree": "79ef5595f2a6543acede4c7043da52ad69151bb7"
+    },
+    {
+      "file": "0100-power-bq27z561-original-temperature.patch",
+      "sha256": "71a9fd2b848888f8898586fc5c31e625e4156564d168693f6679fe2e87b82f15",
+      "original_commit": "82a2656afe05c8d0bb2295f5fa4091f6a334defd",
+      "original_parent": "2f7576b25e806f552bf218ac60f69ecd2d253a72",
+      "committer_date": "2026-11-11T00:25:30+08:00",
+      "tree": "092fac403cb93c305ddbd08b6c3930d8e73d0c86"
+    },
+    {
+      "file": "0101-power-mca-skin-thermal-policy.patch",
+      "sha256": "baad91bf8bc07e2a13d3657c36e5dc9ce64c5ff90075f7afa3c72ccf9641167c",
+      "original_commit": "13e5e2aff2785dbd36dbd936d65dc8859c0fcfc0",
+      "original_parent": "82a2656afe05c8d0bb2295f5fa4091f6a334defd",
+      "committer_date": "2026-11-11T00:25:30+08:00",
+      "tree": "b0af8c547f326062ab3fed7be2e03901132225e5"
     }
   ],
   "provenance": {
@@ -777,7 +825,41 @@
         "mca_charger_thermal.ko": "5bda39f6f811ae0e60bf8c908977b3724d0675ca7ef9c31c3fece85d22d41319"
       },
       "stock_checks": "The same-device wired_thermal table has ten columns per state; the 2:1 direct-charge column descends from 10500 through 9000, 8000, 7000, 6200, 5500, 5000, 4400, 3600, 3000, 2500, 2000, 1500, 1000 to 700 mA. Original parser uses ten-cell rows and the thermal device exposes these as discrete levels.",
-      "scope": "Use the distinct levels within the existing 8000 mA normal-mode ceiling and add zero-current stop. Standard charge_control_limit and thermal cooling constrain one combined pump/PMIC budget. No temperature-to-level map, FFC enable or higher voltage/current capability is inferred from these limits."
+      "scope": "Use the distinct levels within the existing 8000 mA normal-mode ceiling and add zero-current stop. Standard charge_control_limit and thermal cooling constrain one combined pump/PMIC budget. No temperature-to-level map, FFC enable or higher voltage/current capability is inferred from these limits.",
+      "automatic_policy": {
+        "profile": "Global high-load thermal-gl-cgame.conf, illuminated-screen levels; applied in kernel independent of Android app and screen selectors.",
+        "profile_source": "https://raw.githubusercontent.com/xiaomi-pad-8-pro-development/android_vendor_xiaomi_piano/c1e5a318cfe41b5c7cef74385b376fd0c2527c49/proprietary/odm/etc/thermal-gl-cgame.conf",
+        "profile_sha256": "dfc85e0cf3ce687206995cddb8a33b3b677810daf88addbe4c47c5490073d413",
+        "trigger_factory_units": [
+          35000,
+          37000,
+          39000,
+          40000,
+          44000,
+          45000
+        ],
+        "clear_factory_units": [
+          32000,
+          35000,
+          37000,
+          39000,
+          42000,
+          44000
+        ],
+        "wired_thermal_levels": [
+          1,
+          2,
+          8,
+          9,
+          12,
+          15
+        ],
+        "inputs": "Two BQ27Z561 original-temperature registers 0x1e plus quiet, charger1, Wi-Fi and CPU board thermistors. Standard IIO temperatures are physical millidegrees; the calibrated model converts the four board inputs to the original Q10 units before applying weights 500,131,-9,89,232 /1000 +1600. Public stock kernel board-offset default zero is retained; no Android runtime override is imported.",
+        "adc_upstream_series": "https://lore.kernel.org/all/20260731-pmic5_gen4_adc-v1-0-9c49b2eea6f9@oss.qualcomm.com/",
+        "gpio_stock_blob": "a70241ffea5592d52e36bc6dcb6b7878cb3913c5",
+        "policy": "Apply the selected total budget and actual 5V/9V PMIC FCC columns. Keep external input limits independent. Sensor errors stop battery charge without forgetting hysteresis or clearing other stop reasons.",
+        "evidence_sha256": "8814c838dd8bd71d63ccb9fff1d1a0470d9b49d4f53c5a67cafb2daba94eca6e"
+      }
     },
     "cpu_capacity": {
       "stock_rom": "OS4.0.5.0.XPYCNXM",
@@ -805,7 +887,20 @@
       "stock_program_checks": "Named original proxy get/set functions confirm FV 0x2007 in mV, ITERM 0x2006 in mA, FCC 0x2005, all four-byte payloads. Original buck applies normal ITERM 452+20 mA; JEITA uses previous-zone hysteresis; charge status 0x2001 equals 5 when done.",
       "scope": "Combined-cell current capped at 8000 mA; normal FV 4060/4480/4500 mV and ITERM 472 mA. Reference topology enums and property IDs are not copied; use Piano gauges and original-program wire IDs.",
       "firmware_property_checks": "The pinned hyperos4-adsp program confirms FCC/ITERM getters are successful no-ops. Model 0x56 FV getter uses 10 mV while its setter uses 5 mV. Charge enable 0x2003 is a one-byte boolean whose getter reads PMIC CHGR 0x2646 bit 0.",
-      "local_protection": "Use temperature extremes from both cells and firmware pack, retain validated bounded PMIC heat sharing, delay warm-FV recovery and confirm PMIC charge-enable is off before suspend or teardown. Restore only after fresh temperature and normal-limit setup."
+      "local_protection": "Use temperature extremes from both cells and firmware pack, retain validated bounded PMIC heat sharing, delay warm-FV recovery and confirm PMIC charge-enable is off before suspend or teardown. Restore only after fresh temperature and normal-limit setup.",
+      "factory_control_checks": "The same cached quickchg module/BTF requires fast_charge for the 4650 mV single_cp_pmic buck FV override, cancels it in the ordinary path, and permits ordinary single-pump buck sharing only at current_fcc >= 9000 mA with PPS type 11. Factory regulation recomputes APDO current and blocks starts at total_err >= 11; it has no persistent dropout-current capacity inference. Linux counts only the VBUS failures it permits to reopen; other faults remain stopped. Normal 8 A tables and validated local PMIC heat sharing remain.",
+      "source_recovery": "Rebuild APDO and pump protection from the current combined battery budget. Keep zero charge limits and user inhibition independent of input/FV policy. Preserve stop ownership through failed confirmation and cancellation. Source/verification read errors do not authorize PD or imply disconnect. Lower ICL before both voltage transitions, wait for 5 V before raising it, and discard late host caches on ADSP/connector generation changes.",
+      "termination_and_recharge": {
+        "stock_fg_module_sha256": "223715a7c679dda988da1127d67e5a085b4e4c8cca7462b0ae2c7ffee20e7c4c",
+        "scope": "Ordinary whole-pack parallel-gauge termination only; no per-cell CO control, data-flash writes or FFC state machine.",
+        "normal_fv_gate_mv": 4400,
+        "soft_tail_current_below_ma": 259,
+        "voltage_delta_mv": 8,
+        "soft_samples": 5,
+        "sample_period_ms": 1000,
+        "recharge_raw_soc_001_percent": 9700,
+        "semantics": "Effective FV must exceed 4400mV; hardware charge status 5 or five distinct soft tail samples. Use original integer per-cell FCC percentage weights, check recharge after termination in the same monitor cycle. Full, user inhibition, thermal pauses and faults remain independent."
+      }
     },
     "battery_authentication": {
       "reference_url": "https://github.com/ianchb/xiaomi-mipps-auth",
@@ -820,7 +915,8 @@
         "bq27z561.ko": "7a76a4f20b83e4a3de197c7f8ca6bc2281072824e5d6b6ed9962d1c7af89dfdb"
       },
       "checks": "Piano project config selects factory HMAC-SHA256 key 1; fresh 32-byte challenges verified on both installed lwn cell-bank gauges. Vendor MAC commands 0x003e/0x003f switch FFC with a two-byte boolean payload, checksum and length. The mode getter in the stock program is cached, not a hardware readback.",
-      "scope": "Standard read-only authentic results and authenticated charge_type control; vendor key in the board DT. Does not enable FFC voltage/current in the charger policy."
+      "scope": "Standard read-only authentic results and authenticated charge_type control; vendor key in the board DT. Does not enable FFC voltage/current in the charger policy.",
+      "suspend_recovery": "A failed disable-FFC MAC transaction aborts suspend and explicitly rearms gauge polling; PM rollback does not call resume for the failed device. UML tests call the actual PM callback and MAC setter for command/checksum failures, successful disable and no-key devices."
     },
     "poweroff_charging": {
       "stock_program_sha256": {

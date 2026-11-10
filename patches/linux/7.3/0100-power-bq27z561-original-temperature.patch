@@ -1,0 +1,399 @@
+From 82a2656afe05c8d0bb2295f5fa4091f6a334defd Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Wed, 11 Nov 2026 00:25:30 +0800
+Subject: [PATCH] power: supply: bq27xxx: expose the BQ27Z561 original
+ temperature
+
+Provide the original temperature register as an opt-in read-only IIO
+channel for the ordinary charging skin-temperature model. Keep the
+standard power-supply temperature register and its consumers unchanged.
+
+Serialize reads against removal, propagate bus errors and reject values
+outside the factory validated range instead of returning an old sample.
+Keep the IIO dependency optional for other BQ27xxx users and test the real
+read callback, firmware opt-in and failure paths without issuing writes.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ .../bindings/power/supply/bq27xxx.yaml        |   7 +
+ drivers/power/supply/Kconfig                  |  17 +-
+ drivers/power/supply/bq27xxx_battery.c        |  89 +++++++++
+ drivers/power/supply/bq27xxx_battery_test.c   | 174 +++++++++++++++++-
+ 4 files changed, 284 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml b/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
+index 547ef2a66..8e51cac14 100644
+--- a/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
++++ b/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
+@@ -69,6 +69,12 @@ properties:
+ 
+   power-supplies: true
+ 
++  "#io-channel-cells":
++    const: 1
++    description: |
++      BQ27Z561 IIO channel 0 provides its original temperature. The standard
++      power supply temperature measurement remains unchanged.
++
+   ti,cell-monitor:
+     type: boolean
+     description: |
+@@ -98,6 +104,7 @@ allOf:
+     then:
+       properties:
+         ti,authentication-key: false
++        "#io-channel-cells": false
+   - if:
+       properties:
+         compatible:
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index 4db04f8a4..b88c8c611 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -349,8 +349,19 @@ config BATTERY_BQ27XXX
+ 	help
+ 	  Say Y here to enable support for batteries with BQ27xxx chips.
+ 
++config BATTERY_BQ27XXX_IIO
++	bool "BQ27Z561 original temperature IIO channel"
++	depends on BATTERY_BQ27XXX && IIO
++	depends on IIO=y || BATTERY_BQ27XXX=m
++	help
++	  Expose the read-only original temperature register as IIO channel 0.
++	  Only BQ27Z561 devices declaring #io-channel-cells register a provider.
++	  Values use the standard IIO temperature unit, millidegrees Celsius.
++	  The power supply temperature is unchanged; no gauge configuration
++	  is written.
++
+ config BATTERY_BQ27XXX_KUNIT_TEST
+-	bool "KUnit tests for BQ27xxx suspend recovery" if !KUNIT_ALL_TESTS
++	bool "KUnit tests for BQ27xxx gauge callbacks" if !KUNIT_ALL_TESTS
+ 	depends on KUNIT=y && UML && PM_SLEEP
+ 	select BATTERY_BQ27XXX
+ 	default KUNIT_ALL_TESTS
+@@ -358,7 +369,9 @@ config BATTERY_BQ27XXX_KUNIT_TEST
+ 	  Exercise the actual gauge suspend callback with a virtual MAC bus.
+ 	  Check that a failed fast-charge-mode write restores polling after
+ 	  an aborted suspend. Verify both MAC writes and the normal suspend
+-	  path. Run only in UML to avoid real battery hardware.
++	  path. With BATTERY_BQ27XXX_IIO, also verify the read-only original
++	  temperature callback and I/O errors. Run only in UML to avoid real
++	  battery hardware.
+ 
+ config BATTERY_BQ27XXX_I2C
+ 	tristate "BQ27xxx I2C support"
+diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
+index 8d6e0b9cd..51de010d6 100644
+--- a/drivers/power/supply/bq27xxx_battery.c
++++ b/drivers/power/supply/bq27xxx_battery.c
+@@ -61,6 +61,10 @@
+ 
+ #include <linux/power/bq27xxx_battery.h>
+ 
++#if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
++#include <linux/iio/iio.h>
++#endif
++
+ #define BQ27XXX_MANUFACTURER	"Texas Instruments"
+ 
+ /* BQ27XXX Flags */
+@@ -2421,6 +2425,86 @@ static void bq27xxx_external_power_changed(struct power_supply *psy)
+ 	mod_delayed_work(system_percpu_wq, &di->work, HZ / 2);
+ }
+ 
++#if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
++#define BQ27Z561_ORIGINAL_TEMP_REG	0x1e
++#define BQ27Z561_ORIGINAL_TEMP_MIN	1450
++#define BQ27Z561_ORIGINAL_TEMP_MAX	4010
++
++static int bq27z561_iio_read_raw(struct iio_dev *indio_dev,
++				const struct iio_chan_spec *channel,
++				int *val, int *val2, long mask)
++{
++	struct bq27xxx_device_info *di =
++		*(struct bq27xxx_device_info **)iio_priv(indio_dev);
++	int ret;
++
++	if (mask != IIO_CHAN_INFO_PROCESSED || channel->type != IIO_TEMP ||
++	    channel->channel != 0)
++		return -EINVAL;
++	if (di->chip != BQ27Z561)
++		return -EOPNOTSUPP;
++
++	mutex_lock(&di->lock);
++	ret = di->removed ? -ENODEV :
++		di->bus.read(di, BQ27Z561_ORIGINAL_TEMP_REG, false);
++	mutex_unlock(&di->lock);
++	if (ret < 0)
++		return ret;
++	if (ret < BQ27Z561_ORIGINAL_TEMP_MIN || ret > BQ27Z561_ORIGINAL_TEMP_MAX)
++		return -ERANGE;
++
++	/* Original temperature is decikelvin; IIO temperature uses millidegrees C. */
++	*val = (ret - 2730) * 100;
++	return IIO_VAL_INT;
++}
++
++static const struct iio_info bq27z561_iio_info = {
++	.read_raw = bq27z561_iio_read_raw,
++};
++
++static const struct iio_chan_spec bq27z561_iio_channels[] = {
++	{
++		.type = IIO_TEMP,
++		.indexed = 1,
++		.channel = 0,
++		.info_mask_separate = BIT(IIO_CHAN_INFO_PROCESSED),
++		.datasheet_name = "original-temperature",
++	},
++};
++
++static int bq27z561_register_iio(struct bq27xxx_device_info *di)
++{
++	struct iio_dev *indio_dev;
++	u32 cells;
++	int ret;
++
++	if (di->chip != BQ27Z561 ||
++	    !device_property_present(di->dev, "#io-channel-cells"))
++		return 0;
++	ret = device_property_read_u32(di->dev, "#io-channel-cells", &cells);
++	if (ret)
++		return ret;
++	if (cells != 1)
++		return -EINVAL;
++
++	indio_dev = devm_iio_device_alloc(di->dev, sizeof(di));
++	if (!indio_dev)
++		return -ENOMEM;
++	*(struct bq27xxx_device_info **)iio_priv(indio_dev) = di;
++	indio_dev->name = di->name;
++	indio_dev->modes = INDIO_DIRECT_MODE;
++	indio_dev->info = &bq27z561_iio_info;
++	indio_dev->channels = bq27z561_iio_channels;
++	indio_dev->num_channels = ARRAY_SIZE(bq27z561_iio_channels);
++	return devm_iio_device_register(di->dev, indio_dev);
++}
++#else
++static int bq27z561_register_iio(struct bq27xxx_device_info *di)
++{
++	return 0;
++}
++#endif
++
+ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
+ {
+ 	struct power_supply_desc *psy_desc;
+@@ -2462,6 +2546,11 @@ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
+ 		return dev_err_probe(di->dev, ret,
+ 				     "invalid battery authentication configuration\n");
+ 
++	ret = bq27z561_register_iio(di);
++	if (ret)
++		return dev_err_probe(di->dev, ret,
++				     "failed to register original temperature channel\n");
++
+ 	di->bat = devm_power_supply_register(di->dev, psy_desc, &psy_cfg);
+ 	if (IS_ERR(di->bat))
+ 		return dev_err_probe(di->dev, PTR_ERR(di->bat),
+diff --git a/drivers/power/supply/bq27xxx_battery_test.c b/drivers/power/supply/bq27xxx_battery_test.c
+index 0d824c366..2130d0c1b 100644
+--- a/drivers/power/supply/bq27xxx_battery_test.c
++++ b/drivers/power/supply/bq27xxx_battery_test.c
+@@ -1,5 +1,5 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+-/* Included by the core to exercise its actual static PM callback and MAC I/O. */
++/* Included by the core to exercise its actual static callbacks and bus I/O. */
+ #include <kunit/device.h>
+ #include <kunit/test.h>
+ 
+@@ -10,6 +10,12 @@ struct bq27xxx_suspend_test {
+ 	u8 key[SHA256_DIGEST_SIZE];
+ 	u8 command[4], trailer[2];
+ 	unsigned int writes, fail_write;
++#if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
++	int read_value;
++	unsigned int reads;
++	u8 read_reg;
++	bool read_single, read_locked;
++#endif
+ };
+ 
+ static void bq27xxx_suspend_test_poll(struct work_struct *work)
+@@ -127,7 +133,173 @@ static void bq27xxx_suspend_without_key_test(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, atomic_read(&fixture->polls), 0);
+ }
+ 
++#if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
++static int bq27xxx_original_test_read(struct bq27xxx_device_info *di, u8 reg,
++				     bool single)
++{
++	struct bq27xxx_suspend_test *fixture =
++		container_of(di, struct bq27xxx_suspend_test, di);
++
++	fixture->reads++;
++	fixture->read_reg = reg;
++	fixture->read_single = single;
++	fixture->read_locked = mutex_is_locked(&di->lock);
++	return fixture->read_value;
++}
++
++static int bq27xxx_original_test_write(struct bq27xxx_device_info *di, u8 reg,
++				      int value, bool single)
++{
++	struct bq27xxx_suspend_test *fixture =
++		container_of(di, struct bq27xxx_suspend_test, di);
++
++	fixture->writes++;
++	return -EIO;
++}
++
++static struct iio_dev *bq27xxx_original_test_prepare(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *fixture = test->priv;
++	struct iio_dev *indio_dev;
++	struct bq27xxx_device_info *di = &fixture->di;
++
++	di->chip = BQ27Z561;
++	di->name = "bq27z561-test";
++	di->bus.read = bq27xxx_original_test_read;
++	di->bus.write = bq27xxx_original_test_write;
++	indio_dev = devm_iio_device_alloc(di->dev, sizeof(di));
++	if (indio_dev)
++		*(struct bq27xxx_device_info **)iio_priv(indio_dev) = di;
++	return indio_dev;
++}
++
++static void bq27xxx_original_iio_values_test(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *fixture = test->priv;
++	static const struct { int raw, millicelsius; } cases[] = {
++		{ 3087, 35700 }, { 2730, 0 }, { 2631, -9900 },
++		{ 1450, -128000 }, { 4010, 128000 },
++	};
++	struct iio_dev *indio_dev = bq27xxx_original_test_prepare(test);
++	int val, val2, i;
++
++	KUNIT_ASSERT_NOT_NULL(test, indio_dev);
++	for (i = 0; i < ARRAY_SIZE(cases); i++) {
++		fixture->read_value = cases[i].raw;
++		KUNIT_EXPECT_EQ(test, bq27z561_iio_info.read_raw(indio_dev,
++			&bq27z561_iio_channels[0], &val, &val2,
++			IIO_CHAN_INFO_PROCESSED), IIO_VAL_INT);
++		KUNIT_EXPECT_EQ(test, val, cases[i].millicelsius);
++	}
++	KUNIT_EXPECT_EQ(test, fixture->read_reg, (u8)0x1e);
++	KUNIT_EXPECT_FALSE(test, fixture->read_single);
++	KUNIT_EXPECT_TRUE(test, fixture->read_locked);
++	KUNIT_EXPECT_EQ(test, fixture->reads, (unsigned int)ARRAY_SIZE(cases));
++	KUNIT_EXPECT_EQ(test, fixture->writes, 0U);
++}
++
++static void bq27xxx_original_iio_range_test(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *fixture = test->priv;
++	static const int invalid[] = { 1449, 4011, 0, 65535 };
++	struct iio_dev *indio_dev = bq27xxx_original_test_prepare(test);
++	int val = 12345, val2, i;
++
++	KUNIT_ASSERT_NOT_NULL(test, indio_dev);
++	for (i = 0; i < ARRAY_SIZE(invalid); i++) {
++		fixture->read_value = invalid[i];
++		KUNIT_EXPECT_EQ(test, bq27z561_iio_info.read_raw(indio_dev,
++			&bq27z561_iio_channels[0], &val, &val2,
++			IIO_CHAN_INFO_PROCESSED), -ERANGE);
++		KUNIT_EXPECT_EQ(test, val, 12345);
++	}
++	KUNIT_EXPECT_EQ(test, fixture->reads, (unsigned int)ARRAY_SIZE(invalid));
++	KUNIT_EXPECT_EQ(test, fixture->writes, 0U);
++}
++
++static void bq27xxx_original_iio_error_test(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *fixture = test->priv;
++	struct iio_dev *indio_dev = bq27xxx_original_test_prepare(test);
++	int val = 12345, val2;
++
++	KUNIT_ASSERT_NOT_NULL(test, indio_dev);
++	fixture->read_value = -EREMOTEIO;
++	KUNIT_EXPECT_EQ(test, bq27z561_iio_info.read_raw(indio_dev,
++		&bq27z561_iio_channels[0], &val, &val2, IIO_CHAN_INFO_PROCESSED),
++		-EREMOTEIO);
++	KUNIT_EXPECT_EQ(test, val, 12345);
++	KUNIT_EXPECT_EQ(test, fixture->reads, 1U);
++	KUNIT_EXPECT_TRUE(test, fixture->read_locked);
++	KUNIT_EXPECT_EQ(test, fixture->writes, 0U);
++}
++
++static void bq27xxx_original_iio_unsupported_test(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *fixture = test->priv;
++	struct iio_dev *indio_dev = bq27xxx_original_test_prepare(test);
++	struct iio_chan_spec channel = bq27z561_iio_channels[0];
++	int val, val2;
++
++	KUNIT_ASSERT_NOT_NULL(test, indio_dev);
++	fixture->di.chip = BQ27520G1;
++	KUNIT_EXPECT_EQ(test, bq27z561_iio_info.read_raw(indio_dev,
++		&channel, &val, &val2, IIO_CHAN_INFO_PROCESSED), -EOPNOTSUPP);
++	fixture->di.chip = BQ27Z561;
++	KUNIT_EXPECT_EQ(test, bq27z561_iio_info.read_raw(indio_dev,
++		&channel, &val, &val2, IIO_CHAN_INFO_RAW), -EINVAL);
++	channel.channel = 1;
++	KUNIT_EXPECT_EQ(test, bq27z561_iio_info.read_raw(indio_dev,
++		&channel, &val, &val2, IIO_CHAN_INFO_PROCESSED), -EINVAL);
++	KUNIT_EXPECT_EQ(test, fixture->reads, 0U);
++	KUNIT_EXPECT_EQ(test, fixture->writes, 0U);
++}
++
++static void bq27xxx_original_iio_removed_test(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *fixture = test->priv;
++	struct iio_dev *indio_dev = bq27xxx_original_test_prepare(test);
++	int val, val2;
++
++	KUNIT_ASSERT_NOT_NULL(test, indio_dev);
++	fixture->di.removed = true;
++	KUNIT_EXPECT_EQ(test, bq27z561_iio_info.read_raw(indio_dev,
++		&bq27z561_iio_channels[0], &val, &val2, IIO_CHAN_INFO_PROCESSED),
++		-ENODEV);
++	KUNIT_EXPECT_EQ(test, fixture->reads, 0U);
++	KUNIT_EXPECT_EQ(test, fixture->writes, 0U);
++}
++
++static void bq27xxx_original_iio_optin_test(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *fixture = test->priv;
++	static const struct property_entry properties[] = {
++		PROPERTY_ENTRY_U32("#io-channel-cells", 1), {}
++	};
++
++	fixture->di.chip = BQ27Z561;
++	fixture->di.name = "bq27z561-test";
++	fixture->di.bus.read = bq27xxx_original_test_read;
++	fixture->di.bus.write = bq27xxx_original_test_write;
++	KUNIT_EXPECT_EQ(test, bq27z561_register_iio(&fixture->di), 0);
++	KUNIT_ASSERT_EQ(test, device_create_managed_software_node(fixture->di.dev,
++		properties, NULL), 0);
++	KUNIT_ASSERT_EQ(test, bq27z561_register_iio(&fixture->di), 0);
++	KUNIT_EXPECT_EQ(test, fixture->reads, 0U);
++	KUNIT_EXPECT_EQ(test, fixture->writes, 0U);
++}
++#endif
++
+ static struct kunit_case bq27xxx_suspend_cases[] = {
++#if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
++	KUNIT_CASE(bq27xxx_original_iio_values_test),
++	KUNIT_CASE(bq27xxx_original_iio_range_test),
++	KUNIT_CASE(bq27xxx_original_iio_error_test),
++	KUNIT_CASE(bq27xxx_original_iio_unsupported_test),
++	KUNIT_CASE(bq27xxx_original_iio_removed_test),
++	KUNIT_CASE(bq27xxx_original_iio_optin_test),
++#endif
++
+ 	KUNIT_CASE(bq27xxx_suspend_command_failure_test),
+ 	KUNIT_CASE(bq27xxx_suspend_checksum_failure_test),
+ 	KUNIT_CASE(bq27xxx_suspend_disables_fast_test),
+-- 
+2.55.0
+

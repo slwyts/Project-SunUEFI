@@ -1,0 +1,792 @@
+From b10af20777de0700c19bfdd87e702e14d55c3118 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Wed, 11 Nov 2026 00:18:30 +0800
+Subject: [PATCH] iio: adc: support mixed Gen3 and Gen4 Piano thermistors
+
+Backport the Qualcomm mixed-generation ADC and thermal monitor support,
+including the channel bindings, per-channel scaling and extended routing.
+Honor disabled channel nodes so the board can omit unsupported charger
+current channels without losing the supported temperature channels.
+
+Convert the PM7 resistance table from Q10 degrees at the public millidegree
+boundaries, including the inverse thermal-trip conversion. Exercise nominal
+thermistor values, mixed generations, trip roundtrips and invalid codes.
+
+Based on patches by Jishnu Prakash and Anjelique Melendez.
+Link: https://lore.kernel.org/all/20260731-pmic5_gen4_adc-v1-1-9c49b2eea6f9@oss.qualcomm.com/
+Link: https://lore.kernel.org/all/20260731-pmic5_gen4_adc-v1-2-9c49b2eea6f9@oss.qualcomm.com/
+Link: https://lore.kernel.org/all/20260731-pmic5_gen4_adc-v1-3-9c49b2eea6f9@oss.qualcomm.com/
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ .../bindings/iio/adc/qcom,spmi-adc5-gen3.yaml |  47 ++++-
+ drivers/iio/adc/Kconfig                       |   7 +
+ drivers/iio/adc/qcom-spmi-adc5-gen3.c         | 168 +++++++++++++-----
+ drivers/iio/adc/qcom-vadc-common-test.c       |  71 ++++++++
+ drivers/iio/adc/qcom-vadc-common.c            |  55 +++++-
+ drivers/thermal/qcom/qcom-spmi-adc-tm5-gen3.c |  19 +-
+ include/linux/iio/adc/qcom-adc5-gen3-common.h |  44 ++++-
+ include/linux/iio/adc/qcom-vadc-common.h      |   6 +
+ 8 files changed, 358 insertions(+), 59 deletions(-)
+ create mode 100644 drivers/iio/adc/qcom-vadc-common-test.c
+
+diff --git a/Documentation/devicetree/bindings/iio/adc/qcom,spmi-adc5-gen3.yaml b/Documentation/devicetree/bindings/iio/adc/qcom,spmi-adc5-gen3.yaml
+index 149f4af8f..e79ddc2ac 100644
+--- a/Documentation/devicetree/bindings/iio/adc/qcom,spmi-adc5-gen3.yaml
++++ b/Documentation/devicetree/bindings/iio/adc/qcom,spmi-adc5-gen3.yaml
+@@ -21,9 +21,14 @@ description: |
+   All boards using a particular (SOC + master PMIC) combination will have the
+   same number of ADC SDAMs supported on that PMIC.
+ 
++  PMIC5 Gen4 ADC is similar to Gen3 ADC, with some differences such as
++  improved ratiometric conversion resolution.
++
+ properties:
+   compatible:
+-    const: qcom,spmi-adc5-gen3
++    enum:
++      - qcom,spmi-adc5-gen3
++      - qcom,spmi-adc5-gen4
+ 
+   reg:
+     items:
+@@ -83,6 +88,46 @@ patternProperties:
+           This property indicates ADC_TM monitoring is done on this channel.
+         type: boolean
+ 
++      qcom,adc5-gen4:
++        description:
++          Indicates channel is of type ADC5 Gen4. This may be needed in cases where the
++          master PMIC has an ADC peripheral of type Gen3, but some of the other PMICs it
++          communicates with have ADC peripherals of type Gen4, so channels of those PMICs
++          need to be marked as Gen4 to ensure their conversions are handled correctly.
++        type: boolean
++
++      qcom,adc5-gen3:
++        description:
++          Indicates channel is of type ADC5 Gen3. This may be needed in cases where the
++          master PMIC has an ADC peripheral of type Gen4, but some of the other PMICs
++          under it have ADC peripherals of type Gen3.
++        type: boolean
++
++allOf:
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: qcom,spmi-adc5-gen4
++
++    then:
++      patternProperties:
++        "^channel@[0-9a-f]+$":
++          properties:
++            qcom,adc5-gen4: false
++
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: qcom,spmi-adc5-gen3
++
++    then:
++      patternProperties:
++        "^channel@[0-9a-f]+$":
++          properties:
++            qcom,adc5-gen3: false
++
+ required:
+   - compatible
+   - reg
+diff --git a/drivers/iio/adc/Kconfig b/drivers/iio/adc/Kconfig
+index 415e519ad..3989f2722 100644
+--- a/drivers/iio/adc/Kconfig
++++ b/drivers/iio/adc/Kconfig
+@@ -1352,6 +1352,13 @@ config PALMAS_GPADC
+ 	  is used in smartphones and tablets and supports a 16 channel
+ 	  general purpose ADC.
+ 
++config QCOM_VADC_COMMON_KUNIT_TEST
++	bool "Qualcomm ADC temperature conversion tests"
++	depends on KUNIT=y && UML
++	select QCOM_VADC_COMMON
++	help
++	  Test mixed Gen3/Gen4 thermistor scaling and thermal trip conversion.
++
+ config QCOM_VADC_COMMON
+ 	tristate
+ 
+diff --git a/drivers/iio/adc/qcom-spmi-adc5-gen3.c b/drivers/iio/adc/qcom-spmi-adc5-gen3.c
+index c68c6c5f6..d6094f2ea 100644
+--- a/drivers/iio/adc/qcom-spmi-adc5-gen3.c
++++ b/drivers/iio/adc/qcom-spmi-adc5-gen3.c
+@@ -86,7 +86,9 @@ int adc5_gen3_write(struct adc5_device_data *adc, unsigned int sdam_index,
+ }
+ EXPORT_SYMBOL_NS_GPL(adc5_gen3_write, "QCOM_SPMI_ADC5_GEN3");
+ 
+-static int adc5_gen3_read_voltage_data(struct adc5_chip *adc, u16 *data)
++static int adc5_gen3_read_voltage_data(struct adc5_chip *adc,
++				       struct adc5_channel_common_prop *prop,
++				       u16 *data)
+ {
+ 	u8 rslt[2];
+ 	int ret;
+@@ -98,7 +100,8 @@ static int adc5_gen3_read_voltage_data(struct adc5_chip *adc, u16 *data)
+ 
+ 	*data = get_unaligned_le16(rslt);
+ 
+-	if (*data == ADC5_USR_DATA_CHECK) {
++	if (*data == ADC5_USR_DATA_CHECK &&
++	    !(prop->generation == ADC5_GEN4 && prop->cal_method == ADC5_RATIOMETRIC_CAL)) {
+ 		dev_err(adc->dev, "Invalid data:%#x\n", *data);
+ 		return -EINVAL;
+ 	}
+@@ -131,8 +134,9 @@ static int adc5_gen3_configure(struct adc5_chip *adc,
+ 	if (ret)
+ 		return ret;
+ 
+-	/* Write SID */
+-	buf[0] = FIELD_PREP(ADC5_GEN3_SID_MASK, prop->sid);
++	/* Write SID and bus index. */
++	buf[0] = FIELD_PREP(ADC5_GEN4_BUS_INDEX_MASK, prop->bus_index) |
++		 FIELD_PREP(ADC5_GEN4_SID_MASK, prop->sid);
+ 
+ 	/*
+ 	 * Use channel 0 by default for immediate conversion and to indicate
+@@ -268,7 +272,7 @@ static int adc5_gen3_do_conversion(struct adc5_chip *adc,
+ 		return -ETIMEDOUT;
+ 	}
+ 
+-	ret = adc5_gen3_read_voltage_data(adc, data_volt);
++	ret = adc5_gen3_read_voltage_data(adc, prop, data_volt);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -325,7 +329,7 @@ static int adc5_gen3_fwnode_xlate(struct iio_dev *indio_dev,
+ 	int i, v_channel;
+ 
+ 	for (i = 0; i < adc->nchannels; i++) {
+-		v_channel = ADC5_GEN3_V_CHAN(adc->chan_props[i].common_props);
++		v_channel = ADC5_GEN4_V_CHAN(adc->chan_props[i].common_props);
+ 		if (v_channel == iiospec->args[0])
+ 			return i;
+ 	}
+@@ -351,7 +355,7 @@ static int adc5_gen3_read_raw(struct iio_dev *indio_dev,
+ 			return ret;
+ 
+ 		ret = qcom_adc5_hw_scale(prop->scale_fn_type, prop->prescale,
+-					 adc->data, adc_code_volt, val);
++					 prop->data, adc_code_volt, val);
+ 		if (ret)
+ 			return ret;
+ 
+@@ -433,15 +437,89 @@ static const struct adc5_channels adc5_gen3_chans_pmic[ADC5_MAX_CHANNEL] = {
+ 					SCALE_HW_CALIB_THERM_100K_PU_PM7)
+ };
+ 
++static const struct adc5_channels adc5_gen4_chans_pmic[ADC5_MAX_CHANNEL] = {
++	[ADC5_GEN4_OFFSET_REF]		= ADC5_CHAN_VOLT(0,
++						SCALE_HW_CALIB_DEFAULT)
++	[ADC5_GEN4_1P25VREF]		= ADC5_CHAN_VOLT(0,
++						SCALE_HW_CALIB_DEFAULT)
++	[ADC5_GEN4_VPH_PWR]		= ADC5_CHAN_VOLT(1,
++						SCALE_HW_CALIB_DEFAULT)
++	[ADC5_GEN4_VBAT_SNS_QBG]	= ADC5_CHAN_VOLT(1,
++						SCALE_HW_CALIB_DEFAULT)
++	[ADC5_GEN4_DIE_TEMP]		= ADC5_CHAN_TEMP(0,
++						SCALE_HW_CALIB_PMIC_THERM_PM7)
++	[ADC5_GEN4_AMUX1_THM_100K_PU]	= ADC5_CHAN_TEMP(0,
++						SCALE_HW_CALIB_THERM_100K_PU_GEN4)
++	[ADC5_GEN4_AMUX2_THM_100K_PU]	= ADC5_CHAN_TEMP(0,
++						SCALE_HW_CALIB_THERM_100K_PU_GEN4)
++	[ADC5_GEN4_AMUX3_THM_100K_PU]	= ADC5_CHAN_TEMP(0,
++						SCALE_HW_CALIB_THERM_100K_PU_GEN4)
++	[ADC5_GEN4_AMUX4_THM_100K_PU]	= ADC5_CHAN_TEMP(0,
++						SCALE_HW_CALIB_THERM_100K_PU_GEN4)
++	[ADC5_GEN4_AMUX5_THM_100K_PU]	= ADC5_CHAN_TEMP(0,
++						SCALE_HW_CALIB_THERM_100K_PU_GEN4)
++	[ADC5_GEN4_AMUX6_THM_100K_PU]	= ADC5_CHAN_TEMP(0,
++						SCALE_HW_CALIB_THERM_100K_PU_GEN4)
++	[ADC5_GEN4_AMUX1_GPIO_100K_PU]	= ADC5_CHAN_TEMP(0,
++						SCALE_HW_CALIB_THERM_100K_PU_GEN4)
++	[ADC5_GEN4_AMUX2_GPIO_100K_PU]	= ADC5_CHAN_TEMP(0,
++						SCALE_HW_CALIB_THERM_100K_PU_GEN4)
++	[ADC5_GEN4_AMUX3_GPIO_100K_PU]	= ADC5_CHAN_TEMP(0,
++						SCALE_HW_CALIB_THERM_100K_PU_GEN4)
++	[ADC5_GEN4_AMUX4_GPIO_100K_PU]	= ADC5_CHAN_TEMP(0,
++						SCALE_HW_CALIB_THERM_100K_PU_GEN4)
++	[ADC5_GEN4_AMUX5_GPIO_100K_PU]	= ADC5_CHAN_TEMP(0,
++						SCALE_HW_CALIB_THERM_100K_PU_GEN4)
++};
++
++static const struct adc5_data adc5_gen3_data_pmic = {
++	.full_scale_code_volt = 0x70e4,
++	.adc_chans = adc5_gen3_chans_pmic,
++	.info = &adc5_gen3_info,
++	.decimation = (unsigned int [ADC5_DECIMATION_SAMPLES_MAX])
++			   { 85, 340, 1360 },
++	.hw_settle_1 = (unsigned int [VADC_HW_SETTLE_SAMPLES_MAX])
++			   { 15, 100, 200, 300,
++			     400, 500, 600, 700,
++			     1000, 2000, 4000, 8000,
++			     16000, 32000, 64000, 128000 },
++};
++
++static const struct adc5_data adc5_gen4_data_pmic = {
++	.full_scale_code_volt = 0x70e4,
++	.adc_chans = adc5_gen4_chans_pmic,
++	.info = &adc5_gen3_info,
++	.decimation = (unsigned int [ADC5_DECIMATION_SAMPLES_MAX])
++			   { 85, 340, 1360 },
++	.hw_settle_1 = (unsigned int [VADC_HW_SETTLE_SAMPLES_MAX])
++			   { 15, 100, 200, 300,
++			     400, 500, 600, 700,
++			     1000, 2000, 4000, 8000,
++			     16000, 32000, 64000, 128000 },
++};
++
++static const struct of_device_id adc5_match_table[] = {
++	{
++		.compatible = "qcom,spmi-adc5-gen3",
++		.data = &adc5_gen3_data_pmic,
++	},
++	{
++		.compatible = "qcom,spmi-adc5-gen4",
++		.data = &adc5_gen4_data_pmic,
++	},
++	{ }
++};
++MODULE_DEVICE_TABLE(of, adc5_match_table);
++
+ static int adc5_gen3_get_fw_channel_data(struct adc5_chip *adc,
+ 					 struct adc5_channel_prop *prop,
+ 					 struct fwnode_handle *fwnode)
+ {
+ 	const char *name = fwnode_get_name(fwnode);
+-	const struct adc5_data *data = adc->data;
++	const struct adc5_data *data;
++	u32 chan, value, sid, bus_index;
+ 	struct device *dev = adc->dev;
+ 	const char *channel_name;
+-	u32 chan, value, sid;
+ 	u32 varr[2];
+ 	int ret;
+ 
+@@ -452,27 +530,46 @@ static int adc5_gen3_get_fw_channel_data(struct adc5_chip *adc,
+ 
+ 	/*
+ 	 * Value read from "reg" is virtual channel number
+-	 * virtual channel number = sid << 8 | channel number
++	 * virtual channel number = bus index << 13 | sid << 8 | channel number
++	 * For ADC5 GEN3 channels, bus index = 0
+ 	 */
+-	sid = FIELD_GET(ADC5_GEN3_VIRTUAL_SID_MASK, chan);
+-	chan = FIELD_GET(ADC5_GEN3_CHANNEL_MASK, chan);
++	bus_index = FIELD_GET(ADC5_GEN4_V_CHAN_BUS_INDEX_MASK, chan);
++	sid = FIELD_GET(ADC5_GEN4_V_CHAN_SID_MASK, chan);
++	chan = FIELD_GET(ADC5_GEN4_V_CHAN_CHANNEL_MASK, chan);
+ 
+ 	if (chan >= ADC5_MAX_CHANNEL)
+ 		return dev_err_probe(dev, -EINVAL,
+ 				     "%s invalid channel number %d\n",
+ 				     name, chan);
+ 
++	prop->common_props.bus_index = bus_index;
+ 	prop->common_props.channel = chan;
+ 	prop->common_props.sid = sid;
+ 
+-	if (!adc->data->adc_chans[chan].info_mask)
++	if (fwnode_property_read_bool(fwnode, "qcom,adc5-gen4")) {
++		prop->common_props.generation = ADC5_GEN4;
++		data = &adc5_gen4_data_pmic;
++	} else if (fwnode_property_read_bool(fwnode, "qcom,adc5-gen3")) {
++		prop->common_props.generation = ADC5_GEN3;
++		data = &adc5_gen3_data_pmic;
++	} else {
++		prop->common_props.generation = (adc->data == &adc5_gen3_data_pmic) ?
++						 ADC5_GEN3 : ADC5_GEN4;
++		data = adc->data;
++	}
++	prop->common_props.data = data;
++
++	if (!data->adc_chans[chan].info_mask)
+ 		return dev_err_probe(dev, -EINVAL, "Channel %#x not supported\n", chan);
+ 
+ 	channel_name = name;
+ 	fwnode_property_read_string(fwnode, "label", &channel_name);
+ 	prop->common_props.label = channel_name;
+ 
+-	value = data->decimation[ADC5_DECIMATION_DEFAULT];
++	if (prop->common_props.generation == ADC5_GEN3)
++		value = data->decimation[ADC5_DECIMATION_DEFAULT];
++	else
++		value = data->decimation[ADC5_GEN4_DECIMATION_DEFAULT];
+ 	fwnode_property_read_u32(fwnode, "qcom,decimation", &value);
+ 	ret = qcom_adc5_decimation_from_dt(value, data->decimation);
+ 	if (ret < 0)
+@@ -480,7 +577,7 @@ static int adc5_gen3_get_fw_channel_data(struct adc5_chip *adc,
+ 				     chan, value);
+ 	prop->common_props.decimation = ret;
+ 
+-	prop->common_props.prescale = adc->data->adc_chans[chan].prescale_index;
++	prop->common_props.prescale = data->adc_chans[chan].prescale_index;
+ 	ret = fwnode_property_read_u32_array(fwnode, "qcom,pre-scaling", varr, 2);
+ 	if (!ret) {
+ 		ret = qcom_adc5_prescaling_from_dt(varr[0], varr[1]);
+@@ -526,38 +623,19 @@ static int adc5_gen3_get_fw_channel_data(struct adc5_chip *adc,
+ 	return 0;
+ }
+ 
+-static const struct adc5_data adc5_gen3_data_pmic = {
+-	.full_scale_code_volt = 0x70e4,
+-	.adc_chans = adc5_gen3_chans_pmic,
+-	.info = &adc5_gen3_info,
+-	.decimation = (unsigned int [ADC5_DECIMATION_SAMPLES_MAX])
+-			   { 85, 340, 1360 },
+-	.hw_settle_1 = (unsigned int [VADC_HW_SETTLE_SAMPLES_MAX])
+-			   { 15, 100, 200, 300,
+-			     400, 500, 600, 700,
+-			     1000, 2000, 4000, 8000,
+-			     16000, 32000, 64000, 128000 },
+-};
+-
+-static const struct of_device_id adc5_match_table[] = {
+-	{
+-		.compatible = "qcom,spmi-adc5-gen3",
+-		.data = &adc5_gen3_data_pmic,
+-	},
+-	{ }
+-};
+-MODULE_DEVICE_TABLE(of, adc5_match_table);
+-
+ static int adc5_get_fw_data(struct adc5_chip *adc)
+ {
+ 	const struct adc5_channels *adc_chan;
+ 	struct adc5_channel_prop *chan_props;
+ 	struct iio_chan_spec *iio_chan;
+ 	struct device *dev = adc->dev;
++	const struct adc5_data *data;
+ 	unsigned int index = 0;
+ 	int ret;
+ 
+-	adc->nchannels = device_get_child_node_count(dev);
++	adc->nchannels = 0;
++	fwnode_for_each_available_child_node_scoped(dev_fwnode(dev), child)
++		adc->nchannels++;
+ 	if (!adc->nchannels)
+ 		return dev_err_probe(dev, -EINVAL, "No ADC channels found\n");
+ 
+@@ -576,16 +654,17 @@ static int adc5_get_fw_data(struct adc5_chip *adc)
+ 	iio_chan = adc->iio_chans;
+ 	adc->data = device_get_match_data(dev);
+ 
+-	device_for_each_child_node_scoped(dev, child) {
++	fwnode_for_each_available_child_node_scoped(dev_fwnode(dev), child) {
+ 		ret = adc5_gen3_get_fw_channel_data(adc, chan_props, child);
+ 		if (ret)
+ 			return ret;
+ 
+ 		chan_props->chip = adc;
+-		adc_chan = &adc->data->adc_chans[chan_props->common_props.channel];
++		data = chan_props->common_props.data;
++		adc_chan = &data->adc_chans[chan_props->common_props.channel];
+ 		chan_props->common_props.scale_fn_type = adc_chan->scale_fn_type;
+ 
+-		iio_chan->channel = ADC5_GEN3_V_CHAN(chan_props->common_props);
++		iio_chan->channel = ADC5_GEN4_V_CHAN(chan_props->common_props);
+ 		iio_chan->info_mask_separate = adc_chan->info_mask;
+ 		iio_chan->type = adc_chan->type;
+ 		iio_chan->address = index;
+@@ -697,7 +776,7 @@ int adc5_gen3_get_scaled_reading(struct device *dev,
+ 
+ 	return qcom_adc5_hw_scale(common_props->scale_fn_type,
+ 				  common_props->prescale,
+-				  adc->data, adc_code_volt, val);
++				  common_props->data, adc_code_volt, val);
+ }
+ EXPORT_SYMBOL_NS_GPL(adc5_gen3_get_scaled_reading, "QCOM_SPMI_ADC5_GEN3");
+ 
+@@ -705,12 +784,9 @@ int adc5_gen3_therm_code_to_temp(struct device *dev,
+ 				 struct adc5_channel_common_prop *common_props,
+ 				 u16 code, int *val)
+ {
+-	struct iio_dev *indio_dev = dev_get_drvdata(dev->parent);
+-	struct adc5_chip *adc = iio_priv(indio_dev);
+-
+ 	return qcom_adc5_hw_scale(common_props->scale_fn_type,
+ 				  common_props->prescale,
+-				  adc->data, code, val);
++				  common_props->data, code, val);
+ }
+ EXPORT_SYMBOL_NS_GPL(adc5_gen3_therm_code_to_temp, "QCOM_SPMI_ADC5_GEN3");
+ 
+diff --git a/drivers/iio/adc/qcom-vadc-common-test.c b/drivers/iio/adc/qcom-vadc-common-test.c
+new file mode 100644
+index 000000000..36312dd2c
+--- /dev/null
++++ b/drivers/iio/adc/qcom-vadc-common-test.c
+@@ -0,0 +1,71 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <kunit/test.h>
++
++static void qcom_vadc_gen4_midpoint_test(struct kunit *test)
++{
++	int temp;
++
++	/* A 100 kOhm thermistor equals the pull-up at 25 degrees Celsius. */
++	KUNIT_ASSERT_EQ(test, qcom_adc5_hw_scale(
++		SCALE_HW_CALIB_THERM_100K_PU_GEN4, 0, NULL, 32768, &temp), 0);
++	KUNIT_EXPECT_GE(test, temp, 24950);
++	KUNIT_EXPECT_LE(test, temp, 25050);
++	KUNIT_ASSERT_EQ(test, qcom_adc5_hw_scale(
++		SCALE_HW_CALIB_THERM_100K_PU_PM7, 0, NULL, 8192, &temp), 0);
++	KUNIT_EXPECT_EQ(test, temp, 25000);
++}
++
++static void qcom_vadc_mixed_generation_test(struct kunit *test)
++{
++	static const u16 gen3_codes[] = { 2048, 4096, 8192, 12288, 14336 };
++	int i, gen3, gen4;
++
++	/* The same divider ratio has four times the code on a Gen4 channel. */
++	for (i = 0; i < ARRAY_SIZE(gen3_codes); i++) {
++		KUNIT_ASSERT_EQ(test, qcom_adc5_hw_scale(
++			SCALE_HW_CALIB_THERM_100K_PU_PM7, 0, NULL,
++			gen3_codes[i], &gen3), 0);
++		KUNIT_ASSERT_EQ(test, qcom_adc5_hw_scale(
++			SCALE_HW_CALIB_THERM_100K_PU_GEN4, 0, NULL,
++			gen3_codes[i] * 4, &gen4), 0);
++		KUNIT_EXPECT_LE(test, abs(gen3 - gen4), 50);
++	}
++}
++
++static void qcom_vadc_gen4_trip_roundtrip_test(struct kunit *test)
++{
++	static const int temps[] = { -20000, 0, 25000, 35000, 40000,
++				     45000, 55000, 80000 };
++	int i, actual;
++	u16 code;
++
++	for (i = 0; i < ARRAY_SIZE(temps); i++) {
++		code = qcom_adc_tm5_gen4_temp_res_scale(temps[i]);
++		KUNIT_ASSERT_EQ(test, qcom_adc5_hw_scale(
++			SCALE_HW_CALIB_THERM_100K_PU_GEN4, 0, NULL,
++			code, &actual), 0);
++		KUNIT_EXPECT_LE(test, abs(actual - temps[i]), 100);
++	}
++}
++
++static void qcom_vadc_gen4_invalid_code_test(struct kunit *test)
++{
++	int temp;
++
++	KUNIT_EXPECT_EQ(test, qcom_adc5_hw_scale(
++		SCALE_HW_CALIB_THERM_100K_PU_GEN4, 0, NULL, 65535, &temp), -EINVAL);
++}
++
++static struct kunit_case qcom_vadc_gen4_cases[] = {
++	KUNIT_CASE(qcom_vadc_gen4_midpoint_test),
++	KUNIT_CASE(qcom_vadc_mixed_generation_test),
++	KUNIT_CASE(qcom_vadc_gen4_trip_roundtrip_test),
++	KUNIT_CASE(qcom_vadc_gen4_invalid_code_test),
++	{}
++};
++
++static struct kunit_suite qcom_vadc_gen4_suite = {
++	.name = "qcom-vadc-gen4",
++	.test_cases = qcom_vadc_gen4_cases,
++};
++kunit_test_suite(qcom_vadc_gen4_suite);
+diff --git a/drivers/iio/adc/qcom-vadc-common.c b/drivers/iio/adc/qcom-vadc-common.c
+index b03cf584b..54d30d7ca 100644
+--- a/drivers/iio/adc/qcom-vadc-common.c
++++ b/drivers/iio/adc/qcom-vadc-common.c
+@@ -301,6 +301,10 @@ static const struct u32_fract adc5_prescale_ratios[] = {
+ 	{ .numerator =  1, .denominator = 16 },
+ };
+ 
++static int qcom_adc5_gen4_scale_hw_calib_therm(
++				const struct u32_fract *prescale,
++				const struct adc5_data *data,
++				u16 adc_code, int *result_mdec);
+ static int qcom_vadc_scale_hw_calib_volt(
+ 				const struct u32_fract *prescale,
+ 				const struct adc5_data *data,
+@@ -341,6 +345,8 @@ static const struct qcom_adc5_scale_type scale_adc5_fn[] = {
+ 					qcom_vadc7_scale_hw_calib_die_temp},
+ 	[SCALE_HW_CALIB_PM5_CHG_TEMP] = {qcom_vadc_scale_hw_chg5_temp},
+ 	[SCALE_HW_CALIB_PM5_SMB_TEMP] = {qcom_vadc_scale_hw_smb_temp},
++	[SCALE_HW_CALIB_THERM_100K_PU_GEN4] = {
++					qcom_adc5_gen4_scale_hw_calib_therm},
+ };
+ 
+ static int qcom_vadc_map_voltage_temp(const struct vadc_map_pt *pts,
+@@ -551,7 +557,35 @@ static int qcom_vadc7_scale_hw_calib_therm(
+ 	if (ret)
+ 		return ret;
+ 
+-	*result_mdec = result;
++	/* The PM7 resistance table stores temperature in 1/1024 degrees. */
++	*result_mdec = div_s64((s64)result * 1000, 1024);
++
++	return 0;
++}
++
++static int qcom_adc5_gen4_scale_hw_calib_therm(
++				const struct u32_fract *prescale,
++				const struct adc5_data *data,
++				u16 adc_code, int *result_mdec)
++{
++	s64 resistance = adc_code;
++	int ret, result;
++
++	if (adc_code >= RATIO_MAX_ADC5_GEN4)
++		return -EINVAL;
++
++	/* (ADC code * R_PULLUP (100Kohm)) / (full_scale_code - ADC code)*/
++	resistance *= R_PU_100K;
++	resistance = div64_s64(resistance, RATIO_MAX_ADC5_GEN4 - adc_code);
++
++	ret = qcom_vadc_map_voltage_temp(adcmap7_100k,
++					 ARRAY_SIZE(adcmap7_100k),
++					 resistance, &result);
++	if (ret)
++		return ret;
++
++	/* The PM7 resistance table stores temperature in 1/1024 degrees. */
++	*result_mdec = div_s64((s64)result * 1000, 1024);
+ 
+ 	return 0;
+ }
+@@ -682,12 +716,25 @@ u16 qcom_adc_tm5_gen2_temp_res_scale(int temp)
+ 	int64_t resistance;
+ 
+ 	resistance = qcom_vadc_map_temp_voltage(adcmap7_100k,
+-		ARRAY_SIZE(adcmap7_100k), temp);
++						ARRAY_SIZE(adcmap7_100k),
++						div_s64((s64)temp * 1024, 1000));
+ 
+ 	return div64_s64(resistance * RATIO_MAX_ADC7, resistance + R_PU_100K);
+ }
+ EXPORT_SYMBOL(qcom_adc_tm5_gen2_temp_res_scale);
+ 
++u16 qcom_adc_tm5_gen4_temp_res_scale(int temp)
++{
++	s64 resistance;
++
++	resistance = qcom_vadc_map_temp_voltage(adcmap7_100k,
++						ARRAY_SIZE(adcmap7_100k),
++						div_s64((s64)temp * 1024, 1000));
++
++	return div64_s64(resistance * RATIO_MAX_ADC5_GEN4, resistance + R_PU_100K);
++}
++EXPORT_SYMBOL(qcom_adc_tm5_gen4_temp_res_scale);
++
+ int qcom_adc5_hw_scale(enum vadc_scale_fn_type scaletype,
+ 		    unsigned int prescale_ratio,
+ 		    const struct adc5_data *data,
+@@ -770,3 +817,7 @@ EXPORT_SYMBOL(qcom_vadc_decimation_from_dt);
+ 
+ MODULE_LICENSE("GPL v2");
+ MODULE_DESCRIPTION("Qualcomm ADC common functionality");
++
++#if IS_ENABLED(CONFIG_QCOM_VADC_COMMON_KUNIT_TEST)
++#include "qcom-vadc-common-test.c"
++#endif
+diff --git a/drivers/thermal/qcom/qcom-spmi-adc-tm5-gen3.c b/drivers/thermal/qcom/qcom-spmi-adc-tm5-gen3.c
+index 9cf552d36..b86123271 100644
+--- a/drivers/thermal/qcom/qcom-spmi-adc-tm5-gen3.c
++++ b/drivers/thermal/qcom/qcom-spmi-adc-tm5-gen3.c
+@@ -207,15 +207,23 @@ static int adc_tm5_gen3_disable_channel(struct adc_tm5_gen3_channel_props *prop)
+ 			       ADC5_GEN3_CONV_REQ, &val, sizeof(val));
+ }
+ 
++typedef u16 (*temp_res_scale)(int temp);
++
+ static int adc_tm5_gen3_configure(struct adc_tm5_gen3_channel_props *prop,
+ 				  int low_temp, int high_temp)
+ {
+ 	struct adc_tm5_gen3_chip *adc_tm5 = prop->chip;
+ 	u8 buf[ADC_TM5_GEN3_CONFIG_REGS];
++	temp_res_scale tm_scal_fn;
+ 	u8 conv_req;
+ 	u16 adc_code;
+ 	int ret;
+ 
++	if (prop->common_props.generation == ADC5_GEN4)
++		tm_scal_fn = qcom_adc_tm5_gen4_temp_res_scale;
++	else
++		tm_scal_fn = qcom_adc_tm5_gen2_temp_res_scale;
++
+ 	ret = adc5_gen3_poll_wait_hs(adc_tm5->dev_data, prop->sdam_index);
+ 	if (ret < 0)
+ 		return ret;
+@@ -225,8 +233,9 @@ static int adc_tm5_gen3_configure(struct adc_tm5_gen3_channel_props *prop,
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	/* Write SID */
+-	buf[0] = FIELD_PREP(ADC5_GEN3_SID_MASK, prop->common_props.sid);
++	/* Write SID and bus index. */
++	buf[0] = FIELD_PREP(ADC5_GEN4_BUS_INDEX_MASK, prop->common_props.bus_index) |
++		 FIELD_PREP(ADC5_GEN4_SID_MASK, prop->common_props.sid);
+ 
+ 	/* Select TM channel and indicate there is an actual conversion request */
+ 	buf[1] = ADC5_GEN3_CHAN_CONV_REQ | prop->tm_chan_index;
+@@ -252,7 +261,7 @@ static int adc_tm5_gen3_configure(struct adc_tm5_gen3_channel_props *prop,
+ 	/* High temperature corresponds to low voltage threshold */
+ 	prop->low_thr_en = (high_temp != INT_MAX);
+ 	if (prop->low_thr_en) {
+-		adc_code = qcom_adc_tm5_gen2_temp_res_scale(high_temp);
++		adc_code = tm_scal_fn(high_temp);
+ 		put_unaligned_le16(adc_code, &buf[8]);
+ 		buf[7] |= ADC5_GEN3_LOW_THR_INT_EN;
+ 	}
+@@ -260,7 +269,7 @@ static int adc_tm5_gen3_configure(struct adc_tm5_gen3_channel_props *prop,
+ 	/* Low temperature corresponds to high voltage threshold */
+ 	prop->high_thr_en = (low_temp != -INT_MAX);
+ 	if (prop->high_thr_en) {
+-		adc_code = qcom_adc_tm5_gen2_temp_res_scale(low_temp);
++		adc_code = tm_scal_fn(low_temp);
+ 		put_unaligned_le16(adc_code, &buf[10]);
+ 		buf[7] |= ADC5_GEN3_HIGH_THR_INT_EN;
+ 	}
+@@ -306,7 +315,7 @@ static int adc_tm5_register_tzd(struct adc_tm5_gen3_chip *adc_tm5)
+ 	int ret;
+ 
+ 	for (int i = 0; i < adc_tm5->nchannels; i++) {
+-		channel = ADC5_GEN3_V_CHAN(adc_tm5->chan_props[i].common_props);
++		channel = ADC5_GEN4_V_CHAN(adc_tm5->chan_props[i].common_props);
+ 		tzd = devm_thermal_of_zone_register(adc_tm5->dev, channel,
+ 						    &adc_tm5->chan_props[i],
+ 						    &adc_tm_ops);
+diff --git a/include/linux/iio/adc/qcom-adc5-gen3-common.h b/include/linux/iio/adc/qcom-adc5-gen3-common.h
+index 39cbfcbdb..5d8e38350 100644
+--- a/include/linux/iio/adc/qcom-adc5-gen3-common.h
++++ b/include/linux/iio/adc/qcom-adc5-gen3-common.h
+@@ -40,7 +40,8 @@
+ #define ADC5_GEN3_CONV_ERR_CLR_REQ		BIT(0)
+ 
+ #define ADC5_GEN3_SID				0x4f
+-#define ADC5_GEN3_SID_MASK			GENMASK(3, 0)
++#define ADC5_GEN4_SID_MASK			GENMASK(4, 0)
++#define ADC5_GEN4_BUS_INDEX_MASK		GENMASK(6, 5)
+ 
+ #define ADC5_GEN3_PERPH_CH			0x50
+ #define ADC5_GEN3_CHAN_CONV_REQ			BIT(7)
+@@ -51,6 +52,7 @@
+ #define ADC5_GEN3_DIG_PARAM			0x52
+ #define ADC5_GEN3_DIG_PARAM_CAL_SEL_MASK	GENMASK(5, 4)
+ #define ADC5_GEN3_DIG_PARAM_DEC_RATIO_SEL_MASK	GENMASK(3, 2)
++#define ADC5_GEN4_DECIMATION_DEFAULT	1
+ 
+ #define ADC5_GEN3_FAST_AVG			0x53
+ #define ADC5_GEN3_FAST_AVG_CTL_EN		BIT(7)
+@@ -75,10 +77,13 @@
+ #define ADC5_GEN3_CONV_REQ			0xe5
+ #define ADC5_GEN3_CONV_REQ_REQ			BIT(0)
+ 
+-#define ADC5_GEN3_VIRTUAL_SID_MASK		GENMASK(15, 8)
+-#define ADC5_GEN3_CHANNEL_MASK			GENMASK(7, 0)
+-#define ADC5_GEN3_V_CHAN(x)		\
+-	(FIELD_PREP(ADC5_GEN3_VIRTUAL_SID_MASK, (x).sid) | (x).channel)
++#define ADC5_GEN4_V_CHAN_BUS_INDEX_MASK		GENMASK(14, 13)
++#define ADC5_GEN4_V_CHAN_SID_MASK		GENMASK(12, 8)
++#define ADC5_GEN4_V_CHAN_CHANNEL_MASK		GENMASK(7, 0)
++#define ADC5_GEN4_V_CHAN(x) \
++	(FIELD_PREP(ADC5_GEN4_V_CHAN_BUS_INDEX_MASK, (x).bus_index) | \
++	 FIELD_PREP(ADC5_GEN4_V_CHAN_SID_MASK, (x).sid) | \
++	 FIELD_PREP(ADC5_GEN4_V_CHAN_CHANNEL_MASK, (x).channel))
+ 
+ /* ADC channels for PMIC5 Gen3 */
+ #define ADC5_GEN3_REF_GND			0x00
+@@ -102,6 +107,27 @@
+ 
+ #define ADC5_MAX_CHANNEL			0xc0
+ 
++/* ADC channels for PMIC5 Gen4 */
++#define ADC5_GEN4_OFFSET_REF		0x00
++#define ADC5_GEN4_1P25VREF			0x01
++#define ADC5_GEN4_DIE_TEMP			0x03
++#define ADC5_GEN4_USB_SNS_DIV20			0x11
++#define ADC5_GEN4_VIN_DIV20_MUX			0x12
++#define ADC5_GEN4_VPH_PWR			0x8e
++#define ADC5_GEN4_VBAT_SNS_QBG			0x8f
++/* 100k pull-up channels */
++#define ADC5_GEN4_AMUX1_THM_100K_PU		0x44
++#define ADC5_GEN4_AMUX2_THM_100K_PU		0x45
++#define ADC5_GEN4_AMUX3_THM_100K_PU		0x46
++#define ADC5_GEN4_AMUX4_THM_100K_PU		0x47
++#define ADC5_GEN4_AMUX5_THM_100K_PU		0x48
++#define ADC5_GEN4_AMUX6_THM_100K_PU		0x49
++#define ADC5_GEN4_AMUX1_GPIO_100K_PU		0x4a
++#define ADC5_GEN4_AMUX2_GPIO_100K_PU		0x4b
++#define ADC5_GEN4_AMUX3_GPIO_100K_PU		0x4c
++#define ADC5_GEN4_AMUX4_GPIO_100K_PU		0x4d
++#define ADC5_GEN4_AMUX5_GPIO_100K_PU		0x5e
++
+ enum adc5_cal_method {
+ 	ADC5_NO_CAL = 0,
+ 	ADC5_RATIOMETRIC_CAL,
+@@ -117,6 +143,11 @@ enum adc5_time_select {
+ 	MEAS_INT_NONE,
+ };
+ 
++enum adc_generation {
++	ADC5_GEN3 = 0,
++	ADC5_GEN4,
++};
++
+ /**
+  * struct adc5_sdam_data - data per SDAM allocated for adc usage
+  * @base_addr: base address for the ADC SDAM peripheral.
+@@ -166,6 +197,9 @@ struct adc5_channel_common_prop {
+ 	unsigned int hw_settle_time_us;
+ 	unsigned int avg_samples;
+ 	enum vadc_scale_fn_type scale_fn_type;
++	enum adc_generation generation;
++	unsigned int bus_index;
++	const struct adc5_data *data;
+ };
+ 
+ /**
+diff --git a/include/linux/iio/adc/qcom-vadc-common.h b/include/linux/iio/adc/qcom-vadc-common.h
+index 3bf4c4972..55efad27e 100644
+--- a/include/linux/iio/adc/qcom-vadc-common.h
++++ b/include/linux/iio/adc/qcom-vadc-common.h
+@@ -54,6 +54,7 @@
+ 
+ #define R_PU_100K				100000
+ #define RATIO_MAX_ADC7				BIT(14)
++#define RATIO_MAX_ADC5_GEN4			0xffff
+ 
+ /*
+  * VADC_CALIB_ABSOLUTE: uses the 625mV and 1.25V as reference channels.
+@@ -105,6 +106,8 @@ struct vadc_linear_graph {
+  *	charger temperature.
+  * @SCALE_HW_CALIB_PM5_SMB_TEMP: Returns result in millidegrees for PMIC5
+  *	SMB1390 temperature.
++ * @SCALE_HW_CALIB_THERM_100K_PU_GEN4: Returns temperature in millidegC using
++ *	lookup table for PMIC5 Gen4 ADC. The hardware applies offset/slope to adc code.
+  */
+ enum vadc_scale_fn_type {
+ 	SCALE_DEFAULT = 0,
+@@ -120,6 +123,7 @@ enum vadc_scale_fn_type {
+ 	SCALE_HW_CALIB_PMIC_THERM_PM7,
+ 	SCALE_HW_CALIB_PM5_CHG_TEMP,
+ 	SCALE_HW_CALIB_PM5_SMB_TEMP,
++	SCALE_HW_CALIB_THERM_100K_PU_GEN4,
+ 	/* private: */
+ 	SCALE_HW_CALIB_INVALID,
+ };
+@@ -155,6 +159,8 @@ u16 qcom_adc_tm5_temp_volt_scale(unsigned int prescale_ratio,
+ 
+ u16 qcom_adc_tm5_gen2_temp_res_scale(int temp);
+ 
++u16 qcom_adc_tm5_gen4_temp_res_scale(int temp);
++
+ int qcom_adc5_prescaling_from_dt(u32 num, u32 den);
+ 
+ int qcom_adc5_hw_settle_time_from_dt(u32 value, const unsigned int *hw_settle);
+-- 
+2.55.0
+
