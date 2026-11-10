@@ -104,7 +104,7 @@ static EFI_STATUS InitrdValidate(VOID*C,CONST PIANO_LINUX_MEMORY_PROOF*P){assert
 static EFI_STATUS InitrdBuffer(VOID*C,CONST PIANO_LINUX_MEMORY_PROOF*P,CONST VOID*Producer,VOID*Owner,CONST VOID*Base,UINT64 Bytes){
  assert(C==&Linux&&P->BootEpoch==Late.Memory.BootEpoch&&Producer==Initrd&&Owner==Initrd&&Base==Initrd&&Bytes==sizeof(Initrd));return EFI_SUCCESS;}
 static void Setup(void){
- fresh();if((scenario>=21&&scenario<50)||scenario==58)without_usb();assert(PianoProductOwnersInitialize(&Owners,&Config)==EFI_SUCCESS);
+ fresh();if((scenario>=21&&scenario<50)||scenario==58||scenario==72)without_usb();assert(PianoProductOwnersInitialize(&Owners,&Config)==EFI_SUCCESS);
   Policy.RequestedCoreAction=(scenario==40||scenario==41)?PianoUsbServiceActionReboot:scenario>=24?PianoUsbServiceActionBoot:PianoUsbServiceActionContinue;
   if(scenario==40||scenario==41)assert(PianoProductOwnersRequestUiReboot(&Owners)==EFI_SUCCESS);
   else if(scenario>=24&&scenario<50)assert(PianoProductOwnersRequestFileBoot(&Owners,(VOID *)0x701,(VOID *)0x702)==EFI_SUCCESS);
@@ -135,7 +135,7 @@ static VOID ReplayDiagnostic(void){
    efi_checks==Efi&&Calls==OwnerCalls&&livechecks==Live&&timer_calls==Timers&&!locks);
  diagnostic_logging=FALSE;gBS=Boot;live=WasLive;
 }
-int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);assert(scenario<30||scenario==40||scenario==41||(scenario>=50&&scenario<=70));Setup();
+int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);assert(scenario<30||scenario==40||scenario==41||(scenario>=50&&scenario<=72));Setup();
   BOOLEAN NestedRaw=scenario>=26&&scenario<=29;
   BOOLEAN RawCase=(scenario>=18&&scenario<=20)||(scenario>=24&&scenario<=29);
  PIANO_LATE_HANDOFF_ENV Env={.Context=&Late,.Services=&Bs,.SystemTable=&SystemTable,.ParentImage=Parent,.Owners=&Owners,
@@ -147,8 +147,19 @@ int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);
  assert(!Late.Diagnostic.EnterCalls&&!strcmp(Late.Diagnostic.Stage,"not-entered"));
  ReplayDiagnostic();
   locates=0;
+  if(scenario==71||scenario==72){
+    // Linux allows one memory-map refresh after its first EBS call. Device
+    // retirement must not consume a third call when that first key is stale.
+    assert(CoreExitBootServices(Child,mMemoryMapKey-1)==EFI_INVALID_PARAMETER&&!gMemoryMapTerminated);
+    assert(Late.RetireCalls==1&&Owners.Report.Clean&&before_events==1&&!exit_events);
+    if(scenario==72)assert(!Owners.Report.UsbStopped&&Owners.Report.UsbStartupFailedClean&&!UsbStatusReads);
+    UINTN SavedCalls=Calls,SavedMemory=memchecks,SavedChecks=efi_checks,SavedHandles=handles,SavedLocates=locates;
+    assert(CoreExitBootServices(Child,mMemoryMapKey)==EFI_SUCCESS&&gMemoryMapTerminated);
+    assert(Late.RetireCalls==1&&Owners.Report.Clean&&before_events==1&&exit_events==1);
+    assert(Calls==SavedCalls&&memchecks==SavedMemory&&efi_checks==SavedChecks&&handles==SavedHandles&&locates==SavedLocates);
+    puts(scenario==72?"Standard EFI without USB: stale first map completes EBS after Linux's single refresh":"Standard EFI with USB: stale first map completes EBS after Linux's single refresh");return 0;
+  }
   if(scenario>=50){
-    assert(CoreExitBootServices(Child,mMemoryMapKey-1)==EFI_INVALID_PARAMETER&&!efi_checks&&!Calls&&!memchecks);
     if(scenario==53){UsbState.Phase=PianoUsbServiceStopRequested;UsbState.Action=PianoUsbServiceActionReboot;}
     if(scenario==54)ShutdownStatus=EFI_DEVICE_ERROR;
     int Fatal=setjmp(jump);EFI_STATUS Result=Fatal?EFI_ABORTED:CoreExitBootServices(Child,mMemoryMapKey);
@@ -238,7 +249,7 @@ int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);
     assert(!strcmp(Late.Diagnostic.Stage,"ready")&&Late.Diagnostic.EnterCalls==1&&
       Late.Diagnostic.ExitCalls==1&&Late.Diagnostic.RetireCalls==1&&Late.Diagnostic.Phase==PianoExitClean);
     ReplayDiagnostic();
-    puts("Standard EFI leaf: current-image admission, real owners retirement, foreign/stale key refusal and CPU-only retry passed");return 0;
+    puts("Standard EFI leaf: current-image admission, real owners retirement, foreign image refusal and CPU-only retry passed");return 0;
   }
   if(scenario==40||scenario==41){
     assert(PianoLateHandoffArmReset(&Late,Child)==EFI_NOT_READY);
@@ -246,9 +257,10 @@ int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);
     assert(PianoLateHandoffArmReset(&Late,Parent)==EFI_ACCESS_DENIED);
     assert(PianoLateHandoffArmReset(&Late,Child)==EFI_SUCCESS&&Late.ResetMode&&!Late.RawMode&&!memchecks);
     assert(PianoLateHandoffDisarm(&Late)==EFI_ACCESS_DENIED);
-    assert(CoreExitBootServices(Child,mMemoryMapKey)==EFI_INVALID_PARAMETER&&Late.Phase==PianoExitClean&&before_events==1);
+    assert(CoreExitBootServices(Child,mMemoryMapKey-1)==EFI_INVALID_PARAMETER&&Late.Phase==PianoExitClean&&before_events==1);
+    UINTN SavedCalls=Calls,SavedLocates=locates,SavedHandles=handles;
     if(scenario==41){Owners.Report.ResetTarget++;int Fatal=setjmp(jump);if(!Fatal)CoreExitBootServices(Child,mMemoryMapKey);assert(Fatal&&!gMemoryMapTerminated);return 0;}
-    assert(CoreExitBootServices(Child,mMemoryMapKey)==EFI_SUCCESS&&gMemoryMapTerminated&&!memchecks);
+    assert(CoreExitBootServices(Child,mMemoryMapKey)==EFI_SUCCESS&&gMemoryMapTerminated&&!memchecks&&Calls==SavedCalls&&locates==SavedLocates&&handles==SavedHandles);
     puts("Reset Core EBS: retired root only, standard key retry, no OS memory permission passed");return 0;
   }
  if(RawCase){
@@ -272,10 +284,11 @@ int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);
   assert(PianoLateHandoffDisarm(&Late)==EFI_ACCESS_DENIED);
   if(NestedRaw)assert(CoreExitBootServices(Parent,mMemoryMapKey)==EFI_ACCESS_DENIED&&Late.Phase==PianoExitArmed&&!before_events);
   if(scenario==28){NativeImage.Info.DeviceHandle=(VOID *)0x7777;assert(CoreExitBootServices(Child,mMemoryMapKey)==EFI_ACCESS_DENIED&&!before_events&&!memchecks);return 0;}
-  UINTN Saved=Calls,ProofChecks=StartupValidations;assert(CoreExitBootServices(Child,10)==EFI_INVALID_PARAMETER&&Late.Phase==PianoExitArmed&&!before_events);
-  assert(CoreExitBootServices(Child,mMemoryMapKey)==EFI_INVALID_PARAMETER&&Late.Phase==PianoExitClean&&Calls==Saved&&!memchecks&&!Late.RetireCalls);
+  UINTN Saved=Calls,ProofChecks=StartupValidations;
+  assert(CoreExitBootServices(Child,mMemoryMapKey-1)==EFI_INVALID_PARAMETER&&Late.Phase==PianoExitClean&&before_events==1&&Calls==Saved&&!memchecks&&!Late.RetireCalls);
+  UINTN SavedLocates=locates,SavedHandles=handles;
   if(scenario==20||scenario==29){if(scenario==29)RawReport.ExitImage=Parent;else RawReport.Kernel=0xdead;int Fatal=setjmp(jump);if(!Fatal)CoreExitBootServices(Child,mMemoryMapKey);assert(Fatal&&!gMemoryMapTerminated);return 0;}
-  assert(CoreExitBootServices(Child,mMemoryMapKey)==EFI_SUCCESS&&gMemoryMapTerminated&&Calls==Saved&&!memchecks&&!Late.RetireCalls&&StartupValidations==ProofChecks);
+  assert(CoreExitBootServices(Child,mMemoryMapKey)==EFI_SUCCESS&&gMemoryMapTerminated&&Calls==Saved&&!memchecks&&!Late.RetireCalls&&StartupValidations==ProofChecks&&locates==SavedLocates&&handles==SavedHandles);
   puts("Raw Core EBS: trusted pre-retired report, no full-DDR claim, standard key retry, immutable authority passed");return 0;
  }
  if(scenario==15){PIANO_LATE_HANDOFF Other={0};assert(PianoLateHandoffInitialize(&Other,&Env)==EFI_ALREADY_STARTED&&installs==1&&!Other.Signature);return 0;}
@@ -284,9 +297,9 @@ int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);
  if(scenario!=2){EFI_STATUS A=PianoLateHandoffArm(&Late,Child);
   if(scenario==5||scenario==6){assert(A==EFI_NOT_READY&&!Calls&&!timer_calls);return 0;}assert(A==EFI_SUCCESS);}
  // Arm's identity must be identical to the native getter pointer, as on Mu.
- if(scenario==1){mMemoryMapKey=11;assert(CoreExitBootServices(Child,10)==EFI_INVALID_PARAMETER&&!Calls&&!locates&&!before_events&&!timer_calls);return 0;}
- if(scenario==3){assert(CoreExitBootServices((VOID*)0x999,10)==EFI_ACCESS_DENIED&&!Calls&&!before_events&&!timer_calls);return 0;}
- if(scenario==4){gEfiCurrentTpl=Tpl=TPL_CALLBACK;assert(CoreExitBootServices(Child,10)==EFI_UNSUPPORTED&&!Calls&&!before_events&&!timer_calls);return 0;}
+ if(scenario==1)mMemoryMapKey=11;
+ if(scenario==3){assert(CoreExitBootServices((VOID*)0x999,mMemoryMapKey-1)==EFI_ACCESS_DENIED&&!Calls&&!before_events&&!timer_calls);return 0;}
+ if(scenario==4){gEfiCurrentTpl=Tpl=TPL_CALLBACK;assert(CoreExitBootServices(Child,mMemoryMapKey-1)==EFI_UNSUPPORTED&&!Calls&&!before_events&&!timer_calls);return 0;}
  if(scenario==8)UsbStatus=EFI_WARN_STALE_DATA;
  if(scenario==9)ProofValid=FALSE;
  if(scenario==22)StartupValidateStatus=EFI_ACCESS_DENIED;
@@ -310,7 +323,7 @@ int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);
  if(scenario==7||scenario==8||scenario==9||scenario==22){assert(Fatal&&Late.Retained&&!before_events&&!timer_calls);return 0;}
  if(scenario==2||scenario==10||scenario==11||scenario==13){assert(!Fatal&&Status==(scenario==13?EFI_NOT_READY:EFI_ACCESS_DENIED)&&!Calls&&!before_events&&!timer_calls);return 0;}
  assert(!Fatal&&Status==EFI_INVALID_PARAMETER&&Late.RetireCalls==1&&Owners.Report.Clean&&before_events==1&&failed_events==1&&timer_calls==1);
- assert(!strcmp(Order,scenario>=21?"PXApsIM":"PURXApsIM")&&!gMemoryMapTerminated&&mMemoryMapKey==11);
+ assert(!strcmp(Order,scenario>=21?"PXApsIM":"PURXApsIM")&&!gMemoryMapTerminated&&mMemoryMapKey==(scenario==1?12:11));
  if(scenario>=21)assert(!UsbStatusReads&&!Owners.Report.UsbStopped&&Owners.Report.UsbStartupFailedClean&&PianoProductOwnersUsbRetired(&Owners));
  UINTN SavedCalls=Calls,SavedLocates=locates,SavedHandles=handles,SavedMemory=memchecks,SavedProofChecks=StartupValidations;
  if(scenario==14)Owners.Report.Clean=FALSE;

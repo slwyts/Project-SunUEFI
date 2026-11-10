@@ -44,9 +44,9 @@ EFI_STATUS EFIAPI PianoProductBeforeExitBootServices(EFI_HANDLE Image,
  DEBUG((DEBUG_WARN,"PIANO_EBS_CALL image=%p info=%p tpl=%lu caller_key=%lx current_key=%lx before=%u\n",Image,L,Tpl,Key,Current,Before));
  if(Tpl!=TPL_APPLICATION)return Refuse("tpl",EFI_UNSUPPORTED);
  if(!Image||!L||!L->ImageBase||!L->ImageSize)return Refuse("image",EFI_ACCESS_DENIED);
- // Reject an already stale key before any protocol call, Before notification,
- // timer change or device retirement. A standard caller can obtain a new map.
- if(Key!=Current)return Refuse("map-key",EFI_INVALID_PARAMETER);
+ // Retire once after image and memory validation even if the first key is
+ // stale. Deferring retirement to the retry would change the map again and
+ // exhaust Linux's single retry. Native map termination still checks Key.
  if(Before)return Refuse("before-notified",EFI_NOT_READY); // Never discover/retire after Before attempt.
  if(!gBS||!gST||gST->BootServices!=gBS||gBS->Hdr.Signature!=EFI_BOOT_SERVICES_SIGNATURE||!gBS->LocateProtocol)return Refuse("boot-services",EFI_NOT_READY);
  PIANO_PRODUCT_EXIT_PROTOCOL *Found=NULL;

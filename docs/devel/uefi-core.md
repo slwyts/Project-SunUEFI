@@ -88,7 +88,7 @@ PianoProductCoreEntry (uefi/core/PianoProductCore.c)
 
 ESP 中的 Linux `boot.img` 总容器上限为 128 MiB，打包入口 `./build.sh package` 和 `./build.sh esp` 会核对该上限。initramfs 的压缩后上限仍为 16 MiB，内核和设备树仍须满足各自的交接窗口。UEFI Fastboot 的单次 USB 下载上限保持 64 MiB，超过此大小的 Linux 容器需从 ESP 启动。
 
-两种路径的 `ExitBootServices` 都使用当前最内层启动应用的真实句柄和已保存的加载身份。标准 EFI 路径还检查该应用到当前 systemd-boot 的父链及 ESP 身份。开始关闭资源前的拒绝允许启动管理器重试其他内核；进入关闭流程后出错便停止，不能返回仍可能持有文件句柄的 systemd-boot。MapKey 变化后的重试不再进行文件操作、分配或重复关闭硬件。
+两种路径的 `ExitBootServices` 都使用当前最内层启动应用的真实句柄和已保存的加载身份。标准 EFI 路径还检查该应用到当前 systemd-boot 的父链及 ESP 身份。开始关闭资源前的拒绝允许启动管理器重试其他内核；进入关闭流程后，除内存图过期外的错误都会停止执行。首次调用通过身份与内存检查后即关闭资源，即使传入的 MapKey 已过期，也不把关闭动作留到下一次调用。原生内存图检查仍拒绝过期的 key；Linux 刷新一次内存图即可重试，不再进行文件操作、分配或重复关闭硬件。
 
 固件的四个 EFI 时间调用返回 `EFI_UNSUPPORTED`，并通过 `EFI_RT_PROPERTIES_TABLE` 报告；不发布占位 EFI RTC。Linux 使用 PMIC RTC，UEFI 只读原厂 `persist/time/ats_2`，通过保留内存中的标准 NVMEM 单元传入日历偏移，见 [RTC 与原厂时间](hardware/sleep.md#rtc-与原厂时间)。
 

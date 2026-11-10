@@ -300,7 +300,7 @@ index 3c20568655dbe5047e5618f5abce9e6a7f717b20..ac69f0393888c56488640af46e590e3f
    EFI_STATUS  Status;
  
 +  // Product native APP transition before any BeforeNotify/Timer0/map teardown.
-+  // Legacy targets bind Null. A stale key or foreign image does not stop USB.
++  // Legacy targets bind Null. Foreign images cannot retire product devices.
 +  if (gMemoryMapTerminated) {
 +    return PianoProductExitBootServicesResult (EFI_NOT_READY, FALSE);
 +  }

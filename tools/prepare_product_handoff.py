@@ -42,7 +42,7 @@ EFI_LOADED_IMAGE_PROTOCOL *CorePianoCurrentImageInfo (EFI_HANDLE ImageHandle);
 UINTN CorePianoCurrentMemoryMapKey (VOID);
 '''
 EXIT_HOOK='''  // Product native APP transition before any BeforeNotify/Timer0/map teardown.
-  // Legacy targets bind Null. A stale key or foreign image does not stop USB.
+  // Legacy targets bind Null. Foreign images cannot retire product devices.
   if (gMemoryMapTerminated) {
     return PianoProductExitBootServicesResult (EFI_NOT_READY, FALSE);
   }
