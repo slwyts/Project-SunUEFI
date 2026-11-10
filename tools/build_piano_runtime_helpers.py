@@ -54,6 +54,7 @@ TOUCH_PEN_PATCH=ROOT/'tools/patches/piano-touch-view-pen-owner.patch'
 TOUCH_EPOCH_PATCH=ROOT/'tools/patches/piano-touch-view-epoch-reset.patch'
 TOUCH_LINE_NOISE_PATCH=ROOT/'tools/patches/piano-touch-view-line-noise.patch'
 TOUCH_PALM_PATCH=ROOT/'tools/patches/piano-touch-view-palm-rejection.patch'
+TOUCH_PEN_ONLY_PATCH=ROOT/'tools/patches/piano-touch-view-pen-only.patch'
 LOOPBACK_PATCH_SERIES=ROOT/'patches/v4l2loopback/0.15.4/series.json'
 
 
@@ -115,8 +116,8 @@ def derive_touch_source(public, output):
     folder=Path(output)/'piano-touch-source';target=folder/relative
     target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,target)
     patches=[]
-    for patch in (TOUCH_DIAGNOSTICS_PATCH,TOUCH_CAPTURE_PATCH,TOUCH_PEN_PATCH,TOUCH_EPOCH_PATCH,TOUCH_LINE_NOISE_PATCH,TOUCH_PALM_PATCH):
-        if patch in (TOUCH_PEN_PATCH,TOUCH_PALM_PATCH):
+    for patch in (TOUCH_DIAGNOSTICS_PATCH,TOUCH_CAPTURE_PATCH,TOUCH_PEN_PATCH,TOUCH_EPOCH_PATCH,TOUCH_LINE_NOISE_PATCH,TOUCH_PALM_PATCH,TOUCH_PEN_ONLY_PATCH):
+        if patch in (TOUCH_PEN_PATCH,TOUCH_PALM_PATCH,TOUCH_PEN_ONLY_PATCH):
             subprocess.run(['patch','--batch','--forward','--fuzz=0',
                             '--no-backup-if-mismatch','-p1','-i',str(patch)],cwd=folder,check=True)
         else:

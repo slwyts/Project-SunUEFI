@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause-Patent
-# One THP reader; select calibration using the actual touch controller LCD ID.
+# One THP reader for the stylus; fingers are reported by the touch driver.
 set -eu
 # This companion shares piano-touch.service's process group. It does not read
 # THP data or emit input; it restores actual pen radio/haptic settings after
@@ -15,13 +15,16 @@ case "$lcd_id" in
   1) calibration=/usr/share/piano/pen/calibration/piano-boe.ini ;;
   *) calibration= ;;
 esac
+# --pen-only: the driver reports the MT device; this process only merges the
+# stylus position from type29 frames with its Bluetooth HID pressure.
 if [ -n "$calibration" ] && [ -r "$calibration" ]; then
   if echo 3 > /proc/nvt_thp_stylus; then
     exec /usr/bin/piano-touch-view input --seconds 0 \
-      --pen-ini "$calibration" --pen-pressure-max-age-ms 100 --pen-input
+      --pen-only --pen-ini "$calibration" --pen-pressure-max-age-ms 100 --pen-input
   fi
-  echo 'piano-touch: pen scanning unavailable; starting finger input' >&2
+  echo 'piano-touch: pen scanning unavailable; pen input disabled' >&2
+  exit 0
 else
-  echo 'piano-touch: no calibration for the actual touch LCD ID; starting finger input' >&2
+  echo 'piano-touch: no calibration for the actual touch LCD ID; pen input disabled' >&2
+  exit 0
 fi
-exec /usr/bin/piano-touch-view input --seconds 0

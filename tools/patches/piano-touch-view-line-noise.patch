@@ -7,28 +7,53 @@ multitouch sequences despite sub-millisecond input delivery. Estimate the
 common line component with medians before detecting local finger peaks,
 without raising the touch threshold or changing the separate pen decoder.
 
+Only the value at the median index is needed for each line, so select it
+instead of ordering the whole row or column: a frame has one line per row and
+per column, and the full sort was this reader's dominant cost.
+
 OEM reference: piano_nova_boe_thp_config.ini, threshold1.filter_line_gap
 and base_trace. The median filter is a project implementation.
 
 ---
 --- a/initramfs/touch-view/piano-touch-view.c
 +++ b/initramfs/touch-view/piano-touch-view.c
-@@ -197,6 +197,47 @@
+@@ -409,6 +409,66 @@
  		ref_count, ref_type, st.rows, st.cols);
  }
  
-+/* Reject line-wide capacitive interference before looking for local peaks.
-+ * A finger occupies a small part of a row/column; the median estimates the
-+ * common component without learning the finger into the baseline. The Piano
-+ * failure capture contains four three-column bands across all 40 sensor rows.
-+ * Stock THP also has separate line-noise and baseline stages; this is our
-+ * implementation, not a claim to reproduce its proprietary algorithm.
++/* The median of count values at index k, without sorting the rest: a frame
++ * has 100 of these lines and a full qsort was its dominant cost. Only the
++ * value at k is needed, so partition instead of ordering. Values equal to the
++ * pivot collect between j and i and are read directly.
 + */
-+static int cmp_delta(const void *a, const void *b)
++static int nth_smallest(int *values, int count, int k)
 +{
-+	int left = *(const int *)a, right = *(const int *)b;
++	int lo = 0, hi = count - 1;
 +
-+	return (left > right) - (left < right);
++	while (lo < hi) {
++		int pivot = values[lo + (hi - lo) / 2];
++		int i = lo, j = hi;
++
++		while (i <= j) {
++			while (values[i] < pivot)
++				i++;
++			while (values[j] > pivot)
++				j--;
++			if (i <= j) {
++				int swap = values[i];
++
++				values[i++] = values[j];
++				values[j--] = swap;
++			}
++		}
++		if (k <= j)
++			hi = j;
++		else if (k >= i)
++			lo = i;
++		else
++			break;
++	}
++	return values[k];
 +}
 +
 +static void remove_line_noise(void)
@@ -39,16 +64,14 @@ and base_trace. The median filter is a project implementation.
 +	for (c = 0; c < st.cols; c++) {
 +		for (r = 0; r < st.rows; r++)
 +			line[r] = delta[r * st.cols + c];
-+		qsort(line, st.rows, sizeof(line[0]), cmp_delta);
-+		common = line[st.rows / 2];
++		common = nth_smallest(line, st.rows, st.rows / 2);
 +		for (r = 0; r < st.rows; r++)
 +			delta[r * st.cols + c] -= common;
 +	}
 +	for (r = 0; r < st.rows; r++) {
 +		for (c = 0; c < st.cols; c++)
 +			line[c] = delta[r * st.cols + c];
-+		qsort(line, st.cols, sizeof(line[0]), cmp_delta);
-+		common = line[st.cols / 2];
++		common = nth_smallest(line, st.cols, st.cols / 2);
 +		for (c = 0; c < st.cols; c++)
 +			delta[r * st.cols + c] -= common;
 +	}
@@ -61,14 +84,13 @@ and base_trace. The median filter is a project implementation.
  static void print_map(void)
  {
  	static const char ramp[] = " .:-=+*#%@";
-@@ -659,9 +700,8 @@
+@@ -910,9 +970,8 @@
  		int d = (int16_t)le16(p + 64 + n * 2) - reference[n];
  
  		delta[n] = opt.invert ? -d : d;
 -		if (delta[n] > st.max_delta)
 -			st.max_delta = delta[n];
--	}
-+	}
+ 	}
 +	remove_line_noise();
  	/* follow slow baseline drift while nothing is near the threshold */
  	if (st.max_delta < opt.threshold / 2)
