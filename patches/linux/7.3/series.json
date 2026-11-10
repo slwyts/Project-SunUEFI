@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "b28bdadca1a0312890369da4ef95656da96c4a7f",
-  "original_target_commit": "c4a58dd0f40a7ae35553943440fffcb1036e9064",
+  "target_tree": "d9ab95b426cb4468904cf7d59740870de385577e",
+  "original_target_commit": "f1b85887d6b40c0d5b8238e6546d4924d232db62",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -759,6 +759,14 @@
       "original_parent": "b03be1db1dcccc0374a7950f20105ee9e2d261f0",
       "committer_date": "2026-11-10T19:47:33+08:00",
       "tree": "b28bdadca1a0312890369da4ef95656da96c4a7f"
+    },
+    {
+      "file": "0095-input-nt36532e-matrix.patch",
+      "sha256": "ae4340aa4585129a58876a0d3c950d6656fa0c07b5c4f0bb432409ca46e68132",
+      "original_commit": "f1b85887d6b40c0d5b8238e6546d4924d232db62",
+      "original_parent": "c4a58dd0f40a7ae35553943440fffcb1036e9064",
+      "committer_date": "2026-11-10T23:45:14+08:00",
+      "tree": "d9ab95b426cb4468904cf7d59740870de385577e"
     }
   ],
   "provenance": {

@@ -1,0 +1,1203 @@
+From f1b85887d6b40c0d5b8238e6546d4924d232db62 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Tue, 10 Nov 2026 23:45:14 +0800
+Subject: [PATCH] feat(input): decode Piano finger contacts in the kernel
+
+Decode mutual-capacitance frames with integer arithmetic in the existing
+IRQ thread. Preserve line-noise filtering, multitouch and palm
+classification while reporting standard input events directly.
+
+Skip median filtering when the raw signal range guarantees an empty frame
+and identical baseline drift. Keep calibration and contact state across
+damaged samples. Release contacts on transport loss and rebuild calibration
+after firmware resets or suspend. Allocate the raw FIFO only when a
+capture reader requests it.
+
+Prevent system resume from enabling IRQs after a failed firmware load.
+Initialize resume work before exposing its queue, and stop work and IRQs
+before teardown. Restore power-supply state outside the IRQ's touch lock
+to avoid a lock inversion.
+---
+ drivers/input/touchscreen/nt36532e/Makefile   |   2 +-
+ .../touchscreen/nt36532e/nt36xxx-matrix.c     | 509 ++++++++++++++++++
+ .../touchscreen/nt36532e/nt36xxx-matrix.h     |  40 ++
+ drivers/input/touchscreen/nt36532e/nt36xxx.c  | 349 +++++++++++-
+ drivers/input/touchscreen/nt36532e/nt36xxx.h  |  10 +
+ .../touchscreen/nt36532e/nt36xxx_fw_update.c  |   2 +-
+ 6 files changed, 881 insertions(+), 31 deletions(-)
+ create mode 100644 drivers/input/touchscreen/nt36532e/nt36xxx-matrix.c
+ create mode 100644 drivers/input/touchscreen/nt36532e/nt36xxx-matrix.h
+
+diff --git a/drivers/input/touchscreen/nt36532e/Makefile b/drivers/input/touchscreen/nt36532e/Makefile
+index 309263303f..d2dde26745 100644
+--- a/drivers/input/touchscreen/nt36532e/Makefile
++++ b/drivers/input/touchscreen/nt36532e/Makefile
+@@ -6,4 +6,4 @@
+ # Each configuration option enables a list of files.
+ 
+ obj-$(CONFIG_TOUCHSCREEN_NT36532E_SPI) += nt36532e_ts.o
+-nt36532e_ts-y := nt36xxx.o nt36xxx_fw_update.o
++nt36532e_ts-y := nt36xxx.o nt36xxx_fw_update.o nt36xxx-matrix.o
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx-matrix.c b/drivers/input/touchscreen/nt36532e/nt36xxx-matrix.c
+new file mode 100644
+index 0000000000..479efc5162
+--- /dev/null
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx-matrix.c
+@@ -0,0 +1,509 @@
++// SPDX-License-Identifier: GPL-2.0-only AND MIT
++/*
++ * Finger decoding is based on debian-piano initramfs/touch-view.
++ *
++ * MIT License
++ *
++ * Copyright (c) 2026 bluseliu50 and piano mainline contributors
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * of this software and associated documentation files (the "Software"), to deal
++ * in the Software without restriction, including without limitation the rights
++ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++ * copies of the Software, and to permit persons to whom the Software is
++ * furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in all
++ * copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ */
++/* NT36532 host-computed finger contacts from mutual capacitance frames. */
++#include "nt36xxx-matrix.h"
++
++#include <linux/errno.h>
++#include <linux/math.h>
++#include <linux/math64.h>
++#include <linux/sort.h>
++#include <linux/string.h>
++#include <linux/unaligned.h>
++
++#define NVT_MATRIX_MAX_NODES 4096
++#define NVT_MATRIX_PROBE_FRAMES 16
++#define NVT_MATRIX_REF_FRAMES 32
++#define NVT_MATRIX_THRESHOLD 200
++#define NVT_MATRIX_PALM_CELLS 70
++#define NVT_MATRIX_PANEL_WIDTH 239
++#define NVT_MATRIX_PANEL_HEIGHT 163
++#define NVT_MATRIX_COORD_SCALE 16
++
++struct nvt_matrix_area {
++	struct nvt_matrix_point point;
++	bool reported;
++};
++
++struct nvt_matrix {
++	unsigned int capacity;
++	unsigned int rows, cols, nodes;
++	unsigned int probe_count, ref_count;
++	int type;
++	bool have_reference;
++	u8 probe_types[256];
++	s32 *delta;
++	s16 *reference, *samples;
++	u16 *queue;
++	u8 *labels;
++	s32 line[256];
++	s32 physical_x[256], physical_y[256];
++	u64 cell_variance_x, cell_variance_y;
++	struct nvt_matrix_area areas[NVT_MATRIX_MAX_POINTS];
++};
++
++size_t nvt_matrix_size(unsigned int capacity)
++{
++	if (!capacity || capacity > NVT_MATRIX_MAX_NODES)
++		return 0;
++
++	return sizeof(struct nvt_matrix) + capacity *
++		(sizeof(s32) + (NVT_MATRIX_REF_FRAMES + 1) * sizeof(s16) +
++		 sizeof(u16) + sizeof(u8));
++}
++
++void nvt_matrix_reset(struct nvt_matrix *matrix)
++{
++	if (!matrix)
++		return;
++
++	matrix->rows = 0;
++	matrix->cols = 0;
++	matrix->nodes = 0;
++	matrix->probe_count = 0;
++	matrix->ref_count = 0;
++	matrix->type = -1;
++	matrix->have_reference = false;
++	memset(matrix->probe_types, 0, sizeof(matrix->probe_types));
++}
++
++struct nvt_matrix *nvt_matrix_init(void *memory, unsigned int capacity)
++{
++	struct nvt_matrix *matrix = memory;
++
++	if (!memory || !nvt_matrix_size(capacity))
++		return NULL;
++
++	memset(matrix, 0, sizeof(*matrix));
++	matrix->capacity = capacity;
++	matrix->delta = (s32 *)(matrix + 1);
++	matrix->reference = (s16 *)(matrix->delta + capacity);
++	matrix->samples = matrix->reference + capacity;
++	matrix->queue = (u16 *)(matrix->samples +
++			       NVT_MATRIX_REF_FRAMES * capacity);
++	matrix->labels = (u8 *)(matrix->queue + capacity);
++	nvt_matrix_reset(matrix);
++	return matrix;
++}
++
++static int nvt_matrix_checksum(const u8 *payload, size_t bytes,
++			       size_t *covered)
++{
++	u16 checksum, inverse;
++	s32 dwords;
++	u32 sum = 0;
++	size_t i;
++
++	if (bytes < 64)
++		return -EMSGSIZE;
++
++	checksum = get_unaligned_le16(payload + 4);
++	inverse = get_unaligned_le16(payload + 12);
++	dwords = (s32)get_unaligned_le32(payload + 8);
++	if (inverse != (u16)~checksum ||
++	    get_unaligned_le32(payload + 16) != (u32)~dwords || dwords <= 0)
++		return -EBADMSG;
++	if ((size_t)dwords > (bytes - 20) / 4)
++		return -EMSGSIZE;
++
++	*covered = 20 + (size_t)dwords * 4;
++	if (*covered < 64)
++		return -EMSGSIZE;
++	for (i = 20; i < *covered; i += 2)
++		sum += get_unaligned_le16(payload + i);
++	return (u16)(0 - sum) == checksum ? 0 : -EBADMSG;
++}
++
++static int nvt_matrix_compare(const void *left, const void *right)
++{
++	s32 a = *(const s32 *)left, b = *(const s32 *)right;
++
++	return (a > b) - (a < b);
++}
++
++/* Equal values finish together. Limit partition work before using the
++ * kernel's bounded sort, so unusual sensor data cannot force quadratic work.
++ */
++static s32 nvt_matrix_median(s32 *line, unsigned int count)
++{
++	int first = 0, last = count - 1, middle = count / 2;
++	unsigned int budget = count * 3;
++
++	while (first < last) {
++		s32 a = line[first], b = line[first + (last - first) / 2];
++		s32 c = line[last], pivot;
++		int lower = first, upper = last, index = first;
++		unsigned int remaining = last - first + 1;
++
++		if (remaining > budget) {
++			sort(line + first, remaining, sizeof(*line),
++			     nvt_matrix_compare, NULL);
++			return line[middle];
++		}
++		budget -= remaining;
++		if (a > b) {
++			s32 value = a;
++
++			a = b;
++			b = value;
++		}
++		pivot = b < c ? b : (a > c ? a : c);
++		while (index <= upper) {
++			s32 value = line[index];
++
++			if (value < pivot) {
++				line[index++] = line[lower];
++				line[lower++] = value;
++			} else if (value > pivot) {
++				line[index] = line[upper];
++				line[upper--] = value;
++			} else {
++				index++;
++			}
++		}
++		if (middle < lower)
++			last = lower - 1;
++		else if (middle > upper)
++			first = upper + 1;
++		else
++			return pivot;
++	}
++	return line[middle];
++}
++
++static void nvt_matrix_geometry(struct nvt_matrix *matrix)
++{
++	unsigned int width = NVT_MATRIX_PANEL_WIDTH * NVT_MATRIX_RESOLUTION;
++	unsigned int height = NVT_MATRIX_PANEL_HEIGHT * NVT_MATRIX_RESOLUTION;
++	unsigned int i;
++
++	/* Physical centres use 1/16 input unit; their second moments use Q8.
++	 * Precomputing centres keeps division out of the flood-fill loop.
++	 */
++	for (i = 0; i < matrix->cols; i++)
++		matrix->physical_x[i] = ((2 * i + 1) * width *
++			NVT_MATRIX_COORD_SCALE + matrix->cols) / (2 * matrix->cols);
++	for (i = 0; i < matrix->rows; i++)
++		matrix->physical_y[i] = ((2 * i + 1) * height *
++			NVT_MATRIX_COORD_SCALE + matrix->rows) / (2 * matrix->rows);
++	matrix->cell_variance_x = div64_u64((u64)width * width *
++		NVT_MATRIX_COORD_SCALE * NVT_MATRIX_COORD_SCALE,
++		12 * matrix->cols * matrix->cols);
++	matrix->cell_variance_y = div64_u64((u64)height * height *
++		NVT_MATRIX_COORD_SCALE * NVT_MATRIX_COORD_SCALE,
++		12 * matrix->rows * matrix->rows);
++}
++
++static void nvt_matrix_build_reference(struct nvt_matrix *matrix)
++{
++	unsigned int node, frame;
++
++	for (node = 0; node < matrix->nodes; node++) {
++		for (frame = 0; frame < NVT_MATRIX_REF_FRAMES; frame++) {
++			unsigned int sample = frame * matrix->capacity + node;
++
++			matrix->line[frame] = matrix->samples[sample];
++		}
++		matrix->reference[node] =
++			nvt_matrix_median(matrix->line, NVT_MATRIX_REF_FRAMES);
++	}
++	matrix->have_reference = true;
++}
++
++static s32 nvt_matrix_filter(struct nvt_matrix *matrix)
++{
++	s32 common, maximum = 0;
++	unsigned int row, col, node;
++
++	for (col = 0; col < matrix->cols; col++) {
++		for (row = 0; row < matrix->rows; row++)
++			matrix->line[row] = matrix->delta[row * matrix->cols + col];
++		common = nvt_matrix_median(matrix->line, matrix->rows);
++		for (row = 0; row < matrix->rows; row++)
++			matrix->delta[row * matrix->cols + col] -= common;
++	}
++	for (row = 0; row < matrix->rows; row++) {
++		for (col = 0; col < matrix->cols; col++)
++			matrix->line[col] = matrix->delta[row * matrix->cols + col];
++		common = nvt_matrix_median(matrix->line, matrix->cols);
++		for (col = 0; col < matrix->cols; col++)
++			matrix->delta[row * matrix->cols + col] -= common;
++	}
++	for (node = 0; node < matrix->nodes; node++)
++		if (matrix->delta[node] > maximum)
++			maximum = matrix->delta[node];
++	return maximum;
++}
++
++static void nvt_matrix_position(const struct nvt_matrix *matrix,
++				u64 weight, u64 x2, u64 y2,
++				struct nvt_matrix_point *point)
++{
++	u64 width = 2 * matrix->cols * weight;
++	u64 height = 2 * matrix->rows * weight;
++
++	point->x = div64_u64(x2 * NVT_MATRIX_SCREEN_WIDTH, width);
++	point->y = div64_u64((height - y2) * NVT_MATRIX_SCREEN_HEIGHT, height);
++}
++
++static void nvt_matrix_queue(struct nvt_matrix *matrix, unsigned int node,
++			     u8 label, unsigned int *tail)
++{
++	if (matrix->labels[node] || matrix->delta[node] < NVT_MATRIX_THRESHOLD)
++		return;
++
++	matrix->labels[node] = label;
++	matrix->queue[(*tail)++] = node;
++}
++
++static u16 nvt_matrix_axis(u64 variance)
++{
++	/* sqrt(Q8) is Q4; four standard deviations rounded to input units. */
++	u32 axis = (int_sqrt64(variance) + 2) / 4;
++
++	if (axis > NVT_MATRIX_SHAPE_MAX)
++		axis = NVT_MATRIX_SHAPE_MAX;
++	return axis;
++}
++
++static void nvt_matrix_measure(struct nvt_matrix *matrix, unsigned int start,
++			       u8 label)
++{
++	struct nvt_matrix_area *area = &matrix->areas[label - 1];
++	s64 sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
++	s64 vx, vy, covariance, trace;
++	u64 weight = 0, x2 = 0, y2 = 0, count_squared, discriminant, root;
++	unsigned int head = 0, tail = 0;
++
++	memset(area, 0, sizeof(*area));
++	nvt_matrix_queue(matrix, start, label, &tail);
++	while (head < tail) {
++		unsigned int node = matrix->queue[head++];
++		unsigned int row = node / matrix->cols, col = node % matrix->cols;
++		s32 x = matrix->physical_x[col], y = matrix->physical_y[row];
++		u64 value = matrix->delta[node];
++
++		sx += x;
++		sy += y;
++		sxx += (s64)x * x;
++		syy += (s64)y * y;
++		sxy += (s64)x * y;
++		weight += value;
++		x2 += value * (2 * col + 1);
++		y2 += value * (2 * row + 1);
++		if (row)
++			nvt_matrix_queue(matrix, node - matrix->cols, label, &tail);
++		if (row + 1 < matrix->rows)
++			nvt_matrix_queue(matrix, node + matrix->cols, label, &tail);
++		if (col)
++			nvt_matrix_queue(matrix, node - 1, label, &tail);
++		if (col + 1 < matrix->cols)
++			nvt_matrix_queue(matrix, node + 1, label, &tail);
++	}
++
++	count_squared = (u64)tail * tail;
++	vx = div64_s64((s64)tail * sxx - sx * sx, count_squared) +
++		matrix->cell_variance_x;
++	vy = div64_s64((s64)tail * syy - sy * sy, count_squared) +
++		matrix->cell_variance_y;
++	covariance = div64_s64((s64)tail * sxy - sx * sy, count_squared);
++	trace = vx + vy;
++	discriminant = (vx - vy) * (vx - vy) + 4 * covariance * covariance;
++	root = int_sqrt64(discriminant);
++	area->point.major = nvt_matrix_axis((trace + root) / 2);
++	area->point.minor = root < (u64)trace ?
++		nvt_matrix_axis((trace - root) / 2) : 0;
++	area->point.palm = tail >= NVT_MATRIX_PALM_CELLS;
++	nvt_matrix_position(matrix, weight, x2, y2, &area->point);
++}
++
++static bool nvt_matrix_peak(const struct nvt_matrix *matrix, int row, int col)
++{
++	s32 value = matrix->delta[row * matrix->cols + col];
++	int dr, dc;
++
++	for (dr = -1; dr <= 1; dr++) {
++		for (dc = -1; dc <= 1; dc++) {
++			int rr = row + dr, cc = col + dc;
++			s32 neighbour;
++
++			if ((!dr && !dc) || rr < 0 || cc < 0 ||
++			    rr >= (int)matrix->rows || cc >= (int)matrix->cols)
++				continue;
++			neighbour = matrix->delta[rr * matrix->cols + cc];
++			if (neighbour > value ||
++			    (neighbour == value && (dr < 0 || (!dr && dc < 0))))
++				return false;
++		}
++	}
++	return true;
++}
++
++static void nvt_matrix_centroid(const struct nvt_matrix *matrix, int row,
++				int col, struct nvt_matrix_point *point)
++{
++	u64 weight = 0, x2 = 0, y2 = 0;
++	int dr, dc;
++
++	for (dr = -1; dr <= 1; dr++) {
++		for (dc = -1; dc <= 1; dc++) {
++			int rr = row + dr, cc = col + dc;
++			s32 value;
++
++			if (rr < 0 || cc < 0 || rr >= (int)matrix->rows ||
++			    cc >= (int)matrix->cols)
++				continue;
++			value = matrix->delta[rr * matrix->cols + cc];
++			if (value <= 0)
++				continue;
++			weight += value;
++			x2 += (u64)value * (2 * cc + 1);
++			y2 += (u64)value * (2 * rr + 1);
++		}
++	}
++	nvt_matrix_position(matrix, weight, x2, y2, point);
++}
++
++static void nvt_matrix_points(struct nvt_matrix *matrix,
++			      struct nvt_matrix_frame *out)
++{
++	unsigned int row, col, used = 0;
++
++	memset(matrix->labels, 0, matrix->nodes);
++	for (row = 0; row < matrix->rows; row++) {
++		for (col = 0; col < matrix->cols; col++) {
++			unsigned int node = row * matrix->cols + col;
++			struct nvt_matrix_area *area;
++			u8 label;
++
++			if (matrix->delta[node] < NVT_MATRIX_THRESHOLD ||
++			    !nvt_matrix_peak(matrix, row, col))
++				continue;
++			label = matrix->labels[node];
++			if (!label) {
++				if (used == NVT_MATRIX_MAX_POINTS)
++					continue;
++				label = ++used;
++				nvt_matrix_measure(matrix, node, label);
++			}
++			area = &matrix->areas[label - 1];
++			if (area->point.palm && area->reported)
++				continue;
++			out->points[out->count] = area->point;
++			if (area->point.palm)
++				area->reported = true;
++			else
++				nvt_matrix_centroid(matrix, row, col,
++						    &out->points[out->count]);
++			if (++out->count == NVT_MATRIX_MAX_POINTS)
++				return;
++		}
++	}
++}
++
++int nvt_matrix_process(struct nvt_matrix *matrix, const u8 *payload,
++		       size_t bytes, struct nvt_matrix_frame *out)
++{
++	unsigned int rows, cols, nodes, type, i;
++	size_t covered;
++	s32 minimum, maximum;
++	int ret;
++
++	if (!matrix || !payload || !out)
++		return -EINVAL;
++	out->count = 0;
++	ret = nvt_matrix_checksum(payload, bytes, &covered);
++	if (ret)
++		return ret;
++	type = payload[56];
++	if (type == 6 || type == 7 || type == 9 || type == 17 || type == 29)
++		return 0;
++
++	cols = payload[48];
++	rows = payload[49];
++	nodes = rows * cols;
++	if (!nodes || nodes > matrix->capacity)
++		return -EINVAL;
++	if (64 + nodes * sizeof(s16) > covered)
++		return -EMSGSIZE;
++
++	if (matrix->type < 0) {
++		matrix->probe_types[type]++;
++		if (++matrix->probe_count == NVT_MATRIX_PROBE_FRAMES) {
++			matrix->type = 0;
++			for (i = 1; i < 256; i++)
++				if (matrix->probe_types[i] >
++				    matrix->probe_types[matrix->type])
++					matrix->type = i;
++		}
++		return 0;
++	}
++	if (type != (unsigned int)matrix->type)
++		return 0;
++	if (!matrix->ref_count) {
++		matrix->rows = rows;
++		matrix->cols = cols;
++		matrix->nodes = nodes;
++		nvt_matrix_geometry(matrix);
++	}
++	if (rows != matrix->rows || cols != matrix->cols)
++		return -EPROTO;
++	if (!matrix->have_reference) {
++		for (i = 0; i < nodes; i++)
++			matrix->samples[matrix->ref_count * matrix->capacity + i] =
++				(s16)get_unaligned_le16(payload + 64 + i * 2);
++		if (++matrix->ref_count == NVT_MATRIX_REF_FRAMES)
++			nvt_matrix_build_reference(matrix);
++		return 0;
++	}
++
++	minimum = (s16)get_unaligned_le16(payload + 64) -
++		matrix->reference[0];
++	maximum = minimum;
++	for (i = 0; i < nodes; i++) {
++		matrix->delta[i] = (s16)get_unaligned_le16(payload + 64 + i * 2) -
++			matrix->reference[i];
++		if (matrix->delta[i] < minimum)
++			minimum = matrix->delta[i];
++		if (matrix->delta[i] > maximum)
++			maximum = matrix->delta[i];
++	}
++	/* Two median subtractions bound the maximum by twice the raw range.
++	 * Below threshold/4, baseline drift applies and no contact can exist.
++	 */
++	if (maximum - minimum < NVT_MATRIX_THRESHOLD / 4)
++		maximum = 0;
++	else
++		maximum = nvt_matrix_filter(matrix);
++	if (maximum < NVT_MATRIX_THRESHOLD / 2)
++		for (i = 0; i < nodes; i++)
++			matrix->reference[i] +=
++				((s16)get_unaligned_le16(payload + 64 + i * 2) -
++				 matrix->reference[i]) / 8;
++	if (maximum >= NVT_MATRIX_THRESHOLD)
++		nvt_matrix_points(matrix, out);
++	return 1;
++}
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx-matrix.h b/drivers/input/touchscreen/nt36532e/nt36xxx-matrix.h
+new file mode 100644
+index 0000000000..771c05b538
+--- /dev/null
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx-matrix.h
+@@ -0,0 +1,40 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _NT36XXX_MATRIX_H
++#define _NT36XXX_MATRIX_H
++
++#include <linux/types.h>
++
++#define NVT_MATRIX_MAX_POINTS 10
++#define NVT_MATRIX_SCREEN_WIDTH 3200
++#define NVT_MATRIX_SCREEN_HEIGHT 2136
++#define NVT_MATRIX_RESOLUTION 13
++#define NVT_MATRIX_SHAPE_MAX 3848
++
++struct nvt_matrix;
++
++struct nvt_matrix_point {
++	s32 x, y;
++	u16 major, minor;
++	bool palm;
++};
++
++struct nvt_matrix_frame {
++	unsigned int count;
++	struct nvt_matrix_point points[NVT_MATRIX_MAX_POINTS];
++};
++
++/* Capacity is the maximum node count, from 1 through 4096. The caller
++ * supplies aligned storage of nvt_matrix_size() bytes for the full lifetime.
++ */
++size_t nvt_matrix_size(unsigned int capacity);
++struct nvt_matrix *nvt_matrix_init(void *memory, unsigned int capacity);
++void nvt_matrix_reset(struct nvt_matrix *matrix);
++
++/* The payload begins after the SPI/event prefix. Return 1 for a decoded
++ * frame (including zero contacts), 0 while learning or for another type,
++ * and a negative errno for a malformed frame. No input state is retained.
++ */
++int nvt_matrix_process(struct nvt_matrix *matrix, const u8 *payload,
++		       size_t bytes, struct nvt_matrix_frame *out);
++
++#endif
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.c b/drivers/input/touchscreen/nt36532e/nt36xxx.c
+index 309d623fd6..7caa2b68a5 100644
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx.c
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.c
+@@ -27,6 +27,7 @@
+ #include <linux/poll.h>
+ #include <linux/power_supply.h>
+ #include <linux/gpio/consumer.h>
++#include <linux/input/mt.h>
+ #include <linux/of_irq.h>
+ #include <linux/unaligned.h>
+ #include <linux/vmalloc.h>
+@@ -87,6 +88,255 @@ struct nvt_thp_stream_header {
+ 	__le32 firmware_magic;
+ } __packed;
+ 
++static void nvt_input_release(bool palms)
++{
++	bool active = false;
++	unsigned int s;
++
++	if (!ts->input)
++		return;
++	for (s = 0; s < NVT_MATRIX_MAX_POINTS; s++) {
++		struct nvt_input_slot *slot = &ts->input_slots[s];
++
++		if (!slot->active)
++			continue;
++		input_mt_slot(ts->input, s);
++		if (palms)
++			input_report_abs(ts->input, ABS_MT_TOOL_TYPE, MT_TOOL_PALM);
++		input_mt_report_slot_state(ts->input, MT_TOOL_FINGER, false);
++		slot->active = false;
++		slot->palm = false;
++		active = true;
++	}
++	if (active) {
++		input_report_key(ts->input, BTN_TOUCH, 0);
++		input_sync(ts->input);
++	}
++}
++
++static void nvt_input_reset(void)
++{
++	nvt_input_release(false);
++	if (ts->matrix)
++		nvt_matrix_reset(ts->matrix);
++}
++
++static void nvt_input_report(const struct nvt_matrix_frame *frame)
++{
++	bool taken[NVT_MATRIX_MAX_POINTS] = { false };
++	bool ended[NVT_MATRIX_MAX_POINTS] = { false };
++	int matches[NVT_MATRIX_MAX_POINTS];
++	unsigned int s, p;
++	int first = -1;
++
++	if (!frame->count) {
++		nvt_input_release(false);
++		return;
++	}
++
++	for (s = 0; s < NVT_MATRIX_MAX_POINTS; s++) {
++		struct nvt_input_slot *slot = &ts->input_slots[s];
++		int best = -1, distance = 400 * 400;
++
++		matches[s] = -1;
++		if (!slot->active)
++			continue;
++		for (p = 0; p < frame->count; p++) {
++			int dx = frame->points[p].x - slot->x;
++			int dy = frame->points[p].y - slot->y;
++			int d = dx * dx + dy * dy;
++
++			if (!taken[p] && d < distance) {
++				best = p;
++				distance = d;
++			}
++		}
++		if (best < 0) {
++			ended[s] = true;
++			continue;
++		}
++		taken[best] = true;
++		matches[s] = best;
++	}
++	for (p = 0; p < frame->count; p++) {
++		if (taken[p])
++			continue;
++		for (s = 0; s < NVT_MATRIX_MAX_POINTS; s++)
++			if (!ts->input_slots[s].active && matches[s] < 0)
++				break;
++		if (s == NVT_MATRIX_MAX_POINTS)
++			break;
++		matches[s] = p;
++	}
++	for (s = 0; s < NVT_MATRIX_MAX_POINTS; s++) {
++		struct nvt_input_slot *slot = &ts->input_slots[s];
++		const struct nvt_matrix_point *point;
++
++		if (ended[s]) {
++			input_mt_slot(ts->input, s);
++			input_mt_report_slot_state(ts->input, MT_TOOL_FINGER, false);
++			slot->active = false;
++			slot->palm = false;
++			continue;
++		}
++		if (matches[s] < 0)
++			continue;
++		point = &frame->points[matches[s]];
++		slot->palm |= point->palm;
++		slot->active = true;
++		slot->x = point->x;
++		slot->y = point->y;
++		input_mt_slot(ts->input, s);
++		/* libinput must see a palm's type before its tracking ID. */
++		input_report_abs(ts->input, ABS_MT_TOOL_TYPE,
++				 slot->palm ? MT_TOOL_PALM : MT_TOOL_FINGER);
++		input_mt_report_slot_state(ts->input,
++					   slot->palm ? MT_TOOL_PALM : MT_TOOL_FINGER,
++					   true);
++		input_report_abs(ts->input, ABS_MT_POSITION_X, point->x);
++		input_report_abs(ts->input, ABS_MT_POSITION_Y, point->y);
++		input_report_abs(ts->input, ABS_MT_TOUCH_MAJOR, point->major);
++		input_report_abs(ts->input, ABS_MT_TOUCH_MINOR, point->minor);
++		if (!slot->palm && first < 0)
++			first = s;
++	}
++	if (first >= 0) {
++		input_report_abs(ts->input, ABS_X, ts->input_slots[first].x);
++		input_report_abs(ts->input, ABS_Y, ts->input_slots[first].y);
++	}
++	/* Pointer emulation counts palms as touches; count fingers here. */
++	input_report_key(ts->input, BTN_TOUCH, first >= 0);
++	input_sync(ts->input);
++}
++
++/* The outer checksum was checked by nvt_matrix_process(). A type29 must
++ * also contain its four pen arrays, inner checksum and valid hand quarter.
++ */
++static bool nvt_input_pen_frame_valid(const u8 *payload, size_t bytes)
++{
++	const u8 *metadata;
++	size_t nodes, pen_nodes, trailer, required, outer_end, inner_end, i;
++	u32 count, sum = 0;
++	u16 checksum;
++
++	if (bytes < 100 || payload[56] != 29)
++		return false;
++	metadata = payload + 64;
++	nodes = (size_t)payload[48] * payload[49];
++	pen_nodes = (size_t)metadata[7] * metadata[8] +
++		    (size_t)metadata[9] * metadata[10];
++	if (nodes != TOUCH_DEFAULT_NUM_X * TOUCH_DEFAULT_NUM_Y ||
++	    !metadata[7] || !metadata[8] || !metadata[9] || !metadata[10] ||
++	    metadata[11] < 1 || metadata[11] > 4 ||
++	    get_unaligned_le16(metadata + 12) != nodes / 2)
++		return false;
++	trailer = 100 + 4 * pen_nodes;
++	required = trailer + 20 + nodes / 2;
++	outer_end = 20 + (size_t)get_unaligned_le32(payload + 8) * 4;
++	if (required > bytes || required > outer_end)
++		return false;
++	checksum = get_unaligned_le16(payload + trailer + 4);
++	count = get_unaligned_le32(payload + trailer + 8);
++	if (!count || count > (trailer + 4 - 20) / 4 ||
++	    get_unaligned_le16(payload + trailer + 12) != (u16)~checksum ||
++	    get_unaligned_le32(payload + trailer + 16) != ~count)
++		return false;
++	inner_end = 20 + (size_t)count * 4;
++	if (inner_end < trailer || inner_end > trailer + 4)
++		return false;
++	for (i = 20; i < inner_end; i += 2)
++		sum += get_unaligned_le16(payload + i);
++	return (u16)(0U - sum) == checksum;
++}
++
++static void nvt_input_frame(void)
++{
++	const u8 *payload = ts->thp_frame + NVT_THP_HEADER_LEN;
++	struct nvt_matrix_frame frame;
++	int ret;
++
++	ret = nvt_matrix_process(ts->matrix, payload, ts->thp_payload_len, &frame);
++	if (ret < 0)
++		return;
++	if (!ret && ts->thp_payload_len > 56 && payload[56] == 29) {
++		if (!nvt_input_pen_frame_valid(payload, ts->thp_payload_len))
++			return;
++		nvt_input_release(true);
++	}
++	if (ret > 0)
++		nvt_input_report(&frame);
++}
++
++static int nvt_input_init(void)
++{
++	const unsigned int capacity = TOUCH_DEFAULT_NUM_X * TOUCH_DEFAULT_NUM_Y;
++	struct input_dev *input;
++	void *memory;
++	int ret;
++
++	memory = kvzalloc(nvt_matrix_size(capacity), GFP_KERNEL);
++	if (!memory)
++		return -ENOMEM;
++	ts->matrix = nvt_matrix_init(memory, capacity);
++	if (!ts->matrix) {
++		kvfree(memory);
++		return -EINVAL;
++	}
++	input = input_allocate_device();
++	if (!input) {
++		ret = -ENOMEM;
++		goto free_matrix;
++	}
++	input->name = "piano NT36532 THP touchscreen";
++	input->dev.parent = &ts->client->dev;
++	input->id.bustype = BUS_SPI;
++	input->id.vendor = 0x0603;
++	input->id.product = 0x6532;
++	input->id.version = 1;
++	input_set_capability(input, EV_KEY, BTN_TOUCH);
++	input_set_abs_params(input, ABS_X, 0, NVT_MATRIX_SCREEN_WIDTH - 1, 0, 0);
++	input_set_abs_params(input, ABS_Y, 0, NVT_MATRIX_SCREEN_HEIGHT - 1, 0, 0);
++	input_set_abs_params(input, ABS_MT_POSITION_X, 0,
++			     NVT_MATRIX_SCREEN_WIDTH - 1, 0, 0);
++	input_set_abs_params(input, ABS_MT_POSITION_Y, 0,
++			     NVT_MATRIX_SCREEN_HEIGHT - 1, 0, 0);
++	input_set_abs_params(input, ABS_MT_TOUCH_MAJOR, 0, NVT_MATRIX_SHAPE_MAX, 0, 0);
++	input_set_abs_params(input, ABS_MT_TOUCH_MINOR, 0, NVT_MATRIX_SHAPE_MAX, 0, 0);
++	input_set_abs_params(input, ABS_MT_TOOL_TYPE, 0, MT_TOOL_MAX, 0, 0);
++	input_abs_set_res(input, ABS_X, NVT_MATRIX_RESOLUTION);
++	input_abs_set_res(input, ABS_Y, NVT_MATRIX_RESOLUTION);
++	input_abs_set_res(input, ABS_MT_POSITION_X, NVT_MATRIX_RESOLUTION);
++	input_abs_set_res(input, ABS_MT_POSITION_Y, NVT_MATRIX_RESOLUTION);
++	input_abs_set_res(input, ABS_MT_TOUCH_MAJOR, NVT_MATRIX_RESOLUTION);
++	input_abs_set_res(input, ABS_MT_TOUCH_MINOR, NVT_MATRIX_RESOLUTION);
++	ret = input_mt_init_slots(input, NVT_MATRIX_MAX_POINTS, INPUT_MT_DIRECT);
++	if (ret)
++		goto free_input;
++	ret = input_register_device(input);
++	if (ret)
++		goto free_input;
++	ts->input = input;
++	return 0;
++
++free_input:
++	input_free_device(input);
++free_matrix:
++	kvfree(ts->matrix);
++	ts->matrix = NULL;
++	return ret;
++}
++
++static void nvt_input_free(void)
++{
++	if (ts->input) {
++		nvt_input_release(false);
++		input_unregister_device(ts->input);
++		ts->input = NULL;
++	}
++	kvfree(ts->matrix);
++	ts->matrix = NULL;
++}
++
+ static bool nvt_thp_header_valid(const u8 *frame, u16 *header_crc,
+ 				 u32 *magic)
+ {
+@@ -174,6 +424,7 @@ void nvt_thp_mark_epoch(void)
+ 	if (!ts)
+ 		return;
+ 
++	nvt_input_reset();
+ 	mutex_lock(&ts->thp_lock);
+ 	ts->thp_epoch_pending = true;
+ 	ts->thp_epoch_count++;
+@@ -197,6 +448,15 @@ static ssize_t nvt_thp_raw_write(struct file *file, const char __user *buf,
+ 		return ret;
+ 
+ 	mutex_lock(&ts->thp_lock);
++	if (enable && !ts->thp_stream_buf) {
++		ts->thp_stream_buf = vzalloc(NVT_THP_STREAM_SIZE);
++		if (!ts->thp_stream_buf) {
++			mutex_unlock(&ts->thp_lock);
++			return -ENOMEM;
++		}
++		kfifo_init(&ts->thp_stream_fifo, ts->thp_stream_buf,
++			   NVT_THP_STREAM_SIZE);
++	}
+ 	if (enable && !ts->thp_capture_enabled)
+ 		kfifo_reset(&ts->thp_stream_fifo);
+ 	WRITE_ONCE(ts->thp_capture_enabled, enable);
+@@ -675,7 +935,8 @@ static ssize_t nvt_thp_stream_read(struct file *file, char __user *buf,
+ 	}
+ 
+ 	mutex_lock(&ts->thp_lock);
+-	ret = kfifo_to_user(&ts->thp_stream_fifo, buf, count, &copied);
++	ret = ts->thp_stream_buf ?
++		kfifo_to_user(&ts->thp_stream_fifo, buf, count, &copied) : 0;
+ 	mutex_unlock(&ts->thp_lock);
+ 
+ 	return ret ? ret : copied;
+@@ -715,7 +976,7 @@ static int nvt_thp_status_show(struct seq_file *m, void *v)
+ 	seq_printf(m, "irqs: %llu\n", (unsigned long long)ts->thp_irq_count);
+ 	seq_printf(m, "stylus_enabled: %u\n", ts->thp_stylus_mode != 0);
+ 	seq_printf(m, "stylus_mode: %u\n", ts->thp_stylus_mode);
+-	seq_puts(m, "kernel_input: disabled\n");
++	seq_puts(m, "kernel_input: enabled\n");
+ 	seq_printf(m, "payload_length: %u\n", ts->thp_payload_len);
+ 	seq_printf(m, "raw_frame_length: %u\n", nvt_thp_frame_len());
+ 	seq_printf(m, "stream_frame_length: %u\n", nvt_thp_frame_len());
+@@ -1835,6 +2096,7 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
+ 	int32_t ret = -1;
+ 	uint8_t fw_state[7] = { 0 };
+ 	bool frame_captured = false;
++	bool restore_power_supply = false;
+ 
+ 	mutex_lock(&ts->lock);
+ 	ts->thp_irq_count++;
+@@ -1846,6 +2108,8 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
+ 			goto XFER_ERROR;
+ 		}
+ 	}
++	if (!ts->thp_firmware_ready)
++		goto XFER_ERROR;
+ 
+ 	/*
+ 	 * Like the stock p81 THP driver, always fetch the whole frame the IC
+@@ -1868,7 +2132,7 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
+ 		nvt_read_fw_history(ts->mmap->MMAP_HISTORY_EVENT1);
+ 		nvt_update_firmware(ts->fw_name);
+ 		nvt_thp_restore_stylus();
+-		nvt_power_supply_restore();
++		restore_power_supply = true;
+ 		goto XFER_ERROR;
+ 	}
+ #endif /* #if NVT_TOUCH_WDT_RECOVERY */
+@@ -1878,12 +2142,19 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
+ 		goto XFER_ERROR;
+ 	}
+ 
+-	if (frame_captured)
++	if (frame_captured) {
++		nvt_input_frame();
+ 		nvt_thp_publish_frame();
++	}
++	goto out;
+ 
+ XFER_ERROR:
++	nvt_input_release(false);
+ 
++out:
+ 	mutex_unlock(&ts->lock);
++	if (restore_power_supply)
++		nvt_power_supply_restore();
+ 	return IRQ_HANDLED;
+ }
+ 
+@@ -2168,13 +2439,9 @@ static int32_t nvt_ts_probe(struct spi_device *client)
+ 		ret = -ENOMEM;
+ 		goto err_chipvertrim_failed;
+ 	}
+-	ts->thp_stream_buf = vzalloc(NVT_THP_STREAM_SIZE);
+-	if (!ts->thp_stream_buf) {
+-		ret = -ENOMEM;
++	ret = nvt_input_init();
++	if (ret)
+ 		goto err_chipvertrim_failed;
+-	}
+-	kfifo_init(&ts->thp_stream_fifo, ts->thp_stream_buf,
+-		   NVT_THP_STREAM_SIZE);
+ 
+ 	ts->x_num = TOUCH_DEFAULT_NUM_X;
+ 	ts->y_num = TOUCH_DEFAULT_NUM_Y;
+@@ -2217,6 +2484,7 @@ static int32_t nvt_ts_probe(struct spi_device *client)
+ 	INIT_DELAYED_WORK(&ts->nvt_fwu_work, Boot_Update_Firmware);
+ #endif
+ 
++	INIT_WORK(&ts->resume_work, nvt_resume_work);
+ 	ts->event_wq = alloc_workqueue("nvt-event-queue",
+ 		WQ_UNBOUND | WQ_HIGHPRI | WQ_CPU_INTENSIVE, 1);
+ 	if (!ts->event_wq) {
+@@ -2225,7 +2493,6 @@ static int32_t nvt_ts_probe(struct spi_device *client)
+ 		goto err_alloc_work_thread_failed;
+ 	}
+ 
+-	INIT_WORK(&ts->resume_work, nvt_resume_work);
+ 	mutex_init(&ts->power_supply_lock);
+ 	ts->power_supply_status = -1;
+ 	INIT_WORK(&ts->power_supply_work, nvt_power_supply_work);
+@@ -2315,6 +2582,7 @@ static int32_t nvt_ts_probe(struct spi_device *client)
+ err_panelwait_failed:
+ err_chipvertrim_failed:
+ 	nvt_panel_remove_follower(ts);
++	nvt_input_free();
+ 	vfree(ts->thp_stream_buf);
+ 	ts->thp_stream_buf = NULL;
+ 	kfree(ts->thp_frame);
+@@ -2371,11 +2639,7 @@ static void nvt_ts_remove(struct spi_device *client)
+ 		power_supply_unreg_notifier(&ts->power_supply_notifier);
+ 		ts->power_supply_registered = false;
+ 	}
+-	cancel_work_sync(&ts->power_supply_work);
+-	mutex_destroy(&ts->power_supply_lock);
+-
+-	destroy_workqueue(ts->event_wq);
+-	ts->event_wq = NULL;
++	cancel_work_sync(&ts->resume_work);
+ 
+ #if BOOT_UPDATE_FIRMWARE
+ 	if (nvt_fwu_wq) {
+@@ -2387,6 +2651,11 @@ static void nvt_ts_remove(struct spi_device *client)
+ 
+ 	nvt_irq_enable(false);
+ 	free_irq(client->irq, ts);
++	cancel_work_sync(&ts->power_supply_work);
++	destroy_workqueue(ts->event_wq);
++	ts->event_wq = NULL;
++	mutex_destroy(&ts->power_supply_lock);
++	nvt_input_free();
+ 
+ 	mutex_destroy(&ts->xbuf_lock);
+ 	mutex_destroy(&ts->lock);
+@@ -2425,15 +2694,11 @@ static void nvt_ts_shutdown(struct spi_device *client)
+ 
+ 	nvt_panel_remove_follower(ts);
+ 
+-	nvt_irq_enable(false);
+ 	if (ts->power_supply_registered) {
+ 		power_supply_unreg_notifier(&ts->power_supply_notifier);
+ 		ts->power_supply_registered = false;
+ 	}
+-	cancel_work_sync(&ts->power_supply_work);
+-
+-	destroy_workqueue(ts->event_wq);
+-	ts->event_wq = NULL;
++	cancel_work_sync(&ts->resume_work);
+ 
+ #if BOOT_UPDATE_FIRMWARE
+ 	if (nvt_fwu_wq) {
+@@ -2442,6 +2707,14 @@ static void nvt_ts_shutdown(struct spi_device *client)
+ 		nvt_fwu_wq = NULL;
+ 	}
+ #endif
++	nvt_irq_enable(false);
++	cancel_work_sync(&ts->power_supply_work);
++	destroy_workqueue(ts->event_wq);
++	ts->event_wq = NULL;
++	mutex_lock(&ts->lock);
++	bTouchIsAwake = 0;
++	nvt_input_reset();
++	mutex_unlock(&ts->lock);
+ }
+ 
+ /*******************************************************
+@@ -2468,6 +2741,7 @@ static int32_t nvt_ts_suspend(struct device *dev)
+ 	NVT_LOG("start\n");
+ 
+ 	bTouchIsAwake = 0;
++	nvt_input_reset();
+ 
+ 	mutex_unlock(&ts->lock);
+ 
+@@ -2493,7 +2767,9 @@ static int32_t nvt_ts_suspend(struct device *dev)
+ *******************************************************/
+ static int32_t nvt_ts_resume(struct device *dev)
+ {
+-	if (bTouchIsAwake) {
++	int ret;
++
++	if (bTouchIsAwake && ts->thp_firmware_ready) {
+ 		NVT_LOG("Touch is already resume\n");
+ 		return 0;
+ 	}
+@@ -2503,6 +2779,7 @@ static int32_t nvt_ts_resume(struct device *dev)
+ 		return 0;
+ 	}
+ 
++	nvt_irq_enable(false);
+ 	if (ts->dev_pm_suspend)
+ 		pm_stay_awake(dev);
+ 
+@@ -2513,10 +2790,16 @@ static int32_t nvt_ts_resume(struct device *dev)
+ 	ts->ic_state = NVT_IC_RESUME_IN;
+ 
+ 	// please make sure display reset(RESX) sequence and mipi dsi cmds sent before this
+-	if (nvt_update_firmware(ts->fw_name)) {
+-		NVT_ERR("download firmware failed, ignore check fw state\n");
+-	} else {
+-		nvt_check_fw_reset_state(RESET_STATE_REK);
++	ret = nvt_update_firmware(ts->fw_name);
++	if (ret) {
++		NVT_ERR("firmware restore failed (%d), IRQ left off\n", ret);
++		goto out;
++	}
++	ret = nvt_check_fw_reset_state(RESET_STATE_REK);
++	if (ret) {
++		NVT_ERR("firmware reset state unavailable (%d), IRQ left off\n", ret);
++		ts->thp_firmware_ready = false;
++		goto out;
+ 	}
+ 
+ 	nvt_irq_enable(true);
+@@ -2531,14 +2814,16 @@ static int32_t nvt_ts_resume(struct device *dev)
+ 
+ 	nvt_thp_restore_stylus();
+ 
++out:
+ 	mutex_unlock(&ts->lock);
+-	nvt_power_supply_restore();
++	if (!ret)
++		nvt_power_supply_restore();
+ 
+ 	NVT_LOG("end\n");
+ 
+ 	if (ts->dev_pm_suspend)
+ 		pm_relax(dev);
+-	return 0;
++	return ret;
+ }
+ 
+ 
+@@ -2594,8 +2879,11 @@ MODULE_DEVICE_TABLE(of, nvt_match_table);
+ static int nvt_pm_suspend(struct device *dev)
+ {
+ 	NVT_LOG("system enters into pm_suspend");
++	mutex_lock(&ts->lock);
++	nvt_input_reset();
+ 	ts->dev_pm_suspend = true;
+ 	reinit_completion(&ts->dev_pm_suspend_completion);
++	mutex_unlock(&ts->lock);
+ 	NVT_LOG("system enters into pm_suspend2");
+ 	return 0;
+ }
+@@ -2609,10 +2897,13 @@ static int nvt_pm_resume(struct device *dev)
+ 	 * controller keeps sampling while the driver sees no frames. When a
+ 	 * panel follower is present and the panel is down, the follower's
+ 	 * prepared callback restores scanning instead. */
+-	if (!ts->panel_follower_registered || ts->panel_on) {
++	mutex_lock(&ts->lock);
++	if (ts->thp_firmware_ready &&
++	    (!ts->panel_follower_registered || ts->panel_on)) {
+ 		nvt_irq_enable(true);
+ 		bTouchIsAwake = 1;
+ 	}
++	mutex_unlock(&ts->lock);
+ 	NVT_LOG("system resume from pm_suspend2");
+ 	return 0;
+ }
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.h b/drivers/input/touchscreen/nt36532e/nt36xxx.h
+index 541f0a8db3..7d8bf1abb7 100644
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx.h
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.h
+@@ -33,8 +33,15 @@
+ #endif
+ 
+ #include "nt36xxx_mem_map.h"
++#include "nt36xxx-matrix.h"
+ 
+ struct proc_dir_entry;
++struct input_dev;
++
++struct nvt_input_slot {
++	s32 x, y;
++	bool active, palm;
++};
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)
+ #define HAVE_PROC_OPS
+@@ -143,6 +150,9 @@ struct nvt_ts_data {
+ 	int power_supply_status;
+ 	bool power_supply_registered;
+ 	bool panel_on;
++	struct input_dev *input;
++	struct nvt_matrix *matrix;
++	struct nvt_input_slot input_slots[NVT_MATRIX_MAX_POINTS];
+ 	struct mutex thp_lock; /* protects the frame buffer and stream FIFO */
+ 	u8 *thp_frame;
+ 	bool thp_capture_enabled;
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx_fw_update.c b/drivers/input/touchscreen/nt36532e/nt36xxx_fw_update.c
+index 01572b9da4..a6dc2f77e3 100644
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx_fw_update.c
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx_fw_update.c
+@@ -835,6 +835,7 @@ int32_t nvt_update_firmware(const char *firmware_name)
+ 
+ 	/* A failed download/info read must not leave the control API ready. */
+ 	ts->thp_firmware_ready = false;
++	nvt_thp_mark_epoch();
+ 
+ 	// request bin file in "/etc/firmware"
+ 	ret = update_firmware_request(firmware_name);
+@@ -862,7 +863,6 @@ int32_t nvt_update_firmware(const char *firmware_name)
+ 
+ 	NVT_INFO("firmware %s downloaded in %ld us\n", firmware_name,
+ 		 (long) ktime_us_delta(end, start));
+-	nvt_thp_mark_epoch();
+ 
+ 	/* THP firmware: the frame length is only known after the download */
+ 	if (nvt_get_xm_htc_poll_info())
+-- 
+2.55.0
+

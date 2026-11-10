@@ -20,8 +20,8 @@ if [ -n "$calibration" ] && [ -r "$calibration" ]; then
     exec /usr/bin/piano-touch-view input --seconds 0 \
       --pen-ini "$calibration" --pen-pressure-max-age-ms 100 --pen-input
   fi
-  echo 'piano-touch: pen scanning unavailable; starting finger input' >&2
+  echo 'piano-touch: pen scanning unavailable; starting touch input' >&2
 else
-  echo 'piano-touch: no calibration for the actual touch LCD ID; starting finger input' >&2
+  echo 'piano-touch: no calibration for the actual touch LCD ID; starting touch input' >&2
 fi
 exec /usr/bin/piano-touch-view input --seconds 0
