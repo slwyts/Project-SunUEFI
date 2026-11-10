@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "e188f4582c2ede46d6d5d6b8649fd0f0316a3343",
-  "original_target_commit": "79e32ae2694bd74626b78f4201719f2e7e56b560",
+  "target_tree": "780269ae01b41b69bc1f9e1d87b376707a03c9a0",
+  "original_target_commit": "b03be1db1dcccc0374a7950f20105ee9e2d261f0",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -743,6 +743,14 @@
       "original_parent": "6dd902833b08f9c765d0cb8c0c9a38f7bdb6cd38",
       "committer_date": "2026-11-10T20:30:13+08:00",
       "tree": "e188f4582c2ede46d6d5d6b8649fd0f0316a3343"
+    },
+    {
+      "file": "0093-power-mca-charge-inhibition.patch",
+      "sha256": "5a4f99bb770273102922c75520b35eea7c0929629f9328f1d51b3d75d065017c",
+      "original_commit": "b03be1db1dcccc0374a7950f20105ee9e2d261f0",
+      "original_parent": "79e32ae2694bd74626b78f4201719f2e7e56b560",
+      "committer_date": "2026-11-10T17:57:45+08:00",
+      "tree": "780269ae01b41b69bc1f9e1d87b376707a03c9a0"
     }
   ],
   "provenance": {
