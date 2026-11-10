@@ -1,0 +1,595 @@
+From c4a58dd0f40a7ae35553943440fffcb1036e9064 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 10 Nov 2026 19:47:33 +0800
+Subject: [PATCH] fix(power): preserve Piano power-off charging requests
+
+Mark only the stock charger power_off_mode field before a connected
+power-off. The original bootloader otherwise treats USB wakeup as a
+normal Android boot. Keep restart and unplugged shutdown unchanged.
+
+Resolve the unique internal-UFS GPT partition, validate the stock format,
+and preserve every other byte through one logical-block read-modify-write.
+Flush and compare the complete block on readback before device shutdown.
+
+Exercise the real transaction with UML KUnit, including adjacent data,
+busy storage, unplugging, repeated requests and I/O failures.
+---
+ arch/arm64/configs/piano_defconfig        |   1 +
+ drivers/power/reset/Kconfig               |  17 ++
+ drivers/power/reset/Makefile              |   1 +
+ drivers/power/reset/piano-poweroff-test.c | 209 +++++++++++++++
+ drivers/power/reset/piano-poweroff.c      | 296 ++++++++++++++++++++++
+ 5 files changed, 524 insertions(+)
+ create mode 100644 drivers/power/reset/piano-poweroff-test.c
+ create mode 100644 drivers/power/reset/piano-poweroff.c
+
+diff --git a/arch/arm64/configs/piano_defconfig b/arch/arm64/configs/piano_defconfig
+index 443273ee2..2a614db3e 100644
+--- a/arch/arm64/configs/piano_defconfig
++++ b/arch/arm64/configs/piano_defconfig
+@@ -730,6 +730,7 @@ CONFIG_POWER_RESET_GPIO=y
+ CONFIG_POWER_RESET_GPIO_RESTART=y
+ CONFIG_POWER_RESET_MACSMC=m
+ CONFIG_POWER_RESET_MSM=y
++CONFIG_POWER_RESET_PIANO=y
+ CONFIG_POWER_RESET_QCOM_PON=m
+ CONFIG_POWER_RESET_TORADEX_EC=m
+ CONFIG_POWER_RESET_XGENE=y
+diff --git a/drivers/power/reset/Kconfig b/drivers/power/reset/Kconfig
+index bce996bbe..b1292e423 100644
+--- a/drivers/power/reset/Kconfig
++++ b/drivers/power/reset/Kconfig
+@@ -9,6 +9,23 @@ menuconfig POWER_RESET
+ 
+ if POWER_RESET
+ 
++config POWER_RESET_PIANO
++	bool "Xiaomi Piano power-off charging request"
++	depends on ARCH_QCOM || COMPILE_TEST
++	depends on OF && BLOCK && POWER_SUPPLY=y
++	help
++	  Preserve the stock bootloader's power-off charging behavior on Xiaomi
++	  Piano. Only a connected power-off request updates the charger partition;
++	  its other contents and all other original partitions remain unchanged.
++
++config POWER_RESET_PIANO_KUNIT_TEST
++	bool "KUnit tests for the Piano power-off charging request" if !KUNIT_ALL_TESTS
++	depends on POWER_RESET_PIANO && KUNIT=y && UML
++	default KUNIT_ALL_TESTS
++	help
++	  Test the real partition validation and bounded read-modify-write path,
++	  including interrupted I/O, unplugging and preservation of adjacent data.
++
+ config POWER_RESET_AS3722
+ 	bool "ams AS3722 power-off driver"
+ 	depends on MFD_AS3722
+diff --git a/drivers/power/reset/Makefile b/drivers/power/reset/Makefile
+index e31cab4ba..47a75e7a4 100644
+--- a/drivers/power/reset/Makefile
++++ b/drivers/power/reset/Makefile
+@@ -1,4 +1,5 @@
+ # SPDX-License-Identifier: GPL-2.0
++obj-$(CONFIG_POWER_RESET_PIANO) += piano-poweroff.o
+ obj-$(CONFIG_POWER_RESET_AS3722) += as3722-poweroff.o
+ obj-$(CONFIG_POWER_RESET_AT91_POWEROFF) += at91-poweroff.o
+ obj-$(CONFIG_POWER_RESET_AT91_RESET) += at91-reset.o
+diff --git a/drivers/power/reset/piano-poweroff-test.c b/drivers/power/reset/piano-poweroff-test.c
+new file mode 100644
+index 000000000..3baf29ab6
+--- /dev/null
++++ b/drivers/power/reset/piano-poweroff-test.c
+@@ -0,0 +1,209 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <kunit/test.h>
++
++#define PIANO_TEST_BYTES 8192
++
++struct piano_poweroff_test_io {
++	u8 disk[PIANO_TEST_BYTES];
++	u8 before[PIANO_TEST_BYTES];
++	unsigned int reads, writes, flushes;
++	unsigned int fail_read;
++	bool fail_write, fail_flush, corrupt_readback, change_header, change_block;
++	int online;
++	u64 write_offset;
++	size_t write_bytes;
++};
++
++static int piano_test_read(void *context, u64 offset, void *buffer, size_t bytes)
++{
++	struct piano_poweroff_test_io *io = context;
++
++	if (++io->reads == io->fail_read)
++		return -EIO;
++	if (offset > sizeof(io->disk) || bytes > sizeof(io->disk) - offset)
++		return -EINVAL;
++	memcpy(buffer, io->disk + offset, bytes);
++	if (io->change_header && io->reads == 3)
++		((u8 *)buffer)[12] = 0;
++	if (io->change_block && io->reads == 4)
++		((u8 *)buffer)[7] ^= 1;
++	if (io->corrupt_readback && io->writes)
++		((u8 *)buffer)[bytes - 1] ^= 1;
++	return 0;
++}
++
++static int piano_test_write(void *context, u64 offset, void *buffer, size_t bytes)
++{
++	struct piano_poweroff_test_io *io = context;
++
++	io->writes++;
++	io->write_offset = offset;
++	io->write_bytes = bytes;
++	if (io->fail_write)
++		return -EIO;
++	if (offset > sizeof(io->disk) || bytes > sizeof(io->disk) - offset)
++		return -EINVAL;
++	memcpy(io->disk + offset, buffer, bytes);
++	return 0;
++}
++
++static int piano_test_flush(void *context)
++{
++	struct piano_poweroff_test_io *io = context;
++
++	io->flushes++;
++	return io->fail_flush ? -EIO : 0;
++}
++
++static int piano_test_online(void *context)
++{
++	struct piano_poweroff_test_io *io = context;
++
++	return io->online;
++}
++
++static void piano_test_reset(struct piano_poweroff_test_io *io, u32 initialized)
++{
++	unsigned int i;
++
++	memset(io, 0, sizeof(*io));
++	for (i = 0; i < sizeof(io->disk); i++)
++		io->disk[i] = (i * 17 + 23) & 0xff;
++	put_unaligned_le32(PIANO_CHARGER_MAGIC, io->disk);
++	put_unaligned_le32(PIANO_CHARGER_VERSION, io->disk + 4);
++	put_unaligned_le32(initialized, io->disk + 8);
++	put_unaligned_le32(1, io->disk + 12);
++	put_unaligned_le32(2, io->disk + PIANO_POWEROFF_OFFSET);
++	memcpy(io->before, io->disk, sizeof(io->disk));
++	io->online = 1;
++}
++
++static int piano_test_mark(struct piano_poweroff_test_io *io, u64 bytes,
++			   unsigned int block_size)
++{
++	const struct piano_poweroff_io operations = {
++		.context = io,
++		.read = piano_test_read,
++		.write = piano_test_write,
++		.flush = piano_test_flush,
++		.online = piano_test_online,
++	};
++
++	return piano_poweroff_mark(&operations, bytes, block_size);
++}
++
++static void piano_poweroff_preserves_data(struct kunit *test)
++{
++	struct piano_poweroff_test_io *io = kunit_kzalloc(test, sizeof(*io), GFP_KERNEL);
++	unsigned int block_size, initialized;
++
++	KUNIT_ASSERT_NOT_NULL(test, io);
++	for (block_size = 512; block_size <= 4096; block_size *= 2) {
++		for (initialized = 0; initialized <= 1; initialized++) {
++			piano_test_reset(io, initialized);
++			KUNIT_ASSERT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES,
++							   block_size), 0);
++			KUNIT_EXPECT_EQ(test, io->writes, 1);
++			KUNIT_EXPECT_EQ(test, io->flushes, 1);
++			KUNIT_EXPECT_EQ(test, io->write_offset, (u64)PIANO_POWEROFF_OFFSET);
++			KUNIT_EXPECT_EQ(test, io->write_bytes, (size_t)block_size);
++			put_unaligned_le32(1, io->before + PIANO_POWEROFF_OFFSET);
++			KUNIT_EXPECT_MEMEQ(test, io->before, io->disk, sizeof(io->disk));
++			KUNIT_ASSERT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES,
++							   block_size), 0);
++			KUNIT_EXPECT_EQ(test, io->writes, 1);
++		}
++	}
++}
++
++static void piano_poweroff_rejects_bad_storage(struct kunit *test)
++{
++	struct piano_poweroff_test_io *io = kunit_kzalloc(test, sizeof(*io), GFP_KERNEL);
++	static const struct { unsigned int offset; u32 value; } invalid[] = {
++		{ 0, 0 }, { 4, 1 }, { 4, 3 }, { 8, 2 }, { 12, 0 }, { 12, 2 },
++		{ PIANO_POWEROFF_OFFSET, 3 },
++	};
++	unsigned int i;
++
++	KUNIT_ASSERT_NOT_NULL(test, io);
++	for (i = 0; i < ARRAY_SIZE(invalid); i++) {
++		piano_test_reset(io, 0);
++		put_unaligned_le32(invalid[i].value, io->disk + invalid[i].offset);
++		KUNIT_EXPECT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES, 4096), -EINVAL);
++		KUNIT_EXPECT_EQ(test, io->writes, 0);
++	}
++	piano_test_reset(io, 0);
++	KUNIT_EXPECT_EQ(test, piano_test_mark(io, 4099, 4096), -EINVAL);
++	KUNIT_EXPECT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES, 0), -EINVAL);
++	KUNIT_EXPECT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES, 256), -EINVAL);
++	KUNIT_EXPECT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES, 768), -EINVAL);
++	KUNIT_EXPECT_EQ(test, io->writes, 0);
++}
++
++static void piano_poweroff_io_errors(struct kunit *test)
++{
++	struct piano_poweroff_test_io *io = kunit_kzalloc(test, sizeof(*io), GFP_KERNEL);
++	unsigned int read;
++
++	KUNIT_ASSERT_NOT_NULL(test, io);
++	for (read = 1; read <= 5; read++) {
++		piano_test_reset(io, 0);
++		io->fail_read = read;
++		KUNIT_EXPECT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES, 4096), -EIO);
++		KUNIT_EXPECT_EQ(test, io->writes, read == 5 ? 1 : 0);
++	}
++	piano_test_reset(io, 0);
++	io->fail_write = true;
++	KUNIT_EXPECT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES, 4096), -EIO);
++	KUNIT_EXPECT_EQ(test, io->flushes, 0);
++	KUNIT_EXPECT_MEMEQ(test, io->before, io->disk, sizeof(io->disk));
++	piano_test_reset(io, 0);
++	io->fail_flush = true;
++	KUNIT_EXPECT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES, 4096), -EIO);
++	KUNIT_EXPECT_EQ(test, io->reads, 4);
++	piano_test_reset(io, 0);
++	io->corrupt_readback = true;
++	KUNIT_EXPECT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES, 4096), -EIO);
++	KUNIT_EXPECT_EQ(test, io->writes, 1);
++}
++
++static void piano_poweroff_races_and_restart(struct kunit *test)
++{
++	struct piano_poweroff_test_io *io = kunit_kzalloc(test, sizeof(*io), GFP_KERNEL);
++	struct piano_poweroff poweroff = {};
++
++	KUNIT_ASSERT_NOT_NULL(test, io);
++	piano_test_reset(io, 0);
++	io->online = 0;
++	KUNIT_EXPECT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES, 4096), 0);
++	KUNIT_EXPECT_EQ(test, io->writes, 0);
++	io->online = -ENODEV;
++	KUNIT_EXPECT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES, 4096), -ENODEV);
++	piano_test_reset(io, 0);
++	io->change_header = true;
++	KUNIT_EXPECT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES, 4096), -EBUSY);
++	KUNIT_EXPECT_EQ(test, io->writes, 0);
++	piano_test_reset(io, 0);
++	io->change_block = true;
++	KUNIT_EXPECT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES, 4096), -EBUSY);
++	KUNIT_EXPECT_EQ(test, io->writes, 0);
++	/* Restart and halt must return before touching even an uninitialized device. */
++	KUNIT_EXPECT_EQ(test, piano_poweroff_notify(&poweroff.reboot, SYS_RESTART, NULL),
++			NOTIFY_DONE);
++	KUNIT_EXPECT_EQ(test, piano_poweroff_notify(&poweroff.reboot, SYS_HALT, NULL),
++			NOTIFY_DONE);
++}
++
++static struct kunit_case piano_poweroff_cases[] = {
++	KUNIT_CASE(piano_poweroff_preserves_data),
++	KUNIT_CASE(piano_poweroff_rejects_bad_storage),
++	KUNIT_CASE(piano_poweroff_io_errors),
++	KUNIT_CASE(piano_poweroff_races_and_restart),
++	{}
++};
++
++static struct kunit_suite piano_poweroff_suite = {
++	.name = "piano-poweroff",
++	.test_cases = piano_poweroff_cases,
++};
++kunit_test_suite(piano_poweroff_suite);
+diff --git a/drivers/power/reset/piano-poweroff.c b/drivers/power/reset/piano-poweroff.c
+new file mode 100644
+index 000000000..7e3f0e1c4
+--- /dev/null
++++ b/drivers/power/reset/piano-poweroff.c
+@@ -0,0 +1,296 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Preserve the stock Xiaomi Piano bootloader's power-off charging request. */
++#include <linux/bio.h>
++#include <linux/blkdev.h>
++#include <linux/file.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/power_supply.h>
++#include <linux/reboot.h>
++#include <linux/slab.h>
++#include <linux/unaligned.h>
++#include <linux/uuid.h>
++
++#define PIANO_CHARGER_MAGIC	0x20240725
++#define PIANO_CHARGER_VERSION	2
++#define PIANO_CHARGER_HEADER_SIZE	20
++#define PIANO_POWEROFF_OFFSET	0x1000
++
++struct piano_poweroff_io {
++	void *context;
++	int (*read)(void *context, u64 offset, void *buffer, size_t bytes);
++	int (*write)(void *context, u64 offset, void *buffer, size_t bytes);
++	int (*flush)(void *context);
++	int (*online)(void *context);
++};
++
++struct piano_poweroff {
++	struct device *dev;
++	struct notifier_block reboot;
++	struct block_device *bdev;
++	struct mutex lock;
++};
++
++struct piano_charger_partition {
++	struct device *dev;
++	unsigned int matches;
++};
++
++static bool piano_charger_header_valid(const void *header)
++{
++	return get_unaligned_le32(header) == PIANO_CHARGER_MAGIC &&
++	       get_unaligned_le32(header + 4) == PIANO_CHARGER_VERSION &&
++	       get_unaligned_le32(header + 8) <= 1 &&
++	       get_unaligned_le32(header + 12) == 1;
++}
++
++/* All writes are confined to one logical block and change only the request. */
++static int piano_poweroff_mark(const struct piano_poweroff_io *io,
++			      u64 partition_bytes, unsigned int block_size)
++{
++	u8 header[PIANO_CHARGER_HEADER_SIZE];
++	u8 *before, *after, *check;
++	u64 offset;
++	unsigned int field;
++	int ret;
++
++	if (!is_power_of_2(block_size) || block_size < SECTOR_SIZE ||
++	    block_size > min_t(unsigned int, PAGE_SIZE, PIANO_POWEROFF_OFFSET))
++		return -EINVAL;
++	offset = round_down((u64)PIANO_POWEROFF_OFFSET, block_size);
++	field = PIANO_POWEROFF_OFFSET - offset;
++	if (field + sizeof(__le32) > block_size ||
++	    partition_bytes < offset + block_size)
++		return -EINVAL;
++
++	before = kmalloc(block_size, GFP_KERNEL);
++	after = kmalloc(block_size, GFP_KERNEL);
++	check = kmalloc(block_size, GFP_KERNEL);
++	if (!before || !after || !check) {
++		ret = -ENOMEM;
++		goto free;
++	}
++	ret = io->read(io->context, 0, check, block_size);
++	if (ret)
++		goto free;
++	if (!piano_charger_header_valid(check)) {
++		ret = -EINVAL;
++		goto free;
++	}
++	memcpy(header, check, sizeof(header));
++	ret = io->read(io->context, offset, before, block_size);
++	if (ret)
++		goto free;
++	if (get_unaligned_le32(before + field) > 2) {
++		ret = -EINVAL;
++		goto free;
++	}
++	if (get_unaligned_le32(before + field) == 1) {
++		ret = 0;
++		goto free;
++	}
++	memcpy(after, before, block_size);
++	put_unaligned_le32(1, after + field);
++
++	/* Do not race a stock user of the partition or an unplug notification. */
++	ret = io->read(io->context, 0, check, block_size);
++	if (ret)
++		goto free;
++	if (memcmp(header, check, sizeof(header))) {
++		ret = -EBUSY;
++		goto free;
++	}
++	ret = io->read(io->context, offset, check, block_size);
++	if (ret)
++		goto free;
++	if (memcmp(before, check, block_size)) {
++		ret = -EBUSY;
++		goto free;
++	}
++	ret = io->online(io->context);
++	if (ret <= 0)
++		goto free;
++	ret = io->write(io->context, offset, after, block_size);
++	if (ret)
++		goto free;
++	ret = io->flush(io->context);
++	if (ret)
++		goto free;
++	ret = io->read(io->context, offset, check, block_size);
++	if (!ret && memcmp(after, check, block_size))
++		ret = -EIO;
++free:
++	kfree(check);
++	kfree(after);
++	kfree(before);
++	return ret;
++}
++
++static bool piano_charger_partition_valid(struct block_device *bdev)
++{
++	struct partition_meta_info *meta = bdev->bd_meta_info;
++	struct device *parent;
++	uuid_t uuid;
++
++	if (!bdev_is_partition(bdev) || !meta ||
++	    memcmp(meta->volname, "charger", sizeof("charger")) ||
++	    strnlen(meta->uuid, sizeof(meta->uuid)) != UUID_STRING_LEN ||
++	    uuid_parse(meta->uuid, &uuid) || uuid_is_null(&uuid))
++		return false;
++	for (parent = disk_to_dev(bdev->bd_disk); parent; parent = parent->parent)
++		if (of_device_is_compatible(parent->of_node, "qcom,sm8750-ufshc"))
++			return true;
++	return false;
++}
++
++static int piano_find_charger(struct device *dev, void *data)
++{
++	struct piano_charger_partition *partition = data;
++
++	if (!piano_charger_partition_valid(dev_to_bdev(dev)))
++		return 0;
++	if (!partition->matches++)
++		partition->dev = get_device(dev);
++	return 0;
++}
++
++static int piano_poweroff_online(void *context)
++{
++	union power_supply_propval value;
++	struct power_supply *usb;
++	int ret;
++
++	usb = power_supply_get_by_name("piano-mca-usb");
++	if (!usb)
++		return -ENODEV;
++	ret = power_supply_get_property(usb, POWER_SUPPLY_PROP_ONLINE, &value);
++	power_supply_put(usb);
++	return ret ? ret : !!value.intval;
++}
++
++static int piano_poweroff_read(void *context, u64 offset, void *buffer, size_t bytes)
++{
++	struct piano_poweroff *poweroff = context;
++
++	return bdev_rw_virt(poweroff->bdev, offset >> SECTOR_SHIFT, buffer, bytes,
++			    REQ_OP_READ);
++}
++
++static int piano_poweroff_write(void *context, u64 offset, void *buffer, size_t bytes)
++{
++	struct piano_poweroff *poweroff = context;
++
++	return bdev_rw_virt(poweroff->bdev, offset >> SECTOR_SHIFT, buffer, bytes,
++			    REQ_OP_WRITE);
++}
++
++static int piano_poweroff_flush(void *context)
++{
++	struct piano_poweroff *poweroff = context;
++
++	return blkdev_issue_flush(poweroff->bdev);
++}
++
++static int piano_poweroff_prepare(struct piano_poweroff *poweroff)
++{
++	struct piano_charger_partition partition = {};
++	const struct piano_poweroff_io io = {
++		.context = poweroff,
++		.read = piano_poweroff_read,
++		.write = piano_poweroff_write,
++		.flush = piano_poweroff_flush,
++		.online = piano_poweroff_online,
++	};
++	struct block_device *candidate;
++	struct file *file;
++	int ret;
++
++	ret = piano_poweroff_online(poweroff);
++	if (ret <= 0)
++		return ret;
++	class_for_each_device(&block_class, NULL, &partition, piano_find_charger);
++	if (partition.matches != 1) {
++		ret = partition.matches ? -ENOTUNIQ : -ENODEV;
++		goto put;
++	}
++	candidate = dev_to_bdev(partition.dev);
++	file = bdev_file_open_by_dev(candidate->bd_dev,
++				     BLK_OPEN_READ | BLK_OPEN_WRITE |
++				     BLK_OPEN_RESTRICT_WRITES, poweroff, NULL);
++	if (IS_ERR(file)) {
++		ret = PTR_ERR(file);
++		goto put;
++	}
++	poweroff->bdev = file_bdev(file);
++	if (poweroff->bdev != candidate ||
++	    !piano_charger_partition_valid(poweroff->bdev) ||
++	    bdev_read_only(poweroff->bdev)) {
++		ret = -ENODEV;
++		goto close;
++	}
++	ret = sync_blockdev(poweroff->bdev);
++	if (!ret)
++		ret = piano_poweroff_mark(&io, bdev_nr_bytes(poweroff->bdev),
++					  bdev_logical_block_size(poweroff->bdev));
++close:
++	poweroff->bdev = NULL;
++	__fput_sync(file);
++put:
++	put_device(partition.dev);
++	return ret;
++}
++
++static int piano_poweroff_notify(struct notifier_block *nb, unsigned long action,
++				void *data)
++{
++	struct piano_poweroff *poweroff = container_of(nb, struct piano_poweroff,
++						     reboot);
++	int ret;
++
++	if (action != SYS_POWER_OFF)
++		return NOTIFY_DONE;
++	mutex_lock(&poweroff->lock);
++	ret = piano_poweroff_prepare(poweroff);
++	mutex_unlock(&poweroff->lock);
++	if (ret)
++		dev_err(poweroff->dev,
++			"cannot request power-off charging: %pe; USB power may start Android, unplug to stay off\n",
++			ERR_PTR(ret));
++	return NOTIFY_DONE;
++}
++
++static int piano_poweroff_probe(struct platform_device *pdev)
++{
++	struct piano_poweroff *poweroff;
++
++	if (!of_machine_is_compatible("xiaomi,piano"))
++		return -ENODEV;
++	poweroff = devm_kzalloc(&pdev->dev, sizeof(*poweroff), GFP_KERNEL);
++	if (!poweroff)
++		return -ENOMEM;
++	poweroff->dev = &pdev->dev;
++	mutex_init(&poweroff->lock);
++	poweroff->reboot.notifier_call = piano_poweroff_notify;
++	poweroff->reboot.priority = 255;
++	return devm_register_reboot_notifier(&pdev->dev, &poweroff->reboot);
++}
++
++static const struct of_device_id piano_poweroff_of_match[] = {
++	{ .compatible = "mca,qcom_subpmic" },
++	{}
++};
++
++static struct platform_driver piano_poweroff_driver = {
++	.probe = piano_poweroff_probe,
++	.driver = {
++		.name = "piano-poweroff",
++		.of_match_table = piano_poweroff_of_match,
++	},
++};
++builtin_platform_driver(piano_poweroff_driver);
++
++#if IS_ENABLED(CONFIG_POWER_RESET_PIANO_KUNIT_TEST)
++#include "piano-poweroff-test.c"
++#endif
+-- 
+2.55.0
+

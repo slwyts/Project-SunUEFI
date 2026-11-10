@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "780269ae01b41b69bc1f9e1d87b376707a03c9a0",
-  "original_target_commit": "b03be1db1dcccc0374a7950f20105ee9e2d261f0",
+  "target_tree": "b28bdadca1a0312890369da4ef95656da96c4a7f",
+  "original_target_commit": "c4a58dd0f40a7ae35553943440fffcb1036e9064",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -751,6 +751,14 @@
       "original_parent": "79e32ae2694bd74626b78f4201719f2e7e56b560",
       "committer_date": "2026-11-10T17:57:45+08:00",
       "tree": "780269ae01b41b69bc1f9e1d87b376707a03c9a0"
+    },
+    {
+      "file": "0094-power-piano-poweroff-charging.patch",
+      "sha256": "7f95890b90f98a7f66ed297de5f6e4f5e301a8d16925bd079dd13a58326bd2ad",
+      "original_commit": "c4a58dd0f40a7ae35553943440fffcb1036e9064",
+      "original_parent": "b03be1db1dcccc0374a7950f20105ee9e2d261f0",
+      "committer_date": "2026-11-10T19:47:33+08:00",
+      "tree": "b28bdadca1a0312890369da4ef95656da96c4a7f"
     }
   ],
   "provenance": {
@@ -805,6 +813,16 @@
       },
       "checks": "Piano project config selects factory HMAC-SHA256 key 1; fresh 32-byte challenges verified on both installed lwn cell-bank gauges. Vendor MAC commands 0x003e/0x003f switch FFC with a two-byte boolean payload, checksum and length. The mode getter in the stock program is cached, not a hardware readback.",
       "scope": "Standard read-only authentic results and authenticated charge_type control; vendor key in the board DT. Does not enable FFC voltage/current in the charger policy."
+    },
+    "poweroff_charging": {
+      "stock_program_sha256": {
+        "abl_a.img": "b11d90425d531b533e1dc322f76291beaaf8029bb8061b2bd5eddfec91672c97",
+        "charger_partition.ko": "f43493998ee179b1830472c7a79523fbd374d3892870b3713b0fdfbbafdb90ed",
+        "miui-services.jar": "ad7ded21b81862ede1354798648b0cd6d28c598af1359e20e432d2904c3d42db"
+      },
+      "stock_format": "Charger header LE32: magic 0x20240725, version 2, initialized 0/1, available 1; power_off_mode is LE32 at partition byte offset 0x1000. ABL consumes 1 and writes 2. All other bytes are preserved.",
+      "stock_callers": "MiuiBatteryServiceImpl receives ACTION_SHUTDOWN and calls IMiCharge.setMiChargePath(charger_partition_poweroffmode, 1) only while plugged, for selected power-off reasons and outside ship mode. The stock charger_partition driver has no shutdown notifier.",
+      "write_scope": "Only SYS_POWER_OFF with USB ONLINE; identify a unique charger GPT partition beneath the internal SM8750 UFS controller. No header locking, no other stock fields, no ship mode or MCA shutdown-property changes."
     }
   }
 }
