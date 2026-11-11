@@ -66,7 +66,7 @@ def sha(path):
 
 def native_tools():
     """Copy native executables and their loader, never host headers or target libs."""
-    names = ('clang', 'ld.lld', 'llvm-ar', 'llvm-ranlib', 'llvm-nm',
+    names = ('clang', 'llvm-ar', 'llvm-ranlib', 'llvm-nm',
              'llvm-strip', 'llvm-objcopy', 'aarch64-linux-gnu-as', 'aarch64-linux-gnu-ld', 'make')
     selected = {name: Path(shutil.which(name) or '') for name in names}
     missing = [name for name, path in selected.items() if not path.is_file()]
