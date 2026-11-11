@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Rebuild the Debian FFmpeg packages with the shared stateful V4L2 patch."""
 import argparse
+from contextlib import nullcontext
 from email.utils import formatdate
 import hashlib
 import json
@@ -11,6 +12,7 @@ import shutil
 import subprocess
 import tarfile
 import urllib.request
+from host import package_build
 
 import prepare_ffmpeg_source as source
 
@@ -28,6 +30,28 @@ def run(args, **kwargs):
     subprocess.run(list(map(str, args)), check=True, **kwargs)
 
 
+def reusable(output):
+    try:
+        record = json.loads((output / 'SOURCE.json').read_text())
+        policy = json.loads(source.SERIES.read_text())
+        archive = next(row for row in policy['source']['archives'] if row['filename'].endswith('.orig.tar.xz'))
+        patches = [{'path': str((source.SERIES.parent / row['path']).relative_to(ROOT)),
+                    'sha256': source.sha(source.SERIES.parent / row['path'])} for row in policy['series']]
+        version = policy['source']['debian_source_version'] + '+' + policy['local_revision']
+        if (not record.get('packages_built') or record.get('patches') != patches or
+                record.get('archive_sha256') != archive['sha256'] or
+                record.get('package_version') != version or set(record.get('packages', {})) != RUNTIME or
+                (output / '.incomplete').exists()):
+            return None
+        for row in record['packages'].values():
+            if (Path(row['file']).name != row['file'] or row['version'] != version or
+                    row['architecture'] != 'arm64' or sha(output / 'runtime' / row['file']) != row['sha256']):
+                return None
+        return record
+    except (OSError, ValueError, KeyError, StopIteration):
+        return None
+
+
 def align_gbm_development(log):
     """SDL2 needs the GBM headers matching the runtime already in the builder."""
     installed = subprocess.run(
@@ -40,20 +64,23 @@ def align_gbm_development(log):
          'libgbm-dev=' + version], stdout=log, stderr=subprocess.STDOUT)
 
 
-def build_isolated(output, sysroot, jobs):
+def build_isolated(output, sysroot, jobs, resume=False):
     """Build ARM64 Debian packages in a disposable copy, never in the tablet."""
     import build_gsd_packages as debian
     output, sysroot = output.resolve(), sysroot.resolve()
+    if cached := reusable(output):
+        return cached
     if os.geteuid() or not sysroot.is_relative_to(ROOT / 'build') or not sysroot.is_dir():
         raise ValueError('--sysroot requires root and an existing project build sysroot')
-    if not output.is_relative_to(ROOT / 'build') or output.exists():
-        raise ValueError('Use a new project build output directory')
+    if not output.is_relative_to(ROOT / 'build') or (output.exists() and not resume):
+        raise ValueError('Use a new project build output directory or --resume')
     builder = output.with_name(output.name + '-builder')
-    if builder.exists() or builder.is_relative_to(sysroot):
+    if (builder.exists() and not resume) or builder.is_relative_to(sysroot):
         raise ValueError('Use a fresh isolated builder outside the input sysroot')
-    builder.mkdir()
+    builder.mkdir(exist_ok=resume)
     guest_root = builder / 'rootfs'
-    run(['cp', '-a', '--reflink=auto', sysroot, guest_root])
+    if not guest_root.exists():
+        run(['cp', '-a', '--reflink=auto', sysroot, guest_root])
     resolver = guest_root / 'etc/resolv.conf'
     resolver.unlink(missing_ok=True)
     resolver.write_bytes(Path('/etc/resolv.conf').read_bytes())
@@ -64,24 +91,28 @@ def build_isolated(output, sysroot, jobs):
         # Runtime roots contain the local +piano Mesa version; dev packages
         # require exact official versions. Align only this disposable clone.
         import build_mutter_packages
-        with (builder / 'dependencies.log').open('w') as log:
-            build_mutter_packages.chroot(guest_root, ['apt-get', 'update'],
-                                        stdout=log, stderr=subprocess.STDOUT)
-            build_mutter_packages.align_development_cohorts(guest_root, log)
+        if not resume:
+            with (builder / 'dependencies.log').open('a') as log:
+                build_mutter_packages.chroot(guest_root, ['apt-get', 'update'],
+                                            stdout=log, stderr=subprocess.STDOUT)
+                build_mutter_packages.align_development_cohorts(guest_root, log)
         run(['mount', '--bind', ROOT, workspace])
         try:
-            run(['chroot', guest_root, '/usr/bin/env',
-                 'DEBIAN_FRONTEND=noninteractive',
-                 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', '/usr/bin/python3',
-                 '/workspace/tools/build_ffmpeg_packages.py',
-                 '--output', '/workspace/' + str(output.relative_to(ROOT)),
-                 '--jobs', str(jobs), '--install-dependencies'])
+            with package_build.environment(guest_root) as env:
+                run(['chroot', guest_root, '/usr/bin/env',
+                     'DEBIAN_FRONTEND=noninteractive', 'SUNUEFI_PACKAGE_ENVIRONMENT=1',
+                     *package_build.arguments(env), '/usr/bin/python3',
+                     '/workspace/tools/build_ffmpeg_packages.py',
+                     '--output', '/workspace/' + str(output.relative_to(ROOT)),
+                     '--jobs', str(jobs), *(['--resume'] if resume else ['--install-dependencies'])])
         finally:
             run(['umount', workspace])
     return json.loads((output / 'SOURCE.json').read_text())
 
 
-def build(output, jobs, install_dependencies=False):
+def build(output, jobs, install_dependencies=False, resume=False):
+    if cached := reusable(output.resolve()):
+        return cached
     if platform.machine() not in ('aarch64', 'arm64'):
         raise ValueError('Run in a Debian trixie ARM64 builder; no host or reduced-feature package is substituted')
     release = subprocess.check_output(['dpkg', '--print-architecture'], text=True).strip()
@@ -93,16 +124,20 @@ def build(output, jobs, install_dependencies=False):
         raise ValueError('This pinned Debian recipe targets Debian trixie')
     record = json.loads(source.SERIES.read_text())
     output = output.resolve()
-    if not output.is_relative_to(ROOT / 'build') or output.exists():
-        raise ValueError('Use a new project build directory')
-    if not 1 <= jobs <= 8:
-        raise ValueError('Use 1 to 8 build jobs')
+    if not output.is_relative_to(ROOT / 'build') or (output.exists() and not resume):
+        raise ValueError('Use a new project build directory or --resume')
+    if jobs < 1:
+        raise ValueError('Use at least one build job')
+    expected_patches = [{'path': str((source.SERIES.parent / row['path']).relative_to(ROOT)),
+                         'sha256': source.sha(source.SERIES.parent / row['path'])}
+                        for row in record['series']]
     if install_dependencies and os.geteuid():
         raise ValueError('--install-dependencies needs root in the build container')
-    output.mkdir(parents=True)
+    output.mkdir(parents=True, exist_ok=resume)
     (output / '.incomplete').write_text('FFmpeg package build has not completed.\n')
     work = output / 'source'
-    origin = source.prepare(work, apply_patches=False)
+    origin = (json.loads((work / 'SOURCE.json').read_text()) if resume else
+              source.prepare(work, apply_patches=False))
     archive = next(row for row in record['source']['archives']
                    if row['filename'].endswith('.debian.tar.xz'))
     cache = ROOT / 'build/source-cache/ffmpeg-7.1.5-source' / archive['filename']
@@ -112,35 +147,53 @@ def build(output, jobs, install_dependencies=False):
             cache.write_bytes(response.read())
     if cache.stat().st_size != archive['size'] or sha(cache) != archive['sha256']:
         raise ValueError('Debian FFmpeg packaging archive checksum mismatch')
-    with tarfile.open(cache, 'r:xz') as stream:
-        stream.extractall(work, filter='data')
+    if not resume:
+        with tarfile.open(cache, 'r:xz') as stream:
+            stream.extractall(work, filter='data')
     patch_folder = work / 'debian/patches'
     patch_folder.mkdir(exist_ok=True)
     patch_names = []
     for row in record['series']:
-        shutil.copy2(source.SERIES.parent / row['path'], patch_folder / row['path'])
+        if resume:
+            if sha(patch_folder / row['path']) != row['sha256']:
+                raise ValueError('Resume requires the same FFmpeg patches')
+        else:
+            shutil.copy2(source.SERIES.parent / row['path'], patch_folder / row['path'])
         patch_names.append(row['path'])
     series_path = patch_folder / 'series'
     original_series = series_path.read_text() if series_path.exists() else ''
-    series_path.write_text(original_series + ('\n' if original_series and not original_series.endswith('\n') else '') +
-                           ''.join(name + '\n' for name in patch_names))
+    if not resume:
+        series_path.write_text(original_series + ('\n' if original_series and not original_series.endswith('\n') else '') +
+                               ''.join(name + '\n' for name in patch_names))
     version = record['source']['debian_source_version'] + '+' + record['local_revision']
     changelog = work / 'debian/changelog'
-    changelog.write_text('ffmpeg (' + version + ') trixie; urgency=medium\n\n'
-                         '  * Follow the stateful V4L2 decoder source-change sequence.\n\n'
-                         ' -- Project SunUEFI <sunuefi@users.noreply.github.com>  ' +
-                         formatdate(localtime=False) + '\n\n' + changelog.read_text())
+    if resume:
+        if (changelog.read_text().split('(', 1)[1].split(')', 1)[0] != version or
+                origin.get('patches') != expected_patches or
+                origin.get('archive_sha256') != next(row['sha256'] for row in record['source']['archives']
+                                                   if row['filename'].endswith('.orig.tar.xz'))):
+            raise ValueError('Resume requires the same FFmpeg source and package version')
+    else:
+        changelog.write_text('ffmpeg (' + version + ') trixie; urgency=medium\n\n'
+                             '  * Follow the stateful V4L2 decoder source-change sequence.\n\n'
+                             ' -- Project SunUEFI <sunuefi@users.noreply.github.com>  ' +
+                             formatdate(localtime=False) + '\n\n' + changelog.read_text())
     env = os.environ.copy()
     # Keep the original Debian codec/features recipe, including its extra variant.
-    # Only the extensive upstream test suite is omitted for this candidate build.
+    # Tests run separately; package compilation retains every codec variant.
     env['DEB_BUILD_OPTIONS'] = 'nocheck parallel=' + str(jobs)
     env.pop('DEB_BUILD_PROFILES', None)
     command = ['dpkg-buildpackage', '-B', '-us', '-uc', '-aarm64', '-j' + str(jobs)]
-    with (output / 'build.log').open('w') as log:
+    if resume:
+        command.append('-nc')
+    context = (nullcontext({}) if os.environ.get('SUNUEFI_PACKAGE_ENVIRONMENT') else
+               package_build.environment(Path('/')))
+    with context as settings, (output / 'build.log').open('a') as log:
+        env.update(settings)
         if install_dependencies:
             run(['apt-get', 'update'], stdout=log, stderr=subprocess.STDOUT)
             run(['apt-get', 'install', '-y', '--no-install-recommends',
-                 'devscripts', 'equivs', 'dpkg-dev', 'build-essential'],
+                  'devscripts', 'equivs', 'dpkg-dev', 'build-essential', 'ccache'],
                 stdout=log, stderr=subprocess.STDOUT)
             align_gbm_development(log)
             run(['mk-build-deps', '--install', '--remove', '--build-arch=arm64',
@@ -152,7 +205,7 @@ def build(output, jobs, install_dependencies=False):
             stdout=log, stderr=subprocess.STDOUT)
         run(command, cwd=work, env=env, stdout=log, stderr=subprocess.STDOUT)
     runtime = output / 'runtime'
-    runtime.mkdir()
+    runtime.mkdir(exist_ok=True)
     packages = {}
     for path in sorted(output.glob('*.deb')):
         fields = subprocess.check_output(['dpkg-deb', '-f', path, 'Package', 'Version', 'Architecture'], text=True)
@@ -181,7 +234,8 @@ def build(output, jobs, install_dependencies=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=ROOT / 'build/ffmpeg')
-    parser.add_argument('--jobs', type=int, default=2)
+    parser.add_argument('--jobs', type=int, default=package_build.default_jobs(768))
+    parser.add_argument('--resume', action='store_true', help='Continue the same source build without cleaning objects')
     parser.add_argument('--sysroot', type=Path,
                         help='Clone a completed Debian ARM64 sysroot into an isolated package builder')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
@@ -193,8 +247,8 @@ if __name__ == '__main__':
             import sys
             raise SystemExit(subprocess.run(['unshare', '--mount', '--propagation', 'private',
                                             sys.executable, __file__, *sys.argv[1:], '--worker']).returncode)
-        result = (build_isolated(args.output, args.sysroot, args.jobs) if args.sysroot else
-                  build(args.output, args.jobs, args.install_dependencies))
+        result = (build_isolated(args.output, args.sysroot, args.jobs, args.resume) if args.sysroot else
+                  build(args.output, args.jobs, args.install_dependencies, args.resume))
         print(json.dumps(result, indent=2))
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         parser.exit(2, str(error) + '\n')

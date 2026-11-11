@@ -95,6 +95,15 @@ systemd 的 `ukify`，默认从根系统的 `systemd-boot-efi` 包取 ARM64 stub
 
 基础根系统已经构建过时，用 `./build.sh release-rootfs --resume` 更新内核、硬件包和配置，不重新运行 debootstrap。`./build.sh rootfs --distro ID --desktop ID --plan` 会列出其他发行版和桌面组合的计划，目前只有上表的四个目标能完整构建。
 
+内核和桌面包的并行度默认按 CPU 配额与可用内存选择，可用 `--jobs` 覆盖。
+桌面包共用 `build/ccache`（或 `CCACHE_DIR`），FFmpeg、Mutter、GSD 和 UPower
+会先校验并复用完整运行包。FFmpeg 构建中断后加 `--resume`，保留同一源码的对象文件。
+x86 主机用 `./build.sh ffmpeg --sysroot 已完成的ARM64根目录` 构建：编译器、链接器
+和 make 在宿主 CPU 原生运行，头文件与库来自 ARM64 sysroot；QEMU 仅执行目标程序。
+其他桌面包的 `--sysroot`／`--rootfs` 入口使用相同的原生编译工具。
+宿主需安装 Clang、LLD、LLVM、AArch64 binutils、patchelf 和 ccache；Ninja 项目安装宿主 Ninja。
+产品 CI 使用原生 ARM runner，缓存与源码、补丁匹配的 Debian 运行包，并取消被新提交替代的构建。
+
 本地和 GitHub 的完整构建走同一个 `release-rootfs` 入口。默认系统包含中文界面、拼音输入法、Chromium、GNOME 动画、蓝牙地址自动初始化和触控笔组件。根系统生成后会检查这些软件包和必需文件，结果记录在 `manifest.json` 的 `default_system`，缺少任何一项构建就失败。
 
 ### Nyarch GNOME 和 SteamOS

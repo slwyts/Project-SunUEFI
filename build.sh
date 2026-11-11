@@ -39,10 +39,22 @@ PY_KERNEL
   mesa)
     # Mesa is a native Debian package build; its Python dependencies come from
     # APT, not the isolated virtualenv used for UEFI font preparation.
-    env -u VIRTUAL_ENV -u PYTHONHOME -u PYTHONPATH \
-      PATH=/usr/sbin:/usr/bin:/sbin:/bin \
-      bash upstream/piano-mesa-current/scripts/build-mesa-debs.sh \
-      "${1:-$sunuefi_root/build/mesa}" 26.1.6-1~bpo13+1 ;;
+    python3 - "${1:-$sunuefi_root/build/mesa}" <<'PY_MESA'
+import os, sys
+from pathlib import Path
+sys.path.insert(0, 'tools')
+from host.package_build import run_cached
+source = Path('upstream/piano-mesa-current')
+env = os.environ.copy()
+for name in ('VIRTUAL_ENV', 'PYTHONHOME', 'PYTHONPATH'):
+    env.pop(name, None)
+env['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
+inputs = [Path('build.sh'), Path('config/build-container.json'),
+          source / 'scripts/build-mesa-debs.sh', *sorted((source / 'patches').glob('*.patch'))]
+run_cached(Path(sys.argv[1]).resolve(), [path.resolve() for path in inputs],
+           ['bash', source / 'scripts/build-mesa-debs.sh', sys.argv[1], '26.1.6-1~bpo13+1'], env)
+PY_MESA
+    ;;
   sensors)
     python3 - "$sunuefi_root" "${1:-$sunuefi_root/build/sensors}" "${@:2}" <<'PY_SENSORS'
 import hashlib, json, os, shutil, subprocess, sys
@@ -76,8 +88,16 @@ build_env = os.environ.copy()
 for name in ('VIRTUAL_ENV', 'PYTHONHOME', 'PYTHONPATH'):
     build_env.pop(name, None)
 build_env['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
-subprocess.run(['bash', workspace / 'scripts/build-sensors-debs.sh', output, *selection],
-               env=build_env, check=True)
+sys.path.insert(0, str(root / 'tools'))
+from host.package_build import run_cached
+if selection:
+    subprocess.run(['bash', workspace / 'scripts/build-sensors-debs.sh', output, *selection],
+                   env=build_env, check=True)
+else:
+    run_cached(output, [root / 'build.sh', root / 'config/build-container.json',
+                       source / 'scripts/build-sensors-debs.sh',
+                       *[root / name for name in config['patches']]],
+               ['bash', workspace / 'scripts/build-sensors-debs.sh', output], build_env, selection=config)
 shutil.copy2(workspace / 'SOURCE', output / 'SOURCE')
 PY_SENSORS
     ;;

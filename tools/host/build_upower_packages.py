@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -16,6 +17,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import build_gsd_packages as debian
 from build_chroot import guest_command
 from build_piano_runtime_helpers import source_patches
+from host import package_build
 
 SOURCE_VERSION = '1.90.9-1'
 PACKAGE_VERSION = SOURCE_VERSION + '+sunuefi1'
@@ -47,7 +49,8 @@ def reusable(output):
     return data
 
 
-def build(output, sysroot, jobs=2, collect_only=False):
+def build(output, sysroot, jobs=None, collect_only=False):
+    jobs = package_build.default_jobs() if jobs is None else jobs
     output, sysroot = output.resolve(), sysroot.resolve()
     if (not output.is_relative_to(ROOT / 'build') or not sysroot.is_relative_to(ROOT / 'build') or
             output.is_relative_to(sysroot)):
@@ -55,8 +58,8 @@ def build(output, sysroot, jobs=2, collect_only=False):
     cached = reusable(output)
     if cached:
         return cached
-    if os.geteuid() or not 1 <= jobs <= 8:
-        raise ValueError('Use root and 1..8 package build jobs')
+    if os.geteuid() or jobs < 1:
+        raise ValueError('Use root and at least one package build job')
     output.mkdir(parents=True, exist_ok=True)
     builder = output / 'builder/rootfs'
     if collect_only and not builder.is_dir():
@@ -82,7 +85,7 @@ def build(output, sysroot, jobs=2, collect_only=False):
             'Components: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n')
         if not collect_only:
             guest(['apt-get', 'update'])
-            guest(['apt-get', 'install', '-y', '--no-install-recommends', 'dpkg-dev', 'build-essential'])
+            guest(['apt-get', 'install', '-y', '--no-install-recommends', 'dpkg-dev', 'build-essential', 'ccache'])
             guest(['apt-get', 'build-dep', '-y', '--build-profiles=nocheck', 'upower=' + SOURCE_VERSION])
         cache.mkdir(parents=True, exist_ok=True)
         (builder / 'proc').mkdir(exist_ok=True)
@@ -113,9 +116,11 @@ def build(output, sysroot, jobs=2, collect_only=False):
             if debian.sha(source / 'debian/patches' / patch.name) != debian.sha(patch):
                 raise ValueError('Prepared UPower patch differs')
         if not collect_only:
-            guest(['env', f'DEB_BUILD_OPTIONS=nocheck parallel={jobs}', 'DEB_BUILD_PROFILES=nocheck',
-                   'sh', '-c', 'cd "$1"; dpkg-buildpackage -b -us -uc',
-                   'build', debian.inside(builder, source)])
+            with package_build.environment(builder) as settings:
+                guest(['env', *package_build.arguments(settings),
+                       f'DEB_BUILD_OPTIONS=nocheck parallel={jobs}', 'DEB_BUILD_PROFILES=nocheck',
+                       'sh', '-c', 'cd "$1"; dpkg-buildpackage -b -us -uc',
+                       'build', debian.inside(builder, source)])
         changes = source.parent / f'upower_{PACKAGE_VERSION}_arm64.changes'
         change = next(row for row in debian.controls(changes.read_text()) if row.get('Source') == 'upower')
         if change.get('Version') != PACKAGE_VERSION:
@@ -158,8 +163,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sysroot', type=Path, required=True)
     parser.add_argument('--output', type=Path, default=ROOT / 'build/upower')
-    parser.add_argument('--jobs', type=int, default=2)
+    parser.add_argument('--jobs', type=int, default=package_build.default_jobs())
     parser.add_argument('--collect-only', action='store_true',
                         help='Seal an existing completed package build without rebuilding it')
+    parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if not args.worker:
+        raise SystemExit(subprocess.run(['unshare', '--mount', '--propagation', 'private',
+                                        sys.executable, __file__, *sys.argv[1:], '--worker']).returncode)
     print(json.dumps(build(args.output, args.sysroot, args.jobs, args.collect_only), indent=2))

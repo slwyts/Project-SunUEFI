@@ -257,7 +257,8 @@ def seal_modules(folder,release,required_builtin=()):
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--jobs',type=int,default=4);parser.add_argument('--root',default='ram');parser.add_argument('--configure-only',action='store_true')
+    from host.package_build import default_jobs
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--jobs',type=int,default=default_jobs());parser.add_argument('--root',default='ram');parser.add_argument('--configure-only',action='store_true')
     parser.add_argument('--worktree',type=Path,default=WORK)
     parser.add_argument('--commit',default=COMMIT)
     parser.add_argument('--build-dir',type=Path,default=OUT)
@@ -266,7 +267,7 @@ def main():
     parser.add_argument('--pm-debug',action='store_true',
                         help='Enable kernel PM stage tests for suspend diagnostics; disabled in normal builds')
     args=parser.parse_args()
-    if not 1<=args.jobs<=8:raise SystemExit('Full candidate jobs must be 1..8')
+    if args.jobs<1:raise SystemExit('Use at least one kernel build job')
     work,out,artifacts=(path.resolve()for path in (args.worktree,args.build_dir,args.artifacts));commit=args.commit
     if not work.is_relative_to(ROOT/'build/kernel-worktrees')or not out.is_relative_to(ROOT/'build/kernels')or not artifacts.is_relative_to(ROOT/'artifacts/kernels'):
         raise ValueError('Explicit full kernel paths must stay in the workspace build/artifact directories')
@@ -300,15 +301,25 @@ def main():
         try:fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:raise ValueError('Kernel build/output is in use: '+str(directory))
     marker=artifacts/'manifest.json'
-    if marker.exists():
-        if not args.rebuild:raise ValueError('Candidate exists; use --rebuild to replace generated artifacts')
-        # Stale Image/modules may remain during the build, but no consumer can
-        # mistake them for a completed new bundle without its final manifest.
-        marker.unlink()
     source_base=verify_source(work,commit)
     tree=text(['git','rev-parse','HEAD^{tree}'],work)
     compiler_checkout(work,compiler,commit,tree)
-    hashes={str(path.relative_to(ROOT)):sha(path)for path in (ROOT/'config/release.json',bluetooth,filesystem,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/host/prepare_kernel_llvm.py',ROOT/'config/kernel-llvm.json')}
+    hashes={str(path.relative_to(ROOT)):sha(path)for path in (ROOT/'config/release.json',bluetooth,filesystem,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/host/prepare_kernel_llvm.py',ROOT/'tools/host/package_build.py',ROOT/'config/kernel-llvm.json')}
+    if marker.exists():
+        previous=json.loads(marker.read_text())
+        if (not args.configure_only and previous.get('status')=='HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED' and
+            previous.get('source_commit')==commit and previous.get('inputs')==hashes and
+            previous.get('local_module_overrides')==modules and previous.get('root_policy')==args.root and
+            previous.get('command_line')==root_command and previous.get('toolchain',{}).get('sha256')==tools['sha256'] and
+            (out/'.config').is_file() and sha(out/'.config')==previous.get('config_sha256') and
+            (out/'Module.symvers').is_file() and (out/'include/config/kernel.release').is_file()):
+            from stage_piano_kernel_modules import inspect
+            inspect(artifacts)
+            print('Reusing the complete matching kernel and modules: '+previous['kernel_release'],flush=True)
+            return
+        if not args.rebuild:raise ValueError('Candidate exists; use --rebuild to replace generated artifacts')
+        # No reader may pair stale Image/modules with a new in-progress build.
+        marker.unlink()
     effective_text=effective_config(modules)
     effective=out/'piano-full.effective.config';effective.write_text(effective_text)
     command=['make','-C',compiler,'O='+str(out),'ARCH=arm64','LLVM=1','LLVM_IAS=1','LOCALVERSION=']

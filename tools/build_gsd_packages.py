@@ -10,9 +10,11 @@ import shutil
 import shlex
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 from build_piano_runtime_helpers import source_patches
+from host import package_build
 
 ROOT = Path(__file__).resolve().parents[1]
 PATCH = ROOT / 'patches/gnome-settings-daemon/0001-power-optional-device-ambient-profile.patch'
@@ -228,8 +230,8 @@ def build(output, sysroot, jobs, source_cache=None, prepared_source=None,
     output, sysroot = output.resolve(), sysroot.resolve()
     if not output.is_relative_to(ROOT / 'build') or sysroot == Path('/') or not sysroot.is_relative_to(ROOT / 'build'):
         raise ValueError('Use project build directories for output and the completed input sysroot')
-    if not 1 <= jobs <= 8:
-        raise ValueError('Use 1 to 8 package build jobs')
+    if jobs < 1:
+        raise ValueError('Use at least one package build job')
     cached = reusable(output)
     if cached:
         return cached
@@ -280,7 +282,7 @@ def build(output, sysroot, jobs, source_cache=None, prepared_source=None,
             chroot(rootfs, ['apt-get', '-oAcquire::AllowInsecureRepositories=false',
                            '-oAPT::Get::AllowUnauthenticated=false', 'update'], stdout=log, stderr=subprocess.STDOUT)
             if install_dependencies:
-                chroot(rootfs, ['apt-get', 'install', '-y', '--no-install-recommends', 'dpkg-dev', 'build-essential'],
+                chroot(rootfs, ['apt-get', 'install', '-y', '--no-install-recommends', 'dpkg-dev', 'build-essential', 'ccache'],
                        stdout=log, stderr=subprocess.STDOUT)
                 chroot(rootfs, ['apt-get', 'build-dep', '-y', '--build-profiles=nocheck',
                                'gnome-settings-daemon=' + SOURCE_VERSION], stdout=log, stderr=subprocess.STDOUT)
@@ -316,7 +318,9 @@ def build(output, sysroot, jobs, source_cache=None, prepared_source=None,
         if not collect_only:
             env = ['env', 'DEB_BUILD_OPTIONS=nocheck parallel=' + str(jobs), 'DEB_BUILD_PROFILES=nocheck',
                    'sh', '-c', 'cd ' + shlex.quote(inside(rootfs, source)) + ' && dpkg-buildpackage -b -us -uc']
-            chroot(rootfs, env, stdout=log, stderr=subprocess.STDOUT)
+            with package_build.environment(rootfs) as settings:
+                env[1:1] = package_build.arguments(settings)
+                chroot(rootfs, env, stdout=log, stderr=subprocess.STDOUT)
             # dpkg-buildpackage runs --after-build and removes quilt's added
             # source files. Restore the patched view before collect validates
             # source provenance; the completed binary packages stay unchanged.
@@ -329,7 +333,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=ROOT / 'build/gsd')
     parser.add_argument('--sysroot', type=Path, required=True, help='Completed Debian trixie ARM64 base; cloned for a fresh build')
-    parser.add_argument('--jobs', type=int, default=2)
+    parser.add_argument('--jobs', type=int, default=package_build.default_jobs())
     parser.add_argument('--install-dependencies', action='store_true', default=True,
                         help='Install original Debian build dependencies (default)')
     parser.add_argument('--skip-install-dependencies', dest='install_dependencies', action='store_false',
@@ -337,7 +341,11 @@ if __name__ == '__main__':
     parser.add_argument('--source-cache', type=Path, help='Authenticated .dsc/archive cache of an existing isolated job')
     parser.add_argument('--prepared-source', type=Path, help='Existing patched Debian job source inside --sysroot')
     parser.add_argument('--collect-only', action='store_true', help='Seal a completed existing job; no download or compilation')
+    parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if not args.worker:
+        raise SystemExit(subprocess.run(['unshare', '--mount', '--propagation', 'private',
+                                        sys.executable, __file__, *sys.argv[1:], '--worker']).returncode)
     try:
         print(json.dumps(build(args.output, args.sysroot, args.jobs, args.source_cache,
                                args.prepared_source, args.collect_only, args.install_dependencies), indent=2))

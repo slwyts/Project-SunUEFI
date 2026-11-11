@@ -12,9 +12,11 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tarfile
 
 import build_gsd_packages as debian
+from host import package_build
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_VERSION = '48.7-0+deb13u1'
@@ -27,6 +29,23 @@ RUNTIME = {'mutter': 'arm64', 'gir1.2-mutter-16': 'arm64',
 
 def patch_records():
     return [{'path': str(path.relative_to(ROOT)), 'sha256': debian.sha(path)} for path in PATCHES]
+
+
+def reusable(output):
+    try:
+        record = json.loads((output / 'SOURCE.json').read_text())
+        if (not record.get('packages_built') or record.get('patches') != patch_records() or
+                record.get('package_version') != PACKAGE_VERSION or
+                set(record.get('packages', {})) != set(RUNTIME) or (output / '.incomplete').exists()):
+            return None
+        for name, row in record['packages'].items():
+            if (Path(row['file']).name != row['file'] or row['version'] != PACKAGE_VERSION or
+                    row['architecture'] != RUNTIME[name] or
+                    debian.sha(output / 'runtime' / row['file']) != row['sha256']):
+                return None
+        return record
+    except (OSError, ValueError, KeyError):
+        return None
 
 
 def chroot(rootfs, args, **kwargs):
@@ -195,8 +214,10 @@ def collect(output, source, origin, jobs):
 
 def build(output, sysroot, builder_root, jobs, install_dependencies):
     output = output.resolve()
-    if not output.is_relative_to(ROOT / 'build') or not 1 <= jobs <= 8:
-        raise ValueError('Use a project build output and 1..8 jobs')
+    if not output.is_relative_to(ROOT / 'build') or jobs < 1:
+        raise ValueError('Use a project build output and at least one build job')
+    if cached := reusable(output):
+        return cached
     if os.geteuid():
         raise ValueError('Run with root for the isolated native Debian chroot')
     if builder_root:
@@ -230,7 +251,7 @@ def build(output, sysroot, builder_root, jobs, install_dependencies):
                 'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg\n')
             chroot(rootfs, ['apt-get', '-oAcquire::AllowInsecureRepositories=false',
                            '-oAPT::Get::AllowUnauthenticated=false', 'update'], stdout=log, stderr=subprocess.STDOUT)
-            chroot(rootfs, ['apt-get', 'install', '-y', '--no-install-recommends', 'dpkg-dev', 'build-essential'],
+            chroot(rootfs, ['apt-get', 'install', '-y', '--no-install-recommends', 'dpkg-dev', 'build-essential', 'ccache'],
                    stdout=log, stderr=subprocess.STDOUT)
             dependency_alignment = align_development_cohorts(rootfs, log)
             chroot(rootfs, ['apt-get', 'build-dep', '-y', '--no-install-recommends', '--build-profiles=nocheck',
@@ -246,9 +267,11 @@ def build(output, sysroot, builder_root, jobs, install_dependencies):
         source = prepare(rootfs, cache, work, origin, log)
         chroot(rootfs, ['sh', '-c', 'cd ' + shlex.quote(debian.inside(rootfs, source)) +
                        ' && dpkg-checkbuilddeps -Pnocheck'], stdout=log, stderr=subprocess.STDOUT)
-        chroot(rootfs, ['env', 'DEB_BUILD_OPTIONS=nocheck parallel=' + str(jobs), 'DEB_BUILD_PROFILES=nocheck',
-                       'sh', '-c', 'cd ' + shlex.quote(debian.inside(rootfs, source)) +
-                       ' && dpkg-buildpackage -us -uc'], stdout=log, stderr=subprocess.STDOUT)
+        with package_build.environment(rootfs) as env:
+            chroot(rootfs, ['env', *package_build.arguments(env),
+                           'DEB_BUILD_OPTIONS=nocheck parallel=' + str(jobs), 'DEB_BUILD_PROFILES=nocheck',
+                           'sh', '-c', 'cd ' + shlex.quote(debian.inside(rootfs, source)) +
+                           ' && dpkg-buildpackage -us -uc'], stdout=log, stderr=subprocess.STDOUT)
         # Debian after-build un-applies quilt; restore the source view for receipts.
         chroot(rootfs, ['sh', '-c', 'cd ' + shlex.quote(debian.inside(rootfs, source)) +
                        ' && dpkg-source --before-build .'], stdout=log, stderr=subprocess.STDOUT)
@@ -261,9 +284,13 @@ if __name__ == '__main__':
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--sysroot', type=Path, help='Completed trixie ARM64 input; cloned before use')
     group.add_argument('--builder-root', type=Path, help='An existing isolated native Debian package builder')
-    parser.add_argument('--jobs', type=int, default=4)
+    parser.add_argument('--jobs', type=int, default=package_build.default_jobs())
     parser.add_argument('--skip-install-dependencies', action='store_true', help='Use already verified builder dependencies')
+    parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if not args.worker:
+        raise SystemExit(subprocess.run(['unshare', '--mount', '--propagation', 'private',
+                                        sys.executable, __file__, *sys.argv[1:], '--worker']).returncode)
     try:
         print(json.dumps(build(args.output, args.sysroot, args.builder_root, args.jobs,
                                not args.skip_install_dependencies), indent=2))

@@ -21,6 +21,7 @@ import build_mutter_packages
 from build_chroot import guest_command
 from build_piano_runtime_helpers import source_patches
 from prepare_steamos_rootfs import download
+from host import package_build
 
 MODULES = ('glib-2.0', 'gobject-2.0', 'gmodule-2.0', 'gio-2.0', 'gio-unix-2.0',
            'gstreamer-1.0', 'gstreamer-base-1.0', 'gstreamer-video-1.0',
@@ -109,7 +110,7 @@ def prepare_meson(source, version):
     # against the installed server library. Audio and server packages are not replaced.
     (source / 'meson.build').write_text(
         "project('pipewire-gstreamer', 'c', version: '" + version + "')\n"
-        "cc = meson.get_compiler('c')\nconfiginc = include_directories('.')\n"
+         "cc = meson.get_compiler('c')\nconfiginc = include_directories('.')\n"
         "pipewire_dep = dependency('libpipewire-0.3', version: '==" + version + "')\n"
         "spa_dep = dependency('libspa-0.2')\nmathlib = cc.find_library('m')\n"
         "gst_dep = [" + ', '.join("dependency('" + name + "')" for name in MODULES) + "]\n"
@@ -172,13 +173,15 @@ def build_debian(root, output, jobs):
                'libpipewire-0.3-dev=' + version, 'libspa-0.2-dev=' + version,
                'libgstreamer1.0-dev', 'libgstreamer-plugins-base1.0-dev'])
         directory = debian.inside(builder, guest_work)
-        guest(['sh', '-ec', 'cd "$1"; test -d build || meson setup build source --prefix=/usr '
-               '--libdir=lib/aarch64-linux-gnu --buildtype=release; '
-                f'meson compile -C build -j{jobs}; '
-                'GST_PLUGIN_SYSTEM_PATH_1_0= GST_PLUGIN_PATH_1_0= GST_REGISTRY_FORK=no '
-                'GST_REGISTRY_1_0="$PWD/build/test-registry.bin" '
-                'meson test -C build --num-processes 1 --no-rebuild --print-errorlogs; '
-               'DESTDIR="$PWD/package" meson install -C build --no-rebuild', 'build', directory])
+        with package_build.environment(builder) as settings:
+            guest(['env', *package_build.arguments(settings),
+                   'sh', '-ec', 'cd "$1"; test -d build || meson setup build source --prefix=/usr '
+                   '--libdir=lib/aarch64-linux-gnu --buildtype=release; '
+                    f'meson compile -C build -j{jobs}; '
+                    'GST_PLUGIN_SYSTEM_PATH_1_0= GST_PLUGIN_PATH_1_0= GST_REGISTRY_FORK=no '
+                    'GST_REGISTRY_1_0="$PWD/build/test-registry.bin" '
+                    'meson test -C build --num-processes 1 --no-rebuild --print-errorlogs; '
+                   'DESTDIR="$PWD/package" meson install -C build --no-rebuild', 'build', directory])
         package = guest_work / 'package'
         control = package / 'DEBIAN'
         control.mkdir(exist_ok=True)
@@ -275,12 +278,13 @@ def seal(output, version, data, patches, package_format, packages):
     return record
 
 
-def build(root, output, jobs=4):
+def build(root, output, jobs=None):
+    jobs = package_build.default_jobs() if jobs is None else jobs
     root, output = root.resolve(), output.resolve()
     if (os.geteuid() or not root.is_relative_to(ROOT / 'build') or not root.is_dir() or
             not output.is_relative_to(ROOT / 'build') or output.is_relative_to(root) or
-            root.is_relative_to(output) or not 1 <= jobs <= 8):
-        raise ValueError('Use root, project build directories outside each other, and 1..8 jobs')
+            root.is_relative_to(output) or jobs < 1):
+        raise ValueError('Use root, project build directories outside each other, and at least one job')
     output.mkdir(parents=True, exist_ok=True)
     if (root / 'var/lib/dpkg/status').is_file():
         return build_debian(root, output, jobs)
@@ -291,7 +295,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--rootfs', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--jobs', type=int, default=4)
+    parser.add_argument('--jobs', type=int, default=package_build.default_jobs())
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not args.worker:

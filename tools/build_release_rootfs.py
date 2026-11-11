@@ -634,7 +634,8 @@ def execute(record):
                  gsd_folder.parent, '--sysroot', rootfs])
         gsd = gsd_packages(gsd_folder) if desktop == 'gnome' else {'packages': {}}
         mutter_folder = Path(record.get('mutter_dir') or ROOT / 'build/mutter/runtime')
-        if desktop == 'gnome' and not record.get('mutter_dir') and not (mutter_folder.parent / 'SOURCE.json').is_file():
+        import build_mutter_packages as mutter_builder
+        if desktop == 'gnome' and not record.get('mutter_dir') and not mutter_builder.reusable(mutter_folder.parent):
             run([sys.executable, ROOT / 'tools/build_mutter_packages.py', '--output',
                  mutter_folder.parent, '--sysroot', rootfs])
         mutter = mutter_packages(mutter_folder) if desktop == 'gnome' else {'packages': {}}

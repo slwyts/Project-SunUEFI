@@ -56,9 +56,8 @@ jobs:
     if: needs.select.outputs.has_build == 'true'
     concurrency:
       group: build-products-${{ github.ref }}-${{ matrix.target }}
-      # Rootfs builds take over an hour. Finish the running image; GitHub keeps
-      # only the newest pending build for the same branch and distribution.
-      cancel-in-progress: false
+      # Superseded images must not keep consuming paid runner time.
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
@@ -77,9 +76,64 @@ jobs:
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/ccache
-          key: ccache-${{ runner.arch }}-${{ env.SUNUEFI_BUILD_TARGET }}-${{ hashFiles('sources.lock.json', 'patches/**', 'config/build-container.json') }}-${{ github.sha }}
+          key: ccache-${{ runner.arch }}-${{ env.SUNUEFI_BUILD_TARGET }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.arch }}-${{ env.SUNUEFI_BUILD_TARGET }}-${{ hashFiles('sources.lock.json', 'patches/**', 'config/build-container.json') }}-
+            ccache-${{ runner.arch }}-${{ env.SUNUEFI_BUILD_TARGET }}-
+      - name: Reuse the matching kernel and external-module build files
+        if: matrix.target != 'uefi'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            artifacts/kernels/release
+            build/kernels/release/.config
+            build/kernels/release/Makefile
+            build/kernels/release/Module.symvers
+            build/kernels/release/include
+            build/kernels/release/scripts
+            build/kernels/release/arch/arm64/include/generated
+          key: kernel-${{ runner.arch }}-${{ hashFiles('sources.lock.json', 'patches/linux/7.3/**', 'linux/configs/**', 'config/kernel-llvm.json', 'config/release.json', 'tools/build_piano_full_kernel.py', 'tools/build_kernel.py', 'tools/prepare_release_kernel.py', 'tools/prepare_linux_modules.py', 'tools/host/prepare_kernel_llvm.py', 'tools/host/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}
+      - name: Reuse completed Debian FFmpeg packages
+        if: startsWith(matrix.target, 'debian-')
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            build/ffmpeg/runtime
+            build/ffmpeg/SOURCE.json
+            build/ffmpeg/SHA256SUMS
+          key: ffmpeg-arm64-${{ hashFiles('linux/bsp/patches/ffmpeg/**', 'tools/build_ffmpeg_packages.py', 'tools/prepare_ffmpeg_source.py', 'tools/host/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}
+      - name: Reuse completed Debian hardware packages
+        if: startsWith(matrix.target, 'debian-')
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            build/mesa/runtime
+            build/mesa/package-cache.json
+            build/mesa/SHA256SUMS
+            build/sensors/runtime
+            build/sensors/package-cache.json
+            build/sensors/SOURCE
+            build/sensors/SHA256SUMS
+          key: hardware-packages-arm64-${{ hashFiles('sources.lock.json', 'config/release.json', 'build.sh', 'patches/piano-sensors/**', 'tools/host/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}
+      - name: Reuse completed Debian common desktop packages
+        if: startsWith(matrix.target, 'debian-')
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            build/upower/runtime
+            build/upower/SOURCE.json
+            build/pipewire/runtime
+            build/pipewire/SOURCE.json
+          key: desktop-common-arm64-${{ hashFiles('patches/upower/**', 'patches/pipewire/**', 'tools/host/build_upower_packages.py', 'tools/host/build_pipewire_packages.py', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'tools/host/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}
+      - name: Reuse completed Debian GNOME packages
+        if: matrix.target == 'debian-gnome'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            build/gsd/runtime
+            build/gsd/SOURCE.json
+            build/mutter/runtime
+            build/mutter/SOURCE.json
+          key: desktop-gnome-arm64-${{ hashFiles('patches/gnome-settings-daemon/**', 'linux/desktops/gnome/ambient-policy/**', 'linux/desktops/gnome/patches/mutter/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'tools/host/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}
       - name: Build the pinned-base environment
         run: python3 tools/build_container.py
       - name: Build selected product
@@ -91,6 +145,7 @@ jobs:
           docker run --rm --privileged \
             -v "$PWD:/workspace" -w /workspace \
             -e CCACHE_DIR=/workspace/build/ccache -e CCACHE_MAXSIZE=3G \
+            -e CCACHE_COMPILERCHECK=content \
             -e SUNUEFI_BUILD_TARGET sunuefi-builder bash -euc '
               git config --global --add safe.directory /workspace
               git config --global --add safe.directory "/workspace/*"

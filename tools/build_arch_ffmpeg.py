@@ -17,6 +17,7 @@ import sys
 import prepare_ffmpeg_source as source
 from build_nyarch_apps import guest_environment
 from build_release_rootfs import build_resolver
+from host import package_build
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -62,7 +63,7 @@ def package_recipe(version, epoch, pkgrel, options, deps, provides):
         "options=(!debug !lto)\n"
         f"depends={quote_array(deps)}\nprovides={quote_array(provides)}\n"
         "build() {\n  cd \"$startdir/ffmpeg-source\"\n  ./configure " +
-        shlex.join(options) + "\n  make -j4\n}\n"
+        shlex.join(options) + "\n  make\n}\n"
         "package() {\n  cd \"$startdir/ffmpeg-source\"\n"
         "  make DESTDIR=\"$pkgdir\" install\n"
         "  install -Dm644 COPYING.GPLv3 \"$pkgdir/usr/share/licenses/ffmpeg/COPYING.GPLv3\"\n}\n")
@@ -121,7 +122,7 @@ def build(root, output, resume=False):
     recipe = package_recipe(version, epoch, pkgrel, options, deps, provides)
     (guest_work / 'PKGBUILD').write_text(recipe)
     with build_resolver(root), guest_environment(root) as guest:
-        dependencies = ['base-devel', 'clang',
+        dependencies = ['base-devel', 'clang', 'ccache',
                'nasm', 'amf-headers', 'avisynthplus', 'ffnvcodec-headers',
                'frei0r-plugins', 'ladspa', 'opencl-headers', 'vulkan-headers',
                *deps]
@@ -138,8 +139,12 @@ def build(root, output, resume=False):
                           capture_output=True).returncode:
             guest(['useradd', '-m', 'sunuefi-ffmpeg'])
         guest(['chown', '-R', 'sunuefi-ffmpeg:sunuefi-ffmpeg', '/var/tmp/sunuefi-ffmpeg'])
-        guest(['runuser', '-u', 'sunuefi-ffmpeg', '--', 'bash', '-c',
-               'cd /var/tmp/sunuefi-ffmpeg && makepkg --noconfirm --nocheck --nodeps'])
+        with package_build.environment(root) as settings:
+            settings['MAKEFLAGS'] = '-j' + str(package_build.default_jobs(768))
+            settings['CCACHE_UMASK'] = '000'
+            guest(['runuser', '-u', 'sunuefi-ffmpeg', '--', 'env',
+                   *package_build.arguments(settings), 'bash', '-c',
+                   'cd /var/tmp/sunuefi-ffmpeg && makepkg --noconfirm --nocheck --nodeps'])
         packages = [p for p in guest_work.glob('ffmpeg-*.pkg.tar.*')
                     if p.is_file() and p.suffix in ('.xz', '.zst', '.gz', '.bz2', '.lz4', '.lzo')]
         if len(packages) != 1:

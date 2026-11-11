@@ -13,6 +13,7 @@ import time
 
 from build_nyarch_apps import ROOT, guest_environment, run
 from build_release_rootfs import build_resolver
+from host import package_build
 
 
 def install_cached(root, output):
@@ -72,7 +73,7 @@ def build(root, recipe, output, resume=False):
         dependencies = guest(
             ['bash', '-c', 'source "$1/PKGBUILD"; printf "%s\\n" "${makedepends[@]}" "${depends[@]}"',
              'dependencies', folder], capture_output=True, text=True).stdout.splitlines()
-        dependencies = list(dict.fromkeys(['base-devel', *[p for p in dependencies if p]]))
+        dependencies = list(dict.fromkeys(['base-devel', 'ccache', *[p for p in dependencies if p]]))
         # A locally built dependency (for example libssc on SteamOS) need not
         # exist in the base's repositories. Resolve installed versions first.
         missing = subprocess.run(['chroot', root, 'pacman', '-T', *dependencies],
@@ -88,8 +89,12 @@ def build(root, recipe, output, resume=False):
         if not (work / '.sunuefi-built').exists():
             verify_sources(guest, folder)
             flags = ' --noextract' if resume and (work / 'src').is_dir() else ''
-            guest(['runuser', '-u', 'sunuefi-package', '--', 'bash', '-c',
-                   'cd "$1"; makepkg --force --noconfirm --nocheck --nodeps' + flags, 'makepkg', folder])
+            with package_build.environment(root) as settings:
+                settings['MAKEFLAGS'] = '-j' + str(package_build.default_jobs())
+                settings['CCACHE_UMASK'] = '000'
+                guest(['runuser', '-u', 'sunuefi-package', '--', 'env',
+                       *package_build.arguments(settings), 'bash', '-c',
+                       'cd "$1"; makepkg --force --noconfirm --nocheck --nodeps' + flags, 'makepkg', folder])
             (work / '.sunuefi-built').write_text('makepkg completed\n')
         packages = [p for p in work.glob('*.pkg.tar.*') if p.suffix in ('.xz', '.zst', '.gz')]
         if not packages:
