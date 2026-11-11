@@ -320,17 +320,21 @@ class RamHardwareTests(unittest.TestCase):
 
     def test_actual_clock_overlay_only_exact_seven_properties_and_rejects_drift(self):
         base = ROOT / 'private/analysis/piano-linux-owned-dma/Piano-full-linux-owned-dma.dtb'
-        if not base.exists():
-            self.skipTest('actual complete merged DTB required')
+        kernel = ROOT / 'build/kernel-worktrees/piano-smmu-routes'
+        rom = ROOT / 'private/analysis/android-memory-2026-10-05/live.dtb'
+        dtc = ROOT / 'build/kernel-topics/piano-panel/scripts/dtc/dtc'
+        fdtoverlay = dtc.with_name('fdtoverlay')
+        libfdt = ROOT / 'upstream/dtc/libfdt/libfdt.so.1.8.1'
+        required = [base, rom, dtc, fdtoverlay, libfdt,
+                    *(kernel / name for name in clocks.INPUTS)]
+        if any(not path.is_file() for path in required):
+            self.skipTest('complete clock-overlay hardware inputs required')
         # Tool's output policy requires the explicit private directory.
         with tempfile.TemporaryDirectory(dir=ROOT / 'private/analysis', prefix='clock-test-') as tmp:
             out = Path(tmp) / 'candidate'
             args = SimpleNamespace(base=base, base_sha256=clocks.sha(base.read_bytes()),
-                kernel_tree=ROOT / 'build/kernel-worktrees/piano-smmu-routes',
-                rom=ROOT / 'private/analysis/android-memory-2026-10-05/live.dtb', output_dir=out,
-                dtc=ROOT / 'build/kernel-topics/piano-panel/scripts/dtc/dtc',
-                fdtoverlay=ROOT / 'build/kernel-topics/piano-panel/scripts/dtc/fdtoverlay',
-                libfdt=ROOT / 'upstream/dtc/libfdt/libfdt.so.1.8.1')
+                kernel_tree=kernel, rom=rom, output_dir=out,
+                dtc=dtc, fdtoverlay=fdtoverlay, libfdt=libfdt)
             report = clocks.fold(args)
             self.assertEqual(len(report['changes']), 7)
             self.assertFalse(report['hardware_verified'])
