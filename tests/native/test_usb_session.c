@@ -17,6 +17,7 @@ static UINT32 regs[0x100000/4];
 static UINTN session_writes,allocations,completions,resets;
 static UINTN quiet_syncs;
 static UINTN address_writes,address_status_starts;
+static UINT32 pending_end_delay;
 static BOOLEAN ran,failed_halt,reject_session,fail_setup,fail_allocate;
 static BOOLEAN hold_device_reset,corrupt_gctl_restore,ignore_reset_register_writes;
 static BOOLEAN fail_dma_free;
@@ -85,13 +86,25 @@ UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value) {
       ++address_status_starts;
     }
     if(fail_setup && (Value&15)==6)Value|=BIT12;
-    Value&=~BIT10; // Synchronous command completion.
+    if((Value&15)==8 && !(Value&BIT8))
+      pending_end_delay|=1U<<((Offset-0xC80C)/16);
+    else Value&=~BIT10;
   }
   if(Offset==0xC110 && corrupt_gctl_restore)Value^=BIT0;
   regs[Offset/4]=Value;
   return Value;
 }
-static EFI_STATUS EFIAPI stall(UINTN Us){if(stall_hook!=NULL)stall_hook(Us);return EFI_SUCCESS;}
+static EFI_STATUS EFIAPI stall(UINTN Us){
+  if(Us==1000 && pending_end_delay){
+    assert(!(regs[0xC200/4]&(BIT6|BIT8)));
+    for(UINTN Ep=0;Ep<ARRAY_SIZE(mTrbs);++Ep)
+      if((pending_end_delay&(1U<<Ep)) && mTrbs[Ep].Cpu)
+        ((DWC_TRB *)mTrbs[Ep].Cpu)->Control&=~BIT0;
+    pending_end_delay=0;
+  }
+  if(stall_hook!=NULL)stall_hook(Us);
+  return EFI_SUCCESS;
+}
 static VOID EFIAPI reset(EFI_RESET_TYPE Type,EFI_STATUS Status,UINTN Bytes,VOID *Data) {
   assert(Type==EfiResetCold && Status==EFI_TIMEOUT);++resets;
 }
@@ -130,6 +143,7 @@ static VOID init(VOID) {
   session_writes=allocations=completions=resets=0;
   quiet_syncs=0;
   address_writes=address_status_starts=0;
+  pending_end_delay=0;
   ran=failed_halt=reject_session=fail_setup=fail_allocate=FALSE;
   hold_device_reset=corrupt_gctl_restore=ignore_reset_register_writes=FALSE;
   fail_dma_free=FALSE;stall_hook=NULL;extra_mmio_read=NULL;dma_complete_status=dma_free_status=EFI_SUCCESS;

@@ -226,6 +226,13 @@ STATIC EFI_STATUS Command(UINT8 Ep,UINT32 Cmd,UINT32 P0,UINT32 P1,UINT32 P2) {
   }
   UINT32 Base=0xC800+Ep*16;
   Dw(Base,P2);Dw(Base+4,P1);Dw(Base+8,P0);Dw(Base+12,Cmd|BIT10);
+  // DWC3 does not report completion through CMDACT for END without CMDIOC.
+  // Match dwc3_send_gadget_ep_cmd: keep the PHY awake for its 1ms delay.
+  if((Cmd&15)==8 && !(Cmd&BIT8)) {
+    EFI_STATUS Status=gBS->Stall(1000);
+    if(Saved)Dw(0xC200,Phy);
+    return Status==EFI_SUCCESS?EFI_SUCCESS:EFI_ERROR(Status)?Status:EFI_DEVICE_ERROR;
+  }
   for(UINTN I=0;I<1000;++I) {
     UINT32 V=Dr(Base+12);
     if(!(V&BIT10)) {
@@ -238,6 +245,7 @@ STATIC EFI_STATUS Command(UINT8 Ep,UINT32 Cmd,UINT32 P0,UINT32 P1,UINT32 P2) {
     }
     gBS->Stall(10);
   }
+  DEBUG((DEBUG_ERROR,"SUNUEFI_USB_EPCMD_TIMEOUT ep=%u cmd=%x value=%08x dsts=%08x\n",Ep,Cmd,Dr(Base+12),Dr(0xC70C)));
   if(Saved)Dw(0xC200,Phy);
   return EFI_TIMEOUT;
 }
@@ -257,9 +265,7 @@ STATIC EFI_STATUS StopTransfer(UINT8 Ep) {
   if(!mPending[Ep])return EFI_SUCCESS;
   EFI_STATUS Status=Command(Ep,8|BIT11|((UINT32)mResource[Ep]<<16),0,0,0);
   if(EFI_ERROR(Status))return Status;
-  // EP0 legacy synchronous END path: USB31 has no END polling mode. Wait the
-  // 1ms recommended by dwc3_stop_active_transfer before releasing its buffers.
-  gBS->Stall(1000);
+  // Command completed the documented non-IOC END delay before DMA is returned.
   Status=CompleteEventDma(&mTrbs[Ep]);if(EFI_ERROR(Status))return Status;
   if(mPayload[Ep]!=NULL){Status=CompleteEventDma(mPayload[Ep]);if(EFI_ERROR(Status))return Status;}
   mPending[Ep]=FALSE;mPayload[Ep]=NULL;return EFI_SUCCESS;
