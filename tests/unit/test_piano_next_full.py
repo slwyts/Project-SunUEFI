@@ -26,12 +26,11 @@ class PianoNextFullTests(unittest.TestCase):
         self.assertEqual(len(proof['canonical_device_patch_commits']), 17)
         self.assertEqual(len(proof['upstream_generic_patches_omitted']), 8)
         public = (next_full.WORK / 'arch/arm64/configs/piano_rootfs.config').read_text()
-        command = next_full.full.command_line((ROOT / 'linux/configs/piano-full.config').read_text(), public, 'ram')
         config = (CANDIDATE / 'config').read_text()
-        self.assertEqual(len(next_full.full.validate_config(config, public, command)), 50)
+        self.assertEqual(len(next_full.full.validate_config(config, public)), len(next_full.full.REQUIRED))
         for name in ('BATTERY_PIANO_MCA', 'CHARGER_SC8541', 'HID_NANOSIC_WN8030', 'VIDEO_QCOM_CAMSS'):
             with self.subTest(symbol=name), self.assertRaises(ValueError):
-                next_full.full.validate_config(config.replace('CONFIG_' + name + '=m', '# CONFIG_' + name + ' is not set'), public, command)
+                next_full.full.validate_config(config.replace('CONFIG_' + name + '=m', '# CONFIG_' + name + ' is not set'), public)
 
     def test_actual_sealed_candidate_readonly_recheck(self):
         before = next_full.sha(CANDIDATE / 'manifest.json')
@@ -109,7 +108,7 @@ class PianoNextFullTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'tool drifted'):
                 next_full.check_hashes({}, tools)
         with self.assertRaisesRegex(ValueError, 'input drifted'):
-            next_full.check_hashes({'linux/configs/piano-full.config': '0' * 64}, {'paths': {}, 'sha256': {}})
+            next_full.check_hashes({'config/release.json': '0' * 64}, {'paths': {}, 'sha256': {}})
 
 
 if __name__ == '__main__':

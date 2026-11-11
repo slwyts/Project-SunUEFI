@@ -347,42 +347,39 @@ def scan_root(root, release):
     return rows
 
 
-def pinned_mkbootimg():
-    pins = record(ROOT / 'sources.lock.json')
-    for name, relative in (('debian-piano-current', 'mkbootimg/mkbootimg.py'), ('Mu-Silicium', 'Resources/Scripts/mkbootimg.py')):
-        checkout = ROOT / 'upstream' / name
-        script = checkout / relative
-        if not script.is_file():
-            continue
-        pin = pins[name]['commit']
-        registered = run(['git', '-C', ROOT, 'ls-files', '--stage', '--', checkout.relative_to(ROOT)]).stdout.split()
-        require(len(registered) >= 2 and registered[0] == '160000' and registered[1] == pin, 'mkbootimg source is not the registered pin')
-        require(run(['git', '-C', checkout, 'rev-parse', 'HEAD']).stdout.strip() == pin, 'mkbootimg checkout differs from source pin')
-        folder = str(Path(relative).parent)
-        tracked = run(['git', '-C', checkout, 'ls-tree', '-r', '--name-only', pin, '--', folder]).stdout.splitlines()
-        for item in tracked:
-            if item.endswith('.py'):
-                original = subprocess.check_output(['git', '-C', str(checkout), 'show', pin + ':' + item])
-                require((checkout / item).read_bytes() == original, 'Modified mkbootimg Python source: ' + item)
-        require(not run(['git', '-C', checkout, 'status', '--porcelain', '--untracked-files=all', '--', folder]).stdout.strip(), 'Dirty mkbootimg source directory')
-        return script, {'source': name, 'commit': pin, 'script_sha256': sha(script)}
-    raise ValueError('No pinned local mkbootimg source; initialize the registered submodule offline first')
+def verify_uki(path, sections):
+    """Read the produced PE sections, not a build receipt."""
+    import pefile
+    image_info(path, kernel=False)
+    pe = pefile.PE(str(path), fast_load=True)
+    rows = {}
+    try:
+        for section in pe.sections:
+            name = section.Name.rstrip(b'\0').decode('ascii')
+            require(name not in rows, 'Duplicate UKI section: ' + name)
+            size = section.Misc_VirtualSize
+            data = section.get_data()[:size]
+            require(len(data) == size, 'Truncated UKI section: ' + name)
+            rows[name] = data
+        for name, expected in sections.items():
+            require(rows.get(name) == expected, 'UKI section mismatch: ' + name)
+        return {name: {'bytes': len(rows[name]), 'sha256': hashlib.sha256(rows[name]).hexdigest()}
+                for name in sections}
+    finally:
+        pe.close()
 
 
-def verify_boot(path, inputs):
-    require(path.stat().st_size <= 128 * MIB, 'Linux boot container exceeds the 128 MiB ESP load budget')
-    data = path.read_bytes()
-    require(len(data) >= 1660 and data[:8] == b'ANDROID!', 'Invalid boot container')
-    ksize, _, rsize, _, second, _, _, page, version = struct.unpack_from('<9I', data, 8)
-    recovery = struct.unpack_from('<I', data, 1632)[0]
-    header, dsize = struct.unpack_from('<II', data, 1644)
-    require((page, version, header, second, recovery) == (4096, 2, 1660, 0, 0), 'Expected Android v2/4096 without extra stages')
-    require(not any(data[64:576]) and not any(data[608:1632]), 'Unexpected wrapper command line')
-    offset = page
-    for size, source in zip((ksize, rsize, dsize), inputs):
-        require(size == source.stat().st_size and data[offset:offset + size] == source.read_bytes(), 'Boot wrapper component mismatch')
-        offset += (size + page - 1) // page * page
-    require(len(data) == offset, 'Unexpected boot wrapper trailing data')
+def build_uki(tool, stub, output, image, initrd, dtb, command_line, release, os_release, work):
+    (work / 'cmdline').write_text(command_line)
+    (work / 'os-release').write_bytes(os_release)
+    run([sys.executable, tool, '--config=/dev/null', 'build', '--efi-arch=aa64',
+         '--stub', stub, '--linux', image, '--initrd', initrd, '--devicetree', dtb,
+         '--cmdline=@' + str(work / 'cmdline'), '--os-release=@' + str(work / 'os-release'),
+         '--uname', release, '--no-sign-kernel', '--output', output])
+    sections = {'.linux': image.read_bytes(), '.initrd': initrd.read_bytes(),
+                '.dtb': dtb.read_bytes(), '.cmdline': command_line.encode(),
+                '.osrel': os_release, '.uname': release.encode()}
+    return verify_uki(output, sections)
 
 
 def archive_root(root, target, epoch):
@@ -521,11 +518,20 @@ def package(args):
             require(sha(kernel / 'manifest.json') == meta['kernel_manifest_sha256'], 'Component refers to another kernel manifest')
         if meta.get('kernel_commit'):
             require(meta['kernel_commit'] == metas[1].get('source_commit'), 'Rootfs kernel commit mismatch')
-    command_line = metas[1].get('command_line', '').split()
-    roots = [v.split('=', 1)[1] for v in command_line if v.startswith(('root=', 'piano.root='))]
-    require(not roots or roots == [args.root_selector], 'Kernel command line selects another root')
+    command_line = metas[1].get('command_line', '')
+    tokens = command_line.split()
+    roots = [v.split('=', 1)[1] for v in tokens if v.startswith(('root=', 'piano.root='))]
+    require(roots == [args.root_selector], 'Kernel command line selects another root')
+    require(command_line == ' '.join(tokens) and command_line.isascii() and
+            len(command_line.encode()) < 2048 and 'rdinit=/pianoinit' in tokens,
+            'Boot arguments must include the product initramfs and fit the kernel command line')
     if metas[1].get('config_sha256'):
         require(sha(kernel / 'config') == metas[1]['config_sha256'], 'Kernel config hash mismatch')
+        from build_piano_full_kernel import config_values
+        values = config_values((kernel / 'config').read_text())
+        require(values.get('CONFIG_CMDLINE', '""') == '""' and
+                values.get('CONFIG_CMDLINE_FORCE', 'n') == 'n',
+                'Product kernel must accept boot arguments without embedded defaults')
     require(uefi.read_bytes()[:8] == b'ANDROID!', 'UEFI must be an Android boot container')
     image_info(image)
     fdt_info(dtb)
@@ -540,16 +546,14 @@ def package(args):
         require(embedded['etc/piano/kernel-release'].decode().strip() == release, 'Initramfs embedded release mismatch')
     require(all(n.split('/')[2] == release for n in embedded if n.startswith('lib/modules/') and len(n.split('/')) > 2), 'Initramfs module release mismatch')
     rows = scan_root(root, release)
-    systemd_boot = (Path(args.systemd_boot).absolute() if getattr(args, 'systemd_boot', None) else
-                    guest_resolve(root, '/usr/lib/systemd/boot/efi/systemd-bootaa64.efi'))
-    linux_loader = (Path(args.linux_loader).absolute() if getattr(args, 'linux_loader', None) else
-                    uefi.parent / 'PianoLinuxBoot.efi')
+    stub = (Path(args.stub).absolute() if getattr(args, 'stub', None) else
+            guest_resolve(root, '/usr/lib/systemd/boot/efi/linuxaa64.efi.stub'))
+    ukify = Path(args.ukify).absolute()
+    require(ukify.is_file(), 'Install systemd-ukify or pass --ukify')
     efi_sources = {}
-    for name, source in (('systemd_boot', systemd_boot), ('linux_loader', linux_loader)):
+    for name, source in (('stub', stub),):
         require(source.is_file() and not source.is_symlink(), 'Expected regular EFI application: ' + str(source))
         info = image_info(source, kernel=False)
-        if name == 'linux_loader':
-            component(source, metas[0], info['sha256'], name)
         efi_sources[name] = {'source': str(source), 'bytes': info['bytes'], 'sha256': info['sha256']}
     esp_only = getattr(args, 'esp_only', False)
     build_root = bool(args.root_size_mib) and not esp_only
@@ -560,7 +564,6 @@ def package(args):
     if build_root:
         tools += ['mke2fs', 'debugfs']
     require(all(shutil.which(t) for t in tools), 'Missing host tools: ' + ', '.join(t for t in tools if not shutil.which(t)))
-    maker, maker_source = pinned_mkbootimg()
     output.mkdir(parents=True)
     incomplete = output / '.incomplete'
     incomplete.write_text('Packaging has not completed.\n')
@@ -571,14 +574,9 @@ def package(args):
     for source, name, expected in zip(sources, names, hashes):
         shutil.copyfile(source, work / name)
         require(sha(work / name) == expected, 'Source changed while copying: ' + name)
-    for name, source, filename in (('systemd_boot', systemd_boot, 'BOOTAA64.EFI'),
-                                   ('linux_loader', linux_loader, 'LinuxBoot.efi')):
+    for name, source, filename in (('stub', stub, 'linuxaa64.efi.stub'),):
         shutil.copyfile(source, work / filename)
         require(sha(work / filename) == efi_sources[name]['sha256'], 'Source changed while copying: ' + filename)
-    (work / 'loader.conf').write_text('default linux.conf\ntimeout 0\neditor no\nauto-entries no\nauto-firmware no\nconsole-mode keep\n')
-    (work / 'linux.conf').write_text('title 启动 Linux\nlinux /EFI/Piano/stable/Image\n'
-                                   'initrd /EFI/Piano/stable/initramfs\n'
-                                   'devicetree /EFI/Piano/stable/board.dtb\n')
     dtb_derivation = None
     if args.cpu_model_overlay:
         require(shutil.which('dtc') and shutil.which('fdtoverlay'), 'CPU model overlay needs dtc and fdtoverlay')
@@ -590,16 +588,13 @@ def package(args):
     panel_selection = None
     if args.panel_vendor:
         panel_selection = select_panel_vendor(work / 'board.dtb', args.panel_vendor)
-    boot = output / 'boot.img'
-    run([sys.executable, maker, '--header_version', '2', '--pagesize', '4096', '--kernel', work / 'Image', '--ramdisk', work / 'initramfs', '--dtb', work / 'board.dtb', '-o', boot],
-        env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
-    verify_boot(boot, (work / 'Image', work / 'initramfs', work / 'board.dtb'))
-    esp_files = { '/EFI/Piano/stable/' + path.name: path
-                  for path in (work / 'Image', work / 'board.dtb', work / 'initramfs', boot) }
-    esp_files.update({'/EFI/BOOT/BOOTAA64.EFI': work / 'BOOTAA64.EFI',
-                      '/EFI/Piano/LinuxBoot.efi': work / 'LinuxBoot.efi',
-                      '/loader/loader.conf': work / 'loader.conf',
-                      '/loader/entries/linux.conf': work / 'linux.conf'})
+    # The startup image is shared by every rootfs; distro identity stays in root.
+    os_release = b'ID=linux\nPRETTY_NAME="Linux"\n'
+    uki = work / 'sunuefi.efi'
+    uki_sections = build_uki(ukify, work / 'linuxaa64.efi.stub', uki, work / 'Image',
+                             work / 'initramfs', work / 'board.dtb', command_line,
+                             release, os_release, work)
+    esp_files = {'/EFI/Linux/sunuefi.efi': uki}
     for path in esp_files.values():
         os.utime(path, (max(args.epoch, 315532800),) * 2)  # FAT dates start in 1980.
     esp = output / 'esp.img'
@@ -609,8 +604,7 @@ def package(args):
     # Piano UFS exposes 4 KiB logical sectors; Linux rejects a smaller BPB
     # sector size even when firmware can read the filesystem.
     run(['mkfs.vfat', '--invariant', '-S', '4096', '-F', '32', '-n', 'SUNUEFI_ESP', esp])
-    run(['mmd', '-i', esp, '::/EFI', '::/EFI/BOOT', '::/EFI/Piano', '::/EFI/Piano/stable',
-         '::/loader', '::/loader/entries'])
+    run(['mmd', '-i', esp, '::/EFI', '::/EFI/Linux'])
     for destination, path in esp_files.items():
         run(['mcopy', '-m', '-i', esp, path, '::' + destination])
         verify = work / ('readback-' + path.name)
@@ -624,7 +618,10 @@ def package(args):
             {n: (s.st_mode, s.st_uid, s.st_gid, s.st_size, s.st_mtime_ns, s.st_ctime_ns) for n, s in scan_root(root, release).items()}, 'Rootfs changed while packaging')
     shutil.move(work / names[0], output / names[0])
     result = {'schema_version': 1, 'status': 'HOST_BUILT_NOT_DEVICE_READY', 'kernel_release': release, 'root_policy': args.root_selector,
-              'epoch': args.epoch, 'mkbootimg': maker_source, 'device_operation_performed': False, 'device_ready': False,
+              'command_line': command_line,
+              'epoch': args.epoch, 'uki': {'sections': uki_sections, 'ukify_sha256': sha(ukify),
+                                        'stub_sha256': sha(stub)},
+              'device_operation_performed': False, 'device_ready': False,
               'components': {**{name: {'sha256': value} for name, value in zip(('uefi', 'kernel', 'dtb', 'initramfs'), hashes)}, **efi_sources},
               'kernel_manifest_sha256': sha(kernel / 'manifest.json') if (kernel / 'manifest.json').is_file() else None,
               'partitions': {'esp': {'partlabel': 'sunuefi_esp', 'label': 'SUNUEFI_ESP', 'sector_bytes': 4096, 'capacity_bytes': esp.stat().st_size},
@@ -663,10 +660,10 @@ def parser():
         ap.add_argument('--' + name + '-sha256')
     ap.add_argument('--kernel-release')
     ap.add_argument('--rootfs-manifest', type=Path)
-    ap.add_argument('--systemd-boot', type=Path,
-                    help='ARM64 systemd-boot EFI application (default: from rootfs)')
-    ap.add_argument('--linux-loader', type=Path,
-                    help='PianoLinuxBoot EFI application (default: beside UEFI image)')
+    ap.add_argument('--stub', type=Path,
+                    help='ARM64 systemd EFI stub (default: from rootfs)')
+    ap.add_argument('--ukify', type=Path, default=Path('/usr/lib/systemd/ukify'),
+                    help='systemd ukify build tool')
     ap.add_argument('--root-selector', default='LABEL=PIANOROOT')
     ap.add_argument('--esp-size-mib', type=int, default=512)
     ap.add_argument('--esp-only', action='store_true', help='Export the startup images without rebuilding a root image or archive')

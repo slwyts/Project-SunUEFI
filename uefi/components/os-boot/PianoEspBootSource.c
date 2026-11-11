@@ -3,6 +3,7 @@
 #include <Protocol/PartitionInfo.h>
 #include <Protocol/BlockIo.h>
 #include <Protocol/DevicePath.h>
+#include <Protocol/SimpleFileSystem.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/BaseLib.h>
@@ -126,31 +127,6 @@ STATIC EFI_STATUS Find(EFI_HANDLE *Esp,ESP_IDENTITY *Selected){
  *Esp=Found;return EFI_SUCCESS;
 }
 EFI_STATUS PianoEspBootFind(EFI_HANDLE *Esp){return Find(Esp,NULL);}
-EFI_STATUS PianoEspBootLoad(PIANO_ESP_BOOT_SOURCE *S,CONST PIANO_CPU_INPUT_ENV *Cpu){
- if(!S||!Cpu||!Cpu->BootServicesAlive||!Cpu->ServiceSlice)return EFI_INVALID_PARAMETER;
- if(S->Loaded||S->Released||S->Retained||S->File.Retained||S->File.ServicesLost)return EFI_ALREADY_STARTED;
- if(S->File.Signature){
-   EFI_STATUS Cleanup=PianoBootFileDispose(&S->File);
-   if(Cleanup!=EFI_SUCCESS){S->Retained=S->File.Retained;return Cleanup;}
-   if(!S->File.Consumed||S->File.File||S->File.Root||S->File.Data||S->File.Exit||S->File.Owner||S->File.Loan||S->File.Taken||S->Owner||S->Loan||S->View)return EFI_ACCESS_DENIED;
-   ZeroMem(S,sizeof(*S));
- }
- if(!Cpu->BootServicesAlive(Cpu->Context))return EFI_ABORTED;
- EFI_HANDLE Found=NULL;ESP_IDENTITY Before={0},After;
- EFI_STATUS E=Find(&Found,&Before);if(E!=EFI_SUCCESS)return E;
- if(!Cpu->BootServicesAlive(Cpu->Context))return EFI_ABORTED;
- S->Cpu=*Cpu;S->Env=(PIANO_BOOT_FILE_ENV){.Context=Cpu->Context,.Services=gBS,.BootServicesAlive=Cpu->BootServicesAlive,.Cpu=&S->Cpu};
- UINT64 Capacity=(Before.LastBlock+1)*Before.BlockBytes;
- PIANO_BOOT_FILE_SPEC Spec={Found,L"\\EFI\\Piano\\stable\\boot.img",
-   Capacity<PIANO_BOOT_FILE_LOW_BUDGET?Capacity:PIANO_BOOT_FILE_LOW_BUDGET,NULL};
- E=PianoBootFileLoad(&S->File,&S->Env,&Spec,&S->Reader,&S->Blob);
- mDiscovery.Open=E;
- if(E!=EFI_SUCCESS){S->Retained=S->File.Retained;return E;}
- if(!Volume(Found,&After)||CompareMem(&Before,&After,sizeof(Before))){E=PianoBootFileDispose(&S->File);S->Retained=E!=EFI_SUCCESS;return E==EFI_SUCCESS?EFI_MEDIA_CHANGED:E;}
- E=S->Blob.Take(S->Blob.Context,&S->Owner);
- if(E!=EFI_SUCCESS){EFI_STATUS R=PianoBootFileDispose(&S->File);S->Retained=R!=EFI_SUCCESS;return R==EFI_SUCCESS?E:R;}
- S->Loaded=TRUE;return EFI_SUCCESS;
-}
 EFI_STATUS PianoEspBootPresent(VOID) {
  EFI_HANDLE Found=NULL;ESP_IDENTITY Selected={0};
  EFI_STATUS E=Find(&Found,&Selected);if(E!=EFI_SUCCESS)return E;
@@ -158,27 +134,9 @@ EFI_STATUS PianoEspBootPresent(VOID) {
  E=Selected.Sfs->OpenVolume(Selected.Sfs,&Root);
  if(E!=EFI_SUCCESS)return E;
  if(!Root)return EFI_COMPROMISED_DATA;
- E=Root->Open(Root,&File,L"\\EFI\\BOOT\\BOOTAA64.EFI",EFI_FILE_MODE_READ,0);
- if(E==EFI_NOT_FOUND&&!File)
-   E=Root->Open(Root,&File,L"\\EFI\\Piano\\stable\\boot.img",EFI_FILE_MODE_READ,0);
+  E=Root->Open(Root,&File,L"\\EFI\\Linux\\sunuefi.efi",EFI_FILE_MODE_READ,0);
  mDiscovery.Open=E;
  if(E==EFI_SUCCESS&&!File)E=EFI_COMPROMISED_DATA;
  if(File){EFI_STATUS Close=File->Close(File);if(Close!=EFI_SUCCESS)E=Close;}
  EFI_STATUS Close=Root->Close(Root);return Close!=EFI_SUCCESS?Close:E;
-}
-BOOLEAN PianoEspBootOwned(CONST PIANO_ESP_BOOT_SOURCE *S,VOID *Owner){
- return S&&S->Loaded&&!S->Released&&!S->Retained&&Owner&&Owner==S->Owner&&S->File.Owner==Owner&&
- S->File.Ready&&S->File.Taken&&!S->File.Consumed&&!S->File.Retained&&!S->File.ServicesLost&&
- !S->File.File&&!S->File.Root&&S->File.Data&&S->File.Exit&&S->Env.BootServicesAlive(S->Env.Context);
-}
-EFI_STATUS PianoEspBootRelease(PIANO_ESP_BOOT_SOURCE *S){
- if(!S)return EFI_INVALID_PARAMETER;if(S->Released)return EFI_SUCCESS;
- if(!PianoEspBootOwned(S,S->Owner))return EFI_ACCESS_DENIED;
- if(S->Loan){EFI_STATUS E=S->Blob.Unborrow(S->Blob.Context,S->Owner,S->Loan);if(E!=EFI_SUCCESS){S->Retained=TRUE;return E;}S->Loan=NULL;S->View=NULL;}
- EFI_STATUS E=S->Blob.ZeroRelease(S->Blob.Context,S->Owner);if(E!=EFI_SUCCESS){S->Retained=TRUE;return E;}
- S->Owner=NULL;S->Loaded=FALSE;S->Released=TRUE;return EFI_SUCCESS;
-}
-BOOLEAN PianoEspBootReleased(CONST PIANO_ESP_BOOT_SOURCE *S){
- return S&&S->Released&&!S->Loaded&&!S->Retained&&!S->Owner&&!S->Loan&&!S->View&&S->File.Consumed&&
- !S->File.Taken&&!S->File.Owner&&!S->File.Loan&&!S->File.File&&!S->File.Root&&!S->File.Exit&&!S->File.Data&&!S->File.Retained;
 }

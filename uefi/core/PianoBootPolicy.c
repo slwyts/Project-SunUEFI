@@ -41,8 +41,6 @@ STATIC UINTN mKeysCount;
 STATIC volatile BOOLEAN mStartupWindow;
 STATIC BOOLEAN mStartupWindowUsed;
 STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime;
-STATIC EFI_STATUS (*mLinuxEntry)(VOID *,PIANO_PRODUCT_RUNTIME_PROTOCOL *,EFI_HANDLE);
-STATIC VOID *mLinuxContext;
 STATIC CONST PIANO_SMMU_RETIRED_USB_PROOF *mStartupUsbProof;
 STATIC CONST VOID *mStartupUsbFdt;
 BOOLEAN PianoSetStandardKeyNavigation(BOOLEAN Enable);
@@ -286,22 +284,7 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
   }
   mReport.Pumping=FALSE;return mReport.LastPump=Exact(S);
 }
-STATIC EFI_STATUS EFIAPI StartLinux(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,EFI_HANDLE Image) {
-  if(This!=&mRuntime || !Image)return EFI_INVALID_PARAMETER;
-  EFI_STATUS Status=AtApp();if(Status!=EFI_SUCCESS)return Status;
-  if(mReport.Retained || mReport.Pumping || mReport.Dispatching ||
-     mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE || mReport.PendingAction!=PIANO_PRODUCT_ACTION_NONE)return EFI_NOT_READY;
-  if(!mLinuxEntry || mReport.RequestedCoreAction!=PianoUsbServiceActionBoot)return EFI_NOT_STARTED;
-  return mLinuxEntry(mLinuxContext,This,Image);
-}
-STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime={PIANO_PRODUCT_RUNTIME_REVISION,Pump,Alive,Request,Pending,Ack,StartLinux};
-EFI_STATUS PianoBootPolicySetLinuxEntry(EFI_STATUS (*Start)(VOID *,PIANO_PRODUCT_RUNTIME_PROTOCOL *,EFI_HANDLE),VOID *Context) {
-  if(!Start || !Context)return EFI_INVALID_PARAMETER;
-  if(!mReport.Initialized || !mReport.ProtocolInstalled)return EFI_NOT_READY;
-  EFI_STATUS Status=AtApp();if(Status!=EFI_SUCCESS)return Status;
-  if(mLinuxEntry)return EFI_ALREADY_STARTED;
-  mLinuxEntry=Start;mLinuxContext=Context;return EFI_SUCCESS;
-}
+STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime={PIANO_PRODUCT_RUNTIME_REVISION,Pump,Alive,Request,Pending,Ack};
 STATIC EFI_STATUS RetireEsc(VOID) {
   if(mReport.Retained)return EFI_COMPROMISED_DATA;
   for(UINTN I=0;I<mKeysCount;++I){
@@ -343,7 +326,6 @@ EFI_STATUS PianoBootPolicySetEntryBootArgs(CONST CHAR8 *BootArgs,UINTN Bytes) {
     else if(ValueBytes==6 && !CompareMem(Value,"normal",6))Entry=PianoBootEntryNormal;
   }
   if(Matches==1)mReport.Entry=Entry;
-  if(mReport.Entry==PianoBootEntryRecovery)mReport.StartupDefaultAction=PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE;
   return EFI_SUCCESS;
 }
 EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds) {
@@ -390,8 +372,7 @@ EFI_STATUS PianoBootPolicySetStartupTarget(UINT32 Target) {
   if(!mReport.Initialized || !mReport.ProtocolInstalled)return EFI_NOT_READY;
   if(mStartupWindowUsed || mStartupWindow || mReport.Pumping || mReport.Dispatching || mReport.Retained)return EFI_ACCESS_DENIED;
   EFI_STATUS S=AtApp();if(S!=EFI_SUCCESS)return S;
-  if(Target)mReport.StartupDefaultAction=Target==2?PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE:
-    Target==3?PIANO_PRODUCT_ACTION_SETUP:PIANO_PRODUCT_ACTION_SIMPLEINIT;
+  if(Target)mReport.StartupDefaultAction=Target==3?PIANO_PRODUCT_ACTION_SETUP:PIANO_PRODUCT_ACTION_SIMPLEINIT;
   return EFI_SUCCESS;
 }
 EFI_STATUS PianoBootPolicySetUsbStartupFailure(CONST VOID *Fdt,CONST PIANO_SMMU_RETIRED_USB_PROOF *Proof) {

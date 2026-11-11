@@ -85,60 +85,42 @@ class AndroidModuleTests(unittest.TestCase):
         return subprocess.run(['sh', '-c', '. "$1"; ui_print() { printf "%s\\n" "$*" >&2; }; ' + body,
                                'fixture', str(common)], text=True, capture_output=True)
 
-    def test_standard_esp_requires_boot_manager_and_complete_bls_payloads(self):
+    def test_product_esp_requires_nonempty_uki(self):
         esp = self.base / 'esp'
         entries = esp / 'loader/entries'
         entries.mkdir(parents=True)
-        entry = entries / 'linux.conf'
-        entry.write_text('title Linux\nlinux /EFI/Linux/Image\n'
-                         'initrd /EFI/Linux/initrd\ndevicetree /EFI/Linux/board.dtb\n')
         check = f'piano_esp_linux_present "{esp}"'
         self.assertNotEqual(self.shell(check).returncode, 0)
-        boot = esp / 'EFI/BOOT/BOOTAA64.EFI'
+        boot = esp / 'EFI/Linux/sunuefi.efi'
         boot.parent.mkdir(parents=True)
+        boot.touch()
+        self.assertNotEqual(self.shell(check).returncode, 0)
         boot.write_bytes(b'EFI fixture')
-        for name in ('Image', 'initrd', 'board.dtb'):
-            self.assertNotEqual(self.shell(check).returncode, 0)
-            payload = esp / 'EFI/Linux' / name
-            payload.parent.mkdir(parents=True, exist_ok=True)
-            payload.write_bytes(b'payload fixture')
         self.assertEqual(self.shell(check).returncode, 0)
         boot.unlink()
         self.assertNotEqual(self.shell(check).returncode, 0)
-        boot.write_bytes(b'EFI fixture')
-        entry.write_text(entry.read_text() + 'initrd /EFI/Linux/microcode\n')
-        self.assertNotEqual(self.shell(check).returncode, 0)
-        (esp / 'EFI/Linux/microcode').write_bytes(b'additional initrd fixture')
-        self.assertEqual(self.shell(check).returncode, 0)
-        entry.write_text('linux /EFI/Linux/Image\ninitrd /EFI/Linux/initrd\n')
-        self.assertNotEqual(self.shell(check).returncode, 0)
 
-    def test_bls_paths_stay_inside_esp_and_contents_are_not_executed(self):
+    def test_uki_path_stays_inside_esp_and_entry_contents_are_not_executed(self):
         esp = self.base / 'esp'
         entries = esp / 'loader/entries'
         entries.mkdir(parents=True)
-        boot = esp / 'EFI/BOOT/BOOTAA64.EFI'
+        boot = esp / 'EFI/Linux/sunuefi.efi'
         boot.parent.mkdir(parents=True)
-        boot.write_bytes(b'EFI fixture')
         (esp / 'payload').write_bytes(b'payload fixture')
         (self.base / 'outside').write_bytes(b'outside fixture')
         entry = entries / 'linux.conf'
         check = f'piano_esp_linux_present "{esp}"'
-        for path in ('/../outside', '/../esp/payload', '/EFI/../../outside',
-                     '/./payload', '//payload', '/EFI\\..\\payload', 'payload'):
-            with self.subTest(path=path):
-                entry.write_text(f'linux {path}\ninitrd /payload\ndevicetree /payload\n')
-                self.assertNotEqual(self.shell(check).returncode, 0)
-        (esp / 'link').symlink_to(self.base / 'outside')
-        entry.write_text('linux /link\ninitrd /payload\ndevicetree /payload\n')
+        boot.symlink_to(self.base / 'outside')
         self.assertNotEqual(self.shell(check).returncode, 0)
+        boot.unlink()
+        boot.write_bytes(b'EFI fixture')
         marker = self.base / 'must-not-run'
         entry.write_bytes((f'# comment\r\nlinux /payload\r\ninitrd /payload\r\n'
                            f'devicetree /payload\r\noptions $(touch "{marker}")').encode())
         self.assertEqual(self.shell(check).returncode, 0)
         self.assertFalse(marker.exists())
 
-    def test_legacy_esp_boot_image_remains_recognized(self):
+    def test_legacy_esp_does_not_claim_uki_is_installed(self):
         esp = self.base / 'esp'
         boot = esp / 'EFI/Piano/stable/boot.img'
         boot.parent.mkdir(parents=True)
@@ -146,11 +128,11 @@ class AndroidModuleTests(unittest.TestCase):
         boot.touch()
         self.assertNotEqual(self.shell(check).returncode, 0)
         boot.write_bytes(b'legacy boot image fixture')
-        self.assertEqual(self.shell(check).returncode, 0)
+        self.assertNotEqual(self.shell(check).returncode, 0)
         manager = esp / 'EFI/BOOT/BOOTAA64.EFI'
         manager.parent.mkdir(parents=True)
         manager.write_bytes(b'EFI fixture')
-        self.assertEqual(self.shell(check).returncode, 0)
+        self.assertNotEqual(self.shell(check).returncode, 0)
 
     def test_inspect_missing_native_is_readonly_and_no_zip(self):
         self.args.native_tool = self.args.native_manifest = None

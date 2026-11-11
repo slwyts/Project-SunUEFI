@@ -36,15 +36,7 @@ static UINT32 current_action,simple_runs;static VOID *image_base;static jmp_buf 
 static BOOLEAN navigation;
 static UINT64 window_clock;static UINTN window_stalls;
 static UINTN file_case;static EFI_DEVICE_PATH_PROTOCOL *file_path;
-static CONST CHAR16 file_name[]=L"\\EFI\\systemd\\systemd-bootaa64.efi",file_options[]=L"file-options";
-static UINTN linux_calls;
-static EFI_STATUS LinuxEntry(VOID *Context,PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime,EFI_HANDLE Image){
-  CONST PIANO_BOOT_POLICY_REPORT *Report=PianoBootPolicyReport();
-  assert(Context==(VOID *)888&&Runtime==runtime&&Image==(VOID *)777&&tpl==TPL_APPLICATION);
-  assert(!Report->Pumping&&!Report->Dispatching&&!Report->Retained&&Report->ActiveAction==PIANO_PRODUCT_ACTION_NONE&&Report->PendingAction==PIANO_PRODUCT_ACTION_NONE);
-  assert(Report->RequestedCoreAction==PianoUsbServiceActionBoot&&!stops);++linux_calls;
-  return EFI_NOT_FOUND; // A file-open failure before any owner retirement.
-}
+static CONST CHAR16 file_name[]=L"\\EFI\\Linux\\sunuefi.efi",file_options[]=L"file-options";
 EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){(void)Freeze;return EFI_NOT_STARTED;}
 VOID PianoDwc3ServiceReplayStartup(VOID){}
 VOID PianoRawLinuxReplayStable(VOID){}
@@ -214,7 +206,7 @@ static EFI_STATUS EFIAPI start(EFI_HANDLE Handle,UINTN *Bytes,CHAR16 **Data){
   assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_GUI,1000)==EFI_SUCCESS);
   if(scenario==150){
     assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE)==EFI_SUCCESS);
-    assert(runtime->StartLinux(runtime,(VOID *)777)==EFI_NOT_READY&&!linux_calls&&!stops);
+    assert(!stops);
   }
   if(scenario==59){UINT32 A;UINT64 Seq,Next;assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_REQUEST_CONTINUE)==EFI_SUCCESS&&PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionContinue);assert(runtime->GetPendingAction(runtime,&A,&Seq)==EFI_SUCCESS&&A==4);assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_REQUEST_CONTINUE)==EFI_SUCCESS&&runtime->GetPendingAction(runtime,&A,&Next)==EFI_SUCCESS&&Next==Seq);assert(runtime->RequestAction(runtime,5)==EFI_ACCESS_DENIED&&PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionContinue);}
   if(scenario==61)assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_REQUEST_CONTINUE)==EFI_ACCESS_DENIED&&PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionNone);
@@ -259,7 +251,7 @@ static EFI_STATUS EFIAPI unload(EFI_HANDLE Handle){assert(Handle==(VOID *)400 &&
 EFI_STATUS PianoProductAcquireSimpleInit(PIANO_PRODUCT_PAYLOAD_VIEW *V){++acquires;memset(V,0,sizeof(*V));if(scenario==2)return EFI_SECURITY_VIOLATION;assert(!loan);loan=TRUE;V->Image=payload;V->Bytes=sizeof(payload);V->Lease=(VOID *)123;return EFI_SUCCESS;}
 EFI_STATUS PianoProductValidateSimpleInit(CONST PIANO_PRODUCT_PAYLOAD_VIEW *V){++validates;assert(loan && V->Image==payload && V->Lease==(VOID *)123);return scenario==3?EFI_MEDIA_CHANGED:EFI_SUCCESS;}
 EFI_STATUS PianoProductReleaseSimpleInit(CONST PIANO_PRODUCT_PAYLOAD_VIEW *V){++releases;assert(loan && V->Lease==(VOID *)123 && !image_live);if(scenario==4)return EFI_DEVICE_ERROR;loan=FALSE;return EFI_SUCCESS;}
-EFI_STATUS PianoUsbControllerServicePumpApp(UINT32 Reason,UINTN Budget){assert(tpl==TPL_APPLICATION && alive && Budget==1000);++pumps;if(scenario==11)assert(runtime->Pump(runtime,Reason,Budget)==EFI_NOT_READY);if(scenario==149)assert(runtime->StartLinux(runtime,(VOID *)777)==EFI_NOT_READY&&!linux_calls);return scenario==14?EFI_UNSUPPORTED:EFI_SUCCESS;}
+EFI_STATUS PianoUsbControllerServicePumpApp(UINT32 Reason,UINTN Budget){assert(tpl==TPL_APPLICATION && alive && Budget==1000);++pumps;if(scenario==11)assert(runtime->Pump(runtime,Reason,Budget)==EFI_NOT_READY);return scenario==14?EFI_UNSUPPORTED:EFI_SUCCESS;}
 EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){
   *S=(PIANO_DWC3_SERVICE_STATUS){.Revision=scenario==47?2:1,.Started=scenario!=14,.Configured=TRUE,.Phase=PianoUsbServiceListening,.BulkActive=scenario==83};
   if(scenario>=135 && scenario<=140){S->Started=FALSE;S->Configured=FALSE;S->Phase=PianoUsbServiceOff;S->LastStatus=EFI_TIMEOUT;}
@@ -288,7 +280,6 @@ int main(int argc,char **argv){
   keyboard=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);assert(keyboard!=MAP_FAILED);
   keyboard->RegisterKeyNotify=register_key;keyboard->UnregisterKeyNotify=unregister_key;fv.ReadSection=read_section;
   if(scenario>=23 && scenario<=25)keyboard->RegisterKeyNotify=register_uncertain;
-  if(scenario==148)assert(PianoBootPolicySetLinuxEntry(LinuxEntry,(VOID *)888)==EFI_NOT_READY);
   EFI_STATUS S=PianoBootPolicyInitialize((VOID *)555);
   if(scenario==84||scenario==85){assert(S==(scenario==84?EFI_DEVICE_ERROR:EFI_DEVICE_ERROR)&&runtime&&idle&&PianoBootPolicyReport()->Retained&&!key_reg);assert(PianoBootPolicyStop()==EFI_ACCESS_DENIED);goto Done;}
   if(scenario==87){assert(S==EFI_ALREADY_STARTED&&!runtime&&!key_reg);goto Done;}
@@ -303,47 +294,17 @@ int main(int argc,char **argv){
     assert(PianoBootPolicyStop()==EFI_SUCCESS && key_unreg==key_reg && !runtime);goto Done;
   }
   if(scenario>=148){
-    assert(runtime->Revision==2&&runtime->StartLinux);
-    assert(PianoBootPolicySetLinuxEntry(NULL,(VOID *)888)==EFI_INVALID_PARAMETER);
-    assert(PianoBootPolicySetLinuxEntry(LinuxEntry,NULL)==EFI_INVALID_PARAMETER);
-    tpl=TPL_CALLBACK;assert(PianoBootPolicySetLinuxEntry(LinuxEntry,(VOID *)888)==EFI_UNSUPPORTED);tpl=TPL_APPLICATION;
-    if(scenario==148){
-      assert(runtime->StartLinux(runtime,(VOID *)777)==EFI_NOT_STARTED);
-      PIANO_PRODUCT_RUNTIME_PROTOCOL Copy=*runtime;
-      assert(runtime->StartLinux(&Copy,(VOID *)777)==EFI_INVALID_PARAMETER);
-      assert(runtime->StartLinux(runtime,NULL)==EFI_INVALID_PARAMETER);
-    }
-    assert(PianoBootPolicySetLinuxEntry(LinuxEntry,(VOID *)888)==EFI_SUCCESS);
-    assert(PianoBootPolicySetLinuxEntry(LinuxEntry,(VOID *)889)==EFI_ALREADY_STARTED);
-    assert(runtime->StartLinux(runtime,(VOID *)777)==EFI_NOT_STARTED&&!linux_calls);
-    if(scenario==148){
-      PIANO_PRODUCT_RUNTIME_PROTOCOL *Saved=runtime;
-      assert(PianoBootPolicyStop()==EFI_SUCCESS&&!runtime);
-      assert(PianoBootPolicySetLinuxEntry(LinuxEntry,(VOID *)888)==EFI_NOT_READY);
-      alive=FALSE;assert(mprotect(gBS,4096,PROT_NONE)==0);BOOLEAN Fatal=FALSE;
-      if(!setjmp(stop))(VOID)Saved->StartLinux(Saved,(VOID *)777);else Fatal=TRUE;
-      assert(Fatal&&PianoBootPolicyReport()->Retained&&!linux_calls&&!loads&&!starts&&!pumps&&!stops);goto Done;
-    }
-    if(scenario==149){
-      UINTN Pools=pool_calls;tpl=TPL_NOTIFY;assert(mprotect(gBS,4096,PROT_NONE)==0);
+    assert(runtime->Revision==PIANO_PRODUCT_RUNTIME_REVISION);
+    assert(PianoBootPolicySetStartupTarget(scenario==148?1:2)==EFI_SUCCESS);
+    assert(PianoBootPolicyStartupWindow(3000)==EFI_SUCCESS&&!loads&&!starts&&!stops);
+    assert(PianoBootPolicyReport()->StartupDefaultAction==PIANO_PRODUCT_ACTION_SIMPLEINIT);
+    if(scenario==150){
       assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE)==EFI_SUCCESS);
-      assert(mprotect(gBS,4096,PROT_READ|PROT_WRITE)==0);tpl=TPL_APPLICATION;
-      assert(pool_calls==Pools&&!linux_calls&&!loads&&!starts&&!pumps&&!stops);
-      assert(runtime->StartLinux(runtime,(VOID *)777)==EFI_NOT_READY);
-      tpl=TPL_CALLBACK;
-      for(UINTN I=0;I<16;++I)if(events[I].Live&&!events[I].Group)events[I].Notify(&events[I],events[I].Context);
-      assert(runtime->StartLinux(runtime,(VOID *)777)==EFI_UNSUPPORTED&&!linux_calls);tpl=TPL_APPLICATION;
-    }else{
-      assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_SIMPLEINIT)==EFI_SUCCESS);
-      assert(PianoBootPolicyDispatchPending()==EFI_SUCCESS&&starts==1&&!image_live&&!loan&&!linux_calls&&!stops);
-    }
-    assert(PianoBootPolicyDispatchPending()==EFI_END_OF_FILE&&!linux_calls&&!stops);
-    if(scenario==149)assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_APP,1000)==EFI_SUCCESS&&!linux_calls);
-    assert(runtime->StartLinux(runtime,(VOID *)777)==EFI_NOT_FOUND&&linux_calls==1&&!stops);
-    assert(!PianoBootPolicyReport()->Retained&&PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionBoot);
-    assert(PianoBootPolicyCancelStable()==EFI_SUCCESS);
+      assert(PianoBootPolicyDispatchPending()==EFI_END_OF_FILE);
+      assert(PianoBootPolicyCancelStable()==EFI_SUCCESS);
+    }else assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_SIMPLEINIT)==EFI_SUCCESS);
     UINT32 A;UINT64 Seq;assert(runtime->GetPendingAction(runtime,&A,&Seq)==EFI_SUCCESS&&A==PIANO_PRODUCT_ACTION_SIMPLEINIT);
-    assert(runtime->AckAction(runtime,Seq)==EFI_SUCCESS&&runtime->StartLinux(runtime,(VOID *)777)==EFI_NOT_STARTED&&linux_calls==1);
+    assert(runtime->AckAction(runtime,Seq)==EFI_SUCCESS);
     assert(PianoBootPolicyStop()==EFI_SUCCESS&&!stops);goto Done;
   }
   if(scenario==147){
@@ -371,9 +332,9 @@ int main(int argc,char **argv){
     }
     assert(PianoBootPolicyStartupWindow(3000)==EFI_SUCCESS && !loads && !starts && !stops);
     UINT32 A;UINT64 Seq;assert(runtime->GetPendingAction(runtime,&A,&Seq)==EFI_SUCCESS);
-    UINT32 Expected=scenario==130 || scenario==131?PIANO_PRODUCT_ACTION_SETUP:scenario==132?PIANO_PRODUCT_ACTION_SIMPLEINIT:scenario==133?PIANO_PRODUCT_ACTION_NONE:PIANO_PRODUCT_ACTION_RETURN_CORE;
+    UINT32 Expected=scenario==130 || scenario==131?PIANO_PRODUCT_ACTION_SETUP:scenario==132?PIANO_PRODUCT_ACTION_SIMPLEINIT:PIANO_PRODUCT_ACTION_NONE;
     assert(A==Expected && PianoBootPolicyReport()->RequestedCoreAction==(Expected==PIANO_PRODUCT_ACTION_RETURN_CORE?PianoUsbServiceActionBoot:PianoUsbServiceActionNone));
-    if(scenario==135 || scenario==141){assert(!pumps && proof_checks>3000);UINT64 Sample;BOOLEAN Active=TRUE;assert(idle->Read(idle,runtime,&Sample,&Active)==EFI_SUCCESS && Sample>0 && !Active);assert(PianoBootPolicyRun()==EFI_END_OF_FILE && !starts);if(scenario==141)assert(PianoBootPolicyReport()->Usb.Action==PianoUsbServiceActionFault && PianoBootPolicyReport()->Usb.LastStatus==EFI_TIMEOUT);}
+    if(scenario==135 || scenario==141){assert(!pumps && proof_checks>3000);UINT64 Sample;BOOLEAN Active=TRUE;assert(idle->Read(idle,runtime,&Sample,&Active)==EFI_SUCCESS && Sample>0 && !Active);if(scenario==141)assert(PianoBootPolicyReport()->Usb.Action==PianoUsbServiceActionFault && PianoBootPolicyReport()->Usb.LastStatus==EFI_TIMEOUT);}
     else assert(pumps>0);
     assert(PianoBootPolicySetStartupTarget(1)==EFI_ACCESS_DENIED);
     assert(PianoBootPolicyStop()==EFI_SUCCESS);goto Done;
@@ -418,15 +379,14 @@ int main(int argc,char **argv){
     if(scenario==105){Args="\tbootmonitor.bootmode=recovery\r\n";Bytes=strlen(Args)+1;}
     assert(PianoBootPolicySetEntryBootArgs(Args,Bytes)==EFI_SUCCESS);
     assert(PianoBootPolicyReport()->Entry==Expected);
-    assert(PianoBootPolicyReport()->StartupDefaultAction==(Expected==PianoBootEntryRecovery?PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE:PIANO_PRODUCT_ACTION_SIMPLEINIT));
+    assert(PianoBootPolicyReport()->StartupDefaultAction==PIANO_PRODUCT_ACTION_SIMPLEINIT);
     if(scenario==106){EFI_KEY_DATA Key={0};Key.Key.ScanCode=SCAN_F12;assert(key_callback(&Key)==EFI_SUCCESS);}
     S=PianoBootPolicyStartupWindow(3000);
     assert(!navigation&&!starts&&!loads&&!stops);
     if(scenario==104){assert(S==EFI_DEVICE_ERROR&&!PianoBootPolicyReport()->Retained&&key_reg==4&&key_unreg==2);assert(PianoBootPolicyStop()==EFI_SUCCESS&&key_unreg==3);goto Done;}
     assert(S==EFI_SUCCESS);
     UINT32 A;UINT64 Seq;assert(runtime->GetPendingAction(runtime,&A,&Seq)==EFI_SUCCESS);
-    BOOLEAN Auto=Expected==PianoBootEntryRecovery&&scenario<99;
-    Auto=Auto||scenario==105;
+    BOOLEAN Auto=FALSE;
     assert(A==(Auto?PIANO_PRODUCT_ACTION_RETURN_CORE:scenario==99||scenario==106?PIANO_PRODUCT_ACTION_SETUP:scenario>=100&&scenario<=102?PIANO_PRODUCT_ACTION_SIMPLEINIT:scenario==103?PIANO_PRODUCT_ACTION_RETURN_CORE:PIANO_PRODUCT_ACTION_NONE));
     assert(PianoBootPolicyReport()->RequestedCoreAction==(Auto?PianoUsbServiceActionBoot:PianoUsbServiceActionNone));
     assert(PianoBootPolicySetEntryBootArgs(Args,Bytes)==EFI_ACCESS_DENIED);

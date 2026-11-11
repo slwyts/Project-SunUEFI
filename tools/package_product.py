@@ -60,13 +60,10 @@ def main():
     if blob[:8]!=b'ANDROID!'or struct.unpack_from('<I',blob,40)[0]!=args.header_version or blob[4096:4096+ks]!=kernel.read_bytes()or rs!=len(payload)or blob[roff:roff+rs]!=payload:raise ValueError('Product boot image contents mismatch')
     linux_source=ws/'Build/pianoProductPkg/DEBUG_CLANGPDB/AARCH64/pianoProductPkg/Applications/LinuxBoot/LinuxBoot/OUTPUT/PianoLinuxBoot.efi'
     image_info(linux_source,kernel=False)
-    linux_loader=out/'PianoLinuxBoot.efi'
-    shutil.copyfile(linux_source,linux_loader)
-    if sha(linux_loader)!=sha(linux_source):raise ValueError('Installed Linux EFI application changed while copying')
     result={**prepared,'build_id':build['build_id'],'build_inputs':build['inputs'],'android_header_version':args.header_version,
         'status':'INCOMPLETE_NOT_RELEASE','not_release_reasons':[name+': '+entry['status']for name,entry in prepared['backends'].items()],
         'single_image_entry_compatibility':'same bytes; all entry-specific physical boot/recovery/fastboot_boot validation pending',
-        'files':{path.name:{'bytes':path.stat().st_size,'sha256':sha(path)}for path in (image,fd,shim,kernel,linux_loader)},
+        'files':{path.name:{'bytes':path.stat().st_size,'sha256':sha(path)}for path in (image,fd,shim,kernel)},
         'core_application_sha256':sha(core/'OUTPUT/PianoProductCore.efi'),'device_boot_performed':False,'os_boot_performed':False}
     (out/'manifest.json').write_text(json.dumps(result,indent=2)+'\n')
     print(json.dumps({'artifact':str(image),'sha256':sha(image),'bytes':image.stat().st_size,'status':result['status'],'device_boot_performed':False},indent=2))

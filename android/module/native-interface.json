@@ -86,7 +86,7 @@
     "verified_manager": "SukiSU",
     "webui_bridge_verified": true,
     "manager_action": "Plain-language read-only summary, no JSON dump or restart.",
-    "quick_status": "Read owned request pages and check a complete BLS Linux entry or the legacy EFI/Piano/stable/boot.img without writing the ESP or hashing the whole BOOT.",
+    "quick_status": "Read owned request pages and check EFI/Linux/sunuefi.efi without writing the ESP or hashing the whole BOOT.",
     "check_boot": "Complete read-only native status; does not silently create installation state.",
     "switch": "Guarded persistent request write followed by ordinary reboot. Supported helper targets: android, uefi and installed Linux.",
     "setup_available": false,

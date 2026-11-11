@@ -262,7 +262,61 @@ hook(SI+'src/gui/drivers/uefi_gop.c', '\tuefigop_apply_mode();\n',
      '\t\tgop->Mode->Info->HorizontalResolution,gop->Mode->Info->VerticalResolution,\n'
      '\t\tgop->Mode->Info->PixelsPerScanLine,(unsigned)gop->Mode->Info->PixelFormat);\n')
 hook(SI+'src/gui/interface/core/bootmenu.c', '#include"gui/tools.h"\n',
-     '#include"gui/tools.h"\n#include"gui/msgbox.h"\n#include"piano_bootmenu.h"\n#ifdef ENABLE_UEFI\n#include<Library/PianoProductPumpLib.h>\n#endif\n')
+      '#include"gui/tools.h"\n#include"gui/msgbox.h"\n#include"piano_bootmenu.h"\n#ifdef ENABLE_UEFI\n#include<Library/PianoProductPumpLib.h>\n#endif\n')
+hook(SI+'src/gui/interface/core/bootmenu.c', '\tint timeout;\n',
+     '\tint timeout;\n\tuint32_t auto_boot_at;\n\tbool auto_boot_started;\n')
+hook(SI+'src/gui/interface/core/bootmenu.c', '''static void bootmenu_auto_boot(struct bootmenu*bm){
+	if(bm->timeout<=0){
+		bootmenu_remove_auto_boot(bm);
+		bootmenu_click(&(lv_event_t){.user_data=bm});
+	}else if(!bm->auto_boot){
+		bm->auto_boot=lv_timer_create(
+			bootmenu_auto_boot_cb,1000,bm
+		);
+	}else{
+		if(bm->anim&&!bm->anim_done)return;
+		lv_obj_set_hidden(bm->time,false);
+		char*tout=confd_get_string("boot.timeout_text",NULL);
+		lv_label_set_text_fmt(
+			bm->time,
+			tout?tout:_("Auto boot in %d seconds"),
+			bm->timeout
+		);
+		if(tout)free(tout);
+		bm->timeout--;
+		lv_disp_trig_activity(NULL);
+	}
+}''', '''static void bootmenu_auto_boot(struct bootmenu*bm){
+	if(!bm->auto_boot){
+		bm->auto_boot=lv_timer_create(bootmenu_auto_boot_cb,100,bm);
+		return;
+	}
+	if(bm->anim&&!bm->anim_done)return;
+	if(!bm->auto_boot_started){
+		bm->auto_boot_at=lv_tick_get();
+		bm->auto_boot_started=true;
+	}
+	uint32_t elapsed=lv_tick_elaps(bm->auto_boot_at);
+	if(elapsed>=(uint32_t)bm->timeout*1000){
+		bootmenu_remove_auto_boot(bm);
+		bootmenu_click(&(lv_event_t){.user_data=bm});
+		return;
+	}
+	lv_obj_set_hidden(bm->time,false);
+	lv_label_set_text_fmt(bm->time,_("Auto boot in %d seconds"),
+		bm->timeout-(int)(elapsed/1000));
+	lv_disp_trig_activity(NULL);
+}''')
+hook(SI+'src/gui/interface/core/bootmenu.c', '\tlv_obj_add_event_cb(bi->btn,bootmenu_item_click,LV_EVENT_CLICKED,bi);',
+     '\tlv_obj_add_event_cb(bi->btn,bootmenu_remove_auto_boot_cb,LV_EVENT_PRESSED,bm);\n'
+     '\tlv_obj_add_event_cb(bi->btn,bootmenu_remove_auto_boot_cb,LV_EVENT_KEY,bm);\n'
+     '\tlv_obj_add_event_cb(bi->btn,bootmenu_item_click,LV_EVENT_CLICKED,bi);')
+hook(SI+'src/gui/interface/core/bootmenu.c', '\tbm->btn=lv_draw_button(bm->scr,_("Boot"),false,bootmenu_click,bm);\n',
+     '\tbm->btn=lv_draw_button(bm->scr,_("Boot"),false,bootmenu_click,bm);\n'
+     '\tlv_obj_add_event_cb(bm->btn,bootmenu_remove_auto_boot_cb,LV_EVENT_PRESSED,bm);\n'
+     '\tlv_obj_add_event_cb(bm->btn,bootmenu_remove_auto_boot_cb,LV_EVENT_KEY,bm);\n'
+     '\tlv_obj_add_event_cb(bm->page,bootmenu_remove_auto_boot_cb,LV_EVENT_SCROLL_BEGIN,bm);\n'
+     '\tlv_obj_add_event_cb(bm->scr,bootmenu_remove_auto_boot_cb,LV_EVENT_PRESSED,bm);\n')
 hook(SI+'src/gui/SimpleInitGUI.inf', '  interface/core/bootmenu.c\n',
      '  interface/core/bootmenu.c\n  interface/core/piano_bootmenu.c\n')
 hook(SI+'src/gui/interface/core/bootmenu.c',

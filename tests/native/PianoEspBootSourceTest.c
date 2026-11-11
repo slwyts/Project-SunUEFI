@@ -1,5 +1,4 @@
-// Reuse the existing read-only SFS fixture; exercise the real ESP selector,
-// FileSource snapshot, CpuInput slices and launch-blob lifetime together.
+// Reuse the read-only SFS fixture for actual ESP identity and UKI discovery.
 #define main ExistingBootFileSourceFixtureMain
 #include "PianoBootFileSourceTest.c"
 #undef main
@@ -24,12 +23,11 @@ static EFI_BLOCK_IO_PROTOCOL Block;
 static EFI_BLOCK_IO_MEDIA Media;
 static ESP_PATH DevicePath;
 static EFI_BLOCK_IO_PROTOCOL ParentBlock;
-static EFI_BLOCK_IO_PROTOCOL AlternateBlock,AlternateParentBlock;
 static EFI_BLOCK_IO_MEDIA ParentMedia;
 static PARENT_PATH ParentPath;
 static EFI_HANDLE *HandleAllocation,*ParentHandleAllocation;
 static UINTN HandleCount,ParentHandleCount,HandleFrees,ParentFrees,VolumeChecks;
-static BOOLEAN ChangeAfterRead,ChangeBothAfterRead,ChangeParentAfterRead,ChangeInstanceAfterRead,ChangeParentInstanceAfterRead,MissingFile,CheckingPresence,MissingManager;
+static BOOLEAN MissingFile;
 
 static EFI_DEVICE_PATH_PROTOCOL Header(UINT8 T,UINT8 S,UINTN N){
   return (EFI_DEVICE_PATH_PROTOCOL){T,S,{(UINT8)N,(UINT8)(N>>8)}};
@@ -54,11 +52,11 @@ static EFI_STATUS EFIAPI Locate(EFI_LOCATE_SEARCH_TYPE T,EFI_GUID *G,VOID *Key,U
 static EFI_STATUS EFIAPI EspHandle(EFI_HANDLE H,EFI_GUID *G,VOID **Out){
   Check();assert(H==(VOID *)7||H==(VOID *)8||H==(VOID *)9||H==(VOID *)10);
   if(H==(VOID *)9||H==(VOID *)10){
-    if(G==&gEfiBlockIoProtocolGuid){if(ChangeParentAfterRead&&Reads)++ParentMedia.MediaId;*Out=ChangeParentInstanceAfterRead&&Reads?&AlternateParentBlock:&ParentBlock;}
+    if(G==&gEfiBlockIoProtocolGuid){*Out=&ParentBlock;}
     else{assert(G==&gEfiDevicePathProtocolGuid);*Out=&ParentPath;}return EFI_SUCCESS;
   }
-  if(G==&gEfiPartitionInfoProtocolGuid){++VolumeChecks;if((ChangeAfterRead||ChangeBothAfterRead)&&Reads){Partition.Info.Gpt.UniquePartitionGUID.Data1^=1;if(ChangeBothAfterRead)memcpy(DevicePath.Hd.Signature,&Partition.Info.Gpt.UniquePartitionGUID,sizeof(EFI_GUID));}*Out=&Partition;}
-  else if(G==&gEfiBlockIoProtocolGuid)*Out=ChangeInstanceAfterRead&&Reads?&AlternateBlock:&Block;
+  if(G==&gEfiPartitionInfoProtocolGuid){++VolumeChecks;*Out=&Partition;}
+  else if(G==&gEfiBlockIoProtocolGuid)*Out=&Block;
   else if(G==&gEfiDevicePathProtocolGuid)*Out=&DevicePath;
   else {assert(G==&gEfiSimpleFileSystemProtocolGuid);*Out=&Sfs;}
   return EFI_SUCCESS;
@@ -69,17 +67,14 @@ static EFI_STATUS EFIAPI EspFree(VOID *P){
   return Free(P);
 }
 static EFI_STATUS EFIAPI EspOpen(EFI_FILE_PROTOCOL *P,EFI_FILE_PROTOCOL **Out,CHAR16 *Path,UINT64 Mode,UINT64 Attr){
-  static CONST CHAR16 RawPath[]=L"\\EFI\\Piano\\stable\\boot.img";
-  static CONST CHAR16 EfiPath[]=L"\\EFI\\BOOT\\BOOTAA64.EFI";
-  BOOLEAN Manager=CheckingPresence&&!Opens;
-  CONST CHAR16 *ExpectedPath=Manager?EfiPath:RawPath;
-  assert(!memcmp(Path,ExpectedPath,Manager?sizeof(EfiPath):sizeof(RawPath))&&Mode==EFI_FILE_MODE_READ&&!Attr);
-  if(MissingFile||(MissingManager&&Manager)){++Opens;*Out=NULL;return EFI_NOT_FOUND;}return Open(P,Out,Path,Mode,Attr);
+  static CONST CHAR16 EfiPath[]=L"\\EFI\\Linux\\sunuefi.efi";
+  assert(!memcmp(Path,EfiPath,sizeof(EfiPath))&&Mode==EFI_FILE_MODE_READ&&!Attr);
+  if(MissingFile){++Opens;*Out=NULL;return EFI_NOT_FOUND;}return Open(P,Out,Path,Mode,Attr);
 }
 static VOID EspSetup(VOID){
   Case=Reads=Seeks=Opens=Roots=FileCloses=RootCloses=Allocations=Frees=Closes=Calls=Infos=0;
   Slices=MemoryChecks=MemoryValidations=BufferValidations=HandleFrees=ParentFrees=VolumeChecks=0;
-  Services=TRUE;ChangeAfterRead=ChangeBothAfterRead=ChangeParentAfterRead=ChangeInstanceAfterRead=ChangeParentInstanceAfterRead=MissingFile=CheckingPresence=MissingManager=FALSE;
+  Services=TRUE;MissingFile=FALSE;
   HandleCount=ParentHandleCount=1;HandleAllocation=ParentHandleAllocation=NULL;Fence=NULL;
   memset(Pools,0,sizeof(Pools));Setup();gBS=&Bs;Bs.LocateHandleBuffer=Locate;Bs.HandleProtocol=EspHandle;Bs.FreePool=EspFree;Root.Open=EspOpen;
   Partition=(EFI_PARTITION_INFO_PROTOCOL){.Revision=EFI_PARTITION_INFO_PROTOCOL_REVISION,.Type=PARTITION_TYPE_GPT};
@@ -87,7 +82,7 @@ static VOID EspSetup(VOID){
   Partition.Info.Gpt.StartingLBA=107774464;Partition.Info.Gpt.EndingLBA=107905535;
   static CONST CHAR16 Name[36]=L"sunuefi_esp";memcpy(Partition.Info.Gpt.PartitionName,Name,sizeof(Name));
   Media=(EFI_BLOCK_IO_MEDIA){.MediaPresent=TRUE,.LogicalPartition=TRUE,.ReadOnly=TRUE,.BlockSize=4096,.LastBlock=131071};
-  Block=(EFI_BLOCK_IO_PROTOCOL){.Media=&Media,.ReadBlocks=BlockRead,.WriteBlocks=BlockWrite};AlternateBlock=Block;
+  Block=(EFI_BLOCK_IO_PROTOCOL){.Media=&Media,.ReadBlocks=BlockRead,.WriteBlocks=BlockWrite};
   memset(&DevicePath,0,sizeof(DevicePath));
   DevicePath.Vendor.Header=Header(HARDWARE_DEVICE_PATH,HW_VENDOR_DP,sizeof(VENDOR_DEVICE_PATH));DevicePath.Vendor.Guid=VendorGuid;
   DevicePath.Ufs.Header=Header(MESSAGING_DEVICE_PATH,MSG_UFS_DP,sizeof(UFS_DEVICE_PATH));
@@ -96,46 +91,31 @@ static VOID EspSetup(VOID){
   memcpy(DevicePath.Hd.Signature,&EspGuid,sizeof(EspGuid));DevicePath.Hd.MBRType=MBR_TYPE_EFI_PARTITION_TABLE_HEADER;DevicePath.Hd.SignatureType=SIGNATURE_TYPE_GUID;
   DevicePath.End=Header(END_DEVICE_PATH_TYPE,END_ENTIRE_DEVICE_PATH_SUBTYPE,sizeof(EFI_DEVICE_PATH_PROTOCOL));
   ParentMedia=(EFI_BLOCK_IO_MEDIA){.MediaPresent=TRUE,.LogicalPartition=FALSE,.ReadOnly=TRUE,.BlockSize=4096,.LastBlock=124552191};
-  ParentBlock=(EFI_BLOCK_IO_PROTOCOL){.Media=&ParentMedia,.ReadBlocks=BlockRead,.WriteBlocks=BlockWrite};AlternateParentBlock=ParentBlock;
+  ParentBlock=(EFI_BLOCK_IO_PROTOCOL){.Media=&ParentMedia,.ReadBlocks=BlockRead,.WriteBlocks=BlockWrite};
   ParentPath=(PARENT_PATH){.Vendor=DevicePath.Vendor,.Ufs=DevicePath.Ufs,.End=DevicePath.End};
 }
 int main(void){
-  PIANO_CPU_INPUT_ENV Cpu={.BootServicesAlive=Live,.ServiceSlice=CpuSlice};
   EspSetup();EFI_HANDLE Esp=(VOID *)0xbad;MissingFile=TRUE;
   assert(PianoEspBootFind(NULL)==EFI_INVALID_PARAMETER&&!Calls);
   assert(PianoEspBootFind(&Esp)==EFI_SUCCESS&&Esp==(VOID *)7&&HandleFrees==1&&ParentFrees==1);
   assert(!Roots&&!Opens&&!Reads&&!Allocations&&PianoEspBootDiscovery()->Open==EFI_NOT_STARTED);
   EspSetup();HandleCount=257;Esp=(VOID *)0xbad;
   assert(PianoEspBootFind(&Esp)==EFI_COMPROMISED_DATA&&!Esp&&HandleFrees==1&&!Roots&&!Opens);
-  EspSetup();CheckingPresence=TRUE;
+  EspSetup();
   assert(PianoEspBootPresent()==EFI_SUCCESS&&Opens==1&&!Reads&&!Allocations&&FileCloses==1&&RootCloses==1);
-  EspSetup();CheckingPresence=MissingFile=TRUE;
-  assert(PianoEspBootPresent()==EFI_NOT_FOUND&&Opens==2&&!Reads&&!Allocations&&!FileCloses&&RootCloses==1);
-  EspSetup();CheckingPresence=MissingManager=TRUE;
-  assert(PianoEspBootPresent()==EFI_SUCCESS&&Opens==2&&!Reads&&!Allocations&&FileCloses==1&&RootCloses==1);
-  EspSetup();PIANO_ESP_BOOT_SOURCE S={0};assert(PianoEspBootLoad(&S,&Cpu)==EFI_SUCCESS);
-  assert(HandleFrees==1&&Roots==1&&Opens==1&&FileCloses==1&&RootCloses==1&&!S.File.File&&!S.File.Root);
-  assert(S.File.Bytes==ContentBytes&&!memcmp(S.File.Sha256,Expected,32)&&Slices>=3&&VolumeChecks==2);
-  assert(PianoEspBootOwned(&S,S.Owner)&&!PianoEspBootOwned(&S,(VOID *)0xbad));
-  UINTN OldReads=Reads;
-  assert(S.Blob.BorrowView(S.Blob.Context,S.Owner,(PIANO_BOOT_RANGE){0,S.Blob.Bytes},&S.View,&S.Loan)==EFI_SUCCESS);
-  assert(S.View==S.File.Data&&S.Loan==S.File.Loan&&!memcmp(S.View,Content,ContentBytes));
-  assert(PianoEspBootRelease(&S)==EFI_SUCCESS&&PianoEspBootReleased(&S)&&Frees==1&&Closes==1&&Reads==OldReads);
-  assert(!S.File.Data&&!S.File.Exit&&!S.File.Loan&&!S.Owner&&!S.Loan&&!S.View);
-  UINTN Before=Calls;assert(PianoEspBootRelease(&S)==EFI_SUCCESS&&Calls==Before);
-  assert(PianoEspBootLoad(&S,&Cpu)==EFI_ALREADY_STARTED&&Calls==Before);
+  EspSetup();MissingFile=TRUE;
+  assert(PianoEspBootPresent()==EFI_NOT_FOUND&&Opens==1&&!Reads&&!Allocations&&!FileCloses&&RootCloses==1);
   // New installations choose fresh UUIDs, positions, capacities and GPT slots.
   for(UINTN I=0;I<3;++I){
-    EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};EFI_GUID Id={.Data1=(UINT32)(0xabc000+I),.Data4={1,2,3,4,5,6,7,8}};
+    EspSetup();EFI_GUID Id={.Data1=(UINT32)(0xabc000+I),.Data4={1,2,3,4,5,6,7,8}};
     UINT64 Start=2048+I*1000000,Blocks=I==0?65536:I==1?262144:524288;
     Partition.Info.Gpt.UniquePartitionGUID=Id;Partition.Info.Gpt.StartingLBA=Start;Partition.Info.Gpt.EndingLBA=Start+Blocks-1;
     DevicePath.Hd.PartitionNumber=(UINT32)I+2;DevicePath.Hd.PartitionStart=Start;DevicePath.Hd.PartitionSize=Blocks;
     memcpy(DevicePath.Hd.Signature,&Id,sizeof(Id));Media.LastBlock=Blocks-1;
-    assert(PianoEspBootLoad(&S,&Cpu)==EFI_SUCCESS&&PianoEspBootOwned(&S,S.Owner)&&ParentFrees==2);
-    assert(PianoEspBootRelease(&S)==EFI_SUCCESS&&PianoEspBootReleased(&S));
+    assert(PianoEspBootPresent()==EFI_SUCCESS&&!Reads&&!Allocations&&ParentFrees==1);
   }
   // Each mismatch must fail before even opening the volume or allocating a snapshot.
-  for(UINTN I=0;I<33;++I){EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};switch(I){
+  for(UINTN I=0;I<33;++I){EspSetup();switch(I){
     case 0:Partition.Info.Gpt.UniquePartitionGUID.Data1^=1;break;
     case 1:Partition.Info.Gpt.PartitionName[0]='X';break;
     case 2:Partition.Info.Gpt.PartitionTypeGUID.Data1^=1;break;
@@ -171,60 +151,11 @@ int main(void){
     case 31:ParentHandleCount=2;break;
     case 32:ParentMedia.BlockSize=512;break;
   }
-    EFI_STATUS E=PianoEspBootLoad(&S,&Cpu);assert(E==(I==21||I==22?EFI_COMPROMISED_DATA:EFI_NOT_FOUND));
-    assert(!Opens&&!Roots&&!Reads&&!Allocations&&!S.Loaded&&!S.Owner&&!S.Retained&&HandleFrees==1);
-    Esp=(VOID *)0xbad;assert(PianoEspBootFind(&Esp)==E&&!Esp&&HandleFrees==2);
+    Esp=(VOID *)0xbad;EFI_STATUS E=PianoEspBootFind(&Esp);assert(E==(I==21||I==22?EFI_COMPROMISED_DATA:EFI_NOT_FOUND)&&!Esp&&HandleFrees==1);
     assert(!Opens&&!Roots&&!Reads&&!Allocations);
   }
-  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};ChangeAfterRead=TRUE;
-  assert(PianoEspBootLoad(&S,&Cpu)==EFI_MEDIA_CHANGED&&!S.Loaded&&!S.Retained&&S.File.Consumed&&Frees==1&&Closes==1);
-  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};ChangeBothAfterRead=TRUE;
-  assert(PianoEspBootLoad(&S,&Cpu)==EFI_MEDIA_CHANGED&&!S.Loaded&&!S.Retained&&S.File.Consumed&&Frees==1&&Closes==1);
-  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};ChangeParentAfterRead=TRUE;
-  assert(PianoEspBootLoad(&S,&Cpu)==EFI_MEDIA_CHANGED&&!S.Loaded&&!S.Retained&&S.File.Consumed&&Frees==1&&Closes==1);
-  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};ChangeInstanceAfterRead=TRUE;
-  assert(PianoEspBootLoad(&S,&Cpu)==EFI_MEDIA_CHANGED&&!S.Loaded&&!S.Retained&&S.File.Consumed&&Frees==1&&Closes==1);
-  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};ChangeParentInstanceAfterRead=TRUE;
-  assert(PianoEspBootLoad(&S,&Cpu)==EFI_MEDIA_CHANGED&&!S.Loaded&&!S.Retained&&S.File.Consumed&&Frees==1&&Closes==1);
-  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};Media.ReadOnly=ParentMedia.ReadOnly=FALSE;
-  assert(PianoEspBootLoad(&S,&Cpu)==EFI_SUCCESS&&Opens==1&&PianoEspBootOwned(&S,S.Owner));
-  assert(PianoEspBootRelease(&S)==EFI_SUCCESS&&PianoEspBootReleased(&S));
-  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};
-  Partition.Info.Gpt.EndingLBA=Partition.Info.Gpt.StartingLBA+7;DevicePath.Hd.PartitionSize=8;Media.LastBlock=7;
-  assert(PianoEspBootLoad(&S,&Cpu)==EFI_BAD_BUFFER_SIZE&&!S.Loaded&&!S.Retained&&!Reads&&!Allocations);
-  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};MissingFile=TRUE;
-  assert(PianoEspBootLoad(&S,&Cpu)==EFI_NOT_FOUND&&!S.Retained&&S.File.Consumed&&RootCloses==1&&Closes==1&&!Allocations);
-  assert(!S.File.File&&!S.File.Root&&!S.File.Exit&&!S.File.Data&&!S.File.Owner&&!S.File.Loan);
-  MissingFile=FALSE;assert(PianoEspBootLoad(&S,&Cpu)==EFI_SUCCESS&&Opens==2&&PianoEspBootOwned(&S,S.Owner));
-  assert(PianoEspBootRelease(&S)==EFI_SUCCESS&&PianoEspBootReleased(&S)&&Closes==2);
-  // A failed event retirement is terminal, even after the active loan was
-  // successfully removed. Nothing may retry closure or free its live buffer.
-  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};assert(PianoEspBootLoad(&S,&Cpu)==EFI_SUCCESS);
-  assert(S.Blob.BorrowView(S.Blob.Context,S.Owner,(PIANO_BOOT_RANGE){0,S.Blob.Bytes},&S.View,&S.Loan)==EFI_SUCCESS);
-  Case=16;assert(PianoEspBootRelease(&S)==EFI_DEVICE_ERROR&&S.Retained&&S.File.Retained);
-  assert(!S.Loan&&!S.View&&!S.File.Loan&&S.File.Exit&&S.File.Data&&!Frees&&Closes==1&&!PianoEspBootReleased(&S));
-  Before=Calls;assert(PianoEspBootRelease(&S)==EFI_ACCESS_DENIED&&Calls==Before);
-  // Test-fixture reclamation only, after proving production release cannot retry.
-  free(S.File.Exit);free(S.File.Data);
-  // The complete128MiB file is a normal low-heap allocation, not a forged
-  // full-DDR authorization. SHA, ownership and clearing use the real code.
-  ContentBytes=PIANO_CPU_INPUT_LOW_BYTES;Content=malloc(ContentBytes);assert(Content);
-  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};
-  assert(PianoEspBootLoad(&S,&Cpu)==EFI_SUCCESS&&S.File.Bytes==128ULL*1024*1024);
-  assert(Allocations==1&&S.File.Chunks==2048&&Slices>=2048&&!MemoryChecks&&!BufferValidations&&!S.File.Memory.FullDdr);
-  assert(!memcmp(S.File.Sha256,Expected,32)&&PianoEspBootOwned(&S,S.Owner));
-  assert(PianoEspBootRelease(&S)==EFI_SUCCESS&&PianoEspBootReleased(&S)&&Frees==1);
-  // Reject an oversized file before allocating or reading any file data.
-  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};++ContentBytes;
-  assert(PianoEspBootLoad(&S,&Cpu)==EFI_BAD_BUFFER_SIZE&&!Reads&&!Allocations&&!S.Loaded&&!S.Retained&&S.File.Consumed);
-  --ContentBytes;
-  // Fragmentation/allocation failure remains a closed, retained source;
-  // no read, partial launch, or unacknowledged buffer release may follow.
-  EspSetup();S=(PIANO_ESP_BOOT_SOURCE){0};Case=38;
-  assert(PianoEspBootLoad(&S,&Cpu)==EFI_OUT_OF_RESOURCES&&S.Retained&&S.File.Retained);
-  assert(!Reads&&!Allocations&&!Frees&&!S.Loaded&&!S.Owner&&!S.File.Ready&&!S.File.Data);
-  Before=Calls;assert(PianoEspBootRelease(&S)!=EFI_SUCCESS&&Calls==Before);
-  free(S.File.Exit);free(Content);Content=SmallContent;ContentBytes=sizeof(SmallContent);
-  puts("Actual ESP + FileSource + CpuInput PASS: fresh UUID/geometry, parent bounds, ambiguity, read-only opens on RW media, instance changes, missing-file retry, SHA, ownership and cleanup; no device");
+  EspSetup();Media.ReadOnly=ParentMedia.ReadOnly=FALSE;
+  assert(PianoEspBootPresent()==EFI_SUCCESS&&Opens==1&&!Reads&&!Allocations);
+  puts("Actual ESP discovery PASS: fresh UUID/geometry, parent bounds, ambiguity and read-only UKI check; no device");
   return 0;
 }

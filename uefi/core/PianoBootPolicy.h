@@ -23,13 +23,11 @@ typedef struct {
 // Shared core starts real USB/UFS/input first; this policy does not create a
 // transport, stop it on UI return, or turn an unbound worker into USB-ready.
 EFI_STATUS PianoBootPolicyInitialize(EFI_HANDLE Parent);
-// Root binds the installed Linux entry once; RequestAction remains CPU-only.
-EFI_STATUS PianoBootPolicySetLinuxEntry(EFI_STATUS (*Start)(VOID *,PIANO_PRODUCT_RUNTIME_PROTOCOL *,EFI_HANDLE),VOID *Context);
 // Core supplies the bounded /chosen/bootargs property from its validated FDT.
 // Missing, malformed or duplicate mode tokens keep the normal SimpleInit default.
 EFI_STATUS PianoBootPolicySetEntryBootArgs(CONST CHAR8 *BootArgs,UINTN Bytes);
 // Validated embedded request target: 0 keeps the bootargs default, 1 menu,
-// 2 fixed ESP Linux, 3 Setup. Keys during the choice window still take priority.
+// 2 Linux through the same menu countdown, 3 Setup. Keys still take priority.
 EFI_STATUS PianoBootPolicySetStartupTarget(UINT32 Target);
 // Only an actual Controller rollback proof enables CPU/input slices without
 // the USB service. Every use revalidates the producer and live SMMU state.
@@ -37,7 +35,7 @@ EFI_STATUS PianoBootPolicySetUsbStartupFailure(CONST VOID *Fdt,CONST PIANO_SMMU_
 // One APP-only startup choice window (1..3000ms). Keeps the shared service
 // pump alive; F12 keeps its normal path, Esc requests SimpleInit only here.
 // Recovery also maps the side volume keys to SimpleInit during this window;
-// its timeout latches the existing stable-file request only if nothing is pending.
+// its timeout leaves the normal SimpleInit menu policy in place.
 // It only latches an action; the existing Run performs actual dispatch later.
 EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds);
 // Auto SimpleInit from Root's actual APPv1 validated payload registry. Pending

@@ -44,7 +44,7 @@ fastboot -s SunUEFI-piano getvar product     # 应返回 piano-sunuefi
 fastboot -s SunUEFI-piano oem boot-stable
 ```
 
-UEFI 会读取 ESP 里的 `\EFI\Piano\stable\boot.img` 并启动 Linux。不想继续时，回到 Android：
+UEFI 会从启动镜像（ESP）直接启动 Linux。不想继续时，重启：
 
 ```sh
 fastboot -s SunUEFI-piano reboot

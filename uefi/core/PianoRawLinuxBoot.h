@@ -4,7 +4,7 @@
 #include <Protocol/LoadedImage.h>
 
 // This is the fixed, reserved Kernel-window loader, not full-DDR EFI authority.
-// Only the resident Core's real download session or fixed ESP snapshot produces it.
+// Only the resident Core's acknowledged USB download session produces it.
 typedef struct {
   UINT32 Revision;UINT64 Epoch,Kernel,KernelBytes,KernelSpan,Dtb,DtbBytes,Initrd,InitrdBytes;
   EFI_HANDLE Image;CONST EFI_LOADED_IMAGE_PROTOCOL *Identity;VOID *Token;
@@ -12,10 +12,6 @@ typedef struct {
   UINT8 KernelSha[32],InitrdSha[32],DtbSha[32];
 } PIANO_RAW_LINUX_REPORT;
 EFI_STATUS PianoRawLinuxRegister(EFI_HANDLE Image,EFI_SYSTEM_TABLE *SystemTable);
-// Fixed ESP snapshot, taken from the real FileSource before controller retirement.
-EFI_STATUS PianoRawLinuxLoadStable(PIANO_PRODUCT_RUNTIME_PROTOCOL *,VOID **Context,VOID **Token);
-EFI_STATUS PianoRawLinuxDiscardStable(VOID);
-BOOLEAN PianoRawLinuxStableRetained(VOID);
 VOID PianoRawLinuxReplayStable(VOID);
 // Core retains payload ownership; ExitImage is the actual current EFI image.
 EFI_STATUS PianoRawLinuxPrepare(PIANO_PRODUCT_OWNERS *,EFI_HANDLE CoreImage,EFI_HANDLE ExitImage,CONST PIANO_RAW_LINUX_REPORT **);

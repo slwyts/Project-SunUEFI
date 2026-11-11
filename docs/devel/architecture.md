@@ -18,11 +18,9 @@
                        ├─► 常驻 USB Fastboot 服务 (SunUEFI-piano)
                        ├─► 显示 SimpleInit 图形菜单
                        │
-                       ▼ 启动 Linux
-                     systemd-boot (/EFI/BOOT/BOOTAA64.EFI)
-                       │ 默认 Debian 启动项
-                       ▼ LinuxBoot.efi 请求驻留核心启动
-                     读取 sunuefi_esp 中的 /EFI/Piano/stable/boot.img
+                       ▼ 无操作五秒，或手动启动 Linux
+                     核心直接启动 /EFI/Linux/sunuefi.efi (UKI)
+                       │ systemd-stub → Linux EFI stub
                        │
                        ▼ ExitBootServices 安全退出
                      释放 USB 控制器、UFS、时钟与 SMMU
@@ -67,20 +65,15 @@ SunUEFI 提供与原厂 Bootloader 不同的 Fastboot 服务：
 
 ```
 sunuefi_esp/
-├── EFI/
-│   ├── BOOT/BOOTAA64.EFI       # systemd-boot
-│   └── Piano/
-│       ├── LinuxBoot.efi      # 旧启动项的兼容应用
-│       └── stable/
-│           ├── Image
-│           ├── board.dtb
-│           ├── initramfs
-│           └── boot.img       # 旧 ESP 的组合启动镜像
-└── loader/
-    ├── loader.conf
-    └── entries/linux.conf
+└── EFI/
+    └── Linux/
+        └── sunuefi.efi       # UKI：内核、initramfs、DTB、启动参数
 ```
 
-四个发行版共用上面的 ESP。默认启动项在 `loader/entries/linux.conf` 中用 `linux`、`initrd`、`devicetree` 分别引用内核、initramfs 和 DTB，systemd-boot 直接进入内核的 EFI stub。NixOS 也使用这条标准路径，文件由 NixOS 的 systemd-boot 模块管理。
+四个产品发行版共用上面的 ESP。UKI 是标准 EFI 应用，不需要第二个启动管理器。
+独立发行版可自行生成相同路径的 UKI；不要求它采用产品 rootfs。
 
-旧 ESP 仍可通过兼容应用调用驻留核心读取 `boot.img`；没有 EFI 管理器的旧安装沿用原有入口。两种路径都在内核交接前关闭硬件，启动管理器运行时存储保持可读。内存与退出身份的处理见 [UEFI 核心](uefi-core.md#esp-启动文件与系统交接)。
+旧的 Linux `boot.img` 和分文件 BLS 配置不再是产品入口，更新固件时需同步
+更新启动镜像（ESP），不必覆盖已有 root。UEFI 自动适配本次启动的内存布局，
+不按 12/16 GB 制作 UKI。内存与退出身份的处理见
+[UEFI 核心](uefi-core.md#esp-启动文件与系统交接)。

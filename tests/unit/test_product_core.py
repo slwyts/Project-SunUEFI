@@ -52,23 +52,11 @@ class ProductCoreTests(unittest.TestCase):
                                 env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1'})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_running_manager_and_real_child_required(self):
-        self.run_case('admission')
-
-    def test_clean_load_failure_returns_before_retirement(self):
-        self.run_case('before-retirement')
-
-    def test_retained_and_retirement_failures_do_not_return(self):
-        self.run_case('fatal-failures')
-
-    def test_core_identity_and_raw_handoff_order(self):
-        self.run_case('handoff-order')
-
-    def test_host_priority_returns_before_retirement(self):
-        self.run_case('host-priority')
-
-    def test_standard_efi_requires_actual_active_manager_descendant(self):
+    def test_standard_efi_requires_actual_active_uki_descendant(self):
         self.run_case('efi-admission')
+
+    def test_failed_uki_reports_original_error_without_menu_retry(self):
+        self.run_case('uki-load-failure')
 
     def test_error_screen_uses_only_live_unretired_usb_diagnostics(self):
         self.run_case('error-diagnostics')

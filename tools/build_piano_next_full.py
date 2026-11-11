@@ -143,7 +143,7 @@ def validate_modules(folder, release, required=REQUIRED_MODULES):
 
 
 def input_hashes():
-    paths = (ROOT / 'linux/configs/piano-full.config', ROOT / 'linux/configs/piano-bluetooth.config', Path(__file__),
+    paths = (ROOT / 'config/release.json', ROOT / 'linux/configs/piano-bluetooth.config', Path(__file__),
              ROOT / 'tools/build_piano_full_kernel.py', ROOT / 'tools/build_kernel.py',
              ROOT / 'tools/prepare_linux_modules.py')
     return {str(path.relative_to(ROOT)): sha(path) for path in paths}
@@ -173,7 +173,6 @@ def check_candidate(folder, work=WORK, commit=COMMIT):
     check_hashes(state['inputs'], state['toolchain'])
     public = (work / 'arch/arm64/configs/piano_rootfs.config').read_text()
     root_policy = state.get('root_policy', 'ram')
-    command = full.command_line((ROOT / 'linux/configs/piano-full.config').read_text(), public, root_policy)
     config_path = folder / 'config'
     config_pin = state.get('config_sha256')
     if config_pin is None:
@@ -186,7 +185,7 @@ def check_candidate(folder, work=WORK, commit=COMMIT):
     declared_patches = state.get('canonical_device_patch_commits', state.get('canonical_patch_commits'))
     if declared_patches != proof['canonical_device_patch_commits']:
         raise ValueError('Candidate patch lineage mismatch')
-    requirements = full.validate_config(config_path.read_text(), public, command, state.get('local_module_overrides', {}))
+    requirements = full.validate_config(config_path.read_text(), public, state.get('local_module_overrides', {}))
     if requirements != state['full_profile_requirements']:
         raise ValueError('Candidate requirements mismatch')
     if image_info(folder / 'Image') != state['image'] or not state['image']['efi_stub']:
@@ -239,8 +238,7 @@ def main():
         return
     proof = source_proof(work, args.commit)
     public = work / 'arch/arm64/configs/piano_rootfs.config'
-    fragment = ROOT / 'linux/configs/piano-full.config'
-    command_line = full.command_line(fragment.read_text(), public.read_text(), args.root)
+    command_line = full.command_line(args.root)
     modules = full.module_overrides((ROOT / 'linux/configs/piano-bluetooth.config').read_text())
     env, tools = full.toolchain()
     hashes = input_hashes()
@@ -261,7 +259,7 @@ def main():
     pending.write_text(json.dumps(state, indent=2) + '\n')
     command = ['make', '-C', str(work), 'O=' + str(out), 'ARCH=arm64', 'LLVM=1', 'LLVM_IAS=1']
     effective = out / 'piano-full.effective.config'
-    effective_text = full.effective_config(command_line, modules)
+    effective_text = full.effective_config(modules)
     effective.write_text(effective_text)
     log = artifacts / 'build.log'
     config_hash = None
@@ -286,7 +284,7 @@ def main():
              out / '.config', public, effective])
         run(command + ['olddefconfig'])
         state['full_profile_requirements'] = full.validate_config(
-            (out / '.config').read_text(), public.read_text(), command_line, modules)
+            (out / '.config').read_text(), public.read_text(), modules)
         config_hash = sha(out / '.config')
         state['config_sha256'] = config_hash
         state['kernel_release'] = (out / 'include/config/kernel.release').read_text().strip() if (out / 'include/config/kernel.release').exists() else None

@@ -78,19 +78,32 @@ PianoProductCoreEntry (uefi/core/PianoProductCore.c)
 
 ## ESP 启动文件与系统交接
 
-启动 Linux 时，固件在唯一的 `sunuefi_esp` 分区上加载 `/EFI/BOOT/BOOTAA64.EFI`，并保留真实的 ESP 设备句柄。systemd-boot 读取 `loader.conf` 和启动项。标准 EFI 启动项分别用 `linux`、`initrd`、`devicetree` 指定带 EFI stub 的 ARM64 内核、初始文件系统和设备树，由 systemd-boot 直接装载。完整文件布局见[启动架构](architecture.md#存储布局)。
+启动 Linux 时，固件在唯一的 `sunuefi_esp` 分区上直接装载
+`/EFI/Linux/sunuefi.efi`，保留真实的 ESP 设备句柄。这个 UKI 内含内核、
+initramfs、设备树和启动参数，使用标准 systemd-stub 调用 Linux EFI stub；
+没有 systemd-boot 管理器和 Android 格式的 Linux 包。SimpleInit 是唯一的
+图形菜单，默认选择“启动 Linux”，无操作五秒自动启动，输入取消倒计时。
+启动镜像缺失、加载失败或返回固件时显示具体原因并停止，不自动重开菜单或重试。
+完整文件布局见[启动架构](architecture.md#存储布局)。
 
 固件通过 `EFI_DT_FIXUP_PROTOCOL` 为装载的设备树应用同次启动的内存、面板与 Gunyah 修正，并检查保留区。Linux EFI stub 负责填写 EFI 内存图和 initrd 信息。SEC 从本次 ABL 传入的最终设备树读取完整 RAM，结合 SMEM、原生固件区域和冷启动对象生成内存表；新增普通 RAM 保持为 `EfiLoaderData`，不进入固件分配池。退出前再次核对真实 EFI/GCD 描述符及页表的恒等映射和缓存属性，再交给 Linux 回收。
 
-`PianoProductMemoryApplyDtb()` 使用带 CRC 与同次启动标识的早期采集结果，替换 Linux DTB 的 `/memory/reg`、DDR 容量／厂商／类型和 `/ddr-regions`，移除多余的 memory 节点。标准 EFI 和旧 `boot.img` 共用此函数，不按内存容量制作镜像，也不在安装时改写 ESP。Linux 的硬件节点、CMA 请求与保留区保持原样；交接前的检查会拒绝不兼容的保留区，而不是把 EFI 空闲页误当作物理总内存。
+`PianoProductMemoryApplyDtb()` 使用带 CRC 与同次启动标识的早期采集结果，替换 Linux DTB 的 `/memory/reg`、DDR 容量／厂商／类型和 `/ddr-regions`，移除多余的 memory 节点。UKI 的 DTB 在内存中经标准协议修正，不按内存容量制作镜像，也不在安装时改写 ESP。Linux 的硬件节点、CMA 请求与保留区保持原样；交接前的检查会拒绝不兼容的保留区，而不是把 EFI 空闲页误当作物理总内存。
 
-现有 Debian 镜像仍可使用 `/EFI/Piano/LinuxBoot.efi`。该应用通过 Runtime 协议的 APP 入口同步调用驻留核心。核心确认调用者是当前 systemd-boot 的真实子应用后，沿用 `PianoRawLinuxBoot.c` 的文件加载和内核交接：读取 `/EFI/Piano/stable/boot.img`，复制内核、设备树和 initramfs，保留运行时面板与 Gunyah 修正，再关闭 USB、存储、输入、时钟和 SMMU。
+旧的 `boot.img`、BLS 分文件配置和 ESP 兼容应用不再作为产品启动入口。
+升级固件时同步更新启动镜像（ESP），不用覆盖已有 root。打包由 `ukify`
+构建 UKI，再读取 PE 的 `.linux`、`.initrd`、`.dtb`、`.cmdline` 等段逐一
+核对内容；FAT 写入后再次读回整个 EFI 文件。内核没有内建命令行或后备值。
 
-已有 ESP 仅包含 `boot.img` 时，固件在未找到且从未执行 `BOOTAA64.EFI` 的情况下直接使用旧加载器，用户无需重装系统。EFI 引导器已经运行后发生的错误不会静默切换加载路径。准备内核、核对交接身份和退出固件服务的失败分别记录阶段；内存采集与设备树保留区错误显示对应原因及回到 Android 的操作。
+`ExitBootServices` 使用当前最内层启动应用的真实句柄，并核对它到当前 UKI
+的父链、UKI 的加载身份及 ESP 句柄。开始关闭资源前的拒绝可以正常返回；
+进入关闭流程后，除内存图过期外的错误都会停止执行。首次调用通过身份与
+内存检查后即关闭资源，即使传入的 MapKey 已过期，也不把关闭动作留到下一次
+调用。Linux 刷新内存图后重试，不再分配、访问文件或重复关闭硬件。
 
-ESP 中的 Linux `boot.img` 总容器上限为 128 MiB，打包入口 `./build.sh package` 和 `./build.sh esp` 会核对该上限。initramfs 的压缩后上限仍为 16 MiB，内核和设备树仍须满足各自的交接窗口。UEFI Fastboot 的单次 USB 下载上限保持 64 MiB，超过此大小的 Linux 容器需从 ESP 启动。
-
-两种路径的 `ExitBootServices` 都使用当前最内层启动应用的真实句柄和已保存的加载身份。标准 EFI 路径还检查该应用到当前 systemd-boot 的父链及 ESP 身份。开始关闭资源前的拒绝允许启动管理器重试其他内核；进入关闭流程后，除内存图过期外的错误都会停止执行。首次调用通过身份与内存检查后即关闭资源，即使传入的 MapKey 已过期，也不把关闭动作留到下一次调用。原生内存图检查仍拒绝过期的 key；Linux 刷新一次内存图即可重试，不再进行文件操作、分配或重复关闭硬件。
+`PianoRawLinuxBoot.c` 仅保留已确认 USB 下载的诊断启动，不读取 ESP，也不作为
+UKI 失败后的后备。它与产品 UKI 共用资源退出检查；UEFI Fastboot 的单次
+下载上限仍为 64 MiB。
 
 固件的四个 EFI 时间调用返回 `EFI_UNSUPPORTED`，并通过 `EFI_RT_PROPERTIES_TABLE` 报告；不发布占位 EFI RTC。Linux 使用 PMIC RTC，UEFI 只读原厂 `persist/time/ats_2`，通过保留内存中的标准 NVMEM 单元传入日历偏移，见 [RTC 与原厂时间](hardware/sleep.md#rtc-与原厂时间)。
 

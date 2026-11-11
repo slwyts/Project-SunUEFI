@@ -29,7 +29,7 @@ ARTIFACTS=ROOT/'artifacts/kernels/full-integration'
 SOURCE_PINS={'arch/arm64/configs/piano_defconfig':'0525361e8c96891c3462ad8a081ec7f2f144197ce0b6fe2d3448a20271ce6dea',
              'arch/arm64/configs/piano_rootfs.config':'db201a064a89e53c45b5d018f56497d9633a699b205bef89a6db26f5c96ac009'}
 REQUIRED={
- 'MODULES':'y','BLK_DEV_INITRD':'y','EFI':'y','EFI_STUB':'y','CMDLINE_FORCE':'y',
+ 'MODULES':'y','BLK_DEV_INITRD':'y','EFI':'y','EFI_STUB':'y','CMDLINE_FORCE':'n',
  'DRM_MSM':'m','ARM_SMMU':'m','QCOM_Q6V5_PAS':'m','DRM_SIMPLEDRM':'y','DRM_PANEL_NOVATEK_NT36532':'m',
  'VIDEO_QCOM_CAMSS':'m','VIDEO_OV32D40':'m','VIDEO_S5KJN1':'m','VIDEO_DW9768':'m','VIDEO_QCOM_IRIS':'m',
  'SND_SOC_SC8280XP':'m','SND_SOC_QDSP6':'m','SND_SOC_FS19XX':'m','QCOM_FASTRPC':'m',
@@ -117,19 +117,18 @@ def config_values(raw):
     return values
 
 
-def command_line(fragment,public,root_policy):
-    override=config_values(fragment)
-    if set(override)!={'CONFIG_CMDLINE'}:raise ValueError('Local full fragment may override only CONFIG_CMDLINE')
-    original=json.loads(config_values(public)['CONFIG_CMDLINE']);provided=json.loads(override['CONFIG_CMDLINE'])
-    tokens=original.split()
-    if tokens.count('root=PARTLABEL=userdata')!=1:raise ValueError('Unexpected public root policy')
-    levels=[token for token in provided.split()if token.startswith('loglevel=')]
-    if len(levels)!=1 or not re.fullmatch(r'loglevel=[0-8]',levels[0]):raise ValueError('Use one standard console loglevel from 0 to 8')
-    expected=' '.join('piano.root=ram'if token=='root=PARTLABEL=userdata'else levels[0]if token.startswith('loglevel=')else token for token in tokens)
-    if provided!=expected:raise ValueError('Preserve public handoff arguments except the OS root and console loglevel')
+def command_line(root_policy):
+    policy=json.loads((ROOT/'config/release.json').read_text())['kernel']
+    provided=policy['command_line']
+    tokens=provided.split()
+    roots=[token for token in tokens if token.startswith(('root=','piano.root='))]
+    if roots!=['piano.root='+policy['root_policy']]or 'rdinit=/pianoinit'not in tokens:
+        raise ValueError('Release boot arguments must select the product root and initramfs')
+    if provided!=' '.join(tokens)or not provided.isascii()or len(provided.encode())>=2048:
+        raise ValueError('Release boot arguments must fit the kernel command line')
     if root_policy!='ram'and not re.fullmatch(r'(UUID=[0-9a-fA-F-]{8,64}|PARTUUID=[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|LABEL=PIANO[A-Za-z0-9_-]{0,48})',root_policy):
         raise ValueError('External root must be an explicit UUID or PIANO-owned label; Android partition selectors are refused')
-    return provided.replace('piano.root=ram','piano.root='+root_policy)
+    return provided.replace('piano.root='+policy['root_policy'],'piano.root='+root_policy)
 
 
 def module_overrides(fragment,kind='bluetooth'):
@@ -146,9 +145,9 @@ def validate_module_overrides(values):
     return values
 
 
-def effective_config(command,modules):
+def effective_config(modules):
     validate_module_overrides(modules)
-    return 'CONFIG_CMDLINE='+json.dumps(command)+'\n'+''.join(key+'='+value+'\n'for key,value in sorted(modules.items()))
+    return 'CONFIG_CMDLINE=""\nCONFIG_CMDLINE_FORCE=n\n'+''.join(key+'='+value+'\n'for key,value in sorted(modules.items()))
 
 
 def verify_source(work=WORK,commit=None):
@@ -198,21 +197,21 @@ def compiler_checkout(snapshot,work,commit,tree):
         raise ValueError('Compiler checkout differs from the prepared source tree')
 
 
-def validate_config(config,public,expected_command,modules=None):
+def validate_config(config,public,modules=None):
     modules=validate_module_overrides({}if modules is None else modules)
     values=config_values(config)
     if modules.get('CONFIG_QCOM_CPUCP_MBOX')=='y':
         for key in ('CONFIG_ARM_SCMI_PROTOCOL','CONFIG_ARM_SCMI_TRANSPORT_MAILBOX','CONFIG_ARM_SCMI_CPUFREQ'):
             if values.get(key)!='y':raise ValueError('Early CPUCP requires built-in SCMI/cpufreq: '+key)
-    if values.get('CONFIG_CMDLINE')!=json.dumps(expected_command):raise ValueError('Configured full candidate root command line changed')
-    if 'userdata'in expected_command or 'root=PARTLABEL'in expected_command:raise ValueError('Android root target survived')
+    if values.get('CONFIG_CMDLINE','""')!='""'or values.get('CONFIG_CMDLINE_FORCE','n')!='n':
+        raise ValueError('The kernel must not embed or force boot arguments')
     for key,value in config_values(public).items():
-        if key!='CONFIG_CMDLINE'and values.get(key)!=modules.get(key,value):raise ValueError('Public full profile option lost: '+key)
+        if key not in ('CONFIG_CMDLINE','CONFIG_CMDLINE_FORCE','CONFIG_CMDLINE_FROM_BOOTLOADER')and values.get(key)!=modules.get(key,value):raise ValueError('Public full profile option lost: '+key)
     for key,value in modules.items():
         if values.get(key,'n')!=value:raise ValueError('Local module requirement lost: '+key)
     for key,value in REQUIRED.items():
-        if values.get('CONFIG_'+key)!=value:raise ValueError('Full driver/userspace requirement lost: CONFIG_'+key)
-    return {**{key:values['CONFIG_'+key]for key in REQUIRED},**{key.removeprefix('CONFIG_'):value for key,value in modules.items()}}
+        if values.get('CONFIG_'+key,'n')!=value:raise ValueError('Full driver/userspace requirement lost: CONFIG_'+key)
+    return {**{key:values.get('CONFIG_'+key,'n')for key in REQUIRED},**{key.removeprefix('CONFIG_'):value for key,value in modules.items()}}
 
 
 def toolchain():
@@ -274,8 +273,8 @@ def main():
     compiler=ROOT/'build/kernel-worktrees'/(out.name+'-compiler-'+hashlib.sha256(str(out).encode()).hexdigest()[:12])
     if compiler==work or compiler.resolve()!=compiler:
         raise ValueError('Compiler checkout must be a separate physical build-owned directory')
-    verify_source(work,commit);public=work/'arch/arm64/configs/piano_rootfs.config';fragment=ROOT/'linux/configs/piano-full.config'
-    root_command=command_line(fragment.read_text(),public.read_text(),args.root)
+    verify_source(work,commit);public=work/'arch/arm64/configs/piano_rootfs.config'
+    root_command=command_line(args.root)
     bluetooth=ROOT/'linux/configs/piano-bluetooth.config';flash=ROOT/'linux/configs/piano-flash.config'
     pen_dock=ROOT/'linux/configs/piano-pen-dock.config';ir=ROOT/'linux/configs/piano-ir.config'
     early_cpucp=ROOT/'linux/configs/piano-cpucp-early.config'
@@ -309,8 +308,8 @@ def main():
     source_base=verify_source(work,commit)
     tree=text(['git','rev-parse','HEAD^{tree}'],work)
     compiler_checkout(work,compiler,commit,tree)
-    hashes={str(path.relative_to(ROOT)):sha(path)for path in (fragment,bluetooth,filesystem,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/host/prepare_kernel_llvm.py',ROOT/'config/kernel-llvm.json')}
-    effective_text=effective_config(root_command,modules)
+    hashes={str(path.relative_to(ROOT)):sha(path)for path in (ROOT/'config/release.json',bluetooth,filesystem,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/host/prepare_kernel_llvm.py',ROOT/'config/kernel-llvm.json')}
+    effective_text=effective_config(modules)
     effective=out/'piano-full.effective.config';effective.write_text(effective_text)
     command=['make','-C',compiler,'O='+str(out),'ARCH=arm64','LLVM=1','LLVM_IAS=1','LOCALVERSION=']
     if tools['ccache_enabled']:
@@ -321,7 +320,7 @@ def main():
     run(command+['piano_defconfig'],env=env)
     run(['bash',compiler/'scripts/kconfig/merge_config.sh','-m','-O',out,out/'.config',public,effective],cwd=compiler,env=env)
     run(command+['olddefconfig'],env=env)
-    requirements=validate_config((out/'.config').read_text(),public.read_text(),root_command,modules);config_hash=sha(out/'.config')
+    requirements=validate_config((out/'.config').read_text(),public.read_text(),modules);config_hash=sha(out/'.config')
     def fresh():
         verify_source(work,commit)
         verify_source(compiler,commit)

@@ -160,19 +160,15 @@ USB bulk 传输或排队事件优先处理，期间暂停同步输入读取，�
 SimpleInit 默认旋转改为 0°，使用 GOP 的 3200×2136 横屏画布。界面旋转由
 SimpleInit/LVGL 处理，物理显示模式保持原样；实机已确认横屏显示。
 
-标准 UEFI 启动管理器读取 `Boot####` 和 `BootOrder`。ESP 中的 `boot.img`
-是 Android 格式的 Linux 启动包，不能直接当作 EFI 应用交给标准启动管理器。
-产品现在先查找 ESP 和启动文件，再登记一个指向固件内
-`PianoLinuxBoot.efi` 的 Linux 启动项。该应用向驻留核心请求启动，
-随后进入 ESP 中的 systemd-boot。默认 `linux.conf` 直接加载内核 EFI stub、
-initramfs 和 DTB；旧启动项仍可加载 ESP 中的 `LinuxBoot.efi`，通过 APP
-接口同步进入核心读取 `boot.img`，不递归启动管理器。具体内存与退出身份见
+标准 UEFI 启动管理器读取 `Boot####` 和 `BootOrder`。产品在发现 ESP 的
+`/EFI/Linux/sunuefi.efi` 后登记固件内的 Linux 启动项；菜单向驻留核心请求
+启动，核心直接将 UKI 作为 EFI 应用装载。没有 systemd-boot，也不再使用
+Android 格式的 Linux `boot.img` 或 ESP 中的兼容加载应用。具体内存与退出身份见
 [UEFI 核心](../uefi-core.md#esp-启动文件与系统交接)。
 
 入口在启动时发现并登记，普通非易失变量通过下文的文件后端保存。
-标准 EFI 启动项可以用 `linux`、`initrd`、`devicetree` 直接装载 Linux EFI stub。
-固件提供完整内存描述、设备树修正与安全退出；Android 格式的启动包仍须使用
-原有启动应用，不能仅改名为 `.efi`。两条路径共用同一份 UEFI 核心。
+UKI 内含内核、initramfs、DTB 和参数，systemd-stub 调用 Linux EFI stub；
+固件提供完整内存描述、设备树修正与安全退出。
 
 ## 内置菜单与自动保存
 
@@ -182,7 +178,8 @@ initramfs 和 DTB；旧启动项仍可加载 ESP 中的 `LinuxBoot.efi`，通过
 任何文件：目录由固件创建，修改后的设置由 SimpleInit 自动保存。
 静态配置里的默认值不会整份复制到用户文件。
 
-默认中文、横屏、DPI 600，开启动画，不自动倒计时。“启动 Linux”排在
+默认中文、横屏、DPI 600，开启动画；菜单显示后无操作五秒自动启动，
+按键、触摸或滚动取消自动启动。“启动 Linux”排在
 第一项并默认选中；Windows 沿用扫描 `EFI/Microsoft/Boot/bootmgfw.efi`
 的方式发现。菜单保留从文件启动、固件设置、UEFI Shell、文件管理器和
 通用工具。菜单内的 Linux、设置、Shell 与重启动作交给同一个驻留核心处理，

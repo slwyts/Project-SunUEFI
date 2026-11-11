@@ -50,36 +50,13 @@ piano_android_grow_ready() (
   done
   return 1
 )
-# Inspect BLS type-1 entries as data. All payload paths stay inside the mounted
-# ESP; neither entry contents nor kernel command lines are executed.
+# Only inspect the product UKI; never execute payloads or entry contents.
 piano_esp_linux_present() (
   root=$(readlink -f "$1") || exit 1
   [ -d "$root" ] || exit 1
-  if [ -f "$root/EFI/Piano/stable/boot.img" ] &&
-    [ -s "$root/EFI/Piano/stable/boot.img" ]; then exit 0; fi
-  [ -f "$root/EFI/BOOT/BOOTAA64.EFI" ] &&
-    [ -s "$root/EFI/BOOT/BOOTAA64.EFI" ] || exit 1
-  cr=$(printf '\r')
-  for entry in "$root"/loader/entries/*.conf; do
-    [ -f "$entry" ] || continue
-    kernel=false; initrd=false; dtb=false; valid=true
-    while IFS=' 	' read -r key path || [ -n "$key$path" ]; do
-      case "$key" in
-        linux|initrd|devicetree)
-          path=${path%"$cr"}
-          case "$path" in /*) ;; *) valid=false; break ;; esac
-          case "$path/" in
-            *\\*|*//*|*/../*|*/./*) valid=false; break ;;
-          esac
-          resolved=$(readlink -f "$root$path") || { valid=false; break; }
-          case "$resolved" in "$root"/*) ;; *) valid=false; break ;; esac
-          [ -f "$resolved" ] && [ -s "$resolved" ] || { valid=false; break; }
-          case "$key" in linux) kernel=true ;; initrd) initrd=true ;; devicetree) dtb=true ;; esac ;;
-      esac
-    done < "$entry"
-    [ "$valid:$kernel:$initrd:$dtb" != true:true:true:true ] || exit 0
-  done
-  exit 1
+  resolved=$(readlink -f "$root/EFI/Linux/sunuefi.efi") || exit 1
+  case "$resolved" in "$root"/*) ;; *) exit 1 ;; esac
+  [ -f "$resolved" ] && [ -s "$resolved" ]
 )
 piano_check_bootloader() {
   [ "$(getprop ro.boot.flash.locked)" = 0 ] && return 0

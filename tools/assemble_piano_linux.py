@@ -74,8 +74,8 @@ def kernel(folder, family):
     if sha_file(public_path) != full.SOURCE_PINS['arch/arm64/configs/piano_rootfs.config']:
         raise ValueError('Pinned public full profile changed')
     public = public_path.read_text()
-    command = full.command_line((ROOT / 'linux/configs/piano-full.config').read_text(), public, 'ram')
-    requirements = full.validate_config((folder / 'config').read_text(), public, command, manifest.get('local_module_overrides', {}))
+    command = full.command_line('ram')
+    requirements = full.validate_config((folder / 'config').read_text(), public, manifest.get('local_module_overrides', {}))
     if requirements != manifest['full_profile_requirements']:
         raise ValueError('Complete kernel requirements changed')
     release = manifest['kernel_release']
@@ -90,8 +90,7 @@ def kernel(folder, family):
     return {'family': family, 'source_commit': manifest['source_commit'],
             'release': manifest['kernel_release'], 'manifest_sha256': pin,
             'image': info, 'config_sha256': config_pin, 'command_line': command,
-            'config_cmdline_force': True, 'external_debug_parameters_effective': False,
-            'debug_parameter_limitation': 'CONFIG_CMDLINE_FORCE=y discards external debug bootargs; RAM distro /etc/piano/linux-debug.conf supplies validated USB/shell/network defaults',
+             'config_cmdline_force': False, 'external_debug_parameters_effective': True,
             'public_bt_le_enabled': full.config_values((folder / 'config').read_text()).get('CONFIG_BT_LE') == 'y',
             'modules': rows, 'module_summary': summary, 'required_hardware_modules': required}
 

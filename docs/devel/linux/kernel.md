@@ -25,6 +25,17 @@ Linux 基线为上游 `v7.3`，提交
 仍需检查实机显示、输入、无线、音频、相机和电源。更新时必须同时安装
 新内核的模块、`v4l2loopback` 相机模块和 initramfs，不能只替换 `Image`。
 
+启动参数只来自启动镜像，不编进内核。`config/release.json` 的
+`kernel.command_line` 是发布参数来源，打包时写入 UKI 的 `.cmdline`。
+内核使用 `CONFIG_CMDLINE=""`，关闭 `CONFIG_CMDLINE_FORCE`，不保留内建后备。
+打包检查根分区、`rdinit=/pianoinit` 和参数长度，并读回校验 UKI 的各段。
+
+当前 DTB 包含启用的 `simple-framebuffer`，UKI 通过标准 Linux EFI stub 启动。
+`console=tty0` 在 framebuffer 控制台注册后才有输出；
+`console=ttyGS0` 也需要 USB gadget 建立后才可用，不能作为最早期串口。
+屏幕停留在固件交接页不等于内核没有运行，定位需结合 pstore、initramfs
+日志、USB 状态与后续显示接管，而不是直接归因于固件死循环。
+
 ## 内屏低分辨率与硬件缩放
 
 内屏低分辨率由 DPU 的 SSPP 缩放到 `3200×2136`，DSI、DSC 和面板
@@ -646,10 +657,10 @@ FFC 使用前还需要两颗电量计通过电池认证，不能把充电器 MiP
 
 ### MiPPS 认证与连接恢复验证
 
-先在新内核上保留原充电参数，再逐步开启认证和直充。每一步只改变一个参数，
-保留已验证版本的完整启动项、内核、模块、initrd 和设备树，systemd-boot 菜单
-等待 5 秒。测试期间不清理旧代；启动失败先选择旧代，必要时从早期选择页进入
-Android 恢复启动项，不重刷系统分区。
+参数对照测试每次只改变一个参数，并保持 UKI、模块与 root 中的配置匹配。
+产品使用同一个 UKI 入口，SimpleInit 无操作五秒后启动；需要停留菜单时用
+按键或触摸取消。启动失败可从前面的安卓／UEFI 选择器进入 Android，
+再更新启动镜像，不修改原厂系统分区。
 
 Piano 只有一个 USB-C 口。测试原装充电器和线材直连时，先确认 Wi-Fi SSH 与
 持久 journal 可用，通过 Wi-Fi 采集；拔掉电脑后 USB 串口和 USB 网络断开是

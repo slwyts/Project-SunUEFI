@@ -87,8 +87,11 @@ python3 tools/package_sparse_images.py --bundle artifacts/release --output artif
 ```
 
 已有根系统时，运行 `./build.sh esp` 只生成启动镜像，不重新导出 root 镜像。
-启动镜像包含 systemd-boot、对应产品固件的 Linux EFI 启动应用及内核载荷。
-默认从根系统的 `systemd-boot-efi` 包读取引导器；使用单独提取的 ARM64 引导器时，传入 `--systemd-boot /path/to/systemd-bootaa64.efi`。
+启动镜像包含 `/EFI/Linux/sunuefi.efi`：把内核、initramfs、DTB 和启动参数
+封装为一个 UKI，由 SunUEFI 直接启动，不经过 systemd-boot。打包使用
+systemd 的 `ukify`，默认从根系统的 `systemd-boot-efi` 包取 ARM64 stub；
+这个包名不表示镜像安装了 systemd-boot 管理器。单独提取的 stub 可通过
+`--stub /path/to/linuxaa64.efi.stub` 指定，`--ukify` 指定打包工具。
 
 基础根系统已经构建过时，用 `./build.sh release-rootfs --resume` 更新内核、硬件包和配置，不重新运行 debootstrap。`./build.sh rootfs --distro ID --desktop ID --plan` 会列出其他发行版和桌面组合的计划，目前只有上表的四个目标能完整构建。
 
@@ -118,6 +121,7 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 `./build.sh gsd --sysroot 已完成的基础根目录` 在独立副本里编译带 Piano 自动亮度策略的 gnome-settings-daemon，使用原厂 lux 阈值和延迟，不修改传感器读数，由 APT 安装。默认的 `release-rootfs` 会自动完成这一步，策略只匹配 `xiaomi,piano` 板级标识。
 
 `./build.sh mutter` 编译修正了空 Gamma 曲线恢复和无 EDID 内置屏幕颜色配置的 Mutter，保留标准颜色服务和用户配置，不伪造 EDID。通用 sRGB 是未校准的默认值，不是原厂色彩校准。来源与补丁见 [Mutter 适配说明](../../linux/desktops/gnome/patches/mutter/README.md)。
+单独构建时使用了其他输出目录，可通过 `release-rootfs --mutter-dir 输出目录/runtime` 选择；组装前会检查源码、补丁和软件包摘要。
 
 ## 产物位置
 
