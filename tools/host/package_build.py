@@ -67,7 +67,7 @@ def sha(path):
 def native_tools():
     """Copy native executables and their loader, never host headers or target libs."""
     names = ('clang', 'ld.lld', 'llvm-ar', 'llvm-ranlib', 'llvm-nm',
-             'llvm-strip', 'llvm-objcopy', 'aarch64-linux-gnu-as', 'make')
+             'llvm-strip', 'llvm-objcopy', 'aarch64-linux-gnu-as', 'aarch64-linux-gnu-ld', 'make')
     selected = {name: Path(shutil.which(name) or '') for name in names}
     missing = [name for name, path in selected.items() if not path.is_file()]
     if missing:
@@ -130,7 +130,7 @@ def native_tools():
         path.chmod(0o755)
 
     flags = ['--target=aarch64-linux-gnu', '--sysroot=/', '--gcc-toolchain=/usr',
-             '-resource-dir=' + str(prefix), '-fuse-ld=lld', '-fno-integrated-as',
+             '-resource-dir=' + str(prefix), '-fuse-ld=bfd', '-fno-integrated-as',
              '-B' + str(prefix / 'bin'), '-Wno-unused-command-line-argument', '-gdwarf-4']
     wrapper('clang-driver', [str(prefix / 'tools/clang'), *flags])
     for name, cxx in [('clang', False), ('clang++', True)]:
@@ -144,10 +144,12 @@ def native_tools():
         wrapper(name, [str(prefix / 'tools' / name)])
     aliases = {'cc': 'clang', 'gcc': 'clang', 'c++': 'clang++', 'g++': 'clang++',
                'ar': 'llvm-ar', 'ranlib': 'llvm-ranlib', 'nm': 'llvm-nm',
-               'strip': 'llvm-strip', 'objcopy': 'llvm-objcopy', 'ld': 'ld.lld'}
+                'strip': 'llvm-strip', 'objcopy': 'llvm-objcopy'}
     for name, target in aliases.items():
         (destination / 'bin' / name).symlink_to(target)
         (destination / 'bin' / ('aarch64-linux-gnu-' + name)).symlink_to(target)
+    for name in ('ld', 'ld.bfd', 'aarch64-linux-gnu-ld.bfd'):
+        (destination / 'bin' / name).symlink_to('aarch64-linux-gnu-ld')
     identity['outputs'] = {str(path.relative_to(destination)): sha(path)
                            for path in destination.rglob('*') if path.is_file() and not path.is_symlink()}
     (destination / 'identity.json').write_text(json.dumps(identity, sort_keys=True) + '\n')

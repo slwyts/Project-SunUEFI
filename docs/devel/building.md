@@ -101,7 +101,8 @@ systemd 的 `ukify`，默认从根系统的 `systemd-boot-efi` 包取 ARM64 stub
 x86 主机用 `./build.sh ffmpeg --sysroot 已完成的ARM64根目录` 构建：编译器、链接器
 和 make 在宿主 CPU 原生运行，头文件与库来自 ARM64 sysroot；QEMU 仅执行目标程序。
 其他桌面包的 `--sysroot`／`--rootfs` 入口使用相同的原生编译工具。
-宿主需安装 Clang、LLD、LLVM、AArch64 binutils、patchelf 和 ccache；Ninja 项目安装宿主 Ninja。
+宿主需安装 Clang、LLVM、AArch64 binutils、patchelf 和 ccache；Ninja 项目安装宿主 Ninja。
+交叉编译使用 GNU 汇编器与链接器，保留 Debian 的符号版本表和调试信息处理。
 产品 CI 使用原生 ARM runner，缓存与源码、补丁匹配的 Debian 运行包，并取消被新提交替代的构建。
 
 本地和 GitHub 的完整构建走同一个 `release-rootfs` 入口。默认系统包含中文界面、拼音输入法、Chromium、GNOME 动画、蓝牙地址自动初始化和触控笔组件。根系统生成后会检查这些软件包和必需文件，结果记录在 `manifest.json` 的 `default_system`，缺少任何一项构建就失败。

@@ -219,6 +219,10 @@ def toolchain():
     env['PATH']=str(bundled/'bin')+os.pathsep+env.get('PATH','')
     env['LD_LIBRARY_PATH']=str(bundled/'lib')+(os.pathsep+env['LD_LIBRARY_PATH']if env.get('LD_LIBRARY_PATH')else '')
     env=prepare_kernel_llvm.environment(env)
+    if shutil.which('ccache',path=env['PATH']):
+        env.setdefault('CCACHE_DIR',str(ROOT/'build/ccache'))
+        env.setdefault('CCACHE_MAXSIZE','8G')
+        env.setdefault('CCACHE_COMPILERCHECK','content')
     names=('clang','ld.lld','llvm-ar','llvm-nm','llvm-link','llvm-objcopy',
            'llvm-objdump','llvm-readelf','llvm-strip','make','bison','flex','bc','depmod')
     cached=bool(env.get('CCACHE_DIR'))
