@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "ada3010e4da585321686551ca60d5c6497c1377f",
-  "original_target_commit": "f04703e9ecb6244c1d2ed5b724fed4c9d03dca00",
+  "target_tree": "f3077b7e30b3c0d2423befd18e2dfef2f25f6e16",
+  "original_target_commit": "c0c3dcbe73b5dcc4e8baee487581fda4fda67d6d",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -823,6 +823,14 @@
       "original_parent": "13e5e2aff2785dbd36dbd936d65dc8859c0fcfc0",
       "committer_date": "2026-11-11T03:17:19+08:00",
       "tree": "ada3010e4da585321686551ca60d5c6497c1377f"
+    },
+    {
+      "file": "0103-power-mca-authenticated-ffc.patch",
+      "sha256": "feffd1edf396257ab0492ca55293660cd448ab039749a102dd43ef45630bf103",
+      "original_commit": "c0c3dcbe73b5dcc4e8baee487581fda4fda67d6d",
+      "original_parent": "f04703e9ecb6244c1d2ed5b724fed4c9d03dca00",
+      "committer_date": "2026-11-12T00:06:47+08:00",
+      "tree": "f3077b7e30b3c0d2423befd18e2dfef2f25f6e16"
     }
   ],
   "provenance": {
@@ -833,7 +841,7 @@
         "mca_charger_thermal.ko": "5bda39f6f811ae0e60bf8c908977b3724d0675ca7ef9c31c3fece85d22d41319"
       },
       "stock_checks": "The same-device wired_thermal table has ten columns per state; the 2:1 direct-charge column descends from 10500 through 9000, 8000, 7000, 6200, 5500, 5000, 4400, 3600, 3000, 2500, 2000, 1500, 1000 to 700 mA. Original parser uses ten-cell rows and the thermal device exposes these as discrete levels.",
-      "scope": "Use the distinct levels within the existing 8000 mA normal-mode ceiling and add zero-current stop. Standard charge_control_limit and thermal cooling constrain one combined pump/PMIC budget. No temperature-to-level map, FFC enable or higher voltage/current capability is inferred from these limits.",
+      "scope": "Factory thermal levels and zero-current stop constrain one combined pump/PMIC budget. Ordinary profiles remain capped at 8000 mA; authenticated_ffc supplies the separate 12400 mA capability and gates. Current levels alone do not authorize FFC.",
       "automatic_policy": {
         "profile": "Global high-load thermal-gl-cgame.conf, illuminated-screen levels; applied in kernel independent of Android app and screen selectors.",
         "profile_source": "https://raw.githubusercontent.com/xiaomi-pad-8-pro-development/android_vendor_xiaomi_piano/c1e5a318cfe41b5c7cef74385b376fd0c2527c49/proprietary/odm/etc/thermal-gl-cgame.conf",
@@ -923,7 +931,7 @@
         "bq27z561.ko": "7a76a4f20b83e4a3de197c7f8ca6bc2281072824e5d6b6ed9962d1c7af89dfdb"
       },
       "checks": "Piano project config selects factory HMAC-SHA256 key 1; fresh 32-byte challenges verified on both installed lwn cell-bank gauges. Vendor MAC commands 0x003e/0x003f switch FFC with a two-byte boolean payload, checksum and length. The mode getter in the stock program is cached, not a hardware readback.",
-      "scope": "Standard read-only authentic results and authenticated charge_type control; vendor key in the board DT. Does not enable FFC voltage/current in the charger policy.",
+      "scope": "Standard read-only authentic results and authenticated charge_type control; vendor key in the board DT. The charger enables FFC only through the separate authenticated_ffc policy and its temperature, source and current constraints.",
       "suspend_recovery": "A failed disable-FFC MAC transaction aborts suspend and explicitly rearms gauge polling; PM rollback does not call resume for the failed device. UML tests call the actual PM callback and MAC setter for command/checksum failures, successful disable and no-key devices."
     },
     "poweroff_charging": {
@@ -935,6 +943,15 @@
       "stock_format": "Charger header LE32: magic 0x20240725, version 2, initialized 0/1, available 1; power_off_mode is LE32 at partition byte offset 0x1000. ABL consumes 1 and writes 2. All other bytes are preserved.",
       "stock_callers": "MiuiBatteryServiceImpl receives ACTION_SHUTDOWN and calls IMiCharge.setMiChargePath(charger_partition_poweroffmode, 1) only while plugged, for selected power-off reasons and outside ship mode. The stock charger_partition driver has no shutdown notifier.",
       "write_scope": "Only SYS_POWER_OFF with USB ONLINE; identify a unique charger GPT partition beneath the internal SM8750 UFS controller. No header locking, no other stock fields, no ship mode or MCA shutdown-property changes."
+    },
+    "authenticated_ffc": {
+      "stock_rom": "OS4.0.5.0.XPYCNXM",
+      "stock_dtb_sha256": "73d9beea4d8e251d03a42d9bc7331a8f274f6891d7b1f7e6668ecd6ed3eb4ca1",
+      "baa_config_sha256": "2eab003aaf5168ffa4645df039dba625bbd8db5afe7867df07c3cdc3f9f578c2",
+      "original_policy_commit": "274171fbc86cb3235e14fa4dfbfe9c6b518427f7",
+      "integration_commit": "da1459e194528d2274b1e5fb55f6bc3b109c5b6c",
+      "conditions": "Authenticated adapter and both gauges; live six-channel IIO skin policy; cell window 18 <= T < 48 degC; entry raw SOC below 95%; no manual inhibition or full vote.",
+      "scope": "Retain PR20 session recovery, ordinary full/recharge, thermal hysteresis and fault latches; FFC stages 4144/4300/4475/4540 mV, cell FV 4550 mV before aging, combined current up to 12400 mA before derating. PMIC sharing stops at 4480 mV; gauge-mode changes require a confirmed charging pause."
     }
   }
 }

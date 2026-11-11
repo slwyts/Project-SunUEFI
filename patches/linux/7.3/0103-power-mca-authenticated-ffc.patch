@@ -1,0 +1,1224 @@
+From c0c3dcbe73b5dcc4e8baee487581fda4fda67d6d Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 12 Nov 2026 00:06:47 +0800
+Subject: [PATCH] power: supply: piano_mca: integrate authenticated FFC with
+ recovery
+
+Keep the factory FFC stages, gauge authentication, battery aging and PMIC
+sharing alongside the existing ordinary recharge and fault state machine.
+Use the six IIO temperatures and calibrated skin policy for both modes,
+rather than registering another thermal zone or bypassing its budget.
+
+Only change gauge modes after both charging paths are paused. Roll back
+partial mode changes, retry an unconfirmed PMIC pause, preserve fault and
+full votes, and keep the 4480 mV PMIC cutoff through source-budget changes.
+
+Exercise the actual policy with the existing virtual supplies: both-gauge
+authentication, FFC temperature and thermal limits, partial writes,
+inhibition, full votes, aging, tail charge and stop confirmation retries.
+---
+ .../bindings/soc/qcom/qcom,pmic-glink.yaml    |   2 +-
+ drivers/power/supply/piano_mca.c              | 523 ++++++++++++++++--
+ drivers/power/supply/piano_mca_test.c         | 216 ++++++++
+ 3 files changed, 695 insertions(+), 46 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+index 3f4170c920d..a7a06878dca 100644
+--- a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
++++ b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+@@ -96,7 +96,7 @@ properties:
+     minItems: 2
+     maxItems: 32
+     items:
+-      maximum: 8000000
++      maximum: 12400000
+       multipleOf: 1000
+     description: |
+       Strictly decreasing total battery charge current limits for the Xiaomi
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 089afbf0766..fed38482e15 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -22,8 +22,8 @@
+  * through the SC8541 switched-capacitor stage from PPS sources; with
+  * mipps_auth=1 it authenticates Xiaomi MiPPS adapters in the kernel.
+  * piano_mca_write_allowed()
+- * lists every property it can write. Direct charging also manages the
+- * normal-table float voltage; it never selects the FFC voltage or current.
++ * lists every property it can write. FFC requires the authenticated adapter,
++ * both authenticated cell gauges and the factory temperature/SOC window.
+  * With pan_ack=1 it also acknowledges
+  * the ADSP's USB-C port notifications.  The battery itself
+  * is reported by the two bq27z561 fuel gauges; this driver adds the USB
+@@ -67,7 +67,7 @@
+ #define MCA_PROP_CHARGE_ENABLE	0x2003	/* PMIC charge enable, u8 */
+ #define MCA_PROP_FCC		0x2005	/* charge current, mA */
+ #define MCA_PROP_ITERM		0x2006	/* termination current, mA */
+-#define MCA_PROP_FV		0x2007	/* normal float voltage, mV */
++#define MCA_PROP_FV		0x2007	/* PMIC float voltage, mV */
+ #define MCA_PROP_ICL		0x2008	/* input current limit, mA */
+ #define MCA_PROP_PACK_TBAT	0x202a	/* degC */
+ #define MCA_PROP_BOOST_ENABLE	0x200f
+@@ -272,9 +272,9 @@ MODULE_PARM_DESC(mipps_auth,
+  * MCA_CP_DELTA_MV, enable the stage, raise the voltage MCA_CP_STEP_MV at a
+  * time until current flows, then regulate the voltage every MCA_CP_POLL_MS
+  * so the bus current stays at its target and the battery current (both
+- * gauges) below the selected normal-table limit. The limits follow
+- * Piano's CN normal tables without FFC: CC/CV stages and the PMIC float
+- * voltage follow the temperature profile. The PMIC completes tail charge.
++ * gauges) below the selected charge-table limit. CC/CV stages and the PMIC
++ * float voltage follow the temperature profile; FFC additionally requires
++ * authenticated gauges and source. The PMIC completes tail charge.
+  * Both cells and the firmware pack must provide valid readings. The bus
+  * target is cp_ibus_max, at most MCA_CP_IBUS_MAX_MA (stock div_max_curr)
+  * from a verified Xiaomi adapter and MCA_CP_THIRD_IBUS_MA (stock
+@@ -290,6 +290,14 @@ MODULE_PARM_DESC(mipps_auth,
+ #define MCA_CP_VBAT_MIN_MV	3500
+ #define MCA_CP_VBAT_MAX_MV	4500
+ #define MCA_CP_IBAT_MAX_MA	8000
++#define MCA_FFC_IBAT_MAX_MA	12400
++#define MCA_FFC_FV_MV		4550
++#define MCA_FFC_SOC_MAX		95
++#define MCA_FFC_TEMP_MIN	18
++#define MCA_FFC_TEMP_MAX	48
++#define MCA_FFC_BUCK_STOP_MV	4480
++#define MCA_FFC_BUCK_FCC_MA	4000
++#define MCA_FFC_BUCK_FV_MV	4650
+ #define MCA_CP_TAPER_MA		3000
+ #define MCA_CP_TAPER_MS		3500
+ #define MCA_CP_TAPER_DELTA_MV	9
+@@ -313,10 +321,10 @@ struct piano_mca_cp_profile {
+ 	int low, high;
+ 	u16 fv_mv;
+ 	u8 count;
+-	struct piano_mca_cp_voltage voltage[2];
++	struct piano_mca_cp_voltage voltage[4];
+ };
+ 
+-/* Piano CN batt_para_lwn normal tables; FFC/global 12.4 A is not used. */
++/* Piano CN batt_para_lwn ordinary charging tables. */
+ static const struct piano_mca_cp_profile piano_mca_cp_profiles[] = {
+ 	{ 8, 13, 4500, 1, { { 4493, 4320, 452 } } },
+ 	{ 13, 18, 4500, 1, { { 4493, 7100, 452 } } },
+@@ -324,8 +332,20 @@ static const struct piano_mca_cp_profile piano_mca_cp_profiles[] = {
+ 	{ 48, 55, 4060, 1, { { 4053, 4320, 452 } } },
+ };
+ 
++/* Piano CN lwn FFC tables. Stage 1 (the first CV stage) is skipped. */
++static const struct piano_mca_cp_profile piano_mca_ffc_profiles[] = {
++	{ 18, 35, 4550, 4, {
++		{ 4144, 12400, 10650 }, { 4300, 10650, 9040 },
++		{ 4475, 9040, 7230 }, { 4540, 7230, 2350 },
++	} },
++	{ 35, 48, 4550, 4, {
++		{ 4144, 12400, 10650 }, { 4300, 10650, 9040 },
++		{ 4475, 9040, 7230 }, { 4540, 7230, 3164 },
++	} },
++};
++
+ struct piano_mca_cp_limits {
+-	u32 ma, cv_mv, fv_mv;
++	u32 ma, cv_mv, fv_mv, iterm_ma;
+ 	bool last;
+ };
+ 
+@@ -418,15 +438,15 @@ module_param(cp_charge, bool, 0444);
+ MODULE_PARM_DESC(cp_charge,
+ 		 "Charge through the SC8541 switched-capacitor stage from PPS sources; needs hv_charge and charge_current (default: off)");
+ 
+-static unsigned int cp_ibus_max = 4000;
++static unsigned int cp_ibus_max = 5000;
+ module_param(cp_ibus_max, uint, 0444);
+ MODULE_PARM_DESC(cp_ibus_max,
+-		 "Bus current of the switched-capacitor stage, mA (500-5000, default 4000; at most what the source offers less 700, 4100 from unverified sources)");
++		 "Bus current of the switched-capacitor stage, mA (500-5000, default 5000; constrained by the combined pump/PMIC source budget)");
+ 
+-static unsigned int cp_ibat_max = MCA_CP_IBAT_MAX_MA;
++static unsigned int cp_ibat_max = MCA_FFC_IBAT_MAX_MA;
+ module_param(cp_ibat_max, uint, 0444);
+ MODULE_PARM_DESC(cp_ibat_max,
+-		 "Battery current while direct charging, both cells, mA (1000-8000, default 8000; lower by battery voltage and temperature)");
++		 "Battery current while direct charging, both cells, mA (1000-12400; ordinary mode remains capped at 8000)");
+ 
+ static bool pan_ack;
+ module_param(pan_ack, bool, 0444);
+@@ -560,6 +580,22 @@ struct piano_mca {
+ 	int battery_direction;	/* sign of the last combined gauge current */
+ 	u8 normal_cool_zone, normal_hot_zone;	/* previous JEITA indices + 1 */
+ 	bool cp_retry;	/* only a policy pause may restart this connection */
++	bool ffc;		/* both gauges accepted fast-charge mode */
++	bool ffc_done;		/* do not re-enter FFC after tail charge on this cable */
++	bool ffc_mode_known;
++	bool cp_ffc;		/* mode used when the live pump was armed */
++	bool cp_buck_disabled;	/* factory FFC high-voltage cutoff, until pump stop */
++	bool pmic_pause_pending;
++	bool battery_authentic;
++	int battery_soc;
++	int battery_cycles;
++	u32 battery_fcc_derate_ma;
++	u32 battery_fv_derate_mv;
++	u32 battery_normal_fv_derate_mv;
++	u32 battery_health_fv_derate_mv;
++	u32 iterm_set_ma;
++	u32 buck_cv_steps;
++	unsigned long buck_cv_at;
+ 	unsigned long cp_taper_at;
+ 	u32 fv_set_mv;
+ 	unsigned int fv_generation;
+@@ -935,19 +971,30 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
+ 	case MCA_PROP_FCC:
+ 		return charge_current && len == sizeof(u32) &&
+ 		       ((cp_charge && val == 0) ||
+-			(val >= MCA_FCC_MIN_MA && val <= MCA_FCC_MAX_MA &&
++			(val >= MCA_FCC_MIN_MA &&
++			 val <= (mca->ffc ? MCA_FFC_BUCK_FCC_MA :
++							     MCA_FCC_MAX_MA) &&
+ 			 val <= piano_mca_charge_limit(mca)));
+ 	case MCA_PROP_CHARGE_ENABLE:
+ 		return cp_charge && charge_current && len == sizeof(u8) &&
+ 		       (*(const u8 *)data == 0 ||
+ 			(*(const u8 *)data == 1 && piano_mca_charge_limit(mca)));
+ 	case MCA_PROP_FV:
+-		/* The factory normal profiles and the firmware's default only. */
+-		return cp_charge && charge_current && len == sizeof(u32) &&
+-		       (val == 4060 || val == 4480 || val == 4500);
++		if (!cp_charge || !charge_current || len != sizeof(u32))
++			return false;
++		if (val == 4060 || val == 4480 || val == 4500)
++			return true;
++		if (!mca->battery_authentic)
++			return false;
++		if (val >= 4390 && val <= (mca->ffc ? 4595 : 4500) && !(val % 5))
++			return true;
++		/* The original override is only for low-VBAT pump/PMIC sharing. */
++		return mca->cp_ffc && !mca->cp_buck_disabled &&
++		       (val == 4690 || val == 4695);
+ 	case MCA_PROP_ITERM:
+ 		return cp_charge && charge_current && len == sizeof(u32) &&
+-		       val == MCA_NORMAL_ITERM_MA;
++		       (val == MCA_NORMAL_ITERM_MA ||
++			(mca->ffc && (val == 2425 || val == 3232)));
+ 	case MCA_PROP_PD_FIXED_VOLT:
+ 		return hv_charge && len == sizeof(u32) &&
+ 		       (val == 5000 || val == MCA_HV_MV);
+@@ -2034,6 +2081,157 @@ static int piano_mca_cp_gauges(struct piano_mca *mca, int *vbat, int *ibat,
+ 	return 0;
+ }
+ 
++static bool piano_mca_adapter_verified(struct piano_mca *mca);
++static bool piano_mca_cp_active(struct piano_mca *mca);
++static int piano_mca_normal_raw_soc(int *soc);
++static int piano_mca_normal_pause(struct piano_mca *mca,
++				  unsigned int generation,
++				  unsigned int connection);
++
++static int piano_mca_battery_state(struct piano_mca *mca)
++{
++	union power_supply_propval value;
++	struct power_supply *psy;
++	int i, ret, full, design, soc, soh = 100;
++
++	mca->battery_authentic = false;
++	mca->battery_cycles = 0;
++	for (i = 0; i < ARRAY_SIZE(piano_mca_supplied_to); i++) {
++		psy = power_supply_get_by_name(piano_mca_supplied_to[i]);
++		if (!psy)
++			return -ENODEV;
++		ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_AUTHENTIC, &value);
++		if (!ret && !value.intval)
++			ret = -EACCES;
++		if (!ret)
++			ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_CYCLE_COUNT, &value);
++		if (!ret && value.intval < 0)
++			ret = -ENODATA;
++		if (!ret)
++			mca->battery_cycles = max(mca->battery_cycles, value.intval);
++		if (!ret) {
++			ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_CHARGE_TYPE,
++							&value);
++			if (ret == -ENODATA) {
++				mca->ffc_mode_known = false;
++				ret = 0;
++			} else if (!ret && value.intval !=
++				   (mca->ffc ? POWER_SUPPLY_CHARGE_TYPE_FAST :
++					       POWER_SUPPLY_CHARGE_TYPE_STANDARD)) {
++				mca->ffc_mode_known = false;
++			}
++		}
++		if (!ret) {
++			ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_CHARGE_FULL, &value);
++			if (!ret) {
++				full = value.intval;
++				ret = power_supply_get_property(psy,
++						POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN, &value);
++			}
++			if (!ret) {
++				design = value.intval;
++				if (full <= 0 || design <= 0)
++					ret = -ENODATA;
++				else
++					soh = min(soh, (int)div_s64((s64)full * 100, design));
++			}
++		}
++		power_supply_put(psy);
++		if (ret)
++			return ret;
++	}
++	ret = piano_mca_normal_raw_soc(&soc);
++	if (ret)
++		return ret;
++	if (soc < 0 || soc > 10000)
++		return -ENODATA;
++	mca->battery_soc = soc / 100;
++	/* The final same-device smart_charge cc_ichg_cfg, not ut_test. */
++	mca->battery_fcc_derate_ma = mca->battery_cycles <= 800 ? 100 : 200;
++	/* Active Piano BAA_config_final CN-battery, not the DT's ut_test table. */
++	mca->battery_fv_derate_mv = mca->battery_cycles <= 100 ? 0 :
++		mca->battery_cycles <= 300 ? 20 : mca->battery_cycles < 1000 ? 40 : 50;
++	mca->battery_normal_fv_derate_mv = mca->battery_cycles <= 100 ? 0 :
++		mca->battery_cycles <= 300 ? 10 : mca->battery_cycles < 1000 ? 20 : 30;
++	mca->battery_health_fv_derate_mv = mca->battery_cycles >= 200 &&
++		mca->battery_cycles <= 800 && soh < 85 ? 40 : 0;
++	mca->battery_authentic = true;
++	return 0;
++}
++
++/* No raised PMIC voltage is retained across a partial gauge-mode update. */
++static int piano_mca_set_gauge_modes(struct piano_mca *mca, bool fast)
++{
++	union power_supply_propval value = {
++		.intval = fast ? POWER_SUPPLY_CHARGE_TYPE_FAST :
++				POWER_SUPPLY_CHARGE_TYPE_STANDARD,
++	};
++	struct power_supply *psy;
++	int i, ret = 0, error;
++
++	for (i = 0; i < ARRAY_SIZE(piano_mca_supplied_to); i++) {
++		psy = power_supply_get_by_name(piano_mca_supplied_to[i]);
++		if (!psy) {
++			ret = ret ?: -ENODEV;
++			continue;
++		}
++		error = power_supply_set_property(psy, POWER_SUPPLY_PROP_CHARGE_TYPE, &value);
++		power_supply_put(psy);
++		ret = ret ?: error;
++	}
++	return ret;
++}
++
++static int piano_mca_set_ffc(struct piano_mca *mca, bool fast)
++{
++	int ret;
++
++	mca->ffc_mode_known = false;
++	ret = piano_mca_set_gauge_modes(mca, fast);
++	if (ret) {
++		/* Either gauge may have accepted a command whose reply was lost. */
++		if (fast && !piano_mca_set_gauge_modes(mca, false)) {
++			mca->ffc = false;
++			mca->ffc_mode_known = true;
++		}
++		return ret;
++	}
++	if (mca->ffc != fast) {
++		mca->cp_profile = 0;
++		mca->buck_cv_steps = 0;
++		dev_info(mca->dev, "%s battery charging mode\n", fast ? "FFC" : "standard");
++	}
++	mca->ffc = fast;
++	mca->ffc_mode_known = true;
++	return 0;
++}
++
++static int piano_mca_update_ffc(struct piano_mca *mca, int tcool, int twarm)
++{
++	bool fast;
++	int ret;
++
++	ret = piano_mca_battery_state(mca);
++	fast = !ret && !mca->ffc_done && !mca->normal_full && mca->online &&
++	       !READ_ONCE(mca->inhibit_charge) && piano_mca_charge_limit(mca) &&
++	       mca->skin_control && !mca->skin_error &&
++	       time_before_eq(jiffies, mca->skin_sample_at +
++			      msecs_to_jiffies(2 * MCA_SKIN_POLL_MS)) &&
++	       tcool >= MCA_FFC_TEMP_MIN && twarm < MCA_FFC_TEMP_MAX &&
++	       !mca->normal_warm && piano_mca_adapter_verified(mca) &&
++	       (mca->ffc || mca->battery_soc < MCA_FFC_SOC_MAX);
++	if (mca->ffc == fast && mca->ffc_mode_known)
++		return 0;
++	/* A live pump must be stopped before either gauge changes mode. */
++	if (piano_mca_cp_active(mca))
++		return -EAGAIN;
++	ret = piano_mca_normal_pause(mca, pmic_glink_get_generation(mca->client),
++				      piano_mca_connection_generation(mca));
++	if (ret)
++		return ret;
++	return piano_mca_set_ffc(mca, fast);
++}
++
+ static int piano_mca_cp_temp_profile(int temp)
+ {
+ 	int i;
+@@ -2075,8 +2273,9 @@ static int piano_mca_cp_normal_limits(struct piano_mca *mca, int vbat, int ibat,
+ {
+ 	const struct piano_mca_cp_profile *cold, *hot, *profile;
+ 	const struct piano_mca_cp_voltage *voltage;
+-	u32 key, ma;
+-	int a, b, stage;
++	struct piano_mca_cp_profile aged;
++	u32 key, ma, ceiling = MCA_CP_IBAT_MAX_MA;
++	int a, b, stage, last;
+ 
+ 	piano_mca_normal_temperature(mca, tcool, twarm);
+ 	if (tcool < 8)
+@@ -2094,17 +2293,64 @@ static int piano_mca_cp_normal_limits(struct piano_mca *mca, int vbat, int ibat,
+ 	mca->cp_hot = false;
+ 	cold = &piano_mca_cp_profiles[a];
+ 	hot = &piano_mca_cp_profiles[b];
++	if (mca->ffc) {
++		if (tcool < MCA_FFC_TEMP_MIN || twarm >= MCA_FFC_TEMP_MAX)
++			return -ERANGE;
++		a = tcool < 35 ? 0 : 1;
++		b = twarm < 35 ? 0 : 1;
++		cold = &piano_mca_ffc_profiles[a];
++		hot = &piano_mca_ffc_profiles[b];
++		ceiling = MCA_FFC_IBAT_MAX_MA;
++	}
+ 	profile = cold->fv_mv < hot->fv_mv ? cold : hot;
+-	key = a * ARRAY_SIZE(piano_mca_cp_profiles) + b + 1;
++	/* Use the hotter row's factory termination current across mixed zones. */
++	if (mca->ffc)
++		profile = hot;
++	aged = *profile;
++	if (mca->battery_authentic && aged.low >= 18 && aged.high <= 48) {
++		last = aged.count - 1;
++		if (mca->ffc) {
++			aged.fv_mv -= mca->battery_fv_derate_mv;
++			aged.voltage[last].mv -= mca->battery_fv_derate_mv;
++		} else {
++			aged.voltage[last].max_ma = 5940;
++			aged.voltage[last].mv -= mca->battery_normal_fv_derate_mv;
++		}
++		if (mca->battery_cycles >= 1000) {
++			if (mca->ffc) {
++				aged.voltage[0].max_ma = 9920;
++				aged.voltage[0].min_ma = 8480;
++				aged.voltage[1].max_ma = 8480;
++				aged.voltage[1].min_ma = 7232;
++				aged.voltage[2].max_ma = 7232;
++				aged.voltage[2].min_ma = 5786;
++				aged.voltage[3].max_ma = 5786;
++			} else {
++				aged.voltage[0].max_ma = 6400;
++				aged.voltage[0].min_ma = 5786;
++				aged.voltage[1].max_ma = 5786;
++			}
++		}
++		aged.fv_mv -= mca->battery_health_fv_derate_mv;
++		aged.voltage[last].mv -= mca->battery_health_fv_derate_mv;
++		profile = &aged;
++	}
++	key = a * ARRAY_SIZE(piano_mca_cp_profiles) + b + 1 + (mca->ffc ? 32 : 0);
+ 	if (key != mca->cp_profile) {
+ 		mca->cp_profile = key;
+ 		mca->cp_stage = 0;
+ 		mca->cp_taper_at = 0;
+ 	}
+-	ma = min3(clamp(cp_ibat_max, 1000U, (u32)MCA_CP_IBAT_MAX_MA),
++	ma = min3(clamp(cp_ibat_max, 1000U, ceiling),
+ 		  (u32)cold->voltage[0].max_ma, (u32)hot->voltage[0].max_ma);
+ 	stage = min_t(u32, mca->cp_stage / 2, profile->count - 1);
+ 	voltage = &profile->voltage[stage];
++	/* The factory FFC stage mask skips the CV phase at 4144 mV. */
++	if (mca->ffc && !stage && vbat >= voltage->mv) {
++		stage = 1;
++		mca->cp_stage = 2;
++		voltage = &profile->voltage[stage];
++	}
+ 	if (vbat >= voltage->mv) {
+ 		if (ibat <= min_t(int, voltage->min_ma, ma) &&
+ 		    stage + 1 < profile->count) {
+@@ -2115,10 +2361,17 @@ static int piano_mca_cp_normal_limits(struct piano_mca *mca, int vbat, int ibat,
+ 			mca->cp_stage = max_t(u32, mca->cp_stage, 2 * stage + 1);
+ 		}
+ 	}
+-	limits->ma = min3(ma, (u32)voltage->max_ma, piano_mca_charge_limit(mca));
++	ma = min(ma, (u32)voltage->max_ma);
++	if (mca->ffc)
++		ma -= min(ma, mca->battery_fcc_derate_ma);
++	else if (!mca->battery_authentic)
++		ma = min(ma, 2000U);
++	limits->ma = min(ma, piano_mca_charge_limit(mca));
+ 	limits->last = stage + 1 == profile->count;
+ 	limits->cv_mv = voltage->mv - (limits->last ? MCA_CP_TAPER_DELTA_MV : 0);
+ 	limits->fv_mv = profile->fv_mv;
++	limits->iterm_ma = mca->ffc ? profile->voltage[profile->count - 1].min_ma +
++					     (twarm >= 35 ? 68 : 75) : MCA_NORMAL_ITERM_MA;
+ 	if (vbat >= limits->cv_mv)
+ 		mca->cp_stage = max_t(u32, mca->cp_stage, 2 * stage + 1);
+ 	return 0;
+@@ -2168,7 +2421,7 @@ static int piano_mca_normal_enable(struct piano_mca *mca, bool enable,
+  * Use the stock setters' ACKs. FCC and ITERM reads are firmware no-ops;
+  * the model-0x56 FV getter also uses twice the setter's register scale.
+  */
+-static int piano_mca_normal_set_fv(struct piano_mca *mca, u32 mv,
++static int piano_mca_normal_set_fv(struct piano_mca *mca, u32 mv, u32 iterm_ma,
+ 				   unsigned int generation,
+ 				   unsigned int connection)
+ {
+@@ -2176,7 +2429,8 @@ static int piano_mca_normal_set_fv(struct piano_mca *mca, u32 mv,
+ 
+ 	if (!piano_mca_session_valid(mca, generation, connection))
+ 		return -ENODEV;
+-	if (mca->fv_set_mv == mv && mca->fv_generation == generation &&
++	if (mca->fv_set_mv == mv && mca->iterm_set_ma == iterm_ma &&
++	    mca->fv_generation == generation &&
+ 	    mca->fv_connection == connection)
+ 		return 0;
+ 	/* A lost ACK can still have applied the write: discard the old cache. */
+@@ -2187,7 +2441,7 @@ static int piano_mca_normal_set_fv(struct piano_mca *mca, u32 mv,
+ 	if (!piano_mca_session_valid(mca, generation, connection))
+ 		return -ENODEV;
+ 	/* The real Piano proxy uses a four-byte mA value, with no enable bit. */
+-	ret = piano_mca_write_u32_session(mca, MCA_PROP_ITERM, MCA_NORMAL_ITERM_MA,
++	ret = piano_mca_write_u32_session(mca, MCA_PROP_ITERM, iterm_ma,
+ 					  generation, connection);
+ 	if (ret)
+ 		return ret;
+@@ -2196,11 +2450,28 @@ static int piano_mca_normal_set_fv(struct piano_mca *mca, u32 mv,
+ 	if (mca->fv_generation != generation || mca->fv_connection != connection)
+ 		mca->fcc_set_ma = 0;
+ 	mca->fv_set_mv = mv;
++	mca->iterm_set_ma = iterm_ma;
+ 	mca->fv_generation = generation;
+ 	mca->fv_connection = connection;
+ 	return 0;
+ }
+ 
++static u32 piano_mca_pmic_voltage(struct piano_mca *mca, u32 fv_mv, int twarm)
++{
++	if (!mca->ffc)
++		return fv_mv;
++	if (mca->cp_ffc && !mca->cp_buck_disabled)
++		fv_mv = MCA_FFC_BUCK_FV_MV;
++	/* Same-device base-flip-same buck compensation. */
++	return fv_mv + (twarm >= 35 ? 45 : 40);
++}
++
++static u32 piano_mca_ffc_fv(struct piano_mca *mca)
++{
++	return MCA_FFC_FV_MV - mca->battery_fv_derate_mv -
++	       mca->battery_health_fv_derate_mv;
++}
++
+ static int piano_mca_normal_pause(struct piano_mca *mca,
+ 				  unsigned int generation,
+ 				  unsigned int connection)
+@@ -2212,6 +2483,7 @@ static int piano_mca_normal_pause(struct piano_mca *mca,
+ 	fcc_ret = piano_mca_write_u32_session(mca, MCA_PROP_FCC, 0,
+ 					      generation, connection);
+ 	mca->fcc_set_ma = 0;
++	mca->pmic_pause_pending = ret || fcc_ret;
+ 	return ret ?: fcc_ret;
+ }
+ 
+@@ -2267,6 +2539,11 @@ static int piano_mca_normal_termination(struct piano_mca *mca, int vbat, int iba
+ 	if (mca->normal_term_count && mca->normal_term_generation != generation)
+ 		mca->normal_term_count = 0;
+ 	if (!mca->normal_full) {
++		/* FFC has a different tail current and compensated PMIC voltage. */
++		if (mca->ffc) {
++			mca->normal_term_count = 0;
++			return 0;
++		}
+ 		if (!mca->online || fv <= MCA_NORMAL_FULL_MIN_MV) {
+ 			mca->normal_term_count = 0;
+ 			return 0;
+@@ -2319,6 +2596,8 @@ static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat,
+ 	const struct piano_mca_jeita *old;
+ 	bool pause;
+ 	int i, cool = -1, warm = -1, ret;
++	u32 iterm = MCA_NORMAL_ITERM_MA;
++	__le32 charge_status;
+ 
+ 	ret = piano_mca_cp_gauges(mca, &vbat, &ibat, &tcool, &twarm);
+ 	if (ret) {
+@@ -2328,6 +2607,27 @@ static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat,
+ 	}
+ 	*tbat = twarm;
+ 	piano_mca_normal_temperature(mca, tcool, twarm);
++	ret = piano_mca_update_ffc(mca, tcool, twarm);
++	if (ret) {
++		piano_mca_normal_pause(mca, generation, connection);
++		return ret;
++	}
++	if (mca->ffc) {
++		ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_CHARGE_STATUS,
++				      &charge_status, sizeof(charge_status), generation, connection);
++		if (ret) {
++			piano_mca_normal_pause(mca, generation, connection);
++			return ret;
++		}
++		if (le32_to_cpu(charge_status) == 5 ||
++		    (mca->battery_soc >= MCA_FFC_SOC_MAX && twarm >= 35 &&
++		     vbat >= piano_mca_ffc_fv(mca) - 10 && ibat >= 0 && ibat <= 3164)) {
++			mca->ffc_done = true;
++			ret = piano_mca_update_ffc(mca, tcool, twarm);
++			if (ret)
++				return ret;
++		}
++	}
+ 	for (i = 0; i < ARRAY_SIZE(piano_mca_jeita); i++) {
+ 		if (tcool >= piano_mca_jeita[i].low && tcool < piano_mca_jeita[i].high)
+ 			cool = i;
+@@ -2355,6 +2655,14 @@ static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat,
+ 		warm = ARRAY_SIZE(piano_mca_jeita) - 2;
+ 	fv = min(piano_mca_jeita[cool].fv, piano_mca_jeita[warm].fv);
+ 	ma = min3(ma, piano_mca_jeita[cool].ma, piano_mca_jeita[warm].ma);
++	if (!mca->battery_authentic)
++		ma = min(ma, 2000);
++	else if (fv >= 4480)
++		fv -= mca->battery_health_fv_derate_mv;
++	if (mca->ffc) {
++		fv = piano_mca_pmic_voltage(mca, piano_mca_ffc_fv(mca), twarm);
++		iterm = twarm >= 35 ? 3232 : 2425;
++	}
+ 	ma = min_t(u32, ma, piano_mca_charge_limit(mca));
+ 	ma = min_t(u32, ma, piano_mca_skin_buck_current(mca));
+ 	ret = piano_mca_normal_termination(mca, vbat, ibat, fv, generation, connection);
+@@ -2369,7 +2677,24 @@ static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat,
+ 			return ret;
+ 	}
+ 	ma = min_t(u32, ma, piano_mca_policy_fcc(mca->real_type));
+-	ret = piano_mca_normal_set_fv(mca, fv, generation, connection);
++	/* Factory base-flip-same software CV: reduce only at the cell target. */
++	if (mca->ffc) {
++		u32 cell_fv = piano_mca_ffc_fv(mca);
++
++		if (vbat >= cell_fv - 3 &&
++		    time_after_eq(jiffies, mca->buck_cv_at)) {
++			mca->buck_cv_steps = min(mca->buck_cv_steps + 1, 5U);
++			mca->buck_cv_at = jiffies + msecs_to_jiffies(1000);
++		}
++		fv -= mca->buck_cv_steps * 5;
++		if (vbat >= cell_fv) {
++			pause = true;
++			ret = piano_mca_normal_pause(mca, generation, connection);
++			if (ret)
++				return ret;
++		}
++	}
++	ret = piano_mca_normal_set_fv(mca, fv, iterm, generation, connection);
+ 	if (ret) {
+ 		piano_mca_normal_pause(mca, generation, connection);
+ 		return ret;
+@@ -2463,6 +2788,19 @@ static int piano_mca_cp_set_buck(struct piano_mca *mca, u32 icl_ma,
+ {
+ 	int ret;
+ 
++	if (!fcc_ma) {
++		ret = piano_mca_normal_pause(mca, mca->cp_generation,
++					      mca->cp_connection_generation);
++		if (ret)
++			return ret;
++		icl_ma = MCA_ICL_MIN_MA;
++		ret = piano_mca_write_u32_session(mca, MCA_PROP_ICL, icl_ma,
++						  mca->cp_generation,
++						  mca->cp_connection_generation);
++		if (!ret)
++			mca->icl_set_ma = icl_ma;
++		return ret;
++	}
+ 	fcc_ma = min3(fcc_ma, piano_mca_charge_limit(mca),
+ 		      piano_mca_skin_buck_current(mca));
+ 	if (fcc_ma < MCA_FCC_MIN_MA)
+@@ -2488,7 +2826,10 @@ static int piano_mca_cp_stop(struct piano_mca *mca, const char *why)
+ 	int on, ret;
+ 
+ 	if (!piano_mca_cp_active(mca))
+-		return 0;
++		return mca->pmic_pause_pending ?
++			piano_mca_normal_pause(mca,
++				pmic_glink_get_generation(mca->client),
++				piano_mca_connection_generation(mca)) : 0;
+ 
+ 	if (mca->cp != MCA_CP_STOPPING)
+ 		mca->cp_retry = false;
+@@ -2506,9 +2847,16 @@ static int piano_mca_cp_stop(struct piano_mca *mca, const char *why)
+ 	dev_info(mca->dev, "direct charging stopped: %s\n", why);
+ 
+ 	mca->cp = MCA_CP_DONE;
++	/* The factory sharing override must not survive without a live pump. */
++	if (mca->cp_ffc)
++		ret = piano_mca_normal_pause(mca,
++				pmic_glink_get_generation(mca->client),
++				piano_mca_connection_generation(mca));
++	mca->cp_ffc = false;
++	mca->cp_buck_disabled = false;
+ 	mca->hv = MCA_HV_OFF;
+ 	mca->hv_retry = jiffies;
+-	return 0;
++	return ret;
+ }
+ 
+ /* A policy pause may retry after its condition clears, including stop errors. */
+@@ -2623,14 +2971,21 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 		return;
+ 	if (piano_mca_cp_gauges(mca, &vbat, &ibat, &tcool, &twarm))
+ 		return;
++	piano_mca_normal_temperature(mca, tcool, twarm);
++	if (piano_mca_update_ffc(mca, tcool, twarm))
++		return;
+ 	if (piano_mca_cp_normal_limits(mca, vbat, ibat, tcool, twarm, &limits) ||
+ 	    limits.ma < MCA_CP_BUCK_MA + 4 * MCA_CP_OPEN_IBUS_MA ||
+ 	    piano_mca_normal_voltage_stop(mca, vbat, limits.fv_mv) ||
+ 	    vbat < MCA_CP_VBAT_MIN_MV || vbat >= limits.cv_mv ||
+ 	    piano_mca_verifying(mca, generation, mca->cp_connection_generation))
+ 		return;
+-	/* Complete the PMIC voltage transition before arming the pump. */
+-	if (piano_mca_normal_set_fv(mca, limits.fv_mv,
++	/* Keep the PMIC stopped until all gauge and charger limits are set. */
++	if (piano_mca_normal_pause(mca, mca->cp_generation,
++				   mca->cp_connection_generation))
++		return;
++	if (piano_mca_normal_set_fv(mca, piano_mca_pmic_voltage(mca, limits.fv_mv, twarm),
++				    limits.iterm_ma,
+ 				    mca->cp_generation,
+ 				    mca->cp_connection_generation))
+ 		return;
+@@ -2695,13 +3050,16 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	mca->cp_ibat_trip = 0;
+ 	mca->cp_taper_at = 0;
+ 	mca->cp_buck_par = false;
++	mca->cp_ffc = mca->ffc;
++	mca->cp_buck_disabled = vbat >= MCA_FFC_BUCK_STOP_MV;
+ 	mca->cp = MCA_CP_OPENING;
+ 
+ 	if (piano_mca_auth_pending(mca))
+ 		mca->auth_tried = true;
+ 
+ 	/* the buck charger carries little meanwhile */
+-	ret = piano_mca_cp_set_buck(mca, MCA_CP_BUCK_MA, MCA_CP_BUCK_MA);
++	ret = piano_mca_cp_set_buck(mca, MCA_CP_BUCK_MA,
++				    mca->cp_ffc ? 0 : MCA_CP_BUCK_MA);
+ 	ret = ret ?: piano_mca_cp_request(mca, start_mv);
+ 	if (ret) {
+ 		/* again after the adapter reset */
+@@ -2738,6 +3096,15 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 					       mca->cp_connection_generation);
+ 		return;
+ 	}
++	if (mca->cp_ffc && (piano_mca_battery_state(mca) || !mca->ffc_mode_known ||
++	    !mca->battery_authentic || !piano_mca_adapter_verified(mca) ||
++	    mca->skin_error || tcool < MCA_FFC_TEMP_MIN ||
++	    twarm >= MCA_FFC_TEMP_MAX ||
++	    time_after(jiffies, mca->skin_sample_at +
++		       msecs_to_jiffies(2 * MCA_SKIN_POLL_MS)))) {
++		piano_mca_cp_pause(mca, "FFC conditions changed");
++		return;
++	}
+ 	if (piano_mca_cp_normal_limits(mca, vbat, ibat, tcool, twarm, &limits)) {
+ 		if (!piano_mca_cp_pause(mca, "battery temperature")) {
+ 			piano_mca_normal_pause(mca, mca->cp_generation,
+@@ -2762,12 +3129,14 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 		return;
+ 	}
+ 	if (vbat >= limits.fv_mv) {
+-		int ret = mca->fv_set_mv > limits.fv_mv ?
++		int ret = !mca->ffc && mca->fv_set_mv > limits.fv_mv ?
+ 			piano_mca_cp_pause(mca, "normal voltage reached") :
+ 			piano_mca_cp_stop(mca, "normal voltage reached");
+ 
+ 		if (!ret) {
+-			if (piano_mca_normal_set_fv(mca, limits.fv_mv,
++			if (piano_mca_normal_set_fv(mca,
++						    piano_mca_pmic_voltage(mca, limits.fv_mv, twarm),
++						    limits.iterm_ma,
+ 						    mca->cp_generation,
+ 						    mca->cp_connection_generation))
+ 				piano_mca_normal_pause(mca, mca->cp_generation,
+@@ -2779,7 +3148,19 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 		piano_mca_cp_stop(mca, "battery voltage too low");
+ 		return;
+ 	}
+-	if (piano_mca_normal_set_fv(mca, limits.fv_mv, mca->cp_generation,
++	if (mca->cp_ffc && vbat >= MCA_FFC_BUCK_STOP_MV &&
++	    !mca->cp_buck_disabled) {
++		if (piano_mca_normal_pause(mca, mca->cp_generation,
++					   mca->cp_connection_generation)) {
++			piano_mca_cp_stop(mca, "FFC PMIC cutoff failed");
++			return;
++		}
++		mca->cp_buck_disabled = true;
++		mca->cp_buck_par = false;
++	}
++	if (piano_mca_normal_set_fv(mca,
++				    piano_mca_pmic_voltage(mca, limits.fv_mv, twarm),
++				    limits.iterm_ma, mca->cp_generation,
+ 				    mca->cp_connection_generation)) {
+ 		if (!piano_mca_cp_stop_io(mca, "normal voltage setting failed"))
+ 			piano_mca_normal_pause(mca, mca->cp_generation,
+@@ -2799,12 +3180,12 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 
+ 	ibat_max = limits.ma;
+ 	if (limits.last && vbat >= limits.cv_mv - MCA_CP_TAPER_HYS_MV &&
+-	    ibat >= 0 && ibat < MCA_CP_TAPER_MA) {
++	    ibat >= 0 && ibat < (mca->cp_ffc && twarm >= 35 ? 3500 : MCA_CP_TAPER_MA)) {
+ 		if (!mca->cp_taper_at)
+ 			mca->cp_taper_at = jiffies;
+ 		if (time_after_eq(jiffies, mca->cp_taper_at +
+ 				  msecs_to_jiffies(MCA_CP_TAPER_MS))) {
+-			piano_mca_cp_stop(mca, "normal tail charge to PMIC");
++			piano_mca_cp_stop(mca, "tail charge to PMIC");
+ 			return;
+ 		}
+ 	} else {
+@@ -2891,13 +3272,46 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 
+ 		/* only from a source that feeds both at that bus current */
+ 		ibus_all = ibus + mca->ibus_ua / 1000;
+-		par = ibat_max > MCA_CP_PAR_IBAT_MA &&
++		par = !mca->cp_ffc && ibat_max > MCA_CP_PAR_IBAT_MA &&
+ 		      mca->cp_ma >=
+ 				MCA_CP_PAR_IBUS_MA + MCA_CP_PAR_ICL_MA + 200 &&
+ 		      (ibus_all > MCA_CP_PAR_IBUS_MA ||
+ 		       (mca->cp_buck_par &&
+ 			ibus_all > MCA_CP_PAR_IBUS_MA - MCA_CP_PAR_HYS_MA));
+-		if (par != mca->cp_buck_par) {
++		if (mca->cp_ffc) {
++			static const u32 battery_ma[] = { 10000, 8000, 5000 };
++			static const u32 bus_ma[] = { 5200, 4200, 2700 };
++			static const u32 pmic_ma[] = { 4000, 3000, 2000, 1000 };
++			u32 fcc = mca->cp_buck_disabled ? 0 : 1000;
++			u32 icl;
++			int i;
++
++			for (i = 0; fcc && i < ARRAY_SIZE(battery_ma); i++) {
++				if (ibat_max > battery_ma[i] && ibus_all > bus_ma[i]) {
++					fcc = pmic_ma[i];
++					break;
++				}
++			}
++			icl = fcc / 2 + (fcc > 1000 ? 500 : 0);
++			/* Do not give the PMIC a second copy of the source budget. */
++			if (fcc && icl + 2 * MCA_CP_OPEN_IBUS_MA + 200 >
++			    mca->cp_ma) {
++				fcc = 1000;
++				icl = 500;
++			}
++			fcc = min3(fcc, piano_mca_charge_limit(mca),
++				   piano_mca_skin_buck_current(mca));
++			if (fcc != mca->fcc_set_ma) {
++				if (fcc > mca->fcc_set_ma)
++					mv -= min_t(u32, mv > 2 * vbat ? mv - 2 * vbat : 0,
++						(fcc - mca->fcc_set_ma) / 2 /
++						MCA_CP_REG_STEP_MA * MCA_CP_REG_STEP_MV);
++				if (piano_mca_cp_set_buck(mca, icl, fcc)) {
++					piano_mca_cp_stop(mca, "FFC PMIC sharing failed");
++					return;
++				}
++			}
++		} else if (par != mca->cp_buck_par) {
+ 			if (piano_mca_cp_set_buck(mca,
+ 						  par ? MCA_CP_PAR_ICL_MA : MCA_CP_BUCK_MA,
+ 						  par ? MCA_CP_PAR_FCC_MA : MCA_CP_BUCK_MA)) {
+@@ -2916,7 +3330,7 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 		}
+ 		/* what the source gives, less the buck charger's input */
+ 		target = min(target, (int)mca->cp_ma - 200 -
+-			     (mca->cp_buck_par ? MCA_CP_PAR_ICL_MA : MCA_CP_BUCK_MA));
++			     mca->icl_set_ma);
+ 		/*
+ 		 * The stage gives the battery about twice its bus current,
+ 		 * next to the buck charger's share.  The gauges average over
+@@ -2977,6 +3391,9 @@ static int piano_mca_sync_connection(struct piano_mca *mca)
+ 	mca->cp_errors = 0;
+ 	mca->normal_full = false;
+ 	mca->normal_term_count = 0;
++	mca->ffc_done = false;
++	mca->ffc_mode_known = false;
++	mca->buck_cv_steps = 0;
+ 	mca->hv = MCA_HV_OFF;
+ 	mca->hv_renegs = 0;
+ 	mca->icl_set_ma = 0;
+@@ -3030,6 +3447,9 @@ static void piano_mca_poll(struct work_struct *work)
+ 	    piano_mca_pause_charging(mca, generation,
+ 				    mca->polled_connection_generation))
+ 		goto requeue;
++	if (mca->pmic_pause_pending && mca->service_up &&
++	    piano_mca_normal_pause(mca, generation, mca->polled_connection_generation))
++		goto requeue;
+ 	/* Finish an uncertain VERIFY_PROCESS write before any charging policy. */
+ 	if (piano_mca_mipps_cleanup(mca))
+ 		goto requeue;
+@@ -3134,6 +3554,15 @@ static void piano_mca_poll(struct work_struct *work)
+ 		}
+ 		if (piano_mca_cp_pause(mca, "source offline"))
+ 			goto requeue;
++		if (cp_charge && charge_current &&
++		    (mca->ffc || !mca->ffc_mode_known)) {
++			if (mca->service_up &&
++			    piano_mca_normal_pause(mca, generation,
++						   mca->polled_connection_generation))
++				goto requeue;
++			if (piano_mca_set_ffc(mca, false))
++				goto requeue;
++		}
+ 		if (mca->icl_set_ma)
+ 			piano_mca_reset_icl(mca);
+ 		if (mca->fcc_set_ma)
+@@ -3290,7 +3719,7 @@ static int piano_mca_skin_temperature(const int *temp)
+ 
+ static u32 piano_mca_skin_current(struct piano_mca *mca, int temp)
+ {
+-	u32 ma = MCA_CP_IBAT_MAX_MA;
++	u32 ma = clamp(cp_ibat_max, 1000U, (u32)MCA_FFC_IBAT_MAX_MA);
+ 	int i;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(piano_mca_skin_limits); i++) {
+@@ -3466,7 +3895,7 @@ static int piano_mca_usb_get_property(struct power_supply *psy,
+ 		val->intval = READ_ONCE(mca->charge_limit_ua);
+ 		break;
+ 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT_MAX:
+-		val->intval = MCA_CP_IBAT_MAX_MA * 1000;
++		val->intval = MCA_FFC_IBAT_MAX_MA * 1000;
+ 		break;
+ 	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
+ 		val->intval = READ_ONCE(mca->inhibit_charge) ?
+@@ -3496,7 +3925,7 @@ static int piano_mca_usb_set_property(struct power_supply *psy,
+ 	if (!charge_policy || !cp_charge || !charge_current)
+ 		return -EOPNOTSUPP;
+ 	if (psp == POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT) {
+-		if (val->intval < 0 || ua > MCA_CP_IBAT_MAX_MA * 1000 || ua % 1000 ||
++		if (val->intval < 0 || ua > MCA_FFC_IBAT_MAX_MA * 1000 || ua % 1000 ||
+ 		    (ua && ua < MCA_FCC_MIN_MA * 1000))
+ 			return -EINVAL;
+ 	} else if (val->intval != POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO &&
+@@ -3650,7 +4079,7 @@ static int piano_mca_register_cooling(struct piano_mca *mca)
+ 	for (i = 0; i < count; i++) {
+ 		u32 ua = mca->cooling_limits_ua[i];
+ 
+-		if (ua > MCA_CP_IBAT_MAX_MA * 1000 || ua % 1000 ||
++		if (ua > MCA_FFC_IBAT_MAX_MA * 1000 || ua % 1000 ||
+ 		    (ua && ua < MCA_FCC_MIN_MA * 1000) ||
+ 		    (i && ua >= mca->cooling_limits_ua[i - 1]))
+ 			return -EINVAL;
+@@ -3884,6 +4313,8 @@ static void piano_mca_stop_work(struct piano_mca *mca)
+ 
+ 		if (piano_mca_normal_pause(mca, generation, connection))
+ 			dev_err(mca->dev, "failed to pause charging during teardown\n");
++		else if (piano_mca_set_ffc(mca, false))
++			dev_err(mca->dev, "failed to restore standard gauge mode\n");
+ 	} else if (mca->fcc_set_ma) {
+ 		piano_mca_reset_fcc(mca);
+ 	}
+@@ -4063,6 +4494,7 @@ static int piano_mca_suspend(struct device *dev)
+ 		unsigned int connection = piano_mca_connection_generation(mca);
+ 
+ 		ret = piano_mca_normal_pause(mca, generation, connection);
++		ret = ret ?: piano_mca_set_ffc(mca, false);
+ 	}
+ 	if (ret) {
+ 		mca->policy_suspended = false;
+@@ -4070,6 +4502,7 @@ static int piano_mca_suspend(struct device *dev)
+ 		mod_delayed_work(system_freezable_wq, &mca->poll, 0);
+ 		goto unlock;
+ 	}
++	mca->ffc_mode_known = false;
+ unlock:
+ 	mutex_unlock(&mca->policy_lock);
+ 	return ret;
+@@ -4121,7 +4554,7 @@ static int piano_mca_probe(struct auxiliary_device *adev,
+ 	piano_mca_parse_otg_config(mca);
+ 	mutex_init(&mca->lock);
+ 	mutex_init(&mca->policy_lock);
+-	mca->charge_limit_ua = MCA_CP_IBAT_MAX_MA * 1000;
++	mca->charge_limit_ua = MCA_FFC_IBAT_MAX_MA * 1000;
+ 	mutex_init(&mca->pen_boost_lock);
+ 	init_completion(&mca->ack);
+ 	INIT_DELAYED_WORK(&mca->poll, piano_mca_poll);
+diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
+index c300c92f960..e3b2beb5de2 100644
+--- a/drivers/power/supply/piano_mca_test.c
++++ b/drivers/power/supply/piano_mca_test.c
+@@ -49,6 +49,9 @@ struct piano_mca_test_gauge {
+ 	int charge_now_uah;
+ 	int charge_full_uah;
+ 	int charge_error;
++	bool authentic;
++	int cycles, design_uah, charge_type;
++	unsigned int mode_writes, mode_failures;
+ };
+ 
+ struct piano_mca_test_iio {
+@@ -390,6 +393,9 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+ 		case MCA_PROP_CHARGE_STATUS:
+ 			put_unaligned_le32(fixture->charge_status, response.data);
+ 			break;
++		case MCA_PROP_PD_VERIFIED:
++			put_unaligned_le32(fixture->pd_verified, response.data);
++			break;
+ 		case MCA_PROP_ICL:
+ 			put_unaligned_le32(fixture->icl_ma, response.data);
+ 			break;
+@@ -531,7 +537,12 @@ static int piano_mca_test_init(struct kunit *test)
+ 		(struct piano_mca_test_gauge){ 3800000, 1000000, 250, 0 };
+ 	fixture->gauge[0].charge_now_uah = 4400000;
+ 	fixture->gauge[0].charge_full_uah = 4500000;
++	fixture->gauge[0].design_uah = 4500000;
++	fixture->gauge[0].charge_type = POWER_SUPPLY_CHARGE_TYPE_STANDARD;
++	fixture->gauge[0].authentic = true;
+ 	fixture->gauge[1] = fixture->gauge[0];
++	mca->battery_authentic = true;
++	mca->ffc_mode_known = true;
+ 	mca->online = true;
+ 	mca->real_type = MCA_TYPE_PD;
+ 	mutex_init(&mca->lock);
+@@ -576,6 +587,18 @@ static int piano_mca_test_gauge_get(struct power_supply *psy,
+ 	     property == POWER_SUPPLY_PROP_CHARGE_FULL) && gauge->charge_error)
+ 		return gauge->charge_error;
+ 	switch (property) {
++	case POWER_SUPPLY_PROP_AUTHENTIC:
++		value->intval = gauge->authentic;
++		return 0;
++	case POWER_SUPPLY_PROP_CYCLE_COUNT:
++		value->intval = gauge->cycles;
++		return 0;
++	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
++		value->intval = gauge->design_uah;
++		return 0;
++	case POWER_SUPPLY_PROP_CHARGE_TYPE:
++		value->intval = gauge->charge_type;
++		return 0;
+ 	case POWER_SUPPLY_PROP_CHARGE_NOW:
+ 		value->intval = gauge->charge_now_uah;
+ 		return 0;
+@@ -596,6 +619,23 @@ static int piano_mca_test_gauge_get(struct power_supply *psy,
+ 	}
+ }
+ 
++static int piano_mca_test_gauge_set(struct power_supply *psy,
++				    enum power_supply_property property,
++				    const union power_supply_propval *value)
++{
++	struct piano_mca_test_gauge *gauge = power_supply_get_drvdata(psy);
++
++	if (property != POWER_SUPPLY_PROP_CHARGE_TYPE)
++		return -EINVAL;
++	gauge->mode_writes++;
++	if (gauge->mode_failures) {
++		gauge->mode_failures--;
++		return -EIO;
++	}
++	gauge->charge_type = value->intval;
++	return 0;
++}
++
+ static int piano_mca_test_register_gauges(struct kunit *test)
+ {
+ 	struct piano_mca_test *fixture = test->priv;
+@@ -605,6 +645,10 @@ static int piano_mca_test_register_gauges(struct kunit *test)
+ 		POWER_SUPPLY_PROP_TEMP,
+ 		POWER_SUPPLY_PROP_CHARGE_NOW,
+ 		POWER_SUPPLY_PROP_CHARGE_FULL,
++		POWER_SUPPLY_PROP_AUTHENTIC,
++		POWER_SUPPLY_PROP_CYCLE_COUNT,
++		POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
++		POWER_SUPPLY_PROP_CHARGE_TYPE,
+ 	};
+ 	static const struct power_supply_desc descriptions[] = {
+ 		{
+@@ -613,6 +657,7 @@ static int piano_mca_test_register_gauges(struct kunit *test)
+ 			.properties = properties,
+ 			.num_properties = ARRAY_SIZE(properties),
+ 			.get_property = piano_mca_test_gauge_get,
++			.set_property = piano_mca_test_gauge_set,
+ 		},
+ 		{
+ 			.name = "bq27z561-1",
+@@ -620,6 +665,7 @@ static int piano_mca_test_register_gauges(struct kunit *test)
+ 			.properties = properties,
+ 			.num_properties = ARRAY_SIZE(properties),
+ 			.get_property = piano_mca_test_gauge_get,
++			.set_property = piano_mca_test_gauge_set,
+ 		},
+ 	};
+ 	int index;
+@@ -3414,7 +3460,177 @@ static void piano_mca_skin_buck_share_limit_test(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, f->icl_ma, 1500U);
+ }
+ 
++static void piano_mca_ffc_prepare(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	int i;
++
++	piano_mca_skin_limits_prepare(test);
++	mipps_auth = true;
++	for (i = 0; i < ARRAY_SIZE(f->gauge); i++)
++		f->gauge[i].charge_now_uah = 2250000;
++	f->mca.auth_ok = true;
++	f->mca.auth_generation = f->remote_generation;
++	f->pd_verified = 1;
++	f->mca.charge_limit_ua = MCA_FFC_IBAT_MAX_MA * 1000;
++	cp_ibat_max = MCA_FFC_IBAT_MAX_MA;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++}
++
++static void piano_mca_ffc_requires_both_gauges_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	piano_mca_ffc_prepare(test);
++	f->gauge[1].authentic = false;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 25, 25), 0);
++	KUNIT_EXPECT_FALSE(test, f->mca.ffc);
++	f->gauge[1].authentic = true;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 25, 25), 0);
++	KUNIT_EXPECT_TRUE(test, f->mca.ffc);
++	KUNIT_EXPECT_EQ(test, f->gauge[0].charge_type, POWER_SUPPLY_CHARGE_TYPE_FAST);
++	KUNIT_EXPECT_EQ(test, f->gauge[1].charge_type, POWER_SUPPLY_CHARGE_TYPE_FAST);
++}
++
++static void piano_mca_ffc_temperature_and_thermal_budget_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	struct piano_mca_cp_limits limits;
++
++	piano_mca_ffc_prepare(test);
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 17, 25), 0);
++	KUNIT_EXPECT_FALSE(test, f->mca.ffc);
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 18, 25), 0);
++	KUNIT_ASSERT_TRUE(test, f->mca.ffc);
++	KUNIT_ASSERT_EQ(test,
++		piano_mca_cp_normal_limits(&f->mca, 3800, 10000, 25, 25, &limits), 0);
++	KUNIT_EXPECT_EQ(test, limits.ma, 12300U);
++	f->mca.skin_limit_ma = piano_mca_skin_current(&f->mca, 39000);
++	KUNIT_ASSERT_EQ(test,
++		piano_mca_cp_normal_limits(&f->mca, 3800, 10000, 25, 25, &limits), 0);
++	KUNIT_EXPECT_EQ(test, limits.ma, 4400U);
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 25, 48), 0);
++	KUNIT_EXPECT_FALSE(test, f->mca.ffc);
++}
++
++static void piano_mca_ffc_partial_mode_write_rolls_back_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	piano_mca_ffc_prepare(test);
++	f->gauge[1].mode_failures = 1;
++	KUNIT_EXPECT_EQ(test, piano_mca_update_ffc(&f->mca, 25, 25), -EIO);
++	KUNIT_EXPECT_FALSE(test, f->mca.ffc);
++	KUNIT_EXPECT_TRUE(test, f->mca.ffc_mode_known);
++	KUNIT_EXPECT_EQ(test, f->gauge[0].charge_type, POWER_SUPPLY_CHARGE_TYPE_STANDARD);
++	KUNIT_EXPECT_EQ(test, f->gauge[1].charge_type, POWER_SUPPLY_CHARGE_TYPE_STANDARD);
++	KUNIT_EXPECT_FALSE(test, f->pmic_enabled);
++}
++
++static void piano_mca_ffc_inhibition_and_full_survive_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	piano_mca_ffc_prepare(test);
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 25, 25), 0);
++	KUNIT_ASSERT_TRUE(test, f->mca.ffc);
++	f->mca.inhibit_charge = true;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 25, 25), 0);
++	KUNIT_EXPECT_FALSE(test, f->mca.ffc);
++	KUNIT_EXPECT_TRUE(test, f->mca.inhibit_charge);
++	f->mca.inhibit_charge = false;
++	f->mca.normal_full = true;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 25, 25), 0);
++	KUNIT_EXPECT_FALSE(test, f->mca.ffc);
++	KUNIT_EXPECT_TRUE(test, f->mca.normal_full);
++}
++
++static void piano_mca_ffc_voltage_cutoff_keeps_buck_off_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	piano_mca_ffc_prepare(test);
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 25, 25), 0);
++	KUNIT_ASSERT_EQ(test, piano_mca_test_start_cp(test), 0);
++	f->mca.cp_ffc = true;
++	f->mca.cp_buck_disabled = true;
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_set_buck(&f->mca, 0, 0), 0);
++	KUNIT_EXPECT_FALSE(test, f->pmic_enabled);
++	KUNIT_EXPECT_EQ(test, f->fcc_ma, 0U);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, (u32)MCA_ICL_MIN_MA);
++	KUNIT_EXPECT_EQ(test, piano_mca_pmic_voltage(&f->mca, 4550, 25), 4590U);
++}
++
++static void piano_mca_ffc_stop_retries_pmic_pause_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	piano_mca_ffc_prepare(test);
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 25, 25), 0);
++	KUNIT_ASSERT_EQ(test, piano_mca_test_start_cp(test), 0);
++	f->mca.cp_ffc = true;
++	f->pmic_enable_write_failures = 1;
++	KUNIT_EXPECT_EQ(test, piano_mca_cp_pause(&f->mca, "FFC limit"), -EIO);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_EXPECT_TRUE(test, f->mca.cp_retry);
++	KUNIT_EXPECT_TRUE(test, f->mca.pmic_pause_pending);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_stop(&f->mca, "stop confirmation"), 0);
++	KUNIT_EXPECT_FALSE(test, f->mca.pmic_pause_pending);
++	KUNIT_EXPECT_FALSE(test, f->pmic_enabled);
++}
++
++static void piano_mca_ffc_aging_keeps_factory_limits_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	struct piano_mca_cp_limits limits;
++
++	piano_mca_ffc_prepare(test);
++	f->gauge[0].cycles = f->gauge[1].cycles = 1000;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 25, 25), 0);
++	KUNIT_ASSERT_TRUE(test, f->mca.ffc);
++	KUNIT_ASSERT_EQ(test,
++		piano_mca_cp_normal_limits(&f->mca, 3800, 9000, 25, 25, &limits), 0);
++	KUNIT_EXPECT_EQ(test, limits.ma, 9720U);
++	KUNIT_EXPECT_EQ(test, limits.fv_mv, 4500U);
++	f->gauge[0].cycles = f->gauge[1].cycles = 200;
++	f->gauge[0].charge_full_uah = f->gauge[1].charge_full_uah = 3600000;
++	KUNIT_ASSERT_EQ(test, piano_mca_battery_state(&f->mca), 0);
++	KUNIT_ASSERT_EQ(test,
++		piano_mca_cp_normal_limits(&f->mca, 3800, 9000, 25, 25, &limits), 0);
++	KUNIT_EXPECT_EQ(test, limits.fv_mv, 4490U);
++}
++
++static void piano_mca_ffc_tail_does_not_reenter_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	int tbat;
++
++	piano_mca_ffc_prepare(test);
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 25, 25), 0);
++	f->charge_status = 5;
++	f->gauge[0].charge_now_uah = f->gauge[1].charge_now_uah = 4455000;
++	KUNIT_ASSERT_EQ(test, piano_mca_normal_buck(&f->mca, &tbat,
++		f->remote_generation, 0), 0);
++	KUNIT_EXPECT_FALSE(test, f->mca.ffc);
++	KUNIT_EXPECT_TRUE(test, f->mca.ffc_done);
++	KUNIT_EXPECT_TRUE(test, f->mca.normal_full);
++	f->charge_status = 4;
++	f->gauge[0].charge_now_uah = f->gauge[1].charge_now_uah = 2250000;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 25, 25), 0);
++	KUNIT_EXPECT_FALSE(test, f->mca.ffc);
++	KUNIT_EXPECT_TRUE(test, f->mca.normal_full);
++}
++
+ static struct kunit_case piano_mca_test_cases[] = {
++	KUNIT_CASE(piano_mca_ffc_requires_both_gauges_test),
++	KUNIT_CASE(piano_mca_ffc_temperature_and_thermal_budget_test),
++	KUNIT_CASE(piano_mca_ffc_partial_mode_write_rolls_back_test),
++	KUNIT_CASE(piano_mca_ffc_inhibition_and_full_survive_test),
++	KUNIT_CASE(piano_mca_ffc_voltage_cutoff_keeps_buck_off_test),
++	KUNIT_CASE(piano_mca_ffc_stop_retries_pmic_pause_test),
++	KUNIT_CASE(piano_mca_ffc_aging_keeps_factory_limits_test),
++	KUNIT_CASE(piano_mca_ffc_tail_does_not_reenter_test),
+ 	KUNIT_CASE(piano_mca_skin_buck_columns_test),
+ 	KUNIT_CASE(piano_mca_skin_normal_buck_fcc_test),
+ 	KUNIT_CASE(piano_mca_skin_buck_share_limit_test),
