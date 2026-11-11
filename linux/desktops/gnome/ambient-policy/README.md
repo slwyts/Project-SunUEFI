@@ -9,7 +9,7 @@
 正常默认系统使用`tools/build_gsd_packages.py`生产并安装标准Debian包，Root构建入口消费`build/gsd/runtime`及相邻`SOURCE.json`。工具克隆已完成的trixie ARM64 base，不改输入；仅克隆内恢复DNS、配置签名源码APT源并默认安装构建依赖。
 
 ```sh
-sudo python3 tools/build_gsd_packages.py \
+sudo ./build.sh gsd \
   --output build/gsd --sysroot /absolute/project/build/completed-root --jobs 4
 ```
 
@@ -28,7 +28,7 @@ cd /absolute/new/gsd-piano-build
 dpkg-buildpackage -b -us -uc
 ```
 
-发行版源码需为48.1且使用标准`3.0 (quilt)`格式；上下文不同会在准备时失败，不能忽略补丁错误。生成标准`gnome-settings-daemon`包，包版本追加`+sunuefi1`。由发行版正常安装/升级流程替换包，重新登录使新 power manager 生效。
+发行版源码需为48.1且使用标准`3.0 (quilt)`格式；上下文不同会在准备时失败，不能忽略补丁错误。生成标准`gnome-settings-daemon`包，包版本追加`+sunuefi2`，同时包含键盘背光热插拔刷新。由发行版正常安装/升级流程替换包，重新登录使新 power manager 生效。
 
 ## Arch / Arch Linux ARM 51.0
 
@@ -41,4 +41,4 @@ cd /absolute/new/gsd-piano-package
 makepkg -s
 ```
 
-两份补丁分别适配上游版本，设备配置和功能相同。真实官方48.1/51.0源均已校验并无fuzz应用；Debian48.1完整ARM64包已实际构建和收集，51.0尚未编译整包。设备亮度体验仍待默认系统集成后验证。
+两份补丁分别适配上游版本，设备配置和功能相同。官方48.1/51.0源码均已校验并无fuzz应用，完整ARM64包均已构建；Nyarch镜像自动安装`51.0-1.2`。设备亮度体验仍需完整系统实测。

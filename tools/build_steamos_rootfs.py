@@ -408,6 +408,8 @@ done
         build_arch_ffmpeg.build(root, ffmpeg)
     else:
         build_arch_package.install_cached(root, ffmpeg)
+    pipewire = output / 'packages/pipewire'
+    run(ROOT / 'build.sh', 'pipewire', '--rootfs', root, '--output', pipewire)
     client = output / 'steam-client'
     if (not (client / 'SOURCE.json').is_file() or
             json.loads((client / 'SOURCE.json').read_text()) != prepare_steam_client.source_record()):
@@ -447,6 +449,7 @@ done
     manifest = output / 'manifest.json'
     record = json.loads(manifest.read_text())
     record.update(base_source=base_record, ffmpeg=json.loads((ffmpeg / 'SOURCE.json').read_text()),
+                  pipewire=json.loads((pipewire / 'SOURCE.json').read_text()),
                   steam_client=json.loads((client / 'SOURCE.json').read_text()),
                   steam_runtime=runtime_record)
     manifest.write_text(json.dumps(record, indent=2) + '\n')

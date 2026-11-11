@@ -103,14 +103,18 @@ Origin: https://gitlab.gnome.org/GNOME/gnome-settings-daemon/-/blob/50.1/plugins
  static void
  backlight_iface_emit_changed (GsdPowerManager *manager,
                                const char      *interface_name,
-@@ -1750,8 +1783,8 @@
+@@ -1750,8 +1783,12 @@
          if (connection == NULL)
                  return;
 
 -        params = g_variant_new_parsed ("(%s, [{'Brightness', <%i>}], @as [])", interface_name,
 -                                       value);
-+        params = g_variant_new_parsed ("(%s, [{'Brightness', <%i>}, {'Steps', <%i>}], @as [])",
-+                                       interface_name, value, backlight_get_n_steps (manager));
++        if (g_strcmp0 (interface_name, GSD_POWER_DBUS_INTERFACE_KEYBOARD) == 0)
++                params = g_variant_new_parsed ("(%s, [{'Brightness', <%i>}, {'Steps', <%i>}], @as [])",
++                                               interface_name, value, backlight_get_n_steps (manager));
++        else
++                params = g_variant_new_parsed ("(%s, [{'Brightness', <%i>}], @as [])",
++                                               interface_name, value);
          g_dbus_connection_emit_signal (connection,
                                         NULL,
                                         GSD_POWER_DBUS_PATH,

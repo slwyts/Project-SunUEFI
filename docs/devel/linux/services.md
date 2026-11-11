@@ -28,6 +28,12 @@
 
 键盘背光使用内核 LED 节点 `nanosic::kbd_backlight`，经 UPower 和桌面电源组件调节。蓝牙地址由 UEFI 通过标准设备树属性交给内核，触屏解码由设备绑定事件触发。ADSP 和 CDSP 由内核 `remoteproc` 驱动自动启动，设备树不再禁用 ADSP 自动启动，也不依赖用户空间等待显示接管。
 
+Debian 镜像安装带 LED 热插拔补丁的 UPower 1.90.9，daemon 与其精确依赖的
+`libupower-glib3` 一起打包。旧键盘 D-Bus 对象在未连接时仍保留，LED 插拔时
+重新扫描并关闭旧文件描述符。GNOME 的 GSD 48.1（Debian）和 51.0（Nyarch）
+通过同一标准接口异步刷新亮度与范围，取消过期请求，保留亮度为零的状态；
+不增加硬件服务。Nyarch、SteamOS 使用发行版自带的较新 UPower。
+
 相机服务在用户会话开始前创建 V4L2 loopback 节点，并发送 systemd 就绪通知；只有应用请求视频时才启动采集。相机驱动由硬件别名自动探测，`CAMERA_START=0` 禁用图像服务。升级时一起更新 unit 和 helper。
 
 2026-10-08 的 `g086a94c4529d` 实机已绑定主线接口驱动 `qcom-camss`、后置 `s5kjn1 7-0010`、前置 `ov32d40 5-0010` 和对焦 `dw9768 7-000c`。原厂最终 DT 与现有 [相机 overlay](../../../upstream/debian-piano-current/boot/dtbo-piano-camera.dts) 对应：后置走 CCI0 master1、GPIO115/116、CSIPHY1；前置走 QUP2 SE1 I²C、GPIO4/5、CSIPHY4。内核的 `drivers/media/platform/qcom/camss/` 已包含 SM8750、CSID980 和 TFE Gen4 支持，两个 sensor 位于 `drivers/media/i2c/{s5kjn1,ov32d40}.c`。这不是重新移植缺失驱动的场景；`video40/41` 是 loopback，不能单凭枚举判定有图像。此版本经普通 BOOT 启动后，两路各做了30帧短采集，硬件各输出28帧；前后预览已检查，未再出现 CCM `Bad address`。后置等待90帧后画面比初始预览更清晰。长期帧率、同时采集和 GNOME 应用体验仍未验证。
@@ -43,5 +49,18 @@
 通用多发行版路径由 [`tools/assemble_rootfs.py`](../../../tools/assemble_rootfs.py) 安装发行版、桌面和显式选择的 BSP/运行时包；[`tools/package_bsp.py`](../../../tools/package_bsp.py) 按 `linux/bsp/manifest.json` 打包本地配置。配置包本身不自动启用服务，也不包含内核模块或原生程序。
 
 Debian release 由 [`tools/build_release_rootfs.py`](../../../tools/build_release_rootfs.py) 调用上游基础构建，再用 `stage_piano_ram_hardware.build()` 安装经过同一 BSP 清单校验的本地配置，删除上游的旧驱动加载服务，随后安装匹配的模块与原生程序。SteamOS 和 Nyarch 通过 `stage_arch_piano.py` 使用相同硬件运行时。
+
+桌面包由 rootfs 构建自动安装，源码与二进制摘要写入发行版 manifest，构建日志
+并入 CI 的 `logs.zip`。单独构建使用 `./build.sh gsd --sysroot <Debian root>`、
+`./build.sh upower --sysroot <Debian root>` 和
+`./build.sh pipewire --rootfs <发行版 root> --output <build 下的包目录>`；
+这些命令需要 root，输入均为本地构建目录，不访问平板。
+
+PipeWire 只重建完整 GStreamer 插件，链接目标 root 中同版本的库，并用包依赖
+锁定对应发行版版本；不替换服务端、音频组件或库 ABI。补丁处理格式枚举与首选
+格式、运行中 caps、缓冲池锁顺序和借用 MemPtr 的复制。来源和补丁摘要由
+`patches/pipewire/<版本>/series.json` 指定，源码完整准备后才进入缓存，构建器
+变化使旧包缓存失效。19 项格式测试串行运行，使用隔离的 GStreamer registry，
+不扫描系统插件；它们不替代平板上的相机、录屏和屏幕共享验证。
 
 旧 `bootprofiles/` 的源码已分别迁入 `uefi/` 和 `linux/`。该目录本地剩余的 `BootShim.bin`、`BootShim.elf` 与 `__pycache__` 是历史编译产物，当前工具使用 `uefi/handoff/bootshim/`，不从旧目录构建。

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "version": "1.6.9",
+  "source": {
+    "url": "https://deb.debian.org/debian/pool/main/p/pipewire/pipewire_1.6.9.orig.tar.gz",
+    "sha256": "a0012db8aaca4448fd205035e07d264235e4a4fe50713085fc4a6899e738a298"
+  },
+  "patches": [
+    {
+      "file": "0001-gst-fraction-range.patch",
+      "sha256": "2565f4a347ec5773f5c649f4faacd5f322999aa26831a1c6379a728671a2407e"
+    },
+    {
+      "file": "0002-gst-preferred-caps.patch",
+      "sha256": "4068ee6a6ac304b8d9e34e04e8a866344ceca247b7c7236583bfb8f85abba14b"
+    },
+    {
+      "file": "0003-gst-format-tests.patch",
+      "sha256": "fdf7153630a12a4fb95c53231b2bbd21000e4e0d2fa19947ac000dac7a1db71d"
+    },
+    {
+      "file": "0004-gst-retain-running-caps.patch",
+      "sha256": "964df3e181bbbc428a0462f643874a3c89127a28aa2a297165516b9c44c2038b"
+    },
+    {
+      "file": "0005-gst-pool-lock-order.patch",
+      "sha256": "c0a2b116ace35879143e8e505ea63059709fad689ed11caa303349e083cddefa"
+    },
+    {
+      "file": "0006-gst-copy-memptr.patch",
+      "sha256": "0c3bd1d6cbf929c036e6829598219c843756dd58b13721a91aca0ce6e533c897"
+    }
+  ]
+}

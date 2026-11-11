@@ -1,0 +1,489 @@
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Subject: [PATCH] power: refresh keyboard backlight capabilities after hotplug
+
+Refresh the existing UPower keyboard interface after device, name-owner and
+brightness notifications. Cancel stale asynchronous replies and preserve the
+requested brightness, including zero. Unavailable keyboards expose -1 and no
+brightness steps. Do not add keyboard properties to the screen interface.
+
+Source: https://github.com/Cryolitia-Forks/Project-SunUEFI/commit/f46280a0e01ebeae40ca2d837a11cd431c2e46b5
+---
+--- a/plugins/power/gsd-power-manager.c
++++ b/plugins/power/gsd-power-manager.c
+@@ -175,6 +175,7 @@
+ 
+         /* Keyboard */
+         GDBusProxy              *upower_kbd_proxy;
++        GCancellable            *kbd_refresh_cancellable;
+         gint                     kbd_brightness_now;
+         gint                     kbd_brightness_max;
+         gint                     kbd_brightness_old;
+@@ -322,16 +323,21 @@
+         return FALSE;
+ }
+ 
++static void kbd_backlight_refresh (GsdPowerManager *manager, const gchar *source);
++
+ static void
+ engine_device_added_cb (UpClient *client, UpDevice *device, GsdPowerManager *manager)
+ {
+         engine_device_add (manager, device);
++        kbd_backlight_refresh (manager, NULL);
+ }
+ 
+ static void
+ engine_device_removed_cb (UpClient *client, const char *object_path, GsdPowerManager *manager)
+ {
+         guint i;
++
++        kbd_backlight_refresh (manager, NULL);
+ 
+         for (i = 0; i < manager->devices_array->len; i++) {
+                 UpDevice *device = g_ptr_array_index (manager->devices_array, i);
+@@ -1389,12 +1395,15 @@
+ {
+         GVariant *retval;
+ 
++        if (manager->upower_kbd_proxy == NULL || manager->kbd_brightness_max <= 0) {
++                g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
++                                     "No keyboard backlight available");
++                return FALSE;
++        }
++
+         /* same as before */
+         if (manager->kbd_brightness_now == value)
+                 return TRUE;
+-        if (manager->upower_kbd_proxy == NULL)
+-                return TRUE;
+-
+         /* update h/w value */
+         retval = g_dbus_proxy_call_sync (manager->upower_kbd_proxy,
+                                          "SetBrightness",
+@@ -1408,6 +1417,7 @@
+ 
+         /* save new value */
+         manager->kbd_brightness_now = value;
++        kbd_backlight_refresh (manager, NULL);
+         g_variant_unref (retval);
+         return TRUE;
+ }
+@@ -1615,6 +1625,29 @@
+         return NULL;
+ }
+ 
++static gint
++kbd_backlight_get_percentage (GsdPowerManager *manager)
++{
++        if (manager->kbd_brightness_max <= 0 || manager->kbd_brightness_now < 0)
++                return -1;
++
++        return ABS_TO_PERCENTAGE (0,
++                                  manager->kbd_brightness_max,
++                                  manager->kbd_brightness_now);
++}
++
++static gint
++backlight_get_n_steps (GsdPowerManager *manager)
++{
++        gint step;
++
++        if (manager->kbd_brightness_max <= 0)
++                return 0;
++
++        step = BRIGHTNESS_STEP_AMOUNT (manager->kbd_brightness_max);
++        return (manager->kbd_brightness_max / step) + 1;
++}
++
+ static void
+ backlight_iface_emit_changed (GsdPowerManager *manager,
+                               const char      *interface_name,
+@@ -1628,8 +1661,12 @@
+         if (connection == NULL)
+                 return;
+ 
+-        params = g_variant_new_parsed ("(%s, [{'Brightness', <%i>}], @as [])", interface_name,
+-                                       value);
++        if (g_strcmp0 (interface_name, GSD_POWER_DBUS_INTERFACE_KEYBOARD) == 0)
++                params = g_variant_new_parsed ("(%s, [{'Brightness', <%i>}, {'Steps', <%i>}], @as [])",
++                                               interface_name, value, backlight_get_n_steps (manager));
++        else
++                params = g_variant_new_parsed ("(%s, [{'Brightness', <%i>}], @as [])",
++                                               interface_name, value);
+         g_dbus_connection_emit_signal (connection,
+                                        NULL,
+                                        GSD_POWER_DBUS_PATH,
+@@ -1685,7 +1722,7 @@
+         gint max;
+         gint now;
+ 
+-        if (manager->upower_kbd_proxy == NULL)
++        if (manager->upower_kbd_proxy == NULL || manager->kbd_brightness_max <= 0)
+                 return TRUE;
+ 
+         now = manager->kbd_brightness_now;
+@@ -1714,7 +1751,7 @@
+                             gpointer     user_data)
+ {
+         GsdPowerManager *manager = GSD_POWER_MANAGER (user_data);
+-        gint brightness, percentage;
++        gint brightness;
+         const gchar *source;
+ 
+         if (g_strcmp0 (signal_name, "BrightnessChangedWithSource") != 0)
+@@ -1728,11 +1765,7 @@
+         if (g_strcmp0 (source, "external") == 0)
+                 return;
+ 
+-        manager->kbd_brightness_now = brightness;
+-        percentage = ABS_TO_PERCENTAGE (0,
+-                                        manager->kbd_brightness_max,
+-                                        manager->kbd_brightness_now);
+-        backlight_iface_emit_changed (manager, GSD_POWER_DBUS_INTERFACE_KEYBOARD, percentage, source);
++        kbd_backlight_refresh (manager, source);
+ }
+ 
+ static gboolean
+@@ -1813,7 +1846,7 @@
+                 backlight_disable (manager);
+ 
+                 /* only toggle keyboard if present and not already toggled */
+-                if (manager->upower_kbd_proxy &&
++                if (manager->upower_kbd_proxy && manager->kbd_brightness_max > 0 &&
+                     manager->kbd_brightness_old == -1) {
+                         if (upower_kbd_toggle (manager, &error) < 0) {
+                                 g_warning ("failed to turn the kbd backlight off: %s",
+@@ -1849,7 +1882,7 @@
+                 }
+ 
+                 /* only toggle keyboard if present and already toggled off */
+-                if (manager->upower_kbd_proxy &&
++                if (manager->upower_kbd_proxy && manager->kbd_brightness_max > 0 &&
+                     manager->kbd_brightness_old != -1) {
+                         if (upower_kbd_toggle (manager, &error) < 0) {
+                                 g_warning ("failed to turn the kbd backlight on: %s",
+@@ -2355,114 +2388,166 @@
+         update_active_power_profile (manager);
+ }
+ 
+-static int
+-backlight_get_n_steps (GsdPowerManager *manager)
+-{
+-        int step;
+-
+-        step = BRIGHTNESS_STEP_AMOUNT (manager->kbd_brightness_max);
+-
+-        return (manager->kbd_brightness_max / step) + 1;
+-}
+-
+-static void
+-power_keyboard_proxy_ready_cb (GObject             *source_object,
+-                               GAsyncResult        *res,
+-                               gpointer             user_data)
+-{
+-        GVariant *k_now = NULL;
+-        GVariant *k_max = NULL;
+-        GVariant *params = NULL;
+-        GError *error = NULL;
+-        GsdPowerManager *manager = GSD_POWER_MANAGER (user_data);
+-        GDBusConnection *connection = g_application_get_dbus_connection (G_APPLICATION (manager));
+-        gint percentage;
+-
+-        manager->upower_kbd_proxy = g_dbus_proxy_new_for_bus_finish (res, &error);
+-        if (manager->upower_kbd_proxy == NULL) {
+-                g_warning ("Could not connect to UPower: %s",
+-                           error->message);
+-                g_error_free (error);
+-                goto out;
+-        }
+-
++typedef struct {
++        gint maximum;
++        gchar *source;
++} KbdBacklightRefresh;
++
++static void
++kbd_backlight_refresh_free (gpointer data)
++{
++        KbdBacklightRefresh *refresh = data;
++
++        g_free (refresh->source);
++        g_free (refresh);
++}
++
++static void
++kbd_backlight_update (GsdPowerManager *manager,
++                      gint maximum,
++                      gint brightness,
++                      const gchar *source)
++{
++        if (maximum <= 0 || brightness < 0 || brightness > maximum) {
++                maximum = 0;
++                brightness = -1;
++                manager->kbd_brightness_old = -1;
++                manager->kbd_brightness_pre_dim = -1;
++        }
++
++        if (maximum != manager->kbd_brightness_max || maximum <= 0)
++                source = NULL;
++
++        if (source == NULL && manager->kbd_brightness_max == maximum &&
++            manager->kbd_brightness_now == brightness)
++                return;
++
++        manager->kbd_brightness_max = maximum;
++        manager->kbd_brightness_now = brightness;
++        backlight_iface_emit_changed (manager, GSD_POWER_DBUS_INTERFACE_KEYBOARD,
++                                      kbd_backlight_get_percentage (manager), source);
++}
++
++static void
++kbd_backlight_brightness_ready_cb (GObject *source,
++                                   GAsyncResult *res,
++                                   gpointer user_data)
++{
++        g_autoptr(GTask) task = user_data;
++        GsdPowerManager *manager = g_task_get_source_object (task);
++        KbdBacklightRefresh *refresh = g_task_get_task_data (task);
++        g_autoptr(GVariant) reply = NULL;
++        gint brightness;
++
++        reply = g_dbus_proxy_call_finish (G_DBUS_PROXY (source), res, NULL);
++        if (g_task_return_error_if_cancelled (task))
++                return;
++
++        if (reply != NULL) {
++                g_variant_get (reply, "(i)", &brightness);
++                kbd_backlight_update (manager, refresh->maximum, brightness, refresh->source);
++        } else {
++                kbd_backlight_update (manager, 0, -1, refresh->source);
++        }
++        g_task_return_boolean (task, reply != NULL);
++}
++
++static void
++kbd_backlight_maximum_ready_cb (GObject *source,
++                                GAsyncResult *res,
++                                gpointer user_data)
++{
++        g_autoptr(GTask) task = user_data;
++        GsdPowerManager *manager = g_task_get_source_object (task);
++        KbdBacklightRefresh *refresh = g_task_get_task_data (task);
++        g_autoptr(GVariant) reply = NULL;
++        GCancellable *cancellable;
++        gint maximum = 0;
++
++        reply = g_dbus_proxy_call_finish (G_DBUS_PROXY (source), res, NULL);
++        if (g_task_return_error_if_cancelled (task))
++                return;
++
++        if (reply != NULL)
++                g_variant_get (reply, "(i)", &maximum);
++        if (maximum <= 0) {
++                kbd_backlight_update (manager, 0, -1, refresh->source);
++                g_task_return_boolean (task, reply != NULL);
++                return;
++        }
++
++        refresh->maximum = maximum;
++        cancellable = g_task_get_cancellable (task);
++        g_dbus_proxy_call (G_DBUS_PROXY (source), "GetBrightness", NULL,
++                           G_DBUS_CALL_FLAGS_NONE, -1,
++                           cancellable,
++                           kbd_backlight_brightness_ready_cb, g_steal_pointer (&task));
++}
++
++static void
++kbd_backlight_refresh (GsdPowerManager *manager, const gchar *source)
++{
++        g_autoptr(GTask) task = NULL;
++        g_autofree gchar *owner = NULL;
++        KbdBacklightRefresh *refresh;
++
++        if (manager->upower_kbd_proxy == NULL)
++                return;
++
++        if (manager->kbd_refresh_cancellable != NULL)
++                g_cancellable_cancel (manager->kbd_refresh_cancellable);
++        g_clear_object (&manager->kbd_refresh_cancellable);
++
++        owner = g_dbus_proxy_get_name_owner (manager->upower_kbd_proxy);
++        if (owner == NULL) {
++                kbd_backlight_update (manager, 0, -1, NULL);
++                return;
++        }
++
++        /* A new event supersedes both replies from the previous refresh. */
++        manager->kbd_refresh_cancellable = g_cancellable_new ();
++        task = g_task_new (manager, manager->kbd_refresh_cancellable, NULL, NULL);
++        refresh = g_new0 (KbdBacklightRefresh, 1);
++        refresh->source = g_strdup (source);
++        g_task_set_task_data (task, refresh, kbd_backlight_refresh_free);
++        g_dbus_proxy_call (manager->upower_kbd_proxy, "GetMaxBrightness", NULL,
++                           G_DBUS_CALL_FLAGS_NONE, -1,
++                           manager->kbd_refresh_cancellable,
++                           kbd_backlight_maximum_ready_cb, g_steal_pointer (&task));
++}
++
++static void
++upower_kbd_name_owner_changed_cb (GDBusProxy *proxy,
++                                  GParamSpec *pspec,
++                                  GsdPowerManager *manager)
++{
++        kbd_backlight_refresh (manager, NULL);
++}
++
++static void
++power_keyboard_proxy_ready_cb (GObject *source_object,
++                               GAsyncResult *res,
++                               gpointer user_data)
++{
++        g_autoptr(GsdPowerManager) manager = user_data;
++        g_autoptr(GDBusProxy) proxy = NULL;
++        g_autoptr(GError) error = NULL;
++
++        proxy = g_dbus_proxy_new_for_bus_finish (res, &error);
++        if (proxy == NULL) {
++                if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
++                        g_warning ("Could not connect to UPower: %s", error->message);
++                return;
++        }
++        if (manager->session == NULL)
++                return;
++
++        manager->upower_kbd_proxy = g_steal_pointer (&proxy);
+         g_signal_connect (manager->upower_kbd_proxy, "g-signal",
+-                          G_CALLBACK (upower_kbd_proxy_signal_cb),
+-                          manager);
+-
+-        k_now = g_dbus_proxy_call_sync (manager->upower_kbd_proxy,
+-                                        "GetBrightness",
+-                                        NULL,
+-                                        G_DBUS_CALL_FLAGS_NONE,
+-                                        -1,
+-                                        manager->cancellable,
+-                                        &error);
+-        if (k_now == NULL) {
+-                if (error->domain != G_DBUS_ERROR ||
+-                    error->code != G_DBUS_ERROR_UNKNOWN_METHOD) {
+-                        g_warning ("Failed to get brightness: %s",
+-                                   error->message);
+-                } else {
+-                        /* Keyboard brightness is not available */
+-                        g_clear_object (&manager->upower_kbd_proxy);
+-                }
+-                g_error_free (error);
+-                goto out;
+-        }
+-
+-        k_max = g_dbus_proxy_call_sync (manager->upower_kbd_proxy,
+-                                        "GetMaxBrightness",
+-                                        NULL,
+-                                        G_DBUS_CALL_FLAGS_NONE,
+-                                        -1,
+-                                        manager->cancellable,
+-                                        &error);
+-        if (k_max == NULL) {
+-                g_warning ("Failed to get max brightness: %s", error->message);
+-                g_error_free (error);
+-                goto out;
+-        }
+-
+-        g_variant_get (k_now, "(i)", &manager->kbd_brightness_now);
+-        g_variant_get (k_max, "(i)", &manager->kbd_brightness_max);
+-
+-        /* set brightness to max if not currently set so is something
+-         * sensible */
+-        if (manager->kbd_brightness_now < 0) {
+-                gboolean ret;
+-                ret = upower_kbd_set_brightness (manager,
+-                                                 manager->kbd_brightness_max,
+-                                                 &error);
+-                if (!ret) {
+-                        g_warning ("failed to initialize kbd backlight to %i: %s",
+-                                   manager->kbd_brightness_max,
+-                                   error->message);
+-                        g_error_free (error);
+-                }
+-        }
+-
+-        /* Tell the front-end that the brightness changed from
+-         * its default "-1/no keyboard backlight available" default */
+-        percentage = ABS_TO_PERCENTAGE (0,
+-                                        manager->kbd_brightness_max,
+-                                        manager->kbd_brightness_now);
+-        backlight_iface_emit_changed (manager, GSD_POWER_DBUS_INTERFACE_KEYBOARD, percentage, "initial value");
+-
+-        /* Same for "Steps" */
+-        params = g_variant_new_parsed ("(%s, [{'Steps', <%i>}], @as [])",
+-                                       GSD_POWER_DBUS_INTERFACE_KEYBOARD, backlight_get_n_steps (manager));
+-        g_dbus_connection_emit_signal (connection,
+-                                       NULL,
+-                                       GSD_POWER_DBUS_PATH,
+-                                       "org.freedesktop.DBus.Properties",
+-                                       "PropertiesChanged",
+-                                       params, NULL);
+-
+-out:
+-        if (k_now != NULL)
+-                g_variant_unref (k_now);
+-        if (k_max != NULL)
+-                g_variant_unref (k_max);
++                          G_CALLBACK (upower_kbd_proxy_signal_cb), manager);
++        g_signal_connect (manager->upower_kbd_proxy, "notify::g-name-owner",
++                          G_CALLBACK (upower_kbd_name_owner_changed_cb), manager);
++        kbd_backlight_refresh (manager, "initial value");
+ }
+ 
+ static void
+@@ -3148,15 +3233,16 @@
+ 
+         /* connect to UPower for keyboard backlight control */
+         manager->kbd_brightness_now = -1;
++        manager->kbd_refresh_cancellable = g_cancellable_new ();
+         g_dbus_proxy_new_for_bus (G_BUS_TYPE_SYSTEM,
+                                   G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES,
+                                   NULL,
+                                   UPOWER_DBUS_NAME,
+                                   UPOWER_DBUS_PATH_KBDBACKLIGHT,
+                                   UPOWER_DBUS_INTERFACE_KBDBACKLIGHT,
+-                                  NULL,
++                                  manager->kbd_refresh_cancellable,
+                                   power_keyboard_proxy_ready_cb,
+-                                  manager);
++                                  g_object_ref (manager));
+ 
+         manager->devices_array = g_ptr_array_new_with_free_func (g_object_unref);
+         manager->devices_notified_ht = g_hash_table_new_full (g_str_hash, g_str_equal,
+@@ -3202,6 +3288,9 @@
+         GsdPowerManager *manager = GSD_POWER_MANAGER (app);
+ 
+         g_debug ("Stopping power manager");
++        if (manager->kbd_refresh_cancellable != NULL)
++                g_cancellable_cancel (manager->kbd_refresh_cancellable);
++        g_clear_object (&manager->kbd_refresh_cancellable);
+         g_clear_handle_id (&manager->ambient_profile_update_id, g_source_remove);
+         g_clear_pointer (&manager->ambient_profile, gsd_ambient_profile_free);
+ 
+@@ -3473,9 +3562,7 @@
+         } else if (manager->upower_kbd_proxy &&
+                    g_strcmp0 (interface_name, GSD_POWER_DBUS_INTERFACE_KEYBOARD) == 0) {
+                 if (g_strcmp0 (property_name, "Brightness") == 0) {
+-                        value = ABS_TO_PERCENTAGE (0,
+-                                                   manager->kbd_brightness_max,
+-                                                   manager->kbd_brightness_now);
++                        value = kbd_backlight_get_percentage (manager);
+                         retval =  g_variant_new_int32 (value);
+                 } else if (g_strcmp0 (property_name, "Steps") == 0) {
+                         value = backlight_get_n_steps (manager);
+@@ -3551,6 +3638,11 @@
+                 }
+ 
+         } else if (g_strcmp0 (interface_name, GSD_POWER_DBUS_INTERFACE_KEYBOARD) == 0) {
++                if (manager->kbd_brightness_max <= 0) {
++                        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
++                                             "No keyboard backlight available");
++                        return FALSE;
++                }
+                 g_variant_get (value, "i", &brightness_value);
+                 brightness_value = PERCENTAGE_TO_ABS (0, manager->kbd_brightness_max,
+                                                       brightness_value);

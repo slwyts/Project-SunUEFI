@@ -93,6 +93,11 @@ def build(args):
         mesa = recipes / 'mesa'
         shutil.copytree(ROOT / 'linux/bsp/arch/mesa', mesa)
         shutil.copy2(ROOT / 'upstream/piano-mesa-current/patches/0001-freedreno-Add-chip-id-support-for-A830v1.patch', mesa)
+    gsd = recipes / 'gnome-settings-daemon'
+    if gsd.exists():
+        shutil.rmtree(gsd)
+    run(sys.executable, ROOT / 'linux/desktops/gnome/ambient-policy/packaging/prepare_package.py',
+        'arch', gsd)
     mutter = recipes / 'mutter'
     shutil.copytree(ROOT / 'linux/desktops/gnome/arch/mutter', mutter,
                     dirs_exist_ok=True)
@@ -110,6 +115,14 @@ def build(args):
         packages = output / 'packages' / name
         if not (packages / 'manifest.json').exists():
             build_arch_package.build(root, recipes / name, packages)
+    gsd_packages = output / 'packages/gnome-settings-daemon'
+    gsd_manifest = gsd_packages / 'manifest.json'
+    if (not gsd_manifest.is_file() or
+            json.loads(gsd_manifest.read_text()).get('recipe_sha256') !=
+            release.digest(gsd / 'PKGBUILD')):
+        build_arch_package.build(root, gsd, gsd_packages)
+    else:
+        build_arch_package.install_cached(root, gsd_packages)
 
     ffmpeg = output / 'packages/ffmpeg'
     if not build_arch_ffmpeg.is_current(ffmpeg):
@@ -118,6 +131,8 @@ def build(args):
         build_arch_ffmpeg.build(root, ffmpeg)
     else:
         build_arch_package.install_cached(root, ffmpeg)
+    pipewire = output / 'packages/pipewire'
+    run(ROOT / 'build.sh', 'pipewire', '--rootfs', root, '--output', pipewire)
 
     kernel = ROOT / 'artifacts/kernels/release'
     source = Path(json.loads((ROOT / 'build/release/source-manifest.json').read_text())['worktree'])
@@ -134,7 +149,9 @@ def build(args):
     manifest = output / 'manifest.json'
     record = json.loads(manifest.read_text())
     record.update(base_archive_sha256=base_hash, nyarch_inputs=cfg,
-                  ffmpeg=json.loads((ffmpeg / 'SOURCE.json').read_text()))
+                  gnome_power=json.loads(gsd_manifest.read_text()),
+                  ffmpeg=json.loads((ffmpeg / 'SOURCE.json').read_text()),
+                  pipewire=json.loads((pipewire / 'SOURCE.json').read_text()))
     manifest.write_text(json.dumps(record, indent=2) + '\n')
 
 

@@ -1,0 +1,48 @@
+From: Project SunUEFI contributors
+Subject: [PATCH] gst: copy borrowed MemPtr chunks before returning buffers
+
+MemPtr data points into PipeWire mappings that are removed during stream
+renegotiation. A downstream buffer reference cannot retain those mappings.
+Use the existing copying path for MemPtr chunks and retain parent buffers
+only when a chunk actually shares fd-backed memory.
+
+Source: https://github.com/Cryolitia/xiaomi-piano-nixos/blob/ae30633478d363917171fcbb1b9b5134967634d1/packages/pipewire/patches/copy-memptr-buffers.patch
+
+--- a/src/gst/gstpipewiresrc.c
++++ b/src/gst/gstpipewiresrc.c
+@@ -711,6 +711,7 @@
+   enum spa_meta_videotransform_value transform_value;
+   struct spa_meta_cursor *cursor;
+   struct pw_time time;
++  gboolean has_shared_memory = FALSE;
+   guint i;
+ 
+   b = pw_stream_dequeue_buffer (pwsrc->stream->pwstream);
+@@ -850,10 +851,16 @@
+     GstMemory *pmem = gst_buffer_peek_memory (data->buf, i);
+     if (pmem) {
+       GstMemory *mem;
+-      if (pwsrc->use_bufferpool != USE_BUFFERPOOL_NO)
++      /* MemPtr mappings can disappear when PipeWire removes a buffer, even
++       * while downstream still holds our GstBuffer. Copy those chunks before
++       * returning the pool buffer; fd-backed memory keeps its own mapping. */
++      if (pwsrc->use_bufferpool != USE_BUFFERPOOL_NO &&
++          d->type != SPA_DATA_MemPtr) {
+         mem = gst_memory_share (pmem, d->chunk->offset, d->chunk->size);
+-      else
++        has_shared_memory |= mem != NULL;
++      } else {
+         mem = gst_memory_copy (pmem, d->chunk->offset, d->chunk->size);
++      }
+       gst_buffer_insert_memory (buf, i, mem);
+     }
+     if (d->chunk->flags & SPA_CHUNK_FLAG_CORRUPTED) {
+@@ -861,7 +868,7 @@
+       GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_CORRUPTED);
+     }
+   }
+-  if (pwsrc->use_bufferpool != USE_BUFFERPOOL_NO)
++  if (has_shared_memory)
+     gst_buffer_add_parent_buffer_meta (buf, data->buf);
+   gst_buffer_unref (data->buf);
+ 

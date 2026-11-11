@@ -465,16 +465,19 @@ def gsd_packages(folder):
     folder = Path(folder).resolve()
     metadata = folder.parent / 'SOURCE.json'
     source = json.loads(metadata.read_text())
-    patch = ROOT / 'patches/gnome-settings-daemon/0001-power-optional-device-ambient-profile.patch'
-    patches = [{'path': patch.relative_to(ROOT).as_posix(), 'sha256': digest(patch)}]
+    import build_gsd_packages as builder
+    patches = builder.patch_records()
     if source.get('packages_built') is not True or source.get('patches') != patches:
         raise ValueError('GNOME power packages do not match the current ambient policy; rebuild with ./build.sh gsd')
     rows = {}
-    for path in sorted(folder.glob('*.deb')):
+    for package_name, expected in sorted(source.get('packages', {}).items()):
+        if Path(expected['file']).name != expected['file']:
+            raise ValueError('Invalid GNOME power package filename')
+        path = folder / expected['file']
         package, version, arch = [capture(['dpkg-deb', '-f', path, field])
-                                  for field in ('Package', 'Version', 'Architecture')]
+                                   for field in ('Package', 'Version', 'Architecture')]
         row = {'file': path.name, 'version': version, 'architecture': arch, 'sha256': digest(path)}
-        if (package in rows or arch not in ('arm64', 'all') or
+        if (package != package_name or package in rows or arch not in ('arm64', 'all') or
                 version != source.get('package_version') or '+sunuefi' not in version or
                 source.get('packages', {}).get(package) != row):
             raise ValueError('GNOME power runtime package identity differs: ' + path.name)
@@ -607,8 +610,19 @@ def execute(record):
                  '--suite', cfg['debian']['suite'], '--output', out, '--mesa-dir', record['mesa_dir']])
         if not (out / 'COMPLETE').is_file() or rootfs.stat().st_uid: raise ValueError('Base desktop build did not complete with native guest ownership')
         put(rootfs, 'usr/sbin/policy-rc.d', '#!/bin/sh\nexit 101\n'); (rootfs / 'usr/sbin/policy-rc.d').chmod(0o755)
+        from host import build_upower_packages
+        upower_folder = ROOT / 'build/upower'
+        upower = build_upower_packages.build(upower_folder, rootfs)
+        from host import build_pipewire_packages
+        pipewire_folder = ROOT / 'build/pipewire'
+        run([ROOT / 'build.sh', 'pipewire', '--rootfs', rootfs, '--output', pipewire_folder])
+        pipewire = build_pipewire_packages.reusable(
+            pipewire_folder, build_pipewire_packages.debian_version(rootfs), 'deb')
+        if pipewire is None:
+            raise ValueError('PipeWire GStreamer plugin does not match the target ABI')
         gsd_folder = ROOT / 'build/gsd/runtime'
-        if desktop == 'gnome' and not (gsd_folder.parent / 'SOURCE.json').is_file():
+        import build_gsd_packages as gsd_builder
+        if desktop == 'gnome' and not gsd_builder.reusable(gsd_folder.parent):
             run([sys.executable, ROOT / 'tools/build_gsd_packages.py', '--output',
                  gsd_folder.parent, '--sysroot', rootfs])
         gsd = gsd_packages(gsd_folder) if desktop == 'gnome' else {'packages': {}}
@@ -626,6 +640,16 @@ def execute(record):
             shutil.copy2(mutter_folder / row['file'], destination)
             if digest(destination) != row['sha256']:
                 raise ValueError('Mutter package changed while staging: ' + row['file'])
+        for row in upower['packages'].values():
+            destination = gsd_stage / row['file']
+            shutil.copy2(upower_folder / 'runtime' / row['file'], destination)
+            if digest(destination) != row['sha256']:
+                raise ValueError('UPower package changed while staging')
+        for row in pipewire['packages'].values():
+            destination = gsd_stage / row['file']
+            shutil.copy2(pipewire_folder / 'runtime' / row['file'], destination)
+            if digest(destination) != row['sha256']:
+                raise ValueError('PipeWire package changed while staging')
         sensor_stage = target(rootfs, 'tmp/piano-sensors-packages')
         sensor_stage.mkdir(parents=True, exist_ok=True)
         for row in sensors['packages'].values():
@@ -647,6 +671,10 @@ def execute(record):
                                   for row in gsd['packages'].values())
             local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
                                   for row in mutter['packages'].values())
+            local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
+                                  for row in upower['packages'].values())
+            local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
+                                  for row in pipewire['packages'].values())
             if ffmpeg:
                 local_packages.extend('/tmp/piano-ffmpeg-packages/' + row['file']
                                       for row in ffmpeg['packages'].values())
@@ -722,6 +750,12 @@ def execute(record):
         for package, row in mutter['packages'].items():
             if installed.get(package) != row['version']:
                 raise ValueError('Installed Mutter package version differs: ' + package)
+        for package, row in upower['packages'].items():
+            if installed.get(package) != row['version']:
+                raise ValueError('Installed UPower package version differs: ' + package)
+        for package, row in pipewire['packages'].items():
+            if installed.get(package) != row['version']:
+                raise ValueError('Installed PipeWire plugin version differs: ' + package)
         metadata = {str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'var/lib/apt/lists').glob('*InRelease')}
         if not metadata: raise ValueError('Signed APT InRelease metadata is missing')
         metadata.update({str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'etc/apt').rglob('*') if p.is_file()})
@@ -737,7 +771,7 @@ def execute(record):
                   'adapters_manifest_sha256': digest(out / 'adapters/manifest.json'), 'runtime_manifest_sha256': digest(bundle / 'manifest.json'),
                   'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata, 'debian_commit': cfg['debian']['commit'],
                   'mesa_packages': mesa, 'sensors': sensors, 'ffmpeg': ffmpeg, 'gnome_power': gsd,
-                  'mutter': mutter,
+                  'mutter': mutter, 'upower': upower, 'pipewire': pipewire,
                   'boot_request': boot_request, 'firmware_commit': cfg['firmware']['commit'],
                   'clock_epoch': clock,
                   'default_system': defaults, 'desktop': desktop,

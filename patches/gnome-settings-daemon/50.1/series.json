@@ -3,7 +3,7 @@
   "patches": [
     {
       "file": "0001-power-refresh-keyboard-backlight-after-hotplug.patch",
-      "sha256": "15eb6f30e09158c7dec34faf19ad6f22dbebf1c29f248862e5d77ef6014e1e8e"
+      "sha256": "2bda006d2a357897aa910363ce17fd7d878433bc2a6259e9879df3cb8a3c2bd7"
     }
   ]
 }

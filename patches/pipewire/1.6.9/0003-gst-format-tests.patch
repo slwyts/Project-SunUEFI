@@ -1,0 +1,422 @@
+From 18244c9741dda4d5c48df29d15834f25ef97da2b Mon Sep 17 00:00:00 2001
+From: Viorel Cernateanu <vrilutza@gmail.com>
+Date: Fri, 23 Oct 2026 20:53:35 +0300
+Subject: [PATCH] gst: fix video format conversion and enumeration matching
+
+- SPA -> GStreamer: creates a separate caps structure for each size pair
+  instead of separate width/height lists, preventing invalid
+  combinations (e.g., 640x720 when the camera only supports 640x480 and
+  1280x720).
+- GStreamer -> SPA: normalizes a copy of the caps before converting
+  alternatives, preventing g_value_get_int criticals when reading lists
+  containing a preferred scalar and a range.
+- Preserves mixed fixed/range axes, integer steps, and represents equal
+  bounds as scalars instead of invalid ranges.
+Source: https://github.com/PipeWire/pipewire/commit/18244c9741dda4d5c48df29d15834f25ef97da2b
+---
+ src/gst/gstpipewireformat.c      |  93 +++++++-------
+ src/gst/meson.build              |  36 ++++++
+ src/gst/test-gstpipewireformat.c | 211 +++++++++++++++++++++++++++++++
+ 3 files changed, 290 insertions(+), 50 deletions(-)
+ create mode 100644 src/gst/test-gstpipewireformat.c
+
+diff --git a/src/gst/gstpipewireformat.c b/src/gst/gstpipewireformat.c
+index 951bbf2e2d..ae23b6fcb6 100644
+--- a/src/gst/gstpipewireformat.c
++++ b/src/gst/gstpipewireformat.c
+@@ -296,6 +296,9 @@ get_nth_int (const GValue *val, int idx, int *res)
+     } else if (idx == 2) {
+       *res = gst_value_get_int_range_max (val);
+       return true;
++    } else if (idx == 3 && gst_value_get_int_range_step (val) > 1) {
++      *res = gst_value_get_int_range_step (val);
++      return true;
+     }
+   } else if (type == GST_TYPE_LIST) {
+     GArray *array = g_value_peek_pointer (val);
+@@ -341,44 +344,26 @@ get_nth_fraction (const GValue *val, int idx, struct spa_fraction *f)
+ static gboolean
+ get_nth_rectangle (const GValue *width, const GValue *height, int idx, struct spa_rectangle *r)
+ {
+-  const GValue *w = NULL, *h = NULL;
+-  GType wt = G_VALUE_TYPE (width);
+-  GType ht = G_VALUE_TYPE (height);
+-
+-  if (wt == G_TYPE_INT && ht == G_TYPE_INT && idx == 0) {
+-    w = width;
+-    h = height;
+-  } else if (wt == GST_TYPE_INT_RANGE && ht == GST_TYPE_INT_RANGE) {
+-    if (idx == 0 || idx == 1) {
+-      r->width = gst_value_get_int_range_min (width);
+-      r->height = gst_value_get_int_range_min (height);
+-      return true;
+-    } else if (idx == 2) {
+-      r->width = gst_value_get_int_range_max (width);
+-      r->height = gst_value_get_int_range_max (height);
+-      return true;
+-    } else if (idx == 3) {
+-      r->width = gst_value_get_int_range_step (width);
+-      r->height = gst_value_get_int_range_step (height);
+-      if (r->width > 1 || r->height > 1)
+-        return true;
+-      else
+-        return false;
+-    }
+-  } else if (wt == GST_TYPE_LIST && ht == GST_TYPE_LIST) {
+-    GArray *wa = g_value_peek_pointer (width);
+-    GArray *ha = g_value_peek_pointer (height);
+-    if (idx < (int)(wa->len + 1))
+-      w = &g_array_index (wa, GValue, SPA_MAX (idx-1, 0));
+-    if (idx < (int)(ha->len + 1))
+-      h = &g_array_index (ha, GValue, SPA_MAX (idx-1, 0));
+-  }
+-  if (w && h) {
+-    r->width = g_value_get_int (w);
+-    r->height = g_value_get_int (h);
+-    return true;
++  gboolean wrange = GST_VALUE_HOLDS_INT_RANGE (width);
++  gboolean hrange = GST_VALUE_HOLDS_INT_RANGE (height);
++  int w, h;
++
++  if ((wrange || hrange) && idx == 3) {
++    w = wrange ? gst_value_get_int_range_step (width) : 1;
++    h = hrange ? gst_value_get_int_range_step (height) : 1;
++    if (w == 1 && h == 1)
++      return false;
++  } else {
++    int wi = (wrange || hrange) && G_VALUE_HOLDS_INT (width) ? 0 : idx;
++    int hi = (wrange || hrange) && G_VALUE_HOLDS_INT (height) ? 0 : idx;
++
++    if (idx > 2 || !get_nth_int (width, wi, &w) ||
++        !get_nth_int (height, hi, &h))
++      return false;
+   }
+-  return false;
++  r->width = w;
++  r->height = h;
++  return true;
+ }
+ 
+ static uint32_t
+@@ -916,8 +901,12 @@ gst_caps_to_format_all (GstCaps *caps)
+ 
+   d.array = g_ptr_array_new_full (gst_caps_get_size (caps), (GDestroyNotify)g_free);
+ 
++  /* SPA choices cannot nest a range inside an enum. Split list alternatives
++   * into separate structures, preserving their preference order. */
++  caps = gst_caps_normalize (gst_caps_copy (caps));
+   gst_caps_foreach (caps, (GstCapsForeachFunc) foreach_func_dmabuf, &d);
+   gst_caps_foreach (caps, (GstCapsForeachFunc) foreach_func_no_dmabuf, &d);
++  gst_caps_unref (caps);
+ 
+   return d.array;
+ }
+@@ -1215,6 +1204,11 @@ set_pref_int_range (GstCaps *res, const char *key, int pref, int min, int max)
+ {
+   GValue list = { 0 }, v = { 0 };
+ 
++  if (min == max) {
++    gst_caps_set_simple (res, key, G_TYPE_INT, min, NULL);
++    return;
++  }
++
+   if (pref <= min || pref > max) {
+     gst_caps_set_simple (res, key, GST_TYPE_INT_RANGE, min, max, NULL);
+     return;
+@@ -1346,23 +1340,22 @@ handle_rect_prop (const struct spa_pod_prop *prop, const char *width, const char
+     }
+     case SPA_CHOICE_Enum:
+     {
+-      GValue l1 = { 0 }, l2 = { 0 }, v1 = { 0 }, v2 = { 0 };
++      GstCaps *templates = gst_caps_copy (res);
++      uint32_t j;
+ 
+-      g_value_init (&l1, GST_TYPE_LIST);
+-      g_value_init (&l2, GST_TYPE_LIST);
++      while (gst_caps_get_size (res) > 0)
++        gst_caps_remove_structure (res, 0);
+       for (i = 1; i < n_items; i++) {
+-        g_value_init (&v1, G_TYPE_INT);
+-        g_value_set_int (&v1, rect[i].width);
+-        gst_value_list_append_and_take_value (&l1, &v1);
++        for (j = 0; j < gst_caps_get_size (templates); j++) {
++          GstStructure *s = gst_structure_copy (gst_caps_get_structure (templates, j));
++          GstCapsFeatures *f = gst_caps_features_copy (gst_caps_get_features (templates, j));
+ 
+-        g_value_init (&v2, G_TYPE_INT);
+-        g_value_set_int (&v2, rect[i].height);
+-        gst_value_list_append_and_take_value (&l2, &v2);
++          gst_structure_set (s, width, G_TYPE_INT, rect[i].width,
++              height, G_TYPE_INT, rect[i].height, NULL);
++          gst_caps_append_structure_full (res, s, f);
++        }
+       }
+-      gst_caps_set_value (res, width, &l1);
+-      gst_caps_set_value (res, height, &l2);
+-      g_value_unset (&l1);
+-      g_value_unset (&l2);
++      gst_caps_unref (templates);
+       break;
+     }
+     default:
+diff --git a/src/gst/meson.build b/src/gst/meson.build
+index 1e39bcf893..e6282ea35c 100644
+--- a/src/gst/meson.build
++++ b/src/gst/meson.build
+@@ -33,3 +33,39 @@ pipewire_gst = shared_library('gstpipewire',
+ )
+ 
+ plugins = [pipewire_gst]
++
++if get_option('tests').allowed()
++  format_test = executable('gst-pipewire-format-test',
++    ['test-gstpipewireformat.c', 'gstpipewireformat.c'],
++    include_directories : [ configinc ],
++    dependencies : [ spa_dep, gst_dep, pipewire_dep, mathlib ],
++    install : false,
++  )
++  foreach format_case : [
++    'enumeration-dmabuf',
++    'enumeration-forward',
++    'enumeration-roundtrip',
++    'empty',
++    'jpeg-preferred',
++    'audio-rate-list',
++    'dmabuf-list',
++    'fixed',
++    'preferred-size',
++    'scalar-range',
++    'range-scalar',
++    'fraction-list',
++    'independent-lists',
++    'scalar-step',
++    'step-scalar',
++    'channels-list',
++    'channels-step',
++    'format-list',
++    'all-preferences',
++  ]
++    test('gst-format-' + format_case, format_test,
++      args : [format_case],
++      env : ['G_DEBUG=fatal-criticals'],
++      suite : 'gstreamer',
++    )
++  endforeach
++endif
+diff --git a/src/gst/test-gstpipewireformat.c b/src/gst/test-gstpipewireformat.c
+new file mode 100644
+index 0000000000..e30ba3c3d5
+--- /dev/null
++++ b/src/gst/test-gstpipewireformat.c
+@@ -0,0 +1,211 @@
++/* GStreamer
++ * SPDX-FileCopyrightText: Copyright © 2026 Viorel Cernateanu
++ * SPDX-License-Identifier: MIT
++ */
++
++#include <gst/gst.h>
++#include <spa/param/audio/format-utils.h>
++#include <spa/param/video/format-utils.h>
++#include <spa/pod/builder.h>
++#include <spa/pod/iter.h>
++#include <stdio.h>
++#include <string.h>
++extern GPtrArray *gst_caps_to_format_all (GstCaps *caps);
++extern GstCaps *gst_caps_from_format (const struct spa_pod *format);
++struct test
++{
++  const char *name, *caps;
++  unsigned count;
++  int w, h, fps, channels, step;
++};
++static const struct test cases[] = {
++  { "empty", "EMPTY", 0, 0, 0, 0, 0, 0 },
++  { "jpeg-preferred",
++    "image/jpeg,width=(int){1296,[320,1296]},height=(int){736,[240,736]},framerate=30/1", 4, 1296,
++    736, 30, 0, 0 },
++  { "audio-rate-list",
++    "audio/x-raw,format=S16LE,layout=interleaved,channels=2,rate=(int){48000,[8000,192000]}", 2, 0,
++    0, 0, 2, 0 },
++  { "dmabuf-list",
++    "video/"
++    "x-raw(memory:DMABuf),format=DMA_DRM,drm-format=YUYV,width=(int){640,1280},height=480,"
++    "framerate=30/1",
++    2, 640, 480, 30, 0, 0 },
++  { "fixed", "video/x-raw,format=YUY2,width=640,height=480,framerate=30/1", 1, 640, 480, 30, 0, 0 },
++  { "preferred-size",
++    "video/x-raw,format=YUY2,width=(int){1296,[320,1296]},height=(int){736,[240,736]},framerate=30/"
++    "1",
++    4, 1296, 736, 30, 0, 0 },
++  { "scalar-range", "video/x-raw,format=YUY2,width=640,height=(int)[240,736],framerate=30/1", 1,
++    640, 240, 30, 0, 0 },
++  { "range-scalar", "video/x-raw,format=YUY2,width=(int)[320,1296],height=480,framerate=30/1", 1,
++    320, 480, 30, 0, 0 },
++  { "fraction-list",
++    "video/x-raw,format=YUY2,width=640,height=480,framerate=(fraction){30/1,[2/1,60/1]}", 2, 640,
++    480, 30, 0, 0 },
++  { "independent-lists",
++    "video/x-raw,format=YUY2,width=(int){640,1280},height=(int){480,720},framerate=30/1", 4, 640,
++    480, 30, 0, 0 },
++  { "scalar-step", "video/x-raw,format=YUY2,width=640,height=(int)[240,736,8],framerate=30/1", 1,
++    640, 240, 30, 0, 8 },
++  { "step-scalar", "video/x-raw,format=YUY2,width=(int)[320,1280,8],height=480,framerate=30/1", 1,
++    320, 480, 30, 0, 8 },
++  { "channels-list",
++    "audio/x-raw,format=S16LE,layout=interleaved,channels=(int){2,[1,8]},rate=48000", 2, 0, 0, 0, 2,
++    0 },
++  { "channels-step", "audio/x-raw,format=S16LE,layout=interleaved,channels=(int)[2,8,2],rate=48000",
++    1, 0, 0, 0, 2, 2 },
++  { "format-list", "video/x-raw,format=(string){YUY2,RGBx},width=640,height=480,framerate=30/1", 2,
++    640, 480, 30, 0, 0 },
++  { "all-preferences",
++    "video/"
++    "x-raw,format=YUY2,width=(int){1296,[320,1296]},height=(int){736,[240,736]},framerate=("
++    "fraction){30/1,[2/1,60/1]}",
++    8, 1296, 736, 30, 0, 0 }
++};
++static int
++enumeration (const char *name)
++{
++  unsigned char data[2048];
++  struct spa_pod_builder builder = SPA_POD_BUILDER_INIT (data, sizeof (data));
++  struct spa_rectangle a = SPA_RECTANGLE (640, 480), b = SPA_RECTANGLE (1280, 720);
++  struct spa_fraction fps = SPA_FRACTION (30, 1);
++  struct spa_pod *pod = spa_pod_builder_add_object (
++      &builder, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat, SPA_FORMAT_mediaType,
++      SPA_POD_Id (SPA_MEDIA_TYPE_video), SPA_FORMAT_mediaSubtype,
++      SPA_POD_Id (SPA_MEDIA_SUBTYPE_raw), SPA_FORMAT_VIDEO_format,
++      SPA_POD_Id (SPA_VIDEO_FORMAT_YUY2), SPA_FORMAT_VIDEO_size,
++      SPA_POD_CHOICE_ENUM_Rectangle (3, &a, &a, &b), SPA_FORMAT_VIDEO_framerate,
++      SPA_POD_Fraction (&fps));
++  if (!strcmp (name, "enumeration-dmabuf"))
++    pod = spa_pod_builder_add_object (
++        &builder, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat, SPA_FORMAT_mediaType,
++        SPA_POD_Id (SPA_MEDIA_TYPE_video), SPA_FORMAT_mediaSubtype,
++        SPA_POD_Id (SPA_MEDIA_SUBTYPE_raw), SPA_FORMAT_VIDEO_format,
++        SPA_POD_Id (SPA_VIDEO_FORMAT_YUY2), SPA_FORMAT_VIDEO_modifier, SPA_POD_Long ((int64_t) 0),
++        SPA_FORMAT_VIDEO_size, SPA_POD_CHOICE_ENUM_Rectangle (3, &a, &a, &b),
++        SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction (&fps));
++  GstCaps *caps = gst_caps_from_format (pod);
++  g_assert_nonnull (caps);
++  char *original_caps = gst_caps_to_string (caps);
++  unsigned count = 0;
++  if (!strcmp (name, "enumeration-dmabuf"))
++    for (unsigned i = 0; i < gst_caps_get_size (caps); i++)
++      g_assert_true (gst_caps_features_contains (gst_caps_get_features (caps, i), "memory:DMABuf"));
++  if (!strcmp (name, "enumeration-forward"))
++    {
++      GstCaps *bad = gst_caps_from_string ("video/x-raw,width=640,height=720");
++      g_assert_false (gst_caps_can_intersect (caps, bad));
++      gst_caps_unref (bad);
++      count = gst_caps_get_size (caps);
++    }
++  else
++    {
++      GPtrArray *formats = gst_caps_to_format_all (caps);
++      unsigned seen = 0;
++      count = formats->len;
++      for (unsigned i = 0; i < formats->len; i++)
++        {
++          const struct spa_pod_prop *p
++              = spa_pod_find_prop (formats->pdata[i], NULL, SPA_FORMAT_VIDEO_size);
++          g_assert_nonnull (p);
++          uint32_t n, choice;
++          const struct spa_pod *v = spa_pod_get_values (&p->value, &n, &choice);
++          const struct spa_rectangle *r = SPA_POD_BODY (v);
++          for (unsigned j = 0; j < n; j++)
++            {
++              if (r[j].width == 640 && r[j].height == 480)
++                seen |= 1;
++              else if (r[j].width == 1280 && r[j].height == 720)
++                seen |= 2;
++              else
++                g_error ("phantom size %ux%u", r[j].width, r[j].height);
++            }
++        }
++      g_assert_cmpuint (seen, ==, 3);
++      g_ptr_array_unref (formats);
++    }
++  printf ("{\"case\":\"%s\",\"formats\":%u,\"caller_caps_unchanged\":true}\n", name, count);
++  char *final_caps = gst_caps_to_string (caps);
++  g_assert_cmpstr (original_caps, ==, final_caps);
++  g_free (original_caps);
++  g_free (final_caps);
++  gst_caps_unref (caps);
++  return 0;
++}
++int
++main (int argc, char **argv)
++{
++  gst_init (NULL, NULL);
++  g_assert_cmpint (argc, ==, 2);
++  if (!strncmp (argv[1], "enumeration-", 12))
++    return enumeration (argv[1]);
++  const struct test *t = NULL;
++  for (unsigned i = 0; i < G_N_ELEMENTS (cases); i++)
++    if (!strcmp (cases[i].name, argv[1]))
++      t = &cases[i];
++  g_assert_nonnull (t);
++  GstCaps *caps = gst_caps_from_string (t->caps);
++  g_assert_nonnull (caps);
++  char *before = gst_caps_to_string (caps);
++  GPtrArray *formats = gst_caps_to_format_all (caps);
++  g_assert_nonnull (formats);
++  g_assert_cmpuint (formats->len, ==, t->count);
++  char *after = gst_caps_to_string (caps);
++  g_assert_cmpstr (before, ==, after);
++  g_free (before);
++  g_free (after);
++  for (unsigned i = 0; i < formats->len; i++)
++    {
++      struct spa_pod *pod = formats->pdata[i];
++      const struct spa_pod_prop *prop = spa_pod_find_prop (
++          pod, NULL, t->channels ? SPA_FORMAT_AUDIO_channels : SPA_FORMAT_VIDEO_size);
++      g_assert_nonnull (prop);
++      uint32_t n, choice;
++      const struct spa_pod *v = spa_pod_get_values (&prop->value, &n, &choice);
++      g_assert_cmpuint (n, >=, 1);
++      if (t->step)
++        {
++          g_assert_cmpuint (choice, ==, SPA_CHOICE_Step);
++          g_assert_cmpuint (n, ==, 4);
++          if (t->channels)
++            g_assert_cmpint (((int *)SPA_POD_BODY (v))[3], ==, 2);
++          else
++            {
++              const struct spa_rectangle *r = SPA_POD_BODY (v);
++              g_assert_cmpuint (r[3].width, ==, t->w == 640 ? 1 : 8);
++              g_assert_cmpuint (r[3].height, ==, t->w == 640 ? 8 : 1);
++            }
++        }
++      if (i == 0)
++        {
++          if (t->channels)
++            g_assert_cmpint (*(int *)SPA_POD_BODY (v), ==, t->channels);
++          else
++            {
++              const struct spa_rectangle *r = SPA_POD_BODY (v);
++              g_assert_cmpuint (r[0].width, ==, t->w);
++              g_assert_cmpuint (r[0].height, ==, t->h);
++              const struct spa_pod_prop *fp
++                  = spa_pod_find_prop (pod, NULL, SPA_FORMAT_VIDEO_framerate);
++              g_assert_nonnull (fp);
++              const struct spa_pod *f = spa_pod_get_values (&fp->value, &n, &choice);
++              const struct spa_fraction *ff = SPA_POD_BODY (f);
++              g_assert_cmpuint (ff[0].num, ==, t->fps);
++              g_assert_cmpuint (ff[0].denom, ==, 1);
++            }
++        }
++      if (!t->step)
++        {
++          GstCaps *out = gst_caps_from_format (pod);
++          g_assert_nonnull (out);
++          g_assert_true (gst_caps_is_subset (out, caps));
++          gst_caps_unref (out);
++        }
++    }
++  printf ("{\"case\":\"%s\",\"formats\":%u,\"caller_caps_unchanged\":true}\n", t->name,
++          formats->len);
++  g_ptr_array_unref (formats);
++  gst_caps_unref (caps);
++  return 0;
++}

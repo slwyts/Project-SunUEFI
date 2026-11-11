@@ -137,7 +137,7 @@ jobs:
           if [ -f build/logs/ci-build.log ]; then
             tail -n 160 build/logs/ci-build.log
           fi
-          for log in build/distros/release.build.log build/ffmpeg/build.log build/gsd/build.log build/mutter/build.log; do
+          for log in build/distros/release.build.log build/ffmpeg/build.log build/gsd/build.log build/upower/build.log build/pipewire/build.log build/mutter/build.log; do
             if [ -f "$log" ]; then
               echo "::group::$log"
               tail -n 100 "$log"
@@ -234,6 +234,15 @@ jobs:
             build/distros/release/FAILED.json
             build/gsd/SOURCE.json
             build/gsd/build.log
+            build/upower/SOURCE.json
+            build/upower/build.log
+            build/pipewire/SOURCE.json
+            build/pipewire/build.log
+            build/distros/nyarch-gnome-piano/packages/pipewire/SOURCE.json
+            build/distros/nyarch-gnome-piano/packages/pipewire/build.log
+            build/distros/steamos-piano/packages/pipewire/SOURCE.json
+            build/distros/steamos-piano/packages/pipewire/build.log
+            build/distros/nyarch-gnome-piano/packages/gnome-settings-daemon/manifest.json
             build/mutter/SOURCE.json
             build/mutter/SHA256SUMS
             build/mutter/build.log

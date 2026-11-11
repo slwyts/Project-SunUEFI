@@ -12,19 +12,24 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+from build_piano_runtime_helpers import source_patches
 
 ROOT = Path(__file__).resolve().parents[1]
 PATCH = ROOT / 'patches/gnome-settings-daemon/0001-power-optional-device-ambient-profile.patch'
 PREPARE = ROOT / 'linux/desktops/gnome/ambient-policy/packaging/prepare_package.py'
 POLICY = PREPARE.parent.parent
 SOURCE_VERSION = '48.1-1'
-PACKAGE_VERSION = SOURCE_VERSION + '+sunuefi1'
+PACKAGE_VERSION = SOURCE_VERSION + '+sunuefi2'
+PATCHES = [PATCH, *source_patches(ROOT / 'patches/gnome-settings-daemon/48.1/series.json')]
 RUNTIME = {'gnome-settings-daemon': 'arm64', 'gnome-settings-daemon-common': 'all'}
 
 
 def sha(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+def patch_records():
+    return [{'path': path.relative_to(ROOT).as_posix(), 'sha256': sha(path)} for path in PATCHES]
 
 
 def run(args, **kwargs):
@@ -126,6 +131,8 @@ def validate_prepared(source):
     local = source / 'debian/patches/sunuefi-ambient-device-profile.patch'
     if sha(local) != sha(PATCH):
         raise ValueError('Prepared Debian patch differs from the current canonical patch')
+    if sha(source / 'debian/patches/sunuefi-keyboard-backlight-hotplug.patch') != sha(PATCHES[1]):
+        raise ValueError('Prepared keyboard hotplug patch differs')
     for name in ['gsd-ambient-profile.c', 'gsd-ambient-profile.h']:
         if (source / 'plugins/power' / name).read_bytes() != (POLICY / name).read_bytes():
             raise ValueError('Prepared ambient policy source differs: ' + name)
@@ -179,7 +186,7 @@ def collect(output, rootfs, source, origin, jobs):
             raise ValueError('Runtime package checksum differs from actual .changes')
     origin.update(proof)
     record = {'schema_version': 1, 'source': origin, 'packages_built': True,
-              'patches': [{'path': str(PATCH.relative_to(ROOT)), 'sha256': sha(PATCH)}],
+              'patches': patch_records(),
               'package_version': PACKAGE_VERSION, 'packages': packages,
               'recipe': 'original Debian debian/rules',
               'build_command': ['dpkg-buildpackage', '-b', '-us', '-uc'],
@@ -199,7 +206,7 @@ def reusable(output):
         return None
     record = json.loads(path.read_text())
     if (record.get('packages_built') is not True or record.get('package_version') != PACKAGE_VERSION or
-        record.get('patches') != [{'path': str(PATCH.relative_to(ROOT)), 'sha256': sha(PATCH)}] or
+        record.get('patches') != patch_records() or
         set(record.get('packages', {})) != set(RUNTIME)):
         return None
     for name, row in record['packages'].items():
@@ -253,7 +260,8 @@ def build(output, sysroot, jobs, source_cache=None, prepared_source=None,
             rootfs.parent.mkdir(parents=True, exist_ok=True)
             run(['cp', '-a', '--reflink=auto', sysroot, rootfs])
         cache = rootfs / 'build/sunuefi-gsd/cache'
-        source = rootfs / ('build/sunuefi-gsd/work-' + sha(PATCH)[:12] + '/source')
+        identity = hashlib.sha256(json.dumps(patch_records(), sort_keys=True).encode()).hexdigest()[:12]
+        source = rootfs / ('build/sunuefi-gsd/work-' + identity + '/source')
     with devices(rootfs), (output / 'build.log').open('a') as log:
         if capture(['chroot', rootfs, 'dpkg', '--print-architecture']) != 'arm64':
             raise ValueError('The isolated Debian builder must use arm64 packages')
@@ -288,7 +296,7 @@ def build(output, sysroot, jobs, source_cache=None, prepared_source=None,
             chroot(rootfs, ['dpkg-source', '-x', inside(rootfs, cache / origin['dsc']['file']), inside(rootfs, pristine)],
                    stdout=log, stderr=subprocess.STDOUT)
             mirror = rootfs / 'opt/sunuefi-gsd-source'
-            for path in [PATCH, PREPARE]:
+            for path in [*PATCHES, PATCHES[1].parent / 'series.json', PREPARE]:
                 destination = mirror / path.relative_to(ROOT)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, destination)
