@@ -1,0 +1,67 @@
+From 611bb038b07681dae27d6852f4698e4873cbc980 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 12 Nov 2026 00:22:59 +0800
+Subject: [PATCH] fix(power): retain teardown after an unconfirmed FFC PMIC
+ pause
+
+A pump stop can release its power-supply reference before the PMIC pause
+fails. Teardown must retain the stop error without dereferencing that
+already released reference. Exercise this path with a persistent PMIC
+write failure after a confirmed pump stop.
+---
+ drivers/power/supply/piano_mca.c      |  6 ++++--
+ drivers/power/supply/piano_mca_test.c | 17 +++++++++++++++++
+ 2 files changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index fed38482e15..901c477a230 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -4294,8 +4294,10 @@ static void piano_mca_stop_work(struct piano_mca *mca)
+ 	if (piano_mca_cp_stop(mca, "unbind")) {
+ 		/* The stage driver owns stop retries after this consumer goes away. */
+ 		dev_err(mca->dev, "stop failed during teardown; source settings unchanged\n");
+-		power_supply_put(mca->cp_psy);
+-		mca->cp_psy = NULL;
++		if (mca->cp_psy) {
++			power_supply_put(mca->cp_psy);
++			mca->cp_psy = NULL;
++		}
+ 		return;
+ 	}
+ 	if (!mca->service_up)
+diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
+index e3b2beb5de2..d91e80cda9c 100644
+--- a/drivers/power/supply/piano_mca_test.c
++++ b/drivers/power/supply/piano_mca_test.c
+@@ -3601,6 +3601,22 @@ static void piano_mca_ffc_aging_keeps_factory_limits_test(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, limits.fv_mv, 4490U);
+ }
+ 
++static void piano_mca_ffc_teardown_after_pump_stop_error_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	piano_mca_ffc_prepare(test);
++	KUNIT_ASSERT_EQ(test, piano_mca_update_ffc(&f->mca, 25, 25), 0);
++	KUNIT_ASSERT_EQ(test, piano_mca_test_start_cp(test), 0);
++	f->mca.cp_ffc = true;
++	f->pmic_enable_write_failures = -1;
++	piano_mca_stop(&f->mca);
++	KUNIT_EXPECT_TRUE(test, f->mca.policy_stopped);
++	KUNIT_EXPECT_TRUE(test, f->mca.pmic_pause_pending);
++	KUNIT_EXPECT_PTR_EQ(test, f->mca.cp_psy, NULL);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++}
++
+ static void piano_mca_ffc_tail_does_not_reenter_test(struct kunit *test)
+ {
+ 	struct piano_mca_test *f = test->priv;
+@@ -3630,6 +3646,7 @@ static struct kunit_case piano_mca_test_cases[] = {
+ 	KUNIT_CASE(piano_mca_ffc_voltage_cutoff_keeps_buck_off_test),
+ 	KUNIT_CASE(piano_mca_ffc_stop_retries_pmic_pause_test),
+ 	KUNIT_CASE(piano_mca_ffc_aging_keeps_factory_limits_test),
++	KUNIT_CASE(piano_mca_ffc_teardown_after_pump_stop_error_test),
+ 	KUNIT_CASE(piano_mca_ffc_tail_does_not_reenter_test),
+ 	KUNIT_CASE(piano_mca_skin_buck_columns_test),
+ 	KUNIT_CASE(piano_mca_skin_normal_buck_fcc_test),

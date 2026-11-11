@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "f3077b7e30b3c0d2423befd18e2dfef2f25f6e16",
-  "original_target_commit": "c0c3dcbe73b5dcc4e8baee487581fda4fda67d6d",
+  "target_tree": "60db958881b33bf2e107e37993059d5c0a0d76d9",
+  "original_target_commit": "611bb038b07681dae27d6852f4698e4873cbc980",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -831,6 +831,14 @@
       "original_parent": "f04703e9ecb6244c1d2ed5b724fed4c9d03dca00",
       "committer_date": "2026-11-12T00:06:47+08:00",
       "tree": "f3077b7e30b3c0d2423befd18e2dfef2f25f6e16"
+    },
+    {
+      "file": "0104-power-mca-ffc-teardown-reference.patch",
+      "sha256": "cf6d88078468a2b4bd910459619b51d2ea78fc75825da6c9127fdd9451809172",
+      "original_commit": "611bb038b07681dae27d6852f4698e4873cbc980",
+      "original_parent": "c0c3dcbe73b5dcc4e8baee487581fda4fda67d6d",
+      "committer_date": "2026-11-12T00:22:59+08:00",
+      "tree": "60db958881b33bf2e107e37993059d5c0a0d76d9"
     }
   ],
   "provenance": {
