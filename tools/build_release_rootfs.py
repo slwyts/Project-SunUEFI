@@ -590,8 +590,9 @@ def execute(record):
     cfg = record['config']; public = Path(record['public_source']); m, kernel_hash = modules.inspect(kernel)
     desktop = record.get('desktop', 'gnome')
     abi = runtime.kernel_identity(Path(record['kernel_build']), source, m['source_commit'], m['kernel_release'])
-    helper_cc = ('clang' if platform.machine() in ('aarch64', 'arm64') or
-                 not shutil.which('aarch64-linux-gnu-gcc') else 'aarch64-linux-gnu-gcc')
+    # Clang selects the target GCC libraries from the supplied Debian sysroot.
+    # A host cross-GCC can otherwise mix its own libc linker scripts into it.
+    helper_cc = 'clang' if shutil.which('clang') else 'aarch64-linux-gnu-gcc'
     if record['runtime_dir']:
         saved = json.loads((Path(record['runtime_dir']) / 'manifest.json').read_text())
         if saved.get('status') != 'RUNTIME_COMPILED_NOT_DEVICE_TESTED' or saved.get('kernel') != abi or saved.get('public_commit') != cfg['debian']['commit']:
