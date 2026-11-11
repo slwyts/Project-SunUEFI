@@ -44,7 +44,7 @@ def repository(path, commit=None, tree=None):
 
 def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=None,
          public_source=None, firmware_source=None, macros=None, v4l2_source=None, root=ROOT, resume=False,
-         sensors_dir=None, ffmpeg_dir=None, boot_task_snapshot=False, desktop='gnome'):
+         sensors_dir=None, ffmpeg_dir=None, boot_task_snapshot=False, desktop='gnome', mutter_dir=None):
     root = Path(root).resolve(); config = json.loads((root / 'config/release.json').read_text())
     if desktop not in ('gnome', 'kde'):
         raise ValueError('Release desktop must be gnome or kde')
@@ -93,6 +93,11 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
     ffmpeg = Path(ffmpeg_dir).resolve() if ffmpeg_dir else None
     if ffmpeg:
         ffmpeg_packages(ffmpeg, root)
+    mutter = Path(mutter_dir).resolve() if mutter_dir else None
+    if mutter:
+        if desktop != 'gnome':
+            raise ValueError('--mutter-dir is only valid for the GNOME desktop')
+        mutter_packages(mutter)
     if runtime_dir:
         if not (Path(runtime_dir) / 'manifest.json').is_file(): missing.append('matching runtime bundle manifest')
     else:
@@ -115,6 +120,7 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
             'output': str(output), 'rootfs': str(output / 'rootfs'), 'mesa_dir': str(mesa) if mesa else None,
             'sensors_dir': str(sensors),
             'ffmpeg_dir': str(ffmpeg) if ffmpeg else None,
+            'mutter_dir': str(mutter) if mutter else None,
             'boot_task_snapshot': boot_task_snapshot,
             'runtime_dir': str(Path(runtime_dir).resolve()) if runtime_dir else None,
             'kernel_build': str(Path(kernel_build or root / 'build/kernels/release').resolve()),
@@ -626,8 +632,8 @@ def execute(record):
             run([sys.executable, ROOT / 'tools/build_gsd_packages.py', '--output',
                  gsd_folder.parent, '--sysroot', rootfs])
         gsd = gsd_packages(gsd_folder) if desktop == 'gnome' else {'packages': {}}
-        mutter_folder = ROOT / 'build/mutter/runtime'
-        if desktop == 'gnome' and not (mutter_folder.parent / 'SOURCE.json').is_file():
+        mutter_folder = Path(record.get('mutter_dir') or ROOT / 'build/mutter/runtime')
+        if desktop == 'gnome' and not record.get('mutter_dir') and not (mutter_folder.parent / 'SOURCE.json').is_file():
             run([sys.executable, ROOT / 'tools/build_mutter_packages.py', '--output',
                  mutter_folder.parent, '--sysroot', rootfs])
         mutter = mutter_packages(mutter_folder) if desktop == 'gnome' else {'packages': {}}
@@ -788,7 +794,7 @@ def execute(record):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('kernel', 'source', 'output'): parser.add_argument('--' + name, type=Path, required=True)
-    for name in ('mesa-dir', 'sensors-dir', 'ffmpeg-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
+    for name in ('mesa-dir', 'sensors-dir', 'ffmpeg-dir', 'mutter-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
     mode = parser.add_mutually_exclusive_group(required=True); mode.add_argument('--plan', action='store_true'); mode.add_argument('--execute', action='store_true')
     parser.add_argument('--resume', action='store_true', help='Reuse the completed upstream base and refresh release assembly')
     parser.add_argument('--desktop', choices=('gnome', 'kde'), default='gnome')
