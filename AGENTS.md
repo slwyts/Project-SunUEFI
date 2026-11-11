@@ -75,6 +75,7 @@
 ## 3. 底线
 
 * 原厂 UFS 关键分区保持代码级只读（`PianoReadOnlyBlock`）。需要写原厂分区时（例如 `persist`），只写 SunUEFI 自己的目录（`persist/sunuefi/`），不碰其他文件。
+  关机充电有一项例外：Linux 仅在 USB 在线的关机路径中，将原厂 `charger` 分区偏移 `0x1000` 的小端 32 位 `power_off_mode` 设为 `1`，保留所有其他字节。UEFI 的 `PianoReadOnlyBlock` 规则继续适用。
 * 启动 Linux 或重启前，必须干净地退出 ExitBootServices，释放已占用的时钟、SMMU 和 USB 控制器。无法确认安全时保留资源并拒绝交接，不强行释放可能仍被 DMA 使用的内存。
 * 保留用户的 Android 数据、现有 Linux root 和已安装的游戏。除非明确要求，不重装、不重新分区、不重新复制。
 * 没有明确要求时不推送、不改写历史。

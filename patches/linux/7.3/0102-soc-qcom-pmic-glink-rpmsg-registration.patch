@@ -1,0 +1,766 @@
+From f04703e9ecb6244c1d2ed5b724fed4c9d03dca00 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Wed, 11 Nov 2026 03:17:19 +0800
+Subject: [PATCH] fix(soc): defer PMIC GLINK RPMSG registration until platform
+ readiness
+
+The PMIC transport may be announced while the platform device is still
+waiting for its suppliers. Registering the RPMSG driver during module init
+then fails its probe before the platform singleton is ready. Destroying the
+endpoint closes the GLINK channel, so later platform readiness cannot
+recover charging communication.
+
+Register the RPMSG driver only after the platform resources and auxiliary
+devices are ready. Keep registration outside the singleton mutex because
+it can synchronously probe an existing channel. Retain the transport while
+auxiliary clients stop their hardware, then unregister RPMSG before
+releasing PDR and the singleton. Reserve the singleton throughout probe
+and teardown, reject late attachment while removing, and roll back failed
+registration.
+
+Exercise supplier deferral, registration failure, synchronous callbacks and
+teardown using KUnit against the actual driver implementation.
+
+Based on the delayed-registration fix by Stephan Gerhold and Abel Vesa.
+Link: https://gitlab.com/Linaro/arm64-laptops/linux/-/commit/8c309c7e852a49118ddc2ee54c3d8b7c74466f6a
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/soc/qcom/Kconfig           |  14 +
+ drivers/soc/qcom/Makefile          |   1 +
+ drivers/soc/qcom/pmic_glink.c      |  63 ++--
+ drivers/soc/qcom/pmic_glink_test.c | 535 +++++++++++++++++++++++++++++
+ 4 files changed, 586 insertions(+), 27 deletions(-)
+ create mode 100644 drivers/soc/qcom/pmic_glink_test.c
+
+diff --git a/drivers/soc/qcom/Kconfig b/drivers/soc/qcom/Kconfig
+index 05b76b26398889b3c50e6d1fb2aa522b84396e37..b3cc3eea4e10f55f56108383c6755ac1ba9d0888 100644
+--- a/drivers/soc/qcom/Kconfig
++++ b/drivers/soc/qcom/Kconfig
+@@ -104,6 +104,7 @@ config QCOM_PMIC_PDCHARGER_ULOG
+ 
+ config QCOM_PMIC_GLINK
+ 	tristate "Qualcomm PMIC GLINK driver"
++	depends on !QCOM_PMIC_GLINK_KUNIT_TEST
+ 	depends on RPMSG
+ 	depends on TYPEC
+ 	depends on DRM
+@@ -303,6 +304,19 @@ config QCOM_PBS
+ 
+ endif
+ 
++config QCOM_PMIC_GLINK_KUNIT_TEST
++	bool "KUnit tests for PMIC GLINK device lifetimes" if !KUNIT_ALL_TESTS
++	depends on KUNIT=y && UML
++	select AUXILIARY_BUS
++	select RPMSG
++	default KUNIT_ALL_TESTS
++	help
++	  Check early channels, deferred suppliers, probe-failure cleanup and
++	  client stop ordering on the real platform, auxiliary and RPMsg buses.
++	  Firmware services and the transport backend are virtual. Run only
++	  in UML, without the real PMIC GLINK driver, so the suite cannot
++	  access tablet hardware.
++
+ # Options selected by other drivers from different subsystems must be outside
+ # of the menuconfig if-block:
+ 
+diff --git a/drivers/soc/qcom/Makefile b/drivers/soc/qcom/Makefile
+index a5b00a41a2e5dd704f1f84bff2f7e19b4c206a07..b01e1294a6038aadca9086074f1faa50e3a1464f 100644
+--- a/drivers/soc/qcom/Makefile
++++ b/drivers/soc/qcom/Makefile
+@@ -11,6 +11,7 @@ obj-$(CONFIG_QCOM_PD_MAPPER)	+= qcom_pd_mapper.o
+ obj-$(CONFIG_QCOM_PDR_HELPERS)	+= pdr_interface.o
+ obj-$(CONFIG_QCOM_PDR_MSG)	+= qcom_pdr_msg.o
+ obj-$(CONFIG_QCOM_PMIC_GLINK)	+= pmic_glink.o
++obj-$(CONFIG_QCOM_PMIC_GLINK_KUNIT_TEST) += pmic_glink_test.o
+ obj-$(CONFIG_QCOM_PMIC_GLINK)	+= pmic_glink_altmode.o
+ obj-$(CONFIG_QCOM_PMIC_PDCHARGER_ULOG)	+= pmic_pdcharger_ulog.o
+ CFLAGS_pmic_pdcharger_ulog.o	:=  -I$(src)
+diff --git a/drivers/soc/qcom/pmic_glink.c b/drivers/soc/qcom/pmic_glink.c
+index 13c7ffd4dc0055b7f8dd4623cd21bc13e6ba6f49..2f74748591c774d1267c29bba0ed329e9a8957ec 100644
+--- a/drivers/soc/qcom/pmic_glink.c
++++ b/drivers/soc/qcom/pmic_glink.c
+@@ -31,6 +31,7 @@ struct pmic_glink_data {
+ 
+ struct pmic_glink {
+ 	struct device *dev;
++	bool removing;
+ 	struct pdr_handle *pdr;
+ 
+ 	struct rpmsg_endpoint *ept;
+@@ -53,6 +54,7 @@ struct pmic_glink {
+ 	struct list_head clients;
+ };
+ 
++static struct pmic_glink *pmic_glink_owner;
+ static struct pmic_glink *__pmic_glink;
+ static DEFINE_MUTEX(__pmic_glink_lock);
+ 
+@@ -295,7 +297,7 @@ static int pmic_glink_rpmsg_probe(struct rpmsg_device *rpdev)
+ 
+ 	guard(mutex)(&__pmic_glink_lock);
+ 	pg = __pmic_glink;
+-	if (!pg)
++	if (!pg || pg->removing)
+ 		return dev_err_probe(&rpdev->dev, -ENODEV, "no pmic_glink device to attach to\n");
+ 
+ 	dev_set_drvdata(&rpdev->dev, pg);
+@@ -339,6 +341,8 @@ static struct rpmsg_driver pmic_glink_rpmsg_driver = {
+ 	.id_table = pmic_glink_rpmsg_id_match,
+ 	.drv  = {
+ 		.name  = "qcom_pmic_glink_rpmsg",
++		/* Registration and failure cleanup run inside the platform probe. */
++		.probe_type = PROBE_FORCE_SYNCHRONOUS,
+ 	},
+ };
+ 
+@@ -364,11 +368,19 @@ static int pmic_glink_probe(struct platform_device *pdev)
+ 	if (!pg->data)
+ 		return -EINVAL;
+ 
++	mutex_lock(&__pmic_glink_lock);
++	if (pmic_glink_owner) {
++		mutex_unlock(&__pmic_glink_lock);
++		return -EBUSY;
++	}
++	pmic_glink_owner = pg;
++	mutex_unlock(&__pmic_glink_lock);
++
+ 	pg->pdr = pdr_handle_alloc(pmic_glink_pdr_callback, pg);
+ 	if (IS_ERR(pg->pdr)) {
+ 		ret = dev_err_probe(&pdev->dev, PTR_ERR(pg->pdr),
+ 				    "failed to initialize pdr\n");
+-		return ret;
++		goto out_release_instance;
+ 	}
+ 
+ 	if (pg->data->client_mask & BIT(PMIC_GLINK_CLIENT_UCSI)) {
+@@ -401,6 +413,13 @@ static int pmic_glink_probe(struct platform_device *pdev)
+ 	__pmic_glink = pg;
+ 	mutex_unlock(&__pmic_glink_lock);
+ 
++	/* Existing channels may bind synchronously when this driver is registered. */
++	ret = register_rpmsg_driver(&pmic_glink_rpmsg_driver);
++	if (ret) {
++		ret = dev_err_probe(&pdev->dev, ret, "failed to register rpmsg driver\n");
++		goto out_release_aux_devices;
++	}
++
+ 	return 0;
+ 
+ out_release_aux_devices:
+@@ -414,6 +433,12 @@ static int pmic_glink_probe(struct platform_device *pdev)
+ 		pmic_glink_del_aux_device(pg, &pg->ucsi_aux);
+ out_release_pdr_handle:
+ 	pdr_handle_release(pg->pdr);
++out_release_instance:
++	mutex_lock(&__pmic_glink_lock);
++	if (__pmic_glink == pg)
++		__pmic_glink = NULL;
++	pmic_glink_owner = NULL;
++	mutex_unlock(&__pmic_glink_lock);
+ 
+ 	return ret;
+ }
+@@ -422,8 +447,11 @@ static void pmic_glink_remove(struct platform_device *pdev)
+ {
+ 	struct pmic_glink *pg = dev_get_drvdata(&pdev->dev);
+ 
+-	pdr_handle_release(pg->pdr);
++	mutex_lock(&__pmic_glink_lock);
++	pg->removing = true;
++	mutex_unlock(&__pmic_glink_lock);
+ 
++	/* Clients still need the transport while stopping their hardware. */
+ 	if (pg->data->client_mask & BIT(PMIC_GLINK_CLIENT_BATT))
+ 		pmic_glink_del_aux_device(pg, &pg->ps_aux);
+ 	if (pg->data->client_mask & BIT(PMIC_GLINK_CLIENT_ALTMODE))
+@@ -431,8 +459,12 @@ static void pmic_glink_remove(struct platform_device *pdev)
+ 	if (pg->data->client_mask & BIT(PMIC_GLINK_CLIENT_UCSI))
+ 		pmic_glink_del_aux_device(pg, &pg->ucsi_aux);
+ 
++	unregister_rpmsg_driver(&pmic_glink_rpmsg_driver);
++	pdr_handle_release(pg->pdr);
++
+ 	guard(mutex)(&__pmic_glink_lock);
+ 	__pmic_glink = NULL;
++	pmic_glink_owner = NULL;
+ }
+ 
+ static const struct pmic_glink_data pmic_glink_adsp_data = {
+@@ -468,30 +500,7 @@ static struct platform_driver pmic_glink_driver = {
+ 	},
+ };
+ 
+-static int pmic_glink_init(void)
+-{
+-	int ret;
+-
+-	ret = platform_driver_register(&pmic_glink_driver);
+-	if (ret < 0)
+-		return ret;
+-
+-	ret = register_rpmsg_driver(&pmic_glink_rpmsg_driver);
+-	if (ret < 0) {
+-		platform_driver_unregister(&pmic_glink_driver);
+-		return ret;
+-	}
+-
+-	return 0;
+-}
+-module_init(pmic_glink_init);
+-
+-static void pmic_glink_exit(void)
+-{
+-	unregister_rpmsg_driver(&pmic_glink_rpmsg_driver);
+-	platform_driver_unregister(&pmic_glink_driver);
+-}
+-module_exit(pmic_glink_exit);
++module_platform_driver(pmic_glink_driver);
+ 
+ MODULE_DESCRIPTION("Qualcomm PMIC GLINK driver");
+ MODULE_LICENSE("GPL");
+diff --git a/drivers/soc/qcom/pmic_glink_test.c b/drivers/soc/qcom/pmic_glink_test.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..df21c3422904ad86daab515a6ae2f9e42ab1a6ef
+--- /dev/null
++++ b/drivers/soc/qcom/pmic_glink_test.c
+@@ -0,0 +1,535 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Exercise the real platform, auxiliary and RPMsg driver lifetimes in UML. */
++#include <kunit/device.h>
++#include <kunit/test.h>
++#include <linux/auxiliary_bus.h>
++#include <linux/completion.h>
++#include <linux/kthread.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/sched/task.h>
++#include <linux/soc/qcom/pdr.h>
++#include "../../rpmsg/rpmsg_internal.h"
++
++static const void *glink_test_match_data(const struct device *dev);
++static struct pdr_handle *glink_test_pdr_alloc(void (*cb)(int, char *, void *),
++					       void *priv);
++static struct pdr_service *glink_test_pdr_lookup(struct pdr_handle *pdr,
++						 const char *name, const char *path);
++static void glink_test_pdr_release(struct pdr_handle *pdr);
++
++/* Only the external firmware service and DT match data are substituted. */
++#define of_device_get_match_data glink_test_match_data
++#define pdr_handle_alloc glink_test_pdr_alloc
++#define pdr_add_lookup glink_test_pdr_lookup
++#define pdr_handle_release glink_test_pdr_release
++#undef module_platform_driver
++#define module_platform_driver(...)
++#include "pmic_glink.c"
++#undef of_device_get_match_data
++#undef pdr_handle_alloc
++#undef pdr_add_lookup
++#undef pdr_handle_release
++
++struct glink_test {
++	struct device *transport;
++	struct platform_device *parent[2], *supplier[3];
++	struct task_struct *probe_task;
++	struct completion lookup_entered, lookup_release;
++	struct rpmsg_device *rpdev;
++	struct pmic_glink_client *client;
++	void (*pdr_cb)(int state, char *path, void *priv);
++	void *pdr_priv;
++	bool pdr_up, expect_stop, destroyed_before_stop, released_before_stop;
++	bool block_lookup, platform_registered, supplier_driver_registered;
++	bool dummy_registered;
++	u32 suppliers_ready;
++	int alloc_error, lookup_error, probe_ret;
++	unsigned int creates, destroys, sends, stops, pdr_releases, state;
++	int stop_ret;
++};
++
++struct glink_test_endpoint {
++	struct rpmsg_device rpdev;
++	struct rpmsg_endpoint ept;
++};
++
++static struct glink_test *glink_test;
++
++static const void *glink_test_match_data(const struct device *dev)
++{
++	return &pmic_glink_adsp_data;
++}
++
++static struct pdr_handle *glink_test_pdr_alloc(void (*cb)(int, char *, void *),
++					       void *priv)
++{
++	if (glink_test->alloc_error)
++		return ERR_PTR(glink_test->alloc_error);
++	glink_test->pdr_cb = cb;
++	glink_test->pdr_priv = priv;
++	return (struct pdr_handle *)glink_test;
++}
++
++static struct pdr_service *glink_test_pdr_lookup(struct pdr_handle *pdr,
++						 const char *name, const char *path)
++{
++	if (glink_test->block_lookup) {
++		complete(&glink_test->lookup_entered);
++		wait_for_completion(&glink_test->lookup_release);
++	}
++	if (glink_test->lookup_error)
++		return ERR_PTR(glink_test->lookup_error);
++	if (glink_test->pdr_up)
++		glink_test->pdr_cb(SERVREG_SERVICE_STATE_UP, NULL,
++				   glink_test->pdr_priv);
++	return (struct pdr_service *)pdr;
++}
++
++static void glink_test_pdr_release(struct pdr_handle *pdr)
++{
++	if (glink_test->expect_stop && !glink_test->stops)
++		glink_test->released_before_stop = true;
++	glink_test->pdr_releases++;
++}
++
++static void glink_test_destroy_ept(struct rpmsg_endpoint *ept)
++{
++	glink_test->destroys++;
++	if (glink_test->expect_stop && !glink_test->stops)
++		glink_test->destroyed_before_stop = true;
++}
++
++static int glink_test_send(struct rpmsg_endpoint *ept, const void *data, int len)
++{
++	glink_test->sends++;
++	return 0;
++}
++
++static const struct rpmsg_endpoint_ops glink_test_ept_ops = {
++	.destroy_ept = glink_test_destroy_ept,
++	.send = glink_test_send,
++	.trysend = glink_test_send,
++};
++
++static struct rpmsg_endpoint *glink_test_create_ept(struct rpmsg_device *rpdev,
++						    rpmsg_rx_cb_t cb, void *priv,
++						    struct rpmsg_channel_info info)
++{
++	struct glink_test_endpoint *ep = container_of(rpdev, typeof(*ep), rpdev);
++
++	glink_test->creates++;
++	ep->ept.rpdev = rpdev;
++	ep->ept.cb = cb;
++	ep->ept.priv = priv;
++	ep->ept.addr = 1;
++	ep->ept.ops = &glink_test_ept_ops;
++	mutex_init(&ep->ept.cb_lock);
++	return &ep->ept;
++}
++
++static const struct rpmsg_device_ops glink_test_rpdev_ops = {
++	.create_ept = glink_test_create_ept,
++};
++
++static void glink_test_rpdev_release(struct device *dev)
++{
++	kfree(container_of(to_rpmsg_device(dev), struct glink_test_endpoint, rpdev));
++}
++
++static int glink_test_open(struct glink_test *ctx)
++{
++	struct glink_test_endpoint *ep;
++	int ret;
++
++	ep = kzalloc_obj(*ep);
++	if (!ep)
++		return -ENOMEM;
++	strscpy(ep->rpdev.id.name, "PMIC_RTR_ADSP_APPS");
++	ep->rpdev.src = RPMSG_ADDR_ANY;
++	ep->rpdev.dst = RPMSG_ADDR_ANY;
++	ep->rpdev.ops = &glink_test_rpdev_ops;
++	ep->rpdev.dev.parent = ctx->transport;
++	ep->rpdev.dev.release = glink_test_rpdev_release;
++	ret = rpmsg_register_device(&ep->rpdev);
++	if (!ret)
++		ctx->rpdev = &ep->rpdev;
++	return ret;
++}
++
++static struct platform_device *glink_test_parent(struct glink_test *ctx, int id)
++{
++	struct platform_device *pdev;
++
++	pdev = platform_device_register_simple("qcom_pmic_glink", id, NULL, 0);
++	if (!IS_ERR(pdev))
++		ctx->parent[id] = pdev;
++	return pdev;
++}
++
++static void glink_test_notify(void *priv, int state)
++{
++	((struct glink_test *)priv)->state = state;
++}
++
++static void glink_test_receive(const void *data, size_t len, void *priv)
++{
++}
++
++static void glink_test_stop(void *data)
++{
++	struct pmic_glink_client *client = data;
++	struct pmic_glink_hdr hdr = { };
++
++	glink_test->stop_ret = pmic_glink_send(client, &hdr, sizeof(hdr));
++	glink_test->stops++;
++}
++
++static int glink_test_aux_probe(struct auxiliary_device *adev,
++				const struct auxiliary_device_id *id)
++{
++	struct pmic_glink_client *client;
++	int ret;
++
++	client = devm_pmic_glink_client_alloc(&adev->dev, 1, glink_test_receive,
++					      glink_test_notify, glink_test);
++	if (IS_ERR(client))
++		return PTR_ERR(client);
++	ret = devm_add_action_or_reset(&adev->dev, glink_test_stop, client);
++	if (ret)
++		return ret;
++	glink_test->client = client;
++	pmic_glink_client_register(client);
++	return 0;
++}
++
++static const struct auxiliary_device_id glink_test_aux_ids[] = {
++	{ .name = KBUILD_MODNAME ".power-supply" },
++	{ }
++};
++
++static struct auxiliary_driver glink_test_aux_driver = {
++	.name = "glink-test-client",
++	.probe = glink_test_aux_probe,
++	.id_table = glink_test_aux_ids,
++};
++
++static int glink_test_supplier_probe(struct platform_device *pdev)
++{
++	return READ_ONCE(glink_test->suppliers_ready) & BIT(pdev->id) ?
++		0 : -EPROBE_DEFER;
++}
++
++static struct platform_driver glink_test_supplier_driver = {
++	.probe = glink_test_supplier_probe,
++	.driver.name = "glink-test-supplier",
++};
++
++static const struct rpmsg_device_id glink_test_no_ids[] = { { } };
++static struct rpmsg_driver glink_test_dummy_driver = {
++	.id_table = glink_test_no_ids,
++	.drv.name = "qcom_pmic_glink_rpmsg",
++};
++
++static int glink_test_init(struct kunit *test)
++{
++	struct glink_test *ctx;
++	int ret;
++
++	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
++	if (!ctx)
++		return -ENOMEM;
++	ctx->transport = kunit_device_register(test, "glink-transport");
++	if (IS_ERR(ctx->transport))
++		return PTR_ERR(ctx->transport);
++	ctx->pdr_up = true;
++	init_completion(&ctx->lookup_entered);
++	init_completion(&ctx->lookup_release);
++	test->priv = ctx;
++	glink_test = ctx;
++	ret = auxiliary_driver_register(&glink_test_aux_driver);
++	if (ret)
++		return ret;
++	ret = platform_driver_register(&pmic_glink_driver);
++	if (ret)
++		auxiliary_driver_unregister(&glink_test_aux_driver);
++	else
++		ctx->platform_registered = true;
++	return ret;
++}
++
++static void glink_test_exit(struct kunit *test)
++{
++	struct glink_test *ctx = test->priv;
++	int i;
++
++	complete_all(&ctx->lookup_release);
++	if (ctx->probe_task)
++		kthread_stop_put(ctx->probe_task);
++	for (i = 1; i >= 0; i--) {
++		if (!ctx->parent[i])
++			continue;
++		if (device_is_registered(&ctx->parent[i]->dev))
++			platform_device_unregister(ctx->parent[i]);
++		else
++			platform_device_put(ctx->parent[i]);
++	}
++	if (ctx->rpdev)
++		device_unregister(&ctx->rpdev->dev);
++	for (i = 0; i < ARRAY_SIZE(ctx->supplier); i++)
++		if (!IS_ERR_OR_NULL(ctx->supplier[i]))
++			platform_device_unregister(ctx->supplier[i]);
++	if (ctx->supplier_driver_registered)
++		platform_driver_unregister(&glink_test_supplier_driver);
++	if (ctx->dummy_registered)
++		unregister_rpmsg_driver(&glink_test_dummy_driver);
++	if (ctx->platform_registered)
++		platform_driver_unregister(&pmic_glink_driver);
++	auxiliary_driver_unregister(&glink_test_aux_driver);
++	KUNIT_EXPECT_NULL(test, __pmic_glink);
++	KUNIT_EXPECT_NULL(test, pmic_glink_owner);
++	glink_test = NULL;
++}
++
++struct glink_test_order {
++	const char *name;
++	bool open_first, late_pdr;
++};
++
++static const struct glink_test_order glink_test_orders[] = {
++	{ "open-before-parent", true, false },
++	{ "parent-before-open", false, false },
++	{ "open-before-parent-late-pdr", true, true },
++	{ "parent-before-open-late-pdr", false, true },
++};
++
++static void glink_test_order_desc(const struct glink_test_order *p, char *desc)
++{
++	strscpy(desc, p->name, KUNIT_PARAM_DESC_SIZE);
++}
++
++KUNIT_ARRAY_PARAM(glink_test_order, glink_test_orders, glink_test_order_desc);
++
++static void pmic_glink_open_order_test(struct kunit *test)
++{
++	const struct glink_test_order *order = test->param_value;
++	struct glink_test *ctx = test->priv;
++	struct platform_device *pdev;
++	struct pmic_glink_hdr hdr = { };
++
++	ctx->pdr_up = !order->late_pdr;
++	if (order->open_first) {
++		KUNIT_ASSERT_EQ(test, glink_test_open(ctx), 0);
++		KUNIT_EXPECT_NULL(test, ctx->rpdev->dev.driver);
++		KUNIT_EXPECT_EQ(test, ctx->creates, 0);
++	}
++	pdev = glink_test_parent(ctx, 0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, pdev);
++	KUNIT_ASSERT_PTR_EQ(test, pdev->dev.driver, &pmic_glink_driver.driver);
++	if (!order->open_first)
++		KUNIT_ASSERT_EQ(test, glink_test_open(ctx), 0);
++	KUNIT_ASSERT_PTR_EQ(test, ctx->rpdev->dev.driver,
++			    &pmic_glink_rpmsg_driver.drv);
++	KUNIT_EXPECT_EQ(test, ctx->creates, 1);
++	KUNIT_EXPECT_EQ(test, ctx->destroys, 0);
++	if (order->late_pdr)
++		ctx->pdr_cb(SERVREG_SERVICE_STATE_UP, NULL, ctx->pdr_priv);
++	KUNIT_EXPECT_EQ(test, ctx->state, SERVREG_SERVICE_STATE_UP);
++	KUNIT_EXPECT_EQ(test, pmic_glink_send(ctx->client, &hdr, sizeof(hdr)), 0);
++}
++
++static void pmic_glink_remove_stops_client_test(struct kunit *test)
++{
++	struct glink_test *ctx = test->priv;
++
++	KUNIT_ASSERT_EQ(test, glink_test_open(ctx), 0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, glink_test_parent(ctx, 0));
++	KUNIT_ASSERT_NOT_NULL(test, ctx->client);
++	ctx->expect_stop = true;
++	platform_device_unregister(ctx->parent[0]);
++	ctx->parent[0] = NULL;
++	KUNIT_EXPECT_EQ(test, ctx->stops, 1);
++	KUNIT_EXPECT_EQ(test, ctx->stop_ret, 0);
++	KUNIT_EXPECT_EQ(test, ctx->sends, 1);
++	KUNIT_EXPECT_EQ(test, ctx->destroys, 1);
++	KUNIT_EXPECT_EQ(test, ctx->pdr_releases, 1);
++	KUNIT_EXPECT_FALSE(test, ctx->destroyed_before_stop);
++	KUNIT_EXPECT_FALSE(test, ctx->released_before_stop);
++	KUNIT_EXPECT_NULL(test, ctx->rpdev->dev.driver);
++}
++
++static void pmic_glink_deferred_suppliers_test(struct kunit *test)
++{
++	struct glink_test *ctx = test->priv;
++	struct platform_device *pdev;
++	int i;
++
++	KUNIT_ASSERT_EQ(test, platform_driver_register(&glink_test_supplier_driver), 0);
++	ctx->supplier_driver_registered = true;
++	for (i = 0; i < ARRAY_SIZE(ctx->supplier); i++) {
++		ctx->supplier[i] = platform_device_register_simple("glink-test-supplier",
++								   i, NULL, 0);
++		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, ctx->supplier[i]);
++	}
++	platform_driver_unregister(&pmic_glink_driver);
++	ctx->platform_registered = false;
++	pdev = glink_test_parent(ctx, 0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, pdev);
++	for (i = 0; i < ARRAY_SIZE(ctx->supplier); i++)
++		KUNIT_EXPECT_NOT_NULL(test, device_link_add(&pdev->dev,
++							    &ctx->supplier[i]->dev,
++							    DL_FLAG_AUTOREMOVE_CONSUMER));
++	KUNIT_ASSERT_EQ(test, platform_driver_register(&pmic_glink_driver), 0);
++	ctx->platform_registered = true;
++	KUNIT_EXPECT_NULL(test, pdev->dev.driver);
++	KUNIT_EXPECT_NULL(test, pmic_glink_owner);
++	KUNIT_ASSERT_EQ(test, glink_test_open(ctx), 0);
++	KUNIT_EXPECT_EQ(test, ctx->creates, 0);
++	/* Both gauges become available before the ADC provider. */
++	for (i = 0; i < ARRAY_SIZE(ctx->supplier); i++) {
++		WRITE_ONCE(ctx->suppliers_ready, ctx->suppliers_ready | BIT(i));
++		KUNIT_EXPECT_GE(test, device_attach(&ctx->supplier[i]->dev), 0);
++		wait_for_device_probe();
++		if (i < ARRAY_SIZE(ctx->supplier) - 1) {
++			KUNIT_EXPECT_NULL(test, pdev->dev.driver);
++			KUNIT_EXPECT_EQ(test, ctx->creates, 0);
++		}
++	}
++	KUNIT_EXPECT_PTR_EQ(test, pdev->dev.driver, &pmic_glink_driver.driver);
++	KUNIT_EXPECT_PTR_EQ(test, ctx->rpdev->dev.driver,
++			    &pmic_glink_rpmsg_driver.drv);
++	KUNIT_EXPECT_EQ(test, ctx->creates, 1);
++	KUNIT_EXPECT_EQ(test, ctx->destroys, 0);
++}
++
++static int glink_test_probe_thread(void *data)
++{
++	struct glink_test *ctx = data;
++
++	ctx->probe_ret = platform_device_add(ctx->parent[0]);
++	if (ctx->probe_ret) {
++		platform_device_put(ctx->parent[0]);
++		ctx->parent[0] = NULL;
++	}
++	return 0;
++}
++
++static void pmic_glink_initializing_singleton_test(struct kunit *test)
++{
++	struct glink_test *ctx = test->priv;
++	struct platform_device *second;
++	unsigned long entered;
++
++	ctx->block_lookup = true;
++	ctx->parent[0] = platform_device_alloc("qcom_pmic_glink", 0);
++	KUNIT_ASSERT_NOT_NULL(test, ctx->parent[0]);
++	ctx->probe_task = kthread_create(glink_test_probe_thread, ctx, "glink-test-probe");
++	if (IS_ERR(ctx->probe_task)) {
++		ctx->probe_task = NULL;
++		platform_device_put(ctx->parent[0]);
++		ctx->parent[0] = NULL;
++		KUNIT_FAIL(test, "cannot start probe");
++		return;
++	}
++	get_task_struct(ctx->probe_task);
++	wake_up_process(ctx->probe_task);
++	entered = wait_for_completion_timeout(&ctx->lookup_entered,
++					      msecs_to_jiffies(2000));
++	KUNIT_ASSERT_NE(test, entered, 0);
++	KUNIT_EXPECT_NOT_NULL(test, pmic_glink_owner);
++	KUNIT_EXPECT_NULL(test, __pmic_glink);
++	KUNIT_ASSERT_EQ(test, glink_test_open(ctx), 0);
++	KUNIT_EXPECT_EQ(test, ctx->creates, 0);
++	second = glink_test_parent(ctx, 1);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, second);
++	KUNIT_EXPECT_NULL(test, second->dev.driver);
++	complete(&ctx->lookup_release);
++	kthread_stop_put(ctx->probe_task);
++	ctx->probe_task = NULL;
++	ctx->block_lookup = false;
++	KUNIT_ASSERT_EQ(test, ctx->probe_ret, 0);
++	KUNIT_EXPECT_PTR_EQ(test, __pmic_glink,
++			    platform_get_drvdata(ctx->parent[0]));
++	KUNIT_EXPECT_EQ(test, ctx->creates, 1);
++	KUNIT_EXPECT_EQ(test, ctx->destroys, 0);
++	platform_device_unregister(ctx->parent[0]);
++	ctx->parent[0] = NULL;
++	KUNIT_EXPECT_EQ(test, device_attach(&second->dev), 1);
++	KUNIT_EXPECT_PTR_EQ(test, __pmic_glink, platform_get_drvdata(second));
++}
++
++static void pmic_glink_new_open_test(struct kunit *test)
++{
++	struct glink_test *ctx = test->priv;
++	struct pmic_glink_hdr hdr = { };
++	unsigned int generation;
++
++	KUNIT_ASSERT_EQ(test, glink_test_open(ctx), 0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, glink_test_parent(ctx, 0));
++	KUNIT_ASSERT_NOT_NULL(test, ctx->client);
++	generation = pmic_glink_get_generation(ctx->client);
++	device_unregister(&ctx->rpdev->dev);
++	ctx->rpdev = NULL;
++	KUNIT_EXPECT_EQ(test, ctx->state, SERVREG_SERVICE_STATE_DOWN);
++	KUNIT_EXPECT_EQ(test, pmic_glink_send(ctx->client, &hdr, sizeof(hdr)),
++			-ECONNRESET);
++	KUNIT_ASSERT_EQ(test, glink_test_open(ctx), 0);
++	KUNIT_EXPECT_EQ(test, ctx->state, SERVREG_SERVICE_STATE_UP);
++	KUNIT_EXPECT_EQ(test, pmic_glink_send_generation(ctx->client, &hdr,
++							 sizeof(hdr), generation),
++			-ECONNRESET);
++	KUNIT_EXPECT_EQ(test, ctx->creates, 2);
++	KUNIT_EXPECT_EQ(test, ctx->destroys, 1);
++}
++
++static void pmic_glink_probe_failure_test(struct kunit *test)
++{
++	struct glink_test *ctx = test->priv;
++	struct platform_device *pdev;
++	int failure;
++
++	for (failure = 0; failure < 3; failure++) {
++		ctx->alloc_error = failure == 0 ? -ENOMEM : 0;
++		ctx->lookup_error = failure == 1 ? -EIO : 0;
++		if (failure == 2) {
++			KUNIT_ASSERT_EQ(test, register_rpmsg_driver(&glink_test_dummy_driver), 0);
++			ctx->dummy_registered = true;
++		}
++		pdev = glink_test_parent(ctx, 0);
++		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, pdev);
++		KUNIT_EXPECT_NULL(test, pdev->dev.driver);
++		KUNIT_EXPECT_NULL(test, __pmic_glink);
++		KUNIT_EXPECT_NULL(test, pmic_glink_owner);
++		if (ctx->dummy_registered) {
++			unregister_rpmsg_driver(&glink_test_dummy_driver);
++			ctx->dummy_registered = false;
++		}
++		ctx->alloc_error = 0;
++		ctx->lookup_error = 0;
++		KUNIT_EXPECT_EQ(test, device_attach(&pdev->dev), 1);
++		KUNIT_EXPECT_PTR_EQ(test, pdev->dev.driver, &pmic_glink_driver.driver);
++		platform_device_unregister(pdev);
++		ctx->parent[0] = NULL;
++	}
++}
++
++static struct kunit_case pmic_glink_test_cases[] = {
++	KUNIT_CASE_PARAM(pmic_glink_open_order_test, glink_test_order_gen_params),
++	KUNIT_CASE(pmic_glink_remove_stops_client_test),
++	KUNIT_CASE(pmic_glink_deferred_suppliers_test),
++	KUNIT_CASE(pmic_glink_initializing_singleton_test),
++	KUNIT_CASE(pmic_glink_new_open_test),
++	KUNIT_CASE(pmic_glink_probe_failure_test),
++	{ }
++};
++
++static struct kunit_suite pmic_glink_test_suite = {
++	.name = "pmic-glink",
++	.init = glink_test_init,
++	.exit = glink_test_exit,
++	.test_cases = pmic_glink_test_cases,
++};
++
++kunit_test_suite(pmic_glink_test_suite);
++
++MODULE_LICENSE("GPL");
+-- 
+2.55.0
+

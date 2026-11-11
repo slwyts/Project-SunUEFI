@@ -286,8 +286,8 @@
       "source_component": "Project SunUEFI",
       "source_git_mode": "100644",
       "license": "MIT",
-      "sha256": "2cada8784411ac963305b3e925bfcee04481f1f3ee0e15a35b14448a6973d1c5",
-      "source_sha256": "2cada8784411ac963305b3e925bfcee04481f1f3ee0e15a35b14448a6973d1c5"
+      "sha256": "3ebb8173db88496fdaa23c42e635defcbe5784f6f51aa538a76a9b9808b220ff",
+      "source_sha256": "3ebb8173db88496fdaa23c42e635defcbe5784f6f51aa538a76a9b9808b220ff"
     },
     {
       "group": "common",

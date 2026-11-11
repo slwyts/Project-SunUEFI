@@ -7,6 +7,7 @@
 	fragment@0 {
 		target-path = "/soc/qcom,qupv3_1_geni_se@ac0000/i2c@a94000/bq27z561_master@55";
 		piano_battery_cell0: __overlay__ {
+			#io-channel-cells = <1>;
 			ti,cell-monitor;
 			ti,authentication-key = [
 				02 b3 a8 5e a4 c1 a6 db 6f bd 1f d5 76 7c 1a 42
@@ -18,6 +19,7 @@
 	fragment@1 {
 		target-path = "/soc/qcom,qupv3_2_geni_se@8c0000/i2c@88c000/bq27z561_slave@55";
 		piano_battery_cell1: __overlay__ {
+			#io-channel-cells = <1>;
 			ti,cell-monitor;
 			ti,authentication-key = [
 				02 b3 a8 5e a4 c1 a6 db 6f bd 1f d5 76 7c 1a 42
@@ -29,6 +31,14 @@
 	fragment@2 {
 		target-path = "/";
 		__overlay__ {
+			thermal-zones {
+				piano-skin {
+					polling-delay-passive = <0>;
+					polling-delay = <2000>;
+					thermal-sensors = <&piano_mca_thermal>;
+				};
+			};
+
 			battery {
 				compatible = "xiaomi,piano-battery";
 				power-supplies = <&piano_battery_cell0 &piano_battery_cell1>;
@@ -38,12 +48,17 @@
 
 	fragment@3 {
 		target-path = "/soc/qcom,pmic_glink";
-		piano_mca: __overlay__ {
+		piano_mca_thermal: __overlay__ {
+			#thermal-sensor-cells = <0>;
+			io-channels = <&piano_battery_cell0 0>, <&piano_battery_cell1 0>,
+				      <&piano_battery_adc 0x74a>, <&piano_battery_adc 0x74d>,
+				      <&piano_battery_adc 0x146>, <&piano_battery_adc 0x144>;
+			io-channel-names = "battery0", "battery1", "quiet-therm",
+					   "charger-therm", "wifi-therm", "cpu-therm";
 			#cooling-cells = <2>;
-			/* State zero is unrestricted; other states follow wired_thermal. */
+			/* Factory direct-charge thermal levels, capped by normal mode. */
 			xiaomi,charge-current-limits-microamp = <
-				12400000 10500000 9000000 8000000 7000000 6200000
-				5500000 5000000 4400000
+				8000000 7000000 6200000 5500000 5000000 4400000
 				3600000 3000000 2500000 2000000 1500000 1000000
 				700000 0
 			>;
@@ -52,30 +67,20 @@
 
 	fragment@4 {
 		target-path = "/soc/qcom,spmi@c42d000/qcom,pmk8550@0/vadc@9000";
-		piano_thermal_adc: __overlay__ {
-			/* Mainline's shared SDAM IRQ uses standard four-cell SPMI IRQs. */
-			interrupts = <0 0x90 1 1>, <0 0x91 1 1>;
-			pmih010x_batt_therm { qcom,adc-tm; };
-			pmih010x_conn_therm { qcom,adc-tm; };
-			pmih010x_charger1_therm { qcom,adc-tm; };
-			pmih010x_quiet_therm { qcom,adc-tm; };
-			pm8550_wifi_therm { qcom,adc-tm; };
-			pm8550_flash_therm { qcom,adc-tm; };
-			pm8550_cpu_therm { qcom,adc-tm; };
-			pm8550_conn_therm2 { qcom,adc-tm; };
-			pm8550_backlight_therm { qcom,adc-tm; };
-			pm8550_display_therm { qcom,adc-tm; };
-			pmk8550_xo_therm { qcom,adc-tm; };
-			/* Gen4 current/die channels need their own transfer functions. */
-			pmih010x_lite_die_temp { status = "disabled"; };
-			pmih010x_chg_temp { status = "disabled"; };
-			pmih010x_ichg_fb { status = "disabled"; };
-			pmih010x_iin { status = "disabled"; };
-			pmih010x_die_temp { status = "disabled"; };
-			pmih010x_vbat_sns_qbg { status = "disabled"; };
-			pmih010x_vph_pwr { status = "disabled"; };
-			pmih010x_vref_1p25 { status = "disabled"; };
-			pmih010x_offset_ref { status = "disabled"; };
+		piano_battery_adc: __overlay__ {
+			/* These charger-specific channels have no native scaling support. */
+			pmih010x_iin {
+				status = "disabled";
+			};
+			pmih010x_ichg_fb {
+				status = "disabled";
+			};
+			pmih010x_chg_temp {
+				status = "disabled";
+			};
+			pmih010x_lite_die_temp {
+				status = "disabled";
+			};
 		};
 	};
 };

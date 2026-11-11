@@ -164,6 +164,176 @@ int main(void)
                         str(driver), str(self.stubs), '-lm', '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True, timeout=5)
 
+    def test_line_noise_filter_matches_sorted_upper_medians(self):
+        driver = self.folder / 'line-noise-test.c'
+        driver.write_text('#define main PianoReplayMain\n#include ' + json.dumps(str(self.source)) + r'''
+#undef main
+#include <limits.h>
+
+static uint32_t random_state = 1;
+
+static uint32_t next_random(void)
+{
+    random_state = random_state * UINT32_C(1664525) + UINT32_C(1013904223);
+    return random_state;
+}
+
+static int compare_values(const void *a, const void *b)
+{
+    int left = *(const int *)a, right = *(const int *)b;
+    return (left > right) - (left < right);
+}
+
+static int check_medians(void)
+{
+    int line[256], sorted[256];
+
+    for (int count = 1; count <= 256; count++) {
+        for (int pattern = 0; pattern < 8; pattern++) {
+            for (int i = 0; i < count; i++) {
+                switch (pattern) {
+                case 0: line[i] = 17; break;
+                case 1: line[i] = i - count / 2; break;
+                case 2: line[i] = count / 2 - i; break;
+                case 3: line[i] = i % 2 ? INT_MIN : INT_MAX; break;
+                case 4: line[i] = (int)(next_random() % 9) - 4; break;
+                case 5: line[i] = (int)(next_random() % 131071) - 65535; break;
+                case 6: line[i] = i == count / 2 ? 1000 : 0; break;
+                default: line[i] = i <= count / 2 ? -1 : 1; break;
+                }
+            }
+            memcpy(sorted, line, (size_t)count * sizeof(*line));
+            qsort(sorted, count, sizeof(*sorted), compare_values);
+            if (line_median(line, count) != sorted[count / 2]) {
+                fprintf(stderr, "median differs: count=%d pattern=%d\n", count, pattern);
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static int check_filter(int rows, int cols, int pattern)
+{
+    int expected[MAX_NODES], line[256], expected_max = 0;
+    int nodes = rows * cols;
+
+    st.rows = rows;
+    st.cols = cols;
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            int value = (int)(next_random() % 17) - 8;
+            switch (pattern) {
+            case 0: value = 37; break;
+            case 1: break;
+            case 2:
+                value += (c % 15 < 3 ? 580 : 0) + (r % 13 < 2 ? -420 : 0);
+                break;
+            case 3:
+                if (r >= rows / 3 && r < rows / 3 + 3 &&
+                    c >= cols / 2 && c < cols / 2 + 3)
+                    value += 1500;
+                if (r >= 2 * rows / 3 && r < 2 * rows / 3 + 7 &&
+                    c >= cols / 4 && c < cols / 4 + 12)
+                    value += 800;
+                break;
+            case 4: value = r * cols + c - nodes / 2; break;
+            case 5: value = (int)(next_random() % 131071) - 65535; break;
+            default: value = (int)(next_random() % 3) - 1; break;
+            }
+            expected[r * cols + c] = delta[r * cols + c] = value;
+        }
+    }
+
+    /* The filter subtracts column upper medians before row upper medians. */
+    for (int c = 0; c < cols; c++) {
+        for (int r = 0; r < rows; r++)
+            line[r] = expected[r * cols + c];
+        qsort(line, rows, sizeof(*line), compare_values);
+        int common = line[rows / 2];
+        for (int r = 0; r < rows; r++)
+            expected[r * cols + c] -= common;
+    }
+    for (int r = 0; r < rows; r++) {
+        memcpy(line, expected + r * cols, (size_t)cols * sizeof(*line));
+        qsort(line, cols, sizeof(*line), compare_values);
+        int common = line[cols / 2];
+        for (int c = 0; c < cols; c++)
+            expected[r * cols + c] -= common;
+    }
+    for (int i = 0; i < nodes; i++)
+        if (expected[i] > expected_max)
+            expected_max = expected[i];
+
+    st.max_delta = INT_MAX;
+    remove_line_noise();
+    if (memcmp(delta, expected, (size_t)nodes * sizeof(*delta)) ||
+        st.max_delta != expected_max) {
+        fprintf(stderr, "filter differs: %dx%d pattern=%d\n", rows, cols, pattern);
+        return 1;
+    }
+    return 0;
+}
+
+int main(void)
+{
+    static const int dimensions[][2] = {
+        { 40, 60 }, { 1, 1 }, { 1, 255 }, { 255, 1 }, { 7, 9 },
+        { 8, 10 }, { 31, 33 }, { 63, 65 }, { 255, 16 }
+    };
+    if (check_medians())
+        return 1;
+    for (size_t i = 0; i < sizeof(dimensions) / sizeof(dimensions[0]); i++)
+        for (int pattern = 0; pattern < 7; pattern++)
+            if (check_filter(dimensions[i][0], dimensions[i][1], pattern))
+                return 1;
+    for (int i = 0; i < 64; i++) {
+        int rows = 1 + next_random() % 64, cols = 1 + next_random() % 64;
+        if (check_filter(rows, cols, 5))
+            return 1;
+    }
+    return 0;
+}
+''')
+        binary = self.folder / 'line-noise-test'
+        subprocess.run([shutil.which('cc'), '-O2', '-Wall', '-Wextra', '-Werror', '-I', str(PEN),
+                        str(driver), str(self.stubs), '-lm', '-o', str(binary)], check=True)
+        subprocess.run([str(binary)], check=True, timeout=5)
+
+    def test_native_finger_input_needs_no_uinput_or_stream_reader(self):
+        wrapper = self.folder / 'native-input-status.c'
+        wrapper.write_text(r'''
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+FILE *__real_fopen(const char *, const char *);
+FILE *__wrap_fopen(const char *path, const char *mode)
+{
+    if (!strcmp(path, "/proc/nvt_thp_status")) {
+        const char *status = "kernel_input: enabled\n";
+        FILE *stream = tmpfile();
+        if (!stream) abort();
+        fputs(status, stream);
+        rewind(stream);
+        return stream;
+    }
+    return __real_fopen(path, mode);
+}
+''')
+        binary = self.folder / 'native-input'
+        subprocess.run([shutil.which('cc'), '-O2', '-Wall', '-Wextra', '-Werror',
+                        '-I', str(PEN), str(self.source), str(self.stubs),
+                        str(wrapper), '-Wl,--wrap=fopen', '-lm', '-o', str(binary)],
+                       check=True)
+        env = os.environ.copy()
+        env.pop('PIANO_THP_STREAM', None)
+        result = subprocess.run([str(binary), 'input', '--seconds', '0'], env=env,
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '')
+        self.assertEqual(result.stderr, '')
+
 
 if __name__ == '__main__':
     unittest.main()

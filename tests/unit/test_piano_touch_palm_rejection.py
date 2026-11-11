@@ -178,7 +178,7 @@ class PianoTouchPalmRejectionTests(unittest.TestCase):
 
     def test_patch_is_part_of_the_derived_source(self):
         files = [row['file'] for row in self.provenance['patches']]
-        self.assertIn('tools/patches/piano-touch-view-palm-rejection.patch', files)
+        self.assertEqual(files[-1], 'tools/patches/piano-touch-view-palm-rejection.patch')
         self.assertIn('MT_TOOL_PALM', self.source.read_text())
 
     def test_fingertip_is_a_finger_and_a_palm_area_is_one_palm(self):

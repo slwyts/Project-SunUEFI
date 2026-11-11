@@ -1,0 +1,855 @@
+From 13e5e2aff2785dbd36dbd936d65dc8859c0fcfc0 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Wed, 11 Nov 2026 00:25:30 +0800
+Subject: [PATCH] power: supply: piano_mca: apply the factory high-load thermal
+ policy
+
+Read both original battery temperatures and four board thermistors through
+IIO. Preserve the factory calibration units and high-load trigger/clear
+levels, constrain the total battery budget and the voltage-specific buck
+FCC, and expose the computed skin temperature through the thermal API.
+
+Retire the pump before tightening current. Missing sensors stop charging
+while retaining input and ordinary float-voltage control; successful reads
+restore only this limit and retain its hysteresis. Cache the reported
+computed temperature for a bounded time, and stop polling before releasing
+its providers. Keep manual, full, hardware-fault and user cooling limits
+independent. No userspace charging state machine or FFC path is added.
+
+Enable the board's native ADC and original-temperature provider. Match
+PMIH010x's documented 18-pin GPIO layout so the existing thermistor pinctrl
+states use the standard driver rather than deferring ADC setup forever.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ .../bindings/pinctrl/qcom,pmic-gpio.yaml      |   4 +-
+ .../bindings/soc/qcom/qcom,pmic-glink.yaml    |  24 ++
+ arch/arm64/configs/piano_defconfig            |   2 +
+ drivers/pinctrl/qcom/pinctrl-spmi-gpio.c      |   1 +
+ drivers/power/supply/Kconfig                  |   4 +-
+ drivers/power/supply/piano_mca.c              | 223 +++++++++++-
+ drivers/power/supply/piano_mca_test.c         | 337 ++++++++++++++++++
+ 7 files changed, 584 insertions(+), 11 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/pinctrl/qcom,pmic-gpio.yaml b/Documentation/devicetree/bindings/pinctrl/qcom,pmic-gpio.yaml
+index c27e24cb2..d594bd2be 100644
+--- a/Documentation/devicetree/bindings/pinctrl/qcom,pmic-gpio.yaml
++++ b/Documentation/devicetree/bindings/pinctrl/qcom,pmic-gpio.yaml
+@@ -71,6 +71,7 @@ properties:
+           - qcom,pmi8994-gpio
+           - qcom,pmi8998-gpio
+           - qcom,pmih0108-gpio
++          - qcom,pmih010x-gpio
+           - qcom,pmiv0104-gpio
+           - qcom,pmk8350-gpio
+           - qcom,pmk8550-gpio
+@@ -333,6 +334,7 @@ allOf:
+             enum:
+               - qcom,pmh0101-gpio
+               - qcom,pmih0108-gpio
++              - qcom,pmih010x-gpio
+     then:
+       properties:
+         gpio-line-names:
+@@ -505,7 +507,7 @@ $defs:
+                  - gpio1-gpio8 for pmi632
+                  - gpio1-gpio2 for pmi8950
+                  - gpio1-gpio10 for pmi8994
+-                 - gpio1-gpio18 for pmih0108
++                 - gpio1-gpio18 for pmih0108, pmih010x
+                  - gpio1-gpio4 for pmk8350
+                  - gpio1-gpio6 for pmk8550
+                  - gpio1-gpio8 for pmk8850
+diff --git a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+index 05dd68406..3f4170c92 100644
+--- a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
++++ b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+@@ -66,6 +66,28 @@ properties:
+       2, inserting one property before the data-role and source-PDO controls.
+       This must match the ADSP firmware shipped with the operating system.
+ 
++  io-channels:
++    items:
++      - description: First BQ27Z561 original battery temperature
++      - description: Second BQ27Z561 original battery temperature
++      - description: PMIH010x quiet thermistor
++      - description: PMIH010x charger thermistor
++      - description: PM8550 Wi-Fi thermistor
++      - description: PM8550 CPU thermistor
++
++  io-channel-names:
++    items:
++      - const: battery0
++      - const: battery1
++      - const: quiet-therm
++      - const: charger-therm
++      - const: wifi-therm
++      - const: cpu-therm
++
++  '#thermal-sensor-cells':
++    const: 0
++    description: Calibrated Piano skin temperature used by the charging policy.
++
+   '#cooling-cells':
+     const: 2
+ 
+@@ -131,6 +153,8 @@ required:
+ additionalProperties: false
+ 
+ dependencies:
++  io-channels: [io-channel-names]
++  io-channel-names: [io-channels]
+   xiaomi,charge-current-limits-microamp: ['#cooling-cells']
+ 
+ examples:
+diff --git a/arch/arm64/configs/piano_defconfig b/arch/arm64/configs/piano_defconfig
+index 2a614db3e..8200a72c5 100644
+--- a/arch/arm64/configs/piano_defconfig
++++ b/arch/arm64/configs/piano_defconfig
+@@ -744,6 +744,7 @@ CONFIG_POWER_SEQUENCING_QCOM_WCN=m
+ CONFIG_BATTERY_QCOM_BATTMGR=m
+ CONFIG_BATTERY_SBS=m
+ CONFIG_BATTERY_BQ27XXX=y
++CONFIG_BATTERY_BQ27XXX_IIO=y
+ CONFIG_BATTERY_MAX17042=m
+ CONFIG_CHARGER_MT6360=m
+ CONFIG_CHARGER_BQ25890=m
+@@ -1674,6 +1675,7 @@ CONFIG_MEDIATEK_MT6359_AUXADC=m
+ CONFIG_MEDIATEK_MT6577_AUXADC=m
+ CONFIG_QCOM_SPMI_VADC=m
+ CONFIG_QCOM_SPMI_ADC5=m
++CONFIG_QCOM_SPMI_ADC5_GEN3=y
+ CONFIG_ROCKCHIP_SARADC=m
+ CONFIG_RZG2L_ADC=m
+ CONFIG_RZT2H_ADC=m
+diff --git a/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c b/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
+index c6f93fb1d..530d7eb7f 100644
+--- a/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
++++ b/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
+@@ -1292,6 +1292,7 @@ static const struct of_device_id pmic_gpio_of_match[] = {
+ 	{ .compatible = "qcom,pmi8994-gpio", .data = (void *) 10 },
+ 	{ .compatible = "qcom,pmi8998-gpio", .data = (void *) 14 },
+ 	{ .compatible = "qcom,pmih0108-gpio", .data = (void *) 18 },
++	{ .compatible = "qcom,pmih010x-gpio", .data = (void *) 18 },
+ 	{ .compatible = "qcom,pmiv0104-gpio", .data = (void *) 10 },
+ 	{ .compatible = "qcom,pmk8350-gpio", .data = (void *) 4 },
+ 	{ .compatible = "qcom,pmk8550-gpio", .data = (void *) 6 },
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index b88c8c611..2e6dd6637 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -210,7 +210,7 @@ config BATTERY_PMU
+ 
+ config BATTERY_PIANO_MCA
+ 	tristate "Xiaomi MCA ADSP charger/battery telemetry (Pad 8 Pro)"
+-	depends on QCOM_PMIC_GLINK && REGULATOR
++	depends on QCOM_PMIC_GLINK && REGULATOR && IIO
+ 	select CRYPTO_LIB_SHA256
+ 	help
+ 	  Say Y here to enable telemetry from the Xiaomi Pad 8 Pro charger
+@@ -221,7 +221,7 @@ config BATTERY_PIANO_MCA
+ 
+ config BATTERY_PIANO_MCA_KUNIT_TEST
+ 	bool "KUnit tests for Piano MCA charging policy" if !KUNIT_ALL_TESTS
+-	depends on KUNIT=y && UML
++	depends on KUNIT=y && UML && IIO=y
+ 	select CRYPTO_LIB_SHA256
+ 	default KUNIT_ALL_TESTS
+ 	help
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 71bad9b08..089afbf07 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -37,6 +37,7 @@
+ #include <linux/debugfs.h>
+ #include <linux/delay.h>
+ #include <linux/hex.h>
++#include <linux/iio/consumer.h>
+ #include <linux/module.h>
+ #include <linux/math64.h>
+ #include <linux/mutex.h>
+@@ -162,6 +163,7 @@ static const char * const mca_real_type_names[MCA_TYPE_MAX] = {
+ /* VBUS above this means a source is attached (USB default is 5 V) */
+ #define MCA_VBUS_ONLINE_UV	4000000
+ #define MCA_POLL_MS		3000
++#define MCA_SKIN_POLL_MS	2000
+ 
+ /* Input current limits (mA) set by charge_policy, from the stock tables */
+ #define MCA_ICL_MIN_MA		100	/* also the ADSP power-on value */
+@@ -497,6 +499,12 @@ struct piano_mca {
+ 	u32 *cooling_limits_ua;
+ 	unsigned int cooling_count;
+ 	unsigned long cooling_state;
++	struct iio_channel *skin_channels[6];
++	u32 skin_limit_ma;
++	int skin_temp_mc, skin_error;
++	unsigned long skin_sample_at;
++	u8 skin_flags;
++	bool skin_control;
+ 	bool policy_ready;
+ 	bool policy_stopped;
+ 	bool policy_suspended;
+@@ -586,13 +594,18 @@ struct piano_mca {
+ 	int dbg_ret;
+ };
+ 
+-/* The cooling device and power-supply limit constrain the same total budget. */
++static int piano_mca_update_skin(struct piano_mca *mca);
++static u32 piano_mca_skin_buck_current(struct piano_mca *mca);
++
++/* Skin, the cooling device and power-supply limit share one total budget. */
+ static u32 piano_mca_charge_limit(struct piano_mca *mca)
+ {
+ 	u32 ua = READ_ONCE(mca->charge_limit_ua);
+ 
+ 	if (mca->cooling_count)
+ 		ua = min(ua, mca->cooling_limits_ua[READ_ONCE(mca->cooling_state)]);
++	if (mca->skin_control)
++		ua = min(ua, READ_ONCE(mca->skin_limit_ma) * 1000);
+ 	return ua / 1000;
+ }
+ 
+@@ -2343,6 +2356,7 @@ static int piano_mca_normal_buck(struct piano_mca *mca, int *tbat,
+ 	fv = min(piano_mca_jeita[cool].fv, piano_mca_jeita[warm].fv);
+ 	ma = min3(ma, piano_mca_jeita[cool].ma, piano_mca_jeita[warm].ma);
+ 	ma = min_t(u32, ma, piano_mca_charge_limit(mca));
++	ma = min_t(u32, ma, piano_mca_skin_buck_current(mca));
+ 	ret = piano_mca_normal_termination(mca, vbat, ibat, fv, generation, connection);
+ 	pause = piano_mca_normal_voltage_stop(mca, vbat, fv) ||
+ 		ret || mca->normal_full ||
+@@ -2449,7 +2463,8 @@ static int piano_mca_cp_set_buck(struct piano_mca *mca, u32 icl_ma,
+ {
+ 	int ret;
+ 
+-	fcc_ma = min(fcc_ma, piano_mca_charge_limit(mca));
++	fcc_ma = min3(fcc_ma, piano_mca_charge_limit(mca),
++		      piano_mca_skin_buck_current(mca));
+ 	if (fcc_ma < MCA_FCC_MIN_MA)
+ 		return -ERANGE;
+ 	ret = piano_mca_write_u32_session(mca, MCA_PROP_ICL, icl_ma,
+@@ -3080,6 +3095,8 @@ static void piano_mca_poll(struct work_struct *work)
+ 	}
+ 	mca->online = online;
+ 	mca->real_type = real_type;
++	if (piano_mca_update_skin(mca))
++		goto requeue;
+ 
+ 	/* Restore an in-use pen rail after ADSP restarts. Its consumer will
+ 	 * stop the transmitter on a communication error in the meantime.
+@@ -3164,12 +3181,16 @@ static void piano_mca_poll(struct work_struct *work)
+ 				       mca->polled_connection_generation);
+ 
+ requeue:
+-	if (mca->service_up || mca->cp == MCA_CP_STOPPING)
++	if (mca->service_up || mca->cp == MCA_CP_STOPPING) {
++		int interval = mca->skin_control ? MCA_SKIN_POLL_MS : MCA_POLL_MS;
++
++		if (piano_mca_cp_active(mca))
++			interval = min(interval, MCA_CP_POLL_MS);
++		if (mca->normal_term_count)
++			interval = min(interval, MCA_NORMAL_TERM_POLL_MS);
+ 		queue_delayed_work(system_freezable_wq, &mca->poll,
+-				   msecs_to_jiffies(piano_mca_cp_active(mca) ?
+-						    MCA_CP_POLL_MS :
+-						    mca->normal_term_count ?
+-						    MCA_NORMAL_TERM_POLL_MS : MCA_POLL_MS));
++				   msecs_to_jiffies(interval));
++	}
+ unlock:
+ 	mutex_unlock(&mca->policy_lock);
+ }
+@@ -3234,6 +3255,188 @@ static int piano_mca_update_charge_limit(struct piano_mca *mca, u32 old_ma)
+ 	return ret;
+ }
+ 
++/* The factory high-load profile has its own hysteresis at every threshold. */
++static const struct {
++	int trigger_mc, clear_mc;
++	u32 ma, buck_5v_ma, buck_9v_ma;
++} piano_mca_skin_limits[] = {
++	{ 35000, 32000, 10500, 1800, 3500 },
++	{ 37000, 35000,  9000, 1800, 3500 },
++	{ 39000, 37000,  4400, 1800, 3500 },
++	{ 40000, 39000,  3600, 1700, 3500 },
++	{ 44000, 42000,  2000, 1200, 2000 },
++	{ 45000, 44000,   700, 1000,  700 },
++};
++
++static const char * const piano_mca_skin_channels[] = {
++	"battery0", "battery1", "quiet-therm", "charger-therm",
++	"wifi-therm", "cpu-therm",
++};
++
++static int piano_mca_skin_temperature(const int *temp)
++{
++	int cold = min(temp[0], temp[1]), hot = max(temp[0], temp[1]);
++	int battery = cold > 18000 && cold <= 100000 ? hot : cold;
++	s64 weighted;
++
++	/* Board channels used Q10 temperatures in the factory calibration. */
++	weighted = 500LL * battery +
++		   131LL * div_s64((s64)temp[2] * 1024, 1000) -
++		     9LL * div_s64((s64)temp[3] * 1024, 1000) +
++		    89LL * div_s64((s64)temp[4] * 1024, 1000) +
++		   232LL * div_s64((s64)temp[5] * 1024, 1000);
++	return div_s64(weighted, 1000) + 1600;
++}
++
++static u32 piano_mca_skin_current(struct piano_mca *mca, int temp)
++{
++	u32 ma = MCA_CP_IBAT_MAX_MA;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(piano_mca_skin_limits); i++) {
++		if (temp >= piano_mca_skin_limits[i].trigger_mc)
++			mca->skin_flags |= BIT(i);
++		else if (temp <= piano_mca_skin_limits[i].clear_mc)
++			mca->skin_flags &= ~BIT(i);
++	}
++	for (i = 0; i < ARRAY_SIZE(piano_mca_skin_limits); i++) {
++		if (!(mca->skin_flags & BIT(i)))
++			break;
++		ma = min(ma, piano_mca_skin_limits[i].ma);
++	}
++	return ma;
++}
++
++/* The PMIC has separate thermal FCC columns at 5 V and high input voltage. */
++static u32 piano_mca_skin_buck_current(struct piano_mca *mca)
++{
++	u32 ma = U32_MAX;
++	int i;
++
++	if (!mca->skin_control)
++		return ma;
++	for (i = 0; i < ARRAY_SIZE(piano_mca_skin_limits); i++) {
++		if (!(mca->skin_flags & BIT(i)))
++			break;
++		ma = min(ma, mca->vbus_uv > 6000000 ?
++			 piano_mca_skin_limits[i].buck_9v_ma :
++			 piano_mca_skin_limits[i].buck_5v_ma);
++	}
++	return ma;
++}
++
++static void piano_mca_skin_release(void *data)
++{
++	struct piano_mca *mca = data;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(mca->skin_channels); i++) {
++		if (mca->skin_channels[i]) {
++			iio_channel_release(mca->skin_channels[i]);
++			mca->skin_channels[i] = NULL;
++		}
++	}
++}
++
++static int piano_mca_skin_read(struct piano_mca *mca, int *skin)
++{
++	struct iio_channel *channel;
++	enum iio_chan_type type;
++	int temp[ARRAY_SIZE(piano_mca_skin_channels)], i, ret;
++
++	for (i = 0; i < ARRAY_SIZE(piano_mca_skin_channels); i++) {
++		if (!mca->skin_channels[i]) {
++			channel = iio_channel_get(mca->dev, piano_mca_skin_channels[i]);
++			if (IS_ERR(channel)) {
++				ret = PTR_ERR(channel);
++				goto failed;
++			}
++			mca->skin_channels[i] = channel;
++			ret = iio_get_channel_type(channel, &type);
++			if (ret)
++				goto failed;
++			if (type != IIO_TEMP) {
++				ret = -EINVAL;
++				goto failed;
++			}
++		}
++		ret = iio_read_channel_processed(mca->skin_channels[i], &temp[i]);
++		if (ret < 0)
++			goto failed;
++	}
++	*skin = piano_mca_skin_temperature(temp);
++	return 0;
++
++failed:
++	/* Reacquire after a provider is rebound, instead of keeping a dead device. */
++	piano_mca_skin_release(mca);
++	return ret;
++}
++
++/* Called under policy_lock, before either normal or direct charge is applied. */
++static int piano_mca_update_skin(struct piano_mca *mca)
++{
++	u32 old_ma;
++	int temp, ret;
++
++	if (!mca->skin_control)
++		return 0;
++	old_ma = piano_mca_charge_limit(mca);
++	ret = piano_mca_skin_read(mca, &temp);
++	mca->skin_error = ret;
++	if (ret) {
++		mca->skin_limit_ma = 0;
++		dev_warn_ratelimited(mca->dev,
++				     "skin temperature unavailable, charging paused: %d\n", ret);
++	} else {
++		mca->skin_temp_mc = temp;
++		mca->skin_sample_at = jiffies;
++		mca->skin_limit_ma = piano_mca_skin_current(mca, temp);
++	}
++	if (piano_mca_charge_limit(mca) < old_ma)
++		return piano_mca_update_charge_limit(mca, old_ma);
++	return 0;
++}
++
++static int piano_mca_skin_get_temp(struct thermal_zone_device *zone, int *temp)
++{
++	struct piano_mca *mca = thermal_zone_device_priv(zone);
++
++	guard(mutex)(&mca->policy_lock);
++	if (mca->skin_error)
++		return mca->skin_error;
++	/* Transport failures can prevent the policy worker from taking a sample. */
++	if (time_after(jiffies, mca->skin_sample_at +
++			      msecs_to_jiffies(2 * MCA_SKIN_POLL_MS)))
++		return -EAGAIN;
++	*temp = mca->skin_temp_mc;
++	return 0;
++}
++
++static const struct thermal_zone_device_ops piano_mca_skin_ops = {
++	.get_temp = piano_mca_skin_get_temp,
++};
++
++static int piano_mca_register_skin(struct piano_mca *mca)
++{
++	struct thermal_zone_device *zone;
++	int ret;
++
++	if (!charge_policy || !charge_current || !cp_charge ||
++	    device_property_match_string(mca->dev, "io-channel-names", "battery0") < 0)
++		return 0;
++	mca->skin_control = true;
++	mca->skin_error = -EAGAIN;
++	/* Register before poll-stop; channels can be acquired later by the worker. */
++	ret = devm_add_action_or_reset(mca->dev, piano_mca_skin_release, mca);
++	if (ret)
++		return ret;
++	if (!device_property_present(mca->dev, "#thermal-sensor-cells"))
++		return 0;
++	zone = devm_thermal_of_zone_register(mca->dev, 0, mca, &piano_mca_skin_ops);
++	return PTR_ERR_OR_ZERO(zone);
++}
++
+ static int piano_mca_usb_get_property(struct power_supply *psy,
+ 				      enum power_supply_property psp,
+ 				      union power_supply_propval *val)
+@@ -3942,7 +4145,10 @@ static int piano_mca_probe(struct auxiliary_device *adev,
+ 	ret = piano_mca_register_cooling(mca);
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "failed to register charger cooling\n");
+-	/* Stop before devres releases the cooling limits and power supply. */
++	ret = piano_mca_register_skin(mca);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to register skin temperature\n");
++	/* Stop before devres releases temperatures, cooling and power supply. */
+ 	ret = devm_add_action_or_reset(dev, piano_mca_stop, mca);
+ 	if (ret)
+ 		return ret;
+@@ -3995,3 +4201,4 @@ module_auxiliary_driver(piano_mca_driver);
+ 
+ MODULE_DESCRIPTION("Xiaomi MCA ADSP property transport (piano)");
+ MODULE_LICENSE("GPL");
++MODULE_IMPORT_NS("IIO_CONSUMER");
+diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
+index 2313a5705..c300c92f9 100644
+--- a/drivers/power/supply/piano_mca_test.c
++++ b/drivers/power/supply/piano_mca_test.c
+@@ -5,6 +5,7 @@
+ #include <linux/auxiliary_bus.h>
+ #include <linux/atomic.h>
+ #include <linux/kthread.h>
++#include <linux/iio/consumer.h>
+ #include <linux/power_supply.h>
+ #include <linux/soc/qcom/pmic_glink.h>
+ 
+@@ -16,6 +17,15 @@ static unsigned int piano_mca_test_get_generation(struct pmic_glink_client *);
+ #define pmic_glink_send_generation piano_mca_test_send_generation
+ #define pmic_glink_get_generation piano_mca_test_get_generation
+ 
++static struct iio_channel *piano_mca_test_iio_get(struct device *, const char *);
++static void piano_mca_test_iio_release(struct iio_channel *);
++static int piano_mca_test_iio_read(struct iio_channel *, int *);
++static int piano_mca_test_iio_type(struct iio_channel *, enum iio_chan_type *);
++#define iio_channel_get piano_mca_test_iio_get
++#define iio_channel_release piano_mca_test_iio_release
++#define iio_read_channel_processed piano_mca_test_iio_read
++#define iio_get_channel_type piano_mca_test_iio_type
++
+ /* Include the actual implementation, not a second copy of its state machine. */
+ #undef module_auxiliary_driver
+ #define module_auxiliary_driver(...)
+@@ -26,6 +36,10 @@ static unsigned int piano_mca_test_get_generation(struct pmic_glink_client *);
+ #undef pmic_glink_send
+ #undef pmic_glink_send_generation
+ #undef pmic_glink_get_generation
++#undef iio_channel_get
++#undef iio_channel_release
++#undef iio_read_channel_processed
++#undef iio_get_channel_type
+ 
+ struct piano_mca_test_gauge {
+ 	int voltage_uv;
+@@ -37,8 +51,16 @@ struct piano_mca_test_gauge {
+ 	int charge_error;
+ };
+ 
++struct piano_mca_test_iio {
++	int temp_mc, error, releases;
++	enum iio_chan_type type;
++};
++
+ struct piano_mca_test {
+ 	struct piano_mca mca;
++	struct iio_channel skin_channels[6];
++	struct piano_mca_test_iio skin_input[6];
++	int skin_get_error;
+ 	atomic_t work_runs;
+ 	struct completion blocker_started, blocker_release;
+ 	bool block_once;
+@@ -3088,7 +3110,314 @@ static void piano_mca_full_skips_active_cp_test(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_ON);
+ }
+ 
++static struct iio_channel *piano_mca_test_iio_get(struct device *dev, const char *name)
++{
++	struct piano_mca *mca = dev_get_drvdata(dev);
++	struct piano_mca_test *f = container_of(mca, struct piano_mca_test, mca);
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(piano_mca_skin_channels); i++) {
++		if (!strcmp(name, piano_mca_skin_channels[i])) {
++			if (f->skin_get_error == i + 1)
++				return ERR_PTR(-EPROBE_DEFER);
++			return &f->skin_channels[i];
++		}
++	}
++	return ERR_PTR(-ENODEV);
++}
++
++static void piano_mca_test_iio_release(struct iio_channel *channel)
++{
++	struct piano_mca_test_iio *input = channel->data;
++
++	input->releases++;
++}
++
++static int piano_mca_test_iio_type(struct iio_channel *channel, enum iio_chan_type *type)
++{
++	struct piano_mca_test_iio *input = channel->data;
++
++	*type = input->type;
++	return 0;
++}
++
++static int piano_mca_test_iio_read(struct iio_channel *channel, int *value)
++{
++	struct piano_mca_test_iio *input = channel->data;
++
++	if (input->error)
++		return input->error;
++	*value = input->temp_mc;
++	return 0;
++}
++
++static void piano_mca_skin_weighted_model_test(struct kunit *test)
++{
++	int temp[] = { 25000, 25000, 25000, 25000, 25000, 25000 };
++	int normal;
++
++	/* The calibrated denominator is 1000, despite weights adding to 943. */
++	KUNIT_EXPECT_EQ(test, piano_mca_skin_temperature(temp), 25440);
++	normal = piano_mca_skin_temperature(temp);
++	temp[3] = 45000;
++	KUNIT_EXPECT_EQ(test, piano_mca_skin_temperature(temp), normal - 184);
++	memset(temp, 0, sizeof(temp));
++	temp[3] = 1;
++	KUNIT_EXPECT_EQ(test, piano_mca_skin_temperature(temp), 1600);
++}
++
++static void piano_mca_skin_original_battery_test(struct kunit *test)
++{
++	int temp[] = { 25000, 30000, 25000, 25000, 25000, 25000 };
++
++	KUNIT_EXPECT_EQ(test, piano_mca_skin_temperature(temp), 27940);
++	temp[0] = 18000;
++	KUNIT_EXPECT_EQ(test, piano_mca_skin_temperature(temp), 21940);
++	temp[0] = 18001;
++	KUNIT_EXPECT_EQ(test, piano_mca_skin_temperature(temp), 27940);
++	temp[0] = 100001;
++	temp[1] = 110000;
++	KUNIT_EXPECT_EQ(test, piano_mca_skin_temperature(temp), 62941);
++}
++
++static void piano_mca_skin_high_load_hysteresis_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	struct { int temp; u32 ma; } rows[] = {
++		{ 34999, 8000 }, { 35000, 8000 }, { 37000, 8000 },
++		{ 39000, 4400 }, { 40000, 3600 }, { 44000, 2000 },
++		{ 45000, 700 }, { 44001, 700 }, { 44000, 2000 },
++		{ 42001, 2000 }, { 42000, 3600 }, { 39001, 3600 },
++		{ 39000, 4400 }, { 37001, 4400 }, { 37000, 8000 },
++		{ 35000, 8000 }, { 32000, 8000 },
++	};
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(rows); i++)
++		KUNIT_EXPECT_EQ(test, piano_mca_skin_current(&f->mca, rows[i].temp),
++				rows[i].ma);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_flags, 0);
++	KUNIT_EXPECT_EQ(test, piano_mca_skin_current(&f->mca, 50000), 700U);
++	KUNIT_EXPECT_EQ(test, piano_mca_skin_current(&f->mca, 25000), 8000U);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_flags, 0);
++}
++
++static void piano_mca_skin_limits_prepare(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	int i;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	f->mca.skin_control = true;
++	f->mca.skin_error = -EAGAIN;
++	for (i = 0; i < ARRAY_SIZE(f->skin_channels); i++) {
++		f->skin_channels[i].data = &f->skin_input[i];
++		f->skin_input[i].type = IIO_TEMP;
++		f->skin_input[i].temp_mc = 25000;
++	}
++}
++
++static void piano_mca_skin_read_error_recovers_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	int i, tbat;
++
++	piano_mca_skin_limits_prepare(test);
++	KUNIT_EXPECT_EQ(test, piano_mca_charge_limit(&f->mca), 0U);
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_EQ(test, piano_mca_charge_limit(&f->mca), 8000U);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_temp_mc, 25440);
++	KUNIT_ASSERT_EQ(test, piano_mca_test_start_cp(test), 0);
++	f->skin_input[3].error = -EIO;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_EQ(test, piano_mca_charge_limit(&f->mca), 0U);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_error, -EIO);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_FALSE(test, f->pmic_enabled);
++	KUNIT_EXPECT_EQ(test, f->fcc_ma, 0U);
++	for (i = 0; i < 4; i++) {
++		KUNIT_EXPECT_PTR_EQ(test, f->mca.skin_channels[i], NULL);
++		KUNIT_EXPECT_EQ(test, f->skin_input[i].releases, 1);
++	}
++	KUNIT_ASSERT_EQ(test, piano_mca_normal_buck(&f->mca, &tbat, 1, 0), 0);
++	KUNIT_EXPECT_EQ(test, f->fv_mv, 4480U);
++	f->skin_input[3].error = 0;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_EQ(test, piano_mca_charge_limit(&f->mca), 8000U);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_error, 0);
++}
++
++static void piano_mca_skin_missing_sensor_keeps_stop_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	int i;
++
++	piano_mca_skin_limits_prepare(test);
++	f->skin_get_error = 6;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_EQ(test, piano_mca_charge_limit(&f->mca), 0U);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_error, -EPROBE_DEFER);
++	for (i = 0; i < 5; i++)
++		KUNIT_EXPECT_EQ(test, f->skin_input[i].releases, 1);
++	f->skin_get_error = 0;
++	f->skin_input[5].type = IIO_VOLTAGE;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_error, -EINVAL);
++	KUNIT_EXPECT_EQ(test, piano_mca_charge_limit(&f->mca), 0U);
++	f->skin_input[5].type = IIO_TEMP;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_error, 0);
++}
++
++static void piano_mca_skin_error_keeps_hysteresis_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	int i;
++
++	piano_mca_skin_limits_prepare(test);
++	for (i = 0; i < ARRAY_SIZE(f->skin_input); i++)
++		f->skin_input[i].temp_mc = 50000;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_limit_ma, 700U);
++	f->skin_input[4].error = -EIO;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_limit_ma, 0U);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_flags, (u8)GENMASK(5, 0));
++	f->skin_input[4].error = 0;
++	for (i = 0; i < ARRAY_SIZE(f->skin_input); i++)
++		f->skin_input[i].temp_mc = 45000;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_limit_ma, 700U);
++	for (i = 0; i < ARRAY_SIZE(f->skin_input); i++)
++		f->skin_input[i].temp_mc = 44000;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_limit_ma, 2000U);
++}
++
++static void piano_mca_skin_tightens_before_buck_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	int i;
++
++	piano_mca_skin_limits_prepare(test);
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_ASSERT_EQ(test, piano_mca_test_start_cp(test), 0);
++	f->fcc_ma = f->mca.fcc_set_ma = 2000;
++	for (i = 0; i < ARRAY_SIZE(f->skin_input); i++)
++		f->skin_input[i].temp_mc = 50000;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_EQ(test, f->fcc_ma, 700U);
++	KUNIT_EXPECT_LT(test, f->last_stop_event, f->last_fcc_event);
++	KUNIT_EXPECT_TRUE(test, f->mca.cp_retry);
++	KUNIT_EXPECT_EQ(test, f->mca.charge_limit_ua, 8000000U);
++}
++
++static void piano_mca_skin_preserves_user_policy_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	u32 cooling[] = { 8000000, 500000 };
++	int i;
++
++	piano_mca_skin_limits_prepare(test);
++	for (i = 0; i < ARRAY_SIZE(f->skin_input); i++)
++		f->skin_input[i].temp_mc = 55000;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_limit_ma, 700U);
++	f->mca.charge_limit_ua = 1000000;
++	f->mca.cooling_count = ARRAY_SIZE(cooling);
++	f->mca.cooling_limits_ua = cooling;
++	f->mca.cooling_state = 1;
++	f->mca.inhibit_charge = true;
++	f->mca.normal_voltage_stop = true;
++	KUNIT_EXPECT_EQ(test, piano_mca_charge_limit(&f->mca), 500U);
++	for (i = 0; i < ARRAY_SIZE(f->skin_input); i++)
++		f->skin_input[i].temp_mc = 25000;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_EQ(test, f->mca.skin_limit_ma, 8000U);
++	KUNIT_EXPECT_EQ(test, f->mca.charge_limit_ua, 1000000U);
++	KUNIT_EXPECT_EQ(test, f->mca.cooling_state, 1UL);
++	KUNIT_EXPECT_EQ(test, piano_mca_charge_limit(&f->mca), 500U);
++	KUNIT_EXPECT_TRUE(test, f->mca.inhibit_charge);
++	KUNIT_EXPECT_TRUE(test, f->mca.normal_voltage_stop);
++	f->mca.charge_limit_ua = 0;
++	KUNIT_ASSERT_EQ(test, piano_mca_update_skin(&f->mca), 0);
++	KUNIT_EXPECT_EQ(test, piano_mca_charge_limit(&f->mca), 0U);
++}
++
++static void piano_mca_skin_buck_columns_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	static const u32 low[] = { 1800, 1800, 1800, 1700, 1200, 1000 };
++	static const u32 high[] = { 3500, 3500, 3500, 3500, 2000, 700 };
++	int i;
++
++	f->mca.skin_control = true;
++	for (i = 0; i < ARRAY_SIZE(low); i++) {
++		f->mca.skin_flags = GENMASK(i, 0);
++		f->mca.vbus_uv = 0;
++		KUNIT_EXPECT_EQ(test, piano_mca_skin_buck_current(&f->mca), low[i]);
++		f->mca.vbus_uv = 6000000;
++		KUNIT_EXPECT_EQ(test, piano_mca_skin_buck_current(&f->mca), low[i]);
++		f->mca.vbus_uv = 9000000;
++		KUNIT_EXPECT_EQ(test, piano_mca_skin_buck_current(&f->mca), high[i]);
++	}
++	f->mca.skin_control = false;
++	KUNIT_EXPECT_EQ(test, piano_mca_skin_buck_current(&f->mca), U32_MAX);
++}
++
++static void piano_mca_skin_normal_buck_fcc_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	static const struct { u32 type; int vbus; u32 fcc; } rows[] = {
++		{ MCA_TYPE_DCP, 5000000, 1200 },
++		{ MCA_TYPE_PD, 5000000, 1200 },
++		{ MCA_TYPE_PD, 9000000, 2000 },
++		{ MCA_TYPE_PD_PPS, 9000000, 2000 },
++	};
++	int i, tbat;
++
++	piano_mca_skin_limits_prepare(test);
++	f->mca.skin_limit_ma = piano_mca_skin_current(&f->mca, 44000);
++	for (i = 0; i < ARRAY_SIZE(rows); i++) {
++		f->mca.real_type = rows[i].type;
++		f->mca.vbus_uv = rows[i].vbus;
++		KUNIT_ASSERT_EQ(test, piano_mca_normal_buck(&f->mca, &tbat, 1, 0), 0);
++		KUNIT_EXPECT_EQ(test, f->fcc_ma, rows[i].fcc);
++		KUNIT_EXPECT_TRUE(test, f->pmic_enabled);
++	}
++	f->mca.skin_limit_ma = piano_mca_skin_current(&f->mca, 45000);
++	f->mca.vbus_uv = 5000000;
++	KUNIT_ASSERT_EQ(test, piano_mca_normal_buck(&f->mca, &tbat, 1, 0), 0);
++	KUNIT_EXPECT_EQ(test, f->fcc_ma, 700U);
++	KUNIT_EXPECT_EQ(test, f->mca.charge_limit_ua, 8000000U);
++}
++
++static void piano_mca_skin_buck_share_limit_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	piano_mca_skin_limits_prepare(test);
++	f->mca.skin_limit_ma = piano_mca_skin_current(&f->mca, 44000);
++	KUNIT_ASSERT_EQ(test, piano_mca_test_start_cp(test), 0);
++	f->mca.vbus_uv = 9000000;
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_set_buck(&f->mca, 1500, 2500), 0);
++	KUNIT_EXPECT_EQ(test, f->fcc_ma, 2000U);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 1500U);
++	f->mca.vbus_uv = 5000000;
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_set_buck(&f->mca, 1500, 2500), 0);
++	KUNIT_EXPECT_EQ(test, f->fcc_ma, 1200U);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 1500U);
++	f->mca.skin_limit_ma = piano_mca_skin_current(&f->mca, 45000);
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_set_buck(&f->mca, 1500, 2000), 0);
++	KUNIT_EXPECT_EQ(test, f->fcc_ma, 700U);
++	KUNIT_EXPECT_EQ(test, f->icl_ma, 1500U);
++}
++
+ static struct kunit_case piano_mca_test_cases[] = {
++	KUNIT_CASE(piano_mca_skin_buck_columns_test),
++	KUNIT_CASE(piano_mca_skin_normal_buck_fcc_test),
++	KUNIT_CASE(piano_mca_skin_buck_share_limit_test),
+ 	KUNIT_CASE(piano_mca_full_hardware_hold_test),
+ 	KUNIT_CASE(piano_mca_full_soft_five_samples_test),
+ 	KUNIT_CASE(piano_mca_full_soft_boundaries_test),
+@@ -3102,6 +3431,14 @@ static struct kunit_case piano_mca_test_cases[] = {
+ 	KUNIT_CASE(piano_mca_full_keeps_cp_off_test),
+ 	KUNIT_CASE(piano_mca_full_skips_active_cp_test),
+ 
++	KUNIT_CASE(piano_mca_skin_weighted_model_test),
++	KUNIT_CASE(piano_mca_skin_original_battery_test),
++	KUNIT_CASE(piano_mca_skin_high_load_hysteresis_test),
++	KUNIT_CASE(piano_mca_skin_read_error_recovers_test),
++	KUNIT_CASE(piano_mca_skin_missing_sensor_keeps_stop_test),
++	KUNIT_CASE(piano_mca_skin_error_keeps_hysteresis_test),
++	KUNIT_CASE(piano_mca_skin_tightens_before_buck_test),
++	KUNIT_CASE(piano_mca_skin_preserves_user_policy_test),
+ 	KUNIT_CASE(piano_mca_unsampled_session_only_returns_to_five_volts_test),
+ 	KUNIT_CASE(piano_mca_new_session_reapplies_cached_input_test),
+ 	KUNIT_CASE(piano_mca_new_connection_reapplies_cached_input_test),
+-- 
+2.55.0
+
