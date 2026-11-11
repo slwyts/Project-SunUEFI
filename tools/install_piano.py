@@ -299,8 +299,8 @@ class Device:
         require(result.returncode == 0, 'Command failed: ' + ' '.join(argv[:4]) + ': ' + result.stderr.decode(errors='replace')[-1000:])
         return result.stdout, result.stderr
 
-    def shell(self, command):
-        return self.call(['adb', '-s', self.serial, 'exec-out', 'su -c ' + shlex.quote(command)])[0]
+    def shell(self, command, timeout=60):
+        return self.call(['adb', '-s', self.serial, 'exec-out', 'su -c ' + shlex.quote(command)], timeout=timeout)[0]
 
     def text(self, command):
         return self.shell(command).decode().strip()
@@ -380,7 +380,10 @@ class Device:
 
     def readback_hash(self, name, size):
         require(name in PARTITIONS and size % BLOCK == 0, 'Readback limited to dedicated OS image prefixes')
-        output = self.text(f'dd if=/dev/block/by-name/{name} bs={BLOCK} count={size // BLOCK} 2>/dev/null | sha256sum')
+        # Hash large images in streaming batches without a syscall per sector.
+        batch = 4 * 1024 * 1024 if size % (4 * 1024 * 1024) == 0 else BLOCK
+        output = self.shell(f'dd if=/dev/block/by-name/{name} bs={batch} count={size // batch} 2>/dev/null | sha256sum',
+                            timeout=max(60, (size + 32 * 1024 ** 2 - 1) // (32 * 1024 ** 2))).decode().strip()
         require(re.fullmatch(r'[0-9a-f]{64}\s+.*', output), 'Device SHA256 readback failed')
         return output.split()[0]
 
