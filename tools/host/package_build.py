@@ -131,7 +131,7 @@ def native_tools():
 
     flags = ['--target=aarch64-linux-gnu', '--sysroot=/', '--gcc-toolchain=/usr',
              '-resource-dir=' + str(prefix), '-fuse-ld=lld', '-fno-integrated-as',
-             '-B' + str(prefix / 'bin'), '-Wno-unused-command-line-argument']
+             '-B' + str(prefix / 'bin'), '-Wno-unused-command-line-argument', '-gdwarf-4']
     wrapper('clang-driver', [str(prefix / 'tools/clang'), *flags])
     for name, cxx in [('clang', False), ('clang++', True)]:
         command = [str(prefix / 'bin/clang-driver')]
