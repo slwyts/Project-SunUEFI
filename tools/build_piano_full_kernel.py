@@ -312,7 +312,8 @@ def main():
             previous.get('local_module_overrides')==modules and previous.get('root_policy')==args.root and
             previous.get('command_line')==root_command and previous.get('toolchain',{}).get('sha256')==tools['sha256'] and
             (out/'.config').is_file() and sha(out/'.config')==previous.get('config_sha256') and
-            (out/'Module.symvers').is_file() and (out/'include/config/kernel.release').is_file()):
+            (out/'Module.symvers').is_file() and (out/'include/config/kernel.release').is_file() and
+            previous.get('module_symvers_sha256')==sha(out/'Module.symvers')):
             from stage_piano_kernel_modules import inspect
             inspect(artifacts)
             print('Reusing the complete matching kernel and modules: '+previous['kernel_release'],flush=True)
@@ -353,6 +354,7 @@ def main():
     image=out/'arch/arm64/boot/Image';state['image']=image_info(image)
     if not state['image']['efi_stub']:raise ValueError('Complete public candidate has no EFI stub')
     state['kernel_release']=(out/'include/config/kernel.release').read_text().strip()
+    state['module_symvers_sha256']=sha(out/'Module.symvers')
     install=artifacts/'modules'
     if install.exists():shutil.rmtree(install)
     run(command+[f'INSTALL_MOD_PATH={install}','INSTALL_MOD_STRIP=1','modules_install'],env=env);fresh()

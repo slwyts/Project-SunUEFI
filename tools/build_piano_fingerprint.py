@@ -258,6 +258,7 @@ def desktop_service(root):
 
 def install_debian_desktop(root, runtime, output):
     from build_release_rootfs import build_devices, build_resolver
+    from host import package_build
     cfg = json.loads((ROOT / 'config/fingerprint.json').read_text())['desktop']['libfprint']
     output.mkdir(parents=True, exist_ok=True)
     work = root / 'var/tmp/sunuefi-libfprint'
@@ -283,23 +284,26 @@ def install_debian_desktop(root, runtime, output):
         'Name: piano-goodix\nDescription: Piano signed-TA fingerprint transport\nVersion: 1.0\n'
         'Libs: -L/var/tmp/sunuefi-libfprint/sdk/lib -lpiano-goodix -pthread -lm\n'
         'Cflags: -I/var/tmp/sunuefi-libfprint/sdk/include\n')
-    with build_devices(root), build_resolver(root):
-        subprocess.run(['chroot', root, 'apt-get', 'install', '-y', '--no-install-recommends',
-                        'build-essential', 'meson', 'ninja-build', 'pkg-config', 'udev', 'libudev-dev',
-                        'libglib2.0-dev', 'libgusb-dev', 'libgudev-1.0-dev',
-                        'libpixman-1-dev', 'libssl-dev', 'libgirepository1.0-dev',
-                        'fprintd', 'libpam-fprintd'], check=True)
-        subprocess.run(['chroot', root, 'env',
-                        'PKG_CONFIG_PATH=/var/tmp/sunuefi-libfprint/sdk/lib/pkgconfig',
-                        'meson', 'setup', '/var/tmp/sunuefi-libfprint/build',
-                        '/var/tmp/sunuefi-libfprint/libfprint', '--prefix=/usr',
-                        '--libdir=lib/aarch64-linux-gnu', '--buildtype=release',
-                        '-Ddoc=false', '-Dgtk-examples=false', '-Dinstalled-tests=false',
-                        '-Dudev_rules_dir=/usr/lib/udev/rules.d', '-Dudev_hwdb=disabled'], check=True)
-        subprocess.run(['chroot', root, 'meson', 'compile', '-C',
-                        '/var/tmp/sunuefi-libfprint/build', '-j4'], check=True)
-        subprocess.run(['chroot', root, 'env', 'DESTDIR=/var/tmp/sunuefi-libfprint/package',
-                        'meson', 'install', '-C', '/var/tmp/sunuefi-libfprint/build'], check=True)
+    with build_devices(root), build_resolver(root), package_build.environment(root) as settings:
+        def guest(args):
+            subprocess.run(['chroot', root, 'env', *package_build.arguments(settings), *args], check=True)
+
+        guest(['apt-get', 'install', '-y', '--no-install-recommends',
+               'build-essential', 'meson', 'ninja-build', 'pkg-config', 'udev', 'libudev-dev',
+               'libglib2.0-dev', 'libgusb-dev', 'libgudev-1.0-dev',
+               'libpixman-1-dev', 'libssl-dev', 'libgirepository1.0-dev',
+               'fprintd', 'libpam-fprintd', 'ccache'])
+        guest(['env',
+               'PKG_CONFIG_PATH=/var/tmp/sunuefi-libfprint/sdk/lib/pkgconfig',
+               'meson', 'setup', '/var/tmp/sunuefi-libfprint/build',
+               '/var/tmp/sunuefi-libfprint/libfprint', '--prefix=/usr',
+               '--libdir=lib/aarch64-linux-gnu', '--buildtype=release',
+               '-Ddoc=false', '-Dgtk-examples=false', '-Dinstalled-tests=false',
+               '-Dudev_rules_dir=/usr/lib/udev/rules.d', '-Dudev_hwdb=disabled'])
+        guest(['meson', 'compile', '-C', '/var/tmp/sunuefi-libfprint/build',
+               '-j' + str(package_build.default_jobs())])
+        guest(['env', 'DESTDIR=/var/tmp/sunuefi-libfprint/package',
+               'meson', 'install', '-C', '/var/tmp/sunuefi-libfprint/build'])
         package = work / 'package'
         shutil.rmtree(package / 'usr/include', ignore_errors=True)
         shutil.rmtree(package / 'usr/lib/aarch64-linux-gnu/pkgconfig', ignore_errors=True)
