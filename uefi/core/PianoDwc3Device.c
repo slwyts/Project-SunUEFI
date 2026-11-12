@@ -631,13 +631,19 @@ STATIC EFI_STATUS Event(UINT32 E) {
       EFI_STATUS Bulk=BulkStop();if(EFI_ERROR(Bulk))return Bulk;
       mConfigWaiting=mStatusWaiting=FALSE;
 #endif
-      // End each own transfer before returning its memory to the CPU.
-      EFI_STATUS S=StopTransfer(0);if(!EFI_ERROR(S))S=StopTransfer(1);if(EFI_ERROR(S))return S;
+      // Like dwc3_ep0_reset_state, leave an outstanding SETUP receive armed.
+      // END/restart of that transfer during a bus reset can wedge EP0.
+      BOOLEAN SetupArmed=mPhase==0 && mPending[0] && !mPending[1];
+      EFI_STATUS S=EFI_SUCCESS;
+      if(!SetupArmed){
+        S=StopTransfer(0);if(!EFI_ERROR(S))S=StopTransfer(1);if(EFI_ERROR(S))return S;
+        S=Command(0,4,0,0,0);if(EFI_ERROR(S))return S;
+      }
       BOOLEAN Super=mControl.SuperSpeed;UINT8 Speed=mControl.Speed;
       ZeroMem(&mControl,sizeof(mControl));mControl.SuperSpeed=Super;mControl.Speed=Speed;
       mConfigured=FALSE;mLogValid=FALSE;
-      if(Type==0){mPhase=0;Dw(0xC700,Dr(0xC700)&~(0x7FU<<3));return EFI_SUCCESS;}
-      Dw(0xC700,Dr(0xC700)&~(0x7FU<<3));return ArmSetup();
+      Dw(0xC700,Dr(0xC700)&~(0x7FU<<3));
+      return SetupArmed?EFI_SUCCESS:ArmSetup();
     }
     if(Type==2) {
       mControl.Speed=(UINT8)(Dr(0xC70C)&7);mControl.SuperSpeed=mControl.Speed>=4;

@@ -539,6 +539,10 @@ static VOID run_stale_completion(VOID){
   PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID *)0x55,.NowUs=now_us};
   assert(PianoUsbControllerServiceStart((VOID *)123,&C)==EFI_SUCCESS);
   UINTN Completed=completions;
+  for(UINTN I=0;I<3;++I){
+    service_event(0x101);
+    assert(completions==Completed&&mPending[0]&&mTrbs[0].Active&&mSetup.Active&&mPhase==0);
+  }
   service_event(0xC040); // Observed stale SETUP completion: new TRB still HWO.
   assert(completions==Completed && mPending[0] && mTrbs[0].Active && mSetup.Active && mPhase==0);
   service_enumerate();Completed=completions;
@@ -797,7 +801,7 @@ int USB_SERVICE_TEST_MAIN(void) {
   for(UINTN I=0;I<8;++I){pid_t P=fork();assert(P>=0);if(P==0){run_ramlog(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB before-ramlog case %llu failed\n",(unsigned long long)I);return 1;}}
   for(STATUS_CASE I=0;I<StatusCaseCount;++I){pid_t P=fork();assert(P>=0);if(P==0){run_status(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB status-report case %u failed\n",(unsigned)I);return 1;}}
   for(UINTN I=0;I<27;++I){pid_t P=fork();assert(P>=0);if(P==0){run_diagnostics(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB diagnostics case %u failed\n",(unsigned)I);return 1;}}
-  puts("Actual Device+Controller persistent USB: 15 reset/startup-proof + 21 lifecycle + 11 navigation + 8 before-ramlog + 11 status-report + 27 failure-diagnostics cases PASS; in-flight response/END preservation, diagnostic enumeration/reset, saved log upload and fail-closed state checks; no device.");
+  puts("Actual Device+Controller persistent USB: 15 reset/startup-proof + 22 lifecycle + 11 navigation + 8 before-ramlog + 11 status-report + 27 failure-diagnostics cases PASS; in-flight response/END preservation, diagnostic enumeration/reset, saved log upload and fail-closed state checks; no device.");
 #else
   PIANO_USB_STARTUP_FAILURE_EVIDENCE Evidence;assert(PianoDwc3GetStartupFailureEvidence(&Evidence)==EFI_UNSUPPORTED && Evidence.Revision==1);
   (VOID)backend;PIANO_DWC3_SERVICE_STATUS S;PIANO_USB_SERVICE_RETIRE_REPORT R;PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID *)0x55,.NowUs=NULL};
