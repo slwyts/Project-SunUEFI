@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "60db958881b33bf2e107e37993059d5c0a0d76d9",
-  "original_target_commit": "611bb038b07681dae27d6852f4698e4873cbc980",
+  "target_tree": "ffc0bf5589c227d3280605c9ee8fbbd1bdabafe0",
+  "original_target_commit": "80114e79d7a9f563f95064061be9cc6dbc4d1c1f",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -839,6 +839,14 @@
       "original_parent": "c0c3dcbe73b5dcc4e8baee487581fda4fda67d6d",
       "committer_date": "2026-11-12T00:22:59+08:00",
       "tree": "60db958881b33bf2e107e37993059d5c0a0d76d9"
+    },
+    {
+      "file": "0105-dpu-piano-fractional-sampling.patch",
+      "sha256": "a5dd56d1b05febce67512526f4ad3fef47a7774a4bf424e723e03a2ea1fdfcde",
+      "original_commit": "80114e79d7a9f563f95064061be9cc6dbc4d1c1f",
+      "original_parent": "611bb038b07681dae27d6852f4698e4873cbc980",
+      "committer_date": "2026-11-12T23:02:24+08:00",
+      "tree": "ffc0bf5589c227d3280605c9ee8fbbd1bdabafe0"
     }
   ],
   "provenance": {

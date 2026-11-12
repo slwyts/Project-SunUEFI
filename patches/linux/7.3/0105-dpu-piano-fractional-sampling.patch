@@ -1,0 +1,47 @@
+From 80114e79d7a9f563f95064061be9cc6dbc4d1c1f Mon Sep 17 00:00:00 2001
+From: directorhorse <74277661+directorhorse@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 23:02:24 +0800
+Subject: [PATCH] drm/msm/dpu: apply Piano bilinear sampling to fractional
+ upscales
+
+The fixed-panel modes also upscale 2560, 2400, 1920 and 1280 source
+pixels to the 3200-pixel panel. The exact 2x checks skip the corrected
+preload and internal-boundary fetch for all of those modes.
+
+Use the existing Piano QSEED 3.4 bilinear configuration whenever the
+horizontal direction is upscaled and the vertical direction is not
+downscaled. Keep the right-neighbour fetch limited to internal source
+boundaries. Native-size, downscaled, rotated, compressed and YUV planes
+retain their current configuration; the working 1600x1068 path is
+unchanged.
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+index b3f078e1f..3996e567d 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+@@ -528,7 +528,7 @@ static const struct dpu_csc_cfg *_dpu_plane_get_csc(struct dpu_sw_pipe *pipe,
+ 	return csc_ptr;
+ }
+ 
+-/* QSEED 3.4 needs preload seven for aligned 2x RGB sampling. Fetch the
++/* QSEED 3.4 needs preload seven for bilinear RGB upscaling. Fetch the
+  * next source pixel at internal splits instead of clamping interpolation.
+  */
+ static void dpu_plane_setup_piano_bilinear(struct dpu_hw_sspp *pipe_hw,
+@@ -545,8 +545,8 @@ static void dpu_plane_setup_piano_bilinear(struct dpu_hw_sspp *pipe_hw,
+ 	    pipe_hw->cap->sblk->scaler_blk.version != 0x30004 ||
+ 	    state->fb->modifier != DRM_FORMAT_MOD_LINEAR ||
+ 	    MSM_FORMAT_IS_YUV(fmt) || cfg->rotation != DRM_MODE_ROTATE_0 ||
+-	    drm_rect_width(&cfg->dst_rect) != 2 * drm_rect_width(&cfg->src_rect) ||
+-	    drm_rect_height(&cfg->dst_rect) != 2 * drm_rect_height(&cfg->src_rect) ||
++	    drm_rect_width(&cfg->dst_rect) <= drm_rect_width(&cfg->src_rect) ||
++	    drm_rect_height(&cfg->dst_rect) < drm_rect_height(&cfg->src_rect) ||
+ 	    (state->src.x2 & 0xffff))
+ 		return;
+ 
+-- 
+2.34.1
+

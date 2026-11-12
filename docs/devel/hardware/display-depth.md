@@ -38,6 +38,8 @@ SteamOS／KDE 在 Linux 7.3.3 上已切换 2400×1602@120／60、1280×854@60、
 
 标准 `scaling mode` 属性支持 `None` 和 `Full`；低分辨率需要 `Full`，超出原生尺寸的请求会被拒绝。全屏映射保留绝对触摸坐标的对应关系，不引入黑边坐标换算。KDE 默认通过 KWin 已有的 `KWIN_DRM_FORCE_SCALING_MODE=FULL` 选择全屏缩放；游戏模式使用内核默认值。桌面的逻辑缩放比例仍独立生效。
 
+双路 SSPP 各自缩放半幅画面，内部交界处的双线性插值需要另一半的相邻源像素。Piano QSEED 3.4 的线性 RGB 平面在水平放大且垂直不缩小时使用水平预加载值 7，并仅在内部右边界额外读取一个源像素；物理画面最右侧不增加读取范围。这套配置覆盖非整数倍放大，不再限定为 1600×1068 的两倍放大。原生尺寸、缩小、旋转、压缩缓冲和 YUV 平面保留原路径。
+
 ## 原厂的色彩处理
 
 固定的 [MiCode 显示驱动](https://github.com/MiCode/vendor_opensource_display-drivers/tree/aa06fd1757c28dce96fbe4e04d4530ec21b52aac)及同机 Android DRM 状态表明：
