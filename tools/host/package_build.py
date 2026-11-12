@@ -176,6 +176,13 @@ def environment(rootfs, user=None):
     cache = Path(os.environ.get('CCACHE_DIR', ROOT / 'build/ccache')).resolve() / 'packages' / str(uid)
     cache.mkdir(parents=True, exist_ok=True)
     os.chown(cache, uid, gid)
+    # CI restores cache entries as the runner account, including files inside
+    # UID-specific package caches. makepkg must be able to update those entries.
+    if user is not None:
+        for path in cache.rglob('*'):
+            info = path.lstat()
+            if info.st_uid != uid or info.st_gid != gid:
+                os.chown(path, uid, gid, follow_symlinks=False)
     mounts = []
 
     def bind(source, target):
