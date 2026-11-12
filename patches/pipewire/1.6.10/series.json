@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "version": "1.6.10",
+  "source": {
+    "url": "https://codeload.github.com/PipeWire/pipewire/tar.gz/refs/tags/1.6.10",
+    "sha256": "93b7c4f1e62fd9ec3a921846c6bfc64442872bb2366c2bbc3ea69a427b79a4f9"
+  },
+  "patches": [
+    {
+      "file": "../1.6.9/0001-gst-fraction-range.patch",
+      "sha256": "2565f4a347ec5773f5c649f4faacd5f322999aa26831a1c6379a728671a2407e"
+    },
+    {
+      "file": "0002-gst-preferred-caps.patch",
+      "sha256": "c5fa45be307a73c3ab1d7f9d87e180fddcd4a62f0c1ef96370cad0f7aa8690f7"
+    },
+    {
+      "file": "../1.6.9/0003-gst-format-tests.patch",
+      "sha256": "fdf7153630a12a4fb95c53231b2bbd21000e4e0d2fa19947ac000dac7a1db71d"
+    },
+    {
+      "file": "../1.6.9/0004-gst-retain-running-caps.patch",
+      "sha256": "964df3e181bbbc428a0462f643874a3c89127a28aa2a297165516b9c44c2038b"
+    },
+    {
+      "file": "../1.6.9/0005-gst-pool-lock-order.patch",
+      "sha256": "c0a2b116ace35879143e8e505ea63059709fad689ed11caa303349e083cddefa"
+    },
+    {
+      "file": "../1.6.9/0006-gst-copy-memptr.patch",
+      "sha256": "0c3bd1d6cbf929c036e6829598219c843756dd58b13721a91aca0ce6e533c897"
+    }
+  ]
+}
