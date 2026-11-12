@@ -130,7 +130,8 @@ def native_tools():
         path.chmod(0o755)
 
     flags = ['--target=aarch64-linux-gnu', '--sysroot=/', '--gcc-toolchain=/usr',
-             '-resource-dir=' + str(prefix), '-fuse-ld=bfd', '-fno-integrated-as',
+             '-resource-dir=' + str(prefix), '--start-no-unused-arguments',
+             '-fuse-ld=bfd', '--end-no-unused-arguments', '-fno-integrated-as',
              '-B' + str(prefix / 'bin'), '-Wno-unused-command-line-argument', '-gdwarf-4']
     wrapper('clang-driver', [str(prefix / 'tools/clang'), *flags])
     for name, cxx in [('clang', False), ('clang++', True)]:
