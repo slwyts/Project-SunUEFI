@@ -53,6 +53,10 @@ PianoProductCoreEntry (uefi/core/PianoProductCore.c)
 4. **SMMU 保护解除**：安全解绑 DMA 地址映射，释放页表；
 5. **安全拒绝交接**：使用 DMA 的设备（USB、UFS、显示）在任何一步无法确认已干净停止时，固件拒绝交接并保持当前状态，严禁强行释放可能仍在被硬件 DMA 访问的物理内存。
 
+DWC3 停机时先结束活动端点传输，再清除 `RUN_STOP`。等待 `DEVCTRLHLT` 时持续
+确认事件缓冲区中的事件，不再处理新请求或提交 TRB；USB2 PHY 在整个停机过程中
+保持唤醒。只有收到控制器停止确认后，才归还 DMA 缓冲区并释放 SMMU 与时钟。
+
 ## 常驻 USB Fastboot 服务
 
 固件运行期间在后台常驻 USB Fastboot 服务（序列号固定为 `SunUEFI-piano`），在固件菜单、设置和 Shell 界面中均保持在线。它支持以下调试操作：

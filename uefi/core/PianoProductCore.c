@@ -281,8 +281,9 @@ STATIC VOID FailStop(EFI_STATUS Status) {
     if(PianoUsbControllerHostBlocked())Detail=L"USB 设备仍在使用，未能安全断开";
     else if(mOwners.Report.Retained){
       if(EFI_ERROR(mOwners.Report.NvStatus)&&mOwners.Report.NvStatus!=EFI_NOT_STARTED)Detail=L"设置未能保存";
-      else if(EFI_ERROR(mOwners.Report.FilesystemsStatus))Detail=L"仍有文件或驱动没有关闭";
-      else if(mOwners.Report.Usb.HostWasActive&&mOwners.Report.Usb.HostStopStatus!=EFI_SUCCESS)Detail=L"USB 设备仍在使用，未能安全断开";
+       else if(EFI_ERROR(mOwners.Report.FilesystemsStatus))Detail=L"仍有文件或驱动没有关闭";
+       else if(mOwners.Report.Usb.HostWasActive&&mOwners.Report.Usb.HostStopStatus!=EFI_SUCCESS)Detail=L"USB 设备仍在使用，未能安全断开";
+       else if(EFI_ERROR(mOwners.Report.UsbStatus)&&mOwners.Report.UsbStatus!=EFI_NOT_STARTED)Detail=L"USB 设备仍在使用，未能安全断开";
       else Detail=mOwners.Report.Ufs.Failed?L"存储驱动未能安全退出":L"系统交接失败";
     }else if(!AsciiStrnCmp(mBootLogStage,"UFS",3))Detail=L"存储初始化失败";
     else if(!AsciiStrCmp(mBootLogStage,"USB"))Detail=L"USB 初始化失败";

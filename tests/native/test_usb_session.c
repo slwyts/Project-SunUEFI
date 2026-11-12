@@ -18,6 +18,8 @@ static UINTN session_writes,allocations,completions,resets;
 static UINTN quiet_syncs;
 static UINTN address_writes,address_status_starts;
 static UINT32 pending_end_delay;
+static UINT32 halt_required_ends;
+static BOOLEAN halt_requires_empty_ring,halt_acknowledged;
 static BOOLEAN ran,failed_halt,reject_session,fail_setup,fail_allocate;
 static BOOLEAN hold_device_reset,corrupt_gctl_restore,ignore_reset_register_writes;
 static BOOLEAN fail_dma_free;
@@ -50,8 +52,13 @@ UINT32 EFIAPI MmioRead32(UINTN Address) {
   if((Address<DW || Address>=DW+sizeof(regs)) && extra_mmio_read!=NULL)return extra_mmio_read(Address);
   assert(Address>=DW && Address<DW+sizeof(regs) && !(Address&3));
   UINT32 Offset=(UINT32)(Address-DW);
-  if(Offset==0xC70C)
-    return 0x00920004|((regs[0xC704/4]&BIT31) || (ran && failed_halt)?0:BIT22);
+  if(Offset==0xC70C){
+    if((regs[0xC704/4]&BIT31) || (ran&&failed_halt))halt_acknowledged=FALSE;
+    else if(!halt_required_ends &&
+       (!halt_requires_empty_ring || (!regs[0xC40C/4] && !(regs[0xC200/4]&(BIT6|BIT8)))))
+      halt_acknowledged=TRUE;
+    return 0x00920004|(halt_acknowledged?BIT22:0);
+  }
   return regs[Offset/4];
 }
 UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value) {
@@ -73,6 +80,7 @@ UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value) {
   }
   if(Offset==0xC704) {
     if(Value&BIT31) {
+      halt_acknowledged=FALSE;
       assert(regs[USB_SESSION_HS/4]==(original_hs|USB_SESSION_HS_VALID));
       assert(regs[USB_SESSION_SS/4]==(original_ss|USB_SESSION_SS_PRESENT));
       ran=TRUE;
@@ -80,6 +88,7 @@ UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value) {
     if(!hold_device_reset)Value&=~BIT30;
   }
   if(Offset>=0xC80C && Offset<=0xC83C && (Offset&15)==12) {
+    if((Value&15)==8)halt_required_ends&=~(1U<<((Offset-0xC80C)/16));
     if(Offset==0xC81C && (Value&15)==6 && mPhase==3 && mControl.SetAddress) {
       // Replays test 65: the core samples DevAddr before starting STATUS.
       assert(((regs[0xC700/4]>>3)&127)==mControl.PendingAddress);
@@ -144,6 +153,7 @@ static VOID init(VOID) {
   quiet_syncs=0;
   address_writes=address_status_starts=0;
   pending_end_delay=0;
+  halt_required_ends=0;halt_requires_empty_ring=halt_acknowledged=FALSE;
   ran=failed_halt=reject_session=fail_setup=fail_allocate=FALSE;
   hold_device_reset=corrupt_gctl_restore=ignore_reset_register_writes=FALSE;
   fail_dma_free=FALSE;stall_hook=NULL;extra_mmio_read=NULL;dma_complete_status=dma_free_status=EFI_SUCCESS;

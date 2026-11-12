@@ -250,9 +250,37 @@ STATIC EFI_STATUS Command(UINT8 Ep,UINT32 Cmd,UINT32 P0,UINT32 P1,UINT32 P2) {
   return EFI_TIMEOUT;
 }
 STATIC EFI_STATUS Halt(VOID) {
+  if(!(Dr(0xC704)&BIT31) && (Dr(0xC70C)&BIT22))return EFI_SUCCESS;
+  UINT32 Phy=Dr(0xC200),Saved=Phy&(BIT6|BIT8);
+  EFI_STATUS Status=EFI_TIMEOUT;
+  if(Saved)Dw(0xC200,Phy&~Saved);
+  // DWC3 requires END_TRANSFER before RUN_STOP is cleared. Keep every DMA
+  // buffer mapped and active until the global DEVCTRLHLT acknowledgement.
+  if(Dr(0xC704)&BIT31) {
+    for(UINT8 Ep=0;Ep<ARRAY_SIZE(mPending);++Ep) {
+      if(!mPending[Ep] || mEnding[Ep])continue;
+      Status=Command(Ep,8|BIT11|((UINT32)mResource[Ep]<<16),0,0,0);
+      if(Status!=EFI_SUCCESS)goto Done;
+    }
+  }
   Dw(0xC704,Dr(0xC704)&~BIT31);
-  for(UINTN I=0;I<10000;++I){if(Dr(0xC70C)&BIT22)return EFI_SUCCESS;gBS->Stall(10);}
-  return EFI_TIMEOUT;
+  Status=EFI_TIMEOUT;
+  for(UINTN I=0;I<2000;++I) {
+    // Unacknowledged ring events prevent the controller from halting. During
+    // shutdown discard them without dispatching requests or posting new TRBs.
+    UINT32 Count=Dr(0xC40C)&0xffff;
+    if(Count) {
+      if(Count>4096 || (Count&3) || !mRing.Active){Status=EFI_COMPROMISED_DATA;break;}
+      mRingPosition=(mRingPosition+Count)%4096;
+      Dw(0xC40C,Count);
+    }
+    if((Dr(0xC70C)&BIT22) && !(Dr(0xC704)&BIT31)){Status=EFI_SUCCESS;break;}
+    EFI_STATUS Wait=gBS->Stall(1000);
+    if(Wait!=EFI_SUCCESS){Status=EFI_ERROR(Wait)?Wait:EFI_DEVICE_ERROR;break;}
+  }
+Done:
+  if(Saved)Dw(0xC200,Phy);
+  return Status;
 }
 STATIC EFI_STATUS CompleteEventDma(PIANO_DMA_BUFFER *Buffer) {
   EFI_STATUS S=PianoDmaComplete(Buffer,EFI_SUCCESS,TRUE);
