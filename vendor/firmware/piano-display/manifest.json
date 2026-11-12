@@ -1,26 +1,26 @@
 {
-  "schema_version": 1,
-  "component": "piano-display-calibration",
-  "rom": "OS4.0.4.0.XPYCNXM",
-  "directory": "qcom/sm8750",
-  "files": {
-    "piano-boe-display.bin": {
-      "bytes": 53590,
-      "sha256": "0b6e744544c9f7b17a4c1234f32a72e1531ded8869de60d3c94badd2441c7e21",
-      "source": "/odm/etc/display/qdcm_calib_data_xiaomi_p81_42_02_0a_vid_mode_dualdsi_dsc_panel.json",
-      "source_sha256": "bbff3f5d19305b25652fbcfc3e34a80ffed7419f0f78320d04026ae7a69f6ec2",
-      "mode": "native_hdr",
-      "peak_luminance": 777.563659667969,
-      "min_luminance": 0.727868974208832
-    },
-    "piano-csot-display.bin": {
-      "bytes": 53590,
-      "sha256": "b1c8635625d0bf4c9e43f6d836d9f9c834b500c22abd5148945bc7005f187306",
-      "source": "/odm/etc/display/qdcm_calib_data_xiaomi_p81_35_02_0b_vid_mode_dualdsi_dsc_panel.json",
-      "source_sha256": "896d391e826098c1a3edd95d3abd477a25418bbff3c5b575bc608d4ec5ba5c76",
-      "mode": "native_hdr",
-      "peak_luminance": 844.506896972656,
-      "min_luminance": 0.731556177139282
-    }
+ "schema_version": 1,
+ "component": "piano-display-calibration",
+ "rom": "OS4.0.6.0.XPYCNXM",
+ "directory": "qcom/sm8750",
+ "files": {
+  "piano-boe-display.bin": {
+   "bytes": 53590,
+   "sha256": "0b6e744544c9f7b17a4c1234f32a72e1531ded8869de60d3c94badd2441c7e21",
+   "source": "/odm/etc/display/qdcm_calib_data_xiaomi_p81_42_02_0a_vid_mode_dualdsi_dsc_panel.json",
+   "source_sha256": "bbff3f5d19305b25652fbcfc3e34a80ffed7419f0f78320d04026ae7a69f6ec2",
+   "mode": "native_hdr",
+   "peak_luminance": 777.563659667969,
+   "min_luminance": 0.727868974208832
+  },
+  "piano-csot-display.bin": {
+   "bytes": 53590,
+   "sha256": "b1c8635625d0bf4c9e43f6d836d9f9c834b500c22abd5148945bc7005f187306",
+   "source": "/odm/etc/display/qdcm_calib_data_xiaomi_p81_35_02_0b_vid_mode_dualdsi_dsc_panel.json",
+   "source_sha256": "896d391e826098c1a3edd95d3abd477a25418bbff3c5b575bc608d4ec5ba5c76",
+   "mode": "native_hdr",
+   "peak_luminance": 844.506896972656,
+   "min_luminance": 0.731556177139282
   }
+ }
 }

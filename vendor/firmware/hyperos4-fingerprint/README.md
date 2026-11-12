@@ -1,14 +1,14 @@
 # Piano Goodix — HyperOS 4
 
-`gfpia.elf` 是从本机原厂固件目录的 `gfpia.mdt` 和 `gfpia.b00..b08`
-按 ELF 文件偏移还原的完整签名程序，保持各段原始字节。
-重叠段已核对一致，未修改代码或签名。
+`gfpia.elf` 是从官方完整 OTA `OS4.0.6.0.XPYCNXM` 的 `modem` 分区里
+`gfpia.mdt` 和 `gfpia.b00..b08` 按 ELF 程序头的文件偏移还原的完整签名
+程序，保持各段原始字节，未修改代码或签名。
 
 它由高通 QTEE 加载，用于 Goodix 指纹传感器通信。
 文件不含用户录入的指纹模板、解锁密码或运行时认证数据。
 来源、大小和 SHA256 记录在 `manifest.json`。
 
-三个 `piano-goodix-*.bin` 是同一原厂版本 `/odm/lib64/libgf_hal.so` 中的
+三个 `piano-goodix-*.bin` 是同一版本 OTA 的 `/odm/lib64/libgf_hal.so` 中的
 通用模型参数：CAP S／T 防伪模型，以及芯片类型 49 使用的 Dubai U4 模型。
 按 ELF 导出符号的实际文件偏移提取，保留原始字节；清单同时记录来源库的
 SHA256、符号、虚拟地址和文件偏移，便于从原厂库重新提取。

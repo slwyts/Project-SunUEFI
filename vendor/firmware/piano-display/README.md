@@ -15,7 +15,7 @@ GC 保留原厂 `native_hdr` 的 1024 个主采样点和 256 个暗部点；三�
 ./build.sh display-calibration \
   --boe-source /path/to/qdcm_calib_data_xiaomi_p81_42_02_0a_vid_mode_dualdsi_dsc_panel.json \
   --csot-source /path/to/qdcm_calib_data_xiaomi_p81_35_02_0b_vid_mode_dualdsi_dsc_panel.json \
-  --rom OS4.0.4.0.XPYCNXM --output build/display-calibration
+  --rom OS4.0.6.0.XPYCNXM --output build/display-calibration
 ```
 
 格式为 32 字节小端头、两组 1025 项均匀 Degamma LUT、三路打包 GC 表，以及

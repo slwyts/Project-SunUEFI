@@ -1,39 +1,24 @@
 {
-  "schema_version": 1,
-  "component": "piano-fingerprint",
-  "rom": "OS4.0.4.0.XPYCNXM",
-  "source": "stock /vendor/firmware_mnt/image/gfpia.mdt and gfpia.b00..b08; reconstructed at their ELF file offsets",
-  "files": {
-    "gfpia.elf": {
-      "bytes": 11681880,
-      "sha256": "577756f06b3af25b1a6f4490bc27fc74ad8b54c84bc1eea535bbd577005eb24c"
-    },
-    "piano-goodix-cap-s.bin": {
-      "bytes": 308544,
-      "sha256": "01829194c8a1e00b7bf1cc0440043bc5ee45057791f1f1ab410f8119bc10ae4e",
-      "source": "/odm/lib64/libgf_hal.so",
-      "source_sha256": "36a176dee46ff1528930f4f5a18213fa07bfe1ac7652c5489bc14fc51d0e33cf",
-      "symbol": "__asp_CAP_S_2_bin",
-      "elf_virtual_address": "0x39c3e0",
-      "file_offset": 3785696
-    },
-    "piano-goodix-cap-t.bin": {
-      "bytes": 308544,
-      "sha256": "b43b6c3890943436d5c863ab3915a538fd2e2f008deb22915c3bc003c42525ee",
-      "source": "/odm/lib64/libgf_hal.so",
-      "source_sha256": "36a176dee46ff1528930f4f5a18213fa07bfe1ac7652c5489bc14fc51d0e33cf",
-      "symbol": "__asp_CAP_T_2_bin",
-      "elf_virtual_address": "0x3e7924",
-      "file_offset": 4094244
-    },
-    "piano-goodix-dubai-u4.bin": {
-      "bytes": 298120,
-      "sha256": "422741920cb2a0e508241e9d1b7c824f7304f15e638b1576423c6fb99f99ec71",
-      "source": "/odm/lib64/libgf_hal.so",
-      "source_sha256": "36a176dee46ff1528930f4f5a18213fa07bfe1ac7652c5489bc14fc51d0e33cf",
-      "symbol": "DLWeightLightDubaiU4_12_10_14MisTouch",
-      "elf_virtual_address": "0x94da0",
-      "file_offset": 609696
-    }
+ "schema_version": 1,
+ "component": "hyperos4-fingerprint",
+ "rom": "OS4.0.6.0.XPYCNXM",
+ "source": "stock modem /image/gfpia.mdt and .bNN; reconstructed at their ELF file offsets; models read from stock /odm/lib64/libgf_hal.so by symbol",
+ "files": {
+  "gfpia.elf": {
+   "bytes": 11681880,
+   "sha256": "86c8f1d7e54abf986888aebeb2df4a880ad125f1c5730f47b8e55081856414f6"
+  },
+  "piano-goodix-cap-s.bin": {
+   "bytes": 308544,
+   "sha256": "01829194c8a1e00b7bf1cc0440043bc5ee45057791f1f1ab410f8119bc10ae4e"
+  },
+  "piano-goodix-cap-t.bin": {
+   "bytes": 308544,
+   "sha256": "b43b6c3890943436d5c863ab3915a538fd2e2f008deb22915c3bc003c42525ee"
+  },
+  "piano-goodix-dubai-u4.bin": {
+   "bytes": 298120,
+   "sha256": "422741920cb2a0e508241e9d1b7c824f7304f15e638b1576423c6fb99f99ec71"
   }
+ }
 }

@@ -1,7 +1,7 @@
 # Piano CDSP — HyperOS 4
 
-从同一台 Piano 的 HyperOS 4 固件分区 `modem_b` 只读提取，目录对应
-Android 的 `/vendor/firmware_mnt/image`。包含 CDSP、CDSP-DTB 和
+来自官方完整 OTA `OS4.0.6.0.XPYCNXM` 的 `modem` 分区 `/image`，
+与 Android 的 `/vendor/firmware_mnt/image` 内容一致。包含 CDSP、CDSP-DTB 和
 `cdspr.jsn` 服务描述，保留原始字节和文件名；每个文件的大小及 SHA256
 记录在 `manifest.json`。
 

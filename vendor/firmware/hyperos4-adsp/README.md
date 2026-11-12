@@ -1,7 +1,8 @@
 # Piano ADSP — HyperOS 4
 
-从运行 HyperOS `OS4.0.4.0.XPYCNXM` 的 Piano 提取，vendor 标识为
-`OS4.0.2.1.XPYCN`，来源为 `/vendor/firmware_mnt/image`。
+来自官方完整 OTA `OS4.0.6.0.XPYCNXM` 的 `modem` 分区 `/image`，
+vendor 标识为 `OS4.0.6.0.XPYCN`。提取结果与升级到同一版本的设备上
+`/vendor/firmware_mnt/image` 的 461 个文件逐一比对，全部一致。
 
 包含完整 ADSP、ADSP-DTB 与三个服务描述文件，保持原始字节和文件名。
 `manifest.json` 记录每个文件的大小及 SHA256。构建时成套覆盖上游旧版
