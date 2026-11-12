@@ -1,0 +1,22 @@
+From: Jan Alexander Steffens <jan.steffens@gmail.com>
+Subject: [PATCH] Xsession: Don't start ssh-agent by default
+
+Source: https://gitlab.archlinux.org/archlinux/packaging/packages/gdm/-/blob/51.0-1/0001-Xsession-Don-t-start-ssh-agent-by-default.patch
+---
+--- a/data/Xsession.in
++++ b/data/Xsession.in
+@@ -207,14 +207,6 @@ if [ "x$command" = "xdefault" ] ; then
+   fi
+ fi
+ 
+-# add ssh-agent if found
+-sshagent="`gdmwhich ssh-agent`"
+-if [ -n "$sshagent" ] && [ -x "$sshagent" ] && [ -z "$SSH_AUTH_SOCK" ]; then
+-    command="$sshagent -- $command"
+-elif [ -z "$sshagent" ] ; then
+-    echo "$0: ssh-agent not found!"
+-fi
+-
+ echo "$0: Setup done, will execute: $command"
+ 
+ eval exec $command

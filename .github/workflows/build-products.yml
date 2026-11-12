@@ -133,7 +133,9 @@ jobs:
             build/gsd/SOURCE.json
             build/mutter/runtime
             build/mutter/SOURCE.json
-          key: desktop-gnome-arm64-${{ hashFiles('patches/gnome-settings-daemon/**', 'linux/desktops/gnome/ambient-policy/**', 'linux/desktops/gnome/patches/mutter/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'tools/host/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}
+            build/gdm/runtime
+            build/gdm/SOURCE.json
+          key: desktop-gnome-arm64-${{ hashFiles('patches/gnome-settings-daemon/**', 'patches/gdm/**', 'linux/desktops/gnome/ambient-policy/**', 'linux/desktops/gnome/patches/mutter/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'tools/host/build_gdm_packages.py', 'tools/host/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}
       - name: Build the pinned-base environment
         run: python3 tools/build_container.py
       - name: Build selected product
@@ -192,7 +194,7 @@ jobs:
           if [ -f build/logs/ci-build.log ]; then
             tail -n 160 build/logs/ci-build.log
           fi
-          for log in build/distros/release.build.log build/ffmpeg/build.log build/gsd/build.log build/upower/build.log build/pipewire/build.log build/mutter/build.log; do
+          for log in build/distros/release.build.log build/ffmpeg/build.log build/gsd/build.log build/upower/build.log build/pipewire/build.log build/mutter/build.log build/gdm/build.log; do
             if [ -f "$log" ]; then
               echo "::group::$log"
               tail -n 100 "$log"
@@ -291,12 +293,17 @@ jobs:
             build/gsd/build.log
             build/upower/SOURCE.json
             build/upower/build.log
+            build/gdm/SOURCE.json
+            build/gdm/build.log
+            build/distros/nyarch-gnome-piano/packages/gdm/SOURCE.json
+            build/distros/nyarch-gnome-piano/packages/gdm/build.log
             build/pipewire/SOURCE.json
             build/pipewire/build.log
             build/distros/nyarch-gnome-piano/packages/pipewire/SOURCE.json
             build/distros/nyarch-gnome-piano/packages/pipewire/build.log
             build/distros/steamos-piano/packages/pipewire/SOURCE.json
             build/distros/steamos-piano/packages/pipewire/build.log
+            build/distros/steamos-piano/rootfs/var/tmp/sunuefi-package-build/src/build/CMakeFiles/CMakeConfigureLog.yaml
             build/distros/nyarch-gnome-piano/packages/gnome-settings-daemon/manifest.json
             build/mutter/SOURCE.json
             build/mutter/SHA256SUMS

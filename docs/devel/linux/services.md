@@ -52,7 +52,8 @@ Debian release 由 [`tools/build_release_rootfs.py`](../../../tools/build_releas
 
 桌面包由 rootfs 构建自动安装，源码与二进制摘要写入发行版 manifest，构建日志
 并入 CI 的 `logs.zip`。单独构建使用 `./build.sh gsd --sysroot <Debian root>`、
-`./build.sh upower --sysroot <Debian root>` 和
+`./build.sh upower --sysroot <Debian root>`、
+`./build.sh gdm --sysroot <Debian root>` 和
 `./build.sh pipewire --rootfs <发行版 root> --output <build 下的包目录>`；
 这些命令需要 root，输入均为本地构建目录，不访问平板。
 
@@ -62,5 +63,13 @@ PipeWire 只重建完整 GStreamer 插件，链接目标 root 中同版本的库
 `patches/pipewire/<版本>/series.json` 指定，源码完整准备后才进入缓存，构建器
 变化使旧包缓存失效。19 项格式测试串行运行，使用隔离的 GStreamer registry，
 不扫描系统插件；它们不替代平板上的相机、录屏和屏幕共享验证。
+
+GDM 在真实 KMS 设备提供显示接口后启动会话。设备树的临时帧缓冲按平台驱动识别，
+不只检查 `ID_PATH` 前缀；纯渲染 GPU 不作为显示就绪的依据。补丁位于
+`patches/gdm/<版本>/`，Debian 和 Nyarch 构建安装对应版本的标准软件包。
+修正复用 GDM 原有的 udev 事件与超时，不增加显示服务、固定延时
+或桌面重启脚本。硬件运行时安装同时清理显示管理器对旧 `piano-display.service`
+的专用依赖，保留其他用户配置。软件桌面截图只证明合成器渲染成功，内屏输出需
+结合 DRM 活动平面和摄像头实拍确认。
 
 旧 `bootprofiles/` 的源码已分别迁入 `uefi/` 和 `linux/`。该目录本地剩余的 `BootShim.bin`、`BootShim.elf` 与 `__pycache__` 是历史编译产物，当前工具使用 `uefi/handoff/bootshim/`，不从旧目录构建。

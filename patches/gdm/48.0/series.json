@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "source_version": "48.0-2",
+  "package_version": "48.0-2+sunuefi1",
+  "patches": [
+    {
+      "file": "0001-local-display-wait-for-kms-connectors.patch",
+      "sha256": "166fb3c550a3b86660e6636fc46e12905644db036ee8c34df92f8ec817902749"
+    }
+  ]
+}

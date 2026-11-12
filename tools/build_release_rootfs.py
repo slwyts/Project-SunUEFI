@@ -639,6 +639,14 @@ def execute(record):
             run([sys.executable, ROOT / 'tools/build_mutter_packages.py', '--output',
                  mutter_folder.parent, '--sysroot', rootfs])
         mutter = mutter_packages(mutter_folder) if desktop == 'gnome' else {'packages': {}}
+        from host import build_gdm_packages as gdm_builder
+        gdm_folder = ROOT / 'build/gdm'
+        gdm = {'packages': {}}
+        if desktop == 'gnome':
+            run([ROOT / 'build.sh', 'gdm', '--sysroot', rootfs, '--output', gdm_folder])
+            gdm = gdm_builder.reusable(gdm_folder)
+            if gdm is None:
+                raise ValueError('GDM packages do not match the display readiness patch')
         gsd_stage = target(rootfs, 'tmp/piano-gnome-packages')
         gsd_stage.mkdir(parents=True, exist_ok=True)
         for row in gsd['packages'].values():
@@ -648,6 +656,11 @@ def execute(record):
             shutil.copy2(mutter_folder / row['file'], destination)
             if digest(destination) != row['sha256']:
                 raise ValueError('Mutter package changed while staging: ' + row['file'])
+        for row in gdm['packages'].values():
+            destination = gsd_stage / row['file']
+            shutil.copy2(gdm_folder / 'runtime' / row['file'], destination)
+            if digest(destination) != row['sha256']:
+                raise ValueError('GDM package changed while staging')
         for row in upower['packages'].values():
             destination = gsd_stage / row['file']
             shutil.copy2(upower_folder / 'runtime' / row['file'], destination)
@@ -679,6 +692,8 @@ def execute(record):
                                   for row in gsd['packages'].values())
             local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
                                   for row in mutter['packages'].values())
+            local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
+                                  for row in gdm['packages'].values())
             local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
                                   for row in upower['packages'].values())
             local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
@@ -758,6 +773,9 @@ def execute(record):
         for package, row in mutter['packages'].items():
             if installed.get(package) != row['version']:
                 raise ValueError('Installed Mutter package version differs: ' + package)
+        for package, row in gdm['packages'].items():
+            if installed.get(package) != row['version']:
+                raise ValueError('Installed GDM package version differs: ' + package)
         for package, row in upower['packages'].items():
             if installed.get(package) != row['version']:
                 raise ValueError('Installed UPower package version differs: ' + package)
@@ -779,7 +797,7 @@ def execute(record):
                   'adapters_manifest_sha256': digest(out / 'adapters/manifest.json'), 'runtime_manifest_sha256': digest(bundle / 'manifest.json'),
                   'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata, 'debian_commit': cfg['debian']['commit'],
                   'mesa_packages': mesa, 'sensors': sensors, 'ffmpeg': ffmpeg, 'gnome_power': gsd,
-                  'mutter': mutter, 'upower': upower, 'pipewire': pipewire,
+                  'mutter': mutter, 'gdm': gdm, 'upower': upower, 'pipewire': pipewire,
                   'boot_request': boot_request, 'firmware_commit': cfg['firmware']['commit'],
                   'clock_epoch': clock,
                   'default_system': defaults, 'desktop': desktop,

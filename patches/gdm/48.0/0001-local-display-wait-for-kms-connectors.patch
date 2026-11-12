@@ -1,0 +1,73 @@
+From: slwyts <slwyts@foxmail.com>
+Subject: [PATCH] local-display-factory: wait for native KMS connectors
+
+Device-tree firmware framebuffers need not have an ID_PATH beginning with
+platform-simple-framebuffer. Identify their platform driver as well. A
+render-only platform GPU is not evidence that its separate display
+controller is ready, so require a DRM connector before settling.
+
+This extends the firmware-framebuffer exclusion from GDM merge request 219:
+https://gitlab.gnome.org/GNOME/gdm/-/merge_requests/219
+---
+--- a/daemon/gdm-local-display-factory.c
++++ b/daemon/gdm-local-display-factory.c
+@@ -685,6 +685,37 @@ lookup_managed_display_by_seat_id (const char *id,
+ }
+ 
+ #ifdef HAVE_UDEV
++static gboolean
++device_has_connectors (GdmLocalDisplayFactory *factory,
++                       GUdevDevice            *device)
++{
++        g_autoptr (GUdevEnumerator) enumerator = NULL;
++        g_autofree char *connector_pattern = NULL;
++        GList *connectors;
++        gboolean has_connectors;
++
++        connector_pattern = g_strconcat (g_udev_device_get_name (device), "-*", NULL);
++        enumerator = g_udev_enumerator_new (factory->gudev_client);
++        g_udev_enumerator_add_match_subsystem (enumerator, "drm");
++        g_udev_enumerator_add_match_name (enumerator, connector_pattern);
++        connectors = g_udev_enumerator_execute (enumerator);
++        has_connectors = connectors != NULL;
++        g_list_free_full (connectors, g_object_unref);
++
++        return has_connectors;
++}
++
++static gboolean
++is_firmware_framebuffer (GUdevDevice *platform_device)
++{
++        const char *driver = g_udev_device_get_driver (platform_device);
++
++        return g_strcmp0 (driver, "simple-framebuffer") == 0 ||
++               g_strcmp0 (driver, "efi-framebuffer") == 0 ||
++               g_strcmp0 (driver, "vesa-framebuffer") == 0 ||
++               g_strcmp0 (driver, "of-framebuffer") == 0;
++}
++
+ static gboolean
+ udev_is_settled (GdmLocalDisplayFactory *factory)
+ {
+@@ -732,7 +763,8 @@ udev_is_settled (GdmLocalDisplayFactory *factory)
+                 g_autoptr (GUdevDevice) platform_device = NULL;
+                 g_autoptr (GUdevDevice) pci_device = NULL;
+ 
+-                if (g_str_has_prefix (id_path, "platform-simple-framebuffer")) {
++                if ((id_path != NULL && g_strrstr (id_path, "platform-simple-framebuffer") != NULL) ||
++                    !device_has_connectors (factory, device)) {
+                         node = next_node;
+                         continue;
+                 }
+@@ -740,6 +772,11 @@ udev_is_settled (GdmLocalDisplayFactory *factory)
+                 platform_device = g_udev_device_get_parent_with_subsystem (device, "platform", NULL);
+ 
+                 if (platform_device != NULL) {
++                        if (is_firmware_framebuffer (platform_device)) {
++                                node = next_node;
++                                continue;
++                        }
++
+                         g_debug ("GdmLocalDisplayFactory: Found embedded platform graphics, proceeding.");
+                         factory->seat0_has_platform_graphics = TRUE;
+                         is_settled = TRUE;

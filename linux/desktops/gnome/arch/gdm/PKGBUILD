@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: 0BSD
+# Copyright Arch Linux contributors
+# Adapted from https://gitlab.archlinux.org/archlinux/packaging/packages/gdm/-/blob/51.0-1/PKGBUILD
+# Maintainer: Fabian Bornschein <fabiscafe@archlinux.org>
+# Maintainer: Jan Alexander Steffens (heftig) <heftig@archlinux.org>
+# Contributor: Jan de Groot <jgc@archlinux.org>
+pkgbase=gdm
+pkgname=(gdm libgdm)
+pkgver=@VERSION@
+pkgrel=@RELEASE@
+pkgdesc="Display manager and login screen"
+url="https://gitlab.gnome.org/GNOME/gdm"
+arch=(aarch64)
+license=(GPL-2.0-or-later)
+depends=(accountsservice audit bash gdk-pixbuf2 glib2 glibc gnome-session
+         gnome-shell json-glib keyutils libcanberra libgcc libgudev libxau
+         libxcb pam polkit systemd systemd-libs upower)
+makedepends=(dconf docbook-xsl glib2-devel gobject-introspection meson plymouth yelp-tools)
+checkdepends=(check)
+source=(@SOURCES@)
+sha256sums=(@CHECKSUMS@)
+
+prepare() {
+  cd "gdm-$pkgver"
+  for patch in "$srcdir"/*.patch; do
+    patch --forward --fuzz=0 -Np1 -i "$patch"
+  done
+}
+
+build() {
+  arch-meson "gdm-$pkgver" build \
+    -Ddbus-sys=/usr/share/dbus-1/system.d \
+    -Ddefault-pam-config=arch \
+    -Ddefault-path=/usr/local/bin:/usr/local/sbin:/usr/bin \
+    -Dgdm-xsession=true -Drun-dir=/run/gdm -Dselinux=disabled
+  meson compile -C build
+}
+
+check() {
+  meson test -C build --print-errorlogs
+}
+
+_pick() {
+  local p="$1" f d; shift
+  for f; do
+    d="$srcdir/$p/${f#$pkgdir/}"
+    mkdir -p "$(dirname "$d")"
+    mv "$f" "$d"
+    rmdir -p --ignore-fail-on-non-empty "$(dirname "$f")"
+  done
+}
+
+package_gdm() {
+  depends+=(libgdm)
+  optdepends=('fprintd: fingerprint authentication')
+  backup=(etc/gdm/PostSession/Default etc/gdm/PreSession/Default etc/gdm/Xsession
+          etc/gdm/custom.conf etc/pam.d/gdm-autologin etc/pam.d/gdm-fingerprint
+          etc/pam.d/gdm-launch-environment etc/pam.d/gdm-password etc/pam.d/gdm-smartcard)
+  groups=(gnome)
+  meson install -C build --no-rebuild --destdir "$pkgdir"
+  cd "$pkgdir"
+  install -Dm644 /dev/stdin usr/lib/sysusers.d/gdm.conf <<END
+g gdm 120 -
+END
+  mkdir -p var/lib/gdm
+  install -Dm644 /dev/stdin usr/share/glib-2.0/schemas/30_org.archlinux.gdm.gschema.override <<END
+[org.gnome.login-screen]
+enable-smartcard-authentication=false
+logo='/usr/share/pixmaps/archlinux-logo-text-dark.svg'
+END
+  _pick libgdm usr/include
+  _pick libgdm usr/lib/{girepository-1.0,libgdm*,pkgconfig}
+  _pick libgdm usr/share/{gir-1.0,glib-2.0}
+}
+
+package_libgdm() {
+  pkgdesc+=" - support library"
+  depends=(dconf glib2 glibc libgcc libg{lib,object,io}-2.0.so libsystemd.so systemd-libs)
+  provides=(libgdm.so)
+  mv libgdm/* "$pkgdir"
+}

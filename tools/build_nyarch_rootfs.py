@@ -133,6 +133,8 @@ def build(args):
         build_arch_package.install_cached(root, ffmpeg)
     pipewire = output / 'packages/pipewire'
     run(ROOT / 'build.sh', 'pipewire', '--rootfs', root, '--output', pipewire)
+    gdm = output / 'packages/gdm'
+    run(ROOT / 'build.sh', 'gdm', '--rootfs', root, '--output', gdm)
 
     kernel = ROOT / 'artifacts/kernels/release'
     source = Path(json.loads((ROOT / 'build/release/source-manifest.json').read_text())['worktree'])
@@ -151,7 +153,8 @@ def build(args):
     record.update(base_archive_sha256=base_hash, nyarch_inputs=cfg,
                   gnome_power=json.loads(gsd_manifest.read_text()),
                   ffmpeg=json.loads((ffmpeg / 'SOURCE.json').read_text()),
-                  pipewire=json.loads((pipewire / 'SOURCE.json').read_text()))
+                  pipewire=json.loads((pipewire / 'SOURCE.json').read_text()),
+                  gdm=json.loads((gdm / 'SOURCE.json').read_text()))
     manifest.write_text(json.dumps(record, indent=2) + '\n')
 
 
