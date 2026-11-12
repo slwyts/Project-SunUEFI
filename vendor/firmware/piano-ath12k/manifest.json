@@ -1,0 +1,37 @@
+{
+ "schema_version": 1,
+ "component": "piano-ath12k",
+ "rom": "OS4.0.6.0.XPYCNXM",
+ "source": "stock modem-tree: amss.bin<-peach/amss20.bin, aux_ucode.bin<-peach/aux_ucode20.elf, board.bin<-peach/bd_p81.elf, m3.bin<-peach/phy_ucode20.elf, qdss_trace_config.bin<-peach/qdss_trace_config_v2.cfg, regdb.bin<-peach/regdb_xiaomi.bin, tmel.bin<-tmel_peach_20.elf",
+ "files": {
+  "amss.bin": {
+   "bytes": 6930496,
+   "sha256": "90e365a5371c7fb698943e45a0b26e60edbba17d4e9f1e5bf9fdc673538a97fc"
+  },
+  "aux_ucode.bin": {
+   "bytes": 61440,
+   "sha256": "28c4bd3137e223e9d9af67c84fc83e67f4c664fc9936bebe1eb9b3083b6eff5e"
+  },
+  "board.bin": {
+   "bytes": 125272,
+   "sha256": "450fc0013f47e940f8231985f02958b0ab4b899b09c05d5944b804619ba47e14"
+  },
+  "m3.bin": {
+   "bytes": 290816,
+   "sha256": "4bf06f45dd95b86b0ae9c9f281d6315b9d6bc846995dbee888ea9a2a00ad9327"
+  },
+  "qdss_trace_config.bin": {
+   "bytes": 6241,
+   "sha256": "17a855ff76656f3f8ea2571e2523a52a20d0ce036f42bd5728dcae49425ad889"
+  },
+  "regdb.bin": {
+   "bytes": 24278,
+   "sha256": "6d6e4dbfa1e657ec26062a9ad594a1e549606451463c120d8c2404b257777bec"
+  },
+  "tmel.bin": {
+   "bytes": 56752,
+   "sha256": "a175c8d9d0e6b38b5ae23ff0175da795b14b8268919463d2b6e1cb2bfeebc9f8"
+  }
+ },
+ "directory": "ath12k/PEACH/hw2.0"
+}

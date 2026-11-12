@@ -60,7 +60,7 @@ def stage(args):
     runtime.stage(args.runtime.resolve(), root)
     from build_piano_fingerprint import install_desktop
     install_desktop(root, args.runtime.resolve(), output / 'fingerprint-packages')
-    fw = ROOT / cfg['firmware']['source']
+    fw = ROOT / cfg['firmware']['components']
     from stage_piano_firmware import stage as stage_firmware
     stage_firmware(fw, root)
     # Use the reviewed, patched sensor importer source; Debian packaging itself
@@ -162,7 +162,7 @@ def stage(args):
               'kernel_commit': kernel['source_commit'], 'kernel_manifest_sha256': kernel_hash,
               'root_policy': 'LABEL=PIANOROOT', 'login': cfg['login'],
               'desktop_configuration': desktop, 'initramfs': boot, 'clock_epoch': clock,
-              'firmware_commit': cfg['firmware']['commit'],
+              'firmware_components': cfg['firmware']['components'],
               'packages_sha256': release.digest(output / 'packages.tsv'),
               'runtime_manifest_sha256': release.digest(args.runtime / 'manifest.json')}
     (output / 'manifest.json').write_text(json.dumps(record, indent=2) + '\n')

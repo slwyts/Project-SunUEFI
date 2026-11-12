@@ -1,0 +1,21 @@
+{
+ "schema_version": 1,
+ "component": "piano-bluetooth",
+ "rom": "OS4.0.6.0.XPYCNXM",
+ "source": "stock bluetooth-tree: brhbtfw20.tlv<-brhbtfw20.tlv, brhperifw20.tlv<-brhperifw20.tlv, brhbtnv20.b2e<-brhbtnv20.b2e",
+ "files": {
+  "brhbtfw20.tlv": {
+   "bytes": 224076,
+   "sha256": "4041936435ed5a5de37c0fa497d57d811c91f2ea9ea6dac25b77d16d685389ac"
+  },
+  "brhbtnv20.b2e": {
+   "bytes": 13291,
+   "sha256": "2dd5c72dc5d8c221de79075ce083f43e72bb90c3d521695b815c56064bf28b7e"
+  },
+  "brhperifw20.tlv": {
+   "bytes": 19884,
+   "sha256": "de3dfe24c42e5858836eafffe948dcb0dd824381b4af80b5b0d11ca8c0a2ae9a"
+  }
+ },
+ "directory": "qca"
+}

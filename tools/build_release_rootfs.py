@@ -75,12 +75,12 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
     if not kernel.is_relative_to(root / 'artifacts/kernels') or not source.is_relative_to(root / 'build/kernel-worktrees'):
         raise ValueError('Use project release kernel source and artifacts')
     public = Path(public_source or root / config['debian']['source']).resolve()
-    firmware = Path(firmware_source or root / config['firmware']['source']).resolve()
+    firmware = Path(firmware_source or root / config['firmware']['components']).resolve()
     macros = Path(macros or root / 'upstream/audioreach-topology').resolve()
     loop = Path(v4l2_source or root / 'upstream/v4l2loopback').resolve()
     missing = []
     for name, path in (('kernel manifest', kernel / 'manifest.json'), ('kernel source', source / 'Makefile'),
-                       ('public rootfs builder', public / 'scripts/build-rootfs.sh'), ('firmware', firmware / 'firmware/SHA256SUMS')):
+                       ('public rootfs builder', public / 'scripts/build-rootfs.sh'), ('firmware', next(iter(sorted(firmware.glob('*/manifest.json'))), firmware / 'missing'))):
         if not path.is_file(): missing.append(name)
     mesa = Path(mesa_dir).resolve() if mesa_dir else None
     if mesa is None or not list(mesa.glob('*.deb')): missing.append('Piano Mesa .deb directory (--mesa-dir)')
@@ -113,7 +113,6 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
         if record.get('root_policy') != 'LABEL=PIANOROOT' or [w for w in words if w.startswith('piano.root=')] != ['piano.root=LABEL=PIANOROOT'] or any(w.startswith('root=') for w in words) or 'userdata' in record['command_line']:
             raise ValueError('Release kernel must select LABEL=PIANOROOT, never Android userdata')
     if public.is_dir(): repository(public, config['debian']['commit'])
-    if firmware.is_dir(): repository(firmware, config['firmware']['commit'])
     return {'status': 'PLAN_ONLY', 'resume': resume, 'desktop': desktop,
             'previous_kernel_release': previous.get('kernel_release') if previous else None,
             'root_policy': 'LABEL=PIANOROOT', 'kernel': str(kernel), 'source': str(source),
@@ -798,7 +797,7 @@ def execute(record):
                   'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata, 'debian_commit': cfg['debian']['commit'],
                   'mesa_packages': mesa, 'sensors': sensors, 'ffmpeg': ffmpeg, 'gnome_power': gsd,
                   'mutter': mutter, 'gdm': gdm, 'upower': upower, 'pipewire': pipewire,
-                  'boot_request': boot_request, 'firmware_commit': cfg['firmware']['commit'],
+                  'boot_request': boot_request, 'firmware_components': cfg['firmware']['components'],
                   'clock_epoch': clock,
                   'default_system': defaults, 'desktop': desktop,
                   'initramfs': boot, 'password': cfg['login']['password'], 'autologin_retained': True,

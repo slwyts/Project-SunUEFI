@@ -1,0 +1,21 @@
+{
+ "schema_version": 1,
+ "component": "piano-qcom-vpu",
+ "rom": "OS4.0.6.0.XPYCNXM",
+ "source": "stock odm-tree/firmware: gen80000_zap.mbn<-gen80000_zap.mbn, vpu35_4v.mbn<-vpu35_4v.mbn, fs19xx.fsm<-fs19xx.fsm",
+ "files": {
+  "fs19xx.fsm": {
+   "bytes": 4348,
+   "sha256": "ab060b8476065bd789f327f7f8e724a2e17d94e93a85e2e8aa4b4954ce88b90e"
+  },
+  "gen80000_zap.mbn": {
+   "bytes": 12088,
+   "sha256": "778b4a33227e5e57a9724522344d81fd78f598bdc8eb9457508fe598cdf1f485"
+  },
+  "vpu35_4v.mbn": {
+   "bytes": 2413256,
+   "sha256": "fc2f1ee6bcb4d6d8b18fafe652a06a93908734882bed8f179aac00fe8c7cdf65"
+  }
+ },
+ "directory": "qcom/sm8750/xiaomi/piano"
+}

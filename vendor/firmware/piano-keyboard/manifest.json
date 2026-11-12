@@ -1,0 +1,13 @@
+{
+ "schema_version": 1,
+ "component": "piano-keyboard",
+ "rom": "OS4.0.6.0.XPYCNXM",
+ "source": "stock odm-tree/firmware: MCU_Upgrade.bin<-MCU_Upgrade.bin",
+ "files": {
+  "MCU_Upgrade.bin": {
+   "bytes": 83436,
+   "sha256": "c03d6b650cb85a983359c6686d831875df10ee1206fd31afc1403baefeb7e407"
+  }
+ },
+ "directory": "nanosic"
+}

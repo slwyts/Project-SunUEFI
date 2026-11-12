@@ -7,8 +7,8 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 TOP = ('upstream/linux-piano', 'upstream/Mu-Silicium', 'upstream/simple-init',
-       'upstream/debian-piano-current', 'upstream/piano-firmware-current',
-       'upstream/piano-mesa-current', 'upstream/piano-sensors-current', 'upstream/dtc',
+       'upstream/debian-piano-current', 'upstream/piano-mesa-current',
+       'upstream/piano-sensors-current', 'upstream/dtc',
        'upstream/audioreach-topology', 'upstream/v4l2loopback')
 # Deliberately do not recurse into upstream test suites and fuzz corpora.
 NESTED = {

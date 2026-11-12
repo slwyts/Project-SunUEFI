@@ -4,7 +4,7 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import struct
 import uuid
@@ -44,7 +44,7 @@ PRODUCT_COMPONENTS={
     'touch-product':('PianoGeniSpiPio.c','PianoGeniSpiPio.h','PianoTouchNvt.c','PianoTouchNvt.h',
                      'PianoTouchMatrix.c','PianoTouchMatrix.h','PianoTouchService.c','PianoTouchService.h'),
 }
-PIANO_FIRMWARE='upstream/piano-firmware-current/firmware'
+PIANO_FIRMWARE='vendor/firmware'
 POGO_FIRMWARE_NAME='nanosic/MCU_Upgrade.bin'
 # Indexed by the touch lcd-id level, like firmware-name in the Linux DT
 TOUCH_FIRMWARE_NAMES=(('Csot','novatek/novatek_nt36532_piano_fw_csot.bin'),('Boe','novatek/novatek_nt36532_piano_fw_boe.bin'))
@@ -221,15 +221,19 @@ def fix_product_low_heap(text,dtb):
 
 
 def pinned_firmware(root,name):
-    """One blob from the pinned piano-firmware checkout, checked against its SHA256SUMS"""
-    folder=Path(root)/PIANO_FIRMWARE
-    sums={}
-    for line in (folder/'SHA256SUMS').read_text().splitlines():
-        digest,_,listed=line.partition('  ')
-        if digest and listed:sums[listed.removeprefix('./')]=digest
-    data=(folder/name).read_bytes();digest=hashlib.sha256(data).hexdigest()
-    if sums.get(name)!=digest:raise ValueError(name+' differs from the pinned SHA256SUMS')
-    return data,digest
+    """One blob from the tracked firmware components, named by its rootfs path"""
+    base=Path(root)/PIANO_FIRMWARE
+    for manifest in sorted(base.glob('*/manifest.json')):
+        data=json.loads(manifest.read_text())
+        directory=PurePosixPath(data.get('directory','.'))
+        for filename,item in data['files'].items():
+            if (directory/PurePosixPath(filename)).as_posix()!=name:continue
+            content=(manifest.parent/filename).read_bytes()
+            digest=hashlib.sha256(content).hexdigest()
+            if len(content)!=item['bytes'] or digest!=item['sha256']:
+                raise ValueError(name+' differs from its firmware manifest')
+            return content,digest
+    raise ValueError('Firmware not found in tracked components: '+name)
 
 
 def c_array(name,raw):

@@ -49,7 +49,7 @@ def _tracked_sources(root):
     # This helper is needed while its first implementation is still untracked.
     paths.add('tools/firmware_workspace.py')
     return sorted(p for p in paths if not p.startswith(
-        ('uefi/platforms/pianoProductPkg/', 'vendor/firmware/')))
+        ('uefi/platforms/pianoProductPkg/',)))
 
 
 def _check_repo(path, commit):
@@ -152,9 +152,8 @@ def prepare(root=ROOT):
         _link(workspace / relative, root / relative)
     for relative in ('.venv', 'build/host-tools'):
         _link(workspace / relative, root / relative)
-    # Display preparation and the keyboard/touch firmware only read these
-    # fixed reference sources
-    for relative in ('upstream/linux-piano', 'upstream/dtc', 'upstream/piano-firmware-current'):
+    # Display preparation reads the pinned kernel tree.
+    for relative in ('upstream/linux-piano', 'upstream/dtc'):
         if (root / relative).is_dir():
             _link(workspace / relative, root / relative)
     return workspace

@@ -20,6 +20,41 @@ COMPONENTS = (
     ('hyperos4-adsp', 'modem-tree', ('adsp',)),
     ('hyperos4-cdsp', 'modem-tree', ('cdsp',)),
 )
+# Files whose Linux name differs from the stock one, keyed by the path the
+# rootfs needs. Provenance for the renames is in the component README.
+RENAMED = (
+    ('piano-ath12k', 'ath12k/PEACH/hw2.0', 'modem-tree', (
+        ('amss.bin', 'peach/amss20.bin'),
+        ('aux_ucode.bin', 'peach/aux_ucode20.elf'),
+        ('board.bin', 'peach/bd_p81.elf'),
+        ('m3.bin', 'peach/phy_ucode20.elf'),
+        ('qdss_trace_config.bin', 'peach/qdss_trace_config_v2.cfg'),
+        ('regdb.bin', 'peach/regdb_xiaomi.bin'),
+        ('tmel.bin', 'tmel_peach_20.elf'),
+    )),
+    ('piano-bluetooth', 'qca', 'bluetooth-tree', (
+        ('brhbtfw20.tlv', 'brhbtfw20.tlv'),
+        ('brhperifw20.tlv', 'brhperifw20.tlv'),
+        ('brhbtnv20.b2e', 'brhbtnv20.b2e'),
+    )),
+    ('piano-qcom', 'qcom', 'vendor-tree/firmware', (
+        ('gen80000_aqe.fw', 'gen80000_aqe.fw'),
+        ('gen80000_sqe.fw', 'gen80000_sqe.fw'),
+        ('gen80000_gmu.bin', 'gen80000_gmu.bin'),
+    )),
+    ('piano-qcom-vpu', 'qcom/sm8750/xiaomi/piano', 'odm-tree/firmware', (
+        ('gen80000_zap.mbn', 'gen80000_zap.mbn'),
+        ('vpu35_4v.mbn', 'vpu35_4v.mbn'),
+        ('fs19xx.fsm', 'fs19xx.fsm'),
+    )),
+    ('piano-touch', 'novatek', 'odm-tree/firmware', (
+        ('novatek_nt36532_piano_fw_boe.bin', 'novatek_nt36532_piano_fw_boe.bin'),
+        ('novatek_nt36532_piano_fw_csot.bin', 'novatek_nt36532_piano_fw_csot.bin'),
+    )),
+    ('piano-keyboard', 'nanosic', 'odm-tree/firmware', (
+        ('MCU_Upgrade.bin', 'MCU_Upgrade.bin'),
+    )),
+)
 NON_HLOS = 'stock modem /image (Android /vendor/firmware_mnt/image)'
 # Goodix models live as exported arrays in the stock HAL; the offsets come from
 # the ELF symbol table, so they are read rather than hardcoded.
@@ -130,7 +165,7 @@ def files_for(trees, prefixes):
     return wanted
 
 
-def write_component(name, rom, source, payload, extra_notes=None):
+def write_component(name, rom, source, payload, extra_notes=None, directory='.'):
     folder = FIRMWARE / name
     folder.mkdir(parents=True, exist_ok=True)
     for stale in folder.iterdir():
@@ -138,6 +173,8 @@ def write_component(name, rom, source, payload, extra_notes=None):
             stale.unlink()
     manifest = {'schema_version': 1, 'component': name,
                 'rom': rom, 'source': source, 'files': {}}
+    if directory != '.':
+        manifest['directory'] = directory
     for filename, data in sorted(payload.items()):
         (folder / filename).write_bytes(data)
         manifest['files'][filename] = {'bytes': len(data), 'sha256': digest(data)}
@@ -169,6 +206,22 @@ def main(argv=None):
         print(f'{component}: {len(payload)} files from {tree}')
         if not args.dry_run:
             write_component(component, args.rom, NON_HLOS, payload)
+        results[component] = len(payload)
+
+    # Components whose Linux names differ from their stock names.
+    for component, directory, tree, mapping in RENAMED:
+        source = base / tree
+        payload = {}
+        for filename, stock_name in mapping:
+            path = source / stock_name
+            if not path.is_file():
+                raise SystemExit(f'Missing stock file for {component}: {stock_name}')
+            payload[filename] = path.read_bytes()
+        print(f'{component}: {len(payload)} files from {tree} -> {directory}')
+        if not args.dry_run:
+            names = ', '.join(f'{a}<-{b}' for a, b in mapping)
+            write_component(component, args.rom,
+                            f'stock {tree}: {names}', payload, directory=directory)
         results[component] = len(payload)
 
     # The Goodix secure program is shipped split; the stock MDT header names the

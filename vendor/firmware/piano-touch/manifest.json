@@ -1,0 +1,17 @@
+{
+ "schema_version": 1,
+ "component": "piano-touch",
+ "rom": "OS4.0.6.0.XPYCNXM",
+ "source": "stock odm-tree/firmware: novatek_nt36532_piano_fw_boe.bin<-novatek_nt36532_piano_fw_boe.bin, novatek_nt36532_piano_fw_csot.bin<-novatek_nt36532_piano_fw_csot.bin",
+ "files": {
+  "novatek_nt36532_piano_fw_boe.bin": {
+   "bytes": 245760,
+   "sha256": "b7999389d49decb14019e24ce68c6fbb0a388e26391b9b0ab913e285c5e44c6b"
+  },
+  "novatek_nt36532_piano_fw_csot.bin": {
+   "bytes": 245760,
+   "sha256": "14b30bb7799d273f6c5d967376694c2cbd3056f3939135ceda70ebec64abfa7a"
+  }
+ },
+ "directory": "novatek"
+}

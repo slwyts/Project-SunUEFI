@@ -85,15 +85,20 @@
     ]
   },
   "firmware": {
-    "source": "upstream/piano-firmware-current",
-    "commit": "05fc37c09ca8146eecfc4920f8485479db140ae5",
     "manifest": "firmware/SHA256SUMS",
     "overlays": [
       "vendor/firmware/hyperos4-adsp/manifest.json",
       "vendor/firmware/hyperos4-cdsp/manifest.json",
       "vendor/firmware/hyperos4-fingerprint/manifest.json",
-      "vendor/firmware/piano-display/manifest.json"
-    ]
+      "vendor/firmware/piano-ath12k/manifest.json",
+      "vendor/firmware/piano-bluetooth/manifest.json",
+      "vendor/firmware/piano-display/manifest.json",
+      "vendor/firmware/piano-keyboard/manifest.json",
+      "vendor/firmware/piano-qcom-vpu/manifest.json",
+      "vendor/firmware/piano-qcom/manifest.json",
+      "vendor/firmware/piano-touch/manifest.json"
+    ],
+    "components": "vendor/firmware"
   },
   "mesa": {
     "source": "upstream/piano-mesa-current",

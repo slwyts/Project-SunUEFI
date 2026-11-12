@@ -10,7 +10,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
 INC = ROOT / "upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include"
-FIRMWARE = ROOT / "upstream/piano-firmware-current/firmware/novatek"
+FIRMWARE = ROOT / "vendor/firmware/piano-touch"
 IMAGES = [FIRMWARE / "novatek_nt36532_piano_fw_csot.bin", FIRMWARE / "novatek_nt36532_piano_fw_boe.bin"]
 
 
