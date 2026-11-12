@@ -89,9 +89,8 @@ def build(root, recipe, output, resume=False):
         if not (work / '.sunuefi-built').exists():
             verify_sources(guest, folder)
             flags = ' --noextract' if resume and (work / 'src').is_dir() else ''
-            with package_build.environment(root) as settings:
+            with package_build.environment(root, user='sunuefi-package') as settings:
                 settings['MAKEFLAGS'] = '-j' + str(package_build.default_jobs())
-                settings['CCACHE_UMASK'] = '000'
                 guest(['runuser', '-u', 'sunuefi-package', '--', 'env',
                        *package_build.arguments(settings), 'bash', '-c',
                        'cd "$1"; makepkg --force --noconfirm --nocheck --nodeps' + flags, 'makepkg', folder])

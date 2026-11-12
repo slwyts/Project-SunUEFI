@@ -157,16 +157,24 @@ def native_tools():
 
 
 @contextmanager
-def environment(rootfs):
+def environment(rootfs, user=None):
     """Only compiler/linker/make run as host ELF; target programs may use binfmt."""
     rootfs = Path(rootfs).resolve()
     cross = platform.machine() not in ('aarch64', 'arm64')
     if cross and rootfs == Path('/'):
         raise ValueError('ARM64 package builds on x86 need --sysroot; QEMU compilation is not used')
-    cache = Path(os.environ.get('CCACHE_DIR', ROOT / 'build/ccache')).resolve()
+    uid, gid = os.getuid(), os.getgid()
+    if user is not None:
+        accounts = [line.split(':') for line in (rootfs / 'etc/passwd').read_text().splitlines()]
+        account = next((row for row in accounts if row[0] == user), None)
+        if account is None:
+            raise ValueError('Package build account is missing: ' + user)
+        uid, gid = int(account[2]), int(account[3])
+    # Existing kernel caches contain root-owned subdirectories. A writable top
+    # directory does not make those usable by makepkg's unprivileged account.
+    cache = Path(os.environ.get('CCACHE_DIR', ROOT / 'build/ccache')).resolve() / 'packages' / str(uid)
     cache.mkdir(parents=True, exist_ok=True)
-    # makepkg runs as an unprivileged build user; no product files use this mode.
-    cache.chmod(0o1777)
+    os.chown(cache, uid, gid)
     mounts = []
 
     def bind(source, target):
@@ -183,7 +191,7 @@ def environment(rootfs):
         cache_path = str(cache)
         path = '/usr/lib/ccache:/usr/lib/ccache/bin:/usr/sbin:/usr/bin:/sbin:/bin'
         result = {'CCACHE_MAXSIZE': os.environ.get('CCACHE_MAXSIZE', '8G'),
-                  'CCACHE_UMASK': '000', 'CCACHE_COMPILERCHECK': 'content'}
+                  'CCACHE_COMPILERCHECK': 'content'}
         if rootfs != Path('/'):
             cache_path = '/var/cache/sunuefi-ccache'
             bind(cache, rootfs / cache_path.lstrip('/'))

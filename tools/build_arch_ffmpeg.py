@@ -139,9 +139,8 @@ def build(root, output, resume=False):
                           capture_output=True).returncode:
             guest(['useradd', '-m', 'sunuefi-ffmpeg'])
         guest(['chown', '-R', 'sunuefi-ffmpeg:sunuefi-ffmpeg', '/var/tmp/sunuefi-ffmpeg'])
-        with package_build.environment(root) as settings:
+        with package_build.environment(root, user='sunuefi-ffmpeg') as settings:
             settings['MAKEFLAGS'] = '-j' + str(package_build.default_jobs(768))
-            settings['CCACHE_UMASK'] = '000'
             guest(['runuser', '-u', 'sunuefi-ffmpeg', '--', 'env',
                    *package_build.arguments(settings), 'bash', '-c',
                    'cd /var/tmp/sunuefi-ffmpeg && makepkg --noconfirm --nocheck --nodeps'])
