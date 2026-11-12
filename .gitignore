@@ -1,8 +1,8 @@
-private/
-upstream/
-.venv/
-build/
-artifacts/
+/private/
+/upstream/
+/.venv/
+/build/
+/artifacts/
 uefi/platforms/pianoGuiPkg/
 uefi/platforms/pianoLinuxPkg/
 uefi/platforms/pianoProductPkg/
