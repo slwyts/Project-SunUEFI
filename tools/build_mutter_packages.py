@@ -16,7 +16,7 @@ import sys
 import tarfile
 
 import build_gsd_packages as debian
-from host import package_build
+from desktop import package_build
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_VERSION = '48.7-0+deb13u1'

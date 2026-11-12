@@ -14,7 +14,7 @@ import sys
 import tarfile
 import tempfile
 from build_piano_runtime_helpers import source_patches
-from host import package_build
+from desktop import package_build
 
 ROOT = Path(__file__).resolve().parents[1]
 PATCH = ROOT / 'patches/gnome-settings-daemon/0001-power-optional-device-ambient-profile.patch'

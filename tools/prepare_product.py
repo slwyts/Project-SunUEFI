@@ -62,7 +62,7 @@ PRODUCT_FLAGS=('PIANO_USB_SERVICE=1','PIANO_USB_EP0=1','PIANO_USB_FASTBOOT=1','P
 NATIVE_NAMES=vendor_inputs.NATIVE_NAMES
 EARLY_DXE_SOURCE='vendor/piano/early-dxe/EnvDxeEnhanced'
 EARLY_DXE_NAMES=('EnvDxeEnhanced.inf','EnvDxeEnhanced.efi','EnvDxeEnhanced.depex')
-EARLY_DXE_PROVENANCE_SHA256='486da704630a5f2357a075554010350b8015df84f1aeb2e36bbf9b4a7695d46d'
+EARLY_DXE_PROVENANCE_SHA256='7395e9f88c3810aff7014d661569a32faba248c373d68a12c210c02f3c50a694'
 DISK_MODULES=('MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf',
     'MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf',
     'MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf','FatPkg/EnhancedFatDxe/Fat.inf')

@@ -617,10 +617,10 @@ def execute(record):
                  '--suite', cfg['debian']['suite'], '--output', out, '--mesa-dir', record['mesa_dir']])
         if not (out / 'COMPLETE').is_file() or rootfs.stat().st_uid: raise ValueError('Base desktop build did not complete with native guest ownership')
         put(rootfs, 'usr/sbin/policy-rc.d', '#!/bin/sh\nexit 101\n'); (rootfs / 'usr/sbin/policy-rc.d').chmod(0o755)
-        from host import build_upower_packages
+        from desktop import build_upower_packages
         upower_folder = ROOT / 'build/upower'
         upower = build_upower_packages.build(upower_folder, rootfs)
-        from host import build_pipewire_packages
+        from desktop import build_pipewire_packages
         pipewire_folder = ROOT / 'build/pipewire'
         run([ROOT / 'build.sh', 'pipewire', '--rootfs', rootfs, '--output', pipewire_folder])
         pipewire = build_pipewire_packages.reusable(
@@ -639,7 +639,7 @@ def execute(record):
             run([sys.executable, ROOT / 'tools/build_mutter_packages.py', '--output',
                  mutter_folder.parent, '--sysroot', rootfs])
         mutter = mutter_packages(mutter_folder) if desktop == 'gnome' else {'packages': {}}
-        from host import build_gdm_packages as gdm_builder
+        from desktop import build_gdm_packages as gdm_builder
         gdm_folder = ROOT / 'build/gdm'
         gdm = {'packages': {}}
         if desktop == 'gnome':

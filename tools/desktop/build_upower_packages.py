@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import build_gsd_packages as debian
 from build_chroot import guest_command
 from build_piano_runtime_helpers import source_patches
-from host import package_build
+from desktop import package_build
 
 SOURCE_VERSION = '1.90.9-1'
 PACKAGE_VERSION = SOURCE_VERSION + '+sunuefi1'

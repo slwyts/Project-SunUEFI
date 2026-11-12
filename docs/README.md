@@ -41,7 +41,3 @@
 | [`devel/linux/`](devel/linux/kernel.md) | 内核配置、系统服务、SteamOS |
 
 发行版配方在 [BSP 配置包](../linux/bsp/README.md)、[根系统装配](../linux/rootfs/README.md)和[桌面配置](../linux/desktops/README.md)。第三方来源见 [THIRD_PARTY.md](../THIRD_PARTY.md)。
-
-## 历史记录
-
-[`archive/`](archive/README.md) 保存开发过程中的设计和测试记录，只读，不代表当前实现。

@@ -258,7 +258,7 @@ def desktop_service(root):
 
 def install_debian_desktop(root, runtime, output):
     from build_release_rootfs import build_devices, build_resolver
-    from host import package_build
+    from desktop import package_build
     cfg = json.loads((ROOT / 'config/fingerprint.json').read_text())['desktop']['libfprint']
     output.mkdir(parents=True, exist_ok=True)
     work = root / 'var/tmp/sunuefi-libfprint'

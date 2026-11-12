@@ -11,7 +11,7 @@ import subprocess
 
 import build_piano_runtime_helpers as runtime
 import build_piano_fingerprint
-from host import prepare_kernel_llvm
+from desktop import prepare_kernel_llvm
 from prepare_linux_modules import modinfo
 
 ROOT = Path(__file__).resolve().parents[1]

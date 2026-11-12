@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import tarfile
 import urllib.request
-from host import package_build
+from desktop import package_build
 
 import prepare_ffmpeg_source as source
 

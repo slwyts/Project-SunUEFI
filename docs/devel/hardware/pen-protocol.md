@@ -49,7 +49,7 @@
 | `stylus_report` `0x86ab0` | 将两路坐标交换写入最终对象 `0/4`；working-state为1时交换写入 tilt `8/12` |
 | `get_stylus_data` `0x859e0` | 返回 `stylus_total_data`（60096字节），不是最终 `stylus_point`（36字节） |
 
-公开模块 `tools/piano_pen_protocol.py` 解析源码已定义的 raw metadata/矩阵、核验外层 checksum，并读取外部 ini；不内嵌原厂文件，也不生成坐标或 input 设备。`factory_tilt_component` 只还原接收已算 Tip/Ring 差值的 `calculate_tilt` 分段计算，要求调用者显式提供 runtime resolution，拒绝超出原函数 int32 中间值范围的输入。它没有应用配置里的 `tilt_calibration_enabled/threshold/rate`，没有实现 `calibrate_coordinate_tilt`、坐标解算或最终 report，因此不能当作最终笔 tilt；尚未与原厂执行结果对照。反汇编与字段记录保存在同一 private 目录。
+公开模块 `tools/dev/piano_pen_protocol.py` 解析源码已定义的 raw metadata/矩阵、核验外层 checksum，并读取外部 ini；不内嵌原厂文件，也不生成坐标或 input 设备。`factory_tilt_component` 只还原接收已算 Tip/Ring 差值的 `calculate_tilt` 分段计算，要求调用者显式提供 runtime resolution，拒绝超出原函数 int32 中间值范围的输入。它没有应用配置里的 `tilt_calibration_enabled/threshold/rate`，没有实现 `calibrate_coordinate_tilt`、坐标解算或最终 report，因此不能当作最终笔 tilt；尚未与原厂执行结果对照。反汇编与字段记录保存在同一 private 目录。
 
 ## 标准输入接入前的缺项
 
@@ -122,13 +122,13 @@ v2方法 `+0x30=0x26dec` 是另一条路径：HAL `0x26804..0x26834` 以cmd2/arg
 使用调用者提供的文件，不随源码分发原厂 HAL 或 ini：
 
 ```sh
-python3 tools/piano_pen_protocol.py metadata /path/to/original-spi-payload.bin
-python3 tools/piano_pen_protocol.py config /path/to/piano_nova_csot_thp_config.ini
-python3 tools/piano_pen_protocol.py stylus-point /path/to/36-byte-solved-object.bin
-python3 tools/piano_pen_protocol.py hal-point /path/to/64-byte-factory-point.bin
-python3 tools/piano_pen_protocol.py kernel-point /path/to/56-byte-kernel-point.bin
-python3 tools/piano_pen_protocol.py runtime-hwinfo /path/to/41-byte-hwinfo-prefix.bin
-python3 tools/piano_pen_protocol.py runtime-context /path/to/48-byte-context-config.bin
+python3 tools/dev/piano_pen_protocol.py metadata /path/to/original-spi-payload.bin
+python3 tools/dev/piano_pen_protocol.py config /path/to/piano_nova_csot_thp_config.ini
+python3 tools/dev/piano_pen_protocol.py stylus-point /path/to/36-byte-solved-object.bin
+python3 tools/dev/piano_pen_protocol.py hal-point /path/to/64-byte-factory-point.bin
+python3 tools/dev/piano_pen_protocol.py kernel-point /path/to/56-byte-kernel-point.bin
+python3 tools/dev/piano_pen_protocol.py runtime-hwinfo /path/to/41-byte-hwinfo-prefix.bin
+python3 tools/dev/piano_pen_protocol.py runtime-context /path/to/48-byte-context-config.bin
 ```
 
 `metadata` 的输入从 `frame_data_packet` 开始。Linux `/proc/nvt_thp_stream` 每条记录的32字节 record header 和257字节 SPI/event前缀须先去掉，不能直接传整个流；当前捕获路径的最大 payload 是7934字节。解析器核验外层 additive checksum 与长度补码，且要求 metadata 和全部 Tip/Ring 矩阵位于该校验范围内。另一个尾部 pen checksum、hand packet 暂不解析。Android 内核可能已将 additive checksum 字段改写为 CRC32，不能把这样的 HAL mmap 帧混入这个输入格式。

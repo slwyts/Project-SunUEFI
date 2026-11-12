@@ -1,12 +1,13 @@
-.PHONY: sources check uefi kernel-source
+.PHONY: sources check uefi kernel-source bsp rootfs
 
 PYTHON ?= python3
 
+# Thin aliases kept for muscle memory. ./build.sh remains the only entry point.
 sources:
-	$(PYTHON) tools/prepare_sources.py
+	./build.sh sources
 
 check:
-	$(PYTHON) tools/check_host.py --group portable
+	./build.sh check
 
 uefi:
 	$(PYTHON) tools/prepare_sources.py --check
@@ -17,7 +18,6 @@ kernel-source:
 	$(PYTHON) tools/prepare_sources.py --check
 	$(PYTHON) tools/prepare_release_kernel.py
 
-.PHONY: bsp rootfs
 bsp:
 	./build.sh bsp inspect --target debian
 

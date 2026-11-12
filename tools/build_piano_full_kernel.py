@@ -18,7 +18,7 @@ import uuid
 
 from build_kernel import image_info
 from prepare_linux_modules import modinfo
-from host import prepare_kernel_llvm
+from desktop import prepare_kernel_llvm
 
 ROOT=Path(__file__).resolve().parents[1]
 COMMIT=json.loads((ROOT/'config/release.json').read_text())['kernel']['public_baseline']
@@ -261,7 +261,7 @@ def seal_modules(folder,release,required_builtin=()):
 
 
 def main():
-    from host.package_build import default_jobs
+    from desktop.package_build import default_jobs
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--jobs',type=int,default=default_jobs());parser.add_argument('--root',default='ram');parser.add_argument('--configure-only',action='store_true')
     parser.add_argument('--worktree',type=Path,default=WORK)
     parser.add_argument('--commit',default=COMMIT)
@@ -308,7 +308,7 @@ def main():
     source_base=verify_source(work,commit)
     tree=text(['git','rev-parse','HEAD^{tree}'],work)
     compiler_checkout(work,compiler,commit,tree)
-    hashes={str(path.relative_to(ROOT)):sha(path)for path in (ROOT/'config/release.json',bluetooth,filesystem,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/host/prepare_kernel_llvm.py',ROOT/'tools/host/package_build.py',ROOT/'config/kernel-llvm.json')}
+    hashes={str(path.relative_to(ROOT)):sha(path)for path in (ROOT/'config/release.json',bluetooth,filesystem,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/desktop/prepare_kernel_llvm.py',ROOT/'tools/desktop/package_build.py',ROOT/'config/kernel-llvm.json')}
     if marker.exists():
         previous=json.loads(marker.read_text())
         if (not args.configure_only and previous.get('status')=='HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED' and

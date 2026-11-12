@@ -19,7 +19,7 @@ import build_arch_package
 from build_mutter_packages import align_development_cohorts
 from build_chroot import guest_command
 from build_piano_runtime_helpers import source_patches
-from host import package_build
+from desktop import package_build
 
 SERIES = ROOT / 'patches/gdm/48.0/series.json'
 RUNTIME = {'gdm3', 'libgdm1', 'gir1.2-gdm-1.0'}

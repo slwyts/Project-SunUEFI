@@ -21,7 +21,7 @@ import build_mutter_packages
 from build_chroot import guest_command
 from build_piano_runtime_helpers import source_patches
 from prepare_steamos_rootfs import download
-from host import package_build
+from desktop import package_build
 
 MODULES = ('glib-2.0', 'gobject-2.0', 'gmodule-2.0', 'gio-2.0', 'gio-unix-2.0',
            'gstreamer-1.0', 'gstreamer-base-1.0', 'gstreamer-video-1.0',

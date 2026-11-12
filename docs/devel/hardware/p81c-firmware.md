@@ -78,7 +78,7 @@ Linux 下一步宜先通过原厂 GATT/输入日志确认笔的硬件草案与 M
 ## 复现分析
 
 ```sh
-python3 tools/host/inspect_p81c_firmware.py \
+python3 tools/dev/inspect_p81c_firmware.py \
   vendor/piano-pen/p81c/0.0.32/XW_P81C_Pen_FW_User_V0.0.32.img \
   --output build/p81c-inspection/manifest.json \
   --export-dir build/p81c-inspection/disassembler-input

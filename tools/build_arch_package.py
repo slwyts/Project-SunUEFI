@@ -13,7 +13,7 @@ import time
 
 from build_nyarch_apps import ROOT, guest_environment, run
 from build_release_rootfs import build_resolver
-from host import package_build
+from desktop import package_build
 
 
 def install_cached(root, output):

@@ -18,7 +18,7 @@ import struct
 import subprocess
 
 from prepare_linux_modules import modinfo
-from host import prepare_kernel_llvm
+from desktop import prepare_kernel_llvm
 
 ROOT=Path(__file__).resolve().parents[1]
 PUBLIC_COMMIT='a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45'

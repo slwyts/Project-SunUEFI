@@ -17,7 +17,7 @@ import sys
 import prepare_ffmpeg_source as source
 from build_nyarch_apps import guest_environment
 from build_release_rootfs import build_resolver
-from host import package_build
+from desktop import package_build
 
 ROOT = Path(__file__).resolve().parents[1]
 

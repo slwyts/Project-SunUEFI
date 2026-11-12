@@ -14,7 +14,7 @@
 
 ## 原厂提取与原生模块
 
-- `tools/capture_device.py` 从已取得 root 权限的平板提取原厂分区与设备树，需要指定 `--output` 和 `--serial`。
+- `tools/dev/capture_device.py` 从已取得 root 权限的平板提取原厂分区与设备树，需要指定 `--output` 和 `--serial`。
 - `vendor/piano/` 中的原生 PE、DEPEX 和 DTB 已经过清理，移除了主机专属的序列号、种子和启动参数，由 `tools/piano_vendor_inputs.py` 固定哈希并核对。
 - 历史 GPT 采集仅供测试重放使用，产品固件直接读取当前设备的 GPT，不与历史整表快照比对。
 

@@ -3,7 +3,6 @@ upstream/
 .venv/
 build/
 artifacts/
-bootprofiles/
 uefi/platforms/pianoGuiPkg/
 uefi/platforms/pianoLinuxPkg/
 uefi/platforms/pianoProductPkg/

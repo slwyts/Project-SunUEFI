@@ -13,7 +13,7 @@ HAL or firmware ini is embedded or needed at link time.
 
 The packaged profiles use Project SunUEFI's format_version=1 numeric facts:
 only the decoder's scalar calibration keys, two six-point edge/tilt curves,
-and the separable 40/60-axis maps. tools/extract_piano_pen_calibration.py derives
+and the separable 40/60-axis maps. tools/dev/extract_piano_pen_calibration.py derives
 them from an ini supplied by the caller and records the ROM and source SHA256.
 The original expanded factory ini remains a supported input. Touch LCDid 0
 selects CSOT and LCDid 1 selects BOE; the display-panel label is independent.
