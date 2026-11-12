@@ -200,8 +200,20 @@ class RamHardwareTests(unittest.TestCase):
             full_stage.stage(dest, source)
             custom = dest / 'etc/piano/user.conf'
             custom.write_text('keep=yes\n')
+            for base in ('etc/systemd/system', 'usr/lib/systemd/system'):
+                for unit in ('display-manager', 'gdm', 'gdm3', 'sddm'):
+                    dropin = dest / base / (unit + '.service.d')
+                    dropin.mkdir(parents=True, exist_ok=True)
+                    (dropin / '20-piano-display.conf').write_text(
+                        '[Unit]\nRequires=piano-display.service\nAfter=piano-display.service\n')
+                    (dropin / '90-user.conf').write_text('[Service]\nNice=1\n')
             result = stage.build(self.path / 'staged-adapters', source, dest)
             self.assertEqual(custom.read_text(), 'keep=yes\n')
+            for base in ('etc/systemd/system', 'usr/lib/systemd/system'):
+                for unit in ('display-manager', 'gdm', 'gdm3', 'sddm'):
+                    dropin = dest / base / (unit + '.service.d')
+                    self.assertFalse((dropin / '20-piano-display.conf').exists())
+                    self.assertTrue((dropin / '90-user.conf').is_file())
             for name in result['removed_paths']:
                 self.assertFalse((dest / name).exists())
                 self.assertFalse((dest / name).is_symlink())

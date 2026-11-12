@@ -38,9 +38,11 @@ def removed_paths(rootfs):
              'usr/lib/piano/piano-adsp-start',
              'usr/lib/systemd/system/adsprpcd-sensorspd.service.d/10-piano-adsp.conf',
              'usr/lib/systemd/system/bluetooth.service.d/20-piano-address.conf',
-             'etc/systemd/system/display-manager.service.d/20-piano-display.conf',
              'usr/lib/systemd/system/upower.service.d/20-piano-keyboard.conf',
              'etc/piano/display.conf'}
+    for base in ('etc/systemd/system', 'usr/lib/systemd/system'):
+        for unit in ('display-manager', 'gdm', 'gdm3', 'sddm'):
+            paths.add(base + '/' + unit + '.service.d/20-piano-display.conf')
     for name in REMOVED_MODULE_LISTS:
         paths.add('etc/modules-load.d/piano-' + name + '.conf')
     for name in REMOVED_SCRIPTS:
