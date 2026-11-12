@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "repository_path": "upstream/linux-piano",
+  "repository_path": "build/kernel-sources/linux-piano.git",
   "profiles": {
     "stable": {
       "branch": "piano-7.2.6",

@@ -64,7 +64,7 @@ class FirmwareWorkspaceTests(unittest.TestCase):
         (self.root / '.gitignore').write_text('upstream/\nbuild/\nartifacts/\n.venv/\nuefi/platforms/pianoProductPkg/\n')
         git(self.root, 'add', '.')
         git(self.root, 'commit', '-qm', 'test: firmware inputs')
-        for directory in ('.venv', 'build/host-tools', 'upstream/linux-piano', 'upstream/dtc'):
+        for directory in ('.venv', 'build/host-tools', 'upstream/dtc'):
             (self.root / directory).mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):

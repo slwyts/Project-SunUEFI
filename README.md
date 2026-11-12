@@ -151,4 +151,4 @@ docs/        文档
 
 ## 站在谁的肩膀上
 
-上游源码固定在 `upstream/`，我们的修改放在 `patches/`、`uefi/`、`linux/` 和构建工具里。UEFI 部分基于 [EDK2](https://github.com/tianocore/edk2) 和 [Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium)，启动菜单来自 [simple-init](https://github.com/BigfootACA/simple-init)。内核从 [linux-piano](https://github.com/blu-sharky/linux-piano) 起步，Debian 根系统来自 [debian-piano](https://github.com/blu-sharky/debian-piano)，设备固件来自 [piano-firmware](https://github.com/blu-sharky/piano-firmware)，图形用户空间来自 [piano-mesa](https://github.com/blu-sharky/piano-mesa)。完整列表和各项目承担的部分见[上游项目](docs/devel/upstreams.md)。
+上游源码固定在 `upstream/`，我们的修改放在 `patches/`、`uefi/`、`linux/` 和构建工具里。UEFI 部分基于 [EDK2](https://github.com/tianocore/edk2) 和 [Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium)，启动菜单来自 [simple-init](https://github.com/BigfootACA/simple-init)。内核从 [linux-piano](https://github.com/blu-sharky/linux-piano) 起步，Debian 根系统来自 [debian-piano](https://github.com/blu-sharky/debian-piano)，设备固件取自官方 OTA，按组件存放在 `vendor/firmware`，图形用户空间来自 [piano-mesa](https://github.com/blu-sharky/piano-mesa)。完整列表和各项目承担的部分见[上游项目](docs/devel/upstreams.md)。

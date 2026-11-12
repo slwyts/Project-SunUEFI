@@ -127,9 +127,10 @@ def ensure_repository(root, repository, policy):
         if not is_repository(repo):
             raise ValueError('Expected an explicit kernel repository root')
     else:
-        repo = root / 'upstream/linux-piano'
+        # The kernel checkout is not tracked: only a disposable object cache is
+        # kept under build/, and it is filled from the pinned source URL.
+        repo = root / 'build/kernel-sources/linux-piano.git'
         if not is_repository(repo):
-            repo = root / 'build/kernel-sources/linux-piano.git'
             if not repo.exists():
                 repo.parent.mkdir(parents=True, exist_ok=True)
                 result = subprocess.run(['git', 'init', '--bare', str(repo)], capture_output=True, text=True)

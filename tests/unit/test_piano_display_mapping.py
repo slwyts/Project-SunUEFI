@@ -76,8 +76,6 @@ class DisplayMappingTests(unittest.TestCase):
         old=bytes.fromhex('00100000001f4200');new=bytes.fromhex('00100000001f4000');self.assertIn(old,tree_raw)
         changed[mapping.DTB]=tree_raw.replace(old,new,1)
         with self.assertRaisesRegex(ValueError,'exact reg'):mapping.validate(changed,native)
-        changed=dict(inputs);changed[mapping.DTS]=inputs[mapping.DTS].replace(b'0x1f4200',b'0x1f4000')
-        with self.assertRaisesRegex(ValueError,'Kernel resource'):mapping.validate(changed,native)
         changed=dict(inputs);native_dtb=inputs[mapping.NATIVE_DTB]
         changed[mapping.NATIVE_DTB]=native_dtb.replace(bytes.fromhex('0af2780000002000'),bytes.fromhex('0af2780000001000'),1)
         with self.assertRaisesRegex(ValueError,'CESTA exact'):mapping.validate(changed,native)

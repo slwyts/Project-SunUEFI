@@ -58,7 +58,7 @@ class BootFilesTests(unittest.TestCase):
         self.ramdisk=self.root/'fixture.cpio';self.ramdisk.write_bytes(fake_cpio())
         try:self.stable=self.make_build('stable');self.next=self.make_build('next')
         except ValueError as error:
-            # ./build.sh sources clones upstream/linux-piano with depth 1
+            # the release kernel worktree carries the history these profiles need
             if 'canonical commits unavailable' not in str(error):raise
             self.skipTest('needs linux-piano history from base_commit to commit for both profiles')
     def make_build(self,name):

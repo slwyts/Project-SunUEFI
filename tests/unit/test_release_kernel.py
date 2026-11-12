@@ -321,7 +321,7 @@ class ReleaseKernelTests(unittest.TestCase):
         self.assertEqual(self.git("rev-parse", "HEAD", directory=first_worktree), first["actual_commit"])
         self.assertEqual(self.git("rev-parse", "HEAD", directory=second_worktree), first["actual_commit"])
 
-    def test_empty_kernel_directory_does_not_use_the_enclosing_project_repository(self):
+    def test_kernel_objects_come_from_the_build_cache_not_the_project_repository(self):
         self.git("init", "--quiet", directory=self.root)
         (self.root / ".gitignore").write_text(
             "/build/\n/kernels/\n/local-kernel/\n/patches/\n", encoding="utf-8"
@@ -330,12 +330,6 @@ class ReleaseKernelTests(unittest.TestCase):
         self.git("add", ".gitignore", "project.txt", directory=self.root)
         self.git("commit", "--quiet", "-m", "Project fixture baseline", directory=self.root)
         project_head = self.git("rev-parse", "HEAD", directory=self.root)
-        empty_kernel = self.root / "upstream/linux-piano"
-        empty_kernel.mkdir(parents=True)
-        self.assertEqual(
-            self.git("rev-parse", "--show-toplevel", directory=empty_kernel),
-            str(self.root),
-        )
         cache = self.root / "build/kernel-sources/linux-piano.git"
         cache.parent.mkdir(parents=True)
         # Local cloning is fixture setup only. The prepare wrapper below refuses
@@ -350,7 +344,6 @@ class ReleaseKernelTests(unittest.TestCase):
         self.assertEqual(result["actual_tree"], self.target_tree)
         self.assertEqual(self.git("rev-parse", "HEAD", directory=self.root), project_head)
         self.assertEqual(self.git("status", "--porcelain", directory=self.root), "")
-        self.assertEqual(list(empty_kernel.iterdir()), [])
 
     def test_shallow_public_ancestry_is_fetched_without_unshallow(self):
         # Model a source-only CI clone: the public tip and upstream base objects

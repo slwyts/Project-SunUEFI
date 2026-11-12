@@ -13,7 +13,6 @@ import piano_vendor_inputs as vendor_inputs
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = 'uefi/platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'
 DTB = vendor_inputs.BOARD_DTB
-DTS = 'upstream/linux-piano/arch/arm64/boot/dts/qcom/sm8750.dtsi'
 NATIVE_DTB = vendor_inputs.XBL_DTB
 CLOCK_PE = 'upstream/Mu-Silicium/Binaries/piano/ProductFoundation/ClockDxe/ClockDxe.efi'
 PINS = {
@@ -23,10 +22,6 @@ PINS = {
     # Product staging retains CESTA startup clock refs; the immutable original
     # and exact derivation are checked by piano_inherited_clock.
     CLOCK_PE: 'abb63e6cc5d96dc2c3256f5a09ba0a30216150fa7aea595743d84ef067686f60',
-    DTS: '531d6a6d53c8e23b94e8ba2747386f3265c1930bfa24c8db4f8fd1c0086940e0',
-    'upstream/linux-piano/drivers/clk/qcom/gcc-sm8750.c': '3ac38ce713871b541dd7d4bee7007b14fee36d3a2fc6faa951e7c82fd53da960',
-    'upstream/linux-piano/drivers/clk/qcom/dispcc-sm8750.c': 'd33b53c94c12f6f30118dbb20f5c7714aa14ee3421cec436379425cfee2be164',
-    'upstream/linux-piano/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c': 'f8cf490fe9a74c3deb219b28345b66b54085d4b0eef34f3e7e765465f4dfba99',
     'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include/Library/MemoryMapLib.h': 'c60c4b80e81388d40148cc014a25f22a20a89a1722c6dd0f1e784efa3268816b',
     'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Library/MemoryInitPeiLib/MemoryInitPei.c': 'dced274a5e31484b647e643fa255439a9a6f6eb5fc210671233614ed80ef2edb',
     'upstream/Mu-Silicium/Mu_Basecore/UefiCpuPkg/Library/ArmMmuLib/AArch64/ArmMmuLibCore.c': 'bf3be06245f00c6d1b24b94eb0068f607387780966297070836799fea2aa3521',
@@ -109,13 +104,6 @@ def validate(inputs, native_data, owners=()):
     _, _, native = parse_native(native_data)
     if len(native) != 49:
         raise ValueError('Expected the actual 49-row product table')
-    dts = inputs[DTS].decode()
-    required = ('reg = <0x0 0x00100000 0x0 0x1f4200>;',
-                'reg = <0x0 0x0af00000 0x0 0x20000>;',
-                'reg = <0x0 0x0ae00000 0x0 0x1000>;',
-                'reg = <0x0 0x0ae01000 0x0 0x93000>,')
-    if any(dts.count(value) != 1 for value in required):
-        raise ValueError('Kernel resource bounds changed')
     protected = [(r['name'], (r['base'], r['end'])) for r in native]
     if len(owners) > 64:
         raise ValueError('Too many explicit owners')

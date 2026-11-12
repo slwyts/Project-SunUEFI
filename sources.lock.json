@@ -35,10 +35,6 @@
     "commit": "a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45",
     "url": "https://github.com/blu-sharky/debian-piano.git"
   },
-  "piano-firmware-current": {
-    "commit": "05fc37c09ca8146eecfc4920f8485479db140ae5",
-    "url": "https://github.com/blu-sharky/piano-firmware.git"
-  },
   "piano-mesa-current": {
     "commit": "a89c1e46eef3e161520b084479928aaa5a8e8732",
     "url": "https://github.com/blu-sharky/piano-mesa.git"

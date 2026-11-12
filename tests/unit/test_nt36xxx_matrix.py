@@ -67,6 +67,30 @@ static inline u32 get_unaligned_le32(const void *pointer)
 ''',
 }
 
+SQRT_SOURCE = r'''
+/* Floor square root by shift-and-subtract. */
+unsigned long int_sqrt(unsigned long x)
+{
+	unsigned long b, m, y = 0;
+
+	if (x <= 1)
+		return x;
+
+	for (m = 1UL; (m << 2) <= x && (m << 2) > m; m <<= 2)
+		;
+	while (m != 0) {
+		b = y + m;
+		y >>= 1;
+		if (x >= b) {
+			x -= b;
+			y += m;
+		}
+		m >>= 2;
+	}
+	return y;
+}
+'''
+
 HARNESS = r'''
 #include <errno.h>
 #include <stdint.h>
@@ -466,9 +490,8 @@ class Nt36xxxMatrixTests(unittest.TestCase):
     def setUpClass(cls):
         cls.reason = None
         compiler = shutil.which('cc')
-        sqrt = ROOT / 'upstream/linux-piano/lib/math/int_sqrt.c'
-        if not compiler or not sqrt.is_file():
-            cls.reason = 'Host C compiler or Linux integer square-root source unavailable'
+        if not compiler:
+            cls.reason = 'Host C compiler unavailable'
             return
         cls.workspace = tempfile.TemporaryDirectory(prefix='nt36xxx-matrix-')
         folder = Path(cls.workspace.name)
@@ -482,6 +505,8 @@ class Nt36xxxMatrixTests(unittest.TestCase):
             (headers / name).write_text(text)
         harness = folder / 'matrix-test.c'
         harness.write_text(HARNESS)
+        sqrt_source = folder / 'int-sqrt.c'
+        sqrt_source.write_text(SQRT_SOURCE)
         core = (folder / SOURCE / 'nt36xxx-matrix.c').read_text()
         shortcut = 'if (maximum - minimum < NVT_MATRIX_THRESHOLD / 4)'
         filter_entry = 'static s32 nvt_matrix_filter(struct nvt_matrix *matrix)\n{'
@@ -504,8 +529,8 @@ class Nt36xxxMatrixTests(unittest.TestCase):
         subprocess.run([*flags, *renames, '-c', str(filtered),
                         '-o', str(reference_object)], check=True)
         cls.binary = folder / 'matrix-test'
-        subprocess.run([*flags, str(harness), str(measured),
-                        str(reference_object), str(sqrt),
+        subprocess.run([*flags, str(harness), str(measured), str(sqrt_source),
+                        str(reference_object),
                         '-o', str(cls.binary)], check=True)
 
     @classmethod

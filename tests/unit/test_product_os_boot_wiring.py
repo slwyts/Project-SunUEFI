@@ -169,7 +169,7 @@ class ProductOsBootWiringTests(unittest.TestCase):
                     else:source=source.replace('0x1F5000','0x1F4000')
                     table.write_text(source)
                 elif mutation in ('generator','driver_pin','parser'):
-                    name='tools/piano_display_mapping.py'if mutation=='generator'else 'tools/compose_piano_dtb.py'if mutation=='parser'else 'upstream/linux-piano/drivers/clk/qcom/gcc-sm8750.c'
+                    name='tools/piano_display_mapping.py'if mutation=='generator'else 'tools/compose_piano_dtb.py'if mutation=='parser'else 'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/Library/ArmLib.h'
                     path=root/name;path.write_bytes(path.read_bytes()+b'\n// changed input\n')
                 else:
                     path=root/'build/product/prepared-manifest.json';manifest=json.loads(path.read_text())

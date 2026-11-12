@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-TOP = ('upstream/linux-piano', 'upstream/Mu-Silicium', 'upstream/simple-init',
+TOP = ('upstream/Mu-Silicium', 'upstream/simple-init',
        'upstream/debian-piano-current', 'upstream/piano-mesa-current',
        'upstream/piano-sensors-current', 'upstream/dtc',
        'upstream/audioreach-topology', 'upstream/v4l2loopback')
@@ -32,7 +32,6 @@ def git(path, *args):
 def expected(root):
     lock = json.loads((root / 'sources.lock.json').read_text())
     rows = {'upstream/' + name: value['commit'] for name, value in lock.items()}
-    rows['upstream/linux-piano'] = json.loads((root / 'linux/kernel-profiles.json').read_text())['profiles']['stable']['commit']
     return rows
 
 

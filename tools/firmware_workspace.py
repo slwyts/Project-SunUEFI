@@ -152,8 +152,7 @@ def prepare(root=ROOT):
         _link(workspace / relative, root / relative)
     for relative in ('.venv', 'build/host-tools'):
         _link(workspace / relative, root / relative)
-    # Display preparation reads the pinned kernel tree.
-    for relative in ('upstream/linux-piano', 'upstream/dtc'):
+    for relative in ('upstream/dtc',):
         if (root / relative).is_dir():
             _link(workspace / relative, root / relative)
     return workspace

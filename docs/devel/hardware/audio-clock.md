@@ -93,7 +93,7 @@ mute，并匹配原厂 POST_PMD reset。它未应用／编译／实机运行，�
 | `speaker-mic` | TX DEC2 → DMIC0，Volume=85 | TX |
 | `handset-mic-unprocessed` | TX DEC2 → DMIC1，Volume=85 | TX |
 
-原厂 VA 的 `MSM_DMIC` 与主线的 `VA_DMIC` 都是 DEC mux 的值 0。[原厂 DMIC 枚举](https://github.com/MiCode/vendor_qcom_opensource_audio-kernel/blob/baeb7389997a6f6074dae31ec26565d6c286986e/asoc/codecs/lpass-cdc/lpass-cdc-va-macro.c#L1614) 与本地 `upstream/linux-piano/sound/soc/codecs/lpass-va-macro.c` 同为 ZERO、DMIC0…DMIC7，并在 CFG0 的 shift 4 选择输入；DMIC2/3 可以直接对应，不存在编号偏移。
+原厂 VA 的 `MSM_DMIC` 与主线的 `VA_DMIC` 都是 DEC mux 的值 0。[原厂 DMIC 枚举](https://github.com/MiCode/vendor_qcom_opensource_audio-kernel/blob/baeb7389997a6f6074dae31ec26565d6c286986e/asoc/codecs/lpass-cdc/lpass-cdc-va-macro.c#L1614) 与本地内核源码 `sound/soc/codecs/lpass-va-macro.c` 同为 ZERO、DMIC0…DMIC7，并在 CFG0 的 shift 4 选择输入；DMIC2/3 可以直接对应，不存在编号偏移。
 
 之前 UCM 只开 VA DEC0/DMIC1，Volume=84。主线 Volume 的每格为 1 dB，84 对应 0 dB；98 对应 +14 dB，但原厂98属于 TX handset 路径，不能据此直接给当前 VA 加14 dB。增益增加也会放大底噪。当前 WirePlumber 将两通道 PCM 标为 `[ MONO AUX0 ]`，第二个通道没有路由是既有单麦设计，默认全零本身不说明缺少双麦。
 

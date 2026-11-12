@@ -75,10 +75,10 @@ wrapper 与 SE6 的时钟，GPIO56/57 复用到 SE6；GPIO188 复位和 GPIO3 �
 传输使用 SE6 的 GENI I²C FIFO 接口，1 MHz，由 CPU 轮询，不使用 DMA，
 所以不新增 SMMU 上下文。SE6 必须已经由引导程序载入 I²C 协议固件并开放
 FIFO 接口；如果它只开放 GSI 接口，固件只读取状态、不改动它，键盘在 UEFI
-中不可用，Linux 照常使用。MCU 的 RAM 固件来自固定版本的
-`upstream/piano-firmware-current` 中的 `nanosic/MCU_Upgrade.bin`，也就是
-Linux 根系统使用的同一文件；`tools/prepare_product.py` 按该仓库的
-`firmware/SHA256SUMS` 核对后生成头文件嵌入固件，生成文件不提交。
+中不可用，Linux 照常使用。MCU 的 RAM 固件来自仓库内的
+`vendor/firmware/piano-keyboard/MCU_Upgrade.bin`，也就是 Linux 根系统使用
+的同一文件；`tools/prepare_product.py` 按该组件的清单核对后生成头文件嵌入
+固件，生成文件不提交。
 
 任何一步失败，固件立即释放已经占用的资源，不发布输入设备，只保留音量键
 和电源键。RAM 日志中的 `PIANO_POGO_UNAVAILABLE` 写明失败步骤和原因，
@@ -121,10 +121,9 @@ Linux 根系统使用的同一文件；`tools/prepare_product.py` 按该仓库�
 触控固件按 GPIO100（触控 lcd-id）选择：0 用
 `novatek/novatek_nt36532_piano_fw_csot.bin`，1 用
 `novatek/novatek_nt36532_piano_fw_boe.bin`，与 Linux 设备树的
-`firmware-name` 顺序相同。两份文件来自固定版本的
-`upstream/piano-firmware-current`，`tools/prepare_product.py` 按
-`firmware/SHA256SUMS` 核对后嵌入，`PIANO_TOUCH_FIRMWARE` 日志记录所选
-文件的 SHA-256。
+`firmware-name` 顺序相同。两份文件来自仓库内的
+`vendor/firmware/piano-touch`，`tools/prepare_product.py` 按该组件的清单
+核对后嵌入，`PIANO_TOUCH_FIRMWARE` 日志记录所选文件的 SHA-256。
 
 SE2 只开放 GSI 接口，产品不改写该接口，使用 GPIO40/41/42/43 的模式 0
 软件 SPI，不使用 DMA。保留引脚配置，退出时恢复。运行时通过 GPIO162
