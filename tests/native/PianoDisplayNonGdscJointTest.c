@@ -10,7 +10,7 @@ static void JointMmState(void);
 #include "ActualNonGdscJointFixture.h"
 #undef main
 #include <Library/PrintLib.h>
-#include "../../uefi/core/PianoDisplayClockObserve.h"
+#include "../../uefi/core/display/PianoDisplayClockObserve.h"
 #include "../../uefi/components/display-rail/PianoDisplayNonGdscClock.h"
 #define NPA_BASE 0xcfe00000ULL
 #define VCS_BASE 0xcff00000ULL

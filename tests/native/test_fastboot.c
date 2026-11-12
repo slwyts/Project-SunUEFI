@@ -5,7 +5,7 @@
 #include <string.h>
 #include <openssl/sha.h>
 #undef NULL
-#include "../../uefi/core/PianoFastboot.c"
+#include "../../uefi/core/usb/PianoFastboot.c"
 static char replies[300][65];static unsigned calls;static int fail_send,fail_alloc;
 static void *allocation;static size_t allocation_bytes;
 static struct {void *pointer;size_t bytes;} pools[16];

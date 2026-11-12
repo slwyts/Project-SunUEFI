@@ -100,7 +100,7 @@ class UfsWriteRamAppTests(unittest.TestCase):
         # Staging is mutable between hardware profiles. Build the launch
         # fixture from the canonical source, then add the pre-launch providers
         # whose lifetime the write-only profile must preserve.
-        original = (ROOT/'uefi/core/RamApp.c').read_text().replace(
+        original = (ROOT/'uefi/core/native/RamApp.c').read_text().replace(
             '  Status=gBS->LoadImage (FALSE,ImageHandle',
             '  PianoProbeUfs(Fdt);\n  PianoStartKeys(Fdt);\n  Status=gBS->LoadImage (FALSE,ImageHandle')
         staged_before = RAM_APP.read_text()

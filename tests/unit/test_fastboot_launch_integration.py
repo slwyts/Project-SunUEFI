@@ -1,9 +1,11 @@
 """Four actual translation units, host EFI mocks only; no device or prepare."""
+import sys
 import platform
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from core_source import core_source
 
 ROOT = Path(__file__).resolve().parents[2]
 HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
@@ -21,7 +23,7 @@ class LaunchIntegrationTest(unittest.TestCase):
                 "-I", str(INC), "-I", str(INC / HOST_PROCESSOR_BIND),
                 "-I", str(ROOT / "upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include"),
                 str(ROOT / "tests/native/PianoFastbootLaunchIntegrationTest.c"),
-                *[str(APP / name) for name in (
+                *[str(core_source(name, ROOT)) for name in (
                     "PianoFastboot.c", "PianoFastbootDownloadBlob.c",
                     "PianoFastbootBoot.c", "PianoFastbootLaunch.c")],
                 str(ROOT/'uefi/components/os-boot/PianoCpuInput.c'),"-lcrypto", "-o", binary,

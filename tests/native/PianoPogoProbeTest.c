@@ -8,7 +8,7 @@
 #include <setjmp.h>
 #undef NULL
 #define PIANO_POGO_PROBE_HOST_TEST 1
-#include "../../uefi/core/PianoPogoProbe.c"
+#include "../../uefi/core/board/PianoPogoProbe.c"
 EFI_BOOT_SERVICES *gBS;EFI_DXE_SERVICES *gDS;
 EFI_GUID gEfiCpuArchProtocolGuid={.Data1=1},gEfiMemoryAttributeProtocolGuid={.Data1=2};
 static EFI_BOOT_SERVICES bs;static EFI_DXE_SERVICES ds;static EFI_CPU_ARCH_PROTOCOL cpu;

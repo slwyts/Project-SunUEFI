@@ -1,6 +1,8 @@
+import sys
 import platform
 from pathlib import Path
 import os, subprocess, tempfile, unittest
+from core_source import core_include_flags
 ROOT=Path(__file__).resolve().parents[2];BASE=ROOT/'upstream/Mu-Silicium/Mu_Basecore'
 HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
@@ -10,7 +12,7 @@ class ProductOsControllerTests(unittest.TestCase):
   with tempfile.TemporaryDirectory(prefix='product-os-')as directory:
    exe=Path(directory)/'controller'
    # Host builds take the non-AArch64 branches, EL1 DAIF access traps at EL0
-   cmd=['cc','-U__aarch64__','-std=gnu11','-DNO_MSABI_VA_FUNCS','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-Wno-missing-field-initializers','-Wno-deprecated-declarations','-fsanitize=address,undefined','-fno-pie','-no-pie','-I'+str(inc),'-I'+str(inc/HOST_PROCESSOR_BIND),'-I'+str(crypto),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),'-I'+str(ROOT/'uefi/core'),str(ROOT/'tests/native/PianoProductOsControllerTest.c'),str(ROOT/'uefi/core/PianoProductOsController.c'),str(ROOT/'uefi/components/os-boot/PianoCpuInput.c'),'-lcrypto','-o',str(exe)]
+   cmd=['cc','-U__aarch64__','-std=gnu11','-DNO_MSABI_VA_FUNCS','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-Wno-missing-field-initializers','-Wno-deprecated-declarations','-fsanitize=address,undefined','-fno-pie','-no-pie','-I'+str(inc),'-I'+str(inc/HOST_PROCESSOR_BIND),'-I'+str(crypto),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),*core_include_flags(ROOT),str(ROOT/'tests/native/PianoProductOsControllerTest.c'),str(ROOT/'uefi/core/product/PianoProductOsController.c'),str(ROOT/'uefi/components/os-boot/PianoCpuInput.c'),'-lcrypto','-o',str(exe)]
    build=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(build.returncode,0,build.stdout+build.stderr)
    for case in range(6):
     run=subprocess.run([str(exe),str(case)],capture_output=True,text=True);self.assertEqual(run.returncode,0,f'case{case}\n'+run.stdout+run.stderr)
@@ -18,8 +20,8 @@ class ProductOsControllerTests(unittest.TestCase):
   inc=BASE/'MdePkg/Include';crypto=BASE/'CryptoPkg/Include';fdt=BASE/'MdePkg/Library/BaseFdtLib/libfdt/libfdt'
   with tempfile.TemporaryDirectory(prefix='product-os-joint-')as directory:
    exe=Path(directory)/'joint'
-   sources=[ROOT/'tests/native/PianoProductOsJointTest.c',ROOT/'tests/native/PianoLinuxFdtHost.c',ROOT/'uefi/core/PianoProductOsController.c',ROOT/'uefi/components/os-boot/PianoBootFileSource.c',ROOT/'uefi/components/os-boot/PianoLinuxEfiSession.c',ROOT/'uefi/components/os-boot/PianoCpuInput.c',ROOT/'uefi/core/PianoPanelSelection.c',ROOT/'uefi/core/PianoFastbootBoot.c',ROOT/'uefi/core/PianoProductBootObjects.c']
-   cmd=['cc','-U__aarch64__','-std=gnu11','-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-DNO_MSABI_VA_FUNCS','-DPIANO_PRODUCT_NATIVE_LATE=1','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-Wno-missing-field-initializers','-Wno-deprecated-declarations','-fsanitize=address,undefined','-fno-pie','-no-pie','-I'+str(inc),'-I'+str(inc/HOST_PROCESSOR_BIND),'-I'+str(crypto),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),'-I'+str(ROOT/'uefi/core'),'-I'+str(ROOT/'uefi/handoff/early-memory'),'-I'+str(fdt),*map(str,sources)]
+   sources=[ROOT/'tests/native/PianoProductOsJointTest.c',ROOT/'tests/native/PianoLinuxFdtHost.c',ROOT/'uefi/core/product/PianoProductOsController.c',ROOT/'uefi/components/os-boot/PianoBootFileSource.c',ROOT/'uefi/components/os-boot/PianoLinuxEfiSession.c',ROOT/'uefi/components/os-boot/PianoCpuInput.c',ROOT/'uefi/core/display/PianoPanelSelection.c',ROOT/'uefi/core/usb/PianoFastbootBoot.c',ROOT/'uefi/core/product/PianoProductBootObjects.c']
+   cmd=['cc','-U__aarch64__','-std=gnu11','-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-DNO_MSABI_VA_FUNCS','-DPIANO_PRODUCT_NATIVE_LATE=1','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-Wno-missing-field-initializers','-Wno-deprecated-declarations','-fsanitize=address,undefined','-fno-pie','-no-pie','-I'+str(inc),'-I'+str(inc/HOST_PROCESSOR_BIND),'-I'+str(crypto),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),*core_include_flags(ROOT),'-I'+str(ROOT/'uefi/handoff/early-memory'),'-I'+str(fdt),*map(str,sources)]
    cmd += [str(fdt/name)for name in('fdt.c','fdt_ro.c','fdt_rw.c','fdt_wip.c','fdt_sw.c','fdt_check.c','fdt_empty_tree.c')]+['-lcrypto','-o',str(exe)]
    cmd += ['-I'+str(ROOT/'uefi/components/board-identity'),str(ROOT/'uefi/components/board-identity/PianoBluetoothAddress.c'),
            '-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include'),
@@ -29,5 +31,5 @@ class ProductOsControllerTests(unittest.TestCase):
     run=subprocess.run([str(exe),str(case)],capture_output=True,text=True);self.assertEqual(run.returncode,0,f'case{case}\n'+run.stdout+run.stderr)
  def test_actual_aarch64_syntax(self):
   inc=BASE/'MdePkg/Include';env=os.environ.copy();env['LD_LIBRARY_PATH']=str(TOOLCHAIN/'lib')
-  subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-fshort-wchar','-ffreestanding','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-I'+str(inc),'-I'+str(inc/'AArch64'),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),'-I'+str(ROOT/'uefi/core'),str(ROOT/'uefi/core/PianoProductOsController.c')],env=env,check=True)
+  subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-fshort-wchar','-ffreestanding','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-I'+str(inc),'-I'+str(inc/'AArch64'),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),*core_include_flags(ROOT),str(ROOT/'uefi/core/product/PianoProductOsController.c')],env=env,check=True)
 if __name__=='__main__':unittest.main()

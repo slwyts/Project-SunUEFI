@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 import zlib
+from core_source import core_source
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'uefi/handoff/bootselect'

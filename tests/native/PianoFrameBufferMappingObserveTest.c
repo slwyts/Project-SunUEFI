@@ -8,7 +8,7 @@
 #include <unistd.h>
 #undef NULL
 #define PIANO_FB_MAPPING_HOST_TEST 1
-#include "../../uefi/core/PianoFrameBufferMappingObserve.c"
+#include "../../uefi/core/display/PianoFrameBufferMappingObserve.c"
 #include <Library/PrintLib.h>
 #include <Library/BaseLib.h>
 EFI_BOOT_SERVICES *gBS;EFI_SYSTEM_TABLE *gST;EFI_DXE_SERVICES *gDS;

@@ -6,7 +6,7 @@
 #include <string.h>
 #include <openssl/sha.h>
 #undef NULL
-#include "../../uefi/core/PianoUfsWriteTest.h"
+#include "../../uefi/core/storage/PianoUfsWriteTest.h"
 #include <IndustryStandard/Ufs.h>
 #include <IndustryStandard/UfsHci.h>
 

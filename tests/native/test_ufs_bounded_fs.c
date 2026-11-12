@@ -7,7 +7,7 @@
 #include <string.h>
 #include <openssl/sha.h>
 #undef NULL
-#include "../../uefi/core/PianoUfsBoundedFileSystemTest.c"
+#include "../../uefi/core/storage/PianoUfsBoundedFileSystemTest.c"
 EFI_BOOT_SERVICES *gBS;static EFI_BOOT_SERVICES bs;
 EFI_GUID gEfiBlockIoProtocolGuid,gEfiSimpleFileSystemProtocolGuid,gEfiFileInfoGuid;
 static EFI_BLOCK_IO_MEDIA media;static EFI_BLOCK_IO_PROTOCOL block;static EFI_SIMPLE_FILE_SYSTEM_PROTOCOL fs;

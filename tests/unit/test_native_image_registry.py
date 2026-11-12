@@ -1,10 +1,12 @@
 """Actual native loader records only returned successful image handles."""
+import sys
 import platform
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+from core_source import core_source
 
 ROOT = Path(__file__).resolve().parents[2]
 HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
@@ -15,7 +17,7 @@ class NativeImageRegistryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='native-images-') as td:
             d = Path(td)
             for name in ('NativeProbe.c', 'PianoNativeImages.h'):
-                shutil.copyfile(ROOT / 'uefi/core' / name, d / name)
+                shutil.copyfile(core_source(name, ROOT), d / name)
             (d / 'NativeProbeTable.h').write_text('''
 typedef struct {CONST CHAR8 *Name;EFI_GUID Guid;CONST UINT8 *Depex;UINTN DepexBytes;} NATIVE_IMAGE;
 static const UINT8 yes[]={6,8};

@@ -4,6 +4,7 @@ from pathlib import Path
 import hashlib
 import shutil
 from source_input_tail import split_source_tail
+from core_source import core_source
 
 ROOT=Path(__file__).resolve().parents[1]
 # Audited LF bodies retain the original instructions, declarations and INF
@@ -23,8 +24,8 @@ EARLY_FILES=('PianoEarlyMemory.c','PianoEarlyMemory.h','PianoSecRead32.S',
              'PianoColdBootObjects.c','PianoColdBootObjects.h','PianoColdBootObjectsContract.c','PianoColdSecRead256.S','PianoFactoryPanel.h',
              'PianoMemoryLayout.c','PianoMemoryLayout.h','PianoColdMemory.c','PianoColdMemory.h')
 EARLY_CORE_FILES=('PianoPlatformMemoryContract.c','PianoPlatformMemoryContract.h','PianoRamPartition.h')
-OBJECT_DXE_FILES={'PianoProductBootObjects.c':'uefi/core/PianoProductBootObjects.c',
-                 'PianoProductBootObjects.h':'uefi/core/PianoProductBootObjects.h',
+OBJECT_DXE_FILES={'PianoProductBootObjects.c':'uefi/core/product/PianoProductBootObjects.c',
+                 'PianoProductBootObjects.h':'uefi/core/product/PianoProductBootObjects.h',
                  'PianoColdBootObjects.h':'uefi/handoff/early-memory/PianoColdBootObjects.h',
                  'PianoFactoryPanel.h':'uefi/handoff/early-memory/PianoFactoryPanel.h',
                  'PianoColdMemory.h':'uefi/handoff/early-memory/PianoColdMemory.h',
@@ -143,7 +144,7 @@ def prepare(root=ROOT,target=None):
     for name in EARLY_FILES:
         shutil.copyfile(root/'uefi/handoff/early-memory'/name,destination/name)
     for name in EARLY_CORE_FILES:
-        shutil.copyfile(root/'uefi/core'/name,destination/name)
+        shutil.copyfile(core_source(name, root),destination/name)
     (destination/'Sec.inf').write_text(sec_inf(inputs['Sec.inf'].decode()))
     dsc.write_text(dsc_text+'\n[Components]\n  pianoProductPkg/Sec/Sec.inf {\n'
         '    <LibraryClasses>\n'
@@ -186,7 +187,7 @@ def verify(root,target,record):
     expected['Sec/Sec.c']=hashlib.sha256(sec_source(inputs['Sec.c'].decode()).encode()).hexdigest()
     expected['Sec/Sec.inf']=hashlib.sha256(sec_inf(inputs['Sec.inf'].decode()).encode()).hexdigest()
     expected.update({'Sec/'+name:sha(root/'uefi/handoff/early-memory'/name)for name in EARLY_FILES})
-    expected.update({'Sec/'+name:sha(root/'uefi/core'/name)for name in EARLY_CORE_FILES})
+    expected.update({'Sec/'+name:sha(core_source(name, root))for name in EARLY_CORE_FILES})
     memory_map=target/'Library/MemoryMapLib/MemoryMapLib.c'
     if memory_map.exists():
         text=memory_map.read_text();original=unbind_memory_map(text)

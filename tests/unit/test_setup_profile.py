@@ -43,7 +43,7 @@ class SetupMetadataTests(unittest.TestCase):
     def test_no_flash_variable_backend(self):
         self.assertNotIn('FaultTolerantWrite',profile.SETUP_DSC_ADDITIONS)
         self.assertNotIn('Fvb',profile.SETUP_DSC_ADDITIONS)
-        source=(ROOT/'uefi/core/PianoLaunchSetup.c').read_text()
+        source=(ROOT/'uefi/core/boot/PianoLaunchSetup.c').read_text()
         self.assertIn('PcdGetBool(PcdEmuVariableNvModeEnable)',source)
         self.assertNotIn('SetVariable(',source)
 

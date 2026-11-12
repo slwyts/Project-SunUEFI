@@ -3,7 +3,7 @@
 #include <stdio.h>
 #undef NULL
 #define PIANO_USB_POWER_PROBE 1
-#include "../../uefi/core/PianoKeys.c"
+#include "../../uefi/core/input/PianoKeys.c"
 EFI_BOOT_SERVICES *gBS;
 static EFI_BOOT_SERVICES bs;static UINT32 maps[8],owners[8],state=1,command;
 static UINTN writes,stalls;

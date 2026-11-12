@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoUsbControl.c"
+#include "../../uefi/core/usb/PianoUsbControl.c"
 VOID *EFIAPI CopyMem(VOID *D,CONST VOID *S,UINTN N){return memcpy(D,S,N);}
 int main(void){
   PIANO_USB_CONTROL s={0};UINT8 data[256],u[8]={0x80,6,0,1,0,0,8,0};UINTN n;PIANO_USB_CONTROL_ACTION a;

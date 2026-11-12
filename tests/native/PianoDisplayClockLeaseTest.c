@@ -10,7 +10,7 @@
 #include <unistd.h>
 #include <openssl/sha.h>
 #undef NULL
-#include "../../uefi/core/PianoDisplayClockLease.h"
+#include "../../uefi/core/display/PianoDisplayClockLease.h"
 #include <PiDxe.h>
 EFI_GUID gEfiLoadedImageProtocolGuid={.Data1=1},gEfiEventExitBootServicesGuid={.Data1=2};
 VOID *EFIAPI CopyMem(VOID *d,CONST VOID *s,UINTN n){return memmove(d,s,n);}VOID *EFIAPI ZeroMem(VOID *d,UINTN n){return memset(d,0,n);}INTN EFIAPI CompareMem(CONST VOID *a,CONST VOID *b,UINTN n){return memcmp(a,b,n);}BOOLEAN EFIAPI Sha256HashAll(CONST VOID *p,UINTN n,UINT8 *h){return SHA256(p,n,h)!=NULL;}

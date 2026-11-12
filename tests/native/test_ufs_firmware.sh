@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Host-only behavior/ABI checks; never prepares a profile or contacts a device.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/core-includes.sh"
 case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_fs_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_fs_root"
@@ -26,8 +27,8 @@ sun_fs_arm_includes=(
 )
 "${SUNUEFI_TOOLCHAIN_ROOT:-build/host-tools/usr}/bin/clang" --target=aarch64-windows-msvc -fshort-wchar \
   -ffreestanding -fsyntax-only -Wall -Wextra -Werror -Wno-unused-parameter "${sun_fs_arm_includes[@]}" \
-  uefi/core/PianoUfsFileSystemProbe.c uefi/core/PianoLaunchShell.c
+  uefi/core/storage/PianoUfsFileSystemProbe.c uefi/core/boot/PianoLaunchShell.c
 "${SUNUEFI_TOOLCHAIN_ROOT:-build/host-tools/usr}/bin/clang" --target=aarch64-windows-msvc -fshort-wchar \
   -ffreestanding -fsyntax-only -Wall -Wextra -Werror -Wno-unused-parameter -DPIANO_UFS_BLOCKIO -DPIANO_UFS_FILESYSTEMS -DPIANO_UFS_SHELL \
-  "${sun_fs_arm_includes[@]}" uefi/core/PianoUfsReadOnlyDma.c
+  "${sun_fs_arm_includes[@]}" uefi/core/storage/PianoUfsReadOnlyDma.c
 python3 -m py_compile tools/prepare_gui_profile.py

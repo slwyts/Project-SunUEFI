@@ -1,10 +1,13 @@
 """Actual persistent Device+Controller code, CPU-only hardware fixtures."""
+import sys
 import platform
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from core_source import core_include_flags, core_source
+
 ROOT=Path(__file__).resolve().parents[2]
 HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
@@ -20,7 +23,7 @@ class UsbServiceTests(unittest.TestCase):
                        f'-DPIANO_USB_SERVICE={enabled}',f'-DPIANO_USB_RAM_BOOT={enabled}']
                 for path in [INC,INC/HOST_PROCESSOR_BIND,*OTHER]: flags+=['-I',str(path)]
                 sources=[str(ROOT/'tests/native/test_fastboot.c')]
-                if enabled: sources+=[str(ROOT/'uefi/core/PianoFastbootBoot.c')]
+                if enabled: sources+=[str(ROOT/'uefi/core/usb/PianoFastbootBoot.c')]
                 subprocess.run(['cc',*flags,*sources,'-lcrypto','-o',str(binary)],check=True)
                 subprocess.run([str(binary)],check=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'})
                 if not enabled:
@@ -42,11 +45,11 @@ class UsbServiceTests(unittest.TestCase):
             flags=['--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-unused-parameter',f'-DPIANO_USB_SERVICE={enabled}','-DPIANO_USB_FASTBOOT=1','-DPIANO_USB_UFS_FETCH=1','-DPIANO_USB_EP0=1','-DPIANO_USB_RAM_BOOT=1']
             for path in [INC,INC/'AArch64',*OTHER]:flags+=['-I',str(path)]
             for name in ['PianoDwc3Device.c','PianoUsbController.c']:
-                result=subprocess.run([str(TOOLCHAIN/'bin/clang'),*flags,str(ROOT/'uefi/core'/name)],capture_output=True,text=True)
+                result=subprocess.run([str(TOOLCHAIN/'bin/clang'),*flags,str(core_source(name, ROOT))],capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             if enabled:
-                host=[*flags,'-DPIANO_USB_HOST=1','-I',str(ROOT/'uefi/core'),'-I',str(ROOT/'uefi/components/usb-host')]
-                for path in [ROOT/'uefi/core/PianoUsbController.c',*sorted((ROOT/'uefi/components/usb-host').glob('*.c'))]:
+                host=[*flags,'-DPIANO_USB_HOST=1',*core_include_flags(ROOT),'-I',str(ROOT/'uefi/components/usb-host')]
+                for path in [ROOT/'uefi/core/usb/PianoUsbController.c',*sorted((ROOT/'uefi/components/usb-host').glob('*.c'))]:
                     result=subprocess.run([str(TOOLCHAIN/'bin/clang'),*host,str(path)],capture_output=True,text=True)
                     self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 if __name__=='__main__':unittest.main()

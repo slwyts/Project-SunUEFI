@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoQupFwDisk.c"
+#include "../../uefi/core/storage/PianoQupFwDisk.c"
 EFI_BOOT_SERVICES *gBS;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID) {return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level) {return FALSE;}

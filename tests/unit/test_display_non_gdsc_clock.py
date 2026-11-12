@@ -1,3 +1,4 @@
+import sys
 import platform
 from pathlib import Path
 import os,re,subprocess,sys,tempfile,unittest
@@ -7,23 +8,24 @@ ROOT=Path(__file__).resolve().parents[2];BASE=ROOT/'upstream/Mu-Silicium/Mu_Base
 sys.path.insert(0,str(ROOT/'tools'))
 import piano_vendor_inputs as vendor
 from piano_inherited_clock import derive
+from core_source import core_include_dirs
 HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
 class NonGdscClockTests(unittest.TestCase):
  def includes(self,arch):
-  return (BASE/'MdePkg/Include',BASE/'MdePkg/Include'/arch,BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',ROOT/'uefi/components/guarded-read',ROOT/'uefi/core',ROOT/'uefi/components/display-rail')
+  return (BASE/'MdePkg/Include',BASE/'MdePkg/Include'/arch,BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',ROOT/'uefi/components/guarded-read',*core_include_dirs(ROOT),ROOT/'uefi/components/display-rail')
  def test_actual_owner_primary_lease_reader_and_guard(self):
   with tempfile.TemporaryDirectory(prefix='non-gdsc-owner-')as directory:
-   d=Path(directory);write_mu_map_fixture(ROOT,d/'ActualMuMemoryMap.h');owner=(ROOT/'uefi/core/PianoProductDisplayOwner.c').read_text();types=(ROOT/'uefi/core/PianoProductOwners.h').read_text();startup=re.search(r'typedef struct \{(?:(?!typedef struct).)*?\} PIANO_PRODUCT_DISPLAY_STARTUP_REPORT;',types,re.S);self.assertIsNotNone(startup)
+   d=Path(directory);write_mu_map_fixture(ROOT,d/'ActualMuMemoryMap.h');owner=(ROOT/'uefi/core/display/PianoProductDisplayOwner.c').read_text();types=(ROOT/'uefi/core/product/PianoProductOwners.h').read_text();startup=re.search(r'typedef struct \{(?:(?!typedef struct).)*?\} PIANO_PRODUCT_DISPLAY_STARTUP_REPORT;',types,re.S);self.assertIsNotNone(startup)
    (d/'ActualDisplayGcc.h').write_text(startup.group()+'\n'+'\n'.join(function(owner,n)for n in ('ReadAlive','LeaseAlive','ReadGcc','PianoProductDisplayOwnerRetained','CopyAcquire')))
-   (d/'ActualClockObjectComparison.h').write_text(object_comparison((ROOT/'uefi/core/PianoDisplayClockRead.c').read_text()))
+   (d/'ActualClockObjectComparison.h').write_text(object_comparison((ROOT/'uefi/core/display/PianoDisplayClockRead.c').read_text()))
    fixture=(ROOT/'tests/native/PianoDisplayClockPipelineTest.c').read_text();fixture=fixture[:fixture.index('static VOID Run(UINTN Number){')]
-   for source in ('uefi/components/guarded-read/PianoGuardedRead.c','uefi/core/PianoDisplayClockRead.h','uefi/components/display-rail/PianoDisplayNonGdscClock.h'):fixture=fixture.replace('"../../'+source+'"','"'+str(ROOT/source)+'"')
+   for source in ('uefi/components/guarded-read/PianoGuardedRead.c','uefi/core/display/PianoDisplayClockRead.h','uefi/components/display-rail/PianoDisplayNonGdscClock.h'):fixture=fixture.replace('"../../'+source+'"','"'+str(ROOT/source)+'"')
    fixture=fixture.replace('Events[8192]','Events[32768]');needle='static EFI_STATUS EFIAPI Close(EFI_EVENT Event){';self.assertEqual(fixture.count(needle),1);fixture=fixture.replace(needle,needle+'\n if(ChildCloseWarning(Event))return EFI_WARN_STALE_DATA;')
    (d/'ActualNonGdscFixture.h').write_text(fixture)
    cmd=['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-misleading-indentation','-g','-DPIANO_DISPLAY_CLOCK_HOST_TEST=1','-DPIANO_NON_GDSC_CLOCK_HOST_TEST=1','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie']
    for p in (*self.includes(HOST_PROCESSOR_BIND),d):cmd+=['-I',str(p)]
-   cmd +=[str(ROOT/'tests/native/PianoDisplayNonGdscClockTest.c'),str(ROOT/'uefi/core/PianoDisplayClockRead.c'),str(ROOT/'uefi/core/PianoDisplayClockLease.c'),str(ROOT/'uefi/components/display-rail/PianoDisplayNonGdscClock.c'),'-lcrypto','-o',str(d/'owner')]
+   cmd +=[str(ROOT/'tests/native/PianoDisplayNonGdscClockTest.c'),str(ROOT/'uefi/core/display/PianoDisplayClockRead.c'),str(ROOT/'uefi/core/display/PianoDisplayClockLease.c'),str(ROOT/'uefi/components/display-rail/PianoDisplayNonGdscClock.c'),'-lcrypto','-o',str(d/'owner')]
    p=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr)
    # Same ClockDxe bytes that prepare_product stages from the vendor bundle
    clock=Path(directory)/'ClockDxe.efi';clock.write_bytes(derive(vendor.load(ROOT)['native_drivers']['ClockDxe']['pe_path'].read_bytes())[0])

@@ -5,7 +5,6 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
 from build_chroot import remove_pacman_sockets
 
 

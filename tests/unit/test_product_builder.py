@@ -9,12 +9,13 @@ ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'))
 import prepare_product as product
 from product_contract import validate,validate_build_manifest
+from core_source import core_source
 
 
 class ProductBuilderTests(unittest.TestCase):
     def test_actual_product_sources_not_diagnostic_entry_apps(self):
         for name in product.SOURCE_NAMES:
-            self.assertTrue((ROOT/'uefi/core'/name).is_file(),name)
+            self.assertTrue((core_source(name, ROOT)).is_file(),name)
         inf=product.core_inf()
         self.assertIn('ENTRY_POINT = PianoProductCoreEntry',inf)
         self.assertIn('PianoProductOwners.c',inf)

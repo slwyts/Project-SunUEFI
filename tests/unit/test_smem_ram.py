@@ -1,4 +1,5 @@
 """Actual early-memory source with byte-addressed injected reads; no device."""
+import sys
 import platform
 import os
 from pathlib import Path
@@ -6,6 +7,7 @@ import hashlib
 import subprocess
 import tempfile
 import unittest
+from core_source import core_source
 
 ROOT = Path(__file__).resolve().parents[2]
 HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
@@ -23,7 +25,7 @@ class SmemRamTests(unittest.TestCase):
                        '-Werror', '-g', '-fsanitize=address,undefined', '-fno-pie', '-no-pie']
             for path in (SOURCE, INC, INC / HOST_PROCESSOR_BIND):
                 command += ['-I', str(path)]
-            command += [str(ROOT / 'tests/native/PianoSmemRamV3Test.c'), str(SOURCE / 'PianoSmemRam.c'), '-o', str(binary)]
+            command += [str(ROOT / 'tests/native/PianoSmemRamV3Test.c'), str(ROOT/'uefi/handoff/early-memory/PianoSmemRam.c'), '-o', str(binary)]
             subprocess.run(command, check=True, timeout=60)
             subprocess.run([str(binary)], check=True, timeout=60)
             with self.subTest('test95 capture replay'):
@@ -41,7 +43,7 @@ class SmemRamTests(unittest.TestCase):
             for path in (SOURCE, INC, INC / HOST_PROCESSOR_BIND):
                 command += ['-I', str(path)]
             command += [str(ROOT / 'tests/native/PianoSmemRamTest.c'),
-                        str(SOURCE / 'PianoSmemRam.c'), '-o', str(binary)]
+                        str(ROOT/'uefi/handoff/early-memory/PianoSmemRam.c'), '-o', str(binary)]
             subprocess.run(command, check=True, timeout=60)
             subprocess.run([str(binary)], check=True, timeout=60)
 
@@ -51,7 +53,7 @@ class SmemRamTests(unittest.TestCase):
                    '-fshort-wchar', '-fsyntax-only', '-Wall', '-Wextra', '-Werror']
         for path in (SOURCE, INC, INC / 'AArch64'):
             command += ['-I', str(path)]
-        subprocess.run(command + [str(SOURCE / 'PianoSmemRam.c')],
+        subprocess.run(command + [str(ROOT/'uefi/handoff/early-memory/PianoSmemRam.c')],
                        check=True, timeout=60)
 
 

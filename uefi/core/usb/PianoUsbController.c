@@ -53,7 +53,7 @@ STATIC EFI_STATUS ServiceExact(EFI_STATUS S,BOOLEAN Mutation) {
 #if PIANO_USB_HOST
 #include "PianoUsbHost.h"
 #include "PianoUsbTypec.h"
-#include "Protocol/PianoProductRuntime.h"
+#include "../Protocol/PianoProductRuntime.h"
 #endif
 #include "PianoUsbRamBootExperiment.h"
 #if PIANO_USB_RAM_BOOT

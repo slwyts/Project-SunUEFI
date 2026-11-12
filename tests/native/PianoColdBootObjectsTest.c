@@ -20,7 +20,7 @@ static UINTN ColdLogs,ColdObjectLogs;static BOOLEAN Services=TRUE;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return TRUE;}BOOLEAN EFIAPI DebugPrintLevelEnabled(CONST UINTN Level){(VOID)Level;return TRUE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){(VOID)Level;assert(Services);ColdLogs++;if(strstr(Format,"PIANO_COLD_OBJECT i="))ColdObjectLogs++;}
 static BOOLEAN Alive(VOID){return Services;}
-#include "../../uefi/core/PianoProductBootObjects.h"
+#include "../../uefi/core/product/PianoProductBootObjects.h"
 static VOID *HobList;VOID *EFIAPI PrePeiGetHobList(VOID){return HobList;}EFI_STATUS EFIAPI PrePeiSetHobList(VOID *P){HobList=P;return EFI_SUCCESS;}
 EFI_GUID *EFIAPI CopyGuid(EFI_GUID *D,CONST EFI_GUID *S){memcpy(D,S,sizeof(*D));return D;}
 BOOLEAN EFIAPI CompareGuid(CONST EFI_GUID *A,CONST EFI_GUID *B){return !memcmp(A,B,sizeof(*A));}

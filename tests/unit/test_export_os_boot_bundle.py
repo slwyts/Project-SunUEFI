@@ -10,9 +10,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]/'tools'))
 import export_os_boot_bundle as bundle
+from core_source import core_source
 
 
 class BootBundleExportTests(unittest.TestCase):
+    def bundle_root(self, name):
+        return self.root / name
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='piano-export-test-')
         self.addCleanup(self.temp.cleanup)
@@ -31,7 +35,7 @@ class BootBundleExportTests(unittest.TestCase):
         files = {'Image': image, 'initramfs.cpio.gz': b'fixture initrd', 'config': b'CONFIG_EFI=y\n'}
         checksums = {}
         for name, data in files.items():
-            (self.source/name).write_bytes(data)
+            (self.bundle_root(name, ROOT)).write_bytes(data)
             checksums[name] = hashlib.sha256(data).hexdigest()
         data = bytearray(40)
         struct.pack_into('>II', data, 0, 0xd00dfeed, len(data))
@@ -60,7 +64,7 @@ class BootBundleExportTests(unittest.TestCase):
         self.assertFalse(result['efi_handoff_verified'])
         self.assertEqual((self.out/'raw-smoke-evidence.json').read_bytes(), self.evidence.read_bytes())
         for name in ('Image', 'config', 'initramfs.cpio.gz'):
-            self.assertEqual((self.out/name).read_bytes(), (self.source/name).read_bytes())
+            self.assertEqual((self.out/name).read_bytes(), (self.bundle_root(name, ROOT)).read_bytes())
         with self.assertRaisesRegex(ValueError, 'Output exists'):
             bundle.export('stable', self.dtb, self.out)
 

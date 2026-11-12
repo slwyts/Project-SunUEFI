@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Host-only. No prepare CLI, staged firmware, controller/device or real writes.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/core-includes.sh"
 case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_transport_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_transport_root"
@@ -33,8 +34,8 @@ for sun_transport_mode in restore preflight; do
   if [[ "$sun_transport_mode" == preflight ]]; then sun_transport_define=(-DPIANO_TEST_PREFLIGHT=1); fi
   cc -std=gnu11 -fshort-wchar -g -fsanitize=address,undefined -fno-pie -no-pie \
     -ffunction-sections -fdata-sections "${sun_transport_includes[@]}" "${sun_transport_define[@]}" \
-    tests/native/test_ufs_write_transport.c uefi/core/PianoUfsWriteTest.c \
-    uefi/core/PianoGpt.c -Wl,--gc-sections -lcrypto -o "$sun_transport_tmp/test-$sun_transport_mode"
+    tests/native/test_ufs_write_transport.c uefi/core/storage/PianoUfsWriteTest.c \
+    uefi/core/storage/PianoGpt.c -Wl,--gc-sections -lcrypto -o "$sun_transport_tmp/test-$sun_transport_mode"
   "$sun_transport_tmp/test-$sun_transport_mode"
 done
 sun_transport_arm_includes=(
@@ -49,5 +50,5 @@ sun_transport_arm_includes=(
 for sun_transport_mode in PIANO_UFS_WRITE_PREFLIGHT PIANO_UFS_WRITE_RESTORE_TEST; do
   "${SUNUEFI_TOOLCHAIN_ROOT:-build/host-tools/usr}/bin/clang" --target=aarch64-windows-msvc -fshort-wchar -ffreestanding -fsyntax-only -Wall -Wextra -Werror -Wno-unused-parameter \
     -DPIANO_UFS_BLOCKIO=1 -DPIANO_UFS_WRITE_TEST=1 -D"$sun_transport_mode"=1 \
-    "${sun_transport_arm_includes[@]}" uefi/core/PianoUfsReadOnlyDma.c
+    "${sun_transport_arm_includes[@]}" uefi/core/storage/PianoUfsReadOnlyDma.c
 done

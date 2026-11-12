@@ -19,6 +19,7 @@ from prepare_product_early_memory import prepare,sec_source,verify,source_inputs
 from prepare_product import fix_product_low_heap
 import piano_vendor_inputs as vendor_inputs
 from test_product_low_memory import function
+from core_source import core_source
 
 
 class EarlyMemoryTests(unittest.TestCase):
@@ -28,7 +29,7 @@ class EarlyMemoryTests(unittest.TestCase):
         shutil.copytree(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Sec',source)
         shutil.copytree(ROOT/'uefi/handoff/early-memory',root/'uefi/handoff/early-memory')
         core=root/'uefi/core';core.mkdir(parents=True)
-        for name in EARLY_CORE_FILES:shutil.copyfile(ROOT/'uefi/core'/name,core/name)
+        for name in EARLY_CORE_FILES:shutil.copyfile(core_source(name, ROOT),core/name)
         shim=root/'uefi/handoff/bootshim/BootShim.S';shim.parent.mkdir(parents=True)
         shutil.copyfile(ROOT/'uefi/handoff/bootshim/BootShim.S',shim)
         target=root/'product';target.mkdir()
@@ -47,7 +48,7 @@ class EarlyMemoryTests(unittest.TestCase):
                         path.write_bytes((text+footer).replace('\n',newline).encode())
                 record=prepare(root,target);self.assertTrue(verify(root,target,record))
                 for name,digest in record['source_files'].items():
-                    self.assertEqual(digest,hashlib.sha256((source/name).read_bytes()).hexdigest())
+                    self.assertEqual(digest,hashlib.sha256((core_source(name, ROOT)).read_bytes()).hexdigest())
                 sec=source/'Sec.c';before=sec.read_bytes();sec.write_bytes(before+b'\n// Later annotation.\n')
                 with self.assertRaisesRegex(ValueError,'Original SEC source drifted'):verify(root,target,record)
                 sec.write_bytes(before)
@@ -65,7 +66,7 @@ class EarlyMemoryTests(unittest.TestCase):
                               ('AArch64/Helper.S','\n.section evil\n.byte 0\nret\n'),
                               ('Sec.inf','\n[Sources]\n  Evil.c\n'),
                               ('Sec.inf','\n[LibraryClasses]\n  EvilLib\n')):
-                path=source/name;before=path.read_bytes()
+                path=core_source(name, ROOT);before=path.read_bytes()
                 with self.subTest(name=name,tail=tail):
                     path.write_bytes(before+tail.encode())
                     with self.assertRaises(ValueError):source_inputs(source)
@@ -102,7 +103,7 @@ class EarlyMemoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='piano-cold-sec-')as directory:
             path=Path(directory)
             (path/'PianoActualSecMemory.h').write_text(old)
-            (path/'PianoActualDmaHeap.h').write_text(function((ROOT/'uefi/core/PianoDma.c').read_text(),'Heap'))
+            (path/'PianoActualDmaHeap.h').write_text(function((ROOT/'uefi/core/memory/PianoDma.c').read_text(),'Heap'))
             (path/'PianoBoundSecMemory.h').write_text(new)
             (path/'PianoFrozenLowFixture.h').write_text(
                 (ROOT/'tests/native/PianoProductLowMemoryTest.c').read_text().replace('int main(void)','int PianoFrozenLowMain(void)',1))
@@ -156,7 +157,7 @@ class EarlyMemoryTests(unittest.TestCase):
             for name in ('PianoEarlyMemory.c','PianoSmemRam.c','PianoSmemDescriptor.c'):
                 subprocess.run([str(clang),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar',
                     '-Wall','-Wextra','-Werror','-I',str(inc),'-I',str(inc/'AArch64'),
-                    '-c',str(source/name),'-o',str(Path(directory)/(name+'.obj'))],check=True)
+                    '-c',str(core_source(name, ROOT)),'-o',str(Path(directory)/(name+'.obj'))],check=True)
 
     def test_product_staging_and_drift_rejection(self):
         with tempfile.TemporaryDirectory(prefix='piano-sec-prep-')as directory:
@@ -185,16 +186,16 @@ class EarlyMemoryTests(unittest.TestCase):
             (app/'ProductCore.inf').write_text(core_inf())
             (target/'pianoProduct.dsc').write_text('[Components]\n');(target/'pianoProduct.fdf').write_text('[FV]\n  INF SiliciumPkg/Sec/Sec.inf\n')
             record=prepare(ROOT,target);self.assertTrue(verify(ROOT,target,record))
-            (app/'PianoSmemRam.h').write_bytes((ROOT/'uefi/handoff/early-memory/PianoSmemRam.h').read_bytes())
+            (ROOT/'uefi/handoff/early-memory/PianoSmemRam.h').write_bytes((ROOT/'uefi/handoff/early-memory/PianoSmemRam.h').read_bytes())
             for name in OBJECT_DXE_SOURCES:
                 args=[str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-misleading-indentation']
                 for path in (BASE/'MdePkg/Include',BASE/'MdePkg/Include/AArch64',ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include',app):args+=['-I',str(path)]
-                subprocess.run(args+[str(app/name)],check=True)
+                subprocess.run(args+[str(core_source(name, ROOT))],check=True)
             sources=(app/'ProductCore.inf').read_text().split('[Sources]\n',1)[1].split('[',1)[0]
             for name in OBJECT_DXE_SOURCES:self.assertEqual(sources.splitlines().count('  '+name),1)
             self.assertNotIn('  PianoColdBootObjects.c',sources)
             for name in OBJECT_DXE_FILES:
-                p=app/name;before=p.read_bytes();p.write_bytes(before+b'\n// drift\n')
+                p=core_source(name, ROOT);before=p.read_bytes();p.write_bytes(before+b'\n// drift\n')
                 with self.assertRaisesRegex(ValueError,'copy stale'):verify(ROOT,target,record)
                 p.write_bytes(before)
             inf=app/'ProductCore.inf';original=inf.read_text();inf.write_text(original.replace('  PianoProductBootObjects.c\n',''))

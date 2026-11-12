@@ -5,7 +5,7 @@
 #include <stdarg.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoKeys.c"
+#include "../../uefi/core/input/PianoKeys.c"
 
 EFI_BOOT_SERVICES *gBS;
 EFI_GUID gEfiSimpleTextInProtocolGuid={0};EFI_GUID gEfiSimpleTextInputExProtocolGuid={0};

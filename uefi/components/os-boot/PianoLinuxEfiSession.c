@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #include "PianoLinuxEfiSession.h"
-#include "../../core/PianoPanelSelection.h"
+#include "../../core/display/PianoPanelSelection.h"
 #include <PianoBluetoothAddress.h>
 #include <PianoRtcOffset.h>
-#include "../../core/PianoProductBootObjects.h"
+#include "../../core/product/PianoProductBootObjects.h"
 #include <Guid/Fdt.h>
 #include <Guid/LinuxEfiInitrdMedia.h>
 #include <Guid/EventGroup.h>

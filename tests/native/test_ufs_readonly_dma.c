@@ -4,8 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoUfsDmaLayout.c"
-#include "../../uefi/core/PianoUfsReadOnlyDma.c"
+#include "../../uefi/core/storage/PianoUfsDmaLayout.c"
+#include "../../uefi/core/storage/PianoUfsReadOnlyDma.c"
 EFI_BOOT_SERVICES *gBS;EFI_RUNTIME_SERVICES *gRT;
 static EFI_BOOT_SERVICES bs;static UINT8 trl[1024],ucd[1024],data[4096];static UINT32 bell,run,task_run;
 static unsigned begins,completes;static int timeout,bad_ocs;

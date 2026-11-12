@@ -13,7 +13,7 @@ class ColdBootObjectsTests(unittest.TestCase):
    for p in self.includes('X64'):cmd+=['-I',str(p)]
    native=ROOT/'build/firmware-workspace/uefi/platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'
    if not native.is_file():native=ROOT/'uefi/platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c'
-   cmd+=[str(ROOT/'tests/native/PianoColdBootObjectsTest.c'),str(ROOT/'uefi/handoff/early-memory/PianoColdBootObjectsContract.c'),str(ROOT/'uefi/handoff/early-memory/PianoMemoryLayout.c'),str(ROOT/'uefi/core/PianoProductBootObjects.c'),str(native),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),'-Wl,--gc-sections','-o',str(exe)]
+   cmd+=[str(ROOT/'tests/native/PianoColdBootObjectsTest.c'),str(ROOT/'uefi/handoff/early-memory/PianoColdBootObjectsContract.c'),str(ROOT/'uefi/handoff/early-memory/PianoMemoryLayout.c'),str(ROOT/'uefi/core/product/PianoProductBootObjects.c'),str(native),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),'-Wl,--gc-sections','-o',str(exe)]
    p=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(p.returncode,0,(p.stdout+p.stderr)[:12000])
    p=subprocess.run([str(exe),str(captured)if captured.is_file()else'--synthetic'],capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
  def test_complete_factory_memory_guarded_capture_budget(self):
@@ -28,7 +28,7 @@ class ColdBootObjectsTests(unittest.TestCase):
    exe=d/'objects';cmd=['cc','-std=gnu11','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-missing-field-initializers','-Wno-unused-parameter','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-I',str(ROOT/'uefi/handoff/early-memory'),'-include',str(ROOT/'tests/native/PianoCmaPcdShim.h'),'-D_PCD_VALUE_PcdFdBaseAddress=0xA7100000ULL','-D_PCD_VALUE_PcdFdSize=0x300000U','-D_PCD_VALUE_PcdCPUCoresStackBase=0xA760D000ULL','-D_PCD_VALUE_PcdCPUCorePrimaryStackSize=0x40000U']
    for p in self.includes('X64'):cmd+=['-I',str(p)]
    native=ROOT/'uefi/platforms/pianoProbePkg/Library/MemoryMapLib/MemoryMapLib.c'
-   cmd+=[str(ROOT/'tests/native/PianoColdBootObjectsTest.c'),str(ROOT/'uefi/handoff/early-memory/PianoColdBootObjectsContract.c'),str(ROOT/'uefi/handoff/early-memory/PianoMemoryLayout.c'),str(ROOT/'uefi/core/PianoProductBootObjects.c'),str(native),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),'-Wl,--gc-sections','-o',str(exe)]
+   cmd+=[str(ROOT/'tests/native/PianoColdBootObjectsTest.c'),str(ROOT/'uefi/handoff/early-memory/PianoColdBootObjectsContract.c'),str(ROOT/'uefi/handoff/early-memory/PianoMemoryLayout.c'),str(ROOT/'uefi/core/product/PianoProductBootObjects.c'),str(native),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c'),'-Wl,--gc-sections','-o',str(exe)]
    p=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr)
    p=subprocess.run([str(exe),'--memory',str(dt)],capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr);print(p.stdout.strip())
  def test_isolated_actual_arm64_extension_object(self):

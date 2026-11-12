@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Host-only; no prepare, firmware build, device access or reset.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/core-includes.sh"
 case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_reset_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_reset_root"
@@ -15,4 +16,4 @@ done
   -Wall -Wextra -Werror -Wno-unused-parameter -DPIANO_UFS_BLOCKIO=1 \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/AArch64 \
   -I upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include -I uefi/components/ext4 \
-  uefi/core/PianoUfsReadOnlyDma.c uefi/core/PianoUfsProbe.c
+  uefi/core/storage/PianoUfsReadOnlyDma.c uefi/core/storage/PianoUfsProbe.c

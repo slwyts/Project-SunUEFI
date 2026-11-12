@@ -7,7 +7,7 @@
 #include <string.h>
 #include <openssl/sha.h>
 #undef NULL
-#include "../../uefi/core/PianoFastbootDownloadBlob.h"
+#include "../../uefi/core/usb/PianoFastbootDownloadBlob.h"
 #include <Guid/EventGroup.h>
 EFI_GUID gEfiEventBeforeExitBootServicesGuid=EFI_EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES;
 #include <Library/BaseLib.h>

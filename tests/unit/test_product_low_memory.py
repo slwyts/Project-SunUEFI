@@ -10,6 +10,7 @@ ROOT=Path(__file__).resolve().parents[2];BASE=ROOT/'upstream/Mu-Silicium/Mu_Base
 sys.path.insert(0,str(ROOT/'tools'))
 from prepare_product import fix_product_low_heap
 from plan_piano_dram import extract_dt,parse_native_c
+from core_source import core_include_dirs
 
 
 def function(text,name):
@@ -29,7 +30,7 @@ class ProductLowMemoryTests(unittest.TestCase):
 
     def test_actual_product_native_table_aliases_and_current_records(self):
         import hashlib
-        source=ROOT/'uefi/core/PianoPlatformMemoryContract.c'
+        source=ROOT/'uefi/core/memory/PianoPlatformMemoryContract.c'
         native=ROOT/'build/firmware-workspace/uefi/platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'
         dt=ROOT/'artifacts/linux-assembled/piano-stable-next-20261006/EFI/Piano/stable/piano.dtb'
         raw=ROOT/'private/analysis/usb-live-test95/ram402.bin'
@@ -70,7 +71,7 @@ class ProductLowMemoryTests(unittest.TestCase):
         source,_=fix_product_low_heap(original,(ROOT/'private/captures/2026-10-03-piano/live.dtb').read_bytes())
         (ROOT/'build/product-low-memory-test.c').write_text(source)
         sec=function((ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Sec/Sec.c').read_text(),'InitializeMemory').replace('InitializeMemory','PianoActualInitializeMemory')
-        dma=function((ROOT/'uefi/core/PianoDma.c').read_text(),'Heap')
+        dma=function((ROOT/'uefi/core/memory/PianoDma.c').read_text(),'Heap')
         with tempfile.TemporaryDirectory(prefix='piano-product-low-')as tmp:
             tmp=Path(tmp);(tmp/'PianoActualSecMemory.h').write_text(sec);(tmp/'PianoActualDmaHeap.h').write_text(dma)
             exe=tmp/'low'
@@ -91,7 +92,7 @@ class ProductLowMemoryTests(unittest.TestCase):
             exe=Path(tmp)/'contract';includes=[ROOT/'uefi/handoff/early-memory',BASE/'MdePkg/Include',BASE/'MdePkg/Include/X64',BASE/'MdeModulePkg/Include',BASE/'UefiCpuPkg/Include',BASE/'EmbeddedPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include',libfdt]
             command=['cc','-std=gnu11','-fshort-wchar','-g','-fsanitize=address,undefined','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-include',str(ROOT/'tests/native/PianoCmaPcdShim.h')]
             for include in includes:command+=['-I',str(include)]
-            command+=[str(ROOT/'tests/native/PianoPlatformMemoryContractTest.c'),str(ROOT/'tests/native/PianoPlatformFdtHost.c'),str(ROOT/'uefi/core/PianoPlatformMemoryContract.c'),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c')]
+            command+=[str(ROOT/'tests/native/PianoPlatformMemoryContractTest.c'),str(ROOT/'tests/native/PianoPlatformFdtHost.c'),str(ROOT/'uefi/core/memory/PianoPlatformMemoryContract.c'),str(BASE/'EmbeddedPkg/Library/PrePiHobLib/Hob.c')]
             command+=[str(libfdt/name)for name in ('fdt.c','fdt_ro.c','fdt_check.c')]
             command+=['-Wl,--gc-sections','-o',str(exe)]
             build=subprocess.run(command,capture_output=True,text=True);self.assertEqual(build.returncode,0,build.stdout+build.stderr)
@@ -118,10 +119,10 @@ class ProductLowMemoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='piano-cold-memory-')as directory:
             tmp=Path(directory);dt=tmp/'factory.dtb';dt.write_bytes(write_fdt(tree))
             (tmp/'PianoColdNativeTable.c').write_text(source)
-            includes=[ROOT/'uefi/core',ROOT/'uefi/handoff/early-memory',tmp,BASE/'MdePkg/Include',BASE/'MdePkg/Include/X64',BASE/'MdeModulePkg/Include',BASE/'UefiCpuPkg/Include',BASE/'EmbeddedPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include',libfdt]
+            includes=[*core_include_dirs(ROOT),ROOT/'uefi/handoff/early-memory',tmp,BASE/'MdePkg/Include',BASE/'MdePkg/Include/X64',BASE/'MdeModulePkg/Include',BASE/'UefiCpuPkg/Include',BASE/'EmbeddedPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include',libfdt]
             command=['cc','-std=gnu11','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-missing-field-initializers','-DPIANO_PRODUCT_MEMORY_HOST_TEST=1','-fsanitize=address,undefined','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections']
             for include in includes:command+=['-I',str(include)]
-            command+=[str(ROOT/'tests/native/PianoPlatformColdMemoryTest.c'),str(ROOT/'tests/native/PianoPlatformFdtHost.c'),str(ROOT/'uefi/core/PianoPlatformMemoryContract.c'),str(ROOT/'uefi/core/PianoProductMemory.c')]
+            command+=[str(ROOT/'tests/native/PianoPlatformColdMemoryTest.c'),str(ROOT/'tests/native/PianoPlatformFdtHost.c'),str(ROOT/'uefi/core/memory/PianoPlatformMemoryContract.c'),str(ROOT/'uefi/core/memory/PianoProductMemory.c')]
             command+=[str(ROOT/'uefi/handoff/early-memory'/name)for name in ('PianoMemoryLayout.c','PianoColdMemory.c','PianoSmemRam.c','PianoColdBootObjectsContract.c')]
             command+=[str(libfdt/name)for name in ('fdt.c','fdt_ro.c','fdt_check.c','fdt_rw.c','fdt_wip.c')]
             command+=['-Wl,--gc-sections','-o',str(tmp/'memory')]

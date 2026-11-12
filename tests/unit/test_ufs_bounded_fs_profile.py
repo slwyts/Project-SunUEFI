@@ -23,7 +23,7 @@ class ProfileTests(unittest.TestCase):
             with self.subTest(option=option),contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
                 p=profile.argument_parser();a=p.parse_args(['--ufs-bounded-filesystem-test',option]);profile.validate_write_options(p,a)
     def test_transform_only_and_no_os(self):
-        src=(ROOT/'uefi/core/RamApp.c').read_text().replace('  Status=gBS->LoadImage','  PianoProbeUfs(Fdt);\n  Status=gBS->LoadImage',1)
+        src=(ROOT/'uefi/core/native/RamApp.c').read_text().replace('  Status=gBS->LoadImage','  PianoProbeUfs(Fdt);\n  Status=gBS->LoadImage',1)
         out=profile.bounded_fs_ram_app(src)
         self.assertIn('PianoUfsRunBoundedFileSystemTest();',out)
         self.assertLess(out.index('PianoProbeUfs(Fdt);'),out.index('Status=PianoUfsRunBoundedFileSystemTest();'))

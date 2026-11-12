@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoUfsProbe.c"
+#include "../../uefi/core/storage/PianoUfsProbe.c"
 EFI_BOOT_SERVICES *gBS;static EFI_BOOT_SERVICES bs;static EFI_CLOCK_PROTOCOL clock;
 static unsigned reads,enables,disables,ids;static int reset_failure;static UINTN fail_resource;static int fail_ice,valid_dt=1;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}

@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoSmmu.c"
+#include "../../uefi/core/memory/PianoSmmu.c"
 static UINT32 regs[WINDOW/4];static int bad_dt;static UINTN reads,prints;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return TRUE;}
 BOOLEAN EFIAPI DebugAssertEnabled(VOID){return TRUE;}

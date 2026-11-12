@@ -1,6 +1,8 @@
+import sys
 import platform
 from pathlib import Path
 import importlib.util,os,re,subprocess,tempfile,unittest
+from core_source import core_include_dirs
 ROOT=Path(__file__).resolve().parents[2];BASE=ROOT/'upstream/Mu-Silicium/Mu_Basecore'
 HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 PUMP=ROOT/'uefi/components/product-pump/Mu_Basecore/MdePkg'
@@ -15,12 +17,12 @@ def function(text,name):
  return text[match.start():end]
 class BulkIdlePipelineTests(unittest.TestCase):
  def test_actual_wait_policy_client_and_device(self):
-  policy=(ROOT/'uefi/core/PianoBootPolicy.c').read_text();event=(BASE/'MdeModulePkg/Core/Dxe/Event/Event.c').read_text()
+  policy=(ROOT/'uefi/core/boot/PianoBootPolicy.c').read_text();event=(BASE/'MdeModulePkg/Core/Dxe/Event/Event.c').read_text()
   # The product build installs these wait hooks into its workspace copy of Event.c
   for relative,old,new in pump.HOOKS:
    if relative==pump.BASE+'MdeModulePkg/Core/Dxe/Event/Event.c':event=pump.transform(event,old,new,relative)
   actual='\n\n'.join([function(policy,'ReadIdle'),function(policy,'Pump'),function(event,'CoreWaitForEvent')])
-  inc=BASE/'MdePkg/Include';other=[BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',PUMP/'Include',ROOT/'uefi/core']
+  inc=BASE/'MdePkg/Include';other=[BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',PUMP/'Include',*core_include_dirs(ROOT)]
   with tempfile.TemporaryDirectory(prefix='bulk-idle-pipeline-')as directory:
    directory=Path(directory);(directory/'PianoActualBulkIdlePipeline.h').write_text(actual);exe=directory/'pipeline'
    # Host build takes the non-AArch64 branches, EL1 DAIF access traps at EL0

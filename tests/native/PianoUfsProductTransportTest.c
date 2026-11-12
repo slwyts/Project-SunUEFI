@@ -5,8 +5,8 @@
 #undef main
 #define PIANO_UFS_BLOCKIO 1
 #define PIANO_UFS_PRODUCT_STORAGE 1
-#include "../../uefi/core/PianoUfsDmaLayout.c"
-#include "../../uefi/core/PianoUfsReadOnlyDma.c"
+#include "../../uefi/core/storage/PianoUfsDmaLayout.c"
+#include "../../uefi/core/storage/PianoUfsReadOnlyDma.c"
 EFI_BOOT_SERVICES *gBS;EFI_RUNTIME_SERVICES *gRT;
 EFI_GUID gEfiBlockIoProtocolGuid,gEfiDevicePathProtocolGuid,gEfiPartitionInfoProtocolGuid;
 static EFI_BOOT_SERVICES Bs;static EFI_RUNTIME_SERVICES Rt;

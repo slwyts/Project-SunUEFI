@@ -1,16 +1,18 @@
 """Actual UEFI C, no hardware. Architecture object inspection is ARM64."""
+import sys
 import platform
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from core_source import core_include_flags
 
 ROOT=Path(__file__).resolve().parents[2]
 HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
 INCLUDE=ROOT/"upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include"
-SOURCE=ROOT/"uefi/core/PianoHighRamProbe.c"
+SOURCE=ROOT/"uefi/core/memory/PianoHighRamProbe.c"
 
 
 class HighRamProbeTests(unittest.TestCase):
@@ -20,7 +22,7 @@ class HighRamProbeTests(unittest.TestCase):
                 exe=Path(directory)/f"probe-{probe}-{pattern}"
                 command=["cc","-std=c11","-Wall","-Wextra","-Werror","-Wno-misleading-indentation","-g","-fshort-wchar","-fsanitize=address,undefined","-fno-pie","-no-pie",
                     f"-DPIANO_HIGH_RAM_PROBE_EXPERIMENT={probe}",f"-DPIANO_HIGH_RAM_PATTERN_EXPERIMENT={pattern}",
-                    "-I"+str(INCLUDE),"-I"+str(INCLUDE/HOST_PROCESSOR_BIND),"-I"+str(ROOT/"uefi/core"),
+                    "-I"+str(INCLUDE),"-I"+str(INCLUDE/HOST_PROCESSOR_BIND),*core_include_flags(ROOT),
                     str(ROOT/"tests/native/PianoHighRamProbeTest.c"),str(SOURCE),"-o",str(exe)]
                 build=subprocess.run(command,capture_output=True,text=True)
                 self.assertEqual(build.returncode,0,build.stdout+build.stderr)
@@ -35,7 +37,7 @@ class HighRamProbeTests(unittest.TestCase):
                 obj=Path(directory)/f"probe-{probe}-{pattern}.o"
                 command=[str(host/"bin/clang"),"--target=aarch64-none-elf","-std=c11","-ffreestanding","-fshort-wchar","-O2","-Wall","-Wextra","-Werror",
                     f"-DPIANO_HIGH_RAM_PROBE_EXPERIMENT={probe}",f"-DPIANO_HIGH_RAM_PATTERN_EXPERIMENT={pattern}",
-                    "-I"+str(INCLUDE),"-I"+str(INCLUDE/"AArch64"),"-I"+str(ROOT/"uefi/core"),"-c",str(SOURCE),"-o",str(obj)]
+                    "-I"+str(INCLUDE),"-I"+str(INCLUDE/"AArch64"),*core_include_flags(ROOT),"-c",str(SOURCE),"-o",str(obj)]
                 build=subprocess.run(command,env=environment,capture_output=True,text=True)
                 self.assertEqual(build.returncode,0,build.stdout+build.stderr)
                 asm=subprocess.run([str(host/"bin/llvm-objdump"),"-d",str(obj)],env=environment,check=True,capture_output=True,text=True).stdout.lower()

@@ -6,8 +6,8 @@
 #include <string.h>
 #include <setjmp.h>
 #undef NULL
-#include "../../uefi/core/PianoDwc3Device.c"
-#include "../../uefi/core/PianoUsbControl.c"
+#include "../../uefi/core/usb/PianoDwc3Device.c"
+#include "../../uefi/core/usb/PianoUsbControl.c"
 
 EFI_BOOT_SERVICES *gBS;
 EFI_RUNTIME_SERVICES *gRT;

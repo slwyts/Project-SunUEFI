@@ -20,7 +20,8 @@ class ProductCoreTests(unittest.TestCase):
         mirror.mkdir()
         app = ROOT / 'uefi/core'
         for path in app.rglob('*.h'):
-            target = mirror / path.relative_to(app)
+            # Core sources are grouped by subsystem; the generated module is flat.
+            target = mirror / path.name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.symlink_to(path)
         (mirror / 'LateHandoff').symlink_to(ROOT / 'uefi/components/product-handoff', target_is_directory=True)

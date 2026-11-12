@@ -6,7 +6,7 @@
 #include <stdarg.h>
 #undef NULL
 #define PIANO_DMA_HOST_TEST 1
-#include "../../uefi/core/PianoDma.c"
+#include "../../uefi/core/memory/PianoDma.c"
 EFI_BOOT_SERVICES *gBS;EFI_DXE_SERVICES *gDS;
 static EFI_BOOT_SERVICES bs;static EFI_DXE_SERVICES ds;
 static void *allocation;static size_t allocation_bytes;static unsigned frees,clean,invalid,both,unmaps,faults;

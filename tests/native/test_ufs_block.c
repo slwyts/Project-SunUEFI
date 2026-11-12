@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoUfsBlockIo.c"
+#include "../../uefi/core/storage/PianoUfsBlockIo.c"
 static UINT8 disk[256*512];static unsigned commands,writes,flushes;
 static int fail,short_read,bad_target;
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}

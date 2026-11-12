@@ -10,7 +10,7 @@ mkdir -p artifacts/ufs-block
   -fno-builtin -Oz -Wall -Wextra -Werror -Wno-unused-parameter \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/AArch64 \
-  -c uefi/core/PianoUfsBlockIo.c -o artifacts/ufs-block/PianoUfsBlockIo.obj
+  -c uefi/core/storage/PianoUfsBlockIo.c -o artifacts/ufs-block/PianoUfsBlockIo.obj
 cc -std=gnu11 -fshort-wchar -Wall -Wextra -Werror -Wno-unused-parameter \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/X64 \

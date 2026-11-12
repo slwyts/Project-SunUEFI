@@ -1,10 +1,12 @@
 """Actual GOP renderer pixels/fences and canonical single-product source wiring."""
+import sys
 import platform
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from core_source import core_include_flags
 ROOT=Path(__file__).resolve().parents[2]
 HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
@@ -33,7 +35,7 @@ class ProductSplashTests(unittest.TestCase):
             '-I'+str(INC),'-I'+str(INC/'AArch64'),
             '-I'+str(ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdeModulePkg/Include'),
             '-I'+str(ROOT/'upstream/Mu-Silicium/Common/Mu/MsCorePkg/Include'),
-            '-I'+str(ROOT/'uefi/components/product-pump/Mu_Basecore/MdePkg/Include'),'-I'+str(ROOT/'uefi/core'),
+            '-I'+str(ROOT/'uefi/components/product-pump/Mu_Basecore/MdePkg/Include'),*core_include_flags(ROOT),
             str(LIB/'ProductBootManagerLib.c')],check=True)
 
     def test_actual_inf_bds_hook_and_freshness_inputs(self):

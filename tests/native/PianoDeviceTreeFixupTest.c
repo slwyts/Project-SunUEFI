@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Real protocol, panel selection, Gunyah fixup and libfdt; BS/map are fixtures.
-#include "../../uefi/core/PianoProductBootObjects.c"
+#include "../../uefi/core/product/PianoProductBootObjects.c"
 #include "../../uefi/components/product-handoff/PianoDeviceTreeFixup.h"
 #include <PianoFactoryPanel.h>
 #include <Library/UefiBootServicesTableLib.h>

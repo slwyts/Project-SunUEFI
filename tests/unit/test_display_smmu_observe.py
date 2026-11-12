@@ -10,7 +10,7 @@ HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 
 TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
 INC=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 PRINT=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Library/BasePrintLib'
-SRC=ROOT/'uefi/core/PianoDisplaySmmuObserve.c'
+SRC=ROOT/'uefi/core/display/PianoDisplaySmmuObserve.c'
 class DisplaySmmuObserveTests(unittest.TestCase):
     def test_actual_observer_guard_and_formatter(self):
         with tempfile.TemporaryDirectory(prefix='mdss-guard-')as directory:

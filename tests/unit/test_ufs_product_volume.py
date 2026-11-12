@@ -21,7 +21,7 @@ class UfsProductVolumeTests(unittest.TestCase):
             spec=importlib.util.spec_from_file_location('piano_capture',ROOT/'tools/prepare_ufs_write_test.py')
             capture=importlib.util.module_from_spec(spec);spec.loader.exec_module(capture)
             (out/'PianoUfsWriteTestBaseline.h').write_bytes(capture._render_header(capture.verify_capture()))
-            sources=[ROOT/'tests/native/PianoUfsProductVolumeTest.c',ROOT/'uefi/core/PianoUfsProductVolume.c',ROOT/'uefi/core/PianoGpt.c']
+            sources=[ROOT/'tests/native/PianoUfsProductVolumeTest.c',ROOT/'uefi/core/storage/PianoUfsProductVolume.c',ROOT/'uefi/core/storage/PianoGpt.c']
             cmd=['cc','-std=gnu11','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-Wno-unused-const-variable','-fsanitize=address,undefined','-fno-pie','-no-pie','-I',str(out),'-I',str(INC),'-I',str(INC/HOST_PROCESSOR_BIND),'-I',str(CRYPTO),*[str(p) for p in sources],'-lcrypto','-o',str(out/'volume')]
             subprocess.run(cmd,check=True);subprocess.run([str(out/'volume')],check=True)
             for current in (ROOT/'private/analysis/linux-live-test113/current-lun4-gpt.bin',
@@ -31,12 +31,12 @@ class UfsProductVolumeTests(unittest.TestCase):
             proposal=ROOT/'private/provisioning/piano-storage-v1-final'
             if proposal.is_dir():
                 subprocess.run([str(out/'volume'),str(proposal)],check=True)
-            transport=['cc','-std=gnu11','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-Wno-unused-const-variable','-ffunction-sections','-fdata-sections','-fsanitize=address,undefined','-fno-pie','-no-pie','-I',str(out),'-I',str(INC),'-I',str(INC/HOST_PROCESSOR_BIND),'-I',str(CRYPTO),str(ROOT/'tests/native/PianoUfsProductTransportTest.c'),*[str(p) for p in sources[1:]],str(ROOT/'uefi/core/PianoUfsBoundedLayout.c'),'-Wl,--gc-sections','-lcrypto','-o',str(out/'transport')]
+            transport=['cc','-std=gnu11','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-Wno-unused-const-variable','-ffunction-sections','-fdata-sections','-fsanitize=address,undefined','-fno-pie','-no-pie','-I',str(out),'-I',str(INC),'-I',str(INC/HOST_PROCESSOR_BIND),'-I',str(CRYPTO),str(ROOT/'tests/native/PianoUfsProductTransportTest.c'),*[str(p) for p in sources[1:]],str(ROOT/'uefi/core/storage/PianoUfsBoundedLayout.c'),'-Wl,--gc-sections','-lcrypto','-o',str(out/'transport')]
             subprocess.run(transport,check=True);subprocess.run([str(out/'transport')],check=True)
     def test_actual_aarch64_provider_and_transport_both_gates(self):
         with tempfile.TemporaryDirectory(prefix='piano-ext4-headers-') as folder:
             for name in ('PianoExt4.h','PianoStorageIo.h','PianoStorageIo.inc'):
                 (Path(folder)/name).write_bytes((ROOT/'uefi/components/ext4'/name).read_bytes())
             for enabled in (0,1):
-                subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-DPIANO_UFS_BLOCKIO=1',f'-DPIANO_UFS_PRODUCT_STORAGE={enabled}','-I',folder,'-I',str(INC),'-I',str(INC/'AArch64'),'-I',str(CRYPTO),str(ROOT/'uefi/core/PianoUfsReadOnlyDma.c'),str(ROOT/'uefi/core/PianoUfsProductVolume.c')],check=True)
+                subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-DPIANO_UFS_BLOCKIO=1',f'-DPIANO_UFS_PRODUCT_STORAGE={enabled}','-I',folder,'-I',str(INC),'-I',str(INC/'AArch64'),'-I',str(CRYPTO),str(ROOT/'uefi/core/storage/PianoUfsReadOnlyDma.c'),str(ROOT/'uefi/core/storage/PianoUfsProductVolume.c')],check=True)
 if __name__=='__main__':unittest.main()

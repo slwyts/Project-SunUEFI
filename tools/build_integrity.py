@@ -50,10 +50,11 @@ def inputs(root,profile):
                                      early_dxe_files)
         files.update(early_dxe_files(root))
         canonical=root/'uefi/core'
-        files.update(canonical/name for name in SOURCE_NAMES)
+        from core_source import core_source
+        files.update(core_source(name, root) for name in SOURCE_NAMES)
         files.update(root/'uefi/components'/component/name
                      for component,names in PRODUCT_COMPONENTS.items() for name in names)
-        files.update(path for path in canonical.iterdir() if path.is_file() and path.suffix in ('.h','.inc'))
+        files.update(path for path in canonical.rglob('*') if path.is_file() and path.suffix in ('.h','.inc'))
         files.update(os_boot_files(root).values())
         prepared=json.loads((root/'build/product/prepared-manifest.json').read_text());os_boot=prepared.get('os_boot',{})
         if prepared.get('vendor_inputs')!=vendor_record:

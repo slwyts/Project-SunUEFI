@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-#include "../../uefi/core/PianoProductBootLog.h"
+#include "../../uefi/core/product/PianoProductBootLog.h"
 #include "../../uefi/components/product-support/Library/ProductBootManagerLib/ProductSplash.h"
 #include <assert.h>
 #include <stdio.h>

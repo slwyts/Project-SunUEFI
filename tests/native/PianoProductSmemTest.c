@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoProductSmem.h"
+#include "../../uefi/core/memory/PianoProductSmem.h"
 #include "../../uefi/components/guarded-read/PianoGuardedRead.h"
 #include "../../uefi/handoff/early-memory/PianoSmemRam.h"
 #include "../../uefi/handoff/early-memory/PianoEarlyMemory.h"

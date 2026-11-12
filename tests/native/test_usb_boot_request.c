@@ -3,7 +3,7 @@
 #define PIANO_USB_RAM_BOOT 1
 #define USB_FASTBOOT_TEST_MAIN old_bulk_source_suite
 #include "test_usb_fastboot.c"
-#include "../../uefi/core/PianoFastbootBoot.c"
+#include "../../uefi/core/usb/PianoFastbootBoot.c"
 static UINT8 payload[1024];static UINT8 *captured;
 static UINTN boot_stage,ready_calls,validate_calls,take_calls;
 static UINTN test_case;

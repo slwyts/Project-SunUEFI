@@ -7,7 +7,7 @@ static void *test_console;
 #include "test_usb_session.c"
 #undef main
 #include <openssl/sha.h>
-#include "../../uefi/core/PianoFastboot.c"
+#include "../../uefi/core/usb/PianoFastboot.c"
 UINTN EFIAPI AsciiStrLen(CONST CHAR8 *S){return strlen(S);}
 INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
 INTN EFIAPI AsciiStrnCmp(CONST CHAR8 *A,CONST CHAR8 *B,UINTN N){return strncmp(A,B,N);}

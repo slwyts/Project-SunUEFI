@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #pragma once
 #include <Uefi.h>
-#include "Protocol/PianoProductRuntime.h"
+#include "../Protocol/PianoProductRuntime.h"
 #include "PianoFvApplication.h"
 #include "PianoUsbService.h"
 typedef enum {PianoBootEntryUnknown,PianoBootEntryNormal,PianoBootEntryRecovery} PIANO_BOOT_ENTRY;

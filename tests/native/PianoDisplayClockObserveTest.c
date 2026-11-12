@@ -11,7 +11,7 @@
 #undef NULL
 #define PIANO_GUARDED_HOST_TEST 1
 #include "../../uefi/components/guarded-read/PianoGuardedRead.c"
-#include "../../uefi/core/PianoDisplayClockObserve.c"
+#include "../../uefi/core/display/PianoDisplayClockObserve.c"
 #include <Library/PrintLib.h>
 EFI_BOOT_SERVICES *gBS;EFI_SYSTEM_TABLE *gST;EFI_DXE_SERVICES *gDS;
 EFI_GUID gEfiCpuArchProtocolGuid={.Data1=1},gEfiEventExitBootServicesGuid=EFI_EVENT_GROUP_EXIT_BOOT_SERVICES;

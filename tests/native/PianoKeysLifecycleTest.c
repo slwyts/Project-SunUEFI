@@ -7,7 +7,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #undef NULL
-#include "../../uefi/core/PianoKeys.c"
+#include "../../uefi/core/input/PianoKeys.c"
 EFI_BOOT_SERVICES *gBS;static EFI_BOOT_SERVICES bs;
 EFI_GUID gEfiSimpleTextInProtocolGuid={0};EFI_GUID gEfiDevicePathProtocolGuid={0};
 EFI_GUID gEfiSimpleTextInputExProtocolGuid={0};EFI_GUID gEfiConsoleInDeviceGuid={0};

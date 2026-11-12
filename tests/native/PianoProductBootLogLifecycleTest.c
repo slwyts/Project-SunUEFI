@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Exercise the actual Core display callbacks; unrelated owner code is GC'd.
 #define MDEPKG_NDEBUG
-#include "../../uefi/core/PianoProductCore.c"
+#include "../../uefi/core/product/PianoProductCore.c"
 #include <assert.h>
 #include <setjmp.h>
 #include <stdio.h>

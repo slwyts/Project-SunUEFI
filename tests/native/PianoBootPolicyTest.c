@@ -8,9 +8,9 @@
 #include <stdarg.h>
 #include <sys/mman.h>
 #undef NULL
-#include "../../uefi/core/PianoBootPolicy.h"
+#include "../../uefi/core/boot/PianoBootPolicy.h"
 #include <Protocol/PianoProductIdle.h>
-#include "../../uefi/core/PianoProductPayload.h"
+#include "../../uefi/core/product/PianoProductPayload.h"
 #include <PiDxe.h>
 #include <Protocol/SimpleTextInEx.h>
 #include <Protocol/FirmwareVolume2.h>

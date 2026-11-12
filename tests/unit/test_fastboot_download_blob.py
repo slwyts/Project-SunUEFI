@@ -29,7 +29,7 @@ class DownloadBlobTests(unittest.TestCase):
                 "-fshort-wchar", "-ffreestanding", "-fsyntax-only", "-Wall", "-Wextra",
                 "-Werror", "-Wno-unused-parameter", "-I", str(INC),
                 "-I", str(INC / "AArch64"),
-                str(ROOT / "uefi/core/PianoFastbootDownloadBlob.c")
+                str(ROOT / "uefi/core/usb/PianoFastbootDownloadBlob.c")
             ], check=True)
 
 

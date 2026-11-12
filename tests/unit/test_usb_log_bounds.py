@@ -43,7 +43,7 @@ class UsbLogBoundTests(unittest.TestCase):
                         self.assertEqual(record['bytes'],size);self.assertEqual(record['sha256'],hashlib.sha256(data).hexdigest())
                         self.assertTrue(any(x[0]=='get_staged'for x in calls))
     def test_ufs_fetch_limit_is_unchanged_in_actual_firmware_and_checker(self):
-        header=(ROOT/'uefi/core/PianoFastboot.h').read_text();firmware=(ROOT/'uefi/core/PianoFastboot.c').read_text();checker=(ROOT/'tools/check_product_fastboot.py').read_text()
+        header=(ROOT/'uefi/core/usb/PianoFastboot.h').read_text();firmware=(ROOT/'uefi/core/usb/PianoFastboot.c').read_text();checker=(ROOT/'tools/check_product_fastboot.py').read_text()
         self.assertIn('#define PIANO_FASTBOOT_MAX_FETCH 65536U',header)
         self.assertIn('max-fetch-size',firmware);self.assertIn('OKAY0x00010000',firmware)
         self.assertIn('fetch_limit != 65536',checker)

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Host-only; actual app source with fake owners, no prepare/build/device/reset.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/core-includes.sh"
 case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_fetch_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_fetch_root"
@@ -14,4 +15,4 @@ cc -U__aarch64__ -std=gnu11 -fshort-wchar -g -fsanitize=address,undefined -fno-p
 "${SUNUEFI_TOOLCHAIN_ROOT:-build/host-tools/usr}/bin/clang" --target=aarch64-windows-msvc -fshort-wchar -ffreestanding -fsyntax-only \
   -Wall -Wextra -Werror -Wno-unused-parameter \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/AArch64 \
-  uefi/core/PianoUsbUfsFetch.c
+  uefi/core/usb/PianoUsbUfsFetch.c

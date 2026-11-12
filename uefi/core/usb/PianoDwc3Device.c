@@ -4,7 +4,7 @@
 #include "PianoUsbControl.h"
 #include "PianoDwc3Service.h"
 #if PIANO_USB_SERVICE
-#include "Protocol/PianoProductRuntime.h"
+#include "../Protocol/PianoProductRuntime.h"
 #endif
 #ifndef PIANO_USB_FASTBOOT
 #define PIANO_USB_FASTBOOT 0

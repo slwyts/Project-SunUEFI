@@ -3,7 +3,7 @@
 #define main fastboot_command_tests
 #include "test_fastboot.c"
 #undef main
-#include "../../uefi/core/PianoUsbDebug.c"
+#include "../../uefi/core/usb/PianoUsbDebug.c"
 EFI_BOOT_SERVICES *gBS;EFI_RUNTIME_SERVICES *gRT;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}

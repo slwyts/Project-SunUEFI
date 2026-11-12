@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[2]
 HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
 INC=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
-SRC=ROOT/'uefi/core/PianoProductDisplayObserve.c'
+SRC=ROOT/'uefi/core/display/PianoProductDisplayObserve.c'
 PRINT=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Library/BasePrintLib'
 class ProductDisplayObserveTests(unittest.TestCase):
     def test_actual_protocol_inventory_and_retention(self):

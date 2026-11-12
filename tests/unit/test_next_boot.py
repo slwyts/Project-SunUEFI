@@ -1,4 +1,5 @@
 """Exercise the real native command only on a small temporary regular file."""
+import sys
 import hashlib
 import json
 import runpy
@@ -9,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 import zlib
+from core_source import core_source
 
 ROOT = Path(__file__).resolve().parents[2]
 GENERATION = hashlib.sha256(b'next-boot-host-fixture').digest()[:16]

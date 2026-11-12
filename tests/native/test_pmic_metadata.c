@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoPmicMetadata.c"
+#include "../../uefi/core/product/PianoPmicMetadata.c"
 EFI_BOOT_SERVICES *gBS;
 static EFI_BOOT_SERVICES bs;static UINT32 state=1;static unsigned writes,stalls;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}

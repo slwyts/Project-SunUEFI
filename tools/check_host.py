@@ -13,6 +13,8 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'tools'))
+from core_source import core_include_dirs
 PORTABLE = (
     'tests/unit/test_product_contract.py',
     'tests/unit/test_usb_log_bounds.py',
@@ -45,7 +47,12 @@ def run_check(path, timeout):
     # between individual unit files and their temporary fixtures.
     command = [sys.executable, '-m', 'unittest', 'discover',
                '-s', str(path.parent), '-p', path.name, '-v']
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
+    # Core sources are grouped by subsystem but include each other by bare name.
+    # The generated firmware module is flat, so tests get the same flat view.
+    search = os.pathsep.join(str(path) for path in (ROOT / 'uefi/core', *core_include_dirs(ROOT)))
+    python_path = os.pathsep.join(filter(None, (str(ROOT / 'tools'), os.environ.get('PYTHONPATH'))))
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONPATH=python_path,
+               CPATH=os.pathsep.join(filter(None, (search, os.environ.get('CPATH')))))
     try:
         result = subprocess.run(command, cwd=ROOT, env=env,
                                 stdout=subprocess.PIPE,

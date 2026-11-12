@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Host-only. Reads durable PC backup fixtures; transport callbacks are mocks.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/core-includes.sh"
 case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_write_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_write_root"
@@ -10,8 +11,8 @@ if [[ $# -gt 0 || -d "$sun_write_fixture" ]]; then
     -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include \
     -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/$sun_bind \
     -I upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include \
-    tests/native/test_ufs_write_transaction.c uefi/core/PianoUfsWriteTest.c \
-    uefi/core/PianoGpt.c -lcrypto -o build/test-ufs-write-transaction-asan
+    tests/native/test_ufs_write_transaction.c uefi/core/storage/PianoUfsWriteTest.c \
+    uefi/core/storage/PianoGpt.c -lcrypto -o build/test-ufs-write-transaction-asan
   build/test-ufs-write-transaction-asan "$sun_write_fixture"
 else
   echo "Skipped host transaction test: PC backup fixture $sun_write_fixture absent"
@@ -21,4 +22,4 @@ fi
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/AArch64 \
   -I upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include \
-  uefi/core/PianoUfsWriteTest.c
+  uefi/core/storage/PianoUfsWriteTest.c

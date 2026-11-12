@@ -1,3 +1,4 @@
+import sys
 import platform
 from pathlib import Path
 import os,subprocess,sys,tempfile,unittest
@@ -13,7 +14,7 @@ class DisplayClockLeaseTests(unittest.TestCase):
   with tempfile.TemporaryDirectory(prefix='display-clock-lease-')as directory:
    exe=Path(directory)/'lease';cmd=['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-g','-DPIANO_DISPLAY_CLOCK_HOST_TEST=1','-fsanitize=address,undefined','-fno-pie','-no-pie']
    for path in (inc,inc/HOST_PROCESSOR_BIND,crypto,qcom):cmd+=['-I',str(path)]
-   cmd += [str(ROOT/'tests/native/PianoDisplayClockLeaseTest.c'),str(ROOT/'uefi/core/PianoDisplayClockLease.c'),'-lcrypto','-o',str(exe)]
+   cmd += [str(ROOT/'tests/native/PianoDisplayClockLeaseTest.c'),str(ROOT/'uefi/core/display/PianoDisplayClockLease.c'),'-lcrypto','-o',str(exe)]
    p=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr)
    # Same ClockDxe bytes that prepare_product stages from the vendor bundle
    clock=Path(directory)/'ClockDxe.efi';clock.write_bytes(derive(vendor.load(ROOT)['native_drivers']['ClockDxe']['pe_path'].read_bytes())[0])
@@ -22,5 +23,5 @@ class DisplayClockLeaseTests(unittest.TestCase):
   inc=BASE/'MdePkg/Include';env=os.environ.copy();env['LD_LIBRARY_PATH']=str(TOOLCHAIN/'lib')
   args=[str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-misleading-indentation']
   for path in (inc,inc/'AArch64',BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include'):args+=['-I',str(path)]
-  subprocess.run(args+[str(ROOT/'uefi/core/PianoDisplayClockLease.c')],env=env,check=True)
+  subprocess.run(args+[str(ROOT/'uefi/core/display/PianoDisplayClockLease.c')],env=env,check=True)
 if __name__=='__main__':unittest.main()

@@ -37,7 +37,7 @@ class ProductPayloadTests(unittest.TestCase):
             subprocess.run(['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-pie','-no-pie',*flags,str(ROOT/'tests/native/PianoProductPayloadTest.c'),'-lcrypto','-o',str(executable)],check=True)
             subprocess.run([str(executable),str(app)],check=True)
             flags[flags.index(str(inc/HOST_PROCESSOR_BIND))]=str(inc/'AArch64')
-            subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror',*flags,str(ROOT/'uefi/core/PianoProductPayload.c')],check=True)
+            subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror',*flags,str(ROOT/'uefi/core/product/PianoProductPayload.c')],check=True)
 
 
 if __name__=='__main__':unittest.main()

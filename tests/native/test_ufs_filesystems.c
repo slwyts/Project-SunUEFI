@@ -5,8 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoGpt.c"
-#include "../../uefi/core/PianoUfsFileSystemProbe.c"
+#include "../../uefi/core/storage/PianoGpt.c"
+#include "../../uefi/core/storage/PianoUfsFileSystemProbe.c"
 
 EFI_BOOT_SERVICES *gBS;
 EFI_GUID gEfiBlockIoProtocolGuid,gEfiDevicePathProtocolGuid,gEfiSimpleFileSystemProtocolGuid;

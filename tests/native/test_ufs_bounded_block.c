@@ -5,8 +5,8 @@
 #include <string.h>
 #include <openssl/sha.h>
 #undef NULL
-#include "../../uefi/core/PianoUfsBoundedBlock.h"
-#include "../../uefi/core/PianoUfsBoundedLayout.h"
+#include "../../uefi/core/storage/PianoUfsBoundedBlock.h"
+#include "../../uefi/core/storage/PianoUfsBoundedLayout.h"
 #include "PianoUfsWriteTestBaseline.h"
 #include <IndustryStandard/UfsHci.h>
 static PIANO_UFS_BOUNDED_BLOCK volume;

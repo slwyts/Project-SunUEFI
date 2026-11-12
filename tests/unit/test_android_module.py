@@ -12,7 +12,6 @@ import tempfile
 import unittest
 import zipfile
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
 import build_android_module as mod
 
 

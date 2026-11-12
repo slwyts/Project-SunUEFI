@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoOwnedSmmu.c"
+#include "../../uefi/core/memory/PianoOwnedSmmu.c"
 static PIANO_SMMU_SNAPSHOT capture;
 static UINT32 detach_code,destroy_code;
 static EFI_STATUS capture_status,free_status;

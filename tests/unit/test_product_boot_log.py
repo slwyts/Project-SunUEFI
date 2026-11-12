@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
 TOOLCHAIN = Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT', ROOT / 'build/host-tools/usr'))
 INC = ROOT / 'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
-SOURCE = ROOT / 'uefi/core/PianoProductBootLog.c'
+SOURCE = ROOT / 'uefi/core/product/PianoProductBootLog.c'
 SPLASH = ROOT / 'uefi/components/product-support/Library/ProductBootManagerLib/ProductSplash.c'
 sys.path.insert(0, str(ROOT / 'tools'))
 import prepare_product_console as console

@@ -6,7 +6,7 @@ HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 
 class OsBootJointTests(unittest.TestCase):
  def test_actual_file_source_linux_session_sha_libfdt(self):
   inc=BASE/'MdePkg/Include';crypto=BASE/'CryptoPkg/Include';fdt=BASE/'MdePkg/Library/BaseFdtLib/libfdt/libfdt'
-  sources=[ROOT/'tests/native/PianoOsBootJointTest.c',ROOT/'tests/native/PianoLinuxFdtHost.c',ROOT/'uefi/components/os-boot/PianoBootFileSource.c',ROOT/'uefi/components/os-boot/PianoLinuxEfiSession.c',ROOT/'uefi/components/os-boot/PianoCpuInput.c',ROOT/'uefi/core/PianoPanelSelection.c',ROOT/'uefi/core/PianoFastbootBoot.c',ROOT/'uefi/core/PianoProductBootObjects.c']
+  sources=[ROOT/'tests/native/PianoOsBootJointTest.c',ROOT/'tests/native/PianoLinuxFdtHost.c',ROOT/'uefi/components/os-boot/PianoBootFileSource.c',ROOT/'uefi/components/os-boot/PianoLinuxEfiSession.c',ROOT/'uefi/components/os-boot/PianoCpuInput.c',ROOT/'uefi/core/display/PianoPanelSelection.c',ROOT/'uefi/core/usb/PianoFastbootBoot.c',ROOT/'uefi/core/product/PianoProductBootObjects.c']
   with tempfile.TemporaryDirectory(prefix='osboot-joint-')as d:
    # Host build takes the non-AArch64 branches, EL1 DAIF access traps at EL0
    exe=Path(d)/'joint';cmd=['cc','-U__aarch64__','-std=gnu11','-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-DNO_MSABI_VA_FUNCS','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-Wno-deprecated-declarations','-fsanitize=address,undefined','-fno-pie','-no-pie','-I'+str(inc),'-I'+str(inc/HOST_PROCESSOR_BIND),'-I'+str(crypto),'-I'+str(ROOT/'upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include'),'-I'+str(ROOT/'uefi/handoff/early-memory'),'-I'+str(fdt),*map(str,sources)]

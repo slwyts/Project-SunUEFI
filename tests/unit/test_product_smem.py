@@ -10,7 +10,7 @@ class ProductSmemTests(unittest.TestCase):
   with tempfile.TemporaryDirectory(prefix='cold-smem-hob-')as d:
    exe=Path(d)/'snapshot';flags=['-I'+str(inc),'-I'+str(inc/HOST_PROCESSOR_BIND),'-I'+str(guard),'-I'+str(early)]
    cmd=['cc','-std=gnu11','-DPIANO_EARLY_HOST_TEST','-DPIANO_GUARDED_HOST_TEST','-DNO_MSABI_VA_FUNCS','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-g','-fsanitize=address,undefined','-fno-pie','-no-pie',*flags,
-    str(ROOT/'tests/native/PianoEarlySmemSnapshotTest.c'),str(ROOT/'uefi/core/PianoProductSmem.c'),str(guard/'PianoGuardedRead.c'),str(early/'PianoSmemRam.c'),str(early/'PianoSmemDescriptor.c'),str(early/'PianoEarlyMemory.c'),'-o',str(exe)]
+    str(ROOT/'tests/native/PianoEarlySmemSnapshotTest.c'),str(ROOT/'uefi/core/memory/PianoProductSmem.c'),str(guard/'PianoGuardedRead.c'),str(early/'PianoSmemRam.c'),str(early/'PianoSmemDescriptor.c'),str(early/'PianoEarlyMemory.c'),'-o',str(exe)]
    build=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(build.returncode,0,build.stdout+build.stderr)
    captured=ROOT/'private/analysis/usb-live-test95'
    for case in range(58):
@@ -28,7 +28,7 @@ class ProductSmemTests(unittest.TestCase):
     if case==0:print(run.stdout.strip())
    print('Actual SEC -> revision2 HOB -> DXE consumer: raw/v3-physical/failure/tamper/bounds/wrapped-prefix replay cases passed')
  def test_actual_three_modules_guard_parser_lifetime(self):
-  inc=BASE/'MdePkg/Include';families=[ROOT/'uefi/components/guarded-read',ROOT/'uefi/handoff/early-memory'];source=ROOT/'uefi/core/PianoProductSmem.c'
+  inc=BASE/'MdePkg/Include';families=[ROOT/'uefi/components/guarded-read',ROOT/'uefi/handoff/early-memory'];source=ROOT/'uefi/core/memory/PianoProductSmem.c'
   with tempfile.TemporaryDirectory(prefix='product-smem-')as d:
    exe=Path(d)/'smem';flags=['-I'+str(inc),'-I'+str(inc/HOST_PROCESSOR_BIND),*['-I'+str(p)for p in families]]
    cmd=['cc','-std=gnu11','-DPIANO_GUARDED_HOST_TEST','-DNO_MSABI_VA_FUNCS','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-g','-fsanitize=address,undefined','-fno-pie','-no-pie',*flags,str(ROOT/'tests/native/PianoProductSmemTest.c'),str(source),str(families[0]/'PianoGuardedRead.c'),str(families[1]/'PianoSmemRam.c'),'-o',str(exe)]
@@ -39,7 +39,7 @@ class ProductSmemTests(unittest.TestCase):
     run=subprocess.run([str(exe),'0',str(early_case)],capture_output=True,text=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'});self.assertEqual(run.returncode,0,f'early{early_case}\n'+run.stdout+run.stderr)
  def test_wrapper_actual_aarch64_syntax_and_root_order(self):
   inc=BASE/'MdePkg/Include';flags=['-I'+str(inc),'-I'+str(inc/'AArch64'),'-I'+str(ROOT/'uefi/components/guarded-read'),'-I'+str(ROOT/'uefi/handoff/early-memory')]
-  subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror',*flags,str(ROOT/'uefi/core/PianoProductSmem.c')],check=True)
-  core=(ROOT/'uefi/core/PianoProductCore.c').read_text();self.assertLess(core.index('PianoProbeFoundation();'),core.index('PianoProductCaptureEarlySmem();'));self.assertLess(core.index('PianoProductCaptureEarlySmem();'),core.index('PianoUfsSetProbeAction(InitUfs)'))
+  subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror',*flags,str(ROOT/'uefi/core/memory/PianoProductSmem.c')],check=True)
+  core=(ROOT/'uefi/core/product/PianoProductCore.c').read_text();self.assertLess(core.index('PianoProbeFoundation();'),core.index('PianoProductCaptureEarlySmem();'));self.assertLess(core.index('PianoProductCaptureEarlySmem();'),core.index('PianoUfsSetProbeAction(InitUfs)'))
   self.assertNotIn('PianoProductObserveSmem();',core);self.assertNotIn('BootLogStage("SMEM"',core)
 if __name__=='__main__':unittest.main()

@@ -8,6 +8,7 @@ import unittest
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'))
 from prepare_product import EARLY_DXE_SOURCE,EARLY_DXE_NAMES,early_dxe_files,stage_early_dxe
+from core_source import core_source
 
 
 class EarlyDxeTests(unittest.TestCase):

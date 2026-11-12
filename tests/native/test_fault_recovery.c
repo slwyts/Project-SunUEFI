@@ -6,7 +6,7 @@
 #include <stdarg.h>
 #include <setjmp.h>
 #undef NULL
-#include "../../uefi/core/PianoFaultRecovery.c"
+#include "../../uefi/core/boot/PianoFaultRecovery.c"
 EFI_BOOT_SERVICES *gBS;EFI_RUNTIME_SERVICES *gRT;
 EFI_GUID gEfiCpuArchProtocolGuid;
 static EFI_CPU_ARCH_PROTOCOL cpu;static EFI_BOOT_SERVICES bs;static EFI_RUNTIME_SERVICES rt;

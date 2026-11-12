@@ -21,7 +21,7 @@ def build(output):
     output = Path(output)
     if output.exists():
         raise ValueError('Output directory already exists; refusing to overwrite a probe')
-    source = ROOT/'uefi/core/PianoRamBootProbe.c'
+    source = ROOT/'uefi/core/boot/PianoRamBootProbe.c'
     header = source.with_suffix('.h')
     includes = ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
     host = Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT', ROOT/'build/host-tools/usr'))

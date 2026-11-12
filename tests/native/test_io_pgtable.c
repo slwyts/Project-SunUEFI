@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoIoPageTable.c"
+#include "../../uefi/core/memory/PianoIoPageTable.c"
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 int main(void){
   void *memory=NULL;assert(posix_memalign(&memory,4096,PIANO_IO_PT_BYTES)==0);

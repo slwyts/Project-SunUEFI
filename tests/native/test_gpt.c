@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoGpt.c"
+#include "../../uefi/core/storage/PianoGpt.c"
 static void store32(UINT8 *p,UINT32 v){for(unsigned i=0;i<4;++i)p[i]=(UINT8)(v>>(8*i));}
 static void store64(UINT8 *p,UINT64 v){store32(p,(UINT32)v);store32(p+4,(UINT32)(v>>32));}
 static void crc_header(UINT8 *p){store32(p+16,0);store32(p+16,PianoGptCrc32(p,92));}

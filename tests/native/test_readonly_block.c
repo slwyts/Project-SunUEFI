@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoReadOnlyBlock.c"
+#include "../../uefi/core/storage/PianoReadOnlyBlock.c"
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 static unsigned calls;static EFI_STATUS failure;
 static EFI_STATUS transport(VOID *Context,UINT8 Lun,EFI_LBA Lba,UINTN Bytes,VOID *Buffer){

@@ -7,7 +7,6 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
 import package_sparse_images as sparse
 
 

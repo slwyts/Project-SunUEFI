@@ -1,10 +1,12 @@
 """Actual probe/backend/guard host cases and production ARM64 assembly check."""
+import sys
 import platform
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from core_source import core_source
 
 ROOT = Path(__file__).resolve().parents[2]
 HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
@@ -21,7 +23,7 @@ class PogoProbeTests(unittest.TestCase):
                 subprocess.run(["cc", "-std=gnu11", "-fshort-wchar", "-g", "-Wall", "-Wextra", "-Werror",
                     "-Wno-unused-parameter", "-fsanitize=address,undefined", "-fno-pie", "-no-pie",
                     f"-DPIANO_POGO_PROBE_EXPERIMENT={enabled}", "-I", str(INC), "-I", str(INC / HOST_PROCESSOR_BIND), "-I", str(QCOM),
-                    str(ROOT / "tests/native/PianoPogoProbeTest.c"), str(APP / "PianoGeniI2cPio.c"), "-o", binary], check=True)
+                    str(ROOT / "tests/native/PianoPogoProbeTest.c"), str(core_source('PianoGeniI2cPio.c', ROOT)), "-o", binary], check=True)
                 for case in ([0] if not enabled else range(24)):
                     subprocess.run([binary, str(case)], check=True, capture_output=True)
             # A real object assembly check, not fsyntax-only: validates labels,
@@ -29,7 +31,7 @@ class PogoProbeTests(unittest.TestCase):
             subprocess.run([str(TOOLCHAIN/"bin/clang"), "--target=aarch64-windows-msvc",
                 "-fshort-wchar", "-ffreestanding", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
                 "-DPIANO_POGO_PROBE_EXPERIMENT=1", "-I", str(INC), "-I", str(INC / "AArch64"), "-I", str(QCOM),
-                "-c", str(APP / "PianoPogoProbe.c"), "-o", str(Path(out) / "probe.obj")], check=True)
+                "-c", str(core_source('PianoPogoProbe.c', ROOT)), "-o", str(Path(out) / "probe.obj")], check=True)
 
 if __name__ == "__main__":
     unittest.main()

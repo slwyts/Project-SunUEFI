@@ -6,8 +6,8 @@
 #include <stdarg.h>
 #include <openssl/sha.h>
 #undef NULL
-#include "../../uefi/core/PianoUfsProductVolume.h"
-#include "../../uefi/core/PianoGpt.h"
+#include "../../uefi/core/storage/PianoUfsProductVolume.h"
+#include "../../uefi/core/storage/PianoGpt.h"
 #include "PianoUfsWriteTestBaseline.h"
 static PIANO_UFS_PRODUCT_VOLUME volume;
 static UINT8 disk[14680064],primary[4096],entries[12288],backup[4096],backup_entries[12288],pattern[8192],received[8192];

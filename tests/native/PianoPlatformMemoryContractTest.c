@@ -1,7 +1,7 @@
 #define main PianoFrozenCmaMain
 #include "PianoCmaHobTest.c"
 #undef main
-#include "../../uefi/core/PianoPlatformMemoryContract.h"
+#include "../../uefi/core/memory/PianoPlatformMemoryContract.h"
 #include <Library/FdtLib.h>
 #define GetMemoryMap PianoProductLowGetMemoryMap
 #define gMemoryDescriptor PianoProductLowDescriptors

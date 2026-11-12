@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <assert.h>
 #include <stdio.h>
-#include "../../uefi/core/PianoTouchInput.h"
+#include "../../uefi/core/input/PianoTouchInput.h"
 int main(void) {
   assert(PianoTouchAxis(0,0,3200,3200)==0);
   assert(PianoTouchAxis(3200,0,3200,3200)==3199);

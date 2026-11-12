@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #pragma once
-#include "../../core/PianoFastbootLaunch.h"
+#include "../../core/usb/PianoFastbootLaunch.h"
 #include <Protocol/LoadFile2.h>
 #include <Protocol/DevicePath.h>
 #include "PianoCpuInput.h"

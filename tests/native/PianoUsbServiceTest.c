@@ -8,8 +8,8 @@
 #define PIANO_USB_RAM_BOOT 1
 #define USB_FASTBOOT_TEST_MAIN bulk_source_suite
 #include "test_usb_fastboot.c"
-#include "../../uefi/core/PianoFastbootBoot.c"
-#include "../../uefi/core/PianoUsbController.c"
+#include "../../uefi/core/usb/PianoFastbootBoot.c"
+#include "../../uefi/core/usb/PianoUsbController.c"
 #include <sys/wait.h>
 #include <unistd.h>
 #include <stdarg.h>

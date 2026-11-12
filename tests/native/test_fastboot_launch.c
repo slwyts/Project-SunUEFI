@@ -5,7 +5,7 @@
 #undef main
 #include <setjmp.h>
 #include <sys/mman.h>
-#include "../../uefi/core/PianoFastbootLaunch.c"
+#include "../../uefi/core/usb/PianoFastbootLaunch.c"
 EFI_GUID gEfiLoadedImageProtocolGuid={.Data1=1},gEfiEventExitBootServicesGuid={.Data1=2},gEfiEventBeforeExitBootServicesGuid={.Data1=3};
 VOID *EFIAPI CopyMem(VOID *A,CONST VOID *B,UINTN N){return memcpy(A,B,N);}
 static PIANO_FASTBOOT_LAUNCH state;

@@ -6,8 +6,8 @@
 #include <string.h>
 #include <openssl/sha.h>
 #undef NULL
-#include "../../uefi/core/PianoFastbootBlockRead.c"
-#include "../../uefi/core/PianoFastboot.c"
+#include "../../uefi/core/usb/PianoFastbootBlockRead.c"
+#include "../../uefi/core/usb/PianoFastboot.c"
 EFI_GUID gEfiBlockIoProtocolGuid={.Data1=1},gEfiPartitionInfoProtocolGuid={.Data1=2},gEfiDevicePathProtocolGuid={.Data1=3};
 EFI_BOOT_SERVICES bs,*gBS=&bs;
 typedef struct {VENDOR_DEVICE_PATH Vendor;UFS_DEVICE_PATH Ufs;HARDDRIVE_DEVICE_PATH Hd;EFI_DEVICE_PATH_PROTOCOL End;} PATH;

@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from core_source import core_include_dirs
 
 ROOT = Path(__file__).resolve().parents[2]
 HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
@@ -139,7 +140,7 @@ class UsbRamBootTimerTests(unittest.TestCase):
             c_file.write_text(PREFIX + "\n" + function + "\n" + SUFFIX)
             command = [os.environ.get("CC", "cc"), "-std=gnu11", "-fshort-wchar", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
                        "-g", "-fsanitize=address,undefined", "-fno-pie", "-no-pie"]
-            for include in (ROOT / "uefi/core", ROOT / "upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include",
+            for include in (*core_include_dirs(ROOT), ROOT / "upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include",
                             ROOT / "upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include"/HOST_PROCESSOR_BIND):
                 command += ["-I", str(include)]
             command += [str(c_file), "-o", str(binary)]

@@ -6,7 +6,7 @@
 #include <string.h>
 #undef NULL
 #define PIANO_USB_EP0 1
-#include "../../uefi/core/PianoUsbController.c"
+#include "../../uefi/core/usb/PianoUsbController.c"
 EFI_BOOT_SERVICES *gBS;EFI_RUNTIME_SERVICES *gRT;
 static EFI_BOOT_SERVICES bs;static EFI_RUNTIME_SERVICES rt;static EFI_CLOCK_PROTOCOL clock;
 static jmp_buf reset_return;

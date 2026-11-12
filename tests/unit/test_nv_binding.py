@@ -8,6 +8,6 @@ class NvBindingTests(unittest.TestCase):
   inc=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
   with tempfile.TemporaryDirectory(prefix='nv-binding-')as d:
    exe=Path(d)/'bind'
-   subprocess.run(['cc','-std=gnu11','-DNO_MSABI_VA_FUNCS','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-fsanitize=address,undefined','-fno-pie','-no-pie','-I'+str(inc),'-I'+str(inc/HOST_PROCESSOR_BIND),'-I'+str(ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdeModulePkg/Include'),str(ROOT/'tests/native/PianoNvBindingTest.c'),str(ROOT/'uefi/core/PianoNvFvbBinding.c'),'-o',str(exe)],check=True)
+   subprocess.run(['cc','-std=gnu11','-DNO_MSABI_VA_FUNCS','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-fsanitize=address,undefined','-fno-pie','-no-pie','-I'+str(inc),'-I'+str(inc/HOST_PROCESSOR_BIND),'-I'+str(ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdeModulePkg/Include'),str(ROOT/'tests/native/PianoNvBindingTest.c'),str(ROOT/'uefi/core/product/PianoNvFvbBinding.c'),'-o',str(exe)],check=True)
    for case in range(4):subprocess.run([str(exe),str(case)],check=True,capture_output=True)
 if __name__=='__main__':unittest.main()

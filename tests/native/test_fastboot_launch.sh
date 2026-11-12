@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Actual source EFI API mocks only; never LoadImage/StartImage on a device.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/core-includes.sh"
 case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_repo"
@@ -16,6 +17,6 @@ ASAN_OPTIONS=detect_leaks=1 "$sun_launch_dir/test"
   -Wall -Wextra -Werror \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/AArch64 \
-  uefi/core/PianoFastbootLaunch.c uefi/core/PianoFastbootBoot.c \
-  uefi/core/PianoFastbootDownloadBlob.c
+  uefi/core/usb/PianoFastbootLaunch.c uefi/core/usb/PianoFastbootBoot.c \
+  uefi/core/usb/PianoFastbootDownloadBlob.c
 python3 tests/unit/test_fastboot_download_blob.py

@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from core_source import core_source
 
 ROOT=Path(__file__).resolve().parents[2]
 spec=importlib.util.spec_from_file_location('diagnostic_profiles',ROOT/'tools/prepare_gui_profile.py')
@@ -39,7 +40,7 @@ class NewDiagnosticProfileTests(unittest.TestCase):
                 with patch.object(profile,'__file__',str(repo/'tools/prepare_gui_profile.py')),patch.object(sys,'argv',['prepare',flag,'--return-seconds','120']),contextlib.redirect_stdout(io.StringIO()):
                     profile.main()
                 app=repo/'uefi/platforms/pianoGuiPkg/Applications/RamApp'
-                text=(app/'RamApp.c').read_text();inf=(app/'RamApp.inf').read_text()
+                text=(core_source('RamApp.c', ROOT)).read_text();inf=(app/'RamApp.inf').read_text()
                 self.assertNotIn('Status=gBS->LoadImage (FALSE,ImageHandle',text)
                 self.assertNotIn('PianoStartKeys(Fdt)',text)
                 self.assertNotIn('PianoProbeUfs(Fdt)',text)
@@ -48,7 +49,7 @@ class NewDiagnosticProfileTests(unittest.TestCase):
                     self.assertIn('PianoProbePogo(Fdt)',text)
                     self.assertNotIn('PianoFaultRecovery.c',inf)
                     self.assertIn('PianoGeniI2cPio.c',inf)
-                    self.assertTrue((app/'PianoPogoProbe.c').read_text().startswith('#define PIANO_POGO_PROBE_EXPERIMENT 1'))
+                    self.assertTrue((core_source('PianoPogoProbe.c', ROOT)).read_text().startswith('#define PIANO_POGO_PROBE_EXPERIMENT 1'))
                 elif flag=='--high-ram-readonly':
                     self.assertIn('PianoProbeHighRamReadonly()',text)
                     self.assertNotIn('NativeProbe.c',inf)
@@ -56,11 +57,11 @@ class NewDiagnosticProfileTests(unittest.TestCase):
                     self.assertFalse(cfg['foundation'])
                 else:
                     self.assertIn('PianoRunUsbRamBoot(Fdt,ImageHandle)',text)
-                    self.assertTrue((app/'PianoFastboot.c').read_text().startswith('#define PIANO_USB_RAM_BOOT 1'))
+                    self.assertTrue((core_source('PianoFastboot.c', ROOT)).read_text().startswith('#define PIANO_USB_RAM_BOOT 1'))
                     self.assertIn('PianoFastbootDownloadBlob.c',inf)
                     self.assertIn('PianoCpuInput.c',inf)
-                    self.assertEqual((app/'PianoCpuInput.c').read_bytes(),(repo/'uefi/components/os-boot/PianoCpuInput.c').read_bytes())
-                    self.assertEqual((app/'PianoCpuInput.h').read_bytes(),(repo/'uefi/core/PianoCpuInput.h').read_bytes())
+                    self.assertEqual((ROOT/'uefi/components/os-boot/PianoCpuInput.c').read_bytes(),(repo/'uefi/components/os-boot/PianoCpuInput.c').read_bytes())
+                    self.assertEqual((core_source('PianoCpuInput.h', ROOT)).read_bytes(),(repo/'uefi/core/boot/PianoCpuInput.h').read_bytes())
                     self.assertNotIn('PianoUfsDma.c',inf)
                     timer=(repo/'uefi/platforms/pianoGuiPkg/Library/Stage0BootManagerLib/Stage0BootManagerLib.c').read_text()
                     self.assertIn('Usb->Halt()!=EFI_SUCCESS',timer)

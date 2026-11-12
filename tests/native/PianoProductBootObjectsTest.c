@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoProductBootObjects.h"
+#include "../../uefi/core/product/PianoProductBootObjects.h"
 #include <Library/HobLib.h>
 #include <Library/DebugLib.h>
 static EFI_GUID Guid=PIANO_COLD_OBJECT_HOB_GUID;

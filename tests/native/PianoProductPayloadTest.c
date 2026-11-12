@@ -6,8 +6,8 @@
 #undef NULL
 #define PIANO_PRODUCT_PAYLOAD_HOST_TEST 1
 #define MDEPKG_NDEBUG 1
-#include "../../uefi/core/PianoProductPayload.c"
-#include "../../uefi/core/PianoFastbootBoot.c"
+#include "../../uefi/core/product/PianoProductPayload.c"
+#include "../../uefi/core/usb/PianoFastbootBoot.c"
 static UINT64 handoff[64];UINTN PianoProductHostHandoffAddress;
 static UINT8 bank[16384];static UINT8 start_be[8],end_be[8];
 static EFI_MEMORY_REGION_DESCRIPTOR regions[4];static UINT8 region_count;

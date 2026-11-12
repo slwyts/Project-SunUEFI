@@ -5,8 +5,8 @@
 #include <string.h>
 #include <openssl/sha.h>
 #undef NULL
-#include "../../uefi/core/PianoProductOsController.h"
-#include "../../uefi/core/PianoUfsProductVolume.h"
+#include "../../uefi/core/product/PianoProductOsController.h"
+#include "../../uefi/core/storage/PianoUfsProductVolume.h"
 EFI_GUID gEfiSimpleFileSystemProtocolGuid={.Data1=1},gEfiBlockIoProtocolGuid={.Data1=2},gEfiDevicePathProtocolGuid={.Data1=3},gEfiEventExitBootServicesGuid={.Data1=4};
 VOID *EFIAPI ZeroMem(VOID *p,UINTN n){return memset(p,0,n);}VOID *EFIAPI CopyMem(VOID *a,CONST VOID *b,UINTN n){return memmove(a,b,n);}INTN EFIAPI CompareMem(CONST VOID *a,CONST VOID *b,UINTN n){return memcmp(a,b,n);}
 UINTN EFIAPI Sha256GetContextSize(VOID){return sizeof(SHA256_CTX);}BOOLEAN EFIAPI Sha256Init(VOID *p){return SHA256_Init(p)==1;}BOOLEAN EFIAPI Sha256Update(VOID *p,CONST VOID *b,UINTN n){return SHA256_Update(p,b,n)==1;}BOOLEAN EFIAPI Sha256Final(VOID *p,UINT8 *b){return SHA256_Final(b,p)==1;}

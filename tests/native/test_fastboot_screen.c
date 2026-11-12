@@ -5,7 +5,7 @@
 #include <string.h>
 #include <stdio.h>
 #undef NULL
-#include "../../uefi/core/PianoFastbootScreen.c"
+#include "../../uefi/core/usb/PianoFastbootScreen.c"
 EFI_GUID gEfiGraphicsOutputProtocolGuid;
 EFI_BOOT_SERVICES Services,*gBS=&Services;
 static EFI_GRAPHICS_OUTPUT_MODE_INFORMATION ModeInfo;

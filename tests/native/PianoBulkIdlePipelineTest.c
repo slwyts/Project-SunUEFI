@@ -4,7 +4,7 @@
 #define USB_SERVICE_TEST_MAIN persistent_service_suite
 #include "PianoUsbServiceTest.c"
 #undef USB_SERVICE_TEST_MAIN
-#include "../../uefi/core/PianoBootPolicy.h"
+#include "../../uefi/core/boot/PianoBootPolicy.h"
 #include <Library/PianoProductPumpLib.h>
 EFI_SYSTEM_TABLE *gST;static EFI_SYSTEM_TABLE system_table;
 static PIANO_BOOT_POLICY_REPORT mReport;

@@ -9,8 +9,8 @@
 #include <sys/mman.h>
 #include <openssl/sha.h>
 #undef NULL
-#include "../../uefi/core/PianoProductOsController.h"
-#include "../../uefi/core/PianoUfsProductVolume.h"
+#include "../../uefi/core/product/PianoProductOsController.h"
+#include "../../uefi/core/storage/PianoUfsProductVolume.h"
 #include "../../uefi/components/os-boot/PianoLinuxEfiSession.h"
 #include <Guid/FileInfo.h>
 #include <Guid/Fdt.h>

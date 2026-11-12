@@ -4,8 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoIoPageTable.c"
-#include "../../uefi/core/PianoOwnedSmmu.c"
+#include "../../uefi/core/memory/PianoIoPageTable.c"
+#include "../../uefi/core/memory/PianoOwnedSmmu.c"
 static unsigned fsr_writes;static UINT32 fsr_clear_value;
 static unsigned sync_calls;static int sync_fail;
 static unsigned detaches,destroys,releases,exit_retains;static int retained_stream,changed_other;

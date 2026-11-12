@@ -6,7 +6,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #undef NULL
-#include "../../uefi/core/PianoTouchProbe.c"
+#include "../../uefi/core/input/PianoTouchProbe.c"
 
 extern int fdt_check_header(const void *);
 extern int fdt_path_offset(const void *,const char *);

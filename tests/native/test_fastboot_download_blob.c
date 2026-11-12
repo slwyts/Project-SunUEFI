@@ -5,8 +5,8 @@
 #include <string.h>
 #include <openssl/sha.h>
 #undef NULL
-#include "../../uefi/core/PianoFastboot.c"
-#include "../../uefi/core/PianoFastbootDownloadBlob.c"
+#include "../../uefi/core/usb/PianoFastboot.c"
+#include "../../uefi/core/usb/PianoFastbootDownloadBlob.c"
 static struct {void *pointer;size_t bytes;} pools[16];
 static unsigned allocations,frees,quiet_calls;
 static EFI_STATUS quiet_status,release_status;

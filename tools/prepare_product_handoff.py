@@ -3,6 +3,7 @@
 from pathlib import Path
 import hashlib,json,subprocess,shutil
 from source_input_tail import split_source_tail
+from core_source import core_source
 ROOT=Path(__file__).resolve().parents[1]
 BASE='upstream/Mu-Silicium/Mu_Basecore/'
 # Audited LF source bodies. Only independent footer comments/whitespace vary;
@@ -149,8 +150,8 @@ def stage_provider(root,app):
     # The generated module contains the canonical core header mirror.
     required=('PianoProductOwners.h','PianoCpuInput.h')
     for name in required:
-        canonical=root/'uefi/core'/name
-        mirror=app/'core'/name
+        canonical=core_source(name, root)
+        mirror=app/'core'/canonical.relative_to(root/'uefi/core')
         if not mirror.exists()or mirror.read_bytes()!=canonical.read_bytes():
             raise ValueError('Late provider shared header stale: '+name)
     folder.mkdir()

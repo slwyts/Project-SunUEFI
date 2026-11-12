@@ -14,8 +14,8 @@
 #endif
 #define PIANO_USB_EP0 1
 #define PIANO_USB_UFS_FETCH 0
-#include "../../uefi/core/PianoUsbController.c"
-#include "../../uefi/core/PianoUsbStorageExperiment.h"
+#include "../../uefi/core/usb/PianoUsbController.c"
+#include "../../uefi/core/usb/PianoUsbStorageExperiment.h"
 
 EFI_BOOT_SERVICES *gBS;EFI_RUNTIME_SERVICES *gRT;
 STATIC EFI_BOOT_SERVICES Bs;STATIC EFI_RUNTIME_SERVICES Rt;STATIC EFI_CLOCK_PROTOCOL Clock;

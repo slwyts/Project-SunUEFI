@@ -4,7 +4,7 @@
 #define PIANO_USB_EP0 1
 #define USB_FASTBOOT_TEST_MAIN bulk_source_suite
 #include "test_usb_fastboot.c"
-#include "../../uefi/core/PianoUsbController.c"
+#include "../../uefi/core/usb/PianoUsbController.c"
 #include <stdarg.h>
 // This existing fixture mocks HAL ownership rather than a real close ledger.
 // The new exporter must not infer retirement from those mock-only contexts.

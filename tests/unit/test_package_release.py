@@ -11,7 +11,6 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
 import package_release as pr
 from make_kernel_initramfs import make_newc
 

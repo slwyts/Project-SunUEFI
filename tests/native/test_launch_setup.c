@@ -8,7 +8,7 @@
 #include <PiDxe.h>
 static BOOLEAN emu_enabled=TRUE;
 #define _PCD_GET_MODE_BOOL_PcdEmuVariableNvModeEnable emu_enabled
-#include "../../uefi/core/PianoLaunchSetup.c"
+#include "../../uefi/core/boot/PianoLaunchSetup.c"
 EFI_BOOT_SERVICES *gBS;
 EFI_GUID gEfiFirmwareVolume2ProtocolGuid,gEfiLoadedImageProtocolGuid;
 EFI_GUID gEfiHiiDatabaseProtocolGuid,gEfiHiiStringProtocolGuid,gEfiHiiFontProtocolGuid,gEfiHiiConfigRoutingProtocolGuid;

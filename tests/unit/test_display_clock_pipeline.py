@@ -1,4 +1,5 @@
 """Actual combined clock pipeline; only machine/EFI/native ARM boundaries mocked."""
+import sys
 import platform
 from pathlib import Path
 import hashlib,os,re,subprocess,sys,tempfile,unittest
@@ -7,6 +8,7 @@ ROOT=Path(__file__).resolve().parents[2];BASE=ROOT/'upstream/Mu-Silicium/Mu_Base
 sys.path.insert(0,str(ROOT/'tools'))
 import piano_vendor_inputs as vendor
 from piano_inherited_clock import derive
+from core_source import core_include_dirs
 HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 def function(text,name):
  match=re.search(r'(?:STATIC\s+)?(?:VOID|BOOLEAN|EFI_STATUS)\s+'+re.escape(name)+r'\s*\([^)]*\)\s*\{',text)
@@ -25,20 +27,20 @@ def object_comparison(text):
  return match.group()+'\n'+function(text,'DcrSameObject')+'\n'
 class DisplayClockPipelineTests(unittest.TestCase):
  def test_actual_combined_native_clock_reader_and_guard_pipeline(self):
-  owner=ROOT/'uefi/core/PianoProductDisplayOwner.c';text=owner.read_text()
+  owner=ROOT/'uefi/core/display/PianoProductDisplayOwner.c';text=owner.read_text()
   with tempfile.TemporaryDirectory(prefix='display-clock-pipeline-')as directory:
-   d=Path(directory);owners=(ROOT/'uefi/core/PianoProductOwners.h').read_text();startup=re.search(r'typedef struct \{(?:(?!typedef struct).)*?\} PIANO_PRODUCT_DISPLAY_STARTUP_REPORT;',owners,re.S)
+   d=Path(directory);owners=(ROOT/'uefi/core/product/PianoProductOwners.h').read_text();startup=re.search(r'typedef struct \{(?:(?!typedef struct).)*?\} PIANO_PRODUCT_DISPLAY_STARTUP_REPORT;',owners,re.S)
    if not startup:raise AssertionError('missing actual Root startup report')
    (d/'ActualDisplayGcc.h').write_text('// Verbatim actual Root adapter source SHA256 '+hashlib.sha256(owner.read_bytes()).hexdigest()+'\n'+startup.group()+'\n'+'\n'.join(function(text,n)for n in ('ReadAlive','LeaseAlive','ReadGcc','PianoProductDisplayOwnerRetained','CopyAcquire'))+'\n')
-   (d/'ActualClockObjectComparison.h').write_text(object_comparison((ROOT/'uefi/core/PianoDisplayClockRead.c').read_text()))
+   (d/'ActualClockObjectComparison.h').write_text(object_comparison((ROOT/'uefi/core/display/PianoDisplayClockRead.c').read_text()))
    write_mu_map_fixture(ROOT,d/'ActualMuMemoryMap.h')
    # Actual Lease directly dereferences the native protocol and actual Reader
    # enforces the original low heap. ASAN reserves that x64 address-space gap;
    # use UBSAN here without weakening either source's real address contract.
    # Separate actual Lease/Reader/Guard tests retain their ASAN coverage.
    exe=d/'pipeline';cmd=['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-g','-DPIANO_DISPLAY_CLOCK_HOST_TEST=1','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie']
-   for p in (BASE/'MdePkg/Include',BASE/'MdePkg/Include'/HOST_PROCESSOR_BIND,BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',ROOT/'uefi/components/guarded-read',ROOT/'uefi/core',d):cmd+=['-I',str(p)]
-   cmd+=[str(ROOT/'tests/native/PianoDisplayClockPipelineTest.c'),str(ROOT/'uefi/core/PianoDisplayClockRead.c'),str(ROOT/'uefi/core/PianoDisplayClockLease.c'),'-lcrypto','-o',str(exe)]
+   for p in (BASE/'MdePkg/Include',BASE/'MdePkg/Include'/HOST_PROCESSOR_BIND,BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',ROOT/'uefi/components/guarded-read',*core_include_dirs(ROOT),d):cmd+=['-I',str(p)]
+   cmd+=[str(ROOT/'tests/native/PianoDisplayClockPipelineTest.c'),str(ROOT/'uefi/core/display/PianoDisplayClockRead.c'),str(ROOT/'uefi/core/display/PianoDisplayClockLease.c'),'-lcrypto','-o',str(exe)]
    p=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(p.returncode,0,p.stdout+p.stderr)
    # Same ClockDxe bytes that prepare_product stages from the vendor bundle
    clock=Path(directory)/'ClockDxe.efi';clock.write_bytes(derive(vendor.load(ROOT)['native_drivers']['ClockDxe']['pe_path'].read_bytes())[0])

@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Run the real GENI SPI FIFO engine against a host model of the serial engine"""
+import sys
 import platform
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+from core_source import core_include_flags
 
 ROOT = Path(__file__).resolve().parents[2]
 HOST_PROCESSOR_BIND = 'AArch64' if platform.machine() in ('aarch64', 'arm64') else 'X64'
 INC = ROOT / "upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include"
 FLAGS = ["-std=gnu11", "-fshort-wchar", "-g", "-O1", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter"]
-INCLUDES = ["-I", str(ROOT / "uefi/core"), "-I", str(ROOT / "uefi/components/touch-product")]
+INCLUDES = [*core_include_flags(ROOT), "-I", str(ROOT / "uefi/components/touch-product")]
 
 
 class GeniSpiPioTest(unittest.TestCase):

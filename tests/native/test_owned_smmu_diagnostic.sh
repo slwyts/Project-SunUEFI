@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Host-only source tests and production AArch64 syntax; no prepare/device/build.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/core-includes.sh"
 case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_diag_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_diag_root"
@@ -18,4 +19,4 @@ done
   -Wall -Wextra -Werror -Wno-unused-parameter \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/AArch64 \
   -I upstream/Mu-Silicium/Silicon/Silicium/SiliciumPkg/Include -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include \
-  uefi/core/PianoOwnedSmmu.c
+  uefi/core/memory/PianoOwnedSmmu.c

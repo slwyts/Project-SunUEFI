@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoRamBootProbe.c"
+#include "../../uefi/core/boot/PianoRamBootProbe.c"
 static EFI_SYSTEM_TABLE st;
 static EFI_BOOT_SERVICES bs;
 static EFI_RUNTIME_SERVICES rt;

@@ -11,7 +11,7 @@
 #undef NULL
 #define PIANO_GUARDED_HOST_TEST 1
 #include "../../uefi/components/guarded-read/PianoGuardedRead.c"
-#include "../../uefi/core/PianoDisplayClockRead.h"
+#include "../../uefi/core/display/PianoDisplayClockRead.h"
 EFI_GUID gEfiLoadedImageProtocolGuid={.Data1=1},gEfiCpuArchProtocolGuid={.Data1=2},gEfiEventExitBootServicesGuid=EFI_EVENT_GROUP_EXIT_BOOT_SERVICES;
 VOID *EFIAPI CopyMem(VOID *D,CONST VOID *S,UINTN N){return memmove(D,S,N);}VOID *EFIAPI ZeroMem(VOID *D,UINTN N){return memset(D,0,N);}INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}BOOLEAN EFIAPI Sha256HashAll(CONST VOID *P,UINTN N,UINT8 *H){return SHA256(P,N,H)!=NULL;}
 VOID EFIAPI CpuDeadLoop(VOID){abort();}

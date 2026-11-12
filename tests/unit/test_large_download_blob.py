@@ -1,6 +1,8 @@
+import sys
 import platform
 from pathlib import Path
 import subprocess,tempfile,unittest
+from core_source import core_include_flags
 ROOT=Path(__file__).resolve().parents[2];BASE=ROOT/'upstream/Mu-Silicium/Mu_Basecore'
 HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 class LargeDownloadTests(unittest.TestCase):
@@ -11,7 +13,7 @@ class LargeDownloadTests(unittest.TestCase):
    subprocess.run(['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter',
      '-Wno-misleading-indentation','-Wno-deprecated-declarations','-fsanitize=address,undefined',
      '-fno-pie','-no-pie','-I'+str(inc),'-I'+str(inc/HOST_PROCESSOR_BIND),'-I'+str(BASE/'CryptoPkg/Include'),
-     '-I'+str(ROOT/'uefi/core'),str(ROOT/'tests/native/PianoLargeDownloadBlobTest.c'),
+     *core_include_flags(ROOT),str(ROOT/'tests/native/PianoLargeDownloadBlobTest.c'),
      str(ROOT/'uefi/components/os-boot/PianoCpuInput.c'),'-lcrypto','-o',str(exe)],check=True)
    subprocess.run([str(exe)],check=True,timeout=60)
 if __name__=='__main__':unittest.main()

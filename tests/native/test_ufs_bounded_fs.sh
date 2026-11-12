@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Host-only. No prepare CLI, staged firmware, controller/device or real writes.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/core-includes.sh"
 case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_transport_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_transport_root"
@@ -37,8 +38,8 @@ Path(sys.argv[1]).write_bytes(m.render(m.verify()))
 PYFMT
 cc -std=gnu11 -fshort-wchar -g -Wno-deprecated-declarations -fsanitize=address,undefined -fno-pie -no-pie \
   -ffunction-sections -fdata-sections "${sun_transport_includes[@]}" \
-  tests/native/test_ufs_bounded_fs.c uefi/core/PianoUfsWriteTest.c \
-  uefi/core/PianoGpt.c -Wl,--gc-sections -lcrypto -o "$sun_transport_tmp/bounded-fs"
+  tests/native/test_ufs_bounded_fs.c uefi/core/storage/PianoUfsWriteTest.c \
+  uefi/core/storage/PianoGpt.c -Wl,--gc-sections -lcrypto -o "$sun_transport_tmp/bounded-fs"
 "$sun_transport_tmp/bounded-fs"
 sun_transport_arm_includes=(
   -I "$sun_transport_tmp"
@@ -51,5 +52,5 @@ sun_transport_arm_includes=(
 )
 "${SUNUEFI_TOOLCHAIN_ROOT:-build/host-tools/usr}/bin/clang" --target=aarch64-windows-msvc -fshort-wchar -ffreestanding -fsyntax-only -Wall -Wextra -Werror -Wno-unused-parameter \
   -DPIANO_UFS_BLOCKIO=1 -DPIANO_UFS_BOUNDED_VOLUME=1 -DPIANO_UFS_BOUNDED_FS_TEST=1 \
-  "${sun_transport_arm_includes[@]}" uefi/core/PianoUfsReadOnlyDma.c \
-  uefi/core/PianoUfsBoundedBlock.c uefi/core/PianoUfsBoundedLayout.c uefi/core/PianoUfsBoundedFileSystemTest.c
+  "${sun_transport_arm_includes[@]}" uefi/core/storage/PianoUfsReadOnlyDma.c \
+  uefi/core/storage/PianoUfsBoundedBlock.c uefi/core/storage/PianoUfsBoundedLayout.c uefi/core/storage/PianoUfsBoundedFileSystemTest.c

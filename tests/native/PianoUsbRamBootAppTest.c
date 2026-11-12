@@ -11,7 +11,7 @@
 #include <unistd.h>
 #include <openssl/sha.h>
 #undef NULL
-#include "../../uefi/core/PianoUsbRamBoot.c"
+#include "../../uefi/core/usb/PianoUsbRamBoot.c"
 #include <Protocol/LoadedImage.h>
 
 EFI_BOOT_SERVICES *gBS;EFI_RUNTIME_SERVICES *gRT;

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Host-only checks; never prepares or builds a firmware profile.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/core-includes.sh"
 case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_setup_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_setup_root"
@@ -17,6 +18,6 @@ build/test-launch-setup-asan
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include \
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/AArch64 \
   -I upstream/Mu-Silicium/Mu_Basecore/MdeModulePkg/Include \
-  uefi/core/PianoLaunchSetup.c
+  uefi/core/boot/PianoLaunchSetup.c
 python3 tests/unit/test_setup_profile.py
 python3 -m py_compile tools/prepare_gui_profile.py

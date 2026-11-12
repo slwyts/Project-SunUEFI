@@ -14,7 +14,7 @@ TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/us
 INC=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 sys.path.insert(0,str(ROOT/'tools'))
 import prepare_product as product
-SRC=ROOT/'uefi/core/NativeProbe.c'
+SRC=ROOT/'uefi/core/native/NativeProbe.c'
 def header(names,capacity=False):
     data='typedef struct { CONST CHAR8 *Name; EFI_GUID Guid; CONST UINT8 *Depex; UINTN DepexBytes; } NATIVE_IMAGE;\n'
     data+='static const UINT8 True[]={6,8};\n'
@@ -31,7 +31,7 @@ class NativeObserverTests(unittest.TestCase):
         # prepare_product writes the product NativeProbeTable.h from this list, in order
         names=list(product.NATIVE_NAMES)
         self.assertEqual(len(names),13)
-        core=(ROOT/'uefi/core/PianoProductCore.c').read_text()
+        core=(ROOT/'uefi/core/product/PianoProductCore.c').read_text()
         outer=len(re.findall(r'ObserveDisplay\("',core));self.assertEqual(outer,5)
         self.assertIn('ObserveDisplay("after-display-lease")',core)
         self.assertLessEqual(outer+2*len(names),32)
@@ -41,7 +41,7 @@ class NativeObserverTests(unittest.TestCase):
                 directory=Path(directory);actual=directory/'NativeProbe.c';actual.write_bytes(SRC.read_bytes())
                 self.assertEqual(actual.read_bytes(),SRC.read_bytes())
                 (directory/'NativeProbeTable.h').write_text(header(modules,capacity))
-                (directory/'PianoNativeImages.h').write_bytes((ROOT/'uefi/core/PianoNativeImages.h').read_bytes())
+                (directory/'PianoNativeImages.h').write_bytes((ROOT/'uefi/core/input/PianoNativeImages.h').read_bytes())
                 exe=directory/'native'
                 subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-Wno-unused-const-variable',
                     '-fshort-wchar','-g','-fsanitize=address,undefined','-fno-pie','-no-pie',

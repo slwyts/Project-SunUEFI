@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoQupFwRam.c"
+#include "../../uefi/core/storage/PianoQupFwRam.c"
 EFI_BOOT_SERVICES *gBS;
 STATIC EFI_MEMORY_REGION_DESCRIPTOR Regions[3];
 VOID EFIAPI GetMemoryMap(EFI_MEMORY_REGION_DESCRIPTOR **Map,UINT8 *Count) {*Map=Regions;*Count=3;}

@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #undef NULL
-#include "../../uefi/core/PianoUsbUfsFetch.c"
+#include "../../uefi/core/usb/PianoUsbUfsFetch.c"
 EFI_BOOT_SERVICES *gBS;EFI_RUNTIME_SERVICES *gRT;
 static EFI_BOOT_SERVICES bs;static EFI_RUNTIME_SERVICES rt;
 static PIANO_FB_STORAGE storage;static PIANO_UFS_RESET_REPORT report;

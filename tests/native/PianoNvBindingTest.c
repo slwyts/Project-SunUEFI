@@ -4,7 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #undef NULL
-#include "../../uefi/core/PianoNvFvbBinding.h"
+#include "../../uefi/core/product/PianoNvFvbBinding.h"
 #include <Protocol/LoadedImage.h>
 #include <Protocol/Variable.h>
 #include <Guid/EventGroup.h>

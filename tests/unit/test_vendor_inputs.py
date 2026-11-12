@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import piano_vendor_inputs as vendor
 from compose_piano_dtb import read_fdt, write_fdt
 from piano_inherited_clock import derive, ORIGINAL_SHA256, DERIVED_SHA256
+from core_source import core_source
 
 
 class VendorInputsTests(unittest.TestCase):
@@ -140,7 +141,7 @@ class VendorInputsTests(unittest.TestCase):
                 self.assertEqual(identities[name]['pe_sha256'], vendor.sha(expected))
                 self.assertEqual(identities[name]['depex_sha256'], vendor.sha(bundle['native_drivers'][name]['depex_path'].read_bytes()))
             self.assertEqual(fdf.count('SECTION PE32'), 16)
-            self.assertTrue((app / 'NativeProbeTable.h').is_file())
+            self.assertTrue((core_source('NativeProbeTable.h', ROOT)).is_file())
 
     def test_arm64_pe_code_and_section_validation(self):
         data = (ROOT / vendor.BUNDLE / 'native/ClockDxe.efi').read_bytes()

@@ -12,10 +12,11 @@ ROOT=Path(__file__).resolve().parents[2];INC=ROOT/'upstream/Mu-Silicium/Mu_Basec
 sys.path.insert(0,str(ROOT/'tools'))
 import piano_vendor_inputs as vendor
 from piano_inherited_clock import derive
+from core_source import core_include_dirs
 HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
 PRINT=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Library/BasePrintLib'
-SRC=ROOT/'uefi/core/PianoDisplayClockObserve.c'
+SRC=ROOT/'uefi/core/display/PianoDisplayClockObserve.c'
 QCOM=ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include'
 class DisplayClockObserveTests(unittest.TestCase):
     def test_actual_guard_and_required_unfinished_collector(self):
@@ -46,15 +47,15 @@ class DisplayClockObserveTests(unittest.TestCase):
         # replaced and no rail proof or controller register load is invented.
         from test_display_clock_pipeline import function,object_comparison
         from piano_mu_map_fixture import write_mu_map_fixture
-        owner=ROOT/'uefi/core/PianoProductDisplayOwner.c'
+        owner=ROOT/'uefi/core/display/PianoProductDisplayOwner.c'
         fixture=(ROOT/'tests/native/PianoDisplayClockPipelineTest.c').read_text()
         def replace_once(old,new):
             nonlocal fixture
             self.assertEqual(fixture.count(old),1,'actual pipeline fixture anchor drift: '+old[:80])
             fixture=fixture.replace(old,new)
-        for path in ('uefi/components/guarded-read/PianoGuardedRead.c','uefi/core/PianoDisplayClockRead.h','uefi/components/display-rail/PianoDisplayNonGdscClock.h'):
+        for path in ('uefi/components/guarded-read/PianoGuardedRead.c','uefi/core/display/PianoDisplayClockRead.h','uefi/components/display-rail/PianoDisplayNonGdscClock.h'):
             replace_once('"../../'+path+'"','"'+str(ROOT/path)+'"')
-        replace_once('#include "ActualClockObjectComparison.h"','#include "ActualClockObjectComparison.h"\n#include "'+str(ROOT/'uefi/core/PianoDisplayClockObserve.h')+'"\n#include "'+str(ROOT/'uefi/core/PianoProductDisplayOwner.h')+'"')
+        replace_once('#include "ActualClockObjectComparison.h"','#include "ActualClockObjectComparison.h"\n#include "'+str(ROOT/'uefi/core/display/PianoDisplayClockObserve.h')+'"\n#include "'+str(ROOT/'uefi/core/display/PianoProductDisplayOwner.h')+'"')
         replace_once('static BOOLEAN GlobalAlive(VOID){return Services;}',
             'BOOLEAN EFIAPI DebugPrintEnabled(VOID){return TRUE;}\n'
             'BOOLEAN EFIAPI DebugPrintLevelEnabled(CONST UINTN L){(VOID)L;return TRUE;}\n'
@@ -81,17 +82,17 @@ class DisplayClockObserveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='clock-held-joint-')as directory:
             d=Path(directory);text=owner.read_text()
             report=re.search(r'typedef struct \{(?:(?!typedef struct).)*?\} PIANO_PRODUCT_DISPLAY_STARTUP_REPORT;',
-                (ROOT/'uefi/core/PianoProductOwners.h').read_text(),re.S)
+                (ROOT/'uefi/core/product/PianoProductOwners.h').read_text(),re.S)
             self.assertIsNotNone(report)
             (d/'ActualDisplayGcc.h').write_text('// Verbatim adapter '+hashlib.sha256(owner.read_bytes()).hexdigest()+'\n'+
                 '\n'.join(function(text,name)for name in ('ReadAlive','LeaseAlive','ReadGcc','PianoProductDisplayOwnerRetained','PianoProductDisplayClockObserve','CopyAcquire'))+'\n')
-            (d/'ActualClockObjectComparison.h').write_text(object_comparison((ROOT/'uefi/core/PianoDisplayClockRead.c').read_text()))
+            (d/'ActualClockObjectComparison.h').write_text(object_comparison((ROOT/'uefi/core/display/PianoDisplayClockRead.c').read_text()))
             write_mu_map_fixture(ROOT,d/'ActualMuMemoryMap.h')
             test=d/'ActualHeldConsumer.c';test.write_text(fixture);exe=d/'held'
             cmd=['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-g',
                 '-DPIANO_DISPLAY_CLOCK_HOST_TEST=1','-fsanitize=undefined','-fno-sanitize-recover=all','-fno-pie','-no-pie']
-            for path in (INC,INC/HOST_PROCESSOR_BIND,INC.parent.parent/'CryptoPkg/Include',QCOM,ROOT/'uefi/components/guarded-read',ROOT/'uefi/core',d):cmd+=['-I',str(path)]
-            cmd+=[str(test),str(ROOT/'uefi/core/PianoDisplayClockRead.c'),str(ROOT/'uefi/core/PianoDisplayClockLease.c'),str(SRC),'-lcrypto','-o',str(exe)]
+            for path in (INC,INC/HOST_PROCESSOR_BIND,INC.parent.parent/'CryptoPkg/Include',QCOM,ROOT/'uefi/components/guarded-read',*core_include_dirs(ROOT),d):cmd+=['-I',str(path)]
+            cmd+=[str(test),str(ROOT/'uefi/core/display/PianoDisplayClockRead.c'),str(ROOT/'uefi/core/display/PianoDisplayClockLease.c'),str(SRC),'-lcrypto','-o',str(exe)]
             result=subprocess.run(cmd,capture_output=True,text=True);self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             # Same ClockDxe bytes that prepare_product stages from the vendor bundle
             clock=Path(directory)/'ClockDxe.efi';clock.write_bytes(derive(vendor.load(ROOT)['native_drivers']['ClockDxe']['pe_path'].read_bytes())[0])

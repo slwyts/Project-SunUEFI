@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #pragma once
 #include "PianoNvFvb.h"
-#include "Protocol/PianoNvReady.h"
+#include "../Protocol/PianoNvReady.h"
 typedef struct {
  PIANO_NV_FVB Fvb;
  PIANO_NV_READY_PROTOCOL Info;
