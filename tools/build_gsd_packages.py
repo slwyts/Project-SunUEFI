@@ -284,6 +284,8 @@ def build(output, sysroot, jobs, source_cache=None, prepared_source=None,
             if install_dependencies:
                 chroot(rootfs, ['apt-get', 'install', '-y', '--no-install-recommends', 'dpkg-dev', 'build-essential', 'ccache'],
                        stdout=log, stderr=subprocess.STDOUT)
+                from build_mutter_packages import align_development_cohorts
+                align_development_cohorts(rootfs, log)
                 chroot(rootfs, ['apt-get', 'build-dep', '-y', '--build-profiles=nocheck',
                                'gnome-settings-daemon=' + SOURCE_VERSION], stdout=log, stderr=subprocess.STDOUT)
         if not source.exists():
