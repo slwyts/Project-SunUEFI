@@ -9,21 +9,14 @@ import subprocess
 import time
 
 import build_arch_package
+import build_piano_runtime_helpers as runtime_helpers
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = 'e54dac93afccf76e5fefe998399b6c1b1a23f3a1'
 UPSTREAM = 'ad2763da1c48860f649abfe842a087188dcb6e20'  # Valve 3.16.30
 SUBPROJECTS = ('wlroots', 'libliftoff', 'vkroots', 'libdisplay-info')
-PATCHES = (
-    ROOT / 'patches/gamescope/0001-drm-separate-render-and-display.patch',
-    ROOT / 'patches/gamescope/0002-backlight-avoid-double-dimming.patch',
-    ROOT / 'patches/gamescope/0003-drm-consistent-sdr-color.patch',
-    ROOT / 'patches/gamescope/0004-steam-respect-session-refresh.patch',
-    ROOT / 'patches/gamescope/0005-input-touchpad-natural-scroll.patch',
-    ROOT / 'patches/gamescope/0006-input-tablet-and-accelerated-pointer.patch',
-    ROOT / 'patches/gamescope/0007-compositor-preserve-input-damage.patch',
-    ROOT / 'patches/gamescope/0008-drm-wait-for-native-kms.patch',
-)
+SERIES = ROOT / 'patches/gamescope/series.json'
+PATCHES = tuple(runtime_helpers.source_patches(SERIES))
 RECIPE = ROOT / 'linux/bsp/steamos/gamescope/PKGBUILD'
 
 

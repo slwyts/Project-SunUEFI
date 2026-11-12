@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "component": "gamescope",
+  "patches": [
+    {
+      "file": "0001-drm-separate-render-and-display.patch",
+      "scope": "board",
+      "sha256": "162eefe0ca91137be066fee91aa2e93890ee1b2c00465f44e98f77a4c43b4c62"
+    },
+    {
+      "file": "0002-backlight-avoid-double-dimming.patch",
+      "scope": "board",
+      "sha256": "611fdac0afef1f490de14f9831ff5156c06bb1e1cac25026516c0ded9cb5759a"
+    },
+    {
+      "file": "0003-drm-consistent-sdr-color.patch",
+      "scope": "board",
+      "sha256": "174a6b11099fee27f885bbebaef6b274daf7f770a095d1a1939e4cda214dcb87"
+    },
+    {
+      "file": "0004-steam-respect-session-refresh.patch",
+      "scope": "board",
+      "sha256": "ce38108580c1e3e9e2ea1204380c8fad67930fac97c1ea002ffc714b1584c3ad"
+    },
+    {
+      "file": "0005-input-touchpad-natural-scroll.patch",
+      "scope": "board",
+      "sha256": "b27bf2dad0174cdf055137e0a48d451f55b2aad125b436d2641e9ab0b117f358"
+    },
+    {
+      "file": "0006-input-tablet-and-accelerated-pointer.patch",
+      "scope": "board",
+      "sha256": "5a9f6313a9080a93b7b50c920689209f086fd39c71490be7800b49b61b7dcecc"
+    },
+    {
+      "file": "0007-compositor-preserve-input-damage.patch",
+      "scope": "board",
+      "sha256": "0bbd764d15b19f9eeb8a1bdde3f322498738c91c4286647b2196365de0b484a0"
+    },
+    {
+      "file": "0008-drm-wait-for-native-kms.patch",
+      "scope": "generic",
+      "sha256": "51cc1d3254f0fc17400a36d72ecb063eb366d4abd4fbd446213ff86db2796815"
+    }
+  ]
+}
