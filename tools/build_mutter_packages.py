@@ -66,7 +66,8 @@ def align_development_cohorts(rootfs, log, execute=True):
     for development, anchor in [('libgbm-dev', 'libgbm1'),
                                  ('libpipewire-0.3-dev', 'libpipewire-0.3-0t64'),
                                  ('libspa-0.2-dev', 'libspa-0.2-modules'),
-                                 ('libwayland-dev', 'libwayland-client0')]:
+                                 ('libwayland-dev', 'libwayland-client0'),
+                                 ('libwayland-bin', 'libwayland-client0')]:
         if anchor not in installed:
             continue  # A minimal builder lets normal build-dep choose its cohort.
         _, source, version = installed[anchor]
