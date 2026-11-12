@@ -29,7 +29,6 @@ UEFI_FILES = {'requirements-build.txt', 'tools/build_android_product_module.py',
               'tools/product_payload_digest.py', 'tools/piano_vendor_inputs.py'}
 UEFI_PREFIXES = ('android/', 'uefi/', 'vendor/piano/', 'patches/firmware/',
                  'tools/prepare_product_')
-DRAFT_PREFIXES = ('linux/dts/drafts/',)
 DISTROS = ['debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos']
 
 
@@ -44,10 +43,6 @@ def select(files, manual=None):
     full = DISTROS.copy()
     uefi = False
     for name in files:
-        # Candidates in these directories are not product inputs. Promoting
-        # one changes the tracked release config/preparation tools as well.
-        if name.startswith(DRAFT_PREFIXES):
-            continue
         if name in FULL_FILES:
             return full
         if name in UEFI_FILES or name.startswith(UEFI_PREFIXES):

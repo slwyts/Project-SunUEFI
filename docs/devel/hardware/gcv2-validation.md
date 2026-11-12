@@ -15,7 +15,7 @@ python3 /run/piano_gamma_probe.py > /tmp/gcv2-before-mutter.json
 dmesg --color=never > /tmp/gcv2-before-kernel.txt
 ```
 
-`/run`是临时部署路径，源文件是[Gamma客户端](../../../tools/host/piano_gamma_probe.py)和[只读DRM采集器](../../../tools/android/piano_drm_snapshot.c)。脚本使用[Mutter48.7DisplayConfig接口](https://raw.githubusercontent.com/GNOME/mutter/48.7/data/dbus-interfaces/org.gnome.Mutter.DisplayConfig.xml)的`GetResources`、`GetCrtcGamma`和`SetCrtcGamma`；API ID来自当前配置，不能拿DRM对象ID直接代入。
+`/run`是临时部署路径，源文件是[Gamma客户端](../../../tools/dev/piano_gamma_probe.py)和[只读DRM采集器](../../../tools/android/piano_drm_snapshot.c)。脚本使用[Mutter48.7DisplayConfig接口](https://raw.githubusercontent.com/GNOME/mutter/48.7/data/dbus-interfaces/org.gnome.Mutter.DisplayConfig.xml)的`GetResources`、`GetCrtcGamma`和`SetCrtcGamma`；API ID来自当前配置，不能拿DRM对象ID直接代入。
 
 **三个空数组可以表示原本的bypass，不能据此安全恢复。** bde3初始CRTC104/105的`GAMMA_LUT_SIZE=1024`、`GAMMA_LUT=0`，活动CRTC104对应Mutter API ID0。Mutter48.7 [read_crtc_gamma](https://github.com/GNOME/mutter/blob/48.7/src/backends/native/meta-kms-crtc.c#L147)先记录支持的size，在blob0时保留NULL；[getter](https://github.com/GNOME/mutter/blob/48.7/src/backends/native/meta-crtc-kms.c#L98)把NULL返回为size0 LUT。DRM snapshot可解释后端容量，不能证明完整SetCrtcGamma路径能恢复空数组。当前客户端在原状态为空时拒绝probe，`--restore-from`也拒绝空备份；不会以恒等曲线冒称恢复原bypass。
 
@@ -23,7 +23,7 @@ bde3恒等提交在boottime659.136439秒记录`ctl1 dspp_mask0x60000 iova0x1000 
 
 [Mutter最小修复](../../../linux/desktops/gnome/patches/mutter/0001-kms-empty-gamma-bypass.patch)在KMS更新入口将size0与NULL一同表示为bypass，非空曲线仍走原重采样。适用官方48.7；当前root记录`libmutter-16-0 48.7-0+deb13u1`、`gnome-shell 48.7-0+deb13u2`。已用固定Debian源包、原rules/control及正常quilt构建ARM64源码和五个运行包，版本`48.7-0+deb13u1+sunuefi1`。安装并正常重启GDM后，保存当前1024项曲线→设置空→读回三空→恢复原曲线，D-Bus返回与曲线读回均匹配，同一piano会话15保持、GDM active。此检查证明新库完整空LUT接口往返和会话存活，未单独证明面板光学恢复。内核atomic层可写blob0这一事实不替代上层完整验证，也无需为此新增legacy gamma回调。
 
-当前后端在提交与完成处有`drm_dbg_kms`日志，但没有成功初始化、逐DSPP绑定和健康退出的正向日志。`GAMMA_LUT`出现可以说明代码已安装可用ops，无法单独说明每个物理DSPP的输出结果。之前独立[日志草案](../../../patches/linux/drafts/0003-drm-msm-dpu-log-gcv2-init-bind-quiesce.patch)基于旧281的CTL枚举循环，未加入a589；正式0006测试修复改为catalog循环后，该草案不可直接应用，须先更新再正常编译。所需正向消息仍应只在reset成功、资源初始化、ops绑定和quiesce完成之后输出，不增加寄存器读取、假完成事件或新控制路径。
+当前后端在提交与完成处有`drm_dbg_kms`日志，但没有成功初始化、逐DSPP绑定和健康退出的正向日志。`GAMMA_LUT`出现可以说明代码已安装可用ops，无法单独说明每个物理DSPP的输出结果。之前独立日志草案基于旧281的CTL枚举循环，未加入a589；正式0006测试修复改为catalog循环后，该草案不可直接应用，须先更新再正常编译。所需正向消息仍应只在reset成功、资源初始化、ops绑定和quiesce完成之后输出，不增加寄存器读取、假完成事件或新控制路径。
 
 主任务可在测试窗口保存当前`/sys/module/drm/parameters/debug`值，仅增加KMS bit`0x04`，结束时恢复原值。不开启该bit时没有提交debug消息不能被当作没有DMA；已有error日志仍应保留。
 
@@ -68,10 +68,10 @@ python3 /run/piano_gamma_probe.py --restore-from /tmp/gcv2-warm-original.json
 
 ## 同时看四类结果
 
-离线[报告脚本](../../../tools/host/piano_gcv2_report.py)解析采集，不修改系统：
+离线[报告脚本](../../../tools/dev/piano_gcv2_report.py)解析采集，不修改系统：
 
 ```sh
-python3 tools/host/piano_gcv2_report.py \
+python3 tools/dev/piano_gcv2_report.py \
   --snapshot ACTUAL_DRM_JSON --kernel-log ACTUAL_DMESG_TEXT \
   --since-uptime ACTUAL_PROBE_START
 ```
