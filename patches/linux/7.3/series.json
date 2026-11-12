@@ -851,8 +851,8 @@
   ],
   "provenance": {
     "charger_cooling": {
-      "stock_rom": "OS4.0.5.0.XPYCNXM",
-      "stock_dtb_sha256": "73d9beea4d8e251d03a42d9bc7331a8f274f6891d7b1f7e6668ecd6ed3eb4ca1",
+      "stock_rom": "OS4.0.6.0.XPYCNXM",
+      "stock_dtb_sha256": "82b2404bc872c1f60eb4c54c62eb9f2094b97586bdc2aeccae9765f5f258aff1",
       "stock_program_sha256": {
         "mca_charger_thermal.ko": "5bda39f6f811ae0e60bf8c908977b3724d0675ca7ef9c31c3fece85d22d41319"
       },
@@ -891,14 +891,18 @@
         "gpio_stock_blob": "a70241ffea5592d52e36bc6dcb6b7878cb3913c5",
         "policy": "Apply the selected total budget and actual 5V/9V PMIC FCC columns. Keep external input limits independent. Sensor errors stop battery charge without forgetting hysteresis or clearing other stop reasons.",
         "evidence_sha256": "8814c838dd8bd71d63ccb9fff1d1a0470d9b49d4f53c5a67cafb2daba94eca6e"
-      }
+      },
+      "stock_dtb_path": "vendor/piano/dtb/piano.dtb",
+      "stock_dtb_capture_rom": "OS4.0.4.0.XPYCNXM"
     },
     "cpu_capacity": {
-      "stock_rom": "OS4.0.5.0.XPYCNXM",
-      "stock_dtb_sha256": "73d9beea4d8e251d03a42d9bc7331a8f274f6891d7b1f7e6668ecd6ed3eb4ca1",
+      "stock_rom": "OS4.0.6.0.XPYCNXM",
+      "stock_dtb_sha256": "82b2404bc872c1f60eb4c54c62eb9f2094b97586bdc2aeccae9765f5f258aff1",
       "stock_property_checks": "Final running /cpus nodes contain capacity-dmips-mhz 1792 for CPU0-5 and 1894 for CPU6-7. Linux arch_topology normalizes these values with each SCMI policy maximum frequency.",
       "product_board_manifest": "vendor/piano-linux/manifest.json",
-      "scope": "Native SM8750 DTS parity only. The product board DTB already contains these capacity values; this does not change its CPU topology or establish a power-consumption improvement."
+      "scope": "Native SM8750 DTS parity only. The product board DTB already contains these capacity values; this does not change its CPU topology or establish a power-consumption improvement.",
+      "stock_dtb_path": "vendor/piano/dtb/piano.dtb",
+      "stock_dtb_capture_rom": "OS4.0.4.0.XPYCNXM"
     },
     "normal_charging": {
       "reference_url": "https://github.com/turbo-boo/android_kernel_xiaomi_sm8750",
@@ -941,7 +945,7 @@
       "factory_source_url": "https://github.com/MiCode/Xiaomi_Kernel_OpenSource",
       "factory_source_commit": "0b426219a9a24b56c1593ebc84edb8a3f3b897b0",
       "factory_source_path": "xiaomi-modules/mca/mca_hardware_ic/fuelgauge_ic/bq27z561/bq27z561.c",
-      "stock_rom": "OS4.0.5.0.XPYCNXM",
+      "stock_rom": "OS4.0.6.0.XPYCNXM",
       "stock_program_sha256": {
         "batterysecret": "b4692888f6b5b86f29cbb0f2e2bb554b082079d368b77a70d7d9390bcd55ef05",
         "bq27z561.ko": "7a76a4f20b83e4a3de197c7f8ca6bc2281072824e5d6b6ed9962d1c7af89dfdb"
@@ -961,13 +965,26 @@
       "write_scope": "Only SYS_POWER_OFF with USB ONLINE; identify a unique charger GPT partition beneath the internal SM8750 UFS controller. No header locking, no other stock fields, no ship mode or MCA shutdown-property changes."
     },
     "authenticated_ffc": {
-      "stock_rom": "OS4.0.5.0.XPYCNXM",
-      "stock_dtb_sha256": "73d9beea4d8e251d03a42d9bc7331a8f274f6891d7b1f7e6668ecd6ed3eb4ca1",
+      "stock_rom": "OS4.0.6.0.XPYCNXM",
+      "stock_dtb_sha256": "82b2404bc872c1f60eb4c54c62eb9f2094b97586bdc2aeccae9765f5f258aff1",
       "baa_config_sha256": "2eab003aaf5168ffa4645df039dba625bbd8db5afe7867df07c3cdc3f9f578c2",
       "original_policy_commit": "274171fbc86cb3235e14fa4dfbfe9c6b518427f7",
       "integration_commit": "da1459e194528d2274b1e5fb55f6bc3b109c5b6c",
       "conditions": "Authenticated adapter and both gauges; live six-channel IIO skin policy; cell window 18 <= T < 48 degC; entry raw SOC below 95%; no manual inhibition or full vote.",
-      "scope": "Retain PR20 session recovery, ordinary full/recharge, thermal hysteresis and fault latches; FFC stages 4144/4300/4475/4540 mV, cell FV 4550 mV before aging, combined current up to 12400 mA before derating. PMIC sharing stops at 4480 mV; gauge-mode changes require a confirmed charging pause."
+      "scope": "Retain PR20 session recovery, ordinary full/recharge, thermal hysteresis and fault latches; FFC stages 4144/4300/4475/4540 mV, cell FV 4550 mV before aging, combined current up to 12400 mA before derating. PMIC sharing stops at 4480 mV; gauge-mode changes require a confirmed charging pause.",
+      "stock_dtb_path": "vendor/piano/dtb/piano.dtb",
+      "stock_dtb_capture_rom": "OS4.0.4.0.XPYCNXM"
+    },
+    "stock_release_delta": {
+      "stock_rom": "OS4.0.6.0.XPYCNXM",
+      "previous_rom": "OS4.0.5.0.XPYCNXM",
+      "unchanged_for_piano": "Display windows, /memory, all 63 reserved-memory nodes, jeita_para, batt_para, wired_thermal, temperature limits and the FFC tables are identical to the previous release, so the charging and cooling parameters used here need no change.",
+      "second_battery_para": "The new mca_buckchg_jeita_second_para node duplicates mca_buckchg_jeita_gbl_para byte for byte and is read only when the board sets has-second-batt-para. Piano does not set it, and the stock driver additionally requires warsaw p2 or yanan p1, so the node is unused on this device.",
+      "quick_charge_additions": "mca_strategy_quick_charge gains enable_cp_para, drop_fcc_para, drop_fv_cycle, drop_fv_value, reduce_max_cur, non_mi_pps_max_curr (4500/11000/17600 mA for non-Xiaomi PPS), anti-overvoltage-strategy and support-dtpt-reduce-max-cur; vstep_para rows widen from three to five fields. mca_strategy_buckchg_class adds support_pps_100w = 0, so 100 W PPS stays disabled. These are stock policy inputs the kernel does not read; the project keeps its own tables and limits.",
+      "scope": "Provenance only. No kernel value, limit or behaviour changes with this record.",
+      "repository_dtb_sha256": "82b2404bc872c1f60eb4c54c62eb9f2094b97586bdc2aeccae9765f5f258aff1",
+      "release_capture_sha256": "1deee3798375ecaa97c0eedd740186ba48b356e009ce9a5c7f5dda428cb8c6c7",
+      "release_capture": "Runtime FDT of the device on 4.0.6; the checked-in DTB is the same tree captured on 4.0.4 with snapshot properties removed, and every value this project uses compared identical."
     }
   }
 }
