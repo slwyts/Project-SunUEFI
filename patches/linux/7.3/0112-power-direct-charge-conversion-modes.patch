@@ -1,0 +1,1078 @@
+From 7679892741f7c03527300a76f2c008eb59bf3891 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sat, 14 Nov 2026 05:10:30 +0800
+Subject: [PATCH] feat(power): support factory 1:1 direct-charge selection
+
+Expose SC8541 Standard and Bypass charge types with stopped-only mode writes and register readback. Retain stop guards before re-enabling the stage.
+
+Select 1:1 or 2:1 from authenticated adapter capabilities and use the actual conversion ratio for voltage requests, current budgets, PMIC sharing and regulation steps. Apply the factory 4.5 A single-pump bypass limit, wait for low input voltage before enabling bypass and keep dynamic mode switching disabled.
+
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index 2e6dd6637..e56d78da9 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -902,8 +902,17 @@ config CHARGER_SC8541
+ 	select REGMAP_I2C
+ 	help
+ 	  Say Y to enable support for the Southchip SC8541 single-cell 2:1
+-	  switched-capacitor direct charger.  It only exposes the charger;
+-	  the USB PD sink driver decides when to use it.
++	  switched-capacitor and 1:1 bypass direct charger. It only exposes the
++	  charger; the USB PD sink driver decides when to use it.
++
++config CHARGER_SC8541_KUNIT_TEST
++	bool "KUnit tests for SC8541 conversion modes" if !KUNIT_ALL_TESTS
++	depends on KUNIT=y && UML && CHARGER_SC8541=y
++	default KUNIT_ALL_TESTS
++	help
++	  Exercise the real power-supply callbacks and register sequences with
++	  a memory-backed regmap. Check stopped-only mode changes, readback
++	  failures, protection settings and delayed stop confirmation.
+ 
+ config CHARGER_BQ25630
+ 	tristate "TI BQ25630 battery charger driver"
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 7cf5c17a3..18000b969 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -299,12 +299,11 @@ MODULE_PARM_DESC(mipps_auth,
+ 		 "Authenticate Xiaomi MiPPS adapters before PPS negotiation (default: on, may be disabled for debugging)");
+ 
+ /*
+- * cp_charge: direct charging through the SC8541 2:1 switched-capacitor
+- * stage (driver sc8541_charger), which is how stock charges fast
+- * (mca_strategy_quickchg): a PPS source is held at about twice the battery
+- * voltage and the stage halves it into the battery at twice the bus
+- * current, with a bounded PMIC share. The sequence
+- * follows stock: ask the source for twice the battery voltage plus
++ * cp_charge: direct charging through the SC8541 switched-capacitor stage
++ * (driver sc8541_charger), following stock mca_strategy_quickchg. The
++ * stage converts the programmable source at the selected 1:1 or 2:1 ratio,
++ * with a bounded PMIC share. The sequence
++ * follows stock: ask the source for ratio times the battery voltage plus
+  * MCA_CP_DELTA_MV, enable the stage, raise the voltage MCA_CP_STEP_MV at a
+  * time until current flows, then regulate the voltage every MCA_CP_POLL_MS
+  * so the bus current stays at its target and the battery current (both
+@@ -444,6 +443,11 @@ static const struct piano_mca_jeita piano_mca_jeita[] = {
+ #define MCA_CP_REQ_MAX_DELTA_MV	2000
+ #define MCA_CP_PPS_MIN_MV	6000
+ #define MCA_CP_PPS_MAX_MV	11000
++#define MCA_CP_BYPASS_MIN_MV	3600
++#define MCA_CP_BYPASS_MAX_MV	5500
++#define MCA_CP_BYPASS_IBAT_MA	4500	/* one pump: div_single_curr */
++#define MCA_CP_BYPASS_SELECT_MA	5000	/* initial mode comparison: div_max_curr */
++#define MCA_CP_BYPASS_OPEN_MA	800	/* stock open_path_th[0] */
+ #define MCA_CP_BUCK_MA		500	/* buck input limit and charge current */
+ /*
+  * Retain this board's validated 2 A PMIC share to distribute heat. The
+@@ -625,6 +629,7 @@ struct piano_mca {
+ 	unsigned int cp_generation;
+ 	unsigned int cp_connection_generation;
+ 	u32 cp_real_type;	/* source type selected before enabling the pump */
++	u32 cp_ratio;		/* selected once per attempt: 1:1 or 2:1 */
+ 	bool cp_verified;	/* Xiaomi proof used for this attempt's source limits */
+ 	u32 cp_mv;		/* voltage asked of the direct-charge source */
+ 	u32 cp_ma;		/* its current limit */
+@@ -1008,7 +1013,7 @@ static u32 piano_mca_pps_word(u32 mv, u32 ma)
+ 	return (mv / 20) << 16 | ma / 50;
+ }
+ 
+-static bool piano_mca_pps_word_ok(u32 val)
++static bool piano_mca_pps_word_ok(struct piano_mca *mca, u32 val)
+ {
+ 	u32 mv = (val >> 16) * 20, ma = (val & 0xffff) * 50;
+ 
+@@ -1016,6 +1021,10 @@ static bool piano_mca_pps_word_ok(u32 val)
+ 		return false;
+ 	if (mv == MCA_HV_MV && ma <= MCA_HV_PPS_MAX_MA)
+ 		return true;
++	if (cp_charge && mca->cp_ratio == 1 && mca->cp_verified &&
++	    (mca->cp == MCA_CP_OPENING || mca->cp == MCA_CP_ON) &&
++	    mv >= MCA_CP_BYPASS_MIN_MV && mv <= MCA_CP_BYPASS_MAX_MV)
++		return ma <= MCA_CP_PPS_MAX_MA;
+ 
+ 	return cp_charge && mv >= MCA_CP_PPS_MIN_MV && mv <= MCA_CP_PPS_MAX_MV &&
+ 	       ma <= MCA_CP_PPS_MAX_MA;
+@@ -1098,7 +1107,7 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
+ 			 val <= MCA_QC3P5_MAX_VBUS_MV && !(val % MCA_QC3P5_STEP_MV)));
+ 	case MCA_PROP_PPS_SELECT:
+ 		return hv_charge && len == sizeof(u32) &&
+-		       piano_mca_pps_word_ok(val);
++		       piano_mca_pps_word_ok(mca, val);
+ 	case MCA_PROP_VDM_VERSION:
+ 	case MCA_PROP_VDM_VOLTAGE:
+ 	case MCA_PROP_VDM_TEMP:
+@@ -3064,17 +3073,41 @@ static int piano_mca_cp_set_busocp(struct piano_mca *mca, u32 ma)
+ 					 &pv);
+ }
+ 
++static int piano_mca_cp_set_ratio(struct piano_mca *mca)
++{
++	union power_supply_propval pv = {
++		.intval = mca->cp_ratio == 1 ? POWER_SUPPLY_CHARGE_TYPE_BYPASS :
++			POWER_SUPPLY_CHARGE_TYPE_STANDARD,
++	};
++	int type, ret;
++
++	if (!piano_mca_cp_session_valid(mca))
++		return -ECONNRESET;
++	ret = power_supply_set_property(mca->cp_psy, POWER_SUPPLY_PROP_CHARGE_TYPE, &pv);
++	ret = ret ?: piano_mca_cp_get(mca, POWER_SUPPLY_PROP_CHARGE_TYPE, &type);
++	if (!ret && type != pv.intval)
++		ret = -EIO;
++	if (!ret && !piano_mca_cp_session_valid(mca))
++		ret = -ECONNRESET;
++	return ret;
++}
++
+ static int piano_mca_cp_request(struct piano_mca *mca, u32 mv)
+ {
+ 	u32 quantum = mca->cp_real_type == MCA_TYPE_HVDCP_3_B ?
+ 		MCA_QC3_STEP_MV : MCA_QC3P5_STEP_MV;
+-	u32 minimum = max_t(u32, mca->cp_min_mv, MCA_CP_PPS_MIN_MV);
++	u32 minimum = max_t(u32, mca->cp_min_mv, mca->cp_ratio == 1 ?
++			   MCA_CP_BYPASS_MIN_MV : MCA_CP_PPS_MIN_MV);
++	u32 maximum = min_t(u32, mca->cp_max_mv, mca->cp_ratio == 1 ?
++			   MCA_CP_BYPASS_MAX_MV : MCA_CP_PPS_MAX_MV);
+ 	int ret;
+ 
+ 	if (!piano_mca_cp_session_valid(mca))
+ 		return -ECONNRESET;
++	if (roundup(minimum, quantum) > rounddown(maximum, quantum))
++		return -ERANGE;
+ 	mv = clamp(rounddown(mv, quantum), roundup(minimum, quantum),
+-		   rounddown(min_t(u32, mca->cp_max_mv, MCA_CP_PPS_MAX_MV), quantum));
++		   rounddown(maximum, quantum));
+ 	if (piano_mca_is_qc_cp(mca->cp_real_type)) {
+ 		/* A lost acknowledgement can still leave the adapter at this voltage. */
+ 		mca->cp_mv = mv;
+@@ -3222,12 +3255,12 @@ static int piano_mca_pause_charging(struct piano_mca *mca,
+ }
+ 
+ /* The PPS APDO direct charging can use, 0 if none */
+-static u32 piano_mca_cp_apdo(struct piano_mca *mca, u32 start_mv,
+-			     u32 *min_mv, u32 *max_mv)
++static u32 piano_mca_cp_apdo(struct piano_mca *mca, u32 vbat, bool verified,
++			     u32 *min_mv, u32 *max_mv, u32 *ratio)
+ {
+ 	struct piano_mca_pdo pdos[MCA_PD_MAX_PDOS];
+-	u32 ma = 0;
+-	int i;
++	u32 ma[2] = {}, lo[2] = {}, hi[2] = {}, battery[2] = {};
++	int i, mode, selected;
+ 
+ 	if (piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_PDOS, pdos, sizeof(pdos),
+ 			    mca->cp_generation, mca->cp_connection_generation))
+@@ -3236,17 +3269,44 @@ static u32 piano_mca_cp_apdo(struct piano_mca *mca, u32 start_mv,
+ 	for (i = 0; i < MCA_PD_MAX_PDOS; i++) {
+ 		u32 lo_mv = le32_to_cpu(pdos[i].min_mv);
+ 		u32 hi_mv = le32_to_cpu(pdos[i].max_mv);
++		u32 source_ma = min_t(u32, le32_to_cpu(pdos[i].max_ma), MCA_CP_PPS_MAX_MA);
+ 
+-		if (lo_mv < hi_mv && lo_mv <= start_mv &&
+-		    hi_mv >= 2 * MCA_CP_VBAT_MAX_MV + MCA_CP_DELTA_MV &&
+-		    le32_to_cpu(pdos[i].max_ma) > ma) {
+-			ma = le32_to_cpu(pdos[i].max_ma);
+-			*min_mv = lo_mv;
+-			*max_mv = hi_mv;
++		if (lo_mv >= hi_mv || !source_ma)
++			continue;
++		for (mode = 0; mode < ARRAY_SIZE(ma); mode++) {
++			u32 r = mode + 1;
++			u32 capability;
++
++			/* 4.0.6 enables bypass only for PD_VERIFY, not generic PPS. */
++			if (!mode && (!verified || mca->real_type != MCA_TYPE_PD_VERIFY ||
++			    lo_mv > MCA_CP_BYPASS_MIN_MV || hi_mv < MCA_CP_VBAT_MAX_MV))
++				continue;
++			if (mode && hi_mv < 2 * MCA_CP_VBAT_MAX_MV + MCA_CP_DELTA_MV)
++				continue;
++			if (lo_mv > r * vbat + MCA_CP_DELTA_MV ||
++			    hi_mv < r * vbat + MCA_CP_DELTA_MV)
++				continue;
++			capability = min_t(u32, source_ma * r, mode ?
++				2 * MCA_CP_IBUS_MAX_MA : MCA_CP_BYPASS_SELECT_MA);
++			if (capability >= battery[mode] && source_ma >= ma[mode]) {
++				ma[mode] = source_ma;
++				lo[mode] = lo_mv;
++				hi[mode] = hi_mv;
++				battery[mode] = capability;
++			}
+ 		}
+ 	}
+ 
+-	return ma;
++	/* Equal battery capability retains 1:1, as in the factory selection. */
++	selected = battery[1] > battery[0] ? 1 : 0;
++	if (!ma[selected])
++		return 0;
++	*ratio = selected + 1;
++	*min_mv = max_t(u32, lo[selected], selected ?
++			MCA_CP_PPS_MIN_MV : MCA_CP_BYPASS_MIN_MV);
++	*max_mv = min_t(u32, hi[selected], selected ?
++			MCA_CP_PPS_MAX_MV : MCA_CP_BYPASS_MAX_MV);
++	return ma[selected];
+ }
+ 
+ /* The ADSP holds the adapter verified until the next authentication */
+@@ -3290,7 +3350,8 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	bool is_qc = piano_mca_is_qc_cp(mca->real_type);
+ 	bool verified;
+ 	int vbat, ibat, tcool, twarm, ret;
+-	u32 start_mv, ma, src_ma, min_mv = MCA_CP_PPS_MIN_MV, max_mv = 0;
++	u32 start_mv, ma, src_ma, open_ma;
++	u32 ratio = 2, min_mv = MCA_CP_PPS_MIN_MV, max_mv = 0;
+ 
+ 	if (READ_ONCE(mca->inhibit_charge) || mca->cp_errors >= MCA_CP_MAX_ERRORS)
+ 		return;
+@@ -3355,7 +3416,11 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 		ma = qc.max_ibus_ma;
+ 		start_mv = roundup(start_mv, qc.step_mv);
+ 	} else {
+-		ma = piano_mca_cp_apdo(mca, start_mv, &min_mv, &max_mv);
++		ma = piano_mca_cp_apdo(mca, vbat, verified, &min_mv, &max_mv, &ratio);
++		if (ratio == 1) {
++			limits.ma = min_t(u32, limits.ma, MCA_CP_BYPASS_IBAT_MA);
++			start_mv = vbat + MCA_CP_DELTA_MV;
++		}
+ 		if (!verified) {
+ 			ma = min_t(u32, ma, MCA_CP_THIRD_IBUS_MA);
+ 			max_mv = min_t(u32, max_mv, MCA_CP_THIRD_VBUS_MV);
+@@ -3365,7 +3430,8 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 		return;
+ 
+ 	mca->cp_ma = min_t(u32, ma, MCA_CP_PPS_MAX_MA);
+-	mca->cp_min_mv = max_t(u32, min_mv, MCA_CP_PPS_MIN_MV);
++	mca->cp_ratio = ratio;
++	mca->cp_min_mv = min_mv;
+ 	mca->cp_max_mv = max_mv;
+ 	mca->cp_real_type = mca->real_type;
+ 	mca->cp_verified = verified;
+@@ -3377,9 +3443,10 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 		src_ma -= min_t(u32, src_ma, MCA_CP_BUCK_MA + 200);
+ 		mca->cp_ibus_ma = min(clamp(cp_ibus_max, 500U, (u32)MCA_CP_IBUS_MAX_MA),
+ 				      src_ma);
+-		mca->cp_ibus_ma = min(mca->cp_ibus_ma, (limits.ma - MCA_CP_BUCK_MA) / 2);
++		mca->cp_ibus_ma = min(mca->cp_ibus_ma, (limits.ma - MCA_CP_BUCK_MA) / ratio);
+ 	}
+-	if (mca->cp_ibus_ma < 2 * MCA_CP_OPEN_IBUS_MA) {
++	open_ma = ratio == 1 ? MCA_CP_BYPASS_OPEN_MA : MCA_CP_OPEN_IBUS_MA;
++	if (mca->cp_ibus_ma < 2 * open_ma) {
+ 		mca->cp = MCA_CP_DONE;
+ 		return;
+ 	}
+@@ -3399,6 +3466,7 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	}
+ 	/* it must be off before the source is asked for anything */
+ 	if (piano_mca_cp_get(mca, POWER_SUPPLY_PROP_ONLINE, &ret) || ret ||
++	    piano_mca_cp_set_ratio(mca) ||
+ 	    piano_mca_cp_set_busocp(mca, min(mca->cp_ibus_ma + MCA_CP_BUSOCP_MARGIN_MA,
+ 					     MCA_CP_BUSOCP_MAX_MA))) {
+ 		dev_warn(mca->dev, "switched-capacitor stage not ready\n");
+@@ -3439,12 +3507,12 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 	if (is_qc)
+ 		mca->qc_ready_at = jiffies + msecs_to_jiffies(MCA_QC_SETTLE_MS);
+ 
+-	dev_info(mca->dev, "direct charging via %s: %u mV, source ceiling %u mV %u mA, battery %d mV %d degC, bus target %u mA\n",
+-		 is_qc ? "QC" : "PPS", mca->cp_mv, max_mv, ma, vbat, twarm,
++	dev_info(mca->dev, "direct charging via %s %u:1: %u mV, source ceiling %u mV %u mA, battery %d mV %d degC, bus target %u mA\n",
++		 is_qc ? "QC" : "PPS", ratio, mca->cp_mv, max_mv, ma, vbat, twarm,
+ 		 mca->cp_ibus_ma);
+ }
+ 
+-/* Same-device five-field vstep_para. This driver uses the 2:1 rows only. */
++/* Same-device five-field vstep_para. */
+ static const struct piano_mca_vstep {
+ 	u32 ratio, cycles, current_gap_ma, voltage_gap_mv, multiplier;
+ } piano_mca_vsteps[] = {
+@@ -3473,7 +3541,7 @@ static u32 piano_mca_pps_vstep(struct piano_mca *mca,
+ 	for (i = 0; i < ARRAY_SIZE(piano_mca_vsteps); i++) {
+ 		const struct piano_mca_vstep *row = &piano_mca_vsteps[i];
+ 
+-		if (row->ratio != 2 || mca->battery_cycles > row->cycles ||
++		if (row->ratio != mca->cp_ratio || mca->battery_cycles > row->cycles ||
+ 		    abs(gap) < row->current_gap_ma || voltage_gap < row->voltage_gap_mv)
+ 			continue;
+ 		step = MCA_CP_REG_STEP_MV * row->multiplier;
+@@ -3552,6 +3620,8 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ {
+ 	struct piano_mca_cp_limits limits;
+ 	bool is_qc = piano_mca_is_qc_cp(mca->cp_real_type);
++	u32 ratio = mca->cp_ratio;
++	u32 open_ma = ratio == 1 ? MCA_CP_BYPASS_OPEN_MA : MCA_CP_OPEN_IBUS_MA;
+ 	int vbat, ibat, tcool, twarm, vbus_uv, ibus_ua, tdie, on, ibus, over;
+ 	int ibat_max, target, ibus_all, verifying;
+ 	u32 mv = mca->cp_mv;
+@@ -3562,6 +3632,11 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 		piano_mca_cp_pause(mca, "session changed");
+ 		return;
+ 	}
++	if ((ratio != 1 && ratio != 2) ||
++	    (ratio == 1 && mca->real_type != MCA_TYPE_PD_VERIFY)) {
++		piano_mca_cp_stop(mca, "conversion mode no longer supported");
++		return;
++	}
+ 	if (mca->real_type != mca->cp_real_type &&
+ 	    (is_qc || piano_mca_is_qc(mca->real_type))) {
+ 		piano_mca_cp_stop(mca, "charger type changed");
+@@ -3602,6 +3677,8 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 	}
+ 	if (!is_qc && !mca->cp_verified)
+ 		limits.ma = piano_mca_third_pps_current(limits.ma);
++	if (ratio == 1)
++		limits.ma = min_t(u32, limits.ma, MCA_CP_BYPASS_IBAT_MA);
+ 	if (piano_mca_normal_voltage_stop(mca, vbat, limits.fv_mv)) {
+ 		if (!piano_mca_cp_pause(mca, "warm voltage limit")) {
+ 			piano_mca_normal_pause(mca, mca->cp_generation,
+@@ -3708,6 +3785,13 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 			piano_mca_cp_stop_io(mca, "QC voltage ramp failed");
+ 		return;
+ 	}
++	/* A prior 9 V buck supply must settle before the 1:1 path can conduct. */
++	if (ratio == 1 && !on &&
++	    (mca->vbus_uv < mca->cp_min_mv * 1000 ||
++	     mca->vbus_uv > min_t(u32, MCA_CP_BYPASS_MAX_MV,
++				 vbat + MCA_CP_VBUS_MAX_DELTA_MV) * 1000 ||
++	     abs((int)(mca->vbus_uv / 1000) - (int)mca->cp_mv) > 200))
++		return;
+ 	/* enables it while opening (then steps up next poll), else a kick */
+ 	if (piano_mca_cp_set_online(mca, true)) {
+ 		piano_mca_cp_stop_io(mca, "stage refused");
+@@ -3723,7 +3807,8 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 		return;
+ 	}
+ 	ibus = ibus_ua / 1000;
+-	if (vbus_uv / 1000 > 2 * vbat + MCA_CP_VBUS_MAX_DELTA_MV) {
++	if (vbus_uv / 1000 > ratio * vbat + MCA_CP_VBUS_MAX_DELTA_MV ||
++	    (ratio == 1 && vbus_uv / 1000 > MCA_CP_BYPASS_MAX_MV)) {
+ 		piano_mca_cp_stop(mca, "bus voltage too high");
+ 		return;
+ 	}
+@@ -3778,7 +3863,7 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 	}
+ 
+ 	if (mca->cp == MCA_CP_OPENING) {
+-		if (ibus < MCA_CP_OPEN_IBUS_MA) {
++		if (ibus < open_ma) {
+ 			mv += MCA_CP_STEP_MV;
+ 		} else {
+ 			dev_info(mca->dev, "direct charging at %u mV: bus %d mV %d mA, battery %d mV %d mA\n",
+@@ -3819,19 +3904,19 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 					break;
+ 				}
+ 			}
+-			icl = fcc / 2 + (fcc > 1000 ? 500 : 0);
++			icl = fcc / ratio + (fcc > 1000 ? 500 : 0);
+ 			/* Do not give the PMIC a second copy of the source budget. */
+-			if (fcc && icl + 2 * MCA_CP_OPEN_IBUS_MA + 200 >
++			if (fcc && icl + 2 * open_ma + 200 >
+ 			    mca->cp_ma) {
+ 				fcc = 1000;
+-				icl = 500;
++				icl = fcc / ratio;
+ 			}
+ 			fcc = min3(fcc, piano_mca_charge_limit(mca),
+ 				   piano_mca_skin_buck_current(mca));
+ 			if (fcc != mca->fcc_set_ma) {
+ 				if (fcc > mca->fcc_set_ma)
+-					mv -= min_t(u32, mv > 2 * vbat ? mv - 2 * vbat : 0,
+-						(fcc - mca->fcc_set_ma) / 2 /
++					mv -= min_t(u32, mv > ratio * vbat ? mv - ratio * vbat : 0,
++						(fcc - mca->fcc_set_ma) / ratio /
+ 						MCA_CP_REG_STEP_MA * MCA_CP_REG_STEP_MV);
+ 				if (piano_mca_cp_set_buck(mca, icl, fcc)) {
+ 					piano_mca_cp_stop(mca, "FFC PMIC sharing failed");
+@@ -3850,7 +3935,7 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 			mca->cp_buck_par = par;
+ 			/* make room on the bus for the buck charger's share */
+ 			if (par)
+-				mv -= (MCA_CP_PAR_FCC_MA - MCA_CP_BUCK_MA) / 2 /
++				mv -= (MCA_CP_PAR_FCC_MA - MCA_CP_BUCK_MA) / ratio /
+ 				      MCA_CP_REG_STEP_MA * MCA_CP_REG_STEP_MV;
+ 			dev_info(mca->dev, "buck charger at %u mA%s\n",
+ 				 mca->fcc_set_ma, par ? " in parallel" : "");
+@@ -3859,18 +3944,18 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 		target = min(target, (int)mca->cp_ma - 200 -
+ 			     mca->icl_set_ma);
+ 		/*
+-		 * The stage gives the battery about twice its bus current,
++		 * The stage gives the battery ratio times its bus current,
+ 		 * next to the buck charger's share.  The gauges average over
+ 		 * 10-15 s, so the battery limit is held through the stage's
+ 		 * own reading and theirs only trims it slowly, once they
+ 		 * have caught up with a lowered limit.
+ 		 */
+-		target = min(target, (ibat_max - (int)mca->fcc_set_ma) / 2);
++		target = min(target, (ibat_max - (int)mca->fcc_set_ma) / (int)ratio);
+ 
+ 		over = ibus - target;
+ 		vstep = piano_mca_pps_vstep(mca, &limits, vbat, ibat, tcool);
+ 		if (vbat >= limits.cv_mv)
+-			mv -= clamp_t(u32, 4 * (vbat - limits.cv_mv),
++			mv -= clamp_t(u32, 2 * ratio * (vbat - limits.cv_mv),
+ 				      MCA_CP_REG_STEP_MV, MCA_CP_CV_MAX_STEP_MV);
+ 		else if (over > 0)
+ 			mv -= vstep;
+@@ -3890,7 +3975,7 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 				 tdie / 10, tdie % 10);
+ 	}
+ 
+-	mv = clamp_t(u32, mv, 2 * vbat, 2 * vbat + MCA_CP_REQ_MAX_DELTA_MV);
++	mv = clamp_t(u32, mv, ratio * vbat, ratio * vbat + MCA_CP_REQ_MAX_DELTA_MV);
+ 	if (piano_mca_cp_request(mca, mv))
+ 		piano_mca_cp_stop_io(mca, "request refused");
+ }
+@@ -3991,7 +4076,8 @@ static void piano_mca_poll(struct work_struct *work)
+ 	if (ret)
+ 		goto source_error;
+ 	mca->vbus_uv = le32_to_cpu(value);
+-	online = mca->vbus_uv >= MCA_VBUS_ONLINE_UV;
++	online = mca->vbus_uv >= (piano_mca_cp_active(mca) && mca->cp_ratio == 1 ?
++				 MCA_CP_BYPASS_MIN_MV * 1000 : MCA_VBUS_ONLINE_UV);
+ 
+ 	/* The rest only means something with a source attached */
+ 	if (online) {
+diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
+index 486443234..0d7c64812 100644
+--- a/drivers/power/supply/piano_mca_test.c
++++ b/drivers/power/supply/piano_mca_test.c
+@@ -109,6 +109,9 @@ struct piano_mca_test {
+ 	unsigned int last_cp_ocp_event;
+ 	unsigned int last_cp_enable_event;
+ 	bool cp_enabled;
++	int cp_charge_type;
++	int cp_mode_error;
++	unsigned int cp_mode_writes, last_cp_mode_event;
+ 	struct piano_mca_test_gauge gauge[2];
+ 	u32 vbus_uv;
+ 	u32 real_type;
+@@ -139,6 +142,8 @@ struct piano_mca_test {
+ 	bool offer_cp_apdo;
+ 	u32 apdo_max_mv;
+ 	u32 apdo_min_mv;
++	u32 apdo_ma;
++	struct piano_mca_pdo extra_apdo;
+ 	bool only_5v;
+ 	unsigned int fv_writes;
+ 	unsigned int fcc_writes;
+@@ -400,7 +405,8 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+ 			if (fixture->offer_cp_apdo) {
+ 				pdo[2].min_mv = cpu_to_le32(fixture->apdo_min_mv);
+ 				pdo[2].max_mv = cpu_to_le32(fixture->apdo_max_mv);
+-				pdo[2].max_ma = cpu_to_le32(6000);
++				pdo[2].max_ma = cpu_to_le32(fixture->apdo_ma);
++				pdo[3] = fixture->extra_apdo;
+ 			}
+ 			if (fixture->restart_on_pdos) {
+ 				fixture->restart_on_pdos = false;
+@@ -548,6 +554,8 @@ static int piano_mca_test_init(struct kunit *test)
+ 	fixture->fixed_5v_ma = 3000;
+ 	fixture->apdo_max_mv = 10000;
+ 	fixture->apdo_min_mv = 6000;
++	fixture->apdo_ma = 6000;
++	mca->cp_ratio = 2;
+ 	fixture->vbus_uv = 5000000;
+ 	fixture->real_type = MCA_TYPE_PD;
+ 	fixture->charge_status = 4;
+@@ -740,6 +748,9 @@ static int piano_mca_test_cp_get(struct power_supply *psy,
+ 	case POWER_SUPPLY_PROP_TEMP:
+ 		value->intval = fixture->cp_temp;
+ 		break;
++	case POWER_SUPPLY_PROP_CHARGE_TYPE:
++		value->intval = fixture->cp_charge_type;
++		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -752,6 +763,16 @@ static int piano_mca_test_cp_set(struct power_supply *psy,
+ {
+ 	struct piano_mca_test *fixture = power_supply_get_drvdata(psy);
+ 
++	if (property == POWER_SUPPLY_PROP_CHARGE_TYPE) {
++		if (fixture->cp_mode_error)
++			return fixture->cp_mode_error;
++		if (fixture->cp_enabled)
++			return -EBUSY;
++		fixture->cp_charge_type = value->intval;
++		fixture->cp_mode_writes++;
++		fixture->last_cp_mode_event = ++fixture->events;
++		return 0;
++	}
+ 	if (property == POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT) {
+ 		fixture->cp_busocp_ma = value->intval / 1000;
+ 		fixture->last_cp_ocp_event = ++fixture->events;
+@@ -783,6 +804,7 @@ static int piano_mca_test_start_cp(struct kunit *test)
+ 		POWER_SUPPLY_PROP_CURRENT_NOW,
+ 		POWER_SUPPLY_PROP_TEMP,
+ 		POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
++		POWER_SUPPLY_PROP_CHARGE_TYPE,
+ 	};
+ 	static const struct power_supply_desc description = {
+ 		.name = "sc8541",
+@@ -809,6 +831,8 @@ static int piano_mca_test_start_cp(struct kunit *test)
+ 	fixture->mca.cp_generation = fixture->remote_generation;
+ 	fixture->mca.cp_connection_generation = 0;
+ 	fixture->mca.cp_real_type = fixture->mca.real_type;
++	fixture->mca.cp_ratio = 2;
++	fixture->cp_charge_type = POWER_SUPPLY_CHARGE_TYPE_STANDARD;
+ 	fixture->mca.cp_mv = 8000;
+ 	fixture->mca.cp_ma = 3000;
+ 	fixture->mca.cp_max_mv = 10000;
+@@ -3729,6 +3753,159 @@ static void piano_mca_battery_alert_current_test(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, limits.ma, 8000U);
+ }
+ 
++static void piano_mca_pps_conversion_selection_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	static const struct {
++		u32 type, lo, hi, source_ma, other_current, ratio;
++		bool verified;
++	} rows[] = {
++		{ MCA_TYPE_PD_VERIFY, 3300, 5500, 6000, 0, 1, true },
++		{ MCA_TYPE_PD_VERIFY, 3600, 5500, 3000, 0, 1, true },
++		{ MCA_TYPE_PD_VERIFY, 3601, 5500, 6000, 0, 0, true },
++		{ MCA_TYPE_PD_VERIFY, 3300, 4499, 6000, 0, 0, true },
++		{ MCA_TYPE_PD_VERIFY, 3300, 5500, 6000, 0, 0, false },
++		{ MCA_TYPE_PD_PPS, 3300, 5500, 6000, 0, 0, true },
++		{ MCA_TYPE_PD_VERIFY, 3300, 11000, 3000, 0, 2, true },
++		{ MCA_TYPE_PD_VERIFY, 3300, 5500, 6000, 3000, 2, true },
++		{ MCA_TYPE_PD_VERIFY, 3300, 5500, 6000, 2500, 1, true },
++		{ MCA_TYPE_PD_PPS, 3300, 11000, 6000, 0, 2, false },
++	};
++	u32 lo, hi, ratio, ma;
++	int i;
++
++	f->offer_cp_apdo = true;
++	f->mca.cp_generation = f->remote_generation;
++	for (i = 0; i < ARRAY_SIZE(rows); i++) {
++		f->mca.real_type = rows[i].type;
++		f->apdo_min_mv = rows[i].lo;
++		f->apdo_max_mv = rows[i].hi;
++		f->apdo_ma = rows[i].source_ma;
++		f->extra_apdo = (struct piano_mca_pdo) {
++			.min_mv = cpu_to_le32(6000), .max_mv = cpu_to_le32(11000),
++			.max_ma = cpu_to_le32(rows[i].other_current),
++		};
++		ratio = 0;
++		ma = piano_mca_cp_apdo(&f->mca, 3800, rows[i].verified, &lo, &hi, &ratio);
++		KUNIT_EXPECT_EQ_MSG(test, ratio, rows[i].ratio, "row %d", i);
++		KUNIT_EXPECT_EQ(test, ma != 0, rows[i].ratio != 0);
++		if (ratio == 1) {
++			KUNIT_EXPECT_EQ(test, lo, 3600U);
++			KUNIT_EXPECT_EQ(test, hi, 5500U);
++		}
++	}
++	f->restart_on_pdos = true;
++	KUNIT_EXPECT_EQ(test, piano_mca_cp_apdo(&f->mca, 3800, true,
++		&lo, &hi, &ratio), 0U);
++}
++
++static void piano_mca_pps_bypass_regulation_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	unsigned int mode_writes;
++	int i;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_pause(&f->mca, "select bypass"), 0);
++	f->mca.auth_ok = true;
++	f->mca.auth_generation = f->remote_generation;
++	f->pd_verified = 1;
++	mipps_auth = true;
++	f->mca.real_type = f->real_type = MCA_TYPE_PD_VERIFY;
++	f->apdo_min_mv = 3300;
++	f->apdo_max_mv = 5500;
++	f->mca.hv = MCA_HV_ON;
++	piano_mca_cp_try_start(&f->mca, f->remote_generation);
++	KUNIT_ASSERT_EQ(test, f->mca.cp, MCA_CP_OPENING);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_ratio, 1U);
++	KUNIT_EXPECT_EQ(test, f->cp_charge_type, POWER_SUPPLY_CHARGE_TYPE_BYPASS);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_start_ibat_ma, 4500U);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_ibus_ma, 4000U);
++	KUNIT_EXPECT_EQ(test, f->cp_busocp_ma, 5000U);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_mv, 4100U);
++	KUNIT_EXPECT_LT(test, f->last_cp_mode_event, f->last_pps_event);
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_request(&f->mca, 5900), 0);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_mv, 5500U);
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_request(&f->mca, 3000), 0);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_mv, 3600U);
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_request(&f->mca, 4100), 0);
++	piano_mca_cp_step(&f->mca);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	f->mca.vbus_uv = 4100000;
++	f->cp_voltage_uv = 4100000;
++	f->cp_current_ua = 1000000;
++	piano_mca_cp_step(&f->mca);
++	piano_mca_cp_step(&f->mca);
++	KUNIT_ASSERT_EQ(test, f->mca.cp, MCA_CP_ON);
++	f->cp_current_ua = 3900000;
++	for (i = 0; i < ARRAY_SIZE(f->gauge); i++)
++		f->gauge[i].current_ua = 2250000;
++	mode_writes = f->cp_mode_writes;
++	piano_mca_cp_step(&f->mca);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_mv, 4100U);
++	f->cp_current_ua = 4100000;
++	piano_mca_cp_step(&f->mca);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_mv, 4080U);
++	KUNIT_EXPECT_EQ(test, f->cp_mode_writes, mode_writes);
++	/* A valid bypass voltage below the ordinary 4 V attach threshold stays online. */
++	for (i = 0; i < ARRAY_SIZE(f->gauge); i++)
++		f->gauge[i].voltage_uv = 3500000;
++	f->vbus_uv = f->cp_voltage_uv = 3800000;
++	piano_mca_poll(&f->mca.poll.work);
++	KUNIT_EXPECT_TRUE(test, f->mca.online);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_ON);
++	/* A ratio change is never used to recover from an unsafe bypass bus. */
++	f->cp_voltage_uv = 5501000;
++	piano_mca_cp_step(&f->mca);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_EQ(test, f->cp_mode_writes, mode_writes);
++}
++
++static void piano_mca_pps_bypass_stop_failure_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	unsigned int writes;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	f->mca.cp_ratio = 1;
++	f->cp_charge_type = POWER_SUPPLY_CHARGE_TYPE_BYPASS;
++	f->mca.cp_mv = 4100;
++	f->cp_stop_failures = 1;
++	writes = f->pps_writes;
++	KUNIT_EXPECT_EQ(test, piano_mca_cp_pause(&f->mca, "bypass stop"), -EIO);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_STOPPING);
++	KUNIT_EXPECT_TRUE(test, f->cp_enabled);
++	KUNIT_EXPECT_EQ(test, f->pps_writes, writes);
++	KUNIT_EXPECT_EQ(test, f->cp_mode_writes, 0U);
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_pause(&f->mca, "bypass stop"), 0);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++	f->mca.hv = MCA_HV_ON;
++	piano_mca_cp_try_start(&f->mca, f->remote_generation);
++	KUNIT_ASSERT_EQ(test, f->mca.cp, MCA_CP_OPENING);
++	KUNIT_EXPECT_EQ(test, f->mca.cp_ratio, 2U);
++	KUNIT_EXPECT_EQ(test, f->cp_charge_type, POWER_SUPPLY_CHARGE_TYPE_STANDARD);
++	KUNIT_EXPECT_LT(test, f->last_stop_event, f->last_cp_mode_event);
++	KUNIT_EXPECT_LT(test, f->last_cp_mode_event, f->last_pps_event);
++}
++
++static void piano_mca_pps_mode_failure_blocks_source_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	unsigned int writes;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_source_prepare(test), 0);
++	KUNIT_ASSERT_EQ(test, piano_mca_cp_pause(&f->mca, "mode failure"), 0);
++	f->cp_mode_error = -EIO;
++	f->mca.hv = MCA_HV_ON;
++	writes = f->pps_writes;
++	piano_mca_cp_try_start(&f->mca, f->remote_generation);
++	KUNIT_EXPECT_EQ(test, f->pps_writes, writes);
++	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
++	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_DONE);
++}
++
+ static void piano_mca_pps_vstep_test(struct kunit *test)
+ {
+ 	struct piano_mca_test *f = test->priv;
+@@ -3757,6 +3934,9 @@ static void piano_mca_pps_vstep_test(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 4373, 8000, 25), 200U);
+ 	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 4374, 8000, 25), 20U);
+ 	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 3800, 8000, 10), 80U);
++	f->mca.cp_ratio = 1;
++	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 3800, 8000, 25), 40U);
++	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 3800, 10401, 25), 20U);
+ }
+ 
+ static void piano_mca_third_pps_limits_test(struct kunit *test)
+@@ -4071,6 +4251,10 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
+ }
+ 
+ static struct kunit_case piano_mca_test_cases[] = {
++	KUNIT_CASE(piano_mca_pps_conversion_selection_test),
++	KUNIT_CASE(piano_mca_pps_bypass_regulation_test),
++	KUNIT_CASE(piano_mca_pps_bypass_stop_failure_test),
++	KUNIT_CASE(piano_mca_pps_mode_failure_blocks_source_test),
+ 	KUNIT_CASE(piano_mca_pps_apdo_window_test),
+ 	KUNIT_CASE(piano_mca_battery_alert_current_test),
+ 	KUNIT_CASE(piano_mca_pps_vstep_test),
+diff --git a/drivers/power/supply/sc8541_charger.c b/drivers/power/supply/sc8541_charger.c
+index 8b3fc406d..4ef9e0d07 100644
+--- a/drivers/power/supply/sc8541_charger.c
++++ b/drivers/power/supply/sc8541_charger.c
+@@ -1,13 +1,11 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /*
+- * Southchip SC8541 single-cell switched-capacitor (2:1) direct charger
++ * Southchip SC8541 single-cell 2:1 and 1:1 direct charger
+  *
+  * The register layout follows the TI bq25960 (see bq25980_charger.h) with
+  * different ADC scales and threshold offsets.  This driver does not run a
+- * charging algorithm: the switched-capacitor stage only works when the
+- * source is held at about twice the battery voltage (a USB PD PPS source),
+- * which is the job of the PD sink driver.  It exposes the stage as a power
+- * supply:
++ * charging algorithm: the caller must regulate the source for the selected
++ * conversion ratio. It exposes the stage as a power supply:
+  *
+  *   online	read: switching enabled.  Writing 1 programs the protections
+  *		below, starts the ADC, enables switching and must be repeated
+@@ -18,6 +16,8 @@
+  *   input_current_limit	bus over-current protection, SC8541_BUSOCP_MIN_MA
+  *		to SC8541_BUSOCP_MAX_MA (default SC8541_BUSOCP_MA), applied
+  *		at once
++ *   charge_type	Standard selects 2:1, Bypass selects 1:1; only writable
++ *		after switching has stopped and the stop guard has completed
+  *   voltage_now, current_now	bus voltage and current
+  *   temp	die temperature
+  *
+@@ -68,10 +68,10 @@
+  * Protections programmed before switching starts. Battery OVP and alarm
+  * use Piano's factory 4800/4600 mV thresholds. The caller regulates the
+  * normal charge voltage below these limits; the alarm only asserts INT
+- * and cannot replace software voltage regulation. The bus limits fit
+- * a 2:1 stage fed from an 11 V PPS source, with the stock 13 V bus OVP;
+- * the bus over-current limit can
+- * be raised for sources that offer more than 3 A, up to the stock value.
++ * and cannot replace software voltage regulation. Stock uses the same
++ * 13 V bus OVP for both conversion ratios; the caller limits the source
++ * to the selected mode's operating voltage. The bus over-current limit
++ * can be raised for sources that offer more than 3 A, up to the stock value.
+  */
+ #define SC8541_BATOVP_MV	4800
+ #define SC8541_BATOVP_ALM_MV	4600
+@@ -129,6 +129,8 @@ struct sc8541 {
+ 	struct mutex lock;		/* enabled, register sequences */
+ 	struct delayed_work watch;	/* kick timeout, or the check after a stop */
+ 	bool enabled;
++	bool stop_pending;
++	bool bypass;
+ 	u32 busocp_ma;
+ 	struct dentry *dbg;
+ };
+@@ -201,6 +203,7 @@ static int sc8541_disable_locked(struct sc8541 *sc)
+ 	if (sc->enabled)
+ 		dev_info(sc->dev, "switching off\n");
+ 	sc->enabled = false;
++	sc->stop_pending = true;
+ 	mod_delayed_work(system_dfl_wq, &sc->watch,
+ 			 msecs_to_jiffies(SC8541_GUARD_MS));
+ 	return ret;
+@@ -226,8 +229,8 @@ static int sc8541_arm(struct sc8541 *sc)
+ 	ret = ret ?: sc8541_write_check(sc, SC8541_BUSOCP, 0x9f,
+ 				(sc->busocp_ma - SC8541_BUSOCP_OFFSET_MA) /
+ 				SC8541_BUSOCP_STEP_MA);
+-	/* 2:1, not bypass */
+-	ret = ret ?: sc8541_write_check(sc, SC8541_CTRL2, SC8541_EN_BYPASS, 0);
++	ret = ret ?: sc8541_write_check(sc, SC8541_CTRL2, SC8541_EN_BYPASS,
++				      sc->bypass ? SC8541_EN_BYPASS : 0);
+ 	/*
+ 	 * Hardware watchdog: 5 s, enabled. Any register read or write kicks it,
+ 	 * including the caller's 500 ms ADC polls. Keep the separate software
+@@ -248,6 +251,10 @@ static int sc8541_enable(struct sc8541 *sc)
+ 	int ret = 0;
+ 
+ 	mutex_lock(&sc->lock);
++	if (sc->stop_pending) {
++		ret = -EBUSY;
++		goto out;
++	}
+ 	if (!sc->enabled) {
+ 		ret = sc8541_arm(sc);
+ 		ret = ret ?: regmap_write_bits(sc->regmap, SC8541_CTRL2,
+@@ -294,6 +301,8 @@ static int sc8541_disable_sync(struct sc8541 *sc)
+ 	ret = ret ?: regmap_read(sc->regmap, SC8541_CTRL2, &ctrl);
+ 	if (!ret && (ctrl & SC8541_CHG_EN))
+ 		ret = -EIO;
++	if (!ret)
++		sc->stop_pending = false;
+ 	if (ret)
+ 		dev_err(sc->dev, "failed to confirm switching stopped: %d\n", ret);
+ 	mutex_unlock(&sc->lock);
+@@ -314,6 +323,8 @@ static void sc8541_watch(struct work_struct *work)
+ 		   (ctrl & SC8541_CHG_EN)) {
+ 		dev_warn(sc->dev, "still switching after stop, stopping again\n");
+ 		sc8541_disable_locked(sc);
++	} else {
++		sc->stop_pending = false;
+ 	}
+ 	mutex_unlock(&sc->lock);
+ }
+@@ -337,6 +348,13 @@ static int sc8541_get_property(struct power_supply *psy,
+ 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
+ 		val->intval = sc->busocp_ma * 1000;
+ 		return 0;
++	case POWER_SUPPLY_PROP_CHARGE_TYPE:
++		ret = regmap_read(sc->regmap, SC8541_CTRL2, &reg);
++		if (ret)
++			return ret;
++		val->intval = reg & SC8541_EN_BYPASS ?
++			POWER_SUPPLY_CHARGE_TYPE_BYPASS : POWER_SUPPLY_CHARGE_TYPE_STANDARD;
++		return 0;
+ 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+ 	case POWER_SUPPLY_PROP_CURRENT_NOW:
+ 	case POWER_SUPPLY_PROP_TEMP:
+@@ -352,6 +370,37 @@ static int sc8541_get_property(struct power_supply *psy,
+ 	}
+ }
+ 
++static int sc8541_set_charge_type(struct sc8541 *sc, int type)
++{
++	unsigned int ctrl;
++	bool bypass;
++	int ret;
++
++	if (type != POWER_SUPPLY_CHARGE_TYPE_STANDARD &&
++	    type != POWER_SUPPLY_CHARGE_TYPE_BYPASS)
++		return -EINVAL;
++	bypass = type == POWER_SUPPLY_CHARGE_TYPE_BYPASS;
++	mutex_lock(&sc->lock);
++	if (sc->enabled || sc->stop_pending) {
++		ret = -EBUSY;
++		goto out;
++	}
++	ret = regmap_read(sc->regmap, SC8541_CTRL2, &ctrl);
++	if (ret)
++		goto out;
++	if (ctrl & SC8541_CHG_EN) {
++		ret = -EBUSY;
++		goto out;
++	}
++	ret = sc8541_write_check(sc, SC8541_CTRL2, SC8541_EN_BYPASS,
++				 bypass ? SC8541_EN_BYPASS : 0);
++	if (!ret)
++		sc->bypass = bypass;
++out:
++	mutex_unlock(&sc->lock);
++	return ret;
++}
++
+ static int sc8541_set_property(struct power_supply *psy,
+ 			       enum power_supply_property psp,
+ 			       const union power_supply_propval *val)
+@@ -359,6 +408,8 @@ static int sc8541_set_property(struct power_supply *psy,
+ 	struct sc8541 *sc = power_supply_get_drvdata(psy);
+ 	int ret;
+ 
++	if (psp == POWER_SUPPLY_PROP_CHARGE_TYPE)
++		return sc8541_set_charge_type(sc, val->intval);
+ 	if (psp == POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT) {
+ 		mutex_lock(&sc->lock);
+ 		sc->busocp_ma = clamp(val->intval / 1000, SC8541_BUSOCP_MIN_MA,
+@@ -389,11 +440,13 @@ static int sc8541_property_is_writeable(struct power_supply *psy,
+ 					enum power_supply_property psp)
+ {
+ 	return psp == POWER_SUPPLY_PROP_ONLINE ||
++	       psp == POWER_SUPPLY_PROP_CHARGE_TYPE ||
+ 	       psp == POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT;
+ }
+ 
+ static const enum power_supply_property sc8541_props[] = {
+ 	POWER_SUPPLY_PROP_ONLINE,
++	POWER_SUPPLY_PROP_CHARGE_TYPE,
+ 	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
+ 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+ 	POWER_SUPPLY_PROP_CURRENT_NOW,
+@@ -533,10 +586,11 @@ static int sc8541_probe(struct i2c_client *client)
+ 	ret = regmap_read(sc->regmap, SC8541_CTRL2, &ctrl);
+ 	if (ret)
+ 		return ret;
++	sc->bypass = !!(ctrl & SC8541_EN_BYPASS);
+ 	/* Nobody may have left it switching: no caller is driving the source */
+ 	if (ctrl & SC8541_CHG_EN) {
+ 		dev_warn(dev, "found switching on, turning it off\n");
+-		ret = sc8541_stop_switching(sc);
++		ret = sc8541_disable_sync(sc);
+ 		if (ret)
+ 			return ret;
+ 	}
+@@ -601,3 +655,7 @@ module_i2c_driver(sc8541_driver);
+ 
+ MODULE_DESCRIPTION("Southchip SC8541 switched-capacitor direct charger");
+ MODULE_LICENSE("GPL");
++
++#if IS_ENABLED(CONFIG_CHARGER_SC8541_KUNIT_TEST)
++#include "sc8541_charger_test.c"
++#endif
+diff --git a/drivers/power/supply/sc8541_charger_test.c b/drivers/power/supply/sc8541_charger_test.c
+new file mode 100644
+index 000000000..eb49459fb
+--- /dev/null
++++ b/drivers/power/supply/sc8541_charger_test.c
+@@ -0,0 +1,173 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Included by the driver to exercise its callbacks through a real regmap. */
++#include <kunit/device.h>
++#include <kunit/test.h>
++
++struct sc8541_test {
++	struct sc8541 sc;
++	u8 regs[SC8541_MAX_REG + 1];
++	unsigned int writes;
++	int read_error;
++	bool ignore_write;
++};
++
++static int sc8541_test_read(void *context, unsigned int reg, unsigned int *val)
++{
++	struct sc8541_test *f = context;
++
++	if (f->read_error)
++		return f->read_error;
++	*val = f->regs[reg];
++	return 0;
++}
++
++static int sc8541_test_write(void *context, unsigned int reg, unsigned int val)
++{
++	struct sc8541_test *f = context;
++
++	f->writes++;
++	if (!f->ignore_write)
++		f->regs[reg] = val;
++	return 0;
++}
++
++static const struct regmap_bus sc8541_test_bus = {
++	.reg_read = sc8541_test_read,
++	.reg_write = sc8541_test_write,
++};
++
++static int sc8541_test_init(struct kunit *test)
++{
++	struct sc8541_test *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
++	struct power_supply_config cfg = {};
++
++	if (!f)
++		return -ENOMEM;
++	cfg.drv_data = &f->sc;
++	test->priv = f;
++	f->sc.dev = kunit_device_register(test, "sc8541-mode");
++	if (IS_ERR(f->sc.dev))
++		return PTR_ERR(f->sc.dev);
++	mutex_init(&f->sc.lock);
++	INIT_DELAYED_WORK(&f->sc.watch, sc8541_watch);
++	f->sc.busocp_ma = SC8541_BUSOCP_MA;
++	f->sc.regmap = devm_regmap_init(f->sc.dev, &sc8541_test_bus, f,
++				      &sc8541_regmap_config);
++	if (IS_ERR(f->sc.regmap))
++		return PTR_ERR(f->sc.regmap);
++	f->sc.psy = devm_power_supply_register(f->sc.dev, &sc8541_desc, &cfg);
++	return PTR_ERR_OR_ZERO(f->sc.psy);
++}
++
++static void sc8541_test_exit(struct kunit *test)
++{
++	struct sc8541_test *f = test->priv;
++
++	cancel_delayed_work_sync(&f->sc.watch);
++}
++
++static int sc8541_test_set(struct sc8541_test *f, enum power_supply_property prop,
++			   int val)
++{
++	union power_supply_propval pv = { .intval = val };
++
++	return power_supply_set_property(f->sc.psy, prop, &pv);
++}
++
++static void sc8541_conversion_modes_test(struct kunit *test)
++{
++	struct sc8541_test *f = test->priv;
++	union power_supply_propval pv;
++	int mode;
++
++	f->regs[SC8541_CTRL2] = BIT(1);
++	for (mode = 0; mode < 2; mode++) {
++		int type = mode ? POWER_SUPPLY_CHARGE_TYPE_STANDARD :
++			POWER_SUPPLY_CHARGE_TYPE_BYPASS;
++
++		KUNIT_ASSERT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_CHARGE_TYPE, type), 0);
++		KUNIT_ASSERT_EQ(test, power_supply_get_property(f->sc.psy,
++			POWER_SUPPLY_PROP_CHARGE_TYPE, &pv), 0);
++		KUNIT_EXPECT_EQ(test, pv.intval, type);
++		KUNIT_ASSERT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_ONLINE, 1), 0);
++		KUNIT_EXPECT_EQ(test, f->regs[SC8541_CTRL2],
++			(u8)(BIT(1) | SC8541_CHG_EN | (mode ? 0 : SC8541_EN_BYPASS)));
++		KUNIT_EXPECT_EQ(test, f->regs[SC8541_BUSOVP], (u8)120);
++		KUNIT_EXPECT_EQ(test, f->regs[SC8541_BATOVP], (u8)96);
++		KUNIT_EXPECT_EQ(test, f->regs[SC8541_BATOVP_ALM], (u8)76);
++		KUNIT_EXPECT_EQ(test, f->regs[SC8541_BUSOCP] & 0x9f, (u8)10);
++		KUNIT_EXPECT_EQ(test, f->regs[SC8541_CTRL3] & SC8541_WATCHDOG_MASK,
++			(u8)SC8541_WATCHDOG_5S);
++		KUNIT_ASSERT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_ONLINE, 0), 0);
++		KUNIT_EXPECT_FALSE(test, f->sc.stop_pending);
++	}
++}
++
++static void sc8541_mode_requires_stopped_stage_test(struct kunit *test)
++{
++	struct sc8541_test *f = test->priv;
++	unsigned int writes = f->writes;
++
++	KUNIT_EXPECT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_CHARGE_TYPE,
++		POWER_SUPPLY_CHARGE_TYPE_FAST), -EINVAL);
++	f->sc.enabled = true;
++	KUNIT_EXPECT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_CHARGE_TYPE,
++		POWER_SUPPLY_CHARGE_TYPE_BYPASS), -EBUSY);
++	f->sc.enabled = false;
++	f->sc.stop_pending = true;
++	KUNIT_EXPECT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_CHARGE_TYPE,
++		POWER_SUPPLY_CHARGE_TYPE_BYPASS), -EBUSY);
++	KUNIT_EXPECT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_ONLINE, 1), -EBUSY);
++	f->sc.stop_pending = false;
++	f->regs[SC8541_CTRL2] = SC8541_CHG_EN;
++	KUNIT_EXPECT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_CHARGE_TYPE,
++		POWER_SUPPLY_CHARGE_TYPE_BYPASS), -EBUSY);
++	KUNIT_EXPECT_EQ(test, f->writes, writes);
++}
++
++static void sc8541_mode_readback_error_test(struct kunit *test)
++{
++	struct sc8541_test *f = test->priv;
++
++	f->read_error = -EREMOTEIO;
++	KUNIT_EXPECT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_CHARGE_TYPE,
++		POWER_SUPPLY_CHARGE_TYPE_BYPASS), -EREMOTEIO);
++	KUNIT_EXPECT_FALSE(test, f->sc.bypass);
++	f->read_error = 0;
++	f->ignore_write = true;
++	KUNIT_EXPECT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_CHARGE_TYPE,
++		POWER_SUPPLY_CHARGE_TYPE_BYPASS), -EIO);
++	KUNIT_EXPECT_FALSE(test, f->sc.bypass);
++}
++
++static void sc8541_mode_waits_for_stop_confirmation_test(struct kunit *test)
++{
++	struct sc8541_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_ONLINE, 1), 0);
++	f->ignore_write = true;
++	KUNIT_EXPECT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_ONLINE, 0), -EIO);
++	KUNIT_EXPECT_TRUE(test, f->sc.stop_pending);
++	KUNIT_EXPECT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_CHARGE_TYPE,
++		POWER_SUPPLY_CHARGE_TYPE_BYPASS), -EBUSY);
++	f->ignore_write = false;
++	KUNIT_ASSERT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_ONLINE, 0), 0);
++	KUNIT_ASSERT_EQ(test, sc8541_test_set(f, POWER_SUPPLY_PROP_CHARGE_TYPE,
++		POWER_SUPPLY_CHARGE_TYPE_BYPASS), 0);
++}
++
++static struct kunit_case sc8541_test_cases[] = {
++	KUNIT_CASE(sc8541_conversion_modes_test),
++	KUNIT_CASE(sc8541_mode_requires_stopped_stage_test),
++	KUNIT_CASE(sc8541_mode_readback_error_test),
++	KUNIT_CASE(sc8541_mode_waits_for_stop_confirmation_test),
++	{}
++};
++
++static struct kunit_suite sc8541_test_suite = {
++	.name = "sc8541-charger",
++	.init = sc8541_test_init,
++	.exit = sc8541_test_exit,
++	.test_cases = sc8541_test_cases,
++};
++kunit_test_suite(sc8541_test_suite);

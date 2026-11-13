@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "0e3f212b19ecf98c82717eee4509d64cdbdfb8a7",
-  "original_target_commit": "4858338c44393d6c08bbbb7c29ed3dfdef72425e",
+  "target_tree": "ab4d74a2bae3439b4456bbd3a440a3d90388d713",
+  "original_target_commit": "7679892741f7c03527300a76f2c008eb59bf3891",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -895,6 +895,14 @@
       "original_parent": "28d14326ff0da7eba1540f3934d55ec353f06946",
       "committer_date": "2026-11-14T04:26:52+08:00",
       "tree": "0e3f212b19ecf98c82717eee4509d64cdbdfb8a7"
+    },
+    {
+      "file": "0112-power-direct-charge-conversion-modes.patch",
+      "sha256": "ad31fccf972c435e78a5813e9fa5ea75fef89a9b128b450cc4eaf308816e07e7",
+      "original_commit": "7679892741f7c03527300a76f2c008eb59bf3891",
+      "original_parent": "4858338c44393d6c08bbbb7c29ed3dfdef72425e",
+      "committer_date": "2026-11-14T05:10:30+08:00",
+      "tree": "ab4d74a2bae3439b4456bbd3a440a3d90388d713"
     }
   ],
   "provenance": {
@@ -1002,6 +1010,12 @@
       "third_party_pps": "Piano CN third_pps_* caps the whole adapter request at 11000 mV/4100 mA; pump target also reserves the PMIC input and 200 mA bus margin. With PPS 100 W disabled, factory regulation subtracts 200 mA from the combined battery target and caps it at 8000 mA. Verified-proof loss stops before recalculating source limits. Stock sc8541_master bus-ovp-threshold is 13000 mV; software target windows and the 10500 mV alarm remain.",
       "inactive_100w_limit": "non_mi_pps_max_curr is parsed and copied into non_mi_pps_curr for each conversion ratio, but the actual regulation cap is guarded by mca_strategy_is_support_pps_100w(). Piano sets support_pps_100w=0; do not enable this path or substitute its 4500/11000/17600 mA table for third_pps_* limits.",
       "pps_voltage_steps": "4.0.6 BTF gives vstep_para a 20-byte row: volt_ratio, cycle_count, cur_gap, vbat_gap, vstep_ratio. get_vstep checks ratio, cycle upper bound, absolute battery-current gap and signed voltage headroom. The 2:1 rows use 4000/3000/2000/1000/600 mA gaps with 10/8/7/4/2 times 20 mV. Positive CV steps, cycles >=800 and the last 100 mV use 20 mV; ordinary 8-13 C large steps cap at 80 mV. Existing combined-current, source and stage-temperature constraints remain.",
+      "conversion_modes": {
+        "stock_pump_module_sha256": "76c9066b9222277ae34a835b80bdde7de66cc9372919f54c41483af41824e1aa",
+        "selection": "4.0.6 adjust_adapter_mode checks type 12 before adding 1:1, requiring APDO minimum <=3600 mV and maximum >=4500 mV, with a 5500 mV operating ceiling. select_cur_work_mode compares min(div_max_curr, APDO current * ratio), retaining 1:1 on equal battery capability. Piano support_mode=3 enables 1:1/2:1, not 4:1; support-cp-mode-switch and cp-mode-switch-threshold are absent.",
+        "limits": "Piano div_max_curr[0]=5000 mA is the mode-comparison ceiling; div_single_curr[0]=4500 mA limits this single pump. div_delta_volt[0]=300 mV, open_path_th[0]=800 mA, vstep row={1,800,2000,0,2}. Source and combined battery budgets remain independent constraints; voltage/current conversion and PMIC sharing use the selected ratio.",
+        "pump": "Stock SC8541 mode table maps forward 1:1 to register 0x0f bit 3=1 and forward 2:1 to 0. Both stock bus-ovp-threshold entries are 13000 mV and bus-ocp-threshold entries 7000 mA. Standard CHARGE_TYPE_BYPASS/STANDARD writes require a stopped stage and completed stop guard, with mode readback before source requests. Opening bypass waits for the previous buck voltage to settle."
+      },
       "battery_health_current": {
         "stock_fg_module_sha256": "2a0b4bba622966b05f47728d4261685236f558113b39d0c4c0e6db1d8e8415a1",
         "stock_gauge_module_sha256": "7a76a4f20b83e4a3de197c7f8ca6bc2281072824e5d6b6ed9962d1c7af89dfdb",
