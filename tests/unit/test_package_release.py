@@ -2,6 +2,7 @@ import gzip
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import struct
@@ -69,6 +70,67 @@ class ReleasePackageTests(unittest.TestCase):
 
     def write_manifest(self, folder, data):
         (folder / 'manifest.json').write_text(json.dumps(data))
+
+    def test_extract_thermal_zones_preserves_comments_and_strings(self):
+        node = '''thermal-zones {
+            /* { These braces are not nodes. } */
+            cpu-thermal {
+                description = "a } and an escaped \\"{\\"";
+                // } This brace is not a node either.
+                trips { critical { temperature = <125000>; }; };
+            };
+        };'''
+        source = '/ {\n        ' + node + '\n        timer {};\n};\n'
+        self.assertEqual(pr.extract_thermal_zones(source), node + '\n')
+        for invalid in ('/ { timer {}; };', 'thermal-zones {', 'thermal-zones {}'):
+            with self.subTest(source=invalid), self.assertRaises(ValueError):
+                pr.extract_thermal_zones(invalid)
+
+    @unittest.skipUnless(all(shutil.which(t) for t in ('cpp', 'dtc', 'fdtoverlay')), 'DT tools unavailable')
+    def test_piano_tsens_overlay_resolves_sensors_and_gpu(self):
+        record = pr.ROOT / 'build/release/source-manifest.json'
+        if not record.is_file():
+            self.skipTest('Prepared release kernel source is required')
+        kernel = json.loads(record.read_text())
+        source = Path(kernel['worktree'])
+        if not source.is_dir():
+            self.skipTest('Prepared release kernel source is required')
+        includes, metadata = pr.prepare_dtb_includes(source, kernel['actual_commit'], self.base)
+        soc = (source / 'arch/arm64/boot/dts/qcom/sm8750.dtsi').read_text()
+        self.assertTrue((self.base / 'sm8750-thermal-zones.dtsi').read_text().endswith(
+            pr.extract_thermal_zones(soc)))
+        self.assertEqual(metadata['kernel_commit'], kernel['actual_commit'])
+        shutil.copyfile(pr.ROOT / 'vendor/piano-linux/board.dtb', self.dtb)
+        pr.apply_cpu_model_overlay(self.dtb, pr.ROOT / 'linux/dts/piano-battery.dtso', self.base, cpu_only=False)
+        before = pr.read_fdt(self.dtb.read_bytes())['tree']
+        pr.apply_cpu_model_overlay(self.dtb, pr.ROOT / 'linux/dts/piano-tsens.dtso', self.base,
+                                   cpu_only=False, include_dirs=includes)
+        after = pr.read_fdt(self.dtb.read_bytes())
+        zones = {name: props for name, props in after['tree'].items()
+                 if name.startswith('/thermal-zones/') and name.count('/') == 2
+                 and name != '/thermal-zones/piano-skin'}
+        expected = re.findall(r'thermal-sensors\s*=\s*<&(tsens\d+)\s+(\d+)>',
+                              pr.extract_thermal_zones(soc))
+        actual = []
+        for props in zones.values():
+            handle, sensor = struct.unpack('>II', props['thermal-sensors'])
+            actual.append((after['phandles'][handle].rsplit('/', 1)[-1].split('@')[0], str(sensor)))
+        self.assertCountEqual(actual, expected)
+        gpu = '/soc/gpu@3d00000'
+        self.assertEqual(after['tree'][gpu]['#cooling-cells'], struct.pack('>I', 2))
+        maps = [props for name, props in after['tree'].items()
+                if name.startswith('/thermal-zones/') and 'cooling-device' in props]
+        self.assertEqual(len(maps), 8)
+        for props in maps:
+            handle, lower, upper = struct.unpack('>III', props['cooling-device'])
+            self.assertEqual(after['phandles'][handle], gpu)
+            self.assertEqual((lower, upper), (0xffffffff, 0xffffffff))
+        for name, props in before.items():
+            if name in ('/__symbols__', gpu):
+                continue
+            self.assertEqual(after['tree'][name], props, name)
+        with self.assertRaisesRegex(ValueError, 'does not match'):
+            pr.prepare_dtb_includes(source, '0' * 40, self.base)
 
     def test_unused_dynamic_pools_preserve_firmware_reservations(self):
         pool = {'compatible': b'shared-dma-pool\0', 'reusable': b'',

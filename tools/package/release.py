@@ -11,9 +11,11 @@ ROOT = Path(__file__).resolve().parents[2]
 def main(argv):
     record = json.loads((ROOT / 'config/release.json').read_text())
     kernel = record['kernel']
+    source = json.loads((ROOT / 'build/release/source-manifest.json').read_text())
     args = ['python3', 'tools/package_release.py',
             '--uefi', 'artifacts/product/PianoUEFI-product.img',
             '--kernel', 'artifacts/kernels/release',
+            '--kernel-source', source['worktree'],
             '--dtb', 'vendor/piano-linux/board.dtb',
             '--cpu-model-overlay', kernel['cpu_model_overlay'],
             '--panel-vendor', kernel['preferred_display_mode']['panel_vendor']]

@@ -138,6 +138,15 @@ USB PHY 通过的 USB-C 连接器拓扑接入标准方向和模式切换接口�
 这套配置已从正常启动的内核日志核对：上述引用、SPMI、SCMI、DRM 桥及 RSC
 报错消失，ADSP、音频、键盘、蓝牙和 USB 调试连接保持工作。
 
+SoC 温区使用锁定内核 `sm8750.dtsi` 中的完整 `thermal-zones` 定义。打包时
+提取为 include，由 `piano-tsens.dtso` 合入根节点，保留 47 个传感器映射、
+温度阈值及八个 GPU 降温映射；GPU 引用连接到板级主线节点 `gpu_ml`，并补齐
+`#cooling-cells`。不将 Android 的 `/soc/thermal-zones` 厂商策略当作主线温区，
+也不另抄一份阈值。已有 `piano-skin` 充电温区保留。内核 thermal 和 hwmon
+接口直接提供读数，不需要用户空间采集服务；SoC 温度与电池 JEITA 温度分别处理。
+实机启动和深度挂起恢复后，47 路 SoC 温度均可读取，八路 GPU 温区均绑定
+`devfreq-3d00000.gpu` 降温设备。
+
 磁盘启动统一使用 `linux/userspace/disk-bootstrap`，支持发布镜像的 LABEL 和
 开发镜像的 PARTUUID。ext4 先正常回放日志，再转为读写；救援环境包含磁吸键盘
 所需的 GENI I²C、GPI、Nanosic 驱动和 MCU RAM 固件。

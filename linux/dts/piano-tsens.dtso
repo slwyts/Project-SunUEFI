@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/thermal/thermal.h>
+
+/* The folded board tree names the mainline Adreno node gpu_ml. */
+#define gpu gpu_ml
+
+/ {
+	compatible = "xiaomi,piano";
+
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+#include "sm8750-thermal-zones.dtsi"
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc/gpu@3d00000";
+		__overlay__ {
+			#cooling-cells = <2>;
+		};
+	};
+};

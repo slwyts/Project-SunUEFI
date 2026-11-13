@@ -32,7 +32,8 @@
       "linux/dts/piano-pen-charger.dtso",
       "linux/dts/piano-bluetooth-nvm.dtso",
       "linux/dts/piano-ir-spi-controller.dtso",
-      "linux/dts/piano-display-interconnects.dtso"
+      "linux/dts/piano-display-interconnects.dtso",
+      "linux/dts/piano-tsens.dtso"
     ],
     "root_policy": "LABEL=PIANOROOT",
     "command_line": "console=tty0 loglevel=4 consoleblank=0 fbcon=font:TER16x32 rdinit=/pianoinit piano.root=LABEL=PIANOROOT rootfstype=ext4 rootwait ro pd_ignore_unused clk_ignore_unused panic=0 iommu.passthrough=1",

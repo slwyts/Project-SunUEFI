@@ -27,6 +27,11 @@ SunUEFI 站在这些项目之上：EDK2 / Mu-Silicium 提供 UEFI 基础和高�
 
 内核 MiPPS [补丁](patches/linux/7.3/0027-power-piano-mipps-authentication.patch)移植了上述 `xiaomi-mipps-auth` 的协议常量和摘要计算，并参考 [blu-sharky/piano-mipps-auth](https://github.com/blu-sharky/piano-mipps-auth) 对 Piano 固件漏报充电器身份的处理及原厂命令顺序，保留 GPL-2.0-only。认证在内核工作队列中完成，不安装上游的用户空间服务、状态文件和通知。来源提交记录在[内核补丁清单](patches/linux/7.3/series.json)的 `mipps_authentication` 中，协议与限制见[内核说明](docs/devel/linux/kernel.md#usb-type-c)。
 
+SM8750 温区的 include 方案参考 Cryolitia 的
+[Piano TSENS overlay](https://github.com/Cryolitia/nixos-config/blob/096e88bfc641784cc291dfe54695c4811d8c61e5/hosts/xiaomi-piano/piano-tsens-temperatures.dts)，
+沿用 BSD-3-Clause。温区内容在打包时直接取自锁定内核的 `sm8750.dtsi`，
+生成的 include 保留 Qualcomm 版权和原文件许可，不维护第二份传感器表。
+
 HyperOS 4 的 [ADSP](vendor/firmware/hyperos4-adsp/README.md) 和
 [CDSP](vendor/firmware/hyperos4-cdsp/README.md) 固件来自本机原厂固件分区，
 保留原始签名、文件名和逐文件 SHA256，按清单装入四个发行版。

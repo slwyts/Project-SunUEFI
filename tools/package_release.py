@@ -194,12 +194,59 @@ def run(argv, **kwargs):
     return subprocess.run([str(x) for x in argv], check=True, capture_output=True, text=True, **kwargs)
 
 
-def apply_cpu_model_overlay(board, overlay, work, cpu_only=True):
+def extract_thermal_zones(source):
+    """Keep the SoC node intact, ignoring braces in comments and strings."""
+    node = re.search(r'^\s*thermal-zones\s*\{', source, re.M)
+    require(node is not None, 'SoC source has no thermal-zones node')
+    start = source.index('thermal-zones', node.start())
+    tokens = re.finditer(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|[{}]',
+                         source[start:], re.S)
+    depth = 0
+    for token in tokens:
+        if token.group() == '{':
+            depth += 1
+        elif token.group() == '}':
+            depth -= 1
+            if depth == 0:
+                end = start + token.end()
+                terminator = re.match(r'\s*;', source[end:])
+                require(terminator is not None, 'SoC thermal-zones node has no terminator')
+                return source[start:end + terminator.end()] + '\n'
+    raise ValueError('SoC thermal-zones node has unbalanced braces')
+
+
+def prepare_dtb_includes(kernel_source, kernel_commit, work):
+    """Extract SM8750 zones from the same tracked source as the kernel."""
+    commit = run(['git', '-C', kernel_source, 'rev-parse', 'HEAD']).stdout.strip()
+    require(commit == kernel_commit, 'DT include source does not match the kernel commit')
+    sources = {}
+    for name in ('arch/arm64/boot/dts/qcom/sm8750.dtsi',
+                 'include/dt-bindings/thermal/thermal.h'):
+        path = kernel_source / name
+        data = path.read_bytes()
+        tracked = subprocess.check_output(['git', '-C', str(kernel_source), 'show', commit + ':' + name])
+        require(data == tracked, 'DT include source differs from its commit: ' + name)
+        sources[name] = hashlib.sha256(data).hexdigest()
+    source = (kernel_source / 'arch/arm64/boot/dts/qcom/sm8750.dtsi').read_text()
+    # Preserve the SoC file's license and copyright with the generated include.
+    header = source[:source.index('#include')]
+    (work / 'sm8750-thermal-zones.dtsi').write_text(header + extract_thermal_zones(source))
+    return (work, kernel_source / 'include'), {'kernel_commit': commit, 'sources': sources}
+
+
+def apply_cpu_model_overlay(board, overlay, work, cpu_only=True, include_dirs=()):
     """Apply declared board properties to a copy of the captured input."""
     parsed = read_fdt(board.read_bytes())
     before = parsed['tree']
     compiled, derived = work / 'cpu-model.dtbo', work / 'board-with-cpu-model.dtb'
-    run(['dtc', '-@', '-I', 'dts', '-O', 'dtb', '-o', compiled, overlay])
+    source = overlay
+    if include_dirs:
+        source = work / 'overlay.pp.dts'
+        command = ['cpp', '-nostdinc', '-undef', '-x', 'assembler-with-cpp']
+        for directory in include_dirs:
+            command += ['-I', directory]
+        run([*command, overlay, '-o', source])
+    run(['dtc', '-@', '-I', 'dts', '-O', 'dtb', '-o', compiled, source])
     overlay_fdt = read_fdt(compiled.read_bytes())
     fragments = overlay_fdt['tree']
     next_phandle = max(parsed['phandles'], default=0) + 1
@@ -581,9 +628,13 @@ def package(args):
     if args.cpu_model_overlay:
         require(shutil.which('dtc') and shutil.which('fdtoverlay'), 'CPU model overlay needs dtc and fdtoverlay')
         dtb_derivation = apply_cpu_model_overlay(work / 'board.dtb', args.cpu_model_overlay, work)
+    include_dirs, dtb_includes = (), None
+    if args.kernel_source:
+        include_dirs, dtb_includes = prepare_dtb_includes(args.kernel_source, metas[1].get('source_commit'), work)
     extra_dtb_overlays = []
     for overlay in args.dtb_overlay:
-        extra_dtb_overlays.append(apply_cpu_model_overlay(work / 'board.dtb', overlay, work, cpu_only=False))
+        extra_dtb_overlays.append(apply_cpu_model_overlay(work / 'board.dtb', overlay, work,
+                                                        cpu_only=False, include_dirs=include_dirs))
     mainline_bindings = normalize_mainline_bindings(work / 'board.dtb')
     panel_selection = None
     if args.panel_vendor:
@@ -635,6 +686,7 @@ def package(args):
                                  'mtime': inode_mtime(CLOCK_EPOCH, rows[CLOCK_EPOCH], args.epoch)}
     if dtb_derivation: result['dtb_derivation'] = dtb_derivation
     result['mainline_bindings'] = mainline_bindings
+    if dtb_includes: result['dtb_includes'] = dtb_includes
     if extra_dtb_overlays: result['additional_dtb_overlays'] = extra_dtb_overlays
     if panel_selection: result['panel_selection'] = panel_selection
     shutil.rmtree(work)
@@ -653,6 +705,7 @@ def parser():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--cpu-model-overlay', type=Path)
     ap.add_argument('--dtb-overlay', type=Path, action='append', default=[])
+    ap.add_argument('--kernel-source', type=Path, help='Matching kernel source for DT overlay includes')
     ap.add_argument('--panel-vendor', choices=('auto', 'boe', 'csot'))
     for name in ('uefi', 'kernel', 'dtb', 'initramfs', 'rootfs', 'output'):
         ap.add_argument('--' + name, type=Path, required=True)
