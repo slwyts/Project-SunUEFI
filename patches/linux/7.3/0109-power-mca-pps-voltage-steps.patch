@@ -1,0 +1,149 @@
+From 35c62293a237de7fe38cec56ad720b38e079fe6e Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sat, 14 Nov 2026 03:47:47 +0800
+Subject: [PATCH] feat(power): apply the stock five-field PPS voltage-step
+ table
+
+Select 2:1 voltage steps from the same-device current gap, cycle count and cell-voltage headroom. Keep single-step CV increases, aging and last-stage guards, and the cold-profile 80 mV cap. Regulate CV overshoot from the cell-voltage error while retaining existing source and thermal windows.
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 16c4804ea..568115e6c 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -437,7 +437,7 @@ static const struct piano_mca_jeita piano_mca_jeita[] = {
+  */
+ #define MCA_CP_REG_STEP_MV	20
+ #define MCA_CP_REG_STEP_MA	140
+-#define MCA_CP_REG_MAX_STEP_MV	200	/* down, when well above the target */
++#define MCA_CP_CV_MAX_STEP_MV	100
+ #define MCA_CP_BAND_MA		200
+ /*
+  * Above twice the battery voltage: the most the stage may see, and the most
+@@ -3407,6 +3407,47 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
+ 		 mca->cp_ibus_ma);
+ }
+ 
++/* Same-device five-field vstep_para. This driver uses the 2:1 rows only. */
++static const struct piano_mca_vstep {
++	u32 ratio, cycles, current_gap_ma, voltage_gap_mv, multiplier;
++} piano_mca_vsteps[] = {
++	{ 1, 800, 2000, 0, 2 },
++	{ 2, 800, 4000, 0, 10 },
++	{ 2, 800, 3000, 0, 8 },
++	{ 2, 800, 2000, 0, 7 },
++	{ 2, 800, 1000, 0, 4 },
++	{ 2, 800, 600, 0, 2 },
++};
++
++static u32 piano_mca_pps_vstep(struct piano_mca *mca,
++			       const struct piano_mca_cp_limits *limits,
++			       int vbat, int ibat, int tcool)
++{
++	int gap = (int)limits->ma - ibat;
++	int voltage_gap = (int)limits->cv_mv - vbat;
++	u32 step;
++	int i;
++
++	/* Factory base-flip-same: old cells and the last 100 mV use single steps. */
++	if (mca->battery_cycles >= 800 ||
++	    vbat > (int)limits->last_mv + (int)mca->cp_fv_extra_mv - 100 ||
++	    ((mca->cp_stage & 1) && gap > 0))
++		return MCA_CP_REG_STEP_MV;
++	for (i = 0; i < ARRAY_SIZE(piano_mca_vsteps); i++) {
++		const struct piano_mca_vstep *row = &piano_mca_vsteps[i];
++
++		if (row->ratio != 2 || mca->battery_cycles > row->cycles ||
++		    abs(gap) < row->current_gap_ma || voltage_gap < row->voltage_gap_mv)
++			continue;
++		step = MCA_CP_REG_STEP_MV * row->multiplier;
++		/* The stock cold profile (8-13 C) limits large steps to 80 mV. */
++		if (!mca->ffc && tcool < 13 && row->multiplier >= 5)
++			step = 4 * MCA_CP_REG_STEP_MV;
++		return step;
++	}
++	return MCA_CP_REG_STEP_MV;
++}
++
+ /* QC opening waits for the ADSP's voltage ramp before enabling switching. */
+ static int piano_mca_qc_open(struct piano_mca *mca, int vbat)
+ {
+@@ -3477,6 +3518,7 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 	int vbat, ibat, tcool, twarm, vbus_uv, ibus_ua, tdie, on, ibus, over;
+ 	int ibat_max, target, ibus_all, verifying;
+ 	u32 mv = mca->cp_mv;
++	u32 vstep;
+ 	bool par;
+ 
+ 	if (!piano_mca_cp_session_valid(mca)) {
+@@ -3789,16 +3831,17 @@ static void piano_mca_cp_step(struct piano_mca *mca)
+ 		target = min(target, (ibat_max - (int)mca->fcc_set_ma) / 2);
+ 
+ 		over = ibus - target;
++		vstep = piano_mca_pps_vstep(mca, &limits, vbat, ibat, tcool);
+ 		if (vbat >= limits.cv_mv)
+-			mv -= MCA_CP_REG_STEP_MV;
++			mv -= clamp_t(u32, 4 * (vbat - limits.cv_mv),
++				      MCA_CP_REG_STEP_MV, MCA_CP_CV_MAX_STEP_MV);
+ 		else if (over > 0)
+-			mv -= clamp(over / MCA_CP_REG_STEP_MA * MCA_CP_REG_STEP_MV,
+-				    MCA_CP_REG_STEP_MV, MCA_CP_REG_MAX_STEP_MV);
++			mv -= vstep;
+ 		else if (ibat > ibat_max && mca->cp_ibat_trip <= ibat_max)
+-			mv -= MCA_CP_REG_STEP_MV;
++			mv -= vstep;
+ 		else if (ibus + MCA_CP_BAND_MA < target &&
+ 			 ibat + MCA_CP_BAND_MA < ibat_max)
+-			mv += MCA_CP_REG_STEP_MV;
++			mv += vbat < (int)limits.cv_mv - 10 ? vstep : MCA_CP_REG_STEP_MV;
+ 		/* the gauges catch up with a lowered limit only from here */
+ 		if (over > MCA_CP_BAND_MA)
+ 			mca->cp_trip_at = jiffies;
+diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
+index 7431d27a0..e19578ac0 100644
+--- a/drivers/power/supply/piano_mca_test.c
++++ b/drivers/power/supply/piano_mca_test.c
+@@ -3666,6 +3666,36 @@ static void piano_mca_ffc_tail_does_not_reenter_test(struct kunit *test)
+ 	KUNIT_EXPECT_TRUE(test, f->mca.normal_full);
+ }
+ 
++static void piano_mca_pps_vstep_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	struct piano_mca_cp_limits limits = { .ma = 12400, .cv_mv = 4144, .last_mv = 4540 };
++	static const struct { int gap; u32 step; } rows[] = {
++		{ 599, 20 }, { 600, 40 }, { 999, 40 }, { 1000, 80 },
++		{ 1999, 80 }, { 2000, 140 }, { 2999, 140 }, { 3000, 160 },
++		{ 3999, 160 }, { 4000, 200 }, { -599, 20 }, { -4000, 200 },
++	};
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(rows); i++)
++		KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits,
++			3800, limits.ma - rows[i].gap, 25), rows[i].step);
++	f->mca.cp_stage = 1;
++	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 3800, 8000, 25), 20U);
++	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 3800, 16400, 25), 200U);
++	f->mca.cp_stage = 0;
++	f->mca.battery_cycles = 799;
++	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 3800, 8000, 25), 200U);
++	f->mca.battery_cycles = 800;
++	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 3800, 8000, 25), 20U);
++	f->mca.battery_cycles = 0;
++	limits.cv_mv = 4464;
++	limits.last_mv = 4473;
++	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 4373, 8000, 25), 200U);
++	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 4374, 8000, 25), 20U);
++	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 3800, 8000, 10), 80U);
++}
++
+ static void piano_mca_third_pps_limits_test(struct kunit *test)
+ {
+ 	struct piano_mca_test *f = test->priv;
+@@ -3978,6 +4008,7 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
+ }
+ 
+ static struct kunit_case piano_mca_test_cases[] = {
++	KUNIT_CASE(piano_mca_pps_vstep_test),
+ 	KUNIT_CASE(piano_mca_third_pps_limits_test),
+ 	KUNIT_CASE(piano_mca_qc_limits_test),
+ 	KUNIT_CASE(piano_mca_qc_direction_test),

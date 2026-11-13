@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "2ac0dba057d2baa4d2d1c718994406ee2ee4bc2c",
-  "original_target_commit": "44f17a42a812287acb2fe19633cbaf1144c6a25a",
+  "target_tree": "8074e3908cd024e7250a489072ee874a5b1a2f52",
+  "original_target_commit": "35c62293a237de7fe38cec56ad720b38e079fe6e",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -871,6 +871,14 @@
       "original_parent": "028e3daa5e2509148050c82c3599be0a5844dd65",
       "committer_date": "2026-11-14T03:41:04+08:00",
       "tree": "2ac0dba057d2baa4d2d1c718994406ee2ee4bc2c"
+    },
+    {
+      "file": "0109-power-mca-pps-voltage-steps.patch",
+      "sha256": "3d3dec99fc100754d70b7dfec11988932fccab1e8725191e29f0733bd8725a90",
+      "original_commit": "35c62293a237de7fe38cec56ad720b38e079fe6e",
+      "original_parent": "44f17a42a812287acb2fe19633cbaf1144c6a25a",
+      "committer_date": "2026-11-14T03:47:47+08:00",
+      "tree": "8074e3908cd024e7250a489072ee874a5b1a2f52"
     }
   ],
   "provenance": {
@@ -975,7 +983,8 @@
       "buck_and_stop": "QC2 and ordinary QC3 remain on the buck path. Stock input limits: QC2 1200 mA; QC3/QC3+/PD 1600 mA; DCP 1500 mA; CDP 900 mA; float 1000 mA. QC direct charge disables PMIC battery charging, confirms pump shutdown before returning to 9 V, and never emits PD/PPS requests for QC. Tail current is 2400 mA below FV minus 29/24 mV for QC3-B/QC3+.",
       "local_safety": "Keep existing both-cell temperature, cycle, thermal, user-budget, transport generation and stop-confirmation rules. Do not send an upward pulse across the adapter ceiling. The kernel does not infer 67 W delivery from these tables.",
       "third_party_pps": "Piano CN third_pps_* caps the whole adapter request at 11000 mV/4100 mA; pump target also reserves the PMIC input and 200 mA bus margin. With PPS 100 W disabled, factory regulation subtracts 200 mA from the combined battery target and caps it at 8000 mA. Verified-proof loss stops before recalculating source limits. Stock sc8541_master bus-ovp-threshold is 13000 mV; software target windows and the 10500 mV alarm remain.",
-      "inactive_100w_limit": "non_mi_pps_max_curr is parsed and copied into non_mi_pps_curr for each conversion ratio, but the actual regulation cap is guarded by mca_strategy_is_support_pps_100w(). Piano sets support_pps_100w=0; do not enable this path or substitute its 4500/11000/17600 mA table for third_pps_* limits."
+      "inactive_100w_limit": "non_mi_pps_max_curr is parsed and copied into non_mi_pps_curr for each conversion ratio, but the actual regulation cap is guarded by mca_strategy_is_support_pps_100w(). Piano sets support_pps_100w=0; do not enable this path or substitute its 4500/11000/17600 mA table for third_pps_* limits.",
+      "pps_voltage_steps": "4.0.6 BTF gives vstep_para a 20-byte row: volt_ratio, cycle_count, cur_gap, vbat_gap, vstep_ratio. get_vstep checks ratio, cycle upper bound, absolute battery-current gap and signed voltage headroom. The 2:1 rows use 4000/3000/2000/1000/600 mA gaps with 10/8/7/4/2 times 20 mV. Positive CV steps, cycles >=800 and the last 100 mV use 20 mV; ordinary 8-13 C large steps cap at 80 mV. Existing combined-current, source and stage-temperature constraints remain."
     },
     "battery_authentication": {
       "reference_url": "https://github.com/ianchb/xiaomi-mipps-auth",
