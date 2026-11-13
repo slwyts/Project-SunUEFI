@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "ffc0bf5589c227d3280605c9ee8fbbd1bdabafe0",
-  "original_target_commit": "80114e79d7a9f563f95064061be9cc6dbc4d1c1f",
+  "target_tree": "5963739de247692494ba26e35fbc8951b089caab",
+  "original_target_commit": "ee6aa887046afb28b488bd14590ac6a0daeff3e6",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -847,6 +847,14 @@
       "original_parent": "611bb038b07681dae27d6852f4698e4873cbc980",
       "committer_date": "2026-11-12T23:02:24+08:00",
       "tree": "ffc0bf5589c227d3280605c9ee8fbbd1bdabafe0"
+    },
+    {
+      "file": "0106-power-mca-stock-cycle-policy.patch",
+      "sha256": "cdc914ca45b50a7563238f536d2f2a32b11f492adbfa2ca1e5ba34f2d56bb0f8",
+      "original_commit": "ee6aa887046afb28b488bd14590ac6a0daeff3e6",
+      "original_parent": "80114e79d7a9f563f95064061be9cc6dbc4d1c1f",
+      "committer_date": "2026-11-14T00:09:57+08:00",
+      "tree": "5963739de247692494ba26e35fbc8951b089caab"
     }
   ],
   "provenance": {
