@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "8074e3908cd024e7250a489072ee874a5b1a2f52",
-  "original_target_commit": "35c62293a237de7fe38cec56ad720b38e079fe6e",
+  "target_tree": "3ac4bdb365f051cf1c1283bdefbfadf9f79c9112",
+  "original_target_commit": "28d14326ff0da7eba1540f3934d55ec353f06946",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -879,6 +879,14 @@
       "original_parent": "44f17a42a812287acb2fe19633cbaf1144c6a25a",
       "committer_date": "2026-11-14T03:47:47+08:00",
       "tree": "8074e3908cd024e7250a489072ee874a5b1a2f52"
+    },
+    {
+      "file": "0110-power-mca-battery-health-current.patch",
+      "sha256": "812741bbc0613bc74614d044bad034ec8c6b67c469a47e500052f7bf97b7c964",
+      "original_commit": "28d14326ff0da7eba1540f3934d55ec353f06946",
+      "original_parent": "35c62293a237de7fe38cec56ad720b38e079fe6e",
+      "committer_date": "2026-11-14T03:57:05+08:00",
+      "tree": "3ac4bdb365f051cf1c1283bdefbfadf9f79c9112"
     }
   ],
   "provenance": {
@@ -984,7 +992,13 @@
       "local_safety": "Keep existing both-cell temperature, cycle, thermal, user-budget, transport generation and stop-confirmation rules. Do not send an upward pulse across the adapter ceiling. The kernel does not infer 67 W delivery from these tables.",
       "third_party_pps": "Piano CN third_pps_* caps the whole adapter request at 11000 mV/4100 mA; pump target also reserves the PMIC input and 200 mA bus margin. With PPS 100 W disabled, factory regulation subtracts 200 mA from the combined battery target and caps it at 8000 mA. Verified-proof loss stops before recalculating source limits. Stock sc8541_master bus-ovp-threshold is 13000 mV; software target windows and the 10500 mV alarm remain.",
       "inactive_100w_limit": "non_mi_pps_max_curr is parsed and copied into non_mi_pps_curr for each conversion ratio, but the actual regulation cap is guarded by mca_strategy_is_support_pps_100w(). Piano sets support_pps_100w=0; do not enable this path or substitute its 4500/11000/17600 mA table for third_pps_* limits.",
-      "pps_voltage_steps": "4.0.6 BTF gives vstep_para a 20-byte row: volt_ratio, cycle_count, cur_gap, vbat_gap, vstep_ratio. get_vstep checks ratio, cycle upper bound, absolute battery-current gap and signed voltage headroom. The 2:1 rows use 4000/3000/2000/1000/600 mA gaps with 10/8/7/4/2 times 20 mV. Positive CV steps, cycles >=800 and the last 100 mV use 20 mV; ordinary 8-13 C large steps cap at 80 mV. Existing combined-current, source and stage-temperature constraints remain."
+      "pps_voltage_steps": "4.0.6 BTF gives vstep_para a 20-byte row: volt_ratio, cycle_count, cur_gap, vbat_gap, vstep_ratio. get_vstep checks ratio, cycle upper bound, absolute battery-current gap and signed voltage headroom. The 2:1 rows use 4000/3000/2000/1000/600 mA gaps with 10/8/7/4/2 times 20 mV. Positive CV steps, cycles >=800 and the last 100 mV use 20 mV; ordinary 8-13 C large steps cap at 80 mV. Existing combined-current, source and stage-temperature constraints remain.",
+      "battery_health_current": {
+        "stock_fg_module_sha256": "2a0b4bba622966b05f47728d4261685236f558113b39d0c4c0e6db1d8e8415a1",
+        "stock_gauge_module_sha256": "7a76a4f20b83e4a3de197c7f8ca6bc2281072824e5d6b6ed9962d1c7af89dfdb",
+        "checks": "Named FG DTPT monitor takes maximum ISC/SOA alerts from both gauges, with ISC==3 or SOA!=0 activating DTPT. The stock bq27z561_regs and byte-read functions map SOA to 0x70 and ISC to 0x72. Quick-charge regulation applies 80% table current minus reduce_max_cur=200 mA when support-dtpt-reduce-max-cur is present and support-dtpt-ichg-dec is absent, as on Piano.",
+        "interface": "Opt-in vendor gauge registers are described by ti,health-alerts and reported as standard HEALTH_UNSPEC_FAILURE. MCA reads both gauge health properties before policy, pauses on errors and applies the reduction before cycle, thermal, user and source constraints. No data-flash writes."
+      }
     },
     "battery_authentication": {
       "reference_url": "https://github.com/ianchb/xiaomi-mipps-auth",

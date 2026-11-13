@@ -9,6 +9,7 @@
 		piano_battery_cell0: __overlay__ {
 			#io-channel-cells = <1>;
 			ti,cell-monitor;
+			ti,health-alerts;
 			ti,authentication-key = [
 				02 b3 a8 5e a4 c1 a6 db 6f bd 1f d5 76 7c 1a 42
 				31 4f 37 ba 7c 94 60 c9 ed 79 a1 2b b2 b5 d9 9c
@@ -21,6 +22,7 @@
 		piano_battery_cell1: __overlay__ {
 			#io-channel-cells = <1>;
 			ti,cell-monitor;
+			ti,health-alerts;
 			ti,authentication-key = [
 				02 b3 a8 5e a4 c1 a6 db 6f bd 1f d5 76 7c 1a 42
 				31 4f 37 ba 7c 94 60 c9 ed 79 a1 2b b2 b5 d9 9c
