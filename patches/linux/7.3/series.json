@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "2dd997e5109a845b0e47ad11950c6f3e28255e5d",
-  "original_target_commit": "028e3daa5e2509148050c82c3599be0a5844dd65",
+  "target_tree": "2ac0dba057d2baa4d2d1c718994406ee2ee4bc2c",
+  "original_target_commit": "44f17a42a812287acb2fe19633cbaf1144c6a25a",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -863,6 +863,14 @@
       "original_parent": "ee6aa887046afb28b488bd14590ac6a0daeff3e6",
       "committer_date": "2026-11-14T03:28:55+08:00",
       "tree": "2dd997e5109a845b0e47ad11950c6f3e28255e5d"
+    },
+    {
+      "file": "0108-power-mca-third-pps-limits.patch",
+      "sha256": "c507b36d388186b7f26246a04f1878ab079cf91ac889b819ea8779a01e3c6d8a",
+      "original_commit": "44f17a42a812287acb2fe19633cbaf1144c6a25a",
+      "original_parent": "028e3daa5e2509148050c82c3599be0a5844dd65",
+      "committer_date": "2026-11-14T03:41:04+08:00",
+      "tree": "2ac0dba057d2baa4d2d1c718994406ee2ee4bc2c"
     }
   ],
   "provenance": {
@@ -965,7 +973,9 @@
       "wire_checks": "BTF confirms QC_VOLT 0x2011, QC3_VOLT 0x2018 and QC_VOLT_CMD 0x201d. Named set_qc_volt writes 0x2011, not 0x2018. Quick-charge regulation sends increment 0x20 and decrement 0x10; the older public source uses different command enum values.",
       "direct_charge": "QC3-B and HVDCP3P5 use 2:1. Same-device limits are 9500 mV/2500 mA bus/5000 mA battery and 10000 mV/2100 mA bus/4200 mA battery. Opening steps are 200/20 mV, with a 3000 ms ramp wait and at most 40 attempts. Regulation reads pump-side VBUS/IBUS and combined gauge current every 700 ms. QC3-B up margins are 800 mA bus, 700 mA battery and 50 mV cell; down margins are 300 mA bus and 15 mV cell with two votes. QC3+ uses 100/50/20 up and 50/50/10 down margins with one vote. Five repeated samples defer gauge-driven changes until the next sample.",
       "buck_and_stop": "QC2 and ordinary QC3 remain on the buck path. Stock input limits: QC2 1200 mA; QC3/QC3+/PD 1600 mA; DCP 1500 mA; CDP 900 mA; float 1000 mA. QC direct charge disables PMIC battery charging, confirms pump shutdown before returning to 9 V, and never emits PD/PPS requests for QC. Tail current is 2400 mA below FV minus 29/24 mV for QC3-B/QC3+.",
-      "local_safety": "Keep existing both-cell temperature, cycle, thermal, user-budget, transport generation and stop-confirmation rules. Do not send an upward pulse across the adapter ceiling. The kernel does not infer 67 W delivery from these tables."
+      "local_safety": "Keep existing both-cell temperature, cycle, thermal, user-budget, transport generation and stop-confirmation rules. Do not send an upward pulse across the adapter ceiling. The kernel does not infer 67 W delivery from these tables.",
+      "third_party_pps": "Piano CN third_pps_* caps the whole adapter request at 11000 mV/4100 mA; pump target also reserves the PMIC input and 200 mA bus margin. With PPS 100 W disabled, factory regulation subtracts 200 mA from the combined battery target and caps it at 8000 mA. Verified-proof loss stops before recalculating source limits. Stock sc8541_master bus-ovp-threshold is 13000 mV; software target windows and the 10500 mV alarm remain.",
+      "inactive_100w_limit": "non_mi_pps_max_curr is parsed and copied into non_mi_pps_curr for each conversion ratio, but the actual regulation cap is guarded by mca_strategy_is_support_pps_100w(). Piano sets support_pps_100w=0; do not enable this path or substitute its 4500/11000/17600 mA table for third_pps_* limits."
     },
     "battery_authentication": {
       "reference_url": "https://github.com/ianchb/xiaomi-mipps-auth",
