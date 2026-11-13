@@ -60,6 +60,7 @@ verify_expansion() {
   fi
   job=$(sed -n 's/.*"job_id":"\([0-9a-f]*\)".*/\1/p' "$RECEIPT")
   expected=$(sed -n 's/.*"target_userdata_bytes":\([0-9][0-9]*\).*/\1/p' "$RECEIPT")
+  expected_f2fs=$(sed -n 's/.*"target_f2fs_bytes":\([0-9][0-9]*\).*/\1/p' "$RECEIPT")
   created_boot=$(sed -n 's/.*"created_boot_id":"\([0-9a-f-]*\)".*/\1/p' "$RECEIPT")
   valid_id "$job" || { echo 'Android 扩容记录无效。' >&2; return 1; }
   case "$expected" in ''|*[!0-9]*) echo 'Android 扩容目标容量无效。' >&2; return 1 ;; esac
@@ -71,7 +72,12 @@ verify_expansion() {
   fi
   [ -x "$RESIZER" ] || { echo '缺少 Android 扩容检查组件。' >&2; return 1; }
   verification_rc=0
-  "$RESIZER" status --expect-bytes "$expected" > "$STATE/$job.android-expansion-verification.json" \
+  set -- status --expect-bytes "$expected"
+  if [ -n "$expected_f2fs" ]; then
+    case "$expected_f2fs" in *[!0-9]*) echo 'Android 文件系统目标容量无效。' >&2; return 1 ;; esac
+    set -- "$@" --expect-f2fs-bytes "$expected_f2fs"
+  fi
+  "$RESIZER" "$@" > "$STATE/$job.android-expansion-verification.json" \
     2> "$STATE/$job.android-expansion-verification.log" || verification_rc=$?
   if [ "$verification_rc" = 0 ] &&
      grep -q '"expansion_verified":true' "$STATE/$job.android-expansion-verification.json"; then
@@ -222,10 +228,12 @@ EOF
         echo '缺少可用的早期存储维护，未删除独立分区。' >&2; return 1;
       }
       "$RESIZER" check-grow --expect-bytes "$userdata_bytes" > "$STATE/$job.f2fs-layout.json"
+      f2fs_bytes=$(sed -n 's/.*"target_f2fs_bytes":\([0-9][0-9]*\).*/\1/p' "$STATE/$job.f2fs-layout.json")
+      case "$f2fs_bytes" in ''|*[!0-9]*) echo '无法确定 Android 文件系统扩容容量，未删除独立分区。' >&2; return 1 ;; esac
       progress running 70 '正在删除 SunUEFI 分区，将空间归还 Android。'
       "$NATIVE" apply "$plan" "$STATE/$job.gpt-backup" --execute > "$STATE/$job.result.json"
-      printf '{"schema_version":1,"job_id":"%s","target_userdata_bytes":%s,"created_boot_id":"%s","gpt_written":true,"pending_android_expansion":true,"android_grow_detected":%s,"libfs_mgr_sha256":"%s"}\n' \
-        "$job" "$userdata_bytes" "$(cat /proc/sys/kernel/random/boot_id)" "$android_grow" "$libfs_mgr_sha" > "$RECEIPT.tmp"
+      printf '{"schema_version":1,"job_id":"%s","target_userdata_bytes":%s,"target_f2fs_bytes":%s,"created_boot_id":"%s","gpt_written":true,"pending_android_expansion":true,"android_grow_detected":%s,"libfs_mgr_sha256":"%s"}\n' \
+        "$job" "$userdata_bytes" "$f2fs_bytes" "$(cat /proc/sys/kernel/random/boot_id)" "$android_grow" "$libfs_mgr_sha" > "$RECEIPT.tmp"
       chmod 600 "$RECEIPT.tmp"
       mv "$RECEIPT.tmp" "$RECEIPT"
       sync

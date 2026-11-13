@@ -152,15 +152,15 @@ int piano_f2fs_geometry(const char *mapper_path, const char *userdata_path, uint
     return result ? -1 : 0;
 }
 
-int piano_f2fs_layout_capacity(const char *mapper, uint64_t expected) {
+int piano_f2fs_grow_target(const char *mapper, uint64_t partition_bytes, uint64_t *filesystem_bytes) {
     int fd = open(mapper, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     unsigned char sb[3072];
     uint64_t blocks, section;
     int result = fd < 0 || supers(fd, &blocks, &section) ||
         pread(fd, sb, sizeof(sb), 1024) != sizeof(sb);
     if (fd >= 0) close(fd);
-    if (result || expected % BLOCK_BYTES || expected < blocks * BLOCK_BYTES) return -1;
-    uint64_t target = expected / BLOCK_BYTES, seg0 = le32(sb + 72);
+    if (result || partition_bytes % BLOCK_BYTES || partition_bytes < blocks * BLOCK_BYTES) return -1;
+    uint64_t target = partition_bytes / BLOCK_BYTES, seg0 = le32(sb + 72);
     uint64_t ckpt = le32(sb + 52), sit = le32(sb + 56), nat = le32(sb + 60), ssa = le32(sb + 64);
     uint64_t metadata = ckpt + sit + nat + ssa, per_section = le32(sb + 24);
     if (target <= seg0 || !per_section || !sit || (sit & 1) || !nat || (nat & 1) || !ssa) return -1;
@@ -170,8 +170,22 @@ int piano_f2fs_layout_capacity(const char *mapper, uint64_t expected) {
     /* A second device has its own addressing and is not a userdata tail grow. */
     for (size_t i = SUPER_DEVICES_OFFSET; i < SUPER_DEVICES_OFFSET + SUPER_DEVICES_BYTES; ++i)
         if (sb[i]) return -1;
-    return main >= le32(sb + 68) && main <= sit / 2 * SEGMENT_BLOCKS *
-        (BLOCK_BYTES / SIT_ENTRY_BYTES) && main <= ssa * SEGMENT_BLOCKS ? 0 : -1;
+    uint64_t sit_main = sit / 2 * SEGMENT_BLOCKS * (BLOCK_BYTES / SIT_ENTRY_BYTES);
+    uint64_t ssa_main = ssa * SEGMENT_BLOCKS;
+    uint64_t capacity = sit_main < ssa_main ? sit_main : ssa_main;
+    capacity = capacity / per_section * per_section;
+    if (main > capacity) {
+        main = capacity;
+        target = seg0 + (metadata + main) * SEGMENT_BLOCKS;
+    }
+    if (main < le32(sb + 68) || target < blocks) return -1;
+    *filesystem_bytes = target * BLOCK_BYTES;
+    return 0;
+}
+
+int piano_f2fs_layout_capacity(const char *mapper, uint64_t expected) {
+    uint64_t target;
+    return piano_f2fs_grow_target(mapper, expected, &target) || target != expected ? -1 : 0;
 }
 
 int main(int argc, char **argv) {
@@ -183,10 +197,16 @@ int main(int argc, char **argv) {
         if (result && !strcmp(argv[1], "install-early")) perror("Install early F2FS maintenance");
         return result ? 1 : 0;
     }
-    int execute = 0, grow = 0, check_grow = 0; uint64_t limit = 0, expected_bytes = 0;
+    int execute = 0, grow = 0, check_grow = 0;
+    uint64_t limit = 0, expected_bytes = 0, expected_f2fs = 0;
     if (argc == 2 && !strcmp(argv[1], "status")) { /* read-only */ }
     else if (argc == 4 && !strcmp(argv[1], "status") && !strcmp(argv[2], "--expect-bytes")) {
         if (decimal(argv[3], &expected_bytes) || expected_bytes % BLOCK_BYTES) return 2;
+    }
+    else if (argc == 6 && !strcmp(argv[1], "status") && !strcmp(argv[2], "--expect-bytes") &&
+             !strcmp(argv[4], "--expect-f2fs-bytes")) {
+        if (decimal(argv[3], &expected_bytes) || expected_bytes % BLOCK_BYTES ||
+            decimal(argv[5], &expected_f2fs) || expected_f2fs % BLOCK_BYTES || expected_f2fs > expected_bytes) return 2;
     }
     else if (argc == 5 && !strcmp(argv[1], "grow") && !strcmp(argv[2], "--expect-bytes") && !strcmp(argv[4], "--execute")) {
         if (decimal(argv[3], &expected_bytes) || expected_bytes % BLOCK_BYTES) return 2;
@@ -204,7 +224,7 @@ int main(int argc, char **argv) {
         if (decimal(argv[3], &bytes) || bytes % BLOCK_BYTES) return 2;
         limit = bytes / BLOCK_BYTES; execute = 1;
     } else {
-        fprintf(stderr, "Usage: piano-resize-f2fs status [--expect-bytes BYTES] | check-grow --expect-bytes BYTES | shrink --target-bytes BYTES --execute | grow --expect-bytes BYTES --execute\n"
+        fprintf(stderr, "Usage: piano-resize-f2fs status [--expect-bytes BYTES [--expect-f2fs-bytes BYTES]] | check-grow --expect-bytes BYTES | shrink --target-bytes BYTES --execute | grow --expect-bytes BYTES --execute\n"
                         "       piano-resize-f2fs install-early --execute | early-status | early-grow --execute\n");
         return 2;
     }
@@ -239,13 +259,16 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Android expansion target is smaller than existing userdata\n");
             return 3;
         }
-        if (piano_f2fs_layout_capacity(mapper_path, expected_bytes)) {
-            fprintf(stderr, "Existing F2FS metadata cannot cover the target capacity without moving file blocks\n");
+        uint64_t filesystem_target;
+        if (piano_f2fs_grow_target(mapper_path, expected_bytes, &filesystem_target)) {
+            fprintf(stderr, "无法在现有 F2FS 元数据范围内归还空间，未修改文件系统。\n");
             return 1;
         }
         close(data); close(mapper); close(raw);
         if (check_grow) {
-            puts("{\"operation\":\"f2fs-check-grow\",\"read_only\":true,\"existing_layout_covers_target\":true}");
+            printf("{\"operation\":\"f2fs-check-grow\",\"read_only\":true,\"existing_layout_covers_target\":true,"
+                   "\"target_userdata_bytes\":%" PRIu64 ",\"target_f2fs_bytes\":%" PRIu64 "}\n",
+                   expected_bytes, filesystem_target);
             return 0;
         }
         if (piano_f2fs_prepare_grow(mapper_path, userdata_path, expected_bytes)) {
@@ -260,18 +283,26 @@ int main(int argc, char **argv) {
         // a larger GPT entry nor a larger mapper alone proves F2FS has grown.
         uint64_t filesystem_bytes = before * BLOCK_BYTES;
         int mapping_requires_reboot = mapped_bytes != raw_bytes;
-        int grow_pending = raw_bytes - filesystem_bytes >= section * BLOCK_BYTES;
+        uint64_t filesystem_target = raw_bytes;
+        if (piano_f2fs_grow_target(mapper_path, expected_bytes ? expected_bytes : raw_bytes, &filesystem_target)) {
+            fprintf(stderr, "无法核对 F2FS 扩容目标，未修改文件系统。\n");
+            return 1;
+        }
+        int grow_pending = filesystem_target - filesystem_bytes >= section * BLOCK_BYTES;
         int expansion_verified = expected_bytes && raw_bytes == expected_bytes &&
-            mapped_bytes == expected_bytes && !grow_pending;
+            mapped_bytes == expected_bytes && !grow_pending &&
+            (!expected_f2fs || expected_f2fs == filesystem_target);
         printf("{\"operation\":\"f2fs-status\",\"read_only\":true,\"mapping_verified\":true,\"mapped\":%s,\"f2fs_block_count\":%" PRIu64
                ",\"userdata_bytes\":%" PRIu64 ",\"mapped_bytes\":%" PRIu64 ",\"f2fs_bytes\":%" PRIu64
                ",\"section_blocks\":%" PRIu64 ",\"section_bytes\":%" PRIu64
                ",\"both_superblocks_equal\":true,\"free_blocks\":%" PRIu64
                ",\"mapping_requires_reboot\":%s,\"grow_pending\":%s,\"expected_bytes\":%" PRIu64
+               ",\"target_f2fs_bytes\":%" PRIu64
                ",\"expansion_verified\":%s,\"gpt_written\":false}\n",
                direct ? "false" : "true", before, raw_bytes, mapped_bytes, filesystem_bytes,
                section, section * BLOCK_BYTES, (uint64_t)filesystem.f_bfree, mapping_requires_reboot ? "true" : "false",
-               grow_pending ? "true" : "false", expected_bytes, expansion_verified ? "true" : "false");
+                grow_pending ? "true" : "false", expected_bytes, filesystem_target,
+                expansion_verified ? "true" : "false");
         close(data); close(mapper); close(raw); return expected_bytes && !expansion_verified ? 3 : 0;
     }
     if (mapped_bytes != raw_bytes) {

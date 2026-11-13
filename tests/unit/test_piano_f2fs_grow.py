@@ -133,6 +133,75 @@ class PianoF2fsGrowTests(unittest.TestCase):
             self.assertEqual(capacity(os.fsencode(image), 4 << 30), 0)
             self.assertNotEqual(capacity(os.fsencode(image), 64 << 30), 0)
 
+    @unittest.skipUnless((F2FS / 'resize.f2fs').is_file(), 'Build the host F2FS tools for image regression')
+    def test_partition_tail_beyond_metadata_capacity_is_not_a_grow_failure(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / 'build') as folder:
+            folder = Path(folder)
+            source, output = folder / 'input', folder / 'output'
+            source.mkdir()
+            output.mkdir()
+            payload = bytes(range(256)) * 4096
+            (source / 'retained.bin').write_bytes(payload)
+            image = folder / 'data.img'
+            with image.open('wb') as stream:
+                stream.truncate(4 << 30)
+
+            def run(name, *args):
+                result = subprocess.run([str(F2FS / name), *map(str, args)], input='y\n',
+                                        text=True, capture_output=True, timeout=90)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            run('mkfs.f2fs', '-f', '-O', 'extra_attr,inode_checksum,sb_checksum,encrypt', image)
+            run('sload.f2fs', '-f', source, image)
+            run('resize.f2fs', '-s', '-t', (2 << 30) // 512, image)
+            with image.open('r+b') as stream:
+                stream.truncate(64 << 30)
+                stream.seek(1024)
+                before = stream.read(3072)
+            library = folder / 'capacity.so'
+            subprocess.run(['cc', '-shared', '-fPIC', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+                            str(ROOT / 'tools/android/piano_resize_f2fs.c'),
+                            str(ROOT / 'tools/android/piano_f2fs_grow.c'), '-o', str(library)], check=True)
+            native = ctypes.CDLL(str(library))
+            target = native.piano_f2fs_grow_target
+            target.argtypes = [ctypes.c_char_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64)]
+            expected = ctypes.c_uint64()
+            self.assertEqual(target(os.fsencode(image), 64 << 30, ctypes.byref(expected)), 0)
+            self.assertGreater(expected.value, struct.unpack_from('<Q', before, 36)[0] * 4096)
+            self.assertLess(expected.value, 64 << 30)
+            start = struct.unpack_from('<I', before, 92)[0] * 4096
+            length = struct.unpack_from('<I', before, 68)[0] * 512 * 4096
+
+            def main_hash():
+                digest = hashlib.sha256()
+                with image.open('rb') as stream:
+                    stream.seek(start)
+                    left = length
+                    while left:
+                        data = stream.read(min(left, 4 << 20))
+                        self.assertTrue(data)
+                        digest.update(data)
+                        left -= len(data)
+                return digest.digest()
+
+            original = main_hash()
+            run('resize.f2fs', '-P', '-t', expected.value // 512, image)
+            run('resize.f2fs', '-k', '-t', expected.value // 512, image)
+            run('fsck.f2fs', '--dry-run', '--no-kernel-check', '-N', image)
+            self.assertEqual(main_hash(), original)
+            with image.open('rb') as stream:
+                stream.seek(1024)
+                after = stream.read(3072)
+                stream.seek(5120)
+                self.assertEqual(stream.read(3072), after)
+            self.assertEqual(struct.unpack_from('<Q', after, 36)[0] * 4096, expected.value)
+            self.assertEqual(before[72:124], after[72:124])
+            again = ctypes.c_uint64()
+            self.assertEqual(target(os.fsencode(image), 64 << 30, ctypes.byref(again)), 0)
+            self.assertEqual(again.value, expected.value)
+            run('dump.f2fs', '-r', '-f', '-o', output, image)
+            self.assertEqual((output / 'retained.bin').read_bytes(), payload)
+
 
 if __name__ == '__main__':
     unittest.main()

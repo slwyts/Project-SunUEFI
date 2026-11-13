@@ -11,6 +11,10 @@ int piano_f2fs_layout_capacity(const char *mapper, uint64_t expected) {
     (void)mapper; (void)expected;
     abort();
 }
+int piano_f2fs_grow_target(const char *mapper, uint64_t partition, uint64_t *filesystem) {
+    (void)mapper; (void)partition; (void)filesystem;
+    abort();
+}
 
 static void check(const char *json, int accepted) {
     struct grow_request request = {0};
@@ -24,6 +28,11 @@ static void check(const char *json, int accepted) {
 int main(void) {
     check("{" RECORD "}", 1);
     check("{" RECORD ",\"created_boot_id\":\"example\",\"android_grow_detected\":false}\n", 1);
+    check("{" RECORD ",\"target_f2fs_bytes\":239362637824}", 1);
+    check("{" RECORD ",\"target_f2fs_bytes\":0}", 0);
+    check("{" RECORD ",\"target_f2fs_bytes\":239362637825}", 0);
+    check("{" RECORD ",\"target_f2fs_bytes\":999999999999999}", 0);
+    check("{" RECORD ",\"target_f2fs_bytes\":239362637824,\"target_f2fs_bytes\":239362637824}", 0);
     check("{" RECORD ",\"gpt_written\":false}", 0);
     check("{" RECORD ",\"target_userdata_bytes\":1}", 0);
     check("{" RECORD ",\"job_id\":\"another-job\"}", 0);

@@ -4,11 +4,14 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <linux/fs.h>
 #include <signal.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/ioctl.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -40,6 +43,7 @@ struct grow_request {
     unsigned char uuid[16];
     char job[33];
     char boot[37];
+    uint64_t filesystem;
 };
 
 static int secure_dir(const char *path) {
@@ -223,6 +227,19 @@ static int receipt_request(const char *json, size_t size, uint64_t expected, str
     if (!value[0] || strspn(value, "0123456789") != strlen(value) || errno || *end || target != expected ||
         json_field(json, tokens, count, "job_id", JSMN_STRING, request->job, sizeof(request->job)) ||
         strlen(request->job) != 32 || strspn(request->job, "0123456789abcdef") != 32) return -1;
+    /* Legacy receipts describe the partition only; derive the F2FS target below. */
+    request->filesystem = 0;
+    for (int i = 1; i + 1 < count; i += 2) {
+        if (tokens[i].end - tokens[i].start == 17 &&
+            !memcmp(json + tokens[i].start, "target_f2fs_bytes", 17)) {
+            if (json_field(json, tokens, count, "target_f2fs_bytes", JSMN_PRIMITIVE, value, sizeof(value))) return -1;
+            errno = 0;
+            request->filesystem = strtoull(value, &end, 10);
+            if (!value[0] || strspn(value, "0123456789") != strlen(value) || errno || *end ||
+                !request->filesystem || request->filesystem > expected || request->filesystem % 4096) return -1;
+            break;
+        }
+    }
     return 0;
 }
 
@@ -233,7 +250,7 @@ int piano_f2fs_prepare_grow(const char *mapper, const char *userdata, uint64_t e
     ssize_t size = fd < 0 ? -1 : read(fd, json, sizeof(json));
     if (fd >= 0) close(fd);
     if (size <= 0 || size == sizeof(json)) return -1;
-    struct grow_request request = { .magic = "SUNUEFI-GROWv1", .expected = expected };
+    struct grow_request request = { .magic = "SUNUEFI-GROWv2", .expected = expected };
     if (receipt_request(json, (size_t)size, expected, &request)) return -1;
     fd = open("/proc/sys/kernel/random/boot_id", O_RDONLY | O_CLOEXEC);
     ssize_t n = fd < 0 ? -1 : read(fd, request.boot, 36);
@@ -242,6 +259,10 @@ int piano_f2fs_prepare_grow(const char *mapper, const char *userdata, uint64_t e
     /* The current mapper may still have the pre-GPT length until reboot. */
     if (n != 36 || piano_f2fs_geometry(mapper, userdata, 0, request.uuid, &blocks, &section)) return -1;
     if (expected < blocks * 4096 || expected % 4096) return -1;
+    uint64_t target;
+    if (piano_f2fs_grow_target(mapper, expected, &target) ||
+        (request.filesystem && request.filesystem != target)) return -1;
+    request.filesystem = target;
     if (atomic_file(EARLY_REQUEST, &request, sizeof(request), 0600)) return -1;
     puts("{\"operation\":\"f2fs-grow\",\"status\":\"prepared\",\"offline\":true,\"reboot_required\":true}");
     return 0;
@@ -332,7 +353,10 @@ static _Noreturn void reboot_android(void) {
 
 int piano_f2fs_early_grow(void) {
     if (access(EARLY_REQUEST, F_OK)) return errno == ENOENT ? 0 : 1;
-    if (getuid() || getppid() != 1 || !regular_root_file(EARLY_REQUEST, sizeof(struct grow_request))) return 1;
+    const size_t legacy_size = offsetof(struct grow_request, filesystem);
+    if (getuid() || getppid() != 1 ||
+        (!regular_root_file(EARLY_REQUEST, sizeof(struct grow_request)) &&
+         !regular_root_file(EARLY_REQUEST, legacy_size))) return 1;
     int log = open(EARLY_LOG, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (log < 0) return 1;
     dup2(log, STDOUT_FILENO); dup2(log, STDERR_FILENO); close(log);
@@ -340,10 +364,12 @@ int piano_f2fs_early_grow(void) {
     setvbuf(stderr, NULL, _IONBF, 0);
     fprintf(stderr, "SunUEFI: checking confirmed Android expansion in late-fs.\n");
     int fd = open(EARLY_REQUEST, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-    struct grow_request request;
+    struct grow_request request = {0};
     ssize_t n = fd < 0 ? -1 : read(fd, &request, sizeof(request));
     if (fd >= 0) close(fd);
-    if (n != sizeof(request) || memcmp(request.magic, "SUNUEFI-GROWv1", 15) || !request.expected ||
+    if ((n != sizeof(request) || memcmp(request.magic, "SUNUEFI-GROWv2", 15)) &&
+        (n != (ssize_t)legacy_size || memcmp(request.magic, "SUNUEFI-GROWv1", 15))) return 1;
+    if (!request.expected ||
         request.expected % 4096 || request.job[32] || request.boot[36] ||
         strspn(request.job, "0123456789abcdef") != 32) return 1;
     /* Consume before maintenance: neither failures nor reboots repeat writes. */
@@ -362,12 +388,17 @@ int piano_f2fs_early_grow(void) {
         !access("/dev/.sunuefi-storage-late", F_OK) ||
         !realpath("/dev/block/by-name/userdata", userdata) || data_mount(mapper, options, &flags) ||
         piano_f2fs_geometry(mapper, userdata, request.expected, uuid, &before, &section) ||
-        piano_f2fs_layout_capacity(mapper, request.expected) ||
         memcmp(uuid, request.uuid, sizeof(uuid))) {
         errno = EINVAL;
         goto refused;
     }
-    if (request.expected - before * 4096 < section * 4096) {
+    uint64_t target;
+    if (piano_f2fs_grow_target(mapper, request.expected, &target) ||
+        (request.filesystem && request.filesystem != target)) {
+        errno = EINVAL;
+        goto refused;
+    }
+    if (target - before * 4096 < section * 4096) {
         fprintf(stderr, "SunUEFI: Android capacity already covers the requested space.\n");
         return 0;
     }
@@ -384,7 +415,14 @@ int piano_f2fs_early_grow(void) {
         fprintf(stderr, "SunUEFI: plaintext device is still busy; no resize started.\n");
         goto restore;
     }
+    unsigned int sector_bytes = 0;
+    int sector_error = ioctl(fd, BLKSSZGET, &sector_bytes);
     close(fd);
+    if (sector_error || (sector_bytes != 512 && sector_bytes != 1024 &&
+        sector_bytes != 2048 && sector_bytes != 4096) || target % sector_bytes) {
+        fprintf(stderr, "SunUEFI: cannot determine the plaintext device sector size; no expansion started.\n");
+        goto restore;
+    }
     fprintf(stderr, "SunUEFI: userdata is offline; checking the existing filesystem.\n");
     char *check_args[] = {check, "--dry-run", "--no-kernel-check", "-N", mapper, NULL};
     int result = command(check_args, 0);
@@ -392,18 +430,20 @@ int piano_f2fs_early_grow(void) {
         fprintf(stderr, "SunUEFI: filesystem check failed (%d); no expansion started.\n", result);
         goto restore;
     }
-    char *plan_args[] = {tool, "-P", mapper, NULL};
+    char sectors[32];
+    snprintf(sectors, sizeof(sectors), "%" PRIu64, target / sector_bytes);
+    char *plan_args[] = {tool, "-P", "-t", sectors, mapper, NULL};
     if (command(plan_args, 1)) {
         fprintf(stderr, "SunUEFI: the existing metadata cannot cover the requested capacity; no expansion started.\n");
         goto restore;
     }
     fprintf(stderr, "SunUEFI: expanding within the existing layout; file blocks will not move.\n");
-    char *args[] = {tool, "-k", mapper, NULL};
+    char *args[] = {tool, "-k", "-t", sectors, mapper, NULL};
     result = command(args, 1);
     sync();
     if (result || piano_f2fs_geometry(mapper, userdata, request.expected, uuid, &after, &section) ||
         memcmp(uuid, request.uuid, sizeof(uuid)) || after < before ||
-        request.expected - after * 4096 >= section * 4096) {
+        after * 4096 > target || target - after * 4096 >= section * 4096) {
         fprintf(stderr, "SunUEFI: expansion or readback failed (%d); returning through Android's filesystem check.\n", result);
         reboot_android();
     }
