@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "5963739de247692494ba26e35fbc8951b089caab",
-  "original_target_commit": "ee6aa887046afb28b488bd14590ac6a0daeff3e6",
+  "target_tree": "2dd997e5109a845b0e47ad11950c6f3e28255e5d",
+  "original_target_commit": "028e3daa5e2509148050c82c3599be0a5844dd65",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -855,6 +855,14 @@
       "original_parent": "80114e79d7a9f563f95064061be9cc6dbc4d1c1f",
       "committer_date": "2026-11-14T00:09:57+08:00",
       "tree": "5963739de247692494ba26e35fbc8951b089caab"
+    },
+    {
+      "file": "0107-power-mca-qc-direct-charge.patch",
+      "sha256": "aaa86963f83c044ca7f31e07938dc72df54fe548790b2861066dfd27d47927bf",
+      "original_commit": "028e3daa5e2509148050c82c3599be0a5844dd65",
+      "original_parent": "ee6aa887046afb28b488bd14590ac6a0daeff3e6",
+      "committer_date": "2026-11-14T03:28:55+08:00",
+      "tree": "2dd997e5109a845b0e47ad11950c6f3e28255e5d"
     }
   ],
   "provenance": {
@@ -945,6 +953,19 @@
         "recharge_raw_soc_001_percent": 9700,
         "semantics": "Effective FV must exceed 4400mV; hardware charge status 5 or five distinct soft tail samples. Use original integer per-cell FCC percentage weights, check recharge after termination in the same monitor cycle. Full, user inhibition, thermal pauses and faults remain independent."
       }
+    },
+    "quick_charge": {
+      "stock_rom": "OS4.0.6.0.XPYCNXM",
+      "reference": "normal_charging reference_url, reference_commit and reference_paths",
+      "stock_program_sha256": {
+        "mca_strategy_quickchg.ko": "0cf0072642b1669cfbc27713f40679d83786dde249fe151fa1a26eb223132abf",
+        "mca_qcom_subpmic_proxy.ko": "0613a882d953fc3e8ed53543edae4081a01de6120d0a6067f90494c1cc670c4b"
+      },
+      "runtime_fdt_sha256": "d26b0df461cb92e974220a81a5840c323deaa0af61cc48cc5659ff6872028e12",
+      "wire_checks": "BTF confirms QC_VOLT 0x2011, QC3_VOLT 0x2018 and QC_VOLT_CMD 0x201d. Named set_qc_volt writes 0x2011, not 0x2018. Quick-charge regulation sends increment 0x20 and decrement 0x10; the older public source uses different command enum values.",
+      "direct_charge": "QC3-B and HVDCP3P5 use 2:1. Same-device limits are 9500 mV/2500 mA bus/5000 mA battery and 10000 mV/2100 mA bus/4200 mA battery. Opening steps are 200/20 mV, with a 3000 ms ramp wait and at most 40 attempts. Regulation reads pump-side VBUS/IBUS and combined gauge current every 700 ms. QC3-B up margins are 800 mA bus, 700 mA battery and 50 mV cell; down margins are 300 mA bus and 15 mV cell with two votes. QC3+ uses 100/50/20 up and 50/50/10 down margins with one vote. Five repeated samples defer gauge-driven changes until the next sample.",
+      "buck_and_stop": "QC2 and ordinary QC3 remain on the buck path. Stock input limits: QC2 1200 mA; QC3/QC3+/PD 1600 mA; DCP 1500 mA; CDP 900 mA; float 1000 mA. QC direct charge disables PMIC battery charging, confirms pump shutdown before returning to 9 V, and never emits PD/PPS requests for QC. Tail current is 2400 mA below FV minus 29/24 mV for QC3-B/QC3+.",
+      "local_safety": "Keep existing both-cell temperature, cycle, thermal, user-budget, transport generation and stop-confirmation rules. Do not send an upward pulse across the adapter ceiling. The kernel does not infer 67 W delivery from these tables."
     },
     "battery_authentication": {
       "reference_url": "https://github.com/ianchb/xiaomi-mipps-auth",
