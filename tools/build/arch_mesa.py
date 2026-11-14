@@ -101,8 +101,8 @@ def validate(root, work, output):
     if len(candidates) != 1:
         raise ValueError('Native Mesa build has an ambiguous prepared source tree')
     prepared = candidates[0]
-    selected = debian.capture(['chroot', root, 'bash', '-c',
-        'source /var/tmp/sunuefi-package-build/PKGBUILD; printf "%s\\n" "${pkgname[@]}"']).splitlines()
+    selected = debian.capture(['bash', '-c',
+        'source "$1"; printf "%s\\n" "${pkgname[@]}"', 'packages', work / 'PKGBUILD']).splitlines()
     patches = json.loads((work / 'SOURCE.json').read_text())['patches']
     changed = {}
     if patches:
