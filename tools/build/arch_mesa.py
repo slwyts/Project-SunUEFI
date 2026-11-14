@@ -5,6 +5,7 @@ import configparser
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
@@ -141,6 +142,13 @@ def validate(root, work, output):
     for name, value in expected.items():
         if options.get(name) != value and not (name == 'gallium-drivers' and options.get(name) == ['all']):
             raise ValueError('Native Mesa package lost a configured feature: ' + name)
+    bindings = work / 'src/build/src/panfrost/compiler/kraid/kraid_bindings.rs'
+    declaration = re.search(r'pub fn fwrite\([\s\S]*?\) -> [^;]+;', bindings.read_text())
+    if (declaration is None or '__size: usize' not in declaration[0] or
+            '__n: usize' not in declaration[0] or ') -> usize;' not in declaration[0]):
+        raise ValueError('Generated fwrite bindings do not preserve the ARM64 size_t ABI')
+    bindgen = {'file': str(bindings.relative_to(work)), 'sha256': package_build.sha(bindings),
+               'fwrite': declaration[0]}
     packages = {}
     for archive in sorted(path for path in output.glob('*.pkg.tar.*')
                           if path.suffix in ('.xz', '.zst', '.gz')):
@@ -217,7 +225,7 @@ def validate(root, work, output):
     (output / 'builder-packages.tsv').write_text(debian.capture(['chroot', root, 'pacman', '-Q']) + '\n')
     (output / 'VALIDATION.json').write_text(json.dumps({
         'official_source_files_checked': source_files,
-        'build_options': options, 'packages': packages}, indent=2) + '\n')
+        'bindgen': bindgen, 'build_options': options, 'packages': packages}, indent=2) + '\n')
 
 
 def main(argv):
