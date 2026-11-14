@@ -1,6 +1,6 @@
 # Piano 实体摄像头隐私灯
 
-该适配基于 `c8bf8df4d2ca3fe93886b94586c9c34141ccca2b`，通过内核补丁 `0016-piano-camera-privacy-led.patch` 与 `linux/dts/piano-camera-privacy-led.dtso` 接入默认产品。Linux 下前后摄像头开流、停流与共享灯的驱动和 PWM 行为已经验证；实体发光尚未进行光学确认。
+隐私灯通过当前 [media 补丁](../../../patches/linux/7.3/0004-media.patch)与 [设备树 overlay](../../../linux/dts/piano-camera-privacy-led.dtso)接入默认产品，版本以 [Linux 补丁链](../../../patches/linux/7.3/series.json)为准。Linux 下前后摄像头开流、停流与共享灯的驱动和脉宽调制（PWM）行为已经验证；实体发光尚未进行光学确认。
 
 原厂 Android 的相机预览使 PM8550 LPG2 的 `green` 亮度从 0 变成 4，回到 Home、相机关闭后变回 0；满量程为 255。其间 LightsService 的八个灯颜色全部保持 0， lights HAL 也只提供类型 0～7。这里直接使用已对应的 LED 硬件通道，不模拟 Android framework，也不增加后台守护进程。Linux 当前 LED 满量程同样为 255。
 
@@ -12,14 +12,16 @@
 
 两颗 Piano sensor 在取得运行时电源引用之后、写 stream-on 之前同步获取指示灯。这样不会让前一次异步断电回调在启动过程中误释放新获取的引用。正常停止成功后释放引用；复位保持有效且 MCLK 关闭后，power-off 路径也能释放异常停止留下的引用。移除驱动时先完成这一步，再注销 LED 消费者。
 
+这条联动位于 sensor 和 V4L2 内核路径，不依赖 `piano-camerad`、loopback 或控制 socket；以后更换为 libcamera 时不应在用户空间另加点灯逻辑。亮度比例和共享灯引用处理的上游状态见上文，切换用户空间不会改变这些本地扩展的状态。
+
 ## 失败处理
 
 - LPG 的频率、PWM、输出控制、同步、SDAM/LUT、triLED 和 PBS 写入错误沿现有调用链返回到单色或多色同步亮度 setter；不再丢弃错误后返回 0。Piano sensor 收到点灯错误后不写 stream-on。返回成功仍代表硬件接口接受了编程，不等于做过光学测量。
 - OV32D40 不再忽略 stream-off 写入错误。带 privacy LED 的 sensor 停止失败会保留错误与活跃状态，`.s_stream()` 包装层不能将它变成成功再灭灯。没有 privacy LED 的平台保留原行为。
 - CAMSS 不因末端 sensor 停止错误中断剩余停止遍历和 pipeline/buffer 清理。部分启动失败只回退已成功启动的链路前缀，再清理 pipeline；失败节点由其自身处理电源引用。sensor 的错误仍逐项记录，不把软件 cleanup 当作 sensor 已停止。
-- 两颗 sensor 用一个 `stream_pm_held` 标志追踪测试采集取得的 PM 引用。正常停止、停止失败与启动失败各自只消费一次；停止失败后的快速重试在 reset/MCLK-off 之前返回 `-EAGAIN`，不会再次执行 CCI 或 `pm_runtime_put`。强制断电或移除仍持有引用时，通过原子交换消费该引用并使用 `pm_runtime_put_noidle`，不再次触发运行时断电。
+- 两颗 sensor 各用一个 `stream_pm_held` 标志追踪开流取得的 PM 引用。正常停止、停止失败与启动失败各自只消费一次；停止失败后的快速重试在 reset/MCLK-off 之前返回 `-EAGAIN`，不会再次执行 CCI 或 `pm_runtime_put`。强制断电或移除仍持有引用时，通过原子交换消费该引用并使用 `pm_runtime_put_noidle`，不再次触发运行时断电。
 - 异步 power-off 回调只记录已完成的 reset/MCLK-off，不抢 V4L2 state lock。下一次 enable 在已有流状态锁下清除旧的 enabled 状态，因此不会把停止失败时仍可能运行的 sensor 提前标为空闲，也不会因锁顺序发生死锁。
--  stop 或 quiesce 已完成后，sensor 不再占用灯。即使 LED-off 写入失败，也会记录错误、释放已经安全停机的 owner，并允许最后一份注册释放 provider 引用；不会仅因灯的关闭错误永久扣住已停止摄像头的引用。实体灯可能暂时继续亮，错误日志不会把它报告成已经熄灭。
+- stop 或 quiesce 已完成后，sensor 不再占用灯。即使 LED-off 写入失败，也会记录错误、释放已经安全停机的摄像头引用，并允许最后一份注册释放 provider 引用；不会仅因灯的关闭错误永久扣住已停止摄像头的引用。实体灯可能暂时继续亮，错误日志不会把它报告成已经熄灭。
 
 ## 最小构建与剩余验证
 
@@ -29,4 +31,4 @@
 
 本适配处理 sensor 的停止/控制错误；独立的 CAMSS DMA 或硬复位故障仍由其原有底层驱动处理，不能把软件 cleanup 理解成所有 DMA 故障已经恢复。若其他 sensor 驱动在没有完成 stop/quiesce 的情况下直接注销，helper 仍保留不确定的活跃引用；Piano 两个驱动的移除路径已经明确先 quiesce。
 
-源码与构建记录位于 `内部记录目录 `内部记录目录 和 `privacy-shared-live-result.json`。内核准备与产品打包均默认包含该适配。
+内核准备与产品打包均默认包含该适配，Debian、SteamOS 和 Nyarch 使用同一份实现。
