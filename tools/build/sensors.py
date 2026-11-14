@@ -14,7 +14,7 @@ from desktop import package_build
 
 RUNTIME = {'fastrpc-support', 'libfastrpc1', 'libssc2', 'libssc-bin',
            'iio-sensor-proxy', 'piano-sensors'}
-POLICY = ROOT / 'patches/piano-sensors/sid/build.json'
+POLICY = ROOT / 'patches/piano-sensors/5/build.json'
 
 
 def source_workspace(output, config):

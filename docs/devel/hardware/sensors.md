@@ -18,7 +18,7 @@
 sudo ./build.sh sensors build/sensors --sysroot build/distros/debian-sid/rootfs --jobs 8
 ```
 
-`--sysroot` 只读复制输入根目录；构建依赖、APT 源和编译工具只进入输出目录内的隔离副本。`--libssc-only` 保留只构建库与 CLI 的入口。目标源版本和本地包修订号统一记录在 `patches/piano-sensors/sid/build.json`，运行依赖由目标 sid 库生成。完整包缓存核对目标库版本、签名源身份、原始 Debian 配方及补丁哈希；同目录加 `--resume` 复用已完成的源包和未完成的对象，不重复下载通过校验的归档，也不重复配置已完成的包。
+`--sysroot` 只读复制输入根目录；构建依赖、APT 源和编译工具只进入输出目录内的隔离副本。`--libssc-only` 保留只构建库与 CLI 的入口。导入器补丁按上游包版本 5 登记；目标源版本和本地包修订号统一记录在 `patches/piano-sensors/5/build.json`，运行依赖由目标 sid 库生成。完整包缓存核对目标库版本、签名源身份、原始 Debian 配方及补丁哈希；同目录加 `--resume` 复用已完成的源包和未完成的对象，不重复下载通过校验的归档，也不重复配置已完成的包。
 
 官方 CI 的 runtime 集合为六个包：
 

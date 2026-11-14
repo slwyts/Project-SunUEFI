@@ -131,7 +131,7 @@ def project_source_version(source, version):
         original = json.loads((directory / 'debian.json').read_text())['source_version']
         revision = json.loads((directory / 'series.json').read_text())['local_revision']
     elif source in ('libssc', 'iio-sensor-proxy'):
-        policy = json.loads((ROOT / 'patches/piano-sensors/sid/build.json').read_text())
+        policy = json.loads((ROOT / 'patches/piano-sensors/5/build.json').read_text())
         original = policy['source_versions'][source]
         revision = policy['local_revisions'][source]
     else:

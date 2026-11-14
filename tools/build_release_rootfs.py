@@ -453,7 +453,7 @@ def sensors_packages(folder, config, root=ROOT, rootfs=None):
         raise ValueError('Piano sensors SOURCE does not match the fixed release source')
     patches = [{'path': name, 'sha256': digest(Path(root) / name)} for name in config.get('patches', [])]
     from build_piano_runtime_helpers import source_patches
-    series = Path(root) / 'patches/piano-sensors/sid/series.json'
+    series = Path(root) / 'patches/piano-sensors/5/series.json'
     ordered = [path.resolve().relative_to(Path(root).resolve()).as_posix()
                for path in source_patches(series)]
     if ordered != [row['path'] for row in patches]:
