@@ -83,6 +83,8 @@ SOF/EOF 按既有双缓冲 FIFO 关联。标记缺失、不连续、接收端错
 
 实现见[物理帧时序补丁](../../../patches/linux/7.3/0048-camss-frame-timestamps.patch)和 [TFE BUS 修复](../../../patches/linux/7.3/0049-camss-tfe-bus-errors.patch)。`camss_frame`、`camss_frame_error` trace 提供原始计数器、交叉采样和缓冲编号。
 
+产品内核不提供 ISP 寄存器脚本或任意 MMIO 读写入口。TFE 默认设置、缩放和图像控件由驱动编程；诊断使用现有帧 trace 和错误日志。[删除补丁](../../../patches/linux/7.3/0113-camss-remove-register-debug.patch)移除 `camss_isp` debugfs 及其共用的 CSID/VFE 指针，避免两个摄像头互相覆盖调试目标，不改变开流、停流或 DMA 清理。
+
 ## 闪光灯
 
 PMIC 闪光灯使用标准 V4L2 flash 控件，后摄通过 `flash-leds` 关联两路灯。现有服务复用控制 socket 接受一次强制闪光拍照请求：

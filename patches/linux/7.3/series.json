@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "ab4d74a2bae3439b4456bbd3a440a3d90388d713",
-  "original_target_commit": "7679892741f7c03527300a76f2c008eb59bf3891",
+  "target_tree": "c8b5b1733e63dd1472b82a8be0a5548d8bf97649",
+  "original_target_commit": "e8adfef4618d1829a4f7b36b06f7c3c67da62c91",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -903,6 +903,14 @@
       "original_parent": "4858338c44393d6c08bbbb7c29ed3dfdef72425e",
       "committer_date": "2026-11-14T05:10:30+08:00",
       "tree": "ab4d74a2bae3439b4456bbd3a440a3d90388d713"
+    },
+    {
+      "file": "0113-camss-remove-register-debug.patch",
+      "sha256": "2ff738e31cf78d293f77f85e0e2b8093b67f865a75cb93358d5cfb8fb1b41740",
+      "original_commit": "e8adfef4618d1829a4f7b36b06f7c3c67da62c91",
+      "original_parent": "7679892741f7c03527300a76f2c008eb59bf3891",
+      "committer_date": "2026-11-14T21:48:56+08:00",
+      "tree": "c8b5b1733e63dd1472b82a8be0a5548d8bf97649"
     }
   ],
   "provenance": {
