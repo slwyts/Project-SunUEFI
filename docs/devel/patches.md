@@ -53,6 +53,17 @@ Linux 内核补丁按内核版本分目录维护在 `patches/linux/`，通过 `p
 
 `merged` 不表示正在使用的发行版已包含修复。例如 PipeWire 的五项 GStreamer 修复已在上游 master，但 1.6.8、1.6.9 和 1.6.11 的 release 源码仍需回移；GTK 3 维护分支已有工具原子修复，固定的 3.24.52 release 尚不包含它。删除前必须核对所选 release 的实际源码，而不是只比较版本号或提交日期。
 
+### 版本选择与删除边界
+
+| 系列或构建依赖 | 产品选择 | 删除或保留的依据 |
+| --- | --- | --- |
+| Mesa | 四个产品共用官方 27 开发源码；SteamOS 单独保留高度修正 | 不再依赖外部 `piano-mesa` 仓库、裁剪配方、830v1 芯片 ID 或 D3D12 回移补丁；SteamOS 的 renderonly 分配短缺仍存在 |
+| GSD、GDM、Mutter | Debian sid 和 Nyarch 的实际 GNOME 51 版本 | 删除旧 GNOME 48／50 专用系列和重复补丁；保留不同产品实际使用的包版本，共享同一修复文件 |
+| UPower | 各发行版原生包 | 已包含键盘背光插拔处理，删除旧 1.90.9 回移和专用构建器，由 GSD 刷新标准背光对象 |
+| FFmpeg、传感器 | sid 原生配方，Arch 系按各自 ABI 构建 | 删除 FFmpeg 7 和 trixie-backports 专用来源；libssc 的向量接口只保留在有消费者的传感器系列中 |
+| 指纹传输 | 自包含 Linux TEE 对象调用 | 删除 MinkIPC／quic-teec 的链接依赖与适配补丁；UIO 及本地 libfprint 后端仍有消费者，限制见[指纹实现](hardware/led-ir-fingerprint.md#侧指纹) |
+| 相机和旧笔解码 | 相机标准替代尚未形成；新内核不调用用户态笔解码 | 不删除仍承担视频、3A、固件初始化或离线对照的实现来换取更小 diff；删除条件以对应系列和[功能对照](hardware/camera-controls.md#现有服务与标准替代)为准 |
+
 运行 `./build.sh check --pattern test_check_patch_series.py` 检查这些规则，Build products 在选择构建目标前运行同一检查。检查按解析后的文件路径合并共享引用，拒绝同一系列重复应用补丁、摘要漂移、矩阵外目标、已登记包的无目标版本、未入系列的补丁和缺少的上游状态。不同文件以 SHA256 和 Git patch-id 检查重复；没有 `diff --git` 头的普通 unified diff 也会参与比较。
 
 旧包的元数据按改动逐步补齐。CI 传入 push 前的提交 `SUNUEFI_PATCH_BASE`，本次新增或修改的补丁与系列必须补齐其包的目标和来源，不能删除已有的 `targets` 逃避检查。未触及的旧包仍校验顺序、路径、摘要和重复变更，输出中显示元数据缺口数。要在本地检查一个提交范围，运行 `SUNUEFI_PATCH_BASE=$(git rev-parse main) ./build.sh check --pattern test_check_patch_series.py`；要要求所有保留补丁完整登记，使用 `SUNUEFI_PATCH_REQUIRE_ALL=1 ./build.sh check --pattern test_check_patch_series.py`。检查不联网，不自动宣称某个修复已上游，也不自动删除补丁。
