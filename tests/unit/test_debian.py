@@ -5,12 +5,103 @@ import sys
 import json
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
 from build import debian
 
 
 class DebianSourceTests(unittest.TestCase):
+    def candidate_records(self):
+        return [{'Package': 'libgbm1', 'Architecture': 'arm64', 'Source': 'mesa',
+                 'Version': version, 'SHA256': version} for version in ('26.2.6-1', '26.1.6-1')]
+
+    def signed_parser(self):
+        return patch.dict(sys.modules, {'desktop.debian_package': SimpleNamespace(
+            source_identity=lambda row: (row.get('Source', row['Package']), row['Version']))})
+
+    def test_candidate_respects_pin_instead_of_highest_version(self):
+        with self.signed_parser():
+            row = debian.official_candidate('libgbm1', '26.1.6-1', self.candidate_records(), {})
+        self.assertEqual(row['Version'], '26.1.6-1')
+
+    def test_local_candidate_requires_known_revision_and_matching_archive_policy(self):
+        libraries = {'libgbm1': {'version': '26.2.6-1+piano1', 'source': 'mesa'}}
+        with self.signed_parser():
+            row = debian.official_candidate('libgbm1', '26.2.6-1+piano1', self.candidate_records(),
+                                            libraries, '26.2.6-1')
+            self.assertEqual(row['Version'], '26.2.6-1')
+            with self.assertRaisesRegex(ValueError, 'unambiguously'):
+                debian.official_candidate('libgbm1', '26.2.6-1+piano1', self.candidate_records(),
+                                            libraries, '26.1.6-1')
+            libraries['libgbm1']['version'] = '26.2.6-1+piano-untrusted'
+            with self.assertRaisesRegex(ValueError, 'known project revision'):
+                debian.official_candidate('libgbm1', libraries['libgbm1']['version'],
+                                            self.candidate_records(), libraries, '26.2.6-1')
+
+    def test_unrelated_local_abi_is_not_exempted(self):
+        libraries = {'libc6': {'version': '1+piano1', 'source': 'glibc'}}
+        records = [{'Package': 'libc6', 'Architecture': 'arm64', 'Version': '2',
+                    'Source': 'glibc', 'SHA256': 'signed'}]
+        with self.signed_parser(), self.assertRaisesRegex(ValueError, 'Refresh the target sid ABI'):
+            debian.official_candidate('libc6', '2', records, libraries)
+
+    def test_batch_policy_preserves_epoch_and_archive_only_flag(self):
+        text = 'ffmpeg:\n  Candidate: 7:9.0.2-6+b1\nlibc6:arm64:\n  Candidate: 2.43-7\n'
+        with patch.object(debian, 'capture', return_value=text) as capture:
+            self.assertEqual(debian.apt_candidates(Path('/builder'), ['libc6', 'ffmpeg'], True),
+                             {'ffmpeg': '7:9.0.2-6+b1', 'libc6': '2.43-7'})
+        self.assertIn('Dir::State::status=/dev/null', capture.call_args.args[0])
+
+    def test_main_only_source_config_adds_contrib_sources_and_binaries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'etc/apt').mkdir(parents=True)
+            (root / 'etc/apt/sources.list').write_text(
+                'deb https://deb.debian.org/debian sid main\n'
+                'deb-src https://deb.debian.org/debian sid main\n')
+            debian.build_sources(root)
+            text = (root / 'etc/apt/sources.list.d/sunuefi-build.sources').read_text()
+            rows = debian.controls(text)
+            self.assertEqual({row['Types']: row['Components'] for row in rows},
+                             {'deb': 'contrib', 'deb-src': 'contrib'})
+            self.assertTrue(all(row['Signed-By'].endswith('debian-archive-keyring.gpg') for row in rows))
+
+    def test_verifier_change_rechecks_signed_sources_without_rewriting_provenance(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            (output / 'runtime').mkdir()
+            (output / 'runtime/libgbm1.deb').write_bytes(b'cached package')
+            source_checksums = {'mesa.dsc': {'sha256': 'original-source', 'size': 7}}
+            target = debian.TargetIdentity({'suite': 'sid', 'architecture': 'arm64',
+                'sources': {'mesa': '26.2.6-1'}, 'libraries': {}, 'binaries': {}}, Path('/target'))
+            record = {'packages_built': True, 'target': dict(target), 'patches': [],
+                'package_version': '26.2.6-1+piano1', 'recipe': 'original Debian debian/rules and control',
+                'build_packages': {'libc6': '2.43-7'}, 'producer': 'tools/build/mesa.py',
+                'producer_sha256': debian.package_build.sha(debian.ROOT / 'tools/build/mesa.py'),
+                'builder_sha256': 'previous-builder-module', 'verifier_sha256': 'previous-verifier-module',
+                'compiler_environment_sha256': debian.package_build.sha(debian.package_build.__file__),
+                'source': {'package': 'mesa', 'version': '26.2.6-1', 'suite': 'sid',
+                           'recipe': {'debian/rules': 'rules', 'debian/control': 'control'},
+                           'apt_indexes': ['authenticated'],
+                           'archives': [{'file': 'mesa.dsc', **source_checksums['mesa.dsc']}]},
+                'packages': {'libgbm1': {'file': 'libgbm1.deb', 'architecture': 'arm64',
+                                       'version': '26.2.6-1+piano1',
+                                       'sha256': debian.package_build.sha(output / 'runtime/libgbm1.deb')}}}
+            manifest = output / 'SOURCE.json'
+            manifest.write_text(json.dumps(record))
+            original = manifest.read_bytes()
+            with patch.object(debian, 'source_checksums', return_value={'mesa': source_checksums}) as verify:
+                self.assertIsNotNone(debian.reusable(output, record['package_version'], [], {'libgbm1'}, target))
+                verify.assert_called_once_with(Path('/target'), target['sources'])
+            self.assertEqual(manifest.read_bytes(), original)
+            with patch.object(debian, 'source_checksums', return_value={'mesa': {}}):
+                self.assertIsNone(debian.reusable(output, record['package_version'], [], {'libgbm1'}, target))
+            record['build_recipe_version'] = debian.BUILD_RECIPE_VERSION + 1
+            manifest.write_text(json.dumps(record))
+            self.assertIsNone(debian.reusable(output, record['package_version'], [], {'libgbm1'}, target))
+
     def test_clearsigned_dsc_keeps_only_source_body(self):
         text = '''-----BEGIN PGP SIGNED MESSAGE-----
 Hash: SHA512

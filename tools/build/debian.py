@@ -19,6 +19,16 @@ from desktop import package_build
 ROOT = Path(__file__).resolve().parents[2]
 ABI_PACKAGES = ('libc6', 'libglib2.0-0t64', 'libstdc++6', 'libgcc-s1',
                 'libsystemd0', 'libwayland-client0', 'libgbm1')
+# Version 1 also describes manifests produced before this field was recorded.
+# Bump for source preparation or compilation changes, not APT verification.
+BUILD_RECIPE_VERSION = 1
+
+
+class TargetIdentity(dict):
+    """Carry the read-only sysroot for revalidation without serialising its path."""
+    def __init__(self, values, root):
+        super().__init__(values)
+        self.root = root
 
 
 def run(args, **kwargs):
@@ -112,37 +122,101 @@ def verify_sid(root):
         raise ValueError('Use only authenticated Debian sid APT indexes in this builder')
 
 
+def project_source_version(source, version):
+    """Recognise only the exact local revisions selected by this repository."""
+    if source == 'mesa':
+        policy = json.loads((ROOT / 'patches/mesa/26.2.6/series.json').read_text())
+        original = policy['source_version']
+        revision = policy['local_revision']
+    elif source == 'ffmpeg':
+        directory = ROOT / 'patches/ffmpeg/9.0.2'
+        original = json.loads((directory / 'debian.json').read_text())['source_version']
+        revision = json.loads((directory / 'series.json').read_text())['local_revision']
+    elif source in ('libssc', 'iio-sensor-proxy'):
+        policy = json.loads((ROOT / 'patches/piano-sensors/sid/build.json').read_text())
+        original = policy['source_versions'][source]
+        revision = policy['local_revisions'][source]
+    else:
+        return None
+    return original if version == original + '+' + revision else None
+
+
+def apt_candidates(root, packages, archive_only=False):
+    arguments = ['chroot', root, 'env', 'LC_ALL=C', 'apt-cache']
+    if archive_only:
+        # Hide only installed packages; repository pins and APT policy stay intact.
+        arguments += ['-o', 'Dir::State::status=/dev/null']
+    text = capture([*arguments, 'policy', *sorted(packages)])
+    candidates, package = {}, None
+    for line in text.splitlines():
+        if line and not line[0].isspace() and line.endswith(':'):
+            package = line[:-1].split(':', 1)[0]
+        elif line.startswith('  Candidate: ') and package is not None:
+            candidates[package] = line.split(': ', 1)[1]
+    return candidates
+
+
+def official_candidate(package, version, records, libraries, archive_version=None):
+    from desktop import debian_package as signed
+    candidates = [row for row in records if row['Package'] == package and
+                  row['Architecture'] in ('arm64', 'all')]
+    if not version or version == '(none)':
+        raise ValueError('APT has no candidate for the target package: ' + package)
+    selected = [row for row in candidates if row['Version'] == version]
+    if not selected:
+        installed = libraries.get(package, {})
+        if installed.get('version') != version:
+            raise ValueError('APT candidate does not match signed sid: ' + package)
+        source = installed.get('source')
+        original = project_source_version(source, version)
+        if original is None:
+            raise ValueError('APT candidate is not a known project revision: ' + package + '=' + version)
+        selected = [row for row in candidates if row['Version'] == archive_version and
+                    signed.source_identity(row) == (source, original)]
+    if not selected or len({row['SHA256'] for row in selected}) != 1:
+        raise ValueError('APT candidate must unambiguously match signed sid: ' + package)
+    row = selected[0]
+    source, original = signed.source_identity(row)
+    installed = libraries.get(package)
+    if (package in ABI_PACKAGES and installed is not None and installed['version'] != row['Version'] and
+            (installed.get('source') != source or
+             project_source_version(source, installed['version']) != original)):
+        raise ValueError('Refresh the target sid ABI before building: ' + package)
+    return row
+
+
 def target_identity(root, sources, anchors):
     """Bind a completed-package cache to signed source selection and target libs."""
     from desktop import debian_package as signed
     root = Path(root).resolve()
     verify_sid(root)
     libraries = library_versions(root)
-    records, _ = signed.signed_records(root, 'Packages', (*anchors.values(), *ABI_PACKAGES))
+    packages = set(anchors.values()) | set(ABI_PACKAGES)
+    records, _ = signed.signed_records(root, 'Packages', tuple(sorted(packages)))
+    policies = apt_candidates(root, packages)
+    installed = build_packages(root)
+    local = {name for name in packages if name in installed and policies.get(name) == installed[name] and
+             not any(row['Package'] == name and row['Version'] == policies.get(name) for row in records)}
+    archive_policies = apt_candidates(root, local, archive_only=True) if local else {}
+    identities = dict(libraries)
+    for name in local - libraries.keys():
+        possible_sources = {signed.source_identity(row)[0] for row in records if row['Package'] == name}
+        if len(possible_sources) == 1:
+            identities[name] = {'version': installed[name], 'source': possible_sources.pop()}
     selected = {}
-    for package in sorted(set(anchors.values()) | set(ABI_PACKAGES)):
-        candidates = [row for row in records if row['Package'] == package and
-                      row['Architecture'] in ('arm64', 'all')]
-        if not candidates:
+    for package in sorted(packages):
+        if not any(row['Package'] == package for row in records):
             if package not in anchors.values() and package not in libraries:
                 continue
             raise ValueError('Signed sid index has no target package: ' + package)
-        row = candidates[0]
-        for candidate in candidates[1:]:
-            if subprocess.run(['dpkg', '--compare-versions', candidate['Version'], 'gt', row['Version']]).returncode == 0:
-                row = candidate
-        if len({item['SHA256'] for item in candidates if item['Version'] == row['Version']}) != 1:
-            raise ValueError('Signed sid target version is ambiguous: ' + package)
+        row = official_candidate(package, policies.get(package), records, identities, archive_policies.get(package))
         source_name, version = signed.source_identity(row)
         if package in anchors.values() and sources.get(source_name) != version:
             raise ValueError('The configured source differs from the target sid ABI: ' + source_name)
-        if package in libraries and package in ABI_PACKAGES and libraries[package]['version'] != row['Version']:
-            if '+piano' not in libraries[package]['version'] and '+sunuefi' not in libraries[package]['version']:
-                raise ValueError('Refresh the target sid ABI before building: ' + package)
         selected[package] = {'version': row['Version'], 'source': source_name,
                              'source_version': version, 'sha256': row['SHA256']}
-    target = {'suite': 'sid', 'architecture': 'arm64', 'sources': sources,
-              'binaries': selected, 'libraries': libraries}
+    target = TargetIdentity({'suite': 'sid', 'architecture': 'arm64', 'sources': sources,
+                             'binaries': selected, 'libraries': libraries}, root)
     if list((root / 'var/lib/apt/lists').glob('*_source_Sources*')):
         target['source_checksums'] = source_checksums(root, sources)
     return target
@@ -166,6 +240,39 @@ def verify_original_recipe(work, origin):
             raise ValueError('The original Debian package recipe changed: ' + origin['package'])
 
 
+def build_sources(root):
+    """Add missing build-only components without replacing the target's policy."""
+    folder = root / 'etc/apt/sources.list.d'
+    folder.mkdir(parents=True, exist_ok=True)
+    destination = folder / 'sunuefi-build.sources'
+    configured = [root / 'etc/apt/sources.list', *folder.glob('*.list'), *folder.glob('*.sources')]
+    enabled = {'deb': set(), 'deb-src': set()}
+    for path in configured:
+        if path == destination or not path.is_file():
+            continue
+        text = path.read_text()
+        if path.suffix == '.sources':
+            for row in controls(text):
+                if row.get('Enabled', 'yes').lower() == 'no' or 'sid' not in row.get('Suites', '').split():
+                    continue
+                for kind in row.get('Types', '').split():
+                    if kind in enabled:
+                        enabled[kind].update(row.get('Components', '').split())
+        else:
+            for line in text.splitlines():
+                match = re.match(r'^\s*(deb(?:-src)?)\s+(?:\[[^]]*\]\s+)?\S+\s+sid\s+([^#]+)', line)
+                if match:
+                    enabled[match[1]].update(match[2].split())
+    sections = []
+    for kind, needed in [('deb-src', {'main', 'contrib'}), ('deb', {'contrib'})]:
+        missing = needed - enabled[kind]
+        if missing:
+            sections.append(f'Types: {kind}\nURIs: https://deb.debian.org/debian\nSuites: sid\n'
+                            'Components: ' + ' '.join(sorted(missing)) + '\n'
+                            'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg\n')
+    destination.write_text('\n'.join(sections))
+
+
 @contextmanager
 def builder(output, sysroot=None):
     output = output.resolve()
@@ -185,22 +292,7 @@ def builder(output, sysroot=None):
         resolver.write_bytes(Path('/etc/resolv.conf').read_bytes())
         # Build-only sources live in the disposable clone, not the supplied root.
         # Use the official sid archive for source and contrib FastRPC dependencies.
-        sources = root / 'etc/apt/sources.list.d/sunuefi-build.sources'
-        sources.parent.mkdir(parents=True, exist_ok=True)
-        configured = [root / 'etc/apt/sources.list',
-                      *sorted(sources.parent.glob('*.list')), *sorted(sources.parent.glob('*.sources'))]
-        text = '\n'.join(p.read_text() for p in configured if p != sources and p.is_file())
-        extra = []
-        if not any(line.startswith('deb-src ') or (line.startswith('Types:') and 'deb-src' in line)
-                   for line in text.splitlines()):
-            extra.append('Types: deb-src\nURIs: https://deb.debian.org/debian\nSuites: sid\n'
-                         'Components: main contrib non-free non-free-firmware\n'
-                         'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg\n')
-        if 'contrib' not in text:
-            extra.append('Types: deb\nURIs: https://deb.debian.org/debian\nSuites: sid\n'
-                         'Components: contrib non-free non-free-firmware\n'
-                         'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg\n')
-        sources.write_text('\n'.join(extra))
+        build_sources(root)
     elif platform.machine() not in ('arm64', 'aarch64'):
         raise ValueError('On non-ARM64 hosts use --sysroot; host dependencies are never installed')
     workspace = root / 'workspace' if sysroot else ROOT
@@ -354,17 +446,23 @@ def align_development_cohorts(root, log):
     installed = controls(capture(['chroot', root, 'dpkg-query', '-W',
                                   '-f=Package: ${binary:Package}\nVersion: ${Version}\n'
                                   'Source: ${source:Package}\n\n']))
+    from desktop import debian_package as signed
+    local = [row for row in installed if project_source_version(row.get('Source'), row.get('Version'))]
+    names = [row['Package'] for row in local if row.get('Source') in ('mesa', 'pipewire', 'wayland')]
+    if not names:
+        return
+    rows, _ = signed.signed_records(root, 'Packages', [name.split(':', 1)[0] for name in names])
+    policies = apt_candidates(root, names, archive_only=True)
     targets = []
     for row in installed:
-        if row.get('Source') not in ('mesa', 'pipewire', 'wayland') or not any(
-                suffix in row.get('Version', '') for suffix in ('+piano', '+sunuefi')):
+        if row['Package'] not in names:
             continue
         package = row['Package']
-        candidates = [item for item in controls(capture(['chroot', root, 'apt-cache', 'show', package]))
-                      if item.get('Filename') and item.get('SHA256') and
-                      item.get('Source', item['Package']).split(' ', 1)[0] == row['Source'] and
-                      not any(suffix in item['Version'] for suffix in ('+piano', '+sunuefi'))]
-        if not candidates:
+        original = project_source_version(row['Source'], row['Version'])
+        candidates = [item for item in rows if item['Package'] == package.split(':', 1)[0] and
+                      item['Version'] == policies.get(package.split(':', 1)[0]) and
+                      signed.source_identity(item) == (row['Source'], original)]
+        if not candidates or len({item['SHA256'] for item in candidates}) != 1:
             raise ValueError('Signed sid has no development cohort for ' + package)
         targets.append(package + '=' + candidates[0]['Version'])
     if targets:
@@ -415,6 +513,7 @@ def add_patches(work, patches, package, version, message):
 
 
 def write_manifest(output, record):
+    record.setdefault('build_recipe_version', BUILD_RECIPE_VERSION)
     (output / 'SOURCE.json').write_text(json.dumps(record, indent=2) + '\n')
     (output / 'SHA256SUMS').write_text(''.join(row['sha256'] + '  runtime/' + row['file'] + '\n'
                                             for row in record['packages'].values()))
@@ -424,16 +523,23 @@ def reusable(output, version, patches, runtime, target=None):
     try:
         record = json.loads((output / 'SOURCE.json').read_text())
         if (record.get('package_version') != version or record.get('patches') != patches or
+                record.get('recipe') != 'original Debian debian/rules and control' or
                 not record.get('target') or not record.get('build_packages') or (target is not None and
                     {key: value for key, value in record['target'].items() if key not in ('source_checksums', 'libraries')} !=
                     {key: value for key, value in target.items() if key not in ('source_checksums', 'libraries')}) or
                 record.get('producer_sha256') != package_build.sha(ROOT / record['producer']) or
-                record.get('builder_sha256') != package_build.sha(__file__) or
-                record.get('verifier_sha256') != verifier_sha() or
+                record.get('build_recipe_version', 1) != BUILD_RECIPE_VERSION or
                 record.get('compiler_environment_sha256') != package_build.sha(package_build.__file__) or
                 set(record.get('packages', {})) != set(runtime) or
                 not record.get('packages_built') or (output / '.incomplete').exists()):
             return None
+        root = getattr(target, 'root', None)
+        if root is None and (output / 'builder/rootfs').is_dir():
+            root = output / 'builder/rootfs'
+        if root is None:
+            return None
+        # Re-run today's verifier. Old verifier hashes remain build provenance.
+        current_sources = source_checksums(root, record['target']['sources'])
         if target is not None:
             local_packages = set(record['packages'])
             for name in record.get('runtime_dependencies', ABI_PACKAGES):
@@ -450,18 +556,28 @@ def reusable(output, version, patches, runtime, target=None):
                     set(origin.get('recipe', {})) != {'debian/rules', 'debian/control'} or
                     not origin.get('apt_indexes')):
                 return None
+            checksums = {row['file']: {'sha256': row['sha256'], 'size': row['size']}
+                         for row in origin['archives']}
+            if checksums != current_sources[name]:
+                return None
             if target is not None and target.get('source_checksums'):
                 checksums = {row['file']: {'sha256': row['sha256'], 'size': row['size']}
                              for row in origin['archives']}
                 if checksums != target['source_checksums'][name]:
                     return None
         if 'fastrpc' in record['target']['sources']:
+            from desktop import debian_package as signed
+            rows, _ = signed.signed_records(root, 'Packages', ('fastrpc-support', 'libfastrpc1'))
             binary = record.get('fastrpc', {})
             if not binary.get('apt_indexes') or set(binary.get('packages', {})) != {'libfastrpc1', 'fastrpc-support'}:
                 return None
             for name, row in binary['packages'].items():
                 runtime_row = record['packages'][name]
                 if any(row[key] != runtime_row[key] for key in ('file', 'version', 'sha256')):
+                    return None
+                matches = [item for item in rows if item['Package'] == name and
+                           item['Version'] == row['version'] and item['SHA256'] == row['sha256']]
+                if not matches:
                     return None
         for row in record['packages'].values():
             if (Path(row['file']).name != row['file'] or row['architecture'] not in ('all', 'arm64') or
