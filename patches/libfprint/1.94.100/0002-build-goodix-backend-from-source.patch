@@ -1,0 +1,92 @@
+From: slwyts <slwyts@foxmail.com>
+Subject: [PATCH] Build the Goodix backend sources with the target libfprint ABI
+
+Compile the existing signed-TA implementation directly into the driver.
+Do not depend on a platform-specific static archive or pkg-config package
+compiled against a different distribution's libc. The driver stays optional
+when its backend source directory is not supplied.
+
+This changes the build integration, not the UIO or QTEE protocols. The
+Qualcomm source dependencies and their notices remain in the source bundle.
+
+diff --git a/meson.build b/meson.build
+--- a/meson.build
++++ b/meson.build
+@@ -113,7 +113,7 @@
+ 
+ # Drivers
+ drivers = get_option('drivers').split(',')
+-piano_goodix_dep = dependency('piano-goodix', required: false, static: true)
++have_piano_goodix = fs.exists('libfprint/drivers/piano-goodix/piano-goodix.c')
+ 
+ drivers_info = {
+     'upektc_img': {},
+@@ -148,7 +148,7 @@
+     'focaltech_moc': {},
+     'mafpmoc': {},
+     'secugen': {},
+-    'piano_goodix': { 'helper': ['udev', 'piano_goodix'], 'optional': not piano_goodix_dep.found() },
++    'piano_goodix': { 'helper': ['udev', 'piano_goodix'], 'optional': not have_piano_goodix },
+ 
+     # SPI driver (non-optional if SPI is available)
+     'elanspi': { 'spi': true, 'helper': ['udev'], 'optional': not have_spi },
+@@ -246,10 +246,10 @@
+ 
+         optional_deps += openssl_dep
+     elif i == 'piano_goodix'
+-        if not piano_goodix_dep.found()
+-            error('piano-goodix is required for the Piano Goodix driver')
++        if not have_piano_goodix
++            error('The Piano Goodix backend sources are required for this driver')
+         endif
+-        optional_deps += piano_goodix_dep
++        optional_deps += dependency('threads')
+     elif i == 'udev'
+         install_udev_rules = true
+ 
+diff --git a/libfprint/meson.build b/libfprint/meson.build
+--- a/libfprint/meson.build
++++ b/libfprint/meson.build
+@@ -153,6 +153,42 @@
+     'virtual': files('drivers/virtual-device-listener.c'),
+ }
+ 
++if 'piano_goodix' in drivers
++    goodix = 'drivers/piano-goodix'
++    driver_sources += { 'piano_goodix': driver_sources['piano_goodix'] + files(
++        goodix / 'piano-goodix.c',
++        goodix / 'piano-goodix-storage.c',
++        goodix / 'piano-goodix-events.c',
++        goodix / 'piano-goodix-gatekeeper.c',
++        goodix / 'piano-goodix-operations.c',
++        goodix / 'piano-goodix-rpmb.c',
++        goodix / 'quic-teec/libqcomtee/src/qcomtee_object.c',
++        goodix / 'quic-teec/libqcomtee/src/objects/credentials_obj.c',
++        goodix / 'quic-teec/libqcomtee/src/objects/mem_obj.c',
++        goodix / 'minkipc/libminkadaptor/src/mink_adaptor.c',
++        goodix / 'minkipc/libminkadaptor/src/supplicant.c',
++        goodix / 'minkipc/libminkadaptor/src/syscall.S',
++        goodix / 'qcbor/src/UsefulBuf.c',
++        goodix / 'qcbor/src/qcbor_encode.c',
++        goodix / 'qcbor/src/qcbor_decode.c',
++        goodix / 'qcbor/src/qcbor_err_to_str.c',
++        goodix / 'qcbor/src/ieee754.c',
++    ) }
++    optional_deps += declare_dependency(
++        include_directories: [include_directories(
++            goodix,
++            goodix / 'quic-teec/libqcomtee/include',
++            goodix / 'quic-teec/libqcomtee/src',
++            goodix / 'minkipc/libminkadaptor/include',
++            goodix / 'minkipc/libminkadaptor/src',
++            goodix / 'minkipc/listeners/libfsservice/gpfs',
++            goodix / 'minkipc/listeners/libfsservice/fs',
++            goodix / 'minkipc/listeners/libfsservice/cmn',
++        ), include_directories(goodix / 'qcbor/inc', is_system: true)],
++        compile_args: ['-DUSE_QCBOR'],
++    )
++endif
++
+ drivers_sources = []
+ drivers_cflags = []
+ foreach driver: drivers

@@ -4,6 +4,10 @@
     {
       "file": "0001-piano-goodix-uio.patch",
       "sha256": "6577da4849d748dfe472c9a2026419f91be175a98a926e3b98f0de5203ca1696"
+    },
+    {
+      "file": "0002-build-goodix-backend-from-source.patch",
+      "sha256": "708b4447124e0e28c33c7ec41ad5b5557d2e59aab9c15bb081154b6c842399a1"
     }
   ]
 }
