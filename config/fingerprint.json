@@ -17,7 +17,8 @@
     "quic-teec": {
       "url": "https://github.com/quic/quic-teec.git",
       "commit": "736419e25a2036aac3292a10a93e394a90750ca3",
-      "license": "LICENSE.txt"
+      "license": "LICENSE.txt",
+      "patch_series": "patches/quic-teec/0.1.0/series.json"
     },
     "minkipc": {
       "url": "https://github.com/qualcomm/minkipc.git",

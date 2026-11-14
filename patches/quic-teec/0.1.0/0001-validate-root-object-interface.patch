@@ -1,0 +1,65 @@
+From: slwyts <slwyts@foxmail.com>
+Subject: [PATCH] libqcomtee: validate the object interface before creating a root
+
+A TEE device may implement GlobalPlatform sessions without supporting QTEE
+objects. Check the implementation and advertised object-reference capability
+before starting callback workers or sending an object invocation.
+
+Keep the descriptor private across exec and release the allocation and open
+descriptor if initialization fails. Preserve the transport error for callers.
+
+diff --git a/libqcomtee/src/qcomtee_object.c b/libqcomtee/src/qcomtee_object.c
+--- a/libqcomtee/src/qcomtee_object.c
++++ b/libqcomtee/src/qcomtee_object.c
+@@ -1,6 +1,7 @@
+ // Copyright (c) 2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ // SPDX-License-Identifier: BSD-3-Clause
+ 
++#include <errno.h>
+ #include <fcntl.h>
+ #include <stdlib.h>
+ #include <unistd.h>
+@@ -189,6 +190,7 @@ struct qcomtee_object *qcomtee_object_root_init(const char *dev,
+ 						void *arg)
+ {
+ 	struct root_object *root_object;
++	struct tee_ioctl_version_data version = { 0 };
+ 	static struct qcomtee_object_ops qcomtee_object_root_ops = {
+ 		.release = qcomtee_object_root_release,
+ 	};
+@@ -204,12 +206,19 @@ struct qcomtee_object *qcomtee_object_root_init(const char *dev,
+ 	root_object->object.root = &root_object->object;
+ 	root_object->tee_call = tee_call;
+ 	/* Open the driver. */
+-	root_object->fd = open(dev, O_RDWR);
++	root_object->fd = open(dev, O_RDWR | O_CLOEXEC);
+ 	if (root_object->fd < 0) {
+ 		MSGE("%s: %s\n", __func__, strerror(errno));
+ 
+ 		goto failed_out;
+ 	}
++	if (tee_call(root_object->fd, TEE_IOC_VERSION, &version))
++		goto failed_out;
++	if (version.impl_id != TEE_IMPL_ID_QTEE ||
++	    !(version.gen_caps & TEE_GEN_CAP_OBJREF)) {
++		errno = EOPNOTSUPP;
++		goto failed_out;
++	}
+ 
+ 	/* INIT the namespace. */
+ 	root_object->ns.current_idx = 0;
+@@ -222,6 +231,14 @@ struct qcomtee_object *qcomtee_object_root_init(const char *dev,
+ 	return root_object->object.root;
+ 
+ failed_out:
++	{
++		int saved_errno = errno;
++
++		if (root_object->fd >= 0)
++			close(root_object->fd);
++		free(root_object);
++		errno = saved_errno;
++	}
+ 	return QCOMTEE_OBJECT_NULL;
+ }
+ 
