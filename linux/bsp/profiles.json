@@ -2,7 +2,7 @@
   "schema_version": 1,
   "profiles": {
     "debian": {
-      "default_suite": "trixie",
+      "default_suite": "sid",
       "depends": [
         "systemd",
         "udev",

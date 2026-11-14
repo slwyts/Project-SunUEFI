@@ -65,8 +65,8 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
 
 | 目标 | 根系统 | 构建目录 |
 | --- | --- | --- |
-| `debian-gnome` | Debian 13 + GNOME | `build/distros/release` |
-| `debian-kde` | Debian 13 + KDE Plasma | `build/distros/release` |
+| `debian-gnome` | Debian sid + GNOME | `build/distros/release` |
+| `debian-kde` | Debian sid + KDE Plasma | `build/distros/release` |
 | `nyarch-gnome` | Arch Linux ARM + GNOME（Nyarch） | `build/distros/nyarch-gnome-piano` |
 | `steamos` | Valve ARM64 SteamOS | `build/distros/steamos-piano` |
 
@@ -78,9 +78,6 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
 
 ```sh
 ./build.sh linux
-./build.sh mesa
-./build.sh sensors
-./build.sh ffmpeg --install-dependencies
 ./build.sh release-rootfs                    # KDE 加 --desktop kde
 ./build.sh package --root-size-mib 8192
 python3 tools/package_sparse_images.py --bundle artifacts/release --output artifacts/fastboot-sparse
@@ -106,6 +103,8 @@ x86 主机用 `./build.sh ffmpeg --sysroot 已完成的ARM64根目录` 构建：
 产品 CI 使用原生 ARM runner，缓存与源码、补丁匹配的 Debian 运行包，并取消被新提交替代的构建。
 
 本地和 GitHub 的完整构建走同一个 `release-rootfs` 入口。默认系统包含中文界面、拼音输入法、Chromium、GNOME 动画、蓝牙地址自动初始化和触控笔组件。根系统生成后会检查这些软件包和必需文件，结果记录在 `manifest.json` 的 `default_system`，缺少任何一项构建就失败。
+
+Debian 只构建 sid，不混用 stable 或 backports。`release-rootfs` 先生成 sid 基础系统，再从其副本构建 sensors、FFmpeg 和桌面包；不用固件构建容器中的旧版库编译这些运行包。CI 保留编译缓存，但按 sid 配置和构建器区分缓存，并由软件包构建器检查所选源码版本后复用。
 
 ### Nyarch GNOME 和 SteamOS
 

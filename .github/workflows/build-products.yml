@@ -19,6 +19,7 @@ on:
       - 'vendor/firmware/**'
       - 'linux/**'
       - 'tools/**'
+      - 'tests/unit/test_check_patch_series.py'
       - 'upstream/**'
       - 'android/**'
       - 'docs/user/install-from-artifact.md'
@@ -46,6 +47,8 @@ jobs:
           fetch-depth: 0
           submodules: false
           persist-credentials: false
+      - name: Check patch series and product references
+        run: ./build.sh check --pattern test_check_patch_series.py
       - id: targets
         env:
           PUSH_BEFORE: ${{ github.event.before }}
@@ -100,20 +103,17 @@ jobs:
             build/ffmpeg/runtime
             build/ffmpeg/SOURCE.json
             build/ffmpeg/SHA256SUMS
-          key: ffmpeg-arm64-${{ hashFiles('linux/bsp/patches/ffmpeg/**', 'tools/build_ffmpeg_packages.py', 'tools/prepare_ffmpeg_source.py', 'tools/desktop/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}
+          key: ffmpeg-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'linux/bsp/patches/ffmpeg/**', 'patches/ffmpeg/**', 'tools/build_ffmpeg_packages.py', 'tools/prepare_ffmpeg_source.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}
       - name: Reuse completed Debian hardware packages
         if: startsWith(matrix.target, 'debian-')
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
-            build/mesa/runtime
-            build/mesa/package-cache.json
-            build/mesa/SHA256SUMS
             build/sensors/runtime
             build/sensors/package-cache.json
             build/sensors/SOURCE
             build/sensors/SHA256SUMS
-          key: hardware-packages-arm64-${{ hashFiles('sources.lock.json', 'config/release.json', 'build.sh', 'patches/piano-sensors/**', 'tools/desktop/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}
+          key: sensors-sid-arm64-${{ hashFiles('sources.lock.json', 'config/release.json', 'linux/rootfs/debian.json', 'build.sh', 'patches/piano-sensors/**', 'tools/build/sensors.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}
       - name: Reuse completed Debian common desktop packages
         if: startsWith(matrix.target, 'debian-')
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -123,7 +123,7 @@ jobs:
             build/upower/SOURCE.json
             build/pipewire/runtime
             build/pipewire/SOURCE.json
-          key: desktop-common-arm64-${{ hashFiles('patches/upower/**', 'patches/pipewire/**', 'tools/desktop/build_upower_packages.py', 'tools/desktop/build_pipewire_packages.py', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'tools/desktop/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}
+          key: desktop-common-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'patches/upower/**', 'patches/pipewire/**', 'tools/desktop/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'containers/Dockerfile', 'config/build-container.json') }}
       - name: Reuse completed Debian GNOME packages
         if: matrix.target == 'debian-gnome'
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -135,7 +135,7 @@ jobs:
             build/mutter/SOURCE.json
             build/gdm/runtime
             build/gdm/SOURCE.json
-          key: desktop-gnome-arm64-${{ hashFiles('patches/gnome-settings-daemon/**', 'patches/gdm/**', 'linux/desktops/gnome/ambient-policy/**', 'linux/desktops/gnome/patches/mutter/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'tools/desktop/build_gdm_packages.py', 'tools/desktop/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}
+          key: desktop-gnome-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'patches/gnome-settings-daemon/**', 'patches/gdm/**', 'linux/desktops/gnome/ambient-policy/**', 'linux/desktops/gnome/patches/mutter/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}
       - name: Build the pinned-base environment
         run: python3 tools/build_container.py
       - name: Build selected product
@@ -179,10 +179,7 @@ jobs:
                   ./build.sh uefi
                   ./build.sh module
                   ./build.sh linux
-                  ./build.sh mesa
-                  ./build.sh sensors
-                  ./build.sh ffmpeg --install-dependencies
-                  ./build.sh release-rootfs --desktop "${SUNUEFI_BUILD_TARGET#debian-}"
+                   ./build.sh release-rootfs --desktop "${SUNUEFI_BUILD_TARGET#debian-}"
                   ./build.sh package --root-size-mib 8192
                   python3 tools/package_sparse_images.py --bundle artifacts/release --output artifacts/fastboot-sparse
                   ;;
@@ -280,8 +277,7 @@ jobs:
             linux/dts/piano-cpu-model.dtso
             linux/dts/piano-audio-dmic-clock.dtso
             build/release/source-manifest.json
-            build/mesa/SHA256SUMS
-            build/sensors/SOURCE
+             build/sensors/SOURCE
             build/sensors/SHA256SUMS
             build/ffmpeg/SOURCE.json
             build/ffmpeg/SHA256SUMS

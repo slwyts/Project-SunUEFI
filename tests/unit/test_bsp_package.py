@@ -29,7 +29,7 @@ class BspPackageTests(unittest.TestCase):
 
     def test_default_config_has_no_desktop_identity_or_native_payload(self):
         report = bsp.build(self.args())
-        self.assertEqual(report['target'], {'distro': 'debian', 'suite': 'trixie', 'arch': 'aarch64'})
+        self.assertEqual(report['target'], {'distro': 'debian', 'suite': 'sid', 'arch': 'aarch64'})
         self.assertEqual(report['package_architecture'], 'all')
         self.assertFalse(report['auto_enable_services'])
         self.assertFalse(report['device_tested'])
