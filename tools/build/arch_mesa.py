@@ -45,6 +45,10 @@ def recipe(output, steamos=False):
     text = text.replace('    _pick vkradeon usr/share/drirc.d/00-radv-defaults.conf\n',
                         '    _pick vkradeon usr/share/drirc.d/00-radv-defaults.conf\n'
                         '    _pick vkradeon usr/share/drirc.d/01-radv-performance.conf\n')
+    if steamos:
+        text = text.replace('libdisplay-info systemd-libs vulkan-icd-loader xcb-util-keysyms libclc clang)',
+                            'libdisplay-info systemd-libs vulkan-icd-loader xcb-util-keysyms '
+                            'libclc clang libpng python spirv-llvm-translator)')
     if not steamos:
         source = mesa.policy()['source']
         with tarfile.open(mesa.source_archive()) as archive:
