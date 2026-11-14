@@ -264,9 +264,17 @@ def build_resolver(rootfs):
 
 @contextmanager
 def build_devices(rootfs):
-    """Restore standard chroot nodes removed when the public image was sealed."""
+    """Provide chroot nodes and procfs without exposing host device or sysfs trees."""
     created = []
+    proc = target(rootfs, 'proc')
+    mounted_proc = False
     try:
+        if proc.is_symlink():
+            raise ValueError('Build procfs destination must not be a symlink')
+        proc.mkdir(exist_ok=True)
+        if not os.path.ismount(proc):
+            subprocess.run(['mount', '-t', 'proc', '-o', 'nosuid,nodev,noexec', 'proc', proc], check=True)
+            mounted_proc = True
         for name, major, minor in (('null', 1, 3), ('zero', 1, 5), ('random', 1, 8), ('urandom', 1, 9)):
             path = target(rootfs, 'dev/' + name)
             if not path.exists():
@@ -274,6 +282,8 @@ def build_devices(rootfs):
                 created.append(path)
         yield
     finally:
+        if mounted_proc:
+            subprocess.run(['umount', proc], check=True)
         for path in created:
             path.unlink(missing_ok=True)
 
@@ -848,6 +858,9 @@ def execute(record):
     except Exception as exc:
         if out.is_dir(): (out / 'FAILED.json').write_text(json.dumps({'status': 'BUILD_FAILED', 'desktop': desktop, 'error': str(exc)}) + '\n')
         raise
+    finally:
+        if rootfs.is_dir():
+            target(rootfs, 'usr/sbin/policy-rc.d').unlink(missing_ok=True)
 
 
 def main():
@@ -859,7 +872,12 @@ def main():
     parser.add_argument('--desktop', choices=('gnome', 'kde'), default='gnome')
     parser.add_argument('--boot-task-snapshot', action='store_true',
                         help='Enable one delayed PID1/blocked-task snapshot in the diagnostic initramfs')
+    parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = vars(parser.parse_args()); execute_flag = args.pop('execute'); args.pop('plan')
+    if execute_flag and not args.pop('worker'):
+        raise SystemExit(subprocess.run(['unshare', '--mount', '--propagation', 'private',
+                                        sys.executable, __file__, *sys.argv[1:], '--worker']).returncode)
+    args.pop('worker', None)
     try:
         record = plan(**args); print(json.dumps(execute(record) if execute_flag else record, indent=2))
     except (OSError, ValueError, subprocess.SubprocessError) as exc: parser.exit(2, str(exc) + '\n')
