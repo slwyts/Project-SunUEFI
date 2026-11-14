@@ -7,7 +7,7 @@
 
 | 系统 | FFmpeg | 构建入口 |
 | --- | --- | --- |
-| Debian GNOME / KDE | 7.1.5，保留 Debian 打包配置 | `tools/build_ffmpeg_packages.py` |
+| Debian sid | 9.0.2（Debian 源版本 `7:9.0.2-6`），保留 Debian 打包配置 | `tools/build_ffmpeg_packages.py` |
 | SteamOS | 8.1.1，保持 Valve 8.x 库接口和编译选项 | `tools/build_arch_ffmpeg.py` |
 | Nyarch | 9.0.2，保持当前 Arch 库接口 | `tools/build_arch_ffmpeg.py` |
 
@@ -15,17 +15,24 @@ Arch 构建器读取目标系统已安装包的编译选项、依赖和版本信
 重新生成 pacman 包。不会把 FFmpeg 9 降级成 7，也不会用精简调试程序覆盖系统软件。
 软件包和源码来源记录在对应发行版构建目录的 `packages/ffmpeg/SOURCE.json`。
 
-单独准备源码：
+Debian 的包在 sid ARM64 环境编译；其他主机提供同一目标 ABI 的根目录，由构建器复制到隔离环境：
 
 ```sh
-python tools/prepare_ffmpeg_source.py --output build/ffmpeg-source-7
+sudo ./build.sh ffmpeg --sysroot build/distros/debian-sid/rootfs --output build/ffmpeg --jobs 8
+```
+
+构建器验证签名 sid Sources、`.dsc` 及全部归档哈希，使用未删减的 Debian `debian/rules`，同时构建标准与 extra codec 变体。运行集合包含独立的 `ffplay` 和七个 FFmpeg 9 库包，不再包含已移除的 `libpostproc`。Debian 的 orig 归档与 Nyarch 使用的 FFmpeg 9 官方归档相同，复用 `patches/ffmpeg/9.0.2/series.json`，不复制一套 Debian 专用补丁。Debian 打包版本单独记录在同目录 `debian.json`。
+
+单独准备共用源码：
+
+```sh
 python tools/prepare_ffmpeg_source.py \
   --series patches/ffmpeg/9.0.2/series.json \
   --output build/ffmpeg-source-9
 ```
 
 源码归档及补丁固定 SHA256，补丁禁止模糊匹配，不修改 `upstream/`。
-FFmpeg 7 使用固定的 Debian orig 归档；FFmpeg 8 和 9 分别使用官方 8.1.1、9.0.2 归档。
+FFmpeg 8 和 9 分别使用官方 8.1.1、9.0.2 归档。上游 9.0.2 及 Debian 的补丁系列尚未包含这些 V4L2 修正，因此继续重建标准发行版软件包。
 
 SteamOS 和 Nyarch 的包缓存同时核对版本、补丁系列与二进制包哈希。
 修改系列后重新构建完整包；复用缓存时重新安装该包，不保留被基础软件源替换的版本。
