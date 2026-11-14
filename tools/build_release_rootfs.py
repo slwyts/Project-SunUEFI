@@ -633,9 +633,13 @@ def execute(record):
     # A host cross-GCC can otherwise mix its own libc linker scripts into it.
     helper_cc = 'clang' if shutil.which('clang') else 'aarch64-linux-gnu-gcc'
     if record['runtime_dir']:
-        saved = json.loads((Path(record['runtime_dir']) / 'manifest.json').read_text())
+        bundle = Path(record['runtime_dir'])
+        saved = json.loads((bundle / 'manifest.json').read_text())
         if saved.get('status') != 'RUNTIME_COMPILED_NOT_DEVICE_TESTED' or saved.get('kernel') != abi or saved.get('public_commit') != cfg['debian']['commit']:
             raise ValueError('Runtime bundle does not belong to the actual new kernel build')
+        from build_release_helpers import inputs_current
+        if not inputs_current(bundle):
+            raise ValueError('Runtime bundle sources differ; rebuild it for the current hardware implementation')
     elif any(not shutil.which(name) for name in (helper_cc, 'alsatplg', 'm4', 'make', 'depmod')):
         raise ValueError('Install the release helper compiler, alsatplg, m4, make and depmod first')
     if out.exists() and not record.get('resume'): raise ValueError('Output appeared after planning; preserve it')
