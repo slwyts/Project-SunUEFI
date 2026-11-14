@@ -182,7 +182,13 @@ def reusable(output, target=None):
             if any(record['target'][name] != target[name] for name in ('suite', 'architecture', 'sources', 'binaries')):
                 return None
             for name in record['runtime_dependencies']:
-                if name not in RUNTIME and name in target['libraries'] and record['build_packages'].get(name) != target['libraries'][name]['version']:
+                if name in RUNTIME or name not in target['libraries']:
+                    continue
+                built_version = record['build_packages'].get(name)
+                # Target-only ABI anchors are already checked in binaries above.
+                if built_version is None and name in debian.ABI_PACKAGES:
+                    continue
+                if built_version != target['libraries'][name]['version']:
                     return None
         root = getattr(target, 'root', output / 'builder/rootfs')
         source_checksums = debian.source_checksums(root, {'mesa': policy()['debian']['recipe_source_version']})
