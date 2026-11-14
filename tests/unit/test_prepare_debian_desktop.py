@@ -83,6 +83,7 @@ ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-
                 self.assertNotIn('MESA_DIR', text)
                 self.assertNotIn('obsolete-mesa-pin', text)
                 self.assertIn('deb https://deb.debian.org/debian sid main', text)
+                self.assertIn('deb-src https://deb.debian.org/debian sid main', text)
                 subprocess.run(['bash', '-n', script], check=True)
                 self.assertNotEqual(subprocess.run(
                     ['bash', script, '--suite', 'trixie'],

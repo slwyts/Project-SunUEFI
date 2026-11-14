@@ -49,7 +49,8 @@ def sid_recipe(text):
         ('deb https://deb.debian.org/debian trixie main\n'
          'deb https://deb.debian.org/debian trixie-updates main\n'
          'deb https://security.debian.org/debian-security trixie-security main',
-         'deb https://deb.debian.org/debian sid main'),
+         'deb https://deb.debian.org/debian sid main\n'
+         'deb-src https://deb.debian.org/debian sid main'),
         ("printf 'deb http://deb.debian.org/debian trixie main\\n'",
          "printf 'deb http://deb.debian.org/debian sid main\\n'"),
     )

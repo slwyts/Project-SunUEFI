@@ -472,13 +472,15 @@ def ffmpeg_packages(folder, root=ROOT):
             'device_verified': False}
 
 
-def gsd_packages(folder):
+def gsd_packages(folder, rootfs=None):
     """Select the standard GNOME daemon packages with the device ALS policy."""
     folder = Path(folder).resolve()
     metadata = folder.parent / 'SOURCE.json'
     source = json.loads(metadata.read_text())
     import build_gsd_packages as builder
     patches = builder.patch_records()
+    if rootfs is not None and builder.reusable(folder.parent, rootfs) is None:
+        raise ValueError('GNOME power packages do not match the sid target ABI or source')
     if source.get('packages_built') is not True or source.get('patches') != patches:
         raise ValueError('GNOME power packages do not match the current ambient policy; rebuild with ./build.sh gsd')
     rows = {}
@@ -500,7 +502,7 @@ def gsd_packages(folder):
             'device_verified': False}
 
 
-def mutter_packages(folder):
+def mutter_packages(folder, rootfs=None):
     """Use the standard Mutter packages carrying the two desktop fixes."""
     import build_mutter_packages as builder
     folder = Path(folder).resolve()
@@ -508,10 +510,14 @@ def mutter_packages(folder):
     if (folder.parent / '.incomplete').exists():
         raise ValueError('Mutter package build has not completed')
     source = json.loads(metadata.read_text())
+    if rootfs is not None and builder.reusable(folder.parent, rootfs) is None:
+        raise ValueError('Mutter packages do not match the sid target ABI or source')
     if (source.get('packages_built') is not True or
             source.get('patches') != builder.patch_records() or
             source.get('source', {}).get('package') != 'mutter' or
-            source.get('source', {}).get('version') != builder.SOURCE_VERSION):
+            source.get('source', {}).get('suite') != 'sid' or
+            source.get('package_version') != source.get('source', {}).get('version', '') +
+            '+sunuefi' + str(builder.REVISION)):
         raise ValueError('Mutter packages do not match the desktop patches; rebuild with ./build.sh mutter')
     rows = {}
     for path in sorted(folder.glob('*.deb')):
@@ -519,7 +525,7 @@ def mutter_packages(folder):
                                   for field in ('Package', 'Version', 'Architecture')]
         row = {'file': path.name, 'version': version, 'architecture': arch, 'sha256': digest(path)}
         if (package in rows or builder.RUNTIME.get(package) != arch or
-                version != builder.PACKAGE_VERSION or
+                version != source['package_version'] or
                 source.get('packages', {}).get(package) != row):
             raise ValueError('Mutter runtime package identity differs: ' + path.name)
         rows[package] = row
@@ -629,9 +635,6 @@ def execute(record):
         if record.get('ffmpeg_dir') is None:
             run([ROOT / 'build.sh', 'ffmpeg', '--output', ffmpeg_folder.parent, '--sysroot', rootfs])
         ffmpeg = ffmpeg_packages(ffmpeg_folder)
-        from desktop import build_upower_packages
-        upower_folder = ROOT / 'build/upower'
-        upower = build_upower_packages.build(upower_folder, rootfs)
         from desktop import build_pipewire_packages
         pipewire_folder = ROOT / 'build/pipewire'
         run([ROOT / 'build.sh', 'pipewire', '--rootfs', rootfs, '--output', pipewire_folder])
@@ -640,23 +643,19 @@ def execute(record):
         if pipewire is None:
             raise ValueError('PipeWire GStreamer plugin does not match the target ABI')
         gsd_folder = ROOT / 'build/gsd/runtime'
-        import build_gsd_packages as gsd_builder
-        if desktop == 'gnome' and not gsd_builder.reusable(gsd_folder.parent):
-            run([sys.executable, ROOT / 'tools/build_gsd_packages.py', '--output',
-                 gsd_folder.parent, '--sysroot', rootfs])
-        gsd = gsd_packages(gsd_folder) if desktop == 'gnome' else {'packages': {}}
+        if desktop == 'gnome':
+            run([ROOT / 'build.sh', 'gsd', '--output', gsd_folder.parent, '--sysroot', rootfs])
+        gsd = gsd_packages(gsd_folder, rootfs) if desktop == 'gnome' else {'packages': {}}
         mutter_folder = Path(record.get('mutter_dir') or ROOT / 'build/mutter/runtime')
-        import build_mutter_packages as mutter_builder
-        if desktop == 'gnome' and not record.get('mutter_dir') and not mutter_builder.reusable(mutter_folder.parent):
-            run([sys.executable, ROOT / 'tools/build_mutter_packages.py', '--output',
-                 mutter_folder.parent, '--sysroot', rootfs])
-        mutter = mutter_packages(mutter_folder) if desktop == 'gnome' else {'packages': {}}
+        if desktop == 'gnome' and not record.get('mutter_dir'):
+            run([ROOT / 'build.sh', 'mutter', '--output', mutter_folder.parent, '--sysroot', rootfs])
+        mutter = mutter_packages(mutter_folder, rootfs) if desktop == 'gnome' else {'packages': {}}
         from desktop import build_gdm_packages as gdm_builder
         gdm_folder = ROOT / 'build/gdm'
         gdm = {'packages': {}}
         if desktop == 'gnome':
             run([ROOT / 'build.sh', 'gdm', '--sysroot', rootfs, '--output', gdm_folder])
-            gdm = gdm_builder.reusable(gdm_folder)
+            gdm = gdm_builder.reusable(gdm_folder, rootfs)
             if gdm is None:
                 raise ValueError('GDM packages do not match the display readiness patch')
         gsd_stage = target(rootfs, 'tmp/piano-gnome-packages')
@@ -673,11 +672,6 @@ def execute(record):
             shutil.copy2(gdm_folder / 'runtime' / row['file'], destination)
             if digest(destination) != row['sha256']:
                 raise ValueError('GDM package changed while staging')
-        for row in upower['packages'].values():
-            destination = gsd_stage / row['file']
-            shutil.copy2(upower_folder / 'runtime' / row['file'], destination)
-            if digest(destination) != row['sha256']:
-                raise ValueError('UPower package changed while staging')
         for row in pipewire['packages'].values():
             destination = gsd_stage / row['file']
             shutil.copy2(pipewire_folder / 'runtime' / row['file'], destination)
@@ -706,8 +700,6 @@ def execute(record):
                                   for row in mutter['packages'].values())
             local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
                                   for row in gdm['packages'].values())
-            local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
-                                  for row in upower['packages'].values())
             local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
                                   for row in pipewire['packages'].values())
             if ffmpeg:
@@ -788,9 +780,6 @@ def execute(record):
         for package, row in gdm['packages'].items():
             if installed.get(package) != row['version']:
                 raise ValueError('Installed GDM package version differs: ' + package)
-        for package, row in upower['packages'].items():
-            if installed.get(package) != row['version']:
-                raise ValueError('Installed UPower package version differs: ' + package)
         for package, row in pipewire['packages'].items():
             if installed.get(package) != row['version']:
                 raise ValueError('Installed PipeWire plugin version differs: ' + package)
@@ -811,7 +800,7 @@ def execute(record):
                   'debian_archive': archive, 'debian_suite': cfg['debian']['suite'],
                   'debian_commit': cfg['debian']['commit'],
                   'sensors': sensors, 'ffmpeg': ffmpeg, 'gnome_power': gsd,
-                  'mutter': mutter, 'gdm': gdm, 'upower': upower, 'pipewire': pipewire,
+                  'mutter': mutter, 'gdm': gdm, 'pipewire': pipewire,
                   'boot_request': boot_request, 'firmware_components': cfg['firmware']['components'],
                   'clock_epoch': clock,
                   'default_system': defaults, 'desktop': desktop,

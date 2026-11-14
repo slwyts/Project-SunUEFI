@@ -73,7 +73,6 @@ Debian release 由 [`tools/build_release_rootfs.py`](../../../tools/build_releas
 
 桌面包由 rootfs 构建自动安装，源码与二进制摘要写入发行版 manifest，构建日志
 并入 CI 的 `logs.zip`。单独构建使用 `./build.sh gsd --sysroot <Debian root>`、
-`./build.sh upower --sysroot <Debian root>`、
 `./build.sh gdm --sysroot <Debian root>` 和
 `./build.sh pipewire --rootfs <发行版 root> --output <build 下的包目录>`；
 这些命令需要 root，输入均为本地构建目录，不访问平板。
