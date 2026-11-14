@@ -6,8 +6,8 @@
   "targets": ["steamos"],
   "upstream": {
     "status": "downstream",
-    "url": "https://github.com/FFmpeg/FFmpeg/tree/n8.1.1/libavcodec",
-    "drop_when": "The selected SteamOS FFmpeg release implements the stateful source-change, capture-buffer lifetime, P010 and encoder handling shared with FFmpeg 9; verify complete frames across resolution changes and H.264 encode/decode on Iris without the local series."
+    "url": "https://github.com/FFmpeg/FFmpeg/tree/n9.0.2/libavcodec",
+    "drop_when": "The selected FFmpeg release implements stateful V4L2 initial metadata, LAST/source-change drain, orphaned capture buffers, P010, visible-row NV12 uploads and encoder header/stop handling; verify complete frames across resolution changes and H.264 encode/decode on Iris before dropping these fixes."
   },
   "source": {
     "url": "https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz",
