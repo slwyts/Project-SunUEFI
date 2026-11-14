@@ -16,16 +16,9 @@
     "mesa": {
       "target_specific": true,
       "source": {
-        "commit": "2061a5ee6184e465eafb87cf465aed92c04f1a41",
-        "url": "https://gitlab.freedesktop.org/mesa/mesa.git"
+        "configuration": "config/mesa.json"
       },
-      "source_patch_ledger": [
-        {
-          "path": "patches/mesa/26.2.6/0001-freedreno-a830v1.patch",
-          "sha256": "77a906a6976f9450885ff6b0f626ad6a3d3d91a3b6483f625e18be29e1907e12"
-        }
-      ],
-      "license": "MIT; retain patch authorship; no source copied"
+      "license": "MIT AND BSD-3-Clause AND SGI-B-2.0; retain upstream notices"
     },
     "runtime": {
       "target_specific": true,

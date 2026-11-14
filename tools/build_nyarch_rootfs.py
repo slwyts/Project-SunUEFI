@@ -92,10 +92,8 @@ def build(args):
     if not recipes.exists():
         sensor_recipes(recipes, sensors)
     mesa = recipes / 'mesa'
-    shutil.copytree(ROOT / 'linux/bsp/arch/mesa', mesa, dirs_exist_ok=True)
-    mesa_series = ROOT / 'patches/mesa/26.2.6/series.json'
-    for item in json.loads(mesa_series.read_text())['series']:
-        shutil.copy2(mesa_series.parent / item['path'], mesa)
+    from build import mesa as mesa_builder
+    mesa_builder.arch_recipe(mesa)
     gsd = recipes / 'gnome-settings-daemon'
     if gsd.exists():
         shutil.rmtree(gsd)
@@ -125,6 +123,7 @@ def build(args):
         build_arch_package.build(root, mesa, mesa_packages)
     else:
         build_arch_package.install_cached(root, mesa_packages)
+    shutil.copy2(mesa / 'SOURCE.json', mesa_packages / 'SOURCE.json')
     gsd_packages = output / 'packages/gnome-settings-daemon'
     gsd_manifest = gsd_packages / 'manifest.json'
     if (not gsd_manifest.is_file() or

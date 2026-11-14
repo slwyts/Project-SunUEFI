@@ -125,9 +125,7 @@ def verify_sid(root):
 def project_source_version(source, version):
     """Recognise only the exact local revisions selected by this repository."""
     if source == 'mesa':
-        policy = json.loads((ROOT / 'patches/mesa/26.2.6/series.json').read_text())
-        original = policy['source_version']
-        revision = policy['local_revision']
+        return None
     elif source == 'ffmpeg':
         directory = ROOT / 'patches/ffmpeg/9.0.2'
         original = json.loads((directory / 'debian.json').read_text())['source_version']

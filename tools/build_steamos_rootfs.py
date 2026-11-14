@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Assemble Valve's ARM64 userspace with the shared Piano BSP and boot files."""
 import argparse
-import configparser
 import json
 import os
 from pathlib import Path
@@ -191,40 +190,11 @@ def kde_repository_package_works(root, name):
 
 
 def mesa_recipe(output, config):
-    """Build the same native driver generation with the MSM GBM entry point."""
-    source = ROOT / 'build/source-cache/mesa-steamos'
-    if not source.exists():
-        run('git', 'init', '--bare', source)
-        run('git', '-C', source, 'remote', 'add', 'origin', config['repository'])
-    if (subprocess.check_output(['git', '-C', source, 'rev-parse',
-                                 '--is-bare-repository'], text=True).strip() != 'true' or
-            subprocess.check_output(['git', '-C', source, 'remote', 'get-url',
-                                     'origin'], text=True).strip() != config['repository']):
-        raise ValueError('Mesa source cache is not the configured bare repository')
-    if subprocess.run(['git', '-C', source, 'cat-file', '-e', config['commit']],
-                      capture_output=True).returncode:
-        run('git', '-C', source, 'fetch', '--depth=1', 'origin', config['commit'])
-    output.mkdir(parents=True, exist_ok=True)
-    archive = output / 'mesa.tar'
-    run('git', '-C', source, 'archive', '--format=tar', '--prefix=mesa/',
-        '--output=' + str(archive), config['commit'])
-    protocols = configparser.ConfigParser()
-    protocols.read_string(subprocess.check_output(
-        ['git', '-C', source, 'show', config['commit'] + ':subprojects/wayland-protocols.wrap'],
-        text=True))
-    wrap = protocols['wrap-file']
-    download(wrap['source_url'], output / wrap['source_filename'], wrap['source_hash'])
-    patches = runtime_helpers.source_patches(ROOT / config['patch_series'])
-    for patch in patches:
-        shutil.copy2(patch, output / patch.name)
-    template = (ROOT / 'linux/bsp/steamos/mesa/PKGBUILD').read_text()
-    (output / 'PKGBUILD').write_text(template.replace(
-        '@MESA_VERSION@', config['version']).replace('@MESA_SOURCE_SHA256@', digest(archive)).replace(
-        '@WAYLAND_PROTOCOLS_ARCHIVE@', wrap['source_filename']).replace(
-        '@WAYLAND_PROTOCOLS_SHA256@', wrap['source_hash']).replace(
-        '@MESA_PATCH_SOURCES@', ' '.join(shlex.quote(p.name) for p in patches)).replace(
-        '@MESA_PATCH_SHA256S@', ' '.join(shlex.quote(digest(p)) for p in patches)))
-    return output
+    """Use the same pinned official development source as Debian and Nyarch."""
+    from build import mesa
+    if config.get('source_config') != str(mesa.CONFIG.relative_to(ROOT)):
+        raise ValueError('SteamOS Mesa must use the shared official source configuration')
+    return mesa.arch_recipe(output, steamos=True)
 
 
 def build(args):
@@ -387,6 +357,7 @@ done
         build_arch_package.build(root, recipe, mesa)
     else:
         build_arch_package.install_cached(root, mesa)
+    shutil.copy2(recipe / 'SOURCE.json', mesa / 'SOURCE.json')
     gamescope = output / 'packages/gamescope'
     manager = output / 'packages/steamos-manager'
     if not build_steamos_manager.is_current(manager):

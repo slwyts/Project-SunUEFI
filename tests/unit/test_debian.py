@@ -27,18 +27,20 @@ class DebianSourceTests(unittest.TestCase):
         self.assertEqual(row['Version'], '26.1.6-1')
 
     def test_local_candidate_requires_known_revision_and_matching_archive_policy(self):
-        libraries = {'libgbm1': {'version': '26.2.6-1+piano1', 'source': 'mesa'}}
+        libraries = {'libssc2': {'version': '0.4.4-2+piano1+sunuefi3', 'source': 'libssc'}}
+        records = [{'Package': 'libssc2', 'Version': version, 'Source': 'libssc',
+                    'Architecture': 'arm64', 'SHA256': version} for version in ('0.4.4-2', '0.4.4-1')]
         with self.signed_parser():
-            row = debian.official_candidate('libgbm1', '26.2.6-1+piano1', self.candidate_records(),
-                                            libraries, '26.2.6-1')
-            self.assertEqual(row['Version'], '26.2.6-1')
+            row = debian.official_candidate('libssc2', libraries['libssc2']['version'], records,
+                                            libraries, '0.4.4-2')
+            self.assertEqual(row['Version'], '0.4.4-2')
             with self.assertRaisesRegex(ValueError, 'unambiguously'):
-                debian.official_candidate('libgbm1', '26.2.6-1+piano1', self.candidate_records(),
-                                            libraries, '26.1.6-1')
-            libraries['libgbm1']['version'] = '26.2.6-1+piano-untrusted'
+                debian.official_candidate('libssc2', libraries['libssc2']['version'], records,
+                                            libraries, '0.4.4-1')
+            libraries['libssc2']['version'] = '0.4.4-2+piano-untrusted'
             with self.assertRaisesRegex(ValueError, 'known project revision'):
-                debian.official_candidate('libgbm1', libraries['libgbm1']['version'],
-                                            self.candidate_records(), libraries, '26.2.6-1')
+                debian.official_candidate('libssc2', libraries['libssc2']['version'],
+                                            records, libraries, '0.4.4-2')
 
     def test_unrelated_local_abi_is_not_exempted(self):
         libraries = {'libc6': {'version': '1+piano1', 'source': 'glibc'}}

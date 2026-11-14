@@ -37,9 +37,7 @@
     }
   },
   "mesa": {
-    "repository": "https://gitlab.freedesktop.org/mesa/mesa.git",
-    "commit": "e549b466fcf1237469b6814614d21cbcd144c30b",
-    "version": "27.0.0_devel+gite549b466fcf1",
+    "source_config": "config/mesa.json",
     "patch_series": "patches/mesa/27.0/series.json"
   },
   "gtk3": {

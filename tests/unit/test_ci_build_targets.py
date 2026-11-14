@@ -21,7 +21,7 @@ class CiBuildTargetsTests(unittest.TestCase):
         self.assertEqual(targets.select(['sources.lock.json']), PRODUCTS)
         self.assertEqual(targets.select(['tools/build_simpleinit.sh']), PRODUCTS)
         self.assertEqual(targets.select(['patches/firmware/series.json']), PRODUCTS)
-        self.assertEqual(targets.select(['patches/mesa/26.2.6/series.json']), PRODUCTS)
+        self.assertEqual(targets.select(['config/mesa.json']), PRODUCTS)
         self.assertEqual(targets.select(['patches/piano-sensors/import.patch']), PRODUCTS)
         self.assertEqual(targets.select(['android/native/piano-boot-request.c']), PRODUCTS)
         self.assertEqual(targets.select(['uefi/handoff/bootselect/BootRequest.h']), PRODUCTS)
