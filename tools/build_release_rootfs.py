@@ -279,8 +279,8 @@ def build_devices(rootfs):
 
 
 @contextmanager
-def camera_build_sysroot(rootfs, output, run):
-    """Install camera build dependencies without adding them to the image."""
+def runtime_build_sysroot(rootfs, output, run):
+    """Install helper build dependencies without adding them to the image."""
     staging = output / 'runtime-sysroot'
     staging.mkdir()
     for name in ('upper', 'work', 'root'):
@@ -292,7 +292,7 @@ def camera_build_sysroot(rootfs, output, run):
         with build_devices(sysroot), build_resolver(sysroot):
             run(['chroot', sysroot, 'env', 'DEBIAN_FRONTEND=noninteractive',
                  'apt-get', 'install', '-y', '--no-install-recommends',
-                 'libyuv-dev', 'libjpeg62-turbo-dev'])
+                  'build-essential', 'libc6-dev', 'libyuv-dev', 'libjpeg62-turbo-dev'])
             yield sysroot
     finally:
         run(['umount', sysroot])
@@ -778,7 +778,7 @@ def execute(record):
             bundle = out / 'runtime'
             if record.get('resume') and bundle.is_dir():
                 shutil.rmtree(bundle)
-            with camera_build_sysroot(rootfs, out, run) as sysroot:
+            with runtime_build_sysroot(rootfs, out, run) as sysroot:
                 run([sys.executable, ROOT / 'tools/build_release_helpers.py', '--kernel', kernel, '--source', source,
                      '--kernel-build', record['kernel_build'], '--output', bundle, '--sysroot', sysroot,
                      '--cc', helper_cc, '--macros', record['macros'], '--v4l2-source', record['v4l2_source']])
