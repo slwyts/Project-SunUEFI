@@ -74,6 +74,52 @@ class BuildPianoFingerprintTests(unittest.TestCase):
 
 
 class FingerprintDebianMetadataTests(unittest.TestCase):
+    def test_real_debian_cache_checks_inputs_abi_archive_hash_and_dependencies(self):
+        if not shutil.which('dpkg-deb'):
+            self.skipTest('dpkg-deb is required')
+        with tempfile.TemporaryDirectory(prefix='fingerprint-package-cache-') as directory:
+            root = Path(directory)
+            package = root / 'package'
+            (package / 'DEBIAN').mkdir(parents=True)
+            version = '1:' + json.loads((ROOT / 'config/fingerprint.json').read_text())[
+                'desktop']['libfprint']['version'] + '+sunuefi2'
+            dependencies = 'libc6 (>= 2.38), libgusb2a (>= 0.3.3)'
+            (package / 'DEBIAN/control').write_text(
+                'Package: libfprint-2-2\nVersion: ' + version + '\nArchitecture: arm64\n'
+                'Maintainer: Test <test@example.com>\nDepends: ' + dependencies + '\n'
+                'Description: cache metadata test\n')
+            (package / 'usr/share/doc').mkdir(parents=True)
+            (package / 'usr/share/doc/input').write_bytes(b'cache payload')
+            output = root / 'output'
+            output.mkdir()
+            deb = output / 'libfprint.deb'
+            subprocess.run(['dpkg-deb', '--root-owner-group', '--build', package, deb],
+                           check=True, capture_output=True)
+            archive = root / 'backend.tar'
+            archive.write_bytes(b'backend source archive identity')
+            inputs = {'source': 'generation'}
+            abi = {'packages': {'libc6': '2.43-7'}}
+            record = {'inputs': inputs, 'target_abi': abi,
+                      'backend_sources_sha256': fingerprint.digest(archive),
+                      'dependencies': dependencies,
+                      'package': {'file': deb.name, 'sha256': fingerprint.digest(deb),
+                                  'version': version, 'architecture': 'arm64'}}
+            marker = output / 'SOURCE.json'
+            marker.write_text(json.dumps(record))
+            self.assertEqual(fingerprint.debian_reusable(output, inputs, abi, archive)[1], deb)
+            self.assertIsNone(fingerprint.debian_reusable(output, {'source': 'changed'}, abi, archive))
+            self.assertIsNone(fingerprint.debian_reusable(output, inputs, {'packages': {}}, archive))
+            archive.write_bytes(b'changed archive')
+            self.assertIsNone(fingerprint.debian_reusable(output, inputs, abi, archive))
+            archive.write_bytes(b'backend source archive identity')
+            record['dependencies'] = 'libc6'
+            marker.write_text(json.dumps(record))
+            self.assertIsNone(fingerprint.debian_reusable(output, inputs, abi, archive))
+            record['dependencies'] = dependencies
+            marker.write_text(json.dumps(record))
+            deb.write_bytes(deb.read_bytes() + b'tampered')
+            self.assertIsNone(fingerprint.debian_reusable(output, inputs, abi, archive))
+
     def test_dpkg_database_identity_rejects_other_architectures_and_missing_packages(self):
         if not shutil.which('dpkg-query'):
             self.skipTest('dpkg-query is required')

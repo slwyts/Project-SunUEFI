@@ -181,6 +181,8 @@ libfprint 在自己的构建中直接编译同一份后端和依赖源码，不�
 Debian、SteamOS 和 Nyarch 各自使用目标发行版的头文件和库编译。
 Debian 构建依赖留在独立 rootfs，要求 libc／GLib 等开发包匹配目标运行库版本，
 依赖由 `dpkg-shlibdeps` 生成；安装前以目标 loader 核对新库和 fprintd 的符号解析。
+Debian 的 `SOURCE.json` 同时校验源码输入、目标 ABI、后端源码归档、二进制摘要、包身份和
+`Depends`；命中时不再创建构建 rootfs 或编译，仍执行目标链接检查与 APT 依赖模拟。
 Arch 系缓存同时核对配方摘要和运行库版本，不把另一套 ABI 的缓存直接安装。
 这仍是本地 libfprint 包；源码补丁进入仓库不等于上游已收录，更不等于发行版原版包
 已经提供此设备后端。传感器控制仍使用 UIO，原厂签名程序的业务命令和 HAT 协议没有改变。

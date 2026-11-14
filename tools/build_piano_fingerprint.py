@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import shlex
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / 'linux/userspace/fingerprint'
@@ -314,6 +315,81 @@ def shlib_dependencies(output):
     return rows[0]
 
 
+def debian_package_fields(path):
+    text = subprocess.check_output(
+        ['dpkg-deb', '-f', path, 'Package', 'Version', 'Architecture', 'Depends'], text=True)
+    return dict(line.split(': ', 1) for line in text.splitlines())
+
+
+def debian_reusable(output, inputs, target_abi, backend_archive):
+    """Reuse only the exact source generation and target runtime package ABI."""
+    try:
+        record = json.loads((output / 'SOURCE.json').read_text())
+        cfg = json.loads((ROOT / 'config/fingerprint.json').read_text())['desktop']['libfprint']
+        package = record['package']
+        filename = package['file']
+        version = '1:' + cfg['version'] + '+sunuefi2'
+        if (record['inputs'] != inputs or record['target_abi'] != target_abi or
+                record['backend_sources_sha256'] != digest(backend_archive) or
+                package['version'] != version or package['architecture'] != 'arm64' or
+                Path(filename).name != filename or not filename.endswith('.deb') or
+                not record['dependencies']):
+            return None
+        # Existing complete outputs kept the deb beside SOURCE.json. New
+        # outputs use runtime/, as other desktop package builders do.
+        folder = output / 'runtime' if (output / 'runtime').is_dir() else output
+        path = folder / filename
+        if path.is_symlink() or digest(path) != package['sha256']:
+            return None
+        if debian_package_fields(path) != {
+                'Package': 'libfprint-2-2', 'Version': version, 'Architecture': 'arm64',
+                'Depends': record['dependencies']}:
+            return None
+        return record, path
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError):
+        return None
+
+
+def install_debian_package(root, path, target_abi):
+    """Check the target loader and APT dependencies before replacing libfprint."""
+    from build_release_rootfs import build_devices
+
+    if debian_abi(root) != target_abi:
+        raise ValueError('Fingerprint target ABI changed before package installation')
+    with tempfile.TemporaryDirectory(prefix='sunuefi-libfprint-install-', dir=root / 'var/tmp') as folder:
+        install = Path(folder)
+        package = install / 'package'
+        subprocess.run(['dpkg-deb', '-x', path, package], check=True)
+        shutil.copy2(path, install / path.name)
+        library = package / 'usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0'
+        elf = library.read_bytes()
+        if elf[:6] != b'\x7fELF\x02\x01' or elf[18:20] != b'\xb7\x00':
+            raise ValueError('Cached libfprint must be an ARM64 ELF')
+        library_path = '/' + library.parent.relative_to(root).as_posix()
+        daemon = next((name for name in ('/usr/libexec/fprintd', '/usr/lib/fprintd/fprintd')
+                       if (root / name.lstrip('/')).is_file()), None)
+        if daemon is None:
+            raise ValueError('The target fprintd executable is missing')
+        with build_devices(root):
+            for binary in (library_path + '/' + library.name, daemon):
+                result = subprocess.run(['chroot', root, 'env', 'LC_ALL=C',
+                                         'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+                                         'LD_LIBRARY_PATH=' + library_path, 'ldd', '-r', binary],
+                                        capture_output=True, text=True, check=True)
+                messages = result.stdout + result.stderr
+                if ('not found' in messages or 'undefined symbol' in messages or
+                        (binary == daemon and
+                         'libfprint-2.so.2 => ' + library_path + '/libfprint-2.so.2' not in messages)):
+                    raise ValueError('Fingerprint library or fprintd does not resolve against the target ABI')
+            guest_deb = '/' + (install / path.name).relative_to(root).as_posix()
+            subprocess.run(['chroot', root, 'env', 'LC_ALL=C',
+                            'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'apt-get', '--simulate',
+                            '--no-remove', '--no-install-recommends', 'install', guest_deb], check=True)
+            subprocess.run(['chroot', root, 'env', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+                            'dpkg', '-i', guest_deb], check=True)
+    desktop_service(root)
+
+
 def install_debian_desktop(root, runtime, output):
     from build_release_rootfs import build_devices, build_resolver
     from desktop import package_build
@@ -322,9 +398,6 @@ def install_debian_desktop(root, runtime, output):
             not output.is_relative_to(ROOT / 'build') or output.is_relative_to(root)):
         raise ValueError('Build fingerprint packages outside a project-built target rootfs')
     output.mkdir(parents=True, exist_ok=True)
-    builder = output / 'builder/rootfs'
-    if builder.parent.exists():
-        raise ValueError('Inspect the existing fingerprint builder before retrying with a fresh output')
     cfg = json.loads((ROOT / 'config/fingerprint.json').read_text())['desktop']['libfprint']
     backend_archive = backend_sources(runtime)
     inputs = source_inputs()
@@ -336,9 +409,24 @@ def install_debian_desktop(root, runtime, output):
                         '--no-upgrade', '--no-remove', '--no-install-recommends',
                         'fprintd', 'libpam-fprintd'], check=True)
     target_abi = debian_abi(root)
-    builder.parent.mkdir()
-    subprocess.run(['cp', '-a', '--reflink=auto', root, builder], check=True)
+    cached = debian_reusable(output, inputs, target_abi, backend_archive)
+    if cached:
+        print('Reusing completed fingerprint package: ' + str(cached[1]), flush=True)
+        install_debian_package(root, cached[1], target_abi)
+        return
+    identity = hashlib.sha256(json.dumps({
+        'inputs': inputs, 'target_abi': target_abi,
+        'backend_sources_sha256': digest(backend_archive),
+    }, sort_keys=True).encode()).hexdigest()[:16]
+    builder = output / 'builder' / identity / 'rootfs'
+    if not builder.exists():
+        builder.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(['cp', '-a', '--reflink=auto', root, builder], check=True)
+    elif debian_abi(builder) != target_abi:
+        raise ValueError('Existing fingerprint builder differs from the target ABI')
     work = builder / 'var/tmp/sunuefi-libfprint'
+    if work.exists():
+        raise ValueError('Inspect the interrupted fingerprint build before retrying: ' + str(work))
     work.mkdir(parents=True)
     upstream = source('libfprint', cfg)
     archive = output / 'libfprint.tar'
@@ -410,42 +498,20 @@ def install_debian_desktop(root, runtime, output):
             'Maintainer: Project SunUEFI <sunuefi@users.noreply.github.com>\n'
             f'Depends: {dependencies}\n'
             'Description: libfprint with native Piano Goodix support\n')
-        deb = output / f'libfprint-2-2_{cfg["version"]}+sunuefi2_arm64.deb'
+        packages = output / 'runtime'
+        packages.mkdir(exist_ok=True)
+        deb = packages / f'libfprint-2-2_{cfg["version"]}+sunuefi2_arm64.deb'
         subprocess.run(['dpkg-deb', '--root-owner-group', '--build', package, deb], check=True)
     if debian_abi(root) != target_abi:
         raise ValueError('Fingerprint target ABI changed during package compilation')
     if source_inputs() != inputs:
         raise ValueError('Fingerprint sources changed during package compilation')
-    install = root / 'var/tmp/sunuefi-libfprint-install'
-    if install.exists():
-        raise ValueError('Inspect the existing fingerprint install directory before retrying')
-    shutil.copytree(package, install / 'package')
-    shutil.copy2(deb, install / deb.name)
-    with build_devices(root):
-        # Resolve the replacement library and fprintd against the image's own
-        # loader before replacing the installed, working backend.
-        library_path = '/var/tmp/sunuefi-libfprint-install/package/usr/lib/aarch64-linux-gnu'
-        daemon = next((path for path in ('/usr/libexec/fprintd', '/usr/lib/fprintd/fprintd')
-                       if (root / path.lstrip('/')).is_file()), None)
-        if daemon is None:
-            raise ValueError('The target fprintd executable is missing')
-        for binary in (library_path + '/libfprint-2.so.2.0.0', daemon):
-            result = subprocess.run(['chroot', root, 'env', 'LC_ALL=C',
-                                     'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
-                                     'LD_LIBRARY_PATH=' + library_path, 'ldd', '-r', binary],
-                                    capture_output=True, text=True, check=True)
-            messages = result.stdout + result.stderr
-            if 'not found' in messages or 'undefined symbol' in messages:
-                raise ValueError('Fingerprint library or fprintd does not resolve against the target ABI')
-        subprocess.run(['chroot', root, 'env', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
-                        'dpkg', '-i', '/var/tmp/sunuefi-libfprint-install/' + deb.name],
-                       check=True)
+    # A completed binary remains reusable if installation is interrupted.
     (output / 'SOURCE.json').write_text(json.dumps({
         'inputs': inputs, 'target_abi': target_abi, 'dependencies': dependencies,
         'backend_sources_sha256': digest(backend_archive),
         'package': {'file': deb.name, 'sha256': digest(deb), 'version': package_version,
                     'architecture': 'arm64'},
     }, indent=2) + '\n')
-    desktop_service(root)
-    shutil.rmtree(install)
     shutil.rmtree(work)
+    install_debian_package(root, deb, target_abi)
