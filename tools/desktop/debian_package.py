@@ -12,6 +12,7 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import urllib.request
 
 from desktop import package_build
 
@@ -152,6 +153,190 @@ def source_identity(row):
     return match[1], match[2] or row['Version']
 
 
+def local_package_spec(name, installed, official):
+    source, version = source_identity(official)
+    if name == 'libgbm1':
+        folder = ROOT / 'build/mesa'
+        record = json.loads((folder / 'SOURCE.json').read_text())
+        config = ROOT / 'config/mesa.json'
+        policy = json.loads(config.read_text())
+        if (record.get('producer_sha256') != sha(ROOT / 'tools/build/mesa.py') or
+                record.get('config_sha256') != sha(config) or
+                record.get('official_source') != policy['source'] or record.get('patches') != [] or
+                record.get('source', {}).get('version') != policy['debian']['recipe_source_version']):
+            raise ValueError('Local Mesa provenance does not match the selected Mesa builder')
+        upstream = policy['source']
+        if (upstream.get('repository') != 'https://gitlab.freedesktop.org/mesa/mesa.git' or
+                not re.fullmatch('[0-9a-f]{40}', upstream.get('commit', '')) or
+                not re.fullmatch('[0-9a-f]{64}', upstream.get('sha256', ''))):
+            raise ValueError('The selected local Mesa source has no official commit/archive identity')
+        local_version = policy['debian']['package_version']
+        if source != 'mesa':
+            raise ValueError('The signed libgbm1 source is not Mesa')
+        patches = []
+    elif name in ('gnome-settings-daemon', 'gdm3', 'mutter'):
+        # Only these package builders declare the revision and patches we accept.
+        from importlib import import_module
+        module, output = {'gnome-settings-daemon': ('build_gsd_packages', 'gsd'),
+                          'gdm3': ('desktop.build_gdm_packages', 'gdm'),
+                          'mutter': ('build_mutter_packages', 'mutter')}[name]
+        builder = import_module(module)
+        local_version = version + '+sunuefi' + str(builder.REVISION)
+        paths = builder.selection() if name == 'gdm3' else builder.PATCHES
+        patches = [(path, sha(path)) for path in paths]
+        folder = ROOT / 'build' / output
+    else:
+        raise ValueError('No declared local ABI revision is supported for ' + name)
+    if (installed['version'], installed['source'], installed['source_version'], installed['architecture']) != (
+            local_version, source, local_version, 'arm64'):
+        raise ValueError('Installed package is not the declared local revision: ' + name)
+    proof = []
+    for path, digest in patches:
+        if sha(path) != digest:
+            raise ValueError('Local package patch checksum differs: ' + str(path))
+        proof.append({'path': path.resolve().relative_to(ROOT).as_posix(), 'sha256': digest})
+    return folder, proof
+
+
+def verify_installed_binaries(rootfs, archive):
+    expected = {}
+    process = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(archive)], stdout=subprocess.PIPE)
+    try:
+        with tarfile.open(fileobj=process.stdout, mode='r|') as contents:
+            for member in contents:
+                if not member.isfile():
+                    continue
+                path = Path(member.name)
+                if path.is_absolute() or '..' in path.parts:
+                    raise ValueError('Unsafe installed package filename')
+                with contents.extractfile(member) as stream:
+                    header = stream.read(20)
+                    if header.startswith(b'\x7fELF'):
+                        if header[:6] != b'\x7fELF\x02\x01' or header[18:20] != b'\xb7\x00':
+                            raise ValueError('Local package contains a non-ARM64 ELF')
+                        expected['/' + path.as_posix()] = hashlib.sha256(header + stream.read()).hexdigest()
+    finally:
+        process.stdout.close()
+        status = process.wait()
+    if status or not expected:
+        raise ValueError('Local package has no verifiable installed ELF files')
+    text = capture(['chroot', rootfs, 'sha256sum', '--', *sorted(expected)])
+    actual = {name: digest for digest, name in (line.split('  ', 1) for line in text.splitlines())}
+    if actual != expected:
+        raise ValueError('Installed ELF differs from the local package: ' + archive.name)
+    return expected
+
+
+def verify_local_package(rootfs, name, installed, official, sources):
+    folder, patches = local_package_spec(name, installed, official)
+    record = json.loads((folder / 'SOURCE.json').read_text())
+    source, version = source_identity(official)
+    expected = checksum_rows(sources)
+    origin = record.get('source', {})
+    archives = [*origin.get('archives', []), *([origin['dsc']] if 'dsc' in origin else [])]
+    checksums = {row['file']: {'sha256': row['sha256'], 'size': row['size']} for row in archives}
+    if (record.get('packages_built') is not True or record.get('package_version') != installed['version'] or
+            record.get('patches') != patches or
+            (folder / '.incomplete').exists()):
+        raise ValueError('Local package provenance differs from the signed source or current patches: ' + name)
+    if (checksums != expected or
+            (origin.get('package'), origin.get('version'), origin.get('suite')) != (source, version, 'sid')):
+        raise ValueError('Local desktop package differs from the signed sid source: ' + name)
+    package = record.get('packages', {}).get(name, {})
+    filename = package.get('file', '')
+    if (not filename or Path(filename).name != filename or package.get('version') != installed['version'] or
+            package.get('architecture') != installed['architecture']):
+        raise ValueError('Local package identity differs from the installed package: ' + name)
+    archive = folder / 'runtime' / filename
+    if sha(archive) != package.get('sha256'):
+        raise ValueError('Local package archive checksum differs: ' + name)
+    fields = dict(line.split(': ', 1) for line in capture(
+        ['dpkg-deb', '-f', archive, 'Package', 'Version', 'Architecture', 'Source']).splitlines())
+    if (fields.get('Package'), fields.get('Version'), fields.get('Architecture'), source_identity(fields)) != (
+            name, installed['version'], 'arm64', (source, installed['source_version'])):
+        raise ValueError('Local archive control differs from the installed package: ' + name)
+    binaries = verify_installed_binaries(rootfs, archive)
+    result = {**installed, 'package_sha256': package['sha256'], 'origin': origin,
+              'source_checksums': checksums, 'patches': patches, 'installed_elf_sha256': binaries}
+    if name == 'libgbm1':
+        result['official_source'] = record['official_source']
+    return result
+
+
+def library_exports(path):
+    dynamic = capture(['readelf', '--dynamic', '--wide', path])
+    soname = re.search(r'\(SONAME\).*\[([^]]+)\]', dynamic)
+    symbols = set()
+    for line in capture(['readelf', '--dyn-syms', '--wide', path]).splitlines():
+        fields = line.split()
+        if (len(fields) >= 8 and fields[4] in ('GLOBAL', 'WEAK') and
+                fields[5] in ('DEFAULT', 'PROTECTED') and fields[6] != 'UND'):
+            symbols.add((fields[3], fields[7].replace('@@', '@')))
+    return soname[1] if soname else None, symbols
+
+
+def verify_gbm_abi(rootfs, official, installed):
+    """Compare actual GBM exports with the authenticated Debian binary."""
+    cache = ROOT / 'build/source-cache/desktop-abi'
+    cache.mkdir(parents=True, exist_ok=True)
+    archive = cache / Path(official['Filename']).name
+    if not archive.is_file() or sha(archive) != official['SHA256']:
+        cached = rootfs / 'var/cache/apt/archives' / archive.name
+        if cached.is_file() and sha(cached) == official['SHA256']:
+            shutil.copy2(cached, archive)
+        else:
+            with urllib.request.urlopen('https://deb.debian.org/debian/' + official['Filename'], timeout=60) as reply:
+                data = reply.read(int(official['Size']) + 1)
+            if len(data) != int(official['Size']) or hashlib.sha256(data).hexdigest() != official['SHA256']:
+                raise ValueError('The Debian GBM archive differs from its signed index')
+            archive.write_bytes(data)
+
+    with tempfile.TemporaryDirectory(prefix='gbm-abi-', dir=cache) as temporary:
+        folder = Path(temporary)
+        run(['dpkg-deb', '-x', archive, folder], stdout=subprocess.DEVNULL)
+        for relative in sorted(installed['installed_elf_sha256']):
+            if not Path(relative).name.startswith('libgbm.so.'):
+                continue
+            original = folder / relative.lstrip('/')
+            if not original.is_file():
+                continue
+            actual = rootfs / relative.lstrip('/')
+            if (not actual.resolve().is_relative_to(rootfs.resolve()) or
+                    sha(actual) != installed['installed_elf_sha256'][relative]):
+                raise ValueError('GBM ABI inspection must use the verified installed library')
+            soname, symbols = library_exports(original)
+            actual_soname, actual_symbols = library_exports(actual)
+            if soname != 'libgbm.so.1' or actual_soname != soname or not symbols or not symbols <= actual_symbols:
+                raise ValueError('Installed Mesa does not preserve the signed sid GBM ABI; use a matching build target')
+            break
+        else:
+            raise ValueError('The installed GBM library is missing from local package provenance')
+    return official['SHA256']
+
+
+def target_baseline(target):
+    result = {key: value for key, value in target.items() if key != 'installed_local'}
+    result['abi'] = dict(result.get('abi', {}))
+    gbm = result['abi'].get('libgbm1', {})
+    if (gbm.get('verified_baseline_sha256') and
+            gbm['verified_baseline_sha256'] == gbm.get('signed_baseline', {}).get('sha256')):
+        proof = target.get('installed_local', {}).get('libgbm1', {})
+        if proof.get('package_sha256') == gbm.get('package_sha256') and proof.get('installed_elf_sha256'):
+            result['abi']['libgbm1'] = gbm['signed_baseline']
+    return result
+
+
+def same_target(before, after):
+    # A stock-built desktop may run on the verified GBM symbol superset. Two
+    # different local Mesa outputs still need separate package-cache validation.
+    if target_baseline(before) != target_baseline(after):
+        return False
+    old, current = before.get('installed_local', {}), after.get('installed_local', {})
+    if 'libgbm1' in old and 'libgbm1' in current:
+        return old['libgbm1'] == current['libgbm1']
+    return True
+
+
 def target_identity(rootfs, package):
     rootfs = Path(rootfs).resolve()
     release = dict(line.split('=', 1) for line in (rootfs / 'etc/os-release').read_text().splitlines() if '=' in line)
@@ -162,13 +347,15 @@ def target_identity(rootfs, package):
     rows, _ = signed_records(rootfs, 'Packages', (package, *ABI_PACKAGES))
     installed = {}
     text = capture(['chroot', rootfs, 'dpkg-query', '-W',
-                    '-f=${Package}\t${db:Status-Status}\t${Version}\n'])
+                    '-f=${Package}\t${db:Status-Status}\t${Version}\t${source:Package}\t${source:Version}\t${Architecture}\n'])
     for line in text.splitlines():
-        name, status, version = line.split('\t')
+        name, status, version, source, source_version, architecture = line.split('\t')
         if status == 'installed':
-            installed[name] = version
+            installed[name] = {'version': version, 'source': source, 'source_version': source_version,
+                               'architecture': architecture}
     policies = {}
-    text = capture(['chroot', rootfs, 'env', 'LC_ALL=C', 'apt-cache', 'policy', package, *ABI_PACKAGES])
+    text = capture(['chroot', rootfs, 'env', 'LC_ALL=C', 'apt-cache', '-oDir::State::status=/dev/null',
+                    'policy', package, *ABI_PACKAGES])
     name = None
     for line in text.splitlines():
         if line and not line[0].isspace() and line.endswith(':'):
@@ -184,31 +371,58 @@ def target_identity(rootfs, package):
         if not version or version == '(none)':
             raise ValueError('APT has no candidate for the target package: ' + name)
         selected = [row for row in candidates if row['Version'] == version]
-        if not selected and '+sunuefi' in version:
-            # Local packages sort above their original version. Only the signed
-            # archive candidate, never the installed local copy, selects source.
-            version = candidates[0]['Version']
-            for row in candidates[1:]:
-                if subprocess.run(['dpkg', '--compare-versions', row['Version'], 'gt', version]).returncode == 0:
-                    version = row['Version']
-            selected = [row for row in candidates if row['Version'] == version]
         if not selected or len({row['SHA256'] for row in selected}) != 1:
             raise ValueError('APT candidate must unambiguously match signed sid: ' + name)
         row = selected[0]
-        if name in ABI_PACKAGES and name in installed and installed[name] != row['Version']:
-            raise ValueError('Target ABI differs from signed sid candidate; update ' + name + ' first')
         source, source_version = source_identity(row)
         return {'package': name, 'version': row['Version'], 'source': source,
                 'source_version': source_version, 'sha256': row['SHA256']}
 
     binary = select(package)
-    sources, _ = signed_records(rootfs, 'Sources', (binary['source'],))
-    sources = [row for row in sources if row['Version'] == binary['source_version']]
-    if not sources or any(checksum_rows(row) != checksum_rows(sources[0]) for row in sources):
-        raise ValueError('Signed sid Sources must match the selected binary source: ' + package)
-    return {'suite': 'sid', 'architecture': 'arm64', 'binary': binary,
-            'source_checksums': checksum_rows(sources[0]),
-            'abi': {name: select(name) for name in ABI_PACKAGES}}
+    abi = {name: select(name) for name in ABI_PACKAGES}
+    local = {name: row for name, row in {package: binary, **abi}.items()
+             if name in installed and installed[name]['version'] != row['version']}
+    source_names = {binary['source'], *(row['source'] for row in local.values())}
+    sources, _ = signed_records(rootfs, 'Sources', tuple(source_names))
+
+    def source_record(name, version):
+        matches = [row for row in sources if row['Package'] == name and row['Version'] == version]
+        if not matches or any(checksum_rows(row) != checksum_rows(matches[0]) for row in matches):
+            raise ValueError('Signed sid Sources must match the selected binary source: ' + name)
+        return matches[0]
+
+    installed_local = {}
+    for name, selected in local.items():
+        official = next(row for row in rows if row['Package'] == name and row['Version'] == selected['version'])
+        source = source_record(selected['source'], selected['source_version'])
+        installed_local[name] = verify_local_package(rootfs, name, installed[name], official, source)
+        if name == 'libgbm1':
+            proof = installed_local[name]
+            verified = verify_gbm_abi(rootfs, official, proof)
+            abi[name] = {'package': name, **proof, 'sha256': proof['package_sha256'],
+                         'signed_baseline': selected, 'verified_baseline_sha256': verified}
+    target = {'suite': 'sid', 'architecture': 'arm64', 'binary': binary,
+              'source_checksums': checksum_rows(source_record(binary['source'], binary['source_version'])), 'abi': abi}
+    if installed_local:
+        target['installed_local'] = installed_local
+    return target
+
+
+def verify_gbm_dependencies(output, record, target):
+    gbm = target.get('abi', {}).get('libgbm1', {})
+    if 'verified_baseline_sha256' not in gbm:
+        return True
+    for package in record['packages'].values():
+        dependencies = capture(['dpkg-deb', '-f', output / 'runtime' / package['file'], 'Depends'])
+        for relation in dependencies.split(','):
+            if not re.match(r'\s*libgbm1(?:\s|:|$)', relation):
+                continue
+            match = re.fullmatch(r'\s*libgbm1(?::\w+)?(?:\s*\((<<|<=|=|>=|>>)\s*([^)]+)\))?\s*', relation)
+            if not match:
+                return False
+            if match[1] and subprocess.run(['dpkg', '--compare-versions', gbm['version'], match[1], match[2]]).returncode:
+                return False
+    return True
 
 
 def verify_source(rootfs, cache, package, source_version):
@@ -255,7 +469,7 @@ def reusable(output, target, patches, runtime, inputs, revision):
         version = target['binary']['source_version'] + '+sunuefi' + str(revision)
         # Schema 2 used this same recipe before recording its version explicitly.
         recipe_version = record.get('build_recipe_version', 1 if record.get('schema_version') == 2 else None)
-        if (record.get('packages_built') is not True or record.get('target') != target or
+        if (record.get('packages_built') is not True or not same_target(record.get('target', {}), target) or
                 record.get('patches') != patches or recipe_inputs(record.get('inputs', {})) != recipe_inputs(inputs) or
                 recipe_version != BUILD_RECIPE_VERSION or record.get('recipe') != BUILD_RECIPE or
                 record.get('build_command') != BUILD_COMMAND or record.get('build_profiles') != BUILD_PROFILES or
@@ -274,7 +488,9 @@ def reusable(output, target, patches, runtime, inputs, revision):
             if (Path(row['file']).name != row['file'] or row['version'] != version or
                     row['architecture'] != runtime[name] or sha(output / 'runtime' / row['file']) != row['sha256']):
                 return None
-        return record
+        if not verify_gbm_dependencies(output, record, target):
+            raise ValueError('Cached desktop packages require a different Mesa GBM version; use a matching build target')
+        return {**record, 'build_target': record.get('build_target', record['target']), 'target': target}
     except (OSError, ValueError, KeyError):
         return None
 
@@ -293,6 +509,9 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
     inputs = input_records([Path(__file__), Path(package_build.__file__), *inputs])
     if cached := reusable(output, target, patch_proof, runtime, inputs, revision):
         return cached
+    if target.get('installed_local'):
+        raise ValueError('Desktop cache does not match; rebuild from a clean signed sid target '
+                         'before installing local desktop packages')
     output.mkdir(parents=True, exist_ok=True)
     (output / '.incomplete').write_text(package + ' package build has not completed.\n')
     rootfs = Path(builder_root).resolve() if builder_root else output / 'builder/rootfs'
@@ -328,13 +547,16 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
         if install_dependencies:
             guest(['apt-get', '-oAcquire::AllowInsecureRepositories=false',
                    '-oAPT::Get::AllowUnauthenticated=false', 'update'])
-            if target_identity(rootfs, package) != target:
+            builder_target = target_identity(rootfs, package)
+            if not same_target(builder_target, target) or builder_target.get('installed_local'):
                 raise ValueError('The builder and target sid indexes differ; refresh the target APT indexes')
             guest(['apt-get', 'install', '-y', '--no-install-recommends', 'dpkg-dev', 'build-essential', 'ccache'])
             guest(['apt-get', 'build-dep', '-y', '--no-install-recommends', '--build-profiles=nocheck',
                    package + '=' + version])
-        elif target_identity(rootfs, package) != target:
-            raise ValueError('The existing builder does not match the supplied target ABI/source')
+        else:
+            builder_target = target_identity(rootfs, package)
+            if not same_target(builder_target, target) or builder_target.get('installed_local'):
+                raise ValueError('The existing builder does not match the supplied clean target ABI/source')
         cache.mkdir(parents=True, exist_ok=True)
         guest(['sh', '-ec', 'cd "$1"; apt-get source --download-only --only-source "$2"',
                'source', inside(rootfs, cache), package + '=' + version])
