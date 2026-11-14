@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "433a39c1910096ca2d342d69f3ee7de140fb58db",
-  "original_target_commit": "cf31a12a3d5c25b77566928338c4ff3a8c6629b7",
+  "target_tree": "63272cf90df64f2dc2c8cd879cbf8ef917cfa7e7",
+  "original_target_commit": "458ad8d888c23d2d99cff9e7aadbfee32498121d",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1511,6 +1511,19 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI/blob/main/patches/linux/7.3/0004-media.patch",
         "drop_when": "Linux includes an OV32D40 binding matching the supported four-lane D-PHY, MCLK, supplies and reset wiring, and the binding example plus unchanged Piano sensor node properties pass schema validation."
+      }
+    },
+    {
+      "file": "0116-media-camss-bayer-clock-binding.patch",
+      "sha256": "3ae2f9f2dc93bd170e54d98d8779d98be87225ce00219c4767f685017f939a18",
+      "original_commit": "458ad8d888c23d2d99cff9e7aadbfee32498121d",
+      "original_parent": "cf31a12a3d5c25b77566928338c4ff3a8c6629b7",
+      "committer_date": "2026-11-14T23:04:09+08:00",
+      "tree": "63272cf90df64f2dc2c8cd879cbf8ef917cfa7e7",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://lore.kernel.org/linux-media/20260508-add-support-for-camss-on-sm8750-v3-0-fc6861a65c67@oss.qualcomm.com/",
+        "drop_when": "The upstream SM8750 CAMSS binding describes the TFE Bayer processing, fast AHB and CAMNOC clocks and capture interconnects consumed by the accepted driver, and its example plus the complete Piano camera resource description validate."
       }
     }
   ],

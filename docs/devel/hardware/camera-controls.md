@@ -25,6 +25,8 @@ libcamera 的[传感器要求](https://github.com/libcamera-org/libcamera/blob/v
 
 OV32D40 的[设备树 binding](../../../patches/linux/7.3/0115-media-ov32d40-binding.patch)使用通用 video-device、CSI-2 endpoint schema，描述现有四 lane D-PHY、19.2 MHz MCLK、三路电源、低有效 reset 和可选 power domain。binding 的 YAML 与例子通过 `dt_binding_check`，从产品折叠 DT 保留原属性提取的 sensor 节点也通过定向校验；这不等于完整产品 DT 校验通过。原厂遗留节点使完整 DT 的 dtschema 解码失败，原生 Piano skeleton 的通过也不覆盖其未包含的相机节点。
 
+SM8750 的 [CAMSS binding](../../../patches/linux/7.3/0116-media-camss-bayer-clock-binding.patch)还描述每条完整 TFE 的 Bayer、Bayer fast AHB 和 Bayer CAMNOC 时钟，共 44 项时钟资源；这些是 PIX 驱动使用的硬件时钟，不能为匹配旧 schema 而删除。捕获端只描述驱动使用的 `ahb`、`hf_mnoc` 两条 interconnect，不把独立 ICP 的资源放进 CAMSS。binding 例子通过，但当前产品折叠节点缺少这两条带宽路径，定向检查仍报告缺失。interconnect 核心允许没有属性时返回 NULL，只表示驱动能继续探测，不证明资源描述完整。
+
 ### Media graph 与并发
 
 当前产品为后摄配置 `s5kjn1 → msm_csiphy1 → msm_csid0 → msm_vfe0_pix → msm_vfe0_video3`，前摄使用 `ov32d40 → msm_csiphy4 → msm_csid1 → msm_vfe1_pix → msm_vfe1_video3`。CSID sink 是 pad 0，IPP 是 source pad 4；VFE sink/source 分别是 pad 0/1。设备节点编号由探测顺序决定，不是配置常量。原始采集使用 CSID source pad 1 和对应 VFE RDI0。
