@@ -18,7 +18,7 @@
 sudo ./build.sh sensors build/sensors --sysroot build/distros/debian-sid/rootfs --jobs 8
 ```
 
-`--sysroot` 只读复制输入根目录；构建依赖、APT 源和编译工具只进入输出目录内的隔离副本。`--libssc-only` 保留只构建库与 CLI 的入口。目标源版本和本地包修订号统一记录在 `patches/piano-sensors/sid/series.json`，运行依赖由目标 sid 库生成。
+`--sysroot` 只读复制输入根目录；构建依赖、APT 源和编译工具只进入输出目录内的隔离副本。`--libssc-only` 保留只构建库与 CLI 的入口。目标源版本和本地包修订号统一记录在 `patches/piano-sensors/sid/build.json`，运行依赖由目标 sid 库生成。
 
 官方 CI 的 runtime 集合为六个包：
 
