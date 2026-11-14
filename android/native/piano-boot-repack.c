@@ -123,7 +123,11 @@ static int64_t branch_target(uint32_t code) {
   return 4 + delta * 4;
 }
 static int piano_fingerprint(const unsigned char *value, size_t bytes) {
-  static const char *prefixes[] = { "Xiaomi/piano/piano:", "Xiaomi/piano_global/piano:" };
+  static const char *prefixes[] = {
+    "Xiaomi/piano/piano:",
+    "Xiaomi/piano_global/piano:",
+    "Xiaomi/piano_eea/piano:"
+  };
   for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
     size_t prefix = strlen(prefixes[i]);
     if (bytes > prefix && !memcmp(value, prefixes[i], prefix)) return 1;
