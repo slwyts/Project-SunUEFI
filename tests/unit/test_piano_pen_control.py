@@ -28,6 +28,9 @@ class PianoPenControlTests(unittest.TestCase):
                         '--include=include/linux/input/xiaomi-pen.h',
                         str(ROOT / 'patches/linux/7.3/0123-input-nt36532e-pen.patch')],
                        cwd=self.work, check=True, capture_output=True)
+        subprocess.run(['git', 'apply',
+                        str(ROOT / 'patches/linux/7.3/0124-input-nt36532e-pen-centroid.patch')],
+                       cwd=self.work, check=True, capture_output=True)
         self.source.mkdir()
         for name in runtime.PEN_KERNEL_SOURCE_FILES:
             source = self.work / name

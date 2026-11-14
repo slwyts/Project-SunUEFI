@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "709707e76e59ceb062e4f8f060ae8df163e272c6",
-  "original_target_commit": "3f081c9b87314021d491cb4776e6f8ee03f41808",
+  "target_tree": "22692e070a3825ad985e1c87891a442e408339f0",
+  "original_target_commit": "5997e1c29a4e456e5c94a6c26b732881bfacce81",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1615,6 +1615,19 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "Replace with accepted NT36532E pen decoding and cross-HID fusion that loads the correct LCD-ID calibration as firmware, reports coordinates, pressure, tilt and buttons on the physical input device, and preserves sample freshness, coherent release and acknowledged stop retries. Verify real drawing, tilt loss/reacquisition, PM/firmware recovery, palm interaction and both 120/144 Hz; resolve simultaneous-radio identity before removing the safe two-radio refusal, and retain standard BlueZ vendor-GATT initialization until independently replaced."
+      }
+    },
+    {
+      "file": "0124-input-nt36532e-pen-centroid.patch",
+      "sha256": "35245c106950be7148314a1911db4c9ae3870cecfc6ce836fe027c04b6a2ecde",
+      "original_commit": "5997e1c29a4e456e5c94a6c26b732881bfacce81",
+      "original_parent": "3f081c9b87314021d491cb4776e6f8ee03f41808",
+      "committer_date": "2026-11-15T02:21:04+08:00",
+      "tree": "22692e070a3825ad985e1c87891a442e408339f0",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted NT36532E decoder must calculate each axis from one measured scan group, remove each group's own DC baseline, and retain weak distributed signals without splicing unrelated maxima. Verify real contact, weak hover, tilt and edge behavior with synchronized input and pen-tip evidence before replacing this centroid correction."
       }
     }
   ],

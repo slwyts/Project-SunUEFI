@@ -7,7 +7,10 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-PATCH = ROOT / 'patches/linux/7.3/0123-input-nt36532e-pen.patch'
+PATCHES = (
+    ROOT / 'patches/linux/7.3/0123-input-nt36532e-pen.patch',
+    ROOT / 'patches/linux/7.3/0124-input-nt36532e-pen-centroid.patch',
+)
 SOURCE = Path('drivers/input/touchscreen/nt36532e')
 CALIBRATION = ROOT / 'linux/bsp/common/usr/share/piano/pen/calibration'
 
@@ -56,6 +59,11 @@ static inline s64 div_s64(s64 a, s32 b) { return a / b; }
 static inline s64 div64_s64(s64 a, s64 b) { return a / b; }
 ''',
     'module.h': '#define MODULE_FIRMWARE(name)\n',
+    'sort.h': '''#include <stdlib.h>
+static inline void sort(void *p, size_t n, size_t size,
+    int (*compare)(const void *, const void *), void (*swap)(void *, void *, int))
+{ (void)swap; qsort(p, n, size, compare); }
+''',
     'slab.h': '''#include <stdlib.h>
 #include <string.h>
 #define GFP_KERNEL 0
@@ -95,26 +103,62 @@ static char *load(const char *path)
 static void maths(const struct nvt_pen_decoder *d)
 {
     unsigned char plane[960] = {0};
-    s32 axis[60], result;
+    s32 axis[60], line[60], result;
     /* A single positive electrode has its known physical coordinate. */
     plane[(20 * 12 + 5) * 2] = 0xe8;
     plane[(20 * 12 + 5) * 2 + 1] = 3;
     assert(nvt_pen_centroid(plane, 40, 12, true, d->mapping_x,
-                           d->tip_threshold, d->resolution, axis, &result));
+                           d->tip_threshold, d->resolution, axis, line, &result));
     assert(result == d->mapping_x[20] * d->resolution);
     memset(plane, 0xff, sizeof(plane));
     assert(!nvt_pen_centroid(plane, 40, 12, true, d->mapping_x,
-                            d->tip_threshold, d->resolution, axis, &result));
+                            d->tip_threshold, d->resolution, axis, line, &result));
     /* Signed extremes and non-uniform real mappings remain within their span. */
     for (size_t i = 0; i < 480; ++i) {
         plane[i * 2] = i % 7 == 0 ? 255 : 0;
         plane[i * 2 + 1] = i % 7 == 0 ? 127 : 128;
     }
     if (nvt_pen_centroid(plane, 40, 12, true, d->mapping_x,
-                        d->tip_threshold, d->resolution, axis, &result)) {
+                        d->tip_threshold, d->resolution, axis, line, &result)) {
         assert(result >= d->mapping_x[0] * d->resolution);
         assert(result <= d->mapping_x[39] * d->resolution);
     }
+    /* Three measured neighbours can exceed the lobe gate without any one
+     * electrode reaching it. Do not turn this into a per-electrode gate. */
+    memset(plane, 0, sizeof(plane));
+    plane[(9 * 12 + 5) * 2] = 80;
+    plane[(10 * 12 + 5) * 2] = 90;
+    plane[(11 * 12 + 5) * 2] = 80;
+    assert(nvt_pen_centroid(plane, 40, 12, true, d->mapping_x,
+                           d->tip_threshold, d->resolution, axis, line, &result));
+    assert(result == d->mapping_x[10] * d->resolution);
+    /* Each scan group's independent DC offset must not move the centroid. */
+    for (unsigned node = 0; node < 40; ++node) {
+        for (unsigned group = 0; group < 12; ++group) {
+            unsigned index = (node * 12 + group) * 2;
+            int value = (int16_t)get_unaligned_le16(plane + index);
+            value += ((int)group - 4) * 23;
+            plane[index] = value;
+            plane[index + 1] = (unsigned)value >> 8;
+        }
+    }
+    assert(nvt_pen_centroid(plane, 40, 12, true, d->mapping_x,
+                           d->tip_threshold, d->resolution, axis, line, &result));
+    assert(result == d->mapping_x[10] * d->resolution);
+    /* A weaker competing scan group must not splice its peak into the
+     * selected group's centroid. */
+    memset(plane, 0, sizeof(plane));
+    const int amplitudes[] = {100, 400, 1000, 400, 100};
+    for (unsigned i = 0; i < 5; ++i) {
+        unsigned index = ((8 + i) * 12 + 5) * 2;
+        plane[index] = amplitudes[i];
+        plane[index + 1] = amplitudes[i] >> 8;
+    }
+    plane[(11 * 12 + 6) * 2] = 900 & 255;
+    plane[(11 * 12 + 6) * 2 + 1] = 900 >> 8;
+    assert(nvt_pen_centroid(plane, 40, 12, true, d->mapping_x,
+                           d->tip_threshold, d->resolution, axis, line, &result));
+    assert(result == d->mapping_x[10] * d->resolution);
     for (unsigned profile = 0; profile < 2; ++profile) {
         for (unsigned i = 0; i < 6; ++i) {
             s32 diff = d->profiles[profile].difference[i] * d->resolution;
@@ -172,10 +216,11 @@ class Nt36xxxPenTests(unittest.TestCase):
                 path = work / 'include/linux' / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text)
-            subprocess.run(['git', 'apply', '-p1',
-                            '--include=' + str(SOURCE / 'nt36xxx-pen.c'),
-                            '--include=' + str(SOURCE / 'nt36xxx-pen.h'),
-                            str(PATCH)], cwd=work, check=True, capture_output=True)
+            for patch in PATCHES:
+                subprocess.run(['git', 'apply', '-p1',
+                                '--include=' + str(SOURCE / 'nt36xxx-pen.c'),
+                                '--include=' + str(SOURCE / 'nt36xxx-pen.h'),
+                                str(patch)], cwd=work, check=True, capture_output=True)
             harness = work / 'test.c'
             harness.write_text(HARNESS)
             executable = work / 'test'

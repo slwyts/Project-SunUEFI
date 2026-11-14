@@ -1,0 +1,166 @@
+From 5997e1c29a4e456e5c94a6c26b732881bfacce81 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sun, 15 Nov 2026 02:21:04 +0800
+Subject: [PATCH] Input: nt36532e: keep pen centroids within one scan group
+
+Estimate DC independently for each scan group and select a group by its
+local five-electrode positive signal. Calculate the centroid from that
+same measurement instead of splicing per-electrode maxima from groups
+that were never measured together.
+
+Keep the calibration, thresholds, packet validation and pressure fusion
+unchanged. Weak distributed signals are gated by their local sum rather
+than by one electrode alone.
+---
+ .../input/touchscreen/nt36532e/nt36xxx-pen.c  | 87 ++++++++++++++-----
+ 1 file changed, 66 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx-pen.c b/drivers/input/touchscreen/nt36532e/nt36xxx-pen.c
+index 4aa85f4f7..44f4457ce 100644
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx-pen.c
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx-pen.c
+@@ -14,6 +14,7 @@
+ #include <linux/math64.h>
+ #include <linux/module.h>
+ #include <linux/slab.h>
++#include <linux/sort.h>
+ #include <linux/string.h>
+ #include <linux/unaligned.h>
+ 
+@@ -40,6 +41,7 @@ struct nvt_pen_decoder {
+ 	struct nvt_pen_profile profiles[2];
+ 	/* Scratch space is probe-allocated, not on the IRQ stack. */
+ 	s32 axes[4][NVT_PEN_AXIS_Y];
++	s32 line[NVT_PEN_AXIS_Y];
+ };
+ 
+ static int nvt_pen_config_value(const char *config, const char *section,
+@@ -335,42 +337,85 @@ static bool nvt_pen_checksum(const u8 *data, size_t bytes, size_t header,
+ 	return (u16)(0U - sum) == expected;
+ }
+ 
+-/* Project each plane onto its electrode axis using its strongest response.
+- * A local five-electrode centroid ignores remote peaks and negative noise.
++static int nvt_pen_compare(const void *left, const void *right)
++{
++	s32 a = *(const s32 *)left, b = *(const s32 *)right;
++
++	return (a > b) - (a < b);
++}
++
++/* Scan groups are separate measurements, not interchangeable electrodes.
++ * Select one group by its strongest local five-electrode signal, then find
++ * the centroid in that same group. The median excludes the narrow pen lobe
++ * from the DC estimate; the gate measures its integrated positive signal.
+  */
+ static bool nvt_pen_centroid(const u8 *plane, unsigned int nodes,
+ 			     unsigned int groups, bool interleaved,
+ 			     const s32 *mapping, s32 threshold, s32 resolution,
+-			     s32 *axis, s32 *coordinate)
++			     s32 *axis, s32 *line, s32 *coordinate)
+ {
+-	unsigned int i, group, peak = 0;
++	unsigned int i, group, peak = 0, selected_group = 0;
+ 	s64 total = 0, weighted = 0, background = 0;
+-	s32 maximum = S32_MIN;
++	s32 best = 0;
+ 
+-	for (i = 0; i < nodes; i++) {
+-		axis[i] = S16_MIN;
+-		for (group = 0; group < groups; group++) {
++	for (group = 0; group < groups; group++) {
++		unsigned int first, last, candidate;
++		s32 signal = 0;
++
++		for (i = 0; i < nodes; i++) {
+ 			unsigned int index = interleaved ? i * groups + group : group * nodes + i;
++
++			line[i] = (s16)get_unaligned_le16(plane + index * 2);
++		}
++		sort(line, nodes, sizeof(*line), nvt_pen_compare, NULL);
++		background = line[nodes / 2];
++		for (candidate = 0; candidate < nodes; candidate++) {
++			unsigned int index = interleaved ? candidate * groups + group :
++								 group * nodes + candidate;
+ 			s32 value = (s16)get_unaligned_le16(plane + index * 2);
+ 
+-			axis[i] = max(axis[i], value);
++			line[candidate] = max_t(s32, value - background, 0);
+ 		}
+-		background += axis[i];
+-		if (axis[i] > maximum) {
+-			maximum = axis[i];
+-			peak = i;
++		first = 0;
++		last = min(2U, nodes - 1);
++		for (i = first; i <= last; i++)
++			signal += line[i];
++		for (candidate = 0; candidate < nodes; candidate++) {
++			if (signal > best) {
++				best = signal;
++				peak = candidate;
++				selected_group = group;
++			}
++			if (candidate >= 2)
++				signal -= line[first++];
++			if (last + 1 < nodes)
++				signal += line[++last];
+ 		}
+ 	}
+-	background = div_s64(background - maximum, nodes - 1);
+-	if (maximum - background < threshold)
++	if (best < threshold)
+ 		return false;
++	for (i = 0; i < nodes; i++) {
++		unsigned int index = interleaved ? i * groups + selected_group :
++						 selected_group * nodes + i;
++
++		line[i] = (s16)get_unaligned_le16(plane + index * 2);
++	}
++	sort(line, nodes, sizeof(*line), nvt_pen_compare, NULL);
++	background = line[nodes / 2];
++	for (i = 0; i < nodes; i++) {
++		unsigned int index = interleaved ? i * groups + selected_group :
++						 selected_group * nodes + i;
++		s32 value = (s16)get_unaligned_le16(plane + index * 2);
++
++		axis[i] = max_t(s32, value - background, 0);
++	}
+ 	for (i = peak > 2 ? peak - 2 : 0; i <= min(peak + 2, nodes - 1); i++) {
+-		s32 weight = max_t(s32, axis[i] - background - threshold / 2, 0);
++		s32 weight = axis[i];
+ 
+ 		total += weight;
+ 		weighted += (s64)weight * mapping[i] * resolution;
+ 	}
+-	if (!total)
++	if (total < threshold)
+ 		return false;
+ 	*coordinate = div64_s64(weighted, total);
+ 	return true;
+@@ -418,10 +463,10 @@ int nvt_pen_decode(struct nvt_pen_decoder *decoder, const u8 *payload, size_t by
+ 	profile = &decoder->profiles[vendor == 3];
+ 	x_valid = nvt_pen_centroid(payload + 100, 40, 12, true, decoder->mapping_x,
+ 				   decoder->tip_threshold, decoder->resolution,
+-				   decoder->axes[0], &tip_x);
++				   decoder->axes[0], decoder->line, &tip_x);
+ 	y_valid = nvt_pen_centroid(payload + 1060, 60, 8, false, decoder->mapping_y,
+ 				   decoder->tip_threshold, decoder->resolution,
+-				   decoder->axes[1], &tip_y);
++				   decoder->axes[1], decoder->line, &tip_y);
+ 	if (!x_valid || !y_valid)
+ 		return 0;
+ 	point->proximity = true;
+@@ -429,10 +474,10 @@ int nvt_pen_decode(struct nvt_pen_decoder *decoder, const u8 *payload, size_t by
+ 	point->y = tip_y;
+ 	x_valid = nvt_pen_centroid(payload + 2020, 40, 12, true, decoder->mapping_x,
+ 				   decoder->ring_threshold, decoder->resolution,
+-				   decoder->axes[2], &ring_x);
++				   decoder->axes[2], decoder->line, &ring_x);
+ 	y_valid = nvt_pen_centroid(payload + 2980, 60, 8, false, decoder->mapping_y,
+ 				   decoder->ring_threshold, decoder->resolution,
+-				   decoder->axes[3], &ring_y);
++				   decoder->axes[3], decoder->line, &ring_y);
+ 	if (x_valid && y_valid) {
+ 		dx = ring_x - tip_x;
+ 		dy = ring_y - tip_y;
