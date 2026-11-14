@@ -25,8 +25,21 @@ def inputs_current(output):
     if not path.is_file():
         return False
     record = json.loads(path.read_text())
+    pen = record.get('pen_core', {})
+    pen_source = ROOT / 'linux/userspace/pen'
+    pen_paths = [Path(runtime.__file__),
+                 *[pen_source / name for name in runtime.PEN_SOURCE_FILES],
+                 pen_source / 'piano-pen-bluetooth.py', pen_source / 'piano-pen-canvas.py',
+                 ROOT / 'linux/bsp/common/usr/share/piano/pen/p81c-radio.json']
+    if pen.get('input', {}).get('mode') == 'kernel':
+        pen_paths += [pen_source / 'piano-pen-control',
+                      *[ROOT / name for name in runtime.PEN_CALIBRATION_PATHS.values()]]
+    else:
+        pen_paths.append(pen_source / 'piano-touch-input')
     return (
         record.get('producer', {}).get('sha256') == runtime.sha(Path(__file__))
+        and all(pen.get('inputs', {}).get(str(path)) == runtime.sha(path)
+                for path in pen_paths)
         and record.get('module_toolchain_inputs') == {
             str(path.relative_to(ROOT)): runtime.sha(path)
             for path in (Path(prepare_kernel_llvm.__file__), prepare_kernel_llvm.POLICY)
