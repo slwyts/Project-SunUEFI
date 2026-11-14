@@ -183,6 +183,21 @@ def official_candidate(package, version, records, libraries, archive_version=Non
     return row
 
 
+def verify_local_gbm(root, official):
+    from desktop import debian_package as signed
+    fields = controls(capture(['chroot', root, 'dpkg-query', '-W',
+        '-f=version: ${Version}\nsource: ${source:Package}\n'
+        'source_version: ${source:Version}\narchitecture: ${Architecture}\n', 'libgbm1']))[0]
+    source, version = signed.source_identity(official)
+    rows, _ = signed.signed_records(root, 'Sources', (source,))
+    selected = [row for row in rows if row.get('Package') == source and row.get('Version') == version]
+    if not selected or any(checksum_rows(row) != checksum_rows(selected[0]) for row in selected):
+        raise ValueError('Signed sid Sources must identify the GBM packaging source')
+    proof = signed.verify_local_package(root, 'libgbm1', fields, official, selected[0])
+    proof['verified_baseline_sha256'] = signed.verify_gbm_abi(root, official, proof)
+    return proof
+
+
 def target_identity(root, sources, anchors):
     """Bind a completed-package cache to signed source selection and target libs."""
     from desktop import debian_package as signed
@@ -201,13 +216,19 @@ def target_identity(root, sources, anchors):
         possible_sources = {signed.source_identity(row)[0] for row in records if row['Package'] == name}
         if len(possible_sources) == 1:
             identities[name] = {'version': installed[name], 'source': possible_sources.pop()}
-    selected = {}
+    selected, installed_local = {}, {}
     for package in sorted(packages):
         if not any(row['Package'] == package for row in records):
             if package not in anchors.values() and package not in libraries:
                 continue
             raise ValueError('Signed sid index has no target package: ' + package)
-        row = official_candidate(package, policies.get(package), records, identities, archive_policies.get(package))
+        if (package == 'libgbm1' and package in libraries and
+                (package in local or libraries[package]['version'] != policies.get(package))):
+            row = official_candidate(package, archive_policies.get(package, policies.get(package)), records, {})
+            if libraries[package]['version'] != row['Version']:
+                installed_local[package] = verify_local_gbm(root, row)
+        else:
+            row = official_candidate(package, policies.get(package), records, identities, archive_policies.get(package))
         source_name, version = signed.source_identity(row)
         if package in anchors.values() and sources.get(source_name) != version:
             raise ValueError('The configured source differs from the target sid ABI: ' + source_name)
@@ -215,6 +236,8 @@ def target_identity(root, sources, anchors):
                              'source_version': version, 'sha256': row['SHA256']}
     target = TargetIdentity({'suite': 'sid', 'architecture': 'arm64', 'sources': sources,
                              'binaries': selected, 'libraries': libraries}, root)
+    if installed_local:
+        target['installed_local'] = installed_local
     if list((root / 'var/lib/apt/lists').glob('*_source_Sources*')):
         target['source_checksums'] = source_checksums(root, sources)
     return target
@@ -523,8 +546,10 @@ def reusable(output, version, patches, runtime, target=None):
         if (record.get('package_version') != version or record.get('patches') != patches or
                 record.get('recipe') != 'original Debian debian/rules and control' or
                 not record.get('target') or not record.get('build_packages') or (target is not None and
-                    {key: value for key, value in record['target'].items() if key not in ('source_checksums', 'libraries')} !=
-                    {key: value for key, value in target.items() if key not in ('source_checksums', 'libraries')}) or
+                     {key: value for key, value in record['target'].items()
+                      if key not in ('source_checksums', 'libraries', 'installed_local')} !=
+                     {key: value for key, value in target.items()
+                      if key not in ('source_checksums', 'libraries', 'installed_local')}) or
                 record.get('producer_sha256') != package_build.sha(ROOT / record['producer']) or
                 record.get('build_recipe_version', 1) != BUILD_RECIPE_VERSION or
                 record.get('compiler_environment_sha256') != package_build.sha(package_build.__file__) or
@@ -539,10 +564,23 @@ def reusable(output, version, patches, runtime, target=None):
         # Re-run today's verifier. Old verifier hashes remain build provenance.
         current_sources = source_checksums(root, record['target']['sources'])
         if target is not None:
+            local_gbm = target.get('installed_local', {}).get('libgbm1')
+            previous_gbm = record['target'].get('installed_local', {}).get('libgbm1')
+            if previous_gbm and previous_gbm != local_gbm:
+                return None
+            if local_gbm:
+                from desktop import debian_package as signed
+                if not signed.verify_gbm_dependencies(output, record, {'abi': {'libgbm1': local_gbm}}):
+                    return None
             local_packages = set(record['packages'])
             for name in record.get('runtime_dependencies', ABI_PACKAGES):
                 if name in local_packages or name not in target['libraries']:
                     continue
+                if name == 'libgbm1' and local_gbm:
+                    baseline = target['binaries']['libgbm1']
+                    if (local_gbm['verified_baseline_sha256'] == baseline['sha256'] and
+                            record['build_packages'].get(name) == baseline['version']):
+                        continue
                 if record['build_packages'].get(name) != target['libraries'][name]['version']:
                     return None
         origins = record.get('sources') or {record['source']['package']: record['source']}

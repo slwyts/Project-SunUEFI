@@ -49,6 +49,31 @@ class DebianSourceTests(unittest.TestCase):
         with self.signed_parser(), self.assertRaisesRegex(ValueError, 'Refresh the target sid ABI'):
             debian.official_candidate('libc6', '2', records, libraries)
 
+    def test_mesa_development_version_has_no_version_only_signed_alias(self):
+        policy = json.loads((debian.ROOT / 'config/mesa.json').read_text())
+        version = policy['debian']['package_version']
+        libraries = {'libgbm1': {'version': version, 'source': 'mesa'}}
+        with self.signed_parser():
+            self.assertIsNone(debian.project_source_version('mesa', version))
+            with self.assertRaisesRegex(ValueError, 'known project revision'):
+                debian.official_candidate('libgbm1', version, self.candidate_records(),
+                                         libraries, policy['debian']['recipe_source_version'])
+
+    def test_local_gbm_requires_unambiguous_signed_packaging_source(self):
+        installed = ('version: development\nsource: mesa\nsource_version: development\n'
+                     'architecture: arm64\n')
+        official = self.candidate_records()[0]
+        rows = [{'Package': 'mesa', 'Version': official['Version'],
+                 'Checksums-Sha256': digest + ' 1 mesa.dsc'} for digest in ('first', 'different')]
+        for selected in ([], rows):
+            signed = SimpleNamespace(
+                source_identity=lambda row: ('mesa', row['Version']),
+                signed_records=lambda *args: (selected, []))
+            with patch.dict(sys.modules, {'desktop.debian_package': signed}), \
+                    patch.object(debian, 'capture', return_value=installed), \
+                    self.assertRaisesRegex(ValueError, 'GBM packaging source'):
+                debian.verify_local_gbm(Path('/target'), official)
+
     def test_batch_policy_preserves_epoch_and_archive_only_flag(self):
         text = 'ffmpeg:\n  Candidate: 7:9.0.2-6+b1\nlibc6:arm64:\n  Candidate: 2.43-7\n'
         with patch.object(debian, 'capture', return_value=text) as capture:
