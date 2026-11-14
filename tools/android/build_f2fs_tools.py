@@ -18,6 +18,26 @@ def digest(path):
         return hashlib.file_digest(source, 'sha256').hexdigest()
 
 
+def fetch_commit(source, policy):
+    commit = policy['base_commit']
+    present = ['git', '-C', str(source), 'cat-file', '-e', commit + '^{commit}']
+    if not subprocess.run(present, capture_output=True).returncode:
+        return
+    urls = [policy['source_url'], *policy.get('source_mirrors', [])]
+    for _ in range(2):
+        for url in urls:
+            print('Fetching fixed F2FS tools from ' + url, flush=True)
+            try:
+                subprocess.run(['git', '-C', str(source), '-c', 'http.lowSpeedLimit=1024',
+                                '-c', 'http.lowSpeedTime=30', 'fetch', '--no-tags',
+                                '--depth=1', url, commit], check=True, timeout=90)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                continue
+            if not subprocess.run(present, capture_output=True).returncode:
+                return
+    raise ValueError('Cannot fetch the fixed F2FS commit from its source or mirrors: ' + commit)
+
+
 def build(output, sysroot=None, arch='aarch64', jobs=4):
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -31,8 +51,7 @@ def build(output, sysroot=None, arch='aarch64', jobs=4):
     if subprocess.check_output(['git', '-C', str(source), 'status', '--porcelain'], text=True):
         raise ValueError('F2FS source cache contains local changes')
     commit = policy['base_commit']
-    if subprocess.run(['git', '-C', str(source), 'cat-file', '-e', commit + '^{commit}'], capture_output=True).returncode:
-        subprocess.run(['git', '-C', str(source), 'fetch', '--depth=1', policy['source_url'], commit], check=True)
+    fetch_commit(source, policy)
     patch_rows = []
     for row in policy['patches']:
         path = SERIES.parent / row['file']

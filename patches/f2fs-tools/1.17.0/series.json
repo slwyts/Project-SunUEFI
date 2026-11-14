@@ -2,6 +2,9 @@
   "schema_version": 1,
   "version": "1.17.0",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/jaegeuk/f2fs-tools.git",
+  "source_mirrors": [
+    "https://kernel.googlesource.com/pub/scm/linux/kernel/git/jaegeuk/f2fs-tools"
+  ],
   "base_commit": "83fd39a184df96db5def895ddc55bf68e720ef76",
   "target_tree": "3c0bd773b32d51a030cefe776535e01a01738191",
   "patches": [
