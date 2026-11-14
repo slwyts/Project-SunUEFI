@@ -226,10 +226,10 @@ static Object object_decode(struct tee_context *context, const struct tee_ioctl_
 
 static int invoke_remote(struct tee_object *object, ObjectOp op, ObjectArg *args, ObjectCounts counts)
 {
-	struct {
-		struct tee_ioctl_object_invoke_arg argument;
-		struct tee_ioctl_param parameters[PARAMS];
-	} message = {0};
+	_Alignas(8) uint8_t message[sizeof(struct tee_ioctl_object_invoke_arg) +
+		PARAMS * sizeof(struct tee_ioctl_param)] = {0};
+	struct tee_ioctl_object_invoke_arg *argument = (void *)message;
+	struct tee_ioctl_param *parameters = argument->params;
 	struct tee_context *context = object->context;
 	uint64_t exported[PARAMS] = {0};
 	unsigned int bi = ObjectCounts_numBI(counts), bo = ObjectCounts_numBO(counts);
@@ -238,11 +238,11 @@ static int invoke_remote(struct tee_object *object, ObjectOp op, ObjectArg *args
 
 	if (counts & ~65535U || total > PARAMS || (total && !args) || op >= Object_OP_retain)
 		return -EINVAL;
-	message.argument.id = object->id;
-	message.argument.op = op;
-	message.argument.num_params = total;
+	argument->id = object->id;
+	argument->op = op;
+	argument->num_params = total;
 	for (unsigned int i = 0; i < total; i++) {
-		struct tee_ioctl_param *parameter = &message.parameters[i];
+		struct tee_ioctl_param *parameter = &parameters[i];
 
 		if (i < bi + bo) {
 			if (args[i].b.size && !args[i].b.ptr) {
@@ -264,8 +264,8 @@ static int invoke_remote(struct tee_object *object, ObjectOp op, ObjectArg *args
 		}
 	}
 	struct tee_ioctl_buf_data data = {
-		.buf_ptr = (uintptr_t)&message,
-		.buf_len = sizeof(message.argument) + total * sizeof(message.parameters[0]),
+		.buf_ptr = (uintptr_t)message,
+		.buf_len = sizeof(*argument) + total * sizeof(parameters[0]),
 	};
 	result = tee_call(context, TEE_IOC_OBJECT_INVOKE, &data);
 	if (result) {
@@ -275,20 +275,20 @@ static int invoke_remote(struct tee_object *object, ObjectOp op, ObjectArg *args
 		atomic_store(&context->failed, 1);
 		return result;
 	}
-	if (message.argument.ret)
-		return (int32_t)message.argument.ret;
+	if (argument->ret)
+		return (int32_t)argument->ret;
 	result = 0;
 	for (unsigned int i = bi; i < bi + bo; i++) {
-		if (message.parameters[i].b > args[i].b.size)
+		if (parameters[i].b > args[i].b.size)
 			result = -EMSGSIZE;
 		else
-			args[i].b.size = message.parameters[i].b;
+			args[i].b.size = parameters[i].b;
 	}
 	for (unsigned int i = bi + bo + oi; i < total; i++) {
-		args[i].o = object_decode(context, &message.parameters[i]);
-		if (message.parameters[i].a != TEE_OBJREF_NULL && Object_isNull(args[i].o)) {
-			if (message.parameters[i].b == REF_TEE)
-				remote_release(context, message.parameters[i].a);
+		args[i].o = object_decode(context, &parameters[i]);
+		if (parameters[i].a != TEE_OBJREF_NULL && Object_isNull(args[i].o)) {
+			if (parameters[i].b == REF_TEE)
+				remote_release(context, parameters[i].a);
 			result = -ENOMEM;
 		}
 	}
