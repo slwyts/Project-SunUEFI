@@ -28,6 +28,7 @@
       "linux/dts/piano-regdma-resource.dtso",
       "linux/dts/piano-audio-dmic-clock.dtso",
       "linux/dts/piano-camera-sensors.dtso",
+      "linux/dts/piano-camera-interconnects.dtso",
       "linux/dts/piano-camera-flash.dtso",
       "linux/dts/piano-camera-privacy-led.dtso",
       "linux/dts/piano-touch-panel.dtso",

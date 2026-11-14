@@ -23,9 +23,11 @@ SM8750 TFE980 的 PIX sink 接收四种排列的 RAW10 Bayer，source 和对应�
 
 libcamera 的[传感器要求](https://github.com/libcamera-org/libcamera/blob/v0.8.0/Documentation/sensor_driver_requirements.rst)还要求 RAW sensor 提供 HBLANK、VBLANK、PIXEL_RATE，并把曝光表示为图像行。当前 OV32D40 不满足这一模型，不能重新填入已证明错误的 blanking 值来通过初始化。上游也没有这两颗 sensor 的增益 helper 和实测控件延迟，默认延迟不能代替逐模式测量。
 
-OV32D40 的[设备树 binding](../../../patches/linux/7.3/0115-media-ov32d40-binding.patch)使用通用 video-device、CSI-2 endpoint schema，描述现有四 lane D-PHY、19.2 MHz MCLK、三路电源、低有效 reset 和可选 power domain。binding 的 YAML 与例子通过 `dt_binding_check`，从产品折叠 DT 保留原属性提取的 sensor 节点也通过定向校验；这不等于完整产品 DT 校验通过。原厂遗留节点使完整 DT 的 dtschema 解码失败，原生 Piano skeleton 的通过也不覆盖其未包含的相机节点。
+OV32D40 的[设备树 binding](../../../patches/linux/7.3/0115-media-ov32d40-binding.patch)使用通用 video-device、CSI-2 endpoint schema，描述现有四 lane D-PHY、19.2 MHz MCLK、三路电源、低有效 reset 和单个可选 power domain。binding 的 YAML 与例子通过 `dt_binding_check`；修正遗留布尔属性和无效空 `reg` 后，完整折叠 DT 中的 OV32D40 节点通过定向校验。原生 Piano skeleton 不包含完整相机节点，不能代替该检查。
 
-SM8750 的 [CAMSS binding](../../../patches/linux/7.3/0116-media-camss-bayer-clock-binding.patch)还描述每条完整 TFE 的 Bayer、Bayer fast AHB 和 Bayer CAMNOC 时钟，共 44 项时钟资源；这些是 PIX 驱动使用的硬件时钟，不能为匹配旧 schema 而删除。捕获端只描述驱动使用的 `ahb`、`hf_mnoc` 两条 interconnect，不把独立 ICP 的资源放进 CAMSS。binding 例子通过，但当前产品折叠节点缺少这两条带宽路径，定向检查仍报告缺失。interconnect 核心允许没有属性时返回 NULL，只表示驱动能继续探测，不证明资源描述完整。
+SM8750 的 [CAMSS binding](../../../patches/linux/7.3/0116-media-camss-bayer-clock-binding.patch)还描述每条完整 TFE 的 Bayer、Bayer fast AHB 和 Bayer CAMNOC 时钟，共 44 项时钟资源；这些是 PIX 驱动使用的硬件时钟，不能为匹配旧 schema 而删除。捕获端只描述驱动使用的 `ahb`、`hf_mnoc` 两条 interconnect，不把独立 ICP 的资源放进 CAMSS。[带宽 overlay](../../../linux/dts/piano-camera-interconnects.dtso)使用现有 SM8750 provider，补入 APPSS→CAMERA_CFG 的活动带宽路径和 CAMNOC_HF→EBI 的图像路径；runtime resume 提交驱动带宽票据，suspend 清零。两条路径与 44 clocks 在完整折叠节点上的定向 schema 检查通过，带宽投票仍需实机检查。缺少属性时 interconnect 核心返回 NULL 并跳过约束，不能据此将硬件带宽路径改为可选。
+
+前后 sensor 的 `power-domains` 都指向 `CAM_CC_TITAN_TOP_GDSC`。公开相机 DTS 说明该引用用于保证 CAMBIST MCLK 分支工作，并非 sensor 本体位于片上电源域；I2C core 会在 probe 前附加该域，runtime PM 在 sensor 回调前后管理它。S5KJN1 schema 仍拒绝此属性，OV32D40 schema 允许它。应将 Titan 依赖放到 MCLK 供应端并验证 probe、停流和恢复后再迁移引用，不能删除引用或只放宽 sensor schema 来掩盖供应端模型缺项。
 
 ### TFE980 公开资料与 metadata
 
