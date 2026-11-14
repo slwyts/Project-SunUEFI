@@ -11,7 +11,6 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -344,11 +343,6 @@ def arch_recipe(output, steamos=False):
     recipe = recipe.replace('device-select,intel-nullhw,overlay,screenshot,anti-lag,vram-report-limit',
                              'device-select,intel-nullhw,overlay,screenshot,vram-report-limit')
     recipe = recipe.replace('    _pick vkdevice $libdir/libVkLayer_MESA_anti_lag.so\n', '')
-    recipe = recipe.replace('    _pick vkradeon usr/share/drirc.d/00-radv-defaults.conf\n',
-                            '    _pick vkradeon usr/share/drirc.d/00-radv-defaults.conf\n'
-                            '    _pick vkradeon usr/share/drirc.d/01-radv-performance.conf\n')
-    recipe = recipe.replace('  meson compile -C build\n',
-                            '  meson compile -C build ${MAKEFLAGS:-}\n')
     recipe += '\nsource=(mesa.tar.gz)\nsha256sums=(' + data['source']['sha256'] + ')\n'
     recipe += 'b2sums=(' + hashlib.blake2b(archive.read_bytes()).hexdigest() + ')\n'
     with tarfile.open(archive) as source:
@@ -378,22 +372,25 @@ def arch_recipe(output, steamos=False):
         recipe += 'sha256sums+=(' + pin['sha256'] + ')\n'
         recipe += 'b2sums+=(' + hashlib.blake2b(subarchive.read_bytes()).hexdigest() + ')\n'
         prepare += '  mv "' + root_name + '" "mesa-$_pkgver/subprojects/' + wrap_config['wrap-git']['directory'] + '"\n'
+    if not steamos:
+        (output / 'PKGBUILD').write_text(recipe + '\n' + prepare + '}\n')
+        arch_provenance(output, False)
+        return output
     with tarfile.open(archive) as source:
         text = source.extractfile('mesa-' + data['source']['commit'] + '/subprojects/wayland-protocols.wrap').read().decode()
     protocols = configparser.ConfigParser()
     protocols.read_string(text)
     wrap = protocols['wrap-file']
     download(wrap['source_url'], output / wrap['source_filename'], wrap['source_hash'])
-    if steamos:
-        patches = json.loads((ROOT / 'patches/mesa/27.0/series.json').read_text())['patches']
-        for row in patches:
-            patch = ROOT / 'patches/mesa/27.0' / row['file']
-            if package_build.sha(patch) != row['sha256']:
-                raise ValueError('SteamOS Mesa patch checksum mismatch')
-            shutil.copy2(patch, output / row['file'])
-            recipe += "\nsource+=(" + row['file'] + ")\nsha256sums+=(" + row['sha256'] + ")\n"
-            recipe += 'b2sums+=(' + hashlib.blake2b((output / row['file']).read_bytes()).hexdigest() + ')\n'
-            prepare += '  patch --batch --fuzz=0 -Np1 -d "mesa-$_pkgver" < "' + row['file'] + '"\n'
+    patches = json.loads((ROOT / 'patches/mesa/27.0/series.json').read_text())['patches']
+    for row in patches:
+        patch = ROOT / 'patches/mesa/27.0' / row['file']
+        if package_build.sha(patch) != row['sha256']:
+            raise ValueError('SteamOS Mesa patch checksum mismatch')
+        shutil.copy2(patch, output / row['file'])
+        recipe += "\nsource+=(" + row['file'] + ")\nsha256sums+=(" + row['sha256'] + ")\n"
+        recipe += 'b2sums+=(' + hashlib.blake2b((output / row['file']).read_bytes()).hexdigest() + ')\n'
+        prepare += '  patch --batch --fuzz=0 -Np1 -d "mesa-$_pkgver" < "' + row['file'] + '"\n'
     recipe += '\nsource+=("' + wrap['source_filename'] + '")\n'
     recipe += 'sha256sums+=(' + wrap['source_hash'] + ')\n'
     recipe += 'b2sums+=(' + hashlib.blake2b((output / wrap['source_filename']).read_bytes()).hexdigest() + ')\n'
@@ -401,10 +398,6 @@ def arch_recipe(output, steamos=False):
     prepare += '  mkdir -p "mesa-$_pkgver/subprojects/packagecache"\n'
     prepare += '  cp "' + wrap['source_filename'] + '" "mesa-$_pkgver/subprojects/packagecache/"\n}\n'
     recipe += '\n' + prepare
-    if not steamos:
-        (output / 'PKGBUILD').write_text(recipe)
-        arch_provenance(output, False)
-        return output
     recipe += '\npkgname=(deckard-mesa-linux-aarch64)\n'
     recipe += 'pkgbase=deckard-mesa-linux-aarch64\n'
     recipe += 'pkgdesc="Official Mesa development drivers for the SteamOS native runtime"\n'
@@ -425,168 +418,21 @@ def arch_recipe(output, steamos=False):
     return output
 
 
-def build_pacman(output, root, jobs, resume=False, steamos=False):
-    import build_arch_package
-    output, root = output.resolve(), root.resolve()
-    if (not output.is_relative_to(ROOT / 'build') or output.is_relative_to(root) or
-            root.is_relative_to(output) or jobs < 1):
-        raise ValueError('Use separate project build output and ARM64 rootfs directories')
-    recipe = arch_recipe(output / 'recipe', steamos)
-    build_arch_package.build(root, recipe, output / 'runtime', resume=resume, jobs=jobs,
-                             validate=validate_pacman)
-    record = json.loads((recipe / 'SOURCE.json').read_text())
-    record.update(packages_built=True,
-                  packages=json.loads((output / 'runtime/manifest.json').read_text())['packages'],
-                  validation=json.loads((output / 'runtime/VALIDATION.json').read_text()))
-    (output / 'SOURCE.json').write_text(json.dumps(record, indent=2) + '\n')
-    return record
-
-
-def validate_pacman(root, work, output):
-    """Inspect actual package ELF and configured features before removing objects."""
-    source = policy()['source']
-    candidates = [path for path in (work / 'src').glob('mesa-*') if path.is_dir()]
-    if len(candidates) != 1:
-        raise ValueError('Native Mesa build has an ambiguous prepared source tree')
-    prepared = candidates[0]
-    selected = debian.capture(['chroot', root, 'bash', '-c',
-        'source /var/tmp/sunuefi-package-build/PKGBUILD; printf "%s\\n" "${pkgname[@]}"']).splitlines()
-    patches = json.loads((work / 'SOURCE.json').read_text())['patches']
-    changed = {}
-    if patches:
-        with tarfile.open(source_archive()) as archive:
-            name = 'src/gallium/drivers/freedreno/freedreno_resource.c'
-            original = archive.extractfile('mesa-' + source['commit'] + '/' + name).read()
-        patch = ROOT / 'patches/mesa/27.0' / patches[0]['file']
-        with tempfile.NamedTemporaryFile(prefix='mesa-source-', dir=output) as temporary:
-            temporary.write(original)
-            temporary.flush()
-            result = subprocess.run(['patch', '--batch', '--fuzz=0', '--output=-', temporary.name, patch],
-                                    capture_output=True, check=True)
-        changed[name] = hashlib.sha256(result.stdout).hexdigest()
-    source_files = 0
-    with tarfile.open(source_archive()) as archive:
-        prefix = 'mesa-' + source['commit'] + '/'
-        for member in archive:
-            if not member.isfile():
-                continue
-            name = member.name.removeprefix(prefix)
-            expected = changed.get(name)
-            if expected is None:
-                expected = hashlib.sha256(archive.extractfile(member).read()).hexdigest()
-            if package_build.sha(prepared / name) != expected:
-                raise ValueError('Prepared native Mesa source differs from its official archive: ' + name)
-            source_files += 1
-    options = json.loads((work / 'src/build/meson-info/intro-buildoptions.json').read_text())
-    options = {row['name']: row['value'] for row in options}
-    expected = {
-        'gallium-drivers': 'all', 'gallium-rusticl': True, 'teflon': True,
-        'video-codecs': ['all'], 'html-docs': 'enabled',
-        'vulkan-drivers': ['amd', 'intel', 'intel_hasvk', 'swrast', 'freedreno', 'panfrost',
-                           'virtio', 'broadcom', 'imagination', 'microsoft-experimental',
-                           'nouveau', 'asahi', 'gfxstream'],
-        'vulkan-layers': ['device-select', 'intel-nullhw', 'overlay', 'screenshot', 'vram-report-limit'],
-    }
-    for name, value in expected.items():
-        if options.get(name) != value and not (name == 'gallium-drivers' and options.get(name) == ['all']):
-            raise ValueError('Native Mesa package lost a configured feature: ' + name)
-    packages = {}
-    for archive in sorted(path for path in output.glob('*.pkg.tar.*')
-                          if path.suffix in ('.xz', '.zst', '.gz')):
-        metadata = debian.capture(['bsdtar', '-xOf', archive, '.PKGINFO'])
-        fields = {}
-        for line in metadata.splitlines():
-            if ' = ' in line:
-                name, value = line.split(' = ', 1)
-                fields.setdefault(name, []).append(value)
-        if (fields.get('arch') not in (['aarch64'], ['any']) or
-                fields.get('pkgver') != ['1:' + policy()['arch']['package_version'] + '-' +
-                                         policy()['arch']['package_release']]):
-            raise ValueError('Native Mesa package identity differs: ' + archive.name)
-        elf = {}
-        process = subprocess.Popen(['bsdtar', '-cf', '-', '--format=gnutar', '@' + str(archive)],
-                                   stdout=subprocess.PIPE)
-        try:
-            with tarfile.open(fileobj=process.stdout, mode='r|') as contents:
-                for member in contents:
-                    if not member.isfile():
-                        continue
-                    name = Path(member.name)
-                    if name.is_absolute() or '..' in name.parts:
-                        raise ValueError('Unsafe native package filename')
-                    with contents.extractfile(member) as stream:
-                        header = stream.read(20)
-                        if not header.startswith(b'\x7fELF'):
-                            continue
-                        if header[:6] != b'\x7fELF\x02\x01' or header[18:20] != b'\xb7\x00':
-                            raise ValueError('Native Mesa package contains a non-ARM64 ELF: ' + str(name))
-                        elf['/' + name.as_posix()] = hashlib.sha256(header + stream.read()).hexdigest()
-        finally:
-            process.stdout.close()
-            status = process.wait()
-        if status:
-            raise ValueError('Cannot inspect native Mesa archive: ' + archive.name)
-        if elf:
-            actual = debian.capture(['chroot', root, 'sha256sum', '--', *sorted(elf)])
-            actual = {name: digest for digest, name in
-                      (line.split('  ', 1) for line in actual.splitlines())}
-            if actual != elf:
-                raise ValueError('Installed native Mesa ELF differs from its package: ' + archive.name)
-            for name in elf:
-                result = subprocess.run(['chroot', root, 'ldd', '-r', name],
-                                        capture_output=True, text=True)
-                if result.returncode or any(word in result.stdout + result.stderr
-                                             for word in ('not found', 'undefined symbol')):
-                    raise ValueError('Installed native Mesa ELF has unresolved dependencies: ' + name +
-                                     '\n' + result.stdout + result.stderr)
-        if fields.get('depend'):
-            missing = subprocess.run(['chroot', root, 'pacman', '-T', *fields['depend']],
-                                     capture_output=True, text=True)
-            if missing.returncode:
-                raise ValueError('Installed native Mesa package dependencies are unsatisfied: ' +
-                                 archive.name + '\n' + missing.stdout + missing.stderr)
-        buildinfo = debian.capture(['bsdtar', '-xOf', archive, '.BUILDINFO'])
-        if ('pkgbuild_sha256sum = ' + package_build.sha(work / 'PKGBUILD')) not in buildinfo.splitlines():
-            raise ValueError('Native Mesa build receipt differs from its recipe: ' + archive.name)
-        (output / (archive.name + '.BUILDINFO')).write_text(buildinfo + '\n')
-        packages[archive.name] = {'control': fields, 'elf_sha256': elf}
-    if not packages or not any(row['elf_sha256'] for row in packages.values()):
-        raise ValueError('Native Mesa build produced no ARM64 runtime ELF files')
-    if {row['control']['pkgname'][0] for row in packages.values()} != set(selected):
-        raise ValueError('Native Mesa build did not produce the complete selected package set')
-    (output / 'builder-packages.tsv').write_text(debian.capture(['chroot', root, 'pacman', '-Q']) + '\n')
-    (output / 'VALIDATION.json').write_text(json.dumps({
-        'official_source_files_checked': source_files,
-        'build_options': options, 'packages': packages}, indent=2) + '\n')
-
-
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path, nargs='?', default=ROOT / 'build/mesa')
-    roots = parser.add_mutually_exclusive_group()
-    roots.add_argument('--sysroot', type=Path)
-    roots.add_argument('--rootfs', type=Path, help='Isolated ARM64 pacman root; installs built packages')
-    parser.add_argument('--format', choices=('debian', 'pacman'), default='debian')
-    parser.add_argument('--steamos', action='store_true', help='Keep Valve package identity and height patch')
+    parser.add_argument('--sysroot', type=Path)
     parser.add_argument('--jobs', type=int, default=package_build.default_jobs())
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.jobs < 1:
         parser.error('--jobs must be positive')
-    if args.format == 'pacman' and not args.rootfs:
-        parser.error('--format pacman requires --rootfs')
-    if args.format == 'debian' and (args.rootfs or args.steamos):
-        parser.error('--rootfs and --steamos require --format pacman')
-    if args.format == 'pacman' and args.sysroot:
-        parser.error('--format pacman uses --rootfs, not --sysroot')
-    if (args.sysroot or args.rootfs) and not args.worker:
+    if args.sysroot and not args.worker:
         return subprocess.run(['unshare', '--mount', '--propagation', 'private', sys.executable,
                                __file__, *argv, '--worker']).returncode
     try:
-        result = (build_pacman(args.output, args.rootfs, args.jobs, args.resume, args.steamos)
-                  if args.format == 'pacman' else build(args.output, args.sysroot, args.jobs, args.resume))
-        print(json.dumps(result, indent=2))
+        print(json.dumps(build(args.output, args.sysroot, args.jobs, args.resume), indent=2))
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         parser.exit(2, str(error) + '\n')
     return 0

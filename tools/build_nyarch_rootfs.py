@@ -92,8 +92,8 @@ def build(args):
     if not recipes.exists():
         sensor_recipes(recipes, sensors)
     mesa = recipes / 'mesa'
-    from build import mesa as mesa_builder
-    mesa_builder.arch_recipe(mesa)
+    from build import arch_mesa
+    arch_mesa.recipe(mesa)
     gsd = recipes / 'gnome-settings-daemon'
     if gsd.exists():
         shutil.rmtree(gsd)

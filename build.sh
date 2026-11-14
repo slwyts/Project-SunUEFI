@@ -29,7 +29,7 @@ case "$command" in
     python3 tools/prepare_release_kernel.py --refresh
     python3 tools/build/kernel.py "$@"
     ;;
-  mesa) python3 tools/build/mesa.py "$@" ;;
+  mesa) python3 tools/build/arch_mesa.py "$@" ;;
   sensors) python3 tools/build/sensors.py "$@" ;;
   display-calibration) python3 tools/display/build_output_color.py "$@" ;;
   bsp)

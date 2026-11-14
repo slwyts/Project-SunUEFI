@@ -191,10 +191,10 @@ def kde_repository_package_works(root, name):
 
 def mesa_recipe(output, config):
     """Use the same pinned official development source as Debian and Nyarch."""
-    from build import mesa
+    from build import arch_mesa, mesa
     if config.get('source_config') != str(mesa.CONFIG.relative_to(ROOT)):
         raise ValueError('SteamOS Mesa must use the shared official source configuration')
-    return mesa.arch_recipe(output, steamos=True)
+    return arch_mesa.recipe(output, steamos=True)
 
 
 def build(args):
