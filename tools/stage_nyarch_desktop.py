@@ -66,7 +66,7 @@ def stage(root, source, extensions=None):
             if metadata['uuid'] == 'blur-my-shell@aunetx':
                 subprocess.run([
                     'patch', '--batch', '--fuzz=0', '-p1', '-i',
-                    str(ROOT / 'patches/nyarch/0002-blur-follow-material-color-scheme.patch'),
+                    str(ROOT / 'patches/blur-my-shell/75/0001-follow-material-color-scheme.patch'),
                 ], cwd=root / 'usr/share/gnome-shell/extensions' / folder.name, check=True)
             if metadata['uuid'] == 'gsconnect@andyholmes.github.io':
                 config = root / 'usr/share/gnome-shell/extensions' / folder.name / 'config.js'

@@ -9,7 +9,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 UUID = 'material-you-colors@francescocaracciolo.github.io'
-PATCH = ROOT / 'patches/nyarch/0001-material-you-system-install-gnome51.patch'
+PATCH = ROOT / 'patches/material-you-colors/30/0001-system-install-gnome51.patch'
 
 
 def prepare(source, sysroot, output):

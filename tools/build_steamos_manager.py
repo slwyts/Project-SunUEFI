@@ -10,7 +10,7 @@ from prepare_steamos_rootfs import download
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMIT = 'a0d399defebd60db30ba38325d9cf47dbda49bee'
-PATCH = ROOT / 'patches/steamos-manager/0001-optional-kernel-trace-collection.patch'
+PATCH = ROOT / 'patches/steamos-manager/26.4.1/0001-optional-kernel-trace-collection.patch'
 RECIPE = ROOT / 'linux/bsp/steamos/manager/PKGBUILD'
 INPUTS = (
     ('manager.tar.gz',
