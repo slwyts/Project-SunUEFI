@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
-SERIES = ROOT / 'linux/bsp/patches/ffmpeg/series.json'
+SERIES = ROOT / 'patches/ffmpeg/9.0.2/series.json'
 
 
 def sha(path):
