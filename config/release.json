@@ -5,6 +5,9 @@
     "public_baseline": "352508459733d3e6d349ea5581a8dd2fd8bb4180",
     "patch_series": "patches/linux/7.3/series.json",
     "stable_source": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
+    "stable_source_mirrors": [
+      "https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux"
+    ],
     "stable_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
     "stable_version": "7.3.3",
     "uapi_sha256": "5638464826c36018483e2c06f260c1bc439fc6f66b584f56c1e76ec8846c37e5",

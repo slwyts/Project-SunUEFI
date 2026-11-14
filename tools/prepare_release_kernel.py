@@ -25,6 +25,7 @@ TARGETS = {DEFAULT_TARGET: {
     'kernel_version': _release['kernel_version'],
     'worktree_name': 'release',
     'manifest_directory': 'release',
+    'source_mirrors': json.loads((ROOT / 'config/release.json').read_text())['kernel'].get('stable_source_mirrors', []),
 }}
 COMMITTER_NAME = 'slwyts'
 COMMITTER_EMAIL = 'slwyts@foxmail.com'
@@ -34,10 +35,11 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def git(repository, *args, env=None, check=True):
+def git(repository, *args, env=None, check=True, timeout=None):
     result = subprocess.run(
         ['git', '-C', str(repository), *map(str, args)], env=env,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        timeout=timeout,
     )
     if check and result.returncode:
         raise ValueError('Git command failed: ' + result.stderr.strip()[:6000])
@@ -121,6 +123,26 @@ def is_repository(path):
     return Path(location).resolve() == path.resolve()
 
 
+def fetch_source(repo, policy, commit, depth, stable=False):
+    url = policy['stable_url' if stable else 'source_url']
+    mirrors = policy.get('stable_mirrors' if stable else 'source_mirrors', [])
+    error = ''
+    for _ in range(2):
+        for source in (url, *mirrors):
+            print('Fetching fixed kernel source from ' + source, flush=True)
+            try:
+                result = git(repo, '-c', 'http.lowSpeedLimit=1024', '-c', 'http.lowSpeedTime=30',
+                             'fetch', '--no-tags', '--depth=' + str(depth), source, commit,
+                             check=False, timeout=600)
+            except subprocess.TimeoutExpired:
+                error = 'source request exceeded 600 seconds'
+                continue
+            if not result.returncode and not git(repo, 'cat-file', '-e', commit + '^{commit}', check=False).returncode:
+                return
+            error = result.stderr.strip()[-2000:]
+    raise ValueError('Cannot fetch the fixed kernel commit from its source or mirrors: ' + commit + ': ' + error)
+
+
 def ensure_repository(root, repository, policy):
     if repository is not None:
         repo = Path(repository).resolve()
@@ -145,7 +167,7 @@ def ensure_repository(root, repository, policy):
         if git(repo, 'cat-file', '-e', commit + '^{commit}', check=False).returncode:
             # The URL is fixed in TARGETS; user remotes and original local
             # target commit are never used as fallback fetch sources.
-            git(repo, 'fetch', '--no-tags', '--depth=128', policy['source_url'], commit)
+            fetch_source(repo, policy, commit, 128)
         if git(repo, 'rev-parse', commit + '^{commit}') != commit:
             raise ValueError('Public baseline object mismatch')
     if policy.get('upstream_base_commit'):
@@ -153,7 +175,7 @@ def ensure_repository(root, repository, policy):
         if git(repo, 'merge-base', '--is-ancestor', ancestor, policy['base_commit'], check=False).returncode:
             # The fixed Piano tip has 61 commits after v7.2.6. Having both
             # objects is insufficient when the tip remains a shallow boundary.
-            git(repo, 'fetch', '--no-tags', '--depth=128', policy['source_url'], policy['base_commit'])
+            fetch_source(repo, policy, policy['base_commit'], 128)
         if git(repo, 'merge-base', '--is-ancestor', ancestor, policy['base_commit'], check=False).returncode:
             raise ValueError('Public Piano baseline ancestry is incomplete')
     if policy.get('stable_commit'):
@@ -162,7 +184,7 @@ def ensure_repository(root, repository, policy):
         if ancestry.returncode:
             # Fetch only this fixed stable tip. Deepening every shallow ref is
             # unnecessary; 2048 commits cover the 1633 fixes after v7.2.6.
-            git(repo, 'fetch', '--no-tags', '--depth=2048', policy['stable_url'], stable)
+            fetch_source(repo, policy, stable, 2048, stable=True)
         if (git(repo, 'rev-parse', stable + '^{tree}') != policy['stable_tree'] or
                 git(repo, 'merge-base', '--is-ancestor', policy['upstream_base_commit'], stable, check=False).returncode):
             raise ValueError('Stable source tree/ancestry mismatch')

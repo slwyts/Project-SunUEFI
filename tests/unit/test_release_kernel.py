@@ -404,6 +404,17 @@ class ReleaseKernelTests(unittest.TestCase):
             self.prepare()
         self.assert_no_preparation_mutation()
 
+    def test_missing_primary_kernel_source_uses_fixed_commit_from_mirror(self):
+        cold = self.root / 'mirror-source.git'
+        self.git('init', '--bare', '--quiet', str(cold))
+        policy = {**self.target, 'source_url': str(self.root / 'unavailable'),
+                  'source_mirrors': [self.repository.as_uri()]}
+        with patch.dict(os.environ, self.environment):
+            result = builder.ensure_repository(self.root, cold, policy)
+        self.assertEqual(result, cold)
+        self.assertEqual(self.git('rev-parse', self.base_commit + '^{tree}', directory=cold), self.base_tree)
+        self.assertNotEqual(self.git('rev-parse', self.base_commit, directory=cold), self.original_target_commit)
+
     def test_pinned_target_drift_is_rejected_before_worktree_creation(self):
         self.manifest["target_tree"] = "0" * 40
         self.write_manifest()
