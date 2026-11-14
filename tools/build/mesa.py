@@ -449,6 +449,8 @@ def validate_pacman(root, work, output):
     if len(candidates) != 1:
         raise ValueError('Native Mesa build has an ambiguous prepared source tree')
     prepared = candidates[0]
+    selected = debian.capture(['chroot', root, 'bash', '-c',
+        'source /var/tmp/sunuefi-package-build/PKGBUILD; printf "%s\\n" "${pkgname[@]}"']).splitlines()
     patches = json.loads((work / 'SOURCE.json').read_text())['patches']
     changed = {}
     if patches:
@@ -480,6 +482,10 @@ def validate_pacman(root, work, output):
     expected = {
         'gallium-drivers': 'all', 'gallium-rusticl': True, 'teflon': True,
         'video-codecs': ['all'], 'html-docs': 'enabled',
+        'vulkan-drivers': ['amd', 'intel', 'intel_hasvk', 'swrast', 'freedreno', 'panfrost',
+                           'virtio', 'broadcom', 'imagination', 'microsoft-experimental',
+                           'nouveau', 'asahi', 'gfxstream'],
+        'vulkan-layers': ['device-select', 'intel-nullhw', 'overlay', 'screenshot', 'vram-report-limit'],
     }
     for name, value in expected.items():
         if options.get(name) != value and not (name == 'gallium-drivers' and options.get(name) == ['all']):
@@ -539,11 +545,15 @@ def validate_pacman(root, work, output):
             if missing.returncode:
                 raise ValueError('Installed native Mesa package dependencies are unsatisfied: ' +
                                  archive.name + '\n' + missing.stdout + missing.stderr)
-        (output / (archive.name + '.BUILDINFO')).write_text(
-            debian.capture(['bsdtar', '-xOf', archive, '.BUILDINFO']) + '\n')
+        buildinfo = debian.capture(['bsdtar', '-xOf', archive, '.BUILDINFO'])
+        if ('pkgbuild_sha256sum = ' + package_build.sha(work / 'PKGBUILD')) not in buildinfo.splitlines():
+            raise ValueError('Native Mesa build receipt differs from its recipe: ' + archive.name)
+        (output / (archive.name + '.BUILDINFO')).write_text(buildinfo + '\n')
         packages[archive.name] = {'control': fields, 'elf_sha256': elf}
     if not packages or not any(row['elf_sha256'] for row in packages.values()):
         raise ValueError('Native Mesa build produced no ARM64 runtime ELF files')
+    if {row['control']['pkgname'][0] for row in packages.values()} != set(selected):
+        raise ValueError('Native Mesa build did not produce the complete selected package set')
     (output / 'builder-packages.tsv').write_text(debian.capture(['chroot', root, 'pacman', '-Q']) + '\n')
     (output / 'VALIDATION.json').write_text(json.dumps({
         'official_source_files_checked': source_files,
