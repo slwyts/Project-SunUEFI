@@ -429,6 +429,7 @@ done
     runtime_kernel = runtime_helpers.kernel_identity(
         args.kernel_build.resolve(), kernel_source,
         kernel_record['source_commit'], kernel_record['kernel_release'])
+    stage_arch_piano.hardware.stage_pen_calibration(root)
     if (runtime / 'manifest.json').is_file():
         old = json.loads((runtime / 'manifest.json').read_text())
         if old['kernel'] != runtime_kernel or not build_release_helpers.inputs_current(runtime):
@@ -440,6 +441,7 @@ done
             '--kernel', kernel, '--source', kernel_source,
             '--kernel-build', args.kernel_build.resolve(),
             '--output', runtime, '--sysroot', args.bootstrap_sysroot.resolve(),
+            '--firmware-root', root,
             '--cc', helper_tools['paths']['clang'], env=helper_env)
     # Shared stager installs firmware, matching modules, standard interfaces,
     # input/audio/camera helpers, suspend policy and the LABEL-based initramfs.

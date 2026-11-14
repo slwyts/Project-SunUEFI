@@ -150,8 +150,10 @@ THP、也不生成键鼠输入；连接和 `ServicesResolved` 后完成初始化
 原生 ELF 不放进 `Architecture: all` 配置包。BSP 维护带来源与 SHA256 的数字校准，
 在 `/usr/lib/firmware/novatek/piano-{boe,csot}-pen.ini` 建立指向已有数据的相对
 链接，供标准固件加载器使用。运行时构建器检查匹配内核、notifier 导出符号及
-sysroot 中的校准；新内核缺任何一项就报错，不静默生成用户态绘画 launcher。
+目标根目录中的校准；新内核缺任何一项就报错，不静默生成用户态绘画 launcher。
 两条运行时构建入口将选路与校准摘要写入相同 manifest，安装时再次校验。
+`--sysroot` 只选择编译环境；校准默认在该目录检查，跨发行版构建通过
+`--firmware-root` 指定已从同一 BSP 安装校准的目标 rootfs。
 
 ## 保留的原厂算法 worker
 

@@ -26,13 +26,17 @@
 文件缺失或校验失败时手指输入继续工作，不自动启动用户态笔来掩盖失败。
 
 该实现只完成对象编译、两份实际校准的解析和数学边界检查，还没有实机绘画
-对照。发布构建器核对匹配内核的笔源码、配置、notifier 导出符号及 sysroot 中
+对照。发布构建器核对匹配内核的笔源码、配置、notifier 导出符号及目标根目录中
 两份校准，选择只执行 BlueZ 初始化的 `piano-pen-control`，安装为现有
 `/usr/lib/piano/touch-input`。该进程不写 procfs、不读 hidraw/THP、不创建
 uinput，笔尚未 BLE 连接时也不会退出而连带结束初始化。新内核缺少接线或
 校准时构建报错；运行时校准被删除则记录缺失并保留 BlueZ，不回退出第二个
 工具。udev 在 SPI 驱动绑定后启动原有服务，不等待 THP 的私有节点。
 旧内核构建仍选择原 launcher，供回退与对照；三份发行版使用相同规则。
+编译环境由 `--sysroot` 指定，固件检查默认使用它，也可用 `--firmware-root`
+单独指定目标根目录。SteamOS、Nyarch 在构建运行时前从同一 BSP 清单安装
+校准和链接，并传入自己的 rootfs，不要求 Debian 编译容器安装平板固件。
+最终 staging 仍检查安装目的地，不能用编译环境中的文件代替目标固件。
 
 内核 `input_handler` 只连接 `hid-xiaomi` 的真实 BLE 压力设备，内部 notifier
 保留每个实际样本的 BOOTTIME 时刻，避免 evdev 对不变压力的去重丢失新鲜度。

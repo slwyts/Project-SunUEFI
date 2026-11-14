@@ -285,7 +285,7 @@ def verify_elf(path):
     return {'bytes':len(raw),'sha256':sha(path),'machine':183,'static_no_pt_interp':True}
 
 
-def pen_input_frontend(kernel=None, sysroot=None):
+def pen_input_frontend(kernel=None, firmware_root=None):
     """Select one launcher from the matched kernel and installed calibration."""
     from build_piano_ram_bootstrap import guest_resolve
 
@@ -311,12 +311,12 @@ def pen_input_frontend(kernel=None, sysroot=None):
                fields[2] in ('drivers/hid/hid-xiaomi', 'vmlinux')}
     if not {'xiaomi_pen_register_notifier', 'xiaomi_pen_unregister_notifier'} <= symbols:
         raise ValueError('Build the matched kernel pen/HID modules before selecting kernel input')
-    if sysroot is None:
-        raise ValueError('Kernel pen runtime needs a sysroot with the standard firmware calibration')
+    if firmware_root is None:
+        raise ValueError('Kernel pen runtime needs a target root with the standard firmware calibration')
     inputs = {str(path): sha(path) for path in paths}
     calibrations = {}
     for name, original in PEN_CALIBRATION_PATHS.items():
-        installed = guest_resolve(Path(sysroot), '/' + name)
+        installed = guest_resolve(Path(firmware_root), '/' + name)
         expected = ROOT / original
         if not installed.is_file() or sha(installed) != sha(expected):
             raise ValueError('Stage the matching pen calibration before runtime build: /' + name)
@@ -334,11 +334,13 @@ def pen_input_frontend(kernel=None, sysroot=None):
     return text.replace('@KERNEL_RELEASE@', release).encode(), frontend, record, inputs
 
 
-def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None, kernel=None):
+def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None, kernel=None,
+                   firmware_root=None):
     """Build diagnostics and select one input launcher for the matched kernel."""
     output=Path(output).resolve();env=os.environ.copy() if env is None else env
     source=ROOT/'linux/userspace/pen';copied=output/'pen-source';built=output/'pen-core'
-    frontend_data,frontend,pen_input,frontend_inputs=pen_input_frontend(kernel,sysroot)
+    frontend_data,frontend,pen_input,frontend_inputs=pen_input_frontend(
+        kernel,sysroot if firmware_root is None else firmware_root)
     copied.mkdir();built.mkdir()
     inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
     inputs.update(frontend_inputs)
@@ -536,7 +538,8 @@ def build(args):
     inputs.update(identity['inputs']);output.mkdir(parents=True);log=output/'build.log';files={};commands=[]
     flags=[tools/'clang','--target=aarch64-linux-gnu','--sysroot='+str(sysroot),'--gcc-toolchain='+str(sysroot/'usr'),'-O2','-Wall','-Wextra','-Werror']
     touch_source,touch_provenance=derive_touch_source(public,output)
-    pen_files,pen_record=build_pen_core(output,flags,sysroot,env,qemu,kernel=identity)
+    pen_files,pen_record=build_pen_core(
+        output,flags,sysroot,env,qemu,kernel=identity,firmware_root=args.firmware_root)
     files.update(pen_files);inputs.update(pen_record['inputs'])
     camera_files,camera_record=build_camera(output,flags,pen_record['cxx_command'],uapi,sysroot,env,qemu,('-fuse-ld=lld',))
     files.update(camera_files);inputs.update(camera_record['inputs'])
@@ -589,6 +592,8 @@ def parser():
     p.add_argument('--public-source',type=Path,default=ROOT/'upstream/debian-piano-current');p.add_argument('--uapi',type=Path,default=ROOT/'build/piano-runtime/uapi')
     p.add_argument('--sysroot',type=Path,default=ROOT/'build/distros/piano-runtime-build',
                    help='Prepared ARM64 GNU development sysroot with static libyuv/libjpeg');p.add_argument('--macros',type=Path,default=ROOT/'build/piano-runtime/topology/macros');p.add_argument('--alsa-tools',type=Path,default=ROOT/'build/piano-runtime/topology/host-tools')
+    p.add_argument('--firmware-root',type=Path,
+                   help='Target root containing pen firmware calibration; defaults to --sysroot')
     p.add_argument('--v4l2-source',type=Path,default=ROOT/'build/piano-runtime/v4l2loopback');p.add_argument('--kernel-source',type=Path,default=ROOT/'build/kernel-worktrees/piano-full-integration');p.add_argument('--kernel-commit',default=UAPI_COMMIT)
     p.add_argument('--kernel-build',type=Path,default=ROOT/'build/kernels/full-integration');p.add_argument('--kernel-release',default=DEFAULT_RELEASE);p.add_argument('--stage-rootfs',type=Path)
     return p

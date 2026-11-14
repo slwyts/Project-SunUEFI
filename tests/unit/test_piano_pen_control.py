@@ -1,5 +1,6 @@
 """Select the actual kernel launcher and execute it without input/device access."""
 import os
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 import build_piano_runtime_helpers as runtime
 import package_bsp
+import stage_piano_ram_hardware as hardware
 
 
 class PianoPenControlTests(unittest.TestCase):
@@ -99,6 +101,73 @@ class PianoPenControlTests(unittest.TestCase):
         self.assertEqual(source.name, 'piano-touch-input')
         self.assertEqual(record['mode'], 'userspace')
         self.assertIn(b'--pen-input', data)
+
+    def test_target_calibration_staging_uses_bsp_and_preserves_other_files(self):
+        root = ROOT / 'build/distros'
+        root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='pen-calibration-', dir=root) as directory:
+            target = Path(directory)
+            unrelated = target / 'usr/lib/firmware/unrelated.bin'
+            unrelated.parent.mkdir(parents=True)
+            unrelated.write_bytes(b'keep firmware')
+            rows = hardware.stage_pen_calibration(target)
+            self.assertEqual(len(rows), 4)
+            self.assertEqual(unrelated.read_bytes(), b'keep firmware')
+            _, _, record, _ = runtime.pen_input_frontend(self.kernel, target)
+            self.assertEqual(record['mode'], 'kernel')
+            for name in runtime.PEN_CALIBRATION_PATHS:
+                self.assertTrue((target / name).is_symlink())
+            hardware.stage_pen_calibration(target)
+            self.assertEqual(unrelated.read_bytes(), b'keep firmware')
+
+    def test_target_calibration_preflight_rejects_alias_before_writing(self):
+        root = ROOT / 'build/distros'
+        root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='pen-calibration-', dir=root) as directory:
+            target = Path(directory)
+            alias = target / 'usr/share/piano/pen/calibration/piano-csot.ini'
+            alias.parent.mkdir(parents=True)
+            alias.symlink_to(self.work / 'outside')
+            with self.assertRaisesRegex(ValueError, 'guest symlink'):
+                hardware.stage_pen_calibration(target)
+            self.assertFalse((alias.parent / 'piano-boe.ini').exists())
+            self.assertFalse((self.work / 'outside').exists())
+
+    def test_actual_runtime_entries_accept_distinct_firmware_root(self):
+        result = subprocess.run([sys.executable, str(ROOT / 'tools/build_release_helpers.py'),
+                                 '--firmware-root', str(self.rootfs), '--sysroot', '/', '--help'],
+                                capture_output=True, text=True, check=True)
+        self.assertIn('--firmware-root', result.stdout)
+        result = subprocess.run([sys.executable, str(ROOT / 'tools/build_piano_runtime_helpers.py'),
+                                 '--firmware-root', str(self.rootfs), '--sysroot', '/', '--help'],
+                                capture_output=True, text=True, check=True)
+        self.assertIn('--firmware-root', result.stdout)
+        args = runtime.parser().parse_args([
+            '--output', str(self.work / 'output'), '--sysroot', '/',
+            '--firmware-root', str(self.rootfs)])
+        self.assertEqual(args.sysroot, Path('/'))
+        self.assertEqual(args.firmware_root, self.rootfs)
+
+    @unittest.skipUnless(shutil.which('aarch64-linux-gnu-gcc') and
+                         shutil.which('aarch64-linux-gnu-g++') and
+                         shutil.which('qemu-aarch64-static'), 'ARM64 cross toolchain and QEMU required')
+    def test_real_pen_compile_uses_separate_target_firmware_root(self):
+        compiler = shutil.which('aarch64-linux-gnu-gcc')
+        sysroot = Path(subprocess.check_output([compiler, '-print-sysroot'], text=True).strip())
+        self.assertNotEqual(sysroot, self.rootfs)
+        self.assertFalse((sysroot / next(iter(runtime.PEN_CALIBRATION_PATHS))).exists())
+        output = self.work / 'compiled'
+        output.mkdir()
+        files, record = runtime.build_pen_core(
+            output, [compiler, '--sysroot=' + str(sysroot)], sysroot,
+            emulator=shutil.which('qemu-aarch64-static'), kernel=self.kernel,
+            firmware_root=self.rootfs)
+        self.assertEqual(record['input']['mode'], 'kernel')
+        self.assertTrue(runtime.verify_elf(output / files['usr/bin/piano-pen-offline']['file']))
+        self.assertEqual(json.loads((output / 'pen-manifest.json').read_text())['input']['calibration'],
+                         record['input']['calibration'])
+        launcher = (output / files['usr/lib/piano/touch-input']['file']).read_bytes()
+        self.assertNotIn(b'--pen-input', launcher)
 
 
 if __name__ == '__main__':

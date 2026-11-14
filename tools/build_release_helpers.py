@@ -58,7 +58,8 @@ def run(args, cwd=None):
     subprocess.run([str(x) for x in args], cwd=cwd, check=True)
 
 
-def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
+def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop,
+          firmware_root=None):
     record = json.loads((kernel / 'manifest.json').read_text())
     release, commit = record['kernel_release'], record['source_commit']
     identity = runtime.kernel_identity(kernel_build, source, commit, release)
@@ -95,7 +96,8 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
     if not native and not emulator:
         raise ValueError('AArch64 helper checks need qemu-aarch64 on this host')
     pen_files, pen_record = runtime.build_pen_core(
-        output, flags, sysroot, emulator=emulator, kernel=identity)
+        output, flags, sysroot, emulator=emulator, kernel=identity,
+        firmware_root=firmware_root)
     files.update(pen_files)
     camera_files, camera_record = runtime.build_camera(
         output, flags, pen_record['cxx_command'], uapi, sysroot, emulator=emulator)
@@ -189,12 +191,15 @@ def main():
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--cc', default='clang' if platform.machine() in ('aarch64', 'arm64') else 'aarch64-linux-gnu-gcc')
     parser.add_argument('--sysroot', type=Path)
+    parser.add_argument('--firmware-root', type=Path,
+                        help='Target root containing pen firmware calibration; defaults to --sysroot')
     parser.add_argument('--macros', type=Path, default=ROOT / 'upstream/audioreach-topology')
     parser.add_argument('--v4l2-source', type=Path, default=ROOT / 'upstream/v4l2loopback')
     args = parser.parse_args()
     result = build(args.kernel.resolve(), args.source.resolve(), args.kernel_build.resolve(),
                    args.output.resolve(), args.cc, args.sysroot.resolve() if args.sysroot else None,
-                   args.macros.resolve(), args.v4l2_source.resolve())
+                   args.macros.resolve(), args.v4l2_source.resolve(),
+                   firmware_root=args.firmware_root.resolve() if args.firmware_root else None)
     print(json.dumps({'status': result['status'], 'kernel_release': result['kernel']['release']}))
 
 

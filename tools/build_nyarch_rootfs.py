@@ -149,11 +149,13 @@ def build(args):
     kernel = ROOT / 'artifacts/kernels/release'
     source = Path(json.loads((ROOT / 'build/release/source-manifest.json').read_text())['worktree'])
     runtime = output / 'runtime'
+    stage_arch_piano.hardware.stage_pen_calibration(root)
     if not (runtime / 'manifest.json').exists():
         run(sys.executable, ROOT / 'tools/build_release_helpers.py',
             '--kernel', kernel, '--source', source,
             '--kernel-build', ROOT / 'build/kernels/release',
-            '--output', runtime, '--sysroot', args.bootstrap_sysroot.resolve())
+            '--output', runtime, '--sysroot', args.bootstrap_sysroot.resolve(),
+            '--firmware-root', root)
     stage_arch_piano.stage(argparse.Namespace(
         rootfs=root, kernel=kernel, runtime=runtime, sensor_source=sensors,
         bootstrap_sysroot=args.bootstrap_sysroot, desktop='nyarch',
