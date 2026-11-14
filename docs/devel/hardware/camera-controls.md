@@ -23,6 +23,8 @@ SM8750 TFE980 的 PIX sink 接收四种排列的 RAW10 Bayer，source 和对应�
 
 libcamera 的[传感器要求](https://github.com/libcamera-org/libcamera/blob/v0.8.0/Documentation/sensor_driver_requirements.rst)还要求 RAW sensor 提供 HBLANK、VBLANK、PIXEL_RATE，并把曝光表示为图像行。当前 OV32D40 不满足这一模型，不能重新填入已证明错误的 blanking 值来通过初始化。上游也没有这两颗 sensor 的增益 helper 和实测控件延迟，默认延迟不能代替逐模式测量。
 
+OV32D40 的[设备树 binding](../../../patches/linux/7.3/0115-media-ov32d40-binding.patch)使用通用 video-device、CSI-2 endpoint schema，描述现有四 lane D-PHY、19.2 MHz MCLK、三路电源、低有效 reset 和可选 power domain。binding 的 YAML 与例子通过 `dt_binding_check`，从产品折叠 DT 保留原属性提取的 sensor 节点也通过定向校验；这不等于完整产品 DT 校验通过。原厂遗留节点使完整 DT 的 dtschema 解码失败，原生 Piano skeleton 的通过也不覆盖其未包含的相机节点。
+
 ### Media graph 与并发
 
 当前产品为后摄配置 `s5kjn1 → msm_csiphy1 → msm_csid0 → msm_vfe0_pix → msm_vfe0_video3`，前摄使用 `ov32d40 → msm_csiphy4 → msm_csid1 → msm_vfe1_pix → msm_vfe1_video3`。CSID sink 是 pad 0，IPP 是 source pad 4；VFE sink/source 分别是 pad 0/1。设备节点编号由探测顺序决定，不是配置常量。原始采集使用 CSID source pad 1 和对应 VFE RDI0。

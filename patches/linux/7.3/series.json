@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "fd30b8c2f34ff775a18393f2adbf851fd37915eb",
-  "original_target_commit": "234828360faa08ab1c06c220a164509b25294bab",
+  "target_tree": "433a39c1910096ca2d342d69f3ee7de140fb58db",
+  "original_target_commit": "cf31a12a3d5c25b77566928338c4ff3a8c6629b7",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1498,6 +1498,19 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "The accepted TFE980 implementation must distinguish Bayer sink codes from NV12 PIX capture output, choose a supported sink default and keep raw formats on RDI. Verify format enumeration, negotiation and capture agree with the programmed demosaic and Y/C write masters."
+      }
+    },
+    {
+      "file": "0115-media-ov32d40-binding.patch",
+      "sha256": "70f49ff7b399a9e9397339ec7fc236be72559441c7a252dbd1a64fcb36df695d",
+      "original_commit": "cf31a12a3d5c25b77566928338c4ff3a8c6629b7",
+      "original_parent": "234828360faa08ab1c06c220a164509b25294bab",
+      "committer_date": "2026-11-14T23:03:04+08:00",
+      "tree": "433a39c1910096ca2d342d69f3ee7de140fb58db",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI/blob/main/patches/linux/7.3/0004-media.patch",
+        "drop_when": "Linux includes an OV32D40 binding matching the supported four-lane D-PHY, MCLK, supplies and reset wiring, and the binding example plus unchanged Piano sensor node properties pass schema validation."
       }
     }
   ],
