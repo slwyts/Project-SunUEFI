@@ -431,6 +431,17 @@ def runtime_packages(folder, names, version=None):
     return source, rows
 
 
+def mesa_packages(folder, rootfs):
+    from build import mesa as builder
+    folder = Path(folder).resolve()
+    source, rows = runtime_packages(folder, builder.RUNTIME, builder.package_version())
+    if builder.reusable(folder.parent, builder.target_identity(rootfs)) is None:
+        raise ValueError('Mesa runtime does not match the official source, native recipe or target ABI')
+    return {'source_sha256': digest(folder.parent / 'SOURCE.json'),
+            'official_source': source['official_source'], 'patches': source['patches'],
+            'packages': rows, 'device_verified': False}
+
+
 def sensors_packages(folder, config, root=ROOT, rootfs=None):
     folder = Path(folder).resolve()
     metadata = next((p for p in (folder.parent, folder)
@@ -673,6 +684,9 @@ def execute(record):
                 run(['chroot', rootfs, 'apt-get', 'update'])
                 run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive',
                      'apt-get', 'upgrade', '-y', '--with-new-pkgs', '--no-remove'])
+        mesa_folder = ROOT / 'build/mesa/runtime'
+        run([ROOT / 'build.sh', 'mesa', mesa_folder.parent, '--sysroot', rootfs])
+        mesa = mesa_packages(mesa_folder, rootfs)
         sensor_folder = Path(record.get('sensors_dir') or ROOT / 'build/sensors/runtime')
         if record.get('sensors_dir') is None:
             run([ROOT / 'build.sh', 'sensors', sensor_folder.parent, '--sysroot', rootfs])
@@ -736,10 +750,19 @@ def execute(record):
                 shutil.copy2(ffmpeg_folder / row['file'], ffmpeg_stage / row['file'])
                 if digest(ffmpeg_stage / row['file']) != row['sha256']:
                     raise ValueError('FFmpeg package changed while staging: ' + row['file'])
+        mesa_stage = target(rootfs, 'tmp/piano-mesa-packages')
+        mesa_stage.mkdir(parents=True, exist_ok=True)
+        for row in mesa['packages'].values():
+            destination = mesa_stage / row['file']
+            shutil.copy2(mesa_folder / row['file'], destination)
+            if digest(destination) != row['sha256']:
+                raise ValueError('Mesa package changed while staging: ' + row['file'])
         with build_devices(rootfs), build_resolver(rootfs):
             run(['chroot', rootfs, 'apt-get', 'update'])
             local_packages = ['/tmp/piano-sensors-packages/' + row['file']
                               for row in sensors['packages'].values()]
+            local_packages.extend('/tmp/piano-mesa-packages/' + row['file']
+                                  for row in mesa['packages'].values())
             local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
                                   for row in gsd['packages'].values())
             local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
@@ -764,6 +787,7 @@ def execute(record):
                      'apt-get', 'purge', '-y', 'firefox-esr'])
         shutil.rmtree(sensor_stage)
         shutil.rmtree(gsd_stage)
+        shutil.rmtree(mesa_stage)
         if ffmpeg:
             shutil.rmtree(ffmpeg_stage)
         sensor_unit = target(rootfs, 'usr/lib/systemd/system/adsprpcd-sensorspd.service')
@@ -810,6 +834,9 @@ def execute(record):
         (out / 'packages.tsv').write_text(packages + '\n')
         installed = {p[0].split(':')[0]: p[1] for line in packages.splitlines() if len(p := line.split('\t')) == 4 and p[3] == 'installed'}
         defaults = default_system_record(rootfs, installed, cfg, desktop)
+        for package, row in mesa['packages'].items():
+            if installed.get(package) != row['version']:
+                raise ValueError('Installed official Mesa package version differs: ' + package)
         for package, row in sensors['packages'].items():
             if installed.get(package) != row['version']:
                 raise ValueError('Installed Piano sensors version differs: ' + package)
@@ -845,7 +872,7 @@ def execute(record):
                   'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata,
                   'debian_archive': archive, 'debian_suite': cfg['debian']['suite'],
                   'debian_commit': cfg['debian']['commit'],
-                  'sensors': sensors, 'ffmpeg': ffmpeg, 'gnome_power': gsd,
+                  'mesa': mesa, 'sensors': sensors, 'ffmpeg': ffmpeg, 'gnome_power': gsd,
                   'mutter': mutter, 'gdm': gdm, 'pipewire': pipewire,
                   'boot_request': boot_request, 'firmware_components': cfg['firmware']['components'],
                   'clock_epoch': clock,
