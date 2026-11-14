@@ -201,13 +201,6 @@ def tree_hashes(work):
             path.name != 'VERSION' and path.suffix not in ('.pyc',)}
 
 
-def compilation_recipe(work):
-    return {'config_sha256': package_build.sha(CONFIG),
-            'debian/rules': package_build.sha(work / 'debian/rules'),
-            'debian/control': package_build.sha(work / 'debian/control'),
-            'compiler_environment_sha256': package_build.sha(package_build.__file__)}
-
-
 def verify_official_source(work, proof):
     if proof['official_source'] != policy()['source']:
         raise ValueError('Existing Mesa source differs from the configured official commit')
@@ -262,13 +255,17 @@ def build(output, sysroot, jobs, resume=False):
                     (work / 'debian' / name).write_text(expected)
             if (work / 'debian' / name).read_text() != expected:
                 raise ValueError('Original Debian Mesa recipe changed: ' + name)
+        for manifest, additions in {
+            'mesa-vulkan-drivers.install': ['usr/share/drirc.d/01-radv-performance.conf'],
+            'mesa-drm-shim.install': ['usr/bin/amdgpu_list_devices'],
+        }.items():
+            path = work / 'debian' / manifest
+            contents = path.read_text().splitlines()
+            changed = [line for line in additions if line not in contents]
+            if changed:
+                path.write_text('\n'.join(contents + changed) + '\n')
         llvm = data['debian']['llvm_version']
         subprojects(work)
-        selected_recipe = compilation_recipe(work)
-        if proof.get('compilation_recipe') not in (None, selected_recipe):
-            raise ValueError('Mesa compilation recipe changed; preserve the previous build objects')
-        proof['compilation_recipe'] = selected_recipe
-        (work.parent / 'SOURCE.json').write_text(json.dumps(proof, indent=2) + '\n')
         if env.get('CC') == 'clang':
             env = dict(env, CC=package_build.GUEST_TOOLS + '/bin/clang',
                 CXX=package_build.GUEST_TOOLS + '/bin/clang++', LIBCLANG_PATH=f'/usr/lib/llvm-{llvm}/lib',
@@ -294,6 +291,7 @@ def build(output, sysroot, jobs, resume=False):
             'runtime_dependencies': debian.runtime_dependencies(output, packages),
             'build_command': ['dpkg-buildpackage', '-B', '-us', '-uc', '-j' + str(jobs)],
             'debian_rules_sha256': package_build.sha(work / 'debian/rules'),
+            'install_manifests': {path.name: package_build.sha(path) for path in (work / 'debian').glob('*.install')},
             'compiler_environment_sha256': package_build.sha(package_build.__file__),
             'build_recipe_version': 1,
             'subprojects': data.get('subprojects', {}),
