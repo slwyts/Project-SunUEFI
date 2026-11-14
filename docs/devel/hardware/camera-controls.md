@@ -59,7 +59,7 @@ Qualcomm 的 [IFE BG 统计提案](https://lore.kernel.org/linux-media/202610062
 
 产品内核的 `MEDIA_IOC_G_TOPOLOGY` 已确认后摄到 DW9768 和两路 flash 的三个 enabled、immutable ancillary links，运行设备树的 `lens-focus` 和 `flash-leds` 指向相同设备。关联不是 libcamera 接入的缺项，仍缺的是算法、标定和闪光拍照流程。
 
-内核图目前公布 CSID 与 VFE 之间的全连接，但 Gen4 的寄存器更新、帧时序与完成回调按相同硬件编号分派；不能把所有公布的跨编号链接都当作已实现的路由。pipeline 必须先约束已实现的路由，并核实是否需要收窄内核图，再验证前后摄同时工作、交错停流、模式切换和失败恢复。共享隐私灯的引用计数验证不证明两路图像、统计和控件互不干扰。
+SM8750 只公布同编号 CSID→VFE 链接，与 Gen4 的寄存器更新、帧时序和完成回调一致；CSIPHY 选择和其他 SoC 的图保持不变。CSID 四个 source pad 共用格式归一化，IPP pad 4 不再接受任意 code 或尺寸。前后摄同时工作、交错停流、模式切换和失败恢复仍需实机检查；共享隐私灯的引用计数验证不证明两路图像、统计和控件互不干扰。
 
 原有 7.3.3 产品内核的两个 PIX 节点各通过 48 项不含开流的 `v4l2-compliance 1.30.1` 检查，0 warning，Requests 报告 Not Supported。这只说明该基线的 ioctl 行为，不覆盖格式修正后的开流、3A、闪光同步或 libcamera。
 

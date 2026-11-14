@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "63272cf90df64f2dc2c8cd879cbf8ef917cfa7e7",
-  "original_target_commit": "458ad8d888c23d2d99cff9e7aadbfee32498121d",
+  "target_tree": "d02bd6bc1e840fc4c52e6944df7e6e11af26125b",
+  "original_target_commit": "bd537a1307b73309e83c9d99c1db851fb921127c",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1524,6 +1524,58 @@
         "status": "downstream",
         "url": "https://lore.kernel.org/linux-media/20260508-add-support-for-camss-on-sm8750-v3-0-fc6861a65c67@oss.qualcomm.com/",
         "drop_when": "The upstream SM8750 CAMSS binding describes the TFE Bayer processing, fast AHB and CAMNOC clocks and capture interconnects consumed by the accepted driver, and its example plus the complete Piano camera resource description validate."
+      }
+    },
+    {
+      "file": "0117-media-camss-csid-vfe-links.patch",
+      "sha256": "5f2cc0593f08364c6849aa5dea01520ef86b33598412972683d50641a00bf9ac",
+      "original_commit": "219c69941e0a76bfd22dca1671d9cb9a19c5330a",
+      "original_parent": "458ad8d888c23d2d99cff9e7aadbfee32498121d",
+      "tree": "3eee7be269ac68ad1867dd39bd90dd600192d308",
+      "committer_date": "2026-11-15T00:40:18+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI/blob/main/patches/linux/7.3/0004-media.patch",
+        "drop_when": "The accepted upstream SM8750 CAMSS driver exposes only routes backed by its register-update, frame-timing and completion mapping, and both Piano cameras pass stream, concurrent capture, stop and recovery validation."
+      }
+    },
+    {
+      "file": "0118-media-camss-csid-source-formats.patch",
+      "sha256": "ee651052aee1c495d9cae8803db6303b3a2602ee4b1fa5920ac9b4287ceb4c8e",
+      "original_commit": "a2b0148a0e9426b26b685db9a619b4a6a9d66ccc",
+      "original_parent": "219c69941e0a76bfd22dca1671d9cb9a19c5330a",
+      "tree": "0f4c1f8d0d5e411ff2712b21863fadcbd1866893",
+      "committer_date": "2026-11-15T00:53:33+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/drivers/media/platform/qcom/camss/camss-csid.c?id=d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
+        "drop_when": "Upstream CSID format negotiation validates and propagates formats on all four source pads, and S_FMT plus ENUM_FRAME_SIZE on every pad pass the hardware regression checks."
+      }
+    },
+    {
+      "file": "0119-clock-sm8750-mclk-power-binding.patch",
+      "sha256": "4cda5f5aafb3119f969c7fe69833439aa16385d31943bcac9110f48e9359bc81",
+      "original_commit": "6f3acdadb986a802931fb1e726ae4e6596da78b1",
+      "original_parent": "a2b0148a0e9426b26b685db9a619b4a6a9d66ccc",
+      "tree": "8b4645748322a3f7160f55987f6bbf346422d975",
+      "committer_date": "2026-11-15T01:21:54+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/blu-sharky/debian-piano/blob/a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45/boot/dtbo-piano-camera.dts#L38-L40",
+        "drop_when": "The upstream SM8750 MCLK provider binding models its Titan top power dependency, provider examples and complete Piano clock nodes pass schema validation, and the domain relationship matches the accepted clock implementation."
+      }
+    },
+    {
+      "file": "0120-arm64-sm8750-mclk-power.patch",
+      "sha256": "df345d65ced6498a6513b3349c68768a8407cf29aeea97ce96782353e0936854",
+      "original_commit": "bd537a1307b73309e83c9d99c1db851fb921127c",
+      "original_parent": "6f3acdadb986a802931fb1e726ae4e6596da78b1",
+      "tree": "d02bd6bc1e840fc4c52e6944df7e6e11af26125b",
+      "committer_date": "2026-11-15T01:22:15+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/blu-sharky/debian-piano/blob/a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45/boot/dtbo-piano-camera.dts#L239-L268",
+        "drop_when": "Upstream SM8750 describes the MCLK provider Titan dependency and Piano verifies cold probe, MCLK prepare/unprepare, suspend/resume, repeated streaming and failure cleanup without relying on sensor-level Titan votes."
       }
     }
   ],
