@@ -6,15 +6,19 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shlex
 import shutil
 import stat
 import subprocess
+import tarfile
 import tempfile
 
 from desktop import package_build
 
 ROOT = Path(__file__).resolve().parents[2]
+ABI_PACKAGES = ('libc6', 'libglib2.0-0t64', 'libstdc++6', 'libgcc-s1',
+                'libsystemd0', 'libwayland-client0', 'libgbm1')
 
 
 def run(args, **kwargs):
@@ -47,6 +51,49 @@ def checksum_rows(row):
             for digest, size, name in (line.split() for line in row['Checksums-Sha256'].splitlines() if line)}
 
 
+def library_versions(root):
+    installed = controls(capture(['chroot', root, 'dpkg-query', '-W',
+                                  '-f=Package: ${Package}\nVersion: ${Version}\n'
+                                  'Status: ${db:Status-Status}\nSource: ${source:Package}\n\n']))
+    return {row['Package']: {'version': row['Version'], 'source': row.get('Source')}
+            for row in installed if row.get('Status') == 'installed' and row['Package'].startswith('lib')}
+
+
+def build_packages(root):
+    runtime = controls(capture(['chroot', root, 'dpkg-query', '-W',
+                                '-f=Package: ${Package}\nVersion: ${Version}\n'
+                                'Status: ${db:Status-Status}\n\n']))
+    return {row['Package']: row['Version'] for row in runtime if row.get('Status') == 'installed'}
+
+
+def runtime_dependencies(output, packages):
+    names = set(ABI_PACKAGES)
+    for row in packages.values():
+        text = capture(['dpkg-deb', '-f', output / 'runtime' / row['file'], 'Depends'])
+        for dependency in re.split(r'[,|]', text):
+            if match := re.match(r'\s*([a-z0-9][a-z0-9+.-]*)', dependency):
+                names.add(match[1])
+    return sorted(names)
+
+
+def validate_resume(output, target, patches, version):
+    manifest = output / 'SOURCE.json'
+    if not manifest.is_file():
+        return
+    record = json.loads(manifest.read_text())
+    if record.get('patches') != patches or record.get('package_version') != version:
+        raise ValueError('Resume requires the same package version and patches')
+    before = record.get('target')
+    if before is not None and any(before.get(key) != target.get(key) for key in ('suite', 'architecture', 'sources', 'binaries')):
+        raise ValueError('Resume requires the same target ABI and source selection')
+    if record.get('build_packages'):
+        for name in record.get('runtime_dependencies', ABI_PACKAGES):
+            if name in record.get('packages', {}) or name not in target['libraries']:
+                continue
+            if record['build_packages'].get(name) != target['libraries'][name]['version']:
+                raise ValueError('Resume requires the same runtime dependency ABI: ' + name)
+
+
 def guest(root, args, **kwargs):
     return run(['chroot', root, '/usr/bin/env', 'DEBIAN_FRONTEND=noninteractive',
                 'LC_ALL=C.UTF-8', 'LANG=C.UTF-8', *args], **kwargs)
@@ -63,6 +110,60 @@ def verify_sid(root):
     indexes = list((root / 'var/lib/apt/lists').glob('*InRelease'))
     if not indexes or any('\nCodename: sid\n' not in path.read_text() for path in indexes):
         raise ValueError('Use only authenticated Debian sid APT indexes in this builder')
+
+
+def target_identity(root, sources, anchors):
+    """Bind a completed-package cache to signed source selection and target libs."""
+    from desktop import debian_package as signed
+    root = Path(root).resolve()
+    verify_sid(root)
+    libraries = library_versions(root)
+    records, _ = signed.signed_records(root, 'Packages', (*anchors.values(), *ABI_PACKAGES))
+    selected = {}
+    for package in sorted(set(anchors.values()) | set(ABI_PACKAGES)):
+        candidates = [row for row in records if row['Package'] == package and
+                      row['Architecture'] in ('arm64', 'all')]
+        if not candidates:
+            if package not in anchors.values() and package not in libraries:
+                continue
+            raise ValueError('Signed sid index has no target package: ' + package)
+        row = candidates[0]
+        for candidate in candidates[1:]:
+            if subprocess.run(['dpkg', '--compare-versions', candidate['Version'], 'gt', row['Version']]).returncode == 0:
+                row = candidate
+        if len({item['SHA256'] for item in candidates if item['Version'] == row['Version']}) != 1:
+            raise ValueError('Signed sid target version is ambiguous: ' + package)
+        source_name, version = signed.source_identity(row)
+        if package in anchors.values() and sources.get(source_name) != version:
+            raise ValueError('The configured source differs from the target sid ABI: ' + source_name)
+        if package in libraries and package in ABI_PACKAGES and libraries[package]['version'] != row['Version']:
+            if '+piano' not in libraries[package]['version'] and '+sunuefi' not in libraries[package]['version']:
+                raise ValueError('Refresh the target sid ABI before building: ' + package)
+        selected[package] = {'version': row['Version'], 'source': source_name,
+                             'source_version': version, 'sha256': row['SHA256']}
+    target = {'suite': 'sid', 'architecture': 'arm64', 'sources': sources,
+              'binaries': selected, 'libraries': libraries}
+    if list((root / 'var/lib/apt/lists').glob('*_source_Sources*')):
+        target['source_checksums'] = source_checksums(root, sources)
+    return target
+
+
+def source_checksums(root, selected):
+    from desktop import debian_package as signed
+    records, _ = signed.signed_records(root, 'Sources', tuple(selected))
+    result = {}
+    for package, version in selected.items():
+        rows = [row for row in records if row.get('Package') == package and row.get('Version') == version]
+        if not rows or any(checksum_rows(row) != checksum_rows(rows[0]) for row in rows):
+            raise ValueError('Signed sid source version is unavailable or ambiguous: ' + package)
+        result[package] = checksum_rows(rows[0])
+    return result
+
+
+def verify_original_recipe(work, origin):
+    for name, digest in origin.get('recipe', {}).items():
+        if package_build.sha(work / name) != digest:
+            raise ValueError('The original Debian package recipe changed: ' + origin['package'])
 
 
 @contextmanager
@@ -165,17 +266,19 @@ def command(root, env, path, args, log):
 
 
 def source(root, output, package, version, log):
+    from desktop import debian_package as signed
     cache = output / 'archives' / package
     cache.mkdir(parents=True, exist_ok=True)
-    command(root, {}, cache, ['apt-get', 'source', '--download-only', '--only-source',
-                             package + '=' + version], log)
-    rows = [row for row in controls(capture(
-        ['chroot', root, 'apt-cache', 'showsrc', '--only-source', package]))
-            if row.get('Package') == package and row.get('Version') == version]
+    records, proofs = signed.signed_records(root, 'Sources', (package,))
+    rows = [row for row in records if row.get('Package') == package and row.get('Version') == version]
     if not rows or any(checksum_rows(row) != checksum_rows(rows[0]) for row in rows):
         raise ValueError('Signed sid source index must unambiguously identify ' + package + ' ' + version)
     expected = checksum_rows(rows[0])
     expected = dict(sorted(expected.items()))
+    if not all((cache / name).is_file() and (cache / name).stat().st_size == proof['size'] and
+               package_build.sha(cache / name) == proof['sha256'] for name, proof in expected.items()):
+        command(root, {}, cache, ['apt-get', 'source', '--download-only', '--only-source',
+                                 package + '=' + version], log)
     for name, proof in expected.items():
         if Path(name).name != name:
             raise ValueError('Invalid source archive filename')
@@ -192,7 +295,12 @@ def source(root, output, package, version, log):
               'archives': [{'file': name, **proof} for name, proof in expected.items()],
               'apt_source_record_sha256': hashlib.sha256(json.dumps(rows[0], sort_keys=True).encode()).hexdigest(),
               'apt_inrelease': [{'file': p.name, 'sha256': package_build.sha(p)}
-                                for p in sorted((root / 'var/lib/apt/lists').glob('*InRelease'))]}
+                                 for p in sorted((root / 'var/lib/apt/lists').glob('*InRelease'))]}
+    archive = next(name for name in expected if '.debian.tar.' in name)
+    with tarfile.open(cache / archive) as packaging:
+        recipe = {name: packaging.extractfile(name).read() for name in ('debian/rules', 'debian/control')}
+    origin['recipe'] = {name: hashlib.sha256(data).hexdigest() for name, data in recipe.items()}
+    origin['apt_indexes'] = proofs
     work = output / 'sources' / package
     if not work.exists():
         work.parent.mkdir(parents=True, exist_ok=True)
@@ -200,19 +308,45 @@ def source(root, output, package, version, log):
         (work / 'SOURCE.json').write_text(json.dumps(origin, indent=2) + '\n')
     else:
         previous = json.loads((work / 'SOURCE.json').read_text())
-        if previous.get('archives') != origin['archives'] or previous.get('version') != version:
+        before = {row['file']: (row['sha256'], row['size']) for row in previous.get('archives', [])}
+        after = {row['file']: (row['sha256'], row['size']) for row in origin['archives']}
+        if before != after or previous.get('version') != version:
             raise ValueError('The prepared source differs from the current signed source index')
+    verify_original_recipe(work, origin)
     return work, origin
 
 
-def build(root, env, source, jobs, log, architecture_only=False):
+def binaries(root, cache, names, version, log):
+    from desktop import debian_package as signed
+    rows, proofs = signed.signed_records(root, 'Packages', names)
+    selected = {}
+    cache.mkdir(exist_ok=True)
+    for package in names:
+        candidates = [row for row in rows if row['Package'] == package and
+                      row['Version'] == version and row['Architecture'] == 'arm64']
+        if not candidates or len({row['SHA256'] for row in candidates}) != 1:
+            raise ValueError('Signed sid binary version is unavailable or ambiguous: ' + package)
+        row = candidates[0]
+        path = cache / Path(row['Filename']).name
+        if not path.is_file() or package_build.sha(path) != row['SHA256']:
+            command(root, {}, cache, ['apt-get', 'download', package + '=' + version], log)
+        if path.stat().st_size != int(row['Size']) or package_build.sha(path) != row['SHA256']:
+            raise ValueError('Binary package differs from signed sid Packages: ' + path.name)
+        selected[package] = {'file': path.name, 'version': version, 'sha256': row['SHA256']}
+    return {'packages': selected, 'apt_indexes': proofs}
+
+
+def build(root, env, source, jobs, log, architecture_only=False, resume=False):
     options = 'nocheck parallel=' + str(jobs)
     env = dict(env, DEB_BUILD_OPTIONS=options, DEB_BUILD_PROFILES='nocheck')
-    command(root, env, source, ['mk-build-deps', '--install', '--remove',
-                               '--tool=apt-get -y --no-remove --no-install-recommends',
-                               'debian/control'], log)
+    if subprocess.run(['chroot', str(root), 'sh', '-c',
+                       'cd ' + shlex.quote(inside(root, source)) + ' && dpkg-checkbuilddeps -Pnocheck'],
+                      stdout=log, stderr=subprocess.STDOUT).returncode:
+        command(root, env, source, ['mk-build-deps', '--install', '--remove',
+                                   '--tool=apt-get -y --no-remove --no-install-recommends',
+                                   'debian/control'], log)
     command(root, env, source, ['dpkg-buildpackage', '-B' if architecture_only else '-b',
-                               '-us', '-uc', '-j' + str(jobs)], log)
+                               '-us', '-uc', '-j' + str(jobs), *(['-nc'] if resume else [])], log)
 
 
 def align_development_cohorts(root, log):
@@ -238,9 +372,13 @@ def align_development_cohorts(root, log):
                      '--no-install-recommends', *targets], stdout=log, stderr=subprocess.STDOUT)
 
 
-def dependencies(root, log):
-    guest(root, ['apt-get', 'update'], stdout=log, stderr=subprocess.STDOUT)
+def dependencies(root, log, resume=False):
+    from desktop import debian_package as signed
+    if not resume:
+        guest(root, ['apt-get', '-oAcquire::AllowInsecureRepositories=false',
+                     '-oAPT::Get::AllowUnauthenticated=false', 'update'], stdout=log, stderr=subprocess.STDOUT)
     verify_sid(root)
+    signed.signed_records(root, 'Sources', ())
     if root != Path('/'):
         align_development_cohorts(root, log)
     guest(root, ['apt-get', 'install', '-y', '--no-install-recommends', 'build-essential',
@@ -260,10 +398,13 @@ def add_patches(work, patches, package, version, message):
         target = directory / ('sunuefi-' + patch.name)
         if target.exists() and target.read_bytes() != patch.read_bytes():
             raise ValueError('Prepared patch changed: ' + patch.name)
-        target.write_bytes(patch.read_bytes())
+        if not target.exists():
+            target.write_bytes(patch.read_bytes())
         if target.name not in names:
             names.append(target.name)
-    series.write_text('\n'.join(names) + '\n')
+    contents = '\n'.join(names) + '\n'
+    if not series.exists() or series.read_text() != contents:
+        series.write_text(contents)
     changelog = work / 'debian/changelog'
     first = changelog.read_text().splitlines()[0]
     if first.split('(', 1)[1].split(')', 1)[0] != version or ') sid;' not in first:
@@ -279,15 +420,49 @@ def write_manifest(output, record):
                                             for row in record['packages'].values()))
 
 
-def reusable(output, version, patches, runtime):
+def reusable(output, version, patches, runtime, target=None):
     try:
         record = json.loads((output / 'SOURCE.json').read_text())
         if (record.get('package_version') != version or record.get('patches') != patches or
+                not record.get('target') or not record.get('build_packages') or (target is not None and
+                    {key: value for key, value in record['target'].items() if key not in ('source_checksums', 'libraries')} !=
+                    {key: value for key, value in target.items() if key not in ('source_checksums', 'libraries')}) or
                 record.get('producer_sha256') != package_build.sha(ROOT / record['producer']) or
                 record.get('builder_sha256') != package_build.sha(__file__) or
+                record.get('verifier_sha256') != verifier_sha() or
+                record.get('compiler_environment_sha256') != package_build.sha(package_build.__file__) or
                 set(record.get('packages', {})) != set(runtime) or
                 not record.get('packages_built') or (output / '.incomplete').exists()):
             return None
+        if target is not None:
+            local_packages = set(record['packages'])
+            for name in record.get('runtime_dependencies', ABI_PACKAGES):
+                if name in local_packages or name not in target['libraries']:
+                    continue
+                if record['build_packages'].get(name) != target['libraries'][name]['version']:
+                    return None
+        origins = record.get('sources') or {record['source']['package']: record['source']}
+        for name, source_version in record['target']['sources'].items():
+            if name == 'fastrpc':
+                continue  # The unchanged archive binary is authenticated separately by APT.
+            origin = origins.get(name, {})
+            if (origin.get('suite') != 'sid' or origin.get('version') != source_version or
+                    set(origin.get('recipe', {})) != {'debian/rules', 'debian/control'} or
+                    not origin.get('apt_indexes')):
+                return None
+            if target is not None and target.get('source_checksums'):
+                checksums = {row['file']: {'sha256': row['sha256'], 'size': row['size']}
+                             for row in origin['archives']}
+                if checksums != target['source_checksums'][name]:
+                    return None
+        if 'fastrpc' in record['target']['sources']:
+            binary = record.get('fastrpc', {})
+            if not binary.get('apt_indexes') or set(binary.get('packages', {})) != {'libfastrpc1', 'fastrpc-support'}:
+                return None
+            for name, row in binary['packages'].items():
+                runtime_row = record['packages'][name]
+                if any(row[key] != runtime_row[key] for key in ('file', 'version', 'sha256')):
+                    return None
         for row in record['packages'].values():
             if (Path(row['file']).name != row['file'] or row['architecture'] not in ('all', 'arm64') or
                     package_build.sha(output / 'runtime' / row['file']) != row['sha256']):
@@ -295,6 +470,11 @@ def reusable(output, version, patches, runtime):
         return record
     except (ValueError, KeyError, OSError):
         return None
+
+
+def verifier_sha():
+    from desktop import debian_package
+    return package_build.sha(debian_package.__file__)
 
 
 def collect(output, source_dir, runtime_names, version=None, built=True):

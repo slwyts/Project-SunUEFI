@@ -37,6 +37,8 @@ FFmpeg 8 和 9 分别使用官方 8.1.1、9.0.2 归档。上游 9.0.2 及 Debian
 SteamOS 和 Nyarch 的包缓存同时核对版本、补丁系列与二进制包哈希。
 修改系列后重新构建完整包；复用缓存时重新安装该包，不保留被基础软件源替换的版本。
 
+Debian 的 `SOURCE.json` 同时绑定签名 sid 源身份、目标已安装运行库 ABI、原始 `debian/rules`／`debian/control`、补丁和二进制哈希。源码或 ABI 改变不能命中旧包；同目录的 `--resume` 校验这些身份后复用完整 `.changes` 或继续未完成对象，不重下已验哈希的归档、不重新配置完整软件包。
+
 ## 解码流程修正
 
 依据 [Linux stateful decoder 文档](https://www.kernel.org/doc/html/latest/userspace-api/media/v4l/dev-decoder.html)，

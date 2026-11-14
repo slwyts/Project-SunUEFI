@@ -38,7 +38,7 @@ def source_workspace(output, config):
     return workspace, record
 
 
-def build(output, sysroot=None, jobs=None, libssc_only=False):
+def build(output, sysroot=None, jobs=None, libssc_only=False, resume=False):
     output = output.resolve()
     jobs = package_build.default_jobs() if jobs is None else jobs
     if jobs < 1:
@@ -48,13 +48,22 @@ def build(output, sysroot=None, jobs=None, libssc_only=False):
     versions = policy['source_versions']
     runtime_names = {'libssc2', 'libssc-bin'} if libssc_only else RUNTIME
     patches = [{'path': name, 'sha256': package_build.sha(ROOT / name)} for name in config['patches']]
-    cached = debian.reusable(output, policy['native_version'], patches, runtime_names)
+    selected = {'libssc': versions['libssc']}
+    anchors = {'libssc': 'libssc2'}
+    if not libssc_only:
+        selected.update({'iio-sensor-proxy': versions['iio-sensor-proxy'], 'fastrpc': versions['fastrpc']})
+        anchors['iio-sensor-proxy'] = 'iio-sensor-proxy'
+    target = debian.target_identity(sysroot or Path('/'), selected, anchors)
+    cached = debian.reusable(output, policy['native_version'], patches, runtime_names, target)
     if cached and cached.get('policy_sha256') == package_build.sha(POLICY):
         return cached
+    if resume:
+        debian.validate_resume(output, target, patches, policy['native_version'])
     with debian.builder(output, sysroot) as (root, env), (output / 'build.log').open('a') as log:
         (output / '.incomplete').write_text('Sensors package build has not completed.\n')
         workspace, provenance = source_workspace(output, config)
-        debian.dependencies(root, log)
+        debian.dependencies(root, log, resume)
+        target['source_checksums'] = debian.source_checksums(root, selected)
         packages, sources = {}, {}
         for name in ['libssc'] + ([] if libssc_only else ['iio-sensor-proxy']):
             work, origin = debian.source(root, output, name, versions[name], log)
@@ -69,8 +78,18 @@ def build(output, sysroot=None, jobs=None, libssc_only=False):
                 symbols = work / 'debian/libssc2.symbols'
                 if 'ssc_sensor_decode_vector_report@' not in symbols.read_text():
                     symbols.write_text(symbols.read_text().rstrip() +
-                                       '\n ssc_sensor_decode_vector_report@LIBSSC_0.4.0 ' + version + '\n')
-            debian.build(root, env, work, jobs, log)
+                                        '\n ssc_sensor_decode_vector_report@LIBSSC_0.4.0 ' + version + '\n')
+            marker = work / 'SOURCE.json'
+            previous = json.loads(marker.read_text())
+            identity = {'target': target, 'package_version': version,
+                        'patches': [{'file': p.name, 'sha256': package_build.sha(p)} for p in patches]}
+            if previous.get('build_identity') not in (None, identity):
+                raise ValueError('Resume requires the same sensor source, patches and target ABI')
+            previous['build_identity'] = identity
+            marker.write_text(json.dumps(previous, indent=2) + '\n')
+            changes = work.parent / f'{name}_{version}_arm64.changes'
+            if not resume or not changes.is_file():
+                debian.build(root, env, work, jobs, log, resume=resume)
             names = {'libssc2', 'libssc-bin'} if name == 'libssc' else {'iio-sensor-proxy'}
             packages.update(debian.collect(output, work.parent, names, version))
             sources[name] = origin
@@ -87,24 +106,26 @@ def build(output, sysroot=None, jobs=None, libssc_only=False):
             version = policy['native_version']
             debian.add_patches(native, [], 'piano-sensors', version,
                                'Build the sensor integration for Debian sid.')
-            debian.build(root, env, native, jobs, log)
+            if not resume or not (native.parent / f'piano-sensors_{version}_arm64.changes').is_file():
+                debian.build(root, env, native, jobs, log, resume=resume)
             packages.update(debian.collect(output, native.parent, {'piano-sensors'}, version))
             cache = output / 'fastrpc'
-            cache.mkdir(exist_ok=True)
-            debian.command(root, {}, cache, ['apt-get', 'download',
-                                            'fastrpc-support=' + versions['fastrpc'],
-                                            'libfastrpc1=' + versions['fastrpc']], log)
-            # apt-get download authenticates these binaries against signed sid Packages.
+            provenance['fastrpc'] = debian.binaries(
+                root, cache, ['fastrpc-support', 'libfastrpc1'], versions['fastrpc'], log)
             packages.update(debian.collect(output, cache, {'fastrpc-support', 'libfastrpc1'},
                                            versions['fastrpc'], built=False))
         if packages.keys() != runtime_names:
             raise ValueError('Incomplete sensors runtime package set')
-        provenance.update(suite='sid', sources=sources, packages=packages, packages_built=True,
+        provenance.update(suite='sid', target=target, sources=sources, packages=packages, packages_built=True,
                           package_version=policy['native_version'],
                           recipe='original Debian debian/rules and control',
                           producer=str(Path(__file__).relative_to(ROOT)),
                           producer_sha256=package_build.sha(__file__),
                           builder_sha256=package_build.sha(debian.__file__),
+                          build_packages=debian.build_packages(root),
+                          runtime_dependencies=debian.runtime_dependencies(output, packages),
+                          compiler_environment_sha256=package_build.sha(package_build.__file__),
+                          verifier_sha256=debian.verifier_sha(),
                           policy_sha256=package_build.sha(POLICY))
         debian.write_manifest(output, provenance)
         (output / 'SOURCE').write_text(json.dumps(provenance, indent=2) + '\n')
@@ -118,6 +139,7 @@ def main(argv):
     parser.add_argument('--sysroot', type=Path, help='Clone a signed sid ARM64 sysroot below build/')
     parser.add_argument('--libssc-only', action='store_true')
     parser.add_argument('--jobs', type=int, default=package_build.default_jobs())
+    parser.add_argument('--resume', action='store_true', help='Reuse completed source builds and existing objects')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.jobs < 1:
@@ -126,7 +148,7 @@ def main(argv):
         return subprocess.run(['unshare', '--mount', '--propagation', 'private', sys.executable,
                                __file__, *argv, '--worker']).returncode
     try:
-        print(json.dumps(build(args.output, args.sysroot, args.jobs, args.libssc_only), indent=2))
+        print(json.dumps(build(args.output, args.sysroot, args.jobs, args.libssc_only, args.resume), indent=2))
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         parser.exit(2, str(error) + '\n')
     return 0

@@ -3,6 +3,7 @@
 import argparse
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -36,8 +37,8 @@ def package_version():
     return policy['source_version'] + '+' + json.loads(SERIES.read_text())['local_revision']
 
 
-def reusable(output):
-    record = debian.reusable(Path(output), package_version(), patch_records(), RUNTIME)
+def reusable(output, target=None):
+    record = debian.reusable(Path(output), package_version(), patch_records(), RUNTIME, target)
     return record if record and record.get('policy_sha256') == sha(POLICY) else None
 
 
@@ -49,22 +50,27 @@ def build(output, jobs, install_dependencies=False, resume=False, sysroot=None):
     output = output.resolve()
     if jobs < 1:
         raise ValueError('Use at least one build job')
-    if cached := reusable(output):
-        return cached
-    if output.exists() and not resume:
-        raise ValueError('Use a new project build output directory or --resume')
     policy = json.loads(POLICY.read_text())
     series = json.loads(SERIES.read_text())
     patches = patch_records()
     version = package_version()
     producer_sha256 = sha(__file__)
     builder_sha256 = sha(debian.__file__)
+    target = debian.target_identity(sysroot or Path('/'), {'ffmpeg': policy['source_version']},
+                                    {'ffmpeg': 'ffmpeg'})
+    if cached := reusable(output, target):
+        return cached
+    if output.exists() and not resume:
+        raise ValueError('Use a new project build output directory or --resume')
+    if resume:
+        debian.validate_resume(output, target, patches, version)
     with debian.builder(output, sysroot) as (root, env), (output / 'build.log').open('a') as log:
         (output / '.incomplete').write_text('FFmpeg package build has not completed.\n')
         if install_dependencies:
-            debian.dependencies(root, log)
+            debian.dependencies(root, log, resume)
         else:
             debian.verify_sid(root)
+        target['source_checksums'] = debian.source_checksums(root, target['sources'])
         work, origin = debian.source(root, output, 'ffmpeg', policy['source_version'], log)
         archive = next(row for row in origin['archives'] if row['file'].endswith('.orig.tar.xz'))
         # Debian and pacman use the identical upstream release and one patch series.
@@ -76,36 +82,54 @@ def build(output, jobs, install_dependencies=False, resume=False, sysroot=None):
         debian.add_patches(work, [ROOT / row['path'] for row in patches], 'ffmpeg', version,
                            'Follow the stateful V4L2 source-change and encoder buffer sequence.')
         build_env = dict(env, DEB_BUILD_OPTIONS='nocheck parallel=' + str(jobs), DEB_BUILD_PROFILES='')
-        if install_dependencies:
+        dependencies_satisfied = subprocess.run(
+            ['chroot', str(root), 'sh', '-c', 'cd ' +
+             shlex.quote(debian.inside(root, work)) + ' && dpkg-checkbuilddeps'],
+            stdout=log, stderr=subprocess.STDOUT).returncode == 0
+        if install_dependencies and not dependencies_satisfied:
             debian.command(root, build_env, work,
                            ['mk-build-deps', '--install', '--remove',
                              '--tool=apt-get -y --no-remove --no-install-recommends', 'debian/control'], log)
-            if env.get('CC') == 'clang':
-                # libvidstab's pkg-config file uses -fopenmp. The native Clang
-                # driver needs the target OpenMP library, not its host runtime.
-                debian.guest(root, ['apt-get', 'install', '-y', '--no-remove',
-                                   '--no-install-recommends', 'libomp-dev'],
-                             stdout=log, stderr=subprocess.STDOUT)
         if env.get('CC') == 'clang':
             libraries = sorted((root / 'usr/lib').glob('llvm-*/lib/libomp.so'))
+            if not libraries and install_dependencies:
+                # libvidstab uses -fopenmp; link the target, not host, runtime.
+                debian.guest(root, ['apt-get', 'install', '-y', '--no-remove',
+                                    '--no-install-recommends', 'libomp-dev'],
+                             stdout=log, stderr=subprocess.STDOUT)
+                libraries = sorted((root / 'usr/lib').glob('llvm-*/lib/libomp.so'))
             if len(libraries) != 1:
                 raise ValueError('The Clang builder needs one sid libomp development library')
             build_env['LIBRARY_PATH'] = '/' + str(libraries[0].parent.relative_to(root))
         command = ['dpkg-buildpackage', '-B', '-us', '-uc', '-j' + str(jobs)]
         if resume:
             command.append('-nc')
-        debian.command(root, build_env, work, command, log)
+        changes = work.parent / f'ffmpeg_{version.split(":")[-1]}_arm64.changes'
+        identity = {'target': target, 'patches': patches, 'package_version': version,
+                    'recipe': origin['recipe']}
+        marker = work / 'SOURCE.json'
+        previous = json.loads(marker.read_text())
+        if previous.get('build_identity') not in (None, identity):
+            raise ValueError('Resume requires the same FFmpeg source, patches, recipe and target ABI')
+        previous['build_identity'] = identity
+        marker.write_text(json.dumps(previous, indent=2) + '\n')
+        if not resume or not changes.is_file():
+            debian.command(root, build_env, work, command, log)
         packages = debian.collect(output, work.parent, RUNTIME, version)
         if sha(__file__) != producer_sha256 or sha(debian.__file__) != builder_sha256:
             raise ValueError('The FFmpeg build recipe changed during compilation; rerun --resume')
         record = {'component': series['component'], 'upstream_version': series['upstream_version'],
-                  'local_revision': series['local_revision'], 'source': origin,
+                  'local_revision': series['local_revision'], 'source': origin, 'target': target,
                   'archive_sha256': archive['sha256'], 'patches': patches,
                   'package_version': version, 'packages_built': True, 'patches_applied': True,
                   'recipe': 'original Debian debian/rules and control',
                   'build_command': command, 'build_options': build_env['DEB_BUILD_OPTIONS'],
                   'packages': packages, 'producer': str(Path(__file__).relative_to(ROOT)),
                   'producer_sha256': producer_sha256, 'builder_sha256': builder_sha256,
+                  'build_packages': debian.build_packages(root),
+                  'runtime_dependencies': debian.runtime_dependencies(output, packages),
+                  'compiler_environment_sha256': sha(package_build.__file__),
+                  'verifier_sha256': debian.verifier_sha(),
                   'policy_sha256': sha(POLICY)}
         debian.write_manifest(output, record)
         (output / '.incomplete').unlink()
