@@ -148,6 +148,25 @@ def package_identity(path):
         ['dpkg-deb', '-f', path, 'Package', 'Version', 'Architecture']).splitlines())
 
 
+def packaging_source(root, output, log):
+    from desktop import debian_package as signed
+    version = policy()['debian']['recipe_source_version']
+    cache = output / 'archives/mesa'
+    cache.mkdir(parents=True, exist_ok=True)
+    checksums = debian.source_checksums(root, {'mesa': version})['mesa']
+    if not all((cache / name).is_file() and package_build.sha(cache / name) == row['sha256']
+               for name, row in checksums.items()):
+        debian.command(root, {}, cache, ['apt-get', 'source', '--download-only', '--only-source',
+                                        'mesa=' + version], log)
+    origin = signed.verify_source(root, cache, 'mesa', version)
+    archive = next(row['file'] for row in origin['archives'] if '.debian.tar.' in row['file'])
+    with tarfile.open(cache / archive) as source:
+        recipe = {name: source.extractfile(name).read() for name in ('debian/rules', 'debian/control')}
+    origin['archives'] = [origin.pop('dsc'), *origin['archives']]
+    origin['recipe'] = {name: hashlib.sha256(data).hexdigest() for name, data in recipe.items()}
+    return origin, recipe
+
+
 def reusable(output, target=None):
     try:
         record = json.loads((output / 'SOURCE.json').read_text())
@@ -222,7 +241,7 @@ def build(output, sysroot, jobs, resume=False):
     with debian.builder(output, sysroot) as (root, env), (output / 'build.log').open('a') as log:
         (output / '.incomplete').write_text('Mesa package build has not completed.\n')
         debian.dependencies(root, log, resume)
-        recipe_source, origin = debian.source(root, output, 'mesa', data['debian']['recipe_source_version'], log)
+        origin, original_recipe = packaging_source(root, output, log)
         work = output / 'mesa-27/source'
         if not work.exists():
             work.mkdir(parents=True)
@@ -248,7 +267,7 @@ def build(output, sysroot, jobs, resume=False):
         if (work / 'VERSION').read_text().strip() not in (data['source']['version'], package_version()):
             raise ValueError('Existing Mesa source differs; preserve it and use a fresh output')
         for name in ('rules', 'control'):
-            expected = (recipe_source / 'debian' / name).read_text()
+            expected = original_recipe['debian/' + name].decode()
             if name == 'rules':
                 expected = debian_rules(expected)
                 if (work / 'debian' / name).read_text() != expected:
