@@ -34,8 +34,9 @@ def package_version():
 def debian_rules(original):
     # Mesa 27 removed the AMD anti-lag layer. Keep every remaining driver and
     # layer, and use the new upstream VRAM-report layer in the same package.
-    return original.replace('VULKAN_LAYERS += anti-lag device-select intel-nullhw overlay screenshot',
-                            'VULKAN_LAYERS += device-select intel-nullhw overlay screenshot vram-report-limit')
+    original = original.replace('VULKAN_LAYERS += anti-lag device-select intel-nullhw overlay screenshot',
+                                 'VULKAN_LAYERS += device-select intel-nullhw overlay screenshot vram-report-limit')
+    return original.replace('GALLIUM_DEFAULTS = softpipe', 'GALLIUM_DEFAULTS =')
 
 
 def arch_provenance(output, steamos):
@@ -170,6 +171,9 @@ def reusable(output, target=None):
                     for row in record['source']['archives']}
         if expected != source_checksums['mesa']:
             return None
+        signed_packaging = next(row for row in record['source']['archives'] if '.debian.tar.' in row['file'])
+        if record.get('packaging_archive_sha256') != signed_packaging['sha256']:
+            return None
         if Path(record['changes']['file']).name != record['changes']['file']:
             return None
         receipt = output / record['changes']['file']
@@ -296,6 +300,7 @@ def build(output, sysroot, jobs, resume=False):
             'source_files_sha256': hashlib.sha256(json.dumps(proof['files'], sort_keys=True).encode()).hexdigest(),
             'source_patch_series': [],
             'changes': {'file': receipt.name, 'sha256': package_build.sha(receipt)},
+            'packaging_archive_sha256': next(row['sha256'] for row in origin['archives'] if '.debian.tar.' in row['file']),
             'recipe': 'original Debian rules and control with official unpatched Mesa source'}
         debian.write_manifest(output, record)
         (output / '.incomplete').unlink()

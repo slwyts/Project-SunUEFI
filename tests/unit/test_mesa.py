@@ -17,9 +17,11 @@ class MesaTests(unittest.TestCase):
         self.assertFalse((mesa.ROOT / 'patches/mesa/26.2.6/series.json').exists())
 
     def test_recipe_retains_all_other_drivers_and_supported_layers(self):
-        original = 'GALLIUM_DRIVERS += freedreno llvmpipe\nVULKAN_LAYERS += anti-lag device-select intel-nullhw overlay screenshot\n'
+        original = ('GALLIUM_DEFAULTS = softpipe\nGALLIUM_DRIVERS += freedreno llvmpipe softpipe\n'
+                    'VULKAN_LAYERS += anti-lag device-select intel-nullhw overlay screenshot\n')
         changed = mesa.debian_rules(original)
-        self.assertIn('GALLIUM_DRIVERS += freedreno llvmpipe', changed)
+        self.assertIn('GALLIUM_DRIVERS += freedreno llvmpipe softpipe', changed)
+        self.assertNotIn('GALLIUM_DEFAULTS = softpipe', changed)
         self.assertIn('vram-report-limit', changed)
         self.assertNotIn('anti-lag', changed)
 
