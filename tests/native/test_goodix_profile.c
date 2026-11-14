@@ -403,14 +403,14 @@ static void gatekeeper_window(void)
 /* These allocations are used only when uploading models. The packet test
  * selects the actual no-model initialization path and must never reach them.
  */
-int MinkCom_getMemoryObject(Object root, size_t size, Object *memory)
+int goodix_tee_memory(Object root, size_t size, Object *memory)
 {
 	(void)root; (void)size; (void)memory;
 	assert(0);
 	return Object_ERROR;
 }
 
-int MinkCom_getMemoryObjectInfo(Object memory, void **address, size_t *size)
+int goodix_tee_memory_info(Object memory, void **address, size_t *size)
 {
 	(void)memory; (void)address; (void)size;
 	assert(0);

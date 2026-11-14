@@ -98,16 +98,19 @@ QTEE 使用通用 Linux TEE uAPI 的对象调用，不是 GlobalPlatform（GP）
 对象引用的 TEE／USER／MEM 标志和回调 meta 布局属于 QTEE 对通用接口的使用方式，
 不是所有 TEE 实现都接受的协议。上游[接口说明](https://docs.kernel.org/tee/qtee.html)
 同时描述了 direct invocation 和 callback request。
-`quic-teec/libqcomtee/src/qcomtee_object.c` 的 `qcomtee_object_invoke()`
-与 `qcomtee_object_process_one()` 分别封装上述两条路径；MinkIPC 的
-`invoke_over_tee()` 只是将 `ObjectArg` 转成这些参数。
-因此，移除 MinkIPC 可以在用户空间实现，不需要新增内核 ioctl，也不需要假设内核缺少对象接口。
-替代实现仍须管理引用、共享内存、回调缓冲区、失败清理和阻塞回调线程的退出，
-不能只替换一次普通命令调用就删除文件服务或现有认证实现。
+[`piano-goodix-tee.c`](../../../linux/userspace/fingerprint/piano-goodix-tee.c)
+直接使用这些 ioctl，处理远端对象、内存对象和 callback object，不链接 MinkIPC 或 quic-teec。
+它在创建 root object 时检查 implementation 和 capability，拒绝只有 GP 会话的设备；
+失败时关闭 fd 并回收内存，fd 带 `O_CLOEXEC`。这项检查不会加载安全程序或修改安全存储。
 
-[`quic-teec 补丁`](../../../patches/quic-teec/0.1.0/series.json)在创建 root object 时
-先检查上述 implementation 和 capability，拒绝只有 GP 会话的设备；失败时关闭 fd 并回收内存，
-fd 带 `O_CLOEXEC`。这项检查不会加载安全程序或修改安全存储。
+每次传给 QTEE 的本地 callback 都有单独 ID 和引用，收到内核释放通知或关闭 context 后回收；
+输入／输出缓冲区和对象引用分别转换，不把 GP memory reference 当作 QTEE memory object。
+回调输出缓冲区只属于该次调用，保持到 `SUPPL_SEND` 返回，再清零释放。
+传输错误不自动重发，也不假定 QTEE 未保留 callback；剩余引用在关闭 context 后回收。
+关闭传感器及安全程序、发出文件监听释放后才关闭 root。回调线程只有阻塞在 `SUPPL_RECV`
+时允许取消，执行文件操作、发送回复或持有用户空间锁时不可取消；随后等待线程退出。
+共享页由标准 TEE 内存引用保护，Linux 用户空间解除映射不绕过内核／安全世界的引用计数。
+原有录入和认证的设备结果不能替代传输更换后的实机验证。
 
 ### 共享内存与传感器控制
 
@@ -167,7 +170,7 @@ QSEECOMPAT 的 lookup 返回 `architecture=2`，命令应使用 64 位地址，
 
 原生客户端位于
 [`piano-goodix.c`](../../../linux/userspace/fingerprint/piano-goodix.c)，
-使用固定版本的 Qualcomm MinkIPC／quic-teec 与 QCBOR，CLI 由共享运行时构建器
+使用标准 Linux TEE 对象传输与固定版本的 QCBOR，CLI 由共享运行时构建器
 静态编译；来源记录在
 [`config/fingerprint.json`](../../../config/fingerprint.json)。
 执行 `sudo piano-fingerprint-ctl info` 可查询设备信息，`--help` 不访问设备。
@@ -180,7 +183,7 @@ Debian 构建依赖留在独立 rootfs，要求 libc／GLib 等开发包匹配�
 依赖由 `dpkg-shlibdeps` 生成；安装前以目标 loader 核对新库和 fprintd 的符号解析。
 Arch 系缓存同时核对配方摘要和运行库版本，不把另一套 ABI 的缓存直接安装。
 这仍是本地 libfprint 包；源码补丁进入仓库不等于上游已收录，更不等于发行版原版包
-已经提供此设备后端。UIO 和 MinkIPC 的运行协议在这项构建调整中没有改变。
+已经提供此设备后端。传感器控制仍使用 UIO，原厂签名程序的业务命令和 HAT 协议没有改变。
 
 签名程序与模型共用与内核 firmware loader 相同的搜索顺序：先读取已有的
 `/sys/module/firmware_class/parameters/path`，再查 `/lib/firmware/updates/<内核版本>/`、
@@ -289,9 +292,9 @@ Linux 空目录；服务将安全程序使用的虚拟路径映射到这里，�
 要求备份时先落盘同目录 `.bak`，再原子替换主文件并同步文件和目录。
 这些回调随原生操作建立和释放，不另加指纹守护进程。
 
-[`MinkIPC 补丁系列`](../../../patches/minkipc/0.1.0/series.json)修正回调输出缓冲区的
-重复释放与异常回收，并避免工作线程释放最后一个 root object 时自等待。
-构建器在固定上游提交的副本中应用补丁，记录补丁及存储源码的摘要；原始源码缓存保持不变。
+FS／GPFS 布局取自公开 Qualcomm listener 头文件，仅保留本后端使用的消息。
+它们在 [`piano-goodix-storage-protocol.h`](../../../linux/userspace/fingerprint/piano-goodix-storage-protocol.h)
+中按原始尺寸描述，保留来源与许可，不依赖外部 listener 服务或 Mink 头文件。
 
 `sudo piano-fingerprint-ctl prepare-auth` 初始化传感器并完成 Keymaster 到
 Goodix 的认证数据绑定。没有录入或认证操作，也不输出绑定数据。

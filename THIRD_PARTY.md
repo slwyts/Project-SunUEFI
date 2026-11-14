@@ -37,9 +37,10 @@ HyperOS 4 的 [ADSP](vendor/firmware/hyperos4-adsp/README.md) 和
 保留原始签名、文件名和逐文件 SHA256，按清单装入四个发行版。
 它们属于 Qualcomm／小米专有固件，不适用本项目的源码许可。
 
-原生 Goodix 客户端使用 [Qualcomm MinkIPC](https://github.com/qualcomm/minkipc)、
-[quic-teec](https://github.com/quic/quic-teec) 和
-[QCBOR](https://github.com/laurencelundblade/QCBOR) 的公开源码。
+原生 Goodix 客户端通过 Linux TEE 对象 ioctl 自行实现传输，不链接 MinkIPC 或 quic-teec。
+Object C 参数布局与 FS／GPFS 消息参考 [Qualcomm MinkIPC](https://github.com/qualcomm/minkipc)，
+对应文件保留 Qualcomm 版权和 BSD-3-Clause／BSD-3-Clause-Clear 许可。
+CBOR 编解码使用 [QCBOR](https://github.com/laurencelundblade/QCBOR) 的公开源码。
 精确提交、源码许可和构建输入记录在
 [`config/fingerprint.json`](config/fingerprint.json) 及镜像内的
 `/usr/share/piano-provenance/fingerprint.json`；相应许可证随静态客户端安装。

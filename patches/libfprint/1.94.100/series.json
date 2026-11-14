@@ -1,5 +1,11 @@
 {
   "schema_version": 1,
+  "targets": ["debian-gnome", "debian-kde", "steamos", "nyarch-gnome"],
+  "upstream": {
+    "status": "downstream",
+    "url": "https://gitlab.freedesktop.org/libfprint/libfprint",
+    "drop_when": "The selected libfprint release includes the Piano secure Goodix backend and discovery, with equivalent cancellation, scoped storage and native TEE object transport."
+  },
   "patches": [
     {
       "file": "0001-piano-goodix-uio.patch",
@@ -7,7 +13,7 @@
     },
     {
       "file": "0002-build-goodix-backend-from-source.patch",
-      "sha256": "708b4447124e0e28c33c7ec41ad5b5557d2e59aab9c15bb081154b6c842399a1"
+      "sha256": "4feca4bd9e51d0dea8bef501f0e589b84c6b04aa437482c1c801042a29ec4ad6"
     }
   ]
 }

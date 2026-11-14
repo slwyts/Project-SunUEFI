@@ -1,9 +1,0 @@
-{
-  "schema_version": 1,
-  "patches": [
-    {
-      "file": "0001-validate-root-object-interface.patch",
-      "sha256": "51337a3f1c4d11a2b7800a24b3bcdaeda542c43b9fdb465b101915f8e17503be"
-    }
-  ]
-}

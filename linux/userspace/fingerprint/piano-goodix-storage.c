@@ -21,9 +21,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "MinkCom.h"
-#include "fs_msg.h"
-#include "gpfs_msg.h"
+#include "piano-goodix-tee.h"
+#include "piano-goodix-storage-protocol.h"
 #include "piano-goodix-rpmb.h"
 #include "piano-goodix-storage.h"
 
@@ -58,6 +57,7 @@ struct goodix_storage {
 	int profile;
 	int stopped;
 	struct goodix_rpmb *rpmb;
+	Object root;
 	int allow_rpmb;
 	unsigned int rpmb_requests;
 };
@@ -765,8 +765,8 @@ static int storage_open(const char *directory, enum storage_mode mode,
 		if (result)
 			goto done;
 	}
-	if (MinkCom_getRootEnvObject(&root) ||
-	    MinkCom_getClientEnvObject(root, &environment)) {
+	if (goodix_tee_open(&root) ||
+	    goodix_tee_client(root, &environment)) {
 		result = -EIO;
 		goto done;
 	}
@@ -788,8 +788,8 @@ static int storage_open(const char *directory, enum storage_mode mode,
 			goto done;
 		}
 		listener->registration = open[1].o;
-		if (MinkCom_getMemoryObject(root, bytes, &listener->memory) ||
-		    MinkCom_getMemoryObjectInfo(listener->memory, &listener->shared,
+		if (goodix_tee_memory(root, bytes, &listener->memory) ||
+		    goodix_tee_memory_info(listener->memory, &listener->shared,
 					&listener->size) || listener->size < bytes) {
 			result = -ENOMEM;
 			goto done;
@@ -821,7 +821,14 @@ done:
 	if (fd >= 0)
 		close(fd);
 	Object_RELEASE_IF(environment);
-	Object_RELEASE_IF(root);
+	if (!Object_isNull(root)) {
+		if (storage)
+			storage->root = root;
+		else if (*output)
+			(*output)->root = root;
+		else
+			Object_release(root);
+	}
 	goodix_storage_close(storage);
 	return result;
 }
@@ -878,10 +885,12 @@ void goodix_storage_close(struct goodix_storage *storage)
 	pthread_mutex_unlock(&storage->mutex);
 	for (size_t i = 0; i < LISTENER_COUNT; i++)
 		Object_RELEASE_IF(storage->listeners[i].registration);
+	Object_RELEASE_IF(storage->root);
 
-	/* RegisterListenerCBO has no unregister operation. Its remote callback
-	 * release arrives on the still-running Mink workers after deregistration.
-	 * Each memory object retains that root until final destruction below.
+	/* Close the context after listener release, with no secure call active.
+	 * The joined callback worker and closed context cannot access files again.
+	 * Remaining local memory objects still hold their kernel shared-memory fd;
+	 * secure-world references independently protect their pages.
 	 */
 	pthread_mutex_lock(&storage->mutex);
 	while (atomic_load(&storage->references) != 1)

@@ -39,8 +39,7 @@ class BuildPianoFingerprintTests(unittest.TestCase):
             for name in (*fingerprint.CORE_SOURCES, *fingerprint.HEADERS):
                 self.assertEqual(sources.extractfile('./' + name).read(),
                                  (fingerprint.NATIVE / name).read_bytes())
-            transport = sources.extractfile(
-                './quic-teec/libqcomtee/src/qcomtee_object.c').read()
+            transport = sources.extractfile('./piano-goodix-tee.c').read()
             self.assertIn(b'TEE_IOC_VERSION', transport)
             self.assertIn(b'TEE_GEN_CAP_OBJREF', transport)
 

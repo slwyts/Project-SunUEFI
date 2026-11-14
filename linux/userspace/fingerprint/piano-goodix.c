@@ -3,7 +3,7 @@
  * Copyright (c) 2026 slwyts <slwyts@foxmail.com>
  *
  * Native Piano Goodix control client. The application interface follows the
- * factory libgf_ca/QSEECom calls; transport is Qualcomm's public MinkIPC API.
+ * factory libgf_ca/QSEECom calls; transport is the Linux TEE object uAPI.
  * Linux profiles have their own Gatekeeper credential and template storage;
  * factory Android credentials and fingerprint files are never opened.
  */
@@ -28,7 +28,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "MinkCom.h"
+#include "piano-goodix-tee.h"
 #include <qcbor/qcbor_decode.h>
 #include <qcbor/qcbor_encode.h>
 #include <qcbor/qcbor_spiffy_decode.h>
@@ -255,8 +255,8 @@ static int load_application(struct client *client)
 	if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 64 ||
 	    st.st_size > FIRMWARE_LIMIT)
 		goto done;
-	if (MinkCom_getMemoryObject(client->root, st.st_size, &image) ||
-	    MinkCom_getMemoryObjectInfo(image, &address, &capacity) ||
+	if (goodix_tee_memory(client->root, st.st_size, &image) ||
+	    goodix_tee_memory_info(image, &address, &capacity) ||
 	    capacity < (size_t)st.st_size) {
 		result = -ENOMEM;
 		goto done;
@@ -308,8 +308,8 @@ static int open_client(struct client *client)
 
 	memset(client, 0, sizeof(*client));
 	client->controller = -1;
-	if (MinkCom_getRootEnvObject(&client->root) ||
-	    MinkCom_getClientEnvObject(client->root, &client->env))
+	if (goodix_tee_open(&client->root) ||
+	    goodix_tee_client(client->root, &client->env))
 		return -EIO;
 	ObjectArg args[] = {
 		{ .bi = {&uid, sizeof(uid)} },
@@ -326,8 +326,8 @@ static int open_client(struct client *client)
 	client->controller = open_controller();
 	if (client->controller < 0)
 		return client->controller;
-	if (MinkCom_getMemoryObject(client->root, SHARED_SIZE, &client->memory) ||
-	    MinkCom_getMemoryObjectInfo(client->memory, &client->shared,
+	if (goodix_tee_memory(client->root, SHARED_SIZE, &client->memory) ||
+	    goodix_tee_memory_info(client->memory, &client->shared,
 				       &client->shared_size))
 		return -ENOMEM;
 	return client->shared_size >= SHARED_SIZE ? 0 : -EMSGSIZE;
@@ -731,8 +731,8 @@ static int send_model(struct client *client, const uint8_t *model)
 	client->memory = Object_NULL;
 	client->shared = NULL;
 	client->shared_size = 0;
-	if (MinkCom_getMemoryObject(client->root, MODEL_PACKET_BYTES, &client->memory) ||
-	    MinkCom_getMemoryObjectInfo(client->memory, &shared, &capacity) ||
+	if (goodix_tee_memory(client->root, MODEL_PACKET_BYTES, &client->memory) ||
+	    goodix_tee_memory_info(client->memory, &shared, &capacity) ||
 	    capacity < MODEL_PACKET_BYTES)
 		return -ENOMEM;
 	client->shared = shared;
@@ -1295,8 +1295,8 @@ static int grow_operation_buffer(struct client *client, size_t required)
 
 	if (client->shared_size >= required)
 		return 0;
-	if (MinkCom_getMemoryObject(client->root, required, &memory) ||
-	    MinkCom_getMemoryObjectInfo(memory, &shared, &capacity) || capacity < required) {
+	if (goodix_tee_memory(client->root, required, &memory) ||
+	    goodix_tee_memory_info(memory, &shared, &capacity) || capacity < required) {
 		Object_RELEASE_IF(memory);
 		return -ENOMEM;
 	}
@@ -1705,8 +1705,8 @@ static int gatekeeper_storage_probe(uint32_t linux_uid, int ufs)
 	if (!result)
 		result = ufs ? goodix_storage_open_rpmb_ufs(&session.storage) :
 			goodix_storage_open_rpmb_probe(&session.storage);
-	if (!result && (MinkCom_getRootEnvObject(&session.client.root) ||
-	    MinkCom_getClientEnvObject(session.client.root, &session.client.env)))
+	if (!result && (goodix_tee_open(&session.client.root) ||
+	    goodix_tee_client(session.client.root, &session.client.env)))
 		result = -EIO;
 	if (!result)
 		result = open_keymaster(&session.client, &session.keymaster);

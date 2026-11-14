@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the native Goodix client against fixed, public Qualcomm sources."""
+"""Build the native Goodix client with the standard Linux TEE object uAPI."""
 import hashlib
 import json
 from pathlib import Path
@@ -12,19 +12,21 @@ NATIVE = ROOT / 'linux/userspace/fingerprint'
 CORE_SOURCES = (
     'piano-goodix-storage.c', 'piano-goodix-events.c',
     'piano-goodix-gatekeeper.c', 'piano-goodix-operations.c',
-    'piano-goodix-rpmb.c', 'piano-goodix.c',
+    'piano-goodix-rpmb.c', 'piano-goodix-tee.c', 'piano-goodix.c',
 )
 HEADERS = (
     'piano-goodix-storage.h', 'piano-goodix-events.h',
     'piano-goodix-gatekeeper.h', 'piano-goodix-operations.h',
-    'piano-goodix-rpmb.h', 'piano-goodix.h',
+    'piano-goodix-rpmb.h', 'piano-goodix-tee.h', 'piano-goodix-storage-protocol.h', 'piano-goodix.h',
 )
 CLI_SOURCE = NATIVE / 'piano-goodix-cli.c'
+LICENSES = ('BSD-3-Clause.txt', 'BSD-3-Clause-Clear.txt')
 RUNTIME_PATHS = {
     'usr/local/sbin/piano-fingerprint-ctl',
     'usr/share/piano-provenance/fingerprint.json',
     *{f'usr/share/licenses/piano-fingerprint/{name}.txt'
-      for name in ('quic-teec', 'minkipc', 'qcbor')},
+       for name in ('qcbor',)},
+    *{f'usr/share/licenses/piano-fingerprint/{name}' for name in LICENSES},
 }
 
 
@@ -54,7 +56,7 @@ def source_inputs():
     return {
         'config_sha256': digest(ROOT / 'config/fingerprint.json'),
         'native_sources': {name: digest(NATIVE / name)
-                           for name in (*CORE_SOURCES, *HEADERS, CLI_SOURCE.name)},
+                           for name in (*CORE_SOURCES, *HEADERS, *LICENSES, CLI_SOURCE.name)},
         'builder_sha256': digest(Path(__file__)),
         'firmware_manifest_sha256': digest(
             ROOT / 'vendor/firmware/hyperos4-fingerprint/manifest.json'),
@@ -100,7 +102,7 @@ def stage_sources(work):
             subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i', path],
                            cwd=destination, check=True)
         dependencies[name] = destination
-    for name in (*CORE_SOURCES, *HEADERS):
+    for name in (*CORE_SOURCES, *HEADERS, *LICENSES):
         shutil.copy2(NATIVE / name, work / name)
     return dependencies
 
@@ -112,19 +114,9 @@ def build(output, flags, emulator=None):
     work.mkdir()
     backend = work / 'backend'
     dependencies = stage_sources(backend)
-    qtee, mink, qcbor = (dependencies[name] for name in ('quic-teec', 'minkipc', 'qcbor'))
-    includes = [qtee / 'libqcomtee/include', qtee / 'libqcomtee/src',
-                mink / 'libminkadaptor/include', mink / 'libminkadaptor/src',
-                mink / 'listeners/libfsservice/gpfs', mink / 'listeners/libfsservice/fs',
-                mink / 'listeners/libfsservice/cmn',
-                qcbor / 'inc']
+    qcbor = dependencies['qcbor']
+    includes = [qcbor / 'inc']
     originals = [
-        qtee / 'libqcomtee/src/qcomtee_object.c',
-        qtee / 'libqcomtee/src/objects/credentials_obj.c',
-        qtee / 'libqcomtee/src/objects/mem_obj.c',
-        mink / 'libminkadaptor/src/mink_adaptor.c',
-        mink / 'libminkadaptor/src/supplicant.c',
-        mink / 'libminkadaptor/src/syscall.S',
         *[qcbor / 'src' / name for name in (
             'UsefulBuf.c', 'qcbor_encode.c', 'qcbor_decode.c',
             'qcbor_err_to_str.c', 'ieee754.c')],
@@ -152,6 +144,8 @@ def build(output, flags, emulator=None):
     files = {}
     for name, path, mode in [
             ('usr/local/sbin/piano-fingerprint-ctl', binary, 0o755),
+            *[(f'usr/share/licenses/piano-fingerprint/{name}', NATIVE / name, 0o644)
+              for name in LICENSES],
             *[(f'usr/share/licenses/piano-fingerprint/{name}.txt',
                dependencies[name] / record['license'], 0o644)
               for name, record in cfg['sources'].items()]]:
@@ -231,6 +225,12 @@ def desktop_recipes(output, runtime):
             prepare += '''  mkdir -p "$srcdir/libfprint/libfprint/drivers/piano-goodix"
   tar -xf "$srcdir/piano-goodix-sources.tar" -C "$srcdir/libfprint/libfprint/drivers/piano-goodix"
 '''
+        notices = ''
+        if name == 'libfprint':
+            notices = '''  install -Dm644 "$srcdir/libfprint/libfprint/drivers/piano-goodix/BSD-3-Clause.txt" "$pkgdir/usr/share/licenses/libfprint/piano-goodix-BSD-3-Clause.txt"
+  install -Dm644 "$srcdir/libfprint/libfprint/drivers/piano-goodix/BSD-3-Clause-Clear.txt" "$pkgdir/usr/share/licenses/libfprint/piano-goodix-BSD-3-Clause-Clear.txt"
+  install -Dm644 "$srcdir/libfprint/libfprint/drivers/piano-goodix/qcbor/LICENSE" "$pkgdir/usr/share/licenses/libfprint/piano-goodix-QCBOR.txt"
+'''
         recipe_text = (
             f'pkgname={name}\npkgver={record["version"]}\npkgrel=1.1\n'
             'arch=(aarch64)\nlicense=(LGPL-2.1-or-later)\n'
@@ -243,7 +243,7 @@ def desktop_recipes(output, runtime):
             'prepare() {\n' + (prepare or '  :\n') + '}\n'
             'build() {\n' + f'  meson setup build {name} --prefix=/usr --libdir=lib '
             f'--buildtype=release {options}\n  meson compile -C build -j4\n}}\n'
-            'package() {\n  DESTDIR="$pkgdir" meson install -C build\n}\n')
+            'package() {\n  DESTDIR="$pkgdir" meson install -C build\n' + notices + '}\n')
         (recipe / 'PKGBUILD').write_text(recipe_text)
     return cfg
 
@@ -285,7 +285,7 @@ def desktop_service(root):
 
 
 DEBIAN_ABI_PACKAGES = (
-    'libc6', 'libglib2.0-0t64', 'libgusb2', 'libgudev-1.0-0', 'libpixman-1-0', 'libssl3t64',
+    'libc6', 'libglib2.0-0t64', 'libgusb2a', 'libgudev-1.0-0', 'libpixman-1-0', 'libssl3t64',
 )
 
 
@@ -327,6 +327,7 @@ def install_debian_desktop(root, runtime, output):
         raise ValueError('Inspect the existing fingerprint builder before retrying with a fresh output')
     cfg = json.loads((ROOT / 'config/fingerprint.json').read_text())['desktop']['libfprint']
     backend_archive = backend_sources(runtime)
+    inputs = source_inputs()
     debian_abi(root)
     # Runtime packages belong in the image; compilers and -dev packages do not.
     with build_devices(root), build_resolver(root):
@@ -360,7 +361,7 @@ def install_debian_desktop(root, runtime, output):
         versions = target_abi['packages']
         development = {
             'libc6-dev': 'libc6', 'libglib2.0-dev': 'libglib2.0-0t64',
-            'libgusb-dev': 'libgusb2', 'libgudev-1.0-dev': 'libgudev-1.0-0',
+            'libgusb-dev': 'libgusb2a', 'libgudev-1.0-dev': 'libgudev-1.0-0',
             'libpixman-1-dev': 'libpixman-1-0', 'libssl-dev': 'libssl3t64',
         }
         guest(['apt-get', 'install', '-y', '--no-upgrade', '--no-remove', '--no-install-recommends',
@@ -383,6 +384,11 @@ def install_debian_desktop(root, runtime, output):
         shutil.rmtree(package / 'usr/lib/aarch64-linux-gnu/pkgconfig', ignore_errors=True)
         control = package / 'DEBIAN'
         control.mkdir()
+        copyright_directory = package / 'usr/share/doc/libfprint-2-2'
+        copyright_directory.mkdir(parents=True, exist_ok=True)
+        for name in LICENSES:
+            shutil.copy2(backend / name, copyright_directory / ('piano-goodix-' + name))
+        shutil.copy2(backend / 'qcbor/LICENSE', copyright_directory / 'piano-goodix-QCBOR.txt')
         library = package / 'usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0'
         elf = library.read_bytes()
         if elf[:6] != b'\x7fELF\x02\x01' or elf[18:20] != b'\xb7\x00':
@@ -408,6 +414,8 @@ def install_debian_desktop(root, runtime, output):
         subprocess.run(['dpkg-deb', '--root-owner-group', '--build', package, deb], check=True)
     if debian_abi(root) != target_abi:
         raise ValueError('Fingerprint target ABI changed during package compilation')
+    if source_inputs() != inputs:
+        raise ValueError('Fingerprint sources changed during package compilation')
     install = root / 'var/tmp/sunuefi-libfprint-install'
     if install.exists():
         raise ValueError('Inspect the existing fingerprint install directory before retrying')
@@ -433,7 +441,7 @@ def install_debian_desktop(root, runtime, output):
                         'dpkg', '-i', '/var/tmp/sunuefi-libfprint-install/' + deb.name],
                        check=True)
     (output / 'SOURCE.json').write_text(json.dumps({
-        'inputs': source_inputs(), 'target_abi': target_abi, 'dependencies': dependencies,
+        'inputs': inputs, 'target_abi': target_abi, 'dependencies': dependencies,
         'backend_sources_sha256': digest(backend_archive),
         'package': {'file': deb.name, 'sha256': digest(deb), 'version': package_version,
                     'architecture': 'arm64'},
