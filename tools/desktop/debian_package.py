@@ -20,6 +20,11 @@ KEYRING = '/usr/share/keyrings/debian-archive-keyring.gpg'
 ABI_PACKAGES = ('libc6', 'libglib2.0-0t64', 'libsystemd0', 'libgtk-4-1',
                 'libgtk-3-0t64', 'libwayland-client0', 'libgbm1',
                 'libpipewire-0.3-0t64', 'libupower-glib3', 'gnome-shell')
+# Bump when source preparation or compilation changes, not APT verification.
+BUILD_RECIPE_VERSION = 1
+BUILD_COMMAND = ['dpkg-buildpackage', '-b', '-us', '-uc']
+BUILD_PROFILES = 'nocheck'
+BUILD_RECIPE = 'original Debian rules and control; standard quilt/debhelper'
 
 
 def sha(path):
@@ -162,13 +167,22 @@ def target_identity(rootfs, package):
         name, status, version = line.split('\t')
         if status == 'installed':
             installed[name] = version
+    policies = {}
+    text = capture(['chroot', rootfs, 'env', 'LC_ALL=C', 'apt-cache', 'policy', package, *ABI_PACKAGES])
+    name = None
+    for line in text.splitlines():
+        if line and not line[0].isspace() and line.endswith(':'):
+            name = line[:-1].split(':', 1)[0]
+        elif line.startswith('  Candidate: ') and name is not None:
+            policies[name] = line.split(': ', 1)[1]
 
     def select(name):
         candidates = [row for row in rows if row['Package'] == name and row['Architecture'] in ('arm64', 'all')]
         if not candidates:
             raise ValueError('Signed sid APT index has no target package: ' + name)
-        policy = capture(['chroot', rootfs, 'env', 'LC_ALL=C', 'apt-cache', 'policy', name])
-        version = re.search(r'^  Candidate: (\S+)$', policy, re.M)[1]
+        version = policies.get(name)
+        if not version or version == '(none)':
+            raise ValueError('APT has no candidate for the target package: ' + name)
         selected = [row for row in candidates if row['Version'] == version]
         if not selected and '+sunuefi' in version:
             # Local packages sort above their original version. Only the signed
@@ -228,12 +242,23 @@ def input_records(paths):
     return {path.relative_to(ROOT).as_posix(): sha(path) for path in paths}
 
 
+def recipe_inputs(inputs):
+    # Keep this module's hash as provenance, but version its build recipe
+    # separately so verification-only changes do not force recompilation.
+    return {name: digest for name, digest in inputs.items()
+            if name != Path(__file__).relative_to(ROOT).as_posix()}
+
+
 def reusable(output, target, patches, runtime, inputs, revision):
     try:
         record = json.loads((output / 'SOURCE.json').read_text())
         version = target['binary']['source_version'] + '+sunuefi' + str(revision)
+        # Schema 2 used this same recipe before recording its version explicitly.
+        recipe_version = record.get('build_recipe_version', 1 if record.get('schema_version') == 2 else None)
         if (record.get('packages_built') is not True or record.get('target') != target or
-                record.get('patches') != patches or record.get('inputs') != inputs or
+                record.get('patches') != patches or recipe_inputs(record.get('inputs', {})) != recipe_inputs(inputs) or
+                recipe_version != BUILD_RECIPE_VERSION or record.get('recipe') != BUILD_RECIPE or
+                record.get('build_command') != BUILD_COMMAND or record.get('build_profiles') != BUILD_PROFILES or
                 record.get('package_version') != version or set(record.get('packages', {})) != set(runtime) or
                 record.get('source', {}).get('version') != target['binary']['source_version'] or
                 (output / '.incomplete').exists()):
@@ -282,8 +307,10 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
     if source_package != package:
         raise ValueError('Unexpected Debian source package for ' + package)
     package_version = version + '+sunuefi' + str(revision)
-    identity = hashlib.sha256(json.dumps({'target': target, 'patches': patch_proof, 'inputs': inputs},
-                                        sort_keys=True).encode()).hexdigest()[:16]
+    recipe = {'target': target, 'patches': patch_proof, 'inputs': recipe_inputs(inputs),
+              'build_recipe_version': BUILD_RECIPE_VERSION,
+              'build_command': BUILD_COMMAND, 'build_profiles': BUILD_PROFILES}
+    identity = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()[:16]
     work = rootfs / 'build' / package / identity
     cache, source = rootfs / 'build' / package / 'cache', work / 'source'
     with devices(rootfs), (output / 'build.log').open('a') as log:
@@ -384,11 +411,11 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
         # Keep the build's dependency versions and artifact checksums with runtime.
         for path in (changes, buildinfo):
             shutil.copy2(path, output / path.name)
-        record = {'schema_version': 2, 'packages_built': True, 'target': target, 'source': origin,
+        record = {'schema_version': 3, 'packages_built': True, 'target': target, 'source': origin,
                   'package_version': package_version, 'packages': packages, 'patches': patch_proof,
-                  'inputs': inputs, 'recipe': 'original Debian rules and control; standard quilt/debhelper',
-                  'build_command': ['dpkg-buildpackage', '-b', '-us', '-uc'],
-                  'build_options': f'nocheck parallel={jobs}', 'build_profiles': 'nocheck',
+                  'inputs': inputs, 'recipe': BUILD_RECIPE, 'build_recipe_version': BUILD_RECIPE_VERSION,
+                  'build_command': BUILD_COMMAND,
+                  'build_options': f'nocheck parallel={jobs}', 'build_profiles': BUILD_PROFILES,
                   'changes_sha256': sha(changes), 'buildinfo_sha256': sha(buildinfo)}
         (output / 'SOURCE.json').write_text(json.dumps(record, indent=2) + '\n')
         (output / 'SHA256SUMS').write_text(''.join(row['sha256'] + '  runtime/' + row['file'] + '\n'

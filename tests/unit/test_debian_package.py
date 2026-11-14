@@ -32,10 +32,13 @@ class DebianPackageTests(unittest.TestCase):
                       'source_checksums': {'gdm3.dsc': {'sha256': 'source', 'size': 1}},
                       'abi': {'libc6': {'version': '2.42-1'}}}
             inputs = {'recipe': 'recipe-sha256'}
-            record = {'packages_built': True, 'target': target, 'patches': [],
+            record = {'schema_version': 2, 'packages_built': True, 'target': target, 'patches': [],
                       'source': {'package': 'gdm3', 'version': '51.1-1', 'suite': 'sid',
                                  'dsc': {'file': 'gdm3.dsc', 'sha256': 'source', 'size': 1}, 'archives': []},
                       'inputs': inputs,
+                      'recipe': debian_package.BUILD_RECIPE,
+                      'build_command': debian_package.BUILD_COMMAND,
+                      'build_profiles': debian_package.BUILD_PROFILES,
                       'package_version': '51.1-1+sunuefi1',
                       'packages': {'gdm3': {'file': binary.name, 'version': '51.1-1+sunuefi1',
                                            'architecture': 'arm64', 'sha256': debian_package.sha(binary)}}}
@@ -53,6 +56,18 @@ class DebianPackageTests(unittest.TestCase):
                 with self.subTest(field=field):
                     self.assertIsNone(reusable(selected))
             self.assertIsNone(reusable(selected_inputs={'recipe': 'changed'}))
+            verifier = Path(debian_package.__file__).relative_to(ROOT).as_posix()
+            self.assertIsNotNone(reusable(selected_inputs={**inputs, verifier: 'verification-only-change'}))
+            record['build_recipe_version'] = debian_package.BUILD_RECIPE_VERSION + 1
+            (output / 'SOURCE.json').write_text(json.dumps(record))
+            self.assertIsNone(reusable())
+            record.pop('build_recipe_version')
+            (output / 'SOURCE.json').write_text(json.dumps(record))
+            record['build_command'] = ['dpkg-buildpackage', '-b', '-us', '-uc', '-d']
+            (output / 'SOURCE.json').write_text(json.dumps(record))
+            self.assertIsNone(reusable())
+            record['build_command'] = debian_package.BUILD_COMMAND
+            (output / 'SOURCE.json').write_text(json.dumps(record))
             (output / '.incomplete').touch()
             self.assertIsNone(reusable())
             (output / '.incomplete').unlink()
