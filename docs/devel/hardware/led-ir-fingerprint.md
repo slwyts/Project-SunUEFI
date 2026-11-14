@@ -60,9 +60,20 @@ GENI 驱动在消息开始时选择 default，在队列空闲且 SE 确认停止
 
 ## 侧指纹
 
-Linux 原生客户端已完成独立凭据创建、指纹录入、模板保存和重新打开后的验证。
+旧 MinkIPC／quic-teec 客户端已完成独立凭据创建、指纹录入、模板保存和重新打开后的验证。
 实机录入右食指后，关闭并重新打开客户端仍能匹配；未录入的左食指返回不匹配，
 不是等待超时。Linux 使用自己的凭据和模板目录，不复制 Android 已录入的指纹。
+自包含 Linux TEE 客户端保留同一业务实现，实机验证范围如下：
+
+| 功能 | 旧 MinkIPC／quic-teec 路径 | 自包含 Linux TEE 路径 |
+| --- | --- | --- |
+| 加载签名程序、查询设备并关闭 | 实机完成 | 单次 `info` 成功，1.06 秒；`sensor_type=5`、`command_address_bits=64`、`device_info_ok=true` |
+| 初始化、模型加载和 Keymaster 绑定 | 实机完成 | 源码保留，未作实机复测 |
+| Gatekeeper 凭据、HAT 和授权录入 | 实机完成 | 源码保留，未取新令牌、未录入、未调用 RPMB 后端 |
+| 密封模板持久化、重开后匹配与不匹配 | 实机完成 | 源码保留，未采样或匹配 |
+
+新客户端的 `info` 运行在设备原有的旧内核上，使用的 TA 与当前 `vendor` 固件清单摘要不同。
+它证明对象传输、设备查询及关闭成功，不作为新产品镜像、固件、模型或完整认证的验证结果。
 
 HyperOS 4 的 `mfp-daemon` 使用 Goodix HAL、`/dev/xiaomi-fp`
 和高通 QTEE。`libQSEEComAPI.so` 通过 `libminkdescriptor.so` 打开
@@ -110,7 +121,6 @@ QTEE 使用通用 Linux TEE uAPI 的对象调用，不是 GlobalPlatform（GP）
 关闭传感器及安全程序、发出文件监听释放后才关闭 root。回调线程只有阻塞在 `SUPPL_RECV`
 时允许取消，执行文件操作、发送回复或持有用户空间锁时不可取消；随后等待线程退出。
 共享页由标准 TEE 内存引用保护，Linux 用户空间解除映射不绕过内核／安全世界的引用计数。
-原有录入和认证的设备结果不能替代传输更换后的实机验证。
 
 ### 共享内存与传感器控制
 
@@ -139,14 +149,30 @@ Goodix 客户端使用 `QSEECom_send_modified_cmd()` 发送请求。
 原生客户端完成操作后关闭传感器及安全程序。桌面接口范围见下文的
 [Gatekeeper 与桌面认证](#gatekeeper-与桌面认证)。
 
-UIO 是这套已有实现的过渡路径。将文件移到 `drivers/misc/` 或调用
-`misc_register()` 只会注册字符设备，不会得到通用的指纹电源／复位／IRQ 协议。
-标准 GPIO character-device API 能通知引脚边沿，但不负责 regulator、复位和
-“QTEE 确认后再开启 IRQ”的完整生命周期；evdev 的按键和触摸事件也不表示这种握手。
-本机传感器总线由安全世界管理，不能把它声明成 AP 可访问的 spidev 或 USB 指纹设备。
-在不新增 uAPI 的条件下，替换 UIO 还需要找到能承载这一生命周期的已有设备模型，
-或由内核中的传感器／TEE 客户端完成控制。单独新增 misc `read`／`poll`／`ioctl`
-协议不满足这个条件，所以现有控制驱动与可工作的认证路径继续保留。
+UIO 仍是过渡路径。对照 [Linux 上游提交 `aacb77975041`](https://github.com/torvalds/linux/tree/aacb7797504183a90d66b19b1efb555cfe9b3eec)
+的设备模型，内核资源接口可以复用，但没有能直接替换这条控制路径的 QTEE 指纹 consumer：
+
+| 已有机制 | 可复用的部分 | 尚未连接的部分 |
+| --- | --- | --- |
+| firmware、regulator、GPIO、IRQ、runtime PM | 内核驱动可用 `request_firmware()`、`devm_regulator_get()`、`devm_gpiod_get()`、`devm_request_threaded_irq()` 和 `pm_runtime_resume_and_get()` 管理板级资源 | 这些函数不负责选择 `gfpia` 对象、确认 1016 握手或跟踪用户空间认证操作；资源 API 的存在不等于已有传感器驱动 |
+| [TEE client 总线和 API](https://github.com/torvalds/linux/blob/aacb7797504183a90d66b19b1efb555cfe9b3eec/include/linux/tee_drv.h) | `tee_client_driver` 按 TA UUID 匹配；[OP-TEE](https://github.com/torvalds/linux/blob/aacb7797504183a90d66b19b1efb555cfe9b3eec/drivers/tee/optee/device.c) 提供对应枚举实例 | QTEE 不枚举 `tee_client_device`；通用 `tee_client_open_session()`／`tee_client_invoke_func()` 也不是 QTEE 对象调用的内核入口 |
+| [QTEE 内核对象层](https://github.com/torvalds/linux/blob/aacb7797504183a90d66b19b1efb555cfe9b3eec/drivers/tee/qcomtee/qcomtee_object.h) | `qcomtee_object_do_invoke()`、`qcomtee_object_get_service()` 和内核 callback 可承载 consumer 与安全服务的通信 | 声明仍在驱动内部，未导出供独立 consumer 模块使用；[primordial object](https://github.com/torvalds/linux/blob/aacb7797504183a90d66b19b1efb555cfe9b3eec/drivers/tee/qcomtee/primordial_obj.c) 只实现内存映射、yield 和 sleep，不提供传感器资源服务 |
+| [QSEECom auxiliary client](https://github.com/torvalds/linux/blob/aacb7797504183a90d66b19b1efb555cfe9b3eec/drivers/firmware/qcom/qcom_qseecom.c) | 以已加载应用的 ID 建立内核子设备 | `qcom_qseecom_apps` 只有 `qcom.tz.uefisecapp`，不是当前 QSEECOMPAT 对象的固件加载或传感器绑定模型 |
+| [pwrseq](https://github.com/torvalds/linux/blob/aacb7797504183a90d66b19b1efb555cfe9b3eec/drivers/power/sequencing/core.c)、[device links](https://github.com/torvalds/linux/blob/aacb7797504183a90d66b19b1efb555cfe9b3eec/Documentation/driver-api/device_link.rst) | 内核 consumer 可请求电源时序，并以 `DL_FLAG_PM_RUNTIME` 维持资源依赖 | 不会将一个用户空间 TEE object 自动变成 consumer，也不传递 IRQ 确认；[`power/control=on`](https://github.com/torvalds/linux/blob/aacb7797504183a90d66b19b1efb555cfe9b3eec/Documentation/ABI/testing/sysfs-devices-power) 是设备级策略，不是随 fd 关闭释放的操作引用 |
+
+具体边界在 [`qcomtee/call.c`](https://github.com/torvalds/linux/blob/aacb7797504183a90d66b19b1efb555cfe9b3eec/drivers/tee/qcomtee/call.c)：
+`qcomtee_context_add_qtee_object()`／`qcomtee_context_find_qtee_object()` 使用各 context 的 ID 表；
+`qcomtee_probe()` 注册通用 TEE 设备，没有传感器 DT、供电或 IRQ 关联。
+本地 `open_client()` 则先通过用户空间 loader 加载 TA，再单独打开控制器；
+`run_operation()` 在 1016 的阶段交换结束后才重新启用 IRQ。
+另开一个内核 context 不能直接使用这些用户空间对象 ID，单靠 runtime PM 也无法判断交换何时结束。
+
+可以据此设计内核 consumer，但还需明确 QTEE 内核对象调用入口、板级设备与 TA 的关联，
+以及业务仍在用户空间时 IRQ 完成和电源引用如何传递；现有上游实现尚未提供这套连接。
+将文件移到 `drivers/misc/` 不能补齐它：[misc 核心](https://github.com/torvalds/linux/blob/aacb7797504183a90d66b19b1efb555cfe9b3eec/drivers/char/misc.c)
+的 `misc_open()` 只是切换到驱动自带的 `file_operations`，并未定义指纹操作。
+GPIO character-device API 只管理引脚，evdev 也没有 QTEE 握手完成语义；拼接它们仍会把硬件时序留给用户空间。
+本机总线由安全世界管理，不声明为 AP 可访问的 spidev 或 USB 设备，也不新增 misc 私有协议冒充标准接口。
 
 原厂 `pm_humu_l9` 为 3.300 V。现有主线 PLDO 使用不同的离散电压档位；
 必须选择不超过原厂上限的 3.296 V。之前上取整到 3.304 V 时，
@@ -186,6 +212,9 @@ Debian 的 `SOURCE.json` 同时校验源码输入、目标 ABI、后端源码归
 Arch 系缓存同时核对配方摘要和运行库版本，不把另一套 ABI 的缓存直接安装。
 这仍是本地 libfprint 包；源码补丁进入仓库不等于上游已收录，更不等于发行版原版包
 已经提供此设备后端。传感器控制仍使用 UIO，原厂签名程序的业务命令和 HAT 协议没有改变。
+上游提交还需解决 UIO 控制模型、Gatekeeper／共享 RPMB 的录入策略及固件再分发授权。
+libfprint 的 [`HACKING.md`](https://gitlab.freedesktop.org/libfprint/libfprint/-/blob/80a4b5ec612892c5c056c48dddaa561452cf37ec/HACKING.md)
+不接受专有驱动集成；签名 TA 与模型是否符合其固件边界，也需维护者核对，不能凭源码开源或 OTA 摘要宣称符合。
 
 签名程序与模型共用与内核 firmware loader 相同的搜索顺序：先读取已有的
 `/sys/module/firmware_class/parameters/path`，再查 `/lib/firmware/updates/<内核版本>/`、
