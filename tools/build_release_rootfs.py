@@ -86,10 +86,14 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
                 raise ValueError('Resume must keep the desktop used to build this root')
             if previous.get('debian_suite') != config['debian']['suite']:
                 raise ValueError('Resume must keep the Debian suite; build a fresh sid base')
-        elif not (output / 'FAILED.json').is_file():
-            raise ValueError('Resume needs an assembly result or failure record')
-        elif json.loads((output / 'FAILED.json').read_text()).get('desktop', 'gnome') != desktop:
-            raise ValueError('Failed base root belongs to another desktop')
+        else:
+            base_manifest = output / 'build-manifest.txt'
+            expected = f'suite=sid arch=arm64 desktop={desktop} firmware=not-included'
+            if not base_manifest.is_file() or base_manifest.read_text().splitlines()[:1] != [expected]:
+                raise ValueError('Resume needs a completed sid base for the selected desktop')
+            failure = output / 'FAILED.json'
+            if failure.is_file() and json.loads(failure.read_text()).get('desktop', 'gnome') != desktop:
+                raise ValueError('Failed base root belongs to another desktop')
     if not kernel.is_relative_to(root / 'artifacts/kernels') or not source.is_relative_to(root / 'build/kernel-worktrees'):
         raise ValueError('Use project release kernel source and artifacts')
     public = Path(public_source or root / config['debian']['source']).resolve()
@@ -627,6 +631,11 @@ def execute(record):
         if not (out / 'COMPLETE').is_file() or rootfs.stat().st_uid: raise ValueError('Base desktop build did not complete with native guest ownership')
         archive = debian_archive(rootfs)
         put(rootfs, 'usr/sbin/policy-rc.d', '#!/bin/sh\nexit 101\n'); (rootfs / 'usr/sbin/policy-rc.d').chmod(0o755)
+        if record.get('resume'):
+            with build_devices(rootfs), build_resolver(rootfs):
+                run(['chroot', rootfs, 'apt-get', 'update'])
+                run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive',
+                     'apt-get', 'upgrade', '-y', '--with-new-pkgs', '--no-remove'])
         sensor_folder = Path(record.get('sensors_dir') or ROOT / 'build/sensors/runtime')
         if record.get('sensors_dir') is None:
             run([ROOT / 'build.sh', 'sensors', sensor_folder.parent, '--sysroot', rootfs])
