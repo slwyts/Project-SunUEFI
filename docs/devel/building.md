@@ -130,7 +130,9 @@ python3 tools/build/shared_products.py verify --kind firmware
 python3 tools/build/shared_products.py verify --kind kernel
 ```
 
-这些命令只由 CI 或维护者的本地共用构建调用，不改变 rootfs 的安装过程。sid 和 Nyarch 的滚动仓库仍每次读取并校验签名索引、选择实际 candidate；运行包继续由原构建器核对 SOURCE、依赖 ABI 与文件摘要，缓存不冻结候选版本。Debian 包按配方前缀恢复最近缓存，成功后发布本次运行的一代，避免 Actions 同名缓存不可覆盖导致候选更新后每次重编；公共包只由选定的一个 Debian job 保存。完整 root 镜像不存入构建缓存。冷编译、签名索引刷新、根系统安装和镜像导出仍需要时间，不能仅凭缓存设计保证整套产品在几分钟内完成。
+这些命令只由 CI 或维护者的本地共用构建调用，不改变 rootfs 的安装过程。sid 和 Nyarch 的滚动仓库仍每次读取并校验签名索引、选择实际 candidate；运行包继续由原构建器核对 `SOURCE.json`、依赖 ABI 与文件摘要，缓存不冻结候选版本。sensors 与 FFmpeg 缓存保留 `runtime/`、`SOURCE.json` 和 `SHA256SUMS`；旧版 `package-cache.json` 不再参与 sensors 复用。缓存键包含公共 sid 构建器 `tools/build/debian.py`，构建器变化后不会继续使用同一配方缓存。
+
+Debian 包按配方前缀恢复最近缓存，成功后发布本次运行的一代，避免 Actions 同名缓存不可覆盖导致候选更新后每次重编；公共包只由选定的一个 Debian job 保存。完整 root 镜像不存入构建缓存。冷编译、签名索引刷新、根系统安装和镜像导出仍需要时间，不能仅凭缓存设计保证整套产品在几分钟内完成。
 
 本地和 GitHub 的完整构建走同一个 `release-rootfs` 入口。默认系统包含中文界面、拼音输入法、Chromium、GNOME 动画、蓝牙地址自动初始化和触控笔组件。根系统生成后会检查这些软件包和必需文件，结果记录在 `manifest.json` 的 `default_system`，缺少任何一项构建就失败。
 

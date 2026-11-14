@@ -310,9 +310,9 @@ jobs:
             build/ffmpeg/runtime
             build/ffmpeg/SOURCE.json
             build/ffmpeg/SHA256SUMS
-          key: ffmpeg-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'linux/bsp/patches/ffmpeg/**', 'patches/ffmpeg/**', 'tools/build_ffmpeg_packages.py', 'tools/prepare_ffmpeg_source.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ffmpeg-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'linux/bsp/patches/ffmpeg/**', 'patches/ffmpeg/**', 'tools/build_ffmpeg_packages.py', 'tools/build/debian.py', 'tools/prepare_ffmpeg_source.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ffmpeg-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'linux/bsp/patches/ffmpeg/**', 'patches/ffmpeg/**', 'tools/build_ffmpeg_packages.py', 'tools/prepare_ffmpeg_source.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}-
+            ffmpeg-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'linux/bsp/patches/ffmpeg/**', 'patches/ffmpeg/**', 'tools/build_ffmpeg_packages.py', 'tools/build/debian.py', 'tools/prepare_ffmpeg_source.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}-
       - id: sensors-cache
         name: Reuse completed Debian hardware packages
         if: startsWith(matrix.target, 'debian-')
@@ -320,12 +320,12 @@ jobs:
         with:
           path: |
             build/sensors/runtime
-            build/sensors/package-cache.json
+            build/sensors/SOURCE.json
             build/sensors/SOURCE
             build/sensors/SHA256SUMS
-          key: sensors-sid-arm64-${{ hashFiles('sources.lock.json', 'config/release.json', 'linux/rootfs/debian.json', 'build.sh', 'patches/piano-sensors/**', 'tools/build/sensors.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: sensors-sid-arm64-${{ hashFiles('sources.lock.json', 'config/release.json', 'linux/rootfs/debian.json', 'build.sh', 'patches/piano-sensors/**', 'tools/build/sensors.py', 'tools/build/debian.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            sensors-sid-arm64-${{ hashFiles('sources.lock.json', 'config/release.json', 'linux/rootfs/debian.json', 'build.sh', 'patches/piano-sensors/**', 'tools/build/sensors.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}-
+            sensors-sid-arm64-${{ hashFiles('sources.lock.json', 'config/release.json', 'linux/rootfs/debian.json', 'build.sh', 'patches/piano-sensors/**', 'tools/build/sensors.py', 'tools/build/debian.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}-
       - id: pipewire-cache
         name: Reuse completed Debian common desktop packages
         if: startsWith(matrix.target, 'debian-')
@@ -423,7 +423,7 @@ jobs:
           key: ${{ steps.sensors-cache.outputs.cache-primary-key }}
           path: |
             build/sensors/runtime
-            build/sensors/package-cache.json
+            build/sensors/SOURCE.json
             build/sensors/SOURCE
             build/sensors/SHA256SUMS
       - name: Save the validated PipeWire generation once
@@ -452,7 +452,7 @@ jobs:
           if [ -f build/logs/ci-build.log ]; then
             tail -n 160 build/logs/ci-build.log
           fi
-          for log in build/distros/release.build.log build/ffmpeg/build.log build/gsd/build.log build/pipewire/build.log build/mutter/build.log build/gdm/build.log; do
+          for log in build/distros/release.build.log build/ffmpeg/build.log build/sensors/build.log build/gsd/build.log build/pipewire/build.log build/mutter/build.log build/gdm/build.log; do
             if [ -f "$log" ]; then
               echo "::group::$log"
               tail -n 100 "$log"
@@ -538,8 +538,10 @@ jobs:
             linux/dts/piano-cpu-model.dtso
             linux/dts/piano-audio-dmic-clock.dtso
             build/release/source-manifest.json
+            build/sensors/SOURCE.json
             build/sensors/SOURCE
             build/sensors/SHA256SUMS
+            build/sensors/build.log
             build/ffmpeg/SOURCE.json
             build/ffmpeg/SHA256SUMS
             build/ffmpeg/build.log
