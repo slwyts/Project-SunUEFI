@@ -29,7 +29,7 @@ sudo ./build.sh sensors build/sensors --sysroot build/distros/debian-sid/rootfs 
 | `libssc2`、`libssc-bin` | `0.4.4-2+piano1+sunuefi3`，架构 `arm64` |
 | `iio-sensor-proxy` | `3.9-1+piano1+sunuefi1`，架构 `arm64` |
 
-FastRPC 使用签名 sid Packages 验证的标准二进制包，不再下载 trixie-backports 包。libssc 的属性类型与公开向量接口、iio-sensor-proxy 的启动认领顺序修正仍未包含在上述 sid 源码中，因此保留对应补丁。版本、签名索引及归档哈希、六包集合均记录到输出清单。
+FastRPC 使用签名 sid `contrib` Packages 验证的标准二进制包，不再下载 trixie-backports 包。基础配方同时启用 `main contrib` 的二进制与源码索引。libssc 的属性类型与公开向量接口、iio-sensor-proxy 的启动认领顺序修正仍未包含在上述 sid 源码中，因此保留对应补丁。版本、签名索引及归档哈希、六包集合均记录到输出清单。
 
 `tools/build_release_rootfs.py --sensors-dir` 默认使用 `build/sensors/runtime`。六个 `.deb` 需直接位于该目录；`SOURCE` 和 `SHA256SUMS` 可一同放在它的父目录或目录内。顶层构建成功后写入的 `SOURCE` 为：
 

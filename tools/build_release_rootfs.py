@@ -20,7 +20,6 @@ import stage_piano_full_userspace as userspace
 import stage_piano_kernel_modules as modules
 import stage_piano_ram_hardware as hardware
 from make_kernel_initramfs import make_newc, validate_static_arm64_elf
-from build_ffmpeg_packages import RUNTIME as FFMPEG_RUNTIME
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / 'config/release.json'
@@ -115,7 +114,7 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
             sensors_packages(sensors, config['sensors'], root=root)
     ffmpeg = Path(ffmpeg_dir).resolve() if ffmpeg_dir else None
     if ffmpeg:
-        ffmpeg_packages(ffmpeg, root)
+        ffmpeg_packages(ffmpeg)
     mutter = Path(mutter_dir).resolve() if mutter_dir else None
     if mutter:
         if desktop != 'gnome':
@@ -401,7 +400,28 @@ def native_boot_request(rootfs, output):
     return record
 
 
-def sensors_packages(folder, config, root=ROOT):
+def runtime_packages(folder, names, version=None):
+    folder = Path(folder).resolve()
+    metadata = folder.parent / 'SOURCE.json'
+    if not metadata.is_file() or (folder.parent / '.incomplete').exists():
+        raise ValueError('Use a completed runtime package directory: ' + str(folder))
+    source = json.loads(metadata.read_text())
+    rows = {}
+    for path in sorted(folder.glob('*.deb')):
+        package, actual_version, arch = [capture(['dpkg-deb', '-f', path, field])
+                                         for field in ('Package', 'Version', 'Architecture')]
+        row = {'file': path.name, 'version': actual_version, 'architecture': arch, 'sha256': digest(path)}
+        if (package in rows or arch not in ('arm64', 'all') or
+                (version is not None and actual_version != version) or
+                source.get('packages', {}).get(package) != row):
+            raise ValueError('Runtime package identity differs: ' + path.name)
+        rows[package] = row
+    if set(rows) != set(names):
+        raise ValueError('The complete runtime package set is required: ' + str(folder))
+    return source, rows
+
+
+def sensors_packages(folder, config, root=ROOT, rootfs=None):
     folder = Path(folder).resolve()
     metadata = next((p for p in (folder.parent, folder)
                      if (p / 'SOURCE').is_file() and (p / 'SHA256SUMS').is_file()), None)
@@ -411,6 +431,12 @@ def sensors_packages(folder, config, root=ROOT):
     if (source.get('source_url'), source.get('source_commit')) != (config['source_url'], config['commit']):
         raise ValueError('Piano sensors SOURCE does not match the fixed release source')
     patches = [{'path': name, 'sha256': digest(Path(root) / name)} for name in config.get('patches', [])]
+    from build_piano_runtime_helpers import source_patches
+    series = Path(root) / 'patches/piano-sensors/sid/series.json'
+    ordered = [path.resolve().relative_to(Path(root).resolve()).as_posix()
+               for path in source_patches(series)]
+    if ordered != [row['path'] for row in patches]:
+        raise ValueError('Sensors configuration differs from the selected patch series')
     if source.get('patches', []) != patches:
         raise ValueError('Piano sensors SOURCE does not match the release importer patches; rebuild with ./build.sh sensors')
     sums = {}
@@ -434,44 +460,41 @@ def sensors_packages(folder, config, root=ROOT):
         rows[package] = {'file': path.name, 'version': version, 'architecture': arch, 'sha256': actual}
     if set(rows) != {'piano-sensors', 'fastrpc-support', 'libfastrpc1', 'libssc2', 'libssc-bin', 'iio-sensor-proxy'}:
         raise ValueError('Expected exactly the six Piano sensors runtime packages')
-    if any(row['path'] == 'patches/piano-sensors/0002-fix-libssc-property-types.patch' for row in patches):
-        vector_api = any(row['path'] == 'patches/piano-sensors/0003-libssc-raw-vector-reports.patch' for row in patches)
-        version = '0.4.4-2+piano1+sunuefi2' if vector_api else '0.4.4-2+piano1+sunuefi1'
-        if any(rows[package]['version'] != version for package in ('libssc2', 'libssc-bin')):
-            raise ValueError('Expected the property-type fixed libssc library/CLI pair ' + version)
-    if patches and rows['piano-sensors']['version'] != '5+sunuefi1':
-        raise ValueError('Expected the patched Piano sensors importer package version 5+sunuefi1')
+    from build import debian, sensors as builder
+    policy = json.loads((Path(root) / builder.POLICY.relative_to(ROOT)).read_text())
+    versions = policy['source_versions']
+    expected = {'piano-sensors': policy['native_version'],
+                'fastrpc-support': versions['fastrpc'], 'libfastrpc1': versions['fastrpc'],
+                'libssc2': versions['libssc'] + '+' + policy['local_revisions']['libssc'],
+                'libssc-bin': versions['libssc'] + '+' + policy['local_revisions']['libssc'],
+                'iio-sensor-proxy': versions['iio-sensor-proxy'] + '+' +
+                                    policy['local_revisions']['iio-sensor-proxy']}
+    if any(rows[package]['version'] != version for package, version in expected.items()):
+        raise ValueError('Sensors runtime versions differ from the sid package policy')
+    target = debian.target_identity(rootfs, versions, {'libssc': 'libssc2',
+                                    'iio-sensor-proxy': 'iio-sensor-proxy'}) if rootfs else None
+    if (source.get('target', {}).get('sources') != versions or
+            source.get('policy_sha256') != digest(Path(root) / builder.POLICY.relative_to(ROOT)) or
+            debian.reusable(metadata, policy['native_version'], patches, builder.RUNTIME, target) is None):
+        raise ValueError('Sensors runtime does not match the sid source, patches or target ABI')
     return {'source_url': source['source_url'], 'source_commit': source['source_commit'],
             'source_sha256': digest(metadata / 'SOURCE'), 'sha256sums_sha256': digest(metadata / 'SHA256SUMS'),
             'patches': patches, 'packages': rows}
 
 
-def ffmpeg_packages(folder, root=ROOT):
+def ffmpeg_packages(folder, rootfs=None):
+    import build_ffmpeg_packages as builder
+    from build import debian
     folder = Path(folder).resolve()
     metadata = folder.parent / 'SOURCE.json'
-    if not metadata.is_file() or (folder.parent / '.incomplete').exists():
-        raise ValueError('Use the completed FFmpeg runtime from ./build.sh ffmpeg')
-    source = json.loads(metadata.read_text())
-    series = json.loads((Path(root) / 'linux/bsp/patches/ffmpeg/series.json').read_text())
-    patches = [{'path': 'linux/bsp/patches/ffmpeg/' + row['path'],
-                'sha256': digest(Path(root) / 'linux/bsp/patches/ffmpeg' / row['path'])}
-               for row in series['series']]
-    archive = next(row for row in series['source']['archives'] if row['filename'].endswith('.orig.tar.xz'))
-    version = series['source']['debian_source_version'] + '+' + series['local_revision']
-    if (source.get('packages_built') is not True or source.get('patches') != patches or
-            source.get('archive_sha256') != archive['sha256'] or source.get('package_version') != version):
-        raise ValueError('FFmpeg runtime does not match the selected source and patch')
-    rows = {}
-    for path in sorted(folder.glob('*.deb')):
-        package, actual_version, arch = [capture(['dpkg-deb', '-f', path, field])
-                                         for field in ('Package', 'Version', 'Architecture')]
-        row = {'file': path.name, 'version': actual_version, 'architecture': arch, 'sha256': digest(path)}
-        if (package in rows or arch != 'arm64' or actual_version != version or
-                source.get('packages', {}).get(package) != row):
-            raise ValueError('FFmpeg runtime package identity differs: ' + path.name)
-        rows[package] = row
-    if rows.keys() != FFMPEG_RUNTIME:
-        raise ValueError('The complete FFmpeg runtime package set is required')
+    version = builder.package_version()
+    patches = builder.patch_records()
+    source, rows = runtime_packages(folder, builder.RUNTIME, version)
+    selected = {'ffmpeg': json.loads(builder.POLICY.read_text())['source_version']}
+    target = debian.target_identity(rootfs, selected, {'ffmpeg': 'ffmpeg'}) if rootfs else None
+    if (source.get('target', {}).get('sources') != selected or
+            builder.reusable(folder.parent, target) is None):
+        raise ValueError('FFmpeg runtime does not match the sid source, patches or target ABI')
     return {'source_sha256': digest(metadata), 'patches': patches, 'packages': rows,
             'device_verified': False}
 
@@ -639,11 +662,11 @@ def execute(record):
         sensor_folder = Path(record.get('sensors_dir') or ROOT / 'build/sensors/runtime')
         if record.get('sensors_dir') is None:
             run([ROOT / 'build.sh', 'sensors', sensor_folder.parent, '--sysroot', rootfs])
-        sensors = sensors_packages(sensor_folder, cfg['sensors'])
+        sensors = sensors_packages(sensor_folder, cfg['sensors'], rootfs=rootfs)
         ffmpeg_folder = Path(record.get('ffmpeg_dir') or ROOT / 'build/ffmpeg/runtime')
         if record.get('ffmpeg_dir') is None:
             run([ROOT / 'build.sh', 'ffmpeg', '--output', ffmpeg_folder.parent, '--sysroot', rootfs])
-        ffmpeg = ffmpeg_packages(ffmpeg_folder)
+        ffmpeg = ffmpeg_packages(ffmpeg_folder, rootfs)
         from desktop import build_pipewire_packages
         pipewire_folder = ROOT / 'build/pipewire'
         run([ROOT / 'build.sh', 'pipewire', '--rootfs', rootfs, '--output', pipewire_folder])

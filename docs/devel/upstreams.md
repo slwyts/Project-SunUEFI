@@ -16,12 +16,12 @@ SunUEFI 不是从零重写所有东西。上游源码固定在 `upstream/` 的�
 | [piano-firmware](https://github.com/blu-sharky/piano-firmware) | Wi-Fi、蓝牙、DSP、触控等设备固件和功放预设 | 设备固件改为由官方 OTA 导入 `vendor/firmware`；它不是整套 HyperOS，也不含原厂相机算法 |
 | [Mesa](https://mesa3d.org/) | Adreno 图形用户空间 | Debian sid 原生配方与最小 830v1 芯片 ID 补丁 |
 | [piano-sensors](https://github.com/blu-sharky/piano-sensors) | 高通传感器（SSC）通信与桌面桥接 | 数据类型、读取接口、标准 SensorProxy 与自动亮度策略 |
+| [SteamOS-ARM-Port](https://github.com/hashtagbasit/SteamOS-ARM-Port) | Valve ARM64 根系统提取方法和移动设备移植参考 | 复用固定版本提取器，接入 SunUEFI 的 ESP/root、内核及 BSP；不采用其设备启动器和分区方案 |
+| [MiCode](https://github.com/MiCode) 与本机 HyperOS | 原厂设备树、驱动、配置的参照 | 对照真实命令、时序和参数，按标准接口移植 |
 
 Adreno 830v1 的 drm/msm 芯片 ID `0xffff44050001` 已由 Mesa 提交 [`2061a5ee`](https://gitlab.freedesktop.org/mesa/mesa/-/commit/2061a5ee6184e465eafb87cf465aed92c04f1a41)（[MR43878](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/43878)）合入主线，官方 `mesa-26.3.0-rc1` 和 `mesa-26.3.0` 标签已包含。当前 Debian sid `26.2.6-1` 的 orig 与 Debian 补丁系列未包含，Arch Linux ARM 的 `26.2.6`／`26.2.7` 也未包含，因此这两条构建暂时共用 `patches/mesa/26.2.6/` 中的 MIT 回移植，不再引用外部 Mesa 打包仓库。实际 Freedreno 设备查找的编译对照中，未修正的 26.2.6 无法识别该 ID，应用补丁后返回 A8xx。升级到已含修正的发行版源码时即可删除该回移植。
 
 SteamOS 使用的 Mesa 27 开发提交 `e549b466fcf1237469b6814614d21cbcd144c30b` 已包含 830v1，且是 `2061a5ee` 的后续提交，不需要芯片 ID 补丁。它仍需 `patches/mesa/27.0/` 的独立 renderonly 缓冲高度对齐修正；这不是芯片识别问题，不能随旧来源仓库一起删除。
-| [SteamOS-ARM-Port](https://github.com/hashtagbasit/SteamOS-ARM-Port) | Valve ARM64 根系统提取方法和移动设备移植参考 | 复用固定版本提取器，接入 SunUEFI 的 ESP/root、内核及 BSP；不采用其设备启动器和分区方案 |
-| [MiCode](https://github.com/MiCode) 与本机 HyperOS | 原厂设备树、驱动、配置的参照 | 对照真实命令、时序和参数，按标准接口移植 |
 
 Debian 软件通过 APT 安装，Nyarch 和 SteamOS 使用原生 pacman 包。Nyarch 从 Arch Linux ARM 和应用源码构建，不依赖旧版 ISO。SteamOS 是实验目标。Ubuntu、Deepin 等配置暂未纳入默认构建。
 

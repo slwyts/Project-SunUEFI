@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "targets": ["debian-gnome", "debian-kde", "nyarch-gnome", "steamos"],
+  "patches": [
+    {
+      "file": "../0001-import-vendor-reg-config.patch",
+      "sha256": "c99c3ae225085cd3895d2bb2271a64d45a730d1c57d65756b6cab08892b9b458",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/blu-sharky/piano-sensors",
+        "drop_when": "The selected importer reads the device's own vendor file-service configuration and ODM registry through read-only mappings and keeps DSP updates in Linux-owned copies. Verify first boot and cancellation leave Android partitions unchanged before removing this importer extension."
+      }
+    },
+    {
+      "file": "../0002-fix-libssc-property-types.patch",
+      "sha256": "89fe576314d2e7cb7b84b32fb96948899e729562db8cc535c817cffc18c0dfa8",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://codeberg.org/DylanVanAssche/libssc",
+        "drop_when": "The selected libssc source registers stream-type, available and sample-rate with the uint, boolean and float types returned by their getters. Verify standard GObject property reads and introspection without type assertions before deleting the wrapper patch."
+      }
+    },
+    {
+      "file": "../0003-libssc-raw-vector-reports.patch",
+      "sha256": "20f5d59cd908402075ebe17df3294f2132f499b2ad01114d739e8907711d0ca8",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://codeberg.org/DylanVanAssche/libssc",
+        "drop_when": "The selected libssc provides immutable original event payloads, bounded public vector decoding and the same source-built client with a matching symbol-version dependency. Verify unknown events and malformed payloads fail normally without inventing physical units or adding a daemon before replacing this API."
+      }
+    }
+  ]
+}
