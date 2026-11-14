@@ -8,18 +8,26 @@ SM8750 TFE980 的 PIX sink 接收四种排列的 RAW10 Bayer，source 和对应�
 
 产品相机驱动来自 [Linux 补丁链](../../../patches/linux/7.3/series.json)，不是未经修改的主线 CAMSS。图像、控件和帧事件使用 V4L2；颜色矩阵仍有本地私有控件。TFE 的 `vfe_isp_params` 是内核内部状态，不是用户空间可以排队的参数缓冲接口。
 
-| 部分 | 当前实现 | libcamera 硬件路径还缺什么 |
+### 现有服务与标准替代
+
+现有服务仍提供应用所需的相机功能；新的内核接口修正尚未组成 libcamera 替代路径。
+
+| 功能 | 现有服务（旧路径） | 标准硬件路径（替代状态） |
 | --- | --- | --- |
-| 图像队列 | `VIDEO_CAPTURE_MPLANE`、MMAP、DMABUF；PIX 输出 NV12，RDI 输出原始数据 | pipeline 配置硬件缩放、裁切和缓冲生命周期，不映射图像计算 3A |
-| 3A 统计 | 驱动只列出统计 write master 编号，没有统计配置、DMA 队列、格式或完成处理 | 有来源的 TFE980 统计布局、阈值、尺寸、完成顺序及标准 metadata 节点 |
-| ISP 参数 | PIX subdev 的标准 gain、白平衡、饱和度、对比度控件；CCM 为私有 `0x00981ff0` | 上游可接受的逐帧参数接口与生效帧关联，不能另造私有控件替代 |
-| 请求 | 图像队列没有 Media Request 支持；控件逐项写入后触发寄存器更新 | sensor 控件延迟和 TFE 参数实际生效帧的测量；不能把写入成功当作指定帧已经生效 |
-| 前摄时序 | 原生积分计数、固定模式帧间隔；不提供失实的 HBLANK/VBLANK | 可靠的像素阵列时钟及读出模型，或 libcamera 接受的非图像行曝光模型 |
-| 后摄对焦 | DW9768 使用 `FOCUS_ABSOLUTE`，sensor→lens ancillary link 已确认；现有服务对 NV12 计算清晰度 | 硬件对焦统计、镜头标定及移动稳定时间 |
+| 前后摄预览、录像 | CAMSS PIX 输出 NV12，服务通过两个 loopback 摄像头交给应用 | 内核已有 MMAP／DMABUF 图像队列，并修正 RAW10 sink／NV12 capture 和 CSID 路由；libcamera TFE pipeline 未实现 |
+| 分辨率、帧率协商 | 服务处理 loopback 的 `S_FMT`／`S_PARM`，配置 sensor、硬件缩放与裁切 | 内核提供格式、selection 和 sensor 模式接口；libcamera 的协商、缓冲管理与模式切换未实现 |
+| 自动曝光、白平衡、后摄对焦 | 服务从 NV12 采样计算 AE／AWB 和清晰度 | TFE980 统计配置、metadata DMA 队列、完成处理和只处理硬件统计的 IPA 未实现，资料缺项见[下节](#tfe980-公开资料与-metadata) |
+| 手动控件、逐帧参数 | 控制 socket 写标准 sensor／PIX 控件；CCM 使用私有控件 | 底层曝光、gain、白平衡等控件保留；标准逐帧 ISP 参数、生效帧关联和 libcamera 控件接入未实现 |
+| 镜头、闪光拍照 | 镜头及两路 flash ancillary links 已确认；服务提供强制闪光拍照流程 | 标准镜头／flash 控件和关联已具备；硬件 AF 统计、镜头标定、移动稳定时间及 libcamera 闪光流程未实现 |
+| 后摄全幅 | RDI 采集 Quad CFA，经已有软件转换输出 NV12 | 当前 TFE 没有实现全幅 remosaic；硬件路径先使用 binned 模式，不增加软件回退或放大冒充全幅 |
+
+因此不能先移除 `piano-camerad`、loopback 或控制 socket：否则应用会失去已处理的视频输出、3A 和现有拍照入口。WirePlumber 配置同时隐藏服务占用的 CAMSS 节点并禁用 libcamera monitor，避免两个路径争抢 sensor；标准替代完成并验证这些功能前，该配置仍需保留。
+
+图像队列不支持 Media Request，控件逐项写入后触发寄存器更新。还需测量 sensor 控件延迟和 TFE 参数实际生效帧，不能把写入成功当作指定帧已经生效。
 
 现有 `frame_stats()` 从 NV12 的 Y/UV 采样，转换采样值用于 AE/AWB；AF 同样读取图像清晰度。把这些函数移进 IPA 并不能满足“IPA 只处理硬件统计”的目标。驱动中的统计 write master 名称不足以推导计算模块配置、统计记录布局或 DMA 缓冲大小，不能只凭名称开始排队统计 DMA。
 
-上游 [libcamera v0.8.0 simple pipeline](https://github.com/libcamera-org/libcamera/blob/v0.8.0/src/libcamera/pipeline/simple/simple.cpp) 对 CAMSS 使用 software ISP，选择到硬件 PIX 路径也没有 TFE 3A 参数和统计处理。2026-11-12 的上游 master 同样没有 TFE pipeline 或 IPA。[CAMSS pipeline v3 提案](https://lists.libcamera.org/pipermail/libcamera-devel/2026-November/063337.html)增加不同相机的 CSID/VFE 分配，但硬件 ISP 部分针对 QRB2210 OPE，不是 SM8750 TFE980。[OPE 实现](https://lists.libcamera.org/pipermail/libcamera-devel/2026-November/063344.html)仍用 `SwStatsCpu` 读取原始图像并复用 softISP IPA，不能作为不处理图像数据的 TFE 方案。
+上游 [libcamera v0.8.0 simple pipeline](https://github.com/libcamera-org/libcamera/blob/v0.8.0/src/libcamera/pipeline/simple/simple.cpp) 对 CAMSS 使用 software ISP，选择到硬件 PIX 路径也没有 TFE 3A 参数和统计处理；[上游 master](https://gitlab.freedesktop.org/camera/libcamera/-/tree/da6a6ed33ed0ab305f10b6f8b44736150d39cef4/src/libcamera/pipeline)同样没有 TFE pipeline 或 IPA。[CAMSS pipeline v3 提案](https://lists.libcamera.org/pipermail/libcamera-devel/2026-November/063337.html)增加不同相机的 CSID/VFE 分配，但硬件 ISP 部分针对 QRB2210 OPE，不是 SM8750 TFE980。[OPE 实现](https://lists.libcamera.org/pipermail/libcamera-devel/2026-November/063344.html)仍用 `SwStatsCpu` 读取原始图像并复用 softISP IPA，不能作为不处理图像数据的 TFE 方案。
 
 libcamera 的[传感器要求](https://github.com/libcamera-org/libcamera/blob/v0.8.0/Documentation/sensor_driver_requirements.rst)还要求 RAW sensor 提供 HBLANK、VBLANK、PIXEL_RATE，并把曝光表示为图像行。当前 OV32D40 不满足这一模型，不能重新填入已证明错误的 blanking 值来通过初始化。上游也没有这两颗 sensor 的增益 helper 和实测控件延迟，默认延迟不能代替逐模式测量。
 
@@ -45,9 +53,9 @@ MiCode 的 [Piano camera-kernel](https://github.com/MiCode/vendor_qcom_opensourc
 | Bayer RS | 17 | `0x1e00`／`0x1e04` | PLAIN32 |
 | TMC BHIST | 18 | `0x1f00`／`0x1f04` | PLAIN64 |
 
-这些输出同属 completion group 2，`comp_done_mask[2] = 0x70` 对应三个 context；MiCode 表还列出聚合完成中断 `mc_comp_done_mask[2] = BIT(25)`，Qualcomm 的上述版本未列出该字段。不能把 SM8650 的 group 4 完成处理直接搬过来。上述两份公开 kernel 源码中尚未找到这些统计计算模块的启用、ROI、grid/bin 数、阈值、输出 shift、tap point 配置和输出记录定义；IQ 寄存器命令由用户空间生成，再经 `CAM_ISP_IQ_BL` 和 CDM 提交。因此 PLAIN64 只说明打包宽度，不说明每个值是哪个颜色通道、有效位宽或帧，也不能据此确定 DMA 缓冲大小。TFE980 的 AWB BFW、AF BHIST、另一路 CAF 也不能直接当作旧版 BF 统计。
+这些输出同属 completion group 2，`comp_done_mask[2] = 0x70` 对应三个 context；MiCode 表还列出聚合完成中断 `mc_comp_done_mask[2] = BIT(25)`，Qualcomm 的上述版本未列出该字段。不能把 SM8650 的 group 4 完成处理直接搬过来。上述两份公开 kernel 源码中尚未找到这些统计计算模块的启用、ROI、grid/bin 数、阈值、输出 shift、tap point 配置和输出记录定义；IQ 寄存器命令由用户空间生成，再经 `CAM_ISP_IQ_BL` 和 CDM 提交。因此 PLAIN64 只说明打包宽度，不说明每个值是哪个颜色通道、有效位宽或帧，也不能据此确定 DMA 缓冲大小。统计 write master 的 frame-based 模式将宽高设为零，公开代码没有用分配长度设置输出上限；缺少计算模块的最大输出长度，就无法证明 DMA 不会越过缓冲。TFE980 的 AWB BFW、AF BHIST、另一路 CAF 也不能直接当作旧版 BF 统计。
 
-Linux 7.3 的 `v4l2-isp` 已合入通用 buffer/block header 和统计封装，但 header 的 `type` 明确由驱动定义，没有通用 Bayer grid、BHIST 或 BF payload。现有 [GENERIC metadata 格式](https://docs.kernel.org/userspace-api/media/v4l/metafmt-generic.html)描述 CSI-2 行数据的存储，不定义统计含义；把自定义 TFE 数据塞进去仍会制造项目私有 ABI。其他 ISP 的已合入格式也不能用来冒充 TFE 数据。
+Linux 7.3 的 `v4l2-isp` 已合入通用 buffer/block header 和统计封装，但 header 的 `type` 明确由驱动定义，没有通用 Bayer grid、BHIST 或 BF payload。[Linux 主线](https://github.com/torvalds/linux/tree/aacb7797504183a90d66b19b1efb555cfe9b3eec/drivers/media/platform/qcom/camss)和 [media next](https://git.linuxtv.org/media.git/tree/drivers/media/platform/qcom/camss?id=bf6c63ecc20a54aaac7a2fcbd6adaf6498388825)仍无 TFE980 统计后端或 payload 定义。现有 [GENERIC metadata 格式](https://docs.kernel.org/userspace-api/media/v4l/metafmt-generic.html)描述 CSI-2 行数据的存储，不定义统计含义；把自定义 TFE 数据塞进去仍会制造项目私有 ABI。其他 ISP 的已合入格式也不能用来冒充 TFE 数据。
 
 Qualcomm 的 [IFE BG 统计提案](https://lore.kernel.org/linux-media/20261006223953.3382273-21-gjorgji.rosikopulos@oss.qualcomm.com/)与 [CAMSS extensible BHIST 提案](https://lore.kernel.org/linux-media/20261005-linux-mainline-7-2-sm8650-hdk-rfc-0-v1-58-ed985aefd611@kernel.org/)是可复用的上游工作，但尚未合入，且基于不同 IFE 模块。采用前需证明 TFE980 的布局和语义相同，并沿该公共接口评审，而不是在项目里自行分配 block 或 fourcc。
 
