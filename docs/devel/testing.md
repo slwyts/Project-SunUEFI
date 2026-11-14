@@ -40,3 +40,5 @@ python3 tools/check_host.py --group python-all
 ## CI 检查
 
 GitHub Actions 的 **Build products** 在 `main` 上有相关源码变动时自动运行，覆盖 `uefi`、`linux` 以及四个发行版。CI 使用与本地相同的 `./build.sh`、固定子模块和补丁配置，不连接物理设备。
+
+选择目标前会运行补丁系列检查；它检查共享引用、摘要、重复变更以及已登记系列的产品目标。单独运行 `./build.sh check --pattern test_check_patch_series.py`，规则见[补丁管理](patches.md#软件包补丁与产品目标)。
