@@ -29,11 +29,11 @@
 
 键盘背光使用内核 LED 节点 `nanosic::kbd_backlight`，经 UPower 和桌面电源组件调节。蓝牙地址由 UEFI 通过标准设备树属性交给内核，触屏解码由设备绑定事件触发。ADSP 和 CDSP 由内核 `remoteproc` 驱动自动启动，设备树不再禁用 ADSP 自动启动，也不依赖用户空间等待显示接管。
 
-Debian 镜像安装带 LED 热插拔补丁的 UPower 1.90.9，daemon 与其精确依赖的
-`libupower-glib3` 一起打包。旧键盘 D-Bus 对象在未连接时仍保留，LED 插拔时
-重新扫描并关闭旧文件描述符。GNOME 的 GSD 48.1（Debian）和 51.0（Nyarch）
-通过同一标准接口异步刷新亮度与范围，取消过期请求，保留亮度为零的状态；
-不增加硬件服务。Nyarch、SteamOS 使用发行版自带的较新 UPower。
+Debian sid 使用发行版 UPower，不再重建旧版 daemon。签名源码中的
+`up-enumerator-udev.c` 已枚举 LED 插拔；`up-daemon.c` 更新组合键盘对象，
+保持原 `/org/freedesktop/UPower/KbdBacklight` 接口。Debian 和 Nyarch 的 GSD
+共用 51.0 补丁，通过该标准接口异步刷新亮度与范围，取消过期请求，保留
+亮度为零的状态，不增加硬件服务。SteamOS 同样使用发行版 UPower。
 
 相机服务在用户会话开始前创建 V4L2 loopback 节点，并发送 systemd 就绪通知；只有应用请求视频时才启动采集。相机驱动由硬件别名自动探测，`CAMERA_START=0` 禁用图像服务。升级时一起更新 unit 和 helper。
 

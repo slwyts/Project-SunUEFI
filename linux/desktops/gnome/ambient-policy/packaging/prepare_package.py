@@ -29,8 +29,8 @@ def debian(source: Path, destination: Path) -> None:
     if not (source / "debian/changelog").is_file():
         raise SystemExit("Provide the unpacked Debian gnome-settings-daemon source package")
     first = (source / "debian/changelog").read_text().splitlines()[0]
-    if not first.startswith("gnome-settings-daemon (48.1-"):
-        raise SystemExit("This Debian patch is for GNOME 48.1; use a matching source package")
+    if not first.startswith("gnome-settings-daemon (51.0-"):
+        raise SystemExit("The shared Debian/Arch patches require GNOME 51.0 source")
     version = first.split("(", 1)[1].split(")", 1)[0]
     if "+sunuefi" in version:
         raise SystemExit("Source is already a SunUEFI package; use the original Debian source")
@@ -40,9 +40,9 @@ def debian(source: Path, destination: Path) -> None:
     patch_dir = destination / "debian/patches"
     patch_dir.mkdir(exist_ok=True)
     patch_name = "sunuefi-ambient-device-profile.patch"
-    shutil.copyfile(PATCHES / "0001-power-optional-device-ambient-profile.patch", patch_dir / patch_name)
+    shutil.copyfile(PATCHES / "0001-power-optional-device-ambient-profile-51.patch", patch_dir / patch_name)
     extra_names = []
-    for path in package_patches('48.1'):
+    for path in package_patches('51.0'):
         shutil.copyfile(path, patch_dir / path.name)
         extra_names.append(path.name)
     series = patch_dir / "series"
@@ -50,11 +50,11 @@ def debian(source: Path, destination: Path) -> None:
     series.write_text(existing.rstrip() + "\n" + "\n".join([patch_name, *extra_names]) + "\n")
     changelog = destination / "debian/changelog"
     entry = (
-        f"gnome-settings-daemon ({version}+sunuefi4) UNRELEASED; urgency=medium\n\n"
+        f"gnome-settings-daemon ({version}+sunuefi1) UNRELEASED; urgency=medium\n\n"
         "  * Add device ambient-light profiles and keyboard backlight hotplug.\n"
         "  * Restore the current screensaver state when power management starts.\n"
         "  * Use relative luminance for ambient changes and pause while blanked.\n\n"
-        f" -- slwyts <slwyts@foxmail.com>  {format_datetime(datetime.now(timezone.utc))}\n\n"
+        f" -- Project SunUEFI <sunuefi@users.noreply.github.com>  {format_datetime(datetime.now(timezone.utc))}\n\n"
     )
     changelog.write_text(entry + changelog.read_text())
     # Apply all Debian patches through dpkg-source, so context failures are real.
@@ -85,7 +85,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("distro", choices=("debian", "arch"))
     parser.add_argument("destination", type=Path)
-    parser.add_argument("--source", type=Path, help="Unpacked signed-APT Debian 48.1 source package")
+    parser.add_argument("--source", type=Path, help="Unpacked signed-APT Debian GNOME 51.0 source package")
     args = parser.parse_args()
     destination = args.destination.resolve()
     if destination.exists():

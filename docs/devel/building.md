@@ -129,7 +129,7 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 
 `./build.sh gsd --sysroot 已完成的基础根目录` 在独立副本里编译带 Piano 自动亮度策略的 gnome-settings-daemon，使用原厂 lux 阈值和延迟，不修改传感器读数，由 APT 安装。默认的 `release-rootfs` 会自动完成这一步，策略只匹配 `xiaomi,piano` 板级标识。
 
-`./build.sh mutter` 编译修正了空 Gamma 曲线恢复和无 EDID 内置屏幕颜色配置的 Mutter，保留标准颜色服务和用户配置，不伪造 EDID。通用 sRGB 是未校准的默认值，不是原厂色彩校准。来源与补丁见 [Mutter 适配说明](../../linux/desktops/gnome/patches/mutter/README.md)。
+`./build.sh mutter` 从签名 sid 索引选择 Mutter 源码，只保留空 Gamma 曲线恢复修复；无 EDID 的标准 sRGB fallback 已由发行版提供，不再重复打补丁。标准颜色服务和用户配置保持不变。来源与补丁见 [Mutter 适配说明](../../linux/desktops/gnome/patches/mutter/README.md)。
 单独构建时使用了其他输出目录，可通过 `release-rootfs --mutter-dir 输出目录/runtime` 选择；组装前会检查源码、补丁和软件包摘要。
 
 ## 产物位置
