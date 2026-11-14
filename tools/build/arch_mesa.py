@@ -38,6 +38,10 @@ def recipe(output, steamos=False):
     text = text.replace('-D amdgpu-virtio=true', '-D amd-options=use-llvm,virtio')
     text = text.replace('  meson compile -C build\n',
                         '  meson compile -C build ${MAKEFLAGS:-}\n')
+    # Clang's builtin fwrite prototype can hide size_t from bindgen.
+    text = text.replace('  export MESON_PACKAGE_CACHE_DIR="$srcdir"\n',
+                        '  export MESON_PACKAGE_CACHE_DIR="$srcdir"\n'
+                        '  export BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:-} -fno-builtin-fwrite"\n')
     text = text.replace('    _pick vkradeon usr/share/drirc.d/00-radv-defaults.conf\n',
                         '    _pick vkradeon usr/share/drirc.d/00-radv-defaults.conf\n'
                         '    _pick vkradeon usr/share/drirc.d/01-radv-performance.conf\n')
@@ -49,12 +53,13 @@ def recipe(output, steamos=False):
                 'mesa-' + source['commit'] + '/subprojects/wayland-protocols.wrap').read().decode())
         wrap = wrap['wrap-file']
         dependency = mesa.download(wrap['source_url'], output / wrap['source_filename'], wrap['source_hash'])
-        before, closing = text.rsplit('\n}', 1)
-        text = (before + '\n  mkdir -p "mesa-$_pkgver/subprojects/packagecache"\n'
-                '  cp "' + dependency.name + '" "mesa-$_pkgver/subprojects/packagecache/"\n}' + closing)
-        text += '\nsource+=("' + dependency.name + '")\nsha256sums+=(' + wrap['source_hash'] + ')\n'
+        before, prepare = text.rsplit('\nprepare() {\n', 1)
+        body, closing = prepare.rsplit('\n}', 1)
+        text = before + '\nsource+=("' + dependency.name + '")\nsha256sums+=(' + wrap['source_hash'] + ')\n'
         text += 'b2sums+=(' + hashlib.blake2b(dependency.read_bytes()).hexdigest() + ')\n'
         text += 'noextract+=("' + dependency.name + '")\n'
+        text += ('\nprepare() {\n' + body + '\n  mkdir -p "mesa-$_pkgver/subprojects/packagecache"\n'
+                 '  cp "' + dependency.name + '" "mesa-$_pkgver/subprojects/packagecache/"\n}' + closing)
     (output / 'PKGBUILD').write_text(text)
     record = json.loads((output / 'SOURCE.json').read_text())
     record.update(producer_sha256=package_build.sha(__file__),
