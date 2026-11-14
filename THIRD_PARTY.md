@@ -43,10 +43,12 @@ HyperOS 4 的 [ADSP](vendor/firmware/hyperos4-adsp/README.md) 和
 精确提交、源码许可和构建输入记录在
 [`config/fingerprint.json`](config/fingerprint.json) 及镜像内的
 `/usr/share/piano-provenance/fingerprint.json`；相应许可证随静态客户端安装。
-本项目独立实现本机 Goodix 命令封装，复用标准 UIO／TEE 接口。
+本项目独立实现本机 Goodix 命令封装，通过现有 UIO 控制器和标准 Linux TEE 对象接口通信，
+不使用 GP 会话；UIO 控制器及 libfprint 后端仍是本地适配。
 原厂签名程序，以及从本机 `libgf_hal.so` 提取的通用防伪和识别模型参数，
-均保留原字节，作为硬件固件提供，不包含用户指纹模板。来源符号、文件偏移
-和校验值记录在固件清单中，原厂可执行库不随系统安装。来源与范围见
+均保留原字节，作为硬件固件提供，不包含用户指纹模板。提取器按导出符号定位模型，
+输出校验值记录在固件清单中；现有清单未记录逐模型偏移和来源库摘要。
+原厂可执行库不随系统安装。来源记录不构成程序或模型的再分发授权，来源与范围见
 [固件说明](vendor/firmware/hyperos4-fingerprint/README.md)。
 
 Gunyah 的 Android 驱动与主线接口适配来自

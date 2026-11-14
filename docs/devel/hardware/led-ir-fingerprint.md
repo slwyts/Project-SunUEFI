@@ -1,12 +1,12 @@
 # Piano 的 RGB 灯、红外与侧指纹
 
-本页记录 RGB 通道、SPI 红外和 Goodix 侧指纹的原厂接口与 Linux 实现。指纹通过原生 QTEE 客户端和标准 libfprint／fprintd 接入 GNOME 与 PAM，支持 Linux 独立录入、持久保存和认证。
+本页记录 RGB 通道、SPI 红外和 Goodix 侧指纹的原厂接口与 Linux 实现。指纹通过原生 QTEE 客户端和带本地后端的 libfprint 接入 fprintd、GNOME 与 PAM，支持 Linux 独立录入、持久保存和认证；传感器控制与用户空间后端仍是项目适配，不是安装发行版原版 libfprint 就能使用。
 
 | 功能 | 原厂接口 | 当前 Linux 缺口 |
 | --- | --- | --- |
 | RGB 通道 | PM8550 SID1 上的 `qcom,pm8350c-pwm`，SPMI LPG，通道 1/2/3 为 red/green/blue | 标准驱动和产品DT已有；补齐SDAM/LPG模块加载后已出现三个标准LED接口。发光、可见位置和用途尚待确认。 |
 | 红外发射 | SE15 / SPI `0x89c000` / CS0，`ir-spi`，Android 原始波形字符设备 | 已接入标准 SPI/LIRC、原厂波形量化与 MOSI 空闲处理；光学输出未验证。 |
-| 侧指纹 | Goodix，GPIO 控制与高通 QTEE 安全服务 | Linux 独立录入、持久验证和错误手指拒绝已接入标准 fprintd、GNOME 锁屏与 PAM。 |
+| 侧指纹 | Goodix，GPIO 控制与高通 QTEE 安全服务 | 已接入 fprintd、GNOME 锁屏与 PAM；依赖本地 UIO 驱动、libfprint 后端和静态客户端。 |
 
 ## RGB 通道
 
@@ -76,6 +76,41 @@ Linux 7.3 的 `qcomtee` 驱动提供标准 `/dev/tee0`。
 还原的完整签名 `gfpia`。程序大小为 11,681,880 字节，QTEE 版本为
 5.2.0；安全程序和加载接口均没有修改或绕过签名。
 
+### Linux TEE 对象接口
+
+QTEE 使用通用 Linux TEE uAPI 的对象调用，不是 GlobalPlatform（GP）会话协议。
+`TEE_IOC_VERSION` 在 Piano 返回 `impl_id=4`、`impl_caps=0`、`gen_caps=16`，
+分别对应 `TEE_IMPL_ID_QTEE` 和 `TEE_GEN_CAP_OBJREF`；没有声明 `TEE_GEN_CAP_GP`。
+[Linux 7.3 的头文件](https://github.com/torvalds/linux/blob/v7.3/include/uapi/linux/tee.h)
+已经包含 `TEE_IOC_OBJECT_INVOKE`、`UBUF`、`OBJREF`，
+[QTEE 驱动](https://github.com/torvalds/linux/blob/v7.3/drivers/tee/qcomtee/call.c)
+的 `qcomtee_ops` 实现 `object_invoke_func`、`supp_recv` 和 `supp_send`，
+没有实现 `open_session` 或 `invoke_func`。不能将对象 ID 当作 GP session，
+也不能用 `TEE_IOC_OPEN_SESSION`／`TEE_IOC_INVOKE` 替换对象调用。
+
+| 用途 | 已有内核接口 | QTEE 的参数含义 |
+| --- | --- | --- |
+| 调用服务或签名程序 | `TEE_IOC_OBJECT_INVOKE` | 对象 ID、操作号、输入／输出缓冲区和对象引用；`TEE_OBJREF_NULL` 作为调用目标表示 root object |
+| 分配可映射共享内存 | `TEE_IOC_SHM_ALLOC`、`mmap` | 分配返回的共享内存 ID 以 memory `OBJREF` 传入，不能用用户地址冒充物理地址 |
+| 文件服务、凭据等回调 | `TEE_IOC_SUPPL_RECV`、`TEE_IOC_SUPPL_SEND` | 同一 TEE context 中的 callback object 和 request ID，通过 meta 参数收发 |
+| 释放远端引用 | `TEE_IOC_OBJECT_INVOKE` | QTEE 保留操作 `65535`，由驱动释放该 context 中的对象引用 |
+
+对象引用的 TEE／USER／MEM 标志和回调 meta 布局属于 QTEE 对通用接口的使用方式，
+不是所有 TEE 实现都接受的协议。上游[接口说明](https://docs.kernel.org/tee/qtee.html)
+同时描述了 direct invocation 和 callback request。
+`quic-teec/libqcomtee/src/qcomtee_object.c` 的 `qcomtee_object_invoke()`
+与 `qcomtee_object_process_one()` 分别封装上述两条路径；MinkIPC 的
+`invoke_over_tee()` 只是将 `ObjectArg` 转成这些参数。
+因此，移除 MinkIPC 可以在用户空间实现，不需要新增内核 ioctl，也不需要假设内核缺少对象接口。
+替代实现仍须管理引用、共享内存、回调缓冲区、失败清理和阻塞回调线程的退出，
+不能只替换一次普通命令调用就删除文件服务或现有认证实现。
+
+[`quic-teec 补丁`](../../../patches/quic-teec/0.1.0/series.json)在创建 root object 时
+先检查上述 implementation 和 capability，拒绝只有 GP 会话的设备；失败时关闭 fd 并回收内存，
+fd 带 `O_CLOEXEC`。这项检查不会加载安全程序或修改安全存储。
+
+### 共享内存与传感器控制
+
 原始 QTEE 共享内存分配器使用 `alloc_pages_exact()`，超过伙伴分配器
 支持的最大阶数时会报错。项目的
 [`0014-qcomtee-large-shared-memory.patch`](../../../patches/linux/7.3/0014-qcomtee-large-shared-memory.patch)
@@ -101,6 +136,15 @@ Goodix 客户端使用 `QSEECom_send_modified_cmd()` 发送请求。
 原生客户端完成操作后关闭传感器及安全程序。桌面接口范围见下文的
 [Gatekeeper 与桌面认证](#gatekeeper-与桌面认证)。
 
+UIO 是这套已有实现的过渡路径。将文件移到 `drivers/misc/` 或调用
+`misc_register()` 只会注册字符设备，不会得到通用的指纹电源／复位／IRQ 协议。
+标准 GPIO character-device API 能通知引脚边沿，但不负责 regulator、复位和
+“QTEE 确认后再开启 IRQ”的完整生命周期；evdev 的按键和触摸事件也不表示这种握手。
+本机传感器总线由安全世界管理，不能把它声明成 AP 可访问的 spidev 或 USB 指纹设备。
+在不新增 uAPI 的条件下，替换 UIO 还需要找到能承载这一生命周期的已有设备模型，
+或由内核中的传感器／TEE 客户端完成控制。单独新增 misc `read`／`poll`／`ioctl`
+协议不满足这个条件，所以现有控制驱动与可工作的认证路径继续保留。
+
 原厂 `pm_humu_l9` 为 3.300 V。现有主线 PLDO 使用不同的离散电压档位；
 必须选择不超过原厂上限的 3.296 V。之前上取整到 3.304 V 时，
 `regulator_enable()` 尚未返回就发生系统复位；改用较低档位后，
@@ -123,11 +167,28 @@ QSEECOMPAT 的 lookup 返回 `architecture=2`，命令应使用 64 位地址，
 
 原生客户端位于
 [`piano-goodix.c`](../../../linux/userspace/fingerprint/piano-goodix.c)，
-使用固定版本的 Qualcomm MinkIPC／quic-teec 与 QCBOR，由四个发行版
-共用的运行时构建器静态编译；来源记录在
+使用固定版本的 Qualcomm MinkIPC／quic-teec 与 QCBOR，CLI 由共享运行时构建器
+静态编译；来源记录在
 [`config/fingerprint.json`](../../../config/fingerprint.json)。
 执行 `sudo piano-fingerprint-ctl info` 可查询设备信息，`--help` 不访问设备。
 签名程序按固件清单随镜像提供，不包含用户模板或密码。
+
+libfprint 在自己的构建中直接编译同一份后端和依赖源码，不再通过
+`piano-goodix.pc` 链接平台私有 `libpiano-goodix.a`。源码归档和补丁由运行时清单校验，
+Debian、SteamOS 和 Nyarch 各自使用目标发行版的头文件和库编译。
+Debian 构建依赖留在独立 rootfs，要求 libc／GLib 等开发包匹配目标运行库版本，
+依赖由 `dpkg-shlibdeps` 生成；安装前以目标 loader 核对新库和 fprintd 的符号解析。
+Arch 系缓存同时核对配方摘要和运行库版本，不把另一套 ABI 的缓存直接安装。
+这仍是本地 libfprint 包；源码补丁进入仓库不等于上游已收录，更不等于发行版原版包
+已经提供此设备后端。UIO 和 MinkIPC 的运行协议在这项构建调整中没有改变。
+
+签名程序与模型共用与内核 firmware loader 相同的搜索顺序：先读取已有的
+`/sys/module/firmware_class/parameters/path`，再查 `/lib/firmware/updates/<内核版本>/`、
+`/lib/firmware/updates/`、`/lib/firmware/<内核版本>/` 和 `/lib/firmware/`。
+因此 `firmware_class.path=/run/firmware` 也供客户端使用；该目录须在切换根系统后保留。
+客户端只读取此标准参数，不写 sysfs，也不要求固件必须位于 rootfs。
+TA 仍由安全世界验证原厂签名，模型保留现有大小和加载协议检查。拒绝符号链接、非普通文件和
+不可访问的高优先级文件，不用低优先级副本掩盖这些错误。
 
 原生 API 位于 [`piano-goodix.h`](../../../linux/userspace/fingerprint/piano-goodix.h)，
 命令行与 libfprint 后端共用录入、验证、枚举和删除实现。以下以 Linux UID 1000
@@ -152,9 +213,11 @@ SIGTERM 和 API 取消请求会先完成安全程序的取消与关闭，再返�
 该设备要求防伪和识别模型，两者均从同版原厂 `libgf_hal.so` 的导出数据符号
 提取，属于通用算法参数，不是用户模板。CAP S／T 的选择依据设备返回的标志，
 芯片类型 49 使用 `DLWeightLightDubaiU4_12_10_14MisTouch`。
-来源库 SHA256、符号、文件偏移、大小和输出校验值全部记录在
-[`固件清单`](../../../vendor/firmware/hyperos4-fingerprint/manifest.json)，
-不会安装原厂可执行库。
+提取器 [`import_ota.py`](../../../tools/firmware/import_ota.py) 按 ELF 导出符号查找模型，
+不会安装原厂可执行库。现有[`固件清单`](../../../vendor/firmware/hyperos4-fingerprint/manifest.json)
+记录 ROM、输出大小和校验值，未记录来源库摘要和逐模型偏移；不能将输出哈希当作这些来源字段。
+固件和模型的来源记录也不是再分发授权，许可范围见
+[`固件说明`](../../../vendor/firmware/hyperos4-fingerprint/README.md)。
 
 本机原厂 HAL 的构建目标为 `xiaomi_P81_GF3656ZSCB_qsee5_sm8750_64bit_aidl_2025`。
 `gf_hal_show_version`（`0x1ed64`）给出包版本 `V1.0.6.0.0` 和软件版本
@@ -247,8 +310,8 @@ sharing key，已有绑定可用时直接使用，避免重置其他客户端的
 响应的偏移和长度均检查边界，临时参数和加密绑定数据在结束时清零。
 绑定临时参数与 HAT 不落盘；独立 Linux 凭据和密封模板按上述目录分别保存。
 
-原有 GPFS 协议记录保留厂商接口说明；
-持久存储和 RPMB 实现由原生客户端管理。
+GPFS 与 RPMB 都是签名程序要求的回调，但用途不同：前者保存 Linux 目录中的密封模板，
+后者访问同机安全存储，不能用另一个普通目录替代。
 
 录入和认证的入口布局已由原厂 `libgf_hal.so` 静态确认，均使用路由 1：
 
@@ -304,6 +367,23 @@ Linux 用 `0x40000000 | LinuxUID` 作为 Gatekeeper UID 和 Goodix 分组，
 必须为 32 字节；不能用 Linux 密码校验或自行生成的 HMAC 代替。
 原厂 Keymaster 绑定、独立凭据创建、挑战校验和 Goodix 授权录入均已在实机完成。
 
+签名程序自身也检查录入令牌，不只是 Linux 客户端检查包格式。
+针对固件清单中的 `gfpia.elf`，动态符号表和可执行段给出以下位置；该文件的
+可执行 `PT_LOAD` 从文件偏移 `0x1000` 映射到虚拟地址 `0`，所以下表地址加
+`0x1000` 即该指令的文件偏移。
+
+| 符号与虚拟地址 | 行为 |
+| --- | --- |
+| `gf_config_init_by_chip_type`，`0x420`，写入点 `0x4b0` | 将 `g_config+0x60` 设为 1，启用正常配置的令牌检查 |
+| `gf_ta_enroll`，`0x45160`，检查段 `0x45320–0x4538c` | 按配置检查 HAT 版本、挑战，再复制 69 字节令牌，将 MAC 字段清零并计算期望 HMAC；比较原请求中的 32 字节 MAC |
+| `gf_ta_enroll`，错误段 `0x45494–0x454f4`、`0x45390–0x453c0` | 版本、挑战、MAC 错误分别返回 1055、1056、1057；MAC 错误日志为 `token authenticate failed` |
+| `gf_generate_hmac_enroll`，`0x4fe30` → `gf_generate_hmac`，`0x4ff30` | 对令牌前 37 字节计算 HMAC，将结果写入后 32 字节 |
+
+这些指令可以在不调用安全世界的情况下从仓库固件只读复核；它们不证明每种固件配置
+都强制检查，但足以说明不能把正常录入协议改成挑战值、零 MAC 或自制令牌。
+[`goodix_operation_start_enroll()`](../../../linux/userspace/fingerprint/piano-goodix-operations.c)
+只作挑战、SID 和类型的结构检查，MAC 的真实性仍由原厂签名程序判定。
+
 [`piano-goodix-rpmb.c`](../../../linux/userspace/fingerprint/piano-goodix-rpmb.c)
 通过 UFS BSG 的 `SG_IO` 提供回放保护存储（RPMB）通道。原厂读请求使用协议版本
 `0`，认证写请求使用 `0x100`；两者共用 24 字节请求头、512 字节帧和 20 字节响应头，
@@ -329,10 +409,22 @@ RPMB 与 Android 共用，包含全局写计数器、启动记录和安全存储
 命令白名单和短暂开放时段不等于独立的物理 RPMB。Linux 客户端不调用凭据删除或
 全局重置命令，Goodix 模板的普通文件则保存在独立的 Linux `fpdata/`。
 
+因此，禁止修改 RPMB 时不能测试新录入，也不能仅凭“已有 Linux 凭据”就执行
+Gatekeeper 校验来取得新 HAT：`piano_goodix_enroll()` 经 `goodix_gatekeeper_create()`、
+`goodix_gatekeeper_verify()` 调用 `gatekeeper_command()`，后者在同步调用期间允许
+RPMB 认证读写。已有凭据可避免重复创建 SID，但校验和启动记录仍可能更新共享安全存储。
+HAT 绑定当前录入挑战，不落盘供下一次录入复用。
+
+现有 `piano_goodix_verify()`、`piano_goodix_list()`、`piano_goodix_delete()` 使用
+`session_start(..., 0)`，只注册 FS／GPFS，不打开本项目的 RPMB 后端；其中认证复用
+Linux profile 中的 SID 和模板，验证的是 Goodix 返回的指纹 HAT，不再获取 Gatekeeper HAT。
+这是可保留的普通认证路径。`TEE_IOC_VERSION` 只确认内核接口能力，不验证指纹采集、
+匹配或模板持久化；删除操作仍会更改 Linux 模板。
+
 [标准 fprintd 录入接口](https://fprint.freedesktop.org/fprintd-dev/Device.html)
 只接收手指名称，由 Polkit 授权，不提供 Gatekeeper 凭据或 HAT。
-[`libfprint 后端`](../../../patches/libfprint/1.94.100/0001-piano-goodix-uio.patch)
-直接链接同一原生 API，提供录入、单手指验证、多指识别、枚举、按 UID 删除和取消；
+[`本地 libfprint 后端`](../../../patches/libfprint/1.94.100/series.json)
+直接编译同一原生实现，提供录入、单手指验证、多指识别、枚举、按 UID 删除和取消；
 后端的设备私有数据只保存 Linux UID 和手指名称。fprintd 管理标准用户记录，
 密封模板仍由设备端存储管理。
 GNOME 账户设置通过标准 fprintd 接口录入，锁屏认证使用标准 PAM 链路。
