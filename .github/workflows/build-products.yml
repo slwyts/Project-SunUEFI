@@ -20,6 +20,7 @@ on:
       - 'linux/**'
       - 'tools/**'
       - 'tests/unit/test_check_patch_series.py'
+      - 'tests/unit/test_shared_products.py'
       - 'upstream/**'
       - 'android/**'
       - 'docs/user/install-from-artifact.md'
@@ -41,6 +42,7 @@ jobs:
       has_build: ${{ steps.targets.outputs.has_build }}
       matrix: ${{ steps.targets.outputs.matrix }}
       shared_target: ${{ steps.targets.outputs.shared_target }}
+      shared_matrix: ${{ steps.targets.outputs.shared_matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -51,13 +53,171 @@ jobs:
         env:
           SUNUEFI_PATCH_BASE: ${{ github.event.before }}
         run: ./build.sh check --pattern test_check_patch_series.py
+      - name: Check shared build cache rules
+        run: ./build.sh check --group python-all --pattern test_shared_products.py
       - id: targets
         env:
           PUSH_BEFORE: ${{ github.event.before }}
           MANUAL_TARGET: ${{ inputs.target }}
         run: python3 tools/ci_build_targets.py
-  build:
+  environment:
     needs: select
+    if: needs.select.outputs.has_build == 'true'
+    runs-on: ubuntu-24.04-arm
+    concurrency:
+      group: build-products-${{ github.ref }}-environment
+      cancel-in-progress: true
+    outputs:
+      image_id: ${{ steps.image.outputs.image_id }}
+      cache_key: ${{ steps.cache-key.outputs.key }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: false
+          persist-credentials: false
+      - id: cache-key
+        env:
+          BUILDER_INPUTS: ${{ hashFiles('containers/Dockerfile', 'config/build-container.json', 'tools/build_container.py', 'tools/build/ci_container.py', 'tools/build/shared_products.py') }}
+        run: echo "key=builder-arm64-$BUILDER_INPUTS" >> "$GITHUB_OUTPUT"
+      - id: cached-image
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/ci-builder
+          key: ${{ steps.cache-key.outputs.key }}
+      - id: image
+        name: Build or verify the shared builder image
+        run: python3 tools/build/ci_container.py prepare --github-output "$GITHUB_OUTPUT"
+      - name: Save the verified builder image once
+        if: steps.cached-image.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/ci-builder
+          key: ${{ steps.cache-key.outputs.key }}
+
+  shared:
+    needs: [select, environment]
+    if: needs.select.outputs.has_build == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    concurrency:
+      group: build-products-${{ github.ref }}-shared-${{ matrix.kind }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.shared_matrix) }}
+    env:
+      SUNUEFI_BUILD_ENVIRONMENT_ID: ${{ needs.environment.outputs.image_id }}
+      SUNUEFI_CACHE_WORKSPACE: /workspace
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/ci-builder
+          key: ${{ needs.environment.outputs.cache_key }}
+          fail-on-cache-miss: true
+      - name: Load the verified builder image
+        run: python3 tools/build/ci_container.py load
+      - name: Get only required fixed sources
+        run: ./build.sh sources
+      - id: keys
+        run: python3 tools/build/shared_products.py keys --github-output "$GITHUB_OUTPUT"
+      - id: completed
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            artifacts/product
+            artifacts/android
+            artifacts/simpleinit/product
+            artifacts/kernels/release
+            build/shared-products/${{ matrix.kind }}.json
+            build/kernels/release/.config
+            build/kernels/release/Makefile
+            build/kernels/release/Module.symvers
+            build/kernels/release/include
+            build/kernels/release/scripts
+            build/kernels/release/arch/arm64/include/generated
+            build/kernel-sources
+          key: ${{ matrix.kind == 'firmware' && steps.keys.outputs.firmware_key || steps.keys.outputs.kernel_key }}
+      - name: Restore reusable firmware workspace objects
+        if: matrix.kind == 'firmware'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            build/firmware-workspace
+            build/android-product-module
+          key: firmware-objects-arm64-${{ needs.environment.outputs.image_id }}-${{ github.sha }}
+          restore-keys: |
+            firmware-objects-arm64-${{ needs.environment.outputs.image_id }}-
+      - id: llvm
+        if: matrix.kind == 'kernel'
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/toolchains/*.tar.zst
+          key: llvm-arm64-${{ hashFiles('config/kernel-llvm.json', 'tools/desktop/prepare_kernel_llvm.py') }}
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/ccache
+          key: ccache-arm64-shared-${{ matrix.kind }}-${{ github.sha }}
+          restore-keys: |
+            ccache-arm64-shared-${{ matrix.kind }}-
+      - name: Build each common product once, or validate its cache
+        env:
+          SHARED_KIND: ${{ matrix.kind }}
+        run: |
+          set -o pipefail
+          mkdir -p build/logs build/ccache
+          docker run --rm --privileged \
+            -v "$PWD:/workspace" -w /workspace \
+            -e SUNUEFI_BUILD_ENVIRONMENT_ID -e SHARED_KIND \
+            -e CCACHE_DIR=/workspace/build/ccache -e CCACHE_MAXSIZE=3G \
+            -e CCACHE_BASEDIR=/workspace -e CCACHE_COMPILERCHECK=content \
+            -e SUNUEFI_TOOLCHAIN_ROOT=/usr sunuefi-builder bash -euc '
+              git config --global --add safe.directory /workspace
+              git config --global --add safe.directory "/workspace/*"
+              python3 -m venv .venv
+              .venv/bin/pip install -r requirements-build.txt
+              . .venv/bin/activate
+              python3 tools/build/shared_products.py ensure --kind "$SHARED_KIND"
+            ' 2>&1 | tee "build/logs/shared-$SHARED_KIND.log"
+      - name: Save the validated shared generation once
+        if: steps.completed.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            artifacts/product
+            artifacts/android
+            artifacts/simpleinit/product
+            artifacts/kernels/release
+            build/shared-products/${{ matrix.kind }}.json
+            build/kernels/release/.config
+            build/kernels/release/Makefile
+            build/kernels/release/Module.symvers
+            build/kernels/release/include
+            build/kernels/release/scripts
+            build/kernels/release/arch/arm64/include/generated
+            build/kernel-sources
+          key: ${{ matrix.kind == 'firmware' && steps.keys.outputs.firmware_key || steps.keys.outputs.kernel_key }}
+      - name: Save fixed LLVM downloads once
+        if: matrix.kind == 'kernel' && steps.llvm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/toolchains/*.tar.zst
+          key: llvm-arm64-${{ hashFiles('config/kernel-llvm.json', 'tools/desktop/prepare_kernel_llvm.py') }}
+      - name: Stage shared build logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: build-logs-shared-${{ matrix.kind }}
+          path: build/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0
+
+  build:
+    needs: [select, environment, shared]
     if: needs.select.outputs.has_build == 'true'
     concurrency:
       group: build-products-${{ github.ref }}-${{ matrix.target }}
@@ -69,7 +229,9 @@ jobs:
     env:
       # TARGET is reserved by Cargo/bindgen for the compiler target triple.
       SUNUEFI_BUILD_TARGET: ${{ matrix.target }}
-    runs-on: ${{ (startsWith(matrix.target, 'debian-') || matrix.target == 'steamos' || matrix.target == 'nyarch-gnome') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+      SUNUEFI_BUILD_ENVIRONMENT_ID: ${{ needs.environment.outputs.image_id }}
+      SUNUEFI_CACHE_WORKSPACE: /workspace
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -78,25 +240,66 @@ jobs:
           persist-credentials: false
       - name: Get only required fixed sources
         run: ./build.sh sources
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/ci-builder
+          key: ${{ needs.environment.outputs.cache_key }}
+          fail-on-cache-miss: true
+      - name: Load the same verified builder image
+        run: python3 tools/build/ci_container.py load
+      - id: keys
+        run: python3 tools/build/shared_products.py keys --github-output "$GITHUB_OUTPUT"
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/ccache
           key: ccache-${{ runner.arch }}-${{ env.SUNUEFI_BUILD_TARGET }}-${{ github.sha }}
           restore-keys: |
             ccache-${{ runner.arch }}-${{ env.SUNUEFI_BUILD_TARGET }}-
-      - name: Reuse the matching kernel and external-module build files
-        if: matrix.target != 'uefi'
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - name: Restore the single firmware and module generation
+        if: matrix.target != 'linux'
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
+            artifacts/product
+            artifacts/android
+            artifacts/simpleinit/product
             artifacts/kernels/release
+            build/shared-products/firmware.json
             build/kernels/release/.config
             build/kernels/release/Makefile
             build/kernels/release/Module.symvers
             build/kernels/release/include
             build/kernels/release/scripts
             build/kernels/release/arch/arm64/include/generated
-          key: kernel-${{ runner.arch }}-${{ hashFiles('sources.lock.json', 'patches/linux/7.3/**', 'linux/configs/**', 'config/kernel-llvm.json', 'config/release.json', 'tools/build_piano_full_kernel.py', 'tools/build_kernel.py', 'tools/prepare_release_kernel.py', 'tools/prepare_linux_modules.py', 'tools/desktop/prepare_kernel_llvm.py', 'tools/desktop/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}
+            build/kernel-sources
+          key: ${{ steps.keys.outputs.firmware_key }}
+          fail-on-cache-miss: true
+      - name: Restore the matching kernel and external-module build files
+        if: matrix.target != 'uefi'
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            artifacts/product
+            artifacts/android
+            artifacts/simpleinit/product
+            artifacts/kernels/release
+            build/shared-products/kernel.json
+            build/kernels/release/.config
+            build/kernels/release/Makefile
+            build/kernels/release/Module.symvers
+            build/kernels/release/include
+            build/kernels/release/scripts
+            build/kernels/release/arch/arm64/include/generated
+            build/kernel-sources
+          key: ${{ steps.keys.outputs.kernel_key }}
+          fail-on-cache-miss: true
+      - name: Restore fixed kernel LLVM downloads
+        if: matrix.target != 'uefi'
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/toolchains/*.tar.zst
+          key: llvm-arm64-${{ hashFiles('config/kernel-llvm.json', 'tools/desktop/prepare_kernel_llvm.py') }}
+          fail-on-cache-miss: true
       - name: Reuse completed Debian FFmpeg packages
         if: startsWith(matrix.target, 'debian-')
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -121,11 +324,9 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
-            build/upower/runtime
-            build/upower/SOURCE.json
             build/pipewire/runtime
             build/pipewire/SOURCE.json
-          key: desktop-common-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'patches/upower/**', 'patches/pipewire/**', 'tools/desktop/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'containers/Dockerfile', 'config/build-container.json') }}
+          key: desktop-common-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'patches/pipewire/**', 'tools/desktop/debian_package.py', 'tools/desktop/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'containers/Dockerfile', 'config/build-container.json') }}
       - name: Reuse completed Debian GNOME packages
         if: matrix.target == 'debian-gnome'
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -137,10 +338,28 @@ jobs:
             build/mutter/SOURCE.json
             build/gdm/runtime
             build/gdm/SOURCE.json
-          key: desktop-gnome-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'patches/gnome-settings-daemon/**', 'patches/gdm/**', 'linux/desktops/gnome/ambient-policy/**', 'linux/desktops/gnome/patches/mutter/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}
-      - name: Build the pinned-base environment
-        run: python3 tools/build_container.py
+          key: desktop-gnome-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'patches/gnome-settings-daemon/**', 'patches/gdm/**', 'patches/mutter/**', 'linux/desktops/gnome/ambient-policy/**', 'linux/desktops/gnome/patches/mutter/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'tools/desktop/debian_package.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}
+      - id: verify-shared
+        name: Verify restored shared products without recompiling
+        run: |
+          set -o pipefail
+          mkdir -p build/logs
+          docker run --rm --privileged \
+            -v "$PWD:/workspace" -w /workspace \
+            -e SUNUEFI_BUILD_ENVIRONMENT_ID -e SUNUEFI_BUILD_TARGET \
+            -e CCACHE_DIR=/workspace/build/ccache -e CCACHE_COMPILERCHECK=content \
+            -e SUNUEFI_TOOLCHAIN_ROOT=/usr sunuefi-builder bash -euc '
+              git config --global --add safe.directory /workspace
+              git config --global --add safe.directory "/workspace/*"
+              if [ "$SUNUEFI_BUILD_TARGET" != linux ]; then
+                python3 tools/build/shared_products.py verify --kind firmware
+              fi
+              if [ "$SUNUEFI_BUILD_TARGET" != uefi ]; then
+                python3 tools/build/shared_products.py verify --kind kernel
+              fi
+            ' 2>&1 | tee build/logs/shared-verification.log
       - name: Build selected product
+        if: matrix.target != 'uefi' && matrix.target != 'linux'
         run: |
           set -o pipefail
           # The container writes as root; keep the host-side download staging
@@ -149,7 +368,8 @@ jobs:
           docker run --rm --privileged \
             -v "$PWD:/workspace" -w /workspace \
             -e CCACHE_DIR=/workspace/build/ccache -e CCACHE_MAXSIZE=3G \
-            -e CCACHE_COMPILERCHECK=content \
+            -e CCACHE_BASEDIR=/workspace -e CCACHE_COMPILERCHECK=content \
+            -e SUNUEFI_BUILD_ENVIRONMENT_ID -e SUNUEFI_TOOLCHAIN_ROOT=/usr \
             -e SUNUEFI_BUILD_TARGET sunuefi-builder bash -euc '
               git config --global --add safe.directory /workspace
               git config --global --add safe.directory "/workspace/*"
@@ -157,17 +377,7 @@ jobs:
               .venv/bin/pip install -r requirements-build.txt
               . .venv/bin/activate
               case "$SUNUEFI_BUILD_TARGET" in
-                uefi)
-                  ./build.sh uefi
-                  ./build.sh module
-                  ;;
-                linux)
-                  ./build.sh linux
-                  ;;
                 steamos|nyarch-gnome)
-                  ./build.sh uefi
-                  ./build.sh module
-                  ./build.sh linux
                   ./build.sh "$SUNUEFI_BUILD_TARGET-rootfs"
                   ./build.sh package \
                     --rootfs "build/distros/$SUNUEFI_BUILD_TARGET-piano/rootfs" \
@@ -178,10 +388,7 @@ jobs:
                   ;;
                 debian-gnome|debian-kde)
                   python3 -c "import sys; sys.path.insert(0, \"tools\"); from build_release_rootfs import require_host; require_host()"
-                  ./build.sh uefi
-                  ./build.sh module
-                  ./build.sh linux
-                   ./build.sh release-rootfs --desktop "${SUNUEFI_BUILD_TARGET#debian-}"
+                  ./build.sh release-rootfs --desktop "${SUNUEFI_BUILD_TARGET#debian-}"
                   ./build.sh package --root-size-mib 8192
                   python3 tools/package_sparse_images.py --bundle artifacts/release --output artifacts/fastboot-sparse
                   ;;
@@ -193,7 +400,7 @@ jobs:
           if [ -f build/logs/ci-build.log ]; then
             tail -n 160 build/logs/ci-build.log
           fi
-          for log in build/distros/release.build.log build/ffmpeg/build.log build/gsd/build.log build/upower/build.log build/pipewire/build.log build/mutter/build.log build/gdm/build.log; do
+          for log in build/distros/release.build.log build/ffmpeg/build.log build/gsd/build.log build/pipewire/build.log build/mutter/build.log build/gdm/build.log; do
             if [ -f "$log" ]; then
               echo "::group::$log"
               tail -n 100 "$log"
@@ -201,7 +408,7 @@ jobs:
             fi
           done
       - name: Prepare shared downloads
-        if: always() && matrix.target == needs.select.outputs.shared_target && matrix.target != 'linux'
+        if: always() && steps.verify-shared.outcome == 'success' && matrix.target == needs.select.outputs.shared_target && matrix.target != 'linux'
         run: |
           mkdir -p artifacts/downloads/module artifacts/downloads/uefi artifacts/downloads/esp
           if [ -f artifacts/android/manifest.json ]; then
@@ -215,7 +422,7 @@ jobs:
             cp artifacts/fastboot-sparse/esp.img artifacts/downloads/esp/esp.sparse.img
           fi
       - name: Android assistant module
-        if: always() && matrix.target == needs.select.outputs.shared_target
+        if: always() && steps.verify-shared.outcome == 'success' && matrix.target == needs.select.outputs.shared_target
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: SunUEFI-Module
@@ -224,7 +431,7 @@ jobs:
           retention-days: 7
           compression-level: 0
       - name: UEFI for fastboot boot
-        if: always() && matrix.target == needs.select.outputs.shared_target
+        if: always() && steps.verify-shared.outcome == 'success' && matrix.target == needs.select.outputs.shared_target
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: SunUEFI-UEFI-Fastboot
@@ -233,7 +440,7 @@ jobs:
           retention-days: 7
           compression-level: 0
       - name: Shared sparse ESP
-        if: always() && matrix.target == needs.select.outputs.shared_target
+        if: always() && steps.verify-shared.outcome == 'success' && matrix.target == needs.select.outputs.shared_target
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: SunUEFI-ESP
@@ -279,7 +486,7 @@ jobs:
             linux/dts/piano-cpu-model.dtso
             linux/dts/piano-audio-dmic-clock.dtso
             build/release/source-manifest.json
-             build/sensors/SOURCE
+            build/sensors/SOURCE
             build/sensors/SHA256SUMS
             build/ffmpeg/SOURCE.json
             build/ffmpeg/SHA256SUMS
@@ -289,8 +496,6 @@ jobs:
             build/distros/release/FAILED.json
             build/gsd/SOURCE.json
             build/gsd/build.log
-            build/upower/SOURCE.json
-            build/upower/build.log
             build/gdm/SOURCE.json
             build/gdm/build.log
             build/distros/nyarch-gnome-piano/packages/gdm/SOURCE.json
@@ -322,7 +527,7 @@ jobs:
           compression-level: 0
 
   logs:
-    needs: [select, build]
+    needs: [select, environment, shared, build]
     if: always() && needs.select.outputs.has_build == 'true'
     runs-on: ubuntu-24.04
     steps:

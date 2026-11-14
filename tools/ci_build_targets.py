@@ -33,6 +33,15 @@ DISTROS = ['debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos']
 TARGETS = ('uefi', 'linux', *DISTROS)
 
 
+def shared_kinds(targets):
+    result = []
+    if any(target != 'linux' for target in targets):
+        result.append('firmware')
+    if any(target != 'uefi' for target in targets):
+        result.append('kernel')
+    return result
+
+
 def select(files, manual=None):
     if manual:
         if manual == 'all':
@@ -73,9 +82,12 @@ def main():
     args = parser.parse_args()
     targets = select(changed_files(ROOT, args.before), args.target)
     matrix = json.dumps({'target': targets}, separators=(',', ':'))
+    shared_matrix = json.dumps({'kind': shared_kinds(targets)}, separators=(',', ':'))
     if output := os.environ.get('GITHUB_OUTPUT'):
         with open(output, 'a') as stream:
-            stream.write('has_build=' + ('true' if targets else 'false') + '\nmatrix=' + matrix + '\nshared_target=' + (targets[0] if targets else '') + '\n')
+            stream.write('has_build=' + ('true' if targets else 'false') + '\nmatrix=' + matrix +
+                         '\nshared_matrix=' + shared_matrix + '\nshared_target=' +
+                         (targets[0] if targets else '') + '\n')
     print(matrix)
 
 

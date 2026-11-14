@@ -93,7 +93,7 @@ systemd 的 `ukify`，默认从根系统的 `systemd-boot-efi` 包取 ARM64 stub
 基础根系统已经构建过时，用 `./build.sh release-rootfs --resume` 更新内核、硬件包和配置，不重新运行 debootstrap。`./build.sh rootfs --distro ID --desktop ID --plan` 会列出其他发行版和桌面组合的计划，目前只有上表的四个目标能完整构建。
 
 内核和桌面包的并行度默认按 CPU 配额与可用内存选择，可用 `--jobs` 覆盖。
-桌面包共用 `build/ccache`（或 `CCACHE_DIR`），FFmpeg、Mutter、GSD 和 UPower
+桌面包共用 `build/ccache`（或 `CCACHE_DIR`），FFmpeg、Mutter、GSD 和 GDM
 会先校验并复用完整运行包。FFmpeg 构建中断后加 `--resume`，保留同一源码的对象文件。
 x86 主机用 `./build.sh ffmpeg --sysroot 已完成的sid_ARM64根目录` 构建：编译器、链接器
 和 make 在宿主 CPU 原生运行，头文件与库来自 ARM64 sysroot；QEMU 仅执行目标程序。
@@ -111,6 +111,26 @@ sudo ./build.sh mesa --sysroot build/distros/debian-sid/rootfs
 sudo ./build.sh sensors --sysroot build/distros/debian-sid/rootfs
 sudo ./build.sh ffmpeg --sysroot build/distros/debian-sid/rootfs
 ```
+
+### 共用构建与缓存
+
+Build products 先准备一次 ARM64 构建容器，再并行准备两类共享产物：UEFI 与 Android 模块、内核与模块。四个 root job 等待这些阶段完成，恢复同一代产物并校验后才构建各自系统，不再分别编译四遍 UEFI、模块和内核。内部产物放 Actions cache，不增加用户下载项；共享阶段的日志合并进原有 `logs.zip`。
+
+完成缓存只在构建、源码和输出校验成功后发布。缓存键包含构建器、绑定源码、补丁、配置、架构、工作区路径及实际容器镜像 ID。内核恢复保留 Image、完整模块集及外部模块构建需要的配置、符号表和头文件；原生内核入口仍核对 SOURCE、编译器、配置、模块 hash 和 vermagic。root job 检查不匹配时停止，不自行重新编译或混用旧产物。UEFI 缓存保留原有构建标记、同核心模块身份与完整文件摘要，不把未完成的构建标为完成。
+
+固定 LLVM 归档、固件中间对象及 ccache 分开缓存，避免每次下载工具链或因小改动完全丢失对象缓存。只保存 LLVM 压缩归档，不把展开后十余 GiB 的目录占满 Actions cache。构建容器按 Dockerfile、固定基础镜像及构建器区分，载入时核对归档摘要和 OCI 镜像 ID。每种共享缓存只有一个写入 job，本地入口通过文件锁串行更新并原子发布缓存记录。
+
+本地需要连续构建多个发行版时，在已准备好的构建环境里使用同一入口：
+
+```sh
+python3 tools/build/shared_products.py ensure --kind firmware
+python3 tools/build/shared_products.py ensure --kind kernel
+# 后续只校验共用产物；输入不匹配则停止
+python3 tools/build/shared_products.py verify --kind firmware
+python3 tools/build/shared_products.py verify --kind kernel
+```
+
+这些命令只由 CI 或维护者的本地共用构建调用，不改变 rootfs 的安装过程。sid 和 Nyarch 的滚动仓库仍每次读取并校验签名索引、选择实际 candidate；运行包继续由原构建器核对 SOURCE、依赖 ABI 与文件摘要，缓存不冻结候选版本。完整 root 镜像不存入构建缓存。冷编译、签名索引刷新、根系统安装和镜像导出仍需要时间，不能仅凭缓存设计保证整套产品在几分钟内完成。
 
 本地和 GitHub 的完整构建走同一个 `release-rootfs` 入口。默认系统包含中文界面、拼音输入法、Chromium、GNOME 动画、蓝牙地址自动初始化和触控笔组件。根系统生成后会检查这些软件包和必需文件，结果记录在 `manifest.json` 的 `default_system`，缺少任何一项构建就失败。
 
