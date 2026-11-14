@@ -1,5 +1,11 @@
 {
   "schema_version": 1,
+  "targets": [
+    "debian-gnome",
+    "debian-kde",
+    "nyarch-gnome",
+    "steamos"
+  ],
   "source": {
     "pname": "demosaic",
     "version": "0.3.0",
@@ -8,7 +14,12 @@
   "patches": [
     {
       "file": "0001-fix-quad-patterns.patch",
-      "sha256": "26f4530d72c19d86c4e6b70a6b48f542c38bb4df88a207a5fc13353b6ca7e7bb"
+      "sha256": "26f4530d72c19d86c4e6b70a6b48f542c38bb4df88a207a5fc13353b6ca7e7bb",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The legacy camera's full-resolution RAW10 path still uses this software Quad CFA converter. Drop when the selected demosaic release derives block corners and red/blue interpolation axes from all four CFA orders and crop phases, and preserves CFA phase at image borders; verify colored flat fields and measured samples across every phase. Alternatively remove the dependency with a verified native full-resolution remosaic path, not enlarged binned images or a new software fallback."
+      }
     }
   ]
 }

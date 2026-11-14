@@ -1,17 +1,38 @@
 {
   "schema_version": 1,
+  "targets": [
+    "debian-gnome",
+    "debian-kde",
+    "nyarch-gnome",
+    "steamos"
+  ],
   "patches": [
     {
       "file": "0001-capture-format-negotiation.patch",
-      "sha256": "992ed075e4428aa63a5af81e96fc58d3156a36d42d3e07f0ba340c818f0ad45a"
+      "sha256": "992ed075e4428aa63a5af81e96fc58d3156a36d42d3e07f0ba340c818f0ad45a",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The active piano-camerad path depends on this downstream SOURCE_CHANGE registration and capture-to-output negotiation, not an existing upstream protocol. Drop when the selected loopback supports equivalent NV12 size/interval enumeration and S_FMT/S_PARM handover, with acknowledgement only after buffers are released and a matching whole frame arrives; migrate the camera together and verify busy readers, timeout and producer removal. It can also be removed with a working libcamera TFE pipeline/IPA that replaces the legacy daemon, loopback and control-socket path."
+      }
     },
     {
       "file": "0002-native-timestamps-and-mmap-handoff.patch",
-      "sha256": "341f02009ca24ffbc74e2c9e34a0b86cc9cf4a9ba44c716642f56c854a2f9aab"
+      "sha256": "341f02009ca24ffbc74e2c9e34a0b86cc9cf4a9ba44c716642f56c854a2f9aab",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Keep while the legacy camera uses the downstream loopback handshake. Its replacement must preserve OUTPUT MONOTONIC timestamps and source flags, require a fresh frame after capture STREAMON and complete negotiation through both QBUF and write. Verify repeated mmap/fork references, reader-map rejection during negotiation and no reallocation before all mappings close; remove together with the handshake if an operational native libcamera path eliminates loopback."
+      }
     },
     {
       "file": "0003-camera-selection-and-format-defaults.patch",
-      "sha256": "0ea920b212edfbea03a76d4eed1aeebca2a5fb243c58557871998202c7b9f816"
+      "sha256": "0ea920b212edfbea03a76d4eed1aeebca2a5fb243c58557871998202c7b9f816",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected loopback must report the negotiated virtual NV12 image through read-only CROP/CROP_DEFAULT/CROP_BOUNDS queries and retain current dimensions when TRY_FMT omits them. Verify standard clients choose the current frame rather than the minimum scaling size, without advertising physical RAW bounds or changing ordinary producers. Remove with the camera-facing loopback device when a working native libcamera path supplies these client capabilities instead."
+      }
     }
   ]
 }
