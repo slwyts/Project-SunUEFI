@@ -134,6 +134,8 @@ python3 tools/build/shared_products.py verify --kind kernel
 
 这些命令只由 CI 或维护者的本地共用构建调用，不改变 rootfs 的安装过程。sid 和 Nyarch 的滚动仓库仍每次读取并校验签名索引、选择实际 candidate；运行包继续由原构建器核对 `SOURCE.json`、依赖 ABI 与文件摘要，缓存不冻结候选版本。sensors 与 FFmpeg 缓存保留 `runtime/`、`SOURCE.json` 和 `SHA256SUMS`；旧版 `package-cache.json` 不再参与 sensors 复用。缓存键包含公共 sid 构建器 `tools/build/debian.py`，构建器变化后不会继续使用同一配方缓存。
 
+官方 Mesa 27 的 Debian 缓存另外保留 `build/mesa/runtime/`、`SOURCE.json`、`SHA256SUMS` 和原始 `.changes` 收据，不缓存 builder。Mesa 自己的键绑定 `config/mesa.json` 中的官方源码提交与归档摘要、构建器、编译环境和验证器；更新 Mesa pin 不改变其他包的配方键。恢复后仍核对目标 APT 候选与 ABI、签名 sid 中的 Debian 配方源码摘要、官方源码 pin，以及 `.changes` 和九个运行包的身份与摘要，不缓存 APT 索引或跳过验证。
+
 Debian 包按配方前缀恢复最近缓存，成功后发布本次运行的一代，避免 Actions 同名缓存不可覆盖导致候选更新后每次重编；公共包只由选定的一个 Debian job 保存。完整 root 镜像不存入构建缓存。冷编译、签名索引刷新、根系统安装和镜像导出仍需要时间，不能仅凭缓存设计保证整套产品在几分钟内完成。
 
 两个 Debian 桌面还复用 `build/distros/release/fingerprint-packages/` 的 `SOURCE.json` 与 `runtime/`，不缓存指纹 package builder。复用前仍核对原生后端源码归档、libfprint 补丁和配置、目标库 ABI 与实际 `.deb` 摘要，并检查目标 fprintd 的动态链接和 APT 依赖；缓存未命中时正常构建。
