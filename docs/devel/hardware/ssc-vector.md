@@ -2,7 +2,7 @@
 
 libssc 扩展复用已有 SUID 发现、QMI 传输及 open/close 流程，提供原始报告和已核对布局的向量解码。`piano-ssc-vector` 是限时诊断客户端，不作为服务自启动，也不创建 IIO 设备。
 
-共享补丁由 `config/release.json` 的 `sensors.patches` 接入 `./build.sh sensors`，经标准 Debian quilt/Meson 流程构建。`0003-libssc-raw-vector-reports.patch` 提供报告接口及客户端，对应 Debian 版本为 `0.4.4-2+piano1+sunuefi2`。
+共享补丁由 `config/release.json` 的 `sensors.patches` 接入 `./build.sh sensors`，经标准 Debian quilt/Meson 流程构建。`0003-libssc-raw-vector-reports.patch` 提供报告接口及客户端；sid 包版本见[传感器构建与来源](sensors.md#构建与包来源)。
 
 ## 限时读取原始报告
 

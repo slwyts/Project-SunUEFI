@@ -114,9 +114,19 @@ def builder(output, sysroot=None):
             workspace.mkdir(exist_ok=True)
             run(['mount', '--bind', ROOT, workspace])
             mounts.append(workspace)
+        policy = root / 'usr/sbin/policy-rc.d'
+        saved_policy = policy.read_bytes() if policy.exists() else None
+        saved_mode = policy.stat().st_mode if policy.exists() else None
+        policy.write_text('#!/bin/sh\nexit 101\n')
+        policy.chmod(0o755)
         try:
             yield root, env
         finally:
+            if saved_policy is None:
+                policy.unlink()
+            else:
+                policy.write_bytes(saved_policy)
+                policy.chmod(saved_mode)
             for mount in reversed(mounts):
                 run(['umount', mount])
 
@@ -149,7 +159,7 @@ def inside(root, path):
 
 
 def command(root, env, path, args, log):
-    guest(root, ['env', *package_build.arguments(env), 'sh', '-c',
+    guest(root, ['env', 'QUILT_PATCH_OPTS=--fuzz=0', *package_build.arguments(env), 'sh', '-c',
                  'cd ' + shlex.quote(inside(root, path)) + ' && exec ' + shlex.join(list(map(str, args)))],
           stdout=log, stderr=subprocess.STDOUT)
 
@@ -165,6 +175,7 @@ def source(root, output, package, version, log):
     if not rows or any(checksum_rows(row) != checksum_rows(rows[0]) for row in rows):
         raise ValueError('Signed sid source index must unambiguously identify ' + package + ' ' + version)
     expected = checksum_rows(rows[0])
+    expected = dict(sorted(expected.items()))
     for name, proof in expected.items():
         if Path(name).name != name:
             raise ValueError('Invalid source archive filename')
@@ -203,9 +214,34 @@ def build(root, env, source, jobs, log, architecture_only=False):
                                '-us', '-uc', '-j' + str(jobs)], log)
 
 
+def align_development_cohorts(root, log):
+    """Replace local runtime revisions only in the disposable package builder."""
+    installed = controls(capture(['chroot', root, 'dpkg-query', '-W',
+                                  '-f=Package: ${binary:Package}\nVersion: ${Version}\n'
+                                  'Source: ${source:Package}\n\n']))
+    targets = []
+    for row in installed:
+        if row.get('Source') not in ('mesa', 'pipewire', 'wayland') or not any(
+                suffix in row.get('Version', '') for suffix in ('+piano', '+sunuefi')):
+            continue
+        package = row['Package']
+        candidates = [item for item in controls(capture(['chroot', root, 'apt-cache', 'show', package]))
+                      if item.get('Filename') and item.get('SHA256') and
+                      item.get('Source', item['Package']).split(' ', 1)[0] == row['Source'] and
+                      not any(suffix in item['Version'] for suffix in ('+piano', '+sunuefi'))]
+        if not candidates:
+            raise ValueError('Signed sid has no development cohort for ' + package)
+        targets.append(package + '=' + candidates[0]['Version'])
+    if targets:
+        guest(root, ['apt-get', 'install', '-y', '--allow-downgrades', '--no-remove',
+                     '--no-install-recommends', *targets], stdout=log, stderr=subprocess.STDOUT)
+
+
 def dependencies(root, log):
     guest(root, ['apt-get', 'update'], stdout=log, stderr=subprocess.STDOUT)
     verify_sid(root)
+    if root != Path('/'):
+        align_development_cohorts(root, log)
     guest(root, ['apt-get', 'install', '-y', '--no-install-recommends', 'build-essential',
                  'ca-certificates', 'dpkg-dev', 'devscripts', 'equivs', 'ccache', 'patch'],
           stdout=log, stderr=subprocess.STDOUT)
@@ -260,7 +296,7 @@ def reusable(output, version, patches, runtime):
         return None
 
 
-def collect(output, source_dir, runtime_names, version=None):
+def collect(output, source_dir, runtime_names, version=None, built=True):
     runtime = output / 'runtime'
     runtime.mkdir(exist_ok=True)
     packages = {}
@@ -273,6 +309,12 @@ def collect(output, source_dir, runtime_names, version=None):
         if (name in packages or fields['Architecture'] not in ('arm64', 'all') or
                 (version and fields['Version'] != version)):
             raise ValueError('Unexpected package identity: ' + path.name)
+        if built:
+            proofs = [checksum_rows(row).get(path.name) for changes in source_dir.glob('*.changes')
+                      for row in controls(changes.read_text()) if row.get('Version') == fields['Version']]
+            expected = {'sha256': package_build.sha(path), 'size': path.stat().st_size}
+            if expected not in proofs:
+                raise ValueError('Runtime package differs from the actual build .changes: ' + path.name)
         with tempfile.TemporaryDirectory(prefix='package-', dir=output) as temporary:
             run(['dpkg-deb', '-x', path, temporary])
             for binary in Path(temporary).rglob('*'):

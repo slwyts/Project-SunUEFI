@@ -4,7 +4,7 @@
 
 ## 构建与包来源
 
-在文档规定的 Debian trixie root ARM64 builder 中运行：
+在 Debian sid root ARM64 builder 中运行；其他主机用 `--sysroot` 指定已完成的 sid ARM64 根目录：
 
 ```sh
 ./build.sh sources
@@ -12,18 +12,24 @@
 ./build.sh release-rootfs
 ```
 
-`sensors` 默认写入 `build/sensors`，先要求源码 HEAD 与固定提交一致、工作区干净，将源码复制到 `build/sensors-workspace`，在副本应用 `config/release.json` 列出的导入配置和 libssc 属性类型补丁，再调用副本中的上游 `scripts/build-sensors-debs.sh`。上游 checkout 保持干净。`all` 和公开 `debian-gnome` CI 的相关顺序均为 Mesa → sensors → release-rootfs。
+`sensors` 默认写入 `build/sensors`，要求源码 HEAD 与固定提交一致、工作区干净，再将源码复制到输出目录的 `upstream/` 并应用 `config/release.json` 列出的补丁。构建器从签名 sid Sources 取得 libssc 和 iio-sensor-proxy，核对 `.dsc` 和所有归档的 SHA-256，经原有 Debian quilt、Meson 和 debhelper 配方生成软件包，不运行上游的 trixie 构建脚本。上游 checkout 保持干净。
+
+```sh
+sudo ./build.sh sensors build/sensors --sysroot build/distros/debian-sid/rootfs --jobs 8
+```
+
+`--sysroot` 只读复制输入根目录；构建依赖、APT 源和编译工具只进入输出目录内的隔离副本。`--libssc-only` 保留只构建库与 CLI 的入口。目标源版本和本地包修订号统一记录在 `patches/piano-sensors/sid/series.json`，运行依赖由目标 sid 库生成。
 
 官方 CI 的 runtime 集合为六个包：
 
 | 包 | 当前固定源码对应的版本 |
 | --- | --- |
-| `piano-sensors` | 上游 CI 为 `5`，本地补丁构建为 `5+sunuefi1`，架构 `all` |
-| `fastrpc-support`、`libfastrpc1` | `1.0.7-2~bpo13+1`，架构 `arm64` |
-| `libssc2`、`libssc-bin` | `0.4.4-2+piano1+sunuefi2`，架构 `arm64` |
-| `iio-sensor-proxy` | `3.9-1+piano1`，架构 `arm64` |
+| `piano-sensors` | sid 构建为 `5+sunuefi2`，架构 `all` |
+| `fastrpc-support`、`libfastrpc1` | sid 标准包 `1.0.8-1`，架构 `arm64` |
+| `libssc2`、`libssc-bin` | `0.4.4-2+piano1+sunuefi3`，架构 `arm64` |
+| `iio-sensor-proxy` | `3.9-1+piano1+sunuefi1`，架构 `arm64` |
 
-FastRPC 包使用上游脚本固定校验值的 Debian 二进制包；libssc 与 iio-sensor-proxy 从固定 `.dsc` 校验值的 Debian 源包重建。版本与六包集合会记录到发布 manifest。
+FastRPC 使用签名 sid Packages 验证的标准二进制包，不再下载 trixie-backports 包。libssc 的属性类型与公开向量接口、iio-sensor-proxy 的启动认领顺序修正仍未包含在上述 sid 源码中，因此保留对应补丁。版本、签名索引及归档哈希、六包集合均记录到输出清单。
 
 `tools/build_release_rootfs.py --sensors-dir` 默认使用 `build/sensors/runtime`。六个 `.deb` 需直接位于该目录；`SOURCE` 和 `SHA256SUMS` 可一同放在它的父目录或目录内。顶层构建成功后写入的 `SOURCE` 为：
 
@@ -48,7 +54,7 @@ FastRPC 包使用上游脚本固定校验值的 Debian 二进制包；libssc 与
 }
 ```
 
-rootfs builder 核对来源字段、补丁清单与补丁哈希、每个 runtime 包的 SHA-256、包名、架构和 SSC 包的 `+piano` 版本，并要求六包齐全及 `piano-sensors=5+sunuefi1`。原上游 CI 的无补丁 `5` 仍可用于对照，但不满足更新后的发布构建输入。上游 `SHA256SUMS` 同时包含 `all/` 与 `runtime/` 条目；CI 下载只保留 runtime 包时，builder 按对应 runtime 条目逐个校验，不要求开发包或调试包。校验文件中的路径以它所在目录为基准，解压后需保持这层关系。
+rootfs builder 核对来源字段、补丁清单与补丁哈希、每个 runtime 包的 SHA-256、包名、架构及上述版本，并要求六包齐全。原上游 CI 的 trixie 二进制包不满足 sid 发布输入。校验文件中的路径以它所在目录为基准，解压后需保持 `runtime/` 层级；开发包、调试包、`.changes` 和 `.buildinfo` 留在 `sources/` 供构建核对，不要求随 runtime 分发。
 
 这些包通过普通、保留签名检查的 APT 安装，以解析依赖。当前发布 rootfs 基线还需要 `erofs-utils`、`libqmi-glib5`、`libqmi-proxy`、`libqrtr-glib0`；APT 同时解析 `libmbim-glib4`、`libmbim-proxy`，其余运行库沿用已有 rootfs 的 ABI。离线安装也必须备齐这些依赖。
 

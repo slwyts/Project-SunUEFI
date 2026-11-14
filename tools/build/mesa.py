@@ -30,6 +30,11 @@ def build(output, sysroot, jobs):
         work, origin = debian.source(root, output, 'mesa', policy['source_version'], log)
         debian.add_patches(work, patches, 'mesa', version,
                            'Recognise the Adreno 830v1 chip ID on drm/msm.')
+        if env.get('CC') == 'clang':
+            # Debian prepends its LLVM directory to PATH; keep C/C++ compiling
+            # natively even when those target clang binaries are installed.
+            env = dict(env, CC=package_build.GUEST_TOOLS + '/bin/clang',
+                       CXX=package_build.GUEST_TOOLS + '/bin/clang++')
         debian.build(root, env, work, jobs, log, architecture_only=True)
         packages = debian.collect(output, work.parent, RUNTIME, version)
         result = {'source': origin, 'packages_built': True, 'package_version': version,
