@@ -30,11 +30,17 @@ python3 build/firmware-workspace/tools/prepare_nv_runtime_guard.py verify
 
 Linux 内核补丁按内核版本分目录维护在 `patches/linux/`，通过 `patches/linux/7.3/series.json` 登记，在 `./build.sh linux` 阶段自动应用。补丁详情见[内核与调度配置](linux/kernel.md)。
 
+平台、显示、输入与无线、媒体和音频的前五个主题包仍是组合下游移植，没有拆成可逐项提交的子系统系列。清单逐个记录替换它们所需的硬件能力与检查，这些包不是已被主线接收或可直接提交的系列。
+
+`original_commit`、`original_parent` 和 `tree` 用于复现本地补丁链；上游状态以各条目的 `upstream` 为准。参考了公开补丁系列的本地改写仍可标为 `downstream`，参考链接不表示这份改写已经提交。来源元数据不替代补丁头的作者、签名和逐文件许可声明，也不补造缺失的签名。
+
 ## 软件包补丁与产品目标
 
 软件包系列使用 `patches/<包>/<版本>/series.json`。`patches` 列表按顺序应用，条目的 `file` 相对该系列目录解析；FFmpeg 的现有 `series` / `path` 格式含义相同。同一修复适用于多个版本时，系列引用同一份文件，不再复制补丁。跨版本路径可以使用 `../`，但不能离开仓库。
 
 `targets` 登记使用该版本的 CI 产品名，以 `tools/ci_build_targets.py` 中的 `TARGETS` 为准：固件和内核分别可选 `uefi`、`linux`，根系统使用四个发行版目标。PipeWire 的 Debian 两桌面使用 1.6.9，Nyarch 使用 1.6.11，SteamOS 使用 1.6.8。GTK 3.24.52、IBus 1.5.34、KWin 6.6.5 和 Mesa 27.0 的本地系列由 SteamOS 配方使用。Nyarch 的 Material You Colors 30 和 Blur my Shell 75、SteamOS 的 KScreen 6.6.5 和 Manager 26.4.1 也通过各自版本的系列选择补丁。
+
+固件系列同时登记 `uefi` 和四个根系统目标，内核系列登记 `linux` 和四个根系统目标。F2FS 工具装入 Android 引导助手，不装进 Linux 根系统；四个根系统产品也会构建配套助手，因此其系列登记 `uefi` 和四个根系统目标。Gamescope 系列只由 `steamos` 使用。
 
 已登记系列中的补丁必须有 `upstream`。共享文件的来源只需在一个引用处记录一次；一个系列的补丁确实共用来源与删除条件时，也可在系列顶层记录：
 

@@ -1,5 +1,12 @@
 {
   "schema_version": 1,
+  "targets": [
+    "linux",
+    "debian-gnome",
+    "debian-kde",
+    "nyarch-gnome",
+    "steamos"
+  ],
   "target": "release",
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
@@ -14,7 +21,12 @@
       "original_commit": "e72eaf4a9bb8db9e337432ce381f4925c5e8dbb4",
       "original_parent": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
       "committer_date": "2026-11-08T00:43:42+08:00",
-      "tree": "03cd1f5ad5da878f355eaeaf7a7d3be5e3a2f13a"
+      "tree": "03cd1f5ad5da878f355eaeaf7a7d3be5e3a2f13a",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "This combined downstream platform port is not split for subsystem submission. Replace its Piano DT and bindings, boot SMMU/DMA handover, PCIe/WCN power sequencing, charger support, remoteproc and UFS/USB lifecycle changes with accepted subsystem implementations; verify cold boot, DMA isolation, charging, suspend and recovery before removing the bundle."
+      }
     },
     {
       "file": "0002-display.patch",
@@ -22,7 +34,12 @@
       "original_commit": "577ea010e6b57047475f36e3841db5b89dbfdc26",
       "original_parent": "e72eaf4a9bb8db9e337432ce381f4925c5e8dbb4",
       "committer_date": "2026-11-08T00:43:42+08:00",
-      "tree": "47cd0f4efade3c8c238ae50b669bca185dc719f4"
+      "tree": "47cd0f4efade3c8c238ae50b669bca185dc719f4",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "This combined downstream display port is not split for DRM submission. The selected kernel must replace the A8xx catalog changes, bonded DSI/DSC and PHY sequencing, NT36532 panel, dual backlight and DSPP REGDMA/GC/IGC support; verify native modes, color, brightness and suspend/resume with the dependent display fixes before dropping the bundle."
+      }
     },
     {
       "file": "0003-input-wireless.patch",
@@ -30,7 +47,12 @@
       "original_commit": "49432a187382f59cfdc4e7c560a86f339eca058b",
       "original_parent": "577ea010e6b57047475f36e3841db5b89dbfdc26",
       "committer_date": "2026-11-08T00:43:42+08:00",
-      "tree": "6e10284d438a5dfb837f5880d1f28c4063a1fcf5"
+      "tree": "6e10284d438a5dfb837f5880d1f28c4063a1fcf5",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace this combined downstream input/wireless port only after accepted drivers provide Piano WCN Bluetooth/Wi-Fi initialization, Nanosic keyboard/touchpad handling, Xiaomi pen routing, pen-dock power and NT36532E touch firmware/input support. Verify hotplug, standard input events, radio traffic and suspend/resume; the bundle is not a submitted subsystem series."
+      }
     },
     {
       "file": "0004-media.patch",
@@ -38,7 +60,12 @@
       "original_commit": "3b077224cea1a670c1a5d1899eb246444034fb18",
       "original_parent": "49432a187382f59cfdc4e7c560a86f339eca058b",
       "committer_date": "2026-11-08T00:43:42+08:00",
-      "tree": "aaafd98dc4333e8a80c6b9c9cbc1a01677b72aa9"
+      "tree": "aaafd98dc4333e8a80c6b9c9cbc1a01677b72aa9",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "This combined downstream media port is not split for media-subsystem submission. Replace SM8750 CSID980/TFE980 CAMSS, OV32D40/JN1 sensor changes, Iris buffer/response handling and the added subdevice interface with accepted implementations, including the later removal of register-debug access; verify both cameras, formats, DMA error handling, codec restart and suspend before removing the bundle."
+      }
     },
     {
       "file": "0005-audio.patch",
@@ -46,7 +73,12 @@
       "original_commit": "bc6372877619ec8d4fcb87951c48f2d601f1536d",
       "original_parent": "3b077224cea1a670c1a5d1899eb246444034fb18",
       "committer_date": "2026-11-08T00:43:42+08:00",
-      "tree": "91e7e86851d44a12dab6a4c7e442f8e074eb7c91"
+      "tree": "91e7e86851d44a12dab6a4c7e442f8e074eb7c91",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace this combined downstream audio port when accepted FS19xx codec and SM8750 AudioReach graph, topology, clock and VA-macro support can use Piano's firmware and sound card through ALSA. Verify four-speaker playback, microphone capture, DSP recovery and suspend; this bundle has not been split into an ASoC submission series."
+      }
     },
     {
       "file": "0006-gunyah.patch",
@@ -54,7 +86,12 @@
       "original_commit": "51d471b31ccf7309e7d86420efdd17627640362c",
       "original_parent": "bc6372877619ec8d4fcb87951c48f2d601f1536d",
       "committer_date": "2026-11-08T00:43:42+08:00",
-      "tree": "e5ced002ca13634f2e01f5fd866e9273933401f6"
+      "tree": "e5ced002ca13634f2e01f5fd866e9273933401f6",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/code002-2/librevm/tree/56918558e2c4303cda803a655ea716869c551b71/packaging/gunyah-driver-7.2",
+        "drop_when": "The selected kernel must provide the Android-derived Gunyah resource-manager, VM/vCPU, memory-lending and interrupt interfaces used with the stock hypervisor, including safe host unmapping and current resource handles. Migrate consumers to the accepted ABI and verify VM creation, lending/reclaim and disabled-RM boot before removing this downstream port."
+      }
     },
     {
       "file": "0007-bore.patch",
@@ -62,7 +99,12 @@
       "original_commit": "7c7113d4206ed8f0b0691fbc94da9d7872a37473",
       "original_parent": "51d471b31ccf7309e7d86420efdd17627640362c",
       "committer_date": "2026-11-08T00:43:43+08:00",
-      "tree": "adc2722e6f5ebb23e61df0ea2df89f244effeee4"
+      "tree": "adc2722e6f5ebb23e61df0ea2df89f244effeee4",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/CachyOS/kernel-patches/blob/6266b5f33f4e8caaa452174f0132c8c82f919267/7.3/sched/0001-bore-cachy.patch",
+        "drop_when": "Remove when the selected kernel already supplies the BORE scheduler and its configured defaults, or when the product intentionally returns to the upstream fair scheduler. Update BORE configuration together and compare interactive load, scheduling behavior and suspend rather than leaving references to missing scheduler options."
+      }
     },
     {
       "file": "0008-drm-msm-gem-api.patch",
@@ -70,7 +112,12 @@
       "original_commit": "41f787a6ee254c060904c4c883fa04cbdb734e4a",
       "original_parent": "7c7113d4206ed8f0b0691fbc94da9d7872a37473",
       "committer_date": "2026-11-08T00:43:43+08:00",
-      "tree": "e5152689631fd1502aad23987744fd0efbc0b6b6"
+      "tree": "e5152689631fd1502aad23987744fd0efbc0b6b6",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Remove with a replacement DPU LUT-DMA implementation that already uses the selected msm_gem_new reservation-object API. Verify the internal REGDMA buffer allocates with an independent reservation object and is released on both initialization failure and normal teardown."
+      }
     },
     {
       "file": "0009-gunyah-rmap-api.patch",
@@ -78,7 +125,12 @@
       "original_commit": "9ea38a6ac6379246076863f87e92ad9c3321bc65",
       "original_parent": "41f787a6ee254c060904c4c883fa04cbdb734e4a",
       "committer_date": "2026-11-08T00:43:43+08:00",
-      "tree": "5330e9e430282adf3cf1b6996053a192a38ed319"
+      "tree": "5330e9e430282adf3cf1b6996053a192a38ed319",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement Gunyah memory-lending code must use the selected mapping reverse-map iterator with an inclusive last index and reject every mapped folio while holding the mapping lock. Verify mapped, unmapped and multi-page folios before removing the Linux 7.3 API adaptation."
+      }
     },
     {
       "file": "0010-gunyah-dt-availability.patch",
@@ -86,7 +138,12 @@
       "original_commit": "400b6a423987471167527259da0cb8934132666d",
       "original_parent": "9ea38a6ac6379246076863f87e92ad9c3321bc65",
       "committer_date": "2026-11-08T00:43:43+08:00",
-      "tree": "ceda454da43da8d2cb62a4070415fc1219d10261"
+      "tree": "ceda454da43da8d2cb62a4070415fc1219d10261",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected Gunyah driver must honor disabled resource-manager DT nodes and balance their node references. Verify boot without captured current capability handles leaves RM disabled and does not register stale resources or prevent Linux startup."
+      }
     },
     {
       "file": "0011-fastrpc-drain-ssr-invokes.patch",
@@ -94,7 +151,12 @@
       "original_commit": "57f708926d6b8d3fb54d0a19bc2d19c7058dfa4f",
       "original_parent": "400b6a423987471167527259da0cb8934132666d",
       "committer_date": "2026-11-08T00:43:43+08:00",
-      "tree": "461bd31dc7110f95a2b268cb259af7f194d53b67"
+      "tree": "461bd31dc7110f95a2b268cb259af7f194d53b67",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/qualcomm-linux/kernel/pull/1212",
+        "drop_when": "This is a local adaptation of Jianping Li's FastRPC SSR fixes, not that upstream submission. Drop when the selected kernel initializes channel state before exposing devices, wakes polling invokes on SSR and drains all admitted invokes before removing DMA context banks; verify concurrent open/invoke/SSR teardown without use-after-free."
+      }
     },
     {
       "file": "0012-asoc-q6apm-avoid-unregistered-query.patch",
@@ -102,7 +164,12 @@
       "original_commit": "adfa5e11e2bec07f07bbdd08f811b4c75fa933c1",
       "original_parent": "57f708926d6b8d3fb54d0a19bc2d19c7058dfa4f",
       "committer_date": "2026-11-08T00:43:43+08:00",
-      "tree": "063538e10154b2692e37e7007aca96d269c695ed"
+      "tree": "063538e10154b2692e37e7007aca96d269c695ed",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected q6apm driver must avoid synchronous SPF readiness queries before APR installs its service callback, or move them after callback registration. Verify probe no longer discards a valid response and incurs the five-second timeout while PRM can still query DSP readiness."
+      }
     },
     {
       "file": "0013-asoc-va-sm8750-core-votes.patch",
@@ -110,7 +177,12 @@
       "original_commit": "3799f48d56acc3136286a3b6beab11f9c4df7ebf",
       "original_parent": "adfa5e11e2bec07f07bbdd08f811b4c75fa933c1",
       "committer_date": "2026-11-08T00:43:43+08:00",
-      "tree": "d88ae8dd63b5525645d2093a4acc1bd19e2a0ccb"
+      "tree": "d88ae8dd63b5525645d2093a4acc1bd19e2a0ccb",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Remove when accepted SM8750 LPASS runtime-PM handling safely manages the shared macro and dcodec votes without the registration-lifetime workaround. Verify microphone stop/idle alongside the sensors PD causes no ADSP watchdog and that suspend/resume and failed-probe vote balancing remain correct."
+      }
     },
     {
       "file": "0014-qcomtee-large-shared-memory.patch",
@@ -118,7 +190,12 @@
       "original_commit": "33de18b304fbaf5348fa54eeccbedfe84bd0a25d",
       "original_parent": "3799f48d56acc3136286a3b6beab11f9c4df7ebf",
       "committer_date": "2026-11-08T00:43:43+08:00",
-      "tree": "d84252f5cc0b009f933de535b996d56c99e1257a"
+      "tree": "d84252f5cc0b009f933de535b996d56c99e1257a",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected qcomtee allocator must support physically contiguous shared objects larger than the buddy maximum order through CMA or an equivalent supported allocator. Verify loading and releasing the factory-signed 11 MiB Goodix application, secure-bridge registration failures and page cleanup."
+      }
     },
     {
       "file": "0015-remoteproc-sm8750-cdsp-sync-memory.patch",
@@ -126,7 +203,12 @@
       "original_commit": "daded53b1714bd633a4d9c2e746d5bce085aeef5",
       "original_parent": "33de18b304fbaf5348fa54eeccbedfe84bd0a25d",
       "committer_date": "2026-11-08T00:43:43+08:00",
-      "tree": "920875754ceeda010a70692c889a534c5c06ccce"
+      "tree": "920875754ceeda010a70692c889a534c5c06ccce",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected SM8750 PAS descriptor must assign the third CDSP global_sync_mem region to HLOS and CDSP before firmware startup and release it through the reserved-region lifecycle. Verify CDSP boot/restart and failed-start cleanup without granting access to unrelated memory."
+      }
     },
     {
       "file": "0016-drm-igcv5-high-precision-dither.patch",
@@ -134,7 +216,12 @@
       "original_commit": "2cad69b90cdfd7b2c2be4919da73c787918a2c52",
       "original_parent": "daded53b1714bd633a4d9c2e746d5bce085aeef5",
       "committer_date": "2026-11-08T00:43:43+08:00",
-      "tree": "ceedcce8f67f9ca0ded954b35899b51471454890"
+      "tree": "ceedcce8f67f9ca0ded954b35899b51471454890",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement IGC v5 backend must program the documented high-precision dither controls with Piano's calibrated strength while preserving standard LUT sampling and null-LUT bypass. Verify SDR/HDR transforms and bypass; do not replace this with an unverified panel-depth or FRC declaration."
+      }
     },
     {
       "file": "0017-uio-piano-fingerprint-control.patch",
@@ -142,7 +229,12 @@
       "original_commit": "37a51e9eeb058d55d267eaae3cd0f4fc63d46e3b",
       "original_parent": "2cad69b90cdfd7b2c2be4919da73c787918a2c52",
       "committer_date": "2026-11-08T00:43:44+08:00",
-      "tree": "89011db595d0cb463a0c507b5131d4ab97d0c7ad"
+      "tree": "89011db595d0cb463a0c507b5131d4ab97d0c7ad",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace the Piano-specific UIO control with an accepted secure-fingerprint power/reset/IRQ interface and migrate its Goodix userspace consumer together. Verify regulator and active-low reset ordering, interrupt acknowledgement/re-enable, close and removal while keeping sensor communication in QTEE."
+      }
     },
     {
       "file": "0018-qcomtee-public-buffers-cma.patch",
@@ -150,7 +242,12 @@
       "original_commit": "339da269a496bcbc05dc9fc2e5656b5a6c6ea423",
       "original_parent": "37a51e9eeb058d55d267eaae3cd0f4fc63d46e3b",
       "committer_date": "2026-11-08T00:43:44+08:00",
-      "tree": "eda523d46568d7f331ca45671787b5f481d3d7e0"
+      "tree": "eda523d46568d7f331ca45671787b5f481d3d7e0",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected qcomtee implementation must honor the declared CMA/address range for public application buffers as well as large application images. Verify a normal 4 KiB Goodix command buffer stays in the supported range and that private buffers, registration failure and release use their matching allocators."
+      }
     },
     {
       "file": "0019-pmic-glink-altmode-connector-children.patch",
@@ -158,7 +255,12 @@
       "original_commit": "9eac536e0c924795003440e97cec42759d741c54",
       "original_parent": "339da269a496bcbc05dc9fc2e5656b5a6c6ea423",
       "committer_date": "2026-11-08T00:43:44+08:00",
-      "tree": "2b4651203a10910762863bade85e7e1cd345e552"
+      "tree": "2b4651203a10910762863bade85e7e1cd345e552",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected PMIC GLINK altmode driver must enumerate only USB connector children and ignore sibling regulator resources while validating real port numbers. Verify Piano's pen regulator no longer prevents Type-C probe or orientation/mode switching."
+      }
     },
     {
       "file": "0020-ucsi-glink-connector-children.patch",
@@ -166,7 +268,12 @@
       "original_commit": "8ad284cb380499cef94a3cddf8bdf20d4cb7ad8b",
       "original_parent": "9eac536e0c924795003440e97cec42759d741c54",
       "committer_date": "2026-11-08T00:43:44+08:00",
-      "tree": "3fde26ea4f2cfb0345ddfc98a29f5976135c2209"
+      "tree": "3fde26ea4f2cfb0345ddfc98a29f5976135c2209",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected ucsi_glink driver must ignore non-connector PMIC GLINK children rather than requiring a port reg property on regulators. Verify UCSI ports register and resolve their physical switches with the firmware pen regulator present."
+      }
     },
     {
       "file": "0021-ucsi-prefer-numbered-connectors.patch",
@@ -174,7 +281,12 @@
       "original_commit": "6535f06dd03a0d86f16d21e3cc2832a8385e9014",
       "original_parent": "8ad284cb380499cef94a3cddf8bdf20d4cb7ad8b",
       "committer_date": "2026-11-08T00:43:44+08:00",
-      "tree": "2391ef0e5fd71660cf20dc168ef32429e03d9926"
+      "tree": "2391ef0e5fd71660cf20dc168ef32429e03d9926",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected UCSI core must resolve explicit connector reg indices before using ordinal fallback. Verify a regulator preceding connector@0 cannot steal the port fwnode, orientation and role switches work, and firmware without numbered connectors retains its fallback."
+      }
     },
     {
       "file": "0022-ucsi-initial-usb-mux.patch",
@@ -182,7 +294,12 @@
       "original_commit": "4ccbd49289b74d6e91a84dd91ed6a04e4629e616",
       "original_parent": "6535f06dd03a0d86f16d21e3cc2832a8385e9014",
       "committer_date": "2026-11-08T00:43:44+08:00",
-      "tree": "607e66ad28bae6acfbb1a274b495f632890e3831"
+      "tree": "607e66ad28bae6acfbb1a274b495f632890e3831",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "UCSI must apply USB mux mode before initial orientation and role notification for a partner already attached at boot. Verify a boot-attached gadget cable works without a later altmode event or PHY reconfiguration race."
+      }
     },
     {
       "file": "0023-dpu-shared-video-ctl.patch",
@@ -190,7 +307,12 @@
       "original_commit": "aca459ef30504fdaf0c879273025fcf373ef754b",
       "original_parent": "4ccbd49289b74d6e91a84dd91ed6a04e4629e616",
       "committer_date": "2026-11-08T00:43:44+08:00",
-      "tree": "5ced3c39262320be3c2c0a9f64edde2a0f943790"
+      "tree": "5ced3c39262320be3c2c0a9f64edde2a0f943790",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected DPU driver must flush a CTL shared by bonded video interfaces once through its master and track kickoffs only for interfaces with completion callbacks. Verify both DSI halves, vblank and flush timeout handling without a growing slave pending count."
+      }
     },
     {
       "file": "0024-hid-nanosic-feature-and-release.patch",
@@ -198,7 +320,12 @@
       "original_commit": "7b2c4d08da38b128641a62d5783e73ab349d7b5f",
       "original_parent": "aca459ef30504fdaf0c879273025fcf373ef754b",
       "committer_date": "2026-11-08T00:43:44+08:00",
-      "tree": "adeac5ea9c0d0eba57b6b7d02a78993739dc7111"
+      "tree": "adeac5ea9c0d0eba57b6b7d02a78993739dc7111",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement Nanosic transport must reject unsupported feature/output requests, suppress initial feature queries after HID core quirk reset and release contacts with the full variant report length. Verify probe and lid-close release on Piano's 27-byte layout without breaking the 21-byte variant."
+      }
     },
     {
       "file": "0025-ucsi-clear-released-connectors.patch",
@@ -206,7 +333,12 @@
       "original_commit": "447ea07c56933261e169cbfc1a97f57962c9c497",
       "original_parent": "7b2c4d08da38b128641a62d5783e73ab349d7b5f",
       "committer_date": "2026-11-08T00:43:44+08:00",
-      "tree": "715f49a4e11fb7ac1eaf8ced63fff68a5b339d19"
+      "tree": "715f49a4e11fb7ac1eaf8ced63fff68a5b339d19",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected UCSI teardown must clear its freed connector array before the reusable controller can initialize again. Verify ADSP restart followed by initialization failure and repeated unregister cannot dereference old connectors."
+      }
     },
     {
       "file": "0026-mca-recover-pd-input.patch",
@@ -214,7 +346,12 @@
       "original_commit": "f325312349b57c56e7b9522d8e43ca8256c28392",
       "original_parent": "447ea07c56933261e169cbfc1a97f57962c9c497",
       "committer_date": "2026-11-08T00:43:44+08:00",
-      "tree": "1376c824d50037ee7cd7a87ca6b342648cdb51d6"
+      "tree": "1376c824d50037ee7cd7a87ca6b342648cdb51d6",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace when the selected charger/firmware reliably classifies reattached PD sources, or an accepted driver recovers Unknown only from same-peer UCSI PD-online state, SNK_Ready and a valid 5 V PDO. Verify failed reads, reconnect and peer removal do not relax limits or access freed power-supply data."
+      }
     },
     {
       "file": "0027-power-piano-mipps-authentication.patch",
@@ -222,7 +359,12 @@
       "original_commit": "97647310050b549c2da281269b7010faebb8c37e",
       "original_parent": "f325312349b57c56e7b9522d8e43ca8256c28392",
       "committer_date": "2026-11-08T00:43:45+08:00",
-      "tree": "fc533702de0972859e56028d27868c2cd27d41e8"
+      "tree": "fc533702de0972859e56028d27868c2cd27d41e8",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "An accepted charger implementation must replace the GPL-2.0-only MiPPS protocol port with fresh challenge/response verification, Piano's command order and adapter-ID recovery, while retaining ordinary PD/PPS fallback and session invalidation. Verify failed authentication never authorizes higher limits and successful authentication preserves USB data roles."
+      }
     },
     {
       "file": "0028-power-piano-otg-configuration.patch",
@@ -230,7 +372,12 @@
       "original_commit": "e04e7e47875e30ab7a03d0c2e8712e883422e5a9",
       "original_parent": "97647310050b549c2da281269b7010faebb8c37e",
       "committer_date": "2026-11-08T00:43:45+08:00",
-      "tree": "5b2a8317574c5445d28f3c24c5aafb9637fdf7b7"
+      "tree": "5b2a8317574c5445d28f3c24c5aafb9637fdf7b7",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted MCA/firmware path must synchronize Piano's DT-described OTG wiring through property 0x201a once per ADSP generation and retry failed synchronization without blocking ordinary charging. Verify source-role dock detach no longer causes the firmware gpio-not-init failure or TCPC/ADSP restart."
+      }
     },
     {
       "file": "0029-hid-xiaomi-p81c-body-gestures.patch",
@@ -238,7 +385,12 @@
       "original_commit": "cec936faf1fe5e4e56e20be1fda433429f830e0c",
       "original_parent": "e04e7e47875e30ab7a03d0c2e8712e883422e5a9",
       "committer_date": "2026-11-08T00:43:45+08:00",
-      "tree": "57092a5db46a12a7e9b61ac6783fd32fa4c722fb"
+      "tree": "57092a5db46a12a7e9b61ac6783fd32fa4c722fb",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected Xiaomi HID driver must map P81C body slides to page keys, suppress keyboard-array usages the pen never sends and leave squeeze/double-tap reports available to the tablet-tool consumer. Verify gestures do not type keypad digits or Enter and still produce the intended pen actions."
+      }
     },
     {
       "file": "0030-ath12k-tx-dma-address.patch",
@@ -246,7 +398,13 @@
       "original_commit": "f3855883f488862b7b5a77bd3b7b42ad4d70ff93",
       "original_parent": "cec936faf1fe5e4e56e20be1fda433429f830e0c",
       "committer_date": "2026-11-08T01:57:30+08:00",
-      "tree": "8eae9f0565727d2c1f2121fc0f0f936ea8d835e4"
+      "tree": "8eae9f0565727d2c1f2121fc0f0f936ea8d835e4",
+      "upstream": {
+        "status": "merged",
+        "url": "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=979ecb88ed3528e08dd7f87b90b029374226ca84",
+        "commit": "979ecb88ed3528e08dd7f87b90b029374226ca84",
+        "drop_when": "The selected kernel source must retain the upper DMA address bits in the ath12k Wi-Fi 7 MSDU extension descriptor, as in this matching upstream change. Verify TX buffers above 4 GiB are represented without truncation before removing the backport; upstream status alone does not establish inclusion in the fixed source."
+      }
     },
     {
       "file": "0031-ath12k-tx-stats-bounds.patch",
@@ -254,7 +412,13 @@
       "original_commit": "9d4dd949bcbf984398566dee8881627bc0518fe4",
       "original_parent": "f3855883f488862b7b5a77bd3b7b42ad4d70ff93",
       "committer_date": "2026-11-08T01:57:30+08:00",
-      "tree": "805295d10a87b454b9e14e213d6df639816389db"
+      "tree": "805295d10a87b454b9e14e213d6df639816389db",
+      "upstream": {
+        "status": "merged",
+        "url": "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=c8f83d3389d1d1b318ac3bd2ae3d60c2862c90b4",
+        "commit": "c8f83d3389d1d1b318ac3bd2ae3d60c2862c90b4",
+        "drop_when": "The selected ath12k source must bounds-check fw_tx_status, tx_wbm_rel_source and tqm_rel_reason indices as in this matching upstream change. Verify unexpected hardware completion values cannot write past any statistics array before dropping the backport."
+      }
     },
     {
       "file": "0032-ath12k-pci-cma.patch",
@@ -262,7 +426,12 @@
       "original_commit": "d3e19064a5e585dba10e4d488712bf56a15b555f",
       "original_parent": "9d4dd949bcbf984398566dee8881627bc0518fe4",
       "committer_date": "2026-11-08T01:57:30+08:00",
-      "tree": "3bb7ed8cf2ddfad39617abc4d4cbe1e35dc25c71"
+      "tree": "3bb7ed8cf2ddfad39617abc4d4cbe1e35dc25c71",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia/xiaomi-piano-nixos/blob/b06301d14f50ee09e995aae50ecbaac05e89f55e/packages/kernel/patches/ath12k-pci-cma.patch",
+        "drop_when": "PCI core or the selected ath12k driver must attach the DT-declared shared DMA pool before any MHI or CE ring allocation. Verify WCN allocations use that pool on initial probe and reprobe, and a pool attachment failure stops probe without leaking PCI resources."
+      }
     },
     {
       "file": "0033-iommu-identity-attach-readback.patch",
@@ -270,7 +439,12 @@
       "original_commit": "62d65b5c72218b2c88517c27e438c6ad2efbc61c",
       "original_parent": "d3e19064a5e585dba10e4d488712bf56a15b555f",
       "committer_date": "2026-11-08T01:57:30+08:00",
-      "tree": "f952af0b691765918749e036d0de097779912e28"
+      "tree": "f952af0b691765918749e036d0de097779912e28",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia/xiaomi-piano-nixos/blob/b06301d14f50ee09e995aae50ecbaac05e89f55e/packages/kernel/patches/iommu-identity-attach-readback.patch",
+        "drop_when": "The replacement OF/IOMMU path must propagate failures for declared requester mappings and verify the actual identity route and context before accepting attachment. Verify missing, stale, faulting or translating SMMU routes cannot silently fall back to direct DMA; migrate users of the downstream route-reporting interface together."
+      }
     },
     {
       "file": "0034-iommu-adreno-defer-attach.patch",
@@ -278,7 +452,12 @@
       "original_commit": "fde574f73162ecc246ebbaaa35fc57b23064e5ef",
       "original_parent": "62d65b5c72218b2c88517c27e438c6ad2efbc61c",
       "committer_date": "2026-11-08T01:57:30+08:00",
-      "tree": "f3ead72d01e6bb13ae45fb0917ae6b964080acf7"
+      "tree": "f3ead72d01e6bb13ae45fb0917ae6b964080acf7",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia/xiaomi-piano-nixos/blob/b06301d14f50ee09e995aae50ecbaac05e89f55e/packages/kernel/patches/iommu-adreno-defer-default-domain.patch",
+        "drop_when": "The selected Qualcomm SMMU implementation must defer GPU/GMU default attachment until their drivers install the intended paging domains, or provide an accepted equivalent boot mapping transition. Verify graphics probe, submission and resume without overwriting a live GPU/GMU route."
+      }
     },
     {
       "file": "0035-iommu-media-dma-domain.patch",
@@ -286,7 +465,12 @@
       "original_commit": "351f397644914aacdb3bd4770458d604fa2bd5c0",
       "original_parent": "fde574f73162ecc246ebbaaa35fc57b23064e5ef",
       "committer_date": "2026-11-08T01:57:31+08:00",
-      "tree": "8e023bebb78e85f927141c8d8ff6265ef21a2cbe"
+      "tree": "8e023bebb78e85f927141c8d8ff6265ef21a2cbe",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia/xiaomi-piano-nixos/blob/b06301d14f50ee09e995aae50ecbaac05e89f55e/packages/kernel/patches/iommu-media-default-domain.patch",
+        "drop_when": "The selected SMMU/DMA implementation must give SM8750 CAMSS and Iris translated DMA domains suitable for scatter-gather buffers and their DMA masks. Verify camera and codec streaming, restart and buffer release without requiring a userspace IOMMU group-type override."
+      }
     },
     {
       "file": "0036-bluetooth-qca-defer-power.patch",
@@ -294,7 +478,12 @@
       "original_commit": "cc707568577553cb1d7d14d6ab9fe9f3eba9a058",
       "original_parent": "351f397644914aacdb3bd4770458d604fa2bd5c0",
       "committer_date": "2026-11-08T01:57:31+08:00",
-      "tree": "067ecb93f4d00e9923954dd49737642e704c7d9b"
+      "tree": "067ecb93f4d00e9923954dd49737642e704c7d9b",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia/xiaomi-piano-nixos/blob/b06301d14f50ee09e995aae50ecbaac05e89f55e/packages/kernel/patches/bluetooth-qca-defer-power-sequencer.patch",
+        "drop_when": "The selected QCA serdev driver must propagate EPROBE_DEFER from its declared power sequencer instead of falling back to legacy power control. Verify delayed WCN supplier registration and subsequent Bluetooth probe preserve the shared power sequencing."
+      }
     },
     {
       "file": "0037-nanosic-tablet-mode.patch",
@@ -302,7 +491,12 @@
       "original_commit": "d11c5767de7b14972aa138f8b13b0094ce78c426",
       "original_parent": "cc707568577553cb1d7d14d6ab9fe9f3eba9a058",
       "committer_date": "2026-11-08T01:57:31+08:00",
-      "tree": "15879c4dc1af9cb0e94ab4c07dafc3e772cd7b6d"
+      "tree": "15879c4dc1af9cb0e94ab4c07dafc3e772cd7b6d",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia/xiaomi-piano-nixos/blob/b06301d14f50ee09e995aae50ecbaac05e89f55e/packages/kernel/patches/nanosic-tablet-mode-switch.patch",
+        "drop_when": "The accepted Nanosic driver must expose a persistent SW_TABLET_MODE input derived from keyboard attachment and keep that output out of its own inhibit-input path. Verify detach/reconnect updates tablet mode even while the detachable HID devices are absent."
+      }
     },
     {
       "file": "0038-rpmsg-channel-modalias.patch",
@@ -310,7 +504,12 @@
       "original_commit": "8e2cebb69ec3b78c73a72fda4630ee51437a70c6",
       "original_parent": "d11c5767de7b14972aa138f8b13b0094ce78c426",
       "committer_date": "2026-11-08T01:57:31+08:00",
-      "tree": "fb5188400ffbc68d3077c335b2949624293e5cdf"
+      "tree": "fb5188400ffbc68d3077c335b2949624293e5cdf",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia/xiaomi-piano-nixos/blob/b06301d14f50ee09e995aae50ecbaac05e89f55e/packages/kernel/patches/rpmsg-channel-modalias-fallback.patch",
+        "drop_when": "The selected RPMsg core must emit channel modaliases for DT nodes without compatible while retaining OF aliases where compatible is present. Verify standard module autoload for firmware-announced channels without adding board-specific module-loading scripts."
+      }
     },
     {
       "file": "0039-pcie-phy-reset-sequence.patch",
@@ -318,7 +517,12 @@
       "original_commit": "8729f36c837554f6c3d945bb5194c1d10868c640",
       "original_parent": "8e2cebb69ec3b78c73a72fda4630ee51437a70c6",
       "tree": "ea75460d10bce692af9c77d8a6479ee73f1da2ad",
-      "committer_date": "2026-11-08T02:32:50+08:00"
+      "committer_date": "2026-11-08T02:32:50+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia/xiaomi-piano-nixos/blob/b06301d14f50ee09e995aae50ecbaac05e89f55e/packages/kernel/patches/pcie-qcom-phy-reset-sequence.patch",
+        "drop_when": "Replace this local adaptation of Qualcomm's PCIe initialization series when accepted controller/PHY drivers power the endpoint and enable both clock sets before RC/PHY reset, with split resource/start-stop lifecycles. Verify cold probe, resume and failed-port unwind without resetting unclocked hardware."
+      }
     },
     {
       "file": "0040-pmic-glink-freezable-work.patch",
@@ -326,7 +530,13 @@
       "original_commit": "b69346db8b755fb0659ef37571acbf7b11ceff31",
       "original_parent": "8729f36c837554f6c3d945bb5194c1d10868c640",
       "tree": "afda4434402d45ae96dce5dedfb632e1fc6d1a65",
-      "committer_date": "2026-11-08T02:32:50+08:00"
+      "committer_date": "2026-11-08T02:32:50+08:00",
+      "upstream": {
+        "status": "merged",
+        "url": "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=c7c56b6ec077cb96657494b8c18c2c78625035b1",
+        "commit": "c7c56b6ec077cb96657494b8c18c2c78625035b1",
+        "drop_when": "The selected PMIC GLINK altmode source must queue both notification paths on a freezable workqueue, as in this matching upstream change, or defer them until suppliers resume. Verify late suspend/early resume notifications cannot access suspended Type-C I2C devices before dropping the backport."
+      }
     },
     {
       "file": "0041-ir-spi-binding.patch",
@@ -334,7 +544,12 @@
       "original_commit": "b28bbbf75eba03aba9fb4e5510753ce67aa7aa12",
       "original_parent": "b69346db8b755fb0659ef37571acbf7b11ceff31",
       "tree": "e2d264517f5cd995be31a2c84fe0603672b606e1",
-      "committer_date": "2026-11-08T02:39:10+08:00"
+      "committer_date": "2026-11-08T02:39:10+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "An accepted IR-SPI binding must describe Piano's fixed-clock, mode-0, 32-bit transmitter and absence of a software-controlled supply. Migrate the board compatible with the accepted driver and validate its DT without inventing regulator or carrier capabilities."
+      }
     },
     {
       "file": "0042-ir-spi-transmitter.patch",
@@ -342,7 +557,12 @@
       "original_commit": "a8d7d1acf871332420559aa8d0ee01ce38ad3458",
       "original_parent": "b28bbbf75eba03aba9fb4e5510753ce67aa7aa12",
       "tree": "d2e1e313249426d2148c02a7ffeecfaa1eba963f",
-      "committer_date": "2026-11-08T02:39:10+08:00"
+      "committer_date": "2026-11-08T02:39:10+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted rc-core/LIRC transmitter must implement the 1.92 MHz Piano encoding, MSB-first words, duty quantization, alignment and inactive trailer without unsupported regulator assumptions. Verify emitted pulse/space timing and reject oversized single-segment DMA frames rather than splitting or truncating them."
+      }
     },
     {
       "file": "0043-spi-geni-dma-idle.patch",
@@ -350,7 +570,12 @@
       "original_commit": "d59d22ed68f54887a2e99b72653e83955eb68ee0",
       "original_parent": "a8d7d1acf871332420559aa8d0ee01ce38ad3458",
       "tree": "85f8318d06ac37ca04aaa5e6a352769976021ac3",
-      "committer_date": "2026-11-08T02:39:10+08:00"
+      "committer_date": "2026-11-08T02:39:10+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected GENI SPI driver must retain timed-out mappings and runtime-PM references until both GPI channels terminate, require GPI when FIFO is disabled and switch optional idle pins only after the engine stops. Verify DMA timeout recovery and IR output idle levels before removing these safety changes."
+      }
     },
     {
       "file": "0044-s5kjn1-crop-height.patch",
@@ -358,7 +583,12 @@
       "original_commit": "6e550da618aa0491a034cc4d88d00f2443733856",
       "original_parent": "d59d22ed68f54887a2e99b72653e83955eb68ee0",
       "tree": "ace9b61be0781732a2dc00eb0f7e239459c6d9f5",
-      "committer_date": "2026-11-08T02:39:11+08:00"
+      "committer_date": "2026-11-08T02:39:11+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected S5KJN1 driver must return the current mode rectangle's height, not its width, for crop selection. Verify rectangular sensor modes report the correct active crop through V4L2 before dropping the fix."
+      }
     },
     {
       "file": "0045-s5kjn1-factory-modes.patch",
@@ -366,7 +596,12 @@
       "original_commit": "e486633ae39877f402aba5521cebd5b6f97ab249",
       "original_parent": "6e550da618aa0491a034cc4d88d00f2443733856",
       "tree": "8e676ca1e9db737c027efd764945bdc2c8b3477b",
-      "committer_date": "2026-11-08T02:39:11+08:00"
+      "committer_date": "2026-11-08T02:39:11+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted S5KJN1 driver must provide Piano's factory 19.2 MHz register sequences for binned, 4K60 and full-resolution modes with the correct CSI and VT timing rates. Verify each mode's frames and exposure timing while retaining support for boards using the existing 24 MHz tables."
+      }
     },
     {
       "file": "0046-ov32d40-mode-timing.patch",
@@ -374,7 +609,12 @@
       "original_commit": "87be85142db7745c7c0796694664d5beb7cc4eb0",
       "original_parent": "e486633ae39877f402aba5521cebd5b6f97ab249",
       "tree": "27017d3c6a3041ad2e8868960c6e68621bddc9a8",
-      "committer_date": "2026-11-08T02:39:11+08:00"
+      "committer_date": "2026-11-08T02:39:11+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement OV32D40 driver must preserve native HTS/FLL counts, mode-specific exposure limits and nominal frame intervals without deriving negative blanking from visible dimensions. Verify all three factory modes and TRY/ACTIVE interval reporting before dropping the fixed-timing correction."
+      }
     },
     {
       "file": "0047-camss-full-height-nv12.patch",
@@ -382,7 +622,12 @@
       "original_commit": "22ba6824a204ca62b4a26a0faccf966a8a3fc055",
       "original_parent": "87be85142db7745c7c0796694664d5beb7cc4eb0",
       "tree": "3a0f5e97f0ba987db6c6ea3b7912fef4e24eb70d",
-      "committer_date": "2026-11-08T02:39:11+08:00"
+      "committer_date": "2026-11-08T02:39:11+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected CAMSS buffer sizing must accommodate the combined luma/chroma storage height for accepted 8191-row images instead of clipping it to the old 4096-row enumeration limit. Verify full 8160x6120 NV12 allocations and both write-master plane heights without changing accepted image dimensions."
+      }
     },
     {
       "file": "0048-camss-frame-timestamps.patch",
@@ -390,7 +635,12 @@
       "original_commit": "cd13886a3b5e3145115a1f24793dc6a330e57430",
       "original_parent": "22ba6824a204ca62b4a26a0faccf966a8a3fc055",
       "tree": "6928f160cd3ba5616812aab46a980df7bcb2f7c2",
-      "committer_date": "2026-11-08T02:39:12+08:00"
+      "committer_date": "2026-11-08T02:39:12+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Accepted CAMSS support must associate physical CSID980 SOF/EOF markers with the correct queued frame, cross-stamp them to CLOCK_MONOTONIC and expose FRAME_SYNC and buffer timestamps through supported V4L2 semantics. Verify both cameras, discontinuities and receiver errors; migrate users of the added timestamped media-event helper together."
+      }
     },
     {
       "file": "0049-camss-tfe-bus-errors.patch",
@@ -398,7 +648,12 @@
       "original_commit": "a858076ac1acdd26fb8b1e9d185dd963a4277aa7",
       "original_parent": "cd13886a3b5e3145115a1f24793dc6a330e57430",
       "tree": "8ccb21447031e0e6d002aa64b0d7c386a5efc096",
-      "committer_date": "2026-11-08T02:39:13+08:00"
+      "committer_date": "2026-11-08T02:39:13+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected TFE980 driver must latch image-size, CCIF and constraint faults before publishing buffers and retain errors until restart. Verify delayed VFE interrupts cannot publish damaged frames and final-stream shutdown masks BUS interrupts before MMIO loses power."
+      }
     },
     {
       "file": "0050-s5kjn1-readonly-hblank.patch",
@@ -406,7 +661,12 @@
       "original_commit": "38a49872335f5d9c785065431078b208a8739028",
       "original_parent": "a858076ac1acdd26fb8b1e9d185dd963a4277aa7",
       "tree": "838e58989213716613f967dedde2402b366ca002",
-      "committer_date": "2026-11-08T02:39:14+08:00"
+      "committer_date": "2026-11-08T02:39:14+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected S5KJN1 driver must update read-only HBLANK metadata without calling an unsupported hardware setter. Verify changing modes while runtime-active commits the new horizontal blanking value and keeps frame-rate calculations consistent."
+      }
     },
     {
       "file": "0051-camss-pix-alignment.patch",
@@ -414,7 +674,12 @@
       "original_commit": "3f3f891dcfc4262996f62591617fe68bb985c320",
       "original_parent": "38a49872335f5d9c785065431078b208a8739028",
       "tree": "b9bf0e5a1ce1a7ab8448197912bd8d9f7dce9e8f",
-      "committer_date": "2026-11-08T02:39:15+08:00"
+      "committer_date": "2026-11-08T02:39:15+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected CAMSS SM8750 PIX path must negotiate 256-byte row alignment so TFE plane offsets and frame increments are exactly representable. Verify small and full-size NV12 dimensions cannot alias Y/UV addresses, while RDI and other CAMSS generations retain their own alignment."
+      }
     },
     {
       "file": "0052-dpu-gcv2-dark-range.patch",
@@ -422,7 +687,12 @@
       "original_commit": "0482074eb3ce93bdd2a4dc070b483f45ad5479fb",
       "original_parent": "3f3f891dcfc4262996f62591617fe68bb985c320",
       "tree": "3b1bf03e435d78734ad41f534494e36cf430d9ca",
-      "committer_date": "2026-11-08T16:06:02+08:00"
+      "committer_date": "2026-11-08T16:06:02+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted GC v2 backend must program both the 1024-point main grid and 256 dark-range samples through REGDMA and expose matching LUT precision. Verify queue capacity, null-LUT bypass and calibrated dark gradients without changing DSC transport depth or claiming unverified FRC."
+      }
     },
     {
       "file": "0053-dpu-color-lut-sizes.patch",
@@ -430,7 +700,12 @@
       "original_commit": "f11e45afb3e97744e8bb63558df2db0a5419a141",
       "original_parent": "0482074eb3ce93bdd2a4dc070b483f45ad5479fb",
       "tree": "f2841f2959e6d6c2c15fe7063c2fa085f9a47d79",
-      "committer_date": "2026-11-08T16:29:18+08:00"
+      "committer_date": "2026-11-08T16:29:18+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement DPU color backend must validate actual LUT blob lengths, interpolate supported smaller gamma tables and require the complete fixed-index IGC grid. Verify empty, one-entry, short and full LUT submissions cannot overrun packers or silently lose required samples."
+      }
     },
     {
       "file": "0054-dsi-fixed-panel-scaling.patch",
@@ -438,7 +713,12 @@
       "original_commit": "51586cd1ddc492a3bd38b2beaaac26ff2c2f9aa2",
       "original_parent": "f11e45afb3e97744e8bb63558df2db0a5419a141",
       "tree": "223ae093c0d0351ab1075282ff4fe2c8bcb45d23",
-      "committer_date": "2026-11-08T16:36:59+08:00"
+      "committer_date": "2026-11-08T16:36:59+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Accepted bonded-DSI scaling must retain refresh-specific native timings while mapping all requested plane destinations, including cursors, to panel coordinates before pipe splitting and scaler reservation. Verify every lower-resolution mode, touch alignment, plane resource rejection and scaling-property modesets."
+      }
     },
     {
       "file": "0055-dsi-default-panel-scaling.patch",
@@ -446,7 +726,12 @@
       "original_commit": "e1b0264d055d40378d54e7a4f3e00a6ea9449752",
       "original_parent": "51586cd1ddc492a3bd38b2beaaac26ff2c2f9aa2",
       "tree": "7be95fc8b47901e3c6ef8422f633e1d21f8c8d54",
-      "committer_date": "2026-11-08T16:45:11+08:00"
+      "committer_date": "2026-11-08T16:45:11+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected fixed-DSI-panel connector must preserve Full scaling as its initial and reset default while allowing None for native modes. Verify first boot and connector reset keep lower source modes full-panel before dropping the default-state adaptation."
+      }
     },
     {
       "file": "0056-rtc-efi-validate-time.patch",
@@ -454,7 +739,12 @@
       "original_commit": "0155e5a062f60916d2dd1e3401ae33f3fbc4fa72",
       "original_parent": "e1b0264d055d40378d54e7a4f3e00a6ea9449752",
       "tree": "4344bbcedc7d9b16a0991d24cbc8e52495656638",
-      "committer_date": "2026-11-08T22:32:16+08:00"
+      "committer_date": "2026-11-08T22:32:16+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected EFI RTC probe must reject an invalid converted calendar even when firmware GetTime returns success. Verify invalid firmware time cannot displace the usable platform RTC and valid firmware dates still register normally."
+      }
     },
     {
       "file": "0057-dpu-fixed-panel-hdr-conversion.patch",
@@ -462,7 +752,12 @@
       "original_commit": "e8c00af6b31352f55752ae6030a7510928f32b12",
       "original_parent": "0155e5a062f60916d2dd1e3401ae33f3fbc4fa72",
       "tree": "067ee681f9bab4c20d0d50a5b928ef404758d67f",
-      "committer_date": "2026-11-08T23:39:32+08:00"
+      "committer_date": "2026-11-08T23:39:32+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace this downstream fixed-panel HDR path with accepted DSPP gamut/GC/IGC processing and a truthful panel capability description that converts PQ and BT.2020 SDR to the panel's calibrated encoding. Verify SDR/HDR transitions, block allocation, resume and rejected unsupported combinations; a compositor toggle alone is not a replacement."
+      }
     },
     {
       "file": "0058-panel-displayid-description.patch",
@@ -470,7 +765,12 @@
       "original_commit": "fb656661c88c915e6a2e30412ab8597f3970ffe3",
       "original_parent": "e8c00af6b31352f55752ae6030a7510928f32b12",
       "tree": "4d64877d90bbade997b8a680340b4d996af327e1",
-      "committer_date": "2026-11-09T00:08:36+08:00"
+      "committer_date": "2026-11-09T00:08:36+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted NT36532 panel description must provide accurate synthesized DisplayID/native timings and compatible fitted-input modes, consistent with implemented color conversion and the actual link depth. Verify mode enumeration, mode switching and resume without treating synthesized data as panel-read EDID."
+      }
     },
     {
       "file": "0059-dpu-output-color-validation.patch",
@@ -478,7 +778,12 @@
       "original_commit": "6e0a9b58a33ad9633cade6223e78bbb6553fe1ef",
       "original_parent": "fb656661c88c915e6a2e30412ab8597f3970ffe3",
       "tree": "c25063c1dd694b4688c87a7f4002ad2d4a81a31b",
-      "committer_date": "2026-11-09T00:41:04+08:00"
+      "committer_date": "2026-11-09T00:41:04+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement fixed-panel color path must reject commits lacking required conversion blocks and validate fitted-input timing limits. Verify unavailable DSPP resources and invalid small-mode requests fail atomically rather than advertising an unimplemented conversion."
+      }
     },
     {
       "file": "0060-apm-wait-for-transport.patch",
@@ -486,7 +791,12 @@
       "original_commit": "4f0955c42cddc8a03a24d1d34f9fee2c79c3e1ff",
       "original_parent": "6e0a9b58a33ad9633cade6223e78bbb6553fe1ef",
       "tree": "5fc1da00466c9868cb3a9b6741be3be55c3f9ac0",
-      "committer_date": "2026-11-09T02:15:41+08:00"
+      "committer_date": "2026-11-09T02:15:41+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected q6apm readiness path must wait until both parent transport and APM devices are bound, using nonrecursive parent-first locking. Verify a child probing before GLINK receive-intent advertisement defers instead of losing its synchronous response or deadlocking parent probe."
+      }
     },
     {
       "file": "0061-apm-state-query-header.patch",
@@ -494,7 +804,12 @@
       "original_commit": "7c61bd92c40236a59cda9944595d5417dd9ebac6",
       "original_parent": "4f0955c42cddc8a03a24d1d34f9fee2c79c3e1ff",
       "tree": "01db20856d7249252569fdc3fd0724f173002867",
-      "committer_date": "2026-11-09T02:23:11+08:00"
+      "committer_date": "2026-11-09T02:23:11+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected q6apm driver must send GET_SPF_STATE as a header-only request from the registered APM service port. Verify firmware readiness responses are accepted without the invalid apm_cmd_header payload."
+      }
     },
     {
       "file": "0062-rtc-protected-counter-epoch.patch",
@@ -502,7 +817,12 @@
       "original_commit": "066ff1a6d5761a93f04c5353a0b12f51ce577e17",
       "original_parent": "7c61bd92c40236a59cda9944595d5417dd9ebac6",
       "tree": "632ecff646b8348cad0b75c52d8c470f4848cea0",
-      "committer_date": "2026-11-09T03:55:38+08:00"
+      "committer_date": "2026-11-09T03:55:38+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "An accepted PM8xxx RTC solution must keep protected counters out of hctosys until a valid epoch exists while preserving relative alarms, and represent Piano's read-only bootloader offset through a supported NVMEM binding. Verify missing/valid epoch boot and wake alarms without writing the protected counter."
+      }
     },
     {
       "file": "0063-apm-state-error-response.patch",
@@ -510,7 +830,12 @@
       "original_commit": "851e6bbd6a30f2efd3cab0dc3864e27118dbcb59",
       "original_parent": "066ff1a6d5761a93f04c5353a0b12f51ce577e17",
       "tree": "d66d1c0aa66385eec570219211211ba2b94a43f4",
-      "committer_date": "2026-11-09T04:23:24+08:00"
+      "committer_date": "2026-11-09T04:23:24+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected q6apm callback must complete GET_SPF_STATE basic-error replies, validate response lengths and translate AR_ENOTEXIST into not-ready while preserving other DSP errors. Verify early PRM probe defers promptly rather than waiting for a lost-error timeout."
+      }
     },
     {
       "file": "0064-wifi-resume-mac-address.patch",
@@ -518,7 +843,12 @@
       "original_commit": "3dbac618631047e6db89b45f7bcf5c915f5c7e0f",
       "original_parent": "851e6bbd6a30f2efd3cab0dc3864e27118dbcb59",
       "tree": "a532092f31ef37a2569e6f15d74a8e82a7df5307",
-      "committer_date": "2026-11-09T06:01:40+08:00"
+      "committer_date": "2026-11-09T06:01:40+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected ath12k firmware-restart path must retain a valid registered wiphy MAC when firmware without an OTP address reports zeroes, while accepting a valid firmware address. Verify repeated suspend/resume and firmware recovery do not generate a different fallback MAC each time."
+      }
     },
     {
       "file": "0065-dpu-debugfs-state-lock.patch",
@@ -526,7 +856,12 @@
       "original_commit": "aa577d764700a6d84d39892d479bb6805a1162b3",
       "original_parent": "3dbac618631047e6db89b45f7bcf5c915f5c7e0f",
       "tree": "3ca5fc1c7c6a0ed6e926cfedb2ace9649591755c",
-      "committer_date": "2026-11-09T06:26:04+08:00"
+      "committer_date": "2026-11-09T06:26:04+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected DPU debugfs state reader must hold the CRTC modeset lock before dereferencing atomic state or querying interface mode. Verify state reads concurrent with modesets have neither missing-lock warnings nor stale-state access."
+      }
     },
     {
       "file": "0066-dpu-piano-bilinear-sampling.patch",
@@ -534,7 +869,12 @@
       "original_commit": "a889a64ab161c688e65919c283fda5a62923f683",
       "original_parent": "aa577d764700a6d84d39892d479bb6805a1162b3",
       "tree": "0f647fe9528c439a8c14829d16c64a1792c27527",
-      "committer_date": "2026-11-09T16:46:50+08:00"
+      "committer_date": "2026-11-09T16:46:50+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted QSEED 3.4 path must align Piano bilinear sampling across split pipes, fetch the needed internal-boundary neighbor and program alpha extension from the correct vertical state. Verify 2x RGB upscaling has no central seam and geometry changes still trigger the required modeset."
+      }
     },
     {
       "file": "0067-hid-xiaomi-focus-pen.patch",
@@ -542,7 +882,12 @@
       "original_commit": "1abdd75969c8214914d9bb73d3a3f088bdd18f6a",
       "original_parent": "a889a64ab161c688e65919c283fda5a62923f683",
       "tree": "82879a7a7bbdde75eb5c00e5537b0d258f1a3a2b",
-      "committer_date": "2026-11-09T16:52:10+08:00"
+      "committer_date": "2026-11-09T16:52:10+08:00",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected Xiaomi HID driver must match M80p 0022:4d80, preserve separate HID applications and route private pressure/barrel-button data without duplicate generic buttons. Verify the independent focus key and both M80p and P81c input paths with the tablet-tool consumer."
+      }
     },
     {
       "file": "0068-power-mca-stop-work.patch",
@@ -550,7 +895,12 @@
       "original_commit": "9d68a9687864d082e867bce3dc171cd08e134d9f",
       "original_parent": "1abdd75969c8214914d9bb73d3a3f088bdd18f6a",
       "committer_date": "2026-11-08T02:10:20+08:00",
-      "tree": "3ecb727f2feae25d9ec241f2f603a064d0df357d"
+      "tree": "3ecb727f2feae25d9ec241f2f603a064d0df357d",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement MCA teardown must disable delayed work before draining it while GLINK notifications remain registered. Verify notifications racing removal cannot requeue policy after its power supplies and driver state are released."
+      }
     },
     {
       "file": "0069-power-mipps-session-cleanup.patch",
@@ -558,7 +908,12 @@
       "original_commit": "bb43bd1540b6cea45632d44a78665d901596337e",
       "original_parent": "9d68a9687864d082e867bce3dc171cd08e134d9f",
       "committer_date": "2026-11-08T02:49:10+08:00",
-      "tree": "0c7b1d20bc51a6576489a6c30ac30416f11fddc1"
+      "tree": "0c7b1d20bc51a6576489a6c30ac30416f11fddc1",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted MiPPS/GLINK path must bind every exchange and reply to its service generation, record cleanup before VERIFY_PROCESS and retry unacknowledged PD_VERIFIED/VERIFY_PROCESS clearing. Verify transport restarts and lost replies cannot retain authentication or permit high-voltage policy before cleanup completes."
+      }
     },
     {
       "file": "0070-power-mca-connection-events.patch",
@@ -566,7 +921,12 @@
       "original_commit": "e2c653992c43891e1934834785be818cfd92261c",
       "original_parent": "bb43bd1540b6cea45632d44a78665d901596337e",
       "committer_date": "2026-11-08T02:58:21+08:00",
-      "tree": "a78c0b126a8b8fe6148ff4ab4f2b7d59bd64b5df"
+      "tree": "a78c0b126a8b8fe6148ff4ab4f2b7d59bd64b5df",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "An accepted UCSI/power-supply interface must deliver every processed physical connection edge and let the charger bind authentication and writes to that attachment. Verify rapid unplug/replug invalidates old proof while ordinary same-connection PD voltage resets preserve it; replace the added notifier API and its consumer together."
+      }
     },
     {
       "file": "0071-power-sc8541-stop-watchdog.patch",
@@ -574,7 +934,12 @@
       "original_commit": "8cf58735f8a52c9ce794d2ddbead6974df41962b",
       "original_parent": "e2c653992c43891e1934834785be818cfd92261c",
       "committer_date": "2026-11-08T07:40:31+08:00",
-      "tree": "7b68f752cf7e7ec03827c27e10227ef45ce9976f"
+      "tree": "7b68f752cf7e7ec03827c27e10227ef45ce9976f",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted SC8541 driver must return stop/readback errors, retain stop retries, reject unsafe suspend and verify the five-second hardware watchdog before CHG_EN. Verify watchdog expiry and failed stop paths leave the pump off without resetting unrelated protection bits."
+      }
     },
     {
       "file": "0072-power-mca-direct-charge-session-pm.patch",
@@ -582,7 +947,12 @@
       "original_commit": "21fe65264b89453e95b8114b700e312b46e1a722",
       "original_parent": "8cf58735f8a52c9ce794d2ddbead6974df41962b",
       "committer_date": "2026-11-08T07:41:01+08:00",
-      "tree": "ed68741e4013280f91cf248d96353e92ec834b4e"
+      "tree": "ed68741e4013280f91cf248d96353e92ec834b4e",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement direct-charge policy must use both cell-temperature extremes, bind operations to transport/connector generations and confirm pump stop before source restoration. Verify suspend/shutdown stop policy before the stage, retain references across failed stops and restart polling only after safe resume."
+      }
     },
     {
       "file": "0073-power-mca-clear-proof-on-vbus-loss.patch",
@@ -590,7 +960,12 @@
       "original_commit": "9243cfefba6ac7c70cfed9f9c07c93b08978651c",
       "original_parent": "21fe65264b89453e95b8114b700e312b46e1a722",
       "committer_date": "2026-11-08T09:13:00+08:00",
-      "tree": "9f06a6bf5a4ffd47e16c0739ec948bafb7f656c6"
+      "tree": "9f06a6bf5a4ffd47e16c0739ec948bafb7f656c6",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted charger policy must invalidate MiPPS proof on VBUS loss while preserving pending firmware cleanup, including loss detected before UCSI and the long-disconnect fallback. Verify a later connector event cannot forget PD_VERIFIED clearing."
+      }
     },
     {
       "file": "0074-hid-nanosic-resume-fifo-keepalive.patch",
@@ -598,7 +973,12 @@
       "original_commit": "77c8f1d4eff820251da932f32102c5add57d6cf2",
       "original_parent": "9243cfefba6ac7c70cfed9f9c07c93b08978651c",
       "committer_date": "2026-11-08T09:13:32+08:00",
-      "tree": "3c0805ab648b1f77fcb1f645f8fa16652dc3b865"
+      "tree": "3c0805ab648b1f77fcb1f645f8fa16652dc3b865",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected Nanosic driver must drain Piano's first wake report, restore keyboard power/keepalive after wake or firmware reload and propagate reload errors. Verify repeated suspend/resume and attached-keyboard input while retaining Sheng's distinct wake handshake."
+      }
     },
     {
       "file": "0075-power-mca-normal-charging-tables.patch",
@@ -606,7 +986,12 @@
       "original_commit": "3fa8583af9b4165bd2de302e0a18b0c9bccf91c8",
       "original_parent": "77c8f1d4eff820251da932f32102c5add57d6cf2",
       "committer_date": "2026-11-08T17:07:12+08:00",
-      "tree": "5c2966b15ea9eee620f099eb9786c197865fdad5"
+      "tree": "5c2966b15ea9eee620f099eb9786c197865fdad5",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "An accepted Piano charging implementation must retain the factory normal CC/CV and JEITA tables, combined 8 A ceiling, PMIC sharing/float voltage and confirmed tail handover. Verify fresh-session limit setup, missing-temperature stops, pump protection and a confirmed PMIC pause before host policy stops for suspend or removal."
+      }
     },
     {
       "file": "0076-power-mca-normal-termination-hysteresis.patch",
@@ -614,7 +999,12 @@
       "original_commit": "c0ff9c1d5fa95697f0106ba245ac70b24f4fabb6",
       "original_parent": "3fa8583af9b4165bd2de302e0a18b0c9bccf91c8",
       "committer_date": "2026-11-08T18:02:33+08:00",
-      "tree": "ac85e7c9325ffb763fde952de939b5d1d256fc89"
+      "tree": "ac85e7c9325ffb763fde952de939b5d1d256fc89",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement charging path must program Piano's four-byte 472 mA normal termination value and use previous-zone JEITA/CP recovery hysteresis with immediate cold/hot stops. Verify the final firmware-compatible limit-feedback handling and temperature-boundary recovery before removing this table correction."
+      }
     },
     {
       "file": "0077-power-mca-charge-enable-feedback.patch",
@@ -622,7 +1012,12 @@
       "original_commit": "7d3173d0390424b12d7d4c9905ae194ddbf65f09",
       "original_parent": "c0ff9c1d5fa95697f0106ba245ac70b24f4fabb6",
       "committer_date": "2026-11-08T22:26:13+08:00",
-      "tree": "5331f7d64c46e2bbb95463ed0c544296713f2777"
+      "tree": "5331f7d64c46e2bbb95463ed0c544296713f2777",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted MCA path must use acknowledged FCC/ITERM setters rather than successful no-op getters, account for FV getter/setter units and confirm the real PMIC charge-enable bit. Verify fresh-temperature restart, failed pause handling and gauge supply notifications when measured net current changes direction."
+      }
     },
     {
       "file": "0078-power-piano-parallel-battery-pack.patch",
@@ -630,7 +1025,12 @@
       "original_commit": "a9eead3c1303f32558c098050e9f5c6bd6169163",
       "original_parent": "7d3173d0390424b12d7d4c9905ae194ddbf65f09",
       "committer_date": "2026-11-08T22:28:29+08:00",
-      "tree": "3d7c6ed7944ce1f298b498a60b8f86ca2c5f7c2a"
+      "tree": "3d7c6ed7944ce1f298b498a60b8f86ca2c5f7c2a",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "An accepted power-supply model and binding must represent Piano's parallel pack as one system battery while retaining both internal gauges for charging and thermal consumers. Verify summed charge/current, distinct cell voltage/SOC and exactly one user-visible battery; migrate the downstream internal-monitor description together."
+      }
     },
     {
       "file": "0079-power-mca-buck-session.patch",
@@ -638,7 +1038,12 @@
       "original_commit": "7fb390577acb7f419b2cb892af55a56022fe7329",
       "original_parent": "a9eead3c1303f32558c098050e9f5c6bd6169163",
       "committer_date": "2026-11-09T19:33:44+08:00",
-      "tree": "f65ac9e316f58098b24f6022bb99be5d5c2a7b65"
+      "tree": "f65ac9e316f58098b24f6022bb99be5d5c2a7b65",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement buck policy must carry its sampled ADSP/connector generations through CC/CV, PDO, voltage and current requests instead of acquiring a fresh session around stale data. Verify reconnect/restart and failed temperature reads discard the sampled policy without sending stale commands."
+      }
     },
     {
       "file": "0080-power-bq27xxx-auth-binding.patch",
@@ -646,7 +1051,12 @@
       "original_commit": "f520d7a7a55283605daa4af38492ea3434efb5d8",
       "original_parent": "7fb390577acb7f419b2cb892af55a56022fe7329",
       "committer_date": "2026-11-09T22:26:59+08:00",
-      "tree": "659fc71656984a2655b4dae360ddd1383da311d7"
+      "tree": "659fc71656984a2655b4dae360ddd1383da311d7",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace the downstream DT authentication-key property with an accepted BQ27Z561 binding and migrate the board description and gauge driver together. Verify key length/device restrictions and keep ordinary gauge measurements working without any authentication key."
+      }
     },
     {
       "file": "0081-power-bq27xxx-authentication.patch",
@@ -654,7 +1064,12 @@
       "original_commit": "08fa09440c54399ce090519aa4d340d664265bc5",
       "original_parent": "f520d7a7a55283605daa4af38492ea3434efb5d8",
       "committer_date": "2026-11-09T22:28:31+08:00",
-      "tree": "9fee6cfdb3924011e49fc25f17283627f8f4d4ff"
+      "tree": "9fee6cfdb3924011e49fc25f17283627f8f4d4ff",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Accepted BQ27Z561 support must verify fresh HMAC-SHA256 challenges on both gauges, expose read-only authentic results and gate vendor fast-charge mode commands through supported power-supply properties. Verify probe/resume freshness, short/failed transfers and partial mode rollback without writable authentication results or gauge data-flash writes."
+      }
     },
     {
       "file": "0082-arm64-sm8750-cpu-capacity.patch",
@@ -662,7 +1077,12 @@
       "original_commit": "a20312b35e10bf3b903da5add40b9bbe1bcdca2d",
       "original_parent": "08fa09440c54399ce090519aa4d340d664265bc5",
       "committer_date": "2026-11-09T23:39:17+08:00",
-      "tree": "6cc521e6391656299c53d505bc9d4993d896c99a"
+      "tree": "6cc521e6391656299c53d505bc9d4993d896c99a",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected SM8750 DTS must describe the evidenced CPU capacity differences, or provide a verified replacement topology model through standard scheduler interfaces. Check capacities after SCMI maximum-frequency normalization; keep native DTS and product DTB topology consistent."
+      }
     },
     {
       "file": "0083-build-piano-oryon-optimization.patch",
@@ -670,7 +1090,12 @@
       "original_commit": "0edf3c66a47a10e5e1d83be9fdb7b11303f250d7",
       "original_parent": "a20312b35e10bf3b903da5add40b9bbe1bcdca2d",
       "committer_date": "2026-11-10T00:31:39+08:00",
-      "tree": "f5a4532aafb6e75a362a459340b1b9161104efe8"
+      "tree": "f5a4532aafb6e75a362a459340b1b9161104efe8",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Remove when the selected build system provides supported O3 and SM8750 instruction/scheduling tuning, or when the product explicitly returns to generic optimization. Update configuration together, preserve general-register-only code and pointer authentication, and verify boot/modules without enabling absent SVE/SME features."
+      }
     },
     {
       "file": "0084-power-mca-cooling-binding.patch",
@@ -678,7 +1103,12 @@
       "original_commit": "604928960f67cb203725c49ec3f95cdb9e66cd7b",
       "original_parent": "0edf3c66a47a10e5e1d83be9fdb7b11303f250d7",
       "committer_date": "2026-11-10T02:11:16+08:00",
-      "tree": "c1aedca531590d6e8809257c22c0f96687773a5d"
+      "tree": "c1aedca531590d6e8809257c22c0f96687773a5d",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace the downstream MCA cooling properties with accepted DT bindings for descending total battery-current limits and thermal cooling cells. Migrate the board data and driver together and verify the zero level stops battery charging without suspending external input."
+      }
     },
     {
       "file": "0085-power-mca-thermal-charge-limit.patch",
@@ -686,7 +1116,12 @@
       "original_commit": "f5201390a1ee8f318f26e1f8e1261dbe809dc499",
       "original_parent": "604928960f67cb203725c49ec3f95cdb9e66cd7b",
       "committer_date": "2026-11-10T02:13:47+08:00",
-      "tree": "a40670aaa58015134d3b2266675f220a79e140f7"
+      "tree": "a40670aaa58015134d3b2266675f220a79e140f7",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted charger driver must expose standard charge_control_limit and a cooling device that constrain one combined pump/PMIC budget. Verify tightening retires the pump first, failed restrictions remain pending, zero leaves external input usable and limits survive transport restart, suspend and cable changes."
+      }
     },
     {
       "file": "0086-power-mca-restore-pump-budget.patch",
@@ -694,7 +1129,12 @@
       "original_commit": "95d1d592d393f5dec2ebcfc512abf5ba98b22680",
       "original_parent": "f5201390a1ee8f318f26e1f8e1261dbe809dc499",
       "committer_date": "2026-11-10T02:21:27+08:00",
-      "tree": "8dc5271f5497216dd2e49aa526774298d1a5b32c"
+      "tree": "8dc5271f5497216dd2e49aa526774298d1a5b32c",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement direct-charge policy must stop and reopen a pump after its total current budget increases so adapter requests and bus-current protection are recomputed together. Verify lifting a cooling limit cannot run a higher request against the old lower protection threshold."
+      }
     },
     {
       "file": "0087-power-mca-low-current-pmic.patch",
@@ -702,7 +1142,12 @@
       "original_commit": "61a58663732759fa5eefbdff5877c2fb413856fe",
       "original_parent": "95d1d592d393f5dec2ebcfc512abf5ba98b22680",
       "committer_date": "2026-11-10T02:30:19+08:00",
-      "tree": "dc7d27347a9db7433be27686a7592b89c0b90aa3"
+      "tree": "dc7d27347a9db7433be27686a7592b89c0b90aa3",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted policy must leave low-current budgets on the PMIC when they cannot sustain the pump's minimum bus target, without latching the source as completed. Verify reducing then restoring the cooling budget allows safe charging recovery."
+      }
     },
     {
       "file": "0088-power-mca-preserve-stop-reason.patch",
@@ -710,7 +1155,12 @@
       "original_commit": "5a6d01ebaaa352ecd1592cedd046dee2e3885c75",
       "original_parent": "61a58663732759fa5eefbdff5877c2fb413856fe",
       "committer_date": "2026-11-10T02:31:21+08:00",
-      "tree": "91d0750d84c81f2f822024be4d1fbf4a4f3efe4d"
+      "tree": "91d0750d84c81f2f822024be4d1fbf4a4f3efe4d",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement limit-update path must grant retry only to an active pump stopped by that limit change, not to a source already stopped for tail completion or fault. Verify user/thermal limit writes cannot clear a prior nonthermal stop."
+      }
     },
     {
       "file": "0089-power-mca-clear-pump-retry.patch",
@@ -718,7 +1168,12 @@
       "original_commit": "d8be4a4706d5968384bee179522c84be0a661f42",
       "original_parent": "5a6d01ebaaa352ecd1592cedd046dee2e3885c75",
       "committer_date": "2026-11-10T02:35:43+08:00",
-      "tree": "7677c37cc80d9289bebfdf01c8b6091a2db807f3"
+      "tree": "7677c37cc80d9289bebfdf01c8b6091a2db807f3",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted pump state machine must clear previous retry permission on every fresh stop and regrant it only after a newly confirmed thermal or current-limit pause. Verify later faults and uncertain STOPPING states cannot inherit retry from an earlier pause."
+      }
     },
     {
       "file": "0090-power-mca-initial-cooling-state.patch",
@@ -726,7 +1181,12 @@
       "original_commit": "190da1bb63c1ef6c1291b314ae26eddc41b3c1ef",
       "original_parent": "d8be4a4706d5968384bee179522c84be0a661f42",
       "committer_date": "2026-11-10T02:45:01+08:00",
-      "tree": "b0da508a1d10b5cfccb2ab93fa1c9a4177dedae8"
+      "tree": "b0da508a1d10b5cfccb2ab93fa1c9a4177dedae8",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected cooling-device registration must retain an initial thermal request before GLINK becomes ready without scheduling an uninitialized policy worker. Verify first service notification applies that state while teardown rejects new requests separately."
+      }
     },
     {
       "file": "0091-dpu-hdr-identity-gamma.patch",
@@ -734,7 +1194,12 @@
       "original_commit": "6dd902833b08f9c765d0cb8c0c9a38f7bdb6cd38",
       "original_parent": "190da1bb63c1ef6c1291b314ae26eddc41b3c1ef",
       "committer_date": "2026-11-10T20:30:12+08:00",
-      "tree": "ecbb1da73b0a95f6879a4a1045300b5d6409ed09"
+      "tree": "ecbb1da73b0a95f6879a4a1045300b5d6409ed09",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted fixed-panel HDR path must recognize truncated and rounded identity GAMMA_LUT ramps without silently discarding requested atomic state. Verify linear-ramp page flips work and nonidentity or otherwise unsupported color combinations remain rejected."
+      }
     },
     {
       "file": "0092-nanosic-detachable-leds.patch",
@@ -742,7 +1207,12 @@
       "original_commit": "79e32ae2694bd74626b78f4201719f2e7e56b560",
       "original_parent": "6dd902833b08f9c765d0cb8c0c9a38f7bdb6cd38",
       "committer_date": "2026-11-10T20:30:13+08:00",
-      "tree": "e188f4582c2ede46d6d5d6b8649fd0f0316a3343"
+      "tree": "e188f4582c2ede46d6d5d6b8649fd0f0316a3343",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted Nanosic driver must register cover LED class devices only while attached, retain requested levels including zero and recreate devices on reconnect. Verify detach during brightness writes and removal quiesce work without connection-mutex deadlocks or stale desktop backlights."
+      }
     },
     {
       "file": "0093-power-mca-charge-inhibition.patch",
@@ -750,7 +1220,12 @@
       "original_commit": "b03be1db1dcccc0374a7950f20105ee9e2d261f0",
       "original_parent": "79e32ae2694bd74626b78f4201719f2e7e56b560",
       "committer_date": "2026-11-10T17:57:45+08:00",
-      "tree": "780269ae01b41b69bc1f9e1d87b376707a03c9a0"
+      "tree": "780269ae01b41b69bc1f9e1d87b376707a03c9a0",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement charger policy must support standard auto/inhibit-charge behavior while retaining thermal/low-FV hysteresis, JEITA maintenance and independent input negotiation. Verify policy writes serialize with suspend/removal and failed pump-stop confirmation remains owned and retried rather than clearing other stop reasons."
+      }
     },
     {
       "file": "0094-power-piano-poweroff-charging.patch",
@@ -758,7 +1233,12 @@
       "original_commit": "c4a58dd0f40a7ae35553943440fffcb1036e9064",
       "original_parent": "b03be1db1dcccc0374a7950f20105ee9e2d261f0",
       "committer_date": "2026-11-10T19:47:33+08:00",
-      "tree": "b28bdadca1a0312890369da4ef95656da96c4a7f"
+      "tree": "b28bdadca1a0312890369da4ef95656da96c4a7f",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace with an accepted platform shutdown interface or firmware behavior that requests stock off-mode charging only for USB-online power-off. Verify partition/header identification, full-block preservation, flush/readback and I/O failure handling; restart and unplugged shutdown must remain unchanged and no other stock bytes may be written."
+      }
     },
     {
       "file": "0095-input-nt36532e-matrix.patch",
@@ -766,7 +1246,12 @@
       "original_commit": "f1b85887d6b40c0d5b8238e6546d4924d232db62",
       "original_parent": "c4a58dd0f40a7ae35553943440fffcb1036e9064",
       "committer_date": "2026-11-10T23:45:14+08:00",
-      "tree": "d9ab95b426cb4468904cf7d59740870de385577e"
+      "tree": "d9ab95b426cb4468904cf7d59740870de385577e",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Accepted NT36532E support must decode finger matrices into standard multitouch events with calibration, filtering and palm handling in the kernel. Verify damaged frames, transport loss, firmware reset and suspend release/rebuild contacts safely, with IRQ/work teardown and raw-capture allocation independent of ordinary touch input."
+      }
     },
     {
       "file": "0096-power-mca-session-recovery.patch",
@@ -774,7 +1259,12 @@
       "original_commit": "d4c0684caecc11422b7ae3977fcd4f7a38b44129",
       "original_parent": "f1b85887d6b40c0d5b8238e6546d4924d232db62",
       "committer_date": "2026-11-10T23:49:41+08:00",
-      "tree": "9b90c73cb3784d2047502c349ad5017642a15408"
+      "tree": "9b90c73cb3784d2047502c349ad5017642a15408",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement MCA state machine must recalculate recovery from current APDO/battery budgets, bound retries and preserve fault/full/manual/zero-current stops. Verify source and verification read errors, failed stop confirmation, both voltage transitions and ADSP/connector changes cannot authorize stale limits or strand charging references."
+      }
     },
     {
       "file": "0097-power-bq27xxx-suspend-recovery.patch",
@@ -782,7 +1272,12 @@
       "original_commit": "8ffe21256dfbafd987a464e5e3e04ed892183af9",
       "original_parent": "d4c0684caecc11422b7ae3977fcd4f7a38b44129",
       "committer_date": "2026-11-10T23:49:41+08:00",
-      "tree": "448d71bcb028a64b49faff84ec52e85d50102308"
+      "tree": "448d71bcb028a64b49faff84ec52e85d50102308",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected BQ27xxx suspend callback must rearm gauge polling when disabling authenticated fast-charge mode fails, since PM rollback does not resume the failing device. Verify command/checksum failures, successful disable and no-key devices retain the correct polling lifecycle."
+      }
     },
     {
       "file": "0098-iio-piano-gen4-thermistors.patch",
@@ -790,7 +1285,12 @@
       "original_commit": "b10af20777de0700c19bfdd87e702e14d55c3118",
       "original_parent": "8ffe21256dfbafd987a464e5e3e04ed892183af9",
       "committer_date": "2026-11-11T00:18:30+08:00",
-      "tree": "15bf2c16716bc691f3c677cdfab70c3e4ac07030"
+      "tree": "15bf2c16716bc691f3c677cdfab70c3e4ac07030",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://lore.kernel.org/all/20260731-pmic5_gen4_adc-v1-0-9c49b2eea6f9@oss.qualcomm.com/",
+        "drop_when": "This locally extended Qualcomm ADC backport remains downstream. Drop when selected ADC and thermal-monitor drivers support mixed Gen3/Gen4 channel routing, disabled channels and PM7 resistance conversion in physical millidegrees in both directions; verify thermistor readings, invalid codes and thermal-trip roundtrips, including the local scaling fixes."
+      }
     },
     {
       "file": "0099-power-mca-full-recharge.patch",
@@ -798,7 +1298,12 @@
       "original_commit": "2f7576b25e806f552bf218ac60f69ecd2d253a72",
       "original_parent": "b10af20777de0700c19bfdd87e702e14d55c3118",
       "committer_date": "2026-11-11T00:18:30+08:00",
-      "tree": "79ef5595f2a6543acede4c7043da52ad69151bb7"
+      "tree": "79ef5595f2a6543acede4c7043da52ad69151bb7",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted ordinary-charge policy must implement hardware or five-sample tail termination and capacity-weighted 97-percent raw-SOC recharge for the parallel pack. Verify the full vote remains independent of manual, thermal and fault stops, survives transport/source transients and clears on a real connector change while external input stays usable."
+      }
     },
     {
       "file": "0100-power-bq27z561-original-temperature.patch",
@@ -806,7 +1311,12 @@
       "original_commit": "82a2656afe05c8d0bb2295f5fa4091f6a334defd",
       "original_parent": "2f7576b25e806f552bf218ac60f69ecd2d253a72",
       "committer_date": "2026-11-11T00:25:30+08:00",
-      "tree": "092fac403cb93c305ddbd08b6c3930d8e73d0c86"
+      "tree": "092fac403cb93c305ddbd08b6c3930d8e73d0c86",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Accepted BQ27Z561 support must expose the opt-in original-temperature register through a read-only IIO channel without changing standard power-supply temperature semantics. Verify physical units, out-of-range and bus errors, removal serialization and the optional-IIO/no-opt-in path."
+      }
     },
     {
       "file": "0101-power-mca-skin-thermal-policy.patch",
@@ -814,7 +1324,12 @@
       "original_commit": "13e5e2aff2785dbd36dbd936d65dc8859c0fcfc0",
       "original_parent": "82a2656afe05c8d0bb2295f5fa4091f6a334defd",
       "committer_date": "2026-11-11T00:25:30+08:00",
-      "tree": "b0af8c547f326062ab3fed7be2e03901132225e5"
+      "tree": "b0af8c547f326062ab3fed7be2e03901132225e5",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace the downstream skin-policy binding and implementation with accepted thermal support for both gauge temperatures and four board thermistors, calibrated model units and factory trigger/clear levels. Verify PMIH010x pin/ADC setup, sensor-failure charge stops, pump-before-limit ordering and independent manual/full/fault limits without a userspace charging service."
+      }
     },
     {
       "file": "0102-soc-qcom-pmic-glink-rpmsg-registration.patch",
@@ -822,7 +1337,12 @@
       "original_commit": "f04703e9ecb6244c1d2ed5b724fed4c9d03dca00",
       "original_parent": "13e5e2aff2785dbd36dbd936d65dc8859c0fcfc0",
       "committer_date": "2026-11-11T03:17:19+08:00",
-      "tree": "ada3010e4da585321686551ca60d5c6497c1377f"
+      "tree": "ada3010e4da585321686551ca60d5c6497c1377f",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://gitlab.com/Linaro/arm64-laptops/linux/-/commit/8c309c7e852a49118ddc2ee54c3d8b7c74466f6a",
+        "drop_when": "This extends the referenced delayed-registration fix locally. Drop when selected PMIC GLINK registers RPMsg only after platform suppliers/clients are ready, reserves singleton state through teardown and retains transport until clients stop; verify supplier deferral, synchronous probe callbacks, registration rollback and removal without deadlock or a lost GLINK channel."
+      }
     },
     {
       "file": "0103-power-mca-authenticated-ffc.patch",
@@ -830,7 +1350,12 @@
       "original_commit": "c0c3dcbe73b5dcc4e8baee487581fda4fda67d6d",
       "original_parent": "f04703e9ecb6244c1d2ed5b724fed4c9d03dca00",
       "committer_date": "2026-11-12T00:06:47+08:00",
-      "tree": "f3077b7e30b3c0d2423befd18e2dfef2f25f6e16"
+      "tree": "f3077b7e30b3c0d2423befd18e2dfef2f25f6e16",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted Piano charger policy must integrate both-gauge and adapter authentication, factory FFC stages/aging, six-sensor thermal limits and the PMIC sharing cutoff with ordinary recovery/full/fault handling. Verify both charge paths pause before gauge-mode changes, partial changes roll back and failed PMIC pauses retain retry state."
+      }
     },
     {
       "file": "0104-power-mca-ffc-teardown-reference.patch",
@@ -838,7 +1363,12 @@
       "original_commit": "611bb038b07681dae27d6852f4698e4873cbc980",
       "original_parent": "c0c3dcbe73b5dcc4e8baee487581fda4fda67d6d",
       "committer_date": "2026-11-12T00:22:59+08:00",
-      "tree": "60db958881b33bf2e107e37993059d5c0a0d76d9"
+      "tree": "60db958881b33bf2e107e37993059d5c0a0d76d9",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement FFC teardown must preserve PMIC pause failure after pump stop without dereferencing the pump power-supply reference already released by that stop. Verify a persistent PMIC write failure after confirmed pump shutdown retains the error without use-after-free."
+      }
     },
     {
       "file": "0105-dpu-piano-fractional-sampling.patch",
@@ -846,7 +1376,12 @@
       "original_commit": "80114e79d7a9f563f95064061be9cc6dbc4d1c1f",
       "original_parent": "611bb038b07681dae27d6852f4698e4873cbc980",
       "committer_date": "2026-11-12T23:02:24+08:00",
-      "tree": "ffc0bf5589c227d3280605c9ee8fbbd1bdabafe0"
+      "tree": "ffc0bf5589c227d3280605c9ee8fbbd1bdabafe0",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted QSEED sampling fix must cover fractional horizontal upscales without vertical downscaling, not just exact 2x. Verify 2560/2400/1920/1280-to-3200 source modes and internal split boundaries while native, downscaled, rotated, compressed and YUV planes retain their intended sampling."
+      }
     },
     {
       "file": "0106-power-mca-stock-cycle-policy.patch",
@@ -854,7 +1389,12 @@
       "original_commit": "ee6aa887046afb28b488bd14590ac6a0daeff3e6",
       "original_parent": "80114e79d7a9f563f95064061be9cc6dbc4d1c1f",
       "committer_date": "2026-11-14T00:09:57+08:00",
-      "tree": "5963739de247692494ba26e35fbc8951b089caab"
+      "tree": "5963739de247692494ba26e35fbc8951b089caab",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement MCA policy must implement the evidenced factory cycle derating, CP entry SOC/voltage headroom and 2:1 bus/OCP limits, with enabled product charging defaults in the driver. Verify cycle and entry boundaries without depending on a rootfs modprobe override or relaxing thermal/source limits."
+      }
     },
     {
       "file": "0107-power-mca-qc-direct-charge.patch",
@@ -862,7 +1402,12 @@
       "original_commit": "028e3daa5e2509148050c82c3599be0a5844dd65",
       "original_parent": "ee6aa887046afb28b488bd14590ac6a0daeff3e6",
       "committer_date": "2026-11-14T03:28:55+08:00",
-      "tree": "2dd997e5109a845b0e47ad11950c6f3e28255e5d"
+      "tree": "2dd997e5109a845b0e47ad11950c6f3e28255e5d",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Accepted QC charging support must use Piano's verified voltage/pulse protocol, keep QC2/ordinary QC3 on buck and regulate QC3-B/QC3+ through the 2:1 pump with their own current, ramp and tail limits. Verify measured pump feedback, stale sessions, adapter ceilings and confirmed shutdown before source restoration without sending PD/PPS commands to QC sources."
+      }
     },
     {
       "file": "0108-power-mca-third-pps-limits.patch",
@@ -870,7 +1415,12 @@
       "original_commit": "44f17a42a812287acb2fe19633cbaf1144c6a25a",
       "original_parent": "028e3daa5e2509148050c82c3599be0a5844dd65",
       "committer_date": "2026-11-14T03:41:04+08:00",
-      "tree": "2ac0dba057d2baa4d2d1c718994406ee2ee4bc2c"
+      "tree": "2ac0dba057d2baa4d2d1c718994406ee2ee4bc2c",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement PPS policy must cap the complete third-party adapter request at Piano's voltage/current limits, apply the normal battery-current reduction and stop before recalculating after proof loss. Verify PMIC-plus-pump sharing and SC8541 bus protection permit the selected window without enabling the inactive 100 W policy."
+      }
     },
     {
       "file": "0109-power-mca-pps-voltage-steps.patch",
@@ -878,7 +1428,12 @@
       "original_commit": "35c62293a237de7fe38cec56ad720b38e079fe6e",
       "original_parent": "44f17a42a812287acb2fe19633cbaf1144c6a25a",
       "committer_date": "2026-11-14T03:47:47+08:00",
-      "tree": "8074e3908cd024e7250a489072ee874a5b1a2f52"
+      "tree": "8074e3908cd024e7250a489072ee874a5b1a2f52",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted PPS regulator must select voltage steps from conversion ratio, cycles, battery-current gap and signed cell-voltage headroom, preserving CV, aging, final-stage and cold-profile guards. Verify overshoot/down-step behavior and every request remains inside the active source and thermal limits."
+      }
     },
     {
       "file": "0110-power-mca-battery-health-current.patch",
@@ -886,7 +1441,12 @@
       "original_commit": "28d14326ff0da7eba1540f3934d55ec353f06946",
       "original_parent": "35c62293a237de7fe38cec56ad720b38e079fe6e",
       "committer_date": "2026-11-14T03:57:05+08:00",
-      "tree": "3ac4bdb365f051cf1c1283bdefbfadf9f79c9112"
+      "tree": "3ac4bdb365f051cf1c1283bdefbfadf9f79c9112",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace the downstream BQ health-alert binding and policy with accepted SOA/ISC reporting through standard power-supply health and both-gauge current derating. Verify read failures stop charging and alerts apply the factory 80-percent-minus-200-mA reduction before cycle, thermal, user and source limits, without data-flash writes."
+      }
     },
     {
       "file": "0111-power-mca-source-voltage-window.patch",
@@ -894,7 +1454,12 @@
       "original_commit": "4858338c44393d6c08bbbb7c29ed3dfdef72425e",
       "original_parent": "28d14326ff0da7eba1540f3934d55ec353f06946",
       "committer_date": "2026-11-14T04:26:52+08:00",
-      "tree": "0e3f212b19ecf98c82717eee4509d64cdbdfb8a7"
+      "tree": "0e3f212b19ecf98c82717eee4509d64cdbdfb8a7",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The replacement charger transport must use Piano's PPS=11/PD_VERIFY=12 firmware types, read APDOs within the sampled session and retain both selected voltage bounds. Verify reconnect and regulation cannot issue requests below the APDO minimum or above its maximum."
+      }
     },
     {
       "file": "0112-power-direct-charge-conversion-modes.patch",
@@ -902,7 +1467,12 @@
       "original_commit": "7679892741f7c03527300a76f2c008eb59bf3891",
       "original_parent": "4858338c44393d6c08bbbb7c29ed3dfdef72425e",
       "committer_date": "2026-11-14T05:10:30+08:00",
-      "tree": "ab4d74a2bae3439b4456bbd3a440a3d90388d713"
+      "tree": "ab4d74a2bae3439b4456bbd3a440a3d90388d713",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Accepted SC8541/MCA support must expose stopped-only Standard/Bypass mode writes with readback and choose factory 1:1/2:1 operation from authenticated APDO capability. Verify ratio-aware voltage/current/protection calculations, the 4.5 A bypass cap and low-voltage settling before enable, while dynamic mode switching remains disabled."
+      }
     },
     {
       "file": "0113-camss-remove-register-debug.patch",
@@ -910,7 +1480,12 @@
       "original_commit": "e8adfef4618d1829a4f7b36b06f7c3c67da62c91",
       "original_parent": "7679892741f7c03527300a76f2c008eb59bf3891",
       "committer_date": "2026-11-14T21:48:56+08:00",
-      "tree": "c8b5b1733e63dd1472b82a8be0a5548d8bf97649"
+      "tree": "c8b5b1733e63dd1472b82a8be0a5548d8bf97649",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Remove with a replacement SM8750 CAMSS port that never adds the unbounded ISP register-script/live-MMIO interface or its global CSID/VFE pointers. Verify camera controls remain in the driver and both cameras stream without reintroducing register-debug access; dropping only this deletion would restore the unsafe interface."
+      }
     },
     {
       "file": "0114-camss-pix-capture-formats.patch",
@@ -918,7 +1493,12 @@
       "original_commit": "234828360faa08ab1c06c220a164509b25294bab",
       "original_parent": "e8adfef4618d1829a4f7b36b06f7c3c67da62c91",
       "committer_date": "2026-11-14T21:59:54+08:00",
-      "tree": "fd30b8c2f34ff775a18393f2adbf851fd37915eb"
+      "tree": "fd30b8c2f34ff775a18393f2adbf851fd37915eb",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted TFE980 implementation must distinguish Bayer sink codes from NV12 PIX capture output, choose a supported sink default and keep raw formats on RDI. Verify format enumeration, negotiation and capture agree with the programmed demosaic and Y/C write masters."
+      }
     }
   ],
   "provenance": {

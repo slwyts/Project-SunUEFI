@@ -1,41 +1,78 @@
 {
   "schema_version": 1,
+  "targets": [
+    "uefi",
+    "debian-gnome",
+    "debian-kde",
+    "nyarch-gnome",
+    "steamos"
+  ],
   "patches": [
     {
       "repository": "upstream/Mu-Silicium/Mu_Basecore",
       "base_commit": "64f478939955e45faa632c160ae2a75a5ff7ef7f",
       "patch": "mu-basecore.patch",
-      "sha256": "e4406e6828e95c7d71aff36a2255852debad0bebfef2382dae5702e756aa7549"
+      "sha256": "e4406e6828e95c7d71aff36a2255852debad0bebfef2382dae5702e756aa7549",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace this combined downstream integration only when Mu supplies the timer-frequency fallback, application-level event servicing, cancellable firmware UI and Shell, current-application ExitBootServices validation and boot-only NV protection. Verify navigation, reboot and DMA quiescence without the product hooks before removing their library dependencies."
+      }
     },
     {
       "repository": "upstream/Mu-Silicium/Mu_Basecore",
       "base_commit": "64f478939955e45faa632c160ae2a75a5ff7ef7f",
       "patch": "mu-basecore/cfb9372/0002-usb-mass-storage-read-only.patch",
-      "sha256": "cb94a186ef3cc40a430308abedbe05dc50571137184cd5a52de0253a04899ae0"
+      "sha256": "cb94a186ef3cc40a430308abedbe05dc50571137184cd5a52de0253a04899ae0",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Mu must provide a product-selectable USB mass-storage write prohibition that remains set after media changes and rejects writes before issuing any SCSI WRITE command. Verify hotplug, media-change and WriteBlocks paths preserve this policy before removing the downstream enforcement."
+      }
     },
     {
       "repository": "upstream/Mu-Silicium",
       "base_commit": "8471e47f5248ebbffc2e6196b683204163efe155",
       "patch": "mu-silicium.patch",
-      "sha256": "a68761caebc222a17ca0f57fb9f896180535f37ddb408382c6ea2681eb4eba21"
+      "sha256": "a68761caebc222a17ca0f57fb9f896180535f37ddb408382c6ea2681eb4eba21",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Remove when the selected Silicium DSC supplies compatible null bindings for the product event-pump and ExitBootServices libraries, or when their Basecore consumers are replaced together. Verify both the product binding and platforms using the null implementation still link."
+      }
     },
     {
       "repository": "upstream/Mu-Silicium",
       "base_commit": "8471e47f5248ebbffc2e6196b683204163efe155",
       "patch": "mu-silicium/3ec9169/0001-close-filesystem-scan-handles.patch",
-      "sha256": "4d2716e8d912983a9e53311ada77ff1880e9063f859bb23130799b1ec6a33f6f"
+      "sha256": "4d2716e8d912983a9e53311ada77ff1880e9063f859bb23130799b1ec6a33f6f",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected SecureBootHandler must process every newly reported filesystem, close each successfully opened root handle and release each notification buffer. Verify repeated filesystem scans leave no open volume preventing filesystem-driver unload."
+      }
     },
     {
       "repository": "upstream/simple-init",
       "base_commit": "3d66a6e78d519dd050fbebde4db6c5ac933f9aa4",
       "patch": "simple-init.patch",
-      "sha256": "656e5898f49285a852fa2766aa14b847c476e94e6992d8f9c4f5eafe740131db"
+      "sha256": "656e5898f49285a852fa2766aa14b847c476e94e6992d8f9c4f5eafe740131db",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace this combined SimpleInit integration when its selected source supports the Mu FDT and floating-point build interfaces, Chinese font and locale defaults, absolute-touch normalization, product-controlled navigation/reboot and an application-level GUI pump with snapshot cleanup. Verify menu input, return from Shell and safe Linux handover before removing the companion overlays."
+      }
     },
     {
       "repository": "upstream/simple-init",
       "base_commit": "3d66a6e78d519dd050fbebde4db6c5ac933f9aa4",
       "patch": "simple-init/3d66a6e/0001-input-hotplug.patch",
-      "sha256": "95f173afe0dcdc617ef3dc88065885486538eae33573b4310d25333cd490fbfb"
+      "sha256": "95f173afe0dcdc617ef3dc88065885486538eae33573b4310d25333cd490fbfb",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "SimpleInit must register keyboard, absolute-pointer and relative-pointer inputs even when initially absent, refresh handles after hotplug, serialize protocol reads against USB removal and release stale input state. Verify unplug during input, reconnect and Tab/Shift-Tab navigation without stale protocol calls."
+      }
     }
   ],
   "overlay_sources": [

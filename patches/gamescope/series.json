@@ -1,46 +1,89 @@
 {
   "schema_version": 1,
+  "targets": [
+    "steamos"
+  ],
   "component": "gamescope",
   "patches": [
     {
       "file": "0001-drm-separate-render-and-display.patch",
       "scope": "board",
-      "sha256": "162eefe0ca91137be066fee91aa2e93890ee1b2c00465f44e98f77a4c43b4c62"
+      "sha256": "162eefe0ca91137be066fee91aa2e93890ee1b2c00465f44e98f77a4c43b4c62",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected Gamescope source must keep the chosen Vulkan renderer while opening an independently enumerated KMS device when its DRM node is render-only. Verify Adreno rendering with the separate MSM DPU display device and clean failure when no KMS device is available."
+      }
     },
     {
       "file": "0002-backlight-avoid-double-dimming.patch",
       "scope": "board",
-      "sha256": "611fdac0afef1f490de14f9831ff5156c06bb1e1cac25026516c0ded9cb5759a"
+      "sha256": "611fdac0afef1f490de14f9831ff5156c06bb1e1cac25026516c0ded9cb5759a",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Gamescope must distinguish an unwritable hardware-backlight control from an absent backlight and reserve software dimming for the latter. Verify cursor composition and direct scanout have equal brightness while Steam controls the hardware through its privileged writer."
+      }
     },
     {
       "file": "0003-drm-consistent-sdr-color.patch",
       "scope": "board",
-      "sha256": "174a6b11099fee27f885bbebaef6b274daf7f770a095d1a1939e4cda214dcb87"
+      "sha256": "174a6b11099fee27f885bbebaef6b274daf7f770a095d1a1939e4cda214dcb87",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Gamescope must apply equivalent SDR color transforms on scanout and composition when the display backend lacks plane LUTs, using shader composition where necessary. Verify moving the pointer does not change SDR colors and disabling color management still permits direct scanout."
+      }
     },
     {
       "file": "0004-steam-respect-session-refresh.patch",
       "scope": "board",
-      "sha256": "ce38108580c1e3e9e2ea1204380c8fad67930fac97c1ea002ffc714b1584c3ad"
+      "sha256": "ce38108580c1e3e9e2ea1204380c8fad67930fac97c1ea002ffc714b1584c3ad",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected Gamescope must retain a supported requested session refresh when Steam maps its UI instead of selecting the panel maximum. Verify a 120 Hz session remains at 120 Hz on the 144 Hz panel while game-specific refresh selection continues to work."
+      }
     },
     {
       "file": "0005-input-touchpad-natural-scroll.patch",
       "scope": "board",
-      "sha256": "b27bf2dad0174cdf055137e0a48d451f55b2aad125b436d2641e9ab0b117f358"
+      "sha256": "b27bf2dad0174cdf055137e0a48d451f55b2aad125b436d2641e9ab0b117f358",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Gamescope must expose a session-selectable libinput natural-scroll setting for touchpads and apply it to devices added after startup. Migrate the session configuration together and verify mouse wheels and touchscreens retain their own directions."
+      }
     },
     {
       "file": "0006-input-tablet-and-accelerated-pointer.patch",
       "scope": "board",
-      "sha256": "5a9f6313a9080a93b7b50c920689209f086fd39c71490be7800b49b61b7dcecc"
+      "sha256": "5a9f6313a9080a93b7b50c920689209f086fd39c71490be7800b49b61b7dcecc",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Gamescope must use libinput-accelerated desktop pointer motion without changing raw relative game input, and forward absolute pointers and tablet-v2 pressure/tilt with a pointer fallback. Verify Steam navigation, pen-aware clients, fallback clients and raw mouse games before dropping this combined input adaptation."
+      }
     },
     {
       "file": "0007-compositor-preserve-input-damage.patch",
       "scope": "board",
-      "sha256": "0bbd764d15b19f9eeb8a1bdde3f322498738c91c4286647b2196365de0b484a0"
+      "sha256": "0bbd764d15b19f9eeb8a1bdde3f322498738c91c4286647b2196365de0b484a0",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Gamescope must consume repaint damage before presenting, preserve input damage arriving during a blocking page flip and restore consumed damage when pacing defers the paint. Verify continuous pointer updates are not lost on an otherwise idle Steam UI."
+      }
     },
     {
       "file": "0008-drm-wait-for-native-kms.patch",
       "scope": "generic",
-      "sha256": "51cc1d3254f0fc17400a36d72ecb063eb366d4abd4fbd446213ff86db2796815"
+      "sha256": "51cc1d3254f0fc17400a36d72ecb063eb366d4abd4fbd446213ff86db2796815",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Automatic Gamescope display selection must wait for a native KMS device instead of selecting simpledrm when the renderer probes first, dispatch session events and close unselected handles. Verify delayed DPU probing, explicit device selection and a timed-out native-display search."
+      }
     }
   ]
 }
