@@ -37,6 +37,22 @@ python3 tools/check_host.py --group python-all
 
 主机检查只能证明解析和模拟逻辑正确，编译通过或协议已注册不代表硬件功能可用。
 
+### 标准 rootfs 的硬件验收
+
+验收“换发行版仍可用”时，使用匹配内核、设备树和标准固件目录，安装该发行版
+的 libinput、BlueZ、libfprint／fprintd、libcamera 和 V4L2 工具。不要先安装项目
+专用输入或相机服务再把结果算作标准组件支持。验证下载与安装流程时，使用完整
+产品镜像首次启动；在运行中的旧系统临时执行新程序，只能证明该程序对应的检查。
+
+| 链路 | 检查与操作 | 必须满足的结果 |
+| --- | --- | --- |
+| 触控笔 | `libinput list-devices`、`libinput debug-events`；两种笔绘画、悬停、倾角、按钮、手掌、磁吸、120／144 Hz、挂起恢复及固件重载 | 一个物理 tablet-tool，坐标与笔尖一致，抬笔／断连无残留压力；没有 THP／hidraw 用户态解码或 uinput。当前 BlueZ 初始化、弱悬停及 144 Hz 的缺项见[笔实现](hardware/pen-protocol.md#内核输入与许可边界) |
+| 指纹 | 先核对传感器控制模型、固件许可和录入授权，再通过发行版 fprintd 检查录入、多指、验证、枚举、删除、取消及超时 | 使用已接受的设备控制模型和标准 TEE 接口，不依赖 UIO；不得在禁止 RPMB 写入时运行可能获取 HAT 的录入／验证。当前边界见[指纹实现](hardware/led-ir-fingerprint.md#侧指纹) |
+| 相机 | `cam -l`、`v4l2-compliance`，逐模式开流、裁剪缩放、AE／AWB／AF、闪光、隐私灯、并发和恢复 | libcamera 直接配置 TFE，IPA 只读硬件统计，不读取图像计算 3A；没有 loopback、控制 socket 或软件 ISP。当前统计和模式缺项见[相机接口](hardware/camera-controls.md#内核接口与-libcamera) |
+
+记录实际软件版本、物理操作、设备节点和结果。只出现设备、驱动 probe 成功或
+`v4l2-compliance` 的非开流检查通过，都不能替代上述功能验收。
+
 ## CI 检查
 
 GitHub Actions 的 **Build products** 在 `main` 上有相关源码变动时自动运行，覆盖 `uefi`、`linux` 以及四个发行版。CI 使用与本地相同的 `./build.sh`、固定子模块和补丁配置，不连接物理设备。
