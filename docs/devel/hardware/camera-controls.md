@@ -27,7 +27,7 @@ OV32D40 的[设备树 binding](../../../patches/linux/7.3/0115-media-ov32d40-bin
 
 SM8750 的 [CAMSS binding](../../../patches/linux/7.3/0116-media-camss-bayer-clock-binding.patch)还描述每条完整 TFE 的 Bayer、Bayer fast AHB 和 Bayer CAMNOC 时钟，共 44 项时钟资源；这些是 PIX 驱动使用的硬件时钟，不能为匹配旧 schema 而删除。捕获端只描述驱动使用的 `ahb`、`hf_mnoc` 两条 interconnect，不把独立 ICP 的资源放进 CAMSS。[带宽 overlay](../../../linux/dts/piano-camera-interconnects.dtso)使用现有 SM8750 provider，补入 APPSS→CAMERA_CFG 的活动带宽路径和 CAMNOC_HF→EBI 的图像路径；runtime resume 提交驱动带宽票据，suspend 清零。两条路径与 44 clocks 在完整折叠节点上的定向 schema 检查通过，带宽投票仍需实机检查。缺少属性时 interconnect 核心返回 NULL 并跳过约束，不能据此将硬件带宽路径改为可选。
 
-前后 sensor 的 `power-domains` 都指向 `CAM_CC_TITAN_TOP_GDSC`。公开相机 DTS 说明该引用用于保证 CAMBIST MCLK 分支工作，并非 sensor 本体位于片上电源域；I2C core 会在 probe 前附加该域，runtime PM 在 sensor 回调前后管理它。S5KJN1 schema 仍拒绝此属性，OV32D40 schema 允许它。应将 Titan 依赖放到 MCLK 供应端并验证 probe、停流和恢复后再迁移引用，不能删除引用或只放宽 sensor schema 来掩盖供应端模型缺项。
+前后 sensor 的 `power-domains` 都指向 `CAM_CC_TITAN_TOP_GDSC`。公开相机 DTS 说明该引用用于保证 CAMBIST MCLK 分支工作，并非 sensor 本体位于片上电源域；I2C core 会在 probe 前附加该域，runtime PM 在 sensor 回调前后管理它。[sensor overlay](../../../linux/dts/piano-camera-sensors.dtso)也将 Titan 依赖描述在 MCLK 供应端：CAMBIST 在原有 MMCX、MX 之外附加 Titan，通用 clock runtime PM 按 prepare/unprepare 持有、释放这些域。对应 clock binding、例子和节点校验通过，但供应端独立工作仍需实机检查；验证 probe、停流和恢复前保留 sensor 引用。S5KJN1 schema 仍拒绝该旧引用，OV32D40 schema 允许它，不通过放宽前者掩盖迁移尚未完成。
 
 ### TFE980 公开资料与 metadata
 
