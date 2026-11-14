@@ -36,6 +36,7 @@ class GoodixProfileTests(unittest.TestCase):
         subprocess.run([
             *compiler, '-std=c17', '-O2', '-Wall', '-Wextra', '-Werror',
             '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',
+            '-Wl,--wrap=open',
             *[f'-I{path}' for path in includes],
             str(ROOT / 'tests/native/test_goodix_profile.c'),
             *map(str, sources), '-pthread', '-lm', '-o', str(cls.binary),
@@ -71,6 +72,9 @@ class GoodixProfileTests(unittest.TestCase):
 
     def test_initialization_uses_policy_saved_before_init_overwrites_payload(self):
         self.check_profile('initialization-policy')
+
+    def test_standard_firmware_search_order_and_unsafe_files(self):
+        self.check_profile('firmware-paths')
 
 
 if __name__ == '__main__':

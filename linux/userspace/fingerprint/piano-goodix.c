@@ -14,6 +14,7 @@
 #include <endian.h>
 #include <fcntl.h>
 #include <glob.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
@@ -23,6 +24,7 @@
 #include <sys/stat.h>
 #include <sys/file.h>
 #include <sys/random.h>
+#include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -36,7 +38,7 @@
 #include "piano-goodix-storage.h"
 #include "piano-goodix.h"
 
-#define FIRMWARE "/usr/lib/firmware/gfpia.elf"
+#define FIRMWARE "gfpia.elf"
 #define FIRMWARE_LIMIT (32U * 1024U * 1024U)
 #define LOADER_UID 122
 #define PAYLOAD_SIZE 640
@@ -165,6 +167,79 @@ static int open_controller(void)
 	return fd;
 }
 
+static int open_firmware_at(const char *directory, const char *name)
+{
+	char path[PATH_MAX];
+	int bytes = snprintf(path, sizeof(path), "%s/%s", directory, name);
+
+	if (bytes < 0 || (size_t)bytes >= sizeof(path))
+		return -ENAMETOOLONG;
+	int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+
+	return fd < 0 ? -errno : fd;
+}
+
+static int firmware_path_parameter(char directory[257])
+{
+	const char *parameter = "/sys/module/firmware_class/parameters/path";
+	int fd = open(parameter, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+
+	if (fd < 0)
+		return errno == ENOENT ? 0 : -errno;
+	ssize_t bytes;
+	do {
+		bytes = read(fd, directory, 256);
+	} while (bytes < 0 && errno == EINTR);
+	int result = bytes < 0 ? -errno : 0;
+	close(fd);
+	if (result)
+		return result;
+	directory[bytes] = 0;
+	/* Match firmware_loader's first-newline boundary, including the newline
+	 * appended by sysfs when it displays the module parameter.
+	 */
+	directory[strcspn(directory, "\n")] = 0;
+	if (strlen(directory) >= 256)
+		return -ENAMETOOLONG;
+	if (!directory[0])
+		return 0;
+	return directory[0] == '/' ? 1 : -EINVAL;
+}
+
+static int open_firmware(const char *name)
+{
+	struct utsname system;
+	char directory[PATH_MAX], custom[257];
+	int result;
+
+	/* All callers use fixed, flat firmware names, not paths from a TA. */
+	if (!name || !*name || strchr(name, '/') || !strcmp(name, ".") || !strcmp(name, ".."))
+		return -EINVAL;
+	result = firmware_path_parameter(custom);
+	if (result < 0)
+		return result;
+	if (result) {
+		result = open_firmware_at(custom, name);
+		if (result != -ENOENT)
+			return result;
+	}
+	if (uname(&system))
+		return -errno;
+	const char *subdirectories[] = { "updates/", "updates", "", "" };
+	const char *versions[] = { system.release, "", system.release, "" };
+	for (size_t i = 0; i < sizeof(subdirectories) / sizeof(*subdirectories); ++i) {
+		int bytes = snprintf(directory, sizeof(directory), "/lib/firmware/%s%s",
+				     subdirectories[i], versions[i]);
+
+		if (bytes < 0 || (size_t)bytes >= sizeof(directory))
+			return -ENAMETOOLONG;
+		result = open_firmware_at(directory, name);
+		if (result != -ENOENT)
+			return result;
+	}
+	return -ENOENT;
+}
+
 static int load_application(struct client *client)
 {
 	struct stat st;
@@ -172,11 +247,11 @@ static int load_application(struct client *client)
 	void *address = NULL;
 	size_t capacity = 0;
 	const char name[] = "gfpia";
-	int fd = open(FIRMWARE, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	int fd = open_firmware(FIRMWARE);
 	int result = -EINVAL;
 
 	if (fd < 0)
-		return -errno;
+		return fd;
 	if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 64 ||
 	    st.st_size > FIRMWARE_LIMIT)
 		goto done;
@@ -618,15 +693,13 @@ static int device_info(struct client *client, uint32_t *sensor_type)
 
 static int read_model(const char *name, uint8_t *destination, size_t size)
 {
-	char path[256];
 	struct stat st;
 	size_t offset = 0;
 	int result = 0;
 
-	snprintf(path, sizeof(path), "/usr/lib/firmware/%s", name);
-	int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	int fd = open_firmware(name);
 	if (fd < 0)
-		return -errno;
+		return fd;
 	if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size != (off_t)size) {
 		result = -EMSGSIZE;
 		goto done;
