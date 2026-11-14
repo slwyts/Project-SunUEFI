@@ -83,11 +83,12 @@ def main():
     targets = select(changed_files(ROOT, args.before), args.target)
     matrix = json.dumps({'target': targets}, separators=(',', ':'))
     shared_matrix = json.dumps({'kind': shared_kinds(targets)}, separators=(',', ':'))
+    debian_writer = next((target for target in ('debian-gnome', 'debian-kde') if target in targets), '')
     if output := os.environ.get('GITHUB_OUTPUT'):
         with open(output, 'a') as stream:
             stream.write('has_build=' + ('true' if targets else 'false') + '\nmatrix=' + matrix +
                          '\nshared_matrix=' + shared_matrix + '\nshared_target=' +
-                         (targets[0] if targets else '') + '\n')
+                         (targets[0] if targets else '') + '\ndebian_cache_writer=' + debian_writer + '\n')
     print(matrix)
 
 
