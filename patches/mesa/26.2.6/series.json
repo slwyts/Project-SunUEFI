@@ -1,4 +1,6 @@
 {
+  "schema_version": 1,
+  "license": "MIT",
   "source_version": "26.2.6-1",
   "local_revision": "piano1",
   "series": ["0001-freedreno-a830v1.patch"]

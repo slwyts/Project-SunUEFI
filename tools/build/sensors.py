@@ -40,7 +40,7 @@ def source_workspace(output, config):
 
 def build(output, sysroot=None, jobs=None, libssc_only=False):
     output = output.resolve()
-    jobs = jobs or package_build.default_jobs()
+    jobs = package_build.default_jobs() if jobs is None else jobs
     if jobs < 1:
         raise ValueError('Use at least one build job')
     config = json.loads((ROOT / 'config/release.json').read_text())['sensors']

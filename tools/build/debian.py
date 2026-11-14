@@ -198,9 +198,10 @@ def source(root, output, package, version, log):
         work.parent.mkdir(parents=True, exist_ok=True)
         command(root, {}, work.parent, ['dpkg-source', '-x', inside(root, dsc), package], log)
         (work / 'SOURCE.json').write_text(json.dumps(origin, indent=2) + '\n')
-    elif (json.loads((work / 'SOURCE.json').read_text()).get('archives') != origin['archives'] or
-          json.loads((work / 'SOURCE.json').read_text()).get('version') != version):
-        raise ValueError('The prepared source differs from the current signed source index')
+    else:
+        previous = json.loads((work / 'SOURCE.json').read_text())
+        if previous.get('archives') != origin['archives'] or previous.get('version') != version:
+            raise ValueError('The prepared source differs from the current signed source index')
     return work, origin
 
 
