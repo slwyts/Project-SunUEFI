@@ -7,9 +7,6 @@
 [submodule "upstream/debian-piano-current"]
 	path = upstream/debian-piano-current
 	url = https://github.com/blu-sharky/debian-piano.git
-[submodule "upstream/piano-mesa-current"]
-	path = upstream/piano-mesa-current
-	url = https://github.com/blu-sharky/piano-mesa.git
 [submodule "upstream/dtc"]
 	path = upstream/dtc
 	url = https://github.com/dgibson/dtc.git

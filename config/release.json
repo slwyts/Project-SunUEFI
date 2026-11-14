@@ -104,12 +104,6 @@
     ],
     "components": "vendor/firmware"
   },
-  "mesa": {
-    "source": "upstream/piano-mesa-current",
-    "commit": "a89c1e46eef3e161520b084479928aaa5a8e8732",
-    "required": true,
-    "package_version_contains": "+piano"
-  },
   "sensors": {
     "source": "upstream/piano-sensors-current",
     "commit": "65a92202db65ad13493b43fbf15d6abb3b7bcf92",
