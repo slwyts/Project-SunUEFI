@@ -136,6 +136,8 @@ python3 tools/build/shared_products.py verify --kind kernel
 
 Debian 包按配方前缀恢复最近缓存，成功后发布本次运行的一代，避免 Actions 同名缓存不可覆盖导致候选更新后每次重编；公共包只由选定的一个 Debian job 保存。完整 root 镜像不存入构建缓存。冷编译、签名索引刷新、根系统安装和镜像导出仍需要时间，不能仅凭缓存设计保证整套产品在几分钟内完成。
 
+两个 Debian 桌面还复用 `build/distros/release/fingerprint-packages/` 的 `SOURCE.json` 与 `runtime/`，不缓存指纹 package builder。复用前仍核对原生后端源码归档、libfprint 补丁和配置、目标库 ABI 与实际 `.deb` 摘要，并检查目标 fprintd 的动态链接和 APT 依赖；缓存未命中时正常构建。
+
 本地和 GitHub 的完整构建走同一个 `release-rootfs` 入口。默认系统包含中文界面、拼音输入法、Chromium、GNOME 动画、蓝牙地址自动初始化和触控笔组件。根系统生成后会检查这些软件包和必需文件，结果记录在 `manifest.json` 的 `default_system`，缺少任何一项构建就失败。
 
 Debian 只构建 sid，不混用 stable 或 backports。`release-rootfs` 先生成 sid 基础系统，再从其副本构建 sensors、FFmpeg 和桌面包；不用固件构建容器中的旧版库编译这些运行包。CI 保留编译缓存，但按 sid 配置和构建器区分缓存，并由软件包构建器检查所选源码版本后复用。
