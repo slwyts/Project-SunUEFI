@@ -9,8 +9,8 @@
 | 按需充电记录 | [`linux/bsp/common/usr/lib/piano/charge-monitor`](../../../linux/bsp/common/usr/lib/piano/charge-monitor) | `piano-charge-monitor.service`，经共用 BSP 安装，preset 默认关闭 |
 | DMA 状态诊断 | [`linux/userspace/piano-ram-hardware-prepare`](../../../linux/userspace/piano-ram-hardware-prepare) | 仅用于显式诊断，不阻止模块自动探测 |
 | 手指帧解码与多点输入 | [`0095-input-nt36532e-matrix.patch`](../../../patches/linux/7.3/0095-input-nt36532e-matrix.patch) | 编入 `nt36532e_ts`，在现有 SPI 中断线程中直接上报标准输入事件 |
-| 内核笔解码与 BLE 融合 | [`0123-input-nt36532e-pen.patch`](../../../patches/linux/7.3/0123-input-nt36532e-pen.patch) | 编入 `nt36532e_ts`；从标准固件目录加载数字校准，由物理 SPI tablet-tool 上报输入 |
-| 笔输入、旧内核手指输入与原始帧诊断 | [`upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c`](../../../upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c) | 派生后编译为 `/usr/bin/piano-touch-view`，由 `piano-touch.service` 启动 |
+| 内核笔解码与 BLE 融合 | [`0123-input-nt36532e-pen.patch`](../../../patches/linux/7.3/0123-input-nt36532e-pen.patch) 与[扫描组修正](../../../patches/linux/7.3/0124-input-nt36532e-pen-centroid.patch) | 编入 `nt36532e_ts`；从标准固件目录加载数字校准，由物理 SPI tablet-tool 上报输入 |
+| 原始帧诊断与旧内核输入 | [`upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c`](../../../upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c) | 派生后编译为 `/usr/bin/piano-touch-view`；新内核的 `piano-touch.service` 只运行下述 BlueZ 初始化 |
 | 触屏程序的本地观测补丁 | [`tools/patches/piano-touch-view-observability.patch`](../../../tools/patches/piano-touch-view-observability.patch) | `build_piano_runtime_helpers.py` 派生源码，`build_release_helpers.py` 编译 |
 | 相机服务、图像处理与控制接口 | [`linux/bsp/optional/camera/`](../../../linux/bsp/optional/camera/) 与 [`linux/userspace/camera/`](../../../linux/userspace/camera/) | 共用 Makefile 编译服务与客户端，两条运行库构建入口使用同一份源码 |
 | 音频 UCM、模块加载参数、udev 配置 | [`linux/bsp/common/`](../../../linux/bsp/common/) | 按目录布局安装；文件清单在 `linux/bsp/manifest.json` |
