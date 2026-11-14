@@ -90,6 +90,8 @@ def build(output, root, jobs, resume=False, steamos=False):
                   packages=json.loads((output / 'runtime/manifest.json').read_text())['packages'],
                   validation=json.loads((output / 'runtime/VALIDATION.json').read_text()))
     (output / 'SOURCE.json').write_text(json.dumps(record, indent=2) + '\n')
+    (output / 'SHA256SUMS').write_text(''.join(
+        row['sha256'] + '  runtime/' + name + '\n' for name, row in sorted(record['packages'].items())))
     (output / '.incomplete').unlink()
     return record
 

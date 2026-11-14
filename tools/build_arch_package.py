@@ -91,7 +91,9 @@ def build(root, recipe, output, resume=False, jobs=None, validate=None):
         guest(['chown', '-R', 'sunuefi-package:sunuefi-package', folder])
         if not (work / '.sunuefi-built').exists():
             verify_sources(guest, folder)
-            flags = ' --noextract' if resume and (work / 'src').is_dir() else ''
+            source = work / 'src'
+            prepared = source.is_dir() and any(source.iterdir())
+            flags = ' --noextract' if resume and prepared else ''
             with package_build.environment(root, user='sunuefi-package') as settings:
                 settings['MAKEFLAGS'] = '-j' + str(jobs)
                 guest(['runuser', '-u', 'sunuefi-package', '--', 'env',
