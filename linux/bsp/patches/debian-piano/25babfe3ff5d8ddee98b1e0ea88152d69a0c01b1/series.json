@@ -20,16 +20,6 @@
       }
     },
     {
-      "file": "../../0002-display-manager-neutral-order.patch",
-      "sha256": "470fe48c82bd54de9ed4a92995ec3004326d2478b0cb868392a2608a6c6cea05",
-      "license": "MIT; retain debian-piano source notices",
-      "upstream": {
-        "status": "downstream",
-        "url": "https://github.com/slwyts/Project-SunUEFI",
-        "drop_when": "This retains the source diff for the legacy piano-display.service; the current modalias-based runtime no longer installs that service. Remove it with that unit's pinned BSP comparison input once no supported reconstruction uses it. Any retained display preparation unit must order against display-manager.service without pulling in gdm.service; verify both GDM and SDDM startup."
-      }
-    },
-    {
       "file": "../../0003-camera-portable-modprobe.patch",
       "sha256": "b4892c279dfdce444292ed55a61d984829815bfb567add1d508f053ea5166d5b",
       "license": "MIT; retain debian-piano source notices",
