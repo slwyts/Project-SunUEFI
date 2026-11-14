@@ -21,7 +21,7 @@ PATCH = ROOT / 'patches/gnome-settings-daemon/0001-power-optional-device-ambient
 PREPARE = ROOT / 'linux/desktops/gnome/ambient-policy/packaging/prepare_package.py'
 POLICY = PREPARE.parent.parent
 SOURCE_VERSION = '48.1-1'
-PACKAGE_VERSION = SOURCE_VERSION + '+sunuefi3'
+PACKAGE_VERSION = SOURCE_VERSION + '+sunuefi4'
 PATCHES = [PATCH, *source_patches(ROOT / 'patches/gnome-settings-daemon/48.1/series.json')]
 RUNTIME = {'gnome-settings-daemon': 'arm64', 'gnome-settings-daemon-common': 'all'}
 

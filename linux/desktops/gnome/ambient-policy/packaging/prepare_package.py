@@ -50,9 +50,10 @@ def debian(source: Path, destination: Path) -> None:
     series.write_text(existing.rstrip() + "\n" + "\n".join([patch_name, *extra_names]) + "\n")
     changelog = destination / "debian/changelog"
     entry = (
-        f"gnome-settings-daemon ({version}+sunuefi3) UNRELEASED; urgency=medium\n\n"
+        f"gnome-settings-daemon ({version}+sunuefi4) UNRELEASED; urgency=medium\n\n"
         "  * Add device ambient-light profiles and keyboard backlight hotplug.\n"
-        "  * Restore the current screensaver state when power management starts.\n\n"
+        "  * Restore the current screensaver state when power management starts.\n"
+        "  * Use relative luminance for ambient changes and pause while blanked.\n\n"
         f" -- slwyts <slwyts@foxmail.com>  {format_datetime(datetime.now(timezone.utc))}\n\n"
     )
     changelog.write_text(entry + changelog.read_text())

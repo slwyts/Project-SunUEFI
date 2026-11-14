@@ -2,7 +2,7 @@
 
 在 GNOME 自有 power manager 内增加可选设备配置，不增加服务或改传感器值。`piano.ini`只匹配`xiaomi,piano`和测量单位`lux`，沿原厂实际的三条门限曲线分别等待1000/1000/5000ms。其他设备和缺配置保持上游行为。配置安装到`/usr/share/gnome-settings-daemon/ambient-profiles/piano.ini`；需要同时安装编译后的GSD包，仅复制配置不能使未打补丁的GSD获得此功能。
 
-原厂 nits 曲线尚未校准到 Linux 背光，保留上游亮度归一化与平滑。当前实现范围与实际来源见[自动亮度文档](../../../../docs/devel/hardware/auto-brightness.md)。
+亮度幅度使用原厂 108 点 lux→nits 曲线与 KTZ8866 指数码值的相对变化，以用户手动亮度为基准，保留 GNOME 平滑。关屏期间停止调光。曲线来源、系数、零亮度恢复和绝对亮度边界见[自动亮度文档](../../../../docs/devel/hardware/auto-brightness.md)。
 
 ## 默认 release / CI
 
@@ -28,7 +28,7 @@ cd /absolute/new/gsd-piano-build
 dpkg-buildpackage -b -us -uc
 ```
 
-发行版源码需为48.1且使用标准`3.0 (quilt)`格式；上下文不同会在准备时失败，不能忽略补丁错误。生成标准`gnome-settings-daemon`包，包版本追加`+sunuefi3`，同时包含键盘背光热插拔刷新和启动时锁屏状态同步。由发行版正常安装/升级流程替换包，重新登录使新 power manager 生效。
+发行版源码需为48.1且使用标准`3.0 (quilt)`格式；上下文不同会在准备时失败，不能忽略补丁错误。生成标准`gnome-settings-daemon`包，包版本追加`+sunuefi4`，同时包含键盘背光热插拔刷新和启动时锁屏状态同步。由发行版正常安装/升级流程替换包，重新登录使新 power manager 生效。
 
 ## Arch / Arch Linux ARM 51.0
 
@@ -41,4 +41,4 @@ cd /absolute/new/gsd-piano-package
 makepkg -s
 ```
 
-两份补丁分别适配上游版本，设备配置和功能相同。Nyarch 镜像自动安装 `51.0-1.3`。显示关闭与输入唤醒仍通过桌面和内核的标准接口处理。
+两份补丁分别适配上游版本，设备配置和功能相同。Nyarch 镜像自动安装 `51.0-1.4`。显示关闭与输入唤醒仍通过桌面和内核的标准接口处理。

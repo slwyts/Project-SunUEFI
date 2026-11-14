@@ -2,7 +2,7 @@
 # The upstream release includes the gvc source; no moving submodule is fetched.
 pkgname=gnome-settings-daemon
 pkgver=51.0
-pkgrel=1.3
+pkgrel=1.4
 pkgdesc="GNOME Settings Daemon with optional device ambient-light profiles"
 url="https://gitlab.gnome.org/GNOME/gnome-settings-daemon"
 arch=(x86_64 aarch64)

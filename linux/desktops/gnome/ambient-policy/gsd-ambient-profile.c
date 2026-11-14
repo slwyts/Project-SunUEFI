@@ -14,8 +14,10 @@ typedef struct {
 } Curve;
 
 struct _GsdAmbientProfile {
-        Curve bright, dark, small;
+        Curve bright, dark, small, nits;
         guint bright_ms, dark_ms, small_ms;
+        gdouble percent_per_log_nit;
+        gdouble reference_nits, reference_percentage;
         gboolean initialized;
         gdouble accepted_lux;
         gint64 bright_since, dark_since, small_since;
@@ -85,7 +87,26 @@ gsd_ambient_profile_free (GsdAmbientProfile *profile)
         g_free (profile->bright.x); g_free (profile->bright.y);
         g_free (profile->dark.x); g_free (profile->dark.y);
         g_free (profile->small.x); g_free (profile->small.y);
+        g_free (profile->nits.x); g_free (profile->nits.y);
         g_free (profile);
+}
+
+static gboolean
+load_brightness_curve (GKeyFile *file, GsdAmbientProfile *profile)
+{
+        profile->percent_per_log_nit =
+                g_key_file_get_double (file, "Ambient", "BrightnessPercentPerLogNit", NULL);
+        if (!isfinite (profile->percent_per_log_nit) || profile->percent_per_log_nit <= 0 ||
+            !load_curve (file, "BrightnessLux", "BrightnessNits", &profile->nits) ||
+            profile->nits.x[0] != 0)
+                return FALSE;
+
+        for (gsize i = 0; i < profile->nits.count; i++) {
+                if (profile->nits.y[i] <= 0 ||
+                    (i && profile->nits.y[i] < profile->nits.y[i - 1]))
+                        return FALSE;
+        }
+        return TRUE;
 }
 
 GsdAmbientProfile *
@@ -117,6 +138,7 @@ gsd_ambient_profile_load (void)
                     !load_curve (file, "DarkeningLux", "DarkeningThresholdLux", &profile->dark) ||
                     !load_delay (file, "BrighteningDebounceMs", &profile->bright_ms) ||
                     !load_delay (file, "DarkeningDebounceMs", &profile->dark_ms) ||
+                    !load_brightness_curve (file, profile) ||
                     (g_key_file_has_key (file, "Ambient", "SmallBrighteningLux", NULL) &&
                      (!load_curve (file, "SmallBrighteningLux", "SmallBrighteningThresholdLux", &profile->small) ||
                       !load_delay (file, "SmallBrighteningDebounceMs", &profile->small_ms)))) {
@@ -137,6 +159,36 @@ gsd_ambient_profile_reset (GsdAmbientProfile *profile)
                 profile->initialized = FALSE;
                 profile->bright_since = profile->dark_since = profile->small_since = -1;
         }
+}
+
+gboolean
+gsd_ambient_profile_set_brightness (GsdAmbientProfile *profile,
+                                    gdouble measured_lux,
+                                    gdouble percentage)
+{
+        if (!profile || !isfinite (measured_lux) || measured_lux < 0 ||
+            !isfinite (percentage) || percentage < 0 || percentage > 100)
+                return FALSE;
+
+        profile->reference_nits = interpolate (&profile->nits, measured_lux);
+        profile->reference_percentage = percentage;
+        return TRUE;
+}
+
+gdouble
+gsd_ambient_profile_get_brightness (GsdAmbientProfile *profile, gdouble accepted_lux)
+{
+        gdouble nits, percentage;
+
+        if (!profile || profile->reference_nits <= 0 ||
+            !isfinite (accepted_lux) || accepted_lux < 0)
+                return -1;
+
+        /* Only relative luminance is used; no absolute panel calibration is implied. */
+        nits = interpolate (&profile->nits, accepted_lux);
+        percentage = profile->reference_percentage + profile->percent_per_log_nit *
+                     log (nits / profile->reference_nits);
+        return CLAMP (percentage, 0, 100);
 }
 
 /* Each threshold has its own continuous interval: crossing the large

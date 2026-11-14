@@ -1,43 +1,53 @@
 # 自动亮度与原厂策略
 
-2026-10-08，离线解析已有`内部记录目录 lux、锁屏、DPMS或内核构建输入。
+GNOME 电源管理器按 Piano 的环境光门限和相对亮度曲线调光，保留用户手动选择的亮度，不修改 SensorProxy 的照度读数。显示关闭后停止调光，唤醒时恢复保存的亮度，再处理新的环境光。
 
-## 原厂配置
+## 原厂配置与来源
 
-原厂主ALS为Sensortek STK3BCX，采样250ms，warm-up0；快/慢环境窗口1000/3000ms，weighting intercept3000。增亮/变暗持续门限均1000ms，小幅增亮5000ms。还有辅助背面ALS、proximity和场景策略，不能把主ALS配置冒称整套算法。
+主环境光传感器为 Sensortek STK3BCX，原厂采样间隔为 250 ms。HyperOS 的显示服务还使用 1000／3000 ms 快慢环境窗口、辅助背面传感器、距离传感器和场景策略；GNOME 补丁只使用主传感器，不移植整套场景判断。
 
-真正起作用的Miui滞回是dump末段的**绝对lux线性曲线**，不是前面的通用HysteresisLevels百分比表。已提取大幅增亮15点、变暗19点、小幅增亮15点；用mAmbientLux=136.01251代入，得到314.8489396/27.4223739/243.3143733，和dump保留的三个阈值一致。小幅增亮直接使用695行的整条`mHysteresisSmallBrightSpline`，没有根据单点推断比例。此捕获在display OFF，说明配置与保留阈值吻合，不是主动测试回放。
+`linux/desktops/gnome/ambient-policy/piano.ini` 中的三条照度门限来自同机 HyperOS `OS3.0.309.0.WPYCNXM` 显示服务的运行配置：大幅增亮 15 点、变暗 19 点、小幅增亮 15 点，分别要求连续越过门限 1000／1000／5000 ms。这些是绝对 lux 曲线，不是通用的百分比回差表。例如，已接受照度为 136.01251 lux 时，三条曲线分别给出 314.8489、27.4224、243.3144 lux，与原厂显示服务保留的阈值一致。
 
-| 已接受lux | 原厂变暗阈值 | 原厂增亮阈值 | 原厂目标nits |
-| --- | --- | --- | --- |
-| 100 | 23.4844 | 262.2467 | 103 |
-| 136.01251 | 27.4224 | 314.8489 | 107.6013 |
-| 197 | 34.0913 | 403.9313 | 113.7 |
-| 300 | 43.8588 | 554.38 | 123 |
-| 500 | 145.4692 | 846.5133 | 144 |
+108 点目标亮度曲线来自同机 HyperOS 4.0.6 的 `product.img` 中 `/overlay/AospFrameworkResOverlay.apk`：`config_autoBrightnessLevels` 前补 0 lux，与 `config_autoBrightnessDisplayValuesNits` 逐点配对。Linux 使用这些点做线性插值，不把 Android 的背光数组直接作为 Linux 百分比。
 
-完整lux→nits曲线有108点，100..300lux段只从103升到123nits，包含多个低光平台。dump还给出backlight/nits点`(0.001709819,2)`、`(0.49975574,600)`、`(1,800)`。当前PhysicalMapping的current(bl)与另一个DDC normalized map不同；不得将这些nits或Android UI百分比直接当Linux背光百分比。完整原始数组、两条Miui曲线及复现结果在`内部记录目录
+| 环境光 | 原厂目标亮度 |
+| --- | --- |
+| 0 lux | 3.5 nit |
+| 7 lux | 24 nit |
+| 30 lux | 97 nit |
+| 100 lux | 103 nit |
+| 197 lux | 113.7 nit |
+| 300 lux | 123 nit |
+| 500 lux | 144 nit |
 
-[Android16参考ABC](https://android.googlesource.com/platform/frameworks/base/+/android16-release/services/core/java/com/android/server/display/AutomaticBrightnessController.java)用权重积分`x*(x/2+intercept)`计算快/慢窗口，两者和持续时间都越过阈值后更新已接受lux。这有助于解释dump里的窗口/门限；没有因此把AOSP源当完整Miui实现。
+背光使用 KTZ8866 指数电流映射。芯片的 [04b 数据手册](https://kinet-ic.com/uploads/web/KTZ8866/KTZ8866-04b.pdf)给出 `I ∝ 1.003040572^code`；设备两颗芯片的 `BL_CFG1=0x53`，其中 `BLED_MAP=0`，与该模式一致。原厂的普通亮度／高亮度区间和 `mi_bl_level_remap` 转换见[显示亮度说明](display-depth.md#hdr-亮度与背光)。
 
-## GNOME为何更敏感
+## 相对亮度映射
 
-[gsd48.1 ALS处理](https://github.com/GNOME/gnome-settings-daemon/blob/48.1/plugins/power/gsd-power-manager.c#L2833)使用0.1Hz指数低通，时间常数约1.59155s；目标是`lux*100/ambient_norm_value`，根据用户手动亮度归一化，再截到0..100。没有上述Miui lux滞回和1000ms持续门限，每次properties通知都提交整数百分比，包括相同目标。
+[GSD 48.1 上游实现](https://github.com/GNOME/gnome-settings-daemon/blob/48.1/plugins/power/gsd-power-manager.c#L2833)将亮度百分比按 lux 线性缩放。照度从 197 降到 7 lux 时，60% 会变为约 2%；而原厂目标亮度仅从 113.7 降到 24 nit，直接按照度比例计算会过度变暗。
 
-例如197→300lux，原厂目标nits只约增加8.2%，原厂打印的UI档位约62→64；现GSD线性目标增加约52.3%（之后受100%截断）。这说明策略差异，不能替代Linux面板实测nits校准。
+Piano 策略先用三条门限确定已接受的照度，再取得目标亮度 `N(lux)`。用户在 `L0` lux 下选择 `P0` 百分比后，后续目标为：
 
-已在现有GSD backlight policy实现可选设备配置。`linux/desktops/gnome/ambient-policy/piano.ini`保存三条门限曲线和1000/1000/5000ms时序；只在DT包含`xiaomi,piano`且SensorProxy单位为`lux`时选择。缺配置、其他机器、其他单位保持原行为，不修改SensorProxy的读数。
+```text
+P(lux) = clamp(P0 + K × ln(N(lux) / N(L0)), 0, 100)
+K = 100 / ((2047 - 20) × ln(1.003040572))
+  = 16.249888161019676
+```
 
-策略保持一个“已接受lux”，三路分别计算越过门限的连续时间。回到范围内取消相应计时；大门限要求1000ms、小增亮门限要求5000ms。之后仍用GSD原有的用户亮度归一化和指数平滑；定时器保证稳定lux没有后续notify时也能完成持续门限和过渡。手动调亮度、释放传感器、传感器消失和退出服务都取消定时器并重置。匹配设备还会跳过相同目标的重复背光提交；建立非零归一化之后允许0lux进入变暗判断。
+`20..2047` 是 GSD 在该背光接口上使用的码值范围。这里计算相对电流变化，不宣称 Linux 输出已校准到绝对 nit；内容相关背光、面板透射率和原厂 HDR 补偿也不包含在内。未来改变内核背光码值含义时，必须同步调整该系数。
 
-这部分解决频繁小变动触发的问题，但还不是完整原厂自动亮度：未接原厂双窗加权、辅助ALS/场景策略，也未把108点nits曲线映射到Linux KTZ背光。亮度幅度仍受GSD线性映射影响，不能宣称已达到原厂完整亮度轨迹。GNOME之外的桌面仍可直接使用SensorProxy和背光接口，不依赖此补丁。
+例如，197 lux 下手动设为 60%，降到 7 lux 后目标约为 35%，升到 300 lux 后约为 61%。7 lux 下手动设为 61%，降到 0 lux 后约为 30%，不再因为照度为零直接落到最低档。用户仍能主动选择最低亮度；零百分比和零 lux 都可作为有限的基准，之后光线变亮仍能恢复。
 
-同一配置有针对官方 GSD 48.1 和 51.0 两种接口的补丁：48.1 使用原 backlight API，51.0 使用标准 Shell brightness API。Debian 包版本为 `48.1-1+sunuefi3`，Nyarch 为 `51.0-1.3`；同时包含键盘背光热插拔刷新和[启动时锁屏状态同步](power-button.md#默认设置)。
+持续门限后沿用 GNOME 的 0.1 Hz 指数平滑，时间常数约 1.59 秒。定时器补全没有后续传感器通知的过渡；相同整数目标不重复提交。手动调亮度立即重建基准，释放或丢失传感器时取消定时器并清除门限计时。显示关闭时不接受新的调光目标，保留亮度基准和用户请求值。
 
-`./build.sh gsd`供默认release/root/CI调用：克隆已完成的Debian trixie ARM64 base，仅在克隆内恢复DNS，配置带Debian archive keyring的源码APT源，默认安装原始构建依赖，沿Debian原rules生产包。`build/gsd/runtime`只提供正常daemon/common两包，`SOURCE.json`记录APT源索引、`.dsc`/archives、补丁、版本、源文件和runtime哈希；匹配的成功产物直接复用。Nyarch构建准备相同设备策略的Arch配方，构建或校验缓存后安装。普通Debian/Arch及默认release构建入口见[策略打包说明](../../../linux/desktops/gnome/ambient-policy/README.md)。
+## 桌面与构建接入
+
+只在设备树包含 `xiaomi,piano` 且 SensorProxy 单位为 `lux` 时选择 Piano 曲线。其他设备、其他单位或缺配置时保留上游映射。配置和程序都安装在标准 GSD 软件包里，不增加调光服务。
+
+GSD 48.1 使用原 backlight API，以当前用户百分比建立基准；51.0 使用标准 Shell brightness API，保留 Shell 的用户亮度偏移，由 GSD 输出相对自动亮度目标。Debian 版本为 `48.1-1+sunuefi4`，Nyarch 为 `51.0-1.4`；同时包含键盘背光热插拔刷新和[启动时锁屏状态同步](power-button.md#默认设置)。
+
+`./build.sh gsd` 从发行版签名 APT 源校验 Debian 48.1 源码，在隔离的 ARM64 builder 中沿原 `debian/rules` 构建。`build/gsd/runtime` 提供 daemon／common 两包，`SOURCE.json` 记录源码、补丁和软件包摘要。Nyarch 使用对应 51.0 配方。构建命令见[策略打包说明](../../../linux/desktops/gnome/ambient-policy/README.md)。
 
 ## 标准设置界面
 
-[cc-power-panel48.4 `als_enabled_state_changed`](https://github.com/GNOME/gnome-control-center/blob/48.4/panels/power/cc-power-panel.c#L405)要求SensorProxy HasAmbientLight且`has_brightness`，后者由Power.Screen.Brightness≥0决定（638行）。ambient-enabled决定开关状态，不决定隐藏。电池决定分页布局，ALS在Power Saving组，不在Display页面。
-
-当前HasAmbientLight=true、ambient-enabled=true、Screen.Brightness=99。已通过标准AT-SPI动作进入GNOME设置的Power Saving分页，并查看3200×2136截图：Automatic Screen Brightness原生行可见，开关开启。没有强制显示能力行或另做设置界面。
+GNOME 设置的电源页面使用原生自动亮度开关。它要求 SensorProxy 的 `HasAmbientLight=true`，并且 GSD 提供可控制的屏幕亮度；`ambient-enabled` 控制启用状态。没有强制显示硬件能力或增加第二个设置入口。
