@@ -1,5 +1,6 @@
 """Shared CI generations retain hashes, build checks and one writer per cache."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -63,6 +64,47 @@ class SharedProductsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'stale or modified'):
                 shared.run('firmware', verify_only=True, root=self.root)
             command.assert_not_called()
+
+    def test_kernel_key_binds_only_the_release_kernel_section(self):
+        self.git('init','-q')
+        directory=self.root/'config';directory.mkdir()
+        path=directory/'release.json'
+        release=json.loads((ROOT/'config/release.json').read_text())
+        path.write_text(json.dumps(release,indent=2)+'\n')
+        self.git('add','.')
+        with patch.object(shared,'KERNEL_INPUTS',('config/release.json',)), \
+                patch.object(shared,'environment_identity',return_value={'container_image':'sha256:builder'}):
+            record,key=shared.identity('kernel',self.root)
+            release['login']['autologin']=not release['login']['autologin']
+            release['mesa']={'version':'27.0.0'}
+            path.write_text(json.dumps(release,sort_keys=True))
+            self.assertEqual(shared.identity('kernel',self.root),(record,key))
+            release['kernel']['localversion']+='-different'
+            path.write_text(json.dumps(release))
+            self.assertNotEqual(shared.identity('kernel',self.root)[1],key)
+
+    def test_kernel_restore_rejects_unknown_or_changed_policy_before_building(self):
+        import build_piano_full_kernel as kernel
+        (self.root/'config').mkdir()
+        config=self.root/'config/release.json'
+        release=json.loads((ROOT/'config/release.json').read_text())
+        config.write_text(json.dumps(release))
+        policy=kernel.kernel_policy_identity(self.root)
+        artifact=self.root/'artifacts/kernels/release';artifact.mkdir(parents=True)
+        source=self.root/'build/release';source.mkdir(parents=True)
+        (source/'source-manifest.json').write_text(json.dumps({'actual_commit':'a'*40}))
+        marker=artifact/'manifest.json'
+        for metadata in ({},{'kernel_policy':policy['policy'],'kernel_policy_sha256':policy['sha256']}):
+            marker.write_text(json.dumps({'source_commit':'a'*40,**metadata}))
+            release['kernel']['target_tree']='b'*40
+            config.write_text(json.dumps(release))
+            before=marker.read_bytes()
+            with patch.object(kernel,'toolchain') as toolchain,patch.object(shared.subprocess,'run') as command:
+                with self.assertRaisesRegex(ValueError,'policy differs or lacks section provenance'):
+                    shared.check_kernel_hot_inputs(self.root)
+                toolchain.assert_not_called()
+                command.assert_not_called()
+            self.assertEqual(marker.read_bytes(),before)
 
     def test_failed_build_never_publishes_a_cache_receipt(self):
         with patch.object(shared, 'identity', return_value=({'kind': 'firmware'}, 'key')), \

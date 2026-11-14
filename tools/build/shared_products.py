@@ -83,8 +83,11 @@ def identity(kind, root=ROOT):
     root = Path(root).resolve()
     inputs = FIRMWARE_INPUTS if kind == 'firmware' else KERNEL_INPUTS
     rows = source_identity(root, (*inputs, 'tools/build/shared_products.py',
-                                  'tools/build_container.py', 'config/build-container.json',
-                                  'containers/Dockerfile'))
+                                   'tools/build_container.py', 'config/build-container.json',
+                                   'containers/Dockerfile'))
+    if kind == 'kernel':
+        from build_piano_full_kernel import kernel_policy_identity
+        rows['config/release.json'] = {'section': 'kernel', **kernel_policy_identity(root)}
     record = {'schema_version': 1, 'kind': kind,
               'workspace': os.environ.get('SUNUEFI_CACHE_WORKSPACE', str(root)),
               'environment': environment_identity(), 'inputs': rows}
@@ -217,6 +220,8 @@ def check_kernel_hot_inputs(root=ROOT):
     source = json.loads((root / 'build/release/source-manifest.json').read_text())
     if record.get('source_commit') != source.get('actual_commit'):
         raise ValueError('Shared kernel source differs from the selected release')
+    if not kernel.kernel_policy_matches(record, kernel.kernel_policy_identity(root)):
+        raise ValueError('Shared kernel policy differs or lacks section provenance; rebuild in the shared job')
     for name, digest in record['inputs'].items():
         if sha(root / name) != digest:
             raise ValueError('Shared kernel build input differs: ' + name)
