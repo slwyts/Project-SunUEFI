@@ -1,15 +1,35 @@
 # Project SunUEFI
 
-小米平板 8 Pro（`piano`，骁龙 8 至尊版 / SM8750）的 EDK2 UEFI 固件、主线 Linux 内核和桌面系统适配。
-目标是通过统一的 UEFI 获得完整的 Linux 与 Windows 体验，同时保留原厂 Android。Linux 已经能用，Windows 还没有启动。
+> [!IMPORTANT]
+> **引用与署名**：引用、移植或基于本项目的内容（代码、数据、图片、结论）时，请在文档、说明页或发布页注明来源，并链接回 [Project SunUEFI](https://github.com/slwyts/Project-SunUEFI)。再分发代码时，请保留各文件原有的版权和许可证声明
+> **欢迎贡献**：如果你有新的设备或固件支持，欢迎提交 PR [贡献指南](CONTRIBUTING.md) 和 [AI 协作规范](AGENTS.md)。
+> **官方交流群**：[SunUEFI 官方交流群（骁龙 8E）](https://qm.qq.com/q/C1RkQC2yYw) · 群号 **1135414849** 强烈推荐加群交流，跟进最新进展，获取帮助和反馈问题
 
-这块平板的硬件不差，出厂却只能跑 HyperOS。我们给它加了一套自己的 UEFI，让它能从内部存储启动 Debian、Nyarch 或 SteamOS，想回 Android 随时可以回，Android 数据和原厂 Recovery 都保留。
+面向骁龙 8E（SM8750，骁龙 8 至尊版）平台的 EDK2 UEFI 固件与多系统启动适配。首台设备小米平板 8 Pro（`piano`）的主线 Linux 内核和桌面系统已完成完整体验适配，可通过统一的 UEFI 保留原厂 Android 并启动 Linux。Linux 已经能用，Windows on ARM 还没有启动，macOS / iOS 的 UEFI 启动链（[UniXNU](https://github.com/UniXNU/UniXNU)）适配在规划中。
+平台性能不差，但只能跑原厂平庸的安卓系统。我们给它加了一套自己的 UEFI，让它能从内部存储启动 Debian、Nyarch 或 SteamOS，想回 Android 随时可以回，Android 数据和原厂 Recovery 都保留。
 
-[快速开始](#快速开始) · [支持的硬件](#支持的硬件) · [已知问题](docs/user/known-issues.md) · [故障恢复](docs/user/recovery.md) · [尚未完成](#尚未完成)
+## 为什么选择 SunUEFI
+
+### 产品级的易用体验
+
+* **图形化引导助手**：在 Android 侧通过 WebUI 管理启动选项、分区和镜像安装，无需手动操作 Fastboot 或终端命令
+* **一键安装与切换**：下载镜像后在助手内点击安装，选择启动目标后重启即可，回到 Android 只需在 Linux 里运行一条命令
+* **开箱即用的桌面**：预配置动画、中文界面、默认浏览器和自动登录，首次启动就能直接使用
+* **保留原厂系统**：Android 数据、Recovery 和 OTA 更新能力完整保留，**开机自由选择Android或UEFI，Linux和Android互不干扰**，UEFI附带Simpleinit方便管理多系统启动
+
+### 创新
+
+* **合体 BOOT 启动链**：将选择器和 UEFI 附加在原厂内核之后，绕过小米 ABL 在 Recovery 分区自带内核时不加载 pvmfw 的限制（会导致启动完整性校验失败），同时避免替换 BOOT 内核导致 HyperOS 无法启动的问题，实现 Android 与 UEFI 的无缝共存
+* **UEFI Fastboot 服务**：UEFI 运行期间后台常驻 USB Fastboot，支持日志导出、截图、只读分区访问和启动请求，无需屏幕交互即可调试
+* **主线内核适配**：基于上游 Linux 主线开发，硬件支持通过标准内核子系统和设备树实现，无需发行版专用补丁或脚本
+* **统一固件核心**：同一份 UEFI 镜像用于合体 BOOT、临时启动和安装器，不再维护多套测试镜像
+* **助手管理器**：在 Android 侧通过KSU或SukiSU的模块WebUI直接管理或更新UEFI/分区/系统刷写，无需额外的刷机工具，操作简单直观；Linux侧也提供一键切换启动目标工具
+
+[快速开始](#快速开始) · [支持的硬件](#支持的硬件) · [已知问题](docs/user/known-issues.md) · [故障恢复](docs/user/recovery.md)
 
 ## 开机时发生什么
 
-原厂 Android 内核留在原位，SunUEFI 只把内核的入口改向一个小选择器，再把选择器和 UEFI 接在内核后面一起加载。这个整体叫合体 BOOT：选择 Android 进入 HyperOS，选择 UEFI 启动 Linux 或进入固件菜单，小米原厂的 Recovery 照常可用。选择页停留约三秒，音量键切换，短按电源确认，没有操作就沿用保存的选择。原理见[合体 BOOT](docs/devel/boot/combined-boot.md)。
+原厂 Android 内核留在原位，SunUEFI 把内核的原来入口改向自有实现的一个小选择器，再把选择器和 UEFI 接在内核后面一起加载。这个整体叫合体 BOOT：选择 Android 进入 HyperOS，选择 UEFI 启动 Linux 或进入固件菜单，小米原厂的 Recovery 照常可用。选择页停留约三秒，音量键切换，短按电源确认，没有操作就沿用保存的选择。原理见[合体 BOOT](docs/devel/boot/combined-boot.md)。
 
 ```mermaid
 flowchart LR
