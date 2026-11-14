@@ -139,7 +139,7 @@ def subprojects(work):
         with tarfile.open(archive) as stream:
             stream.extractall(work / 'subprojects', filter='data')
         if row.get('patch_directory'):
-                shutil.copytree(work / 'subprojects/packagefiles' / row['patch_directory'],
+            shutil.copytree(work / 'subprojects/packagefiles' / row['patch_directory'],
                             work / 'subprojects' / row['directory'], dirs_exist_ok=True)
 
 
