@@ -1,8 +1,10 @@
 # Mutter 适配
 
-Debian sid 沿发行版原始 `debian/rules`、`debian/control` 和 quilt 构建，只保留空 Gamma LUT 修复。源码版本从目标 ARM64 APT 候选的 `Source` 字段选择，包版本在该版本后追加 `+sunuefi1`，不固定旧 Debian 13 的 ABI。
+Debian sid 沿发行版原始 `debian/rules`、`debian/control` 和 quilt 构建，与 Nyarch 共用空 Gamma LUT 和取消触摸 grab 两项修复。共享系列在 `patches/mutter/51.0/series.json`，覆盖 51.0 和 51.1。源码版本从目标 ARM64 APT 候选的 `Source` 字段选择，包版本在该版本后追加 `+sunuefi1`，不固定旧 Debian 13 的 ABI。
 
 `0001-kms-empty-gamma-bypass.patch` 将零项 Gamma LUT 表示为已有的 NULL bypass，避免重采样时除以零和访问空数组，非空曲线不变。签名 sid 源码的 `meta-kms-update.c` 仍将零项 LUT 传入 `meta_gamma_lut_copy_to_size()`，所以这项补丁仍需保留。
+
+`0003-wayland-touch-ignore-cancelled-grab.patch` 在触摸序列取消、focus 已清除后拒绝交互移动和缩放请求，避免解引用空指针。sid 源码的 `touch_can_grab_surface()` 仍直接读取 `focus_surface->surface`。这两项均为 downstream 补丁，尚未声明上游接受；删除前按共享系列的条件核对发行源码和功能。
 
 无 EDID 输出不再使用本地补丁。发行版 Mutter 的 `meta-color-store.c` 已按真实 device ID 生成 sRGB fallback，`meta-color-device.c` 保留 colord 默认 profile；内核内屏也提供匹配面板的合成 EDID。通用 sRGB 不是面板实测校准，不能据此声明 HDR 或色彩精度。
 

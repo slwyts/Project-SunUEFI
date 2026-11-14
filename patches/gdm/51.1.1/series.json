@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "version": "51.1.1",
+  "targets": ["nyarch-gnome"],
   "package_release": "1.1",
   "source": {
     "url": "https://download.gnome.org/sources/gdm/51/gdm-51.1.1.tar.xz",

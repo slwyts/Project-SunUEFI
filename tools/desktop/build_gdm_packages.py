@@ -28,7 +28,7 @@ def selection():
 
 def target_selection(rootfs):
     target = debian_package.target_identity(rootfs, 'gdm3')
-    if target['binary']['source_version'].split('-', 1)[0] not in ('51.0', '51.1', '51.1.1'):
+    if target['binary']['source_version'].split('-', 1)[0] not in json.loads(SERIES.read_text())['versions']:
         raise ValueError('The shared GDM patch requires the signed sid GDM 51 source')
     return target
 

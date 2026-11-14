@@ -16,6 +16,7 @@ import build_arch_package
 import build_arch_ffmpeg
 import build_nyarch_apps
 import build_release_rootfs as release
+from build_piano_runtime_helpers import source_patches
 import stage_arch_piano
 from build_steamos_rootfs import sensor_sources, sensor_recipes
 from prepare_steamos_rootfs import download
@@ -97,13 +98,12 @@ def build(args):
     if gsd.exists():
         shutil.rmtree(gsd)
     run(sys.executable, ROOT / 'linux/desktops/gnome/ambient-policy/packaging/prepare_package.py',
-        'arch', gsd)
+        'arch', gsd, '--rootfs', root)
     mutter = recipes / 'mutter'
     shutil.copytree(ROOT / 'linux/desktops/gnome/arch/mutter', mutter,
                     dirs_exist_ok=True)
-    for name in ('0001-kms-empty-gamma-bypass.patch',
-                 '0003-wayland-touch-ignore-cancelled-grab.patch'):
-        shutil.copy2(ROOT / 'linux/desktops/gnome/patches/mutter' / name, mutter)
+    for path in source_patches(ROOT / 'patches/mutter/51.0/series.json'):
+        shutil.copy2(path, mutter / path.name)
     control_center = recipes / 'control-center'
     shutil.copytree(ROOT / 'linux/desktops/gnome/arch/control-center',
                     control_center, dirs_exist_ok=True)

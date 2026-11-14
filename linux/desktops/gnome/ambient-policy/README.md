@@ -15,9 +15,9 @@ sudo ./build.sh gsd \
 
 源码版本从目标 sid ARM64 二进制候选的 `Source` 字段选择，再核对签名 Sources、`.dsc` 与 archive 的 SHA256。缓存绑定该源码、目标桌面 ABI 和共享补丁；不复用其他 Debian suite 或旧 GNOME 的包。沿原始 `debian/rules`、`debian/control` 和 quilt 构建，跳过上游测试套件但保留原功能。输出收集 daemon/common 两个运行包、`.changes`、`.buildinfo` 与来源记录。
 
-## Debian sid / GNOME 51.0
+## Debian sid / GNOME 51
 
-使用发行版签名 APT 源提供的 `gnome-settings-daemon` 51.0 源码及正常构建依赖。Debian 和 Nyarch 共用同一份 ambient 策略、键盘热插拔及启动锁屏状态补丁。在新目录准备副本时，工具将这些补丁加入既有 quilt series 并由 `dpkg-source` 应用；不会修改输入目录或安装包。
+使用发行版签名 APT 源提供的 `gnome-settings-daemon` 源码及正常构建依赖。Debian 和 Nyarch 共用 `51.0/series.json` 的 ambient 策略、键盘热插拔及启动锁屏状态补丁；该系列覆盖已核对的 51.0 和 51.1，不为发行版复制补丁。在新目录准备副本时，工具将这些补丁加入既有 quilt series 并由 `dpkg-source` 应用；不会修改输入目录或安装包。
 
 ```sh
 apt-get source gnome-settings-daemon
@@ -28,17 +28,17 @@ cd /absolute/new/gsd-piano-build
 dpkg-buildpackage -b -us -uc
 ```
 
-发行版源码需为 51.0 且使用标准 `3.0 (quilt)` 格式；上下文不同会在准备时失败，不能忽略补丁错误。生成标准 `gnome-settings-daemon` 包，原始源码版本后追加 `+sunuefi1`。由发行版正常安装/升级流程替换包，重新登录使新 power manager 生效。
+发行版源码需为该系列支持的版本且使用标准 `3.0 (quilt)` 格式；上下文不同会在准备时失败，不能忽略补丁错误。生成标准 `gnome-settings-daemon` 包，原始源码版本后追加 `+sunuefi1`。由发行版正常安装/升级流程替换包，重新登录使新 power manager 生效。
 
-## Arch / Arch Linux ARM 51.0
+## Arch / Arch Linux ARM 51
 
-GNOME 51.0 使用 Shell brightness 接口。Arch 配方使用与 Debian 相同的 51.0 补丁，固定官方 release tar 的 SHA256，准备时填写本地补丁 SHA256。应在具有相应 51.x 依赖的目标发行版构建；不会为较旧桌面自动降级或更换 GNOME 大版本。
+GNOME 51 使用 Shell brightness 接口。Arch 配方从目标 pacman 仓库选择版本，要求目标已安装的 GSD 与仓库同版，再从共享系列读取对应官方 release tar 的 SHA256。准备结果同时记录源码和补丁摘要，不再把仓库的 51.1 降到 51.0。
 
 ```sh
 python3 linux/desktops/gnome/ambient-policy/packaging/prepare_package.py \
-  arch /absolute/new/gsd-piano-package
+  arch /absolute/new/gsd-piano-package --rootfs /absolute/project/build/distros/nyarch-gnome/rootfs
 cd /absolute/new/gsd-piano-package
 makepkg -s
 ```
 
-Nyarch 镜像自动安装 `51.0-1.4`。显示关闭与输入唤醒仍通过桌面和内核的标准接口处理。
+Nyarch 包保留仓库的上游版本，在仓库 pkgrel 后追加 `.1`；例如仓库为 `51.1-1` 时生成 `51.1-1.1`。显示关闭与输入唤醒仍通过桌面和内核的标准接口处理。

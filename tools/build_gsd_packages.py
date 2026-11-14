@@ -14,11 +14,10 @@ from desktop import package_build
 from desktop.debian_package import capture, chroot, checksum_rows, controls, devices, inside, run, sha, verify_source
 
 ROOT = Path(__file__).resolve().parents[1]
-PATCH = ROOT / 'patches/gnome-settings-daemon/0001-power-optional-device-ambient-profile-51.patch'
 SERIES = ROOT / 'patches/gnome-settings-daemon/51.0/series.json'
 PREPARE = ROOT / 'linux/desktops/gnome/ambient-policy/packaging/prepare_package.py'
 POLICY = PREPARE.parent.parent
-PATCHES = [PATCH, *source_patches(SERIES)]
+PATCHES = [path.resolve() for path in source_patches(SERIES)]
 RUNTIME = {'gnome-settings-daemon': 'arm64', 'gnome-settings-daemon-common': 'all'}
 REVISION = 1
 
@@ -34,8 +33,8 @@ def inputs():
 
 def selection(rootfs):
     target = debian.target_identity(rootfs, 'gnome-settings-daemon')
-    if target['binary']['source_version'].split('-', 1)[0] != '51.0':
-        raise ValueError('The shared GSD patches require the signed sid GNOME 51.0 source')
+    if target['binary']['source_version'].split('-', 1)[0] not in json.loads(SERIES.read_text())['versions']:
+        raise ValueError('The shared GSD patches require a supported signed sid GNOME 51 source')
     return target
 
 

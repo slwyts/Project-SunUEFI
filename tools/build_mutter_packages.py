@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Debian sid ARM64 Mutter with the empty KMS Gamma fix."""
+"""Build Debian sid ARM64 Mutter with shared KMS Gamma and touch-grab fixes."""
 import argparse
 import hashlib
 import json
@@ -9,11 +9,13 @@ import subprocess
 import sys
 
 import build_gsd_packages as debian
+from build_piano_runtime_helpers import source_patches
 from desktop import debian_package
 from desktop import package_build
 
 ROOT = Path(__file__).resolve().parents[1]
-PATCHES = [ROOT / 'linux/desktops/gnome/patches/mutter/0001-kms-empty-gamma-bypass.patch']
+SERIES = ROOT / 'patches/mutter/51.0/series.json'
+PATCHES = [path.resolve() for path in source_patches(SERIES)]
 RUNTIME = {'mutter': 'arm64', 'gir1.2-mutter-51': 'arm64', 'libmutter-51-0': 'arm64',
            'mutter-common': 'all', 'mutter-common-bin': 'arm64'}
 REVISION = 1
@@ -25,13 +27,13 @@ def patch_records():
 
 def selection(rootfs):
     target = debian_package.target_identity(rootfs, 'mutter')
-    if target['binary']['source_version'].split('-', 1)[0] != '51.0':
-        raise ValueError('The selected Mutter patches and runtime packages require signed sid Mutter 51.0')
+    if target['binary']['source_version'].split('-', 1)[0] not in json.loads(SERIES.read_text())['versions']:
+        raise ValueError('The shared Mutter patches and runtime packages require supported signed sid Mutter 51')
     return target
 
 
 def reusable(output, rootfs):
-    inputs = debian_package.input_records([Path(__file__), Path(debian_package.__file__),
+    inputs = debian_package.input_records([Path(__file__), SERIES, Path(debian_package.__file__),
                                           Path(package_build.__file__)])
     return debian_package.reusable(Path(output), selection(rootfs), patch_records(), RUNTIME, inputs, REVISION)
 
@@ -93,7 +95,7 @@ def align_development_cohorts(rootfs, log, execute=True):
 
 def build(output, sysroot, builder_root, jobs, install_dependencies=True):
     selection(sysroot or builder_root)
-    return debian_package.build(output, sysroot, jobs, 'mutter', PATCHES, RUNTIME, [Path(__file__)],
+    return debian_package.build(output, sysroot, jobs, 'mutter', PATCHES, RUNTIME, [Path(__file__), SERIES],
                                 revision=REVISION, builder_root=builder_root,
                                 install_dependencies=install_dependencies)
 
