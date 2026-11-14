@@ -1,8 +1,6 @@
 {
   "schema_version": 1,
-  "targets": [
-    "steamos"
-  ],
+  "targets": ["steamos"],
   "patches": [
     {
       "file": "0001-freedreno-renderonly-height-alignment.patch",

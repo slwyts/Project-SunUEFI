@@ -16,13 +16,13 @@
     "mesa": {
       "target_specific": true,
       "source": {
-        "commit": "a89c1e46eef3e161520b084479928aaa5a8e8732",
-        "url": "https://github.com/blu-sharky/piano-mesa.git"
+        "commit": "2061a5ee6184e465eafb87cf465aed92c04f1a41",
+        "url": "https://gitlab.freedesktop.org/mesa/mesa.git"
       },
       "source_patch_ledger": [
         {
-          "path": "patches/0001-freedreno-Add-chip-id-support-for-A830v1.patch",
-          "sha256": "01bc8e6b35019f7d6b84bc2d919a60686ffb1742d4df04467a89d3aac22a7380"
+          "path": "patches/mesa/26.2.6/0001-freedreno-a830v1.patch",
+          "sha256": "77a906a6976f9450885ff6b0f626ad6a3d3d91a3b6483f625e18be29e1907e12"
         }
       ],
       "license": "MIT; retain patch authorship; no source copied"

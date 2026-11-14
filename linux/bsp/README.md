@@ -27,4 +27,4 @@ Debian 默认 trixie，Ubuntu 默认 noble，Arch Linux ARM 默认 rolling；Dee
 
 安装前可用 `inspect --against /absolute/target-root` 只读检查文件和 dpkg/pacman 归属。UCM 使用标准 ALSA 路径；已有同名发行版文件或其他包归属时停止，不加宽泛 Replaces，也不使用 force-overwrite。Debian 包附只读 preinst 检查，Arch 依赖正常 pacman 文件冲突检查。没有通用 `install` 子命令；目标环境使用标准 APT/dpkg 或 pacman。
 
-`layers.json` 记录 native runtime 的既有 producer、固件来源及 kernel 版本约束；不读取个人 build 输出。内核 GPL、源文件 BSD 等许可继续按各组件保留，固件另按原分发条款。Mesa 继续来自固定的公开 `piano-mesa` source：`layers.json` 保存其上游补丁路径与哈希，不复制 Mesa 源码或假设 Debian 二进制能跨发行版使用。
+`layers.json` 记录 native runtime 的既有 producer、固件来源及 kernel 版本约束；不读取个人 build 输出。内核 GPL、源文件 BSD 等许可继续按各组件保留，固件另按原分发条款。Mesa 使用各目标发行版的原生软件包配方；26.2.6／26.2.7 缺失的 830v1 芯片 ID 和 DirectX-Headers 兼容修正共用 `patches/mesa/26.2.6/` 中的上游 MIT 补丁，不复制 Mesa 源码或假设 Debian 二进制能跨发行版使用。SteamOS 27 的显示缓冲对齐修正独立保留。

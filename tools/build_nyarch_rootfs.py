@@ -91,9 +91,11 @@ def build(args):
     recipes = inputs / 'recipes'
     if not recipes.exists():
         sensor_recipes(recipes, sensors)
-        mesa = recipes / 'mesa'
-        shutil.copytree(ROOT / 'linux/bsp/arch/mesa', mesa)
-        shutil.copy2(ROOT / 'upstream/piano-mesa-current/patches/0001-freedreno-Add-chip-id-support-for-A830v1.patch', mesa)
+    mesa = recipes / 'mesa'
+    shutil.copytree(ROOT / 'linux/bsp/arch/mesa', mesa, dirs_exist_ok=True)
+    mesa_series = ROOT / 'patches/mesa/26.2.6/series.json'
+    for item in json.loads(mesa_series.read_text())['series']:
+        shutil.copy2(mesa_series.parent / item['path'], mesa)
     gsd = recipes / 'gnome-settings-daemon'
     if gsd.exists():
         shutil.rmtree(gsd)
@@ -111,10 +113,18 @@ def build(args):
                  control_center)
     # SteamOS's protobuf compatibility rebuild is intentionally not selected
     # for Arch: its rolling packages already share the current library ABI.
-    for name in ('mutter', 'control-center', 'mesa', 'fastrpc', 'libssc', 'iio-sensor-proxy'):
+    for name in ('mutter', 'control-center', 'fastrpc', 'libssc', 'iio-sensor-proxy'):
         packages = output / 'packages' / name
         if not (packages / 'manifest.json').exists():
             build_arch_package.build(root, recipes / name, packages)
+    mesa_packages = output / 'packages/mesa'
+    mesa_manifest = mesa_packages / 'manifest.json'
+    if (not mesa_manifest.is_file() or
+            json.loads(mesa_manifest.read_text()).get('recipe_sha256') !=
+            release.digest(mesa / 'PKGBUILD')):
+        build_arch_package.build(root, mesa, mesa_packages)
+    else:
+        build_arch_package.install_cached(root, mesa_packages)
     gsd_packages = output / 'packages/gnome-settings-daemon'
     gsd_manifest = gsd_packages / 'manifest.json'
     if (not gsd_manifest.is_file() or

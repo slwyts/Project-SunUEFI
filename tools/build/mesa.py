@@ -19,7 +19,9 @@ RUNTIME = {'mesa-libgallium', 'libgbm1', 'libegl-mesa0', 'libglx-mesa0',
 def build(output, sysroot, jobs):
     policy = json.loads(SERIES.read_text())
     version = policy['source_version'] + '+' + policy['local_revision']
-    patches = [SERIES.parent / name for name in policy['series']]
+    patches = [SERIES.parent / row['path'] for row in policy['series']]
+    if any(package_build.sha(path) != row['sha256'] for path, row in zip(patches, policy['series'])):
+        raise ValueError('Mesa patch checksum mismatch')
     output = output.resolve()
     records = [{'path': str(p.relative_to(ROOT)), 'sha256': package_build.sha(p)} for p in patches]
     if cached := debian.reusable(output, version, records, RUNTIME):

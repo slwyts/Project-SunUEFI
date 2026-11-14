@@ -1,7 +1,29 @@
 {
   "schema_version": 1,
   "license": "MIT",
+  "targets": ["debian-gnome", "debian-kde", "nyarch-gnome"],
   "source_version": "26.2.6-1",
   "local_revision": "piano1",
-  "series": ["0001-freedreno-a830v1.patch"]
+  "series": [
+    {
+      "path": "0001-freedreno-a830v1.patch",
+      "sha256": "77a906a6976f9450885ff6b0f626ad6a3d3d91a3b6483f625e18be29e1907e12",
+      "upstream": {
+        "status": "merged",
+        "url": "https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/43878",
+        "commit": "2061a5ee6184e465eafb87cf465aed92c04f1a41",
+        "drop_when": "The selected Mesa release recognises drm/msm chip ID 0xffff44050001 without this backport; compile the real Freedreno device lookup and verify it returns an A8xx device."
+      }
+    },
+    {
+      "path": "0002-d3d12-mutable-picture-control.patch",
+      "sha256": "924b07b78f73e6d32b6c7946562eb4697a4f4d924071a85f7f2bb8f388940896",
+      "upstream": {
+        "status": "merged",
+        "url": "https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/43715",
+        "commit": "c963b6c854fe02b5270eee20e2cf9f12ee2d4633",
+        "drop_when": "The selected Mesa release has a separate mutable picture-control representation and builds the complete D3D12 video encoder with DirectX-Headers 1.620.2 or newer without this backport."
+      }
+    }
+  ]
 }

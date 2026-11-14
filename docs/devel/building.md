@@ -102,7 +102,7 @@ x86 主机用 `./build.sh ffmpeg --sysroot 已完成的sid_ARM64根目录` 构�
 交叉编译使用 GNU 汇编器与链接器，保留 Debian 的符号版本表和调试信息处理。
 产品 CI 使用原生 ARM runner，缓存与源码、补丁匹配的 Debian 运行包，并取消被新提交替代的构建。
 
-Debian 的 Mesa、FFmpeg、sensors 在 sid 根目录的隔离副本中构建，不安装宿主容器的库或混用 trixie-backports。`--sysroot` 不修改输入根目录；包版本、源码归档、补丁和二进制哈希记录在各输出目录。Mesa `26.2.6-1` 的 Freedreno 设备表仍只有 `0xffff44050000` 与 KGSL `0x44050001`，无法匹配 drm/msm 的 `0xffff44050001`；`patches/mesa/26.2.6/` 保留上游提交 `2061a5ee` 的一行设备 ID 修正，经原始 Debian 配方构建，不继续使用旧的 piano-mesa backports 脚本。
+Debian 的 Mesa、FFmpeg、sensors 在 sid 根目录的隔离副本中构建，不安装宿主容器的库或混用 trixie-backports。`--sysroot` 不修改输入根目录；包版本、源码归档、补丁和二进制哈希记录在各输出目录。Mesa `26.2.6-1` 的 Freedreno 设备表仍只有 `0xffff44050000` 与 KGSL `0x44050001`，无法匹配 drm/msm 的 `0xffff44050001`；`patches/mesa/26.2.6/` 保留上游提交 `2061a5ee` 的一行设备 ID 修正，以及新 DirectX-Headers 所需的上游 D3D12 可写参数修正。两者经原始 Debian 配方构建，不继续使用旧的 piano-mesa backports 脚本。Nyarch 的 Mesa 26.2.7 共用这些补丁；SteamOS 27 的显示缓冲对齐修正单独保留。
 
 已有 sid ARM64 根目录时，可以单独重建这三组包：
 
