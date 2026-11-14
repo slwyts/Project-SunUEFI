@@ -154,7 +154,7 @@ def validate(root, work, output):
                 fields.get('pkgver') != ['1:' + mesa.policy()['arch']['package_version'] + '-' +
                                          mesa.policy()['arch']['package_release']]):
             raise ValueError('Native Mesa package identity differs: ' + archive.name)
-        elf = {}
+        elf, object_types = {}, {}
         process = subprocess.Popen(['bsdtar', '-cf', '-', '--format=gnutar', '@' + str(archive)],
                                    stdout=subprocess.PIPE)
         try:
@@ -171,7 +171,9 @@ def validate(root, work, output):
                             continue
                         if header[:6] != b'\x7fELF\x02\x01' or header[18:20] != b'\xb7\x00':
                             raise ValueError('Native Mesa package contains a non-ARM64 ELF: ' + str(name))
-                        elf['/' + name.as_posix()] = hashlib.sha256(header + stream.read()).hexdigest()
+                        installed = '/' + name.as_posix()
+                        object_types[installed] = int.from_bytes(header[16:18], 'little')
+                        elf[installed] = hashlib.sha256(header + stream.read()).hexdigest()
         finally:
             process.stdout.close()
             status = process.wait()
@@ -184,6 +186,13 @@ def validate(root, work, output):
             if actual != elf:
                 raise ValueError('Installed native Mesa ELF differs from its package: ' + archive.name)
             for name in elf:
+                if object_types[name] == 1:
+                    continue  # Relocatable objects are resolved by their eventual linker.
+                if object_types[name] not in (2, 3):
+                    raise ValueError('Unexpected native Mesa ELF object type: ' + name)
+                dynamic = debian.capture(['readelf', '--dynamic', root / name.lstrip('/')])
+                if '(NEEDED)' not in dynamic:
+                    continue
                 result = subprocess.run(['chroot', root, 'ldd', '-r', name],
                                         capture_output=True, text=True)
                 if result.returncode or any(word in result.stdout + result.stderr
@@ -200,7 +209,7 @@ def validate(root, work, output):
         if ('pkgbuild_sha256sum = ' + package_build.sha(work / 'PKGBUILD')) not in buildinfo.splitlines():
             raise ValueError('Native Mesa build receipt differs from its recipe: ' + archive.name)
         (output / (archive.name + '.BUILDINFO')).write_text(buildinfo + '\n')
-        packages[archive.name] = {'control': fields, 'elf_sha256': elf}
+        packages[archive.name] = {'control': fields, 'elf_sha256': elf, 'elf_types': object_types}
     if not packages or not any(row['elf_sha256'] for row in packages.values()):
         raise ValueError('Native Mesa build produced no ARM64 runtime ELF files')
     if {row['control']['pkgname'][0] for row in packages.values()} != set(selected):
