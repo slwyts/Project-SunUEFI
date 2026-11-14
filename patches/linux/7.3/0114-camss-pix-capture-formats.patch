@@ -1,0 +1,71 @@
+From 234828360faa08ab1c06c220a164509b25294bab Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sat, 14 Nov 2026 21:59:54 +0800
+Subject: [PATCH] media: camss: separate TFE980 sink and capture formats
+
+The SM8750 PIX path always enables the demosaic and FD Y/C write masters.
+Its video node cannot capture the Bayer formats accepted on the sink pad.
+
+Keep Bayer enumeration on the PIX sink and expose only NV12 on its capture
+node. Use a supported default sink code for SM8750 instead of advertising
+an unsupported UYVY format. Raw capture remains on the RDI nodes.
+---
+ drivers/media/platform/qcom/camss/camss-vfe.c | 22 ++++++++++++++-----
+ 1 file changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index d836cc03b..c23191227 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -300,8 +300,6 @@ static const struct camss_format_info formats_pix_980[] = {
+ 	  PER_PLANE_DATA(0, 1, 1, 1, 1, 10) },
+ 	{ MEDIA_BUS_FMT_SRGGB10_1X10, 10, V4L2_PIX_FMT_SRGGB10P, 1,
+ 	  PER_PLANE_DATA(0, 1, 1, 1, 1, 10) },
+-	{ MEDIA_BUS_FMT_YUYV8_1_5X8, 8, V4L2_PIX_FMT_NV12, 1,
+-	  PER_PLANE_DATA(0, 1, 1, 2, 3, 8) },
+ };
+ 
+ const struct camss_formats vfe_formats_pix_980 = {
+@@ -309,6 +307,11 @@ const struct camss_formats vfe_formats_pix_980 = {
+ 	.formats = formats_pix_980
+ };
+ 
++static const struct camss_format_info formats_pix_980_output[] = {
++	{ MEDIA_BUS_FMT_YUYV8_1_5X8, 8, V4L2_PIX_FMT_NV12, 1,
++	  PER_PLANE_DATA(0, 1, 1, 2, 3, 8) },
++};
++
+ static u32 vfe_src_pad_code(struct vfe_line *line, u32 sink_code,
+ 			    unsigned int index, u32 src_req_code)
+ {
+@@ -1558,9 +1561,12 @@ static void vfe_try_format(struct vfe_line *line,
+ 			if (fmt->code == line->formats[i].code)
+ 				break;
+ 
+-		/* If not found, use UYVY as default */
+-		if (i >= line->nformats)
+-			fmt->code = MEDIA_BUS_FMT_UYVY8_1X16;
++		if (i >= line->nformats) {
++			if (to_vfe(line)->camss->res->version == CAMSS_8750)
++				fmt->code = line->formats[0].code;
++			else
++				fmt->code = MEDIA_BUS_FMT_UYVY8_1X16;
++		}
+ 
+ 		fmt->width = clamp_t(u32, fmt->width, 1, 8191);
+ 		fmt->height = clamp_t(u32, fmt->height, 1, 8191);
+@@ -2462,6 +2468,12 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
+ 
+ 		video_out->nformats = vfe->line[i].nformats;
+ 		video_out->formats = vfe->line[i].formats;
++		if (vfe->camss->res->version == CAMSS_8750 &&
++		    vfe_line_has_isp(vfe, i)) {
++			/* FD write masters produce NV12, not the Bayer input. */
++			video_out->nformats = ARRAY_SIZE(formats_pix_980_output);
++			video_out->formats = formats_pix_980_output;
++		}
+ 
+ 		snprintf(name, ARRAY_SIZE(name), "%s%d_%s%d",
+ 			 MSM_VFE_NAME, vfe->id, "video", i);
+-- 
+2.56.1

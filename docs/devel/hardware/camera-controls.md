@@ -2,6 +2,8 @@
 
 相机服务向应用提供前摄、后摄两个 V4L2 摄像头。普通模式使用 CAMSS 硬件 ISP 输出 NV12；后摄全幅 RAW10 使用软件 Quad CFA 转换。服务只在应用开流时启动传感器和 ISP，关闭流后停止 DMA。曝光、白平衡和后摄对焦由同一服务的帧循环控制。
 
+SM8750 TFE980 的 PIX sink 接收四种排列的 RAW10 Bayer，source 和对应捕获节点只输出 NV12。RAW10 原始采集走 RDI，不能因 PIX 接收 Bayer 就把它公布为 RAW10 捕获设备。[格式补丁](../../../patches/linux/7.3/0114-camss-pix-capture-formats.patch)分别描述 sink 和捕获格式，并让 SM8750 sink 的默认值落在支持的格式中；不再共用包含 RAW10 和 NV12 的捕获枚举。
+
 ## 分辨率和帧率
 
 默认输出为 1920×1440、30 fps。应用通过标准 `VIDIOC_S_FMT` 和 `VIDIOC_S_PARM` 选择尺寸和帧率，不需要修改服务配置。

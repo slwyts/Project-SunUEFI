@@ -4,8 +4,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "c8b5b1733e63dd1472b82a8be0a5548d8bf97649",
-  "original_target_commit": "e8adfef4618d1829a4f7b36b06f7c3c67da62c91",
+  "target_tree": "fd30b8c2f34ff775a18393f2adbf851fd37915eb",
+  "original_target_commit": "234828360faa08ab1c06c220a164509b25294bab",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -911,6 +911,14 @@
       "original_parent": "7679892741f7c03527300a76f2c008eb59bf3891",
       "committer_date": "2026-11-14T21:48:56+08:00",
       "tree": "c8b5b1733e63dd1472b82a8be0a5548d8bf97649"
+    },
+    {
+      "file": "0114-camss-pix-capture-formats.patch",
+      "sha256": "0cd3a625cd0aed962865a0730ef023cafd834f5e209107d9862a37c25eaa2df2",
+      "original_commit": "234828360faa08ab1c06c220a164509b25294bab",
+      "original_parent": "e8adfef4618d1829a4f7b36b06f7c3c67da62c91",
+      "committer_date": "2026-11-14T21:59:54+08:00",
+      "tree": "fd30b8c2f34ff775a18393f2adbf851fd37915eb"
     }
   ],
   "provenance": {
