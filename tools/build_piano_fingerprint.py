@@ -401,7 +401,10 @@ def install_debian_desktop(root, runtime, output):
     cfg = json.loads((ROOT / 'config/fingerprint.json').read_text())['desktop']['libfprint']
     backend_archive = backend_sources(runtime)
     inputs = source_inputs()
-    debian_abi(root)
+    architecture = subprocess.check_output(
+        ['chroot', root, 'dpkg', '--print-architecture'], text=True).strip()
+    if architecture != 'arm64':
+        raise ValueError('The fingerprint target must use ARM64 Debian packages')
     # Runtime packages belong in the image; compilers and -dev packages do not.
     with build_devices(root), build_resolver(root):
         subprocess.run(['chroot', root, 'env', 'DEBIAN_FRONTEND=noninteractive',
