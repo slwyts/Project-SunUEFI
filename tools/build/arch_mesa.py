@@ -75,6 +75,8 @@ def build(output, root, jobs, resume=False, steamos=False):
     if (not output.is_relative_to(ROOT / 'build') or output.is_relative_to(root) or
             root.is_relative_to(output) or jobs < 1):
         raise ValueError('Use separate project build output and ARM64 rootfs directories')
+    output.mkdir(parents=True, exist_ok=True)
+    (output / '.incomplete').write_text('Native Mesa package build has not completed.\n')
     selected = recipe(output / 'recipe', steamos)
     build_arch_package.build(root, selected, output / 'runtime', resume=resume, jobs=jobs,
                              validate=validate)
@@ -83,6 +85,7 @@ def build(output, root, jobs, resume=False, steamos=False):
                   packages=json.loads((output / 'runtime/manifest.json').read_text())['packages'],
                   validation=json.loads((output / 'runtime/VALIDATION.json').read_text()))
     (output / 'SOURCE.json').write_text(json.dumps(record, indent=2) + '\n')
+    (output / '.incomplete').unlink()
     return record
 
 
