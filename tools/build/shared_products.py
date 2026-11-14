@@ -131,6 +131,9 @@ def atomic_json(path, record):
         json.dump(record, stream, indent=2)
         stream.write('\n')
         stream.flush()
+        # Docker builds run as root; the runner must be able to read this file
+        # when saving the validated generation to Actions cache.
+        os.fchmod(stream.fileno(), 0o644)
         os.fsync(stream.fileno())
     temporary.replace(path)
 

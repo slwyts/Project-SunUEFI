@@ -51,6 +51,7 @@ class SharedProductsTests(unittest.TestCase):
                   'verification': {'verified': True}}
         marker = self.root / 'build/shared-products/firmware.json'
         shared.atomic_json(marker, record)
+        self.assertEqual(marker.stat().st_mode & 0o777, 0o644)
         with patch.object(shared, 'identity', return_value=(identity, 'key')), \
                 patch.object(shared, 'output_paths', return_value=[output]), \
                 patch.object(shared, 'verify_firmware', return_value={'verified': True}) as verify, \
