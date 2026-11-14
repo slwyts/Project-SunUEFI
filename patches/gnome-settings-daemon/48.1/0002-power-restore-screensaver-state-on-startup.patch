@@ -1,0 +1,43 @@
+From: Project SunUEFI
+Subject: [PATCH] power: restore the current screensaver state at startup
+
+ActiveChanged is not replayed to a new power manager. Query GetActive before
+initializing idle watches and monitor power, so restarting the daemon while
+locked does not leave a black framebuffer with the panel backlight on. Keep
+the current monitor power state if the query fails.
+
+--- a/plugins/power/gsd-power-manager.c
++++ b/plugins/power/gsd-power-manager.c
+@@ -3128,6 +3128,7 @@ gsd_power_manager_startup (GApplication *app)
+         g_autoptr (GError) error = NULL;
+         g_autofree char *chassis_type = NULL;
++        gboolean screensaver_state_known;
+         g_debug ("Starting power manager");
+         gnome_settings_profile_start (NULL);
+ 
+         /* Check whether we are running in a VM */
+@@ -3258,10 +3259,22 @@ gsd_power_manager_startup (GApplication *app)
+ 
+         /* coldplug the engine */
+         engine_coldplug (manager);
++        screensaver_state_known =
++                gsd_screen_saver_call_get_active_sync (manager->screensaver_proxy,
++                                                       &manager->screensaver_active,
++                                                       manager->cancellable,
++                                                       &error);
++        if (!screensaver_state_known) {
++                g_warning ("Could not read the screensaver state: %s", error->message);
++                g_clear_error (&error);
++        }
+         idle_configure (manager);
+ 
+-        /* ensure the default dpms timeouts are cleared */
+-        backlight_enable (manager);
++        /* ActiveChanged is not replayed when the daemon restarts. */
++        if (manager->screensaver_active)
++                idle_set_mode (manager, GSD_POWER_IDLE_MODE_BLANK);
++        else if (screensaver_state_known)
++                backlight_enable (manager);
+ 
+         if (!gnome_settings_is_wayland ())
+                 manager->xscreensaver_watchdog_timer_id = gsd_power_enable_screensaver_watchdog ();

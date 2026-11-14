@@ -21,7 +21,7 @@ PATCH = ROOT / 'patches/gnome-settings-daemon/0001-power-optional-device-ambient
 PREPARE = ROOT / 'linux/desktops/gnome/ambient-policy/packaging/prepare_package.py'
 POLICY = PREPARE.parent.parent
 SOURCE_VERSION = '48.1-1'
-PACKAGE_VERSION = SOURCE_VERSION + '+sunuefi2'
+PACKAGE_VERSION = SOURCE_VERSION + '+sunuefi3'
 PATCHES = [PATCH, *source_patches(ROOT / 'patches/gnome-settings-daemon/48.1/series.json')]
 RUNTIME = {'gnome-settings-daemon': 'arm64', 'gnome-settings-daemon-common': 'all'}
 
@@ -133,8 +133,9 @@ def validate_prepared(source):
     local = source / 'debian/patches/sunuefi-ambient-device-profile.patch'
     if sha(local) != sha(PATCH):
         raise ValueError('Prepared Debian patch differs from the current canonical patch')
-    if sha(source / 'debian/patches/sunuefi-keyboard-backlight-hotplug.patch') != sha(PATCHES[1]):
-        raise ValueError('Prepared keyboard hotplug patch differs')
+    for path in PATCHES[1:]:
+        if sha(source / 'debian/patches' / path.name) != sha(path):
+            raise ValueError('Prepared GSD patch differs: ' + path.name)
     for name in ['gsd-ambient-profile.c', 'gsd-ambient-profile.h']:
         if (source / 'plugins/power' / name).read_bytes() != (POLICY / name).read_bytes():
             raise ValueError('Prepared ambient policy source differs: ' + name)

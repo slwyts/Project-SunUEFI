@@ -28,7 +28,7 @@ cd /absolute/new/gsd-piano-build
 dpkg-buildpackage -b -us -uc
 ```
 
-发行版源码需为48.1且使用标准`3.0 (quilt)`格式；上下文不同会在准备时失败，不能忽略补丁错误。生成标准`gnome-settings-daemon`包，包版本追加`+sunuefi2`，同时包含键盘背光热插拔刷新。由发行版正常安装/升级流程替换包，重新登录使新 power manager 生效。
+发行版源码需为48.1且使用标准`3.0 (quilt)`格式；上下文不同会在准备时失败，不能忽略补丁错误。生成标准`gnome-settings-daemon`包，包版本追加`+sunuefi3`，同时包含键盘背光热插拔刷新和启动时锁屏状态同步。由发行版正常安装/升级流程替换包，重新登录使新 power manager 生效。
 
 ## Arch / Arch Linux ARM 51.0
 
@@ -41,4 +41,4 @@ cd /absolute/new/gsd-piano-package
 makepkg -s
 ```
 
-两份补丁分别适配上游版本，设备配置和功能相同。官方48.1/51.0源码均已校验并无fuzz应用，完整ARM64包均已构建；Nyarch镜像自动安装`51.0-1.2`。设备亮度体验仍需完整系统实测。
+两份补丁分别适配上游版本，设备配置和功能相同。Nyarch 镜像自动安装 `51.0-1.3`。显示关闭与输入唤醒仍通过桌面和内核的标准接口处理。

@@ -13,14 +13,16 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[5]
 PATCHES = ROOT / "patches/gnome-settings-daemon"
 
-def hotplug_patch(version):
+def package_patches(version):
     directory = PATCHES / version
     series = json.loads((directory / 'series.json').read_text())
-    row, = series['patches']
-    path = directory / row['file']
-    if hashlib.sha256(path.read_bytes()).hexdigest() != row['sha256']:
-        raise ValueError('Keyboard backlight patch checksum differs')
-    return path
+    paths = []
+    for row in series['patches']:
+        path = directory / row['file']
+        if hashlib.sha256(path.read_bytes()).hexdigest() != row['sha256']:
+            raise ValueError('GSD patch checksum differs: ' + row['file'])
+        paths.append(path)
+    return paths
 
 
 def debian(source: Path, destination: Path) -> None:
@@ -39,15 +41,18 @@ def debian(source: Path, destination: Path) -> None:
     patch_dir.mkdir(exist_ok=True)
     patch_name = "sunuefi-ambient-device-profile.patch"
     shutil.copyfile(PATCHES / "0001-power-optional-device-ambient-profile.patch", patch_dir / patch_name)
-    hotplug_name = "sunuefi-keyboard-backlight-hotplug.patch"
-    shutil.copyfile(hotplug_patch('48.1'), patch_dir / hotplug_name)
+    extra_names = []
+    for path in package_patches('48.1'):
+        shutil.copyfile(path, patch_dir / path.name)
+        extra_names.append(path.name)
     series = patch_dir / "series"
     existing = series.read_text() if series.exists() else ""
-    series.write_text(existing.rstrip() + "\n" + patch_name + "\n" + hotplug_name + "\n")
+    series.write_text(existing.rstrip() + "\n" + "\n".join([patch_name, *extra_names]) + "\n")
     changelog = destination / "debian/changelog"
     entry = (
-        f"gnome-settings-daemon ({version}+sunuefi2) UNRELEASED; urgency=medium\n\n"
-        "  * Add device ambient-light profiles and keyboard backlight hotplug.\n\n"
+        f"gnome-settings-daemon ({version}+sunuefi3) UNRELEASED; urgency=medium\n\n"
+        "  * Add device ambient-light profiles and keyboard backlight hotplug.\n"
+        "  * Restore the current screensaver state when power management starts.\n\n"
         f" -- slwyts <slwyts@foxmail.com>  {format_datetime(datetime.now(timezone.utc))}\n\n"
     )
     changelog.write_text(entry + changelog.read_text())
@@ -61,13 +66,17 @@ def arch(destination: Path) -> None:
     shutil.copyfile(Path(__file__).with_name("PKGBUILD"), destination / "PKGBUILD")
     shutil.copyfile(PATCHES / "0001-power-optional-device-ambient-profile-51.patch",
                     destination / "ambient-device-profile.patch")
-    shutil.copyfile(hotplug_patch('51.0'), destination / 'keyboard-backlight-hotplug.patch')
+    extra_patches = package_patches('51.0')
+    for path in extra_patches:
+        shutil.copyfile(path, destination / path.name)
     # The recipe pins the public release and the locally prepared patch.
     recipe = destination / "PKGBUILD"
     checksum = hashlib.sha256((destination / "ambient-device-profile.patch").read_bytes()).hexdigest()
-    hotplug_checksum = hashlib.sha256((destination / 'keyboard-backlight-hotplug.patch').read_bytes()).hexdigest()
+    sources = ' '.join(path.name for path in extra_patches)
+    checksums = ' '.join("'" + hashlib.sha256(path.read_bytes()).hexdigest() + "'"
+                         for path in extra_patches)
     recipe.write_text(recipe.read_text().replace("@PATCH_SHA256@", checksum).replace(
-        '@HOTPLUG_SHA256@', hotplug_checksum))
+        '@EXTRA_PATCHES@', sources).replace('@EXTRA_SHA256@', checksums))
     print(f"Prepared {destination}; build there as an unprivileged user with makepkg -s")
 
 

@@ -32,7 +32,7 @@
 
 这部分解决频繁小变动触发的问题，但还不是完整原厂自动亮度：未接原厂双窗加权、辅助ALS/场景策略，也未把108点nits曲线映射到Linux KTZ背光。亮度幅度仍受GSD线性映射影响，不能宣称已达到原厂完整亮度轨迹。GNOME之外的桌面仍可直接使用SensorProxy和背光接口，不依赖此补丁。
 
-同一配置有针对官方GSD48.1和51.0两种接口的补丁：48.1使用原backlight API，51.0使用标准Shell brightness API。两份官方发布包均校验SHA256并完成`patch --fuzz=0`应用，也都已构建完整ARM64包。Debian版本为`48.1-1+sunuefi2`，Nyarch为`51.0-1.2`，同时包含键盘背光热插拔刷新。Debian runtime中的AArch64程序、配置和`.changes`摘要已校验，Nyarch包的配方与二进制摘要已校验。完整桌面上的亮度体验仍需实机检查。
+同一配置有针对官方 GSD 48.1 和 51.0 两种接口的补丁：48.1 使用原 backlight API，51.0 使用标准 Shell brightness API。Debian 包版本为 `48.1-1+sunuefi3`，Nyarch 为 `51.0-1.3`；同时包含键盘背光热插拔刷新和[启动时锁屏状态同步](power-button.md#默认设置)。
 
 `./build.sh gsd`供默认release/root/CI调用：克隆已完成的Debian trixie ARM64 base，仅在克隆内恢复DNS，配置带Debian archive keyring的源码APT源，默认安装原始构建依赖，沿Debian原rules生产包。`build/gsd/runtime`只提供正常daemon/common两包，`SOURCE.json`记录APT源索引、`.dsc`/archives、补丁、版本、源文件和runtime哈希；匹配的成功产物直接复用。Nyarch构建准备相同设备策略的Arch配方，构建或校验缓存后安装。普通Debian/Arch及默认release构建入口见[策略打包说明](../../../linux/desktops/gnome/ambient-policy/README.md)。
 

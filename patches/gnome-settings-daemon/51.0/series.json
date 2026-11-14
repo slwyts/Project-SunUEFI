@@ -4,6 +4,10 @@
     {
       "file": "0001-power-refresh-keyboard-backlight-after-hotplug.patch",
       "sha256": "2bded9f122530cba11a9dc6fccdc804612b105d985a27bdbd5cbb1e31125dffd"
+    },
+    {
+      "file": "0002-power-restore-screensaver-state-on-startup.patch",
+      "sha256": "dee3f51c10426aee215e7879808866c3ee58549e0529a41c1edbae702bf5f5b8"
     }
   ]
 }

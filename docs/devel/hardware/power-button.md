@@ -24,6 +24,8 @@ GNOME 的[电源键助手](../../../linux/desktops/gnome/power-overlay/usr/lib/p
 
 [标准 dconf 配置](../../../linux/desktops/gnome/power-overlay/etc/dconf/db/local.d/00-power)设置 2 分钟空闲熄屏、使用电池时 5 分钟自动挂起、外接电源时 10 分钟自动挂起。键盘背光默认 80%，后续沿用用户保存的亮度。用户可在系统设置里修改这些偏好。
 
+GSD 电源管理器启动时先读取 GNOME 已有的锁屏状态，再配置空闲计时和显示电源。会话已锁屏时保持灭屏；查询失败时保留原显示电源状态，避免重启服务把黑画面背后的背光重新点亮。正常输入仍沿用 GNOME 的唤醒与再次灭屏流程，不增加背光轮询服务。
+
 构建启用 `sleep.target` 和 `suspend.target`，使用 `mem/deep`。休眠、混合睡眠及先睡眠后休眠保持禁用。
 
 ## 内核适配
