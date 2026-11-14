@@ -106,9 +106,7 @@
       "version": "6.6.5",
       "url": "https://download.kde.org/stable/plasma/6.6.5/kscreen-6.6.5.tar.xz",
       "sha256": "753ebc00cf75359c2e7ba3aabb20ff3596d0fbbe2f0b6d3ed6098d27282a3276",
-      "patches": [
-        "patches/kscreen/6.6.5/0001-find-qt-before-qml-helper.patch"
-      ],
+      "patch_series": "patches/kscreen/6.6.5/series.json",
       "license": [
         "LGPL-2.0-or-later"
       ],

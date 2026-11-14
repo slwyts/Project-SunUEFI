@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "version": "30",
+  "targets": [
+    "nyarch-gnome"
+  ],
+  "patches": [
+    {
+      "file": "0001-system-install-gnome51.patch",
+      "sha256": "c1828625638161855bea9138c7b1909c5ab0f1450bdec63fae1fd8546aed1143",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/NyarchLinux/NyarchLinux/blob/5088f5cbd80131176cdb2a669e8cfb7ce580312a/Gnome/etc/skel/.local/share/gnome-shell/extensions/material-you-colors%40francescocaracciolo.github.io/extension.js",
+        "drop_when": "The selected extension works from the system extension directory on GNOME 51, discovers User Themes schemas, disconnects settings on disable and generates light and dark CSS without native Node addons or directory creation races."
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "version": "6.6.5",
+  "targets": [
+    "steamos"
+  ],
+  "patches": [
+    {
+      "file": "0001-find-qt-before-qml-helper.patch",
+      "sha256": "7ff291c863001a440397332a83b75de76a834be29c9678df38f23f01fb0c4b83",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://invent.kde.org/plasma/kscreen/-/blob/v6.6.5/CMakeLists.txt",
+        "drop_when": "The selected KScreen and ECM sources configure a fresh Qt 6.11 build with ecm_add_qml_module defined and Qt Network dependencies resolved, without reordering ECMQmlModule locally."
+      }
+    }
+  ]
+}

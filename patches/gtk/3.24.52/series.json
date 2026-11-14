@@ -9,9 +9,9 @@
       "sha256": "27a599dc9e565dafb6fc8df9e4ac8b9f26467f2041bb3d8494fae3b59c308b20",
       "upstream": {
         "status": "merged",
-        "url": "https://gitlab.gnome.org/GNOME/gtk/-/commit/920259c25070986b13675fd86f3def1b805dc00d",
-        "commit": "920259c25070986b13675fd86f3def1b805dc00d",
-        "drop_when": "The selected GTK 3 source uses the device's X11 display for XI2 tool atoms, as GTK 4 does; verify an X11 candidate window while the default display is Wayland."
+        "url": "https://gitlab.gnome.org/GNOME/gtk/-/commit/c3b824a8f435dc975b2bee21a81254e3bb5a2229",
+        "commit": "c3b824a8f435dc975b2bee21a81254e3bb5a2229",
+        "drop_when": "The selected GTK 3 release contains c3b824a8f435dc975b2bee21a81254e3bb5a2229 or uses the device's X11 display for XI2 tool atoms; verify an X11 candidate window while the default display is Wayland."
       }
     }
   ]

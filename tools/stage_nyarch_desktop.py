@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 from build_nyarch_apps import guest_environment
+from build_piano_runtime_helpers import source_patches
 from stage_piano_full_userspace import stage_gnome_power
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,9 +65,10 @@ def stage(root, source, extensions=None):
             shutil.copytree(folder, root / 'usr/share/gnome-shell/extensions' / folder.name,
                             symlinks=True, dirs_exist_ok=True)
             if metadata['uuid'] == 'blur-my-shell@aunetx':
+                patch, = source_patches(ROOT / 'patches/blur-my-shell/75/series.json')
                 subprocess.run([
                     'patch', '--batch', '--fuzz=0', '-p1', '-i',
-                    str(ROOT / 'patches/blur-my-shell/75/0001-follow-material-color-scheme.patch'),
+                    str(patch),
                 ], cwd=root / 'usr/share/gnome-shell/extensions' / folder.name, check=True)
             if metadata['uuid'] == 'gsconnect@andyholmes.github.io':
                 config = root / 'usr/share/gnome-shell/extensions' / folder.name / 'config.js'

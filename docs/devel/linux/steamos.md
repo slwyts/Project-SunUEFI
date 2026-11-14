@@ -259,7 +259,7 @@ ARM64 Steam 客户端当前把 CPU 名称报告为 `Unknown`，频率取 CPU0 �
 默认传递触摸事件，允许游戏接收多指输入，玩法仍取决于游戏支持。
 
 SteamOS Manager 使用 Valve 26.4.1 源码，补丁位于
-`patches/steamos-manager/`：缺少 tracefs 时停用内核诊断采集，继续提供
+`patches/steamos-manager/26.4.1/series.json`：缺少 tracefs 时停用内核诊断采集，继续提供
 桌面切换等管理功能。`tools/build_steamos_manager.py` 固定源码、工具链
 及摘要，并构建匹配系统的原生包。
 
