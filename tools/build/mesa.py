@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -443,6 +444,37 @@ def build_pacman(output, root, jobs, resume=False, steamos=False):
 
 def validate_pacman(root, work, output):
     """Inspect actual package ELF and configured features before removing objects."""
+    source = policy()['source']
+    candidates = [path for path in (work / 'src').glob('mesa-*') if path.is_dir()]
+    if len(candidates) != 1:
+        raise ValueError('Native Mesa build has an ambiguous prepared source tree')
+    prepared = candidates[0]
+    patches = json.loads((work / 'SOURCE.json').read_text())['patches']
+    changed = {}
+    if patches:
+        with tarfile.open(source_archive()) as archive:
+            name = 'src/gallium/drivers/freedreno/freedreno_resource.c'
+            original = archive.extractfile('mesa-' + source['commit'] + '/' + name).read()
+        patch = ROOT / 'patches/mesa/27.0' / patches[0]['file']
+        with tempfile.NamedTemporaryFile(prefix='mesa-source-', dir=output) as temporary:
+            temporary.write(original)
+            temporary.flush()
+            result = subprocess.run(['patch', '--batch', '--fuzz=0', '--output=-', temporary.name, patch],
+                                    capture_output=True, check=True)
+        changed[name] = hashlib.sha256(result.stdout).hexdigest()
+    source_files = 0
+    with tarfile.open(source_archive()) as archive:
+        prefix = 'mesa-' + source['commit'] + '/'
+        for member in archive:
+            if not member.isfile():
+                continue
+            name = member.name.removeprefix(prefix)
+            expected = changed.get(name)
+            if expected is None:
+                expected = hashlib.sha256(archive.extractfile(member).read()).hexdigest()
+            if package_build.sha(prepared / name) != expected:
+                raise ValueError('Prepared native Mesa source differs from its official archive: ' + name)
+            source_files += 1
     options = json.loads((work / 'src/build/meson-info/intro-buildoptions.json').read_text())
     options = {row['name']: row['value'] for row in options}
     expected = {
@@ -514,6 +546,7 @@ def validate_pacman(root, work, output):
         raise ValueError('Native Mesa build produced no ARM64 runtime ELF files')
     (output / 'builder-packages.tsv').write_text(debian.capture(['chroot', root, 'pacman', '-Q']) + '\n')
     (output / 'VALIDATION.json').write_text(json.dumps({
+        'official_source_files_checked': source_files,
         'build_options': options, 'packages': packages}, indent=2) + '\n')
 
 
