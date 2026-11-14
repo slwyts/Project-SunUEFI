@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT
+[Unit]
+Description=Piano charging telemetry recorder
+After=local-fs.target
+ConditionPathIsDirectory=/sys/class/power_supply
+
+[Service]
+ExecStart=/usr/lib/piano/charge-monitor
+Restart=on-failure
+RestartSec=30
+LogsDirectory=piano-charge-monitor
+LogsDirectoryMode=0750
+UMask=0027
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+PrivateDevices=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_NETLINK
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

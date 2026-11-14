@@ -302,6 +302,48 @@
       "source_component": "Project SunUEFI",
       "source_git_mode": "100644",
       "license": "MIT"
+    },
+    {
+      "group": "common",
+      "path": "usr/lib/piano/charge-monitor",
+      "type": "file",
+      "mode": "0755",
+      "uid": 0,
+      "gid": 0,
+      "source": "linux/bsp/common/usr/lib/piano/charge-monitor",
+      "source_component": "Project SunUEFI",
+      "source_git_mode": "100755",
+      "license": "MIT",
+      "sha256": "ee442ca8c8a6eeb4ad8aafa4aefafce3265d9b7931f6733767f40d862a5a5e58",
+      "source_sha256": "ee442ca8c8a6eeb4ad8aafa4aefafce3265d9b7931f6733767f40d862a5a5e58"
+    },
+    {
+      "group": "common",
+      "path": "usr/lib/systemd/system/piano-charge-monitor.service",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "source": "linux/bsp/common/usr/lib/systemd/system/piano-charge-monitor.service",
+      "source_component": "Project SunUEFI",
+      "source_git_mode": "100644",
+      "license": "MIT",
+      "sha256": "1eb59ebd8f868e3c96fabe6962b37032d1a04ce87409038f49295c149e74c932",
+      "source_sha256": "1eb59ebd8f868e3c96fabe6962b37032d1a04ce87409038f49295c149e74c932"
+    },
+    {
+      "group": "common",
+      "path": "usr/lib/systemd/system-preset/80-piano-charge-monitor.preset",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "source": "linux/bsp/common/usr/lib/systemd/system-preset/80-piano-charge-monitor.preset",
+      "source_component": "Project SunUEFI",
+      "source_git_mode": "100644",
+      "license": "MIT",
+      "sha256": "434ad6607f2965b17243536eeb37b1f8becd6b1ed457dcccbdb46101de2d5eba",
+      "source_sha256": "434ad6607f2965b17243536eeb37b1f8becd6b1ed457dcccbdb46101de2d5eba"
     }
   ],
   "excluded": [

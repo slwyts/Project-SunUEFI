@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | 触屏和 USB 网络的 unit | [`linux/bsp/common/usr/lib/systemd/system/`](../../../linux/bsp/common/usr/lib/systemd/system/) | 配置包安装到 `/usr/lib/systemd/system/` |
 | 共用硬件运行时安装 | [`tools/stage_piano_ram_hardware.py`](../../../tools/stage_piano_ram_hardware.py) | 读取 BSP 清单、保留权限和符号链接，清理旧的按序加载服务 |
+| 按需充电记录 | [`linux/bsp/common/usr/lib/piano/charge-monitor`](../../../linux/bsp/common/usr/lib/piano/charge-monitor) | `piano-charge-monitor.service`，经共用 BSP 安装，preset 默认关闭 |
 | DMA 状态诊断 | [`linux/userspace/piano-ram-hardware-prepare`](../../../linux/userspace/piano-ram-hardware-prepare) | 仅用于显式诊断，不阻止模块自动探测 |
 | 手指帧解码与多点输入 | [`0095-input-nt36532e-matrix.patch`](../../../patches/linux/7.3/0095-input-nt36532e-matrix.patch) | 编入 `nt36532e_ts`，在现有 SPI 中断线程中直接上报标准输入事件 |
 | 笔输入、旧内核手指输入与原始帧诊断 | [`upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c`](../../../upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c) | 派生后编译为 `/usr/bin/piano-touch-view`，由 `piano-touch.service` 启动 |
@@ -43,6 +44,26 @@ Debian 镜像安装带 LED 热插拔补丁的 UPower 1.90.9，daemon 与其精�
 相机3A指自动曝光、白平衡和对焦，当前这部分必要算法由 `piano-camerad` 使用内核 sensor/ISP 控件实现。前摄自然光日志中，高亮像素占比在3%..8%间变化；旧 AE 跨过4%时会突然降约19%曝光量，又因平均亮度不足而提高增益。稳定性补丁改为连续高亮响应、每相机统计滤波、约5%亮度误差死区和单次6%变化上限，保留既有曝光/增益分配、白平衡与对焦。用户确认现场是自然光、没有开室内灯，因此没有强制新增50Hz防闪烁参数。
 
 修正后的 ARM64 camerad 已部署。本机前摄的一次900帧采集中，启动3秒后的810帧全画面 YAVG 为76.54..77.76，曝光和两项增益保持2808/15872/6958；程序自身的局部亮度统计为93..95，采样范围不同，不能直接比较这两组亮度的绝对值。采集只保留统计，没有保存相机视频。这确认了该场景下控制循环稳定，尚未测量光照突变和完整模式切换，也不代表完整原厂3A调校。原始统计在本地 `内部记录目录
+
+## 充电记录
+
+记录器只读 power-supply、IIO、hwmon、thermal、Type-C、CPU/GPU 频率和
+背光接口。每条 JSON 记录包含 UTC 时间、启动 ID、boottime、采样耗时与
+读取错误；数值沿用 sysfs 单位，电源电压、电流为微伏、微安，电源温度为
+0.1°C，thermal 与 IIO 温度为毫摄氏度，原始 ADC 保留 scale 和 offset。
+`power_w` 从读数计算，PMIC 与电荷泵输入分别保存，合计只作为输入估算，
+电池功率正值为净充入、负值为净放电。
+
+在线时每 2 秒采样，离线时每 60 秒采样；netlink 插拔通知提前结束等待，
+状态未知时按 2 秒重试。MCA 固件摘要至多每分钟读取一次，插拔时可提前
+刷新，认证进行时跳过；不写 debugfs 或启用电荷泵 ADC。一个传感器读取
+失败不会丢弃其他数据。系统睡眠不被该服务阻止。
+
+`/var/log/piano-charge-monitor/samples.jsonl` 保存当前记录，每段最多
+1 MiB；满段压缩为按序号排列的 `samples-*.jsonl.gz`。当前文件、旧段与
+压缩暂存合计不超过 20 MiB，空间不足先删除最早旧段。文件锁防止多个
+实例写入同一目录，重启时只截掉未完成的最后一行。服务使用只读系统和
+内核接口保护，仅允许日志目录写入。启停与导出见[快速上手](../../user/getting-started.md#充电记录)。
 
 ## 两条 rootfs 构建路径
 

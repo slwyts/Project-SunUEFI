@@ -1,0 +1,245 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+"""Record read-only charging telemetry in a size-limited JSONL history."""
+import errno
+import fcntl
+import gzip
+import json
+import os
+from pathlib import Path
+import re
+import select
+import signal
+import socket
+import sys
+import time
+from datetime import datetime, timezone
+
+LIMIT = 20 * 1024 * 1024
+CHUNK = 1024 * 1024
+LOGS = Path('/var/log/piano-charge-monitor')
+POWER_FIELDS = (
+    'type', 'scope', 'present', 'online', 'status', 'health', 'authentic',
+    'capacity', 'capacity_level', 'technology', 'manufacturer', 'model_name',
+    'voltage_now', 'voltage_min', 'voltage_max', 'voltage_max_design',
+    'current_now', 'current_avg', 'current_max', 'power_now', 'power_avg',
+    'input_current_limit', 'input_voltage_limit', 'input_power_limit',
+    'constant_charge_current', 'constant_charge_current_max',
+    'constant_charge_voltage', 'constant_charge_voltage_max', 'charge_term_current',
+    'charge_now', 'charge_full', 'charge_full_design', 'charge_counter',
+    'energy_now', 'energy_full', 'energy_full_design', 'cycle_count',
+    'temp', 'time_to_empty_now', 'time_to_full_now', 'charge_type', 'usb_type',
+    'charger_type', 'charge_behaviour', 'charge_control_limit', 'charge_control_limit_max',
+)
+SENSOR = re.compile(r'(?:in_(?:temp|voltage|current|power)\d*|temp\d+|in\d+|curr\d+|power\d+)'
+                    r'_(?:input|raw|scale|offset|label|average|crit|crit_alarm|max|max_alarm|min|alarm)$')
+ARCHIVE = re.compile(r'samples-(\d{12})\.jsonl\.gz$')
+
+
+class History:
+    def __init__(self, directory, limit=LIMIT, chunk=CHUNK):
+        self.directory, self.limit, self.chunk = directory, limit, chunk
+        directory.mkdir(mode=0o750, parents=True, exist_ok=True)
+        self.lock = (directory / '.lock').open('a')
+        fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.current = directory / 'samples.jsonl'
+        self.temporary = directory / '.samples.gz.tmp'
+        self.temporary.unlink(missing_ok=True)
+        self.archives = sorted(p for p in directory.iterdir() if ARCHIVE.fullmatch(p.name))
+        self.sequence = int(ARCHIVE.fullmatch(self.archives[-1].name)[1]) if self.archives else 0
+        if self.current.exists():
+            # Discard only an interrupted final write, not complete older samples.
+            with self.current.open('r+b') as stream:
+                size = stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, size - chunk))
+                tail = stream.read()
+                if tail and not tail.endswith(b'\n'):
+                    end = tail.rfind(b'\n')
+                    stream.truncate(max(0, size - chunk) + end + 1 if end >= 0 else 0)
+        self.total = sum(p.stat().st_size for p in self.archives)
+        self.total += self.current.stat().st_size if self.current.exists() else 0
+        self.prune(0)
+
+    def prune(self, extra):
+        while self.total + extra > self.limit and self.archives:
+            path = self.archives.pop(0)
+            self.total -= path.stat().st_size
+            path.unlink()
+        if self.total + extra > self.limit:
+            raise ValueError('A charging sample exceeds the log capacity')
+
+    def append(self, sample):
+        data = json.dumps(sample, ensure_ascii=False, separators=(',', ':')).encode() + b'\n'
+        if len(data) > self.chunk:
+            raise ValueError('A charging sample exceeds the log chunk size')
+        size = self.current.stat().st_size if self.current.exists() else 0
+        if size and size + len(data) > self.chunk:
+            compressed = gzip.compress(self.current.read_bytes(), compresslevel=6, mtime=0)
+            self.prune(len(compressed))
+            self.sequence += 1
+            with self.temporary.open('xb') as stream:
+                stream.write(compressed)
+                stream.flush()
+                os.fsync(stream.fileno())
+            path = self.directory / f'samples-{self.sequence:012d}.jsonl.gz'
+            self.temporary.rename(path)
+            self.archives.append(path)
+            self.total += len(compressed) - size
+            self.current.write_bytes(b'')
+        self.prune(len(data))
+        with self.current.open('ab') as stream:
+            stream.write(data)
+        self.total += len(data)
+
+
+class Sampler:
+    def __init__(self, root=Path('/')):
+        self.root = root
+        self.boot_id = self.path('proc/sys/kernel/random/boot_id').read_text().strip()
+        self.kernel = os.uname().release
+        self.firmware = None
+        self.firmware_at = -60.0
+        self.previous_power = None
+
+    def path(self, name):
+        return self.root / name.lstrip('/')
+
+    def read(self, path, errors):
+        try:
+            with path.open() as stream:
+                text = stream.read(8192).strip()
+            return int(text) if re.fullmatch(r'-?\d+', text) else text
+        except OSError as error:
+            errors[str(path.relative_to(self.root))] = error.errno
+            return None
+
+    def fields(self, directory, names, errors):
+        return {name: self.read(directory / name, errors)
+                for name in names if (directory / name).is_file()}
+
+    def external_power(self):
+        errors = {}
+        main = self.path('sys/class/power_supply/piano-mca-usb/online')
+        online = self.read(main, errors)
+        if online in (0, 1):
+            return bool(online)
+        values = []
+        for path in self.path('sys/class/power_supply').glob('*'):
+            kind = self.read(path / 'type', errors)
+            if isinstance(kind, str) and kind.startswith(('USB', 'Mains', 'Wireless')):
+                value = self.read(path / 'online', errors)
+                if value in (0, 1):
+                    values.append(bool(value))
+        return any(values) if values else None
+
+    def sensor_fields(self, path, errors):
+        try:
+            names = ['name', *sorted(p.name for p in path.iterdir() if SENSOR.fullmatch(p.name))]
+        except OSError as error:
+            errors[str(path.relative_to(self.root))] = error.errno
+            return {}
+        return self.fields(path, names, errors)
+
+    def sample(self):
+        started = time.monotonic()
+        boottime = time.clock_gettime(time.CLOCK_BOOTTIME)
+        errors = {}
+        online = self.external_power()
+        result = {'schema': 1, 'time': datetime.now(timezone.utc).isoformat(timespec='milliseconds'),
+                  'boottime_s': round(boottime, 3), 'boot_id': self.boot_id,
+                  'kernel': self.kernel, 'external_power': online,
+                  'interval_s': 60 if online is False else 2}
+        supplies = {}
+        for path in sorted(self.path('sys/class/power_supply').glob('*')):
+            values = self.fields(path, POWER_FIELDS, errors)
+            if (path / 'xiaomi').is_dir():
+                values['xiaomi'] = self.fields(path / 'xiaomi',
+                    ('real_type', 'pd_verifed', 'verify_process', 'adapter_id', 'adapter_svid',
+                     'data_role', 'pdo2'), errors)
+            supplies[path.name] = values
+        result['power_supply'] = supplies
+        sensors = {}
+        for base, group in (('sys/bus/iio/devices', 'iio:device*'), ('sys/class/hwmon', 'hwmon*')):
+            for path in sorted(self.path(base).glob(group)):
+                sensors[str(path.relative_to(self.root))] = self.sensor_fields(path, errors)
+        result['sensors'] = sensors
+        result['thermal'] = {p.name: self.fields(p, ('type', 'temp', 'mode', 'policy',
+            *sorted(x.name for x in p.glob('trip_point_*') if x.is_file())), errors)
+            for p in sorted(self.path('sys/class/thermal').glob('thermal_zone*'))}
+        result['cooling'] = {p.name: self.fields(p, ('type', 'cur_state', 'max_state'), errors)
+            for p in sorted(self.path('sys/class/thermal').glob('cooling_device*'))}
+        result['typec'] = {p.name: self.fields(p, ('power_role', 'data_role', 'orientation',
+            'power_operation_mode', 'usb_power_delivery_revision', 'usb_typec_revision'), errors)
+            for p in sorted(self.path('sys/class/typec').glob('port[0-9]*')) if '-partner' not in p.name}
+        result['pd'] = {str(p.relative_to(self.root)): self.read(p, errors)
+            for p in sorted(self.path('sys/class/usb_power_delivery').glob('pd*/revision'))}
+        result['cpufreq'] = {p.name: self.fields(p, ('scaling_cur_freq', 'scaling_min_freq',
+            'scaling_max_freq', 'scaling_governor'), errors)
+            for p in sorted(self.path('sys/devices/system/cpu/cpufreq').glob('policy*'))}
+        result['devfreq'] = {p.name: self.fields(p, ('cur_freq', 'min_freq', 'max_freq', 'governor'), errors)
+            for p in sorted(self.path('sys/class/devfreq').glob('*'))}
+        result['backlight'] = {p.name: self.fields(p, ('actual_brightness', 'brightness',
+            'max_brightness', 'bl_power'), errors)
+            for p in sorted(self.path('sys/class/backlight').glob('*'))}
+        result['loadavg'] = self.read(self.path('proc/loadavg'), errors)
+        result['charging_parameters'] = self.fields(self.path('sys/module/piano_mca/parameters'),
+            ('charge_policy', 'charge_current', 'hv_charge', 'mipps_auth', 'cp_charge',
+              'cp_ibat_max', 'cp_ibus_max'), errors)
+        powers = {}
+        for device in ('piano-mca-usb', 'sc8541', 'battery'):
+            values = supplies.get(device, {})
+            v, i = values.get('voltage_now'), values.get('current_now')
+            if isinstance(v, int) and isinstance(i, int):
+                powers[device] = round(v * i / 1e12, 6)
+        if supplies.get('sc8541', {}).get('online') == 0:
+            powers['sc8541'] = 0
+        if all(name in powers for name in ('piano-mca-usb', 'sc8541')):
+            powers['input_estimate'] = powers['piano-mca-usb'] + powers['sc8541']
+        result['power_w'] = powers
+        verifying = supplies.get('piano-mca-usb', {}).get('xiaomi', {}).get('verify_process')
+        # Full firmware reads are slow. Do not repeat them at the 2-second rate
+        # or add transactions during the adapter authentication exchange.
+        if verifying == 0 and (boottime - self.firmware_at >= 60 or online != self.previous_power):
+            self.firmware = self.read(self.path('sys/kernel/debug/piano_mca/summary'), errors)
+            self.firmware_at = boottime
+        result['firmware'] = {'boottime_s': round(self.firmware_at, 3), 'summary': self.firmware}
+        self.previous_power = online
+        result['errors'] = errors
+        result['duration_s'] = round(time.monotonic() - started, 3)
+        return result
+
+
+def main():
+    os.umask(0o027)
+    history = History(LOGS)
+    sampler = Sampler()
+    events = socket.socket(socket.AF_NETLINK, socket.SOCK_DGRAM | socket.SOCK_CLOEXEC, 15)
+    events.bind((0, 1))
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    while True:
+        sample = sampler.sample()
+        history.append(sample)
+        deadline = time.monotonic() + max(0, sample['interval_s'] - sample['duration_s'])
+        while time.monotonic() < deadline:
+            if not select.select([events], [], [], max(0, deadline - time.monotonic()))[0]:
+                break
+            try:
+                event = events.recv(65536)
+            except OSError as error:
+                if error.errno == errno.ENOBUFS:
+                    # A missed uevent is covered by the next timed sample.
+                    continue
+                raise
+            if (b'SUBSYSTEM=power_supply\0' in event or b'SUBSYSTEM=typec\0' in event) and \
+                    sampler.external_power() != sample['external_power']:
+                break
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
+    except (OSError, ValueError) as error:
+        print('Cannot record charging telemetry: ' + str(error), file=sys.stderr)
+        raise SystemExit(1)

@@ -35,6 +35,30 @@
 
 首次启动会把根文件系统扩展到分区的全部容量，比以后的启动慢。看到桌面后用用户名 `piano`、密码 `piano123456` 登录，桌面默认自动登录。锁屏解锁和 `sudo` 用同一个密码，可以在系统设置里改，或者运行 `passwd`。
 
+## 充电记录
+
+`piano-charge-monitor.service` 默认关闭。需要观察充电时，在终端运行：
+
+```sh
+sudo systemctl start piano-charge-monitor.service
+```
+
+接电时每 2 秒记录，未接电时每 60 秒记录；插拔电源会立即重新采样。
+记录包含电源电压、电流、功率估算、快充协议和认证状态、两芯电池信息、
+温度、热限流档位及 CPU/GPU 频率。它只读取状态，不修改充电设置，也不
+阻止系统睡眠；系统睡眠期间不采样，唤醒后继续。
+
+日志保存在 `/var/log/piano-charge-monitor/`，旧记录自动压缩，总量不超过
+20 MiB，满后删除最早记录。导出记录或结束监测：
+
+```sh
+sudo tar -C /var/log -czf "$HOME/charging-logs.tar.gz" piano-charge-monitor
+sudo systemctl stop piano-charge-monitor.service
+```
+
+需要以后开机也记录时，用 `sudo systemctl enable --now piano-charge-monitor.service`；
+取消开机记录并停止则用 `sudo systemctl disable --now piano-charge-monitor.service`。
+
 ## 回到 Android
 
 在 Linux 里运行 `piano-next-boot android --reboot`，或者点桌面上的“返回 Android”。开机时在选择页用音量键选 Android 只影响这一次。其他情况见[故障恢复](recovery.md)。
