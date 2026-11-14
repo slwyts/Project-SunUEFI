@@ -9,6 +9,7 @@
 | 按需充电记录 | [`linux/bsp/common/usr/lib/piano/charge-monitor`](../../../linux/bsp/common/usr/lib/piano/charge-monitor) | `piano-charge-monitor.service`，经共用 BSP 安装，preset 默认关闭 |
 | DMA 状态诊断 | [`linux/userspace/piano-ram-hardware-prepare`](../../../linux/userspace/piano-ram-hardware-prepare) | 仅用于显式诊断，不阻止模块自动探测 |
 | 手指帧解码与多点输入 | [`0095-input-nt36532e-matrix.patch`](../../../patches/linux/7.3/0095-input-nt36532e-matrix.patch) | 编入 `nt36532e_ts`，在现有 SPI 中断线程中直接上报标准输入事件 |
+| 内核笔解码与 BLE 融合 | [`0123-input-nt36532e-pen.patch`](../../../patches/linux/7.3/0123-input-nt36532e-pen.patch) | 编入 `nt36532e_ts`；从标准固件目录加载数字校准，由物理 SPI tablet-tool 上报输入 |
 | 笔输入、旧内核手指输入与原始帧诊断 | [`upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c`](../../../upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c) | 派生后编译为 `/usr/bin/piano-touch-view`，由 `piano-touch.service` 启动 |
 | 触屏程序的本地观测补丁 | [`tools/patches/piano-touch-view-observability.patch`](../../../tools/patches/piano-touch-view-observability.patch) | `build_piano_runtime_helpers.py` 派生源码，`build_release_helpers.py` 编译 |
 | 相机服务、图像处理与控制接口 | [`linux/bsp/optional/camera/`](../../../linux/bsp/optional/camera/) 与 [`linux/userspace/camera/`](../../../linux/userspace/camera/) | 共用 Makefile 编译服务与客户端，两条运行库构建入口使用同一份源码 |
@@ -23,7 +24,9 @@
 
 坏校验或截断帧只丢弃，不更新触点或基线；短暂丢样不会中断拖动。固件重载、挂起和移除释放触点，固件重载与挂起后重新学习基线。SPI 传输失败释放当前触点，保留基线；面板恢复时，固件重载失败则保持中断关闭。原始帧 FIFO 只在显式启用捕获时分配，手指输入本身不占用这份 4 MiB 队列。
 
-`piano-touch-view input` 在实时模式读取 `kernel_input` 状态：内核已接管手指时跳过手指解码和虚拟触屏，只保留显式请求的笔或诊断功能；两者都未请求时直接退出。旧内核继续使用原来的用户空间手指路径。[用户空间去噪补丁](../../../tools/patches/piano-touch-view-line-noise.patch)也使用中位数选择，作为旧内核和离线诊断的实现。
+匹配新笔驱动、导出符号与标准固件校准的构建使用 BlueZ-only `touch-input`，只初始化厂商 GATT 特征，不再读取 THP／hidraw、写 procfs 或创建 uinput。BLE 尚未连接时该进程继续等待；笔矩阵和蓝牙样本由内核融合。校准从 BSP 的相对固件链接读取，同一张表只保留一份。
+
+旧内核构建才使用 `piano-touch-view input`：内核已接管手指时跳过手指解码和虚拟触屏，只保留显式请求的笔或诊断功能。[用户空间去噪补丁](../../../tools/patches/piano-touch-view-line-noise.patch)保留用于旧内核和离线对照，不是新产品的输入路径。
 
 硬件驱动通过 OF、platform、SPI、RPMsg 等标准 modalias 加载，依赖由设备树、内核 supplier 和延迟探测表达。显示、键盘、无线、音频和视频没有按加载顺序运行的用户空间服务。热更新定位后的修复必须写回内核、设备树或对应程序源码。
 

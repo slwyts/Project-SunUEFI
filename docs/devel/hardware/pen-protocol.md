@@ -1,8 +1,71 @@
 # Piano 触控笔协议与原厂算法
 
-默认 120 Hz。Focus Pen Pro 支持定位、压感绘画、144 Hz 笔输入、轻捏、震动和磁吸连接恢复；普通 Focus Pen 的刷新率范围见下文。掌压按接触面积识别并与笔同组交给 libinput 仲裁，阈值仍需用真实手掌数据调整，见[笔目录说明](../../../linux/userspace/pen/README.md)；轻捏、双击和笔身滑动的格式与 Linux 输出见[笔身手势](#笔身手势)。
+默认 120 Hz。Focus Pen Pro 已完成 120 Hz 定位与压感绘画，144 Hz 的限制见[已知问题](../../user/known-issues.md#触控笔)；普通 Focus Pen 的刷新率范围见下文。掌压按接触面积识别并与笔同组交给 libinput 仲裁，阈值仍需用真实手掌数据调整，见[笔目录说明](../../../linux/userspace/pen/README.md)；轻捏、双击和笔身滑动的格式与 Linux 输出见[笔身手势](#笔身手势)。
 
 下文保留移植过程的协议记录。原厂依据来自同版本 `OS3.0.309.0.WPYCNXM` ROM 的触控 HAL、公开驱动和操作采集。
+
+## 内核输入与许可边界
+
+`hid-xiaomi` 将两个型号的 15 字节 Report5 首个小端 16 位字上报为标准
+`ABS_PRESSURE`，范围分别为 M80p 的 0..8191 和 P81c 的 0..16383；Report2 的
+两个笔按钮也有标准事件。其余压力字、Report6 姿态和原始矩阵中的 pressure
+不补作笔输入。压力节点没有 X/Y 或 `BTN_TOOL_PEN`，因此不冒充独立数位板；
+原始 hidraw 保持不变。
+
+`nt36532e` 新增独立整数 C 实现：校验 type29 的两层校验和、四组 480 点矩阵
+和手指 quarter 边界，分别取轴向响应，在峰值的五电极邻域求质心，再用外部
+位置映射、Tip/Ring 差值曲线和倾角校正生成坐标。它不使用现有 C++ 解算器的
+候选扫描线混合、浮点 Kalman 和 follower 滤波，边缘、悬停距离、掌压干扰与
+倾角精度必须用原始采集和笔尖位置对照，不能把编译成功写成原厂等价。
+
+校准通过标准 `request_firmware_direct()` 读取 `novatek/piano-boe-pen.ini`
+或 `novatek/piano-csot-pen.ini`，按控制器 LCD ID 选择，接受仓库现有的数字
+`format_version=1`。文件位于发行版标准固件目录 `/lib/firmware/novatek/`
+（合并 `/usr` 的系统为 `/usr/lib/firmware/novatek/`），不把映射表或模型常数
+塞进 GPL 驱动。BSP 从已有数字校准建立相对符号链接，表数据只维护一份。
+文件缺失或校验失败时手指输入继续工作，不自动启动用户态笔来掩盖失败。
+
+该实现只完成对象编译、两份实际校准的解析和数学边界检查，还没有实机绘画
+对照。发布构建器核对匹配内核的笔源码、配置、notifier 导出符号及 sysroot 中
+两份校准，选择只执行 BlueZ 初始化的 `piano-pen-control`，安装为现有
+`/usr/lib/piano/touch-input`。该进程不写 procfs、不读 hidraw/THP、不创建
+uinput，笔尚未 BLE 连接时也不会退出而连带结束初始化。新内核缺少接线或
+校准时构建报错；运行时校准被删除则记录缺失并保留 BlueZ，不回退出第二个
+工具。udev 在 SPI 驱动绑定后启动原有服务，不等待 THP 的私有节点。
+旧内核构建仍选择原 launcher，供回退与对照；三份发行版使用相同规则。
+
+内核 `input_handler` 只连接 `hid-xiaomi` 的真实 BLE 压力设备，内部 notifier
+保留每个实际样本的 BOOTTIME 时刻，避免 evdev 对不变压力的去重丢失新鲜度。
+融合只取不晚于屏幕帧且不超过 100 ms 的压力；断连、挂起、固件重载、
+磁吸和帧超时释放工具与按钮。100 ms 是防止卡住接触的策略，不是原厂参数。
+释放接触或压力失效时同步清零 `ABS_PRESSURE`；同一次感应范围内缺少 Ring
+样本时保留上一倾角，不把缺测当作直立，工具离开范围时清除倾角状态。
+合成输入属于 SPI 触控设备，不依赖 uinput 或用户空间读取原始 FIFO。M80p
+和 P81c 按实际连接型号切换范围；同时存在两个 BLE 发送者时停止融合与扫描，
+因为 type29 中哪一字段能对应 BLE 身份尚未建立，不能把第一支笔的压力套给
+另一支笔的位置。
+
+扫描跟随现有标准 `SW_PEN_INSERTED`，不依赖私有充电节点：磁吸时停止，取下
+后恢复已请求型号；面板及系统休眠停止扫描，固件恢复后按当前状态重放。
+停止扫描失败时保留停止请求并每秒重试，确认停止前不配置新的笔型号。
+磁吸 handler 初始化失败时清理该 handler 并排空工作项，保留手指与旧用户态
+笔路径，不使整个触屏探测失败。发布的内核笔 launcher 不自动启用旧路径；
+procfs 和离线解码源码仅留给旧内核与对照，待实机替代验证后再删除。
+
+现有 [`piano-pen-decoder.cpp`](../../../linux/userspace/pen/piano-pen-decoder.cpp)
+和其[固定上游](https://github.com/ianchb/xiaomi-sheng-thp/tree/34046210932d654a4c0df0121ecc31c008f8148c)
+仅授予 Apache-2.0。Linux `LICENSES/dual/Apache-2.0` 明确要求另有 GPLv2 兼容
+授权；不能直接翻译成 C 或更换 SPDX 并入内核。上述质心/插值是独立实现，
+协议事实和数学方法可复用，原开源核心及其许可保留。
+
+P81c 的 FE11/FE12 初始化仍由 BlueZ 控制服务完成。HID Report Map 没有 Output
+或 Feature；`drivers/hid/uhid.c::uhid_hid_set_report()` 仅把 HID 请求交回
+用户空间，并没有访问任意 GATT characteristic 的接口。BlueZ 的
+[`profiles/input/hog.c`](https://github.com/bluez/bluez/blob/master/profiles/input/hog.c)
+通过用户空间 GATT client 创建 UHID。当前内核没有供 `hid-xiaomi` 共用这条
+ATT 连接的通用 GATT client；因此不能删除 `pen-bluetooth` 并假装无线时序、
+磁吸通知、双击开关和振动初始化已经由驱动完成。144 Hz 无笔帧的原因也未
+由这份输入迁移修复。
 
 ## 普通 Focus Pen（M80p）
 

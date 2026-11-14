@@ -94,7 +94,8 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
     emulator = None if native else shutil.which('qemu-aarch64-static') or shutil.which('qemu-aarch64')
     if not native and not emulator:
         raise ValueError('AArch64 helper checks need qemu-aarch64 on this host')
-    pen_files, pen_record = runtime.build_pen_core(output, flags, sysroot, emulator=emulator)
+    pen_files, pen_record = runtime.build_pen_core(
+        output, flags, sysroot, emulator=emulator, kernel=identity)
     files.update(pen_files)
     camera_files, camera_record = runtime.build_camera(
         output, flags, pen_record['cxx_command'], uapi, sysroot, emulator=emulator)

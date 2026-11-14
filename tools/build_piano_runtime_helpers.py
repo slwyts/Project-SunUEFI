@@ -39,6 +39,14 @@ PEN_SOURCE_FILES=('Makefile','piano-pen-frame.c','piano-pen-frame.h',
  'piano-pen-decoder.hpp','piano-pen-offline.cpp','piano-pen-owner.c',
  'piano-pen-owner.h','Apache-2.0.txt','OPEN_CORE_ORIGIN.txt')
 PEN_DOCUMENTS=('Apache-2.0.txt','OPEN_CORE_ORIGIN.txt')
+PEN_CALIBRATION_PATHS={
+ 'usr/lib/firmware/novatek/piano-'+panel+'-pen.ini':
+ 'linux/bsp/common/usr/share/piano/pen/calibration/piano-'+panel+'.ini'
+ for panel in ('boe','csot')}
+PEN_KERNEL_SOURCE_FILES=(
+ 'drivers/input/touchscreen/nt36532e/nt36xxx-pen.c',
+ 'drivers/input/touchscreen/nt36532e/nt36xxx-pen-input.c',
+ 'include/linux/input/xiaomi-pen.h')
 PEN_RUNTIME_PATHS={'usr/bin/piano-pen-offline','usr/bin/piano-pen-canvas','usr/lib/piano/pen-bluetooth','usr/lib/piano/touch-input','usr/share/piano/pen/p81c-radio.json'}|{
  'usr/share/doc/piano-pen-offline/'+name for name in PEN_DOCUMENTS}
 TOOL_PINS={'clang':'939a882527432ec23b094c289e7f170bf2d6ec282e74dde75e31b08602fa3eae',
@@ -277,12 +285,63 @@ def verify_elf(path):
     return {'bytes':len(raw),'sha256':sha(path),'machine':183,'static_no_pt_interp':True}
 
 
-def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None):
-    """Build the same offline C/C++ sources in both runtime pipelines; no ini input."""
+def pen_input_frontend(kernel=None, sysroot=None):
+    """Select one launcher from the matched kernel and installed calibration."""
+    from build_piano_ram_bootstrap import guest_resolve
+
+    source = ROOT / 'linux/userspace/pen'
+    legacy = source / 'piano-touch-input'
+    if kernel is None:
+        return legacy.read_bytes(), legacy, {'mode': 'userspace'}, {}
+    kernel_source, build = Path(kernel['source']), Path(kernel['build'])
+    paths = [kernel_source / name for name in PEN_KERNEL_SOURCE_FILES]
+    if not any(path.exists() for path in paths):
+        return legacy.read_bytes(), legacy, {'mode': 'userspace'}, {}
+    if not all(path.is_file() for path in paths):
+        raise ValueError('Kernel pen source is incomplete; refusing a mixed input runtime')
+    config = (build / '.config').read_text()
+    options = dict(re.findall(r'^(CONFIG_[A-Z0-9_]+)=(.*)$', config, re.M))
+    touch, hid = (options.get(name) for name in
+                  ('CONFIG_TOUCHSCREEN_NT36532E_SPI', 'CONFIG_HID_XIAOMI'))
+    if (touch not in ('y', 'm') or hid not in ('y', 'm') or
+            (touch == 'y' and hid == 'm') or options.get('CONFIG_FW_LOADER') != 'y'):
+        raise ValueError('The matched kernel cannot reach pen decoding, HID or firmware loading')
+    symbols = {fields[1] for line in (build / 'Module.symvers').read_text().splitlines()
+               if len(fields := line.split()) >= 4 and fields[3] == 'EXPORT_SYMBOL_GPL' and
+               fields[2] in ('drivers/hid/hid-xiaomi', 'vmlinux')}
+    if not {'xiaomi_pen_register_notifier', 'xiaomi_pen_unregister_notifier'} <= symbols:
+        raise ValueError('Build the matched kernel pen/HID modules before selecting kernel input')
+    if sysroot is None:
+        raise ValueError('Kernel pen runtime needs a sysroot with the standard firmware calibration')
+    inputs = {str(path): sha(path) for path in paths}
+    calibrations = {}
+    for name, original in PEN_CALIBRATION_PATHS.items():
+        installed = guest_resolve(Path(sysroot), '/' + name)
+        expected = ROOT / original
+        if not installed.is_file() or sha(installed) != sha(expected):
+            raise ValueError('Stage the matching pen calibration before runtime build: /' + name)
+        calibrations[name] = sha(installed)
+        inputs[str(expected)] = sha(expected)
+    release = kernel['release']
+    if not re.fullmatch(r'[a-zA-Z0-9_.+-]{1,128}', release):
+        raise ValueError('Invalid kernel release for pen input launcher')
+    frontend = source / 'piano-pen-control'
+    text = frontend.read_text()
+    if text.count('@KERNEL_RELEASE@') != 1:
+        raise ValueError('Kernel pen launcher needs exactly one release substitution')
+    record = {'mode': 'kernel', 'kernel_release': release, 'calibration': calibrations,
+              'legacy_input_enabled': False, 'bluez_control': True}
+    return text.replace('@KERNEL_RELEASE@', release).encode(), frontend, record, inputs
+
+
+def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None, kernel=None):
+    """Build diagnostics and select one input launcher for the matched kernel."""
     output=Path(output).resolve();env=os.environ.copy() if env is None else env
     source=ROOT/'linux/userspace/pen';copied=output/'pen-source';built=output/'pen-core'
+    frontend_data,frontend,pen_input,frontend_inputs=pen_input_frontend(kernel,sysroot)
     copied.mkdir();built.mkdir()
     inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
+    inputs.update(frontend_inputs)
     for name in PEN_SOURCE_FILES:
         original=source/name;inputs[str(original)]=sha(original)
         shutil.copyfile(original,copied/name)
@@ -349,12 +408,12 @@ def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None):
         'file':str(copied_canvas.relative_to(output)),'bytes':copied_canvas.stat().st_size,
         'sha256':sha(copied_canvas),'mode':0o755,'source_kind':'project-pen-drawing',
         'source_path':'linux/userspace/pen/piano-pen-canvas.py'}
-    frontend=source/'piano-touch-input';inputs[str(frontend)]=sha(frontend)
-    copied_frontend=copied/frontend.name;shutil.copyfile(frontend,copied_frontend)
+    inputs[str(frontend)]=sha(frontend)
+    copied_frontend=copied/'piano-touch-input';copied_frontend.write_bytes(frontend_data)
     files['usr/lib/piano/touch-input']={
         'file':str(copied_frontend.relative_to(output)),'bytes':copied_frontend.stat().st_size,
         'sha256':sha(copied_frontend),'mode':0o755,'source_kind':'project-touch-input',
-        'source_path':'linux/userspace/pen/piano-touch-input'}
+        'source_path':str(frontend.relative_to(ROOT)),'pen_input':pen_input}
     for name in PEN_DOCUMENTS:
         path=copied/name
         files['usr/share/doc/piano-pen-offline/'+name]={
@@ -366,7 +425,8 @@ def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None):
             'cxx_command':cxx,
             'archive':{'file':str(archive.relative_to(output)),'bytes':archive.stat().st_size,
                        'sha256':sha(archive),'installed':False},
-            'ini_required_at_build':False,'device_operation':False,'drawing_input_enabled':False}
+            'ini_required_at_build':pen_input['mode']=='kernel','device_operation':False,
+            'drawing_input_enabled':False,'input':pen_input}
     (output/'pen-manifest.json').write_text(json.dumps(record,indent=2)+'\n')
     return files,record
 
@@ -404,6 +464,10 @@ def stage(output,destination):
         expected |= RUNTIME_PATHS
     if set(files)!=expected:raise ValueError('Runtime bundle source/install paths differ from the exact contract')
     if not(destination/'usr/lib/modules'/release/'kernel').is_dir():raise ValueError('Stage the matching full kernel module tree first')
+    frontend,_,pen_input,_=pen_input_frontend(manifest['kernel'],destination)
+    if (manifest['pen_core'].get('input',{'mode':'userspace'})!=pen_input or
+            files['usr/lib/piano/touch-input']['sha256']!=hashlib.sha256(frontend).hexdigest()):
+        raise ValueError('Rebuild the pen runtime for this kernel; refusing mixed input launchers')
     # Prevalidate the entire generation before changing any destination file.
     for name,row in files.items():
         p=output/row['file']
@@ -472,7 +536,7 @@ def build(args):
     inputs.update(identity['inputs']);output.mkdir(parents=True);log=output/'build.log';files={};commands=[]
     flags=[tools/'clang','--target=aarch64-linux-gnu','--sysroot='+str(sysroot),'--gcc-toolchain='+str(sysroot/'usr'),'-O2','-Wall','-Wextra','-Werror']
     touch_source,touch_provenance=derive_touch_source(public,output)
-    pen_files,pen_record=build_pen_core(output,flags,sysroot,env,qemu)
+    pen_files,pen_record=build_pen_core(output,flags,sysroot,env,qemu,kernel=identity)
     files.update(pen_files);inputs.update(pen_record['inputs'])
     camera_files,camera_record=build_camera(output,flags,pen_record['cxx_command'],uapi,sysroot,env,qemu,('-fuse-ld=lld',))
     files.update(camera_files);inputs.update(camera_record['inputs'])

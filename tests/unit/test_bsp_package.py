@@ -53,6 +53,17 @@ class BspPackageTests(unittest.TestCase):
         self.assertEqual(report['target']['suite'], 'user-selected-suite')
         self.assertFalse(report['dependency_resolution_tested'])
 
+    def test_pen_calibration_uses_standard_firmware_paths_without_duplicate_tables(self):
+        report = bsp.build(self.args())
+        for panel in ('boe', 'csot'):
+            name = f'usr/lib/firmware/novatek/piano-{panel}-pen.ini'
+            row = report['payload_files'][name]
+            self.assertEqual(row['type'], 'symlink')
+            link = bsp.BSP / 'common' / name
+            original = bsp.BSP / 'common/usr/share/piano/pen/calibration' / f'piano-{panel}.ini'
+            self.assertEqual(link.resolve(), original.resolve())
+            self.assertEqual(link.read_bytes(), original.read_bytes())
+
     def test_payload_tamper_refused_before_stage(self):
         copied = self.base / 'bsp'
         shutil.copytree(bsp.BSP, copied, symlinks=True)

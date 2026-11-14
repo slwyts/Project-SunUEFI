@@ -286,8 +286,8 @@
       "source_component": "Project SunUEFI",
       "source_git_mode": "100644",
       "license": "MIT",
-      "sha256": "3ebb8173db88496fdaa23c42e635defcbe5784f6f51aa538a76a9b9808b220ff",
-      "source_sha256": "3ebb8173db88496fdaa23c42e635defcbe5784f6f51aa538a76a9b9808b220ff"
+      "sha256": "13001fcc77d4a1823b7c43e93f808e8294527636f50fc15d4876fa95f8816664",
+      "source_sha256": "13001fcc77d4a1823b7c43e93f808e8294527636f50fc15d4876fa95f8816664"
     },
     {
       "group": "common",
@@ -296,9 +296,9 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "cfd6d1b0e57e806f6aa2e0722ce6bd0f581efeab242a26aa6f525291b78e885c",
+      "sha256": "1bc25d5d55617899528d7b3c5a4f28c1fc453b049cab57d2b24f0723fe91bc27",
       "source": "linux/bsp/common/etc/udev/rules.d/79-piano-touch.rules",
-      "source_sha256": "cfd6d1b0e57e806f6aa2e0722ce6bd0f581efeab242a26aa6f525291b78e885c",
+      "source_sha256": "1bc25d5d55617899528d7b3c5a4f28c1fc453b049cab57d2b24f0723fe91bc27",
       "source_component": "Project SunUEFI",
       "source_git_mode": "100644",
       "license": "MIT"
@@ -344,6 +344,34 @@
       "license": "MIT",
       "sha256": "434ad6607f2965b17243536eeb37b1f8becd6b1ed457dcccbdb46101de2d5eba",
       "source_sha256": "434ad6607f2965b17243536eeb37b1f8becd6b1ed457dcccbdb46101de2d5eba"
+    },
+    {
+      "group": "common",
+      "path": "usr/lib/firmware/novatek/piano-boe-pen.ini",
+      "type": "symlink",
+      "mode": "0777",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "3322ee6e7b6d103cc4c63dae919a1890d3d38a359429ddbc7c25ad76c59f5865",
+      "source": "linux/bsp/common/usr/lib/firmware/novatek/piano-boe-pen.ini",
+      "source_component": "Project SunUEFI numeric calibration facts",
+      "source_sha256": "3322ee6e7b6d103cc4c63dae919a1890d3d38a359429ddbc7c25ad76c59f5865",
+      "source_git_mode": "120000",
+      "license": "MIT"
+    },
+    {
+      "group": "common",
+      "path": "usr/lib/firmware/novatek/piano-csot-pen.ini",
+      "type": "symlink",
+      "mode": "0777",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "8d157cd6d2d1856246f78ed48a9d46fee0f4c3a38bee95b9fc7faf583f3e6af1",
+      "source": "linux/bsp/common/usr/lib/firmware/novatek/piano-csot-pen.ini",
+      "source_component": "Project SunUEFI numeric calibration facts",
+      "source_sha256": "8d157cd6d2d1856246f78ed48a9d46fee0f4c3a38bee95b9fc7faf583f3e6af1",
+      "source_git_mode": "120000",
+      "license": "MIT"
     }
   ],
   "excluded": [
