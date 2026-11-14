@@ -34,9 +34,9 @@ Linux 内核补丁按内核版本分目录维护在 `patches/linux/`，通过 `p
 
 软件包系列使用 `patches/<包>/<版本>/series.json`。`patches` 列表按顺序应用，条目的 `file` 相对该系列目录解析；FFmpeg 的现有 `series` / `path` 格式含义相同。同一修复适用于多个版本时，系列引用同一份文件，不再复制补丁。跨版本路径可以使用 `../`，但不能离开仓库。
 
-`targets` 登记使用该版本的 CI 产品名，以 `tools/ci_build_targets.py` 中的四个 root 目标为准。PipeWire 的 Debian 两桌面使用 1.6.9，Nyarch 使用 1.6.11，SteamOS 使用 1.6.8。GTK 3.24.52、IBus 1.5.34、KWin 6.6.5 和 Mesa 27.0 的本地系列由 SteamOS 配方使用。其他软件包尚未登记 `targets` 时仍检查补丁顺序、路径和摘要；同一个包开始登记后，其所有保留版本都必须明确目标。
+`targets` 登记使用该版本的 CI 产品名，以 `tools/ci_build_targets.py` 中的 `TARGETS` 为准：固件和内核分别可选 `uefi`、`linux`，根系统使用四个发行版目标。PipeWire 的 Debian 两桌面使用 1.6.9，Nyarch 使用 1.6.11，SteamOS 使用 1.6.8。GTK 3.24.52、IBus 1.5.34、KWin 6.6.5 和 Mesa 27.0 的本地系列由 SteamOS 配方使用。Nyarch 的 Material You Colors 30 和 Blur my Shell 75、SteamOS 的 KScreen 6.6.5 和 Manager 26.4.1 也通过各自版本的系列选择补丁。
 
-条目可以附带 `upstream`，共享文件的来源只需在定义它的系列记录一次：
+已登记系列中的补丁必须有 `upstream`。共享文件的来源只需在一个引用处记录一次；一个系列的补丁确实共用来源与删除条件时，也可在系列顶层记录：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -45,6 +45,8 @@ Linux 内核补丁按内核版本分目录维护在 `patches/linux/`，通过 `p
 | `commit` | 已知时填写完整上游提交号 |
 | `drop_when` | 换到哪个包含修复的源码、需要通过什么功能检查后才能删除 |
 
-`merged` 不表示正在使用的发行版已包含修复。例如 PipeWire 的五项 GStreamer 修复已在上游 master，但 1.6.8、1.6.9 和 1.6.11 的 release 源码仍需回移；GTK 的提交来自 GTK 4，GTK 3 仍需对应修复。删除前必须核对所选 release 的实际源码，而不是只比较版本号或提交日期。
+`merged` 不表示正在使用的发行版已包含修复。例如 PipeWire 的五项 GStreamer 修复已在上游 master，但 1.6.8、1.6.9 和 1.6.11 的 release 源码仍需回移；GTK 3 维护分支已有工具原子修复，固定的 3.24.52 release 尚不包含它。删除前必须核对所选 release 的实际源码，而不是只比较版本号或提交日期。
 
-运行 `./build.sh check --pattern test_check_patch_series.py` 检查这些规则，Build products 在选择构建目标前运行同一检查。检查按解析后的文件路径合并共享引用，拒绝同一系列重复应用补丁、摘要漂移、矩阵外目标、已登记包的无目标版本和未入系列的补丁。不同文件以 SHA256 和 Git patch-id 检查重复；没有 `diff --git` 头的普通 unified diff 也会参与比较。检查不联网，不自动宣称某个修复已上游，也不自动删除补丁。
+运行 `./build.sh check --pattern test_check_patch_series.py` 检查这些规则，Build products 在选择构建目标前运行同一检查。检查按解析后的文件路径合并共享引用，拒绝同一系列重复应用补丁、摘要漂移、矩阵外目标、已登记包的无目标版本、未入系列的补丁和缺少的上游状态。不同文件以 SHA256 和 Git patch-id 检查重复；没有 `diff --git` 头的普通 unified diff 也会参与比较。
+
+旧包的元数据按改动逐步补齐。CI 传入 push 前的提交 `SUNUEFI_PATCH_BASE`，本次新增或修改的补丁与系列必须补齐其包的目标和来源，不能删除已有的 `targets` 逃避检查。未触及的旧包仍校验顺序、路径、摘要和重复变更，输出中显示元数据缺口数。要在本地检查一个提交范围，运行 `SUNUEFI_PATCH_BASE=$(git rev-parse main) ./build.sh check --pattern test_check_patch_series.py`；要要求所有保留补丁完整登记，使用 `SUNUEFI_PATCH_REQUIRE_ALL=1 ./build.sh check --pattern test_check_patch_series.py`。检查不联网，不自动宣称某个修复已上游，也不自动删除补丁。

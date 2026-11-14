@@ -48,6 +48,8 @@ jobs:
           submodules: false
           persist-credentials: false
       - name: Check patch series and product references
+        env:
+          SUNUEFI_PATCH_BASE: ${{ github.event.before }}
         run: ./build.sh check --pattern test_check_patch_series.py
       - id: targets
         env:

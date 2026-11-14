@@ -30,13 +30,14 @@ UEFI_FILES = {'requirements-build.txt', 'tools/build_android_product_module.py',
 UEFI_PREFIXES = ('android/', 'uefi/', 'vendor/piano/', 'patches/firmware/',
                  'tools/prepare_product_')
 DISTROS = ['debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos']
+TARGETS = ('uefi', 'linux', *DISTROS)
 
 
 def select(files, manual=None):
     if manual:
         if manual == 'all':
             return DISTROS.copy()
-        if manual not in ('uefi', 'linux', *DISTROS):
+        if manual not in TARGETS:
             raise ValueError('Unknown manual product target')
         return [manual]
     files = list(files)
