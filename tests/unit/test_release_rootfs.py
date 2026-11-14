@@ -71,7 +71,10 @@ class ReleaseRootTests(unittest.TestCase):
         with patch.object(builder.subprocess, 'run', side_effect=AssertionError('plan executed a command')):
             result = self.planned()
         self.assertEqual(result['status'], 'PLAN_ONLY'); self.assertEqual(result['root_policy'], 'LABEL=PIANOROOT')
-        self.assertIn('Piano Mesa .deb directory (--mesa-dir)', result['missing_inputs'])
+        self.assertNotIn('mesa_dir', result)
+        self.assertIsNone(result['sensors_dir'])
+        self.assertIsNone(result['ffmpeg_dir'])
+        self.assertEqual(result['config']['debian']['suite'], 'sid')
         self.assertTrue(any('build-rootfs.sh' in step for step in result['steps']))
         self.assertFalse(self.output.exists())
 
@@ -156,6 +159,29 @@ class ReleaseRootTests(unittest.TestCase):
         (self.root / 'config/release.json').write_text(json.dumps(config))
         with self.assertRaisesRegex(ValueError, 'snapshot mode'):
             self.planned()
+
+    def test_retired_debian_suite_is_not_a_product_target(self):
+        config = copy.deepcopy(CONFIG)
+        config['debian']['suite'] = 'trixie'
+        (self.root / 'config/release.json').write_text(json.dumps(config))
+        with self.assertRaisesRegex(ValueError, 'only sid'):
+            self.planned()
+
+    def test_archive_identity_uses_apt_not_testing_os_release_codename(self):
+        (self.rootfs / 'etc').mkdir(parents=True)
+        (self.rootfs / 'etc/os-release').write_text(
+            'ID=debian\nVERSION_CODENAME=forky\nPRETTY_NAME="Debian GNU/Linux forky/sid"\n')
+        for indexes, accepted in (
+                ('sid unstable Debian Packages\nsid unstable Debian Sources\n', True),
+                ('trixie stable Debian Packages\n', False),
+                ('sid unstable Debian Packages\ntrixie stable Debian Packages\n', False),
+                ('', False)):
+            with self.subTest(indexes=indexes), patch.object(builder, 'capture', return_value=indexes):
+                if accepted:
+                    self.assertEqual(builder.debian_archive(self.rootfs)['suite'], 'sid')
+                else:
+                    with self.assertRaisesRegex(ValueError, 'sid only'):
+                        builder.debian_archive(self.rootfs)
 
     def test_real_shell_selector_rejects_android_uuid_and_duplicates(self):
         guard = BOOT[BOOT.index('selected=0'):BOOT.index('dma_routes() {')]

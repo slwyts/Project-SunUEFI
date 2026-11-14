@@ -41,8 +41,7 @@ case "$command" in
     sunuefi_release_source="$(python3 tools/build/kernel_worktree.py)"
     python3 tools/build_release_rootfs.py --kernel artifacts/kernels/release \
       --source "$sunuefi_release_source" --kernel-build build/kernels/release \
-      --output build/distros/release --mesa-dir build/mesa/runtime \
-      --sensors-dir build/sensors/runtime --ffmpeg-dir build/ffmpeg/runtime --execute "$@" ;;
+      --output build/distros/release --execute "$@" ;;
   package|esp)
     if [[ "$command" == esp ]]; then set -- --esp-only "$@"; fi
     python3 tools/package/release.py "$@"
@@ -52,9 +51,6 @@ case "$command" in
     "$0" uefi
     "$0" module
     "$0" linux
-    "$0" mesa
-    "$0" sensors
-    "$0" ffmpeg --install-dependencies
     "$0" release-rootfs
     "$0" package "$@"
     ;;

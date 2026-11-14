@@ -52,7 +52,7 @@
   "debian": {
     "source": "upstream/debian-piano-current",
     "commit": "a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45",
-    "suite": "trixie",
+    "suite": "sid",
     "apt_policy": "mutable-recorded",
     "snapshot": null,
     "archive_signature_verification": "upstream debootstrap keyring and APT defaults; never disabled",

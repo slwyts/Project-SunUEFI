@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Derive the selected desktop's base recipe without altering the upstream tree."""
+"""Derive the Debian sid desktop recipe without altering the upstream tree."""
 from pathlib import Path
 import copy
 import json
@@ -41,31 +41,75 @@ def gnome_path(name):
     return any(name == prefix or name.startswith(prefix + '/') for prefix in GNOME_PATHS)
 
 
+def sid_recipe(text):
+    """Replace the fixed source recipe's stable-only APT setup as one operation."""
+    replacements = (
+        ('[ "$SUITE" = trixie ] || die \'this desktop profile supports trixie only\'',
+         '[ "$SUITE" = sid ] || die \'this desktop profile supports sid only\''),
+        ('deb https://deb.debian.org/debian trixie main\n'
+         'deb https://deb.debian.org/debian trixie-updates main\n'
+         'deb https://security.debian.org/debian-security trixie-security main',
+         'deb https://deb.debian.org/debian sid main'),
+        ("printf 'deb http://deb.debian.org/debian trixie main\\n'",
+         "printf 'deb http://deb.debian.org/debian sid main\\n'"),
+    )
+    for old, replacement in replacements:
+        if text.count(old) != 1:
+            raise ValueError('Upstream Debian APT setup changed')
+        text = text.replace(old, replacement)
+    start = text.index('# Newer userspace from trixie-backports,')
+    end = text.index('if [ -n "$USERSPACE_DIR" ]; then', start)
+    text = text[:start] + text[end:]
+    start = text.index('if [ -n "$MESA_DIR" ]; then')
+    end = text.index('# The checkout belongs to the building user;', start)
+    text = text[:start] + text[end:]
+    text = text.replace('SUITE=trixie ', 'SUITE=sid ')
+    text = text.replace('--suite trixie', '--suite sid')
+    text = text.replace(" USERSPACE_DIR='' MESA_DIR=''", " USERSPACE_DIR=''")
+    text = text.replace(' [--mesa-dir DIR]', '')
+    text = text.replace('        --mesa-dir) MESA_DIR=$(realpath "${2:?}"); shift 2 ;;\n', '')
+    if 'trixie' in text or 'MESA_DIR' in text:
+        raise ValueError('Stable-only Debian source remains in the derived sid recipe')
+    return text
+
+
 def prepare(public, output, desktop):
-    if desktop == 'gnome':
-        return public
-    if desktop != 'kde':
+    if desktop not in ('gnome', 'kde'):
         raise ValueError('Unsupported Debian desktop')
     destination = output / 'base-recipe'
-    shutil.copytree(public / 'scripts', destination / 'scripts')
+    (destination / 'scripts').mkdir(parents=True)
+    shutil.copy2(public / 'scripts/build-rootfs.sh', destination / 'scripts/build-rootfs.sh')
     shutil.copytree(public / 'rootfs', destination / 'rootfs', symlinks=True)
-    for name in GNOME_PATHS:
-        path = destination / 'rootfs/overlay' / name
-        if path.is_symlink() or path.is_file():
-            path.unlink()
-        elif path.is_dir():
-            shutil.rmtree(path)
+    if desktop == 'kde':
+        for name in GNOME_PATHS:
+            path = destination / 'rootfs/overlay' / name
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                shutil.rmtree(path)
     package_file = destination / 'rootfs/packages.txt'
-    packages = [line for line in package_file.read_text().splitlines()
-                if line.strip() not in GNOME_PACKAGES | {'firefox-esr'}]
-    package_file.write_text('\n'.join(packages + KDE_PACKAGES + ['chromium']) + '\n')
+    packages = [line.strip() for line in package_file.read_text().splitlines()
+                if line.strip() and not line.lstrip().startswith('#')]
+    backports = destination / 'rootfs/packages-backports.txt'
+    packages.extend(line.strip() for line in backports.read_text().splitlines()
+                    if line.strip() and not line.lstrip().startswith('#'))
+    backports.unlink()
+    # Codec SONAME dependencies come from FFmpeg, not the old stable ABI list.
+    obsolete = {'firefox-esr', 'libavcodec61', 'qbootctl'}
+    if desktop == 'kde':
+        obsolete |= GNOME_PACKAGES
+        packages.extend(KDE_PACKAGES)
+    packages = list(dict.fromkeys([p for p in packages if p not in obsolete] +
+                                  ['chromium', 'ffmpeg', 'mesa-vulkan-drivers']))
+    package_file.write_text('\n'.join(packages) + '\n')
     script = destination / 'scripts/build-rootfs.sh'
-    text = script.read_text()
-    old = 'ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-manager.service"'
-    if text.count(old) != 1:
-        raise ValueError('Upstream display-manager selection changed')
-    text = text.replace(old, 'ln -sf /usr/lib/systemd/system/sddm.service "$ROOTFS/etc/systemd/system/display-manager.service"')
-    text = text.replace('desktop=gnome', 'desktop=kde').replace('GNOME autologin', 'Plasma autologin')
+    text = sid_recipe(script.read_text())
+    if desktop == 'kde':
+        old = 'ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-manager.service"'
+        if text.count(old) != 1:
+            raise ValueError('Upstream display-manager selection changed')
+        text = text.replace(old, 'ln -sf /usr/lib/systemd/system/sddm.service "$ROOTFS/etc/systemd/system/display-manager.service"')
+        text = text.replace('desktop=gnome', 'desktop=kde').replace('GNOME autologin', 'Plasma autologin')
     script.write_text(text)
     return destination
 

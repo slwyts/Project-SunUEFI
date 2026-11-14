@@ -33,6 +33,20 @@ def capture(args, cwd=None):
     return subprocess.check_output(list(map(str, args)), cwd=cwd, text=True).strip()
 
 
+def debian_archive(rootfs):
+    """Check the actual APT indexes, including a resumed generated root."""
+    release = userspace.guest_resolve(rootfs, '/etc/os-release').read_text()
+    if 'ID=debian' not in release.splitlines():
+        raise ValueError('The product base must be Debian')
+    text = capture(['chroot', rootfs, 'apt-get', 'indextargets', '--format',
+                    '$(CODENAME) $(SUITE) $(ORIGIN) $(IDENTIFIER)'])
+    rows = [line.split() for line in text.splitlines() if line.strip()]
+    if not rows or any(len(row) != 4 or row[:3] != ['sid', 'unstable', 'Debian']
+                       for row in rows) or not any(row[3] == 'Packages' for row in rows):
+        raise ValueError('Debian product APT indexes must contain sid only; rebuild the base root')
+    return {'suite': 'sid', 'indexes': rows}
+
+
 def repository(path, commit=None, tree=None):
     head = capture(['git', '-C', path, 'rev-parse', 'HEAD'])
     if (commit and head != commit) or capture(['git', '-C', path, 'status', '--porcelain']):
@@ -42,7 +56,7 @@ def repository(path, commit=None, tree=None):
     return head
 
 
-def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=None,
+def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
          public_source=None, firmware_source=None, macros=None, v4l2_source=None, root=ROOT, resume=False,
          sensors_dir=None, ffmpeg_dir=None, boot_task_snapshot=False, desktop='gnome', mutter_dir=None):
     root = Path(root).resolve(); config = json.loads((root / 'config/release.json').read_text())
@@ -55,6 +69,8 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
         ] + KDE_PACKAGES
     if config['debian']['apt_policy'] != 'mutable-recorded' or config['debian']['snapshot'] is not None:
         raise ValueError('Only signed mutable APT with recorded metadata is implemented; snapshot mode is not configured')
+    if config['debian']['suite'] != 'sid':
+        raise ValueError('The Debian product builds only sid')
     kernel, source, output = [Path(p).resolve() for p in (kernel, source, output)]
     if not output.is_relative_to(root / 'build/distros') or output.is_symlink() or (output.exists() and not resume):
         raise ValueError('Output must be a new project build/distros directory')
@@ -68,6 +84,8 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
                 raise ValueError('Completed base root belongs to another source')
             if previous.get('desktop', 'gnome') != desktop:
                 raise ValueError('Resume must keep the desktop used to build this root')
+            if previous.get('debian_suite') != config['debian']['suite']:
+                raise ValueError('Resume must keep the Debian suite; build a fresh sid base')
         elif not (output / 'FAILED.json').is_file():
             raise ValueError('Resume needs an assembly result or failure record')
         elif json.loads((output / 'FAILED.json').read_text()).get('desktop', 'gnome') != desktop:
@@ -82,14 +100,15 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
     for name, path in (('kernel manifest', kernel / 'manifest.json'), ('kernel source', source / 'Makefile'),
                        ('public rootfs builder', public / 'scripts/build-rootfs.sh'), ('firmware', next(iter(sorted(firmware.glob('*/manifest.json'))), firmware / 'missing'))):
         if not path.is_file(): missing.append(name)
-    mesa = Path(mesa_dir).resolve() if mesa_dir else None
-    if mesa is None or not list(mesa.glob('*.deb')): missing.append('Piano Mesa .deb directory (--mesa-dir)')
-    sensors = Path(sensors_dir or root / 'build/sensors/runtime').resolve()
+    sensors = Path(sensors_dir).resolve() if sensors_dir else None
     sensor_source = root / config['sensors']['source']
     if not (sensor_source / 'scripts/build-sensors-debs.sh').is_file(): missing.append('fixed Piano sensors source')
     if sensor_source.is_dir(): repository(sensor_source, config['sensors']['commit'])
-    if not list(sensors.glob('*.deb')): missing.append('Piano sensors runtime .deb directory (--sensors-dir)')
-    else: sensors_packages(sensors, config['sensors'], root=root)
+    if sensors is not None:
+        if not list(sensors.glob('*.deb')):
+            missing.append('Piano sensors runtime .deb directory (--sensors-dir)')
+        else:
+            sensors_packages(sensors, config['sensors'], root=root)
     ffmpeg = Path(ffmpeg_dir).resolve() if ffmpeg_dir else None
     if ffmpeg:
         ffmpeg_packages(ffmpeg, root)
@@ -116,8 +135,8 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
     return {'status': 'PLAN_ONLY', 'resume': resume, 'desktop': desktop,
             'previous_kernel_release': previous.get('kernel_release') if previous else None,
             'root_policy': 'LABEL=PIANOROOT', 'kernel': str(kernel), 'source': str(source),
-            'output': str(output), 'rootfs': str(output / 'rootfs'), 'mesa_dir': str(mesa) if mesa else None,
-            'sensors_dir': str(sensors),
+            'output': str(output), 'rootfs': str(output / 'rootfs'),
+            'sensors_dir': str(sensors) if sensors else None,
             'ffmpeg_dir': str(ffmpeg) if ffmpeg else None,
             'mutter_dir': str(mutter) if mutter else None,
             'boot_task_snapshot': boot_task_snapshot,
@@ -126,7 +145,7 @@ def plan(kernel, source, output, mesa_dir=None, runtime_dir=None, kernel_build=N
             'public_source': str(public), 'firmware_source': str(firmware), 'config': config, 'missing_inputs': missing,
             'macros': str(macros), 'v4l2_source': str(loop),
             'steps': ['require root + mount/chroot capability; ARM64 or enabled qemu-aarch64 binfmt',
-                      'run public build-rootfs.sh --suite trixie --output NEW --mesa-dir DEBS in private mount namespace',
+                      'derive build-rootfs.sh for sid and install the selected desktop from signed APT in a private mount namespace',
                       'install extra packages with signed APT defaults; record mutable repository metadata',
                       'verify sensors SOURCE/SHA256SUMS; install six runtime packages and signed APT dependencies',
                       'stage public overlay/adapters/modules; build_release_helpers uses actual compiler, alsatplg/m4 and matching kernel ABI',
@@ -378,18 +397,6 @@ def native_boot_request(rootfs, output):
     return record
 
 
-def mesa_packages(folder):
-    rows = {}
-    for path in Path(folder).glob('*.deb'):
-        package, version, arch = [capture(['dpkg-deb', '-f', path, field]) for field in ('Package', 'Version', 'Architecture')]
-        if arch not in ('arm64', 'all') or '+piano' not in version:
-            raise ValueError('Expected ARM64 Piano Mesa packages')
-        rows[package] = {'version': version, 'architecture': arch, 'sha256': digest(path)}
-    if not {'mesa-libgallium', 'libgbm1', 'libegl-mesa0', 'libglx-mesa0', 'mesa-vulkan-drivers'} <= rows.keys():
-        raise ValueError('Piano Mesa core packages are missing')
-    return rows
-
-
 def sensors_packages(folder, config, root=ROOT):
     folder = Path(folder).resolve()
     metadata = next((p for p in (folder.parent, folder)
@@ -598,9 +605,6 @@ def execute(record):
             raise ValueError('Runtime bundle does not belong to the actual new kernel build')
     elif any(not shutil.which(name) for name in (helper_cc, 'alsatplg', 'm4', 'make', 'depmod')):
         raise ValueError('Install the release helper compiler, alsatplg, m4, make and depmod first')
-    mesa = mesa_packages(record['mesa_dir'])
-    sensors = sensors_packages(record['sensors_dir'], cfg['sensors'])
-    ffmpeg = ffmpeg_packages(record['ffmpeg_dir']) if record.get('ffmpeg_dir') else None
     if out.exists() and not record.get('resume'): raise ValueError('Output appeared after planning; preserve it')
     out.parent.mkdir(parents=True, exist_ok=True); log = out.with_name(out.name + '.build.log')
     if log.exists() and not record.get('resume'): raise ValueError('Build log exists; choose a new output name')
@@ -613,9 +617,18 @@ def execute(record):
             from prepare_debian_desktop import prepare
             recipe = prepare(public, out.with_name(out.name + '-recipe'), desktop)
             run(['unshare', '--mount', '--propagation', 'private', 'bash', recipe / 'scripts/build-rootfs.sh',
-                 '--suite', cfg['debian']['suite'], '--output', out, '--mesa-dir', record['mesa_dir']])
+                 '--suite', cfg['debian']['suite'], '--output', out])
         if not (out / 'COMPLETE').is_file() or rootfs.stat().st_uid: raise ValueError('Base desktop build did not complete with native guest ownership')
+        archive = debian_archive(rootfs)
         put(rootfs, 'usr/sbin/policy-rc.d', '#!/bin/sh\nexit 101\n'); (rootfs / 'usr/sbin/policy-rc.d').chmod(0o755)
+        sensor_folder = Path(record.get('sensors_dir') or ROOT / 'build/sensors/runtime')
+        if record.get('sensors_dir') is None:
+            run([ROOT / 'build.sh', 'sensors', sensor_folder.parent, '--sysroot', rootfs])
+        sensors = sensors_packages(sensor_folder, cfg['sensors'])
+        ffmpeg_folder = Path(record.get('ffmpeg_dir') or ROOT / 'build/ffmpeg/runtime')
+        if record.get('ffmpeg_dir') is None:
+            run([ROOT / 'build.sh', 'ffmpeg', '--output', ffmpeg_folder.parent, '--sysroot', rootfs])
+        ffmpeg = ffmpeg_packages(ffmpeg_folder)
         from desktop import build_upower_packages
         upower_folder = ROOT / 'build/upower'
         upower = build_upower_packages.build(upower_folder, rootfs)
@@ -673,14 +686,14 @@ def execute(record):
         sensor_stage = target(rootfs, 'tmp/piano-sensors-packages')
         sensor_stage.mkdir(parents=True, exist_ok=True)
         for row in sensors['packages'].values():
-            shutil.copy2(Path(record['sensors_dir']) / row['file'], sensor_stage / row['file'])
+            shutil.copy2(sensor_folder / row['file'], sensor_stage / row['file'])
             if digest(sensor_stage / row['file']) != row['sha256']:
                 raise ValueError('Piano sensors package changed while staging: ' + row['file'])
         ffmpeg_stage = target(rootfs, 'tmp/piano-ffmpeg-packages')
         if ffmpeg:
             ffmpeg_stage.mkdir(parents=True, exist_ok=True)
             for row in ffmpeg['packages'].values():
-                shutil.copy2(Path(record['ffmpeg_dir']) / row['file'], ffmpeg_stage / row['file'])
+                shutil.copy2(ffmpeg_folder / row['file'], ffmpeg_stage / row['file'])
                 if digest(ffmpeg_stage / row['file']) != row['sha256']:
                     raise ValueError('FFmpeg package changed while staging: ' + row['file'])
         with build_devices(rootfs), build_resolver(rootfs):
@@ -794,8 +807,10 @@ def execute(record):
                   'root_policy': 'LABEL=PIANOROOT', 'kernel_release': m['kernel_release'], 'kernel_commit': m['source_commit'],
                   'kernel_manifest_sha256': kernel_hash, 'release_config_sha256': digest(POLICY), 'packages_sha256': digest(out / 'packages.tsv'),
                   'adapters_manifest_sha256': digest(out / 'adapters/manifest.json'), 'runtime_manifest_sha256': digest(bundle / 'manifest.json'),
-                  'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata, 'debian_commit': cfg['debian']['commit'],
-                  'mesa_packages': mesa, 'sensors': sensors, 'ffmpeg': ffmpeg, 'gnome_power': gsd,
+                  'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata,
+                  'debian_archive': archive, 'debian_suite': cfg['debian']['suite'],
+                  'debian_commit': cfg['debian']['commit'],
+                  'sensors': sensors, 'ffmpeg': ffmpeg, 'gnome_power': gsd,
                   'mutter': mutter, 'gdm': gdm, 'upower': upower, 'pipewire': pipewire,
                   'boot_request': boot_request, 'firmware_components': cfg['firmware']['components'],
                   'clock_epoch': clock,
@@ -813,7 +828,7 @@ def execute(record):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('kernel', 'source', 'output'): parser.add_argument('--' + name, type=Path, required=True)
-    for name in ('mesa-dir', 'sensors-dir', 'ffmpeg-dir', 'mutter-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
+    for name in ('sensors-dir', 'ffmpeg-dir', 'mutter-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
     mode = parser.add_mutually_exclusive_group(required=True); mode.add_argument('--plan', action='store_true'); mode.add_argument('--execute', action='store_true')
     parser.add_argument('--resume', action='store_true', help='Reuse the completed upstream base and refresh release assembly')
     parser.add_argument('--desktop', choices=('gnome', 'kde'), default='gnome')
