@@ -108,6 +108,8 @@ class Sampler:
         try:
             with path.open() as stream:
                 text = stream.read(8192).strip()
+            if path.parent.name == 'xiaomi' and path.name in ('adapter_id', 'adapter_svid', 'pdo2'):
+                return text
             return int(text) if re.fullmatch(r'-?\d+', text) else text
         except OSError as error:
             errors[str(path.relative_to(self.root))] = error.errno
