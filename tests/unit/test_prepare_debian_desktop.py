@@ -4,6 +4,7 @@ import sys
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -11,6 +12,26 @@ import prepare_debian_desktop as desktop
 
 
 class PrepareDebianDesktopTests(unittest.TestCase):
+    def test_release_kde_replaces_only_generated_qt_scaling_with_output_scaling(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sessions = root / 'usr/share/wayland-sessions'
+            sessions.mkdir(parents=True)
+            (sessions / 'plasma.desktop').write_text('[Desktop Entry]\n')
+            generated = []
+            for home in ('etc/skel', 'home/piano'):
+                scale = root / home / '.config/plasma-workspace/env/sunuefi-scale.sh'
+                scale.parent.mkdir(parents=True)
+                scale.write_text('export QT_SCALE_FACTOR="${QT_SCALE_FACTOR:-2}"\n')
+                generated.append(scale)
+            custom = generated[1].with_name('user-scale.sh')
+            custom.write_text('export QT_SCALE_FACTOR=1.5\n')
+            desktop.configure(root, Mock())
+            self.assertTrue(all(not path.exists() for path in generated))
+            self.assertEqual(custom.read_text(), 'export QT_SCALE_FACTOR=1.5\n')
+            self.assertIn('Session=plasma.desktop', (root / 'etc/sddm.conf.d/10-sunuefi.conf').read_text())
+            self.assertTrue((root / 'home/piano/.config/kwinoutputconfig.json').is_file())
+
     def public_recipe(self, folder):
         public = folder / 'public'
         (public / 'scripts').mkdir(parents=True)

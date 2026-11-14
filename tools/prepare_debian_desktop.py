@@ -122,6 +122,12 @@ def configure(rootfs, run, input_method='fcitx'):
     path = rootfs / 'etc/sddm.conf.d/10-sunuefi.conf'
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('[Autologin]\nUser=piano\nSession=' + sessions[0].name + '\n')
+    # The generic stock KDE base uses per-application Qt scaling. The release
+    # uses compositor output scaling, so remove only that generated default.
+    for home in ('etc/skel', 'home/piano'):
+        scale = rootfs / home / '.config/plasma-workspace/env/sunuefi-scale.sh'
+        if scale.is_file() and scale.read_text() == 'export QT_SCALE_FACTOR="${QT_SCALE_FACTOR:-2}"\n':
+            scale.unlink()
     # Use desktop settings; do not ship GNOME's exclusive evdev power helper.
     config = rootfs / 'home/piano/.config'
     config.mkdir(parents=True, exist_ok=True)
