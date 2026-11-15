@@ -115,15 +115,14 @@ def build(args):
         packages = output / 'packages' / name
         if not (packages / 'manifest.json').exists():
             build_arch_package.build(root, recipes / name, packages)
-    mesa_packages = output / 'packages/mesa'
-    mesa_manifest = mesa_packages / 'manifest.json'
-    if (not mesa_manifest.is_file() or
-            json.loads(mesa_manifest.read_text()).get('recipe_sha256') !=
-            release.digest(mesa / 'PKGBUILD')):
-        build_arch_package.build(root, mesa, mesa_packages)
+    mesa_packages = ROOT / 'build/mesa-pacman/nyarch-gnome'
+    if not arch_mesa.is_current(mesa_packages, mesa):
+        if mesa_packages.exists():
+            shutil.rmtree(mesa_packages)
+        build_arch_package.build(root, mesa, mesa_packages, validate=arch_mesa.validate)
+        shutil.copy2(mesa / 'SOURCE.json', mesa_packages / 'SOURCE.json')
     else:
-        build_arch_package.install_cached(root, mesa_packages)
-    shutil.copy2(mesa / 'SOURCE.json', mesa_packages / 'SOURCE.json')
+        arch_mesa.install_cached(root, mesa_packages)
     gsd_packages = output / 'packages/gnome-settings-daemon'
     gsd_manifest = gsd_packages / 'manifest.json'
     if (not gsd_manifest.is_file() or

@@ -351,13 +351,16 @@ done
         packages = output / 'packages' / name
         if not (packages / 'manifest.json').is_file():
             build_arch_package.build(root, recipes / name, packages)
-    mesa = output / 'packages/mesa'
+    mesa = ROOT / 'build/mesa-pacman/steamos'
     recipe = mesa_recipe(output / 'mesa-recipe', steamos_config['mesa'])
-    if not kde_package_is_current(mesa, recipe):
-        build_arch_package.build(root, recipe, mesa)
+    from build import arch_mesa
+    if not arch_mesa.is_current(mesa, recipe):
+        if mesa.exists():
+            shutil.rmtree(mesa)
+        build_arch_package.build(root, recipe, mesa, validate=arch_mesa.validate)
+        shutil.copy2(recipe / 'SOURCE.json', mesa / 'SOURCE.json')
     else:
-        build_arch_package.install_cached(root, mesa)
-    shutil.copy2(recipe / 'SOURCE.json', mesa / 'SOURCE.json')
+        arch_mesa.install_cached(root, mesa)
     gamescope = output / 'packages/gamescope'
     manager = output / 'packages/steamos-manager'
     if not build_steamos_manager.is_current(manager):

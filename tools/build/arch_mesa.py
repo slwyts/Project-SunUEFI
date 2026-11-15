@@ -96,6 +96,64 @@ def build(output, root, jobs, resume=False, steamos=False):
     return record
 
 
+def is_current(output, selected):
+    try:
+        manifest = json.loads((output / 'manifest.json').read_text())
+        validation = json.loads((output / 'VALIDATION.json').read_text())
+        origin = json.loads((output / 'SOURCE.json').read_text())
+        expected = json.loads((selected / 'SOURCE.json').read_text())
+        packages = manifest['packages']
+        if (manifest['recipe_sha256'] != package_build.sha(selected / 'PKGBUILD') or
+                validation['official_source_files_checked'] <= 0 or not packages or
+                set(validation['packages']) != set(packages) or
+                any(origin.get(key) != expected[key] for key in
+                    ('official_source', 'config_sha256', 'recipe_sha256', 'patches'))):
+            return False
+        return all(Path(name).name == name and
+                   package_build.sha(output / name) == row['sha256']
+                   for name, row in packages.items())
+    except (KeyError, ValueError, OSError):
+        return False
+
+
+def verify_installed(root, validation):
+    for name, package in validation['packages'].items():
+        elf = package['elf_sha256']
+        if elf:
+            actual = debian.capture(['chroot', root, 'sha256sum', '--', *sorted(elf)])
+            actual = {path: digest for digest, path in
+                      (line.split('  ', 1) for line in actual.splitlines())}
+            if actual != elf:
+                raise ValueError('Installed native Mesa ELF differs from its package: ' + name)
+        for path, object_type in package['elf_types'].items():
+            if object_type == 1:
+                continue
+            if object_type not in (2, 3):
+                raise ValueError('Unexpected native Mesa ELF object type: ' + path)
+            dynamic = debian.capture(['readelf', '--dynamic', root / path.lstrip('/')])
+            if '(NEEDED)' not in dynamic:
+                continue
+            result = subprocess.run(['chroot', root, 'ldd', '-r', path],
+                                    capture_output=True, text=True)
+            if result.returncode or any(word in result.stdout + result.stderr
+                                       for word in ('not found', 'undefined symbol')):
+                raise ValueError('Installed native Mesa ELF has unresolved dependencies: ' + path +
+                                 '\n' + result.stdout + result.stderr)
+        dependencies = package['control'].get('depend', [])
+        if dependencies:
+            result = subprocess.run(['chroot', root, 'pacman', '-T', *dependencies],
+                                    capture_output=True, text=True)
+            if result.returncode:
+                raise ValueError('Installed native Mesa dependencies are unsatisfied: ' + name +
+                                 '\n' + result.stdout + result.stderr)
+
+
+def install_cached(root, output):
+    import build_arch_package
+    build_arch_package.install_cached(root, output)
+    verify_installed(root, json.loads((output / 'VALIDATION.json').read_text()))
+
+
 def validate(root, work, output):
     """Inspect actual package ELF and configured features before removing objects."""
     source = mesa.policy()['source']
@@ -189,32 +247,6 @@ def validate(root, work, output):
             status = process.wait()
         if status:
             raise ValueError('Cannot inspect native Mesa archive: ' + archive.name)
-        if elf:
-            actual = debian.capture(['chroot', root, 'sha256sum', '--', *sorted(elf)])
-            actual = {name: digest for digest, name in
-                      (line.split('  ', 1) for line in actual.splitlines())}
-            if actual != elf:
-                raise ValueError('Installed native Mesa ELF differs from its package: ' + archive.name)
-            for name in elf:
-                if object_types[name] == 1:
-                    continue  # Relocatable objects are resolved by their eventual linker.
-                if object_types[name] not in (2, 3):
-                    raise ValueError('Unexpected native Mesa ELF object type: ' + name)
-                dynamic = debian.capture(['readelf', '--dynamic', root / name.lstrip('/')])
-                if '(NEEDED)' not in dynamic:
-                    continue
-                result = subprocess.run(['chroot', root, 'ldd', '-r', name],
-                                        capture_output=True, text=True)
-                if result.returncode or any(word in result.stdout + result.stderr
-                                             for word in ('not found', 'undefined symbol')):
-                    raise ValueError('Installed native Mesa ELF has unresolved dependencies: ' + name +
-                                     '\n' + result.stdout + result.stderr)
-        if fields.get('depend'):
-            missing = subprocess.run(['chroot', root, 'pacman', '-T', *fields['depend']],
-                                     capture_output=True, text=True)
-            if missing.returncode:
-                raise ValueError('Installed native Mesa package dependencies are unsatisfied: ' +
-                                 archive.name + '\n' + missing.stdout + missing.stderr)
         buildinfo = debian.capture(['bsdtar', '-xOf', archive, '.BUILDINFO'])
         if ('pkgbuild_sha256sum = ' + package_build.sha(work / 'PKGBUILD')) not in buildinfo.splitlines():
             raise ValueError('Native Mesa build receipt differs from its recipe: ' + archive.name)
@@ -225,9 +257,11 @@ def validate(root, work, output):
     if {row['control']['pkgname'][0] for row in packages.values()} != set(selected):
         raise ValueError('Native Mesa build did not produce the complete selected package set')
     (output / 'builder-packages.tsv').write_text(debian.capture(['chroot', root, 'pacman', '-Q']) + '\n')
-    (output / 'VALIDATION.json').write_text(json.dumps({
+    validation = {
         'official_source_files_checked': source_files,
-        'bindgen': bindgen, 'build_options': options, 'packages': packages}, indent=2) + '\n')
+        'bindgen': bindgen, 'build_options': options, 'packages': packages}
+    verify_installed(root, validation)
+    (output / 'VALIDATION.json').write_text(json.dumps(validation, indent=2) + '\n')
 
 
 def main(argv):

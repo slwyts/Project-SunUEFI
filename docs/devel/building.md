@@ -168,6 +168,8 @@ sudo ./build.sh mesa build/mesa-steamos --format pacman --rootfs build/distros/s
 
 中断后使用相同参数加 `--resume`，保留已配置的源码和对象。SteamOS 构建保留 `deckard-mesa-linux-aarch64` 包名及 renderonly 高度补丁；Nyarch 保留 Arch Linux ARM 的原生拆分包。
 
+两种产品构建都会检查 Mesa 源码、完整驱动选项和 ARM64 包。CI 分别缓存原生包；复用前核对来源、配方与包摘要，安装后重新检查 ELF 和目标系统的依赖，避免把不匹配的滚动发行版缓存带入镜像。
+
 所有发行版都由 `tools/stage_piano_firmware.py` 安装同一套设备固件。`config/release.json` 的 `firmware.overlays` 选用完整的 HyperOS 4 ADSP 和 ADSP-DTB 更新，覆盖旧文件，来源、大小和 SHA256 记录在固件清单里。
 
 ### 单独构建的软件包

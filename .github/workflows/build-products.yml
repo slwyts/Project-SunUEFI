@@ -326,6 +326,15 @@ jobs:
           key: ffmpeg-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'linux/bsp/patches/ffmpeg/**', 'patches/ffmpeg/**', 'tools/build_ffmpeg_packages.py', 'tools/build/debian.py', 'tools/prepare_ffmpeg_source.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             ffmpeg-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'linux/bsp/patches/ffmpeg/**', 'patches/ffmpeg/**', 'tools/build_ffmpeg_packages.py', 'tools/build/debian.py', 'tools/prepare_ffmpeg_source.py', 'tools/desktop/**', 'containers/Dockerfile', 'config/build-container.json') }}-
+      - id: pacman-mesa-cache
+        name: Reuse completed native Mesa packages
+        if: matrix.target == 'nyarch-gnome' || matrix.target == 'steamos'
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/mesa-pacman/${{ matrix.target }}
+          key: mesa-pacman-${{ matrix.target }}-${{ hashFiles('config/mesa.json', 'config/nyarch.json', 'config/steamos.json', 'patches/mesa/**', 'tools/build/arch_mesa.py', 'tools/build/mesa.py', 'tools/build_arch_package.py', 'tools/desktop/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            mesa-pacman-${{ matrix.target }}-${{ hashFiles('config/mesa.json', 'config/nyarch.json', 'config/steamos.json', 'patches/mesa/**', 'tools/build/arch_mesa.py', 'tools/build/mesa.py', 'tools/build_arch_package.py', 'tools/desktop/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}-
       - id: sensors-cache
         name: Reuse completed Debian hardware packages
         if: startsWith(matrix.target, 'debian-')
@@ -356,8 +365,8 @@ jobs:
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
-            build/distros/release/fingerprint-packages/SOURCE.json
-            build/distros/release/fingerprint-packages/runtime
+            build/fingerprint-packages/SOURCE.json
+            build/fingerprint-packages/runtime
           key: fingerprint-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'config/fingerprint.json', 'tools/build_piano_fingerprint.py', 'linux/userspace/fingerprint/**', 'patches/libfprint/**', 'vendor/firmware/hyperos4-fingerprint/manifest.json', 'tools/desktop/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             fingerprint-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'config/fingerprint.json', 'tools/build_piano_fingerprint.py', 'linux/userspace/fingerprint/**', 'patches/libfprint/**', 'vendor/firmware/hyperos4-fingerprint/manifest.json', 'tools/desktop/package_build.py', 'containers/Dockerfile', 'config/build-container.json') }}-
@@ -441,6 +450,12 @@ jobs:
             build/mesa/SOURCE.json
             build/mesa/SHA256SUMS
             build/mesa/*.changes
+      - name: Save completed native Mesa packages
+        if: matrix.target == 'nyarch-gnome' || matrix.target == 'steamos'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          key: ${{ steps.pacman-mesa-cache.outputs.cache-primary-key }}
+          path: build/mesa-pacman/${{ matrix.target }}
       - name: Save the validated FFmpeg generation once
         if: matrix.target == needs.select.outputs.debian_cache_writer
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -486,8 +501,8 @@ jobs:
         with:
           key: ${{ steps.fingerprint-cache.outputs.cache-primary-key }}
           path: |
-            build/distros/release/fingerprint-packages/SOURCE.json
-            build/distros/release/fingerprint-packages/runtime
+            build/fingerprint-packages/SOURCE.json
+            build/fingerprint-packages/runtime
       - name: Show failed build output
         if: failure()
         run: |
