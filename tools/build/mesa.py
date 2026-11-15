@@ -2,6 +2,7 @@
 """Build the shared official Mesa development source as native distro packages."""
 import argparse
 import configparser
+import fcntl
 from email.utils import formatdate
 import hashlib
 import json
@@ -240,6 +241,15 @@ def build(output, sysroot, jobs, resume=False):
     output = output.resolve()
     if jobs < 1 or not output.is_relative_to(ROOT / 'build'):
         raise ValueError('Use a project build output and at least one build job')
+    output.mkdir(parents=True, exist_ok=True)
+    # Desktop builds share this cache. Hold the lock before validation as
+    # another build may be replacing its manifest or cleaning its objects.
+    with (output / 'build.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return build_package(output, sysroot, jobs, resume)
+
+
+def build_package(output, sysroot, jobs, resume):
     data = policy()
     target = target_identity(sysroot or Path('/'))
     if cached := reusable(output, target):
