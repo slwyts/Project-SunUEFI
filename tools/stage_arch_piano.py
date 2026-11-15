@@ -51,7 +51,7 @@ def stage(args):
     hardware.build(adapters, ROOT / cfg['debian']['source'], root)
     old_modules = ([p.name for p in (root / 'usr/lib/modules').iterdir()
                     if p.is_dir() and p.name != kernel['kernel_release']]
-                   if steamos and (root / 'usr/lib/modules').is_dir() else [])
+                   if (root / 'usr/lib/modules').is_dir() else [])
     current_modules = modules.safe_target(
         root, Path('usr/lib/modules') / kernel['kernel_release'])
     if current_modules.exists():
