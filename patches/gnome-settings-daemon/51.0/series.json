@@ -1,13 +1,44 @@
 {
   "schema_version": 1,
+  "versions": ["51.0", "51.1"],
+  "targets": ["debian-gnome", "nyarch-gnome"],
+  "sources": {
+    "51.0": {
+      "url": "https://download.gnome.org/sources/gnome-settings-daemon/51/gnome-settings-daemon-51.0.tar.xz",
+      "sha256": "7c6249118ddfffc4bb34d6b3edaa86b3ea02a1ad2b7711d79480749906767665"
+    },
+    "51.1": {
+      "url": "https://download.gnome.org/sources/gnome-settings-daemon/51/gnome-settings-daemon-51.1.tar.xz",
+      "sha256": "e7de8d30ae2d63c7a9a21f8f0247219275cbc1d7f5ed09205e4a47642666f6ae"
+    }
+  },
   "patches": [
     {
+      "file": "../0001-power-optional-device-ambient-profile-51.patch",
+      "sha256": "5c27bf914802dad89a41f306d2810fb90dd1e28e1f9f8e30bd1676e04e09d3c2",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia-Forks/Project-SunUEFI/tree/main/linux/desktops/gnome/ambient-policy",
+        "drop_when": "The selected GSD source provides device ambient-light profiles with the Piano relative-luminance policy, blanking pause and threshold delays."
+      }
+    },
+    {
       "file": "0001-power-refresh-keyboard-backlight-after-hotplug.patch",
-      "sha256": "2bded9f122530cba11a9dc6fccdc804612b105d985a27bdbd5cbb1e31125dffd"
+      "sha256": "2bded9f122530cba11a9dc6fccdc804612b105d985a27bdbd5cbb1e31125dffd",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia-Forks/Project-SunUEFI/commit/f46280a0e01ebeae40ca2d837a11cd431c2e46b5",
+        "drop_when": "The selected GSD source refreshes keyboard range and brightness after UPower hotplug and restart, cancels stale replies and preserves zero brightness."
+      }
     },
     {
       "file": "0002-power-restore-screensaver-state-on-startup.patch",
-      "sha256": "dee3f51c10426aee215e7879808866c3ee58549e0529a41c1edbae702bf5f5b8"
+      "sha256": "dee3f51c10426aee215e7879808866c3ee58549e0529a41c1edbae702bf5f5b8",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia-Forks/Project-SunUEFI/tree/main/patches/gnome-settings-daemon",
+        "drop_when": "The selected GSD source queries GetActive before configuring idle and monitor power, preserving the display state when that query fails."
+      }
     }
   ]
 }

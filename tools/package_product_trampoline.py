@@ -31,7 +31,7 @@ def align(size, unit=PAGE):
 
 
 def piano_fingerprint(value):
-    prefixes = ('Xiaomi/piano/piano:', 'Xiaomi/piano_global/piano:')
+    prefixes = ('Xiaomi/piano/piano:', 'Xiaomi/piano_global/piano:', 'Xiaomi/piano_eea/piano:')
     return '\0' not in value and any(value.startswith(prefix) and len(value) > len(prefix)
                                      for prefix in prefixes)
 

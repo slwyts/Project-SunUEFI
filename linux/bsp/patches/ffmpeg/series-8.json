@@ -3,6 +3,12 @@
   "component": "ffmpeg-v4l2m2m",
   "upstream_version": "8.1.1",
   "local_revision": "sunuefi4",
+  "targets": ["steamos"],
+  "upstream": {
+    "status": "downstream",
+    "url": "https://github.com/FFmpeg/FFmpeg/tree/n9.0.2/libavcodec",
+    "drop_when": "The selected FFmpeg release implements stateful V4L2 initial metadata, LAST/source-change drain, orphaned capture buffers, P010, visible-row NV12 uploads and encoder header/stop handling; verify complete frames across resolution changes and H.264 encode/decode on Iris before dropping these fixes."
+  },
   "source": {
     "url": "https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz",
     "filename": "ffmpeg-8.1.1.tar.xz",

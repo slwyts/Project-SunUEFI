@@ -43,9 +43,9 @@
 | --- | --- | --- |
 | 显示 | 3200×2136，默认 120 Hz，低分辨率缩放、144 Hz、KDE HDR／广色域切换、十位输出、夜灯、标准 Gamma／Degamma及熄屏恢复 | 12-bit／FRC 和色深选择尚未提供，见[显示位深](devel/hardware/display-depth.md) |
 | GPU | Adreno 加速的 GNOME | 部分 GTK 窗口连续缩放约 30 次/秒画面提交，需继续区分客户端处理和帧回调等待；见[窗口缩放](devel/hardware/window-resize.md) |
-| 触屏 | 点按、拖动、长按、手势，约 144 Hz | 360 Hz 未实现；依赖主机端触点算法和 uinput |
+| 触屏 | 内核直接上报标准多点触控，点按、拖动、长按与手势可用，约 144 Hz | 360 Hz 未实现 |
 | 键盘 / 触控板 | 打字、触控板、背光和睡眠恢复可用，背光走 UPower / GNOME | — |
-| 触控笔 | 定位、压感绘画、144 Hz 笔输入、轻捏与震动；磁吸识别、笔电量、充满停电以及跨系统自动重新配对 | 完整掌压、笔身滑动及应用快捷手势仍需完善，见[笔协议](devel/hardware/pen-protocol.md) |
+| 触控笔 | Focus Pen Pro 在 120 Hz 下通过内核 evdev 完成定位与压感绘画，GNOME 原生数位板页识别物理 SPI 设备；保留磁吸、笔电量、充满停电和自动重新配对 | 两种笔、手势和掌压的覆盖范围见[笔协议](devel/hardware/pen-protocol.md)与[已知问题](user/known-issues.md#触控笔) |
 | Wi-Fi | 可用 | 新系统需自行保存网络连接 |
 | 蓝牙 | 可用，使用 p81 板级 NVM，已修复连接距离过短；启动时自动读取本机原厂地址 | 原厂地址缺失时提供稳定硬件标识派生方案，见[蓝牙配置](devel/hardware/bluetooth.md) |
 | Linux USB 3 | 标准 Type-C 方向和角色切换、5 Gbit/s USB 调试网络 | 首次连接时序继续核对，见[USB Type-C](devel/linux/kernel.md#usb-type-c) |
@@ -54,7 +54,7 @@
 | 麦克风 | 录音、原生单声道 ALSA / PipeWire 输入及睡眠恢复，硬件增益 +40 dB | — |
 | 相机 | 前后预览、录像、自动曝光／对焦／白平衡及首帧恢复，CAMSS/TFE 硬件 ISP | 实现见[相机与闪光灯](devel/hardware/camera-flash.md)，手动接口见[相机控制](devel/hardware/camera-controls.md) |
 | 相机隐私灯 | 摄像头工作时实体绿色指示灯亮起，随视频流和前后摄像头切换启停 | — |
-| 闪光灯 | 两路标准 LED 已注册，限值已读回 | 实际发光和曝光同步未观察 |
+| 闪光灯 | 两路标准 LED 接受手电筒开关请求，关闭后读回零，无故障标志 | 实际发光和曝光同步还没有确认，见[实现说明](devel/hardware/camera-flash.md) |
 | 传感器 | 自动旋转、光线、距离、罗盘及标准 SensorProxy 接口 | 实现见[传感器](devel/hardware/sensors.md) |
 | 自动亮度 | 桌面联动可用，GNOME 策略沿用原厂 lux 阈值与延迟，传感器数据不做修改 | 见[自动亮度](devel/hardware/auto-brightness.md) |
 | 夜灯 / 色温 | GNOME 夜灯可用，自动生成内置屏幕的颜色配置 | 通用 sRGB 配置，不是原厂校准 |
@@ -63,7 +63,7 @@
 | 视频编解码 | ✅ | Iris 硬件加速与 V4L2 编解码可用，提供适配的 FFmpeg 软件包 |
 | SteamOS / Proton / FEX | ✅ | 游戏模式和桌面模式正常运行，ARM64 Proton 与 FEX 支持良好（个别游戏需自身参数，与项目本身无关） |
 | 指纹 | Linux 独立录入、保存与认证，标准 libfprint／fprintd 接口 | 不读取 Android 的指纹模板，不提供跨用户识别；见[指纹实现](devel/hardware/led-ir-fingerprint.md#侧指纹) |
-| 红外 / RGB 灯 | RGB 标准 LED 接口、红外标准 LIRC 驱动和原厂波形量化已接入 | 红外光学输出未测量 |
+| 红外 / RGB 灯 | 红外标准 LIRC 发送成功，超长请求被拒绝后可继续发送；RGB 提供标准 LED 接口 | 红外载波、包络与距离未测量；RGB 发光位置未确认 |
 | 默认桌面 | 中文界面、拼音输入法、Chromium 浏览器，GNOME 动画开启 | — |
 | Windows / WinPE | 目标 | 未启动 |
 

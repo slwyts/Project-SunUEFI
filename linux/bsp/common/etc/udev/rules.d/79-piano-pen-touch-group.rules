@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-# The native touchscreen and virtual pen share one display. An explicit group
-# pairs pen proximity with this touchscreen for libinput's touch arbitration.
-# The names also cover finger input provided by the older userspace reader.
+# The physical touchscreen and pen share one display. Keep legacy input names
+# in the same group when using an older kernel.
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", DRIVERS=="NVT-ts-spi", ENV{LIBINPUT_DEVICE_GROUP}="piano-touchscreen"
 ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="piano NT36532 THP touchscreen|Piano Focus Pen Pro", ENV{LIBINPUT_DEVICE_GROUP}="piano-touchscreen"

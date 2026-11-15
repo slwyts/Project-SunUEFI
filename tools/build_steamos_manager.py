@@ -6,11 +6,12 @@ from pathlib import Path
 import shutil
 
 import build_arch_package
+from build_piano_runtime_helpers import source_patches
 from prepare_steamos_rootfs import download
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMIT = 'a0d399defebd60db30ba38325d9cf47dbda49bee'
-PATCH = ROOT / 'patches/steamos-manager/0001-optional-kernel-trace-collection.patch'
+SERIES = ROOT / 'patches/steamos-manager/26.4.1/series.json'
 RECIPE = ROOT / 'linux/bsp/steamos/manager/PKGBUILD'
 INPUTS = (
     ('manager.tar.gz',
@@ -29,8 +30,9 @@ INPUTS = (
 
 
 def source_inputs():
+    patch, = source_patches(SERIES)
     return {'commit': COMMIT, 'archives': INPUTS,
-            'patch_sha256': hashlib.sha256(PATCH.read_bytes()).hexdigest(),
+            'patch_sha256': hashlib.sha256(patch.read_bytes()).hexdigest(),
             'recipe_sha256': hashlib.sha256(RECIPE.read_bytes()).hexdigest()}
 
 
@@ -41,11 +43,12 @@ def is_current(output):
 
 
 def build(root, output):
+    patch, = source_patches(SERIES)
     recipe = output.parent / 'manager-recipe'
     recipe.mkdir(parents=True, exist_ok=True)
     for filename, url, checksum in INPUTS:
         download(url, recipe / filename, checksum)
-    shutil.copy2(PATCH, recipe / PATCH.name)
+    shutil.copy2(patch, recipe / patch.name)
     hashes = [INPUTS[0][2], source_inputs()['patch_sha256'],
               *[row[2] for row in INPUTS[1:]]]
     (recipe / 'PKGBUILD').write_text(RECIPE.read_text().replace(

@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/dts-v1/;
+/plugin/;
+
+/* SM8750 CAMSS consumes these paths for configuration and captured frames. */
+/ {
+	fragment@0 {
+		target-path = "/soc/isp-ml@ad27000";
+		__overlay__ {
+			/* Mainline SM8750 IDs and two-cell provider specifiers:
+			 * APPSS_PROC=2, CAMERA_CFG=3, ACTIVE_ONLY=3;
+			 * CAMNOC_HF=0, EBI1=1, ALWAYS=7.
+			 */
+			interconnects = <&gem_noc 2 3 &config_noc 3 3>,
+					<&mmss_noc 0 7 &mc_virt 1 7>;
+			interconnect-names = "ahb", "hf_mnoc";
+		};
+	};
+};

@@ -9,7 +9,8 @@
 | 按需充电记录 | [`linux/bsp/common/usr/lib/piano/charge-monitor`](../../../linux/bsp/common/usr/lib/piano/charge-monitor) | `piano-charge-monitor.service`，经共用 BSP 安装，preset 默认关闭 |
 | DMA 状态诊断 | [`linux/userspace/piano-ram-hardware-prepare`](../../../linux/userspace/piano-ram-hardware-prepare) | 仅用于显式诊断，不阻止模块自动探测 |
 | 手指帧解码与多点输入 | [`0095-input-nt36532e-matrix.patch`](../../../patches/linux/7.3/0095-input-nt36532e-matrix.patch) | 编入 `nt36532e_ts`，在现有 SPI 中断线程中直接上报标准输入事件 |
-| 笔输入、旧内核手指输入与原始帧诊断 | [`upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c`](../../../upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c) | 派生后编译为 `/usr/bin/piano-touch-view`，由 `piano-touch.service` 启动 |
+| 内核笔解码与 BLE 融合 | [`0123-input-nt36532e-pen.patch`](../../../patches/linux/7.3/0123-input-nt36532e-pen.patch) 与[扫描组修正](../../../patches/linux/7.3/0124-input-nt36532e-pen-centroid.patch) | 编入 `nt36532e_ts`；从标准固件目录加载数字校准，由物理 SPI tablet-tool 上报输入 |
+| 原始帧诊断与旧内核输入 | [`upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c`](../../../upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c) | 派生后编译为 `/usr/bin/piano-touch-view`；新内核的 `piano-touch.service` 只运行下述 BlueZ 初始化 |
 | 触屏程序的本地观测补丁 | [`tools/patches/piano-touch-view-observability.patch`](../../../tools/patches/piano-touch-view-observability.patch) | `build_piano_runtime_helpers.py` 派生源码，`build_release_helpers.py` 编译 |
 | 相机服务、图像处理与控制接口 | [`linux/bsp/optional/camera/`](../../../linux/bsp/optional/camera/) 与 [`linux/userspace/camera/`](../../../linux/userspace/camera/) | 共用 Makefile 编译服务与客户端，两条运行库构建入口使用同一份源码 |
 | 音频 UCM、模块加载参数、udev 配置 | [`linux/bsp/common/`](../../../linux/bsp/common/) | 按目录布局安装；文件清单在 `linux/bsp/manifest.json` |
@@ -17,33 +18,35 @@
 | GNOME 电源键与保护套合盖 | [`linux/desktops/gnome/power-overlay/`](../../../linux/desktops/gnome/power-overlay/) | 复用 `piano-power-button.service`，完整 stager 和 GNOME 组装安装同一份源码；当前只控制背光，锁屏/睡眠限制见[说明](../hardware/power-button.md) |
 | 内核配置与板级设备树 | [`linux/configs/`](../../../linux/configs/) 与 [`linux/dts/`](../../../linux/dts/) | 内核源码由 `patches/linux/7.3/series.json` 从公开稳定版重建，补丁来源见内核角色说明 |
 
-手指输入由 `nt36532e` 直接处理，不需要用户空间读取者。矩阵核心与 SPI、固件和输入上报分开，使用整数完成帧校验、基线、行列去噪、局部峰值、接触面积和质心计算；输入层保留十个槽位和掌压锁存。掌压不按下 `BTN_TOUCH`，笔帧取消手指时先报告掌压类型再释放槽位。掌压判定的限制见[笔输入说明](../../../linux/userspace/pen/README.md#同一触控进程中的笔输入)。
+手指输入由 `nt36532e` 直接处理，不需要用户空间读取者。矩阵核心与 SPI、固件和输入上报分开，使用整数完成帧校验、基线、行列去噪、局部峰值、接触面积和质心计算；输入层保留十个槽位和掌压锁存。掌压不按下 `BTN_TOUCH`，笔帧取消手指时先报告掌压类型再释放槽位。掌压判定的限制见[笔输入说明](../../../linux/userspace/pen/README.md#旧内核与对照的用户态笔输入)。
 
 核心先用 16 个有效帧确定矩阵类型，再对 32 帧逐格取上中位数建立基线。去噪先减每列中位数，再减每行中位数；三路选择超出工作量预算后使用内核排序收尾。原始差值的最大值与最小值相差不到 50 时，去噪后的最大值必然低于 100，可以跳过去噪并执行相同的基线漂移；其余帧在去噪后按触摸阈值 200 决定是否扫描峰值和区域。60×40 的解码状态约 175 KiB，在探测时一次分配，正常帧与恢复路径不再分配内存。
 
 坏校验或截断帧只丢弃，不更新触点或基线；短暂丢样不会中断拖动。固件重载、挂起和移除释放触点，固件重载与挂起后重新学习基线。SPI 传输失败释放当前触点，保留基线；面板恢复时，固件重载失败则保持中断关闭。原始帧 FIFO 只在显式启用捕获时分配，手指输入本身不占用这份 4 MiB 队列。
 
-`piano-touch-view input` 在实时模式读取 `kernel_input` 状态：内核已接管手指时跳过手指解码和虚拟触屏，只保留显式请求的笔或诊断功能；两者都未请求时直接退出。旧内核继续使用原来的用户空间手指路径。[用户空间去噪补丁](../../../tools/patches/piano-touch-view-line-noise.patch)也使用中位数选择，作为旧内核和离线诊断的实现。
+匹配新笔驱动、导出符号与标准固件校准的构建使用 BlueZ-only `touch-input`，只初始化厂商 GATT 特征，不再读取 THP／hidraw、写 procfs 或创建 uinput。BLE 尚未连接时该进程继续等待；笔矩阵和蓝牙样本由内核融合。校准从 BSP 的相对固件链接读取，同一张表只保留一份。
+
+旧内核构建才使用 `piano-touch-view input`：内核已接管手指时跳过手指解码和虚拟触屏，只保留显式请求的笔或诊断功能。[用户空间去噪补丁](../../../tools/patches/piano-touch-view-line-noise.patch)保留用于旧内核和离线对照，不是新产品的输入路径。
 
 硬件驱动通过 OF、platform、SPI、RPMsg 等标准 modalias 加载，依赖由设备树、内核 supplier 和延迟探测表达。显示、键盘、无线、音频和视频没有按加载顺序运行的用户空间服务。热更新定位后的修复必须写回内核、设备树或对应程序源码。
 
 键盘背光使用内核 LED 节点 `nanosic::kbd_backlight`，经 UPower 和桌面电源组件调节。蓝牙地址由 UEFI 通过标准设备树属性交给内核，触屏解码由设备绑定事件触发。ADSP 和 CDSP 由内核 `remoteproc` 驱动自动启动，设备树不再禁用 ADSP 自动启动，也不依赖用户空间等待显示接管。
 
-Debian 镜像安装带 LED 热插拔补丁的 UPower 1.90.9，daemon 与其精确依赖的
-`libupower-glib3` 一起打包。旧键盘 D-Bus 对象在未连接时仍保留，LED 插拔时
-重新扫描并关闭旧文件描述符。GNOME 的 GSD 48.1（Debian）和 51.0（Nyarch）
-通过同一标准接口异步刷新亮度与范围，取消过期请求，保留亮度为零的状态；
-不增加硬件服务。Nyarch、SteamOS 使用发行版自带的较新 UPower。
+Debian sid 使用发行版 UPower，不再重建旧版 daemon。签名源码中的
+`up-enumerator-udev.c` 已枚举 LED 插拔；`up-daemon.c` 更新组合键盘对象，
+保持原 `/org/freedesktop/UPower/KbdBacklight` 接口。Debian 和 Nyarch 的 GSD
+共用 51.0 补丁，通过该标准接口异步刷新亮度与范围，取消过期请求，保留
+亮度为零的状态，不增加硬件服务。SteamOS 同样使用发行版 UPower。
 
 相机服务在用户会话开始前创建 V4L2 loopback 节点，并发送 systemd 就绪通知；只有应用请求视频时才启动采集。相机驱动由硬件别名自动探测，`CAMERA_START=0` 禁用图像服务。升级时一起更新 unit 和 helper。
 
 2026-10-08 的 `g086a94c4529d` 实机已绑定主线接口驱动 `qcom-camss`、后置 `s5kjn1 7-0010`、前置 `ov32d40 5-0010` 和对焦 `dw9768 7-000c`。原厂最终 DT 与现有 [相机 overlay](../../../upstream/debian-piano-current/boot/dtbo-piano-camera.dts) 对应：后置走 CCI0 master1、GPIO115/116、CSIPHY1；前置走 QUP2 SE1 I²C、GPIO4/5、CSIPHY4。内核的 `drivers/media/platform/qcom/camss/` 已包含 SM8750、CSID980 和 TFE Gen4 支持，两个 sensor 位于 `drivers/media/i2c/{s5kjn1,ov32d40}.c`。这不是重新移植缺失驱动的场景；`video40/41` 是 loopback，不能单凭枚举判定有图像。此版本经普通 BOOT 启动后，两路各做了30帧短采集，硬件各输出28帧；前后预览已检查，未再出现 CCM `Bad address`。后置等待90帧后画面比初始预览更清晰。长期帧率、同时采集和 GNOME 应用体验仍未验证。
 
-相机硬件当前只交给 `piano-camerad` 管理；它配置 CSID→TFE PIX、缩放和 NV12，并提供曝光、白平衡、对焦控制。[WirePlumber 配置](../../../linux/bsp/optional/camera/etc/wireplumber/wireplumber.conf.d/50-piano-camera.conf) 因此禁用 `monitor.libcamera` 和直连 CAMSS 节点，应用使用 loopback。标准 [libcamera v0.7.1 simple pipeline](https://gitlab.freedesktop.org/camera/libcamera/-/blob/v0.7.1/src/libcamera/pipeline/simple/simple.cpp) 有通用 CAMSS/software ISP 支持，但尚未接入这里的 TFE 硬件 ISP 路径；不要同时开启两个管理程序争用传感器。若以后改用 libcamera，需要先完成 media 路径、硬件控件及图像调校的接入。
+相机硬件当前只交给 `piano-camerad` 管理；它配置 CSID→TFE PIX、缩放和 NV12，并提供曝光、白平衡、对焦控制。[WirePlumber 配置](../../../linux/bsp/optional/camera/etc/wireplumber/wireplumber.conf.d/50-piano-camera.conf) 因此禁用 `monitor.libcamera` 和直连 CAMSS 节点，应用使用 loopback。这份配置与服务一起保留，不能在没有可运行替代时单独删除。libcamera 上游支持范围、TFE 统计与逐帧参数接口、前摄时序、并发、时间戳和调校许可的缺项统一见[内核接口与 libcamera](../hardware/camera-controls.md#内核接口与-libcamera)。Debian、SteamOS 和 Nyarch 共用同一内核适配；切换发行版或升级软件包不能补齐这些硬件接口。
 
 相机3A指自动曝光、白平衡和对焦，当前这部分必要算法由 `piano-camerad` 使用内核 sensor/ISP 控件实现。前摄自然光日志中，高亮像素占比在3%..8%间变化；旧 AE 跨过4%时会突然降约19%曝光量，又因平均亮度不足而提高增益。稳定性补丁改为连续高亮响应、每相机统计滤波、约5%亮度误差死区和单次6%变化上限，保留既有曝光/增益分配、白平衡与对焦。用户确认现场是自然光、没有开室内灯，因此没有强制新增50Hz防闪烁参数。
 
-修正后的 ARM64 camerad 已部署。本机前摄的一次900帧采集中，启动3秒后的810帧全画面 YAVG 为76.54..77.76，曝光和两项增益保持2808/15872/6958；程序自身的局部亮度统计为93..95，采样范围不同，不能直接比较这两组亮度的绝对值。采集只保留统计，没有保存相机视频。这确认了该场景下控制循环稳定，尚未测量光照突变和完整模式切换，也不代表完整原厂3A调校。原始统计在本地 `内部记录目录
+修正后的 ARM64 camerad 已部署。本机前摄的一次900帧采集中，启动3秒后的810帧全画面 YAVG 为76.54..77.76，曝光和两项增益保持2808/15872/6958；程序自身的局部亮度统计为93..95，采样范围不同，不能直接比较这两组亮度的绝对值。采集只保留统计，没有保存相机视频。这确认了该场景下控制循环稳定，尚未测量光照突变和完整模式切换，也不代表完整原厂3A调校。
 
 ## 充电记录
 
@@ -73,7 +76,6 @@ Debian release 由 [`tools/build_release_rootfs.py`](../../../tools/build_releas
 
 桌面包由 rootfs 构建自动安装，源码与二进制摘要写入发行版 manifest，构建日志
 并入 CI 的 `logs.zip`。单独构建使用 `./build.sh gsd --sysroot <Debian root>`、
-`./build.sh upower --sysroot <Debian root>`、
 `./build.sh gdm --sysroot <Debian root>` 和
 `./build.sh pipewire --rootfs <发行版 root> --output <build 下的包目录>`；
 这些命令需要 root，输入均为本地构建目录，不访问平板。
@@ -92,3 +94,10 @@ GDM 在真实 KMS 设备提供显示接口后启动会话。设备树的临时�
 或桌面重启脚本。硬件运行时安装同时清理显示管理器对旧 `piano-display.service`
 的专用依赖，保留其他用户配置。软件桌面截图只证明合成器渲染成功，内屏输出需
 结合 DRM 活动平面和摄像头实拍确认。
+
+锁屏重新认证也使用 GDM 原有的 PAM 和 D-Bus 通道。客户端取消时关闭认证会话，
+不再向取消方发送 `Reset`，避免 GNOME Shell 51 再次取消、重建认证的循环。
+请求被替换或客户端断开时，先关闭认证会话、停止 PAM 子进程，再释放对象。
+认证进程仍持有会话引用，仅释放请求本身不足以结束它们。
+该补丁由 Debian 和 Nyarch 的 GDM 系列共用，不改变密码校验、锁屏设置
+或文件描述符上限。

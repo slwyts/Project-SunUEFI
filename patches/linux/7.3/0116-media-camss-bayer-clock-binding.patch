@@ -1,0 +1,134 @@
+From 458ad8d888c23d2d99cff9e7aadbfee32498121d Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sat, 14 Nov 2026 23:04:09 +0800
+Subject: [PATCH] dt-bindings: media: describe SM8750 TFE Bayer clocks
+
+The TFE980 pixel path uses separate Bayer processing, fast AHB and CAMNOC
+clocks for each full TFE. Describe those nine clocks in the consumer schema
+and example rather than rejecting resources the driver needs.
+
+Limit interconnect descriptions to the AHB configuration and high-frequency
+capture paths consumed by SM8750 CAMSS. Keep both paths required; a legacy
+DT without interconnects is not made valid by allowing NULL handles in the
+interconnect core.
+---
+ .../bindings/media/qcom,sm8750-camss.yaml     | 41 ++++++++++++++-----
+ 1 file changed, 30 insertions(+), 11 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/media/qcom,sm8750-camss.yaml b/Documentation/devicetree/bindings/media/qcom,sm8750-camss.yaml
+index fc0550899..a23bda8e3 100644
+--- a/Documentation/devicetree/bindings/media/qcom,sm8750-camss.yaml
++++ b/Documentation/devicetree/bindings/media/qcom,sm8750-camss.yaml
+@@ -42,7 +42,7 @@ properties:
+       - const: vfe_lite1
+ 
+   clocks:
+-    maxItems: 35
++    maxItems: 44
+ 
+   clock-names:
+     items:
+@@ -54,6 +54,9 @@ properties:
+       - const: cpas_vfe1
+       - const: cpas_vfe2
+       - const: cpas_vfe_lite
++      - const: cpas_vfe0_bayer
++      - const: cpas_vfe1_bayer
++      - const: cpas_vfe2_bayer
+       - const: csid
+       - const: csid_csiphy_rx
+       - const: csiphy0
+@@ -76,6 +79,12 @@ properties:
+       - const: vfe1_fast_ahb
+       - const: vfe2
+       - const: vfe2_fast_ahb
++      - const: vfe0_bayer
++      - const: vfe0_bayer_fast_ahb
++      - const: vfe1_bayer
++      - const: vfe1_bayer_fast_ahb
++      - const: vfe2_bayer
++      - const: vfe2_bayer_fast_ahb
+       - const: vfe_lite
+       - const: vfe_lite_ahb
+       - const: vfe_lite_cphy_rx
+@@ -105,14 +114,12 @@ properties:
+       - const: vfe_lite1
+ 
+   interconnects:
+-    maxItems: 4
++    maxItems: 2
+ 
+   interconnect-names:
+     items:
+       - const: ahb
+       - const: hf_mnoc
+-      - const: sf_mnoc
+-      - const: sf_icp_mnoc
+ 
+   iommus:
+     maxItems: 1
+@@ -293,6 +300,9 @@ examples:
+                      <&camcc CAM_CC_CAMNOC_RT_TFE_1_MAIN_CLK>,
+                      <&camcc CAM_CC_CAMNOC_RT_TFE_2_MAIN_CLK>,
+                      <&camcc CAM_CC_CAMNOC_RT_IFE_LITE_CLK>,
++                     <&camcc CAM_CC_CAMNOC_RT_TFE_0_BAYER_CLK>,
++                     <&camcc CAM_CC_CAMNOC_RT_TFE_1_BAYER_CLK>,
++                     <&camcc CAM_CC_CAMNOC_RT_TFE_2_BAYER_CLK>,
+                      <&camcc CAM_CC_CSID_CLK>,
+                      <&camcc CAM_CC_CSID_CSIPHY_RX_CLK>,
+                      <&camcc CAM_CC_CSIPHY0_CLK>,
+@@ -315,6 +325,12 @@ examples:
+                      <&camcc CAM_CC_TFE_1_MAIN_FAST_AHB_CLK>,
+                      <&camcc CAM_CC_TFE_2_MAIN_CLK>,
+                      <&camcc CAM_CC_TFE_2_MAIN_FAST_AHB_CLK>,
++                     <&camcc CAM_CC_TFE_0_BAYER_CLK>,
++                     <&camcc CAM_CC_TFE_0_BAYER_FAST_AHB_CLK>,
++                     <&camcc CAM_CC_TFE_1_BAYER_CLK>,
++                     <&camcc CAM_CC_TFE_1_BAYER_FAST_AHB_CLK>,
++                     <&camcc CAM_CC_TFE_2_BAYER_CLK>,
++                     <&camcc CAM_CC_TFE_2_BAYER_FAST_AHB_CLK>,
+                      <&camcc CAM_CC_IFE_LITE_CLK>,
+                      <&camcc CAM_CC_IFE_LITE_AHB_CLK>,
+                      <&camcc CAM_CC_IFE_LITE_CPHY_RX_CLK>,
+@@ -328,6 +344,9 @@ examples:
+                           "cpas_vfe1",
+                           "cpas_vfe2",
+                           "cpas_vfe_lite",
++                          "cpas_vfe0_bayer",
++                          "cpas_vfe1_bayer",
++                          "cpas_vfe2_bayer",
+                           "csid",
+                           "csid_csiphy_rx",
+                           "csiphy0",
+@@ -350,6 +369,12 @@ examples:
+                           "vfe1_fast_ahb",
+                           "vfe2",
+                           "vfe2_fast_ahb",
++                          "vfe0_bayer",
++                          "vfe0_bayer_fast_ahb",
++                          "vfe1_bayer",
++                          "vfe1_bayer_fast_ahb",
++                          "vfe2_bayer",
++                          "vfe2_bayer_fast_ahb",
+                           "vfe_lite",
+                           "vfe_lite_ahb",
+                           "vfe_lite_cphy_rx",
+@@ -392,15 +417,9 @@ examples:
+             interconnects = <&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ACTIVE_ONLY
+                              &config_noc SLAVE_CAMERA_CFG QCOM_ICC_TAG_ACTIVE_ONLY>,
+                             <&mmss_noc MASTER_CAMNOC_HF QCOM_ICC_TAG_ALWAYS
+-                             &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>,
+-                            <&mmss_noc MASTER_CAMNOC_SF QCOM_ICC_TAG_ALWAYS
+-                             &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>,
+-                            <&mmss_noc MASTER_CAMNOC_NRT_ICP_SF QCOM_ICC_TAG_ALWAYS
+                              &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>;
+             interconnect-names = "ahb",
+-                                 "hf_mnoc",
+-                                 "sf_mnoc",
+-                                 "sf_icp_mnoc";
++                                 "hf_mnoc";
+ 
+             iommus = <&apps_smmu 0x1c00 0x00>;
+ 
+-- 
+2.56.1

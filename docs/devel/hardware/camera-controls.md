@@ -1,6 +1,81 @@
 # 相机格式与控件
 
-相机服务向应用提供前摄、后摄两个 V4L2 摄像头。普通模式使用 CAMSS 硬件 ISP 输出 NV12；后摄全幅 RAW10 使用软件 Quad CFA 转换。服务只在应用开流时启动传感器和 ISP，关闭流后停止 DMA。曝光、白平衡和后摄对焦由同一服务的帧循环控制。
+相机服务向应用提供前摄、后摄两个 V4L2 摄像头。普通模式使用 CAMSS 硬件图像处理器（ISP）输出 NV12；后摄全幅 RAW10 使用软件 Quad CFA 转换。服务只在应用开流时启动传感器和 ISP，关闭流后停止 DMA。自动曝光、白平衡和后摄对焦（3A）由同一服务的帧循环控制。当前还没有不读取图像数据的 libcamera TFE pipeline 和 IPA 算法模块，旧服务及其 loopback、控制 socket 仍是应用使用相机的依赖。
+
+SM8750 TFE980 的 PIX sink 接收四种排列的 RAW10 Bayer，source 和对应捕获节点只输出 NV12。RAW10 原始采集走 RDI，不能因 PIX 接收 Bayer 就把它公布为 RAW10 捕获设备。[格式补丁](../../../patches/linux/7.3/0114-camss-pix-capture-formats.patch)分别描述 sink 和捕获格式，并让 SM8750 sink 的默认值落在支持的格式中；不再共用包含 RAW10 和 NV12 的捕获枚举。
+
+## 内核接口与 libcamera
+
+产品相机驱动来自 [Linux 补丁链](../../../patches/linux/7.3/series.json)，不是未经修改的主线 CAMSS。图像、控件和帧事件使用 V4L2；颜色矩阵仍有本地私有控件。TFE 的 `vfe_isp_params` 是内核内部状态，不是用户空间可以排队的参数缓冲接口。
+
+### 现有服务与标准替代
+
+现有服务仍提供应用所需的相机功能；新的内核接口修正尚未组成 libcamera 替代路径。
+
+| 功能 | 现有服务（旧路径） | 标准硬件路径（替代状态） |
+| --- | --- | --- |
+| 前后摄预览、录像 | CAMSS PIX 输出 NV12，服务通过两个 loopback 摄像头交给应用 | 内核已有 MMAP／DMABUF 图像队列，并修正 RAW10 sink／NV12 capture 和 CSID 路由；libcamera TFE pipeline 未实现 |
+| 分辨率、帧率协商 | 服务处理 loopback 的 `S_FMT`／`S_PARM`，配置 sensor、硬件缩放与裁切 | 内核提供格式、selection 和 sensor 模式接口；libcamera 的协商、缓冲管理与模式切换未实现 |
+| 自动曝光、白平衡、后摄对焦 | 服务从 NV12 采样计算 AE／AWB 和清晰度 | TFE980 统计配置、metadata DMA 队列、完成处理和只处理硬件统计的 IPA 未实现，资料缺项见[下节](#tfe980-公开资料与-metadata) |
+| 手动控件、逐帧参数 | 控制 socket 写标准 sensor／PIX 控件；CCM 使用私有控件 | 底层曝光、gain、白平衡等控件保留；标准逐帧 ISP 参数、生效帧关联和 libcamera 控件接入未实现 |
+| 镜头、闪光拍照 | 镜头及两路 flash ancillary links 已确认；服务提供强制闪光拍照流程 | 标准镜头／flash 控件和关联已具备；硬件 AF 统计、镜头标定、移动稳定时间及 libcamera 闪光流程未实现 |
+| 后摄全幅 | RDI 采集 Quad CFA，经已有软件转换输出 NV12 | 当前 TFE 没有实现全幅 remosaic；硬件路径先使用 binned 模式，不增加软件回退或放大冒充全幅 |
+
+因此不能先移除 `piano-camerad`、loopback 或控制 socket：否则应用会失去已处理的视频输出、3A 和现有拍照入口。WirePlumber 配置同时隐藏服务占用的 CAMSS 节点并禁用 libcamera monitor，避免两个路径争抢 sensor；标准替代完成并验证这些功能前，该配置仍需保留。
+
+图像队列不支持 Media Request，控件逐项写入后触发寄存器更新。还需测量 sensor 控件延迟和 TFE 参数实际生效帧，不能把写入成功当作指定帧已经生效。
+
+现有 `frame_stats()` 从 NV12 的 Y/UV 采样，转换采样值用于 AE/AWB；AF 同样读取图像清晰度。把这些函数移进 IPA 并不能满足“IPA 只处理硬件统计”的目标。驱动中的统计 write master 名称不足以推导计算模块配置、统计记录布局或 DMA 缓冲大小，不能只凭名称开始排队统计 DMA。
+
+上游 [libcamera v0.8.0 simple pipeline](https://github.com/libcamera-org/libcamera/blob/v0.8.0/src/libcamera/pipeline/simple/simple.cpp) 对 CAMSS 使用 software ISP，选择到硬件 PIX 路径也没有 TFE 3A 参数和统计处理；[上游 master](https://gitlab.freedesktop.org/camera/libcamera/-/tree/da6a6ed33ed0ab305f10b6f8b44736150d39cef4/src/libcamera/pipeline)同样没有 TFE pipeline 或 IPA。[CAMSS pipeline v3 提案](https://lists.libcamera.org/pipermail/libcamera-devel/2026-November/063337.html)增加不同相机的 CSID/VFE 分配，但硬件 ISP 部分针对 QRB2210 OPE，不是 SM8750 TFE980。[OPE 实现](https://lists.libcamera.org/pipermail/libcamera-devel/2026-November/063344.html)仍用 `SwStatsCpu` 读取原始图像并复用 softISP IPA，不能作为不处理图像数据的 TFE 方案。
+
+libcamera 的[传感器要求](https://github.com/libcamera-org/libcamera/blob/v0.8.0/Documentation/sensor_driver_requirements.rst)还要求 RAW sensor 提供 HBLANK、VBLANK、PIXEL_RATE，并把曝光表示为图像行。当前 OV32D40 不满足这一模型，不能重新填入已证明错误的 blanking 值来通过初始化。上游也没有这两颗 sensor 的增益 helper 和实测控件延迟，默认延迟不能代替逐模式测量。
+
+OV32D40 的[设备树 binding](../../../patches/linux/7.3/0115-media-ov32d40-binding.patch)使用通用 video-device、CSI-2 endpoint schema，描述现有四 lane D-PHY、19.2 MHz MCLK、三路电源、低有效 reset 和单个可选 power domain。binding 的 YAML 与例子通过 `dt_binding_check`；修正遗留布尔属性和无效空 `reg` 后，完整折叠 DT 中的 OV32D40 节点通过定向校验。原生 Piano skeleton 不包含完整相机节点，不能代替该检查。
+
+SM8750 的 [CAMSS binding](../../../patches/linux/7.3/0116-media-camss-bayer-clock-binding.patch)还描述每条完整 TFE 的 Bayer、Bayer fast AHB 和 Bayer CAMNOC 时钟，共 44 项时钟资源；这些是 PIX 驱动使用的硬件时钟，不能为匹配旧 schema 而删除。捕获端只描述驱动使用的 `ahb`、`hf_mnoc` 两条 interconnect，不把独立 ICP 的资源放进 CAMSS。[带宽 overlay](../../../linux/dts/piano-camera-interconnects.dtso)使用现有 SM8750 provider，补入 APPSS→CAMERA_CFG 的活动带宽路径和 CAMNOC_HF→EBI 的图像路径；runtime resume 提交驱动带宽票据，suspend 清零。两条路径与 44 clocks 在完整折叠节点上的定向 schema 检查通过，带宽投票仍需实机检查。缺少属性时 interconnect 核心返回 NULL 并跳过约束，不能据此将硬件带宽路径改为可选。
+
+前后 sensor 的 `power-domains` 都指向 `CAM_CC_TITAN_TOP_GDSC`。公开相机 DTS 说明该引用用于保证 CAMBIST MCLK 分支工作，并非 sensor 本体位于片上电源域；I2C core 会在 probe 前附加该域，runtime PM 在 sensor 回调前后管理它。[sensor overlay](../../../linux/dts/piano-camera-sensors.dtso)也将 Titan 依赖描述在 MCLK 供应端：CAMBIST 在原有 MMCX、MX 之外附加 Titan，通用 clock runtime PM 按 prepare/unprepare 持有、释放这些域。对应 clock binding、例子和节点校验通过，但供应端独立工作仍需实机检查；验证 probe、停流和恢复前保留 sensor 引用。S5KJN1 schema 仍拒绝该旧引用，OV32D40 schema 允许它，不通过放宽前者掩盖迁移尚未完成。
+
+### TFE980 公开资料与 metadata
+
+MiCode 的 [Piano camera-kernel](https://github.com/MiCode/vendor_qcom_opensource_camera-kernel/blob/piano-w-oss/drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/vfe17x/cam_tfe980.h)和 Qualcomm 官方 [camera-driver](https://github.com/qualcomm-linux/camera-driver/blob/camera-kernel.qclinux.0.0/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/vfe17x/cam_tfe980.h)都公开了 `cam_tfe980.h`，文件许可为 GPL-2.0-only。`tfe980_bus_hw_info` 描述统计 write master 10–18 的寄存器、格式和完成组；同一源码的 `cam_vfe_bus_ver3.c` 提供帧模式、stride、地址和 context 编程流程，可以作为统计 DMA 实现的依据。
+
+| TFE980 输出 | write master | `cfg`／`image_addr` 偏移 | 传输格式 |
+| --- | --- | --- | --- |
+| AEC BE | 10 | `0x1700`／`0x1704` | PLAIN64 |
+| AEC BHIST | 11 | `0x1800`／`0x1804` | PLAIN64 |
+| Tintless BG | 12 | `0x1900`／`0x1904` | PLAIN64 |
+| AWB BG | 13 | `0x1a00`／`0x1a04` | PLAIN64 |
+| AWB BFW | 14 | `0x1b00`／`0x1b04` | PLAIN64 |
+| AF BHIST | 15 | `0x1c00`／`0x1c04` | PLAIN64 |
+| ALSC BG | 16 | `0x1d00`／`0x1d04` | PLAIN64 |
+| Bayer RS | 17 | `0x1e00`／`0x1e04` | PLAIN32 |
+| TMC BHIST | 18 | `0x1f00`／`0x1f04` | PLAIN64 |
+
+这些输出同属 completion group 2，`comp_done_mask[2] = 0x70` 对应三个 context；MiCode 表还列出聚合完成中断 `mc_comp_done_mask[2] = BIT(25)`，Qualcomm 的上述版本未列出该字段。不能把 SM8650 的 group 4 完成处理直接搬过来。上述两份公开 kernel 源码中尚未找到这些统计计算模块的启用、ROI、grid/bin 数、阈值、输出 shift、tap point 配置和输出记录定义；IQ 寄存器命令由用户空间生成，再经 `CAM_ISP_IQ_BL` 和 CDM 提交。因此 PLAIN64 只说明打包宽度，不说明每个值是哪个颜色通道、有效位宽或帧，也不能据此确定 DMA 缓冲大小。统计 write master 的 frame-based 模式将宽高设为零，公开代码没有用分配长度设置输出上限；缺少计算模块的最大输出长度，就无法证明 DMA 不会越过缓冲。TFE980 的 AWB BFW、AF BHIST、另一路 CAF 也不能直接当作旧版 BF 统计。
+
+Linux 7.3 的 `v4l2-isp` 已合入通用 buffer/block header 和统计封装，但 header 的 `type` 明确由驱动定义，没有通用 Bayer grid、BHIST 或 BF payload。[Linux 主线](https://github.com/torvalds/linux/tree/aacb7797504183a90d66b19b1efb555cfe9b3eec/drivers/media/platform/qcom/camss)和 [media next](https://git.linuxtv.org/media.git/tree/drivers/media/platform/qcom/camss?id=bf6c63ecc20a54aaac7a2fcbd6adaf6498388825)仍无 TFE980 统计后端或 payload 定义。现有 [GENERIC metadata 格式](https://docs.kernel.org/userspace-api/media/v4l/metafmt-generic.html)描述 CSI-2 行数据的存储，不定义统计含义；把自定义 TFE 数据塞进去仍会制造项目私有 ABI。其他 ISP 的已合入格式也不能用来冒充 TFE 数据。
+
+Qualcomm 的 [IFE BG 统计提案](https://lore.kernel.org/linux-media/20261006223953.3382273-21-gjorgji.rosikopulos@oss.qualcomm.com/)与 [CAMSS extensible BHIST 提案](https://lore.kernel.org/linux-media/20261005-linux-mainline-7-2-sm8650-hdk-rfc-0-v1-58-ed985aefd611@kernel.org/)是可复用的上游工作，但尚未合入，且基于不同 IFE 模块。采用前需证明 TFE980 的布局和语义相同，并沿该公共接口评审，而不是在项目里自行分配 block 或 fourcc。
+
+下一项必要资料是带开放许可的 TFE980 统计计算寄存器和输出定义，至少覆盖 AEC BE/BHIST、AWB BG 与可用于 AF 的统计。原厂相同模式的寄存器命令、缓冲尺寸／stride、统计完成顺序和统计样本可用于交叉测量，但普通 Linux 控件枚举和空闲寄存器读回不能补出这些定义。Qualcomm 的 [libcamx-dev 打包说明](https://github.com/qualcomm-linux/pkg-camx-dev/blob/ceee1ff870a96da9ea4fc2c7ba46b952c6e034da/debian/copyright)明确区分 BSD 打包脚本与闭源 CamX 载荷，不能因下载公开就视为可导入实现或调校的开放源码。
+
+### Media graph 与并发
+
+当前产品为后摄配置 `s5kjn1 → msm_csiphy1 → msm_csid0 → msm_vfe0_pix → msm_vfe0_video3`，前摄使用 `ov32d40 → msm_csiphy4 → msm_csid1 → msm_vfe1_pix → msm_vfe1_video3`。CSID sink 是 pad 0，IPP 是 source pad 4；VFE sink/source 分别是 pad 0/1。设备节点编号由探测顺序决定，不是配置常量。原始采集使用 CSID source pad 1 和对应 VFE RDI0。
+
+产品内核的 `MEDIA_IOC_G_TOPOLOGY` 已确认后摄到 DW9768 和两路 flash 的三个 enabled、immutable ancillary links，运行设备树的 `lens-focus` 和 `flash-leds` 指向相同设备。关联不是 libcamera 接入的缺项，仍缺的是算法、标定和闪光拍照流程。
+
+SM8750 只公布同编号 CSID→VFE 链接，与 Gen4 的寄存器更新、帧时序和完成回调一致；CSIPHY 选择和其他 SoC 的图保持不变。CSID 四个 source pad 共用格式归一化，IPP pad 4 不再接受任意 code 或尺寸。前后摄同时工作、交错停流、模式切换和失败恢复仍需实机检查；共享隐私灯的引用计数验证不证明两路图像、统计和控件互不干扰。
+
+原有 7.3.3 产品内核的两个 PIX 节点各通过 48 项不含开流的 `v4l2-compliance 1.30.1` 检查，0 warning，Requests 报告 Not Supported。这只说明该基线的 ioctl 行为，不覆盖格式修正后的开流、3A、闪光同步或 libcamera。
+
+### 调校来源与全幅模式
+
+相机源码的 MIT 许可不自动覆盖外部调校数据。现有 `cam_cfgs[].ccm` 注释写明来自原厂调校矩阵均值，但没有独立来源和再分发许可记录；TFE 寄存器编程的 CamX 来源也需要逐项确认公开来源与许可。libcamera 的新调校必须使用许可清楚的公开数据或重新测量的数据，不能导入 OEM tuning、私有 Chromatix 或把现有常量换个 YAML 文件名继续使用。
+
+后摄 8160×6120 输出的是 Quad CFA，现有 TFE 配置只选择普通 2×2 Bayer 顺序、普通 demosaic，并关闭 BDS2，没有实现全幅 remosaic。该源码能说明当前路径不支持此模式，不能证明芯片永远没有相应能力，也不能仅凭注释中的 7008 像素就声称硬件宽度上限。硬件路径应先使用后摄 4080×3060、前摄 3264×2448 的 binned 模式；全幅需要单独的公开硬件资料和验证，不增加软件 debayer、缩放或颜色转换回退，也不把 binned 图像放大后标为全幅。旧服务的软件全幅路径在有可运行替代前保留，不记为 TFE 全幅适配。
 
 ## 分辨率和帧率
 
@@ -66,6 +141,20 @@ AE、AWB、AF 分别保存自动或手动状态。数值写入要求先把对应
 
 ## 帧时间戳与错误
 
+PipeWire 的 V4L2 采集对不支持导出 DMA-BUF 的设备使用 MMAP 复制。
+复制后的 SPA 缓冲与内核捕获编号分开管理，仍在排队、已交给应用或带有非零
+busy 引用的帧不能被覆盖；内核缓冲在复制完成后立即归还。应用暂时持有全部
+缓冲时仍推进相机时钟，允许处理循环归还帧，不修改传感器时间戳。
+修复见[共享 PipeWire 补丁](../../../patches/pipewire/1.6.9/0007-v4l2-copy-buffer-pool.patch)。
+
+`./build.sh pipewire` 只生成 GStreamer 插件和 `pipewire-v4l2-source` 两个包，
+保留发行版原有的 server、音频与蓝牙库。采集包安装独立 SPA 库和标准
+`context.spa-libs` 配置；它使用独立 source factory 名称，因为 PipeWire
+按首个匹配规则选择库，已有的 `api.v4l2.*` 规则不会被后加载的同名规则替换。
+WirePlumber 从该库枚举设备后将独立 factory 交给 PipeWire，两个进程因此使用
+同一修复。Debian、Nyarch 和 SteamOS 共用源码与补丁。正式 Debian 包的前后摄
+带声音录像已检查开始、停止、重新打开和完整解码。
+
 完整 SM8750 CAMSS 的 IPP 和 RDI0 使用 CSID980 锁存的物理计数器，通过标准 V4L2 接口报告帧时间。
 
 | 接口 | 时间含义 | 同一帧的编号 |
@@ -75,17 +164,21 @@ AE、AWB、AF 分别保存自动或手动状态。数值写入要求先把对应
 
 应用按表中的帧编号配对；`event.sequence` 是事件队列的序号，不能用来关联图像。DMA 完成、用户态出队和 ISP 转换均可能晚于 EOF。`DQBUF` 的 `timeval` 将纳秒截断到微秒，保守覆盖 EOF 时取该微秒区间的上界，即换算为纳秒后加 999。
 
-中断内依次读取物理计数器、`ktime_get_ns()`、物理计数器，以两次计数器读数的中点换算锁存值。计数频率来自 ARM64 `CNTFRQ_EL0`；采样区间超过 50 微秒或锁存值早于采样超过一秒时拒绝换算。在 `CLOCK_MONOTONIC` 总瞬时速率与计数器标称速率相差不超过 ±500 ppm 的条件下，误差保守上界为 550 微秒。
+中断内依次读取物理计数器、`ktime_get_ns()`、物理计数器，以两次计数器读数的中点换算锁存值。驱动要求 ARM64 `CNTFRQ_EL0` 为 19.2 MHz，否则拒绝换算；采样区间超过 50 微秒或锁存值早于采样超过一秒时也拒绝换算。在 `CLOCK_MONOTONIC` 总瞬时速率与计数器标称速率相差不超过 ±500 ppm 的条件下，误差保守上界为 550 微秒。
 
 CSI SOF 是帧包开始，积分可能更早。内核不减去曝光时间，也不标记 `TSTAMP_SRC_SOE`；拍照仍须结合传感器积分模型。SOF 到 EOF 的实际跨度也不能简单替换成有效行数乘行时间。
+
+libcamera `SensorTimestamp` 的语义是首行开始曝光、时钟为 `CLOCK_BOOTTIME`。这里的 CSI SOF 和 EOF 都不能直接填入该字段：还需要传感器积分相对 CSI 的时序和 MONOTONIC→BOOTTIME 换算，并在睡眠恢复后重新核对。现有 simple pipeline 直接使用捕获时间戳的行为不是 TFE 时间戳语义已经适配。
 
 SOF/EOF 按既有双缓冲 FIFO 关联。标记缺失、不连续、接收端错误或无效换算会使该流持续返回 `V4L2_BUF_FLAG_ERROR`，直到重新开流。TFE 图像尺寸、CCIF 和约束错误另走 BUS 中断；处理错误与完成缓冲共用 `output_lock`，先检查错误再发布图像。只有活动的 write master 允许访问 BUS 寄存器，停止最后一条流时在关时钟前屏蔽、清除并读回中断配置。
 
 实现见[物理帧时序补丁](../../../patches/linux/7.3/0048-camss-frame-timestamps.patch)和 [TFE BUS 修复](../../../patches/linux/7.3/0049-camss-tfe-bus-errors.patch)。`camss_frame`、`camss_frame_error` trace 提供原始计数器、交叉采样和缓冲编号。
 
+产品内核不提供 ISP 寄存器脚本或任意 MMIO 读写入口。TFE 默认设置、缩放和图像控件由驱动编程；诊断使用现有帧 trace 和错误日志。[删除补丁](../../../patches/linux/7.3/0113-camss-remove-register-debug.patch)移除 `camss_isp` debugfs 及其共用的 CSID/VFE 指针，避免两个摄像头互相覆盖调试目标，不改变开流、停流或 DMA 清理。
+
 ## 闪光灯
 
-PMIC 闪光灯使用标准 V4L2 flash 控件，后摄通过 `flash-leds` 关联两路灯。现有服务复用控制 socket 接受一次强制闪光拍照请求：
+PMIC 闪光灯使用标准 V4L2 flash 控件，后摄设备树通过 `flash-leds` 引用两路灯，到两颗 flash subdev 的 `MEDIA_LNK_FL_ANCILLARY_LINK` 已确认。现有服务从这些链接查找闪光灯，复用控制 socket 接受一次强制闪光拍照请求：
 
 ```sh
 piano-camera-ctl capture rear --flash --output photo.jpg
@@ -94,5 +187,7 @@ piano-camera-ctl capture rear --flash --output photo.jpg
 程序冻结当前曝光、白平衡和对焦，等待两个真正开始于冻结之后的传感器帧，再开启有硬件超时的闪光。物理 `FRAME_SYNC` 事件与同序号捕获缓冲提供 SOF 和 EOF；只有完整曝光区间落在保守亮灯窗口内的帧才交付。取消、超时、格式切换或传感器错误均关闭闪光、恢复原控制状态，不返回其他帧。
 
 照片尺寸沿用当前协商的 PIX 输出，不会自动切换成原生全幅。全幅 RDI 和前摄闪光请求返回 `EOPNOTSUPP`。该路径提供长脉冲曝光覆盖，不包含自动预闪测光或短脉冲冻结运动；普通视频应用也不会自动发出这条拍照请求。JPEG 由调用者接收只读封存的图像文件描述符后编码，服务不接收用户输出路径。
+
+libcamera v0.8.0 的通用 sensor 类只识别关联镜头，没有现成的 TFE 闪光拍照流程。未来接入仍须保留硬件超时、故障读回、取消和完整曝光覆盖条件，先完成标准 kernel 接口与 libcamera 控件设计，不能继续用项目 socket 冒充 libcamera 支持。现有闪光流程的源码不等于已经完成光学发光与曝光同步测量。
 
 隐私指示灯的驱动与 PWM 联动见[实现说明](camera-privacy-led.md)。它与拍照闪光灯用途不同。

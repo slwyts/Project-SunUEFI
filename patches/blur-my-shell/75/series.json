@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "version": "75",
+  "targets": [
+    "nyarch-gnome"
+  ],
+  "patches": [
+    {
+      "file": "0001-follow-material-color-scheme.patch",
+      "sha256": "02cd3f079c79165441dcdc1ab7fec9cd52cfc288ed951abb5e3d80927c234ae5",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/aunetx/blur-my-shell/blob/v75/src/components/popup/index.js",
+        "drop_when": "The selected Blur my Shell release follows the active MaterialYou stylesheet's light or dark preference while retaining explicit popup style overrides and other theme selection."
+      }
+    }
+  ]
+}

@@ -16,6 +16,7 @@ import build_arch_package
 import build_arch_ffmpeg
 import build_nyarch_apps
 import build_release_rootfs as release
+from build_piano_runtime_helpers import source_patches
 import stage_arch_piano
 from build_steamos_rootfs import sensor_sources, sensor_recipes
 from prepare_steamos_rootfs import download
@@ -90,20 +91,19 @@ def build(args):
     recipes = inputs / 'recipes'
     if not recipes.exists():
         sensor_recipes(recipes, sensors)
-        mesa = recipes / 'mesa'
-        shutil.copytree(ROOT / 'linux/bsp/arch/mesa', mesa)
-        shutil.copy2(ROOT / 'upstream/piano-mesa-current/patches/0001-freedreno-Add-chip-id-support-for-A830v1.patch', mesa)
+    mesa = recipes / 'mesa'
+    from build import arch_mesa
+    arch_mesa.recipe(mesa)
     gsd = recipes / 'gnome-settings-daemon'
     if gsd.exists():
         shutil.rmtree(gsd)
     run(sys.executable, ROOT / 'linux/desktops/gnome/ambient-policy/packaging/prepare_package.py',
-        'arch', gsd)
+        'arch', gsd, '--rootfs', root)
     mutter = recipes / 'mutter'
     shutil.copytree(ROOT / 'linux/desktops/gnome/arch/mutter', mutter,
                     dirs_exist_ok=True)
-    for name in ('0001-kms-empty-gamma-bypass.patch',
-                 '0003-wayland-touch-ignore-cancelled-grab.patch'):
-        shutil.copy2(ROOT / 'linux/desktops/gnome/patches/mutter' / name, mutter)
+    for path in source_patches(ROOT / 'patches/mutter/51.0/series.json'):
+        shutil.copy2(path, mutter / path.name)
     control_center = recipes / 'control-center'
     shutil.copytree(ROOT / 'linux/desktops/gnome/arch/control-center',
                     control_center, dirs_exist_ok=True)
@@ -111,10 +111,18 @@ def build(args):
                  control_center)
     # SteamOS's protobuf compatibility rebuild is intentionally not selected
     # for Arch: its rolling packages already share the current library ABI.
-    for name in ('mutter', 'control-center', 'mesa', 'fastrpc', 'libssc', 'iio-sensor-proxy'):
+    for name in ('mutter', 'control-center', 'fastrpc', 'libssc', 'iio-sensor-proxy'):
         packages = output / 'packages' / name
         if not (packages / 'manifest.json').exists():
             build_arch_package.build(root, recipes / name, packages)
+    mesa_packages = ROOT / 'build/mesa-pacman/nyarch-gnome'
+    if not arch_mesa.is_current(mesa_packages, mesa):
+        if mesa_packages.exists():
+            shutil.rmtree(mesa_packages)
+        build_arch_package.build(root, mesa, mesa_packages, validate=arch_mesa.validate)
+        shutil.copy2(mesa / 'SOURCE.json', mesa_packages / 'SOURCE.json')
+    else:
+        arch_mesa.install_cached(root, mesa_packages)
     gsd_packages = output / 'packages/gnome-settings-daemon'
     gsd_manifest = gsd_packages / 'manifest.json'
     if (not gsd_manifest.is_file() or
@@ -133,17 +141,21 @@ def build(args):
         build_arch_package.install_cached(root, ffmpeg)
     pipewire = output / 'packages/pipewire'
     run(ROOT / 'build.sh', 'pipewire', '--rootfs', root, '--output', pipewire)
+    libwacom = output / 'packages/libwacom'
+    run(ROOT / 'build.sh', 'libwacom', '--rootfs', root, '--output', libwacom)
     gdm = output / 'packages/gdm'
     run(ROOT / 'build.sh', 'gdm', '--rootfs', root, '--output', gdm)
 
     kernel = ROOT / 'artifacts/kernels/release'
     source = Path(json.loads((ROOT / 'build/release/source-manifest.json').read_text())['worktree'])
     runtime = output / 'runtime'
+    stage_arch_piano.hardware.stage_pen_calibration(root)
     if not (runtime / 'manifest.json').exists():
         run(sys.executable, ROOT / 'tools/build_release_helpers.py',
             '--kernel', kernel, '--source', source,
             '--kernel-build', ROOT / 'build/kernels/release',
-            '--output', runtime, '--sysroot', args.bootstrap_sysroot.resolve())
+            '--output', runtime, '--sysroot', args.bootstrap_sysroot.resolve(),
+            '--firmware-root', root)
     stage_arch_piano.stage(argparse.Namespace(
         rootfs=root, kernel=kernel, runtime=runtime, sensor_source=sensors,
         bootstrap_sysroot=args.bootstrap_sysroot, desktop='nyarch',
@@ -154,6 +166,7 @@ def build(args):
                   gnome_power=json.loads(gsd_manifest.read_text()),
                   ffmpeg=json.loads((ffmpeg / 'SOURCE.json').read_text()),
                   pipewire=json.loads((pipewire / 'SOURCE.json').read_text()),
+                  libwacom=json.loads((libwacom / 'SOURCE.json').read_text()),
                   gdm=json.loads((gdm / 'SOURCE.json').read_text()))
     manifest.write_text(json.dumps(record, indent=2) + '\n')
 

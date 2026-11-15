@@ -32,15 +32,12 @@
     "package_format": "pacman",
     "policy": "Rebuild the rootfs-compatible package; never install Debian libraries into SteamOS",
     "patch_series_by_abi": {
-      "7": "linux/bsp/patches/ffmpeg/series.json",
       "8": "linux/bsp/patches/ffmpeg/series-8.json",
       "9": "patches/ffmpeg/9.0.2/series.json"
     }
   },
   "mesa": {
-    "repository": "https://gitlab.freedesktop.org/mesa/mesa.git",
-    "commit": "e549b466fcf1237469b6814614d21cbcd144c30b",
-    "version": "27.0.0_devel+gite549b466fcf1",
+    "source_config": "config/mesa.json",
     "patch_series": "patches/mesa/27.0/series.json"
   },
   "gtk3": {
@@ -106,9 +103,7 @@
       "version": "6.6.5",
       "url": "https://download.kde.org/stable/plasma/6.6.5/kscreen-6.6.5.tar.xz",
       "sha256": "753ebc00cf75359c2e7ba3aabb20ff3596d0fbbe2f0b6d3ed6098d27282a3276",
-      "patches": [
-        "patches/steamos/0001-kscreen-find-qt-before-qml-helper.patch"
-      ],
+      "patch_series": "patches/kscreen/6.6.5/series.json",
       "license": [
         "LGPL-2.0-or-later"
       ],

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "component": "debian-piano-overlay",
+  "source_manifest": "../../../manifest.json",
+  "targets": [
+    "debian-gnome",
+    "debian-kde",
+    "nyarch-gnome",
+    "steamos"
+  ],
+  "patches": [
+    {
+      "file": "../../0001-ucm-piano-microphone-and-speakers.patch",
+      "sha256": "078e3f8a45de49dabb7d620c510f7ee2bba8a761efc8bcb0b99d686a03d55a6f",
+      "license": "MIT; retain debian-piano source notices",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected upstream UCM must provide Piano's four-channel speaker PCM with all four amplifier gains, the mono DMIC2/DEC0 microphone route and gain, and jack-detected DisplayPort playback. Verify one physical speaker output and microphone, all speaker paths, microphone enable/disable and DP routing against the matching kernel/topology before replacing the BSP-derived HiFi.conf and its source diff together."
+      }
+    },
+    {
+      "file": "../../0003-camera-portable-modprobe.patch",
+      "sha256": "b4892c279dfdce444292ed55a61d984829815bfb567add1d508f053ea5166d5b",
+      "license": "MIT; retain debian-piano source notices",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The maintained camera service still uses this portable modprobe invocation while its body is tracked directly in the BSP. Drop when the selected upstream unit resolves modprobe through a distribution-independent path, or when a working native libcamera path removes piano-camerad and its loopback prerequisite. Verify camera service startup on Debian and Arch-based products without requiring /usr/sbin/modprobe."
+      }
+    }
+  ]
+}

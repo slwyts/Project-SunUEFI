@@ -1,7 +1,9 @@
 {
   "schema_version": 1,
   "version": "51.0",
-  "package_release": "1.1",
+  "versions": ["51.0", "51.1"],
+  "targets": ["debian-gnome", "nyarch-gnome"],
+  "package_release": "1.2",
   "source": {
     "url": "https://download.gnome.org/sources/gdm/51/gdm-51.0.tar.xz",
     "sha256": "2ce5acf5a438b8f6dc1d14fd777a911be5eeb2f7ab9a7c4600166205b15d6536"
@@ -9,11 +11,30 @@
   "patches": [
     {
       "file": "0001-local-display-wait-for-kms-connectors.patch",
-      "sha256": "9528d83ec19a8dc007e9a47ecc15e1ed89c51eaf0da01d12081e3e647f84e663"
+      "sha256": "9528d83ec19a8dc007e9a47ecc15e1ed89c51eaf0da01d12081e3e647f84e663",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://gitlab.gnome.org/GNOME/gdm/-/merge_requests/219",
+        "drop_when": "The selected GDM source ignores firmware framebuffers and render-only DRM cards until a native KMS card has connectors; verify the greeter starts after display-controller probe."
+      }
     },
     {
       "file": "0002-Xsession-no-ssh-agent.patch",
-      "sha256": "468ce3f753c7b6874cd840abba36f3b241737a7d26068dfb850cd4e32a9ddc28"
+      "sha256": "468ce3f753c7b6874cd840abba36f3b241737a7d26068dfb850cd4e32a9ddc28",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://gitlab.archlinux.org/archlinux/packaging/packages/gdm/-/blob/51.0-1/0001-Xsession-Don-t-start-ssh-agent-by-default.patch",
+        "drop_when": "The selected Arch GDM source no longer starts ssh-agent from Xsession; keep the Debian packaging path separate."
+      }
+    },
+    {
+      "file": "0003-session-worker-close-cancelled-reauthentication.patch",
+      "sha256": "9212f34a3d85461670f441b02de7bc9c5f8308894aba74f44e8e85f3ccb51ad7",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://gitlab.gnome.org/GNOME/gdm/-/blob/main/daemon/gdm-session-worker.c",
+        "drop_when": "The selected GDM closes cancelled and replaced reauthentication sessions without sending Reset back to the cancelling client; repeated lock and cancel operations leave no PAM workers or D-Bus connections behind."
+      }
     }
   ]
 }

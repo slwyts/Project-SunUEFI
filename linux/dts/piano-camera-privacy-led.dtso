@@ -7,7 +7,7 @@
  * Stock camera preview: green brightness 0 -> 4 -> 0, max 255;
  * framework LightsService ids 0..7 remain zero. Provider: PM8550 LPG2.
  * Both sensors share this physical indicator. The fraction property is the
- * SunUEFI proposed video-interface binding extension in kernel patch 0016.
+ * SunUEFI proposed video-interface binding extension in the media patch series.
  */
 / {
 	fragment@0 {

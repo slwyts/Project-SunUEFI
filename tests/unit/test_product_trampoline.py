@@ -27,10 +27,11 @@ def components():
 
 
 class TrampolinePackageTests(unittest.TestCase):
-    def test_piano_fingerprint_accepts_chinese_and_global_products(self):
-        for prefix in ('Xiaomi/piano/piano:', 'Xiaomi/piano_global/piano:'):
+    def test_piano_fingerprint_accepts_chinese_global_and_eea_products(self):
+        for prefix in ('Xiaomi/piano/piano:', 'Xiaomi/piano_global/piano:', 'Xiaomi/piano_eea/piano:'):
             for suffix in ('15/build/incremental:user/release-keys',
-                           '16/build/incremental:user/release-keys', 'x'):
+                           '16/build/incremental:user/release-keys',
+                           '15/AQ3A.250226.002/OS3.0.305.0.WPYEUXM:user/release-keys', 'x'):
                 with self.subTest(fingerprint=prefix + suffix):
                     self.assertTrue(module.piano_fingerprint(prefix + suffix))
 
@@ -41,14 +42,21 @@ class TrampolinePackageTests(unittest.TestCase):
             'Xiaomi/piano_pro/piano:15/build',
             'Xiaomi/piano_global_extra/piano:15/build',
             'Xiaomi/piano_globalish/piano:15/build',
+            'Xiaomi/piano_eeax/piano:15/build',
+            'Xiaomi/piano_eea_global/piano:15/build',
+            'Xiaomi/piano_eea/other:15/build',
+            'Xiaomi/piano_eea/pianox:15/build',
+            'Other/piano_eea/piano:15/build',
             'Xiaomi/piano/piano_global:15/build',
             'Xiaomi/piano_global/pianox:15/build',
             'Xiaomi/piano/other:15/build',
             'Xiaomi/piano/piano/15/build',
             'Xiaomi/piano/piano:',
             'Xiaomi/piano_global/piano:',
+            'Xiaomi/piano_eea/piano:',
             'Xiaomi/piano/piano:\0',
             'Xiaomi/piano_global/piano:15/build\0extra',
+            'Xiaomi/piano_eea/piano:15/build\0extra',
             'Xiaomi/piano/piano:15/build\0',
         )
         for fingerprint in fingerprints:

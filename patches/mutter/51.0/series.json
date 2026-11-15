@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "versions": ["51.0", "51.1"],
+  "targets": ["debian-gnome", "nyarch-gnome"],
+  "patches": [
+    {
+      "file": "../../../linux/desktops/gnome/patches/mutter/0001-kms-empty-gamma-bypass.patch",
+      "sha256": "c9c3bf53ca666aa85e7208aa59d422ad4ab0543b52c97cb8a46df3a644f4d974",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia-Forks/Project-SunUEFI/tree/main/linux/desktops/gnome/patches/mutter",
+        "drop_when": "The selected Mutter source treats an empty DisplayConfig Gamma LUT as KMS bypass before resampling; verify empty/readback/restore through the normal compositor."
+      }
+    },
+    {
+      "file": "../../../linux/desktops/gnome/patches/mutter/0003-wayland-touch-ignore-cancelled-grab.patch",
+      "sha256": "c4d7b5ad80d120a1e66af9f1c0c72b2e8fb12ea6c5581e3eb5e264907a5b368a",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia-Forks/Project-SunUEFI/tree/main/linux/desktops/gnome/patches/mutter",
+        "drop_when": "The selected Mutter source rejects interactive grabs from cancelled touch sequences without dereferencing a cleared focus_surface; verify cancel then move/resize."
+      }
+    }
+  ]
+}

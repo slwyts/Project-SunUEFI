@@ -1,9 +1,15 @@
 {
   "schema_version": 1,
+  "targets": ["steamos"],
   "patches": [
     {
       "file": "0001-freedreno-renderonly-height-alignment.patch",
-      "sha256": "c5ff27aeabca500a8cf095cee1cdd5b47ed0bfee3d96c537117320bfae854976"
+      "sha256": "c5ff27aeabca500a8cf095cee1cdd5b47ed0bfee3d96c537117320bfae854976",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://gitlab.freedesktop.org/mesa/mesa/-/blob/e549b466fcf1237469b6814614d21cbcd144c30b/src/gallium/drivers/freedreno/freedreno_resource.c",
+        "drop_when": "The selected Mesa source allocates renderonly scanout buffers large enough for a6xx and newer GMEM layouts; verify non-four-row-aligned heights import without reducing the visible dimensions."
+      }
     }
   ]
 }

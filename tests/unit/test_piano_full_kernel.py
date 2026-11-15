@@ -19,6 +19,85 @@ CONFIG=ROOT/'artifacts/kernels/release/config'
 CONFIGURED='needs the release kernel build (./build.sh linux)'
 
 
+class KernelPolicyCacheTests(unittest.TestCase):
+    def test_non_kernel_config_changes_keep_the_reuse_decision_and_outputs(self):
+        with tempfile.TemporaryDirectory(prefix='kernel-policy-') as directory:
+            root=Path(directory);(root/'config').mkdir()
+            config=root/'config/release.json'
+            release=json.loads((ROOT/'config/release.json').read_text())
+            config.write_text(json.dumps(release,indent=2)+'\n')
+            policy=full.kernel_policy_identity(root)
+            output=root/'kernel-build';(output/'include/config').mkdir(parents=True)
+            (output/'.config').write_text('CONFIG_MODULES=y\n')
+            (output/'Module.symvers').write_text('0x12345678\tmodule_symbol\tvmlinux\tEXPORT_SYMBOL\n')
+            (output/'include/config/kernel.release').write_text('7.3.3-piano\n')
+            inputs={'tools/kernel.py':'producer-sha256'}
+            tools={'sha256':{'clang':'compiler-sha256'}}
+            record={'status':'HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED',
+                    'source_commit':'a'*40,'inputs':inputs,'kernel_policy':policy['policy'],
+                    'kernel_policy_sha256':policy['sha256'],'local_module_overrides':{'CONFIG_UHID':'m'},
+                    'root_policy':'LABEL=PIANOROOT','command_line':'rdinit=/pianoinit piano.root=LABEL=PIANOROOT',
+                    'toolchain':tools,'config_sha256':full.sha(output/'.config'),
+                    'module_symvers_sha256':full.sha(output/'Module.symvers')}
+            marker=output/'manifest.json';marker.write_text(json.dumps(record,indent=2)+'\n')
+            before={path: (path.read_bytes(),path.stat().st_mtime_ns)
+                    for path in output.rglob('*') if path.is_file()}
+
+            def reusable():
+                return full.matching_build(record,'a'*40,inputs,full.kernel_policy_identity(root),
+                                           {'CONFIG_UHID':'m'},'LABEL=PIANOROOT',record['command_line'],tools,output)
+
+            self.assertTrue(reusable())
+            release['login']['autologin']=not release['login']['autologin']
+            release['sensors']['required']=not release['sensors']['required']
+            release['mesa']={'version':'27.0.0'}
+            config.write_text(json.dumps(release,sort_keys=True,separators=(',',':')))
+            self.assertEqual(full.kernel_policy_identity(root),policy)
+            self.assertTrue(reusable())
+            self.assertEqual({path: (path.read_bytes(),path.stat().st_mtime_ns) for path in before},before)
+
+            release['kernel']['command_line']+=' panic_on_warn=1'
+            config.write_text(json.dumps(release))
+            self.assertFalse(reusable())
+            self.assertEqual({path: (path.read_bytes(),path.stat().st_mtime_ns) for path in before},before)
+
+    def test_reuse_still_rejects_source_config_tools_and_symbol_changes(self):
+        with tempfile.TemporaryDirectory(prefix='kernel-reuse-') as directory:
+            output=Path(directory);(output/'include/config').mkdir(parents=True)
+            (output/'.config').write_text('CONFIG_MODULES=y\n')
+            (output/'Module.symvers').write_text('kernel symbols\n')
+            (output/'include/config/kernel.release').write_text('7.3.3-piano\n')
+            policy=full.kernel_policy_identity(ROOT)
+            hashes={'recipe.py':'source-digest'};modules={'CONFIG_UHID':'m'}
+            tools={'sha256':{'clang':'compiler-digest'}}
+            record={'status':'HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED',
+                    'source_commit':'a'*40,'inputs':hashes,'kernel_policy':policy['policy'],
+                    'kernel_policy_sha256':policy['sha256'],'local_module_overrides':modules,
+                    'root_policy':'LABEL=PIANOROOT','command_line':'piano.root=LABEL=PIANOROOT',
+                    'toolchain':tools,'config_sha256':full.sha(output/'.config'),
+                    'module_symvers_sha256':full.sha(output/'Module.symvers')}
+
+            def reusable(candidate):
+                return full.matching_build(candidate,'a'*40,hashes,policy,modules,
+                                           'LABEL=PIANOROOT',record['command_line'],tools,output)
+
+            self.assertTrue(reusable(record))
+            for key,value in (('source_commit','b'*40),('inputs',{}),('local_module_overrides',{}),
+                              ('root_policy','ram'),('command_line','changed'),
+                              ('toolchain',{'sha256':{'clang':'other-compiler'}}),
+                              ('config_sha256','0'*64),('module_symvers_sha256','0'*64)):
+                with self.subTest(field=key):
+                    self.assertFalse(reusable({**record,key:value}))
+
+    def test_legacy_whole_file_hash_does_not_prove_the_kernel_section(self):
+        policy=full.kernel_policy_identity(ROOT)
+        legacy={'inputs':{'config/release.json':full.sha(ROOT/'config/release.json')}}
+        self.assertFalse(full.kernel_policy_matches(legacy,policy))
+        self.assertEqual(set(legacy),{'inputs'})
+        self.assertFalse(full.kernel_policy_matches(
+            {'kernel_policy':policy['policy'],'kernel_policy_sha256':'0'*64},policy))
+
+
 class PianoFullKernelTests(unittest.TestCase):
     def setUp(self):
         if not (KERNEL/'arch/arm64/configs/piano_defconfig').exists():

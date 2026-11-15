@@ -17,11 +17,10 @@ class GoodixKeymasterTests(unittest.TestCase):
         if not compiler or not shutil.which(compiler[0]):
             raise unittest.SkipTest('A native C compiler is required')
         includes = [
-            ROOT / 'build/source-cache/minkipc/libminkadaptor/include',
             ROOT / 'build/source-cache/qcbor/inc',
         ]
         if not all(path.is_dir() for path in includes):
-            raise unittest.SkipTest('Cached MinkIPC and QCBOR public headers are required')
+            raise unittest.SkipTest('Cached QCBOR public headers are required')
         temporary = tempfile.TemporaryDirectory(prefix='piano-goodix-keymaster-')
         cls.addClassCleanup(temporary.cleanup)
         cls.binary = Path(temporary.name) / 'test_goodix_keymaster'

@@ -1,0 +1,389 @@
+From e8adfef4618d1829a4f7b36b06f7c3c67da62c91 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sat, 14 Nov 2026 21:48:56 +0800
+Subject: [PATCH] media: camss: remove SM8750 ISP register debug interface
+
+The TFE pixel pipeline programs its defaults and image controls in the
+driver. No product component uses the separate register scripts or live
+register access.
+
+Drop the unbounded MMIO interface and its single global CSID/VFE pointers,
+which do not represent simultaneous front and rear streams. Keep the media
+graph, controls, frame tracepoints and DMA error handling unchanged.
+---
+ drivers/media/platform/qcom/camss/Makefile    |   1 -
+ .../platform/qcom/camss/camss-csid-980.c      |   5 -
+ .../platform/qcom/camss/camss-isp-debug.c     | 215 ------------------
+ .../platform/qcom/camss/camss-isp-debug.h     |  23 --
+ .../platform/qcom/camss/camss-vfe-gen4.c      |   5 -
+ drivers/media/platform/qcom/camss/camss.c     |   7 -
+ 6 files changed, 256 deletions(-)
+ delete mode 100644 drivers/media/platform/qcom/camss/camss-isp-debug.c
+ delete mode 100644 drivers/media/platform/qcom/camss/camss-isp-debug.h
+
+diff --git a/drivers/media/platform/qcom/camss/Makefile b/drivers/media/platform/qcom/camss/Makefile
+index 31911429d..3e4c9f984 100644
+--- a/drivers/media/platform/qcom/camss/Makefile
++++ b/drivers/media/platform/qcom/camss/Makefile
+@@ -18,7 +18,6 @@ qcom-camss-objs += \
+ 		camss-csiphy-2ph-1-0.o \
+ 		camss-csiphy-3ph-1-0.o \
+ 		camss-format.o \
+-		camss-isp-debug.o \
+ 		camss-ispif.o \
+ 		camss-tpg.o \
+ 		camss-tpg-gen1.o \
+diff --git a/drivers/media/platform/qcom/camss/camss-csid-980.c b/drivers/media/platform/qcom/camss/camss-csid-980.c
+index c97170c36..47f514130 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid-980.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-980.c
+@@ -21,7 +21,6 @@
+ #include "camss.h"
+ #include "camss-csid.h"
+ #include "camss-csid-gen3.h"
+-#include "camss-isp-debug.h"
+ 
+ /* Reset and Command Registers */
+ #define CSID_RST_CFG				0xC
+@@ -587,7 +586,6 @@ static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable,
+ 		writel(0, csid->base + CSID_IPP_IRQ_MASK);
+ 		val = readl(csid->base + CSID_TOP_IRQ_MASK) & ~CSID_IPP_TOP_IRQ;
+ 		writel(val, csid->base + CSID_TOP_IRQ_MASK);
+-		camss_isp_set_live(CAMSS_ISP_CSID, NULL);
+ 		val = readl(csid->base + CSID_IPP_CFG0) & ~RDI_CFG0_EN;
+ 		writel(val, csid->base + CSID_IPP_CFG0);
+ 		return;
+@@ -618,7 +616,6 @@ static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable,
+ 	writel(0, csid->base + CSID_IPP_IRQ_SUBSAMPLE_PERIOD);
+ 	writel(0, csid->base + CSID_IPP_IRQ_MASK);
+ 
+-	camss_isp_apply_script(CAMSS_ISP_CSID, csid->base);
+ 	camss_frame_reset(csid->camss, csid->id, CSID_IPP_PORT,
+ 			  csid_read_timestamp(csid, CSID_IPP_CURRENT_SOF),
+ 			  csid_read_timestamp(csid, CSID_IPP_CURRENT_EOF));
+@@ -631,8 +628,6 @@ static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable,
+ 
+ 	val = readl(csid->base + CSID_IPP_CFG0) | RDI_CFG0_EN;
+ 	writel(val, csid->base + CSID_IPP_CFG0);
+-
+-	camss_isp_set_live(CAMSS_ISP_CSID, csid->base);
+ }
+ 
+ static void csid_configure_stream(struct csid_device *csid, u8 enable)
+diff --git a/drivers/media/platform/qcom/camss/camss-isp-debug.c b/drivers/media/platform/qcom/camss/camss-isp-debug.c
+deleted file mode 100644
+index 96c2fac21..000000000
+--- a/drivers/media/platform/qcom/camss/camss-isp-debug.c
++++ /dev/null
+@@ -1,215 +0,0 @@
+-// SPDX-License-Identifier: GPL-2.0
+-/*
+- * camss-isp-debug.c
+- *
+- * Bring-up aid for the SM8750 TFE pixel path: register scripts applied when
+- * the pixel path starts, and live register access while it streams.
+- *
+- * debugfs (camss_isp/):
+- *   vfe_script, csid_script  write "OFFSET VALUE" lines (hex) to append,
+- *                            "clear" to empty; read to list
+- *   vfe_live, csid_live      write "OFFSET VALUE" to write now,
+- *                            "r OFFSET COUNT" to read now; read to show
+- *                            the last read
+- *
+- * Live access only touches a block between its pixel path start and stop,
+- * i.e. while its clocks and power domains are known to be on.
+- */
+-#include <linux/debugfs.h>
+-#include <linux/io.h>
+-#include <linux/kernel.h>
+-#include <linux/mutex.h>
+-#include <linux/seq_file.h>
+-#include <linux/slab.h>
+-#include <linux/string.h>
+-#include <linux/uaccess.h>
+-
+-#include "camss-isp-debug.h"
+-
+-#define ISP_SCRIPT_MAX		2048
+-#define ISP_PEEK_MAX		256
+-
+-struct isp_block {
+-	const char *name;
+-	u32 off[ISP_SCRIPT_MAX];
+-	u32 val[ISP_SCRIPT_MAX];
+-	unsigned int n;
+-	void __iomem *base;		/* set while live */
+-	u32 peek_off;
+-	u32 peek_val[ISP_PEEK_MAX];
+-	unsigned int peek_n;
+-};
+-
+-static struct isp_block isp_blocks[CAMSS_ISP_BLOCKS] = {
+-	[CAMSS_ISP_VFE] = { .name = "vfe" },
+-	[CAMSS_ISP_CSID] = { .name = "csid" },
+-};
+-
+-static DEFINE_MUTEX(isp_lock);
+-static struct dentry *isp_dir;
+-
+-void camss_isp_apply_script(enum camss_isp_block which, void __iomem *base)
+-{
+-	struct isp_block *b = &isp_blocks[which];
+-	unsigned int i;
+-
+-	mutex_lock(&isp_lock);
+-	for (i = 0; i < b->n; i++)
+-		writel(b->val[i], base + b->off[i]);
+-	mutex_unlock(&isp_lock);
+-}
+-
+-void camss_isp_set_live(enum camss_isp_block which, void __iomem *base)
+-{
+-	mutex_lock(&isp_lock);
+-	isp_blocks[which].base = base;
+-	mutex_unlock(&isp_lock);
+-}
+-
+-static int isp_script_show(struct seq_file *s, void *unused)
+-{
+-	struct isp_block *b = s->private;
+-	unsigned int i;
+-
+-	mutex_lock(&isp_lock);
+-	for (i = 0; i < b->n; i++)
+-		seq_printf(s, "0x%05x 0x%08x\n", b->off[i], b->val[i]);
+-	mutex_unlock(&isp_lock);
+-
+-	return 0;
+-}
+-
+-static int isp_script_open(struct inode *inode, struct file *file)
+-{
+-	return single_open(file, isp_script_show, inode->i_private);
+-}
+-
+-static ssize_t isp_script_write(struct file *file, const char __user *ubuf,
+-				size_t len, loff_t *ppos)
+-{
+-	struct isp_block *b = ((struct seq_file *)file->private_data)->private;
+-	char *buf, *line, *cur;
+-	u32 off, val;
+-
+-	buf = memdup_user_nul(ubuf, len);
+-	if (IS_ERR(buf))
+-		return PTR_ERR(buf);
+-
+-	mutex_lock(&isp_lock);
+-	cur = buf;
+-	while ((line = strsep(&cur, "\n"))) {
+-		if (!strncmp(line, "clear", 5)) {
+-			b->n = 0;
+-			continue;
+-		}
+-		if (sscanf(line, "%x %x", &off, &val) != 2)
+-			continue;
+-		if (b->n >= ISP_SCRIPT_MAX || off & 3)
+-			break;
+-		b->off[b->n] = off;
+-		b->val[b->n] = val;
+-		b->n++;
+-	}
+-	mutex_unlock(&isp_lock);
+-	kfree(buf);
+-
+-	return len;
+-}
+-
+-static const struct file_operations isp_script_fops = {
+-	.owner = THIS_MODULE,
+-	.open = isp_script_open,
+-	.read = seq_read,
+-	.write = isp_script_write,
+-	.llseek = seq_lseek,
+-	.release = single_release,
+-};
+-
+-static int isp_live_show(struct seq_file *s, void *unused)
+-{
+-	struct isp_block *b = s->private;
+-	unsigned int i;
+-
+-	mutex_lock(&isp_lock);
+-	for (i = 0; i < b->peek_n; i++)
+-		seq_printf(s, "0x%05x 0x%08x\n", b->peek_off + 4 * i,
+-			   b->peek_val[i]);
+-	mutex_unlock(&isp_lock);
+-
+-	return 0;
+-}
+-
+-static int isp_live_open(struct inode *inode, struct file *file)
+-{
+-	return single_open(file, isp_live_show, inode->i_private);
+-}
+-
+-static ssize_t isp_live_write(struct file *file, const char __user *ubuf,
+-			      size_t len, loff_t *ppos)
+-{
+-	struct isp_block *b = ((struct seq_file *)file->private_data)->private;
+-	char *buf;
+-	u32 off, val;
+-	unsigned int i;
+-	int ret = len;
+-
+-	buf = memdup_user_nul(ubuf, len);
+-	if (IS_ERR(buf))
+-		return PTR_ERR(buf);
+-
+-	mutex_lock(&isp_lock);
+-	if (!b->base) {
+-		ret = -ENODEV;
+-	} else if (sscanf(buf, "r %x %x", &off, &val) == 2) {
+-		if (off & 3 || !val || val > ISP_PEEK_MAX) {
+-			ret = -EINVAL;
+-		} else {
+-			b->peek_off = off;
+-			b->peek_n = val;
+-			for (i = 0; i < val; i++)
+-				b->peek_val[i] = readl(b->base + off + 4 * i);
+-		}
+-	} else if (sscanf(buf, "%x %x", &off, &val) == 2 && !(off & 3)) {
+-		writel(val, b->base + off);
+-	} else {
+-		ret = -EINVAL;
+-	}
+-	mutex_unlock(&isp_lock);
+-	kfree(buf);
+-
+-	return ret;
+-}
+-
+-static const struct file_operations isp_live_fops = {
+-	.owner = THIS_MODULE,
+-	.open = isp_live_open,
+-	.read = seq_read,
+-	.write = isp_live_write,
+-	.llseek = seq_lseek,
+-	.release = single_release,
+-};
+-
+-void camss_isp_debug_init(void)
+-{
+-	char name[16];
+-	int i;
+-
+-	if (isp_dir)
+-		return;
+-
+-	isp_dir = debugfs_create_dir("camss_isp", NULL);
+-	for (i = 0; i < CAMSS_ISP_BLOCKS; i++) {
+-		snprintf(name, sizeof(name), "%s_script", isp_blocks[i].name);
+-		debugfs_create_file(name, 0600, isp_dir, &isp_blocks[i],
+-				    &isp_script_fops);
+-		snprintf(name, sizeof(name), "%s_live", isp_blocks[i].name);
+-		debugfs_create_file(name, 0600, isp_dir, &isp_blocks[i],
+-				    &isp_live_fops);
+-	}
+-}
+-
+-void camss_isp_debug_exit(void)
+-{
+-	debugfs_remove_recursive(isp_dir);
+-	isp_dir = NULL;
+-}
+diff --git a/drivers/media/platform/qcom/camss/camss-isp-debug.h b/drivers/media/platform/qcom/camss/camss-isp-debug.h
+deleted file mode 100644
+index e104c9ad8..000000000
+--- a/drivers/media/platform/qcom/camss/camss-isp-debug.h
++++ /dev/null
+@@ -1,23 +0,0 @@
+-/* SPDX-License-Identifier: GPL-2.0 */
+-/*
+- * camss-isp-debug.h
+- *
+- * Bring-up aid for the SM8750 TFE pixel path.
+- */
+-#ifndef QC_MSM_CAMSS_ISP_DEBUG_H
+-#define QC_MSM_CAMSS_ISP_DEBUG_H
+-
+-#include <linux/types.h>
+-
+-enum camss_isp_block {
+-	CAMSS_ISP_VFE,
+-	CAMSS_ISP_CSID,
+-	CAMSS_ISP_BLOCKS
+-};
+-
+-void camss_isp_apply_script(enum camss_isp_block which, void __iomem *base);
+-void camss_isp_set_live(enum camss_isp_block which, void __iomem *base);
+-void camss_isp_debug_init(void);
+-void camss_isp_debug_exit(void);
+-
+-#endif /* QC_MSM_CAMSS_ISP_DEBUG_H */
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-gen4.c b/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
+index 38fd570bc..031596ccd 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
+@@ -12,7 +12,6 @@
+ #include <linux/ktime.h>
+ 
+ #include "camss.h"
+-#include "camss-isp-debug.h"
+ #include "camss-trace.h"
+ #include "camss-vfe.h"
+ 
+@@ -508,12 +507,9 @@ static void vfe_pix_start(struct vfe_device *vfe, struct vfe_line *line)
+ 	vfe_isp_update(vfe, line);
+ 	vfe_pix_scaler_config(vfe, line);
+ 	vfe_pix_crc_config(vfe, &line->crop);
+-	camss_isp_apply_script(CAMSS_ISP_VFE, vfe->base);
+ 
+ 	vfe_pix_wm_start(vfe, FD_Y_WM, pix->width, pix->height, stride);
+ 	vfe_pix_wm_start(vfe, FD_C_WM, pix->width, pix->height / 2, stride);
+-
+-	camss_isp_set_live(CAMSS_ISP_VFE, vfe->base);
+ }
+ 
+ /* All BUS helpers below run with output_lock held. The active-line mask is
+@@ -667,7 +663,6 @@ static void vfe_wm_stop(struct vfe_device *vfe, u8 wm)
+ 	enum vfe_line_id id = wm;
+ 
+ 	if (wm == VFE_LINE_PIX && !vfe_is_lite(vfe)) {
+-		camss_isp_set_live(CAMSS_ISP_VFE, NULL);
+ 		writel(0, vfe->base + VFE_BUS_WM_CFG(FD_Y_WM));
+ 		writel(0, vfe->base + VFE_BUS_WM_CFG(FD_C_WM));
+ 		vfe_bus_stop(vfe, id);
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 20879c20c..41bbbc8f9 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -28,7 +28,6 @@
+ #include <media/v4l2-fwnode.h>
+ 
+ #include "camss.h"
+-#include "camss-isp-debug.h"
+ 
+ #define CAMSS_CLOCK_MARGIN_NUMERATOR 105
+ #define CAMSS_CLOCK_MARGIN_DENOMINATOR 100
+@@ -6092,9 +6091,6 @@ static int camss_probe(struct platform_device *pdev)
+ 
+ 	camss->res = of_device_get_match_data(dev);
+ 
+-	if (camss->res->version == CAMSS_8750)
+-		camss_isp_debug_init();
+-
+ 	atomic_set(&camss->ref_count, 0);
+ 	camss->dev = dev;
+ 	platform_set_drvdata(pdev, camss);
+@@ -6236,9 +6232,6 @@ static void camss_remove(struct platform_device *pdev)
+ 		camss_delete(camss);
+ 
+ 	camss_genpd_cleanup(camss);
+-
+-	if (camss->res->version == CAMSS_8750)
+-		camss_isp_debug_exit();
+ }
+ 
+ static const struct camss_resources kaanapali_resources = {
+-- 
+2.56.1

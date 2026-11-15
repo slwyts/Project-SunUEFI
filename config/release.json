@@ -11,7 +11,7 @@
     "stable_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
     "stable_version": "7.3.3",
     "uapi_sha256": "5638464826c36018483e2c06f260c1bc439fc6f66b584f56c1e76ec8846c37e5",
-    "target_tree": "ab4d74a2bae3439b4456bbd3a440a3d90388d713",
+    "target_tree": "22692e070a3825ad985e1c87891a442e408339f0",
     "cpu_model_overlay": "linux/dts/piano-cpu-model.dtso",
     "additional_dtb_overlays": [
       "linux/dts/piano-cma.dtso",
@@ -28,6 +28,7 @@
       "linux/dts/piano-regdma-resource.dtso",
       "linux/dts/piano-audio-dmic-clock.dtso",
       "linux/dts/piano-camera-sensors.dtso",
+      "linux/dts/piano-camera-interconnects.dtso",
       "linux/dts/piano-camera-flash.dtso",
       "linux/dts/piano-camera-privacy-led.dtso",
       "linux/dts/piano-touch-panel.dtso",
@@ -52,7 +53,7 @@
   "debian": {
     "source": "upstream/debian-piano-current",
     "commit": "a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45",
-    "suite": "trixie",
+    "suite": "sid",
     "apt_policy": "mutable-recorded",
     "snapshot": null,
     "archive_signature_verification": "upstream debootstrap keyring and APT defaults; never disabled",
@@ -104,12 +105,6 @@
     ],
     "components": "vendor/firmware"
   },
-  "mesa": {
-    "source": "upstream/piano-mesa-current",
-    "commit": "a89c1e46eef3e161520b084479928aaa5a8e8732",
-    "required": true,
-    "package_version_contains": "+piano"
-  },
   "sensors": {
     "source": "upstream/piano-sensors-current",
     "commit": "65a92202db65ad13493b43fbf15d6abb3b7bcf92",
@@ -118,8 +113,7 @@
     "patches": [
       "patches/piano-sensors/0001-import-vendor-reg-config.patch",
       "patches/piano-sensors/0002-fix-libssc-property-types.patch",
-      "patches/piano-sensors/0003-libssc-raw-vector-reports.patch",
-      "patches/piano-sensors/0004-align-iio-mesa-build-deps.patch"
+      "patches/piano-sensors/0003-libssc-raw-vector-reports.patch"
     ]
   },
   "storage": {

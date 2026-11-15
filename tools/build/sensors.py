@@ -1,56 +1,156 @@
 #!/usr/bin/env python3
-"""Build the fixed Piano sensor package set through the shared package cache."""
-import hashlib
+"""Build the sensor packages against the target Debian sid ABI."""
+import argparse
 import json
-import os
+from pathlib import Path
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PROPERTY_TYPES = 'patches/piano-sensors/0002-fix-libssc-property-types.patch'
+sys.path.insert(0, str(ROOT / 'tools'))
+from build import debian
+from desktop import package_build
+
+RUNTIME = {'fastrpc-support', 'libfastrpc1', 'libssc2', 'libssc-bin',
+           'iio-sensor-proxy', 'piano-sensors'}
+POLICY = ROOT / 'patches/piano-sensors/5/build.json'
+
+
+def source_workspace(output, config):
+    source = ROOT / config['source']
+    head = debian.capture(['git', '-C', source, 'rev-parse', 'HEAD'])
+    dirty = debian.capture(['git', '-C', source, 'status', '--porcelain'])
+    if head != config['commit'] or dirty:
+        raise ValueError('Sensors source HEAD/cleanliness mismatch; run ./build.sh sources')
+    workspace = output / 'upstream'
+    patches = [{'path': name, 'sha256': package_build.sha(ROOT / name)} for name in config['patches']]
+    record = {'source_url': config['source_url'], 'source_commit': head, 'patches': patches}
+    if workspace.exists():
+        if json.loads((workspace / 'SOURCE').read_text()) != record:
+            raise ValueError('Sensors source changed; use a fresh output directory')
+    else:
+        shutil.copytree(source, workspace, ignore=shutil.ignore_patterns('.git'))
+        for patch in patches:
+            debian.run(['patch', '--batch', '--forward', '--fuzz=0', '-p1', '-i', ROOT / patch['path']],
+                       cwd=workspace)
+        (workspace / 'SOURCE').write_text(json.dumps(record, indent=2) + '\n')
+    return workspace, record
+
+
+def build(output, sysroot=None, jobs=None, libssc_only=False, resume=False):
+    output = output.resolve()
+    jobs = package_build.default_jobs() if jobs is None else jobs
+    if jobs < 1:
+        raise ValueError('Use at least one build job')
+    config = json.loads((ROOT / 'config/release.json').read_text())['sensors']
+    policy = json.loads(POLICY.read_text())
+    versions = policy['source_versions']
+    runtime_names = {'libssc2', 'libssc-bin'} if libssc_only else RUNTIME
+    patches = [{'path': name, 'sha256': package_build.sha(ROOT / name)} for name in config['patches']]
+    selected = {'libssc': versions['libssc']}
+    anchors = {'libssc': 'libssc2'}
+    if not libssc_only:
+        selected.update({'iio-sensor-proxy': versions['iio-sensor-proxy'], 'fastrpc': versions['fastrpc']})
+        anchors['iio-sensor-proxy'] = 'iio-sensor-proxy'
+    target = debian.target_identity(sysroot or Path('/'), selected, anchors)
+    cached = debian.reusable(output, policy['native_version'], patches, runtime_names, target)
+    if cached and cached.get('policy_sha256') == package_build.sha(POLICY):
+        return cached
+    if resume:
+        debian.validate_resume(output, target, patches, policy['native_version'])
+    with debian.builder(output, sysroot) as (root, env), (output / 'build.log').open('a') as log:
+        (output / '.incomplete').write_text('Sensors package build has not completed.\n')
+        workspace, provenance = source_workspace(output, config)
+        debian.dependencies(root, log, resume)
+        target['source_checksums'] = debian.source_checksums(root, selected)
+        packages, sources = {}, {}
+        for name in ['libssc'] + ([] if libssc_only else ['iio-sensor-proxy']):
+            work, origin = debian.source(root, output, name, versions[name], log)
+            version = versions[name] + '+' + policy['local_revisions'][name]
+            patches = sorted((workspace / 'patches' / name).glob('*.patch'))
+            debian.add_patches(work, patches, name, version,
+                               'Preserve SSC property types, raw reports and sensor claim ordering.')
+            if name == 'libssc':
+                install = work / 'debian/libssc-bin.install'
+                if 'usr/bin/piano-ssc-vector' not in install.read_text().splitlines():
+                    install.write_text(install.read_text().rstrip() + '\nusr/bin/piano-ssc-vector\n')
+                symbols = work / 'debian/libssc2.symbols'
+                if 'ssc_sensor_decode_vector_report@' not in symbols.read_text():
+                    symbols.write_text(symbols.read_text().rstrip() +
+                                        '\n ssc_sensor_decode_vector_report@LIBSSC_0.4.0 ' + version + '\n')
+            marker = work / 'SOURCE.json'
+            previous = json.loads(marker.read_text())
+            identity = {'target': target, 'package_version': version,
+                        'patches': [{'file': p.name, 'sha256': package_build.sha(p)} for p in patches]}
+            if previous.get('build_identity') not in (None, identity):
+                raise ValueError('Resume requires the same sensor source, patches and target ABI')
+            previous['build_identity'] = identity
+            marker.write_text(json.dumps(previous, indent=2) + '\n')
+            changes = work.parent / f'{name}_{version}_arm64.changes'
+            if not resume or not changes.is_file():
+                debian.build(root, env, work, jobs, log, resume=resume)
+            names = {'libssc2', 'libssc-bin'} if name == 'libssc' else {'iio-sensor-proxy'}
+            packages.update(debian.collect(output, work.parent, names, version))
+            sources[name] = origin
+            if name == 'libssc' and not libssc_only:
+                development = [p for p in work.parent.glob('*.deb')
+                               if p.name.startswith(('libssc-dev_', 'libssc2_', 'gir1.2-ssc-2_'))]
+                debian.guest(root, ['apt-get', 'install', '-y', '--no-remove', '--no-install-recommends',
+                                   *[debian.inside(root, p) for p in development]],
+                             stdout=log, stderr=subprocess.STDOUT)
+        if not libssc_only:
+            native = output / 'sources/piano-sensors'
+            if not native.exists():
+                shutil.copytree(workspace / 'piano-sensors', native)
+            version = policy['native_version']
+            debian.add_patches(native, [], 'piano-sensors', version,
+                               'Build the sensor integration for Debian sid.')
+            if not resume or not (native.parent / f'piano-sensors_{version}_arm64.changes').is_file():
+                debian.build(root, env, native, jobs, log, resume=resume)
+            packages.update(debian.collect(output, native.parent, {'piano-sensors'}, version))
+            cache = output / 'fastrpc'
+            provenance['fastrpc'] = debian.binaries(
+                root, cache, ['fastrpc-support', 'libfastrpc1'], versions['fastrpc'], log)
+            packages.update(debian.collect(output, cache, {'fastrpc-support', 'libfastrpc1'},
+                                           versions['fastrpc'], built=False))
+        if packages.keys() != runtime_names:
+            raise ValueError('Incomplete sensors runtime package set')
+        provenance.update(suite='sid', target=target, sources=sources, packages=packages, packages_built=True,
+                          package_version=policy['native_version'],
+                          recipe='original Debian debian/rules and control',
+                          producer=str(Path(__file__).relative_to(ROOT)),
+                          producer_sha256=package_build.sha(__file__),
+                          builder_sha256=package_build.sha(debian.__file__),
+                          build_packages=debian.build_packages(root),
+                          runtime_dependencies=debian.runtime_dependencies(output, packages),
+                          compiler_environment_sha256=package_build.sha(package_build.__file__),
+                          verifier_sha256=debian.verifier_sha(),
+                          policy_sha256=package_build.sha(POLICY))
+        debian.write_manifest(output, provenance)
+        (output / 'SOURCE').write_text(json.dumps(provenance, indent=2) + '\n')
+        (output / '.incomplete').unlink()
+        return provenance
 
 
 def main(argv):
-    output = Path(argv[0]).resolve() if argv else ROOT / 'build/sensors'
-    selection = argv[1:]
-    if selection not in ([], ['--libssc-only']):
-        raise SystemExit('Usage: ./build.sh sensors [OUTPUT_DIR] [--libssc-only]')
-    config = json.loads((ROOT / 'config/release.json').read_text())['sensors']
-    if selection and PROPERTY_TYPES not in config['patches']:
-        raise SystemExit('Select the libssc property-type patch in sensors.patches '
-                         'before building libssc-only.')
-    source = ROOT / config['source']
-    head = subprocess.check_output(['git', '-C', source, 'rev-parse', 'HEAD'], text=True).strip()
-    dirty = subprocess.check_output(['git', '-C', source, 'status', '--porcelain'], text=True)
-    if head != config['commit'] or dirty:
-        raise SystemExit('Sensors source HEAD/cleanliness mismatch; run ./build.sh sources.')
-    workspace = ROOT / 'build/sensors-workspace'
-    shutil.rmtree(workspace, ignore_errors=True)
-    shutil.copytree(source, workspace, ignore=shutil.ignore_patterns('.git'))
-    patches = []
-    for name in config['patches']:
-        patch = ROOT / name
-        patches.append({'path': name, 'sha256': hashlib.sha256(patch.read_bytes()).hexdigest()})
-        subprocess.run(['patch', '--batch', '--forward', '-p1', '-i', patch], cwd=workspace, check=True)
-    (workspace / 'SOURCE').write_text(
-        json.dumps({'source_url': config['source_url'], 'source_commit': head,
-                    'patches': patches}, indent=2) + '\n')
-    env = os.environ.copy()
-    for name in ('VIRTUAL_ENV', 'PYTHONHOME', 'PYTHONPATH'):
-        env.pop(name, None)
-    env['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
-    sys.path.insert(0, str(ROOT / 'tools'))
-    from desktop.package_build import run_cached
-    script = workspace / 'scripts/build-sensors-debs.sh'
-    if selection:
-        subprocess.run(['bash', script, output, *selection], env=env, check=True)
-    else:
-        run_cached(output, [ROOT / 'build.sh', ROOT / 'config/build-container.json', script,
-                            *[ROOT / name for name in config['patches']]],
-                   ['bash', script, output], env, selection=config)
-    shutil.copy2(workspace / 'SOURCE', output / 'SOURCE')
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('output', type=Path, nargs='?', default=ROOT / 'build/sensors')
+    parser.add_argument('--sysroot', type=Path, help='Clone a signed sid ARM64 sysroot below build/')
+    parser.add_argument('--libssc-only', action='store_true')
+    parser.add_argument('--jobs', type=int, default=package_build.default_jobs())
+    parser.add_argument('--resume', action='store_true', help='Reuse completed source builds and existing objects')
+    parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    if args.jobs < 1:
+        parser.error('--jobs must be positive')
+    if args.sysroot and not args.worker:
+        return subprocess.run(['unshare', '--mount', '--propagation', 'private', sys.executable,
+                               __file__, *argv, '--worker']).returncode
+    try:
+        print(json.dumps(build(args.output, args.sysroot, args.jobs, args.libssc_only, args.resume), indent=2))
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        parser.exit(2, str(error) + '\n')
     return 0
 
 

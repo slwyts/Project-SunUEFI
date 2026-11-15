@@ -1,6 +1,9 @@
 {
   "schema_version": 1,
   "version": "1.6.8",
+  "targets": [
+    "steamos"
+  ],
   "source": {
     "url": "https://codeload.github.com/PipeWire/pipewire/tar.gz/refs/tags/1.6.8",
     "sha256": "8181172a1d95131f6af8bbc0b98f90b2a33349b042b84c3ce57dd5d11348cc58"
@@ -29,6 +32,10 @@
     {
       "file": "../1.6.9/0006-gst-copy-memptr.patch",
       "sha256": "0c3bd1d6cbf929c036e6829598219c843756dd58b13721a91aca0ce6e533c897"
+    },
+    {
+      "file": "../1.6.9/0007-v4l2-copy-buffer-pool.patch",
+      "sha256": "6824b2f7d5236a6ac6e5ad2bb369a3bf4fe2a70cd1bf9de6449df88af92895d1"
     }
   ]
 }

@@ -1,0 +1,17 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+# Kernel input owns pen samples; BlueZ owns the vendor GATT initialization.
+set -eu
+expected_kernel='@KERNEL_RELEASE@'
+running_kernel=$(uname -r)
+if [ "$running_kernel" != "$expected_kernel" ]; then
+  printf 'piano-touch: kernel pen input requires %s; running %s; userspace pen input is disabled\n' \
+    "$expected_kernel" "$running_kernel" >&2
+fi
+for panel in boe csot; do
+  if [ ! -r "/usr/lib/firmware/novatek/piano-$panel-pen.ini" ]; then
+    printf 'piano-touch: missing %s pen calibration; kernel pen input is unavailable\n' "$panel" >&2
+  fi
+done
+exec /usr/lib/piano/pen-bluetooth \
+  --profile /usr/share/piano/pen/p81c-radio.json --follow

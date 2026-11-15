@@ -1,6 +1,10 @@
 {
   "schema_version": 1,
   "version": "1.6.9",
+  "targets": [
+    "debian-gnome",
+    "debian-kde"
+  ],
   "source": {
     "url": "https://deb.debian.org/debian/pool/main/p/pipewire/pipewire_1.6.9.orig.tar.gz",
     "sha256": "a0012db8aaca4448fd205035e07d264235e4a4fe50713085fc4a6899e738a298"
@@ -8,27 +12,71 @@
   "patches": [
     {
       "file": "0001-gst-fraction-range.patch",
-      "sha256": "2565f4a347ec5773f5c649f4faacd5f322999aa26831a1c6379a728671a2407e"
+      "sha256": "2565f4a347ec5773f5c649f4faacd5f322999aa26831a1c6379a728671a2407e",
+      "upstream": {
+        "status": "merged",
+        "url": "https://github.com/PipeWire/pipewire/commit/c4309f0eb5667f15c6c98a3ab19ea2c6f45afa3e",
+        "commit": "c4309f0eb5667f15c6c98a3ab19ea2c6f45afa3e",
+        "drop_when": "The selected PipeWire release contains c4309f0eb5667f15c6c98a3ab19ea2c6f45afa3e or an equivalent fraction conversion; verify the GStreamer format tests before removing this backport."
+      }
     },
     {
       "file": "0002-gst-preferred-caps.patch",
-      "sha256": "4068ee6a6ac304b8d9e34e04e8a866344ceca247b7c7236583bfb8f85abba14b"
+      "sha256": "4068ee6a6ac304b8d9e34e04e8a866344ceca247b7c7236583bfb8f85abba14b",
+      "upstream": {
+        "status": "merged",
+        "url": "https://github.com/PipeWire/pipewire/commit/acea30afaaa0022f9ea134ce876cea12b1b1bcf0",
+        "commit": "acea30afaaa0022f9ea134ce876cea12b1b1bcf0",
+        "drop_when": "The selected PipeWire release preserves preferred SPA choice values in GStreamer caps and passes the format tests without this backport."
+      }
     },
     {
       "file": "0003-gst-format-tests.patch",
-      "sha256": "fdf7153630a12a4fb95c53231b2bbd21000e4e0d2fa19947ac000dac7a1db71d"
+      "sha256": "fdf7153630a12a4fb95c53231b2bbd21000e4e0d2fa19947ac000dac7a1db71d",
+      "upstream": {
+        "status": "merged",
+        "url": "https://github.com/PipeWire/pipewire/commit/18244c9741dda4d5c48df29d15834f25ef97da2b",
+        "commit": "18244c9741dda4d5c48df29d15834f25ef97da2b",
+        "drop_when": "The selected PipeWire release includes format conversion and enumeration tests from 18244c9741dda4d5c48df29d15834f25ef97da2b or their replacement, and those tests pass unpatched."
+      }
     },
     {
       "file": "0004-gst-retain-running-caps.patch",
-      "sha256": "964df3e181bbbc428a0462f643874a3c89127a28aa2a297165516b9c44c2038b"
+      "sha256": "964df3e181bbbc428a0462f643874a3c89127a28aa2a297165516b9c44c2038b",
+      "upstream": {
+        "status": "merged",
+        "url": "https://github.com/PipeWire/pipewire/commit/97699d707df374773fe5d6e32ea7362ef8dcf51b",
+        "commit": "97699d707df374773fe5d6e32ea7362ef8dcf51b",
+        "drop_when": "The selected PipeWire release retains running caps accepted by downstream, while genuine camera format changes still renegotiate."
+      }
     },
     {
       "file": "0005-gst-pool-lock-order.patch",
-      "sha256": "c0a2b116ace35879143e8e505ea63059709fad689ed11caa303349e083cddefa"
+      "sha256": "c0a2b116ace35879143e8e505ea63059709fad689ed11caa303349e083cddefa",
+      "upstream": {
+        "status": "merged",
+        "url": "https://github.com/PipeWire/pipewire/commit/765e628cb2ad2153cf6adc581262da7abd0d9213",
+        "commit": "765e628cb2ad2153cf6adc581262da7abd0d9213",
+        "drop_when": "The selected PipeWire release takes the stream thread lock before the pool object lock when recycling buffers, including teardown."
+      }
     },
     {
       "file": "0006-gst-copy-memptr.patch",
-      "sha256": "0c3bd1d6cbf929c036e6829598219c843756dd58b13721a91aca0ce6e533c897"
+      "sha256": "0c3bd1d6cbf929c036e6829598219c843756dd58b13721a91aca0ce6e533c897",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Cryolitia/xiaomi-piano-nixos/blob/ae30633478d363917171fcbb1b9b5134967634d1/packages/pipewire/patches/copy-memptr-buffers.patch",
+        "drop_when": "The selected PipeWire release keeps MemPtr contents valid for downstream buffers after stream buffer removal; verify retained frames across camera renegotiation."
+      }
+    },
+    {
+      "file": "0007-v4l2-copy-buffer-pool.patch",
+      "sha256": "6824b2f7d5236a6ac6e5ad2bb369a3bf4fe2a70cd1bf9de6449df88af92895d1",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/PipeWire/pipewire/tree/master/spa/plugins/v4l2",
+        "drop_when": "The selected V4L2 source keeps copied SPA buffers separate from capture indices, honors queued/outstanding and busy buffers, immediately returns copied kernel frames, and advances its driver clock during backpressure. Verify Snapshot audio/video start-stop, retained frames, no duplicate PTS, and ordinary V4L2 cameras before removing this fix."
+      }
     }
   ]
 }

@@ -19,4 +19,15 @@
 			link-frequencies = /bits/ 64 <857600000>;
 		};
 	};
+
+	fragment@2 {
+		target-path = "/soc/clock-controller-ml@1760000";
+		__overlay__ {
+			/* MCLK outputs require Titan top as well as MMCX=6 and MX=8.
+			 * The clock provider holds these domains while prepared.
+			 */
+			power-domains = <&rpmhpd_ml 6>, <&rpmhpd_ml 8>,
+					<&camcc_ml 0>;
+		};
+	};
 };

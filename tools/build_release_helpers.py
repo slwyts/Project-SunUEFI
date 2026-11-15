@@ -25,8 +25,21 @@ def inputs_current(output):
     if not path.is_file():
         return False
     record = json.loads(path.read_text())
+    pen = record.get('pen_core', {})
+    pen_source = ROOT / 'linux/userspace/pen'
+    pen_paths = [Path(runtime.__file__),
+                 *[pen_source / name for name in runtime.PEN_SOURCE_FILES],
+                 pen_source / 'piano-pen-bluetooth.py', pen_source / 'piano-pen-canvas.py',
+                 ROOT / 'linux/bsp/common/usr/share/piano/pen/p81c-radio.json']
+    if pen.get('input', {}).get('mode') == 'kernel':
+        pen_paths += [pen_source / 'piano-pen-control',
+                      *[ROOT / name for name in runtime.PEN_CALIBRATION_PATHS.values()]]
+    else:
+        pen_paths.append(pen_source / 'piano-touch-input')
     return (
         record.get('producer', {}).get('sha256') == runtime.sha(Path(__file__))
+        and all(pen.get('inputs', {}).get(str(path)) == runtime.sha(path)
+                for path in pen_paths)
         and record.get('module_toolchain_inputs') == {
             str(path.relative_to(ROOT)): runtime.sha(path)
             for path in (Path(prepare_kernel_llvm.__file__), prepare_kernel_llvm.POLICY)
@@ -58,7 +71,8 @@ def run(args, cwd=None):
     subprocess.run([str(x) for x in args], cwd=cwd, check=True)
 
 
-def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
+def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop,
+          firmware_root=None):
     record = json.loads((kernel / 'manifest.json').read_text())
     release, commit = record['kernel_release'], record['source_commit']
     identity = runtime.kernel_identity(kernel_build, source, commit, release)
@@ -94,7 +108,9 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop):
     emulator = None if native else shutil.which('qemu-aarch64-static') or shutil.which('qemu-aarch64')
     if not native and not emulator:
         raise ValueError('AArch64 helper checks need qemu-aarch64 on this host')
-    pen_files, pen_record = runtime.build_pen_core(output, flags, sysroot, emulator=emulator)
+    pen_files, pen_record = runtime.build_pen_core(
+        output, flags, sysroot, emulator=emulator, kernel=identity,
+        firmware_root=firmware_root)
     files.update(pen_files)
     camera_files, camera_record = runtime.build_camera(
         output, flags, pen_record['cxx_command'], uapi, sysroot, emulator=emulator)
@@ -188,12 +204,15 @@ def main():
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--cc', default='clang' if platform.machine() in ('aarch64', 'arm64') else 'aarch64-linux-gnu-gcc')
     parser.add_argument('--sysroot', type=Path)
+    parser.add_argument('--firmware-root', type=Path,
+                        help='Target root containing pen firmware calibration; defaults to --sysroot')
     parser.add_argument('--macros', type=Path, default=ROOT / 'upstream/audioreach-topology')
     parser.add_argument('--v4l2-source', type=Path, default=ROOT / 'upstream/v4l2loopback')
     args = parser.parse_args()
     result = build(args.kernel.resolve(), args.source.resolve(), args.kernel_build.resolve(),
                    args.output.resolve(), args.cc, args.sysroot.resolve() if args.sysroot else None,
-                   args.macros.resolve(), args.v4l2_source.resolve())
+                   args.macros.resolve(), args.v4l2_source.resolve(),
+                   firmware_root=args.firmware_root.resolve() if args.firmware_root else None)
     print(json.dumps({'status': result['status'], 'kernel_release': result['kernel']['release']}))
 
 

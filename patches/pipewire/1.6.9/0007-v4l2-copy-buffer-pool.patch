@@ -1,0 +1,234 @@
+From: Project SunUEFI <sunuefi@users.noreply.github.com>
+Subject: [PATCH] spa: v4l2: keep copied capture frames independent of device indices
+
+MMAP-only producers can reuse capture indices while an asynchronous client
+is still holding a frame. Keep a separate free copied-buffer pool, honor
+SPA busy metadata, and requeue kernel buffers immediately after copying.
+Advance the driver clock even when every copied frame is retained.
+
+diff --git a/spa/plugins/v4l2/v4l2-source.c b/spa/plugins/v4l2/v4l2-source.c
+--- a/spa/plugins/v4l2/v4l2-source.c
++++ b/spa/plugins/v4l2/v4l2-source.c
+@@ -52,6 +52,7 @@
+ #define BUFFER_FLAG_OUTSTANDING	(1<<0)
+ #define BUFFER_FLAG_ALLOCATED	(1<<1)
+ #define BUFFER_FLAG_MAPPED	(1<<2)
++#define BUFFER_FLAG_QUEUED	(1<<3)
+ 
+ struct buffer {
+ 	uint32_t id;
+@@ -59,6 +60,7 @@
+ 	struct spa_list link;
+ 	struct spa_buffer *outbuf;
+ 	struct spa_meta_header *h;
++	struct spa_meta_busy *busy;
+ 	struct spa_meta_videotransform *vt;
+ 	struct v4l2_buffer v4l2_buffer;
+ 	void *ptr;
+@@ -78,6 +80,7 @@
+ 	struct impl *impl;
+ 
+ 	bool alloc_buffers;
++	bool copy_buffers;
+ 	bool probed_expbuf;
+ 	bool have_expbuf;
+ 	bool first_buffer;
+@@ -625,6 +628,12 @@
+ 				SPA_TYPE_OBJECT_ParamMeta, id,
+ 				SPA_PARAM_META_type, SPA_POD_Id(SPA_META_VideoTransform),
+ 				SPA_PARAM_META_size, SPA_POD_Int(sizeof(struct spa_meta_videotransform)));
++			break;
++		case 2:
++			param = spa_pod_builder_add_object(&b.b,
++				SPA_TYPE_OBJECT_ParamMeta, id,
++				SPA_PARAM_META_type, SPA_POD_Id(SPA_META_Busy),
++				SPA_PARAM_META_size, SPA_POD_Int(sizeof(struct spa_meta_busy)));
+ 			break;
+ 		default:
+ 			return 0;
+@@ -960,6 +969,7 @@
+ 
+ 	b = spa_list_first(&port->queue, struct buffer, link);
+ 	spa_list_remove(&b->link);
++	SPA_FLAG_CLEAR(b->flags, BUFFER_FLAG_QUEUED);
+ 	SPA_FLAG_SET(b->flags, BUFFER_FLAG_OUTSTANDING);
+ 
+ 	spa_log_trace(this->log, "%p: dequeue buffer %d", this, b->id);
+diff --git a/spa/plugins/v4l2/v4l2-utils.c b/spa/plugins/v4l2/v4l2-utils.c
+--- a/spa/plugins/v4l2/v4l2-utils.c
++++ b/spa/plugins/v4l2/v4l2-utils.c
+@@ -115,6 +115,8 @@
+ 
+ 	SPA_FLAG_CLEAR(b->flags, BUFFER_FLAG_OUTSTANDING);
+ 	spa_log_trace(this->log, "v4l2 %p: recycle buffer %d", this, buffer_id);
++	if (port->copy_buffers)
++		return 0;
+ 
+ 	if (xioctl(dev->fd, VIDIOC_QBUF, &b->v4l2_buffer) < 0) {
+ 		err = errno;
+@@ -1678,6 +1680,7 @@
+ 	struct buffer *b;
+ 	struct spa_data *d;
+ 	int64_t pts;
++	uint32_t i;
+ 
+ 	spa_zero(buf);
+ 	buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+@@ -1696,6 +1699,9 @@
+ 			spa_log_warn(this->log, "v4l2 %p: error qbuf: %m", this);
+ 		return 0;
+ 	}
++
++	if (buf.index >= port->n_buffers)
++		return -EIO;
+ 
+ 	pts = SPA_TIMEVAL_TO_NSEC(&buf.timestamp);
+ 
+@@ -1728,7 +1734,24 @@
+ 		this->clock->next_nsec += (uint64_t) (target * SPA_NSEC_PER_SEC * corr);
+ 	}
+ 
+-	b = &port->buffers[buf.index];
++	/* Keep advancing the camera clock even while downstream holds every
++	 * copied frame, so graph processing can return those buffers.
++	 */
++	if (port->copy_buffers) {
++		for (i = 0; i < port->n_buffers; i++)
++			if (!(port->buffers[i].flags & (BUFFER_FLAG_QUEUED | BUFFER_FLAG_OUTSTANDING)) &&
++			    (!port->buffers[i].busy || SPA_ATOMIC_LOAD(port->buffers[i].busy->count) == 0))
++				break;
++		if (i == port->n_buffers) {
++			if (xioctl(dev->fd, VIDIOC_QBUF, &buf) < 0)
++				return -errno;
++			return 0;
++		}
++		b = &port->buffers[i];
++	} else {
++		b = &port->buffers[buf.index];
++	}
++
+ 	if (b->h) {
+ 		b->h->flags = 0;
+ 		if (buf.flags & V4L2_BUF_FLAG_ERROR)
+@@ -1750,10 +1773,14 @@
+ 	if (buf.flags & V4L2_BUF_FLAG_ERROR)
+ 		d[0].chunk->flags |= SPA_CHUNK_FLAG_CORRUPTED;
+ 
+-	if (b->mmap_ptr && b->ptr)
+-		memcpy(b->ptr, b->mmap_ptr, d[0].chunk->size);
++	if (port->copy_buffers) {
++		memcpy(b->ptr, port->buffers[buf.index].mmap_ptr, d[0].chunk->size);
++		if (xioctl(dev->fd, VIDIOC_QBUF, &buf) < 0)
++			return -errno;
++	}
+ 
+ 	spa_list_append(&port->queue, &b->link);
++	SPA_FLAG_SET(b->flags, BUFFER_FLAG_QUEUED);
+ 	return 0;
+ }
+ 
+@@ -1777,19 +1804,27 @@
+ 		spa_log_warn(this->log, "v4l2 %p: spurious wakeup %d", this, source->rmask);
+ 		return;
+ 	}
++	io = port->io;
++	if (io && io->status != SPA_STATUS_HAVE_DATA && io->buffer_id < port->n_buffers) {
++		spa_v4l2_buffer_recycle(this, io->buffer_id);
++		io->buffer_id = SPA_ID_INVALID;
++	}
+ 
+ 	if ((res = mmap_read(this)) < 0) {
+ 		spa_log_warn(this->log, "v4l2 %p: mmap read error:%s", this, spa_strerror(res));
+ 		return;
+ 	}
+ 
+-	if (spa_list_is_empty(&port->queue))
++	if (spa_list_is_empty(&port->queue)) {
++		spa_node_call_ready(&this->callbacks, SPA_STATUS_HAVE_DATA);
+ 		return;
++	}
+ 
+ 	io = port->io;
+ 	if (io == NULL) {
+ 		b = spa_list_first(&port->queue, struct buffer, link);
+ 		spa_list_remove(&b->link);
++		SPA_FLAG_CLEAR(b->flags, BUFFER_FLAG_QUEUED);
+ 		SPA_FLAG_SET(b->flags, BUFFER_FLAG_OUTSTANDING);
+ 		spa_v4l2_buffer_recycle(this, b->id);
+ 	}
+@@ -1799,6 +1834,7 @@
+ 
+ 		b = spa_list_first(&port->queue, struct buffer, link);
+ 		spa_list_remove(&b->link);
++		SPA_FLAG_CLEAR(b->flags, BUFFER_FLAG_QUEUED);
+ 		SPA_FLAG_SET(b->flags, BUFFER_FLAG_OUTSTANDING);
+ 
+ 		io->buffer_id = b->id;
+@@ -1815,6 +1851,8 @@
+ 	struct v4l2_requestbuffers reqbuf;
+ 	unsigned int i;
+ 	struct spa_data *d;
++
++	port->copy_buffers = false;
+ 
+ 	if (n_buffers > 0) {
+ 		d = buffers[0]->datas;
+@@ -1861,14 +1899,16 @@
+ 		return -ENOMEM;
+ 	}
+ 
+-	for (i = 0; i < reqbuf.count; i++) {
++	for (i = 0; i < n_buffers; i++) {
+ 		struct buffer *b;
+ 
+ 		b = &port->buffers[i];
+ 		b->id = i;
+ 		b->outbuf = buffers[i];
+ 		b->flags = BUFFER_FLAG_OUTSTANDING;
++		b->ptr = b->mmap_ptr = NULL;
+ 		b->h = spa_buffer_find_meta_data(buffers[i], SPA_META_Header, sizeof(*b->h));
++		b->busy = spa_buffer_find_meta_data(buffers[i], SPA_META_Busy, sizeof(*b->busy));
+ 		b->vt = spa_buffer_find_meta_data(buffers[i], SPA_META_VideoTransform, sizeof(*b->vt));
+ 
+ 		spa_log_debug(this->log, "%s: import buffer %p", this->props.device, buffers[i]);
+@@ -1932,9 +1972,12 @@
+ 			return -EIO;
+ 		}
+ 
+-		spa_v4l2_buffer_recycle(this, i);
+-	}
+-	port->n_buffers = reqbuf.count;
++		SPA_FLAG_CLEAR(b->flags, BUFFER_FLAG_OUTSTANDING);
++		if (xioctl(dev->fd, VIDIOC_QBUF, &b->v4l2_buffer) < 0)
++			return -errno;
++	}
++	port->copy_buffers = port->memtype == V4L2_MEMORY_MMAP;
++	port->n_buffers = n_buffers;
+ 
+ 	return 0;
+ }
+@@ -1949,6 +1992,8 @@
+ 	unsigned int i;
+ 	bool use_expbuf = false;
+ 
++	port->copy_buffers = false;
++
+ 	port->memtype = V4L2_MEMORY_MMAP;
+ 
+ 	spa_zero(reqbuf);
+@@ -1984,6 +2029,7 @@
+ 		b->outbuf = buffers[i];
+ 		b->flags = BUFFER_FLAG_OUTSTANDING;
+ 		b->h = spa_buffer_find_meta_data(buffers[i], SPA_META_Header, sizeof(*b->h));
++		b->busy = spa_buffer_find_meta_data(buffers[i], SPA_META_Busy, sizeof(*b->busy));
+ 		b->vt = spa_buffer_find_meta_data(buffers[i], SPA_META_VideoTransform, sizeof(*b->vt));
+ 
+ 		spa_zero(b->v4l2_buffer);
+@@ -2198,6 +2244,7 @@
+ 		struct buffer *b;
+ 
+ 		b = &port->buffers[i];
++		SPA_FLAG_CLEAR(b->flags, BUFFER_FLAG_QUEUED);
+ 		if (!SPA_FLAG_IS_SET(b->flags, BUFFER_FLAG_OUTSTANDING)) {
+ 			if (xioctl(dev->fd, VIDIOC_QBUF, &b->v4l2_buffer) < 0)
+ 				spa_log_warn(this->log, "VIDIOC_QBUF: %s", strerror(errno));

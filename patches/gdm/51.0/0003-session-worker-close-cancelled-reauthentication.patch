@@ -1,0 +1,33 @@
+From: slwyts <slwyts@foxmail.com>
+Subject: [PATCH] session-worker: close cancelled reauthentication requests
+
+A reauthentication client cancels its old verifier before opening another
+channel. Sending Reset back in response makes GNOME Shell 51 restart that
+sequence, repeatedly cancelling and reopening authentication before the
+password prompt can be used. Stop its conversations without sending a
+reset notification; the client is already cancelling or restarting them.
+
+Close the session before dropping a replaced or disconnected request.
+Conversations retain their session, so unref alone leaves a pending PAM
+worker and its D-Bus connections alive until it exits. Repeated requests
+can exhaust the login worker's file descriptors and prevent unlocking.
+---
+--- a/daemon/gdm-session-worker.c
++++ b/daemon/gdm-session-worker.c
+@@ -3098,7 +3098,7 @@ on_reauthentication_cancelled (GdmSession              *session,
+                                ReauthenticationRequest *request)
+ {
+         g_debug ("GdmSessionWorker: client cancelled reauthentication request");
+-        gdm_session_reset (session);
++        gdm_session_close (session);
+ }
+ 
+ static void
+@@ -3354,6 +3354,7 @@ reauthentication_request_free (ReauthenticationRequest *request)
+         g_signal_handlers_disconnect_by_func (request->session,
+                                               G_CALLBACK (on_reauthentication_verification_complete),
+                                               request);
++        gdm_session_close (request->session);
+         g_clear_object (&request->session);
+         g_slice_free (ReauthenticationRequest, request);
+ }

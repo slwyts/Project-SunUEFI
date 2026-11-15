@@ -54,6 +54,17 @@ def normalize_mainline_bindings(board):
         if props.get('iommus') == b'':
             del props['iommus']
             changes.append(path + ':iommus')
+        if props.get('bias-disable') == bytes(4):
+            # The standard property is a flag. Its default pinconf argument
+            # is zero, so removing the old zero cell preserves its meaning.
+            props['bias-disable'] = b''
+            changes.append(path + ':bias-disable')
+        if (path == '/soc/pcie@1c00000/pcie0_rp/cnss_pci0' and
+                props.get('reg') == b'' and 'compatible' not in props):
+            # This downstream placeholder has no PCI address. Keep its
+            # resources without presenting an empty address to DT decoders.
+            del props['reg']
+            changes.append(path + ':reg')
         if path == '/soc/remoteproc-adsp@03000000' and 'qcom,no-auto-boot' in props:
             del props['qcom,no-auto-boot']
             changes.append(path + ':qcom,no-auto-boot')

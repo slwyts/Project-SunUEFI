@@ -3,7 +3,7 @@
  * Copyright (c) 2026 slwyts <slwyts@foxmail.com>
  *
  * Native Piano Goodix control client. The application interface follows the
- * factory libgf_ca/QSEECom calls; transport is Qualcomm's public MinkIPC API.
+ * factory libgf_ca/QSEECom calls; transport is the Linux TEE object uAPI.
  * Linux profiles have their own Gatekeeper credential and template storage;
  * factory Android credentials and fingerprint files are never opened.
  */
@@ -14,6 +14,7 @@
 #include <endian.h>
 #include <fcntl.h>
 #include <glob.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
@@ -23,10 +24,11 @@
 #include <sys/stat.h>
 #include <sys/file.h>
 #include <sys/random.h>
+#include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
 
-#include "MinkCom.h"
+#include "piano-goodix-tee.h"
 #include <qcbor/qcbor_decode.h>
 #include <qcbor/qcbor_encode.h>
 #include <qcbor/qcbor_spiffy_decode.h>
@@ -36,7 +38,7 @@
 #include "piano-goodix-storage.h"
 #include "piano-goodix.h"
 
-#define FIRMWARE "/usr/lib/firmware/gfpia.elf"
+#define FIRMWARE "gfpia.elf"
 #define FIRMWARE_LIMIT (32U * 1024U * 1024U)
 #define LOADER_UID 122
 #define PAYLOAD_SIZE 640
@@ -165,6 +167,79 @@ static int open_controller(void)
 	return fd;
 }
 
+static int open_firmware_at(const char *directory, const char *name)
+{
+	char path[PATH_MAX];
+	int bytes = snprintf(path, sizeof(path), "%s/%s", directory, name);
+
+	if (bytes < 0 || (size_t)bytes >= sizeof(path))
+		return -ENAMETOOLONG;
+	int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+
+	return fd < 0 ? -errno : fd;
+}
+
+static int firmware_path_parameter(char directory[257])
+{
+	const char *parameter = "/sys/module/firmware_class/parameters/path";
+	int fd = open(parameter, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+
+	if (fd < 0)
+		return errno == ENOENT ? 0 : -errno;
+	ssize_t bytes;
+	do {
+		bytes = read(fd, directory, 256);
+	} while (bytes < 0 && errno == EINTR);
+	int result = bytes < 0 ? -errno : 0;
+	close(fd);
+	if (result)
+		return result;
+	directory[bytes] = 0;
+	/* Match firmware_loader's first-newline boundary, including the newline
+	 * appended by sysfs when it displays the module parameter.
+	 */
+	directory[strcspn(directory, "\n")] = 0;
+	if (strlen(directory) >= 256)
+		return -ENAMETOOLONG;
+	if (!directory[0])
+		return 0;
+	return directory[0] == '/' ? 1 : -EINVAL;
+}
+
+static int open_firmware(const char *name)
+{
+	struct utsname system;
+	char directory[PATH_MAX], custom[257];
+	int result;
+
+	/* All callers use fixed, flat firmware names, not paths from a TA. */
+	if (!name || !*name || strchr(name, '/') || !strcmp(name, ".") || !strcmp(name, ".."))
+		return -EINVAL;
+	result = firmware_path_parameter(custom);
+	if (result < 0)
+		return result;
+	if (result) {
+		result = open_firmware_at(custom, name);
+		if (result != -ENOENT)
+			return result;
+	}
+	if (uname(&system))
+		return -errno;
+	const char *subdirectories[] = { "updates/", "updates", "", "" };
+	const char *versions[] = { system.release, "", system.release, "" };
+	for (size_t i = 0; i < sizeof(subdirectories) / sizeof(*subdirectories); ++i) {
+		int bytes = snprintf(directory, sizeof(directory), "/lib/firmware/%s%s",
+				     subdirectories[i], versions[i]);
+
+		if (bytes < 0 || (size_t)bytes >= sizeof(directory))
+			return -ENAMETOOLONG;
+		result = open_firmware_at(directory, name);
+		if (result != -ENOENT)
+			return result;
+	}
+	return -ENOENT;
+}
+
 static int load_application(struct client *client)
 {
 	struct stat st;
@@ -172,16 +247,16 @@ static int load_application(struct client *client)
 	void *address = NULL;
 	size_t capacity = 0;
 	const char name[] = "gfpia";
-	int fd = open(FIRMWARE, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	int fd = open_firmware(FIRMWARE);
 	int result = -EINVAL;
 
 	if (fd < 0)
-		return -errno;
+		return fd;
 	if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 64 ||
 	    st.st_size > FIRMWARE_LIMIT)
 		goto done;
-	if (MinkCom_getMemoryObject(client->root, st.st_size, &image) ||
-	    MinkCom_getMemoryObjectInfo(image, &address, &capacity) ||
+	if (goodix_tee_memory(client->root, st.st_size, &image) ||
+	    goodix_tee_memory_info(image, &address, &capacity) ||
 	    capacity < (size_t)st.st_size) {
 		result = -ENOMEM;
 		goto done;
@@ -233,8 +308,8 @@ static int open_client(struct client *client)
 
 	memset(client, 0, sizeof(*client));
 	client->controller = -1;
-	if (MinkCom_getRootEnvObject(&client->root) ||
-	    MinkCom_getClientEnvObject(client->root, &client->env))
+	if (goodix_tee_open(&client->root) ||
+	    goodix_tee_client(client->root, &client->env))
 		return -EIO;
 	ObjectArg args[] = {
 		{ .bi = {&uid, sizeof(uid)} },
@@ -251,8 +326,8 @@ static int open_client(struct client *client)
 	client->controller = open_controller();
 	if (client->controller < 0)
 		return client->controller;
-	if (MinkCom_getMemoryObject(client->root, SHARED_SIZE, &client->memory) ||
-	    MinkCom_getMemoryObjectInfo(client->memory, &client->shared,
+	if (goodix_tee_memory(client->root, SHARED_SIZE, &client->memory) ||
+	    goodix_tee_memory_info(client->memory, &client->shared,
 				       &client->shared_size))
 		return -ENOMEM;
 	return client->shared_size >= SHARED_SIZE ? 0 : -EMSGSIZE;
@@ -618,15 +693,13 @@ static int device_info(struct client *client, uint32_t *sensor_type)
 
 static int read_model(const char *name, uint8_t *destination, size_t size)
 {
-	char path[256];
 	struct stat st;
 	size_t offset = 0;
 	int result = 0;
 
-	snprintf(path, sizeof(path), "/usr/lib/firmware/%s", name);
-	int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	int fd = open_firmware(name);
 	if (fd < 0)
-		return -errno;
+		return fd;
 	if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size != (off_t)size) {
 		result = -EMSGSIZE;
 		goto done;
@@ -658,8 +731,8 @@ static int send_model(struct client *client, const uint8_t *model)
 	client->memory = Object_NULL;
 	client->shared = NULL;
 	client->shared_size = 0;
-	if (MinkCom_getMemoryObject(client->root, MODEL_PACKET_BYTES, &client->memory) ||
-	    MinkCom_getMemoryObjectInfo(client->memory, &shared, &capacity) ||
+	if (goodix_tee_memory(client->root, MODEL_PACKET_BYTES, &client->memory) ||
+	    goodix_tee_memory_info(client->memory, &shared, &capacity) ||
 	    capacity < MODEL_PACKET_BYTES)
 		return -ENOMEM;
 	client->shared = shared;
@@ -1222,8 +1295,8 @@ static int grow_operation_buffer(struct client *client, size_t required)
 
 	if (client->shared_size >= required)
 		return 0;
-	if (MinkCom_getMemoryObject(client->root, required, &memory) ||
-	    MinkCom_getMemoryObjectInfo(memory, &shared, &capacity) || capacity < required) {
+	if (goodix_tee_memory(client->root, required, &memory) ||
+	    goodix_tee_memory_info(memory, &shared, &capacity) || capacity < required) {
 		Object_RELEASE_IF(memory);
 		return -ENOMEM;
 	}
@@ -1632,8 +1705,8 @@ static int gatekeeper_storage_probe(uint32_t linux_uid, int ufs)
 	if (!result)
 		result = ufs ? goodix_storage_open_rpmb_ufs(&session.storage) :
 			goodix_storage_open_rpmb_probe(&session.storage);
-	if (!result && (MinkCom_getRootEnvObject(&session.client.root) ||
-	    MinkCom_getClientEnvObject(session.client.root, &session.client.env)))
+	if (!result && (goodix_tee_open(&session.client.root) ||
+	    goodix_tee_client(session.client.root, &session.client.env)))
 		result = -EIO;
 	if (!result)
 		result = open_keymaster(&session.client, &session.keymaster);

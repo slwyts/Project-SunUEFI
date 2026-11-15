@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: 0BSD
+# Based on the Arch Linux libwacom package; keep its complete upstream library,
+# database, tools, and udev integration.
+pkgname=libwacom
+pkgver=@VERSION@
+pkgrel=1.1
+pkgdesc='Tablet model library and database'
+arch=(aarch64)
+url='https://github.com/linuxwacom/libwacom'
+license=(HPND)
+depends=(glib2 glibc libevdev libgudev libgcc)
+optdepends=('python-libevdev: for libwacom-show-stylus'
+            'python-pyudev: for libwacom-show-stylus')
+makedepends=(meson)
+options=(!debug !lto)
+source=(@SOURCES@)
+sha256sums=(@CHECKSUMS@)
+
+prepare() {
+  cd "libwacom-libwacom-$pkgver"
+  for patch in "$srcdir"/*.patch; do
+    patch --forward --fuzz=0 -Np1 -i "$patch"
+  done
+}
+
+build() {
+  arch-meson "libwacom-libwacom-$pkgver" build -Dtests=disabled -Ddocumentation=disabled
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --no-rebuild --destdir "$pkgdir"
+  install -Dm644 "libwacom-libwacom-$pkgver/COPYING" "$pkgdir/usr/share/licenses/$pkgname/COPYING"
+}

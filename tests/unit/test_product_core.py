@@ -43,7 +43,9 @@ class ProductCoreTests(unittest.TestCase):
              '-fshort-wchar', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',
              '-fsanitize=address,undefined', '-fno-pie', '-no-pie',
              *['-I' + str(path) for path in includes],
-             str(ROOT / 'tests/native/PianoProductCoreTest.c'), '-o', str(cls.executable)],
+             str(ROOT / 'tests/native/PianoProductCoreTest.c'),
+             str(ROOT / 'uefi/core/usb/PianoFastbootBoot.c'),
+             str(ROOT / 'uefi/components/os-boot/PianoUkiImage.c'), '-o', str(cls.executable)],
             capture_output=True, text=True)
         if compiled.returncode:
             raise AssertionError(compiled.stdout + compiled.stderr)

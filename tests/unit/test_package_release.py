@@ -151,6 +151,34 @@ class ReleasePackageTests(unittest.TestCase):
             if path != '/reserved-memory/qseecom_region':
                 self.assertEqual(after[path], props, path)
 
+    def test_folded_dt_normalizes_zero_bias_flags_and_empty_pci_placeholder(self):
+        pci = '/soc/pcie@1c00000/pcie0_rp/cnss_pci0'
+        tree = {'/': {}, '/pins': {},
+                '/pins/zero': {'bias-disable': bytes(4)},
+                '/pins/flag': {'bias-disable': b''},
+                '/pins/other': {'bias-disable': struct.pack('>I', 1)},
+                '/soc': {}, '/soc/pcie@1c00000': {},
+                '/soc/pcie@1c00000/pcie0_rp': {'ranges': b''},
+                pci: {'reg': b'', 'memory-region': struct.pack('>I', 1)},
+                '/reserved-memory': {},
+                '/reserved-memory/wifi': {'phandle': struct.pack('>I', 1),
+                                          'reg': struct.pack('>QQ', 0x90000000, pr.MIB)}}
+        self.dtb.write_bytes(pr.write_fdt({'tree': tree, 'reservations': [], 'boot_cpu': 0}))
+        result = pr.normalize_mainline_bindings(self.dtb)
+        after = pr.read_fdt(self.dtb.read_bytes())['tree']
+        self.assertEqual(set(result['changes']), {'/pins/zero:bias-disable', pci + ':reg'})
+        self.assertEqual(after['/pins/zero']['bias-disable'], b'')
+        self.assertNotIn('reg', after[pci])
+        self.assertEqual(after[pci]['memory-region'], tree[pci]['memory-region'])
+        for path, props in tree.items():
+            if path not in ('/pins/zero', pci):
+                self.assertEqual(after[path], props, path)
+        for address in (struct.pack('>5I', 0, 0, 0, 0, 0), struct.pack('>5I', 0x100, 0, 0, 0, 0)):
+            tree[pci]['reg'] = address
+            self.dtb.write_bytes(pr.write_fdt({'tree': tree, 'reservations': [], 'boot_cpu': 0}))
+            pr.normalize_mainline_bindings(self.dtb)
+            self.assertEqual(pr.read_fdt(self.dtb.read_bytes())['tree'][pci]['reg'], address)
+
     def test_component_hash_cannot_override_manifest(self):
         with self.assertRaisesRegex(ValueError, 'disagrees'):
             pr.component(self.uefi, pr.record(self.uefi.parent / 'manifest.json'), '0' * 64, 'uefi')

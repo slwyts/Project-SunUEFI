@@ -1,39 +1,19 @@
-# Mutter 48.7 本地适配
+# Mutter 适配
 
-针对 Debian 13 的 `mutter 48.7-0+deb13u1`，本地版本为
-`48.7-0+deb13u1+sunuefi1`。补丁保留上游源码和原 Debian `rules`、`control`：
+Debian sid 沿发行版原始 `debian/rules`、`debian/control` 和 quilt 构建，与 Nyarch 共用空 Gamma LUT 和取消触摸 grab 两项修复。共享系列在 `patches/mutter/51.0/series.json`，覆盖 51.0 和 51.1。源码版本从目标 ARM64 APT 候选的 `Source` 字段选择，包版本在该版本后追加 `+sunuefi1`，不固定旧 Debian 13 的 ABI。
 
-- `0001` 将空 Gamma LUT 表示为已有的 NULL bypass，避免对零项数组重采样；非空曲线不变。
-- `0002` 在 colord 真实连接完成且没有现有默认 profile 时，让无 EDID 的物理输出进入已有标准 sRGB fallback。生成文件以实际 colord device ID 的 SHA256 命名，ICC 内记录实际 Filename 和 MAPPING_device_id，供 colord 原有 soft 关联使用。已有默认 profile（包括 soft）不替换，EDID 路线不变。
+`0001-kms-empty-gamma-bypass.patch` 将零项 Gamma LUT 表示为已有的 NULL bypass，避免重采样时除以零和访问空数组，非空曲线不变。签名 sid 源码的 `meta-kms-update.c` 仍将零项 LUT 传入 `meta_gamma_lut_copy_to_size()`，所以这项补丁仍需保留。
 
-sRGB fallback 标为 **uncalibrated**，没有面板实测校准、伪 EDID、HDR 声明或新用户服务。
+`0003-wayland-touch-ignore-cancelled-grab.patch` 在触摸序列取消、focus 已清除后拒绝交互移动和缩放请求，避免解引用空指针。sid 源码的 `touch_can_grab_surface()` 仍直接读取 `focus_surface->surface`。这两项均为 downstream 补丁，尚未声明上游接受；删除前按共享系列的条件核对发行源码和功能。
 
-标准包入口复用 GSD 的 Debian 源校验器。以完成的 Debian trixie ARM64
-sysroot 为输入会先克隆，再在独立 chroot 使用签名 APT 的精确 Sources 记录
-校验 `.dsc` 与两个 archive，通过正常 quilt 和 debhelper 构建源码及二进制包：
+无 EDID 输出不再使用本地补丁。发行版 Mutter 的 `meta-color-store.c` 已按真实 device ID 生成 sRGB fallback，`meta-color-device.c` 保留 colord 默认 profile；内核内屏也提供匹配面板的合成 EDID。通用 sRGB 不是面板实测校准，不能据此声明 HDR 或色彩精度。
 
 ```sh
-sudo python3 tools/build_mutter_packages.py \
-  --sysroot build/distros/release/rootfs --jobs 4
+sudo ./build.sh mutter --sysroot build/distros/release/rootfs --jobs 4
 ```
 
-已有独立 ARM64 package builder（原生或标准 QEMU binfmt）可复用，避免再次复制和安装依赖：
+输入是已完成的 sid ARM64 sysroot，保留签名 APT 二进制与源码索引。工具先克隆，再在独立 chroot 校验 InRelease、Sources、`.dsc` 与 archive 的 SHA256。缓存绑定当前源码、目标桌面 ABI 和补丁，不能复用旧 `libmutter-16` 包。
 
-```sh
-sudo python3 tools/build_mutter_packages.py \
-  --builder-root build/mutter-package-builder-20261008/rootfs \
-  --skip-install-dependencies --jobs 4
-```
+已有独立 builder 可用 `--builder-root 路径 --skip-install-dependencies`，仍执行实际 `dpkg-checkbuilddeps -Pnocheck`。不要传设备或已封存的产品 rootfs。
 
-`--builder-root` 必须是独立构建目录，不传设备或已封存的产品 rootfs。
-`--skip-install-dependencies` 仍运行实际 `dpkg-checkbuilddeps -Pnocheck`。
-工具会在独立 builder 内读取实际 GBM/PipeWire 版本，从已签名 APT 索引选择
-同版本开发包。对本项目 `+pianoN` 的 Mesa 包一起调整完整来源 cohort，
-APT 模拟有删除则停止；不修改原输入或设备，也不猜测其他大版本。
-实际版本、包 SHA 和 solver 记录随 `SOURCE.json` 保存。
-
-输出 `build/mutter/runtime/` 中五个标准运行包，`all/` 保留正常构建产物，
-`SOURCE.json`、`SHA256SUMS` 记录固定来源、实际补丁、包版本及 hash。
-使用原配方与 `DEB_BUILD_OPTIONS=nocheck parallel=4`，不执行完整测试套件。
-构建成功不证明设备颜色更新或空 LUT 恢复安全；安装和正常重启 GNOME 后，
-仍需由设备 owner 核实际 profile、标准 Night Light、硬件完成及原状态恢复。
+`build/mutter/runtime/` 提供五个标准运行包，包括 `libmutter-51-0` 和 `gir1.2-mutter-51`。输出同时保留 `.changes`、`.buildinfo`、`SOURCE.json` 与 `SHA256SUMS`。使用 `DEB_BUILD_OPTIONS=nocheck parallel=4` 不执行完整上游测试套件；设备验证仍需在正常安装、重启 GNOME 后检查标准 Night Light、空 LUT 往返和原状态恢复。

@@ -30,13 +30,23 @@ UEFI_FILES = {'requirements-build.txt', 'tools/build_android_product_module.py',
 UEFI_PREFIXES = ('android/', 'uefi/', 'vendor/piano/', 'patches/firmware/',
                  'tools/prepare_product_')
 DISTROS = ['debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos']
+TARGETS = ('uefi', 'linux', *DISTROS)
+
+
+def shared_kinds(targets):
+    result = []
+    if any(target != 'linux' for target in targets):
+        result.append('firmware')
+    if any(target != 'uefi' for target in targets):
+        result.append('kernel')
+    return result
 
 
 def select(files, manual=None):
     if manual:
         if manual == 'all':
             return DISTROS.copy()
-        if manual not in ('uefi', 'linux', *DISTROS):
+        if manual not in TARGETS:
             raise ValueError('Unknown manual product target')
         return [manual]
     files = list(files)
@@ -72,9 +82,13 @@ def main():
     args = parser.parse_args()
     targets = select(changed_files(ROOT, args.before), args.target)
     matrix = json.dumps({'target': targets}, separators=(',', ':'))
+    shared_matrix = json.dumps({'kind': shared_kinds(targets)}, separators=(',', ':'))
+    debian_writer = next((target for target in ('debian-gnome', 'debian-kde') if target in targets), '')
     if output := os.environ.get('GITHUB_OUTPUT'):
         with open(output, 'a') as stream:
-            stream.write('has_build=' + ('true' if targets else 'false') + '\nmatrix=' + matrix + '\nshared_target=' + (targets[0] if targets else '') + '\n')
+            stream.write('has_build=' + ('true' if targets else 'false') + '\nmatrix=' + matrix +
+                         '\nshared_matrix=' + shared_matrix + '\nshared_target=' +
+                         (targets[0] if targets else '') + '\ndebian_cache_writer=' + debian_writer + '\n')
     print(matrix)
 
 

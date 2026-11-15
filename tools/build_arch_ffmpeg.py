@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build shared FFmpeg BSP patches as native SteamOS or Arch packages.
 
-Preserve the target's codec configuration and library ABI. FFmpeg 7.0/7.1
-use the shared Debian source; FFmpeg 8 and 9 use their matching patch ports.
+Preserve the target's codec configuration and library ABI. SteamOS FFmpeg 8
+and Debian/Nyarch FFmpeg 9 share the same stateful decoder and encoder fixes.
 """
 import argparse
 import json
@@ -24,10 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def patch_series(package_version):
     version = package_version.split(':')[-1]
-    if re.match(r'^7\.[01](?:[.\s-])', version):
-        return source.SERIES
     if re.match(r'^8\.1(?:\.\d+)?-', version):
-        return source.SERIES.with_name('series-8.json')
+        return ROOT / 'linux/bsp/patches/ffmpeg/series-8.json'
     if re.match(r'^9\.0\.2-', version):
         return ROOT / 'patches/ffmpeg/9.0.2/series.json'
     raise ValueError('Port the BSP fixes to the installed FFmpeg ABI before replacing ' + package_version)

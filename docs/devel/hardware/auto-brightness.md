@@ -44,9 +44,9 @@ K = 100 / ((2047 - 20) × ln(1.003040572))
 
 只在设备树包含 `xiaomi,piano` 且 SensorProxy 单位为 `lux` 时选择 Piano 曲线。其他设备、其他单位或缺配置时保留上游映射。配置和程序都安装在标准 GSD 软件包里，不增加调光服务。
 
-GSD 48.1 使用原 backlight API，以当前用户百分比建立基准；51.0 使用标准 Shell brightness API，保留 Shell 的用户亮度偏移，由 GSD 输出相对自动亮度目标。Debian 版本为 `48.1-1+sunuefi4`，Nyarch 为 `51.0-1.4`；同时包含键盘背光热插拔刷新和[启动时锁屏状态同步](power-button.md#默认设置)。
+Debian sid 和 Nyarch 共用 GSD 51 的标准 Shell brightness API，保留 Shell 的用户亮度偏移，由 GSD 输出相对自动亮度目标；同时包含键盘背光热插拔刷新和[启动时锁屏状态同步](power-button.md#默认设置)。共享系列覆盖 51.0 和 51.1。Debian 包在签名 APT 所选源码版本后追加 `+sunuefi1`；Nyarch 保留目标 pacman 仓库的上游版本，pkgrel 后追加 `.1`。
 
-`./build.sh gsd` 从发行版签名 APT 源校验 Debian 48.1 源码，在隔离的 ARM64 builder 中沿原 `debian/rules` 构建。`build/gsd/runtime` 提供 daemon／common 两包，`SOURCE.json` 记录源码、补丁和软件包摘要。Nyarch 使用对应 51.0 配方。构建命令见[策略打包说明](../../../linux/desktops/gnome/ambient-policy/README.md)。
+`./build.sh gsd` 从目标 sid 的签名 APT 索引选择并校验源码，在隔离的 ARM64 builder 中沿原 `debian/rules` 构建。`build/gsd/runtime` 提供 daemon／common 两包，`SOURCE.json` 记录源码、目标 ABI、补丁和软件包摘要。构建命令见[策略打包说明](../../../linux/desktops/gnome/ambient-policy/README.md)。
 
 ## 标准设置界面
 

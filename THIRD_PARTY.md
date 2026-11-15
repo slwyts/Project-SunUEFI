@@ -1,6 +1,6 @@
 # 第三方来源与本地材料
 
-SunUEFI 站在这些项目之上：EDK2 / Mu-Silicium 提供 UEFI 基础和高通平台集成，simple-init 提供 UEFI 里的图形菜单，linux-piano 与 Linux 内核提供板级驱动，debian-piano、piano-mesa、piano-sensors 提供根系统、GPU 用户空间和传感器通信，设备固件取自官方 OTA，MiCode 与本机原厂系统用作对照参考。各项目负责什么、我们增加了什么，见[上游项目](docs/devel/upstreams.md)。
+SunUEFI 站在这些项目之上：EDK2 / Mu-Silicium 提供 UEFI 基础和高通平台集成，simple-init 提供 UEFI 里的图形菜单，linux-piano 与 Linux 内核提供板级驱动，debian-piano、Mesa、piano-sensors 提供根系统、GPU 用户空间和传感器通信，设备固件取自官方 OTA，MiCode 与本机原厂系统用作对照参考。各项目负责什么、我们增加了什么，见[上游项目](docs/devel/upstreams.md)。
 
 本页是精确来源索引：固定的提交、使用它们的脚本和已知的许可线索。完整提交号以链接的锁文件和脚本为准。许可线索来自仓库中的文件声明，没有逐一重新核对上游许可正文。
 
@@ -37,16 +37,19 @@ HyperOS 4 的 [ADSP](vendor/firmware/hyperos4-adsp/README.md) 和
 保留原始签名、文件名和逐文件 SHA256，按清单装入四个发行版。
 它们属于 Qualcomm／小米专有固件，不适用本项目的源码许可。
 
-原生 Goodix 客户端使用 [Qualcomm MinkIPC](https://github.com/qualcomm/minkipc)、
-[quic-teec](https://github.com/quic/quic-teec) 和
-[QCBOR](https://github.com/laurencelundblade/QCBOR) 的公开源码。
+原生 Goodix 客户端通过 Linux TEE 对象 ioctl 自行实现传输，不链接 MinkIPC 或 quic-teec。
+Object C 参数布局与 FS／GPFS 消息参考 [Qualcomm MinkIPC](https://github.com/qualcomm/minkipc)，
+对应文件保留 Qualcomm 版权和 BSD-3-Clause／BSD-3-Clause-Clear 许可。
+CBOR 编解码使用 [QCBOR](https://github.com/laurencelundblade/QCBOR) 的公开源码。
 精确提交、源码许可和构建输入记录在
 [`config/fingerprint.json`](config/fingerprint.json) 及镜像内的
 `/usr/share/piano-provenance/fingerprint.json`；相应许可证随静态客户端安装。
-本项目独立实现本机 Goodix 命令封装，复用标准 UIO／TEE 接口。
+本项目独立实现本机 Goodix 命令封装，通过现有 UIO 控制器和标准 Linux TEE 对象接口通信，
+不使用 GP 会话；UIO 控制器及 libfprint 后端仍是本地适配。
 原厂签名程序，以及从本机 `libgf_hal.so` 提取的通用防伪和识别模型参数，
-均保留原字节，作为硬件固件提供，不包含用户指纹模板。来源符号、文件偏移
-和校验值记录在固件清单中，原厂可执行库不随系统安装。来源与范围见
+均保留原字节，作为硬件固件提供，不包含用户指纹模板。提取器按导出符号定位模型，
+输出校验值记录在固件清单中；现有清单未记录逐模型偏移和来源库摘要。
+原厂可执行库不随系统安装。来源记录不构成程序或模型的再分发授权，来源与范围见
 [固件说明](vendor/firmware/hyperos4-fingerprint/README.md)。
 
 Gunyah 的 Android 驱动与主线接口适配来自

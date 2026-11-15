@@ -29,7 +29,7 @@ class BspPackageTests(unittest.TestCase):
 
     def test_default_config_has_no_desktop_identity_or_native_payload(self):
         report = bsp.build(self.args())
-        self.assertEqual(report['target'], {'distro': 'debian', 'suite': 'trixie', 'arch': 'aarch64'})
+        self.assertEqual(report['target'], {'distro': 'debian', 'suite': 'sid', 'arch': 'aarch64'})
         self.assertEqual(report['package_architecture'], 'all')
         self.assertFalse(report['auto_enable_services'])
         self.assertFalse(report['device_tested'])
@@ -52,6 +52,17 @@ class BspPackageTests(unittest.TestCase):
         report = bsp.build(self.args('inspect', '--target', 'deepin', '--suite', 'user-selected-suite'))
         self.assertEqual(report['target']['suite'], 'user-selected-suite')
         self.assertFalse(report['dependency_resolution_tested'])
+
+    def test_pen_calibration_uses_standard_firmware_paths_without_duplicate_tables(self):
+        report = bsp.build(self.args())
+        for panel in ('boe', 'csot'):
+            name = f'usr/lib/firmware/novatek/piano-{panel}-pen.ini'
+            row = report['payload_files'][name]
+            self.assertEqual(row['type'], 'symlink')
+            link = bsp.BSP / 'common' / name
+            original = bsp.BSP / 'common/usr/share/piano/pen/calibration' / f'piano-{panel}.ini'
+            self.assertEqual(link.resolve(), original.resolve())
+            self.assertEqual(link.read_bytes(), original.read_bytes())
 
     def test_payload_tamper_refused_before_stage(self):
         copied = self.base / 'bsp'

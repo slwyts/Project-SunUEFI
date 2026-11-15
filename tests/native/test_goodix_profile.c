@@ -6,7 +6,126 @@
 #include "../../linux/userspace/fingerprint/piano-goodix-storage.c"
 #include "../../linux/userspace/fingerprint/piano-goodix-rpmb.c"
 #include <assert.h>
+#include <stdarg.h>
 #include <sys/resource.h>
+
+int __real_open(const char *path, int flags, ...);
+int __wrap_open(const char *path, int flags, ...);
+
+static const char *firmware_parameter;
+static const char *firmware_tree;
+static int firmware_lookup;
+
+int __wrap_open(const char *path, int flags, ...)
+{
+	char redirected[PATH_MAX];
+	mode_t mode = 0;
+
+	if (flags & O_CREAT) {
+		va_list args;
+
+		va_start(args, flags);
+		mode = va_arg(args, int);
+		va_end(args);
+	}
+	if (!strcmp(path, "/sys/module/firmware_class/parameters/path")) {
+		assert(firmware_lookup && firmware_parameter);
+		path = firmware_parameter;
+	} else if (!strncmp(path, "/lib/firmware/", 14)) {
+		assert(firmware_lookup && firmware_tree);
+		int bytes = snprintf(redirected, sizeof(redirected), "%s/%s",
+				     firmware_tree, path + 14);
+
+		assert(bytes >= 0 && (size_t)bytes < sizeof(redirected));
+		path = redirected;
+	}
+	return __real_open(path, flags, mode);
+}
+
+static void firmware_file(int directory, const char *path, const char *contents)
+{
+	int fd = openat(directory, path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+
+	assert(fd >= 0);
+	assert(write(fd, contents, strlen(contents)) == (ssize_t)strlen(contents));
+	assert(!close(fd));
+}
+
+static void firmware_contents(const char *name, const char *expected)
+{
+	char contents[32] = {0};
+	int fd = open_firmware(name);
+
+	assert(fd >= 0 && (fcntl(fd, F_GETFD) & FD_CLOEXEC));
+	assert(read(fd, contents, sizeof(contents)) == (ssize_t)strlen(expected));
+	assert(!strcmp(contents, expected));
+	close(fd);
+}
+
+static void firmware_paths(int directory, const char *path)
+{
+	char parameter[PATH_MAX], custom[PATH_MAX], tree[PATH_MAX], version[PATH_MAX];
+	struct utsname system;
+
+	assert(!uname(&system));
+	assert(snprintf(parameter, sizeof(parameter), "%s/parameter", path) > 0);
+	assert(snprintf(custom, sizeof(custom), "%s/custom", path) > 0);
+	assert(snprintf(tree, sizeof(tree), "%s/firmware", path) > 0);
+	assert(!mkdirat(directory, "custom", 0700));
+	assert(!mkdirat(directory, "firmware", 0700));
+	assert(!mkdirat(directory, "firmware/updates", 0700));
+	assert(snprintf(version, sizeof(version), "firmware/%s", system.release) > 0);
+	assert(!mkdirat(directory, version, 0700));
+	assert(snprintf(version, sizeof(version), "firmware/updates/%s", system.release) > 0);
+	assert(!mkdirat(directory, version, 0700));
+	firmware_parameter = parameter;
+	firmware_tree = tree;
+	firmware_lookup = 1;
+
+	firmware_file(directory, "firmware/gfpia.elf", "default");
+	firmware_file(directory, "firmware/updates/gfpia.elf", "updates");
+	strcat(version, "/gfpia.elf");
+	firmware_file(directory, version, "versioned-updates");
+	assert(snprintf(custom, sizeof(custom), "%s/custom\n", path) > 0);
+	firmware_file(directory, "parameter", custom);
+	firmware_file(directory, "custom/gfpia.elf", "custom");
+	firmware_contents("gfpia.elf", "custom");
+	assert(!unlinkat(directory, "custom/gfpia.elf", 0));
+	firmware_contents("gfpia.elf", "versioned-updates");
+	assert(!unlinkat(directory, version, 0));
+	firmware_contents("gfpia.elf", "updates");
+	assert(!unlinkat(directory, "firmware/updates/gfpia.elf", 0));
+	assert(snprintf(version, sizeof(version), "firmware/%s/gfpia.elf", system.release) > 0);
+	firmware_file(directory, version, "versioned");
+	firmware_contents("gfpia.elf", "versioned");
+	assert(!unlinkat(directory, version, 0));
+	firmware_contents("gfpia.elf", "default");
+	firmware_file(directory, "parameter", "\n");
+	firmware_contents("gfpia.elf", "default");
+	assert(!unlinkat(directory, "parameter", 0));
+	firmware_contents("gfpia.elf", "default");
+
+	firmware_file(directory, "parameter", custom);
+	assert(!symlinkat("../firmware/gfpia.elf", directory, "custom/gfpia.elf"));
+	assert(open_firmware("gfpia.elf") == -ELOOP);
+	assert(!unlinkat(directory, "custom/gfpia.elf", 0));
+	assert(!mkfifoat(directory, "custom/piano-goodix-cap-s.bin", 0600));
+	uint8_t bytes[8];
+	assert(read_model("piano-goodix-cap-s.bin", bytes, sizeof(bytes)) == -EMSGSIZE);
+	assert(open_firmware("../gfpia.elf") == -EINVAL);
+	assert(open_firmware("/gfpia.elf") == -EINVAL);
+	assert(open_firmware(".") == -EINVAL && open_firmware("..") == -EINVAL);
+	firmware_file(directory, "parameter", "relative\n");
+	assert(open_firmware("gfpia.elf") == -EINVAL);
+	char excessive[257];
+	memset(excessive, '/', sizeof(excessive) - 1);
+	excessive[256] = 0;
+	firmware_file(directory, "parameter", excessive);
+	assert(open_firmware("gfpia.elf") == -ENAMETOOLONG);
+	assert(!unlinkat(directory, "parameter", 0));
+	assert(open_firmware("missing-model.bin") == -ENOENT);
+	firmware_lookup = 0;
+}
 
 static struct linux_profile example(void)
 {
@@ -284,14 +403,14 @@ static void gatekeeper_window(void)
 /* These allocations are used only when uploading models. The packet test
  * selects the actual no-model initialization path and must never reach them.
  */
-int MinkCom_getMemoryObject(Object root, size_t size, Object *memory)
+int goodix_tee_memory(Object root, size_t size, Object *memory)
 {
 	(void)root; (void)size; (void)memory;
 	assert(0);
 	return Object_ERROR;
 }
 
-int MinkCom_getMemoryObjectInfo(Object memory, void **address, size_t *size)
+int goodix_tee_memory_info(Object memory, void **address, size_t *size)
 {
 	(void)memory; (void)address; (void)size;
 	assert(0);
@@ -367,6 +486,7 @@ int main(int argc, char **argv)
 	else if (!strcmp(argv[1], "cancellation")) cancellation();
 	else if (!strcmp(argv[1], "gatekeeper-window")) gatekeeper_window();
 	else if (!strcmp(argv[1], "initialization-policy")) initialization_policy();
+	else if (!strcmp(argv[1], "firmware-paths")) firmware_paths(directory, argv[2]);
 	else assert(0);
 	close(directory);
 	return 0;

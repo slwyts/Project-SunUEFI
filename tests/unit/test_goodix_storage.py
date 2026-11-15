@@ -16,15 +16,6 @@ class GoodixStorageTests(unittest.TestCase):
         compiler = shlex.split(os.environ.get('CC', 'cc'))
         if not compiler or not shutil.which(compiler[0]):
             raise unittest.SkipTest('A native C compiler is required')
-        mink = ROOT / 'build/source-cache/minkipc'
-        includes = [
-            mink / 'libminkadaptor/include',
-            mink / 'listeners/libfsservice/fs',
-            mink / 'listeners/libfsservice/gpfs',
-            mink / 'listeners/libfsservice/cmn',
-        ]
-        if not all(path.is_dir() for path in includes):
-            raise unittest.SkipTest('Cached public MinkIPC filesystem headers are required')
         temporary = tempfile.TemporaryDirectory(prefix='piano-goodix-storage-')
         cls.addClassCleanup(temporary.cleanup)
         cls.binary = Path(temporary.name) / 'test_goodix_storage'
@@ -32,7 +23,6 @@ class GoodixStorageTests(unittest.TestCase):
             *compiler, '-std=c17', '-O2', '-Wall', '-Wextra', '-Werror',
             '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',
             '-Wl,--wrap=malloc', '-Wl,--wrap=ioctl', '-Wl,--wrap=fsync',
-            *[f'-I{path}' for path in includes],
             str(ROOT / 'tests/native/test_goodix_storage.c'),
             '-pthread', '-o', str(cls.binary),
         ], check=True)

@@ -80,7 +80,7 @@ class AssembleTests(unittest.TestCase):
         self.assertEqual((output / 'keep').read_text(), 'old')
 
     def test_package_target_and_bytes_are_checked(self):
-        target = {'distro': 'debian', 'suite': 'trixie', 'arch': 'aarch64'}
+        target = {'distro': 'debian', 'suite': 'sid', 'arch': 'aarch64'}
         directory = self.package('config', target)
         self.assertEqual(tool.bundle(directory, target)['component'], 'config')
         with self.assertRaisesRegex(ValueError, 'target distro'):
@@ -94,7 +94,7 @@ class AssembleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Package format'): tool.bundle(directory, target)
 
     def test_recipe_only_bsp_and_missing_compiled_layers_are_not_complete(self):
-        target = {'distro': 'debian', 'suite': 'trixie', 'arch': 'aarch64'}
+        target = {'distro': 'debian', 'suite': 'sid', 'arch': 'aarch64'}
         recipe = self.package('recipe', target, ready=False)
         with self.assertRaisesRegex(ValueError, 'not a built'): tool.bundle(recipe, target)
         bsp = self.package('config', target)
@@ -103,7 +103,7 @@ class AssembleTests(unittest.TestCase):
         self.assertEqual(result['status'], 'INPUTS_REQUIRED')
 
     def test_complete_target_layers_use_bsp_manifest_fields(self):
-        target = {'distro': 'debian', 'suite': 'trixie', 'arch': 'aarch64'}
+        target = {'distro': 'debian', 'suite': 'sid', 'arch': 'aarch64'}
         bsp = self.package('config', target); extra = ['--bsp', str(bsp)]
         for component in sorted(tool.LAYERS): extra += ['--layer', str(self.package(component, target, component))]
         result = tool.plan(self.args('debian', 'gnome', *extra), self.root)

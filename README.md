@@ -95,11 +95,11 @@ UEFI 运行时，后台常驻一个 USB Fastboot 服务（设备名 `SunUEFI-pia
 | GPU | ✅ | Adreno，Vulkan（Turnip）和 OpenGL（Freedreno）。部分 GTK 窗口连续缩放时帧率偏低 |
 | 触屏 | ✅ | 点按、拖动、长按、手势，约 144 Hz |
 | 官方键盘与触控板 | ✅ | 含键盘背光，F1–F12 用右 Ctrl 加数字键，见[键盘说明](docs/user/keyboard.md) |
-| 触控笔（Xiaomi Focus Pen，P81C） | ⚠️ | 定位、压感、轻捏、震动、磁吸恢复可用。完整掌压、笔身滑动、快捷手势未完成 |
+| 触控笔 | ✅ | Focus Pen Pro 在 120 Hz 下支持定位与压感书写，GNOME 原生数位板设置可识别。手势与掌压范围见[已知问题](docs/user/known-issues.md#触控笔) |
 | 扬声器与麦克风 | ✅ | 四扬声器，原生单声道录音 |
 | Wi-Fi / 蓝牙 | ✅ | 蓝牙自动配置本机地址，使用 p81 板级 NVM，连接距离正常 |
 | 相机 | ✅ | 前后预览、录像、自动曝光和对焦，摄像头工作时实体绿灯亮起 |
-| 闪光灯 | ⚠️ | 接口已注册，实际发光未观察 |
+| 闪光灯 | ⚠️ | 已接入标准控制接口；实际发光和拍照同步还没有确认 |
 | 传感器与自动亮度 | ✅ | 自动旋转、光线、距离、罗盘 |
 | 夜灯 | ✅ | 使用通用 sRGB 配置，不是原厂校准 |
 | 电源 | ✅ | 双电池、PD 与小米快充、拓展坞充电和 OTG、合盖、挂起与唤醒；GNOME 支持节能／平衡／性能三档。不支持休眠 |
@@ -174,4 +174,4 @@ docs/        文档
 
 ## 站在谁的肩膀上
 
-上游源码固定在 `upstream/`，我们的修改放在 `patches/`、`uefi/`、`linux/` 和构建工具里。UEFI 部分基于 [EDK2](https://github.com/tianocore/edk2) 和 [Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium)，启动菜单来自 [simple-init](https://github.com/BigfootACA/simple-init)。内核从 [linux-piano](https://github.com/blu-sharky/linux-piano) 起步，Debian 根系统来自 [debian-piano](https://github.com/blu-sharky/debian-piano)，设备固件取自官方 OTA，按组件存放在 `vendor/firmware`，图形用户空间来自 [piano-mesa](https://github.com/blu-sharky/piano-mesa)。完整列表和各项目承担的部分见[上游项目](docs/devel/upstreams.md)。
+上游源码固定在 `upstream/`，我们的修改放在 `patches/`、`uefi/`、`linux/` 和构建工具里。UEFI 部分基于 [EDK2](https://github.com/tianocore/edk2) 和 [Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium)，启动菜单来自 [simple-init](https://github.com/BigfootACA/simple-init)。内核从 [linux-piano](https://github.com/blu-sharky/linux-piano) 起步，Debian 根系统来自 [debian-piano](https://github.com/blu-sharky/debian-piano)，设备固件取自官方 OTA，按组件存放在 `vendor/firmware`，图形用户空间使用 [Mesa](https://mesa3d.org/)。完整列表和各项目承担的部分见[上游项目](docs/devel/upstreams.md)。

@@ -6,13 +6,15 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+from build_piano_runtime_helpers import source_patches
 
 ROOT = Path(__file__).resolve().parents[1]
 UUID = 'material-you-colors@francescocaracciolo.github.io'
-PATCH = ROOT / 'patches/nyarch/0001-material-you-system-install-gnome51.patch'
+SERIES = ROOT / 'patches/material-you-colors/30/series.json'
 
 
 def prepare(source, sysroot, output):
+    patch, = source_patches(SERIES)
     upstream = source / 'Gnome/etc/skel/.local/share/gnome-shell/extensions' / UUID
     resource = sysroot / 'usr/share/gnome-shell/gnome-shell-theme.gresource'
     if not resource.is_file():
@@ -24,7 +26,7 @@ def prepare(source, sysroot, output):
         raise ValueError('Use a fresh output directory')
     shutil.copytree(upstream, output, symlinks=True,
                     ignore=shutil.ignore_patterns('node_modules', '__pycache__'))
-    subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i', PATCH],
+    subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i', patch],
                    cwd=output, check=True)
     metadata = output / 'metadata.json'
     data = json.loads(metadata.read_text())
@@ -43,8 +45,8 @@ def prepare(source, sysroot, output):
     record = {
         'source_commit': subprocess.check_output(['git', '-C', source, 'rev-parse', 'HEAD'],
                                                 text=True).strip(),
-        'patch': str(PATCH.relative_to(ROOT)),
-        'patch_sha256': hashlib.sha256(PATCH.read_bytes()).hexdigest(),
+        'patch': str(patch.relative_to(ROOT)),
+        'patch_sha256': hashlib.sha256(patch.read_bytes()).hexdigest(),
         'shell_version': version.strip(),
         'shell_resource_sha256': hashlib.sha256(resource.read_bytes()).hexdigest(),
         'backend': 'upstream JavaScript Material color engine',

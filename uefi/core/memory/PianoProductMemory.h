@@ -37,6 +37,9 @@ VOID PianoProductMemoryReemitDiagnostic(VOID);
 // functions allocate no pages and never convert or release occupied memory.
 EFI_STATUS PianoProductMemoryCheck(VOID *Context,PIANO_LINUX_MEMORY_PROOF *Proof);
 EFI_STATUS PianoProductMemoryValidate(VOID *Context,CONST PIANO_LINUX_MEMORY_PROOF *Proof);
+// A direct-entry EFI loader may reuse its handle for a copied embedded kernel.
+// Require the complete destination to remain allocated as executable loader RAM.
+EFI_STATUS PianoProductMemoryValidateCode(CONST VOID *Base,UINT64 Bytes);
 // The final Linux tree must describe RAM/reservations compatible with the map
 // admitted before the first MemoryPeim, including FDT reserve-map entries.
 EFI_STATUS PianoProductMemoryValidateDtb(CONST VOID *Tree,UINTN Bytes);

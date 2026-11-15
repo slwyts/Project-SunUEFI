@@ -17,14 +17,10 @@ class GoodixProfileTests(unittest.TestCase):
         if not compiler or not shutil.which(compiler[0]):
             raise unittest.SkipTest('A native C compiler is required')
         includes = [
-            ROOT / 'build/source-cache/minkipc/libminkadaptor/include',
-            ROOT / 'build/source-cache/minkipc/listeners/libfsservice/fs',
-            ROOT / 'build/source-cache/minkipc/listeners/libfsservice/gpfs',
-            ROOT / 'build/source-cache/minkipc/listeners/libfsservice/cmn',
             ROOT / 'build/source-cache/qcbor/inc',
         ]
         if not all(path.is_dir() for path in includes):
-            raise unittest.SkipTest('Cached public MinkIPC and QCBOR headers are required')
+            raise unittest.SkipTest('Cached public QCBOR headers are required')
         temporary = tempfile.TemporaryDirectory(prefix='piano-goodix-profile-')
         cls.addClassCleanup(temporary.cleanup)
         cls.binary = Path(temporary.name) / 'test_goodix_profile'
@@ -36,6 +32,7 @@ class GoodixProfileTests(unittest.TestCase):
         subprocess.run([
             *compiler, '-std=c17', '-O2', '-Wall', '-Wextra', '-Werror',
             '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',
+            '-Wl,--wrap=open',
             *[f'-I{path}' for path in includes],
             str(ROOT / 'tests/native/test_goodix_profile.c'),
             *map(str, sources), '-pthread', '-lm', '-o', str(cls.binary),
@@ -71,6 +68,9 @@ class GoodixProfileTests(unittest.TestCase):
 
     def test_initialization_uses_policy_saved_before_init_overwrites_payload(self):
         self.check_profile('initialization-policy')
+
+    def test_standard_firmware_search_order_and_unsafe_files(self):
+        self.check_profile('firmware-paths')
 
 
 if __name__ == '__main__':

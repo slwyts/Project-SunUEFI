@@ -107,6 +107,33 @@ def text(argv,cwd=None,env=None):return subprocess.check_output([str(x)for x in 
 def run(argv,cwd=None,env=None):subprocess.run([str(x)for x in argv],cwd=cwd,env=env,check=True)
 
 
+def kernel_policy_identity(root=None):
+    root=ROOT if root is None else Path(root)
+    policy=json.loads((root/'config/release.json').read_text())['kernel']
+    if not isinstance(policy,dict):
+        raise ValueError('Release kernel policy must be an object')
+    encoded=json.dumps(policy,sort_keys=True,separators=(',',':')).encode()
+    return {'policy':policy,'sha256':hashlib.sha256(encoded).hexdigest()}
+
+
+def kernel_policy_matches(record,identity):
+    # Legacy records only hash release.json and cannot prove its old kernel
+    # section. Rebuild once rather than rewriting their source provenance.
+    return (record.get('kernel_policy')==identity['policy'] and
+            record.get('kernel_policy_sha256')==identity['sha256'])
+
+
+def matching_build(previous,commit,hashes,policy,modules,root_policy,root_command,tools,out):
+    return (previous.get('status')=='HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED' and
+            previous.get('source_commit')==commit and previous.get('inputs')==hashes and
+            kernel_policy_matches(previous,policy) and
+            previous.get('local_module_overrides')==modules and previous.get('root_policy')==root_policy and
+            previous.get('command_line')==root_command and previous.get('toolchain',{}).get('sha256')==tools['sha256'] and
+            (out/'.config').is_file() and sha(out/'.config')==previous.get('config_sha256') and
+            (out/'Module.symvers').is_file() and (out/'include/config/kernel.release').is_file() and
+            previous.get('module_symvers_sha256')==sha(out/'Module.symvers'))
+
+
 def config_values(raw):
     values={}
     for line in raw.splitlines():
@@ -308,16 +335,12 @@ def main():
     source_base=verify_source(work,commit)
     tree=text(['git','rev-parse','HEAD^{tree}'],work)
     compiler_checkout(work,compiler,commit,tree)
-    hashes={str(path.relative_to(ROOT)):sha(path)for path in (ROOT/'config/release.json',bluetooth,filesystem,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/desktop/prepare_kernel_llvm.py',ROOT/'tools/desktop/package_build.py',ROOT/'config/kernel-llvm.json')}
+    policy=kernel_policy_identity()
+    hashes={str(path.relative_to(ROOT)):sha(path)for path in (bluetooth,filesystem,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/desktop/prepare_kernel_llvm.py',ROOT/'tools/desktop/package_build.py',ROOT/'config/kernel-llvm.json')}
     if marker.exists():
         previous=json.loads(marker.read_text())
-        if (not args.configure_only and previous.get('status')=='HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED' and
-            previous.get('source_commit')==commit and previous.get('inputs')==hashes and
-            previous.get('local_module_overrides')==modules and previous.get('root_policy')==args.root and
-            previous.get('command_line')==root_command and previous.get('toolchain',{}).get('sha256')==tools['sha256'] and
-            (out/'.config').is_file() and sha(out/'.config')==previous.get('config_sha256') and
-            (out/'Module.symvers').is_file() and (out/'include/config/kernel.release').is_file() and
-            previous.get('module_symvers_sha256')==sha(out/'Module.symvers')):
+        if (not args.configure_only and matching_build(
+                previous,commit,hashes,policy,modules,args.root,root_command,tools,out)):
             from stage_piano_kernel_modules import inspect
             inspect(artifacts)
             print('Reusing the complete matching kernel and modules: '+previous['kernel_release'],flush=True)
@@ -341,14 +364,16 @@ def main():
         verify_source(work,commit)
         verify_source(compiler,commit)
         if text(['git','rev-parse','HEAD^{tree}'],compiler)!=tree:raise ValueError('Compiler source tree drifted')
-        if any(sha(ROOT/name)!=value for name,value in hashes.items())or sha(out/'.config')!=config_hash or effective.read_text()!=effective_text:raise ValueError('Full candidate source/config/tool inputs drifted')
+        if (kernel_policy_identity()!=policy or any(sha(ROOT/name)!=value for name,value in hashes.items())or
+                sha(out/'.config')!=config_hash or effective.read_text()!=effective_text):raise ValueError('Full candidate source/config/tool inputs drifted')
         if any(sha(Path(tools['paths'][name]))!=value for name,value in tools['sha256'].items()):raise ValueError('Full candidate build tool changed during compilation')
     fresh();state={'profile':'full-integration','mode':'complete-public-hardware','build_id':str(uuid.uuid4()),'source_commit':commit,'source_tree':tree,'source_worktree':str(compiler),'source_clean':True,
       'prepared_source_worktree':str(work),'compiler_worktree':str(compiler),
       'source_branch':text(['git','branch','--show-current'],compiler),'base_commit':source_base,
       'public_full_baseline':COMMIT,'local_patch_commits':text(['git','rev-list','--reverse',source_base+'..'+commit],work).splitlines(),
       'hardware_config_origin':{'commit':COMMIT,'base_commit':BASE_COMMIT},
-      'public_config_sha256':SOURCE_PINS,'inputs':hashes,'config_sha256':config_hash,'toolchain':tools,'root_policy':args.root,'command_line':root_command,
+      'public_config_sha256':SOURCE_PINS,'inputs':hashes,'kernel_policy':policy['policy'],'kernel_policy_sha256':policy['sha256'],
+      'config_sha256':config_hash,'toolchain':tools,'root_policy':args.root,'command_line':root_command,
       'full_profile_requirements':requirements,'local_module_overrides':modules,'hardware_verified':False,'device_operation_performed':False,'android_userdata_selected':False,
       'safe_pianoinit_external_bundle_required':True,'public_bt_le_enabled':config_values((out/'.config').read_text()).get('CONFIG_BT_LE')=='y',
       'dtb':None,'status':'CONFIGURED_NOT_BUILT'if args.configure_only else 'BUILDING_NOT_BOOTABLE'}
