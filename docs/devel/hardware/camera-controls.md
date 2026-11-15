@@ -141,6 +141,20 @@ AE、AWB、AF 分别保存自动或手动状态。数值写入要求先把对应
 
 ## 帧时间戳与错误
 
+PipeWire 的 V4L2 采集对不支持导出 DMA-BUF 的设备使用 MMAP 复制。
+复制后的 SPA 缓冲与内核捕获编号分开管理，仍在排队、已交给应用或带有非零
+busy 引用的帧不能被覆盖；内核缓冲在复制完成后立即归还。应用暂时持有全部
+缓冲时仍推进相机时钟，允许处理循环归还帧，不修改传感器时间戳。
+修复见[共享 PipeWire 补丁](../../../patches/pipewire/1.6.9/0007-v4l2-copy-buffer-pool.patch)。
+
+`./build.sh pipewire` 只生成 GStreamer 插件和 `pipewire-v4l2-source` 两个包，
+保留发行版原有的 server、音频与蓝牙库。采集包安装独立 SPA 库和标准
+`context.spa-libs` 配置；它使用独立 source factory 名称，因为 PipeWire
+按首个匹配规则选择库，已有的 `api.v4l2.*` 规则不会被后加载的同名规则替换。
+WirePlumber 从该库枚举设备后将独立 factory 交给 PipeWire，两个进程因此使用
+同一修复。Debian、Nyarch 和 SteamOS 共用源码与补丁。正式 Debian 包的前后摄
+带声音录像已检查开始、停止、重新打开和完整解码。
+
 完整 SM8750 CAMSS 的 IPP 和 RDI0 使用 CSID980 锁存的物理计数器，通过标准 V4L2 接口报告帧时间。
 
 | 接口 | 时间含义 | 同一帧的编号 |

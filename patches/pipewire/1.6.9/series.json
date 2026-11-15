@@ -68,6 +68,15 @@
         "url": "https://github.com/Cryolitia/xiaomi-piano-nixos/blob/ae30633478d363917171fcbb1b9b5134967634d1/packages/pipewire/patches/copy-memptr-buffers.patch",
         "drop_when": "The selected PipeWire release keeps MemPtr contents valid for downstream buffers after stream buffer removal; verify retained frames across camera renegotiation."
       }
+    },
+    {
+      "file": "0007-v4l2-copy-buffer-pool.patch",
+      "sha256": "6824b2f7d5236a6ac6e5ad2bb369a3bf4fe2a70cd1bf9de6449df88af92895d1",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/PipeWire/pipewire/tree/master/spa/plugins/v4l2",
+        "drop_when": "The selected V4L2 source keeps copied SPA buffers separate from capture indices, honors queued/outstanding and busy buffers, immediately returns copied kernel frames, and advances its driver clock during backpressure. Verify Snapshot audio/video start-stop, retained frames, no duplicate PTS, and ordinary V4L2 cameras before removing this fix."
+      }
     }
   ]
 }
