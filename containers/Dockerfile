@@ -11,7 +11,7 @@ RUN if [ "$(dpkg --print-architecture)" != arm64 ]; then \
     rustc cargo libstd-rust-dev:arm64 libyuv-dev libjpeg62-turbo-dev \
     flex bison bc libssl-dev uuid-dev zlib1g-dev libelf-dev \
     python3 python3-venv python3-pip python3-packaging gettext fonts-noto-cjk libfreetype6 \
-    debootstrap debian-archive-keyring qemu-user-static \
+    debootstrap debian-archive-keyring gpgv qemu-user-static \
     mtools dosfstools e2fsprogs cpio kmod device-tree-compiler \
     zstd rsync ccache alsa-utils m4 pkg-config curl ca-certificates openssh-client openssl \
     util-linux file squashfs-tools busybox-static libarchive-tools libglib2.0-bin systemd-ukify && rm -rf /var/lib/apt/lists/*

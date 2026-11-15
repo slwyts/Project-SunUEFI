@@ -616,7 +616,7 @@ def package(args):
     esp_only = getattr(args, 'esp_only', False)
     build_root = bool(args.root_size_mib) and not esp_only
     build_archive = not esp_only and (not args.root_size_mib or args.root_archive)
-    tools = ['mkfs.vfat', 'mmd', 'mcopy']
+    tools = ['mkfs.vfat', 'mcopy']
     if build_archive:
         tools += ['tar', 'zstd']
     if build_root:
@@ -666,9 +666,17 @@ def package(args):
     # Piano UFS exposes 4 KiB logical sectors; Linux rejects a smaller BPB
     # sector size even when firmware can read the filesystem.
     run(['mkfs.vfat', '--invariant', '-S', '4096', '-F', '32', '-n', 'SUNUEFI_ESP', esp])
-    run(['mmd', '-i', esp, '::/EFI', '::/EFI/Linux'])
+    esp_tree = work / 'esp-tree'
     for destination, path in esp_files.items():
-        run(['mcopy', '-m', '-i', esp, path, '::' + destination])
+        target = esp_tree / destination.lstrip('/')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+    for path in [*esp_tree.rglob('*'), esp_tree]:
+        os.utime(path, (max(args.epoch, 315532800),) * 2)
+    # Copy the directory tree with preserved times too. mmd stamps directories
+    # with wall-clock time, making otherwise identical product ESPs differ.
+    run(['mcopy', '-s', '-m', '-i', esp, esp_tree / 'EFI', '::/'])
+    for destination, path in esp_files.items():
         verify = work / ('readback-' + path.name)
         run(['mcopy', '-i', esp, '::' + destination, verify])
         require(sha(verify) == sha(path), 'ESP file readback differs: ' + path.name)

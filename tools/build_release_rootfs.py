@@ -3,6 +3,7 @@
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import fcntl
 import gzip
 import json
 import os
@@ -12,6 +13,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 
 import build_piano_disk_bootstrap as disk
@@ -161,7 +163,7 @@ def require_host():
     caps = next(line.split()[1] for line in Path('/proc/self/status').read_text().splitlines() if line.startswith('CapEff:'))
     if int(caps, 16) & ((1 << 21) | (1 << 18)) != ((1 << 21) | (1 << 18)):
         raise ValueError('Root runner also needs CAP_SYS_ADMIN and CAP_SYS_CHROOT')
-    required = ['debootstrap', 'chroot', 'curl', 'ssh-keygen', 'openssl', 'mount', 'umount', 'unshare', 'sha256sum', 'dpkg-deb']
+    required = ['debootstrap', 'chroot', 'curl', 'ssh-keygen', 'openssl', 'mount', 'umount', 'unshare', 'sha256sum', 'dpkg-deb', 'gpgv']
     if platform.machine() not in ('aarch64', 'arm64'):
         required.append('qemu-aarch64-static')
         entry = Path('/proc/sys/fs/binfmt_misc/qemu-aarch64')
@@ -583,9 +585,36 @@ def mutter_packages(folder, rootfs=None):
             'packages': rows, 'device_verified': False}
 
 
-def bootstrap(rootfs, kernel, output, release, boot_task_snapshot=False, firmware_root=None):
-    # Use the same authenticated distro input on fresh CI and local builds.
-    # The early diagnostic BusyBox capture is not a release dependency.
+def bootstrap_tools():
+    """Extract fixed tools without installing them into any target rootfs."""
+    from prepare_steamos_rootfs import download
+    packages = json.loads(POLICY.read_text())['bootstrap_packages']
+    folder = ROOT / 'build/source-cache/bootstrap'
+    folder.mkdir(parents=True, exist_ok=True)
+    with (folder / 'download.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        archives = {}
+        for name, row in packages.items():
+            archive = folder / (row['sha256'] + '.deb')
+            download(row['url'], archive, row['sha256'])
+            archives[name] = archive
+    return packages, archives
+
+
+def bootstrap(kernel, output, release, boot_task_snapshot=False):
+    packages, archives = bootstrap_tools()
+    # The target distro must not determine the shared initramfs contents.
+    with tempfile.TemporaryDirectory(prefix='bootstrap-', dir=ROOT / 'build') as temporary:
+        rootfs = Path(temporary)
+        for archive in archives.values():
+            subprocess.run(['dpkg-deb', '-x', archive, rootfs], check=True)
+        for name in ('bin', 'sbin', 'lib'):
+            if not (rootfs / name).exists():
+                (rootfs / name).symlink_to('usr/' + name)
+        return pack_bootstrap(rootfs, packages, archives, kernel, output, release, boot_task_snapshot)
+
+
+def pack_bootstrap(rootfs, packages, archives, kernel, output, release, boot_task_snapshot):
     busybox = disk.guest_resolve(rootfs, '/usr/bin/busybox')
     validate_static_arm64_elf(busybox.read_bytes())
     applets = set(capture(['chroot', rootfs, '/usr/bin/busybox', '--list']).splitlines())
@@ -594,15 +623,15 @@ def bootstrap(rootfs, kernel, output, release, boot_task_snapshot=False, firmwar
     bootstrap_applets = tuple(name for name in disk.APPLETS if name != 'mountpoint')
     if missing := set(bootstrap_applets) - applets:
         raise ValueError('Static BusyBox is missing bootstrap applets: ' + ', '.join(sorted(missing)))
-    package = capture(['chroot', rootfs, 'dpkg-query', '-W',
-                       '-f=${Package}\t${Version}\t${Architecture}', 'busybox-static']).split('\t')
-    if len(package) != 3 or package[0] != 'busybox-static' or package[2] != 'arm64':
-        raise ValueError('Release bootstrap requires the installed ARM64 busybox-static package')
+    package = [capture(['dpkg-deb', '-f', archives['busybox-static'], field])
+               for field in ('Package', 'Version', 'Architecture')]
+    if package[0] != 'busybox-static' or package[2] != 'arm64':
+        raise ValueError('Release bootstrap requires an ARM64 busybox-static package')
     busybox_source = output / 'initramfs/busybox-source.json'
     busybox_source.parent.mkdir(exist_ok=True)
     busybox_record = {'package': package[0], 'version': package[1],
         'architecture': package[2], 'sha256': digest(busybox),
-        'source': 'signed Debian APT in the release rootfs', 'license': 'GPL-2.0-only'}
+        'source': packages['busybox-static']['url'], 'license': 'GPL-2.0-only'}
     busybox_source.write_text(json.dumps(busybox_record, indent=2) + '\n')
     files = disk.runtime_files(rootfs, ('/usr/sbin/blkid', '/usr/bin/mountpoint'))
     directory = Path(kernel) / 'modules/lib/modules' / release
@@ -612,8 +641,16 @@ def bootstrap(rootfs, kernel, output, release, boot_task_snapshot=False, firmwar
                   'usr/local/sbin/piano-debug-bootstrap': ROOT / 'linux/userspace/piano-debug-bootstrap'})
     files['init'] = files['pianoinit']
     for name in rescue: files[f'lib/modules/{release}/{name}'] = directory / name
-    files['lib/firmware/nanosic/MCU_Upgrade.bin'] = disk.guest_resolve(
-        Path(firmware_root or rootfs), '/lib/firmware/nanosic/MCU_Upgrade.bin')
+    from stage_piano_firmware import components
+    keyboard = [(manifest, data) for _, manifest, data in components()
+                if data['component'] == 'piano-keyboard']
+    if len(keyboard) != 1:
+        raise ValueError('The shared bootstrap needs one keyboard firmware component')
+    manifest, data = keyboard[0]
+    firmware = manifest.parent / 'MCU_Upgrade.bin'
+    if digest(firmware) != data['files']['MCU_Upgrade.bin']['sha256']:
+        raise ValueError('The shared keyboard firmware checksum differs')
+    files['lib/firmware/nanosic/MCU_Upgrade.bin'] = firmware
     generated = {'etc/piano/root-label': 'PIANOROOT\n', 'etc/piano/root-partname': 'sunuefi_root\n',
                  'etc/piano/busybox-source.json': busybox_source.read_text(),
                  'etc/piano/kernel-release': release + '\n',
@@ -636,7 +673,7 @@ def bootstrap(rootfs, kernel, output, release, boot_task_snapshot=False, firmwar
               'kernel_commit': json.loads((Path(kernel) / 'manifest.json').read_text())['source_commit'],
               'kernel_manifest_sha256': digest(Path(kernel) / 'manifest.json'), 'root_policy': 'LABEL=PIANOROOT',
               'initramfs_sha256': digest(target), 'entry_sha256': digest(files['pianoinit']),
-              'busybox': busybox_record,
+              'busybox': busybox_record, 'packages': packages,
               'boot_task_snapshot': boot_task_snapshot,
               'boot_task_snapshot_source_sha256': digest(ROOT / 'linux/userspace/piano-boot-task-snapshot')}
     (target.parent / 'manifest.json').write_text(json.dumps(record, indent=2) + '\n')
@@ -878,7 +915,7 @@ def execute(record):
         snapshot = target(rootfs, 'usr/lib/piano/piano-boot-task-snapshot')
         shutil.copy2(ROOT / 'linux/userspace/piano-boot-task-snapshot', snapshot)
         snapshot.chmod(0o755)
-        boot = bootstrap(rootfs, kernel, out, m['kernel_release'], record.get('boot_task_snapshot', False))
+        boot = bootstrap(kernel, out, m['kernel_release'], record.get('boot_task_snapshot', False))
         clock = clock_epoch(rootfs)
         if modules.inspect(kernel)[1] != kernel_hash: raise ValueError('Kernel changed during rootfs build')
         result = {'status': 'HOST_BUILT_RELEASE_' + desktop.upper() + '_ROOT_NOT_BOOT_VERIFIED', 'rootfs': str(rootfs),
