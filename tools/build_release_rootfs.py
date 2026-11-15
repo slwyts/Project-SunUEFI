@@ -161,7 +161,7 @@ def require_host():
     caps = next(line.split()[1] for line in Path('/proc/self/status').read_text().splitlines() if line.startswith('CapEff:'))
     if int(caps, 16) & ((1 << 21) | (1 << 18)) != ((1 << 21) | (1 << 18)):
         raise ValueError('Root runner also needs CAP_SYS_ADMIN and CAP_SYS_CHROOT')
-    required = ['debootstrap', 'chroot', 'curl', 'ssh-keygen', 'openssl', 'mount', 'umount', 'unshare', 'sha256sum', 'dpkg-deb']
+    required = ['debootstrap', 'chroot', 'curl', 'ssh-keygen', 'openssl', 'mount', 'umount', 'unshare', 'sha256sum', 'dpkg-deb', 'gpgv']
     if platform.machine() not in ('aarch64', 'arm64'):
         required.append('qemu-aarch64-static')
         entry = Path('/proc/sys/fs/binfmt_misc/qemu-aarch64')
