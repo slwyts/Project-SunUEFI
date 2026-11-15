@@ -80,9 +80,10 @@ Debian release 由 [`tools/build_release_rootfs.py`](../../../tools/build_releas
 `./build.sh pipewire --rootfs <发行版 root> --output <build 下的包目录>`；
 这些命令需要 root，输入均为本地构建目录，不访问平板。
 
-PipeWire 只重建完整 GStreamer 插件，链接目标 root 中同版本的库，并用包依赖
-锁定对应发行版版本；不替换服务端、音频组件或库 ABI。补丁处理格式枚举与首选
-格式、运行中 caps、缓冲池锁顺序和借用 MemPtr 的复制。来源和补丁摘要由
+PipeWire 重建完整 GStreamer 插件和独立的 V4L2 采集插件，链接目标 root 中
+同版本的库，并用包依赖锁定对应发行版版本；不替换服务端、音频组件或库 ABI。
+补丁处理格式枚举与首选格式、运行中 caps、缓冲池锁顺序、借用 MemPtr 的复制，
+以及录像持有的 V4L2 复制帧；模块选择与缓冲管理见[相机接口](../hardware/camera-controls.md#帧时间戳与错误)。来源和补丁摘要由
 `patches/pipewire/<版本>/series.json` 指定，源码完整准备后才进入缓存，构建器
 变化使旧包缓存失效。19 项格式测试串行运行，使用隔离的 GStreamer registry，
 不扫描系统插件；它们不替代平板上的相机、录屏和屏幕共享验证。
