@@ -1,5 +1,45 @@
 {
   "schema_version": 1,
+  "efi_stub": {
+    "url": "https://deb.debian.org/debian/pool/main/s/systemd/systemd-boot-efi_262.2-1_arm64.deb",
+    "sha256": "a6137774e8ae0d0493ede8c3a1e05d37f762ff784f0de3777c74d160085df680",
+    "member": "./usr/lib/systemd/boot/efi/linuxaa64.efi.stub",
+    "stub_sha256": "7c9e61a5b168725ee7db40dabe84be24dade12c53732c306aec49e7cd67c353a"
+  },
+  "bootstrap_packages": {
+    "busybox-static": {
+      "url": "https://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b2_arm64.deb",
+      "sha256": "1b094307f3d13b2b15841cf42ba2c8610e8f9b7fa1fbe141f762442e609bc89e"
+    },
+    "util-linux": {
+      "url": "https://deb.debian.org/debian/pool/main/u/util-linux/util-linux_2.42.4-1_arm64.deb",
+      "sha256": "4041ef33dc098a173d32c01c80f7515f1edd97f07ec7f80db268a3fc614ee4c5"
+    },
+    "libblkid1": {
+      "url": "https://deb.debian.org/debian/pool/main/u/util-linux/libblkid1_2.42.4-1_arm64.deb",
+      "sha256": "53ee740e15f0435ddfefc5a532208d0e984fcf1dcc6d19197211470c1ce32a61"
+    },
+    "libmount1": {
+      "url": "https://deb.debian.org/debian/pool/main/u/util-linux/libmount1_2.42.4-1_arm64.deb",
+      "sha256": "75557252326f9a911a4a0b7f4ee99b61cb73d9a92a25b7c93dd8bab16373e048"
+    },
+    "libc6": {
+      "url": "https://deb.debian.org/debian/pool/main/g/glibc/libc6_2.43-7_arm64.deb",
+      "sha256": "2315e75157bf67622bb435724de8be3c4c6f5bb33f3f26e8310842ea66093c74"
+    },
+    "libselinux1": {
+      "url": "https://deb.debian.org/debian/pool/main/libs/libselinux/libselinux1_3.11-2.1+b1_arm64.deb",
+      "sha256": "69096c93ae439c34892f94a023aff6f944e5f1e4003c11b83558319a39444f02"
+    },
+    "libsystemd0": {
+      "url": "https://deb.debian.org/debian/pool/main/s/systemd/libsystemd0_262.2-1_arm64.deb",
+      "sha256": "bb762bfd4c54ee135c9d186d978413f772611e61b8b2809ceeb93eb57bd747e7"
+    },
+    "libpcre2-8-0": {
+      "url": "https://deb.debian.org/debian/pool/main/p/pcre2/libpcre2-8-0_10.49-1_arm64.deb",
+      "sha256": "3af37b066fb2b6ff7c6cc37c33f5144fa97650030b1b191cb082a93e0c5a5f8a"
+    }
+  },
   "kernel": {
     "target": "release",
     "public_baseline": "352508459733d3e6d349ea5581a8dd2fd8bb4180",

@@ -284,9 +284,11 @@ class ReleasePackageTests(unittest.TestCase):
 
     def use_systemd_tools(self):
         roots = (Path('/'), pr.ROOT / 'build/gsd/builder/rootfs')
-        for root in roots:
-            tool = root / 'usr/lib/systemd/ukify'
-            stub = root / 'usr/lib/systemd/boot/efi/linuxaa64.efi.stub'
+        candidates = [(root / 'usr/lib/systemd/ukify',
+                       root / 'usr/lib/systemd/boot/efi/linuxaa64.efi.stub') for root in roots]
+        candidates += [(Path('/usr/lib/systemd/ukify'), stub)
+                       for stub in (pr.ROOT / 'build/source-cache/efi-stub').glob('*.efi.stub')]
+        for tool, stub in candidates:
             if tool.is_file() and stub.is_file():
                 try:
                     import pefile
@@ -336,7 +338,9 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertFalse((self.args.output / '.incomplete').exists())
                 self.assertTrue((self.args.output / 'SHA256SUMS').is_file())
         self.assertEqual(before, {p.relative_to(self.root).as_posix(): (p.stat().st_size, pr.sha(p))
-                                for p in self.root.rglob('*') if p.is_file()})
+                                 for p in self.root.rglob('*') if p.is_file()})
+        self.assertEqual(pr.sha(self.base / 'bundle-default/esp.img'),
+                         pr.sha(self.base / 'bundle-override/esp.img'))
 
     @unittest.skipUnless(all(shutil.which(t) for t in ('mkfs.vfat', 'mmd', 'mcopy')), 'FAT tools unavailable')
     def test_corrupt_efi_readback_cannot_complete_esp(self):

@@ -86,9 +86,14 @@ python3 tools/package_sparse_images.py --bundle artifacts/release --output artif
 已有根系统时，运行 `./build.sh esp` 只生成启动镜像，不重新导出 root 镜像。
 启动镜像包含 `/EFI/Linux/sunuefi.efi`：把内核、initramfs、DTB 和启动参数
 封装为一个 UKI，由 SunUEFI 直接启动，不经过 systemd-boot。打包使用
-systemd 的 `ukify`，默认从根系统的 `systemd-boot-efi` 包取 ARM64 stub；
-这个包名不表示镜像安装了 systemd-boot 管理器。单独提取的 stub 可通过
+systemd 的 `ukify`，默认使用 `config/release.json` 固定的 Debian ARM64
+`systemd-boot-efi` 包中的 stub，校验包和文件的 SHA256，四产品使用同一文件；
+这不会在目标系统安装 Debian 软件包或 systemd-boot 管理器。单独提取的 stub 可通过
 `--stub /path/to/linuxaa64.efi.stub` 指定，`--ukify` 指定打包工具。
+
+initramfs 的 BusyBox、分区识别工具和依赖库也由 `config/release.json` 固定并校验，
+在临时目录解包，不从各发行版根系统取库。内核模块和键盘固件使用共享产品的同一份输入，
+因此同次构建的四个系统可以使用同一个启动镜像。
 
 基础根系统已经构建过时，用 `./build.sh release-rootfs --resume` 更新内核、硬件包和配置，不重新运行 debootstrap。`./build.sh rootfs --distro ID --desktop ID --plan` 会列出其他发行版和桌面组合的计划，目前只有上表的四个目标能完整构建。
 

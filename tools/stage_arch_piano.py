@@ -134,10 +134,8 @@ def stage(args):
         desktop = nyarch.stage(root, args.desktop_source, extension_bundle)
     clock = release.clock_epoch(root)
     release.native_boot_request(root, output)
-    # Shared static bootstrap is built from a signed Debian busybox input,
-    # separately from the Arch root. It switches into Arch /sbin/init.
-    boot = release.bootstrap(args.bootstrap_sysroot.resolve(), args.kernel.resolve(),
-                             output, kernel['kernel_release'], firmware_root=root)
+    # Fixed Debian tools build the shared bootstrap outside the Arch root.
+    boot = release.bootstrap(args.kernel.resolve(), output, kernel['kernel_release'])
     release.sanitize(root, output)
     # These rolling packages moved their dist-info license directory without
     # updating the /usr/share/licenses symlink. Preserve the actual licenses.
