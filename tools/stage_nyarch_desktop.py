@@ -26,7 +26,8 @@ def stage(root, source, extensions=None):
     for folder in ('themes', 'icons', 'backgrounds'):
         src = origin / folder
         dst = root / 'usr/share' / folder
-        shutil.copytree(src, dst, symlinks=True, dirs_exist_ok=True)
+        dst.mkdir(parents=True, exist_ok=True)
+        subprocess.run(['rsync', '-a', '--', str(src) + '/', str(dst) + '/'], check=True)
         for path in src.rglob('*'):
             if path.is_file() and not path.is_symlink():
                 inputs[str(path.relative_to(source))] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -62,8 +63,9 @@ def stage(root, source, extensions=None):
             metadata = json.loads((folder / 'metadata.json').read_text())
             if '51' not in metadata.get('shell-version', []):
                 raise ValueError('Extension has no GNOME 51 support: ' + folder.name)
-            shutil.copytree(folder, root / 'usr/share/gnome-shell/extensions' / folder.name,
-                            symlinks=True, dirs_exist_ok=True)
+            destination = root / 'usr/share/gnome-shell/extensions' / folder.name
+            destination.mkdir(parents=True, exist_ok=True)
+            subprocess.run(['rsync', '-a', '--', str(folder) + '/', str(destination) + '/'], check=True)
             if metadata['uuid'] == 'blur-my-shell@aunetx':
                 patch, = source_patches(ROOT / 'patches/blur-my-shell/75/series.json')
                 subprocess.run([
@@ -125,9 +127,10 @@ def stage(root, source, extensions=None):
     (root / 'etc/hostname').write_text('piano\n')
     (root / 'etc/gdm/custom.conf').write_text(
         '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=piano\n')
-    shutil.copytree(root / 'usr/share/themes/MaterialYou',
-                    root / 'home/piano/.local/share/themes/MaterialYou',
-                    symlinks=True, dirs_exist_ok=True)
+    source_theme = root / 'usr/share/themes/MaterialYou'
+    user_theme = root / 'home/piano/.local/share/themes/MaterialYou'
+    user_theme.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['rsync', '-a', '--', str(source_theme) + '/', str(user_theme) + '/'], check=True)
     with guest_environment(root) as guest:
         guest(['chown', '-R', 'piano:piano', '/home/piano/.local/share/themes'])
         guest(['locale-gen'])
