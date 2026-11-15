@@ -99,7 +99,12 @@ def stage(args):
     put(root, 'etc/chromium-flags.conf',
         (ROOT / 'linux/bsp/arch/chromium-flags.conf').read_text())
     with release.build_resolver(root), guest_environment(root) as guest:
-        guest(['pacman', '-S', '--needed', '--noconfirm', 'erofs-utils', 'device-mapper', 'rsync'])
+        required = ('erofs-utils', 'device-mapper', 'rsync')
+        missing = [name for name in required if subprocess.run(
+            ['chroot', root, 'pacman', '-Q', name], stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL).returncode]
+        if missing:
+            guest(['pacman', '-S', '--needed', '--noconfirm', *missing])
         # The upstream demo account occupies UID 1000 in bootstrap tarballs.
         if subprocess.run(['chroot', root, 'id', 'alarm'], capture_output=True).returncode == 0:
             guest(['userdel', '-r', 'alarm'])
