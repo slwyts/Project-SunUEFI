@@ -629,7 +629,10 @@ jobs:
             build/distros/release/packages.tsv
             build/distros/release/adapters/manifest.json
             build/distros/release/runtime/manifest.json
-            build/distros/release/fingerprint-packages/SOURCE.json
+            build/fingerprint-packages/SOURCE.json
+            build/mesa-pacman/${{ matrix.target }}/SOURCE.json
+            build/mesa-pacman/${{ matrix.target }}/VALIDATION.json
+            build/mesa-pacman/${{ matrix.target }}/builder-packages.tsv
             artifacts/android/manifest.json
             build/android-product-module/manifest.json
             artifacts/product/manifest.json
