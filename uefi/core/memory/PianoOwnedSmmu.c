@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Narrow adapter to the captured SM8750 HAL IOMMU ABI. Owns only UFS_MEM's
-// domain, root tables and mappings. Never resets/detaches all SMMU contexts.
+// Narrow adapter to the captured SM8750 HAL IOMMU ABI. Each instance owns one
+// domain, root table and stream. Never resets or detaches other SMMU contexts.
 #include "PianoOwnedSmmu.h"
 #include <Protocol/LoadedImage.h>
 #include <Library/UefiBootServicesTableLib.h>
@@ -26,6 +26,15 @@ STATIC EFI_GUID mGuid={0x54B6D3B4,0x5D33,0x4F91,{0x86,0,0x6C,0x41,0xD5,0xDE,0xB1
 STATIC PIANO_OWNED_SMMU mExperiment;
 STATIC PIANO_DMA_DEVICE mDevice;
 STATIC UINT32 mDiagnosticSequence;
+STATIC BOOLEAN PeerGeometry(CONST PIANO_SMMU_SNAPSHOT *A,CONST PIANO_SMMU_SNAPSHOT *B);
+STATIC BOOLEAN PeerDevice(CONST PIANO_SMMU_DEVICE *A,CONST PIANO_SMMU_DEVICE *B);
+STATIC BOOLEAN PeerIdentity(CONST PIANO_SMMU_SNAPSHOT *S,UINTN Index,UINT16 Sid,UINT64 Root);
+STATIC BOOLEAN GpiPeersUnchanged(CONST PIANO_OWNED_SMMU *C) {
+  if(!PeerGeometry(&C->Before,&C->After))return FALSE;
+  for(UINTN I=0;I<PIANO_SMMU_DEVICE_COUNT;++I)
+    if(I!=2 && !PeerDevice(&C->Before.Device[I],&C->After.Device[I]))return FALSE;
+  return TRUE;
+}
 STATIC UINT32 DiagnosticCrc(CONST CHAR8 *Body,UINTN Bytes) {
   UINT32 C=MAX_UINT32;
   for(UINTN I=0;I<Bytes;++I){C^=(UINT8)Body[I];for(UINTN J=0;J<8;++J)C=(C>>1)^((C&1)?0xEDB88320U:0);}
@@ -213,10 +222,12 @@ STATIC VOID ClearOwnedStickyFault(CONST PIANO_OWNED_SMMU *C) {
 }
 STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D,UINT8 Index) {
   if(C==NULL || D==NULL)return EFI_INVALID_PARAMETER;
-  UINT16 Sid=Index==0?0x60:0x40;
-  if(Index>1 || D->StreamId!=Sid)return EFI_UNSUPPORTED;
+  STATIC CONST UINT16 Sids[]={0x60,0x40,0xB6};
+  STATIC CONST CHAR8 *Resources[]={"UFS_MEM","USB0","QUP1"};
+  if(Index>=ARRAY_SIZE(Sids) || D->StreamId!=Sids[Index])return EFI_UNSUPPORTED;
+  UINT16 Sid=Sids[Index];
   ZeroMem(C,sizeof(*C));C->Fdt=Fdt;
-  C->DeviceIndex=Index;C->ResourceName=Index==0?"UFS_MEM":"USB0";
+  C->DeviceIndex=Index;C->ResourceName=Resources[Index];
   EFI_STATUS Status=PianoSmmuCapture(Fdt,"owned-before",&C->Before);
   if(EFI_ERROR(Status))return Status;
   RememberBaseline(C);BaselineReport(C,"baseline-open");
@@ -241,9 +252,10 @@ STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEV
   WriteBackDataCacheRange(C->TableMemory.Cpu,C->TableMemory.ReservedBytes);MemoryFence();
   Native=((CONFIGURE)Functions(C)[4])(C->Domain,&Config);
   DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DOMAIN_CONFIG code=%u root=%lx\n",Native,Config.Ttbr0));if(Native)return EFI_DEVICE_ERROR;
-  // Captured UsbConfigDxe uses USB0 and attach argument 0x03000000;
-  // detachment uses zero. Reject any resulting SID/context mismatch below.
-  Native=((ATTACH)Functions(C)[2])(C->Domain,C->ResourceName,Index==0?0:0x03000000,0);
+  // XBL NAMEDNODE_QUP1 maps input 0x03000001 to GPI1 SID 0xB6.
+  // USB uses input 0x03000000. Readback must match the requested stream.
+  UINT32 Input=Index==0?0:Index==1?0x03000000:0x03000001;
+  Native=((ATTACH)Functions(C)[2])(C->Domain,C->ResourceName,Input,0);
   // Treat even a partially failed attach conservatively: detach must succeed
   // before table memory may be released.
   C->Attached=TRUE;
@@ -255,30 +267,52 @@ STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEV
      (U->Ttbr0&0x0000FFFFFFFFF000ULL)!=C->TableMemory.Physical || U->Tcr!=Config.Tcr ||
      (U->Tcr2&0x0003800FU)!=Config.Tcr2 || U->Mair0!=Config.Mair0 || U->Sctlr!=Config.Sctlr)
     return EFI_COMPROMISED_DATA;
+  if(Index==2) {
+    if(!GpiPeersUnchanged(C) || !PeerIdentity(&C->After,2,Sid,C->TableMemory.Physical))
+      return EFI_COMPROMISED_DATA;
+    UINT32 Smr=C->Before.RawSmr[U->StreamIndex],S2cr=C->Before.RawS2cr[U->StreamIndex];
+    if(C->Before.ExtendedIds?(S2cr&BIT10):(Smr&BIT31))return EFI_COMPROMISED_DATA;
+  }
   for(UINTN I=0;I<C->Before.Groups;++I) {
     if(I==U->StreamIndex)continue;
     if(C->Before.RawSmr[I]!=C->After.RawSmr[I] || C->Before.RawS2cr[I]!=C->After.RawS2cr[I])return EFI_COMPROMISED_DATA;
   }
   // Log before clearing sticky faults, and clear only the bank this newly
-  // created UFS domain owns. TTBCR2 bits 5/6 read as RES1 on this hardware.
+  // created domain owns. TTBCR2 bits 5/6 read as RES1 on this hardware.
   ClearOwnedStickyFault(C);
   BOOLEAN Reserve=Index==0 || D->ReserveAcrossExit;
-  *D=(PIANO_DMA_DEVICE){.Name=Index==0?"ufs":"usb",.StreamId=Sid,.AddressBits=32,.CacheLine=64,.Context=C,.Map=Map,.Unmap=Unmap,.Fault=Fault,.ReserveAcrossExit=Reserve};
+  *D=(PIANO_DMA_DEVICE){.Name=Index==0?"ufs":Index==1?"usb":"gpi1",.StreamId=Sid,.AddressBits=32,.CacheLine=64,.Context=C,.Map=Map,.Unmap=Unmap,.Fault=Fault,.ReserveAcrossExit=Reserve};
   C->OwnedIdentitySaved=TRUE;C->OwnedTablePhysical=C->TableMemory.Physical;C->AttachedSnapshot=C->After;
   C->Verified=TRUE;DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_OWNED_READY sid=%x bank=%u root=%lx other_streams_unchanged=1\n",Sid,U->ContextBank,C->TableMemory.Physical));
   return EFI_SUCCESS;
 }
 EFI_STATUS PianoOwnedSmmuOpen(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D){return OpenResource(Fdt,C,D,0);}
 EFI_STATUS PianoOwnedSmmuOpenUsb(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D){return OpenResource(Fdt,C,D,1);}
+EFI_STATUS PianoOwnedSmmuOpenGpi(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D){return OpenResource(Fdt,C,D,2);}
 EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C) {
   if(C==NULL)return EFI_INVALID_PARAMETER;
   if(C->ExitRetained || C->TableMemory.Quarantined)return EFI_ACCESS_DENIED;
   for(UINTN I=0;I<ARRAY_SIZE(C->Mapping);++I)if(C->Mapping[I].Used)return EFI_ACCESS_DENIED;
   RememberBaseline(C);
   if(C->Attached) {
+    if(C->DeviceIndex==2 && !C->OwnedIdentitySaved) {
+      C->TableMemory.Quarantined=TRUE;
+      return CloseRejected(C,"gpi-attach-unverified",MAX_UINT16,EFI_NOT_READY);
+    }
+    if(C->DeviceIndex==2) {
+      EFI_STATUS Status=PianoSmmuCaptureQuiet(C->Fdt,&C->After);
+      if(Status!=EFI_SUCCESS || !GpiPeersUnchanged(C) ||
+         !PeerIdentity(&C->After,2,0xB6,C->OwnedTablePhysical) ||
+         !PeerDevice(&C->AttachedSnapshot.Device[2],&C->After.Device[2]) ||
+         CompareMem(C->AttachedSnapshot.RawSmr,C->After.RawSmr,sizeof(C->After.RawSmr)) ||
+         CompareMem(C->AttachedSnapshot.RawS2cr,C->After.RawS2cr,sizeof(C->After.RawS2cr))) {
+        C->TableMemory.Quarantined=TRUE;
+        return CloseRejected(C,"gpi-route-changed",MAX_UINT16,Status);
+      }
+    }
     C->CloseLedger.DetachAttempted=TRUE;
-    UINT32 Native=((ATTACH)Functions(C)[3])(C->Domain,C->ResourceName==NULL?"UFS_MEM":C->ResourceName,
-      C->DeviceIndex==1?0x03000000:0,0);
+    UINT32 Input=C->DeviceIndex==0?0:C->DeviceIndex==1?0x03000000:0x03000001;
+    UINT32 Native=((ATTACH)Functions(C)[3])(C->Domain,C->ResourceName==NULL?"UFS_MEM":C->ResourceName,Input,0);
     C->CloseLedger.DetachCode=Native;if(Native)C->CloseLedger.Uncertain=TRUE;
     DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DOMAIN_DETACH code=%u\n",Native));if(Native){PianoOwnedSmmuReport(C);return EFI_DEVICE_ERROR;}
     C->Attached=FALSE;C->Verified=FALSE;
@@ -300,10 +334,29 @@ EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C) {
       if(Retired!=NULL && I==Retired->PeerSlot)continue; // exact retired row already validated; baseline remains untouched
       if(C->Before.RawSmr[I]!=C->After.RawSmr[I] || C->Before.RawS2cr[I]!=C->After.RawS2cr[I])return CloseRejected(C,"other-raw",(UINT32)I,Status);
     }
+    if(C->DeviceIndex==2) {
+      // GPI stops before the older USB/UFS domains. Restore only the invalid
+      // route slot this instance claimed, so their original baselines hold.
+      if(!GpiPeersUnchanged(C) || OwnedSlot>=C->Before.Groups)
+        return CloseRejected(C,"gpi-slot",OwnedSlot,EFI_COMPROMISED_DATA);
+      UINT32 Smr=C->Before.RawSmr[OwnedSlot],S2cr=C->Before.RawS2cr[OwnedSlot];
+      if(C->Before.ExtendedIds?(S2cr&BIT10):(Smr&BIT31))
+        return CloseRejected(C,"gpi-baseline-valid",OwnedSlot,EFI_COMPROMISED_DATA);
+      UINT32 CurrentSmr=C->After.RawSmr[OwnedSlot],CurrentS2cr=C->After.RawS2cr[OwnedSlot];
+      if((CurrentSmr || CurrentS2cr) && (CurrentSmr!=Smr || CurrentS2cr!=S2cr))
+        return CloseRejected(C,"gpi-slot-reused",OwnedSlot,EFI_COMPROMISED_DATA);
+      MmioWrite32(C->Before.Base+0xC00+4*OwnedSlot,S2cr);
+      MmioWrite32(C->Before.Base+0x800+4*OwnedSlot,Smr);MemoryFence();
+      Status=PianoSmmuCapture(C->Fdt,"gpi-restored",&C->After);
+      if(Status!=EFI_SUCCESS || !C->After.Valid || C->After.Device[2].Present ||
+         CompareMem(C->Before.RawSmr,C->After.RawSmr,sizeof(C->Before.RawSmr)) ||
+         CompareMem(C->Before.RawS2cr,C->After.RawS2cr,sizeof(C->Before.RawS2cr)))
+        return CloseRejected(C,"gpi-route-restore",OwnedSlot,Status);
+    }
     if(Retired!=NULL)DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_PEER_RETIRE_VERIFIED peer_sid=40 peer_slot=%u original_smr=%08x original_s2cr=%08x retired_smr=0 retired_s2cr=0 baseline_unchanged=1\n",
       Retired->PeerSlot,Retired->BaselineSmr,Retired->BaselineS2cr));
     if(C->DeviceIndex==0)DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DETACH_VERIFIED ufs_stream_absent=1 other_streams_unchanged=1 tables_retained_until_verified=1\n"));
-    else DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DETACH_VERIFIED usb_stream_absent=1 other_streams_unchanged=1 tables_retained_until_verified=1\n"));
+    else DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DETACH_VERIFIED dev=%a stream_absent=1 other_streams_unchanged=1 tables_retained_until_verified=1\n",C->ResourceName));
     C->TableMemory.Quarantined=FALSE;
   }
   if(C->Domain) {

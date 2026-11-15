@@ -64,6 +64,7 @@ STATIC UINT32 RecordCrc(CONST VOID *Data,UINTN Bytes) {
 STATIC BOOLEAN QuietCommand(CONST CHAR8 *Command){
   if(Command==NULL)return FALSE;
   if(!AsciiStrCmp(Command,"BLOCKIO_READ"))return TRUE;
+  if(!AsciiStrnCmp(Command,"TOUCH_SPI_",10))return TRUE;
 #if defined(PIANO_USB_SERVICE) && PIANO_USB_SERVICE
   if(!AsciiStrCmp(Command,"USB_FASTBOOT_IN")||!AsciiStrCmp(Command,"USB_FASTBOOT_OUT")||
      !AsciiStrCmp(Command,"PARTITION_WRITE_FUA")||!AsciiStrCmp(Command,"PARTITION_SYNC"))return TRUE;

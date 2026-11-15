@@ -9,17 +9,31 @@
 static unsigned fsr_writes;static UINT32 fsr_clear_value;
 static unsigned sync_calls;static int sync_fail;
 static unsigned detaches,destroys,releases,exit_retains;static int retained_stream,changed_other;
+static int gpi_case;static unsigned route_writes;static PIANO_SMMU_SNAPSHOT gpi_capture,gpi_live;
+static EFI_STATUS gpi_quiet_status;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
 UINTN EFIAPI AsciiSPrint(CHAR8 *Buffer,UINTN Size,CONST CHAR8 *Format,...){abort();return 0;}
-UINT32 EFIAPI MmioRead32(UINTN Address){abort();return 0;}
-UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value){assert(Address==0x15080058);++fsr_writes;fsr_clear_value=Value;return Value;}
+UINT32 EFIAPI MmioRead32(UINTN Address){
+  if(gpi_case && Address>=0x15000800 && Address<=0x15000804)return gpi_capture.RawSmr[(Address-0x15000800)/4];
+  if(gpi_case && Address>=0x15000C00 && Address<=0x15000C04)return gpi_capture.RawS2cr[(Address-0x15000C00)/4];
+  abort();return 0;
+}
+UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value){
+  if(gpi_case) {
+    assert(Address==0x15000800 || Address==0x15000C00);++route_writes;
+    if(Address==0x15000800)gpi_capture.RawSmr[0]=Value;else gpi_capture.RawS2cr[0]=Value;
+    return Value;
+  }
+  assert(Address==0x15080058);++fsr_writes;fsr_clear_value=Value;return Value;
+}
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
+INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
 VOID *EFIAPI WriteBackDataCacheRange(VOID *P,UINTN N){return P;}
 VOID EFIAPI MemoryFence(VOID){ }
 static UINT32 sync(VOID *Domain){assert(Domain==(void *)123);++sync_calls;return sync_fail?1:0;}
-static UINT32 detach(VOID *Domain,CONST CHAR8 *Name,UINT32 Arid,UINT32 Flags){assert(Domain==(void *)123 && !strcmp(Name,"UFS_MEM"));++detaches;return 0;}
+static UINT32 detach(VOID *Domain,CONST CHAR8 *Name,UINT32 Arid,UINT32 Flags){assert(Domain==(void *)123 && !strcmp(Name,gpi_case?"QUP1":"UFS_MEM"));assert(Arid==(gpi_case?0x03000001:0) && !Flags);++detaches;return 0;}
 static UINT32 destroy(VOID *Domain){assert(Domain==(void *)123);++destroys;return 0;}
 EFI_STATUS PianoDmaFree(PIANO_DMA_BUFFER *B){assert(!B->Quarantined);++releases;B->Signature=0;return EFI_SUCCESS;}
 EFI_STATUS PianoDmaRetainForExit(PIANO_DMA_BUFFER *B){
@@ -27,8 +41,12 @@ EFI_STATUS PianoDmaRetainForExit(PIANO_DMA_BUFFER *B){
   ++exit_retains;B->ExitRetained=TRUE;return EFI_SUCCESS;
 }
 EFI_STATUS PianoSmmuCapture(CONST VOID *Fdt,CONST CHAR8 *Phase,PIANO_SMMU_SNAPSHOT *S){
+  if(gpi_case){*S=gpi_capture;return EFI_SUCCESS;}
   memset(S,0,sizeof(*S));S->Valid=TRUE;S->Groups=2;S->Device[0].Present=retained_stream;
   S->RawSmr[1]=changed_other?124:123;return EFI_SUCCESS;
+}
+EFI_STATUS PianoSmmuCaptureQuiet(CONST VOID *Fdt,PIANO_SMMU_SNAPSHOT *S){
+  assert(gpi_case);*S=gpi_live;return gpi_quiet_status;
 }
 int main(void){
   assert(OFFSET_OF(DOMAIN_CONFIG,Mair0)==0x18 && OFFSET_OF(DOMAIN_CONFIG,Sctlr)==0x20 &&
@@ -73,5 +91,41 @@ int main(void){
   c->DeviceIndex=0;c->After.Base=0x15000000;c->After.ContextBase=0x80000;c->After.PageShift=12;c->After.Device[0].ContextBank=0;
   c->After.Device[0].Fsr=0x400;ClearOwnedStickyFault(c);assert(!fsr_writes && c->After.Device[0].Fsr==0x400);
   c->After.Device[0].Fsr=0x402;ClearOwnedStickyFault(c);assert(fsr_writes==1 && fsr_clear_value==2 && c->After.Device[0].Fsr==0x402);
+  // GPI retirement restores its original invalid route before older domains
+  // close. A changed/reused route is not permission to overwrite that slot.
+  gpi_case=1;
+  for(UINT32 Case=0;Case<8;++Case) {
+    memset(c,0,sizeof(*c));memset(&gpi_capture,0,sizeof(gpi_capture));route_writes=0;
+    gpi_quiet_status=EFI_SUCCESS;
+    c->DeviceIndex=2;c->ResourceName="QUP1";c->Attached=c->Verified=c->OwnedIdentitySaved=TRUE;
+    c->Api=functions;c->Domain=(VOID *)123;c->TableMemory.Signature=1;
+    c->Before.Valid=TRUE;c->Before.Groups=2;c->Before.Base=0x15000000;c->Before.Window=0x100000;
+    c->Before.ContextBase=0x80000;c->Before.PageShift=12;c->Before.Banks=83;
+    c->Before.RawSmr[0]=0x5B6;c->Before.RawS2cr[0]=0x20001;c->Before.RawSmr[1]=0x80000060;
+    c->After=c->Before;
+    c->After.Device[2]=(PIANO_SMMU_DEVICE){.Sid=0xB6,.StreamIndex=0,.ContextBank=2,.Present=TRUE,
+      .Enabled=TRUE,.Smr=0x800000B6,.S2cr=2,.Sctlr=0x1E5,.Cba2r=1,.Tcr=0x802519,.Tcr2=0x38001,
+      .Mair0=0xFF,.Ttbr0=0x82000000};
+    c->After.RawSmr[0]=c->After.Device[2].Smr;c->After.RawS2cr[0]=c->After.Device[2].S2cr;
+    c->OwnedTablePhysical=0x82000000;c->AttachedSnapshot=gpi_live=c->After;gpi_capture=c->Before;
+    gpi_capture.RawSmr[0]=gpi_capture.RawS2cr[0]=0;
+    if(Case==1)gpi_capture.RawSmr[1]^=1;
+    if(Case==2)gpi_capture.RawSmr[0]=0x123;
+    if(Case==3)gpi_live.Device[2].Ttbr0^=4096;
+    if(Case==4)gpi_live.Device[0].Tcr^=1;
+    if(Case==5)gpi_live.Groups=3;
+    if(Case==6)gpi_quiet_status=EFI_DEVICE_ERROR;
+    if(Case==7)gpi_live.Device[2].Tcr^=1;
+    unsigned Freed=releases,Destroyed=destroys,Detached=detaches;
+    if(!Case) {
+      assert(PianoOwnedSmmuClose(c)==EFI_SUCCESS && route_writes==2);
+      assert(gpi_capture.RawSmr[0]==0x5B6 && gpi_capture.RawS2cr[0]==0x20001);
+      assert(releases==Freed+1 && destroys==Destroyed+1);
+    } else {
+      assert(PianoOwnedSmmuClose(c)==EFI_COMPROMISED_DATA && !route_writes);
+      assert(c->TableMemory.Quarantined && releases==Freed && destroys==Destroyed);
+      if(Case>=3)assert(detaches==Detached);
+    }
+  }
   free(memory);free(c);puts("Owned SMMU backend: nonidentity arena, alignment, per-direction PTEs, unmap and retained rollback failure passed.");return 0;
 }

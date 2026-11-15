@@ -616,11 +616,10 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_POGO_START status=%r owner=%u\n",PogoStart,PogoStarted));
   EFI_STATUS TouchStart=PianoTouchStart(Fdt);BOOLEAN TouchStarted=TouchStart==EFI_SUCCESS;
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_TOUCH_START status=%r owner=%u\n",TouchStart,TouchStarted));
-  // Extra owner bits are explicitly unstarted in this integration. Their
-  // hardware backend is still incomplete; the manifest must disclose that.
+  // Touch owns the GPI channels and closes their domain before USB and UFS.
   PIANO_PRODUCT_OWNERS_CONFIG Config={.Revision=1,.Fdt=Fdt,.ExpectedOwnerMask=PIANO_OWNER_ALL_MASK,
-    .StartedOwnerMask=(PIANO_OWNER_CORE_MASK&~(UsbStarted?0:PIANO_OWNER_USB))|(mDisplayStartup.Held?PIANO_OWNER_DISPLAY:0)|(PogoStarted?PIANO_OWNER_POGO:0)|(TouchStarted?PIANO_OWNER_TOUCH:0),
-    .AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|(PogoStarted?0:PIANO_OWNER_POGO)|(TouchStarted?0:PIANO_OWNER_TOUCH)|(UsbStarted?0:PIANO_OWNER_USB)|(mDisplayStartup.Held?0:PIANO_OWNER_DISPLAY),
+    .StartedOwnerMask=(PIANO_OWNER_CORE_MASK&~(UsbStarted?0:PIANO_OWNER_USB))|(mDisplayStartup.Held?PIANO_OWNER_DISPLAY:0)|(PogoStarted?PIANO_OWNER_POGO:0)|(TouchStarted?(PIANO_OWNER_TOUCH|PIANO_OWNER_GPI):0),
+    .AbsentOwnerMask=PIANO_OWNER_USB_HOST|(PogoStarted?0:PIANO_OWNER_POGO)|(TouchStarted?0:(PIANO_OWNER_TOUCH|PIANO_OWNER_GPI))|(UsbStarted?0:PIANO_OWNER_USB)|(mDisplayStartup.Held?0:PIANO_OWNER_DISPLAY),
     .StartupUsbProof=UsbStarted?NULL:&mStartupUsbProof,
     .Runtime=Runtime,.InputContext=NULL,.StopInput=StopInput,.PogoContext=NULL,.StopPogo=PianoPogoStop,.TouchContext=NULL,.StopTouch=PianoTouchStop,
     .DisplayContext=mDisplayStartup.LeaseContext,.StopDisplay=PianoProductDisplayStop,.DisplayStartup=mDisplayStartup};

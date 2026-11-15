@@ -20,6 +20,8 @@ BOOLEAN EFIAPI DebugPrintEnabled(VOID){return debug_enabled;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return debug_enabled;}
 VOID EFIAPI MemoryFence(VOID){ }
 VOID *EFIAPI ZeroMem(VOID *Buffer,UINTN Size){return memset(Buffer,0,Size);}
+INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN Size){return memcmp(A,B,Size);}
+UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value){(VOID)Address;(VOID)Value;abort();return 0;}
 
 // Faithful adapter for the limited ASCII/unsigned formats used by the actual
 // diagnostic. Formatting is mocked; CRC, sequence, record contents and source
@@ -64,6 +66,7 @@ EFI_STATUS PianoDmaFree(PIANO_DMA_BUFFER *Buffer){
 EFI_STATUS PianoSmmuCapture(CONST VOID *Fdt,CONST CHAR8 *Phase,PIANO_SMMU_SNAPSHOT *Snapshot){
   assert(!strcmp(Phase,"owned-detached"));*Snapshot=observed;return capture_status;
 }
+EFI_STATUS PianoSmmuCaptureQuiet(CONST VOID *Fdt,PIANO_SMMU_SNAPSHOT *Snapshot){(VOID)Fdt;(VOID)Snapshot;abort();return EFI_UNSUPPORTED;}
 static PIANO_OWNED_SMMU *initial(void){
   reads=detaches=destroys=frees=records=0;memset(lines,0,sizeof(lines));
   native_detach_status=native_destroy_status=0;capture_status=EFI_SUCCESS;debug_enabled=TRUE;
