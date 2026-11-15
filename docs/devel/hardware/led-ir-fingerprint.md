@@ -448,6 +448,9 @@ Gatekeeper 校验来取得新 HAT：`piano_goodix_enroll()` 经 `goodix_gatekeep
 `goodix_gatekeeper_verify()` 调用 `gatekeeper_command()`，后者在同步调用期间允许
 RPMB 认证读写。已有凭据可避免重复创建 SID，但校验和启动记录仍可能更新共享安全存储。
 HAT 绑定当前录入挑战，不落盘供下一次录入复用。
+[Android Gatekeeper 规范](https://source.android.com/docs/security/features/authentication/gatekeeper#request-throttling)
+要求验证前写入失败计数、成功后清除，所以不能把正常校验改成只读来绕过防重试保护。
+高位 UID 与独立模板目录可以隔离用户记录，但不改变共享存储这一事实。
 
 现有 `piano_goodix_verify()`、`piano_goodix_list()`、`piano_goodix_delete()` 使用
 `session_start(..., 0)`，只注册 FS／GPFS，不打开本项目的 RPMB 后端；其中认证复用
