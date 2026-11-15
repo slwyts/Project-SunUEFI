@@ -280,7 +280,9 @@ def build_package(output, sysroot, jobs, resume):
                 '  * Package the shared official Mesa development source without source patches.\n\n'
                 ' -- Project SunUEFI <sunuefi@users.noreply.github.com>  ' + formatdate(localtime=False) +
                 '\n\n' + changelog.read_text())
-        if (work / 'VERSION').read_text().strip() not in (data['source']['version'], package_version()):
+        generated_version = package_version().split('-', 1)[0].replace('~', '-')
+        if (work / 'VERSION').read_text().strip() not in (
+                data['source']['version'], package_version(), generated_version):
             raise ValueError('Existing Mesa source differs; preserve it and use a fresh output')
         for name in ('rules', 'control'):
             expected = original_recipe['debian/' + name].decode()
