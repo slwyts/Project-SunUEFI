@@ -106,7 +106,9 @@ def validate_resume(output, target, patches, version):
 
 def guest(root, args, **kwargs):
     return run(['chroot', root, '/usr/bin/env', 'DEBIAN_FRONTEND=noninteractive',
-                'LC_ALL=C.UTF-8', 'LANG=C.UTF-8', *args], **kwargs)
+                'LC_ALL=C.UTF-8', 'LANG=C.UTF-8',
+                'DEBFULLNAME=Project SunUEFI', 'DEBEMAIL=sunuefi@users.noreply.github.com',
+                *args], **kwargs)
 
 
 def verify_sid(root):
