@@ -3,7 +3,7 @@
   "version": "51.0",
   "versions": ["51.0", "51.1"],
   "targets": ["debian-gnome", "nyarch-gnome"],
-  "package_release": "1.1",
+  "package_release": "1.2",
   "source": {
     "url": "https://download.gnome.org/sources/gdm/51/gdm-51.0.tar.xz",
     "sha256": "2ce5acf5a438b8f6dc1d14fd777a911be5eeb2f7ab9a7c4600166205b15d6536"
@@ -25,6 +25,15 @@
         "status": "downstream",
         "url": "https://gitlab.archlinux.org/archlinux/packaging/packages/gdm/-/blob/51.0-1/0001-Xsession-Don-t-start-ssh-agent-by-default.patch",
         "drop_when": "The selected Arch GDM source no longer starts ssh-agent from Xsession; keep the Debian packaging path separate."
+      }
+    },
+    {
+      "file": "0003-session-worker-close-cancelled-reauthentication.patch",
+      "sha256": "9212f34a3d85461670f441b02de7bc9c5f8308894aba74f44e8e85f3ccb51ad7",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://gitlab.gnome.org/GNOME/gdm/-/blob/main/daemon/gdm-session-worker.c",
+        "drop_when": "The selected GDM closes cancelled and replaced reauthentication sessions without sending Reset back to the cancelling client; repeated lock and cancel operations leave no PAM workers or D-Bus connections behind."
       }
     }
   ]

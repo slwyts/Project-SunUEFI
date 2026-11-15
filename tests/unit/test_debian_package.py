@@ -46,11 +46,11 @@ class DebianPackageTests(unittest.TestCase):
 
     def test_local_revision_needs_declared_package_source_and_exact_version(self):
         official = {'Package': 'gdm3', 'Source': 'gdm3 (51.1-1)', 'Version': '51.1-1+b1'}
-        installed = {'version': '51.1-1+sunuefi1', 'source': 'gdm3',
-                     'source_version': '51.1-1+sunuefi1', 'architecture': 'arm64'}
+        installed = {'version': '51.1-1+sunuefi2', 'source': 'gdm3',
+                     'source_version': '51.1-1+sunuefi2', 'architecture': 'arm64'}
         folder, patches = debian_package.local_package_spec('gdm3', installed, official)
         self.assertEqual(folder, ROOT / 'build/gdm')
-        self.assertEqual(len(patches), 1)
+        self.assertEqual(len(patches), 2)
         for field, value in [('version', '51.1-1+sunuefi999'), ('source', 'unrelated'),
                              ('source_version', '51.0-1+sunuefi1'), ('architecture', 'amd64')]:
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'declared local revision'):

@@ -717,7 +717,7 @@ def execute(record):
             run([ROOT / 'build.sh', 'gdm', '--sysroot', rootfs, '--output', gdm_folder])
             gdm = gdm_builder.reusable(gdm_folder, rootfs)
             if gdm is None:
-                raise ValueError('GDM packages do not match the display readiness patch')
+                raise ValueError('GDM packages do not match the shared source patches')
         gsd_stage = target(rootfs, 'tmp/piano-gnome-packages')
         gsd_stage.mkdir(parents=True, exist_ok=True)
         for row in gsd['packages'].values():

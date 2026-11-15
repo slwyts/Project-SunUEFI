@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Debian or Arch GDM packages with native KMS readiness detection."""
+"""Build Debian or Arch GDM with KMS readiness and reauthentication cleanup."""
 import argparse
 import json
 import os
@@ -18,12 +18,12 @@ from desktop import debian_package, package_build
 
 SERIES = ROOT / 'patches/gdm/51.0/series.json'
 RUNTIME = {'gdm3': 'arm64', 'libgdm1': 'arm64', 'gir1.2-gdm-1.0': 'arm64'}
-REVISION = 1
+REVISION = 2
 
 
 def selection():
     # The Xsession/ssh-agent change belongs to Arch packaging, not Debian.
-    return [path for path in source_patches(SERIES) if path.name == '0001-local-display-wait-for-kms-connectors.patch']
+    return [path for path in source_patches(SERIES) if path.name != '0002-Xsession-no-ssh-agent.patch']
 
 
 def target_selection(rootfs):
@@ -43,8 +43,8 @@ def reusable(output, rootfs):
 def build(output, sysroot, jobs, builder_root=None, install_dependencies=True):
     target_selection(sysroot or builder_root)
     patches = selection()
-    if len(patches) != 1:
-        raise ValueError('The shared GDM series must contain its KMS readiness patch')
+    if len(patches) != 2:
+        raise ValueError('The shared GDM series must contain its KMS readiness and reauthentication patches')
     return debian_package.build(output, sysroot, jobs, 'gdm3', patches, RUNTIME, [Path(__file__), SERIES],
                                 revision=REVISION, builder_root=builder_root,
                                 install_dependencies=install_dependencies)
