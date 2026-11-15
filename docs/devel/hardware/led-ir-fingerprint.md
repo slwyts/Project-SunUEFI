@@ -5,7 +5,7 @@
 | 功能 | 原厂接口 | 当前 Linux 缺口 |
 | --- | --- | --- |
 | RGB 通道 | PM8550 SID1 上的 `qcom,pm8350c-pwm`，SPMI LPG，通道 1/2/3 为 red/green/blue | 标准驱动和产品DT已有；补齐SDAM/LPG模块加载后已出现三个标准LED接口。发光、可见位置和用途尚待确认。 |
-| 红外发射 | SE15 / SPI `0x89c000` / CS0，`ir-spi`，Android 原始波形字符设备 | 已接入标准 SPI/LIRC、原厂波形量化与 MOSI 空闲处理；光学输出未验证。 |
+| 红外发射 | SE15 / SPI `0x89c000` / CS0，`ir-spi`，Android 原始波形字符设备 | 标准 LIRC 发送、超长拒绝及拒绝后再次发送通过；载波、包络和距离没有测量。 |
 | 侧指纹 | Goodix，GPIO 控制与高通 QTEE 安全服务 | 已接入 fprintd、GNOME 锁屏与 PAM；依赖本地 UIO 驱动、libfprint 后端和静态客户端。 |
 
 ## RGB 通道
@@ -23,8 +23,9 @@ LPG 和 SDAM 通过设备树的硬件别名自动加载，不需要模块列表�
 Piano 的发送器通过标准 rc-core/LIRC 接口接收脉冲与间隔，设备为
 `/dev/lircN`。无需 Android HAL 或常驻服务，`ir-ctl` 由 v4l-utils 提供。
 发送时可用 `ir-ctl -d /dev/lirc0 --carrier=38000 --send=remote.txt`，文件使用
-ir-ctl 的 `pulse` / `space` 文本格式。接口注册和编译不代表光学输出已经测量；
-首次上机需要核对实际载波、包络以及发送后的熄灭状态。
+ir-ctl 的 `pulse` / `space` 文本格式。产品内核上 `ir-ctl` 的 NEC 发送返回成功，
+超过 1024 段的请求返回 `EINVAL`，一秒长脉冲返回 `EMSGSIZE`，随后短报文仍能
+发送成功。载波、包络、距离和发送后的光学熄灭状态还需要测量。
 
 原厂最终设备树将发送器放在
 `/soc/qcom,qupv3_2_geni_se@8c0000/spi@89c000/ir-spi@0`，即
@@ -68,12 +69,12 @@ GENI 驱动在消息开始时选择 default，在队列空闲且 SE 确认停止
 | 功能 | 旧 MinkIPC／quic-teec 路径 | 自包含 Linux TEE 路径 |
 | --- | --- | --- |
 | 加载签名程序、查询设备并关闭 | 实机完成 | 单次 `info` 成功，1.06 秒；`sensor_type=5`、`command_address_bits=64`、`device_info_ok=true` |
-| 初始化、模型加载和 Keymaster 绑定 | 实机完成 | 源码保留，未作实机复测 |
+| 初始化、模型加载和 Keymaster 绑定 | 实机完成 | 产品内核及匹配固件上初始化成功，sensor 5、chip 49，三份模型加载完成 |
 | Gatekeeper 凭据、HAT 和授权录入 | 实机完成 | 源码保留，未取新令牌、未录入、未调用 RPMB 后端 |
 | 密封模板持久化、重开后匹配与不匹配 | 实机完成 | 源码保留，未采样或匹配 |
 
-新客户端的 `info` 运行在设备原有的旧内核上，使用的 TA 与当前 `vendor` 固件清单摘要不同。
-它证明对象传输、设备查询及关闭成功，不作为新产品镜像、固件、模型或完整认证的验证结果。
+新产品内核及匹配固件已完成 `info`、`initialize` 和 fprintd 设备枚举；
+新传输路径的录入、模板重开及匹配／不匹配仍缺实机复测，不能沿用旧客户端的完整认证结果。
 
 HyperOS 4 的 `mfp-daemon` 使用 Goodix HAL、`/dev/xiaomi-fp`
 和高通 QTEE。`libQSEEComAPI.so` 通过 `libminkdescriptor.so` 打开

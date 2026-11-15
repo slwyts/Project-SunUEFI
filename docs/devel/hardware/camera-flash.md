@@ -1,107 +1,57 @@
 # Piano 摄像头闪光灯
 
-2026-10-08：实机只读 regmap `0-01` 的两寄存器读回确认 **SPMI SID 1、基址
-0xee00，type=0x18、subtype=0x07**。标准驱动已有该四通道 IP 布局，两路接线
-1/2可直接描述。默认release已接入标准驱动配置、DT overlay、cleanup补丁和
-modules-load策略。新内核 `7.2.9-piano-gnome-g45bba6e91e6c` 已完整构建，
-随匹配模块和默认设备树部署，并通过普通 BOOT 重启进入 Linux。
-两路 `:flash-0` / `:flash-1` 标准 LED class 已注册；读回每路 flash
-上限400000µA、timeout上限300000µs。第一路以32/255的低档torch请求运行1秒，
-写入成功、fault无标志，随后brightness读回0。未观察发光或测光，
-也未证明相机应用曝光同步。
+两路闪光灯通过标准 LED class 和 V4L2 flash 控件接入，后摄 media graph
+已建立对应的 ancillary links。手电筒请求能到达 PMIC，关闭后亮度与通道使能
+恢复零，没有故障标志；实际发光和拍照曝光同步还没有确认。普通相机应用
+还不能自动使用拍照闪光。
 
 ## 身份、接线与限值
 
-原厂最终 Android DTB 与参考 `vendor/piano-linux/board.dtb` 一致：父节点为
-`/soc/qcom,spmi@c42d000/qcom,pm8550@1`，`reg=<1 0>`；旧 flash 位于
-`qcom,flash_led@ee00`。原厂 compatible `qcom,qti-pm8350c-flash-led` 是 IP 名称，
-不用于推测 SID。原厂 `qcom,id` 0/1 对应标准一基 `led-sources=<1>/<2>`，
-保持两支独立 LED，不合并为并联通道。
+原厂最终 Android 设备树将控制器放在 PM8550 的 SPMI SID 1、基址 `0xee00`。
+实机只读寄存器返回 `type=0x18`、`subtype=0x07`，对应标准驱动支持的四通道 IP。
+两路接线使用通道 1、2；原厂的 `qcom,id=0/1` 对应标准一基
+`led-sources=<1>/<2>`，不合并为并联通道。
 
-每路 flash 限值为 **400mA、300ms**；原厂 torch 允许短时400mA，5000ms后降至
-100mA。主线没有该时间曲线，因此连续 torch 上限采用 **100mA/路**。
-限值字段依据 [MiCode 原厂实现](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/45fb9bd6ae5ba2942fc1d53e4b6b46ef76992f71/drivers/leds/leds-qti-flash.c#L1710)。
+每路 flash 上限为 400 mA、300 ms。原厂 torch 允许短时 400 mA，5000 ms 后
+降至 100 mA；标准驱动没有该时间曲线，因此持续 torch 上限采用每路 100 mA。
+限值依据为 [MiCode 原厂实现](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/45fb9bd6ae5ba2942fc1d53e4b6b46ef76992f71/drivers/leds/leds-qti-flash.c#L1710)。
 
-只读身份记录在本地
-`内部记录目录
-共读取两寄存器。原厂 live DTB SHA256 为
-`8056ae623549f4dbefbf3c2615c134fa670cafa83387235575ab573896636fcc`，参考板 DTB 为
-`36e6adef75306d7727f79e97d0406376baa43e1b454e29d1c40bc0fc36d47db3`。
-这确认身份和描述依据，不证明亮度、供电、thermal/fault 或曝光同步已经正常。
+## 内核与设备树
 
-## 默认 release 接线
+共享的 [flash overlay](../../../linux/dts/piano-camera-flash.dtso) 禁用原厂
+flash 节点和 trigger 配置，在原位置创建标准 `led-controller@ee00`，只描述
+已接线的两路 LED。S5KJN1 的 `flash-leds` 引用这两个子节点，由
+`v4l2_async_register_subdev_sensor()` 建立关联，不增加用户空间设备或守护进程。
+绑定见 [qcom,spmi-flash-led.yaml](https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/leds/qcom,spmi-flash-led.yaml)。
 
-[piano-camera-flash.dtso](../../../linux/dts/piano-camera-flash.dtso) 禁用旧 vendor
-flash 和 `/soc/qcom,camera-flash0` trigger consumer，创建只有两个标准子节点的
-`led-controller@ee00` 并设为 `okay`，保持100mA torch、400mA/300ms flash。
-旧 vendor 多子节点结构不能直接换 compatible；标准绑定见
-[qcom,spmi-flash-led.yaml](https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/leds/qcom,spmi-flash-led.yaml)。
-没有加入电源/GPIO猜测或手工寄存器初始化。
+[内核配置](../../../linux/configs/piano-flash.config) 启用 `LEDS_CLASS_FLASH`、
+`LEDS_QCOM_FLASH`、`V4L2_FLASH_LED_CLASS` 和 `VIDEO_V4L2_SUBDEV_API`。
+驱动提供 torch brightness、flash brightness、timeout、strobe 和 fault。
+V4L2 wrapper 提供对应的标准控件；节点编号随探测顺序变化，应通过 media graph
+和设备名定位，不固定 `/dev/v4l-subdevN`。
 
-[piano-flash.config](../../../linux/configs/piano-flash.config) 是现有完整内核上的小
-fragment，不创建第二个 profile：
+[平台补丁](../../../patches/linux/7.3/0001-platform.patch)修正释放循环的索引，
+并让合法 5 mA 电流档位经过 LED 亮度转换后保持一致：转换到 0..255 编码时
+向上取整，硬件 setter 继续向下取整并保留原电流上限、温控与故障处理。
+25 mA 请求对应亮度 64、ITARGET 4，零亮度仍表示关闭。
 
-```text
-CONFIG_LEDS_CLASS_FLASH=m
-CONFIG_LEDS_QCOM_FLASH=m
-CONFIG_V4L2_FLASH_LED_CLASS=m
-CONFIG_VIDEO_V4L2_SUBDEV_API=y
-```
+## 设备检查范围
 
-现有 LED、SPMI PMIC、VIDEO_DEV 依赖保留；V4L2_FLASH_LED_CLASS 按 Kconfig 选择
-MEDIA_CONTROLLER、V4L2_ASYNC 和 subdev API。`build_piano_full_kernel.py`默认合并
-这四项及既有UHID，并检查四项最终值和PUBLIC其余选项。配置检查通过，未修改
-之前已完成的7fff内核O目录或artifact。
+产品内核上两路 LED 的 flash 上限均读回 400000 µA，timeout 上限为
+300000 µs。分别请求 25 mA torch 时，PMIC 的 module-enable 和 channel-enable
+正确置位，ITARGET 为 4，关闭后使能归零，三项状态寄存器没有故障。
 
-现有根系统会阻止SoC `of:*`自动modprobe，默认完整stager现复制同一
-`etc/modules-load.d/piano-flash.conf`，标准加载`leds_qcom_flash`；camera可选BSP
-也通过manifest包含这份策略。不新增daemon或profile，不把DT `okay`当作已绑定。
-`build.sh package`与release的additional_dtb_overlays均保留DMIC并加入flash。
+通过标准 LED 接口分别请求亮度 64、128 后也能读回请求值并关闭。固定电脑
+摄像头曝光进行前后对照，没有得到明确的场景照明变化；后摄在冻结曝光和
+白平衡的 150 帧采集中，平均亮度保持约 20，没有随这两次开灯请求明显变化。
+灯的朝向、遮挡和场景未受控，这些结果还不足以判断实际发光或照明强度。
 
-统一的新源码准备已经带上既有
-[平台补丁中的 cleanup 索引修正](../../../patches/linux/7.3/0001-platform.patch)。
-它修正两个释放循环的数组越界，先检查成功计数、递减索引再释放，包括 NULL。
-之前该补丁已做单AArch64对象编译。以旧7ffftree加补丁的临时index算出
-新tree `b8f07b7e9f9efb0cece6dc465f7052fc5d7079a8`，标准准备器复现同一tree，
-新commit为`45bba6e91e6c1f04b1d306024a7ef3780c0380dc`；旧snapshot保持不变。
-新O配置SHA为`8baf147f407fdb21659ad012f0535f285fba5c382da719f0f03aa2e904729aa1`。
+## 拍照与失败处理
 
-标准 LED class 提供 torch brightness、flash brightness/timeout/strobe/fault；
-V4L2 wrapper 注册异步 flash subdevice。相机侧 fwnode/notifier 关联仍需验证，不能
-仅凭注册宣布 `/dev/v4l-subdev*` 或曝光同步可用，也不恢复 vendor trigger daemon。
-接口语义见 [Linux Flash LED 文档](https://docs.kernel.org/leds/leds-class-flash.html)。
+现有相机服务使用后摄的 ancillary links 查找两路 flash。强制闪光拍照会冻结
+曝光、白平衡和对焦，等待冻结后的真实传感器帧，再请求有硬件超时的闪光。
+只有完整曝光区间落在保守亮灯窗口内的帧才返回；取消、超时、格式切换或
+传感器错误都关闭闪光、恢复控制状态，不交付其他帧。
 
-测试 `/sys/class/video4linux/*/name` 尚无flash subdevice；LED class注册不能
-代替media关联。部署和低档请求记录位于本机
-`内部记录目录 与
-`flash-torch-low-current.txt`。原UFS系统分区和BOOT载荷未在这轮部署中重写；
-更新的是项目ESP中的Linux boot文件及根系统模块/软件包。
-
-下一默认 overlay 已给 S5KJN1 节点增加标准 `flash-leds`，引用两路 LED
-子节点。该 sensor 使用 `v4l2_async_register_subdev_sensor()`，其现有 notifier
-读取这项属性；flash wrapper 已按 LED fwnode 注册，因此不另加用户空间设备。
-组合 DTB 中两个 phandle 已分别解析到 led-0/led-1。关联已随a8版启动文件
-部署并通过普通BOOT重启，出现 `/dev/v4l-subdev34` 的 `:flash-0` 与
-`/dev/v4l-subdev35` 的 `:flash-1`。标准V4L2接口列出LED mode、software/hardware
-strobe、timeout、flash/torch intensity和fault；当前off、无fault。这确认了
-subdevice与控制接口，不证明拍照曝光同步或桌面应用已经接好闪光灯。
-
-同一a8版本又通过标准V4L2控件分别请求两路25mA torch，并只读PMIC
-regmap的11个明确寄存器。开启第一路时，module-enable `ee46=80`、channel-enable
-`ee4e=01`、5mA resolution `ee49=01`、第一路current-target `ee42=03`；
-开启第二路时对应 `ee4e=02`、`ee49=02`、`ee43=03`。5mA步进的target=3
-编程电流为20mA：现有强度与0..255亮度的两次向下取整，使25mA请求降到24mA，
-随后PMIC再向下取整。不能将请求值当作实测或编程电流。两次三个状态寄存器
-`ee06/ee07/ee09`均为0；关闭后module/channel-enable均恢复0。
-这确认控件已到达PMIC输出配置，没有直接写寄存器。光学发光与曝光同步
-仍未证明：之前后摄统计没有明确亮度变化，场景距离和遮挡也未受控，不能据此
-认定灯不亮。原始读回位于本机 `内部记录目录
-
-上述取整修正位于[平台补丁](../../../patches/linux/7.3/0001-platform.patch)：仅在电流转0..255 LED编码时使用ceil，保留setter的floor、上限和温控路径；反向控件转换按相同每通道5mA档返回总电流，避免把亮度64报告成25098µA。25mA因此对应亮度64、setter25mA、ITARGET4；nearest并不足够，15mA仍会经亮度38降为10mA。1..4通道在500mA/通道上限下，ceil编码误差小于一个硬件5mA档，合法V4L2步进得以保留。正值最低档来自setter的ITARGET0，brightness0仍为关闭。
-
-之前主机已对参考board.dtb组合一次overlay，检查标准节点okay、旧vendor/trigger
-disabled及两路通道、电流和时限，结果在`build/flash-overlay-check/`。另确认
-完整stager复制modules-load策略、可选camera BSP payload含相同文件；没有运行
-服务、触碰设备或生成新的测试镜像。下一次统一build使用这条默认接线。
-
-bde3实机分别请求两路25mA torch，PMIC target由之前3变为4，5mA步进对应25mA；module/channel-enable分别正确置位，关闭后回到0，三项状态均无fault。该结果确认取整修正到达硬件；发光和曝光同步仍未验证，记录在 `bde3-flash-current.json`。
+这一流程仍属于现有服务，未接入 libcamera，也没有完成光学曝光同步测量。
+控件、SOF／EOF 帧关联和现有命令见[相机格式与控件](camera-controls.md#闪光灯)。
