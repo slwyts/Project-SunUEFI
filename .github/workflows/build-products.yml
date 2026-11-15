@@ -356,9 +356,12 @@ jobs:
           path: |
             build/pipewire/runtime
             build/pipewire/SOURCE.json
-          key: desktop-common-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'patches/pipewire/**', 'tools/desktop/debian_package.py', 'tools/desktop/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'containers/Dockerfile', 'config/build-container.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+            build/libwacom/runtime
+            build/libwacom/SOURCE.json
+            build/libwacom/SHA256SUMS
+          key: desktop-common-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'patches/pipewire/**', 'patches/libwacom/**', 'tools/desktop/debian_package.py', 'tools/desktop/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'containers/Dockerfile', 'config/build-container.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            desktop-common-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'patches/pipewire/**', 'tools/desktop/debian_package.py', 'tools/desktop/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'containers/Dockerfile', 'config/build-container.json') }}-
+            desktop-common-sid-arm64-${{ hashFiles('config/release.json', 'linux/rootfs/debian.json', 'patches/pipewire/**', 'patches/libwacom/**', 'tools/desktop/debian_package.py', 'tools/desktop/**', 'tools/build_gsd_packages.py', 'tools/build_mutter_packages.py', 'containers/Dockerfile', 'config/build-container.json') }}-
       - id: fingerprint-cache
         name: Reuse completed Debian fingerprint packages
         if: startsWith(matrix.target, 'debian-')
@@ -483,6 +486,9 @@ jobs:
           path: |
             build/pipewire/runtime
             build/pipewire/SOURCE.json
+            build/libwacom/runtime
+            build/libwacom/SOURCE.json
+            build/libwacom/SHA256SUMS
       - name: Save the validated GNOME generation once
         if: matrix.target == 'debian-gnome'
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -509,7 +515,7 @@ jobs:
           if [ -f build/logs/ci-build.log ]; then
             tail -n 160 build/logs/ci-build.log
           fi
-          for log in build/distros/release.build.log build/mesa/build.log build/ffmpeg/build.log build/sensors/build.log build/gsd/build.log build/pipewire/build.log build/mutter/build.log build/gdm/build.log; do
+          for log in build/distros/release.build.log build/mesa/build.log build/ffmpeg/build.log build/sensors/build.log build/gsd/build.log build/pipewire/build.log build/libwacom/build.log build/mutter/build.log build/gdm/build.log; do
             if [ -f "$log" ]; then
               echo "::group::$log"
               tail -n 100 "$log"
@@ -617,6 +623,12 @@ jobs:
             build/distros/nyarch-gnome-piano/packages/gdm/build.log
             build/pipewire/SOURCE.json
             build/pipewire/build.log
+            build/libwacom/SOURCE.json
+            build/libwacom/build.log
+            build/distros/nyarch-gnome-piano/packages/libwacom/SOURCE.json
+            build/distros/nyarch-gnome-piano/packages/libwacom/build.log
+            build/distros/steamos-piano/packages/libwacom/SOURCE.json
+            build/distros/steamos-piano/packages/libwacom/build.log
             build/distros/nyarch-gnome-piano/packages/pipewire/SOURCE.json
             build/distros/nyarch-gnome-piano/packages/pipewire/build.log
             build/distros/steamos-piano/packages/pipewire/SOURCE.json

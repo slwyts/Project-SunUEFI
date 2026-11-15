@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "version": "2.20.0",
+  "versions": ["2.20.0"],
+  "installed_versions": ["2.18.0", "2.20.0"],
+  "targets": ["debian-gnome", "debian-kde", "nyarch-gnome", "steamos"],
+  "source": {
+    "url": "https://deb.debian.org/debian/pool/main/libw/libwacom/libwacom_2.20.0.orig.tar.gz",
+    "sha256": "aad76712118a522133e90ad701b92a7c30b0334c459b8174777e4b31aab00ba7"
+  },
+  "patches": [
+    {
+      "file": "0001-spi-digitizers-and-xiaomi-pad.patch",
+      "sha256": "63017df69dc0454782b13c67d9b7c2ca02aabd912b02485321c64807e441e54b",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/linuxwacom/libwacom",
+        "drop_when": "The selected libwacom supports real SPI input IDs and includes the Xiaomi Pad 8 Pro digitizer and a pressure/tilt stylus without an inverted eraser. Verify discovery from the physical evdev path and native GNOME/KDE settings before removing the shared patch."
+      }
+    }
+  ]
+}

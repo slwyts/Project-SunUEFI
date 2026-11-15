@@ -141,6 +141,8 @@ def build(args):
         build_arch_package.install_cached(root, ffmpeg)
     pipewire = output / 'packages/pipewire'
     run(ROOT / 'build.sh', 'pipewire', '--rootfs', root, '--output', pipewire)
+    libwacom = output / 'packages/libwacom'
+    run(ROOT / 'build.sh', 'libwacom', '--rootfs', root, '--output', libwacom)
     gdm = output / 'packages/gdm'
     run(ROOT / 'build.sh', 'gdm', '--rootfs', root, '--output', gdm)
 
@@ -164,6 +166,7 @@ def build(args):
                   gnome_power=json.loads(gsd_manifest.read_text()),
                   ffmpeg=json.loads((ffmpeg / 'SOURCE.json').read_text()),
                   pipewire=json.loads((pipewire / 'SOURCE.json').read_text()),
+                  libwacom=json.loads((libwacom / 'SOURCE.json').read_text()),
                   gdm=json.loads((gdm / 'SOURCE.json').read_text()))
     manifest.write_text(json.dumps(record, indent=2) + '\n')
 

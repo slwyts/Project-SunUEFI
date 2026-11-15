@@ -1,0 +1,349 @@
+From: Project SunUEFI <sunuefi@users.noreply.github.com>
+Subject: [PATCH] Support SPI digitizers and describe Xiaomi Pad 8 Pro pens
+
+Keep SPI input identity intact, describe pressure and tilt without an
+inverted eraser, and let standard desktop tablet settings find the device.
+
+diff --git a/data/wacom.example b/data/wacom.example
+index d2287c9..e4f090f 100644
+--- a/data/wacom.example
++++ b/data/wacom.example
+@@ -59,7 +59,7 @@ Name=Wacom Intuos4 6x9
+ # Leave blank where the device name is sufficient to identify.
+ ModelName=
+ 
+-# DeviceMatch includes the bus (usb, bluetooth, serial), the vendor ID and
++# DeviceMatch includes the bus (usb, bluetooth, serial, i2c, spi), the vendor ID and
+ # product ID and optionally the device name. This is the connector used,
+ # not whatever name the kernel might give it, so some "Wacom Serial" builtin
+ # devices will be USB as that's how they're connected.
+@@ -127,6 +127,8 @@ Layout=wacom-bamboo-16fg-m-pt.svg
+ # Styli=@generic-with-eraser
+ # If the stylus does not have an eraser:
+ # Styli=@generic-no-eraser
++# With tilt and no eraser:
++# Styli=@generic-no-eraser-tilt
+ # If the stylus has 3 buttons and an eraser (e.g. Huion PW600):
+ # Styli=@generic-3btn-with-eraser
+ #
+diff --git a/data/wacom.stylus b/data/wacom.stylus
+index 56725d8..93d1a7f 100644
+--- a/data/wacom.stylus
++++ b/data/wacom.stylus
+@@ -26,6 +26,14 @@ Axes=Pressure;
+ Type=General
+ IsGenericStylus=true
+ 
++[0x0:0xffffa]
++Name=General Pen with Tilt and no Eraser
++Group=generic-no-eraser-tilt
++Buttons=2
++Axes=Tilt;Pressure;
++Type=General
++IsGenericStylus=true
++
+ # Used by e.g. Huion devices
+ [0x0:0xffffb]
+ Name=General 3 Button Pen
+diff --git a/data/xiaomi-pad-8-pro.tablet b/data/xiaomi-pad-8-pro.tablet
+new file mode 100644
+index 0000000..4f0898b
+--- /dev/null
++++ b/data/xiaomi-pad-8-pro.tablet
+@@ -0,0 +1,16 @@
++# Novatek NT36532E SPI digitizer, as reported by the Linux input driver.
++# Both pens share the digitizer's IDs; the driver reports the connected model.
++
++[Device]
++Name=Xiaomi Pad 8 Pro
++ModelName=piano
++DeviceMatch=spi|0603|6532|Novatek Focus Pen;spi|0603|6532|Novatek Focus Pen Pro;
++Class=ISDV4
++Width=239
++Height=163
++IntegratedIn=Display;System
++Styli=@generic-no-eraser-tilt;
++
++[Features]
++Stylus=true
++Touch=false
+diff --git a/libwacom/libwacom-database.c b/libwacom/libwacom-database.c
+index 11dda45..ede43c0 100644
+--- a/libwacom/libwacom-database.c
++++ b/libwacom/libwacom-database.c
+@@ -175,6 +175,8 @@ bus_from_str(const char *str)
+ 		return WBUSTYPE_BLUETOOTH;
+ 	if (g_str_equal(str, "i2c"))
+ 		return WBUSTYPE_I2C;
++	if (g_str_equal(str, "spi"))
++		return WBUSTYPE_SPI;
+ 	return WBUSTYPE_UNKNOWN;
+ }
+ 
+@@ -193,6 +195,8 @@ bus_to_str(WacomBusType bus)
+ 		return "bluetooth";
+ 	case WBUSTYPE_I2C:
+ 		return "i2c";
++	case WBUSTYPE_SPI:
++		return "spi";
+ 	}
+ 	g_assert_not_reached();
+ }
+diff --git a/libwacom/libwacom.c b/libwacom/libwacom.c
+index 2087795..0e680cc 100644
+--- a/libwacom/libwacom.c
++++ b/libwacom/libwacom.c
+@@ -165,6 +165,10 @@ get_bus_vid_pid(GUdevDevice *device,
+ 		*bus = WBUSTYPE_I2C;
+ 		retval = TRUE;
+ 		break;
++	case 28:
++		*bus = WBUSTYPE_SPI;
++		retval = TRUE;
++		break;
+ 	}
+ 
+ out:
+@@ -760,6 +764,7 @@ libwacom_new_from_builder(const WacomDeviceDatabase *db,
+ 		WacomBusType all_busses[] = {
+ 			WBUSTYPE_USB,
+ 			WBUSTYPE_I2C,
++			WBUSTYPE_SPI,
+ 			WBUSTYPE_BLUETOOTH,
+ 			WBUSTYPE_UNKNOWN,
+ 		};
+@@ -1144,6 +1149,9 @@ print_match(int fd,
+ 	case WBUSTYPE_I2C:
+ 		bus_name = "i2c";
+ 		break;
++	case WBUSTYPE_SPI:
++		bus_name = "spi";
++		break;
+ 	case WBUSTYPE_UNKNOWN:
+ 		bus_name = "unknown";
+ 		break;
+@@ -1768,6 +1776,7 @@ libwacom_stylus_get_for_id(const WacomDeviceDatabase *db,
+ 	case GENERIC_PEN_NO_ERASER:
+ 	case GENERIC_PEN_3BTN_WITH_ERASER:
+ 	case GENERIC_ERASER_3BTN:
++	case GENERIC_PEN_NO_ERASER_TILT:
+ 		id.vid = 0;
+ 		break;
+ 	}
+diff --git a/libwacom/libwacom.h b/libwacom/libwacom.h
+index 06777da..252688a 100644
+--- a/libwacom/libwacom.h
++++ b/libwacom/libwacom.h
+@@ -153,6 +153,7 @@ typedef enum {
+ 	WBUSTYPE_SERIAL,    /**< Serial tablet */
+ 	WBUSTYPE_BLUETOOTH, /**< Bluetooth tablet */
+ 	WBUSTYPE_I2C,       /**< I2C tablet */
++	WBUSTYPE_SPI,       /**< SPI tablet */
+ } WacomBusType;
+ 
+ /**
+diff --git a/libwacom/libwacomint.h b/libwacom/libwacomint.h
+index 402906c..aa90622 100644
+--- a/libwacom/libwacomint.h
++++ b/libwacom/libwacomint.h
+@@ -49,6 +49,7 @@ enum GenericStylus {
+ 	GENERIC_PEN_NO_ERASER = 0xffffd,
+ 	GENERIC_ERASER_3BTN = 0xffffc,
+ 	GENERIC_PEN_3BTN_WITH_ERASER = 0xffffb,
++	GENERIC_PEN_NO_ERASER_TILT = 0xffffa,
+ };
+ 
+ enum WacomFeature {
+diff --git a/test/__init__.py b/test/__init__.py
+index 10b36a8..5d97e16 100644
+--- a/test/__init__.py
++++ b/test/__init__.py
+@@ -338,6 +338,7 @@ class LibWacom:
+         _Enum(name="WBUSTYPE_SERIAL", value=2),
+         _Enum(name="WBUSTYPE_BLUETOOTH", value=3),
+         _Enum(name="WBUSTYPE_I2C", value=4),
++        _Enum(name="WBUSTYPE_SPI", value=5),
+         _Enum(name="WACOM_DEVICE_INTEGRATED_NONE", value=0),
+         _Enum(name="WACOM_DEVICE_INTEGRATED_DISPLAY", value=1),
+         _Enum(name="WACOM_DEVICE_INTEGRATED_SYSTEM", value=2),
+@@ -417,6 +418,7 @@ class WacomBustype(enum.IntEnum):
+     USB = 0x1
+     I2C = 0x2
+     BLUETOOTH = 0x3
++    SPI = 0x5
+ 
+ 
+ class WacomMatch:
+@@ -586,6 +588,7 @@ class WacomStylus:
+         PEN_NO_ERASER = 0xFFFFD
+         ERASER_3BTN = 0xFFFFC
+         PEN_3BTN_WITH_ERASER = 0xFFFFB
++        PEN_NO_ERASER_TILT = 0xFFFFA
+ 
+     def __init__(self, stylus):
+         self.stylus = stylus
+diff --git a/test/test-stylus-validity.c b/test/test-stylus-validity.c
+index 308e90d..bec68c1 100644
+--- a/test/test-stylus-validity.c
++++ b/test/test-stylus-validity.c
+@@ -388,6 +388,12 @@ setup_emr_tests(const WacomStylus *stylus)
+ 		add_test(stylus, test_distance);
+ 		add_test(stylus, test_tilt);
+ 		break;
++	case 0xffffa: /* GENERIC_PEN_NO_ERASER_TILT */
++		add_test(stylus, test_generic);
++		add_test(stylus, test_pressure);
++		add_test(stylus, test_no_distance);
++		add_test(stylus, test_tilt);
++		break;
+ 	case 0x006:
+ 	case 0x096:
+ 	case 0x097:
+diff --git a/test/test-tablet-validity.c b/test/test-tablet-validity.c
+index bf4609b..7714e78 100644
+--- a/test/test-tablet-validity.c
++++ b/test/test-tablet-validity.c
+@@ -180,6 +180,7 @@ assert_vidpid(WacomBusType bus,
+ 		break;
+ 	case WBUSTYPE_BLUETOOTH:
+ 	case WBUSTYPE_I2C:
++	case WBUSTYPE_SPI:
+ 		g_assert_cmpint(vid, >, 0);
+ 		g_assert_cmpint(pid, >, 0);
+ 		break;
+diff --git a/test/test_data_files.py b/test/test_data_files.py
+index 30d426f..a64b9df 100755
+--- a/test/test_data_files.py
++++ b/test/test_data_files.py
+@@ -46,6 +46,7 @@ def test_device_match(tabletfile):
+             "bluetooth",
+             "i2c",
+             "serial",
++            "spi",
+         ], f"{tabletfile}: unknown bus type"
+         assert re.match("[0-9a-f]{4}", vid), (
+             f"{tabletfile}: {vid} must be lowercase hex"
+diff --git a/test/test_libwacom.py b/test/test_libwacom.py
+index fd49ec1..272813d 100644
+--- a/test/test_libwacom.py
++++ b/test/test_libwacom.py
+@@ -378,6 +378,16 @@ def test_new_from_builder_ids(db, bus, vid, pid):
+         assert device.bustype == WacomBustype.BLUETOOTH
+ 
+ 
++def test_new_from_spi_builder(db):
++    builder = WacomBuilder.create(
++        bus=WacomBustype.SPI, usbid=(0x0603, 0x6532), match_name="Novatek Focus Pen Pro"
++    )
++    device = db.new_from_builder(builder)
++    assert device is not None
++    assert device.bustype == WacomBustype.SPI
++    assert device.name == "Xiaomi Pad 8 Pro"
++
++
+ def test_new_from_builder_empty(db):
+     builder = WacomBuilder.create()
+     device = db.new_from_builder(builder)
+@@ -608,6 +618,7 @@ def test_new_from_path_unknown_device(db, fallback, bustype):
+         WacomBustype.USB: 0x3,
+         WacomBustype.BLUETOOTH: 0x5,
+         WacomBustype.I2C: 0x18,
++        WacomBustype.SPI: 0x1C,
+     }[bustype]
+ 
+     name = "Unknown device"
+diff --git a/test/test_udev_rules.py b/test/test_udev_rules.py
+index 9239e59..6df0421 100644
+--- a/test/test_udev_rules.py
++++ b/test/test_udev_rules.py
+@@ -75,7 +75,7 @@ def pytest_generate_tests(metafunc):
+                     continue
+ 
+                 bus, vid, pid = match.split("|")[:3]  # skip the name part of the match
+-                if bus not in ["usb", "bluetooth"]:
++                if bus not in ["usb", "bluetooth", "spi"]:
+                     continue
+ 
+                 try:
+@@ -89,6 +89,8 @@ def pytest_generate_tests(metafunc):
+                     bus = 0x3
+                 elif bus == "bluetooth":
+                     bus = 0x5
++                elif bus == "spi":
++                    bus = 0x1C
+ 
+                 class Tablet:
+                     def __init__(self, name, bus, vid, pid, is_touchscreen=False):
+diff --git a/tools/debug-device.c b/tools/debug-device.c
+index 0a5f45f..987bb3d 100644
+--- a/tools/debug-device.c
++++ b/tools/debug-device.c
+@@ -117,6 +117,8 @@ device_from_device_match(WacomDeviceDatabase *db,
+ 		bustype = WBUSTYPE_BLUETOOTH;
+ 	else if (g_str_equal(parts[0], "i2c"))
+ 		bustype = WBUSTYPE_I2C;
++	else if (g_str_equal(parts[0], "spi"))
++		bustype = WBUSTYPE_SPI;
+ 	else {
+ 		fprintf(stderr, "Unknown bus type %s\n", parts[0]);
+ 		return NULL;
+@@ -189,6 +191,9 @@ handle_device(WacomDeviceDatabase *db,
+ 		case WBUSTYPE_I2C:
+ 			busstr = "I2C";
+ 			break;
++		case WBUSTYPE_SPI:
++			busstr = "SPI";
++			break;
+ 		}
+ 		func(libwacom_get_bustype, "%s", busstr);
+ 	}
+diff --git a/tools/libwacom-update-db.py b/tools/libwacom-update-db.py
+index d8ed3f0..b96edbb 100755
+--- a/tools/libwacom-update-db.py
++++ b/tools/libwacom-update-db.py
+@@ -65,6 +65,7 @@ class HWDBFile:
+         bustypes = {
+             "usb": "0003",
+             "bluetooth": "0005",
++            "spi": "001C",
+         }
+         # serial devices have their own rules, so we skip anything that
+         # doesn't have straight conversion
+diff --git a/tools/list-devices.c b/tools/list-devices.c
+index aeee4d5..7b0c7a2 100644
+--- a/tools/list-devices.c
++++ b/tools/list-devices.c
+@@ -80,6 +80,9 @@ print_device_info(WacomDevice *device,
+ 			case WBUSTYPE_I2C:
+ 				bus = "i2c";
+ 				break;
++			case WBUSTYPE_SPI:
++				bus = "spi";
++				break;
+ 			default:
+ 				break;
+ 			}
+@@ -162,6 +165,9 @@ main(int argc,
+ 	for (p = list; *p; p++)
+ 		print_device_info((WacomDevice *)*p, WBUSTYPE_I2C, output_format);
+ 
++	for (p = list; *p; p++)
++		print_device_info((WacomDevice *)*p, WBUSTYPE_SPI, output_format);
++
+ 	for (p = list; *p; p++)
+ 		print_device_info((WacomDevice *)*p, WBUSTYPE_SERIAL, output_format);
+ 
+diff --git a/tools/list-local-devices.c b/tools/list-local-devices.c
+index b256a03..ef59c4b 100644
+--- a/tools/list-local-devices.c
++++ b/tools/list-local-devices.c
+@@ -141,6 +141,9 @@ tablet_print_yaml(gpointer data,
+ 	case WBUSTYPE_I2C:
+ 		bus = "i2c";
+ 		break;
++	case WBUSTYPE_SPI:
++		bus = "spi";
++		break;
+ 	default:
+ 		break;
+ 	}

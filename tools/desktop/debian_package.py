@@ -174,11 +174,12 @@ def local_package_spec(name, installed, official):
         if source != 'mesa':
             raise ValueError('The signed libgbm1 source is not Mesa')
         patches = []
-    elif name in ('gnome-settings-daemon', 'gdm3', 'mutter'):
+    elif name in ('gnome-settings-daemon', 'gdm3', 'mutter', 'libwacom9'):
         # Only these package builders declare the revision and patches we accept.
         from importlib import import_module
         module, output = {'gnome-settings-daemon': ('build_gsd_packages', 'gsd'),
                           'gdm3': ('desktop.build_gdm_packages', 'gdm'),
+                          'libwacom9': ('desktop.build_libwacom_packages', 'libwacom'),
                           'mutter': ('build_mutter_packages', 'mutter')}[name]
         builder = import_module(module)
         local_version = version + '+sunuefi' + str(builder.REVISION)
@@ -496,7 +497,8 @@ def reusable(output, target, patches, runtime, inputs, revision):
 
 
 def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
-          validate=None, validate_runtime=None, builder_root=None, install_dependencies=True):
+          validate=None, validate_runtime=None, builder_root=None, install_dependencies=True,
+          binary_package=None):
     output = Path(output).resolve()
     sysroot = Path(sysroot or builder_root).resolve()
     if (not output.is_relative_to(ROOT / 'build') or not sysroot.is_relative_to(ROOT / 'build') or
@@ -504,7 +506,8 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
         raise ValueError('Use separate project build directories and at least one build job')
     if os.geteuid():
         raise ValueError('Use root for an isolated ARM64 Debian package build')
-    target = target_identity(sysroot, package)
+    binary_package = binary_package or package
+    target = target_identity(sysroot, binary_package)
     patch_proof = [{'path': path.relative_to(ROOT).as_posix(), 'sha256': sha(path)} for path in patches]
     inputs = input_records([Path(__file__), Path(package_build.__file__), *inputs])
     if cached := reusable(output, target, patch_proof, runtime, inputs, revision):
@@ -547,14 +550,14 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
         if install_dependencies:
             guest(['apt-get', '-oAcquire::AllowInsecureRepositories=false',
                    '-oAPT::Get::AllowUnauthenticated=false', 'update'])
-            builder_target = target_identity(rootfs, package)
+            builder_target = target_identity(rootfs, binary_package)
             if not same_target(builder_target, target) or builder_target.get('installed_local'):
                 raise ValueError('The builder and target sid indexes differ; refresh the target APT indexes')
             guest(['apt-get', 'install', '-y', '--no-install-recommends', 'dpkg-dev', 'build-essential', 'ccache'])
             guest(['apt-get', 'build-dep', '-y', '--no-install-recommends', '--build-profiles=nocheck',
                    package + '=' + version])
         else:
-            builder_target = target_identity(rootfs, package)
+            builder_target = target_identity(rootfs, binary_package)
             if not same_target(builder_target, target) or builder_target.get('installed_local'):
                 raise ValueError('The existing builder does not match the supplied clean target ABI/source')
         cache.mkdir(parents=True, exist_ok=True)

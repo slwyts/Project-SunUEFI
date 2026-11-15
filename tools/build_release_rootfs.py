@@ -702,6 +702,12 @@ def execute(record):
             pipewire_folder, build_pipewire_packages.debian_version(rootfs), 'deb')
         if pipewire is None:
             raise ValueError('PipeWire GStreamer plugin does not match the target ABI')
+        from desktop import build_libwacom_packages
+        libwacom_folder = ROOT / 'build/libwacom'
+        run([ROOT / 'build.sh', 'libwacom', '--sysroot', rootfs, '--output', libwacom_folder])
+        libwacom = build_libwacom_packages.reusable(libwacom_folder, rootfs)
+        if libwacom is None:
+            raise ValueError('libwacom packages do not match the shared SPI digitizer support')
         gsd_folder = ROOT / 'build/gsd/runtime'
         if desktop == 'gnome':
             run([ROOT / 'build.sh', 'gsd', '--output', gsd_folder.parent, '--sysroot', rootfs])
@@ -737,6 +743,11 @@ def execute(record):
             shutil.copy2(pipewire_folder / 'runtime' / row['file'], destination)
             if digest(destination) != row['sha256']:
                 raise ValueError('PipeWire package changed while staging')
+        for row in libwacom['packages'].values():
+            destination = gsd_stage / row['file']
+            shutil.copy2(libwacom_folder / 'runtime' / row['file'], destination)
+            if digest(destination) != row['sha256']:
+                raise ValueError('libwacom package changed while staging')
         sensor_stage = target(rootfs, 'tmp/piano-sensors-packages')
         sensor_stage.mkdir(parents=True, exist_ok=True)
         for row in sensors['packages'].values():
@@ -771,6 +782,8 @@ def execute(record):
                                   for row in gdm['packages'].values())
             local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
                                   for row in pipewire['packages'].values())
+            local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
+                                  for row in libwacom['packages'].values())
             if ffmpeg:
                 local_packages.extend('/tmp/piano-ffmpeg-packages/' + row['file']
                                       for row in ffmpeg['packages'].values())
@@ -856,6 +869,9 @@ def execute(record):
         for package, row in pipewire['packages'].items():
             if installed.get(package) != row['version']:
                 raise ValueError('Installed PipeWire plugin version differs: ' + package)
+        for package, row in libwacom['packages'].items():
+            if installed.get(package) != row['version']:
+                raise ValueError('Installed libwacom package version differs: ' + package)
         metadata = {str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'var/lib/apt/lists').glob('*InRelease')}
         if not metadata: raise ValueError('Signed APT InRelease metadata is missing')
         metadata.update({str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'etc/apt').rglob('*') if p.is_file()})
@@ -873,7 +889,7 @@ def execute(record):
                   'debian_archive': archive, 'debian_suite': cfg['debian']['suite'],
                   'debian_commit': cfg['debian']['commit'],
                   'mesa': mesa, 'sensors': sensors, 'ffmpeg': ffmpeg, 'gnome_power': gsd,
-                  'mutter': mutter, 'gdm': gdm, 'pipewire': pipewire,
+                  'mutter': mutter, 'gdm': gdm, 'pipewire': pipewire, 'libwacom': libwacom,
                   'boot_request': boot_request, 'firmware_components': cfg['firmware']['components'],
                   'clock_epoch': clock,
                   'default_system': defaults, 'desktop': desktop,
