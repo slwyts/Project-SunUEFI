@@ -31,6 +31,10 @@ STATIC UINTN CoreId,ManagerId,ChildId,InnerId,EspId,OtherId;
 STATIC UINT32 Count,Handles;
 STATIC EFI_STATUS HandleStatus,FailureStatus;
 STATIC EFI_STATUS EspStatus,LoadStatus,HostStatus;
+STATIC EFI_STATUS CodeStatus;
+STATIC struct {MEMMAP_DEVICE_PATH Memory;EFI_DEVICE_PATH_PROTOCOL End;} KernelPath;
+STATIC UINT8 UkiBytes[8192];
+STATIC UINT8 KernelBytes[8192];
 STATIC UINT32 FileLoads;
 STATIC UINTN Restricts,DiagnosticPumps,DiagnosticStalls,RuntimePumps;
 STATIC UINT32 RetainedObservers;
@@ -45,9 +49,12 @@ STATIC EFI_STATUS EFIAPI Handle(EFI_HANDLE Image,EFI_GUID *Guid,VOID **Interface
   return HandleStatus;
 }
 INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
+VOID *EFIAPI CopyMem(VOID *D,CONST VOID *S,UINTN N){return memmove(D,S,N);}
+VOID *EFIAPI ZeroMem(VOID *D,UINTN N){return memset(D,0,N);}
 UINT32 EFIAPI Fdt32ToCpu(UINT32 V){return __builtin_bswap32(V);}
 INT32 EFIAPI FdtCheckHeader(CONST VOID *Tree){assert(Tree==DeviceTree);return 0;}
 EFI_STATUS PianoProductMemoryValidateDtb(CONST VOID *Tree,UINTN Bytes){assert(Tree==DeviceTree&&Bytes==sizeof(DeviceTree));return EFI_SUCCESS;}
+EFI_STATUS PianoProductMemoryValidateCode(CONST VOID *Base,UINT64 Bytes){assert((Base==ManagerLoaded.ImageBase&&Bytes==ManagerLoaded.ImageSize)||(Base==mLinuxApplication.BaseIdentity&&Bytes==mLinuxApplication.SizeIdentity));return CodeStatus;}
 BOOLEAN PianoUsbControllerHostBlocked(VOID){return FALSE;}
 VOID PianoProductMemoryGetDiagnostic(PIANO_PRODUCT_MEMORY_DIAGNOSTIC *Report){memset(Report,0,sizeof(*Report));Report->CaptureStatus=Report->DtbStatus=EFI_NOT_STARTED;}
 CONST PIANO_BOOT_POLICY_REPORT *PianoBootPolicyReport(VOID){return &Policy;}
@@ -122,6 +129,34 @@ STATIC VOID Reset(VOID){
   mHandoffFailure=NULL;mHandoffStage="not-started";
   Restricts=DiagnosticPumps=DiagnosticStalls=RuntimePumps=RetainedObservers=0;
   RestrictStatus=EFI_NOT_READY;ExitDuringDiagnosticPump=FALSE;mFailureDiagnostics=FALSE;mFailureStatus=EFI_NOT_STARTED;
+  CodeStatus=EFI_SUCCESS;
+  memset(&KernelPath,0,sizeof(KernelPath));
+  KernelPath.Memory.Header=(EFI_DEVICE_PATH_PROTOCOL){HARDWARE_DEVICE_PATH,HW_MEMMAP_DP,{sizeof(MEMMAP_DEVICE_PATH),0}};
+  KernelPath.Memory.MemoryType=EfiLoaderData;
+  KernelPath.Memory.StartingAddress=(UINTN)mLinuxApplication.BaseIdentity;
+  KernelPath.Memory.EndingAddress=(UINTN)mLinuxApplication.BaseIdentity+mLinuxApplication.SizeIdentity-1;
+  KernelPath.End=(EFI_DEVICE_PATH_PROTOCOL){END_DEVICE_PATH_TYPE,END_ENTIRE_DEVICE_PATH_SUBTYPE,{4,0}};
+}
+STATIC VOID Put16(UINT8 *P,UINT16 V){P[0]=(UINT8)V;P[1]=(UINT8)(V>>8);}
+STATIC VOID Put32(UINT8 *P,UINT32 V){Put16(P,(UINT16)V);Put16(P+2,(UINT16)(V>>16));}
+STATIC VOID DirectKernel(VOID){
+  memset(UkiBytes,0,sizeof(UkiBytes));
+  Put16(UkiBytes,0x5a4d);Put32(UkiBytes+60,64);Put32(UkiBytes+64,0x4550);
+  Put16(UkiBytes+68,0xaa64);Put16(UkiBytes+70,1);Put16(UkiBytes+84,112);
+  UINT8 *Opt=UkiBytes+88;Put16(Opt,0x20b);Put32(Opt+56,sizeof(UkiBytes));Put32(Opt+60,512);Put16(Opt+68,10);
+  UINT8 *Section=Opt+112;memcpy(Section,".linux",6);Put32(Section+8,1024);Put32(Section+12,4096);
+  UINT8 *Kernel=UkiBytes+4096;
+  Put16(Kernel,0x5a4d);Put32(Kernel+60,64);Put32(Kernel+64,0x4550);
+  Put16(Kernel+68,0xaa64);Put16(Kernel+70,1);Put16(Kernel+84,112);Put16(Kernel+86,2);
+  Opt=Kernel+88;Put16(Opt,0x20b);Put32(Opt+16,4096);Put32(Opt+32,4096);Put32(Opt+36,512);
+  Put32(Opt+56,8192);Put32(Opt+60,512);Put16(Opt+68,10);
+  Section=Opt+112;memcpy(Section,".text",5);Put32(Section+8,512);Put32(Section+12,4096);
+  Put32(Section+16,512);Put32(Section+20,512);Put32(Section+36,0x60000020);
+  mLinuxApplication.BaseIdentity=UkiBytes;mLinuxApplication.SizeIdentity=sizeof(UkiBytes);
+  KernelPath.Memory.StartingAddress=(UINTN)Kernel;KernelPath.Memory.EndingAddress=(UINTN)Kernel+1023;
+  memset(KernelBytes,0,sizeof(KernelBytes));memcpy(KernelBytes+4096,Kernel+512,512);
+  ManagerLoaded.ImageBase=KernelBytes;ManagerLoaded.ImageSize=sizeof(KernelBytes);
+  ManagerLoaded.FilePath=&KernelPath.Memory.Header;
 }
 STATIC VOID EfiAdmission(VOID){
   Reset();assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)==EFI_SUCCESS&&!Count);
@@ -138,6 +173,16 @@ STATIC VOID EfiAdmission(VOID){
   BAD_EFI(ChildLoaded.ParentHandle=INNER;InnerLoaded.DeviceHandle=OTHER);
   BAD_EFI(System.NumberOfTableEntries=0);BAD_EFI(Policy.RequestedCoreAction=PianoUsbServiceActionReboot);
 #undef BAD_EFI
+  Reset();DirectKernel();assert(ValidateInstalledEfiImage(CORE,MANAGER,&ManagerLoaded)==EFI_SUCCESS);
+#define BAD_DIRECT(Change) do{Reset();DirectKernel();Change;assert(ValidateInstalledEfiImage(CORE,MANAGER,&ManagerLoaded)!=EFI_SUCCESS);}while(0)
+  BAD_DIRECT(ManagerLoaded.ParentHandle=OTHER);BAD_DIRECT(ManagerLoaded.DeviceHandle=OTHER);
+  BAD_DIRECT(ManagerLoaded.FilePath=NULL);BAD_DIRECT(KernelPath.Memory.MemoryType=EfiConventionalMemory);
+  BAD_DIRECT(KernelPath.Memory.StartingAddress--);BAD_DIRECT(KernelPath.Memory.EndingAddress+=2);
+  BAD_DIRECT(ManagerLoaded.ImageSize++);BAD_DIRECT(UkiBytes[4096]=0);
+  BAD_DIRECT(UkiBytes[200]='x');BAD_DIRECT(Put32(UkiBytes+208,8192));
+  BAD_DIRECT(KernelBytes[4096]^=1);
+  BAD_DIRECT(KernelPath.End.Type=HARDWARE_DEVICE_PATH);BAD_DIRECT(CodeStatus=EFI_ACCESS_DENIED);
+#undef BAD_DIRECT
 }
 STATIC VOID UkiLoadFailure(VOID){
   CONST EFI_STATUS Errors[]={EFI_NOT_FOUND,EFI_TIMEOUT,EFI_LOAD_ERROR,EFI_SUCCESS};

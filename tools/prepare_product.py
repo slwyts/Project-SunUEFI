@@ -49,7 +49,7 @@ POGO_FIRMWARE_NAME='nanosic/MCU_Upgrade.bin'
 # Indexed by the touch lcd-id level, like firmware-name in the Linux DT
 TOUCH_FIRMWARE_NAMES=(('Csot','novatek/novatek_nt36532_piano_fw_csot.bin'),('Boe','novatek/novatek_nt36532_piano_fw_boe.bin'))
 COMPONENT_C_SOURCES=tuple(name for names in PRODUCT_COMPONENTS.values() for name in names if name.endswith('.c'))
-OS_BOOT_SOURCES=('PianoBootFileSource.c','PianoCpuImageLoan.c','PianoLinuxEfiSession.c','PianoCpuInput.c','PianoEspBootSource.c')
+OS_BOOT_SOURCES=('PianoBootFileSource.c','PianoCpuImageLoan.c','PianoLinuxEfiSession.c','PianoCpuInput.c','PianoEspBootSource.c','PianoUkiImage.c')
 OS_BOOT_HEADERS=tuple(name[:-2]+'.h' for name in OS_BOOT_SOURCES)
 LATE_HANDOFF_INF_SOURCES=tuple('LateHandoff/'+name for name in ('PianoLateHandoff.c','PianoLateHandoff.h','PianoDeviceTreeFixup.c','PianoDeviceTreeFixup.h'))
 OS_BOOT_INF_SOURCES=tuple('Components/os-boot/'+name for name in (*OS_BOOT_SOURCES,*OS_BOOT_HEADERS))

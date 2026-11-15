@@ -5,6 +5,7 @@
 #include "PianoProductOwners.h"
 #include "PianoRawLinuxBoot.h"
 #include "Components/os-boot/PianoEspBootSource.h"
+#include "Components/os-boot/PianoUkiImage.h"
 #include "PianoFastbootBlockRead.h"
 #include "PianoKeysLifecycle.h"
 #include "PianoRamPartition.h"
@@ -400,6 +401,36 @@ STATIC EFI_STATUS EfiImageResult(CONST CHAR8 *Stage,EFI_STATUS Status){
   mEfiImageStage=Stage;mEfiImageStatus=Status;
   return Status;
 }
+STATIC EFI_STATUS ValidateDirectKernel(CONST EFI_LOADED_IMAGE_PROTOCOL *Image){
+  // systemd-stub's direct entry reuses its firmware-created handle, retaining
+  // the ESP and parent while replacing ImageBase/Size and FilePath for Linux.
+  CONST MEMMAP_DEVICE_PATH *Path=(CONST VOID *)Image->FilePath;
+  if(!Path||Path->Header.Type!=HARDWARE_DEVICE_PATH||Path->Header.SubType!=HW_MEMMAP_DP||
+     (Path->Header.Length[0]|((UINT16)Path->Header.Length[1]<<8))!=sizeof(*Path)||
+     Path->MemoryType!=EfiLoaderData)return EFI_ACCESS_DENIED;
+  CONST EFI_DEVICE_PATH_PROTOCOL *End=(CONST VOID *)(Path+1);
+  if(End->Type!=END_DEVICE_PATH_TYPE||End->SubType!=END_ENTIRE_DEVICE_PATH_SUBTYPE||
+     End->Length[0]!=sizeof(*End)||End->Length[1])return EFI_ACCESS_DENIED;
+  EFI_STATUS Status=PianoProductMemoryValidateCode(mLinuxApplication.BaseIdentity,
+    mLinuxApplication.SizeIdentity);
+  if(Status!=EFI_SUCCESS)return Status;
+  PIANO_BOOT_SOURCE Source;PIANO_BOOT_IMAGE Kernel;
+  Status=PianoUkiImageKernel(mLinuxApplication.BaseIdentity,
+    (UINTN)mLinuxApplication.SizeIdentity,&Source);
+  if(Status!=EFI_SUCCESS)return Status;
+  UINT64 Base=(UINTN)Source.Context;
+  // Older systemd versions used an exclusive end. Both forms must identify
+  // this exact embedded file, not merely another address inside the UKI.
+  if(Path->StartingAddress!=Base||Path->EndingAddress<Base||
+     (Path->EndingAddress-Base!=Source.Bytes-1&&Path->EndingAddress-Base!=Source.Bytes))
+    return EFI_ACCESS_DENIED;
+  Status=PianoFastbootBootParse(&Source,&Kernel);
+  if(Status!=EFI_SUCCESS)return Status;
+  if(Kernel.Kind!=PianoBootArm64Pe||Image->ImageSize!=Kernel.Pe.ImageBytes)return EFI_ACCESS_DENIED;
+  Status=PianoProductMemoryValidateCode(Image->ImageBase,Image->ImageSize);
+  if(Status!=EFI_SUCCESS)return Status;
+  return PianoUkiImageVerifyCode(&Source,Image->ImageBase,(UINTN)Image->ImageSize);
+}
 STATIC EFI_STATUS ValidateInstalledEfiImage(VOID *Context,EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *Identity){
   if(!mLinuxActive || !Image || Image==Context ||
      !mLinuxEsp || !mLinuxApplication.Image || !mLinuxApplication.Busy || !mLinuxApplication.StartCalled ||
@@ -412,8 +443,12 @@ STATIC EFI_STATUS ValidateInstalledEfiImage(VOID *Context,EFI_HANDLE Image,CONST
   EFI_STATUS Status=gBS->HandleProtocol(mLinuxApplication.Image,&gEfiLoadedImageProtocolGuid,(VOID **)&Uki);
   if(!BootLogAlive())return EFI_ABORTED;if(Status!=EFI_SUCCESS)return EfiImageResult("uki-protocol",Status);
   if(!EfiLoadedValid(Uki) || Uki!=mLinuxApplication.LoadedIdentity ||
-     Uki->ImageBase!=mLinuxApplication.BaseIdentity || Uki->ImageSize!=mLinuxApplication.SizeIdentity ||
-     Uki->ParentHandle!=(EFI_HANDLE)Context || Uki->DeviceHandle!=mLinuxEsp)return EfiImageResult("uki-identity",EFI_ACCESS_DENIED);
+      Uki->ParentHandle!=(EFI_HANDLE)Context || Uki->DeviceHandle!=mLinuxEsp)return EfiImageResult("uki-identity",EFI_ACCESS_DENIED);
+  if(Uki->ImageBase!=mLinuxApplication.BaseIdentity||Uki->ImageSize!=mLinuxApplication.SizeIdentity){
+    if(Image!=mLinuxApplication.Image||Identity!=Uki)return EfiImageResult("uki-image",EFI_ACCESS_DENIED);
+    Status=ValidateDirectKernel(Uki);
+    if(Status!=EFI_SUCCESS)return EfiImageResult("direct-kernel",Status);
+  }
   EFI_HANDLE Seen[4];EFI_HANDLE CurrentImage=Image;
   // The UKI loads its embedded kernel from memory. Only inner frames may lack
   // a filesystem handle; the outer image must be our actual ESP application.
@@ -454,7 +489,9 @@ STATIC EFI_STATUS StartInstalledLinux(EFI_HANDLE Image){
   // failed local boot must never create another menu/countdown automatically.
   Status=PianoProductOwnersResolveReturnedAction(&mOwners);
   if(Status==EFI_NOT_READY){
-    if(LinuxStatus==EFI_NOT_FOUND)mHandoffFailure=L"未找到 Linux，请更新启动镜像";
+    if(mEfiImageStatus!=EFI_SUCCESS&&mEfiImageStatus!=EFI_NOT_STARTED)
+      mHandoffFailure=L"Linux 启动身份检查失败，请更新固件和启动镜像";
+    else if(LinuxStatus==EFI_NOT_FOUND)mHandoffFailure=L"未找到 Linux，请更新启动镜像";
     else if(LinuxStatus==EFI_TIMEOUT)mHandoffFailure=L"读取 Linux 启动镜像超时";
     else if(LinuxStatus==EFI_UNSUPPORTED||LinuxStatus==EFI_LOAD_ERROR)mHandoffFailure=L"Linux 启动镜像格式不受支持，请更新镜像";
     FailStop(LinuxStatus);

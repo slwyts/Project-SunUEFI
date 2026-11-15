@@ -482,7 +482,36 @@ EFI_STATUS PianoProductMemoryCheck(VOID *Context,PIANO_LINUX_MEMORY_PROOF *Proof
 EFI_STATUS PianoProductMemoryValidate(VOID *Context,CONST PIANO_LINUX_MEMORY_PROOF *Proof){
  if(!Proof)return EFI_INVALID_PARAMETER;PIANO_LINUX_MEMORY_PROOF Fresh;EFI_STATUS S=PianoProductMemoryCheck(Context,&Fresh);if(S!=EFI_SUCCESS)return S;
  if(Proof->Revision!=1||Proof->Status!=EFI_SUCCESS||Proof->BootEpoch!=Fresh.BootEpoch||Proof->DramBytes!=Fresh.DramBytes||!Proof->NormalBytes||Proof->UnresolvedReservations||!Proof->FullDdr||!Proof->FixedReservations||!Proof->DynamicReservations||!Proof->RuntimeRegions||!Proof->CacheVerified||!Proof->OwnershipVerified)return EFI_NOT_READY;
- return EFI_SUCCESS;
+  return EFI_SUCCESS;
+}
+EFI_STATUS PianoProductMemoryValidateCode(CONST VOID *Base,UINT64 Bytes){
+ if(!Base||!Span((UINTN)Base,Bytes)||Bytes>0x10000000)return EFI_INVALID_PARAMETER;
+ if(mBusy)return EFI_ALREADY_STARTED;
+ mBusy=TRUE;
+ EFI_STATUS Status=Capture();CPU_MAP Cpu={0},After={0};
+ if(Status==EFI_SUCCESS)Status=Snapshot();
+ if(Status==EFI_SUCCESS)Status=CpuMap(&Cpu);
+ if(Status==EFI_SUCCESS&&!CpuGeometry(&Cpu))Status=EFI_UNSUPPORTED;
+ UINT64 Position=(UINTN)Base,End=Position+Bytes;
+ while(Status==EFI_SUCCESS&&Position<End){
+  EFI_MEMORY_DESCRIPTOR *D=At(Position);
+  if(!D||D->Type!=EfiLoaderCode||!(D->Attribute&EFI_MEMORY_WB)){Status=EFI_ACCESS_DENIED;break;}
+  UINT64 Next=MIN(End,D->PhysicalStart+D->NumberOfPages*4096);
+  Status=NormalMapping(&Cpu,Position,Next-Position);
+  while(Status==EFI_SUCCESS&&Position<Next){
+   EFI_GCD_MEMORY_SPACE_DESCRIPTOR G={0};Status=gDS->GetMemorySpaceDescriptor(Position,&G);
+   if(Status!=EFI_SUCCESS)break;
+   if(!Live()||G.GcdMemoryType!=EfiGcdMemoryTypeSystemMemory||!Span(G.BaseAddress,G.Length)||
+      Position<G.BaseAddress||Position-G.BaseAddress>=G.Length||(G.Attributes&EFI_MEMORY_RP)||
+      (G.Attributes&(EFI_MEMORY_UC|EFI_MEMORY_WC|EFI_MEMORY_WT|EFI_MEMORY_WB))!=EFI_MEMORY_WB){
+    Status=EFI_ACCESS_DENIED;break;
+   }
+   Position=MIN(Next,G.BaseAddress+G.Length);
+  }
+ }
+ if(Status==EFI_SUCCESS)Status=CpuMap(&After);
+ if(Status==EFI_SUCCESS&&CompareMem(&Cpu,&After,sizeof(Cpu)))Status=EFI_NOT_READY;
+ mBusy=FALSE;return Status;
 }
 STATIC EFI_STATUS TreeRead(VOID *Context,UINT32 At,UINTN Bytes,VOID *Out){CopyMem(Out,(CONST UINT8 *)Context+At,Bytes);return EFI_SUCCESS;}
 

@@ -271,7 +271,21 @@ static VOID Run(VOID){
  ReplayCheck("ready",EFI_SUCCESS);
  assert(PianoProductMemoryValidate(NULL,&Proof)==EFI_SUCCESS);
   assert(PianoProductMemoryValidateDtb(Tree,TreeBytes)==EFI_SUCCESS);
-  if(Case==0)CheckDtbInjection(&R->Layout);
+   if(Case==0){
+    CheckDtbInjection(&R->Layout);
+    UINTN I;for(I=0;I<MapCount;++I)if(Map[I].Type==EfiConventionalMemory)break;
+    assert(I<MapCount);UINT64 Base=Map[I].PhysicalStart;
+    assert(PianoProductMemoryValidateCode((VOID *)(UINTN)Base,4096)==EFI_ACCESS_DENIED);
+    Map[I].Type=EfiLoaderCode;
+    assert(PianoProductMemoryValidateCode((VOID *)(UINTN)Base,4096)==EFI_SUCCESS);
+    UINT64 Attributes=Map[I].Attribute;Map[I].Attribute&=~EFI_MEMORY_WB;
+    assert(PianoProductMemoryValidateCode((VOID *)(UINTN)Base,4096)==EFI_ACCESS_DENIED);
+    Map[I].Attribute=Attributes;
+    Case=28;assert(PianoProductMemoryValidateCode((VOID *)(UINTN)Base,4096)==EFI_ACCESS_DENIED);Case=0;
+    Map[I].Type=EfiLoaderData;
+    assert(PianoProductMemoryValidateCode((VOID *)(UINTN)Base,4096)==EFI_ACCESS_DENIED);
+    Map[I].Type=EfiConventionalMemory;
+   }
  // The separate DTB snapshot must not erase the last complete live-map check.
  ReplayCheck("ready",EFI_SUCCESS);
  if(Case==8){UINTN I;for(I=0;I<MapCount;++I)if(Map[I].Type==EfiConventionalMemory)break;assert(I<MapCount);EFI_MEMORY_DESCRIPTOR Rest=Map[I];assert(Rest.NumberOfPages>1);Map[I].Type=EfiLoaderData;Map[I].NumberOfPages=1;Rest.PhysicalStart+=4096;Rest.NumberOfPages--;Map[MapCount++]=Rest;assert(PianoProductMemoryValidate(NULL,&Proof)==EFI_SUCCESS);}
