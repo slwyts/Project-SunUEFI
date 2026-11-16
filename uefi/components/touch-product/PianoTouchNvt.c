@@ -41,8 +41,6 @@ EFI_STATUS PianoNvtParseImage(CONST UINT8 *D,UINTN Bytes,PIANO_NVT_IMAGE *Image)
     PIANO_NVT_PARTITION *P=&Image->Part[L];
     if(L<2) {
       P->BinAddr=Word(D+L*12);P->SramAddr=Word(D+4+L*12);P->Size=Word(D+8+L*12);
-      if((UINT64)P->BinAddr+(P->Size+4)/4*4>Bytes)return EFI_COMPROMISED_DATA;
-      P->Crc=PianoNvtCrc32(D+P->BinAddr,P->Size);
     } else {
       // As in the driver, a record after the header keeps the previous
       // position unless a cascaded second header sits at End - 0x10
@@ -53,7 +51,16 @@ EFI_STATUS PianoNvtParseImage(CONST UINT8 *D,UINTN Bytes,PIANO_NVT_IMAGE *Image)
       P->SramAddr=Word(D+At);P->Size=Word(D+At+4);P->BinAddr=Word(D+At+8);P->Crc=Word(D+At+12);
       if(L<2+Info && P->BinAddr<End && P->Size)FoundHeader=TRUE;
     }
-    if((UINT64)P->BinAddr+P->Size>Bytes)return EFI_COMPROMISED_DATA;
+    // Size excludes the final byte sent by the download loop. The chip's
+    // SRAM address and page commands carry only 24 address bits.
+    UINT64 TransferBytes=(UINT64)P->Size+1;
+    if((UINT64)P->BinAddr+TransferBytes>Bytes ||
+       (UINT64)P->SramAddr+TransferBytes>0x1000000ULL)return EFI_COMPROMISED_DATA;
+    if(L<2) {
+      UINT64 CrcBytes=((UINT64)P->Size+4)/4*4;
+      if((UINT64)P->BinAddr+CrcBytes>Bytes)return EFI_COMPROMISED_DATA;
+      P->Crc=PianoNvtCrc32(D+P->BinAddr,P->Size);
+    }
   }
   Image->Count=Count;
   return EFI_SUCCESS;

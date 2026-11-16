@@ -8,7 +8,36 @@
 #undef NULL
 #include "PianoTouchNvt.h"
 
+static void Put32(UINT8 *P,UINT32 V){
+  P[0]=(UINT8)V;P[1]=(UINT8)(V>>8);P[2]=(UINT8)(V>>16);P[3]=(UINT8)(V>>24);
+}
+
+static void CheckDownloadBounds(void){
+  const UINTN Bytes=0x2000;
+  UINT8 *Data=calloc(1,Bytes);assert(Data);
+  PIANO_NVT_IMAGE Image;
+  Put32(Data,0x30);Put32(Data+4,0x1000);Put32(Data+8,4);
+  Put32(Data+12,0x200);Put32(Data+16,0x2000);Put32(Data+20,4);
+  Data[0x1000]=1;Data[0x1001]=0xFE;memcpy(Data+Bytes-3,"NVT",3);
+  assert(PianoNvtParseImage(Data,Bytes,&Image)==EFI_SUCCESS);
+  Put32(Data+8,MAX_UINT32);
+  assert(PianoNvtParseImage(Data,Bytes,&Image)==EFI_COMPROMISED_DATA);
+  Put32(Data+8,4);Put32(Data+4,0xFFFFFC);
+  assert(PianoNvtParseImage(Data,Bytes,&Image)==EFI_COMPROMISED_DATA);
+  Put32(Data+4,0xFFFFFB);
+  assert(PianoNvtParseImage(Data,Bytes,&Image)==EFI_SUCCESS);
+  Put32(Data+4,0x1000);Put32(Data,0x40);
+  Put32(Data+0x30,0x3000);Put32(Data+0x34,4);Put32(Data+0x38,(UINT32)Bytes-4);
+  assert(PianoNvtParseImage(Data,Bytes,&Image)==EFI_COMPROMISED_DATA);
+  Put32(Data+0x38,(UINT32)Bytes-5);
+  assert(PianoNvtParseImage(Data,Bytes,&Image)==EFI_SUCCESS);
+  Put32(Data+0x30,0x1000000);
+  assert(PianoNvtParseImage(Data,Bytes,&Image)==EFI_COMPROMISED_DATA);
+  free(Data);
+}
+
 int main(int argc,char **argv){
+  CheckDownloadBounds();
   STATIC CONST UINT8 Boe[6]={0x0A,0x12,0x34,0x32,0x65,0x03},Casc[6]={0xFF,0xFF,0xFF,0x32,0x65,0x03},Other[6]={0x0E,0,0,0x23,0x65,0x03};
   assert(PianoNvtMatchTrim((CONST UINT8 *)"\x0E\x01\x02\x32\x65\x03")==0 && PianoNvtMatchTrim(Boe)==1 && PianoNvtMatchTrim(Casc)==1 && PianoNvtMatchTrim(Other)==-1);
   PIANO_NVT_MAP Map;
