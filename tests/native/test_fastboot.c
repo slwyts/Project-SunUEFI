@@ -82,14 +82,14 @@ static void diagnostics_only(void){
   command(&S,"download:00000003","DATA00000003");
   assert(PianoFastbootPacket(&S,"abc",3)==EFI_SUCCESS && S.Complete && S.UploadBorrowed);
   assert(PianoFastbootStageCopy(&S,"other",5)==EFI_SUCCESS);
-  assert(PianoFastbootRestrictToDiagnostics(NULL)==EFI_INVALID_PARAMETER);
+  assert(PianoFastbootRestrictToDiagnostics(NULL,TRUE)==EFI_INVALID_PARAMETER);
   for(unsigned i=0;i<3;++i){
     S.BootPreparing=i==0;S.BootPending=i==1;S.BootTransferFrozen=i==2;
-    assert(PianoFastbootRestrictToDiagnostics(&S)==EFI_NOT_READY && !S.DiagnosticsOnly && S.Download && S.Upload);
+    assert(PianoFastbootRestrictToDiagnostics(&S,TRUE)==EFI_NOT_READY && !S.DiagnosticsOnly && S.Download && S.Upload);
   }
   S.BootPreparing=S.BootPending=S.BootTransferFrozen=FALSE;
   S.RebootRequested=S.ExitRequested=TRUE;
-  assert(PianoFastbootRestrictToDiagnostics(&S)==EFI_SUCCESS && S.DiagnosticsOnly && !allocation);
+  assert(PianoFastbootRestrictToDiagnostics(&S,TRUE)==EFI_SUCCESS && S.DiagnosticsOnly && !allocation);
   assert(!S.Download && !S.Upload && !S.Receiving && !S.Complete && !S.RebootRequested && !S.ExitRequested);
   S.Diagnostic=diagnostic_reply;
   command(&S,"getvar:version","OKAY0.4");
@@ -99,25 +99,30 @@ static void diagnostics_only(void){
   command(&S,"getvar:SunUEFI:ram-boot","OKAYdisabled");
   command(&S,"getvar:all","OKAY");assert(calls==5 && !strcmp(replies[3],"INFOmax-download-size:0x00000000"));
   unsigned StorageQueries=storage_queries,BootQueries=boot_queries;
-  const char *Blocked[]={"download:00000003","fetch:xbl_config_a:0x0:0x1","boot","reboot","continue", "oem setup","oem shell","oem simpleinit","oem boot-stable","oem sha256","oem discard","oem log","flash:boot_a"};
+  const char *Blocked[]={"download:00000003","fetch:xbl_config_a:0x0:0x1","boot", "oem setup","oem shell","oem simpleinit","oem boot-stable","oem sha256","oem discard","oem log","flash:boot_a"};
   for(unsigned i=0;i<sizeof(Blocked)/sizeof(Blocked[0]);++i)
     command(&S,Blocked[i],"FAILonly diagnostics available after boot failure");
   assert(storage_queries==StorageQueries && boot_queries==BootQueries && !diagnostic_calls && !allocation);
   assert(storage_queries==2 && boot_queries==(PIANO_USB_RAM_BOOT?1U:0U));
   command(&S,"oem status","OKAY");command(&S,"oem ramlog","OKAY");
   UINT8 *Upload=S.Upload;
-  assert(PianoFastbootRestrictToDiagnostics(&S)==EFI_SUCCESS && S.Upload==Upload);
+  assert(PianoFastbootRestrictToDiagnostics(&S,TRUE)==EFI_SUCCESS && S.Upload==Upload);
   command(&S,"upload","OKAY");assert(calls==3 && !strcmp(replies[1],"frozen"));
   command(&S,"oem screenshot","OKAY");command(&S,"upload","OKAY");assert(diagnostic_calls==3);
   PianoFastbootReset(&S);assert(S.DiagnosticsOnly && !S.Upload && !allocation);
   command(&S,"download:00000003","FAILonly diagnostics available after boot failure");
-  command(&S,"reboot","FAILonly diagnostics available after boot failure");
-  assert(!S.RebootRequested && !S.ExitRequested && !S.Receiving);
+  command(&S,"reboot","OKAY");
+  assert(S.RebootRequested && !S.ExitRequested && !S.Receiving);
+  PianoFastbootReset(&S);
+  command(&S,"continue","OKAY");assert(S.ExitRequested && !S.RebootRequested);
+  PianoFastbootReset(&S);
   // A partial host download is discarded before command parsing resumes.
   assert(PianoFastbootInit(&S,(VOID *)123,send_reply,NULL)==EFI_SUCCESS);
   command(&S,"download:00000003","DATA00000003");
   assert(PianoFastbootPacket(&S,"a",1)==EFI_SUCCESS && S.Receiving);
-  assert(PianoFastbootRestrictToDiagnostics(&S)==EFI_SUCCESS && !S.Receiving && !allocation);
+  assert(PianoFastbootRestrictToDiagnostics(&S,FALSE)==EFI_SUCCESS && !S.Receiving && !allocation);
+  command(&S,"reboot","FAILresource cleanup incomplete; read logs and hold power");
+  assert(!S.RebootRequested);
   command(&S,"getvar:version","OKAY0.4");
 }
 int main(void){

@@ -85,7 +85,7 @@ struct PIANO_FASTBOOT {
   BOOLEAN BootPreparing,BootPending,BootTransferFrozen;
   UINTN Expected, Received;
   BOOLEAN Receiving, Complete, RebootRequested, ExitRequested;
-  BOOLEAN DiagnosticsOnly;
+  BOOLEAN DiagnosticsOnly,DiagnosticsRebootBlocked;
 };
 
 EFI_STATUS PianoFastbootInit(PIANO_FASTBOOT *State, VOID *Context,
@@ -94,8 +94,9 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *State, CONST VOID *Data, UINTN By
 VOID PianoFastbootReset(PIANO_FASTBOOT *State);
 // One-way restriction for a live error screen. Clears ordinary CPU transfers;
 // a prepared or transferred boot payload must retain its existing ownership.
-// Ordinary USB resets preserve this restriction and cannot restore actions.
-EFI_STATUS PianoFastbootRestrictToDiagnostics(PIANO_FASTBOOT *State);
+// Ordinary USB resets preserve this restriction. Diagnostic reads and a
+// deferred reboot remain available; no new image or UI action is admitted.
+EFI_STATUS PianoFastbootRestrictToDiagnostics(PIANO_FASTBOOT *State,BOOLEAN AllowReboot);
 // Send must copy each frame before returning; it must never DMA this CPU pool.
 EFI_STATUS PianoFastbootStageCopy(PIANO_FASTBOOT *State, CONST VOID *Data, UINTN Bytes);
 // NULL unregisters. Merely registering callbacks does not advertise readiness.

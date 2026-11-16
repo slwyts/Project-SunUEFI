@@ -35,9 +35,10 @@ VOID PianoFastbootReset(PIANO_FASTBOOT *S) {
   S->BootPending=FALSE;S->BootValidatedDownload=NULL;S->BootValidatedBytes=0;
   ZeroMem(&S->BootView,sizeof(S->BootView));ZeroMem(&S->BootProof,sizeof(S->BootProof));
 }
-EFI_STATUS PianoFastbootRestrictToDiagnostics(PIANO_FASTBOOT *S) {
+EFI_STATUS PianoFastbootRestrictToDiagnostics(PIANO_FASTBOOT *S,BOOLEAN AllowReboot) {
   if(S==NULL)return EFI_INVALID_PARAMETER;
   if(S->BootPreparing || S->BootPending || S->BootTransferFrozen)return EFI_NOT_READY;
+  S->DiagnosticsRebootBlocked|=!AllowReboot;
   if(S->DiagnosticsOnly)return EFI_SUCCESS;
   PianoFastbootReset(S);
   S->DiagnosticsOnly=TRUE;
@@ -307,7 +308,8 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes)
     return Reply(S,"FAILinvalid command bytes");
   CHAR8 Cmd[65];CopyMem(Cmd,Data,Bytes);Cmd[Bytes]=0;
   if(S->DiagnosticsOnly && AsciiStrnCmp(Cmd,"getvar:",7) && !Equal(Cmd,"upload") &&
-     !Equal(Cmd,"oem status") && !Equal(Cmd,"oem ramlog") && !Equal(Cmd,"oem screenshot"))
+     !Equal(Cmd,"oem status") && !Equal(Cmd,"oem ramlog") && !Equal(Cmd,"oem screenshot") &&
+     !Equal(Cmd,"reboot") && !Equal(Cmd,"continue"))
     return Reply(S,"FAILonly diagnostics available after boot failure");
   if(!AsciiStrnCmp(Cmd,"getvar:",7))return GetVar(S,Cmd+7);
   if(!AsciiStrnCmp(Cmd,"download:",9))return Download(S,Cmd+9);
@@ -342,11 +344,13 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes)
     return Reply(S,"OKAY");
   }
   if(Equal(Cmd,"reboot")) {
+    if(S->DiagnosticsRebootBlocked)return Reply(S,"FAILresource cleanup incomplete; read logs and hold power");
     EFI_STATUS Status=Reply(S,"OKAY");
     if(!EFI_ERROR(Status))S->RebootRequested=TRUE;
     return Status;
   }
   if(Equal(Cmd,"continue")) {
+    if(S->DiagnosticsRebootBlocked)return Reply(S,"FAILresource cleanup incomplete; read logs and hold power");
     EFI_STATUS Status=Reply(S,"OKAY");
     if(!EFI_ERROR(Status))S->ExitRequested=TRUE;
     return Status;

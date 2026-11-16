@@ -65,7 +65,7 @@ EFI_STATUS PianoDwc3ServiceStart(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Dev
 EFI_STATUS PianoDwc3ServicePollBounded(UINTN MaxEvents);
 EFI_STATUS PianoDwc3ServicePumpApp(UINT32 Reason,UINTN BudgetUs);
 // One-way failure mode for an already healthy device service; never restarts USB.
-EFI_STATUS PianoDwc3ServiceRestrictToDiagnostics(VOID);
+EFI_STATUS PianoDwc3ServiceRestrictToDiagnostics(BOOLEAN AllowReboot);
 EFI_STATUS PianoDwc3ServicePumpDiagnostics(UINTN BudgetUs);
 EFI_STATUS PianoDwc3ServiceStop(EFI_STATUS Reason);
 EFI_STATUS PianoDwc3ServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *Status);

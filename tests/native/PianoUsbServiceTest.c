@@ -718,6 +718,10 @@ static VOID run_diagnostics(UINTN Test) {
     service_enumerate();((DWC_TRB *)mTrbs[0].Cpu)->Control&=~BIT0;service_event(1);
     assert(mEnding[2] && mPending[2] && mTrbs[2].Active);
   }
+  if(Test==27){
+    service_enumerate();service_out("reboot");service_ack();
+    assert(mService.State.Phase==PianoUsbServiceStopRequested);
+  }
   EFI_BOOT_SERVICES OtherServices=bs;EFI_SYSTEM_TABLE OtherTable=service_system_table;
   switch(Test) {
     case 1:mService.State.Busy=TRUE;break;
@@ -746,14 +750,25 @@ static VOID run_diagnostics(UINTN Test) {
     case 24:mService.State.ServicesLost=TRUE;break;
   }
   UINTN Captures=full_captures,Reads=backend_reads,Infos=backend_infos,Clocks=clock_calls,Events=event_creates;
-  EFI_STATUS Status=PianoUsbControllerRestrictToDiagnostics();
+  EFI_STATUS Status=PianoUsbControllerRestrictToDiagnostics(Test!=27);
   assert(full_captures==Captures && backend_reads==Reads && backend_infos==Infos &&
     clock_calls==Clocks && event_creates==Events && !closes);
-  if(Test && Test!=25 && Test!=26) {
+  if(Test && Test!=25 && Test!=26 && Test!=27) {
     assert(Status!=EFI_SUCCESS && !mPersistent.DiagnosticsOnly && !mService.DiagnosticsOnly && !mFastboot.DiagnosticsOnly);
     free_cold_model();return;
   }
   assert(Status==EFI_SUCCESS && mPersistent.DiagnosticsOnly && mService.DiagnosticsOnly && mFastboot.DiagnosticsOnly);
+  if(Test==27){
+    assert(mService.State.Phase==PianoUsbServiceListening && mService.State.Action==PianoUsbServiceActionNone);
+    assert(mPending[2]&&!mFastboot.RebootRequested);
+    service_out("getvar:product");assert(!memcmp(mBulkTx.Cpu,"OKAYpiano-sunuefi",16));service_ack();
+    service_out("reboot");assert(!memcmp(mBulkTx.Cpu,"FAIL",4));service_ack();
+    service_out("getvar:version");assert(!memcmp(mBulkTx.Cpu,"OKAY0.4",7));service_ack();
+    assert(mService.State.Phase==PianoUsbServiceListening);
+    PIANO_USB_SERVICE_RETIRE_REPORT Retired;
+    assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&Retired)==EFI_SUCCESS&&Retired.Clean);
+    free_cold_model();return;
+  }
   if(Test==25){
     assert(mPending[3] && mBulkTx.Active && mTrbs[3].Active && mFrameCount==Queued && mPayload[3]==Payload);
     assert(!memcmp(Bounce,mBulkTx.Cpu,sizeof(Bounce)));service_ack();
@@ -764,7 +779,7 @@ static VOID run_diagnostics(UINTN Test) {
   }
   // Enter before a PC enumerates, as on a failed unattended boot.
   if(Test!=25)service_enumerate();assert(mFastboot.DiagnosticsOnly);
-  CONST CHAR8 *Blocked[]={"continue","reboot","boot","download:00000004","fetch:xbl_config_a:0x0:0x1","oem setup","oem shell","oem boot-stable"};
+  CONST CHAR8 *Blocked[]={"boot","download:00000004","fetch:xbl_config_a:0x0:0x1","oem setup","oem shell","oem boot-stable"};
   for(UINTN I=0;I<ARRAY_SIZE(Blocked);++I){
     service_out(Blocked[I]);assert(mPending[3] && !memcmp(mBulkTx.Cpu,"FAIL",4));service_ack();
     assert(mService.State.Phase==PianoUsbServiceListening && mService.State.Action==PianoUsbServiceActionNone);
@@ -779,12 +794,21 @@ static VOID run_diagnostics(UINTN Test) {
   ((DWC_TRB *)mTrbs[0].Cpu)->Control&=~BIT0;service_event(1);
   ((DWC_TRB *)mTrbs[2].Cpu)->Control&=~BIT0;service_event((8U<<24)|(7U<<6)|4);service_event(0x201);service_enumerate();
   assert(mFastboot.DiagnosticsOnly && mService.DiagnosticsOnly && mPersistent.DiagnosticsOnly);
-  service_out("reboot");assert(!memcmp(mBulkTx.Cpu,"FAIL",4));service_ack();
+  service_out(Test==26?"continue":"reboot");assert(!memcmp(mBulkTx.Cpu,"OKAY",4));
+  assert(mService.State.Phase==PianoUsbServiceListening && mService.State.Action==PianoUsbServiceActionNone);
+  service_ack();
+  assert(mService.State.Phase==PianoUsbServiceStopRequested &&
+    mService.State.Action==(Test==26?PianoUsbServiceActionContinue:PianoUsbServiceActionReboot));
   assert(PianoUsbControllerPumpDiagnostics(5000)==EFI_SUCCESS);
   assert(full_captures==Captures && backend_reads==Reads && backend_infos==Infos && clock_calls==Clocks && event_creates==Events && !closes && !resets);
   service_system_table.BootServices=NULL;
   assert(PianoUsbControllerPumpDiagnostics(5000)!=EFI_SUCCESS);
   assert(PianoDwc3ServicePumpDiagnostics(5000)!=EFI_SUCCESS);
+  service_system_table.BootServices=&bs;
+  PIANO_USB_SERVICE_RETIRE_REPORT Retired;
+  assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&Retired)==EFI_SUCCESS);
+  assert(Retired.Clean && Retired.DeviceHalted && Retired.DmaFreed && Retired.DomainFreed &&
+    Retired.ClocksReleased && Retired.DmaBuffersFreed==9 && !mPersistent.Started);
   free(Header);test_console=NULL;free_cold_model();
 }
 #endif
@@ -800,15 +824,15 @@ int USB_SERVICE_TEST_MAIN(void) {
   for(UINTN I=0;I<11;++I){pid_t P=fork();assert(P>=0);if(P==0){run_navigation(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB product navigation case %llu failed\n",(unsigned long long)I);return 1;}}
   for(UINTN I=0;I<8;++I){pid_t P=fork();assert(P>=0);if(P==0){run_ramlog(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB before-ramlog case %llu failed\n",(unsigned long long)I);return 1;}}
   for(STATUS_CASE I=0;I<StatusCaseCount;++I){pid_t P=fork();assert(P>=0);if(P==0){run_status(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB status-report case %u failed\n",(unsigned)I);return 1;}}
-  for(UINTN I=0;I<27;++I){pid_t P=fork();assert(P>=0);if(P==0){run_diagnostics(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB diagnostics case %u failed\n",(unsigned)I);return 1;}}
-  puts("Actual Device+Controller persistent USB: 15 reset/startup-proof + 22 lifecycle + 11 navigation + 8 before-ramlog + 11 status-report + 27 failure-diagnostics cases PASS; in-flight response/END preservation, diagnostic enumeration/reset, saved log upload and fail-closed state checks; no device.");
+  for(UINTN I=0;I<28;++I){pid_t P=fork();assert(P>=0);if(P==0){run_diagnostics(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB diagnostics case %u failed\n",(unsigned)I);return 1;}}
+  puts("Actual Device+Controller persistent USB: 15 reset/startup-proof + 22 lifecycle + 11 navigation + 8 before-ramlog + 11 status-report + 28 failure-diagnostics cases PASS; in-flight response/END preservation, diagnostic enumeration/reset, saved log upload and fail-closed state checks; no device.");
 #else
   PIANO_USB_STARTUP_FAILURE_EVIDENCE Evidence;assert(PianoDwc3GetStartupFailureEvidence(&Evidence)==EFI_UNSUPPORTED && Evidence.Revision==1);
   (VOID)backend;PIANO_DWC3_SERVICE_STATUS S;PIANO_USB_SERVICE_RETIRE_REPORT R;PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID *)0x55,.NowUs=NULL};
   assert(PianoUsbControllerServiceStart(NULL,&C)==EFI_UNSUPPORTED && PianoDwc3ServiceStart(NULL,NULL,&C)==EFI_UNSUPPORTED);
   assert(PianoUsbControllerServicePumpApp(1,1000)==EFI_UNSUPPORTED && PianoDwc3ServicePollBounded(1)==EFI_UNSUPPORTED);
-  assert(PianoUsbControllerRestrictToDiagnostics()==EFI_UNSUPPORTED && PianoUsbControllerPumpDiagnostics(1000)==EFI_UNSUPPORTED);
-  assert(PianoDwc3ServiceRestrictToDiagnostics()==EFI_UNSUPPORTED && PianoDwc3ServicePumpDiagnostics(1000)==EFI_UNSUPPORTED);
+  assert(PianoUsbControllerRestrictToDiagnostics(TRUE)==EFI_UNSUPPORTED && PianoUsbControllerPumpDiagnostics(1000)==EFI_UNSUPPORTED);
+  assert(PianoDwc3ServiceRestrictToDiagnostics(TRUE)==EFI_UNSUPPORTED && PianoDwc3ServicePumpDiagnostics(1000)==EFI_UNSUPPORTED);
   assert(PianoUsbControllerServiceGetStatus(&S)==EFI_UNSUPPORTED && PianoUsbControllerServiceStop(EFI_SUCCESS,&R)==EFI_UNSUPPORTED);
   model_init();configure();cmd("oem setup","FAILcommand disabled by RAM-only policy");cmd("oem shell","FAILcommand disabled by RAM-only policy");cmd("oem simpleinit","FAILcommand disabled by RAM-only policy");
   assert(Halt()==EFI_SUCCESS);for(UINTN I=0;I<ARRAY_SIZE(all);++I){if(all[I]->Active)assert(PianoDmaComplete(all[I],EFI_SUCCESS,TRUE)==EFI_SUCCESS);assert(PianoDmaFree(all[I])==EFI_SUCCESS);}ClearFastboot();
