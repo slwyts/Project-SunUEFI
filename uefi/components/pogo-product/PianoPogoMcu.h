@@ -37,6 +37,8 @@ UINT32 PianoPogoMcuDataCommand(IN CONST UINT8 *Code,IN UINT32 CodeBytes,IN UINT3
 VOID PianoPogoMcuBootCommand(IN UINT8 Command,OUT UINT8 Wire[2]);
 // "0x4C, 32 00 4E 31 80 38 cmd 01 value sum ...", 66 bytes after the register
 VOID PianoPogoMcuRuntimeCommand(IN UINT8 Command,IN UINT8 Value,OUT UINT8 Wire[PIANO_POGO_COMMAND_WIRE_BYTES]);
+// Stock startup query to the MCU route, separate from cover authentication.
+VOID PianoPogoMcuVersionCommand(OUT UINT8 Wire[PIANO_POGO_COMMAND_WIRE_BYTES]);
 // A runtime read frame carries reports only when it starts with 0x57 and its
 // third byte is non-zero; Linux drops every other frame
 BOOLEAN PianoPogoMcuFrameHasReports(IN CONST UINT8 Frame[PIANO_POGO_REPORT_BYTES]);
