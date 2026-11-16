@@ -94,7 +94,8 @@ EFI_STATUS PianoTouchMatrixFeed(PIANO_TOUCH_MATRIX *M,CONST UINT8 *P,UINTN Len) 
   INTN Csum=PianoTouchPayloadChecksum(P,Len);
   UINT32 Type=P[56],Cols=P[48],Rows=P[49],Nodes=Rows*Cols;
   if(Csum<=0){++M->BadChecksum;return EFI_NOT_READY;}
-  if(!Nodes || Nodes>PIANO_TOUCH_MAX_NODES || 64+(UINT64)Nodes*2>Len){++M->Skipped;return EFI_NOT_READY;}
+  UINT64 CheckedBytes=20+(UINT64)Le32(P+8)*4;
+  if(!Nodes || Nodes>PIANO_TOUCH_MAX_NODES || 64+(UINT64)Nodes*2>CheckedBytes){++M->Skipped;return EFI_NOT_READY;}
   M->LastFrameNo=Le16(P+28);
   if(M->RefType<0) {
     // Lock onto the dominant non-pen matrix type

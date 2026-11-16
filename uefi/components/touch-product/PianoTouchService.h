@@ -10,5 +10,6 @@ EFI_STATUS PianoTouchStart(IN CONST VOID *Fdt);
 VOID PianoTouchPump(VOID);
 // Reemit saved decoder progress without touching the hardware.
 VOID PianoTouchReplay(VOID);
-// Handoff is refused if input, GPIO or clock cleanup is incomplete.
+// Stops GPI DMA and its SMMU domain before restoring GPIO and clocks. Any
+// incomplete cleanup retains memory and refuses handoff.
 EFI_STATUS PianoTouchStop(IN VOID *Context,OUT PIANO_PRODUCT_INPUT_RETIRE_REPORT *Report);

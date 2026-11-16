@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 /* SPLITv1 file repacking and explicit current-slot Android BOOT operations.
- * BOOT4 and AVB fields follow the AOSP bootimg/libavb wire structures.
+ * BOOT3/4 and AVB fields follow the AOSP bootimg/libavb wire structures.
  * Recovery data follows APP; the original GKI is kept once, in place.
  */
 #define _GNU_SOURCE
@@ -35,10 +35,14 @@ struct blob { unsigned char *data; size_t size; };
 struct avb {
   const unsigned char *descriptors;
   uint64_t descriptor_bytes, original_bytes, vbmeta_offset, vbmeta_bytes, rollback;
-  int hash_matches;
+  int present, hash_present, hash_matches;
   char fingerprint[1024];
 };
-struct boot { uint32_t kernel_bytes; uint64_t span; struct avb avb; };
+struct boot {
+  uint32_t kernel_bytes;
+  uint64_t span, sections_offset, sections_bytes;
+  struct avb avb;
+};
 
 static void fail(const char *message) {
   fprintf(stderr, "piano-boot-repack: %s\n", message);
@@ -122,25 +126,16 @@ static int64_t branch_target(uint32_t code) {
   if (delta & 0x2000000u) delta -= 0x4000000u;
   return 4 + delta * 4;
 }
-static int piano_fingerprint(const unsigned char *value, size_t bytes) {
-  static const char *prefixes[] = {
-    "Xiaomi/piano/piano:",
-    "Xiaomi/piano_global/piano:",
-    "Xiaomi/piano_eea/piano:"
-  };
-  for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
-    size_t prefix = strlen(prefixes[i]);
-    if (bytes > prefix && !memcmp(value, prefixes[i], prefix)) return 1;
-  }
-  return 0;
-}
-
 static struct avb parse_avb(const struct blob *b, int require_hash) {
   require(b->size >= PAGE + 64, "BOOT is too small");
   const unsigned char *footer = b->data + b->size - 64;
+  if (memcmp(footer, "AVBf", 4)) {
+    require(!require_hash, "BOOT has no AVB footer; explicit modified-BOOT confirmation is required");
+    return (struct avb){ .original_bytes = b->size };
+  }
   require(!memcmp(footer, "AVBf", 4) && be32(footer + 4) == 1 && !be32(footer + 8) &&
           !nonzero(footer + 36, 28), "unsupported AVB footer");
-  struct avb a = { .original_bytes = be64(footer + 12), .vbmeta_offset = be64(footer + 20),
+  struct avb a = { .present = 1, .original_bytes = be64(footer + 12), .vbmeta_offset = be64(footer + 20),
                   .vbmeta_bytes = be64(footer + 28) };
   require(a.original_bytes >= PAGE && a.original_bytes <= a.vbmeta_offset &&
           a.vbmeta_bytes >= 256 && a.vbmeta_bytes <= 65536 &&
@@ -161,17 +156,24 @@ static struct avb parse_avb(const struct blob *b, int require_hash) {
     require(bytes <= a.descriptor_bytes - at - 16 && !(bytes & 7), "invalid AVB descriptor extent");
     bytes += 16;
     if (be64(d) == 2) {
-      require(bytes >= 132 && !memcmp(d + 24, "sha256", 7) && !nonzero(d + 31, 25), "only SHA256 boot hash is supported");
+      require(bytes >= 132, "truncated boot hash descriptor");
+      int sha512 = !memcmp(d + 24, "sha512", 7) && !nonzero(d + 31, 25);
+      require(sha512 || (!memcmp(d + 24, "sha256", 7) && !nonzero(d + 31, 25)), "unsupported boot hash algorithm");
       uint32_t name = be32(d + 56), salt = be32(d + 60), hash = be32(d + 64);
       uint64_t image = be64(d + 16), payload = (uint64_t)name + salt + hash;
-      require(name == 4 && hash == 32 && !be32(d + 68) && !nonzero(d + 72, 60) &&
+      require(name == 4 && hash == (sha512 ? 64u : 32u) && !be32(d + 68) && !nonzero(d + 72, 60) &&
               range(132, payload, bytes) && align_to(132 + payload, 8) == bytes &&
               image == a.original_bytes && image <= a.vbmeta_offset && !memcmp(d + 132, "boot", 4),
               "unsupported boot hash descriptor");
-      SHA2_CTX ctx; unsigned char calculated[32];
-      SHA256Init(&ctx); SHA256Update(&ctx, d + 132 + name, salt);
-      SHA256Update(&ctx, b->data, (size_t)image); SHA256Final(calculated, &ctx);
-      a.hash_matches = !memcmp(calculated, d + 132 + name + salt, 32); hashes++;
+      SHA2_CTX ctx; unsigned char calculated[64];
+      if (sha512) {
+        SHA512Init(&ctx); SHA512Update(&ctx, d + 132 + name, salt);
+        SHA512Update(&ctx, b->data, (size_t)image); SHA512Final(calculated, &ctx);
+      } else {
+        SHA256Init(&ctx); SHA256Update(&ctx, d + 132 + name, salt);
+        SHA256Update(&ctx, b->data, (size_t)image); SHA256Final(calculated, &ctx);
+      }
+      a.hash_matches = !memcmp(calculated, d + 132 + name + salt, hash); hashes++;
     } else if (be64(d) == 0) {
       require(bytes >= 34, "truncated AVB property");
       uint64_t key = be64(d + 16), value = be64(d + 24);
@@ -179,35 +181,48 @@ static struct avb parse_avb(const struct blob *b, int require_hash) {
               !d[32 + key] && !d[33 + key + value], "invalid AVB property extent");
       const char *wanted = "com.android.build.boot.fingerprint";
       if (key == strlen(wanted) && !memcmp(d + 32, wanted, key)) {
-        require(value >= 13 && value < sizeof(a.fingerprint) &&
-                !memchr(d + 33 + key, 0, (size_t)value) &&
-                piano_fingerprint(d + 33 + key, (size_t)value), "BOOT is not the supported Piano ROM family");
+        require(value < sizeof(a.fingerprint) && !memchr(d + 33 + key, 0, (size_t)value), "invalid BOOT fingerprint property");
         memcpy(a.fingerprint, d + 33 + key, (size_t)value);
         fingerprint++;
       }
     } else fail("unsupported AVB descriptor; no metadata will be discarded");
     at += bytes;
   }
-  require(hashes == 1 && fingerprint == 1, "expected one boot hash and Piano fingerprint");
-  require(!require_hash || a.hash_matches, "BOOT hash descriptor does not match the input");
+  require(hashes <= 1 && fingerprint <= 1, "duplicate boot hash or fingerprint property");
+  a.hash_present = hashes == 1;
+  require(!require_hash || (a.hash_present && a.hash_matches), "BOOT hash descriptor does not match the input");
   return a;
 }
 static struct boot parse_boot(const struct blob *b, int verify_avb) {
-  require(b->size >= PAGE && !memcmp(b->data, "ANDROID!", 8) && le32(b->data + 40) == 4 &&
-          le32(b->data + 20) == 1584 && !le32(b->data + 12) && !le32(b->data + 1580),
-          "expected BOOT4 with separate init_boot and no boot_signature section");
+  require(b->size >= PAGE && !memcmp(b->data, "ANDROID!", 8), "expected Android BOOT3/4");
+  uint32_t version = le32(b->data + 40);
+  require((version == 3 && le32(b->data + 20) == 1580) ||
+          (version == 4 && le32(b->data + 20) == 1584), "expected Android BOOT3/4 header");
   struct boot s = { .kernel_bytes = le32(b->data + 8) };
   require(s.kernel_bytes >= PAGE && range(PAGE, s.kernel_bytes, b->size - 64), "invalid kernel extent");
   const unsigned char *k = b->data + PAGE;
   s.span = le64(k + 16);
-  require(!memcmp(k, "MZ", 2) && !memcmp(k + 56, "ARMd", 4) &&
+  /* NORMAL enters code1's target directly. Only skip code0 when it is the
+   * ARM64 EFI signature instruction or a standard NOP, not arbitrary code. */
+  require((!memcmp(k, "MZ", 2) || le32(k) == 0xD503201FU) && !memcmp(k + 56, "ARMd", 4) &&
           !(le64(k + 24) & 1) && !(le64(k + 8) % (2u * 1024u * 1024u)) &&
           s.span >= s.kernel_bytes && s.span < BOOT_BYTES, "unsupported raw AArch64 GKI span or placement");
   int64_t target = branch_target(le32(k + 4));
   require(target >= 64 && (uint64_t)target < s.kernel_bytes, "unsupported GKI branch");
   s.avb = parse_avb(b, verify_avb);
-  require(PAGE + (uint64_t)s.kernel_bytes <= s.avb.original_bytes, "kernel exceeds the AVB original image");
+  uint64_t end = s.avb.present ? s.avb.vbmeta_offset : b->size;
+  s.sections_offset = PAGE + align_to(s.kernel_bytes, PAGE);
+  s.sections_bytes = align_to(le32(b->data + 12), PAGE) +
+                     (version == 4 ? align_to(le32(b->data + 1580), PAGE) : 0);
+  require(PAGE + (uint64_t)s.kernel_bytes <= end &&
+          (!s.sections_bytes || range(s.sections_offset, s.sections_bytes, end)),
+          "kernel, ramdisk or boot signature overlaps AVB metadata or exceeds BOOT");
   return s;
+}
+static int boot_source_confirm_required(const struct boot *s) {
+  return !s->avb.hash_present || !s->avb.hash_matches ||
+         s->avb.original_bytes < (s->sections_bytes ? s->sections_offset + s->sections_bytes :
+                                                   PAGE + (uint64_t)s->kernel_bytes);
 }
 static const unsigned char *find_split(const struct blob *b, const struct boot *s) {
   uint64_t selector = (uint64_t)branch_target(le32(b->data + PAGE + 4));
@@ -290,7 +305,8 @@ static struct blob repack(const struct blob *source, const struct boot *s,
   uint64_t catalog = align_to(ap + app->size, 16), records = 0;
   size_t tail = sparse_tail(source, PAGE + s->kernel_bytes, NULL, &records);
   uint64_t catalog_bytes = CATALOG_HEADER + PAGE + 64 + tail, total = align_to(catalog + catalog_bytes, PAGE);
-  require(total < 0x08000000 && total + PAGE + 69632 < BOOT_BYTES, "payload does not fit the 96MiB BOOT carrier");
+  require(total < 0x08000000 && total + PAGE + s->sections_bytes + 69632 < BOOT_BYTES,
+          "payload, ramdisk and boot signature do not fit the 96MiB BOOT carrier");
   struct blob out = { .data = calloc(1, BOOT_BYTES), .size = BOOT_BYTES };
   require(out.data != NULL, "out of memory");
   memcpy(out.data, source->data, PAGE + s->kernel_bytes); put32(out.data + 8, (uint32_t)total);
@@ -319,7 +335,9 @@ static struct blob repack(const struct blob *source, const struct boot *s,
   memcpy(c + CATALOG_HEADER + PAGE, source->data + PAGE, 64);
   sparse_tail(source, PAGE + s->kernel_bytes, c + CATALOG_HEADER + PAGE + 64, &records);
   sha(c + CATALOG_HEADER, (size_t)(catalog_bytes - CATALOG_HEADER), c + 288);
-  add_avb(&out, PAGE + total, &s->avb);
+  if (s->sections_bytes)
+    memcpy(out.data + PAGE + total, source->data + s->sections_offset, (size_t)s->sections_bytes);
+  add_avb(&out, PAGE + total + s->sections_bytes, &s->avb);
   return out;
 }
 static struct blob restore(const struct blob *wrapped, const struct boot *s, const unsigned char *m,
@@ -375,7 +393,9 @@ static struct blob restore(const struct blob *wrapped, const struct boot *s, con
   }
   require(at == bytes, "unexpected restore catalog bytes");
   sha(out.data, out.size, hash); require(!memcmp(hash, c + 96, 32), "reconstructed BOOT SHA256 differs from the original");
-  (void)parse_boot(&out, 1);
+  /* The source can have stale or absent AVB after a custom GKI installation.
+   * Its full bytes are authenticated by the restore catalog, not the old AVB. */
+  (void)parse_boot(&out, 0);
   *catalog_size = bytes; *tail_records = count; return out;
 }
 static uint64_t number(const char *p) {
@@ -485,6 +505,7 @@ struct options {
   const char *action, *device, *slot, *rom, *bootprop, *policy, *output, *source, *state, *state_output, *payload, *target, *input;
   const char *payload_output;
   int execute, preview, reject_wrapped, require_ready, read_only;
+  int confirm_modified;
 };
 static void property(const char *name, char *value, size_t capacity) {
   int p[2]; require(!pipe2(p, O_CLOEXEC), "getprop pipe failed");
@@ -516,7 +537,6 @@ static struct identity current_identity(const struct options *o, int write) {
   property("ro.bootimage.build.fingerprint", id.bootprop, sizeof(id.bootprop));
   /* These are independent identities. The actual BOOT footer may describe a
    * newer image than ro.bootimage.build.fingerprint on the same running ROM. */
-  require(id.rom[0] && id.bootprop[0], "current ROM/bootimage properties are missing");
   require(!o->slot || !strcmp(o->slot, id.slot), "requested slot is not the current Android slot");
   require(!o->device || !strcmp(o->device, id.node), "only the exact active boot_a/boot_b node is allowed");
   require(!o->rom || !strcmp(o->rom, id.rom), "ROM changed since invocation");
@@ -699,7 +719,7 @@ static struct components check_wrapper_canonical(const struct blob *wrapped,
   };
   p.selector.data = malloc(p.selector.size); require(p.selector.data != NULL, "out of memory");
   memcpy(p.selector.data, k + le64(m + 24), p.selector.size); memset(p.selector.data + p.metadata, 0, 128);
-  struct boot stock = parse_boot(original, 1);
+  struct boot stock = parse_boot(original, 0);
   struct blob expected = repack(original, &stock, &p.selector, p.memory, p.metadata, &p.shim, &p.fd, &p.app);
   char actual_hash[65], expected_hash[65]; wrapper_hash(wrapped, m, actual_hash); hash_hex(expected.data, expected.size, expected_hash);
   require(wrapped->size == expected.size && !strcmp(actual_hash, expected_hash), "current wrapper differs from its canonical carrier");
@@ -855,7 +875,7 @@ static struct blob upgrade_wrapper(const struct json *policy, const char *direct
   require(before.sequence[before.newest] < UINT64_MAX, "request sequence exhausted");
   struct blob sel = payload(policy, directory, "selector.bin", 65536), shim = payload(policy, directory, "shim.bin", 1024 * 1024);
   struct blob fd = payload(policy, directory, "fd.bin", 0x300000), app = payload(policy, directory, "app.bin", 64 * 1024 * 1024);
-  int selector_meta = member(policy, 0, "selector"); struct boot stock = parse_boot(original, 1);
+  int selector_meta = member(policy, 0, "selector"); struct boot stock = parse_boot(original, 0);
   struct blob result = repack(original, &stock, &sel, json_number(policy, selector_meta, "memory_bytes"),
                               json_number(policy, selector_meta, "metadata_offset"), &shim, &fd, &app);
   struct boot boot = parse_boot(&result, 1); const unsigned char *rm = find_split(&result, &boot);
@@ -903,6 +923,7 @@ static int online_main(int argc, char **argv) {
     if (!strcmp(name, "--read-only")) { o.read_only = 1; continue; }
     if (!strcmp(name, "--reject-wrapped")) { o.reject_wrapped = 1; continue; }
     if (!strcmp(name, "--require-ready")) { o.require_ready = 1; continue; }
+    if (!strcmp(name, "--confirm-modified-boot")) { require(!o.confirm_modified, "duplicate --confirm-modified-boot"); o.confirm_modified = 1; continue; }
     if (!strcmp(name, "--json")) continue;
     require(i + 1 < argc, "option needs a value"); const char *value = argv[++i]; const char **field = NULL;
     if (!strcmp(name, "--interface-version")) { require(!strcmp(value, "1"), "unsupported interface version"); continue; }
@@ -922,6 +943,8 @@ static int online_main(int argc, char **argv) {
     require(field && !*field, "unknown/duplicate interface option"); *field = value;
   }
   require(!(o.execute && (o.preview || o.read_only)), "write and read-only modes conflict");
+  require(!o.confirm_modified || (!strcmp(o.action, "repack") && o.execute && !o.input),
+          "--confirm-modified-boot requires an Android repack operation with --execute");
   require(!strcmp(o.action, "status") || !strcmp(o.action, "probe") || !strcmp(o.action, "repack") ||
           !strcmp(o.action, "restore") || !strcmp(o.action, "request") || !strcmp(o.action, "adopt") || !strcmp(o.action, "upgrade"), "unknown command");
   /* A real wrapped file can exercise the same persistent CRC writer, without Android or fake block nodes. */
@@ -958,7 +981,6 @@ static int online_main(int argc, char **argv) {
   struct snapshot s = snapshot(&o); const unsigned char *m = find_split(&s.bytes, &s.boot);
   uint64_t catalog_bytes = 0, records = 0; struct blob original = {0};
   if (m) original = restore(&s.bytes, &s.boot, m, &catalog_bytes, &records);
-  else require(s.boot.avb.hash_matches, "stock BOOT data hash mismatch");
   require(!o.reject_wrapped || !m, "active BOOT is already wrapped");
   if (!strcmp(o.action, "adopt")) {
     require(m && !o.execute && !o.output && !o.source && !o.payload && !o.target && o.state_output,
@@ -995,6 +1017,11 @@ static int online_main(int argc, char **argv) {
     struct boot check = parse_boot(&result, 1); const unsigned char *rm = find_split(&result, &check);
     struct blob back = restore(&result, &check, rm, &catalog_bytes, &records);
     require(back.size == s.bytes.size && !memcmp(back.data, s.bytes.data, back.size), "internal full BOOT reconstruction differs"); free(back.data);
+    if (boot_source_confirm_required(&s.boot)) {
+      require(o.confirm_modified, "当前 BOOT 的 AVB 摘要缺失或不一致；请通过实体音量键确认保留当前内核后安装。");
+      require(!piano_boot_source_confirm(), "已取消安装，尚未写入 BOOT。");
+      check_snapshot_current(&o, &s);
+    }
     struct blob state = installation_state(&s, &result, rm, "PREPARED_NOT_WRITTEN"); save(o.state_output, &state); sync_parent(o.state_output); free(state.data);
     char after[65]; hash_hex(result.data, result.size, after); write_guarded(&o, &s, result.data, result.size, 0, after);
     state = installation_state(&s, &result, rm, "WRITTEN_READBACK_VERIFIED"); finish_state(o.state_output, &state); emit_result(&state, NULL);
@@ -1034,10 +1061,13 @@ static int online_main(int argc, char **argv) {
     fprintf(f, "{\"schema_version\":1,\"status\":\"%s\",", !strcmp(o.action, "probe") ? "ACTIVE_BOOT_PROBED" : "ACTIVE_BOOT_STATUS"); identity_fields(f, &s);
     fprintf(f, ",\"source_sha256\":\"%s\",\"original_source_sha256\":\"%s\",\"wrapper_sha256\":\"%s\",\"app_sha256\":\"%s\","
             "\"wrapped\":%s,\"owned\":%s,\"avb_hash_matches\":%s,\"module_ready\":%s,"
+            "\"avb_present\":%s,\"avb_hash_present\":%s,\"boot_source_confirm_required\":%s,"
             "\"restore_catalog_bytes\":%" PRIu64 ",\"request_target\":%u,\"request_sequence\":%" PRIu64 ","
             "\"request_policy\":\"persistent-until-changed\",\"read_only\":true,\"full_partition_backup\":false,",
             s.sha, original_sha, immutable, app_sha, m ? "true" : "false", owned ? "true" : "false",
             s.boot.avb.hash_matches ? "true" : "false", ready ? "true" : "false",
+            s.boot.avb.present ? "true" : "false", s.boot.avb.hash_present ? "true" : "false",
+            !m && boot_source_confirm_required(&s.boot) ? "true" : "false",
             catalog_bytes, m ? r.target[r.newest] : 0, m ? r.sequence[r.newest] : 0);
     policy_fields(f, &policy); fputs("}\n", f);
     require(!fclose(f), "metadata formatting failed"); emit_result(&result, o.output); free(result.data);
@@ -1066,6 +1096,8 @@ int main(int argc, char **argv) {
          "Android: probe/status --boot-device /dev/block/by-name/boot_a|boot_b --active-slot _a|_b --policy FILE\n"
          "Android: adopt --boot-device ... --active-slot ... --policy FILE --state-output FILE [--payload-output-dir DIR]\n"
          "Android: upgrade --boot-device ... --active-slot ... --policy FILE --payload-dir DIR --state-output FILE [--installed-state FILE] --execute\n"
+         "Android: repack --boot-device ... --active-slot ... --policy FILE --source-metadata FILE --payload-dir DIR --state-output FILE --execute [--confirm-modified-boot]\n"
+         "File repack: --allow-modified-boot accepts missing/stale AVB only; kernel and lossless restore checks remain mandatory.\n"
          "repack/upgrade/restore/request online writes require --execute and current-ROM metadata/state.\n"
          "No inactive-slot, Recovery, vbmeta, GPT, OTA automation or automatic reboot.");
     return 0;
@@ -1074,7 +1106,12 @@ int main(int argc, char **argv) {
   const char *action = argv[1], *input = NULL, *output = NULL, *selector_path = NULL;
   const char *shim_path = NULL, *fd_path = NULL, *app_path = NULL;
   uint64_t memory = 0, metadata = UINT64_MAX;
+  int allow_modified = 0;
   for (int i = 2; i < argc; i++) {
+    if (!strcmp(argv[i], "--allow-modified-boot")) {
+      require(!allow_modified && !strcmp(action, "repack"), "--allow-modified-boot is only for file repack");
+      allow_modified = 1; continue;
+    }
     require(i + 1 < argc, "option needs a value");
     const char *name = argv[i], *value = argv[++i];
     if (!strcmp(name, "--input") && !input) input = value;
@@ -1096,19 +1133,23 @@ int main(int argc, char **argv) {
   }
   require(!strcmp(action, "probe") || !strcmp(action, "repack") || !strcmp(action, "restore"), "unknown command");
   struct blob b = load(input, BOOT_BYTES);
-  struct boot s = parse_boot(&b, !strcmp(action, "repack"));
+  struct boot s = parse_boot(&b, !strcmp(action, "repack") && !allow_modified);
+  require(strcmp(action, "repack") || allow_modified || !boot_source_confirm_required(&s),
+          "BOOT hash does not cover the current kernel; explicit modified-BOOT confirmation is required");
   const unsigned char *m = find_split(&b, &s);
   char source_sha[65], result_sha[65]; hash_hex(b.data, b.size, source_sha);
   uint64_t catalog_bytes = 0, records = 0;
   if (!strcmp(action, "probe")) {
     require(!output && !selector_path && !shim_path && !fd_path && !app_path, "probe does not accept output/payload options");
     if (m) { struct blob reconstructed = restore(&b, &s, m, &catalog_bytes, &records); free(reconstructed.data); }
-    else require(s.avb.hash_matches, "stock BOOT hash descriptor mismatch");
-    printf("{\"status\":\"FILE_PROBED\",\"wrapped\":%s,\"boot_bytes\":%zu,\"kernel_bytes\":%u,"
+    printf("{\"status\":\"FILE_PROBED\",\"wrapped\":%s,\"boot_bytes\":%zu,\"kernel_bytes\":%u,\"header_version\":%u,"
            "\"image_span\":%" PRIu64 ",\"source_sha256\":\"%s\",\"avb_hash_matches\":%s,"
+           "\"avb_present\":%s,\"avb_hash_present\":%s,\"boot_source_confirm_required\":%s,"
            "\"restore_catalog_bytes\":%" PRIu64 ",\"padding_records\":%" PRIu64 ",\"device_operation_performed\":false}\n",
-           m ? "true" : "false", b.size, s.kernel_bytes, s.span, source_sha,
-           s.avb.hash_matches ? "true" : "false", catalog_bytes, records);
+           m ? "true" : "false", b.size, s.kernel_bytes, le32(b.data + 40), s.span, source_sha,
+           s.avb.hash_matches ? "true" : "false", s.avb.present ? "true" : "false",
+           s.avb.hash_present ? "true" : "false", !m && boot_source_confirm_required(&s) ? "true" : "false",
+           catalog_bytes, records);
   } else if (!strcmp(action, "repack")) {
     require(!m, "input is already wrapped; restore first");
     struct blob selector = load(selector_path, 65536), shim = load(shim_path, 1024 * 1024);

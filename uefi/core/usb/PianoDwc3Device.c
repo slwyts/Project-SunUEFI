@@ -933,11 +933,16 @@ STATIC BOOLEAN ServiceAtApp(VOID) {
   EFI_TPL Old=gBS->RaiseTPL(TPL_HIGH_LEVEL);gBS->RestoreTPL(Old);return Old==TPL_APPLICATION;
 }
 STATIC BOOLEAN ServiceDiagnosticsLive(BOOLEAN CheckBusy) {
-  if(!mService.State.Started || mService.State.Phase!=PianoUsbServiceListening ||
-     mService.State.Retained || mService.State.ServicesLost || (CheckBusy && mService.State.Busy) ||
-     mService.State.Action!=PianoUsbServiceActionNone || mService.Uncertain || mExperimentContractFailed ||
-     !mExperimentRunning || mService.StartStatus!=EFI_SUCCESS || !mService.EverStarted ||
-     mFastboot.RebootRequested || mFastboot.ExitRequested || mFastboot.Receiving ||
+  BOOLEAN Reset=mFastboot.RebootRequested!=mFastboot.ExitRequested;
+  BOOLEAN Acknowledged=Reset && mService.State.Phase==PianoUsbServiceStopRequested &&
+    mService.State.Action==(mFastboot.RebootRequested?PianoUsbServiceActionReboot:PianoUsbServiceActionContinue) &&
+    !mFrames && !mPending[3] && !mEnding[3];
+  if(!mService.State.Started || (!Acknowledged && (mService.State.Phase!=PianoUsbServiceListening ||
+      mService.State.Action!=PianoUsbServiceActionNone)) ||
+      mService.State.Retained || mService.State.ServicesLost || (CheckBusy && mService.State.Busy) ||
+      mService.Uncertain || mExperimentContractFailed ||
+      !mExperimentRunning || mService.StartStatus!=EFI_SUCCESS || !mService.EverStarted ||
+      (!Reset && (mFastboot.RebootRequested || mFastboot.ExitRequested)) || mFastboot.Receiving ||
      mFastboot.BootPreparing || mFastboot.BootPending || mFastboot.BootTransferFrozen)return FALSE;
 #if PIANO_USB_RAM_BOOT
   if(mBootAckObserved || mBootActionValid)return FALSE;
@@ -951,14 +956,26 @@ STATIC EFI_STATUS ServiceDiagnosticsReady(VOID) {
   // RestoreTPL may dispatch the EBS fence before returning to APP.
   return ServiceDiagnosticsLive(TRUE)?EFI_SUCCESS:EFI_ABORTED;
 }
-EFI_STATUS PianoDwc3ServiceRestrictToDiagnostics(VOID) {
+EFI_STATUS PianoDwc3ServiceRestrictToDiagnostics(BOOLEAN AllowReboot) {
+  if(!mService.DiagnosticsOnly && (mFastboot.RebootRequested || mFastboot.ExitRequested) &&
+     (mService.State.Phase!=PianoUsbServiceStopRequested ||
+      mService.State.Action!=(mFastboot.RebootRequested?PianoUsbServiceActionReboot:PianoUsbServiceActionContinue) ||
+      mFrames || mPending[3] || mEnding[3]))return EFI_NOT_READY;
   EFI_STATUS Status=ServiceDiagnosticsReady();if(Status!=EFI_SUCCESS)return Status;
   // Queued frames already own their copies and EP3 uses a separate bounce
   // buffer. Keep them and pending END transfers intact while limiting commands.
-  Status=PianoFastbootRestrictToDiagnostics(&mFastboot);
+  BOOLEAN ResetAcknowledged=mService.State.Phase==PianoUsbServiceStopRequested;
+  Status=PianoFastbootRestrictToDiagnostics(&mFastboot,AllowReboot);
   if(Status!=EFI_SUCCESS)return Status;
+  if(ResetAcknowledged) {
+    // A different driver refused retirement after the host received OKAY.
+    // Keep this same USB session alive and accept fresh diagnostic commands.
+    mFastboot.RebootRequested=mFastboot.ExitRequested=FALSE;
+    mService.State.Action=PianoUsbServiceActionNone;mService.State.Phase=PianoUsbServiceListening;
+  }
+  mService.DiagnosticsOnly=TRUE;
   if(!ServiceDiagnosticsLive(TRUE))return EFI_ABORTED;
-  mService.DiagnosticsOnly=TRUE;return EFI_SUCCESS;
+  return BulkPump();
 }
 EFI_STATUS PianoDwc3ServicePumpDiagnostics(UINTN BudgetUs) {
   if(!mService.DiagnosticsOnly || !mFastboot.DiagnosticsOnly)return EFI_NOT_READY;
@@ -1351,7 +1368,7 @@ VOID PianoDwc3ServiceReplayStartup(VOID){}
 EFI_STATUS PianoDwc3ServiceStart(PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D,CONST PIANO_DWC3_SERVICE_CONFIG *Config){(VOID)C;(VOID)D;(VOID)Config;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoDwc3ServicePollBounded(UINTN N){(VOID)N;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoDwc3ServicePumpApp(UINT32 Reason,UINTN BudgetUs){(VOID)Reason;(VOID)BudgetUs;return EFI_UNSUPPORTED;}
-EFI_STATUS PianoDwc3ServiceRestrictToDiagnostics(VOID){return EFI_UNSUPPORTED;}
+EFI_STATUS PianoDwc3ServiceRestrictToDiagnostics(BOOLEAN AllowReboot){(VOID)AllowReboot;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoDwc3ServicePumpDiagnostics(UINTN BudgetUs){(VOID)BudgetUs;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoDwc3ServiceStop(EFI_STATUS Reason){(VOID)Reason;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoDwc3ServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){if(S==NULL)return EFI_INVALID_PARAMETER;ZeroMem(S,sizeof(*S));S->Revision=1;return EFI_UNSUPPORTED;}

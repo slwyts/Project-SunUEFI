@@ -269,8 +269,8 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
     if(mReport.IdleSample==MAX_UINT64)S=EFI_OUT_OF_RESOURCES;
     else {++mReport.IdleSample;mReport.IdleBulkActive=Actual.BulkActive;mReport.IdleKnown=TRUE;}
   }
-  // GPIO SPI reads can hold the CPU for 40 ms. Drain USB first and defer
-  // synchronous input work while bulk data or queued USB events need service.
+  // Drain USB first and defer synchronous input work while bulk data or
+  // queued USB events need service.
   if((S==EFI_SUCCESS || S==EFI_NOT_READY) && mReport.IdleKnown && !Actual.BulkActive && !Actual.WorkPending &&
        (Reason&(PIANO_PRODUCT_PUMP_WAIT_EVENT|PIANO_PRODUCT_PUMP_GUI))){PianoPogoPump();PianoTouchPump();}
   // Drain USB first. Never hold off Chapter 9 enumeration or an active bulk

@@ -27,6 +27,7 @@ UINTN EFIAPI AsciiSPrint(CHAR8 *Buffer,UINTN Size,CONST CHAR8 *Format,...){
 }
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
+INTN EFIAPI AsciiStrnCmp(CONST CHAR8 *A,CONST CHAR8 *B,UINTN N){return strncmp(A,B,N);}
 VOID EFIAPI MemoryFence(VOID){ }
 static EFI_MEMORY_REGION_DESCRIPTOR region;
 VOID GetMemoryMap(EFI_MEMORY_REGION_DESCRIPTOR **Map,UINT8 *Count){*Map=&region;*Count=1;}

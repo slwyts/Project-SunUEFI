@@ -69,6 +69,8 @@ typedef struct {
 } PIANO_POGO_INPUT;
 
 VOID PianoPogoReset(IN OUT PIANO_POGO_INPUT *Input);
+// Stock Nanosic_i2c_parse masks the high sync bit and accepts four routes.
+BOOLEAN PianoPogoFrameValid(IN CONST UINT8 *Frame,IN UINTN Bytes);
 EFI_STATUS PianoPogoFeedFrame(IN OUT PIANO_POGO_INPUT *Input, IN CONST UINT8 *Frame, IN UINTN Bytes);
 EFI_STATUS PianoPogoReadKeyEx(IN OUT PIANO_POGO_INPUT *Input, OUT EFI_KEY_DATA *Key);
 EFI_STATUS PianoPogoReadPointer(IN OUT PIANO_POGO_INPUT *Input, OUT EFI_SIMPLE_POINTER_STATE *State);

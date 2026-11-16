@@ -40,6 +40,12 @@ STATIC UINTN Restricts,DiagnosticPumps,DiagnosticStalls,RuntimePumps;
 STATIC UINT32 RetainedObservers;
 STATIC EFI_STATUS RestrictStatus;
 STATIC BOOLEAN ExitDuringDiagnosticPump;
+STATIC BOOLEAN ResetDuringDiagnosticPump,ResetReached;
+STATIC EFI_STATUS RetireStatus;
+STATIC UINT32 Retires,ResetArms;
+STATIC PIANO_USB_SERVICE_ACTION DiagnosticAction;
+STATIC BOOLEAN DiagnosticResetBlocked;
+STATIC CONST CHAR16 *FailureDetail;
 
 STATIC EFI_STATUS EFIAPI Handle(EFI_HANDLE Image,EFI_GUID *Guid,VOID **Interface){
   assert(Guid==&gEfiLoadedImageProtocolGuid);++Handles;
@@ -74,14 +80,37 @@ BOOLEAN PianoDisplaySmmuRetained(VOID){return (RetainedObservers&BIT1)!=0;}
 BOOLEAN PianoFrameBufferMappingRetained(VOID){return (RetainedObservers&BIT2)!=0;}
 BOOLEAN PianoDisplayClockRetained(VOID){return (RetainedObservers&BIT3)!=0;}
 BOOLEAN PianoProductDisplayOwnerRetained(VOID){return (RetainedObservers&BIT4)!=0;}
-EFI_STATUS PianoUsbControllerRestrictToDiagnostics(VOID){
-  ++Restricts;assert(!mFailureDiagnostics&&!Count&&!RuntimePumps);return RestrictStatus;
+EFI_STATUS PianoUsbControllerRestrictToDiagnostics(BOOLEAN AllowReboot){
+  ++Restricts;assert(!Count&&!RuntimePumps);
+  if(mOwners.Report.Retained || mOwners.Report.PolicyStopped)assert(!AllowReboot);
+  if(!AllowReboot)DiagnosticResetBlocked=TRUE;
+  return RestrictStatus;
 }
 EFI_STATUS PianoUsbControllerPumpDiagnostics(UINTN BudgetUs){
-  assert(BudgetUs==1000&&Restricts==1&&mFailureDiagnostics&&!Count&&!RuntimePumps);
+  assert(BudgetUs==1000&&Restricts>=1&&mFailureDiagnostics&&!Count&&!RuntimePumps);
   ++DiagnosticPumps;
   if(ExitDuringDiagnosticPump){mBootLogExited=TRUE;System.BootServices=NULL;return EFI_SUCCESS;}
+  if(ResetDuringDiagnosticPump && !DiagnosticResetBlocked)return EFI_SUCCESS;
   return DiagnosticPumps==3?EFI_DEVICE_ERROR:EFI_SUCCESS;
+}
+EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *Usb){
+  memset(Usb,0,sizeof(*Usb));Usb->Revision=1;Usb->Started=TRUE;
+  Usb->Phase=ResetDuringDiagnosticPump&&!DiagnosticResetBlocked?PianoUsbServiceStopRequested:PianoUsbServiceListening;
+  Usb->Action=ResetDuringDiagnosticPump&&!DiagnosticResetBlocked?DiagnosticAction:PianoUsbServiceActionNone;
+  return EFI_SUCCESS;
+}
+EFI_STATUS PianoProductOwnersRetire(PIANO_PRODUCT_OWNERS *Owners){
+  assert(Owners==&mOwners&&!mFailureDiagnostics);++Retires;
+  if(RetireStatus!=EFI_SUCCESS){Owners->Report.Retained=TRUE;return RetireStatus;}
+  Owners->Report.Clean=TRUE;Owners->Report.AllowedAction=DiagnosticAction;
+  return EFI_SUCCESS;
+}
+EFI_STATUS PianoLateHandoffArmReset(PIANO_LATE_HANDOFF *Late,EFI_HANDLE Image){
+  assert(Late==&mLateHandoff&&Image==CORE&&Retires==1&&mOwners.Report.Clean);++ResetArms;return EFI_SUCCESS;
+}
+EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *Owners,EFI_HANDLE Image){
+  assert(Owners==&mOwners&&Image==CORE&&ResetArms==1&&Owners->Report.Clean);
+  ResetReached=TRUE;longjmp(Escape,1);return EFI_ABORTED;
 }
 STATIC EFI_STATUS EFIAPI DiagnosticStall(UINTN Microseconds){
   assert(Microseconds==1000&&mFailureDiagnostics&&BootLogAlive());++DiagnosticStalls;return EFI_SUCCESS;
@@ -98,7 +127,7 @@ EFI_STATUS PianoProductBootLogStage(CONST CHAR8 *Name,EFI_STATUS Status,UINT64 E
   (VOID)Name;(VOID)Status;(VOID)Elapsed;assert(!"boot log is disabled");return EFI_SUCCESS;
 }
 EFI_STATUS PianoProductBootLogMessage(CONST CHAR16 *Title,CONST CHAR16 *Detail,EFI_STATUS Status,BOOLEAN Failed){
-  assert(Title&&Detail);if(Failed)FailureStatus=Status;return EFI_SUCCESS;
+  assert(Title&&Detail);if(Failed){FailureStatus=Status;FailureDetail=Detail;}return EFI_SUCCESS;
 }
 VOID EFIAPI CpuDeadLoop(VOID){longjmp(Escape,1);}
 
@@ -125,10 +154,14 @@ STATIC VOID Reset(VOID){
   Policy.RequestedCoreAction=PianoUsbServiceActionBoot;
   Count=Handles=0;HandleStatus=EFI_SUCCESS;
   FailureStatus=EFI_NOT_STARTED;
+  FailureDetail=NULL;
   EspStatus=LoadStatus=EFI_SUCCESS;HostStatus=EFI_NOT_READY;FileLoads=0;
   mHandoffFailure=NULL;mHandoffStage="not-started";
   Restricts=DiagnosticPumps=DiagnosticStalls=RuntimePumps=RetainedObservers=0;
   RestrictStatus=EFI_NOT_READY;ExitDuringDiagnosticPump=FALSE;mFailureDiagnostics=FALSE;mFailureStatus=EFI_NOT_STARTED;
+  ResetDuringDiagnosticPump=ResetReached=FALSE;RetireStatus=EFI_SUCCESS;Retires=ResetArms=0;
+  DiagnosticAction=PianoUsbServiceActionReboot;
+  DiagnosticResetBlocked=FALSE;
   CodeStatus=EFI_SUCCESS;
   memset(&KernelPath,0,sizeof(KernelPath));
   KernelPath.Memory.Header=(EFI_DEVICE_PATH_PROTOCOL){HARDWARE_DEVICE_PATH,HW_MEMMAP_DP,{sizeof(MEMMAP_DEVICE_PATH),0}};
@@ -210,6 +243,27 @@ STATIC VOID ErrorDiagnostics(VOID){
   assert(mFailureStatus==EFI_LOAD_ERROR&&FailureStatus==EFI_LOAD_ERROR&&!Count&&!Handles&&!RuntimePumps);
   assert(!mOwners.Report.RetiredMask&&!mOwners.Report.Clean&&!mLateHandoff.RetireCalls);
 
+  PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;HostStatus=EFI_SUCCESS;
+  mLinuxActive=FALSE;mLinuxApplication.Busy=FALSE;mLateHandoff.Env.ParentImage=CORE;
+  if(!setjmp(Escape)){FailStop(EFI_OUT_OF_RESOURCES);assert(!"acknowledged reset must leave failure diagnostics");}
+  assert(ResetReached&&Retires==1&&ResetArms==1&&!RuntimePumps);
+
+  PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;HostStatus=EFI_SUCCESS;
+  DiagnosticAction=PianoUsbServiceActionContinue;
+  mLinuxActive=FALSE;mLinuxApplication.Busy=FALSE;mLateHandoff.Env.ParentImage=CORE;
+  if(!setjmp(Escape))FailStop(EFI_OUT_OF_RESOURCES);
+  assert(ResetReached&&Retires==1&&ResetArms==1&&!RuntimePumps);
+
+  PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;DiagnosticAction=PianoUsbServiceActionBoot;
+  mLinuxActive=FALSE;mLinuxApplication.Busy=FALSE;mLateHandoff.Env.ParentImage=CORE;
+  if(!setjmp(Escape))FailStop(EFI_OUT_OF_RESOURCES);
+  assert(!ResetReached&&!Retires&&!ResetArms&&!RuntimePumps);
+
+  PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;HostStatus=EFI_SUCCESS;RetireStatus=EFI_DEVICE_ERROR;
+  mLinuxActive=FALSE;mLinuxApplication.Busy=FALSE;mLateHandoff.Env.ParentImage=CORE;
+  if(!setjmp(Escape)){FailStop(EFI_OUT_OF_RESOURCES);assert(!"failed cleanup must halt without reset");}
+  assert(!ResetReached&&Retires==1&&!ResetArms&&mOwners.Report.Retained);
+
   PrepareErrorDiagnostics();RestrictStatus=EFI_NOT_READY;
   if(!setjmp(Escape))FailStop(EFI_LOAD_ERROR);
   assert(Restricts==1&&!DiagnosticPumps&&!DiagnosticStalls&&!RuntimePumps&&!Count);
@@ -224,22 +278,11 @@ STATIC VOID ErrorDiagnostics(VOID){
   assert(!Restricts&&!DiagnosticPumps&&!DiagnosticStalls&&!RuntimePumps&&!Count&&!Handles&&!mFailureDiagnostics); \
   assert(mFailureStatus==EFI_LOAD_ERROR); \
 }while(0)
-  UNSAFE_DIAGNOSTICS(mOwners.Report.Busy=TRUE);
-  UNSAFE_DIAGNOSTICS(mOwners.Report.Retained=TRUE);
-  UNSAFE_DIAGNOSTICS(mOwners.Report.Clean=TRUE);
   UNSAFE_DIAGNOSTICS(mOwners.Report.ServicesLost=TRUE);
-  UNSAFE_DIAGNOSTICS(mOwners.Report.PolicyStopped=TRUE);
   UNSAFE_DIAGNOSTICS(mOwners.Report.UsbStopped=TRUE);
-  UNSAFE_DIAGNOSTICS(mOwners.Report.RetiredMask=PIANO_OWNER_UFS);
-  UNSAFE_DIAGNOSTICS(mOwners.Report.Phase=PianoProductOwnersRetiring);
-  UNSAFE_DIAGNOSTICS(mOwners.Report.Phase=PianoProductOwnersClean);
-  UNSAFE_DIAGNOSTICS(mOwners.Report.Phase=PianoProductOwnersRetained);
-  UNSAFE_DIAGNOSTICS(mLateHandoff.Busy=TRUE);
-  UNSAFE_DIAGNOSTICS(mLateHandoff.Retained=TRUE);
-  UNSAFE_DIAGNOSTICS(mLateHandoff.RetireCalls=1);
-  UNSAFE_DIAGNOSTICS(mLateHandoff.Phase=PianoExitRetiring);
-  UNSAFE_DIAGNOSTICS(mLateHandoff.Phase=PianoExitClean);
-  UNSAFE_DIAGNOSTICS(mLateHandoff.Phase=PianoExitRetained);
+  UNSAFE_DIAGNOSTICS(mOwners.Report.Usb.Attempted=TRUE);
+  UNSAFE_DIAGNOSTICS(mOwners.Report.RetiredMask=PIANO_OWNER_USB);
+  UNSAFE_DIAGNOSTICS(mOwners.Report.OuterTplHeld=TRUE);
   for(UINTN I=0;I<5;++I){UNSAFE_DIAGNOSTICS(RetainedObservers=1U<<I);}
   UNSAFE_DIAGNOSTICS(mBootLogExited=TRUE);
   UNSAFE_DIAGNOSTICS(System.BootServices=NULL);
@@ -247,6 +290,20 @@ STATIC VOID ErrorDiagnostics(VOID){
   UNSAFE_DIAGNOSTICS(gBS=NULL);
   UNSAFE_DIAGNOSTICS(Services.Stall=NULL);
 #undef UNSAFE_DIAGNOSTICS
+  for(UINTN I=0;I<2;++I){
+    PrepareErrorDiagnostics();mOwners.Report.Retained=TRUE;
+    if(I)mOwners.Report.Pogo.Started=TRUE;else mOwners.Report.Touch.Started=TRUE;
+    if(!setjmp(Escape))FailStop(EFI_DEVICE_ERROR);
+    CONST CHAR16 *Expected=I?L"键盘驱动未能安全退出":L"触屏驱动未能安全退出";
+    UINTN Length=0;while(Expected[Length])++Length;
+    assert(FailureDetail&&!memcmp(FailureDetail,Expected,(Length+1)*sizeof(CHAR16)));
+    assert(Restricts==1&&DiagnosticPumps==3&&DiagnosticResetBlocked&&!RuntimePumps);
+  }
+  PrepareErrorDiagnostics();mOwners.Report.PolicyStopped=TRUE;mOwners.Report.RetiredMask=PIANO_OWNER_POLICY;
+  mOwners.Report.Retained=TRUE;mOwners.Report.Phase=PianoProductOwnersRetained;
+  mLateHandoff.Busy=mLateHandoff.Retained=TRUE;mLateHandoff.Phase=PianoExitRetained;mLateHandoff.RetireCalls=1;
+  if(!setjmp(Escape))FailStop(EFI_DEVICE_ERROR);
+  assert(Restricts==1&&DiagnosticPumps==3&&DiagnosticResetBlocked&&!Retires&&!ResetReached);
 }
 int main(int Argc,char **Argv){
   assert(Argc==2);

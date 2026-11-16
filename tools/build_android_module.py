@@ -120,7 +120,8 @@ def selector_payload(path, manifest, payloads):
             'Selector hash/size mismatch')
     require(meta.get('product_fd_sha256') == digest(payloads['fd.bin']) and
             meta.get('app_payload_sha256') == digest(payloads['app.bin']), 'Selector belongs to a different FD/APP')
-    require(meta.get('supported_boot_headers') == [4], 'Selector must declare current-ROM BOOT v4 support')
+    require(meta.get('supported_boot_headers') in ([4], [3, 4]),
+            'Selector must declare supported BOOT v3/v4 headers including current-ROM v4')
     require(meta.get('app_abi') == 1 and meta.get('wrapper_version') == 1,
             'Unsupported selector APP/wrapper ABI')
     require(meta.get('entry_policy') == 'explicit-request-only' and
@@ -158,12 +159,12 @@ def native_proof(tool, manifest, payloads, selector):
     require(proof.get('request_policy') == 'persistent-until-changed', 'Native proof must describe persistent requests')
     expected = {name: digest(raw) for name, raw in {**payloads, 'selector.bin': selector}.items()}
     require(proof.get('payload_sha256') == expected, 'Native proof belongs to different payloads')
-    require(proof.get('supported_boot_headers', proof.get('tested_boot_headers')) == [4],
+    require(proof.get('supported_boot_headers', proof.get('tested_boot_headers')) in ([4], [3, 4]),
             'Native tool must support current-ROM BOOT v4')
     require(proof.get('stock_kernel_bundled') is False and proof.get('full_partition_backup') is False,
             'Native proof must preserve runtime extraction and no whole-partition backup')
     blockers = []
-    if proof.get('tested_boot_headers') != [4]:
+    if 4 not in proof.get('tested_boot_headers', []):
         blockers.append('native BOOT v4 tests are missing')
     tests = proof.get('tests', {})
     for name in TESTS:
@@ -209,7 +210,7 @@ def inspect(args):
               'ota_automatic': False, 'supported_managers': ['Magisk', 'KernelSU'],
               'automatic_partition_operations': False,
               'root_preservation': 'current BOOT GKI bytes retained; init_boot/vendor_boot untouched',
-              'supported_source_layout': 'raw ARM64 BOOT v4, separate init_boot, valid Piano AVB hash/fingerprint'}
+              'supported_source_layout': 'raw ARM64 BOOT v3/v4; stock or custom GKI; optional fingerprint; source AVB mismatch requires physical confirmation'}
     report['entry_policy'] = 'explicit-request-only'
     report['request_policy'] = 'persistent-until-changed'
     report['request_bootarg'] = 'sunuefi.boot=uefi'
@@ -307,8 +308,10 @@ def package(args):
     entries['bin/piano-boot-repack'] = native
     entries['licenses/COPYING.libmd'] = read_file(ROOT / 'upstream/simple-init/libs/libmd/COPYING')
     entries['licenses/jsmn.h'] = read_file(ROOT / 'android/native/jsmn.h')
+    proof = read_json(args.native_manifest)
     entries['policy.json'] = (json.dumps({**report, 'interface_version': 1,
-        'supported_boot_headers': [4], 'wrapper_version': 1, 'app_abi': 1,
+        'supported_boot_headers': proof.get('supported_boot_headers', proof.get('tested_boot_headers')),
+        'wrapper_version': 1, 'app_abi': 1,
         'commands': list(COMMANDS), 'tool': record(native),
         'native_proof_sha256': digest(read_file(args.native_manifest)),
         'selector_manifest_sha256': digest(read_file(args.selector_manifest))}, sort_keys=True, indent=2) + '\n').encode()

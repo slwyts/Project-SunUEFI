@@ -186,6 +186,96 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 `./build.sh mutter` 从签名 sid 索引选择 Mutter 源码，与 Nyarch 共用空 Gamma 曲线恢复和已取消触摸 grab 两项修复；无 EDID 的标准 sRGB fallback 已由发行版提供，不再重复打补丁。标准颜色服务和用户配置保持不变。来源与补丁见 [Mutter 适配说明](../../linux/desktops/gnome/patches/mutter/README.md)。
 单独构建时使用了其他输出目录，可通过 `release-rootfs --mutter-dir 输出目录/runtime` 选择；组装前会检查源码、补丁和软件包摘要。
 
+## 软件包与更新标准化
+
+硬件支持应能安装到干净的受支持发行版中，再通过发行版包管理器升级、卸载和
+回退。四个产品镜像是这些软件包和首次安装默认设置的组合，不应成为硬件适配
+唯一能生效的环境。下面区分已经使用的原生包和仍由构建脚本复制的文件；
+未完成的实施工作见[发布要求中的开发清单](release.md#未完成的开发工作)。
+
+| 内容 | 现有安装方式 | 标准化方向 |
+| --- | --- | --- |
+| Linux 内核与模块 | `Image`、配置、`System.map` 和模块目录；rootfs 构建器直接复制模块 | Debian 内核包与 pacman 内核包，随包安装并维护匹配的模块 |
+| 设备树 | ESP 打包时组合板级 DTB、overlay 和绑定转换 | 构建匹配内核的 DTB，按内核版本安装，生成 UKI 时选取同版文件 |
+| Linux 设备固件 | `tools/stage_piano_firmware.py` 校验后复制到 `/usr/lib/firmware` | 原生固件包，补充发行版缺少的文件，避免与 `linux-firmware` 重复拥有同一路径 |
+| ALSA UCM、AudioReach topology、udev、笔校准及硬件配置 | 已有 BSP 打包入口，完整产品仍有直接复制 | 明确包内文件、依赖、配置覆盖和卸载范围 |
+| Mesa、FFmpeg | 已有 Debian 和 pacman 原生包 | 保留目标发行版完整配方、功能和 ABI，按软件源正常更新 |
+| 传感器 | Debian 提供 FastRPC、libssc、iio-sensor-proxy 和 Piano 配置的六个运行包；Arch 部分集成文件另行复制 | 原生包包含完整集成文件，运行时继续提供标准 SensorProxy 接口 |
+| PipeWire 相机插件 | 已有 GStreamer 插件包和 `pipewire-v4l2-source` 包 | 保留明确的 PipeWire ABI 依赖，修复进入上游后撤掉本地替代 |
+| 指纹 | libfprint／fprintd 使用目标发行版包；CLI 和服务配置另行安装 | 正常包拥有全部必要文件，标准认证结果仍取自 libfprint／fprintd |
+| 笔及相机工具、外部模块 | runtime 文件集合直接安装，包含匹配内核的 `v4l2loopback` | 运行组件、诊断工具和内核模块分别打包，标准替代完整可用后删除旧路径 |
+| GNOME／KDE／SteamOS 组件 | Mutter、GDM、GSD、libwacom、Gamescope 等已有原生包，默认设置和会话文件仍有 overlay | 通用修复维护一份补丁，设备配置与产品默认值分开，不覆盖用户设置 |
+
+Linux 设备固件包括 ADSP、CDSP、Goodix 签名程序及模型、ath12k、蓝牙、GPU、
+VPU、内屏、键盘和触屏文件，来源由 `config/release.json` 和组件清单记录。
+原厂固件的许可与再分发条件需逐项核对，不能由本项目源码许可覆盖。
+SunUEFI 固件和 Android 引导助手使用另一条更新链；安装 Linux 内核或硬件包
+不应顺带覆盖 Android BOOT。
+
+### 内核软件包
+
+Debian 优先复用选定内核的 `make bindeb-pkg`，提供按 ABI 版本命名的
+`linux-image-<release>`、`linux-headers-<release>`，再由元包依赖最新版本。
+Arch 系使用 `PKGBUILD`／`makepkg`，分别提供设备内核和 headers 包；不得将
+设备内核声明为可满足发行版原版 `linux` 的二进制模块依赖。
+共用源码、补丁、配置和版本定义，不把 `.deb` 当作 pacman 包安装。
+
+内核 release 必须区分会影响模块兼容性的修改，避免不同驱动占用同一个
+`/usr/lib/modules/<release>/`。模块与内核的构建配置、导出符号必须匹配，
+不能只比较 `vermagic`。headers 包需包含外部模块构建所需的生成头文件、
+配置、脚本和 `Module.symvers`；`make headers_install` 导出的用户空间
+接口头文件不能替代它，也不需要因安装设备内核就替换发行版 `linux-libc-dev`。
+交叉构建时还需检查 headers 内附工具能在目标机运行。
+
+DTB 与内核一同构建和按版本安装，避免旧内核使用被覆盖的新设备树。
+长期把板级描述收敛到内核的 `arch/arm64/boot/dts/qcom/`，减少外部转换；
+同次启动的动态内存和固件资源仍由 UEFI 通过标准设备树修正协议提供。
+
+### 从装包到 UKI
+
+正常升级应由以下流程完成，而不是重新刷写整个 ESP：
+
+```text
+APT／pacman 安装内核、模块、匹配 DTB 和必要固件
+  → 处理外部模块及 depmod
+  → 发行版 initramfs 工具生成对应版本的 initramfs
+  → ukify／mkinitcpio 生成 UKI
+  → 安装到 ESP 的 EFI/Linux/
+  → 引导程序发现启动项，或由标准 Boot#### 直接启动
+```
+
+Debian 遵循 `/etc/kernel/` 和 `/etc/initramfs/post-update.d/` 的钩子约定；
+Arch 遵循 mkinitcpio preset 和 pacman hooks。选用 `kernel-install` 时可用
+`layout=uki` 组织安装，不再让另一套钩子重复生成。系统名称来自目标系统的
+`os-release`，根设备使用标准 `root=UUID=…` 或 `root=PARTUUID=…`，逐步
+替换私有 `piano.root=` 和固定分区名检查。Android 数据保护继续保留。
+
+UKI 按安装标识及内核版本命名，不能依赖固定的 `sunuefi.efi` 或 `linux.efi`。
+多个系统应能独立安装自己的 UKI，SimpleInit 和 systemd-boot 都只是可选
+引导程序。四产品可以共用内核和固件，安装后的 UKI 不必逐字节相同；
+共用初装镜像不能限制各发行版自己的启动参数、名称和后续更新。
+
+回退必须同时保留旧 UKI、模块和 DTB。Debian 的按 ABI 包名便于并存；
+Arch 的同名内核包升级不会自动保留旧模块，需要明确的并存或配套降级方案。
+`fallback` initramfs 不是旧版本内核。生成失败、ESP 未挂载或空间不足时应
+报告失败并保留原启动组合，不先删除旧内核。不得在包卸载时删除其他系统的启动项。
+
+### 软件源与文件归属
+
+建立签名 APT 和 pacman 软件源，Nyarch 与 SteamOS 按各自库 ABI 构建和发布，
+用正常依赖及版本更新替代 SteamOS 对适配包的长期 `IgnorePkg`。
+包内程序不放进留给管理员的 `/usr/local`；默认配置、服务和状态目录使用
+发行版约定，升级保留密码、机器身份、配对、游戏和用户修改。
+普通用户空间组件只依赖实际使用的接口与库版本，不因内核重新构建就全部重编。
+
+软件包管理与硬件接口标准化分别完成。把现有相机 daemon／loopback 或指纹
+UIO 后端打成原生包，不等于标准 CAMSS／libcamera 或上游指纹控制模型已经完成。
+源码和配方随包可取得，通用补丁被上游收录后删除本地副本。
+
+依据：[Debian 内核包与钩子](https://kernel-team.pages.debian.net/kernel-handbook/ch-update-hooks.html)、
+[Arch 内核打包](https://wiki.archlinux.org/title/Kernel/Arch_build_system)、
+[`kernel-install`](https://www.freedesktop.org/software/systemd/man/latest/kernel-install.html)。
+
 ## 产物位置
 
 | 目录 | 内容 |

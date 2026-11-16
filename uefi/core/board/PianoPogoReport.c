@@ -237,9 +237,10 @@ STATIC BOOLEAN Vendor(PIANO_POGO_INPUT *Input, CONST UINT8 *P, UINTN Len) {
   Event.Command=P[4];
   switch(P[4]) {
     case 0xa2:
-      if ((P[9]&3)!=0 && (P[9]&3)!=3) { return TRUE; }
-      if (Input->AttachKnown&&Input->Attached==((P[9]&3)==3)) { return TRUE; }
-      Input->AttachKnown=TRUE; Input->Attached=(P[9]&3)==3;
+      // Stock keeps physical attachment (bit 0) separate from power (bit 1).
+      // A detach with power still high must release held input immediately.
+      if (Input->AttachKnown&&Input->Attached==((P[9]&1)!=0)) { return TRUE; }
+      Input->AttachKnown=TRUE; Input->Attached=(P[9]&1)!=0;
       Event.Kind=PianoPogoAttachment; Event.Value=Input->Attached;
       if (!Input->Attached) {
         UINTN I; Input->KeyHead=0; Input->KeyCount=0; Input->Modifiers=0; Input->ConsumerUsage=0;
@@ -261,10 +262,18 @@ STATIC BOOLEAN Vendor(PIANO_POGO_INPUT *Input, CONST UINT8 *P, UINTN Len) {
   return PushControl(Input,Event); // no UID/challenge/token copied or logged.
 }
 
+BOOLEAN PianoPogoFrameValid(CONST UINT8 *Frame,UINTN Bytes) {
+  if(Frame==NULL || Bytes!=PIANO_POGO_FRAME_BYTES || (Frame[0]&0x7F)!=0x57)return FALSE;
+  switch(Frame[2]) {
+    case 0x39:case 0x4A:case 0x5B:case 0x6C:return TRUE;
+    default:return FALSE;
+  }
+}
+
 EFI_STATUS PianoPogoFeedFrame(PIANO_POGO_INPUT *Input, CONST UINT8 *Frame, UINTN Bytes) {
   PIANO_POGO_INPUT Work; UINTN Offset=3,Reports=0; EFI_STATUS Status=EFI_SUCCESS;
   if (Input==NULL||Frame==NULL) { return EFI_INVALID_PARAMETER; }
-  if (Bytes!=PIANO_POGO_FRAME_BYTES||Frame[0]!=0x57||!Frame[2]) { Input->RejectedFrames++; return EFI_COMPROMISED_DATA; }
+  if (!PianoPogoFrameValid(Frame,Bytes)) { Input->RejectedFrames++; return EFI_COMPROMISED_DATA; }
   Work=*Input;
   while (Offset<Bytes && Reports++<PIANO_POGO_MAX_REPORTS) {
     CONST UINT8 *P=Frame+Offset; UINTN Size=0;

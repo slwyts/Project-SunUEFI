@@ -73,6 +73,14 @@ piano_check_bootloader() {
   PIANO_CONFIRMED_UNVERIFIED_BOOTLOADER=1
   export PIANO_CONFIRMED_UNVERIFIED_BOOTLOADER
 }
+piano_boot_source_warning() {
+  if grep -Eq '"boot_source_confirm_required"[[:space:]]*:[[:space:]]*true' "$1"; then
+    ui_print "当前 BOOT 的 AVB 摘要缺失或不一致，可能装有自定义 GKI 或被 Root 工具修改。"
+    ui_print "安装会保留当前内核，不换回原厂；完整还原检查通过后会请求实体音量键确认。"
+    ui_print "确认这是目前正常启动 Android 所用的 BOOT 后，按下并松开三次音量下继续。"
+    ui_print "按音量上取消；30 秒未完成则退出，尚未写入 BOOT。"
+  fi
+}
 piano_current_identity() {
   [ "$(getprop ro.product.device)" = piano ] || piano_fail "Only piano is supported." || return
   slot=$(getprop ro.boot.slot_suffix)
@@ -81,9 +89,6 @@ piano_current_identity() {
   [ -b "$bootdev" ] || { piano_fail "The active BOOT partition is unavailable."; return 1; }
   rom_fingerprint=$(getprop ro.build.fingerprint)
   boot_fingerprint=$(getprop ro.bootimage.build.fingerprint)
-  [ -n "$rom_fingerprint" ] && [ -n "$boot_fingerprint" ] || {
-    piano_fail "ROM and boot-image fingerprints are required."; return 1;
-  }
   if [ "${1:-}" = install ] && [ "$(getprop sys.boot_completed)" != 1 ]; then
     piano_fail "Install only after the current Android ROM has booted normally."; return 1
   fi

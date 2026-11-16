@@ -13,7 +13,7 @@ static UINT64 Clock;
 static unsigned Writes,Cancels,Aborts;
 // Slave model at 0x4C: records writes, answers reads from Answer
 static UINT8 Received[1024],Answer[128];static UINTN ReceivedBytes,AnswerBytes,AnswerPos;
-static int Nack,NackRead,Stuck,CancelWorks,CommandOp,CommandStretch,WriteLeft,ReadLeft;static unsigned Stops;
+static int Nack,NackRead,Stuck,CancelWorks,SecondaryOnCancel,CommandOp,CommandStretch,WriteLeft,ReadLeft;static unsigned Stops;
 static UINT32 RxFifo[64];static unsigned RxCount;
 
 static UINT32 *R(UINT32 Offset){assert(Offset<PIANO_GENI_SE6_BYTES && !(Offset&3));return &Reg[Offset/4];}
@@ -53,6 +53,7 @@ static EFI_STATUS EFIAPI Write32(VOID *Context,UINT32 Offset,UINT32 Value){
   case 0x604:
     if(Value&BIT2){++Cancels;if(CancelWorks){*R(0x40)&=~BIT0;*R(0x610)|=BIT4;}}
     if(Value&BIT1){++Aborts;if(CancelWorks>1){*R(0x40)&=~BIT0;*R(0x610)|=BIT5;}}
+    if(SecondaryOnCancel)*R(0x40)|=BIT12;
     return EFI_SUCCESS;
   default:*R(Offset)=Value;return EFI_SUCCESS;
   }
@@ -62,7 +63,7 @@ static void Reset(UINT32 InterfaceDisable,UINT32 Protocol){
   memset(Reg,0,sizeof(Reg));*R(0x68)=(Protocol<<8)|0x04;*R(0x64)=InterfaceDisable;
   *R(0xE24)=(32U<<24)|(16U<<16);*R(0xE28)=(32U<<24)|(16U<<16);*R(0x908)=3;
   *R(0x258)=1;*R(0x614)=0x1234;*R(0x260)=0xDEAD;*R(0x48)=0x70;*R(0x24)=0;
-  memcpy(Original,Reg,sizeof(Reg));Writes=Cancels=Aborts=0;ReceivedBytes=0;Nack=Stuck=0;CancelWorks=1;RxCount=0;Clock=0;
+  memcpy(Original,Reg,sizeof(Reg));Writes=Cancels=Aborts=0;ReceivedBytes=0;Nack=Stuck=SecondaryOnCancel=0;CancelWorks=1;RxCount=0;Clock=0;
 }
 static PIANO_GENI_PIO_IO Io={PIANO_GENI_SE6_BASE,PIANO_GENI_SE6_BYTES,(VOID *)Reg,Read32,Write32,Now};
 
@@ -116,6 +117,24 @@ int main(void){
   UINT32 Clock48=*R(0x48);assert(Clock48!=Original[0x48/4]);
   assert(PianoGeniI2cClose(&I)==EFI_DEVICE_ERROR && *R(0x48)==Clock48 && *R(0x258)==0 && !I.Open);
   assert(PianoGeniI2cClose(&I)==EFI_DEVICE_ERROR);
-  puts("Piano GENI I2C FIFO engine: open/identity/packing/write513/write-read/NACK/timeout/abort/restore PASS");
+  // The secondary sequencer is never ours to cancel or reconfigure.
+  CONST UINT32 Active[]={BIT12,BIT0|BIT12};
+  for(UINTN N=0;N<ARRAY_SIZE(Active);++N) {
+    Reset(0,3);assert(PianoGeniI2cOpen(&I,&Io,19200000,1000000)==EFI_SUCCESS);
+    *R(0x40)=Active[N];UINT32 Saved[REGS];memcpy(Saved,Reg,sizeof(Saved));unsigned Before=Writes;
+    assert(PianoGeniI2cClose(&I)==EFI_DEVICE_ERROR && I.Broken && !I.Open);
+    assert(Writes==Before && !Cancels && !Aborts && !memcmp(Saved,Reg,sizeof(Saved)));
+    *R(0x40)=0;
+    assert(PianoGeniI2cClose(&I)==EFI_DEVICE_ERROR && Writes==Before);
+  }
+  // A secondary sequence appearing during cancellation also blocks restore.
+  Reset(0,3);assert(PianoGeniI2cOpen(&I,&Io,19200000,1000000)==EFI_SUCCESS);
+  *R(0x40)=BIT0;SecondaryOnCancel=1;unsigned Before=Writes;
+  Clock48=*R(0x48);
+  assert(PianoGeniI2cClose(&I)==EFI_DEVICE_ERROR && I.Broken && !I.Open);
+  assert(Writes==Before+1 && Cancels==1 && !Aborts && (*R(0x40)&BIT12));
+  assert(*R(0x48)==Clock48 && *R(0x258)==0);
+  assert(PianoGeniI2cClose(&I)==EFI_DEVICE_ERROR && Writes==Before+1);
+  puts("Piano GENI I2C FIFO engine: open/identity/packing/write513/write-read/NACK/timeout/abort/restore/secondary-retain PASS");
   return 0;
 }

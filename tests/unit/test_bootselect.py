@@ -206,6 +206,9 @@ class BootSelectTests(unittest.TestCase):
         m = meta()
         self.assertEqual(ctypes.sizeof(m), 128)
         self.assertEqual(self.lib.PianoBootSelectMetadataValid(ctypes.byref(m), 0x4000), 1)
+        m.code0 = 0xD503201F
+        self.assertEqual(self.lib.PianoBootSelectMetadataValid(ctypes.byref(m), 0x4000), 1)
+        m.code0 = 0xfa405a4d
         layout = self.lib.PianoBootSelectRecoveryLayout
         self.assertEqual(layout(ctypes.byref(m), 0xA8000000, 0x4000, 0xB5000000, 0x1000, 0xB0200000, 0x1000000), 1)
         for base, tree, rd in ((0xA7100000, 0xB5000000, 0xB0200000), (0xA8000000, 0xA8001000, 0xB0200000),
@@ -282,8 +285,10 @@ class BootSelectTests(unittest.TestCase):
         frontend[values['bootselect_metadata']:values['bootselect_metadata'] + 128] = bytes(m)
         frontend.extend(b'\0' * (span - len(frontend)))
         blob = out / 'frontend.bin'
-        for mode in ('normal', 'recovery', 'charging'):
+        for mode in ('normal', 'recovery', 'charging', 'normal-nop', 'recovery-nop'):
             scenario_frontend = bytearray(frontend)
+            if mode.endswith('-nop'):
+                struct.pack_into('<I', scenario_frontend, values['bootselect_metadata'] + 40, 0xD503201F)
             if mode == 'charging':
                 # Trap any picker entry in this temporary binary copy. A
                 # NORMAL result alone would not prove that no picker drew or
@@ -297,7 +302,7 @@ class BootSelectTests(unittest.TestCase):
             # FDT guarantees 4-byte property alignment, not 8-byte alignment.
             # The extra spaces place these 64-bit initrd cells at offset % 8=4.
             # Run with SCTLR.A=1 so the compiler cannot silently widen readers.
-            args = b'sunuefi.boot=uefi    \0' if mode == 'recovery' else b'bootmonitor.bootmode=normal    \0'
+            args = b'sunuefi.boot=uefi    \0' if mode.startswith('recovery') else b'bootmonitor.bootmode=normal    \0'
             if mode == 'charging':
                 args = b'bootmonitor.bootmode=poweroff_cg sunuefi.boot=uefi\0'
             data = dtb(args, initrd=(0xB6000000, 0xB6010000))
@@ -307,7 +312,10 @@ class BootSelectTests(unittest.TestCase):
             self.assertEqual(data.index(struct.pack('>Q', 0xB6000000)) % 8, 4)
             tree = out / 'tree.bin'; tree.write_bytes(data)
             source = out / 'harness.S'
-            source.write_text(HARNESS.replace('@FRONT@', str(blob)).replace('@DTB@', str(tree)))
+            harness = HARNESS.replace('@FRONT@', str(blob)).replace('@DTB@', str(tree))
+            if mode.endswith('-nop'):
+                harness = harness.replace('0xfa405a4d', '0xD503201F')
+            source.write_text(harness)
             script = out / 'harness.ld'
             script.write_text('ENTRY(harness_start)\nSECTIONS { . = 0x40080000; .harness : { *(.harness) } . = 0xA8000000; .kernel : { *(.kernel) } . = 0xB5000000; .dtb : { *(.dtb) } /DISCARD/ : { *(.note*) *(.comment) } }\n')
             obj, elf = out / 'harness.o', out / 'harness.elf'
@@ -317,7 +325,7 @@ class BootSelectTests(unittest.TestCase):
                                      '-nodefaults', '-serial', 'none', '-monitor', 'none',
                                      '-semihosting-config', 'enable=on,target=native', '-kernel', elf], capture_output=True, text=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            expected = 'normal' if mode == 'charging' else mode
+            expected = 'normal' if mode == 'charging' else mode.removesuffix('-nop')
             self.assertIn('PASS ' + expected, result.stdout + result.stderr)
 
 

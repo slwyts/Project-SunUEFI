@@ -41,7 +41,7 @@ PRODUCT_COMPONENTS={
     'pogo-product':('PianoPogoDxe.c','PianoPogoDxe.h','PianoPogoBoard.c','PianoPogoBoard.h',
                     'PianoPogoMcu.c','PianoPogoMcu.h','PianoPogoService.c','PianoPogoService.h'),
     'usb-host':('PianoUsbHost.c','PianoUsbHost.h','PianoUsbTypec.c','PianoUsbTypec.h'),
-    'touch-product':('PianoGeniSpiPio.c','PianoGeniSpiPio.h','PianoTouchNvt.c','PianoTouchNvt.h',
+    'touch-product':('PianoGeniSpiGpi.c','PianoGeniSpiGpi.h','PianoTouchNvt.c','PianoTouchNvt.h',
                      'PianoTouchMatrix.c','PianoTouchMatrix.h','PianoTouchService.c','PianoTouchService.h'),
 }
 PIANO_FIRMWARE='vendor/firmware'
@@ -279,10 +279,10 @@ def backend_status():
       'pogo_keyboard_touchpad':{'status':'IMPLEMENTED_UNTESTED','transport':'QUP1 SE6 GENI I2C FIFO/PIO, 1 MHz, no DMA',
         'physical_evidence':'MCU RAM firmware verified; cover attachment and runtime commands accepted; clean release before Linux',
         'missing':'physical keystrokes, touchpad clicks/motion and unplug/replug'},
-      'touchscreen':{'status':'IMPLEMENTED_UNTESTED','transport':'QUP1 SE2 GPIO SPI, 64-byte chip-select intervals, no DMA',
+      'touchscreen':{'status':'IMPLEMENTED_UNTESTED','transport':'QUP1 SE2 hardware SPI with polled GPI1 DMA and an owned SMMU domain',
         'sequence':'Linux nt36xxx probe without a DRM panel follower: eng reset, chip-ID trim, per-panel host download, THP frames',
-        'physical_evidence':'firmware loaded, idle matrix baseline established and standard protocol polled; clean release before Linux',
-        'missing':'touching the panel causes persistent frame checksum failures; no physical menu clicks'},
+        'physical_evidence':'the replaced GPIO transport loaded firmware but failed frame checksums during touch; the GPI transport has not run on the tablet',
+        'missing':'GPI register access, chip identity, complete frame checksums, menu clicks and clean DMA/domain retirement on the tablet'},
       'dma_smmu':{'status':'IMPLEMENTED_STRICT_OWNERS','physical_evidence':'test91 readonly fetch and exact combined USB/UFS retirement passed; resident product retirement still untested','ram_partition_inventory':'AUDITED_NATIVE_ABI_LINKED_UNTESTED','smem_observation':'READ_ONLY_COLD_SEC_AND_DXE_BOUND_UNTESTED','sec_early_ready':False,'high_ddr_mapped':False,'high_ram_ownership_verified':False},
       'ufs_blockio_read_write':{'status':'RESERVED_VOLUME_BACKEND_UNPROVISIONED','original_media':'READ_ONLY','missing':'explicit permanent reservation, provisioning approval and product physical RW acceptance'},
       'gpt':{'status':'IMPLEMENTED_READ','physical_evidence':'real UFS GPT reads; product untested'},

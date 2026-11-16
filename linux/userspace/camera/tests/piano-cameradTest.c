@@ -208,6 +208,51 @@ static void check_raw_frame(struct cam *camera)
 	free(expected);
 }
 
+static void check_lens_association(void)
+{
+	struct media_v2_entity entities[] = {
+		{ .id = 1, .name = "s5kjn1 7-0010", .function = MEDIA_ENT_F_CAM_SENSOR },
+		{ .id = 2, .name = "ov32d40 5-0010", .function = MEDIA_ENT_F_CAM_SENSOR },
+		{ .id = 3, .name = "dw9768 9-000c", .function = MEDIA_ENT_F_LENS },
+		{ .id = 4, .name = "gt9764 7-000c", .function = MEDIA_ENT_F_LENS },
+		{ .id = 5, .name = "rear flash", .function = MEDIA_ENT_F_FLASH },
+	};
+	const uint32_t ancillary = MEDIA_LNK_FL_ANCILLARY_LINK |
+		MEDIA_LNK_FL_ENABLED | MEDIA_LNK_FL_IMMUTABLE;
+	struct media_v2_link links[] = {
+		{ .source_id = 1, .sink_id = 3, .flags = MEDIA_LNK_FL_ENABLED },
+		{ .source_id = 1, .sink_id = 3,
+		  .flags = MEDIA_LNK_FL_INTERFACE_LINK | MEDIA_LNK_FL_ENABLED },
+		{ .source_id = 1, .sink_id = 3, .flags = MEDIA_LNK_FL_ANCILLARY_LINK },
+		{ .source_id = 3, .sink_id = 1, .flags = ancillary },
+		{ .source_id = 1, .sink_id = 5, .flags = ancillary },
+		{ .source_id = 1, .sink_id = 4, .flags = ancillary },
+	};
+	struct topo topology = {
+		.t = {
+			.num_entities = sizeof(entities) / sizeof(entities[0]),
+			.num_links = sizeof(links) / sizeof(links[0]),
+		},
+		.ents = entities, .links = links,
+	};
+	const struct media_v2_entity *lens;
+
+	assert(topo_lens(&topology, 1, &lens) == 0 && lens == &entities[3]);
+	assert(topo_lens(&topology, 2, &lens) == 0 && !lens);
+	/* A new driver name must not change which physical lens is selected. */
+	strcpy(entities[3].name, "another-vcm 7-000c");
+	assert(topo_lens(&topology, 1, &lens) == 0 && lens == &entities[3]);
+	links[5].source_id = 2;
+	assert(topo_lens(&topology, 1, &lens) == 0 && !lens);
+	assert(topo_lens(&topology, 2, &lens) == 0 && lens == &entities[3]);
+	links[5].source_id = 1;
+	links[2].flags = ancillary;
+	assert(topo_lens(&topology, 1, &lens) < 0 && errno == ENOTUNIQ && !lens);
+	links[2].flags = MEDIA_LNK_FL_ANCILLARY_LINK;
+	links[5].sink_id = 99;
+	assert(topo_lens(&topology, 1, &lens) < 0 && errno == ENODEV && !lens);
+}
+
 static void check_scaling(void)
 {
 	struct cam camera = { .mode = cam_cfgs[0], .quad_raw = true };
@@ -320,6 +365,7 @@ static void check_tfe_timestamp(void)
 int main(void)
 {
 	check_modes();
+	check_lens_association();
 	check_scaling();
 	struct cam camera = { .mode = cam_cfgs[0], .loop_fd = LOOPBACK_FD,
 		.vid_fd = CAPTURE_FD, .sensor_fd = -1, .vfe_fd = -1, .vcm_fd = -1,
@@ -342,7 +388,7 @@ int main(void)
 	free(published);
 	free(dma);
 	check_tfe_timestamp();
-	puts("owner checks passed: seven modes, RAW10 layout/order, software controls, "
+	puts("owner checks passed: seven modes, sensor lens associations, RAW10 layout/order, software controls, "
 	     "QBUF-before-render, CPU ownership, busy drop, completion, invalid-frame requeue, "
 	     "full bypass and actual libyuv centre-crop/scale with chroma");
 	return 0;

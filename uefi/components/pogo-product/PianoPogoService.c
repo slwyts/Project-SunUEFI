@@ -27,14 +27,15 @@
 typedef enum {
   StepOff,StepClocks,StepPower,StepResetRelease,StepWake,StepBootId,StepBootIdRead,StepBootState,
   StepHeaderState,StepHeaderStateRead,StepData,StepVerify,StepVerifyState,StepVerifyStateRead,StepArm,
-  StepRuntime,StepUnavailable,StepStopped
+  StepVersion,StepKeyboardPower,StepRuntime,StepUnavailable,StepStopped
 } POGO_STEP;
 STATIC CONST CHAR8 *mStepNames[]={"off","clocks","power","reset","wake","boot-id","boot-id-read","boot-state",
-  "header-state","header-state-read","data","verify","verify-state","verify-state-read","arm","runtime","unavailable","stopped"};
+  "header-state","header-state-read","data","verify","verify-state","verify-state-read","arm",
+  "version","keyboard-power","runtime","unavailable","stopped"};
 
 STATIC struct {
   BOOLEAN Started,Busy,InTransfer,DxeStarted,DxeStopped,Released,ReleaseClean,Attached,CapsLed,ReadAgain,Speculative;
-  UINT8 LastFrame[PIANO_POGO_REPORT_BYTES];
+  UINT8 LastFrame[PIANO_POGO_FRAME_BYTES];
   POGO_STEP Step;
   UINT64 Frequency,CounterStart,CounterEnd,StartUs,NextUs,LastReadUs,KeepaliveUs;
   UINT32 Offset,Reads,Frames,Empty,ReadErrors,Consecutive,Commands,CommandErrors;
@@ -63,6 +64,11 @@ STATIC UINT64 EFIAPI SeNow(VOID *Context){(VOID)Context;return NowUs();}
 STATIC EFI_STATUS ReleaseHardware(VOID) {
   if(mPogo.Released)return mPogo.ReleaseStatus;
   mPogo.SeRestore=PianoGeniI2cClose(&mPogo.I2c);
+  if(mPogo.SeRestore!=EFI_SUCCESS) {
+    mPogo.Released=TRUE;mPogo.ReleaseClean=FALSE;
+    mPogo.BoardRelease=(PIANO_POGO_BOARD_RELEASE){.Pins=EFI_NOT_READY,.Rails=EFI_NOT_READY,.Clocks=EFI_NOT_READY};
+    return mPogo.ReleaseStatus=mPogo.SeRestore;
+  }
   EFI_STATUS Board=PianoPogoBoardRelease(&mPogo.Board,&mPogo.BoardRelease);
   mPogo.Released=TRUE;
   mPogo.ReleaseClean=mPogo.SeRestore==EFI_SUCCESS && Board==EFI_SUCCESS && mPogo.BoardRelease.Clean;
@@ -91,10 +97,11 @@ STATIC EFI_STATUS BootRead(UINT8 *Value) {
   UINT8 Register=PIANO_POGO_BOOT_REGISTER;
   return Xfer(&Register,1,Value,1,5000);
 }
-STATIC VOID Command(UINT8 Code,UINT8 Value) {
+STATIC EFI_STATUS Command(UINT8 Code,UINT8 Value) {
   UINT8 Wire[PIANO_POGO_COMMAND_WIRE_BYTES];PianoPogoMcuRuntimeCommand(Code,Value,Wire);
   EFI_STATUS S=Send(Wire,sizeof(Wire));++mPogo.Commands;
   if(S!=EFI_SUCCESS){++mPogo.CommandErrors;DEBUG((DEBUG_WARN,"PIANO_POGO_COMMAND code=%02x value=%02x status=%r\n",Code,Value,S));}
+  return S;
 }
 
 // One bring-up action, then the wait Linux uses before the next one
@@ -153,6 +160,16 @@ STATIC VOID BringUp(UINT64 Now) {
     Wait=WRITE_GAP_US+50000;break;
   case StepArm:
     S=PianoPogoBoardArmIrq(&mPogo.Board);Wait=0;
+    break;
+  case StepVersion: {
+    UINT8 Wire[PIANO_POGO_COMMAND_WIRE_BYTES];PianoPogoMcuVersionCommand(Wire);
+    S=Send(Wire,sizeof(Wire));
+    break;
+  }
+  case StepKeyboardPower:
+    // Stock resume powers the cover before any attachment report arrives.
+    S=Command(PIANO_POGO_CMD_KEYBOARD_POWER,1);
+    mPogo.KeepaliveUs=Now+KEEPALIVE_US;
     if(S==EFI_SUCCESS)DEBUG((DEBUG_WARN,"PIANO_POGO_READY bring_up_ms=%lu firmware_bytes=%u\n",(Now-mPogo.StartUs)/1000,(UINT32)sizeof(mPianoPogoMcuCode)));
     break;
   default:return;
@@ -189,15 +206,15 @@ STATIC EFI_STATUS EFIAPI BackendRead(VOID *Context,UINT64 Deadline,UINT8 Frame[P
   mPogo.ReadAgain=FALSE;
   if(S!=EFI_SUCCESS){++mPogo.ReadErrors;++mPogo.Consecutive;mPogo.LastStatus=S;mPogo.ReadAgain=mPogo.Consecutive<=3;return EFI_NOT_READY;}
   mPogo.Consecutive=0;
-  if(!PianoPogoMcuFrameHasReports(Frame)){++mPogo.Empty;return EFI_NOT_READY;}
-  if(mPogo.Speculative && CompareMem(Frame,mPogo.LastFrame,PIANO_POGO_REPORT_BYTES)==0){++mPogo.Empty;return EFI_NOT_READY;}
-  CopyMem(mPogo.LastFrame,Frame,PIANO_POGO_REPORT_BYTES);mPogo.ReadAgain=TRUE;
+  if(!PianoPogoFrameValid(Frame,PIANO_POGO_FRAME_BYTES)){++mPogo.Empty;return EFI_NOT_READY;}
+  if(mPogo.Speculative && CompareMem(Frame,mPogo.LastFrame,PIANO_POGO_FRAME_BYTES)==0){++mPogo.Empty;return EFI_NOT_READY;}
+  CopyMem(mPogo.LastFrame,Frame,PIANO_POGO_FRAME_BYTES);mPogo.ReadAgain=TRUE;
   ++mPogo.Frames;*Bytes=PIANO_POGO_FRAME_BYTES;return EFI_SUCCESS;
 }
 STATIC EFI_STATUS EFIAPI BackendStop(VOID *Context,PIANO_POGO_BACKEND_STOP *Stop) {
   (VOID)Context;if(!Stop)return EFI_INVALID_PARAMETER;
   EFI_STATUS S=ReleaseHardware();
-  Stop->Status=S;Stop->Quiet=TRUE;Stop->Clean=mPogo.ReleaseClean;Stop->Retained=!mPogo.ReleaseClean;
+  Stop->Status=S;Stop->Quiet=mPogo.SeRestore==EFI_SUCCESS;Stop->Clean=mPogo.ReleaseClean;Stop->Retained=!mPogo.ReleaseClean;
   return S;
 }
 

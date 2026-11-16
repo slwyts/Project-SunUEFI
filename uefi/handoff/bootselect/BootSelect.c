@@ -200,7 +200,8 @@ int PianoBootSelectMetadataValid(const PIANO_BOOT_SELECT_META *M, uint64_t Selec
       !Range(M->BootShimOffset, M->BootShimBytes, M->ContainerBytes) ||
       !Range(M->BootShimOffset + M->BootShimBytes, M->FdBytes, M->ContainerBytes) ||
       M->AppOffset < M->BootShimOffset + M->BootShimBytes + M->FdBytes || M->AppBytes < 64 ||
-      !Range(M->AppOffset, M->AppBytes, M->ContainerBytes) || (M->OriginalCode0 & 0xFFFF) != 0x5A4D ||
+      !Range(M->AppOffset, M->AppBytes, M->ContainerBytes) ||
+      ((M->OriginalCode0 & 0xFFFF) != 0x5A4D && M->OriginalCode0 != 0xD503201F) ||
       (M->OriginalCode1 >> 26) != 5) return 0;
   Target = 4 + ((int64_t)(int32_t)(M->OriginalCode1 << 6) >> 4);
   return Target >= 64 && (uint64_t)Target < M->OriginalImageSize;

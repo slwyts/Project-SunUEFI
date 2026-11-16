@@ -49,9 +49,12 @@ int main(int argc,char **argv){
   assert(!memcmp(Command,Touchpad,sizeof(Touchpad)));for(UINT32 I=sizeof(Touchpad);I<sizeof(Command);++I)assert(!Command[I]);
   PianoPogoMcuRuntimeCommand(PIANO_POGO_CMD_INDICATOR,PIANO_POGO_LED_CAPS_ON,Command);
   assert(Command[7]==0x2E && Command[9]==0xFD && Command[10]==(UINT8)(0x4E + 0x31 + 0x80 + 0x38 + 0x2E + 0x01 + 0xFD));
+  PianoPogoMcuVersionCommand(Command);
+  // Nanosic_803_firmware_version_read, from the checked stock module.
+  static const UINT8 Version[]={0x4C,0x32,0x00,0x4F,0x30,0x80,0x18,0x01,0x00,0x18};
+  assert(!memcmp(Command,Version,sizeof(Version)));
+  for(UINT32 I=sizeof(Version);I<sizeof(Command);++I)assert(!Command[I]);
   UINT8 Boot[2];PianoPogoMcuBootCommand(0x05,Boot);assert(Boot[0]==0x5C && Boot[1]==0x05);
-  UINT8 Frame[PIANO_POGO_REPORT_BYTES]={0x57,0,1};assert(PianoPogoMcuFrameHasReports(Frame));
-  Frame[2]=0;assert(!PianoPogoMcuFrameHasReports(Frame));Frame[0]=0;Frame[2]=1;assert(!PianoPogoMcuFrameHasReports(Frame));
   if(argc>1){
     // The pinned Piano MCU image: header at 0x7FC0, RAM code at 0x8000
     FILE *F=fopen(argv[1],"rb");assert(F);static UINT8 File[0x20000];size_t N=fread(File,1,sizeof(File),F);fclose(F);
@@ -59,6 +62,6 @@ int main(int argc,char **argv){
     CheckImage(File+0x7FC0,File+0x8000,Size);
     printf("pinned image: %u code bytes, %u packets\n",Size,(Size+502)/503);
   }
-  puts("Piano pogo MCU formats: header/checksums/503-byte packets/runtime commands/frame check PASS");
+  puts("Piano pogo MCU formats: header/checksums/503-byte packets/runtime commands PASS");
   return 0;
 }

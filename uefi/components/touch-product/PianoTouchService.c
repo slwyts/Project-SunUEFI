@@ -7,6 +7,7 @@
 #include "PianoTouchNvt.h"
 #include "PianoTouchMatrix.h"
 #include "PianoTouchFirmware.h"
+#include "PianoGeniSpiGpi.h"
 #include <Protocol/EFIClock.h>
 #include <Protocol/AbsolutePointer.h>
 #include <Protocol/DevicePath.h>
@@ -19,6 +20,7 @@
 #include <Library/FdtLib.h>
 
 #define TOUCH_SE 0xA88000U
+#define TOUCH_SPI_HZ 19200000U
 #define FIRMWARE_CHUNK 512U
 #define FRAME_MIN_GAP_US 16000U
 #define POLL_NO_IRQ_US 16000U
@@ -51,7 +53,9 @@ STATIC CONST CHAR8 *mStepNames[]={"off","clocks","eng-reset","trim-reset","trim-
 
 STATIC struct {
   BOOLEAN Started,Busy,InTransfer,Released,Published,Cascade,EdgeSeen,EdgePending,IrqArmed,Pending;
-  T_STEP Step;
+  T_STEP Step,FailedStep;
+  CONST CHAR8 *FailureReason;
+  CONST VOID *Fdt;
   UINT64 Frequency,CounterStart,CounterEnd,StartUs,NextUs,LastReadUs;
   UINT32 Table,Retry,Attempt,Part,PartOffset,Polls,Payload,Frames,Reads,ReadErrors,Consecutive,WdtCount,Downloads;
   UINT32 StatePolls,StateReads,StateChanges,Peak;
@@ -66,6 +70,7 @@ STATIC struct {
   EFI_ABSOLUTE_POINTER_PROTOCOL Pointer;EFI_ABSOLUTE_POINTER_MODE Mode;EFI_ABSOLUTE_POINTER_STATE State;
 } mT;
 STATIC PIANO_TOUCH_MATRIX mMatrix;
+STATIC PIANO_SPI_GPI mSpi;
 STATIC struct {UINT8 Data[64];UINT32 Us;EFI_STATUS Status;} mFirstFrames[3];
 STATIC UINT8 mTx[PIANO_NVT_TRANSFER_LEN+2],mRx[PIANO_NVT_READ_LEN+2],mFrame[PIANO_NVT_READ_LEN];
 STATIC struct {VENDOR_DEVICE_PATH Vendor;EFI_DEVICE_PATH_PROTOCOL End;} mPath={
@@ -114,23 +119,15 @@ STATIC EFI_STATUS WritePin(UINTN P,UINT32 Value) {
   mT.Pins[P].Changed=TRUE;MmioWrite32(CTL(mGpio[P]),Value);MemoryFence();
   return (MmioRead32(CTL(mGpio[P]))&CTL_FIELDS)==(Value&CTL_FIELDS)?EFI_SUCCESS:EFI_ACCESS_DENIED;
 }
-// The Y700 driver demonstrates mode-0 GPIO SPI without touching GENI's
-// GSI-only registers. Piano's final DT maps MISO/MOSI/CLK/CS to 40/41/42/43.
-STATIC VOID Drive(UINTN P,BOOLEAN High){MmioWrite32(IO(mGpio[P]),High?BIT1:0);}
 STATIC EFI_STATUS SpiPins(VOID){
   for(UINTN P=0;P<4;++P)SavePin(P);
   for(UINTN P=0;P<4;++P){
-    UINT32 Value=(mT.Pins[P].Ctl&~CTL_FIELDS)|(2U<<6)|1U;
+    // Stock SE2 pins use function 1, 6 mA and no bias.
+    UINT32 Value=(mT.Pins[P].Ctl&~CTL_FIELDS)|(2U<<6)|(1U<<2);
     if(Value&BIT11)Value|=BIT12;
     EFI_STATUS S=WritePin(P,Value);if(S!=EFI_SUCCESS)return S;
   }
-  Drive(3,TRUE);Drive(2,FALSE);Drive(1,FALSE);
-  for(UINTN P=1;P<4;++P){
-    UINT32 Value=(mT.Pins[P].Ctl&~CTL_FIELDS)|(2U<<6)|CTL_OE|(P==3?3U:1U);
-    if(Value&BIT11)Value|=BIT12;
-    EFI_STATUS S=WritePin(P,Value);if(S!=EFI_SUCCESS)return S;
-  }
-  mT.Spi.Open=TRUE;return EFI_SUCCESS;
+  return EFI_SUCCESS;
 }
 // gpiod GPIOD_IN: GPIO function, output disabled, pull and drive kept
 STATIC EFI_STATUS InputPin(UINTN P){SavePin(P);return WritePin(P,mT.Pins[P].Ctl&~(CTL_OE|(0xFU<<2)));}
@@ -144,20 +141,9 @@ STATIC EFI_STATUS RestorePin(UINTN P) {
 // Transfers are synchronous; InTransfer only guards a callback re-entering
 STATIC EFI_STATUS Xfer(CONST UINT8 *Tx,UINT8 *Rx,UINTN Len) {
   if(!mT.Spi.Open||mT.Released||!Tx||!Len||Len>sizeof(mTx))return EFI_NOT_READY;
-  mT.InTransfer=TRUE;EFI_STATUS S=EFI_SUCCESS;
-  UINT64 Deadline=NowUs()+500000;
-  Drive(3,FALSE);MicroSecondDelay(2);
-  for(UINTN At=0;At<Len;++At){
-    UINT8 Out=Tx[At],In=0;
-    for(UINTN Bit=0;Bit<8;++Bit){
-      Drive(1,(Out&0x80)!=0);Out<<=1;NanoSecondDelay(100);Drive(2,TRUE);
-      In=(UINT8)((In<<1)|(MmioRead32(IO(mGpio[0]))&1));
-      NanoSecondDelay(100);Drive(2,FALSE);
-    }
-    if(Rx)Rx[At]=In;
-    if((At&63U)==63U&&NowUs()>=Deadline){S=EFI_TIMEOUT;mT.Spi.Broken=TRUE;break;}
-  }
-  Drive(3,TRUE);MicroSecondDelay(2);mT.InTransfer=FALSE;return S;
+  mT.InTransfer=TRUE;
+  EFI_STATUS S=PianoGeniSpiGpiTransfer(&mSpi,Tx,Rx,Len,20000);
+  mT.Spi.Broken=mSpi.Retained || S!=EFI_SUCCESS;mT.InTransfer=FALSE;return S;
 }
 STATIC EFI_STATUS Write(UINT8 *Buf,UINTN Len){Buf[0]|=0x80;return Xfer(Buf,NULL,Len);}
 // Buf[0] is the offset; the IC answers after one dummy byte, so Len - 1 data
@@ -171,24 +157,10 @@ STATIC EFI_STATUS Read(UINT8 *Buf,UINTN Len) {
 }
 STATIC EFI_STATUS SetPage(UINT32 Addr){UINT8 B[3]={0xFF,(UINT8)(Addr>>15),(UINT8)(Addr>>7)};return Write(B,3);}
 STATIC EFI_STATUS ReadFrame(UINTN Len) {
-  UINT8 B[65];
-
-  // Long GPIO-SPI chip selects stall the running controller. Readdress each
-  // chunk, then let the payload checksum reject a frame changed between reads.
-  mFrame[0]=0;
-  for(UINTN At=1;At<Len;At+=sizeof(B)-1) {
-    UINT32 Address=mT.Map.EventBuf+(UINT32)At-1;
-    UINTN Bytes=MIN(Len-At,sizeof(B)-1);
-
-    EFI_STATUS S=SetPage(Address);
-    if(S!=EFI_SUCCESS)return S;
-    ZeroMem(B,sizeof(B));
-    B[0]=(UINT8)(Address&0x7F);
-    S=Read(B,Bytes+1);
-    if(S!=EFI_SUCCESS)return S;
-    CopyMem(mFrame+At,B+1,Bytes);
-  }
-  return EFI_SUCCESS;
+  if(Len>sizeof(mFrame))return EFI_BAD_BUFFER_SIZE;
+  EFI_STATUS S=SetPage(mT.Map.EventBuf);
+  if(S!=EFI_SUCCESS)return S;
+  ZeroMem(mFrame,Len);return Read(mFrame,Len);
 }
 STATIC EFI_STATUS WriteAddr(UINT32 Addr,UINT8 Data) {
   EFI_STATUS S=SetPage(Addr);if(S!=EFI_SUCCESS)return S;
@@ -241,11 +213,11 @@ STATIC EFI_STATUS Unpublish(VOID) {
 }
 
 STATIC EFI_STATUS ReleaseHardware(VOID) {
-  if(mT.Released)return mT.PinsStatus!=EFI_SUCCESS?mT.PinsStatus:mT.ClocksStatus;
+  if(mT.Released)return mT.SpiRestore!=EFI_SUCCESS?mT.SpiRestore:mT.PinsStatus!=EFI_SUCCESS?mT.PinsStatus:mT.ClocksStatus;
   mT.Released=TRUE;
-  if(mT.Spi.Open){Drive(3,TRUE);Drive(2,FALSE);mT.Spi.Open=FALSE;}
-  // No serial-engine registers or DMA state were changed by GPIO SPI.
-  mT.SpiRestore=EFI_SUCCESS;mT.PinsStatus=EFI_SUCCESS;mT.ClocksStatus=EFI_SUCCESS;
+  mT.SpiRestore=PianoGeniSpiGpiClose(&mSpi);
+  if(mT.SpiRestore!=EFI_SUCCESS)return mT.SpiRestore;
+  mT.Spi.Open=FALSE;mT.PinsStatus=EFI_SUCCESS;mT.ClocksStatus=EFI_SUCCESS;
   if(mT.IrqArmed) {
     MmioWrite32(INTR_CFG(mGpio[PIN_IRQ]),mT.Pins[PIN_IRQ].Intr);MmioWrite32(INTR_STATUS(mGpio[PIN_IRQ]),0);MemoryFence();
     if(MmioRead32(INTR_CFG(mGpio[PIN_IRQ]))!=mT.Pins[PIN_IRQ].Intr)mT.PinsStatus=EFI_DEVICE_ERROR;else mT.IrqArmed=FALSE;
@@ -259,6 +231,7 @@ STATIC EFI_STATUS ReleaseHardware(VOID) {
 }
 STATIC VOID Unavailable(CONST CHAR8 *Reason,EFI_STATUS Status) {
   T_STEP Failed=mT.Step;if(Failed==TStopped)return;
+  mT.FailedStep=Failed;mT.FailureReason=Reason;
   mT.InputStatus=Unpublish();EFI_STATUS Release=ReleaseHardware();
   mT.Step=TUnavailable;mT.LastStatus=Status;
   DEBUG((DEBUG_WARN,"PIANO_TOUCH_UNAVAILABLE reason=%a step=%a status=%r se2_fw=%08x se2_if_disable=%08x lcd_id=%d firmware=%a release=%r\n",
@@ -286,10 +259,12 @@ STATIC VOID BringUp(UINT64 Now) {
     mT.Spi.Firmware=MmioRead32(TOUCH_SE+0x68);mT.Spi.InterfaceDisable=MmioRead32(TOUCH_SE+0x64);
     UINT32 Active=MmioRead32(TOUCH_SE+0x40);
     if(Active&(BIT0|BIT12)){S=EFI_ACCESS_DENIED;Reason="se2-active";break;}
-    S=SpiPins();
-    DEBUG((DEBUG_WARN,"PIANO_TOUCH_SE2 fw=%08x if_disable=%08x active=%08x gpio_spi=1 dma=0 status=%r\n",
+    S=PianoGeniSpiGpiOpen(&mSpi,mT.Fdt,mT.SeHz,TOUCH_SPI_HZ);
+    if(S==EFI_SUCCESS)S=SpiPins();
+    DEBUG((DEBUG_WARN,"PIANO_TOUCH_SE2 fw=%08x if_disable=%08x active=%08x hardware_spi=1 dma=1 status=%r\n",
       mT.Spi.Firmware,mT.Spi.InterfaceDisable,Active,S));
-    if(S!=EFI_SUCCESS){Reason="spi-pins";break;}
+    if(S!=EFI_SUCCESS){Reason="spi-open";break;}
+    mT.Spi.Open=TRUE;
     // Touch lcd-id (0 CSOT, 1 BOE) picks the firmware, as in the driver
     if((S=InputPin(PIN_LCD_ID))!=EFI_SUCCESS){Reason="lcd-id-pin";break;}
     mT.LcdId=(INT32)(MmioRead32(IO(mGpio[PIN_LCD_ID]))&1);(VOID)RestorePin(PIN_LCD_ID);
@@ -385,9 +360,8 @@ STATIC VOID BringUp(UINT64 Now) {
       if(++mT.Polls<50){Next=TReportMode;Wait=10000;break;}
       S=EFI_TIMEOUT;Reason="firmware-calibration";break;
     }
-    // Stock DATA_MODE_53 selects idle scans after calibration. Active scans
-    // replace the matrix faster than the GPIO transport can copy it.
-    B[0]=PIANO_NVT_EVENT_HOST_CMD;B[1]=0xBF;B[2]=0x01;B[3]=0;B[4]=2;B[5]=0;
+    // Stock DATA_MODE_53 value 1 selects active scans after calibration.
+    B[0]=PIANO_NVT_EVENT_HOST_CMD;B[1]=0xBF;B[2]=0x01;B[3]=0;B[4]=1;B[5]=0;
     S=Write(B,6);Wait=20000;mT.Polls=0;break;
   case TReportReady:
     if((S=SetPage(mT.Map.EventBuf))!=EFI_SUCCESS)break;
@@ -396,7 +370,7 @@ STATIC VOID BringUp(UINT64 Now) {
       if(++mT.Polls<10){Next=TReportReady;Wait=10000;break;}
       S=EFI_TIMEOUT;Reason="report-mode";break;
     }
-    DEBUG((DEBUG_WARN,"PIANO_TOUCH_REPORT_MODE idle=1 status=%02x\n",B[1]));
+    DEBUG((DEBUG_WARN,"PIANO_TOUCH_REPORT_MODE active=1 status=%02x\n",B[1]));
     break;
   case TArm: {
     // Rising edge latched in TLMM with delivery off; restored on release
@@ -477,7 +451,7 @@ EFI_STATUS PianoTouchStart(CONST VOID *Fdt) {
   if(!BusOk || !TsOk){DEBUG((DEBUG_WARN,"PIANO_TOUCH_START status=%r bus=%u touch=%u\n",EFI_NOT_FOUND,BusOk,TsOk));return EFI_NOT_FOUND;}
   mT.Frequency=GetPerformanceCounterProperties(&mT.CounterStart,&mT.CounterEnd);
   if(mT.Frequency<1000000ULL || mT.CounterStart==mT.CounterEnd)return EFI_UNSUPPORTED;
-  mT.Started=TRUE;mT.Step=TClocks;mT.StartUs=mT.NextUs=NowUs();mT.LcdId=-1;mT.LastStatus=EFI_NOT_STARTED;
+  mT.Started=TRUE;mT.Fdt=Fdt;mT.Step=TClocks;mT.StartUs=mT.NextUs=NowUs();mT.LcdId=-1;mT.LastStatus=EFI_NOT_STARTED;
   return EFI_SUCCESS;
 }
 
@@ -490,6 +464,18 @@ VOID PianoTouchPump(VOID) {
 }
 
 VOID PianoTouchReplay(VOID){
+  DEBUG((DEBUG_WARN,"PIANO_TOUCH_STATUS step=%a failed_step=%a reason=%a status=%r se2_fw=%08x se2_if_disable=%08x lcd_id=%d firmware=%a release=%r clock_refs=%x source_hz=%u\n",
+    mStepNames[mT.Step],mStepNames[mT.FailedStep],mT.FailureReason?mT.FailureReason:"none",mT.LastStatus,
+    mT.Spi.Firmware,mT.Spi.InterfaceDisable,mT.LcdId,mT.FwName?mT.FwName:"none",mT.SpiRestore,mT.ClockHeld,mT.SeHz));
+  DEBUG((DEBUG_WARN,"PIANO_TOUCH_GPI status=%r close=%r retained=%u instance=%u transfers=%u failures=%u events=%u event=%08x/%08x/%08x/%08x geni=%08x global=%08x general=%08x error=%08x\n",
+    mSpi.Status,mSpi.CloseStatus,mSpi.Retained,mSpi.Instance,mSpi.Transfers,mSpi.Failures,mSpi.Events,
+    mSpi.LastEvent[0],mSpi.LastEvent[1],mSpi.LastEvent[2],mSpi.LastEvent[3],mSpi.LastStatusReg,
+     mSpi.LastGlobalIrq,mSpi.LastGeneralIrq,mSpi.LastErrorLog));
+  DEBUG((DEBUG_WARN,"PIANO_TOUCH_GPI_PROBE_SAVED status=%r offset=%x value=%08x\n",mSpi.ProbeStatus,mSpi.ProbeOffset,mSpi.ProbeValue));
+  DEBUG((DEBUG_WARN,"PIANO_TOUCH_GPI_OPEN stage=%a mismatch=%u offset=%x expected=%08x readback=%08x domain=%u attached=%u verified=%u event_allocated=%u tx_allocated=%u rx_allocated=%u saved=%u\n",
+    mSpi.Stage?mSpi.Stage:"none",mSpi.FailureRecorded,mSpi.FailureOffset,mSpi.FailureExpected,mSpi.FailureReadback,
+    mSpi.Smmu.Domain!=NULL,mSpi.Smmu.Attached,mSpi.Smmu.Verified,mSpi.EventAllocated,mSpi.ChannelAllocated[0],mSpi.ChannelAllocated[1],mSpi.SavedCount));
+  PianoOwnedSmmuReport(&mSpi.Smmu);
   DEBUG((DEBUG_WARN,"PIANO_TOUCH_MATRIX step=%a frames=%u reads=%u errors=%u checksum_errors=%u skipped=%u probe=%u reference=%u ref_type=%d ref_frames=%u rows=%u cols=%u\n",
     mStepNames[mT.Step],mMatrix.Frames,mT.Reads,mT.ReadErrors,mMatrix.BadChecksum,mMatrix.Skipped,mMatrix.ProbeCount,mMatrix.HaveReference,mMatrix.RefType,mMatrix.RefCount,mMatrix.Rows,mMatrix.Cols));
   DEBUG((DEBUG_WARN,"PIANO_TOUCH_INPUT frame=%u peak=%d max_peak=%u touching=%u x=%d y=%d changes=%u polls=%u consumed=%u pending=%u buttons=%u downloads=%u\n",
@@ -516,7 +502,7 @@ EFI_STATUS PianoTouchStop(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Repor
   Report->Clean=!mT.Published && Hardware==EFI_SUCCESS && mT.SpiRestore==EFI_SUCCESS;
   Report->Retained=!Report->Clean;
   Report->Status=Report->Clean?EFI_SUCCESS:EFI_DEVICE_ERROR;
-  // No DMA is involved and, like the driver's shutdown, no IC command is sent
+  // GPI channels, DMA pages and the SMMU domain are closed before clocks.
   DEBUG((DEBUG_WARN,"PIANO_TOUCH_RELEASE clean=%u handoff=%a not_restored=%a%a%a%a%a input=%r se2=%r pins=%r clocks=%r frames=%u reads=%u read_errors=%u\n",
     Report->Clean,Report->Clean?"ready":"blocked",Report->Clean?"none":"",mT.Published?"input-protocols,":"",mT.SpiRestore==EFI_SUCCESS?"":"se2-registers,",
     mT.PinsStatus==EFI_SUCCESS?"":"pins,",mT.ClocksStatus==EFI_SUCCESS?"":"clock-references,",

@@ -72,6 +72,8 @@ STATIC CONST CHAR8 *mHandoffStage="not-started";
 STATIC CONST CHAR16 *mHandoffFailure;
 STATIC VOID BootLogReturned(VOID);
 STATIC VOID FailStop(EFI_STATUS Status);
+STATIC VOID RetireCoreAction(VOID);
+STATIC VOID ResetCore(EFI_HANDLE Image);
 EFI_STATUS PianoRegisterLinuxBootOption(VOID);
 STATIC BOOLEAN EFIAPI BootLogAlive(VOID) {
   return !mBootLogExited && !mOwners.Report.ServicesLost && gST!=NULL && gST->BootServices==gBS;
@@ -251,20 +253,42 @@ STATIC BOOLEAN FailureDiagnosticsSafe(VOID) {
      PianoDisplaySmmuRetained() || PianoFrameBufferMappingRetained() ||
      PianoDisplayClockRetained() || PianoProductDisplayOwnerRetained())return FALSE;
   CONST PIANO_PRODUCT_OWNERS_REPORT *Owners=&mOwners.Report;
-  if(Owners->Busy || Owners->Retained || Owners->Clean || Owners->ServicesLost ||
-     Owners->RetiredMask || Owners->PolicyStopped || Owners->UsbStopped ||
-     Owners->Phase>=PianoProductOwnersRetiring)return FALSE;
-  return !mLateHandoff.Busy && !mLateHandoff.Retained && !mLateHandoff.RetireCalls &&
-    mLateHandoff.Phase!=PianoExitRetiring && mLateHandoff.Phase!=PianoExitClean &&
-    mLateHandoff.Phase!=PianoExitRetained;
+  // A failed input or image owner does not own the USB worker. Only USB
+  // retirement, lost services or a held non-APP context prevent diagnostics.
+  return !Owners->ServicesLost && !Owners->UsbStopped && !Owners->Usb.Attempted &&
+    !(Owners->RetiredMask&PIANO_OWNER_USB) && !Owners->OuterTplHeld;
+}
+STATIC BOOLEAN FailureRebootSafe(VOID) {
+  CONST PIANO_PRODUCT_OWNERS_REPORT *O=&mOwners.Report;
+  return FailureDiagnosticsSafe() && O->Initialized && !O->Busy && !O->Retained && !O->Clean &&
+    !O->RetiredMask && !O->PolicyStopped && O->Phase<PianoProductOwnersRetiring &&
+    !mLateHandoff.Busy && !mLateHandoff.Retained && !mLateHandoff.RetireCalls &&
+    mLateHandoff.Phase==PianoExitUnarmed && mLateHandoff.Env.ParentImage && !mLinuxActive &&
+    !mLinuxApplication.Busy && !mLinuxApplication.Retained;
 }
 STATIC VOID RunFailureDiagnostics(VOID) {
-  if(!FailureDiagnosticsSafe() || PianoUsbControllerRestrictToDiagnostics()!=EFI_SUCCESS)return;
+  if(!FailureDiagnosticsSafe() || PianoUsbControllerRestrictToDiagnostics(FailureRebootSafe())!=EFI_SUCCESS)return;
   mFailureDiagnostics=TRUE;
   // Keep only the existing USB worker alive. The runtime pump can touch
   // input, storage and boot actions whose failure brought us here.
   while(FailureDiagnosticsSafe()) {
     if(PianoUsbControllerPumpDiagnostics(1000)!=EFI_SUCCESS || !FailureDiagnosticsSafe())break;
+    PIANO_DWC3_SERVICE_STATUS Usb={0};
+    if(PianoUsbControllerServiceGetStatus(&Usb)!=EFI_SUCCESS || !FailureDiagnosticsSafe())break;
+    if(Usb.Phase==PianoUsbServiceStopRequested) {
+      if(Usb.Revision!=1 || Usb.Retained || Usb.ServicesLost || Usb.Busy ||
+         (Usb.Action!=PianoUsbServiceActionReboot && Usb.Action!=PianoUsbServiceActionContinue) ||
+         !FailureRebootSafe()) {
+        if(PianoUsbControllerRestrictToDiagnostics(FALSE)!=EFI_SUCCESS)break;
+        continue;
+      }
+      // The USB service publishes this action only after its OKAY has left
+      // the IN endpoint. Reuse normal retirement; never reset around DMA.
+      mFailureDiagnostics=FALSE;
+      RetireCoreAction();
+      ResetCore(mLateHandoff.Env.ParentImage);
+      break;
+    }
     if(gBS->Stall(1000)!=EFI_SUCCESS)break;
   }
   mFailureDiagnostics=FALSE;
@@ -282,9 +306,11 @@ STATIC VOID FailStop(EFI_STATUS Status) {
     if(PianoUsbControllerHostBlocked())Detail=L"USB 设备仍在使用，未能安全断开";
     else if(mOwners.Report.Retained){
       if(EFI_ERROR(mOwners.Report.NvStatus)&&mOwners.Report.NvStatus!=EFI_NOT_STARTED)Detail=L"设置未能保存";
-       else if(EFI_ERROR(mOwners.Report.FilesystemsStatus))Detail=L"仍有文件或驱动没有关闭";
-       else if(mOwners.Report.Usb.HostWasActive&&mOwners.Report.Usb.HostStopStatus!=EFI_SUCCESS)Detail=L"USB 设备仍在使用，未能安全断开";
-       else if(EFI_ERROR(mOwners.Report.UsbStatus)&&mOwners.Report.UsbStatus!=EFI_NOT_STARTED)Detail=L"USB 设备仍在使用，未能安全断开";
+      else if(EFI_ERROR(mOwners.Report.FilesystemsStatus))Detail=L"仍有文件或驱动没有关闭";
+      else if(mOwners.Report.Usb.HostWasActive&&mOwners.Report.Usb.HostStopStatus!=EFI_SUCCESS)Detail=L"USB 设备仍在使用，未能安全断开";
+      else if(EFI_ERROR(mOwners.Report.UsbStatus)&&mOwners.Report.UsbStatus!=EFI_NOT_STARTED)Detail=L"USB 设备仍在使用，未能安全断开";
+      else if(mOwners.Report.Touch.Started&&!mOwners.Report.Touch.Clean)Detail=L"触屏驱动未能安全退出";
+      else if(mOwners.Report.Pogo.Started&&!mOwners.Report.Pogo.Clean)Detail=L"键盘驱动未能安全退出";
       else Detail=mOwners.Report.Ufs.Failed?L"存储驱动未能安全退出":L"系统交接失败";
     }else if(!AsciiStrnCmp(mBootLogStage,"UFS",3))Detail=L"存储初始化失败";
     else if(!AsciiStrCmp(mBootLogStage,"USB"))Detail=L"USB 初始化失败";
@@ -301,7 +327,9 @@ STATIC VOID FailStop(EFI_STATUS Status) {
         StorageDetail[I]=0;Detail=StorageDetail;
       }
     }
-    if(BootLogAlive())(VOID)PianoProductBootLogMessage(L"未能启动系统",Detail,Status,TRUE);
+    BOOLEAN Reboot=mOwners.Report.RequestedAction==PianoUsbServiceActionReboot ||
+      mOwners.Report.RequestedAction==PianoUsbServiceActionContinue;
+    if(BootLogAlive())(VOID)PianoProductBootLogMessage(Reboot?L"未能重启设备":L"未能启动系统",Detail,Status,TRUE);
   }
   RunFailureDiagnostics();
 #ifdef __aarch64__
@@ -350,18 +378,27 @@ STATIC EFI_STATUS StopInput(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Rep
   Report->Protocols=Keys.Disconnect!=EFI_SUCCESS?Keys.Disconnect:Keys.Uninstall!=EFI_SUCCESS?Keys.Uninstall:Keys.WaitClose;
   Report->Status=Status;if(Status==EFI_SUCCESS && Keys.Clean)mInputStarted=FALSE;return Status;
 }
-// The same installed-image and USB paths retain the existing retirement order.
-STATIC EFI_STATUS CompleteCoreAction(EFI_HANDLE Image) {
+STATIC VOID RetireCoreAction(VOID) {
   EFI_STATUS Status=PianoProductOwnersResolveReturnedAction(&mOwners);
   if(Status!=EFI_SUCCESS)FailStop(Status);
   (VOID)PianoProductBootLogMessage(L"正在交接系统",L"正在保存设置并关闭存储",EFI_SUCCESS,FALSE);
   mHandoffStage="owners-retire";mHandoffFailure=L"系统资源未能安全退出";
   Status=PianoProductOwnersRetire(&mOwners);
   if(Status!=EFI_SUCCESS || !mOwners.Report.Clean)FailStop(Status);
+}
+STATIC VOID ResetCore(EFI_HANDLE Image) {
+  if(mOwners.Report.AllowedAction!=PianoUsbServiceActionReboot &&
+     mOwners.Report.AllowedAction!=PianoUsbServiceActionContinue)FailStop(EFI_ACCESS_DENIED);
+  EFI_STATUS Status=PianoLateHandoffArmReset(&mLateHandoff,Image);
+  if(Status==EFI_SUCCESS)Status=PianoResetExecute(&mOwners,Image);
+  FailStop(Status);
+}
+// The same installed-image and USB paths retain the existing retirement order.
+STATIC EFI_STATUS CompleteCoreAction(EFI_HANDLE Image) {
+  RetireCoreAction();
+  EFI_STATUS Status;
   if(mOwners.Report.AllowedAction==PianoUsbServiceActionReboot || mOwners.Report.AllowedAction==PianoUsbServiceActionContinue) {
-    Status=PianoLateHandoffArmReset(&mLateHandoff,Image);
-    if(Status==EFI_SUCCESS)Status=PianoResetExecute(&mOwners,Image);
-    FailStop(Status);
+    ResetCore(Image);
   }
   if(mOwners.Report.AllowedAction==PianoUsbServiceActionBoot){
     CONST PIANO_RAW_LINUX_REPORT *Raw=NULL;
@@ -616,11 +653,10 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_POGO_START status=%r owner=%u\n",PogoStart,PogoStarted));
   EFI_STATUS TouchStart=PianoTouchStart(Fdt);BOOLEAN TouchStarted=TouchStart==EFI_SUCCESS;
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_TOUCH_START status=%r owner=%u\n",TouchStart,TouchStarted));
-  // Extra owner bits are explicitly unstarted in this integration. Their
-  // hardware backend is still incomplete; the manifest must disclose that.
+  // Touch owns the GPI channels and closes their domain before USB and UFS.
   PIANO_PRODUCT_OWNERS_CONFIG Config={.Revision=1,.Fdt=Fdt,.ExpectedOwnerMask=PIANO_OWNER_ALL_MASK,
-    .StartedOwnerMask=(PIANO_OWNER_CORE_MASK&~(UsbStarted?0:PIANO_OWNER_USB))|(mDisplayStartup.Held?PIANO_OWNER_DISPLAY:0)|(PogoStarted?PIANO_OWNER_POGO:0)|(TouchStarted?PIANO_OWNER_TOUCH:0),
-    .AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|(PogoStarted?0:PIANO_OWNER_POGO)|(TouchStarted?0:PIANO_OWNER_TOUCH)|(UsbStarted?0:PIANO_OWNER_USB)|(mDisplayStartup.Held?0:PIANO_OWNER_DISPLAY),
+    .StartedOwnerMask=(PIANO_OWNER_CORE_MASK&~(UsbStarted?0:PIANO_OWNER_USB))|(mDisplayStartup.Held?PIANO_OWNER_DISPLAY:0)|(PogoStarted?PIANO_OWNER_POGO:0)|(TouchStarted?(PIANO_OWNER_TOUCH|PIANO_OWNER_GPI):0),
+    .AbsentOwnerMask=PIANO_OWNER_USB_HOST|(PogoStarted?0:PIANO_OWNER_POGO)|(TouchStarted?0:(PIANO_OWNER_TOUCH|PIANO_OWNER_GPI))|(UsbStarted?0:PIANO_OWNER_USB)|(mDisplayStartup.Held?0:PIANO_OWNER_DISPLAY),
     .StartupUsbProof=UsbStarted?NULL:&mStartupUsbProof,
     .Runtime=Runtime,.InputContext=NULL,.StopInput=StopInput,.PogoContext=NULL,.StopPogo=PianoPogoStop,.TouchContext=NULL,.StopTouch=PianoTouchStop,
     .DisplayContext=mDisplayStartup.LeaseContext,.StopDisplay=PianoProductDisplayStop,.DisplayStartup=mDisplayStartup};

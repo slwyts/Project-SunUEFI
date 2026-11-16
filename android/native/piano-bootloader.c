@@ -47,12 +47,8 @@ static long long now_ms(void) {
   return (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
 
-int piano_bootloader_confirm(void) {
-  fprintf(stderr,
-      "无法确认 Bootloader 已解锁，可能启用了 BL 状态伪装模块。\n"
-      "如果只有临时 Root、实际没有解锁 BL，写入引导可能导致设备无法启动（变砖）。\n"
-      "请确认实际已解锁，并愿意承担继续安装的风险。\n"
-      "松开音量键，连续按下并松开三次音量下继续；按音量上退出。30 秒未完成则退出。\n");
+static int confirm_keys(const char *warning, const char *success) {
+  fprintf(stderr, "%s\n松开音量键，连续按下并松开三次音量下继续；按音量上退出。30 秒未完成则退出。\n", warning);
   struct pollfd fds[INPUTS];
   struct piano_bootloader_keys keys[INPUTS] = {0};
   unsigned total = 0;
@@ -137,7 +133,22 @@ int piano_bootloader_confirm(void) {
   }
 done:
   for (nfds_t i = 0; i < count; ++i) close(fds[i].fd);
-  fprintf(stderr, "%s\n", result ? failure :
-      "已确认继续；仅本次操作跳过 BL 状态检查，其余写入校验保持不变。");
+  fprintf(stderr, "%s\n", result ? failure : success);
   return result;
+}
+
+int piano_bootloader_confirm(void) {
+  return confirm_keys(
+      "无法确认 Bootloader 已解锁，可能启用了 BL 状态伪装模块。\n"
+      "如果只有临时 Root、实际没有解锁 BL，写入引导可能导致设备无法启动（变砖）。\n"
+      "请确认实际已解锁，并愿意承担继续安装的风险。",
+      "已确认继续；仅本次操作跳过 BL 状态检查，其余写入校验保持不变。");
+}
+
+int piano_boot_source_confirm(void) {
+  return confirm_keys(
+      "当前 BOOT 缺少有效的 AVB 数据摘要，可能由自定义 GKI 或 Root 工具修改。\n"
+      "已检查内核入口，并确认能完整还原当前 BOOT；这不验证内核来源或启动兼容性。\n"
+      "确认这是目前正常启动 Android 所用的 BOOT 后再继续。",
+      "已确认保留当前内核继续安装；仅本次操作接受原 BOOT 的 AVB 摘要缺失或不一致。");
 }

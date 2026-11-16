@@ -40,8 +40,26 @@ piano_check_bootloader || exit 3
             self.assertIn('按音量上取消', result.stdout)
             self.assertLess(result.stdout.index('三次音量下'), result.stdout.index('KEY_READER_STARTED'))
             result = subprocess.run(command, capture_output=True, text=True,
-                                    env={**os.environ, 'PROMPT_RESULT': '1'})
+                                     env={**os.environ, 'PROMPT_RESULT': '1'})
             self.assertEqual(result.returncode, 3)
+
+    def test_custom_kernel_notice_does_not_treat_fingerprint_as_identity(self):
+        with tempfile.TemporaryDirectory(prefix='piano-boot-source-') as folder:
+            status = Path(folder) / 'status.json'
+            command = ['sh', '-c', '''. "$1"
+ui_print() { echo "$*"; }
+piano_boot_source_warning "$2"
+''', 'boot-source', str(ROOT / 'android/module/common.sh'), str(status)]
+            status.write_text('{"boot_source_confirm_required":false}')
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0)
+            self.assertFalse(result.stdout)
+            status.write_text('{"boot_source_confirm_required":true}')
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0)
+            self.assertIn('保留当前内核', result.stdout)
+            self.assertIn('三次音量下', result.stdout)
+            self.assertIn('音量上取消', result.stdout)
 
 
 if __name__ == '__main__':

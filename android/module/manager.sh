@@ -65,8 +65,10 @@ piano_quick_status() {
   fi
   confirm_bootloader=false
   [ "$wrapped" = true ] || [ "$(getprop ro.boot.flash.locked)" = 0 ] || confirm_bootloader=true
-  printf '{"operation":"quick-status","route":"%s","destination":"%s","wrapped":%s,"state_available":%s,"linux_available":%s,"linux_checked":%s,"slot":"%s","request_status":"%s","request_target":%s,"request_sequence":%s,"setup_available":false,"read_only":true,"bootloader_confirm_required":%s,"entries":%s}\n' \
-    "$route" "$destination" "$wrapped" "$state_available" "$linux_available" "$linux_checked" "$slot" "$request_status" "$chosen" "$sequence" "$confirm_bootloader" "$entries"
+  module_version=$(sed -n 's/^version=//p' "$MODPATH/module.prop")
+  printf '%s' "$module_version" | grep -Eq '^[0-9A-Za-z.+_-]{1,64}$' || module_version=unknown
+  printf '{"operation":"quick-status","route":"%s","destination":"%s","wrapped":%s,"state_available":%s,"linux_available":%s,"linux_checked":%s,"slot":"%s","request_status":"%s","request_target":%s,"request_sequence":%s,"setup_available":false,"read_only":true,"bootloader_confirm_required":%s,"module_version":"%s","entries":%s}\n' \
+    "$route" "$destination" "$wrapped" "$state_available" "$linux_available" "$linux_checked" "$slot" "$request_status" "$chosen" "$sequence" "$confirm_bootloader" "$module_version" "$entries"
 }
 
 case "$operation" in
@@ -175,9 +177,10 @@ case "$operation" in
     --rom-fingerprint "$rom_fingerprint" --boot-fingerprint "$boot_fingerprint" \
     --policy "$policy" --output "$work/current.json" --reject-wrapped >/dev/null
    piano_check_bootloader || exit 1
+   piano_boot_source_warning "$work/current.json"
    "$repack" repack --boot-device "$bootdev" --active-slot "$slot" \
     --source-metadata "$work/current.json" --payload-dir "$MODPATH/payload" \
-    --policy "$policy" --state-output "$next_state" --execute >/dev/null
+    --policy "$policy" --state-output "$next_state" --confirm-modified-boot --execute >/dev/null
    # Replace the prior slot's metadata only after native write/readback
    # verification. Failed attempts retain their prepared record for diagnosis.
    mv -f "$next_state" "$state"

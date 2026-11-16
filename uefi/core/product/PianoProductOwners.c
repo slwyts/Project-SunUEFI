@@ -28,8 +28,8 @@ STATIC EFI_STATUS AtApp(PIANO_PRODUCT_OWNERS *Owners) {
   if(Owners->Report.ServicesLost)return EFI_ACCESS_DENIED;
   return Old==TPL_APPLICATION?EFI_SUCCESS:EFI_UNSUPPORTED;
 }
-// No DMA does not make live callbacks, protocols or clock references safe.
-// Apply the same checked input-stop report to each registered input backend.
+// Every backend reports protocol and resource cleanup. Touch closes its GPI
+// DMA before the older USB/UFS domains; Pogo has no DMA and stops later.
 STATIC EFI_STATUS RetireInput(PIANO_PRODUCT_OWNERS *Owners,UINT32 Owner,PIANO_PRODUCT_INPUT_STOP Stop,VOID *Context,
                                    PIANO_PRODUCT_INPUT_RETIRE_REPORT *Report,EFI_STATUS *Status,BOOLEAN *Stopped) {
   if(!(Owners->Report.RegisteredStartedMask&Owner))return EFI_SUCCESS;
@@ -101,8 +101,8 @@ EFI_STATUS PianoProductOwnersInitialize(PIANO_PRODUCT_OWNERS *Owners,CONST PIANO
   if(!Owners || !Config || Config->Revision!=PIANO_PRODUCT_OWNERS_REVISION || !Config->Fdt ||
      !Config->Runtime || !Config->StopInput)return EFI_INVALID_PARAMETER;
   if(Owners->Report.Initialized || Owners->Report.Retained || Owners->ExitEvent)return EFI_ALREADY_STARTED;
-  // Require the full platform inventory. Extra DMA owners cannot participate in
-  // the current UFS/USB peer contract, and are not silently omitted.
+  // Require the full platform inventory. Touch closes its private GPI DMA
+  // before the older USB/UFS domains; an unrelated DMA backend is rejected.
   if(Config->ExpectedOwnerMask!=PIANO_OWNER_ALL_MASK ||
      (Config->StartedOwnerMask|Config->AbsentOwnerMask)!=PIANO_OWNER_ALL_MASK ||
      (Config->StartedOwnerMask&Config->AbsentOwnerMask))return EFI_NOT_READY;
@@ -111,6 +111,7 @@ EFI_STATUS PianoProductOwnersInitialize(PIANO_PRODUCT_OWNERS *Owners,CONST PIANO
   BOOLEAN AbsentUsb=!(Config->StartedOwnerMask&PIANO_OWNER_USB);
   if(AbsentUsb?!StartupUsbConfig(Config):Config->StartupUsbProof!=NULL)return EFI_NOT_READY;
   if(Config->StartedOwnerMask&~PIANO_OWNER_SUPPORTED_MASK)return EFI_UNSUPPORTED;
+  if((Config->StartedOwnerMask&PIANO_OWNER_GPI) && !(Config->StartedOwnerMask&PIANO_OWNER_TOUCH))return EFI_UNSUPPORTED;
   if(!DisplayRegistration(Config))return EFI_NOT_READY;
   if((Config->StartedOwnerMask&PIANO_OWNER_POGO) && !Config->StopPogo)return EFI_INVALID_PARAMETER;
   if((Config->StartedOwnerMask&PIANO_OWNER_TOUCH) && !Config->StopTouch)return EFI_INVALID_PARAMETER;
@@ -364,6 +365,13 @@ EFI_STATUS PianoProductOwnersRetire(PIANO_PRODUCT_OWNERS *Owners) {
   if(S!=EFI_SUCCESS || Owners->Report.ServicesLost || !Policy || Policy->ProtocolInstalled || Policy->Dispatching || Policy->Pumping || Policy->Retained || Policy->ServicesLost)
     return Retain(Owners,S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S);
   Owners->Report.PolicyStopped=TRUE;Owners->Report.RetiredMask|=PIANO_OWNER_POLICY;
+  S=RetireInput(Owners,PIANO_OWNER_TOUCH,Owners->Config.StopTouch,Owners->Config.TouchContext,
+    &Owners->Report.Touch,&Owners->Report.TouchStatus,&Owners->Report.TouchStopped);
+  if(S!=EFI_SUCCESS)return S;
+  if(Owners->Report.RegisteredStartedMask&PIANO_OWNER_GPI) {
+    if(!Owners->Report.TouchStopped)return Retain(Owners,EFI_NOT_READY);
+    Owners->Report.RetiredMask|=PIANO_OWNER_GPI;
+  }
   if(AbsentUsb){
     // Recheck the actual controller and live peer after Policy teardown. There
     // was no USB service to stop, no download token, and no host ACK to invent.
@@ -413,8 +421,6 @@ EFI_STATUS PianoProductOwnersRetire(PIANO_PRODUCT_OWNERS *Owners) {
   Owners->Report.InputStopped=TRUE;Owners->Report.RetiredMask|=PIANO_OWNER_INPUT;
   S=RetireInput(Owners,PIANO_OWNER_POGO,Owners->Config.StopPogo,Owners->Config.PogoContext,
     &Owners->Report.Pogo,&Owners->Report.PogoStatus,&Owners->Report.PogoStopped);
-  if(S==EFI_SUCCESS)S=RetireInput(Owners,PIANO_OWNER_TOUCH,Owners->Config.StopTouch,Owners->Config.TouchContext,
-    &Owners->Report.Touch,&Owners->Report.TouchStatus,&Owners->Report.TouchStopped);
   if(S!=EFI_SUCCESS)return S;
   if(Owners->Report.RegisteredStartedMask&PIANO_OWNER_DISPLAY){
     S=AtApp(Owners);if(S!=EFI_SUCCESS||Owners->Report.ServicesLost)return Retain(Owners,S);

@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "22692e070a3825ad985e1c87891a442e408339f0",
-  "original_target_commit": "5997e1c29a4e456e5c94a6c26b732881bfacce81",
+  "target_tree": "472ad593f3d49275a96a06a943c6216b08a501cf",
+  "original_target_commit": "6ea05f142758b185e931a162033517c3e2a61481",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1628,6 +1628,32 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "The accepted NT36532E decoder must calculate each axis from one measured scan group, remove each group's own DC baseline, and retain weak distributed signals without splicing unrelated maxima. Verify real contact, weak hover, tilt and edge behavior with synchronized input and pen-tip evidence before replacing this centroid correction."
+      }
+    },
+    {
+      "file": "0125-media-gt9764ba-binding.patch",
+      "sha256": "bd319546b74efbfcf10b554acfb3217dd70dde59b8f4a3b8476dfe3cc9385bd9",
+      "original_commit": "2a243d7452c2f9c50c45c26ce0522bade20caf2a",
+      "original_parent": "5997e1c29a4e456e5c94a6c26b732881bfacce81",
+      "committer_date": "2026-11-16T11:16:46+08:00",
+      "tree": "88f45d76037da1b403f07afb661955da92e14886",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected upstream kernel includes the Giantec GT9764BA lens actuator binding and supports its existing I2C address and two supplies. Validate the Piano lens node against that binding before removing this patch."
+      }
+    },
+    {
+      "file": "0126-media-gt9764ba-lens.patch",
+      "sha256": "142f8fcebe3607792cdad9927327cbc4d891ef733c8a67a8ab23ed42bf6ebd13",
+      "original_commit": "6ea05f142758b185e931a162033517c3e2a61481",
+      "original_parent": "2a243d7452c2f9c50c45c26ce0522bade20caf2a",
+      "committer_date": "2026-11-16T11:16:46+08:00",
+      "tree": "472ad593f3d49275a96a06a943c6216b08a501cf",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected upstream kernel provides a GT9764BA binding and V4L2 lens driver with the factory AAC settings, bidirectional DAC and neutral-position parking. Verify focus movement, reopen, system sleep and parking with error handling on Piano before removing this implementation."
       }
     }
   ],

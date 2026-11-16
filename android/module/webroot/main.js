@@ -7,8 +7,20 @@ const strings = {
 let language = /^en\b/i.test(typeof navigator === 'object' ? navigator.language : '') ? 'en' : 'zh';
 try { const saved = localStorage.getItem('sunuefi-language'); if (saved === 'zh' || saved === 'en') language = saved; } catch (_) {}
 const t = key => strings[language][key] || key;
-Object.assign(strings.zh, {deleteConfirm:'删除并归还空间',bootloaderWarning:'无法确认 BL 已解锁，可能启用了状态伪装模块。如果只有临时 Root、实际未解锁，写入可能导致设备无法启动（变砖）。继续操作后，请在 30 秒内按下并松开三次音量下确认；按音量上退出。'});
-Object.assign(strings.en, {deleteConfirm:'Delete and return space',bootloaderWarning:'Bootloader unlock could not be confirmed. A state-spoofing module may be active. If this is temporary root on a locked bootloader, writing may make the device unbootable. After continuing, press and release Volume Down three times within 30 seconds to confirm, or press Volume Up to exit.'});
+Object.assign(strings.zh, {deleteConfirm:'删除并归还空间',bootloaderRisk:'无法确认 Bootloader 已解锁，可能启用了状态伪装模块。如果实际未解锁、只有临时 Root，写入引导可能导致设备无法启动。'});
+Object.assign(strings.en, {deleteConfirm:'Delete and return space',bootloaderRisk:'Bootloader unlock could not be confirmed. A state-spoofing module may be active. If the bootloader is locked and this is temporary Root, writing boot may make the device unbootable.'});
+Object.assign(strings.zh, {
+  installBody:'保留当前 Android 内核（包括自定义 GKI）和启动选择，重新安装 SunUEFI 引导。Android 数据不会被清除。',
+  modifiedBootWarning:'当前引导的校验信息（AVB）缺失或与内容不一致。自定义 GKI 和 Root 工具可能造成这种情况。请确认当前内核能正常启动 Android。',
+  installKeyPrompt:'继续后，按提示在 30 秒内按下并松开音量－三次；音量＋或超时取消，不写入 BOOT。',
+  installBothKeyPrompt:'继续后会分别确认解锁状态和引导校验信息。每次按提示在 30 秒内按下并松开音量－三次；音量＋或超时取消，不写入 BOOT。'
+});
+Object.assign(strings.en, {
+  installBody:'Reinstall SunUEFI while keeping the current Android kernel, including custom GKI, and boot selection. Android data is kept.',
+  modifiedBootWarning:'The current boot verification data (AVB) is missing or does not match. Custom GKI and Root tools can cause this. Confirm that the current kernel starts Android normally.',
+  installKeyPrompt:'After continuing, follow the prompt to press and release Volume Down three times within 30 seconds. Volume Up or a timeout cancels without writing BOOT.',
+  installBothKeyPrompt:'After continuing, separate prompts confirm bootloader unlock and boot verification data. For each prompt, press and release Volume Down three times within 30 seconds. Volume Up or a timeout cancels without writing BOOT.'
+});
 let counter = 0;
 function nativeAction(action, target, extra, bytes) {
   let valid = ['quick-status','status','reinstall','storage-status','storage-reboot'].includes(action) && !target && !extra;
@@ -49,6 +61,13 @@ if (typeof document !== 'undefined') {
   const imageAvailable = kind => (storage && storage.sources || []).some(item => item.kind === kind && item.selected && item.available);
   const flashWarning = images => t(images.length === 2 ? 'flashWarning' : images[0] === 'esp' ? 'flashEspWarning' : 'flashRootWarning');
   const needsBootloaderConfirmation = () => (!status || !status.wrapped) && (!status || status.bootloader_confirm_required !== false);
+  const installWarnings = () => {
+    const bootloader = needsBootloaderConfirmation();
+    const source = status && status.boot_source_confirm_required;
+    if (!bootloader && !source) return '';
+    return [bootloader ? t('bootloaderRisk') : '', source ? t('modifiedBootWarning') : '',
+      t(bootloader && source ? 'installBothKeyPrompt' : 'installKeyPrompt')].filter(Boolean).join('\n\n');
+  };
   const route = () => document.querySelector('input[name="route"]:checked').value;
   const destinationName = id => t(id === 'uefi' ? 'menu' : id);
   function say(key, error) { messageKey = key; $('message').textContent = t(key); $('message').classList.toggle('error', !!error); }
@@ -81,7 +100,7 @@ if (typeof document !== 'undefined') {
     $('details').replaceChildren();
     const target = status && status.request_target;
     const saved = target === 0 ? 'Android' : target > 0 ? 'UEFI · ' + destinationName(target === 2 ? 'linux' : target === 3 ? 'setup' : 'uefi') : t('unknown');
-    for (const [key,value] of [['slot', status && status.slot || t('unknown')],['savedRoute',saved],['version','0.5.0']]) {
+    for (const [key,value] of [['slot', status && status.slot || t('unknown')],['savedRoute',saved],['version',status && status.module_version || t('unknown')]]) {
       const row = document.createElement('div'), label = document.createElement('dt'), text = document.createElement('dd');
       label.textContent = t(key); text.textContent = value; row.append(label,text); $('details').append(row);
     }
@@ -266,14 +285,24 @@ if (typeof document !== 'undefined') {
     try { await nativeAction('switch',target); }
     catch (error) { busy = false; updateButtons(); errorMessage(error); }
   });
-  $('reinstall').addEventListener('click', () => {
-    $('bootloader-install-warning').hidden = !needsBootloaderConfirmation();
-    $('bootloader-install-warning').textContent = t('bootloaderWarning');
-    $('install-dialog').showModal();
+  $('reinstall').addEventListener('click', async () => {
+    if (busy) return;
+    busy = true; activeAction = 'reinstall'; updateButtons(); say('checking');
+    try {
+      show(await nativeAction('status'), false);
+      const warning = installWarnings();
+      $('bootloader-install-warning').hidden = !warning;
+      $('bootloader-install-warning').textContent = warning;
+      $('install-dialog').showModal();
+      say('');
+    } catch (error) { errorMessage(error); }
+    finally { busy = false; updateButtons(); }
   });
   $('cancel-install').addEventListener('click', () => $('install-dialog').close());
   $('confirm-install').addEventListener('click', async () => {
-    $('install-dialog').close(); if (busy) return; busy = true; activeAction = 'reinstall'; updateButtons(); say(needsBootloaderConfirmation() ? 'bootloaderWarning' : 'installing');
+    $('install-dialog').close(); if (busy) return; busy = true; activeAction = 'reinstall'; updateButtons(); say('installing');
+    const warning = installWarnings();
+    if (warning) $('message').textContent += '\n' + warning;
     try {
       const result = await nativeAction('reinstall'); selectionChanged = false;
       show(await nativeAction('quick-status'), true); say(result.status === 'ADOPTED_READ_ONLY_VERIFIED' ? 'unchanged' : 'installed');

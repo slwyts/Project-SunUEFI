@@ -19,6 +19,7 @@ VOID *EFIAPI ZeroMem(VOID *Buffer,UINTN Bytes){return memset(Buffer,0,Bytes);}
 INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN Bytes){return memcmp(A,B,Bytes);}
 VOID EFIAPI MemoryFence(VOID){}
 UINT32 EFIAPI MmioRead32(UINTN Address){UINTN Offset=Address-0x15000000;if(Offset>=0x800 && Offset<0xc00)return capture.RawSmr[(Offset-0x800)/4];if(Offset>=0xc00 && Offset<0x1000)return capture.RawS2cr[(Offset-0xc00)/4];abort();return 0;}
+UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value){(VOID)Address;(VOID)Value;abort();return 0;}
 static UINT32 detach(VOID *Domain,CONST CHAR8 *Name,UINT32 Arid,UINT32 Flags){
   assert(!Flags && ((Domain==(VOID *)123 && !strcmp(Name,"USB0") && Arid==0x03000000) ||
     (Domain==(VOID *)321 && !strcmp(Name,"UFS_MEM") && Arid==0)));++detach_calls;return detach_code;
@@ -26,6 +27,7 @@ static UINT32 detach(VOID *Domain,CONST CHAR8 *Name,UINT32 Arid,UINT32 Flags){
 static UINT32 destroy(VOID *Domain){assert(Domain==(VOID *)123 || Domain==(VOID *)321);++destroy_calls;return destroy_code;}
 EFI_STATUS PianoDmaFree(PIANO_DMA_BUFFER *Buffer){++free_calls;assert(!Buffer->Quarantined);if(free_status==EFI_SUCCESS)ZeroMem(Buffer,sizeof(*Buffer));return free_status;}
 EFI_STATUS PianoSmmuCapture(CONST VOID *Fdt,CONST CHAR8 *Phase,PIANO_SMMU_SNAPSHOT *Out){assert(!strcmp(Phase,"owned-detached"));*Out=capture;return capture_status;}
+EFI_STATUS PianoSmmuCaptureQuiet(CONST VOID *Fdt,PIANO_SMMU_SNAPSHOT *Out){(VOID)Fdt;(VOID)Out;abort();return EFI_UNSUPPORTED;}
 static PIANO_OWNED_SMMU *usb,*ufs;
 static PIANO_SMMU_SNAPSHOT now,detached;
 static PIANO_SMMU_USB_RETIRE_EVIDENCE execution;

@@ -25,7 +25,7 @@ int main(void) {
   cmd("oem screenshot","OKAY");cmd("download:00000001","DATA00000001");assert(!mScreenBytes && !mScreenGeneration);
   out("X",1);drain();cmd("oem discard","OKAY");cmd("oem screenshot","OKAY");
   out("upload",6);assert(mPending[3]);UINT8 Active[12];CopyMem(Active,mBulkTx.Cpu,12);
-  assert(PianoFastbootRestrictToDiagnostics(&mFastboot)==EFI_SUCCESS && mFastboot.DiagnosticsOnly);
+  assert(PianoFastbootRestrictToDiagnostics(&mFastboot,TRUE)==EFI_SUCCESS && mFastboot.DiagnosticsOnly);
   assert(Event(0x101)==EFI_SUCCESS);assert(!mScreenBytes && !mScreenGeneration && !mFastboot.Upload && !mFrames && mEnding[3]);
   assert(mFastboot.DiagnosticsOnly); // A bus reset must not restore boot/actions.
   assert(mBulkTx.Active && !memcmp(Active,mBulkTx.Cpu,12));end(3);

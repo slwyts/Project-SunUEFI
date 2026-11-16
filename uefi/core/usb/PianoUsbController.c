@@ -727,9 +727,9 @@ STATIC EFI_STATUS ControllerDiagnosticsReady(VOID) {
   if(!ControllerAtApp())return EFI_UNSUPPORTED;
   return ControllerDiagnosticsLive()?EFI_SUCCESS:EFI_ABORTED;
 }
-EFI_STATUS PianoUsbControllerRestrictToDiagnostics(VOID) {
+EFI_STATUS PianoUsbControllerRestrictToDiagnostics(BOOLEAN AllowReboot) {
   EFI_STATUS Status=ControllerDiagnosticsReady();if(Status!=EFI_SUCCESS)return Status;
-  Status=PianoDwc3ServiceRestrictToDiagnostics();if(Status!=EFI_SUCCESS)return Status;
+  Status=PianoDwc3ServiceRestrictToDiagnostics(AllowReboot);if(Status!=EFI_SUCCESS)return Status;
   if(!ControllerDiagnosticsLive())return EFI_ABORTED;
   mPersistent.DiagnosticsOnly=TRUE;return EFI_SUCCESS;
 }
@@ -925,7 +925,7 @@ EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RET
 #else
 EFI_STATUS PianoUsbControllerServiceStart(CONST VOID *Fdt,CONST PIANO_DWC3_SERVICE_CONFIG *Config){(VOID)Fdt;(VOID)Config;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoUsbControllerServicePumpApp(UINT32 Reason,UINTN BudgetUs){(VOID)Reason;(VOID)BudgetUs;return EFI_UNSUPPORTED;}
-EFI_STATUS PianoUsbControllerRestrictToDiagnostics(VOID){return EFI_UNSUPPORTED;}
+EFI_STATUS PianoUsbControllerRestrictToDiagnostics(BOOLEAN AllowReboot){(VOID)AllowReboot;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoUsbControllerPumpDiagnostics(UINTN BudgetUs){(VOID)BudgetUs;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){if(S==NULL)return EFI_INVALID_PARAMETER;ControllerZero(S,sizeof(*S));S->Revision=1;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RETIRE_REPORT *R){(VOID)Reason;if(R==NULL)return EFI_INVALID_PARAMETER;ControllerZero(R,sizeof(*R));R->Revision=1;return R->Status=EFI_UNSUPPORTED;}

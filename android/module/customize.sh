@@ -37,7 +37,8 @@ if [ -f "$MODPATH/installed-core.json" ]; then
       "$repack" probe --boot-device "$bootdev" --active-slot "$slot"         --rom-fingerprint "$rom_fingerprint" --boot-fingerprint "$boot_fingerprint"         --policy "$MODPATH/policy.json" --output "$work/current.json" --reject-wrapped > /dev/null ||
         abort "当前 BOOT 格式不受支持，尚未写入。"
       piano_check_bootloader || abort "已取消安装，尚未写入 BOOT。"
-      "$repack" repack --boot-device "$bootdev" --active-slot "$slot"         --source-metadata "$work/current.json" --payload-dir "$MODPATH/payload"         --policy "$MODPATH/policy.json" --state-output "$state_output" --execute > /dev/null ||
+      piano_boot_source_warning "$work/current.json"
+      "$repack" repack --boot-device "$bootdev" --active-slot "$slot"         --source-metadata "$work/current.json" --payload-dir "$MODPATH/payload"         --policy "$MODPATH/policy.json" --state-output "$state_output" --confirm-modified-boot --execute > /dev/null ||
         abort "引导安装未完成，请查看上面的原因。"
     fi
   else
@@ -104,10 +105,11 @@ ui_print "Install on the currently running slot $slot? Volume Up confirms; Volum
 key=$(piano_read_key) || abort "No confirmation; no write occurred."
 [ "$key" = up ] || abort "Cancelled; no write occurred."
 piano_check_bootloader || abort "已取消安装，尚未写入 BOOT。"
+piano_boot_source_warning "$work/current.json"
 # The native tool must re-read slot/fingerprints/source hash immediately before its guarded write.
 "$repack" repack --boot-device "$bootdev" --active-slot "$slot" \
   --source-metadata "$work/current.json" --payload-dir "$MODPATH/payload" \
-  --policy "$MODPATH/policy.json" --state-output "$MODPATH/install-state.json" --require-ready --execute ||
+  --policy "$MODPATH/policy.json" --state-output "$MODPATH/install-state.json" --require-ready --confirm-modified-boot --execute ||
   abort "Repack/write failed. Read the native tool's result before rebooting."
 rm -rf "$work"
 set_perm_recursive "$MODPATH" 0 0 0755 0644

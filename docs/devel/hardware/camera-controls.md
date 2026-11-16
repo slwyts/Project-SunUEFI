@@ -53,19 +53,57 @@ MiCode 的 [Piano camera-kernel](https://github.com/MiCode/vendor_qcom_opensourc
 | Bayer RS | 17 | `0x1e00`／`0x1e04` | PLAIN32 |
 | TMC BHIST | 18 | `0x1f00`／`0x1f04` | PLAIN64 |
 
-这些输出同属 completion group 2，`comp_done_mask[2] = 0x70` 对应三个 context；MiCode 表还列出聚合完成中断 `mc_comp_done_mask[2] = BIT(25)`，Qualcomm 的上述版本未列出该字段。不能把 SM8650 的 group 4 完成处理直接搬过来。上述两份公开 kernel 源码中尚未找到这些统计计算模块的启用、ROI、grid/bin 数、阈值、输出 shift、tap point 配置和输出记录定义；IQ 寄存器命令由用户空间生成，再经 `CAM_ISP_IQ_BL` 和 CDM 提交。因此 PLAIN64 只说明打包宽度，不说明每个值是哪个颜色通道、有效位宽或帧，也不能据此确定 DMA 缓冲大小。统计 write master 的 frame-based 模式将宽高设为零，公开代码没有用分配长度设置输出上限；缺少计算模块的最大输出长度，就无法证明 DMA 不会越过缓冲。TFE980 的 AWB BFW、AF BHIST、另一路 CAF 也不能直接当作旧版 BF 统计。
+这些输出同属 completion group 2，`comp_done_mask[2] = 0x70` 对应三个 context；MiCode 表还列出聚合完成中断 `mc_comp_done_mask[2] = BIT(25)`，Qualcomm 的上述版本未列出该字段。用于对焦的 CAF 走独立 write master 22，`cfg`／`image_addr` 为 `0x2300`／`0x2304`，completion group 4 的完成位为 `0x100`。两组完成事件需要分别处理，不能把 SM8650 的统计中断处理原样搬过来。
+
+上述两份公开 kernel 源码没有统计计算模块的完整配置和输出记录定义；IQ 寄存器命令由用户空间生成，再经 `CAM_ISP_IQ_BL` 和命令调度器 CDM 提交。PLAIN64 只描述传输打包，不确定统计含义或分配长度。统计 write master 的 frame-based 模式将宽高设为零，公开代码没有用分配长度设置写入上限；驱动必须先限制计算模块的输出，才能保证 DMA 不越过缓冲。
+
+#### 原厂统计布局与长度
+
+以下结论来自 `OS3.0.309.0.WPYCNXM` 的 CamX 前端、平台、核心、CAF 解析器及缓冲管理库的静态分析，用于独立实现硬件接口。未执行或打包这些库，也不导入其算法和调校。还没有采集同机原厂的统计 DMA 数据和最终分配记录，表中长度不作为全部硬件模式已经验证的依据。
+
+| 统计输出 | 原厂解析布局 | 长度依据与缺项 |
+| --- | --- | --- |
+| BG／BE | 每区域 80 字节，小端；R、Gr、Gb、B、Y 各有普通与饱和累加记录。每项占 64 位，sum 为低 34 位，count 为高 16 位 | 原厂 AEC BE、AWB BG、Tintless BG、ALSC BG 共用 64×48 的配置上限，完整网格为 245,760 字节；Blob 分配容量是 327,680 字节。仍缺采样语义、双 TFE 分割及实机数据核对 |
+| AWB BFW | 每区域也是 80 字节颜色统计，包含 ROI 编号，最多 16 个区域 | 16 个完整区域为 1,280 字节；原厂格式 23 使用每行 10 个 64-bit word、共 16 行。它不是对焦清晰度统计 |
+| CAF 普通网格 | 每个滤波器 16 字节：sum 为首个 64 位字的 bits 0–36，count 为 bits 39–61；sharpness 为第二个字的低 40 位 | 滤波器数和网格上限由同一个配置模式决定，见下表；前端调整后的计数与有效数据仍缺实机核对 |
+| BHIST | 原厂解析器逐项读取小端 `u32`，取低 25 位；有效项数来自该帧配置 | 三个引擎的单通道模式均为 1,024 项，即 4,096 字节；AEC 另有 R、G、B、Y 四通道模式，每通道 512 项，共 8,192 字节。三者的 Blob 分配容量均为 8,192 字节；采样和分桶语义仍需核对 |
+
+BG／BE 的配置检查先拒绝零区域数、超过 64×48 的网格及越出输入范围的 ROI，再按每区域 16–512 像素的偶数宽高调整 ROI 和区域数。最终区域数使用 6 位减一编码写入寄存器；位宽可表示 64×64，不意味着原厂配置允许这一网格。驱动应分别限制配置、计算有效载荷和分配缓冲，不能从分配容量反推最大网格。
+
+BHIST 的通道选择、有效项数和初始化命令数也是不同概念。原厂构造参数 `(2048, 4)`／`(1024, 1)` 中，第二项用于计算 DMI（片上统计存储访问）初始化命令所需的空间，不是输出通道数。单通道模式选择 R、B、G 或 Y；只有 AEC 接受四通道模式，解析后按 R、G、B、Y 四段交给算法。AF、TMC 拒绝该模式。ROI 会按 2×2 单元对齐，还存在多区域权重、绿色采样选择和非均匀分桶配置；这些行为未核对完整，不能把同为 1,024 项的输出直接解释成公共接口要求的 Bayer-quad luma 计数。
+
+CAF 的原厂硬件能力沿 MCTFE metadata 传入 AF，再选择格式 tag 2 的解析器。tag 只确定记录版本，不能代替已经应用的滤波模式。普通网格的配置函数与解析器使用同一组区域计数：
+
+| 普通网格模式 | 滤波器顺序 | 每区域字节数 | 最大网格 | 最大有效载荷 |
+| --- | --- | --- | --- | --- |
+| 六组滤波 | H11、V1、H12、V2、H21、H22 | 96 | 32×24 | 73,728 字节 |
+| 两组滤波 | H11、V1 | 32 | 48×48 | 73,728 字节 |
+
+原厂 TFE980 的能力描述选择 HAF 配置与格式 tag 2 的解析路径。该路径使用上述普通网格，不读取另一条 BAF 配置路径的 `windowType`。库中的 fixed／floating／flexible 分支操作的是不同布局的 BAF 对象；其中的 48×48 字段不能和 HAF 六组滤波的 96 字节记录拼在一起，也不能据此断言它们会在同一个 CAF 缓冲末尾追加数据。驱动仍须独立限制实际启用的 HAF ROI 类型、最终网格和输出长度；73,728 字节只对应表中的普通网格模式。BG／BFW 的颜色累加值不能替代 CAF 的 sharpness。
+
+普通网格的滤波模式从 AF 配置传入前端，最终写入 HAF top 寄存器 `0x9370` 的 bit 5；两组区域计数在转换后写入 `0x9650`／`0x9658` 的 bits 16–21，使用减一编码。前端还会按裁切、采样和区域最小尺寸调整网格，因此 metadata 必须附带该帧应用的计数和模式，不能只返回请求值。ROI 类型与滤波模式是两个字段，不能将 floating／flexible ROI 的检查分支当作六组滤波模式的总长度证明。
+
+原厂 SM8750 的静态 `UsecaseZSL` 图中，BG、BHIST 和 CAF 链接使用 Blob 格式 6；MCTFE 的 `FinalizeBufferDimensions()` 用硬件能力覆盖初始尺寸。普通 Blob 按 `width×height` 字节计算，再向上对齐到 4,096 字节；色彩空间 `0x1000` 有单独的 16 倍分支。内部非 HAL 端口初始色彩空间是 `0x101`，实时协商的默认值映射为 `0x201`，两者都不走该分支。
+
+格式初始化清零显式总长度和 plane-size override 的计数，再由 `GetTotalSize()` 计算单帧长度。缓冲管理器保留这份格式；非共享池分配将其长度乘以单独的批量帧数，传给 `CSLAlloc()`。因此在上述普通 Blob 路径下，BG／BE、BHIST 和 CAF 的单帧分配分别为 327,680、8,192 和 73,728 字节，均已满足页对齐。链接里的初始 `0x4000`／`0xc00` 不是最终分配长度；共享池、实际批量帧数与运行图仍需从原厂采集。计算模块的输出上限和统计生效帧也需要独立验证，不能仅凭分配足够大就启用 DMA。
 
 Linux 7.3 的 `v4l2-isp` 已合入通用 buffer/block header 和统计封装，但 header 的 `type` 明确由驱动定义，没有通用 Bayer grid、BHIST 或 BF payload。[Linux 主线](https://github.com/torvalds/linux/tree/aacb7797504183a90d66b19b1efb555cfe9b3eec/drivers/media/platform/qcom/camss)和 [media next](https://git.linuxtv.org/media.git/tree/drivers/media/platform/qcom/camss?id=bf6c63ecc20a54aaac7a2fcbd6adaf6498388825)仍无 TFE980 统计后端或 payload 定义。现有 [GENERIC metadata 格式](https://docs.kernel.org/userspace-api/media/v4l/metafmt-generic.html)描述 CSI-2 行数据的存储，不定义统计含义；把自定义 TFE 数据塞进去仍会制造项目私有 ABI。其他 ISP 的已合入格式也不能用来冒充 TFE 数据。
 
-Qualcomm 的 [IFE BG 统计提案](https://lore.kernel.org/linux-media/20261006223953.3382273-21-gjorgji.rosikopulos@oss.qualcomm.com/)与 [CAMSS extensible BHIST 提案](https://lore.kernel.org/linux-media/20261005-linux-mainline-7-2-sm8650-hdk-rfc-0-v1-58-ed985aefd611@kernel.org/)是可复用的上游工作，但尚未合入，且基于不同 IFE 模块。采用前需证明 TFE980 的布局和语义相同，并沿该公共接口评审，而不是在项目里自行分配 block 或 fourcc。
+Qualcomm 的 [IFE BG 统计提案](https://lore.kernel.org/linux-media/20261006223953.3382273-21-gjorgji.rosikopulos@oss.qualcomm.com/)使用 64×48 网格、四颜色 `u32` 累加值，不适合直接承载 TFE980 的五通道 34-bit sum；不能截断数据去套用该结构。[CAMSS extensible BHIST 提案](https://lore.kernel.org/linux-media/20261005-linux-mainline-7-2-sm8650-hdk-rfc-0-v1-58-ed985aefd611@kernel.org/)定义 1,024-bin Bayer-quad luma 统计，TFE 的 bin 数相同也不足以证明通道与采样语义相同。这些公共接口尚未合入，采用或扩展时仍需沿上游设计核对和评审，不能在项目里自行分配 block 或 fourcc 后宣称标准接口适配完成。
 
-下一项必要资料是带开放许可的 TFE980 统计计算寄存器和输出定义，至少覆盖 AEC BE/BHIST、AWB BG 与可用于 AF 的统计。原厂相同模式的寄存器命令、缓冲尺寸／stride、统计完成顺序和统计样本可用于交叉测量，但普通 Linux 控件枚举和空闲寄存器读回不能补出这些定义。Qualcomm 的 [libcamx-dev 打包说明](https://github.com/qualcomm-linux/pkg-camx-dev/blob/ceee1ff870a96da9ea4fc2c7ba46b952c6e034da/debian/copyright)明确区分 BSD 打包脚本与闭源 CamX 载荷，不能因下载公开就视为可导入实现或调校的开放源码。
+独立实现还需补全 AEC BE/BHIST、AWB BG 和 CAF 的计算寄存器、允许配置、最大输出及失败停止流程。原厂相同模式的寄存器命令、缓冲尺寸／stride、统计完成顺序和统计样本用于交叉测量；普通 Linux 控件枚举和空闲寄存器读回不能补出这些定义。Qualcomm 的 [libcamx-dev 打包说明](https://github.com/qualcomm-linux/pkg-camx-dev/blob/ceee1ff870a96da9ea4fc2c7ba46b952c6e034da/debian/copyright)明确区分 BSD 打包脚本与闭源 CamX 载荷，公开下载不提供导入实现或调校的许可。
 
 ### Media graph 与并发
 
 当前产品为后摄配置 `s5kjn1 → msm_csiphy1 → msm_csid0 → msm_vfe0_pix → msm_vfe0_video3`，前摄使用 `ov32d40 → msm_csiphy4 → msm_csid1 → msm_vfe1_pix → msm_vfe1_video3`。CSID sink 是 pad 0，IPP 是 source pad 4；VFE sink/source 分别是 pad 0/1。设备节点编号由探测顺序决定，不是配置常量。原始采集使用 CSID source pad 1 和对应 VFE RDI0。
 
-产品内核的 `MEDIA_IOC_G_TOPOLOGY` 已确认后摄到 DW9768 和两路 flash 的三个 enabled、immutable ancillary links，运行设备树的 `lens-focus` 和 `flash-leds` 指向相同设备。关联不是 libcamera 接入的缺项，仍缺的是算法、标定和闪光拍照流程。
+原有产品内核的 `MEDIA_IOC_G_TOPOLOGY` 已确认后摄到镜头和两路 flash 的三个 enabled、immutable ancillary links，运行设备树的 `lens-focus` 和 `flash-leds` 指向相同设备。镜头由 GT9764BA 驱动接管后沿用该关联，仍需上机检查开流、对焦和关闭后的归位。
+
+服务沿传感器发出的 enabled ancillary link 查找 `MEDIA_ENT_F_LENS`，不再按镜头驱动名称匹配。前摄没有该关联，保持固定焦距；关联指向不存在的设备或同一传感器关联多个镜头时，记录错误并关闭该路自动对焦，不猜测设备，也不影响另一颗相机。
+
+原厂 `OS3.0.309.0.WPYCNXM` 的后摄模块描述和 actuator 库标明马达为 GT9764BA，初始化依次写 `0x02 = 0`、`0x02 = 2`、`0x06 = 0x40`、`0x07 = 0x73`。[厂商产品表](https://www.giantec-semi.com/yqmd/164)将 GT9764BA 标为双向、GT9769 标为单向；两者不能因位置寄存器相同就视为完整兼容。[GT9764BA 驱动](../../../patches/linux/7.3/0126-media-gt9764ba-lens.patch)和 [binding](../../../patches/linux/7.3/0125-media-gt9764ba-binding.patch)提供标准 V4L2 镜头实体、`V4L2_CID_FOCUS_ABSOLUTE` 和 runtime PM，设备树不再使用 `giantec,gt9769` 匹配 DW9768 驱动。
+
+GT9764BA 使用 0–1023 的 DAC 范围，默认值和断电前的归位目标为 512。[MiCode 的 GPL GT9764 驱动](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/a369d30bd5df3fcfb4304ee9e7ae10fa4f11899a/drivers/misc/mediatek/lens/vcm/v4l2/gt9764/gt9764.c)也使用该中点。归位每步最多移动 50，等待 10 ms；时序来自原厂 `GetParkLens` 回调及其 I²C 命令构造调用链。归位写入失败时返回错误并保留供电，不继续断电。驱动跟踪成功写入的位置，恢复供电后按相同步幅恢复用户设置。10 ms 是归位步进等待，不是光学稳定时间的测量；手动移动后的稳定时间和对焦标定仍未实现。原厂 `0x73` 超出 DW9768 binding 的 6-bit timing 范围，驱动使用 GT9764BA 原厂寄存器值，不套用 DW9768 公式。
 
 SM8750 只公布同编号 CSID→VFE 链接，与 Gen4 的寄存器更新、帧时序和完成回调一致；CSIPHY 选择和其他 SoC 的图保持不变。CSID 四个 source pad 共用格式归一化，IPP pad 4 不再接受任意 code 或尺寸。前后摄同时工作、交错停流、模式切换和失败恢复仍需实机检查；共享隐私灯的引用计数验证不证明两路图像、统计和控件互不干扰。
 

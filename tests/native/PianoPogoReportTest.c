@@ -8,7 +8,7 @@
 #include "PianoPogoInput.h"
 #include "PianoPogoI2c.h"
 
-STATIC VOID Frame(UINT8 *F) { memset(F,0,68); F[0]=0x57; F[2]=1; }
+STATIC VOID Frame(UINT8 *F) { memset(F,0,68); F[0]=0x57; F[2]=0x39; }
 STATIC VOID Word(UINT8 *P, UINT16 V) { P[0]=(UINT8)V; P[1]=(UINT8)(V>>8); }
 STATIC EFI_STATUS FeedKey(PIANO_POGO_INPUT *C, UINT8 Mod, UINT8 Key) {
   UINT8 F[68]; Frame(F); F[3]=5; F[4]=Mod; F[6]=Key; return PianoPogoFeedFrame(C,F,68);
@@ -98,12 +98,13 @@ STATIC VOID TestTouchAndDetach(VOID) {
   assert(PianoPogoFeedFrame(&C,F,68)==EFI_COMPROMISED_DATA); assert(C.PrimaryContactId==4);
   F[29]=4; assert(PianoPogoFeedFrame(&C,F,68)==EFI_UNSUPPORTED);
   Frame(F); F[3]=0x19; assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS); PianoPogoReadAbsolute(&C,&A); assert(!A.ActiveButtons);
-  assert(FeedKey(&C,0,4)==EFI_SUCCESS); Frame(F); F[3]=0x22; F[5]=0x38; F[6]=0x80; F[7]=0xa2; F[12]=0;
+  assert(FeedKey(&C,0,4)==EFI_SUCCESS); Frame(F); F[3]=0x22; F[5]=0x38; F[6]=0x80; F[7]=0xa2; F[12]=2;
   assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS); assert(C.AttachKnown&&!C.Attached&&!C.KeyCount);
   assert(PianoPogoReadPointer(&C,&M)==EFI_SUCCESS&&!M.LeftButton&&!M.RightButton);
   assert(PianoPogoReadControl(&C,&E)==EFI_SUCCESS && E.Kind==PianoPogoAttachment && !E.Value);
   assert(FeedKey(&C,0,5)==EFI_SUCCESS&&!C.KeyCount);
-  F[12]=3; assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS); assert(C.Attached); PianoPogoReadControl(&C,&E);
+  F[12]=1; assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS); assert(C.Attached); PianoPogoReadControl(&C,&E);
+  F[12]=3;
   assert(PianoPogoFeedFrame(&C,F,68)==EFI_SUCCESS&&!C.ControlCount); // same status coalesces.
 }
 

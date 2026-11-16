@@ -1,0 +1,396 @@
+From 6ea05f142758b185e931a162033517c3e2a61481 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 16 Nov 2026 11:16:46 +0800
+Subject: [PATCH] media: i2c: add Giantec GT9764BA bidirectional lens actuator
+
+Expose V4L2 focus control and a lens media entity with runtime PM.
+Park toward the neutral DAC value 512 before disabling supplies, rather
+than driving the bidirectional actuator toward zero as DW9768 does.
+
+The initialization sequence comes from the Piano OS3.0.309.0.WPYCNXM
+factory actuator module description. Its OEM park callback uses 50-code
+steps with 10000 us command delays. The published GPL GT9764 driver also
+parks at 512:
+https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/a369d30bd5df3fcfb4304ee9e7ae10fa4f11899a/drivers/misc/mediatek/lens/vcm/v4l2/gt9764/gt9764.c
+
+Use the factory AAC register bytes without applying the incompatible
+DW9768 timing formula. The 10 ms ramp delay is a parking sequence delay,
+not a claim about optical settling after a focus change. Keep the lens
+powered if parking fails.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ MAINTAINERS                |   1 +
+ drivers/media/i2c/Kconfig  |  10 ++
+ drivers/media/i2c/Makefile |   1 +
+ drivers/media/i2c/gt9764.c | 313 +++++++++++++++++++++++++++++++++++++
+ 4 files changed, 325 insertions(+)
+ create mode 100644 drivers/media/i2c/gt9764.c
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 820537bb4..a48cd206c 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -11110,6 +11110,7 @@ M:	slwyts <slwyts@foxmail.com>
+ L:	linux-media@vger.kernel.org
+ S:	Maintained
+ F:	Documentation/devicetree/bindings/media/i2c/giantec,gt9764ba.yaml
++F:	drivers/media/i2c/gt9764.c
+ 
+ GIGABYTE WATERFORCE SENSOR DRIVER
+ M:	Aleksa Savic <savicaleksa83@gmail.com>
+diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
+index 39f98e89e..f2725c7d2 100644
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -959,6 +959,16 @@ config VIDEO_DW9807_VCM
+ 	  capability. This is designed for linear control of
+ 	  voice coil motors, controlled via I2C serial interface.
+ 
++config VIDEO_GT9764
++	tristate "Giantec GT9764BA lens actuator support"
++	depends on PM
++	help
++	  V4L2 subdevice driver for the Giantec GT9764BA bidirectional
++	  camera lens actuator, controlled over I2C.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called gt9764.
++
+ endif
+ 
+ menu "Flash devices"
+diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
+index 8fc3a0151..a46935fa2 100644
+--- a/drivers/media/i2c/Makefile
++++ b/drivers/media/i2c/Makefile
+@@ -42,6 +42,7 @@ obj-$(CONFIG_VIDEO_GC0310) += gc0310.o
+ obj-$(CONFIG_VIDEO_GC05A2) += gc05a2.o
+ obj-$(CONFIG_VIDEO_GC08A3) += gc08a3.o
+ obj-$(CONFIG_VIDEO_GC2145) += gc2145.o
++obj-$(CONFIG_VIDEO_GT9764) += gt9764.o
+ obj-$(CONFIG_VIDEO_HI556) += hi556.o
+ obj-$(CONFIG_VIDEO_HI846) += hi846.o
+ obj-$(CONFIG_VIDEO_HI847) += hi847.o
+diff --git a/drivers/media/i2c/gt9764.c b/drivers/media/i2c/gt9764.c
+new file mode 100644
+index 000000000..ccbaf6eb9
+--- /dev/null
++++ b/drivers/media/i2c/gt9764.c
+@@ -0,0 +1,313 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Giantec GT9764BA bidirectional voice-coil lens actuator.
++ *
++ * Register values follow the Piano factory actuator description. The neutral
++ * position is also documented by MiCode's GPL GT9764 V4L2 driver.
++ */
++
++#include <linux/delay.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/pm_runtime.h>
++#include <linux/regulator/consumer.h>
++
++#include <media/v4l2-async.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-subdev.h>
++
++#define GT9764_CONTROL			0x02
++#define GT9764_POSITION			0x03
++#define GT9764_AAC_MODE			0x06
++#define GT9764_AAC_TIMING			0x07
++#define GT9764_MAX_POSITION		1023
++#define GT9764_NEUTRAL_POSITION		512
++#define GT9764_PARK_STEP			50
++#define GT9764_PARK_DELAY_US		10000
++
++static const char * const gt9764_supply_names[] = {
++	"vin",
++	"vdd",
++};
++
++struct gt9764 {
++	struct v4l2_subdev sd;
++	struct v4l2_ctrl_handler ctrls;
++	struct v4l2_ctrl *focus;
++	struct regulator_bulk_data supplies[ARRAY_SIZE(gt9764_supply_names)];
++	/* Serializes controls with power transitions and position tracking. */
++	struct mutex lock;
++	u16 position;
++	bool powered;
++};
++
++static struct gt9764 *to_gt9764(struct v4l2_subdev *sd)
++{
++	return container_of(sd, struct gt9764, sd);
++}
++
++static int gt9764_set_position(struct gt9764 *lens, u16 position)
++{
++	struct i2c_client *client = v4l2_get_subdevdata(&lens->sd);
++	int ret;
++
++	ret = i2c_smbus_write_word_swapped(client, GT9764_POSITION, position);
++	if (ret)
++		return ret;
++
++	lens->position = position;
++	return 0;
++}
++
++static int gt9764_move_gradually(struct gt9764 *lens, unsigned int target)
++{
++	int ret, position;
++
++	while (lens->position != target) {
++		position = lens->position;
++		position += clamp_t(int, (int)target - position,
++				    -GT9764_PARK_STEP, GT9764_PARK_STEP);
++		ret = gt9764_set_position(lens, position);
++		if (ret)
++			return ret;
++
++		usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
++	}
++
++	return 0;
++}
++
++static int gt9764_init(struct gt9764 *lens)
++{
++	struct i2c_client *client = v4l2_get_subdevdata(&lens->sd);
++	int ret;
++
++	ret = i2c_smbus_write_byte_data(client, GT9764_CONTROL, 0);
++	if (ret)
++		return ret;
++
++	usleep_range(1000, 1100);
++	ret = i2c_smbus_write_byte_data(client, GT9764_CONTROL, 2);
++	if (ret)
++		return ret;
++
++	usleep_range(100, 200);
++	ret = i2c_smbus_write_byte_data(client, GT9764_AAC_MODE, 0x40);
++	if (ret)
++		return ret;
++
++	usleep_range(100, 200);
++	ret = i2c_smbus_write_byte_data(client, GT9764_AAC_TIMING, 0x73);
++	if (ret)
++		return ret;
++
++	usleep_range(100, 200);
++	ret = gt9764_set_position(lens, GT9764_NEUTRAL_POSITION);
++	if (ret)
++		return ret;
++
++	usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
++	return gt9764_move_gradually(lens, lens->focus->val);
++}
++
++static int gt9764_suspend(struct device *dev)
++{
++	struct gt9764 *lens = to_gt9764(dev_get_drvdata(dev));
++	int ret;
++
++	mutex_lock(&lens->lock);
++	if (!lens->powered) {
++		ret = 0;
++		goto unlock;
++	}
++
++	ret = gt9764_move_gradually(lens, GT9764_NEUTRAL_POSITION);
++	if (ret) {
++		dev_err(dev, "Failed to park lens; power remains enabled: %d\n", ret);
++		goto unlock;
++	}
++
++	usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
++	ret = regulator_bulk_disable(ARRAY_SIZE(lens->supplies), lens->supplies);
++	if (ret)
++		dev_err(dev, "Failed to disable regulators: %d\n", ret);
++	else
++		lens->powered = false;
++unlock:
++	mutex_unlock(&lens->lock);
++	return ret;
++}
++
++static int gt9764_resume(struct device *dev)
++{
++	struct gt9764 *lens = to_gt9764(dev_get_drvdata(dev));
++	int ret;
++
++	mutex_lock(&lens->lock);
++	if (!lens->powered) {
++		ret = regulator_bulk_enable(ARRAY_SIZE(lens->supplies), lens->supplies);
++		if (ret)
++			goto unlock;
++		lens->powered = true;
++	}
++
++	usleep_range(5000, 6000);
++	ret = gt9764_init(lens);
++	if (ret) {
++		int park, disable;
++
++		park = gt9764_move_gradually(lens, GT9764_NEUTRAL_POSITION);
++		if (park) {
++			dev_err(dev, "Failed to park lens; power remains enabled: %d\n", park);
++			goto unlock;
++		}
++
++		usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
++		disable = regulator_bulk_disable(ARRAY_SIZE(lens->supplies), lens->supplies);
++		if (disable)
++			dev_err(dev, "Failed to disable regulators: %d\n", disable);
++		else
++			lens->powered = false;
++	}
++unlock:
++	mutex_unlock(&lens->lock);
++	return ret;
++}
++
++static int gt9764_set_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct gt9764 *lens = container_of(ctrl->handler, struct gt9764, ctrls);
++	struct device *dev = lens->sd.dev;
++	int ret;
++
++	if (ctrl->id != V4L2_CID_FOCUS_ABSOLUTE)
++		return -EINVAL;
++
++	ret = pm_runtime_get_if_active(dev);
++	if (ret <= 0)
++		return ret;
++
++	ret = gt9764_set_position(lens, ctrl->val);
++	pm_runtime_put_autosuspend(dev);
++	return ret;
++}
++
++static const struct v4l2_ctrl_ops gt9764_ctrl_ops = {
++	.s_ctrl = gt9764_set_ctrl,
++};
++
++static int gt9764_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
++{
++	return pm_runtime_resume_and_get(sd->dev);
++}
++
++static int gt9764_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
++{
++	pm_runtime_put_autosuspend(sd->dev);
++	return 0;
++}
++
++static const struct v4l2_subdev_internal_ops gt9764_internal_ops = {
++	.open = gt9764_open,
++	.close = gt9764_close,
++};
++
++static const struct v4l2_subdev_ops gt9764_subdev_ops = {};
++
++static int gt9764_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct gt9764 *lens;
++	unsigned int i;
++	int ret;
++
++	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA |
++						    I2C_FUNC_SMBUS_WORD_DATA))
++		return -EOPNOTSUPP;
++
++	lens = devm_kzalloc(dev, sizeof(*lens), GFP_KERNEL);
++	if (!lens)
++		return -ENOMEM;
++
++	for (i = 0; i < ARRAY_SIZE(lens->supplies); i++)
++		lens->supplies[i].supply = gt9764_supply_names[i];
++	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(lens->supplies), lens->supplies);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to get regulators\n");
++
++	mutex_init(&lens->lock);
++	v4l2_i2c_subdev_init(&lens->sd, client, &gt9764_subdev_ops);
++	lens->sd.internal_ops = &gt9764_internal_ops;
++	lens->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	lens->sd.entity.function = MEDIA_ENT_F_LENS;
++	v4l2_ctrl_handler_init(&lens->ctrls, 1);
++	lens->ctrls.lock = &lens->lock;
++	lens->focus = v4l2_ctrl_new_std(&lens->ctrls, &gt9764_ctrl_ops,
++					V4L2_CID_FOCUS_ABSOLUTE, 0,
++					GT9764_MAX_POSITION, 1,
++					GT9764_NEUTRAL_POSITION);
++	ret = lens->ctrls.error;
++	if (ret)
++		goto free_ctrls;
++	lens->sd.ctrl_handler = &lens->ctrls;
++
++	ret = media_entity_pads_init(&lens->sd.entity, 0, NULL);
++	if (ret)
++		goto free_ctrls;
++
++	pm_runtime_set_suspended(dev);
++	pm_runtime_set_autosuspend_delay(dev, 1000);
++	pm_runtime_use_autosuspend(dev);
++	pm_runtime_enable(dev);
++
++	ret = v4l2_async_register_subdev(&lens->sd);
++	if (!ret)
++		return 0;
++
++	pm_runtime_disable(dev);
++	pm_runtime_dont_use_autosuspend(dev);
++	media_entity_cleanup(&lens->sd.entity);
++free_ctrls:
++	v4l2_ctrl_handler_free(&lens->ctrls);
++	mutex_destroy(&lens->lock);
++	return ret;
++}
++
++static void gt9764_remove(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct gt9764 *lens = to_gt9764(i2c_get_clientdata(client));
++
++	v4l2_async_unregister_subdev(&lens->sd);
++	pm_runtime_disable(dev);
++	if (lens->powered && !gt9764_suspend(dev))
++		pm_runtime_set_suspended(dev);
++	pm_runtime_dont_use_autosuspend(dev);
++	media_entity_cleanup(&lens->sd.entity);
++	v4l2_ctrl_handler_free(&lens->ctrls);
++	mutex_destroy(&lens->lock);
++}
++
++static const struct of_device_id gt9764_of_match[] = {
++	{ .compatible = "giantec,gt9764ba" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, gt9764_of_match);
++
++static DEFINE_RUNTIME_DEV_PM_OPS(gt9764_pm_ops, gt9764_suspend, gt9764_resume, NULL);
++
++static struct i2c_driver gt9764_driver = {
++	.driver = {
++		.name = "gt9764",
++		.pm = pm_sleep_ptr(&gt9764_pm_ops),
++		.of_match_table = gt9764_of_match,
++	},
++	.probe = gt9764_probe,
++	.remove = gt9764_remove,
++};
++module_i2c_driver(gt9764_driver);
++
++MODULE_DESCRIPTION("Giantec GT9764BA lens actuator driver");
++MODULE_LICENSE("GPL");
+-- 
+2.56.1
+
