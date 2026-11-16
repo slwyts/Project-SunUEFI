@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,7 +17,7 @@ EEA_FINGERPRINT = (
 )
 
 
-def boot_image(fingerprint):
+def boot_image(fingerprint, algorithm='sha256'):
     kernel = bytearray(8192)
     struct.pack_into('<IIQQQ', kernel, 0, 0xfa405a4d, 0x14000010, 0, 16384, 10)
     kernel[56:60] = b'ARMd'
@@ -28,18 +29,20 @@ def boot_image(fingerprint):
     original = bytes(header + kernel)
 
     salt, name = b'Piano BOOT fixture', b'boot'
-    image_hash = hashlib.sha256(salt + original).digest()
+    image_hash = hashlib.new(algorithm, salt + original).digest()
     descriptor = bytearray((132 + len(name) + len(salt) + len(image_hash) + 7) & ~7)
     struct.pack_into('>QQQ', descriptor, 0, 2, len(descriptor) - 16, len(original))
-    descriptor[24:31] = b'sha256\0'
+    descriptor[24:31] = algorithm.encode() + b'\0'
     struct.pack_into('>III', descriptor, 56, len(name), len(salt), len(image_hash))
     descriptor[132:132 + len(name) + len(salt) + len(image_hash)] = name + salt + image_hash
 
     key = b'com.android.build.boot.fingerprint'
-    prop = bytearray((32 + len(key) + 1 + len(fingerprint) + 1 + 7) & ~7)
-    struct.pack_into('>QQQQ', prop, 0, 0, len(prop) - 16, len(key), len(fingerprint))
-    prop[32:32 + len(key)] = key
-    prop[33 + len(key):33 + len(key) + len(fingerprint)] = fingerprint
+    prop = bytearray()
+    if fingerprint is not None:
+        prop = bytearray((32 + len(key) + 1 + len(fingerprint) + 1 + 7) & ~7)
+        struct.pack_into('>QQQQ', prop, 0, 0, len(prop) - 16, len(key), len(fingerprint))
+        prop[32:32 + len(key)] = key
+        prop[33 + len(key):33 + len(key) + len(fingerprint)] = fingerprint
     descriptors = descriptor + prop
     aux_bytes = (len(descriptors) + 63) & ~63
     vbmeta = bytearray(256 + aux_bytes)
@@ -90,34 +93,36 @@ class PianoBootRepackTests(unittest.TestCase):
                     self.assertTrue(record['avb_hash_matches'])
                     self.assertFalse(record['device_operation_performed'])
 
-    def test_other_devices_and_malformed_fingerprints_are_rejected(self):
+    def test_custom_gki_fingerprint_is_metadata_not_device_identity(self):
+        for fingerprint in (None, b'', b'Custom/GKI/arm64:16/custom:userdebug/test-keys',
+                            b'Xiaomi/missi/missi:17/custom:user/release-keys'):
+            with self.subTest(fingerprint=fingerprint):
+                result = self.probe(boot_image(fingerprint))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                record = json.loads(result.stdout)
+                self.assertTrue(record['avb_hash_matches'])
+                self.assertFalse(record['boot_source_confirm_required'])
+
+    def test_malformed_fingerprint_property_still_rejected(self):
         fingerprints = (
-            b'Other/piano/piano:x', b'xiaomi/piano/piano:x',
-            b'Xiaomi/pianox/piano:x', b'Xiaomi/piano_globalx/piano:x',
-            b'Xiaomi/piano_eeax/piano:x', b'Xiaomi/piano_eea_global/piano:x',
-            b'Other/piano_eea/piano:x', b'Xiaomi/piano_eea/pianox:x',
-            b'Xiaomi/piano_pro/piano:x', b'Xiaomi/piano/pianox:x',
-            b'Xiaomi/piano_global/pianox:x', b'Xiaomi/piano/other:x',
-            b'Xiaomi/piano_global/other:x', b'Xiaomi/piano//piano:x',
-            b'Xiaomi/piano_eea/other:x', b'Xiaomi/piano_eea//piano:x',
-            b'Xiaomi/piano/piano', b'Xiaomi/piano/piano:',
-            b'Xiaomi/piano_global/piano:', b'Xiaomi/piano/piano:x\0extra',
-            b'Xiaomi/piano_eea/piano:', b'Xiaomi/piano_eea/piano:x\0extra',
+            b'Custom/GKI/arm64:x\0extra',
+            b'Xiaomi/piano/piano:x\0extra',
+            b'Xiaomi/piano_eea/piano:x\0extra',
             b'Xiaomi/piano_global/piano:x\0extra', b'Xiaomi/piano/piano:' + b'x' * 1024,
         )
         for fingerprint in fingerprints:
             with self.subTest(fingerprint=fingerprint):
                 result = self.probe(boot_image(fingerprint))
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn('BOOT is not the supported Piano ROM family', result.stderr)
+                self.assertIn('invalid BOOT fingerprint property', result.stderr)
 
     def test_global_support_keeps_hash_and_extent_checks(self):
         fingerprint = b'Xiaomi/piano_global/piano:15/AQ3A.250226.002/OS3.0.304.0.WPYMIXM:user/release-keys'
         image = boot_image(fingerprint)
         image[4096 + 128] ^= 1
         result = self.probe(image)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('stock BOOT hash descriptor mismatch', result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)['boot_source_confirm_required'])
 
         image = boot_image(fingerprint)
         struct.pack_into('>Q', image, len(image) - 64 + 20, len(image))
@@ -129,8 +134,8 @@ class PianoBootRepackTests(unittest.TestCase):
         image = boot_image(EEA_FINGERPRINT)
         image[4096 + 128] ^= 1
         result = self.probe(image)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('stock BOOT hash descriptor mismatch', result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)['boot_source_confirm_required'])
 
         image = boot_image(EEA_FINGERPRINT)
         struct.pack_into('>Q', image, len(image) - 64 + 20, len(image))
@@ -139,9 +144,9 @@ class PianoBootRepackTests(unittest.TestCase):
         self.assertIn('AVB extent is outside BOOT', result.stderr)
 
         for offset, value, error in (
-                (40, 3, 'expected BOOT4'),
-                (12, 4096, 'expected BOOT4'),
-                (1580, 4096, 'expected BOOT4'),
+                (40, 2, 'expected Android BOOT3/4'),
+                (12, len(image), 'ramdisk or boot signature'),
+                (1580, len(image), 'ramdisk or boot signature'),
                 (8, len(image), 'invalid kernel extent')):
             with self.subTest(offset=offset):
                 image = boot_image(EEA_FINGERPRINT)
@@ -190,6 +195,90 @@ class PianoBootRepackTests(unittest.TestCase):
             self.assertFalse(record['persistent_request']['changed_wrapper_probe']['avb_hash_matches'])
             self.assertIn(EEA_FINGERPRINT, (output / record['wrapped_file']).read_bytes())
             self.assertEqual(stock.read_bytes(), image)
+
+    def test_custom_gki_roundtrip_and_explicit_modified_source_choice(self):
+        variants = {}
+        variants['custom-sha512-metadata'] = boot_image(b'Custom/GKI/arm64:x', 'sha512')
+        variants['missing-fingerprint'] = boot_image(None)
+        image = boot_image(None)
+        image[4096 + 128:4096 + 140] = b'custom patch'
+        variants['stale-avb'] = image
+        image = boot_image(None)
+        image[12288:] = bytes(len(image) - 12288)
+        variants['without-avb'] = image
+        image = boot_image(None)
+        struct.pack_into('>Q', image, 12288 + 104, 0)
+        variants['without-hash'] = image
+        image = boot_image(None)
+        metadata = image[12288:12800]
+        image[12288:12800] = bytes(512)
+        image[20480:20992] = metadata
+        image[12288:16384] = b'custom extra'.ljust(4096, b'\0')
+        struct.pack_into('<I', image, 8, 12288)
+        struct.pack_into('>Q', image, len(image) - 64 + 20, 20480)
+        variants['old-hash-extent'] = image
+        image = boot_image(None)
+        struct.pack_into('<I', image, 4096, 0xD503201F)
+        variants['non-efi-entry'] = image
+        image = boot_image(None)
+        struct.pack_into('<I', image, 20, 1580)
+        struct.pack_into('<I', image, 40, 3)
+        variants['boot-v3'] = image
+        image = boot_image(None)
+        image[12288:16384] = b'generic ramdisk'.ljust(4096, b'\0')
+        image[16384:20480] = b'GKI signature'.ljust(4096, b'\0')
+        image[20480:20992] = boot_image(None)[12288:12800]
+        struct.pack_into('<I', image, 12, 100)
+        struct.pack_into('<I', image, 1580, 4096)
+        struct.pack_into('>Q', image, len(image) - 64 + 20, 20480)
+        variants['ramdisk-and-signature'] = image
+        for label, image in variants.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory(dir=self.directory) as directory:
+                base = Path(directory)
+                source, wrapped = base / 'source.img', base / 'wrapped.img'
+                source.write_bytes(image)
+                selector, shim, fd, app = (base / name for name in ('selector', 'shim', 'fd', 'app'))
+                selector.write_bytes(bytes(512))
+                shim.write_bytes(bytes(56) + b'ARMd' + bytes(68))
+                fd.write_bytes(bytes(0x300000))
+                code = b'MZ' + bytes(4094)
+                app.write_bytes(struct.pack('<16sIIQ32s', b'SUNUEFI-APPv1\0', 1, 64, len(code),
+                                            hashlib.sha256(code).digest()) + code)
+                command = [str(self.binary), 'repack', '--input', str(source), '--output', str(wrapped),
+                           '--selector', str(selector), '--selector-memory-bytes', '8704',
+                           '--selector-metadata-offset', '256', '--shim', str(shim), '--fd', str(fd), '--app', str(app)]
+                probe = json.loads(self.probe(image).stdout)
+                needs_choice = label not in ('custom-sha512-metadata', 'missing-fingerprint')
+                self.assertEqual(probe['boot_source_confirm_required'], needs_choice)
+                result = subprocess.run(command, capture_output=True, text=True)
+                if needs_choice:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(wrapped.exists())
+                    result = subprocess.run([*command, '--allow-modified-boot'], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data = wrapped.read_bytes()
+                after_kernel = 4096 + struct.unpack_from('<I', data, 8)[0]
+                if label == 'ramdisk-and-signature':
+                    self.assertEqual(data[after_kernel:after_kernel + 8192], image[12288:20480])
+                if label == 'boot-v3':
+                    self.assertEqual(struct.unpack_from('<I', data, 40)[0], 3)
+                if label == 'non-efi-entry':
+                    self.assertEqual(struct.unpack_from('<I', data, 4096)[0], 0xD503201F)
+                requested = base / 'requested.img'
+                subprocess.run([str(self.binary), 'request', '--input', str(wrapped), '--output', str(requested),
+                                '--target', 'linux'], capture_output=True, check=True)
+                restored = base / 'restored.img'
+                subprocess.run([str(self.binary), 'restore', '--input', str(requested), '--output', str(restored)],
+                               capture_output=True, check=True)
+                self.assertEqual(restored.read_bytes(), image)
+                malformed = bytearray(image)
+                struct.pack_into('<I', malformed, 4100, 0)
+                source.write_bytes(malformed)
+                wrapped.unlink()
+                result = subprocess.run([*command, '--allow-modified-boot'], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('unsupported GKI branch', result.stderr)
+                self.assertFalse(wrapped.exists())
 
 
 if __name__ == '__main__':

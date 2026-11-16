@@ -61,6 +61,7 @@ dt,dd { margin:0; } dd { color:#464c56; overflow-wrap:anywhere; text-align:right
 dialog { width:min(440px,calc(100% - 40px)); border:0; border-radius:28px; padding:28px; color:#202329; background:#fff; }
 dialog::backdrop { background:#16202f55; }
 dialog p { color:var(--muted); font-size:15px; line-height:1.7; }
+#bootloader-install-warning { white-space:pre-line; }
 .dialog-actions { display:flex; gap:12px; margin-top:24px; }
 .dialog-actions button { flex:1; min-height:50px; border-radius:18px; background:#f1f3f5; color:#46515c; }
 .dialog-actions .primary { background:#167d70; color:#fff; font-size:16px; }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the native BOOT4 tool; optionally roundtrip one real stock file without a device."""
+"""Build the native BOOT3/4 tool; optionally roundtrip one real source file without a device."""
 import argparse
 import hashlib
 import json
@@ -160,7 +160,7 @@ def build(output, arch, compiler=None, sysroot=None):
               'read_only_adoption': True, 'adoption_policy_payload_matching': True,
               'adoption_full_stock_reconstruction': True, 'adoption_payload_export': True,
               'core_upgrade_implemented': True, 'upgrade_preserves_stock_and_request': True,
-              'wrapper': 'SPLITv1+RSTRv1', 'supported_boot_headers': [4],
+              'wrapper': 'SPLITv1+RSTRv1', 'supported_boot_headers': [3, 4],
               'compiler': cc, 'compiler_version': subprocess.check_output([cc, '--version'], env=env, text=True).splitlines()[0],
               'compile_command': [cc, *flags, *map(str, sources), '-o', str(binary)],
               'sources': {str(path.relative_to(ROOT)): sha(path) for path in inputs},
@@ -185,7 +185,7 @@ def prototype_policy(binary, result, selector_dir, product, app, output):
     payloads = {name: {'sha256': sha(path), 'bytes': path.stat().st_size} for name, path in paths.items()}
     result['payload_sha256'] = {name: item['sha256'] for name, item in payloads.items()}
     selector_meta = {**meta, 'schema_version': 1, 'interface_version': 1,
-                     'supported_boot_headers': [4], 'wrapper_version': 1, 'app_abi': 1,
+                     'supported_boot_headers': [3, 4], 'wrapper_version': 1, 'app_abi': 1,
                      'product_fd_sha256': payloads['fd.bin']['sha256'],
                      'app_payload_sha256': payloads['app.bin']['sha256'],
                      'entry_policy': 'explicit-request-only', 'request_bootarg': 'sunuefi.boot=uefi',
@@ -220,7 +220,7 @@ if __name__ == '__main__':
         if args.roundtrip_stock or args.selector_dir:
             result['roundtrip'] = roundtrip(binary, args.roundtrip_stock, args.selector_dir,
                                             args.product, args.app, args.output.resolve(), args.runner)
-            result['tested_boot_headers'] = [4]
+            result['tested_boot_headers'] = [result['roundtrip']['source_probe']['header_version']]
             result['tests']['lossless_roundtrip'] = True
             result['tests']['request_persistent_reselection_crc'] = True
             prototype_policy(binary, result, args.selector_dir.resolve(), args.product.resolve(),

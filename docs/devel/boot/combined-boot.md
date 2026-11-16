@@ -1,12 +1,11 @@
 # 原生 BOOT 重打包、还原与持久请求
 
-`android/native/piano-boot-repack.c` 已实现普通文件的无损重打包／还原，并接通
-Android 模块要求的在线 `status`、`probe`、`repack`、`restore`、`request`。
-在线写入源码已完成，尚未在设备执行；安装、读回、还原、包装启动和
-标准 Recovery 仍需分别验证，模块 ZIP 的设备证明门禁保持关闭。
+`android/native/piano-boot-repack.c` 为 Android 引导助手提供当前 BOOT 的重打包、
+核心更新、无损还原和持久启动选择。原厂内核与格式兼容的自定义 GKI 都保留在原位，
+不从安装包替换 Android 内核。模块的安装和使用见 [Android 引导助手](android-module.md)。
 
-当前仅支持 Piano 原厂 BOOT v4、raw AArch64 GKI、独立 init_boot、无
-boot_signature 和 96 MiB active BOOT。工具不改变 Recovery、init_boot、
+支持 Piano 的 BOOT v3／v4、raw AArch64 GKI 和 96 MiB active BOOT，
+保留已有 ramdisk 与 v4 GKI 签名段。入口和布局要求见[BOOT 识别与写入](android-module.md#boot-识别与写入)。工具不改变 Recovery、init_boot、
 vendor_boot、vbmeta、GPT 或非活动槽，也不自动重启／处理 OTA。
 
 ## 已核对的布局
@@ -21,24 +20,25 @@ BOOT4 / AVB 字段依据 AOSP 的
 [boot image header](https://android.googlesource.com/platform/system/tools/mkbootimg/+/refs/heads/main/include/bootimg/bootimg.h)、
 [AVB footer](https://android.googlesource.com/platform/external/avb/+/refs/heads/main/libavb/avb_footer.h)
 与 [hash descriptor](https://android.googlesource.com/platform/external/avb/+/refs/heads/main/libavb/avb_hash_descriptor.h)。
-输入必须有一个正确的 SHA256 boot hash descriptor 和 Piano boot fingerprint
-（国行 `piano`、国际版 `piano_global` 或欧版 `piano_eea`）；
-工具验证 descriptor 的数据 hash，没有验证 OEM RSA 签名。
-欧版的指纹识别适用于文件重打包检查，不表示已验证欧版设备启动或硬件差异。
+指纹只作为写前比对的元数据，不要求原厂前缀或某个内核版本。AVB 存在时校验结构
+和 SHA256／SHA512 数据摘要，没有验证 OEM RSA 签名。摘要缺失或失配的当前 BOOT
+可以在完整还原检查后经实体音量键确认继续；具体流程见[BOOT 识别与写入](android-module.md#boot-识别与写入)。
+格式不兼容、损坏的范围和无法保留的元数据不会因确认而跳过。
 
 ## 保持 SPLITv1
 
 重打包的内核仍是当前早期 selector 使用的 `SUNUEFI-SPLITv1`。布局为：
 
 ```text
-BOOT4 header（仅 kernel_size 更新）
+BOOT3／4 header（仅 kernel_size 更新）
 原 GKI 一份（仅 branch/image_size 更新）
 原 Image span 后的两个 4 KiB NEXTv1 请求页
 selector 文件与其私有 stack 空间
-本次测试明确提供的 BootShim + 当前产品 FD
+同一产品的 BootShim + FD
 当前 APPv1
 RSTRv1 恢复目录
-对齐填充、unsigned boot AVB metadata、分区末尾 footer
+对齐填充、原 ramdisk 与 GKI 签名段（如有）
+unsigned boot AVB metadata、分区末尾 footer
 ```
 
 GKI 未再复制一份。原 BOOT header 的完整 4096 字节、原 GKI header 的 64 字节
@@ -49,8 +49,11 @@ GKI 未再复制一份。原 BOOT header 的完整 4096 字节、原 GKI header 
 `RSTRv1` 固定 header 为 320 字节，记录原文件长度、GKI 长度/span、selector
 文件/内存大小/metadata 偏移、source/GKI/selector/shim/FD/APP SHA256 与目录
 body SHA256。body 是原 BOOT page、原 GKI header，然后是原始 offset/length
-及该非零块。还原首先从的 GKI 副本恢复原 header，再按目录重建尾部及零区，
-验证完整原厂 BOOT SHA256，并核对恢复后的 AVB descriptor。新镜像使用 unsigned
+及该非零块。还原首先从保留的 GKI 恢复原 header，再按目录重建尾部及零区，
+验证完整原 BOOT SHA256。恢复源可以带有自定义内核留下的旧 AVB 摘要，完整性由
+目录记录的原始字节摘要核对。ramdisk 与 GKI 签名段按 AOSP 布局移到新内核段之后，
+原偏移及原内容同时保留在恢复目录里。GKI 签名字节保持原样，不表示签名覆盖新增的选择器。
+新镜像使用 unsigned
 AVB NONE/hash 元数据，保留原 properties 与 rollback；没有 OEM 签名，也没有
 改变设备 vbmeta 的功能。
 
@@ -89,6 +92,11 @@ piano-boot-repack request --input selected-boot.img --target linux --preview
 旧值。`--bootshim` 是 `--shim` 的同义入口。FD 必须为 3 MiB，APP 必须通过 APPv1
 大小和 SHA 校验；selector 的 metadata placeholder 必须是原始空值，拒绝嵌套
 包装。输出必须是新文件，不覆盖输入。
+
+文件模式的 `probe` 报告 `boot_source_confirm_required`，不因摘要缺失或失配而隐藏
+当前布局。离线重打包这类输入时加 `--allow-modified-boot`，只放宽源 AVB 数据摘要；
+入口、空间、元数据范围和完整还原检查保持不变。Android 在线安装使用
+`--confirm-modified-boot` 并读取实体音量键，没有免按键的在线选项。
 
 一次原厂文件的完整比较入口是：
 
