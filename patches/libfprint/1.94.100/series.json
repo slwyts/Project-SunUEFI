@@ -13,7 +13,7 @@
     },
     {
       "file": "0002-build-goodix-backend-from-source.patch",
-      "sha256": "4feca4bd9e51d0dea8bef501f0e589b84c6b04aa437482c1c801042a29ec4ad6"
+      "sha256": "f0f65785694e7330464015a32c7ec23ece5461453c0e102212677592ad853490"
     }
   ]
 }

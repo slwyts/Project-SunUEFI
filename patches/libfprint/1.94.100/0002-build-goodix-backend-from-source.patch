@@ -47,7 +47,7 @@ diff --git a/meson.build b/meson.build
 diff --git a/libfprint/meson.build b/libfprint/meson.build
 --- a/libfprint/meson.build
 +++ b/libfprint/meson.build
-@@ -153,6 +153,30 @@
+@@ -153,6 +153,31 @@
      'virtual': files('drivers/virtual-device-listener.c'),
  }
  
@@ -70,7 +70,8 @@ diff --git a/libfprint/meson.build b/libfprint/meson.build
 +    optional_deps += declare_dependency(
 +        include_directories: [include_directories(
 +            goodix,
-+        ), include_directories(goodix / 'qcbor/inc', is_system: true)],
++        ), include_directories(goodix / 'uapi', is_system: true),
++        include_directories(goodix / 'qcbor/inc', is_system: true)],
 +        compile_args: ['-DUSE_QCBOR'],
 +    )
 +endif

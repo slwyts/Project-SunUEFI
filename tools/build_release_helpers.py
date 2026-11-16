@@ -135,7 +135,7 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop,
             item.update(touch_record)
         files[destination] = item
     fingerprint_files, fingerprint = build_piano_fingerprint.build(
-        output, flags, emulator=emulator)
+        output, flags, uapi, emulator=emulator)
     fingerprint_binary = output / fingerprint_files[
         'usr/local/sbin/piano-fingerprint-ctl']['file']
     fingerprint_files['usr/local/sbin/piano-fingerprint-ctl'].update(
