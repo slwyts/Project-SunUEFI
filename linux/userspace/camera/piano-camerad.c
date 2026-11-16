@@ -89,7 +89,6 @@ struct cam_cfg {
 	const char *csid;
 	const char *vfe;	/* PIX line subdev */
 	const char *video;	/* PIX line video node */
-	const char *vcm;	/* focus actuator entity prefix, or NULL */
 	unsigned int in_w, in_h;	/* sensor mode */
 	unsigned int out_w, out_h;	/* ISP output (MN downscaler) */
 	unsigned int max_out_w, max_out_h;
@@ -109,7 +108,7 @@ static const struct cam_cfg cam_cfgs[] = {
 		.name = "rear", .label = "Rear Camera",
 		.sensor = "s5kjn1", .phy = "msm_csiphy1",
 		.csid = "msm_csid0", .vfe = "msm_vfe0_pix",
-		.video = "msm_vfe0_video3", .vcm = "dw9768",
+		.video = "msm_vfe0_video3",
 		.in_w = 4080, .in_h = 3060, .out_w = 1920, .out_h = 1440,
 		.max_out_w = 4080, .max_out_h = 3060,
 		.modes = rear_modes, .num_modes = sizeof(rear_modes) / sizeof(*rear_modes),
@@ -295,6 +294,45 @@ static const struct media_v2_entity *topo_entity(const struct topo *tp,
 			return &tp->ents[i];
 
 	return NULL;
+}
+
+static int topo_lens(const struct topo *tp, uint32_t sensor_id,
+		     const struct media_v2_entity **lens)
+{
+	const struct media_v2_entity *found = NULL;
+
+	*lens = NULL;
+	for (unsigned int i = 0; i < tp->t.num_links; i++) {
+		const struct media_v2_link *link = &tp->links[i];
+		const struct media_v2_entity *entity = NULL;
+
+		/* Ancillary links run from the sensor entity to its lens or flash,
+		 * not between pads or from the device-node interface.
+		 */
+		if ((link->flags & MEDIA_LNK_FL_LINK_TYPE) !=
+		    MEDIA_LNK_FL_ANCILLARY_LINK ||
+		    !(link->flags & MEDIA_LNK_FL_ENABLED) ||
+		    link->source_id != sensor_id)
+			continue;
+		for (unsigned int j = 0; j < tp->t.num_entities; j++)
+			if (tp->ents[j].id == link->sink_id) {
+				entity = &tp->ents[j];
+				break;
+			}
+		if (!entity) {
+			errno = ENODEV;
+			return -1;
+		}
+		if (entity->function != MEDIA_ENT_F_LENS)
+			continue;
+		if (found) {
+			errno = ENOTUNIQ;
+			return -1;
+		}
+		found = entity;
+	}
+	*lens = found;
+	return 0;
 }
 
 static const struct media_v2_pad *topo_pad(const struct topo *tp,
@@ -954,7 +992,7 @@ static int sensor_frame_rate(struct cam *c)
 static int cam_start(struct cam *c)
 {
 	const struct cam_cfg *cfg = c->cfg;
-	const struct media_v2_entity *sen, *phy, *csid, *vfe, *vid;
+	const struct media_v2_entity *sen, *phy, *csid, *vfe, *vid, *lens;
 	struct topo tp;
 	int mfd, phy_fd = -1, csid_fd = -1, ret = -1;
 	uint32_t code = 0, yuv = MEDIA_BUS_FMT_YUYV8_1_5X8;
@@ -1019,11 +1057,12 @@ static int cam_start(struct cam *c)
 
 	/* optional: without the actuator the lens stays where it is */
 	c->af_state = AF_OFF;
-	if (cfg->vcm) {
-		const struct media_v2_entity *lens = topo_entity(&tp, cfg->vcm);
-
-		if (lens)
-			c->vcm_fd = topo_open_devnode(&tp, lens->id);
+	if (topo_lens(&tp, sen->id, &lens) < 0) {
+		logmsg(c, "sensor lens association: %s", strerror(errno));
+	} else if (lens) {
+		c->vcm_fd = topo_open_devnode(&tp, lens->id);
+		if (c->vcm_fd < 0)
+			logmsg(c, "cannot open lens %s: %s", lens->name, strerror(errno));
 		if (c->vcm_fd >= 0 &&
 		    ctrl_range(c->vcm_fd, V4L2_CID_FOCUS_ABSOLUTE,
 			       &c->af_min, &c->af_max) == 0) {
