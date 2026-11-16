@@ -22,6 +22,10 @@ HEADERS = (
 )
 CLI_SOURCE = NATIVE / 'piano-goodix-cli.c'
 LICENSES = ('BSD-3-Clause.txt', 'BSD-3-Clause-Clear.txt')
+ARCH_DESKTOP_DEPENDENCIES = {
+    'libfprint': ('glib2', 'libgusb', 'libgudev', 'pixman', 'openssl'),
+    'fprintd': ('libfprint', 'dbus', 'dbus-glib', 'polkit', 'pam'),
+}
 RUNTIME_PATHS = {
     'usr/local/sbin/piano-fingerprint-ctl',
     'usr/share/piano-provenance/fingerprint.json',
@@ -230,8 +234,7 @@ def desktop_recipes(output, runtime):
             shutil.copy2(backend, recipe / filename)
         files = [archive.name, *patch_names, *local]
         quoted = lambda values: ' '.join(shlex.quote(str(value)) for value in values)
-        dependencies = (['glib2', 'libgusb', 'libgudev', 'pixman', 'openssl']
-                        if name == 'libfprint' else ['libfprint', 'dbus', 'dbus-glib', 'polkit', 'pam'])
+        dependencies = ARCH_DESKTOP_DEPENDENCIES[name]
         prepare = ''.join('  patch -d "$srcdir/' + name + '" -p1 < "$srcdir/' + p + '"\n'
                           for p in patch_names)
         options = ('-Ddoc=false -Dgtk-examples=false -Dinstalled-tests=false '
@@ -269,20 +272,33 @@ def install_desktop(root, runtime, output):
     if (root / 'var/lib/dpkg/status').is_file():
         return install_debian_desktop(root, runtime, output)
     import build_arch_package
+    from build_nyarch_apps import guest_environment
+    from build_release_rootfs import build_resolver
+
+    root, runtime, output = root.resolve(), runtime.resolve(), output.resolve()
+    if (not root.is_relative_to(ROOT / 'build/distros') or
+            not output.is_relative_to(ROOT / 'build') or output.is_relative_to(root)):
+        raise ValueError('Build fingerprint packages outside a project-built target rootfs')
     recipes = output / 'recipes'
     desktop_recipes(recipes, runtime)
     for name in ('libfprint', 'fprintd'):
+        required = ('glibc', *ARCH_DESKTOP_DEPENDENCIES[name])
+        missing = subprocess.run(['chroot', root, 'pacman', '-T', *required],
+                                 capture_output=True, text=True)
+        if missing.returncode not in (0, 127):
+            raise RuntimeError(missing.stderr)
+        if missing.returncode:
+            with build_resolver(root), guest_environment(root) as guest:
+                guest(['pacman', '-S', '--needed', '--noconfirm', *missing.stdout.splitlines()])
         packages = output / name
         cohort = subprocess.check_output(
-            ['chroot', root, 'pacman', '-Q', 'glibc', 'glib2', 'libgusb', 'libgudev',
-             'pixman', 'openssl'], text=True)
+            ['chroot', root, 'pacman', '-Q', *required], text=True)
         inputs = {'recipe_sha256': digest(recipes / name / 'PKGBUILD'),
                   'runtime_packages': cohort}
         if not (packages / 'manifest.json').is_file():
             build_arch_package.build(root, recipes / name, packages)
             updated = subprocess.check_output(
-                ['chroot', root, 'pacman', '-Q', 'glibc', 'glib2', 'libgusb', 'libgudev',
-                 'pixman', 'openssl'], text=True)
+                ['chroot', root, 'pacman', '-Q', *required], text=True)
             if updated != cohort:
                 raise ValueError('Fingerprint build dependencies changed the target ABI; rebuild the packages')
             (packages / 'fingerprint-inputs.json').write_text(json.dumps(inputs, indent=2) + '\n')
