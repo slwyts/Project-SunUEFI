@@ -43,7 +43,11 @@ UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value) {
     UINT32 State=Op==1?2:Op==2?3:Op==10?0:1;
     Registers[Context/4]=(Registers[Context/4]&~STATE_MASK)|(State<<20);
     Registers[(Offset-Local+(K==2?EVENT_IRQ:CHANNEL_IRQ))/4]|=K==2?1U:1U<<K;
-  } else Registers[Offset/4]=Value;
+  } else {
+    UINT32 ReadOnly=Local==EVENT_CONTEXT?EVENT_READ_ONLY:
+      (Local==CHANNEL(0) || Local==CHANNEL(1))?CHANNEL_READ_ONLY:0;
+    Registers[Offset/4]=(Value&~ReadOnly)|(Registers[Offset/4]&ReadOnly);
+  }
   return Value;
 }
 EFI_STATUS PianoDmaSyncForCpuQuiet(PIANO_DMA_BUFFER *B){assert(B->Active);return EFI_SUCCESS;}
@@ -66,7 +70,21 @@ STATIC VOID Fresh(PIANO_SPI_GPI *S) {
   S->TxRing.DeviceAddress=0x40000000;S->RxRing.DeviceAddress=0x40001000;
 }
 
+STATIC VOID ReadOnlyContextFields(VOID) {
+  PIANO_SPI_GPI S;Fresh(&S);
+  UINT32 Value=0x10010002,ReadOnly=(1U<<20)|(1U<<4);
+  Registers[Register(&S,EVENT_CONTEXT)/4]=Value|ReadOnly;
+  assert(Program(&S,EVENT_CONTEXT,Value,EVENT_READ_ONLY)==EFI_SUCCESS);
+  assert(Registers[Register(&S,EVENT_CONTEXT)/4]==(Value|ReadOnly));
+  Value=0x10000002;ReadOnly=(1U<<20)|(1U<<8)|(1U<<4);
+  Registers[Register(&S,CHANNEL(1))/4]=Value|ReadOnly;
+  assert(Program(&S,CHANNEL(1),Value,CHANNEL_READ_ONLY)==EFI_SUCCESS);
+  assert(Registers[Register(&S,CHANNEL(1))/4]==(Value|ReadOnly));
+  assert(Program(&S,CHANNEL(1),Value,0)==EFI_DEVICE_ERROR);
+}
+
 int main(VOID) {
+  ReadOnlyContextFields();
   PIANO_SPI_GPI S;
   UINT32 TxStorage[RING_BYTES/4],RxStorage[RING_BYTES/4];
   CONST UINT32 Lengths[]={3,8,513,5449,PIANO_SPI_GPI_MAX_BYTES};
@@ -119,7 +137,7 @@ int main(VOID) {
   Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;
   *Event=(TRE){{0x40000020,0,(16U<<24)|5449,0x22U<<16}};
   assert(Events(&S,5449,1,&Done)==EFI_DEVICE_ERROR && !Done);
-  CONST UINT32 Errors[]={0x3100,0x3118,0x3200};
+  CONST UINT32 Errors[]={0x3100,0x3118};
   for(UINTN I=0;I<ARRAY_SIZE(Errors);++I) {
     Fresh(&S);Done=0;
     Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;
@@ -127,6 +145,11 @@ int main(VOID) {
     Registers[Register(&S,Errors[I])/4]=1;
     assert(Events(&S,5449,1,&Done)==EFI_DEVICE_ERROR && !Done && !S.Events);
   }
+  Fresh(&S);Done=0;
+  Registers[Register(&S,0x3200)/4]=0xB767BB55;
+  Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;
+  *Event=(TRE){{0x40000020,0,(2U<<24)|5449,0x22U<<16}};
+  assert(Events(&S,5449,1,&Done)==EFI_SUCCESS && Done==1);
   for(UINT32 First=0;First<2;++First) {
     Fresh(&S);Done=0;
     Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;

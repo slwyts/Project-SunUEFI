@@ -53,7 +53,8 @@ STATIC CONST CHAR8 *mStepNames[]={"off","clocks","eng-reset","trim-reset","trim-
 
 STATIC struct {
   BOOLEAN Started,Busy,InTransfer,Released,Published,Cascade,EdgeSeen,EdgePending,IrqArmed,Pending;
-  T_STEP Step;
+  T_STEP Step,FailedStep;
+  CONST CHAR8 *FailureReason;
   CONST VOID *Fdt;
   UINT64 Frequency,CounterStart,CounterEnd,StartUs,NextUs,LastReadUs;
   UINT32 Table,Retry,Attempt,Part,PartOffset,Polls,Payload,Frames,Reads,ReadErrors,Consecutive,WdtCount,Downloads;
@@ -230,6 +231,7 @@ STATIC EFI_STATUS ReleaseHardware(VOID) {
 }
 STATIC VOID Unavailable(CONST CHAR8 *Reason,EFI_STATUS Status) {
   T_STEP Failed=mT.Step;if(Failed==TStopped)return;
+  mT.FailedStep=Failed;mT.FailureReason=Reason;
   mT.InputStatus=Unpublish();EFI_STATUS Release=ReleaseHardware();
   mT.Step=TUnavailable;mT.LastStatus=Status;
   DEBUG((DEBUG_WARN,"PIANO_TOUCH_UNAVAILABLE reason=%a step=%a status=%r se2_fw=%08x se2_if_disable=%08x lcd_id=%d firmware=%a release=%r\n",
@@ -462,6 +464,18 @@ VOID PianoTouchPump(VOID) {
 }
 
 VOID PianoTouchReplay(VOID){
+  DEBUG((DEBUG_WARN,"PIANO_TOUCH_STATUS step=%a failed_step=%a reason=%a status=%r se2_fw=%08x se2_if_disable=%08x lcd_id=%d firmware=%a release=%r clock_refs=%x source_hz=%u\n",
+    mStepNames[mT.Step],mStepNames[mT.FailedStep],mT.FailureReason?mT.FailureReason:"none",mT.LastStatus,
+    mT.Spi.Firmware,mT.Spi.InterfaceDisable,mT.LcdId,mT.FwName?mT.FwName:"none",mT.SpiRestore,mT.ClockHeld,mT.SeHz));
+  DEBUG((DEBUG_WARN,"PIANO_TOUCH_GPI status=%r close=%r retained=%u instance=%u transfers=%u failures=%u events=%u event=%08x/%08x/%08x/%08x geni=%08x global=%08x general=%08x error=%08x\n",
+    mSpi.Status,mSpi.CloseStatus,mSpi.Retained,mSpi.Instance,mSpi.Transfers,mSpi.Failures,mSpi.Events,
+    mSpi.LastEvent[0],mSpi.LastEvent[1],mSpi.LastEvent[2],mSpi.LastEvent[3],mSpi.LastStatusReg,
+     mSpi.LastGlobalIrq,mSpi.LastGeneralIrq,mSpi.LastErrorLog));
+  DEBUG((DEBUG_WARN,"PIANO_TOUCH_GPI_PROBE_SAVED status=%r offset=%x value=%08x\n",mSpi.ProbeStatus,mSpi.ProbeOffset,mSpi.ProbeValue));
+  DEBUG((DEBUG_WARN,"PIANO_TOUCH_GPI_OPEN stage=%a mismatch=%u offset=%x expected=%08x readback=%08x domain=%u attached=%u verified=%u event_allocated=%u tx_allocated=%u rx_allocated=%u saved=%u\n",
+    mSpi.Stage?mSpi.Stage:"none",mSpi.FailureRecorded,mSpi.FailureOffset,mSpi.FailureExpected,mSpi.FailureReadback,
+    mSpi.Smmu.Domain!=NULL,mSpi.Smmu.Attached,mSpi.Smmu.Verified,mSpi.EventAllocated,mSpi.ChannelAllocated[0],mSpi.ChannelAllocated[1],mSpi.SavedCount));
+  PianoOwnedSmmuReport(&mSpi.Smmu);
   DEBUG((DEBUG_WARN,"PIANO_TOUCH_MATRIX step=%a frames=%u reads=%u errors=%u checksum_errors=%u skipped=%u probe=%u reference=%u ref_type=%d ref_frames=%u rows=%u cols=%u\n",
     mStepNames[mT.Step],mMatrix.Frames,mT.Reads,mT.ReadErrors,mMatrix.BadChecksum,mMatrix.Skipped,mMatrix.ProbeCount,mMatrix.HaveReference,mMatrix.RefType,mMatrix.RefCount,mMatrix.Rows,mMatrix.Cols));
   DEBUG((DEBUG_WARN,"PIANO_TOUCH_INPUT frame=%u peak=%d max_peak=%u touching=%u x=%d y=%d changes=%u polls=%u consumed=%u pending=%u buttons=%u downloads=%u\n",

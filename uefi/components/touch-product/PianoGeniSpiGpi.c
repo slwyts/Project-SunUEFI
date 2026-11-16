@@ -30,6 +30,8 @@
 #define CHANNEL_IRQ_CLEAR 0x30A0U
 #define EVENT_IRQ_CLEAR 0x30A4U
 #define STATE_MASK (0xFU<<20)
+#define CHANNEL_READ_ONLY (STATE_MASK|(0x1FU<<8)|(0xFU<<4))
+#define EVENT_READ_ONLY (STATE_MASK|(0xFFU<<8)|(0xFU<<4))
 #define RING_BYTES 4096U
 #define ELEMENT_BYTES 16U
 #define RING_ELEMENTS (RING_BYTES/ELEMENT_BYTES)
@@ -82,7 +84,15 @@ STATIC EFI_STATUS Program(PIANO_SPI_GPI *S,UINT32 Offset,UINT32 Value,UINT32 Ign
     S->Saved[S->SavedCount].Ignore=Ignore;++S->SavedCount;
   }
   Write(S,Offset,Value);
-  return ((Read(S,Offset)^Value)&~Ignore)?EFI_DEVICE_ERROR:EFI_SUCCESS;
+  UINT32 Readback=Read(S,Offset);
+  if((Readback^Value)&~Ignore) {
+    if(!S->FailureRecorded) {
+      S->FailureRecorded=TRUE;S->FailureOffset=Register(S,Offset);
+      S->FailureExpected=Value;S->FailureReadback=Readback;
+    }
+    return EFI_DEVICE_ERROR;
+  }
+  return EFI_SUCCESS;
 }
 
 STATIC EFI_STATUS SeProgram(PIANO_SPI_GPI *S,UINT32 Offset,UINT32 Value) {
@@ -95,7 +105,15 @@ STATIC EFI_STATUS SeProgram(PIANO_SPI_GPI *S,UINT32 Offset,UINT32 Value) {
   }
   S->SerialChanged=TRUE;
   MmioWrite32(SE_BASE+Offset,Value);MemoryFence();
-  return MmioRead32(SE_BASE+Offset)==Value?EFI_SUCCESS:EFI_DEVICE_ERROR;
+  UINT32 Readback=MmioRead32(SE_BASE+Offset);
+  if(Readback!=Value) {
+    if(!S->FailureRecorded) {
+      S->FailureRecorded=TRUE;S->FailureOffset=SE_BASE+Offset;
+      S->FailureExpected=Value;S->FailureReadback=Readback;
+    }
+    return EFI_DEVICE_ERROR;
+  }
+  return EFI_SUCCESS;
 }
 
 STATIC EFI_STATUS Command(PIANO_SPI_GPI *S,UINT32 Channel,UINT32 Opcode,UINT32 State) {
@@ -156,7 +174,7 @@ STATIC EFI_STATUS Allocate(PIANO_SPI_GPI *S,PIANO_DMA_BUFFER *B,UINTN Bytes,PIAN
 STATIC EFI_STATUS ConfigureChannel(PIANO_SPI_GPI *S,UINT32 K,PIANO_DMA_BUFFER *Ring) {
   UINT32 Context=CHANNEL(K);
   UINT64 Address=Ring->DeviceAddress;
-  EFI_STATUS E=Program(S,Context,(ELEMENT_BYTES<<24)|(K==0?BIT3:0)|2U,STATE_MASK);
+  EFI_STATUS E=Program(S,Context,(ELEMENT_BYTES<<24)|(K==0?BIT3:0)|2U,CHANNEL_READ_ONLY);
   if(E==EFI_SUCCESS)E=Program(S,Context+4,RING_BYTES,0);
   if(E==EFI_SUCCESS)E=Program(S,Context+8,(UINT32)Address,0);
   if(E==EFI_SUCCESS)E=Program(S,Context+12,(UINT32)(Address>>32),0);
@@ -170,7 +188,8 @@ STATIC EFI_STATUS ConfigureChannel(PIANO_SPI_GPI *S,UINT32 K,PIANO_DMA_BUFFER *R
 
 STATIC EFI_STATUS ConfigureEvent(PIANO_SPI_GPI *S) {
   UINT64 Address=S->EventRing.DeviceAddress;
-  EFI_STATUS E=Program(S,EVENT_CONTEXT,(ELEMENT_BYTES<<24)|BIT16|2U,STATE_MASK);
+  // Channel state, EE and channel ID are hardware-owned read-only fields.
+  EFI_STATUS E=Program(S,EVENT_CONTEXT,(ELEMENT_BYTES<<24)|BIT16|2U,EVENT_READ_ONLY);
   if(E==EFI_SUCCESS)E=Program(S,EVENT_CONTEXT+4,RING_BYTES,0);
   if(E==EFI_SUCCESS)E=Program(S,EVENT_CONTEXT+8,(UINT32)Address,0);
   if(E==EFI_SUCCESS)E=Program(S,EVENT_CONTEXT+12,(UINT32)(Address>>32),0);
@@ -220,6 +239,8 @@ STATIC EFI_STATUS ProbeIdle(PIANO_SPI_GPI *S,UINT32 Mask) {
   EFI_STATUS E=PianoGuardedReadBegin(&Config,&Token);
   if(E!=EFI_SUCCESS) {
     CONST PIANO_GUARDED_REPORT *R=PianoGuardedReadReport();
+    if(R)DEBUG((DEBUG_ERROR,"PIANO_TOUCH_GPI_PROBE_BEGIN status=%r mapping=%r page=%lx par=%lx gcd_type=%u gcd_attrs=%lx cleanup=%r retained=%u\n",
+      E,R->MappingStatus,R->LastMappingPage,R->LastPar,R->LastGcdType,R->LastGcdAttributes,R->CleanupStatus,R->Retained));
     return R && (R->Retained || R->Active || R->Fatal || R->ServicesLost)?Retain(S,E):E;
   }
   // The DT mask names the AP-owned instances sharing SID 0xB6. Other EEs
@@ -229,19 +250,31 @@ STATIC EFI_STATUS ProbeIdle(PIANO_SPI_GPI *S,UINT32 Mask) {
     CONST UINT32 Offsets[]={CHANNEL(0),CHANNEL(1),EVENT_CONTEXT};
     for(UINT32 K=0;K<ARRAY_SIZE(Offsets);++K) {
       UINT32 Value=0;
+      S->ProbeOffset=Register(S,Offsets[K]);
       E=PianoGuardedRead32(Token,GPI_BASE+Register(S,Offsets[K]),&Value);
+      S->ProbeValue=Value;
+      DEBUG((DEBUG_WARN,"PIANO_TOUCH_GPI_PROBE instance=%u offset=%x value=%08x status=%r\n",I,S->ProbeOffset,Value,E));
       if(E!=EFI_SUCCESS)break;
       if(Value&STATE_MASK){E=EFI_ALREADY_STARTED;break;}
     }
   }
   for(S->Instance=1;S->Instance<5;++S->Instance)if(Mask&(1U<<S->Instance))break;
   UINT32 Enabled=0;
-  if(E==EFI_SUCCESS)E=PianoGuardedRead32(Token,GPI_BASE+Register(S,0x3000),&Enabled);
+  if(E==EFI_SUCCESS) {
+    S->ProbeOffset=Register(S,0x3000);
+    E=PianoGuardedRead32(Token,GPI_BASE+S->ProbeOffset,&Enabled);S->ProbeValue=Enabled;
+    DEBUG((DEBUG_WARN,"PIANO_TOUCH_GPI_PROBE instance=%u offset=%x value=%08x status=%r\n",S->Instance,S->ProbeOffset,Enabled,E));
+  }
   CONST UINT32 Errors[]={0x3100,0x3118,0x3200};
+  UINT32 *Values[]={&S->LastGlobalIrq,&S->LastGeneralIrq,&S->LastErrorLog};
   for(UINT32 I=0;E==EFI_SUCCESS && I<ARRAY_SIZE(Errors);++I) {
     UINT32 Value=0;
+    S->ProbeOffset=Register(S,Errors[I]);
     E=PianoGuardedRead32(Token,GPI_BASE+Register(S,Errors[I]),&Value);
-    if(E==EFI_SUCCESS && Value)E=EFI_DEVICE_ERROR;
+    S->ProbeValue=Value;*Values[I]=Value;
+    DEBUG((DEBUG_WARN,"PIANO_TOUCH_GPI_PROBE instance=%u offset=%x value=%08x status=%r\n",S->Instance,S->ProbeOffset,Value,E));
+    // ERROR_LOG retains payload even without a pending global error interrupt.
+    if(E==EFI_SUCCESS && I<2 && Value)E=EFI_DEVICE_ERROR;
   }
   EFI_STATUS End=PianoGuardedReadEnd(Token);
   CONST PIANO_GUARDED_REPORT *Report=PianoGuardedReadReport();
@@ -254,7 +287,7 @@ STATIC EFI_STATUS ProbeIdle(PIANO_SPI_GPI *S,UINT32 Mask) {
 EFI_STATUS PianoGeniSpiGpiOpen(PIANO_SPI_GPI *S,CONST VOID *Fdt,UINT32 SourceHz,UINT32 MaxHz) {
   if(!S || !Fdt || SourceHz<1000000U || MaxHz<1000000U || MaxHz>19200000U)return EFI_INVALID_PARAMETER;
   if(S->Started)return EFI_ALREADY_STARTED;
-  ZeroMem(S,sizeof(*S));S->Started=TRUE;S->CloseStatus=EFI_NOT_STARTED;
+  ZeroMem(S,sizeof(*S));S->Started=TRUE;S->CloseStatus=EFI_NOT_STARTED;S->Stage="validate";
   S->Frequency=GetPerformanceCounterProperties(&S->CounterStart,&S->CounterEnd);
   if(S->Frequency<1000000ULL || S->CounterStart==S->CounterEnd)return S->Status=EFI_UNSUPPORTED;
   S->Divider=(SourceHz+MaxHz-1)/MaxHz;
@@ -265,6 +298,7 @@ EFI_STATUS PianoGeniSpiGpiOpen(PIANO_SPI_GPI *S,CONST VOID *Fdt,UINT32 SourceHz,
   if((MmioRead32(SE_BASE+0x68)&0xFF00U)!=0x100U || !(MmioRead32(SE_BASE+0x64)&1) ||
      (MmioRead32(SE_BASE+0x40)&SE_ACTIVE))return S->Status=EFI_NOT_READY;
   E=ProbeIdle(S,Mask);
+  S->ProbeStatus=E;
   if(E!=EFI_SUCCESS)return S->Status=E;
   // GPI CONFIG/GO descriptors also change these SE registers. Save the whole
   // transfer configuration before a descriptor can execute, not after it.
@@ -275,30 +309,39 @@ EFI_STATUS PianoGeniSpiGpiOpen(PIANO_SPI_GPI *S,CONST VOID *Fdt,UINT32 SourceHz,
   }
   S->SeSavedCount=ARRAY_SIZE(SeOffsets);
   S->Device=(PIANO_DMA_DEVICE){.Name="gpi1",.StreamId=0xB6,.AddressBits=32,.CacheLine=64,.ReserveAcrossExit=TRUE};
+  S->Stage="smmu-open";
   E=PianoOwnedSmmuOpenGpi(Fdt,&S->Smmu,&S->Device);
   if(E!=EFI_SUCCESS)goto Failed;
+  S->Stage="dma-allocate";
   E=Allocate(S,&S->TxRing,RING_BYTES,PianoDmaToDevice);
   if(E==EFI_SUCCESS)E=Allocate(S,&S->RxRing,RING_BYTES,PianoDmaToDevice);
   if(E==EFI_SUCCESS)E=Allocate(S,&S->EventRing,RING_BYTES,PianoDmaFromDevice);
   if(E==EFI_SUCCESS)E=Allocate(S,&S->Tx,PIANO_SPI_GPI_MAX_BYTES,PianoDmaToDevice);
   if(E==EFI_SUCCESS)E=Allocate(S,&S->Rx,PIANO_SPI_GPI_MAX_BYTES,PianoDmaFromDevice);
   if(E!=EFI_SUCCESS)goto Failed;
+  // Like qcom/gpi.c, discard an old error payload only after idle checks and
+  // attaching our DMA domain. Pending errors are never cleared to continue.
+  Write(S,0x3200,0);
   // Poll raw completion sources. Keep the top-level IRQ mask zero so no GIC
   // handler is required, and never change the secure FIFO/GSI selection.
   CONST struct {UINT32 Offset,Value;} Irqs[]={
     {0x3088,0},{0x3098,3},{0x309C,1},{0x30B8,1},{0x3108,1},{0x3120,15},
     {0x3180,1},{0x3188,0},{0x318C,0}};
+  S->Stage="irq-config";
   for(UINT32 I=0;E==EFI_SUCCESS && I<ARRAY_SIZE(Irqs);++I)
     E=Program(S,Irqs[I].Offset,Irqs[I].Value,0);
   if(E!=EFI_SUCCESS)goto Failed;
-  S->EventAllocated=TRUE;E=Command(S,2,0,1);
+  S->Stage="event-allocate";S->EventAllocated=TRUE;E=Command(S,2,0,1);
+  if(E==EFI_SUCCESS)S->Stage="event-config";
   if(E==EFI_SUCCESS)E=ConfigureEvent(S);
   for(UINT32 K=0;E==EFI_SUCCESS && K<2;++K) {
+    S->Stage=K?"rx-allocate":"tx-allocate";
     S->ChannelAllocated[K]=TRUE;E=Command(S,K,0,1);
+    if(E==EFI_SUCCESS)S->Stage=K?"rx-config":"tx-config";
     if(E==EFI_SUCCESS)E=ConfigureChannel(S,K,K?&S->RxRing:&S->TxRing);
   }
   if(E!=EFI_SUCCESS)goto Failed;
-  E=SeProgram(S,0xE1C,0);
+  S->Stage="se-config";E=SeProgram(S,0xE1C,0);
   if(E==EFI_SUCCESS)E=SeProgram(S,0x614,MmioRead32(SE_BASE+0x614)&~(BIT0|BIT26|BIT27|BIT30));
   if(E==EFI_SUCCESS)E=SeProgram(S,0x258,1);
   if(E==EFI_SUCCESS)E=SeProgram(S,0xE18,MmioRead32(SE_BASE+0xE18)|15U);
@@ -306,7 +349,7 @@ EFI_STATUS PianoGeniSpiGpiOpen(PIANO_SPI_GPI *S,CONST VOID *Fdt,UINT32 SourceHz,
   if(E==EFI_SUCCESS)E=SeProgram(S,0x24,MmioRead32(SE_BASE+0x24)|0x7FU);
   if(E==EFI_SUCCESS)E=SeProgram(S,0x28,MmioRead32(SE_BASE+0x28)|0x7FU);
   if(E!=EFI_SUCCESS)goto Failed;
-  S->Open=TRUE;
+  S->Stage="ready";S->Open=TRUE;
   DEBUG((DEBUG_WARN,"PIANO_TOUCH_GPI_READY instance=%u se=2 sid=B6 source_hz=%u divider=%u irq=polled dma_buffers=5\n",
     S->Instance,SourceHz,S->Divider));
   return S->Status=EFI_SUCCESS;
@@ -318,7 +361,7 @@ Failed:
 
 STATIC EFI_STATUS Events(PIANO_SPI_GPI *S,UINTN Bytes,UINT32 Expected,UINT32 *Done) {
   S->LastGlobalIrq=Read(S,0x3100);S->LastGeneralIrq=Read(S,0x3118);S->LastErrorLog=Read(S,0x3200);
-  if(S->LastGlobalIrq || S->LastGeneralIrq || S->LastErrorLog)return EFI_DEVICE_ERROR;
+  if(S->LastGlobalIrq || S->LastGeneralIrq)return EFI_DEVICE_ERROR;
   UINT64 Producer=Read(S,EVENT_CONTEXT+0x10)|((UINT64)Read(S,EVENT_CONTEXT+0x14)<<32);
   EFI_STATUS E=PianoDmaSyncForCpuQuiet(&S->EventRing);
   if(E!=EFI_SUCCESS)return E;
