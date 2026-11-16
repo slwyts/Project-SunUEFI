@@ -206,7 +206,7 @@ class PianoFullKernelTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'does not descend'):full.verify_source(work,disconnected)
 
     def test_real_module_vermagic_hash_and_duplicate_rejection(self):
-        source=ROOT/'artifacts/kernels/stable/userspace-debug/modules'
+        source=ROOT/'artifacts/kernels/release/modules'
         modules=list(source.rglob('*.ko'))
         if not modules:self.skipTest('Existing actual ARM64 modules unavailable')
         module=modules[0];release=full.modinfo(module)['vermagic'].split()[0]

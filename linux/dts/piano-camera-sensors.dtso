@@ -30,4 +30,11 @@
 					<&camcc_ml 0>;
 		};
 	};
+
+	fragment@3 {
+		target-path = "/soc/cci-ml@ac7b000/i2c-bus@1/vcm@c";
+		__overlay__ {
+			compatible = "giantec,gt9764ba";
+		};
+	};
 };

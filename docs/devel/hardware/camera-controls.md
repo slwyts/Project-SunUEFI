@@ -65,11 +65,13 @@ Qualcomm 的 [IFE BG 统计提案](https://lore.kernel.org/linux-media/202610062
 
 当前产品为后摄配置 `s5kjn1 → msm_csiphy1 → msm_csid0 → msm_vfe0_pix → msm_vfe0_video3`，前摄使用 `ov32d40 → msm_csiphy4 → msm_csid1 → msm_vfe1_pix → msm_vfe1_video3`。CSID sink 是 pad 0，IPP 是 source pad 4；VFE sink/source 分别是 pad 0/1。设备节点编号由探测顺序决定，不是配置常量。原始采集使用 CSID source pad 1 和对应 VFE RDI0。
 
-产品内核的 `MEDIA_IOC_G_TOPOLOGY` 已确认后摄到镜头（当前注册名 `dw9768`）和两路 flash 的三个 enabled、immutable ancillary links，运行设备树的 `lens-focus` 和 `flash-leds` 指向相同设备。关联不是 libcamera 接入的缺项，仍缺的是算法、标定和闪光拍照流程。
+原有产品内核的 `MEDIA_IOC_G_TOPOLOGY` 已确认后摄到镜头和两路 flash 的三个 enabled、immutable ancillary links，运行设备树的 `lens-focus` 和 `flash-leds` 指向相同设备。镜头由 GT9764BA 驱动接管后沿用该关联，仍需上机检查开流、对焦和关闭后的归位。
 
 服务沿传感器发出的 enabled ancillary link 查找 `MEDIA_ENT_F_LENS`，不再按镜头驱动名称匹配。前摄没有该关联，保持固定焦距；关联指向不存在的设备或同一传感器关联多个镜头时，记录错误并关闭该路自动对焦，不猜测设备，也不影响另一颗相机。
 
-原厂 `OS3.0.309.0.WPYCNXM` 的后摄模块描述和 actuator 库标明马达为 GT9764BA，初始化依次写 `0x02 = 0`、`0x02 = 2`、`0x06 = 0x40`、`0x07 = 0x73`。[厂商产品表](https://www.giantec-semi.com/yqmd/164)将 GT9764BA 标为双向、GT9769 标为单向；现有设备树却使用 `giantec,gt9769`，由 DW9768 驱动处理，不能视为完整兼容。原厂归位代码和 [MiCode 的 GPL GT9764 驱动](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/a369d30bd5df3fcfb4304ee9e7ae10fa4f11899a/drivers/misc/mediatek/lens/vcm/v4l2/gt9764/gt9764.c)都向 DAC 512 方向归位，而 DW9768 向零归位。GT9764BA 的专用驱动、准确移动时间和实机归位检查尚未完成；`0x73` 超出 DW9768 binding 的 6-bit timing 范围，不能套用它的时序公式或属性。
+原厂 `OS3.0.309.0.WPYCNXM` 的后摄模块描述和 actuator 库标明马达为 GT9764BA，初始化依次写 `0x02 = 0`、`0x02 = 2`、`0x06 = 0x40`、`0x07 = 0x73`。[厂商产品表](https://www.giantec-semi.com/yqmd/164)将 GT9764BA 标为双向、GT9769 标为单向；两者不能因位置寄存器相同就视为完整兼容。[GT9764BA 驱动](../../../patches/linux/7.3/0126-media-gt9764ba-lens.patch)和 [binding](../../../patches/linux/7.3/0125-media-gt9764ba-binding.patch)提供标准 V4L2 镜头实体、`V4L2_CID_FOCUS_ABSOLUTE` 和 runtime PM，设备树不再使用 `giantec,gt9769` 匹配 DW9768 驱动。
+
+GT9764BA 使用 0–1023 的 DAC 范围，默认值和断电前的归位目标为 512。[MiCode 的 GPL GT9764 驱动](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/a369d30bd5df3fcfb4304ee9e7ae10fa4f11899a/drivers/misc/mediatek/lens/vcm/v4l2/gt9764/gt9764.c)也使用该中点。归位每步最多移动 50，等待 10 ms；时序来自原厂 `GetParkLens` 回调及其 I²C 命令构造调用链。归位写入失败时返回错误并保留供电，不继续断电。驱动跟踪成功写入的位置，恢复供电后按相同步幅恢复用户设置。10 ms 是归位步进等待，不是光学稳定时间的测量；手动移动后的稳定时间和对焦标定仍未实现。原厂 `0x73` 超出 DW9768 binding 的 6-bit timing 范围，驱动使用 GT9764BA 原厂寄存器值，不套用 DW9768 公式。
 
 SM8750 只公布同编号 CSID→VFE 链接，与 Gen4 的寄存器更新、帧时序和完成回调一致；CSIPHY 选择和其他 SoC 的图保持不变。CSID 四个 source pad 共用格式归一化，IPP pad 4 不再接受任意 code 或尺寸。前后摄同时工作、交错停流、模式切换和失败恢复仍需实机检查；共享隐私灯的引用计数验证不证明两路图像、统计和控件互不干扰。
 
