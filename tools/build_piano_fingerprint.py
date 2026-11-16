@@ -25,6 +25,7 @@ LICENSES = ('BSD-3-Clause.txt', 'BSD-3-Clause-Clear.txt')
 RUNTIME_PATHS = {
     'usr/local/sbin/piano-fingerprint-ctl',
     'usr/share/piano-provenance/fingerprint.json',
+    'usr/share/licenses/piano-fingerprint/linux-tee.h',
     *{f'usr/share/licenses/piano-fingerprint/{name}.txt'
        for name in ('qcbor',)},
     *{f'usr/share/licenses/piano-fingerprint/{name}' for name in LICENSES},
@@ -59,6 +60,8 @@ def source_inputs():
         'native_sources': {name: digest(NATIVE / name)
                            for name in (*CORE_SOURCES, *HEADERS, *LICENSES, CLI_SOURCE.name)},
         'builder_sha256': digest(Path(__file__)),
+        'kernel_uapi_sha256': json.loads(
+            (ROOT / 'config/release.json').read_text())['kernel']['uapi_sha256'],
         'firmware_manifest_sha256': digest(
             ROOT / 'vendor/firmware/hyperos4-fingerprint/manifest.json'),
         'patches': patch_inputs,
@@ -84,7 +87,7 @@ def source(name, record):
     return path
 
 
-def stage_sources(work):
+def stage_sources(work, uapi):
     """Keep one source-built backend for the CLI and native libfprint builds."""
     work.mkdir(parents=True)
     cfg = json.loads((ROOT / 'config/fingerprint.json').read_text())['sources']
@@ -105,16 +108,23 @@ def stage_sources(work):
         dependencies[name] = destination
     for name in (*CORE_SOURCES, *HEADERS, *LICENSES):
         shutil.copy2(NATIVE / name, work / name)
+    headers = work / 'uapi/linux'
+    headers.mkdir(parents=True)
+    shutil.copy2(uapi / 'include/linux/tee.h', headers / 'tee.h')
     return dependencies
 
 
-def build(output, flags, emulator=None):
+def build(output, flags, uapi, emulator=None):
     inputs = source_inputs()
+    tee_header = uapi / 'include/linux/tee.h'
+    tee_digest = digest(tee_header)
     cfg = json.loads((ROOT / 'config/fingerprint.json').read_text())
     work = output / 'fingerprint'
     work.mkdir()
     backend = work / 'backend'
-    dependencies = stage_sources(backend)
+    dependencies = stage_sources(backend, uapi)
+    # Use the exported kernel interface before any sysroot system headers.
+    flags = [flags[0], '-isystem', str(backend / 'uapi'), *flags[1:]]
     qcbor = dependencies['qcbor']
     includes = [qcbor / 'inc']
     originals = [
@@ -145,6 +155,8 @@ def build(output, flags, emulator=None):
     files = {}
     for name, path, mode in [
             ('usr/local/sbin/piano-fingerprint-ctl', binary, 0o755),
+            ('usr/share/licenses/piano-fingerprint/linux-tee.h',
+             backend / 'uapi/linux/tee.h', 0o644),
             *[(f'usr/share/licenses/piano-fingerprint/{name}', NATIVE / name, 0o644)
               for name in LICENSES],
             *[(f'usr/share/licenses/piano-fingerprint/{name}.txt',
@@ -163,6 +175,7 @@ def build(output, flags, emulator=None):
         'source_files': {str(p.relative_to(ROOT)): digest(p) for p in originals},
         'backend_archive': {'file': str(backend_archive.relative_to(output)),
                             'sha256': digest(backend_archive)},
+        'uapi_headers': {'linux/tee.h': tee_digest},
         'firmware': json.loads(
             (ROOT / 'vendor/firmware/hyperos4-fingerprint/manifest.json').read_text())['files'],
         'operations': ['info', 'initialize', 'prepare-auth', 'watch', 'list',
@@ -170,6 +183,8 @@ def build(output, flags, emulator=None):
     }
     if source_inputs() != inputs:
         raise ValueError('Fingerprint sources changed during compilation')
+    if digest(tee_header) != tee_digest or digest(backend / 'uapi/linux/tee.h') != tee_digest:
+        raise ValueError('Fingerprint TEE header changed during compilation')
     provenance = work / 'fingerprint.json'
     provenance.write_text(json.dumps(record, indent=2) + '\n')
     files['usr/share/piano-provenance/fingerprint.json'] = {
@@ -231,6 +246,7 @@ def desktop_recipes(output, runtime):
             notices = '''  install -Dm644 "$srcdir/libfprint/libfprint/drivers/piano-goodix/BSD-3-Clause.txt" "$pkgdir/usr/share/licenses/libfprint/piano-goodix-BSD-3-Clause.txt"
   install -Dm644 "$srcdir/libfprint/libfprint/drivers/piano-goodix/BSD-3-Clause-Clear.txt" "$pkgdir/usr/share/licenses/libfprint/piano-goodix-BSD-3-Clause-Clear.txt"
   install -Dm644 "$srcdir/libfprint/libfprint/drivers/piano-goodix/qcbor/LICENSE" "$pkgdir/usr/share/licenses/libfprint/piano-goodix-QCBOR.txt"
+  install -Dm644 "$srcdir/libfprint/libfprint/drivers/piano-goodix/uapi/linux/tee.h" "$pkgdir/usr/share/licenses/libfprint/piano-goodix-linux-tee.h"
 '''
         recipe_text = (
             f'pkgname={name}\npkgver={record["version"]}\npkgrel=1.1\n'
@@ -480,6 +496,7 @@ def install_debian_desktop(root, runtime, output):
         for name in LICENSES:
             shutil.copy2(backend / name, copyright_directory / ('piano-goodix-' + name))
         shutil.copy2(backend / 'qcbor/LICENSE', copyright_directory / 'piano-goodix-QCBOR.txt')
+        shutil.copy2(backend / 'uapi/linux/tee.h', copyright_directory / 'piano-goodix-linux-tee.h')
         library = package / 'usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0'
         elf = library.read_bytes()
         if elf[:6] != b'\x7fELF\x02\x01' or elf[18:20] != b'\xb7\x00':
