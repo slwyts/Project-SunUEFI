@@ -180,12 +180,14 @@ STATIC EFI_STATUS Recover(PIANO_GENI_I2C *I) {
   UINT32 Status=0,Irq=0,Fifo=0,Word=0;EFI_STATUS S;
   for(UINTN Phase=0;Phase<3;++Phase) {
     if((S=Rd(I,GENI_STATUS,&Status))!=EFI_SUCCESS)return S;
+    if(Status&S_ACTIVE){I->Broken=TRUE;return EFI_DEVICE_ERROR;}
     if(!(Status&M_ACTIVE))break;
     if(Phase==2){I->Broken=TRUE;return EFI_DEVICE_ERROR;}
     if((S=Wr(I,GENI_M_CMD_CTRL,Phase==0?CMD_CANCEL:CMD_ABORT))!=EFI_SUCCESS)return S;
     UINT64 Deadline=I->Io.NowUs(I->Io.Context)+RECOVER_US;
     for(;;) {
       if((S=Rd(I,GENI_M_IRQ_STATUS,&Irq))!=EFI_SUCCESS || (S=Rd(I,GENI_STATUS,&Status))!=EFI_SUCCESS)return S;
+      if(Status&S_ACTIVE){I->Broken=TRUE;return EFI_DEVICE_ERROR;}
       if((Irq&(Phase==0?IRQ_CANCEL:IRQ_ABORT)) || !(Status&M_ACTIVE) || Late(I,Deadline))break;
     }
   }
@@ -198,6 +200,8 @@ STATIC EFI_STATUS Recover(PIANO_GENI_I2C *I) {
   if((S=Rd(I,GENI_RX_FIFO_STAT,&Fifo))!=EFI_SUCCESS)return S;
   UINT32 Tx=0;if((S=Rd(I,GENI_TX_FIFO_STAT,&Tx))!=EFI_SUCCESS)return S;
   if((Fifo&RX_WORDS) || (Tx&TX_WORDS)){I->Broken=TRUE;return EFI_DEVICE_ERROR;}
+  if((S=Rd(I,GENI_STATUS,&Status))!=EFI_SUCCESS)return S;
+  if(Status&(M_ACTIVE|S_ACTIVE)){I->Broken=TRUE;return EFI_DEVICE_ERROR;}
   return Wr(I,GENI_M_IRQ_CLEAR,MAX_UINT32);
 }
 
