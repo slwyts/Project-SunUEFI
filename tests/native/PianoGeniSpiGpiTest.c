@@ -99,33 +99,62 @@ int main(VOID) {
   assert(RouteChecks==1 && !FreeCount && !DomainClose && S.Smmu.Domain);
   assert(S.Tx.Active && S.Rx.Active && S.EventRing.Active);
 
-  Fresh(&S);BOOLEAN Done=FALSE;
+  Fresh(&S);UINT32 Done=0;
   Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;
   TRE *Event=(TRE *)EventStorage;
   *Event=(TRE){{0x40000020,0,(2U<<24)|5449,0x22U<<16}};
-  assert(Events(&S,5449,&Done)==EFI_SUCCESS && Done && S.Events==1 && S.EventRead==1);
-  Fresh(&S);Done=FALSE;
+  assert(Events(&S,5449,1,&Done)==EFI_SUCCESS && Done==1 && S.Events==1 && S.EventRead==1);
+  Fresh(&S);Done=0;
   Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;
   *Event=(TRE){{0x40000020,0,(2U<<24)|5448,0x22U<<16}};
-  assert(Events(&S,5449,&Done)==EFI_COMPROMISED_DATA && !Done);
-  Fresh(&S);Done=FALSE;
+  assert(Events(&S,5449,1,&Done)==EFI_COMPROMISED_DATA && !Done);
+  Fresh(&S);Done=0;
   Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;
   *Event=(TRE){{0x40000030,0,(2U<<24)|5449,0x22U<<16}};
-  assert(Events(&S,5449,&Done)==EFI_COMPROMISED_DATA && !Done);
-  Fresh(&S);Done=FALSE;
+  assert(Events(&S,5449,1,&Done)==EFI_COMPROMISED_DATA && !Done);
+  Fresh(&S);Done=0;
   Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40003000;
-  assert(Events(&S,5449,&Done)==EFI_COMPROMISED_DATA && !Done);
-  Fresh(&S);Done=FALSE;
+  assert(Events(&S,5449,1,&Done)==EFI_COMPROMISED_DATA && !Done);
+  Fresh(&S);Done=0;
   Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;
   *Event=(TRE){{0x40000020,0,(16U<<24)|5449,0x22U<<16}};
-  assert(Events(&S,5449,&Done)==EFI_DEVICE_ERROR && !Done);
+  assert(Events(&S,5449,1,&Done)==EFI_DEVICE_ERROR && !Done);
   CONST UINT32 Errors[]={0x3100,0x3118,0x3200};
   for(UINTN I=0;I<ARRAY_SIZE(Errors);++I) {
-    Fresh(&S);Done=FALSE;
+    Fresh(&S);Done=0;
     Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;
     *Event=(TRE){{0x40000020,0,(2U<<24)|5449,0x22U<<16}};
     Registers[Register(&S,Errors[I])/4]=1;
-    assert(Events(&S,5449,&Done)==EFI_DEVICE_ERROR && !Done && !S.Events);
+    assert(Events(&S,5449,1,&Done)==EFI_DEVICE_ERROR && !Done && !S.Events);
+  }
+  for(UINT32 First=0;First<2;++First) {
+    Fresh(&S);Done=0;
+    Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;
+    Event[0]=(TRE){{First?0x40001000:0x40000020,0,(2U<<24)|5449,(First<<24)|(0x22U<<16)}};
+    assert(Events(&S,5449,3,&Done)==EFI_SUCCESS && Done==(1U<<First) && Done!=3);
+    // Hardware can fetch the RX descriptor before it writes the payload.
+    Registers[Register(&S,CHANNEL(1)+0x10)/4]=0x40001010;
+    assert(Events(&S,5449,3,&Done)==EFI_SUCCESS && Done!=(UINT32)3);
+    Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002020;
+    Event[1]=(TRE){{First?0x40000020:0x40001000,0,(2U<<24)|5449,((!First)<<24)|(0x22U<<16)}};
+    assert(Events(&S,5449,3,&Done)==EFI_SUCCESS && Done==3);
+    Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002030;
+    Event[2]=Event[1];
+    assert(Events(&S,5449,3,&Done)==EFI_COMPROMISED_DATA);
+  }
+  Fresh(&S);Done=0;
+  Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;
+  *Event=(TRE){{0x40001000,0,(2U<<24)|5448,(1U<<24)|(0x22U<<16)}};
+  assert(Events(&S,5449,3,&Done)==EFI_COMPROMISED_DATA && !Done);
+  Fresh(&S);Done=0;
+  Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;
+  *Event=(TRE){{0x40001000,0,(2U<<24)|5449,(1U<<24)|(0x22U<<16)}};
+  assert(Events(&S,5449,1,&Done)==EFI_COMPROMISED_DATA && !Done);
+  for(UINT32 Type=0;Type<2;++Type) {
+    Fresh(&S);Done=0;
+    Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;
+    *Event=(TRE){{0x40001000,0,(2U<<24)|5449,(1U<<24)|((Type?0xFFU:0x31U)<<16)}};
+    assert(Events(&S,5449,3,&Done)==EFI_SUCCESS && !Done);
   }
   puts("GPI SPI: stop failure retains DMA; exact completions, lengths and ring bounds are required.");
   return 0;

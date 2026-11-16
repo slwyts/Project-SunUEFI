@@ -316,7 +316,7 @@ Failed:
   return E;
 }
 
-STATIC EFI_STATUS Events(PIANO_SPI_GPI *S,UINTN Bytes,BOOLEAN *Done) {
+STATIC EFI_STATUS Events(PIANO_SPI_GPI *S,UINTN Bytes,UINT32 Expected,UINT32 *Done) {
   S->LastGlobalIrq=Read(S,0x3100);S->LastGeneralIrq=Read(S,0x3118);S->LastErrorLog=Read(S,0x3200);
   if(S->LastGlobalIrq || S->LastGeneralIrq || S->LastErrorLog)return EFI_DEVICE_ERROR;
   UINT64 Producer=Read(S,EVENT_CONTEXT+0x10)|((UINT64)Read(S,EVENT_CONTEXT+0x14)<<32);
@@ -333,9 +333,13 @@ STATIC EFI_STATUS Events(PIANO_SPI_GPI *S,UINTN Bytes,BOOLEAN *Done) {
       UINT32 Code=Event.Word[2]>>24;
       UINT64 Pointer=Event.Word[0]|((UINT64)Event.Word[1]<<32);
       if(Channel>1 || (Code!=1 && Code!=2 && Code!=4))return EFI_DEVICE_ERROR;
-      UINT64 Expected=(Channel?S->RxRing.DeviceAddress:S->TxRing.DeviceAddress)+(Channel?0:32);
-      if(Pointer!=Expected || (Event.Word[2]&0xFFFFFFU)!=Bytes)return EFI_COMPROMISED_DATA;
-      if(Channel==0 && Code==2)*Done=TRUE;
+      UINT32 Flag=1U<<Channel;
+      UINT64 Descriptor=(Channel?S->RxRing.DeviceAddress:S->TxRing.DeviceAddress)+(Channel?0:32);
+      if(!(Expected&Flag) || Pointer!=Descriptor || (Event.Word[2]&0xFFFFFFU)!=Bytes)return EFI_COMPROMISED_DATA;
+      if(Code==2) {
+        if(*Done&Flag)return EFI_COMPROMISED_DATA;
+        *Done|=Flag;
+      }
     } else if(Type!=0x31 && Type!=0xFF) {
       return EFI_UNSUPPORTED;
     }
@@ -382,24 +386,19 @@ EFI_STATUS PianoGeniSpiGpiTransfer(PIANO_SPI_GPI *S,CONST UINT8 *Tx,UINT8 *Rx,UI
     // A command that times out may already have started the channel.
     S->ChannelStarted[K]=TRUE;E=Command(S,K,1,2);
   }
-  BOOLEAN Done=FALSE;
+  UINT32 Done=0,Expected=Rx?3U:1U;
   if(E==EFI_SUCCESS) {
     if(Rx)Write(S,CHANNEL_DOORBELL(1),(UINT32)(S->RxRing.DeviceAddress+16));
     Write(S,CHANNEL_DOORBELL(0),(UINT32)(S->TxRing.DeviceAddress+48));
     UINT64 Deadline=NowUs(S)+TimeoutUs;
-    while(!Done) {
+    // Like stock spi-msm-geni, a full-duplex read needs both callbacks with
+    // the exact length. An advanced RX ring pointer only proves TRE fetch.
+    while(Done!=Expected) {
       S->LastStatusReg=MmioRead32(SE_BASE+0x610);
       if(S->LastStatusReg&GENI_ERRORS){E=EFI_DEVICE_ERROR;break;}
-      E=Events(S,Bytes,&Done);
-      if(E!=EFI_SUCCESS || Done)break;
+      E=Events(S,Bytes,Expected,&Done);
+      if(E!=EFI_SUCCESS || Done==Expected)break;
       if(NowUs(S)>=Deadline){E=EFI_TIMEOUT;break;}
-    }
-    if(E==EFI_SUCCESS && Rx) {
-      UINT64 Deadline=NowUs(S)+COMMAND_TIMEOUT_US,Rp;
-      do {
-        Rp=Read(S,CHANNEL(1)+0x10)|((UINT64)Read(S,CHANNEL(1)+0x14)<<32);
-      } while(Rp==S->RxRing.DeviceAddress && NowUs(S)<Deadline);
-      if(Rp!=S->RxRing.DeviceAddress+16)E=EFI_END_OF_FILE;
     }
   }
   EFI_STATUS Stop=StopChannels(S,TRUE);
@@ -407,7 +406,7 @@ EFI_STATUS PianoGeniSpiGpiTransfer(PIANO_SPI_GPI *S,CONST UINT8 *Tx,UINT8 *Rx,UI
   if(Stop!=EFI_SUCCESS) {
     S->Busy=FALSE;return Retain(S,Stop);
   }
-  if(E==EFI_SUCCESS)E=Events(S,Bytes,&Done);
+  if(E==EFI_SUCCESS)E=Events(S,Bytes,Expected,&Done);
   PIANO_DMA_BUFFER *Buffers[]={&S->Tx,&S->Rx,&S->TxRing,&S->RxRing};
   for(UINTN I=0;I<ARRAY_SIZE(Buffers);++I) {
     EFI_STATUS C=Complete(S,Buffers[I],E);
