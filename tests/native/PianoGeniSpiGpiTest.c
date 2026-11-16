@@ -12,7 +12,7 @@ EFI_DXE_SERVICES *gDS;
 EFI_SYSTEM_TABLE *gST;
 STATIC UINT32 Registers[GPI_BYTES/4];
 STATIC UINT64 Clock;
-STATIC UINT32 StopFailure,FreeCount,DomainClose,CommandCount;
+STATIC UINT32 StopFailure,RouteFailure,FreeCount,DomainClose,CommandCount,RouteChecks;
 STATIC UINT32 EventStorage[RING_BYTES/4];
 
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
@@ -50,17 +50,18 @@ EFI_STATUS PianoDmaSyncForCpuQuiet(PIANO_DMA_BUFFER *B){assert(B->Active);return
 EFI_STATUS PianoDmaComplete(PIANO_DMA_BUFFER *B,EFI_STATUS Status,BOOLEAN Quiet){assert(B->Active && Quiet);B->Active=FALSE;return Status;}
 EFI_STATUS PianoDmaFree(PIANO_DMA_BUFFER *B){assert(!B->Active);++FreeCount;ZeroMem(B,sizeof(*B));return EFI_SUCCESS;}
 EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C){assert(FreeCount==5);++DomainClose;C->Domain=NULL;return EFI_SUCCESS;}
+EFI_STATUS PianoOwnedSmmuCheckGpi(PIANO_OWNED_SMMU *C){assert(C->Attached && !FreeCount);++RouteChecks;return RouteFailure?EFI_COMPROMISED_DATA:EFI_SUCCESS;}
 
 STATIC VOID Fresh(PIANO_SPI_GPI *S) {
   ZeroMem(S,sizeof(*S));ZeroMem(Registers,sizeof(Registers));ZeroMem(EventStorage,sizeof(EventStorage));
-  Clock=StopFailure=FreeCount=DomainClose=CommandCount=0;
+  Clock=StopFailure=RouteFailure=FreeCount=DomainClose=CommandCount=RouteChecks=0;
   S->Started=S->Open=S->EventAllocated=TRUE;S->Instance=1;S->Frequency=1000000;S->CounterEnd=MAX_UINT64;
   S->CloseStatus=EFI_NOT_STARTED;
   S->ChannelAllocated[0]=S->ChannelAllocated[1]=TRUE;
   S->ChannelStarted[0]=S->ChannelStarted[1]=TRUE;
   S->TxRing.Signature=S->RxRing.Signature=S->EventRing.Signature=S->Tx.Signature=S->Rx.Signature=1;
   S->TxRing.Active=S->RxRing.Active=S->EventRing.Active=S->Tx.Active=S->Rx.Active=TRUE;
-  S->Smmu.Domain=(VOID *)1;
+  S->Smmu.Domain=(VOID *)1;S->Smmu.Attached=TRUE;
   S->EventRing.Cpu=EventStorage;S->EventRing.DeviceAddress=0x40002000;
   S->TxRing.DeviceAddress=0x40000000;S->RxRing.DeviceAddress=0x40001000;
 }
@@ -90,7 +91,13 @@ int main(VOID) {
   Fresh(&S);
   assert(PianoGeniSpiGpiClose(&S)==EFI_SUCCESS && FreeCount==5 && DomainClose==1);
   assert(!S.Open && !S.ChannelAllocated[0] && !S.ChannelAllocated[1] && !S.EventAllocated);
+  assert(RouteChecks==1);
   Calls=CommandCount;assert(PianoGeniSpiGpiClose(&S)==EFI_SUCCESS && Calls==CommandCount);
+
+  Fresh(&S);RouteFailure=1;
+  assert(PianoGeniSpiGpiClose(&S)==EFI_COMPROMISED_DATA && S.Retained);
+  assert(RouteChecks==1 && !FreeCount && !DomainClose && S.Smmu.Domain);
+  assert(S.Tx.Active && S.Rx.Active && S.EventRing.Active);
 
   Fresh(&S);BOOLEAN Done=FALSE;
   Registers[Register(&S,EVENT_CONTEXT+0x10)/4]=0x40002010;

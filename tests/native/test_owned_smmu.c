@@ -117,6 +117,18 @@ int main(void){
     if(Case==6)gpi_quiet_status=EFI_DEVICE_ERROR;
     if(Case==7)gpi_live.Device[2].Tcr^=1;
     unsigned Freed=releases,Destroyed=destroys,Detached=detaches;
+    if(!Case || Case>=3) {
+      c->Mapping[0].Used=TRUE;
+      assert(PianoOwnedSmmuCheckGpi(c)==(!Case?EFI_SUCCESS:EFI_COMPROMISED_DATA));
+      assert(releases==Freed && destroys==Destroyed && detaches==Detached && !route_writes);
+      c->Mapping[0].Used=FALSE;
+      // A rejected check quarantines the table; only the successful check may
+      // continue into the normal unmap, free and detach path below.
+      if(Case>=3) {
+        assert(c->TableMemory.Quarantined && PianoOwnedSmmuClose(c)==EFI_ACCESS_DENIED);
+        continue;
+      }
+    }
     if(!Case) {
       assert(PianoOwnedSmmuClose(c)==EFI_SUCCESS && route_writes==2);
       assert(gpi_capture.RawSmr[0]==0x5B6 && gpi_capture.RawS2cr[0]==0x20001);
@@ -124,7 +136,6 @@ int main(void){
     } else {
       assert(PianoOwnedSmmuClose(c)==EFI_COMPROMISED_DATA && !route_writes);
       assert(c->TableMemory.Quarantined && releases==Freed && destroys==Destroyed);
-      if(Case>=3)assert(detaches==Detached);
     }
   }
   free(memory);free(c);puts("Owned SMMU backend: nonidentity arena, alignment, per-direction PTEs, unmap and retained rollback failure passed.");return 0;

@@ -280,6 +280,11 @@ STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEV
   // Log before clearing sticky faults, and clear only the bank this newly
   // created domain owns. TTBCR2 bits 5/6 read as RES1 on this hardware.
   ClearOwnedStickyFault(C);
+  if(Index==2 && (U->Fsr&PIANO_SMMU_FSR_FAULT_MASK)) {
+    UINTN Bank=C->After.Base+C->After.ContextBase+((UINTN)U->ContextBank<<C->After.PageShift);
+    U->Fsr=MmioRead32(Bank+0x58);
+    if(U->Fsr&PIANO_SMMU_FSR_FAULT_MASK)return EFI_DEVICE_ERROR;
+  }
   BOOLEAN Reserve=Index==0 || D->ReserveAcrossExit;
   *D=(PIANO_DMA_DEVICE){.Name=Index==0?"ufs":Index==1?"usb":"gpi1",.StreamId=Sid,.AddressBits=32,.CacheLine=64,.Context=C,.Map=Map,.Unmap=Unmap,.Fault=Fault,.ReserveAcrossExit=Reserve};
   C->OwnedIdentitySaved=TRUE;C->OwnedTablePhysical=C->TableMemory.Physical;C->AttachedSnapshot=C->After;
@@ -289,26 +294,33 @@ STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEV
 EFI_STATUS PianoOwnedSmmuOpen(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D){return OpenResource(Fdt,C,D,0);}
 EFI_STATUS PianoOwnedSmmuOpenUsb(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D){return OpenResource(Fdt,C,D,1);}
 EFI_STATUS PianoOwnedSmmuOpenGpi(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D){return OpenResource(Fdt,C,D,2);}
+EFI_STATUS PianoOwnedSmmuCheckGpi(PIANO_OWNED_SMMU *C) {
+  if(!C || C->DeviceIndex!=2 || !C->Attached || C->ExitRetained || C->TableMemory.Quarantined)
+    return EFI_NOT_READY;
+  if(!C->OwnedIdentitySaved) {
+    C->TableMemory.Quarantined=TRUE;
+    return CloseRejected(C,"gpi-attach-unverified",MAX_UINT16,EFI_NOT_READY);
+  }
+  EFI_STATUS Status=PianoSmmuCaptureQuiet(C->Fdt,&C->After);
+  if(Status!=EFI_SUCCESS || !GpiPeersUnchanged(C) ||
+     !PeerIdentity(&C->After,2,0xB6,C->OwnedTablePhysical) ||
+     !PeerDevice(&C->AttachedSnapshot.Device[2],&C->After.Device[2]) ||
+     CompareMem(C->AttachedSnapshot.RawSmr,C->After.RawSmr,sizeof(C->After.RawSmr)) ||
+     CompareMem(C->AttachedSnapshot.RawS2cr,C->After.RawS2cr,sizeof(C->After.RawS2cr))) {
+    C->TableMemory.Quarantined=TRUE;
+    return CloseRejected(C,"gpi-route-changed",MAX_UINT16,Status);
+  }
+  return EFI_SUCCESS;
+}
 EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C) {
   if(C==NULL)return EFI_INVALID_PARAMETER;
   if(C->ExitRetained || C->TableMemory.Quarantined)return EFI_ACCESS_DENIED;
   for(UINTN I=0;I<ARRAY_SIZE(C->Mapping);++I)if(C->Mapping[I].Used)return EFI_ACCESS_DENIED;
   RememberBaseline(C);
   if(C->Attached) {
-    if(C->DeviceIndex==2 && !C->OwnedIdentitySaved) {
-      C->TableMemory.Quarantined=TRUE;
-      return CloseRejected(C,"gpi-attach-unverified",MAX_UINT16,EFI_NOT_READY);
-    }
     if(C->DeviceIndex==2) {
-      EFI_STATUS Status=PianoSmmuCaptureQuiet(C->Fdt,&C->After);
-      if(Status!=EFI_SUCCESS || !GpiPeersUnchanged(C) ||
-         !PeerIdentity(&C->After,2,0xB6,C->OwnedTablePhysical) ||
-         !PeerDevice(&C->AttachedSnapshot.Device[2],&C->After.Device[2]) ||
-         CompareMem(C->AttachedSnapshot.RawSmr,C->After.RawSmr,sizeof(C->After.RawSmr)) ||
-         CompareMem(C->AttachedSnapshot.RawS2cr,C->After.RawS2cr,sizeof(C->After.RawS2cr))) {
-        C->TableMemory.Quarantined=TRUE;
-        return CloseRejected(C,"gpi-route-changed",MAX_UINT16,Status);
-      }
+      EFI_STATUS Status=PianoOwnedSmmuCheckGpi(C);
+      if(Status!=EFI_SUCCESS)return Status;
     }
     C->CloseLedger.DetachAttempted=TRUE;
     UINT32 Input=C->DeviceIndex==0?0:C->DeviceIndex==1?0x03000000:0x03000001;
@@ -348,7 +360,7 @@ EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C) {
       MmioWrite32(C->Before.Base+0xC00+4*OwnedSlot,S2cr);
       MmioWrite32(C->Before.Base+0x800+4*OwnedSlot,Smr);MemoryFence();
       Status=PianoSmmuCapture(C->Fdt,"gpi-restored",&C->After);
-      if(Status!=EFI_SUCCESS || !C->After.Valid || C->After.Device[2].Present ||
+      if(Status!=EFI_SUCCESS || !GpiPeersUnchanged(C) || C->After.Device[2].Present ||
          CompareMem(C->Before.RawSmr,C->After.RawSmr,sizeof(C->Before.RawSmr)) ||
          CompareMem(C->Before.RawS2cr,C->After.RawS2cr,sizeof(C->Before.RawS2cr)))
         return CloseRejected(C,"gpi-route-restore",OwnedSlot,Status);

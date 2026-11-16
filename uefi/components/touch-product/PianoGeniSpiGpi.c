@@ -443,6 +443,10 @@ EFI_STATUS PianoGeniSpiGpiClose(PIANO_SPI_GPI *S) {
     if(E!=EFI_SUCCESS)return S->CloseStatus=Retain(S,E);
     S->EventAllocated=FALSE;
   }
+  if(S->Smmu.Attached) {
+    E=PianoOwnedSmmuCheckGpi(&S->Smmu);
+    if(E!=EFI_SUCCESS)return S->CloseStatus=Retain(S,E);
+  }
   while(S->SerialChanged && S->SeSavedCount) {
     UINT32 I=S->SeSavedCount-1,Offset=S->SeSaved[I].Offset,Value=S->SeSaved[I].Value;
     MmioWrite32(SE_BASE+Offset,Value);MemoryFence();

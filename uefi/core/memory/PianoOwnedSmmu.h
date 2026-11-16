@@ -94,6 +94,8 @@ EFI_STATUS PianoOwnedSmmuOpen(CONST VOID *Fdt,PIANO_OWNED_SMMU *Context,PIANO_DM
 EFI_STATUS PianoOwnedSmmuOpenUsb(CONST VOID *Fdt,PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Device);
 // The GPI caller holds QUP1 clocks and proves its channels idle before calling.
 EFI_STATUS PianoOwnedSmmuOpenGpi(CONST VOID *Fdt,PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Device);
+// Check the live GPI route before unmapping or freeing any of its DMA buffers.
+EFI_STATUS PianoOwnedSmmuCheckGpi(PIANO_OWNED_SMMU *Context);
 EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *Context);
 // Re-emits saved baseline/last rejection without MMIO or native HAL calls;
 // safe after clocks close. Full body CRC and its mirror have the same sequence.
