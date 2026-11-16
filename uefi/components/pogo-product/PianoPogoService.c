@@ -35,7 +35,7 @@ STATIC CONST CHAR8 *mStepNames[]={"off","clocks","power","reset","wake","boot-id
 
 STATIC struct {
   BOOLEAN Started,Busy,InTransfer,DxeStarted,DxeStopped,Released,ReleaseClean,Attached,CapsLed,ReadAgain,Speculative;
-  UINT8 LastFrame[PIANO_POGO_REPORT_BYTES];
+  UINT8 LastFrame[PIANO_POGO_FRAME_BYTES];
   POGO_STEP Step;
   UINT64 Frequency,CounterStart,CounterEnd,StartUs,NextUs,LastReadUs,KeepaliveUs;
   UINT32 Offset,Reads,Frames,Empty,ReadErrors,Consecutive,Commands,CommandErrors;
@@ -201,9 +201,9 @@ STATIC EFI_STATUS EFIAPI BackendRead(VOID *Context,UINT64 Deadline,UINT8 Frame[P
   mPogo.ReadAgain=FALSE;
   if(S!=EFI_SUCCESS){++mPogo.ReadErrors;++mPogo.Consecutive;mPogo.LastStatus=S;mPogo.ReadAgain=mPogo.Consecutive<=3;return EFI_NOT_READY;}
   mPogo.Consecutive=0;
-  if(!PianoPogoMcuFrameHasReports(Frame)){++mPogo.Empty;return EFI_NOT_READY;}
-  if(mPogo.Speculative && CompareMem(Frame,mPogo.LastFrame,PIANO_POGO_REPORT_BYTES)==0){++mPogo.Empty;return EFI_NOT_READY;}
-  CopyMem(mPogo.LastFrame,Frame,PIANO_POGO_REPORT_BYTES);mPogo.ReadAgain=TRUE;
+  if(!PianoPogoFrameValid(Frame,PIANO_POGO_FRAME_BYTES)){++mPogo.Empty;return EFI_NOT_READY;}
+  if(mPogo.Speculative && CompareMem(Frame,mPogo.LastFrame,PIANO_POGO_FRAME_BYTES)==0){++mPogo.Empty;return EFI_NOT_READY;}
+  CopyMem(mPogo.LastFrame,Frame,PIANO_POGO_FRAME_BYTES);mPogo.ReadAgain=TRUE;
   ++mPogo.Frames;*Bytes=PIANO_POGO_FRAME_BYTES;return EFI_SUCCESS;
 }
 STATIC EFI_STATUS EFIAPI BackendStop(VOID *Context,PIANO_POGO_BACKEND_STOP *Stop) {

@@ -41,7 +41,11 @@ static EFI_STATUS EFIAPI Ready(VOID *C){(void)C;assert(Tpl==TPL_APPLICATION);ret
 static EFI_STATUS EFIAPI Data(VOID *C,BOOLEAN *R){(void)C;assert(Tpl==TPL_APPLICATION);*R=Case!=5;return EFI_SUCCESS;}
 static UINT64 EFIAPI Now(VOID *C){(void)C;assert(Tpl==TPL_APPLICATION);return Clock;}
 static EFI_STATUS EFIAPI Read(VOID *C,UINT64 Deadline,UINT8 *Frame,UINTN *N){
-  (void)C;assert(Tpl==TPL_APPLICATION&&Deadline==Clock+10000);Reads++;memset(Frame,0,68);Frame[0]=0x57;Frame[2]=1;Frame[3]=5;Frame[6]=0x45;*N=Case==6?67:68;Clock+=Case==21?11000:100;
+  (void)C;assert(Tpl==TPL_APPLICATION&&Deadline==Clock+10000);Reads++;memset(Frame,0,68);Frame[0]=Case==23?0xD7:Case==29?0x56:0x57;
+  STATIC CONST UINT8 Routes[]={0x4A,0x5B,0x6C};Frame[2]=Case>=24&&Case<=26?Routes[Case-24]:Case==27?1:Case==28?0:0x39;
+  Frame[3]=5;Frame[6]=0x45;*N=Case==6?67:68;Clock+=Case==21?11000:100;
+  if(Case==30){Frame[3]=0x22;Frame[5]=0x38;Frame[6]=0x80;Frame[7]=0xA2;Frame[12]=1;Frame[19]=5;Frame[22]=0x45;}
+  if(Case==31){Frame[3]=0x22;Frame[5]=0x38;Frame[6]=0x80;Frame[7]=0xA2;Frame[12]=2;}
   if(Case==8)Exit();if(Case==18){Frame[12]=2;Frame[13]=3;Frame[14]=1;Frame[16]=2;Frame[18]=3;}
   return Case==7?EFI_DEVICE_ERROR:EFI_SUCCESS;}
 static EFI_STATUS EFIAPI Stop(VOID *C,PIANO_POGO_BACKEND_STOP *R){(void)C;assert(Tpl==TPL_APPLICATION);Stops++;*R=(PIANO_POGO_BACKEND_STOP){EFI_SUCCESS,TRUE,TRUE,FALSE};if(Case==13)R->Quiet=FALSE;return EFI_SUCCESS;}
@@ -71,6 +75,8 @@ static VOID Run(UINTN C){
   if(C==3){Driver.Report.WorkPending=FALSE;UINTN Before=Reads;Notify(Driver.Timer);assert(Driver.Report.WorkPending&&Reads==Before);}
   S=PianoPogoDxePump(&Driver);
   if(C==5){assert(S==EFI_NOT_READY&&!Reads&&!Driver.Report.Frames);}
+  else if(C>=27&&C<=29){assert(S==EFI_NOT_READY&&!Driver.Report.Retained&&!Driver.Report.Frames&&!Notices&&Driver.Adapter.Core.RejectedFrames==1);}
+  else if(C==31){assert(S==EFI_SUCCESS&&Driver.Adapter.Core.AttachKnown&&!Driver.Adapter.Core.Attached&&!Driver.Adapter.Core.KeyCount&&!Notices);}
   else if(C==6||C==7||C==8||C==16||C==21){assert(S!=EFI_SUCCESS&&Driver.Report.Retained);if(C==8){UINTN Before=Calls;assert(PianoPogoDxePump(&Driver)==EFI_ABORTED&&PianoPogoDxeStop(&Driver)==EFI_ABORTED&&Calls==Before);return;}}
   else {assert(S==EFI_SUCCESS&&Reads==1&&Driver.Report.Frames==1&&Notices==1&&Signals>=2);assert(Driver.Adapter.TextEx.ReadKeyStrokeEx(&Driver.Adapter.TextEx,&K)==EFI_SUCCESS&&K.Key.ScanCode==SCAN_F12);}
   if(C==4){UINTN Before=Reads;Notify(Driver.Wait[0]);assert(Reads==Before);}
@@ -81,4 +87,4 @@ static VOID Run(UINTN C){
   assert(S==EFI_SUCCESS&&Stops==1&&Uninstalls==1&&Closes==5&&Driver.Report.Stopped&&!Driver.Report.Published&&!Driver.Report.Retained);
   UINTN Before=Calls;assert(PianoPogoDxeStop(&Driver)==EFI_SUCCESS&&Calls==Before);assert(Driver.Adapter.TextEx.ReadKeyStrokeEx(&Driver.Adapter.TextEx,&K)==EFI_NOT_READY);
 }
-int main(void){for(UINTN C=0;C<23;C++){pid_t P=fork();assert(P>=0);if(!P){Run(C);_exit(0);}int S;waitpid(P,&S,0);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"pogo producer case %llu failed\n",(unsigned long long)C);return 1;}}puts("Actual pogo EFI producer: 23 fork readiness/publish/APP report/timer-only/wait events/F12 callback/same+cross-instance ABA/checked-stop/warnings/EBS cases passed; synthetic host backend only, no real wire input");return 0;}
+int main(void){for(UINTN C=0;C<32;C++){pid_t P=fork();assert(P>=0);if(!P){Run(C);_exit(0);}int S;waitpid(P,&S,0);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"pogo producer case %llu failed\n",(unsigned long long)C);return 1;}}puts("Actual pogo EFI producer: 32 readiness/publish/report/framing/attachment/callback/checked-stop/EBS cases passed; synthetic host backend only, no real wire input");return 0;}

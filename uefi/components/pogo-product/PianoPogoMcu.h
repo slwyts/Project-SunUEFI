@@ -13,7 +13,6 @@
 #define PIANO_POGO_DATA_CHUNK 503U
 #define PIANO_POGO_DATA_WIRE_BYTES 513U    // register + 512-byte data command
 #define PIANO_POGO_COMMAND_WIRE_BYTES 67U  // register + 66-byte runtime command
-#define PIANO_POGO_REPORT_BYTES 68U
 #define PIANO_POGO_MAX_CODE_BYTES 0x10000U
 
 // Runtime commands to the MCU (Linux hid-nanosic-wn8030.c)
@@ -39,6 +38,3 @@ VOID PianoPogoMcuBootCommand(IN UINT8 Command,OUT UINT8 Wire[2]);
 VOID PianoPogoMcuRuntimeCommand(IN UINT8 Command,IN UINT8 Value,OUT UINT8 Wire[PIANO_POGO_COMMAND_WIRE_BYTES]);
 // Stock startup query to the MCU route, separate from cover authentication.
 VOID PianoPogoMcuVersionCommand(OUT UINT8 Wire[PIANO_POGO_COMMAND_WIRE_BYTES]);
-// A runtime read frame carries reports only when it starts with 0x57 and its
-// third byte is non-zero; Linux drops every other frame
-BOOLEAN PianoPogoMcuFrameHasReports(IN CONST UINT8 Frame[PIANO_POGO_REPORT_BYTES]);

@@ -62,7 +62,3 @@ VOID PianoPogoMcuVersionCommand(UINT8 Wire[PIANO_POGO_COMMAND_WIRE_BYTES]) {
   B[0]=0x32;B[2]=0x4F;B[3]=0x30;B[4]=0x80;B[5]=0x18;B[6]=0x01;
   B[8]=Sum8(B+2,6);
 }
-
-BOOLEAN PianoPogoMcuFrameHasReports(CONST UINT8 Frame[PIANO_POGO_REPORT_BYTES]) {
-  return Frame!=NULL && Frame[0]==0x57 && Frame[2]!=0;
-}
