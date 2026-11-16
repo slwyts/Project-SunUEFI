@@ -353,6 +353,17 @@ STATIC EFI_STATUS Complete(PIANO_SPI_GPI *S,PIANO_DMA_BUFFER *Buffer,EFI_STATUS 
   return E==Status?EFI_SUCCESS:Retain(S,E);
 }
 
+STATIC VOID TransferDescriptors(PIANO_SPI_GPI *S,BOOLEAN Receive,UINTN Bytes) {
+  ZeroMem(S->TxRing.Cpu,RING_BYTES);ZeroMem(S->RxRing.Cpu,RING_BYTES);
+  TRE *T=S->TxRing.Cpu,*R=S->RxRing.Cpu;
+  T[0]=(TRE){{4U|BIT24|BIT25,0,S->Divider,(0x22U<<16)|BIT0}};
+  // Stock spi-msm-geni supplies RX words for full duplex as well as RX-only.
+  // All transfers here use eight-bit words, so the word count equals Bytes.
+  T[1]=(TRE){{Receive?3U:1U,0,Receive?(UINT32)Bytes:0,(0x20U<<16)|BIT0|(Receive?BIT11:0)}};
+  T[2]=(TRE){{(UINT32)S->Tx.DeviceAddress,(UINT32)(S->Tx.DeviceAddress>>32),(UINT32)Bytes,(0x10U<<16)|BIT9}};
+  if(Receive)R[0]=(TRE){{(UINT32)S->Rx.DeviceAddress,(UINT32)(S->Rx.DeviceAddress>>32),(UINT32)Bytes,0x10U<<16}};
+}
+
 EFI_STATUS PianoGeniSpiGpiTransfer(PIANO_SPI_GPI *S,CONST UINT8 *Tx,UINT8 *Rx,UINTN Bytes,UINT32 TimeoutUs) {
   if(!S || !Tx || !Bytes || Bytes>PIANO_SPI_GPI_MAX_BYTES || !TimeoutUs || TimeoutUs>1000000U)return EFI_INVALID_PARAMETER;
   if(!S->Open || S->Busy || S->Retained || S->Failures)return EFI_NOT_READY;
@@ -360,12 +371,7 @@ EFI_STATUS PianoGeniSpiGpiTransfer(PIANO_SPI_GPI *S,CONST UINT8 *Tx,UINT8 *Rx,UI
   S->Busy=TRUE;++S->Transfers;
   MmioWrite32(SE_BASE+0x618,MAX_UINT32);MemoryFence();
   CopyMem(S->Tx.Cpu,Tx,Bytes);
-  ZeroMem(S->TxRing.Cpu,RING_BYTES);ZeroMem(S->RxRing.Cpu,RING_BYTES);
-  TRE *T=S->TxRing.Cpu,*R=S->RxRing.Cpu;
-  T[0]=(TRE){{4U|BIT24|BIT25,0,S->Divider,(0x22U<<16)|BIT0}};
-  T[1]=(TRE){{Rx?3U:1U,0,0,(0x20U<<16)|BIT0|(Rx?BIT11:0)}};
-  T[2]=(TRE){{(UINT32)S->Tx.DeviceAddress,(UINT32)(S->Tx.DeviceAddress>>32),(UINT32)Bytes,(0x10U<<16)|BIT9}};
-  if(Rx)R[0]=(TRE){{(UINT32)S->Rx.DeviceAddress,(UINT32)(S->Rx.DeviceAddress>>32),(UINT32)Bytes,0x10U<<16}};
+  TransferDescriptors(S,Rx!=NULL,Bytes);
   EFI_STATUS E=ConfigureChannel(S,0,&S->TxRing);
   if(E==EFI_SUCCESS)E=ConfigureChannel(S,1,&S->RxRing);
   if(E==EFI_SUCCESS)E=PianoDmaBegin(&S->Tx,"TOUCH_SPI_TX");

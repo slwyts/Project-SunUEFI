@@ -67,6 +67,20 @@ STATIC VOID Fresh(PIANO_SPI_GPI *S) {
 
 int main(VOID) {
   PIANO_SPI_GPI S;
+  UINT32 TxStorage[RING_BYTES/4],RxStorage[RING_BYTES/4];
+  CONST UINT32 Lengths[]={3,8,513,5449,PIANO_SPI_GPI_MAX_BYTES};
+  for(UINTN I=0;I<ARRAY_SIZE(Lengths);++I)for(UINTN Receive=0;Receive<2;++Receive) {
+    Fresh(&S);S.TxRing.Cpu=TxStorage;S.RxRing.Cpu=RxStorage;
+    S.Tx.DeviceAddress=0x41000000;S.Rx.DeviceAddress=0x42000000;S.Divider=2;
+    TransferDescriptors(&S,(BOOLEAN)Receive,Lengths[I]);
+    TRE *Tx=(TRE *)TxStorage,*Rx=(TRE *)RxStorage;
+    assert(Tx[0].Word[0]==0x03000004 && Tx[0].Word[2]==2 && Tx[0].Word[3]==0x00220001);
+    assert(Tx[1].Word[0]==(Receive?3U:1U) && Tx[1].Word[1]==0);
+    assert(Tx[1].Word[2]==(Receive?Lengths[I]:0) && Tx[1].Word[3]==(Receive?0x00200801U:0x00200001U));
+    assert(Tx[2].Word[0]==0x41000000 && !Tx[2].Word[1] && Tx[2].Word[2]==Lengths[I] && Tx[2].Word[3]==0x00100200);
+    assert(Rx[0].Word[0]==(Receive?0x42000000U:0) && !Rx[0].Word[1]);
+    assert(Rx[0].Word[2]==(Receive?Lengths[I]:0) && Rx[0].Word[3]==(Receive?0x00100000U:0));
+  }
   Fresh(&S);StopFailure=1;
   assert(PianoGeniSpiGpiClose(&S)!=EFI_SUCCESS && S.Retained && !FreeCount && !DomainClose);
   assert(S.Tx.Active && S.Rx.Active && S.EventRing.Active && S.Smmu.Domain);

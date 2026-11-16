@@ -147,7 +147,9 @@ SE2 只开放 GSI 接口，传输使用 GPI1 的 AP 通道，不访问曾引发�
 整帧校验，校验失败的帧不产生点按。
 
 GPI 配置来自原厂最终设备树和 `GpiDxe`，描述符格式、SPI 命令及启停顺序对照
-Linux `drivers/dma/qcom/gpi.c` 与 `drivers/spi/spi-geni-qcom.c`。先用已有的
+Linux `drivers/dma/qcom/gpi.c` 与 `drivers/spi/spi-geni-qcom.c`。全双工 GO
+描述符按原厂 `spi-msm-geni` 填写实际接收字数；8 位传输中字数等于字节数。
+先用已有的
 异常保护读取 AP 通道状态，只有通道和事件环未占用时才建立自己的 SMMU
 映射。XBL 的 `NAMEDNODE_QUP1` 将输入 `0x03000001` 映射到 GPI1 的 SID
 `0xB6`，页表和五份 DMA 缓冲区复用共享内存管理代码，不假定设备地址等于
