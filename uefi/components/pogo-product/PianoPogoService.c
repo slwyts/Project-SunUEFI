@@ -64,6 +64,11 @@ STATIC UINT64 EFIAPI SeNow(VOID *Context){(VOID)Context;return NowUs();}
 STATIC EFI_STATUS ReleaseHardware(VOID) {
   if(mPogo.Released)return mPogo.ReleaseStatus;
   mPogo.SeRestore=PianoGeniI2cClose(&mPogo.I2c);
+  if(mPogo.SeRestore!=EFI_SUCCESS) {
+    mPogo.Released=TRUE;mPogo.ReleaseClean=FALSE;
+    mPogo.BoardRelease=(PIANO_POGO_BOARD_RELEASE){.Pins=EFI_NOT_READY,.Rails=EFI_NOT_READY,.Clocks=EFI_NOT_READY};
+    return mPogo.ReleaseStatus=mPogo.SeRestore;
+  }
   EFI_STATUS Board=PianoPogoBoardRelease(&mPogo.Board,&mPogo.BoardRelease);
   mPogo.Released=TRUE;
   mPogo.ReleaseClean=mPogo.SeRestore==EFI_SUCCESS && Board==EFI_SUCCESS && mPogo.BoardRelease.Clean;
@@ -209,7 +214,7 @@ STATIC EFI_STATUS EFIAPI BackendRead(VOID *Context,UINT64 Deadline,UINT8 Frame[P
 STATIC EFI_STATUS EFIAPI BackendStop(VOID *Context,PIANO_POGO_BACKEND_STOP *Stop) {
   (VOID)Context;if(!Stop)return EFI_INVALID_PARAMETER;
   EFI_STATUS S=ReleaseHardware();
-  Stop->Status=S;Stop->Quiet=TRUE;Stop->Clean=mPogo.ReleaseClean;Stop->Retained=!mPogo.ReleaseClean;
+  Stop->Status=S;Stop->Quiet=mPogo.SeRestore==EFI_SUCCESS;Stop->Clean=mPogo.ReleaseClean;Stop->Retained=!mPogo.ReleaseClean;
   return S;
 }
 
