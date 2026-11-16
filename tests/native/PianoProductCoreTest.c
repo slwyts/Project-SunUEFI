@@ -40,6 +40,7 @@ STATIC UINTN Restricts,DiagnosticPumps,DiagnosticStalls,RuntimePumps;
 STATIC UINT32 RetainedObservers;
 STATIC EFI_STATUS RestrictStatus;
 STATIC BOOLEAN ExitDuringDiagnosticPump;
+STATIC CONST CHAR16 *FailureDetail;
 
 STATIC EFI_STATUS EFIAPI Handle(EFI_HANDLE Image,EFI_GUID *Guid,VOID **Interface){
   assert(Guid==&gEfiLoadedImageProtocolGuid);++Handles;
@@ -98,7 +99,7 @@ EFI_STATUS PianoProductBootLogStage(CONST CHAR8 *Name,EFI_STATUS Status,UINT64 E
   (VOID)Name;(VOID)Status;(VOID)Elapsed;assert(!"boot log is disabled");return EFI_SUCCESS;
 }
 EFI_STATUS PianoProductBootLogMessage(CONST CHAR16 *Title,CONST CHAR16 *Detail,EFI_STATUS Status,BOOLEAN Failed){
-  assert(Title&&Detail);if(Failed)FailureStatus=Status;return EFI_SUCCESS;
+  assert(Title&&Detail);if(Failed){FailureStatus=Status;FailureDetail=Detail;}return EFI_SUCCESS;
 }
 VOID EFIAPI CpuDeadLoop(VOID){longjmp(Escape,1);}
 
@@ -125,6 +126,7 @@ STATIC VOID Reset(VOID){
   Policy.RequestedCoreAction=PianoUsbServiceActionBoot;
   Count=Handles=0;HandleStatus=EFI_SUCCESS;
   FailureStatus=EFI_NOT_STARTED;
+  FailureDetail=NULL;
   EspStatus=LoadStatus=EFI_SUCCESS;HostStatus=EFI_NOT_READY;FileLoads=0;
   mHandoffFailure=NULL;mHandoffStage="not-started";
   Restricts=DiagnosticPumps=DiagnosticStalls=RuntimePumps=RetainedObservers=0;
@@ -247,6 +249,15 @@ STATIC VOID ErrorDiagnostics(VOID){
   UNSAFE_DIAGNOSTICS(gBS=NULL);
   UNSAFE_DIAGNOSTICS(Services.Stall=NULL);
 #undef UNSAFE_DIAGNOSTICS
+  for(UINTN I=0;I<2;++I){
+    PrepareErrorDiagnostics();mOwners.Report.Retained=TRUE;
+    if(I)mOwners.Report.Pogo.Started=TRUE;else mOwners.Report.Touch.Started=TRUE;
+    if(!setjmp(Escape))FailStop(EFI_DEVICE_ERROR);
+    CONST CHAR16 *Expected=I?L"键盘驱动未能安全退出":L"触屏驱动未能安全退出";
+    UINTN Length=0;while(Expected[Length])++Length;
+    assert(FailureDetail&&!memcmp(FailureDetail,Expected,(Length+1)*sizeof(CHAR16)));
+    assert(!Restricts&&!DiagnosticPumps&&!RuntimePumps);
+  }
 }
 int main(int Argc,char **Argv){
   assert(Argc==2);

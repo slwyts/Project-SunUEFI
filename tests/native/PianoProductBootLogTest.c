@@ -132,6 +132,10 @@ int main(int Argc,char **Argv){
     }
     assert(PianoProductBootLogMessage(L"未能启动系统",L"设备树内存或保留区不匹配",EFI_ACCESS_DENIED,TRUE)==EFI_SUCCESS);
     char MemoryFailure[1024];snprintf(MemoryFailure,sizeof(MemoryFailure),"%s-memory.ppm",Argv[1]);Preview(MemoryFailure);
+    assert(PianoProductBootLogMessage(L"未能启动系统",L"触屏驱动未能安全退出",EFI_DEVICE_ERROR,TRUE)==EFI_SUCCESS);
+    char TouchFailure[1024];snprintf(TouchFailure,sizeof(TouchFailure),"%s-touch.ppm",Argv[1]);Preview(TouchFailure);
+    assert(PianoProductBootLogMessage(L"未能启动系统",L"键盘驱动未能安全退出",EFI_DEVICE_ERROR,TRUE)==EFI_SUCCESS);
+    char KeyboardFailure[1024];snprintf(KeyboardFailure,sizeof(KeyboardFailure),"%s-keyboard.ppm",Argv[1]);Preview(KeyboardFailure);
   }
   CONST UINT32 Sizes[][2]={{480,320},{800,600},{3200,320},{480,2136}};
   for(UINTN I=0;I<ARRAY_SIZE(Sizes);++I){
