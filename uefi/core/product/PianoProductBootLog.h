@@ -9,9 +9,8 @@ typedef BOOLEAN (EFIAPI *PIANO_PRODUCT_BOOT_LOG_ALIVE)(VOID);
 // ExitBootServices fence and elapsed-time measurement. No console state changes.
 EFI_STATUS PianoProductBootLogInitialize(EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop,
                                         PIANO_PRODUCT_BOOT_LOG_ALIVE Alive);
-// Fixed rows: DISPLAY, PAYLOAD, SMEM, INPUT, UFS, USB, MENU. Non-success results
-// except NOT_STARTED show their complete native EFI_STATUS value. A display failure never becomes a
-// service result; the caller continues to own all existing startup decisions.
+// Rows cover the visible startup stages. Earlier SMEM capture stays in the
+// firmware log. Failures show their EFI_STATUS; painting does not gate startup.
 EFI_STATUS PianoProductBootLogStage(CONST CHAR8 *Name,EFI_STATUS Status,
                                    UINT64 ElapsedMs);
 // Human-readable boot/exit progress and recovery instructions through the same GOP.

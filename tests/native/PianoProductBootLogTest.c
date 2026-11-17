@@ -84,19 +84,24 @@ int main(int Argc,char **Argv){
   assert(PianoProductBootLogStage("DISPLAY",EFI_SUCCESS,0)==EFI_NOT_STARTED);
   Reset(3200,2136);Info.HorizontalResolution=Width;Info.VerticalResolution=Height;
   PIANO_SPLASH_REPORT Splash;assert(PianoProductDrawSplash(&Gop,Alive,&Splash)==EFI_SUCCESS);
-  assert(PianoProductBootLogInitialize(&Gop,Alive)==EFI_SUCCESS&&PanelClears==7);
-  assert(PanelX==Width*6/100&&PanelX==Splash.HintX&&Pitch==50&&PanelY==1281&&PanelY+7*Pitch<Splash.HintY);
+  assert(PianoProductBootLogInitialize(&Gop,Alive)==EFI_SUCCESS&&PanelClears==6);
+  assert(PanelX==Width*6/100&&PanelX==Splash.HintX&&Pitch==50&&PanelY==1281&&PanelY+6*Pitch<Splash.HintY);
   assert(PanelY>Splash.WordmarkY+7*Splash.WordmarkScale+Height/65+7*(Height/350));
-  for(UINT32 Row=0;Row<7;++Row)ExpectText(Row,9,"--");
+  STATIC CONST CHAR8 *Names[]={"DISPLAY","PAYLOAD","INPUT","UFS","USB","MENU"};
+  for(UINT32 Row=0;Row<ARRAY_SIZE(Names);++Row){
+    ExpectText(Row,0,Names[Row]);
+    ExpectText(Row,9,"--");
+  }
   assert(PianoProductBootLogStage("DISPLAY",EFI_SUCCESS,0)==EFI_SUCCESS);ExpectText(0,9,"OK");ExpectText(0,23,"0 MS");ExpectCode(0,"0 MS","--");
   assert(PianoProductBootLogStage("PAYLOAD",EFI_SUCCESS,MAX_UINT64)==EFI_SUCCESS);ExpectText(1,23,"18446744073709551615 MS");ExpectCode(1,"18446744073709551615 MS","--");
-  assert(PianoProductBootLogStage("SMEM",EFI_NOT_READY,412)==EFI_SUCCESS);ExpectText(2,9,"NOT READY");ExpectText(2,23,"412 MS");ExpectCode(2,"412 MS","0X8000000000000006");
-  assert(PianoProductBootLogStage("INPUT",EFI_NOT_STARTED,500)==EFI_SUCCESS);ExpectText(3,9,"WAIT");ExpectCode(3,"500 MS","--");
-  assert(PianoProductBootLogStage("UFS",EFI_UNSUPPORTED,600)==EFI_SUCCESS);ExpectText(4,9,"UNAVAILABLE");ExpectCode(4,"600 MS","0X8000000000000003");
-  assert(PianoProductBootLogStage("UFS CAPACITY",EFI_DEVICE_ERROR,528)==EFI_SUCCESS);ExpectText(4,9,"CAPACITY FAIL");ExpectCode(4,"528 MS","0X8000000000000007");
-  assert(PianoProductBootLogStage("USB",EFI_DEVICE_ERROR,710)==EFI_SUCCESS);ExpectText(5,9,"FAILED");ExpectCode(5,"710 MS","0X8000000000000007");
-  assert(PianoProductBootLogStage("MENU",EFI_WARN_UNKNOWN_GLYPH,725)==EFI_SUCCESS);ExpectText(6,9,"FAILED");ExpectCode(6,"725 MS","0X0000000000000001");
+  assert(PianoProductBootLogStage("INPUT",EFI_NOT_READY,412)==EFI_SUCCESS);ExpectText(2,9,"NOT READY");ExpectText(2,23,"412 MS");ExpectCode(2,"412 MS","0X8000000000000006");
+  assert(PianoProductBootLogStage("INPUT",EFI_NOT_STARTED,500)==EFI_SUCCESS);ExpectText(2,9,"WAIT");ExpectCode(2,"500 MS","--");
+  assert(PianoProductBootLogStage("UFS",EFI_UNSUPPORTED,600)==EFI_SUCCESS);ExpectText(3,9,"UNAVAILABLE");ExpectCode(3,"600 MS","0X8000000000000003");
+  assert(PianoProductBootLogStage("UFS CAPACITY",EFI_DEVICE_ERROR,528)==EFI_SUCCESS);ExpectText(3,9,"CAPACITY FAIL");ExpectCode(3,"528 MS","0X8000000000000007");
+  assert(PianoProductBootLogStage("USB",EFI_DEVICE_ERROR,710)==EFI_SUCCESS);ExpectText(4,9,"FAILED");ExpectCode(4,"710 MS","0X8000000000000007");
+  assert(PianoProductBootLogStage("MENU",EFI_WARN_UNKNOWN_GLYPH,725)==EFI_SUCCESS);ExpectText(5,9,"FAILED");ExpectCode(5,"725 MS","0X0000000000000001");
   UINT32 Previous=Calls;assert(PianoProductBootLogStage("not-a-stage",EFI_SUCCESS,1)==EFI_INVALID_PARAMETER&&Calls==Previous);
+  assert(PianoProductBootLogStage("SMEM",EFI_NOT_READY,0)==EFI_INVALID_PARAMETER&&Calls==Previous);
   assert(PianoProductBootLogStage(NULL,EFI_SUCCESS,1)==EFI_INVALID_PARAMETER&&Calls==Previous);
   if(Argc==2){
     assert(PianoProductBootLogStage("PAYLOAD",EFI_SUCCESS,18)==EFI_SUCCESS);
@@ -141,10 +146,10 @@ int main(int Argc,char **Argv){
   for(UINTN I=0;I<ARRAY_SIZE(Sizes);++I){
     Reset(Sizes[I][0],Sizes[I][1]);Info.HorizontalResolution=Width;Info.VerticalResolution=Height;
     assert(PianoProductDrawSplash(&Gop,Alive,&Splash)==EFI_SUCCESS);
-    assert(PianoProductBootLogInitialize(&Gop,Alive)==EFI_SUCCESS&&PanelClears==7);
-    assert(PanelY+7*Pitch<Splash.HintY);
+    assert(PianoProductBootLogInitialize(&Gop,Alive)==EFI_SUCCESS&&PanelClears==6);
+    assert(PanelY+6*Pitch<Splash.HintY);
     assert(PanelX==Width*6/100&&PanelX==Splash.HintX);
-    assert(PianoProductBootLogStage("UFS",EFI_NOT_FOUND,MAX_UINT64)==EFI_SUCCESS);ExpectText(4,9,"UNAVAILABLE");ExpectText(4,23,"18446744073709551615 MS");ExpectCode(4,"18446744073709551615 MS","0X800000000000000E");
+    assert(PianoProductBootLogStage("UFS",EFI_NOT_FOUND,MAX_UINT64)==EFI_SUCCESS);ExpectText(3,9,"UNAVAILABLE");ExpectText(3,23,"18446744073709551615 MS");ExpectCode(3,"18446744073709551615 MS","0X800000000000000E");
   }
   for(UINT32 Case=0;Case<4;++Case){
     Reset(800,600);Info.HorizontalResolution=Width;Info.VerticalResolution=Height;
@@ -165,5 +170,5 @@ int main(int Argc,char **Argv){
   Info.HorizontalResolution=400;Previous=Calls;
   assert(PianoProductBootLogInitialize(&Gop,Alive)==EFI_UNSUPPORTED&&Calls==Previous);
   Live=FALSE;assert(PianoProductBootLogInitialize(&Gop,Alive)==EFI_ABORTED&&Calls==Previous);
-  free(Pixels);puts("Actual boot-log GOP pixels/status hex/elapsed, seven fixed rows, bounds and terminal Blt/EBS fences passed");return 0;
+  free(Pixels);puts("Boot-log GOP pixels, visible stages, failure status, bounds and Blt/EBS fences passed");return 0;
 }

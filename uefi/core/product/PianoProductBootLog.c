@@ -15,7 +15,8 @@ STATIC struct {CONST CHAR8 *Name;UINT32 Stage;EFI_STATUS Status,GccStatus;UINT32
 STATIC UINT32 mCheckpointCount,mCheckpointReplayCalls;
 #endif
 
-STATIC CONST CHAR8 *mNames[]={"DISPLAY","PAYLOAD","SMEM","INPUT","UFS","USB","MENU"};
+enum { BootLogStorageRow = 3 };
+STATIC CONST CHAR8 *mNames[]={"DISPLAY","PAYLOAD","INPUT","UFS","USB","MENU"};
 STATIC CONST UINT8 mLetters[26][5]={
   {0x7e,0x11,0x11,0x11,0x7e},{0x7f,0x49,0x49,0x49,0x36},{0x3e,0x41,0x41,0x41,0x22},
   {0x7f,0x41,0x41,0x22,0x1c},{0x7f,0x49,0x49,0x49,0x41},{0x7f,0x09,0x09,0x09,0x01},
@@ -166,11 +167,11 @@ EFI_STATUS PianoProductBootLogInitialize(EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop,PIANO
   if(Width<480||Height<320||Width>8192||Height>8192)return EFI_UNSUPPORTED;
   UINT32 Short=Width<Height?Width:Height,Scale=Short/400;
   if(!Scale)Scale=1;
-  // Seven 35px rows at the native 3200x2136 mode, with no overlap with the
-  // splash wordmark above or its bottom-left setup/key hints below.
+  // Leave room for the splash wordmark and the setup/key hints.
+  UINT32 PanelRows=10*ARRAY_SIZE(mNames);
   UINT32 Top=Height*60/100,Bottom=Height*79/100;
-  if(Bottom-Top<70)Top=Bottom-70;
-  while(Scale>1&&(402*Scale>Width-32||70*Scale>Bottom-Top))--Scale;
+  if(Bottom-Top<PanelRows)Top=Bottom-PanelRows;
+  while(Scale>1&&(402*Scale>Width-32||PanelRows*Scale>Bottom-Top))--Scale;
   mCanvas.Gop=Gop;mCanvas.Alive=Alive;mCanvas.Width=Width;mCanvas.Height=Height;
   mCanvas.Scale=Scale;mCanvas.Pitch=10*Scale;mCanvas.PanelWidth=402*Scale;
   mCanvas.X=Width*6/100;mCanvas.Y=Top;mCanvas.Fault=EFI_SUCCESS;
@@ -199,7 +200,7 @@ EFI_STATUS PianoProductBootLogStage(CONST CHAR8 *Name,EFI_STATUS Status,UINT64 E
     {"UFS GPT","GPT FAILED"},{"UFS BLOCKIO","BLOCKIO FAIL"},
     {"UFS VOLUME","VOLUME FAIL"}};
   if(Row==ARRAY_SIZE(mNames))for(UINTN I=0;I<ARRAY_SIZE(UfsFailures);++I) {
-    if(Equal(Name,UfsFailures[I].Name)){Row=4;Label=UfsFailures[I].Label;break;}
+    if(Equal(Name,UfsFailures[I].Name)){Row=BootLogStorageRow;Label=UfsFailures[I].Label;break;}
   }
   if(Row==ARRAY_SIZE(mNames))return EFI_INVALID_PARAMETER;
   // Keep a canonical static name: callers may pass a temporary string.
