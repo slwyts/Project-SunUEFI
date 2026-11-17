@@ -1,0 +1,72 @@
+"""Verify the mapping from completed product package sets to native repositories."""
+from pathlib import Path
+import json
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools/repo'))
+from products import publication_batches, sha
+
+
+class RepoProductsTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='sunuefi-package-sets-')
+        self.addCleanup(temporary.cleanup)
+        self.packages = Path(temporary.name)
+
+    def package_set(self, name, files, **identity):
+        directory = self.packages / name
+        directory.mkdir(parents=True)
+        record = {**identity, 'packages': {}}
+        for filename, content in files.items():
+            path = directory / filename
+            path.write_bytes(content)
+            record['packages'][filename] = {'sha256': sha(path)}
+        (directory / 'manifest.json').write_text(json.dumps(record))
+
+    def test_maps_kernel_and_arch_packages_to_the_same_index(self):
+        kernel = 'linux-piano-1-1-aarch64.pkg.tar.zst'
+        graphics = 'mesa-27-1-aarch64.pkg.tar.zst'
+        firmware = 'piano-firmware-1-1-any.pkg.tar.zst'
+        deb_kernel = 'linux-piano_1_arm64.deb'
+        deb_shared = 'mesa_27_arm64.deb'
+        self.package_set('kernel/debian', {deb_kernel: b'kernel'}, format='debian')
+        self.package_set('kernel/pacman', {kernel: b'kernel'}, format='pacman')
+        self.package_set('overlays/debian-gnome', {deb_shared: b'same build'}, repo='apt')
+        self.package_set('overlays/debian-kde', {deb_shared: b'same build'}, repo='apt')
+        self.package_set('overlays/nyarch-gnome', {firmware: b'device', graphics: b'arch'},
+                         repo='sunuefi')
+        self.package_set('overlays/steamos', {graphics: b'valve'}, repo='sunuefi-steamos')
+
+        batches = publication_batches(self.packages, kernel=True, overlays=True)
+        self.assertEqual({name: [path.name for path in paths] for name, paths in batches.items()},
+                         {'apt': [deb_kernel, deb_shared],
+                          'sunuefi': [kernel, graphics, firmware],
+                          'sunuefi-steamos': [graphics]})
+        self.assertEqual(batches['sunuefi'][1].read_bytes(), b'arch')
+        self.assertEqual(batches['sunuefi-steamos'][0].read_bytes(), b'valve')
+
+    def test_duplicate_names_within_one_repo_must_match(self):
+        package = 'mesa_27_arm64.deb'
+        self.package_set('overlays/debian-gnome', {package: b'first'}, repo='apt')
+        self.package_set('overlays/debian-kde', {package: b'different'}, repo='apt')
+        with self.assertRaisesRegex(ValueError, 'share a package filename'):
+            publication_batches(self.packages, kernel=False, overlays=True)
+
+    def test_cache_cannot_redirect_a_package_set_to_another_repo(self):
+        self.package_set('overlays/steamos', {'mesa.pkg.tar.zst': b'valve'}, repo='sunuefi')
+        with self.assertRaisesRegex(ValueError, 'does not match its build target'):
+            publication_batches(self.packages, kernel=False, overlays=True)
+
+    def test_modified_package_is_rejected_before_any_batch_is_returned(self):
+        package = 'mesa.pkg.tar.zst'
+        self.package_set('overlays/steamos', {package: b'valve'}, repo='sunuefi-steamos')
+        (self.packages / 'overlays/steamos' / package).write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'Package manifest differs'):
+            publication_batches(self.packages, kernel=False, overlays=True)
+
+
+if __name__ == '__main__':
+    unittest.main()

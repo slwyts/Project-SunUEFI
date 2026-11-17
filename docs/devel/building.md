@@ -272,6 +272,23 @@ Arch 的同名内核包升级不会自动保留旧模块，需要明确的并存
 UIO 后端打成原生包，不等于标准 CAMSS／libcamera 或上游指纹控制模型已经完成。
 源码和配方随包可取得，通用补丁被上游收录后删除本地副本。
 
+R2 软件源顶层为 `apt/`、`pacman/`、`keys/`，公开入口是
+`https://sunuefi-repo.okassets.uk`。APT 使用 `apt/dists/sid` 和
+`apt/pool/main`。pacman 遵循 `$repo/os/$arch`：
+`sunuefi` 提供共用的内核、DTB、设备配置和 Arch Linux ARM 重建包。
+Nyarch 只启用 `sunuefi`；SteamOS 把 `sunuefi-steamos` 放在 `sunuefi` 前，
+只有为 Valve 用户空间重建的包放入增量仓。同名包优先使用排在前面的仓库，
+没有覆盖的包从 `sunuefi` 取得。
+
+`./build.sh repo --repo apt|sunuefi|sunuefi-steamos
+--key <指纹> --output <新目录> <包文件...>` 生成签名索引，
+加 `--publish` 后使用 `R2_ENDPOINT`、`R2_BUCKET`、`R2_ACCESS_KEY_ID` 和
+`R2_SECRET_ACCESS_KEY` 上传。上传先完成不可变包文件和签名，再更新索引，
+同名文件内容变化即拒绝；保留旧包，不执行远端删除。
+APT 发布 by-hash 索引，最后更新 `InRelease`；下次发布从这份签名索引继续。
+pacman 数据库和分离签名是不同对象，发布期间可能短暂验签失败，应重试，
+不能关闭签名检查。上传中断时，发布工具仍可从上一份完整索引继续。
+
 依据：[Debian 内核包与钩子](https://kernel-team.pages.debian.net/kernel-handbook/ch-update-hooks.html)、
 [Arch 内核打包](https://wiki.archlinux.org/title/Kernel/Arch_build_system)、
 [`kernel-install`](https://www.freedesktop.org/software/systemd/man/latest/kernel-install.html)。

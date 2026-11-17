@@ -3,3 +3,4 @@ freetype-py==2.5.1
 requests==2.32.5
 zstandard==0.25.0
 pefile==2024.8.26
+boto3==1.44.4
