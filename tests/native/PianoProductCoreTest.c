@@ -31,6 +31,8 @@ STATIC UINTN CoreId,ManagerId,ChildId,InnerId,EspId,OtherId;
 STATIC UINT32 Count,Handles;
 STATIC EFI_STATUS HandleStatus,FailureStatus;
 STATIC EFI_STATUS EspStatus,LoadStatus,HostStatus;
+STATIC BOOLEAN MenuLaunch;
+STATIC UINTN HostLeaves,BootCancels;
 STATIC EFI_STATUS CodeStatus;
 STATIC struct {MEMMAP_DEVICE_PATH Memory;EFI_DEVICE_PATH_PROTOCOL End;} KernelPath;
 STATIC UINT8 UkiBytes[8192];
@@ -65,10 +67,17 @@ BOOLEAN PianoUsbControllerHostBlocked(VOID){return FALSE;}
 VOID PianoProductMemoryGetDiagnostic(PIANO_PRODUCT_MEMORY_DIAGNOSTIC *Report){memset(Report,0,sizeof(*Report));Report->CaptureStatus=Report->DtbStatus=EFI_NOT_STARTED;}
 CONST PIANO_BOOT_POLICY_REPORT *PianoBootPolicyReport(VOID){return &Policy;}
 BOOLEAN PianoSetStandardKeyNavigation(BOOLEAN Enable){(VOID)Enable;return FALSE;}
-EFI_STATUS PianoStartBootOption(EFI_HANDLE Parent,EFI_HANDLE *Device,PIANO_FV_APPLICATION *Application){
-  assert(Parent==CORE&&Device==&mLinuxEsp&&Application==&mLinuxApplication&&mLinuxActive);
+EFI_STATUS PianoUsbControllerServiceLeaveHost(VOID){++HostLeaves;return EFI_SUCCESS;}
+EFI_STATUS PianoBootPolicyCancelExit(VOID){++BootCancels;return EFI_SUCCESS;}
+EFI_STATUS PianoStartBootOption(EFI_HANDLE Parent,EFI_HANDLE *Device,PIANO_FV_APPLICATION *Application,
+  PIANO_BOOT_DISPATCH *Dispatch){
+  assert(Parent==CORE&&Device==&mLinuxEsp&&Application==&mLinuxApplication&&!mLinuxActive);
+  Application->StartCalled=FALSE;
+  if(MenuLaunch){Dispatch->StartedMenu=TRUE;*Device=NULL;return LoadStatus;}
   *Device=EspStatus==EFI_SUCCESS?ESP:NULL;
   if(EspStatus!=EFI_SUCCESS)return EspStatus;
+  assert(Dispatch->Selection==Policy.BootSelection && Dispatch->PrepareSystem()==EFI_SUCCESS && mLinuxActive);
+  Application->StartCalled=TRUE;
   ++FileLoads;return LoadStatus;
 }
 EFI_STATUS PianoProductOwnersResolveReturnedAction(PIANO_PRODUCT_OWNERS *Owners){assert(Owners==&mOwners);return HostStatus;}
@@ -157,6 +166,7 @@ STATIC VOID Reset(VOID){
   FailureStatus=EFI_NOT_STARTED;
   FailureDetail=NULL;
   EspStatus=LoadStatus=EFI_SUCCESS;HostStatus=EFI_NOT_READY;FileLoads=0;
+  MenuLaunch=FALSE;HostLeaves=BootCancels=0;
   mHandoffFailure=NULL;mHandoffStage="not-started";
   Restricts=DiagnosticPumps=DiagnosticStalls=RuntimePumps=RetainedObservers=0;
   RestrictStatus=EFI_NOT_READY;ExitDuringDiagnosticPump=FALSE;mFailureDiagnostics=FALSE;mFailureStatus=EFI_NOT_STARTED;
@@ -232,6 +242,10 @@ STATIC VOID UkiLoadFailure(VOID){
   Reset();EspStatus=EFI_NOT_FOUND;
   if(!setjmp(Escape)){(VOID)StartInstalledLinux(CORE);assert(!"missing ESP must not retry");}
   assert(!FileLoads&&FailureStatus==EFI_NOT_FOUND);
+  Reset();MenuLaunch=TRUE;Policy.BootSelection=PianoBootAutomatic;
+  assert(StartInstalledLinux(CORE)==EFI_NOT_READY&&!FileLoads&&!HostLeaves&&!BootCancels);
+  Reset();EspStatus=EFI_NOT_FOUND;Policy.BootSelection=PianoBootAutomatic;
+  assert(StartInstalledLinux(CORE)==EFI_NOT_READY&&!FileLoads&&!HostLeaves&&BootCancels==1);
 }
 STATIC VOID PrepareErrorDiagnostics(VOID){
   Reset();Services.Stall=DiagnosticStall;RestrictStatus=EFI_SUCCESS;

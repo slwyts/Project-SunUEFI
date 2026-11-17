@@ -29,6 +29,7 @@ STATIC PIANO_PRODUCT_IDLE_PROTOCOL mIdle;
 STATIC EFI_GUID mRuntimeGuid=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID;
 STATIC EFI_GUID mSetupGuid={0x462caa21,0x7614,0x4503,{0x83,0x6e,0x8a,0xb6,0xf4,0x66,0x23,0x31}};
 STATIC EFI_GUID mShellGuid={0x7c04a583,0x9e3e,0x4f1c,{0xad,0x65,0xe0,0x52,0x68,0xd0,0xb4,0xd1}};
+STATIC EFI_GUID mBootPickerGuid={0xeec25bdc,0x67f2,0x4d95,{0xb1,0xd5,0xf8,0x1b,0x20,0x39,0xd1,0x1d}};
 STATIC PIANO_BOOT_POLICY_REPORT mReport;
 STATIC EFI_HANDLE mParent,mProtocolHandle;
 STATIC EFI_EVENT mExitEvent,mKeyEvent;
@@ -41,6 +42,7 @@ STATIC UINTN mKeysCount;
 STATIC volatile BOOLEAN mStartupWindow;
 STATIC BOOLEAN mStartupWindowUsed;
 STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime;
+STATIC EFI_STATUS EFIAPI OpenSimpleInit(PIANO_PRODUCT_RUNTIME_PROTOCOL *This);
 STATIC CONST PIANO_SMMU_RETIRED_USB_PROOF *mStartupUsbProof;
 STATIC CONST VOID *mStartupUsbFdt;
 BOOLEAN PianoSetStandardKeyNavigation(BOOLEAN Enable);
@@ -81,9 +83,16 @@ STATIC BOOLEAN UsbBulkInProgress(VOID) {
   return mReport.Usb.Started && mReport.Usb.Phase==PianoUsbServiceListening &&
     mReport.Usb.BulkActive && !mReport.Usb.Downloading;
 }
-STATIC EFI_STATUS EFIAPI Request(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Action) {
-  if(This!=&mRuntime || Action<PIANO_PRODUCT_ACTION_SIMPLEINIT || Action>PIANO_PRODUCT_ACTION_REQUEST_EDL)return EFI_INVALID_PARAMETER;
-  UINT32 ResetTarget=Action>=PIANO_PRODUCT_ACTION_REQUEST_SHUTDOWN?Action-PIANO_PRODUCT_ACTION_REQUEST_SHUTDOWN+1:0;
+STATIC BOOLEAN UiAction(UINT32 Action) {
+  return (Action>=PIANO_PRODUCT_ACTION_SIMPLEINIT && Action<=PIANO_PRODUCT_ACTION_SHELL)
+    || Action==PIANO_PRODUCT_ACTION_BOOT_PICKER;
+}
+STATIC EFI_STATUS QueueAction(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Action,
+  PIANO_BOOT_SELECTION Selection,UINT16 Number) {
+  if(This!=&mRuntime || Action<PIANO_PRODUCT_ACTION_SIMPLEINIT ||
+     Action>PIANO_PRODUCT_ACTION_BOOT_PICKER)return EFI_INVALID_PARAMETER;
+  UINT32 ResetTarget=Action>=PIANO_PRODUCT_ACTION_REQUEST_SHUTDOWN &&
+    Action<=PIANO_PRODUCT_ACTION_REQUEST_EDL?Action-PIANO_PRODUCT_ACTION_REQUEST_SHUTDOWN+1:0;
   PIANO_USB_SERVICE_ACTION Reason=(Action==PIANO_PRODUCT_ACTION_REQUEST_REBOOT||ResetTarget)?PianoUsbServiceActionReboot:
     Action==PIANO_PRODUCT_ACTION_REQUEST_CONTINUE?PianoUsbServiceActionContinue:
     Action==PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE?PianoUsbServiceActionBoot:PianoUsbServiceActionNone;
@@ -91,16 +100,39 @@ STATIC EFI_STATUS EFIAPI Request(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Act
   if(Typed)Action=PIANO_PRODUCT_ACTION_RETURN_CORE;
   UINT64 Mask=Critical();EFI_STATUS S=EFI_SUCCESS;
   if(!mAlive)S=EFI_ABORTED;
-  else if(Typed && Reason!=PianoUsbServiceActionBoot && (mReport.ActiveAction<PIANO_PRODUCT_ACTION_SIMPLEINIT || mReport.ActiveAction>PIANO_PRODUCT_ACTION_SHELL))S=EFI_ACCESS_DENIED;
+  else if(Typed && Reason!=PianoUsbServiceActionBoot && !UiAction(mReport.ActiveAction))S=EFI_ACCESS_DENIED;
   else if(Typed && mReport.PendingAction==PIANO_PRODUCT_ACTION_RETURN_CORE && mReport.RequestedCoreAction!=Reason)S=EFI_ACCESS_DENIED;
   else if(Typed && mReport.PendingAction==PIANO_PRODUCT_ACTION_RETURN_CORE && mReport.RequestedResetTarget!=ResetTarget)S=EFI_ACCESS_DENIED;
+  else if(Typed && Reason==PianoUsbServiceActionBoot && mReport.PendingAction==PIANO_PRODUCT_ACTION_RETURN_CORE &&
+    (mReport.BootSelection!=Selection || mReport.BootOptionNumber!=Number))S=EFI_ACCESS_DENIED;
   else if(mReport.PendingAction==PIANO_PRODUCT_ACTION_RETURN_CORE && Action!=PIANO_PRODUCT_ACTION_RETURN_CORE)S=EFI_ACCESS_DENIED;
-  else if(!Typed && Action<=PIANO_PRODUCT_ACTION_SHELL && mReport.ActiveAction==Action){ /* same UI: successful no-op, preserve any newer pending action */ }
+  else if(!Typed && UiAction(Action) && mReport.ActiveAction==Action){ /* same UI: successful no-op, preserve any newer pending action */ }
   else if(mReport.PendingAction!=Action) {
     if(mReport.Sequence==MAX_UINT64)S=EFI_OUT_OF_RESOURCES;
-    else {if(Typed){mReport.RequestedCoreAction=Reason;mReport.RequestedResetTarget=ResetTarget;}mReport.PendingAction=Action;++mReport.Sequence;}
+    else {
+      if(Typed){
+        mReport.RequestedCoreAction=Reason;mReport.RequestedResetTarget=ResetTarget;
+        mReport.BootSelection=Selection;mReport.BootOptionNumber=Number;
+      }
+      mReport.PendingAction=Action;++mReport.Sequence;
+    }
   }
   EndCritical(Mask);return S;
+}
+STATIC EFI_STATUS EFIAPI Request(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Action) {
+  return QueueAction(This,Action,PianoBootSystems,0);
+}
+STATIC EFI_STATUS EFIAPI SelectBootOption(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT16 Number) {
+  if(This!=&mRuntime)return EFI_INVALID_PARAMETER;
+  if(mReport.ActiveAction!=PIANO_PRODUCT_ACTION_SIMPLEINIT &&
+     mReport.ActiveAction!=PIANO_PRODUCT_ACTION_SETUP &&
+     mReport.ActiveAction!=PIANO_PRODUCT_ACTION_BOOT_PICKER)return EFI_ACCESS_DENIED;
+  if(UsbBulkInProgress())return EFI_NOT_READY;
+  return QueueAction(This,PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE,PianoBootSelected,Number);
+}
+STATIC BOOLEAN EFIAPI IsSimpleInitOption(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,
+  CONST EFI_DEVICE_PATH_PROTOCOL *Path) {
+  return This==&mRuntime && mAlive && PianoBootOptionIsSimpleInit(Path);
 }
 STATIC EFI_STATUS EFIAPI Pending(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 *Action,UINT64 *Sequence) {
   if(This!=&mRuntime || !Action || !Sequence)return EFI_INVALID_PARAMETER;
@@ -131,7 +163,8 @@ STATIC EFI_STATUS EFIAPI StartupEsc(EFI_KEY_DATA *Key) {
   if(!mStartupWindow || !Key || Key->Key.UnicodeChar)return EFI_SUCCESS;
   if(Key->Key.ScanCode!=SCAN_ESC && !(mReport.Entry==PianoBootEntryRecovery &&
      (Key->Key.ScanCode==SCAN_UP || Key->Key.ScanCode==SCAN_DOWN)))return EFI_SUCCESS;
-  return Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT);
+  return Request(&mRuntime,Key->Key.ScanCode==SCAN_ESC?
+                 PIANO_PRODUCT_ACTION_BOOT_PICKER:PIANO_PRODUCT_ACTION_SIMPLEINIT);
 }
 STATIC EFI_STATUS RegisterEsc(UINTN I) {
   CONST UINT16 Scans[]={SCAN_ESC,SCAN_UP,SCAN_DOWN};
@@ -257,7 +290,7 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
       if(mReport.IdleSample==MAX_UINT64)S=EFI_OUT_OF_RESOURCES;
       else {++mReport.IdleSample;mReport.IdleBulkActive=FALSE;mReport.IdleKnown=TRUE;}
       if(S==EFI_SUCCESS && mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE &&
-         mReport.PendingAction>=PIANO_PRODUCT_ACTION_SIMPLEINIT && mReport.PendingAction<=PIANO_PRODUCT_ACTION_SHELL &&
+         UiAction(mReport.PendingAction) &&
          mReport.PendingAction!=mReport.ActiveAction)S=EFI_ABORTED;
     }
     mReport.Pumping=FALSE;return mReport.LastPump=Exact(S);
@@ -288,7 +321,7 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
   }
   if((S==EFI_SUCCESS || S==EFI_NOT_READY) && !UsbBulkInProgress() &&
      mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE &&
-     mReport.PendingAction>=PIANO_PRODUCT_ACTION_SIMPLEINIT && mReport.PendingAction<=PIANO_PRODUCT_ACTION_SHELL &&
+     UiAction(mReport.PendingAction) &&
      mReport.PendingAction!=mReport.ActiveAction)S=EFI_ABORTED; // cooperative UI yield, not EBS/USB shutdown
   // Drain USB first. Never hold off Chapter 9 enumeration or an active bulk
   // transfer for a variable snapshot. Final saving is still mandatory at exit.
@@ -301,7 +334,8 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
   }
   mReport.Pumping=FALSE;return mReport.LastPump=Exact(S);
 }
-STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime={PIANO_PRODUCT_RUNTIME_REVISION,Pump,Alive,Request,Pending,Ack};
+STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime={PIANO_PRODUCT_RUNTIME_REVISION,Pump,Alive,Request,Pending,Ack,
+  OpenSimpleInit,SelectBootOption,IsSimpleInitOption};
 STATIC EFI_STATUS RetireEsc(VOID) {
   if(mReport.Retained)return EFI_COMPROMISED_DATA;
   for(UINTN I=0;I<mKeysCount;++I){
@@ -324,7 +358,7 @@ EFI_STATUS PianoBootPolicySetEntryBootArgs(CONST CHAR8 *BootArgs,UINTN Bytes) {
   if(!mReport.Initialized || !mReport.ProtocolInstalled)return EFI_NOT_READY;
   if(mStartupWindowUsed || mReport.Dispatching || mReport.Pumping || mReport.Retained)return EFI_ACCESS_DENIED;
   EFI_STATUS S=AtApp();if(S!=EFI_SUCCESS)return S;
-  mReport.Entry=PianoBootEntryUnknown;mReport.StartupDefaultAction=PIANO_PRODUCT_ACTION_SIMPLEINIT;
+  mReport.Entry=PianoBootEntryUnknown;mReport.StartupDefaultAction=PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE;
   // ABL derives this exact non-Android token from its recovery flag. It is an
   // entry-policy hint only, never authority for new memory or storage access.
   STATIC CONST CHAR8 Key[]="bootmonitor.bootmode=";
@@ -342,8 +376,19 @@ EFI_STATUS PianoBootPolicySetEntryBootArgs(CONST CHAR8 *BootArgs,UINTN Bytes) {
     if(ValueBytes==8 && !CompareMem(Value,"recovery",8))Entry=PianoBootEntryRecovery;
     else if(ValueBytes==6 && !CompareMem(Value,"normal",6))Entry=PianoBootEntryNormal;
   }
-  if(Matches==1)mReport.Entry=Entry;
+  if(Matches==1){
+    mReport.Entry=Entry;
+    if(Entry==PianoBootEntryRecovery)mReport.StartupDefaultAction=PIANO_PRODUCT_ACTION_SIMPLEINIT;
+  }
   return EFI_SUCCESS;
+}
+STATIC EFI_STATUS QueueStartupDefault(VOID) {
+  UINT64 Mask=Critical();
+  EFI_STATUS Status=EFI_SUCCESS;
+  if(mReport.PendingAction==PIANO_PRODUCT_ACTION_NONE)
+    Status=QueueAction(&mRuntime,mReport.StartupDefaultAction,PianoBootAutomatic,0);
+  EndCritical(Mask);
+  return Status;
 }
 EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds) {
   if(!Milliseconds || Milliseconds>3000)return EFI_INVALID_PARAMETER;
@@ -354,13 +399,12 @@ EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds) {
   UINT64 First,Last;UINT64 Frequency=GetPerformanceCounterProperties(&First,&Last);
   if(!Frequency || First==Last)return EFI_UNSUPPORTED;
   BOOLEAN Down=First>Last;UINT64 Start=GetPerformanceCounter(),Previous=Start;
-  BOOLEAN Navigation=FALSE,PreviousNavigation=FALSE;
-  if(mReport.Entry==PianoBootEntryRecovery){PreviousNavigation=PianoSetStandardKeyNavigation(TRUE);Navigation=TRUE;}
+  BOOLEAN PreviousNavigation=PianoSetStandardKeyNavigation(TRUE);
   mStartupWindowUsed=TRUE;mStartupWindow=TRUE;mKeysDirty=TRUE;
   for(UINTN Slice=0;Slice<3100;++Slice){
     UINT32 Action;UINT64 Sequence;S=Pending(&mRuntime,&Action,&Sequence);RequireAlive();
     if(S!=EFI_SUCCESS || Action!=PIANO_PRODUCT_ACTION_NONE){S=S==EFI_SUCCESS?EFI_SUCCESS:S;goto Done;}
-    S=Pump(&mRuntime,PIANO_PRODUCT_PUMP_APP,1000);RequireAlive();
+    S=Pump(&mRuntime,PIANO_PRODUCT_PUMP_APP|PIANO_PRODUCT_PUMP_WAIT_EVENT,1000);RequireAlive();
     if(S!=EFI_SUCCESS && S!=EFI_NOT_READY)goto Done;
     if(mReport.KeyStatus!=EFI_SUCCESS && mReport.KeyStatus!=EFI_NOT_READY){S=mReport.KeyStatus;goto Done;}
     S=Pending(&mRuntime,&Action,&Sequence);RequireAlive();if(S!=EFI_SUCCESS || Action!=PIANO_PRODUCT_ACTION_NONE)goto Done;
@@ -374,14 +418,10 @@ EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds) {
 Done:
   mStartupWindow=FALSE;
   EFI_STATUS Cleanup=RetireEsc();
-  if(Navigation)PianoSetStandardKeyNavigation(PreviousNavigation);
+  PianoSetStandardKeyNavigation(PreviousNavigation);
   if(Cleanup!=EFI_SUCCESS)return Cleanup;
   if(S==EFI_SUCCESS && (mReport.StartupDefaultAction==PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE ||
-                       mReport.StartupDefaultAction==PIANO_PRODUCT_ACTION_SETUP)) {
-    UINT64 Mask=Critical();
-    if(mReport.PendingAction==PIANO_PRODUCT_ACTION_NONE)S=Request(&mRuntime,mReport.StartupDefaultAction);
-    EndCritical(Mask);
-  }
+                       mReport.StartupDefaultAction==PIANO_PRODUCT_ACTION_SETUP))S=QueueStartupDefault();
   return S;
 }
 EFI_STATUS PianoBootPolicySetStartupTarget(UINT32 Target) {
@@ -389,7 +429,8 @@ EFI_STATUS PianoBootPolicySetStartupTarget(UINT32 Target) {
   if(!mReport.Initialized || !mReport.ProtocolInstalled)return EFI_NOT_READY;
   if(mStartupWindowUsed || mStartupWindow || mReport.Pumping || mReport.Dispatching || mReport.Retained)return EFI_ACCESS_DENIED;
   EFI_STATUS S=AtApp();if(S!=EFI_SUCCESS)return S;
-  if(Target)mReport.StartupDefaultAction=Target==3?PIANO_PRODUCT_ACTION_SETUP:PIANO_PRODUCT_ACTION_SIMPLEINIT;
+  if(Target)mReport.StartupDefaultAction=Target==3?PIANO_PRODUCT_ACTION_SETUP:
+    Target==2?PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE:PIANO_PRODUCT_ACTION_SIMPLEINIT;
   return EFI_SUCCESS;
 }
 EFI_STATUS PianoBootPolicySetUsbStartupFailure(CONST VOID *Fdt,CONST PIANO_SMMU_RETIRED_USB_PROOF *Proof) {
@@ -451,6 +492,37 @@ EFI_STATUS PianoBootPolicyInitialize(EFI_HANDLE Parent) {
   S=Exact(gBS->RegisterProtocolNotify(&gEfiSimpleTextInputExProtocolGuid,mKeyEvent,&mKeyRegistration));RequireAlive();if(S!=EFI_SUCCESS || !mKeyRegistration){mReport.Retained=TRUE;return S==EFI_SUCCESS?EFI_COMPROMISED_DATA:S;}
   mKeysDirty=TRUE;RefreshKeys();return mReport.Retained?EFI_COMPROMISED_DATA:EFI_SUCCESS;
 }
+STATIC EFI_STATUS RunSimpleInit(VOID) {
+  EFI_STATUS Status=Exact(PianoProductAcquireSimpleInit(&mPayload));RequireAlive();
+  mReport.PayloadStatus=Status;
+  if(Status==EFI_SUCCESS) {
+    mPayloadLoan=TRUE;
+    if(!mPayload.Image || !mPayload.Lease || mPayload.Bytes<4096 || mPayload.Bytes>0x4000000)RetainAndHalt();
+    Status=Exact(PianoProductValidateSimpleInit(&mPayload));RequireAlive();
+  }
+  if(Status==EFI_SUCCESS)Status=PianoApplicationRunBuffer(mParent,mPayload.Image,mPayload.Bytes,
+    NULL,0x8000000,&mReport.Application);
+  RequireAlive();
+  if(mReport.Application.Retained)RetainAndHalt();
+  if(mPayloadLoan) {
+    EFI_STATUS Release=Exact(PianoProductReleaseSimpleInit(&mPayload));RequireAlive();
+    if(Release!=EFI_SUCCESS){mReport.PayloadStatus=Release;RetainAndHalt();}
+    mPayloadLoan=FALSE;ZeroMem(&mPayload,sizeof(mPayload));
+  }
+  return Status;
+}
+STATIC EFI_STATUS EFIAPI OpenSimpleInit(PIANO_PRODUCT_RUNTIME_PROTOCOL *This) {
+  if(This!=&mRuntime)return EFI_INVALID_PARAMETER;
+  if(!mAlive || !mReport.ProtocolInstalled || mReport.Retained || mReport.Pumping ||
+     mReport.Dispatching || mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE)return EFI_ACCESS_DENIED;
+  EFI_STATUS Status=AtApp();if(Status!=EFI_SUCCESS)return Status;
+  if(mReport.PendingAction!=PIANO_PRODUCT_ACTION_NONE || UsbBulkInProgress())return EFI_ABORTED;
+  mReport.RequestedCoreAction=PianoUsbServiceActionNone;
+  mReport.Dispatching=TRUE;mReport.ActiveAction=PIANO_PRODUCT_ACTION_SIMPLEINIT;++mReport.AppRuns;
+  Status=RunSimpleInit();
+  mReport.LastAction=Status;mReport.ActiveAction=PIANO_PRODUCT_ACTION_NONE;mReport.Dispatching=FALSE;
+  return Status;
+}
 EFI_STATUS PianoBootPolicyDispatchPending(VOID) {
   if(!mReport.Initialized || !mReport.ProtocolInstalled)return EFI_NOT_READY;
   if(mReport.Dispatching || mReport.Retained)return EFI_ALREADY_STARTED;
@@ -464,16 +536,7 @@ EFI_STATUS PianoBootPolicyDispatchPending(VOID) {
   }
   BOOLEAN SetupFallback=FALSE;++mReport.AppRuns;
   if(Action==PIANO_PRODUCT_ACTION_SIMPLEINIT) {
-    S=Exact(PianoProductAcquireSimpleInit(&mPayload));RequireAlive();mReport.PayloadStatus=S;
-    if(S==EFI_SUCCESS){
-      mPayloadLoan=TRUE;
-      if(!mPayload.Image || !mPayload.Lease || mPayload.Bytes<4096 || mPayload.Bytes>0x4000000)RetainAndHalt();
-      S=Exact(PianoProductValidateSimpleInit(&mPayload));RequireAlive();
-    }
-    if(S==EFI_SUCCESS)S=PianoApplicationRunBuffer(mParent,mPayload.Image,mPayload.Bytes,NULL,0x8000000,&mReport.Application);
-    RequireAlive();
-    if(mReport.Application.Retained)RetainAndHalt();
-    if(mPayloadLoan){EFI_STATUS Release=Exact(PianoProductReleaseSimpleInit(&mPayload));RequireAlive();if(Release!=EFI_SUCCESS){mReport.PayloadStatus=Release;RetainAndHalt();}mPayloadLoan=FALSE;ZeroMem(&mPayload,sizeof(mPayload));}
+    S=RunSimpleInit();
   } else {
     BOOLEAN Unavailable=FALSE;S=Action==PIANO_PRODUCT_ACTION_SETUP?SetupReady(&Unavailable):EFI_SUCCESS;
     if(Unavailable){
@@ -482,13 +545,16 @@ EFI_STATUS PianoBootPolicyDispatchPending(VOID) {
       else {DEBUG((DEBUG_WARN,"SUNUEFI_SETUP_FALLBACK_DENIED setup_status=%r status=%r\n",S,Ready));S=Ready;}
     }
     if(S==EFI_SUCCESS){BOOLEAN Previous=PianoSetStandardKeyNavigation(TRUE);
-      S=PianoFvApplicationRun(mParent,Action==PIANO_PRODUCT_ACTION_SETUP?&mSetupGuid:&mShellGuid,
+      CONST EFI_GUID *File=Action==PIANO_PRODUCT_ACTION_SETUP?&mSetupGuid:
+        Action==PIANO_PRODUCT_ACTION_BOOT_PICKER?&mBootPickerGuid:&mShellGuid;
+      S=PianoFvApplicationRun(mParent,File,
         Action==PIANO_PRODUCT_ACTION_SHELL?L"Shell.efi -nostartup -nointerrupt -nomap":NULL,0x2000000,&mReport.Application);
       RequireAlive();if(!mReport.Application.Retained)PianoSetStandardKeyNavigation(Previous);
     }
     RequireAlive();if(mReport.Application.Retained)RetainAndHalt();
   }
   mReport.LastAction=S;mReport.ActiveAction=PIANO_PRODUCT_ACTION_NONE;mReport.Dispatching=FALSE;
+  if(Action==PIANO_PRODUCT_ACTION_BOOT_PICKER && S==EFI_NOT_FOUND)return QueueStartupDefault();
   if(SetupFallback){
     // Setup was ACKed before readiness, and no loader ran. Queue the menu once
     // while preserving any newer UI/core request; never retire shared USB here.
@@ -532,7 +598,9 @@ EFI_STATUS PianoBootPolicyRun(VOID) {
     // slice between children, preserving the same DMA/service owner instance.
     EFI_STATUS Service=Pump(&mRuntime,PIANO_PRODUCT_PUMP_APP,1000);
     if(Service!=EFI_SUCCESS && Service!=EFI_NOT_READY && Service!=EFI_ABORTED)return Service;
-    if(Action==PIANO_PRODUCT_ACTION_SETUP || Action==PIANO_PRODUCT_ACTION_SHELL) {
+    if(Action==PIANO_PRODUCT_ACTION_BOOT_PICKER) {
+      Get=QueueStartupDefault();if(Get!=EFI_SUCCESS)return Get;
+    } else if(Action==PIANO_PRODUCT_ACTION_SETUP || Action==PIANO_PRODUCT_ACTION_SHELL) {
       Get=Pending(&mRuntime,&Action,&Sequence);RequireAlive();if(Get!=EFI_SUCCESS)return Get;
       if(Action==PIANO_PRODUCT_ACTION_NONE){Get=Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT);if(Get!=EFI_SUCCESS)return Get;}
     }

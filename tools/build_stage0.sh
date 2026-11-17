@@ -35,6 +35,10 @@ cd "$sun_ws"
 
 # Apply the reference project's required patches to the isolated host checkout.
 for sun_patch in Auth-Service.patch Boot-Manager.patch Timer.patch Usb-Bus.patch; do
+  # The product uses the upstream boot selector without extra power actions.
+  if [[ "$sun_profile" == product && "$sun_patch" == Boot-Manager.patch ]]; then
+    continue
+  fi
   sun_file="$sun_ws/Resources/MuPatches/$sun_patch"
   if git -C Mu_Basecore apply --check "$sun_file" 2>/dev/null; then
     git -C Mu_Basecore apply "$sun_file"

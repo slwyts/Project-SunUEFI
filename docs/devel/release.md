@@ -57,16 +57,15 @@ UEFI 用标准引导程序和变量工具，系统更新用发行版的包管理
 
 ESP（EFI 系统分区）内已有官方 `ukify` 和 ARM64 systemd-stub 生成的标准 UKI。
 产品默认安装 systemd-boot；固件按 `BootNext`、`BootOrder` 和 `Boot####`
-选择 EFI 应用，设备后备路径复用上游库。SimpleInit 的“启动 Linux”仍是
-请求启动顺序的静态入口，不是逐项显示磁盘系统。变量在 Linux 运行时的安全
-持久化和 SimpleInit 普通启动项仍需完成。
+选择 EFI 应用，设备后备路径复用上游库。SimpleInit 作为普通启动项注册；
+其“启动 Linux”按系统启动顺序执行。Linux 运行时的变量持久化另行处理。
 
 | 工作 | 现在的实现 | 下一步 |
 | --- | --- | --- |
 | 固件启动顺序 | 驻留核心先初始化设备和恢复变量，再消费 `BootNext`、按 `BootOrder` 启动；`BootCurrent` 标识正在执行的选项 | 实机检查一次性选择、重新排序和失败恢复 |
-| SimpleInit 默认设备 | 默认仍先显示 SimpleInit；“启动 Linux”请求标准启动顺序 | SimpleInit 注册为普通 `Boot####`，首次默认置顶，之后尊重用户排序；Esc 打开临时固件启动选择 |
+| SimpleInit 与一次性选择 | 平板已注册置顶的 SimpleInit `Boot####`，菜单可继续启动现有 SteamOS | 用实体键盘和侧键核对 Esc 选择、取消与顺序恢复 |
 | 系统发现与直接启动 | 固件不再限定 OS 文件名、分区标签或 UFS LUN；启动项路径和后备发现复用 UEFI 库 | 实测其他卷、多个 ESP、直接 UKI 及其他系统加载器的资源退出 |
-| 引导程序 | 官方 systemd-boot 已在现有 SteamOS 实机启动分离文件与旧 UKI，已设置三秒菜单 | 完成普通 UEFI 启动项注册，检查用户排序、首次安装及两种布局升级 |
+| 引导程序 | 官方 systemd-boot 已在现有 SteamOS 实机启动分离文件与旧 UKI，已设置三秒菜单 | 检查用户排序、首次安装及两种布局升级 |
 | 标准存储写入和 Fastboot 刷写 | 扫描不改 GPT，刷写只卸载目标。平板上已完成 512 MiB sparse 写入、全量读回与取消读取后的自动恢复 | 对照同机原厂继续优化传输和连续写入速度；实测长操作中的触屏、键盘和触控板 |
 | Linux 运行时 EFI 变量 | `persist/sunuefi/` 双文件只在 Boot Services 阶段保存；运行时非易失 `SetVariable` 和删除被拒绝 | 在存储交给 Linux 后安全持久化，实测 `efibootmgr` 创建、排序、消费 `BootNext`、删除及跨重启恢复 |
 | EFI 层分区管理 | 未实现 | 先完成标准块读写和 GPT 安全检查；“伪动态分区”只有需求方向，未实现，不改变现有分区布局 |

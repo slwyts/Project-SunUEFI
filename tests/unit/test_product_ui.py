@@ -30,6 +30,7 @@ def generated(root):
     shell=(root/(prepare.SHELL+'Shell.c')).read_text()
     reader=(root/(prepare.SHELL+'FileHandleWrappers.c')).read_text()
     ui=(root/(prepare.UI+'FrontPage.c')).read_text()
+    picker=(root/(prepare.PICKER+'BootManagerMenu.c')).read_text()
     browser=(root/(prepare.BROWSER+'Presentation.c')).read_text()
     console=(root/(prepare.UEFI_LIB+'Console.c')).read_text()
     simple=(root/(prepare.SI+'src/lib/reboot.c')).read_text()
@@ -77,7 +78,7 @@ for (;;) {switch(ControlFlag){
     input_branch='EFI_STATUS ActualInputBranch(USER_INPUT UserInput) {EFI_STATUS Status;\n'+browser[input_begin:input_end]+'\n}\n'
     reboot_boot=boot[boot.index('int run_boot_reboot('):boot.index('\n}\n',boot.index('int run_boot_reboot('))+2]
     countdown=bootmenu[bootmenu.index('static void bootmenu_auto_boot_cb('):bootmenu.index('static void bootmenu_add(')]
-    return '\n\n'.join((function(display,'UiWaitForEvent'),function(cdl,'WaitForKeyStroke'),readline,function(shell,'DoShellPrompt'),menu,close,input_branch,popup,function(ui,'UiEntry'),function(ui,'SetupResetReminder'),main,reboot_types,simple[reboot_begin:reboot_end],reboot_boot,function(bootdef,'boot_init_configs'),*[function(bootmenu,name) for name in ('bootmenu_boot','bootmenu_remove_auto_boot','bootmenu_remove_auto_boot_cb','bootmenu_click')],countdown,reset_params,function(reset,'MainCmdReset'),function(reset,'ShellCommandRunReset')))
+    return '\n\n'.join((function(display,'UiWaitForEvent'),function(cdl,'WaitForKeyStroke'),readline,function(shell,'DoShellPrompt'),menu,close,input_branch,popup,function(ui,'UiEntry'),function(ui,'SetupResetReminder'),function(picker,'BootFromSelectOption'),main,reboot_types,simple[reboot_begin:reboot_end],reboot_boot,function(bootdef,'boot_init_configs'),*[function(bootmenu,name) for name in ('bootmenu_boot','bootmenu_remove_auto_boot','bootmenu_remove_auto_boot_cb','bootmenu_click')],countdown,reset_params,function(reset,'MainCmdReset'),function(reset,'ShellCommandRunReset')))
 
 class ProductUiTests(unittest.TestCase):
     def fixture(self,directory):

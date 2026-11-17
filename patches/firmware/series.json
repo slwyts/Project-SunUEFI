@@ -12,7 +12,7 @@
       "repository": "upstream/Mu-Silicium/Mu_Basecore",
       "base_commit": "64f478939955e45faa632c160ae2a75a5ff7ef7f",
       "patch": "mu-basecore.patch",
-      "sha256": "e4406e6828e95c7d71aff36a2255852debad0bebfef2382dae5702e756aa7549",
+      "sha256": "504e2d06bce201479200eee8b43f224f54daa2a282ebe9bba5744e077576f81f",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",

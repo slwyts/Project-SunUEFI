@@ -4,10 +4,11 @@
 #ifndef PIANO_PRODUCT_RUNTIME_PROTOCOL_H
 #define PIANO_PRODUCT_RUNTIME_PROTOCOL_H
 #include <Uefi.h>
+#include <Protocol/DevicePath.h>
 
 #define PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID \
   {0x618c4e8d,0x29ab,0x4fdc,{0xa4,0x13,0x60,0x2b,0x46,0x39,0x72,0xa1}}
-#define PIANO_PRODUCT_RUNTIME_REVISION 3ULL
+#define PIANO_PRODUCT_RUNTIME_REVISION 4ULL
 #define PIANO_PRODUCT_PUMP_WAIT_EVENT BIT0
 #define PIANO_PRODUCT_PUMP_GUI        BIT1
 #define PIANO_PRODUCT_PUMP_APP        BIT2
@@ -27,12 +28,13 @@
 // all-owner retirement+cold reboot; a future configured OS loader can resolve
 // this same action explicitly. Pending consumers still observe only 0..4.
 #define PIANO_PRODUCT_ACTION_REQUEST_CONTINUE 6U
-// Fixed installed ESP image; Core reads the file before retiring device owners.
+// Start the next system in BootOrder, excluding the SimpleInit menu itself.
 #define PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE 7U
 #define PIANO_PRODUCT_ACTION_REQUEST_SHUTDOWN 8U
 #define PIANO_PRODUCT_ACTION_REQUEST_RECOVERY 9U
 #define PIANO_PRODUCT_ACTION_REQUEST_BOOTLOADER 10U
 #define PIANO_PRODUCT_ACTION_REQUEST_EDL 11U
+#define PIANO_PRODUCT_ACTION_BOOT_PICKER 12U
 #define PIANO_PRODUCT_RESET_NORMAL 0U
 #define PIANO_PRODUCT_RESET_SHUTDOWN 1U
 #define PIANO_PRODUCT_RESET_RECOVERY 2U
@@ -58,5 +60,11 @@ struct PIANO_PRODUCT_RUNTIME_PROTOCOL {
   // Parent supervisor alone consumes an action; a stale sequence must not
   // clear a newer request. GUI cooperatively exits without acknowledging.
   EFI_STATUS (EFIAPI *AckAction)(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT64 Sequence);
+  // Only the firmware-volume entry calls this synchronously at APP TPL.
+  EFI_STATUS (EFIAPI *OpenSimpleInit)(PIANO_PRODUCT_RUNTIME_PROTOCOL *This);
+  // An interactive list requests a real Boot#### after its own image returns.
+  EFI_STATUS (EFIAPI *SelectBootOption)(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT16 Number);
+  BOOLEAN (EFIAPI *IsSimpleInitOption)(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,
+                                      CONST EFI_DEVICE_PATH_PROTOCOL *Path);
 };
 #endif

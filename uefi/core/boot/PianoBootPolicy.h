@@ -2,7 +2,7 @@
 #pragma once
 #include <Uefi.h>
 #include "../Protocol/PianoProductRuntime.h"
-#include "PianoFvApplication.h"
+#include "PianoBootOptions.h"
 #include "PianoUsbService.h"
 typedef enum {PianoBootEntryUnknown,PianoBootEntryNormal,PianoBootEntryRecovery} PIANO_BOOT_ENTRY;
 typedef struct {
@@ -17,6 +17,8 @@ typedef struct {
   // Never a direct reset from a GUI/pump or a fabricated USB worker action.
   PIANO_USB_SERVICE_ACTION RequestedCoreAction;
   UINT32 RequestedResetTarget;
+  PIANO_BOOT_SELECTION BootSelection;
+  UINT16 BootOptionNumber;
   PIANO_DWC3_SERVICE_STATUS Usb;
   PIANO_FV_APPLICATION Application;
 } PIANO_BOOT_POLICY_REPORT;
@@ -24,18 +26,17 @@ typedef struct {
 // transport, stop it on UI return, or turn an unbound worker into USB-ready.
 EFI_STATUS PianoBootPolicyInitialize(EFI_HANDLE Parent);
 // Core supplies the bounded /chosen/bootargs property from its validated FDT.
-// Missing, malformed or duplicate mode tokens keep the normal SimpleInit default.
+// Missing, malformed or duplicate mode tokens use the normal firmware order.
 EFI_STATUS PianoBootPolicySetEntryBootArgs(CONST CHAR8 *BootArgs,UINTN Bytes);
 // Validated embedded request target: 0 keeps the bootargs default, 1 menu,
-// 2 Linux through the same menu countdown, 3 Setup. Keys still take priority.
+// 2 normal firmware order, 3 Setup. Keys still take priority.
 EFI_STATUS PianoBootPolicySetStartupTarget(UINT32 Target);
 // Only an actual Controller rollback proof enables CPU/input slices without
 // the USB service. Every use revalidates the producer and live SMMU state.
 EFI_STATUS PianoBootPolicySetUsbStartupFailure(CONST VOID *Fdt,CONST PIANO_SMMU_RETIRED_USB_PROOF *Proof);
 // One APP-only startup choice window (1..3000ms). Keeps the shared service
-// pump alive; F12 keeps its normal path, Esc requests SimpleInit only here.
-// Recovery also maps the side volume keys to SimpleInit during this window;
-// its timeout leaves the normal SimpleInit menu policy in place.
+// pump alive; F12 opens Setup, Esc requests the one-time boot list.
+// Recovery also maps the side volume keys to SimpleInit during this window.
 // It only latches an action; the existing Run performs actual dispatch later.
 EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds);
 // Auto SimpleInit from Root's actual APPv1 validated payload registry. Pending

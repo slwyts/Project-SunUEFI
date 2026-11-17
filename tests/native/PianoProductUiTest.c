@@ -50,6 +50,7 @@
 EFI_BOOT_SERVICES *gBS;
 EFI_SYSTEM_TABLE *gST;
 EFI_RUNTIME_SERVICES *gRT;
+EFI_HANDLE gImageHandle;
 static EFI_BOOT_SERVICES bs;
 static EFI_SYSTEM_TABLE st;
 static EFI_RUNTIME_SERVICES rt;
@@ -173,6 +174,15 @@ VOID ActualPopupWait(EFI_INPUT_KEY *Key);
 static VOID CreatePopUp(UINTN attr,EFI_INPUT_KEY *Key,...){++reset_reminders;ActualPopupWait(Key);}
 static VOID EFIAPI ResetSystem(EFI_RESET_TYPE Type,EFI_STATUS Status,UINTN Bytes,VOID *Data){assert(allow_native_reset&&!enabled);++native_resets;}
 static BOOLEAN PianoProductRebootManaged(VOID){return enabled;}
+typedef struct {UINTN OptionNumber;BOOLEAN Hidden;} EFI_BOOT_MANAGER_LOAD_OPTION;
+static UINTN picker_selections,selected_boot_number;
+static BOOLEAN IgnoreBootOption(EFI_BOOT_MANAGER_LOAD_OPTION *Option){return Option->Hidden;}
+static EFI_STATUS PianoProductSelectBootOption(UINT16 Number){
+  ++picker_selections;selected_boot_number=Number;pending=TRUE;return EFI_SUCCESS;
+}
+static VOID EfiBootManagerBoot(EFI_BOOT_MANAGER_LOAD_OPTION *Option){
+  ++legacy_boots;selected_boot_number=Option->OptionNumber;
+}
 static EFI_STATUS PianoProductRequestReboot(VOID){++reboot_requests;if(!enabled)return EFI_UNSUPPORTED;if(request_failure)return EFI_ACCESS_DENIED;pending=TRUE;return EFI_SUCCESS;}
 static EFI_STATUS PianoProductRequestReset(UINT32 target){reset_target=target;return PianoProductRequestReboot();}
 static EFI_STATUS PianoProductRequestContinue(VOID){++continue_requests;if(!enabled)return EFI_UNSUPPORTED;if(request_failure)return EFI_ACCESS_DENIED;pending=TRUE;return EFI_SUCCESS;}
@@ -256,6 +266,7 @@ static VOID reset(BOOLEAN on){
   processed_input=checked_config=0;display_buffer=NULL;
   remote_on_wait=TRUE;allow_native_reset=request_failure=FALSE;reboot_requests=native_resets=config_saves=reboot_warnings=0;
   navigation_requests=navigation_action=gui_exits=legacy_boots=entry_count=0;
+  picker_selections=selected_boot_number=0;
   reset_option=reset_packages=0;
   continue_requests=message_errors=0;
   reset_target=0;
@@ -343,6 +354,16 @@ int main(VOID){
   reset(TRUE);request_failure=TRUE;strcpy(item.cfg.ident,"continue");bootmenu_boot(&bm);assert(continue_requests==1&&message_errors==1&&!gui_exits&&!legacy_boots&&!native_resets);
   reset(TRUE);request_failure=TRUE;strcpy(item.cfg.ident,"setup");bootmenu_boot(&bm);assert(navigation_requests==1&&!gui_exits&&!legacy_boots&&!native_resets);
   reset(FALSE);boot_init_configs();assert(!entry_count);bootmenu_boot(&bm);assert(legacy_boots==1&&!navigation_requests&&!gui_exits);
+  EFI_BOOT_MANAGER_LOAD_OPTION options[]={{3,TRUE},{19,FALSE},{42,FALSE},{0x10000,FALSE}};
+  reset(TRUE);BootFromSelectOption(options,ARRAY_SIZE(options),1);
+  assert(picker_selections==1&&selected_boot_number==42&&pending&&!legacy_boots);
+  reset(TRUE);BootFromSelectOption(options,ARRAY_SIZE(options),2);
+  assert(!picker_selections&&!pending&&!legacy_boots);
+  BootFromSelectOption(options,ARRAY_SIZE(options),3);
+  BootFromSelectOption(options,ARRAY_SIZE(options),4);
+  assert(!picker_selections&&!pending&&!legacy_boots&&!native_resets);
+  reset(FALSE);BootFromSelectOption(options,ARRAY_SIZE(options),0);
+  assert(!picker_selections&&!pending&&legacy_boots==1&&selected_boot_number==19);
   reset(TRUE);assert(ShellCommandRunReset(NULL,gST)==SHELL_SUCCESS&&pending&&reboot_requests==1&&!native_resets&&reset_packages==1&&allocated==freed);
   for(UINTN option=1;option<=4;++option){reset(TRUE);reset_option=option;assert(ShellCommandRunReset(NULL,gST)==SHELL_UNSUPPORTED&&!pending&&!reboot_requests&&!native_resets&&reset_packages==1&&allocated==freed);}
   reset(TRUE);request_failure=TRUE;assert(ShellCommandRunReset(NULL,gST)==SHELL_DEVICE_ERROR&&!pending&&!native_resets&&reset_packages==1&&allocated==freed);

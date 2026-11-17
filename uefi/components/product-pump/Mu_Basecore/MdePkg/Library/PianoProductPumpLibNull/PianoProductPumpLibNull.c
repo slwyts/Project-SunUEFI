@@ -14,3 +14,6 @@ EFI_STATUS EFIAPI PianoProductRequestReboot(VOID) { return EFI_UNSUPPORTED; }
 EFI_STATUS EFIAPI PianoProductRequestReset(UINT32 Target) { (VOID)Target;return EFI_UNSUPPORTED; }
 EFI_STATUS EFIAPI PianoProductRequestContinue(VOID) { return EFI_UNSUPPORTED; }
 BOOLEAN EFIAPI PianoProductRebootManaged(VOID){return FALSE;}
+EFI_STATUS EFIAPI PianoProductOpenSimpleInit(VOID) { return EFI_UNSUPPORTED; }
+EFI_STATUS EFIAPI PianoProductSelectBootOption(UINT16 Number) { (VOID)Number;return EFI_UNSUPPORTED; }
+BOOLEAN EFIAPI PianoProductIsSimpleInitOption(CONST EFI_DEVICE_PATH_PROTOCOL *Path) { (VOID)Path;return FALSE; }

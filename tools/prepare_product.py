@@ -21,6 +21,8 @@ import piano_vendor_inputs as vendor_inputs
 from core_source import core_source, has_core_source
 
 CORE_GUID='35E0D1B5-93CE-4D6A-9A93-6ADAA3F26C40'
+SIMPLEINIT_BOOT_MODULE='Applications/SimpleInitBoot/SimpleInitBoot.inf'
+BOOT_PICKER_MODULE='MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf'
 OS_BOOT_SOURCE_BUDGET=128*1024*1024
 SOURCE_NAMES=(
     'PianoProductCore.c','PianoBootOptions.c','PianoProductBootLog.c','PianoProductDisplayObserve.c','PianoDisplaySmmuObserve.c','PianoFrameBufferMappingObserve.c','PianoDisplayClockObserve.c','PianoProductDisplayOwner.c','PianoDisplayClockLease.c','PianoDisplayClockRead.c','PianoBootPolicy.c','PianoFvApplication.c','PianoProductPayload.c','PianoProductOwners.c','PianoRamPartition.c','PianoProductSmem.c','PianoProductMemory.c',
@@ -73,6 +75,15 @@ HOST_MODULES=('MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf','MdeModulePkg/Bus/Usb/U
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def simpleinit_boot_guid_header(root=ROOT):
+    inf=root/'uefi/components/product-support'/SIMPLEINIT_BOOT_MODULE
+    guid,=(uuid.UUID(line.split('=',1)[1].strip()) for line in inf.read_text().splitlines()
+           if line.strip().startswith('FILE_GUID ='))
+    first,second,third=guid.fields[:3]
+    tail=','.join(f'0x{byte:02x}' for byte in guid.bytes[8:])
+    return ('STATIC CONST EFI_GUID mPianoSimpleInitBootFileGuid='
+            f'{{0x{first:08x},0x{second:04x},0x{third:04x},{{{tail}}}}};\n')
 
 
 def verify_display_mapping(root,target,record):
@@ -509,6 +520,7 @@ def prepare(root=ROOT):
     late_provider['os_image_armed']=False
     observation=prepare_observation_families(root,app)
     (app/'PianoProductSimpleInitDigest.h').write_text(header)
+    (app/'PianoSimpleInitBootGuid.h').write_text(simpleinit_boot_guid_header(root))
     shutil.copyfile(root/'upstream/Mu-Silicium/Mu_Basecore/MdeModulePkg/Universal/Console/GraphicsConsoleDxe/PianoChineseGlyphs.h',app/'PianoChineseGlyphs.h')
     (app/'ProductCore.inf').write_text(core_inf())
     from firmware.prepare_ext4 import prepare as prepare_ext4
@@ -581,6 +593,7 @@ def prepare(root=ROOT):
       NULL|ShellPkg/Library/UefiShellInstall1CommandsLib/UefiShellInstall1CommandsLib.inf
   }
 '''
+    text+='  pianoProductPkg/'+SIMPLEINIT_BOOT_MODULE+'\n'
     text+=SETUP_DSC_ADDITIONS
     # All service flags bind actual product implementations; diagnostics are
     # not dispatched. FETCH enables the shared live SMMU storage guard.
@@ -591,7 +604,9 @@ def prepare(root=ROOT):
     dsc.write_text(text)
     fdf=target/'pianoProduct.fdf';text=fdf.read_text().replace('# Host-only stage-0 diagnostic; NOT hardware validated.','# Single PianoUEFI product integration candidate; INCOMPLETE_NOT_RELEASE.')
     text=text.replace('SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf','pianoProductPkg/Drivers/PianoGopDxe/PianoGopDxe.inf')
-    modules=DISK_MODULES+HOST_MODULES+SETUP_FV_MODULES+('MdeModulePkg/Logo/LogoDxe.inf',ext4['module'],'ShellPkg/Application/Shell/Shell.inf','pianoProductPkg/Applications/ProductCore/ProductCore.inf')
+    modules=DISK_MODULES+HOST_MODULES+SETUP_FV_MODULES+(
+        BOOT_PICKER_MODULE,'pianoProductPkg/'+SIMPLEINIT_BOOT_MODULE,'MdeModulePkg/Logo/LogoDxe.inf',
+        ext4['module'],'ShellPkg/Application/Shell/Shell.inf','pianoProductPkg/Applications/ProductCore/ProductCore.inf')
     text=text.replace('!include SiliciumPkg/Common.fdf.inc',''.join('  INF '+module+'\n' for module in modules)+native_fdf+'\n!include SiliciumPkg/Common.fdf.inc')
     fdf.write_text(text)
     early_memory=prepare_early_memory(root,target)

@@ -1,0 +1,13 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = SimpleInitBoot
+  FILE_GUID = 668FEFE4-0631-4B20-A0B9-2AA6DA4CEB7D
+  MODULE_TYPE = UEFI_APPLICATION
+  ENTRY_POINT = SimpleInitBootEntry
+[Sources]
+  SimpleInitBoot.c
+[Packages]
+  MdePkg/MdePkg.dec
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  PianoProductPumpLib

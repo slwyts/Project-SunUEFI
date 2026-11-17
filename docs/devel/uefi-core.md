@@ -14,26 +14,9 @@
 
 ## 固件启动流程
 
-产品核心从 `uefi/core/PianoProductCore.c` 的入口函数 `PianoProductCoreEntry` 开始执行：
-
-```
-PianoProductCoreEntry (uefi/core/PianoProductCore.c)
-  │
-  ├─► PianoProductAcquireSimpleInit: 获取并校验原厂传入的设备树 (FDT)
-  ├─► PianoProductDisplayObserveStart: 探测并继承原厂 GOP 帧缓冲与显示状态
-  ├─► PianoProductEarlyDxeRegister: 注册早期依赖
-  ├─► PianoProductDisplayOwnerStart: 接管显示控制器与背光
-  ├─► PianoBootPolicyStart: 初始化启动策略管理
-  ├─► PianoGopDxeRegister / PianoLogoDxeRegister: 注册图形输出与启动画面
-  ├─► PianoFvApplicationStart: 加载固件内部文件卷
-  ├─► PianoRawLinuxRegister: 准备 Linux 加载支撑
-  ├─► PianoUsbControllerServiceStart: 启动常驻后台的 USB 调试控制器
-  ├─► PianoUfsProductStorageStart: 发布 UFS 块设备并挂载项目存储
-  ├─► PianoSimpleInitStart: 显示图形引导菜单与启动动画
-  │
-  ▼ 用户选择或倒计时超时
-系统交接 (ExitBootServices) 或进入设置
-```
+驻留产品核心校验原厂传入的设备树，接管显示，启动后台 USB 服务，发布 UFS
+块设备并恢复保存的设置。然后进入固件启动顺序、一次性启动选择或固件设置。
+启动操作系统和整个固件重启都回到驻留核心，由它完成对应的资源退出。
 
 ## UFS 写入
 
@@ -98,16 +81,20 @@ DWC3 停机时先结束活动端点传输，再清除 `RUN_STOP`。等待 `DEVCT
 
 控制台初始化后先启动驻留核心，完成设备初始化、变量恢复和安全退出协议安装，
 再选择系统。固件读取标准 `Boot####`：先消费一次性 `BootNext`，
-再按 `BootOrder` 尝试启用的启动项。设备路径由上游 UEFI BootManager 库展开，
+再按 `BootOrder` 尝试启用的启动项。SimpleInit 也是普通启动项，通过固定的固件卷
+GUID 定位，没有用户排序时排在首位；已有排序不会因固件启动而重排。
+启动时按 Esc 打开本次启动选择，选定或取消都不改 `BootOrder`，F12 进入固件设置。
+设备路径由上游 UEFI BootManager 库展开，
 支持 GPT 短路径、文件路径和标准 `EFI/BOOT/BOOTAA64.EFI` 后备入口。
 固件不限定分区标签、UFS LUN 或 systemd-boot 文件名；不自动创建名为 Linux 的
 固件内部替代项。
 
 产品 ESP 默认安装 systemd-boot。没有注册普通启动项时使用标准后备文件。
 systemd-boot 默认使用分开的内核、initramfs 和设备树，也能发现版本化 UKI。
-SimpleInit 默认选择“启动 Linux”，无操作五秒后进入系统引导程序，输入可取消；
+SimpleInit 默认选择“启动 Linux”，无操作五秒后按启动顺序寻找系统，跳过 SimpleInit 自身；
 随后 systemd-boot 菜单停留三秒，可选择旧内核。
-启动镜像缺失、加载失败或返回固件时显示具体原因并停止，不自动重开菜单或重试。
+自动启动找不到可用项时返回菜单；已经执行的系统引导程序失败时显示原因，
+不会重新开始倒计时或反复尝试该项。
 完整文件布局见[启动架构](architecture.md#存储布局)。
 
 固件通过 `EFI_DT_FIXUP_PROTOCOL` 为装载的设备树应用同次启动的内存、面板与 Gunyah 修正，并检查保留区。Linux EFI stub 负责填写 EFI 内存图和 initrd 信息。SEC 从本次 ABL 传入的最终设备树读取完整 RAM，结合 SMEM、原生固件区域和冷启动对象生成内存表；新增普通 RAM 保持为 `EfiLoaderData`，不进入固件分配池。退出前再次核对真实 EFI/GCD 描述符及页表的恒等映射和缓存属性，再交给 Linux 回收。

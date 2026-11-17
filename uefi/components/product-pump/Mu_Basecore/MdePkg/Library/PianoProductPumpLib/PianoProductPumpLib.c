@@ -86,7 +86,8 @@ EFI_STATUS EFIAPI PianoProductGetPendingAction(UINT32 *Action,UINT64 *Sequence) 
   UINT32 Pending=PIANO_PRODUCT_ACTION_NONE;UINT64 Seq=0;
   Status=mRuntime->GetPendingAction(mRuntime,&Pending,&Seq);
   if(!PianoProductPumpBootServicesAlive())Status=EFI_ABORTED;
-  if(Status==EFI_SUCCESS && (Pending>PIANO_PRODUCT_ACTION_RETURN_CORE || (Pending!=PIANO_PRODUCT_ACTION_NONE && Seq==0)))Status=EFI_COMPROMISED_DATA;
+  if(Status==EFI_SUCCESS && ((Pending>PIANO_PRODUCT_ACTION_RETURN_CORE &&
+     Pending!=PIANO_PRODUCT_ACTION_BOOT_PICKER) || (Pending!=PIANO_PRODUCT_ACTION_NONE && Seq==0)))Status=EFI_COMPROMISED_DATA;
   if(Status==EFI_SUCCESS){*Action=Pending;*Sequence=Seq;}
   mBusy=FALSE;return Exact(Status);
 }
@@ -183,6 +184,29 @@ EFI_STATUS EFIAPI PianoProductRequestContinue(VOID) {
   return Status==EFI_UNSUPPORTED?EFI_ACCESS_DENIED:Exact(Status);
 }
 BOOLEAN EFIAPI PianoProductRebootManaged(VOID){return TRUE;}
+EFI_STATUS EFIAPI PianoProductOpenSimpleInit(VOID) {
+  EFI_STATUS Status=Enter();
+  if(Status!=EFI_SUCCESS)return Status;
+  Status=mRuntime->OpenSimpleInit?mRuntime->OpenSimpleInit(mRuntime):EFI_UNSUPPORTED;
+  if(!PianoProductPumpBootServicesAlive()){CpuDeadLoop();return EFI_ABORTED;}
+  mBusy=FALSE;
+  return Exact(Status);
+}
+EFI_STATUS EFIAPI PianoProductSelectBootOption(UINT16 Number) {
+  EFI_STATUS Status=Enter();
+  if(Status!=EFI_SUCCESS)return Status;
+  Status=mRuntime->SelectBootOption?mRuntime->SelectBootOption(mRuntime,Number):EFI_UNSUPPORTED;
+  if(!PianoProductPumpBootServicesAlive()){CpuDeadLoop();return EFI_ABORTED;}
+  mBusy=FALSE;
+  return Exact(Status);
+}
+BOOLEAN EFIAPI PianoProductIsSimpleInitOption(CONST EFI_DEVICE_PATH_PROTOCOL *Path) {
+  if(!Path || Enter()!=EFI_SUCCESS)return FALSE;
+  BOOLEAN Match=mRuntime->IsSimpleInitOption && mRuntime->IsSimpleInitOption(mRuntime,Path);
+  if(!PianoProductPumpBootServicesAlive()){CpuDeadLoop();return FALSE;}
+  mBusy=FALSE;
+  return Match;
+}
 EFI_STATUS EFIAPI PianoProductPumpLibDestructor(EFI_HANDLE Image,EFI_SYSTEM_TABLE *SystemTable) {
   (VOID)Image;(VOID)SystemTable;
   // Never leave a callback pointing into an unloaded GUI/app module. If the

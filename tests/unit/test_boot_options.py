@@ -3,10 +3,13 @@ import os
 import shutil
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools'))
+from prepare_product import simpleinit_boot_guid_header
 
 
 class BootOptionsTests(unittest.TestCase):
@@ -36,11 +39,13 @@ class BootOptionsTests(unittest.TestCase):
 
     def test_boot_next_order_and_binary_options(self):
         with tempfile.TemporaryDirectory(prefix='uefi-options-') as temporary:
-            executable = Path(temporary) / 'boot-options'
+            work = Path(temporary)
+            (work / 'PianoSimpleInitBootGuid.h').write_text(simpleinit_boot_guid_header())
+            executable = work / 'boot-options'
             include = ROOT / 'upstream/Mu-Silicium/Mu_Basecore'
             flags = ['-I' + str(path) for path in (
                 include / 'MdePkg/Include', include / 'MdePkg/Include/X64',
-                include / 'MdeModulePkg/Include')]
+                include / 'MdeModulePkg/Include', ROOT / 'uefi/components/nv', work)]
             subprocess.run([
                 'cc', '-std=gnu11', '-fshort-wchar', '-Wall', '-Wextra', '-Werror',
                 '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',
