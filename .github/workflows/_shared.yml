@@ -87,7 +87,7 @@ jobs:
           SHARED_KIND: ${{ matrix.kind }}
         run: |
           set -o pipefail
-          mkdir -p build/logs build/ccache
+          mkdir -p build/logs build/ccache artifacts/downloads
           docker run --rm --privileged \
             -v "$PWD:/workspace" -w /workspace \
             -e SUNUEFI_BUILD_ENVIRONMENT_ID -e SHARED_KIND \
