@@ -151,7 +151,8 @@ CONST PIANO_UFS_RESET_REPORT *PianoUfsResetShutdownReport(VOID){return &Ufs;}
 static EFI_STATUS InputStop(VOID *C,PIANO_PRODUCT_INPUT_RETIRE_REPORT *R){(VOID)C;assert(Tpl==TPL_APPLICATION);Step('I');*R=(PIANO_PRODUCT_INPUT_RETIRE_REPORT){.Revision=1,.Started=TRUE,.Returned=TRUE,.Clean=TRUE};return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI RuntimeRequest(PIANO_PRODUCT_RUNTIME_PROTOCOL *P,UINT32 A){assert(P==&Runtime&&A==PIANO_PRODUCT_ACTION_RETURN_CORE);return EFI_SUCCESS;}
 static VOID Setup(UINT32 N){Case=N;gBS=&Bs;gDS=&Ds;Bs.RaiseTPL=Raise;Bs.RestoreTPL=Restore;Bs.LocateProtocol=Locate;Bs.CreateEventEx=Create;Bs.CloseEvent=Close;Ds.GetMemorySpaceDescriptor=Gcd;Cpu.RegisterInterruptHandler=Register;
-  Policy.Initialized=Policy.ProtocolInstalled=TRUE;Runtime.Revision=PIANO_PRODUCT_RUNTIME_REVISION;Runtime.RequestAction=RuntimeRequest;Usb=(PIANO_DWC3_SERVICE_STATUS){.Revision=1,.Started=TRUE,.Phase=PianoUsbServiceListening};Storage=(PIANO_FB_STORAGE){NULL,Ready,InfoStorage,ReadStorage};
+  Policy.Initialized=Policy.ProtocolInstalled=TRUE;Runtime.Revision=PIANO_PRODUCT_RUNTIME_REVISION;Runtime.RequestAction=RuntimeRequest;Usb=(PIANO_DWC3_SERVICE_STATUS){.Revision=1,.Started=TRUE,.Phase=PianoUsbServiceListening};
+  Storage=(PIANO_FB_STORAGE){.Ready=Ready,.Info=InfoStorage,.ReadBlocks=ReadStorage};
   Ufs=(PIANO_UFS_RESET_REPORT){.Started=TRUE,.Prepared=TRUE,.Returned=TRUE,.Clean=TRUE,.TplHeld=TRUE,.DmaFreed=3,.Disconnected=6,.ProtocolsRemoved=7};
 }
 static VOID Run(UINT32 N){Setup(N);PIANO_PRODUCT_DISPLAY_STARTUP_REPORT Start={0};PIANO_PRODUCT_DISPLAY_RETIRE_REPORT Stop={0};
@@ -173,7 +174,13 @@ static VOID Run(UINT32 N){Setup(N);PIANO_PRODUCT_DISPLAY_STARTUP_REPORT Start={0
     UINT32 BeforeLogs=Logs;assert(PianoProductDisplayReplay()==EFI_SUCCESS&&Logs>BeforeLogs&&Loads==8&&EvidenceCalls==1);return;}
   if(N==12||N==13){PIANO_DISPLAY_CLOCK_LEASE Before=*Lease;if(N==12){assert(PianoProductDisplayStartup((VOID *)Start.LeaseContext)==EFI_INVALID_PARAMETER);assert(PianoProductDisplayStop(Start.LeaseContext,(VOID *)Start.LeaseContext)==EFI_INVALID_PARAMETER);}else assert(PianoProductDisplayStartup((VOID *)(MAX_UINTN-16))==EFI_INVALID_PARAMETER);
     assert(!memcmp(&Before,Lease,sizeof(Before))&&!ReleaseCalls);return;}
-  if(N==0){PIANO_PRODUCT_OWNERS_CONFIG C={.Revision=1,.Fdt=(VOID *)1,.ExpectedOwnerMask=PIANO_OWNER_ALL_MASK,.StartedOwnerMask=PIANO_OWNER_SUPPORTED_MASK&~(PIANO_OWNER_POGO|PIANO_OWNER_TOUCH),.AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|PIANO_OWNER_POGO|PIANO_OWNER_TOUCH,.Runtime=&Runtime,.StopInput=InputStop,.DisplayContext=Start.LeaseContext,.StopDisplay=PianoProductDisplayStop,.DisplayStartup=Start};
+  if(N==0){PIANO_PRODUCT_OWNERS_CONFIG C={
+      .Revision=1,.Fdt=(VOID *)1,.ExpectedOwnerMask=PIANO_OWNER_ALL_MASK,
+      .StartedOwnerMask=PIANO_OWNER_CORE_MASK|PIANO_OWNER_DISPLAY,
+      .AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|PIANO_OWNER_POGO|PIANO_OWNER_TOUCH,
+      .Runtime=&Runtime,.StopInput=InputStop,.DisplayContext=Start.LeaseContext,
+      .StopDisplay=PianoProductDisplayStop,.DisplayStartup=Start
+    };
     assert(PianoProductOwnersInitialize(&Owners,&C)==EFI_SUCCESS);Usb.Phase=PianoUsbServiceStopRequested;Usb.Action=PianoUsbServiceActionReboot;assert(PianoProductOwnersObserveUsbAction(&Owners)==EFI_SUCCESS);
     EFI_STATUS Retire=PianoProductOwnersRetire(&Owners);
     if(Retire!=EFI_SUCCESS)fprintf(stderr,"joint retire=%lx order=%s display=%lx release=%lx count=%lx gcc=%lx/%lx reads=%u pages=%u cleanup=%lx started=%u returned=%u clean=%u held=%u released=%u owned=%u/%u snapshots=%u/%u\n",(unsigned long)Retire,Order,(unsigned long)Owners.Report.Display.Status,(unsigned long)Owners.Report.Display.Release,(unsigned long)Owners.Report.Display.CounterStatus,(unsigned long)Owners.Report.Display.GccReadback,(unsigned long)Owners.Report.Display.GccReadbackEnd,Owners.Report.Display.GccReads,Owners.Report.Display.GccPages,(unsigned long)Owners.Report.Display.Cleanup,Owners.Report.Display.Started,Owners.Report.Display.Returned,Owners.Report.Display.Clean,Owners.Report.Display.HeldAfter,Owners.Report.Display.Released,Owners.Report.Display.OwnedReferencesBefore,Owners.Report.Display.OwnedReferencesAfter,Owners.Report.Display.ReleaseBeforeSnapshots,Owners.Report.Display.ReleaseAfterSnapshots);

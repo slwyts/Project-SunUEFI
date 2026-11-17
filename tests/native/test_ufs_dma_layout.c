@@ -45,6 +45,17 @@ int main(void){
   assert(PianoUfsBuildReadCommand(trd,32,ucd,1024,0x40001000,0x40002000,4096,11,0,PianoUfsReadLba10,1,1)==EFI_SUCCESS);
   assert(ucd[16]==0x28 && ucd[21]==1 && ucd[24]==1);
   assert(PianoUfsBuildReadCommand(trd,32,ucd,1024,0x40001000,0x40002000,4096,11,8,PianoUfsReadLba10,0,1)==EFI_INVALID_PARAMETER);
+  assert(PianoUfsBuildReadCommand(trd,32,ucd,1024,0x40001000,0x40002000,PIANO_UFS_PRDT_MAX_DATA_BYTES,
+    11,0,PianoUfsReadLba10,MAX_UINT32-63,64)==EFI_SUCCESS);
+  assert(ucd[23]==0 && ucd[24]==64 && ucd[13]==4 && ucd[14]==0 && ucd[15]==0);
+  assert(ucd[268]==0xff && ucd[269]==0xff && ucd[270]==3 && ucd[271]==0);
+  assert(PianoUfsBuildReadCommand(trd,32,ucd,1024,0x40001000,0x40002000,PIANO_UFS_PRDT_MAX_DATA_BYTES,
+    11,0,PianoUfsReadLba10,MAX_UINT32-62,64)==EFI_INVALID_PARAMETER);
+  assert(PianoUfsBuildReadCommand(trd,32,ucd,1024,0x40001000,0x40002000,PIANO_UFS_PRDT_MAX_DATA_BYTES+4096,
+    11,0,PianoUfsReadLba10,0,65)==EFI_INVALID_PARAMETER);
+  assert(PianoUfsBuildReadCommand(trd,32,ucd,1024,0x40001000,0x40002000,65536,
+    11,0,PianoUfsModeSense10,0,0)==EFI_INVALID_PARAMETER);
+  assert(PianoUfsBuildReadCommand(trd,32,ucd,1024,0x40001000,0x40002000,4096,11,0,PianoUfsReadLba10,1,1)==EFI_SUCCESS);
   UINT32 transferred;UINT8 *r=ucd+64;Le32(trd+8,0);ZeroMem(r,64);r[0]=0x21;r[3]=11;
   assert(PianoUfsCheckReadResponse(trd,ucd,11,4096,&transferred)==EFI_SUCCESS && transferred==4096);
   r[1]=0x20;Be32(r+12,4000);

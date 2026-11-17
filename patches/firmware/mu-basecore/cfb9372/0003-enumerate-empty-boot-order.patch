@@ -1,0 +1,21 @@
+diff --git a/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c b/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c
+--- a/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c
++++ b/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c
+@@ -2609,9 +2609,6 @@ EfiBootManagerRefreshAllBootOption (
+   }
+ 
+   NvBootOptions = EfiBootManagerGetLoadOptions (&NvBootOptionCount, LoadOptionTypeBoot);
+-  if (NvBootOptions == NULL) {
+-    goto Exit;
+-  }
+ 
+   //
+   // Remove invalid EFI boot options from NV
+@@ -2649,7 +2646,6 @@ EfiBootManagerRefreshAllBootOption (
+     }
+   }
+ 
+-Exit:
+   if (BootOptions != NULL) {
+     EfiBootManagerFreeLoadOptions (BootOptions, BootOptionCount);
+   }

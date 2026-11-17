@@ -64,13 +64,11 @@ EFI_STATUS PianoProductMemoryValidateCode(CONST VOID *Base,UINT64 Bytes){assert(
 BOOLEAN PianoUsbControllerHostBlocked(VOID){return FALSE;}
 VOID PianoProductMemoryGetDiagnostic(PIANO_PRODUCT_MEMORY_DIAGNOSTIC *Report){memset(Report,0,sizeof(*Report));Report->CaptureStatus=Report->DtbStatus=EFI_NOT_STARTED;}
 CONST PIANO_BOOT_POLICY_REPORT *PianoBootPolicyReport(VOID){return &Policy;}
-EFI_STATUS PianoEspBootFind(EFI_HANDLE *Esp){*Esp=EspStatus==EFI_SUCCESS?ESP:NULL;return EspStatus;}
 BOOLEAN PianoSetStandardKeyNavigation(BOOLEAN Enable){(VOID)Enable;return FALSE;}
-EFI_STATUS PianoApplicationRunFile(EFI_HANDLE Parent,EFI_HANDLE Device,CONST CHAR16 *Path,
-  CONST CHAR16 *Options,UINT64 Limit,PIANO_FV_APPLICATION *Application){
-  STATIC CONST CHAR16 Expected[]=L"\\EFI\\Linux\\sunuefi.efi";
-  assert(Parent==CORE&&Device==ESP&&!memcmp(Path,Expected,sizeof(Expected))&&!Options);
-  assert(Limit==0x10000000&&Application==&mLinuxApplication&&mLinuxActive);
+EFI_STATUS PianoStartBootOption(EFI_HANDLE Parent,EFI_HANDLE *Device,PIANO_FV_APPLICATION *Application){
+  assert(Parent==CORE&&Device==&mLinuxEsp&&Application==&mLinuxApplication&&mLinuxActive);
+  *Device=EspStatus==EFI_SUCCESS?ESP:NULL;
+  if(EspStatus!=EFI_SUCCESS)return EspStatus;
   ++FileLoads;return LoadStatus;
 }
 EFI_STATUS PianoProductOwnersResolveReturnedAction(PIANO_PRODUCT_OWNERS *Owners){assert(Owners==&mOwners);return HostStatus;}
@@ -82,7 +80,6 @@ BOOLEAN PianoDisplayClockRetained(VOID){return (RetainedObservers&BIT3)!=0;}
 BOOLEAN PianoProductDisplayOwnerRetained(VOID){return (RetainedObservers&BIT4)!=0;}
 EFI_STATUS PianoUsbControllerRestrictToDiagnostics(BOOLEAN AllowReboot){
   ++Restricts;assert(!Count&&!RuntimePumps);
-  if(mOwners.Report.Retained || mOwners.Report.PolicyStopped)assert(!AllowReboot);
   if(!AllowReboot)DiagnosticResetBlocked=TRUE;
   return RestrictStatus;
 }
@@ -105,11 +102,15 @@ EFI_STATUS PianoProductOwnersRetire(PIANO_PRODUCT_OWNERS *Owners){
   Owners->Report.Clean=TRUE;Owners->Report.AllowedAction=DiagnosticAction;
   return EFI_SUCCESS;
 }
-EFI_STATUS PianoLateHandoffArmReset(PIANO_LATE_HANDOFF *Late,EFI_HANDLE Image){
-  assert(Late==&mLateHandoff&&Image==CORE&&Retires==1&&mOwners.Report.Clean);++ResetArms;return EFI_SUCCESS;
+EFI_STATUS PianoProductOwnersPrepareReset(PIANO_PRODUCT_OWNERS *Owners){
+  assert(Owners==&mOwners&&!mFailureDiagnostics);++ResetArms;
+  Owners->Report.ResetAttempted=TRUE;
+  if(RetireStatus!=EFI_SUCCESS){Owners->Report.Retained=TRUE;return RetireStatus;}
+  Owners->Report.ResetPrepared=TRUE;Owners->Report.AllowedAction=DiagnosticAction;
+  return EFI_SUCCESS;
 }
-EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *Owners,EFI_HANDLE Image){
-  assert(Owners==&mOwners&&Image==CORE&&ResetArms==1&&Owners->Report.Clean);
+EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *Owners){
+  assert(Owners==&mOwners&&ResetArms==1&&Owners->Report.ResetPrepared&&!Retires);
   ResetReached=TRUE;longjmp(Escape,1);return EFI_ABORTED;
 }
 STATIC EFI_STATUS EFIAPI DiagnosticStall(UINTN Microseconds){
@@ -200,12 +201,13 @@ STATIC VOID EfiAdmission(VOID){
   BAD_EFI(mLinuxApplication.Busy=FALSE);BAD_EFI(mLinuxApplication.EbsObserved=TRUE);
   BAD_EFI(ManagerLoaded.ParentHandle=OTHER);BAD_EFI(ManagerLoaded.DeviceHandle=OTHER);
   BAD_EFI(mLinuxApplication.LoadedIdentity=&ChildLoaded);BAD_EFI(ManagerLoaded.ImageSize++);
-  BAD_EFI(ChildLoaded.DeviceHandle=OTHER);BAD_EFI(ChildLoaded.ParentHandle=CORE);
+  BAD_EFI(ChildLoaded.ParentHandle=CORE);
   BAD_EFI(ChildLoaded.ParentHandle=CHILD);BAD_EFI(ChildLoaded.Revision=0);
   BAD_EFI(ChildLoaded.ParentHandle=INNER;InnerLoaded.ParentHandle=CHILD);
-  BAD_EFI(ChildLoaded.ParentHandle=INNER;InnerLoaded.DeviceHandle=OTHER);
   BAD_EFI(System.NumberOfTableEntries=0);BAD_EFI(Policy.RequestedCoreAction=PianoUsbServiceActionReboot);
 #undef BAD_EFI
+  Reset();ChildLoaded.DeviceHandle=OTHER;
+  assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)==EFI_SUCCESS);
   Reset();DirectKernel();assert(ValidateInstalledEfiImage(CORE,MANAGER,&ManagerLoaded)==EFI_SUCCESS);
 #define BAD_DIRECT(Change) do{Reset();DirectKernel();Change;assert(ValidateInstalledEfiImage(CORE,MANAGER,&ManagerLoaded)!=EFI_SUCCESS);}while(0)
   BAD_DIRECT(ManagerLoaded.ParentHandle=OTHER);BAD_DIRECT(ManagerLoaded.DeviceHandle=OTHER);
@@ -223,7 +225,7 @@ STATIC VOID UkiLoadFailure(VOID){
     Reset();mLinuxActive=FALSE;LoadStatus=Errors[I];
     if(!setjmp(Escape)){(VOID)StartInstalledLinux(CORE);assert(!"failed UKI must not return to a countdown");}
     assert(FileLoads==1&&!mLinuxActive&&!mLinuxEsp&&mHandoffFailure);
-    assert(!strcmp(mHandoffStage,"linux-uki"));
+    assert(!strcmp(mHandoffStage,"linux-boot-manager"));
     assert(FailureStatus==(Errors[I]==EFI_SUCCESS?EFI_ABORTED:Errors[I]));
     assert(!mOwners.Report.RetiredMask&&!mLateHandoff.RetireCalls);
   }
@@ -246,13 +248,13 @@ STATIC VOID ErrorDiagnostics(VOID){
   PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;HostStatus=EFI_SUCCESS;
   mLinuxActive=FALSE;mLinuxApplication.Busy=FALSE;mLateHandoff.Env.ParentImage=CORE;
   if(!setjmp(Escape)){FailStop(EFI_OUT_OF_RESOURCES);assert(!"acknowledged reset must leave failure diagnostics");}
-  assert(ResetReached&&Retires==1&&ResetArms==1&&!RuntimePumps);
+  assert(ResetReached&&!Retires&&ResetArms==1&&!RuntimePumps);
 
   PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;HostStatus=EFI_SUCCESS;
   DiagnosticAction=PianoUsbServiceActionContinue;
   mLinuxActive=FALSE;mLinuxApplication.Busy=FALSE;mLateHandoff.Env.ParentImage=CORE;
   if(!setjmp(Escape))FailStop(EFI_OUT_OF_RESOURCES);
-  assert(ResetReached&&Retires==1&&ResetArms==1&&!RuntimePumps);
+  assert(ResetReached&&!Retires&&ResetArms==1&&!RuntimePumps);
 
   PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;DiagnosticAction=PianoUsbServiceActionBoot;
   mLinuxActive=FALSE;mLinuxApplication.Busy=FALSE;mLateHandoff.Env.ParentImage=CORE;
@@ -262,7 +264,7 @@ STATIC VOID ErrorDiagnostics(VOID){
   PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;HostStatus=EFI_SUCCESS;RetireStatus=EFI_DEVICE_ERROR;
   mLinuxActive=FALSE;mLinuxApplication.Busy=FALSE;mLateHandoff.Env.ParentImage=CORE;
   if(!setjmp(Escape)){FailStop(EFI_OUT_OF_RESOURCES);assert(!"failed cleanup must halt without reset");}
-  assert(!ResetReached&&Retires==1&&!ResetArms&&mOwners.Report.Retained);
+  assert(!ResetReached&&!Retires&&ResetArms==1&&mOwners.Report.Retained);
 
   PrepareErrorDiagnostics();RestrictStatus=EFI_NOT_READY;
   if(!setjmp(Escape))FailStop(EFI_LOAD_ERROR);
@@ -297,13 +299,18 @@ STATIC VOID ErrorDiagnostics(VOID){
     CONST CHAR16 *Expected=I?L"键盘驱动未能安全退出":L"触屏驱动未能安全退出";
     UINTN Length=0;while(Expected[Length])++Length;
     assert(FailureDetail&&!memcmp(FailureDetail,Expected,(Length+1)*sizeof(CHAR16)));
-    assert(Restricts==1&&DiagnosticPumps==3&&DiagnosticResetBlocked&&!RuntimePumps);
+    assert(Restricts==1&&DiagnosticPumps==3&&!RuntimePumps);
   }
   PrepareErrorDiagnostics();mOwners.Report.PolicyStopped=TRUE;mOwners.Report.RetiredMask=PIANO_OWNER_POLICY;
   mOwners.Report.Retained=TRUE;mOwners.Report.Phase=PianoProductOwnersRetained;
   mLateHandoff.Busy=mLateHandoff.Retained=TRUE;mLateHandoff.Phase=PianoExitRetained;mLateHandoff.RetireCalls=1;
   if(!setjmp(Escape))FailStop(EFI_DEVICE_ERROR);
-  assert(Restricts==1&&DiagnosticPumps==3&&DiagnosticResetBlocked&&!Retires&&!ResetReached);
+  assert(Restricts==1&&DiagnosticPumps==3&&!Retires&&!ResetReached);
+  PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;mOwners.Report.Retained=TRUE;
+  mOwners.Report.PolicyStopped=TRUE;mOwners.Report.Phase=PianoProductOwnersRetained;
+  mLinuxApplication.Retained=TRUE;mLateHandoff.Retained=TRUE;
+  if(!setjmp(Escape))FailStop(EFI_DEVICE_ERROR);
+  assert(ResetReached&&ResetArms==1&&!Retires&&!RuntimePumps);
 }
 int main(int Argc,char **Argv){
   assert(Argc==2);

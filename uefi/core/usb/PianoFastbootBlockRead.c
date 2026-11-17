@@ -7,11 +7,17 @@
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>
+#if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
+#include "PianoNvFile.h"
+#include "PianoStorageIo.h"
+#endif
 #define MAX_PARTITIONS 160U
 typedef struct {
   EFI_HANDLE Handle;
   EFI_BLOCK_IO_PROTOCOL *Block;
   EFI_BLOCK_READ Read;
+  EFI_BLOCK_WRITE Write;
+  EFI_BLOCK_FLUSH Flush;
   EFI_PARTITION_ENTRY Gpt;
   HARDDRIVE_DEVICE_PATH Hd;
   CHAR8 Name[37];
@@ -19,6 +25,7 @@ typedef struct {
   UINT32 MediaId;
   UINT32 IoAlign;
   UINT8 Lun;
+  BOOLEAN ReadOnly;
   VOID *Token;
 } PARTITION;
 STATIC PARTITION mPartitions[MAX_PARTITIONS];
@@ -73,7 +80,8 @@ STATIC EFI_STATUS Current(PARTITION *P){
      gBS->HandleProtocol(P->Handle,&gEfiPartitionInfoProtocolGuid,(VOID **)&I)!=EFI_SUCCESS ||
      gBS->HandleProtocol(P->Handle,&gEfiDevicePathProtocolGuid,(VOID **)&D)!=EFI_SUCCESS)return EFI_NO_MEDIA;
   if(B!=P->Block || B==NULL || B->Revision<EFI_BLOCK_IO_PROTOCOL_REVISION || B->ReadBlocks!=P->Read || B->ReadBlocks==NULL ||
-     B->Media==NULL || B->Media->MediaPresent!=TRUE || B->Media->ReadOnly!=TRUE || B->Media->LogicalPartition!=TRUE ||
+     B->WriteBlocks!=P->Write || B->FlushBlocks!=P->Flush ||
+     B->Media==NULL || B->Media->MediaPresent!=TRUE || B->Media->ReadOnly!=P->ReadOnly || B->Media->LogicalPartition!=TRUE ||
      B->Media->MediaId!=P->MediaId || B->Media->IoAlign!=P->IoAlign || B->Media->IoAlign>1 ||
      B->Media->BlockSize!=4096 || B->Media->LastBlock!=(P->Bytes/4096)-1 ||
      I==NULL || I->Revision<EFI_PARTITION_INFO_PROTOCOL_REVISION || I->Type!=PARTITION_TYPE_GPT || CompareMem(&I->Info.Gpt,&P->Gpt,sizeof(P->Gpt)) ||
@@ -96,15 +104,15 @@ STATIC EFI_STATUS Info(VOID *Context,CONST CHAR8 *Name,PIANO_FB_PARTITION_INFO *
   if(Found==NULL)return EFI_NOT_FOUND;
   EFI_STATUS S=Current(Found);if(S!=EFI_SUCCESS)return S;
   CopyMem(Out->Name,Found->Name,sizeof(Out->Name));Out->Bytes=Found->Bytes;
-  Out->BlockSize=4096;Out->ReadOnly=TRUE;Out->Token=Found->Token;return EFI_SUCCESS;
+  Out->BlockSize=4096;Out->ReadOnly=Found->ReadOnly;Out->Token=Found->Token;return EFI_SUCCESS;
 }
 STATIC EFI_STATUS ReadBlocks(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info,UINT64 Lba,UINTN Bytes,VOID *Buffer){
   (VOID)Context;if(!mReady)return EFI_NOT_READY;
-  if(Info==NULL || Buffer==NULL || !Bytes || Bytes%4096 || Bytes>65536)return EFI_INVALID_PARAMETER;
+  if(Info==NULL || Buffer==NULL || !Bytes || Bytes%4096 || Bytes>PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES)return EFI_INVALID_PARAMETER;
   PARTITION *P=NULL;
   for(UINTN N=0;N<mCount;++N)if(Info->Token==mPartitions[N].Token){P=&mPartitions[N];break;}
   if(P==NULL)return EFI_INVALID_PARAMETER;
-  if(Info->Bytes!=P->Bytes || Info->BlockSize!=4096 || Info->ReadOnly!=TRUE ||
+  if(Info->Bytes!=P->Bytes || Info->BlockSize!=4096 || Info->ReadOnly!=P->ReadOnly ||
      AsciiStrnCmp(Info->Name,P->Name,sizeof(Info->Name)) || Lba>=P->Bytes/4096 || Bytes/4096>P->Bytes/4096-Lba)return EFI_INVALID_PARAMETER;
   EFI_STATUS S=Current(P);if(S!=EFI_SUCCESS)return S;
   // The actual Piano provider advertises IoAlign1 and does shared-DMA bounce.
@@ -116,7 +124,59 @@ STATIC EFI_STATUS ReadBlocks(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info,U
   if(!mReady || P->Token!=Token)return EFI_MEDIA_CHANGED;
   return Current(P); // Revoke a snapshot changed during the synchronous read.
 }
-STATIC CONST PIANO_FB_STORAGE mStorage={NULL,Ready,Info,ReadBlocks};
+STATIC EFI_STATUS Writable(CONST PIANO_FB_PARTITION_INFO *Info,PARTITION **Out){
+  if(!mReady)return EFI_NOT_READY;
+  if(!Info)return EFI_INVALID_PARAMETER;
+  for(UINTN N=0;N<mCount;++N){
+    PARTITION *P=&mPartitions[N];
+    if(P->Token!=Info->Token)continue;
+    if(Info->Bytes!=P->Bytes || Info->BlockSize!=4096 || Info->ReadOnly!=P->ReadOnly ||
+       AsciiStrnCmp(Info->Name,P->Name,sizeof(Info->Name)))return EFI_INVALID_PARAMETER;
+    EFI_STATUS S=Current(P);if(S!=EFI_SUCCESS)return S;
+    if(P->ReadOnly || !P->Write || !P->Flush)return EFI_WRITE_PROTECTED;
+    *Out=P;return EFI_SUCCESS;
+  }
+  return EFI_INVALID_PARAMETER;
+}
+STATIC EFI_STATUS PrepareWrite(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info){
+  (VOID)Context;PARTITION *P=NULL;EFI_STATUS S=Writable(Info,&P);if(S!=EFI_SUCCESS)return S;
+  VOID *Token=P->Token;
+#if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
+  EFI_HANDLE Partition=P->Handle;
+  S=PianoNvFilePreparePartitionWrite(Partition);if(S!=EFI_SUCCESS)return S;
+  if(!mReady || P->Token!=Token)return EFI_MEDIA_CHANGED;
+  S=Current(P);if(S!=EFI_SUCCESS)return S;
+  S=PianoStorageCloseFilesystemForWrite(Partition);if(S!=EFI_SUCCESS)return S;
+#endif
+  if(!mReady || P->Token!=Token)return EFI_MEDIA_CHANGED;
+  return Current(P);
+}
+STATIC EFI_STATUS WriteBlocks(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info,UINT64 Lba,UINTN Bytes,CONST VOID *Buffer){
+  (VOID)Context;PARTITION *P=NULL;EFI_STATUS S=Writable(Info,&P);if(S!=EFI_SUCCESS)return S;
+  if(!Buffer || !Bytes || Bytes%4096 || Bytes>PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES ||
+     Lba>=P->Bytes/4096 || Bytes/4096>P->Bytes/4096-Lba)return EFI_INVALID_PARAMETER;
+  VOID *Token=P->Token;
+#if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
+  S=PianoStorageCheckFilesystemClosed(P->Handle);if(S!=EFI_SUCCESS)return S;
+  if(!mReady || P->Token!=Token)return EFI_MEDIA_CHANGED;
+  S=Current(P);if(S!=EFI_SUCCESS)return S;
+#endif
+  S=P->Write(P->Block,P->MediaId,Lba,Bytes,(VOID *)Buffer);
+  if(S!=EFI_SUCCESS)return EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
+  if(!mReady || P->Token!=Token)return EFI_MEDIA_CHANGED;
+  return Current(P);
+}
+STATIC EFI_STATUS Flush(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info){
+  (VOID)Context;PARTITION *P=NULL;EFI_STATUS S=Writable(Info,&P);if(S!=EFI_SUCCESS)return S;
+  VOID *Token=P->Token;
+  S=P->Flush(P->Block);
+  if(S!=EFI_SUCCESS)return EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
+  if(!mReady || P->Token!=Token)return EFI_MEDIA_CHANGED;
+  return Current(P);
+}
+STATIC CONST PIANO_FB_STORAGE mStorage={
+  .Ready=Ready,.Info=Info,.ReadBlocks=ReadBlocks,.PrepareWrite=PrepareWrite,.WriteBlocks=WriteBlocks,.Flush=Flush
+};
 EFI_STATUS PianoFastbootBlockReadInit(VOID){
   if(mReady)return EFI_ALREADY_STARTED;
   mCount=0;ZeroMem(mPartitions,sizeof(mPartitions));
@@ -130,13 +190,14 @@ EFI_STATUS PianoFastbootBlockReadInit(VOID){
     if(gBS->HandleProtocol(Handles[N],&gEfiPartitionInfoProtocolGuid,(VOID **)&I)!=EFI_SUCCESS || I==NULL ||
        I->Revision<EFI_PARTITION_INFO_PROTOCOL_REVISION || I->Type!=PARTITION_TYPE_GPT ||
        gBS->HandleProtocol(Handles[N],&gEfiBlockIoProtocolGuid,(VOID **)&B)!=EFI_SUCCESS || B==NULL || B->Revision<EFI_BLOCK_IO_PROTOCOL_REVISION ||
-       B->ReadBlocks==NULL || B->Media==NULL || B->Media->MediaPresent!=TRUE || B->Media->ReadOnly!=TRUE ||
+       B->ReadBlocks==NULL || B->Media==NULL || B->Media->MediaPresent!=TRUE ||
        B->Media->LogicalPartition!=TRUE || B->Media->BlockSize!=4096 || B->Media->IoAlign>1 ||
        !Geometry(&Hd,&I->Info.Gpt,B->Media->LastBlock))continue;
     CHAR8 Name[37];if(!NameOf(I->Info.Gpt.PartitionName,Name))continue;
     if(mCount==MAX_PARTITIONS || mNextToken==MAX_UINTN){S=EFI_OUT_OF_RESOURCES;break;}
     PARTITION *P=&mPartitions[mCount++];P->Handle=Handles[N];P->Block=B;P->Gpt=I->Info.Gpt;
-    P->Hd=Hd;P->Read=B->ReadBlocks;P->IoAlign=B->Media->IoAlign;P->Token=(VOID *)mNextToken++;
+    P->Hd=Hd;P->Read=B->ReadBlocks;P->Write=B->WriteBlocks;P->Flush=B->FlushBlocks;P->ReadOnly=B->Media->ReadOnly;
+    P->IoAlign=B->Media->IoAlign;P->Token=(VOID *)mNextToken++;
     CopyMem(P->Name,Name,sizeof(P->Name));P->Bytes=(B->Media->LastBlock+1)*4096;P->MediaId=B->Media->MediaId;P->Lun=Lun;
   }
   if(Handles!=NULL)FreePool(Handles);

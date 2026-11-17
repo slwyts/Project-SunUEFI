@@ -4,6 +4,7 @@ set -euo pipefail
 case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_repo"
+. tests/native/core-includes.sh
 sun_test_dir="$(mktemp -d /tmp/sunuefi-usb-fastboot-tests.XXXXXX)"
 trap 'rm -rf -- "$sun_test_dir"' EXIT
 sun_flags=(-std=gnu11 -fshort-wchar -Wall -Wextra -Werror -Wno-unused-parameter
@@ -15,7 +16,7 @@ for sun_test in test_usb_control test_usb_session test_usb_diagnostic test_fastb
   "${CC:-cc}" "${sun_flags[@]}" "tests/native/$sun_test.c" -lcrypto -o "$sun_test_dir/$sun_test"
   "$sun_test_dir/$sun_test"
 done
-for sun_test in test_fastboot_fetch test_fastboot_block_read test_usb_fastboot test_usb_screenshot_route test_usb_coexist test_usb_boot_request; do
+for sun_test in test_fastboot_fetch test_fastboot_flash test_fastboot_block_read test_usb_fastboot test_usb_screenshot_route test_usb_coexist test_usb_boot_request; do
   "${CC:-cc}" "${sun_flags[@]}" -fsanitize=address,undefined -fno-omit-frame-pointer \
     "tests/native/$sun_test.c" -lcrypto -o "$sun_test_dir/$sun_test"
   ASAN_OPTIONS=detect_leaks=1 "$sun_test_dir/$sun_test"

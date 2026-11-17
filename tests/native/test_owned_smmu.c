@@ -163,13 +163,19 @@ int main(void){
     }
     c->AttachedSnapshot=gpi_live=c->After;gpi_capture=c->Before;
     gpi_capture.RawS2cr[0]=gpi_capture.RawS2cr[2]=0;
+    if(!Case){
+      c->TableMemory.Physical=c->OwnedTablePhysical;
+      mActiveGpi=c;
+      PIANO_SMMU_SNAPSHOT Expected=c->Before;
+      assert(PianoOwnedSmmuExpectActiveGpi(&Expected)==EFI_SUCCESS && PeerSnapshot(&Expected,&c->AttachedSnapshot));
+    }
     if(Case==1)gpi_live.Device[3].Ttbr0^=4096;
     if(Case==2)gpi_live.RawSmr[2]^=1;
     if(Case==4)gpi_capture.Device[3]=c->After.Device[3];
     unsigned Freed=releases,Destroyed=destroys,Detached=detaches;
     EFI_STATUS Status=PianoOwnedSmmuClose(c);
     if(!Case) {
-      assert(Status==EFI_SUCCESS && qup_detaches==1 && detaches==Detached+1 && route_writes==4);
+      assert(Status==EFI_SUCCESS && qup_detaches==1 && detaches==Detached+1 && route_writes==4 && !mActiveGpi);
       assert(releases==Freed+1 && destroys==Destroyed+1);
       assert(!memcmp(c->Before.RawSmr,gpi_capture.RawSmr,sizeof(gpi_capture.RawSmr)));
       assert(!memcmp(c->Before.RawS2cr,gpi_capture.RawS2cr,sizeof(gpi_capture.RawS2cr)));

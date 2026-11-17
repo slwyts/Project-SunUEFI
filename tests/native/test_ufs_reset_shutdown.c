@@ -92,6 +92,12 @@ static VOID initialize(VOID){
 }
 int main(void){
   gRT=&rt;bs.RaiseTPL=raise_tpl;bs.DisconnectController=disconnect;bs.UninstallMultipleProtocolInterfaces=uninstall;bs.CloseEvent=close_event;rt.ResetSystem=reset;
+  initialize();
+  assert(PianoUfsBlockIoQuiesceForReset()==EFI_SUCCESS && QueuesStopped() && !mBlockLive);
+  assert(!freed && !owned_closed && !disconnected && !uninstalled && !typed_clocks);
+  assert(mTrl.Signature && mContext.Attached && mContext.Domain);
+  initialize();mBlockBusy=TRUE;assert(PianoUfsBlockIoQuiesceForReset()==EFI_NOT_READY && mBlockLive);
+  initialize();stuck_tm_run=TRUE;assert(PianoUfsBlockIoQuiesceForReset()==EFI_TIMEOUT && !freed && !owned_closed);
   initialize();regs.tr_bell=BIT31;regs.tm_bell=BIT30;
   assert(PianoUfsBlockIoPrepareForReset()==EFI_SUCCESS && disconnected==1 && !mBlockLive && !freed && !owned_closed && !typed_clocks && QueuesStopped() && regs.irq==0 && mResetReport.Prepared && mResetReport.TplHeld && raised==1);
   assert(PianoUfsBlockIoPrepareForReset()==EFI_SUCCESS && disconnected==1 && raised==1);

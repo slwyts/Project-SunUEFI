@@ -11,7 +11,7 @@ sun_dma_includes=(
   -I upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include
   -I uefi/components/ext4
 )
-for sun_dma_test in dma smmu_snapshot io_pgtable owned_smmu ufs_dma_layout ufs_readonly_dma ufs_probe gpt readonly_block; do
+for sun_dma_test in dma smmu_snapshot io_pgtable owned_smmu ufs_dma_layout ufs_readonly_dma ufs_probe gpt block_io; do
   cc -std=gnu11 -fshort-wchar -g -fsanitize=address,undefined -fno-pie -no-pie \
     -ffunction-sections -fdata-sections "${sun_dma_includes[@]}" \
     "tests/native/test_${sun_dma_test}.c" -Wl,--gc-sections -o "build/test-${sun_dma_test}-asan"

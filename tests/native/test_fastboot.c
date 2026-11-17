@@ -14,9 +14,7 @@ INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
 INTN EFIAPI AsciiStrnCmp(CONST CHAR8 *A,CONST CHAR8 *B,UINTN N){return strncmp(A,B,N);}
 VOID *EFIAPI CopyMem(VOID *A,CONST VOID *B,UINTN N){return memcpy(A,B,N);}
 VOID *EFIAPI ZeroMem(VOID *A,UINTN N){return memset(A,0,N);}
-#if PIANO_USB_RAM_BOOT
 INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
-#endif
 VOID *EFIAPI AllocateZeroPool(UINTN N){
   if(fail_alloc)return NULL;
   for(unsigned i=0;i<16;++i)if(!pools[i].pointer){pools[i].pointer=calloc(1,N);pools[i].bytes=N;
@@ -92,6 +90,9 @@ static void diagnostics_only(void){
   assert(PianoFastbootRestrictToDiagnostics(&S,TRUE)==EFI_SUCCESS && S.DiagnosticsOnly && !allocation);
   assert(!S.Download && !S.Upload && !S.Receiving && !S.Complete && !S.RebootRequested && !S.ExitRequested);
   S.Diagnostic=diagnostic_reply;
+  command(&S,"oem help","OKAY");
+  assert(calls==9 && !strcmp(replies[0],"INFOUEFI Fastboot commands:"));
+  for(unsigned i=0;i<calls;++i)assert(!strstr(replies[i],"stage FILE")&&!strstr(replies[i],"fetch PARTITION"));
   command(&S,"getvar:version","OKAY0.4");
   command(&S,"getvar:max-download-size","OKAY0x00000000");
   command(&S,"getvar:max-fetch-size","FAILstorage backend not ready");
@@ -130,13 +131,17 @@ int main(void){
   assert(PianoFastbootInit(NULL,NULL,send_reply,NULL)==EFI_INVALID_PARAMETER);
   assert(PianoFastbootInit(&S,(void *)123,NULL,NULL)==EFI_INVALID_PARAMETER);
   assert(PianoFastbootInit(&S,(void *)123,send_reply,log_reply)==EFI_SUCCESS);
+  command(&S,"oem help","OKAY");
+  assert(calls==12 && !strcmp(replies[8],"INFOstage FILE - download a RAM payload (max 64 MiB)"));
   command(&S,"getvar:version","OKAY0.4");
   command(&S,"getvar:SunUEFI:ram-boot","OKAYdisabled");
   command(&S,"getvar:version-malicious","FAILunknown variable");
   command(&S,"getvar:all","OKAY");assert(calls==5);
-  const char *blocked[]={"flash:boot_a","erase:userdata","flashing unlock","oem unlock",
+  command(&S,"flash:boot_a","FAILstorage write backend not ready");
+  command(&S,"erase:userdata","FAILstorage write backend not ready");
+  const char *blocked[]={"flashing unlock","oem unlock",
     "set_active:b","oem edl","reboot-edl","reboot-bootloader","oem poke 1 2",
-    "flash:qupfw_a","update-super:super","snapshot-update:merge","format:userdata"};
+    "update-super:super","snapshot-update:merge","format:userdata"};
   for(size_t i=0;i<sizeof(blocked)/sizeof(blocked[0]);++i)
     command(&S,blocked[i],"FAILcommand disabled by RAM-only policy");
   const char *bad[]={"download:","download:0000000g","download:000000001",

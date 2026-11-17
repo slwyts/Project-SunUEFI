@@ -2,4 +2,4 @@
 #pragma once
 #include "PianoProductOwners.h"
 EFI_STATUS PianoResetInitialize(CONST VOID *Fdt);
-EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *Owners,EFI_HANDLE Image);
+EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *Owners);

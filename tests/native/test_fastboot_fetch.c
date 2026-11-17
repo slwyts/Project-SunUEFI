@@ -66,14 +66,14 @@ int main(void) {
   reply(&S,"fetch:XBL_config_a:0x0:0x1","FAILunknown partition");
   reply(&S,"getvar:partition-size:xbl_config_b","FAILunknown partition");
   bad_info=TRUE;reply(&S,"fetch:xbl_config_a:0x0:0x1","FAILinvalid partition information");bad_info=FALSE;
-  read_only=FALSE;reply(&S,"fetch:xbl_config_a:0x0:0x1","FAILinvalid partition information");read_only=TRUE;
+  read_only=FALSE;fetch(&S,0,1);read_only=TRUE;
   ++partition_bytes;reply(&S,"getvar:partition-size:xbl_config_a","FAILinvalid partition information");--partition_bytes;
   fail_read=TRUE;reply(&S,"fetch:xbl_config_a:0x0:0x1","FAILpartition read failed");assert(reads==1);fail_read=FALSE;
   fail_alloc=1;reply(&S,"fetch:xbl_config_a:0x0:0x1","FAILnot enough RAM");fail_alloc=0;
   for(INTN Frame=0;Frame<3;++Frame){fail_frame=Frame;assert(packet(&S,"fetch:xbl_config_a:0x1:0x1000")==EFI_DEVICE_ERROR && !allocation);}fail_frame=-1;
   PianoFastbootReset(&S);assert(StorageReady(&S)); // RAM discard does not detach an independently owned backend.
   assert(PianoFastbootSetStorage(&S,NULL)==EFI_SUCCESS);reply(&S,"getvar:max-fetch-size","FAILstorage backend not ready");
-  reply(&S,"flash:xbl_config_a","FAILcommand disabled by RAM-only policy");
+  reply(&S,"flash:xbl_config_a","FAILstorage write backend not ready");
   puts("Fastboot fetch actual source: readiness advertisement, exact names/tokens/readonly metadata, 64-bit bounds, 64KiB DATA/raw/OKAY, partial 4K, read/alloc/send failure zero-free, no RAM-stage alias and flash denial passed.");
   return 0;
 }

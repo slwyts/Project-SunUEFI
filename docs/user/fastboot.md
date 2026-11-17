@@ -1,21 +1,21 @@
 # UEFI Fastboot
 
-UEFI Fastboot 是 SunUEFI 运行期间在后台提供的 USB Fastboot 服务，用来读日志、截图、只读读取分区和请求启动。屏幕白屏、没有菜单时也能用。固件把控制权交给 Linux 时，它随之退出。
+UEFI Fastboot 是 SunUEFI 运行期间在后台提供的 USB Fastboot 服务，用来读日志、截图、读写分区和请求启动。屏幕白屏、没有菜单时也能用。固件把控制权交给 Linux 时，它随之退出。
 
 ## 和另外两个 Fastboot 的区别
 
 | 名称 | 设备序列号 | 什么时候出现 | 刷写 |
 | --- | --- | --- | --- |
 | 原厂 Bootloader Fastboot | 平板真实序列号 | `adb reboot bootloader` | 可以 |
-| UEFI Fastboot | `SunUEFI-piano` | SunUEFI 运行期间 | 拒绝 |
+| UEFI Fastboot | `SunUEFI-piano` | SunUEFI 运行期间 | 可以，按精确分区名操作 |
 | Linux 的 USB 网络 / SSH | 无 | Linux 启动之后 | 不适用 |
 
 下面所有命令都带 `-s SunUEFI-piano`，确保操作的是 UEFI 服务，而不是原厂 Bootloader。服务在 UEFI 菜单、固件设置和 Shell 里一直保持连接，切换页面不会退出。
 
 启动失败时，只要 USB 连接仍正常，错误提示页会保留状态、日志和截图命令。
-`reboot` 或 `continue` 请求重启，固件先停止 DMA、释放资源并退出固件服务。
-`OKAY` 表示请求已收到，是否重启以设备重新启动为准。清理失败后仍可查询正常的
-USB 连接，但再次请求重启会返回失败，此时长按电源重启。错误页不再启动其他
+`reboot` 或 `continue` 请求重启，固件先保存设置、完成存储写入，再执行整机复位。
+`OKAY` 表示请求已收到，是否重启以设备重新启动为准。外设清理失败不阻止重启；
+设置保存或存储同步失败时仍保留错误页，此时长按电源重启。错误页不再启动其他
 镜像或切换页面；USB 已关闭或状态无法确认时不会重新启用连接。
 
 USB 口插着 OTG 转接头和键盘、U 盘等设备时，这个口给这些设备使用，UEFI Fastboot 不在线。拔下设备、接回电脑后恢复。
@@ -23,6 +23,7 @@ USB 口插着 OTG 转接头和键盘、U 盘等设备时，这个口给这些设
 ## 查看状态
 
 ```sh
+fastboot -s SunUEFI-piano oem help             # 当前可用命令与参数
 fastboot -s SunUEFI-piano getvar product        # piano-sunuefi
 fastboot -s SunUEFI-piano getvar version
 fastboot -s SunUEFI-piano getvar storage-policy
@@ -51,19 +52,38 @@ fastboot -s SunUEFI-piano fetch 分区名 文件
 
 只读。单次请求最多 64 KiB，fastboot 工具会自动分块。
 
+## 刷写分区
+
+```sh
+fastboot -s SunUEFI-piano flash sunuefi_esp esp.img
+fastboot -s SunUEFI-piano flash sunuefi_root root.img
+fastboot -s SunUEFI-piano reboot
+```
+
+支持原始镜像和 Android sparse 镜像；大镜像由电脑端 fastboot 按下载上限拆分。
+分区名必须与 GPT 中的名称完全一致，例如原厂 A/B 分区要明确写 `_a` 或 `_b`。
+不按原厂分区名称加软件写保护。`erase 分区名` 将整个指定分区清零；
+`flash` 只改写镜像覆盖的范围，sparse 空洞保留原有数据。
+
+刷写只会卸载目标分区。目标分区上有文件打开时，先关闭文件再重试。
+只有刷写保存固件设置的 `persist` 分区时，固件才会先保存设置并暂停变量写入；
+刷写结束后请重启，再更改固件设置。
+每段写入后都会读回比较，完成时同步。写入报错后先重新刷入完整镜像，
+再从该分区启动。
+
 ## 启动与退出
 
 | 命令 | 作用 |
 | --- | --- |
-| `oem boot-stable` | 从启动镜像（ESP）直接启动 Linux UKI |
+| `oem boot-stable` | 从启动镜像（ESP）进入 systemd-boot 并启动 Linux |
 | `oem setup`、`oem shell`、`oem simpleinit` | 切换到 UEFI 设置、Shell 或 SimpleInit 菜单 |
-| `reboot` | 释放 USB、存储、时钟和 SMMU 后重启，沿用已保存的启动路线 |
+| `reboot` | 保存设置、同步存储后重启，沿用已保存的启动路线 |
 | `continue` | 同样重启，不改变启动选择，也不会直接启动 Linux |
 | `stage 文件` | 把文件下载到内存，最大 64 MiB |
 | `oem sha256`、`oem discard` | 对暂存的数据计算哈希，或丢弃它 |
 
 ## 不支持的命令
 
-`flash`、`erase`、`flashing`、切换槽位和未知的 `oem` 命令一律被拒绝。读日志用 `oem ramlog`，`oem log` 会失败。`boot 文件` 还不是通用的系统或 EFI 启动入口。
+`flashing`、切换槽位和未知的 `oem` 命令被拒绝。读日志用 `oem ramlog`，`oem log` 会失败。`boot 文件` 还不是通用的系统或 EFI 启动入口。
 
 电脑看不到 `SunUEFI-piano` 时，见[故障恢复](recovery.md)。

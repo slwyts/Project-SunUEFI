@@ -58,8 +58,6 @@ def main():
     blob=image.read_bytes();ks,rs=struct.unpack_from('<2I',blob,8)
     roff=4096+((ks+4095)//4096)*4096
     if blob[:8]!=b'ANDROID!'or struct.unpack_from('<I',blob,40)[0]!=args.header_version or blob[4096:4096+ks]!=kernel.read_bytes()or rs!=len(payload)or blob[roff:roff+rs]!=payload:raise ValueError('Product boot image contents mismatch')
-    linux_source=ws/'Build/pianoProductPkg/DEBUG_CLANGPDB/AARCH64/pianoProductPkg/Applications/LinuxBoot/LinuxBoot/OUTPUT/PianoLinuxBoot.efi'
-    image_info(linux_source,kernel=False)
     result={**prepared,'build_id':build['build_id'],'build_inputs':build['inputs'],'android_header_version':args.header_version,
         'status':'INCOMPLETE_NOT_RELEASE','not_release_reasons':[name+': '+entry['status']for name,entry in prepared['backends'].items()],
         'single_image_entry_compatibility':'same bytes; all entry-specific physical boot/recovery/fastboot_boot validation pending',

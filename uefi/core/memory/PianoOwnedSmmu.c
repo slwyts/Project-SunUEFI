@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Narrow adapter to the captured SM8750 HAL IOMMU ABI. Each instance owns one
-// domain, root table and stream. Never resets or detaches other SMMU contexts.
+// domain and root table. Never resets or detaches other SMMU contexts.
 #include "PianoOwnedSmmu.h"
 #include <Protocol/LoadedImage.h>
 #include <Library/UefiBootServicesTableLib.h>
@@ -25,6 +25,7 @@ typedef struct {UINT64 Revision;VOID (*GetApi)(VOID **);VOID (*Reserved)(VOID);}
 STATIC EFI_GUID mGuid={0x54B6D3B4,0x5D33,0x4F91,{0x86,0,0x6C,0x41,0xD5,0xDE,0xB1,0x9A}};
 STATIC PIANO_OWNED_SMMU mExperiment;
 STATIC PIANO_DMA_DEVICE mDevice;
+STATIC CONST PIANO_OWNED_SMMU *mActiveGpi;
 STATIC UINT32 mDiagnosticSequence;
 STATIC BOOLEAN PeerGeometry(CONST PIANO_SMMU_SNAPSHOT *A,CONST PIANO_SMMU_SNAPSHOT *B);
 STATIC BOOLEAN PeerDevice(CONST PIANO_SMMU_DEVICE *A,CONST PIANO_SMMU_DEVICE *B);
@@ -309,7 +310,42 @@ STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEV
 }
 EFI_STATUS PianoOwnedSmmuOpen(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D){return OpenResource(Fdt,C,D,0);}
 EFI_STATUS PianoOwnedSmmuOpenUsb(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D){return OpenResource(Fdt,C,D,1);}
-EFI_STATUS PianoOwnedSmmuOpenGpi(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D){return OpenResource(Fdt,C,D,2);}
+EFI_STATUS PianoOwnedSmmuOpenGpi(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEVICE *D){
+  if(!C || !D)return EFI_INVALID_PARAMETER;
+  if(mActiveGpi)return EFI_ALREADY_STARTED;
+  EFI_STATUS Status=OpenResource(Fdt,C,D,2);
+  if(Status==EFI_SUCCESS)mActiveGpi=C;
+  return Status;
+}
+EFI_STATUS PianoOwnedSmmuExpectActiveGpi(PIANO_SMMU_SNAPSHOT *Expected){
+  if(!Expected)return EFI_INVALID_PARAMETER;
+  CONST PIANO_OWNED_SMMU *Gpi=mActiveGpi;
+  if(!Gpi)return EFI_SUCCESS;
+  if(Gpi->DeviceIndex!=2 || !Gpi->Verified || !Gpi->Attached || !Gpi->QupAttached || !Gpi->OwnedIdentitySaved ||
+     Gpi->ExitRetained || Gpi->CloseLedger.Uncertain || !Gpi->Domain || !Gpi->TableMemory.Signature ||
+     Gpi->TableMemory.Quarantined || Gpi->TableMemory.Physical!=Gpi->OwnedTablePhysical)return EFI_NOT_READY;
+  CONST PIANO_SMMU_SNAPSHOT *Before=&Gpi->Before,*Attached=&Gpi->AttachedSnapshot;
+  if(!PeerGeometry(Expected,Before) || !PeerGeometry(Before,Attached) ||
+     Attached->Device[2].StreamIndex==Attached->Device[3].StreamIndex)return EFI_COMPROMISED_DATA;
+  for(UINTN I=2;I<PIANO_SMMU_DEVICE_COUNT;++I){
+    CONST PIANO_SMMU_DEVICE *Route=&Attached->Device[I];
+    UINT16 Slot=Route->StreamIndex;
+    if(!Route->Present || Route->Sid!=(I==2?0xB6:0xA3) || Slot>=Before->Groups ||
+       Route->ContextBank>=Before->Banks || Route->Smr!=Attached->RawSmr[Slot] ||
+       Route->S2cr!=Attached->RawS2cr[Slot] ||
+       Before->Device[I].Present || !PeerDevice(&Expected->Device[I],&Before->Device[I]) ||
+       (Before->ExtendedIds?(Before->RawS2cr[Slot]&BIT10):(Before->RawSmr[Slot]&BIT31)) ||
+       Expected->RawSmr[Slot]!=Before->RawSmr[Slot] || Expected->RawS2cr[Slot]!=Before->RawS2cr[Slot])
+      return EFI_COMPROMISED_DATA;
+  }
+  for(UINTN I=2;I<PIANO_SMMU_DEVICE_COUNT;++I){
+    CONST PIANO_SMMU_DEVICE *Route=&Attached->Device[I];
+    Expected->Device[I]=*Route;
+    Expected->RawSmr[Route->StreamIndex]=Route->Smr;
+    Expected->RawS2cr[Route->StreamIndex]=Route->S2cr;
+  }
+  return EFI_SUCCESS;
+}
 EFI_STATUS PianoOwnedSmmuCheckGpi(PIANO_OWNED_SMMU *C) {
   if(!C || C->DeviceIndex!=2 || !C->Attached || C->ExitRetained || C->TableMemory.Quarantined)
     return EFI_NOT_READY;
@@ -414,6 +450,7 @@ EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C) {
   EFI_STATUS Status=C->TableMemory.Signature?PianoDmaFree(&C->TableMemory):EFI_SUCCESS;
   C->CloseLedger.TableFreeStatus=Status;if(Status!=EFI_SUCCESS)C->CloseLedger.Uncertain=TRUE;
   C->CloseLedger.ExactClose=Status==EFI_SUCCESS && !C->CloseLedger.Uncertain;
+  if(C==mActiveGpi && C->CloseLedger.ExactClose)mActiveGpi=NULL;
   PianoOwnedSmmuReport(C);return Status;
 }
 EFI_STATUS PianoOwnedSmmuRetainForExit(PIANO_OWNED_SMMU *C) {
@@ -496,6 +533,16 @@ STATIC BOOLEAN PeerSnapshot(CONST PIANO_SMMU_SNAPSHOT *A,CONST PIANO_SMMU_SNAPSH
   if(!PeerRows(A,B,MAX_UINT16,MAX_UINT16))return FALSE;
   return PeerDevice(&A->Device[0],&B->Device[0]) && PeerDevice(&A->Device[1],&B->Device[1]);
 }
+STATIC BOOLEAN UsbRetiredPeers(CONST PIANO_OWNED_SMMU *U,CONST PIANO_SMMU_SNAPSHOT *Now,
+                               UINT32 Kind){
+  // A proven pre-DMA startup rollback is also checked while the menu is
+  // running with touch active. The final UFS handoff still checks its old baseline.
+  if(Kind!=PIANO_USB_RETIRE_STARTUP_FAILED_CLEAN || !mActiveGpi)
+    return PeerRows(&U->After,Now,MAX_UINT16,MAX_UINT16);
+  PIANO_SMMU_SNAPSHOT Expected=U->After;
+  return PianoOwnedSmmuExpectActiveGpi(&Expected)==EFI_SUCCESS &&
+    PeerRows(&Expected,Now,MAX_UINT16,MAX_UINT16);
+}
 STATIC EFI_STATUS PeerRetired(CONST PIANO_OWNED_SMMU *U,CONST PIANO_SMMU_USB_RETIRE_EVIDENCE *E,CONST PIANO_SMMU_SNAPSHOT *Now) {
   if(U==NULL || E==NULL || Now==NULL)return EFI_INVALID_PARAMETER;
   BOOLEAN BuffersRetired=E->Kind==PIANO_USB_RETIRE_RUNNING?E->DmaBuffersFreed==9:
@@ -515,9 +562,9 @@ STATIC EFI_STATUS PeerRetired(CONST PIANO_OWNED_SMMU *U,CONST PIANO_SMMU_USB_RET
   if(!PeerIdentity(&U->AttachedSnapshot,1,0x40,U->OwnedTablePhysical))return EFI_COMPROMISED_DATA;
   UINT16 Slot=U->AttachedSnapshot.Device[1].StreamIndex;
   if(!PeerRows(&U->Before,&U->AttachedSnapshot,Slot,MAX_UINT16) || !PeerRows(&U->Before,&U->After,Slot,MAX_UINT16) ||
-     !PeerRows(&U->Before,Now,Slot,MAX_UINT16) || !PeerAbsent(&U->Before,1,0x40) || !PeerAbsent(&U->After,1,0x40) ||
+     !UsbRetiredPeers(U,Now,E->Kind) || !PeerAbsent(&U->Before,1,0x40) || !PeerAbsent(&U->After,1,0x40) ||
      !PeerAbsent(Now,1,0x40) || (U->Before.RawSmr[Slot]&BIT31) || (U->Before.RawS2cr[Slot]&BIT10) ||
-     U->After.RawSmr[Slot]!=0 || U->After.RawS2cr[Slot]!=0 || Now->RawSmr[Slot]!=0 || Now->RawS2cr[Slot]!=0)return EFI_COMPROMISED_DATA;
+     U->After.RawSmr[Slot]!=0 || U->After.RawS2cr[Slot]!=0)return EFI_COMPROMISED_DATA;
   CONST PIANO_SMMU_DEVICE *F=&U->Before.Device[0];
   if(!PeerIdentity(&U->Before,0,0x60,F->Ttbr0&0x0000fffffffff000ULL) ||
      !PeerDevice(F,&U->AttachedSnapshot.Device[0]) || !PeerDevice(F,&U->After.Device[0]) || !PeerDevice(F,&Now->Device[0]) ||
@@ -540,7 +587,7 @@ EFI_STATUS PianoOwnedSmmuPrepareRetiredUsbContract(CONST PIANO_OWNED_SMMU *Ufs,C
   if(Contract==NULL)return EFI_INVALID_PARAMETER;
   ZeroMem(Contract,sizeof(*Contract));
   if(Ufs==NULL || Proof==NULL || Current==NULL)return EFI_INVALID_PARAMETER;
-  if(!Proof->Valid || Proof->Revision!=PIANO_SMMU_USB_RETIRE_REVISION || Proof->UsbContext==NULL)return EFI_NOT_READY;
+  if(mActiveGpi || !Proof->Valid || Proof->Revision!=PIANO_SMMU_USB_RETIRE_REVISION || Proof->UsbContext==NULL)return EFI_NOT_READY;
   CONST PIANO_OWNED_SMMU *Usb=Proof->UsbContext;EFI_STATUS S=PeerRetired(Usb,&Proof->Execution,Current);if(S!=EFI_SUCCESS)return S;
   if(Proof->Slot!=Usb->AttachedSnapshot.Device[1].StreamIndex || Proof->ContextBank!=Usb->AttachedSnapshot.Device[1].ContextBank ||
      Proof->TablePhysical!=Usb->OwnedTablePhysical || !PeerSnapshot(&Proof->UsbBaseline,&Usb->Before) ||

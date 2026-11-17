@@ -30,6 +30,8 @@ static BOOLEAN image_live,keyboard_live=TRUE,loan,alive=TRUE;static UINT8 payloa
 static EFI_LOADED_IMAGE_PROTOCOL replacement_loaded;
 static UINTN pumps,stops,starts,loads,unloads,acquires,validates,releases,key_reg,key_unreg,frees,pool_calls;
 static UINTN pogo_pumps,touch_pumps;
+static BOOLEAN bulk_active,download_active;
+static UINT32 bulk_events;
 static EFI_GUID *missing_setup_guid;static EFI_STATUS missing_setup_status;static UINTN fallback_logs;
 static PIANO_SMMU_RETIRED_USB_PROOF startup_usb_proof;static UINTN proof_checks;static EFI_STATUS proof_check_status=EFI_SUCCESS;
 static UINT32 current_action,simple_runs;static VOID *image_base;static jmp_buf stop;
@@ -204,6 +206,37 @@ static EFI_STATUS EFIAPI start(EFI_HANDLE Handle,UINTN *Bytes,CHAR16 **Data){
     free(image_base);image_base=NULL;image_live=FALSE;return file_case==6?EFI_DEVICE_ERROR:EFI_SUCCESS;
   }
   assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_GUI,1000)==EFI_SUCCESS);
+  if(scenario==153 || scenario==154){
+    UINTN Inputs=pogo_pumps;
+    UINT32 Action;UINT64 Seq;
+    bulk_active=TRUE;
+    assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_WAIT_EVENT,1000)==EFI_SUCCESS);
+    assert(pogo_pumps==Inputs+1 && touch_pumps==pogo_pumps);
+    if(scenario==153){
+      EFI_KEY_DATA Key={0};Key.Key.ScanCode=SCAN_F12;
+      assert(key_callback(&Key)==EFI_SUCCESS);
+    }else assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_REQUEST_REBOOT)==EFI_SUCCESS);
+    bulk_events=2;
+    assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_WAIT_EVENT,1000)==EFI_SUCCESS);
+    assert(pogo_pumps==Inputs+1 && touch_pumps==pogo_pumps);
+    assert(runtime->GetPendingAction(runtime,&Action,&Seq)==EFI_SUCCESS && Action==PIANO_PRODUCT_ACTION_NONE);
+    bulk_events=0;
+    assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_WAIT_EVENT,1000)==EFI_SUCCESS);
+    assert(pogo_pumps==Inputs+2 && touch_pumps==pogo_pumps);
+    assert(runtime->GetPendingAction(runtime,&Action,&Seq)==EFI_SUCCESS && Action==PIANO_PRODUCT_ACTION_NONE);
+    bulk_active=FALSE;
+    assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_GUI,1000)==(scenario==153?EFI_ABORTED:EFI_SUCCESS));
+    assert(runtime->GetPendingAction(runtime,&Action,&Seq)==EFI_SUCCESS &&
+      Action==(scenario==153?PIANO_PRODUCT_ACTION_SETUP:PIANO_PRODUCT_ACTION_RETURN_CORE));
+  }
+  if(scenario==155){
+    UINT32 Action;UINT64 Seq;
+    bulk_active=download_active=TRUE;
+    assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_GUI,1000)==EFI_SUCCESS);
+    assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_REQUEST_REBOOT)==EFI_SUCCESS);
+    assert(runtime->GetPendingAction(runtime,&Action,&Seq)==EFI_SUCCESS &&
+      Action==PIANO_PRODUCT_ACTION_RETURN_CORE);
+  }
   if(scenario==150){
     assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE)==EFI_SUCCESS);
     assert(!stops);
@@ -254,6 +287,7 @@ EFI_STATUS PianoProductReleaseSimpleInit(CONST PIANO_PRODUCT_PAYLOAD_VIEW *V){++
 EFI_STATUS PianoUsbControllerServicePumpApp(UINT32 Reason,UINTN Budget){assert(tpl==TPL_APPLICATION && alive && Budget==1000);++pumps;if(scenario==11)assert(runtime->Pump(runtime,Reason,Budget)==EFI_NOT_READY);return scenario==14?EFI_UNSUPPORTED:EFI_SUCCESS;}
 EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){
   *S=(PIANO_DWC3_SERVICE_STATUS){.Revision=scenario==47?2:1,.Started=scenario!=14,.Configured=TRUE,.Phase=PianoUsbServiceListening,.BulkActive=scenario==83};
+  if(scenario>=153){S->BulkActive=bulk_active;S->Downloading=download_active;S->WorkPending=bulk_active;S->QueuedEvents=bulk_events;}
   if(scenario>=135 && scenario<=140){S->Started=FALSE;S->Configured=FALSE;S->Phase=PianoUsbServiceOff;S->LastStatus=EFI_TIMEOUT;}
   if(scenario==140 || (scenario>=141 && scenario<=146)){S->Started=FALSE;S->Configured=FALSE;S->Phase=PianoUsbServiceOff;S->Action=PianoUsbServiceActionFault;S->LastStatus=EFI_TIMEOUT;}
   if(scenario==142){S->Started=TRUE;S->Phase=PianoUsbServiceListening;}
@@ -271,7 +305,7 @@ EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){
 }
 EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RETIRE_REPORT *Report){(void)Reason;(void)Report;++stops;assert(!"UI return must not stop shared USB");return EFI_DEVICE_ERROR;}
 int main(int argc,char **argv){
-  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=152);
+  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=155);
   gST=&system_table;if(scenario==151)gST->ConsoleInHandle=(VOID *)201;
   gBS=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);assert(gBS!=MAP_FAILED);
   *gBS=(EFI_BOOT_SERVICES){.RaiseTPL=raise,.RestoreTPL=restore,.CreateEventEx=create_ex,.CreateEvent=create,.CloseEvent=close_event,
@@ -287,6 +321,11 @@ int main(int argc,char **argv){
   if(scenario==13){assert(S==EFI_COMPROMISED_DATA && PianoBootPolicyReport()->Retained);goto Done;}
   if(scenario>=23 && scenario<=25){assert(S==EFI_COMPROMISED_DATA && PianoBootPolicyReport()->Retained && !starts);goto Done;}
   assert(S==EFI_SUCCESS && runtime && key_reg==1);
+  if(scenario>=153){
+    assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_SIMPLEINIT)==EFI_SUCCESS);
+    assert(PianoBootPolicyDispatchPending()==EFI_SUCCESS && starts==1 && !stops);
+    assert(PianoBootPolicyStop()==EFI_SUCCESS && !runtime);goto Done;
+  }
   if(scenario>=151) {
     assert(PianoBootPolicyReport()->KeyboardProviders==1);
     if(scenario==152)gST->ConsoleInHandle=(VOID *)201;
@@ -412,7 +451,7 @@ int main(int argc,char **argv){
     UINT64 Sample=0;BOOLEAN Active=TRUE;assert(idle&&idle->Runtime==runtime&&idle->Read(idle,runtime,&Sample,&Active)==EFI_NOT_READY);
     assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_WAIT_EVENT,1000)==EFI_SUCCESS);
     assert(idle->Read(idle,runtime,&Sample,&Active)==EFI_SUCCESS&&Sample==1&&Active==(scenario==83));
-    assert(pogo_pumps==(scenario==83?0:1)&&touch_pumps==pogo_pumps);
+    assert(pogo_pumps==1&&touch_pumps==pogo_pumps);
     if(scenario==86){assert(PianoBootPolicyStop()==EFI_DEVICE_ERROR&&PianoBootPolicyReport()->Retained&&runtime&&idle);goto Done;}
     assert(PianoBootPolicyStop()==EFI_SUCCESS&&!runtime&&!idle&&!stops);goto Done;
   }

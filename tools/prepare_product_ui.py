@@ -261,8 +261,11 @@ hook(SI+'src/gui/drivers/uefi_gop.c', '\tuefigop_apply_mode();\n',
      '\t\t(unsigned long long)gop->Mode->FrameBufferBase,(unsigned long long)gop->Mode->FrameBufferSize,\n'
      '\t\tgop->Mode->Info->HorizontalResolution,gop->Mode->Info->VerticalResolution,\n'
      '\t\tgop->Mode->Info->PixelsPerScanLine,(unsigned)gop->Mode->Info->PixelFormat);\n')
-hook(SI+'src/gui/interface/core/bootmenu.c', '#include"gui/tools.h"\n',
-      '#include"gui/tools.h"\n#include"gui/msgbox.h"\n#include"piano_bootmenu.h"\n#ifdef ENABLE_UEFI\n#include<Library/PianoProductPumpLib.h>\n#endif\n')
+BOOTMENU_INCLUDE = '#include"gui/tools.h"\n'
+BOOTMENU_INCLUDES = (BOOTMENU_INCLUDE + '#include"gui/msgbox.h"\n#include"piano_bootmenu.h"\n'
+                     '#ifdef ENABLE_UEFI\n#include<Library/PianoProductPumpLib.h>\n'
+                     '#include"piano_product_runtime.h"\n#endif\n')
+hook(SI+'src/gui/interface/core/bootmenu.c', BOOTMENU_INCLUDE, BOOTMENU_INCLUDES)
 hook(SI+'src/gui/interface/core/bootmenu.c', '\tint timeout;\n',
      '\tint timeout;\n\tuint32_t auto_boot_at;\n\tbool auto_boot_started;\n')
 hook(SI+'src/gui/interface/core/bootmenu.c', '''static void bootmenu_auto_boot(struct bootmenu*bm){
@@ -292,11 +295,21 @@ hook(SI+'src/gui/interface/core/bootmenu.c', '''static void bootmenu_auto_boot(s
 		return;
 	}
 	if(bm->anim&&!bm->anim_done)return;
+	uint32_t now;
+	#if defined(ENABLE_UEFI) && defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP
+	if(!piano_product_gui_autoboot_tick(&now)){
+		lv_obj_set_hidden(bm->time,true);
+		lv_disp_trig_activity(NULL);
+		return;
+	}
+	#else
+	now=lv_tick_get();
+	#endif
 	if(!bm->auto_boot_started){
-		bm->auto_boot_at=lv_tick_get();
+		bm->auto_boot_at=now;
 		bm->auto_boot_started=true;
 	}
-	uint32_t elapsed=lv_tick_elaps(bm->auto_boot_at);
+	uint32_t elapsed=now-bm->auto_boot_at;
 	if(elapsed>=(uint32_t)bm->timeout*1000){
 		bootmenu_remove_auto_boot(bm);
 		bootmenu_click(&(lv_event_t){.user_data=bm});
@@ -439,7 +452,7 @@ def prepare(root=ROOT, apply=False, check_pins=True):
             newline[path]=b'\r\n' if b'\r\n' in raw else b'\n'
             desired[path]=raw.decode().replace('\r\n','\n')
             if relative==SI+'src/gui/interface/core/bootmenu.c' and previous_menu_include in desired[path]:
-                desired[path]=desired[path].replace(previous_menu_include,previous_menu_include.replace('#include"gui/msgbox.h"\n','#include"gui/msgbox.h"\n#include"piano_bootmenu.h"\n'),1)
+                desired[path]=desired[path].replace(previous_menu_include,BOOTMENU_INCLUDES,1)
             if relative==SI+'src/gui/interface/core/bootmenu.c':
                 desired[path]=desired[path].replace('"piano-setup"','"setup"').replace('"piano-stable"','"linux"').replace('"piano-shell"','"shell"').replace('未能返回 Android，请稍后重试。','未能重启，请稍后重试。')
             if relative==SI+'src/lib/reboot.c':

@@ -34,7 +34,8 @@ static EFI_STATUS boot_take(VOID *Context,PIANO_FASTBOOT *S,CONST PIANO_FB_BOOT_
 }
 static PIANO_FB_BOOT backend={.Context=(VOID *)123,.MaxImageBytes=65536,.Ready=boot_ready,.Validate=boot_validate,.TakeAfterAck=boot_take};
 static VOID tick_boot(UINTN Us) {
-  if(Us!=1000 || !mRing.Active || !(regs[0xC704/4]&BIT31) || (boot_stage==0 && !mPending[0]))return;
+  if(Us!=1000 || boot_stage==12 || !mRing.Active ||
+     !(regs[0xC704/4]&BIT31) || (boot_stage==0 && !mPending[0]))return;
   if(boot_stage<6){lifecycle_stage=boot_stage;lifecycle_events(Us);boot_stage=lifecycle_stage;return;}
   DWC_TRB *T;
   if(boot_stage==6 || boot_stage==10) {

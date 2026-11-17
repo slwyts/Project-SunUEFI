@@ -31,6 +31,39 @@
       }
     },
     {
+      "repository": "upstream/Mu-Silicium/Mu_Basecore",
+      "base_commit": "64f478939955e45faa632c160ae2a75a5ff7ef7f",
+      "patch": "mu-basecore/cfb9372/0003-enumerate-empty-boot-order.patch",
+      "sha256": "5db909639a2a793981ee2bfad55a006c3bcc8e8f297535bf84a33c989db67a5f",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Remove when Mu registers enumerated boot devices even when BootOrder is absent or empty. Verify first boot and removal of the last stale option still discover standard disk fallback paths."
+      }
+    },
+    {
+      "repository": "upstream/Mu-Silicium/Mu_Basecore",
+      "base_commit": "64f478939955e45faa632c160ae2a75a5ff7ef7f",
+      "patch": "mu-basecore/cfb9372/0004-enumerate-gpt-without-repair.patch",
+      "sha256": "65a6bd5b1584acb5a5aaf36894419d4a8895dfdfc273902ec7e1d32b0c5c4dbe",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Partition discovery must use a validated primary or backup GPT without automatically writing repairs to the disk. Verify primary-only, backup-only, both-valid and both-invalid cases issue no writes while explicit standard BlockIO writes remain available."
+      }
+    },
+    {
+      "repository": "upstream/Mu-Silicium/Mu_Basecore",
+      "base_commit": "64f478939955e45faa632c160ae2a75a5ff7ef7f",
+      "patch": "mu-basecore/cfb9372/0005-keep-open-fat-files-during-raw-write.patch",
+      "sha256": "c347e0c3455a48e04ee82c58dac3053d8650756097f4ed2425aeded195ffaa75",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Remove when a caller can stop the FAT driver for a planned raw write without invalidating open files. Verify that active files refuse this operation, a closed volume flushes before detach, and media removal still invalidates open files."
+      }
+    },
+    {
       "repository": "upstream/Mu-Silicium",
       "base_commit": "8471e47f5248ebbffc2e6196b683204163efe155",
       "patch": "mu-silicium.patch",

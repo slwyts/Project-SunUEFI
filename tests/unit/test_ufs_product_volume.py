@@ -1,7 +1,6 @@
 """Actual product provider and actual shared-UFS adapter, host only."""
 import platform
 import os
-import importlib.util
 from pathlib import Path
 import subprocess
 import tempfile
@@ -12,15 +11,11 @@ TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/us
 INC=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
 CRYPTO=ROOT/'upstream/Mu-Silicium/Mu_Basecore/CryptoPkg/Include'
 class UfsProductVolumeTests(unittest.TestCase):
-    @unittest.skipUnless((ROOT/'private/captures/ufs-test-area-1/manifest.json').is_file(),'private real capture absent')
     def test_actual_provider_reserved_and_original_cases(self):
         with tempfile.TemporaryDirectory(prefix='piano-product-volume-') as folder:
             out=Path(folder)
             for name in ('PianoExt4.h','PianoStorageIo.h','PianoStorageIo.inc'):
                 (out/name).write_bytes((ROOT/'uefi/components/ext4'/name).read_bytes())
-            spec=importlib.util.spec_from_file_location('piano_capture',ROOT/'tools/prepare_ufs_write_test.py')
-            capture=importlib.util.module_from_spec(spec);spec.loader.exec_module(capture)
-            (out/'PianoUfsWriteTestBaseline.h').write_bytes(capture._render_header(capture.verify_capture()))
             sources=[ROOT/'tests/native/PianoUfsProductVolumeTest.c',ROOT/'uefi/core/storage/PianoUfsProductVolume.c',ROOT/'uefi/core/storage/PianoGpt.c']
             cmd=['cc','-std=gnu11','-fshort-wchar','-g','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-misleading-indentation','-Wno-unused-const-variable','-fsanitize=address,undefined','-fno-pie','-no-pie','-I',str(out),'-I',str(INC),'-I',str(INC/HOST_PROCESSOR_BIND),'-I',str(CRYPTO),*[str(p) for p in sources],'-lcrypto','-o',str(out/'volume')]
             subprocess.run(cmd,check=True);subprocess.run([str(out/'volume')],check=True)

@@ -1,0 +1,49 @@
+diff --git a/MdeModulePkg/Universal/Disk/PartitionDxe/Gpt.c b/MdeModulePkg/Universal/Disk/PartitionDxe/Gpt.c
+--- a/MdeModulePkg/Universal/Disk/PartitionDxe/Gpt.c
++++ b/MdeModulePkg/Universal/Disk/PartitionDxe/Gpt.c
+@@ -151,39 +151,15 @@ PartitionInstallGptChildHandles (
+       goto Done;
+     }
+ 
+-    DEBUG ((DEBUG_INFO, " Valid backup partition table\n"));
+-    DEBUG ((DEBUG_INFO, " Restore primary partition table by the backup\n"));
+-    //
+-    // Both the restore write and the subsequent validation can fail (for
+-    // example on write-protected media, or when the backup header's
+-    // AlternateLBA points beyond the end of the device).  Never fall through
+-    // with PrimaryHeader left in an unrestored/invalid state; bail out so the
+-    // partition table that gets used is always one that passed validation.
+-    //
+-    if (!PartitionRestoreGptTable (BlockIo, DiskIo, BackupHeader)) {
+-      DEBUG ((DEBUG_INFO, " Restore primary partition table error\n"));
+-      goto Done;
+-    }
+-
+-    if (!PartitionValidGptTable (BlockIo, DiskIo, BackupHeader->AlternateLBA, PrimaryHeader)) {
+-      DEBUG ((DEBUG_INFO, " Not Valid restored primary partition table\n"));
+-      goto Done;
+-    }
+-
+-    DEBUG ((DEBUG_INFO, " Restore primary partition table success\n"));
++    // Discovery must not write a disk. Use the validated backup in memory;
++    // explicit partitioning tools remain responsible for repairing metadata.
++    CopyMem (PrimaryHeader, BackupHeader, sizeof (*PrimaryHeader));
++    DEBUG ((DEBUG_WARN, " Using backup GPT without modifying the disk\n"));
+   } else if (!PartitionValidGptTable (BlockIo, DiskIo, PrimaryHeader->AlternateLBA, BackupHeader)) {
+-    DEBUG ((DEBUG_INFO, " Valid primary and !Valid backup partition table\n"));
+-    DEBUG ((DEBUG_INFO, " Restore backup partition table by the primary\n"));
+-    if (!PartitionRestoreGptTable (BlockIo, DiskIo, PrimaryHeader)) {
+-      DEBUG ((DEBUG_INFO, " Restore backup partition table error\n"));
+-    }
+-
+-    if (PartitionValidGptTable (BlockIo, DiskIo, PrimaryHeader->AlternateLBA, BackupHeader)) {
+-      DEBUG ((DEBUG_INFO, " Restore backup partition table success\n"));
+-    }
++    DEBUG ((DEBUG_WARN, " Using primary GPT; backup needs repair by a partitioning tool\n"));
+   }
+ 
+-  DEBUG ((DEBUG_INFO, " Valid primary and Valid backup partition table\n"));
++  DEBUG ((DEBUG_INFO, " Using validated GPT for partition discovery\n"));
+ 
+   //
+   // Read the EFI Partition Entries

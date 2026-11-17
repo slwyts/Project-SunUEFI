@@ -11,7 +11,6 @@
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/DebugLib.h>
-#include <Library/MemoryAllocationLib.h>
 
 #define ARB_CORE 0x0C400000U
 #define ARB_CFG 0x0C42D000U
@@ -73,9 +72,8 @@ STATIC EFI_STATUS Download(VOID){
   S=Scm(0xC2000502,2,0x1FD9000,1,NULL);if(S!=EFI_SUCCESS)return S;
   S=Scm(0xC2000501,1,0x1FD9000,0,&Value);return S!=EFI_SUCCESS?S:Value==1?EFI_SUCCESS:EFI_DEVICE_ERROR;
 }
-EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *O,EFI_HANDLE Image){
-  if(!O||!O->Report.Clean||O->Report.Retained||O->Report.ServicesLost||
-     !O->Report.UfsStopped||!O->Report.InputStopped||!PianoProductOwnersUsbRetired(O)||
+EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *O){
+  if(!O||!O->Report.ResetPrepared||O->Report.Busy||O->Report.ServicesLost||
      (O->Report.AllowedAction!=PianoUsbServiceActionReboot&&O->Report.AllowedAction!=PianoUsbServiceActionContinue))return EFI_ACCESS_DENIED;
   UINT32 Target=O->Report.Origin==PianoProductRequestUi?O->Report.ResetTarget:0;
   if(Target>PIANO_PRODUCT_RESET_EDL)return EFI_INVALID_PARAMETER;
@@ -84,20 +82,11 @@ EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *O,EFI_HANDLE Image){
     S=Reason(Target==PIANO_PRODUCT_RESET_RECOVERY?1:2);
   else if(Target==PIANO_PRODUCT_RESET_EDL)S=Download();
   if(S!=EFI_SUCCESS)return S;
-  DEBUG((DEBUG_WARN,"PIANO_RESET target=%u owners_clean=1\n",Target));
-  // Complete standard EBS before power/reset too. Cache the runtime function
-  // and arguments; after success do not touch gBS, gRT, GOP or the RAM log.
-  EFI_RESET_SYSTEM Reset=gRT->ResetSystem;
+  if(!gRT || !gRT->ResetSystem)return EFI_UNSUPPORTED;
+  DEBUG((DEBUG_WARN,"PIANO_RESET target=%u storage_quiesced=1 exit_boot_services=0\n",Target));
+  // ResetSystem is valid while Boot Services are active. Keep every device's
+  // DMA allocation alive until the platform reset stops the hardware.
   EFI_RESET_TYPE Type=Target==PIANO_PRODUCT_RESET_SHUTDOWN?EfiResetShutdown:EfiResetCold;
-  UINTN Size=0,Key=0,Stride=0;UINT32 Version=0;
-  S=gBS->GetMemoryMap(&Size,NULL,&Key,&Stride,&Version);
-  if(S!=EFI_BUFFER_TOO_SMALL||!Stride||Stride>MAX_UINTN/16||Size>MAX_UINTN-16*Stride)return EFI_COMPROMISED_DATA;
-  UINTN Capacity=Size+16*Stride;EFI_MEMORY_DESCRIPTOR *Map=AllocatePool(Capacity);if(!Map)return EFI_OUT_OF_RESOURCES;
-  for(UINTN Attempt=0;Attempt<2;++Attempt){
-    Size=Capacity;S=gBS->GetMemoryMap(&Size,Map,&Key,&Stride,&Version);if(S!=EFI_SUCCESS)return S;
-    S=gBS->ExitBootServices(Image,Key);
-    if(S==EFI_SUCCESS){Reset(Type,EFI_SUCCESS,0,NULL);CpuDeadLoop();while(TRUE){}}
-    if(S!=EFI_INVALID_PARAMETER)return S;
-  }
-  return S;
+  gRT->ResetSystem(Type,EFI_SUCCESS,0,NULL);
+  return EFI_DEVICE_ERROR;
 }

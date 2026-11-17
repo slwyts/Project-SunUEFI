@@ -61,5 +61,5 @@ class ProductCoreTests(unittest.TestCase):
     def test_failed_uki_reports_original_error_without_menu_retry(self):
         self.run_case('uki-load-failure')
 
-    def test_error_screen_keeps_usb_and_retires_before_acknowledged_reset(self):
+    def test_error_screen_keeps_usb_and_prepares_storage_before_reset(self):
         self.run_case('error-diagnostics')

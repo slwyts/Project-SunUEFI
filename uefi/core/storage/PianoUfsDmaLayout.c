@@ -108,9 +108,12 @@ EFI_STATUS PianoUfsParseCapacity(CONST VOID *Data,UINTN Bytes,UINT64 *LastLba,UI
 EFI_STATUS PianoUfsBuildReadCommand(VOID *Trd,UINTN TrdBytes,VOID *Ucd,UINTN UcdBytes,
                                   UINT64 UcdIova,UINT64 DataIova,UINT32 DataBytes,
                                   UINT8 Tag,UINT8 Lun,PIANO_UFS_READ_COMMAND Cmd,UINT32 Lba,UINT16 Blocks) {
-  if((DataIova&3) || DataBytes==0 || DataBytes>4096 || DataIova>MAX_UINT64-DataBytes || Lun>7 ||
-     Cmd>PianoUfsModeSense10 || (Cmd==PianoUfsReadCapacity16 && DataBytes!=32) ||
-     (Cmd==PianoUfsReadLba10 && (!Blocks || (DataBytes!=512U*Blocks && DataBytes!=4096U*Blocks))))
+  if((DataIova&3) || !DataBytes || DataBytes>PIANO_UFS_PRDT_MAX_DATA_BYTES ||
+     DataIova>MAX_UINT64-DataBytes || Lun>7 || Cmd>PianoUfsModeSense10 ||
+     (Cmd!=PianoUfsReadLba10 && DataBytes>4096) ||
+     (Cmd==PianoUfsReadCapacity16 && DataBytes!=32) ||
+     (Cmd==PianoUfsReadLba10 && (!Blocks || (UINT32)(Blocks-1)>MAX_UINT32-Lba ||
+                                (DataBytes!=512U*Blocks && DataBytes!=4096U*Blocks))))
     return EFI_INVALID_PARAMETER;
   EFI_STATUS Status=Init(Trd,TrdBytes,Ucd,UcdBytes,UcdIova,64);if(EFI_ERROR(Status))return Status;
   UINT8 *T=Trd,*R=Ucd;Le32(T,0x15000000); // READ from device, CT=1, INT=1.

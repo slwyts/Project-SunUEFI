@@ -3,6 +3,9 @@
 #include <Uefi.h>
 #define PIANO_UFS_SHUTDOWN_GUID {0x3D43C751,0xC239,0x42D5,{0x95,0x9C,0x75,0x21,0xF0,0x18,0x02,0x60}}
 typedef struct {UINT64 Revision;EFI_STATUS (*Halt)(VOID);} PIANO_UFS_SHUTDOWN;
+// Flush pending product data and halt storage for an immediate full reset.
+// Keep DMA buffers, mappings and clocks allocated; never resume normal IO.
+EFI_STATUS PianoUfsBlockIoQuiesceForReset(VOID);
 // Cold-reset-only two-phase retirement. Prepare leaves DMA/domain/clocks owned
 // but fully halted so another owner (USB) can retire between these calls.
 EFI_STATUS PianoUfsBlockIoPrepareForReset(VOID);

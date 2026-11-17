@@ -283,7 +283,7 @@ def main():
         path.write_text(text)
     if args.usb_debug:
         path=app/'PianoKeys.c';path.write_text('#define PIANO_USB_POWER_PROBE 1\n'+path.read_text())
-        for name in ('PianoFastboot.h','PianoFastboot.c','PianoUsbDebug.c'):
+        for name in ('PianoFastboot.h','PianoFastboot.c','PianoFastbootFlash.inc','PianoUsbDebug.c'):
             shutil.copyfile(core_source(name, root),app/name)
         path=app/'RamApp.inf'
         text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoFastboot.c\n  PianoUsbDebug.c')
@@ -397,10 +397,10 @@ def main():
         text=text.replace('PianoUfsSetProbeAction(PianoOwnedSmmuMemoryExperiment)',
             'PianoUfsSetProbeAction(PianoUfsReadOnlyDmaExperiment)');path.write_text(text)
     if args.ufs_blockio:
-        for name in ('PianoReadOnlyBlock.c','PianoReadOnlyBlock.h','PianoUfsShutdown.h'):
+        for name in ('PianoBlockIo.c','PianoBlockIo.h','PianoUfsShutdown.h'):
             shutil.copyfile(core_source(name, root),app/name)
         path=app/'PianoUfsReadOnlyDma.c';path.write_text('#define PIANO_UFS_BLOCKIO 1\n'+path.read_text())
-        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoReadOnlyBlock.c')
+        path=app/'RamApp.inf';text=path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoBlockIo.c')
         text+='  gEfiDevicePathProtocolGuid\n';text=text.replace('[Protocols]','[Guids]\n  gEfiEventExitBootServicesGuid\n\n[Protocols]');path.write_text(text)
         path=app/'RamApp.c';text=path.read_text().replace('#pragma pack(1)','VOID PianoUfsBlockIoStop(VOID);\n#pragma pack(1)',1)
         text=text.replace('PianoStopFaultRecovery();','PianoUfsBlockIoStop(); PianoStopFaultRecovery();');path.write_text(text)
@@ -491,7 +491,7 @@ def main():
             path=app/'PianoUsbController.c';path.write_text('#define PIANO_USB_EP0 1\n'+path.read_text())
             path=app/'RamApp.inf';path.write_text(path.read_text().replace('  RamApp.c','  RamApp.c\n  PianoDwc3Device.c\n  PianoUsbControl.c'))
             if args.usb_fastboot:
-                for name in ('PianoFastboot.c','PianoFastboot.h'):
+                for name in ('PianoFastboot.c','PianoFastboot.h','PianoFastbootFlash.inc'):
                     shutil.copyfile(core_source(name, root),app/name)
                 for name in ('PianoDwc3Device.c','PianoUsbControl.c'):
                     path=app/name;path.write_text('#define PIANO_USB_FASTBOOT 1\n'+path.read_text())

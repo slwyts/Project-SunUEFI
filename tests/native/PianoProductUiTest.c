@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <ctype.h>
 #include <stdbool.h>
+#include <stdint.h>
 #undef NULL
 #include <Uefi.h>
 #include <Protocol/SimpleTextIn.h>
@@ -203,12 +204,33 @@ static VOID confd_set_save(CONST char *name,bool save){}
 static VOID tlog_notice(CONST char *format,...){ }
 static char target_boot_name[256];
 struct bootmenu_item{boot_config cfg;};
-struct bootmenu{struct bootmenu_item *selected;};
+typedef struct{void *user_data;}lv_event_t;
+typedef struct lv_timer{void (*callback)(struct lv_timer *);void *user_data;}lv_timer_t;
+typedef struct{bool hidden;int seconds;}lv_obj_t;
+struct bootmenu{
+  struct bootmenu_item *selected;
+  lv_timer_t *auto_boot;
+  lv_obj_t *time;
+  bool anim,anim_done,auto_boot_started;
+  int timeout;
+  uint32_t auto_boot_at;
+};
 static bool bootmenu_chdir(struct bootmenu_item *bi){return false;}
 static int after_exit(VOID *arg){++legacy_boots;return 0;}
 static VOID gui_run_and_exit(int (*callback)(VOID *)){if(callback){callback(NULL);}else ++gui_exits;}
 static VOID piano_bootmenu_enter(VOID *arg){}
 static VOID lv_async_call(VOID(*fn)(VOID *),VOID *arg){fn(arg);}
+static bool countdown_idle;
+static uint32_t countdown_tick;
+static lv_timer_t countdown_timer;
+static bool piano_product_gui_autoboot_tick(uint32_t *milliseconds){*milliseconds=countdown_tick;return countdown_idle;}
+static lv_timer_t *lv_timer_create(void (*callback)(lv_timer_t *),uint32_t delay,void *data){
+  assert(delay==100&&!countdown_timer.callback);countdown_timer=(lv_timer_t){callback,data};return &countdown_timer;
+}
+static void lv_timer_del(lv_timer_t *timer){assert(timer==&countdown_timer&&timer->callback);timer->callback=NULL;}
+static void lv_obj_set_hidden(lv_obj_t *label,bool hidden){label->hidden=hidden;}
+static void lv_label_set_text_fmt(lv_obj_t *label,const char *fmt,int seconds){assert(!strcmp(fmt,"Auto boot in %d seconds"));label->seconds=seconds;}
+static void lv_disp_trig_activity(void *display){assert(!display);}
 typedef UINTN SHELL_STATUS;
 enum{SHELL_SUCCESS,SHELL_INVALID_PARAMETER,SHELL_UNSUPPORTED,SHELL_DEVICE_ERROR};
 enum{TypeValue,TypeFlag,TypeMax};
@@ -242,6 +264,38 @@ static VOID reset(BOOLEAN on){
   InitializeListHead(&ShellInfoObject.ViewingSettings.CommandHistory.Link);
   InitializeListHead(&ShellInfoObject.BufferToFreeList.Link);InitializeListHead(&ShellInfoObject.SplitList.Link);
   user.Action=55;gMisMatch=FALSE;gExitRequired=FALSE;
+}
+static VOID test_autoboot(VOID){
+  reset(TRUE);
+  struct bootmenu_item item={.cfg={.mode=BOOT_EXIT,.ident="linux"}};
+  lv_obj_t label={.hidden=true};
+  struct bootmenu bm={.selected=&item,.time=&label,.anim=true,.timeout=5};
+  bootmenu_auto_boot(&bm);
+  assert(bm.auto_boot==&countdown_timer&&countdown_timer.callback);
+  countdown_idle=true;countdown_tick=100;
+  countdown_timer.callback(&countdown_timer);
+  assert(label.hidden&&!bm.auto_boot_started);
+  bm.anim_done=true;
+  countdown_timer.callback(&countdown_timer);
+  assert(!label.hidden&&label.seconds==5&&!navigation_requests);
+  countdown_tick=2100;
+  countdown_timer.callback(&countdown_timer);
+  assert(!label.hidden&&label.seconds==3&&!navigation_requests);
+  countdown_idle=false;
+  countdown_timer.callback(&countdown_timer);
+  assert(label.hidden&&!navigation_requests&&bm.auto_boot);
+  countdown_idle=true;countdown_tick=5099;
+  countdown_timer.callback(&countdown_timer);
+  assert(!label.hidden&&label.seconds==1&&!navigation_requests);
+  countdown_tick=5100;
+  countdown_timer.callback(&countdown_timer);
+  assert(label.hidden&&!bm.auto_boot&&navigation_requests==1&&
+    navigation_action==PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE&&gui_exits==1);
+  reset(TRUE);
+  bm=(struct bootmenu){.selected=&item,.time=&label,.timeout=5};
+  bootmenu_auto_boot(&bm);
+  bootmenu_remove_auto_boot_cb(&(lv_event_t){.user_data=&bm});
+  assert(label.hidden&&!countdown_timer.callback&&!navigation_requests);
 }
 int main(VOID){
   bs=(EFI_BOOT_SERVICES){.WaitForEvent=Wait,.CreateEvent=Create,.SetTimer=SetTimer,.CloseEvent=Close,.CheckEvent=Check,.LocateProtocol=Locate};gBS=&bs;
@@ -293,5 +347,6 @@ int main(VOID){
   for(UINTN option=1;option<=4;++option){reset(TRUE);reset_option=option;assert(ShellCommandRunReset(NULL,gST)==SHELL_UNSUPPORTED&&!pending&&!reboot_requests&&!native_resets&&reset_packages==1&&allocated==freed);}
   reset(TRUE);request_failure=TRUE;assert(ShellCommandRunReset(NULL,gST)==SHELL_DEVICE_ERROR&&!pending&&!native_resets&&reset_packages==1&&allocated==freed);
   reset(FALSE);allow_native_reset=TRUE;assert(ShellCommandRunReset(NULL,gST)==SHELL_SUCCESS&&native_resets==1&&!reboot_requests&&reset_packages==1&&allocated==freed);
-  puts("Actual patched Setup/Shell wait, UI cleanup and shared-core return paths passed for continue/reboot/boot; no reset/stop/Exit/fake keys");return 0;
+  test_autoboot();
+  puts("Actual patched Setup/Shell wait, UI cleanup, shared-core return and USB-aware startup countdown passed");return 0;
 }

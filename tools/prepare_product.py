@@ -26,7 +26,7 @@ SOURCE_NAMES=(
     'PianoProductCore.c','PianoBootOptions.c','PianoProductBootLog.c','PianoProductDisplayObserve.c','PianoDisplaySmmuObserve.c','PianoFrameBufferMappingObserve.c','PianoDisplayClockObserve.c','PianoProductDisplayOwner.c','PianoDisplayClockLease.c','PianoDisplayClockRead.c','PianoBootPolicy.c','PianoFvApplication.c','PianoProductPayload.c','PianoProductOwners.c','PianoRamPartition.c','PianoProductSmem.c','PianoProductMemory.c',
     'NativeProbe.c','PianoKeys.c','PianoFaultRecovery.c',
     'PianoSmmu.c','PianoDma.c','PianoOwnedSmmu.c','PianoIoPageTable.c',
-    'PianoUfsProbe.c','PianoUfsReadOnlyDma.c','PianoUfsDmaLayout.c','PianoGpt.c','PianoReadOnlyBlock.c',
+    'PianoUfsProbe.c','PianoUfsReadOnlyDma.c','PianoUfsDmaLayout.c','PianoGpt.c','PianoBlockIo.c',
     'PianoUfsProductVolume.c','PianoUfsBoundedLayout.c',
     'PianoFastboot.c','PianoFastbootBlockRead.c','PianoFastbootBoot.c','PianoFastbootLaunch.c','PianoFastbootDownloadBlob.c','PianoRawLinuxBoot.c','PianoPanelSelection.c',
     'PianoFastbootScreen.c','PianoDwc3Device.c','PianoUsbControl.c','PianoUsbController.c','PianoUsbPhy.c',
@@ -49,7 +49,7 @@ POGO_FIRMWARE_NAME='nanosic/MCU_Upgrade.bin'
 # Indexed by the touch lcd-id level, like firmware-name in the Linux DT
 TOUCH_FIRMWARE_NAMES=(('Csot','novatek/novatek_nt36532_piano_fw_csot.bin'),('Boe','novatek/novatek_nt36532_piano_fw_boe.bin'))
 COMPONENT_C_SOURCES=tuple(name for names in PRODUCT_COMPONENTS.values() for name in names if name.endswith('.c'))
-OS_BOOT_SOURCES=('PianoBootFileSource.c','PianoCpuImageLoan.c','PianoLinuxEfiSession.c','PianoCpuInput.c','PianoEspBootSource.c','PianoUkiImage.c')
+OS_BOOT_SOURCES=('PianoBootFileSource.c','PianoCpuImageLoan.c','PianoLinuxEfiSession.c','PianoCpuInput.c','PianoUkiImage.c')
 OS_BOOT_HEADERS=tuple(name[:-2]+'.h' for name in OS_BOOT_SOURCES)
 LATE_HANDOFF_INF_SOURCES=tuple('LateHandoff/'+name for name in ('PianoLateHandoff.c','PianoLateHandoff.h','PianoDeviceTreeFixup.c','PianoDeviceTreeFixup.h'))
 OS_BOOT_INF_SOURCES=tuple('Components/os-boot/'+name for name in (*OS_BOOT_SOURCES,*OS_BOOT_HEADERS))
@@ -402,6 +402,7 @@ def core_inf():
   SynchronizationLib
   HobLib
 [Guids]
+  gEfiGlobalVariableGuid
   gEfiConsoleInDeviceGuid
   gEfiEventExitBootServicesGuid
   gEfiEventBeforeExitBootServicesGuid
@@ -495,6 +496,8 @@ def prepare(root=ROOT):
         nested.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(path,nested)
     shutil.copytree(source/'Protocol',app/'Protocol')
+    shutil.copyfile(source/'Protocol/PianoRawPartitionWrite.h',
+                    root/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/Protocol/PianoRawPartitionWrite.h')
     for component,names in PRODUCT_COMPONENTS.items():
         for name in names:shutil.copyfile(root/'uefi/components'/component/name,app/name)
     pogo_firmware=prepare_pogo_firmware(root,app)
@@ -555,7 +558,6 @@ def prepare(root=ROOT):
   }
   MdeModulePkg/Logo/LogoDxe.inf
   pianoProductPkg/Drivers/PianoExt4Dxe/PianoExt4Dxe.inf
-  pianoProductPkg/Applications/LinuxBoot/LinuxBoot.inf
   MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf
   MdeModulePkg/Bus/Usb/UsbMouseDxe/UsbMouseDxe.inf
   pianoProductPkg/Drivers/PianoGopDxe/PianoGopDxe.inf
@@ -589,7 +591,7 @@ def prepare(root=ROOT):
     dsc.write_text(text)
     fdf=target/'pianoProduct.fdf';text=fdf.read_text().replace('# Host-only stage-0 diagnostic; NOT hardware validated.','# Single PianoUEFI product integration candidate; INCOMPLETE_NOT_RELEASE.')
     text=text.replace('SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf','pianoProductPkg/Drivers/PianoGopDxe/PianoGopDxe.inf')
-    modules=DISK_MODULES+HOST_MODULES+SETUP_FV_MODULES+('MdeModulePkg/Logo/LogoDxe.inf',ext4['module'],'ShellPkg/Application/Shell/Shell.inf','pianoProductPkg/Applications/LinuxBoot/LinuxBoot.inf','pianoProductPkg/Applications/ProductCore/ProductCore.inf')
+    modules=DISK_MODULES+HOST_MODULES+SETUP_FV_MODULES+('MdeModulePkg/Logo/LogoDxe.inf',ext4['module'],'ShellPkg/Application/Shell/Shell.inf','pianoProductPkg/Applications/ProductCore/ProductCore.inf')
     text=text.replace('!include SiliciumPkg/Common.fdf.inc',''.join('  INF '+module+'\n' for module in modules)+native_fdf+'\n!include SiliciumPkg/Common.fdf.inc')
     fdf.write_text(text)
     early_memory=prepare_early_memory(root,target)

@@ -8,7 +8,6 @@
 #undef NULL
 #include "../../uefi/core/storage/PianoUfsProductVolume.h"
 #include "../../uefi/core/storage/PianoGpt.h"
-#include "PianoUfsWriteTestBaseline.h"
 static PIANO_UFS_PRODUCT_VOLUME volume;
 static UINT8 disk[14680064],primary[4096],entries[12288],backup[4096],backup_entries[12288],pattern[8192],received[8192];
 static PIANO_UFS_WINDOW_IO io;
@@ -55,6 +54,28 @@ static VOID reseal_gpt(VOID){
   memcpy(backup_entries,entries,12288);UINT32 C=PianoGptCrc32(entries,12288);put32(primary+88,C);put32(backup+88,C);
   put32(primary+16,0);put32(backup+16,0);put32(primary+16,PianoGptCrc32(primary,92));put32(backup+16,PianoGptCrc32(backup,92));
 }
+static VOID synthetic_gpt(VOID){
+  memset(primary,0,sizeof(primary));memset(entries,0,sizeof(entries));
+  memcpy(primary,"EFI PART",8);put32(primary+8,0x10000);put32(primary+12,92);
+  put64(primary+24,1);put64(primary+32,378879);put64(primary+40,5);put64(primary+48,378872);
+  CONST EFI_GUID Disk={0x105ea123,0x4ace,0x4123,{0x9d,0,0,0,0,0,0,1}};
+  memcpy(primary+56,&Disk,sizeof(Disk));
+  put64(primary+72,2);put32(primary+80,96);put32(primary+84,128);
+  memcpy(backup,primary,sizeof(backup));
+  put64(backup+24,378879);put64(backup+32,1);put64(backup+72,378873);
+  CONST UINTN Slots[]={1,10,12,46};
+  CONST CHAR16 *Names[]={L"data",L"vendor",L"boot_a",L"boot_b"};
+  CONST EFI_GUID Type={0x0fc63daf,0x8483,0x4772,{0x8e,0x79,0x3d,0x69,0xd8,0x47,0x7d,0xe4}};
+  for(UINTN I=0;I<ARRAY_SIZE(Slots);++I){
+    CONST EFI_GUID Uuid={0x321abcd0+(UINT32)I,0x313c,0x4880,{0x80,0,0,0,0,0,0,1}};
+    UINT8 *Entry=entries+Slots[I]*128;
+    UINT64 First=64+32*I;
+    memcpy(Entry,&Type,sizeof(Type));memcpy(Entry+16,&Uuid,sizeof(Uuid));
+    put64(Entry+32,First);put64(Entry+40,First+15);
+    for(UINTN C=0;Names[I][C];++C)Entry[56+2*C]=(UINT8)Names[I][C];
+  }
+  reseal_gpt();
+}
 static VOID header(VOID){
   UINT8 *H=disk;memcpy(H,"PIANO-VOLUME-v1",16);put32(H+16,1);put32(H+20,128);put32(H+28,1);
   memcpy(H+32,entries+95*128+16,16);memcpy(H+48,primary+56,16);EFI_GUID Type=PIANO_PRODUCT_STORAGE_TYPE_GUID;memcpy(H+64,&Type,16);
@@ -65,7 +86,7 @@ static VOID fresh(BOOLEAN Provisioned){
   ++cases;memset(&volume,0,sizeof(volume));memset(disk,0,sizeof(disk));memset(pattern,0x71,sizeof(pattern));
   held=wp=queue_bad=write_error=write_warning=short_write=sync_error=stale_read=release_error=FALSE;acquires=releases=reads=writes=syncs=guard_reads=0;
   last_phase[0]=0;last_index=last_offset=MAX_UINT64;
-  memcpy(primary,mPianoUfsWriteTestPrimaryHeader,4096);memcpy(entries,mPianoUfsWriteTestPrimaryEntries,12288);memcpy(backup,mPianoUfsWriteTestBackupHeader,4096);memcpy(backup_entries,entries,12288);
+  synthetic_gpt();
   io=(PIANO_UFS_WINDOW_IO){.Io={&volume,read,write,sync,guard,quiet},.Acquire=acquire,.Release=release};
   if(Provisioned){UINT8 *E=entries+95*128;EFI_GUID Type=PIANO_PRODUCT_STORAGE_TYPE_GUID,Uuid={0x01234567,0x89ab,0x4cde,{0x81,0x23,0x45,0x67,0x89,0xab,0xcd,0xef}};memcpy(E,&Type,16);memcpy(E+16,&Uuid,16);put64(E+32,375040);put64(E+40,378623);put64(E+48,2);const CHAR16 Name[]=L"PianoUEFI Storage";memcpy(E+56,Name,sizeof(Name));reseal_gpt();header();}
 }
@@ -80,6 +101,7 @@ int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--current-gpt")){
     fresh(FALSE);FILE *F=fopen(argv[2],"rb");assert(F && fread(primary,1,sizeof(primary),F)==sizeof(primary) && fread(entries,1,sizeof(entries),F)==sizeof(entries) && fgetc(F)==EOF);fclose(F);
     // Preserve the captured primary CRCs; synthesize only its matching backup.
+    memcpy(backup,primary,sizeof(backup));put64(backup+24,get64(primary+32));put64(backup+32,1);put64(backup+72,378873);
     memcpy(backup_entries,entries,sizeof(entries));put32(backup+88,PianoGptCrc32(entries,sizeof(entries)));put32(backup+16,0);put32(backup+16,PianoGptCrc32(backup,92));
     absent();puts("Actual current Android GPT: absent owned entry NOT_FOUND, zero WRITE/SYNC/write-guard, no quarantine.");return 0;
   }

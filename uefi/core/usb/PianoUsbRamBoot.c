@@ -4,6 +4,7 @@
 // initial device test from executing a different downloaded application.
 #include "PianoUsbRamBoot.h"
 #include "PianoUsbRamBootExperiment.h"
+#include "PianoOwnedSmmu.h"
 #include "PianoFastbootDownloadBlob.h"
 #include "PianoRamBootProbe.h"
 #include <Guid/EventGroup.h>

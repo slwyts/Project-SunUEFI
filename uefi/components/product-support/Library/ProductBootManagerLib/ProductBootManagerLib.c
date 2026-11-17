@@ -17,6 +17,7 @@ STATIC volatile BOOLEAN mExited;
 STATIC EFI_EVENT mExitFence;
 STATIC BOOLEAN mFenceAttempted;
 STATIC EFI_STATUS mFenceStatus;
+STATIC VOID StartCore(VOID);
 STATIC VOID EFIAPI ExitFence(EFI_EVENT Event,VOID *Context){(VOID)Event;(VOID)Context;mExited=TRUE;}
 STATIC VOID RequireAlive(VOID){if(mExited){CpuDeadLoop();}}
 STATIC BOOLEAN EFIAPI SplashAlive(VOID){return !mExited;}
@@ -42,13 +43,16 @@ EFI_DEVICE_PATH_PROTOCOL **EFIAPI DeviceBootManagerAfterConsole(VOID){
   RequireAlive();
   DEBUG((DEBUG_WARN,"SUNUEFI_PRODUCT_SPLASH status=%r backend=gop-blt vector=1 width=%u height=%u logo=%u calls=%u hint_drawn=%u diagnostic_timer=0\n",
     S,Report.Width,Report.Height,Report.LogoSize,Report.DrawCalls,(UINT32)(S==EFI_SUCCESS)));
+  // Initialize storage, restore variables and install the safe-exit provider
+  // before BDS can consume BootNext or launch any installed OS.
+  StartCore();
   return NULL;
 }
 EFI_DEVICE_PATH_PROTOCOL **EFIAPI DeviceBootManagerOnDemandConInConnect(VOID){return NULL;}
 VOID EFIAPI DeviceBootManagerProcessBootCompletion(EFI_BOOT_MANAGER_LOAD_OPTION *Option){(VOID)Option;}
 EFI_STATUS EFIAPI DeviceBootManagerPriorityBoot(EFI_BOOT_MANAGER_LOAD_OPTION *Option){(VOID)Option;return EFI_NOT_FOUND;}
 VOID EFIAPI DeviceBootManagerBdsEntry(VOID){}
-VOID EFIAPI DeviceBootManagerUnableToBoot(VOID){
+STATIC VOID StartCore(VOID){
   EFI_GUID File={0x35E0D1B5,0x93CE,0x4D6A,{0x9A,0x93,0x6A,0xDA,0xA3,0xF2,0x6C,0x40}};
   VOID *Source=NULL;UINTN Bytes=0;EFI_HANDLE Core=NULL;
   EFI_STATUS S=EnsureFence();
@@ -68,3 +72,4 @@ VOID EFIAPI DeviceBootManagerUnableToBoot(VOID){
     gBS->Stall(1000);RequireAlive();
   }
 }
+VOID EFIAPI DeviceBootManagerUnableToBoot(VOID){StartCore();}

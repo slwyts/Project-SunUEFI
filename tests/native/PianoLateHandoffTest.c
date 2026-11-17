@@ -82,7 +82,7 @@ static EFI_STATUS EFIAPI Handle(EFI_HANDLE H,EFI_GUID*G,VOID**Out){assert(H==Chi
 static EFI_STATUS EFIAPI TimerPeriod(EFI_TIMER_ARCH_PROTOCOL*This,UINT64 Period){assert(This==&Timer&&!Period&&Owners.Report.Clean&&Late.Phase==PianoExitClean);++timer_calls;return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI Disable(EFI_CPU_ARCH_PROTOCOL*This){assert(This==&Cpu&&gMemoryMapTerminated&&Owners.Report.Clean);++interrupt_calls;return EFI_SUCCESS;}
 VOID CoreNotifySignalList(CONST EFI_GUID*G){
-  if(G==&gEfiEventBeforeExitBootServicesGuid){assert(Owners.Report.Clean&&(Late.RetireCalls==1||((Late.RawMode||Late.ResetMode)&&!Late.RetireCalls)));++before_events;if(Late.RawMode||Late.ResetMode)++mMemoryMapKey;}
+  if(G==&gEfiEventBeforeExitBootServicesGuid){assert(Owners.Report.Clean&&(Late.RetireCalls==1||(Late.RawMode&&!Late.RetireCalls)));++before_events;if(Late.RawMode)++mMemoryMapKey;}
  else if(G==&gEfiEventExitBootServicesGuid){assert(gMemoryMapTerminated&&Owners.Report.Clean);++exit_events;}
  else if(G==&gEventExitBootServicesFailedGuid){assert(!gMemoryMapTerminated&&before_events==1);++failed_events;}
  else assert(!"unknown Core notification");}
@@ -250,18 +250,6 @@ int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);
       Late.Diagnostic.ExitCalls==1&&Late.Diagnostic.RetireCalls==1&&Late.Diagnostic.Phase==PianoExitClean);
     ReplayDiagnostic();
     puts("Standard EFI leaf: current-image admission, real owners retirement, foreign image refusal and CPU-only retry passed");return 0;
-  }
-  if(scenario==40||scenario==41){
-    assert(PianoLateHandoffArmReset(&Late,Child)==EFI_NOT_READY);
-    assert(PianoProductOwnersRetire(&Owners)==EFI_SUCCESS);
-    assert(PianoLateHandoffArmReset(&Late,Parent)==EFI_ACCESS_DENIED);
-    assert(PianoLateHandoffArmReset(&Late,Child)==EFI_SUCCESS&&Late.ResetMode&&!Late.RawMode&&!memchecks);
-    assert(PianoLateHandoffDisarm(&Late)==EFI_ACCESS_DENIED);
-    assert(CoreExitBootServices(Child,mMemoryMapKey-1)==EFI_INVALID_PARAMETER&&Late.Phase==PianoExitClean&&before_events==1);
-    UINTN SavedCalls=Calls,SavedLocates=locates,SavedHandles=handles;
-    if(scenario==41){Owners.Report.ResetTarget++;int Fatal=setjmp(jump);if(!Fatal)CoreExitBootServices(Child,mMemoryMapKey);assert(Fatal&&!gMemoryMapTerminated);return 0;}
-    assert(CoreExitBootServices(Child,mMemoryMapKey)==EFI_SUCCESS&&gMemoryMapTerminated&&!memchecks&&Calls==SavedCalls&&locates==SavedLocates&&handles==SavedHandles);
-    puts("Reset Core EBS: retired root only, standard key retry, no OS memory permission passed");return 0;
   }
  if(RawCase){
   RawReport=(PIANO_RAW_LINUX_REPORT){.Revision=1,.Epoch=123,.Image=NestedRaw?Parent:Child,.Identity=NestedRaw?&Loaded:&NativeImage.Info,

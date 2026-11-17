@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Fastboot 0.4 command layer. No block, variable, flash or OEM passthrough API.
+// Fastboot 0.4 command layer with explicit partition-scoped storage operations.
 #include "PianoFastboot.h"
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
@@ -9,11 +9,76 @@
 #include "PianoFastbootBoot.h"
 #endif
 
+STATIC BOOLEAN StorageReady(PIANO_FASTBOOT *S);
+STATIC VOID CancelFlash(PIANO_FASTBOOT *S);
+
+STATIC BOOLEAN StorageWriteConfigured(CONST PIANO_FASTBOOT *S) {
+  return S->Storage.PrepareWrite && S->Storage.WriteBlocks && S->Storage.Flush;
+}
+BOOLEAN PianoFastbootStorageWritable(PIANO_FASTBOOT *S) {
+  return S && StorageWriteConfigured(S) && StorageReady(S);
+}
 STATIC EFI_STATUS Reply(PIANO_FASTBOOT *S, CONST CHAR8 *Text) {
   return S->Send(S->Context, Text, AsciiStrLen(Text));
 }
 STATIC BOOLEAN Equal(CONST CHAR8 *A, CONST CHAR8 *B) {
   return AsciiStrCmp(A,B)==0;
+}
+STATIC EFI_STATUS Help(PIANO_FASTBOOT *S) {
+  STATIC CONST CHAR8 *Diagnostics[]={
+    "INFOUEFI Fastboot commands:",
+    "INFOgetvar NAME - query device; NAME=all lists basics",
+    "INFOoem help - show commands available now",
+    "INFOoem status - show saved startup and device status",
+    "INFOoem ramlog - stage firmware log",
+    "INFOoem screenshot - stage screen as BMP",
+    "INFOget_staged FILE - save staged log or screenshot",
+    "INFOreboot / continue - save settings and restart"
+  };
+  for(UINTN I=0;I<ARRAY_SIZE(Diagnostics);++I) {
+    EFI_STATUS Status=Reply(S,Diagnostics[I]);if(Status!=EFI_SUCCESS)return Status;
+  }
+  if(S->DiagnosticsRebootBlocked){
+    EFI_STATUS Status=Reply(S,"INFOrestart unavailable; read logs, then hold power");
+    if(Status!=EFI_SUCCESS)return Status;
+  }
+  if(S->DiagnosticsOnly)return Reply(S,"OKAY");
+  STATIC CONST CHAR8 *Normal[]={
+    "INFOstage FILE - download a RAM payload (max 64 MiB)",
+    "INFOoem sha256 - hash the downloaded payload",
+    "INFOoem discard - discard staged RAM data"
+  };
+  for(UINTN I=0;I<ARRAY_SIZE(Normal);++I) {
+    EFI_STATUS Status=Reply(S,Normal[I]);if(Status!=EFI_SUCCESS)return Status;
+  }
+  if(StorageReady(S)){
+    EFI_STATUS Status=Reply(S,"INFOfetch PARTITION FILE - read partition to file");
+    if(Status!=EFI_SUCCESS)return Status;
+    if(StorageWriteConfigured(S)){
+      Status=Reply(S,"INFOflash PARTITION FILE - write raw or sparse image");
+      if(Status!=EFI_SUCCESS)return Status;
+      Status=Reply(S,"INFOerase PARTITION - zero the named partition");
+      if(Status!=EFI_SUCCESS)return Status;
+    }
+  }
+#if PIANO_USB_SERVICE
+  if(S->Diagnostic){
+    STATIC CONST CHAR8 *Navigation[]={
+      "INFOoem setup / shell / simpleinit - open firmware UI",
+      "INFOoem boot-stable - start the configured OS boot order"
+    };
+    for(UINTN I=0;I<ARRAY_SIZE(Navigation);++I) {
+      EFI_STATUS Status=Reply(S,Navigation[I]);if(Status!=EFI_SUCCESS)return Status;
+    }
+  }
+#endif
+#if PIANO_USB_RAM_BOOT
+  if(S->Boot.Ready && S->Boot.Ready(S->Boot.Context)==EFI_SUCCESS){
+    EFI_STATUS Status=Reply(S,"INFOboot FILE - boot a supported ARM64 RAM image");
+    if(Status!=EFI_SUCCESS)return Status;
+  }
+#endif
+  return Reply(S,"OKAY");
 }
 STATIC VOID Hex32(UINT32 Value, CHAR8 *Out) {
   STATIC CONST CHAR8 Digits[]="0123456789abcdef";
@@ -23,6 +88,9 @@ STATIC VOID Hex32(UINT32 Value, CHAR8 *Out) {
 VOID PianoFastbootReset(PIANO_FASTBOOT *S) {
   if(S==NULL)return;
   if(S->BootTransferFrozen || S->BootPreparing)return; // Retained/validated source must not be destroyed by reset.
+  if(S->FlashExecuting){S->FlashCancelRequested=TRUE;return;}
+  CancelFlash(S);
+  if(S->BootTransferFrozen)return; // A storage callback may have observed the exit fence.
   if(S->Upload!=NULL && !S->UploadBorrowed){ZeroMem(S->Upload,S->UploadBytes);FreePool(S->Upload);}
   S->Upload=NULL;S->UploadBytes=0;S->UploadBorrowed=FALSE;
   if(S->Download!=NULL) {
@@ -37,16 +105,18 @@ VOID PianoFastbootReset(PIANO_FASTBOOT *S) {
 }
 EFI_STATUS PianoFastbootRestrictToDiagnostics(PIANO_FASTBOOT *S,BOOLEAN AllowReboot) {
   if(S==NULL)return EFI_INVALID_PARAMETER;
-  if(S->BootPreparing || S->BootPending || S->BootTransferFrozen)return EFI_NOT_READY;
+  if(S->BootPreparing || S->BootPending || S->BootTransferFrozen || S->FlashExecuting)return EFI_NOT_READY;
   S->DiagnosticsRebootBlocked|=!AllowReboot;
   if(S->DiagnosticsOnly)return EFI_SUCCESS;
+  BOOLEAN Interrupted=PianoFastbootFlashPending(S);
   PianoFastbootReset(S);
+  if(S->BootTransferFrozen)return EFI_ABORTED;
   S->DiagnosticsOnly=TRUE;
-  return EFI_SUCCESS;
+  return Interrupted?Reply(S,"FAILpartition write interrupted"):EFI_SUCCESS;
 }
 EFI_STATUS PianoFastbootStageCopy(PIANO_FASTBOOT *S,CONST VOID *Data,UINTN Bytes) {
   if(S==NULL || Data==NULL || Bytes==0 || Bytes>PIANO_FASTBOOT_MAX_DOWNLOAD || S->Receiving)return EFI_INVALID_PARAMETER;
-  if(S->BootPreparing || S->BootPending || S->BootTransferFrozen)return EFI_NOT_READY;
+  if(S->BootPreparing || S->BootPending || S->BootTransferFrozen || S->Flash)return EFI_NOT_READY;
   UINT8 *Copy=AllocateZeroPool(Bytes);if(Copy==NULL)return EFI_OUT_OF_RESOURCES;
   CopyMem(Copy,Data,Bytes);
   if(S->Upload!=NULL && !S->UploadBorrowed){ZeroMem(S->Upload,S->UploadBytes);FreePool(S->Upload);}
@@ -60,13 +130,14 @@ EFI_STATUS PianoFastbootInit(PIANO_FASTBOOT *S, VOID *Context,
 }
 EFI_STATUS PianoFastbootSetStorage(PIANO_FASTBOOT *S,CONST PIANO_FB_STORAGE *Storage) {
   if(S==NULL)return EFI_INVALID_PARAMETER;
+  if(S->Flash || S->FlashExecuting)return EFI_NOT_READY;
   if(Storage==NULL){ZeroMem(&S->Storage,sizeof(S->Storage));return EFI_SUCCESS;}
   if(Storage->Ready==NULL || Storage->Info==NULL || Storage->ReadBlocks==NULL)return EFI_INVALID_PARAMETER;
   S->Storage=*Storage;return EFI_SUCCESS;
 }
 EFI_STATUS PianoFastbootSetBoot(PIANO_FASTBOOT *S,CONST PIANO_FB_BOOT *Boot) {
   if(S==NULL)return EFI_INVALID_PARAMETER;
-  if(S->BootPreparing || S->BootPending || S->BootTransferFrozen)return EFI_NOT_READY;
+  if(S->BootPreparing || S->BootPending || S->BootTransferFrozen || S->Flash)return EFI_NOT_READY;
   if(Boot!=NULL && (!Boot->MaxImageBytes || Boot->Ready==NULL || Boot->Validate==NULL || Boot->TakeAfterAck==NULL))return EFI_INVALID_PARAMETER;
 #if !PIANO_USB_RAM_BOOT
   if(Boot!=NULL)return EFI_UNSUPPORTED;
@@ -132,11 +203,12 @@ STATIC EFI_STATUS PartitionInfo(PIANO_FASTBOOT *S,CONST CHAR8 *Name,PIANO_FB_PAR
   ZeroMem(Info,sizeof(*Info));EFI_STATUS Status=S->Storage.Info(S->Storage.Context,Name,Info);
   if(Status!=EFI_SUCCESS)return Status;
   // Never infer an alias, range, permission or live partition from a name.
-  if(Info->Name[PIANO_FASTBOOT_PARTITION_NAME]!=0 || AsciiStrCmp(Name,Info->Name) || Info->Token==NULL || Info->ReadOnly!=TRUE ||
+  if(Info->Name[PIANO_FASTBOOT_PARTITION_NAME]!=0 || AsciiStrCmp(Name,Info->Name) || Info->Token==NULL ||
      !Info->Bytes || Info->BlockSize<512 || Info->BlockSize>4096 || (Info->BlockSize&(Info->BlockSize-1)) || Info->Bytes%Info->BlockSize)
     return EFI_COMPROMISED_DATA;
   return EFI_SUCCESS;
 }
+#include "PianoFastbootFlash.inc"
 STATIC VOID Hex64(UINT64 Value,CHAR8 *Out) {
   STATIC CONST CHAR8 Digits[]="0123456789abcdef";
   for(UINTN I=0;I<16;++I)Out[I]=Digits[(Value>>((15-I)*4))&15];
@@ -155,7 +227,7 @@ STATIC EFI_STATUS GetVar(PIANO_FASTBOOT *S, CONST CHAR8 *Name) {
   if(Equal(Name,"serialno"))return Reply(S,"OKAYSunUEFI-piano");
   if(Equal(Name,"version-bootloader"))return Reply(S,"OKAYSunUEFI-debug-v1");
   if(Equal(Name,"is-userspace"))return Reply(S,"OKAYno");
-  if(Equal(Name,"storage-policy"))return Reply(S,"OKAYno-persistent-writes");
+  if(Equal(Name,"storage-policy"))return Reply(S,PianoFastbootStorageWritable(S)?"OKAYexplicit-partition-writes":"OKAYread-only");
   if(Equal(Name,"max-download-size"))return Reply(S,S->DiagnosticsOnly?"OKAY0x00000000":"OKAY0x04000000");
   if(Equal(Name,"SunUEFI:ram-boot")) {
     if(S->DiagnosticsOnly)return Reply(S,"OKAYdisabled");
@@ -172,7 +244,8 @@ STATIC EFI_STATUS GetVar(PIANO_FASTBOOT *S, CONST CHAR8 *Name) {
   }
   if(Equal(Name,"all")) {
     CONST CHAR8 *Rows[]={"INFOproduct:piano-sunuefi","INFOversion:0.4",
-      "INFOstorage-policy:no-persistent-writes",S->DiagnosticsOnly?"INFOmax-download-size:0x00000000":"INFOmax-download-size:0x04000000"};
+      PianoFastbootStorageWritable(S)?"INFOstorage-policy:explicit-partition-writes":"INFOstorage-policy:read-only",
+      S->DiagnosticsOnly?"INFOmax-download-size:0x00000000":"INFOmax-download-size:0x04000000"};
     for(UINTN I=0;I<ARRAY_SIZE(Rows);++I) {
       EFI_STATUS Status=Reply(S,Rows[I]);if(EFI_ERROR(Status))return Status;
     }
@@ -287,7 +360,7 @@ Released:
 }
 EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes) {
   if(S==NULL || S->Send==NULL || (Data==NULL && Bytes!=0))return EFI_INVALID_PARAMETER;
-  if(S->BootPreparing || S->BootPending || S->BootTransferFrozen)return EFI_NOT_READY;
+  if(S->BootPreparing || S->BootPending || S->BootTransferFrozen || S->Flash || S->FlashExecuting)return EFI_NOT_READY;
   if(S->Receiving) {
     if(Bytes==0)return EFI_SUCCESS; // Ignore USB zero length packets.
     if(Bytes>S->Expected-S->Received) {
@@ -308,12 +381,16 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes)
     return Reply(S,"FAILinvalid command bytes");
   CHAR8 Cmd[65];CopyMem(Cmd,Data,Bytes);Cmd[Bytes]=0;
   if(S->DiagnosticsOnly && AsciiStrnCmp(Cmd,"getvar:",7) && !Equal(Cmd,"upload") &&
+     !Equal(Cmd,"oem help") &&
      !Equal(Cmd,"oem status") && !Equal(Cmd,"oem ramlog") && !Equal(Cmd,"oem screenshot") &&
      !Equal(Cmd,"reboot") && !Equal(Cmd,"continue"))
     return Reply(S,"FAILonly diagnostics available after boot failure");
+  if(Equal(Cmd,"oem help"))return Help(S);
   if(!AsciiStrnCmp(Cmd,"getvar:",7))return GetVar(S,Cmd+7);
   if(!AsciiStrnCmp(Cmd,"download:",9))return Download(S,Cmd+9);
   if(!AsciiStrnCmp(Cmd,"fetch:",6))return Fetch(S,Cmd+6);
+  if(!AsciiStrnCmp(Cmd,"flash:",6))return Flash(S,Cmd+6,FALSE);
+  if(!AsciiStrnCmp(Cmd,"erase:",6))return Flash(S,Cmd+6,TRUE);
   if(Equal(Cmd,"upload")) {
     if(S->Upload==NULL || !S->UploadBytes)return Reply(S,"FAILno staged RAM payload");
     CHAR8 Result[13]="DATA";Hex32((UINT32)S->UploadBytes,Result+4);
@@ -362,7 +439,8 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes)
     return Reply(S,"FAILRAM boot handoff not implemented in debug v1");
 #endif
   }
-  // Default deny covers flash, erase, set_active, flashing, arbitrary OEM,
+  // Unknown commands never imply a write, unlock or arbitrary OEM operation.
+  // This also excludes set_active, flashing,
   // reboot-edl, reboot-bootloader, memory poke and unknown future commands.
   return Reply(S,"FAILcommand disabled by RAM-only policy");
 }

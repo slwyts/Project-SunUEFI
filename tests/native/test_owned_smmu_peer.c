@@ -37,14 +37,18 @@ static PIANO_SMMU_DEVICE identity(UINT16 Sid,UINT16 Slot,UINT8 Bank,UINT64 Root)
   return (PIANO_SMMU_DEVICE){.Sid=Sid,.StreamIndex=Slot,.ContextBank=Bank,.Present=TRUE,.Enabled=TRUE,.Type=0,
     .Smr=Sid,.S2cr=BIT10|Bank,.Sctlr=0x1e5,.Cbar=0x10000,.Cba2r=1,.Tcr=0x802519,.Tcr2=0x38001,.Mair0=0xff,.Ttbr0=Root};
 }
-static void setup(void){
+static void setup_routes(BOOLEAN InheritedGpi){
   ZeroMem(usb,sizeof(*usb));ZeroMem(ufs,sizeof(*ufs));ZeroMem(&now,sizeof(now));
   ZeroMem(&proof,sizeof(proof));ZeroMem(&contract,sizeof(contract));
   now.Valid=TRUE;now.ExtendedIds=TRUE;now.Base=0x15000000;now.Window=0x100000;now.ContextBase=0x80000;
   now.PageShift=12;now.Groups=127;now.Banks=83;now.Id0=BIT8|127;now.Id1=83;now.Id2=7;now.GlobalControl=BIT3;
   now.RawSmr[1]=0x540;now.RawS2cr[1]=0x20001;now.RawS2cr[113]=0x0300006e;
   now.Device[0]=(PIANO_SMMU_DEVICE){.Sid=0x60};now.Device[1]=(PIANO_SMMU_DEVICE){.Sid=0x40};
-  now.Device[2]=identity(0xb6,3,2,0x83000000);now.RawSmr[3]=now.Device[2].Smr;now.RawS2cr[3]=now.Device[2].S2cr;
+  now.Device[2].Sid=0xB6;now.Device[3].Sid=0xA3;
+  if(InheritedGpi){
+    now.Device[2]=identity(0xB6,3,2,0x83000000);
+    now.RawSmr[3]=now.Device[2].Smr;now.RawS2cr[3]=now.Device[2].S2cr;
+  }
   ufs->Before=now;now.Device[0]=identity(0x60,0,0,0x81000000);now.RawSmr[0]=0x60;now.RawS2cr[0]=BIT10;
   ufs->DeviceIndex=0;ufs->Attached=ufs->Verified=ufs->OwnedIdentitySaved=TRUE;ufs->Domain=(VOID *)321;
   ufs->OwnedTablePhysical=0x81000000;ufs->TableMemory.Signature=1;ufs->After=ufs->AttachedSnapshot=now;
@@ -60,6 +64,7 @@ static void setup(void){
     .DeviceHalted=TRUE,.DmaFreed=TRUE,.ClocksReleased=TRUE,.GdscReleased=TRUE,.DmaBuffersFreed=9,.ClockReleaseMask=PIANO_USB_CLOCK_RELEASE_MASK};
   detach_calls=destroy_calls=free_calls=0;detach_code=destroy_code=0;capture_status=free_status=EFI_SUCCESS;
 }
+static void setup(void){setup_routes(TRUE);}
 static void close_usb(void){assert(PianoOwnedSmmuClose(usb)==EFI_SUCCESS && usb->CloseLedger.ExactClose);assert(detach_calls==1 && destroy_calls==1 && free_calls==1);}
 static void valid(void){
   assert(PianoOwnedSmmuMakeRetiredUsbProof(usb,&execution,&now,&proof)==EFI_SUCCESS && proof.Valid && proof.Slot==1);
@@ -67,6 +72,52 @@ static void valid(void){
   assert(contract.PeerSlot==1 && contract.OwnerSlot==0 && contract.BaselineSmr==0x540 && contract.BaselineS2cr==0x20001);
   assert(!contract.RetiredSmr && !contract.RetiredS2cr);
   assert(PianoOwnedSmmuCheckRetiredUsbContract(ufs,&contract,&detached)==EFI_SUCCESS);
+}
+static void check_startup_failure_with_touch(void){
+  setup_routes(FALSE);
+  close_usb();
+  PIANO_OWNED_SMMU *Gpi=calloc(1,sizeof(*Gpi));
+  assert(Gpi);
+  Gpi->DeviceIndex=2;Gpi->Domain=(VOID *)456;
+  Gpi->Verified=Gpi->Attached=Gpi->QupAttached=Gpi->OwnedIdentitySaved=TRUE;
+  Gpi->TableMemory.Signature=1;Gpi->OwnedTablePhysical=Gpi->TableMemory.Physical=0x83000000;
+  Gpi->Before=Gpi->AttachedSnapshot=now;
+  // The HAL can reuse the inactive USB slot after verified startup rollback.
+  Gpi->AttachedSnapshot.Device[2]=identity(0xB6,1,2,Gpi->OwnedTablePhysical);
+  Gpi->AttachedSnapshot.Device[3]=identity(0xA3,3,2,Gpi->OwnedTablePhysical);
+  for(UINTN I=2;I<4;++I){
+    CONST PIANO_SMMU_DEVICE *Route=&Gpi->AttachedSnapshot.Device[I];
+    Gpi->AttachedSnapshot.RawSmr[Route->StreamIndex]=Route->Smr;
+    Gpi->AttachedSnapshot.RawS2cr[Route->StreamIndex]=Route->S2cr;
+  }
+  PIANO_SMMU_SNAPSHOT Before=now,Expected=Before;
+  assert(PianoOwnedSmmuExpectActiveGpi(&Expected)==EFI_SUCCESS && !memcmp(&Expected,&Before,sizeof(Expected)));
+  mActiveGpi=Gpi;
+  assert(PianoOwnedSmmuExpectActiveGpi(&Expected)==EFI_SUCCESS);
+  assert(PeerSnapshot(&Expected,&Gpi->AttachedSnapshot) && PeerSnapshot(&Before,&usb->After));
+  PIANO_SMMU_SNAPSHOT Wrong=Before;Wrong.RawS2cr[3]^=1;
+  assert(PianoOwnedSmmuExpectActiveGpi(&Wrong)==EFI_COMPROMISED_DATA && !Wrong.Device[2].Present);
+  now=Expected;
+  assert(PianoOwnedSmmuMakeRetiredUsbProof(usb,&execution,&now,&proof)!=EFI_SUCCESS);
+  execution.Kind=PIANO_USB_RETIRE_STARTUP_FAILED_CLEAN;
+  execution.StartupStatus=EFI_TIMEOUT;execution.DmaBuffersFreed=0;
+  assert(PianoOwnedSmmuMakeRetiredUsbProof(usb,&execution,&now,&proof)==EFI_SUCCESS && proof.Valid);
+  assert(PianoOwnedSmmuPrepareRetiredUsbContract(ufs,&proof,&now,&contract)==EFI_NOT_READY && !contract.Valid);
+  for(UINTN Case=0;Case<5;++Case){
+    now=Expected;
+    switch(Case){
+      case 0:now.RawSmr[1]=0x40;break;
+      case 1:now.RawS2cr[113]^=1;break;
+      case 2:now.Device[2].Ttbr0^=4096;break;
+      case 3:now.Device[0].Tcr^=1;break;
+      case 4:now.GlobalFault=1;break;
+    }
+    assert(PianoOwnedSmmuMakeRetiredUsbProof(usb,&execution,&now,&proof)!=EFI_SUCCESS && !proof.Valid);
+  }
+  mActiveGpi=NULL;
+  now=Before;
+  valid();
+  free(Gpi);
 }
 int main(void){
   usb=calloc(1,sizeof(*usb));ufs=calloc(1,sizeof(*ufs));assert(usb&&ufs);api[3]=(UINTN)detach;api[1]=(UINTN)destroy;
@@ -131,5 +182,6 @@ int main(void){
       case 8:now.RawS2cr[113]^=1;break;case 9:now.Device[0].Tcr^=1;break;}
     assert(PianoOwnedSmmuMakeRetiredUsbProof(usb,&execution,&now,&proof)!=EFI_SUCCESS && !proof.Valid);
   }
-  free(usb);free(ufs);puts("Actual retired USB proof/contract: exact real close ledger, Halt+9DMA+clock/GDSC evidence, SID/slot/CB/root identity, equal UFS/USB baseline, unique zero/zero row, strict other slots/contexts and no normalization passed.");return 0;
+  check_startup_failure_with_touch();
+  free(usb);free(ufs);puts("Actual retired USB proof/contract: validated retirement, exact unrelated rows, startup rollback with active touch, and final handoff only after touch closes passed.");return 0;
 }

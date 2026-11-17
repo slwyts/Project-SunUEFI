@@ -62,8 +62,9 @@ STATIC EFI_STATUS EFIAPI Close(EFI_EVENT Event){assert(!Exited&&Event==(VOID *)0
 STATIC EFI_STATUS EFIAPI IdleRead(PIANO_PRODUCT_IDLE_PROTOCOL *This,CONST PIANO_PRODUCT_RUNTIME_PROTOCOL *Runtime,UINT64 *Sequence,BOOLEAN *Active){
   assert(This==&Idle&&Runtime==&Protocol&&!Exited);*Sequence=Scenario==59?1:IdleSequence;
   *Active=(Scenario==56||Scenario==57)?Pumps<3:Scenario==61?2:FALSE;
+  if(Scenario==64)*Active=Pumps==3||Pumps==4;
   if(Scenario==60){ExitCallback((VOID*)0x77,ExitContext);Exited=TRUE;return EFI_SUCCESS;}
-  return Scenario==63?EFI_NOT_READY:EFI_SUCCESS;
+  return Scenario==63||(Scenario==65&&(Pumps==3||Pumps==4))?EFI_NOT_READY:EFI_SUCCESS;
 }
 STATIC EFI_STATUS EFIAPI Locate(EFI_GUID *Guid,VOID *Registration,VOID **Value){
   (VOID)Registration;assert(!Exited);EFI_GUID G=PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID,H=PIANO_PRODUCT_IDLE_PROTOCOL_GUID;
@@ -177,10 +178,28 @@ STATIC VOID Run(UINT32 Case){
   if(Case==59){assert(PianoProductPumpApplication(1,1000)==EFI_SUCCESS&&PianoProductPumpShouldIdle());assert(!PianoProductPumpShouldIdle());assert(PianoProductPumpApplication(1,1000)==EFI_SUCCESS&&!PianoProductPumpShouldIdle());assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);}
   if(Case==60){assert(PianoProductPumpApplication(1,1000)==EFI_SUCCESS&&!PianoProductPumpShouldIdle()&&!PianoProductPumpBootServicesAlive());}
   if(Case==61||Case==62||Case==63){assert(PianoProductPumpApplication(1,1000)==EFI_SUCCESS&&!PianoProductPumpShouldIdle());assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);}
+#if PIANO_PRODUCT_GUI_PUMP
+  if(Case==64||Case==65){
+    UINT32 Tick=123;
+    assert(!piano_product_gui_autoboot_tick(&Tick)&&Tick==123);
+    piano_product_gui_pump();assert(piano_product_gui_autoboot_tick(&Tick)&&Tick==0);
+    Advance(1400000);
+    piano_product_gui_pump();assert(piano_product_gui_autoboot_tick(&Tick)&&Tick==1400);
+    Advance(30000);
+    piano_product_gui_pump();assert(!piano_product_gui_autoboot_tick(&Tick));
+    Advance(12000000);
+    piano_product_gui_pump();assert(!piano_product_gui_autoboot_tick(&Tick));
+    Advance(30000);
+    piano_product_gui_pump();assert(piano_product_gui_autoboot_tick(&Tick)&&Tick==1400);
+    Advance(3600000);
+    piano_product_gui_pump();assert(piano_product_gui_autoboot_tick(&Tick)&&Tick==5000);
+    assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);
+  }
+#endif
   if(Case<=3||Case==7||Case==9||(Case>=10&&Case<=13))assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);
   (VOID)Status;
 }
 int main(void){
-  for(UINT32 I=0;I<64;I++){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"pump case%u failed\n",I);return 1;}}
-  puts("Actual product client + CoreWaitForEvent/gui_main/custom_tick_get: 64 fork cases, measured GUI time/bounded 1ms service/navigation/EBS/8 logs; no fake keys/device");return 0;
+  for(UINT32 I=0;I<(PIANO_PRODUCT_GUI_PUMP?66U:64U);I++){pid_t P=fork();assert(P>=0);if(!P){Run(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"pump case%u failed\n",I);return 1;}}
+  puts("Actual product client + CoreWaitForEvent/gui_main/custom_tick_get: measured GUI time, USB-aware countdown, bounded service, navigation and EBS");return 0;
 }

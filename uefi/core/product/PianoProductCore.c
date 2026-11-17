@@ -4,7 +4,6 @@
 #include "PianoProductPayload.h"
 #include "PianoProductOwners.h"
 #include "PianoRawLinuxBoot.h"
-#include "Components/os-boot/PianoEspBootSource.h"
 #include "Components/os-boot/PianoUkiImage.h"
 #include "PianoFastbootBlockRead.h"
 #include "PianoKeysLifecycle.h"
@@ -73,8 +72,9 @@ STATIC CONST CHAR16 *mHandoffFailure;
 STATIC VOID BootLogReturned(VOID);
 STATIC VOID FailStop(EFI_STATUS Status);
 STATIC VOID RetireCoreAction(VOID);
-STATIC VOID ResetCore(EFI_HANDLE Image);
-EFI_STATUS PianoRegisterLinuxBootOption(VOID);
+STATIC VOID ResetCore(VOID);
+EFI_STATUS PianoRefreshBootOptions(VOID);
+EFI_STATUS PianoStartBootOption(EFI_HANDLE Parent,EFI_HANDLE *Device,PIANO_FV_APPLICATION *Application);
 STATIC BOOLEAN EFIAPI BootLogAlive(VOID) {
   return !mBootLogExited && !mOwners.Report.ServicesLost && gST!=NULL && gST->BootServices==gBS;
 }
@@ -260,11 +260,8 @@ STATIC BOOLEAN FailureDiagnosticsSafe(VOID) {
 }
 STATIC BOOLEAN FailureRebootSafe(VOID) {
   CONST PIANO_PRODUCT_OWNERS_REPORT *O=&mOwners.Report;
-  return FailureDiagnosticsSafe() && O->Initialized && !O->Busy && !O->Retained && !O->Clean &&
-    !O->RetiredMask && !O->PolicyStopped && O->Phase<PianoProductOwnersRetiring &&
-    !mLateHandoff.Busy && !mLateHandoff.Retained && !mLateHandoff.RetireCalls &&
-    mLateHandoff.Phase==PianoExitUnarmed && mLateHandoff.Env.ParentImage && !mLinuxActive &&
-    !mLinuxApplication.Busy && !mLinuxApplication.Retained;
+  return FailureDiagnosticsSafe() && O->Initialized && !O->Busy && !O->ServicesLost &&
+    !O->ResetAttempted && !O->UfsStopped && !O->OuterTplHeld;
 }
 STATIC VOID RunFailureDiagnostics(VOID) {
   if(!FailureDiagnosticsSafe() || PianoUsbControllerRestrictToDiagnostics(FailureRebootSafe())!=EFI_SUCCESS)return;
@@ -283,10 +280,11 @@ STATIC VOID RunFailureDiagnostics(VOID) {
         continue;
       }
       // The USB service publishes this action only after its OKAY has left
-      // the IN endpoint. Reuse normal retirement; never reset around DMA.
+      // the IN endpoint. Keep retained peripheral allocations until reset.
       mFailureDiagnostics=FALSE;
-      RetireCoreAction();
-      ResetCore(mLateHandoff.Env.ParentImage);
+      EFI_STATUS Status=PianoProductOwnersPrepareReset(&mOwners);
+      if(Status!=EFI_SUCCESS)FailStop(Status);
+      ResetCore();
       break;
     }
     if(gBS->Stall(1000)!=EFI_SUCCESS)break;
@@ -381,24 +379,30 @@ STATIC EFI_STATUS StopInput(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Rep
 STATIC VOID RetireCoreAction(VOID) {
   EFI_STATUS Status=PianoProductOwnersResolveReturnedAction(&mOwners);
   if(Status!=EFI_SUCCESS)FailStop(Status);
+  if(mOwners.Report.RequestedAction==PianoUsbServiceActionReboot ||
+     mOwners.Report.RequestedAction==PianoUsbServiceActionContinue){
+    mHandoffStage="reset-prepare";mHandoffFailure=L"设置或存储写入未能完成";
+    Status=PianoProductOwnersPrepareReset(&mOwners);
+    if(Status!=EFI_SUCCESS)FailStop(Status);
+    return;
+  }
   (VOID)PianoProductBootLogMessage(L"正在交接系统",L"正在保存设置并关闭存储",EFI_SUCCESS,FALSE);
   mHandoffStage="owners-retire";mHandoffFailure=L"系统资源未能安全退出";
   Status=PianoProductOwnersRetire(&mOwners);
   if(Status!=EFI_SUCCESS || !mOwners.Report.Clean)FailStop(Status);
 }
-STATIC VOID ResetCore(EFI_HANDLE Image) {
+STATIC VOID ResetCore(VOID) {
   if(mOwners.Report.AllowedAction!=PianoUsbServiceActionReboot &&
      mOwners.Report.AllowedAction!=PianoUsbServiceActionContinue)FailStop(EFI_ACCESS_DENIED);
-  EFI_STATUS Status=PianoLateHandoffArmReset(&mLateHandoff,Image);
-  if(Status==EFI_SUCCESS)Status=PianoResetExecute(&mOwners,Image);
+  EFI_STATUS Status=PianoResetExecute(&mOwners);
   FailStop(Status);
 }
-// The same installed-image and USB paths retain the existing retirement order.
+// Reset prepares storage only; OS boot retains full device retirement.
 STATIC EFI_STATUS CompleteCoreAction(EFI_HANDLE Image) {
   RetireCoreAction();
   EFI_STATUS Status;
   if(mOwners.Report.AllowedAction==PianoUsbServiceActionReboot || mOwners.Report.AllowedAction==PianoUsbServiceActionContinue) {
-    ResetCore(Image);
+    ResetCore();
   }
   if(mOwners.Report.AllowedAction==PianoUsbServiceActionBoot){
     CONST PIANO_RAW_LINUX_REPORT *Raw=NULL;
@@ -486,16 +490,16 @@ STATIC EFI_STATUS ValidateInstalledEfiImage(VOID *Context,EFI_HANDLE Image,CONST
     Status=ValidateDirectKernel(Uki);
     if(Status!=EFI_SUCCESS)return EfiImageResult("direct-kernel",Status);
   }
-  EFI_HANDLE Seen[4];EFI_HANDLE CurrentImage=Image;
-  // The UKI loads its embedded kernel from memory. Only inner frames may lack
-  // a filesystem handle; the outer image must be our actual ESP application.
+  EFI_HANDLE Seen[32];EFI_HANDLE CurrentImage=Image;
+  // systemd-boot loads a UKI which enters its embedded kernel. Only inner
+  // frames may lack a filesystem handle; the manager must be on our ESP.
   for(UINTN Depth=0;Depth<ARRAY_SIZE(Seen);++Depth){
     for(UINTN N=0;N<Depth;++N)if(Seen[N]==CurrentImage)return EfiImageResult("parent-cycle",EFI_ACCESS_DENIED);
     Seen[Depth]=CurrentImage;
     Status=gBS->HandleProtocol(CurrentImage,&gEfiLoadedImageProtocolGuid,(VOID **)&Current);
     if(!BootLogAlive())return EFI_ABORTED;if(Status!=EFI_SUCCESS)return EfiImageResult("child-protocol",Status);
-    if(!EfiLoadedValid(Current) || (!Depth && Current!=Identity) ||
-       (Current->DeviceHandle && Current->DeviceHandle!=mLinuxEsp))return EfiImageResult("child-identity",EFI_ACCESS_DENIED);
+    if(!EfiLoadedValid(Current) || (!Depth && Current!=Identity))
+      return EfiImageResult("child-identity",EFI_ACCESS_DENIED);
     if(CurrentImage==mLinuxApplication.Image)
       return EfiImageResult("device-tree",Current==Uki?ValidateEfiDeviceTree():EFI_ACCESS_DENIED);
     if(!Current->ParentHandle || Current->ParentHandle==(EFI_HANDLE)Context)return EfiImageResult("parent",EFI_ACCESS_DENIED);
@@ -504,13 +508,13 @@ STATIC EFI_STATUS ValidateInstalledEfiImage(VOID *Context,EFI_HANDLE Image,CONST
   return EfiImageResult("parent-depth",EFI_ACCESS_DENIED);
 }
 STATIC EFI_STATUS StartInstalledLinux(EFI_HANDLE Image){
-  mHandoffStage="linux-uki";mHandoffFailure=L"Linux 启动镜像未能加载或交接";
+  mHandoffStage="linux-boot-manager";mHandoffFailure=L"Linux 引导程序未能加载或交接";
   (VOID)PianoProductBootLogMessage(L"正在启动系统",L"请稍候",EFI_SUCCESS,FALSE);
-  EFI_STATUS Status=PianoEspBootFind(&mLinuxEsp);
-  if(Status==EFI_SUCCESS){
+  EFI_STATUS Status;
+  {
     BOOLEAN PreviousNavigation=PianoSetStandardKeyNavigation(TRUE);
     mLinuxActive=TRUE;
-    Status=PianoApplicationRunFile(Image,mLinuxEsp,L"\\EFI\\Linux\\sunuefi.efi",NULL,0x10000000,&mLinuxApplication);
+    Status=PianoStartBootOption(Image,&mLinuxEsp,&mLinuxApplication);
     mLinuxActive=FALSE;
     if(mLinuxApplication.Retained)FailStop(Status);
     if(mLateHandoff.Retained||mLateHandoff.RetireCalls||mLateHandoff.Phase==PianoExitClean)FailStop(Status);
@@ -519,7 +523,7 @@ STATIC EFI_STATUS StartInstalledLinux(EFI_HANDLE Image){
     }
     PianoSetStandardKeyNavigation(PreviousNavigation);
   }
-  DEBUG((DEBUG_WARN,"PIANO_UKI_RETURN status=%r\n",Status));
+  DEBUG((DEBUG_WARN,"PIANO_BOOT_MANAGER_RETURN status=%r\n",Status));
   EFI_STATUS LinuxStatus=Status==EFI_SUCCESS?EFI_ABORTED:Status;
   mLinuxEsp=NULL;
   // Preserve a real host action that arrived while the UKI was loading. A
@@ -636,7 +640,8 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   ObserveDisplay("after-usb");
   BootLogStage("MENU",EFI_NOT_STARTED);
   Status=PianoBootPolicyInitialize(Image);if(Status!=EFI_SUCCESS)FailStop(Status);
-  (VOID)PianoRegisterLinuxBootOption();
+  Status=PianoRefreshBootOptions();
+  if(Status!=EFI_SUCCESS)FailStop(Status);
   // Fdt was validated against the BootShim handoff and mapped input at PAYLOAD.
   INT32 Chosen=FdtPathOffset(Fdt,"/chosen"),BootArgsBytes=0;
   CONST CHAR8 *BootArgs=Chosen<0?NULL:FdtGetProp(Fdt,Chosen,"bootargs",&BootArgsBytes);
@@ -680,7 +685,14 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
     Status=PianoBootPolicyRun();
     PianoDwc3ServiceReplayStartup();
     if(Status==EFI_END_OF_FILE) {
-      // Leave the USB host role before any exit is latched, so a busy device can be retried
+      CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();
+      if(Policy && (Policy->RequestedCoreAction==PianoUsbServiceActionReboot ||
+         Policy->RequestedCoreAction==PianoUsbServiceActionContinue)){
+        Status=CompleteCoreAction(Image);
+        FailStop(Status==EFI_SUCCESS?EFI_ABORTED:Status);
+      }
+      // OS handoff must leave the USB host role; full platform reset does not
+      // free the controller's DMA mappings or resume another OS in place.
       EFI_STATUS Host=PianoUsbControllerServiceLeaveHost();
       if(Host==EFI_NOT_READY) {
         (VOID)PianoProductBootLogMessage(L"USB 设备仍在使用",L"请拔下 USB 设备后重试",Host,FALSE);

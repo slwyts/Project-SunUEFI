@@ -2,6 +2,7 @@
 #pragma once
 #include <Uefi.h>
 #include <Protocol/LoadedImage.h>
+#include <Protocol/DevicePath.h>
 typedef struct {
   UINT32 Signature;
   BOOLEAN Busy,EbsObserved,Retained,StartCalled,StartReturned,AutoUnloaded;
@@ -28,3 +29,7 @@ EFI_STATUS PianoApplicationRunBuffer(EFI_HANDLE Parent,CONST VOID *Image,UINTN B
 // Shared owners remain live; this helper grants no OS handoff permission.
 EFI_STATUS PianoApplicationRunFile(EFI_HANDLE Parent,EFI_HANDLE Device,CONST CHAR16 *Path,
   CONST CHAR16 *Options,UINT64 MaxLoadedBytes,PIANO_FV_APPLICATION *Context);
+// Execute a resolved standard load option, preserving its binary OptionalData.
+EFI_STATUS PianoApplicationRunPath(EFI_HANDLE Parent,EFI_HANDLE Device,
+  EFI_DEVICE_PATH_PROTOCOL *Path,CONST VOID *Options,UINT32 OptionsBytes,
+  UINT64 MaxLoadedBytes,PIANO_FV_APPLICATION *Context);

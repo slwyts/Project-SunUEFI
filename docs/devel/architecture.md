@@ -19,7 +19,7 @@
                        ├─► 显示 SimpleInit 图形菜单
                        │
                        ▼ 无操作五秒，或手动启动 Linux
-                     核心直接启动 /EFI/Linux/sunuefi.efi (UKI)
+                     systemd-boot 自动发现版本化 UKI
                        │ systemd-stub → Linux EFI stub
                        │
                        ▼ ExitBootServices 安全退出
@@ -65,13 +65,16 @@ SunUEFI 提供与原厂 Bootloader 不同的 Fastboot 服务：
 
 ```
 sunuefi_esp/
-└── EFI/
-    └── Linux/
-        └── sunuefi.efi       # UKI：内核、initramfs、DTB、启动参数
+├── EFI/
+│   ├── BOOT/BOOTAA64.EFI
+│   ├── systemd/systemd-bootaa64.efi
+│   └── Linux/linux-<release>.efi   # 内核、initramfs、DTB、启动参数
+└── loader/loader.conf
 ```
 
-四个产品发行版共用上面的 ESP。UKI 是标准 EFI 应用，不需要第二个启动管理器。
-独立发行版可自行生成相同路径的 UKI；不要求它采用产品 rootfs。
+四个产品发行版共用上面的初装 ESP。systemd-boot 识别 `EFI/Linux/` 中
+UKI 的系统信息和内核版本；发行版更新通过标准钩子生成自己的 UKI，
+不要求使用固定文件名或产品 rootfs。
 
 旧的 Linux `boot.img` 和分文件 BLS 配置不再是产品入口，更新固件时需同步
 更新启动镜像（ESP），不必覆盖已有 root。UEFI 自动适配本次启动的内存布局，

@@ -76,7 +76,8 @@ for (;;) {switch(ControlFlag){
     input_end=browser.index('\n}\n',input_begin)
     input_branch='EFI_STATUS ActualInputBranch(USER_INPUT UserInput) {EFI_STATUS Status;\n'+browser[input_begin:input_end]+'\n}\n'
     reboot_boot=boot[boot.index('int run_boot_reboot('):boot.index('\n}\n',boot.index('int run_boot_reboot('))+2]
-    return '\n\n'.join((function(display,'UiWaitForEvent'),function(cdl,'WaitForKeyStroke'),readline,function(shell,'DoShellPrompt'),menu,close,input_branch,popup,function(ui,'UiEntry'),function(ui,'SetupResetReminder'),main,reboot_types,simple[reboot_begin:reboot_end],reboot_boot,function(bootdef,'boot_init_configs'),function(bootmenu,'bootmenu_boot'),reset_params,function(reset,'MainCmdReset'),function(reset,'ShellCommandRunReset')))
+    countdown=bootmenu[bootmenu.index('static void bootmenu_auto_boot_cb('):bootmenu.index('static void bootmenu_add(')]
+    return '\n\n'.join((function(display,'UiWaitForEvent'),function(cdl,'WaitForKeyStroke'),readline,function(shell,'DoShellPrompt'),menu,close,input_branch,popup,function(ui,'UiEntry'),function(ui,'SetupResetReminder'),main,reboot_types,simple[reboot_begin:reboot_end],reboot_boot,function(bootdef,'boot_init_configs'),*[function(bootmenu,name) for name in ('bootmenu_boot','bootmenu_remove_auto_boot','bootmenu_remove_auto_boot_cb','bootmenu_click')],countdown,reset_params,function(reset,'MainCmdReset'),function(reset,'ShellCommandRunReset')))
 
 class ProductUiTests(unittest.TestCase):
     def fixture(self,directory):
@@ -128,7 +129,7 @@ class ProductUiTests(unittest.TestCase):
             prepare.prepare(root,apply=True,check_pins=False)
             out=Path(out);(out/'PianoActualProductUi.h').write_text(generated(root))
             exe=out/'ui';include=BASE/'MdePkg/Include'
-            build=subprocess.run(['cc','-std=gnu11','-DENABLE_UEFI','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-unused-label','-fsanitize=address,undefined','-g','-fno-pie','-no-pie','-I'+str(include),'-I'+str(include/HOST_PROCESSOR_BIND),'-I'+str(out),str(ROOT/'tests/native/PianoProductUiTest.c'),'-o',str(exe)],capture_output=True,text=True)
+            build=subprocess.run(['cc','-std=gnu11','-DENABLE_UEFI','-DPIANO_PRODUCT_GUI_PUMP=1','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-unused-label','-fsanitize=address,undefined','-g','-fno-pie','-no-pie','-I'+str(include),'-I'+str(include/HOST_PROCESSOR_BIND),'-I'+str(out),str(ROOT/'tests/native/PianoProductUiTest.c'),'-o',str(exe)],capture_output=True,text=True)
             self.assertEqual(build.returncode,0,build.stdout+build.stderr)
             run=subprocess.run([str(exe)],capture_output=True,text=True)
             self.assertEqual(run.returncode,0,run.stdout+run.stderr);print(run.stdout.strip())

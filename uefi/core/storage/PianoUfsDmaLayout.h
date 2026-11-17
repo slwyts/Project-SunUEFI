@@ -3,6 +3,8 @@
 #include <Uefi.h>
 #define PIANO_UFS_UCD_BYTES 1024U
 #define PIANO_UFS_RESPONSE_OFFSET 64U
+// UFSHCI Data Byte Count is an 18-bit, zero-based length per PRDT entry.
+#define PIANO_UFS_PRDT_MAX_DATA_BYTES (256U * 1024U)
 EFI_STATUS PianoUfsBuildNop(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN UcdBytes,UINT64 UcdIova,UINT8 Tag);
 EFI_STATUS PianoUfsBuildReadDescriptor(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN UcdBytes,UINT64 UcdIova,
                                       UINT8 Tag,UINT8 Idn,UINT8 Index,UINT16 Bytes);

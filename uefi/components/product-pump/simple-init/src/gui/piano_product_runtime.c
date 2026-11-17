@@ -11,12 +11,26 @@
 #include <Library/BaseLib.h>
 // Existing cooperative exit, not direct StartImage/keyboard injection.
 extern void gui_run_and_exit(int (*run)(void *));
-#include <stdbool.h>
 extern bool gui_run;
+static bool autoboot_usb_idle;
+static uint32_t autoboot_tick,autoboot_sample_at;
+
+bool piano_product_gui_autoboot_tick(uint32_t *milliseconds) {
+  if(!autoboot_usb_idle)return false;
+  *milliseconds=autoboot_tick;
+  return true;
+}
+
 void piano_product_gui_pump(void) {
   if(!PianoProductPumpBootServicesAlive()){CpuDeadLoop();return;}
   PianoProductPumpApplication(PIANO_PRODUCT_PUMP_GUI,1000);
   if(!PianoProductPumpBootServicesAlive()){CpuDeadLoop();return;}
+  bool idle=PianoProductPumpShouldIdle();
+  uint32_t now=(uint32_t)piano_product_gui_tick();
+  // Do not count an interval that borders activity or an unknown USB state.
+  if(idle&&autoboot_usb_idle)autoboot_tick+=now-autoboot_sample_at;
+  autoboot_usb_idle=idle;
+  autoboot_sample_at=now;
   UINT32 Action=PIANO_PRODUCT_ACTION_NONE;UINT64 Sequence=0;
   EFI_STATUS Status=PianoProductGetPendingAction(&Action,&Sequence);
   if(!PianoProductPumpBootServicesAlive()){CpuDeadLoop();return;}

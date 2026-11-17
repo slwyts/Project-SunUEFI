@@ -67,7 +67,7 @@ static VOID publish(UINT32 EventValue) {
   ((UINT32 *)mRing.Cpu)[mRingPosition/4]=EventValue;regs[0xC40C/4]=4;
 }
 static VOID lifecycle_events(UINTN Us) {
-  if(Us!=1000 || !mRing.Active || !(regs[0xC704/4]&BIT31) || (lifecycle_stage==0 && !mPending[0]))return;
+  if(Us!=1000 || lifecycle_stage>=8 || !mRing.Active || !(regs[0xC704/4]&BIT31) || (lifecycle_stage==0 && !mPending[0]))return;
   DWC_TRB *T;
   switch(lifecycle_stage) {
     case 0:case 3: {
@@ -118,7 +118,7 @@ int USB_FASTBOOT_TEST_MAIN(void) {
 #if !PIANO_USB_SCREENSHOT
   cmd("oem screenshot","FAILdiagnostic command unavailable");
 #endif
-  cmd("flash:boot_a","FAILcommand disabled by RAM-only policy");
+  cmd("flash:boot_a","FAILstorage write backend not ready");
   UINT8 Oversize[65];memset(Oversize,'A',sizeof(Oversize));out(Oversize,sizeof(Oversize));drain();
   assert(wire_bytes==20 && !memcmp(wire,"FAILcommand too long",20));
   UINT8 Pattern[65553];for(UINTN I=0;I<sizeof(Pattern);++I)Pattern[I]=(UINT8)(I*73+I/251+19);
@@ -160,7 +160,7 @@ int USB_FASTBOOT_TEST_MAIN(void) {
   assert(!mConfigured && mControl.Configuration==0 && mEnding[2] && mBulkRx.Active && !mFastboot.Upload);
   end(2);assert(!mBulkRx.Active && !mPending[2]);
   setup_packet(5,1);status_complete();configure();
-  assert(Event(1)==EFI_SUCCESS);assert(!mConfigured && mEnding[2] && !mBulkLive && !mPending[0]);end(2);
+  assert(Event(1)==EFI_SUCCESS);assert(!mConfigured && mEnding[2] && !mBulkLive && mPending[0]);end(2);
   ClearFastboot();for(UINTN I=0;I<ARRAY_SIZE(all);++I){if(all[I]->Active)assert(PianoDmaComplete(all[I],EFI_SUCCESS,TRUE)==EFI_SUCCESS);assert(PianoDmaFree(all[I])==EFI_SUCCESS);}
   if(mLogSnapshot){ZeroMem(mLogSnapshot,USB_DIAG_LOG_BYTES);FreePool(mLogSnapshot);mLogSnapshot=NULL;}free(Header);test_console=NULL;
   device_reboot_lifecycle();

@@ -10,6 +10,7 @@
 // The new exporter must not infer retirement from those mock-only contexts.
 EFI_STATUS PianoOwnedSmmuMakeRetiredUsbProof(CONST PIANO_OWNED_SMMU *C,CONST PIANO_SMMU_USB_RETIRE_EVIDENCE *E,
   CONST PIANO_SMMU_SNAPSHOT *S,PIANO_SMMU_RETIRED_USB_PROOF *P){(VOID)C;(VOID)E;(VOID)S;(VOID)P;return EFI_NOT_READY;}
+EFI_STATUS PianoOwnedSmmuExpectActiveGpi(PIANO_SMMU_SNAPSHOT *S){(VOID)S;return EFI_SUCCESS;}
 static EFI_CLOCK_PROTOCOL clock;
 static UINT32 smmu[0x100000/4];static PIANO_SMMU_SNAPSHOT hardware;
 static UINTN held,next_clock,closes,installs,removes,full_captures,backend_reads,backend_infos,stage;
@@ -96,9 +97,10 @@ static EFI_STATUS read_backend(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info
   if(scenario==3)hw_store(0x80c,0x80000040);
   return EFI_SUCCESS;
 }
-static PIANO_FB_STORAGE backend={ (VOID *)456,ready_backend,info_backend,read_backend };
+static PIANO_FB_STORAGE backend={ .Context=(VOID *)456,.Ready=ready_backend,.Info=info_backend,.ReadBlocks=read_backend };
 static VOID tick(UINTN Us) {
-  if(Us!=1000 || !mRing.Active || !(regs[0xC704/4]&BIT31) || (stage==0 && !mPending[0]))return;
+  if(Us!=1000 || stage==9 || mExperimentContractFailed || !mRing.Active ||
+     !(regs[0xC704/4]&BIT31) || (stage==0 && !mPending[0]))return;
   if(stage<6){lifecycle_stage=stage;lifecycle_events(Us);stage=lifecycle_stage;return;}
   DWC_TRB *T;
   if(stage==6) {

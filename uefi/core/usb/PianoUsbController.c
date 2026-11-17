@@ -101,24 +101,27 @@ STATIC BOOLEAN SameGeometry(CONST PIANO_SMMU_SNAPSHOT *A,CONST PIANO_SMMU_SNAPSH
 STATIC EFI_STATUS CoexistCheck(CONST VOID *Fdt,CONST CHAR8 *Phase,BOOLEAN UsbAttached) {
   PIANO_SMMU_SNAPSHOT Now;EFI_STATUS S=PianoSmmuCapture(Fdt,Phase,&Now);
   if(S!=EFI_SUCCESS)return CoexistFail(Phase,S);
-  if(!SameGeometry(&mCoexistBasis,&Now))return CoexistFail(Phase,EFI_COMPROMISED_DATA);
+  PIANO_SMMU_SNAPSHOT Expected=mCoexistBasis;
+  S=PianoOwnedSmmuExpectActiveGpi(&Expected);
+  if(S!=EFI_SUCCESS)return CoexistFail(Phase,S);
+  if(!SameGeometry(&Expected,&Now))return CoexistFail(Phase,EFI_COMPROMISED_DATA);
   PIANO_SMMU_DEVICE *Ufs=&Now.Device[0],*Usb=&Now.Device[1];
   BOOLEAN Stable=SameContext(&mCoexistUfs,Ufs);
   BOOLEAN Separate=UsbAttached?(Usb->Present && Usb->Enabled && Usb->Type==0 &&
     Usb->Sid==0x40 && Usb->ContextBank!=Ufs->ContextBank && (Usb->Ttbr0&0x0000FFFFFFFFF000ULL)!=(Ufs->Ttbr0&0x0000FFFFFFFFF000ULL) &&
     (Usb->Ttbr0&0x0000FFFFFFFFF000ULL)==mUsbContext.TableMemory.Physical):!Usb->Present;
   if(UsbAttached) {
-    PIANO_SMMU_DEVICE Expected=mCoexistBasis.Device[1];
+    PIANO_SMMU_DEVICE ExpectedUsb=Expected.Device[1];
     // OwnedOpen clears an inherited sticky USB FSR after its capture. Freeze
     // the actual post-clear fault fields only in the first full capture.
-    if(!mCoexistReady){Expected.Fsr=Usb->Fsr;Expected.Far=Usb->Far;Expected.Fsynr=Usb->Fsynr;}
-    Separate=Separate && SameContext(&Expected,Usb);
+    if(!mCoexistReady){ExpectedUsb.Fsr=Usb->Fsr;ExpectedUsb.Far=Usb->Far;ExpectedUsb.Fsynr=Usb->Fsynr;}
+    Separate=Separate && SameContext(&ExpectedUsb,Usb);
   }
   for(UINTN I=0;I<Now.Groups;++I) {
     if(!UsbAttached && I==mCoexistBasis.Device[1].StreamIndex)continue;
-    if(Now.RawSmr[I]!=mCoexistBasis.RawSmr[I] || Now.RawS2cr[I]!=mCoexistBasis.RawS2cr[I])Stable=FALSE;
+    if(Now.RawSmr[I]!=Expected.RawSmr[I] || Now.RawS2cr[I]!=Expected.RawS2cr[I])Stable=FALSE;
   }
-  for(UINTN I=2;I<PIANO_SMMU_DEVICE_COUNT;++I)if(!SameContext(&mCoexistBasis.Device[I],&Now.Device[I]))Stable=FALSE;
+  for(UINTN I=2;I<PIANO_SMMU_DEVICE_COUNT;++I)if(!SameContext(&Expected.Device[I],&Now.Device[I]))Stable=FALSE;
   DEBUG((DEBUG_WARN,"SUNUEFI_UFS_USB_COEXIST phase=%a stable_ufs=%u separate=%u ufs_cb=%u usb_cb=%u ufs_root=%lx usb_root=%lx\n",
     Phase,Stable,Separate,Ufs->ContextBank,Usb->ContextBank,Ufs->Ttbr0,Usb->Ttbr0));
   if(!Stable || !Separate)return CoexistFail(Phase,EFI_DEVICE_ERROR);
@@ -152,18 +155,21 @@ STATIC EFI_STATUS CoexistGuard(VOID *Context,CONST CHAR8 *Phase,BOOLEAN Full) {
   if(Full)return CoexistCheck(Fdt,Phase,TRUE);
   if((mCoexistBasis.PageShift!=12 && mCoexistBasis.PageShift!=16) || !mCoexistBasis.Groups || mCoexistBasis.Groups>256 || !mCoexistBasis.Banks || mCoexistBasis.Banks>256)
     return CoexistFail(Phase,EFI_COMPROMISED_DATA);
+  PIANO_SMMU_SNAPSHOT Expected=mCoexistBasis;
+  EFI_STATUS Status=PianoOwnedSmmuExpectActiveGpi(&Expected);
+  if(Status!=EFI_SUCCESS)return CoexistFail(Phase,Status);
   MemoryFence();
   UINT32 Value;
   CONST UINT32 Offsets[]={0,0x20,0x24,0x28,0x48};
-  CONST UINT32 Expected[]={mCoexistBasis.GlobalControl,mCoexistBasis.Id0,mCoexistBasis.Id1,mCoexistBasis.Id2,mCoexistBasis.GlobalFault};
-  for(UINTN I=0;I<ARRAY_SIZE(Offsets);++I)if(ContractRead(Offsets[I],&Value)!=EFI_SUCCESS || Value!=Expected[I])return CoexistFail(Phase,EFI_DEVICE_ERROR);
+  CONST UINT32 Globals[]={Expected.GlobalControl,Expected.Id0,Expected.Id1,Expected.Id2,Expected.GlobalFault};
+  for(UINTN I=0;I<ARRAY_SIZE(Offsets);++I)if(ContractRead(Offsets[I],&Value)!=EFI_SUCCESS || Value!=Globals[I])return CoexistFail(Phase,EFI_DEVICE_ERROR);
   for(UINTN I=0;I<mCoexistBasis.Groups;++I) {
-    if(ContractRead(0x800+4U*I,&Value)!=EFI_SUCCESS || Value!=mCoexistBasis.RawSmr[I])return CoexistFail(Phase,EFI_DEVICE_ERROR);
-    if(ContractRead(0xC00+4U*I,&Value)!=EFI_SUCCESS || Value!=mCoexistBasis.RawS2cr[I])return CoexistFail(Phase,EFI_DEVICE_ERROR);
+    if(ContractRead(0x800+4U*I,&Value)!=EFI_SUCCESS || Value!=Expected.RawSmr[I])return CoexistFail(Phase,EFI_DEVICE_ERROR);
+    if(ContractRead(0xC00+4U*I,&Value)!=EFI_SUCCESS || Value!=Expected.RawS2cr[I])return CoexistFail(Phase,EFI_DEVICE_ERROR);
   }
-  for(UINTN I=0;I<PIANO_SMMU_DEVICE_COUNT;++I)if(mCoexistBasis.Device[I].Present) {
-    PIANO_SMMU_DEVICE Current=mCoexistBasis.Device[I];EFI_STATUS S=QuietContext(&Current);
-    if(S!=EFI_SUCCESS || !SameContext(&Current,&mCoexistBasis.Device[I]))return CoexistFail(Phase,S==EFI_SUCCESS?EFI_DEVICE_ERROR:S);
+  for(UINTN I=0;I<PIANO_SMMU_DEVICE_COUNT;++I)if(Expected.Device[I].Present) {
+    PIANO_SMMU_DEVICE Current=Expected.Device[I];EFI_STATUS S=QuietContext(&Current);
+    if(S!=EFI_SUCCESS || !SameContext(&Current,&Expected.Device[I]))return CoexistFail(Phase,S==EFI_SUCCESS?EFI_DEVICE_ERROR:S);
   }
   MemoryFence();++mCoexistQuietChecks;return EFI_SUCCESS;
 }
@@ -188,7 +194,26 @@ STATIC EFI_STATUS ProxyRead(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info,UI
   (VOID)Context;EFI_STATUS S=ProxyBegin("coexist-read-before");if(S!=EFI_SUCCESS)return S;
   return ProxyEnd(mUnderlyingStorage.ReadBlocks(mUnderlyingStorage.Context,Info,Lba,Bytes,Buffer),"coexist-read-after");
 }
-STATIC CONST PIANO_FB_STORAGE mProxyStorage={NULL,ProxyReady,ProxyInfo,ProxyRead};
+STATIC EFI_STATUS ProxyPrepareWrite(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info){
+  (VOID)Context;EFI_STATUS S=ProxyBegin("coexist-prepare-write-before");if(S!=EFI_SUCCESS)return S;
+  return ProxyEnd(mUnderlyingStorage.PrepareWrite(mUnderlyingStorage.Context,Info),"coexist-prepare-write-after");
+}
+STATIC EFI_STATUS ProxyWrite(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info,UINT64 Lba,UINTN Bytes,CONST VOID *Buffer){
+  (VOID)Context;EFI_STATUS S=ProxyBegin("coexist-write-before");if(S!=EFI_SUCCESS)return S;
+  return ProxyEnd(mUnderlyingStorage.WriteBlocks(mUnderlyingStorage.Context,Info,Lba,Bytes,Buffer),"coexist-write-after");
+}
+STATIC EFI_STATUS ProxyFlush(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info){
+  (VOID)Context;EFI_STATUS S=ProxyBegin("coexist-flush-before");if(S!=EFI_SUCCESS)return S;
+  return ProxyEnd(mUnderlyingStorage.Flush(mUnderlyingStorage.Context,Info),"coexist-flush-after");
+}
+STATIC PIANO_FB_STORAGE mProxyStorage={.Ready=ProxyReady,.Info=ProxyInfo,.ReadBlocks=ProxyRead};
+STATIC CONST PIANO_FB_STORAGE *ProxyStorage(VOID){
+  BOOLEAN Writable=mUnderlyingStorage.PrepareWrite && mUnderlyingStorage.WriteBlocks && mUnderlyingStorage.Flush;
+  mProxyStorage.PrepareWrite=Writable?ProxyPrepareWrite:NULL;
+  mProxyStorage.WriteBlocks=Writable?ProxyWrite:NULL;
+  mProxyStorage.Flush=Writable?ProxyFlush:NULL;
+  return &mProxyStorage;
+}
 #endif
 #if PIANO_USB_UFS_FETCH || PIANO_USB_RAM_BOOT || PIANO_USB_SERVICE
 #if !PIANO_USB_UFS_FETCH
@@ -668,6 +693,12 @@ STATIC EFI_STATUS RoleRestartDevice(VOID) {
   (VOID)PianoDwc3ServiceStop(S);RoleFail("device-restart",S);return S;
 }
 STATIC VOID RoleEnterHost(VOID) {
+#if PIANO_USB_UFS_FETCH
+  if(mCombinedBusy){
+    EFI_STATUS Check=CoexistCheck(mUsbContext.Fdt,"service-host-start",TRUE);
+    if(Check!=EFI_SUCCESS){RoleFail("host-start",Check);return;}
+  }
+#endif
   EFI_STATUS S=PianoDwc3ServiceStop(EFI_SUCCESS);PIANO_DWC3_SERVICE_STATUS D;ZeroMem(&D,sizeof(D));
   EFI_STATUS G=PianoDwc3ServiceGetStatus(&D);
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_ROLE switch=host device_stop=%r halted=%u freed=%u retained=%u\n",S,D.DeviceHalted,D.DmaBuffersFreed,D.Retained));
@@ -683,6 +714,12 @@ STATIC VOID RoleEnterHost(VOID) {
   (VOID)RoleRestartDevice();
 }
 STATIC EFI_STATUS RoleLeaveHost(BOOLEAN Retire) {
+#if PIANO_USB_UFS_FETCH
+  if(mCombinedBusy){
+    EFI_STATUS Check=CoexistCheck(mUsbContext.Fdt,"service-host-stop",TRUE);
+    if(Check!=EFI_SUCCESS){RoleFail("host-stop",Check);return Check;}
+  }
+#endif
   EFI_STATUS S=PianoUsbHostStop();
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_ROLE switch=device host_stop=%r retire=%u\n",S,Retire));
   if(S==EFI_NOT_READY)return S;
@@ -771,7 +808,7 @@ EFI_STATUS PianoUsbControllerServiceStart(CONST VOID *Fdt,CONST PIANO_DWC3_SERVI
   if(Config->Storage!=NULL) {
     mUnderlyingStorage=*Config->Storage;mCombinedBusy=TRUE;
     EFI_STATUS Bind=mUnderlyingStorage.Ready(mUnderlyingStorage.Context);
-    if(Bind==EFI_SUCCESS)Bind=PianoDwc3SetStorageForExperiment(&mProxyStorage);
+    if(Bind==EFI_SUCCESS)Bind=PianoDwc3SetStorageForExperiment(ProxyStorage());
     if(Bind==EFI_SUCCESS)Bind=PianoDwc3SetStorageCheckForExperiment(CoexistGuard,(VOID *)Fdt);
     if(Bind!=EFI_SUCCESS) {
       PianoDwc3SetStorageCheckForExperiment(NULL,NULL);PianoDwc3SetStorageForExperiment(NULL);
@@ -1005,7 +1042,7 @@ EFI_STATUS PianoUsbControllerRunWithStorage(CONST VOID *Fdt,CONST PIANO_FB_STORA
   if(mCombinedBusy || mUsbControllerRunning || mUsbCleanupBlocked)return EFI_NOT_READY;
   mCombinedBusy=TRUE;mCoexistReady=mCoexistFailed=mProxyBusy=FALSE;mCoexistQuietChecks=0;mUnderlyingStorage=*Storage;
   EFI_STATUS S=mUnderlyingStorage.Ready(mUnderlyingStorage.Context);if(S!=EFI_SUCCESS){mCombinedBusy=FALSE;return S;}
-  S=PianoDwc3SetStorageForExperiment(&mProxyStorage);if(S!=EFI_SUCCESS){mCombinedBusy=FALSE;return S;}
+  S=PianoDwc3SetStorageForExperiment(ProxyStorage());if(S!=EFI_SUCCESS){mCombinedBusy=FALSE;return S;}
   S=PianoDwc3SetStorageCheckForExperiment(CoexistGuard,(VOID *)Fdt);
   if(S!=EFI_SUCCESS){PianoDwc3SetStorageForExperiment(NULL);mCombinedBusy=FALSE;return S;}
   S=RunController(Fdt,TRUE,RebootRequested);

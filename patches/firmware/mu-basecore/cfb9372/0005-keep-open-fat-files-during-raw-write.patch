@@ -1,0 +1,76 @@
+diff --git a/FatPkg/EnhancedFatDxe/Init.c b/FatPkg/EnhancedFatDxe/Init.c
+--- a/FatPkg/EnhancedFatDxe/Init.c
++++ b/FatPkg/EnhancedFatDxe/Init.c
+@@ -7,6 +7,9 @@
+ **/
+ 
+ #include "Fat.h"
++#include <Protocol/PianoRawPartitionWrite.h>
++
++STATIC EFI_GUID mPianoRawPartitionWriteGuid = PIANO_RAW_PARTITION_WRITE_GUID;
+ 
+ /**
+ 
+@@ -171,6 +174,34 @@ FatAbandonVolume (
+ {
+   EFI_STATUS  Status;
+   BOOLEAN     LockedByMe;
++  VOID        *RawWrite;
++
++  LockedByMe = FALSE;
++  //
++  // Unlike media removal, an explicit raw write can wait for open files.
++  // Keep the volume usable when refusing and flush cached data before detach.
++  //
++  if ((Volume->Handle != NULL) &&
++      (gBS->HandleProtocol (Volume->Handle, &mPianoRawPartitionWriteGuid, &RawWrite) == EFI_SUCCESS))
++  {
++    Status = FatAcquireLockOrFail ();
++    if (Status != EFI_SUCCESS) {
++      return Status;
++    }
++
++    if (Volume->Root != NULL) {
++      FatReleaseLock ();
++      return EFI_ACCESS_DENIED;
++    }
++
++    Status = FatFlushDirtyCache (Volume, NULL);
++    if (Status != EFI_SUCCESS) {
++      FatReleaseLock ();
++      return Status;
++    }
++
++    LockedByMe = TRUE;
++  }
+ 
+   //
+   // Uninstall the protocol interface.
+@@ -183,21 +214,22 @@ FatAbandonVolume (
+                     NULL
+                     );
+     if (EFI_ERROR (Status)) {
++      if (LockedByMe) {
++        FatReleaseLock ();
++      }
+       return Status;
+     }
+   }
+ 
+-  LockedByMe = FALSE;
+-
+   //
+   // Acquire the lock.
+   // If the caller has already acquired the lock (which
+   // means we are in the process of some Fat operation),
+   // we can not acquire again.
+   //
+-  Status = FatAcquireLockOrFail ();
+-  if (!EFI_ERROR (Status)) {
+-    LockedByMe = TRUE;
++  if (!LockedByMe) {
++    Status     = FatAcquireLockOrFail ();
++    LockedByMe = !EFI_ERROR (Status);
+   }
+ 
+   //

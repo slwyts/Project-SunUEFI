@@ -95,6 +95,9 @@ EFI_STATUS PianoOwnedSmmuOpenUsb(CONST VOID *Fdt,PIANO_OWNED_SMMU *Context,PIANO
 // The caller holds QUP1 clocks and proves channels idle. B6 rings and A3
 // payloads share the domain, including its mapping and retirement checks.
 EFI_STATUS PianoOwnedSmmuOpenGpi(CONST VOID *Fdt,PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Device);
+// Add the two verified GPI routes to a copy of a pre-GPI snapshot. All other
+// expectations remain unchanged. No hardware access; the caller checks live registers.
+EFI_STATUS PianoOwnedSmmuExpectActiveGpi(PIANO_SMMU_SNAPSHOT *Expected);
 // Check the live GPI route before unmapping or freeing any of its DMA buffers.
 EFI_STATUS PianoOwnedSmmuCheckGpi(PIANO_OWNED_SMMU *Context);
 EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *Context);

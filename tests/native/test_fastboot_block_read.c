@@ -8,15 +8,52 @@
 #undef NULL
 #include "../../uefi/core/usb/PianoFastbootBlockRead.c"
 #include "../../uefi/core/usb/PianoFastboot.c"
+#if PIANO_UFS_PRODUCT_STORAGE
+#include "../../uefi/components/nv/PianoNvFile.c"
+#include "../../uefi/core/storage/PianoGpt.c"
+EFI_RUNTIME_SERVICES *gRT;
+EFI_GUID gEfiSimpleFileSystemProtocolGuid={.Data1=4},gEfiFileInfoGuid={.Data1=5};
+EFI_GUID gEfiEventExitBootServicesGuid=EFI_EVENT_GROUP_EXIT_BOOT_SERVICES;
+#endif
 EFI_GUID gEfiBlockIoProtocolGuid={.Data1=1},gEfiPartitionInfoProtocolGuid={.Data1=2},gEfiDevicePathProtocolGuid={.Data1=3};
 EFI_BOOT_SERVICES bs,*gBS=&bs;
 typedef struct {VENDOR_DEVICE_PATH Vendor;UFS_DEVICE_PATH Ufs;HARDDRIVE_DEVICE_PATH Hd;EFI_DEVICE_PATH_PROTOCOL End;} PATH;
 _Static_assert(sizeof(PATH)==sizeof(VENDOR_DEVICE_PATH)+sizeof(UFS_DEVICE_PATH)+sizeof(HARDDRIVE_DEVICE_PATH)+4,"fixed path must not contain padding");
-typedef struct {EFI_BLOCK_IO_PROTOCOL Block;EFI_BLOCK_IO_MEDIA Media;EFI_PARTITION_INFO_PROTOCOL Info;PATH Path;UINT32 Missing;} CHILD;
+typedef struct {
+  EFI_BLOCK_IO_PROTOCOL Block;EFI_BLOCK_IO_MEDIA Media;EFI_PARTITION_INFO_PROTOCOL Info;PATH Path;UINT32 Missing;
+#if PIANO_UFS_PRODUCT_STORAGE
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL Filesystem;
+  BOOLEAN Mounted,OpenFiles;
+#endif
+} CHILD;
 static CHILD children[MAX_PARTITIONS+1];static UINTN child_count,read_calls,write_calls,last_lba,last_bytes;
 static EFI_STATUS locate_status,read_status;static BOOLEAN null_handles;static UINTN pools;
 static UINTN revoke_on_read;
 static struct {VOID *P;UINTN Bytes;BOOLEAN Zero;} allocated[16];
+#if PIANO_UFS_PRODUCT_STORAGE
+static UINT8 written_block[PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES];
+static UINTN written_bytes;
+static UINTN flush_calls,close_calls;
+static CHILD *written_child,*expected_close;
+static BOOLEAN revoke_on_write,revoke_on_flush;
+BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
+BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
+VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
+INTN EFIAPI StrnCmp(CONST CHAR16 *A,CONST CHAR16 *B,UINTN N){
+  for(UINTN I=0;I<N;++I){if(A[I]!=B[I])return A[I]<B[I]?-1:1;if(!A[I])return 0;}return 0;
+}
+UINTN EFIAPI StrSize(CONST CHAR16 *S){UINTN N=0;while(S[N])++N;return (N+1)*sizeof(CHAR16);}
+EFI_STATUS PianoStorageCloseFilesystemForWrite(EFI_HANDLE Partition){
+  CHILD *C=Partition;assert(C==expected_close && C->Mounted);
+  if(C->OpenFiles)return EFI_ACCESS_DENIED;
+  if(C==mVolumeHandle)assert(mProtocol.Frozen);
+  ++close_calls;C->Mounted=FALSE;return EFI_SUCCESS;
+}
+EFI_STATUS PianoStorageCheckFilesystemClosed(EFI_HANDLE Partition){
+  CHILD *C=Partition;assert(C>=children && C<children+child_count);
+  return C->Mounted?EFI_ACCESS_DENIED:EFI_SUCCESS;
+}
+#endif
 VOID *EFIAPI CopyMem(VOID *A,CONST VOID *B,UINTN N){return memcpy(A,B,N);}
 VOID *EFIAPI ZeroMem(VOID *A,UINTN N){return memset(A,0,N);}
 INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
@@ -29,6 +66,9 @@ static VOID *alloc(UINTN Bytes,BOOLEAN Zero) {
   assert(FALSE);return NULL;
 }
 VOID *EFIAPI AllocateZeroPool(UINTN Bytes){return alloc(Bytes,TRUE);}
+#if PIANO_UFS_PRODUCT_STORAGE
+VOID *EFIAPI AllocatePool(UINTN Bytes){return alloc(Bytes,FALSE);}
+#endif
 VOID EFIAPI FreePool(VOID *P) {
   assert(P);for(UINTN I=0;I<ARRAY_SIZE(allocated);++I)if(allocated[I].P==P) {
     if(allocated[I].Zero)for(UINTN N=0;N<allocated[I].Bytes;++N)assert(!((UINT8 *)P)[N]);
@@ -38,6 +78,13 @@ VOID EFIAPI FreePool(VOID *P) {
 }
 BOOLEAN EFIAPI Sha256HashAll(CONST VOID *P,UINTN N,UINT8 *Hash){return SHA256(P,N,Hash)!=NULL;}
 static EFI_STATUS EFIAPI locate(EFI_LOCATE_SEARCH_TYPE Type,EFI_GUID *Guid,VOID *Key,UINTN *Count,EFI_HANDLE **Handles) {
+#if PIANO_UFS_PRODUCT_STORAGE
+  if(Guid==&gEfiSimpleFileSystemProtocolGuid){
+    assert(Type==ByProtocol && !Key);*Count=0;*Handles=alloc(child_count*sizeof(**Handles),FALSE);
+    for(UINTN I=0;I<child_count;++I)if(children[I].Mounted)(*Handles)[(*Count)++]=&children[I];
+    return locate_status;
+  }
+#endif
   assert(Type==ByProtocol && Guid==&gEfiBlockIoProtocolGuid && !Key);*Count=child_count;*Handles=NULL;
   if(child_count && !null_handles){*Handles=alloc(child_count*sizeof(**Handles),FALSE);for(UINTN I=0;I<child_count;++I)(*Handles)[I]=&children[I];}
   return locate_status;
@@ -46,22 +93,47 @@ static EFI_STATUS EFIAPI handle(EFI_HANDLE Handle,EFI_GUID *Guid,VOID **Out) {
   CHILD *C=Handle;assert(C>=children && C<children+child_count);*Out=NULL;
   if(Guid==&gEfiBlockIoProtocolGuid){if(C->Missing&1)return EFI_NOT_FOUND;*Out=&C->Block;}
   else if(Guid==&gEfiPartitionInfoProtocolGuid){if(C->Missing&2)return EFI_NOT_FOUND;*Out=&C->Info;}
+#if PIANO_UFS_PRODUCT_STORAGE
+  else if(Guid==&gEfiSimpleFileSystemProtocolGuid){if(!C->Mounted)return EFI_UNSUPPORTED;*Out=&C->Filesystem;}
+#endif
   else {assert(Guid==&gEfiDevicePathProtocolGuid);if(C->Missing&4)return EFI_NOT_FOUND;*Out=&C->Path;}
   return EFI_SUCCESS;
 }
 static UINT8 at(UINT64 Byte){return (UINT8)(Byte*73+(Byte>>8)+(Byte>>32)+19);}
 static EFI_STATUS EFIAPI read(EFI_BLOCK_IO_PROTOCOL *Block,UINT32 MediaId,EFI_LBA Lba,UINTN Bytes,VOID *Buffer) {
   CHILD *C=NULL;for(UINTN I=0;I<child_count;++I)if(&children[I].Block==Block)C=&children[I];assert(C);
-  assert(MediaId==C->Media.MediaId && C->Media.ReadOnly && Bytes && !(Bytes%4096) && Lba<=C->Media.LastBlock && Bytes/4096<=C->Media.LastBlock+1-Lba);
+  assert(MediaId==C->Media.MediaId && Bytes && !(Bytes%4096) && Lba<=C->Media.LastBlock && Bytes/4096<=C->Media.LastBlock+1-Lba);
   ++read_calls;last_lba=Lba;last_bytes=Bytes;
   if(read_status!=EFI_SUCCESS)return read_status;
+#if PIANO_UFS_PRODUCT_STORAGE
+  if(C==written_child){assert(!Lba && Bytes==written_bytes);memcpy(Buffer,written_block,Bytes);return EFI_SUCCESS;}
+#endif
   UINT64 Physical=(C->Info.Info.Gpt.StartingLBA+Lba)*4096;
   for(UINTN I=0;I<Bytes;++I)((UINT8 *)Buffer)[I]=at(Physical+I);
   if(revoke_on_read==1)++C->Media.MediaId;
   if(revoke_on_read==2)PianoFastbootBlockReadStop();
   return EFI_SUCCESS;
 }
-static EFI_STATUS EFIAPI write_block(EFI_BLOCK_IO_PROTOCOL *Block,UINT32 MediaId,EFI_LBA Lba,UINTN Bytes,VOID *Buffer){++write_calls;assert(FALSE);return EFI_WRITE_PROTECTED;}
+static EFI_STATUS EFIAPI write_block(EFI_BLOCK_IO_PROTOCOL *Block,UINT32 MediaId,EFI_LBA Lba,UINTN Bytes,VOID *Buffer){
+  ++write_calls;
+#if PIANO_UFS_PRODUCT_STORAGE
+  CHILD *C=BASE_CR(Block,CHILD,Block);
+  assert(!C->Mounted && !C->Media.ReadOnly && MediaId==C->Media.MediaId && !Lba);
+  assert(Bytes && Bytes<=sizeof(written_block) && !(Bytes%4096));
+  written_child=C;written_bytes=Bytes;memcpy(written_block,Buffer,Bytes);
+  if(revoke_on_write){PianoFastbootBlockReadStop();assert(PianoFastbootBlockReadInit()==EFI_SUCCESS);}
+  return EFI_SUCCESS;
+#else
+  assert(FALSE);return EFI_WRITE_PROTECTED;
+#endif
+}
+#if PIANO_UFS_PRODUCT_STORAGE
+static EFI_STATUS EFIAPI flush_block(EFI_BLOCK_IO_PROTOCOL *Block){
+  assert(Block==&written_child->Block);++flush_calls;
+  if(revoke_on_flush){PianoFastbootBlockReadStop();assert(PianoFastbootBlockReadInit()==EFI_SUCCESS);}
+  return EFI_SUCCESS;
+}
+#endif
 static VOID node(EFI_DEVICE_PATH_PROTOCOL *H,UINT8 Type,UINT8 Sub,UINTN Bytes){H->Type=Type;H->SubType=Sub;H->Length[0]=(UINT8)Bytes;H->Length[1]=(UINT8)(Bytes>>8);}
 static VOID gpt_name(CHILD *C,CONST CHAR8 *Name){ZeroMem(C->Info.Info.Gpt.PartitionName,sizeof(C->Info.Info.Gpt.PartitionName));for(UINTN I=0;Name[I];++I)C->Info.Info.Gpt.PartitionName[I]=(UINT8)Name[I];}
 static VOID valid(UINTN Count) {
@@ -84,6 +156,71 @@ static VOID valid(UINTN Count) {
 static VOID reject(VOID){assert(PianoFastbootBlockReadInit()==EFI_NOT_FOUND && !PianoFastbootBlockReadStorage() && !pools && !read_calls && !write_calls);}
 static UINT8 frames[3][65537];static UINTN frame_bytes[3],frame_count;
 static EFI_STATUS send(VOID *Context,CONST VOID *Data,UINTN Bytes){assert(!Context && frame_count<3 && Bytes<=65536);CopyMem(frames[frame_count],Data,Bytes);frame_bytes[frame_count++]=Bytes;return EFI_SUCCESS;}
+#if PIANO_UFS_PRODUCT_STORAGE
+static VOID test_partition_write_scope(VOID){
+  valid(3);
+  for(UINTN I=0;I<3;++I){
+    children[I].Mounted=TRUE;children[I].Media.ReadOnly=FALSE;children[I].Block.FlushBlocks=flush_block;
+  }
+  gpt_name(&children[1],"sunuefi_esp");gpt_name(&children[2],"persist");
+  UINTN EspBlocks=2*PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES/4096;
+  children[1].Media.LastBlock=EspBlocks-1;
+  children[1].Info.Info.Gpt.EndingLBA=children[1].Info.Info.Gpt.StartingLBA+EspBlocks-1;
+  children[1].Path.Hd.PartitionSize=EspBlocks;
+  assert(Volume()==EFI_SUCCESS && mVolumeHandle==&children[2] && mFs==&children[2].Filesystem);
+  // Simulate a store restored from disk whose variables have not changed.
+  mStarted=TRUE;mSequence=1;
+  assert(PianoFastbootBlockReadInit()==EFI_SUCCESS);
+  CONST PIANO_FB_STORAGE *S=PianoFastbootBlockReadStorage();
+  PIANO_FB_PARTITION_INFO Esp,Factory,Persist;
+  assert(S->Info(NULL,"sunuefi_esp",&Esp)==EFI_SUCCESS && S->Info(NULL,"xbl_config_a",&Factory)==EFI_SUCCESS &&
+    S->Info(NULL,"persist",&Persist)==EFI_SUCCESS && !mProtocol.Frozen && !write_calls && !close_calls);
+  expected_close=&children[1];children[1].OpenFiles=TRUE;
+  assert(S->PrepareWrite(NULL,&Esp)==EFI_ACCESS_DENIED && !mProtocol.Frozen && !close_calls && !write_calls);
+  children[1].OpenFiles=FALSE;
+
+  // One full batch and another FILL block. A remount stops the second
+  // write, but the first verified batch must still be flushed.
+  UINT8 Sparse[44]={0x3a,0xff,0x26,0xed,1,0,0,0,28,0,12,0,0,16,0,0,0,0,0,0,1,0,0,0,
+    0,0,0,0,0xc2,0xca,0,0,0,0,0,0,16,0,0,0,0x41,0x42,0x43,0x44};
+  Sparse[16]=Sparse[32]=(UINT8)(PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES/4096+1);
+  PIANO_FASTBOOT Fb;assert(PianoFastbootInit(&Fb,NULL,send,NULL)==EFI_SUCCESS && PianoFastbootSetStorage(&Fb,S)==EFI_SUCCESS);
+  frame_count=0;
+  assert(PianoFastbootPacket(&Fb,"download:0000002c",17)==EFI_SUCCESS &&
+    PianoFastbootPacket(&Fb,Sparse,sizeof(Sparse))==EFI_SUCCESS);
+  frame_count=0;
+  assert(PianoFastbootPacket(&Fb,"flash:sunuefi_esp",sizeof("flash:sunuefi_esp")-1)==EFI_SUCCESS);
+  while(!write_calls)assert(PianoFastbootFlashPending(&Fb) && PianoFastbootFlashStep(&Fb)==EFI_SUCCESS);
+  assert(write_calls==1 && read_calls==1 && last_bytes==sizeof(written_block) && !flush_calls && close_calls==1 &&
+    children[0].Mounted && !children[1].Mounted && children[2].Mounted && !mProtocol.Frozen);
+  children[1].Mounted=TRUE;
+  while(PianoFastbootFlashPending(&Fb))assert(PianoFastbootFlashStep(&Fb)==EFI_SUCCESS);
+  assert(write_calls==1 && flush_calls==1 && frame_count==2 && !memcmp(frames[1],"FAIL",4));
+  PianoFastbootReset(&Fb);
+
+  // A factory partition is not banned; a different mounted filesystem and
+  // its variable store stay untouched. Protect the original token across IO.
+  expected_close=&children[0];
+  assert(S->PrepareWrite(NULL,&Factory)==EFI_SUCCESS && close_calls==2 &&
+    children[1].Mounted && children[2].Mounted && !mProtocol.Frozen);
+  UINT8 Data[4096]={0};
+  revoke_on_write=TRUE;
+  assert(S->WriteBlocks(NULL,&Factory,0,sizeof(Data),Data)==EFI_MEDIA_CHANGED);
+  assert(S->Info(NULL,"xbl_config_a",&Factory)==EFI_SUCCESS);
+  revoke_on_flush=TRUE;
+  assert(S->Flush(NULL,&Factory)==EFI_MEDIA_CHANGED && flush_calls==2);
+
+  assert(S->Info(NULL,"persist",&Persist)==EFI_SUCCESS);
+  expected_close=&children[2];
+  mFs=&children[1].Filesystem;
+  assert(S->PrepareWrite(NULL,&Persist)==EFI_MEDIA_CHANGED && close_calls==2 && !mProtocol.Frozen);
+  mFs=&children[2].Filesystem;
+  assert(S->PrepareWrite(NULL,&Persist)==EFI_SUCCESS && close_calls==3 &&
+    !children[2].Mounted && children[1].Mounted && mProtocol.Frozen);
+  PianoFastbootBlockReadStop();
+  assert(!pools);puts("Target-only Fastboot writes: NVRAM identity, open files, sparse remount, final sync and write/flush token revocation passed.");
+}
+#endif
 int main(void) {
   valid(0);assert(PianoFastbootBlockReadInit()==EFI_NOT_FOUND && !pools);
   valid(1);null_handles=TRUE;assert(PianoFastbootBlockReadInit()==EFI_COMPROMISED_DATA && !pools);
@@ -134,7 +271,7 @@ int main(void) {
       case 12:C->Path.End.Type=MESSAGING_DEVICE_PATH;break;case 13:C->Path.End.Length[0]=8;break;
       case 14:ZeroMem(&C->Info.Info.Gpt.UniquePartitionGUID,16);ZeroMem(C->Path.Hd.Signature,16);break;
       case 15:ZeroMem(&C->Info.Info.Gpt.PartitionTypeGUID,16);break;case 16:C->Info.Info.Gpt.EndingLBA=C->Info.Info.Gpt.StartingLBA-1;break;
-      case 17:C->Media.IoAlign=4096;break;case 18:C->Media.ReadOnly=FALSE;break;case 19:C->Media.LogicalPartition=FALSE;break;
+      case 17:C->Media.IoAlign=4096;break;case 18:C->Block.ReadBlocks=NULL;break;case 19:C->Media.LogicalPartition=FALSE;break;
       case 20:C->Info.Info.Gpt.PartitionName[0]=0x100;break;case 21:C->Info.Info.Gpt.PartitionName[30]='Z';break;case 22:C->Block.Revision=0;break;
       case 23:C->Info.Revision=0;break;
       case 24:C->Media.LastBlock=MAX_UINT64/4096;break;
@@ -147,6 +284,9 @@ int main(void) {
   valid(2);gpt_name(&children[1],"xbl_config_a");assert(PianoFastbootBlockReadInit()==EFI_SUCCESS && S->Info(NULL,"xbl_config_a",&Info)==EFI_NO_MAPPING);
   valid(1);CHAR8 Full[37];memset(Full,'A',36);Full[36]=0;gpt_name(&children[0],Full);assert(PianoFastbootBlockReadInit()==EFI_SUCCESS && S->Info(NULL,Full,&Info)==EFI_SUCCESS);
   valid(MAX_PARTITIONS+1);assert(PianoFastbootBlockReadInit()==EFI_OUT_OF_RESOURCES && !PianoFastbootBlockReadStorage() && !pools);
+#if PIANO_UFS_PRODUCT_STORAGE
+  test_partition_write_scope();
+#endif
   valid(1);mNextToken=MAX_UINTN;assert(PianoFastbootBlockReadInit()==EFI_OUT_OF_RESOURCES && !pools);PianoFastbootBlockReadStop();
   assert(!write_calls && !pools);puts("Actual EFI BlockIO bridge + fetch: owned path/HD-GPT geometry/GUID, canonical names/ambiguity, MediaId/read-only/function revocation, stale-cookie ABA, alignment, partial4K, failure cleanup and zero writes passed.");
   return 0;

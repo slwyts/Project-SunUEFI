@@ -86,7 +86,6 @@ int main(void){
             native.write_text('#define main OriginalOwnersMain\n#include "'+str(fixture)+'"\n#undef main\n'
                 '#include "'+str(ROOT/'uefi/core/boot/PianoRawLinuxBoot.h')+'"\n'
                 '#include "'+str(ROOT/'uefi/core/usb/PianoFastbootDownloadBlob.h')+'"\n'
-                '#include "'+str(ROOT/'uefi/components/os-boot/PianoEspBootSource.h')+'"\n'
                 +state+'\nstatic RAW_STATE mRaw;\n'+clean+'\n'+predicates+r'''
 int main(void) {
   fresh();BootAction.Context=&mRaw;BootAction.Token=&mRaw.Adapter;mRaw.Token=BootAction.Token;

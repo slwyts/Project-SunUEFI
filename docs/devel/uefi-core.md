@@ -28,31 +28,37 @@ PianoProductCoreEntry (uefi/core/PianoProductCore.c)
   ├─► PianoFvApplicationStart: 加载固件内部文件卷
   ├─► PianoRawLinuxRegister: 准备 Linux 加载支撑
   ├─► PianoUsbControllerServiceStart: 启动常驻后台的 USB 调试控制器
-  ├─► PianoUfsProductStorageStart: 挂载只读 UFS 与独立存储分区
+  ├─► PianoUfsProductStorageStart: 发布 UFS 块设备并挂载项目存储
   ├─► PianoSimpleInitStart: 显示图形引导菜单与启动动画
   │
   ▼ 用户选择或倒计时超时
 系统交接 (ExitBootServices) 或进入设置
 ```
 
-## 原厂 UFS 分区只读保护
+## UFS 写入
 
-固件在 `uefi/core/PianoReadOnlyBlock.c` 中对原厂 UFS 分区实施代码级保护：
+产品固件通过标准 Block I/O 提供实际可写的 UFS 设备，不按原厂分区名称加软件写保护。
+硬件自身的写保护和传输能力如实反映在介质属性中。查询、扫描和启动探测不调用写入函数；
+自动设置保存仍限定在 `persist/sunuefi/`。
 
-* **关键只读**：原厂 Android 相关的系统、配置与引导分区（如 `boot`、`init_boot`、`vendor_boot`、`super`、`userdata` 等）在 UEFI 运行期间一律只读，拒绝写操作；
-* **允许写入**：仅针对 SunUEFI 独立创建的分区（`sunuefi_esp`、`sunuefi_root`）开放写入权限；
-* **分区表校验**：固件仅对 GPT 结构、CRC 校验码和逻辑边界进行标准合规性核对，不与某次历史采集的整表快照比对。
+Fastboot 的明确刷写请求按精确 GPT 分区名定位，核对介质标识、GUID、边界和容量。
+写入前保存设置并关闭文件系统，避免文件缓存随后覆盖镜像；每段写入独立读回比较，
+最后同步设备缓存。Android sparse 镜像先完整检查结构再执行，空洞不改写原有数据。
+标准块写由实际调用者指定范围；它不经过项目自动保存接口的分区白名单。
+
+GPT 只检查结构、CRC 和逻辑边界，不与历史机器快照比较。初始化检查只读取磁盘，
+不再通过向 LBA 0 发起写请求来探测写保护。
 
 ## 安全退出 ExitBootServices
 
-在启动 Linux 或执行重启前，UEFI 必须安全断开硬件并退出 ExitBootServices，防止发生外设总线冲突：
+在启动 Linux 前，UEFI 必须安全断开硬件并退出 ExitBootServices，防止发生外设总线冲突：
 
 1. 先关闭触屏的 GPI 通道和事件环，确认串行引擎停止，再释放 DMA 缓冲区及 SMMU 域，恢复寄存器、引脚和时钟。它占用前的无效 SMMU 路由也必须恢复，以免改变 USB／UFS 的退出校验。
 2. 停止 DWC3 端点传输，清空事件环，释放 USB DMA 缓冲区；USB 口处于主机模式时，先断开 USB 设备驱动，停止并复位 xHCI。
 3. 完成 UFS 已排队的传输，同步缓存，安全断开存储通道。USB 和 UFS 各自在停止 DMA 后解绑地址映射并释放页表。
 4. 关闭物理按键和磁吸键盘输入协议，让键盘 MCU 回到复位，恢复 L11B/L14B 的 RPMh 投票、引脚和 SE6 寄存器，释放 QUP1 时钟引用，最后释放显示时钟。
 
-任何一步无法确认外设已经停止时，固件保留可能仍被 DMA 使用的内存，拒绝继续启动或重启。触屏 GPI 路径还没有在平板上完成传输与退出检查，具体状态见[触屏实现](boot/uefi-console.md#触屏)。
+任何一步无法确认外设已经停止时，固件保留可能仍被 DMA 使用的内存，拒绝交接系统。整机重启不经过这条路径：保存设置、完成存储写入并停止存储队列后直接调用 `ResetSystem`，外设 DMA 缓冲区保留到复位。具体实现见[触屏实现](boot/uefi-console.md#触屏)与[电源动作](boot/uefi-console.md#电源动作与退出)。
 
 DWC3 停机时先结束活动端点传输，再清除 `RUN_STOP`。等待 `DEVCTRLHLT` 时持续
 确认事件缓冲区中的事件，不再处理新请求或提交 TRB；USB2 PHY 在整个停机过程中
@@ -62,19 +68,21 @@ DWC3 停机时先结束活动端点传输，再清除 `RUN_STOP`。等待 `DEVCT
 
 固件运行期间在后台常驻 USB Fastboot 服务（序列号固定为 `SunUEFI-piano`），在固件菜单、设置和 Shell 界面中均保持在线。它支持以下调试操作：
 
+* `oem help`：列出当前模式可用的命令；
 * `getvar product` / `version` / `storage-policy`：查询固件状态；
 * `oem status` / `oem ramlog`：导出内存诊断日志（最多 256 KiB）；
 * `oem screenshot`：读取帧缓冲截图（24 位 BMP）；
 * `fetch`：只读读取分区内容（单次上限 64 KiB）；
-* `oem boot-stable`：直接从 ESP 启动 Linux；
-* `reboot` / `continue`：安全清理外设后重启回系统。
+* `flash` / `erase`：按准确的 GPT 名称写入或清零指定分区；
+* `oem boot-stable`：按固件的启动顺序尝试已安装的系统；
+* `reboot` / `continue`：保存设置、同步存储后执行整机复位；不经过系统交接检查。
 
-该服务明确拒绝 `flash`、`erase`、`flashing` 等改写分区的危险操作，详见 [UEFI Fastboot](../user/fastboot.md)。
+刷写前只卸载目标文件系统。后续每段写入都会重新确认目标未被挂载、介质与分区未变，写完读回校验，最后同步才报告成功。产品 UFS 一次传输最多 256 KiB。USB 事件优先处理，键盘和触屏在批次间继续读取；下载、刷写或擦除时，SimpleInit 的自动启动倒计时暂停。电脑中止读取时，固件等待旧回复结束，确认端点停止后才接受新命令。命令用法见 [UEFI Fastboot](../user/fastboot.md)。
 
 错误提示页仅在 BootServices、USB 设备及其 SMMU 资源仍有效时运行诊断循环。
 循环绕过启动策略、输入和 USB 角色切换，只处理现有 USB 设备；输入退出失败
 不应停止仍健康的 USB。Fastboot 保留状态、日志、截图和快照上传，重启是否
-允许取决于资源退出状态，USB 重置不能解除限制。具体重启、清理失败和连接
+允许取决于设置保存与存储写入状态，外设寄存器恢复失败不阻止整机复位。具体重启、清理失败和连接
 保留条件见[电源动作与退出](boot/uefi-console.md#电源动作与退出)。状态查询只
 输出保存的镜像、设备树、内存和退出检查结果，不重新探测失败的硬件。
 
@@ -88,27 +96,32 @@ DWC3 停机时先结束活动端点传输，再清除 `RUN_STOP`。等待 `DEVCT
 
 ## ESP 启动文件与系统交接
 
-启动 Linux 时，固件在唯一的 `sunuefi_esp` 分区上直接装载
-`/EFI/Linux/sunuefi.efi`，保留真实的 ESP 设备句柄。这个 UKI 内含内核、
-initramfs、设备树和启动参数，使用标准 systemd-stub 调用 Linux EFI stub；
-没有 systemd-boot 管理器和 Android 格式的 Linux 包。SimpleInit 是唯一的
-图形菜单，默认选择“启动 Linux”，无操作五秒自动启动，输入取消倒计时。
+控制台初始化后先启动驻留核心，完成设备初始化、变量恢复和安全退出协议安装，
+再选择系统。固件读取标准 `Boot####`：先消费一次性 `BootNext`，
+再按 `BootOrder` 尝试启用的启动项。设备路径由上游 UEFI BootManager 库展开，
+支持 GPT 短路径、文件路径和标准 `EFI/BOOT/BOOTAA64.EFI` 后备入口。
+固件不限定分区标签、UFS LUN 或 systemd-boot 文件名；不自动创建名为 Linux 的
+固件内部替代项。
+
+产品 ESP 默认安装 systemd-boot。没有注册普通启动项时使用标准后备文件。
+systemd-boot 默认使用分开的内核、initramfs 和设备树，也能发现版本化 UKI。
+SimpleInit 默认选择“启动 Linux”，无操作五秒后进入系统引导程序，输入可取消；
+随后 systemd-boot 菜单停留三秒，可选择旧内核。
 启动镜像缺失、加载失败或返回固件时显示具体原因并停止，不自动重开菜单或重试。
 完整文件布局见[启动架构](architecture.md#存储布局)。
 
 固件通过 `EFI_DT_FIXUP_PROTOCOL` 为装载的设备树应用同次启动的内存、面板与 Gunyah 修正，并检查保留区。Linux EFI stub 负责填写 EFI 内存图和 initrd 信息。SEC 从本次 ABL 传入的最终设备树读取完整 RAM，结合 SMEM、原生固件区域和冷启动对象生成内存表；新增普通 RAM 保持为 `EfiLoaderData`，不进入固件分配池。退出前再次核对真实 EFI/GCD 描述符及页表的恒等映射和缓存属性，再交给 Linux 回收。
 
-`PianoProductMemoryApplyDtb()` 使用带 CRC 与同次启动标识的早期采集结果，替换 Linux DTB 的 `/memory/reg`、DDR 容量／厂商／类型和 `/ddr-regions`，移除多余的 memory 节点。UKI 的 DTB 在内存中经标准协议修正，不按内存容量制作镜像，也不在安装时改写 ESP。Linux 的硬件节点、CMA 请求与保留区保持原样；交接前的检查会拒绝不兼容的保留区，而不是把 EFI 空闲页误当作物理总内存。
+`PianoProductMemoryApplyDtb()` 使用带 CRC 与同次启动标识的早期采集结果，替换 Linux DTB 的 `/memory/reg`、DDR 容量／厂商／类型和 `/ddr-regions`，移除多余的 memory 节点。DTB 在内存中经标准协议修正，不按内存容量制作镜像，也不在安装时改写 ESP。Linux 的硬件节点、CMA 请求与保留区保持原样；交接前的检查会拒绝不兼容的保留区，而不是把 EFI 空闲页误当作物理总内存。
 
-旧的 `boot.img`、BLS 分文件配置和 ESP 兼容应用不再作为产品启动入口。
-升级固件时同步更新启动镜像（ESP），不用覆盖已有 root。打包由 `ukify`
-构建 UKI，再读取 PE 的 `.linux`、`.initrd`、`.dtb`、`.cmdline` 等段逐一
-核对内容；FAT 写入后再次读回整个 EFI 文件。内核没有内建命令行或后备值。
+启动镜像由构建器生成，写入 FAT 后读回核对。选择 UKI 时，用 `ukify` 打包
+并核对 `.linux`、`.initrd`、`.dtb` 和 `.cmdline` 各段。内核没有内建命令行或
+后备值。安装后的内核更新由发行版软件包维护，不需要重新刷写整个 ESP。
 
-`ExitBootServices` 使用当前最内层启动应用的真实句柄，并核对它到当前 UKI
-的父链、UKI 的加载身份及 ESP 句柄。systemd-stub 直接调用内核时会复用
-UKI 句柄并更新内核地址；固件核对其内存设备路径确实指向原 UKI 的 `.linux`，
-复制后的可执行段与内嵌内核一致，且源与目标仍是合法、可读的 LoaderCode 内存。
+`ExitBootServices` 使用当前最内层启动应用的句柄，并核对它到所选 EFI
+应用的父链、外层应用的加载身份和来源卷。父链最多 32 层，子加载器可以打开
+其他卷，但不能借用另一条启动链的镜像身份。systemd-stub 直接调用内核时
+会复用 UKI 句柄，外层 systemd-boot 的身份保持不变。
 父句柄和 ESP 来源保持不变，不接受任意替换地址。开始关闭资源前的拒绝可以正常返回；
 进入关闭流程后，除内存图过期外的错误都会停止执行。首次调用通过身份与
 内存检查后即关闭资源，即使传入的 MapKey 已过期，也不把关闭动作留到下一次

@@ -76,6 +76,11 @@ STATIC VOID EndCritical(UINT64 Mask) {
 #endif
 }
 STATIC BOOLEAN EFIAPI Alive(PIANO_PRODUCT_RUNTIME_PROTOCOL *This){return This==&mRuntime && mAlive;}
+STATIC BOOLEAN UsbBulkInProgress(VOID) {
+  // An incomplete download does not touch storage and might never finish.
+  return mReport.Usb.Started && mReport.Usb.Phase==PianoUsbServiceListening &&
+    mReport.Usb.BulkActive && !mReport.Usb.Downloading;
+}
 STATIC EFI_STATUS EFIAPI Request(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Action) {
   if(This!=&mRuntime || Action<PIANO_PRODUCT_ACTION_SIMPLEINIT || Action>PIANO_PRODUCT_ACTION_REQUEST_EDL)return EFI_INVALID_PARAMETER;
   UINT32 ResetTarget=Action>=PIANO_PRODUCT_ACTION_REQUEST_SHUTDOWN?Action-PIANO_PRODUCT_ACTION_REQUEST_SHUTDOWN+1:0;
@@ -99,7 +104,14 @@ STATIC EFI_STATUS EFIAPI Request(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Act
 }
 STATIC EFI_STATUS EFIAPI Pending(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 *Action,UINT64 *Sequence) {
   if(This!=&mRuntime || !Action || !Sequence)return EFI_INVALID_PARAMETER;
-  UINT64 Mask=Critical();*Action=mReport.PendingAction;*Sequence=mReport.Sequence;BOOLEAN Live=mAlive;EndCritical(Mask);
+  UINT64 Mask=Critical();
+  // Keep the current application interactive, but do not let it yield for
+  // navigation, boot or reset until the in-flight storage or reply has drained.
+  BOOLEAN Deferred=mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE && UsbBulkInProgress();
+  *Action=Deferred?PIANO_PRODUCT_ACTION_NONE:mReport.PendingAction;
+  *Sequence=mReport.Sequence;
+  BOOLEAN Live=mAlive;
+  EndCritical(Mask);
   return Live?EFI_SUCCESS:EFI_ABORTED;
 }
 STATIC EFI_STATUS EFIAPI Ack(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT64 Sequence) {
@@ -261,18 +273,23 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
     EFI_STATUS Latch=Request(&mRuntime,PIANO_PRODUCT_ACTION_RETURN_CORE);if(Latch!=EFI_SUCCESS)S=Latch;
   }
   if(S==EFI_SUCCESS && (!mReport.Usb.Started || mReport.Usb.Retained || mReport.Usb.ServicesLost))S=EFI_NOT_READY;
-  if((S==EFI_SUCCESS || S==EFI_NOT_READY) && mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE &&
-     mReport.PendingAction>=PIANO_PRODUCT_ACTION_SIMPLEINIT && mReport.PendingAction<=PIANO_PRODUCT_ACTION_SHELL &&
-     mReport.PendingAction!=mReport.ActiveAction)S=EFI_ABORTED; // cooperative UI yield, not EBS/USB shutdown
   if((S==EFI_SUCCESS || S==EFI_NOT_READY) && Status==EFI_SUCCESS && Actual.Revision==1 && Actual.Started &&
        Actual.Phase==PianoUsbServiceListening && !Actual.Retained && !Actual.ServicesLost && !Actual.Busy){
     if(mReport.IdleSample==MAX_UINT64)S=EFI_OUT_OF_RESOURCES;
     else {++mReport.IdleSample;mReport.IdleBulkActive=Actual.BulkActive;mReport.IdleKnown=TRUE;}
   }
-  // Drain USB first and defer synchronous input work while bulk data or
-  // queued USB events need service.
-  if((S==EFI_SUCCESS || S==EFI_NOT_READY) && mReport.IdleKnown && !Actual.BulkActive && !Actual.WorkPending &&
-       (Reason&(PIANO_PRODUCT_PUMP_WAIT_EVENT|PIANO_PRODUCT_PUMP_GUI))){PianoPogoPump();PianoTouchPump();}
+  // Service queued USB events first, then give the bounded input workers a
+  // slice between USB transfers or partition write batches.
+  if((S==EFI_SUCCESS || S==EFI_NOT_READY) && mReport.IdleKnown && !Actual.QueuedEvents &&
+     (!Actual.WorkPending || (Actual.Configured && Actual.BulkActive)) &&
+     (Reason&(PIANO_PRODUCT_PUMP_WAIT_EVENT|PIANO_PRODUCT_PUMP_GUI))){
+    PianoPogoPump();RequireAlive();
+    PianoTouchPump();RequireAlive();
+  }
+  if((S==EFI_SUCCESS || S==EFI_NOT_READY) && !UsbBulkInProgress() &&
+     mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE &&
+     mReport.PendingAction>=PIANO_PRODUCT_ACTION_SIMPLEINIT && mReport.PendingAction<=PIANO_PRODUCT_ACTION_SHELL &&
+     mReport.PendingAction!=mReport.ActiveAction)S=EFI_ABORTED; // cooperative UI yield, not EBS/USB shutdown
   // Drain USB first. Never hold off Chapter 9 enumeration or an active bulk
   // transfer for a variable snapshot. Final saving is still mandatory at exit.
   if(S==EFI_SUCCESS && mReport.IdleKnown && Actual.Configured && !Actual.BulkActive && !Actual.WorkPending){
@@ -488,6 +505,17 @@ EFI_STATUS PianoBootPolicyRun(VOID) {
   if(Initial==PIANO_PRODUCT_ACTION_NONE)S=Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT);
   if(S!=EFI_SUCCESS)return S;
   for(;;) {
+    // A child can also close itself without a navigation request. Keep
+    // pumping the transaction before starting another child or booting.
+    if(UsbBulkInProgress()){
+      S=Pump(&mRuntime,PIANO_PRODUCT_PUMP_APP,1000);RequireAlive();
+      if(S!=EFI_SUCCESS && S!=EFI_NOT_READY)return S;
+      if(UsbBulkInProgress()){
+        S=gBS->Stall(1000);RequireAlive();
+        if(S!=EFI_SUCCESS)return Exact(S);
+      }
+      continue;
+    }
     UINT32 Action;UINT64 Sequence;EFI_STATUS Get=Pending(&mRuntime,&Action,&Sequence);RequireAlive();if(Get!=EFI_SUCCESS)return Get;
     if(Action==PIANO_PRODUCT_ACTION_NONE)return S;
     S=PianoBootPolicyDispatchPending();
