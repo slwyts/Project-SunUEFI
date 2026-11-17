@@ -18,6 +18,7 @@ import uuid
 
 from build_kernel import image_info
 from prepare_linux_modules import modinfo
+from prepare_release_kernel import release_series
 from desktop import prepare_kernel_llvm
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -181,18 +182,17 @@ def verify_source(work=WORK,commit=None):
     commit=COMMIT if commit is None else commit
     if not re.fullmatch(r'[0-9a-f]{40}',commit):raise ValueError('Exact canonical full kernel commit required')
     if text(['git','rev-parse','HEAD'],work)!=commit:raise ValueError('Full candidate source HEAD drifted')
-    policy=json.loads((ROOT/'config/release.json').read_text())['kernel']
+    series=release_series(ROOT,json.loads((ROOT/'config/release.json').read_text())['kernel'])
     tree=text(['git','rev-parse','HEAD^{tree}'],work)
-    if tree==policy['target_tree']:
-        base=policy['base_commit']
+    if tree==series['target_tree']:
+        base=series['base_commit']
     else:
         base=COMMIT
-        series=json.loads((ROOT/policy['patch_series']).read_text())
         target=series['original_target_commit']
         target_tree=subprocess.run(['git','rev-parse',target+'^{tree}'],cwd=work,capture_output=True,text=True)
-        if target_tree.returncode==0 and target_tree.stdout.strip()==policy['target_tree'] and \
+        if target_tree.returncode==0 and target_tree.stdout.strip()==series['target_tree'] and \
            subprocess.run(['git','merge-base','--is-ancestor',target,commit],cwd=work,capture_output=True).returncode==0:
-            base=policy['base_commit']
+            base=series['base_commit']
     if commit!=base and subprocess.run(['git','merge-base','--is-ancestor',base,commit],cwd=work,capture_output=True).returncode:
         raise ValueError('Kernel source does not descend from its recorded baseline')
     if text(['git','status','--porcelain=v1','--untracked-files=all'],work):raise ValueError('Full candidate source is dirty')

@@ -22,6 +22,7 @@ import stage_piano_full_userspace as userspace
 import stage_piano_kernel_modules as modules
 import stage_piano_ram_hardware as hardware
 from make_kernel_initramfs import make_newc, validate_static_arm64_elf
+from prepare_release_kernel import release_series
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / 'config/release.json'
@@ -130,7 +131,7 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
     record = None
     if (kernel / 'manifest.json').is_file():
         record, _ = modules.inspect(kernel)
-        head = repository(source, tree=config['kernel']['target_tree'])
+        head = repository(source, tree=release_series(root, config['kernel'])['target_tree'])
         if record['source_commit'] != head or record.get('source_clean') is not True:
             raise ValueError('Kernel manifest does not match the prepared release source')
         words = record['command_line'].split()

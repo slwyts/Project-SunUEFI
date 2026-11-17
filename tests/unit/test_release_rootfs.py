@@ -34,6 +34,9 @@ class ReleaseRootTests(unittest.TestCase):
             path.mkdir(parents=True)
         (self.kernel / 'manifest.json').write_text('{}'); (self.source / 'Makefile').write_text('fixture')
         (self.root / 'config/release.json').write_text(json.dumps(CONFIG))
+        series = self.root / CONFIG['kernel']['patch_series']
+        series.parent.mkdir(parents=True)
+        series.write_text(json.dumps({'target_tree': 'd' * 40}))
         debug = self.root / 'linux/userspace/piano-debug-bootstrap'
         debug.parent.mkdir(parents=True); debug.write_text('#!/bin/sh\nexit 0\n')
         (debug.parent / 'piano-boot-request').write_text('#!/bin/sh\nexit 0\n')
@@ -77,6 +80,12 @@ class ReleaseRootTests(unittest.TestCase):
         self.assertEqual(result['config']['debian']['suite'], 'sid')
         self.assertTrue(any('build-rootfs.sh' in step for step in result['steps']))
         self.assertFalse(self.output.exists())
+
+    def test_plan_checks_the_kernel_tree_from_the_series(self):
+        with patch.object(builder.modules, 'inspect', return_value=(self.m, 'b' * 64)), \
+             patch.object(builder, 'repository', return_value=self.m['source_commit']) as repository:
+            builder.plan(self.kernel, self.source, self.output, root=self.root)
+        repository.assert_any_call(self.source, tree='d' * 40)
 
     def test_existing_output_and_path_outside_project_are_refused(self):
         self.output.mkdir(parents=True)

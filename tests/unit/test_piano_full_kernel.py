@@ -151,7 +151,14 @@ class PianoFullKernelTests(unittest.TestCase):
     def test_real_generated_full_config_preserves_public_profile(self):
         path=CONFIG
         if not path.exists():self.skipTest(CONFIGURED)
-        full.verify_source(KERNEL,RECORD['source_commit']);public=(KERNEL/'arch/arm64/configs/piano_rootfs.config').read_text()
+        # The installed build may predate the pinned release series.
+        head=full.text(['git','rev-parse','HEAD'],KERNEL)
+        tree=full.text(['git','rev-parse','HEAD^{tree}'],KERNEL)
+        self.assertEqual((head,tree),(RECORD['source_commit'],RECORD['source_tree']))
+        self.assertFalse(full.text(['git','status','--porcelain=v1','--untracked-files=all'],KERNEL))
+        for name,digest in full.SOURCE_PINS.items():
+            self.assertEqual(full.sha(KERNEL/name),digest)
+        public=(KERNEL/'arch/arm64/configs/piano_rootfs.config').read_text()
         config=path.read_text();modules=RECORD['local_module_overrides'];requirements=full.validate_config(config,public,modules)
         self.assertEqual(requirements['VIDEO_QCOM_CAMSS'],'m');self.assertEqual(requirements['DRM_MSM'],'m');self.assertEqual(requirements['SND_SOC_SC8280XP'],'m')
         for symbol in ('VIDEO_OV32D40','HID_NANOSIC_WN8030','BATTERY_PIANO_MCA','CHARGER_SC8541','QCOM_Q6V5_PAS'):
@@ -194,12 +201,17 @@ class PianoFullKernelTests(unittest.TestCase):
                 with tempfile.TemporaryDirectory(prefix='full-release-policy-')as policy_dir:
                     policy_root=Path(policy_dir);(policy_root/'config').mkdir()
                     (policy_root/'config/release.json').write_text(json.dumps({'kernel':{
-                        'base_commit':commit,'target_tree':git('rev-parse','HEAD^{tree}'),
                         'patch_series':'config/series.json'}}))
-                    (policy_root/'config/series.json').write_text(json.dumps({'original_target_commit':descendant}))
-                    (work/'new').write_text('release derivative');git('add','new')
-                    git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','release derivative')
+                    series=policy_root/'config/series.json'
+                    pins={'base_commit':commit,'target_tree':git('rev-parse','HEAD^{tree}')}
                     with patch.object(full,'ROOT',policy_root),patch.object(full,'COMMIT','f'*40):
+                        # A thin CI checkout has the fixed base and replayed
+                        # commits, not the downstream author's original object.
+                        series.write_text(json.dumps({**pins,'original_target_commit':'e'*40}))
+                        self.assertEqual(full.verify_source(work,descendant),commit)
+                        series.write_text(json.dumps({**pins,'original_target_commit':descendant}))
+                        (work/'new').write_text('release derivative');git('add','new')
+                        git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','release derivative')
                         self.assertEqual(full.verify_source(work,git('rev-parse','HEAD')),commit)
                 disconnected=git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree','HEAD^{tree}','-m','disconnected')
                 git('checkout','--detach',disconnected)

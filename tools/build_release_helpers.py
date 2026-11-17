@@ -13,6 +13,7 @@ import build_piano_runtime_helpers as runtime
 import build_piano_fingerprint
 from desktop import prepare_kernel_llvm
 from prepare_linux_modules import modinfo
+from prepare_release_kernel import release_series
 
 ROOT = Path(__file__).resolve().parents[1]
 STABLE_UAPI_COMMIT = '5fce161649b4d779d1b76d9fcd52dc77779774b8'
@@ -52,8 +53,9 @@ def inputs_current(output):
 
 def expected_uapi_digest(source, commit):
     policy = json.loads((ROOT / 'config/release.json').read_text())['kernel']
+    series = release_series(ROOT, policy)
     release = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor',
-                              policy['base_commit'], commit], capture_output=True)
+                              series['base_commit'], commit], capture_output=True)
     if release.returncode == 0 and policy.get('uapi_sha256'):
         return policy['uapi_sha256']
     current = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor',

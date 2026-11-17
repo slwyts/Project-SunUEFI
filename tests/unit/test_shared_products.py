@@ -96,7 +96,7 @@ class SharedProductsTests(unittest.TestCase):
         marker=artifact/'manifest.json'
         for metadata in ({},{'kernel_policy':policy['policy'],'kernel_policy_sha256':policy['sha256']}):
             marker.write_text(json.dumps({'source_commit':'a'*40,**metadata}))
-            release['kernel']['target_tree']='b'*40
+            release['kernel']['patch_series']='patches/linux/next/series.json'
             config.write_text(json.dumps(release))
             before=marker.read_bytes()
             with patch.object(kernel,'toolchain') as toolchain,patch.object(shared.subprocess,'run') as command:
