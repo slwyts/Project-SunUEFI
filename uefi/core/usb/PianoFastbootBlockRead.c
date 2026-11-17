@@ -10,6 +10,21 @@
 #if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
 #include "PianoNvFile.h"
 #include "PianoStorageIo.h"
+#include <Library/DebugLib.h>
+STATIC PIANO_STORAGE_IO_TIMING mWriteTiming;
+STATIC VOID *mWriteTimingToken;
+STATIC PIANO_STORAGE_IO_TIMING *TrackIo(VOID *Token){
+  return PianoStorageSetIoTiming(Token && Token==mWriteTimingToken?&mWriteTiming:NULL);
+}
+STATIC VOID ReportIoTiming(VOID *Token,EFI_STATUS Status){
+  if(!Token || Token!=mWriteTimingToken)return;
+  mWriteTimingToken=NULL;
+  DEBUG((DEBUG_WARN,"SUNUEFI_FASTBOOT_FLASH_UFS read_submitted=%lu read_completed=%lu read_wait_us=%lu "
+    "write_submitted=%lu write_completed=%lu write_wait_us=%lu sync_submitted=%lu sync_completed=%lu sync_wait_us=%lu status=%r\n",
+    mWriteTiming.Read.Submitted,mWriteTiming.Read.Completed,mWriteTiming.Read.WaitUs,
+    mWriteTiming.Write.Submitted,mWriteTiming.Write.Completed,mWriteTiming.Write.WaitUs,
+    mWriteTiming.Sync.Submitted,mWriteTiming.Sync.Completed,mWriteTiming.Sync.WaitUs,Status));
+}
 #endif
 #define MAX_PARTITIONS 160U
 typedef struct {
@@ -119,7 +134,13 @@ STATIC EFI_STATUS ReadBlocks(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info,U
   // Do not claim that alignment on arbitrary third-party BlockIO providers.
   if(P->Block->Media->IoAlign>1)return EFI_UNSUPPORTED;
   VOID *Token=P->Token;
+#if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
+  PIANO_STORAGE_IO_TIMING *Previous=TrackIo(Token);
+#endif
   S=P->Block->ReadBlocks(P->Block,P->MediaId,Lba,Bytes,Buffer);
+#if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
+  PianoStorageSetIoTiming(Previous);
+#endif
   if(S!=EFI_SUCCESS)return EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
   if(!mReady || P->Token!=Token)return EFI_MEDIA_CHANGED;
   return Current(P); // Revoke a snapshot changed during the synchronous read.
@@ -149,7 +170,14 @@ STATIC EFI_STATUS PrepareWrite(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info
   S=PianoStorageCloseFilesystemForWrite(Partition);if(S!=EFI_SUCCESS)return S;
 #endif
   if(!mReady || P->Token!=Token)return EFI_MEDIA_CHANGED;
-  return Current(P);
+  S=Current(P);
+#if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
+  if(S==EFI_SUCCESS){
+    ZeroMem(&mWriteTiming,sizeof(mWriteTiming));
+    mWriteTimingToken=Token;
+  }
+#endif
+  return S;
 }
 STATIC EFI_STATUS WriteBlocks(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info,UINT64 Lba,UINTN Bytes,CONST VOID *Buffer){
   (VOID)Context;PARTITION *P=NULL;EFI_STATUS S=Writable(Info,&P);if(S!=EFI_SUCCESS)return S;
@@ -160,22 +188,42 @@ STATIC EFI_STATUS WriteBlocks(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info,
   S=PianoStorageCheckFilesystemClosed(P->Handle);if(S!=EFI_SUCCESS)return S;
   if(!mReady || P->Token!=Token)return EFI_MEDIA_CHANGED;
   S=Current(P);if(S!=EFI_SUCCESS)return S;
+  PIANO_STORAGE_IO_TIMING *Previous=TrackIo(Token);
 #endif
   S=P->Write(P->Block,P->MediaId,Lba,Bytes,(VOID *)Buffer);
+#if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
+  PianoStorageSetIoTiming(Previous);
+#endif
   if(S!=EFI_SUCCESS)return EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
   if(!mReady || P->Token!=Token)return EFI_MEDIA_CHANGED;
   return Current(P);
 }
 STATIC EFI_STATUS Flush(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info){
-  (VOID)Context;PARTITION *P=NULL;EFI_STATUS S=Writable(Info,&P);if(S!=EFI_SUCCESS)return S;
-  VOID *Token=P->Token;
-  S=P->Flush(P->Block);
-  if(S!=EFI_SUCCESS)return EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
-  if(!mReady || P->Token!=Token)return EFI_MEDIA_CHANGED;
-  return Current(P);
+  (VOID)Context;
+  VOID *Token=Info?Info->Token:NULL;
+  PARTITION *P=NULL;
+  EFI_STATUS S=Writable(Info,&P);
+  if(S==EFI_SUCCESS){
+#if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
+    PIANO_STORAGE_IO_TIMING *Previous=TrackIo(Token);
+#endif
+    S=P->Flush(P->Block);
+#if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
+    PianoStorageSetIoTiming(Previous);
+#endif
+    if(S==EFI_SUCCESS)S=!mReady || P->Token!=Token?EFI_MEDIA_CHANGED:Current(P);
+    else if(!EFI_ERROR(S))S=EFI_DEVICE_ERROR;
+  }
+#if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
+  ReportIoTiming(Token,S);
+#endif
+  return S;
 }
 STATIC CONST PIANO_FB_STORAGE mStorage={
-  .Ready=Ready,.Info=Info,.ReadBlocks=ReadBlocks,.PrepareWrite=PrepareWrite,.WriteBlocks=WriteBlocks,.Flush=Flush
+  .Ready=Ready,.Info=Info,.ReadBlocks=ReadBlocks,.PrepareWrite=PrepareWrite,.WriteBlocks=WriteBlocks,.Flush=Flush,
+#if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
+  .MaxFetchBytes=PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES,
+#endif
 };
 EFI_STATUS PianoFastbootBlockReadInit(VOID){
   if(mReady)return EFI_ALREADY_STARTED;
@@ -205,4 +253,9 @@ EFI_STATUS PianoFastbootBlockReadInit(VOID){
   mReady=TRUE;return EFI_SUCCESS;
 }
 CONST PIANO_FB_STORAGE *PianoFastbootBlockReadStorage(VOID){return mReady?&mStorage:NULL;}
-VOID PianoFastbootBlockReadStop(VOID){mReady=FALSE;mCount=0;ZeroMem(mPartitions,sizeof(mPartitions));}
+VOID PianoFastbootBlockReadStop(VOID){
+  mReady=FALSE;mCount=0;ZeroMem(mPartitions,sizeof(mPartitions));
+#if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
+  mWriteTimingToken=NULL;
+#endif
+}

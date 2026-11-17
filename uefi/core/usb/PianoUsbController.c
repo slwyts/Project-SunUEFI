@@ -212,6 +212,7 @@ STATIC CONST PIANO_FB_STORAGE *ProxyStorage(VOID){
   mProxyStorage.PrepareWrite=Writable?ProxyPrepareWrite:NULL;
   mProxyStorage.WriteBlocks=Writable?ProxyWrite:NULL;
   mProxyStorage.Flush=Writable?ProxyFlush:NULL;
+  mProxyStorage.MaxFetchBytes=mUnderlyingStorage.MaxFetchBytes;
   return &mProxyStorage;
 }
 #endif

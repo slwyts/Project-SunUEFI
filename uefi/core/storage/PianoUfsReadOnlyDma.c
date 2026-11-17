@@ -18,6 +18,7 @@
 #error Product storage requires BlockIO and excludes restore-test profiles
 #endif
 #include "PianoUfsBoundedLayout.h"
+#include <Library/TimerLib.h>
 STATIC PIANO_UFS_PRODUCT_VOLUME *mProductVolume;
 STATIC BOOLEAN mProductExecuting,mProductRetained,mProductPublished;
 STATIC EFI_TPL mProductOldTpl;
@@ -31,6 +32,21 @@ STATIC BOOLEAN mPartitionExecuting,mPartitionFailed;
 STATIC UINT8 mPartitionLun;
 STATIC UINT64 mPartitionFirst,mPartitionBlocks;
 STATIC EFI_STATUS PartitionGate(VOID);
+STATIC PIANO_STORAGE_IO_TIMING *mStorageIoTiming;
+PIANO_STORAGE_IO_TIMING *PianoStorageSetIoTiming(PIANO_STORAGE_IO_TIMING *Timing){
+  PIANO_STORAGE_IO_TIMING *Previous=mStorageIoTiming;
+  mStorageIoTiming=Timing;
+  return Previous;
+}
+STATIC PIANO_STORAGE_COMMAND_TIMING *CommandTiming(CONST UINT8 *Request){
+  if(!mStorageIoTiming || Request[0]!=1)return NULL;
+  switch(Request[16]){
+    case 0x28:return &mStorageIoTiming->Read;
+    case 0x2A:return &mStorageIoTiming->Write;
+    case 0x35:return &mStorageIoTiming->Sync;
+    default:return NULL;
+  }
+}
 #endif
 #if defined(PIANO_UFS_WRITE_TEST) || defined(PIANO_UFS_BOUNDED_VOLUME) || PIANO_UFS_PRODUCT_STORAGE
 #include "PianoUfsWriteTest.h"
@@ -379,6 +395,9 @@ STATIC EFI_STATUS Submit(CONST CHAR8 *Name,UINT8 Tag,BOOLEAN Nop) {
 #endif
 #if PIANO_UFS_PRODUCT_STORAGE
   if(Mutation){if(Out)++mProductWriteDoorbells;else ++mProductSyncDoorbells;}
+  PIANO_STORAGE_COMMAND_TIMING *Timing=CommandTiming(Request);
+  if(Timing)++Timing->Submitted;
+  UINT64 Submitted=Timing?GetPerformanceCounter():0;
 #endif
   Write(0x58,1);
   DEBUG((TraceLevel,"SUNUEFI_UFS_DMA_DOORBELL command=%a tag=%u trl_iova=%lx ucd_iova=%lx\n",Name,Tag,mTrl.DeviceAddress,mUcd.DeviceAddress));
@@ -390,6 +409,13 @@ STATIC EFI_STATUS Submit(CONST CHAR8 *Name,UINT8 Tag,BOOLEAN Nop) {
     gBS->Stall(100);
   }
   if(mExitRetained)return EFI_ABORTED;
+#if PIANO_UFS_PRODUCT_STORAGE
+  if(Timing){
+    UINT64 Observed=GetPerformanceCounter();
+    if(Observed>=Submitted)Timing->WaitUs+=GetTimeInNanoSecond(Observed-Submitted)/1000;
+    if(Done)++Timing->Completed;
+  }
+#endif
   Status=Done?EFI_SUCCESS:EFI_TIMEOUT;
 #ifdef PIANO_UFS_WRITE_TEST
   mWriteTransportStatus=Status;

@@ -20,6 +20,7 @@ static UINTN Freed,Disconnected,Uninstalled,ClockStops;
 static UINTN NativeReads,LastReadBytes,LastWriteBytes,LargestRead,LargestWrite;
 static UINTN CorruptCapture;static UINT64 CorruptPage;
 static BOOLEAN TranslateBad,PartialWrite,PartialRead,WrongReadLun,RetainOnRead,ResetAttempted;
+static UINT64 FakeUs,ReadDelay,WriteDelay,SyncDelay,DoorbellReadyUs;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){(void)Level;return FALSE;}VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){(void)Level;(void)Format;}
 VOID EFIAPI MemoryFence(VOID){}VOID EFIAPI CpuPause(VOID){}
 INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
@@ -32,7 +33,9 @@ VOID PianoFaultSetDiagnostic(VOID (*F)(VOID)){(void)F;}
 VOID PianoSmmuLogFaults(CONST PIANO_SMMU_SNAPSHOT *S){(void)S;}
 static EFI_TPL EFIAPI raise_tpl(EFI_TPL New){assert(New>=CurrentTpl);EFI_TPL Old=CurrentTpl;CurrentTpl=New;return Old;}
 static VOID EFIAPI restore_tpl(EFI_TPL Old){assert(Old<=CurrentTpl);CurrentTpl=Old;}
-static EFI_STATUS EFIAPI stall(UINTN Us){assert(Us==10 || Us==100);return EFI_SUCCESS;}
+static EFI_STATUS EFIAPI stall(UINTN Us){assert(Us==10 || Us==100);FakeUs+=Us;return EFI_SUCCESS;}
+UINT64 EFIAPI GetPerformanceCounter(VOID){return FakeUs;}
+UINT64 EFIAPI GetTimeInNanoSecond(UINT64 Ticks){return Ticks*1000;}
 static VOID EFIAPI reset(EFI_RESET_TYPE Type,EFI_STATUS Status,UINTN Bytes,VOID *Arg){(void)Type;(void)Status;(void)Bytes;(void)Arg;ResetAttempted=TRUE;assert(!"Product backend may not reset");}
 EFI_STATUS PianoDmaAllocate(PIANO_DMA_DEVICE *D,UINTN Bytes,UINTN Align,UINT8 Bits,PIANO_DMA_DIRECTION Direction,PIANO_DMA_BUFFER *Buffer){(void)D;(void)Bytes;(void)Align;(void)Bits;(void)Direction;(void)Buffer;++Allocations;assert(!"Shared adapter must not allocate DMA");return EFI_UNSUPPORTED;}
 EFI_STATUS PianoDmaBegin(PIANO_DMA_BUFFER *B,CONST CHAR8 *Name){(void)Name;assert(!B->Active && !B->Quarantined);B->Active=TRUE;++DmaBegins;return EFI_SUCCESS;}
@@ -43,8 +46,18 @@ EFI_STATUS PianoIoPageTableTranslate(PIANO_IO_PAGE_TABLE *T,UINT64 Iova,BOOLEAN 
   return EFI_SUCCESS;
 }
 EFI_STATUS PianoSmmuCapture(CONST VOID *Fdt,CONST CHAR8 *Phase,PIANO_SMMU_SNAPSHOT *Snapshot){assert(Fdt==(VOID *)0x123 && !strcmp(Phase,"product-volume-lease"));++CaptureCalls;*Snapshot=Hardware;if(CaptureCalls==CorruptCapture)Snapshot->RawS2cr[3]^=1;return EFI_SUCCESS;}
-EFI_STATUS PianoSmmuCaptureQuiet(CONST VOID *Fdt,PIANO_SMMU_SNAPSHOT *Snapshot){return PianoSmmuCapture(Fdt,"product-volume-lease",Snapshot);}
-UINT32 EFIAPI MmioRead32(UINTN Address){assert(Address>=HCI && Address<HCI+sizeof(Regs) && !(Address&3));return Regs[(Address-HCI)/4];}
+EFI_STATUS PianoSmmuRefreshSnapshot(CONST PIANO_SMMU_SNAPSHOT *Registered,PIANO_SMMU_SNAPSHOT *Snapshot){
+  assert(Registered==&mContext.AttachedSnapshot && Registered->Valid);
+  return PianoSmmuCapture(mContext.Fdt,"product-volume-lease",Snapshot);
+}
+UINT32 EFIAPI MmioRead32(UINTN Address){
+  assert(Address>=HCI && Address<HCI+sizeof(Regs) && !(Address&3));
+  UINTN Offset=Address-HCI;
+  if(Offset==0x58 && DoorbellReadyUs && FakeUs>=DoorbellReadyUs){
+    Regs[0x58/4]=0;DoorbellReadyUs=0;
+  }
+  return Regs[Offset/4];
+}
 static VOID physical_read(UINT32 Lba,UINT8 *Destination){
   if(Lba==1)memcpy(Destination,primary,4096);
   else if(Lba>=2 && Lba<=4)memcpy(Destination,entries+(Lba-2)*4096,4096);
@@ -105,7 +118,10 @@ UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value){
       ++NativeSyncs;
     }
   }
-  Regs[0x58/4]=0;return Value;
+  UINT64 Delay=Ucd[0]!=1?0:Ucd[16]==0x28?ReadDelay:Ucd[16]==0x2a?WriteDelay:Ucd[16]==0x35?SyncDelay:0;
+  if(Delay)DoorbellReadyUs=FakeUs+Delay;
+  else Regs[0x58/4]=0;
+  return Value;
 }
 static EFI_STATUS EFIAPI install(EFI_HANDLE *Handle,...){assert(CurrentTpl==TPL_APPLICATION && Handle==&mBlockHandles[7] && !*Handle && volume.State.Provisioned && !volume.Media.ReadOnly);++Installs;*Handle=(VOID *)0x888;return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI connect(EFI_HANDLE Handle,EFI_HANDLE *Drivers,EFI_DEVICE_PATH_PROTOCOL *Path,BOOLEAN Recursive){(void)Drivers;(void)Path;assert(Handle==(VOID *)0x888 && Recursive && CurrentTpl==TPL_APPLICATION);++Connects;return EFI_NOT_FOUND;}
@@ -123,6 +139,8 @@ static VOID native_fresh(BOOLEAN Provisioned){
   CaptureCalls=Doorbells=DmaBegins=DmaCompletes=Allocations=Installs=Connects=NativeWrites=NativeSyncs=Freed=Disconnected=Uninstalled=ClockStops=0;CorruptCapture=0;TranslateBad=PartialWrite=ResetAttempted=FALSE;CurrentTpl=TPL_APPLICATION;
   NativeReads=LastReadBytes=LastWriteBytes=LargestRead=LargestWrite=0;
   CorruptPage=0;PartialRead=WrongReadLun=RetainOnRead=mPartitionExecuting=mPartitionFailed=FALSE;
+  FakeUs=ReadDelay=WriteDelay=SyncDelay=DoorbellReadyUs=0;
+  mStorageIoTiming=NULL;
   mProductVolume=NULL;mProductExecuting=mProductRetained=mProductPublished=mBlockBusy=mExitRetained=FALSE;mBlockLive=mInstalled=mEverInstalled=TRUE;mLunCount=6;mShutdownHandle=mExitBootEvent=NULL;mSavedBase=0x12345000;mSavedUpper=0;
   mDevice=(PIANO_DMA_DEVICE){.Name="ufs",.Context=&mContext,.StreamId=0x60};
   mTrl=(PIANO_DMA_BUFFER){.Signature=1,.Device=&mDevice,.Cpu=Trl,.Bytes=1024,.Physical=0x81000000,.DeviceAddress=0x40000000,.Mapped=TRUE,.Direction=PianoDmaBidirectional};
@@ -204,6 +222,9 @@ static VOID partition_batches(VOID){
   PIANO_STORAGE_PARTITION Range={.Lun=4,.BlockBytes=4096,.First=375168,.Blocks=sizeof(Payload)/4096};
   for(UINTN Index=0;Index<sizeof(Payload);++Index)Payload[Index]=(UINT8)(Index*31+Index/251);
   native_fresh(TRUE);
+  PIANO_STORAGE_IO_TIMING Timing={0};
+  ReadDelay=700;WriteDelay=1300;SyncDelay=900;
+  assert(PianoStorageSetIoTiming(&Timing)==NULL);
   assert(StorageTransfer(&Range,1,sizeof(Payload),Payload,TRUE)==EFI_INVALID_PARAMETER && !Doorbells);
   assert(ServiceWrite(NULL,4,mLuns[4].Last-1,Batch,Payload)==EFI_INVALID_PARAMETER && !Doorbells);
   assert(ServiceRead(NULL,4,mLuns[4].Last-1,Batch,Readback)==EFI_INVALID_PARAMETER && !Doorbells);
@@ -212,6 +233,10 @@ static VOID partition_batches(VOID){
   assert(ServiceRead(NULL,4,Range.First,sizeof(Readback),Readback)==EFI_SUCCESS && !memcmp(Readback,Payload,sizeof(Payload)));
   assert(Doorbells==4 && NativeReads==2 && LargestRead==Batch && LastReadBytes==4096);
   assert(StorageFlush(&Range)==EFI_SUCCESS && Doorbells==5 && NativeSyncs==1);
+  assert(PianoStorageSetIoTiming(NULL)==&Timing);
+  assert(Timing.Write.Submitted==2 && Timing.Write.Completed==2 && Timing.Write.WaitUs==2*WriteDelay);
+  assert(Timing.Read.Submitted==2 && Timing.Read.Completed==2 && Timing.Read.WaitUs==2*ReadDelay);
+  assert(Timing.Sync.Submitted==1 && Timing.Sync.Completed==1 && Timing.Sync.WaitUs==SyncDelay);
   assert(DmaBegins==DmaCompletes && !Allocations && !mBlockBusy && CurrentTpl==TPL_APPLICATION);
 
   native_fresh(TRUE);
@@ -249,10 +274,12 @@ static VOID partition_batches(VOID){
   assert(ServiceRead(NULL,4,Range.First,Batch,Readback)==EFI_DEVICE_ERROR && DmaBegins==DmaCompletes);
 
   native_fresh(TRUE);RetainOnRead=TRUE;
+  Timing=(PIANO_STORAGE_IO_TIMING){0};assert(PianoStorageSetIoTiming(&Timing)==NULL);
   assert(ServiceRead(NULL,4,Range.First,sizeof(Readback),Readback)==EFI_ABORTED);
   assert(mExitRetained && DmaBegins==3 && !DmaCompletes && mData.Active && mUcd.Active && mTrl.Active && CurrentTpl==TPL_CALLBACK);
   assert(Doorbells==1 && ServiceRead(NULL,4,Range.First,Batch,Readback)==EFI_ACCESS_DENIED && Doorbells==1);
-  puts("Actual product UFS: 256 KiB READ(10)/WRITE(10) FUA, short/wrong-LUN refusal, whole-range gate, interior DMA map and exit retention passed.");
+  assert(PianoStorageSetIoTiming(NULL)==&Timing && Timing.Read.Submitted==1 && !Timing.Read.Completed && !Timing.Read.WaitUs);
+  puts("Actual product UFS: 256 KiB READ(10)/WRITE(10) FUA, timed doorbells, whole-range gate, interior DMA map and exit retention passed.");
 }
 int main(void){
   filesystem_write_preparation();

@@ -1230,6 +1230,10 @@ STATIC VOID ReportFlash(CONST CHAR8 *Partition,CONST PIANO_FB_FLASH_TIMING *T,CO
     "SUNUEFI_FASTBOOT_FLASH partition=%a bytes=%lu total_us=%lu prepare_us=%lu write_us=%lu read_us=%lu flush_us=%lu result=%a\n",
     Partition,T->Bytes,T->TotalUs,T->PrepareUs,T->WriteUs,T->ReadUs,T->FlushUs,Result));
 }
+STATIC UINT64 FastbootNowUs(VOID *Context){
+  (VOID)Context;
+  return mService.Config.NowUs(mService.Config.Context);
+}
 EFI_STATUS PianoDwc3ServiceStart(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Device,CONST PIANO_DWC3_SERVICE_CONFIG *Config) {
   if(Context==NULL || Device==NULL || Config==NULL || Config->NowUs==NULL)return EFI_INVALID_PARAMETER;
   if(gBS->RaiseTPL==NULL || gBS->RestoreTPL==NULL)return EFI_UNSUPPORTED;
@@ -1254,7 +1258,7 @@ EFI_STATUS PianoDwc3ServiceStart(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Dev
   ClearFastboot();EFI_STATUS S=PianoFastbootInit(&mFastboot,Config->Context,FastbootSend,NULL);
   if(S!=EFI_SUCCESS)return ServiceError(S);
   mFastboot.Query=FastbootQuery;mFastboot.Diagnostic=FastbootDiagnostic;
-  mFastboot.NowUs=Config->NowUs;mFastboot.ReportFlash=ReportFlash;
+  mFastboot.NowUs=FastbootNowUs;mFastboot.ReportFlash=ReportFlash;
   if(mExperimentHasStorage){S=PianoFastbootSetStorage(&mFastboot,&mExperimentStorage);if(S!=EFI_SUCCESS)return ServiceError(S);}
 #if PIANO_USB_RAM_BOOT
   mBootAckObserved=FALSE;

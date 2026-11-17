@@ -27,15 +27,15 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| 存储与保护 | 可用。探测前恢复 UFS 设备就绪状态，读取 GPT、BlockIO 和 ESP 文件；原厂关键分区由代码强制只读 |
+| UEFI 存储 | 提供标准 BlockIO 读写和 ESP 文件访问。扫描只读取 GPT，不自动写盘；明确的刷写请求只操作指定目标 |
 | 交接与退出 | 启动 Linux 前清理 USB、UFS、时钟与 SMMU，无法确认安全时拒绝交接 |
 | 显示 | 合体 BOOT 进入 UEFI 后可显示菜单；延后原厂 ClockDxe 的 CESTA/media 和 DCD 启动初始化，保留继承的显示状态。见[显示定位](devel/boot/uefi-display.md) |
 | 菜单 / Setup / Shell | SimpleInit 菜单、TianoCore 中文设置页面与四倍字号可用；音量键移动、电源键确认、双音量键返回可用，见[设置页面](devel/boot/uefi-console.md)；Shell 尚未完成实机验证 |
 | Y700 四代触屏 | NT36536 的单指菜单点击、滑动可用，见[驱动说明](devel/hardware/y700-touch.md) |
-| Piano 触屏、键盘、USB Host | 固件设置中的官方键盘输入已确认；触屏完成 GPI 初始化和固件解析，SPI 传输、点按、触控板及 USB Host 仍缺实机结果。菜单保留音量键与电源键 |
-| UEFI Fastboot | 在菜单、固件设置和 Shell 中常驻，正常 BOOT 进入时可连接；提供日志、截图、只读 `fetch`、`stage`（≤64 MiB）、`oem boot-stable` 和重启。拒绝 `flash`/`erase`；完整命令见[UEFI Fastboot](user/fastboot.md) |
+| Piano 触屏、键盘、USB Host | 固件设置中的官方键盘输入已确认，触屏能读取数据帧。点按、触控板及 USB 主机还需设备操作确认。菜单保留音量键与电源键 |
+| UEFI Fastboot | 在菜单、固件设置和 Shell 中运行，提供日志、截图、读取、暂存、刷写和重启。已在启动分区验证 raw／sparse 写入与读回。命令见 [UEFI Fastboot](user/fastboot.md) |
 | EFI 变量 | 普通非易失变量保存在 `persist/sunuefi/` 的双副本文件中；退出 Boot Services 后不再写 UFS，见[变量保存](devel/boot/uefi-console.md#persist-中的-uefi-变量) |
-| 任意 `.img` / `.efi` 启动 | 没有完成，目前只启动 ESP 中的 Linux |
+| 标准 EFI 启动 | 按 UEFI 启动顺序选择系统。已通过 systemd-boot 启动 SteamOS 的独立内核、initramfs 和设备树，也能启动旧 UKI |
 
 ## Linux 与硬件
 

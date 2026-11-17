@@ -147,7 +147,7 @@ int USB_FASTBOOT_TEST_MAIN(void) {
   cmd("oem ramlog","OKAY");assert(mFastLogBytes==LargeBytes&&mFastLogCrc==DiagCrc(LiveLog,LargeBytes)&&mFastboot.UploadBytes==LargeBytes);
   UINT8 *SavedLarge=malloc(LargeBytes);assert(SavedLarge);CopyMem(SavedLarge,mFastboot.Upload,LargeBytes);memset(LiveLog,'Z',LargeBytes);
   out("upload",6);drain();assert(wire_bytes==LargeBytes+16&&wire_packets==66&&!memcmp(wire,"DATA00040000",12)&&!memcmp(wire+12,SavedLarge,LargeBytes)&&!memcmp(wire+12+LargeBytes,"OKAY",4));
-  assert(mBulkTx.Bytes==4096&&PIANO_FASTBOOT_MAX_FETCH==65536U);free(SavedLarge);
+  assert(mBulkTx.Bytes==4096);free(SavedLarge);
   // IN's DMA copy stays intact while config0 zeros/frees all CPU-owned data.
   out("getvar:version",14);assert(mPending[3]);UINT8 Active[7];CopyMem(Active,mBulkTx.Cpu,7);
   setup_packet(9,0);assert(mEnding[3] && mPending[3] && mBulkTx.Active && !mFrames && !mFastboot.Download && !mFastboot.Upload);

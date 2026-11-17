@@ -41,7 +41,7 @@ def main():
             raise RuntimeError('Wrong firmware product')
         maximum=int(parse_variable(command('getvar','max-fetch-size'),'max-fetch-size'),16)
         size=int(parse_variable(command('getvar','partition-size:xbl_config_a'),'partition-size:xbl_config_a'),16)
-        if not 0<maximum<=65536 or size!=len(data):raise RuntimeError('Unexpected partition or chunk geometry')
+        if maximum not in (65536,262144) or size!=len(data):raise RuntimeError('Unexpected partition or chunk geometry')
         target=out/'xbl_config_a.img'
         command('fetch','xbl_config_a',str(target.resolve()))
         actual=target.read_bytes()

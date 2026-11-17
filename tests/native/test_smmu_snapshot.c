@@ -4,7 +4,7 @@
 #include <string.h>
 #undef NULL
 #include "../../uefi/core/memory/PianoSmmu.c"
-static UINT32 regs[WINDOW/4];static int bad_dt;static UINTN reads,prints;
+static UINT32 regs[WINDOW/4];static int bad_dt;static UINTN reads,prints,dt_reads;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return TRUE;}
 BOOLEAN EFIAPI DebugAssertEnabled(VOID){return TRUE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return TRUE;}
@@ -13,6 +13,7 @@ VOID EFIAPI DebugAssert(CONST CHAR8 *File,UINTN Line,CONST CHAR8 *Description){a
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 UINT32 EFIAPI MmioRead32(UINTN A){++reads;assert(A>=BASE && A<=BASE+WINDOW-4 && !(A&3));return regs[(A-BASE)/4];}
 INT32 EFIAPI FdtPathOffset(CONST VOID *F,CONST CHAR8 *Path){
+  ++dt_reads;
   if(strstr(Path,"apps-smmu"))return 1;
   if(strstr(Path,"ufshc"))return 2;
   if(strstr(Path,"dwc3"))return 3;
@@ -45,6 +46,14 @@ int main(void){
   assert(s.Device[1].Type==1 && s.Device[2].Type==2 && !s.Device[3].Present);
   UINTN Reads=reads;assert(prints>0);PIANO_SMMU_SNAPSHOT quiet;reads=prints=0;
   assert(PianoSmmuCaptureQuiet(NULL,&quiet)==EFI_SUCCESS && !memcmp(&s,&quiet,sizeof(s)) && reads==Reads && !prints);
+  reads=dt_reads=0;
+  assert(PianoSmmuRefreshSnapshot(&s,&quiet)==EFI_SUCCESS && !memcmp(&s,&quiet,sizeof(s)) && reads==Reads && !dt_reads);
+  PIANO_SMMU_SNAPSHOT invalid=s;invalid.Base=0;
+  reads=0;
+  assert(PianoSmmuRefreshSnapshot(&invalid,&quiet)==EFI_COMPROMISED_DATA && !quiet.Valid && !reads && !dt_reads);
+  regs[0x80c/4]=BIT31|0x60;
+  assert(PianoSmmuRefreshSnapshot(&s,&quiet)==EFI_COMPROMISED_DATA && !quiet.Valid && !dt_reads);
+  regs[0x80c/4]=0;
   UINT32 copy[8];memcpy(copy,regs+0x800/4,sizeof(copy));PianoSmmuLogFaults(&s);
   assert(memcmp(copy,regs+0x800/4,sizeof(copy))==0);
   regs[0x80c/4]=BIT31|0x60;regs[0xc0c/4]=0;

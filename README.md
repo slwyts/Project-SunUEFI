@@ -51,12 +51,12 @@ flowchart LR
 
 ### UEFI Fastboot
 
-UEFI 运行时，后台常驻一个 USB Fastboot 服务（设备名 `SunUEFI-piano`）。即使屏幕没有画面，也能从电脑读日志、导出截图、只读读取分区，或请求启动 Linux。它和另外两个容易混淆的东西不同，命令见 [UEFI Fastboot](docs/user/fastboot.md)。
+UEFI 运行时，后台常驻一个 USB Fastboot 服务（设备名 `SunUEFI-piano`）。可以从电脑读日志、取截图、读写指定分区或启动系统。命令见 [UEFI Fastboot](docs/user/fastboot.md)。
 
 | 名称 | 什么时候出现 | 能做什么 |
 | --- | --- | --- |
 | 原厂 Bootloader Fastboot | 开机时按键进入，或 `adb reboot bootloader` | 小米原厂功能，可刷写分区 |
-| UEFI Fastboot（本项目） | SunUEFI 运行期间 | 日志、截图、只读读取、请求启动；不支持刷写和擦除 |
+| UEFI Fastboot（本项目） | SunUEFI 运行期间 | 日志、截图、读取、刷写和擦除指定分区、请求启动 |
 | Linux 的 USB 网络 / SSH | Linux 启动之后 | 普通的 Linux 远程登录与调试 |
 
 ### 同一个 UEFI 核心

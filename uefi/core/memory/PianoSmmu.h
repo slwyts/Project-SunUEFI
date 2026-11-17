@@ -27,5 +27,8 @@ typedef struct {
 EFI_STATUS PianoSmmuCapture(CONST VOID *Fdt,CONST CHAR8 *Phase,PIANO_SMMU_SNAPSHOT *Snapshot);
 // Same live register reads and checks, without per-row diagnostic output.
 EFI_STATUS PianoSmmuCaptureQuiet(CONST VOID *Fdt,PIANO_SMMU_SNAPSHOT *Snapshot);
+// Re-read the registers of a previously validated controller without parsing its DT again.
+EFI_STATUS PianoSmmuRefreshSnapshot(CONST PIANO_SMMU_SNAPSHOT *Registered,
+                                  PIANO_SMMU_SNAPSHOT *Snapshot);
 VOID PianoSmmuLogFaults(CONST PIANO_SMMU_SNAPSHOT *Snapshot);
 BOOLEAN PianoSmmuStreamMatches(UINT32 Smr,UINT32 S2cr,BOOLEAN Extended,UINT16 Sid);

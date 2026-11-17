@@ -72,7 +72,7 @@ DWC3 停机时先结束活动端点传输，再清除 `RUN_STOP`。等待 `DEVCT
 * `getvar product` / `version` / `storage-policy`：查询固件状态；
 * `oem status` / `oem ramlog`：导出内存诊断日志（最多 256 KiB）；
 * `oem screenshot`：读取帧缓冲截图（24 位 BMP）；
-* `fetch`：只读读取分区内容（单次上限 64 KiB）；
+* `fetch`：按后端提供的上限只读读取分区内容（产品每次最多 256 KiB）；
 * `flash` / `erase`：按准确的 GPT 名称写入或清零指定分区；
 * `oem boot-stable`：按固件的启动顺序尝试已安装的系统；
 * `reboot` / `continue`：保存设置、同步存储后执行整机复位；不经过系统交接检查。

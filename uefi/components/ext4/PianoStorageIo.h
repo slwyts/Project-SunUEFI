@@ -13,6 +13,15 @@ EFI_STATUS PianoStorageOpen(CONST CHAR16 *Name,PIANO_STORAGE_PARTITION *Partitio
 EFI_STATUS PianoStorageRead(CONST PIANO_STORAGE_PARTITION *,UINT64 Block,UINTN Bytes,VOID *Buffer);
 EFI_STATUS PianoStorageWrite(CONST PIANO_STORAGE_PARTITION *,UINT64 Block,UINTN Bytes,CONST VOID *Buffer);
 EFI_STATUS PianoStorageFlush(CONST PIANO_STORAGE_PARTITION *);
+typedef struct {
+  UINT64 Submitted,Completed,WaitUs;
+} PIANO_STORAGE_COMMAND_TIMING;
+typedef struct {
+  PIANO_STORAGE_COMMAND_TIMING Read,Write,Sync;
+} PIANO_STORAGE_IO_TIMING;
+// Optional counters for a synchronous BlockIO call. Restore the previous
+// pointer before returning; never retain a caller's buffer across APP slices.
+PIANO_STORAGE_IO_TIMING *PianoStorageSetIoTiming(PIANO_STORAGE_IO_TIMING *Timing);
 // A raw write must have exclusive use of an already validated partition.
 EFI_STATUS PianoStorageCloseFilesystemForWrite(EFI_HANDLE Partition);
 EFI_STATUS PianoStorageCheckFilesystemClosed(EFI_HANDLE Partition);

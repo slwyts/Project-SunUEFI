@@ -46,10 +46,7 @@ STATIC VOID ReadBank(PIANO_SMMU_SNAPSHOT *S,PIANO_SMMU_DEVICE *D,BOOLEAN Verbose
   if(Verbose)DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_CB dev=%a sid=%x bank=%u sctlr=%08x cbar=%08x cba2r=%08x ttbr0=%lx ttbr1=%lx tcr=%08x tcr2=%08x mair=%08x:%08x fsr=%08x far=%lx fsynr=%08x\n",
     D->Name,D->Sid,D->ContextBank,D->Sctlr,D->Cbar,D->Cba2r,D->Ttbr0,D->Ttbr1,D->Tcr,D->Tcr2,D->Mair0,D->Mair1,D->Fsr,D->Far,D->Fsynr));
 }
-STATIC EFI_STATUS Capture(CONST VOID *Fdt,CONST CHAR8 *Phase,PIANO_SMMU_SNAPSHOT *S,BOOLEAN Verbose) {
-  if(S==NULL || Phase==NULL)return EFI_INVALID_PARAMETER;
-  ZeroMem(S,sizeof(*S));EFI_STATUS Status=Validate(Fdt);
-  if(EFI_ERROR(Status))return Status;
+STATIC EFI_STATUS CaptureRegisters(CONST CHAR8 *Phase,PIANO_SMMU_SNAPSHOT *S,BOOLEAN Verbose) {
   S->Base=BASE;S->Window=WINDOW;
   STATIC CONST CHAR8 *Names[]={"ufs","usb","gpi1","qup1"};
   STATIC CONST UINT16 Sids[]={0x60,0x40,0xB6,0xA3};
@@ -90,8 +87,21 @@ STATIC EFI_STATUS Capture(CONST VOID *Fdt,CONST CHAR8 *Phase,PIANO_SMMU_SNAPSHOT
     if(Verbose)DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_NO_STREAM phase=%a dev=%a sid=%x\n",Phase,S->Device[I].Name,S->Device[I].Sid));
   S->Valid=TRUE;if(Verbose)DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_END phase=%a status=Success changed_registers=0\n",Phase));return EFI_SUCCESS;
 }
+STATIC EFI_STATUS Capture(CONST VOID *Fdt,CONST CHAR8 *Phase,PIANO_SMMU_SNAPSHOT *S,BOOLEAN Verbose) {
+  if(S==NULL || Phase==NULL)return EFI_INVALID_PARAMETER;
+  ZeroMem(S,sizeof(*S));
+  EFI_STATUS Status=Validate(Fdt);
+  return EFI_ERROR(Status)?Status:CaptureRegisters(Phase,S,Verbose);
+}
 EFI_STATUS PianoSmmuCapture(CONST VOID *Fdt,CONST CHAR8 *Phase,PIANO_SMMU_SNAPSHOT *S){return Capture(Fdt,Phase,S,TRUE);}
 EFI_STATUS PianoSmmuCaptureQuiet(CONST VOID *Fdt,PIANO_SMMU_SNAPSHOT *S){return Capture(Fdt,"quiet",S,FALSE);}
+EFI_STATUS PianoSmmuRefreshSnapshot(CONST PIANO_SMMU_SNAPSHOT *Registered,PIANO_SMMU_SNAPSHOT *S) {
+  if(S==NULL || Registered==S)return EFI_INVALID_PARAMETER;
+  ZeroMem(S,sizeof(*S));
+  if(Registered==NULL || !Registered->Valid || Registered->Base!=BASE || Registered->Window!=WINDOW)
+    return EFI_COMPROMISED_DATA;
+  return CaptureRegisters("registered",S,FALSE);
+}
 VOID PianoSmmuLogFaults(CONST PIANO_SMMU_SNAPSHOT *S) {
   if(S==NULL || !S->Valid)return;
   UINT32 Global=Read(0x48);

@@ -50,7 +50,7 @@ fastboot -s SunUEFI-piano get_staged uefi-screenshot.bmp  # 24 位 BMP
 fastboot -s SunUEFI-piano fetch 分区名 文件
 ```
 
-只读。单次请求最多 64 KiB，fastboot 工具会自动分块。
+只读。单次请求最多 256 KiB，fastboot 工具会自动分块。
 
 ## 刷写分区
 
@@ -75,7 +75,7 @@ fastboot -s SunUEFI-piano reboot
 
 | 命令 | 作用 |
 | --- | --- |
-| `oem boot-stable` | 从启动镜像（ESP）进入 systemd-boot 并启动 Linux |
+| `oem boot-stable` | 按固件的启动顺序选择系统；默认进入 systemd-boot |
 | `oem setup`、`oem shell`、`oem simpleinit` | 切换到 UEFI 设置、Shell 或 SimpleInit 菜单 |
 | `reboot` | 保存设置、同步存储后重启，沿用已保存的启动路线 |
 | `continue` | 同样重启，不改变启动选择，也不会直接启动 Linux |

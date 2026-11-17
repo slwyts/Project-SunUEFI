@@ -33,12 +33,20 @@ static struct {VOID *P;UINTN Bytes;BOOLEAN Zero;} allocated[16];
 #if PIANO_UFS_PRODUCT_STORAGE
 static UINT8 written_block[PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES];
 static UINTN written_bytes;
-static UINTN flush_calls,close_calls;
+static UINTN flush_calls,close_calls,timing_reports;
 static CHILD *written_child,*expected_close;
 static BOOLEAN revoke_on_write,revoke_on_flush;
-BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
-BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
-VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
+static PIANO_STORAGE_IO_TIMING *timing;
+BOOLEAN EFIAPI DebugPrintEnabled(VOID){return TRUE;}
+BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return Level==DEBUG_WARN;}
+VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){
+  if(!strncmp(Format,"SUNUEFI_FASTBOOT_FLASH_UFS ",sizeof("SUNUEFI_FASTBOOT_FLASH_UFS ")-1))++timing_reports;
+}
+PIANO_STORAGE_IO_TIMING *PianoStorageSetIoTiming(PIANO_STORAGE_IO_TIMING *Now){
+  PIANO_STORAGE_IO_TIMING *Previous=timing;
+  timing=Now;
+  return Previous;
+}
 INTN EFIAPI StrnCmp(CONST CHAR16 *A,CONST CHAR16 *B,UINTN N){
   for(UINTN I=0;I<N;++I){if(A[I]!=B[I])return A[I]<B[I]?-1:1;if(!A[I])return 0;}return 0;
 }
@@ -106,6 +114,7 @@ static EFI_STATUS EFIAPI read(EFI_BLOCK_IO_PROTOCOL *Block,UINT32 MediaId,EFI_LB
   ++read_calls;last_lba=Lba;last_bytes=Bytes;
   if(read_status!=EFI_SUCCESS)return read_status;
 #if PIANO_UFS_PRODUCT_STORAGE
+  if(timing)++timing->Read.Submitted;
   if(C==written_child){assert(!Lba && Bytes==written_bytes);memcpy(Buffer,written_block,Bytes);return EFI_SUCCESS;}
 #endif
   UINT64 Physical=(C->Info.Info.Gpt.StartingLBA+Lba)*4096;
@@ -120,6 +129,7 @@ static EFI_STATUS EFIAPI write_block(EFI_BLOCK_IO_PROTOCOL *Block,UINT32 MediaId
   CHILD *C=BASE_CR(Block,CHILD,Block);
   assert(!C->Mounted && !C->Media.ReadOnly && MediaId==C->Media.MediaId && !Lba);
   assert(Bytes && Bytes<=sizeof(written_block) && !(Bytes%4096));
+  if(timing)++timing->Write.Submitted;
   written_child=C;written_bytes=Bytes;memcpy(written_block,Buffer,Bytes);
   if(revoke_on_write){PianoFastbootBlockReadStop();assert(PianoFastbootBlockReadInit()==EFI_SUCCESS);}
   return EFI_SUCCESS;
@@ -130,6 +140,7 @@ static EFI_STATUS EFIAPI write_block(EFI_BLOCK_IO_PROTOCOL *Block,UINT32 MediaId
 #if PIANO_UFS_PRODUCT_STORAGE
 static EFI_STATUS EFIAPI flush_block(EFI_BLOCK_IO_PROTOCOL *Block){
   assert(Block==&written_child->Block);++flush_calls;
+  if(timing)++timing->Sync.Submitted;
   if(revoke_on_flush){PianoFastbootBlockReadStop();assert(PianoFastbootBlockReadInit()==EFI_SUCCESS);}
   return EFI_SUCCESS;
 }
@@ -154,8 +165,8 @@ static VOID valid(UINTN Count) {
   }
 }
 static VOID reject(VOID){assert(PianoFastbootBlockReadInit()==EFI_NOT_FOUND && !PianoFastbootBlockReadStorage() && !pools && !read_calls && !write_calls);}
-static UINT8 frames[3][65537];static UINTN frame_bytes[3],frame_count;
-static EFI_STATUS send(VOID *Context,CONST VOID *Data,UINTN Bytes){assert(!Context && frame_count<3 && Bytes<=65536);CopyMem(frames[frame_count],Data,Bytes);frame_bytes[frame_count++]=Bytes;return EFI_SUCCESS;}
+static UINT8 frames[3][PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES];static UINTN frame_bytes[3],frame_count;
+static EFI_STATUS send(VOID *Context,CONST VOID *Data,UINTN Bytes){assert(!Context && frame_count<3 && Bytes<=sizeof(frames[0]));CopyMem(frames[frame_count],Data,Bytes);frame_bytes[frame_count++]=Bytes;return EFI_SUCCESS;}
 #if PIANO_UFS_PRODUCT_STORAGE
 static VOID test_partition_write_scope(VOID){
   valid(3);
@@ -186,6 +197,14 @@ static VOID test_partition_write_scope(VOID){
   Sparse[16]=Sparse[32]=(UINT8)(PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES/4096+1);
   PIANO_FASTBOOT Fb;assert(PianoFastbootInit(&Fb,NULL,send,NULL)==EFI_SUCCESS && PianoFastbootSetStorage(&Fb,S)==EFI_SUCCESS);
   frame_count=0;
+  CONST CHAR8 Limit[]="getvar:max-fetch-size",Fetch[]="fetch:sunuefi_esp:0x0:0x40000";
+  assert(PianoFastbootPacket(&Fb,Limit,sizeof(Limit)-1)==EFI_SUCCESS && frame_count==1 && !memcmp(frames[0],"OKAY0x00040000",14));
+  frame_count=0;assert(PianoFastbootPacket(&Fb,Fetch,sizeof(Fetch)-1)==EFI_SUCCESS);
+  assert(frame_count==3 && frame_bytes[1]==sizeof(frames[1]) && !memcmp(frames[0],"DATA00040000",12));
+  assert(read_calls==1 && last_bytes==sizeof(frames[1]) && !timing && !timing_reports && !write_calls);
+  UINT64 Start=children[1].Info.Info.Gpt.StartingLBA*4096;
+  for(UINTN I=0;I<sizeof(frames[1]);++I)assert(frames[1][I]==at(Start+I));
+  read_calls=frame_count=0;
   assert(PianoFastbootPacket(&Fb,"download:0000002c",17)==EFI_SUCCESS &&
     PianoFastbootPacket(&Fb,Sparse,sizeof(Sparse))==EFI_SUCCESS);
   frame_count=0;
@@ -193,9 +212,11 @@ static VOID test_partition_write_scope(VOID){
   while(!write_calls)assert(PianoFastbootFlashPending(&Fb) && PianoFastbootFlashStep(&Fb)==EFI_SUCCESS);
   assert(write_calls==1 && read_calls==1 && last_bytes==sizeof(written_block) && !flush_calls && close_calls==1 &&
     children[0].Mounted && !children[1].Mounted && children[2].Mounted && !mProtocol.Frozen);
+  assert(!timing && !timing_reports && mWriteTiming.Read.Submitted==1 && mWriteTiming.Write.Submitted==1);
   children[1].Mounted=TRUE;
   while(PianoFastbootFlashPending(&Fb))assert(PianoFastbootFlashStep(&Fb)==EFI_SUCCESS);
   assert(write_calls==1 && flush_calls==1 && frame_count==2 && !memcmp(frames[1],"FAIL",4));
+  assert(!timing && timing_reports==1 && mWriteTiming.Sync.Submitted==1 && !mWriteTimingToken);
   PianoFastbootReset(&Fb);
 
   // A factory partition is not banned; a different mounted filesystem and

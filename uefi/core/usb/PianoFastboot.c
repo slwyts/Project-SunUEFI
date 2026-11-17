@@ -132,7 +132,9 @@ EFI_STATUS PianoFastbootSetStorage(PIANO_FASTBOOT *S,CONST PIANO_FB_STORAGE *Sto
   if(S==NULL)return EFI_INVALID_PARAMETER;
   if(S->Flash || S->FlashExecuting)return EFI_NOT_READY;
   if(Storage==NULL){ZeroMem(&S->Storage,sizeof(S->Storage));return EFI_SUCCESS;}
-  if(Storage->Ready==NULL || Storage->Info==NULL || Storage->ReadBlocks==NULL)return EFI_INVALID_PARAMETER;
+  if(Storage->Ready==NULL || Storage->Info==NULL || Storage->ReadBlocks==NULL ||
+     Storage->MaxFetchBytes>PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES || Storage->MaxFetchBytes%4096)
+    return EFI_INVALID_PARAMETER;
   S->Storage=*Storage;return EFI_SUCCESS;
 }
 EFI_STATUS PianoFastbootSetBoot(PIANO_FASTBOOT *S,CONST PIANO_FB_BOOT *Boot) {
@@ -214,8 +216,16 @@ STATIC VOID Hex64(UINT64 Value,CHAR8 *Out) {
   for(UINTN I=0;I<16;++I)Out[I]=Digits[(Value>>((15-I)*4))&15];
   Out[16]=0;
 }
+STATIC UINT32 FetchLimit(CONST PIANO_FASTBOOT *S){
+  return S->Storage.MaxFetchBytes?S->Storage.MaxFetchBytes:PIANO_FASTBOOT_DEFAULT_FETCH_BYTES;
+}
 STATIC EFI_STATUS GetVar(PIANO_FASTBOOT *S, CONST CHAR8 *Name) {
-  if(Equal(Name,"max-fetch-size"))return Reply(S,StorageReady(S)?"OKAY0x00010000":"FAILstorage backend not ready");
+  if(Equal(Name,"max-fetch-size")){
+    if(!StorageReady(S))return Reply(S,"FAILstorage backend not ready");
+    CHAR8 Result[15]="OKAY0x";
+    Hex32(FetchLimit(S),Result+6);
+    return Reply(S,Result);
+  }
   if(!AsciiStrnCmp(Name,"partition-size:",15)) {
     if(!StorageReady(S))return Reply(S,"FAILstorage backend not ready");
     PIANO_FB_PARTITION_INFO Info;EFI_STATUS Status=PartitionInfo(S,Name+15,&Info);
@@ -319,7 +329,7 @@ STATIC EFI_STATUS Fetch(PIANO_FASTBOOT *S,CHAR8 *Arg) {
   }
   UINT64 Offset,Size;
   if(OffsetArg==NULL || SizeArg==NULL || !PartitionName(Arg) || !ParseFetchHex(OffsetArg,&Offset) ||
-     !ParseFetchHex(SizeArg,&Size) || !Size || Size>PIANO_FASTBOOT_MAX_FETCH)return Reply(S,"FAILinvalid fetch range");
+     !ParseFetchHex(SizeArg,&Size) || !Size || Size>FetchLimit(S))return Reply(S,"FAILinvalid fetch range");
   PIANO_FB_PARTITION_INFO Info;EFI_STATUS Status=PartitionInfo(S,Arg,&Info);
   if(Status!=EFI_SUCCESS)return Reply(S,Status==EFI_NOT_FOUND?"FAILunknown partition":"FAILinvalid partition information");
   if(Offset>Info.Bytes || Size>Info.Bytes-Offset)return Reply(S,"FAILfetch outside partition");

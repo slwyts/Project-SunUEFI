@@ -197,7 +197,7 @@ def run_check(root, test_id, phase='simpleinit', wait_seconds=60, command_timeou
         variables = {}
         for name, expected in (('product', 'piano-sunuefi'), ('version', '0.4'),
                                ('serialno', SERIAL), ('is-userspace', 'no'),
-                               ('storage-policy', 'no-persistent-writes')):
+                               ('storage-policy', 'explicit-partition-writes')):
             actual = variable(name)
             variables[name] = actual
             if actual != expected:
@@ -205,19 +205,20 @@ def run_check(root, test_id, phase='simpleinit', wait_seconds=60, command_timeou
         download_limit = hex_variable('max-download-size')
         fetch_limit = hex_variable('max-fetch-size')
         partition_size = hex_variable('partition-size:xbl_config_a')
-        if download_limit != 67108864 or fetch_limit != 65536 or partition_size != original.stat().st_size:
+        if download_limit != 67108864 or fetch_limit not in (65536, 262144) or partition_size != original.stat().st_size:
             raise CheckFailed('Unexpected download/fetch/partition bounds')
         variables.update({'max-download-size': download_limit, 'max-fetch-size': fetch_limit,
                           'partition-size:xbl_config_a': partition_size,
                           'SunUEFI:ram-boot': variable('SunUEFI:ram-boot'),
                           'SunUEFI:usb-state': variable('SunUEFI:usb-state')})
-        if variables['SunUEFI:ram-boot'] != 'disabled':
-            raise CheckFailed('First product acceptance expected an unbound RAM-boot backend')
+        if variables['SunUEFI:ram-boot'] not in ('enabled', 'disabled'):
+            raise CheckFailed('Unexpected RAM-boot capability')
         if not re.fullmatch(r'configured-speed-[SFH]', variables['SunUEFI:usb-state']):
             raise CheckFailed('Unexpected configured USB state')
         command('getvar', 'all')
         status_output = command('oem', 'status')
-        if any(row not in status_output for row in ('storage-policy:no-persistent-writes', 'transport:owned-DMA-SMMU-bulk')):
+        if any(row not in status_output for row in (
+                'storage-policy:explicit-partition-writes', 'transport:owned-DMA-SMMU-bulk')):
             raise CheckFailed('Unexpected product status report')
         result['variables'] = variables
         if navigate is not None:
