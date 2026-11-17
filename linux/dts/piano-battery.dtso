@@ -54,9 +54,14 @@
 			#thermal-sensor-cells = <0>;
 			io-channels = <&piano_battery_cell0 0>, <&piano_battery_cell1 0>,
 				      <&piano_battery_adc 0x74a>, <&piano_battery_adc 0x74d>,
-				      <&piano_battery_adc 0x146>, <&piano_battery_adc 0x144>;
+				      <&piano_battery_adc 0x146>, <&piano_battery_adc 0x144>,
+				      <&piano_battery_adc 0x747>, <&piano_battery_adc 0x14b>;
 			io-channel-names = "battery0", "battery1", "quiet-therm",
-					   "charger-therm", "wifi-therm", "cpu-therm";
+					   "charger-therm", "wifi-therm", "cpu-therm",
+					   "connector-therm", "connector-therm2";
+			connector-isolation-gpios = <&pm8550_gpios 9 0>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&anti_burn_mos_ctrl_default>;
 			#cooling-cells = <2>;
 			/* Both modes share the factory current levels and stop state. */
 			xiaomi,charge-current-limits-microamp = <
@@ -71,6 +76,7 @@
 	fragment@4 {
 		target-path = "/soc/qcom,spmi@c42d000/qcom,pmk8550@0/vadc@9000";
 		piano_battery_adc: __overlay__ {
+			#io-channel-cells = <1>;
 			/* These charger-specific channels have no native scaling support. */
 			pmih010x_iin {
 				status = "disabled";

@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "c1caefefb4dec79efcac2fdf9e48550b8cda9876",
-  "original_target_commit": "eb870c3c7e8d588785255e14b9afbe1d7a95caf1",
+  "target_tree": "4ddc50e6f1a715f32fa4fff82ff3e052b4005683",
+  "original_target_commit": "2f3df94adb6f16836b93cdba7edb625be632d573",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1706,6 +1706,19 @@
         "status": "downstream",
         "url": "https://www.ti.com/lit/ug/sluuc54c/sluuc54c.pdf",
         "drop_when": "Upstream converts the standard BQ27Z561 signed milliwatt register to microwatts, suppresses the unverified Piano vendor reading or provides a validated replacement, and its IIO tests cleanly release the device before its shared firmware node."
+      }
+    },
+    {
+      "file": "0132-power-mca-connector-overtemperature.patch",
+      "sha256": "fbae8005547430c789a81bfcca15239e578657b6fe6824ec3ec8e4f507c44b72",
+      "original_commit": "2f3df94adb6f16836b93cdba7edb625be632d573",
+      "original_parent": "eb870c3c7e8d588785255e14b9afbe1d7a95caf1",
+      "committer_date": "2026-11-18T05:03:00+08:00",
+      "tree": "4ddc50e6f1a715f32fa4fff82ff3e052b4005683",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace with accepted Piano connector protection that monitors both thermistors, isolates USB sink and source power on factory trips or sensor failure, and requires cooling plus a confirmed detach before clearing the thermal latch. Verify GPIO failure, reconnect, suspend and resume."
       }
     }
   ],
