@@ -73,12 +73,21 @@ def run(args, cwd=None):
     subprocess.run([str(x) for x in args], cwd=cwd, check=True)
 
 
+def export_uapi(source, kernel_build, commit, output):
+    compiler_source = runtime.kernel_compiler_source(kernel_build, source, commit)
+    run(['make', '-C', compiler_source, 'O=' + str(kernel_build), 'ARCH=arm64',
+         'headers_install', 'INSTALL_HDR_PATH=' + str(output)])
+    expected = expected_uapi_digest(source, commit)
+    if runtime.tree_digest(runtime.tree_files(output / 'include')) != expected:
+        raise ValueError('Runtime UAPI differs from the reviewed public interfaces')
+    return expected
+
+
 def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop,
           firmware_root=None):
     record = json.loads((kernel / 'manifest.json').read_text())
     release, commit = record['kernel_release'], record['source_commit']
     identity = runtime.kernel_identity(kernel_build, source, commit, release)
-    compiler_source = runtime.kernel_compiler_source(kernel_build, source, commit)
     runtime.repository(ROOT / 'upstream/debian-piano-current', runtime.PUBLIC_COMMIT)
     runtime.repository(macros, runtime.MACROS_COMMIT)
     runtime.repository(loop, runtime.LOOP_COMMIT)
@@ -91,12 +100,7 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop,
     output.mkdir(parents=True)
     public = ROOT / 'upstream/debian-piano-current'
     uapi = output / 'uapi'
-    run(['make', '-C', compiler_source, 'O=' + str(kernel_build), 'ARCH=arm64',
-         'headers_install', 'INSTALL_HDR_PATH=' + str(uapi)])
-    rows = runtime.tree_files(uapi / 'include')
-    uapi_digest = expected_uapi_digest(source, commit)
-    if runtime.tree_digest(rows) != uapi_digest:
-        raise ValueError('Runtime UAPI differs from the reviewed public interfaces')
+    uapi_digest = export_uapi(source, kernel_build, commit, uapi)
     flags = [compiler, '-O2', '-Wall', '-Wextra', '-Werror']
     if 'clang' in Path(compiler).name:
         flags += ['--target=aarch64-linux-gnu']

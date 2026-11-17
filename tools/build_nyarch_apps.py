@@ -17,6 +17,7 @@ import subprocess
 import sys
 import urllib.request
 
+from build import overlay_release
 from build_chroot import guest_command, remove_pacman_sockets, stop_helpers
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -128,7 +129,7 @@ def guest_environment(root):
                 raise
 
 
-def build(root, sources, output, resume=False):
+def build(root, sources, output, resume=False, *, refresh=True):
     root = root.resolve()
     if os.geteuid() or not root.is_relative_to(ROOT / 'build/distros'):
         raise ValueError('Use root and a project-built ARM64 rootfs')
@@ -155,12 +156,13 @@ def build(root, sources, output, resume=False):
                 raise ValueError('Cannot resume with a different application source')
         else:
             shutil.copytree(sources / row['name'], folder, symlinks=True)
-        pkg = folder / 'PKGBUILD'
-        pkg.write_text(pkg.read_text().replace(
+        pkg = (sources / row['name'] / 'PKGBUILD').read_text().replace(
             'git+${url}.git#commit=', row['name'] + '::git+file:///var/tmp/sunuefi-nyarch-build/' +
-            row['name'] + '/source#commit='))
+            row['name'] + '/source#commit=')
+        (folder / 'PKGBUILD').write_text(overlay_release.pacman_recipe(pkg))
     with guest_environment(root) as guest:
-        guest(['pacman', '-Syu', '--needed', '--noconfirm', *PACKAGES])
+        if refresh:
+            guest(['pacman', '-Syu', '--needed', '--noconfirm', *PACKAGES])
         if subprocess.run(['chroot', root, 'id', '-u', 'sunuefi-build'],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
             guest(['useradd', '-m', '-u', '60001', 'sunuefi-build'])
@@ -182,6 +184,7 @@ def build(root, sources, output, resume=False):
             packages.append('/var/tmp/sunuefi-nyarch-build/' + row['name'] + '/' + target.name)
             row['package'] = target.name
             row['sha256'] = hashlib.sha256(target.read_bytes()).hexdigest()
+            row['overlay_release'] = overlay_release.generation()
         guest(['pacman', '-U', '--noconfirm', *packages])
         guest(['userdel', '-r', 'sunuefi-build'])
     shutil.rmtree(work)

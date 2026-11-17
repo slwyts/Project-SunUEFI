@@ -16,7 +16,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
-from build import debian
+from build import debian, overlay_release
 from desktop import package_build
 
 CONFIG = ROOT / 'config/mesa.json'
@@ -29,7 +29,7 @@ def policy():
 
 
 def package_version():
-    return policy()['debian']['package_version']
+    return overlay_release.debian_version(policy()['debian']['package_version'])
 
 
 def debian_rules(original):

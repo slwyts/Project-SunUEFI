@@ -118,6 +118,25 @@ def stage_sources(work, uapi):
     return dependencies
 
 
+def backend_archive(output, backend):
+    archive = backend.parent / 'piano-goodix-sources.tar'
+    subprocess.run(['tar', '--sort=name', '--mtime=@0', '--owner=0', '--group=0',
+                    '--numeric-owner', '-cf', archive, '-C', backend, '.'], check=True)
+    return {'file': str(archive.relative_to(output)), 'sha256': digest(archive)}
+
+
+def prepare_desktop_backend(output, uapi):
+    """Export the reviewed source used by libfprint without building the CLI."""
+    inputs = source_inputs()
+    backend = output / 'fingerprint/backend'
+    stage_sources(backend, uapi)
+    archive = backend_archive(output, backend)
+    if source_inputs() != inputs:
+        raise ValueError('Fingerprint inputs changed while preparing the backend')
+    (backend.parent / 'fingerprint.json').write_text(json.dumps(
+        {'inputs': inputs, 'backend_archive': archive}, indent=2) + '\n')
+
+
 def build(output, flags, uapi, emulator=None):
     inputs = source_inputs()
     tee_header = uapi / 'include/linux/tee.h'
@@ -150,9 +169,7 @@ def build(output, flags, uapi, emulator=None):
             command = [arg for arg in command if arg != '-Werror']
         subprocess.run(command, check=True)
         objects.append(obj)
-    backend_archive = work / 'piano-goodix-sources.tar'
-    subprocess.run(['tar', '--sort=name', '--mtime=@0', '--owner=0', '--group=0',
-                    '--numeric-owner', '-cf', backend_archive, '-C', backend, '.'], check=True)
+    archive = backend_archive(output, backend)
     binary = work / 'piano-fingerprint-ctl'
     subprocess.run([*flags, '-static', *objects, '-pthread', '-lm', '-o', binary], check=True)
     subprocess.run(([emulator] if emulator else []) + [str(binary), '--help'], check=True)
@@ -177,8 +194,7 @@ def build(output, flags, uapi, emulator=None):
         'client_source': str(CLI_SOURCE.relative_to(ROOT)),
         'client_sha256': digest(CLI_SOURCE),
         'source_files': {str(p.relative_to(ROOT)): digest(p) for p in originals},
-        'backend_archive': {'file': str(backend_archive.relative_to(output)),
-                            'sha256': digest(backend_archive)},
+        'backend_archive': archive,
         'uapi_headers': {'linux/tee.h': tee_digest},
         'firmware': json.loads(
             (ROOT / 'vendor/firmware/hyperos4-fingerprint/manifest.json').read_text())['files'],
@@ -293,7 +309,7 @@ def install_desktop(root, runtime, output):
         packages = output / name
         cohort = subprocess.check_output(
             ['chroot', root, 'pacman', '-Q', *required], text=True)
-        inputs = {'recipe_sha256': digest(recipes / name / 'PKGBUILD'),
+        inputs = {'recipe_sha256': build_arch_package.recipe_sha256(recipes / name / 'PKGBUILD'),
                   'runtime_packages': cohort}
         if not (packages / 'manifest.json').is_file():
             build_arch_package.build(root, recipes / name, packages)
@@ -355,12 +371,14 @@ def debian_package_fields(path):
 
 def debian_reusable(output, inputs, target_abi, backend_archive):
     """Reuse only the exact source generation and target runtime package ABI."""
+    from build import overlay_release
+
     try:
         record = json.loads((output / 'SOURCE.json').read_text())
         cfg = json.loads((ROOT / 'config/fingerprint.json').read_text())['desktop']['libfprint']
         package = record['package']
         filename = package['file']
-        version = '1:' + cfg['version'] + '+sunuefi2'
+        version = overlay_release.debian_version('1:' + cfg['version'] + '+sunuefi2')
         if (record['inputs'] != inputs or record['target_abi'] != target_abi or
                 record['backend_sources_sha256'] != digest(backend_archive) or
                 package['version'] != version or package['architecture'] != 'arm64' or
@@ -423,8 +441,9 @@ def install_debian_package(root, path, target_abi):
 
 
 def install_debian_desktop(root, runtime, output):
+    from build import overlay_release
     from build_release_rootfs import build_devices, build_resolver
-    from desktop import package_build
+    from desktop import debian_package, package_build
     root, runtime, output = root.resolve(), runtime.resolve(), output.resolve()
     if (not root.is_relative_to(ROOT / 'build/distros') or
             not output.is_relative_to(ROOT / 'build') or output.is_relative_to(root)):
@@ -459,6 +478,7 @@ def install_debian_desktop(root, runtime, output):
         subprocess.run(['cp', '-a', '--reflink=auto', root, builder], check=True)
     elif debian_abi(builder) != target_abi:
         raise ValueError('Existing fingerprint builder differs from the target ABI')
+    debian_package.verify_build_archive(builder)
     work = builder / 'var/tmp/sunuefi-libfprint'
     if work.exists():
         raise ValueError('Inspect the interrupted fingerprint build before retrying: ' + str(work))
@@ -527,7 +547,7 @@ def install_debian_desktop(root, runtime, output):
             'sh', '-ec', 'cd /var/tmp/sunuefi-libfprint/libfprint; '
             'dpkg-shlibdeps -O -e../package/usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0',
         ], capture_output=True, text=True).stdout)
-        package_version = '1:' + cfg['version'] + '+sunuefi2'
+        package_version = overlay_release.debian_version('1:' + cfg['version'] + '+sunuefi2')
         (control / 'control').write_text(
             f'Package: libfprint-2-2\nVersion: {package_version}\nArchitecture: arm64\n'
             'Multi-Arch: same\nSection: libs\nPriority: optional\n'
@@ -536,8 +556,9 @@ def install_debian_desktop(root, runtime, output):
             'Description: libfprint with native Piano Goodix support\n')
         packages = output / 'runtime'
         packages.mkdir(exist_ok=True)
-        deb = packages / f'libfprint-2-2_{cfg["version"]}+sunuefi2_arm64.deb'
+        deb = packages / f'libfprint-2-2_{package_version.split(":", 1)[-1]}_arm64.deb'
         subprocess.run(['dpkg-deb', '--root-owner-group', '--build', package, deb], check=True)
+        debian_package.verify_build_archive(builder)
     if debian_abi(root) != target_abi:
         raise ValueError('Fingerprint target ABI changed during package compilation')
     if source_inputs() != inputs:

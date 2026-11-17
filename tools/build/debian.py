@@ -14,6 +14,7 @@ import subprocess
 import tarfile
 import tempfile
 
+from build import overlay_release
 from desktop import package_build
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -138,7 +139,7 @@ def project_source_version(source, version):
         revision = policy['local_revisions'][source]
     else:
         return None
-    return original if version == original + '+' + revision else None
+    return original if overlay_release.base_debian_version(version) == original + '+' + revision else None
 
 
 def apt_candidates(root, packages, archive_only=False):
@@ -298,6 +299,8 @@ def build_sources(root):
 
 @contextmanager
 def builder(output, sysroot=None):
+    from desktop.debian_package import verify_build_archive
+
     output = output.resolve()
     if os.geteuid() or not output.is_relative_to(ROOT / 'build'):
         raise ValueError('Run as root with an output below the project build directory')
@@ -337,6 +340,7 @@ def builder(output, sysroot=None):
         policy.chmod(0o755)
         try:
             yield root, env
+            verify_build_archive(root)
         finally:
             if saved_policy is None:
                 policy.unlink()
@@ -495,9 +499,8 @@ def align_development_cohorts(root, log):
 
 def dependencies(root, log, resume=False):
     from desktop import debian_package as signed
-    if not resume:
-        guest(root, ['apt-get', '-oAcquire::AllowInsecureRepositories=false',
-                     '-oAPT::Get::AllowUnauthenticated=false', 'update'], stdout=log, stderr=subprocess.STDOUT)
+    signed.prepare_build_indexes(root, lambda args: guest(root, args, stdout=log,
+                                 stderr=subprocess.STDOUT), refresh=not resume)
     verify_sid(root)
     signed.signed_records(root, 'Sources', ())
     if root != Path('/'):

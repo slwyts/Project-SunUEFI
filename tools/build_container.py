@@ -14,8 +14,8 @@ def main():
         image = registry + '/' + config['image'] + '@' + config['index_digest']
         process = subprocess.Popen(
             ['docker', 'build', '--build-arg', 'SUNUEFI_BASE_IMAGE=' + image,
-             '-t', 'sunuefi-builder', '-f', 'containers/Dockerfile', '.'],
-            cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+             '-t', 'sunuefi-builder', '-f', 'Dockerfile', '.'],
+            cwd=ROOT / 'containers', stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         lines = []
         for line in process.stdout:
             print(line, end='', flush=True)

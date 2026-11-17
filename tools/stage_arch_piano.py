@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,54 @@ def put(root, name, text, mode=0o644):
     path.chmod(mode)
 
 
+def pacman_configuration(text, steamos):
+    """Enable the signed repositories before stock repositories, once each."""
+    from package.boot import PACMAN_REPOSITORIES
+
+    generated = {f'/etc/pacman.d/{name}.conf' for name in PACMAN_REPOSITORIES}
+    lines = []
+    sections = []
+    for line in text.splitlines(keepends=True):
+        uncommented = line.split('#', 1)[0].strip()
+        include = re.fullmatch(r'Include\s*=\s*(\S+)', uncommented)
+        if include and include[1] in generated:
+            continue
+        section = re.fullmatch(r'\[([^\]]+)\]', uncommented)
+        if section:
+            sections.append((len(lines), section[1]))
+        lines.append(line)
+    names = [name for _, name in sections]
+    if len(names) < 2 or names[0] != 'options' or names.count('options') != 1:
+        raise ValueError('pacman.conf must start with options and contain a repository')
+    if any(name in PACMAN_REPOSITORIES for name in names):
+        raise ValueError('pacman.conf has an unmanaged SunUEFI repository section')
+    insertion = sections[1][0]
+    selected = PACMAN_REPOSITORIES[::-1] if steamos else PACMAN_REPOSITORIES[:1]
+    lines[insertion:insertion] = [f'Include = /etc/pacman.d/{name}.conf\n'
+                                  for name in selected]
+    return ''.join(lines)
+
+
+def install_repository(root, steamos):
+    from package.boot import PACMAN_REPOSITORIES, pacman_repository
+
+    root = Path(root).resolve()
+    builds = ROOT / 'build/distros'
+    if os.geteuid() or root == builds or not root.is_relative_to(builds):
+        raise ValueError('Configure pacman repositories only in a project build root')
+    for name in PACMAN_REPOSITORIES if steamos else PACMAN_REPOSITORIES[:1]:
+        fragment = release.target(root, f'etc/pacman.d/{name}.conf')
+        if fragment.is_symlink() or fragment.read_text() != pacman_repository(name):
+            raise ValueError('Install the matching Piano repository configuration: ' + name)
+    policy = release.target(root, 'etc/pacman.conf')
+    if policy.is_symlink():
+        raise ValueError('Expected a regular pacman.conf in the build root')
+    configured = pacman_configuration(policy.read_text(), steamos)
+    with guest_environment(root) as guest:
+        guest(['pacman-key', '--populate', 'sunuefi'])
+    policy.write_text(configured)
+
+
 def stage(args):
     root, output = args.rootfs.resolve(), args.rootfs.resolve().parent
     if os.geteuid() or not root.is_relative_to(ROOT / 'build/distros'):
@@ -42,6 +91,7 @@ def stage(args):
             kernel['source_commit'], kernel['kernel_release']):
         raise ValueError('Rebuild the runtime helpers for the selected kernel')
     steamos = getattr(args, 'desktop', 'nyarch') == 'steamos'
+    published_packages = getattr(args, 'published_packages', None)
     userspace.stage(root, ROOT / cfg['debian']['source'],
                     desktop='kde' if steamos else 'gnome')
     # These are generated files in the build root; refresh them on --resume.
@@ -49,17 +99,15 @@ def stage(args):
     if adapters.exists():
         shutil.rmtree(adapters)
     hardware.build(adapters, ROOT / cfg['debian']['source'], root)
-    old_modules = ([p.name for p in (root / 'usr/lib/modules').iterdir()
-                    if p.is_dir() and p.name != kernel['kernel_release']]
-                   if (root / 'usr/lib/modules').is_dir() else [])
-    current_modules = modules.safe_target(
-        root, Path('usr/lib/modules') / kernel['kernel_release'])
-    if current_modules.exists():
-        shutil.rmtree(current_modules)
-    modules.stage(root, args.kernel, old_modules)
     runtime.stage(args.runtime.resolve(), root)
-    from build_piano_fingerprint import install_desktop
-    install_desktop(root, args.runtime.resolve(), output / 'fingerprint-packages')
+    if published_packages is not None:
+        from build_piano_fingerprint import desktop_service
+        desktop_service(root)
+    else:
+        from package.kernel import install as install_kernel
+        from build_piano_fingerprint import install_desktop
+        install_kernel(root, 'pacman', args.kernel)
+        install_desktop(root, args.runtime.resolve(), output / 'fingerprint-packages')
     fw = ROOT / cfg['firmware']['components']
     from stage_piano_firmware import stage as stage_firmware
     stage_firmware(fw, root)
@@ -123,7 +171,7 @@ def stage(args):
         guest(['depmod', '-a', kernel['kernel_release']])
     if steamos:
         from stage_steamos_desktop import configure
-        desktop = configure(root)
+        desktop = configure(root, published_packages=published_packages is not None)
     else:
         from prepare_nyarch_material import prepare, UUID
         extension_bundle = output / 'nyarch-shell-extensions'
@@ -157,6 +205,9 @@ def stage(args):
             else:
                 item.unlink()
     packages = subprocess.check_output(['chroot', root, 'pacman', '-Q'], text=True)
+    if published_packages is not None:
+        from build.overlay_packages import verify_pacman_versions
+        verify_pacman_versions(published_packages, packages)
     (output / 'packages.tsv').write_text(packages)
     record = {'status': 'HOST_BUILT_ROOT_NOT_BOOT_VERIFIED',
               'distro': 'steamos' if steamos else 'nyarch',

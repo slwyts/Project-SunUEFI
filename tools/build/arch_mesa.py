@@ -13,7 +13,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
-from build import debian, mesa
+from build import debian, mesa, overlay_release
 from desktop import package_build
 
 
@@ -97,13 +97,15 @@ def build(output, root, jobs, resume=False, steamos=False):
 
 
 def is_current(output, selected):
+    import build_arch_package
+
     try:
         manifest = json.loads((output / 'manifest.json').read_text())
         validation = json.loads((output / 'VALIDATION.json').read_text())
         origin = json.loads((output / 'SOURCE.json').read_text())
         expected = json.loads((selected / 'SOURCE.json').read_text())
         packages = manifest['packages']
-        if (manifest['recipe_sha256'] != package_build.sha(selected / 'PKGBUILD') or
+        if (manifest['recipe_sha256'] != build_arch_package.recipe_sha256(selected / 'PKGBUILD') or
                 validation['official_source_files_checked'] <= 0 or not packages or
                 set(validation['packages']) != set(packages) or
                 any(origin.get(key) != expected[key] for key in
@@ -209,6 +211,9 @@ def validate(root, work, output):
         raise ValueError('Generated fwrite bindings do not preserve the ARM64 size_t ABI')
     bindgen = {'file': str(bindings.relative_to(work)), 'sha256': package_build.sha(bindings),
                'fwrite': declaration[0]}
+    arch_policy = mesa.policy()['arch']
+    version = ('1:' + arch_policy['package_version'] + '-' +
+               overlay_release.pacman_release(arch_policy['package_release']))
     packages = {}
     for archive in sorted(path for path in output.glob('*.pkg.tar.*')
                           if path.suffix in ('.xz', '.zst', '.gz')):
@@ -218,9 +223,7 @@ def validate(root, work, output):
             if ' = ' in line:
                 name, value = line.split(' = ', 1)
                 fields.setdefault(name, []).append(value)
-        if (fields.get('arch') not in (['aarch64'], ['any']) or
-                fields.get('pkgver') != ['1:' + mesa.policy()['arch']['package_version'] + '-' +
-                                         mesa.policy()['arch']['package_release']]):
+        if fields.get('arch') not in (['aarch64'], ['any']) or fields.get('pkgver') != [version]:
             raise ValueError('Native Mesa package identity differs: ' + archive.name)
         elf, object_types = {}, {}
         process = subprocess.Popen(['bsdtar', '-cf', '-', '--format=gnutar', '@' + str(archive)],

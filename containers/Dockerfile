@@ -9,12 +9,16 @@ RUN if [ "$(dpkg --print-architecture)" != arm64 ]; then \
     build-essential git make clang lld llvm nasm acpica-tools autoconf automake libtool patchelf ninja-build \
     binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
     rustc cargo libstd-rust-dev:arm64 libyuv-dev libjpeg62-turbo-dev \
-    flex bison bc libssl-dev uuid-dev zlib1g-dev libelf-dev \
+    flex bison bc libssl-dev libssl-dev:arm64 uuid-dev zlib1g-dev libelf-dev \
     python3 python3-venv python3-pip python3-packaging gettext fonts-noto-cjk libfreetype6 \
-    debootstrap debian-archive-keyring gpgv qemu-user-static \
+    debootstrap debian-archive-keyring gpgv gnupg apt-utils qemu-user-static \
+    dpkg-dev debhelper fakeroot pacman-package-manager libdw-dev libarchive-dev \
     mtools dosfstools e2fsprogs cpio kmod device-tree-compiler \
     zstd rsync ccache alsa-utils m4 pkg-config curl ca-certificates openssh-client openssl \
     util-linux file squashfs-tools busybox-static libarchive-tools libglib2.0-bin systemd-ukify && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends makepkg \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 # No source or personal workspace is embedded in the builder image.

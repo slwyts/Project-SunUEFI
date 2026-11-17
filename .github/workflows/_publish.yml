@@ -1,0 +1,98 @@
+name: Publish signed native packages
+
+on:
+  workflow_call:
+    inputs:
+      cache_key:
+        required: true
+        type: string
+      image_id:
+        required: true
+        type: string
+      overlay_matrix:
+        required: true
+        type: string
+    secrets:
+      SUNUEFI_REPO_GPG_KEY:
+        required: true
+      R2_ACCESS_KEY_ID:
+        required: true
+      R2_SECRET_ACCESS_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-26.04-arm
+    env:
+      SUNUEFI_BUILD_ENVIRONMENT_ID: ${{ inputs.image_id }}
+      SUNUEFI_CACHE_WORKSPACE: /workspace
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/ci-builder
+          key: ${{ inputs.cache_key }}
+          fail-on-cache-miss: true
+      - id: keys
+        run: |
+          python3 tools/build/ci_container.py load
+          python3 tools/build/shared_products.py keys --github-output "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/restore-shared-product
+        with:
+          kind: kernel
+          key: ${{ steps.keys.outputs.kernel_key }}
+      - if: contains(fromJSON(inputs.overlay_matrix).target, 'debian-gnome')
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: artifacts/packages/overlays/debian-gnome
+          key: repo-packages-v1-${{ github.run_id }}-debian-gnome
+          fail-on-cache-miss: true
+      - if: contains(fromJSON(inputs.overlay_matrix).target, 'nyarch-gnome')
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: artifacts/packages/overlays/nyarch-gnome
+          key: repo-packages-v1-${{ github.run_id }}-nyarch-gnome
+          fail-on-cache-miss: true
+      - if: contains(fromJSON(inputs.overlay_matrix).target, 'steamos')
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: artifacts/packages/overlays/steamos
+          key: repo-packages-v1-${{ github.run_id }}-steamos
+          fail-on-cache-miss: true
+      - name: Sign, upload and check all selected package indexes
+        env:
+          SUNUEFI_REPO_GPG_KEY: ${{ secrets.SUNUEFI_REPO_GPG_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          OVERLAYS: ${{ inputs.overlay_matrix }}
+        run: |
+          set -o pipefail
+          mkdir -p build/logs
+          docker run --rm -v "$PWD:/workspace" -w /workspace \
+            -e SUNUEFI_REPO_GPG_KEY -e R2_ACCESS_KEY_ID -e R2_SECRET_ACCESS_KEY \
+            -e R2_ENDPOINT -e R2_BUCKET -e OVERLAYS \
+            -e SUNUEFI_BUILD_ENVIRONMENT_ID -e SUNUEFI_CACHE_WORKSPACE sunuefi-builder bash -euc '
+              git config --global --add safe.directory /workspace
+              python3 tools/build/shared_products.py verify --kind kernel
+              python3 -m venv /tmp/repo-venv
+              /tmp/repo-venv/bin/pip install -r requirements-build.txt
+              . /tmp/repo-venv/bin/activate
+              ./build.sh repo products --kernel --overlay-matrix "$OVERLAYS" --output build/repository
+            ' 2>&1 | tee build/logs/repository.log
+      - name: Stage repository publication logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: build-logs-repository
+          path: build/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0

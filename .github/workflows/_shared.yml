@@ -1,0 +1,162 @@
+name: Shared firmware and kernel
+
+on:
+  workflow_call:
+    inputs:
+      image_id:
+        required: true
+        type: string
+      cache_key:
+        required: true
+        type: string
+      shared_matrix:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  shared:
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.shared_matrix) }}
+    env:
+      SUNUEFI_BUILD_ENVIRONMENT_ID: ${{ inputs.image_id }}
+      SUNUEFI_CACHE_WORKSPACE: /workspace
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/ci-builder
+          key: ${{ inputs.cache_key }}
+          fail-on-cache-miss: true
+      - name: Load the verified builder image
+        run: python3 tools/build/ci_container.py load
+      - name: Get only required fixed sources
+        run: ./build.sh sources
+      - id: keys
+        run: python3 tools/build/shared_products.py keys --github-output "$GITHUB_OUTPUT"
+      - id: completed
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            artifacts/product
+            artifacts/android
+            artifacts/simpleinit/product
+            artifacts/kernels/release
+            artifacts/packages/kernel
+            build/shared-products/${{ matrix.kind }}.json
+            build/kernels/release/.config
+            build/kernels/release/Makefile
+            build/kernels/release/Module.symvers
+            build/kernels/release/include
+            build/kernels/release/scripts
+            build/kernels/release/arch/arm64/include/generated
+            build/kernel-sources
+          key: ${{ matrix.kind == 'firmware' && steps.keys.outputs.firmware_key || steps.keys.outputs.kernel_key }}
+      - name: Restore reusable firmware workspace objects
+        if: matrix.kind == 'firmware'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            build/firmware-workspace
+            build/android-product-module
+          key: firmware-objects-arm64-${{ inputs.image_id }}-${{ github.sha }}
+          restore-keys: |
+            firmware-objects-arm64-${{ inputs.image_id }}-
+      - id: llvm
+        if: matrix.kind == 'kernel'
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/toolchains/*.tar.zst
+          key: llvm-arm64-${{ hashFiles('config/kernel-llvm.json', 'tools/desktop/prepare_kernel_llvm.py') }}
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/ccache
+          key: ccache-arm64-shared-${{ matrix.kind }}-${{ github.sha }}
+          restore-keys: |
+            ccache-arm64-shared-${{ matrix.kind }}-
+      - name: Build each common product once, or validate its cache
+        env:
+          SHARED_KIND: ${{ matrix.kind }}
+        run: |
+          set -o pipefail
+          mkdir -p build/logs build/ccache
+          docker run --rm --privileged \
+            -v "$PWD:/workspace" -w /workspace \
+            -e SUNUEFI_BUILD_ENVIRONMENT_ID -e SHARED_KIND \
+            -e CCACHE_DIR=/workspace/build/ccache -e CCACHE_MAXSIZE=3G \
+            -e CCACHE_BASEDIR=/workspace -e CCACHE_COMPILERCHECK=content \
+            -e SUNUEFI_TOOLCHAIN_ROOT=/usr sunuefi-builder bash -euc '
+              git config --global --add safe.directory /workspace
+              git config --global --add safe.directory "/workspace/*"
+              python3 -m venv .venv
+              .venv/bin/pip install -r requirements-build.txt
+              . .venv/bin/activate
+              python3 tools/build/shared_products.py ensure --kind "$SHARED_KIND"
+            ' 2>&1 | tee "build/logs/shared-$SHARED_KIND.log"
+      - name: Save the validated shared generation once
+        if: steps.completed.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            artifacts/product
+            artifacts/android
+            artifacts/simpleinit/product
+            artifacts/kernels/release
+            artifacts/packages/kernel
+            build/shared-products/${{ matrix.kind }}.json
+            build/kernels/release/.config
+            build/kernels/release/Makefile
+            build/kernels/release/Module.symvers
+            build/kernels/release/include
+            build/kernels/release/scripts
+            build/kernels/release/arch/arm64/include/generated
+            build/kernel-sources
+          key: ${{ matrix.kind == 'firmware' && steps.keys.outputs.firmware_key || steps.keys.outputs.kernel_key }}
+      - name: Save fixed LLVM downloads once
+        if: matrix.kind == 'kernel' && steps.llvm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/toolchains/*.tar.zst
+          key: llvm-arm64-${{ hashFiles('config/kernel-llvm.json', 'tools/desktop/prepare_kernel_llvm.py') }}
+      - name: Stage the shared firmware downloads
+        if: matrix.kind == 'firmware'
+        run: |
+          mkdir -p artifacts/downloads/module artifacts/downloads/uefi
+          cp artifacts/android/SunUEFI-Piano-*.zip artifacts/downloads/module/
+          cp artifacts/product/PianoUEFI-product.img artifacts/downloads/uefi/SunUEFI-UEFI-Fastboot.img
+          cp uefi/components/product-support/Library/ConsoleScale/OFL.txt artifacts/downloads/uefi/
+      - name: Android assistant module
+        if: matrix.kind == 'firmware'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: SunUEFI-Module
+          path: artifacts/downloads/module/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: UEFI for fastboot boot
+        if: matrix.kind == 'firmware'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: SunUEFI-UEFI-Fastboot
+          path: artifacts/downloads/uefi/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Stage shared build logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: build-logs-shared-${{ matrix.kind }}
+          path: build/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0

@@ -22,6 +22,7 @@ KDE_PACKAGES = [
     'fcitx5', 'fcitx5-chinese-addons',
     'fcitx5-frontend-gtk3', 'fcitx5-frontend-qt6', 'kde-config-fcitx5',
     'fcitx5-frontend-qt5', 'maliit-keyboard',
+    'libpam-kwallet5', 'systemd-coredump',
 ]
 GNOME_PATHS = (
     'etc/gdm3', 'etc/dconf', 'usr/share/glib-2.0/schemas/90_piano.gschema.override',
@@ -64,6 +65,10 @@ def sid_recipe(text):
     start = text.index('if [ -n "$MESA_DIR" ]; then')
     end = text.index('# The checkout belongs to the building user;', start)
     text = text[:start] + text[end:]
+    text = text.replace('chroot "$ROOTFS" apt-get update',
+                        'chroot "$ROOTFS" apt-get -o APT::Update::Error-Mode=any update')
+    text = text.replace(' -o Dir::Etc::sourceparts=- update',
+                        ' -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update')
     text = text.replace('SUITE=trixie ', 'SUITE=sid ')
     text = text.replace('--suite trixie', '--suite sid')
     text = text.replace(" USERSPACE_DIR='' MESA_DIR=''", " USERSPACE_DIR=''")
@@ -143,6 +148,11 @@ def configure(rootfs, run, input_method='fcitx'):
             '[Groups/0/Items/0]\nName=keyboard-us\nLayout=\n\n'
             '[Groups/0/Items/1]\nName=pinyin\nLayout=\n\n'
             '[GroupOrder]\n0=Default\n')
+        # KWin launches the input method with its privileged Wayland socket.
+        # An ordinary autostart client cannot bind input-method-v1.
+        (config / 'kwinrc').write_text(
+            '[Wayland]\nInputMethod=/usr/share/applications/org.fcitx.Fcitx5.desktop\n'
+            'VirtualKeyboardEnabled=true\n')
     elif input_method != 'ibus':
         raise ValueError('Unsupported input method: ' + input_method)
     input_environment = rootfs / 'etc/environment.d/60-piano-input-method.conf'
@@ -157,10 +167,7 @@ def configure(rootfs, run, input_method='fcitx'):
         'KWIN_DRM_FORCE_SCALING_MODE=FULL\n')
     if input_method == 'fcitx':
         autostart = rootfs / 'etc/xdg/autostart/piano-fcitx5.desktop'
-        autostart.parent.mkdir(parents=True, exist_ok=True)
-        autostart.write_text(
-            '[Desktop Entry]\nType=Application\nName=Fcitx 5\n'
-            'Exec=fcitx5 -d --replace\nOnlyShowIn=KDE;\nNoDisplay=true\n')
+        autostart.unlink(missing_ok=True)
     overlay = Path(__file__).resolve().parents[1] / 'linux/desktops/kde/config'
     for source in sorted(overlay.iterdir()):
         if source.name != 'kwinoutputconfig.json':

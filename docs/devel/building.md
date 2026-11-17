@@ -84,12 +84,16 @@ python3 tools/package_sparse_images.py --bundle artifacts/release --output artif
 ```
 
 已有根系统时，运行 `./build.sh esp` 只生成启动镜像，不重新导出 root 镜像。
-启动镜像包含 `/EFI/Linux/sunuefi.efi`：把内核、initramfs、DTB 和启动参数
-封装为一个 UKI，由 SunUEFI 直接启动，不经过 systemd-boot。打包使用
-systemd 的 `ukify`，默认使用 `config/release.json` 固定的 Debian ARM64
-`systemd-boot-efi` 包中的 stub，校验包和文件的 SHA256，四产品使用同一文件；
-这不会在目标系统安装 Debian 软件包或 systemd-boot 管理器。单独提取的 stub 可通过
-`--stub /path/to/linuxaa64.efi.stub` 指定，`--ukify` 指定打包工具。
+启动镜像默认使用 BLS Type #1：内核、initramfs 和设备树（DTB）分开放在
+`/linux/<release>/`，启动项放在 `/loader/entries/`。
+SimpleInit 的“启动 Linux”进入 systemd-boot，菜单停留三秒，可以选择保留的旧内核。
+加 `./build.sh esp --boot-layout uki` 可改为将这些文件和启动参数封装为
+`/EFI/Linux/linux-<release>.efi`（UKI）。
+UKI 打包使用 systemd 的 `ukify`，stub 来自 `config/release.json` 固定并校验的
+Debian ARM64 `systemd-boot-efi` 包；默认 BLS 构建不需要 ukify 或 stub。
+同一个软件包还提供 ARM64 systemd-boot，安装在 ESP 的
+`EFI/systemd/systemd-bootaa64.efi` 和标准后备路径 `EFI/BOOT/BOOTAA64.EFI`。
+单独提取的文件可通过 `--stub`、`--systemd-boot` 指定，`--ukify` 指定打包工具。
 
 initramfs 的 BusyBox、分区识别工具和依赖库也由 `config/release.json` 固定并校验，
 在临时目录解包，不从各发行版根系统取库。内核模块和键盘固件使用共享产品的同一份输入，
@@ -119,7 +123,10 @@ sudo ./build.sh ffmpeg --sysroot build/distros/debian-sid/rootfs
 
 ### 共用构建与缓存
 
-Build products 先准备一次 ARM64 构建容器，再并行准备两类共享产物：UEFI 与 Android 模块、内核与模块。四个 root job 等待这些阶段完成，恢复同一代产物并校验后才构建各自系统，不再分别编译四遍 UEFI、模块和内核。内部产物放 Actions cache，不增加用户下载项；共享阶段的日志合并进原有 `logs.zip`。
+Build products 先准备一次 ARM64 构建容器，再并行构建 UEFI 和 Android 模块、内核和原生包。覆盖包随后按 Debian、Nyarch、SteamOS 分别构建，Debian GNOME 和 KDE 共用一套。发布阶段签名并上传 R2，从公开域名验签和核对索引后，四个系统才从对应的软件源安装这一批包。中间产物不增加用户下载项，各阶段的日志仍合并进 `logs.zip`。
+
+同一分支的产品运行按批排队。pacman 同步索引只列出每个包的最新版本，
+所以本批镜像组装结束前，下一批不会替换公开索引；同批的各发行版仍并行构建。
 
 完成缓存只在构建、源码和输出校验成功后发布。缓存键包含构建器、绑定源码、补丁、配置、架构、工作区路径及实际容器镜像 ID。内核恢复保留 Image、完整模块集及外部模块构建需要的配置、符号表和头文件；原生内核入口仍核对 SOURCE、编译器、配置、模块 hash 和 vermagic。root job 检查不匹配时停止，不自行重新编译或混用旧产物。UEFI 缓存保留原有构建标记、同核心模块身份与完整文件摘要，不把未完成的构建标为完成。
 
@@ -137,13 +144,11 @@ python3 tools/build/shared_products.py verify --kind firmware
 python3 tools/build/shared_products.py verify --kind kernel
 ```
 
-这些命令只由 CI 或维护者的本地共用构建调用，不改变 rootfs 的安装过程。sid 和 Nyarch 的滚动仓库仍每次读取并校验签名索引、选择实际 candidate；运行包继续由原构建器核对 `SOURCE.json`、依赖 ABI 与文件摘要，缓存不冻结候选版本。sensors 与 FFmpeg 缓存保留 `runtime/`、`SOURCE.json` 和 `SHA256SUMS`；旧版 `package-cache.json` 不再参与 sensors 复用。缓存键包含公共 sid 构建器 `tools/build/debian.py`，构建器变化后不会继续使用同一配方缓存。
+这些命令只由 CI 或维护者的本地共用构建调用，不改变 rootfs 的安装过程。覆盖包只缓存已完成的包档案与清单，不缓存半装好的构建根。复用前仍准备新的发行版基底，核对实际构建容器、源码与配方、所用内核接口、已安装包、仓库配置和索引；Nyarch 另核对应用实际构建的 Git 提交。任一输入不匹配就重编，不把滚动仓库锁在旧索引上。
 
-官方 Mesa 27 的 Debian 缓存另外保留 `build/mesa/runtime/`、`SOURCE.json`、`SHA256SUMS` 和原始 `.changes` 收据，不缓存 builder。Mesa 自己的键绑定 `config/mesa.json` 中的官方源码提交与归档摘要、构建器、编译环境和验证器；更新 Mesa pin 不改变其他包的配方键。恢复后仍核对目标 APT 候选与 ABI、签名 sid 中的 Debian 配方源码摘要、官方源码 pin，以及 `.changes` 和九个运行包的身份与摘要，不缓存 APT 索引或跳过验证。
+Debian 核对已签名的 sid `Packages` 与 `Sources`，子构建器共用已选定的索引；Arch 系用各自 pacman 配置下实际的数据库，安装包时仍按发行版签名策略校验。缓存命中后逐个核对包名、版本、架构和 SHA256。完整 root 镜像不存入构建缓存。首次编译、仓库刷新、根系统安装和镜像导出仍需要时间。
 
-Debian 包按配方前缀恢复最近缓存，成功后发布本次运行的一代，避免 Actions 同名缓存不可覆盖导致候选更新后每次重编；公共包只由选定的一个 Debian job 保存。完整 root 镜像不存入构建缓存。冷编译、签名索引刷新、根系统安装和镜像导出仍需要时间，不能仅凭缓存设计保证整套产品在几分钟内完成。
-
-两个 Debian 桌面还复用 `build/distros/release/fingerprint-packages/` 的 `SOURCE.json` 与 `runtime/`，不缓存指纹 package builder。复用前仍核对原生后端源码归档、libfprint 补丁和配置、目标库 ABI 与实际 `.deb` 摘要，并检查目标 fprintd 的动态链接和 APT 依赖；缓存未命中时正常构建。
+CI 实际重编覆盖包时，使用该次运行和重试编号增加原生包修订号：Debian 在配方版本后加 `+sunuefi.<运行编号>.<重试编号>`，Arch 使用 `pkgrel` 的数字子修订。属于同一源包的多个二进制包保持同一版本。命中缓存或直接使用 Debian 官方签名的 FastRPC 包时，保留原版本和原文件；本地构建默认仍使用配方版本。
 
 本地和 GitHub 的完整构建走同一个 `release-rootfs` 入口。默认系统包含中文界面、拼音输入法、Chromium、GNOME 动画、蓝牙地址自动初始化和触控笔组件。根系统生成后会检查这些软件包和必需文件，结果记录在 `manifest.json` 的 `default_system`，缺少任何一项构建就失败。
 
@@ -195,8 +200,8 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 
 | 内容 | 现有安装方式 | 标准化方向 |
 | --- | --- | --- |
-| Linux 内核与模块 | `Image`、配置、`System.map` 和模块目录；rootfs 构建器直接复制模块 | Debian 内核包与 pacman 内核包，随包安装并维护匹配的模块 |
-| 设备树 | ESP 打包时组合板级 DTB、overlay 和绑定转换 | 构建匹配内核的 DTB，按内核版本安装，生成 UKI 时选取同版文件 |
+| Linux 内核与模块 | Debian 的 `bindeb-pkg` 和 Arch 的 `pacman-pkg` 原生包 | 随包安装并维护匹配的模块，由元包选择最新版本 |
+| 设备树 | 组合板级 DTB、overlay 和绑定转换，按内核版本打包 | 生成启动文件时选取同版文件，逐步收敛到内核源码中的板级设备树 |
 | Linux 设备固件 | `tools/stage_piano_firmware.py` 校验后复制到 `/usr/lib/firmware` | 原生固件包，补充发行版缺少的文件，避免与 `linux-firmware` 重复拥有同一路径 |
 | ALSA UCM、AudioReach topology、udev、笔校准及硬件配置 | 已有 BSP 打包入口，完整产品仍有直接复制 | 明确包内文件、依赖、配置覆盖和卸载范围 |
 | Mesa、FFmpeg | 已有 Debian 和 pacman 原生包 | 保留目标发行版完整配方、功能和 ABI，按软件源正常更新 |
@@ -216,7 +221,9 @@ SunUEFI 固件和 Android 引导助手使用另一条更新链；安装 Linux �
 
 Debian 优先复用选定内核的 `make bindeb-pkg`，提供按 ABI 版本命名的
 `linux-image-<release>`、`linux-headers-<release>`，再由元包依赖最新版本。
-Arch 系使用 `PKGBUILD`／`makepkg`，分别提供设备内核和 headers 包；不得将
+Arch 系使用内核源码自带的 `pacman-pkg`、`PKGBUILD`／`makepkg`，
+提供按 release 命名的内核和 headers 包，`linux-piano` 与
+`linux-piano-headers` 元包选择最新版，让旧内核及模块可以并存；不得将
 设备内核声明为可满足发行版原版 `linux` 的二进制模块依赖。
 共用源码、补丁、配置和版本定义，不把 `.deb` 当作 pacman 包安装。
 
@@ -227,11 +234,28 @@ Arch 系使用 `PKGBUILD`／`makepkg`，分别提供设备内核和 headers 包�
 接口头文件不能替代它，也不需要因安装设备内核就替换发行版 `linux-libc-dev`。
 交叉构建时还需检查 headers 内附工具能在目标机运行。
 
+```sh
+./build.sh linux-package --format debian --output artifacts/packages/kernel/debian
+./build.sh linux-package --format pacman --output artifacts/packages/kernel/pacman
+```
+
+CI 在 ARM64 构建器打包。交叉构建需要 ARM64 GNU 工具链及 libc；
+内核和包构建共用同一套编译选项。加 `--plan` 可只检查命令。
+headers 包校验 `Module.symvers`、生成头文件和构建工具架构；只发布内核和
+外部模块 headers，不发布随 `bindeb-pkg` 生成的 `linux-libc-dev`。
+源码、配置摘要及构建提交时间写入内核 release，避免不同构建混用模块目录。
+`linux-piano-dtb-<release>` 随同发布完整板级 DTB；`piano-boot-config`
+连接 Debian 内核钩子或 pacman 事务钩子、发行版 initramfs 工具和 `kernel-install`。
+仅改设备树或引导配置时，软件包版本继续递增，不改变现有内核 ABI；
+升级已安装内核的设备树时，包管理器也会刷新启动文件。
+产品系统通过 `/etc/kernel/entry-token` 沿用初装启动镜像的 `linux` 标识；
+在独立安装的发行版中装包时，由 `kernel-install` 选择该系统的标识。
+
 DTB 与内核一同构建和按版本安装，避免旧内核使用被覆盖的新设备树。
 长期把板级描述收敛到内核的 `arch/arm64/boot/dts/qcom/`，减少外部转换；
 同次启动的动态内存和固件资源仍由 UEFI 通过标准设备树修正协议提供。
 
-### 从装包到 UKI
+### 从装包到启动项
 
 正常升级应由以下流程完成，而不是重新刷写整个 ESP：
 
@@ -239,26 +263,44 @@ DTB 与内核一同构建和按版本安装，避免旧内核使用被覆盖的�
 APT／pacman 安装内核、模块、匹配 DTB 和必要固件
   → 处理外部模块及 depmod
   → 发行版 initramfs 工具生成对应版本的 initramfs
-  → ukify／mkinitcpio 生成 UKI
-  → 安装到 ESP 的 EFI/Linux/
-  → 引导程序发现启动项，或由标准 Boot#### 直接启动
+  → kernel-install 按所选布局安装内核、initramfs 和 DTB
+  → systemd-boot 发现 BLS 启动项或 UKI
 ```
 
-Debian 遵循 `/etc/kernel/` 和 `/etc/initramfs/post-update.d/` 的钩子约定；
-Arch 遵循 mkinitcpio preset 和 pacman hooks。选用 `kernel-install` 时可用
-`layout=uki` 组织安装，不再让另一套钩子重复生成。系统名称来自目标系统的
-`os-release`，根设备使用标准 `root=UUID=…` 或 `root=PARTUUID=…`，逐步
-替换私有 `piano.root=` 和固定分区名检查。Android 数据保护继续保留。
+Debian 复用 initramfs-tools 和 systemd-boot 提供的内核、initramfs 钩子；
+`55-initrd.install` 将生成的 initramfs 交给 systemd。
+Arch 由 pacman 事务调用 `kernel-install`，复用官方 `50-mkinitcpio.install`，
+并按 [ArchWiki 的 kernel-install 配置](https://wiki.archlinux.org/title/Kernel-install)
+屏蔽 preset 模式的两条 mkinitcpio 事务钩子，避免重复生成。
+固件、initramfs 工具及相关启动组件更新时，事务钩子重建所有已安装内核的启动文件。
+SteamOS 的 Frame 存储分组、恢复、ADB 和固件钩子不适用这台平板；
+Piano 的 mkinitcpio 配置只跳过这些钩子，保留系统及用户配置的其他钩子。
 
-UKI 按安装标识及内核版本命名，不能依赖固定的 `sunuefi.efi` 或 `linux.efi`。
-多个系统应能独立安装自己的 UKI，SimpleInit 和 systemd-boot 都只是可选
-引导程序。四产品可以共用内核和固件，安装后的 UKI 不必逐字节相同；
-共用初装镜像不能限制各发行版自己的启动参数、名称和后续更新。
+默认 `/etc/kernel/install.conf` 为 `layout=bls`；需要 UKI 时改为 `layout=uki`。
+Arch 系运行 `sudo kernel-install add-all`；Debian 的内核文件在 `/boot`，
+运行 `sudo kernel-install add "$(uname -r)" "/boot/vmlinuz-$(uname -r)"`，
+或为需要添加的其他版本明确指定 release 和内核文件。BLS 使用 systemd 的
+`90-loaderentry.install`；UKI 使用 `60-ukify.install` 和 `90-uki-copy.install`。
+`/etc/kernel/cmdline` 可以覆盖包内的默认启动参数，
+`/etc/kernel/devicetree` 可以覆盖默认 DTB 选择；这些管理员配置优先于 `/usr/lib/kernel/`。
+包管理器升级保留 `/etc/kernel/install.conf` 等可修改配置。
+根设备可设为 `root=UUID=…` 或 `root=PARTUUID=…`，包内默认使用 `root=LABEL=PIANOROOT`，
+不带首次安装 initramfs 使用的私有参数。
 
-回退必须同时保留旧 UKI、模块和 DTB。Debian 的按 ABI 包名便于并存；
-Arch 的同名内核包升级不会自动保留旧模块，需要明确的并存或配套降级方案。
-`fallback` initramfs 不是旧版本内核。生成失败、ESP 未挂载或空间不足时应
-报告失败并保留原启动组合，不先删除旧内核。不得在包卸载时删除其他系统的启动项。
+启动文件按安装标识及内核版本命名，菜单名称取自目标系统的 `os-release`；
+仍可通过标准 UEFI 启动项改用其他引导程序。
+四产品共用的初装启动项不设排序键，升级后由发行版生成的入口优先；
+仍可从菜单选择旧入口，也可改用自己的启动参数、名称和更新方式。
+
+回退必须同时保留旧启动文件、模块和 DTB。Debian 和 Arch 的设备内核都按
+release 使用不同包名，元包升级不会替换旧版本包；从 systemd-boot 菜单选择旧版即可。
+Arch 默认不生成可选的 `fallback` initramfs；它包含同一内核的更多模块，
+不能替代保留旧版内核。
+卸载旧版内核会移除该版本的启动项，不删除其他系统的启动项。
+原生包要求 systemd 258 或更高版本。如果同一版本从 BLS 切换成 UKI，
+卸载也会调用 systemd 的 BLS 插件清理旧启动项。
+更新前应保持 ESP 正常挂载且空间充足；initramfs 生成失败时，先修复报错，
+保留原内核与启动文件，不继续卸载旧版。
 
 ### 软件源与文件归属
 

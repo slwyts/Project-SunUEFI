@@ -32,7 +32,7 @@ def source_inputs():
 
 def is_current(output):
     record = output / 'SOURCE.json'
-    return (output / 'manifest.json').is_file() and record.is_file() and (
+    return build_arch_package.matches_release(output) and record.is_file() and (
         json.loads(record.read_text()).get('inputs') == source_inputs())
 
 

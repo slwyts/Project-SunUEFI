@@ -45,7 +45,7 @@ FRAME_UNITS = (
 )
 
 
-def configure_package_updates(root):
+def configure_package_updates(root, published_packages=False):
     bsp = Path(__file__).resolve().parents[1] / 'linux/bsp/steamos'
     put(root, 'usr/local/libexec/piano-steamos-update',
         (bsp / 'piano-steamos-update').read_text(), 0o755)
@@ -54,19 +54,17 @@ def configure_package_updates(root):
     entry = root / 'usr/bin/steamos-update'
     entry.unlink(missing_ok=True)
     entry.symlink_to('/usr/local/libexec/piano-steamos-update')
-    # Locally patched packages are delivered with the BSP. Stock replacements
-    # lose the GPU, sensor, decoder and desktop fixes. This policy also applies
-    # to Discover's libalpm backend.
+    # Keep local builds on the tested cohort until their replacements are
+    # available from the signed SteamOS-priority repository.
     policy = root / 'etc/pacman.conf'
     text = policy.read_text()
+    marker = '# Piano hardware packages are updated with the BSP image.\n'
+    text = re.sub(r'(?m)^' + re.escape(marker) + r'IgnorePkg = [^\n]*\n', '', text)
     ignore = ('deckard-mesa-linux-aarch64 gamescope steamos-manager '
               'ffmpeg fastrpc libssc iio-sensor-proxy ibus libibus gtk3 kwin')
-    block = ('# Piano hardware packages are updated with the BSP image.\n'
-             'IgnorePkg = ' + ignore + '\n')
-    if block not in text:
-        text = re.sub(r'(?m)^# Piano hardware packages are updated with the BSP image\.\n'
-                      r'IgnorePkg = [^\n]*\n', '', text)
-        text = text.replace('[options]\n', '[options]\n' + block, 1)
+    if not published_packages:
+        text = text.replace('[options]\n', '[options]\n' + marker +
+                            'IgnorePkg = ' + ignore + '\n', 1)
     policy.write_text(text)
 
 
@@ -287,7 +285,7 @@ def configure_platform(root):
     return units
 
 
-def configure(root):
+def configure(root, *, published_packages=False):
     # Frame mounts its own ESP at /efi and links /boot/efi there. SunUEFI's
     # shared fstab mounts SUNUEFI_ESP directly at /boot/efi.
     esp = root / 'boot/efi'
@@ -303,7 +301,7 @@ def configure(root):
                  '70-spatial-node-config.conf'):
         (root / 'etc/wireplumber/wireplumber.conf.d' / name).unlink(missing_ok=True)
     units = configure_platform(root)
-    configure_package_updates(root)
+    configure_package_updates(root, published_packages)
     offload = root / 'etc/tmpfiles.d/steamos-offload.conf'
     offload.parent.mkdir(parents=True, exist_ok=True)
     offload.unlink(missing_ok=True)

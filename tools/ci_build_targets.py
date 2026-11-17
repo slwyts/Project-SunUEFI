@@ -14,7 +14,7 @@ FULL_FILES = {'.github/workflows/build-products.yml', '.gitmodules',
               'uefi/handoff/bootselect/BootRequest.c',
               'uefi/handoff/bootselect/BootRequest.h',
               'docs/user/install-from-artifact.md'}
-FULL_PREFIXES = ('tools/', 'config/', 'containers/', 'linux/',
+FULL_PREFIXES = ('.github/workflows/', '.github/actions/', 'tools/', 'config/', 'containers/', 'linux/',
                  'vendor/piano-linux/', 'vendor/firmware/', 'patches/', 'upstream/')
 UEFI_FILES = {'requirements-build.txt', 'tools/build_android_product_module.py',
               'tools/build_android_module.py', 'tools/build_boot_repack.py',
@@ -40,6 +40,12 @@ def shared_kinds(targets):
     if any(target != 'uefi' for target in targets):
         result.append('kernel')
     return result
+
+
+def overlay_targets(targets):
+    """KDE and GNOME consume the same Debian overlay package generation."""
+    result = ['debian-gnome'] if set(targets) & {'debian-gnome', 'debian-kde'} else []
+    return [*result, *(target for target in ('nyarch-gnome', 'steamos') if target in targets)]
 
 
 def select(files, manual=None):
@@ -81,15 +87,23 @@ def main():
     parser.add_argument('--target', default=os.environ.get('MANUAL_TARGET', ''))
     args = parser.parse_args()
     targets = select(changed_files(ROOT, args.before), args.target)
-    matrix = json.dumps({'target': targets}, separators=(',', ':'))
-    shared_matrix = json.dumps({'kind': shared_kinds(targets)}, separators=(',', ':'))
-    debian_writer = next((target for target in ('debian-gnome', 'debian-kde') if target in targets), '')
+    distributions = [target for target in targets if target in DISTROS]
+    overlays = overlay_targets(distributions)
+    def matrix(axis, values):
+        return json.dumps({axis: values}, separators=(',', ':'))
+
     if output := os.environ.get('GITHUB_OUTPUT'):
         with open(output, 'a') as stream:
-            stream.write('has_build=' + ('true' if targets else 'false') + '\nmatrix=' + matrix +
-                         '\nshared_matrix=' + shared_matrix + '\nshared_target=' +
-                         (targets[0] if targets else '') + '\ndebian_cache_writer=' + debian_writer + '\n')
-    print(matrix)
+            values = {
+                'has_build': 'true' if targets else 'false',
+                'has_rootfs': 'true' if distributions else 'false',
+                'rootfs_matrix': matrix('target', distributions),
+                'overlay_matrix': matrix('target', overlays),
+                'shared_matrix': matrix('kind', shared_kinds(targets)),
+                'shared_target': distributions[0] if distributions else '',
+            }
+            stream.write(''.join(f'{name}={value}\n' for name, value in values.items()))
+    print(matrix('target', targets))
 
 
 if __name__ == '__main__':

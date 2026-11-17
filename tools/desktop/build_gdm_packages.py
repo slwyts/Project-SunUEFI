@@ -69,6 +69,7 @@ def build_arch(root, output):
         record = json.loads(metadata.read_text())
         packages = record.get('packages', {})
         if (record.get('inputs') == inputs and packages and
+                build_arch_package.matches_release(output / 'runtime') and
                 all(Path(name).name == name and (output / 'runtime' / name).is_file() and
                     debian.sha(output / 'runtime' / name) == row['sha256']
                     for name, row in packages.items())):

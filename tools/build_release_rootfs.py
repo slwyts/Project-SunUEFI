@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build a new public-source GNOME root and label bootstrap; never write a device."""
+"""Build Debian desktop packages and product images without touching a device."""
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from datetime import datetime, timezone
 import fcntl
 import gzip
@@ -21,6 +21,7 @@ import build_piano_runtime_helpers as runtime
 import stage_piano_full_userspace as userspace
 import stage_piano_kernel_modules as modules
 import stage_piano_ram_hardware as hardware
+from build import overlay_packages, overlay_release
 from make_kernel_initramfs import make_newc, validate_static_arm64_elf
 from prepare_release_kernel import release_series
 
@@ -43,8 +44,10 @@ def debian_archive(rootfs):
     text = capture(['chroot', rootfs, 'apt-get', 'indextargets', '--format',
                     '$(CODENAME) $(SUITE) $(ORIGIN) $(IDENTIFIER)'])
     rows = [line.split() for line in text.splitlines() if line.strip()]
-    if not rows or any(len(row) != 4 or row[:3] != ['sid', 'unstable', 'Debian']
-                       for row in rows) or not any(row[3] == 'Packages' for row in rows):
+    origins = (['sid', 'unstable', 'Debian'], ['sid', 'sid', 'SunUEFI'])
+    if not rows or any(len(row) != 4 or row[:3] not in origins
+                       for row in rows) or not any(row[:3] == origins[0] and row[3] == 'Packages'
+                                                  for row in rows):
         raise ValueError('Debian product APT indexes must contain sid only; rebuild the base root')
     return {'suite': 'sid', 'indexes': rows}
 
@@ -60,7 +63,8 @@ def repository(path, commit=None, tree=None):
 
 def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
          public_source=None, firmware_source=None, macros=None, v4l2_source=None, root=ROOT, resume=False,
-         sensors_dir=None, ffmpeg_dir=None, boot_task_snapshot=False, desktop='gnome', mutter_dir=None):
+         sensors_dir=None, ffmpeg_dir=None, boot_task_snapshot=False, desktop='gnome', mutter_dir=None,
+         packages_only=None, published_packages=None):
     root = Path(root).resolve(); config = json.loads((root / 'config/release.json').read_text())
     if desktop not in ('gnome', 'kde'):
         raise ValueError('Release desktop must be gnome or kde')
@@ -74,6 +78,20 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
     if config['debian']['suite'] != 'sid':
         raise ValueError('The Debian product builds only sid')
     kernel, source, output = [Path(p).resolve() for p in (kernel, source, output)]
+    if packages_only:
+        package_output = Path(packages_only).resolve()
+        if (package_output.exists() or not package_output.is_relative_to(root / 'artifacts/packages') or
+                package_output == root / 'artifacts/packages'):
+            raise ValueError('Use a new project artifacts/packages directory for the overlay packages')
+        if output == root / 'build/distros/release':
+            output = root / 'build/distros/overlays' / ('debian-' + desktop)
+        if output == root / 'build/distros/overlays' or not output.is_relative_to(root / 'build/distros/overlays'):
+            raise ValueError('Use a separate build/distros/overlays directory for package builds')
+    if published_packages and (sensors_dir or ffmpeg_dir or mutter_dir or packages_only):
+        raise ValueError('Published packages cannot be combined with local package selection')
+    if published_packages:
+        published_packages = Path(published_packages).resolve()
+        overlay_packages.read_debian(published_packages, desktop)
     if not output.is_relative_to(root / 'build/distros') or output.is_symlink() or (output.exists() and not resume):
         raise ValueError('Output must be a new project build/distros directory')
     previous = None
@@ -103,8 +121,11 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
     macros = Path(macros or root / 'upstream/audioreach-topology').resolve()
     loop = Path(v4l2_source or root / 'upstream/v4l2loopback').resolve()
     missing = []
-    for name, path in (('kernel manifest', kernel / 'manifest.json'), ('kernel source', source / 'Makefile'),
-                       ('public rootfs builder', public / 'scripts/build-rootfs.sh'), ('firmware', next(iter(sorted(firmware.glob('*/manifest.json'))), firmware / 'missing'))):
+    inputs = [('kernel manifest', kernel / 'manifest.json'), ('kernel source', source / 'Makefile'),
+              ('public rootfs builder', public / 'scripts/build-rootfs.sh')]
+    if not packages_only:
+        inputs.append(('firmware', next(iter(sorted(firmware.glob('*/manifest.json'))), firmware / 'missing')))
+    for name, path in inputs:
         if not path.is_file(): missing.append(name)
     sensors = Path(sensors_dir).resolve() if sensors_dir else None
     sensor_source = root / config['sensors']['source']
@@ -125,7 +146,7 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
         mutter_packages(mutter)
     if runtime_dir:
         if not (Path(runtime_dir) / 'manifest.json').is_file(): missing.append('matching runtime bundle manifest')
-    else:
+    elif not packages_only:
         for name, path in (('AudioReach topology macros', macros / 'audioreach'), ('v4l2loopback source', loop / 'Makefile')):
             if not path.exists(): missing.append(name)
     record = None
@@ -138,6 +159,16 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
         if record.get('root_policy') != 'LABEL=PIANOROOT' or [w for w in words if w.startswith('piano.root=')] != ['piano.root=LABEL=PIANOROOT'] or any(w.startswith('root=') for w in words) or 'userdata' in record['command_line']:
             raise ValueError('Release kernel must select LABEL=PIANOROOT, never Android userdata')
     if public.is_dir(): repository(public, config['debian']['commit'])
+    if packages_only:
+        steps = ['prepare a signed Debian sid build root',
+                 'build and verify the selected native desktop and hardware packages',
+                 'export selected packages and SHA256 manifest without assembling a product image']
+    else:
+        steps = ['derive build-rootfs.sh for sid and install the selected desktop from signed APT',
+                 ('install exact overlay packages from the signed SunUEFI APT source' if published_packages
+                  else 'build and install the selected native overlay packages'),
+                 'install matching kernel packages and stage the native hardware runtime',
+                 'verify firmware, apply product defaults and build the initial initramfs']
     return {'status': 'PLAN_ONLY', 'resume': resume, 'desktop': desktop,
             'previous_kernel_release': previous.get('kernel_release') if previous else None,
             'root_policy': 'LABEL=PIANOROOT', 'kernel': str(kernel), 'source': str(source),
@@ -146,17 +177,12 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
             'ffmpeg_dir': str(ffmpeg) if ffmpeg else None,
             'mutter_dir': str(mutter) if mutter else None,
             'boot_task_snapshot': boot_task_snapshot,
+            'packages_only': str(package_output) if packages_only else None,
+            'published_packages': str(published_packages) if published_packages else None,
             'runtime_dir': str(Path(runtime_dir).resolve()) if runtime_dir else None,
             'kernel_build': str(Path(kernel_build or root / 'build/kernels/release').resolve()),
             'public_source': str(public), 'firmware_source': str(firmware), 'config': config, 'missing_inputs': missing,
-            'macros': str(macros), 'v4l2_source': str(loop),
-            'steps': ['require root + mount/chroot capability; ARM64 or enabled qemu-aarch64 binfmt',
-                      'derive build-rootfs.sh for sid and install the selected desktop from signed APT in a private mount namespace',
-                      'install extra packages with signed APT defaults; record mutable repository metadata',
-                      'verify sensors SOURCE/SHA256SUMS; install six runtime packages and signed APT dependencies',
-                      'stage public overlay/adapters/modules; build_release_helpers uses actual compiler, alsatplg/m4 and matching kernel ABI',
-                      'verify/stage firmware; apply label storage policy; set the documented login password and remove generated access keys',
-                      'record actual packages/source hashes; build release label initramfs; no archive or device writes']}
+            'macros': str(macros), 'v4l2_source': str(loop), 'steps': steps}
 
 
 def require_host():
@@ -320,6 +346,13 @@ def apply_policy(rootfs, output, config):
     if set(storage['masked_units']) != {'piano-swapfile.service', 'qbootctl.service'}:
         raise ValueError('Only the two storage-policy units may be masked')
     put(rootfs, 'etc/fstab', 'LABEL=PIANOROOT / ext4 defaults,noatime,x-systemd.growfs 0 1\nLABEL=SUNUEFI_ESP /boot/efi vfat umask=0077,nofail 0 2\n')
+    # The shared ESP starts with the same entry token on all product images.
+    put(rootfs, 'etc/kernel/entry-token', 'linux\n')
+    # This runs only while assembling a new image, never on an installed root.
+    localtime = target(rootfs, 'etc/localtime')
+    localtime.unlink(missing_ok=True)
+    localtime.symlink_to('/usr/share/zoneinfo/Asia/Shanghai')
+    put(rootfs, 'etc/timezone', 'Asia/Shanghai\n')
     # The RAM overlay masks growfs; the dedicated disk root uses systemd's native service.
     growfs_mask = target(rootfs, 'etc/systemd/system/systemd-growfs-root.service')
     if growfs_mask.is_symlink() and growfs_mask.readlink() == Path('/dev/null'):
@@ -487,19 +520,14 @@ def sensors_packages(folder, config, root=ROOT, rootfs=None):
     from build import debian, sensors as builder
     policy = json.loads((Path(root) / builder.POLICY.relative_to(ROOT)).read_text())
     versions = policy['source_versions']
-    expected = {'piano-sensors': policy['native_version'],
-                'fastrpc-support': versions['fastrpc'], 'libfastrpc1': versions['fastrpc'],
-                'libssc2': versions['libssc'] + '+' + policy['local_revisions']['libssc'],
-                'libssc-bin': versions['libssc'] + '+' + policy['local_revisions']['libssc'],
-                'iio-sensor-proxy': versions['iio-sensor-proxy'] + '+' +
-                                    policy['local_revisions']['iio-sensor-proxy']}
+    expected = builder.package_versions(policy)
     if any(rows[package]['version'] != version for package, version in expected.items()):
         raise ValueError('Sensors runtime versions differ from the sid package policy')
     target = debian.target_identity(rootfs, versions, {'libssc': 'libssc2',
                                     'iio-sensor-proxy': 'iio-sensor-proxy'}) if rootfs else None
     if (source.get('target', {}).get('sources') != versions or
             source.get('policy_sha256') != digest(Path(root) / builder.POLICY.relative_to(ROOT)) or
-            debian.reusable(metadata, policy['native_version'], patches, builder.RUNTIME, target) is None):
+            debian.reusable(metadata, expected['piano-sensors'], patches, builder.RUNTIME, target) is None):
         raise ValueError('Sensors runtime does not match the sid source, patches or target ABI')
     return {'source_url': source['source_url'], 'source_commit': source['source_commit'],
             'source_sha256': digest(metadata / 'SOURCE'), 'sha256sums_sha256': digest(metadata / 'SHA256SUMS'),
@@ -567,8 +595,8 @@ def mutter_packages(folder, rootfs=None):
             source.get('patches') != builder.patch_records() or
             source.get('source', {}).get('package') != 'mutter' or
             source.get('source', {}).get('suite') != 'sid' or
-            source.get('package_version') != source.get('source', {}).get('version', '') +
-            '+sunuefi' + str(builder.REVISION)):
+            source.get('package_version') != overlay_release.debian_version(
+                source.get('source', {}).get('version', '') + '+sunuefi' + str(builder.REVISION))):
         raise ValueError('Mutter packages do not match the desktop patches; rebuild with ./build.sh mutter')
     rows = {}
     for path in sorted(folder.glob('*.deb')):
@@ -681,6 +709,158 @@ def pack_bootstrap(rootfs, packages, archives, kernel, output, release, boot_tas
     return record
 
 
+def build_overlays(record, rootfs, run, directory=None):
+    """Produce the same native packages for publishing and local builds."""
+    sources = {}
+    directory = directory or ROOT / 'build'
+    mesa = directory / 'mesa/runtime'
+    run([ROOT / 'build.sh', 'mesa', mesa.parent, '--sysroot', rootfs])
+    sources['mesa'] = mesa, mesa_packages(mesa, rootfs)
+    sensors = Path(record.get('sensors_dir') or directory / 'sensors/runtime')
+    if record.get('sensors_dir') is None:
+        run([ROOT / 'build.sh', 'sensors', sensors.parent, '--sysroot', rootfs])
+    sources['sensors'] = sensors, sensors_packages(sensors, record['config']['sensors'], rootfs=rootfs)
+    ffmpeg = Path(record.get('ffmpeg_dir') or directory / 'ffmpeg/runtime')
+    if record.get('ffmpeg_dir') is None:
+        run([ROOT / 'build.sh', 'ffmpeg', '--output', ffmpeg.parent, '--sysroot', rootfs])
+    sources['ffmpeg'] = ffmpeg, ffmpeg_packages(ffmpeg, rootfs)
+    from desktop import build_pipewire_packages as pipewire_builder
+    pipewire = directory / 'pipewire'
+    run([ROOT / 'build.sh', 'pipewire', '--rootfs', rootfs, '--output', pipewire])
+    pipewire_record = pipewire_builder.reusable(pipewire, pipewire_builder.debian_version(rootfs), 'deb')
+    if pipewire_record is None:
+        raise ValueError('PipeWire GStreamer plugin does not match the target ABI')
+    sources['pipewire'] = pipewire / 'runtime', pipewire_record
+    from desktop import build_libwacom_packages as libwacom_builder
+    libwacom = directory / 'libwacom'
+    run([ROOT / 'build.sh', 'libwacom', '--sysroot', rootfs, '--output', libwacom])
+    libwacom_record = libwacom_builder.reusable(libwacom, rootfs)
+    if libwacom_record is None:
+        raise ValueError('libwacom packages do not match the shared SPI digitizer support')
+    sources['libwacom'] = libwacom / 'runtime', libwacom_record
+    if record['desktop'] == 'gnome':
+        gsd = directory / 'gsd/runtime'
+        run([ROOT / 'build.sh', 'gsd', '--output', gsd.parent, '--sysroot', rootfs])
+        sources['gnome_power'] = gsd, gsd_packages(gsd, rootfs)
+        mutter = Path(record.get('mutter_dir') or directory / 'mutter/runtime')
+        if record.get('mutter_dir') is None:
+            run([ROOT / 'build.sh', 'mutter', '--output', mutter.parent, '--sysroot', rootfs])
+        sources['mutter'] = mutter, mutter_packages(mutter, rootfs)
+        from desktop import build_gdm_packages as gdm_builder
+        gdm = directory / 'gdm'
+        run([ROOT / 'build.sh', 'gdm', '--sysroot', rootfs, '--output', gdm])
+        gdm_record = gdm_builder.reusable(gdm, rootfs)
+        if gdm_record is None:
+            raise ValueError('GDM packages do not match the shared source patches')
+        sources['gdm'] = gdm / 'runtime', gdm_record
+    return sources
+
+
+def install_overlays(rootfs, run, config, desktop, packages, *, published=False):
+    from desktop.debian_package import prepare_build_indexes
+
+    apt = ['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get']
+    tmp = target(rootfs, 'var/tmp')
+    tmp.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='sunuefi-overlays-', dir=tmp) as folder, \
+            build_devices(rootfs), build_resolver(rootfs):
+        work = Path(folder)
+        work.chmod(0o755)
+        prepare_build_indexes(rootfs, lambda args: run(['chroot', rootfs, *args]))
+        if published:
+            paths = overlay_packages.download_debian(rootfs, work, packages, run)
+        else:
+            paths = []
+            for name, (archive, row) in packages.items():
+                stage = work / name
+                shutil.copyfile(archive, stage)
+                if digest(stage) != row['sha256']:
+                    raise ValueError('Overlay package changed during installation: ' + name)
+                paths.append('/' + stage.relative_to(rootfs).as_posix())
+        extra = config['debian']['extra_packages']
+        if published:
+            # In particular, do not keep Debian's bytes when both archives
+            # provide the same version of an explicitly requested package.
+            run([*apt, 'install', '-y', '--no-install-recommends', '--reinstall', *paths])
+            run([*apt, 'install', '-y', '--no-upgrade', '--no-install-recommends',
+                 *extra, 'fprintd', 'libpam-fprintd'])
+        else:
+            run([*apt, 'install', '-y', '--no-install-recommends', *extra, *paths])
+        if desktop == 'kde':
+            # A resumed generated KDE root may retain the old GNOME backend.
+            run([*apt, 'purge', '-y', 'tuned-ppd', 'tuned'])
+        if 'chromium' in extra:
+            run([*apt, 'purge', '-y', 'firefox-esr'])
+
+
+def export_overlays(record, rootfs, sources, kernel, *, directory=None, uapi=None, inputs=None):
+    """Add the libfprint package without staging any hardware or boot files."""
+    from build import overlay_cache
+    from build_piano_fingerprint import install_debian_desktop, prepare_desktop_backend
+    from build_release_helpers import export_uapi
+    from desktop.debian_package import verify_build_archive
+
+    fingerprint = (directory or ROOT / 'build') / 'fingerprint-packages'
+    if record['runtime_dir']:
+        install_debian_desktop(rootfs, Path(record['runtime_dir']), fingerprint)
+    else:
+        with tempfile.TemporaryDirectory(prefix='sunuefi-fingerprint-', dir=Path(record['output'])) as temporary:
+            work = Path(temporary)
+            if uapi is None:
+                uapi = work / 'uapi'
+                export_uapi(Path(record['source']), Path(record['kernel_build']),
+                            kernel['source_commit'], uapi)
+            prepare_desktop_backend(work, uapi)
+            install_debian_desktop(rootfs, work, fingerprint)
+    if inputs is not None:
+        verify_build_archive(rootfs)
+        if (inputs['recipes'] != overlay_cache.debian_recipe_identity(ROOT) or
+                inputs['kernel_uapi_sha256'] != runtime.tree_digest(runtime.tree_files(uapi / 'include'))):
+            raise ValueError('Debian overlay recipes or exported kernel headers changed during the build')
+    metadata = json.loads((fingerprint / 'SOURCE.json').read_text())
+    metadata['packages'] = {'libfprint-2-2': metadata['package']}
+    folder = fingerprint / 'runtime' if (fingerprint / 'runtime').is_dir() else fingerprint
+    sources['fingerprint'] = folder, metadata
+    packages = overlay_packages.debian_packages(sources)
+    overlay_packages.verify_debian_generation(packages)
+    return overlay_packages.export(Path(record['packages_only']), 'debian-' + record['desktop'],
+                                   'apt', packages,
+                                   {name: value for name, (_, value) in sources.items()},
+                                   build_inputs=inputs)
+
+
+def build_overlay_set(record, rootfs, kernel, run):
+    """Build or reuse native packages independently of product image assembly."""
+    from build import overlay_cache
+    from build_release_helpers import export_uapi
+    from desktop.debian_package import use_build_archive
+
+    desktop = record['desktop']
+    output = Path(record['output'])
+    with ExitStack() as contexts:
+        directory = uapi = inputs = None
+        # CI starts from a fresh stock base and uses only the repository recipes.
+        # A resumed build or an explicitly supplied bundle has different inputs.
+        if (os.environ.get('SUNUEFI_BUILD_ENVIRONMENT_ID')
+                and not any(record.get(key) for key in
+                            ('resume', 'runtime_dir', 'sensors_dir', 'ffmpeg_dir', 'mutter_dir'))):
+            temporary = contexts.enter_context(
+                tempfile.TemporaryDirectory(prefix='sunuefi-overlay-uapi-', dir=output))
+            uapi = Path(temporary)
+            uapi_digest = export_uapi(Path(record['source']), Path(record['kernel_build']),
+                                      kernel['source_commit'], uapi)
+            inputs = overlay_cache.debian_inputs(ROOT, rootfs, uapi_digest)
+            if cached := overlay_cache.restore_debian(
+                    ROOT, Path(record['packages_only']), 'debian-' + desktop, inputs):
+                return cached
+            contexts.enter_context(use_build_archive(inputs['archive']))
+            directory = output / 'packages'
+        sources = build_overlays(record, rootfs, run, directory)
+        install_overlays(rootfs, run, record['config'], desktop, overlay_packages.debian_packages(sources))
+        return export_overlays(record, rootfs, sources, kernel, directory=directory,
+                               uapi=uapi, inputs=inputs)
+
+
 def execute(record):
     if record['missing_inputs']: raise ValueError('Missing inputs: ' + ', '.join(record['missing_inputs']))
     require_host()
@@ -699,15 +879,20 @@ def execute(record):
         from build_release_helpers import inputs_current
         if not inputs_current(bundle):
             raise ValueError('Runtime bundle sources differ; rebuild it for the current hardware implementation')
-    elif any(not shutil.which(name) for name in (helper_cc, 'alsatplg', 'm4', 'make', 'depmod')):
+    elif not record.get('packages_only') and any(not shutil.which(name)
+                                                 for name in (helper_cc, 'alsatplg', 'm4', 'make', 'depmod')):
         raise ValueError('Install the release helper compiler, alsatplg, m4, make and depmod first')
     if out.exists() and not record.get('resume'): raise ValueError('Output appeared after planning; preserve it')
     out.parent.mkdir(parents=True, exist_ok=True); log = out.with_name(out.name + '.build.log')
     if log.exists() and not record.get('resume'): raise ValueError('Build log exists; choose a new output name')
     if record.get('resume'):
         (out / 'manifest.json').unlink(missing_ok=True)
-    def run(args, cwd=None):
-        with log.open('a') as stream: subprocess.run(list(map(str, args)), cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, check=True)
+    def run(args, cwd=None, *, capture_output=False, text=False):
+        command = list(map(str, args))
+        if capture_output:
+            return subprocess.run(command, cwd=cwd, capture_output=True, text=text, check=True)
+        with log.open('a') as stream:
+            return subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, check=True)
     try:
         if not record.get('resume'):
             from prepare_debian_desktop import prepare
@@ -717,136 +902,30 @@ def execute(record):
         if not (out / 'COMPLETE').is_file() or rootfs.stat().st_uid: raise ValueError('Base desktop build did not complete with native guest ownership')
         archive = debian_archive(rootfs)
         put(rootfs, 'usr/sbin/policy-rc.d', '#!/bin/sh\nexit 101\n'); (rootfs / 'usr/sbin/policy-rc.d').chmod(0o755)
-        if record.get('resume'):
+        if record.get('resume') and not record.get('published_packages'):
             with build_devices(rootfs), build_resolver(rootfs):
                 run(['chroot', rootfs, 'apt-get', 'update'])
                 run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive',
                      'apt-get', 'upgrade', '-y', '--with-new-pkgs', '--no-remove'])
-        mesa_folder = ROOT / 'build/mesa/runtime'
-        run([ROOT / 'build.sh', 'mesa', mesa_folder.parent, '--sysroot', rootfs])
-        mesa = mesa_packages(mesa_folder, rootfs)
-        sensor_folder = Path(record.get('sensors_dir') or ROOT / 'build/sensors/runtime')
-        if record.get('sensors_dir') is None:
-            run([ROOT / 'build.sh', 'sensors', sensor_folder.parent, '--sysroot', rootfs])
-        sensors = sensors_packages(sensor_folder, cfg['sensors'], rootfs=rootfs)
-        ffmpeg_folder = Path(record.get('ffmpeg_dir') or ROOT / 'build/ffmpeg/runtime')
-        if record.get('ffmpeg_dir') is None:
-            run([ROOT / 'build.sh', 'ffmpeg', '--output', ffmpeg_folder.parent, '--sysroot', rootfs])
-        ffmpeg = ffmpeg_packages(ffmpeg_folder, rootfs)
-        from desktop import build_pipewire_packages
-        pipewire_folder = ROOT / 'build/pipewire'
-        run([ROOT / 'build.sh', 'pipewire', '--rootfs', rootfs, '--output', pipewire_folder])
-        pipewire = build_pipewire_packages.reusable(
-            pipewire_folder, build_pipewire_packages.debian_version(rootfs), 'deb')
-        if pipewire is None:
-            raise ValueError('PipeWire GStreamer plugin does not match the target ABI')
-        from desktop import build_libwacom_packages
-        libwacom_folder = ROOT / 'build/libwacom'
-        run([ROOT / 'build.sh', 'libwacom', '--sysroot', rootfs, '--output', libwacom_folder])
-        libwacom = build_libwacom_packages.reusable(libwacom_folder, rootfs)
-        if libwacom is None:
-            raise ValueError('libwacom packages do not match the shared SPI digitizer support')
-        gsd_folder = ROOT / 'build/gsd/runtime'
-        if desktop == 'gnome':
-            run([ROOT / 'build.sh', 'gsd', '--output', gsd_folder.parent, '--sysroot', rootfs])
-        gsd = gsd_packages(gsd_folder, rootfs) if desktop == 'gnome' else {'packages': {}}
-        mutter_folder = Path(record.get('mutter_dir') or ROOT / 'build/mutter/runtime')
-        if desktop == 'gnome' and not record.get('mutter_dir'):
-            run([ROOT / 'build.sh', 'mutter', '--output', mutter_folder.parent, '--sysroot', rootfs])
-        mutter = mutter_packages(mutter_folder, rootfs) if desktop == 'gnome' else {'packages': {}}
-        from desktop import build_gdm_packages as gdm_builder
-        gdm_folder = ROOT / 'build/gdm'
-        gdm = {'packages': {}}
-        if desktop == 'gnome':
-            run([ROOT / 'build.sh', 'gdm', '--sysroot', rootfs, '--output', gdm_folder])
-            gdm = gdm_builder.reusable(gdm_folder, rootfs)
-            if gdm is None:
-                raise ValueError('GDM packages do not match the shared source patches')
-        gsd_stage = target(rootfs, 'tmp/piano-gnome-packages')
-        gsd_stage.mkdir(parents=True, exist_ok=True)
-        for row in gsd['packages'].values():
-            shutil.copy2(gsd_folder / row['file'], gsd_stage / row['file'])
-        for row in mutter['packages'].values():
-            destination = gsd_stage / row['file']
-            shutil.copy2(mutter_folder / row['file'], destination)
-            if digest(destination) != row['sha256']:
-                raise ValueError('Mutter package changed while staging: ' + row['file'])
-        for row in gdm['packages'].values():
-            destination = gsd_stage / row['file']
-            shutil.copy2(gdm_folder / 'runtime' / row['file'], destination)
-            if digest(destination) != row['sha256']:
-                raise ValueError('GDM package changed while staging')
-        for row in pipewire['packages'].values():
-            destination = gsd_stage / row['file']
-            shutil.copy2(pipewire_folder / 'runtime' / row['file'], destination)
-            if digest(destination) != row['sha256']:
-                raise ValueError('PipeWire package changed while staging')
-        for row in libwacom['packages'].values():
-            destination = gsd_stage / row['file']
-            shutil.copy2(libwacom_folder / 'runtime' / row['file'], destination)
-            if digest(destination) != row['sha256']:
-                raise ValueError('libwacom package changed while staging')
-        sensor_stage = target(rootfs, 'tmp/piano-sensors-packages')
-        sensor_stage.mkdir(parents=True, exist_ok=True)
-        for row in sensors['packages'].values():
-            shutil.copy2(sensor_folder / row['file'], sensor_stage / row['file'])
-            if digest(sensor_stage / row['file']) != row['sha256']:
-                raise ValueError('Piano sensors package changed while staging: ' + row['file'])
-        ffmpeg_stage = target(rootfs, 'tmp/piano-ffmpeg-packages')
-        if ffmpeg:
-            ffmpeg_stage.mkdir(parents=True, exist_ok=True)
-            for row in ffmpeg['packages'].values():
-                shutil.copy2(ffmpeg_folder / row['file'], ffmpeg_stage / row['file'])
-                if digest(ffmpeg_stage / row['file']) != row['sha256']:
-                    raise ValueError('FFmpeg package changed while staging: ' + row['file'])
-        mesa_stage = target(rootfs, 'tmp/piano-mesa-packages')
-        mesa_stage.mkdir(parents=True, exist_ok=True)
-        for row in mesa['packages'].values():
-            destination = mesa_stage / row['file']
-            shutil.copy2(mesa_folder / row['file'], destination)
-            if digest(destination) != row['sha256']:
-                raise ValueError('Mesa package changed while staging: ' + row['file'])
-        with build_devices(rootfs), build_resolver(rootfs):
-            run(['chroot', rootfs, 'apt-get', 'update'])
-            local_packages = ['/tmp/piano-sensors-packages/' + row['file']
-                              for row in sensors['packages'].values()]
-            local_packages.extend('/tmp/piano-mesa-packages/' + row['file']
-                                  for row in mesa['packages'].values())
-            local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
-                                  for row in gsd['packages'].values())
-            local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
-                                  for row in mutter['packages'].values())
-            local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
-                                  for row in gdm['packages'].values())
-            local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
-                                  for row in pipewire['packages'].values())
-            local_packages.extend('/tmp/piano-gnome-packages/' + row['file']
-                                  for row in libwacom['packages'].values())
-            if ffmpeg:
-                local_packages.extend('/tmp/piano-ffmpeg-packages/' + row['file']
-                                      for row in ffmpeg['packages'].values())
-            run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get', 'install', '-y',
-                 '--no-install-recommends', *cfg['debian']['extra_packages'], *local_packages])
-            if desktop == 'kde':
-                # A resumed generated KDE root may retain the old GNOME backend.
-                run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive',
-                     'apt-get', 'purge', '-y', 'tuned-ppd', 'tuned'])
-            if 'chromium' in cfg['debian']['extra_packages']:
-                # The selected browser is installed before removing the old
-                # base's Firefox package. User browser profiles are untouched.
-                run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive',
-                     'apt-get', 'purge', '-y', 'firefox-esr'])
-        shutil.rmtree(sensor_stage)
-        shutil.rmtree(gsd_stage)
-        shutil.rmtree(mesa_stage)
-        if ffmpeg:
-            shutil.rmtree(ffmpeg_stage)
+        published = record.get('published_packages')
+        if published:
+            components, packages = overlay_packages.read_debian(Path(published), desktop)
+            from package.kernel import install as install_kernel
+            install_kernel(rootfs, 'debian', kernel, published=True)
+            install_overlays(rootfs, run, cfg, desktop, packages, published=True)
+            archive = debian_archive(rootfs)
+        elif record.get('packages_only'):
+            result = build_overlay_set(record, rootfs, m, run)
+            (out / 'FAILED.json').unlink(missing_ok=True)
+            return result
+        else:
+            sources = build_overlays(record, rootfs, run)
+            install_overlays(rootfs, run, cfg, desktop, overlay_packages.debian_packages(sources))
+            components = {name: {'packages': {}} for name in overlay_packages.DEBIAN_GNOME}
+            components.update({name: value for name, (_, value) in sources.items()})
         sensor_unit = target(rootfs, 'usr/lib/systemd/system/adsprpcd-sensorspd.service')
         sensor_unit.write_text(sensor_unit.read_text().replace(' piano-adsp.service', ''))
         if record.get('resume') and (out / 'adapters').is_dir(): shutil.rmtree(out / 'adapters')
-        if record.get('resume'):
-            staged_modules = target(rootfs, 'usr/lib/modules') / m['kernel_release']
-            if staged_modules.is_dir(): shutil.rmtree(staged_modules)
         userspace.stage(rootfs, public, desktop=desktop); hardware.build(out / 'adapters', public, rootfs)
         if desktop == 'kde':
             from prepare_debian_desktop import configure
@@ -855,10 +934,9 @@ def execute(record):
         # dconf update, so animation/power policy is actually present in root.
         if desktop == 'gnome':
             run(['chroot', rootfs, 'dconf', 'update'])
-        previous_release = record.get('previous_kernel_release')
-        remove_releases = ([previous_release] if previous_release and previous_release != m['kernel_release']
-                           and (rootfs / 'usr/lib/modules' / previous_release).is_dir() else [])
-        modules.stage(rootfs, kernel, remove_releases)
+        if not published:
+            from package.kernel import install as install_kernel
+            install_kernel(rootfs, 'debian', kernel)
         if record['runtime_dir']:
             bundle = Path(record['runtime_dir']); rm = json.loads((bundle / 'manifest.json').read_text())
             if rm['kernel'] != runtime.kernel_identity(Path(record['kernel_build']), source, m['source_commit'], m['kernel_release']): raise ValueError('Runtime bundle kernel ABI provenance differs')
@@ -872,8 +950,11 @@ def execute(record):
                      '--kernel-build', record['kernel_build'], '--output', bundle, '--sysroot', sysroot,
                      '--cc', helper_cc, '--macros', record['macros'], '--v4l2-source', record['v4l2_source']])
             runtime.stage(bundle, rootfs)
-        from build_piano_fingerprint import install_desktop
-        install_desktop(rootfs, bundle, ROOT / 'build/fingerprint-packages')
+        from build_piano_fingerprint import desktop_service, install_desktop
+        if published:
+            desktop_service(rootfs)
+        else:
+            install_desktop(rootfs, bundle, ROOT / 'build/fingerprint-packages')
         from stage_piano_firmware import stage as stage_firmware
         stage_firmware(Path(record['firmware_source']), rootfs)
         apply_policy(rootfs, out, cfg)
@@ -885,31 +966,10 @@ def execute(record):
         (out / 'packages.tsv').write_text(packages + '\n')
         installed = {p[0].split(':')[0]: p[1] for line in packages.splitlines() if len(p := line.split('\t')) == 4 and p[3] == 'installed'}
         defaults = default_system_record(rootfs, installed, cfg, desktop)
-        for package, row in mesa['packages'].items():
-            if installed.get(package) != row['version']:
-                raise ValueError('Installed official Mesa package version differs: ' + package)
-        for package, row in sensors['packages'].items():
-            if installed.get(package) != row['version']:
-                raise ValueError('Installed Piano sensors version differs: ' + package)
-        if ffmpeg:
-            for package, row in ffmpeg['packages'].items():
+        for component, metadata in components.items():
+            for package, row in metadata['packages'].items():
                 if installed.get(package) != row['version']:
-                    raise ValueError('Installed FFmpeg version differs: ' + package)
-        for package, row in gsd['packages'].items():
-            if installed.get(package) != row['version']:
-                raise ValueError('Installed GNOME power package version differs: ' + package)
-        for package, row in mutter['packages'].items():
-            if installed.get(package) != row['version']:
-                raise ValueError('Installed Mutter package version differs: ' + package)
-        for package, row in gdm['packages'].items():
-            if installed.get(package) != row['version']:
-                raise ValueError('Installed GDM package version differs: ' + package)
-        for package, row in pipewire['packages'].items():
-            if installed.get(package) != row['version']:
-                raise ValueError('Installed PipeWire plugin version differs: ' + package)
-        for package, row in libwacom['packages'].items():
-            if installed.get(package) != row['version']:
-                raise ValueError('Installed libwacom package version differs: ' + package)
+                    raise ValueError(f'Installed {component} package version differs: {package}')
         metadata = {str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'var/lib/apt/lists').glob('*InRelease')}
         if not metadata: raise ValueError('Signed APT InRelease metadata is missing')
         metadata.update({str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'etc/apt').rglob('*') if p.is_file()})
@@ -926,13 +986,14 @@ def execute(record):
                   'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata,
                   'debian_archive': archive, 'debian_suite': cfg['debian']['suite'],
                   'debian_commit': cfg['debian']['commit'],
-                  'mesa': mesa, 'sensors': sensors, 'ffmpeg': ffmpeg, 'gnome_power': gsd,
-                  'mutter': mutter, 'gdm': gdm, 'pipewire': pipewire, 'libwacom': libwacom,
+                  **components,
                   'boot_request': boot_request, 'firmware_components': cfg['firmware']['components'],
                   'clock_epoch': clock,
                   'default_system': defaults, 'desktop': desktop,
                   'initramfs': boot, 'password': cfg['login']['password'], 'autologin_retained': True,
                   'bit_reproducible': False, 'root_uid': rootfs.stat().st_uid, 'device_operation_performed': False}
+        if published:
+            result['overlay_manifest_sha256'] = digest(Path(published))
         (out / 'manifest.json').write_text(json.dumps(result, indent=2) + '\n')
         (out / 'FAILED.json').unlink(missing_ok=True)
         return result
@@ -949,6 +1010,11 @@ def main():
     for name in ('kernel', 'source', 'output'): parser.add_argument('--' + name, type=Path, required=True)
     for name in ('sensors-dir', 'ffmpeg-dir', 'mutter-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
     mode = parser.add_mutually_exclusive_group(required=True); mode.add_argument('--plan', action='store_true'); mode.add_argument('--execute', action='store_true')
+    packages = parser.add_mutually_exclusive_group()
+    packages.add_argument('--packages-only', type=Path, metavar='DIRECTORY',
+                          help='Build and export overlay packages without assembling a product image')
+    packages.add_argument('--published-packages', type=Path, metavar='MANIFEST',
+                          help='Install exact overlay packages from the signed SunUEFI APT source')
     parser.add_argument('--resume', action='store_true', help='Reuse the completed upstream base and refresh release assembly')
     parser.add_argument('--desktop', choices=('gnome', 'kde'), default='gnome')
     parser.add_argument('--boot-task-snapshot', action='store_true',

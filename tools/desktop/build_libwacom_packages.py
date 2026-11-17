@@ -93,6 +93,7 @@ def build_arch(root, output, jobs):
     if metadata.is_file():
         record = json.loads(metadata.read_text())
         if (record.get('inputs') == inputs and record.get('target') == target and record.get('packages') and
+                build_arch_package.matches_release(output / 'runtime') and
                 all(Path(name).name == name and
                     debian_package.sha(output / 'runtime' / name) == row['sha256']
                     for name, row in record['packages'].items())):

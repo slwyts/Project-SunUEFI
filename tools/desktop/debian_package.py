@@ -14,6 +14,7 @@ import tarfile
 import tempfile
 import urllib.request
 
+from build import overlay_release
 from desktop import package_build
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,6 +27,7 @@ BUILD_RECIPE_VERSION = 1
 BUILD_COMMAND = ['dpkg-buildpackage', '-b', '-us', '-uc']
 BUILD_PROFILES = 'nocheck'
 BUILD_RECIPE = 'original Debian rules and control; standard quilt/debhelper'
+BUILD_ARCHIVE = 'SUNUEFI_DEBIAN_BUILD_ARCHIVE'
 
 
 def sha(path):
@@ -123,17 +125,22 @@ def signed_records(rootfs, identifier, packages):
         digest, size, paragraph = hashlib.sha256(), 0, []
         selected = []
         try:
-            for line in process.stdout:
-                digest.update(line)
-                size += len(line)
-                if line.strip():
-                    paragraph.append(line)
-                else:
-                    if paragraph and paragraph[0].decode().strip() in package_lines:
-                        selected.extend(controls(b''.join(paragraph).decode()))
-                    paragraph = []
-            if paragraph and paragraph[0].decode().strip() in package_lines:
-                selected.extend(controls(b''.join(paragraph).decode()))
+            if package_lines:
+                for line in process.stdout:
+                    digest.update(line)
+                    size += len(line)
+                    if line.strip():
+                        paragraph.append(line)
+                    else:
+                        if paragraph and paragraph[0].decode().strip() in package_lines:
+                            selected.extend(controls(b''.join(paragraph).decode()))
+                        paragraph = []
+                if paragraph and paragraph[0].decode().strip() in package_lines:
+                    selected.extend(controls(b''.join(paragraph).decode()))
+            else:
+                for chunk in iter(lambda: process.stdout.read(1024 * 1024), b''):
+                    digest.update(chunk)
+                    size += len(chunk)
         finally:
             process.stdout.close()
             status = process.wait()
@@ -143,6 +150,54 @@ def signed_records(rootfs, identifier, packages):
         proofs.append({'uri': target['URI'], 'sha256': expected['sha256'],
                        'inrelease_sha256': sha(rootfs / release.relative_to('/'))})
     return records, proofs
+
+
+def archive_inputs(rootfs):
+    """Identify every signed index APT can use to resolve sources and packages."""
+    rootfs = Path(rootfs)
+    indexes = {}
+    for name in ('Packages', 'Sources'):
+        _, proofs = signed_records(rootfs, name, ())
+        # Refreshing a signature over the same indexes changes neither source
+        # selection nor dependency resolution.
+        indexes[name] = [{'uri': row['uri'], 'sha256': row['sha256']}
+                         for row in sorted(proofs, key=lambda row: row['uri'])]
+    return {'indexes': indexes,
+            'keyring_sha256': sha(rootfs / KEYRING.lstrip('/'))}
+
+
+def archive_digest(archive):
+    return hashlib.sha256(json.dumps(archive, sort_keys=True).encode()).hexdigest()
+
+
+@contextmanager
+def use_build_archive(archive):
+    """Keep this disposable package build on the authenticated target indexes."""
+    previous = os.environ.get(BUILD_ARCHIVE)
+    os.environ[BUILD_ARCHIVE] = archive_digest(archive)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(BUILD_ARCHIVE, None)
+        else:
+            os.environ[BUILD_ARCHIVE] = previous
+
+
+def verify_build_archive(rootfs):
+    expected = os.environ.get(BUILD_ARCHIVE)
+    if expected is None:
+        return False
+    if archive_digest(archive_inputs(rootfs)) != expected:
+        raise ValueError('Debian package builder indexes differ from the selected signed sid archive')
+    return True
+
+
+def prepare_build_indexes(rootfs, execute, *, refresh=True):
+    if not verify_build_archive(rootfs) and refresh:
+        execute(['apt-get', '-o', 'APT::Update::Error-Mode=any',
+                 '-oAcquire::AllowInsecureRepositories=false',
+                 '-oAPT::Get::AllowUnauthenticated=false', 'update'])
 
 
 def source_identity(row):
@@ -188,8 +243,9 @@ def local_package_spec(name, installed, official):
         folder = ROOT / 'build' / output
     else:
         raise ValueError('No declared local ABI revision is supported for ' + name)
-    if (installed['version'], installed['source'], installed['source_version'], installed['architecture']) != (
-            local_version, source, local_version, 'arm64'):
+    if (overlay_release.base_debian_version(installed['version']), installed['source'],
+            installed['source_version'], installed['architecture']) != (
+                local_version, source, installed['version'], 'arm64'):
         raise ValueError('Installed package is not the declared local revision: ' + name)
     proof = []
     for path, digest in patches:
@@ -467,7 +523,7 @@ def recipe_inputs(inputs):
 def reusable(output, target, patches, runtime, inputs, revision):
     try:
         record = json.loads((output / 'SOURCE.json').read_text())
-        version = target['binary']['source_version'] + '+sunuefi' + str(revision)
+        version = overlay_release.debian_version(target['binary']['source_version'] + '+sunuefi' + str(revision))
         # Schema 2 used this same recipe before recording its version explicitly.
         recipe_version = record.get('build_recipe_version', 1 if record.get('schema_version') == 2 else None)
         if (record.get('packages_built') is not True or not same_target(record.get('target', {}), target) or
@@ -528,8 +584,9 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
     source_package = target['binary']['source']
     if source_package != package:
         raise ValueError('Unexpected Debian source package for ' + package)
-    package_version = version + '+sunuefi' + str(revision)
+    package_version = overlay_release.debian_version(version + '+sunuefi' + str(revision))
     recipe = {'target': target, 'patches': patch_proof, 'inputs': recipe_inputs(inputs),
+              'package_version': package_version,
               'build_recipe_version': BUILD_RECIPE_VERSION,
               'build_command': BUILD_COMMAND, 'build_profiles': BUILD_PROFILES}
     identity = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()[:16]
@@ -547,9 +604,8 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
         policy.write_text('#!/bin/sh\nexit 101\n')
         policy.chmod(0o755)
         # Reuse the target's deb-src configuration rather than adding duplicates.
+        prepare_build_indexes(rootfs, guest, refresh=install_dependencies)
         if install_dependencies:
-            guest(['apt-get', '-oAcquire::AllowInsecureRepositories=false',
-                   '-oAPT::Get::AllowUnauthenticated=false', 'update'])
             builder_target = target_identity(rootfs, binary_package)
             if not same_target(builder_target, target) or builder_target.get('installed_local'):
                 raise ValueError('The builder and target sid indexes differ; refresh the target APT indexes')
@@ -633,6 +689,7 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
                 for row in packages.values():
                     run(['dpkg-deb', '-x', runtime_dir / row['file'], folder], stdout=log, stderr=log)
                 validate_runtime(folder)
+        verify_build_archive(rootfs)
         # Keep the build's dependency versions and artifact checksums with runtime.
         for path in (changes, buildinfo):
             shutil.copy2(path, output / path.name)

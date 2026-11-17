@@ -9,12 +9,23 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
-from build import debian
+from build import debian, overlay_release
 from desktop import package_build
 
 RUNTIME = {'fastrpc-support', 'libfastrpc1', 'libssc2', 'libssc-bin',
            'iio-sensor-proxy', 'piano-sensors'}
 POLICY = ROOT / 'patches/piano-sensors/5/build.json'
+
+
+def package_versions(policy):
+    selected = policy['source_versions']
+    libssc = overlay_release.debian_version(selected['libssc'] + '+' + policy['local_revisions']['libssc'])
+    sensor_proxy = overlay_release.debian_version(selected['iio-sensor-proxy'] + '+' +
+                                                  policy['local_revisions']['iio-sensor-proxy'])
+    return {'piano-sensors': overlay_release.debian_version(policy['native_version']),
+            'libssc2': libssc, 'libssc-bin': libssc, 'iio-sensor-proxy': sensor_proxy,
+            # Both FastRPC archives are downloaded unchanged from signed sid.
+            'fastrpc-support': selected['fastrpc'], 'libfastrpc1': selected['fastrpc']}
 
 
 def source_workspace(output, config):
@@ -46,6 +57,8 @@ def build(output, sysroot=None, jobs=None, libssc_only=False, resume=False):
     config = json.loads((ROOT / 'config/release.json').read_text())['sensors']
     policy = json.loads(POLICY.read_text())
     versions = policy['source_versions']
+    runtime_versions = package_versions(policy)
+    native_version = runtime_versions['piano-sensors']
     runtime_names = {'libssc2', 'libssc-bin'} if libssc_only else RUNTIME
     patches = [{'path': name, 'sha256': package_build.sha(ROOT / name)} for name in config['patches']]
     selected = {'libssc': versions['libssc']}
@@ -54,11 +67,11 @@ def build(output, sysroot=None, jobs=None, libssc_only=False, resume=False):
         selected.update({'iio-sensor-proxy': versions['iio-sensor-proxy'], 'fastrpc': versions['fastrpc']})
         anchors['iio-sensor-proxy'] = 'iio-sensor-proxy'
     target = debian.target_identity(sysroot or Path('/'), selected, anchors)
-    cached = debian.reusable(output, policy['native_version'], patches, runtime_names, target)
+    cached = debian.reusable(output, native_version, patches, runtime_names, target)
     if cached and cached.get('policy_sha256') == package_build.sha(POLICY):
         return cached
     if resume:
-        debian.validate_resume(output, target, patches, policy['native_version'])
+        debian.validate_resume(output, target, patches, native_version)
     with debian.builder(output, sysroot) as (root, env), (output / 'build.log').open('a') as log:
         (output / '.incomplete').write_text('Sensors package build has not completed.\n')
         workspace, provenance = source_workspace(output, config)
@@ -67,7 +80,7 @@ def build(output, sysroot=None, jobs=None, libssc_only=False, resume=False):
         packages, sources = {}, {}
         for name in ['libssc'] + ([] if libssc_only else ['iio-sensor-proxy']):
             work, origin = debian.source(root, output, name, versions[name], log)
-            version = versions[name] + '+' + policy['local_revisions'][name]
+            version = runtime_versions['libssc2' if name == 'libssc' else name]
             patches = sorted((workspace / 'patches' / name).glob('*.patch'))
             debian.add_patches(work, patches, name, version,
                                'Preserve SSC property types, raw reports and sensor claim ordering.')
@@ -103,7 +116,7 @@ def build(output, sysroot=None, jobs=None, libssc_only=False, resume=False):
             native = output / 'sources/piano-sensors'
             if not native.exists():
                 shutil.copytree(workspace / 'piano-sensors', native)
-            version = policy['native_version']
+            version = native_version
             debian.add_patches(native, [], 'piano-sensors', version,
                                'Build the sensor integration for Debian sid.')
             if not resume or not (native.parent / f'piano-sensors_{version}_arm64.changes').is_file():
@@ -117,7 +130,7 @@ def build(output, sysroot=None, jobs=None, libssc_only=False, resume=False):
         if packages.keys() != runtime_names:
             raise ValueError('Incomplete sensors runtime package set')
         provenance.update(suite='sid', target=target, sources=sources, packages=packages, packages_built=True,
-                          package_version=policy['native_version'],
+                          package_version=native_version,
                           recipe='original Debian debian/rules and control',
                           producer=str(Path(__file__).relative_to(ROOT)),
                           producer_sha256=package_build.sha(__file__),

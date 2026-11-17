@@ -22,6 +22,7 @@ import build_steamos_gamescope
 import build_steamos_manager
 import build_piano_runtime_helpers as runtime_helpers
 import build_release_helpers
+from build import overlay_cache, overlay_packages
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -143,7 +144,7 @@ def kde_package_is_current(package_dir, recipe):
         record = json.loads(manifest.read_text())
     except (OSError, json.JSONDecodeError):
         return False
-    return (record.get('recipe_sha256') == digest(recipe / 'PKGBUILD') and
+    return (record.get('recipe_sha256') == build_arch_package.recipe_sha256(recipe / 'PKGBUILD') and
             all((package_dir / name).is_file() and
                 digest(package_dir / name) == row.get('sha256')
                 for name, row in record.get('packages', {}).items()) and
@@ -198,7 +199,8 @@ def mesa_recipe(output, config):
 
 
 def build(args):
-    output = args.output.resolve()
+    target = 'steamos'
+    output, package_output, published = overlay_packages.pacman_build_mode(args, target, ROOT)
     if os.geteuid() or not output.is_relative_to(ROOT / 'build/distros'):
         raise ValueError('Run as root with output below build/distros')
     if output.exists() and not args.resume:
@@ -308,6 +310,35 @@ done
         locale = root / 'etc/locale.gen'
         locale.write_text('en_US.UTF-8 UTF-8\nzh_CN.UTF-8 UTF-8\n')
         guest(['locale-gen'])
+
+    source = output / 'sensor-source'
+    if not source.exists():
+        sensor_sources(source, cfg['sensors'])
+    kernel = ROOT / 'artifacts/kernels/release'
+    kernel_source = Path(json.loads((ROOT / 'build/release/source-manifest.json').read_text())['worktree'])
+    cache_inputs = None
+    if package_output:
+        cache_inputs = overlay_cache.pacman_inputs(
+            ROOT, root, kernel / 'manifest.json', base_record['base']['rootfs_sha256'])
+        if reused := overlay_cache.restore_pacman(ROOT, package_output, target, cache_inputs):
+            return reused
+    if published:
+        records = overlay_packages.install_arch_overlays(root, kernel, target, published)
+    else:
+        records, packages = build_overlays(root, output, source, steamos_config)
+        if package_output:
+            commit = json.loads((kernel / 'manifest.json').read_text())['source_commit']
+            packages.update(overlay_packages.fingerprint_pacman_packages(
+                root, output / 'fingerprint-packages', kernel_source, args.kernel_build.resolve(), commit))
+            overlay_cache.check_pacman_inputs(ROOT, root, cache_inputs)
+            return overlay_packages.export(package_output, target, overlay_packages.ARCH_REPOSITORIES[target],
+                                           overlay_packages.pacman_packages(root, packages), records,
+                                           build_inputs=cache_inputs)
+    finish_product(args, root, output, source, kernel, kernel_source, base_record, records, published)
+
+
+def build_overlays(root, output, source, steamos_config):
+    outputs = {}
     for name in kde_recipes(output / 'kde-recipes', root):
         if kde_repository_package_works(root, name):
             continue
@@ -319,12 +350,14 @@ done
             build_arch_package.build(root, recipe, packages)
         else:
             build_arch_package.install_cached(root, packages)
+        outputs[name] = overlay_packages.pacman_outputs(packages)
     gtk_recipe = gtk3_recipe(output / 'gtk3-recipe')
     gtk_packages = output / 'packages/gtk3'
     if not kde_package_is_current(gtk_packages, gtk_recipe):
         build_arch_package.build(root, gtk_recipe, gtk_packages)
     else:
         build_arch_package.install_cached(root, gtk_packages)
+    outputs['gtk3'] = overlay_packages.pacman_outputs(gtk_packages)
     ibus_recipe = output / 'ibus-recipe'
     ibus_recipe.mkdir(exist_ok=True)
     ibus_patch, = runtime_helpers.source_patches(ROOT / 'patches/ibus/1.5.34/series.json')
@@ -337,20 +370,20 @@ done
         build_arch_package.build(root, ibus_recipe, ibus)
     else:
         build_arch_package.install_cached(root, ibus)
+    outputs['ibus'] = overlay_packages.pacman_outputs(ibus)
     power_profiles = output / 'packages/power-profiles-daemon'
-    if not (power_profiles / 'manifest.json').is_file():
+    if not build_arch_package.matches_release(power_profiles):
         build_arch_package.build(
             root, ROOT / 'linux/bsp/steamos/power-profiles-daemon', power_profiles)
-    source = output / 'sensor-source'
-    if not source.exists():
-        sensor_sources(source, cfg['sensors'])
+    outputs['power-profiles-daemon'] = overlay_packages.pacman_outputs(power_profiles)
     recipes = output / 'sensor-recipes'
     if not recipes.exists():
         sensor_recipes(recipes, source)
     for name in ('fastrpc', 'libssc', 'iio-sensor-proxy'):
         packages = output / 'packages' / name
-        if not (packages / 'manifest.json').is_file():
+        if not build_arch_package.matches_release(packages):
             build_arch_package.build(root, recipes / name, packages)
+        outputs[name] = overlay_packages.pacman_outputs(packages)
     mesa = ROOT / 'build/mesa-pacman/steamos'
     recipe = mesa_recipe(output / 'mesa-recipe', steamos_config['mesa'])
     from build import arch_mesa
@@ -361,6 +394,7 @@ done
         shutil.copy2(recipe / 'SOURCE.json', mesa / 'SOURCE.json')
     else:
         arch_mesa.install_cached(root, mesa)
+    outputs['mesa'] = overlay_packages.pacman_outputs(mesa)
     gamescope = output / 'packages/gamescope'
     manager = output / 'packages/steamos-manager'
     if not build_steamos_manager.is_current(manager):
@@ -369,12 +403,14 @@ done
         build_steamos_manager.build(root, manager)
     else:
         build_arch_package.install_cached(root, manager)
+    outputs['steamos-manager'] = overlay_packages.pacman_outputs(manager)
     if not build_steamos_gamescope.is_current(gamescope):
         if gamescope.exists():
             shutil.rmtree(gamescope)
         build_steamos_gamescope.build(root, gamescope)
     else:
         build_arch_package.install_cached(root, gamescope)
+    outputs['gamescope'] = overlay_packages.pacman_outputs(gamescope)
     ffmpeg = output / 'packages/ffmpeg'
     if not build_arch_ffmpeg.is_current(ffmpeg):
         if ffmpeg.exists():
@@ -382,10 +418,19 @@ done
         build_arch_ffmpeg.build(root, ffmpeg)
     else:
         build_arch_package.install_cached(root, ffmpeg)
+    outputs['ffmpeg'] = overlay_packages.pacman_outputs(ffmpeg)
     pipewire = output / 'packages/pipewire'
     run(ROOT / 'build.sh', 'pipewire', '--rootfs', root, '--output', pipewire)
     libwacom = output / 'packages/libwacom'
     run(ROOT / 'build.sh', 'libwacom', '--rootfs', root, '--output', libwacom)
+    outputs['pipewire'] = overlay_packages.pacman_outputs(pipewire / 'runtime')
+    outputs['libwacom'] = overlay_packages.pacman_outputs(libwacom / 'runtime')
+    records = {name: json.loads((directory / 'SOURCE.json').read_text())
+               for name, directory in (('ffmpeg', ffmpeg), ('pipewire', pipewire), ('libwacom', libwacom))}
+    return records, outputs
+
+
+def finish_product(args, root, output, source, kernel, kernel_source, base_record, records, published):
     client = output / 'steam-client'
     if (not (client / 'SOURCE.json').is_file() or
             json.loads((client / 'SOURCE.json').read_text()) != prepare_steam_client.source_record()):
@@ -398,8 +443,6 @@ done
     if runtime_record['config_sha256'] != digest(ROOT / 'config/steam-runtime.json'):
         raise ValueError('Cached Proton/runtime differs from config/steam-runtime.json')
 
-    kernel = ROOT / 'artifacts/kernels/release'
-    kernel_source = Path(json.loads((ROOT / 'build/release/source-manifest.json').read_text())['worktree'])
     runtime = output / 'runtime'
     kernel_record = json.loads((kernel / 'manifest.json').read_text())
     runtime_kernel = runtime_helpers.kernel_identity(
@@ -423,14 +466,15 @@ done
     # input/audio/camera helpers, suspend policy and the LABEL-based initramfs.
     stage_arch_piano.stage(argparse.Namespace(
         rootfs=root, kernel=kernel, runtime=runtime, sensor_source=source,
-        bootstrap_sysroot=args.bootstrap_sysroot, desktop='steamos'))
+        bootstrap_sysroot=args.bootstrap_sysroot, desktop='steamos',
+        published_packages=published[1] if published else None))
     manifest = output / 'manifest.json'
     record = json.loads(manifest.read_text())
-    record.update(base_source=base_record, ffmpeg=json.loads((ffmpeg / 'SOURCE.json').read_text()),
-                  pipewire=json.loads((pipewire / 'SOURCE.json').read_text()),
-                  libwacom=json.loads((libwacom / 'SOURCE.json').read_text()),
+    record.update(base_source=base_record, **records,
                   steam_client=json.loads((client / 'SOURCE.json').read_text()),
                   steam_runtime=runtime_record)
+    if published:
+        record['overlay_manifest_sha256'] = digest(args.published_packages)
     manifest.write_text(json.dumps(record, indent=2) + '\n')
 
 
@@ -442,6 +486,7 @@ if __name__ == '__main__':
     parser.add_argument('--kernel-build', type=Path, default=ROOT / 'build/kernels/release',
                         help='Build directory matching artifacts/kernels/release')
     parser.add_argument('--resume', action='store_true')
+    overlay_packages.pacman_arguments(parser)
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not args.worker:

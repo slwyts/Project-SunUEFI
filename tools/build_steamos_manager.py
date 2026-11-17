@@ -38,7 +38,7 @@ def source_inputs():
 
 def is_current(output):
     path = output / 'SOURCE.json'
-    return (output / 'manifest.json').is_file() and path.is_file() and (
+    return build_arch_package.matches_release(output) and path.is_file() and (
         json.loads(path.read_text()) == json.loads(json.dumps(source_inputs())))
 
 

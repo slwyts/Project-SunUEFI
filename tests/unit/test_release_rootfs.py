@@ -81,6 +81,22 @@ class ReleaseRootTests(unittest.TestCase):
         self.assertTrue(any('build-rootfs.sh' in step for step in result['steps']))
         self.assertFalse(self.output.exists())
 
+    def test_package_phase_uses_a_separate_builder_and_has_no_image_inputs(self):
+        packages = self.root / 'artifacts/packages/overlays/debian-gnome'
+        with patch.object(builder.modules, 'inspect', return_value=(self.m, 'b' * 64)), \
+                patch.object(builder, 'repository', return_value=self.m['source_commit']):
+            result = builder.plan(self.kernel, self.source, self.output, root=self.root,
+                                  packages_only=packages)
+            self.assertEqual(result['packages_only'], str(packages))
+            self.assertEqual(Path(result['output']), self.root / 'build/distros/overlays/debian-gnome')
+            self.assertNotIn('firmware', result['missing_inputs'])
+            self.assertNotIn('AudioReach topology macros', result['missing_inputs'])
+            with self.assertRaisesRegex(ValueError, 'separate .* directory'):
+                builder.plan(self.kernel, self.source, self.output.parent / 'product-image',
+                             root=self.root, packages_only=packages)
+        self.assertFalse(packages.exists())
+        self.assertFalse(Path(result['output']).exists())
+
     def test_plan_checks_the_kernel_tree_from_the_series(self):
         with patch.object(builder.modules, 'inspect', return_value=(self.m, 'b' * 64)), \
              patch.object(builder, 'repository', return_value=self.m['source_commit']) as repository:
@@ -124,6 +140,7 @@ class ReleaseRootTests(unittest.TestCase):
             builder.apply_policy(self.rootfs, self.output, CONFIG)
             builder.apply_policy(self.rootfs, self.output, CONFIG)
         self.assertEqual((self.rootfs / 'etc/fstab').read_text(), 'LABEL=PIANOROOT / ext4 defaults,noatime,x-systemd.growfs 0 1\nLABEL=SUNUEFI_ESP /boot/efi vfat umask=0077,nofail 0 2\n')
+        self.assertEqual((self.rootfs / 'etc/kernel/entry-token').read_text(), 'linux\n')
         for name, data in before.items(): self.assertEqual((self.rootfs / 'etc/systemd/system' / name).read_bytes(), data)
         for name in CONFIG['storage']['masked_units']:
             self.assertEqual(os.readlink(self.rootfs / 'etc/systemd/system' / name), '/dev/null')

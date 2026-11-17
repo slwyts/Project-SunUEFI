@@ -7,7 +7,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/repo'))
-from products import publication_batches, sha
+from products import overlay_matrix, publication_batches, sha
 
 
 class RepoProductsTests(unittest.TestCase):
@@ -20,6 +20,8 @@ class RepoProductsTests(unittest.TestCase):
         directory = self.packages / name
         directory.mkdir(parents=True)
         record = {**identity, 'packages': {}}
+        if name.startswith('overlays/'):
+            record.update(schema_version=1, target=directory.name)
         for filename, content in files.items():
             path = directory / filename
             path.write_bytes(content)
@@ -40,7 +42,8 @@ class RepoProductsTests(unittest.TestCase):
                          repo='sunuefi')
         self.package_set('overlays/steamos', {graphics: b'valve'}, repo='sunuefi-steamos')
 
-        batches = publication_batches(self.packages, kernel=True, overlays=True)
+        targets = ('debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos')
+        batches = publication_batches(self.packages, kernel=True, overlays=targets)
         self.assertEqual({name: [path.name for path in paths] for name, paths in batches.items()},
                          {'apt': [deb_kernel, deb_shared],
                           'sunuefi': [kernel, graphics, firmware],
@@ -53,19 +56,30 @@ class RepoProductsTests(unittest.TestCase):
         self.package_set('overlays/debian-gnome', {package: b'first'}, repo='apt')
         self.package_set('overlays/debian-kde', {package: b'different'}, repo='apt')
         with self.assertRaisesRegex(ValueError, 'share a package filename'):
-            publication_batches(self.packages, kernel=False, overlays=True)
+            publication_batches(self.packages, kernel=False, overlays=('debian-gnome', 'debian-kde'))
 
     def test_cache_cannot_redirect_a_package_set_to_another_repo(self):
         self.package_set('overlays/steamos', {'mesa.pkg.tar.zst': b'valve'}, repo='sunuefi')
         with self.assertRaisesRegex(ValueError, 'does not match its build target'):
-            publication_batches(self.packages, kernel=False, overlays=True)
+            publication_batches(self.packages, kernel=False, overlays=('steamos',))
 
     def test_modified_package_is_rejected_before_any_batch_is_returned(self):
         package = 'mesa.pkg.tar.zst'
         self.package_set('overlays/steamos', {package: b'valve'}, repo='sunuefi-steamos')
         (self.packages / 'overlays/steamos' / package).write_bytes(b'changed')
         with self.assertRaisesRegex(ValueError, 'Package manifest differs'):
-            publication_batches(self.packages, kernel=False, overlays=True)
+            publication_batches(self.packages, kernel=False, overlays=('steamos',))
+
+    def test_only_requested_overlay_generations_are_published(self):
+        self.package_set('overlays/debian-gnome', {'mesa_27_arm64.deb': b'arch'}, repo='apt')
+        self.package_set('overlays/steamos', {'mesa.pkg.tar.zst': b'valve'}, repo='sunuefi-steamos')
+        batches = publication_batches(self.packages, kernel=False,
+                                      overlays=overlay_matrix('{"target":["debian-gnome"]}'))
+        self.assertEqual(list(batches), ['apt'])
+        for invalid in ('{"target":["uefi"]}', '{"target":["steamos","steamos"]}',
+                        '{"target":"steamos"}', '["steamos"]'):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                overlay_matrix(invalid)
 
 
 if __name__ == '__main__':

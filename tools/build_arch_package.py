@@ -13,7 +13,27 @@ import time
 
 from build_nyarch_apps import ROOT, guest_environment, run
 from build_release_rootfs import build_resolver
+from build import overlay_release
 from desktop import package_build
+
+
+def prepared_recipe(path):
+    recipe = path.read_bytes()
+    if overlay_release.generation() is None:
+        return recipe
+    return overlay_release.pacman_recipe(recipe.decode()).encode()
+
+
+def recipe_sha256(path):
+    return hashlib.sha256(prepared_recipe(path)).hexdigest()
+
+
+def matches_release(output):
+    try:
+        record = json.loads((output / 'manifest.json').read_text())
+        return record.get('overlay_release') == overlay_release.generation()
+    except (OSError, ValueError):
+        return False
 
 
 def install_cached(root, output):
@@ -65,13 +85,18 @@ def build(root, recipe, output, resume=False, jobs=None, validate=None):
         raise ValueError('Use at least one build job')
     folder = '/var/tmp/sunuefi-package-build'
     work = root / folder.lstrip('/')
+    pkgbuild = prepared_recipe(recipe / 'PKGBUILD')
     if work.exists() and not resume:
         raise ValueError('A package build already exists; use --resume for the same recipe')
     if work.exists():
-        if (work / 'PKGBUILD').read_bytes() != (recipe / 'PKGBUILD').read_bytes():
+        if (work / 'PKGBUILD').read_bytes() != pkgbuild:
             raise ValueError('Resume requires the same package recipe')
     else:
         shutil.copytree(recipe, work, symlinks=True)
+        if pkgbuild != (recipe / 'PKGBUILD').read_bytes():
+            if (work / 'PKGBUILD').is_symlink():
+                (work / 'PKGBUILD').unlink()
+            (work / 'PKGBUILD').write_bytes(pkgbuild)
     with build_resolver(root), guest_environment(root) as guest:
         dependencies = guest(
             ['bash', '-c', 'source "$1/PKGBUILD"; printf "%s\\n" "${makedepends[@]}" "${depends[@]}"',
@@ -114,7 +139,8 @@ def build(root, recipe, output, resume=False, jobs=None, validate=None):
         guest(['userdel', '-r', 'sunuefi-package'])
     (output / 'manifest.json').write_text(json.dumps({
         'package_format': 'pacman', 'architecture': 'aarch64',
-        'recipe_sha256': hashlib.sha256((recipe / 'PKGBUILD').read_bytes()).hexdigest(),
+        'recipe_sha256': hashlib.sha256(pkgbuild).hexdigest(),
+        'overlay_release': overlay_release.generation(),
         'packages': rows}, indent=2) + '\n')
     shutil.rmtree(work)
 

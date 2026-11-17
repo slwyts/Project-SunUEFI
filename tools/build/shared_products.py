@@ -27,7 +27,10 @@ KERNEL_INPUTS = ('build.sh', 'sources.lock.json', 'config/release.json',
                 'tools/prepare_release_kernel.py', 'tools/build/kernel.py',
                 'tools/build_piano_full_kernel.py', 'tools/build_kernel.py',
                 'tools/prepare_linux_modules.py', 'tools/stage_piano_kernel_modules.py',
-                'tools/desktop/prepare_kernel_llvm.py', 'tools/desktop/package_build.py')
+                'tools/desktop/prepare_kernel_llvm.py', 'tools/desktop/package_build.py',
+                'tools/package/kernel.py', 'tools/package/kernel-debian.mk',
+                'tools/package/boot.py', 'tools/package_release.py',
+                'vendor/piano-linux/board.dtb', 'linux/dts', 'config/keys')
 KERNEL_BUILD_FILES = ('.config', 'Makefile', 'Module.symvers', 'include', 'scripts',
                       'arch/arm64/include/generated')
 
@@ -99,7 +102,7 @@ def output_paths(kind, root=ROOT):
     if kind == 'firmware':
         return [root / name for name in ('artifacts/product', 'artifacts/android',
                                          'artifacts/simpleinit/product')]
-    return [root / 'artifacts/kernels/release',
+    return [root / 'artifacts/kernels/release', root / 'artifacts/packages/kernel',
             *[root / 'build/kernels/release' / name for name in KERNEL_BUILD_FILES]]
 
 
@@ -236,6 +239,7 @@ def check_kernel_hot_inputs(root=ROOT):
             sha(out / 'Module.symvers') != record.get('module_symvers_sha256')):
         raise ValueError('Shared kernel configuration or Module.symvers differs')
     fragments = (('piano-bluetooth.config', 'bluetooth'), ('piano-filesystem.config', 'filesystem'),
+                 ('piano-gamepad.config', 'gamepad'),
                  ('piano-pen-dock.config', 'pen-dock'), ('piano-ir.config', 'ir'),
                  ('piano-flash.config', 'flash'), ('piano-cpucp-early.config', 'early-cpucp'),
                  ('piano-userspace-security.config', 'userspace-security'),
@@ -294,6 +298,13 @@ def run(kind, verify_only=False, root=ROOT):
                 check_kernel_hot_inputs(root)
             subprocess.run([root / 'build.sh', 'linux'], cwd=root, check=True)
             result = verify_kernel(root)
+            if not matching:
+                for package_format in ('debian', 'pacman'):
+                    output = root / 'artifacts/packages/kernel' / package_format
+                    if output.exists():
+                        shutil.rmtree(output)
+                    subprocess.run([root / 'build.sh', 'linux-package', '--format', package_format,
+                                    '--output', output], cwd=root, check=True)
         elif matching:
             result = verify_firmware(root)
         else:

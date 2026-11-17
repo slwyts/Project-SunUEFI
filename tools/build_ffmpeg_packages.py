@@ -7,7 +7,7 @@ import shlex
 import subprocess
 import sys
 
-from build import debian
+from build import debian, overlay_release
 from desktop import package_build
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +34,8 @@ def patch_records():
 
 def package_version():
     policy = json.loads(POLICY.read_text())
-    return policy['source_version'] + '+' + json.loads(SERIES.read_text())['local_revision']
+    return overlay_release.debian_version(policy['source_version'] + '+' +
+                                          json.loads(SERIES.read_text())['local_revision'])
 
 
 def reusable(output, target=None):
