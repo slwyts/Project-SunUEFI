@@ -1,7 +1,6 @@
 """Sign real package indexes, merge releases and reject changed package bytes."""
 import importlib.util
 import io
-import json
 import os
 from pathlib import Path
 import shutil
@@ -48,11 +47,7 @@ class RepoPublishTests(unittest.TestCase):
         environment = patch.dict(os.environ, GNUPGHOME=str(gnupg))
         environment.start()
         self.addCleanup(environment.stop)
-        subprocess.run(['gpg', '--batch', '--pinentry-mode', 'loopback', '--passphrase', '',
-                        '--quick-generate-key', 'Repository fixture <test@example.invalid>',
-                        'ed25519', 'sign', '1d'], check=True, capture_output=True)
-        records = subprocess.check_output(['gpg', '--with-colons', '--list-secret-keys'], text=True)
-        self.key = next(row.split(':')[9] for row in records.splitlines() if row.startswith('fpr:'))
+        self.key = self.signing_key('Repository fixture <test@example.invalid>')
         keys = self.root / 'config/keys'
         keys.mkdir(parents=True)
         for suffix, flags in (('gpg', []), ('asc', ['--armor'])):
@@ -63,9 +58,28 @@ class RepoPublishTests(unittest.TestCase):
         self.addCleanup(root_patch.stop)
         self.store = MemoryStore()
 
+    def signing_key(self, user):
+        subprocess.run(['gpg', '--batch', '--pinentry-mode', 'loopback', '--passphrase', '',
+                        '--quick-generate-key', user, 'ed25519', 'sign', '1d'],
+                       check=True, capture_output=True)
+        records = subprocess.check_output(
+            ['gpg', '--batch', '--with-colons', '--list-secret-keys', user], text=True)
+        return next(row.split(':')[9] for row in records.splitlines() if row.startswith('fpr:'))
+
     def args(self, name, packages, generation):
         return SimpleNamespace(repo=name, packages=packages, key=self.key,
                                output=self.root / generation)
+
+    def debian(self, version):
+        tree = self.root / ('package-' + version)
+        control = tree / 'DEBIAN/control'
+        control.parent.mkdir(parents=True)
+        control.write_text(f'Package: fixture\nVersion: {version}\nArchitecture: all\n'
+                           'Maintainer: Fixture <test@example.invalid>\nDescription: Fixture\n')
+        package = self.root / ('fixture_' + version + '_all.deb')
+        subprocess.run(['dpkg-deb', '--build', '--root-owner-group', tree, package],
+                       check=True, capture_output=True)
+        return package
 
     def pacman(self, version, name='fixture'):
         path = self.root / (name + '-' + version + '-1-any.pkg.tar.gz')
@@ -159,13 +173,7 @@ class RepoPublishTests(unittest.TestCase):
             if version == '2':
                 # A failed upload may have written one of the fallback files.
                 self.store.objects['apt/dists/sid/Release'] = b'incomplete next release'
-            tree = self.root / ('package-' + version)
-            control = tree / 'DEBIAN/control'
-            control.parent.mkdir(parents=True)
-            control.write_text(f'Package: fixture\nVersion: {version}\nArchitecture: all\n'
-                               'Maintainer: Fixture <test@example.invalid>\nDescription: Fixture\n')
-            package = self.root / ('fixture_' + version + '_all.deb')
-            subprocess.run(['dpkg-deb', '--build', '--root-owner-group', tree, package], check=True)
+            package = self.debian(version)
             packages.append(package)
             repo.publish(self.args('apt', [package], 'generation-' + version), self.store)
         self.assertEqual(self.store.writes[-1][0], 'apt/dists/sid/InRelease')
@@ -175,6 +183,38 @@ class RepoPublishTests(unittest.TestCase):
         for package in packages:
             self.assertIn('apt/pool/main/' + package.name, self.store.objects)
         self.assertTrue(any('/by-hash/SHA256/' in name for name in self.store.objects))
+
+    def assert_no_upload_for_untrusted_signer(self, args):
+        previous_objects = self.store.objects.copy()
+        previous_writes = self.store.writes.copy()
+        with self.assertRaises(subprocess.CalledProcessError) as failure:
+            repo.publish(args, self.store)
+        self.assertEqual(failure.exception.cmd[0], 'gpgv')
+        self.assertEqual(self.store.objects, previous_objects)
+        self.assertEqual(self.store.writes, previous_writes)
+
+    @unittest.skipUnless(all(shutil.which(name) for name in
+                            ('dpkg-deb', 'dpkg-scanpackages', 'apt-ftparchive')), 'APT tools required')
+    def test_apt_rejects_untrusted_release_signer_before_any_upload(self):
+        repo.publish(self.args('apt', [self.debian('1')], 'first'), self.store)
+        package = self.debian('2')
+        key = self.signing_key('Other archive <other@example.invalid>')
+        args = self.args('apt', [package], 'second')
+        args.key = key
+        self.assert_no_upload_for_untrusted_signer(args)
+
+        local = self.args('apt', [package], 'local')
+        local.key = key
+        self.assertFalse(repo.publish(local)['published'])
+
+    @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
+    def test_pacman_rejects_untrusted_index_signer_even_with_existing_package_signature(self):
+        package = self.pacman('1')
+        repo.publish(self.args('sunuefi', [package], 'first'), self.store)
+        # The valid signature on this previously published package is reused.
+        args = self.args('sunuefi', [package], 'second')
+        args.key = self.signing_key('Other archive <other@example.invalid>')
+        self.assert_no_upload_for_untrusted_signer(args)
 
     def test_duplicate_or_wrong_format_inputs_fail_before_creating_output(self):
         package = self.pacman('1')

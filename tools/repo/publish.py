@@ -107,14 +107,14 @@ class Store:
 def apt_index(work, packages, key, store=None):
     """Retain old package entries; publish by-hash indexes before InRelease."""
     prefix = 'apt'
+    keyring = ROOT / 'config/keys/sunuefi-archive-keyring.gpg'
     pool = work / 'pool/main'
     pool.mkdir(parents=True)
     old = []
     if store:
         signed_release, release = work / 'old-InRelease', work / 'old-Release'
         if store.get('apt/dists/sid/InRelease', signed_release):
-            run('gpgv', '--keyring', ROOT / 'config/keys/sunuefi-archive-keyring.gpg',
-                '--output', release, signed_release)
+            run('gpgv', '--keyring', keyring, '--output', release, signed_release)
             index = work / 'old-Packages'
             # Select the index by the authenticated digest, never by mutable URL.
             match = re.search(r'^ ([0-9a-f]{64}) +(\d+) main/binary-arm64/Packages$',
@@ -160,13 +160,14 @@ def apt_index(work, packages, key, store=None):
         hashed.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(index, hashed)
         immutable.append(hashed)
-    detached = sign(release, key)
-    detached.rename(target / 'Release.gpg')
-    sign(release, key, clear=True)
+    detached = sign(release, key).rename(target / 'Release.gpg')
+    inrelease = sign(release, key, clear=True)
+    if store:
+        run('gpgv', '--keyring', keyring, inrelease)
+        verify(release, detached, keyring)
     # InRelease is the APT commit point. Release and detached signature remain
     # for older clients; separate objects cannot be switched atomically.
-    mutable = [binary / 'Packages', binary / 'Packages.gz',
-               release, target / 'Release.gpg', target / 'InRelease']
+    mutable = [binary / 'Packages', binary / 'Packages.gz', release, detached, inrelease]
     return prefix, immutable, mutable
 
 
@@ -205,6 +206,9 @@ def pacman_index(work, packages, name, key, store=None):
         immutable.extend((target, signature))
     run('repo-add', '--prevent-downgrade', '--include-sigs', '--sign', '--key', key, db,
         *[work / package.name for package in packages])
+    if store:
+        for archive, signature in archives:
+            verify(archive, signature, keyring)
     mutable = []
     index = {}
     for source in sources:
