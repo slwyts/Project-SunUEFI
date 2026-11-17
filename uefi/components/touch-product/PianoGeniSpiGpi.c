@@ -75,7 +75,10 @@ STATIC EFI_STATUS Retain(PIANO_SPI_GPI *S,EFI_STATUS Status) {
 }
 
 STATIC EFI_STATUS Program(PIANO_SPI_GPI *S,UINT32 Offset,UINT32 Value,UINT32 Ignore) {
-  BOOLEAN Saved=FALSE;
+  // Channel/event contexts and doorbells belong to the allocated rings.
+  // DEALLOC releases them; writing their allocated values back afterwards is
+  // neither supported nor a restoration of the original unallocated state.
+  BOOLEAN Saved=Offset<CHANNEL_COMMAND;
   for(UINT32 I=0;I<S->SavedCount;++I)if(S->Saved[I].Offset==Offset)Saved=TRUE;
   if(!Saved) {
     if(S->SavedCount==ARRAY_SIZE(S->Saved))return EFI_OUT_OF_RESOURCES;
@@ -492,15 +495,28 @@ EFI_STATUS PianoGeniSpiGpiClose(PIANO_SPI_GPI *S) {
   while(S->SerialChanged && S->SeSavedCount) {
     UINT32 I=S->SeSavedCount-1,Offset=S->SeSaved[I].Offset,Value=S->SeSaved[I].Value;
     MmioWrite32(SE_BASE+Offset,Value);MemoryFence();
-    if(MmioRead32(SE_BASE+Offset)!=Value)return S->CloseStatus=Retain(S,EFI_DEVICE_ERROR);
+    UINT32 Readback=MmioRead32(SE_BASE+Offset);
+    if(Readback!=Value) {
+      S->FailureRecorded=TRUE;S->FailureOffset=SE_BASE+Offset;
+      S->FailureExpected=Value;S->FailureReadback=Readback;
+      DEBUG((DEBUG_ERROR,"PIANO_TOUCH_RESTORE offset=%x expected=%08x readback=%08x\n",
+        S->FailureOffset,Value,Readback));
+      return S->CloseStatus=Retain(S,EFI_DEVICE_ERROR);
+    }
     --S->SeSavedCount;
   }
   S->SerialChanged=FALSE;
   while(S->SavedCount) {
     UINT32 I=S->SavedCount-1;
     Write(S,S->Saved[I].Offset,S->Saved[I].Value);
-    if((Read(S,S->Saved[I].Offset)^S->Saved[I].Value)&~S->Saved[I].Ignore)
+    UINT32 Readback=Read(S,S->Saved[I].Offset);
+    if((Readback^S->Saved[I].Value)&~S->Saved[I].Ignore) {
+      S->FailureRecorded=TRUE;S->FailureOffset=GPI_BASE+Register(S,S->Saved[I].Offset);
+      S->FailureExpected=S->Saved[I].Value;S->FailureReadback=Readback;
+      DEBUG((DEBUG_ERROR,"PIANO_TOUCH_RESTORE offset=%x expected=%08x readback=%08x\n",
+        S->FailureOffset,S->FailureExpected,Readback));
       return S->CloseStatus=Retain(S,EFI_DEVICE_ERROR);
+    }
     --S->SavedCount;
   }
   PIANO_DMA_BUFFER *Buffers[]={&S->Rx,&S->Tx,&S->RxRing,&S->TxRing,&S->EventRing};

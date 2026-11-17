@@ -24,7 +24,7 @@ typedef struct {
 } PIANO_SMMU_CLOSE_LEDGER;
 typedef struct {
   VOID *Domain,*Api;
-  BOOLEAN Attached,Verified,ExitRetained;
+  BOOLEAN Attached,Verified,ExitRetained,QupAttached;
   PIANO_DMA_BUFFER TableMemory;
   PIANO_IO_PAGE_TABLE PageTable;
   PIANO_SMMU_SNAPSHOT Before,After;
@@ -92,7 +92,8 @@ EFI_STATUS PianoOwnedSmmuCheckRetiredUsbContract(CONST PIANO_OWNED_SMMU *Ufs,
   CONST PIANO_SMMU_RETIRED_USB_CONTRACT *Contract,CONST PIANO_SMMU_SNAPSHOT *Current);
 EFI_STATUS PianoOwnedSmmuOpen(CONST VOID *Fdt,PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Device);
 EFI_STATUS PianoOwnedSmmuOpenUsb(CONST VOID *Fdt,PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Device);
-// The GPI caller holds QUP1 clocks and proves its channels idle before calling.
+// The caller holds QUP1 clocks and proves channels idle. B6 rings and A3
+// payloads share the domain, including its mapping and retirement checks.
 EFI_STATUS PianoOwnedSmmuOpenGpi(CONST VOID *Fdt,PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Device);
 // Check the live GPI route before unmapping or freeing any of its DMA buffers.
 EFI_STATUS PianoOwnedSmmuCheckGpi(PIANO_OWNED_SMMU *Context);

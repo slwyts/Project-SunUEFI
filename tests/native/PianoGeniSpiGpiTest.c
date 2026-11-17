@@ -80,6 +80,10 @@ STATIC VOID ReadOnlyContextFields(VOID) {
   Registers[Register(&S,CHANNEL(1))/4]=Value|ReadOnly;
   assert(Program(&S,CHANNEL(1),Value,CHANNEL_READ_ONLY)==EFI_SUCCESS);
   assert(Registers[Register(&S,CHANNEL(1))/4]==(Value|ReadOnly));
+  assert(!S.SavedCount);
+  Registers[Register(&S,0x3098)/4]=2;
+  assert(Program(&S,0x3098,3,0)==EFI_SUCCESS && S.SavedCount==1);
+  assert(S.Saved[0].Offset==0x3098 && S.Saved[0].Value==2);
   assert(Program(&S,CHANNEL(1),Value,0)==EFI_DEVICE_ERROR);
 }
 

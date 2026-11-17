@@ -32,7 +32,8 @@ STATIC BOOLEAN PeerIdentity(CONST PIANO_SMMU_SNAPSHOT *S,UINTN Index,UINT16 Sid,
 STATIC BOOLEAN GpiPeersUnchanged(CONST PIANO_OWNED_SMMU *C) {
   if(!PeerGeometry(&C->Before,&C->After))return FALSE;
   for(UINTN I=0;I<PIANO_SMMU_DEVICE_COUNT;++I)
-    if(I!=2 && !PeerDevice(&C->Before.Device[I],&C->After.Device[I]))return FALSE;
+    if(I!=2 && !(I==3 && C->QupAttached) &&
+       !PeerDevice(&C->Before.Device[I],&C->After.Device[I]))return FALSE;
   return TRUE;
 }
 STATIC UINT32 DiagnosticCrc(CONST CHAR8 *Body,UINTN Bytes) {
@@ -232,6 +233,7 @@ STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEV
   if(EFI_ERROR(Status))return Status;
   RememberBaseline(C);BaselineReport(C,"baseline-open");
   if(C->Before.Device[Index].Present)return EFI_ALREADY_STARTED;
+  if(Index==2 && C->Before.Device[3].Present)return EFI_ALREADY_STARTED;
   // Quiescence is checked before attaching a new UFS context. No disk command.
   if(Index==0 && (MmioRead32(0x1D84058) || MmioRead32(0x1D84078)))return EFI_NOT_READY;
   if(Index==1 && ((MmioRead32(0xA60C704)&BIT31) || !(MmioRead32(0xA60C70C)&BIT22)))return EFI_NOT_READY;
@@ -260,6 +262,15 @@ STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEV
   // before table memory may be released.
   C->Attached=TRUE;
   DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DOMAIN_ATTACH name=%a code=%u\n",C->ResourceName,Native));if(Native)return EFI_DEVICE_ERROR;
+  if(Index==2) {
+    // GPI fetches rings through B6; GENI accesses payloads through A3.
+    // The stock QUP1 mapping names input 4 for the latter. Both streams
+    // must translate the descriptor's buffer addresses through this domain.
+    C->QupAttached=TRUE;
+    Native=((ATTACH)Functions(C)[2])(C->Domain,"QUP1",0x03000004,0);
+    DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DOMAIN_ATTACH name=QUP1 sid=A3 code=%u\n",Native));
+    if(Native)return EFI_DEVICE_ERROR;
+  }
   Status=PianoSmmuCapture(Fdt,"owned-after",&C->After);if(EFI_ERROR(Status))return Status;
   RememberBaseline(C);BaselineReport(C,"baseline-owned");
   PIANO_SMMU_DEVICE *U=&C->After.Device[Index];
@@ -268,13 +279,18 @@ STATIC EFI_STATUS OpenResource(CONST VOID *Fdt,PIANO_OWNED_SMMU *C,PIANO_DMA_DEV
      (U->Tcr2&0x0003800FU)!=Config.Tcr2 || U->Mair0!=Config.Mair0 || U->Sctlr!=Config.Sctlr)
     return EFI_COMPROMISED_DATA;
   if(Index==2) {
-    if(!GpiPeersUnchanged(C) || !PeerIdentity(&C->After,2,Sid,C->TableMemory.Physical))
+    if(!GpiPeersUnchanged(C) || !PeerIdentity(&C->After,2,Sid,C->TableMemory.Physical) ||
+       !PeerIdentity(&C->After,3,0xA3,C->TableMemory.Physical))
       return EFI_COMPROMISED_DATA;
-    UINT32 Smr=C->Before.RawSmr[U->StreamIndex],S2cr=C->Before.RawS2cr[U->StreamIndex];
-    if(C->Before.ExtendedIds?(S2cr&BIT10):(Smr&BIT31))return EFI_COMPROMISED_DATA;
+    for(UINTN I=2;I<4;++I) {
+      UINT16 Slot=C->After.Device[I].StreamIndex;
+      UINT32 Smr=C->Before.RawSmr[Slot],S2cr=C->Before.RawS2cr[Slot];
+      if(C->Before.ExtendedIds?(S2cr&BIT10):(Smr&BIT31))return EFI_COMPROMISED_DATA;
+    }
   }
   for(UINTN I=0;I<C->Before.Groups;++I) {
     if(I==U->StreamIndex)continue;
+    if(Index==2 && I==C->After.Device[3].StreamIndex)continue;
     if(C->Before.RawSmr[I]!=C->After.RawSmr[I] || C->Before.RawS2cr[I]!=C->After.RawS2cr[I])return EFI_COMPROMISED_DATA;
   }
   // Log before clearing sticky faults, and clear only the bank this newly
@@ -305,6 +321,9 @@ EFI_STATUS PianoOwnedSmmuCheckGpi(PIANO_OWNED_SMMU *C) {
   if(Status!=EFI_SUCCESS || !GpiPeersUnchanged(C) ||
      !PeerIdentity(&C->After,2,0xB6,C->OwnedTablePhysical) ||
      !PeerDevice(&C->AttachedSnapshot.Device[2],&C->After.Device[2]) ||
+     (C->QupAttached &&
+      (!PeerIdentity(&C->After,3,0xA3,C->OwnedTablePhysical) ||
+       !PeerDevice(&C->AttachedSnapshot.Device[3],&C->After.Device[3]))) ||
      CompareMem(C->AttachedSnapshot.RawSmr,C->After.RawSmr,sizeof(C->After.RawSmr)) ||
      CompareMem(C->AttachedSnapshot.RawS2cr,C->After.RawS2cr,sizeof(C->After.RawS2cr))) {
     C->TableMemory.Quarantined=TRUE;
@@ -323,6 +342,12 @@ EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C) {
       if(Status!=EFI_SUCCESS)return Status;
     }
     C->CloseLedger.DetachAttempted=TRUE;
+    UINT16 QupSlot=C->QupAttached?C->After.Device[3].StreamIndex:MAX_UINT16;
+    if(C->QupAttached) {
+      UINT32 Native=((ATTACH)Functions(C)[3])(C->Domain,"QUP1",0x03000004,0);
+      DEBUG((DEBUG_WARN,"SUNUEFI_SMMU_DOMAIN_DETACH sid=A3 code=%u\n",Native));
+      if(Native){C->CloseLedger.Uncertain=TRUE;return EFI_DEVICE_ERROR;}
+    }
     UINT32 Input=C->DeviceIndex==0?0:C->DeviceIndex==1?0x03000000:0x03000001;
     UINT32 Native=((ATTACH)Functions(C)[3])(C->Domain,C->ResourceName==NULL?"UFS_MEM":C->ResourceName,Input,0);
     C->CloseLedger.DetachCode=Native;if(Native)C->CloseLedger.Uncertain=TRUE;
@@ -335,7 +360,8 @@ EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C) {
     C->CloseLedger.DetachedCaptureAttempted=TRUE;
     EFI_STATUS Status=PianoSmmuCapture(C->Fdt,"owned-detached",&C->After);C->CloseLedger.DetachedCaptureStatus=Status;
     if(Status!=EFI_SUCCESS)C->CloseLedger.Uncertain=TRUE;
-    if(Status!=EFI_SUCCESS || !C->After.Valid || C->After.Device[C->DeviceIndex].Present)
+    if(Status!=EFI_SUCCESS || !C->After.Valid || C->After.Device[C->DeviceIndex].Present ||
+       (C->QupAttached && C->After.Device[3].Present))
       return CloseRejected(C,Status!=EFI_SUCCESS || !C->After.Valid?"capture-error":"owned-still-present",OwnedSlot,Status);
     if(C->Before.Groups!=C->After.Groups)return CloseRejected(C,"group-count",OwnedSlot,Status);
     CONST PIANO_SMMU_RETIRED_USB_CONTRACT *Retired=C->RetiredUsbContract;
@@ -343,6 +369,7 @@ EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C) {
       return CloseRejected(C,"peer-contract",Retired->PeerSlot,Status);
     for(UINTN I=0;I<C->Before.Groups;++I) {
       if(I==OwnedSlot)continue;
+      if(C->QupAttached && I==QupSlot)continue;
       if(Retired!=NULL && I==Retired->PeerSlot)continue; // exact retired row already validated; baseline remains untouched
       if(C->Before.RawSmr[I]!=C->After.RawSmr[I] || C->Before.RawS2cr[I]!=C->After.RawS2cr[I])return CloseRejected(C,"other-raw",(UINT32)I,Status);
     }
@@ -351,14 +378,19 @@ EFI_STATUS PianoOwnedSmmuClose(PIANO_OWNED_SMMU *C) {
       // route slot this instance claimed, so their original baselines hold.
       if(!GpiPeersUnchanged(C) || OwnedSlot>=C->Before.Groups)
         return CloseRejected(C,"gpi-slot",OwnedSlot,EFI_COMPROMISED_DATA);
-      UINT32 Smr=C->Before.RawSmr[OwnedSlot],S2cr=C->Before.RawS2cr[OwnedSlot];
-      if(C->Before.ExtendedIds?(S2cr&BIT10):(Smr&BIT31))
-        return CloseRejected(C,"gpi-baseline-valid",OwnedSlot,EFI_COMPROMISED_DATA);
-      UINT32 CurrentSmr=C->After.RawSmr[OwnedSlot],CurrentS2cr=C->After.RawS2cr[OwnedSlot];
-      if((CurrentSmr || CurrentS2cr) && (CurrentSmr!=Smr || CurrentS2cr!=S2cr))
-        return CloseRejected(C,"gpi-slot-reused",OwnedSlot,EFI_COMPROMISED_DATA);
-      MmioWrite32(C->Before.Base+0xC00+4*OwnedSlot,S2cr);
-      MmioWrite32(C->Before.Base+0x800+4*OwnedSlot,Smr);MemoryFence();
+      CONST UINT16 Slots[]={OwnedSlot,QupSlot};
+      for(UINTN I=0;I<(C->QupAttached?2U:1U);++I) {
+        UINT16 Slot=Slots[I];
+        if(Slot>=C->Before.Groups)return CloseRejected(C,"gpi-slot",Slot,EFI_COMPROMISED_DATA);
+        UINT32 Smr=C->Before.RawSmr[Slot],S2cr=C->Before.RawS2cr[Slot];
+        if(C->Before.ExtendedIds?(S2cr&BIT10):(Smr&BIT31))
+          return CloseRejected(C,"gpi-baseline-valid",Slot,EFI_COMPROMISED_DATA);
+        UINT32 CurrentSmr=C->After.RawSmr[Slot],CurrentS2cr=C->After.RawS2cr[Slot];
+        if((CurrentSmr || CurrentS2cr) && (CurrentSmr!=Smr || CurrentS2cr!=S2cr))
+          return CloseRejected(C,"gpi-slot-reused",Slot,EFI_COMPROMISED_DATA);
+        MmioWrite32(C->Before.Base+0xC00+4*Slot,S2cr);
+        MmioWrite32(C->Before.Base+0x800+4*Slot,Smr);MemoryFence();
+      }
       Status=PianoSmmuCapture(C->Fdt,"gpi-restored",&C->After);
       if(Status!=EFI_SUCCESS || !GpiPeersUnchanged(C) || C->After.Device[2].Present ||
          CompareMem(C->Before.RawSmr,C->After.RawSmr,sizeof(C->Before.RawSmr)) ||
