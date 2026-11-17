@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "274f0483990b471390cebcd83fb85e6d271bd362",
-  "original_target_commit": "0feba8887e8a65b48682208836cba9a7e260c289",
+  "target_tree": "c1caefefb4dec79efcac2fdf9e48550b8cda9876",
+  "original_target_commit": "eb870c3c7e8d588785255e14b9afbe1d7a95caf1",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1680,6 +1680,32 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "Replace with accepted MCA request-response matching that validates sequence, message type, opcode and wire property before completing reads or writes. Verify mismatched replies cannot acknowledge a charger control and a later matching reply still completes the request."
+      }
+    },
+    {
+      "file": "0130-power-mca-warm-pmic-compensation.patch",
+      "sha256": "8cfb22f18a1376a59a7c524f8304815c50e6a6a2c40239944e243b0440beef04",
+      "original_commit": "7ea552ec9fdfe4853e93bde090faf5271839f802",
+      "original_parent": "0feba8887e8a65b48682208836cba9a7e260c289",
+      "committer_date": "2026-11-18T04:18:12+08:00",
+      "tree": "18d7436eba6876cad0ba388b7d98b6345dc00696",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The accepted Piano charger applies the factory 30 mV ordinary PMIC compensation only at measured 48–54 C, while leaving JEITA stop and recovery thresholds and authenticated FFC compensation unchanged."
+      }
+    },
+    {
+      "file": "0131-power-bq27z561-average-power.patch",
+      "sha256": "541835b4a93c19bdb26b8118c960876b34ffe3ebac3b7ff9e317b42ab0a6fcbf",
+      "original_commit": "eb870c3c7e8d588785255e14b9afbe1d7a95caf1",
+      "original_parent": "7ea552ec9fdfe4853e93bde090faf5271839f802",
+      "committer_date": "2026-11-18T04:18:12+08:00",
+      "tree": "c1caefefb4dec79efcac2fdf9e48550b8cda9876",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://www.ti.com/lit/ug/sluuc54c/sluuc54c.pdf",
+        "drop_when": "Upstream converts the standard BQ27Z561 signed milliwatt register to microwatts, suppresses the unverified Piano vendor reading or provides a validated replacement, and its IIO tests cleanly release the device before its shared firmware node."
       }
     }
   ],

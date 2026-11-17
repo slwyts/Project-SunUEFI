@@ -1,0 +1,148 @@
+From eb870c3c7e8d588785255e14b9afbe1d7a95caf1 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@tuta.io>
+Date: Wed, 18 Nov 2026 04:18:12 +0800
+Subject: [PATCH] fix(power): report BQ27Z561 average power only for known
+ firmware
+
+TI SLUUC54C specifies signed milliwatts for the standard 0x22/0x23 command. Piano vendor firmware uses different power commands; do not read or report the unverified value. Release the KUnit IIO child before detaching its shared software node.
+---
+ drivers/power/supply/bq27xxx_battery.c      | 13 ++++-
+ drivers/power/supply/bq27xxx_battery_test.c | 58 ++++++++++++++++++++-
+ 2 files changed, 68 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
+index c288ab9ec..56d7caab5 100644
+--- a/drivers/power/supply/bq27xxx_battery.c
++++ b/drivers/power/supply/bq27xxx_battery.c
+@@ -2012,6 +2012,14 @@ static int bq27xxx_battery_pwr_avg(struct bq27xxx_device_info *di,
+ {
+ 	int power;
+ 
++	/*
++	 * Piano's vendor gauge firmware has private power commands. Its 0x22
++	 * semantics have not been established, so do not publish a guessed
++	 * scale or substitute instantaneous voltage/current for average power.
++	 */
++	if (di->chip == BQ27Z561 && di->health_alerts)
++		return -ENODATA;
++
+ 	power = bq27xxx_read(di, BQ27XXX_REG_AP, false);
+ 	if (power < 0) {
+ 		dev_err(di->dev,
+@@ -2020,7 +2028,10 @@ static int bq27xxx_battery_pwr_avg(struct bq27xxx_device_info *di,
+ 		return power;
+ 	}
+ 
+-	if (di->opts & BQ27XXX_O_ZERO)
++	if (di->chip == BQ27Z561)
++		/* TI SLUUC54C, section 12.1.15: signed milliwatts. */
++		val->intval = (s16)power * 1000;
++	else if (di->opts & BQ27XXX_O_ZERO)
+ 		val->intval = (power * BQ27XXX_POWER_CONSTANT) / BQ27XXX_RS;
+ 	else
+ 		/* Other gauges return a signed value in units of 10mW */
+diff --git a/drivers/power/supply/bq27xxx_battery_test.c b/drivers/power/supply/bq27xxx_battery_test.c
+index 97236ae29..c4a46f3a5 100644
+--- a/drivers/power/supply/bq27xxx_battery_test.c
++++ b/drivers/power/supply/bq27xxx_battery_test.c
+@@ -2,6 +2,7 @@
+ /* Included by the core to exercise its actual static callbacks and bus I/O. */
+ #include <kunit/device.h>
+ #include <kunit/test.h>
++#include <linux/device.h>
+ 
+ struct bq27xxx_suspend_test {
+ 	struct bq27xxx_device_info di;
+@@ -17,6 +18,8 @@ struct bq27xxx_suspend_test {
+ 	unsigned int reads;
+ 	u8 read_reg;
+ 	bool read_single, read_locked;
++	void *iio_group;
++	bool iio_node_added;
+ #endif
+ };
+ 
+@@ -82,6 +85,13 @@ static void bq27xxx_suspend_test_exit(struct kunit *test)
+ 	struct bq27xxx_suspend_test *fixture = test->priv;
+ 
+ 	cancel_delayed_work_sync(&fixture->di.work);
++	/* Unregister the IIO child before releasing its shared firmware node. */
++#if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
++	if (fixture->iio_group)
++		devres_release_group(fixture->di.dev, fixture->iio_group);
++	if (fixture->iio_node_added)
++		device_remove_software_node(fixture->di.dev);
++#endif
+ }
+ 
+ static void bq27xxx_suspend_failure_test(struct kunit *test, unsigned int fail)
+@@ -278,15 +288,21 @@ static void bq27xxx_original_iio_optin_test(struct kunit *test)
+ 	static const struct property_entry properties[] = {
+ 		PROPERTY_ENTRY_U32("#io-channel-cells", 1), {}
+ 	};
++	static const struct software_node node = {
++		.properties = properties,
++	};
+ 
+ 	fixture->di.chip = BQ27Z561;
+ 	fixture->di.name = "bq27z561-test";
+ 	fixture->di.bus.read = bq27xxx_original_test_read;
+ 	fixture->di.bus.write = bq27xxx_original_test_write;
+ 	KUNIT_EXPECT_EQ(test, bq27z561_register_iio(&fixture->di), 0);
+-	KUNIT_ASSERT_EQ(test, device_create_managed_software_node(fixture->di.dev,
+-		properties, NULL), 0);
++	KUNIT_ASSERT_EQ(test, device_add_software_node(fixture->di.dev, &node), 0);
++	fixture->iio_node_added = true;
++	fixture->iio_group = devres_open_group(fixture->di.dev, NULL, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, fixture->iio_group);
+ 	KUNIT_ASSERT_EQ(test, bq27z561_register_iio(&fixture->di), 0);
++	devres_close_group(fixture->di.dev, fixture->iio_group);
+ 	KUNIT_EXPECT_EQ(test, fixture->reads, 0U);
+ 	KUNIT_EXPECT_EQ(test, fixture->writes, 0U);
+ }
+@@ -344,7 +360,45 @@ static void bq27xxx_health_alert_test(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, f->writes, 0U);
+ }
+ 
++static int bq27xxx_power_test_read(struct bq27xxx_device_info *di, u8 reg,
++				  bool single)
++{
++	struct bq27xxx_suspend_test *f =
++		container_of(di, struct bq27xxx_suspend_test, di);
++
++	f->health_reads++;
++	if (reg != 0x22 || single)
++		return -EINVAL;
++	return (u16)(s16)-123;
++}
++
++static void bq27xxx_vendor_average_power_test(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *f = test->priv;
++	union power_supply_propval value = { .intval = 42 };
++
++	f->di.chip = BQ27Z561;
++	f->di.regs = bq27z561_regs;
++	f->di.bus.read = bq27xxx_power_test_read;
++	f->di.health_alerts = true;
++	KUNIT_EXPECT_EQ(test, bq27xxx_battery_pwr_avg(&f->di, &value), -ENODATA);
++	KUNIT_EXPECT_EQ(test, f->health_reads, 0U);
++	KUNIT_EXPECT_EQ(test, value.intval, 42);
++	/* The standard BQ27Z561 command uses signed milliwatts. */
++	f->di.health_alerts = false;
++	KUNIT_ASSERT_EQ(test, bq27xxx_battery_pwr_avg(&f->di, &value), 0);
++	KUNIT_EXPECT_EQ(test, value.intval, -123000);
++	KUNIT_EXPECT_EQ(test, f->health_reads, 1U);
++	f->di.health_alerts = true;
++	f->di.chip = BQ27500;
++	KUNIT_ASSERT_EQ(test, bq27xxx_battery_pwr_avg(&f->di, &value), 0);
++	KUNIT_EXPECT_EQ(test, value.intval, -1230000);
++	KUNIT_EXPECT_EQ(test, f->health_reads, 2U);
++	KUNIT_EXPECT_EQ(test, f->writes, 0U);
++}
++
+ static struct kunit_case bq27xxx_suspend_cases[] = {
++	KUNIT_CASE(bq27xxx_vendor_average_power_test),
+ 	KUNIT_CASE(bq27xxx_health_alert_test),
+ #if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
+ 	KUNIT_CASE(bq27xxx_original_iio_values_test),
