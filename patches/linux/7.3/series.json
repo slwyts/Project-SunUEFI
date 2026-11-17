@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "472ad593f3d49275a96a06a943c6216b08a501cf",
-  "original_target_commit": "6ea05f142758b185e931a162033517c3e2a61481",
+  "target_tree": "274f0483990b471390cebcd83fb85e6d271bd362",
+  "original_target_commit": "0feba8887e8a65b48682208836cba9a7e260c289",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1654,6 +1654,32 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "The selected upstream kernel provides a GT9764BA binding and V4L2 lens driver with the factory AAC settings, bidirectional DAC and neutral-position parking. Verify focus movement, reopen, system sleep and parking with error handling on Piano before removing this implementation."
+      }
+    },
+    {
+      "file": "0127-power-charging-state-feedback.patch",
+      "sha256": "3cfc1c9335b6447fed8b42dd1320813d13d0e638341e710053394058eb71b2f3",
+      "original_commit": "2fd6297644b08b64ddb07c78d0bba6f48d6a4b11",
+      "original_parent": "6ea05f142758b185e931a162033517c3e2a61481",
+      "committer_date": "2026-11-18T02:42:00+08:00",
+      "tree": "fc7295e26da709602fb2e6330998450ac5c6deff",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace with accepted MCA charge-inhibit/full-state handling and bounded notification decoding, plus SC8541 limits reporting the successfully written hardware value. Verify inhibit/auto/recharge, truncated notifications under KASAN, quantization and failed-register-write cache behavior."
+      }
+    },
+    {
+      "file": "0128-power-mca-response-identity.patch",
+      "sha256": "cec5c1bd10050c89a072fb9ca4321d26fb813af3373f655287ee43bec8ef14b4",
+      "original_commit": "0feba8887e8a65b48682208836cba9a7e260c289",
+      "original_parent": "2fd6297644b08b64ddb07c78d0bba6f48d6a4b11",
+      "committer_date": "2026-11-18T03:10:00+08:00",
+      "tree": "274f0483990b471390cebcd83fb85e6d271bd362",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Replace with accepted MCA request-response matching that validates sequence, message type, opcode and wire property before completing reads or writes. Verify mismatched replies cannot acknowledge a charger control and a later matching reply still completes the request."
       }
     }
   ],
