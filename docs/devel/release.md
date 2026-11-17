@@ -35,12 +35,14 @@
 
 | 工作 | 现在的实现 | 下一步 |
 | --- | --- | --- |
-| 原生内核及 headers 包 | 构建输出 Image、模块目录和清单，rootfs 直接复制；没有完整的原生内核包更新链 | Debian 内核包及元包、Arch PKGBUILD；按模块 ABI 区分 release，提供可在目标机使用的 headers |
-| 匹配的设备树 | 制作 ESP 时组合 DTB 和 overlay | 随内核版本构建、安装和选择 DTB，减少包外设备树转换 |
-| initramfs／UKI 更新与回退 | 共用私有 bootstrap，UKI 在整机打包时生成 | 接入发行版钩子和标准 root 参数，独立生成版本化 UKI；保留旧 UKI、模块和 DTB，验证生成失败与卸载 |
+| Linux 7.4 主线迁移 | 产品仍使用 7.3.3；主线处于 7.4-rc 阶段 | 跟进正式标签，逐项 rebase 平台补丁；以主线实现替换重复驱动和接口，删除被替代的补丁、配置与引用，完成内核、模块、DTB、原生包及实机回归后切换产品 |
+| 原生内核及 headers 包 | 接入上游 `bindeb-pkg` 和 `pacman-pkg`，rootfs 通过包管理器安装；按 release 命名，元包选择最新版 | 完成 ARM64 全量打包、干净系统安装、外部模块构建和升级实机检查 |
+| 匹配的设备树 | 完整板级 DTB 按内核 release 独立打包，`kernel-install` 选择同版文件 | 将完整板级描述收敛进内核 DTS，减少外部转换 |
+| initramfs／UKI 更新与回退 | 初装继续提供共用 bootstrap；更新接入 initramfs-tools／mkinitcpio 和 kernel-install，版本化 UKI | 实测标准 initramfs 冷启动、旧内核选择、生成失败及卸载，确认全部早期依赖完整 |
 | 设备固件与硬件配置包 | 校验后复制固件、topology、规则及部分配置；BSP 打包入口未覆盖完整产品 | 按文件归属改为原生包，声明固件兼容关系和许可，不覆盖发行版已有文件 |
 | runtime 与诊断工具 | 相机、笔、指纹及外部模块仍有文件集合安装；桌面库多数已经打包 | 拆清运行组件、诊断工具和匹配内核的模块依赖，消除包外覆盖及产品文件对 `/usr/local` 的占用 |
-| 签名软件源 | 本地构建后安装，SteamOS 用 `IgnorePkg` 保住部分适配包 | 发布签名 APT／pacman 仓库；Nyarch、SteamOS 分别构建，验证整套升级和回退 |
+| 签名软件源 | 已有签名索引和 R2 发布入口；CI 单写入者保留旧包、发布新索引；SteamOS 仍保留原 `IgnorePkg` | 首次真实发布后验证整套升级与回退，再删除 `IgnorePkg` 并启用发行版覆盖源 |
+| 分阶段 CI 与缓存 | 已拆分共用构建、rootfs 和发布工作流；覆盖包仍在 rootfs 构建期间生成 | 调整为 UEFI／Android、内核与覆盖包、R2 发布、各 rootfs；逐层缓存全部实际输入，命中后校验清单与哈希，验证源码或依赖变动不会复用旧产物 |
 
 包清单、安装职责及标准工具选择见[软件包与更新标准化](building.md#软件包与更新标准化)。
 四产品继续保留，默认中文、动画、Chromium、账号及蓝牙体验属于产品配置，
@@ -49,17 +51,18 @@
 ### 标准 UEFI 启动与存储
 
 ESP（EFI 系统分区）内已有官方 `ukify` 和 ARM64 systemd-stub 生成的标准 UKI。
-但产品仍固定查找 `sunuefi_esp` 的 `/EFI/Linux/sunuefi.efi`，SimpleInit 的
-“启动 Linux”仍来自静态配置，而不是发现该文件后才出现。更名和通用启动管理
-均未实现，不能把标准文件格式当作通用启动能力已经完成。
+产品默认安装 systemd-boot；固件按 `BootNext`、`BootOrder` 和 `Boot####`
+选择 EFI 应用，设备后备路径复用上游库。SimpleInit 的“启动 Linux”仍是
+请求启动顺序的静态入口，不是逐项显示磁盘系统。变量在 Linux 运行时的安全
+持久化和 SimpleInit 普通启动项仍需完成。
 
 | 工作 | 现在的实现 | 下一步 |
 | --- | --- | --- |
-| 固件启动顺序 | 驻留核心从 BDS（UEFI 启动管理阶段）的失败入口启动，变量恢复晚于普通启动流程 | 提前初始化硬件服务和恢复变量，复用上游启动管理器处理 `BootOrder`、`BootNext`、`BootCurrent` |
-| SimpleInit 默认设备 | 固件内 Linux 专用应用和菜单动作固定启动产品 UKI | SimpleInit 注册为普通 `Boot####`，首次默认置顶，之后尊重用户排序；Esc 打开临时固件启动选择 |
-| 系统发现与直接启动 | Linux 菜单、分区名、LUN 和 EFI 路径有产品绑定，Windows 使用文件扫描 | 枚举实际 `EFI/Linux/*.efi` 并读取 UKI 元数据，删除静态假入口；支持其他分区上的标准 EFI 启动项和通用资源退出 |
-| 可选引导程序 | 当前产品没有安装 systemd-boot | 保留 SimpleInit 默认体验，用户可改用 systemd-boot 或直接注册 UKI；不要求经过两层菜单 |
-| 标准存储写入和 Fastboot 刷写 | 私有后端可写自己的文件，标准块接口与 Fastboot 仍有统一只读限制 | 复用产品 UFS 后端接通允许范围的 BlockIO／DiskIO 和 `flash`，补齐稀疏镜像、缓存同步、边界、读回及挂载协调；保留原厂关键分区保护 |
+| 固件启动顺序 | 驻留核心先初始化设备和恢复变量，再消费 `BootNext`、按 `BootOrder` 启动；`BootCurrent` 标识正在执行的选项 | 实机检查一次性选择、重新排序和失败恢复 |
+| SimpleInit 默认设备 | 默认仍先显示 SimpleInit；“启动 Linux”请求标准启动顺序 | SimpleInit 注册为普通 `Boot####`，首次默认置顶，之后尊重用户排序；Esc 打开临时固件启动选择 |
+| 系统发现与直接启动 | 固件不再限定 OS 文件名、分区标签或 UFS LUN；启动项路径和后备发现复用 UEFI 库 | 实测其他卷、多个 ESP、直接 UKI 及其他系统加载器的资源退出 |
+| 引导程序 | 官方 systemd-boot 已在现有 SteamOS 启动；新打包默认分离内核、initramfs 和 DTB，菜单三秒，可选 UKI | 完成普通 UEFI 启动项注册，实测新包安装、两种布局升级和旧内核回退 |
+| 标准存储写入和 Fastboot 刷写 | 标准块写、raw／sparse 刷写已接入，主机检查覆盖边界、尾块和读回；长操作分段处理和扫描时禁止自动修表仍在开发 | 完成长操作、缓存同步、挂载协调及产品分区实测；明确刷写不按原厂分区名称拒绝，自动保存仍限项目目录 |
 | Linux 运行时 EFI 变量 | `persist/sunuefi/` 双文件只在 Boot Services 阶段保存；运行时非易失 `SetVariable` 和删除被拒绝 | 在存储交给 Linux 后安全持久化，实测 `efibootmgr` 创建、排序、消费 `BootNext`、删除及跨重启恢复 |
 | EFI 层分区管理 | 未实现 | 先完成标准块读写和 GPT 安全检查；“伪动态分区”只有需求方向，未实现，不改变现有分区布局 |
 
@@ -71,15 +74,15 @@ ESP（EFI 系统分区）内已有官方 `ukify` 和 ARM64 systemd-stub 生成�
 
 | 工作 | 已有结果 | 下一步 |
 | --- | --- | --- |
-| 错误页 Fastboot | 源码保留健康 USB 的诊断，并在可安全退出时处理重启；本地命令、ACK 后动作及清理失败检查通过 | 实机检查 `getvar all`、日志、截图及重启；触屏或键盘退出失败不得停止仍健康的 USB，会话应继续查询并明确拒绝无法完成的重启 |
-| 启动与 UKI 加载故障 | 触屏 GPI 初始化后出现 Fastboot 超时并回到 Android；另有 UKI 返回 `Out of Resources`，发生在资源退出之前 | 定位初始化后的停止原因和镜像内存分配失败，重新跑通完整启动与恢复；`OKAY` 不作为重启完成结果 |
+| 错误页 Fastboot | 实机已完成 `getvar all`、日志、截图和错误页软件重启；重启只保存设置、同步存储，不经过外设恢复或 ExitBootServices | 继续检查存储同步失败提示和外接 USB 设备的退出；触屏或键盘清理失败不应阻止整机复位 |
+| 启动与 UKI 加载故障 | 已补齐 GENI 数据通路的 SMMU 映射及通道退出处理，经官方 systemd-boot 启动现有 SteamOS；SSH 和 bootctl 已确认实际引导程序 | 检查完整产品安装、输入恢复和 Android／Linux 往返；`OKAY` 不作为重启完成结果 |
 | Piano 触屏 | GPI 配置、SMMU 域及五份 DMA 缓冲已初始化，BOE 固件解析通过 | 验证 SPI 传输、芯片 ID、固件下载、整帧校验、菜单点按及安全退出，再检查 Android／Linux 往返 |
 | 官方键盘与触控板 | 固件设置中的物理键盘输入已由维护者确认 | 触控板移动与点击、拔插、输入状态释放及 Android／Linux 往返恢复 |
 | UEFI USB 3.x | 实现已接入产品，缺 SuperSpeed 实机结果 | 使用 USB 3.x 线检查 5 Gbit/s 协商、长传输校验、正反插、主机／设备角色、OTG、Hub、热插拔及恢复；PD 和视频输出分别检查 |
 
-维护者已经用 USB 3.x 线确认 Linux 的高速链路正常。当前连接用的是 USB 2.0 线，
-480 Mbit/s 是线材条件，不能据此登记 Linux USB 3.x 故障；UEFI 的高速传输
-仍需用合适线材检查。驱动退出时继续保留不能确认停止的 DMA 资源，但不能把
+当前使用维护者提供的 USB 3.x 线，最近一次 Linux 连接协商为 480 Mbit/s；
+不能据此归因线材，仍需分别检查控制器、PHY、方向与协商日志。
+驱动退出时继续保留不能确认停止的 DMA 资源，但不能把
 输入驱动的失败当成健康 USB 必须停止的理由。
 
 ### Linux 硬件接口与实机检查
