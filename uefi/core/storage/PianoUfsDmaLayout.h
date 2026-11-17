@@ -5,6 +5,7 @@
 #define PIANO_UFS_RESPONSE_OFFSET 64U
 // UFSHCI Data Byte Count is an 18-bit, zero-based length per PRDT entry.
 #define PIANO_UFS_PRDT_MAX_DATA_BYTES (256U * 1024U)
+#define PIANO_UFS_MAX_TRANSFER_BYTES (4U * PIANO_UFS_PRDT_MAX_DATA_BYTES)
 EFI_STATUS PianoUfsBuildNop(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN UcdBytes,UINT64 UcdIova,UINT8 Tag);
 EFI_STATUS PianoUfsBuildReadDescriptor(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN UcdBytes,UINT64 UcdIova,
                                       UINT8 Tag,UINT8 Idn,UINT8 Index,UINT16 Bytes);
@@ -19,6 +20,8 @@ typedef enum {PianoUfsReportLuns,PianoUfsReadCapacity16,PianoUfsReadLba10,PianoU
 EFI_STATUS PianoUfsBuildReadCommand(VOID *Utrd,UINTN UtrdBytes,VOID *Ucd,UINTN UcdBytes,
                                   UINT64 UcdIova,UINT64 DataIova,UINT32 DataBytes,
                                   UINT8 Tag,UINT8 Lun,PIANO_UFS_READ_COMMAND Command,UINT32 Lba,UINT16 Blocks);
+BOOLEAN PianoUfsDataLayoutMatches(CONST VOID *Utrd,CONST VOID *Ucd,
+                                 UINT64 DataIova,UINT32 DataBytes);
 EFI_STATUS PianoUfsCheckReadResponse(CONST VOID *Utrd,CONST VOID *Ucd,UINT8 Tag,UINT32 Requested,UINT32 *Transferred);
 // Decode bounded fixed/descriptor sense. Invalid input sets available outputs to FF.
 BOOLEAN PianoUfsReadSense(CONST VOID *Ucd,UINT8 *Key,UINT8 *Asc,UINT8 *Ascq);

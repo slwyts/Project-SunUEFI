@@ -585,11 +585,11 @@ typedef enum {
 } REPLY_CASE;
 static EFI_STATUS reply_fetch_info(VOID *Context,CONST CHAR8 *Name,PIANO_FB_PARTITION_INFO *Info){
   EFI_STATUS Status=info_backend(Context,Name,Info);
-  if(Status==EFI_SUCCESS)Info->Bytes=PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES;
+  if(Status==EFI_SUCCESS)Info->Bytes=PIANO_FASTBOOT_MAX_FETCH_BYTES;
   return Status;
 }
 static EFI_STATUS reply_fetch_read(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info,UINT64 Lba,UINTN Bytes,VOID *Buffer){
-  assert(Context==(VOID *)456 && Info->Token==(VOID *)789 && !Lba && Bytes==PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES);
+  assert(Context==(VOID *)456 && Info->Token==(VOID *)789 && !Lba && Bytes==PIANO_FASTBOOT_MAX_FETCH_BYTES);
   ++backend_reads;memset(Buffer,0xa5,Bytes);return EFI_SUCCESS;
 }
 static VOID run_reply_recovery(REPLY_CASE Test){
@@ -598,7 +598,7 @@ static VOID run_reply_recovery(REPLY_CASE Test){
   bs.CreateEventEx=create_event_ex;bs.SetTimer=set_timer;bs.CloseEvent=close_event;
   clock.DisableClock=clock.DisableClockPowerDomain=persistent_disable;
   PIANO_FB_STORAGE Storage={.Context=(VOID *)456,.Ready=ready_backend,.Info=reply_fetch_info,.ReadBlocks=reply_fetch_read,
-    .MaxFetchBytes=PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES};
+    .MaxFetchBytes=PIANO_FASTBOOT_MAX_FETCH_BYTES};
   PIANO_DWC3_SERVICE_CONFIG Config={.Context=(VOID *)0x55,.NowUs=now_us,.Storage=&Storage};
   assert(PianoUsbControllerServiceStart((VOID *)123,&Config)==EFI_SUCCESS);
   service_enumerate();
@@ -638,7 +638,7 @@ static VOID run_reply_recovery(REPLY_CASE Test){
     }
     if(Test==ReplyNormalFetch){
       UINT64 Start=fake_now;
-      for(UINTN N=0;N<PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES/4096;++N){
+      for(UINTN N=0;N<PIANO_FASTBOOT_MAX_FETCH_BYTES/4096;++N){
         fake_now+=FASTBOOT_REPLY_IDLE_US/2;
         assert(PianoUsbControllerServicePumpApp(1,5000)==EFI_SUCCESS && !mEnding[3]);
         assert(mPosted[3]==4096 && ((UINT8 *)mBulkTx.Cpu)[4095]==0xa5);

@@ -205,5 +205,5 @@ int main(void){
   assert(PianoFastbootRestrictToDiagnostics(&S,TRUE)==EFI_SUCCESS && S.DiagnosticsOnly && !S.Flash && !S.Download);
   assert(!strcmp(replies[calls-1],"FAILpartition write interrupted") && !written);
   PianoFastbootReset(&S);assert(!allocation);
-  puts("Fastboot flash: 256 KiB write/readback, raw tails, cross-batch sparse holes, preflight bounds, reset and final sync passed.");
+  puts("Fastboot flash: 1 MiB write/readback, raw tails, cross-batch sparse holes, preflight bounds, reset and final sync passed.");
 }

@@ -222,7 +222,7 @@ STATIC EFI_STATUS Flush(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info){
 STATIC CONST PIANO_FB_STORAGE mStorage={
   .Ready=Ready,.Info=Info,.ReadBlocks=ReadBlocks,.PrepareWrite=PrepareWrite,.WriteBlocks=WriteBlocks,.Flush=Flush,
 #if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
-  .MaxFetchBytes=PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES,
+  .MaxFetchBytes=PIANO_FASTBOOT_MAX_FETCH_BYTES,
 #endif
 };
 EFI_STATUS PianoFastbootBlockReadInit(VOID){

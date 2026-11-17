@@ -165,7 +165,7 @@ static VOID valid(UINTN Count) {
   }
 }
 static VOID reject(VOID){assert(PianoFastbootBlockReadInit()==EFI_NOT_FOUND && !PianoFastbootBlockReadStorage() && !pools && !read_calls && !write_calls);}
-static UINT8 frames[3][PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES];static UINTN frame_bytes[3],frame_count;
+static UINT8 frames[3][PIANO_FASTBOOT_MAX_FETCH_BYTES];static UINTN frame_bytes[3],frame_count;
 static EFI_STATUS send(VOID *Context,CONST VOID *Data,UINTN Bytes){assert(!Context && frame_count<3 && Bytes<=sizeof(frames[0]));CopyMem(frames[frame_count],Data,Bytes);frame_bytes[frame_count++]=Bytes;return EFI_SUCCESS;}
 #if PIANO_UFS_PRODUCT_STORAGE
 static VOID test_partition_write_scope(VOID){
@@ -194,16 +194,17 @@ static VOID test_partition_write_scope(VOID){
   // write, but the first verified batch must still be flushed.
   UINT8 Sparse[44]={0x3a,0xff,0x26,0xed,1,0,0,0,28,0,12,0,0,16,0,0,0,0,0,0,1,0,0,0,
     0,0,0,0,0xc2,0xca,0,0,0,0,0,0,16,0,0,0,0x41,0x42,0x43,0x44};
-  Sparse[16]=Sparse[32]=(UINT8)(PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES/4096+1);
+  UINT32 Blocks=PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES/4096+1;
+  for(UINTN I=0;I<4;++I)Sparse[16+I]=Sparse[32+I]=(UINT8)(Blocks>>(8*I));
   PIANO_FASTBOOT Fb;assert(PianoFastbootInit(&Fb,NULL,send,NULL)==EFI_SUCCESS && PianoFastbootSetStorage(&Fb,S)==EFI_SUCCESS);
   frame_count=0;
   CONST CHAR8 Limit[]="getvar:max-fetch-size",Fetch[]="fetch:sunuefi_esp:0x0:0x40000";
   assert(PianoFastbootPacket(&Fb,Limit,sizeof(Limit)-1)==EFI_SUCCESS && frame_count==1 && !memcmp(frames[0],"OKAY0x00040000",14));
   frame_count=0;assert(PianoFastbootPacket(&Fb,Fetch,sizeof(Fetch)-1)==EFI_SUCCESS);
-  assert(frame_count==3 && frame_bytes[1]==sizeof(frames[1]) && !memcmp(frames[0],"DATA00040000",12));
-  assert(read_calls==1 && last_bytes==sizeof(frames[1]) && !timing && !timing_reports && !write_calls);
+  assert(frame_count==3 && frame_bytes[1]==256*1024 && !memcmp(frames[0],"DATA00040000",12));
+  assert(read_calls==1 && last_bytes==frame_bytes[1] && !timing && !timing_reports && !write_calls);
   UINT64 Start=children[1].Info.Info.Gpt.StartingLBA*4096;
-  for(UINTN I=0;I<sizeof(frames[1]);++I)assert(frames[1][I]==at(Start+I));
+  for(UINTN I=0;I<frame_bytes[1];++I)assert(frames[1][I]==at(Start+I));
   read_calls=frame_count=0;
   assert(PianoFastbootPacket(&Fb,"download:0000002c",17)==EFI_SUCCESS &&
     PianoFastbootPacket(&Fb,Sparse,sizeof(Sparse))==EFI_SUCCESS);

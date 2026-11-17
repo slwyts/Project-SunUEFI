@@ -4,6 +4,7 @@ set -euo pipefail
 case "$(uname -m)" in aarch64|arm64) sun_bind=AArch64 ;; *) sun_bind=X64 ;; esac
 sun_dma_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$sun_dma_root"
+. tests/native/core-includes.sh
 sun_dma_includes=(
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include
   -I upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/$sun_bind

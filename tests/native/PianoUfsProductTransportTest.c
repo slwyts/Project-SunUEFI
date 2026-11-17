@@ -13,7 +13,7 @@ EFI_GUID gEfiBlockIoProtocolGuid,gEfiDevicePathProtocolGuid,gEfiPartitionInfoPro
 EFI_GUID gEfiSimpleFileSystemProtocolGuid,gEfiDiskIoProtocolGuid;
 static EFI_BOOT_SERVICES Bs;static EFI_RUNTIME_SERVICES Rt;
 #include <stdarg.h>
-static UINT8 Trl[1024],Ucd[1024],Data[PIANO_UFS_PRDT_MAX_DATA_BYTES];static UINT32 Regs[0x400/4];
+static UINT8 Trl[1024],Ucd[1024],Data[PIANO_UFS_MAX_TRANSFER_BYTES];static UINT32 Regs[0x400/4];
 static PIANO_SMMU_SNAPSHOT Hardware;
 static EFI_TPL CurrentTpl;static UINTN CaptureCalls,Doorbells,DmaBegins,DmaCompletes,Allocations,Installs,Connects,NativeWrites,NativeSyncs;
 static UINTN Freed,Disconnected,Uninstalled,ClockStops;
@@ -69,8 +69,17 @@ static UINTN block_command_bytes(VOID){
   UINTN Blocks=(UINT16)(Ucd[23]<<8)|Ucd[24];
   UINT32 Bytes=ReadBe32(Ucd+12);
   assert(Blocks && Bytes==Blocks*4096 && Bytes<=sizeof(Data));
-  assert(ReadLe32(Trl+28)==(1U|(64U<<16)));
-  assert(ReadLe32(Ucd+256)==mData.DeviceAddress && ReadLe32(Ucd+260)==0 && ReadLe32(Ucd+268)==Bytes-1);
+  UINT32 Dwords=ReadLe32(Trl+28),Remaining=Bytes;
+  assert((Dwords>>16)==64 && (Dwords&0xffff)<=4);
+  for(UINTN I=0;I<(Dwords&0xffff);++I){
+    CONST UINT8 *Entry=Ucd+256+16*I;
+    UINT32 Chunk=ReadLe32(Entry+12)+1;
+    assert(Chunk==MIN(Remaining,PIANO_UFS_PRDT_MAX_DATA_BYTES) &&
+      ReadLe32(Entry)==mData.DeviceAddress+Bytes-Remaining &&
+      !ReadLe32(Entry+4) && !ReadLe32(Entry+8));
+    Remaining-=Chunk;
+  }
+  assert(!Remaining);
   assert(mData.Active && mUcd.Active && mTrl.Active);
   return Bytes;
 }
@@ -149,9 +158,9 @@ static VOID native_fresh(BOOLEAN Provisioned){
   PIANO_DMA_BUFFER *Buffers[]={&mTrl,&mUcd,&mData};for(UINTN I=0;I<3;++I){Buffers[I]->ReservedBytes=ALIGN_VALUE(Buffers[I]->Bytes,4096);Buffers[I]->Alignment=4096;Buffers[I]->MemoryType=EfiReservedMemoryType;Buffers[I]->MemoryAttributes=EFI_MEMORY_WB;}
   Regs[0x50/4]=(UINT32)mTrl.DeviceAddress;Regs[0x34/4]=1;Regs[0x30/4]=15;
   Hardware=(PIANO_SMMU_SNAPSHOT){.Valid=TRUE,.Base=0x15000000,.Window=0x100000,.ContextBase=0x80000,.PageShift=12,.Groups=4,.Banks=2};
-  Hardware.Device[0]=(PIANO_SMMU_DEVICE){.Present=TRUE,.Enabled=TRUE,.Sid=0x60,.Smr=0x80000060,.Sctlr=0x1e5,.Ttbr0=0x81090000};Hardware.RawSmr[0]=Hardware.Device[0].Smr;
-  Hardware.Device[1]=(PIANO_SMMU_DEVICE){.Present=TRUE,.Enabled=TRUE,.Sid=0x40,.StreamIndex=1,.ContextBank=1,.Smr=0x80000040,.S2cr=1,.Sctlr=0x1e5,.Ttbr0=0x810a0000};Hardware.RawSmr[1]=Hardware.Device[1].Smr;Hardware.RawS2cr[1]=1;
-  mContext.Attached=mContext.Verified=TRUE;mContext.Domain=(VOID *)0x777;mContext.Fdt=(VOID *)0x123;mContext.TableMemory.Signature=1;mContext.TableMemory.Physical=0x81090000;mContext.AttachedSnapshot=Hardware;
+  Hardware.Device[0]=(PIANO_SMMU_DEVICE){.Present=TRUE,.Enabled=TRUE,.Sid=0x60,.Smr=0x80000060,.Sctlr=0x1e5,.Ttbr0=0x81200000};Hardware.RawSmr[0]=Hardware.Device[0].Smr;
+  Hardware.Device[1]=(PIANO_SMMU_DEVICE){.Present=TRUE,.Enabled=TRUE,.Sid=0x40,.StreamIndex=1,.ContextBank=1,.Smr=0x80000040,.S2cr=1,.Sctlr=0x1e5,.Ttbr0=0x81210000};Hardware.RawSmr[1]=Hardware.Device[1].Smr;Hardware.RawS2cr[1]=1;
+  mContext.Attached=mContext.Verified=TRUE;mContext.Domain=(VOID *)0x777;mContext.Fdt=(VOID *)0x123;mContext.TableMemory.Signature=1;mContext.TableMemory.Physical=0x81200000;mContext.AttachedSnapshot=Hardware;
   mLuns[4].Id=4;mLuns[4].Last=378879;mLuns[4].Block=4096;
   mPermanentWpStatus=mPowerOnWpStatus=mCapabilities[4].CacheStatus=mCapabilities[4].UnitStatus=EFI_SUCCESS;
   mPermanentWp=mPowerOnWp=mCapabilities[4].WriteProtected=FALSE;
@@ -217,8 +226,8 @@ static VOID filesystem_write_preparation(void){
   assert(OtherMounted && !NativeWrites && !NativeSyncs && !Doorbells);
 }
 static VOID partition_batches(VOID){
-  const UINT32 Batch=PIANO_UFS_PRDT_MAX_DATA_BYTES;
-  static UINT8 Payload[PIANO_UFS_PRDT_MAX_DATA_BYTES+4096],Readback[sizeof(Payload)];
+  const UINT32 Batch=PIANO_UFS_MAX_TRANSFER_BYTES;
+  static UINT8 Payload[PIANO_UFS_MAX_TRANSFER_BYTES+4096],Readback[sizeof(Payload)];
   PIANO_STORAGE_PARTITION Range={.Lun=4,.BlockBytes=4096,.First=375168,.Blocks=sizeof(Payload)/4096};
   for(UINTN Index=0;Index<sizeof(Payload);++Index)Payload[Index]=(UINT8)(Index*31+Index/251);
   native_fresh(TRUE);
@@ -249,15 +258,21 @@ static VOID partition_batches(VOID){
   assert(BuildPartitionWrite(Trl,sizeof(Trl),Ucd,sizeof(Ucd),1,4,(UINT32)Range.First,Batch)==EFI_SUCCESS);
   --Ucd[24]; // The CDB count must match the entire PRDT and write plan.
   assert(Submit("PARTITION_WRITE_FUA",1,FALSE)==EFI_ACCESS_DENIED && !Doorbells);
-  ++Ucd[24];++Ucd[268];
+  ++Ucd[24];++Ucd[284];
   assert(Submit("PARTITION_WRITE_FUA",1,FALSE)==EFI_ACCESS_DENIED && !Doorbells);
   assert(BuildPartitionWrite(Trl,sizeof(Trl),Ucd,sizeof(Ucd),1,4,(UINT32)Range.First,Batch+4096)==EFI_INVALID_PARAMETER);
   assert(!DmaBegins && !Allocations);
 
-  native_fresh(TRUE);CorruptPage=mData.DeviceAddress+8*4096;
+  native_fresh(TRUE);mBlockBusy=TRUE;
+  assert(PianoUfsBuildReadCommand(Trl,sizeof(Trl),Ucd,sizeof(Ucd),mUcd.DeviceAddress,mData.DeviceAddress,Batch,
+    1,4,PianoUfsReadLba10,(UINT32)Range.First,Batch/4096)==EFI_SUCCESS);
+  ++Ucd[288];
+  assert(Submit("BLOCKIO_READ",1,FALSE)==EFI_COMPROMISED_DATA && !Doorbells && !DmaBegins);
+
+  native_fresh(TRUE);CorruptPage=mData.DeviceAddress+PIANO_UFS_PRDT_MAX_DATA_BYTES+8*4096;
   assert(StorageTransfer(&Range,0,Batch,Payload,TRUE)==EFI_COMPROMISED_DATA);
   assert(mProductRetained && !Doorbells && !DmaBegins);
-  native_fresh(TRUE);CorruptPage=mData.DeviceAddress+8*4096;
+  native_fresh(TRUE);CorruptPage=mData.DeviceAddress+2*PIANO_UFS_PRDT_MAX_DATA_BYTES+8*4096;
   assert(ServiceRead(NULL,4,Range.First,Batch,Readback)==EFI_COMPROMISED_DATA);
   assert(mProductRetained && !Doorbells && !DmaBegins);
 
@@ -279,7 +294,7 @@ static VOID partition_batches(VOID){
   assert(mExitRetained && DmaBegins==3 && !DmaCompletes && mData.Active && mUcd.Active && mTrl.Active && CurrentTpl==TPL_CALLBACK);
   assert(Doorbells==1 && ServiceRead(NULL,4,Range.First,Batch,Readback)==EFI_ACCESS_DENIED && Doorbells==1);
   assert(PianoStorageSetIoTiming(NULL)==&Timing && Timing.Read.Submitted==1 && !Timing.Read.Completed && !Timing.Read.WaitUs);
-  puts("Actual product UFS: 256 KiB READ(10)/WRITE(10) FUA, timed doorbells, whole-range gate, interior DMA map and exit retention passed.");
+  puts("Actual product UFS: 1 MiB READ(10)/WRITE(10) FUA, timed doorbells, whole-range gate, interior DMA map and exit retention passed.");
 }
 int main(void){
   filesystem_write_preparation();

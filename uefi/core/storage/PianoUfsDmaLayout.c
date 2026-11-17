@@ -3,6 +3,8 @@
 // NOP, read queries/SCSI and no-data resume; no block write or write queries.
 #include "PianoUfsDmaLayout.h"
 #include <Library/BaseMemoryLib.h>
+#define PRDT_OFFSET 256U
+#define PRDT_ENTRY_BYTES 16U
 STATIC VOID Le32(UINT8 *P,UINT32 V){for(UINTN I=0;I<4;++I)P[I]=(UINT8)(V>>(8*I));}
 STATIC UINT32 ReadLe32(CONST UINT8 *P){return P[0]|((UINT32)P[1]<<8)|((UINT32)P[2]<<16)|((UINT32)P[3]<<24);}
 STATIC VOID Be16(UINT8 *P,UINT16 V){P[0]=(UINT8)(V>>8);P[1]=(UINT8)V;}
@@ -108,7 +110,7 @@ EFI_STATUS PianoUfsParseCapacity(CONST VOID *Data,UINTN Bytes,UINT64 *LastLba,UI
 EFI_STATUS PianoUfsBuildReadCommand(VOID *Trd,UINTN TrdBytes,VOID *Ucd,UINTN UcdBytes,
                                   UINT64 UcdIova,UINT64 DataIova,UINT32 DataBytes,
                                   UINT8 Tag,UINT8 Lun,PIANO_UFS_READ_COMMAND Cmd,UINT32 Lba,UINT16 Blocks) {
-  if((DataIova&3) || !DataBytes || DataBytes>PIANO_UFS_PRDT_MAX_DATA_BYTES ||
+  if((DataIova&3) || !DataBytes || DataBytes>PIANO_UFS_MAX_TRANSFER_BYTES ||
      DataIova>MAX_UINT64-DataBytes || Lun>7 || Cmd>PianoUfsModeSense10 ||
      (Cmd!=PianoUfsReadLba10 && DataBytes>4096) ||
      (Cmd==PianoUfsReadCapacity16 && DataBytes!=32) ||
@@ -117,15 +119,39 @@ EFI_STATUS PianoUfsBuildReadCommand(VOID *Trd,UINTN TrdBytes,VOID *Ucd,UINTN Ucd
     return EFI_INVALID_PARAMETER;
   EFI_STATUS Status=Init(Trd,TrdBytes,Ucd,UcdBytes,UcdIova,64);if(EFI_ERROR(Status))return Status;
   UINT8 *T=Trd,*R=Ucd;Le32(T,0x15000000); // READ from device, CT=1, INT=1.
-  Le32(T+28,1U|((256U/4)<<16)); // One PRDT entry at byte 256.
+  UINT32 Entries=1+(DataBytes-1)/PIANO_UFS_PRDT_MAX_DATA_BYTES;
+  Le32(T+28,Entries|((PRDT_OFFSET/4)<<16));
   R[0]=1;R[1]=0x40;R[2]=Lun;R[3]=Tag;Be32(R+12,DataBytes);
   UINT8 *Cdb=R+16;
   if(Cmd==PianoUfsReportLuns){Cdb[0]=0xA0;Be32(Cdb+6,DataBytes);}
   else if(Cmd==PianoUfsReadCapacity16){Cdb[0]=0x9E;Cdb[1]=0x10;Be32(Cdb+10,32);}
   else if(Cmd==PianoUfsModeSense10){Cdb[0]=0x5A;Cdb[1]=0x08;Cdb[2]=0x08;Be16(Cdb+7,(UINT16)DataBytes);}
   else {Cdb[0]=0x28;Be32(Cdb+2,Lba);Be16(Cdb+7,Blocks);}
-  UINT8 *Prdt=R+256;Le32(Prdt,(UINT32)DataIova);Le32(Prdt+4,(UINT32)(DataIova>>32));
-  Le32(Prdt+12,DataBytes-1);return EFI_SUCCESS;
+  UINT8 *Entry=R+PRDT_OFFSET;
+  for(UINT32 At=0;At<DataBytes;Entry+=PRDT_ENTRY_BYTES){
+    UINT32 Bytes=MIN(DataBytes-At,PIANO_UFS_PRDT_MAX_DATA_BYTES);
+    UINT64 Address=DataIova+At;
+    Le32(Entry,(UINT32)Address);
+    Le32(Entry+4,(UINT32)(Address>>32));
+    Le32(Entry+12,Bytes-1);
+    At+=Bytes;
+  }
+  return EFI_SUCCESS;
+}
+BOOLEAN PianoUfsDataLayoutMatches(CONST VOID *Trd,CONST VOID *Ucd,UINT64 DataIova,UINT32 DataBytes){
+  if(!Trd || !Ucd || (DataIova&3) || !DataBytes || DataBytes>PIANO_UFS_MAX_TRANSFER_BYTES ||
+     DataIova>MAX_UINT64-DataBytes)return FALSE;
+  UINT32 Entries=1+(DataBytes-1)/PIANO_UFS_PRDT_MAX_DATA_BYTES;
+  if(ReadLe32((CONST UINT8 *)Trd+28)!=(Entries|((PRDT_OFFSET/4)<<16)))return FALSE;
+  CONST UINT8 *Entry=(CONST UINT8 *)Ucd+PRDT_OFFSET;
+  for(UINT32 At=0;At<DataBytes;Entry+=PRDT_ENTRY_BYTES){
+    UINT32 Bytes=MIN(DataBytes-At,PIANO_UFS_PRDT_MAX_DATA_BYTES);
+    UINT64 Address=DataIova+At;
+    if(ReadLe32(Entry)!=(UINT32)Address || ReadLe32(Entry+4)!=(UINT32)(Address>>32) ||
+       ReadLe32(Entry+8) || ReadLe32(Entry+12)!=Bytes-1)return FALSE;
+    At+=Bytes;
+  }
+  return TRUE;
 }
 EFI_STATUS PianoUfsParseCacheMode(CONST VOID *Data,UINTN Bytes,BOOLEAN *WriteProtected,BOOLEAN *Fua,BOOLEAN *WriteCache,BOOLEAN *ReadCacheDisabled) {
   if(Data==NULL || WriteProtected==NULL || Fua==NULL || WriteCache==NULL || ReadCacheDisabled==NULL)return EFI_INVALID_PARAMETER;

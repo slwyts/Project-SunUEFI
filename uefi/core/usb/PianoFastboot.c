@@ -133,7 +133,7 @@ EFI_STATUS PianoFastbootSetStorage(PIANO_FASTBOOT *S,CONST PIANO_FB_STORAGE *Sto
   if(S->Flash || S->FlashExecuting)return EFI_NOT_READY;
   if(Storage==NULL){ZeroMem(&S->Storage,sizeof(S->Storage));return EFI_SUCCESS;}
   if(Storage->Ready==NULL || Storage->Info==NULL || Storage->ReadBlocks==NULL ||
-     Storage->MaxFetchBytes>PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES || Storage->MaxFetchBytes%4096)
+     Storage->MaxFetchBytes>PIANO_FASTBOOT_MAX_FETCH_BYTES || Storage->MaxFetchBytes%4096)
     return EFI_INVALID_PARAMETER;
   S->Storage=*Storage;return EFI_SUCCESS;
 }

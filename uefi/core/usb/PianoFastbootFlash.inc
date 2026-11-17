@@ -139,9 +139,11 @@ STATIC VOID NextSparseRange(CONST PIANO_FASTBOOT *S,PIANO_FB_FLASH *F){
       F->Source=(UINTN)(Chunk-S->Download)+F->Header;
       F->Remaining=Expanded;F->Filling=Type==0xcac2;
       if(F->Filling){
-        // All fill writes are block aligned. Build the pattern once per record.
+        // Fill only the range this record can write in one batch.
+        UINTN Bytes=(UINTN)MIN(Expanded,(UINT64)sizeof(F->Expected));
         CopyMem(F->Expected,Chunk+F->Header,4);
-        for(UINTN N=4;N<sizeof(F->Expected);N*=2)CopyMem(F->Expected+N,F->Expected,N);
+        for(UINTN N=4;N<Bytes;N*=2)
+          CopyMem(F->Expected+N,F->Expected,MIN(N,Bytes-N));
       }
       break;
     }

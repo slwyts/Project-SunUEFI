@@ -115,7 +115,7 @@ STATIC EFI_STATUS mWindowTransportStatus=EFI_NOT_STARTED;
 #endif
 #define HCI 0x01D84000U
 #if PIANO_UFS_PRODUCT_STORAGE
-#define UFS_DATA_DMA_BYTES PIANO_UFS_PRDT_MAX_DATA_BYTES
+#define UFS_DATA_DMA_BYTES PIANO_UFS_MAX_TRANSFER_BYTES
 #else
 #define UFS_DATA_DMA_BYTES 4096U
 #endif
@@ -376,6 +376,8 @@ STATIC EFI_STATUS Submit(CONST CHAR8 *Name,UINT8 Tag,BOOLEAN Nop) {
   EFI_STATUS Status;
   if(HasData) {
     if(!mData.Mapped || Requested>mData.Bytes)return EFI_BAD_BUFFER_SIZE;
+    if(!PianoUfsDataLayoutMatches(mTrl.Cpu,mUcd.Cpu,mData.DeviceAddress,Requested))
+      return EFI_COMPROMISED_DATA;
     DEBUG((TraceLevel,"SUNUEFI_UFS_DATA_DMA command=%a dev=ufs pa=%lx iova=%lx transfer_bytes=%u buffer_bytes=%lu direction=%a alignment=%lu\n",
       Name,mData.Physical,mData.DeviceAddress,Requested,(UINT64)mData.Bytes,Out?"to-device":"from-device",(UINT64)mData.Alignment));
     Status=PianoDmaBegin(&mData,Name);if(EFI_ERROR(Status))return Status;

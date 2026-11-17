@@ -3,7 +3,7 @@
 #define main fastboot_command_suite
 #include "test_fastboot.c"
 #undef main
-static UINT8 frames[3][PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES+1];static UINTN lengths[3],frame_count,reads,info_calls,fail_read_at;
+static UINT8 frames[3][PIANO_FASTBOOT_MAX_FETCH_BYTES+1];static UINTN lengths[3],frame_count,reads,info_calls,fail_read_at;
 static BOOLEAN ready,bad_info,read_only;static INTN fail_frame;
 static UINT64 partition_bytes;static UINT32 block_size;
 static UINT8 byte_at(UINT64 Offset){return (UINT8)(((Offset^(Offset>>8)^(Offset>>32)^(Offset>>56))*73)+19);}
@@ -48,10 +48,10 @@ int main(void) {
   PIANO_FB_STORAGE Storage={.Context=(VOID *)456,.Ready=storage_ready,.Info=storage_info,.ReadBlocks=storage_read};
   assert(PianoFastbootSetStorage(NULL,&Storage)==EFI_INVALID_PARAMETER);
   PIANO_FB_STORAGE Broken=Storage;Broken.ReadBlocks=NULL;assert(PianoFastbootSetStorage(&S,&Broken)==EFI_INVALID_PARAMETER);
-  Broken=Storage;Broken.MaxFetchBytes=PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES+4096;
+  Broken=Storage;Broken.MaxFetchBytes=PIANO_FASTBOOT_MAX_FETCH_BYTES+4096;
   assert(PianoFastbootSetStorage(&S,&Broken)==EFI_INVALID_PARAMETER);
   --Broken.MaxFetchBytes;assert(PianoFastbootSetStorage(&S,&Broken)==EFI_INVALID_PARAMETER);
-  Broken.MaxFetchBytes=PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES-1;
+  Broken.MaxFetchBytes=PIANO_FASTBOOT_MAX_FETCH_BYTES-1;
   assert(PianoFastbootSetStorage(&S,&Broken)==EFI_INVALID_PARAMETER);
   assert(PianoFastbootSetStorage(&S,&Storage)==EFI_SUCCESS);
   reply(&S,"getvar:max-fetch-size","FAILstorage backend not ready");ready=TRUE;
@@ -59,12 +59,12 @@ int main(void) {
   reply(&S,"fetch:xbl_config_a:0x0:0x10001","FAILinvalid fetch range");assert(!reads);
   reply(&S,"getvar:partition-size:xbl_config_a","OKAY0x0000020000040000");
   fetch(&S,0,65536);assert(reads==1);
-  Storage.MaxFetchBytes=PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES;
+  Storage.MaxFetchBytes=PIANO_FASTBOOT_MAX_FETCH_BYTES;
   assert(PianoFastbootSetStorage(&S,&Storage)==EFI_SUCCESS);
   reply(&S,"getvar:max-fetch-size","OKAY0x00040000");
-  fetch(&S,0,PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES);assert(reads==1);
+  fetch(&S,0,PIANO_FASTBOOT_MAX_FETCH_BYTES);assert(reads==1);
   fetch(&S,4094,5);assert(reads==2);
-  fetch(&S,1,PIANO_FASTBOOT_MAX_BLOCK_IO_BYTES);assert(reads==3);
+  fetch(&S,1,PIANO_FASTBOOT_MAX_FETCH_BYTES);assert(reads==3);
   fetch(&S,0x100000001ULL,19);assert(reads==1); // Above 32-bit offsets.
   fetch(&S,partition_bytes-1,1);assert(reads==1);
   partition_bytes=0xfffffffffffff000ULL;fetch(&S,partition_bytes-1,1); // No offset+size overflow.
