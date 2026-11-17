@@ -2,6 +2,7 @@ import gzip
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import stat
@@ -63,6 +64,7 @@ class ReleasePackageTests(unittest.TestCase):
         self.args = pr.parser().parse_args(['--uefi', str(self.uefi), '--kernel', str(self.kernel), '--dtb', str(self.dtb),
                                           '--initramfs', str(self.initrd), '--rootfs', str(self.root), '--output', str(self.base / 'bundle')])
         self.args.stub = self.stub
+        self.args.systemd_boot = self.stub
         self.args.ukify = Path(__file__)
 
     def tearDown(self):
@@ -120,11 +122,23 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertEqual(after['tree'][gpu]['#cooling-cells'], struct.pack('>I', 2))
         maps = [props for name, props in after['tree'].items()
                 if name.startswith('/thermal-zones/') and 'cooling-device' in props]
-        self.assertEqual(len(maps), 8)
+        self.assertEqual(len(maps), 17)
+        gpu_maps = cpu_maps = 0
         for props in maps:
             handle, lower, upper = struct.unpack('>III', props['cooling-device'])
-            self.assertEqual(after['phandles'][handle], gpu)
             self.assertEqual((lower, upper), (0xffffffff, 0xffffffff))
+            device = after['phandles'][handle]
+            if device == gpu:
+                gpu_maps += 1
+            else:
+                self.assertIn(device, ('/cpus/cpu@0', '/cpus/cpu@10000'))
+                cpu_maps += 1
+                trip, = struct.unpack('>I', props['trip'])
+                trip_path = after['phandles'][trip]
+                self.assertEqual(after['tree'][trip_path]['temperature'], struct.pack('>I', 95000))
+                self.assertEqual(after['tree'][trip_path]['hysteresis'], struct.pack('>I', 8000))
+                self.assertEqual(after['tree'][trip_path]['type'], b'passive\0')
+        self.assertEqual((gpu_maps, cpu_maps), (8, 9))
         for name, props in before.items():
             if name in ('/__symbols__', gpu):
                 continue
@@ -248,8 +262,10 @@ class ReleasePackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Hardlink outside'):
             pr.scan_root(self.root, '6.6-fixture')
 
-    def test_mixed_kernel_modules_refused(self):
+    def test_old_modules_can_coexist_but_selected_release_is_required(self):
         (self.root / 'lib/modules/old').mkdir()
+        pr.scan_root(self.root, '6.6-fixture')
+        (self.root / 'lib/modules/6.6-fixture').rmdir()
         with self.assertRaisesRegex(ValueError, 'modules/release'):
             pr.scan_root(self.root, '6.6-fixture')
 
@@ -277,12 +293,14 @@ class ReleasePackageTests(unittest.TestCase):
             path.write_bytes(original)
 
     def test_missing_ukify_is_reported_before_output(self):
+        self.args.boot_layout = 'uki'
         self.args.ukify = self.base / 'missing-ukify'
         with self.assertRaisesRegex(ValueError, 'systemd-ukify'):
             pr.package(self.args)
         self.assertFalse(self.args.output.exists())
 
     def use_systemd_tools(self):
+        self.args.boot_layout = 'uki'
         roots = (Path('/'), pr.ROOT / 'build/gsd/builder/rootfs')
         candidates = [(root / 'usr/lib/systemd/ukify',
                        root / 'usr/lib/systemd/boot/efi/linuxaa64.efi.stub') for root in roots]
@@ -298,6 +316,78 @@ class ReleasePackageTests(unittest.TestCase):
                 shutil.copyfile(stub, self.stub)
                 return
         self.skipTest('ARM64 systemd stub and ukify are required')
+
+    @unittest.skipUnless(all(shutil.which(t) for t in ('mkfs.vfat', 'mmd', 'mcopy')), 'FAT tools unavailable')
+    def test_real_default_bls_entry_uses_separate_kernel_initrd_and_dtb(self):
+        self.use_systemd_tools()
+        self.args.boot_layout = 'bls'
+        self.args.ukify = self.base / 'not-required'
+        self.args.esp_only = True
+        self.args.esp_size_mib = 512
+        result = pr.package(self.args)
+        self.assertEqual(result['boot_layout'], 'bls')
+        self.assertIsNone(result['uki'])
+        base = '/linux/6.6-fixture/'
+        for target, source in (('linux', self.kernel / 'Image'),
+                               ('initrd', self.initrd), ('board.dtb', self.dtb)):
+            readback = self.base / ('bls-' + target)
+            pr.run(['mcopy', '-i', self.args.output / 'esp.img', '::' + base + target, readback])
+            self.assertEqual(readback.read_bytes(), source.read_bytes())
+        entry = self.base / 'entry.conf'
+        pr.run(['mcopy', '-i', self.args.output / 'esp.img',
+                '::/loader/entries/linux-6.6-fixture.conf', entry])
+        self.assertIn('linux ' + base + 'linux\n', entry.read_text())
+        self.assertIn('initrd ' + base + 'initrd\n', entry.read_text())
+        self.assertIn('devicetree ' + base + 'board.dtb\n', entry.read_text())
+        config = self.base / 'loader.conf'
+        pr.run(['mcopy', '-i', self.args.output / 'esp.img', '::/loader/loader.conf', config])
+        self.assertIn('timeout 3\n', config.read_text())
+        self.assertFalse(any(path.startswith('/EFI/Linux/') for path in result['esp_files']))
+
+    @unittest.skipUnless(all(shutil.which(t) for t in ('mkfs.vfat', 'mmd', 'mcopy', 'bootctl')),
+                         'FAT and systemd-boot tools unavailable')
+    def test_installed_distribution_entry_takes_priority_over_initial_image(self):
+        self.use_systemd_tools()
+        self.args.esp_only = True
+        self.args.esp_size_mib = 512
+        upgraded = 'linux-6.7-fixture.conf'
+        for layout, suffix in (('bls', 'conf'), ('uki', 'efi')):
+            with self.subTest(layout=layout):
+                bootctl = ['bootctl']
+                if layout == 'uki' and platform.machine() not in ('aarch64', 'arm64'):
+                    # bootctl only enumerates UKIs matching its own architecture.
+                    arm_root = pr.ROOT / 'build/distros/package-arch'
+                    arm_bootctl = arm_root / 'usr/bin/bootctl'
+                    emulator = shutil.which('qemu-aarch64-static')
+                    if not emulator or not arm_bootctl.is_file():
+                        self.skipTest('ARM64 bootctl required to enumerate an ARM64 UKI')
+                    bootctl = [emulator, '-L', arm_root, arm_bootctl]
+                root = self.base / layout
+                esp = root / 'esp'
+                esp.mkdir(parents=True)
+                self.args.output = root / 'bundle'
+                self.args.boot_layout = layout
+                pr.package(self.args)
+                pr.run(['mcopy', '-s', '-i', self.args.output / 'esp.img', '::*', esp])
+                initial = f'linux-6.6-fixture.{suffix}'
+                command = [*bootctl, '--root', root, '--no-pager', '--json=short', 'list']
+                env = dict(os.environ, SYSTEMD_ESP_PATH='/esp', SYSTEMD_XBOOTLDR_PATH='/esp')
+
+                def entries():
+                    return json.loads(pr.run(command, env=env).stdout)
+
+                self.assertEqual([entry['id'] for entry in entries() if entry['isDefault']], [initial])
+                kernel = esp / 'linux/6.7-fixture/linux'
+                kernel.parent.mkdir(parents=True)
+                shutil.copyfile(self.kernel / 'Image', kernel)
+                entry = esp / 'loader/entries' / upgraded
+                entry.parent.mkdir(exist_ok=True)
+                # An installed distro's ID may sort after the shared image's title.
+                entry.write_text('title SteamOS\nsort-key steamos\nversion 6.7-fixture\n'
+                                 'linux /linux/6.7-fixture/linux\n')
+                actual = entries()
+                self.assertEqual([entry['id'] for entry in actual if entry['isDefault']], [upgraded])
+                self.assertIn(initial, {entry['id'] for entry in actual})
 
     @unittest.skipUnless(all(shutil.which(t) for t in ('mkfs.vfat', 'mmd', 'mcopy')), 'FAT tools unavailable')
     def test_real_esp_boot_chain_defaults_overrides_and_root_unchanged(self):
@@ -326,13 +416,16 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertIsNone(result['partitions']['root']['capacity_bytes'])
                 self.assertIsNone(result['metadata']['archive'])
                 self.assertIsNone(result['metadata']['ext4'])
-                self.assertEqual(result['esp_files'], ['/EFI/Linux/sunuefi.efi'])
+                self.assertEqual(result['esp_files'], [
+                    '/EFI/Linux/linux-6.6-fixture.efi',
+                    '/EFI/systemd/systemd-bootaa64.efi', '/EFI/BOOT/BOOTAA64.EFI',
+                    '/loader/loader.conf'])
                 readback = self.base / 'fat-readback.efi'
-                pr.run(['mcopy', '-i', self.args.output / 'esp.img', '::/EFI/Linux/sunuefi.efi', readback])
+                pr.run(['mcopy', '-i', self.args.output / 'esp.img', '::/EFI/Linux/linux-6.6-fixture.efi', readback])
                 sections = {'.linux': (self.kernel / 'Image').read_bytes(),
                             '.initrd': self.initrd.read_bytes(), '.dtb': self.dtb.read_bytes(),
                             '.cmdline': b'rdinit=/pianoinit piano.root=LABEL=PIANOROOT console=tty0',
-                            '.uname': b'6.6-fixture', '.osrel': b'ID=linux\nPRETTY_NAME="Linux"\n'}
+                            '.uname': b'6.6-fixture', '.osrel': b'PRETTY_NAME="Linux"\n'}
                 self.assertEqual(pr.verify_uki(readback, sections), result['uki']['sections'])
                 readback.unlink()
                 self.assertFalse((self.args.output / '.incomplete').exists())
@@ -350,12 +443,12 @@ class ReleasePackageTests(unittest.TestCase):
 
         def corrupt_readback(argv, **kwargs):
             result = actual_run(argv, **kwargs)
-            if str(argv[0]) == 'mcopy' and str(argv[-2]) == '::/EFI/Linux/sunuefi.efi':
+            if str(argv[0]) == 'mcopy' and str(argv[-2]) == '::/EFI/Linux/linux-6.6-fixture.efi':
                 Path(argv[-1]).write_bytes(b'CORRUPT FIXTURE')
             return result
 
         with patch.object(pr, 'run', side_effect=corrupt_readback):
-            with self.assertRaisesRegex(ValueError, 'ESP file readback differs: sunuefi.efi'):
+            with self.assertRaisesRegex(ValueError, 'ESP file readback differs: linux-6.6-fixture.efi'):
                 pr.package(self.args)
         self.assertTrue((self.args.output / '.incomplete').is_file())
         self.assertFalse((self.args.output / 'manifest.json').exists())

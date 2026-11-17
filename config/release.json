@@ -4,7 +4,9 @@
     "url": "https://deb.debian.org/debian/pool/main/s/systemd/systemd-boot-efi_262.2-1_arm64.deb",
     "sha256": "a6137774e8ae0d0493ede8c3a1e05d37f762ff784f0de3777c74d160085df680",
     "member": "./usr/lib/systemd/boot/efi/linuxaa64.efi.stub",
-    "stub_sha256": "7c9e61a5b168725ee7db40dabe84be24dade12c53732c306aec49e7cd67c353a"
+    "stub_sha256": "7c9e61a5b168725ee7db40dabe84be24dade12c53732c306aec49e7cd67c353a",
+    "boot_member": "./usr/lib/systemd/boot/efi/systemd-bootaa64.efi",
+    "boot_sha256": "6d3925a5c1fdde99de63a67a92a8bb5aa336a6e189c2a7bb9c4c4a4396ef65a4"
   },
   "bootstrap_packages": {
     "busybox-static": {
@@ -114,6 +116,7 @@
       "fonts-noto",
       "poppler-data",
       "fonts-noto-cjk",
+      "systemd-coredump",
       "locales",
       "ibus",
       "ibus-libpinyin",

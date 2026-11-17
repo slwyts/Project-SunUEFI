@@ -7,6 +7,29 @@
 /* The folded board tree names the mainline Adreno node gpu_ml. */
 #define gpu gpu_ml
 
+/*
+ * Stock piano cpufreq trips: 95 C, 8 C hysteresis, policy0/policy6.
+ * Keep SM8750 hot/critical trips and bind the same nine die sensors to
+ * upstream CPU cooling devices instead of downstream cpufreq-thermal.
+ */
+#define PIANO_CPU_COOLING(zone, label, cpu) \
+	zone { \
+		polling-delay-passive = <250>; \
+		trips { \
+			label: cpu-passive { \
+				temperature = <95000>; \
+				hysteresis = <8000>; \
+				type = "passive"; \
+			}; \
+		}; \
+		cooling-maps { \
+			cpu-map { \
+				trip = <&label>; \
+				cooling-device = <&cpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>; \
+			}; \
+		}; \
+	};
+
 / {
 	compatible = "xiaomi,piano";
 
@@ -21,6 +44,22 @@
 		target-path = "/soc/gpu@3d00000";
 		__overlay__ {
 			#cooling-cells = <2>;
+		};
+	};
+	fragment@2 {
+		target-path = "/";
+		__overlay__ {
+			thermal-zones {
+			PIANO_CPU_COOLING(cpu-0-0-0-thermal, piano_cpu000, CPU0)
+			PIANO_CPU_COOLING(cpu-0-2-0-thermal, piano_cpu020, CPU0)
+			PIANO_CPU_COOLING(cpu-0-2-1-thermal, piano_cpu021, CPU0)
+			PIANO_CPU_COOLING(cpu-0-4-0-thermal, piano_cpu040, CPU0)
+			PIANO_CPU_COOLING(cpu-0-4-1-thermal, piano_cpu041, CPU0)
+			PIANO_CPU_COOLING(cpu-1-0-0-thermal, piano_cpu100, CPU6)
+			PIANO_CPU_COOLING(cpu-1-0-1-thermal, piano_cpu101, CPU6)
+			PIANO_CPU_COOLING(cpu-1-1-0-thermal, piano_cpu110, CPU6)
+			PIANO_CPU_COOLING(cpu-1-1-1-thermal, piano_cpu111, CPU6)
+			};
 		};
 	};
 };

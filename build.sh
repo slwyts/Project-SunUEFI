@@ -30,6 +30,7 @@ case "$command" in
     python3 tools/prepare_release_kernel.py --refresh
     python3 tools/build/kernel.py "$@"
     ;;
+  linux-package) python3 tools/package/kernel.py "$@" ;;
   mesa) python3 tools/build/arch_mesa.py "$@" ;;
   sensors) python3 tools/build/sensors.py "$@" ;;
   display-calibration) python3 tools/display/build_output_color.py "$@" ;;
@@ -64,7 +65,7 @@ case "$command" in
   install) python3 tools/install_piano.py "$@" ;;
   installer) python3 tools/export_installer.py "$@" ;;
   help|-h|--help)
-    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|module-package|boot-request|boot-repack|linux|mesa|sensors|display-calibration|ffmpeg|gsd|gdm|pipewire|libwacom|mutter|bsp|repo|rootfs|release-rootfs|steamos-rootfs|package|all|installer|install' \
+    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|module-package|boot-request|boot-repack|linux|linux-package|mesa|sensors|display-calibration|ffmpeg|gsd|gdm|pipewire|libwacom|mutter|bsp|repo|rootfs|release-rootfs|steamos-rootfs|package|all|installer|install' \
       'Full builds need the documented builder environment; rootfs/Mesa/sensors run in a root ARM64 build container.' \
       'release-rootfs reads its kernel source worktree from build/release/source-manifest.json.' \
       'Building never partitions or flashes a tablet. install is a separate explicit command.' ;;

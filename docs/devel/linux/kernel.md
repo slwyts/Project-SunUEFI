@@ -26,11 +26,13 @@ Linux 基线为上游 `v7.3`，提交
 新内核的模块、`v4l2loopback` 相机模块和 initramfs，不能只替换 `Image`。
 
 启动参数只来自启动镜像，不编进内核。`config/release.json` 的
-`kernel.command_line` 是发布参数来源，打包时写入 UKI 的 `.cmdline`。
+`kernel.command_line` 是初装发布参数来源，默认写入 BLS 启动项，
+选择 UKI 时写入其 `.cmdline`。
 内核使用 `CONFIG_CMDLINE=""`，关闭 `CONFIG_CMDLINE_FORCE`，不保留内建后备。
-打包检查根分区、`rdinit=/pianoinit` 和参数长度，并读回校验 UKI 的各段。
+打包检查根分区、`rdinit=/pianoinit` 和参数长度，并读回校验启动文件；
+安装后的原生内核包使用发行版 initramfs 和标准 `root=` 参数。
 
-当前 DTB 包含启用的 `simple-framebuffer`，UKI 通过标准 Linux EFI stub 启动。
+当前 DTB 包含启用的 `simple-framebuffer`，内核通过标准 Linux EFI stub 启动。
 `console=tty0` 在 framebuffer 控制台注册后才有输出；
 `console=ttyGS0` 也需要 USB gadget 建立后才可用，不能作为最早期串口。
 屏幕停留在固件交接页不等于内核没有运行，定位需结合 pstore、initramfs
@@ -147,10 +149,23 @@ SoC 温区使用锁定内核 `sm8750.dtsi` 中的完整 `thermal-zones` 定义�
 提取为 include，由 `piano-tsens.dtso` 合入根节点，保留 47 个传感器映射、
 温度阈值及八个 GPU 降温映射；GPU 引用连接到板级主线节点 `gpu_ml`，并补齐
 `#cooling-cells`。不将 Android 的 `/soc/thermal-zones` 厂商策略当作主线温区，
-也不另抄一份阈值。已有 `piano-skin` 充电温区保留。内核 thermal 和 hwmon
+CPU 降频补齐原厂九个温区到 `cpu0`／`cpu6` 的 cooling map：
+从同机 Android 的 sysfs 核对为 95°C passive、8°C 回差，分别对应
+policy0 的 CPU 0–5 和 policy6 的 CPU 6–7。SoC 原有 hot／critical 阈值保留。
+已有 `piano-skin` 充电温区保留。内核 thermal 和 hwmon
 接口直接提供读数，不需要用户空间采集服务；SoC 温度与电池 JEITA 温度分别处理。
 实机启动和深度挂起恢复后，47 路 SoC 温度均可读取，八路 GPU 温区均绑定
 `devfreq-3d00000.gpu` 降温设备。
+
+### 游戏手柄
+
+[`piano-gamepad.config`](../../../linux/configs/piano-gamepad.config) 为四个
+系统启用主线 `xpad`、`hid-microsoft`、`hid-nintendo`、`hid-playstation`
+和 `hid-sony`，同时开启 joystick 设备接口、振动及驱动支持的指示灯功能。
+USB Xbox／XInput 设备使用 `xpad`；蓝牙 HID 通过 BlueZ、UHID／HIDP 和
+对应 HID 驱动进入 evdev，不使用 USB xpad。设备连接成功但 Steam 没有输入时，
+应分别检查 HID 绑定、输入事件和 Steam 权限，不能把蓝牙配对当成驱动正常。
+这些选项不包含树外 xpadneo，也不保证所有第三方兼容模式使用相同协议。
 
 磁盘启动统一使用 `linux/userspace/disk-bootstrap`，支持发布镜像的 LABEL 和
 开发镜像的 PARTUUID。ext4 先正常回放日志，再转为读写；救援环境包含磁吸键盘
@@ -772,8 +787,8 @@ FFC 使用前还需要两颗电量计通过电池认证，不能把充电器 MiP
 
 ### MiPPS 认证与连接恢复验证
 
-参数对照测试每次只改变一个参数，并保持 UKI、模块与 root 中的配置匹配。
-产品使用同一个 UKI 入口，SimpleInit 无操作五秒后启动；需要停留菜单时用
+参数对照测试每次只改变一个参数，并保持启动文件、模块与 root 中的配置匹配。
+产品共用初装启动镜像，SimpleInit 无操作五秒后启动；需要停留菜单时用
 按键或触摸取消。启动失败可从前面的安卓／UEFI 选择器进入 Android，
 再更新启动镜像，不修改原厂系统分区。
 

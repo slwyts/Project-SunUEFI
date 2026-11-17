@@ -53,6 +53,12 @@ BLUETOOTH_OVERRIDES={'CONFIG_UHID':'m','CONFIG_HID_XIAOMI':'m',
                     'CONFIG_BT_RFCOMM':'m','CONFIG_BT_RFCOMM_TTY':'y','CONFIG_BT_BNEP':'m'}
 FILESYSTEM_OVERRIDES={'CONFIG_EXFAT_FS':'y','CONFIG_NTFS3_FS':'y',
                       'CONFIG_NTFS3_LZX_XPRESS':'y','CONFIG_NLS_UTF8':'y'}
+GAMEPAD_OVERRIDES={
+    'CONFIG_INPUT_JOYSTICK':'y','CONFIG_INPUT_JOYDEV':'m',
+    'CONFIG_JOYSTICK_XPAD':'m','CONFIG_JOYSTICK_XPAD_FF':'y','CONFIG_JOYSTICK_XPAD_LEDS':'y',
+    'CONFIG_HID_MICROSOFT':'m','CONFIG_HID_NINTENDO':'m','CONFIG_NINTENDO_FF':'y',
+    'CONFIG_HID_PLAYSTATION':'m','CONFIG_PLAYSTATION_FF':'y','CONFIG_HID_SONY':'m','CONFIG_SONY_FF':'y',
+}
 PEN_DOCK_OVERRIDES={'CONFIG_INPUT_XIAOMI_PIANO_PEN_DOCK':'m', 'CONFIG_CHARGER_SC96231':'m'}
 IR_OVERRIDES={'CONFIG_LIRC':'y','CONFIG_IR_SPI':'m'}
 USERSPACE_SECURITY_OVERRIDES={'CONFIG_SECURITY_LANDLOCK':'y'}
@@ -99,7 +105,7 @@ PLATFORM_OVERRIDES.update({key: 'm' for key in (
 PLATFORM_OVERRIDES.update({'CONFIG_FTRACE': 'y', 'CONFIG_ENABLE_DEFAULT_TRACERS': 'y'})
 PLATFORM_OVERRIDES.update({'CONFIG_ANDROID_BINDER_IPC': 'y', 'CONFIG_ANDROID_BINDERFS': 'y',
                            'CONFIG_ANDROID_BINDER_DEVICES': '"binder,hwbinder,vndbinder"'})
-ALLOWED_OVERRIDES={**BLUETOOTH_OVERRIDES,**FILESYSTEM_OVERRIDES,**PEN_DOCK_OVERRIDES,**IR_OVERRIDES,**FLASH_OVERRIDES,**EARLY_CPUCP_OVERRIDES,
+ALLOWED_OVERRIDES={**BLUETOOTH_OVERRIDES,**FILESYSTEM_OVERRIDES,**GAMEPAD_OVERRIDES,**PEN_DOCK_OVERRIDES,**IR_OVERRIDES,**FLASH_OVERRIDES,**EARLY_CPUCP_OVERRIDES,
                    **USERSPACE_SECURITY_OVERRIDES,**SLEEP_OVERRIDES,**PM_DEBUG_OVERRIDES,**PLATFORM_OVERRIDES}
 
 
@@ -162,6 +168,7 @@ def command_line(root_policy):
 def module_overrides(fragment,kind='bluetooth'):
     lines=[line.strip()for line in fragment.splitlines()if line.strip()and not line.lstrip().startswith('#')]
     expected=BLUETOOTH_OVERRIDES if kind=='bluetooth'else FILESYSTEM_OVERRIDES if kind=='filesystem'else PEN_DOCK_OVERRIDES if kind=='pen-dock'else IR_OVERRIDES if kind=='ir'else FLASH_OVERRIDES if kind=='flash'else EARLY_CPUCP_OVERRIDES if kind=='early-cpucp'else USERSPACE_SECURITY_OVERRIDES if kind=='userspace-security'else SLEEP_OVERRIDES if kind=='sleep'else PLATFORM_OVERRIDES if kind=='platform'else None
+    if kind=='gamepad':expected=GAMEPAD_OVERRIDES
     if expected is None or len(lines)!=len(expected) or set(lines)!={key+'='+value for key,value in expected.items()}:raise ValueError('Unexpected '+kind+' configuration fragment')
     return dict(expected)
 
@@ -242,6 +249,7 @@ def validate_config(config,public,modules=None):
 
 
 def toolchain():
+    import platform
     env=os.environ.copy();bundled=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
     env['PATH']=str(bundled/'bin')+os.pathsep+env.get('PATH','')
     env['LD_LIBRARY_PATH']=str(bundled/'lib')+(os.pathsep+env['LD_LIBRARY_PATH']if env.get('LD_LIBRARY_PATH')else '')
@@ -254,9 +262,20 @@ def toolchain():
            'llvm-objdump','llvm-readelf','llvm-strip','make','bison','flex','bc','depmod')
     cached=bool(env.get('CCACHE_DIR'))
     if cached:names+=('ccache',)
+    cross=platform.machine() not in ('arm64','aarch64')
+    if cross:names+=('aarch64-linux-gnu-gcc',)
     binaries={name:shutil.which(name,path=env['PATH'])for name in names}
     if any(path is None for path in binaries.values()):raise ValueError('Missing full build dependencies: '+str([name for name,path in binaries.items()if path is None]))
     cc=[binaries['ccache'],binaries['clang']]if cached else[binaries['clang']]
+    if cross:
+        gcc=Path(binaries['aarch64-linux-gnu-gcc']).resolve()
+        sysroot=text([gcc,'-print-sysroot'],env=env)
+        if not sysroot or not Path(sysroot).is_dir():
+            raise ValueError('Install the ARM64 GNU cross compiler and its libc sysroot')
+        # pacman-pkg uses CC itself to build the target's external-module
+        # helpers. Keep these flags identical for the original kernel build.
+        cc+=['--target=aarch64-linux-gnu','--gcc-toolchain='+str(gcc.parent.parent),
+             '--sysroot='+sysroot]
     return env,{'paths':binaries,'sha256':{name:sha(Path(path))for name,path in binaries.items()},'compiler':text([binaries['clang'],'--version'],env=env).splitlines()[0],
                'linker':text([binaries['ld.lld'],'--version'],env=env).splitlines()[0],
                'llvm_tools':text([binaries['llvm-ar'],'--version'],env=env).splitlines(),
@@ -313,7 +332,9 @@ def main():
     userspace_security=ROOT/'linux/configs/piano-userspace-security.config'
     sleep=ROOT/'linux/configs/piano-sleep.config'
     filesystem=ROOT/'linux/configs/piano-filesystem.config'
+    gamepad=ROOT/'linux/configs/piano-gamepad.config'
     modules={**module_overrides(bluetooth.read_text()),**module_overrides(filesystem.read_text(),'filesystem'),
+             **module_overrides(gamepad.read_text(),'gamepad'),
              **module_overrides(pen_dock.read_text(),'pen-dock'),
              **module_overrides(ir.read_text(),'ir'),
              **module_overrides(flash.read_text(),'flash'),
@@ -323,7 +344,10 @@ def main():
              **module_overrides((ROOT/'linux/configs/piano-platform.config').read_text(),'platform')}
     if args.pm_debug:
         modules.update(PM_DEBUG_OVERRIDES)
-    env,tools=toolchain();out.mkdir(parents=True,exist_ok=True);artifacts.mkdir(parents=True,exist_ok=True)
+    env,tools=toolchain()
+    env.update(KBUILD_BUILD_USER='sunuefi',KBUILD_BUILD_HOST='builder',KBUILD_BUILD_VERSION='1')
+    env.setdefault('KBUILD_BUILD_TIMESTAMP',text(['git','show','-s','--format=%cI',commit],work))
+    out.mkdir(parents=True,exist_ok=True);artifacts.mkdir(parents=True,exist_ok=True)
     build_locks=[]
     lock_root=ROOT/'build/locks';lock_root.mkdir(parents=True,exist_ok=True)
     for directory in sorted({work,compiler,out,artifacts}):
@@ -336,7 +360,7 @@ def main():
     tree=text(['git','rev-parse','HEAD^{tree}'],work)
     compiler_checkout(work,compiler,commit,tree)
     policy=kernel_policy_identity()
-    hashes={str(path.relative_to(ROOT)):sha(path)for path in (bluetooth,filesystem,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/desktop/prepare_kernel_llvm.py',ROOT/'tools/desktop/package_build.py',ROOT/'config/kernel-llvm.json')}
+    hashes={str(path.relative_to(ROOT)):sha(path)for path in (bluetooth,filesystem,gamepad,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/desktop/prepare_kernel_llvm.py',ROOT/'tools/desktop/package_build.py',ROOT/'config/kernel-llvm.json')}
     if marker.exists():
         previous=json.loads(marker.read_text())
         if (not args.configure_only and matching_build(
@@ -351,15 +375,21 @@ def main():
     effective_text=effective_config(modules)
     effective=out/'piano-full.effective.config';effective.write_text(effective_text)
     command=['make','-C',compiler,'O='+str(out),'ARCH=arm64','LLVM=1','LLVM_IAS=1','LOCALVERSION=']
+    command.append('CC='+shlex.join(tools['kernel_cc']))
+    if 'aarch64-linux-gnu-gcc' in tools['paths']:
+        command.append('CROSS_COMPILE=aarch64-linux-gnu-')
     if tools['ccache_enabled']:
         # Kbuild recommends a stable timestamp for useful ccache reuse.
         env.setdefault('KBUILD_BUILD_TIMESTAMP',text(['git','show','-s','--format=%cI',commit],work))
         tools['kbuild_build_timestamp']=env['KBUILD_BUILD_TIMESTAMP']
-        command.append('CC='+shlex.join(tools['kernel_cc']))
     run(command+['piano_defconfig'],env=env)
     run(['bash',compiler/'scripts/kconfig/merge_config.sh','-m','-O',out,out/'.config',public,effective],cwd=compiler,env=env)
     run(command+['olddefconfig'],env=env)
     requirements=validate_config((out/'.config').read_text(),public.read_text(),modules);config_hash=sha(out/'.config')
+    # Source and configuration changes must not replace another kernel ABI.
+    package_epoch=text(['git','-C',ROOT,'show','-s','--format=%ct','HEAD'])
+    abi_digest=hashlib.sha256((tree+config_hash+json.dumps(hashes,sort_keys=True)).encode()).hexdigest()[:12]
+    command[command.index('LOCALVERSION=')]='LOCALVERSION=-b'+package_epoch+'-g'+abi_digest
     def fresh():
         verify_source(work,commit)
         verify_source(compiler,commit)
