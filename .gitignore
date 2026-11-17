@@ -10,3 +10,4 @@ __pycache__/
 *.pyc
 uefi/handoff/bootshim/BootShim.bin
 uefi/handoff/bootshim/BootShim.elf
+docs/opencode-sunuefi-transcript.md
