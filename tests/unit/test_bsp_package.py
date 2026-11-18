@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
+from build.check_patch_series import patch_id
 import package_bsp as bsp
 
 TOPOLOGY_TOOLS = all(shutil.which(tool) for tool in ('m4', 'alsatplg'))
@@ -104,7 +105,8 @@ class BspPackageTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), (bsp.BSP / layer / row['path']).read_bytes())
                 if row.get('derived_from'):
                     derived = row['derived_from']
-                    self.assertEqual(hashlib.sha256((ROOT / derived['path']).read_bytes()).hexdigest(), derived['sha256'])
+                    self.assertEqual(patch_id(ROOT / derived['path'], verbatim=True),
+                                     (derived['patch_id'],), derived['scope'])
         hifi = self.base / 'rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf'
         self.assertIn(b"VA DMIC MUX0' DMIC2", hifi.read_bytes())
         self.assertIn(b'CaptureChannels 1', hifi.read_bytes())

@@ -31,6 +31,17 @@ class CheckPatchSeriesTests(unittest.TestCase):
         path.write_text(text)
         return path
 
+    def test_verbatim_patch_id_ignores_mail_header_but_preserves_spaces(self):
+        mail = 'From ' + 'a' * 40 + ' Mon Sep 17 00:00:00 2001\n\n'
+        diff = DIFF.replace('+fixed();', '+fixed("Audio Route");')
+        original = self.patch('original.patch', mail + diff)
+        replayed = self.patch('replayed.patch', mail.replace('a' * 40, 'b' * 40) + diff)
+        changed = self.patch('changed.patch', mail + diff.replace('Audio Route', 'AudioRoute'))
+        self.assertEqual(checker.patch_id(original, verbatim=True),
+                         checker.patch_id(replayed, verbatim=True))
+        self.assertNotEqual(checker.patch_id(original, verbatim=True),
+                            checker.patch_id(changed, verbatim=True))
+
     def series(self, name, patches, **fields):
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -79,7 +79,7 @@
       "patch_sha256": "078e3f8a45de49dabb7d620c510f7ee2bba8a761efc8bcb0b99d686a03d55a6f",
       "derived_from": {
         "path": "patches/linux/7.3/0005-audio.patch",
-        "sha256": "191b05b323cca594c3f9e40efc7d6ed696cc7a1a9926f1f336ee9632c27e490c",
+        "patch_id": "1da2380da2ca6f1452f13470c45c49c3385e78e4",
         "scope": "CaptureChannels 1 requires the Piano-specific VA mono FE/BE kernel route"
       }
     },

@@ -18,7 +18,7 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def patch_id(path):
+def patch_id(path, *, verbatim=False):
     """Include plain unified diffs, which git patch-id otherwise skips."""
     lines = path.read_text().splitlines(keepends=True)
     unified, git_header = [], False
@@ -35,7 +35,8 @@ def patch_id(path):
                 unified.append(f'diff --git a/{name} b/{name}\n')
             git_header = False
         unified.append(line)
-    result = subprocess.run(['git', 'patch-id', '--stable'], input=''.join(unified),
+    mode = '--verbatim' if verbatim else '--stable'
+    result = subprocess.run(['git', 'patch-id', mode], input=''.join(unified),
                             text=True, capture_output=True, check=True)
     return tuple(line.split()[0] for line in result.stdout.splitlines())
 
