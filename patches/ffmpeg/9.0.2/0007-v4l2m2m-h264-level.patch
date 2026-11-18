@@ -1,0 +1,91 @@
+From: Project SunUEFI contributors
+Subject: [PATCH] avcodec/v4l2_m2m_enc: honor the requested H.264 level
+
+The V4L2 mem2mem H.264 encoder leaves the level at the driver default
+even when AVCodecContext.level is set. This can produce a bitstream
+with a level that does not match the requested encoding parameters.
+
+Translate the H.264 level identifier into a V4L2 menu value and set the
+control before streaming. For example, -level:v 52 requests level 5.2.
+Use 9 to distinguish level 1b from level 1.1, as in h264_metadata.
+Keep the driver default when no level is requested and report an error
+if the requested level cannot be set.
+
+--- a/libavcodec/v4l2_m2m_enc.c
++++ b/libavcodec/v4l2_m2m_enc.c
+@@ -50,7 +50,7 @@
+         av_log(s->avctx, AV_LOG_WARNING, "Failed to set timeperframe");
+ }
+
+-static inline void v4l2_set_ext_ctrl(V4L2m2mContext *s, unsigned int id, signed int value, const char *name, int log_warning)
++static inline int v4l2_set_ext_ctrl(V4L2m2mContext *s, unsigned int id, signed int value, const char *name, int log_warning)
+ {
+     struct v4l2_ext_controls ctrls = { { 0 } };
+     struct v4l2_ext_control ctrl = { 0 };
+@@ -64,12 +64,16 @@
+     ctrl.value = value;
+     ctrl.id = id;
+
+-    if (ioctl(s->fd, VIDIOC_S_EXT_CTRLS, &ctrls) < 0)
+-        av_log(s->avctx, log_warning || errno != EINVAL ? AV_LOG_WARNING : AV_LOG_DEBUG,
+-               "Failed to set %s: %s\n", name, strerror(errno));
+-    else
+-        av_log(s->avctx, AV_LOG_DEBUG, "Encoder: %s = %d\n", name, value);
++    if (ioctl(s->fd, VIDIOC_S_EXT_CTRLS, &ctrls) < 0) {
++        int err = errno;
++
++        av_log(s->avctx, log_warning || err != EINVAL ? AV_LOG_WARNING : AV_LOG_DEBUG,
++               "Failed to set %s: %s\n", name, strerror(err));
++        return AVERROR(err);
++    }
++    av_log(s->avctx, AV_LOG_DEBUG, "Encoder: %s = %d\n", name, value);
++    return 0;
+ }
+
+ static inline int v4l2_get_ext_ctrl(V4L2m2mContext *s, unsigned int id, signed int *value, const char *name, int log_warning)
+ {
+@@ -124,6 +128,26 @@
+     return AVERROR(ENOENT);
+ }
+
++static int v4l2_h264_level_from_ff(int level)
++{
++    /* Map V4L2 menu indices to level_idc, using 9 for level 1b. */
++    static const uint8_t level_idcs[] = {
++        10,  9, 11, 12, 13,
++        20, 21, 22,
++        30, 31, 32,
++        40, 41, 42,
++        50, 51, 52,
++        60, 61, 62,
++    };
++    int i;
++
++    for (i = 0; i < FF_ARRAY_ELEMS(level_idcs); i++)
++        if (level_idcs[i] == level)
++            return i;
++
++    return AVERROR(EINVAL);
++}
++
+ static inline int v4l2_mpeg4_profile_from_ff(int p)
+ {
+     static const struct mpeg4_profile {
+@@ -213,6 +237,17 @@
+             else
+                 v4l2_set_ext_ctrl(s, MPEG_CID(H264_PROFILE), val, "h264 profile", 1);
+         }
++        if (avctx->level != AV_LEVEL_UNKNOWN) {
++            val = v4l2_h264_level_from_ff(avctx->level);
++            if (val < 0) {
++                av_log(avctx, AV_LOG_ERROR, "Invalid H.264 level_idc %d\n",
++                       avctx->level);
++                return val;
++            }
++            ret = v4l2_set_ext_ctrl(s, MPEG_CID(H264_LEVEL), val, "H.264 level", 1);
++            if (ret < 0)
++                return ret;
++        }
+         qmin_cid = MPEG_CID(H264_MIN_QP);
+         qmax_cid = MPEG_CID(H264_MAX_QP);
+         qmin = 0;

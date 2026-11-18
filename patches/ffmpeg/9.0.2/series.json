@@ -2,12 +2,12 @@
   "schema_version": 1,
   "component": "ffmpeg-v4l2m2m",
   "upstream_version": "9.0.2",
-  "local_revision": "sunuefi4",
+  "local_revision": "sunuefi5",
   "targets": ["debian-gnome", "debian-kde", "nyarch-gnome"],
   "upstream": {
     "status": "downstream",
     "url": "https://github.com/FFmpeg/FFmpeg/tree/n9.0.2/libavcodec",
-    "drop_when": "The selected FFmpeg release implements stateful V4L2 initial metadata, LAST/source-change drain, orphaned capture buffers, P010, visible-row NV12 uploads and encoder header/stop handling; verify complete frames across resolution changes and H.264 encode/decode on Iris before dropping these fixes."
+    "drop_when": "The selected FFmpeg release implements stateful V4L2 initial metadata, LAST/source-change drain, orphaned capture buffers, P010, visible-row NV12 uploads, encoder header/stop handling and explicit H.264 level; verify complete frames across resolution changes and matching H.264 bitstream level on Iris before dropping these fixes."
   },
   "source": {
     "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
@@ -44,6 +44,11 @@
     {
       "path": "0003-v4l2m2m-stop-unstarted-encoder.patch",
       "sha256": "63ec598d048ead5424f6cc1eb882b430ff268c368838057b439cdf98ee172c2d",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "0007-v4l2m2m-h264-level.patch",
+      "sha256": "5938ca6dbaf75d8f512365e953ac92e867214746d4770c693aa582702f73a842",
       "license": "LGPL-2.1-or-later; retain upstream file notices"
     }
   ],
