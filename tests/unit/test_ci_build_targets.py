@@ -1,4 +1,5 @@
 """Actual Git change lists select public product builds, without device inputs."""
+from fnmatch import fnmatchcase
 from pathlib import Path
 import os
 import subprocess
@@ -42,15 +43,64 @@ class CiBuildTargetsTests(unittest.TestCase):
             env = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
             def git(*args):
                 return subprocess.check_output(['git', '-C', str(root), *args], env=env, text=True).strip()
+            def commit(message):
+                git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                    '-c', 'commit.gpgsign=false', 'commit', '-qm', message)
+                return git('rev-parse', 'HEAD')
+
+            def assert_changes(base, *paths):
+                files = targets.changed_files(root, base)
+                self.assertCountEqual(filter(None, files), paths)
+                self.assertEqual(targets.select(files), PRODUCTS)
+
             git('init', '-q')
+            git('config', 'diff.renames', 'true')
             (root / 'linux').mkdir(); (root / 'linux/config').write_text('base\n')
             (root / 'build.sh').write_text('shared\n'); git('add', '.')
-            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'base')
-            before = git('rev-parse', 'HEAD')
+            before = commit('base')
             (root / 'linux/config').write_text('new\n'); git('add', '.')
-            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Linux change')
-            self.assertEqual(targets.select(targets.changed_files(root, before)), PRODUCTS)
+            modified = commit('Linux change')
+            assert_changes(before, 'linux/config')
             self.assertEqual(targets.select(targets.changed_files(root, '0' * 40)), PRODUCTS)
+
+            (root / 'docs').mkdir()
+            git('mv', 'linux/config', 'docs/config')
+            moved_out = commit('move out of product inputs')
+            assert_changes(modified, 'linux/config', 'docs/config')
+            (root / 'linux').mkdir(exist_ok=True)
+            git('mv', 'docs/config', 'linux/settings')
+            moved_in = commit('move into product inputs')
+            assert_changes(moved_out, 'docs/config', 'linux/settings')
+
+            git('rm', 'linux/settings')
+            commit('remove product input')
+            assert_changes(moved_in, 'linux/settings')
+
+    def test_workflow_path_filter_agrees_on_tracked_inputs(self):
+        workflow = ROOT / '.github/workflows/build-products.yml'
+        lines = workflow.read_text().splitlines()
+        rules = []
+        for line in lines[lines.index('    paths:') + 1:]:
+            if not line.startswith('      - '):
+                break
+            rules.append(line.removeprefix('      - ').strip("'\""))
+
+        def included(path):
+            enabled = False
+            for rule in rules:
+                pattern = rule.removeprefix('!')
+                if pattern.endswith('/**'):
+                    matches = path.startswith(pattern.removesuffix('**'))
+                else:
+                    matches = path.count('/') == pattern.count('/') and fnmatchcase(path, pattern)
+                if matches:
+                    enabled = not rule.startswith('!')
+            return enabled
+
+        tracked = subprocess.check_output(['git', '-C', ROOT, 'ls-files', '-z'], text=True)
+        tracked = [path for path in tracked.split('\0') if path]
+        self.assertEqual([path for path in tracked if included(path)],
+                         [path for path in tracked if targets.select([path])])
 
     def test_host_checks_changes_alone_do_not_select_products(self):
         check_files = ['.github/workflows/host-checks.yml', 'tools/check_host.py',
