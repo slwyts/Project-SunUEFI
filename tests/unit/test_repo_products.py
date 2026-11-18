@@ -56,8 +56,10 @@ class RepoProductsTests(unittest.TestCase):
                          {'apt': [deb_kernel, deb_shared, device_deb.name],
                           'sunuefi': [kernel, graphics, device_pacman.name, firmware],
                           'sunuefi-steamos': [graphics]})
-        self.assertEqual(batches['sunuefi'][1].read_bytes(), b'arch')
-        self.assertEqual(batches['sunuefi-steamos'][0].read_bytes(), b'valve')
+        arch = self.packages / 'overlays/nyarch-gnome' / graphics
+        valve = self.packages / 'overlays/steamos' / graphics
+        self.assertEqual(batches['sunuefi'][arch], sha(arch))
+        self.assertEqual(batches['sunuefi-steamos'][valve], sha(valve))
 
     def test_does_not_publish_common_bsp_from_steamos_overlays(self):
         self.package_set('kernel/debian', {'linux.deb': b'kernel'}, format='debian')

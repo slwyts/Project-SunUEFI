@@ -9,7 +9,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 
-from publish import REPOSITORIES, ROOT, Store, publish, sha
+from publish import REPOSITORIES, ROOT, Store, prepare_publication, sha, upload_publication
 from verify_public import verify_public
 
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -84,8 +84,22 @@ def publication_batches(root, *, kernel, overlays):
             if old is not None and old[1] != digest:
                 raise ValueError('Different builds share a package filename: ' + name)
             groups[repository][name] = (path, digest)
-    return {repository: [group[name][0] for name in sorted(group)]
+    return {repository: dict(group[name] for name in sorted(group))
             for repository, group in groups.items() if group}
+
+
+def publish_products(batches, key, output, store):
+    """Verify every selected repository before switching any public index."""
+    publications = []
+    for repository, packages in batches.items():
+        options = SimpleNamespace(repo=repository, key=key, output=output / repository,
+                                  packages=packages)
+        digests = {path.name: digest for path, digest in packages.items()}
+        publications.append(prepare_publication(options, store, digests=digests))
+    for publication in publications:
+        result = upload_publication(publication, store)
+        verify_public(PUBLIC_REPOSITORY_URL, publication.repo, publication.output)
+        print(json.dumps({**result, 'public_indexes_verified': True}, indent=2), flush=True)
 
 
 def main():
@@ -124,14 +138,7 @@ def main():
             keys = [line.split(':')[9] for line in record.splitlines() if line.startswith('fpr:')]
             if not keys:
                 raise ValueError('No signing subkey was imported')
-            store = Store()
-            for repository, paths in batches.items():
-                options = SimpleNamespace(
-                    repo=repository, key=keys[0], output=args.output / repository, packages=paths)
-                result = publish(options, store)
-                verify_public(PUBLIC_REPOSITORY_URL, repository, options.output)
-                print(json.dumps({**result, 'public_indexes_verified': True}, indent=2),
-                      flush=True)
+            publish_products(batches, keys[0], args.output, Store())
         finally:
             subprocess.run(['gpgconf', '--kill', 'gpg-agent'], check=False)
             if previous is None:
@@ -141,4 +148,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        raise SystemExit(str(error))

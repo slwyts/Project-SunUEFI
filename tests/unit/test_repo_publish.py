@@ -1,10 +1,10 @@
 """Sign real package indexes, merge releases and reject changed package bytes."""
-import importlib.util
 import io
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -12,9 +12,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location('repo_publish', ROOT / 'tools/repo/publish.py')
-repo = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(repo)
+sys.path.insert(0, str(ROOT / 'tools/repo'))
+import products
+import publish as repo
 
 
 class MemoryStore:
@@ -111,6 +111,61 @@ class RepoPublishTests(unittest.TestCase):
                          self.store.objects[prefix + 'sunuefi.db.tar.zst'])
         immutable = [index for index, (_, fixed) in enumerate(self.store.writes) if fixed]
         self.assertLess(immutable[-1], len(self.store.writes) - 1)
+
+    @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
+    def test_product_rejects_older_pacman_version_before_updating_any_index(self):
+        base, overlay = 'sunuefi', 'sunuefi-steamos'
+        old, newer = self.pacman('1'), self.pacman('2')
+        common = self.pacman('1', 'device')
+        with patch.object(products, 'verify_public') as verify_public:
+            for package, output in ((old, 'first'), (newer, 'second')):
+                products.publish_products({overlay: {package: repo.sha(package)}},
+                                          self.key, self.root / output, self.store)
+            before = self.store.objects.copy()
+            writes = self.store.writes.copy()
+            verify_public.reset_mock()
+            batches = {base: {common: repo.sha(common)}, overlay: {old: repo.sha(old)}}
+            with self.assertRaisesRegex(ValueError, r'fixture 1-1 .*index selects 2-1'):
+                products.publish_products(batches, self.key, self.root / 'stale', self.store)
+            verify_public.assert_not_called()
+        self.assertEqual(self.store.objects, before)
+        self.assertEqual(self.store.writes, writes)
+
+    @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
+    def test_product_accepts_republishing_the_same_pacman_generation(self):
+        package = self.pacman('2')
+        digest = repo.sha(package)
+        batches = {'sunuefi': {package: digest}}
+        prefix = 'pacman/sunuefi/os/aarch64/'
+        with patch.object(products, 'verify_public'):
+            products.publish_products(batches, self.key, self.root / 'first', self.store)
+            signature = self.store.objects[prefix + package.name + '.sig']
+            products.publish_products(batches, self.key, self.root / 'again', self.store)
+        self.assertEqual(self.store.objects[prefix + package.name + '.sig'], signature)
+        entry = repo.run('bsdtar', '-xOf', self.root / 'again/sunuefi/sunuefi.db',
+                         'fixture-2-1/desc', capture_output=True, text=True).stdout
+        self.assertIn('%NAME%\nfixture\n', entry)
+        self.assertIn('%VERSION%\n2-1\n', entry)
+        self.assertIn(f'%SHA256SUM%\n{digest}\n', entry)
+
+    @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
+    def test_pacman_selection_requires_the_sealed_filename_and_digest(self):
+        package = self.pacman('2')
+        output = self.args('sunuefi', [package], 'hash')
+        repo.publish(output)
+        for filename, digest in ((package.name, '0' * 64), ('different.pkg.tar.zst', repo.sha(package))):
+            with self.subTest(filename=filename), self.assertRaisesRegex(
+                    ValueError, 'does not match the sealed filename and SHA-256'):
+                repo.check_pacman_selection(output.output / 'sunuefi.db',
+                                            {'fixture': ('2-1', filename, digest)})
+
+    def test_product_rechecks_package_bytes_before_indexing(self):
+        package = self.pacman('2')
+        batches = {'sunuefi': {package: repo.sha(package)}}
+        package.write_bytes(b'changed after verifying the manifest')
+        with self.assertRaisesRegex(ValueError, 'Package changed while preparing publication'):
+            products.publish_products(batches, self.key, self.root / 'changed', self.store)
+        self.assertFalse(self.store.writes)
 
     @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
     def test_changed_package_cannot_overwrite_a_published_filename(self):

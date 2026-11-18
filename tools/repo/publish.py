@@ -3,12 +3,15 @@
 import argparse
 import gzip
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import tarfile
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORIES = ('apt', 'sunuefi', 'sunuefi-steamos')
@@ -104,7 +107,13 @@ class Store:
                     raise
 
 
-def apt_index(work, packages, key, store=None):
+def copy_package(package, destination, digests):
+    shutil.copyfile(package, destination)
+    if digests is not None and sha(destination) != digests[package.name]:
+        raise ValueError('Package changed while preparing publication: ' + package.name)
+
+
+def apt_index(work, packages, key, store=None, *, digests=None):
     """Retain old package entries; publish by-hash indexes before InRelease."""
     prefix = 'apt'
     keyring = ROOT / 'config/keys/sunuefi-archive-keyring.gpg'
@@ -130,7 +139,7 @@ def apt_index(work, packages, key, store=None):
                            capture_output=True, text=True).stdout.strip()
         if architecture not in ('arm64', 'all'):
             raise ValueError('APT package must be arm64 or all: ' + package.name)
-        shutil.copyfile(package, pool / package.name)
+        copy_package(package, pool / package.name, digests)
     data = run('dpkg-scanpackages', '--multiversion', 'pool', '/dev/null', cwd=work,
                capture_output=True, text=True).stdout
     entries = {}
@@ -171,7 +180,42 @@ def apt_index(work, packages, key, store=None):
     return prefix, immutable, mutable
 
 
-def pacman_index(work, packages, name, key, store=None):
+def check_pacman_selection(database, expected):
+    """Check the archives pacman will select from the generated database."""
+    # The builder's Python tarfile cannot read this zstd archive directly.
+    data = run('bsdtar', '-cf', '-', '@' + str(database), capture_output=True).stdout
+    selected = {}
+    with tarfile.open(fileobj=io.BytesIO(data), mode='r:') as archive:
+        for member in archive:
+            if not member.name.endswith('/desc'):
+                continue
+            if not member.isfile():
+                raise ValueError('Invalid pacman index entry: ' + member.name)
+            record = archive.extractfile(member).read().decode()
+            fields = []
+            for field in ('NAME', 'VERSION', 'FILENAME', 'SHA256SUM'):
+                values = re.findall(rf'^%{field}%\n(\S+)$', record, re.M)
+                if len(values) != 1:
+                    raise ValueError(f'{database.name}: invalid {field} in {member.name}')
+                fields.append(values[0])
+            name, version, filename, digest = fields
+            if name in selected:
+                raise ValueError(f'{database.name}: multiple entries for {name}')
+            selected[name] = (version, filename, digest)
+    for name, (version, filename, digest) in expected.items():
+        if name not in selected:
+            raise ValueError(f'{database.name}: {name} {version} is missing from the index')
+        indexed_version, indexed_file, indexed_digest = selected[name]
+        if indexed_version != version:
+            raise ValueError(f'{database.name}: {name} {version} is required for this build, '
+                             f'but the index selects {indexed_version}. '
+                             'Use a build with a package version newer than the indexed version.')
+        if (indexed_file, indexed_digest) != (filename, digest):
+            raise ValueError(f'{database.name}: {name} {version} does not match the sealed '
+                             f'filename and SHA-256 for {filename}')
+
+
+def pacman_index(work, packages, name, key, store=None, *, digests=None):
     prefix = 'pacman/' + name + '/os/aarch64'
     db = work / (name + '.db.tar.zst')
     files = work / (name + '.files.tar.zst')
@@ -191,13 +235,21 @@ def pacman_index(work, packages, name, key, store=None):
                 raise ValueError('Published pacman index is missing or damaged: ' + path.name)
         for archive, signature in archives:
             verify(archive, signature, keyring)
-    immutable = []
+    immutable, expected = [], {}
     for package in packages:
-        info = run('bsdtar', '-xOf', package, '.PKGINFO', capture_output=True, text=True).stdout
+        target = work / package.name
+        copy_package(package, target, digests)
+        info = run('bsdtar', '-xOf', target, '.PKGINFO', capture_output=True, text=True).stdout
         if not re.search(r'^arch = (aarch64|any)$', info, re.M):
             raise ValueError('pacman package must be aarch64 or any: ' + package.name)
-        target = work / package.name
-        shutil.copyfile(package, target)
+        if digests is not None:
+            names = re.findall(r'^pkgname = (\S+)$', info, re.M)
+            versions = re.findall(r'^pkgver = (\S+)$', info, re.M)
+            if len(names) != 1 or len(versions) != 1:
+                raise ValueError('Missing or repeated package name or version: ' + package.name)
+            if names[0] in expected:
+                raise ValueError(f'{name}: multiple packages for {names[0]} in the build')
+            expected[names[0]] = (versions[0], package.name, digests[package.name])
         signature = target.with_name(target.name + '.sig')
         # Reuse the signature for an unchanged package; GPG signatures carry time.
         if not store or not store.get(prefix + '/' + signature.name, signature):
@@ -209,6 +261,8 @@ def pacman_index(work, packages, name, key, store=None):
     if store:
         for archive, signature in archives:
             verify(archive, signature, keyring)
+    if digests is not None:
+        check_pacman_selection(db, expected)
     mutable = []
     index = {}
     for source in sources:
@@ -230,12 +284,16 @@ def pacman_index(work, packages, name, key, store=None):
     return prefix, immutable, [*mutable, committed]
 
 
-def publish(args, store=None):
+def prepare_publication(args, store=None, *, digests=None):
+    """Build and verify local indexes before making any repository writes."""
     if args.repo not in REPOSITORIES:
         raise ValueError('Unknown package repository: ' + args.repo)
     packages = [path.resolve() for path in args.packages]
-    if not packages or len({path.name for path in packages}) != len(packages):
+    names = {path.name for path in packages}
+    if not packages or len(names) != len(packages):
         raise ValueError('Pass a nonempty package list with unique filenames')
+    if digests is not None and set(digests) != names:
+        raise ValueError('Package checksums do not match the files selected for publication')
     for path in packages:
         pattern = r'[A-Za-z0-9_.+~:%-]+\.deb' if args.repo == 'apt' else (
             r'[A-Za-z0-9_.+~:%-]+\.pkg\.tar\.(zst|xz|gz)')
@@ -246,18 +304,31 @@ def publish(args, store=None):
     args.output.mkdir(parents=True)
     work = args.output.resolve()
     if args.repo == 'apt':
-        prefix, immutable, mutable = apt_index(work, packages, args.key, store)
+        prefix, immutable, mutable = apt_index(work, packages, args.key, store, digests=digests)
     else:
-        prefix, immutable, mutable = pacman_index(work, packages, args.repo, args.key, store)
+        prefix, immutable, mutable = pacman_index(
+            work, packages, args.repo, args.key, store, digests=digests)
+    if digests is None:
+        digests = {path.name: sha(path) for path in packages}
+    return SimpleNamespace(repo=args.repo, output=work, prefix=prefix, immutable=immutable,
+                           mutable=mutable, packages=digests)
+
+
+def upload_publication(publication, store=None):
     if store:
         for name in ('sunuefi-archive-keyring.gpg', 'sunuefi-archive-keyring.asc'):
             store.put('keys/' + name, ROOT / 'config/keys' / name)
-        for path in immutable:
-            store.put(prefix + '/' + path.relative_to(work).as_posix(), path, immutable=True)
-        for path in mutable:
-            store.put(prefix + '/' + path.relative_to(work).as_posix(), path)
-    return {'repo': args.repo, 'published': store is not None,
-            'packages': {path.name: sha(path) for path in packages}}
+        prefix = publication.prefix + '/'
+        for path in publication.immutable:
+            store.put(prefix + path.relative_to(publication.output).as_posix(), path, immutable=True)
+        for path in publication.mutable:
+            store.put(prefix + path.relative_to(publication.output).as_posix(), path)
+    return {'repo': publication.repo, 'published': store is not None,
+            'packages': publication.packages}
+
+
+def publish(args, store=None):
+    return upload_publication(prepare_publication(args, store), store)
 
 
 def main():
