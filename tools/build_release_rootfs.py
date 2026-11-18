@@ -30,6 +30,7 @@ from prepare_release_kernel import release_series
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / 'config/release.json'
 DEBIAN_MIRROR = 'https://deb.debian.org/debian'
+REGDB_PATH = '/lib/firmware/regulatory.db'
 
 
 def package_build_manifest(desktop):
@@ -230,9 +231,26 @@ def put(root, name, text):
     path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
 
 
+def select_wireless_regdb(rootfs, run):
+    # The shared kernel trusts the upstream signature, not Debian's.
+    run(['chroot', rootfs, 'update-alternatives', '--set', 'regulatory.db', REGDB_PATH + '-upstream'])
+
+
+def wireless_regdb_record(rootfs):
+    files = {}
+    for suffix in ('', '.p7s'):
+        name = (REGDB_PATH + suffix).lstrip('/')
+        selected = userspace.guest_resolve(rootfs, name)
+        upstream = userspace.guest_resolve(rootfs, name + '-upstream')
+        if selected != upstream or not selected.is_file() or not selected.stat().st_size:
+            raise ValueError('Debian wireless-regdb upstream alternative is not installed: ' + name)
+        files[name] = digest(selected)
+    return files
+
+
 def default_system_record(rootfs, installed, config, desktop='gnome'):
     """Require the shipped desktop and BSP, including runtime-bundle resumes."""
-    required = {'systemd-sysv', 'pipewire', 'network-manager', POWER_PROFILES_PACKAGE,
+    required = {'systemd-sysv', 'pipewire', 'network-manager', 'wireless-regdb', POWER_PROFILES_PACKAGE,
                 'tuned', 'tuned-ppd'}
     required.update({'gnome-shell', 'gdm3'} if desktop == 'gnome' else {'plasma-workspace', 'sddm', 'powerdevil'})
     required.update(config['debian']['extra_packages'])
@@ -253,7 +271,7 @@ def default_system_record(rootfs, installed, config, desktop='gnome'):
             'usr/share/plasma/shells/org.kde.plasma.desktop/metadata.json',
         )
     )
-    files = {}
+    files = wireless_regdb_record(rootfs)
     for name in paths:
         path = userspace.guest_resolve(rootfs, name)
         if not path.is_file() or not path.stat().st_size:
@@ -948,6 +966,7 @@ def execute(record):
             result = build_overlay_set(record, rootfs, m, run)
             (out / 'FAILED.json').unlink(missing_ok=True)
             return result
+        select_wireless_regdb(rootfs, run)
         from package.kernel import install as install_kernel
 
         if published:

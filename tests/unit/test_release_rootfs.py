@@ -61,7 +61,8 @@ class ReleaseRootTests(unittest.TestCase):
             with self.subTest(desktop=desktop):
                 config = self.planned(desktop)['config']
                 installed = dict.fromkeys(
-                    {*packages, 'systemd-sysv', 'pipewire', 'network-manager', 'tuned', 'tuned-ppd',
+                    {*packages, 'systemd-sysv', 'pipewire', 'network-manager', 'wireless-regdb',
+                     'tuned', 'tuned-ppd',
                      *config['debian']['extra_packages']}, 'fixture')
                 with self.assertRaisesRegex(ValueError, 'packages are not installed: piano-power-profiles$'):
                     builder.default_system_record(self.rootfs, installed, config, desktop)

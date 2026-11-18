@@ -188,6 +188,12 @@ CI 实际重编覆盖包时，使用该次运行和重试编号增加原生包�
 
 Debian 只构建 sid，不混用 stable 或 backports。`release-rootfs` 先生成 sid 基础系统，再从其副本构建 sensors、FFmpeg 和桌面包；不用固件构建容器中的旧版库编译这些运行包。CI 保留编译缓存，但按 sid 配置和构建器区分缓存，并由软件包构建器检查所选源码版本后复用。
 
+Debian 镜像用 `update-alternatives` 选择 `wireless-regdb` 包自带的上游签名版本。
+数据库与签名一起切换，普通 APT 更新会保留该选择；共用内核仍用上游公钥验签。
+已有 Debian 安装可运行
+`sudo update-alternatives --set regulatory.db /lib/firmware/regulatory.db-upstream`，
+重启后内核会重新读取数据库。
+
 ### Nyarch GNOME 和 SteamOS
 
 ```sh
