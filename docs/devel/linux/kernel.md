@@ -151,7 +151,9 @@ SoC 温区使用锁定内核 `sm8750.dtsi` 中的完整 `thermal-zones` 定义�
 `#cooling-cells`。不将 Android 的 `/soc/thermal-zones` 厂商策略当作主线温区，
 CPU 降频补齐原厂九个温区到 `cpu0`／`cpu6` 的 cooling map：
 从同机 Android 的 sysfs 核对为 95°C passive、8°C 回差，分别对应
-policy0 的 CPU 0–5 和 policy6 的 CPU 6–7。SoC 原有 hot／critical 阈值保留。
+policy0 的 CPU 0–5 和 policy6 的 CPU 6–7。其余七个单核温区在原厂使用
+高温停核保护，不属于 95°C 降频策略；四个 `cpuss` 温区原厂没有冷却映射。
+Linux 保留 SoC 原有的 hot／critical 阈值，没有复制厂商停核策略。
 已有 `piano-skin` 充电温区保留。内核 thermal 和 hwmon
 接口直接提供读数，不需要用户空间采集服务；SoC 温度与电池 JEITA 温度分别处理。
 实机启动和深度挂起恢复后，47 路 SoC 温度均可读取，八路 GPU 温区均绑定
