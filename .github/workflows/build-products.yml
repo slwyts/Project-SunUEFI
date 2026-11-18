@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - '.github/workflows/**'
+      - '.github/workflows/build-products.yml'
+      - '.github/workflows/_*.yml'
       - '.github/actions/**'
       - 'build.sh'
       - 'Makefile'
@@ -20,17 +21,7 @@ on:
       - 'vendor/firmware/**'
       - 'linux/**'
       - 'tools/**'
-      - 'tests/unit/test_check_patch_series.py'
-      - 'tests/unit/test_build_nyarch_apps.py'
-      - 'tests/unit/test_kernel_package.py'
-      - 'tests/unit/test_overlay_packages.py'
-      - 'tests/unit/test_overlay_cache.py'
-      - 'tests/unit/test_debian_overlay_cache.py'
-      - 'tests/unit/test_repo*.py'
-      - 'tests/unit/test_ci_container.py'
-      - 'tests/unit/test_camera.py'
-      - 'tests/unit/test_shared_products.py'
-      - 'tests/unit/test_stage_arch_piano.py'
+      - '!tools/check_host.py'
       - 'upstream/**'
       - 'android/**'
       - 'docs/user/install-from-artifact.md'
@@ -66,12 +57,12 @@ jobs:
           fetch-depth: 0
           submodules: false
           persist-credentials: false
-      - name: Check patch series and product references
+      - name: Check patch series and build rules
         env:
           SUNUEFI_PATCH_BASE: ${{ github.event.before }}
-        run: ./build.sh check --pattern test_check_patch_series.py
-      - name: Check shared build cache rules
-        run: ./build.sh check --group python-all --pattern test_shared_products.py --pattern test_ci_container.py
+        run: |
+          ./build.sh check --pattern test_check_patch_series.py \
+            --pattern test_shared_products.py --pattern test_ci_container.py
       - id: targets
         env:
           PUSH_BEFORE: ${{ github.event.before }}
@@ -111,7 +102,7 @@ jobs:
             sunuefi-builder ./build.sh check --group python-all --pattern 'test_repo*.py' \
               --pattern test_kernel_package.py --pattern 'test_overlay*.py' \
               --pattern test_debian_overlay_cache.py \
-              --pattern test_build_nyarch_apps.py --pattern test_camera.py \
+              --pattern test_build_nyarch_apps.py \
               --pattern test_stage_arch_piano.py
 
   shared:

@@ -1,13 +1,13 @@
 # 运行检查
 
-本地通过 `tools/check_host.py` 运行主机端检查，不需要连接平板。涉及写入和硬件交互的改动，还需要在实际平板上验证。
+本地通过 `./build.sh check` 运行主机端检查，不需要连接平板。涉及写入和硬件交互的改动，还需要在实际平板上验证。
 
 ## 主机检查
 
 日常改动只需 Python 3，不触碰设备：
 
 ```sh
-python3 tools/check_host.py --group portable
+./build.sh check
 ```
 
 这条命令检查产品配置、日志大小上限、用模拟 ADB 收集 RAM 日志的流程、构建产物是否过期、DMA 日志、USB 诊断读取，以及测试脚本本身。输出里每个测试文件单独显示结果和跳过数。`portable` 组出现跳过按失败处理。
@@ -16,16 +16,17 @@ python3 tools/check_host.py --group portable
 
 ```sh
 # 只查看测试文件列表，不运行
-python3 tools/check_host.py --group portable --list
-python3 tools/check_host.py --group python-all --list
+./build.sh check --list
+./build.sh check --group python-all --list
 
 # 运行 tests/unit/ 下的全部 Python 测试
-python3 tools/check_host.py --group python-all
+./build.sh check --group python-all
 ```
 
 `python-all` 运行 `tests/unit/test_*.py` 中的全部测试，默认每文件 120 秒超时。部分测试依赖上游头文件、C 编译器或特定输入文件，条件不足时会跳过或报错，输出里会说明原因。
 
-`tests/native/` 下的原生 C 和 Shell 测试（例如 DMA、UFS、USB 状态机测试）不属于上述 Python 发现范围，修改对应原生模块时需按脚本注释单独运行，例如 `bash tests/native/test_usb_fastboot.sh`。
+`./build.sh check --group ci --list` 列出 CI 运行的主机检查，包括无需私有样本的原生 Shell 测试。
+需要本地固件、工具链或采集样本的其他检查按测试脚本的说明单独运行。
 
 ## 设备验证
 
@@ -55,6 +56,11 @@ python3 tools/check_host.py --group python-all
 
 ## CI 检查
 
-GitHub Actions 的 **Build products** 在 `main` 上有相关源码变动时自动运行，覆盖 `uefi`、`linux` 以及四个发行版。CI 使用与本地相同的 `./build.sh`、固定子模块和补丁配置，不连接物理设备。
+GitHub Actions 的 **Host checks** 在发往 `main` 的 PR 和 `main` 更新时运行
+`./build.sh check --group ci`。它从公开固定源码准备启动回退、Fastboot、相机运行和原生打包
+测试，不使用发布密钥；选中的检查如果跳过也会报错。只改测试不会触发产品构建。
+
+**Build products** 在 `main` 上有相关产品源码变动时自动运行，覆盖 `uefi`、`linux`
+以及四个发行版，并在构建环境验证签名 APT 和 pacman 软件源。两个工作流都不连接物理设备。
 
 选择目标前会运行补丁系列检查；它检查共享引用、摘要、重复变更，以及已登记和本次修改系列的产品目标、上游状态与删除条件。单独运行 `./build.sh check --pattern test_check_patch_series.py`，规则见[补丁管理](patches.md#软件包补丁与产品目标)。

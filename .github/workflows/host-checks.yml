@@ -1,0 +1,56 @@
+name: Host checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: host-checks-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    env:
+      SUNUEFI_TOOLCHAIN_ROOT: /usr
+      SUNUEFI_PATCH_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install native test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            alsa-utils binutils-aarch64-linux-gnu build-essential cargo clang \
+            debhelper libarchive-tools libjpeg-dev libssl-dev libyuv-dev m4 \
+            makepkg pacman-package-manager zstd
+      - name: Check out fixed test sources
+        run: |
+          git submodule update --init --depth 1 -- upstream/Mu-Silicium \
+            upstream/debian-piano-current upstream/audioreach-topology
+          git -C upstream/Mu-Silicium submodule update --init --depth 1 -- Mu_Basecore
+          git -C upstream/Mu-Silicium/Mu_Basecore submodule update --init --depth 1 \
+            -- MdePkg/Library/BaseFdtLib/libfdt
+      - name: Prepare the fixed camera test dependency
+        run: |
+          mkdir -p build
+          PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=tools python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from build_piano_runtime_helpers import prepare_camera_quad
+
+          with TemporaryDirectory() as temporary:
+              work = Path(temporary)
+              (work / 'quad').mkdir()
+              prepare_camera_quad(work, work, os.environ.copy())
+          PY
+      - run: ./build.sh check --group ci

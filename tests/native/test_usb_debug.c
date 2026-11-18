@@ -9,7 +9,6 @@ BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
 VOID *EFIAPI AllocatePool(UINTN N){return malloc(N);}
-INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
 static EFI_BOOT_SERVICES bs;static EFI_USB_DEVICE_PROTOCOL usb;
 static UINT8 rx[RX_BYTES],tx[64];
 static USB_DEVICE_EVENT next_kind;static USB_DEVICE_EVENT_DATA next_data;
@@ -63,7 +62,7 @@ int main(void){
   connect(0);assert(!mConnected && !allocation && !mRxPending && mCount==0);
   complete(1,0,UsbDeviceTransferStatusCancelled);assert(mStarted);
   connect(1);assert(mRxPending && posted_rx==64);
-  receive("erase:userdata",14);assert(strcmp(transmitted,"FAILcommand disabled by RAM-only policy")==0);
+  receive("erase:userdata",14);assert(strcmp(transmitted,"FAILstorage write backend not ready")==0);
   complete(0x81,posted_tx,UsbDeviceTransferStatusCompleteOK);
   // Fill the bounded queue, prove rejection does not overwrite queued replies.
   while(mCount<QUEUE_COUNT)assert(Enqueue(NULL,"INFOx",5)==EFI_SUCCESS);

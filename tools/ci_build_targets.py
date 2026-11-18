@@ -31,6 +31,7 @@ UEFI_PREFIXES = ('android/', 'uefi/', 'vendor/piano/', 'patches/firmware/',
                  'tools/prepare_product_')
 DISTROS = ['debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos']
 TARGETS = ('uefi', 'linux', *DISTROS)
+CHECK_ONLY_FILES = {'.github/workflows/host-checks.yml', 'tools/check_host.py'}
 
 
 def shared_kinds(targets):
@@ -59,6 +60,8 @@ def select(files, manual=None):
     full = DISTROS.copy()
     uefi = False
     for name in files:
+        if name in CHECK_ONLY_FILES:
+            continue
         if name in FULL_FILES:
             return full
         if name in UEFI_FILES or name.startswith(UEFI_PREFIXES):

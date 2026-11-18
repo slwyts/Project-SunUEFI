@@ -2,8 +2,8 @@
 """Run explicit offline checks; never prepares firmware or contacts a device.
 
 The portable group runs on a source-only clone with Python's standard library.
-python-all discovers tests/unit and needs its documented
-local prerequisites. Native shell/C checks remain separate, explicit commands.
+The ci group adds public native checks for which CI prepares dependencies.
+python-all discovers tests/unit and needs its documented local prerequisites.
 """
 import argparse
 import os
@@ -33,21 +33,52 @@ PORTABLE = (
     'tests/unit/test_release_rootfs.py',
     'tests/unit/test_install_piano.py',
     'tests/unit/test_assemble_rootfs.py',
-    'tests/unit/test_bsp_package.py',
+    'tests/unit/test_shared_products.py',
+    'tests/unit/test_ci_container.py',
+)
+CI_UNIT = (
+    'test_boot_options.py',
+    'test_product_core.py',
+    'test_late_handoff.py',
+    'test_usb_ram_boot_controller.py',
+    'test_gt9764.py',
+    'test_piano_camera.py',
+    'test_camera.py',
+    'test_bsp_package.py',
+)
+CI_NATIVE = (
+    'test_dma_foundation.sh',
+    'test_fastboot_boot.sh',
+    'test_fastboot_launch.sh',
+    'test_owned_smmu_diagnostic.sh',
+    'test_owned_smmu_peer.sh',
+    'test_uefi_setup.sh',
+    'test_ufs_firmware.sh',
+    'test_ufs_reset_shutdown.sh',
+    'test_usb_debug.sh',
+    'test_usb_fastboot.sh',
+    'test_usb_ufs_fetch_app.sh',
 )
 
 
 def checks(root, group):
-    if group == 'portable':
-        return [root / name for name in PORTABLE]
-    return sorted((root / 'tests/unit').glob('test_*.py'))
+    unit = root / 'tests/unit'
+    if group == 'python-all':
+        return sorted(unit.glob('test_*.py'))
+    portable = [root / name for name in PORTABLE]
+    if group == 'ci':
+        return [*portable, *(unit / name for name in CI_UNIT),
+                *(root / 'tests/native' / name for name in CI_NATIVE)]
+    return portable
 
 
 def run_check(path, timeout):
     # Discover only this file. A subprocess isolates module names/import paths
     # between individual unit files and their temporary fixtures.
-    command = [sys.executable, '-m', 'unittest', 'discover',
-               '-s', str(path.parent), '-p', path.name, '-v']
+    native = path.suffix == '.sh'
+    command = (['bash', str(path)] if native else
+               [sys.executable, '-m', 'unittest', 'discover',
+                '-s', str(path.parent), '-p', path.name, '-v'])
     # Core sources are grouped by subsystem but include each other by bare name.
     # The generated firmware module is flat, so tests get the same flat view.
     search = os.pathsep.join(str(path) for path in (ROOT / 'uefi/core', *core_include_dirs(ROOT)))
@@ -62,6 +93,12 @@ def run_check(path, timeout):
     except subprocess.TimeoutExpired:
         return 'FAILED', 0, 0, f'Exceeded {timeout}s timeout'
     output = result.stdout
+    if native:
+        if result.returncode:
+            return 'FAILED', 1, 0, output
+        if re.search(r'^Skipped:', output, re.MULTILINE):
+            return 'SKIPPED', 1, 1, output
+        return 'PASSED', 1, 0, output
     count = re.search(r'^Ran (\d+) tests? in ', output, re.MULTILINE)
     skipped = re.search(r'\bskipped=(\d+)', output)
     total = int(count.group(1)) if count else 0
@@ -73,7 +110,7 @@ def run_check(path, timeout):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--group', choices=('portable', 'python-all'), default='portable')
+    parser.add_argument('--group', choices=('portable', 'ci', 'python-all'), default='portable')
     parser.add_argument('--list', action='store_true', help='List files without running tests')
     parser.add_argument('--pattern', action='append', help='Select test filenames within the group; may be repeated')
     parser.add_argument('--timeout', type=int, default=120, help='Per-file timeout in seconds')
@@ -88,7 +125,7 @@ def main(argv=None):
     if args.list:
         print('\n'.join(str(path.relative_to(ROOT)) for path in paths))
         return 0
-    print(f'Group: {args.group}; {len(paths)} Python files. Not hardware validation.', flush=True)
+    print(f'Group: {args.group}; {len(paths)} test files. Not hardware validation.', flush=True)
     failed = tests = skips = 0
     for path in paths:
         label = str(path.relative_to(ROOT))
@@ -99,15 +136,14 @@ def main(argv=None):
         status, total, skipped, output = run_check(path, args.timeout)
         tests += total
         skips += skipped
-        # Portable is a promised self-contained set; missing coverage is a CI
-        # failure. python-all reports legitimate optional local-input skips.
-        bad = status == 'FAILED' or (args.group == 'portable' and skipped > 0)
+        # A skip in the portable or CI groups means promised coverage is
+        # missing. python-all also reports optional local-input tests.
+        bad = status == 'FAILED' or (args.group != 'python-all' and skipped > 0)
         failed += int(bad)
         print(f'{status} {label}: {total} tests, {skipped} skipped', flush=True)
         if bad or skipped:
             print(output, end='' if output.endswith('\n') else '\n', flush=True)
-    print(f'Result: {tests} tests, {skips} skipped, {failed} failing files. '
-          'Native shell/C suites are not included.', flush=True)
+    print(f'Result: {tests} tests, {skips} skipped, {failed} failing files.', flush=True)
     return 1 if failed else 0
 
 

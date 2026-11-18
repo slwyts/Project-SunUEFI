@@ -39,7 +39,7 @@ class HostChecksTests(unittest.TestCase):
 
     def test_portable_skips_fail_but_optional_group_reports_them(self):
         result = ('PASSED_WITH_SKIPS', 2, 1, 'one optional check skipped\n')
-        for group, expected in (('portable', 1), ('python-all', 0)):
+        for group, expected in (('portable', 1), ('ci', 1), ('python-all', 0)):
             code, output, _ = self.invoke(group, result)
             self.assertEqual(code, expected)
             self.assertIn('1 skipped', output)
@@ -67,6 +67,25 @@ class HostChecksTests(unittest.TestCase):
         response = subprocess.CompletedProcess([], 0, stdout='No tests were run\n')
         with patch.object(RUNNER.subprocess, 'run', return_value=response):
             self.assertEqual(RUNNER.run_check(Path('/tmp/test_fixture.py'), 1)[0], 'FAILED')
+
+    def test_ci_runs_python_and_shell_checks_without_duplicates(self):
+        files = RUNNER.checks(ROOT, 'ci')
+        self.assertEqual(len(files), len(set(files)))
+        for name in ('tests/unit/test_boot_options.py', 'tests/unit/test_camera.py',
+                     'tests/native/test_fastboot_launch.sh'):
+            self.assertIn(ROOT / name, files)
+        self.assertNotIn(ROOT / 'tests/native/test_ufs_bounded_fs.sh', files)
+
+    def test_native_script_failures_and_skips_are_reported(self):
+        path = Path('/tmp/test_fixture.sh')
+        for code, stdout, expected in ((0, 'OK\n', 'PASSED'),
+                                       (1, 'failure\n', 'FAILED'),
+                                       (0, 'Skipped: input missing\n', 'SKIPPED')):
+            with self.subTest(expected=expected), patch.object(
+                    RUNNER.subprocess, 'run',
+                    return_value=subprocess.CompletedProcess([], code, stdout=stdout)) as run:
+                self.assertEqual(RUNNER.run_check(path, 1)[0], expected)
+                self.assertEqual(run.call_args.args[0], ['bash', str(path)])
 
 
 if __name__ == '__main__':

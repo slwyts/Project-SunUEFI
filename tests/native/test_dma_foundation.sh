@@ -18,4 +18,3 @@ for sun_dma_test in dma smmu_snapshot io_pgtable owned_smmu ufs_dma_layout ufs_r
     "tests/native/test_${sun_dma_test}.c" -Wl,--gc-sections -o "build/test-${sun_dma_test}-asan"
   "build/test-${sun_dma_test}-asan"
 done
-.venv/bin/python tests/unit/test_dma_log.py

@@ -52,6 +52,13 @@ class CiBuildTargetsTests(unittest.TestCase):
             self.assertEqual(targets.select(targets.changed_files(root, before)), PRODUCTS)
             self.assertEqual(targets.select(targets.changed_files(root, '0' * 40)), PRODUCTS)
 
+    def test_host_checks_changes_alone_do_not_select_products(self):
+        check_files = ['.github/workflows/host-checks.yml', 'tools/check_host.py',
+                       'tests/unit/test_camera.py', 'tests/native/PianoBootOptionsTest.c']
+        self.assertEqual(targets.select(check_files), [])
+        self.assertEqual(targets.select([*check_files, '.github/workflows/_rootfs.yml']), PRODUCTS)
+        self.assertEqual(targets.select([*check_files, 'tools/package/camera.py']), PRODUCTS)
+
 
 if __name__ == '__main__':
     unittest.main()

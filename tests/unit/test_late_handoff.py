@@ -1,8 +1,9 @@
 import sys
 from pathlib import Path
-import importlib.util,subprocess,tempfile,unittest,re,shutil,sys
+import importlib.util,os,subprocess,tempfile,unittest,re,shutil,sys
 from core_source import core_include_flags
 ROOT=Path(__file__).resolve().parents[2];BASE=ROOT/'upstream/Mu-Silicium/Mu_Basecore'
+TOOLCHAIN=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
 sys.path.insert(0,str(ROOT/'tools'))
 spec=importlib.util.spec_from_file_location('late_prepare',ROOT/'tools/prepare_product_handoff.py');prepare=importlib.util.module_from_spec(spec);spec.loader.exec_module(prepare)
 def function(text,name):
@@ -161,7 +162,7 @@ class LateHandoffTests(unittest.TestCase):
   before={name:(ROOT/name).read_bytes()for name in prepare.PINS}
   inc=BASE/'MdePkg/Include';shared=ROOT/'uefi/components/product-handoff/Mu_Basecore/MdePkg/Include'
   for name in ('PianoLateHandoff.c','PianoDeviceTreeFixup.c','Mu_Basecore/MdePkg/Library/PianoProductExitLib/PianoProductExitLib.c','Mu_Basecore/MdePkg/Library/PianoProductExitLibNull/PianoProductExitLibNull.c'):
-   subprocess.run([str(ROOT/'build/host-tools/usr/bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding',
+   subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc','-ffreestanding',
      '-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-I'+str(inc),'-I'+str(inc/'AArch64'),
       '-I'+str(shared),*core_include_flags(ROOT),'-I'+str(ROOT/'uefi/handoff/early-memory'),
       '-I'+str(ROOT/'uefi/components/board-identity'),
