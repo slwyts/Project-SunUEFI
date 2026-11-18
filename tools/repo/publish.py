@@ -29,7 +29,7 @@ def sha(path, algorithm='sha256'):
 
 def apt_index_hashes(release, algorithm):
     """Read the Packages entries in one Release checksum section."""
-    section = re.search(rf'^{algorithm}:\n((?:[ \t]+[^\n]+\n)+)', release.read_text(), re.M)
+    section = re.search(rf'^{algorithm}:\n((?:[ \t]+[^\n]+(?:\n|$))+)', release.read_text(), re.M)
     if not section:
         raise ValueError(f'APT Release has no {algorithm} section')
     width = hashlib.new(algorithm.lower()).digest_size * 2

@@ -279,6 +279,14 @@ class RepoPublishTests(unittest.TestCase):
                 self.assertEqual(self.store.objects[key], content)
                 self.assertIn((key, True), self.store.writes)
 
+    def test_apt_accepts_last_signed_index_without_a_final_newline(self):
+        release = self.root / 'Release'
+        digest = 'a' * 128
+        indexes = ('main/binary-arm64/Packages', 'main/binary-arm64/Packages.gz')
+        release.write_text('SHA512:\n' + '\n'.join(f' {digest} 17 {name}' for name in indexes))
+        self.assertEqual(repo.apt_index_hashes(release, 'SHA512'),
+                         {name: (17, digest) for name in indexes})
+
     def assert_no_upload_for_untrusted_signer(self, args):
         previous_objects = self.store.objects.copy()
         previous_writes = self.store.writes.copy()
