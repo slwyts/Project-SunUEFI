@@ -22,8 +22,8 @@ KDE_PACKAGES = [
     'task-chinese-s-kde-desktop',
     'fonts-noto', 'poppler-data', 'xdg-desktop-portal-kde',
     'fcitx5', 'fcitx5-chinese-addons',
-    'fcitx5-frontend-gtk3', 'fcitx5-frontend-qt6', 'kde-config-fcitx5',
-    'fcitx5-frontend-qt5', 'maliit-keyboard',
+    'fcitx5-frontend-gtk3', 'fcitx5-frontend-gtk4', 'fcitx5-frontend-qt5',
+    'fcitx5-frontend-qt6', 'kde-config-fcitx5', 'maliit-keyboard',
     'libpam-kwallet5', 'systemd-coredump',
 ]
 GNOME_PATHS = (
@@ -178,10 +178,14 @@ def configure(rootfs, run, input_method='fcitx'):
         raise ValueError('Unsupported input method: ' + input_method)
     input_environment = rootfs / 'etc/environment.d/60-piano-input-method.conf'
     input_environment.parent.mkdir(parents=True, exist_ok=True)
-    input_environment.write_text(
-        (f'GTK_IM_MODULE={input_method}\nQT_IM_MODULE={input_method}\n'
-         if input_method == 'fcitx' else '') +
-        f'XMODIFIERS=@im={input_method}\nSDL_IM_MODULE={input_method}\n')
+    settings = f'XMODIFIERS=@im={input_method}\n'
+    if input_method == 'fcitx':
+        # GTK can otherwise select "simple" on Plasma. Prefer the compositor
+        # on Wayland, with the Fcitx modules for Xwayland and older Qt.
+        settings += 'GTK_IM_MODULE=wayland:fcitx\nQT_IM_MODULES=wayland;fcitx\nQT_IM_MODULE=fcitx\n'
+    else:
+        settings += 'SDL_IM_MODULE=ibus\n'
+    input_environment.write_text(settings)
     # Panel source modes require fitting even when listed as driver modes.
     # KWin otherwise explicitly requests None for every non-generated mode.
     (input_environment.parent / '60-piano-display.conf').write_text(

@@ -70,7 +70,28 @@ ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-
 ''')
         return public
 
-    def test_kde_filters_tuned_packages_with_their_configuration(self):
+    def test_kde_uses_its_native_input_method_with_xwayland_fallback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session = root / 'usr/share/wayland-sessions/plasma.desktop'
+            session.parent.mkdir(parents=True)
+            session.touch()
+            autostart = root / 'etc/xdg/autostart/piano-fcitx5.desktop'
+            autostart.parent.mkdir(parents=True)
+            autostart.touch()
+
+            desktop.configure(root, Mock())
+
+            kwin = (root / 'home/piano/.config/kwinrc').read_text().splitlines()
+            self.assertIn('InputMethod=/usr/share/applications/org.fcitx.Fcitx5.desktop', kwin)
+            self.assertFalse(autostart.exists())
+            settings = (root / 'etc/environment.d/60-piano-input-method.conf').read_text().splitlines()
+            self.assertCountEqual(settings, [
+                'GTK_IM_MODULE=wayland:fcitx', 'QT_IM_MODULES=wayland;fcitx',
+                'QT_IM_MODULE=fcitx', 'XMODIFIERS=@im=fcitx',
+            ])
+
+    def test_kde_selects_its_packages_and_removes_tuned_configuration(self):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
             public = self.public_recipe(folder)
@@ -86,6 +107,7 @@ ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-
             self.assertTrue({'tuned', 'tuned-ppd', 'gnome-shell'}.isdisjoint(selected))
             self.assertIn('powerdevil', selected)
             self.assertIn('pipewire-audio', selected)
+            self.assertIn('fcitx5-frontend-gtk4', selected)
             self.assertFalse((recipe / 'rootfs/overlay' / relative).exists())
             self.assertEqual((public / 'rootfs/packages.txt').read_text().splitlines(), packages)
             self.assertEqual(profile.read_text(), 'upstream configuration\n')
