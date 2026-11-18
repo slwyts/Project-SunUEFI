@@ -54,6 +54,11 @@
 记录实际软件版本、物理操作、设备节点和结果。只出现设备、驱动 probe 成功或
 `v4l2-compliance` 的非开流检查通过，都不能替代上述功能验收。
 
+相机迁移要检查全新安装和旧版升级。全新安装不包含 `piano-camerad`、
+`v4l2loopback` 或项目控制 socket；旧版升级后卸载这些组件，再通过
+发行版的 libcamera 和 PipeWire 用普通应用打开两颗相机。预览、拍照、
+带声音录像、自动和手动控件均应可用，停流重开和睡眠恢复后重复检查。
+
 ## CI 检查
 
 GitHub Actions 的 **Host checks** 在发往 `main` 的 PR 和 `main` 更新时运行
