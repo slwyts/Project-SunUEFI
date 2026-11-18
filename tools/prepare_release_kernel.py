@@ -330,9 +330,10 @@ def prepare(root=ROOT, repository=None, worktree=None, source_manifest=None, tar
     series, patches, series_hash = load_series(root, target)
     policy = TARGETS[target]
     paths = update_patches(root, policy)
-    # Source snapshots follow their content, while one generated record selects
-    # the current release. Updating a pin never resets an older checkout.
-    default_name = policy.get('worktree_name', target) + '-' + policy['target_tree'][:12]
+    # Folding or reordering patches can leave the final tree unchanged.
+    # Keep each series in its own checkout so exact provenance still matches.
+    default_name = (policy.get('worktree_name', target) + '-' +
+                    policy['target_tree'][:12] + '-' + series_hash[:12])
     work = Path(worktree or root / 'build/kernel-worktrees' / default_name).resolve()
     marker = Path(source_manifest or root / 'build' / policy.get('manifest_directory', 'release-kernel') / 'source-manifest.json').resolve()
     if not work.is_relative_to(root / 'build/kernel-worktrees'):

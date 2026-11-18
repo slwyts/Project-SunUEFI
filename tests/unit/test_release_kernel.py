@@ -93,7 +93,6 @@ class ReleaseKernelTests(unittest.TestCase):
             "original_target_commit": self.original_target_commit,
             "source_url": SOURCE_URL,
         }
-        self.worktree = self.root / "build/kernel-worktrees" / ("fixture-" + self.target_tree[:12])
         self.source_manifest = self.root / "build/release-kernel/source-manifest.json"
         self.initial_worktrees = self.git("worktree", "list", "--porcelain")
         self.initial_head = self.git("rev-parse", "HEAD")
@@ -113,6 +112,12 @@ class ReleaseKernelTests(unittest.TestCase):
     @staticmethod
     def sha256(path):
         return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    @property
+    def worktree(self):
+        series_hash = self.sha256(self.patch_directory / "series.json")
+        return (self.root / "build/kernel-worktrees" /
+                f"fixture-{self.target['target_tree'][:12]}-{series_hash[:12]}")
 
     def write_manifest(self):
         (self.patch_directory / "series.json").write_text(
@@ -197,7 +202,6 @@ class ReleaseKernelTests(unittest.TestCase):
             self.target.update(target_tree=tree, stable_merged_tree=tree,
                                conflict_resolution={'source': 'config.txt', 'file': 'patches/linux/resolve-config.patch',
                                                     'sha256': self.sha256(resolution)})
-        self.worktree = self.root / "build/kernel-worktrees" / ("fixture-" + self.target["target_tree"][:12])
         return stable
 
     def test_stable_merge_keeps_real_parentage_and_local_patch_content(self):
@@ -292,6 +296,29 @@ class ReleaseKernelTests(unittest.TestCase):
         self.assertEqual(self.git("rev-parse", "HEAD", directory=self.worktree), head)
         self.assertEqual(self.git("rev-list", "--count", f"{self.base_commit}..HEAD", directory=self.worktree), "2")
 
+    def test_folded_series_with_same_tree_gets_its_own_worktree(self):
+        before = self.prepare()
+        original = Path(before['worktree'])
+        folded = self.git('commit-tree', self.target_tree, '-p', self.base_commit,
+                          '-m', 'Fixture: provide the final configuration in one patch')
+        file = '0001-fixture-folded.patch'
+        path = self.patch_directory / file
+        path.write_bytes(self.git_bytes('format-patch', '--stdout', '-1', folded))
+        self.manifest['patches'] = [{
+            'file': file, 'sha256': self.sha256(path), 'original_commit': folded,
+            'original_parent': self.base_commit, 'tree': self.target_tree,
+            'committer_date': self.git('show', '-s', '--format=%cI', folded),
+        }]
+        self.manifest['original_target_commit'] = self.target['original_target_commit'] = folded
+        self.write_manifest()
+        after = self.prepare(refresh=True)
+        self.assertEqual(after['actual_tree'], before['actual_tree'])
+        self.assertNotEqual(after['actual_commit'], before['actual_commit'])
+        self.assertEqual(Path(after['worktree']), self.worktree)
+        self.assertNotEqual(self.worktree, original)
+        self.assertEqual(self.git('rev-parse', 'HEAD', directory=original), before['actual_commit'])
+        self.assertEqual(self.prepare(), after)
+
     def test_explicit_output_paths_are_used(self):
         worktree = self.root / "build/kernel-worktrees/chosen-kernel"
         source_manifest = self.root / "build/chosen-metadata/kernel-source.json"
@@ -369,7 +396,6 @@ class ReleaseKernelTests(unittest.TestCase):
         self.write_manifest()
         policy = {'base_commit': public, 'upstream_base_commit': ancestor,
                   'target_tree': local_tree, 'original_target_commit': local, 'source_url': url}
-        self.worktree = self.root / 'build/kernel-worktrees' / ('fixture-' + local_tree[:12])
         cold = self.root / 'cold-source.git'
         subprocess.run(['git', 'clone', '--quiet', '--bare', '--depth=1', '--branch=public', url, str(cold)],
                        check=True, env=self.environment)
@@ -395,7 +421,7 @@ class ReleaseKernelTests(unittest.TestCase):
         self.assertEqual(result['actual_tree'], local_tree)
         self.assertEqual(result['status'], 'SOURCE_PREPARED_NOT_BUILT')
         self.git('merge-base', '--is-ancestor', ancestor, result['actual_commit'], directory=cold)
-        self.assertEqual((self.worktree / 'local.txt').read_text(), 'local adapter\n')
+        self.assertEqual((Path(result['worktree']) / 'local.txt').read_text(), 'local adapter\n')
 
     def test_patch_tamper_is_rejected_before_worktree_creation(self):
         patch_path = self.patch_directory / self.manifest["patches"][0]["file"]
