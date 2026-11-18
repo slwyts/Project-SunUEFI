@@ -70,6 +70,7 @@ Linux 内核补丁按内核版本分目录维护在 `patches/linux/`，通过 `p
 | 指纹传输 | 自包含 Linux TEE 对象调用 | 删除 MinkIPC／quic-teec 的链接依赖与适配补丁；UIO 及本地 libfprint 后端仍有消费者，限制见[指纹实现](hardware/led-ir-fingerprint.md#侧指纹) |
 | 相机和旧笔解码 | 相机标准替代尚未形成；新内核不调用用户态笔解码 | 不删除仍承担视频、3A、固件初始化或离线对照的实现来换取更小 diff；删除条件以对应系列和[功能对照](hardware/camera-controls.md#现有服务与标准替代)为准 |
 
-运行 `./build.sh check --pattern test_check_patch_series.py` 检查这些规则，Build products 在选择构建目标前运行同一检查。检查按解析后的文件路径合并共享引用，拒绝同一系列重复应用补丁、摘要漂移、矩阵外目标、已登记包的无目标版本、未入系列的补丁和缺少的上游状态。不同文件以 SHA256 和 Git patch-id 检查重复；没有 `diff --git` 头的普通 unified diff 也会参与比较。
-
-旧包的元数据按改动逐步补齐。CI 传入 push 前的提交 `SUNUEFI_PATCH_BASE`，本次新增或修改的补丁与系列必须补齐其包的目标和来源，不能删除已有的 `targets` 逃避检查。未触及的旧包仍校验顺序、路径、摘要和重复变更，输出中显示元数据缺口数。要在本地检查一个提交范围，运行 `SUNUEFI_PATCH_BASE=$(git rev-parse main) ./build.sh check --pattern test_check_patch_series.py`；要要求所有保留补丁完整登记，使用 `SUNUEFI_PATCH_REQUIRE_ALL=1 ./build.sh check --pattern test_check_patch_series.py`。检查不联网，不自动宣称某个修复已上游，也不自动删除补丁。
+运行 `./build.sh check --pattern test_check_patch_series.py` 检查这些规则，Build products 在选择构建目标前运行同一检查。
+检查覆盖当前工作区的全部系列，不依赖 Git 历史或网络。每个系列都要登记有效的产品目标，每份补丁都要登记来源和删除条件，补丁文件必须被系列引用。
+检查按实际文件路径合并共享引用，同时拒绝重复应用、摘要不符和相互冲突的来源记录。不同文件以 SHA256 和 Git patch-id 检查重复；没有 `diff --git` 头的普通 unified diff 也会参与比较。
+检查不判定某个修复是否已合入上游，也不自动删除补丁。

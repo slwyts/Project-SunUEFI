@@ -67,4 +67,4 @@ GitHub Actions 的 **Host checks** 在发往 `main` 的 PR 和 `main` 更新时�
 这两组测试都不使用发布密钥，有测试跳过也会阻止构建。两个工作流都不连接物理设备。
 工作流启动后，构建选择器检查改名的新旧路径，文件移出产品目录也按移除构建输入处理。
 
-选择目标前会运行补丁系列检查；它检查共享引用、摘要、重复变更，以及已登记和本次修改系列的产品目标、上游状态与删除条件。单独运行 `./build.sh check --pattern test_check_patch_series.py`，规则见[补丁管理](patches.md#软件包补丁与产品目标)。
+选择目标前会运行补丁系列检查；它核对全部系列的产品目标、补丁来源、删除条件、文件摘要和重复引用，不需要完整 Git 历史。单独运行 `./build.sh check --pattern test_check_patch_series.py`，规则见[补丁管理](patches.md#软件包补丁与产品目标)。

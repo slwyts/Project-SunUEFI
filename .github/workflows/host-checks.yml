@@ -19,11 +19,9 @@ jobs:
     timeout-minutes: 15
     env:
       SUNUEFI_TOOLCHAIN_ROOT: /usr
-      SUNUEFI_PATCH_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          fetch-depth: 0
           persist-credentials: false
       - name: Install native test dependencies
         run: |
