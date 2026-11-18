@@ -188,6 +188,53 @@ class BspPackageTests(unittest.TestCase):
         self.assertNotIn('systemctl', guard)
         self.assertNotIn('Replaces:', (control / 'control').read_text())
 
+    @unittest.skipUnless(shutil.which('dpkg-deb'), 'dpkg-deb unavailable; no fake deb test')
+    def test_real_touch_deb_contains_verified_firmware_only(self):
+        out = self.base / 'deb'
+        target = self.base / 'target'
+        target.mkdir()
+        source = bsp.TOUCH_MANIFEST.parent
+        args = self.args('package', '--format', 'deb', '--touch-firmware', str(source),
+                         '--output', str(out))
+        with self.assertRaisesRegex(ValueError, 'Specify --against'):
+            bsp.build(args)
+        args.against = target
+        self.assertFalse(out.exists())
+        report = bsp.build(args)
+        self.assertFalse(report['public_distribution'])
+        artifact = out / next(iter(report['files']))
+        self.assertEqual(artifact.name, 'piano-firmware-touch_0.1.0_all.deb')
+        self.assertEqual(report['depends'], [])
+        with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(
+                ['dpkg-deb', '--fsys-tarfile', artifact]))) as archive:
+            files = {member.name for member in archive if member.isfile()}
+            self.assertEqual(files, {
+                './usr/lib/firmware/novatek/novatek_nt36532_piano_fw_boe.bin',
+                './usr/lib/firmware/novatek/novatek_nt36532_piano_fw_csot.bin',
+                './usr/share/doc/piano-firmware-touch/bsp-manifest.json',
+                './usr/share/doc/piano-firmware-touch/copyright',
+            })
+            for name, record in report['payload_files'].items():
+                installed = archive.extractfile('./' + name).read()
+                self.assertEqual(hashlib.sha256(installed).hexdigest(), record['sha256'])
+            installed_report = archive.extractfile(
+                './usr/share/doc/piano-firmware-touch/bsp-manifest.json').read().decode()
+            self.assertNotIn(str(source), installed_report)
+
+    def test_local_touch_firmware_rejects_tampering_and_publication_generation(self):
+        source = self.base / 'source'
+        shutil.copytree(bsp.TOUCH_MANIFEST.parent, source)
+        args = self.args('stage', '--touch-firmware', str(source), '--output', str(self.base / 'stage'))
+        with patch.dict(os.environ, {bsp.overlay_release.ENVIRONMENT: '10.1'}):
+            with self.assertRaisesRegex(ValueError, 'cannot be built as a publication generation'):
+                bsp.build(args)
+        panel = source / 'novatek_nt36532_piano_fw_boe.bin'
+        raw = panel.read_bytes()
+        panel.write_bytes(bytes([raw[0] ^ 1]) + raw[1:])
+        with self.assertRaisesRegex(ValueError, 'Touch firmware checksum mismatch'):
+            bsp.build(args)
+        self.assertFalse(args.output.exists())
+
 
 if __name__ == '__main__':
     unittest.main()

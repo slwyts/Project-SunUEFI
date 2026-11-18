@@ -39,3 +39,23 @@ Debian 默认 sid，Ubuntu 默认 noble，Arch Linux ARM 默认 rolling；Deepin
 `/etc/piano/pen-radio.json`，新镜像的笔服务优先读取它。
 
 `layers.json` 记录 native runtime 的既有 producer、固件来源及 kernel 版本约束；不读取个人 build 输出。内核 GPL、源文件 BSD 等许可继续按各组件保留，固件另按原分发条款。Mesa 使用 `config/mesa.json` 固定的官方 27 开发源码，以各发行版原生配方构建，不复制 Debian 二进制到其他发行版。830v1 芯片 ID 和 DirectX-Headers 修正已在官方源码中，无需回移植；SteamOS renderonly 的显示缓冲高度修正尚未合入，单独保留。
+
+## 本地触控固件包
+
+`piano-firmware-touch` 只包含 Xiaomi Pad 8 Pro 的 BOE、CSOT 两份触控固件。
+从与[固件清单](../../vendor/firmware/piano-touch/manifest.json)所列版本一致的原厂
+ROM 提取 `odm/firmware` 中的这两个文件，再指定该目录和要安装到的系统根目录：
+
+```sh
+./build.sh bsp package --touch-firmware /absolute/odm/firmware \
+  --against /absolute/target-root --target debian --format deb --output build/touch-deb
+./build.sh bsp package --touch-firmware /absolute/odm/firmware \
+  --against /absolute/target-root --target arch --format pacman --output build/touch-pacman
+```
+
+SteamOS 使用同一份 `any` 格式的 pacman 包。构建只读检查指定的目标根目录，
+包括压缩版固件和 Valve 的包数据库。旧镜像若有未登记的同名文件，先移到
+备份目录再构建；有其他包拥有时保留发行版文件。构建后若目标系统已更新，
+先用 `./build.sh bsp inspect --touch-firmware <提取目录> --against <目标根>`
+重新核对，再运行 `apt install ./<包名>.deb` 或 `pacman -U ./<包名>.pkg.tar.zst`。
+没有找到这两份原厂固件的公开再分发许可，因此必须显式提供本地输入，包只供本地安装。

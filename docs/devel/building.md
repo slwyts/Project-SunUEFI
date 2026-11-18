@@ -202,7 +202,7 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 | --- | --- | --- |
 | Linux 内核与模块 | Debian 的 `bindeb-pkg` 和 Arch 的 `pacman-pkg` 原生包 | 随包安装并维护匹配的模块，由元包选择最新版本 |
 | 设备树 | 组合板级 DTB、overlay 和绑定转换，按内核版本打包 | 生成启动文件时选取同版文件，逐步收敛到内核源码中的板级设备树 |
-| Linux 设备固件 | `tools/stage_piano_firmware.py` 校验后复制到 `/usr/lib/firmware` | 原生固件包，补充发行版缺少的文件，避免与 `linux-firmware` 重复拥有同一路径 |
+| Linux 设备固件 | 产品构建校验后复制到 `/usr/lib/firmware`；两份触控固件可单独[构建本地软件包](../../linux/bsp/README.md#本地触控固件包) | 发行版提供通用固件，设备包只补缺少且有分发依据的文件 |
 | ALSA UCM、udev、笔校准及设备配置 | 四个产品安装同一份 `piano-device-config`；AudioReach topology 另由运行组件安装 | 继续将 topology 和剩余硬件运行文件按归属打包 |
 | Mesa、FFmpeg | 已有 Debian 和 pacman 原生包 | 保留目标发行版完整配方、功能和 ABI，按软件源正常更新 |
 | 传感器 | Debian 提供 FastRPC、libssc、iio-sensor-proxy 和 Piano 配置的六个运行包；Arch 部分集成文件另行复制 | 原生包包含完整集成文件，运行时继续提供标准 SensorProxy 接口 |
@@ -214,6 +214,9 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 Linux 设备固件包括 ADSP、CDSP、Goodix 签名程序及模型、ath12k、蓝牙、GPU、
 VPU、内屏、键盘和触屏文件，来源由 `config/release.json` 和组件清单记录。
 原厂固件的许可与再分发条件需逐项核对，不能由本项目源码许可覆盖。
+通用 Adreno 固件由 Debian 的 `firmware-qcom-soc` 和 Arch Linux ARM、Valve
+SteamOS 的 `linux-firmware-qcom` 提供。原厂 AQE、SQE 与这些公开版本不是同一份
+文件，不宜只按文件名替换；板级 ZAP 也不同于 Qualcomm 参考板的签名版本。
 SunUEFI 固件和 Android 引导助手使用另一条更新链；安装 Linux 内核或硬件包
 不应顺带覆盖 Android BOOT。
 
