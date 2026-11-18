@@ -22,6 +22,7 @@ on:
       - 'linux/**'
       - 'tools/**'
       - '!tools/check_host.py'
+      - '!tools/build/check_patch_series.py'
       - 'upstream/**'
       - 'android/**'
       - 'docs/user/install-from-artifact.md'

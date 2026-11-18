@@ -69,7 +69,8 @@ class SharedProductsTests(unittest.TestCase):
 
     def test_firmware_key_ignores_host_checks_and_rootfs_assembly_but_binds_firmware_tools(self):
         self.git('init', '-q')
-        not_inputs = ('tools/check_host.py', 'tools/package/camera.py', 'tools/build_release_rootfs.py',
+        not_inputs = ('tools/check_host.py', 'tools/build/check_patch_series.py',
+                      'tools/package/camera.py', 'tools/build_release_rootfs.py',
                       'tools/build_nyarch_rootfs.py', 'tools/build_steamos_rootfs.py')
         inputs = ('tools/build_product.sh', 'tools/build_android_product_module.py',
                   'tools/prepare_nv_runtime_guard.py')

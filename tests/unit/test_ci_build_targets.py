@@ -24,6 +24,7 @@ class CiBuildTargetsTests(unittest.TestCase):
         self.assertEqual(targets.overlay_targets(['linux']), [])
 
     def test_domains_and_shared_inputs(self):
+        self.assertEqual(targets.select(['tools/build/check_patch_series.py']), [])
         self.assertEqual(targets.select(['uefi/core/product/PianoProductCore.c']), PRODUCTS)
         self.assertEqual(targets.select(['linux/dts/piano-audio-dmic-clock.dtso']), PRODUCTS)
         self.assertEqual(targets.select(['config/release.json']), PRODUCTS)

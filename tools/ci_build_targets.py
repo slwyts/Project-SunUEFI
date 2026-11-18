@@ -31,7 +31,8 @@ UEFI_PREFIXES = ('android/', 'uefi/', 'vendor/piano/', 'patches/firmware/',
                  'tools/prepare_product_')
 DISTROS = ['debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos']
 TARGETS = ('uefi', 'linux', *DISTROS)
-CHECK_ONLY_FILES = {'.github/workflows/host-checks.yml', 'tools/check_host.py'}
+CHECK_ONLY_FILES = {'.github/workflows/host-checks.yml', 'tools/check_host.py',
+                    'tools/build/check_patch_series.py'}
 
 
 def shared_kinds(targets):
