@@ -1,0 +1,32 @@
+From f4225d4c745df95317ec86295c8deae557f2222c Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@tuta.io>
+Date: Wed, 18 Nov 2026 18:49:00 +0800
+Subject: [PATCH] media: i2c: s5kjn1: Reject mode changes while streaming
+
+An active format request can select a different mode while streaming.
+The driver changes the reported geometry and timing controls but the
+sensor continues sending frames according to the old mode registers.
+
+Return -EBUSY for active format requests that change the streaming mode.
+Still allow TRY requests and requests for the current mode.
+
+Fixes: e38fd0933c75 ("media: i2c: add Samsung S5KJN1 image sensor device driver")
+Signed-off-by: slwyts <slwyts@tuta.io>
+---
+ drivers/media/i2c/s5kjn1.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/media/i2c/s5kjn1.c b/drivers/media/i2c/s5kjn1.c
+index a4255fbd9..4fb5fc646 100644
+--- a/drivers/media/i2c/s5kjn1.c
++++ b/drivers/media/i2c/s5kjn1.c
+@@ -1038,6 +1038,9 @@ static int s5kjn1_set_pad_format(struct v4l2_subdev *sd,
+ 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY || s5kjn1->mode == mode)
+ 		goto set_format;
+ 
++	if (v4l2_subdev_is_streaming(sd))
++		return -EBUSY;
++
+ 	/* Update limits and set FPS and exposure to default values */
+ 	hblank = mode->hts - mode->width;
+ 	__v4l2_ctrl_modify_range(s5kjn1->hblank, hblank, hblank, 1, hblank);

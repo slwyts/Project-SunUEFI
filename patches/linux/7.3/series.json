@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "4ddc50e6f1a715f32fa4fff82ff3e052b4005683",
-  "original_target_commit": "f43838411eec503caf4929140fdcae4d9a7729f8",
+  "target_tree": "7724c30874c4eedf2dab2da4917979a34cbd6ad1",
+  "original_target_commit": "36f10d3611534f361a181a88ca4118597ec032d5",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1706,6 +1706,32 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "Replace with accepted Piano connector protection that monitors both thermistors, isolates USB sink and source power on factory trips or sensor failure, and requires cooling plus a confirmed detach before clearing the thermal latch. Verify GPIO failure, reconnect, suspend and resume."
+      }
+    },
+    {
+      "file": "0133-media-s5kjn1-guard-active-mode.patch",
+      "sha256": "39829cd6b27e392b2896684aa892e2e8291d1b16c9a15675747cf987fb43f2e0",
+      "original_commit": "f4225d4c745df95317ec86295c8deae557f2222c",
+      "original_parent": "f43838411eec503caf4929140fdcae4d9a7729f8",
+      "committer_date": "2026-11-18T18:49:00+08:00",
+      "tree": "f6dd5292bd7d03961c7148dd1e88823100c70789",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected upstream S5KJN1 driver rejects active mode changes during streaming without rejecting TRY or requests for the current mode."
+      }
+    },
+    {
+      "file": "0134-media-s5kjn1-program-mode-before-controls.patch",
+      "sha256": "7f89b000ece0fa6628d52723e9c80ffb8266d9b8dd0cc471c54eed6036ec9819",
+      "original_commit": "36f10d3611534f361a181a88ca4118597ec032d5",
+      "original_parent": "f4225d4c745df95317ec86295c8deae557f2222c",
+      "committer_date": "2026-11-18T18:49:00+08:00",
+      "tree": "7724c30874c4eedf2dab2da4917979a34cbd6ad1",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected upstream S5KJN1 driver computes blanking and exposure for the selected mode and does not write stale mode registers between stream stop and programming the next mode."
       }
     }
   ],

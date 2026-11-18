@@ -1,0 +1,123 @@
+From 36f10d3611534f361a181a88ca4118597ec032d5 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@tuta.io>
+Date: Wed, 18 Nov 2026 18:49:00 +0800
+Subject: [PATCH] media: i2c: s5kjn1: Apply controls after programming the mode
+
+Runtime PM can leave the sensor powered after it stops streaming.
+Selecting a different mode then calls the VBLANK setter before updating
+the mode. This can write the new blanking plus the old active height
+into the frame-length register.
+
+Update the mode before refreshing the control ranges. Use its default
+exposure when recomputing the exposure range. Keep control updates in
+software until stream start has programmed the selected mode, and
+clear that state again on stop or a failed start.
+
+Fixes: e38fd0933c75 ("media: i2c: add Samsung S5KJN1 image sensor device driver")
+Signed-off-by: slwyts <slwyts@tuta.io>
+---
+ drivers/media/i2c/s5kjn1.c | 30 ++++++++++++++++++++----------
+ 1 file changed, 20 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/media/i2c/s5kjn1.c b/drivers/media/i2c/s5kjn1.c
+index 4fb5fc646..7fa76f12f 100644
+--- a/drivers/media/i2c/s5kjn1.c
++++ b/drivers/media/i2c/s5kjn1.c
+@@ -120,6 +120,7 @@ struct s5kjn1 {
+ 	unsigned int num_modes;
+ 
+ 	const struct s5kjn1_mode *mode;
++	bool mode_programmed;
+ 	bool stream_pm_held;	/* The one reference acquired for privacy capture. */
+ };
+ 
+@@ -758,7 +759,7 @@ static int s5kjn1_set_ctrl(struct v4l2_ctrl *ctrl)
+ 					     ctrl_handler);
+ 	const struct s5kjn1_mode *mode = s5kjn1->mode;
+ 	s64 exposure_max;
+-	int ret;
++	int pm, ret;
+ 
+ 	/* Propagate change of current control to all related controls */
+ 	switch (ctrl->id) {
+@@ -769,14 +770,18 @@ static int s5kjn1_set_ctrl(struct v4l2_ctrl *ctrl)
+ 					 s5kjn1->exposure->minimum,
+ 					 exposure_max,
+ 					 s5kjn1->exposure->step,
+-					 s5kjn1->exposure->default_value);
++					 mode->exposure);
+ 		break;
+ 	}
+ 
+-	/* V4L2 controls are applied, when sensor is powered up for streaming */
+-	if (!pm_runtime_get_if_active(s5kjn1->dev))
++	/* A powered sensor can still contain the previous mode's registers. */
++	if (!s5kjn1->mode_programmed)
+ 		return 0;
+ 
++	pm = pm_runtime_get_if_active(s5kjn1->dev);
++	if (IS_ENABLED(CONFIG_PM) && pm <= 0)
++		return pm ?: -EAGAIN;
++
+ 	switch (ctrl->id) {
+ 	case V4L2_CID_ANALOGUE_GAIN:
+ 		ret = cci_write(s5kjn1->regmap, S5KJN1_REG_AGAIN,
+@@ -805,7 +810,8 @@ static int s5kjn1_set_ctrl(struct v4l2_ctrl *ctrl)
+ 		break;
+ 	}
+ 
+-	pm_runtime_put(s5kjn1->dev);
++	if (pm > 0)
++		pm_runtime_put(s5kjn1->dev);
+ 
+ 	return ret;
+ }
+@@ -958,6 +964,7 @@ static int s5kjn1_enable_streams(struct v4l2_subdev *sd,
+ 	if (ret)
+ 		goto error;
+ 
++	s5kjn1->mode_programmed = true;
+ 	ret = __v4l2_ctrl_handler_setup(s5kjn1->sd.ctrl_handler);
+ 
+ 	cci_write(s5kjn1->regmap, S5KJN1_REG_CTRL_MODE,
+@@ -968,6 +975,7 @@ static int s5kjn1_enable_streams(struct v4l2_subdev *sd,
+ 	return 0;
+ 
+ error:
++	s5kjn1->mode_programmed = false;
+ 	dev_err(s5kjn1->dev, "failed to start streaming: %d\n", ret);
+ 	if (!privacy || xchg(&s5kjn1->stream_pm_held, false))
+ 		pm_runtime_put_autosuspend(s5kjn1->dev);
+@@ -983,6 +991,8 @@ static int s5kjn1_disable_streams(struct v4l2_subdev *sd,
+ 	bool privacy = !IS_ERR_OR_NULL(sd->privacy_led);
+ 	int ret;
+ 
++	s5kjn1->mode_programmed = false;
++
+ 	/* Do not retry CCI or put a reference already consumed by failed stop. */
+ 	if (privacy && !READ_ONCE(s5kjn1->stream_pm_held))
+ 		return READ_ONCE(sd->privacy_led_quiesced) ? 0 : -EAGAIN;
+@@ -1041,6 +1051,11 @@ static int s5kjn1_set_pad_format(struct v4l2_subdev *sd,
+ 	if (v4l2_subdev_is_streaming(sd))
+ 		return -EBUSY;
+ 
++	if (s5kjn1->sd.ctrl_handler->error)
++		return s5kjn1->sd.ctrl_handler->error;
++
++	s5kjn1->mode = mode;
++
+ 	/* Update limits and set FPS and exposure to default values */
+ 	hblank = mode->hts - mode->width;
+ 	__v4l2_ctrl_modify_range(s5kjn1->hblank, hblank, hblank, 1, hblank);
+@@ -1056,11 +1071,6 @@ static int s5kjn1_set_pad_format(struct v4l2_subdev *sd,
+ 				 mode->exposure);
+ 	__v4l2_ctrl_s_ctrl(s5kjn1->exposure, mode->exposure);
+ 
+-	if (s5kjn1->sd.ctrl_handler->error)
+-		return s5kjn1->sd.ctrl_handler->error;
+-
+-	s5kjn1->mode = mode;
+-
+ set_format:
+ 	*v4l2_subdev_state_get_format(state, 0) = fmt->format;
+ 
