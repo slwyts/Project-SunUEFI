@@ -1,0 +1,66 @@
+From: Project SunUEFI contributors
+Subject: [PATCH 1/2] avcodec/v4l2_buffers: bound the V4L2 plane payload
+
+Multiplanar bytesused counts data_offset, but the encoded packet starts
+at that offset. Report only the payload and make the mapped buffer
+reference fit the bytes remaining in the plane. Reject invalid payload
+bounds before exposing the mapping, and return a dequeued buffer on
+packet setup failure while the queue is still active.
+
+--- a/libavcodec/v4l2_buffers.c
++++ b/libavcodec/v4l2_buffers.c
+@@ -285,14 +285,19 @@
+
+ static int v4l2_buf_to_bufref(V4L2Buffer *in, int plane, AVBufferRef **buf)
+ {
++    size_t offset;
+     int ret;
+
+     if (plane >= in->num_planes)
+         return AVERROR(EINVAL);
+
+-    /* even though most encoders return 0 in data_offset encoding vp8 does require this value */
+-    *buf = av_buffer_create((char *)in->plane_info[plane].mm_addr + in->planes[plane].data_offset,
+-                            in->plane_info[plane].length, v4l2_free_buffer, in, 0);
++    offset = V4L2_TYPE_IS_MULTIPLANAR(in->buf.type) ?
++             in->planes[plane].data_offset : 0;
++    if (offset > in->plane_info[plane].length)
++        return AVERROR_INVALIDDATA;
++    *buf = av_buffer_create((uint8_t *)in->plane_info[plane].mm_addr + offset,
++                            in->plane_info[plane].length - offset,
++                            v4l2_free_buffer, in, 0);
+     if (!*buf)
+         return AVERROR(ENOMEM);
+
+@@ -538,14 +543,28 @@
+
+ int ff_v4l2_buffer_buf_to_avpkt(AVPacket *pkt, V4L2Buffer *avbuf)
+ {
++    const V4L2Context *ctx = avbuf->context;
++    const int mplane = V4L2_TYPE_IS_MULTIPLANAR(avbuf->buf.type);
++    const unsigned int offset = mplane ? avbuf->planes[0].data_offset : 0;
++    const unsigned int bytesused = mplane ? avbuf->planes[0].bytesused :
++                                           avbuf->buf.bytesused;
+     int ret;
+
+     av_packet_unref(pkt);
+-    ret = v4l2_buf_to_bufref(avbuf, 0, &pkt->buf);
+-    if (ret)
++    /* Multiplanar bytesused includes data_offset. */
++    if (avbuf->num_planes < 1 || offset > bytesused ||
++        bytesused > avbuf->plane_info[0].length || bytesused - offset > INT_MAX)
++        ret = AVERROR_INVALIDDATA;
++    else
++        ret = v4l2_buf_to_bufref(avbuf, 0, &pkt->buf);
++
++    if (ret < 0) {
++        if (!ctx->done)
++            ff_v4l2_buffer_enqueue(avbuf);
+         return ret;
++    }
+
+-    pkt->size = V4L2_TYPE_IS_MULTIPLANAR(avbuf->buf.type) ? avbuf->buf.m.planes[0].bytesused : avbuf->buf.bytesused;
++    pkt->size = bytesused - offset;
+     pkt->data = pkt->buf->data;
+
+     if (avbuf->buf.flags & V4L2_BUF_FLAG_KEYFRAME)

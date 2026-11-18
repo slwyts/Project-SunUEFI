@@ -1,0 +1,85 @@
+From: Project SunUEFI contributors
+Subject: [PATCH 2/2] avcodec/v4l2_buffers: preserve an encoder capture reserve
+
+An interleaver can retain encoded packets while waiting for another
+stream, including the last audio packets during drain. If every capture
+buffer stays in userspace, the driver cannot finish encoding.
+
+Use zero-copy when there is space to retain one more buffer. Under
+pressure copy only the validated compressed payload and requeue the
+capture buffer after reading its metadata. Do not change the default
+number of buffers or the decoder's capture queue.
+
+--- a/libavcodec/v4l2_buffers.c
++++ b/libavcodec/v4l2_buffers.c
+@@ -544,28 +544,39 @@
+ int ff_v4l2_buffer_buf_to_avpkt(AVPacket *pkt, V4L2Buffer *avbuf)
+ {
+     const V4L2Context *ctx = avbuf->context;
++    V4L2m2mContext *s = buf_to_m2mctx(avbuf);
++    const unsigned int buffers = ctx->num_buffers;
+     const int mplane = V4L2_TYPE_IS_MULTIPLANAR(avbuf->buf.type);
+     const unsigned int offset = mplane ? avbuf->planes[0].data_offset : 0;
+     const unsigned int bytesused = mplane ? avbuf->planes[0].bytesused :
+                                            avbuf->buf.bytesused;
+-    int ret;
++    int copy, size, ret, queue_ret;
+
+     av_packet_unref(pkt);
+     /* Multiplanar bytesused includes data_offset. */
+     if (avbuf->num_planes < 1 || offset > bytesused ||
+-        bytesused > avbuf->plane_info[0].length || bytesused - offset > INT_MAX)
++        bytesused > avbuf->plane_info[0].length || bytesused - offset > INT_MAX) {
+         ret = AVERROR_INVALIDDATA;
+-    else
+-        ret = v4l2_buf_to_bufref(avbuf, 0, &pkt->buf);
+-
+-    if (ret < 0) {
+-        if (!ctx->done)
+-            ff_v4l2_buffer_enqueue(avbuf);
+-        return ret;
++        goto requeue;
+     }
++    size = bytesused - offset;
+
+-    pkt->size = bytesused - offset;
+-    pkt->data = pkt->buf->data;
++    /* Only CAPTURE packets hold encoder buffer references. Keep enough
++     * buffers for the driver to proceed while the muxer retains packets. */
++    copy = !ctx->done && (buffers <= 2 ||
++           atomic_load(&s->refcount) >= buffers - FFMAX(buffers / 8, 1) - 1);
++    if (copy) {
++        ret = av_new_packet(pkt, size);
++        if (ret < 0)
++            goto requeue;
++        memcpy(pkt->data, (uint8_t *)avbuf->plane_info[0].mm_addr + offset, size);
++    } else {
++        ret = v4l2_buf_to_bufref(avbuf, 0, &pkt->buf);
++        if (ret < 0)
++            goto requeue;
++        pkt->size = size;
++        pkt->data = pkt->buf->data;
++    }
+
+     if (avbuf->buf.flags & V4L2_BUF_FLAG_KEYFRAME)
+         pkt->flags |= AV_PKT_FLAG_KEY;
+@@ -577,7 +588,18 @@
+
+     pkt->dts = pkt->pts = v4l2_get_pts(avbuf);
+
+-    return 0;
++    if (!copy)
++        return 0;
++
++requeue:
++    if (!ctx->done) {
++        queue_ret = ff_v4l2_buffer_enqueue(avbuf);
++        if (ret >= 0 && queue_ret < 0) {
++            av_packet_unref(pkt);
++            return queue_ret;
++        }
++    }
++    return ret;
+ }
+
+ int ff_v4l2_buffer_avpkt_to_buf(const AVPacket *pkt, V4L2Buffer *out)

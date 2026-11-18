@@ -2,12 +2,12 @@
   "schema_version": 1,
   "component": "ffmpeg-v4l2m2m",
   "upstream_version": "9.0.2",
-  "local_revision": "sunuefi5",
+  "local_revision": "sunuefi6",
   "targets": ["debian-gnome", "debian-kde", "nyarch-gnome"],
   "upstream": {
     "status": "downstream",
     "url": "https://github.com/FFmpeg/FFmpeg/tree/n9.0.2/libavcodec",
-    "drop_when": "The selected FFmpeg release implements stateful V4L2 initial metadata, LAST/source-change drain, orphaned capture buffers, P010, visible-row NV12 uploads, encoder header/stop handling and explicit H.264 level; verify complete frames across resolution changes and matching H.264 bitstream level on Iris before dropping these fixes."
+    "drop_when": "The selected FFmpeg release implements stateful V4L2 initial metadata, LAST/source-change drain, orphaned capture buffers, P010, visible-row NV12 uploads, encoder header/stop handling, explicit H.264 level, payload bounds and a capture buffer reserve; verify complete frames across resolution changes, matching H.264 bitstream level and a complete encoder drain while recording audio on Iris."
   },
   "source": {
     "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
@@ -49,6 +49,16 @@
     {
       "path": "0007-v4l2m2m-h264-level.patch",
       "sha256": "5938ca6dbaf75d8f512365e953ac92e867214746d4770c693aa582702f73a842",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "0008-v4l2m2m-bound-capture-payload.patch",
+      "sha256": "b07edb42a3e1bacf36cc92a47f979317dcfe392658defbfb0d9f4802b07da5e1",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "0009-v4l2m2m-reserve-capture-buffers.patch",
+      "sha256": "d2653aee9c97e564fdf95068148549b51525ff972a66dcd3927205bc4f055c7e",
       "license": "LGPL-2.1-or-later; retain upstream file notices"
     }
   ],

@@ -214,6 +214,14 @@ WirePlumber 从该库枚举设备后将独立 factory 交给 PipeWire，两个�
 同一修复。Debian、Nyarch 和 SteamOS 共用源码与补丁。正式 Debian 包的前后摄
 带声音录像已检查开始、停止、重新打开和完整解码。
 
+FFmpeg 8.1.1 和 9.0.2 共用[有效码流边界](../../../patches/ffmpeg/9.0.2/0008-v4l2m2m-bound-capture-payload.patch)
+和[编码缓冲保留](../../../patches/ffmpeg/9.0.2/0009-v4l2m2m-reserve-capture-buffers.patch)修复。
+当封装等待另一轨而持有编码包时，FFmpeg 复制压缩码流并立即归还稀缺的
+CAPTURE 缓冲，默认缓冲数不变。平板接真实麦克风录制 8 秒，最小补丁版送入
+Iris 的 433 帧全部写入并解码，音视频时长约 8 秒，未再出现编码缓冲耗尽。
+这不等于稳定有声 4K60：原始帧在 loopback 读取前仍可能被覆盖，FFmpeg
+读到的帧序号会跳过中间帧。加大共享队列也不能保证应用持有的映射不被复用。
+
 完整 SM8750 CAMSS 的 IPP 和 RDI0 使用 CSID980 锁存的物理计数器，通过标准 V4L2 接口报告帧时间。
 
 | 接口 | 时间含义 | 同一帧的编号 |
