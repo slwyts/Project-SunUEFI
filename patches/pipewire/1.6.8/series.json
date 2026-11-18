@@ -36,6 +36,10 @@
     {
       "file": "../1.6.9/0007-v4l2-copy-buffer-pool.patch",
       "sha256": "6824b2f7d5236a6ac6e5ad2bb369a3bf4fe2a70cd1bf9de6449df88af92895d1"
+    },
+    {
+      "file": "../1.6.9/0008-gst-contiguous-plane-stride.patch",
+      "sha256": "05df22b963be91b1ac4c4063368d1ece78be8a26bcb3e439d7b2987a84495645"
     }
   ]
 }

@@ -24,8 +24,9 @@ from build import overlay_release
 from prepare_steamos_rootfs import download
 from desktop import debian_package, package_build
 
+GST_VIDEO_MIN_VERSION = '1.22.0'
 MODULES = ('glib-2.0', 'gobject-2.0', 'gmodule-2.0', 'gio-2.0', 'gio-unix-2.0',
-           'gstreamer-1.0', 'gstreamer-base-1.0', 'gstreamer-video-1.0',
+           'gstreamer-1.0', 'gstreamer-base-1.0',
            'gstreamer-audio-1.0', 'gstreamer-allocators-1.0')
 
 
@@ -138,7 +139,8 @@ def prepare_meson(source, version):
          "cc = meson.get_compiler('c')\nconfiginc = include_directories('.')\n"
         "pipewire_dep = dependency('libpipewire-0.3', version: '==" + version + "')\n"
         "spa_dep = dependency('libspa-0.2')\nmathlib = cc.find_library('m')\n"
-        "gst_dep = [" + ', '.join("dependency('" + name + "')" for name in MODULES) + "]\n"
+        "gst_dep = [" + ', '.join("dependency('" + name + "')" for name in MODULES) + ",\n"
+        f"           dependency('gstreamer-video-1.0', version: '>={GST_VIDEO_MIN_VERSION}')]\n"
         "config = configuration_data()\nconfig.set_quoted('PACKAGE', 'pipewire')\n"
         "config.set_quoted('PACKAGE_VERSION', meson.project_version())\n"
         "config.set('HAVE_GSTREAMER_DEVICE_PROVIDER', true)\n"
@@ -303,7 +305,8 @@ def build_arch(root, output, jobs):
         'arch=(aarch64)\nurl=https://pipewire.org\nlicense=(MIT)\n'
         'depends=(' + ' '.join(shlex.quote(v) for v in (
             'libpipewire=' + version, 'pipewire=' + version, 'pipewire-audio=' + version,
-            'glib2', 'glibc', 'gst-plugins-base-libs', 'gstreamer', 'pipewire-session-manager')) + ')\n'
+            'glib2', 'glibc', 'gst-plugins-base-libs>=' + GST_VIDEO_MIN_VERSION,
+            'gstreamer', 'pipewire-session-manager')) + ')\n'
         'makedepends=(meson pkgconf systemd)\noptions=(!debug !lto)\n'
         'build() {\n  meson setup "$startdir/build" "$startdir/source" --prefix=/usr --libdir=lib --buildtype=release\n'
         f'  meson compile -C "$startdir/build" -j{jobs}\n'

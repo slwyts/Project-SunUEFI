@@ -77,6 +77,16 @@
         "url": "https://github.com/PipeWire/pipewire/tree/master/spa/plugins/v4l2",
         "drop_when": "The selected V4L2 source keeps copied SPA buffers separate from capture indices, honors queued/outstanding and busy buffers, immediately returns copied kernel frames, and advances its driver clock during backpressure. Verify Snapshot audio/video start-stop, retained frames, no duplicate PTS, and ordinary V4L2 cameras before removing this fix."
       }
+    },
+    {
+      "file": "0008-gst-contiguous-plane-stride.patch",
+      "sha256": "05df22b963be91b1ac4c4063368d1ece78be8a26bcb3e439d7b2987a84495645",
+      "upstream": {
+        "status": "merged",
+        "url": "https://github.com/PipeWire/pipewire/commit/95e89f786aad1077dab59f5b1bde572ceab12b7a",
+        "commit": "95e89f786aad1077dab59f5b1bde572ceab12b7a",
+        "drop_when": "The selected PipeWire release derives the stride and offset of contiguous video planes from the chunk stride, as in PipeWire 1.6.10."
+      }
     }
   ]
 }
