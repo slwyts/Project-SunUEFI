@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Build the public runtime helpers with an explicit, recorded host toolchain."""
 import argparse
-import hashlib
 import json
-import os
 from pathlib import Path
 import platform
 import shutil
@@ -11,8 +9,6 @@ import subprocess
 
 import build_piano_runtime_helpers as runtime
 import build_piano_fingerprint
-from desktop import prepare_kernel_llvm
-from prepare_linux_modules import modinfo
 from prepare_release_kernel import release_series
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,10 +35,6 @@ def inputs_current(output):
         record.get('producer', {}).get('sha256') == runtime.sha(Path(__file__))
         and all(pen.get('inputs', {}).get(str(path)) == runtime.sha(path)
                 for path in pen_paths)
-        and record.get('module_toolchain_inputs') == {
-            str(path.relative_to(ROOT)): runtime.sha(path)
-            for path in (Path(prepare_kernel_llvm.__file__), prepare_kernel_llvm.POLICY)
-        }
         and record.get('camera', {}).get('inputs') == runtime.camera_inputs()
         and record.get('fingerprint', {}).get('inputs')
         == build_piano_fingerprint.source_inputs()
@@ -81,14 +73,12 @@ def export_uapi(source, kernel_build, commit, output):
     return expected
 
 
-def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop,
-          firmware_root=None):
+def build(kernel, source, kernel_build, output, cc, sysroot, macros, firmware_root=None):
     record = json.loads((kernel / 'manifest.json').read_text())
     release, commit = record['kernel_release'], record['source_commit']
     identity = runtime.kernel_identity(kernel_build, source, commit, release)
     runtime.repository(ROOT / 'upstream/debian-piano-current', runtime.PUBLIC_COMMIT)
     runtime.repository(macros, runtime.MACROS_COMMIT)
-    runtime.repository(loop, runtime.LOOP_COMMIT)
     if output.exists() or not output.resolve().is_relative_to(ROOT / 'build'):
         raise ValueError('Use a fresh project build output')
     compiler = shutil.which(cc)
@@ -153,48 +143,14 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, loop,
     files['usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'] = {
         'file': str(topology.relative_to(output)), 'bytes': topology.stat().st_size,
         'sha256': runtime.sha(topology), 'mode': 0o644}
-    module_source = output / 'v4l2loopback'
-    module_source.mkdir()
-    for name in subprocess.check_output(['git', '-C', str(loop), 'ls-files'], text=True).splitlines():
-        target = module_source / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(loop / name, target)
-    for patch in runtime.source_patches(runtime.LOOPBACK_PATCH_SERIES):
-        run(['patch', '--batch', '--forward', '--fuzz=0', '-p1',
-             '--directory', module_source, '--input', patch])
-    module_inputs = {
-        str(path.relative_to(ROOT)): runtime.sha(path)
-        for path in (Path(prepare_kernel_llvm.__file__), prepare_kernel_llvm.POLICY)
-    }
-    module_env = prepare_kernel_llvm.environment()
-    module_compiler = shutil.which('clang', path=module_env['PATH'])
-    module_toolchain = {
-        'compiler': module_compiler, 'compiler_sha256': runtime.sha(Path(module_compiler)),
-        'version': subprocess.check_output([module_compiler, '--version'],
-                                           env=module_env, text=True).splitlines()[0],
-    }
-    subprocess.run(['make', '-C', str(kernel_build), 'M=' + str(module_source),
-                    'ARCH=arm64', 'LLVM=1', 'LOCALVERSION=', 'modules'],
-                   env=module_env, check=True)
-    module = module_source / 'v4l2loopback.ko'
-    item = modinfo(module)
-    if not item['vermagic'].startswith(release + ' '):
-        raise ValueError('External module ABI differs from the selected kernel')
-    files['usr/lib/modules/' + release + '/updates/v4l2loopback.ko'] = {
-        'file': str(module.relative_to(output)), 'bytes': module.stat().st_size,
-        'sha256': runtime.sha(module), 'mode': 0o644, 'vermagic': item['vermagic'],
-        'source_commit': runtime.LOOP_COMMIT}
     if runtime.kernel_identity(kernel_build, source, commit, release) != identity:
         raise ValueError('Kernel source/ABI changed during runtime helper build')
-    if any(runtime.sha(ROOT / name) != digest for name, digest in module_inputs.items()):
-        raise ValueError('External module toolchain inputs changed during compilation')
     result = {'status': 'RUNTIME_COMPILED_NOT_DEVICE_TESTED', 'kernel': identity,
         'public_commit': runtime.PUBLIC_COMMIT, 'runtime_files': files, 'pen_core': pen_record, 'camera': camera_record,
         'producer': {'file': 'tools/build_release_helpers.py', 'sha256': runtime.sha(Path(__file__))},
         'fingerprint': fingerprint,
-        'module_toolchain_inputs': module_inputs, 'module_toolchain': module_toolchain,
-        'uapi_sha256': uapi_digest, 'uapi_source_commit': commit, 'macros_commit': runtime.MACROS_COMMIT,
-        'v4l2_commit': runtime.LOOP_COMMIT, 'hardware_verified': False,
+        'uapi_sha256': uapi_digest, 'uapi_source_commit': commit,
+        'macros_commit': runtime.MACROS_COMMIT, 'hardware_verified': False,
         'toolchain': {'compiler': compiler, 'compiler_sha256': runtime.sha(Path(compiler)),
             'version': subprocess.check_output([compiler, '--version'], text=True).splitlines()[0],
             'alsatplg_sha256': runtime.sha(Path(topology_compiler))}}
@@ -211,11 +167,10 @@ def main():
     parser.add_argument('--firmware-root', type=Path,
                         help='Target root containing pen firmware calibration; defaults to --sysroot')
     parser.add_argument('--macros', type=Path, default=ROOT / 'upstream/audioreach-topology')
-    parser.add_argument('--v4l2-source', type=Path, default=ROOT / 'upstream/v4l2loopback')
     args = parser.parse_args()
     result = build(args.kernel.resolve(), args.source.resolve(), args.kernel_build.resolve(),
                    args.output.resolve(), args.cc, args.sysroot.resolve() if args.sysroot else None,
-                   args.macros.resolve(), args.v4l2_source.resolve(),
+                   args.macros.resolve(),
                    firmware_root=args.firmware_root.resolve() if args.firmware_root else None)
     print(json.dumps({'status': result['status'], 'kernel_release': result['kernel']['release']}))
 

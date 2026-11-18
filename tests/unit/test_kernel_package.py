@@ -179,7 +179,7 @@ class KernelPackageTests(unittest.TestCase):
             with patch.object(boot, 'prepare_dtb', return_value=b'device tree fixture'):
                 packages = boot.add_packages(
                     plan, output, {'command_line': 'rdinit=/pianoinit piano.root=LABEL=PIANOROOT ro rw'},
-                    kernel.sha)
+                    kernel.sha, image_modules=(('linux-piano-v4l2loopback-7.3-piano-b1', '0.15.4-1'),))
             self.assertEqual(len(packages), 4)
             for archive in packages:
                 destination = output / archive.stem
@@ -205,6 +205,7 @@ class KernelPackageTests(unittest.TestCase):
             depends = subprocess.check_output(['dpkg-deb', '-f', image_meta, 'Depends'], text=True)
             self.assertIn('linux-image-7.3-piano-b1 (= 7.3+1-1)', depends)
             self.assertIn('linux-piano-dtb-7.3-piano-b1 (= 7.3+2-1)', depends)
+            self.assertIn('linux-piano-v4l2loopback-7.3-piano-b1 (= 0.15.4-1)', depends)
             self.assertIn('piano-boot-config', depends)
 
     @unittest.skipUnless(shutil.which('dpkg-deb'), 'dpkg-deb required')

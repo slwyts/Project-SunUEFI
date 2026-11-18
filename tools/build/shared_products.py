@@ -23,13 +23,14 @@ FIRMWARE_INPUTS = ('build.sh', 'Makefile', '.gitmodules', 'sources.lock.json',
                    'patches/f2fs-tools', 'vendor/piano', 'config/piano-product.json',
                    'config/uefi-ext4.json', 'config/simpleinit.static.uefi.cfg', 'android')
 KERNEL_INPUTS = ('build.sh', 'sources.lock.json', 'config/release.json',
-                'config/kernel-llvm.json', 'patches/linux', 'linux/configs',
+                'config/kernel-llvm.json', 'patches/linux', 'patches/v4l2loopback', 'linux/configs',
                 'tools/prepare_release_kernel.py', 'tools/build/kernel.py',
                 'tools/build_piano_full_kernel.py', 'tools/build_kernel.py',
                 'tools/prepare_linux_modules.py', 'tools/stage_piano_kernel_modules.py',
                 'tools/desktop/prepare_kernel_llvm.py', 'tools/desktop/package_build.py',
                 'tools/package/kernel.py', 'tools/package/kernel-debian.mk',
-                'tools/package/boot.py', 'tools/package_release.py',
+                'tools/package/boot.py', 'tools/package/v4l2loopback.py', 'tools/package_release.py',
+                'tools/build_piano_runtime_helpers.py', 'tools/build/overlay_packages.py',
                 'vendor/piano-linux/board.dtb', 'linux/dts', 'config/keys')
 KERNEL_BUILD_FILES = ('.config', 'Makefile', 'Module.symvers', 'include', 'scripts',
                       'arch/arm64/include/generated')

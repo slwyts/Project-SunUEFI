@@ -373,6 +373,7 @@ def build_packages(plan):
         selected = sorted(output.glob('*.pkg.tar.zst'))
         if len(selected) != 2:
             raise ValueError('pacman-pkg did not produce only the image and headers packages')
+    image_archive, = (path for path in selected if 'headers' not in path.name)
     for path in selected:
         if 'headers' in path.name:
             verify_headers(path, plan['format'], release=plan['kernel_release'],
@@ -381,7 +382,10 @@ def build_packages(plan):
             verify_image(path, plan['format'], plan['kernel_release'], image_digest,
                          manifest['modules'])
     from package.boot import add_packages
-    selected += add_packages(plan, output, manifest, sha)
+    from package.v4l2loopback import build_package as build_camera_module
+    archive, name, version = build_camera_module(plan, image_archive, env)
+    selected.append(archive)
+    selected += add_packages(plan, output, manifest, sha, image_modules=((name, version),))
     if sha(Path(plan['kernel']) / 'manifest.json') != plan['manifest_sha256']:
         raise ValueError('Sealed kernel changed while building packages')
     record = {**plan, 'packages': {path.name: {'sha256': sha(path)} for path in selected}}

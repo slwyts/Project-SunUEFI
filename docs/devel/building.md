@@ -208,7 +208,7 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 | 传感器 | Debian 提供 FastRPC、libssc、iio-sensor-proxy 和 Piano 配置的六个运行包；Arch 部分集成文件另行复制 | 原生包包含完整集成文件，运行时继续提供标准 SensorProxy 接口 |
 | PipeWire 相机插件 | 已有 GStreamer 插件包和 `pipewire-v4l2-source` 包 | 保留明确的 PipeWire ABI 依赖，修复进入上游后撤掉本地替代 |
 | 指纹 | libfprint／fprintd 使用目标发行版包；CLI 和服务配置另行安装 | 正常包拥有全部必要文件，标准认证结果仍取自 libfprint／fprintd |
-| 笔及相机工具、外部模块 | runtime 文件集合直接安装，包含匹配内核的 `v4l2loopback` | 运行组件、诊断工具和内核模块分别打包，标准替代完整可用后删除旧路径 |
+| 笔及相机工具、外部模块 | `v4l2loopback` 随匹配内核使用独立原生包；用户空间工具仍由 runtime 安装 | 将运行组件和诊断工具打包，标准替代完整可用后删除旧路径 |
 | GNOME／KDE／SteamOS 组件 | Mutter、GDM、GSD、libwacom、Gamescope 等已有原生包，默认设置和会话文件仍有 overlay | 通用修复维护一份补丁，设备配置与产品默认值分开，不覆盖用户设置 |
 
 Linux 设备固件包括 ADSP、CDSP、Goodix 签名程序及模型、ath12k、蓝牙、GPU、
@@ -301,6 +301,8 @@ Arch 系运行 `sudo kernel-install add-all`；Debian 的内核文件在 `/boot`
 
 回退必须同时保留旧启动文件、模块和 DTB。Debian 和 Arch 的设备内核都按
 release 使用不同包名，元包升级不会替换旧版本包；从 systemd-boot 菜单选择旧版即可。
+相机 `v4l2loopback` 模块也按 release 并存，由内核元包安装匹配版本并交给
+包管理器更新模块索引。
 Arch 默认不生成可选的 `fallback` initramfs；它包含同一内核的更多模块，
 不能替代保留旧版内核。
 卸载旧版内核会移除该版本的启动项，不删除其他系统的启动项。

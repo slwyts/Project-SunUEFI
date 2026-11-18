@@ -62,7 +62,7 @@ def repository(path, commit=None, tree=None):
 
 
 def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
-         public_source=None, firmware_source=None, macros=None, v4l2_source=None, root=ROOT, resume=False,
+         public_source=None, firmware_source=None, macros=None, root=ROOT, resume=False,
          sensors_dir=None, ffmpeg_dir=None, boot_task_snapshot=False, desktop='gnome', mutter_dir=None,
          packages_only=None, published_packages=None):
     root = Path(root).resolve(); config = json.loads((root / 'config/release.json').read_text())
@@ -119,7 +119,6 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
     public = Path(public_source or root / config['debian']['source']).resolve()
     firmware = Path(firmware_source or root / config['firmware']['components']).resolve()
     macros = Path(macros or root / 'upstream/audioreach-topology').resolve()
-    loop = Path(v4l2_source or root / 'upstream/v4l2loopback').resolve()
     missing = []
     inputs = [('kernel manifest', kernel / 'manifest.json'), ('kernel source', source / 'Makefile'),
               ('public rootfs builder', public / 'scripts/build-rootfs.sh')]
@@ -146,9 +145,8 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
         mutter_packages(mutter)
     if runtime_dir:
         if not (Path(runtime_dir) / 'manifest.json').is_file(): missing.append('matching runtime bundle manifest')
-    elif not packages_only:
-        for name, path in (('AudioReach topology macros', macros / 'audioreach'), ('v4l2loopback source', loop / 'Makefile')):
-            if not path.exists(): missing.append(name)
+    elif not packages_only and not (macros / 'audioreach').exists():
+        missing.append('AudioReach topology macros')
     record = None
     if (kernel / 'manifest.json').is_file():
         record, _ = modules.inspect(kernel)
@@ -182,7 +180,7 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
             'runtime_dir': str(Path(runtime_dir).resolve()) if runtime_dir else None,
             'kernel_build': str(Path(kernel_build or root / 'build/kernels/release').resolve()),
             'public_source': str(public), 'firmware_source': str(firmware), 'config': config, 'missing_inputs': missing,
-            'macros': str(macros), 'v4l2_source': str(loop), 'steps': steps}
+            'macros': str(macros), 'steps': steps}
 
 
 def require_host():
@@ -953,7 +951,7 @@ def execute(record):
             with runtime_build_sysroot(rootfs, out, run) as sysroot:
                 run([sys.executable, ROOT / 'tools/build_release_helpers.py', '--kernel', kernel, '--source', source,
                      '--kernel-build', record['kernel_build'], '--output', bundle, '--sysroot', sysroot,
-                     '--cc', helper_cc, '--macros', record['macros'], '--v4l2-source', record['v4l2_source']])
+                     '--cc', helper_cc, '--macros', record['macros']])
             runtime.stage(bundle, rootfs)
         from build_piano_fingerprint import desktop_service, install_desktop
         if published:
@@ -965,7 +963,8 @@ def execute(record):
         apply_policy(rootfs, out, cfg)
         boot_request = native_boot_request(rootfs, out)
         sanitize(rootfs, out)
-        run(['chroot', rootfs, '/usr/sbin/depmod', '-a', m['kernel_release']])
+        from package.v4l2loopback import verify_installed
+        verify_installed(rootfs, 'debian', m['kernel_release'])
         (rootfs / 'usr/sbin/policy-rc.d').unlink()
         packages = capture(['chroot', rootfs, 'dpkg-query', '-W', '-f=${binary:Package}\t${Version}\t${Architecture}\t${db:Status-Status}\n'])
         (out / 'packages.tsv').write_text(packages + '\n')
@@ -1017,7 +1016,7 @@ def execute(record):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('kernel', 'source', 'output'): parser.add_argument('--' + name, type=Path, required=True)
-    for name in ('sensors-dir', 'ffmpeg-dir', 'mutter-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros', 'v4l2-source'): parser.add_argument('--' + name, type=Path)
+    for name in ('sensors-dir', 'ffmpeg-dir', 'mutter-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros'): parser.add_argument('--' + name, type=Path)
     mode = parser.add_mutually_exclusive_group(required=True); mode.add_argument('--plan', action='store_true'); mode.add_argument('--execute', action='store_true')
     packages = parser.add_mutually_exclusive_group()
     packages.add_argument('--packages-only', type=Path, metavar='DIRECTORY',

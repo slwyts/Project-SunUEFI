@@ -17,8 +17,8 @@ import shutil
 import struct
 import subprocess
 
-from prepare_linux_modules import modinfo
 from desktop import prepare_kernel_llvm
+from package import v4l2loopback
 
 ROOT=Path(__file__).resolve().parents[1]
 PUBLIC_COMMIT='a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45'
@@ -26,7 +26,6 @@ UAPI_COMMIT='352508459733d3e6d349ea5581a8dd2fd8bb4180'
 UAPI_DIGEST='c4c7b7358f4440da8832eea607ff812fb5481181401e869a34cca70bbe103d4c'
 SOURCE_PINS=json.loads((ROOT/'sources.lock.json').read_text())
 MACROS_COMMIT=SOURCE_PINS['audioreach-topology']['commit']
-LOOP_COMMIT=SOURCE_PINS['v4l2loopback']['commit']
 PUBLIC_SOURCES={
  'piano-touch-view':('initramfs/touch-view/piano-touch-view.c','eb1bac5a7bfac3200248ebe39e8d9564bed3d7848b11655ded5d065dc0ef6e12','usr/bin/piano-touch-view'),
  'piano-pd-locator':('initramfs/pd-locator/piano-pd-locator.c','8de9d2840a896b4bd6c90bd4b124479d2f142e9e85420f2022894bb32fc8dde8','usr/sbin/piano-pd-locator')}
@@ -62,7 +61,6 @@ TOUCH_PEN_PATCH=ROOT/'tools/patches/piano-touch-view-pen-owner.patch'
 TOUCH_EPOCH_PATCH=ROOT/'tools/patches/piano-touch-view-epoch-reset.patch'
 TOUCH_LINE_NOISE_PATCH=ROOT/'tools/patches/piano-touch-view-line-noise.patch'
 TOUCH_PALM_PATCH=ROOT/'tools/patches/piano-touch-view-palm-rejection.patch'
-LOOPBACK_PATCH_SERIES=ROOT/'patches/v4l2loopback/0.15.4/series.json'
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -444,11 +442,13 @@ def build_touch_binary(output, cc_flags, uapi, source, pen_record, env=None, lin
     return row
 
 
-def stage(output,destination):
+def stage(output,destination,*,include_camera_module=False):
     if not destination.resolve().is_relative_to(ROOT/'build/distros'):raise ValueError('Stage only into a derived workspace distro')
     manifest=json.loads((output/'manifest.json').read_text());files=manifest['runtime_files'];release=manifest['kernel']['release']
     if not re.fullmatch(r'[a-zA-Z0-9_.+-]{1,128}',release):raise ValueError('Unsafe runtime kernel release')
-    expected={row[2]for row in PUBLIC_SOURCES.values()}|PEN_RUNTIME_PATHS|CAMERA_RUNTIME_PATHS|{'usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin','usr/lib/modules/'+release+'/updates/v4l2loopback.ko'}
+    expected={row[2]for row in PUBLIC_SOURCES.values()}|PEN_RUNTIME_PATHS|CAMERA_RUNTIME_PATHS|{'usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'}
+    if include_camera_module:
+        expected.add(v4l2loopback.module_path(release).as_posix())
     if manifest.get('fingerprint'):
         from build_piano_fingerprint import RUNTIME_PATHS
         expected |= RUNTIME_PATHS
@@ -466,7 +466,8 @@ def stage(output,destination):
         if not p.is_file()or p.is_symlink()or p.stat().st_size!=row['bytes']or sha(p)!=row['sha256']:raise ValueError('Runtime bundle changed: '+name)
     for name,row in files.items():
         target=destination/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(output/row['file'],target);target.chmod(row['mode'])
-    subprocess.run(['depmod','-b',str(destination),'-m','/usr/lib/modules',manifest['kernel']['release']],check=True)
+    if include_camera_module:
+        subprocess.run(['depmod','-b',str(destination),'-m','/usr/lib/modules',release],check=True)
     record={'status':'REAL_RUNTIME_STAGED_NOT_DEVICE_TESTED','bundle_manifest_sha256':sha(output/'manifest.json'),'kernel':manifest['kernel'],'files':files,'pen_core':manifest['pen_core'],'device_tested':False}
     p=destination/'usr/share/piano-provenance/runtime-helpers.json';p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(record,indent=2)+'\n')
     return record
@@ -481,7 +482,8 @@ def build(args):
     # the external module binds the independently requested kernel commit/ABI.
     uapi=args.uapi.resolve();uapi_rows=tree_files(uapi/'include')
     if tree_digest(uapi_rows)!=UAPI_DIGEST:raise ValueError('3525 UAPI header generation changed')
-    repository(args.macros.resolve(),MACROS_COMMIT);repository(args.v4l2_source.resolve(),LOOP_COMMIT)
+    repository(args.macros.resolve(),MACROS_COMMIT)
+    loop=args.v4l2_source.resolve();loop_commit=v4l2loopback.source_pin()['commit'];repository(loop,loop_commit)
     tools=ROOT/'build/host-tools/usr/bin';env=os.environ.copy();env['PATH']=str(tools)+os.pathsep+env['PATH'];env['LD_LIBRARY_PATH']=str(ROOT/'build/host-tools/usr/lib')
     inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
     for path in (Path(prepare_kernel_llvm.__file__),prepare_kernel_llvm.POLICY):
@@ -490,7 +492,8 @@ def build(args):
     inputs[str(TOUCH_CAPTURE_PATCH)]=sha(TOUCH_CAPTURE_PATCH)
     inputs[str(TOUCH_PEN_PATCH)]=sha(TOUCH_PEN_PATCH)
     inputs[str(TOUCH_EPOCH_PATCH)]=sha(TOUCH_EPOCH_PATCH)
-    for patch in [LOOPBACK_PATCH_SERIES,*source_patches(LOOPBACK_PATCH_SERIES)]:
+    for patch in [Path(v4l2loopback.__file__),ROOT/'sources.lock.json',
+                  v4l2loopback.PATCH_SERIES,*source_patches(v4l2loopback.PATCH_SERIES)]:
         inputs[str(patch)]=sha(patch)
     for name,pin in TOOL_PINS.items():
         p=tools/name
@@ -551,27 +554,22 @@ def build(args):
     if sha(tplg)!=TOPOLOGY_PIN:raise ValueError('Public topology differs from validated repeat build')
     run([*launch,'-d',tplg,'-o',output/'topology-decoded.conf'],env,log)
     files['usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin']={'file':tplg.relative_to(output).as_posix(),'bytes':tplg.stat().st_size,'sha256':sha(tplg),'mode':0o644,'decode_exit_code':0,'device_tested':False}
-    module_source=output/'v4l2loopback';module_source.mkdir()
-    tracked=capture(['git','ls-files','-z'],args.v4l2_source.resolve()).split('\0')
-    for name in filter(None,tracked):
-        original=args.v4l2_source.resolve()/name;target=module_source/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,target);inputs[str(original)]=sha(original)
-    for patch in source_patches(LOOPBACK_PATCH_SERIES):
-        subprocess.run(['patch','--batch','--forward','--fuzz=0',
-                        '--no-backup-if-mismatch','-p1','-i',str(patch)],
-                       cwd=module_source,check=True)
     module_env=prepare_kernel_llvm.environment(env)
     module_compiler=Path(shutil.which('clang',path=module_env['PATH']))
     inputs[str(module_compiler)]=sha(module_compiler)
-    run(['make','-C',args.kernel_build.resolve(),'M='+str(module_source),'ARCH=arm64','LLVM=1','LLVM_IAS=1','LOCALVERSION=','-j4','modules'],module_env,log)
-    module=module_source/'v4l2loopback.ko';run(['llvm-strip','--strip-debug',module],module_env,log);info=modinfo(module)
-    if info.get('name')!='v4l2loopback'or info.get('vermagic','').split()[0]!=args.kernel_release:raise ValueError('External module does not match requested exact kernel')
-    files['usr/lib/modules/'+args.kernel_release+'/updates/v4l2loopback.ko']={'file':module.relative_to(output).as_posix(),'bytes':module.stat().st_size,'sha256':sha(module),'mode':0o644,'vermagic':info['vermagic'],'source_commit':LOOP_COMMIT,'strip_debug':True,'loaded':False}
+    module,info=v4l2loopback.compile_module(args.kernel_build.resolve(),loop,output/'v4l2loopback',
+                                           args.kernel_release,module_env,strip_debug=True)
+    files[v4l2loopback.module_path(args.kernel_release).as_posix()]={
+        'file':module.relative_to(output).as_posix(),'bytes':module.stat().st_size,
+        'sha256':sha(module),'mode':0o644,'vermagic':info['vermagic'],
+        'source_commit':loop_commit,'strip_debug':True,'loaded':False}
+    repository(loop,loop_commit)
     for name,pin in inputs.items():
         if sha(Path(name))!=pin:raise ValueError('Runtime build input changed: '+name)
     kernel_identity(args.kernel_build.resolve(),source,args.kernel_commit,args.kernel_release)
-    manifest={'status':'RUNTIME_COMPILED_NOT_DEVICE_TESTED','public_commit':PUBLIC_COMMIT,'uapi_commit':UAPI_COMMIT,'uapi_sha256':UAPI_DIGEST,'macros_commit':MACROS_COMMIT,'v4l2_commit':LOOP_COMMIT,'kernel':identity,'inputs':inputs,'runtime_files':files,'pen_core':pen_record,'camera':camera_record,'hardware_verified':False,'device_operation':False,'known_topology_limit':'ALSA decoded config does not recompile vendor data; original public config matches known binary SHA and decodes successfully'}
+    manifest={'status':'RUNTIME_COMPILED_NOT_DEVICE_TESTED','public_commit':PUBLIC_COMMIT,'uapi_commit':UAPI_COMMIT,'uapi_sha256':UAPI_DIGEST,'macros_commit':MACROS_COMMIT,'v4l2_commit':loop_commit,'kernel':identity,'inputs':inputs,'runtime_files':files,'pen_core':pen_record,'camera':camera_record,'hardware_verified':False,'device_operation':False,'known_topology_limit':'ALSA decoded config does not recompile vendor data; original public config matches known binary SHA and decodes successfully'}
     (output/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
-    if args.stage_rootfs:stage(output,args.stage_rootfs.resolve())
+    if args.stage_rootfs:stage(output,args.stage_rootfs.resolve(),include_camera_module=True)
     return manifest
 
 

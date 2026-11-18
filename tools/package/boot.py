@@ -50,7 +50,7 @@ def prepare_dtb(manifest, build):
         return dtb.read_bytes()
 
 
-def add_packages(plan, output, manifest, digest):
+def add_packages(plan, output, manifest, digest, *, image_modules=()):
     """Keep device configuration separate from the unmodified kernel recipe."""
     release = plan['kernel_release']
     name = 'linux-piano-dtb-' + release.lower().replace('_', '-')
@@ -218,6 +218,8 @@ def add_packages(plan, output, manifest, digest):
                 depends = f'linux-{kind}-{release} (= {abi_version}-1)'
                 if kind == 'image':
                     depends += f', {name} (= {version}-1), piano-boot-config (>= {version}-1)'
+                    depends += ''.join(f', {package} (= {revision})'
+                                       for package, revision in image_modules)
                 trees.append(('linux-' + kind + '-piano', meta,
                               'Latest Piano Linux ' + kind, depends))
         else:
@@ -232,10 +234,11 @@ def add_packages(plan, output, manifest, digest):
                 depends = base + ('-headers' if kind == 'headers' else '') + '=' + native_version
                 if kind == 'image':
                     depends += ' ' + name + '=' + version + "-1 'piano-boot-config>=" + version + "-1'"
+                    depends += ''.join(f' {package}={revision}' for package, revision in image_modules)
                 trees.append(('linux-piano' + ('-headers' if kind == 'headers' else ''),
                               meta, 'Latest Piano Linux ' + kind, depends))
         for package_name, payload, description, depends in trees:
-            # Use the release commit rather than the build machine's clock.
+            # Keep packaging timestamps fixed for this revision.
             for path in (*payload.rglob('*'), payload):
                 if not path.is_symlink():
                     os.utime(path, (int(epoch), int(epoch)))

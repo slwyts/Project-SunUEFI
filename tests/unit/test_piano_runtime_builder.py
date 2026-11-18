@@ -14,12 +14,15 @@ import build_piano_runtime_helpers as runtime
 class PianoRuntimeBuilderTests(unittest.TestCase):
     def test_actual_canonical_compile_help_topology_and_module(self):
         if not(ROOT/'build/distros/piano-runtime-build/usr/lib/aarch64-linux-gnu/libc.a').exists():self.skipTest('Verified native ARM64 sysroot not prepared')
+        if not(ROOT/'build/kernels/full-integration/Module.symvers').exists():self.skipTest('Full candidate kernel not built')
         with tempfile.TemporaryDirectory(prefix='runtime-build-test-',dir=ROOT/'build')as directory:
             output=Path(directory)/'bundle';args=runtime.parser().parse_args(['--output',str(output)])
             manifest=runtime.build(args);self.assertTrue(runtime.CAMERA_RUNTIME_PATHS <= manifest['runtime_files'].keys());self.assertFalse(manifest['hardware_verified'])
             self.assertEqual(manifest['kernel']['release'],runtime.DEFAULT_RELEASE)
             for name in runtime.PUBLIC_SOURCES:self.assertTrue(runtime.verify_elf(output/name)['static_no_pt_interp'])
-            module=output/'v4l2loopback/v4l2loopback.ko';self.assertEqual(runtime.modinfo(module)['vermagic'].split()[0],runtime.DEFAULT_RELEASE)
+            module=output/'v4l2loopback/v4l2loopback.ko'
+            info=runtime.v4l2loopback.module_info(module,runtime.DEFAULT_RELEASE)
+            self.assertEqual(info['vermagic'].split()[0],runtime.DEFAULT_RELEASE)
             with self.assertRaisesRegex(ValueError,'preserve prior'):runtime.build(args)
             destination=Path(directory)/'unused-stage'
             with self.assertRaisesRegex(ValueError,'derived'):runtime.stage(output,destination)

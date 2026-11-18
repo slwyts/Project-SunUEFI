@@ -103,14 +103,15 @@ def stage(args):
     if adapters.exists():
         shutil.rmtree(adapters)
     hardware.build(adapters, ROOT / cfg['debian']['source'], root)
+    if published_packages is None:
+        from package.kernel import install as install_kernel
+        install_kernel(root, 'pacman', args.kernel)
     runtime.stage(args.runtime.resolve(), root)
     if published_packages is not None:
         from build_piano_fingerprint import desktop_service
         desktop_service(root)
     else:
-        from package.kernel import install as install_kernel
         from build_piano_fingerprint import install_desktop
-        install_kernel(root, 'pacman', args.kernel)
         install_desktop(root, args.runtime.resolve(), output / 'fingerprint-packages')
     fw = ROOT / cfg['firmware']['components']
     from stage_piano_firmware import stage as stage_firmware
@@ -172,7 +173,6 @@ def stage(args):
         guest(['systemctl', 'enable', 'sddm' if steamos else 'gdm', 'NetworkManager', 'sshd', 'bluetooth',
                'piano-camerad', 'piano-hostkeys', 'adsprpcd-sensorspd'])
         guest(['systemctl', 'set-default', 'graphical.target'])
-        guest(['depmod', '-a', kernel['kernel_release']])
     if steamos:
         from stage_steamos_desktop import configure
         desktop = configure(root, published_packages=published_packages is not None)
@@ -212,6 +212,8 @@ def stage(args):
     overlay_packages.verify_pacman_versions(
         {**(published_packages or {}), 'device_configuration': device_configuration}, packages)
     overlay_packages.verify_bsp_files(root, 'pacman')
+    from package.v4l2loopback import verify_installed
+    verify_installed(root, 'pacman', kernel['kernel_release'])
     (output / 'packages.tsv').write_text(packages)
     record = {'status': 'HOST_BUILT_ROOT_NOT_BOOT_VERIFIED',
               'distro': 'steamos' if steamos else 'nyarch',
