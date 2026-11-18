@@ -29,35 +29,6 @@ def safe_destination(rootfs, relative):
     return path
 
 
-def stage_pen_calibration(rootfs):
-    """Stage the BSP's pen tables and firmware links before cross-runtime builds."""
-    rootfs = Path(rootfs).resolve()
-    if not rootfs.is_relative_to(ROOT / 'build/distros') or not rootfs.is_dir():
-        raise ValueError('Pen calibration target must be an existing build/distros root')
-    names = {f'usr/share/piano/pen/calibration/piano-{panel}.ini' for panel in ('boe', 'csot')}
-    names |= {f'usr/lib/firmware/novatek/piano-{panel}-pen.ini' for panel in ('boe', 'csot')}
-    _, rows = payload([])
-    selected = [(row, data) for row, data in rows if row['path'] in names]
-    if {row['path'] for row, _ in selected} != names:
-        raise ValueError('The shared BSP must provide both pen calibrations and firmware links')
-    for row, _ in selected:
-        destination = safe_destination(rootfs, row['path'])
-        if destination.is_symlink() and row['type'] != 'symlink':
-            raise ValueError('Refuse writing pen calibration through a guest symlink: ' + row['path'])
-        if destination.exists() and not destination.is_file():
-            raise ValueError('Pen calibration destination is not a file: ' + row['path'])
-    for row, data in selected:
-        destination = safe_destination(rootfs, row['path'])
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        if row['type'] == 'symlink':
-            destination.unlink(missing_ok=True)
-            destination.symlink_to(data.decode())
-        else:
-            destination.write_bytes(data)
-            destination.chmod(int(row['mode'], 8))
-    return {row['path']: digest(data) for row, data in selected}
-
-
 def removed_paths(rootfs):
     paths = {'etc/udev/rules.d/80-drivers.rules',
              'etc/udev/rules.d/79-piano-ir.rules',
@@ -99,6 +70,7 @@ def build(output, source, rootfs=None):
     if commit != pin or subprocess.check_output(['git', '-C', str(source), 'status', '--porcelain'], text=True):
         raise ValueError('public source must have the pinned clean commit')
     _, rows = payload(['camera'])
+    rows = [(row, data) for row, data in rows if row['group'] == 'camera']
     files = {row['path']: data for row, data in rows}
     modes = {row['path']: int(row['mode'], 8) for row, _ in rows}
     links = {row['path'] for row, _ in rows if row['type'] == 'symlink'}

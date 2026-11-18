@@ -334,6 +334,7 @@ done
             return overlay_packages.export(package_output, target, overlay_packages.ARCH_REPOSITORIES[target],
                                            overlay_packages.pacman_packages(root, packages), records,
                                            build_inputs=cache_inputs)
+        records['device_configuration'] = overlay_packages.install_local_arch_bsp(root)
     finish_product(args, root, output, source, kernel, kernel_source, base_record, records, published)
 
 
@@ -448,7 +449,6 @@ def finish_product(args, root, output, source, kernel, kernel_source, base_recor
     runtime_kernel = runtime_helpers.kernel_identity(
         args.kernel_build.resolve(), kernel_source,
         kernel_record['source_commit'], kernel_record['kernel_release'])
-    stage_arch_piano.hardware.stage_pen_calibration(root)
     if (runtime / 'manifest.json').is_file():
         old = json.loads((runtime / 'manifest.json').read_text())
         if old['kernel'] != runtime_kernel or not build_release_helpers.inputs_current(runtime):
@@ -467,7 +467,8 @@ def finish_product(args, root, output, source, kernel, kernel_source, base_recor
     stage_arch_piano.stage(argparse.Namespace(
         rootfs=root, kernel=kernel, runtime=runtime, sensor_source=source,
         bootstrap_sysroot=args.bootstrap_sysroot, desktop='steamos',
-        published_packages=published[1] if published else None))
+        published_packages=published[1] if published else None,
+        device_configuration=records['device_configuration']))
     manifest = output / 'manifest.json'
     record = json.loads(manifest.read_text())
     record.update(base_source=base_record, **records,

@@ -108,6 +108,7 @@ def guest_environment(root):
             # systemd must still treat PID 1 in this namespace as a build chroot.
             return run(guest_command(root, ['/usr/bin/env',
                                            'SYSTEMD_OFFLINE=1', 'SYSTEMD_IN_CHROOT=1',
+                                           'SUNUEFI_OFFLINE_ROOTFS=1',
                                            'PATH=/usr/bin:/usr/sbin:/bin:/sbin', *args]), **kwargs)
 
         yield guest

@@ -30,8 +30,7 @@ def inputs_current(output):
     pen_source = ROOT / 'linux/userspace/pen'
     pen_paths = [Path(runtime.__file__),
                  *[pen_source / name for name in runtime.PEN_SOURCE_FILES],
-                 pen_source / 'piano-pen-bluetooth.py', pen_source / 'piano-pen-canvas.py',
-                 ROOT / 'linux/bsp/common/usr/share/piano/pen/p81c-radio.json']
+                 pen_source / 'piano-pen-bluetooth.py', pen_source / 'piano-pen-canvas.py']
     if pen.get('input', {}).get('mode') == 'kernel':
         pen_paths += [pen_source / 'piano-pen-control',
                       *[ROOT / name for name in runtime.PEN_CALIBRATION_PATHS.values()]]

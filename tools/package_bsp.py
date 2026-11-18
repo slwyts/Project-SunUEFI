@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import posixpath
+import pwd
 import re
 import shlex
 import shutil
@@ -14,6 +15,7 @@ import sys
 import tempfile
 
 from build_piano_ram_bootstrap import guest_resolve
+from build import overlay_release
 
 ROOT = Path(__file__).resolve().parents[1]
 BSP = ROOT / 'linux/bsp'
@@ -102,7 +104,10 @@ def inspect(args):
     source, rows = payload(args.feature)
     ledger = read_json(BSP / 'layers.json')
     layers = ledger['required_layers']
-    report = {'schema_version': 1, 'component': 'config', 'package': NAME, 'version': args.version,
+    version = args.version
+    if args.format == 'deb':
+        version = overlay_release.debian_version(version)
+    report = {'schema_version': 1, 'component': 'config', 'package': NAME, 'version': version,
               'status': 'HOST_CONFIG_NOT_DEVICE_TESTED', 'target': {'distro': args.target, 'suite': suite, 'arch': args.arch},
               'package_architecture': 'any' if args.target == 'arch' else 'all',
               'features': args.feature, 'source': source['source'], 'required_layers': layers,
@@ -164,7 +169,8 @@ def debian_package(output, tree, report, configuration):
         'Description: Xiaomi Pad 8 Pro device configuration\n'
         ' Native runtime, Mesa, firmware and modules are distributed separately.\n')
     (control / 'conffiles').write_text(''.join('/' + name + '\n' for name in configuration))
-    (control / 'preinst').write_text(preinst(report['payload_files']))
+    provenance = 'usr/share/doc/' + NAME + '/bsp-manifest.json'
+    (control / 'preinst').write_text(preinst([*report['payload_files'], provenance]))
     (control / 'preinst').chmod(0o755)
     subprocess.run(['/bin/sh', '-n', control / 'preinst'], check=True)
     artifact = output / f"{NAME}_{report['version']}_all.deb"
@@ -182,7 +188,7 @@ def pacman_sources(directory, tree, report, configuration):
     depends = ' '.join(map(shlex.quote, report['depends']))
     backup = ' '.join(map(shlex.quote, configuration))
     (directory / 'PKGBUILD').write_text(
-        f"pkgname={NAME}\npkgver={report['version']}\npkgrel=1\n"
+        f"pkgname={NAME}\npkgver={report['version']}\npkgrel={overlay_release.pacman_release('1')}\n"
         "pkgdesc='Xiaomi Pad 8 Pro device configuration'\n"
         "url='https://github.com/slwyts/Project-SunUEFI'\n"
         'arch=(any)\nlicense=(MIT BSD-2-Clause-Patent)\noptions=(!strip !debug)\n'
@@ -196,20 +202,47 @@ def pacman_sources(directory, tree, report, configuration):
         '}\n')
 
 
+def pacman_builder_account():
+    if os.geteuid() != 0:
+        return None
+    try:
+        return pwd.getpwnam('sunuefi-build')
+    except KeyError:
+        if Path('/.dockerenv').is_file():
+            subprocess.run(['useradd', '--system', '--create-home', 'sunuefi-build'], check=True)
+            return pwd.getpwnam('sunuefi-build')
+        uid = os.environ.get('SUDO_UID', '')
+        if uid.isdecimal() and int(uid) > 0:
+            return pwd.getpwuid(int(uid))
+        raise ValueError('Run makepkg as a regular user or in the project builder')
+
+
 def pacman_package(output, tree, report, configuration):
-    with tempfile.TemporaryDirectory(prefix='makepkg-', dir=output) as folder:
+    # Only the packed sources and recipe are exposed to the unprivileged
+    # builder, not the rootfs or repo signing files.
+    account = pacman_builder_account()
+    with tempfile.TemporaryDirectory(prefix='sunuefi-bsp-', dir='/tmp' if account else output) as folder:
         work = Path(folder)
         pacman_sources(work, tree, report, configuration)
         # This package only copies checked data. Its runtime dependencies are
         # resolved on installation, not installed into the build machine.
-        env = {**os.environ, 'SOURCE_DATE_EPOCH': '0', 'BUILDDIR': str(work),
-               'SRCDEST': str(work), 'PKGDEST': str(output), 'PKGEXT': '.pkg.tar.zst'}
-        subprocess.run(['makepkg', '--noconfirm', '--nodeps'], cwd=work,
-                       env=env, stdout=sys.stderr, check=True)
-        artifact = output / f"{NAME}-{report['version']}-1-any.pkg.tar.zst"
+        env = {**os.environ, 'SOURCE_DATE_EPOCH': '0', 'LC_ALL': 'C',
+               'BUILDDIR': str(work), 'SRCDEST': str(work), 'PKGDEST': str(work),
+               'LOGDEST': str(work), 'PKGEXT': '.pkg.tar.zst',
+               'PACKAGER': 'Project SunUEFI <slwyts@tuta.io>'}
+        command = ['makepkg', '--noconfirm', '--nodeps']
+        if account is not None:
+            for path in (work, *work.iterdir()):
+                os.chown(path, account.pw_uid, account.pw_gid, follow_symlinks=False)
+            command = ['runuser', '-u', account.pw_name, '--', *command]
+        subprocess.run(command, cwd=work, env=env, stdout=sys.stderr, check=True)
+        version = report['version'] + '-' + overlay_release.pacman_release('1')
+        artifact = work / f'{NAME}-{version}-any.pkg.tar.zst'
         require(artifact.is_file() and not artifact.is_symlink(),
                 'makepkg did not produce the Piano configuration package')
-        return artifact
+        target = output / artifact.name
+        shutil.copyfile(artifact, target)
+        return target, version
 
 
 def build(args):
@@ -223,15 +256,18 @@ def build(args):
         require(shutil.which(backend), 'Missing package backend: ' + backend)
         if args.format == 'pacman':
             require(shutil.which('tar'), 'Missing tar')
-            require(os.geteuid() != 0, 'Run makepkg as a regular user')
     output, tree, report, rows = stage(args)
     if args.command == 'package':
         configuration = [row['path'] for row, _ in rows if row['path'].startswith('etc/')]
-        builder = pacman_package if args.format == 'pacman' else debian_package
-        artifact = builder(output, tree, report, configuration)
+        if args.format == 'pacman':
+            artifact, version = pacman_package(output, tree, report, configuration)
+        else:
+            artifact = debian_package(output, tree, report, configuration)
+            version = report['version']
         report['package_ready'] = True
         report['files'][artifact.name] = {'bytes': artifact.stat().st_size,
-                                          'sha256': sha(artifact.read_bytes()), 'format': args.format}
+                                          'sha256': sha(artifact.read_bytes()), 'format': args.format,
+                                          'version': version}
     for path in [tree, *tree.rglob('*')]:
         if path.is_dir():
             path.chmod(0o755)

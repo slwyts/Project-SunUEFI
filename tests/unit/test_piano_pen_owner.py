@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 PEN = ROOT / 'linux/userspace/pen'
@@ -161,6 +162,17 @@ class PianoPenOwnerTests(unittest.TestCase):
     def native(self):
         if self.reason:
             self.skipTest(self.reason)
+
+    def test_bluetooth_profile_uses_administrator_file_before_package_defaults(self):
+        module = load_bluetooth()
+        with tempfile.TemporaryDirectory() as temporary:
+            local = Path(temporary) / 'pen-radio.json'
+            with patch.object(module, 'Path', side_effect=lambda p: (
+                    local if p == '/etc/piano/pen-radio.json' else Path(p))):
+                self.assertEqual(module.profile_path(PROFILE), PROFILE)
+                self.assertEqual(module.profile_path(), Path('/usr/share/piano/pen/p81c-radio.json'))
+                local.touch()
+                self.assertEqual(module.profile_path(), local)
 
     def test_double_tap_is_the_second_tool_button_in_range(self):
         self.native()

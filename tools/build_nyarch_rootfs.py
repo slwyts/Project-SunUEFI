@@ -96,6 +96,7 @@ def build(args):
             return overlay_packages.export(package_output, target, overlay_packages.ARCH_REPOSITORIES[target],
                                            overlay_packages.pacman_packages(root, packages), records,
                                            build_inputs=cache_inputs)
+        records['device_configuration'] = overlay_packages.install_local_arch_bsp(root)
 
     desktop = inputs / 'desktop'
     if not desktop.exists():
@@ -120,7 +121,9 @@ def build(args):
                 archive_file.extractall(destination)
 
     runtime = output / 'runtime'
-    stage_arch_piano.hardware.stage_pen_calibration(root)
+    from build_release_helpers import inputs_current
+    if (runtime / 'manifest.json').is_file() and not inputs_current(runtime):
+        shutil.rmtree(runtime)
     if not (runtime / 'manifest.json').exists():
         run(sys.executable, ROOT / 'tools/build_release_helpers.py',
             '--kernel', kernel, '--source', source,
@@ -131,7 +134,8 @@ def build(args):
         rootfs=root, kernel=kernel, runtime=runtime, sensor_source=sensors,
         bootstrap_sysroot=args.bootstrap_sysroot, desktop='nyarch',
         desktop_source=desktop, extensions=extensions,
-        published_packages=published[1] if published else None))
+        published_packages=published[1] if published else None,
+        device_configuration=records['device_configuration']))
     manifest = output / 'manifest.json'
     record = json.loads(manifest.read_text())
     record.update(base_archive_sha256=base_hash, nyarch_inputs=cfg, **records)

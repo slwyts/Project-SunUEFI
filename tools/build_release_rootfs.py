@@ -909,10 +909,11 @@ def execute(record):
                      'apt-get', 'upgrade', '-y', '--with-new-pkgs', '--no-remove'])
         published = record.get('published_packages')
         if published:
+            bsp_archive, bsp = overlay_packages.shared_bsp('debian')
             components, packages = overlay_packages.read_debian(Path(published), desktop)
             from package.kernel import install as install_kernel
             install_kernel(rootfs, 'debian', kernel, published=True)
-            install_overlays(rootfs, run, cfg, desktop, packages, published=True)
+            install_overlays(rootfs, run, cfg, desktop, {**packages, bsp_archive.name: bsp}, published=True)
             archive = debian_archive(rootfs)
         elif record.get('packages_only'):
             result = build_overlay_set(record, rootfs, m, run)
@@ -920,7 +921,11 @@ def execute(record):
             return result
         else:
             sources = build_overlays(record, rootfs, run)
-            install_overlays(rootfs, run, cfg, desktop, overlay_packages.debian_packages(sources))
+            packages = overlay_packages.debian_packages(sources)
+            with tempfile.TemporaryDirectory(prefix='sunuefi-bsp-', dir=out) as temporary:
+                bsp_archive, bsp = overlay_packages.build_bsp(Path(temporary) / 'package', 'debian', run)
+                install_overlays(rootfs, run, cfg, desktop,
+                                 {**packages, bsp_archive.name: (bsp_archive, bsp)})
             components = {name: {'packages': {}} for name in overlay_packages.DEBIAN_GNOME}
             components.update({name: value for name, (_, value) in sources.items()})
         sensor_unit = target(rootfs, 'usr/lib/systemd/system/adsprpcd-sensorspd.service')
@@ -965,6 +970,9 @@ def execute(record):
         packages = capture(['chroot', rootfs, 'dpkg-query', '-W', '-f=${binary:Package}\t${Version}\t${Architecture}\t${db:Status-Status}\n'])
         (out / 'packages.tsv').write_text(packages + '\n')
         installed = {p[0].split(':')[0]: p[1] for line in packages.splitlines() if len(p := line.split('\t')) == 4 and p[3] == 'installed'}
+        if installed.get(bsp['name']) != bsp['version']:
+            raise ValueError('Installed Piano device configuration package version differs')
+        overlay_packages.verify_bsp_files(rootfs, 'debian')
         defaults = default_system_record(rootfs, installed, cfg, desktop)
         for component, metadata in components.items():
             for package, row in metadata['packages'].items():
@@ -986,6 +994,7 @@ def execute(record):
                   'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata,
                   'debian_archive': archive, 'debian_suite': cfg['debian']['suite'],
                   'debian_commit': cfg['debian']['commit'],
+                  'device_configuration': bsp,
                   **components,
                   'boot_request': boot_request, 'firmware_components': cfg['firmware']['components'],
                   'clock_epoch': clock,

@@ -584,10 +584,20 @@ class Pen:
                 self.bus.signal_unsubscribe(self.subscription)
 
 
+def profile_path(explicit=None):
+    if explicit is not None:
+        return explicit
+    local = Path('/etc/piano/pen-radio.json')
+    if local.exists() or local.is_symlink():
+        return local
+    return Path('/usr/share/piano/pen/p81c-radio.json')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--address', help='optional paired pen address; otherwise discover one connected Focus Pen')
-    parser.add_argument('--profile', type=Path, required=True)
+    parser.add_argument('--profile', type=Path,
+                        help='override the local or packaged pen radio profile')
     parser.add_argument('--stationary-device', type=Path)
     parser.add_argument('--observe-seconds', type=float, default=10)
     parser.add_argument('--follow', action='store_true',
@@ -595,7 +605,7 @@ def main():
     args = parser.parse_args()
     if not 0 <= args.observe_seconds <= 300:
         parser.error('observe-seconds must be between 0 and 300')
-    p = profile(args.profile)
+    p = profile(profile_path(args.profile))
     stopped = False
     pen = None
     last_error = None

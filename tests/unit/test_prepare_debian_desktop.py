@@ -65,6 +65,7 @@ if [ -n "$MESA_DIR" ]; then
     echo obsolete-mesa-pin
 fi
 # The checkout belongs to the building user; the rootfs must stay root-owned.
+chroot "$ROOTFS" systemctl enable NetworkManager ssh bluetooth piano-usb piano-touch piano-radio
 ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-manager.service"
 ''')
         return public
@@ -116,6 +117,32 @@ ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-
                 self.assertEqual(selected.count('pipewire-audio'), 1)
                 self.assertFalse((recipe / 'rootfs/packages-backports.txt').exists())
             self.assertEqual((public / 'scripts/build-rootfs.sh').read_bytes(), original)
+
+    def test_both_recipes_leave_packaged_files_and_service_activation_to_the_package(self):
+        public = ROOT / 'upstream/debian-piano-current'
+        upstream = public / 'rootfs/overlay'
+        if not upstream.is_dir():
+            self.skipTest('Pinned Debian source not fetched')
+        packaged = desktop.device_config_paths()
+        upstream_paths = {name for name in packaged
+                          if (upstream / name).is_file() or (upstream / name).is_symlink()}
+        self.assertTrue(upstream_paths)
+        self.assertTrue(any((upstream / path).is_symlink() for path in upstream_paths))
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ('gnome', 'kde'):
+                recipe = desktop.prepare(public, Path(folder) / name, name)
+                for relative in packaged:
+                    path = recipe / 'rootfs/overlay' / relative
+                    self.assertFalse(path.exists() or path.is_symlink(), relative)
+                script = recipe / 'scripts/build-rootfs.sh'
+                enabled, = [line.split('systemctl enable ', 1)[1].split()
+                            for line in script.read_text().splitlines() if 'systemctl enable ' in line]
+                self.assertTrue({'piano-usb', 'piano-touch'}.isdisjoint(enabled))
+                self.assertTrue({'NetworkManager', 'bluetooth', 'piano-camerad'}.issubset(enabled))
+                self.assertTrue((recipe / 'rootfs/overlay/usr/lib/systemd/system/piano-camerad.service').is_file())
+                subprocess.run(['bash', '-n', script], check=True)
+        self.assertTrue(all((upstream / path).is_file() or (upstream / path).is_symlink()
+                            for path in upstream_paths))
 
     def test_source_drift_rejects_mixed_suite_output(self):
         with self.assertRaisesRegex(ValueError, 'APT setup changed'):

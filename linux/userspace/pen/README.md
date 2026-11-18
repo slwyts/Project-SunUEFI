@@ -142,7 +142,7 @@ THP、也不生成键鼠输入；连接和 `ServicesResolved` 后完成初始化
 `BTN_STYLUS2` 当作右键；绘图应用可将其绑定到橡皮擦或取色工具。
 双击或滑动打断轻捏时，轻捏结束但不算一次点击。
 
-笔尖受压时笔不发送手势，停笔片刻后才会识别。双击和滑动的开关保存在笔里，`pen-bluetooth` 按 `p81c-radio.json` 的 `double_tap` 与 `slide` 在每次连接时打开它们；改为 `false` 后重启 `piano-touch.service` 即可在笔端关闭。原厂在双击和滑动时会让平板另发一次振动命令，Linux 不发送，因此这两个手势没有笔端振动。
+笔尖受压时笔不发送手势，停笔片刻后才会识别。双击和滑动的开关保存在笔里，`pen-bluetooth` 在每次连接时应用配置中的 `double_tap` 与 `slide`；改法见[笔协议说明](../../../docs/devel/hardware/pen-protocol.md)。原厂在双击和滑动时会让平板另发一次振动命令，Linux 不发送，因此这两个手势没有笔端振动。
 
 双击与滑动的报告格式来自笔固件和原厂系统，尚无平板上的实测记录。在平板上检查时，`sudo libinput debug-events --show-keycodes` 应在笔的键盘设备上显示 `KEY_PAGEUP`／`KEY_PAGEDOWN`，在 `Piano Focus Pen Pro` 上显示 `BTN_STYLUS2`；`sudo evtest` 可分别查看两个设备。只看原始 Report2 的命令见协议页。
 

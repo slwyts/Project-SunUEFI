@@ -13,6 +13,7 @@ from publish import REPOSITORIES, ROOT, Store, publish, sha
 from verify_public import verify_public
 
 sys.path.insert(0, str(ROOT / 'tools'))
+from build.overlay_packages import bsp_package
 from package.boot import PUBLIC_REPOSITORY_URL
 
 
@@ -63,12 +64,22 @@ def overlay_matrix(value):
 def publication_batches(root, *, kernel, overlays):
     """Merge shared and distribution packages before updating each signed index."""
     groups = {name: {} for name in REPOSITORIES}
+    shared = set()
     if kernel:
         for package_format, repository in KERNEL_REPOSITORIES.items():
             groups[repository].update(packages(root / 'kernel' / package_format, format=package_format))
+    if kernel:
+        for package_format, repository in KERNEL_REPOSITORIES.items():
+            path, metadata = bsp_package(root / 'bsp' / package_format, package_format)
+            if path.name in groups[repository]:
+                raise ValueError('Common device configuration duplicated in ' + repository)
+            groups[repository][path.name] = (path, metadata['sha256'])
+            shared.add(path.name)
     for target in overlays:
         repository = OVERLAY_REPOSITORIES[target]
         for name, (path, digest) in overlay_set(root / 'overlays' / target, target).items():
+            if name in shared:
+                raise ValueError('Common device configuration duplicated in ' + target)
             old = groups[repository].get(name)
             if old is not None and old[1] != digest:
                 raise ValueError('Different builds share a package filename: ' + name)
@@ -81,9 +92,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--kernel', action='store_true')
     parser.add_argument('--verify-target', choices=OVERLAY_REPOSITORIES)
+    parser.add_argument('--verify-bsp', action='store_true')
     parser.add_argument('--overlay-matrix', type=overlay_matrix, default='{"target":[]}')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
+    if args.verify_bsp:
+        if args.kernel or args.overlay_matrix or args.verify_target:
+            parser.error('Use --verify-bsp without other operations')
+        rows = {package_format: bsp_package(args.output / package_format, package_format)[1]
+                for package_format in KERNEL_REPOSITORIES}
+        print(json.dumps(rows, indent=2))
+        return
     if args.verify_target:
         if args.kernel or args.overlay_matrix:
             parser.error('Use --verify-target without publication options')
@@ -91,7 +110,7 @@ def main():
         print(f'Verified {len(paths)} packages for {args.verify_target}')
         return
     if not args.kernel and not args.overlay_matrix:
-        parser.error('Select --kernel, --overlay-matrix or --verify-target')
+        parser.error('Select --kernel, --overlay-matrix, --verify-target or --verify-bsp')
     batches = publication_batches(ROOT / 'artifacts/packages', kernel=args.kernel,
                                   overlays=args.overlay_matrix)
     with tempfile.TemporaryDirectory(prefix='sunuefi-signing-') as folder:

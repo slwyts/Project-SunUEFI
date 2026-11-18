@@ -12,7 +12,6 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 import build_piano_runtime_helpers as runtime
 import package_bsp
-import stage_piano_ram_hardware as hardware
 
 
 class PianoPenControlTests(unittest.TestCase):
@@ -105,37 +104,6 @@ class PianoPenControlTests(unittest.TestCase):
         self.assertEqual(record['mode'], 'userspace')
         self.assertIn(b'--pen-input', data)
 
-    def test_target_calibration_staging_uses_bsp_and_preserves_other_files(self):
-        root = ROOT / 'build/distros'
-        root.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix='pen-calibration-', dir=root) as directory:
-            target = Path(directory)
-            unrelated = target / 'usr/lib/firmware/unrelated.bin'
-            unrelated.parent.mkdir(parents=True)
-            unrelated.write_bytes(b'keep firmware')
-            rows = hardware.stage_pen_calibration(target)
-            self.assertEqual(len(rows), 4)
-            self.assertEqual(unrelated.read_bytes(), b'keep firmware')
-            _, _, record, _ = runtime.pen_input_frontend(self.kernel, target)
-            self.assertEqual(record['mode'], 'kernel')
-            for name in runtime.PEN_CALIBRATION_PATHS:
-                self.assertTrue((target / name).is_symlink())
-            hardware.stage_pen_calibration(target)
-            self.assertEqual(unrelated.read_bytes(), b'keep firmware')
-
-    def test_target_calibration_preflight_rejects_alias_before_writing(self):
-        root = ROOT / 'build/distros'
-        root.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix='pen-calibration-', dir=root) as directory:
-            target = Path(directory)
-            alias = target / 'usr/share/piano/pen/calibration/piano-csot.ini'
-            alias.parent.mkdir(parents=True)
-            alias.symlink_to(self.work / 'outside')
-            with self.assertRaisesRegex(ValueError, 'guest symlink'):
-                hardware.stage_pen_calibration(target)
-            self.assertFalse((alias.parent / 'piano-boe.ini').exists())
-            self.assertFalse((self.work / 'outside').exists())
-
     def test_actual_runtime_entries_accept_distinct_firmware_root(self):
         result = subprocess.run([sys.executable, str(ROOT / 'tools/build_release_helpers.py'),
                                  '--firmware-root', str(self.rootfs), '--sysroot', '/', '--help'],
@@ -166,6 +134,7 @@ class PianoPenControlTests(unittest.TestCase):
             emulator=shutil.which('qemu-aarch64-static'), kernel=self.kernel,
             firmware_root=self.rootfs)
         self.assertEqual(record['input']['mode'], 'kernel')
+        self.assertNotIn('usr/share/piano/pen/p81c-radio.json', files)
         self.assertTrue(runtime.verify_elf(output / files['usr/bin/piano-pen-offline']['file']))
         self.assertEqual(json.loads((output / 'pen-manifest.json').read_text())['input']['calibration'],
                          record['input']['calibration'])

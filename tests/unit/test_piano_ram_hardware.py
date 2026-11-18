@@ -176,7 +176,7 @@ class RamHardwareTests(unittest.TestCase):
         self.assertEqual(result['driver_loading'], 'standard-modalias')
         for name in stage.REMOVED_SCRIPTS:
             self.assertNotIn('usr/lib/piano/' + name + '-start', result['files'])
-        self.assertTrue((self.path / 'adapters/usr/share/alsa/ucm2/conf.d/sm8750/Xiaomi Pad 8 Pro.conf').is_symlink())
+        self.assertFalse((self.path / 'adapters/usr/share/alsa/ucm2').exists())
         with self.assertRaises(ValueError):
             stage.build(self.path / 'adapters', source)
 
@@ -200,6 +200,9 @@ class RamHardwareTests(unittest.TestCase):
             full_stage.stage(dest, source)
             custom = dest / 'etc/piano/user.conf'
             custom.write_text('keep=yes\n')
+            packaged = dest / 'etc/modprobe.d/piano.conf'
+            packaged.parent.mkdir(parents=True, exist_ok=True)
+            packaged.write_text('# configuration retained by the package manager\n')
             for base in ('etc/systemd/system', 'usr/lib/systemd/system'):
                 for unit in ('display-manager', 'gdm', 'gdm3', 'sddm'):
                     dropin = dest / base / (unit + '.service.d')
@@ -209,6 +212,7 @@ class RamHardwareTests(unittest.TestCase):
                     (dropin / '90-user.conf').write_text('[Service]\nNice=1\n')
             result = stage.build(self.path / 'staged-adapters', source, dest)
             self.assertEqual(custom.read_text(), 'keep=yes\n')
+            self.assertEqual(packaged.read_text(), '# configuration retained by the package manager\n')
             for base in ('etc/systemd/system', 'usr/lib/systemd/system'):
                 for unit in ('display-manager', 'gdm', 'gdm3', 'sddm'):
                     dropin = dest / base / (unit + '.service.d')

@@ -22,6 +22,17 @@ class OverlayPackageTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
 
+    def test_common_device_configuration_matches_the_sealed_native_deb(self):
+        output = self.root / 'bsp'
+        archive, metadata = overlays.build_bsp(output, 'debian')
+        self.assertEqual(metadata['name'], 'piano-device-config')
+        self.assertEqual(metadata['architecture'], 'all')
+        self.assertEqual(overlays.bsp_package(output, 'debian'), (archive, metadata))
+        with archive.open('ab') as stream:
+            stream.write(b'changed')
+        with self.assertRaisesRegex(ValueError, 'archive differs'):
+            overlays.bsp_package(output, 'debian')
+
     def deb(self, name, version='1', *, payload=None, directory=None):
         package = self.root / 'payload'
         package.mkdir()

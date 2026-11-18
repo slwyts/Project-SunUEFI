@@ -13,5 +13,4 @@ for panel in boe csot; do
     printf 'piano-touch: missing %s pen calibration; kernel pen input is unavailable\n' "$panel" >&2
   fi
 done
-exec /usr/lib/piano/pen-bluetooth \
-  --profile /usr/share/piano/pen/p81c-radio.json --follow
+exec /usr/lib/piano/pen-bluetooth --follow

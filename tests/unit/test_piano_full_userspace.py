@@ -10,6 +10,7 @@ import unittest
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'))
 import stage_piano_full_userspace as stage
+from package_bsp import payload
 
 
 class PianoFullUserspaceTests(unittest.TestCase):
@@ -33,7 +34,28 @@ class PianoFullUserspaceTests(unittest.TestCase):
             self.assertEqual(os.readlink(target/'etc/systemd/system/qbootctl.service'),'/dev/null')
             self.assertIn('UDISKS_IGNORE',(target/'etc/udev/rules.d/01-piano-protect-android.rules').read_text())
             self.assertFalse(result['piano_boot_verified'])
+            _, packaged = payload([])
+            for row, _ in packaged:
+                path = target / row['path']
+                self.assertFalse(path.exists() or path.is_symlink(), row['path'])
             subprocess.run(['bash','-n',str(target/'pianoinit')],check=True)
+
+            for row, data in packaged:
+                path = target / row['path']
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if row['type'] == 'symlink':
+                    path.symlink_to('installed-config')
+                else:
+                    # Use different bytes to detect even a same-file overwrite.
+                    path.write_bytes(data + b'\n# installed configuration\n')
+            for desktop in ('gnome', 'kde'):
+                stage.stage(target, source, desktop=desktop)
+                for row, data in packaged:
+                    path = target / row['path']
+                    if row['type'] == 'symlink':
+                        self.assertEqual(os.readlink(path), 'installed-config', row['path'])
+                    else:
+                        self.assertEqual(path.read_bytes(), data + b'\n# installed configuration\n', row['path'])
 
     @unittest.skipUnless(shutil.which('bwrap'),'bwrap required')
     def test_actual_entry_refuses_android_root_before_any_mount(self):

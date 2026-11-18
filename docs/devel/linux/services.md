@@ -5,7 +5,8 @@
 | 要修改的内容 | 源码位置 | 安装位置或构建入口 |
 | --- | --- | --- |
 | 触屏和 USB 网络的 unit | [`linux/bsp/common/usr/lib/systemd/system/`](../../../linux/bsp/common/usr/lib/systemd/system/) | 配置包安装到 `/usr/lib/systemd/system/` |
-| 共用硬件运行时安装 | [`tools/stage_piano_ram_hardware.py`](../../../tools/stage_piano_ram_hardware.py) | 读取 BSP 清单、保留权限和符号链接，清理旧的按序加载服务 |
+| 共用硬件配置 | [`linux/bsp/manifest.json`](../../../linux/bsp/manifest.json) | `piano-device-config` 拥有 UCM、笔校准和通用设备规则 |
+| 硬件运行时安装 | [`tools/stage_piano_ram_hardware.py`](../../../tools/stage_piano_ram_hardware.py) | 安装相机配置与显式诊断工具，清理旧的按序加载服务 |
 | 按需充电记录 | [`linux/bsp/common/usr/lib/piano/charge-monitor`](../../../linux/bsp/common/usr/lib/piano/charge-monitor) | `piano-charge-monitor.service`，经共用 BSP 安装，preset 默认关闭 |
 | DMA 状态诊断 | [`linux/userspace/piano-ram-hardware-prepare`](../../../linux/userspace/piano-ram-hardware-prepare) | 仅用于显式诊断，不阻止模块自动探测 |
 | 手指帧解码与多点输入 | [`0095-input-nt36532e-matrix.patch`](../../../patches/linux/7.3/0095-input-nt36532e-matrix.patch) | 编入 `nt36532e_ts`，在现有 SPI 中断线程中直接上报标准输入事件 |
@@ -72,7 +73,9 @@ Debian sid 使用发行版 UPower，不再重建旧版 daemon。签名源码中�
 
 通用多发行版路径由 [`tools/assemble_rootfs.py`](../../../tools/assemble_rootfs.py) 安装发行版、桌面和显式选择的 BSP/运行时包；[`tools/package_bsp.py`](../../../tools/package_bsp.py) 按 `linux/bsp/manifest.json` 打包本地配置。配置包本身不自动启用服务，也不包含内核模块或原生程序。
 
-Debian release 由 [`tools/build_release_rootfs.py`](../../../tools/build_release_rootfs.py) 调用上游基础构建，再用 `stage_piano_ram_hardware.build()` 安装经过同一 BSP 清单校验的本地配置，删除上游的旧驱动加载服务，随后安装匹配的模块与原生程序。SteamOS 和 Nyarch 通过 `stage_arch_piano.py` 使用相同硬件运行时。
+Debian 基础镜像从签名 APT 源安装 `piano-device-config`，SteamOS 和 Nyarch
+从同一个 `sunuefi` pacman 仓库安装。触屏和 USB 服务由包内的 udev 规则启动。
+相机配置和诊断程序仍由运行组件组装；产品镜像会检查包拥有的硬件文件没被后续步骤覆盖。
 
 桌面包由 rootfs 构建自动安装，源码与二进制摘要写入发行版 manifest，构建日志
 并入 CI 的 `logs.zip`。单独构建使用 `./build.sh gsd --sysroot <Debian root>`、

@@ -404,4 +404,7 @@ Linux之前显示144Hz、hand180、pen240。两边笔扫描率相同；这一次
    hidraw 允许多个读者，这条命令不影响笔输入。书写后立即滑动不会发出报告，停笔片刻再试。
 4. `journalctl -b -u piano-touch.service | grep -e 630101 -e slide_setting_unanswered` 应找到 `"hex": "630101"` 的请求；出现 `slide_setting_unanswered` 表示这支笔的固件不回应滑动开关。
 
-把 `/usr/share/piano/pen/p81c-radio.json` 中的 `slide` 或 `double_tap` 改为 `false` 后执行 `sudo systemctl restart piano-touch.service`，可以在笔端关闭对应手势。
+第一次调整时，将 `/usr/share/piano/pen/p81c-radio.json` 复制为
+`/etc/piano/pen-radio.json`。把本地配置中的 `slide` 或 `double_tap` 改为
+`false`，再执行 `sudo systemctl restart piano-touch.service` 即可关闭笔端对应手势。
+升级设备配置包不会覆盖这个本地文件。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage the complete public hardware service overlay with RAM-root policy.
+"""Stage the unpackaged userspace overlay with RAM-root policy.
 
 Does not run it, mount blocks, prepare firmware or build a boot image. Rootfs
 must be an explicitly supplied workspace directory; source originals stay intact.
@@ -68,7 +68,7 @@ def stage_gnome_power(rootfs):
 def stage(rootfs, source, desktop='gnome'):
     if desktop not in ('gnome', 'kde'):
         raise ValueError('Unsupported desktop')
-    from prepare_debian_desktop import gnome_path
+    from prepare_debian_desktop import device_config_paths, gnome_path
     rootfs,source=Path(rootfs).resolve(),Path(source).resolve()
     if not rootfs.is_relative_to(ROOT) or not rootfs.is_dir():
         raise ValueError('Rootfs must be an existing workspace directory')
@@ -77,10 +77,12 @@ def stage(rootfs, source, desktop='gnome'):
         raise ValueError('Expected fixed clean complete userspace source')
     overlay=source/'rootfs/overlay'
     if not overlay.is_dir():raise ValueError('Complete upstream overlay missing')
+    packaged = device_config_paths()
     copied={}
     for path in sorted(overlay.rglob('*')):
         name=path.relative_to(overlay)
-        if desktop != 'gnome' and gnome_path(name.as_posix()):
+        relative = name.as_posix()
+        if relative in packaged or (desktop != 'gnome' and gnome_path(relative)):
             continue
         target=rootfs/name
         # Never follow guest-root absolute links while writing on the host.
@@ -95,7 +97,7 @@ def stage(rootfs, source, desktop='gnome'):
             target.parent.mkdir(parents=True,exist_ok=True)
             if target.is_symlink():raise ValueError('Refuse writing through guest symlink')
             shutil.copy2(path,target)
-            copied[name.as_posix()]=hashlib.sha256(path.read_bytes()).hexdigest()
+            copied[relative]=hashlib.sha256(path.read_bytes()).hexdigest()
     # Apply the language after the public overlay so its upstream en_US
     # default cannot overwrite the product's Simplified Chinese default.
     for name, contents in (

@@ -5,6 +5,8 @@ import copy
 import json
 import shutil
 
+from package_bsp import payload
+
 GNOME_PACKAGES = {
     'gdm3', 'gnome', 'task-gnome-desktop', 'gnome-control-center',
     'gnome-session', 'gnome-settings-daemon',
@@ -42,6 +44,12 @@ def gnome_path(name):
     return any(name == prefix or name.startswith(prefix + '/') for prefix in GNOME_PATHS)
 
 
+def device_config_paths():
+    """Paths installed by piano-device-config, not by the public overlay."""
+    _, rows = payload([])
+    return {row['path'] for row, _ in rows}
+
+
 def sid_recipe(text):
     """Replace the fixed source recipe's stable-only APT setup as one operation."""
     replacements = (
@@ -74,6 +82,12 @@ def sid_recipe(text):
     text = text.replace(" USERSPACE_DIR='' MESA_DIR=''", " USERSPACE_DIR=''")
     text = text.replace(' [--mesa-dir DIR]', '')
     text = text.replace('        --mesa-dir) MESA_DIR=$(realpath "${2:?}"); shift 2 ;;\n', '')
+    # The device package uses udev to activate USB and touch on matching hardware.
+    enable = 'chroot "$ROOTFS" systemctl enable NetworkManager ssh bluetooth'
+    upstream_enable = enable + ' piano-usb piano-touch '
+    if text.count(upstream_enable) != 1:
+        raise ValueError('Upstream Debian service activation changed')
+    text = text.replace(upstream_enable, enable + ' ')
     if 'trixie' in text or 'MESA_DIR' in text:
         raise ValueError('Stable-only Debian source remains in the derived sid recipe')
     return text
@@ -85,7 +99,14 @@ def prepare(public, output, desktop):
     destination = output / 'base-recipe'
     (destination / 'scripts').mkdir(parents=True)
     shutil.copy2(public / 'scripts/build-rootfs.sh', destination / 'scripts/build-rootfs.sh')
-    shutil.copytree(public / 'rootfs', destination / 'rootfs', symlinks=True)
+    source_rootfs = public / 'rootfs'
+    packaged_paths = {Path('overlay') / path for path in device_config_paths()}
+
+    def ignore_packaged(directory, names):
+        relative = Path(directory).relative_to(source_rootfs)
+        return {name for name in names if relative / name in packaged_paths}
+
+    shutil.copytree(source_rootfs, destination / 'rootfs', symlinks=True, ignore=ignore_packaged)
     if desktop == 'kde':
         for name in GNOME_PATHS:
             path = destination / 'rootfs/overlay' / name

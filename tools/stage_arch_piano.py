@@ -21,6 +21,7 @@ import stage_piano_full_userspace as userspace
 import stage_piano_kernel_modules as modules
 import stage_piano_ram_hardware as hardware
 import stage_nyarch_desktop as nyarch
+from build import overlay_packages
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -92,6 +93,9 @@ def stage(args):
         raise ValueError('Rebuild the runtime helpers for the selected kernel')
     steamos = getattr(args, 'desktop', 'nyarch') == 'steamos'
     published_packages = getattr(args, 'published_packages', None)
+    device_configuration = getattr(args, 'device_configuration', None)
+    if device_configuration is None:
+        device_configuration = overlay_packages.install_local_arch_bsp(root)
     userspace.stage(root, ROOT / cfg['debian']['source'],
                     desktop='kde' if steamos else 'gnome')
     # These are generated files in the build root; refresh them on --resume.
@@ -205,9 +209,9 @@ def stage(args):
             else:
                 item.unlink()
     packages = subprocess.check_output(['chroot', root, 'pacman', '-Q'], text=True)
-    if published_packages is not None:
-        from build.overlay_packages import verify_pacman_versions
-        verify_pacman_versions(published_packages, packages)
+    overlay_packages.verify_pacman_versions(
+        {**(published_packages or {}), 'device_configuration': device_configuration}, packages)
+    overlay_packages.verify_bsp_files(root, 'pacman')
     (output / 'packages.tsv').write_text(packages)
     record = {'status': 'HOST_BUILT_ROOT_NOT_BOOT_VERIFIED',
               'distro': 'steamos' if steamos else 'nyarch',

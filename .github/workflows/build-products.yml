@@ -147,6 +147,7 @@ jobs:
       image_id: ${{ needs.environment.outputs.image_id }}
       cache_key: ${{ needs.environment.outputs.cache_key }}
       overlay_matrix: ${{ needs.select.outputs.overlay_matrix }}
+      bsp_key: ${{ needs.shared.outputs.bsp_key }}
 
   build:
     needs: [select, environment, shared, repository]
@@ -157,6 +158,7 @@ jobs:
       cache_key: ${{ needs.environment.outputs.cache_key }}
       matrix: ${{ needs.select.outputs.rootfs_matrix }}
       shared_target: ${{ needs.select.outputs.shared_target }}
+      bsp_key: ${{ needs.shared.outputs.bsp_key }}
 
   logs:
     needs: [select, environment, shared, repository, build, overlays]

@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/repo'))
@@ -34,6 +35,8 @@ class RepoProductsTests(unittest.TestCase):
         firmware = 'piano-firmware-1-1-any.pkg.tar.zst'
         deb_kernel = 'linux-piano_1_arm64.deb'
         deb_shared = 'mesa_27_arm64.deb'
+        device_deb = self.packages / 'piano-device-config_1_all.deb'
+        device_pacman = self.packages / 'piano-device-config-1-1-any.pkg.tar.zst'
         self.package_set('kernel/debian', {deb_kernel: b'kernel'}, format='debian')
         self.package_set('kernel/pacman', {kernel: b'kernel'}, format='pacman')
         self.package_set('overlays/debian-gnome', {deb_shared: b'same build'}, repo='apt')
@@ -43,13 +46,29 @@ class RepoProductsTests(unittest.TestCase):
         self.package_set('overlays/steamos', {graphics: b'valve'}, repo='sunuefi-steamos')
 
         targets = ('debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos')
-        batches = publication_batches(self.packages, kernel=True, overlays=targets)
+        with patch('products.bsp_package', side_effect=(
+                (device_deb, {'sha256': 'debian'}), (device_pacman, {'sha256': 'pacman'}))) as bsp:
+            batches = publication_batches(self.packages, kernel=True, overlays=targets)
+        self.assertEqual([call.args for call in bsp.call_args_list],
+                         [(self.packages / 'bsp/debian', 'debian'),
+                          (self.packages / 'bsp/pacman', 'pacman')])
         self.assertEqual({name: [path.name for path in paths] for name, paths in batches.items()},
-                         {'apt': [deb_kernel, deb_shared],
-                          'sunuefi': [kernel, graphics, firmware],
+                         {'apt': [deb_kernel, deb_shared, device_deb.name],
+                          'sunuefi': [kernel, graphics, device_pacman.name, firmware],
                           'sunuefi-steamos': [graphics]})
         self.assertEqual(batches['sunuefi'][1].read_bytes(), b'arch')
         self.assertEqual(batches['sunuefi-steamos'][0].read_bytes(), b'valve')
+
+    def test_does_not_publish_common_bsp_from_steamos_overlays(self):
+        self.package_set('kernel/debian', {'linux.deb': b'kernel'}, format='debian')
+        self.package_set('kernel/pacman', {'linux.pkg.tar.zst': b'kernel'}, format='pacman')
+        device_deb = self.packages / 'piano-device-config_1_all.deb'
+        device_pacman = self.packages / 'piano-device-config-1-1-any.pkg.tar.zst'
+        self.package_set('overlays/steamos', {device_pacman.name: b'valve'}, repo='sunuefi-steamos')
+        with patch('products.bsp_package', side_effect=(
+                (device_deb, {'sha256': 'debian'}), (device_pacman, {'sha256': 'pacman'}))):
+            with self.assertRaisesRegex(ValueError, 'Common device configuration duplicated'):
+                publication_batches(self.packages, kernel=True, overlays=('steamos',))
 
     def test_duplicate_names_within_one_repo_must_match(self):
         package = 'mesa_27_arm64.deb'
