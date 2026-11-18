@@ -1,4 +1,4 @@
-From 7d3173d0390424b12d7d4c9905ae194ddbf65f09 Mon Sep 17 00:00:00 2001
+From a844585cd8f0ffaee7b79eaa35a2feaa5ac5d554 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 22:26:13 +0800
 Subject: [PATCH] fix(power): use real MCA charge-enable feedback

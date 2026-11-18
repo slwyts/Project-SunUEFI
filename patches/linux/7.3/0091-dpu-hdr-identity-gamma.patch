@@ -1,4 +1,4 @@
-From 6dd902833b08f9c765d0cb8c0c9a38f7bdb6cd38 Mon Sep 17 00:00:00 2001
+From 169450433f4e95a26f0908cf4848d773539f279e Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Tue, 10 Nov 2026 01:10:26 +0800
 Subject: [PATCH] drm/msm: accept identity gamma ramps with fixed-panel HDR

@@ -1,4 +1,4 @@
-From aa577d764700a6d84d39892d479bb6805a1162b3 Mon Sep 17 00:00:00 2001
+From c75a1a604ddaea956e9184c8767c55b6d4c1e76e Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 06:26:04 +0800
 Subject: [PATCH] drm/msm/dpu: lock the CRTC state while reading debugfs

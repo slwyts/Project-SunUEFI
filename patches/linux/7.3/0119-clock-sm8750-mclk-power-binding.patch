@@ -1,4 +1,4 @@
-From 6f3acdadb986a802931fb1e726ae4e6596da78b1 Mon Sep 17 00:00:00 2001
+From bca377870b98639f4a0d1267c92175ad694b3feb Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 15 Nov 2026 01:21:54 +0800
 Subject: [PATCH] dt-bindings: clock: qcom: describe SM8750 MCLK Titan

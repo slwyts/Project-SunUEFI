@@ -1,4 +1,4 @@
-From 781a0bb21d3eb1016ded57d4114fc1706e5a2ff2 Mon Sep 17 00:00:00 2001
+From b6e056e62bc9c00917391634e6c4df1d1fa3fcb7 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 19:39:38 +0800
 Subject: [PATCH] media: camss: Validate contiguous DMA ranges for capture
@@ -22,7 +22,7 @@ Assisted-by: LLM
  1 file changed, 33 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
-index 1c09d0f9d11a99284e2a5caa03aaa0f91994ecd3..8e886e4d44673f4f7832d405c3bfeef4fda16a30 100644
+index 1b369fa584a7cebabe80e8b03a3c654f32c1f6bd..34d15edbe19a55638486083659d0b606c612df60 100644
 --- a/drivers/media/platform/qcom/camss/camss-video.c
 +++ b/drivers/media/platform/qcom/camss/camss-video.c
 @@ -7,6 +7,7 @@
@@ -80,3 +80,6 @@ index 1c09d0f9d11a99284e2a5caa03aaa0f91994ecd3..8e886e4d44673f4f7832d405c3bfeef4
  			return -EFAULT;
  
  		buffer->addr[i] = sg_dma_address(sgt->sgl);
+-- 
+2.56.1
+

@@ -1,4 +1,4 @@
-From b03be1db1dcccc0374a7950f20105ee9e2d261f0 Mon Sep 17 00:00:00 2001
+From a1202d1cdf85446a6e2005ce329642155e84d726 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 17:57:45 +0800
 Subject: [PATCH] fix(power): preserve thermal limits during charge inhibition

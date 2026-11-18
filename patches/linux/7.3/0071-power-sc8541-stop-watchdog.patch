@@ -1,4 +1,4 @@
-From 8cf58735f8a52c9ce794d2ddbead6974df41962b Mon Sep 17 00:00:00 2001
+From 7d1f18231dca5c45d474cc3e8e23e247508724c8 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 07:40:31 +0800
 Subject: [PATCH] fix(power-supply): confirm SC8541 stop and arm its hardware

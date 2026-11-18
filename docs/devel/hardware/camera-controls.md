@@ -4,6 +4,8 @@
 
 SM8750 TFE980 的 PIX sink 接收四种排列的 RAW10 Bayer，source 和对应捕获节点只输出 NV12。RAW10 原始采集走 RDI，不能因 PIX 接收 Bayer 就把它公布为 RAW10 捕获设备。[格式补丁](../../../patches/linux/7.3/0114-camss-pix-capture-formats.patch)分别描述 sink 和捕获格式，并让 SM8750 sink 的默认值落在支持的格式中；不再共用包含 RAW10 和 NV12 的捕获枚举。
 
+NV12 捕获和裁切使用相同的尺寸步长：宽度为 16 的倍数，高度和裁切起点按完整色度样本对齐。缩放下限按 16 倍比例向上取偶数；后摄输入 4080×3060 时，平板读回的最小缩放尺寸为 256×192。DMA 基址和 PIX 行跨度按 TFE980 的 256 字节地址单位校验。
+
 ## 内核接口与 libcamera
 
 产品相机驱动来自 [Linux 补丁链](../../../patches/linux/7.3/series.json)，不是未经修改的主线 CAMSS。图像、控件和帧事件使用 V4L2；颜色矩阵仍有本地私有控件。TFE 的 `vfe_isp_params` 是内核内部状态，不是用户空间可以排队的参数缓冲接口。

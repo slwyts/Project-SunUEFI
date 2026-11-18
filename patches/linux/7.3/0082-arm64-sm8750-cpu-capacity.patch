@@ -1,4 +1,4 @@
-From a20312b35e10bf3b903da5add40b9bbe1bcdca2d Mon Sep 17 00:00:00 2001
+From 1a38fb202c29715ccf97e5208a975328919b8d7d Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 23:39:17 +0800
 Subject: [PATCH] arm64: dts: qcom: sm8750: describe CPU capacity differences

@@ -1,4 +1,4 @@
-From 611bb038b07681dae27d6852f4698e4873cbc980 Mon Sep 17 00:00:00 2001
+From 05b99a3a3ab41ce928b372525901d60575f598e7 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 12 Nov 2026 00:22:59 +0800
 Subject: [PATCH] fix(power): retain teardown after an unconfirmed FFC PMIC

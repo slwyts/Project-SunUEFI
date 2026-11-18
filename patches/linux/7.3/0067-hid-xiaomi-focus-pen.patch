@@ -1,4 +1,4 @@
-From 1abdd75969c8214914d9bb73d3a3f088bdd18f6a Mon Sep 17 00:00:00 2001
+From e8b6ad734c7df20e0a190ff7749a01a1167abb4d Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sun, 8 Nov 2026 22:19:24 +0800
 Subject: [PATCH] HID: xiaomi: support Focus Pen M80p input routing

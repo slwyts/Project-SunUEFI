@@ -1,4 +1,4 @@
-From f5201390a1ee8f318f26e1f8e1261dbe809dc499 Mon Sep 17 00:00:00 2001
+From 9d8f8038a82af73c82f2c3cee2706a12d758e241 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 02:13:47 +0800
 Subject: [PATCH] power: supply: piano_mca: share standard thermal charge
