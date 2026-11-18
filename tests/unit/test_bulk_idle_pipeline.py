@@ -9,7 +9,7 @@ PUMP=ROOT/'uefi/components/product-pump/Mu_Basecore/MdePkg'
 spec=importlib.util.spec_from_file_location('prepare_product_pump',ROOT/'tools/prepare_product_pump.py')
 pump=importlib.util.module_from_spec(spec);spec.loader.exec_module(pump)
 def function(text,name):
- match=re.search(r'(?m)^(?:STATIC )?EFI_STATUS\s+(?:EFIAPI\s+)?'+name+r'\s*\(',text)
+ match=re.search(r'(?m)^(?:STATIC )?(?:EFI_STATUS|BOOLEAN)\s+(?:EFIAPI\s+)?'+name+r'\s*\(',text)
  if not match:raise ValueError(name)
  start=text.index('{',match.start());end=start+1;depth=1
  while depth:
@@ -21,7 +21,8 @@ class BulkIdlePipelineTests(unittest.TestCase):
   # The product build installs these wait hooks into its workspace copy of Event.c
   for relative,old,new in pump.HOOKS:
    if relative==pump.BASE+'MdeModulePkg/Core/Dxe/Event/Event.c':event=pump.transform(event,old,new,relative)
-  actual='\n\n'.join([function(policy,'ReadIdle'),function(policy,'Pump'),function(event,'CoreWaitForEvent')])
+  actual='\n\n'.join([*(function(policy,name) for name in ('UsbBulkInProgress','UiAction','ReadIdle','Pump')),
+                     function(event,'CoreWaitForEvent')])
   inc=BASE/'MdePkg/Include';other=[BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',PUMP/'Include',*core_include_dirs(ROOT)]
   with tempfile.TemporaryDirectory(prefix='bulk-idle-pipeline-')as directory:
    directory=Path(directory);(directory/'PianoActualBulkIdlePipeline.h').write_text(actual);exe=directory/'pipeline'
