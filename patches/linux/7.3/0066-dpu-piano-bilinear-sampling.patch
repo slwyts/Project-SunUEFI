@@ -1,4 +1,4 @@
-From 10094845b7d0464061564ea63d09a2fad0a4e8a4 Mon Sep 17 00:00:00 2001
+From 4500639942c1078007e5cf10ba2eef554d632776 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sun, 8 Nov 2026 21:49:25 +0800
 Subject: [PATCH] drm/msm/dpu: align Piano QSEED 2x sampling across pipe splits

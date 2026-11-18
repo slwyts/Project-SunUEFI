@@ -1,4 +1,4 @@
-From d0e7737281634c536a7337b7b160fa059e7a7aa4 Mon Sep 17 00:00:00 2001
+From 02df6167e92e9ab9975c59fa6b3dce026e470907 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 02:45:01 +0800
 Subject: [PATCH] power: supply: piano_mca: retain cooling requests during
@@ -10,7 +10,7 @@ Thermal registration can invoke the cooling callback before the GLINK client is 
  1 file changed, 5 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 3a3e7b38d7a..e9db8c0441b 100644
+index 66edaa3cc971d9fa618ba21f5f2ebfe50024f25a..f49da46f90235af3fc8eef92d6d8fa93e083accc 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -485,6 +485,7 @@ struct piano_mca {
@@ -50,4 +50,5 @@ index 3a3e7b38d7a..e9db8c0441b 100644
  
  	if (pan_ack)
 -- 
-2.56.0
+2.56.1
+

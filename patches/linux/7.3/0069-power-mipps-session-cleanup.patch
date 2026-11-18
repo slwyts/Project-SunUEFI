@@ -1,4 +1,4 @@
-From c52c3e8e3bd6a252c7aeb044bc7160badd5980bb Mon Sep 17 00:00:00 2001
+From 424de810eba33d5d565469f08192b5d104c84a0f Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 02:49:10 +0800
 Subject: [PATCH] fix(power-supply): bind MiPPS exchanges and cleanup to GLINK
@@ -14,7 +14,7 @@ Arm cleanup before setting VERIFY_PROCESS so a lost reply cannot strand the flag
  3 files changed, 162 insertions(+), 39 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 95e67c0c7..5f22985c5 100644
+index 92fc29d93a6b9b9d8ae9098876732460f77f9cad..b26411858dbf118f3285d68c8fbb2a8c0ac1f172 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -494,9 +494,10 @@ struct piano_mca {
@@ -76,7 +76,7 @@ index 95e67c0c7..5f22985c5 100644
  
  	ret = mca->retcode ? -EIO : 0;
  	if (!ret && opcode == MCA_OP_READ)
-@@ -741,7 +746,8 @@ static int piano_mca_xfer(struct piano_mca *mca, u32 opcode, u32 prop,
+@@ -741,7 +746,8 @@ out:
  /* Read a property; up to 256 bytes are copied to @buf. */
  static int piano_mca_read(struct piano_mca *mca, u32 prop, void *buf, size_t len)
  {
@@ -363,7 +363,7 @@ index 95e67c0c7..5f22985c5 100644
  	if (mca->pen_boost_on)
  		piano_mca_pen_boost_off(mca);
 diff --git a/drivers/soc/qcom/pmic_glink.c b/drivers/soc/qcom/pmic_glink.c
-index 0cbc55d79..13c7ffd4d 100644
+index 0cbc55d799e3aeb98021234c7c25df1bd932c9e8..13c7ffd4dc0055b7f8dd4623cd21bc13e6ba6f49 100644
 --- a/drivers/soc/qcom/pmic_glink.c
 +++ b/drivers/soc/qcom/pmic_glink.c
 @@ -44,6 +44,7 @@ struct pmic_glink {
@@ -454,7 +454,7 @@ index 0cbc55d79..13c7ffd4d 100644
  		list_for_each_entry(client, &pg->clients, node)
  			client->pdr_notify(client->priv, new_state);
 diff --git a/include/linux/soc/qcom/pmic_glink.h b/include/linux/soc/qcom/pmic_glink.h
-index 7cddf1027..f50208825 100644
+index 7cddf10277528ef219ebd4f9f1abed4c3da97c25..f502088256365ba9748465483dfb97e18f2c5842 100644
 --- a/include/linux/soc/qcom/pmic_glink.h
 +++ b/include/linux/soc/qcom/pmic_glink.h
 @@ -22,6 +22,9 @@ struct pmic_glink_hdr {
@@ -468,5 +468,5 @@ index 7cddf1027..f50208825 100644
  struct pmic_glink_client *devm_pmic_glink_client_alloc(struct device *dev,
  						       unsigned int id,
 -- 
-2.55.0
+2.56.1
 

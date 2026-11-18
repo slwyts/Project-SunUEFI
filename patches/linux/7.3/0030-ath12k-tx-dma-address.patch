@@ -1,4 +1,4 @@
-From 9d716c9117e7b3055c301a05576a64e79f359fcb Mon Sep 17 00:00:00 2001
+From bb7232c0631e2068fdfce7a9c6e555dbf33513a6 Mon Sep 17 00:00:00 2001
 From: Baochen Qiang <baochen.qiang@oss.qualcomm.com>
 Date: Sun, 8 Nov 2026 01:57:30 +0800
 Subject: [PATCH] wifi: ath12k: preserve the complete TX buffer DMA address

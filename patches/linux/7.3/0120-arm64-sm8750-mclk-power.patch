@@ -1,4 +1,4 @@
-From 36340454c5fd7a7c5087075c727d1f97791e382a Mon Sep 17 00:00:00 2001
+From 21536d17b250b106d8e7d5f9ac03c0547ae338f8 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 15 Nov 2026 01:22:15 +0800
 Subject: [PATCH] arm64: dts: qcom: sm8750: attach MCLK provider to Titan top

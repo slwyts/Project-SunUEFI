@@ -1,4 +1,4 @@
-From b30af60c1b3fcbae901634f1b10dc648eecccf9e Mon Sep 17 00:00:00 2001
+From a0134efbb57e8829c5568438d41c03529864f867 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 05:10:30 +0800
 Subject: [PATCH] feat(power): support factory 1:1 direct-charge selection
@@ -6,9 +6,17 @@ Subject: [PATCH] feat(power): support factory 1:1 direct-charge selection
 Expose SC8541 Standard and Bypass charge types with stopped-only mode writes and register readback. Retain stop guards before re-enabling the stage.
 
 Select 1:1 or 2:1 from authenticated adapter capabilities and use the actual conversion ratio for voltage requests, current budgets, PMIC sharing and regulation steps. Apply the factory 4.5 A single-pump bypass limit, wait for low input voltage before enabling bypass and keep dynamic mode switching disabled.
+---
+ drivers/power/supply/Kconfig               |  13 +-
+ drivers/power/supply/piano_mca.c           | 172 ++++++++++++++-----
+ drivers/power/supply/piano_mca_test.c      | 186 ++++++++++++++++++++-
+ drivers/power/supply/sc8541_charger.c      |  82 +++++++--
+ drivers/power/supply/sc8541_charger_test.c | 173 +++++++++++++++++++
+ 5 files changed, 568 insertions(+), 58 deletions(-)
+ create mode 100644 drivers/power/supply/sc8541_charger_test.c
 
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
-index 2e6dd6637..e56d78da9 100644
+index 2e6dd6637ede3a9a7ed75cee4f42d39eb8444d16..e56d78da96b2397bc0d349e95a0947550987bb5e 100644
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
 @@ -902,8 +902,17 @@ config CHARGER_SC8541
@@ -32,7 +40,7 @@ index 2e6dd6637..e56d78da9 100644
  config CHARGER_BQ25630
  	tristate "TI BQ25630 battery charger driver"
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 7cf5c17a3..18000b969 100644
+index 5920137c384ca5f98a73c9bc6480269f7778c450..d2ff628bd8fb0f67eded26daaf5f8507539411f6 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -299,12 +299,11 @@ MODULE_PARM_DESC(mipps_auth,
@@ -433,10 +441,10 @@ index 7cf5c17a3..18000b969 100644
  	/* The rest only means something with a source attached */
  	if (online) {
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
-index 486443234..0d7c64812 100644
+index 57e7e3558d845580a5f0774cbbd5dadf519b3f8f..d137202479bcb7c6b00937057e5125157301845b 100644
 --- a/drivers/power/supply/piano_mca_test.c
 +++ b/drivers/power/supply/piano_mca_test.c
-@@ -109,6 +109,9 @@ struct piano_mca_test {
+@@ -110,6 +110,9 @@ struct piano_mca_test {
  	unsigned int last_cp_ocp_event;
  	unsigned int last_cp_enable_event;
  	bool cp_enabled;
@@ -446,7 +454,7 @@ index 486443234..0d7c64812 100644
  	struct piano_mca_test_gauge gauge[2];
  	u32 vbus_uv;
  	u32 real_type;
-@@ -139,6 +142,8 @@ struct piano_mca_test {
+@@ -140,6 +143,8 @@ struct piano_mca_test {
  	bool offer_cp_apdo;
  	u32 apdo_max_mv;
  	u32 apdo_min_mv;
@@ -455,7 +463,7 @@ index 486443234..0d7c64812 100644
  	bool only_5v;
  	unsigned int fv_writes;
  	unsigned int fcc_writes;
-@@ -400,7 +405,8 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+@@ -401,7 +406,8 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
  			if (fixture->offer_cp_apdo) {
  				pdo[2].min_mv = cpu_to_le32(fixture->apdo_min_mv);
  				pdo[2].max_mv = cpu_to_le32(fixture->apdo_max_mv);
@@ -465,7 +473,7 @@ index 486443234..0d7c64812 100644
  			}
  			if (fixture->restart_on_pdos) {
  				fixture->restart_on_pdos = false;
-@@ -548,6 +554,8 @@ static int piano_mca_test_init(struct kunit *test)
+@@ -549,6 +555,8 @@ static int piano_mca_test_init(struct kunit *test)
  	fixture->fixed_5v_ma = 3000;
  	fixture->apdo_max_mv = 10000;
  	fixture->apdo_min_mv = 6000;
@@ -474,7 +482,7 @@ index 486443234..0d7c64812 100644
  	fixture->vbus_uv = 5000000;
  	fixture->real_type = MCA_TYPE_PD;
  	fixture->charge_status = 4;
-@@ -740,6 +748,9 @@ static int piano_mca_test_cp_get(struct power_supply *psy,
+@@ -745,6 +753,9 @@ static int piano_mca_test_cp_get(struct power_supply *psy,
  	case POWER_SUPPLY_PROP_TEMP:
  		value->intval = fixture->cp_temp;
  		break;
@@ -484,7 +492,7 @@ index 486443234..0d7c64812 100644
  	default:
  		return -EINVAL;
  	}
-@@ -752,6 +763,16 @@ static int piano_mca_test_cp_set(struct power_supply *psy,
+@@ -757,6 +768,16 @@ static int piano_mca_test_cp_set(struct power_supply *psy,
  {
  	struct piano_mca_test *fixture = power_supply_get_drvdata(psy);
  
@@ -501,7 +509,7 @@ index 486443234..0d7c64812 100644
  	if (property == POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT) {
  		fixture->cp_busocp_ma = value->intval / 1000;
  		fixture->last_cp_ocp_event = ++fixture->events;
-@@ -783,6 +804,7 @@ static int piano_mca_test_start_cp(struct kunit *test)
+@@ -788,6 +809,7 @@ static int piano_mca_test_start_cp(struct kunit *test)
  		POWER_SUPPLY_PROP_CURRENT_NOW,
  		POWER_SUPPLY_PROP_TEMP,
  		POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
@@ -509,7 +517,7 @@ index 486443234..0d7c64812 100644
  	};
  	static const struct power_supply_desc description = {
  		.name = "sc8541",
-@@ -809,6 +831,8 @@ static int piano_mca_test_start_cp(struct kunit *test)
+@@ -814,6 +836,8 @@ static int piano_mca_test_start_cp(struct kunit *test)
  	fixture->mca.cp_generation = fixture->remote_generation;
  	fixture->mca.cp_connection_generation = 0;
  	fixture->mca.cp_real_type = fixture->mca.real_type;
@@ -518,7 +526,7 @@ index 486443234..0d7c64812 100644
  	fixture->mca.cp_mv = 8000;
  	fixture->mca.cp_ma = 3000;
  	fixture->mca.cp_max_mv = 10000;
-@@ -3729,6 +3753,159 @@ static void piano_mca_battery_alert_current_test(struct kunit *test)
+@@ -3749,6 +3773,159 @@ static void piano_mca_battery_alert_current_test(struct kunit *test)
  	KUNIT_EXPECT_EQ(test, limits.ma, 8000U);
  }
  
@@ -678,7 +686,7 @@ index 486443234..0d7c64812 100644
  static void piano_mca_pps_vstep_test(struct kunit *test)
  {
  	struct piano_mca_test *f = test->priv;
-@@ -3757,6 +3934,9 @@ static void piano_mca_pps_vstep_test(struct kunit *test)
+@@ -3777,6 +3954,9 @@ static void piano_mca_pps_vstep_test(struct kunit *test)
  	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 4373, 8000, 25), 200U);
  	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 4374, 8000, 25), 20U);
  	KUNIT_EXPECT_EQ(test, piano_mca_pps_vstep(&f->mca, &limits, 3800, 8000, 10), 80U);
@@ -688,7 +696,7 @@ index 486443234..0d7c64812 100644
  }
  
  static void piano_mca_third_pps_limits_test(struct kunit *test)
-@@ -4071,6 +4251,10 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
+@@ -4091,6 +4271,10 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
  }
  
  static struct kunit_case piano_mca_test_cases[] = {
@@ -700,7 +708,7 @@ index 486443234..0d7c64812 100644
  	KUNIT_CASE(piano_mca_battery_alert_current_test),
  	KUNIT_CASE(piano_mca_pps_vstep_test),
 diff --git a/drivers/power/supply/sc8541_charger.c b/drivers/power/supply/sc8541_charger.c
-index 8b3fc406d..4ef9e0d07 100644
+index 8b3fc406da5c8c9e4a5ee692e69c608d52a735d7..4ef9e0d07a182eba5488560f5b5c478e9ead5b15 100644
 --- a/drivers/power/supply/sc8541_charger.c
 +++ b/drivers/power/supply/sc8541_charger.c
 @@ -1,13 +1,11 @@
@@ -899,7 +907,7 @@ index 8b3fc406d..4ef9e0d07 100644
 +#endif
 diff --git a/drivers/power/supply/sc8541_charger_test.c b/drivers/power/supply/sc8541_charger_test.c
 new file mode 100644
-index 000000000..eb49459fb
+index 0000000000000000000000000000000000000000..eb49459fb986a7549c3c33d598cf5550b75cf41c
 --- /dev/null
 +++ b/drivers/power/supply/sc8541_charger_test.c
 @@ -0,0 +1,173 @@
@@ -1076,3 +1084,6 @@ index 000000000..eb49459fb
 +	.test_cases = sc8541_test_cases,
 +};
 +kunit_test_suite(sc8541_test_suite);
+-- 
+2.56.1
+

@@ -1,4 +1,4 @@
-From c43c765db1026f7df7fc59bf06c1d1c826cc3b84 Mon Sep 17 00:00:00 2001
+From f7d5fe5a2dc4942d31a4fd2004a3bda55fe5fb5a Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 18:02:33 +0800
 Subject: [PATCH] fix(power): match Piano normal termination and JEITA
@@ -14,7 +14,7 @@ Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
  1 file changed, 63 insertions(+), 22 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 0a63a9f0b..aad1b2879 100644
+index f54cebd18de1c8f39aaf8ebcf59e2e9b65d52065..8818ef29304d01413229e7ca6a8f4adf4a1b029e 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -15,8 +15,7 @@
@@ -194,5 +194,5 @@ index 0a63a9f0b..aad1b2879 100644
  	ret = piano_mca_normal_set_fv(mca, fv, generation, connection);
  	if (ret) {
 -- 
-2.55.0
+2.56.1
 

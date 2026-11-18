@@ -1,4 +1,4 @@
-From 815369d7263e34879e01a36f1bb621746f0939a4 Mon Sep 17 00:00:00 2001
+From 58f7300815a30c72a28de71b6c8708be9c2f5b0b Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 22:28:29 +0800
 Subject: [PATCH] power: supply: represent Piano parallel cells as one battery
@@ -8,6 +8,9 @@ charge and current while keeping cell voltage and SOC estimates
 distinct. Mark explicitly internal gauges as monitor components and
 retain their measurements for charging and thermal consumers.
 
+Expose the measured and filtered currents separately and use the
+filtered sum for the pack status.
+
 Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
 ---
  .../bindings/power/supply/bq27xxx.yaml        |   8 +
@@ -15,13 +18,13 @@ Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
  drivers/power/supply/Kconfig                  |   9 +
  drivers/power/supply/Makefile                 |   1 +
  drivers/power/supply/bq27xxx_battery.c        |   6 +-
- drivers/power/supply/piano_battery.c          | 254 ++++++++++++++++++
- 6 files changed, 321 insertions(+), 1 deletion(-)
+ drivers/power/supply/piano_battery.c          | 256 ++++++++++++++++++
+ 6 files changed, 323 insertions(+), 1 deletion(-)
  create mode 100644 Documentation/devicetree/bindings/power/supply/xiaomi,piano-battery.yaml
  create mode 100644 drivers/power/supply/piano_battery.c
 
 diff --git a/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml b/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
-index bc0540018..a8d5cbed0 100644
+index bc05400186cf1c18537a04695b4ca3b65a2e0e24..a8d5cbed0cebc8025449050955962352a5fb26da 100644
 --- a/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
 +++ b/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
 @@ -69,6 +69,14 @@ properties:
@@ -41,7 +44,7 @@ index bc0540018..a8d5cbed0 100644
    - if:
 diff --git a/Documentation/devicetree/bindings/power/supply/xiaomi,piano-battery.yaml b/Documentation/devicetree/bindings/power/supply/xiaomi,piano-battery.yaml
 new file mode 100644
-index 000000000..5362b5db1
+index 0000000000000000000000000000000000000000..5362b5db15c03aaad67d296ad91c3f6e53d08c35
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/power/supply/xiaomi,piano-battery.yaml
 @@ -0,0 +1,44 @@
@@ -90,7 +93,7 @@ index 000000000..5362b5db1
 +      power-supplies = <&fuel_gauge_master>, <&fuel_gauge_slave>;
 +    };
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
-index e9873e3b2..cccddfd9d 100644
+index e9873e3b2a16bb1e809f51d82b4acc327fcc6e9f..cccddfd9de06474ebdb58ffc0f00aedb074cdc37 100644
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
 @@ -322,6 +322,15 @@ config MANAGER_SBS
@@ -110,7 +113,7 @@ index e9873e3b2..cccddfd9d 100644
  	tristate "BQ27xxx battery driver"
  	help
 diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
-index e4c42a129..59e068c3d 100644
+index e4c42a1290d52c0fab6b023c45b614531726da21..59e068c3d3e7fbc6e40a5fedc9e9e4ace5614532 100644
 --- a/drivers/power/supply/Makefile
 +++ b/drivers/power/supply/Makefile
 @@ -50,6 +50,7 @@ obj-$(CONFIG_BATTERY_WM97XX)	+= wm97xx_battery.o
@@ -122,10 +125,10 @@ index e4c42a129..59e068c3d 100644
  obj-$(CONFIG_BATTERY_BQ27XXX_I2C) += bq27xxx_battery_i2c.o
  obj-$(CONFIG_BATTERY_BQ27XXX_HDQ) += bq27xxx_battery_hdq.o
 diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
-index 01c9ec111..5c32de13c 100644
+index b952bbca0ebbb1aa03ffd6fc8caaff06d89e48f8..52473e9b5dd04047e8ce84381ea0d3c484a23b83 100644
 --- a/drivers/power/supply/bq27xxx_battery.c
 +++ b/drivers/power/supply/bq27xxx_battery.c
-@@ -2249,7 +2249,11 @@ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
+@@ -2256,7 +2256,11 @@ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
  		return -ENOMEM;
  
  	psy_desc->name = di->name;
@@ -140,10 +143,10 @@ index 01c9ec111..5c32de13c 100644
  	psy_desc->get_property = bq27xxx_battery_get_property;
 diff --git a/drivers/power/supply/piano_battery.c b/drivers/power/supply/piano_battery.c
 new file mode 100644
-index 000000000..66ca32c52
+index 0000000000000000000000000000000000000000..b56177dfc767d7f4ffd6004fb031d9dbb424e29c
 --- /dev/null
 +++ b/drivers/power/supply/piano_battery.c
-@@ -0,0 +1,254 @@
+@@ -0,0 +1,256 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Xiaomi Piano's two parallel cell banks form one system battery. Keep the
@@ -189,7 +192,7 @@ index 000000000..66ca32c52
 +	int currents[PIANO_BATTERY_CELLS], status[PIANO_BATTERY_CELLS];
 +	int net_current, ret;
 +
-+	ret = piano_battery_read_cells(psy, POWER_SUPPLY_PROP_CURRENT_NOW, currents);
++	ret = piano_battery_read_cells(psy, POWER_SUPPLY_PROP_CURRENT_AVG, currents);
 +	if (ret)
 +		return ret;
 +	net_current = currents[0] + currents[1];
@@ -267,6 +270,7 @@ index 000000000..66ca32c52
 +		value->intval = cells[0] && cells[1];
 +		break;
 +	case POWER_SUPPLY_PROP_CURRENT_NOW:
++	case POWER_SUPPLY_PROP_CURRENT_AVG:
 +	case POWER_SUPPLY_PROP_CHARGE_NOW:
 +	case POWER_SUPPLY_PROP_CHARGE_FULL:
 +	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
@@ -342,6 +346,7 @@ index 000000000..66ca32c52
 +	POWER_SUPPLY_PROP_SCOPE,
 +	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 +	POWER_SUPPLY_PROP_CURRENT_NOW,
++	POWER_SUPPLY_PROP_CURRENT_AVG,
 +	POWER_SUPPLY_PROP_CAPACITY,
 +	POWER_SUPPLY_PROP_TEMP,
 +	POWER_SUPPLY_PROP_TECHNOLOGY,
@@ -399,5 +404,5 @@ index 000000000..66ca32c52
 +MODULE_DESCRIPTION("Xiaomi Piano parallel battery pack");
 +MODULE_LICENSE("GPL");
 -- 
-2.55.0
+2.56.1
 

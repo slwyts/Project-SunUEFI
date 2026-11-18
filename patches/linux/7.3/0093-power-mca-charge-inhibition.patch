@@ -1,4 +1,4 @@
-From 821e24c6e5fc0dd53deaf41b91f4fb2ec34416cb Mon Sep 17 00:00:00 2001
+From a81f42440fed0a18e471388dd0729d230ad2c98c Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 17:57:45 +0800
 Subject: [PATCH] fix(power): preserve thermal limits during charge inhibition
@@ -17,12 +17,12 @@ and CP stop retries with UML-only KUnit tests using virtual supplies.
  drivers/power/supply/Kconfig          |   11 +
  drivers/power/supply/Makefile         |    1 +
  drivers/power/supply/piano_mca.c      |  311 +++-
- drivers/power/supply/piano_mca_test.c | 2171 +++++++++++++++++++++++++
- 4 files changed, 2420 insertions(+), 74 deletions(-)
+ drivers/power/supply/piano_mca_test.c | 2192 +++++++++++++++++++++++++
+ 4 files changed, 2441 insertions(+), 74 deletions(-)
  create mode 100644 drivers/power/supply/piano_mca_test.c
 
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
-index 71081a862..fd3caba7c 100644
+index 71081a862d164ff1d7e39a1939c5c0643e6160a7..fd3caba7ccc9a228add5f5c996b94f943c1c83ae 100644
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
 @@ -219,6 +219,17 @@ config BATTERY_PIANO_MCA
@@ -44,7 +44,7 @@ index 71081a862..fd3caba7c 100644
  	tristate "Qualcomm PMIC GLINK battery manager support"
  	depends on QCOM_PMIC_GLINK
 diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
-index 59e068c3d..158b781f5 100644
+index 59e068c3d3e7fbc6e40a5fedc9e9e4ace5614532..158b781f54707eec84bda7e40417ef710e9d8568 100644
 --- a/drivers/power/supply/Makefile
 +++ b/drivers/power/supply/Makefile
 @@ -39,6 +39,7 @@ obj-$(CONFIG_BATTERY_LENOVO_YOGA_C630) += lenovo_yoga_c630_battery.o
@@ -56,7 +56,7 @@ index 59e068c3d..158b781f5 100644
  obj-$(CONFIG_BATTERY_SAMSUNG_SDI)	+= samsung-sdi-battery.o
  obj-$(CONFIG_BATTERY_S2MU005)	+= s2mu005-battery.o
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index e9db8c044..f9ad399b0 100644
+index f49da46f90235af3fc8eef92d6d8fa93e083accc..494ead696528d8cc860632c355643f2b808cae55 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -291,6 +291,9 @@ MODULE_PARM_DESC(mipps_auth,
@@ -351,7 +351,7 @@ index e9db8c044..f9ad399b0 100644
  	} else if (charge_policy && piano_mca_cp_active(mca)) {
  		piano_mca_cp_step(mca);
  	} else if (charge_policy) {
-@@ -2882,6 +2967,7 @@ static void piano_mca_poll(struct work_struct *work)
+@@ -2882,6 +2967,7 @@ requeue:
  		queue_delayed_work(system_freezable_wq, &mca->poll,
  				   msecs_to_jiffies(piano_mca_cp_active(mca) ?
  						    MCA_CP_POLL_MS : MCA_POLL_MS));
@@ -602,10 +602,10 @@ index e9db8c044..f9ad399b0 100644
  
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
 new file mode 100644
-index 000000000..7001028aa
+index 0000000000000000000000000000000000000000..f376ae1908dffcaa29514caf71f16b14213d53ea
 --- /dev/null
 +++ b/drivers/power/supply/piano_mca_test.c
-@@ -0,0 +1,2171 @@
+@@ -0,0 +1,2192 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/* Exercise the driver in UML with virtual ADSP transport, gauges and CP. */
 +#include <kunit/device.h>
@@ -640,6 +640,7 @@ index 000000000..7001028aa
 +	int current_ua;
 +	int temp;
 +	int error;
++	int current_now_ua;
 +};
 +
 +struct piano_mca_test {
@@ -1107,6 +1108,9 @@ index 000000000..7001028aa
 +		value->intval = gauge->voltage_uv;
 +		return 0;
 +	case POWER_SUPPLY_PROP_CURRENT_NOW:
++		value->intval = gauge->current_now_ua;
++		return 0;
++	case POWER_SUPPLY_PROP_CURRENT_AVG:
 +		value->intval = gauge->current_ua;
 +		return 0;
 +	case POWER_SUPPLY_PROP_TEMP:
@@ -1123,6 +1127,7 @@ index 000000000..7001028aa
 +	static const enum power_supply_property properties[] = {
 +		POWER_SUPPLY_PROP_VOLTAGE_NOW,
 +		POWER_SUPPLY_PROP_CURRENT_NOW,
++		POWER_SUPPLY_PROP_CURRENT_AVG,
 +		POWER_SUPPLY_PROP_TEMP,
 +	};
 +	static const struct power_supply_desc descriptions[] = {
@@ -1270,6 +1275,21 @@ index 000000000..7001028aa
 +	mca->vbus_uv = 9000000;
 +	fixture->vbus_uv = 9000000;
 +	mca->hv = MCA_HV_ON;
++}
++
++static void piano_mca_uses_average_battery_current_test(struct kunit *test)
++{
++	struct piano_mca_test *fixture = test->priv;
++	int vbat, ibat, tcool, twarm;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_test_register_gauges(test), 0);
++	fixture->gauge[0].current_now_ua = -500000;
++	fixture->gauge[1].current_now_ua = -200000;
++	fixture->gauge[0].current_ua = -100000;
++	fixture->gauge[1].current_ua = 300000;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_gauges(&vbat, &ibat, &tcool, &twarm), 0);
++	KUNIT_EXPECT_EQ(test, ibat, 200);
 +}
 +
 +static void piano_mca_thermal_restores_input_test(struct kunit *test)
@@ -2716,6 +2736,7 @@ index 000000000..7001028aa
 +static struct kunit_case piano_mca_test_cases[] = {
 +	KUNIT_CASE(piano_mca_limit_preserves_inhibition_test),
 +	KUNIT_CASE(piano_mca_limit_during_suspend_test),
++	KUNIT_CASE(piano_mca_uses_average_battery_current_test),
 +	KUNIT_CASE(piano_mca_thermal_restores_input_test),
 +	KUNIT_CASE(piano_mca_thermal_negotiates_hv_test),
 +	KUNIT_CASE(piano_mca_thermal_stop_write_failure_test),
@@ -2778,5 +2799,5 @@ index 000000000..7001028aa
 +};
 +kunit_test_suite(piano_mca_test_suite);
 -- 
-2.55.0
+2.56.1
 

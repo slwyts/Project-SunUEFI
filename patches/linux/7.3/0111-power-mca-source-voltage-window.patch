@@ -1,4 +1,4 @@
-From 6ae8371ff6bdaa2f3b44f3c3d943ad5ce6f2fca4 Mon Sep 17 00:00:00 2001
+From b6cfc60d7d624d493cd4452e77d1a08f6adfdb2e Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 04:26:52 +0800
 Subject: [PATCH] fix(power): match firmware charger types and selected PPS
@@ -7,9 +7,13 @@ Subject: [PATCH] fix(power): match firmware charger types and selected PPS
 Use the stock PPS=11 and PD_VERIFY=12 type values. Bind APDO reads to the active charging session, retain its minimum voltage, and clamp regulation requests to the complete selected APDO window.
 
 Describe the enabled charging defaults in the driver header.
+---
+ drivers/power/supply/piano_mca.c      | 35 +++++++++++++++------------
+ drivers/power/supply/piano_mca_test.c | 27 ++++++++++++++++++++-
+ 2 files changed, 45 insertions(+), 17 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index af193c0ad..7cf5c17a3 100644
+index a3eb8e099e43f1c553cb0e7448c698c5ac6d5826..5920137c384ca5f98a73c9bc6480269f7778c450 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -14,13 +14,10 @@
@@ -129,10 +133,10 @@ index af193c0ad..7cf5c17a3 100644
  	mca->cp_real_type = mca->real_type;
  	mca->cp_verified = verified;
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
-index 482c63d78..486443234 100644
+index 8ff1c4a0ced7076e04cca73dfe16e0ba247d3231..57e7e3558d845580a5f0774cbbd5dadf519b3f8f 100644
 --- a/drivers/power/supply/piano_mca_test.c
 +++ b/drivers/power/supply/piano_mca_test.c
-@@ -138,6 +138,7 @@ struct piano_mca_test {
+@@ -139,6 +139,7 @@ struct piano_mca_test {
  	bool restart_on_enable_read;
  	bool offer_cp_apdo;
  	u32 apdo_max_mv;
@@ -140,7 +144,7 @@ index 482c63d78..486443234 100644
  	bool only_5v;
  	unsigned int fv_writes;
  	unsigned int fcc_writes;
-@@ -397,7 +398,7 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+@@ -398,7 +399,7 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
  			pdo[1].max_mv = cpu_to_le32(9000);
  			pdo[1].max_ma = cpu_to_le32(fixture->fixed_9v_ma);
  			if (fixture->offer_cp_apdo) {
@@ -149,7 +153,7 @@ index 482c63d78..486443234 100644
  				pdo[2].max_mv = cpu_to_le32(fixture->apdo_max_mv);
  				pdo[2].max_ma = cpu_to_le32(6000);
  			}
-@@ -546,6 +547,7 @@ static int piano_mca_test_init(struct kunit *test)
+@@ -547,6 +548,7 @@ static int piano_mca_test_init(struct kunit *test)
  	fixture->fixed_9v_ma = 2000;
  	fixture->fixed_5v_ma = 3000;
  	fixture->apdo_max_mv = 10000;
@@ -157,7 +161,7 @@ index 482c63d78..486443234 100644
  	fixture->vbus_uv = 5000000;
  	fixture->real_type = MCA_TYPE_PD;
  	fixture->charge_status = 4;
-@@ -3674,6 +3676,28 @@ static void piano_mca_ffc_tail_does_not_reenter_test(struct kunit *test)
+@@ -3694,6 +3696,28 @@ static void piano_mca_ffc_tail_does_not_reenter_test(struct kunit *test)
  	KUNIT_EXPECT_TRUE(test, f->mca.normal_full);
  }
  
@@ -186,7 +190,7 @@ index 482c63d78..486443234 100644
  static void piano_mca_battery_alert_current_test(struct kunit *test)
  {
  	struct piano_mca_test *f = test->priv;
-@@ -4047,6 +4071,7 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
+@@ -4067,6 +4091,7 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
  }
  
  static struct kunit_case piano_mca_test_cases[] = {
@@ -194,3 +198,6 @@ index 482c63d78..486443234 100644
  	KUNIT_CASE(piano_mca_battery_alert_current_test),
  	KUNIT_CASE(piano_mca_pps_vstep_test),
  	KUNIT_CASE(piano_mca_third_pps_limits_test),
+-- 
+2.56.1
+

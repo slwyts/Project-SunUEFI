@@ -1,4 +1,4 @@
-From dbf566de12dc3bde2cc4926c2a0425c6e8d0aed5 Mon Sep 17 00:00:00 2001
+From bf3024d20698c89bbfab80065aceb3f6afc14a8f Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 04:18:12 +0800
 Subject: [PATCH] fix(power): apply factory warm-zone PMIC voltage compensation
@@ -13,7 +13,7 @@ Add the factory 30 mV offset in the ordinary PMIC setter for measured temperatur
  2 files changed, 44 insertions(+), 17 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 3d261fec7..9c269cdcd 100644
+index 1aa4bf142c8b604eb12cead0f96df8e449325629..86e4493bdf558ee775a77007e925298cb1a5e03f 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -1094,7 +1094,7 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
@@ -45,10 +45,10 @@ index 3d261fec7..9c269cdcd 100644
  	if (ret) {
  		piano_mca_normal_pause(mca, generation, connection);
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
-index ac1a4b10e..991f4a4d1 100644
+index 7b79362b5b3bc5f8b0787a01a0ce66b82808b8ae..95846710cfece7ca6c9e445f9e0a719a6c148975 100644
 --- a/drivers/power/supply/piano_mca_test.c
 +++ b/drivers/power/supply/piano_mca_test.c
-@@ -1078,7 +1078,7 @@ static void piano_mca_warm_high_vbat_input_test(struct kunit *test)
+@@ -1098,7 +1098,7 @@ static void piano_mca_warm_high_vbat_input_test(struct kunit *test)
  	piano_mca_apply_policy(&fixture->mca, fixture->remote_generation, 0);
  	KUNIT_EXPECT_FALSE(test, fixture->pmic_enabled);
  	KUNIT_EXPECT_EQ(test, fixture->fcc_ma, 0U);
@@ -57,7 +57,7 @@ index ac1a4b10e..991f4a4d1 100644
  	KUNIT_EXPECT_EQ(test, fixture->icl_ma, 1600U);
  	KUNIT_EXPECT_GT(test, fixture->last_pmic_disable_event, 0U);
  	KUNIT_EXPECT_GT(test, fixture->last_fv_event,
-@@ -1138,7 +1138,7 @@ static void piano_mca_warm_exit_low_fv_test(struct kunit *test)
+@@ -1158,7 +1158,7 @@ static void piano_mca_warm_exit_low_fv_test(struct kunit *test)
  		bool enabled;
  		u32 fv;
  	} rows[] = {
@@ -66,7 +66,7 @@ index ac1a4b10e..991f4a4d1 100644
  		{ 47, false, 4060 },
  		{ 46, false, 4060 },
  		{ 45, true, 4480 },
-@@ -1905,7 +1905,7 @@ static void piano_mca_inhibit_jeita_warm_high_test(struct kunit *test)
+@@ -1925,7 +1925,7 @@ static void piano_mca_inhibit_jeita_warm_high_test(struct kunit *test)
  		0);
  	KUNIT_EXPECT_EQ(test, f->fv_mv, 4480U);
  	piano_mca_poll(&f->mca.poll.work);
@@ -75,7 +75,7 @@ index ac1a4b10e..991f4a4d1 100644
  	KUNIT_EXPECT_TRUE(test, f->mca.normal_voltage_stop);
  	KUNIT_EXPECT_FALSE(test, f->cp_enabled);
  	KUNIT_EXPECT_FALSE(test, f->pmic_enabled);
-@@ -1929,7 +1929,7 @@ static void piano_mca_inhibit_jeita_warm_below_term_test(struct kunit *test)
+@@ -1949,7 +1949,7 @@ static void piano_mca_inhibit_jeita_warm_below_term_test(struct kunit *test)
  				  POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE),
  		0);
  	piano_mca_poll(&f->mca.poll.work);
@@ -84,7 +84,7 @@ index ac1a4b10e..991f4a4d1 100644
  	KUNIT_EXPECT_FALSE(test, f->mca.normal_voltage_stop);
  	KUNIT_EXPECT_FALSE(test, f->pmic_enabled);
  	KUNIT_EXPECT_EQ(test, f->fcc_ma, 0U);
-@@ -1967,7 +1967,7 @@ static void piano_mca_inhibit_jeita_auto_hysteresis_test(struct kunit *test)
+@@ -1987,7 +1987,7 @@ static void piano_mca_inhibit_jeita_auto_hysteresis_test(struct kunit *test)
  		f->gauge[0].voltage_uv = f->gauge[1].voltage_uv =
  			rows[i].mv * 1000;
  		piano_mca_poll(&f->mca.poll.work);
@@ -93,7 +93,7 @@ index ac1a4b10e..991f4a4d1 100644
  		KUNIT_EXPECT_EQ(test, f->pmic_enabled, rows[i].enabled);
  		KUNIT_EXPECT_EQ(test, f->fcc_ma, rows[i].enabled ? 3000U : 0U);
  	}
-@@ -2028,13 +2028,13 @@ static void piano_mca_inhibit_jeita_fv_lost_ack_test(struct kunit *test)
+@@ -2048,13 +2048,13 @@ static void piano_mca_inhibit_jeita_fv_lost_ack_test(struct kunit *test)
  		0);
  	f->lose_fv_ack = true;
  	piano_mca_poll(&f->mca.poll.work);
@@ -109,7 +109,7 @@ index ac1a4b10e..991f4a4d1 100644
  	KUNIT_EXPECT_EQ(test, f->icl_ma, 1600U);
  	KUNIT_EXPECT_EQ(test, f->fcc_positive_writes, 0U);
  	KUNIT_EXPECT_EQ(test, f->pmic_enable_writes, 0U);
-@@ -2052,13 +2052,13 @@ static void piano_mca_inhibit_jeita_iterm_error_test(struct kunit *test)
+@@ -2072,13 +2072,13 @@ static void piano_mca_inhibit_jeita_iterm_error_test(struct kunit *test)
  		0);
  	f->iterm_write_failures = -1;
  	piano_mca_poll(&f->mca.poll.work);
@@ -125,7 +125,7 @@ index ac1a4b10e..991f4a4d1 100644
  	KUNIT_EXPECT_EQ(test, f->icl_ma, 1600U);
  	KUNIT_EXPECT_EQ(test, f->fcc_positive_writes, 0U);
  	KUNIT_EXPECT_EQ(test, f->pmic_enable_writes, 0U);
-@@ -2081,7 +2081,7 @@ static void piano_mca_inhibit_jeita_hot_hysteresis_test(struct kunit *test)
+@@ -2101,7 +2101,7 @@ static void piano_mca_inhibit_jeita_hot_hysteresis_test(struct kunit *test)
  		f->gauge[0].temp = f->gauge[1].temp = temps[i] * 10;
  		piano_mca_poll(&f->mca.poll.work);
  		KUNIT_EXPECT_EQ(test, f->mca.cp_hot, i < 2);
@@ -134,7 +134,7 @@ index ac1a4b10e..991f4a4d1 100644
  		KUNIT_EXPECT_FALSE(test, f->pmic_enabled);
  		KUNIT_EXPECT_EQ(test, f->fcc_ma, 0U);
  	}
-@@ -2191,7 +2191,7 @@ static void piano_mca_hot_fv_voltage_recovery_test(struct kunit *test)
+@@ -2211,7 +2211,7 @@ static void piano_mca_hot_fv_voltage_recovery_test(struct kunit *test)
  	piano_mca_poll(&f->mca.poll.work);
  	KUNIT_EXPECT_FALSE(test, f->mca.normal_voltage_stop);
  	KUNIT_EXPECT_TRUE(test, f->pmic_enabled);
@@ -143,7 +143,7 @@ index ac1a4b10e..991f4a4d1 100644
  	KUNIT_EXPECT_EQ(test, f->fcc_ma, 3000U);
  	KUNIT_EXPECT_EQ(test, f->pmic_enable_writes, 1U);
  }
-@@ -2407,7 +2407,7 @@ static void piano_mca_source_drop_restores_budget_test(struct kunit *test)
+@@ -2427,7 +2427,7 @@ static void piano_mca_source_drop_restores_budget_test(struct kunit *test)
  	KUNIT_EXPECT_EQ(test, f->mca.cp_ibus_ma, 1650U);
  	KUNIT_EXPECT_EQ(test, f->cp_busocp_ma, 2650U);
  	KUNIT_EXPECT_LT(test, f->last_cp_ocp_event, f->last_cp_enable_event);
@@ -152,7 +152,7 @@ index ac1a4b10e..991f4a4d1 100644
  
  	f->pack_temp = 25;
  	f->gauge[0].temp = f->gauge[1].temp = 250;
-@@ -2547,7 +2547,7 @@ static void piano_mca_zero_limit_keeps_input_and_fv_test(struct kunit *test)
+@@ -2567,7 +2567,7 @@ static void piano_mca_zero_limit_keeps_input_and_fv_test(struct kunit *test)
  	f->pack_temp = 48;
  	f->gauge[0].temp = f->gauge[1].temp = 480;
  	piano_mca_poll(&f->mca.poll.work);
@@ -161,7 +161,7 @@ index ac1a4b10e..991f4a4d1 100644
  	KUNIT_EXPECT_FALSE(test, f->pmic_enabled);
  	KUNIT_EXPECT_EQ(test, f->fcc_ma, 0U);
  }
-@@ -3161,7 +3161,7 @@ static void piano_mca_full_low_fv_excluded_test(struct kunit *test)
+@@ -3181,7 +3181,7 @@ static void piano_mca_full_low_fv_excluded_test(struct kunit *test)
  	}
  	KUNIT_EXPECT_FALSE(test, f->mca.normal_full);
  	KUNIT_EXPECT_EQ(test, f->mca.normal_term_count, (u8)0);
@@ -170,7 +170,7 @@ index ac1a4b10e..991f4a4d1 100644
  	KUNIT_EXPECT_TRUE(test, f->mca.normal_voltage_stop);
  }
  
-@@ -3221,7 +3221,7 @@ static void piano_mca_full_read_errors_hold_test(struct kunit *test)
+@@ -3241,7 +3241,7 @@ static void piano_mca_full_read_errors_hold_test(struct kunit *test)
  	f->gauge[0].temp = f->gauge[1].temp = 480;
  	piano_mca_poll(&f->mca.poll.work);
  	KUNIT_EXPECT_TRUE(test, f->mca.normal_full);
@@ -179,7 +179,7 @@ index ac1a4b10e..991f4a4d1 100644
  	KUNIT_EXPECT_EQ(test, f->icl_ma, 1600U);
  	f->source_read_error = MCA_PROP_BUS_CURR;
  	piano_mca_poll(&f->mca.poll.work);
-@@ -4358,7 +4358,31 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
+@@ -4378,7 +4378,31 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
  	KUNIT_EXPECT_TRUE(test, piano_mca_cp_entry_allowed(&mca, 4400, &limits));
  }
  
@@ -211,3 +211,6 @@ index ac1a4b10e..991f4a4d1 100644
  	KUNIT_CASE(piano_mca_response_identity_test),
  	KUNIT_CASE(piano_mca_short_notification_test),
  	KUNIT_CASE(piano_mca_inhibit_does_not_create_full_test),
+-- 
+2.56.1
+

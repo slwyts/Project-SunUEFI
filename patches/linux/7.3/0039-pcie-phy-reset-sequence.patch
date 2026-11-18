@@ -1,4 +1,4 @@
-From 724572802f22d3e73efaa312148c55f565f28dd6 Mon Sep 17 00:00:00 2001
+From f4a8769b35e13097fe76f1dfb1c83029ece44ac1 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 02:32:50 +0800
 Subject: [PATCH] PCI: qcom: sequence controller and PHY clocks before reset

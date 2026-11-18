@@ -1,4 +1,4 @@
-From 5cb60d4d43d5c4c93f72eaa91ef082062d47cb35 Mon Sep 17 00:00:00 2001
+From e9e12455ffc7f86305462506974b9f7cbe18ee2d Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 03:57:05 +0800
 Subject: [PATCH] feat(power): expose gauge health alerts and reduce
@@ -7,9 +7,17 @@ Subject: [PATCH] feat(power): expose gauge health alerts and reduce
 Describe the vendor BQ27Z561 SOA/ISC registers in the board binding and report their alerts through standard power-supply health. Read both gauges before charging and retain a stop on read errors.
 
 Apply the Piano DTPT current rule, 80 percent of the charge-table current minus 200 mA, before cycle and shared limits. No gauge data-flash writes or private charging properties are added.
+---
+ .../bindings/power/supply/bq27xxx.yaml        |  9 +++
+ drivers/power/supply/bq27xxx_battery.c        | 23 +++++++-
+ drivers/power/supply/bq27xxx_battery_test.c   | 55 +++++++++++++++++++
+ drivers/power/supply/piano_mca.c              | 34 ++++++++++++
+ drivers/power/supply/piano_mca_test.c         | 40 ++++++++++++++
+ include/linux/power/bq27xxx_battery.h         |  1 +
+ 6 files changed, 161 insertions(+), 1 deletion(-)
 
 diff --git a/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml b/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
-index 8e51cac14..000210da2 100644
+index 8e51cac14a0fd4c5fdebecefe43ac9f2f5c6fe4c..000210da27786e0e5ef78eae6383f03540333044 100644
 --- a/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
 +++ b/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
 @@ -93,6 +93,14 @@ properties:
@@ -36,7 +44,7 @@ index 8e51cac14..000210da2 100644
    - if:
        properties:
 diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
-index 51de010d6..c288ab9ec 100644
+index ff5fe0d2269ecb6f37319b5ec108e0b6769820e5..71abf99cf4fdbe21e68be2882c5f420ab638d8ef 100644
 --- a/drivers/power/supply/bq27xxx_battery.c
 +++ b/drivers/power/supply/bq27xxx_battery.c
 @@ -97,6 +97,8 @@
@@ -48,7 +56,7 @@ index 51de010d6..c288ab9ec 100644
  
  /* control register params */
  #define BQ27XXX_SEALED			0x20
-@@ -1840,7 +1842,23 @@ static bool bq27xxx_battery_capacity_inaccurate(struct bq27xxx_device_info *di,
+@@ -1843,7 +1845,23 @@ static bool bq27xxx_battery_capacity_inaccurate(struct bq27xxx_device_info *di,
  static int bq27xxx_battery_read_health(struct bq27xxx_device_info *di,
  				       union power_supply_propval *val)
  {
@@ -73,7 +81,7 @@ index 51de010d6..c288ab9ec 100644
  
  	/* Unlikely but important to return first */
  	if (unlikely(bq27xxx_battery_overtemp(di, di->cache.flags)))
-@@ -2524,6 +2542,9 @@ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
+@@ -2531,6 +2549,9 @@ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
  	di->unseal_key = bq27xxx_chip_data[di->chip].unseal_key;
  	di->dm_regs    = bq27xxx_chip_data[di->chip].dm_regs;
  	di->opts       = bq27xxx_chip_data[di->chip].opts;
@@ -84,7 +92,7 @@ index 51de010d6..c288ab9ec 100644
  	psy_desc = devm_kzalloc(di->dev, sizeof(*psy_desc), GFP_KERNEL);
  	if (!psy_desc)
 diff --git a/drivers/power/supply/bq27xxx_battery_test.c b/drivers/power/supply/bq27xxx_battery_test.c
-index 2130d0c1b..97236ae29 100644
+index 1f301767c558842e0d24b3c549a85a068005bc8b..3625029376c57daab34e0f8deeb6eedddccb7ddc 100644
 --- a/drivers/power/supply/bq27xxx_battery_test.c
 +++ b/drivers/power/supply/bq27xxx_battery_test.c
 @@ -10,6 +10,8 @@ struct bq27xxx_suspend_test {
@@ -93,10 +101,10 @@ index 2130d0c1b..97236ae29 100644
  	unsigned int writes, fail_write;
 +	int isc, soa;
 +	unsigned int health_reads;
+ 	int current_now, current_avg, current_flags;
+ 	unsigned int current_now_reads, current_avg_reads;
  #if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
- 	int read_value;
- 	unsigned int reads;
-@@ -290,7 +292,60 @@ static void bq27xxx_original_iio_optin_test(struct kunit *test)
+@@ -292,6 +294,58 @@ static void bq27xxx_original_iio_optin_test(struct kunit *test)
  }
  #endif
  
@@ -152,13 +160,19 @@ index 2130d0c1b..97236ae29 100644
 +	KUNIT_EXPECT_EQ(test, f->writes, 0U);
 +}
 +
+ static int bq27xxx_current_test_read(struct bq27xxx_device_info *di, u8 reg, bool single)
+ {
+ 	struct bq27xxx_suspend_test *f =
+@@ -380,6 +434,7 @@ static void bq27z561_current_properties_test(struct kunit *test)
+ 
  static struct kunit_case bq27xxx_suspend_cases[] = {
+ 	KUNIT_CASE(bq27z561_current_properties_test),
 +	KUNIT_CASE(bq27xxx_health_alert_test),
  #if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
  	KUNIT_CASE(bq27xxx_original_iio_values_test),
  	KUNIT_CASE(bq27xxx_original_iio_range_test),
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 568115e6c..af193c0ad 100644
+index c427843205018b2d093edaeec623ff952741a57b..a3eb8e099e43f1c553cb0e7448c698c5ac6d5826 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -466,6 +466,7 @@ static const struct piano_mca_jeita piano_mca_jeita[] = {
@@ -208,8 +222,8 @@ index 568115e6c..af193c0ad 100644
 +}
 +
  /*
-  * Both fuel gauges: the higher cell voltage (mV), the sum of the currents
-  * (mA, positive while charging), and both temperature extremes (degC).
+  * Both fuel gauges: the higher cell voltage (mV), the sum of the average
+  * currents (mA, positive while charging), and both temperature extremes (degC).
 @@ -2285,6 +2313,7 @@ static int piano_mca_cp_gauges(struct piano_mca *mca, int *vbat, int *ibat,
  	int ret, temp, direction;
  
@@ -231,7 +245,7 @@ index 568115e6c..af193c0ad 100644
  		ma -= min(ma, mca->battery_fcc_derate_ma);
  	else
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
-index e19578ac0..482c63d78 100644
+index c81fd0ef7efa2e5382d655dc8c7755df848642bb..8ff1c4a0ced7076e04cca73dfe16e0ba247d3231 100644
 --- a/drivers/power/supply/piano_mca_test.c
 +++ b/drivers/power/supply/piano_mca_test.c
 @@ -51,6 +51,7 @@ struct piano_mca_test_gauge {
@@ -240,9 +254,9 @@ index e19578ac0..482c63d78 100644
  	int cycles, design_uah, charge_type;
 +	int health, health_error;
  	unsigned int mode_writes, mode_failures;
+ 	int current_now_ua;
  };
- 
-@@ -564,6 +565,7 @@ static int piano_mca_test_init(struct kunit *test)
+@@ -565,6 +566,7 @@ static int piano_mca_test_init(struct kunit *test)
  	fixture->gauge[0].design_uah = 4500000;
  	fixture->gauge[0].charge_type = POWER_SUPPLY_CHARGE_TYPE_STANDARD;
  	fixture->gauge[0].authentic = true;
@@ -250,7 +264,7 @@ index e19578ac0..482c63d78 100644
  	fixture->gauge[1] = fixture->gauge[0];
  	mca->battery_authentic = true;
  	mca->ffc_mode_known = true;
-@@ -612,6 +614,11 @@ static int piano_mca_test_gauge_get(struct power_supply *psy,
+@@ -613,6 +615,11 @@ static int piano_mca_test_gauge_get(struct power_supply *psy,
  	     property == POWER_SUPPLY_PROP_CHARGE_FULL) && gauge->charge_error)
  		return gauge->charge_error;
  	switch (property) {
@@ -262,7 +276,7 @@ index e19578ac0..482c63d78 100644
  	case POWER_SUPPLY_PROP_AUTHENTIC:
  		value->intval = gauge->authentic;
  		return 0;
-@@ -674,6 +681,7 @@ static int piano_mca_test_register_gauges(struct kunit *test)
+@@ -679,6 +686,7 @@ static int piano_mca_test_register_gauges(struct kunit *test)
  		POWER_SUPPLY_PROP_CYCLE_COUNT,
  		POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
  		POWER_SUPPLY_PROP_CHARGE_TYPE,
@@ -270,7 +284,7 @@ index e19578ac0..482c63d78 100644
  	};
  	static const struct power_supply_desc descriptions[] = {
  		{
-@@ -3666,6 +3674,37 @@ static void piano_mca_ffc_tail_does_not_reenter_test(struct kunit *test)
+@@ -3686,6 +3694,37 @@ static void piano_mca_ffc_tail_does_not_reenter_test(struct kunit *test)
  	KUNIT_EXPECT_TRUE(test, f->mca.normal_full);
  }
  
@@ -308,7 +322,7 @@ index e19578ac0..482c63d78 100644
  static void piano_mca_pps_vstep_test(struct kunit *test)
  {
  	struct piano_mca_test *f = test->priv;
-@@ -4008,6 +4047,7 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
+@@ -4028,6 +4067,7 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
  }
  
  static struct kunit_case piano_mca_test_cases[] = {
@@ -317,7 +331,7 @@ index e19578ac0..482c63d78 100644
  	KUNIT_CASE(piano_mca_third_pps_limits_test),
  	KUNIT_CASE(piano_mca_qc_limits_test),
 diff --git a/include/linux/power/bq27xxx_battery.h b/include/linux/power/bq27xxx_battery.h
-index b1be969b9..64b0e9e8c 100644
+index b1be969b9b8f6c1ff72461f34ceae9424f291859..64b0e9e8c8147dd8e576cc4ec64317b61e8fb390 100644
 --- a/include/linux/power/bq27xxx_battery.h
 +++ b/include/linux/power/bq27xxx_battery.h
 @@ -64,6 +64,7 @@ struct bq27xxx_device_info {
@@ -328,3 +342,6 @@ index b1be969b9..64b0e9e8c 100644
  	u8 *auth_key;
  	bool authentic;
  	bool fast_charge;
+-- 
+2.56.1
+

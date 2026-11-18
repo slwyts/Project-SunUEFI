@@ -1,4 +1,4 @@
-From 5e5aada4bc1496168c21862e75ac179884696a79 Mon Sep 17 00:00:00 2001
+From 86f15d999dbee1c9a4bfdc0f9b4e716156c34653 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 02:35:43 +0800
 Subject: [PATCH] power: supply: piano_mca: clear retry permission on a fresh
@@ -10,7 +10,7 @@ A later fault must not inherit the retry flag from an earlier thermal pause. Cle
  1 file changed, 3 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 5d0a8d83ee4..3a3e7b38d7a 100644
+index 9da3d8dacc471251cbc22714f5a04b5bf761c774..66edaa3cc971d9fa618ba21f5f2ebfe50024f25a 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -2280,6 +2280,7 @@ static int piano_mca_cp_stop(struct piano_mca *mca, const char *why)
@@ -40,4 +40,5 @@ index 5d0a8d83ee4..3a3e7b38d7a 100644
  		ret = piano_mca_cp_stop(mca, "charge current limit changed");
  		if (!ret) {
 -- 
-2.56.0
+2.56.1
+

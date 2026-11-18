@@ -1,4 +1,4 @@
-From 1d6c080f68b6419af33ace0a4b18fc90aedc56bc Mon Sep 17 00:00:00 2001
+From 161cc85b438827aa683903b3dd5cbef7060acbe5 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 09:13:32 +0800
 Subject: [PATCH] fix(hid): drain Piano wake reports and restart keyboard

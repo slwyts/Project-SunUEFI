@@ -1,4 +1,4 @@
-From 175c908a693777111c9d622cc2836e8d7f9e0136 Mon Sep 17 00:00:00 2001
+From b8f8075e4a68f7a98c7db8a60089d52dd7c52089 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 22:26:13 +0800
 Subject: [PATCH] fix(power): use real MCA charge-enable feedback
@@ -20,7 +20,7 @@ Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
  1 file changed, 77 insertions(+), 35 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index aad1b2879..c27083565 100644
+index 8818ef29304d01413229e7ca6a8f4adf4a1b029e..1ddf51c52cc7a4bb23216c40476fe60c259a7b82 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -60,6 +60,7 @@
@@ -249,5 +249,5 @@ index aad1b2879..c27083565 100644
  			}
  			mca->cp_buck_par = par;
 -- 
-2.55.0
+2.56.1
 

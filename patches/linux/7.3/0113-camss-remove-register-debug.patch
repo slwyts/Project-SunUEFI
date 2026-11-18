@@ -1,4 +1,4 @@
-From 053c260832fa4aac9d1f5351562e39487120b3f3 Mon Sep 17 00:00:00 2001
+From 64cf2a55ef0f0a0ec752beae2de17a1f416b5095 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 21:48:56 +0800
 Subject: [PATCH] media: camss: remove SM8750 ISP register debug interface

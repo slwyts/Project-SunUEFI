@@ -1,4 +1,4 @@
-From 598d9a9ef234dffb0742f6af5b9a2f24fd361d2f Mon Sep 17 00:00:00 2001
+From 3e4bf9de2b769208fd5b5d1f01249aa9be44a77f Mon Sep 17 00:00:00 2001
 From: Cryolitia <cryolitia@cryolitia.com>
 Date: Sun, 8 Nov 2026 02:10:20 +0800
 Subject: [PATCH] fix(power-supply): disable MCA polling before releasing
@@ -10,7 +10,7 @@ GLINK callbacks remain registered while the stop action runs. Disable the delaye
  1 file changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 6d1536fb2..95e67c0c7 100644
+index 241a8e39fb91c30c00516312c234aeb45b61dd56..92fc29d93a6b9b9d8ae9098876732460f77f9cad 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -2490,7 +2490,8 @@ static void piano_mca_stop(void *data)
@@ -24,5 +24,5 @@ index 6d1536fb2..95e67c0c7 100644
  	if (mca->pen_boost_on)
  		piano_mca_pen_boost_off(mca);
 -- 
-2.55.0
+2.56.1
 

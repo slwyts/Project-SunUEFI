@@ -1,4 +1,4 @@
-From fc2d695c94e40e89874451fc14a3a52af634e2e6 Mon Sep 17 00:00:00 2001
+From 873cc0019cda26372674db0ed4a5c0f261d7a487 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 00:41:04 +0800
 Subject: [PATCH] drm/msm: validate fixed-panel conversion blocks and VGA

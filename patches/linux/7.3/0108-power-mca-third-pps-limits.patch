@@ -1,4 +1,4 @@
-From 25a4179420552df705825bb463e2ed3ffdc9a47e Mon Sep 17 00:00:00 2001
+From 1104a3aa1f8b87a9c212e8fe81ac29f601e16948 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 03:41:04 +0800
 Subject: [PATCH] fix(power): enforce stock third-party PPS source limits
@@ -6,9 +6,14 @@ Subject: [PATCH] fix(power): enforce stock third-party PPS source limits
 Cap the complete adapter request, not just the pump, at the Piano CN third_pps voltage and current limits. Apply the stock 200 mA battery-current reduction and stop before rebuilding after verified adapter proof is lost.
 
 Use the same-device 13 V SC8541 bus overvoltage threshold so the allowed 11 V PPS request does not hit the old 11 V protection setting. Keep software voltage windows and alarm thresholds.
+---
+ drivers/power/supply/piano_mca.c      | 31 ++++++++++++++--
+ drivers/power/supply/piano_mca_test.c | 53 +++++++++++++++++++++------
+ drivers/power/supply/sc8541_charger.c |  5 ++-
+ 3 files changed, 72 insertions(+), 17 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index ff400449d..16c4804ea 100644
+index 57839dadf64bb316dbd957501a5cbfe86cea7a53..8028e741f89feb060ef86dd5db73193d97c03431 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -446,7 +446,7 @@ static const struct piano_mca_jeita piano_mca_jeita[] = {
@@ -120,10 +125,10 @@ index ff400449d..16c4804ea 100644
  		if (!piano_mca_cp_pause(mca, "warm voltage limit")) {
  			piano_mca_normal_pause(mca, mca->cp_generation,
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
-index 2cc4b7e25..7431d27a0 100644
+index e56aa09efdeac26c1494c749bb5444dbc1447a03..b6f7a7022feebe5790d91dd5ac9ab18d77cc7578 100644
 --- a/drivers/power/supply/piano_mca_test.c
 +++ b/drivers/power/supply/piano_mca_test.c
-@@ -136,6 +136,7 @@ struct piano_mca_test {
+@@ -137,6 +137,7 @@ struct piano_mca_test {
  	bool replug_on_enable_read;
  	bool restart_on_enable_read;
  	bool offer_cp_apdo;
@@ -131,7 +136,7 @@ index 2cc4b7e25..7431d27a0 100644
  	bool only_5v;
  	unsigned int fv_writes;
  	unsigned int fcc_writes;
-@@ -396,7 +397,7 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+@@ -397,7 +398,7 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
  			pdo[1].max_ma = cpu_to_le32(fixture->fixed_9v_ma);
  			if (fixture->offer_cp_apdo) {
  				pdo[2].min_mv = cpu_to_le32(6000);
@@ -140,7 +145,7 @@ index 2cc4b7e25..7431d27a0 100644
  				pdo[2].max_ma = cpu_to_le32(6000);
  			}
  			if (fixture->restart_on_pdos) {
-@@ -543,6 +544,7 @@ static int piano_mca_test_init(struct kunit *test)
+@@ -544,6 +545,7 @@ static int piano_mca_test_init(struct kunit *test)
  	mca->polled_generation = fixture->remote_generation;
  	fixture->fixed_9v_ma = 2000;
  	fixture->fixed_5v_ma = 3000;
@@ -148,7 +153,7 @@ index 2cc4b7e25..7431d27a0 100644
  	fixture->vbus_uv = 5000000;
  	fixture->real_type = MCA_TYPE_PD;
  	fixture->charge_status = 4;
-@@ -2347,9 +2349,9 @@ static void piano_mca_source_drop_restores_budget_test(struct kunit *test)
+@@ -2367,9 +2369,9 @@ static void piano_mca_source_drop_restores_budget_test(struct kunit *test)
  	for (n = 0; n < 6; n++)
  		piano_mca_poll(&f->mca.poll.work);
  	KUNIT_ASSERT_EQ(test, f->mca.cp, MCA_CP_ON);
@@ -161,7 +166,7 @@ index 2cc4b7e25..7431d27a0 100644
  	KUNIT_EXPECT_LT(test, f->last_cp_ocp_event, f->last_cp_enable_event);
  	KUNIT_EXPECT_EQ(test, f->fv_mv, 4060U);
  
-@@ -2361,11 +2363,11 @@ static void piano_mca_source_drop_restores_budget_test(struct kunit *test)
+@@ -2381,11 +2383,11 @@ static void piano_mca_source_drop_restores_budget_test(struct kunit *test)
  	for (n = 0; n < 8; n++)
  		piano_mca_poll(&f->mca.poll.work);
  	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_ON);
@@ -177,7 +182,7 @@ index 2cc4b7e25..7431d27a0 100644
  	KUNIT_EXPECT_EQ(test, f->fv_mv, 4480U);
  	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 1U);
  }
-@@ -2413,7 +2415,7 @@ static void piano_mca_source_drop_retry_limit_test(struct kunit *test)
+@@ -2433,7 +2435,7 @@ static void piano_mca_source_drop_retry_limit_test(struct kunit *test)
  	KUNIT_EXPECT_EQ(test, f->mca.cp_errors, 0U);
  	KUNIT_EXPECT_EQ(test, f->mca.polled_connection_generation, 1U);
  	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_ON);
@@ -186,7 +191,7 @@ index 2cc4b7e25..7431d27a0 100644
  }
  
  static void piano_mca_source_auth_reset_not_error_test(struct kunit *test)
-@@ -2589,8 +2591,8 @@ static void piano_mca_limit_stop_error_recovers_test(struct kunit *test)
+@@ -2609,8 +2611,8 @@ static void piano_mca_limit_stop_error_recovers_test(struct kunit *test)
  	for (n = 0; n < 6; n++)
  		piano_mca_poll(&f->mca.poll.work);
  	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_ON);
@@ -197,7 +202,7 @@ index 2cc4b7e25..7431d27a0 100644
  	KUNIT_EXPECT_LT(test, f->last_cp_ocp_event, f->last_cp_enable_event);
  }
  
-@@ -3664,6 +3666,34 @@ static void piano_mca_ffc_tail_does_not_reenter_test(struct kunit *test)
+@@ -3684,6 +3686,34 @@ static void piano_mca_ffc_tail_does_not_reenter_test(struct kunit *test)
  	KUNIT_EXPECT_TRUE(test, f->mca.normal_full);
  }
  
@@ -232,7 +237,7 @@ index 2cc4b7e25..7431d27a0 100644
  static void piano_mca_qc_limits_test(struct kunit *test)
  {
  	struct piano_mca_test *f = test->priv;
-@@ -3948,6 +3978,7 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
+@@ -3968,6 +3998,7 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
  }
  
  static struct kunit_case piano_mca_test_cases[] = {
@@ -241,7 +246,7 @@ index 2cc4b7e25..7431d27a0 100644
  	KUNIT_CASE(piano_mca_qc_direction_test),
  	KUNIT_CASE(piano_mca_qc_repeated_samples_test),
 diff --git a/drivers/power/supply/sc8541_charger.c b/drivers/power/supply/sc8541_charger.c
-index 7aa48b927..8b3fc406d 100644
+index 7aa48b927814f5fdda159e559a34495a13107f30..8b3fc406da5c8c9e4a5ee692e69c608d52a735d7 100644
 --- a/drivers/power/supply/sc8541_charger.c
 +++ b/drivers/power/supply/sc8541_charger.c
 @@ -69,12 +69,13 @@
@@ -260,3 +265,6 @@ index 7aa48b927..8b3fc406d 100644
  #define SC8541_BUSOVP_ALM_MV	10500
  #define SC8541_BUSOCP_MA	3500
  #define SC8541_BUSOCP_MIN_MA	1000
+-- 
+2.56.1
+

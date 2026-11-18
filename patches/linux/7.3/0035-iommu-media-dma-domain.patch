@@ -1,4 +1,4 @@
-From d68c2cada248cc113c25cd27b2d0cbb6ab8cb5f6 Mon Sep 17 00:00:00 2001
+From 65fbd52936196de5cf9c42efeea143ae95fb7f23 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 01:57:31 +0800
 Subject: [PATCH] iommu/arm-smmu-qcom: use DMA domains for SM8750 media clients

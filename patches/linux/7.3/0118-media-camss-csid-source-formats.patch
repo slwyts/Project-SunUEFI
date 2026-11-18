@@ -1,4 +1,4 @@
-From 3e234ff78dca6e99d9ff7f826d08868bdd488f6c Mon Sep 17 00:00:00 2001
+From 7d4483a415aba19401d2a1a1096a8983aa5b7a5c Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 15 Nov 2026 00:53:33 +0800
 Subject: [PATCH] media: camss: validate formats on every CSID source pad

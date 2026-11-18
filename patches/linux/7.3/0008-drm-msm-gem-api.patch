@@ -1,4 +1,4 @@
-From 1c23753c6188898b076565231ebfdf1bfab26d73 Mon Sep 17 00:00:00 2001
+From 29b6d6f9edc3a826a19165a7cc9e0ddc36823387 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 14:00:00 +0000
 Subject: [PATCH] fix(drm/msm): adapt LUT DMA allocation to Linux 7.3

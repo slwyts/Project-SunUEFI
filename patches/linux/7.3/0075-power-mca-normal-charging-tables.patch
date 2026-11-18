@@ -1,4 +1,4 @@
-From 0b61e5ce21f7c616373aedfbecbae40d497ab877 Mon Sep 17 00:00:00 2001
+From 25e3a1cd3c15545ab7f5a0bad539ab2aceddaac5 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 17:07:12 +0800
 Subject: [PATCH] feat(power): apply Piano normal charging tables
@@ -14,7 +14,7 @@ Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
  2 files changed, 364 insertions(+), 105 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 43eb272e7..0a63a9f0b 100644
+index 4fa9c70b26303dda431de87e68927edbc2f937a5..f54cebd18de1c8f39aaf8ebcf59e2e9b65d52065 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -23,7 +23,9 @@
@@ -638,7 +638,7 @@ index 43eb272e7..0a63a9f0b 100644
  		enable_delayed_work(&mca->poll);
  		mod_delayed_work(system_freezable_wq, &mca->poll, 0);
 diff --git a/drivers/power/supply/sc8541_charger.c b/drivers/power/supply/sc8541_charger.c
-index 52c1d4961..7aa48b927 100644
+index 52c1d49610753ced20fcdc952aa1568f909e868d..7aa48b927814f5fdda159e559a34495a13107f30 100644
 --- a/drivers/power/supply/sc8541_charger.c
 +++ b/drivers/power/supply/sc8541_charger.c
 @@ -65,15 +65,15 @@
@@ -666,5 +666,5 @@ index 52c1d4961..7aa48b927 100644
  #define SC8541_BUSOVP_ALM_MV	10500
  #define SC8541_BUSOCP_MA	3500
 -- 
-2.55.0
+2.56.1
 

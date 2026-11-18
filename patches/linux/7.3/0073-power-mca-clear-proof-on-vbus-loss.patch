@@ -1,4 +1,4 @@
-From 891689c401597c433814cb740c00e9e176b3f68f Mon Sep 17 00:00:00 2001
+From 7bb628beeb1a66dd2168d38435f2a370b2ac08c9 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 09:13:00 +0800
 Subject: [PATCH] fix(power-supply): clear MiPPS proof when VBUS disappears
@@ -14,7 +14,7 @@ Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
  1 file changed, 4 insertions(+)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index e78ee14f9..43eb272e7 100644
+index 2eb200e571255f06936722c60528d36b77596f12..4fa9c70b26303dda431de87e68927edbc2f937a5 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -2384,6 +2384,8 @@ static void piano_mca_poll(struct work_struct *work)
@@ -36,5 +36,5 @@ index e78ee14f9..43eb272e7 100644
  			mca->mipps_attempted = false;
  		}
 -- 
-2.55.0
+2.56.1
 

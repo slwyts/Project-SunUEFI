@@ -1,8 +1,12 @@
-From e72eaf4a9bb8db9e337432ce381f4925c5e8dbb4 Mon Sep 17 00:00:00 2001
+From 50603dbc5b8597b3dac1fd7593aca6322ea332b1 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(platform): port Piano platform support to Linux 7.3
 
+The BQ27Z561 exposes measured and filtered current through separate
+read-only commands. Publish both as standard power supply properties
+and use the filtered reading for the MCA decisions, preserving the
+current input the charging policy previously received.
 ---
  .github/workflows/piano-dtb.yml               |   58 +
  .../ABI/testing/procfs-nvt-thp-control        |   63 +
@@ -53,6 +57,7 @@ Subject: [PATCH] feat(platform): port Piano platform support to Linux 7.3
  drivers/power/sequencing/pwrseq-qcom-wcn.c    |  705 ++++-
  drivers/power/supply/Kconfig                  |   28 +
  drivers/power/supply/Makefile                 |    3 +
+ drivers/power/supply/bq27xxx_battery.c        |   21 +-
  drivers/power/supply/piano_mca.c              | 2454 +++++++++++++++++
  drivers/power/supply/qcom_battmgr.c           |    2 +
  drivers/power/supply/sc8541_charger.c         |  575 ++++
@@ -72,7 +77,7 @@ Subject: [PATCH] feat(platform): port Piano platform support to Linux 7.3
  include/linux/pwrseq/qcom_wcn.h               |   36 +
  include/uapi/linux/nanosic_hinge.h            |   28 +
  .../selftests/iommu/qcom-handoff-snapshot.c   |  108 +
- 68 files changed, 11455 insertions(+), 242 deletions(-)
+ 69 files changed, 11469 insertions(+), 249 deletions(-)
  create mode 100644 .github/workflows/piano-dtb.yml
  create mode 100644 Documentation/ABI/testing/procfs-nvt-thp-control
  create mode 100644 Documentation/ABI/testing/sysfs-devices-piano-dma-route
@@ -98,7 +103,7 @@ Subject: [PATCH] feat(platform): port Piano platform support to Linux 7.3
 
 diff --git a/.github/workflows/piano-dtb.yml b/.github/workflows/piano-dtb.yml
 new file mode 100644
-index 00000000000..d2f092d8fb4
+index 0000000000000000000000000000000000000000..d2f092d8fb44c1b18c680850dbaed201a7030ef2
 --- /dev/null
 +++ b/.github/workflows/piano-dtb.yml
 @@ -0,0 +1,58 @@
@@ -162,7 +167,7 @@ index 00000000000..d2f092d8fb4
 +          if-no-files-found: error
 diff --git a/Documentation/ABI/testing/procfs-nvt-thp-control b/Documentation/ABI/testing/procfs-nvt-thp-control
 new file mode 100644
-index 00000000000..84487392392
+index 0000000000000000000000000000000000000000..84487392392970a227361673e354fe4b58011a05
 --- /dev/null
 +++ b/Documentation/ABI/testing/procfs-nvt-thp-control
 @@ -0,0 +1,63 @@
@@ -231,7 +236,7 @@ index 00000000000..84487392392
 +                python3 drivers/input/touchscreen/nt36532e/test_thp_control.py
 diff --git a/Documentation/ABI/testing/sysfs-devices-piano-dma-route b/Documentation/ABI/testing/sysfs-devices-piano-dma-route
 new file mode 100644
-index 00000000000..bbe9261da74
+index 0000000000000000000000000000000000000000..bbe9261da7446fb2df449e93790553679fec1ae7
 --- /dev/null
 +++ b/Documentation/ABI/testing/sysfs-devices-piano-dma-route
 @@ -0,0 +1,46 @@
@@ -282,7 +287,7 @@ index 00000000000..bbe9261da74
 +                The identity getter also uses group serialization so a domain
 +                cannot be detached/freed during either readback callback.
 diff --git a/Documentation/devicetree/bindings/arm/qcom.yaml b/Documentation/devicetree/bindings/arm/qcom.yaml
-index ff8a35df786..1636f11a4ce 100644
+index ff8a35df7862dbf2c48163d5915ea845fc179634..1636f11a4ce2d6b5df87e4a6c1fe8e146f15afa3 100644
 --- a/Documentation/devicetree/bindings/arm/qcom.yaml
 +++ b/Documentation/devicetree/bindings/arm/qcom.yaml
 @@ -1170,6 +1170,7 @@ properties:
@@ -294,7 +299,7 @@ index ff8a35df786..1636f11a4ce 100644
  
        - items:
 diff --git a/Documentation/devicetree/bindings/display/msm/gmu.yaml b/Documentation/devicetree/bindings/display/msm/gmu.yaml
-index 9e459f12ce3..f1e609b7e1c 100644
+index 9e459f12ce3f57e2d239d9d8a8b90242251ad0f3..f1e609b7e1c7e7a717594a9cea53bca7b21d8d0c 100644
 --- a/Documentation/devicetree/bindings/display/msm/gmu.yaml
 +++ b/Documentation/devicetree/bindings/display/msm/gmu.yaml
 @@ -305,7 +305,9 @@ allOf:
@@ -309,7 +314,7 @@ index 9e459f12ce3..f1e609b7e1c 100644
        properties:
          reg:
 diff --git a/Documentation/devicetree/bindings/display/msm/gpu.yaml b/Documentation/devicetree/bindings/display/msm/gpu.yaml
-index e5efe2d35dd..1c4a6f17c1b 100644
+index e5efe2d35ddcce30e83ec14f8771e79c2cb28603..1c4a6f17c1bf783bce72fe4d43aa99e3fba23d20 100644
 --- a/Documentation/devicetree/bindings/display/msm/gpu.yaml
 +++ b/Documentation/devicetree/bindings/display/msm/gpu.yaml
 @@ -414,6 +414,7 @@ allOf:
@@ -329,7 +334,7 @@ index e5efe2d35dd..1c4a6f17c1b 100644
                - qcom,adreno-44070001
  
 diff --git a/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml b/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml
-index aa0cf0ec5b9..cb315c53cbe 100644
+index aa0cf0ec5b93f61aeea98395f6095275e24e1ffb..cb315c53cbe92ada99146f546a8d2a99253a57a2 100644
 --- a/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml
 +++ b/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml
 @@ -29,14 +29,18 @@ properties:
@@ -373,7 +378,7 @@ index aa0cf0ec5b9..cb315c53cbe 100644
    - reg
 diff --git a/Documentation/devicetree/bindings/display/panel/novatek,nt36532.yaml b/Documentation/devicetree/bindings/display/panel/novatek,nt36532.yaml
 new file mode 100644
-index 00000000000..493c5f907c8
+index 0000000000000000000000000000000000000000..493c5f907c858202b79aa9fe2f9f8e50be57117a
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/display/panel/novatek,nt36532.yaml
 @@ -0,0 +1,107 @@
@@ -486,7 +491,7 @@ index 00000000000..493c5f907c8
 +...
 diff --git a/Documentation/devicetree/bindings/input/nanosic,wn8030.yaml b/Documentation/devicetree/bindings/input/nanosic,wn8030.yaml
 new file mode 100644
-index 00000000000..b4286d91ce6
+index 0000000000000000000000000000000000000000..b4286d91ce6be91ac38d146672347caaaee0384f
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/input/nanosic,wn8030.yaml
 @@ -0,0 +1,82 @@
@@ -574,7 +579,7 @@ index 00000000000..b4286d91ce6
 +...
 diff --git a/Documentation/devicetree/bindings/input/touchscreen/novatek,nvt-ts-spi.yaml b/Documentation/devicetree/bindings/input/touchscreen/novatek,nvt-ts-spi.yaml
 new file mode 100644
-index 00000000000..eebeaa97201
+index 0000000000000000000000000000000000000000..eebeaa972018b4427234492f1934b430db2f4d6f
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/input/touchscreen/novatek,nvt-ts-spi.yaml
 @@ -0,0 +1,94 @@
@@ -673,7 +678,7 @@ index 00000000000..eebeaa97201
 +    };
 +...
 diff --git a/Documentation/devicetree/bindings/leds/backlight/kinetic,ktz8866.yaml b/Documentation/devicetree/bindings/leds/backlight/kinetic,ktz8866.yaml
-index c914e127698..78d0f039bd5 100644
+index c914e12769825f9436657c8f9153cbee32ecc5cf..78d0f039bd5febbc6062dc59e69b5b73d24e7eb6 100644
 --- a/Documentation/devicetree/bindings/leds/backlight/kinetic,ktz8866.yaml
 +++ b/Documentation/devicetree/bindings/leds/backlight/kinetic,ktz8866.yaml
 @@ -55,12 +55,37 @@ properties:
@@ -751,7 +756,7 @@ index c914e127698..78d0f039bd5 100644
 +    };
 diff --git a/Documentation/devicetree/bindings/media/qcom,kaanapali-camss.yaml b/Documentation/devicetree/bindings/media/qcom,kaanapali-camss.yaml
 new file mode 100644
-index 00000000000..2f2bb682f32
+index 0000000000000000000000000000000000000000..2f2bb682f32f4d84fca2c22eeacbd9d1f0499f4a
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/media/qcom,kaanapali-camss.yaml
 @@ -0,0 +1,433 @@
@@ -1190,7 +1195,7 @@ index 00000000000..2f2bb682f32
 +    };
 diff --git a/Documentation/devicetree/bindings/media/qcom,sm8750-camss.yaml b/Documentation/devicetree/bindings/media/qcom,sm8750-camss.yaml
 new file mode 100644
-index 00000000000..fc0550899c0
+index 0000000000000000000000000000000000000000..fc0550899c0747babcdc536f225fd37e16ff93b9
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/media/qcom,sm8750-camss.yaml
 @@ -0,0 +1,433 @@
@@ -1628,7 +1633,7 @@ index 00000000000..fc0550899c0
 +        };
 +    };
 diff --git a/Documentation/devicetree/bindings/media/video-interface-devices.yaml b/Documentation/devicetree/bindings/media/video-interface-devices.yaml
-index a81d2a155fe..8d892996d8c 100644
+index a81d2a155fe668a95e0916c99e702de8b5c07005..8d892996d8c08bab8ea9a4196d661731755d88eb 100644
 --- a/Documentation/devicetree/bindings/media/video-interface-devices.yaml
 +++ b/Documentation/devicetree/bindings/media/video-interface-devices.yaml
 @@ -25,6 +25,18 @@ properties:
@@ -1652,7 +1657,7 @@ index a81d2a155fe..8d892996d8c 100644
      description:
 diff --git a/Documentation/devicetree/bindings/power/supply/southchip,sc8541.yaml b/Documentation/devicetree/bindings/power/supply/southchip,sc8541.yaml
 new file mode 100644
-index 00000000000..097e45949bf
+index 0000000000000000000000000000000000000000..097e45949bfda97dd879904d159fd49695fcfa37
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/power/supply/southchip,sc8541.yaml
 @@ -0,0 +1,49 @@
@@ -1707,7 +1712,7 @@ index 00000000000..097e45949bf
 +    };
 diff --git a/Documentation/devicetree/bindings/power/supply/southchip,sc96231.yaml b/Documentation/devicetree/bindings/power/supply/southchip,sc96231.yaml
 new file mode 100644
-index 00000000000..b505ee2a14a
+index 0000000000000000000000000000000000000000..b505ee2a14a1256f9c85cfe18bb2fe5f95325e38
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/power/supply/southchip,sc96231.yaml
 @@ -0,0 +1,67 @@
@@ -1779,7 +1784,7 @@ index 00000000000..b505ee2a14a
 +        };
 +    };
 diff --git a/Documentation/devicetree/bindings/remoteproc/qcom,sm8550-pas.yaml b/Documentation/devicetree/bindings/remoteproc/qcom,sm8550-pas.yaml
-index c58e8a6c7fe..07d88d27ad2 100644
+index c58e8a6c7fe1063f7eb3762115e16fdd06914b21..07d88d27ad279db384b00e3e8e738fa7e57b3ca3 100644
 --- a/Documentation/devicetree/bindings/remoteproc/qcom,sm8550-pas.yaml
 +++ b/Documentation/devicetree/bindings/remoteproc/qcom,sm8550-pas.yaml
 @@ -70,6 +70,13 @@ properties:
@@ -1797,7 +1802,7 @@ index c58e8a6c7fe..07d88d27ad2 100644
      minItems: 2
      items:
 diff --git a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
-index 16ad4f5698f..b7acf4d2c4a 100644
+index 16ad4f5698fc3db0ed8650804ccfcff1ee29cfcc..b7acf4d2c4af9163b6faf1c47218275c5ebfb331 100644
 --- a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
 +++ b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
 @@ -56,6 +56,30 @@ properties:
@@ -1833,7 +1838,7 @@ index 16ad4f5698f..b7acf4d2c4a 100644
  
 diff --git a/Documentation/devicetree/bindings/sound/foursemi,fs19xx.yaml b/Documentation/devicetree/bindings/sound/foursemi,fs19xx.yaml
 new file mode 100644
-index 00000000000..cb08921da85
+index 0000000000000000000000000000000000000000..cb08921da857d104cdcbb4841d2c6294b0f2a6f1
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/sound/foursemi,fs19xx.yaml
 @@ -0,0 +1,70 @@
@@ -1908,7 +1913,7 @@ index 00000000000..cb08921da85
 +        };
 +    };
 diff --git a/Documentation/devicetree/bindings/sound/qcom,sm8250.yaml b/Documentation/devicetree/bindings/sound/qcom,sm8250.yaml
-index 1536fcd96d6..7e7977fff48 100644
+index 1536fcd96d6873d2c69ef504adb13ea1197e8a98..7e7977fff48ae6672bbc80b951614abffbcf7fc1 100644
 --- a/Documentation/devicetree/bindings/sound/qcom,sm8250.yaml
 +++ b/Documentation/devicetree/bindings/sound/qcom,sm8250.yaml
 @@ -32,6 +32,10 @@ properties:
@@ -1923,7 +1928,7 @@ index 1536fcd96d6..7e7977fff48 100644
            - ayaneo,pocket-s2-sndcard
            - fairphone,fp4-sndcard
 diff --git a/Documentation/devicetree/bindings/vendor-prefixes.yaml b/Documentation/devicetree/bindings/vendor-prefixes.yaml
-index ba200296937..1eab5c5f9ff 100644
+index ba2002969373433b1f48118872c46cf7bcfff276..1eab5c5f9ffe8a6505487b95144c933040892bc2 100644
 --- a/Documentation/devicetree/bindings/vendor-prefixes.yaml
 +++ b/Documentation/devicetree/bindings/vendor-prefixes.yaml
 @@ -1162,6 +1162,8 @@ patternProperties:
@@ -1945,7 +1950,7 @@ index ba200296937..1eab5c5f9ff 100644
      description: SpacemiT (Hangzhou) Technology Co. Ltd
    "^spansion,.*":
 diff --git a/MAINTAINERS b/MAINTAINERS
-index 782389bd5cd..266c61a18f7 100644
+index 782389bd5cd3d9e0117ebdfae707e1f61cb3e772..266c61a18f7f45e610208fda1b7b903cb42e719a 100644
 --- a/MAINTAINERS
 +++ b/MAINTAINERS
 @@ -2454,6 +2454,7 @@ S:	Maintained
@@ -1985,7 +1990,7 @@ index 782389bd5cd..266c61a18f7 100644
  M:	Xu Yilun <yilun.xu@intel.com>
  R:	Tom Rix <trix@redhat.com>
 diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
-index 1c86e7e98f5..622341b327f 100644
+index 1c86e7e98f55d539f5292816ce06c9a46bd4904c..622341b327f38677a1223105b8d7e4f9b5a99c84 100644
 --- a/arch/arm64/boot/dts/qcom/Makefile
 +++ b/arch/arm64/boot/dts/qcom/Makefile
 @@ -408,6 +408,7 @@ dtb-$(CONFIG_ARCH_QCOM)	+= sm8650-mtp.dtb
@@ -1997,10 +2002,10 @@ index 1c86e7e98f5..622341b327f 100644
  
  talos-evk-el2-dtbs	:= talos-evk.dtb talos-el2.dtbo
 diff --git a/arch/arm64/boot/dts/qcom/sm8750-mtp.dts b/arch/arm64/boot/dts/qcom/sm8750-mtp.dts
-index 9b5fbc004df..b665d7a3af4 100644
+index 9b5fbc004df4ecbb5d34734917aefe643a71e32f..b665d7a3af42b19c9dc3fab880ddfd5c964a7cfc 100644
 --- a/arch/arm64/boot/dts/qcom/sm8750-mtp.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8750-mtp.dts
-@@ -935,6 +935,14 @@ vreg_l7n_3p3: ldo7 {
+@@ -935,6 +935,14 @@
  	};
  };
  
@@ -2016,10 +2021,10 @@ index 9b5fbc004df..b665d7a3af4 100644
  	status = "okay";
  
 diff --git a/arch/arm64/boot/dts/qcom/sm8750-qrd.dts b/arch/arm64/boot/dts/qcom/sm8750-qrd.dts
-index b56317cfa9f..75927e1f7b9 100644
+index b56317cfa9fc7fa8d8f055da7d4de7a6d22fd95e..75927e1f7b9ab0316781c64dbcc82d3394c414f6 100644
 --- a/arch/arm64/boot/dts/qcom/sm8750-qrd.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8750-qrd.dts
-@@ -858,6 +858,14 @@ vreg_l7n_3p3: ldo7 {
+@@ -858,6 +858,14 @@
  	};
  };
  
@@ -2036,7 +2041,7 @@ index b56317cfa9f..75927e1f7b9 100644
  };
 diff --git a/arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano.dts b/arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano.dts
 new file mode 100644
-index 00000000000..9312b3e3cf0
+index 0000000000000000000000000000000000000000..9312b3e3cf069ee36df33b80573c50ad2da5cbdb
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano.dts
 @@ -0,0 +1,1433 @@
@@ -3474,7 +3479,7 @@ index 00000000000..9312b3e3cf0
 +	status = "okay";
 +};
 diff --git a/arch/arm64/boot/dts/qcom/sm8750.dtsi b/arch/arm64/boot/dts/qcom/sm8750.dtsi
-index dd738d13df8..90cb849046b 100644
+index dd738d13df8e04b0302c4b4d7ab21e318a9560a0..90cb849046bc5d0309bccb9b2fef95d011f299fe 100644
 --- a/arch/arm64/boot/dts/qcom/sm8750.dtsi
 +++ b/arch/arm64/boot/dts/qcom/sm8750.dtsi
 @@ -5,10 +5,12 @@
@@ -3490,7 +3495,7 @@ index dd738d13df8..90cb849046b 100644
  #include <dt-bindings/clock/qcom,sm8750-tcsr.h>
  #include <dt-bindings/clock/qcom,sm8750-videocc.h>
  #include <dt-bindings/dma/qcom-gpi.h>
-@@ -2180,6 +2182,291 @@ tcsr_mutex: hwlock@1f40000 {
+@@ -2180,6 +2182,291 @@
  			#hwlock-cells = <1>;
  		};
  
@@ -3782,7 +3787,7 @@ index dd738d13df8..90cb849046b 100644
  		remoteproc_mpss: remoteproc@4080000 {
  			compatible = "qcom,sm8750-mpss-pas";
  			reg = <0x0 0x04080000 0x0 0x10000>;
-@@ -3096,9 +3383,11 @@ &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>,
+@@ -3096,9 +3383,11 @@
  			mdss_mdp: display-controller@ae01000 {
  				compatible = "qcom,sm8750-dpu";
  				reg = <0x0 0x0ae01000 0x0 0x93000>,
@@ -3796,7 +3801,7 @@ index dd738d13df8..90cb849046b 100644
  
  				interrupts-extended = <&mdss 0>;
  
-@@ -5951,6 +6240,18 @@ cpu_scp_lpri1: scp-sram-section@200 {
+@@ -5951,6 +6240,18 @@
  			};
  		};
  
@@ -3815,7 +3820,7 @@ index dd738d13df8..90cb849046b 100644
  		/* cluster0 */
  		pmu@240b3400 {
  			compatible = "qcom,sm8750-cpu-bwmon", "qcom,sdm845-bwmon";
-@@ -6647,10 +6948,10 @@ gpuss0-thermal {
+@@ -6647,10 +6948,10 @@
  			thermal-sensors = <&tsens2 1>;
  
  			trips {
@@ -3829,7 +3834,7 @@ index dd738d13df8..90cb849046b 100644
  				};
  
  				gpuss0-critical {
-@@ -6659,16 +6960,23 @@ gpuss0-critical {
+@@ -6659,16 +6960,23 @@
  					type = "critical";
  				};
  			};
@@ -3856,7 +3861,7 @@ index dd738d13df8..90cb849046b 100644
  				};
  
  				gpuss1-critical {
-@@ -6677,16 +6985,23 @@ gpuss1-critical {
+@@ -6677,16 +6985,23 @@
  					type = "critical";
  				};
  			};
@@ -3883,7 +3888,7 @@ index dd738d13df8..90cb849046b 100644
  				};
  
  				gpuss2-critical {
-@@ -6695,16 +7010,23 @@ gpuss2-critical {
+@@ -6695,16 +7010,23 @@
  					type = "critical";
  				};
  			};
@@ -3910,7 +3915,7 @@ index dd738d13df8..90cb849046b 100644
  				};
  
  				gpuss3-critical {
-@@ -6713,16 +7035,23 @@ gpuss3-critical {
+@@ -6713,16 +7035,23 @@
  					type = "critical";
  				};
  			};
@@ -3937,7 +3942,7 @@ index dd738d13df8..90cb849046b 100644
  				};
  
  				gpuss4-critical {
-@@ -6731,16 +7060,23 @@ gpuss4-critical {
+@@ -6731,16 +7060,23 @@
  					type = "critical";
  				};
  			};
@@ -3964,7 +3969,7 @@ index dd738d13df8..90cb849046b 100644
  				};
  
  				gpuss5-critical {
-@@ -6749,16 +7085,23 @@ gpuss5-critical {
+@@ -6749,16 +7085,23 @@
  					type = "critical";
  				};
  			};
@@ -3991,7 +3996,7 @@ index dd738d13df8..90cb849046b 100644
  				};
  
  				gpuss6-critical {
-@@ -6767,16 +7110,23 @@ gpuss6-critical {
+@@ -6767,16 +7110,23 @@
  					type = "critical";
  				};
  			};
@@ -4018,7 +4023,7 @@ index dd738d13df8..90cb849046b 100644
  				};
  
  				gpuss7-critical {
-@@ -6785,6 +7135,13 @@ gpuss7-critical {
+@@ -6785,6 +7135,13 @@
  					type = "critical";
  				};
  			};
@@ -4034,7 +4039,7 @@ index dd738d13df8..90cb849046b 100644
  		modem0-thermal {
 diff --git a/arch/arm64/configs/piano_defconfig b/arch/arm64/configs/piano_defconfig
 new file mode 100644
-index 00000000000..443273ee20c
+index 0000000000000000000000000000000000000000..443273ee20ce66342e06bb7a571526692e97444e
 --- /dev/null
 +++ b/arch/arm64/configs/piano_defconfig
 @@ -0,0 +1,1972 @@
@@ -6012,7 +6017,7 @@ index 00000000000..443273ee20c
 +# CONFIG_STRICT_DEVMEM is not set
 diff --git a/arch/arm64/configs/piano_rootfs.config b/arch/arm64/configs/piano_rootfs.config
 new file mode 100644
-index 00000000000..53479be1630
+index 0000000000000000000000000000000000000000..53479be163038be53c6aced42678c4d29050bd98
 --- /dev/null
 +++ b/arch/arm64/configs/piano_rootfs.config
 @@ -0,0 +1,52 @@
@@ -6069,7 +6074,7 @@ index 00000000000..53479be1630
 +CONFIG_ZRAM_BACKEND_ZSTD=y
 +CONFIG_ZRAM_DEF_COMP_ZSTD=y
 diff --git a/arch/arm64/kernel/cpuinfo.c b/arch/arm64/kernel/cpuinfo.c
-index 45c63f3d75c..9be8516f230 100644
+index 45c63f3d75c53de540b144aa9b015a60203c36fd..9be8516f23016e7de37d11702161e74b40e2680e 100644
 --- a/arch/arm64/kernel/cpuinfo.c
 +++ b/arch/arm64/kernel/cpuinfo.c
 @@ -17,6 +17,7 @@
@@ -6112,7 +6117,7 @@ index 45c63f3d75c..9be8516f230 100644
  	seq_printf(m, "BogoMIPS\t: %lu.%02lu\n",
  		   loops_per_jiffy / (500000UL/HZ),
 diff --git a/drivers/clk/qcom/gcc-sm8750.c b/drivers/clk/qcom/gcc-sm8750.c
-index 6cfe9012226..7a52d55ad8d 100644
+index 6cfe90122268a8dea1f9b4db49f2ef03a0af37fc..7a52d55ad8d6c60e84c76e80f24de0ecc45bb45a 100644
 --- a/drivers/clk/qcom/gcc-sm8750.c
 +++ b/drivers/clk/qcom/gcc-sm8750.c
 @@ -2889,6 +2889,7 @@ static struct gdsc gcc_pcie_0_gdsc = {
@@ -6132,7 +6137,7 @@ index 6cfe9012226..7a52d55ad8d 100644
  	.pwrsts = PWRSTS_OFF_ON,
  	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | VOTABLE,
 diff --git a/drivers/i2c/busses/i2c-qcom-cci.c b/drivers/i2c/busses/i2c-qcom-cci.c
-index bd70c6bae5d..d55806c89c0 100644
+index bd70c6bae5dc685435bf2ad031cf7a11ec60ab4f..d55806c89c06a4a65b0f8c3eba3b4928f65b6b36 100644
 --- a/drivers/i2c/busses/i2c-qcom-cci.c
 +++ b/drivers/i2c/busses/i2c-qcom-cci.c
 @@ -520,6 +520,13 @@ static int cci_probe(struct platform_device *pdev)
@@ -6160,7 +6165,7 @@ index bd70c6bae5d..d55806c89c0 100644
  	/* Memory */
 diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
 new file mode 100644
-index 00000000000..470fd9fb638
+index 0000000000000000000000000000000000000000..470fd9fb638fdd6518e08388ddb0684ea6c3c8cd
 --- /dev/null
 +++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
 @@ -0,0 +1,103 @@
@@ -6268,7 +6273,7 @@ index 00000000000..470fd9fb638
 +
 +#endif
 diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
-index 795e8ec7e8f..0ae8efe8998 100644
+index 795e8ec7e8faf32ecfe1ff1ed06b98b05649361e..0ae8efe8998547c664072e4f015c6e0440173900 100644
 --- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
 +++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
 @@ -13,6 +13,7 @@
@@ -6529,7 +6534,7 @@ index 795e8ec7e8f..0ae8efe8998 100644
  #ifdef CONFIG_ARM_SMMU_QCOM_DEBUG
  	.context_fault = qcom_smmu_context_fault,
 diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.c b/drivers/iommu/arm/arm-smmu/arm-smmu.c
-index 889a0966d36..54a379ccf12 100644
+index 889a0966d36cdba2c2c6478cf71a1e0894ca42a3..54a379ccf12311ed7629495fcf4e48642e79b1b1 100644
 --- a/drivers/iommu/arm/arm-smmu/arm-smmu.c
 +++ b/drivers/iommu/arm/arm-smmu/arm-smmu.c
 @@ -39,6 +39,7 @@
@@ -6916,7 +6921,7 @@ index 889a0966d36..54a379ccf12 100644
  		arm_smmu_cb_write(smmu, i, ARM_SMMU_CB_FSR, ARM_SMMU_CB_FSR_FAULT);
  	}
 diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.h b/drivers/iommu/arm/arm-smmu/arm-smmu.h
-index 26d2e33cd32..096b87aae0f 100644
+index 26d2e33cd328b8278888585fc07a31485d9397e2..096b87aae0fd7d1923aff7b442691ebd7973acb7 100644
 --- a/drivers/iommu/arm/arm-smmu/arm-smmu.h
 +++ b/drivers/iommu/arm/arm-smmu/arm-smmu.h
 @@ -277,6 +277,8 @@ struct arm_smmu_s2cr {
@@ -6946,7 +6951,7 @@ index 26d2e33cd32..096b87aae0f 100644
  	void (*probe_finalize)(struct arm_smmu_device *smmu, struct device *dev);
  };
 diff --git a/drivers/iommu/iommu.c b/drivers/iommu/iommu.c
-index cd1bca7ede9..8e417d80bc4 100644
+index cd1bca7ede9af63b5817ddf0d666ee138438c836..8e417d80bc4e62ed143e586c0e9839ec04d4bd7f 100644
 --- a/drivers/iommu/iommu.c
 +++ b/drivers/iommu/iommu.c
 @@ -1389,6 +1389,20 @@ static struct device *iommu_group_first_dev(struct iommu_group *group)
@@ -7018,7 +7023,7 @@ index cd1bca7ede9..8e417d80bc4 100644
   * iommu_group_get - Return the group for a device and increment reference
   * @dev: get the group that this device belongs to
 diff --git a/drivers/leds/flash/leds-qcom-flash.c b/drivers/leds/flash/leds-qcom-flash.c
-index b03a6833e3e..a51d7662a7c 100644
+index b03a6833e3e3a076980bfcb46d5bbde4f4183a19..a51d7662a7c35cb7d60802a5543a44b1ca324dcc 100644
 --- a/drivers/leds/flash/leds-qcom-flash.c
 +++ b/drivers/leds/flash/leds-qcom-flash.c
 @@ -654,16 +654,31 @@ qcom_flash_intensity_to_led_brightness(struct v4l2_flash *v4l2_flash, s32 intens
@@ -7079,7 +7084,7 @@ index b03a6833e3e..a51d7662a7c 100644
  	mutex_destroy(&flash_data->lock);
  }
 diff --git a/drivers/leds/rgb/leds-qcom-lpg.c b/drivers/leds/rgb/leds-qcom-lpg.c
-index d7d6518de30..6eeaceb9ebe 100644
+index d7d6518de30f2b3e32945829f7fbc5e798a3203b..6eeaceb9ebe62a88891cfecd1cea19b4eabc1608 100644
 --- a/drivers/leds/rgb/leds-qcom-lpg.c
 +++ b/drivers/leds/rgb/leds-qcom-lpg.c
 @@ -544,13 +544,14 @@ static void lpg_calc_duty(struct lpg_channel *chan, uint64_t duty)
@@ -7497,7 +7502,7 @@ index d7d6518de30..6eeaceb9ebe 100644
  out_unlock:
  	mutex_unlock(&lpg->lock);
 diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
-index d4fac2caca8..2f062fdf09e 100644
+index d4fac2caca8678c801a6891678bd17e1dce4a2f2..2f062fdf09e87e42632255c6ee9a6025a3455e7a 100644
 --- a/drivers/misc/fastrpc.c
 +++ b/drivers/misc/fastrpc.c
 @@ -923,6 +923,11 @@ static int fastrpc_map_attach(struct fastrpc_user *fl, int fd,
@@ -7526,7 +7531,7 @@ index d4fac2caca8..2f062fdf09e 100644
  
  	return err;
 diff --git a/drivers/pci/controller/dwc/pcie-designware-host.c b/drivers/pci/controller/dwc/pcie-designware-host.c
-index f5a38e6fd8d..77a8a19e919 100644
+index f5a38e6fd8d799d8b1acb7dad016576f7e3cc66b..77a8a19e919783499ec8be061baff0ad40373071 100644
 --- a/drivers/pci/controller/dwc/pcie-designware-host.c
 +++ b/drivers/pci/controller/dwc/pcie-designware-host.c
 @@ -588,9 +588,17 @@ int dw_pcie_host_init(struct dw_pcie_rp *pp)
@@ -7598,7 +7603,7 @@ index f5a38e6fd8d..77a8a19e919 100644
  	if (ret)
  		goto err_stop_link;
 diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
-index b58a607b713..a412da12b96 100644
+index b58a607b713f58ec32721e0ecb5c3154e64f3a73..a412da12b96504f202261c01336310ac5236d500 100644
 --- a/drivers/pci/controller/dwc/pcie-qcom.c
 +++ b/drivers/pci/controller/dwc/pcie-qcom.c
 @@ -27,6 +27,7 @@
@@ -7998,7 +8003,7 @@ index b58a607b713..a412da12b96 100644
  		 * Set minimum bandwidth required to keep data path
  		 * functional during suspend.
 diff --git a/drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.c b/drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.c
-index c5ced87944b..a7df7df1c92 100644
+index c5ced87944b6ca3dc642692311ff504a650acec7..a7df7df1c920b103c091ea054f894db330bffa10 100644
 --- a/drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.c
 +++ b/drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.c
 @@ -122,6 +122,11 @@ static const struct of_device_id pwrseq_pwrctrl_of_match[] = {
@@ -8014,7 +8019,7 @@ index c5ced87944b..a7df7df1c92 100644
  };
  MODULE_DEVICE_TABLE(of, pwrseq_pwrctrl_of_match);
 diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
-index c39ced168d0..8009e29b7eb 100644
+index c39ced168d035ef200af301feb7bf45bb764aaaa..8009e29b7eb416133796d2bea29374f34df85f8b 100644
 --- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
 +++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
 @@ -5283,9 +5283,12 @@ static int qmp_combo_probe(struct platform_device *pdev)
@@ -8034,7 +8039,7 @@ index c39ced168d0..8009e29b7eb 100644
  	/*
  	 * Enable runtime PM before creating the PHYs, phy_create() only enables
 diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c b/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
-index da83358c97e..f63668018b8 100644
+index da83358c97ead1ebe91d5051303b49745e8727dc..f63668018b8cdbf9bfd4f66f3b8936f0c4e4cb0b 100644
 --- a/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
 +++ b/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
 @@ -17,6 +17,7 @@
@@ -8120,7 +8125,7 @@ index da83358c97e..f63668018b8 100644
  
  	if (!skip_reset) {
  		ret = reset_control_deassert(qmp->nocsr_reset);
-@@ -5828,12 +5853,15 @@ static int qmp_pcie_power_on(struct phy *phy)
+@@ -5828,12 +5853,15 @@ skip_tbls_init:
  skip_serdes_start:
  	status = pcs + cfg->regs[QPHY_PCS_STATUS];
  	mask = cfg->phy_status;
@@ -8174,7 +8179,7 @@ index da83358c97e..f63668018b8 100644
  };
  
 diff --git a/drivers/power/sequencing/Kconfig b/drivers/power/sequencing/Kconfig
-index 226c62704d9..b0eb33ecb3a 100644
+index 226c62704d9bb540077294667942c34f282272fa..b0eb33ecb3a622ae48784824e9af582b6e65b0a8 100644
 --- a/drivers/power/sequencing/Kconfig
 +++ b/drivers/power/sequencing/Kconfig
 @@ -17,6 +17,7 @@ config POWER_SEQUENCING_QCOM_WCN
@@ -8186,7 +8191,7 @@ index 226c62704d9..b0eb33ecb3a 100644
  	  Say Y here to enable the power sequencing driver for Qualcomm
  	  WCN Bluetooth/WLAN chipsets.
 diff --git a/drivers/power/sequencing/pwrseq-qcom-wcn.c b/drivers/power/sequencing/pwrseq-qcom-wcn.c
-index 34146d6372f..709a85c0c10 100644
+index 34146d6372f39faf309aba3661e31d4b4ed803a6..709a85c0c10bb3fffdefbd533d3e39efd272975b 100644
 --- a/drivers/power/sequencing/pwrseq-qcom-wcn.c
 +++ b/drivers/power/sequencing/pwrseq-qcom-wcn.c
 @@ -9,26 +9,48 @@
@@ -9028,7 +9033,7 @@ index 34146d6372f..709a85c0c10 100644
  		.compatible = "qcom,wcn6750-pmu",
  		.data = &pwrseq_wcn6750_of_data,
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
-index b89ef40df7f..0e21baccdc4 100644
+index b89ef40df7f82a41a40eba230999e49094047608..0e21baccdc4ce53f0a4046fc88a745826f99d991 100644
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
 @@ -208,6 +208,16 @@ config BATTERY_PMU
@@ -9079,7 +9084,7 @@ index b89ef40df7f..0e21baccdc4 100644
 +
  endif # POWER_SUPPLY
 diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
-index f3c0d1006c1..e4c42a1290d 100644
+index f3c0d1006c1a2a9fdaf3228391ead9e33235cc66..e4c42a1290d52c0fab6b023c45b614531726da21 100644
 --- a/drivers/power/supply/Makefile
 +++ b/drivers/power/supply/Makefile
 @@ -38,6 +38,7 @@ obj-$(CONFIG_BATTERY_LEGO_EV3)	+= lego_ev3_battery.o
@@ -9103,9 +9108,100 @@ index f3c0d1006c1..e4c42a1290d 100644
  obj-$(CONFIG_MACSMC_POWER)	+= macsmc-power.o
  obj-$(CONFIG_CHARGER_MAX77759)	+= max77759_charger.o
 +obj-$(CONFIG_CHARGER_SC96231)	+= sc96231_charger.o
+diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
+index 01c9ec1116fa09146fa61796dce171ba6d32d483..b952bbca0ebbb1aa03ffd6fc8caaff06d89e48f8 100644
+--- a/drivers/power/supply/bq27xxx_battery.c
++++ b/drivers/power/supply/bq27xxx_battery.c
+@@ -104,6 +104,7 @@ enum bq27xxx_reg_index {
+ 	BQ27XXX_REG_TEMP,	/* Temperature */
+ 	BQ27XXX_REG_INT_TEMP,	/* Internal Temperature */
+ 	BQ27XXX_REG_VOLT,	/* Voltage */
++	BQ27XXX_REG_CI,		/* Current */
+ 	BQ27XXX_REG_AI,		/* Average Current */
+ 	BQ27XXX_REG_FLAGS,	/* Flags */
+ 	BQ27XXX_REG_TTE,	/* Time-to-Empty */
+@@ -485,6 +486,7 @@ static u8
+ 		[BQ27XXX_REG_TEMP] = 0x06,
+ 		[BQ27XXX_REG_INT_TEMP] = INVALID_REG_ADDR,
+ 		[BQ27XXX_REG_VOLT] = 0x08,
++		[BQ27XXX_REG_CI] = 0x0c,
+ 		[BQ27XXX_REG_AI] = 0x14,
+ 		[BQ27XXX_REG_FLAGS] = 0x0a,
+ 		[BQ27XXX_REG_TTE] = 0x16,
+@@ -821,6 +823,7 @@ static enum power_supply_property bq27z561_props[] = {
+ 	POWER_SUPPLY_PROP_PRESENT,
+ 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+ 	POWER_SUPPLY_PROP_CURRENT_NOW,
++	POWER_SUPPLY_PROP_CURRENT_AVG,
+ 	POWER_SUPPLY_PROP_CAPACITY,
+ 	POWER_SUPPLY_PROP_CAPACITY_LEVEL,
+ 	POWER_SUPPLY_PROP_TEMP,
+@@ -1853,12 +1856,11 @@ static bool bq27xxx_battery_is_full(struct bq27xxx_device_info *di, int flags)
+ }
+ 
+ /*
+- * Return the battery average current in µA and the status
+- * Note that current can be negative signed as well
+- * Or 0 if something fails.
++ * Return the selected battery current in µA and/or the battery status.
+  */
+ static int bq27xxx_battery_current_and_status(
+ 	struct bq27xxx_device_info *di,
++	enum bq27xxx_reg_index current_reg,
+ 	union power_supply_propval *val_curr,
+ 	union power_supply_propval *val_status,
+ 	struct bq27xxx_reg_cache *cache)
+@@ -1867,7 +1869,7 @@ static int bq27xxx_battery_current_and_status(
+ 	int curr;
+ 	int flags;
+ 
+-	curr = bq27xxx_read(di, BQ27XXX_REG_AI, false);
++	curr = bq27xxx_read(di, current_reg, false);
+ 	if (curr < 0) {
+ 		dev_err(di->dev, "error reading current\n");
+ 		return curr;
+@@ -1929,7 +1931,8 @@ static void bq27xxx_battery_update_unlocked(struct bq27xxx_device_info *di)
+ 		 * checked to detect charging <-> discharging status changes.
+ 		 */
+ 		if (!(di->opts & BQ27XXX_O_ZERO))
+-			bq27xxx_battery_current_and_status(di, NULL, &status, &cache);
++			bq27xxx_battery_current_and_status(di, BQ27XXX_REG_AI, NULL,
++							   &status, &cache);
+ 	}
+ 
+ 	if ((di->cache.capacity != cache.capacity) ||
+@@ -2124,6 +2127,7 @@ static int bq27xxx_battery_get_property(struct power_supply *psy,
+ {
+ 	int ret = 0;
+ 	struct bq27xxx_device_info *di = power_supply_get_drvdata(psy);
++	enum bq27xxx_reg_index current_reg = BQ27XXX_REG_AI;
+ 
+ 	mutex_lock(&di->lock);
+ 	if (time_is_before_jiffies(di->last_update + 5 * HZ))
+@@ -2135,7 +2139,7 @@ static int bq27xxx_battery_get_property(struct power_supply *psy,
+ 
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_STATUS:
+-		ret = bq27xxx_battery_current_and_status(di, NULL, val, NULL);
++		ret = bq27xxx_battery_current_and_status(di, BQ27XXX_REG_AI, NULL, val, NULL);
+ 		break;
+ 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+ 		ret = bq27xxx_battery_voltage(di, val);
+@@ -2144,7 +2148,10 @@ static int bq27xxx_battery_get_property(struct power_supply *psy,
+ 		val->intval = di->cache.flags < 0 ? 0 : 1;
+ 		break;
+ 	case POWER_SUPPLY_PROP_CURRENT_NOW:
+-		ret = bq27xxx_battery_current_and_status(di, val, NULL, NULL);
++	case POWER_SUPPLY_PROP_CURRENT_AVG:
++		if (psp == POWER_SUPPLY_PROP_CURRENT_NOW && di->chip == BQ27Z561)
++			current_reg = BQ27XXX_REG_CI;
++		ret = bq27xxx_battery_current_and_status(di, current_reg, val, NULL, NULL);
+ 		break;
+ 	case POWER_SUPPLY_PROP_CAPACITY:
+ 		ret = bq27xxx_simple_value(di->cache.capacity, val);
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
 new file mode 100644
-index 00000000000..1c54dc71e7b
+index 0000000000000000000000000000000000000000..57ab786749c08a1eef5f50947197cf0485d7c504
 --- /dev/null
 +++ b/drivers/power/supply/piano_mca.c
 @@ -0,0 +1,2454 @@
@@ -10385,7 +10481,7 @@ index 00000000000..1c54dc71e7b
 +
 +/*
 + * Both fuel gauges: the higher cell voltage (mV) and temperature (degC) and
-+ * the sum of the currents (mA, positive while charging)
++ * the sum of the average currents (mA, positive while charging)
 + */
 +static int piano_mca_gauges(int *vbat_mv, int *ibat_ma, int *tbat)
 +{
@@ -10401,7 +10497,7 @@ index 00000000000..1c54dc71e7b
 +		if (!psy)
 +			return -ENODEV;
 +		ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_VOLTAGE_NOW, &v);
-+		ret = ret ?: power_supply_get_property(psy, POWER_SUPPLY_PROP_CURRENT_NOW, &i);
++		ret = ret ?: power_supply_get_property(psy, POWER_SUPPLY_PROP_CURRENT_AVG, &i);
 +		ret = ret ?: power_supply_get_property(psy, POWER_SUPPLY_PROP_TEMP, &t);
 +		power_supply_put(psy);
 +		if (ret)
@@ -11564,7 +11660,7 @@ index 00000000000..1c54dc71e7b
 +MODULE_DESCRIPTION("Xiaomi MCA ADSP property transport (piano)");
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
-index 7716eb9e1af..74ee7ae03c8 100644
+index 7716eb9e1aff58c32911a03f855d6b1e164973ed..74ee7ae03c88b3a491797fd372c2709b4eb25d53 100644
 --- a/drivers/power/supply/qcom_battmgr.c
 +++ b/drivers/power/supply/qcom_battmgr.c
 @@ -1618,6 +1618,8 @@ static const struct of_device_id qcom_battmgr_of_variants[] = {
@@ -11578,7 +11674,7 @@ index 7716eb9e1af..74ee7ae03c8 100644
  };
 diff --git a/drivers/power/supply/sc8541_charger.c b/drivers/power/supply/sc8541_charger.c
 new file mode 100644
-index 00000000000..9c98624062f
+index 0000000000000000000000000000000000000000..9c98624062f0c7d4063a49309fcf43b2159445c1
 --- /dev/null
 +++ b/drivers/power/supply/sc8541_charger.c
 @@ -0,0 +1,575 @@
@@ -12159,7 +12255,7 @@ index 00000000000..9c98624062f
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/power/supply/sc96231_charger.c b/drivers/power/supply/sc96231_charger.c
 new file mode 100644
-index 00000000000..812e0afd41d
+index 0000000000000000000000000000000000000000..812e0afd41db7ab24531b1e6ae0f19d640a31bfd
 --- /dev/null
 +++ b/drivers/power/supply/sc96231_charger.c
 @@ -0,0 +1,534 @@
@@ -12698,7 +12794,7 @@ index 00000000000..812e0afd41d
 +MODULE_AUTHOR("slwyts <slwyts@foxmail.com>");
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/remoteproc/qcom_q6v5.c b/drivers/remoteproc/qcom_q6v5.c
-index fe148b4b377..3e5e85b34b0 100644
+index fe148b4b3775fc98f3ea86fed60a6eb495bb5a0a..3e5e85b34b0ce6f482228e6391b48df41e9ef2a5 100644
 --- a/drivers/remoteproc/qcom_q6v5.c
 +++ b/drivers/remoteproc/qcom_q6v5.c
 @@ -371,10 +371,24 @@ int qcom_q6v5_init(struct qcom_q6v5 *q6v5, struct platform_device *pdev,
@@ -12730,7 +12826,7 @@ index fe148b4b377..3e5e85b34b0 100644
  	return 0;
  }
 diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
-index a005546c265..139137b50a5 100644
+index a005546c265d0eccbdd6a984b04e88c3089ba690..139137b50a5921a15c47b95a58a370621c3c5103 100644
 --- a/drivers/remoteproc/qcom_q6v5_pas.c
 +++ b/drivers/remoteproc/qcom_q6v5_pas.c
 @@ -617,15 +617,37 @@ static const struct rproc_ops qcom_pas_minidump_ops = {
@@ -12923,7 +13019,7 @@ index a005546c265..139137b50a5 100644
  	{ .compatible = "qcom,x1e80100-cdsp-pas", .data = &x1e80100_cdsp_resource },
  	{ },
 diff --git a/drivers/soc/qcom/Kconfig b/drivers/soc/qcom/Kconfig
-index 2b524154d9f..05b76b26398 100644
+index 2b524154d9fb331199fb162e43b0acfc03eced6b..05b76b26398889b3c50e6d1fb2aa522b84396e37 100644
 --- a/drivers/soc/qcom/Kconfig
 +++ b/drivers/soc/qcom/Kconfig
 @@ -202,6 +202,18 @@ config QCOM_SMP2P
@@ -12946,7 +13042,7 @@ index 2b524154d9f..05b76b26398 100644
  	tristate "Qualcomm Shared Memory State Machine"
  	depends on MAILBOX
 diff --git a/drivers/soc/qcom/Makefile b/drivers/soc/qcom/Makefile
-index 798643be359..a5b00a41a2e 100644
+index 798643be3590cc8303854658fd483b7807d2230f..a5b00a41a2e5dd704f1f84bff2f7e19b4c206a07 100644
 --- a/drivers/soc/qcom/Makefile
 +++ b/drivers/soc/qcom/Makefile
 @@ -28,6 +28,7 @@ obj-$(CONFIG_QCOM_SMEM) +=	qcom_smem.o
@@ -12958,7 +13054,7 @@ index 798643be359..a5b00a41a2e 100644
  obj-$(CONFIG_QCOM_SOCINFO)	+= socinfo.o
  obj-$(CONFIG_QCOM_SPM)		+= spm.o
 diff --git a/drivers/soc/qcom/pmic_glink.c b/drivers/soc/qcom/pmic_glink.c
-index 3042261578a..0cbc55d799e 100644
+index 3042261578aad8dcb45e8803fd2ffb249aeace26..0cbc55d799e3aeb98021234c7c25df1bd932c9e8 100644
 --- a/drivers/soc/qcom/pmic_glink.c
 +++ b/drivers/soc/qcom/pmic_glink.c
 @@ -407,6 +407,8 @@ static const struct of_device_id pmic_glink_of_match[] = {
@@ -12971,7 +13067,7 @@ index 3042261578a..0cbc55d799e 100644
  };
  MODULE_DEVICE_TABLE(of, pmic_glink_of_match);
 diff --git a/drivers/soc/qcom/qcom_pd_mapper.c b/drivers/soc/qcom/qcom_pd_mapper.c
-index 64ca99d7fad..26882be4ab2 100644
+index 64ca99d7fad92075aa0060acc9375478045c7d42..26882be4ab2d58e9b12ffc37f11f14f6ed6e7d7c 100644
 --- a/drivers/soc/qcom/qcom_pd_mapper.c
 +++ b/drivers/soc/qcom/qcom_pd_mapper.c
 @@ -665,6 +665,16 @@ static const struct of_device_id qcom_pdm_domains[] __maybe_unused = {
@@ -12993,7 +13089,7 @@ index 64ca99d7fad..26882be4ab2 100644
  
 diff --git a/drivers/soc/qcom/smp2p_sleepstate.c b/drivers/soc/qcom/smp2p_sleepstate.c
 new file mode 100644
-index 00000000000..70f1a4e6e86
+index 0000000000000000000000000000000000000000..70f1a4e6e866a9b3a5e5b6a50310d7c85c1f9a85
 --- /dev/null
 +++ b/drivers/soc/qcom/smp2p_sleepstate.c
 @@ -0,0 +1,135 @@
@@ -13133,7 +13229,7 @@ index 00000000000..70f1a4e6e86
 +MODULE_DESCRIPTION("Qualcomm SMP2P sleep-state notifier");
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/soc/qcom/ubwc_config.c b/drivers/soc/qcom/ubwc_config.c
-index 23901a4c51f..6309b6994aa 100644
+index 23901a4c51f7305d95ac65e2a651fc557863a4ac..6309b6994aa6aedb841ab84051b388daace79d43 100644
 --- a/drivers/soc/qcom/ubwc_config.c
 +++ b/drivers/soc/qcom/ubwc_config.c
 @@ -166,6 +166,8 @@ static const struct of_device_id qcom_ubwc_configs[] __maybe_unused = {
@@ -13146,7 +13242,7 @@ index 23901a4c51f..6309b6994aa 100644
  };
  
 diff --git a/drivers/ufs/core/ufshcd.c b/drivers/ufs/core/ufshcd.c
-index ca8329052cb..e6e17967075 100644
+index ca8329052cbc5cc7cde850d9535a5b690d8c535c..e6e1796707518ab3222f392fe0ac88cbbcb1d320 100644
 --- a/drivers/ufs/core/ufshcd.c
 +++ b/drivers/ufs/core/ufshcd.c
 @@ -3368,20 +3368,48 @@ static int ufshcd_issue_dev_cmd(struct ufs_hba *hba, struct scsi_cmnd *cmd,
@@ -13223,7 +13319,7 @@ index ca8329052cb..e6e17967075 100644
  
  out:
  	ufshcd_put_dev_mgmt_cmd(cmd);
-@@ -3410,6 +3442,24 @@ static int ufshcd_exec_dev_cmd(struct ufs_hba *hba,
+@@ -3410,6 +3442,24 @@ out:
  	return err;
  }
  
@@ -13260,7 +13356,7 @@ index ca8329052cb..e6e17967075 100644
  		if (!err || err == -ETIMEDOUT)
  			break;
 diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
-index fd5c2cd36c5..c1a58cee40b 100644
+index fd5c2cd36c595c8b67a75e8791491fae0811b4c3..c1a58cee40b7b3610d1fe290072f7d884b15cc1a 100644
 --- a/drivers/usb/dwc3/core.c
 +++ b/drivers/usb/dwc3/core.c
 @@ -322,6 +322,7 @@ u32 dwc3_core_fifo_space(struct dwc3_ep *dep, u8 type)
@@ -13311,7 +13407,7 @@ index fd5c2cd36c5..c1a58cee40b 100644
  
  	/*
 diff --git a/drivers/usb/dwc3/dwc3-qcom.c b/drivers/usb/dwc3/dwc3-qcom.c
-index ac68b4218b5..b72f9ef4840 100644
+index ac68b4218b56b77838d457e8c131e2d9dd757ec5..b72f9ef4840d110be8e73559f98d4651145e8742 100644
 --- a/drivers/usb/dwc3/dwc3-qcom.c
 +++ b/drivers/usb/dwc3/dwc3-qcom.c
 @@ -7,6 +7,7 @@
@@ -13367,7 +13463,7 @@ index ac68b4218b5..b72f9ef4840 100644
  		goto clk_disable;
  	}
 diff --git a/include/linux/iommu.h b/include/linux/iommu.h
-index ac43b8b93f1..4edd8ee58ba 100644
+index ac43b8b93f14aa4853e794eec5e6ca39d1eac0f1..4edd8ee58ba386755241cb9c7c87ee745ad85d76 100644
 --- a/include/linux/iommu.h
 +++ b/include/linux/iommu.h
 @@ -987,7 +987,9 @@ extern int iommu_group_add_device(struct iommu_group *group,
@@ -13383,7 +13479,7 @@ index ac43b8b93f1..4edd8ee58ba 100644
  extern void iommu_group_put(struct iommu_group *group);
 diff --git a/include/linux/pwrseq/qcom_wcn.h b/include/linux/pwrseq/qcom_wcn.h
 new file mode 100644
-index 00000000000..c3795d70e7c
+index 0000000000000000000000000000000000000000..c3795d70e7c706dbb50c48f06a78f9fb3ebb9f6c
 --- /dev/null
 +++ b/include/linux/pwrseq/qcom_wcn.h
 @@ -0,0 +1,36 @@
@@ -13425,7 +13521,7 @@ index 00000000000..c3795d70e7c
 +#endif /* __POWER_SEQUENCING_QCOM_WCN_H__ */
 diff --git a/include/uapi/linux/nanosic_hinge.h b/include/uapi/linux/nanosic_hinge.h
 new file mode 100644
-index 00000000000..be64a878667
+index 0000000000000000000000000000000000000000..be64a878667e2953de8f61847125fb5dcdd51c01
 --- /dev/null
 +++ b/include/uapi/linux/nanosic_hinge.h
 @@ -0,0 +1,28 @@
@@ -13459,7 +13555,7 @@ index 00000000000..be64a878667
 +#endif /* _UAPI_LINUX_NANOSIC_HINGE_H */
 diff --git a/tools/testing/selftests/iommu/qcom-handoff-snapshot.c b/tools/testing/selftests/iommu/qcom-handoff-snapshot.c
 new file mode 100644
-index 00000000000..80ee8421bf5
+index 0000000000000000000000000000000000000000..80ee8421bf5defc15cad82177362acbc304ae31c
 --- /dev/null
 +++ b/tools/testing/selftests/iommu/qcom-handoff-snapshot.c
 @@ -0,0 +1,108 @@
@@ -13571,3 +13667,6 @@ index 00000000000..80ee8421bf5
 +	puts("qcom SMMU handoff and real stage1 register comparator assertions passed.");
 +	return 0;
 +}
+-- 
+2.56.1
+

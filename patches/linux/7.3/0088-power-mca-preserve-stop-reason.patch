@@ -1,4 +1,4 @@
-From 364d5fc67d6d9bda0ef74932cabf6b4693939e02 Mon Sep 17 00:00:00 2001
+From fa6b29065fa83cc166120acc914e0ddecbb04d66 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 02:31:21 +0800
 Subject: [PATCH] power: supply: piano_mca: preserve prior nonthermal stops
@@ -9,7 +9,7 @@ Limit changes may make an active pump restartable after its confirmed stop. Do n
  1 file changed, 6 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index ed077766345..5d0a8d83ee4 100644
+index 44dd8f22fa2a2d34e58797f82501599ff330b855..9da3d8dacc471251cbc22714f5a04b5bf761c774 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -2821,8 +2821,10 @@ static void piano_mca_poll(struct work_struct *work)
@@ -38,4 +38,5 @@ index ed077766345..5d0a8d83ee4 100644
  				if (!ma) {
  					ret = piano_mca_normal_pause(mca, generation, connection);
 -- 
-2.56.0
+2.56.1
+

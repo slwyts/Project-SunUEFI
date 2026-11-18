@@ -1,4 +1,4 @@
-From f88b8e9a9096d212b836a29877d3f3594492f2e4 Mon Sep 17 00:00:00 2001
+From 835fbc809099c0ec9a0c4b18511148f4dad755e1 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 12 Nov 2026 00:22:59 +0800
 Subject: [PATCH] fix(power): retain teardown after an unconfirmed FFC PMIC
@@ -14,7 +14,7 @@ write failure after a confirmed pump stop.
  2 files changed, 21 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index fed38482e15..901c477a230 100644
+index c62ae69913b82a8229123de50916941a0111e334..773fc9622d0dd5d10c21d5742b6c71251d3cdc92 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -4294,8 +4294,10 @@ static void piano_mca_stop_work(struct piano_mca *mca)
@@ -31,10 +31,10 @@ index fed38482e15..901c477a230 100644
  	}
  	if (!mca->service_up)
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
-index e3b2beb5de2..d91e80cda9c 100644
+index 6d058992b4cec83a70339047f81e33920878c600..7aa744df96784ec0bdc67c60fd80c81ff7c313e4 100644
 --- a/drivers/power/supply/piano_mca_test.c
 +++ b/drivers/power/supply/piano_mca_test.c
-@@ -3601,6 +3601,22 @@ static void piano_mca_ffc_aging_keeps_factory_limits_test(struct kunit *test)
+@@ -3621,6 +3621,22 @@ static void piano_mca_ffc_aging_keeps_factory_limits_test(struct kunit *test)
  	KUNIT_EXPECT_EQ(test, limits.fv_mv, 4490U);
  }
  
@@ -57,7 +57,7 @@ index e3b2beb5de2..d91e80cda9c 100644
  static void piano_mca_ffc_tail_does_not_reenter_test(struct kunit *test)
  {
  	struct piano_mca_test *f = test->priv;
-@@ -3630,6 +3646,7 @@ static struct kunit_case piano_mca_test_cases[] = {
+@@ -3650,6 +3666,7 @@ static struct kunit_case piano_mca_test_cases[] = {
  	KUNIT_CASE(piano_mca_ffc_voltage_cutoff_keeps_buck_off_test),
  	KUNIT_CASE(piano_mca_ffc_stop_retries_pmic_pause_test),
  	KUNIT_CASE(piano_mca_ffc_aging_keeps_factory_limits_test),
@@ -65,3 +65,6 @@ index e3b2beb5de2..d91e80cda9c 100644
  	KUNIT_CASE(piano_mca_ffc_tail_does_not_reenter_test),
  	KUNIT_CASE(piano_mca_skin_buck_columns_test),
  	KUNIT_CASE(piano_mca_skin_normal_buck_fcc_test),
+-- 
+2.56.1
+

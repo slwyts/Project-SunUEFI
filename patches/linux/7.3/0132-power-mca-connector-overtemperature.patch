@@ -1,4 +1,4 @@
-From b00da2e543e61ba9d897df7e77b0a4932cb132a8 Mon Sep 17 00:00:00 2001
+From e64909fae6b78fd17df0b8b681cb41c19373fca1 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 05:03:00 +0800
 Subject: [PATCH] fix(power): isolate the Piano USB connector on
@@ -22,7 +22,7 @@ paused until isolation and recovery can be checked again.
  5 files changed, 1060 insertions(+), 16 deletions(-)
 
 diff --git a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
-index a7a06878d..788bcd518 100644
+index a7a06878dca6efd2939b8eb620106bad606da755..788bcd518d4ba46a817aa720232e3234c1444a80 100644
 --- a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
 +++ b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
 @@ -67,6 +67,7 @@ properties:
@@ -96,7 +96,7 @@ index a7a06878d..788bcd518 100644
    - |+
      pmic-glink {
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
-index e56d78da9..a080578f5 100644
+index e56d78da96b2397bc0d349e95a0947550987bb5e..a080578f518a8f4ca1e0d7c1044eb9a3a07e3677 100644
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
 @@ -210,7 +210,7 @@ config BATTERY_PMU
@@ -118,7 +118,7 @@ index e56d78da9..a080578f5 100644
  	default KUNIT_ALL_TESTS
  	help
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 9c269cdcd..ded3c5099 100644
+index 86e4493bdf558ee775a77007e925298cb1a5e03f..13ac22e6c4d0fdeb62a39c7afe66a9060ba8cb80 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -33,12 +33,14 @@
@@ -932,7 +932,7 @@ index 9c269cdcd..ded3c5099 100644
  	if (pan_ack)
  		return piano_mca_pan_init(mca);
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
-index 991f4a4d1..7bc1929c5 100644
+index 95846710cfece7ca6c9e445f9e0a719a6c148975..1557c0c4fdbee47cd631896e4f748384c8bcfde9 100644
 --- a/drivers/power/supply/piano_mca_test.c
 +++ b/drivers/power/supply/piano_mca_test.c
 @@ -4,6 +4,8 @@
@@ -944,7 +944,7 @@ index 991f4a4d1..7bc1929c5 100644
  #include <linux/kthread.h>
  #include <linux/iio/consumer.h>
  #include <linux/power_supply.h>
-@@ -64,6 +66,15 @@ struct piano_mca_test {
+@@ -65,6 +67,15 @@ struct piano_mca_test {
  	struct piano_mca mca;
  	struct iio_channel skin_channels[6];
  	struct piano_mca_test_iio skin_input[6];
@@ -960,7 +960,7 @@ index 991f4a4d1..7bc1929c5 100644
  	int skin_get_error;
  	atomic_t work_runs;
  	struct completion blocker_started, blocker_release;
-@@ -355,6 +366,14 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+@@ -356,6 +367,14 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
  			fixture->pps_write_failures--;
  			return -EIO;
  		}
@@ -975,7 +975,7 @@ index 991f4a4d1..7bc1929c5 100644
  	} else if (write && property >= MCA_PROP_VDM_BASE &&
  		   property < MCA_PROP_VDM_BASE + 8) {
  		unsigned int i;
-@@ -433,6 +452,12 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+@@ -434,6 +453,12 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
  		case MCA_PROP_BUS_VOLT:
  			put_unaligned_le32(fixture->vbus_uv, response.data);
  			break;
@@ -988,7 +988,7 @@ index 991f4a4d1..7bc1929c5 100644
  		case MCA_PROP_REAL_TYPE:
  			put_unaligned_le32(fixture->real_type, response.data);
  			break;
-@@ -603,6 +628,7 @@ static int piano_mca_test_init(struct kunit *test)
+@@ -604,6 +629,7 @@ static int piano_mca_test_init(struct kunit *test)
  	mca->real_type = MCA_TYPE_PD;
  	mutex_init(&mca->lock);
  	mutex_init(&mca->policy_lock);
@@ -996,7 +996,7 @@ index 991f4a4d1..7bc1929c5 100644
  	mca->charge_limit_ua = MCA_CP_IBAT_MAX_MA * 1000;
  	mca->policy_ready = true;
  	init_completion(&fixture->blocker_started);
-@@ -610,6 +636,7 @@ static int piano_mca_test_init(struct kunit *test)
+@@ -611,6 +637,7 @@ static int piano_mca_test_init(struct kunit *test)
  	mutex_init(&mca->pen_boost_lock);
  	init_completion(&mca->ack);
  	INIT_DELAYED_WORK(&mca->poll, piano_mca_test_work);
@@ -1004,7 +1004,7 @@ index 991f4a4d1..7bc1929c5 100644
  	mipps_auth = true;
  	charge_policy = true;
  	charge_current = false;
-@@ -625,6 +652,11 @@ static void piano_mca_test_exit(struct kunit *test)
+@@ -626,6 +653,11 @@ static void piano_mca_test_exit(struct kunit *test)
  	struct piano_mca_test *fixture = test->priv;
  
  	disable_delayed_work_sync(&fixture->mca.poll);
@@ -1016,7 +1016,7 @@ index 991f4a4d1..7bc1929c5 100644
  	if (fixture->mca.cp_psy) {
  		fixture->cp_stop_failures = 0;
  		piano_mca_cp_stop(&fixture->mca, "test cleanup");
-@@ -3338,6 +3370,9 @@ static struct iio_channel *piano_mca_test_iio_get(struct device *dev, const char
+@@ -3358,6 +3390,9 @@ static struct iio_channel *piano_mca_test_iio_get(struct device *dev, const char
  			return &f->skin_channels[i];
  		}
  	}
@@ -1026,7 +1026,7 @@ index 991f4a4d1..7bc1929c5 100644
  	return ERR_PTR(-ENODEV);
  }
  
-@@ -4381,7 +4416,392 @@ static void piano_mca_warm_pmic_compensation_test(struct kunit *test)
+@@ -4401,7 +4436,392 @@ static void piano_mca_warm_pmic_compensation_test(struct kunit *test)
  	KUNIT_EXPECT_EQ(test, piano_mca_pmic_voltage(&f->mca, 4550, 40), 4595U);
  }
  
@@ -1420,7 +1420,7 @@ index 991f4a4d1..7bc1929c5 100644
  	KUNIT_CASE(piano_mca_response_identity_test),
  	KUNIT_CASE(piano_mca_short_notification_test),
 diff --git a/drivers/usb/typec/ucsi/psy.c b/drivers/usb/typec/ucsi/psy.c
-index ba8592a4e..0427f5775 100644
+index ba8592a4e49426c2789617f9bf3e9c41fe6f1d2f..0427f5775b9d7ebbb4f2bc2853c8bd67a436ba2f 100644
 --- a/drivers/usb/typec/ucsi/psy.c
 +++ b/drivers/usb/typec/ucsi/psy.c
 @@ -22,6 +22,7 @@ enum ucsi_psy_online_states {
@@ -1441,3 +1441,6 @@ index ba8592a4e..0427f5775 100644
  	case POWER_SUPPLY_PROP_ONLINE:
  		return ucsi_psy_get_online(con, val);
  	case POWER_SUPPLY_PROP_VOLTAGE_MIN:
+-- 
+2.56.1
+

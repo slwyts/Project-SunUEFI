@@ -1,13 +1,17 @@
-From cef223a7327d4fe422585cfe76cb20bb7c1eb981 Mon Sep 17 00:00:00 2001
+From f85d46b9be602fb5186b61ad8e0014d42431531b Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 03:47:47 +0800
 Subject: [PATCH] feat(power): apply the stock five-field PPS voltage-step
  table
 
 Select 2:1 voltage steps from the same-device current gap, cycle count and cell-voltage headroom. Keep single-step CV increases, aging and last-stage guards, and the cold-profile 80 mV cap. Regulate CV overshoot from the cell-voltage error while retaining existing source and thermal windows.
+---
+ drivers/power/supply/piano_mca.c      | 55 ++++++++++++++++++++++++---
+ drivers/power/supply/piano_mca_test.c | 31 +++++++++++++++
+ 2 files changed, 80 insertions(+), 6 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 16c4804ea..568115e6c 100644
+index 8028e741f89feb060ef86dd5db73193d97c03431..c427843205018b2d093edaeec623ff952741a57b 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -437,7 +437,7 @@ static const struct piano_mca_jeita piano_mca_jeita[] = {
@@ -99,10 +103,10 @@ index 16c4804ea..568115e6c 100644
  		if (over > MCA_CP_BAND_MA)
  			mca->cp_trip_at = jiffies;
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
-index 7431d27a0..e19578ac0 100644
+index b6f7a7022feebe5790d91dd5ac9ab18d77cc7578..c81fd0ef7efa2e5382d655dc8c7755df848642bb 100644
 --- a/drivers/power/supply/piano_mca_test.c
 +++ b/drivers/power/supply/piano_mca_test.c
-@@ -3666,6 +3666,36 @@ static void piano_mca_ffc_tail_does_not_reenter_test(struct kunit *test)
+@@ -3686,6 +3686,36 @@ static void piano_mca_ffc_tail_does_not_reenter_test(struct kunit *test)
  	KUNIT_EXPECT_TRUE(test, f->mca.normal_full);
  }
  
@@ -139,7 +143,7 @@ index 7431d27a0..e19578ac0 100644
  static void piano_mca_third_pps_limits_test(struct kunit *test)
  {
  	struct piano_mca_test *f = test->priv;
-@@ -3978,6 +4008,7 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
+@@ -3998,6 +4028,7 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
  }
  
  static struct kunit_case piano_mca_test_cases[] = {
@@ -147,3 +151,6 @@ index 7431d27a0..e19578ac0 100644
  	KUNIT_CASE(piano_mca_third_pps_limits_test),
  	KUNIT_CASE(piano_mca_qc_limits_test),
  	KUNIT_CASE(piano_mca_qc_direction_test),
+-- 
+2.56.1
+

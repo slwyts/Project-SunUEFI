@@ -1,4 +1,4 @@
-From 4ed6bf7cce2ae5989f14fc2d8da05230d8345fa1 Mon Sep 17 00:00:00 2001
+From 71b3ac278b7febbc765e4d8add5d4c4846713f27 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Wed, 11 Nov 2026 00:25:30 +0800
 Subject: [PATCH] power: supply: piano_mca: apply the factory high-load thermal
@@ -32,7 +32,7 @@ Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
  7 files changed, 584 insertions(+), 11 deletions(-)
 
 diff --git a/Documentation/devicetree/bindings/pinctrl/qcom,pmic-gpio.yaml b/Documentation/devicetree/bindings/pinctrl/qcom,pmic-gpio.yaml
-index c27e24cb2..d594bd2be 100644
+index c27e24cb206fcd6c566a4ecf0a08f5bbec1c90bd..d594bd2bedd44e3c2dcb4458b88551cec07a2edd 100644
 --- a/Documentation/devicetree/bindings/pinctrl/qcom,pmic-gpio.yaml
 +++ b/Documentation/devicetree/bindings/pinctrl/qcom,pmic-gpio.yaml
 @@ -71,6 +71,7 @@ properties:
@@ -61,7 +61,7 @@ index c27e24cb2..d594bd2be 100644
                   - gpio1-gpio6 for pmk8550
                   - gpio1-gpio8 for pmk8850
 diff --git a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
-index 05dd68406..3f4170c92 100644
+index 05dd684064aa6b0854522c2acc9ba4c4361bc68f..3f4170c920d18553c549ce5cc946a494dc14d7a2 100644
 --- a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
 +++ b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
 @@ -66,6 +66,28 @@ properties:
@@ -103,7 +103,7 @@ index 05dd68406..3f4170c92 100644
  
  examples:
 diff --git a/arch/arm64/configs/piano_defconfig b/arch/arm64/configs/piano_defconfig
-index 2a614db3e..8200a72c5 100644
+index 2a614db3e15ab365c66af6fa8888637235148bdf..8200a72c55b5eca881ff70c1b386ceb802930819 100644
 --- a/arch/arm64/configs/piano_defconfig
 +++ b/arch/arm64/configs/piano_defconfig
 @@ -744,6 +744,7 @@ CONFIG_POWER_SEQUENCING_QCOM_WCN=m
@@ -123,7 +123,7 @@ index 2a614db3e..8200a72c5 100644
  CONFIG_RZG2L_ADC=m
  CONFIG_RZT2H_ADC=m
 diff --git a/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c b/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
-index c6f93fb1d..530d7eb7f 100644
+index c6f93fb1dc2027a697eeec0060761b58b9361256..530d7eb7fdefdb8c3a521b71d252492dbb8c46be 100644
 --- a/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
 +++ b/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
 @@ -1292,6 +1292,7 @@ static const struct of_device_id pmic_gpio_of_match[] = {
@@ -135,7 +135,7 @@ index c6f93fb1d..530d7eb7f 100644
  	{ .compatible = "qcom,pmk8350-gpio", .data = (void *) 4 },
  	{ .compatible = "qcom,pmk8550-gpio", .data = (void *) 6 },
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
-index b88c8c611..2e6dd6637 100644
+index b88c8c611beb56f267ecaf37eb8ef6ac10bd6dac..2e6dd6637ede3a9a7ed75cee4f42d39eb8444d16 100644
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
 @@ -210,7 +210,7 @@ config BATTERY_PMU
@@ -157,7 +157,7 @@ index b88c8c611..2e6dd6637 100644
  	default KUNIT_ALL_TESTS
  	help
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 71bad9b08..089afbf07 100644
+index ccdcc6186f8bca6c477bf02b085ada94a658316b..02bd07218a20556319d1c0bd47893f59c360f2ac 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -37,6 +37,7 @@
@@ -236,7 +236,7 @@ index 71bad9b08..089afbf07 100644
  
  	/* Restore an in-use pen rail after ADSP restarts. Its consumer will
  	 * stop the transmitter on a communication error in the meantime.
-@@ -3164,12 +3181,16 @@ static void piano_mca_poll(struct work_struct *work)
+@@ -3164,12 +3181,16 @@ source_error:
  				       mca->polled_connection_generation);
  
  requeue:
@@ -465,7 +465,7 @@ index 71bad9b08..089afbf07 100644
  MODULE_LICENSE("GPL");
 +MODULE_IMPORT_NS("IIO_CONSUMER");
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
-index 2313a5705..c300c92f9 100644
+index ee1597ef1408e3c4a52f52eb2e29b0cd9f06a5ea..49fdcda36252b23cc8d78ab1b3df6d548d7474e5 100644
 --- a/drivers/power/supply/piano_mca_test.c
 +++ b/drivers/power/supply/piano_mca_test.c
 @@ -5,6 +5,7 @@
@@ -503,8 +503,8 @@ index 2313a5705..c300c92f9 100644
  
  struct piano_mca_test_gauge {
  	int voltage_uv;
-@@ -37,8 +51,16 @@ struct piano_mca_test_gauge {
- 	int charge_error;
+@@ -38,8 +52,16 @@ struct piano_mca_test_gauge {
+ 	int current_now_ua;
  };
  
 +struct piano_mca_test_iio {
@@ -520,7 +520,7 @@ index 2313a5705..c300c92f9 100644
  	atomic_t work_runs;
  	struct completion blocker_started, blocker_release;
  	bool block_once;
-@@ -3088,7 +3110,314 @@ static void piano_mca_full_skips_active_cp_test(struct kunit *test)
+@@ -3108,7 +3130,314 @@ static void piano_mca_full_skips_active_cp_test(struct kunit *test)
  	KUNIT_EXPECT_EQ(test, f->mca.cp, MCA_CP_ON);
  }
  
@@ -835,7 +835,7 @@ index 2313a5705..c300c92f9 100644
  	KUNIT_CASE(piano_mca_full_hardware_hold_test),
  	KUNIT_CASE(piano_mca_full_soft_five_samples_test),
  	KUNIT_CASE(piano_mca_full_soft_boundaries_test),
-@@ -3102,6 +3431,14 @@ static struct kunit_case piano_mca_test_cases[] = {
+@@ -3122,6 +3451,14 @@ static struct kunit_case piano_mca_test_cases[] = {
  	KUNIT_CASE(piano_mca_full_keeps_cp_off_test),
  	KUNIT_CASE(piano_mca_full_skips_active_cp_test),
  
@@ -851,5 +851,5 @@ index 2313a5705..c300c92f9 100644
  	KUNIT_CASE(piano_mca_new_session_reapplies_cached_input_test),
  	KUNIT_CASE(piano_mca_new_connection_reapplies_cached_input_test),
 -- 
-2.55.0
+2.56.1
 

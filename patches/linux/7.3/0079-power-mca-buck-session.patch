@@ -1,4 +1,4 @@
-From 85196e407d8d88175c6fa5ef21a7dab75fc84e40 Mon Sep 17 00:00:00 2001
+From 99f79c4f32aba9873f1ecefe8f6784b96c4b0032 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 19:33:44 +0800
 Subject: [PATCH] fix(power): keep buck charging requests in the sampled
@@ -12,7 +12,7 @@ Read fallback battery temperature with an explicit result so transport errors sk
  1 file changed, 63 insertions(+), 30 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index c2708356523..6f0c7dd89a7 100644
+index 1ddf51c52cc7a4bb23216c40476fe60c259a7b82..864e3e6f49db56dc2c67b61aee09917aa092d5c0 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -1447,13 +1447,15 @@ static u32 piano_mca_policy_icl(u32 real_type)
@@ -237,4 +237,5 @@ index c2708356523..6f0c7dd89a7 100644
  		piano_mca_reset_icl(mca);
  	if (cp_charge && charge_current) {
 -- 
-2.56.0
+2.56.1
+

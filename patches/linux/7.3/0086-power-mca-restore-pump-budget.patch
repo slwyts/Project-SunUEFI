@@ -1,4 +1,4 @@
-From 89f2e07030ef165e710cc8be972bb9341f50dcf9 Mon Sep 17 00:00:00 2001
+From 56d30b551851fa5a07e7b043b2d274511d59b9de Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 02:21:27 +0800
 Subject: [PATCH] power: supply: piano_mca: reopen pump after restoring its
@@ -10,7 +10,7 @@ A pump started under a smaller charge limit has a lower bus-current protection s
  1 file changed, 8 insertions(+)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 7929eeb8e48..bb7456ea5c8 100644
+index f54789c9da8703a6ea5e07f78ac76808833fea41..d6a2731cb0e1c7a3ea031a71da9fe4e3a7aca114 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -521,6 +521,7 @@ struct piano_mca {
@@ -43,4 +43,5 @@ index 7929eeb8e48..bb7456ea5c8 100644
  		if (!piano_mca_cp_stop(mca, "normal voltage reached")) {
  			mca->cp_thermal_stop = mca->fv_set_mv > limits.fv_mv;
 -- 
-2.56.0
+2.56.1
+

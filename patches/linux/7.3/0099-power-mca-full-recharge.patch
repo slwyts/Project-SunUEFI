@@ -1,4 +1,4 @@
-From a4614be4a22c99570ea77a4126ce27a46b81fac7 Mon Sep 17 00:00:00 2001
+From 01848aeb929fdc463d49fcbe87375ee7ea0c0b9f Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Wed, 11 Nov 2026 00:18:30 +0800
 Subject: [PATCH] power: supply: piano_mca: implement ordinary full and
@@ -21,7 +21,7 @@ Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
  2 files changed, 424 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 685a7ae05..71bad9b08 100644
+index dd396c57234d717653d65337a65c1e72df6189e6..ccdcc6186f8bca6c477bf02b085ada94a658316b 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -38,6 +38,7 @@
@@ -248,7 +248,7 @@ index 685a7ae05..71bad9b08 100644
  	/* A transport failure is not a measured disconnect or a new source. */
  	if (!piano_mca_cp_stop_io(mca, "source read failed"))
  		piano_mca_normal_pause(mca, generation,
-@@ -3044,7 +3167,9 @@ static void piano_mca_poll(struct work_struct *work)
+@@ -3044,7 +3167,9 @@ requeue:
  	if (mca->service_up || mca->cp == MCA_CP_STOPPING)
  		queue_delayed_work(system_freezable_wq, &mca->poll,
  				   msecs_to_jiffies(piano_mca_cp_active(mca) ?
@@ -268,7 +268,7 @@ index 685a7ae05..71bad9b08 100644
  	/* A queued poll sees the suspended flag and exits without requeueing. */
  	disable_delayed_work_sync(&mca->poll);
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
-index d7faece6c..2313a5705 100644
+index dd42f5a56ca2c09b997448ff65cf3e17d2dbd38c..ee1597ef1408e3c4a52f52eb2e29b0cd9f06a5ea 100644
 --- a/drivers/power/supply/piano_mca_test.c
 +++ b/drivers/power/supply/piano_mca_test.c
 @@ -32,6 +32,9 @@ struct piano_mca_test_gauge {
@@ -278,10 +278,10 @@ index d7faece6c..2313a5705 100644
 +	int charge_now_uah;
 +	int charge_full_uah;
 +	int charge_error;
+ 	int current_now_ua;
  };
  
- struct piano_mca_test {
-@@ -78,6 +81,8 @@ struct piano_mca_test {
+@@ -79,6 +82,8 @@ struct piano_mca_test {
  	bool cp_enabled;
  	struct piano_mca_test_gauge gauge[2];
  	u32 vbus_uv;
@@ -290,7 +290,7 @@ index d7faece6c..2313a5705 100644
  	int pack_temp;
  	int pack_read_failures;
  	u32 fv_mv;
-@@ -171,6 +176,11 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+@@ -172,6 +177,11 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
  		fixture->verify_read_failures--;
  		return -EIO;
  	}
@@ -302,7 +302,7 @@ index d7faece6c..2313a5705 100644
  	if (!write && property == MCA_PROP_PACK_TBAT &&
  	    fixture->pack_read_failures) {
  		if (fixture->pack_read_failures > 0)
-@@ -355,6 +365,9 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+@@ -356,6 +366,9 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
  			}
  			break;
  		}
@@ -312,7 +312,7 @@ index d7faece6c..2313a5705 100644
  		case MCA_PROP_ICL:
  			put_unaligned_le32(fixture->icl_ma, response.data);
  			break;
-@@ -483,6 +496,7 @@ static int piano_mca_test_init(struct kunit *test)
+@@ -484,6 +497,7 @@ static int piano_mca_test_init(struct kunit *test)
  	fixture->fixed_9v_ma = 2000;
  	fixture->fixed_5v_ma = 3000;
  	fixture->vbus_uv = 5000000;
@@ -320,7 +320,7 @@ index d7faece6c..2313a5705 100644
  	fixture->pack_temp = 25;
  	fixture->fv_mv = 4480;
  	fixture->fcc_ma = 500;
-@@ -493,6 +507,8 @@ static int piano_mca_test_init(struct kunit *test)
+@@ -494,6 +508,8 @@ static int piano_mca_test_init(struct kunit *test)
  	fixture->cp_read_error_property = -1;
  	fixture->gauge[0] =
  		(struct piano_mca_test_gauge){ 3800000, 1000000, 250, 0 };
@@ -329,7 +329,7 @@ index d7faece6c..2313a5705 100644
  	fixture->gauge[1] = fixture->gauge[0];
  	mca->online = true;
  	mca->real_type = MCA_TYPE_PD;
-@@ -534,7 +550,16 @@ static int piano_mca_test_gauge_get(struct power_supply *psy,
+@@ -535,7 +551,16 @@ static int piano_mca_test_gauge_get(struct power_supply *psy,
  	if (gauge->error)
  		return gauge->error;
  
@@ -346,16 +346,16 @@ index d7faece6c..2313a5705 100644
  	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
  		value->intval = gauge->voltage_uv;
  		return 0;
-@@ -556,6 +581,8 @@ static int piano_mca_test_register_gauges(struct kunit *test)
- 		POWER_SUPPLY_PROP_VOLTAGE_NOW,
+@@ -561,6 +586,8 @@ static int piano_mca_test_register_gauges(struct kunit *test)
  		POWER_SUPPLY_PROP_CURRENT_NOW,
+ 		POWER_SUPPLY_PROP_CURRENT_AVG,
  		POWER_SUPPLY_PROP_TEMP,
 +		POWER_SUPPLY_PROP_CHARGE_NOW,
 +		POWER_SUPPLY_PROP_CHARGE_FULL,
  	};
  	static const struct power_supply_desc descriptions[] = {
  		{
-@@ -2805,7 +2832,276 @@ static void piano_mca_unsampled_session_only_returns_to_five_volts_test(struct k
+@@ -2825,7 +2852,276 @@ static void piano_mca_unsampled_session_only_returns_to_five_volts_test(struct k
  	KUNIT_EXPECT_LT(test, f->last_icl_event, f->last_voltage_event);
  }
  
@@ -633,5 +633,5 @@ index d7faece6c..2313a5705 100644
  	KUNIT_CASE(piano_mca_new_session_reapplies_cached_input_test),
  	KUNIT_CASE(piano_mca_new_connection_reapplies_cached_input_test),
 -- 
-2.55.0
+2.56.1
 

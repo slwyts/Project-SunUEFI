@@ -1,4 +1,4 @@
-From 086efffaada5f7c0f8ff81a6dc2fb7c5f6e13f97 Mon Sep 17 00:00:00 2001
+From f3092d49693bd6139c4abfc09c43bfb3eb501c0b Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 22:28:31 +0800
 Subject: [PATCH] feat(power): verify BQ27Z561 battery challenges before
@@ -16,7 +16,7 @@ The pack reports authentic only when both bank monitors pass. A board-provided k
  5 files changed, 234 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
-index cccddfd9de0..71081a862d1 100644
+index cccddfd9de06474ebdb58ffc0f00aedb074cdc37..71081a862d164ff1d7e39a1939c5c0643e6160a7 100644
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
 @@ -333,6 +333,8 @@ config BATTERY_PIANO
@@ -29,7 +29,7 @@ index cccddfd9de0..71081a862d1 100644
  	  Say Y here to enable support for batteries with BQ27xxx chips.
  
 diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
-index 5c32de13c51..b9fae35c4c3 100644
+index 52473e9b5dd04047e8ce84381ea0d3c484a23b83..3e667dbe346c75f2d4110cca71c362ee785361db 100644
 --- a/drivers/power/supply/bq27xxx_battery.c
 +++ b/drivers/power/supply/bq27xxx_battery.c
 @@ -53,6 +53,11 @@
@@ -59,17 +59,17 @@ index 5c32de13c51..b9fae35c4c3 100644
  /* control register params */
  #define BQ27XXX_SEALED			0x20
  #define BQ27XXX_SET_CFGUPDATE		0x13
-@@ -1930,6 +1943,9 @@ static void bq27xxx_battery_update_unlocked(struct bq27xxx_device_info *di)
- 		 */
+@@ -1933,6 +1946,9 @@ static void bq27xxx_battery_update_unlocked(struct bq27xxx_device_info *di)
  		if (!(di->opts & BQ27XXX_O_ZERO))
- 			bq27xxx_battery_current_and_status(di, NULL, &status, &cache);
+ 			bq27xxx_battery_current_and_status(di, BQ27XXX_REG_AI, NULL,
+ 							   &status, &cache);
 +	} else if (di->auth_key) {
 +		di->authentic = false;
 +		di->charge_mode_known = false;
  	}
  
  	if ((di->cache.capacity != cache.capacity) ||
-@@ -2118,6 +2134,183 @@ static int bq27xxx_simple_value(int value,
+@@ -2121,6 +2137,183 @@ static int bq27xxx_simple_value(int value,
  	return 0;
  }
  
@@ -253,9 +253,9 @@ index 5c32de13c51..b9fae35c4c3 100644
  static int bq27xxx_battery_get_property(struct power_supply *psy,
  					enum power_supply_property psp,
  					union power_supply_propval *val)
-@@ -2125,6 +2318,10 @@ static int bq27xxx_battery_get_property(struct power_supply *psy,
- 	int ret = 0;
+@@ -2129,6 +2322,10 @@ static int bq27xxx_battery_get_property(struct power_supply *psy,
  	struct bq27xxx_device_info *di = power_supply_get_drvdata(psy);
+ 	enum bq27xxx_reg_index current_reg = BQ27XXX_REG_AI;
  
 +	if (di->auth_key && (psp == POWER_SUPPLY_PROP_AUTHENTIC ||
 +			    psp == POWER_SUPPLY_PROP_CHARGE_TYPE))
@@ -264,7 +264,7 @@ index 5c32de13c51..b9fae35c4c3 100644
  	mutex_lock(&di->lock);
  	if (time_is_before_jiffies(di->last_update + 5 * HZ))
  		bq27xxx_battery_update_unlocked(di);
-@@ -2257,7 +2454,13 @@ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
+@@ -2264,7 +2461,13 @@ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
  	psy_desc->properties = bq27xxx_chip_data[di->chip].props;
  	psy_desc->num_properties = bq27xxx_chip_data[di->chip].props_size;
  	psy_desc->get_property = bq27xxx_battery_get_property;
@@ -278,7 +278,7 @@ index 5c32de13c51..b9fae35c4c3 100644
  
  	di->bat = devm_power_supply_register(di->dev, psy_desc, &psy_cfg);
  	if (IS_ERR(di->bat))
-@@ -2283,6 +2486,8 @@ void bq27xxx_battery_teardown(struct bq27xxx_device_info *di)
+@@ -2290,6 +2493,8 @@ void bq27xxx_battery_teardown(struct bq27xxx_device_info *di)
  
  	/* Set removed to avoid bq27xxx_battery_update() re-queuing the work */
  	mutex_lock(&di->lock);
@@ -287,7 +287,7 @@ index 5c32de13c51..b9fae35c4c3 100644
  	di->removed = true;
  	mutex_unlock(&di->lock);
  
-@@ -2294,15 +2499,28 @@ EXPORT_SYMBOL_GPL(bq27xxx_battery_teardown);
+@@ -2301,15 +2506,28 @@ EXPORT_SYMBOL_GPL(bq27xxx_battery_teardown);
  static int bq27xxx_battery_suspend(struct device *dev)
  {
  	struct bq27xxx_device_info *di = dev_get_drvdata(dev);
@@ -319,7 +319,7 @@ index 5c32de13c51..b9fae35c4c3 100644
  	return 0;
  }
 diff --git a/drivers/power/supply/bq27xxx_battery_i2c.c b/drivers/power/supply/bq27xxx_battery_i2c.c
-index c4e7a9521d0..d1d15955da9 100644
+index c4e7a9521d086987199af5c845b28cf916957e7b..d1d15955da979b67a6cc303f2433f2b936b75a49 100644
 --- a/drivers/power/supply/bq27xxx_battery_i2c.c
 +++ b/drivers/power/supply/bq27xxx_battery_i2c.c
 @@ -61,6 +61,8 @@ static int bq27xxx_battery_i2c_read(struct bq27xxx_device_info *di, u8 reg,
@@ -347,7 +347,7 @@ index c4e7a9521d0..d1d15955da9 100644
  	buf[0] = reg;
  	memcpy(&buf[1], data, len);
 diff --git a/drivers/power/supply/piano_battery.c b/drivers/power/supply/piano_battery.c
-index 66ca32c523c..8cf4e0f4cfa 100644
+index b56177dfc767d7f4ffd6004fb031d9dbb424e29c..6f47e046add288374c4b524f0e4d7ee3b6801b75 100644
 --- a/drivers/power/supply/piano_battery.c
 +++ b/drivers/power/supply/piano_battery.c
 @@ -118,6 +118,7 @@ static int piano_battery_get_property(struct power_supply *psy,
@@ -358,7 +358,7 @@ index 66ca32c523c..8cf4e0f4cfa 100644
  		value->intval = cells[0] && cells[1];
  		break;
  	case POWER_SUPPLY_PROP_CURRENT_NOW:
-@@ -193,6 +194,7 @@ static void piano_battery_external_power_changed(struct power_supply *psy)
+@@ -194,6 +195,7 @@ static void piano_battery_external_power_changed(struct power_supply *psy)
  static const enum power_supply_property piano_battery_properties[] = {
  	POWER_SUPPLY_PROP_STATUS,
  	POWER_SUPPLY_PROP_PRESENT,
@@ -367,7 +367,7 @@ index 66ca32c523c..8cf4e0f4cfa 100644
  	POWER_SUPPLY_PROP_VOLTAGE_NOW,
  	POWER_SUPPLY_PROP_CURRENT_NOW,
 diff --git a/include/linux/power/bq27xxx_battery.h b/include/linux/power/bq27xxx_battery.h
-index d56e1276aaf..b1be969b9b8 100644
+index d56e1276aafe5ee5d6baf78961ed7bd9e2b278fa..b1be969b9b8f6c1ff72461f34ceae9424f291859 100644
 --- a/include/linux/power/bq27xxx_battery.h
 +++ b/include/linux/power/bq27xxx_battery.h
 @@ -64,6 +64,11 @@ struct bq27xxx_device_info {
@@ -382,3 +382,6 @@ index d56e1276aaf..b1be969b9b8 100644
  	unsigned long last_update;
  	union power_supply_propval last_status;
  	struct delayed_work work;
+-- 
+2.56.1
+

@@ -1,4 +1,4 @@
-From aebf92dbb3702d54e7297e5699ac70c849de993f Mon Sep 17 00:00:00 2001
+From f93c327620bedbe91618d55a4f5dd9249832ebd2 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 8 Nov 2026 21:32:14 +0800
 Subject: [PATCH] rtc: efi: reject invalid firmware time during probe

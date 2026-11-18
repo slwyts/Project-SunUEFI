@@ -1,4 +1,4 @@
-From c38cdc89e5521f10bbfb9df5e959ad618f350ce1 Mon Sep 17 00:00:00 2001
+From 73792b9941bed5fe567edaf409c70649ae310540 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 02:13:47 +0800
 Subject: [PATCH] power: supply: piano_mca: share standard thermal charge
@@ -12,7 +12,7 @@ Serialize the policy worker, limit updates and suspend/teardown. Keep limits acr
  1 file changed, 212 insertions(+), 5 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 6f0c7dd89a7..7929eeb8e48 100644
+index 864e3e6f49db56dc2c67b61aee09917aa092d5c0..f54789c9da8703a6ea5e07f78ac76808833fea41 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -47,6 +47,7 @@
@@ -169,7 +169,7 @@ index 6f0c7dd89a7..7929eeb8e48 100644
  
  	if (!online) {
  		/* UCSI ONLINE follows the connector, not VBUS. Preserve an
-@@ -2826,6 +2870,7 @@ static void piano_mca_poll(struct work_struct *work)
+@@ -2826,6 +2870,7 @@ requeue:
  		queue_delayed_work(system_freezable_wq, &mca->poll,
  				   msecs_to_jiffies(piano_mca_cp_active(mca) ?
  						    MCA_CP_POLL_MS : MCA_POLL_MS));
@@ -421,4 +421,5 @@ index 6f0c7dd89a7..7929eeb8e48 100644
  
  	if (pan_ack)
 -- 
-2.56.0
+2.56.1
+

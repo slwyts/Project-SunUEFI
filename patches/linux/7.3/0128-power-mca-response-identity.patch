@@ -1,4 +1,4 @@
-From 194b029b2a84cb0fb88b608bdab614dd3ec64e24 Mon Sep 17 00:00:00 2001
+From 84e353096d843526711868e635a5872aa3a9c550 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 03:10:00 +0800
 Subject: [PATCH] fix(power): reject mismatched MCA property replies
@@ -12,7 +12,7 @@ Exercise mismatched replies before valid read and write responses in the actual 
  2 files changed, 50 insertions(+)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 960587099..3d261fec7 100644
+index 2f6205a83f00a91735760761fee30451cebb162f..1aa4bf142c8b604eb12cead0f96df8e449325629 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -590,6 +590,8 @@ struct piano_mca {
@@ -45,10 +45,10 @@ index 960587099..3d261fec7 100644
  	req.seq = cpu_to_le32(mca->seq);
  	reinit_completion(&mca->ack);
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
-index 574f7a147..ac1a4b10e 100644
+index bafc4de27f869b3b4d7c9b064e486f3d126ee6d3..7b79362b5b3bc5f8b0787a01a0ce66b82808b8ae 100644
 --- a/drivers/power/supply/piano_mca_test.c
 +++ b/drivers/power/supply/piano_mca_test.c
-@@ -168,6 +168,8 @@ struct piano_mca_test {
+@@ -169,6 +169,8 @@ struct piano_mca_test {
  	int cp_current_ua;
  	int cp_temp;
  	int cp_read_error_property;
@@ -57,7 +57,7 @@ index 574f7a147..ac1a4b10e 100644
  };
  
  static void piano_mca_test_work(struct work_struct *work)
-@@ -510,6 +512,24 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+@@ -511,6 +513,24 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
  	}
  
  	/* Exercise actual length, sequence, reply copy and completion handling. */
@@ -82,7 +82,7 @@ index 574f7a147..ac1a4b10e 100644
  	piano_mca_callback(&response, sizeof(response), &fixture->mca);
  	return 0;
  }
-@@ -2974,6 +2994,27 @@ static int piano_mca_full_prepare(struct kunit *test)
+@@ -2994,6 +3014,27 @@ static int piano_mca_full_prepare(struct kunit *test)
  	return 0;
  }
  
@@ -110,7 +110,7 @@ index 574f7a147..ac1a4b10e 100644
  static void piano_mca_short_notification_test(struct kunit *test)
  {
  	struct piano_mca_test *f = test->priv;
-@@ -4318,6 +4359,7 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
+@@ -4338,6 +4379,7 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
  }
  
  static struct kunit_case piano_mca_test_cases[] = {

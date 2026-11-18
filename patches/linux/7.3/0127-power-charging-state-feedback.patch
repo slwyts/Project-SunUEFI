@@ -1,4 +1,4 @@
-From f8b5448fa346e96bd99468ad619b972cb895092d Mon Sep 17 00:00:00 2001
+From e9efc235b274102760d270d8c5af0a69059a5cd2 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 02:42:00 +0800
 Subject: [PATCH] fix(power): preserve charge state and report applied pump
@@ -13,7 +13,7 @@ Do not create termination votes while charging is inhibited. Preserve existing f
  4 files changed, 138 insertions(+), 5 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 18000b969..960587099 100644
+index d2ff628bd8fb0f67eded26daaf5f8507539411f6..2f6205a83f00a91735760761fee30451cebb162f 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -774,6 +774,10 @@ static void piano_mca_callback(const void *data, size_t len, void *priv)
@@ -43,10 +43,10 @@ index 18000b969..960587099 100644
  		/* FFC has a different tail current and compensated PMIC voltage. */
  		if (mca->ffc) {
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
-index 0d7c64812..574f7a147 100644
+index d137202479bcb7c6b00937057e5125157301845b..bafc4de27f869b3b4d7c9b064e486f3d126ee6d3 100644
 --- a/drivers/power/supply/piano_mca_test.c
 +++ b/drivers/power/supply/piano_mca_test.c
-@@ -2974,6 +2974,73 @@ static int piano_mca_full_prepare(struct kunit *test)
+@@ -2994,6 +2994,73 @@ static int piano_mca_full_prepare(struct kunit *test)
  	return 0;
  }
  
@@ -120,7 +120,7 @@ index 0d7c64812..574f7a147 100644
  static void piano_mca_full_hardware_hold_test(struct kunit *test)
  {
  	struct piano_mca_test *f = test->priv;
-@@ -4251,6 +4318,9 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
+@@ -4271,6 +4338,9 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
  }
  
  static struct kunit_case piano_mca_test_cases[] = {
@@ -131,7 +131,7 @@ index 0d7c64812..574f7a147 100644
  	KUNIT_CASE(piano_mca_pps_bypass_regulation_test),
  	KUNIT_CASE(piano_mca_pps_bypass_stop_failure_test),
 diff --git a/drivers/power/supply/sc8541_charger.c b/drivers/power/supply/sc8541_charger.c
-index 4ef9e0d07..da90a5336 100644
+index 4ef9e0d07a182eba5488560f5b5c478e9ead5b15..da90a5336231900be21735f77b4b2a1bb4f30346 100644
 --- a/drivers/power/supply/sc8541_charger.c
 +++ b/drivers/power/supply/sc8541_charger.c
 @@ -346,7 +346,9 @@ static int sc8541_get_property(struct power_supply *psy,
@@ -167,7 +167,7 @@ index 4ef9e0d07..da90a5336 100644
  		return ret;
  	}
 diff --git a/drivers/power/supply/sc8541_charger_test.c b/drivers/power/supply/sc8541_charger_test.c
-index eb49459fb..065f412c4 100644
+index eb49459fb986a7549c3c33d598cf5550b75cf41c..065f412c432c6ff082fb9ea143087d12c180a1ee 100644
 --- a/drivers/power/supply/sc8541_charger_test.c
 +++ b/drivers/power/supply/sc8541_charger_test.c
 @@ -8,6 +8,7 @@ struct sc8541_test {

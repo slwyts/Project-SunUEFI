@@ -1,4 +1,4 @@
-From d32e1dddd0abcd145d77951dbe144cbb113ecebb Mon Sep 17 00:00:00 2001
+From ec3beb9fe1a311221b8beccd601d4fd36e56fcff Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 02:30:19 +0800
 Subject: [PATCH] power: supply: piano_mca: keep low-current charging on the
@@ -10,7 +10,7 @@ Require enough total current to sustain the pump minimum bus target before chang
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index bb7456ea5c8..ed077766345 100644
+index d6a2731cb0e1c7a3ea031a71da9fe4e3a7aca114..44dd8f22fa2a2d34e58797f82501599ff330b855 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -2396,7 +2396,7 @@ static void piano_mca_cp_try_start(struct piano_mca *mca, unsigned int generatio
@@ -23,4 +23,5 @@ index bb7456ea5c8..ed077766345 100644
  	    piano_mca_read_u32(mca, MCA_PROP_VERIFY_PROCESS))
  		return;
 -- 
-2.56.0
+2.56.1
+

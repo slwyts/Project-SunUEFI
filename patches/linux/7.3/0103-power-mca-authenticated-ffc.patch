@@ -1,4 +1,4 @@
-From 40db1e85c3fff98c6737a5484a760eb9545dab2e Mon Sep 17 00:00:00 2001
+From 200c3aea54c5e3cb734f263eb852bcc8cc98cf5e Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 12 Nov 2026 00:06:47 +0800
 Subject: [PATCH] power: supply: piano_mca: integrate authenticated FFC with
@@ -23,7 +23,7 @@ inhibition, full votes, aging, tail charge and stop confirmation retries.
  3 files changed, 695 insertions(+), 46 deletions(-)
 
 diff --git a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
-index 3f4170c920d..a7a06878dca 100644
+index 3f4170c920d18553c549ce5cc946a494dc14d7a2..a7a06878dca6efd2939b8eb620106bad606da755 100644
 --- a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
 +++ b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
 @@ -96,7 +96,7 @@ properties:
@@ -36,7 +36,7 @@ index 3f4170c920d..a7a06878dca 100644
      description: |
        Strictly decreasing total battery charge current limits for the Xiaomi
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 089afbf0766..fed38482e15 100644
+index 02bd07218a20556319d1c0bd47893f59c360f2ac..c62ae69913b82a8229123de50916941a0111e334 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -22,8 +22,8 @@
@@ -938,7 +938,7 @@ index 089afbf0766..fed38482e15 100644
  	init_completion(&mca->ack);
  	INIT_DELAYED_WORK(&mca->poll, piano_mca_poll);
 diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
-index c300c92f960..e3b2beb5de2 100644
+index 49fdcda36252b23cc8d78ab1b3df6d548d7474e5..6d058992b4cec83a70339047f81e33920878c600 100644
 --- a/drivers/power/supply/piano_mca_test.c
 +++ b/drivers/power/supply/piano_mca_test.c
 @@ -49,6 +49,9 @@ struct piano_mca_test_gauge {
@@ -948,10 +948,10 @@ index c300c92f960..e3b2beb5de2 100644
 +	bool authentic;
 +	int cycles, design_uah, charge_type;
 +	unsigned int mode_writes, mode_failures;
+ 	int current_now_ua;
  };
  
- struct piano_mca_test_iio {
-@@ -390,6 +393,9 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+@@ -391,6 +394,9 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
  		case MCA_PROP_CHARGE_STATUS:
  			put_unaligned_le32(fixture->charge_status, response.data);
  			break;
@@ -961,7 +961,7 @@ index c300c92f960..e3b2beb5de2 100644
  		case MCA_PROP_ICL:
  			put_unaligned_le32(fixture->icl_ma, response.data);
  			break;
-@@ -531,7 +537,12 @@ static int piano_mca_test_init(struct kunit *test)
+@@ -532,7 +538,12 @@ static int piano_mca_test_init(struct kunit *test)
  		(struct piano_mca_test_gauge){ 3800000, 1000000, 250, 0 };
  	fixture->gauge[0].charge_now_uah = 4400000;
  	fixture->gauge[0].charge_full_uah = 4500000;
@@ -974,7 +974,7 @@ index c300c92f960..e3b2beb5de2 100644
  	mca->online = true;
  	mca->real_type = MCA_TYPE_PD;
  	mutex_init(&mca->lock);
-@@ -576,6 +587,18 @@ static int piano_mca_test_gauge_get(struct power_supply *psy,
+@@ -577,6 +588,18 @@ static int piano_mca_test_gauge_get(struct power_supply *psy,
  	     property == POWER_SUPPLY_PROP_CHARGE_FULL) && gauge->charge_error)
  		return gauge->charge_error;
  	switch (property) {
@@ -993,7 +993,7 @@ index c300c92f960..e3b2beb5de2 100644
  	case POWER_SUPPLY_PROP_CHARGE_NOW:
  		value->intval = gauge->charge_now_uah;
  		return 0;
-@@ -596,6 +619,23 @@ static int piano_mca_test_gauge_get(struct power_supply *psy,
+@@ -600,6 +623,23 @@ static int piano_mca_test_gauge_get(struct power_supply *psy,
  	}
  }
  
@@ -1017,7 +1017,7 @@ index c300c92f960..e3b2beb5de2 100644
  static int piano_mca_test_register_gauges(struct kunit *test)
  {
  	struct piano_mca_test *fixture = test->priv;
-@@ -605,6 +645,10 @@ static int piano_mca_test_register_gauges(struct kunit *test)
+@@ -610,6 +650,10 @@ static int piano_mca_test_register_gauges(struct kunit *test)
  		POWER_SUPPLY_PROP_TEMP,
  		POWER_SUPPLY_PROP_CHARGE_NOW,
  		POWER_SUPPLY_PROP_CHARGE_FULL,
@@ -1028,7 +1028,7 @@ index c300c92f960..e3b2beb5de2 100644
  	};
  	static const struct power_supply_desc descriptions[] = {
  		{
-@@ -613,6 +657,7 @@ static int piano_mca_test_register_gauges(struct kunit *test)
+@@ -618,6 +662,7 @@ static int piano_mca_test_register_gauges(struct kunit *test)
  			.properties = properties,
  			.num_properties = ARRAY_SIZE(properties),
  			.get_property = piano_mca_test_gauge_get,
@@ -1036,7 +1036,7 @@ index c300c92f960..e3b2beb5de2 100644
  		},
  		{
  			.name = "bq27z561-1",
-@@ -620,6 +665,7 @@ static int piano_mca_test_register_gauges(struct kunit *test)
+@@ -625,6 +670,7 @@ static int piano_mca_test_register_gauges(struct kunit *test)
  			.properties = properties,
  			.num_properties = ARRAY_SIZE(properties),
  			.get_property = piano_mca_test_gauge_get,
@@ -1044,7 +1044,7 @@ index c300c92f960..e3b2beb5de2 100644
  		},
  	};
  	int index;
-@@ -3414,7 +3460,177 @@ static void piano_mca_skin_buck_share_limit_test(struct kunit *test)
+@@ -3434,7 +3480,177 @@ static void piano_mca_skin_buck_share_limit_test(struct kunit *test)
  	KUNIT_EXPECT_EQ(test, f->icl_ma, 1500U);
  }
  
@@ -1222,3 +1222,6 @@ index c300c92f960..e3b2beb5de2 100644
  	KUNIT_CASE(piano_mca_skin_buck_columns_test),
  	KUNIT_CASE(piano_mca_skin_normal_buck_fcc_test),
  	KUNIT_CASE(piano_mca_skin_buck_share_limit_test),
+-- 
+2.56.1
+

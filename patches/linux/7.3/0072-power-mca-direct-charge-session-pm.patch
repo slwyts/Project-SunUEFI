@@ -1,4 +1,4 @@
-From bc3f592d642fbe7de8fe9ecd6f56c5433cf5e33f Mon Sep 17 00:00:00 2001
+From 8bd772ef49ee94b644d38688fec80002888276a6 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 07:41:01 +0800
 Subject: [PATCH] fix(power-supply): bind direct charging to its session and
@@ -14,7 +14,7 @@ Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
  1 file changed, 173 insertions(+), 53 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 799a14527..e78ee14f9 100644
+index 808e8b8a06e7d215d8d1df007d1f60df2d1efc56..2eb200e571255f06936722c60528d36b77596f12 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -38,6 +38,7 @@
@@ -74,9 +74,9 @@ index 799a14527..e78ee14f9 100644
  
  /*
 - * Both fuel gauges: the higher cell voltage (mV) and temperature (degC) and
-- * the sum of the currents (mA, positive while charging)
-+ * Both fuel gauges: the higher cell voltage (mV), the sum of the currents
-+ * (mA, positive while charging), and both temperature extremes (degC).
+- * the sum of the average currents (mA, positive while charging)
++ * Both fuel gauges: the higher cell voltage (mV), the sum of the average
++ * currents (mA, positive while charging), and both temperature extremes (degC).
   */
 -static int piano_mca_gauges(int *vbat_mv, int *ibat_ma, int *tbat)
 +static int piano_mca_gauges(int *vbat_mv, int *ibat_ma, int *tcool, int *twarm)
@@ -516,5 +516,5 @@ index 799a14527..e78ee14f9 100644
  };
  module_auxiliary_driver(piano_mca_driver);
 -- 
-2.55.0
+2.56.1
 

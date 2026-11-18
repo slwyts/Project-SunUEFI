@@ -1,4 +1,4 @@
-From 46924b7bc8becffcf07a4e1a77ffd4f375b2dc09 Mon Sep 17 00:00:00 2001
+From d04a8bdc812b0c72564f38a4231f33784a330e20 Mon Sep 17 00:00:00 2001
 From: YueMiyuki <76854136+YueMiyuki@users.noreply.github.com>
 Date: Thu, 29 Oct 2026 16:30:00 +0800
 Subject: [PATCH] HID: xiaomi: map P81C body slides to page keys

@@ -1,4 +1,4 @@
-From 4c2f35bf077067a4a7d8d91978251c3a0f3ecd0d Mon Sep 17 00:00:00 2001
+From 40bae359de4673615b881502fdf750901432e4c4 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Fri, 6 Nov 2026 06:45:20 +0800
 Subject: [PATCH] dt-bindings: leds: ir-spi: describe the Piano transmitter

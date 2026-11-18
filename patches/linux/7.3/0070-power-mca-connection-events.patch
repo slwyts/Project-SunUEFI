@@ -1,4 +1,4 @@
-From d7737c7ca5e8af6c77c738d2eb1a5112557aebcb Mon Sep 17 00:00:00 2001
+From b4f1288d0e52425e0c1cec8591f5e3ac2bd9f887 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 02:58:21 +0800
 Subject: [PATCH] fix(power-supply): invalidate MCA authentication on UCSI
@@ -17,7 +17,7 @@ Bind authentication attempts, VDM writes and verified results to the attachment 
  6 files changed, 186 insertions(+), 33 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 5f22985c5..799a14527 100644
+index b26411858dbf118f3285d68c8fbb2a8c0ac1f172..808e8b8a06e7d215d8d1df007d1f60df2d1efc56 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -30,6 +30,7 @@
@@ -138,7 +138,7 @@ index 5f22985c5..799a14527 100644
  		ret = -ECONNRESET;
  		goto out;
  	}
-@@ -747,7 +796,8 @@ static int piano_mca_xfer(struct piano_mca *mca, u32 opcode, u32 prop,
+@@ -747,7 +796,8 @@ out:
  static int piano_mca_read(struct piano_mca *mca, u32 prop, void *buf, size_t len)
  {
  	return piano_mca_xfer(mca, MCA_OP_READ, prop, buf, len,
@@ -437,7 +437,7 @@ index 5f22985c5..799a14527 100644
  
  	if (pan_ack)
 diff --git a/drivers/power/supply/power_supply_core.c b/drivers/power/supply/power_supply_core.c
-index 127978564..c45a7f1e0 100644
+index 1279785645fbe561e6140e845b5f024b7c17a3aa..c45a7f1e03ae6cf132f9460d12a2d6fd80539505 100644
 --- a/drivers/power/supply/power_supply_core.c
 +++ b/drivers/power/supply/power_supply_core.c
 @@ -161,6 +161,24 @@ void power_supply_changed(struct power_supply *psy)
@@ -466,7 +466,7 @@ index 127978564..c45a7f1e0 100644
   * Notify that power supply was registered after parent finished the probing.
   *
 diff --git a/drivers/usb/typec/ucsi/psy.c b/drivers/usb/typec/ucsi/psy.c
-index c8ebab8ba..ba8592a4e 100644
+index c8ebab8ba7e74a224bf9794a4e784fabe91fc842..ba8592a4e49426c2789617f9bf3e9c41fe6f1d2f 100644
 --- a/drivers/usb/typec/ucsi/psy.c
 +++ b/drivers/usb/typec/ucsi/psy.c
 @@ -353,3 +353,11 @@ void ucsi_port_psy_changed(struct ucsi_connector *con)
@@ -482,7 +482,7 @@ index c8ebab8ba..ba8592a4e 100644
 +	power_supply_connection_changed(con->psy);
 +}
 diff --git a/drivers/usb/typec/ucsi/ucsi.c b/drivers/usb/typec/ucsi/ucsi.c
-index 239693f92..c88cd023a 100644
+index 239693f92de358e3bd2cb31f32ba491fd85715f3..c88cd023a6ad67b0d9ded9fc13167f7a3ba6a185 100644
 --- a/drivers/usb/typec/ucsi/ucsi.c
 +++ b/drivers/usb/typec/ucsi/ucsi.c
 @@ -1390,6 +1390,9 @@ static int ucsi_check_connection(struct ucsi_connector *con)
@@ -506,7 +506,7 @@ index 239693f92..c88cd023a 100644
  		ucsi_orientation(con);
  
 diff --git a/drivers/usb/typec/ucsi/ucsi.h b/drivers/usb/typec/ucsi/ucsi.h
-index dc594388d..3da45fd55 100644
+index dc594388dcd081176daa41b331c681092ad889e5..3da45fd55b0aa3ceded4d788d96b785b76678f15 100644
 --- a/drivers/usb/typec/ucsi/ucsi.h
 +++ b/drivers/usb/typec/ucsi/ucsi.h
 @@ -595,10 +595,12 @@ int ucsi_sync_control_common(struct ucsi *ucsi, u64 command, u32 *cci,
@@ -523,7 +523,7 @@ index dc594388d..3da45fd55 100644
  
  #if IS_ENABLED(CONFIG_TYPEC_DP_ALTMODE)
 diff --git a/include/linux/power_supply.h b/include/linux/power_supply.h
-index 0a4ea490d..36edda34d 100644
+index 0a4ea490d5ea8c0764694337c47d808570521efb..36edda34d00bd610559aec8dd4fd68c7a1753a5d 100644
 --- a/include/linux/power_supply.h
 +++ b/include/linux/power_supply.h
 @@ -229,6 +229,7 @@ enum power_supply_charge_behaviour {
@@ -543,5 +543,5 @@ index 0a4ea490d..36edda34d 100644
  int power_supply_get_property_from_supplier(struct power_supply *psy,
  					    enum power_supply_property psp,
 -- 
-2.55.0
+2.56.1
 

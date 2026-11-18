@@ -1,4 +1,4 @@
-From ccdf47cbd186c2edb8d8dc408ff2f94bbc98bc18 Mon Sep 17 00:00:00 2001
+From 67a0825e1780cd95872588ec494f27aa90d3e76e Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Wed, 11 Nov 2026 00:25:30 +0800
 Subject: [PATCH] power: supply: bq27xxx: expose the BQ27Z561 original
@@ -22,7 +22,7 @@ Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
  4 files changed, 284 insertions(+), 3 deletions(-)
 
 diff --git a/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml b/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
-index 547ef2a66..8e51cac14 100644
+index 547ef2a662f603ebd4311432a0cf507c2b1aa62a..8e51cac14a0fd4c5fdebecefe43ac9f2f5c6fe4c 100644
 --- a/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
 +++ b/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
 @@ -69,6 +69,12 @@ properties:
@@ -47,7 +47,7 @@ index 547ef2a66..8e51cac14 100644
        properties:
          compatible:
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
-index 4db04f8a4..b88c8c611 100644
+index 4db04f8a4a2cee23f133be68766945b3ec159911..b88c8c611beb56f267ecaf37eb8ef6ac10bd6dac 100644
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
 @@ -349,8 +349,19 @@ config BATTERY_BQ27XXX
@@ -83,7 +83,7 @@ index 4db04f8a4..b88c8c611 100644
  config BATTERY_BQ27XXX_I2C
  	tristate "BQ27xxx I2C support"
 diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
-index 8d6e0b9cd..51de010d6 100644
+index 49222970c1aac10fbd6f966968b18251d4a19fe8..ff5fe0d2269ecb6f37319b5ec108e0b6769820e5 100644
 --- a/drivers/power/supply/bq27xxx_battery.c
 +++ b/drivers/power/supply/bq27xxx_battery.c
 @@ -61,6 +61,10 @@
@@ -97,7 +97,7 @@ index 8d6e0b9cd..51de010d6 100644
  #define BQ27XXX_MANUFACTURER	"Texas Instruments"
  
  /* BQ27XXX Flags */
-@@ -2421,6 +2425,86 @@ static void bq27xxx_external_power_changed(struct power_supply *psy)
+@@ -2428,6 +2432,86 @@ static void bq27xxx_external_power_changed(struct power_supply *psy)
  	mod_delayed_work(system_percpu_wq, &di->work, HZ / 2);
  }
  
@@ -184,7 +184,7 @@ index 8d6e0b9cd..51de010d6 100644
  int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
  {
  	struct power_supply_desc *psy_desc;
-@@ -2462,6 +2546,11 @@ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
+@@ -2469,6 +2553,11 @@ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
  		return dev_err_probe(di->dev, ret,
  				     "invalid battery authentication configuration\n");
  
@@ -197,7 +197,7 @@ index 8d6e0b9cd..51de010d6 100644
  	if (IS_ERR(di->bat))
  		return dev_err_probe(di->dev, PTR_ERR(di->bat),
 diff --git a/drivers/power/supply/bq27xxx_battery_test.c b/drivers/power/supply/bq27xxx_battery_test.c
-index 0d824c366..2130d0c1b 100644
+index eb8267223a3606dde290c447d80586080b78a086..1f301767c558842e0d24b3c549a85a068005bc8b 100644
 --- a/drivers/power/supply/bq27xxx_battery_test.c
 +++ b/drivers/power/supply/bq27xxx_battery_test.c
 @@ -1,5 +1,5 @@
@@ -207,10 +207,10 @@ index 0d824c366..2130d0c1b 100644
  #include <kunit/device.h>
  #include <kunit/test.h>
  
-@@ -10,6 +10,12 @@ struct bq27xxx_suspend_test {
- 	u8 key[SHA256_DIGEST_SIZE];
- 	u8 command[4], trailer[2];
+@@ -12,6 +12,12 @@ struct bq27xxx_suspend_test {
  	unsigned int writes, fail_write;
+ 	int current_now, current_avg, current_flags;
+ 	unsigned int current_now_reads, current_avg_reads;
 +#if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
 +	int read_value;
 +	unsigned int reads;
@@ -220,7 +220,7 @@ index 0d824c366..2130d0c1b 100644
  };
  
  static void bq27xxx_suspend_test_poll(struct work_struct *work)
-@@ -127,7 +133,173 @@ static void bq27xxx_suspend_without_key_test(struct kunit *test)
+@@ -129,6 +135,163 @@ static void bq27xxx_suspend_without_key_test(struct kunit *test)
  	KUNIT_EXPECT_EQ(test, atomic_read(&fixture->polls), 0);
  }
  
@@ -381,7 +381,13 @@ index 0d824c366..2130d0c1b 100644
 +}
 +#endif
 +
+ static int bq27xxx_current_test_read(struct bq27xxx_device_info *di, u8 reg, bool single)
+ {
+ 	struct bq27xxx_suspend_test *f =
+@@ -217,6 +380,15 @@ static void bq27z561_current_properties_test(struct kunit *test)
+ 
  static struct kunit_case bq27xxx_suspend_cases[] = {
+ 	KUNIT_CASE(bq27z561_current_properties_test),
 +#if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
 +	KUNIT_CASE(bq27xxx_original_iio_values_test),
 +	KUNIT_CASE(bq27xxx_original_iio_range_test),
@@ -395,5 +401,5 @@ index 0d824c366..2130d0c1b 100644
  	KUNIT_CASE(bq27xxx_suspend_checksum_failure_test),
  	KUNIT_CASE(bq27xxx_suspend_disables_fast_test),
 -- 
-2.55.0
+2.56.1
 
