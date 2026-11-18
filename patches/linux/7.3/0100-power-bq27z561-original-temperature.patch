@@ -1,4 +1,4 @@
-From 6d6674f96f286b8dea2244a904a9afeeabbae1a4 Mon Sep 17 00:00:00 2001
+From ccdf47cbd186c2edb8d8dc408ff2f94bbc98bc18 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Wed, 11 Nov 2026 00:25:30 +0800
 Subject: [PATCH] power: supply: bq27xxx: expose the BQ27Z561 original

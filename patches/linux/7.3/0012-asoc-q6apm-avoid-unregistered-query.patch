@@ -1,4 +1,4 @@
-From adfa5e11e2bec07f07bbdd08f811b4c75fa933c1 Mon Sep 17 00:00:00 2001
+From b2c26a8371658c44629bab109ddc88a92ea9522a Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Wed, 21 Oct 2026 19:19:53 +0000
 Subject: [PATCH] ASoC: qcom: q6apm: avoid a readiness query before APR

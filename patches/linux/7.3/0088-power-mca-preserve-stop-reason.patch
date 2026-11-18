@@ -1,4 +1,4 @@
-From 71a678136448a6f13dee1e08acfa7aa07c8f4108 Mon Sep 17 00:00:00 2001
+From 364d5fc67d6d9bda0ef74932cabf6b4693939e02 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 02:31:21 +0800
 Subject: [PATCH] power: supply: piano_mca: preserve prior nonthermal stops

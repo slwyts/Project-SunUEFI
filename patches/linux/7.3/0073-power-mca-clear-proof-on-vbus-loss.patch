@@ -1,4 +1,4 @@
-From ab49d15ec6904b21e1b83ea8070a6cf572ec29ea Mon Sep 17 00:00:00 2001
+From 891689c401597c433814cb740c00e9e176b3f68f Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 09:13:00 +0800
 Subject: [PATCH] fix(power-supply): clear MiPPS proof when VBUS disappears

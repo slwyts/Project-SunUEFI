@@ -1,4 +1,4 @@
-From 5f24033fcec658059da2738a1df07ff32b4ab007 Mon Sep 17 00:00:00 2001
+From 1a904727cecd65381ed311e1fcfea69642c6f4f4 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 04:18:12 +0800
 Subject: [PATCH] fix(power): report BQ27Z561 average power only for known

@@ -1,4 +1,4 @@
-From aca459ef30504fdaf0c879273025fcf373ef754b Mon Sep 17 00:00:00 2001
+From c5b0dd7fd87c015ef10f92f5762634f68db2b280 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 17:59:50 +0800
 Subject: [PATCH] drm/msm/dpu: flush shared video CTLs once per kickoff

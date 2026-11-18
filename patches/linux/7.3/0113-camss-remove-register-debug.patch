@@ -1,4 +1,4 @@
-From 43a20f702582c8a8e1396a22541b347102e49377 Mon Sep 17 00:00:00 2001
+From 053c260832fa4aac9d1f5351562e39487120b3f3 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 21:48:56 +0800
 Subject: [PATCH] media: camss: remove SM8750 ISP register debug interface
@@ -354,10 +354,10 @@ index cfd398dbb4e7492c9ef0b13699f55c43943604da..3cc899d29920f343c4a05acd73baf20f
  		writel(0, vfe->base + VFE_BUS_WM_CFG(FD_C_WM));
  		vfe_bus_stop(vfe, id);
 diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
-index 20879c20cf8c1800ab9baeeede2e6e2c8f1fc9f5..41bbbc8f9b0968bdcbb703eaa14dc9cde29fe96b 100644
+index 3a0e241f25e19b6f3b8db321060eae1fe8a6e31e..d17f84ade81d93f85ea0a221ec3806185895a084 100644
 --- a/drivers/media/platform/qcom/camss/camss.c
 +++ b/drivers/media/platform/qcom/camss/camss.c
-@@ -28,7 +28,6 @@
+@@ -29,7 +29,6 @@
  #include <media/v4l2-fwnode.h>
  
  #include "camss.h"
@@ -365,7 +365,7 @@ index 20879c20cf8c1800ab9baeeede2e6e2c8f1fc9f5..41bbbc8f9b0968bdcbb703eaa14dc9cd
  
  #define CAMSS_CLOCK_MARGIN_NUMERATOR 105
  #define CAMSS_CLOCK_MARGIN_DENOMINATOR 100
-@@ -6092,9 +6091,6 @@ static int camss_probe(struct platform_device *pdev)
+@@ -6126,9 +6125,6 @@ static int camss_probe(struct platform_device *pdev)
  
  	camss->res = of_device_get_match_data(dev);
  
@@ -375,7 +375,7 @@ index 20879c20cf8c1800ab9baeeede2e6e2c8f1fc9f5..41bbbc8f9b0968bdcbb703eaa14dc9cd
  	atomic_set(&camss->ref_count, 0);
  	camss->dev = dev;
  	platform_set_drvdata(pdev, camss);
-@@ -6236,9 +6232,6 @@ static void camss_remove(struct platform_device *pdev)
+@@ -6270,9 +6266,6 @@ static void camss_remove(struct platform_device *pdev)
  		camss_delete(camss);
  
  	camss_genpd_cleanup(camss);

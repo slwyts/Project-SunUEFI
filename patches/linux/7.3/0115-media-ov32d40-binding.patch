@@ -1,4 +1,4 @@
-From e6bd34252bf63cf9d717bee7c908c01ed218cff4 Mon Sep 17 00:00:00 2001
+From d406e7f9ba84b0cd603c8bcec1453088b27356b5 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 23:03:04 +0800
 Subject: [PATCH] dt-bindings: media: document OmniVision OV32D40

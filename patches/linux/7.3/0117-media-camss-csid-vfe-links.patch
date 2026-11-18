@@ -1,4 +1,4 @@
-From 5526de60ff1b641bf035d18839ff2f7b636852a1 Mon Sep 17 00:00:00 2001
+From 78db38cfc491fd13d49dac542ad96c0db572992c Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 15 Nov 2026 00:40:18 +0800
 Subject: [PATCH] media: camss: expose only implemented SM8750 CSID to VFE
@@ -21,10 +21,10 @@ The existing rear CSID0/VFE0 and front CSID1/VFE1 routes are preserved.
  1 file changed, 6 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
-index 41bbbc8f9..661c65daa 100644
+index d17f84ade81d93f85ea0a221ec3806185895a084..842bcf16339ddd70d4aecd87ad92a97f34a2fc56 100644
 --- a/drivers/media/platform/qcom/camss/camss.c
 +++ b/drivers/media/platform/qcom/camss/camss.c
-@@ -5704,7 +5704,11 @@ static int camss_link_entities(struct camss *camss)
+@@ -5738,7 +5738,11 @@ static int camss_link_entities(struct camss *camss)
  				}
  	} else {
  		for (i = 0; i < camss->res->csid_num; i++)
@@ -37,7 +37,7 @@ index 41bbbc8f9..661c65daa 100644
  				for (j = 0; j < camss->vfe[k].res->line_num; j++) {
  					struct v4l2_subdev *csid = &camss->csid[i].subdev;
  					struct v4l2_subdev *vfe = &camss->vfe[k].line[j].subdev;
-@@ -5721,6 +5725,7 @@ static int camss_link_entities(struct camss *camss)
+@@ -5755,6 +5759,7 @@ static int camss_link_entities(struct camss *camss)
  						return ret;
  					}
  				}

@@ -1,4 +1,4 @@
-From 8e88ed0b929469e170657360c726c80ae9aa9fed Mon Sep 17 00:00:00 2001
+From bef56ad10eea0929ad342b1cfc105b0e737a8dee Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sat, 7 Nov 2026 08:32:43 +0000
 Subject: [PATCH] media: camss: Preserve SM8750 TFE write-master address units
@@ -70,10 +70,10 @@ index 38fd570bc9b2153bf3ab43c61ebf9dbd363789e9..cfd398dbb4e7492c9ef0b13699f55c43
  	dev_dbg(vfe->camss->dev, "wm:%d, image buf addr:0x%x\n", wm, addr);
  }
 diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
-index 32b8425b6e4b78ebed930a7c6372b37256148560..0a58c03f341eaf80654b9e2e45ca91a19655da67 100644
+index 4f434279d915a8bc6498a5a75235d9b525d0b61e..9b38a0a67b8030a5f1922fa5bb78c4643be8b325 100644
 --- a/drivers/media/platform/qcom/camss/camss-vfe.c
 +++ b/drivers/media/platform/qcom/camss/camss-vfe.c
-@@ -2362,6 +2362,10 @@ static int vfe_bpl_align_pix(struct vfe_device *vfe)
+@@ -2382,6 +2382,10 @@ static int vfe_bpl_align_pix(struct vfe_device *vfe)
  		 */
  		ret = 0;
  		break;
@@ -84,7 +84,7 @@ index 32b8425b6e4b78ebed930a7c6372b37256148560..0a58c03f341eaf80654b9e2e45ca91a1
  	default:
  		break;
  	}
-@@ -2444,6 +2448,8 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
+@@ -2464,6 +2468,8 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
  		}
  
  		video_out->ops = &vfe->video_ops;

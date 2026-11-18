@@ -1,4 +1,4 @@
-From f325312349b57c56e7b9522d8e43ca8256c28392 Mon Sep 17 00:00:00 2001
+From 999e627ab6cce07b49407669ed43e29c4f0831a5 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sun, 25 Oct 2026 14:59:44 +0000
 Subject: [PATCH] power: supply: piano_mca: recover unknown PD input

@@ -1,4 +1,4 @@
-From 915c592a146857dc0b380d8f5121275d8fc34ccd Mon Sep 17 00:00:00 2001
+From 5e5aada4bc1496168c21862e75ac179884696a79 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 02:35:43 +0800
 Subject: [PATCH] power: supply: piano_mca: clear retry permission on a fresh

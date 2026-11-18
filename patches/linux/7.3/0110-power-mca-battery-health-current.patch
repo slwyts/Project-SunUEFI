@@ -1,4 +1,4 @@
-From bd6f8b1ab1f27c0f5b17e4cb29c96840e0ef9ce5 Mon Sep 17 00:00:00 2001
+From 5cb60d4d43d5c4c93f72eaa91ef082062d47cb35 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 03:57:05 +0800
 Subject: [PATCH] feat(power): expose gauge health alerts and reduce

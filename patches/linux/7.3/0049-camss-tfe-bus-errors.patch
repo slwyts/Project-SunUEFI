@@ -1,4 +1,4 @@
-From a858076ac1acdd26fb8b1e9d185dd963a4277aa7 Mon Sep 17 00:00:00 2001
+From daf4b3bdaaaa7a5f233e067410e640cbf5e44042 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sat, 7 Nov 2026 07:14:52 +0800
 Subject: [PATCH] fix(camera): reject frames affected by TFE bus faults
@@ -18,7 +18,7 @@ stream's interrupt source before the clock-off path can run.
  3 files changed, 162 insertions(+), 8 deletions(-)
 
 diff --git a/drivers/media/platform/qcom/camss/camss-vfe-gen4.c b/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
-index 619d391f91d..38fd570bc9b 100644
+index 619d391f91d688f3c84d2a2023ca01cbdae1b122..38fd570bc9b2153bf3ab43c61ebf9dbd363789e9 100644
 --- a/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
 +++ b/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
 @@ -9,13 +9,29 @@
@@ -219,10 +219,10 @@ index 619d391f91d..38fd570bc9b 100644
  	.vfe_isp_update = vfe_isp_update,
  };
 diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
-index 0f2f0277213..32b8425b6e4 100644
+index 508337ec2623cab511b131397444926119746081..4f434279d915a8bc6498a5a75235d9b525d0b61e 100644
 --- a/drivers/media/platform/qcom/camss/camss-vfe.c
 +++ b/drivers/media/platform/qcom/camss/camss-vfe.c
-@@ -610,7 +610,7 @@ void vfe_frame_sync(struct vfe_device *vfe, int port_id, bool start,
+@@ -610,7 +610,7 @@ unlock:
  
  void vfe_buf_done(struct vfe_device *vfe, int wm)
  {
@@ -249,7 +249,7 @@ index 0f2f0277213..32b8425b6e4 100644
  
  	ready_buf = output->buf[0];
  	if (!ready_buf) {
-@@ -2043,6 +2052,14 @@ int msm_vfe_subdev_init(struct camss *camss, struct vfe_device *vfe,
+@@ -2063,6 +2072,14 @@ int msm_vfe_subdev_init(struct camss *camss, struct vfe_device *vfe,
  		}
  	}
  
@@ -264,7 +264,7 @@ index 0f2f0277213..32b8425b6e4 100644
  	/* Interrupt */
  
  	ret = platform_get_irq_byname(pdev, res->interrupt[0]);
-@@ -2105,10 +2122,6 @@ int msm_vfe_subdev_init(struct camss *camss, struct vfe_device *vfe,
+@@ -2125,10 +2142,6 @@ int msm_vfe_subdev_init(struct camss *camss, struct vfe_device *vfe,
  	mutex_init(&vfe->stream_lock);
  	vfe->stream_count = 0;
  
@@ -276,7 +276,7 @@ index 0f2f0277213..32b8425b6e4 100644
  
  	for (i = VFE_LINE_RDI0; i < vfe->res->line_num; i++) {
 diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
-index bcbe5426772..8c151063d6e 100644
+index bcbe54267729ce55833563f7c07d0a33aa93b169..8c151063d6eea0711705d85f4cd70c15c804290b 100644
 --- a/drivers/media/platform/qcom/camss/camss-vfe.h
 +++ b/drivers/media/platform/qcom/camss/camss-vfe.h
 @@ -145,6 +145,8 @@ struct vfe_hw_ops {
@@ -298,5 +298,5 @@ index bcbe5426772..8c151063d6e 100644
  	struct vfe_line line[VFE_LINE_NUM_MAX];
  	u32 reg_update;
 -- 
-2.56.0
+2.56.1
 

@@ -1,4 +1,4 @@
-From d11c5767de7b14972aa138f8b13b0094ce78c426 Mon Sep 17 00:00:00 2001
+From 47a284ec9e9c6e025464c96c1305aa76486df5d1 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 01:57:31 +0800
 Subject: [PATCH] HID: nanosic: report tablet mode from keyboard attachment

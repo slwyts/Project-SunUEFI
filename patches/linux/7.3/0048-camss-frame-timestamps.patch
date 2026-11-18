@@ -1,4 +1,4 @@
-From cd13886a3b5e3145115a1f24793dc6a330e57430 Mon Sep 17 00:00:00 2001
+From 306efe3caf447ff201495d27331dbbf8a86e7d80 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sat, 7 Nov 2026 07:14:52 +0800
 Subject: [PATCH] feat(camera): expose physical SOF and EOF frame timestamps
@@ -28,7 +28,7 @@ keeps its frame-start meaning; it is not labelled exposure start.
  create mode 100644 drivers/media/platform/qcom/camss/camss-trace.h
 
 diff --git a/drivers/media/platform/qcom/camss/Makefile b/drivers/media/platform/qcom/camss/Makefile
-index 601c7f683fc..31911429d1e 100644
+index 601c7f683fc943890ec101b0144a510ba656da89..31911429d1eb708097536844afdf9aebeec34abc 100644
 --- a/drivers/media/platform/qcom/camss/Makefile
 +++ b/drivers/media/platform/qcom/camss/Makefile
 @@ -1,6 +1,8 @@
@@ -41,7 +41,7 @@ index 601c7f683fc..31911429d1e 100644
  		camss.o \
  		camss-csid.o \
 diff --git a/drivers/media/platform/qcom/camss/camss-csid-980.c b/drivers/media/platform/qcom/camss/camss-csid-980.c
-index 56bf09d9c16..c97170c3687 100644
+index 56bf09d9c1639adc55ba66b5ee5e9a4b0a9aa08b..c97170c36870da40951b8d747296e6d3f0d45965 100644
 --- a/drivers/media/platform/qcom/camss/camss-csid-980.c
 +++ b/drivers/media/platform/qcom/camss/camss-csid-980.c
 @@ -11,7 +11,13 @@
@@ -361,7 +361,7 @@ index 56bf09d9c16..c97170c3687 100644
  				camss_buf_done(csid->camss, csid->id, i);
 diff --git a/drivers/media/platform/qcom/camss/camss-trace.h b/drivers/media/platform/qcom/camss/camss-trace.h
 new file mode 100644
-index 00000000000..c7f789da7ab
+index 0000000000000000000000000000000000000000..c7f789da7ab21be1aa215d69afff779c2be51409
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-trace.h
 @@ -0,0 +1,83 @@
@@ -449,7 +449,7 @@ index 00000000000..c7f789da7ab
 +#define TRACE_INCLUDE_FILE camss-trace
 +#include <trace/define_trace.h>
 diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
-index f3a665eec19..0f2f0277213 100644
+index 8200a64c9756cd68bc8439df7694c611eadf867c..508337ec2623cab511b131397444926119746081 100644
 --- a/drivers/media/platform/qcom/camss/camss-vfe.c
 +++ b/drivers/media/platform/qcom/camss/camss-vfe.c
 @@ -23,6 +23,9 @@
@@ -664,7 +664,7 @@ index f3a665eec19..0f2f0277213 100644
  	spin_unlock_irqrestore(&vfe->output_lock, flags);
  
  	return vfe_reset(vfe);
-@@ -1242,6 +1400,9 @@ int vfe_flush_buffers(struct camss_video *vid,
+@@ -1262,6 +1420,9 @@ int vfe_flush_buffers(struct camss_video *vid,
  		vb2_buffer_done(&output->last_buffer->vb.vb2_buf, state);
  		output->last_buffer = NULL;
  	}
@@ -674,7 +674,7 @@ index f3a665eec19..0f2f0277213 100644
  
  	spin_unlock_irqrestore(&vfe->output_lock, flags);
  
-@@ -2270,6 +2431,10 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
+@@ -2290,6 +2451,10 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
  		}
  
  		video_out->ops = &vfe->video_ops;
@@ -686,7 +686,7 @@ index f3a665eec19..0f2f0277213 100644
  			video_out->bpl_alignment = vfe_bpl_align_pix(vfe);
  			video_out->line_based = 1;
 diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
-index f0f5c76ceb4..bcbe5426772 100644
+index f0f5c76ceb4bb1806b9ab4733093cc2a76d418c4..bcbe54267729ce55833563f7c07d0a33aa93b169 100644
 --- a/drivers/media/platform/qcom/camss/camss-vfe.h
 +++ b/drivers/media/platform/qcom/camss/camss-vfe.h
 @@ -78,6 +78,12 @@ struct vfe_output {
@@ -719,7 +719,7 @@ index f0f5c76ceb4..bcbe5426772 100644
   * vfe_get_output_v2 - Get vfe output line
   * line: VFE line
 diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
-index bbd773eeefe..1c09d0f9d11 100644
+index bbd773eeefef1295318cddab026c644d734e2209..1c09d0f9d11a99284e2a5caa03aaa0f91994ecd3 100644
 --- a/drivers/media/platform/qcom/camss/camss-video.c
 +++ b/drivers/media/platform/qcom/camss/camss-video.c
 @@ -11,6 +11,7 @@
@@ -777,7 +777,7 @@ index bbd773eeefe..1c09d0f9d11 100644
  
  /* -----------------------------------------------------------------------------
 diff --git a/drivers/media/platform/qcom/camss/camss-video.h b/drivers/media/platform/qcom/camss/camss-video.h
-index d3e56e240a8..69906409f46 100644
+index d3e56e240a8880e0c1779085bd90b8ce43306a64..69906409f46cd7104ed3dcc5c53122f8aaa3a789 100644
 --- a/drivers/media/platform/qcom/camss/camss-video.h
 +++ b/drivers/media/platform/qcom/camss/camss-video.h
 @@ -23,6 +23,12 @@ struct camss_buffer {
@@ -802,10 +802,10 @@ index d3e56e240a8..69906409f46 100644
  	unsigned int nformats;
  };
 diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
-index c5ec15baee0..20879c20cf8 100644
+index baac4288d3680b2f1c59ee8ba6befa97803523ad..3a0e241f25e19b6f3b8db321060eae1fe8a6e31e 100644
 --- a/drivers/media/platform/qcom/camss/camss.c
 +++ b/drivers/media/platform/qcom/camss/camss.c
-@@ -5749,6 +5749,29 @@ void camss_buf_done(struct camss *camss, int hw_id, int port_id)
+@@ -5783,6 +5783,29 @@ void camss_buf_done(struct camss *camss, int hw_id, int port_id)
  	}
  }
  
@@ -836,10 +836,10 @@ index c5ec15baee0..20879c20cf8 100644
   * camss_register_entities - Register subdev nodes and create links
   * @camss: CAMSS device
 diff --git a/drivers/media/platform/qcom/camss/camss.h b/drivers/media/platform/qcom/camss/camss.h
-index 314bd794033..175bb918d5f 100644
+index f9ee2bc059dfea9986d06664d4bb081128041b3f..a846bddf7b5741407e03c4467b0935bc8561e577 100644
 --- a/drivers/media/platform/qcom/camss/camss.h
 +++ b/drivers/media/platform/qcom/camss/camss.h
-@@ -179,6 +179,16 @@ int camss_vfe_get(struct camss *camss, int id);
+@@ -181,6 +181,16 @@ int camss_vfe_get(struct camss *camss, int id);
  void camss_vfe_put(struct camss *camss, int id);
  void camss_delete(struct camss *camss);
  void camss_buf_done(struct camss *camss, int hw_id, int port_id);
@@ -857,7 +857,7 @@ index 314bd794033..175bb918d5f 100644
  		      int port_id, bool is_clear);
  
 diff --git a/drivers/media/v4l2-core/v4l2-event.c b/drivers/media/v4l2-core/v4l2-event.c
-index 9dd2aaa95a6..5aa78c12887 100644
+index 9dd2aaa95a67406bda3a257325442888895ed088..5aa78c12887b6d5b1ca4b37d18d3ee8a5806e46a 100644
 --- a/drivers/media/v4l2-core/v4l2-event.c
 +++ b/drivers/media/v4l2-core/v4l2-event.c
 @@ -150,24 +150,28 @@ static void __v4l2_event_queue_fh(struct v4l2_fh *fh,
@@ -895,7 +895,7 @@ index 9dd2aaa95a6..5aa78c12887 100644
  
  void v4l2_event_queue_fh(struct v4l2_fh *fh, const struct v4l2_event *ev)
 diff --git a/include/media/v4l2-event.h b/include/media/v4l2-event.h
-index 3a0e2588361..c178b16a23a 100644
+index 3a0e2588361cf451b3dbfc63dfab99550d13cf6a..c178b16a23afd545cb46aea8b3f6d7bc94da473a 100644
 --- a/include/media/v4l2-event.h
 +++ b/include/media/v4l2-event.h
 @@ -105,6 +105,21 @@ int v4l2_event_dequeue(struct v4l2_fh *fh, struct v4l2_event *event,
@@ -921,5 +921,5 @@ index 3a0e2588361..c178b16a23a 100644
   * v4l2_event_queue_fh - Queue events to video device.
   *
 -- 
-2.56.0
+2.56.1
 

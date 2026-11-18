@@ -1,4 +1,4 @@
-From 0d0368d833176501ae0eb2ef41bce7639abef879 Mon Sep 17 00:00:00 2001
+From 815369d7263e34879e01a36f1bb621746f0939a4 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 22:28:29 +0800
 Subject: [PATCH] power: supply: represent Piano parallel cells as one battery

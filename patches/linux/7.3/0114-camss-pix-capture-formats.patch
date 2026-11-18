@@ -1,4 +1,4 @@
-From 00fe3c3c06f697676463566aff995d31a2057dbb Mon Sep 17 00:00:00 2001
+From 6dbc9d18d59a2b6526b1761c9b3cc39e2079d8db Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 21:59:54 +0800
 Subject: [PATCH] media: camss: separate TFE980 sink and capture formats
@@ -27,7 +27,7 @@ Assisted-by: LLM
  3 files changed, 108 insertions(+), 9 deletions(-)
 
 diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
-index 0a58c03f341eaf80654b9e2e45ca91a19655da67..321f83ff091e4981d4f1da4f15ad03a698fef88d 100644
+index 9b38a0a67b8030a5f1922fa5bb78c4643be8b325..f546f2d35ae166401bad2ebd15899a226d2966c0 100644
 --- a/drivers/media/platform/qcom/camss/camss-vfe.c
 +++ b/drivers/media/platform/qcom/camss/camss-vfe.c
 @@ -300,8 +300,6 @@ static const struct camss_format_info formats_pix_980[] = {
@@ -78,7 +78,7 @@ index 0a58c03f341eaf80654b9e2e45ca91a19655da67..321f83ff091e4981d4f1da4f15ad03a6
  		return index ? 0 : MEDIA_BUS_FMT_YUYV8_1_5X8;
  
  	switch (vfe->camss->res->version) {
-@@ -1558,12 +1578,20 @@ static void vfe_try_format(struct vfe_line *line,
+@@ -1578,12 +1598,20 @@ static void vfe_try_format(struct vfe_line *line,
  			if (fmt->code == line->formats[i].code)
  				break;
  
@@ -102,7 +102,7 @@ index 0a58c03f341eaf80654b9e2e45ca91a19655da67..321f83ff091e4981d4f1da4f15ad03a6
  
  		fmt->field = V4L2_FIELD_NONE;
  		fmt->colorspace = V4L2_COLORSPACE_SRGB;
-@@ -1594,6 +1622,15 @@ static void vfe_try_format(struct vfe_line *line,
+@@ -1614,6 +1642,15 @@ static void vfe_try_format(struct vfe_line *line,
  	fmt->colorspace = V4L2_COLORSPACE_SRGB;
  }
  
@@ -118,7 +118,7 @@ index 0a58c03f341eaf80654b9e2e45ca91a19655da67..321f83ff091e4981d4f1da4f15ad03a6
  /*
   * vfe_try_compose - Handle try compose selection by pad subdev method
   * @line: VFE line
-@@ -1610,6 +1647,16 @@ static void vfe_try_compose(struct vfe_line *line,
+@@ -1630,6 +1667,16 @@ static void vfe_try_compose(struct vfe_line *line,
  
  	fmt = __vfe_get_format(line, sd_state, MSM_VFE_PAD_SINK, which);
  
@@ -135,7 +135,7 @@ index 0a58c03f341eaf80654b9e2e45ca91a19655da67..321f83ff091e4981d4f1da4f15ad03a6
  	if (rect->width > fmt->width)
  		rect->width = fmt->width;
  
-@@ -1633,6 +1680,26 @@ static void vfe_try_compose(struct vfe_line *line,
+@@ -1653,6 +1700,26 @@ static void vfe_try_compose(struct vfe_line *line,
  		rect->height = 4;
  }
  
@@ -162,7 +162,7 @@ index 0a58c03f341eaf80654b9e2e45ca91a19655da67..321f83ff091e4981d4f1da4f15ad03a6
  /*
   * vfe_try_crop - Handle try crop selection by pad subdev method
   * @line: VFE line
-@@ -1648,6 +1715,10 @@ static void vfe_try_crop(struct vfe_line *line,
+@@ -1668,6 +1735,10 @@ static void vfe_try_crop(struct vfe_line *line,
  	struct v4l2_rect *compose;
  
  	compose = __vfe_get_compose(line, sd_state, which);
@@ -173,7 +173,7 @@ index 0a58c03f341eaf80654b9e2e45ca91a19655da67..321f83ff091e4981d4f1da4f15ad03a6
  
  	if (rect->width > compose->width)
  		rect->width = compose->width;
-@@ -2464,6 +2535,12 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
+@@ -2484,6 +2555,12 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
  
  		video_out->nformats = vfe->line[i].nformats;
  		video_out->formats = vfe->line[i].formats;
