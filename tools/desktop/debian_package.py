@@ -228,16 +228,20 @@ def install_build_dependencies(rootfs, package, version, log):
                 '--build-profiles=' + BUILD_PROFILES, package + '=' + version]
         download = [*args, '--download-only']
         # APT can report a reset after the final TLS record as a permanent error.
+        failure = None
         with tempfile.TemporaryFile(mode='w+t', encoding='utf-8', errors='replace') as transcript:
-            result = chroot(rootfs, download, stdout=transcript, stderr=subprocess.STDOUT, check=False)
+            try:
+                chroot(rootfs, download, stdout=transcript, stderr=subprocess.STDOUT)
+            except subprocess.CalledProcessError as error:
+                failure = error
             transcript.seek(0)
             shutil.copyfileobj(transcript, log)
             transcript.seek(0)
-            failed = dependency_download_resets(transcript.read()) if result.returncode == 100 else set()
+            failed = dependency_download_resets(transcript.read()) if failure and failure.returncode == 100 else set()
         log.flush()
-        if result.returncode:
+        if failure:
             if not failed:
-                result.check_returncode()
+                raise failure
             # APT reports the exact cache name, including the epoch.
             plan = chroot(rootfs, [*args, '--print-uris'], capture_output=True, text=True)
             for uri, name in re.findall(r"^'(https://[^']+)' ([A-Za-z0-9.+_~:%-]+\.deb) ",
