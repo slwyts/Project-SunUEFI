@@ -1,8 +1,8 @@
 # 临时启动
 
-用 `fastboot boot` 把 UEFI 载入内存试运行，重启后平板恢复原来的启动方式，什么都不会写入。日常安装请用[引导助手](install-from-artifact.md)。
+用 `fastboot boot` 把 UEFI 载入内存试运行，不刷写 BOOT。下次开机仍走原有的启动方式。日常安装请用[引导助手](install-from-artifact.md)。
 
-临时加载不会把 Linux 装进平板。要进入 Linux，平板里需要已经有 `sunuefi_esp` 和 `sunuefi_root`。
+临时加载不会安装 Linux。要启动已经装好的 Linux，平板里需要有 `sunuefi_esp` 和 `sunuefi_root`。临时的是 UEFI 本身：固件设置和进入 Linux 后保存的文件仍可写入磁盘。
 
 ## 准备
 
@@ -44,7 +44,7 @@ fastboot -s SunUEFI-piano getvar product     # 应返回 piano-sunuefi
 fastboot -s SunUEFI-piano oem boot-stable
 ```
 
-UEFI 会从启动镜像（ESP）直接启动 Linux。不想继续时，重启：
+UEFI 按启动顺序选择引导程序。默认由启动分区（ESP）里的 systemd-boot 加载内核和 initramfs，再进入已安装的 Linux。不想继续时，重启：
 
 ```sh
 fastboot -s SunUEFI-piano reboot
