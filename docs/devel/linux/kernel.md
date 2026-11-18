@@ -760,10 +760,14 @@ SOC 按各组满充容量加权；充放电状态由合计净电流和满充标�
 内部电量计不再单独注册为系统 Battery，因此 UPower 和 GNOME 只显示一个
 完整电池组，不需要桌面补丁或过滤规则。
 
-TI 的标准 BQ27Z561 `AveragePower()` 单位为有符号毫瓦。Piano 原厂
-电量计固件使用私有功率命令，不能据此推定它的 `0x22/0x23` 有相同语义。
-Piano 电量计的 `power_avg` 返回 `ENODATA`；电池电压和电流仍可读取，
-充电调节不依赖这个功率字段。
+[TI 技术手册](https://www.ti.com/lit/ug/sluuc54c/sluuc54c.pdf#page=80) §12.1.15
+规定标准 BQ27Z561 `AveragePower()` 读取 `0x22/0x23`，返回有符号毫瓦，
+充电为正、放电为负。Piano 的 HyperOS 4 电量计驱动读取另外两个寄存器，
+将 `0x7b` 报为功率偏差（`power_deviation`），`0x89` 报为 `action_power`。
+偏差不是平均功率，`action_power` 的单位与平均窗口也没有核实，
+不能套用标准命令的换算。
+在平板上，两颗电量计的 `power_avg` 均返回 `ENODATA`，各自的电压和电流
+仍能读取；充电调节不依赖这个功率字段。
 
 FFC 使用前还需要两颗电量计通过电池认证，不能把充电器 MiPPS 认证当成
 电池认证。BQ27Z561 驱动使用原厂 32 字节随机挑战及 HMAC-SHA256 邮箱，
