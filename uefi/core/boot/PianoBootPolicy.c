@@ -8,6 +8,7 @@
 #include "PianoUsbStorageExperiment.h"
 #include "PianoRawLinuxBoot.h"
 #include "PianoNvFile.h"
+#include "PianoPogoService.h"
 #include <Protocol/SimpleTextInEx.h>
 #include <Protocol/HiiDatabase.h>
 #include <Protocol/HiiString.h>
@@ -45,8 +46,9 @@ STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime;
 STATIC EFI_STATUS EFIAPI OpenSimpleInit(PIANO_PRODUCT_RUNTIME_PROTOCOL *This);
 STATIC CONST PIANO_SMMU_RETIRED_USB_PROOF *mStartupUsbProof;
 STATIC CONST VOID *mStartupUsbFdt;
+#define POGO_STARTUP_WAIT_MS 3500U
+#define POGO_STARTUP_EXTRA_SLICES 256U
 BOOLEAN PianoSetStandardKeyNavigation(BOOLEAN Enable);
-VOID PianoPogoPump(VOID);
 VOID PianoTouchPump(VOID);
 STATIC EFI_STATUS Exact(EFI_STATUS S){return S==EFI_SUCCESS?S:EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
 STATIC VOID RetainAndHalt(VOID){mReport.Retained=TRUE;
@@ -399,9 +401,12 @@ EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds) {
   UINT64 First,Last;UINT64 Frequency=GetPerformanceCounterProperties(&First,&Last);
   if(!Frequency || First==Last)return EFI_UNSUPPORTED;
   BOOLEAN Down=First>Last;UINT64 Start=GetPerformanceCounter(),Previous=Start;
+  BOOLEAN WaitForKeyboard=PianoPogoKeyboardState()==PianoPogoKeyboardStarting;
+  UINT64 KeyDeadline=Milliseconds;
+  UINTN SliceLimit=3100+(WaitForKeyboard?POGO_STARTUP_WAIT_MS+POGO_STARTUP_EXTRA_SLICES:0);
   BOOLEAN PreviousNavigation=PianoSetStandardKeyNavigation(TRUE);
   mStartupWindowUsed=TRUE;mStartupWindow=TRUE;mKeysDirty=TRUE;
-  for(UINTN Slice=0;Slice<3100;++Slice){
+  for(UINTN Slice=0;Slice<SliceLimit;++Slice){
     UINT32 Action;UINT64 Sequence;S=Pending(&mRuntime,&Action,&Sequence);RequireAlive();
     if(S!=EFI_SUCCESS || Action!=PIANO_PRODUCT_ACTION_NONE){S=S==EFI_SUCCESS?EFI_SUCCESS:S;goto Done;}
     S=Pump(&mRuntime,PIANO_PRODUCT_PUMP_APP|PIANO_PRODUCT_PUMP_WAIT_EVENT,1000);RequireAlive();
@@ -411,8 +416,17 @@ EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds) {
     UINT64 Now=GetPerformanceCounter();
     if((Down&&Now>Previous)||(!Down&&Now<Previous)){S=EFI_COMPROMISED_DATA;goto Done;}
     Previous=Now;UINT64 Delta=Down?Start-Now:Now-Start;
-    if(GetTimeInNanoSecond(Delta)/1000000>=Milliseconds){S=EFI_SUCCESS;goto Done;}
-    S=gBS->Stall(1000);RequireAlive();if(S!=EFI_SUCCESS){S=Exact(S);goto Done;}
+    UINT64 Elapsed=GetTimeInNanoSecond(Delta)/1000000;
+    if(WaitForKeyboard){
+      PIANO_POGO_KEYBOARD_STATE Keyboard=PianoPogoKeyboardState();
+      if(Keyboard==PianoPogoKeyboardReady && Elapsed<=POGO_STARTUP_WAIT_MS)
+        KeyDeadline=Elapsed+Milliseconds;
+      if(Keyboard!=PianoPogoKeyboardStarting || Elapsed>=POGO_STARTUP_WAIT_MS)
+        WaitForKeyboard=FALSE;
+    }
+    if(!WaitForKeyboard && Elapsed>=KeyDeadline){S=EFI_SUCCESS;goto Done;}
+    UINTN StallUs=WaitForKeyboard?PianoPogoStartupStallUs(1000):1000;
+    S=gBS->Stall(StallUs);RequireAlive();if(S!=EFI_SUCCESS){S=Exact(S);goto Done;}
   }
   S=EFI_TIMEOUT;
 Done:

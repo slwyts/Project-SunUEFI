@@ -9,6 +9,7 @@
 #include <sys/mman.h>
 #undef NULL
 #include "../../uefi/core/boot/PianoBootPolicy.h"
+#include "../../uefi/components/pogo-product/PianoPogoService.h"
 #include <Protocol/PianoProductIdle.h>
 #include "../../uefi/core/product/PianoProductPayload.h"
 #include <PiDxe.h>
@@ -44,6 +45,14 @@ BOOLEAN PianoBootOptionIsSimpleInit(CONST EFI_DEVICE_PATH_PROTOCOL *Path){return
 VOID PianoDwc3ServiceReplayStartup(VOID){}
 VOID PianoRawLinuxReplayStable(VOID){}
 VOID PianoPogoPump(VOID){++pogo_pumps;}
+PIANO_POGO_KEYBOARD_STATE PianoPogoKeyboardState(VOID){
+  if(scenario==159||scenario==160)
+    return window_clock<2750000?PianoPogoKeyboardStarting:PianoPogoKeyboardReady;
+  if(scenario==161)
+    return window_clock<700000?PianoPogoKeyboardStarting:PianoPogoKeyboardAbsent;
+  return scenario==162?PianoPogoKeyboardStarting:PianoPogoKeyboardAbsent;
+}
+UINTN PianoPogoStartupStallUs(UINTN LimitUs){return LimitUs;}
 VOID PianoTouchPump(VOID){++touch_pumps;}
 UINT64 EFIAPI GetPerformanceCounterProperties(UINT64 *First,UINT64 *Last){*First=scenario==71?MAX_UINT64:0;*Last=scenario==71?0:MAX_UINT64;return scenario==74?0:1000000;}
 UINT64 EFIAPI GetPerformanceCounter(VOID){return scenario==71?MAX_UINT64-window_clock:window_clock;}
@@ -164,6 +173,10 @@ static EFI_STATUS EFIAPI window_stall(UINTN Us){
   assert(Us==1000&&tpl==TPL_APPLICATION&&alive);++window_stalls;
   if(scenario!=68)window_clock+=Us;
   if(scenario==80&&window_stalls==2)window_clock=500;
+  if(scenario==159&&window_stalls==3000){
+    EFI_KEY_DATA Key={0};Key.Key.ScanCode=SCAN_ESC;
+    assert(escape_callback(&Key)==EFI_SUCCESS);
+  }
   if(window_stalls==2){EFI_KEY_DATA Key={0};
     if(scenario==65){Key.Key.ScanCode=SCAN_F12;assert(key_callback(&Key)==EFI_SUCCESS);}
     if(scenario==131){Key.Key.ScanCode=SCAN_F12;assert(key_callback(&Key)==EFI_SUCCESS);}
@@ -314,7 +327,7 @@ EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){
 }
 EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RETIRE_REPORT *Report){(void)Reason;(void)Report;++stops;assert(!"UI return must not stop shared USB");return EFI_DEVICE_ERROR;}
 int main(int argc,char **argv){
-  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=158);
+  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=162);
   gST=&system_table;if(scenario==151)gST->ConsoleInHandle=(VOID *)201;
   gBS=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);assert(gBS!=MAP_FAILED);
   *gBS=(EFI_BOOT_SERVICES){.RaiseTPL=raise,.RestoreTPL=restore,.CreateEventEx=create_ex,.CreateEvent=create,.CloseEvent=close_event,
@@ -330,6 +343,16 @@ int main(int argc,char **argv){
   if(scenario==13){assert(S==EFI_COMPROMISED_DATA && PianoBootPolicyReport()->Retained);goto Done;}
   if(scenario>=23 && scenario<=25){assert(S==EFI_COMPROMISED_DATA && PianoBootPolicyReport()->Retained && !starts);goto Done;}
   assert(S==EFI_SUCCESS && runtime && key_reg==1);
+  if(scenario>=159){
+    assert(PianoBootPolicySetEntryBootArgs(NULL,0)==EFI_SUCCESS);
+    assert(PianoBootPolicyStartupWindow(1000)==EFI_SUCCESS&&!loads&&!starts&&!stops);
+    assert(window_stalls==(scenario==159?3000:scenario==160?3750:scenario==161?1000:3500));
+    UINT32 Action;UINT64 Sequence;
+    assert(runtime->GetPendingAction(runtime,&Action,&Sequence)==EFI_SUCCESS);
+    assert(Action==(scenario==159?PIANO_PRODUCT_ACTION_BOOT_PICKER:PIANO_PRODUCT_ACTION_RETURN_CORE));
+    assert(PianoBootPolicyStop()==EFI_SUCCESS && key_unreg==key_reg);
+    goto Done;
+  }
   if(scenario>=156){
     assert(runtime->SelectBootOption(runtime,19)==EFI_ACCESS_DENIED);
     if(scenario==156){

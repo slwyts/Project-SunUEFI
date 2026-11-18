@@ -36,6 +36,7 @@ EFI_STATUS PianoBootPolicySetStartupTarget(UINT32 Target);
 EFI_STATUS PianoBootPolicySetUsbStartupFailure(CONST VOID *Fdt,CONST PIANO_SMMU_RETIRED_USB_PROOF *Proof);
 // One APP-only startup choice window (1..3000ms). Keeps the shared service
 // pump alive; F12 opens Setup, Esc requests the one-time boot list.
+// A cover initializing within its own deadline gets the full key window.
 // Recovery also maps the side volume keys to SimpleInit during this window.
 // It only latches an action; the existing Run performs actual dispatch later.
 EFI_STATUS PianoBootPolicyStartupWindow(UINTN Milliseconds);

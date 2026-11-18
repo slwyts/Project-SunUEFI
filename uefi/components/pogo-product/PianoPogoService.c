@@ -37,7 +37,7 @@ STATIC struct {
   BOOLEAN Started,Busy,InTransfer,DxeStarted,DxeStopped,Released,ReleaseClean,Attached,CapsLed,ReadAgain,Speculative;
   UINT8 LastFrame[PIANO_POGO_FRAME_BYTES];
   POGO_STEP Step;
-  UINT64 Frequency,CounterStart,CounterEnd,StartUs,NextUs,LastReadUs,KeepaliveUs;
+  UINT64 Frequency,CounterStart,CounterEnd,StartUs,NextUs,FirmwareTransferUs,LastReadUs,KeepaliveUs;
   UINT32 Offset,Reads,Frames,Empty,ReadErrors,Consecutive,Commands,CommandErrors;
   EFI_STATUS LastStatus,DxeStatus,ReleaseStatus,SeRestore;
   PIANO_POGO_BOARD Board;
@@ -148,6 +148,7 @@ STATIC VOID BringUp(UINT64 Now) {
     UINT8 Wire[PIANO_POGO_DATA_WIRE_BYTES];
     UINT32 Bytes=PianoPogoMcuDataCommand(mPianoPogoMcuCode,sizeof(mPianoPogoMcuCode),mPogo.Offset,Wire);
     S=Bytes?Send(Wire,sizeof(Wire)):EFI_DEVICE_ERROR;
+    mPogo.FirmwareTransferUs+=NowUs()-Now;
     if(S==EFI_SUCCESS){mPogo.Offset+=Bytes;if(mPogo.Offset<sizeof(mPianoPogoMcuCode))Next=StepData;}
     break;
   }
@@ -170,7 +171,8 @@ STATIC VOID BringUp(UINT64 Now) {
     // Stock resume powers the cover before any attachment report arrives.
     S=Command(PIANO_POGO_CMD_KEYBOARD_POWER,1);
     mPogo.KeepaliveUs=Now+KEEPALIVE_US;
-    if(S==EFI_SUCCESS)DEBUG((DEBUG_WARN,"PIANO_POGO_READY bring_up_ms=%lu firmware_bytes=%u\n",(Now-mPogo.StartUs)/1000,(UINT32)sizeof(mPianoPogoMcuCode)));
+    if(S==EFI_SUCCESS)DEBUG((DEBUG_WARN,"PIANO_POGO_READY bring_up_ms=%lu firmware_bytes=%u transfer_ms=%lu\n",
+      (Now-mPogo.StartUs)/1000,(UINT32)sizeof(mPianoPogoMcuCode),mPogo.FirmwareTransferUs/1000));
     break;
   default:return;
   }
@@ -282,6 +284,23 @@ VOID PianoPogoPump(VOID) {
   // A retire that ran inside the input producer could not stop it there
   if(mPogo.Step==StepStopped && mPogo.DxeStarted && !mPogo.DxeStopped){mPogo.DxeStatus=PianoPogoDxeStop(&mDxe);mPogo.DxeStopped=mPogo.DxeStatus!=EFI_NOT_READY;}
   mPogo.Busy=FALSE;
+}
+
+PIANO_POGO_KEYBOARD_STATE PianoPogoKeyboardState(VOID) {
+  if(!mPogo.Started || mPogo.Step==StepUnavailable || mPogo.Step==StepStopped)
+    return PianoPogoKeyboardAbsent;
+  if(mPogo.Step!=StepRuntime || !mPogo.DxeStarted || !mDxe.Adapter.Core.AttachKnown)
+    return PianoPogoKeyboardStarting;
+  return mPogo.Attached?PianoPogoKeyboardReady:PianoPogoKeyboardAbsent;
+}
+
+UINTN PianoPogoStartupStallUs(UINTN LimitUs) {
+  if(mPogo.Step!=StepData)return LimitUs;
+  UINT64 Now=NowUs();
+  // If another worker already used the wait, service a packet on the next
+  // pump instead of rounding up to another full millisecond.
+  if(Now>=mPogo.NextUs)return MIN(LimitUs,1U);
+  return (UINTN)MIN((UINT64)LimitUs,mPogo.NextUs-Now);
 }
 
 VOID PianoPogoReplay(VOID) {

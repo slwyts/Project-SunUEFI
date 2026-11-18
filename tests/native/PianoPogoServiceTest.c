@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Check the production release order; no serial transfer or board MMIO runs.
+// Check the packet wait and release order without serial transfers or MMIO.
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +9,7 @@
 
 STATIC EFI_STATUS SerialStatus,BoardStatus;
 STATIC UINTN SerialCloses,BoardReleases;
+STATIC UINT64 ClockUs;
 
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){(VOID)Level;return FALSE;}
@@ -16,7 +17,7 @@ VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){(VOID)Level;(VOID)Fo
 VOID *EFIAPI CopyMem(VOID *Destination,CONST VOID *Source,UINTN Bytes){return memcpy(Destination,Source,Bytes);}
 INTN EFIAPI CompareMem(CONST VOID *First,CONST VOID *Second,UINTN Bytes){return memcmp(First,Second,Bytes);}
 
-UINT64 EFIAPI GetPerformanceCounter(VOID){abort();}
+UINT64 EFIAPI GetPerformanceCounter(VOID){return ClockUs;}
 BOOLEAN PianoPogoBoardIrqPending(PIANO_POGO_BOARD *Board){(VOID)Board;abort();}
 BOOLEAN PianoPogoFrameValid(CONST UINT8 *Frame,UINTN Bytes){(VOID)Frame;(VOID)Bytes;abort();}
 EFI_STATUS PianoGeniI2cTransfer(PIANO_GENI_I2C *I2c,UINT8 Address,CONST UINT8 *Write,UINTN WriteBytes,
@@ -46,6 +47,15 @@ STATIC VOID Fresh(EFI_STATUS Serial,EFI_STATUS Board) {
 }
 
 int main(VOID) {
+  mPogo.Frequency=1000000;
+  mPogo.CounterEnd=MAX_UINT64;
+  ClockUs=3500;mPogo.NextUs=4000;
+  assert(PianoPogoStartupStallUs(1000)==1000);
+  mPogo.Step=StepData;
+  assert(PianoPogoStartupStallUs(1000)==500);
+  assert(PianoPogoStartupStallUs(100)==100);
+  ClockUs=4500;
+  assert(PianoPogoStartupStallUs(1000)==1);
   CONST EFI_STATUS Failures[]={EFI_TIMEOUT,EFI_DEVICE_ERROR,EFI_ACCESS_DENIED};
   PIANO_POGO_BACKEND_STOP Stop;
   for(UINTN I=0;I<ARRAY_SIZE(Failures);++I) {

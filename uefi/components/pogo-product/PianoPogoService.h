@@ -4,11 +4,20 @@
 #include <Uefi.h>
 #include "PianoProductOwners.h"
 
+typedef enum {
+  PianoPogoKeyboardAbsent,
+  PianoPogoKeyboardStarting,
+  PianoPogoKeyboardReady
+} PIANO_POGO_KEYBOARD_STATE;
+
 // Only checks the board DT; EFI_NOT_FOUND means the owner is absent
 EFI_STATUS PianoPogoStart(IN CONST VOID *Fdt);
 // APP-only: one bring-up step or one report read per call. Any failure
 // releases the resources already acquired.
 VOID PianoPogoPump(VOID);
+PIANO_POGO_KEYBOARD_STATE PianoPogoKeyboardState(VOID);
+// Shorten a scheduler wait when the next firmware packet is due sooner.
+UINTN PianoPogoStartupStallUs(UINTN LimitUs);
 VOID PianoPogoReplay(VOID);
 // Puts the MCU back in reset and restores RPMh votes, pins, SE6 registers and
 // clock references. No DMA is involved, so an incomplete release is logged
