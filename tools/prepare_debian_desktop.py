@@ -19,7 +19,7 @@ KDE_PACKAGES = [
     'task-kde-desktop', 'plasma-desktop', 'plasma-workspace', 'sddm', 'dolphin', 'konsole',
     'systemsettings', 'powerdevil', 'upower', 'plasma-nm', 'plasma-pa', 'kscreen',
     'task-chinese-s-kde-desktop',
-    'fonts-noto', 'poppler-data', 'xdg-desktop-portal-kde',
+    'fonts-noto', 'poppler-data', 'xdg-desktop-portal-kde', 'xdg-desktop-portal-gtk',
     'fcitx5', 'fcitx5-chinese-addons',
     'fcitx5-frontend-gtk3', 'fcitx5-frontend-gtk4', 'fcitx5-frontend-qt5',
     'fcitx5-frontend-qt6', 'kde-config-fcitx5', 'maliit-keyboard',
@@ -181,9 +181,9 @@ def configure(rootfs, run, input_method='fcitx'):
     input_environment.parent.mkdir(parents=True, exist_ok=True)
     settings = f'XMODIFIERS=@im={input_method}\n'
     if input_method == 'fcitx':
-        # GTK can otherwise select "simple" on Plasma. Prefer the compositor
-        # on Wayland, with the Fcitx modules for Xwayland and older Qt.
-        settings += 'GTK_IM_MODULE=wayland:fcitx\nQT_IM_MODULES=wayland;fcitx\nQT_IM_MODULE=fcitx\n'
+        # Plasma's GTK settings portal fallback lets GTK pick its own module.
+        # Qt prefers Wayland and retains the Fcitx plugin for X11 and Qt 5.
+        settings += 'QT_IM_MODULES=wayland;fcitx\nQT_IM_MODULE=fcitx\n'
     else:
         settings += 'SDL_IM_MODULE=ibus\n'
     input_environment.write_text(settings)

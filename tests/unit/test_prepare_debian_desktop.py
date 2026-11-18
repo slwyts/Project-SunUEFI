@@ -87,8 +87,7 @@ ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-
             self.assertFalse(autostart.exists())
             settings = (root / 'etc/environment.d/60-piano-input-method.conf').read_text().splitlines()
             self.assertCountEqual(settings, [
-                'GTK_IM_MODULE=wayland:fcitx', 'QT_IM_MODULES=wayland;fcitx',
-                'QT_IM_MODULE=fcitx', 'XMODIFIERS=@im=fcitx',
+                'QT_IM_MODULES=wayland;fcitx', 'QT_IM_MODULE=fcitx', 'XMODIFIERS=@im=fcitx',
             ])
 
     def test_kde_selects_its_packages_without_copying_packaged_profiles(self):
@@ -109,6 +108,7 @@ ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-
             self.assertIn('powerdevil', selected)
             self.assertIn('pipewire-audio', selected)
             self.assertIn('fcitx5-frontend-gtk4', selected)
+            self.assertIn('xdg-desktop-portal-gtk', selected)
             self.assertFalse((recipe / 'rootfs/overlay' / relative).exists())
             gnome = desktop.prepare(public, folder / 'gnome-derived', 'gnome')
             self.assertFalse((gnome / 'rootfs/overlay' / relative).exists())
