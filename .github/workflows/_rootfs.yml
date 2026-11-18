@@ -21,6 +21,9 @@ on:
       camera_key:
         required: true
         type: string
+      overlay_manifests:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -72,12 +75,15 @@ jobs:
           path: artifacts/packages/camera
           key: ${{ inputs.camera_key }}
           fail-on-cache-miss: true
-      - name: Restore the record of the published overlay packages
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: artifacts/packages/overlays/${{ env.SUNUEFI_OVERLAY_TARGET }}/manifest.json
-          key: repo-manifest-v1-${{ github.run_id }}-${{ env.SUNUEFI_OVERLAY_TARGET }}
-          fail-on-cache-miss: true
+      - name: Use the overlay manifest from the completed publication
+        env:
+          PUBLISHED_MANIFEST: ${{ toJSON(fromJSON(inputs.overlay_manifests)[env.SUNUEFI_OVERLAY_TARGET]) }}
+        run: |
+          directory="artifacts/packages/overlays/$SUNUEFI_OVERLAY_TARGET"
+          mkdir -p "$directory"
+          jq -e --arg target "$SUNUEFI_OVERLAY_TARGET" \
+            'select(.target == $target and .schema_version == 1 and (.packages | length > 0))' \
+            <<< "$PUBLISHED_MANIFEST" > "$directory/manifest.json"
       - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/toolchains/*.tar.zst

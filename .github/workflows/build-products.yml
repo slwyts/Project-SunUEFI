@@ -152,6 +152,7 @@ jobs:
       shared_target: ${{ needs.select.outputs.shared_target }}
       bsp_key: ${{ needs.shared.outputs.bsp_key }}
       camera_key: ${{ needs.shared.outputs.camera_key }}
+      overlay_manifests: ${{ needs.repository.outputs.overlay_manifests }}
 
   logs:
     needs: [select, environment, shared, repository, build, overlays]
