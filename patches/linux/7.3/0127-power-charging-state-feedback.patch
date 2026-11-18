@@ -1,4 +1,4 @@
-From e9efc235b274102760d270d8c5af0a69059a5cd2 Mon Sep 17 00:00:00 2001
+From 64a1f1d87099117588d81f611436c27ab7449440 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 02:42:00 +0800
 Subject: [PATCH] fix(power): preserve charge state and report applied pump

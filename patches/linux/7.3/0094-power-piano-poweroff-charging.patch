@@ -1,4 +1,4 @@
-From a75840c323014f10751b9b05fbcb3ffec76dbc9d Mon Sep 17 00:00:00 2001
+From 7dc8bd61afd55f632578e0465d71a03623156359 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 19:47:33 +0800
 Subject: [PATCH] fix(power): preserve Piano power-off charging requests

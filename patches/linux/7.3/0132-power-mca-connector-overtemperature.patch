@@ -1,4 +1,4 @@
-From e64909fae6b78fd17df0b8b681cb41c19373fca1 Mon Sep 17 00:00:00 2001
+From 219f8031cff411d58ac7ed3d2f7198f61a50f544 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 05:03:00 +0800
 Subject: [PATCH] fix(power): isolate the Piano USB connector on

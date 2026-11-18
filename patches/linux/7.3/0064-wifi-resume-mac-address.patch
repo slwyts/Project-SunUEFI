@@ -1,4 +1,4 @@
-From 9b2302e43f186173f15e9cdb2d020fb30041618b Mon Sep 17 00:00:00 2001
+From a8d204bae476464af5a9997c2caef41cb0626734 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 06:01:40 +0800
 Subject: [PATCH] wifi: ath12k: retain the selected MAC when restarting

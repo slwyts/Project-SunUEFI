@@ -1,4 +1,4 @@
-From d835d9ae2eb067841c4af475ec1901feba6cd678 Mon Sep 17 00:00:00 2001
+From 91b5f0ef01d2dbfd6149b49fb3882a288363ae09 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 22:26:59 +0800
 Subject: [PATCH] dt-bindings: power: supply: bq27xxx: describe battery

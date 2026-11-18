@@ -1,4 +1,4 @@
-From ec3beb9fe1a311221b8beccd601d4fd36e56fcff Mon Sep 17 00:00:00 2001
+From 0ed5d712c3cab55fe174f8188c91f40d479caedb Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 02:30:19 +0800
 Subject: [PATCH] power: supply: piano_mca: keep low-current charging on the

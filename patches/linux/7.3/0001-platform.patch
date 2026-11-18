@@ -1,4 +1,4 @@
-From 50603dbc5b8597b3dac1fd7593aca6322ea332b1 Mon Sep 17 00:00:00 2001
+From 241948f5490abc37d47bb5e8aaa8c84c4f1641ad Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(platform): port Piano platform support to Linux 7.3
@@ -7,77 +7,81 @@ The BQ27Z561 exposes measured and filtered current through separate
 read-only commands. Publish both as standard power supply properties
 and use the filtered reading for the MCA decisions, preserving the
 current input the charging policy previously received.
+
+Use the SC96231 receiver confirmation for the charging status rather
+than contact discovery. Bound the ping and transfer negotiation phases
+and retry a failed supply disable before starting a new cycle.
 ---
- .github/workflows/piano-dtb.yml               |   58 +
- .../ABI/testing/procfs-nvt-thp-control        |   63 +
- .../ABI/testing/sysfs-devices-piano-dma-route |   46 +
- .../devicetree/bindings/arm/qcom.yaml         |    1 +
- .../devicetree/bindings/display/msm/gmu.yaml  |    4 +-
- .../devicetree/bindings/display/msm/gpu.yaml  |    2 +
- .../bindings/display/msm/qcom,sm8650-dpu.yaml |   17 +
- .../display/panel/novatek,nt36532.yaml        |  107 +
- .../bindings/input/nanosic,wn8030.yaml        |   82 +
- .../input/touchscreen/novatek,nvt-ts-spi.yaml |   94 +
- .../leds/backlight/kinetic,ktz8866.yaml       |   59 +-
- .../bindings/media/qcom,kaanapali-camss.yaml  |  433 +++
- .../bindings/media/qcom,sm8750-camss.yaml     |  433 +++
- .../media/video-interface-devices.yaml        |   12 +
- .../power/supply/southchip,sc8541.yaml        |   49 +
- .../power/supply/southchip,sc96231.yaml       |   67 +
- .../bindings/remoteproc/qcom,sm8550-pas.yaml  |    7 +
- .../bindings/soc/qcom/qcom,pmic-glink.yaml    |   24 +
- .../bindings/sound/foursemi,fs19xx.yaml       |   70 +
- .../bindings/sound/qcom,sm8250.yaml           |    4 +
- .../devicetree/bindings/vendor-prefixes.yaml  |    4 +
- MAINTAINERS                                   |   15 +
- arch/arm64/boot/dts/qcom/Makefile             |    1 +
- arch/arm64/boot/dts/qcom/sm8750-mtp.dts       |    8 +
- arch/arm64/boot/dts/qcom/sm8750-qrd.dts       |    8 +
- .../boot/dts/qcom/sm8750-xiaomi-piano.dts     | 1433 ++++++++++
- arch/arm64/boot/dts/qcom/sm8750.dtsi          |  409 ++-
- arch/arm64/configs/piano_defconfig            | 1972 +++++++++++++
- arch/arm64/configs/piano_rootfs.config        |   52 +
- arch/arm64/kernel/cpuinfo.c                   |   18 +-
- drivers/clk/qcom/gcc-sm8750.c                 |    2 +
- drivers/i2c/busses/i2c-qcom-cci.c             |    9 +-
- .../arm/arm-smmu/arm-smmu-qcom-handoff.h      |  103 +
- drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c    |  190 +-
- drivers/iommu/arm/arm-smmu/arm-smmu.c         |  315 ++-
- drivers/iommu/arm/arm-smmu/arm-smmu.h         |    5 +
- drivers/iommu/iommu.c                         |   47 +-
- drivers/leds/flash/leds-qcom-flash.c          |   29 +-
- drivers/leds/rgb/leds-qcom-lpg.c              |  209 +-
- drivers/misc/fastrpc.c                        |   11 +-
- .../pci/controller/dwc/pcie-designware-host.c |   24 +-
- drivers/pci/controller/dwc/pcie-qcom.c        |  216 +-
- drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.c      |    5 +
- drivers/phy/qualcomm/phy-qcom-qmp-combo.c     |    9 +-
- drivers/phy/qualcomm/phy-qcom-qmp-pcie.c      |   51 +-
- drivers/power/sequencing/Kconfig              |    1 +
- drivers/power/sequencing/pwrseq-qcom-wcn.c    |  705 ++++-
- drivers/power/supply/Kconfig                  |   28 +
- drivers/power/supply/Makefile                 |    3 +
- drivers/power/supply/bq27xxx_battery.c        |   21 +-
- drivers/power/supply/piano_mca.c              | 2454 +++++++++++++++++
- drivers/power/supply/qcom_battmgr.c           |    2 +
- drivers/power/supply/sc8541_charger.c         |  575 ++++
- drivers/power/supply/sc96231_charger.c        |  534 ++++
- drivers/remoteproc/qcom_q6v5.c                |   20 +-
- drivers/remoteproc/qcom_q6v5_pas.c            |  134 +-
- drivers/soc/qcom/Kconfig                      |   12 +
- drivers/soc/qcom/Makefile                     |    1 +
- drivers/soc/qcom/pmic_glink.c                 |    2 +
- drivers/soc/qcom/qcom_pd_mapper.c             |   10 +
- drivers/soc/qcom/smp2p_sleepstate.c           |  135 +
- drivers/soc/qcom/ubwc_config.c                |    2 +
- drivers/ufs/core/ufshcd.c                     |   82 +-
- drivers/usb/dwc3/core.c                       |   19 +-
- drivers/usb/dwc3/dwc3-qcom.c                  |   25 +-
- include/linux/iommu.h                         |    4 +-
- include/linux/pwrseq/qcom_wcn.h               |   36 +
- include/uapi/linux/nanosic_hinge.h            |   28 +
- .../selftests/iommu/qcom-handoff-snapshot.c   |  108 +
- 69 files changed, 11469 insertions(+), 249 deletions(-)
+ .github/workflows/piano-dtb.yml                    |   58 +
+ Documentation/ABI/testing/procfs-nvt-thp-control   |   63 +
+ .../ABI/testing/sysfs-devices-piano-dma-route      |   46 +
+ Documentation/devicetree/bindings/arm/qcom.yaml    |    1 +
+ .../devicetree/bindings/display/msm/gmu.yaml       |    4 +-
+ .../devicetree/bindings/display/msm/gpu.yaml       |    2 +
+ .../bindings/display/msm/qcom,sm8650-dpu.yaml      |   17 +
+ .../bindings/display/panel/novatek,nt36532.yaml    |  107 +
+ .../devicetree/bindings/input/nanosic,wn8030.yaml  |   82 +
+ .../input/touchscreen/novatek,nvt-ts-spi.yaml      |   94 +
+ .../bindings/leds/backlight/kinetic,ktz8866.yaml   |   59 +-
+ .../bindings/media/qcom,kaanapali-camss.yaml       |  433 ++++
+ .../bindings/media/qcom,sm8750-camss.yaml          |  433 ++++
+ .../bindings/media/video-interface-devices.yaml    |   12 +
+ .../bindings/power/supply/southchip,sc8541.yaml    |   49 +
+ .../bindings/power/supply/southchip,sc96231.yaml   |   67 +
+ .../bindings/remoteproc/qcom,sm8550-pas.yaml       |    7 +
+ .../bindings/soc/qcom/qcom,pmic-glink.yaml         |   24 +
+ .../devicetree/bindings/sound/foursemi,fs19xx.yaml |   70 +
+ .../devicetree/bindings/sound/qcom,sm8250.yaml     |    4 +
+ .../devicetree/bindings/vendor-prefixes.yaml       |    4 +
+ MAINTAINERS                                        |   15 +
+ arch/arm64/boot/dts/qcom/Makefile                  |    1 +
+ arch/arm64/boot/dts/qcom/sm8750-mtp.dts            |    8 +
+ arch/arm64/boot/dts/qcom/sm8750-qrd.dts            |    8 +
+ arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano.dts   | 1433 ++++++++++++
+ arch/arm64/boot/dts/qcom/sm8750.dtsi               |  409 +++-
+ arch/arm64/configs/piano_defconfig                 | 1972 ++++++++++++++++
+ arch/arm64/configs/piano_rootfs.config             |   52 +
+ arch/arm64/kernel/cpuinfo.c                        |   18 +-
+ drivers/clk/qcom/gcc-sm8750.c                      |    2 +
+ drivers/i2c/busses/i2c-qcom-cci.c                  |    9 +-
+ drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h |  103 +
+ drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c         |  190 +-
+ drivers/iommu/arm/arm-smmu/arm-smmu.c              |  315 ++-
+ drivers/iommu/arm/arm-smmu/arm-smmu.h              |    5 +
+ drivers/iommu/iommu.c                              |   47 +-
+ drivers/leds/flash/leds-qcom-flash.c               |   29 +-
+ drivers/leds/rgb/leds-qcom-lpg.c                   |  209 +-
+ drivers/misc/fastrpc.c                             |   11 +-
+ drivers/pci/controller/dwc/pcie-designware-host.c  |   24 +-
+ drivers/pci/controller/dwc/pcie-qcom.c             |  216 +-
+ drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.c           |    5 +
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c          |    9 +-
+ drivers/phy/qualcomm/phy-qcom-qmp-pcie.c           |   51 +-
+ drivers/power/sequencing/Kconfig                   |    1 +
+ drivers/power/sequencing/pwrseq-qcom-wcn.c         |  705 +++++-
+ drivers/power/supply/Kconfig                       |   28 +
+ drivers/power/supply/Makefile                      |    3 +
+ drivers/power/supply/bq27xxx_battery.c             |   21 +-
+ drivers/power/supply/piano_mca.c                   | 2454 ++++++++++++++++++++
+ drivers/power/supply/qcom_battmgr.c                |    2 +
+ drivers/power/supply/sc8541_charger.c              |  575 +++++
+ drivers/power/supply/sc96231_charger.c             |  567 +++++
+ drivers/remoteproc/qcom_q6v5.c                     |   20 +-
+ drivers/remoteproc/qcom_q6v5_pas.c                 |  134 +-
+ drivers/soc/qcom/Kconfig                           |   12 +
+ drivers/soc/qcom/Makefile                          |    1 +
+ drivers/soc/qcom/pmic_glink.c                      |    2 +
+ drivers/soc/qcom/qcom_pd_mapper.c                  |   10 +
+ drivers/soc/qcom/smp2p_sleepstate.c                |  135 ++
+ drivers/soc/qcom/ubwc_config.c                     |    2 +
+ drivers/ufs/core/ufshcd.c                          |   82 +-
+ drivers/usb/dwc3/core.c                            |   19 +-
+ drivers/usb/dwc3/dwc3-qcom.c                       |   25 +-
+ include/linux/iommu.h                              |    4 +-
+ include/linux/pwrseq/qcom_wcn.h                    |   36 +
+ include/uapi/linux/nanosic_hinge.h                 |   28 +
+ .../selftests/iommu/qcom-handoff-snapshot.c        |  108 +
+ 69 files changed, 11502 insertions(+), 249 deletions(-)
  create mode 100644 .github/workflows/piano-dtb.yml
  create mode 100644 Documentation/ABI/testing/procfs-nvt-thp-control
  create mode 100644 Documentation/ABI/testing/sysfs-devices-piano-dma-route
@@ -12255,10 +12259,10 @@ index 0000000000000000000000000000000000000000..9c98624062f0c7d4063a49309fcf43b2
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/power/supply/sc96231_charger.c b/drivers/power/supply/sc96231_charger.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..812e0afd41db7ab24531b1e6ae0f19d640a31bfd
+index 0000000000000000000000000000000000000000..f89c2af895bd4957c299994ed2d44f9880cbc13c
 --- /dev/null
 +++ b/drivers/power/supply/sc96231_charger.c
-@@ -0,0 +1,534 @@
+@@ -0,0 +1,567 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Southchip SC96231 pen transmitter.
@@ -12291,15 +12295,26 @@ index 0000000000000000000000000000000000000000..812e0afd41db7ab24531b1e6ae0f19d6
 +#define SC_PEN_MAC		0x01dc /* six bytes starting at offset 2 */
 +#define SC_TX_DISABLE		BIT(18)
 +#define SC_TX_ENABLE		BIT(19)
++#define SC_IRQ_RX_DETECTED	BIT(14)
 +#define SC_IRQ_EPT		BIT(15)
-+#define SC_IRQ_RX_FOUND		BIT(16)
++#define SC_IRQ_GET_RX		BIT(16)
 +#define SC_IRQ_FOD		BIT(17)
 +#define SC_IRQ_CEP_TIMEOUT	BIT(19)
-+#define SC_IRQ_RX_DETECTED	BIT(14)
++#define SC_IRQ_PING		BIT(21)
 +#define SC_IRQ_CONFIG		BIT(24)
 +#define SC_IRQ_BLE_CONNECT	BIT(25)
 +#define SC_IRQ_SOC		BIT(27)
 +#define SC_IRQ_FAULTS		(SC_IRQ_EPT | SC_IRQ_FOD | SC_IRQ_CEP_TIMEOUT)
++
++#define SC_PING_TIMEOUT		(20 * HZ)
++#define SC_TRANSFER_TIMEOUT	(100 * HZ)
++
++enum sc96231_tx_state {
++	SC96231_TX_OFF,
++	SC96231_TX_WAIT_PING,
++	SC96231_TX_WAIT_RX,
++	SC96231_TX_TRANSFER,
++};
 +
 +struct sc96231 {
 +	struct device *dev;
@@ -12315,14 +12330,15 @@ index 0000000000000000000000000000000000000000..812e0afd41db7ab24531b1e6ae0f19d6
 +	int *hall_irqs;
 +	int irq;
 +	bool docked;
-+	bool enabled;
++	bool vin_enable_held;
 +	bool present;
 +	bool full;
 +	bool fault;
 +	bool stopping;
 +	bool soc_valid;
 +	int capacity;
-+	unsigned long started;
++	enum sc96231_tx_state tx_state;
++	unsigned long tx_deadline;
 +	unsigned long full_since;
 +	char address[18];
 +};
@@ -12339,22 +12355,34 @@ index 0000000000000000000000000000000000000000..812e0afd41db7ab24531b1e6ae0f19d6
 +	return regmap_raw_write(sc->map, reg, &data, sizeof(data));
 +}
 +
++static int sc96231_disable_vin(struct sc96231 *sc)
++{
++	int ret;
++
++	if (!sc->vin_enable_held)
++		return 0;
++	ret = regulator_disable(sc->vin);
++	if (ret)
++		dev_warn_ratelimited(sc->dev, "pen supply disable failed: %d\n",
++				     ret);
++	else
++		sc->vin_enable_held = false;
++	return ret;
++}
++
 +static void sc96231_stop(struct sc96231 *sc)
 +{
 +	int ret;
 +
-+	if (!sc->enabled)
-+		return;
-+	ret = sc96231_write_u32(sc, SC_COMMAND, SC_TX_DISABLE);
-+	if (ret)
-+		dev_dbg(sc->dev, "TX disable command failed: %d\n", ret);
-+	/* Even an unresponsive transmitter must lose its enable and supply. */
-+	gpiod_set_value_cansleep(sc->tx_enable, 0);
-+	ret = regulator_disable(sc->vin);
-+	if (ret)
-+		dev_warn(sc->dev, "pen supply disable failed: %d\n", ret);
-+	else
-+		sc->enabled = false;
++	if (sc->tx_state != SC96231_TX_OFF) {
++		ret = sc96231_write_u32(sc, SC_COMMAND, SC_TX_DISABLE);
++		if (ret)
++			dev_dbg(sc->dev, "TX disable command failed: %d\n", ret);
++		/* Also disconnect an unresponsive transmitter. */
++		gpiod_set_value_cansleep(sc->tx_enable, 0);
++		sc->tx_state = SC96231_TX_OFF;
++	}
++	sc96231_disable_vin(sc);
 +}
 +
 +static int sc96231_start(struct sc96231 *sc)
@@ -12366,8 +12394,9 @@ index 0000000000000000000000000000000000000000..812e0afd41db7ab24531b1e6ae0f19d6
 +	ret = regulator_enable(sc->vin);
 +	if (ret)
 +		return ret == -ENODEV ? -EPROBE_DEFER : ret;
-+	sc->enabled = true;
++	sc->vin_enable_held = true;
 +	gpiod_set_value_cansleep(sc->tx_enable, 1);
++	sc->tx_state = SC96231_TX_WAIT_PING;
 +	msleep(20);
 +
 +	/* Stock uses the last byte of this aligned word as an I2C handshake. */
@@ -12404,7 +12433,7 @@ index 0000000000000000000000000000000000000000..812e0afd41db7ab24531b1e6ae0f19d6
 +	ret = sc96231_write_u32(sc, SC_COMMAND, SC_TX_ENABLE);
 +	if (ret)
 +		goto fail;
-+	sc->started = jiffies;
++	sc->tx_deadline = jiffies + SC_PING_TIMEOUT;
 +	dev_info(sc->dev, "pen transmitter enabled, firmware %#x\n",
 +		 le32_to_cpu(version));
 +	return 0;
@@ -12482,7 +12511,7 @@ index 0000000000000000000000000000000000000000..812e0afd41db7ab24531b1e6ae0f19d6
 +	int attached, ret;
 +
 +	mutex_lock(&sc->lock);
-+	if (sc->stopping)
++	if (READ_ONCE(sc->stopping))
 +		goto out;
 +	attached = sc96231_docked(sc);
 +	if (attached < 0)
@@ -12492,21 +12521,20 @@ index 0000000000000000000000000000000000000000..812e0afd41db7ab24531b1e6ae0f19d6
 +		input_report_switch(sc->dock, SW_PEN_INSERTED, attached);
 +		input_sync(sc->dock);
 +		if (!attached) {
-+			sc96231_stop(sc);
 +			sc->present = false;
 +			sc->full = false;
 +			sc->fault = false;
 +			sc->soc_valid = false;
 +			sc->full_since = 0;
 +			/* Retain the discovered address for reconnect after removal. */
-+			goto notify;
 +		}
 +	}
-+	if (!sc->docked || sc->fault || sc->full) {
-+		sc96231_stop(sc);
-+		goto notify;
-+	}
-+	if (!sc->enabled) {
++	if (!sc->docked || sc->fault || sc->full)
++		goto stop;
++	if (sc->tx_state == SC96231_TX_OFF) {
++		/* Finish any failed supply shutdown before starting a new cycle. */
++		if (sc96231_disable_vin(sc))
++			goto poll;
 +		ret = sc96231_start(sc);
 +		if (ret == -EPROBE_DEFER)
 +			goto poll;
@@ -12527,21 +12555,29 @@ index 0000000000000000000000000000000000000000..812e0afd41db7ab24531b1e6ae0f19d6
 +		if (ret)
 +			goto failed;
 +	}
-+	if (irq & (SC_IRQ_RX_FOUND | SC_IRQ_RX_DETECTED | SC_IRQ_CONFIG))
++	if (irq & (SC_IRQ_GET_RX | SC_IRQ_RX_DETECTED | SC_IRQ_CONFIG))
 +		sc->present = true;
++
++	/* The receiver can be detected before it accepts power. */
++	if (irq & SC_IRQ_GET_RX) {
++		sc->tx_state = SC96231_TX_TRANSFER;
++	} else if ((irq & SC_IRQ_PING) &&
++		   sc->tx_state == SC96231_TX_WAIT_PING) {
++		sc->tx_state = SC96231_TX_WAIT_RX;
++		sc->tx_deadline = jiffies + SC_TRANSFER_TIMEOUT;
++	}
++
 +	ret = sc96231_update_pen(sc, irq);
 +	if (ret)
 +		goto failed;
-+	if (sc->full) {
-+		sc96231_stop(sc);
-+		goto notify;
-+	}
++	if (sc->full)
++		goto stop;
 +	if (irq & SC_IRQ_FAULTS) {
 +		ret = -EREMOTEIO;
 +		goto failed;
 +	}
-+	/* Same 20-second no-receiver timeout as the original charging stack. */
-+	if (!sc->present && time_after(jiffies, sc->started + 20 * HZ)) {
++	if (sc->tx_state != SC96231_TX_TRANSFER &&
++	    time_after_eq(jiffies, sc->tx_deadline)) {
 +		ret = -ETIMEDOUT;
 +		goto failed;
 +	}
@@ -12549,13 +12585,14 @@ index 0000000000000000000000000000000000000000..812e0afd41db7ab24531b1e6ae0f19d6
 +failed:
 +	dev_warn(sc->dev, "pen transmitter stopped: %d, IRQ %#x\n", ret, irq);
 +	sc->fault = true;
++stop:
 +	sc96231_stop(sc);
 +notify:
 +	power_supply_changed(sc->battery);
 +poll:
-+	if (!sc->stopping &&
-+	    (sc->enabled || (sc->docked && !sc->fault && !sc->full)))
-+		mod_delayed_work(system_freezable_wq, &sc->work, HZ);
++	if (!READ_ONCE(sc->stopping) &&
++	    (sc->vin_enable_held || (sc->docked && !sc->fault && !sc->full)))
++		queue_delayed_work(system_freezable_wq, &sc->work, HZ);
 +out:
 +	mutex_unlock(&sc->lock);
 +}
@@ -12589,7 +12626,7 @@ index 0000000000000000000000000000000000000000..812e0afd41db7ab24531b1e6ae0f19d6
 +			val->intval = POWER_SUPPLY_STATUS_UNKNOWN;
 +		else if (sc->full)
 +			val->intval = POWER_SUPPLY_STATUS_FULL;
-+		else if (sc->enabled && !sc->fault)
++		else if (sc->tx_state == SC96231_TX_TRANSFER)
 +			val->intval = POWER_SUPPLY_STATUS_CHARGING;
 +		else
 +			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;

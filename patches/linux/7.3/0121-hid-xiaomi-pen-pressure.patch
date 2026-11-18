@@ -1,4 +1,4 @@
-From 8e6c7f3ffada8ed8f3a8dbdae0a5e9bc7c3b2621 Mon Sep 17 00:00:00 2001
+From 20f73c202ccb4d3cb4fa522226431fa40aad36b4 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 22:04:44 +0800
 Subject: [PATCH] HID: xiaomi: expose Focus Pen pressure through evdev

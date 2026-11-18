@@ -1,4 +1,4 @@
-From 368894e7dd5b4c91f7d11d6bbcc6177da2595e43 Mon Sep 17 00:00:00 2001
+From d8e66a7ba5df8279f68119cedac210e8c90f98e0 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
 Date: Tue, 10 Nov 2026 23:45:14 +0800
 Subject: [PATCH] feat(input): decode Piano finger contacts in the kernel

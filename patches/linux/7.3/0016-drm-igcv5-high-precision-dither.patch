@@ -1,4 +1,4 @@
-From 90071b98bd1dc961ca9704e36a5d5604268d78dd Mon Sep 17 00:00:00 2001
+From 7826555950dfe493b816e9834971b4d1ea8f0360 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 05:39:50 +0800
 Subject: [PATCH] drm/msm/dpu: match Piano IGC high-precision dithering

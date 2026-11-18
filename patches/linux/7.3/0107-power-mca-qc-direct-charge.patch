@@ -1,4 +1,4 @@
-From cac3c7215012e2c971c3d610f1bcdde73e45adaf Mon Sep 17 00:00:00 2001
+From fc03762f35c9d4d6cdccca40387cc54e63539e22 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 03:28:55 +0800
 Subject: [PATCH] feat(power): add stock QC voltage and direct-charge control

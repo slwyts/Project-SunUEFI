@@ -1,4 +1,4 @@
-From 27eb5d3034ddc5d23792c18d313cf77a1ca78b3b Mon Sep 17 00:00:00 2001
+From 0132812133e3cfd8323049dcf05377df48d423f0 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Tue, 10 Nov 2026 23:43:19 +0800
 Subject: [PATCH] fix(power): reconcile MCA source recovery and charging stops

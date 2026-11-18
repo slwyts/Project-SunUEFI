@@ -1,4 +1,4 @@
-From 9d3bdfe4c4c769d8e953dbf21d9bc2642c752626 Mon Sep 17 00:00:00 2001
+From 371c7488dbaf6fad4c9711001dfd1ddaa4674be1 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 11:42:46 +0800
 Subject: [PATCH] usb: typec: ucsi_glink: ignore non-connector GLINK resources

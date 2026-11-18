@@ -1,4 +1,4 @@
-From b58287f929da4622a7255ef3df3ebc207a8cb86e Mon Sep 17 00:00:00 2001
+From 0a53306cc40699b407392995c225bf28c0b3f998 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sun, 25 Oct 2026 12:04:07 +0000
 Subject: [PATCH] fix(usb): clear UCSI connectors after unregister

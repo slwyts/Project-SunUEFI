@@ -1,4 +1,4 @@
-From 1104a3aa1f8b87a9c212e8fe81ac29f601e16948 Mon Sep 17 00:00:00 2001
+From d19139a5d0cd484b41b29ebe82dffd9c2ba00a6c Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 03:41:04 +0800
 Subject: [PATCH] fix(power): enforce stock third-party PPS source limits
