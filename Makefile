@@ -10,12 +10,12 @@ check:
 	./build.sh check
 
 uefi:
-	$(PYTHON) tools/prepare_sources.py --check
+	$(PYTHON) tools/prepare_sources.py --check --group firmware
 	$(PYTHON) tools/piano_vendor_inputs.py
 	bash tools/build_product.sh
 
 kernel-source:
-	$(PYTHON) tools/prepare_sources.py --check
+	$(PYTHON) tools/prepare_sources.py --check --group kernel
 	$(PYTHON) tools/prepare_release_kernel.py
 
 bsp:

@@ -37,6 +37,8 @@ APT 包版本会被记录，但构建结果不保证逐字节一致。
 
 ## UEFI 和引导助手
 
+单独构建固件和引导助手时，先运行 `./build.sh sources --group firmware`。
+
 ```sh
 docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
   git config --global --add safe.directory /workspace
