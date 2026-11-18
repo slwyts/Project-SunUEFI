@@ -10,6 +10,8 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
+import tempfile
 
 from build_piano_ram_bootstrap import guest_resolve
 
@@ -151,57 +153,85 @@ def preinst(paths):
             '  fi\ndone\n')
 
 
-def package(args, output, tree, report, rows):
-    require(args.format in ('deb', 'tar'), 'Select --format deb or tar')
-    if args.format == 'deb':
-        require(args.target != 'arch', 'Arch requires a native recipe/package, not a Debian deb')
-        require(shutil.which('dpkg-deb'), 'Missing dpkg-deb; no simulated .deb is generated')
-        control = tree / 'DEBIAN'
-        control.mkdir()
-        control.chmod(0o755)
-        (control / 'control').write_text(f'Package: {NAME}\nVersion: {args.version}\nArchitecture: all\n'
-                                       f'Maintainer: Project SunUEFI\nSection: misc\nPriority: optional\n'
-                                       'Depends: ' + ', '.join(report['depends']) + '\n'
-                                       'Description: Piano device configuration (target profile candidate)\n'
-                                       ' Configuration only; native runtime, Mesa, firmware and modules are separate.\n')
-        (control / 'conffiles').write_text(''.join('/' + row['path'] + '\n' for row, _ in rows if row['path'].startswith('etc/')))
-        (control / 'preinst').write_text(preinst(report['payload_files']))
-        (control / 'preinst').chmod(0o755)
-        subprocess.run(['/bin/sh', '-n', control / 'preinst'], check=True)
-        artifact = output / f'{NAME}_{args.version}_all.deb'
-        subprocess.run(['dpkg-deb', '--root-owner-group', '--build', tree, artifact], check=True,
-                       env={**os.environ, 'SOURCE_DATE_EPOCH': '0'})
-        shutil.rmtree(control)
-        report['package_ready'] = True
-        report['files'][artifact.name] = {'bytes': artifact.stat().st_size, 'sha256': sha(artifact.read_bytes()), 'format': 'deb'}
-    else:
-        require(shutil.which('tar'), 'Missing tar')
-        artifact = output / 'payload.tar'
-        subprocess.run(['tar', '--sort=name', '--numeric-owner', '--owner=0', '--group=0', '--mtime=@0',
-                        '--format=pax', '--pax-option=delete=atime,delete=ctime', '-C', tree, '-cf', artifact, '.'], check=True)
-        report['files'][artifact.name] = {'bytes': artifact.stat().st_size, 'sha256': sha(artifact.read_bytes()), 'format': 'tar'}
-        if args.archrecipe:
-            require(args.target == 'arch', '--archrecipe requires --target arch')
-            recipe = output / 'PKGBUILD'
-            depends = ' '.join(shlex.quote(dep) for dep in report['depends'])
-            recipe.write_text(f'pkgname={NAME}\npkgver={args.version}\npkgrel=1\narch=(any)\nlicense=(MIT)\n'
-                              f'pkgdesc="Piano device configuration; native layers separate"\ndepends=({depends})\n'
-                              'source=(payload.tar)\nnoextract=(payload.tar)\n'
-                              f"sha256sums=('{report['files']['payload.tar']['sha256']}')\n"
-                              'package() {\n  bsdtar --no-same-owner -xf "$srcdir/payload.tar" -C "$pkgdir"\n}\n')
-            subprocess.run(['/bin/bash', '-n', recipe], check=True)
-            report['files'][recipe.name] = {'bytes': recipe.stat().st_size, 'sha256': sha(recipe.read_bytes()), 'format': 'arch-recipe'}
+def debian_package(output, tree, report, configuration):
+    control = tree / 'DEBIAN'
+    control.mkdir()
+    control.chmod(0o755)
+    (control / 'control').write_text(
+        f"Package: {NAME}\nVersion: {report['version']}\nArchitecture: all\n"
+        'Maintainer: Project SunUEFI <slwyts@tuta.io>\nSection: misc\nPriority: optional\n'
+        'Depends: ' + ', '.join(report['depends']) + '\n'
+        'Description: Xiaomi Pad 8 Pro device configuration\n'
+        ' Native runtime, Mesa, firmware and modules are distributed separately.\n')
+    (control / 'conffiles').write_text(''.join('/' + name + '\n' for name in configuration))
+    (control / 'preinst').write_text(preinst(report['payload_files']))
+    (control / 'preinst').chmod(0o755)
+    subprocess.run(['/bin/sh', '-n', control / 'preinst'], check=True)
+    artifact = output / f"{NAME}_{report['version']}_all.deb"
+    subprocess.run(['dpkg-deb', '--root-owner-group', '--build', tree, artifact],
+                   check=True, stdout=sys.stderr, env={**os.environ, 'SOURCE_DATE_EPOCH': '0'})
+    shutil.rmtree(control)
+    return artifact
+
+
+def pacman_sources(directory, tree, report, configuration):
+    archive = directory / 'payload.tar'
+    subprocess.run(['tar', '--sort=name', '--numeric-owner', '--owner=0', '--group=0',
+                    '--mtime=@0', '--format=pax', '--pax-option=delete=atime,delete=ctime',
+                    '-C', tree, '-cf', archive, '.'], check=True)
+    depends = ' '.join(map(shlex.quote, report['depends']))
+    backup = ' '.join(map(shlex.quote, configuration))
+    (directory / 'PKGBUILD').write_text(
+        f"pkgname={NAME}\npkgver={report['version']}\npkgrel=1\n"
+        "pkgdesc='Xiaomi Pad 8 Pro device configuration'\n"
+        "url='https://github.com/slwyts/Project-SunUEFI'\n"
+        'arch=(any)\nlicense=(MIT BSD-2-Clause-Patent)\noptions=(!strip !debug)\n'
+        f'depends=({depends})\nbackup=({backup})\n'
+        'source=(payload.tar)\nnoextract=(payload.tar)\n'
+        f"sha256sums=('{sha(archive.read_bytes())}')\n"
+        'package() {\n'
+        '  bsdtar --no-same-owner -xf "$srcdir/payload.tar" -C "$pkgdir"\n'
+        '  install -d "$pkgdir/usr/share/licenses/$pkgname"\n'
+        '  ln -s "../../doc/$pkgname/copyright" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"\n'
+        '}\n')
+
+
+def pacman_package(output, tree, report, configuration):
+    with tempfile.TemporaryDirectory(prefix='makepkg-', dir=output) as folder:
+        work = Path(folder)
+        pacman_sources(work, tree, report, configuration)
+        # This package only copies checked data. Its runtime dependencies are
+        # resolved on installation, not installed into the build machine.
+        env = {**os.environ, 'SOURCE_DATE_EPOCH': '0', 'BUILDDIR': str(work),
+               'SRCDEST': str(work), 'PKGDEST': str(output), 'PKGEXT': '.pkg.tar.zst'}
+        subprocess.run(['makepkg', '--noconfirm', '--nodeps'], cwd=work,
+                       env=env, stdout=sys.stderr, check=True)
+        artifact = output / f"{NAME}-{report['version']}-1-any.pkg.tar.zst"
+        require(artifact.is_file() and not artifact.is_symlink(),
+                'makepkg did not produce the Piano configuration package')
+        return artifact
 
 
 def build(args):
     if args.command == 'inspect':
         return inspect(args)[0]
     if args.command == 'package':
-        require(args.format, 'Select --format')
-        require(shutil.which('dpkg-deb' if args.format == 'deb' else 'tar'), 'Missing package backend: ' + str(args.format))
+        require(args.format, 'Select --format deb or pacman')
+        require((args.format == 'pacman') == (args.target == 'arch'),
+                'Use --format pacman for Arch and --format deb for Debian derivatives')
+        backend = 'makepkg' if args.format == 'pacman' else 'dpkg-deb'
+        require(shutil.which(backend), 'Missing package backend: ' + backend)
+        if args.format == 'pacman':
+            require(shutil.which('tar'), 'Missing tar')
+            require(os.geteuid() != 0, 'Run makepkg as a regular user')
     output, tree, report, rows = stage(args)
     if args.command == 'package':
-        package(args, output, tree, report, rows)
+        configuration = [row['path'] for row, _ in rows if row['path'].startswith('etc/')]
+        builder = pacman_package if args.format == 'pacman' else debian_package
+        artifact = builder(output, tree, report, configuration)
+        report['package_ready'] = True
+        report['files'][artifact.name] = {'bytes': artifact.stat().st_size,
+                                          'sha256': sha(artifact.read_bytes()), 'format': args.format}
     for path in [tree, *tree.rglob('*')]:
         if path.is_dir():
             path.chmod(0o755)
@@ -217,8 +247,7 @@ def parser():
     ap.add_argument('--suite')
     ap.add_argument('--arch', choices=('aarch64',), default='aarch64')
     ap.add_argument('--feature', choices=('camera',), action='append', default=[])
-    ap.add_argument('--format', choices=('deb', 'tar'))
-    ap.add_argument('--archrecipe', action='store_true')
+    ap.add_argument('--format', choices=('deb', 'pacman'))
     ap.add_argument('--against', type=Path, help='Readonly target-root conflict/ownership check')
     ap.add_argument('--output', type=Path)
     ap.add_argument('--version', default='0.1.0')

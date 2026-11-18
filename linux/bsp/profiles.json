@@ -11,7 +11,8 @@
         "alsa-ucm-conf",
         "alsa-utils",
         "python3",
-        "mount"
+        "mount",
+        "iproute2"
       ],
       "camera_depends": [
         "wireplumber (>= 0.5)"
@@ -31,7 +32,8 @@
         "alsa-ucm-conf",
         "alsa-utils",
         "python3",
-        "mount"
+        "mount",
+        "iproute2"
       ],
       "camera_depends": [
         "wireplumber (>= 0.5)"
@@ -51,7 +53,8 @@
         "alsa-ucm-conf",
         "alsa-utils",
         "python3",
-        "mount"
+        "mount",
+        "iproute2"
       ],
       "camera_depends": [
         "wireplumber (>= 0.5)"
@@ -70,7 +73,9 @@
         "alsa-ucm-conf",
         "alsa-utils",
         "python",
-        "util-linux"
+        "util-linux",
+        "iproute2",
+        "grep"
       ],
       "camera_depends": [
         "wireplumber>=0.5"

@@ -1,6 +1,6 @@
 # Piano 设备配置层
 
-这里保存与发行版、桌面选择分开的设备配置。来源是固定提交的公开 `debian-piano` overlay，保留 MIT 许可和逐文件 SHA256；配置包为 `piano-device-config`，Debian 包 `Architecture: all`，Arch 配方 `arch=(any)`。各目标的依赖解析和设备运行仍未测试。
+这里保存与发行版、桌面选择分开的设备配置。来源是固定提交的公开 `debian-piano` overlay，保留许可和逐文件 SHA256。`piano-device-config` 在 Debian 上是 `Architecture: all` 的 `.deb`，在 Arch 上是 `makepkg` 构建的 `any` 包。
 
 默认包含 UCM、驱动加载参数与硬件服务单元。`--feature camera` 才加入的相机 udev / WirePlumber 配置及服务，仍需对应 runtime 和同内核 v4l2loopback。没有新增 libinput 补丁或空的“支持”目录。服务不自动启用。
 
@@ -17,14 +17,14 @@ UCM 打开四路扬声器，PipeWire 的普通立体声流使用标准 `simple` 
 不提取桌面/GDM/dconf、账号、machine-id、SSH、软件源、fstab/swapfile/userdata、qbootctl 写槽或固定 USB 地址策略。`80-drivers.rules` 会覆盖 systemd 同名规则并广泛禁止自动加载，因此未纳入；不能把这份配置包当作已经验证的完整 BSP。
 
 ```sh
-python3 tools/package_bsp.py inspect --target debian
-python3 tools/package_bsp.py stage --target debian --output /absolute/new-stage
-python3 tools/package_bsp.py package --target debian --format deb --output /absolute/new-package --version 0.1.0
-python3 tools/package_bsp.py package --target arch --format tar --archrecipe --output /absolute/new-arch-recipe
+./build.sh bsp inspect --target debian
+./build.sh bsp stage --target debian --output /absolute/new-stage
+./build.sh bsp package --target debian --format deb --output /absolute/new-deb --version 0.1.0
+./build.sh bsp package --target arch --format pacman --output /absolute/new-pacman --version 0.1.0
 ```
 
-Debian 默认 trixie，Ubuntu 默认 noble，Arch Linux ARM 默认 rolling；Deepin 必须显式传 `--suite`。同样的配置不代表原生程序 ABI 相同：runtime、固件、kernel modules 和 Mesa 是独立目标层，组装系统时必须与 distro/suite/aarch64 一致。包目录的 `manifest.json` 提供 target、payload 元数据和包文件的 SHA256。Arch 的 tar/PKGBUILD 只是配方，仍需在目标环境构建成原生包。
+Debian 默认 sid，Ubuntu 默认 noble，Arch Linux ARM 默认 rolling；Deepin 必须显式传 `--suite`。Arch 构建请用装有 `makepkg` 和 `base-devel` 的环境，以普通用户运行；`--format pacman` 直接生成 `.pkg.tar.zst`。包目录的 `manifest.json` 记录目标、文件清单和包的 SHA256。同一配置适用于多个发行版，但原生程序、固件、内核模块和 Mesa 仍需分别匹配目标系统。
 
-安装前可用 `inspect --against /absolute/target-root` 只读检查文件和 dpkg/pacman 归属。UCM 使用标准 ALSA 路径；已有同名发行版文件或其他包归属时停止，不加宽泛 Replaces，也不使用 force-overwrite。Debian 包附只读 preinst 检查，Arch 依赖正常 pacman 文件冲突检查。没有通用 `install` 子命令；目标环境使用标准 APT/dpkg 或 pacman。
+安装到目标系统时用 `apt install ./piano-device-config_版本_all.deb` 或 `pacman -U ./piano-device-config-版本-1-any.pkg.tar.zst`。安装前可用 `inspect --against /absolute/target-root` 只读检查文件归属。两类包都保留管理员对 `/etc` 配置的修改；发行版或其他软件包已占用同名文件时停止，不强制覆盖。旧产品镜像曾直接复制这些文件，不能在仍有未登记文件的系统上直接装包。
 
 `layers.json` 记录 native runtime 的既有 producer、固件来源及 kernel 版本约束；不读取个人 build 输出。内核 GPL、源文件 BSD 等许可继续按各组件保留，固件另按原分发条款。Mesa 使用 `config/mesa.json` 固定的官方 27 开发源码，以各发行版原生配方构建，不复制 Debian 二进制到其他发行版。830v1 芯片 ID 和 DirectX-Headers 修正已在官方源码中，无需回移植；SteamOS renderonly 的显示缓冲高度修正尚未合入，单独保留。

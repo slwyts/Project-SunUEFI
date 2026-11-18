@@ -128,13 +128,20 @@ class BspPackageTests(unittest.TestCase):
             bsp.build(self.args('inspect', '--target', 'arch', '--against', str(root)))
 
     @unittest.skipUnless(shutil.which('tar'), 'tar unavailable')
-    def test_real_tar_and_arch_recipe_metadata(self):
-        out = self.base / 'bundle'
-        report = bsp.build(self.args('package', '--format', 'tar', '--target', 'arch', '--archrecipe', '--output', str(out)))
-        self.assertFalse(report['package_ready'])
-        self.assertFalse((out / '.incomplete').exists())
-        self.assertIn('arch=(any)', (out / 'PKGBUILD').read_text())
-        with tarfile.open(out / 'payload.tar') as archive:
+    def test_pacman_sources_include_payload_and_native_backup_metadata(self):
+        _, tree, report, rows = bsp.stage(
+            self.args('stage', '--target', 'arch', '--output', str(self.base / 'stage')))
+        work = self.base / 'makepkg'
+        work.mkdir()
+        configuration = [row['path'] for row, _ in rows if row['path'].startswith('etc/')]
+        bsp.pacman_sources(work, tree, report, configuration)
+        recipe = work / 'PKGBUILD'
+        subprocess.run(['/bin/bash', '-n', recipe], check=True)
+        metadata = subprocess.check_output(
+            ['/bin/bash', '-c', 'source "$1"; printf "%s\\n" "${arch[@]}" "${backup[@]}"',
+             'metadata', recipe], text=True).splitlines()
+        self.assertEqual(metadata, ['any', *configuration])
+        with tarfile.open(work / 'payload.tar') as archive:
             for member in archive:
                 self.assertEqual((member.uid, member.gid, member.mtime), (0, 0, 0))
             member = archive.getmember('./usr/share/alsa/ucm2/conf.d/sm8750/Xiaomi Pad 8 Pro.conf')
@@ -142,7 +149,18 @@ class BspPackageTests(unittest.TestCase):
             self.assertEqual(member.linkname, '../../Qualcomm/sm8750/Xiaomi-Pad-8-Pro/Xiaomi-Pad-8-Pro.conf')
             hifi = archive.extractfile('./usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf').read()
             self.assertIn(b"VA_DEC0 Volume' 124", hifi)
-        self.assertEqual(report['files']['payload.tar']['sha256'], hashlib.sha256((out / 'payload.tar').read_bytes()).hexdigest())
+        self.assertIn(hashlib.sha256((work / 'payload.tar').read_bytes()).hexdigest(),
+                      recipe.read_text())
+
+    def test_wrong_distro_or_missing_makepkg_does_not_stage(self):
+        out = self.base / 'bundle'
+        with self.assertRaisesRegex(ValueError, 'for Arch'):
+            bsp.build(self.args('package', '--format', 'pacman', '--output', str(out)))
+        with patch.object(bsp.shutil, 'which', return_value=None):
+            with self.assertRaisesRegex(ValueError, 'Missing package backend: makepkg'):
+                bsp.build(self.args('package', '--format', 'pacman', '--target', 'arch',
+                                    '--output', str(out)))
+        self.assertFalse(out.exists())
 
     def test_missing_deb_backend_does_not_fake_package(self):
         out = self.base / 'bundle'
