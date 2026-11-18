@@ -510,8 +510,46 @@ STATIC EFI_STATUS PrepareInstalledSystem(VOID) {
   EFI_STATUS Status=PianoUsbControllerServiceLeaveHost();
   if(Status!=EFI_SUCCESS)return Status;
   mLinuxActive=TRUE;
+  mEfiImageStage="not-started";
+  mEfiImageStatus=EFI_NOT_STARTED;
   (VOID)PianoProductBootLogMessage(L"正在启动系统",L"请稍候",EFI_SUCCESS,FALSE);
   return EFI_SUCCESS;
+}
+STATIC VOID FinishInstalledSystemAttempt(EFI_STATUS Status) {
+  mLinuxActive=FALSE;
+  if(!gBS || !BootLogAlive() || mLinuxApplication.Retained || mLinuxApplication.EbsObserved ||
+     mLateHandoff.Retained || mLateHandoff.RetireCalls || mLateHandoff.Phase==PianoExitClean)
+    FailStop(Status);
+  if(mLateHandoff.Phase==PianoExitArmed){
+    EFI_STATUS Disarm=PianoLateHandoffDisarm(&mLateHandoff);
+    if(Disarm!=EFI_SUCCESS)FailStop(Disarm);
+  }
+}
+STATIC BOOLEAN CanTryNextInstalledSystem(EFI_STATUS Status) {
+  FinishInstalledSystemAttempt(Status);
+  if(mLateHandoff.Phase!=PianoExitUnarmed || mLateHandoff.Busy ||
+     mOwners.Report.Phase!=PianoProductOwnersRunning || mOwners.Report.Busy ||
+     mOwners.Report.Clean || mOwners.Report.Retained || mOwners.Report.RetiredMask ||
+     mOwners.Report.Origin!=PianoProductRequestNone)
+    return FALSE;
+  CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();
+  if(!Policy || !Policy->Initialized || !Policy->ProtocolInstalled || Policy->Retained ||
+     Policy->ServicesLost || Policy->Dispatching || Policy->Pumping ||
+     Policy->ActiveAction!=PIANO_PRODUCT_ACTION_NONE || Policy->PendingAction!=PIANO_PRODUCT_ACTION_NONE ||
+     Policy->RequestedCoreAction!=PianoUsbServiceActionBoot)
+    return FALSE;
+  if(mOwners.Report.RegisteredStartedMask&PIANO_OWNER_USB){
+    PIANO_DWC3_SERVICE_STATUS Usb={0};
+    if(PianoUsbControllerServiceGetStatus(&Usb)!=EFI_SUCCESS ||
+       Usb.Revision!=1 || !Usb.Started || Usb.Phase!=PianoUsbServiceListening ||
+       Usb.Action!=PianoUsbServiceActionNone || Usb.Retained || Usb.ServicesLost ||
+       Usb.Busy || Usb.BulkActive || Usb.WorkPending || Usb.HostActive)
+      return FALSE;
+  } else if(PianoProductOwnersResolveReturnedAction(&mOwners)!=EFI_NOT_READY) {
+    // Revalidate the startup rollback proof before retrying without USB.
+    return FALSE;
+  }
+  return TRUE;
 }
 STATIC EFI_STATUS ReturnToBootMenu(EFI_STATUS Status,CONST CHAR16 *Title,CONST CHAR16 *Detail) {
   if(Title && Detail){
@@ -527,18 +565,13 @@ STATIC EFI_STATUS StartInstalledLinux(EFI_HANDLE Image){
   mEfiImageStage="not-started";mEfiImageStatus=EFI_NOT_STARTED;
   CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();
   PIANO_BOOT_DISPATCH Dispatch={.Selection=Policy->BootSelection,.Number=Policy->BootOptionNumber,
-    .PrepareSystem=PrepareInstalledSystem};
+    .PrepareSystem=PrepareInstalledSystem,.CanTryNextSystem=CanTryNextInstalledSystem};
   EFI_STATUS Status;
   {
     BOOLEAN PreviousNavigation=PianoSetStandardKeyNavigation(TRUE);
     mLinuxActive=FALSE;
     Status=PianoStartBootOption(Image,&mLinuxEsp,&mLinuxApplication,&Dispatch);
-    mLinuxActive=FALSE;
-    if(mLinuxApplication.Retained)FailStop(Status);
-    if(mLateHandoff.Retained||mLateHandoff.RetireCalls||mLateHandoff.Phase==PianoExitClean)FailStop(Status);
-    if(mLateHandoff.Phase==PianoExitArmed){
-      EFI_STATUS Disarm=PianoLateHandoffDisarm(&mLateHandoff);if(Disarm!=EFI_SUCCESS)FailStop(Disarm);
-    }
+    FinishInstalledSystemAttempt(Status);
     PianoSetStandardKeyNavigation(PreviousNavigation);
   }
   DEBUG((DEBUG_WARN,"PIANO_BOOT_MANAGER_RETURN status=%r\n",Status));
@@ -556,7 +589,7 @@ STATIC EFI_STATUS StartInstalledLinux(EFI_HANDLE Image){
       if(LinuxStatus==EFI_NOT_READY)return ReturnToBootMenu(LinuxStatus,L"USB 设备仍在使用",L"请拔下 USB 设备后重试");
       FailStop(LinuxStatus);
     }
-    if(Dispatch.Selection==PianoBootAutomatic && !mLinuxApplication.StartCalled){
+    if(Dispatch.Selection==PianoBootAutomatic && !Dispatch.StartedSystem){
       return LinuxStatus==EFI_NOT_FOUND?ReturnToBootMenu(LinuxStatus,NULL,NULL):
         ReturnToBootMenu(LinuxStatus,L"无法按启动顺序启动",L"已返回菜单，请检查启动项");
     }

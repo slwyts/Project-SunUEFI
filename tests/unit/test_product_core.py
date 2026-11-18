@@ -61,5 +61,8 @@ class ProductCoreTests(unittest.TestCase):
     def test_failed_uki_reports_original_error_without_menu_retry(self):
         self.run_case('uki-load-failure')
 
+    def test_boot_fallback_requires_clean_handoff_and_yields_to_usb(self):
+        self.run_case('boot-fallback')
+
     def test_error_screen_keeps_usb_and_prepares_storage_before_reset(self):
         self.run_case('error-diagnostics')

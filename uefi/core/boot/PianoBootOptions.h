@@ -12,8 +12,8 @@ typedef struct {
   PIANO_BOOT_SELECTION Selection;
   UINT16 Number;
   EFI_STATUS (*PrepareSystem)(VOID);
-  BOOLEAN SystemBlocked;
-  BOOLEAN StartedMenu;
+  BOOLEAN (*CanTryNextSystem)(EFI_STATUS Status);
+  BOOLEAN SystemBlocked,StartedMenu,StartedSystem;
 } PIANO_BOOT_DISPATCH;
 
 EFI_STATUS PianoRefreshBootOptions(VOID);
