@@ -12,11 +12,11 @@
       "repository": "upstream/Mu-Silicium/Mu_Basecore",
       "base_commit": "64f478939955e45faa632c160ae2a75a5ff7ef7f",
       "patch": "mu-basecore.patch",
-      "sha256": "504e2d06bce201479200eee8b43f224f54daa2a282ebe9bba5744e077576f81f",
+      "sha256": "839572ecbbefc952706eb0aa78f4a401dd0d51f4f2e2f0134bc8e23441eff2b3",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
-        "drop_when": "Replace this combined downstream integration only when Mu supplies the timer-frequency fallback, application-level event servicing, cancellable firmware UI and Shell, current-application ExitBootServices validation and boot-only NV protection. Verify navigation, reboot and DMA quiescence without the product hooks before removing their library dependencies."
+        "drop_when": "Replace this combined downstream integration only when Mu supplies the timer-frequency fallback, application-level event servicing, cancellable firmware UI and Shell, and current-application ExitBootServices validation. Verify navigation, reboot and DMA quiescence without the product hooks before removing their library dependencies."
       }
     },
     {

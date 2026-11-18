@@ -15,7 +15,6 @@ STATIC EFI_RT_PROPERTIES_TABLE  mRuntimeProperties = {
   sizeof (EFI_RT_PROPERTIES_TABLE),
   EFI_RT_SUPPORTED_GET_VARIABLE |
   EFI_RT_SUPPORTED_GET_NEXT_VARIABLE_NAME |
-  EFI_RT_SUPPORTED_SET_VARIABLE |
   EFI_RT_SUPPORTED_SET_VIRTUAL_ADDRESS_MAP |
   EFI_RT_SUPPORTED_CONVERT_POINTER |
   EFI_RT_SUPPORTED_GET_NEXT_HIGH_MONOTONIC_COUNT |
@@ -90,10 +89,12 @@ LibRtcInitialize (
     mRuntimeProperties.RuntimeServicesSupported = Properties->RuntimeServicesSupported;
   }
 
-  // Preserve other services' capability bits; only the four time calls are absent.
+  // Preserve unrelated capability bits. The product uses a boot-only
+  // variable store and cannot set variables after ExitBootServices.
   mRuntimeProperties.RuntimeServicesSupported &= ~(EFI_RT_SUPPORTED_GET_TIME |
                                                   EFI_RT_SUPPORTED_SET_TIME |
                                                   EFI_RT_SUPPORTED_GET_WAKEUP_TIME |
-                                                  EFI_RT_SUPPORTED_SET_WAKEUP_TIME);
+                                                  EFI_RT_SUPPORTED_SET_WAKEUP_TIME |
+                                                  EFI_RT_SUPPORTED_SET_VARIABLE);
   return gBS->InstallConfigurationTable (&gEfiRtPropertiesTableGuid, &mRuntimeProperties);
 }

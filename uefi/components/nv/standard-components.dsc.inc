@@ -14,6 +14,4 @@
    gEfiMdeModulePkgTokenSpaceGuid.PcdVariableStoreSize|0x40000
   <LibraryClasses>
    VariableFlashInfoLib|pianoProductNvPkg/Library/PianoVariableFlashInfoLib/PianoVariableFlashInfoLib.inf
-  <BuildOptions>
-   GCC:*_*_*_CC_FLAGS = -DPIANO_NV_BOOT_ONLY=1
  }

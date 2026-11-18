@@ -4,6 +4,9 @@ import sys,subprocess,tempfile,unittest
 ROOT=Path(__file__).resolve().parents[2];sys.path.insert(0,str(ROOT/'tools'))
 HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 import prepare_nv_runtime_guard as guard
+MARKER='  // The product has no persistent variable writer after ExitBootServices.'
+INC=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
+RTC=ROOT/'uefi/components/product-support/Library/UnsupportedRealTimeClockLib/UnsupportedRealTimeClockLib.c'
 class RuntimeNvGuardTests(unittest.TestCase):
  def pinned_sources(self,root):
   # Pinned VariableRuntimeDxe sources, as the build's workspace checkout starts
@@ -12,38 +15,86 @@ class RuntimeNvGuardTests(unittest.TestCase):
   dxe=path.with_name('VariableDxe.c');dxe.write_bytes(subprocess.check_output(['git','-C',str(ROOT/guard.BASE),'show','HEAD:'+str(Path(relative).with_name('VariableDxe.c'))]))
   header=root/'uefi/components/nv/Include/Protocol/PianoNvFile.h';header.parent.mkdir(parents=True);header.write_bytes((ROOT/'uefi/components/nv/Include/Protocol/PianoNvFile.h').read_bytes())
   return path
- def test_exact_standard_entry_before_mor_or_auth_mutation(self):
+ def compile_and_run(self, text):
+  with tempfile.TemporaryDirectory(prefix='nv-guard-') as directory:
+   source=Path(directory)/'guard.c'
+   exe=source.with_suffix('')
+   source.write_text(text)
+   subprocess.run(['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror',
+                   '-Wno-unused-parameter','-I'+str(INC),'-I'+str(INC/HOST_PROCESSOR_BIND),
+                   '-I'+str(INC.parents[1]/'MdeModulePkg/Include'),
+                   str(source),'-o',str(exe)],check=True)
+   subprocess.run([str(exe)],check=True)
+ def test_exact_standard_entry_before_store_or_arguments(self):
   with tempfile.TemporaryDirectory()as d:
    path=self.pinned_sources(Path(d));guard.prepare(Path(d),apply=True,check_pin=False);text=path.read_text()
-  begin=text.index('#if PIANO_NV_BOOT_ONLY\n  // The UFS owner');end=text.index('#endif',begin)+len('#endif');fragment=text[begin:end]
-  inc=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
-  with tempfile.TemporaryDirectory(prefix='nv-guard-')as d:
-   d=Path(d);source=d/'guard.c';source.write_text('''#include <assert.h>
+  function=text.index('\nVariableServiceSetVariable (')
+  begin=text.index(MARKER,function)
+  end=text.index('  AuthFormat = ',function)
+  self.assertLess(begin,end)
+  self.compile_and_run('''#include <assert.h>
 #undef NULL
 #include <Uefi.h>
-static BOOLEAN runtime,existing;static UINTN finds,mor;
-typedef struct{UINT32 Attributes;}HEADER;typedef struct{HEADER*CurrPtr;}VARIABLE_POINTER_TRACK;
-static HEADER header;static struct{UINTN VariableGlobal;}global;static typeof(global)*mVariableModuleGlobal=&global;
+static BOOLEAN runtime;
+static UINTN writes;
 static BOOLEAN AtRuntime(void){return runtime;}
-static EFI_STATUS FindVariable(CHAR16*n,EFI_GUID*g,VARIABLE_POINTER_TRACK*v,VOID*c,BOOLEAN all){finds++;v->CurrPtr=&header;return existing?EFI_SUCCESS:EFI_NOT_FOUND;}
-static EFI_STATUS Check(UINT32 Attributes){CHAR16*VariableName=L"NV";EFI_GUID Guid={0};EFI_GUID*VendorGuid=&Guid;
-'''+fragment+'''
-mor++;return EFI_SUCCESS;}
-int main(void){runtime=TRUE;existing=TRUE;header.Attributes=EFI_VARIABLE_NON_VOLATILE|EFI_VARIABLE_RUNTIME_ACCESS;
-#if PIANO_NV_BOOT_ONLY
-assert(Check(EFI_VARIABLE_NON_VOLATILE)==EFI_UNSUPPORTED&&!finds&&!mor);assert(Check(0)==EFI_UNSUPPORTED&&finds==1&&!mor);
-header.Attributes=EFI_VARIABLE_RUNTIME_ACCESS;assert(Check(0)==EFI_SUCCESS&&mor==1);runtime=FALSE;assert(Check(EFI_VARIABLE_NON_VOLATILE)==EFI_SUCCESS&&mor==2);
-#else
-assert(Check(EFI_VARIABLE_NON_VOLATILE)==EFI_SUCCESS&&mor==1);assert(Check(0)==EFI_SUCCESS&&mor==2);
-#endif
-return 0;}
+static EFI_STATUS Check(UINT32 attributes,UINTN bytes){
+'''+text[begin:end]+'''
+  ++writes;return EFI_SUCCESS;
+}
+int main(void){
+  runtime=TRUE;
+  assert(Check(EFI_VARIABLE_NON_VOLATILE,4)==EFI_UNSUPPORTED);
+  assert(Check(EFI_VARIABLE_RUNTIME_ACCESS,4)==EFI_UNSUPPORTED);
+  assert(Check(0,0)==EFI_UNSUPPORTED&&!writes);
+  runtime=FALSE;
+  assert(Check(EFI_VARIABLE_NON_VOLATILE,4)==EFI_SUCCESS);
+  assert(Check(0,0)==EFI_SUCCESS&&writes==2);
+  return 0;
+}
 ''')
-   for mode in(0,1):
-    exe=d/f'guard{mode}';subprocess.run(['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-unused-function','-Wno-unused-variable',f'-DPIANO_NV_BOOT_ONLY={mode}','-I'+str(inc),'-I'+str(inc/HOST_PROCESSOR_BIND),str(source),'-o',str(exe)],check=True);subprocess.run([str(exe)],check=True)
+ def test_actual_runtime_properties_keep_variable_reads(self):
+  self.compile_and_run('''#include <assert.h>
+#undef NULL
+#include "'''+str(RTC)+'''"
+EFI_GUID gEfiRtPropertiesTableGuid=EFI_RT_PROPERTIES_TABLE_GUID;
+static EFI_RT_PROPERTIES_TABLE *inherited,*published;
+EFI_STATUS EFIAPI EfiGetSystemConfigurationTable(EFI_GUID *Guid,VOID **Table){
+  assert(Guid==&gEfiRtPropertiesTableGuid);
+  *Table=inherited;
+  return inherited?EFI_SUCCESS:EFI_NOT_FOUND;
+}
+static EFI_STATUS EFIAPI Publish(EFI_GUID *Guid,VOID *Table){
+  assert(Guid==&gEfiRtPropertiesTableGuid);
+  published=Table;
+  return EFI_SUCCESS;
+}
+static EFI_BOOT_SERVICES Services={.InstallConfigurationTable=Publish};
+EFI_BOOT_SERVICES *gBS=&Services;
+int main(void){
+  const UINT32 readers=EFI_RT_SUPPORTED_GET_VARIABLE|EFI_RT_SUPPORTED_GET_NEXT_VARIABLE_NAME|
+                      EFI_RT_SUPPORTED_QUERY_VARIABLE_INFO;
+  assert(LibRtcInitialize(NULL,NULL)==EFI_SUCCESS);
+  assert(published->Length==sizeof(*published));
+  assert((published->RuntimeServicesSupported&readers)==readers);
+  assert(!(published->RuntimeServicesSupported&EFI_RT_SUPPORTED_SET_VARIABLE));
+  EFI_RT_PROPERTIES_TABLE input={EFI_RT_PROPERTIES_TABLE_VERSION,sizeof(input),
+    EFI_RT_SUPPORTED_GET_VARIABLE|EFI_RT_SUPPORTED_SET_VARIABLE|EFI_RT_SUPPORTED_SET_TIME|
+    EFI_RT_SUPPORTED_RESET_SYSTEM};
+  inherited=&input;
+  assert(LibRtcInitialize(NULL,NULL)==EFI_SUCCESS);
+  assert(published->RuntimeServicesSupported==(EFI_RT_SUPPORTED_GET_VARIABLE|
+                                                EFI_RT_SUPPORTED_RESET_SYSTEM));
+  --input.Length;
+  assert(LibRtcInitialize(NULL,NULL)==EFI_COMPROMISED_DATA);
+  return 0;
+}
+''')
  def test_pinned_and_idempotent(self):
   with tempfile.TemporaryDirectory()as d:
    root=Path(d);path=self.pinned_sources(root)
    first=guard.prepare(root,apply=True,check_pin=False);self.assertEqual(first,guard.prepare(root,apply=True,check_pin=False))
-   text=path.read_text().replace('#if PIANO_NV_BOOT_ONLY\n  // The UFS owner','#if PIANO_NV_BOOT_ONLY\n  // damaged guard');path.write_text(text)
+   text=path.read_text().replace('return EFI_UNSUPPORTED;\n  }\n\n  AuthFormat',
+                                 'return EFI_SUCCESS;\n  }\n\n  AuthFormat',1);path.write_text(text)
    with self.assertRaises(ValueError):guard.prepare(root,apply=True,check_pin=False)
 if __name__=='__main__':unittest.main()

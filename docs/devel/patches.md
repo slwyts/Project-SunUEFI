@@ -12,7 +12,7 @@
 | 2 | `tools/prepare_product_handoff.py apply` | Mu Basecore DXE | 安装晚期 APP 身份检查和退出钩子 |
 | 3 | `tools/prepare_product_pump.py apply` | Mu DXE Event、Silicium 库绑定 | 安装事件分发与产品 pump 支持 |
 | 4 | `tools/prepare_product_ui.py apply` | Mu DisplayEngine、SetupBrowser、UiApp | 安装菜单导航与退出处理 |
-| 5 | `tools/prepare_nv_runtime_guard.py apply` | Basecore RuntimeDxe Variable.c | 安装变量运行时保护（编译参数 `PIANO_NV_BOOT_ONLY=1`） |
+| 5 | `tools/prepare_nv_runtime_guard.py apply` | Basecore RuntimeDxe | 接入启动阶段变量保存，运行时拒绝写入 |
 | 6 | `tools/build_simpleinit.sh --product-gui-pump` | SimpleInit | 编译 SimpleInit 图形菜单 |
 | 7 | `tools/prepare_product.py` | `pianoProductPkg` | 组装组件、早期内存校验，生成产品平台描述 |
 | 8 | `tools/build_stage0.sh product` | Mu Basecore | 编译固件（自动应用 Mu `Resources/MuPatches/` 补丁） |
