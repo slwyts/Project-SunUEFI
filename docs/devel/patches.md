@@ -34,6 +34,12 @@ Linux 内核补丁按内核版本分目录维护在 `patches/linux/`，通过 `p
 
 `original_commit`、`original_parent` 和 `tree` 用于复现本地补丁链；上游状态以各条目的 `upstream` 为准。参考了公开补丁系列的本地改写仍可标为 `downstream`，参考链接不表示这份改写已经提交。来源元数据不替代补丁头的作者、签名和逐文件许可声明，也不补造缺失的签名。
 
+### 准备投给 Linux 上游
+
+1. 产品改动回写到 `patches/linux/`，不要把 `build/kernel-worktrees/` 当作源码。修正系列中新引入的代码时，修改原补丁并重放后续补丁。运行 `./build.sh check --pattern test_check_patch_series.py` 检查登记，再用 `./build.sh linux --configure-only` 准备产品内核并验证补丁可以依次应用。
+2. 在独立的内核工作目录里，按目标子系统要求的分支重放拟投稿的提交。每项只做一个可独立审查的变更；修复已存在于上游的缺陷时，用目标树的真实提交核对 `Fixes:`。用 `git format-patch` 导出，逐项运行 `scripts/checkpatch.pl --strict`，再做对应驱动编译、绑定校验或设备验证。产品补丁链能重放，不等于上游系列也能单独应用。
+3. 用 `scripts/get_maintainer.pl` 查找维护者和列表，说明测试的内核、设备和结果，以及哪些缺项会影响审查。按 Linux 的[投稿指南](https://docs.kernel.org/process/submitting-patches.html)和[工具辅助规则](https://docs.kernel.org/process/coding-assistants.html)标注来源和协助情况；提交者本人复核代码、许可和署名后签署 DCO（`Signed-off-by:`）。
+
 ## 软件包补丁与产品目标
 
 软件包系列使用 `patches/<包>/<版本>/series.json`。`patches` 列表按顺序应用，条目的 `file` 相对该系列目录解析；FFmpeg 的现有 `series` / `path` 格式含义相同。同一修复适用于多个版本时，系列引用同一份文件，不再复制补丁。跨版本路径可以使用 `../`，但不能离开仓库。
