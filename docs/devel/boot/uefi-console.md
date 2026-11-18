@@ -210,8 +210,9 @@ SimpleInit 默认旋转改为 0°，使用 GOP 的 3200×2136 横屏画布。界
 SimpleInit/LVGL 处理，物理显示模式保持原样；实机已确认横屏显示。
 
 产品驻留核心在 BDS 的控制台初始化完成后启动，先恢复变量和安装安全退出协议。
-“启动 Linux”请求标准启动顺序：先消费 `BootNext`，再按 `BootOrder` 读取
-`Boot####` 的设备路径。没有指定文件的设备启动项由上游库尝试标准后备文件，
+普通自动启动先消费 `BootNext`，再按 `BootOrder` 读取 `Boot####` 的设备路径。
+从 SimpleInit 选“启动 Linux”时，沿用系统启动顺序，但跳过 SimpleInit 自身，
+也不消费为下次开机设置的 `BootNext`。没有指定文件的设备启动项由上游库尝试标准后备文件，
 不绑定某个加载器名称或分区标签。产品安装的 systemd-boot 继续发现
 `EFI/Linux/` 中的版本化 UKI。不使用 Android 格式的 Linux `boot.img`
 或固件内的 Linux 替代项。通用启动管理的剩余工作见[开发清单](../release.md#标准-uefi-启动与存储)。具体内存与退出身份见
