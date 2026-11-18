@@ -109,7 +109,9 @@ initramfs 的 BusyBox、分区识别工具和依赖库也由 `config/release.jso
 在临时目录解包，不从各发行版根系统取库。内核模块和键盘固件使用共享产品的同一份输入，
 因此同次构建的四个系统可以使用同一个启动镜像。
 
-基础根系统已经构建过时，用 `./build.sh release-rootfs --resume` 更新内核、硬件包和配置，不重新运行 debootstrap。`./build.sh rootfs --distro ID --desktop ID --plan` 会列出其他发行版和桌面组合的计划，目前只有上表的四个目标能完整构建。
+基础系统已经构建过时，用 `./build.sh release-rootfs --resume` 更新内核、硬件包和配置，不重建桌面根。
+需要重编的覆盖包沿用 CI 的独立 sid 构建根。续建保留桌面根的 SunUEFI 软件源，覆盖包编译只使用 Debian 官方源。
+`./build.sh rootfs --distro ID --desktop ID --plan` 会列出其他发行版和桌面组合的计划，目前只有上表的四个目标能完整构建。
 
 内核和桌面包的并行度默认按 CPU 配额与可用内存选择，可用 `--jobs` 覆盖。
 桌面包共用 `build/ccache`（或 `CCACHE_DIR`），FFmpeg、Mutter、GSD 和 GDM
@@ -186,7 +188,7 @@ CI 实际重编覆盖包时，使用该次运行和重试编号增加原生包�
 
 本地和 GitHub 的完整构建走同一个 `release-rootfs` 入口。默认系统包含中文界面、拼音输入法、Chromium、GNOME 动画、蓝牙地址自动初始化和触控笔组件。根系统生成后会检查这些软件包和必需文件，结果记录在 `manifest.json` 的 `default_system`，缺少任何一项构建就失败。
 
-Debian 只构建 sid，不混用 stable 或 backports。`release-rootfs` 先生成 sid 基础系统，再从其副本构建 sensors、FFmpeg 和桌面包；不用固件构建容器中的旧版库编译这些运行包。CI 保留编译缓存，但按 sid 配置和构建器区分缓存，并由软件包构建器检查所选源码版本后复用。
+Debian 只构建 sid，不混用 stable 或 backports。`release-rootfs` 从独立的 sid 构建根编译 sensors、FFmpeg 和桌面包，再将对应的原生包装入镜像。CI 保留编译缓存，但按 sid 配置和构建器区分缓存，并由软件包构建器检查所选源码版本后复用。
 
 Debian 镜像用 `update-alternatives` 选择 `wireless-regdb` 包自带的上游签名版本。
 数据库与签名一起切换，普通 APT 更新会保留该选择；共用内核仍用上游公钥验签。

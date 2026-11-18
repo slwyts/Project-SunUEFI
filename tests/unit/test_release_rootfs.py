@@ -120,6 +120,41 @@ class ReleaseRootTests(unittest.TestCase):
                                   packages_only=packages, resume=True)
             self.assertTrue(result['resume'])
 
+    def test_local_overlay_build_keeps_image_sources_out_of_compilation(self):
+        from desktop import debian_package
+
+        source = self.rootfs / 'etc/apt/sources.list.d/sunuefi.sources'
+        source.parent.mkdir(parents=True)
+        source.write_text('Origin: SunUEFI\n')
+        record = {'output': str(self.output), 'desktop': 'kde', 'resume': True}
+        prepared = []
+
+        def prepare(output, desktop, run):
+            self.assertEqual(desktop, 'kde')
+            root = output / 'rootfs'
+            root.mkdir(parents=True)
+            prepared.append(root)
+
+        def verify(root):
+            self.assertEqual(root, prepared[0])
+            self.assertNotEqual(root, self.rootfs)
+            return {'signed': 'Debian'}
+
+        def build(record, root, kernel, run, directory):
+            archive.assert_called_once_with(root)
+            self.assertEqual(directory, self.output / 'packages')
+            self.assertEqual(os.environ[debian_package.BUILD_ARCHIVE],
+                             debian_package.archive_digest({'signed': 'Debian'}))
+            return {'package': 'result'}
+
+        with patch.object(builder, 'prepare_package_build_root', side_effect=prepare), \
+                patch.object(debian_package, 'archive_inputs', side_effect=verify) as archive, \
+                patch.object(builder, 'build_overlays', side_effect=build):
+            self.assertEqual(builder.build_local_overlays(record, self.m, None),
+                             {'package': 'result'})
+        self.assertFalse(prepared[0].exists())
+        self.assertEqual(source.read_text(), 'Origin: SunUEFI\n')
+
     def test_local_overlays_use_existing_indexes_after_installing_boot_configuration(self):
         archive = self.root / 'piano-camera_1.0-1_arm64.deb'
         archive.write_bytes(b'test camera package')
@@ -142,6 +177,7 @@ class ReleaseRootTests(unittest.TestCase):
             })
         self.assertEqual(len(commands), 1)
         self.assertIn('install', commands[0])
+        self.assertIn('--allow-downgrades', commands[0])
         self.assertTrue(source.is_file())
 
     def test_pipewire_upgrade_replaces_the_old_v4l2_plugin_without_adding_test_packages(self):
@@ -287,6 +323,7 @@ class ReleaseRootTests(unittest.TestCase):
             'ID=debian\nVERSION_CODENAME=forky\nPRETTY_NAME="Debian GNU/Linux forky/sid"\n')
         for indexes, accepted in (
                 ('sid unstable Debian Packages\nsid unstable Debian Sources\n', True),
+                ('sid unstable Debian Packages\nsid sid SunUEFI Packages\n', True),
                 ('trixie stable Debian Packages\n', False),
                 ('sid unstable Debian Packages\ntrixie stable Debian Packages\n', False),
                 ('', False)):

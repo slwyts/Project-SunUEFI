@@ -176,7 +176,8 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
         steps = ['derive build-rootfs.sh for sid and install the selected desktop from signed APT',
                  'install the matching native kernel packages',
                  ('install exact desktop and camera packages from the signed SunUEFI APT source'
-                  if published_packages else 'install the locally built desktop and camera packages'),
+                  if published_packages
+                  else 'build overlays in a separate signed Debian sid root and install the native packages'),
                  'stage the hardware runtime, apply product defaults and build the initial initramfs']
     return {'status': 'PLAN_ONLY', 'resume': resume, 'desktop': desktop,
             'previous_kernel_release': previous.get('kernel_release') if previous else None,
@@ -757,7 +758,7 @@ def pack_bootstrap(rootfs, packages, archives, kernel, output, release, boot_tas
     return record
 
 
-def build_overlays(record, rootfs, run, directory=None):
+def build_overlays(record, rootfs, kernel, run, directory=None, *, uapi=None):
     """Produce the same native packages for publishing and local builds."""
     sources = {}
     directory = directory or ROOT / 'build'
@@ -801,6 +802,9 @@ def build_overlays(record, rootfs, run, directory=None):
         if gdm_record is None:
             raise ValueError('GDM packages do not match the shared source patches')
         sources['gdm'] = gdm / 'runtime', gdm_record
+    install_overlays(rootfs, run, overlay_packages.debian_packages(sources))
+    sources['fingerprint'] = build_fingerprint_overlay(
+        record, rootfs, kernel, directory / 'fingerprint-packages', uapi)
     return sources
 
 
@@ -828,6 +832,10 @@ def install_overlays(rootfs, run, packages, *, extra=(), published=False):
             remove = [DEBIAN_V4L2_TRANSITION + '-']
 
     apt = ['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get']
+    # Rebuilding a generated image can replace higher CI revisions with the
+    # explicitly selected local archives.
+    if not published:
+        apt.append('--allow-downgrades')
     tmp = target(rootfs, 'var/tmp')
     tmp.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='sunuefi-overlays-', dir=tmp) as folder, \
@@ -861,14 +869,11 @@ def install_overlays(rootfs, run, packages, *, extra=(), published=False):
             run([*apt, 'purge', '-y', 'firefox-esr'])
 
 
-def export_overlays(record, rootfs, sources, kernel, *, directory=None, uapi=None, inputs=None):
-    """Add the libfprint package without staging any hardware or boot files."""
-    from build import overlay_cache
+def build_fingerprint_overlay(record, rootfs, kernel, fingerprint, uapi):
+    """Build libfprint against the same installed runtime as the other packages."""
     from build_piano_fingerprint import install_debian_desktop, prepare_desktop_backend
     from build_release_helpers import export_uapi
-    from desktop.debian_package import verify_build_archive
 
-    fingerprint = (directory or ROOT / 'build') / 'fingerprint-packages'
     if record['runtime_dir']:
         install_debian_desktop(rootfs, Path(record['runtime_dir']), fingerprint)
     else:
@@ -880,28 +885,32 @@ def export_overlays(record, rootfs, sources, kernel, *, directory=None, uapi=Non
                             kernel['source_commit'], uapi)
             prepare_desktop_backend(work, uapi)
             install_debian_desktop(rootfs, work, fingerprint)
-    if inputs is not None:
-        verify_build_archive(rootfs)
-        if (inputs['recipes'] != overlay_cache.debian_recipe_identity(ROOT) or
-                inputs['kernel_uapi_sha256'] != runtime.tree_digest(runtime.tree_files(uapi / 'include'))):
-            raise ValueError('Debian overlay recipes or exported kernel headers changed during the build')
     metadata = json.loads((fingerprint / 'SOURCE.json').read_text())
     metadata['packages'] = {'libfprint-2-2': metadata['package']}
     folder = fingerprint / 'runtime' if (fingerprint / 'runtime').is_dir() else fingerprint
-    sources['fingerprint'] = folder, metadata
-    packages = overlay_packages.debian_packages(sources)
-    overlay_packages.verify_debian_generation(packages)
-    return overlay_packages.export(Path(record['packages_only']), 'debian-' + record['desktop'],
-                                   'apt', packages,
-                                   {name: value for name, (_, value) in sources.items()},
-                                   build_inputs=inputs)
+    return folder, metadata
+
+
+def build_local_overlays(record, kernel, run):
+    """Keep project repositories in the image out of build dependency selection."""
+    from desktop.debian_package import archive_inputs, use_build_archive, verify_build_archive
+
+    output = Path(record['output'])
+    with tempfile.TemporaryDirectory(prefix='sunuefi-overlay-root-', dir=output) as temporary:
+        builder = Path(temporary) / 'builder'
+        prepare_package_build_root(builder, record['desktop'], run)
+        rootfs = builder / 'rootfs'
+        with use_build_archive(archive_inputs(rootfs)):
+            sources = build_overlays(record, rootfs, kernel, run, output / 'packages')
+            verify_build_archive(rootfs)
+            return sources
 
 
 def build_overlay_set(record, rootfs, kernel, run):
     """Build or reuse native packages independently of product image assembly."""
     from build import overlay_cache
     from build_release_helpers import export_uapi
-    from desktop.debian_package import use_build_archive
+    from desktop.debian_package import use_build_archive, verify_build_archive
 
     desktop = record['desktop']
     output = Path(record['output'])
@@ -923,10 +932,18 @@ def build_overlay_set(record, rootfs, kernel, run):
                 return cached
             contexts.enter_context(use_build_archive(inputs['archive']))
             directory = output / 'packages'
-        sources = build_overlays(record, rootfs, run, directory)
-        install_overlays(rootfs, run, overlay_packages.debian_packages(sources))
-        return export_overlays(record, rootfs, sources, kernel, directory=directory,
-                               uapi=uapi, inputs=inputs)
+        sources = build_overlays(record, rootfs, kernel, run, directory, uapi=uapi)
+        if inputs is not None:
+            verify_build_archive(rootfs)
+            if (inputs['recipes'] != overlay_cache.debian_recipe_identity(ROOT) or
+                    inputs['kernel_uapi_sha256'] != runtime.tree_digest(runtime.tree_files(uapi / 'include'))):
+                raise ValueError('Debian overlay recipes or exported kernel headers changed during the build')
+        packages = overlay_packages.debian_packages(sources)
+        overlay_packages.verify_debian_generation(packages)
+        return overlay_packages.export(Path(record['packages_only']), 'debian-' + desktop,
+                                       'apt', packages,
+                                       {name: value for name, (_, value) in sources.items()},
+                                       build_inputs=inputs)
 
 
 def execute(record):
@@ -976,7 +993,8 @@ def execute(record):
         put(rootfs, 'usr/sbin/policy-rc.d', '#!/bin/sh\nexit 101\n'); (rootfs / 'usr/sbin/policy-rc.d').chmod(0o755)
         if record.get('resume') and not record.get('published_packages'):
             with build_devices(rootfs), build_resolver(rootfs):
-                run(['chroot', rootfs, 'apt-get', 'update'])
+                run(['chroot', rootfs, 'apt-get', '-o', 'APT::Update::Error-Mode=any', 'update'])
+                archive = debian_archive(rootfs)
                 run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive',
                      'apt-get', 'upgrade', '-y', '--with-new-pkgs', '--no-remove'])
         published = record.get('published_packages')
@@ -1002,7 +1020,7 @@ def execute(record):
             archive = debian_archive(rootfs)
         else:
             camera_archive, camera_record = camera.ensure('debian')
-            sources = build_overlays(record, rootfs, run)
+            sources = build_local_overlays(record, m, run)
             packages = overlay_packages.debian_packages(sources)
             install_kernel(rootfs, 'debian', kernel)
             with tempfile.TemporaryDirectory(prefix='sunuefi-bsp-', dir=out) as temporary:
@@ -1017,7 +1035,7 @@ def execute(record):
                     topology_archive.name: (topology_archive, topology),
                     camera_archive.name: (camera_archive, camera_record),
                     power_archive.name: (power_archive, power),
-                }, extra=cfg['debian']['extra_packages'])
+                }, extra=(*cfg['debian']['extra_packages'], 'fprintd', 'libpam-fprintd'))
             components = {name: {'packages': {}} for name in overlay_packages.DEBIAN_GNOME}
             components.update({name: value for name, (_, value) in sources.items()})
         sensor_unit = target(rootfs, 'usr/lib/systemd/system/adsprpcd-sensorspd.service')
@@ -1044,11 +1062,10 @@ def execute(record):
                      '--kernel-build', record['kernel_build'], '--output', bundle, '--sysroot', sysroot,
                      '--cc', helper_cc])
             runtime.stage(bundle, rootfs)
-        from build_piano_fingerprint import desktop_service, install_desktop
-        if published:
-            desktop_service(rootfs)
-        else:
-            install_desktop(rootfs, bundle, ROOT / 'build/fingerprint-packages')
+        from build_piano_fingerprint import debian_abi, desktop_service
+        if not published and debian_abi(rootfs) != components['fingerprint']['target_abi']:
+            raise ValueError('The image fingerprint ABI differs from the signed package build root')
+        desktop_service(rootfs)
         from stage_piano_firmware import stage as stage_firmware, verify_display
         firmware = stage_firmware(Path(record['firmware_source']), rootfs, 'debian',
                                   shared=bool(published), run=run)
