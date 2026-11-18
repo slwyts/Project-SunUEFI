@@ -27,20 +27,22 @@ class DebianSourceTests(unittest.TestCase):
         self.assertEqual(row['Version'], '26.1.6-1')
 
     def test_local_candidate_requires_known_revision_and_matching_archive_policy(self):
-        libraries = {'libssc2': {'version': '0.4.4-2+piano1+sunuefi3', 'source': 'libssc'}}
+        policy = json.loads((debian.ROOT / 'patches/piano-sensors/5/build.json').read_text())
+        official = policy['source_versions']['libssc']
+        local = official + '+' + policy['local_revisions']['libssc']
+        libraries = {'libssc2': {'version': local, 'source': 'libssc'}}
+        older = '0.4.4-1'
         records = [{'Package': 'libssc2', 'Version': version, 'Source': 'libssc',
-                    'Architecture': 'arm64', 'SHA256': version} for version in ('0.4.4-2', '0.4.4-1')]
+                    'Architecture': 'arm64', 'SHA256': version} for version in (official, older)]
         with self.signed_parser():
-            row = debian.official_candidate('libssc2', libraries['libssc2']['version'], records,
-                                            libraries, '0.4.4-2')
-            self.assertEqual(row['Version'], '0.4.4-2')
+            row = debian.official_candidate('libssc2', local, records, libraries, official)
+            self.assertEqual(row['Version'], official)
             with self.assertRaisesRegex(ValueError, 'unambiguously'):
-                debian.official_candidate('libssc2', libraries['libssc2']['version'], records,
-                                            libraries, '0.4.4-1')
-            libraries['libssc2']['version'] = '0.4.4-2+piano-untrusted'
+                debian.official_candidate('libssc2', local, records, libraries, older)
+            libraries['libssc2']['version'] = official + '+piano-untrusted'
             with self.assertRaisesRegex(ValueError, 'known project revision'):
                 debian.official_candidate('libssc2', libraries['libssc2']['version'],
-                                            records, libraries, '0.4.4-2')
+                                          records, libraries, official)
 
     def test_unrelated_local_abi_is_not_exempted(self):
         libraries = {'libc6': {'version': '1+piano1', 'source': 'glibc'}}

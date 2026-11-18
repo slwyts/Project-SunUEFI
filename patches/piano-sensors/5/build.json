@@ -1,6 +1,6 @@
 {
   "source_versions": {
-    "libssc": "0.4.4-2",
+    "libssc": "0.4.4-2.1",
     "iio-sensor-proxy": "3.9-1",
     "fastrpc": "1.0.9-1"
   },
