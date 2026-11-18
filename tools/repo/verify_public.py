@@ -1,24 +1,22 @@
 """Check the newly published indexes at the URLs package managers use."""
 from pathlib import Path
-import re
 import subprocess
 import tempfile
 import time
 from urllib.parse import urlsplit
 
-from publish import REPOSITORIES, ROOT, run, sha
+from publish import APT_INDEX_HASHES, REPOSITORIES, ROOT, apt_index_hashes, run, sha
 
 
 HTTP_TIMEOUT = 15
 RETRY_DELAYS = (2, 4, 8, 16, 32)
-APT_INDEXES = ('main/binary-arm64/Packages', 'main/binary-arm64/Packages.gz')
 
 
 class PublicIndexError(ValueError):
     """A published index is unavailable or does not match the new generation."""
 
 
-def download(public_url, key, destination, size, digest):
+def download(public_url, key, destination, size, digest, *, algorithm='sha256'):
     try:
         result = run('curl', '--disable', '--silent', '--show-error', '--fail',
                      '--max-time', HTTP_TIMEOUT, '--max-filesize', size,
@@ -29,7 +27,7 @@ def download(public_url, key, destination, size, digest):
     if result.stdout != '200':
         raise PublicIndexError(f'{key}: HTTP {result.stdout}')
     if (not destination.is_file() or destination.stat().st_size != size
-            or sha(destination) != digest):
+            or sha(destination, algorithm) != digest):
         raise PublicIndexError(f'{key}: bytes do not match the published generation')
 
 
@@ -40,22 +38,6 @@ def check_signature(keyring, key, *args):
         detail = error.stderr.strip().splitlines()
         reason = detail[-1] if detail else 'gpgv exited with an error'
         raise PublicIndexError(f'{key}: signature verification failed: {reason}') from error
-
-
-def apt_hashes(path):
-    text = path.read_text()
-    section = re.search(r'^SHA256:\n((?:[ \t]+[^\n]+\n)+)', text, re.M)
-    if not section:
-        raise PublicIndexError('InRelease: signed Release has no SHA256 section')
-    hashes = {}
-    for line in section[1].splitlines():
-        row = re.fullmatch(r'\s+([0-9a-f]{64})\s+([0-9]+)\s+(\S+)', line)
-        if not row or row[3] in hashes:
-            raise PublicIndexError('InRelease: malformed signed SHA256 section')
-        hashes[row[3]] = (int(row[2]), row[1])
-    if any(name not in hashes for name in APT_INDEXES):
-        raise PublicIndexError('InRelease: missing signed ARM64 Packages index')
-    return hashes
 
 
 def verify_public(public_url, repository, output):
@@ -93,11 +75,12 @@ def verify_public(public_url, repository, output):
                     release = work / 'Release'
                     check_signature(keyring, prefix + '/InRelease',
                                     '--output', release, work / 'InRelease')
-                    hashes = apt_hashes(release)
-                    for name in APT_INDEXES:
-                        size, digest = hashes[name]
-                        key = prefix + '/' + name.rsplit('/', 1)[0] + '/by-hash/SHA256/' + digest
-                        download(public_url, key, work / digest, size, digest)
+                    for algorithm in APT_INDEX_HASHES:
+                        for name, (size, digest) in apt_index_hashes(release, algorithm).items():
+                            directory = name.rsplit('/', 1)[0]
+                            key = f'{prefix}/{directory}/by-hash/{algorithm}/{digest}'
+                            download(public_url, key, work / digest, size, digest,
+                                     algorithm=algorithm.lower())
                 else:
                     for suffix in ('.db', '.files'):
                         name = repository + suffix

@@ -343,7 +343,9 @@ Nyarch 只启用 `sunuefi`；SteamOS 把 `sunuefi-steamos` 放在 `sunuefi` 前�
 加 `--publish` 后使用 `R2_ENDPOINT`、`R2_BUCKET`、`R2_ACCESS_KEY_ID` 和
 `R2_SECRET_ACCESS_KEY` 上传。上传先完成不可变包文件和签名，再更新索引，
 同名文件内容变化即拒绝；保留旧包，不执行远端删除。
-APT 发布 by-hash 索引，最后更新 `InRelease`；下次发布从这份签名索引继续。
+APT 先上传 SHA512 和 SHA256 的 `by-hash` 索引，再更新 `InRelease`。
+发布后从公开域名核对两种地址，避免 APT 退回可能仍被缓存的 `Packages.gz`。
+下次发布从这份签名索引继续。
 产品构建先核对 pacman 新索引选中的包名、版本和 SHA-256，再上传索引。
 如果索引已选中更新的版本，发布会停止；用高于已发布版本的包重新构建。
 同一上游内核版本的新 ABI 必须推进 `abi_epoch`；APT 和 pacman 发布都检查这一点，

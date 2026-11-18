@@ -1,4 +1,5 @@
 """Sign real package indexes, merge releases and reject changed package bytes."""
+import hashlib
 import io
 import os
 from pathlib import Path
@@ -257,6 +258,9 @@ class RepoPublishTests(unittest.TestCase):
             if version == '2':
                 # A failed upload may have written one of the fallback files.
                 self.store.objects['apt/dists/sid/Release'] = b'incomplete next release'
+                for name in list(self.store.objects):
+                    if '/by-hash/SHA512/' in name:
+                        del self.store.objects[name]
             package = self.debian(version)
             packages.append(package)
             repo.publish(self.args('apt', [package], 'generation-' + version), self.store)
@@ -266,7 +270,14 @@ class RepoPublishTests(unittest.TestCase):
         self.assertIn(b'Version: 2', index)
         for package in packages:
             self.assertIn('apt/pool/main/' + package.name, self.store.objects)
-        self.assertTrue(any('/by-hash/SHA256/' in name for name in self.store.objects))
+        path = 'apt/dists/sid/main/binary-arm64/'
+        for algorithm in ('SHA512', 'SHA256'):
+            for name in ('Packages', 'Packages.gz'):
+                content = self.store.objects[path + name]
+                digest = hashlib.new(algorithm.lower(), content).hexdigest()
+                key = path + 'by-hash/' + algorithm + '/' + digest
+                self.assertEqual(self.store.objects[key], content)
+                self.assertIn((key, True), self.store.writes)
 
     def assert_no_upload_for_untrusted_signer(self, args):
         previous_objects = self.store.objects.copy()

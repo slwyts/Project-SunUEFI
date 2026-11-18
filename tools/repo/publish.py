@@ -15,14 +15,33 @@ from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORIES = ('apt', 'sunuefi', 'sunuefi-steamos')
+APT_INDEXES = ('main/binary-arm64/Packages', 'main/binary-arm64/Packages.gz')
+APT_INDEX_HASHES = ('SHA512', 'SHA256')
 KERNEL_META_VERSION = re.compile(
     r'([0-9]+\.[0-9]+\.[0-9]+(?:~?rc[0-9]+)?)'
     r'\+([0-9]+)\.[0-9]+\.([0-9a-f]{12}(?:\.[0-9a-f]{12})?)-1')
 
 
-def sha(path):
+def sha(path, algorithm='sha256'):
     with path.open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
+        return hashlib.file_digest(stream, algorithm).hexdigest()
+
+
+def apt_index_hashes(release, algorithm):
+    """Read the Packages entries in one Release checksum section."""
+    section = re.search(rf'^{algorithm}:\n((?:[ \t]+[^\n]+\n)+)', release.read_text(), re.M)
+    if not section:
+        raise ValueError(f'APT Release has no {algorithm} section')
+    width = hashlib.new(algorithm.lower()).digest_size * 2
+    hashes = {}
+    for line in section[1].splitlines():
+        row = re.fullmatch(rf'\s+([0-9a-f]{{{width}}})\s+([0-9]+)\s+(\S+)', line)
+        if not row or row[3] in hashes:
+            raise ValueError(f'APT Release has a malformed {algorithm} section')
+        hashes[row[3]] = (int(row[2]), row[1])
+    if any(name not in hashes for name in APT_INDEXES):
+        raise ValueError(f'APT Release is missing an ARM64 Packages index in {algorithm}')
+    return {name: hashes[name] for name in APT_INDEXES}
 
 
 def run(*args, **kwargs):
@@ -141,13 +160,11 @@ def apt_index(work, packages, key, store=None, *, digests=None):
         if store.get('apt/dists/sid/InRelease', signed_release):
             run('gpgv', '--keyring', keyring, '--output', release, signed_release)
             index = work / 'old-Packages'
-            # Select the index by the authenticated digest, never by mutable URL.
-            match = re.search(r'^ ([0-9a-f]{64}) +(\d+) main/binary-arm64/Packages$',
-                              release.read_text(), re.M)
-            if not match or not store.get(
-                    'apt/dists/sid/main/binary-arm64/by-hash/SHA256/' + match[1], index):
+            # Previous generations may only have the SHA256 by-hash objects.
+            size, digest = apt_index_hashes(release, 'SHA256')[APT_INDEXES[0]]
+            if not store.get('apt/dists/sid/main/binary-arm64/by-hash/SHA256/' + digest, index):
                 raise ValueError('Published APT by-hash index is missing')
-            if sha(index) != match[1] or index.stat().st_size != int(match[2]):
+            if sha(index) != digest or index.stat().st_size != size:
                 raise ValueError('Published APT Packages digest differs')
             old = stanzas(index.read_text())
     for package in packages:
@@ -187,11 +204,15 @@ def apt_index(work, packages, key, store=None, *, digests=None):
         '-o', 'APT::FTPArchive::Release::Acquire-By-Hash=yes',
         'release', '.', cwd=target, capture_output=True).stdout)
     immutable = list(pool.iterdir())
-    for index in (binary / 'Packages', binary / 'Packages.gz'):
-        hashed = binary / 'by-hash/SHA256' / sha(index)
-        hashed.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(index, hashed)
-        immutable.append(hashed)
+    for algorithm in APT_INDEX_HASHES:
+        for name, (size, digest) in apt_index_hashes(release, algorithm).items():
+            index = target / name
+            if index.stat().st_size != size or sha(index, algorithm.lower()) != digest:
+                raise ValueError(f'APT Release digest differs for {name} ({algorithm})')
+            hashed = index.parent / 'by-hash' / algorithm / digest
+            hashed.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(index, hashed)
+            immutable.append(hashed)
     detached = sign(release, key).rename(target / 'Release.gpg')
     inrelease = sign(release, key, clear=True)
     if store:

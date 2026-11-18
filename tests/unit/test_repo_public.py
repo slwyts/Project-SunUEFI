@@ -114,10 +114,11 @@ class PublicRepositoryTests(unittest.TestCase):
 
         public.verify_public(self.url, 'apt', output)
 
-        by_hash = '/apt/dists/sid/main/binary-arm64/by-hash/SHA256/'
+        by_hash = '/apt/dists/sid/main/binary-arm64/by-hash/'
         binary = output / 'dists/sid/main/binary-arm64'
         self.assertEqual(self.requests, [path] * 3 + [
-            by_hash + publish.sha(binary / name) for name in ('Packages', 'Packages.gz')
+            by_hash + algorithm + '/' + publish.sha(binary / name, algorithm.lower())
+            for algorithm in ('SHA512', 'SHA256') for name in ('Packages', 'Packages.gz')
         ])
 
     @unittest.skipUnless(all(shutil.which(tool) for tool in
@@ -141,13 +142,25 @@ class PublicRepositoryTests(unittest.TestCase):
                          'APT packaging tools required')
     def test_apt_rejects_corruption_of_an_index_named_by_the_signature(self):
         output = self.generation('apt', '1')
-        digest = publish.sha(output / 'dists/sid/main/binary-arm64/Packages.gz')
-        key = '/apt/dists/sid/main/binary-arm64/by-hash/SHA256/' + digest
+        digest = publish.sha(output / 'dists/sid/main/binary-arm64/Packages.gz', 'sha512')
+        key = '/apt/dists/sid/main/binary-arm64/by-hash/SHA512/' + digest
         body = self.objects[key]
         self.objects[key] = bytes([body[0] ^ 1]) + body[1:]
 
-        with self.assertRaisesRegex(public.PublicIndexError, 'by-hash/SHA256/.*bytes do not match'):
+        with self.assertRaisesRegex(public.PublicIndexError, 'by-hash/SHA512/.*bytes do not match'):
             public.verify_public(self.url, 'apt', output)
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in
+                            ('dpkg-deb', 'dpkg-scanpackages', 'apt-ftparchive')),
+                         'APT packaging tools required')
+    def test_missing_sha512_is_not_hidden_by_live_mutable_index(self):
+        output = self.generation('apt', '1')
+        digest = publish.sha(output / 'dists/sid/main/binary-arm64/Packages.gz', 'sha512')
+        del self.objects['/apt/dists/sid/main/binary-arm64/by-hash/SHA512/' + digest]
+
+        with self.assertRaisesRegex(public.PublicIndexError, 'by-hash/SHA512/.*404'):
+            public.verify_public(self.url, 'apt', output)
+        self.assertNotIn('/apt/dists/sid/main/binary-arm64/Packages.gz', self.requests)
 
     @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'),
                          'pacman packaging tools required')
