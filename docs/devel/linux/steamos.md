@@ -275,9 +275,9 @@ KDE 会话明确选择 DRM 后端，避免合成器重启时继承旧显示变�
 软件后端，不改变游戏的 OpenGL/Vulkan 能力。之前桌面 OpenGL 路径在
 贴边预览创建内部 Qt 窗口时触发 QRhi 上下文失败，导致合成器退出。
 
-默认安装标准 `power-profiles-daemon`，供 KDE 显示电源方案。当前设备
-只探测到通用的平衡与省电接口，尚未提供高通专用性能策略，不宣称已经
-接通性能档位。
+KDE 的节能、平衡和性能三档使用[共用的 TuneD 电源策略](../hardware/power-profiles.md)，
+每档设置实际的 CPU、GPU 频率上限。Valve 的游戏界面通过 SteamOS Manager
+读取平台电源方案，和 KDE 的 PowerProfiles 接口不同。
 
 2026-10-21 实机记录：清理原设备服务后，Linux 7.3 的内核和系统服务启动
 约 18 秒，不含 UEFI；Steam 登录界面已显示。完整游戏模式、模式切换、

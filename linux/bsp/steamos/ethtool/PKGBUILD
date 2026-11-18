@@ -1,0 +1,34 @@
+# Arch Linux recipe rebuilt for Valve's ARM64 userspace.
+# Maintainer: Ionut Biru <ibiru@archlinux.org>
+# Contributor: Paul Mattal <paul@archlinux.org>
+# Contributor: Martin Kemp <mdkemp@elys.com>
+
+pkgname=ethtool
+epoch=1
+pkgver=7.2
+pkgrel=1
+pkgdesc='Utility for controlling network drivers and hardware'
+arch=('aarch64')
+url='https://www.kernel.org/pub/software/network/ethtool/'
+license=('GPL-2.0-or-later')
+depends=('glibc' 'libmnl')
+# The build environment pairs Clang with GNU ld without LLVMgold.
+options=('!lto' '!debug')
+source=("https://cdn.kernel.org/pub/software/network/ethtool/$pkgname-$pkgver.tar.xz")
+sha256sums=('44256ddf4631ed08d816b7b8725f4b2e0f05e96b8c7ca64ee5c81449da2b6507')
+
+build() {
+  cd "$pkgname-$pkgver"
+  ./configure --prefix=/usr --mandir=/usr/share/man --sbindir=/usr/bin
+  make
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  make check
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  make DESTDIR="$pkgdir" install
+}

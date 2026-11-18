@@ -137,10 +137,11 @@ def stage(args):
     published_packages = getattr(args, 'published_packages', None)
     device_configuration = getattr(args, 'device_configuration', None)
     topology = getattr(args, 'audio_topology_package', None)
-    if device_configuration is None and topology is None:
-        device_configuration, topology = overlay_packages.install_local_arch_bsp(root)
-    if device_configuration is None or topology is None:
-        raise ValueError('Both shared device packages must be installed')
+    power = getattr(args, 'power_profiles_package', None)
+    if device_configuration is None and topology is None and power is None:
+        device_configuration, topology, power = overlay_packages.install_local_arch_bsp(root)
+    if device_configuration is None or topology is None or power is None:
+        raise ValueError('Shared device packages must be installed together')
     userspace.stage(root, ROOT / cfg['debian']['source'],
                     desktop='kde' if steamos else 'gnome')
     # These are generated files in the build root; refresh them on --resume.
@@ -198,7 +199,7 @@ def stage(args):
         guest(['systemctl', 'mask', 'hibernate.target',
                'hybrid-sleep.target', 'suspend-then-hibernate.target'])
         guest(['systemctl', 'enable', 'sddm' if steamos else 'gdm', 'NetworkManager', 'sshd', 'bluetooth',
-               'piano-camerad', 'piano-hostkeys', 'adsprpcd-sensorspd'])
+               'piano-camerad', 'piano-hostkeys', 'adsprpcd-sensorspd', 'tuned-ppd.service'])
         guest(['systemctl', 'set-default', 'graphical.target'])
     if steamos:
         from stage_steamos_desktop import configure
@@ -239,8 +240,9 @@ def stage(args):
     overlay_packages.verify_pacman_versions(
         {**(published_packages or {}), 'device_configuration': device_configuration,
          'audio_topology_package': topology, 'camera_package': camera_record,
-         'sensor_package': sensor_record}, packages)
+         'sensor_package': sensor_record, 'power_profiles_package': power}, packages)
     overlay_packages.verify_bsp_files(root, 'pacman')
+    overlay_packages.verify_bsp_files(root, 'pacman', component='power-profiles')
     overlay_packages.verify_topology(root, 'pacman', topology)
     verify_display(root, 'pacman', firmware['display_package'])
     sensors.verify_arch_files(root)
@@ -259,6 +261,7 @@ def stage(args):
               'display_firmware_package': firmware['display_package'],
               'packages_sha256': release.digest(output / 'packages.tsv'),
               'camera_package': camera_record, 'audio_topology_package': topology,
+              'power_profiles_package': power,
               'sensor_package': sensor_record,
               'runtime_manifest_sha256': release.digest(args.runtime / 'manifest.json')}
     (output / 'manifest.json').write_text(json.dumps(record, indent=2) + '\n')

@@ -1,0 +1,37 @@
+# Arch Linux recipe rebuilt for Valve's ARM64 userspace.
+# Maintainer: Tobias Powalowski <tpowa@archlinux.org>
+# Contributor: Paul Mattal <paul@archlinux.org>
+
+pkgname=hdparm
+pkgver=9.65
+pkgrel=3
+pkgdesc='A shell utility for manipulating Linux IDE drive/driver parameters'
+arch=('aarch64')
+url='https://sourceforge.net/projects/hdparm/'
+license=('LicenseRef-BSD' 'GPL-3.0-or-later')
+depends=('glibc')
+options=('!lto' '!debug')
+source=("https://downloads.sourceforge.net/sourceforge/hdparm/$pkgname-$pkgver.tar.gz"
+        'pass-ldflags.patch')
+sha512sums=('4ffc8902b90cee10d68af8ddb9f3b9454d523ecd49cdaaed254b4d7a999462a8ad5ec1bb5d7684b09fefa41b5941ab533b167dad290003b51c795a633ca88913'
+            'b64f5012dc6af6e77856294549b95d777ef3fb210645c0b8fd8bc1c98bbd02f7fe3ab7b1e560d2d2ce743e6a4cf14871fe3775807403c81b43867d0c1a8b7182')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  patch -Np1 -i "$srcdir/pass-ldflags.patch"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  make
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -d "$pkgdir/usr/bin"
+  make DESTDIR="$pkgdir" sbindir=/usr/bin install
+  install -m755 contrib/{idectl,ultrabayd} "$pkgdir/usr/bin"
+  install -Dm644 wiper/README.txt "$pkgdir/usr/share/doc/wiper/README.txt"
+  install -Dm755 wiper/wiper.sh "$pkgdir/usr/bin/wiper.sh"
+  install -Dm644 LICENSE.TXT "$pkgdir/usr/share/licenses/$pkgname/LICENSE.TXT"
+}

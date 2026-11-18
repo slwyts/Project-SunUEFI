@@ -5,7 +5,7 @@ import copy
 import json
 import shutil
 
-from package_bsp import payload
+from package_bsp import payload, power_profiles_payload
 
 GNOME_PACKAGES = {
     'gdm3', 'gnome', 'task-gnome-desktop', 'gnome-control-center',
@@ -14,7 +14,6 @@ GNOME_PACKAGES = {
     'nautilus', 'evolution-data-server', 'ibus', 'ibus-libpinyin',
     'ibus-gtk', 'ibus-gtk3', 'ibus-gtk4',
     'task-chinese-s-gnome-desktop',
-    'power-profiles-daemon', 'tuned', 'tuned-ppd',
 }
 KDE_PACKAGES = [
     'task-kde-desktop', 'plasma-workspace', 'sddm', 'dolphin', 'konsole',
@@ -29,12 +28,6 @@ KDE_PACKAGES = [
 GNOME_PATHS = (
     'etc/gdm3', 'etc/dconf', 'usr/share/glib-2.0/schemas/90_piano.gschema.override',
     'usr/lib/systemd/user/piano-power-button.service', 'usr/lib/piano/power-button',
-    # KDE uses PowerDevil; remove TuneD packages and their GNOME-only overlay.
-    'usr/lib/tuned/profiles/piano-power-saver',
-    'usr/lib/tuned/profiles/piano-balanced',
-    'usr/lib/tuned/profiles/piano-performance',
-    'etc/tuned/piano-ppd.conf',
-    'usr/lib/systemd/system/tuned-ppd.service.d',
     'etc/systemd/user/graphical-session.target.wants/piano-power-button.service',
     'etc/systemd/logind.conf.d/piano.conf', 'etc/udev/rules.d/70-piano-power-button.rules',
 )
@@ -47,7 +40,7 @@ def gnome_path(name):
 def packaged_overlay_paths():
     """Paths owned by native packages rather than the public overlay."""
     _, rows = payload(['camera'])
-    return {row['path'] for row, _ in rows}
+    return {row['path'] for row, _ in (*rows, *power_profiles_payload())}
 
 
 def sid_recipe(text):

@@ -75,6 +75,8 @@ def publication_batches(root, *, kernel, overlays):
             groups[repository].update(packages(root / 'kernel' / package_format, format=package_format))
             for path, metadata in (bsp_package(root / 'bsp' / package_format, package_format),
                                    topology_package(root / 'bsp', package_format),
+                                   bsp_package(root / 'bsp/power-profiles' / package_format,
+                                               package_format, component='power-profiles'),
                                    camera.shared_package(package_format, root / 'camera' / package_format)):
                 if path.name in groups[repository]:
                     raise ValueError('Common package duplicated in ' + repository + ': ' + path.name)
@@ -135,6 +137,8 @@ def main():
         rows = {package_format: {
             'device_configuration': bsp_package(args.output / package_format, package_format)[1],
             'audio_topology': topology_package(args.output, package_format)[1],
+            'power_profiles': bsp_package(args.output / 'power-profiles' / package_format,
+                                         package_format, component='power-profiles')[1],
             'display_firmware': bsp_package(args.output / 'display-firmware' / package_format,
                                             package_format, component='display-firmware')[1],
         }

@@ -1,0 +1,32 @@
+# Arch Linux recipe rebuilt for Valve's Python ABI.
+# Maintainer: David Runge <dvzrv@archlinux.org>
+# Contributor: Joakim Hernberg <jhernberg@alchemy.lu>
+# Contributor: Ninez <triplesquarednine@gmail.com>
+
+pkgname=python-linux-procfs
+pkgver=0.7.4
+pkgrel=2
+pkgdesc='Linux /proc abstraction classes for Python'
+arch=('any')
+url='https://git.kernel.org/pub/scm/libs/python/python-linux-procfs/python-linux-procfs.git'
+license=('GPL-2.0-only')
+depends=('python')
+makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
+source=("$url/snapshot/$pkgname-$pkgver.tar.gz")
+sha512sums=('644c6db3cd14b85d0e000548f2904dc92a200995756fbe0dff2d56649235e17213a0109166534cd324a83279b0df9af7dd7fd3e68575fb076d5d9d98689a7b09')
+b2sums=('9b5c146950892b0ae8ed2803b4ccc9f4e9ac1b4bfe756a2b5171b97435fcc45d38566c643306e36eb4fad99a40a99d29f7523c95baae21ab779bb78dd60b525f')
+
+build() {
+  cd "$pkgname-$pkgver"
+  python -m build --wheel --no-isolation
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  python bitmasklist_test.py
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+}

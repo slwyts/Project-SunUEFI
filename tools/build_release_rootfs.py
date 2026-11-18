@@ -22,6 +22,7 @@ import stage_piano_full_userspace as userspace
 import stage_piano_kernel_modules as modules
 import stage_piano_ram_hardware as hardware
 from build import overlay_packages, overlay_release
+from package_bsp import POWER_PROFILES_PACKAGE
 from make_kernel_initramfs import make_newc, validate_static_arm64_elf
 from package import camera
 from prepare_release_kernel import release_series
@@ -222,9 +223,8 @@ def put(root, name, text):
 
 def default_system_record(rootfs, installed, config, desktop='gnome'):
     """Require the shipped desktop and BSP, including runtime-bundle resumes."""
-    if desktop == 'kde' and {'tuned', 'tuned-ppd'} & installed.keys():
-        raise ValueError('KDE must not retain TuneD without its GNOME profile configuration')
-    required = {'systemd-sysv', 'pipewire', 'network-manager'}
+    required = {'systemd-sysv', 'pipewire', 'network-manager', POWER_PROFILES_PACKAGE,
+                'tuned', 'tuned-ppd'}
     required.update({'gnome-shell', 'gdm3'} if desktop == 'gnome' else {'plasma-workspace', 'sddm', 'powerdevil'})
     required.update(config['debian']['extra_packages'])
     missing = sorted(required - installed.keys())
@@ -237,12 +237,7 @@ def default_system_record(rootfs, installed, config, desktop='gnome'):
         'usr/share/piano/pen/p81c-radio.json', 'usr/lib/piano/pen-control.py',
         'usr/bin/piano-pen-canvas',
     )
-    paths += (('etc/dconf/db/local.d/00-sunuefi', 'etc/dconf/db/local', 'etc/dconf/profile/user',
-               'usr/lib/tuned/profiles/piano-power-saver/tuned.conf',
-               'usr/lib/tuned/profiles/piano-balanced/tuned.conf',
-               'usr/lib/tuned/profiles/piano-performance/tuned.conf',
-               'etc/tuned/piano-ppd.conf',
-               'usr/lib/systemd/system/tuned-ppd.service.d/50-piano-ppd.conf')
+    paths += (('etc/dconf/db/local.d/00-sunuefi', 'etc/dconf/db/local', 'etc/dconf/profile/user')
               if desktop == 'gnome' else ('etc/sddm.conf.d/10-sunuefi.conf',))
     files = {}
     for name in paths:
@@ -754,7 +749,7 @@ def build_overlays(record, rootfs, run, directory=None):
     return sources
 
 
-def install_overlays(rootfs, run, config, desktop, packages, *, published=False):
+def install_overlays(rootfs, run, config, packages, *, published=False):
     from desktop.debian_package import prepare_build_indexes
 
     apt = ['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get']
@@ -788,9 +783,6 @@ def install_overlays(rootfs, run, config, desktop, packages, *, published=False)
                  *extra, 'fprintd', 'libpam-fprintd'])
         else:
             run([*apt, 'install', '-y', '--no-install-recommends', *extra, *paths])
-        if desktop == 'kde':
-            # A resumed generated KDE root may retain the old GNOME backend.
-            run([*apt, 'purge', '-y', 'tuned-ppd', 'tuned'])
         if 'chromium' in extra:
             run([*apt, 'purge', '-y', 'firefox-esr'])
 
@@ -858,7 +850,7 @@ def build_overlay_set(record, rootfs, kernel, run):
             contexts.enter_context(use_build_archive(inputs['archive']))
             directory = output / 'packages'
         sources = build_overlays(record, rootfs, run, directory)
-        install_overlays(rootfs, run, record['config'], desktop, overlay_packages.debian_packages(sources))
+        install_overlays(rootfs, run, record['config'], overlay_packages.debian_packages(sources))
         return export_overlays(record, rootfs, sources, kernel, directory=directory,
                                uapi=uapi, inputs=inputs)
 
@@ -919,13 +911,14 @@ def execute(record):
         if published:
             bsp_archive, bsp = overlay_packages.shared_bsp('debian')
             topology_archive, topology = overlay_packages.shared_topology('debian')
+            power_archive, power = overlay_packages.shared_bsp('debian', component='power-profiles')
             camera_archive, camera_record = camera.shared_package('debian')
             components, packages = overlay_packages.read_debian(Path(published), desktop)
             overlay_packages.check_topology_conflicts(rootfs, topology)
             install_kernel(rootfs, 'debian', kernel, published=True)
-            install_overlays(rootfs, run, cfg, desktop, {
+            install_overlays(rootfs, run, cfg, {
                 **packages, bsp_archive.name: bsp, topology_archive.name: topology,
-                camera_archive.name: camera_record,
+                camera_archive.name: camera_record, power_archive.name: power,
             }, published=True)
             archive = debian_archive(rootfs)
         else:
@@ -937,11 +930,14 @@ def execute(record):
                 bsp_archive, bsp = overlay_packages.build_bsp(Path(temporary) / 'package', 'debian', run)
                 topology_archive, topology = overlay_packages.build_bsp(
                     Path(temporary) / 'topology', 'debian', run, component='audio-topology')
+                power_archive, power = overlay_packages.build_bsp(
+                    Path(temporary) / 'power', 'debian', run, component='power-profiles')
                 overlay_packages.check_topology_conflicts(rootfs, topology)
-                install_overlays(rootfs, run, cfg, desktop, {
+                install_overlays(rootfs, run, cfg, {
                     **packages, bsp_archive.name: (bsp_archive, bsp),
                     topology_archive.name: (topology_archive, topology),
                     camera_archive.name: (camera_archive, camera_record),
+                    power_archive.name: (power_archive, power),
                 })
             components = {name: {'packages': {}} for name in overlay_packages.DEBIAN_GNOME}
             components.update({name: value for name, (_, value) in sources.items()})
@@ -978,6 +974,7 @@ def execute(record):
         firmware = stage_firmware(Path(record['firmware_source']), rootfs, 'debian',
                                   shared=bool(published), run=run)
         apply_policy(rootfs, out, cfg)
+        run(['chroot', rootfs, 'systemctl', 'enable', 'tuned-ppd.service'])
         boot_request = native_boot_request(rootfs, out)
         sanitize(rootfs, out)
         from package.v4l2loopback import verify_installed
@@ -992,6 +989,9 @@ def execute(record):
         if installed.get(topology['name']) != topology['version']:
             raise ValueError('Installed Piano audio topology package version differs')
         overlay_packages.verify_topology(rootfs, 'debian', topology)
+        if installed.get(power['name']) != power['version']:
+            raise ValueError('Installed Piano power profiles package version differs')
+        overlay_packages.verify_bsp_files(rootfs, 'debian', component='power-profiles')
         verify_display(rootfs, 'debian', firmware['display_package'])
         if installed.get(camera_record['name']) != camera_record['version']:
             raise ValueError('Installed Piano camera package version differs')
@@ -1018,7 +1018,7 @@ def execute(record):
                   'debian_archive': archive, 'debian_suite': cfg['debian']['suite'],
                   'debian_commit': cfg['debian']['commit'],
                   'device_configuration': bsp, 'camera_package': camera_record,
-                  'audio_topology_package': topology,
+                  'audio_topology_package': topology, 'power_profiles_package': power,
                   'display_firmware_package': firmware['display_package'],
                   **components,
                   'boot_request': boot_request, 'firmware_components': cfg['firmware']['components'],

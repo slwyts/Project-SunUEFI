@@ -298,15 +298,38 @@ class BspPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unowned-existing-file'):
             bsp.conflict_check(root, rows, bsp.DISPLAY_PACKAGE)
         self.assertEqual(bsp.conflict_check(root, rows, bsp.DISPLAY_PACKAGE,
-                                            adopt_display=True)['adopted'], [name])
+                                            adopt_identical=True)['adopted'], [name])
         compressed = path.with_name(path.name + '.zst')
         compressed.write_bytes(b'compressed alias')
         with self.assertRaisesRegex(ValueError, r'\.zst'):
-            bsp.conflict_check(root, rows, bsp.DISPLAY_PACKAGE, adopt_display=True)
+            bsp.conflict_check(root, rows, bsp.DISPLAY_PACKAGE, adopt_identical=True)
         compressed.unlink()
         path.write_bytes(b'not the fixed calibration')
         with self.assertRaisesRegex(ValueError, 'unowned-existing-file'):
-            bsp.conflict_check(root, rows, bsp.DISPLAY_PACKAGE, adopt_display=True)
+            bsp.conflict_check(root, rows, bsp.DISPLAY_PACKAGE, adopt_identical=True)
+
+    def test_power_profiles_adopt_only_identical_unowned_defaults(self):
+        root = self.base / 'guest'
+        row, data = bsp.power_profiles_payload()[0]
+        path = root / row['path']
+        path.parent.mkdir(parents=True)
+        path.write_bytes(data)
+        path.chmod(0o644)
+
+        def check():
+            return bsp.conflict_check(root, [(row, data)], bsp.POWER_PROFILES_PACKAGE,
+                                      adopt_identical=True)
+
+        self.assertEqual(check()['adopted'], [row['path']])
+        path.write_bytes(data + b'\n# Administrator default\n')
+        with self.assertRaisesRegex(ValueError, 'unowned-existing-file'):
+            check()
+        path.write_bytes(data)
+        info = root / 'var/lib/dpkg/info'
+        info.mkdir(parents=True)
+        (info / 'other.list').write_text('/' + row['path'] + '\n')
+        with self.assertRaisesRegex(ValueError, 'other'):
+            check()
 
     def test_local_firmware_rejects_tampering_and_publication_generation(self):
         for component, manifest in (('touch', bsp.TOUCH_MANIFEST),

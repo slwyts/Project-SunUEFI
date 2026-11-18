@@ -91,7 +91,7 @@ ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-
                 'QT_IM_MODULE=fcitx', 'XMODIFIERS=@im=fcitx',
             ])
 
-    def test_kde_selects_its_packages_and_removes_tuned_configuration(self):
+    def test_kde_selects_its_packages_without_copying_packaged_profiles(self):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
             public = self.public_recipe(folder)
@@ -104,11 +104,14 @@ ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-
 
             recipe = desktop.prepare(public, folder / 'derived', 'kde')
             selected = (recipe / 'rootfs/packages.txt').read_text().splitlines()
-            self.assertTrue({'tuned', 'tuned-ppd', 'gnome-shell'}.isdisjoint(selected))
+            self.assertNotIn('gnome-shell', selected)
+            self.assertTrue({'tuned', 'tuned-ppd'}.issubset(selected))
             self.assertIn('powerdevil', selected)
             self.assertIn('pipewire-audio', selected)
             self.assertIn('fcitx5-frontend-gtk4', selected)
             self.assertFalse((recipe / 'rootfs/overlay' / relative).exists())
+            gnome = desktop.prepare(public, folder / 'gnome-derived', 'gnome')
+            self.assertFalse((gnome / 'rootfs/overlay' / relative).exists())
             self.assertEqual((public / 'rootfs/packages.txt').read_text().splitlines(), packages)
             self.assertEqual(profile.read_text(), 'upstream configuration\n')
 

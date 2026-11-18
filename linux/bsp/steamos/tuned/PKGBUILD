@@ -1,0 +1,63 @@
+# Arch Linux split package rebuilt for Valve's Python ABI.
+# Maintainer: Sven-Hendrik Haase <svenstaro@archlinux.org>
+# Contributor: Manuel Hüsers <aur@huesers.de>
+# Contributor: Iwan Timmer <irtimmer@gmail.com>
+# Contributor: Timothée Ravier <tim@siosm.fr>
+# Contributor: Tom <teztho@archlinux.org>
+
+pkgbase=tuned
+pkgname=('tuned' 'tuned-ppd')
+pkgver=2.28.0
+pkgrel=1
+pkgdesc='Daemon that performs monitoring and adaptive configuration of devices in the system'
+arch=('any')
+url='https://github.com/redhat-performance/tuned'
+license=('GPL-2.0-or-later')
+depends=('ethtool' 'gawk' 'hdparm' 'polkit' 'perf' 'python-configobj'
+         'python-dbus' 'python-gobject' 'python-linux-procfs' 'python-pyudev')
+makedepends=('desktop-file-utils' 'python-pyinotify')
+source=("$url/archive/v$pkgver/$pkgbase-$pkgver.tar.gz")
+sha512sums=('3bdefbcc45afa651eecf5d59625babd83d5bed73594eb1db17e56edd0f1a25d60f346e7cb7bb8061a98833b228440e14730126b7f9b9ac5c97841d068574b27f')
+
+prepare() {
+  cd "$pkgbase-$pkgver"
+  sed -i 's|/sbin/|/bin/|g' tuned.service tuned-gui.py tuned-gui.desktop tuned/ppd/tuned-ppd.service
+}
+
+package_tuned() {
+  optdepends=(
+    'virt-what: Virtual machine detection'
+    'systemtap: Detailed system monitoring'
+    'tuned-ppd: PowerProfiles D-Bus interface'
+    'wireless_tools: Wireless device power management'
+    'x86_energy_perf_policy: Energy Performance Bias support')
+  backup=(
+    'etc/tuned/active_profile'
+    'etc/tuned/bootcmdline'
+    'etc/tuned/cpu-partitioning-powersave-variables.conf'
+    'etc/tuned/cpu-partitioning-variables.conf'
+    'etc/tuned/post_loaded_profile'
+    'etc/tuned/profile_mode'
+    'etc/tuned/realtime-variables.conf'
+    'etc/tuned/realtime-virtual-guest-variables.conf'
+    'etc/tuned/realtime-virtual-host-variables.conf'
+    'etc/tuned/tuned-main.conf')
+
+  cd "$pkgbase-$pkgver"
+  make DESTDIR="$pkgdir" SBINDIR=/usr/bin LIBEXECDIR=/usr/lib install
+  rm -r "$pkgdir"/{run,var}
+  python -m compileall -d /usr/lib "$pkgdir/usr/lib"
+  python -O -m compileall -d /usr/lib "$pkgdir/usr/lib"
+}
+
+package_tuned-ppd() {
+  pkgdesc='PowerProfiles D-Bus interface for TuneD'
+  depends=('tuned' 'python-pyinotify')
+  provides=('power-profiles-daemon')
+  conflicts=('power-profiles-daemon')
+  replaces=('power-profiles-daemon')
+  backup=('etc/tuned/ppd.conf')
+
+  cd "$pkgbase-$pkgver"
+  make DESTDIR="$pkgdir" SBINDIR=/usr/bin LIBEXECDIR=/usr/lib install-ppd
+}

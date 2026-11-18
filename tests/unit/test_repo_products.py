@@ -20,6 +20,8 @@ class RepoProductsTests(unittest.TestCase):
         self.camera_pacman = self.packages / 'camera/pacman/piano-camera-1.0-1-aarch64.pkg.tar.zst'
         self.topology_deb = self.packages / 'bsp/audio-topology/debian/piano-audio-topology_1_all.deb'
         self.topology_pacman = self.packages / 'bsp/audio-topology/pacman/piano-audio-topology-1-1-any.pkg.tar.zst'
+        self.power_deb = self.packages / 'bsp/power-profiles/debian/piano-power-profiles_1_all.deb'
+        self.power_pacman = self.packages / 'bsp/power-profiles/pacman/piano-power-profiles-1-1-any.pkg.tar.zst'
         self.sensor = self.packages / 'bsp/sensors/piano-sensors-5-1-any.pkg.tar.zst'
 
     def shared_camera(self):
@@ -71,7 +73,8 @@ class RepoProductsTests(unittest.TestCase):
 
         targets = ('debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos')
         with patch('products.bsp_package', side_effect=(
-                (device_deb, {'sha256': 'debian'}), (device_pacman, {'sha256': 'pacman'}))) as bsp, \
+                (device_deb, {'sha256': 'debian'}), (self.power_deb, {'sha256': 'debian-power'}),
+                (device_pacman, {'sha256': 'pacman'}), (self.power_pacman, {'sha256': 'pacman-power'}))) as bsp, \
                 self.shared_camera() as camera, self.shared_topology() as topology, \
                 patch('products.sensors.pacman_package',
                       return_value=(self.sensor, {'sha256': 'sensors'})) as sensors, \
@@ -79,7 +82,9 @@ class RepoProductsTests(unittest.TestCase):
             batches = publication_batches(self.packages, kernel=True, overlays=targets)
         self.assertEqual([call.args for call in bsp.call_args_list],
                          [(self.packages / 'bsp/debian', 'debian'),
-                          (self.packages / 'bsp/pacman', 'pacman')])
+                          (self.power_deb.parent, 'debian'),
+                          (self.packages / 'bsp/pacman', 'pacman'),
+                          (self.power_pacman.parent, 'pacman')])
         self.assertEqual([call.args for call in camera.call_args_list],
                          [('debian', self.camera_deb.parent),
                           ('pacman', self.camera_pacman.parent)])
@@ -91,10 +96,10 @@ class RepoProductsTests(unittest.TestCase):
         self.assertEqual(list(batches), ['apt', 'sunuefi-steamos', 'sunuefi'])
         self.assertEqual({name: [path.name for path in paths] for name, paths in batches.items()},
                          {'apt': [deb_kernel, deb_shared, self.topology_deb.name,
-                                  self.camera_deb.name, device_deb.name],
+                                  self.camera_deb.name, device_deb.name, self.power_deb.name],
                           'sunuefi': [proxy, kernel, graphics, self.topology_pacman.name,
                                       self.camera_pacman.name, device_pacman.name, firmware,
-                                      self.sensor.name],
+                                      self.power_pacman.name, self.sensor.name],
                           'sunuefi-steamos': [proxy, graphics]})
         arch = self.packages / 'overlays/nyarch-gnome' / graphics
         valve = self.packages / 'overlays/steamos' / graphics
@@ -111,7 +116,8 @@ class RepoProductsTests(unittest.TestCase):
         self.package_set('overlays/steamos', {**proxy, device_pacman.name: b'valve'},
                          repo='sunuefi-steamos')
         with patch('products.bsp_package', side_effect=(
-                (device_deb, {'sha256': 'debian'}), (device_pacman, {'sha256': 'pacman'}))), \
+                (device_deb, {'sha256': 'debian'}), (self.power_deb, {'sha256': 'debian-power'}),
+                (device_pacman, {'sha256': 'pacman'}), (self.power_pacman, {'sha256': 'pacman-power'}))), \
                 self.shared_camera(), self.shared_topology(), \
                 patch('products.sensors.pacman_package',
                       return_value=(self.sensor, {'sha256': 'sensors'})), \

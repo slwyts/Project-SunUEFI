@@ -321,8 +321,8 @@ done
             return overlay_packages.export(package_output, target, overlay_packages.ARCH_REPOSITORIES[target],
                                            overlay_packages.pacman_packages(root, packages), records,
                                            build_inputs=cache_inputs)
-        records['device_configuration'], records['audio_topology_package'] = (
-            overlay_packages.install_local_arch_bsp(root))
+        records['device_configuration'], records['audio_topology_package'], \
+            records['power_profiles_package'] = overlay_packages.install_local_arch_bsp(root)
     finish_product(args, root, output, kernel, kernel_source, base_record, records, published)
 
 
@@ -360,11 +360,14 @@ def build_overlays(root, output, source, steamos_config):
     else:
         build_arch_package.install_cached(root, ibus)
     outputs['ibus'] = overlay_packages.pacman_outputs(ibus)
-    power_profiles = output / 'packages/power-profiles-daemon'
-    if not build_arch_package.matches_release(power_profiles):
-        build_arch_package.build(
-            root, ROOT / 'linux/bsp/steamos/power-profiles-daemon', power_profiles)
-    outputs['power-profiles-daemon'] = overlay_packages.pacman_outputs(power_profiles)
+    for name in overlay_packages.STEAMOS_TUNED_RECIPES:
+        recipe = ROOT / 'linux/bsp/steamos' / name
+        packages = output / 'packages' / name
+        if not kde_package_is_current(packages, recipe):
+            build_arch_package.build(root, recipe, packages)
+        else:
+            build_arch_package.install_cached(root, packages)
+        outputs[name] = overlay_packages.pacman_outputs(packages)
     recipes = output / 'sensor-recipes'
     sensor_recipes(recipes, source)
     for name in ('fastrpc', 'libssc', 'iio-sensor-proxy'):
@@ -458,7 +461,8 @@ def finish_product(args, root, output, kernel, kernel_source, base_record, recor
         bootstrap_sysroot=args.bootstrap_sysroot, desktop='steamos',
         published_packages=published[1] if published else None,
         device_configuration=records['device_configuration'],
-        audio_topology_package=records['audio_topology_package']))
+        audio_topology_package=records['audio_topology_package'],
+        power_profiles_package=records['power_profiles_package']))
     manifest = output / 'manifest.json'
     record = json.loads(manifest.read_text())
     record.update(base_source=base_record, **records,

@@ -48,21 +48,24 @@ class ReleaseRootTests(unittest.TestCase):
         with patch.object(builder.modules, 'inspect', return_value=(self.m, 'b' * 64)), patch.object(builder, 'repository', return_value='a' * 40):
             return builder.plan(self.kernel, self.source, self.output, root=self.root, desktop=desktop)
 
-    def test_kde_excludes_tuned_packages_but_gnome_keeps_them(self):
+    def test_kde_selects_its_desktop_packages(self):
         config = copy.deepcopy(CONFIG)
-        config['debian']['extra_packages'].extend(['tuned', 'tuned-ppd'])
         (self.root / 'config/release.json').write_text(json.dumps(config))
         packages = self.planned('kde')['config']['debian']['extra_packages']
         self.assertIn('powerdevil', packages)
         self.assertIn('chromium', packages)
-        self.assertTrue({'tuned', 'tuned-ppd'}.isdisjoint(packages))
         self.assertFalse(any(p.startswith('ibus') or p.startswith('gnome') for p in packages))
-        self.assertTrue({'tuned', 'tuned-ppd'}.issubset(
-            self.planned()['config']['debian']['extra_packages']))
 
-    def test_kde_record_refuses_a_retained_tuned_backend(self):
-        with self.assertRaisesRegex(ValueError, 'KDE must not retain TuneD'):
-            builder.default_system_record(self.rootfs, {'tuned-ppd': 'fixture'}, CONFIG, 'kde')
+    def test_every_release_desktop_requires_native_power_profiles(self):
+        for desktop, packages in (('gnome', {'gnome-shell', 'gdm3'}),
+                                  ('kde', {'plasma-workspace', 'sddm', 'powerdevil'})):
+            with self.subTest(desktop=desktop):
+                config = self.planned(desktop)['config']
+                installed = dict.fromkeys(
+                    {*packages, 'systemd-sysv', 'pipewire', 'network-manager', 'tuned', 'tuned-ppd',
+                     *config['debian']['extra_packages']}, 'fixture')
+                with self.assertRaisesRegex(ValueError, 'packages are not installed: piano-power-profiles$'):
+                    builder.default_system_record(self.rootfs, installed, config, desktop)
 
     def policy_tree(self):
         for name in ('usr/lib/piano', 'etc/systemd/system', 'etc/ssh', 'home/piano/.ssh', 'root/.ssh', 'dev', 'proc', 'sys', 'run'):
@@ -115,7 +118,7 @@ class ReleaseRootTests(unittest.TestCase):
 
         with patch.object(builder, 'build_devices', return_value=nullcontext()), \
                 patch.object(builder, 'build_resolver', return_value=nullcontext()):
-            builder.install_overlays(self.rootfs, run, {'debian': {'extra_packages': []}}, 'gnome', {
+            builder.install_overlays(self.rootfs, run, {'debian': {'extra_packages': []}}, {
                 archive.name: (archive, {'sha256': builder.digest(archive)}),
             })
         self.assertEqual(len(commands), 1)

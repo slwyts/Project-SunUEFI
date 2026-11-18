@@ -94,8 +94,8 @@ def build(args):
             return overlay_packages.export(package_output, target, overlay_packages.ARCH_REPOSITORIES[target],
                                            overlay_packages.pacman_packages(root, packages), records,
                                            build_inputs=cache_inputs)
-        records['device_configuration'], records['audio_topology_package'] = (
-            overlay_packages.install_local_arch_bsp(root))
+        records['device_configuration'], records['audio_topology_package'], \
+            records['power_profiles_package'] = overlay_packages.install_local_arch_bsp(root)
 
     desktop = inputs / 'desktop'
     if not desktop.exists():
@@ -135,7 +135,8 @@ def build(args):
         desktop_source=desktop, extensions=extensions,
         published_packages=published[1] if published else None,
         device_configuration=records['device_configuration'],
-        audio_topology_package=records['audio_topology_package']))
+        audio_topology_package=records['audio_topology_package'],
+        power_profiles_package=records['power_profiles_package']))
     manifest = output / 'manifest.json'
     record = json.loads(manifest.read_text())
     record.update(base_archive_sha256=base_hash, nyarch_inputs=cfg, **records)

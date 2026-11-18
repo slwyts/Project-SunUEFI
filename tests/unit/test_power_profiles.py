@@ -1,9 +1,9 @@
-"""The GNOME power overlay must keep its three-mode tuned-ppd contract."""
+"""The device profiles map three desktop power modes to TuneD."""
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-OVERLAY = ROOT / 'linux/desktops/gnome/power-overlay'
+OVERLAY = ROOT / 'linux/bsp/power-profiles'
 
 PROFILES = ('piano-power-saver', 'piano-balanced', 'piano-performance')
 CPU = '/sys/devices/system/cpu/cpufreq/'

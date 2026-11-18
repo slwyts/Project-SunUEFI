@@ -83,7 +83,7 @@ def install_display(source, rootfs, package_format, *, shared, run):
         if overlay_packages.sha(staged) != metadata['sha256']:
             raise ValueError('Display calibration package changed during installation')
         guest_archive = '/' + staged.relative_to(rootfs).as_posix()
-        migration = package_bsp.conflict_check(rootfs, rows, name, adopt_display=True)
+        migration = package_bsp.conflict_check(rootfs, rows, name, adopt_identical=True)
         moved = []
         try:
             for index, relative in enumerate(migration['adopted']):

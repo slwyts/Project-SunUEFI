@@ -1,13 +1,15 @@
 # 电源模式（节能 / 平衡 / 性能）
 
-GNOME 的三档电源模式由 `tuned-ppd` 提供，映射到三个 TuneD profile，
-再由 TuneD 的 `sysfs` 插件写 CPU、GPU 上限。全程纯配置，没有自研守护进程。
+Debian GNOME、Debian KDE、Nyarch 和 SteamOS 的 KDE 桌面共用
+`piano-power-profiles`。GNOME 和 KDE 都通过标准 PowerProfiles D-Bus
+接口选档，由 `tuned-ppd` 映射到 TuneD 配置，再由 TuneD 的 `sysfs`
+插件设置 CPU、GPU 上限。
 
 ## 为什么不用 power-profiles-daemon
 
-Debian 的 `power-profiles-daemon` 在本机只暴露 **两档**。它在 ARM 上找不到
-ACPI platform profile，退化成 placeholder 驱动，而 placeholder 只注册
-`balanced` 和 `power-saver`：
+原版 `power-profiles-daemon` 在本机找不到 ACPI 电源模式接口，只能用
+`placeholder` 后端登记 `balanced` 和 `power-saver`。两档不会实际限制
+CPU、GPU；SteamOS 的 KDE 也不会把它们显示为可选档位：
 
 ```console
 $ busctl get-property org.freedesktop.UPower.PowerProfiles \
@@ -28,16 +30,18 @@ aa{sv} 3 "power-saver" "balanced" "performance"
 
 ## 档位与上限
 
-| GNOME 模式 | TuneD profile | policy0 上限 | policy6 上限 | CPU boost | GPU 上限 |
+| 电源模式 | TuneD profile | policy0 上限 | policy6 上限 | CPU boost | GPU 上限 |
 | --- | --- | ---: | ---: | ---: | ---: |
 | 节能 | `piano-power-saver` | 1785600 kHz | 1958400 kHz | 0 | 342 MHz |
 | 平衡（默认） | `piano-balanced` | 3532800 kHz | 4089600 kHz | 0 | 1100 MHz |
 | 性能 | `piano-performance` | 3532800 kHz | 4320000 kHz | 1 | 1100 MHz |
 
 下限由 TuneD profile 固定为 384000 / 1017600 kHz，governor 统一 `schedutil`。
-数值来自上游 piano 整合方案的 `device/power/tuned/profiles`（MIT），
-在本机三档全部实测通过。`policy6` 的 4320000 kHz 不在
-`scaling_available_frequencies` 里（该列表止于 4089600），但 SoC 接受写入。
+数值来自上游 piano 整合方案的 `device/power/tuned/profiles`（MIT）。
+`policy6` 的 4320000 kHz 不在 `scaling_available_frequencies` 里
+（该列表止于 4089600）；这是驱动接受的上限，不表示 CPU 一定运行在这个频率。
+内核可根据温度或负载选用更低的频率。CPU 的温控来自片上温度传感器和
+cpufreq 冷却设备，GPU 用 devfreq 冷却设备，档位不会修改内核温控阈值。
 
 ## 两个必须记住的约束
 
@@ -60,16 +64,24 @@ BindReadOnlyPaths=/etc/tuned/piano-ppd.conf:/etc/tuned/ppd.conf
 
 `systemctl show tuned-ppd -p BindReadOnlyPaths` 应输出
 `/etc/tuned/piano-ppd.conf:/etc/tuned/ppd.conf:rbind`，而
-`/etc/tuned/ppd.conf` 本身仍是包里的内容。删掉 drop-in 并重启即恢复原厂映射。
+`/etc/tuned/ppd.conf` 本身仍归发行版包管理。卸载 `piano-power-profiles`
+并重启服务后，TuneD 使用发行版的映射。
 
-## 文件位置
+## 安装与打包
 
-| 路径 | 作用 |
-| --- | --- |
-| `linux/desktops/gnome/power-overlay/usr/lib/tuned/profiles/piano-*/tuned.conf` | 三档上限 |
-| `.../etc/tuned/piano-ppd.conf` | GNOME 模式 → TuneD profile 映射 |
-| `.../usr/lib/systemd/system/tuned-ppd.service.d/50-piano-ppd.conf` | 把映射挂进服务 |
-| `config/release.json` 的 `debian.extra_packages` | 装 `tuned-ppd`（KDE 构建会剔除） |
+镜像预装配置包并启用 `tuned-ppd.service`。配置包发布在 SunUEFI 的
+APT 软件源和 `sunuefi` pacman 软件源；Debian sid 与 Arch Linux ARM
+提供 TuneD。Valve 的 ARM64 软件源没有 TuneD，SteamOS 使用
+`sunuefi-steamos` 中按 Valve 的依赖版本构建的包。
+
+配置源码位于 [`linux/bsp/power-profiles`](../../../linux/bsp/power-profiles)。
+用 `./build.sh bsp package --power-profiles --target debian --format deb --output DIRECTORY`
+构建 Debian 包；Arch 构建把目标和格式分别换成 `arch` 和 `pacman`。
+
+从旧镜像安装配置包时，已有手工放入的 TuneD 文件应先核对。APT 可接管
+内容一致的默认文件；pacman 遇到冲突时，先备份并移走报错的文件，再安装。
+装完后将自定义配置放进 TuneD 的 `/etc/tuned/profiles` 或自己的 systemd
+覆盖文件，不要覆盖 `/usr/lib` 下的包文件。
 
 ## 内核调度接口
 
@@ -86,8 +98,8 @@ BindReadOnlyPaths=/etc/tuned/piano-ppd.conf:/etc/tuned/ppd.conf
 
 ## 实机档位切换
 
-在 Debian 13 + GNOME 48.7 上，`busctl set-property ... ActiveProfile`
-依次切三档，每档等 3 秒读 sysfs：
+在 SteamOS 实机用 pacman 安装后，KDE PowerDevil 读到三档。通过 KDE 的
+接口逐档切换，读回的上限和 Debian GNOME 上通过 PowerProfiles 测得的一致：
 
 ```console
 power-saver -> tuned=piano-power-saver p0=1785600 p6=1958400 boost=0 gpu=342000000

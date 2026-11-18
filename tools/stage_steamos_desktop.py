@@ -205,10 +205,10 @@ def configure_cpu_and_recovery(root):
 
 def configure_platform(root):
     configure_cpu_and_recovery(root)
-    link = root / 'etc/systemd/system/graphical.target.wants/power-profiles-daemon.service'
-    link.parent.mkdir(parents=True, exist_ok=True)
-    link.unlink(missing_ok=True)
-    link.symlink_to('/usr/lib/systemd/system/power-profiles-daemon.service')
+    old_power_service = root / 'etc/systemd/system/graphical.target.wants/power-profiles-daemon.service'
+    if old_power_service.is_symlink() and old_power_service.readlink() == Path(
+            '/usr/lib/systemd/system/power-profiles-daemon.service'):
+        old_power_service.unlink()
     units = platform_units(root)
     for unit in units:
         link = root / 'etc/systemd/system' / unit

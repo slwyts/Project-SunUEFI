@@ -29,6 +29,8 @@ LOCAL_FIRMWARE = {
     DISPLAY_PACKAGE: ('display-firmware', DISPLAY_MANIFEST),
 }
 TOPOLOGY_PACKAGE = 'piano-audio-topology'
+POWER_PROFILES_PACKAGE = 'piano-power-profiles'
+POWER_PROFILES = BSP / 'power-profiles'
 TOPOLOGY_SOURCES = ('debian-piano-current', 'audioreach-topology')
 FIRMWARE_PACKAGES = (*LOCAL_FIRMWARE, TOPOLOGY_PACKAGE)
 FIRMWARE_ROOT = 'usr/lib/firmware/'
@@ -41,6 +43,8 @@ def package_description(package):
         return 'Xiaomi Pad 8 Pro display calibration firmware'
     if package == TOPOLOGY_PACKAGE:
         return 'Xiaomi Pad 8 Pro AudioReach topology'
+    if package == POWER_PROFILES_PACKAGE:
+        return 'Xiaomi Pad 8 Pro CPU and GPU power profiles'
     return 'Xiaomi Pad 8 Pro device configuration'
 
 
@@ -167,7 +171,7 @@ def owners(root):
     return result
 
 
-def conflict_check(root, rows, package=NAME, *, adopt_display=False):
+def conflict_check(root, rows, package=NAME, *, adopt_identical=False):
     root = root.resolve()
     require(root.is_dir(), 'Conflict-check root does not exist')
     ownership, conflicts, adopted = owners(root), [], []
@@ -187,7 +191,7 @@ def conflict_check(root, rows, package=NAME, *, adopt_display=False):
         for path, assigned in resolved.items():
             own_destination = path == destination and assigned == {package}
             existing = path.exists() or path.is_symlink()
-            if (adopt_display and package == DISPLAY_PACKAGE and path == destination and not assigned
+            if (adopt_identical and path == destination and not assigned
                     and not path.is_symlink() and path.is_file() and path.stat().st_size == len(data)
                     and (path.stat().st_mode & 0o7777) == int(row['mode'], 8)
                     and path.read_bytes() == data):
@@ -197,7 +201,7 @@ def conflict_check(root, rows, package=NAME, *, adopt_display=False):
                                   'owners': sorted(assigned) or ['unowned-existing-file']})
     require(not conflicts, 'Existing target files must not be overwritten: ' + json.dumps(conflicts))
     report = {'performed': True, 'root_was_modified': False, 'conflicts': []}
-    if adopt_display:
+    if adopt_identical:
         report['adopted'] = adopted
     return report
 
@@ -265,6 +269,8 @@ def inspect(args):
         return inspect_local_firmware(args, suite, DISPLAY_PACKAGE, args.display_firmware)
     if args.audio_topology:
         return inspect_audio_topology(args, suite)
+    if args.power_profiles:
+        return inspect_power_profiles(args, suite)
     source, rows = payload([])
     ledger = read_json(BSP / 'layers.json')
     layers = ledger['required_layers']
@@ -281,6 +287,41 @@ def inspect(args):
               'conflict_check': conflict_check(args.against, rows) if args.against else {'performed': False, 'required_before_install': True},
               'payload_files': {row['path']: {**{k: v for k, v in row.items() if k != 'group'}, 'bytes': len(data)} for row, data in rows}, 'files': {}}
     return report, rows
+
+
+def power_profiles_payload():
+    paths = ('etc/tuned/piano-ppd.conf',
+             'usr/lib/systemd/system/tuned-ppd.service.d/50-piano-ppd.conf',
+             *(f'usr/lib/tuned/profiles/piano-{mode}/tuned.conf'
+               for mode in ('power-saver', 'balanced', 'performance')))
+    rows = []
+    for path in paths:
+        source = POWER_PROFILES / path
+        require(source.is_file() and not source.is_symlink(),
+                'Missing regular power profile file: ' + path)
+        data = source.read_bytes()
+        rows.append(({'path': path, 'type': 'file', 'mode': '0644',
+                      'sha256': sha(data)}, data))
+    return rows
+
+
+def inspect_power_profiles(args, suite):
+    require(args.target in ('debian', 'arch'), 'Power profiles require Debian or Arch')
+    rows = power_profiles_payload()
+    package = POWER_PROFILES_PACKAGE
+    version = overlay_release.debian_version(args.version) if args.format == 'deb' else args.version
+    return {
+        'schema_version': 1, 'component': 'power-profiles', 'package': package,
+        'version': version, 'target': {'distro': args.target, 'suite': suite, 'arch': args.arch},
+        'package_architecture': 'any' if args.target == 'arch' else 'all',
+        'source': {'license': 'MIT', 'path': POWER_PROFILES.relative_to(ROOT).as_posix()},
+        'depends': ['tuned-ppd'], 'package_ready': False,
+        'conflict_check': (conflict_check(args.against, rows, package, adopt_identical=True)
+                           if args.against
+                           else {'performed': False, 'required_before_install': True}),
+        'payload_files': {row['path']: {**row, 'bytes': len(data)} for row, data in rows},
+        'files': {},
+    }, rows
 
 
 def stage(args):
@@ -313,6 +354,9 @@ def stage(args):
         else:
             copyright = topology_copyright(report['source'])
         (docs / 'copyright').write_text(copyright)
+    if report['package'] == POWER_PROFILES_PACKAGE:
+        docs.mkdir(parents=True)
+        shutil.copyfile(POWER_PROFILES / 'copyright', docs / 'copyright')
     provenance = docs / 'bsp-manifest.json'
     omitted = ({'files', 'conflict_check'} if report['package'] in (TOPOLOGY_PACKAGE, DISPLAY_PACKAGE)
                else {'files'})
@@ -323,7 +367,7 @@ def stage(args):
     return output, tree, report, rows
 
 
-def preinst(paths, package=NAME):
+def preinst(paths, package=NAME, *, adopt=None):
     guard = '#!/bin/sh\nset -eu\n'
     if package in FIRMWARE_PACKAGES:
         firmware = ' '.join(shlex.quote('/' + name) for name in paths if name.startswith(FIRMWARE_ROOT))
@@ -341,12 +385,29 @@ def preinst(paths, package=NAME):
                   '  done\n'
                   'done\n')
     quoted = ' '.join(shlex.quote('/' + name) for name in paths)
+    adoption = ''
+    if adopt:
+        cases = ''.join(
+            f'          {shlex.quote("/" + name)}) checksum={row["sha256"]} ;;\n'
+            for name, row in adopt.items())
+        adoption = (
+            '      "")\n'
+            '        checksum=\n'
+            '        case "$path" in\n' + cases +
+            '        esac\n'
+            '        if [ -n "$checksum" ] && [ ! -L "$path" ] && [ -f "$path" ] &&\n'
+            '           [ "$(stat -c %a -- "$path")" = 644 ] &&\n'
+            '           printf "%s  %s\\n" "$checksum" "$path" | sha256sum --quiet -c -; then\n'
+            '          continue\n'
+            '        fi\n'
+            '        printf "%s\\n" "BSP file conflict: $path" >&2; exit 1 ;;\n')
     return (guard +
-            '# Refuse cross-package ownership and unowned existing files; no force-overwrite.\n'
+            '# Refuse other packages and modified files from a generated image.\n'
             f'for path in {quoted}; do\n'
             '  if [ -e "$path" ] || [ -L "$path" ]; then\n'
             '    owned=$(dpkg-query --search "$path" 2>/dev/null || true)\n'
-            f'    case "$owned" in "{package}: $path"|"{package}:all: $path") ;;\n'
+            f'    case "$owned" in "{package}: $path"|"{package}:all: $path") ;;\n' +
+            adoption +
             '      *) printf "%s\\n" "BSP file conflict: $path ($owned)" >&2; exit 1 ;;\n'
             '    esac\n'
             '  fi\ndone\n')
@@ -358,10 +419,11 @@ def debian_package(output, tree, report, configuration):
         TOUCH_PACKAGE: ('non-free-firmware/kernel', ' Built from locally supplied stock ROM files.\n'),
         DISPLAY_PACKAGE: ('non-free-firmware/kernel', ' Installs locally supplied panel calibration data.\n'),
         TOPOLOGY_PACKAGE: ('kernel', ' Provides the topology loaded by the Qualcomm ASoC driver.\n'),
+        POWER_PROFILES_PACKAGE: ('admin', ' Connects the three desktop power modes to TuneD.\n'),
     }.get(package, ('misc', ' Native runtime, Mesa, firmware and modules are distributed separately.\n'))
     depends = 'Depends: ' + ', '.join(report['depends']) + '\n' if report['depends'] else ''
     installed_size = ''
-    if package in FIRMWARE_PACKAGES:
+    if package in FIRMWARE_PACKAGES or package == POWER_PROFILES_PACKAGE:
         # The firmware payload contains only directories and regular files.
         # Match dpkg-gencontrol: 1 KiB per directory, round up each file.
         kib = 1 + sum(1 if path.is_dir() else (path.stat().st_size + 1023) // 1024
@@ -378,9 +440,10 @@ def debian_package(output, tree, report, configuration):
         (control / 'conffiles').write_text(''.join('/' + name + '\n' for name in configuration))
     docs = 'usr/share/doc/' + package + '/'
     paths = [*report['payload_files'], docs + 'bsp-manifest.json']
-    if package in FIRMWARE_PACKAGES:
+    if package in FIRMWARE_PACKAGES or package == POWER_PROFILES_PACKAGE:
         paths.append(docs + 'copyright')
-    (control / 'preinst').write_text(preinst(paths, package))
+    adopt = report['payload_files'] if package == POWER_PROFILES_PACKAGE else None
+    (control / 'preinst').write_text(preinst(paths, package, adopt=adopt))
     (control / 'preinst').chmod(0o755)
     subprocess.run(['/bin/sh', '-n', control / 'preinst'], check=True)
     artifact = output / f"{package}_{report['version']}_all.deb"
@@ -400,6 +463,7 @@ def pacman_sources(directory, tree, report, configuration):
     backup = ' '.join(map(shlex.quote, configuration))
     license_ids = {name: 'LicenseRef-Proprietary' for name in LOCAL_FIRMWARE}
     license_ids[TOPOLOGY_PACKAGE] = 'BSD-3-Clause'
+    license_ids[POWER_PROFILES_PACKAGE] = 'MIT'
     (directory / 'PKGBUILD').write_text(
         f"pkgname={package}\npkgver={report['version']}\npkgrel={overlay_release.pacman_release('1')}\n"
         f'pkgdesc={shlex.quote(package_description(package))}\n'
@@ -506,6 +570,8 @@ def parser():
                            help='Package the two local display calibration files')
     component.add_argument('--audio-topology', action='store_true',
                            help='Build the AudioReach topology package from the fixed sources')
+    component.add_argument('--power-profiles', action='store_true',
+                           help='Package the board-specific TuneD profiles and desktop mapping')
     ap.add_argument('--output', type=Path)
     ap.add_argument('--version', default='0.1.0')
     return ap

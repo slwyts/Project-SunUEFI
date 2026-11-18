@@ -114,7 +114,6 @@
       "python3-gi",
       "gir1.2-gtk-3.0",
       "pkexec",
-      "tuned-ppd",
       "chromium",
       "chromium-sandbox",
       "chromium-l10n",
