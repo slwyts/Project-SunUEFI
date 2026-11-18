@@ -108,13 +108,13 @@ jobs:
             build/kernel-sources
           key: ${{ matrix.kind == 'firmware' && steps.keys.outputs.firmware_key || steps.keys.outputs.kernel_key }}
       - name: Restore reusable firmware workspace objects
-        if: matrix.kind == 'firmware'
+        if: matrix.kind == 'firmware' && steps.completed.outputs.cache-hit != 'true'
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             build/firmware-workspace
             build/android-product-module
-          key: firmware-objects-arm64-${{ inputs.image_id }}-${{ github.sha }}
+          key: firmware-objects-arm64-${{ inputs.image_id }}-${{ steps.keys.outputs.firmware_key }}
           restore-keys: |
             firmware-objects-arm64-${{ inputs.image_id }}-
       - id: llvm
@@ -123,12 +123,14 @@ jobs:
         with:
           path: build/toolchains/*.tar.zst
           key: llvm-arm64-${{ hashFiles('config/kernel-llvm.json', 'tools/desktop/prepare_kernel_llvm.py') }}
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - name: Restore ccache only when building the kernel
+        if: matrix.kind == 'kernel' && steps.completed.outputs.cache-hit != 'true'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/ccache
-          key: ccache-arm64-shared-${{ matrix.kind }}-${{ github.sha }}
+          key: ccache-arm64-shared-kernel-${{ steps.keys.outputs.kernel_key }}
           restore-keys: |
-            ccache-arm64-shared-${{ matrix.kind }}-
+            ccache-arm64-shared-kernel-
       - name: Build each common product once, or validate its cache
         env:
           SHARED_KIND: ${{ matrix.kind }}
