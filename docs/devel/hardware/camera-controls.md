@@ -217,8 +217,10 @@ busy 引用的帧不能被覆盖；内核缓冲在复制完成后立即归还。
 缓冲时仍推进相机时钟，允许处理循环归还帧，不修改传感器时间戳。
 修复见[共享 PipeWire 补丁](../../../patches/pipewire/1.6.9/0007-v4l2-copy-buffer-pool.patch)。
 
-`./build.sh pipewire` 只生成 GStreamer 插件和 `pipewire-v4l2-source` 两个包，
-保留发行版原有的 server、音频与蓝牙库。采集包安装独立 SPA 库和标准
+Debian 构建把修复装入原有的 `libspa-0.2-modules`。`./build.sh pipewire`
+按同一 Debian 源码版本一起生成服务端、库和插件。Nyarch 和 SteamOS 使用目标
+发行版原有的服务端、音频与蓝牙库，并重建 GStreamer 插件和
+`pipewire-v4l2-source`。独立采集包安装 SPA 库和标准
 `context.spa-libs` 配置；它使用独立 source factory 名称，因为 PipeWire
 按首个匹配规则选择库，已有的 `api.v4l2.*` 规则不会被后加载的同名规则替换。
 WirePlumber 从该库枚举设备后将独立 factory 交给 PipeWire，两个进程因此使用

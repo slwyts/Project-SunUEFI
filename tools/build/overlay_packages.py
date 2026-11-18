@@ -242,6 +242,10 @@ def read_debian(path, desktop):
         metadata = manifest['components'].get(component)
         if not metadata or not metadata.get('packages'):
             raise ValueError('Missing Debian overlay component: ' + component)
+        if component == 'pipewire':
+            from desktop.build_pipewire_packages import verify_debian_packages
+
+            verify_debian_packages(metadata)
         components[component] = metadata
         for name, info in metadata['packages'].items():
             filename = info['file']

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build GStreamer and V4L2 capture plugins for the installed PipeWire ABI."""
+"""Build the Debian PipeWire package set or plugins for the installed pacman ABI."""
 import argparse
 import hashlib
 import json
@@ -16,26 +16,51 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 import build_arch_package
-import build_gsd_packages as debian
-import build_mutter_packages
-from build_chroot import guest_command
 from build_piano_runtime_helpers import source_patches
 from build import overlay_release
 from prepare_steamos_rootfs import download
-from desktop import debian_package, package_build
+from desktop import debian_package as debian, package_build
 
 GST_VIDEO_MIN_VERSION = '1.22.0'
 MODULES = ('glib-2.0', 'gobject-2.0', 'gmodule-2.0', 'gio-2.0', 'gio-unix-2.0',
            'gstreamer-1.0', 'gstreamer-base-1.0',
            'gstreamer-audio-1.0', 'gstreamer-allocators-1.0')
+DEBIAN_REVISION = 3
+DEBIAN_V4L2_TRANSITION = 'pipewire-v4l2-source'
+DEBIAN_DEFAULT = frozenset((
+    'gstreamer1.0-pipewire', 'libpipewire-0.3-0t64', 'libpipewire-0.3-common',
+    'libpipewire-0.3-modules', 'libspa-0.2-bluetooth', 'libspa-0.2-modules',
+    'pipewire', 'pipewire-alsa', 'pipewire-audio', 'pipewire-bin', 'pipewire-pulse',
+))
+# Existing optional packages still need the same version during an APT upgrade.
+DEBIAN_PACKAGES = {
+    **dict.fromkeys((
+        'gstreamer1.0-pipewire', 'libpipewire-0.3-0t64', 'libpipewire-0.3-dev',
+        'libpipewire-0.3-modules', 'libpipewire-0.3-modules-x11',
+        'libspa-0.2-bluetooth', 'libspa-0.2-dev', 'libspa-0.2-jack',
+        'libspa-0.2-libcamera', 'libspa-0.2-modules', 'pipewire', 'pipewire-alsa',
+        'pipewire-bin', 'pipewire-jack', 'pipewire-pulse', 'pipewire-tests', 'pipewire-v4l2',
+    ), 'arm64'),
+    **dict.fromkeys((
+        'libpipewire-0.3-common', 'pipewire-audio', 'pipewire-audio-client-libraries',
+        'pipewire-doc', 'pipewire-libcamera', 'pipewire-system-services', DEBIAN_V4L2_TRANSITION,
+    ), 'all'),
+}
 
 
-def policy(version):
+def patch_series(version):
     upstream = version.split(':')[-1].split('-', 1)[0]
     series = ROOT / 'patches/pipewire' / upstream / 'series.json'
     if not series.is_file():
-        raise ValueError('Port the GStreamer fixes to the installed PipeWire version: ' + version)
+        raise ValueError('Check the patches against the selected PipeWire version: ' + version)
+    return series
+
+
+def arch_policy(version):
+    series = patch_series(version)
     data = json.loads(series.read_text())
+    if {'steamos', 'nyarch-gnome'}.isdisjoint(data['targets']):
+        raise ValueError('Select the PipeWire patch series for pacman')
     patches = source_patches(series)
     return data, [{'path': p.relative_to(ROOT).as_posix(), 'sha256': debian.sha(p)} for p in patches]
 
@@ -46,27 +71,24 @@ def pacman_release(version):
     return f'{major}.{int(minor or 0) + 2}'
 
 
-def package_version(version, package_format, data):
-    if package_format == 'deb':
-        return overlay_release.debian_version(version + '+sunuefi2')
+def package_version(version, data):
     epoch = version.split(':', 1)[0] if ':' in version else '0'
     return ((epoch + ':' if epoch != '0' else '') + data['version'] + '-' +
             overlay_release.pacman_release(pacman_release(version)))
 
 
-def reusable(output, version, package_format):
+def reusable_arch(output, version):
     try:
         record = json.loads((output / 'SOURCE.json').read_text())
-        data, patches = policy(version)
+        data, patches = arch_policy(version)
         if (record['upstream_package_version'] != version or record['patches'] != patches or
                 record['archive_sha256'] != data['source']['sha256'] or
                 record.get('producer_sha256') != debian.sha(__file__) or
-                record['package_format'] != package_format or not record['packages_built']):
+                record['package_format'] != 'pacman' or not record['packages_built']):
             return None
-        expected = 'gstreamer1.0-pipewire' if package_format == 'deb' else 'gst-plugin-pipewire'
-        if set(record['packages']) != {expected, 'pipewire-v4l2-source'}:
+        if set(record['packages']) != {'gst-plugin-pipewire', 'pipewire-v4l2-source'}:
             return None
-        expected_version = package_version(version, package_format, data)
+        expected_version = package_version(version, data)
         for row in record['packages'].values():
             if (Path(row['file']).name != row['file'] or row['version'] != expected_version
                     or debian.sha(output / 'runtime' / row['file']) != row['sha256']):
@@ -77,7 +99,7 @@ def reusable(output, version, package_format):
 
 
 def prepare(output, version):
-    data, patches = policy(version)
+    data, patches = arch_policy(version)
     identity = hashlib.sha256(json.dumps(
         [data, patches, debian.sha(__file__)], sort_keys=True).encode()).hexdigest()[:12]
     work = output / ('source-' + identity)
@@ -166,117 +188,56 @@ def prepare_meson(source, version):
         "option('tests', type: 'feature', value: 'enabled')\n")
 
 
-def debian_version(root):
-    versions = debian.capture(['chroot', root, 'dpkg-query', '-W', '-f=${Version}\n',
-                              'pipewire', 'libpipewire-0.3-0t64']).splitlines()
-    if len(versions) != 2 or len(set(versions)) != 1:
-        raise ValueError('PipeWire server and library package versions must match')
-    return versions[0]
+def debian_series(version):
+    series = patch_series(version)
+    data = json.loads(series.read_text())
+    if not {'debian-gnome', 'debian-kde'} <= set(data['targets']):
+        raise ValueError('Select the PipeWire patch series for Debian')
+    return series, data, [path.resolve() for path in source_patches(series)]
+
+
+def debian_inputs(root, output):
+    # The server package has systemd units; the shared library carries the ABI.
+    target = debian.target_identity(root, debian.PIPEWIRE_ABI_PACKAGE, package_output=output)
+    series, data, patches = debian_series(target['binary']['source_version'])
+    archive = next(row for name, row in target['source_checksums'].items() if '.orig.tar.' in name)
+    if archive['sha256'] != data['source']['sha256']:
+        raise ValueError('PipeWire patches are not based on the signed Debian source')
+    return target, series, patches
+
+
+def reusable_debian(output, root):
+    target, series, patches = debian_inputs(root, output)
+    proof = [{'path': path.relative_to(ROOT).as_posix(), 'sha256': debian.sha(path)} for path in patches]
+    inputs = debian.input_records([Path(__file__), series, Path(debian.__file__),
+                                   Path(package_build.__file__)])
+    return debian.reusable(output, target, proof, DEBIAN_PACKAGES, inputs, DEBIAN_REVISION)
+
+
+def verify_debian_packages(record):
+    version = record.get('package_version')
+    packages = record['packages']
+    if (not version or set(packages) != set(DEBIAN_PACKAGES) or
+            any(row.get('version') != version or row.get('architecture') != DEBIAN_PACKAGES[name]
+                for name, row in packages.items())):
+        raise ValueError('The Debian PipeWire set must contain all native packages at the same version')
+
+
+def test_debian_build(guest, source):
+    # Keep the focused GStreamer tests from the previous plugin build.
+    guest(['sh', '-ec', 'cd "$1"; build="obj-$(dpkg-architecture -qDEB_HOST_GNU_TYPE)"; '
+           'GST_PLUGIN_SYSTEM_PATH_1_0= GST_PLUGIN_PATH_1_0= GST_REGISTRY_FORK=no '
+           'GST_REGISTRY_1_0="$PWD/$build/test-registry.bin" '
+           'meson test -C "$build" --num-processes 1 --no-rebuild --print-errorlogs '
+           '--suite gstreamer', 'test', source])
 
 
 def build_debian(root, output, jobs):
-    version = debian_version(root)
-    cached = reusable(output, version, 'deb')
-    if cached:
-        return cached
-    work, data, patches = prepare(output, version)
-    builder = output / 'builder/rootfs'
-    if not builder.is_dir():
-        builder.parent.mkdir(exist_ok=True)
-        debian.run(['cp', '-a', '--reflink=auto', root, builder])
-    if debian_version(builder) != version:
-        raise ValueError('The isolated PipeWire builder no longer matches the target ABI')
-    guest_work = builder / 'build' / ('pipewire-gstreamer-' + work.name)
-    if guest_work.exists():
-        prepared = json.loads((work / 'prepared.json').read_text())
-        if any(debian.sha(guest_work / 'source' / name) != checksum
-               for name, checksum in prepared.items()):
-            raise ValueError('Existing PipeWire builder has different sources')
-    else:
-        guest_work.mkdir(parents=True)
-        shutil.copytree(work / 'source', guest_work / 'source')
-    (builder / 'proc').mkdir(exist_ok=True)
-    with debian.devices(builder), (output / 'build.log').open('a') as log:
-        def guest(args, **kwargs):
-            return subprocess.run(list(map(str, guest_command(builder, [
-                'env', 'DEBIAN_FRONTEND=noninteractive', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', *args]))),
-                check=True, stdout=log, stderr=subprocess.STDOUT, **kwargs)
-
-        dns = builder / 'etc/resolv.conf'
-        if dns.is_symlink():
-            dns.unlink()
-        dns.write_bytes(Path('/etc/resolv.conf').read_bytes())
-        debian_package.prepare_build_indexes(builder, guest)
-        build_mutter_packages.align_development_cohorts(builder, log)
-        guest(['apt-get', 'install', '-y', '--no-remove', '--no-install-recommends',
-               'build-essential', 'meson', 'ninja-build', 'dpkg-dev',
-               'libpipewire-0.3-dev=' + version, 'libspa-0.2-dev=' + version,
-               'libgstreamer1.0-dev', 'libgstreamer-plugins-base1.0-dev', 'libudev-dev', 'libsystemd-dev'])
-        directory = debian.inside(builder, guest_work)
-        with package_build.environment(builder) as settings:
-            guest(['env', *package_build.arguments(settings),
-                   'sh', '-ec', 'cd "$1"; test -d build || meson setup build source --prefix=/usr '
-                   '--libdir=lib/aarch64-linux-gnu --buildtype=release; '
-                    f'meson compile -C build -j{jobs}; '
-                    'GST_PLUGIN_SYSTEM_PATH_1_0= GST_PLUGIN_PATH_1_0= GST_REGISTRY_FORK=no '
-                    'GST_REGISTRY_1_0="$PWD/build/test-registry.bin" '
-                    'meson test -C build --num-processes 1 --no-rebuild --print-errorlogs; '
-                   'DESTDIR="$PWD/package" meson install -C build --no-rebuild', 'build', directory])
-        package = guest_work / 'package'
-        control = package / 'DEBIAN'
-        control.mkdir(exist_ok=True)
-        binary = package / 'usr/lib/aarch64-linux-gnu/gstreamer-1.0/libgstpipewire.so'
-        elf = binary.read_bytes()
-        if elf[:6] != b'\x7fELF\x02\x01' or elf[18:20] != b'\xb7\x00':
-            raise ValueError('GStreamer plugin must be an ARM64 ELF')
-        deps = debian.capture(['chroot', builder, 'sh', '-ec', 'cd "$1/source"; '
-                              'mkdir -p debian; touch debian/control; '
-                              'dpkg-shlibdeps -O ../package/usr/lib/aarch64-linux-gnu/gstreamer-1.0/libgstpipewire.so',
-                              'dependencies', directory])
-        dependencies = deps.split('shlibs:Depends=', 1)[1].strip()
-        built_version = package_version(version, 'deb', data)
-        filename_version = built_version.split(':', 1)[-1]
-        (control / 'control').write_text(
-            'Package: gstreamer1.0-pipewire\nVersion: ' + built_version + '\nArchitecture: arm64\n'
-            'Multi-Arch: same\nSection: libs\nPriority: optional\n'
-            'Maintainer: Project SunUEFI <sunuefi@users.noreply.github.com>\n'
-            'Depends: pipewire (= ' + version + '), ' + dependencies + '\n'
-            'Description: GStreamer plugin for PipeWire with format and buffer fixes\n'
-            ' Keeps preferred camera formats and safely copies borrowed MemPtr buffers.\n')
-        runtime = output / 'runtime'
-        runtime.mkdir(exist_ok=True)
-        path = runtime / ('gstreamer1.0-pipewire_' + filename_version + '_arm64.deb')
-        packages = {'gstreamer1.0-pipewire': {'file': path.name, 'version': built_version,
-                     'architecture': 'arm64'}}
-        capture = guest_work / 'capture-package'
-        module_relative = 'usr/lib/aarch64-linux-gnu/spa-0.2/v4l2/libspa-v4l2-source.so'
-        for relative in (module_relative, 'usr/share/pipewire/pipewire.conf.d/90-v4l2-source.conf',
-                         'usr/share/wireplumber/wireplumber.conf.d/90-v4l2-source.conf'):
-            destination = capture / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(package / relative, destination)
-        # The first package contains only GStreamer files; the companion owns
-        # its separate SPA module and standard module-selection configuration.
-        debian.run(['dpkg-deb', '--build', '--root-owner-group', package, path], stdout=log)
-        packages['gstreamer1.0-pipewire']['sha256'] = debian.sha(path)
-        deps = debian.capture(['chroot', builder, 'sh', '-ec', 'cd "$1/source"; '
-                              'dpkg-shlibdeps -O ../capture-package/' + module_relative,
-                              'dependencies', directory])
-        dependencies = deps.split('shlibs:Depends=', 1)[1].strip()
-        (capture / 'DEBIAN').mkdir(exist_ok=True)
-        (capture / 'DEBIAN/control').write_text(
-            'Package: pipewire-v4l2-source\nVersion: ' + built_version + '\nArchitecture: arm64\n'
-            'Section: libs\nPriority: optional\n'
-            'Maintainer: Project SunUEFI <sunuefi@users.noreply.github.com>\n'
-            'Depends: pipewire (= ' + version + '), libspa-0.2-modules (= ' + version + '), ' + dependencies + '\n'
-            'Description: PipeWire V4L2 capture with independent copied buffers\n'
-            ' Keeps queued and retained camera frames intact during recording transitions.\n')
-        path = runtime / ('pipewire-v4l2-source_' + filename_version + '_arm64.deb')
-        debian.run(['dpkg-deb', '--build', '--root-owner-group', capture, path], stdout=log)
-        packages['pipewire-v4l2-source'] = {'file': path.name, 'version': built_version,
-                                         'architecture': 'arm64', 'sha256': debian.sha(path)}
-        debian_package.verify_build_archive(builder)
-    return seal(output, version, data, patches, 'deb', packages)
+    _, series, patches = debian_inputs(root, output)
+    return debian.build(output, root, jobs, 'pipewire', patches, DEBIAN_PACKAGES,
+                        [Path(__file__), series], revision=DEBIAN_REVISION,
+                        binary_package=debian.PIPEWIRE_ABI_PACKAGE,
+                        test_build=test_debian_build)
 
 
 def build_arch(root, output, jobs):
@@ -286,7 +247,7 @@ def build_arch(root, output, jobs):
     if len(versions) != 3 or len(set(versions)) != 1:
         raise ValueError('PipeWire server, audio and library package versions must match')
     version = versions[0]
-    cached = reusable(output, version, 'pacman')
+    cached = reusable_arch(output, version)
     if cached:
         build_arch_package.install_cached(root, output / 'runtime')
         installed = debian.capture(['chroot', root, 'pacman', '-Q', 'gst-plugin-pipewire']).split()[1]
@@ -326,7 +287,7 @@ def build_arch(root, output, jobs):
                         '--recipe', recipe, '--output', runtime],
                        check=True, stdout=log, stderr=subprocess.STDOUT)
     manifest = json.loads((runtime / 'manifest.json').read_text())
-    expected_version = package_version(version, 'pacman', data)
+    expected_version = package_version(version, data)
     packages = {}
     for name, row in manifest['packages'].items():
         info = debian.capture(['bsdtar', '-xOf', runtime / name, '.PKGINFO'])
@@ -342,14 +303,14 @@ def build_arch(root, output, jobs):
                                   'version': expected_version, 'architecture': 'aarch64'}
     if set(packages) != {'gst-plugin-pipewire', 'pipewire-v4l2-source'}:
         raise ValueError('The PipeWire build must contain both camera plugins')
-    return seal(output, version, data, patches, 'pacman', packages)
+    return seal(output, version, data, patches, packages)
 
 
-def seal(output, version, data, patches, package_format, packages):
+def seal(output, version, data, patches, packages):
     record = {'packages_built': True, 'upstream_package_version': version,
               'producer_sha256': debian.sha(__file__),
               'archive_sha256': data['source']['sha256'], 'patches': patches,
-              'package_format': package_format, 'packages': packages,
+              'package_format': 'pacman', 'packages': packages,
               'scope': 'GStreamer and V4L2 capture plugins; server, audio and Bluetooth libraries unchanged'}
     (output / 'SOURCE.json').write_text(json.dumps(record, indent=2) + '\n')
     return record

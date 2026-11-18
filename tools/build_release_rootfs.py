@@ -361,8 +361,6 @@ def prepare_package_build_root(output, desktop, run):
             return run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', *args])
 
         prepare_build_indexes(rootfs, guest)
-        # The GStreamer plugin builder reads the installed PipeWire ABI.
-        guest(['apt-get', 'install', '-y', '--no-install-recommends', 'pipewire'])
     (output / 'build-manifest.txt').write_text(package_build_manifest(desktop) + '\n')
     (output / 'COMPLETE').touch()
 
@@ -777,9 +775,9 @@ def build_overlays(record, rootfs, run, directory=None):
     from desktop import build_pipewire_packages as pipewire_builder
     pipewire = directory / 'pipewire'
     run([ROOT / 'build.sh', 'pipewire', '--rootfs', rootfs, '--output', pipewire])
-    pipewire_record = pipewire_builder.reusable(pipewire, pipewire_builder.debian_version(rootfs), 'deb')
+    pipewire_record = pipewire_builder.reusable_debian(pipewire, rootfs)
     if pipewire_record is None:
-        raise ValueError('PipeWire GStreamer plugin does not match the target ABI')
+        raise ValueError('PipeWire packages do not match the signed Debian source')
     sources['pipewire'] = pipewire / 'runtime', pipewire_record
     from desktop import build_libwacom_packages as libwacom_builder
     libwacom = directory / 'libwacom'
@@ -809,6 +807,26 @@ def build_overlays(record, rootfs, run, directory=None):
 def install_overlays(rootfs, run, packages, *, extra=(), published=False):
     from desktop.debian_package import prepare_build_indexes
 
+    details = packages.values() if published else (row for _, row in packages.values())
+    cohort = any(row.get('component') == 'pipewire' and
+                 row.get('name') == 'libpipewire-0.3-modules' for row in details)
+    remove = []
+    if cohort:
+        from desktop.build_pipewire_packages import DEBIAN_DEFAULT, DEBIAN_V4L2_TRANSITION
+
+        text = capture(['chroot', rootfs, 'dpkg-query', '-W',
+                        '-f=${Package}\t${db:Status-Status}\n'])
+        installed = {row.split()[0] for row in text.splitlines() if row.endswith('\tinstalled')}
+        wanted = (DEBIAN_DEFAULT | installed) - {DEBIAN_V4L2_TRANSITION}
+
+        def keep(row):
+            return row.get('component') != 'pipewire' or row['name'] in wanted
+
+        packages = {name: value for name, value in packages.items()
+                    if keep(value if published else value[1])}
+        if DEBIAN_V4L2_TRANSITION in installed:
+            remove = [DEBIAN_V4L2_TRANSITION + '-']
+
     apt = ['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get']
     tmp = target(rootfs, 'var/tmp')
     tmp.mkdir(parents=True, exist_ok=True)
@@ -834,11 +852,11 @@ def install_overlays(rootfs, run, packages, *, extra=(), published=False):
         if published:
             # In particular, do not keep Debian's bytes when both archives
             # provide the same version of an explicitly requested package.
-            run([*apt, 'install', '-y', '--no-install-recommends', '--reinstall', *paths])
+            run([*apt, 'install', '-y', '--no-install-recommends', '--reinstall', *paths, *remove])
             run([*apt, 'install', '-y', '--no-upgrade', '--no-install-recommends',
                  *extra, 'fprintd', 'libpam-fprintd'])
         else:
-            run([*apt, 'install', '-y', '--no-install-recommends', *extra, *paths])
+            run([*apt, 'install', '-y', '--no-install-recommends', *extra, *paths, *remove])
         if 'chromium' in extra:
             run([*apt, 'purge', '-y', 'firefox-esr'])
 
@@ -1058,8 +1076,12 @@ def execute(record):
             raise ValueError('Installed Piano camera package version differs')
         camera.verify_installed(rootfs, 'debian', camera_archive)
         defaults = default_system_record(rootfs, installed, cfg, desktop)
+        from desktop.build_pipewire_packages import DEBIAN_DEFAULT
         for component, metadata in components.items():
             for package, row in metadata['packages'].items():
+                if (component == 'pipewire' and package not in DEBIAN_DEFAULT and
+                        package not in installed):
+                    continue
                 if installed.get(package) != row['version']:
                     raise ValueError(f'Installed {component} package version differs: {package}')
         metadata = {str(p.relative_to(rootfs)): digest(p) for p in (rootfs / 'var/lib/apt/lists').glob('*InRelease')}

@@ -13,6 +13,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from build import overlay_packages as overlays
+from desktop.build_pipewire_packages import DEBIAN_PACKAGES
 
 
 @unittest.skipUnless(shutil.which('dpkg-deb'), 'Debian package tools required')
@@ -33,18 +34,18 @@ class OverlayPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'archive differs'):
             overlays.bsp_package(output, 'debian')
 
-    def deb(self, name, version='1', *, payload=None, directory=None):
+    def deb(self, name, version='1', *, architecture='arm64', payload=None, directory=None):
         package = self.root / 'payload'
         package.mkdir()
         control = package / 'DEBIAN/control'
         control.parent.mkdir()
         control.write_text(
-            f'Package: {name}\nVersion: {version}\nArchitecture: arm64\n'
+            f'Package: {name}\nVersion: {version}\nArchitecture: {architecture}\n'
             'Maintainer: Package build test <test@example.invalid>\nDescription: Overlay fixture\n')
         if payload:
             (package / 'usr/share').mkdir(parents=True)
             (package / 'usr/share/fixture').write_text(payload)
-        archive = (directory or self.root) / f'{name}_{version}_arm64.deb'
+        archive = (directory or self.root) / f'{name}_{version}_{architecture}.deb'
         subprocess.run(['dpkg-deb', '--build', '--root-owner-group', package, archive],
                        check=True, capture_output=True)
         shutil.rmtree(package)
@@ -53,12 +54,14 @@ class OverlayPackageTests(unittest.TestCase):
     def test_exports_only_validated_files_and_selects_only_kde_components(self):
         sources = {}
         for component in (*overlays.DEBIAN_SHARED, *overlays.DEBIAN_GNOME, 'fingerprint'):
-            name = 'test-' + component.replace('_', '-')
-            archive = self.deb(name)
-            sources[component] = (archive.parent, {'packages': {name: {
-                'file': archive.name, 'version': '1', 'architecture': 'arm64',
-                'sha256': overlays.sha(archive),
-            }}})
+            names = DEBIAN_PACKAGES if component == 'pipewire' else {
+                'test-' + component.replace('_', '-'): 'arm64'}
+            records = {}
+            for name, architecture in names.items():
+                archive = self.deb(name, architecture=architecture)
+                records[name] = {'file': archive.name, 'version': '1',
+                                 'architecture': architecture, 'sha256': overlays.sha(archive)}
+            sources[component] = (self.root, {'packages': records, 'package_version': '1'})
         unlisted = self.deb('test-obsolete')
         output = self.root / 'set'
         expected = overlays.debian_packages(sources)
@@ -71,6 +74,16 @@ class OverlayPackageTests(unittest.TestCase):
         self.assertNotIn(unlisted.name, gnome)
         self.assertEqual({row['component'] for row in kde.values()},
                          {*overlays.DEBIAN_SHARED, 'fingerprint'})
+
+        name = 'libpipewire-0.3-modules'
+        _, pipewire = sources['pipewire']
+        removed = pipewire['packages'].pop(name)['file']
+        incomplete = {filename: row for filename, row in expected.items() if filename != removed}
+        out = self.root / 'incomplete'
+        with self.assertRaisesRegex(ValueError, 'all native packages'):
+            overlays.export(out, 'debian-gnome', 'apt', incomplete,
+                            {name: value for name, (_, value) in sources.items()})
+        self.assertFalse(out.exists())
 
         out = self.root / 'partial'
         path, row = expected[next(iter(expected))]

@@ -14,7 +14,7 @@ from verify_public import verify_public
 
 sys.path.insert(0, str(ROOT / 'tools'))
 from build import sensors
-from build.overlay_packages import ARCH_REPOSITORIES, bsp_package, topology_package
+from build.overlay_packages import ARCH_REPOSITORIES, bsp_package, read_debian, topology_package
 from package import camera
 from package.boot import PUBLIC_REPOSITORY_URL
 
@@ -47,7 +47,13 @@ def packages(directory, **identity):
 
 
 def overlay_set(directory, target):
-    return packages(directory, schema_version=1, target=target, repo=OVERLAY_REPOSITORIES[target])
+    repo = OVERLAY_REPOSITORIES[target]
+    archives = packages(directory, schema_version=1, target=target, repo=repo)
+    if repo == 'apt':
+        _, entries = read_debian(directory / 'manifest.json', target.removeprefix('debian-'))
+        if set(archives) != set(entries):
+            raise ValueError('Debian overlay files differ from the package set')
+    return archives
 
 
 def overlay_matrix(value):

@@ -1,0 +1,102 @@
+From f2e187cdf759cb019f23995c0d11dcc765f39d44 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@tuta.io>
+Date: Thu, 19 Nov 2026 02:27:48 +0800
+Subject: [PATCH] fix(client-node): allow empty readable parameters
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+An exported camera can support PropInfo without providing any controls. Treat an empty readable parameter as success so session managers can activate the node and port.
+
+Keep returning ENOENT for unreadable parameters, including an input without an EnumFormat filter. This preserves negotiation for ordinary unfiltered PipeWire capture clients.
+
+Upstream: https://github.com/PipeWire/pipewire/commit/abf37dbddef96518f7e93f39d910fd4e38cc887b
+Upstream: https://github.com/PipeWire/pipewire/commit/c81badc1bc9d26911cbc9d6ed0a23b79637dd3cf
+Co-authored-by: Barnabás Pőcze <pobrn@protonmail.com>
+Co-authored-by: Viorel Cernateanu <vrilutza@gmail.com>
+---
+ src/modules/module-client-node/client-node.c | 23 +++++++++++++-------
+ 1 file changed, 15 insertions(+), 8 deletions(-)
+
+diff --git a/src/modules/module-client-node/client-node.c b/src/modules/module-client-node/client-node.c
+index 9740e1c..d3d268d 100644
+--- a/src/modules/module-client-node/client-node.c
++++ b/src/modules/module-client-node/client-node.c
+@@ -330,12 +330,17 @@ static int impl_node_enum_params(void *object, int seq,
+ 	uint8_t buffer[1024];
+ 	struct spa_pod_dynamic_builder b;
+ 	struct spa_result_node_params result;
++	struct spa_param_info *pi;
+ 	uint32_t count = 0;
+-	bool found = false;
+ 
+ 	spa_return_val_if_fail(impl != NULL, -EINVAL);
+ 	spa_return_val_if_fail(num != 0, -EINVAL);
+ 
++	pi = pw_param_info_find(impl->this.node->info.params,
++			impl->this.node->info.n_params, id);
++	if (pi == NULL || !SPA_FLAG_IS_SET(pi->flags, SPA_PARAM_INFO_READ))
++		return -ENOENT;
++
+ 	result.id = id;
+ 	result.next = 0;
+ 
+@@ -351,8 +356,6 @@ static int impl_node_enum_params(void *object, int seq,
+ 		if (param == NULL || !spa_pod_is_object_id(param, id))
+ 			continue;
+ 
+-		found = true;
+-
+ 		if (result.index < start)
+ 			continue;
+ 
+@@ -367,7 +370,8 @@ static int impl_node_enum_params(void *object, int seq,
+ 		if (count == num)
+ 			break;
+ 	}
+-	return found ? 0 : -ENOENT;
++
++	return 0;
+ }
+ 
+ static int impl_node_set_param(void *object, uint32_t id, uint32_t flags,
+@@ -598,8 +602,8 @@ node_port_enum_params(struct impl *impl, int seq,
+ 	uint8_t buffer[1024];
+ 	struct spa_pod_dynamic_builder b;
+ 	struct spa_result_node_params result;
++	struct spa_param_info *pi;
+ 	uint32_t count = 0;
+-	bool found = false;
+ 
+ 	spa_return_val_if_fail(impl != NULL, -EINVAL);
+ 	spa_return_val_if_fail(num != 0, -EINVAL);
+@@ -610,6 +614,10 @@ node_port_enum_params(struct impl *impl, int seq,
+ 	pw_log_debug("%p: seq:%d port %d.%d id:%u start:%u num:%u n_params:%d",
+ 			impl, seq, direction, port_id, id, start, num, port->params.n_params);
+ 
++	pi = pw_param_info_find(port->port->info.params, port->port->info.n_params, id);
++	if (pi == NULL || !SPA_FLAG_IS_SET(pi->flags, SPA_PARAM_INFO_READ))
++		return -ENOENT;
++
+ 	result.id = id;
+ 	result.next = 0;
+ 
+@@ -625,8 +633,6 @@ node_port_enum_params(struct impl *impl, int seq,
+ 		if (param == NULL || !spa_pod_is_object_id(param, id))
+ 			continue;
+ 
+-		found = true;
+-
+ 		if (result.index < start)
+ 			continue;
+ 
+@@ -641,7 +647,8 @@ node_port_enum_params(struct impl *impl, int seq,
+ 		if (count == num)
+ 			break;
+ 	}
+-	return found ? 0 : -ENOENT;
++
++	return 0;
+ }
+ 
+ static int

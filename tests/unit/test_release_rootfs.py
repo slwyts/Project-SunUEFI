@@ -144,6 +144,30 @@ class ReleaseRootTests(unittest.TestCase):
         self.assertIn('install', commands[0])
         self.assertTrue(source.is_file())
 
+    def test_pipewire_upgrade_replaces_the_old_v4l2_plugin_without_adding_test_packages(self):
+        archives = {}
+        for name, component in (('libpipewire-0.3-modules', 'pipewire'),
+                                ('pipewire-v4l2-source', 'pipewire'),
+                                ('pipewire-jack', 'pipewire'),
+                                ('pipewire-tests', 'pipewire'),
+                                ('piano-camera', 'camera')):
+            path = self.root / f'{name}_1_arm64.deb'
+            path.write_bytes(name.encode())
+            archives[path.name] = (path, {'component': component, 'name': name,
+                                          'sha256': builder.digest(path)})
+        installed = 'pipewire-v4l2-source\tinstalled\npipewire-jack\tinstalled\n'
+        commands = []
+        with patch.object(builder, 'build_devices', return_value=nullcontext()), \
+                patch.object(builder, 'build_resolver', return_value=nullcontext()), \
+                patch.object(builder, 'capture', return_value=installed):
+            builder.install_overlays(self.rootfs, commands.append, archives)
+        self.assertEqual(len(commands), 1)
+        arguments = commands[0]
+        self.assertIn('pipewire-v4l2-source-', arguments)
+        self.assertEqual({Path(arg).name for arg in arguments if str(arg).endswith('.deb')},
+                         {'libpipewire-0.3-modules_1_arm64.deb', 'pipewire-jack_1_arm64.deb',
+                          'piano-camera_1_arm64.deb'})
+
     def test_plan_checks_the_kernel_tree_from_the_series(self):
         with patch.object(builder.modules, 'inspect', return_value=(self.m, 'b' * 64)), \
              patch.object(builder, 'repository', return_value=self.m['source_commit']) as repository:

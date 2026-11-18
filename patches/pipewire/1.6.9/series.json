@@ -87,6 +87,25 @@
         "commit": "95e89f786aad1077dab59f5b1bde572ceab12b7a",
         "drop_when": "The selected PipeWire release derives the stride and offset of contiguous video planes from the chunk stride, as in PipeWire 1.6.10."
       }
+    },
+    {
+      "file": "0009-client-node-empty-params.patch",
+      "sha256": "feb6656afe05eef8b5503e241c10b7ea06c0df05dbbed5c41dab523e9503a7f1",
+      "upstream": {
+        "status": "merged",
+        "url": "https://github.com/PipeWire/pipewire/commit/c81badc1bc9d26911cbc9d6ed0a23b79637dd3cf",
+        "commit": "c81badc1bc9d26911cbc9d6ed0a23b79637dd3cf",
+        "drop_when": "The selected release returns an empty result for readable exported parameters and retains ENOENT for unreadable ones, including inputs without a format filter."
+      }
+    },
+    {
+      "file": "0010-debian-v4l2-source-transition.patch",
+      "sha256": "e7743c849e168ec16492c8759835ed5d4ef14634c0245ea38cead19cf2b40ebb",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://wiki.debian.org/PackageTransition",
+        "drop_when": "Supported Debian installations no longer have the standalone SunUEFI pipewire-v4l2-source with exact stock PipeWire dependencies."
+      }
     }
   ]
 }

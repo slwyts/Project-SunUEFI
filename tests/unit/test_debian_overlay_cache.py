@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from build import overlay_cache, overlay_packages, overlay_release
 from desktop import debian_package
+from desktop.build_pipewire_packages import DEBIAN_PACKAGES
 
 
 @unittest.skipUnless(os.geteuid() == 0 and all(shutil.which(tool) for tool in
@@ -122,18 +123,20 @@ class DebianOverlayCacheTests(unittest.TestCase):
         sources = {}
         for component in (*overlay_packages.DEBIAN_SHARED, *overlay_packages.DEBIAN_GNOME,
                           'fingerprint'):
-            name = 'test-' + component.replace('_', '-')
+            names = DEBIAN_PACKAGES if component == 'pipewire' else {
+                'test-' + component.replace('_', '-'): 'arm64'}
             control = self.root / 'payload/DEBIAN/control'
             control.parent.mkdir(parents=True, exist_ok=True)
-            control.write_text(f'Package: {name}\nVersion: 1\nArchitecture: arm64\n'
-                               'Maintainer: Fixture <test@example.invalid>\nDescription: Overlay fixture\n')
-            path = archives / f'{name}_1_arm64.deb'
-            subprocess.run(['dpkg-deb', '--build', '--root-owner-group', control.parents[1], path],
-                           check=True, capture_output=True)
-            sources[component] = (archives, {'packages': {name: {
-                'file': path.name, 'version': '1', 'architecture': 'arm64',
-                'sha256': overlay_packages.sha(path),
-            }}})
+            records = {}
+            for name, architecture in names.items():
+                control.write_text(f'Package: {name}\nVersion: 1\nArchitecture: {architecture}\n'
+                                   'Maintainer: Fixture <test@example.invalid>\nDescription: Overlay fixture\n')
+                path = archives / f'{name}_1_{architecture}.deb'
+                subprocess.run(['dpkg-deb', '--build', '--root-owner-group', control.parents[1], path],
+                               check=True, capture_output=True)
+                records[name] = {'file': path.name, 'version': '1', 'architecture': architecture,
+                                 'sha256': overlay_packages.sha(path)}
+            sources[component] = (archives, {'packages': records, 'package_version': '1'})
         output = self.project / 'build/overlay-cache/debian-gnome'
         overlay_packages.export(output, 'debian-gnome', 'apt',
                                 overlay_packages.debian_packages(sources),

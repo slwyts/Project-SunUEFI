@@ -1,0 +1,22 @@
+Description: Upgrade the old V4L2 source to the native SPA module
+ The standalone package required the exact stock PipeWire version. Replace it
+ with an empty transitional package so APT can upgrade the full package set.
+ The repaired module now belongs to libspa-0.2-modules; newer versions also
+ satisfy the transition.
+Forwarded: not-needed
+
+--- a/debian/control
++++ b/debian/control
+@@ -504,3 +504,12 @@
+  .
+  This is a transitional package for libspa-0.2-libcamera.
+  It can safely be removed.
++
++Package: pipewire-v4l2-source
++Section: oldlibs
++Architecture: all
++Depends: libspa-0.2-modules (>= ${binary:Version}),
++         ${misc:Depends}
++Description: transitional package for libspa-0.2-modules
++ The V4L2 source is provided by libspa-0.2-modules.
++ This package can safely be removed.

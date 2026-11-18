@@ -77,6 +77,23 @@ class DebianPackageTests(unittest.TestCase):
             debian_package.local_package_spec('gnome-shell', installed,
                                               {'Package': 'gnome-shell', 'Version': '51.0-3'})
 
+    def test_local_pipewire_abi_must_use_the_declared_native_library(self):
+        from desktop import build_pipewire_packages
+
+        name = debian_package.PIPEWIRE_ABI_PACKAGE
+        official = {'Package': name, 'Source': 'pipewire', 'Version': '1.6.9-2'}
+        version = '1.6.9-2+sunuefi' + str(build_pipewire_packages.DEBIAN_REVISION)
+        installed = {'version': version, 'source': 'pipewire',
+                     'source_version': version, 'architecture': 'arm64'}
+        output = ROOT / 'build/packages/pipewire'
+        folder, patches = debian_package.local_package_spec(name, installed, official,
+                                                            package_output=output)
+        self.assertEqual(folder, output)
+        self.assertIn('patches/pipewire/1.6.9/0009-client-node-empty-params.patch',
+                      {row['path'] for row in patches})
+        with self.assertRaisesRegex(ValueError, 'declared local revision'):
+            debian_package.local_package_spec(name, {**installed, 'version': '1.6.9-2+unknown'}, official)
+
     def test_gbm_cache_comparison_preserves_actual_local_identity(self):
         baseline = {'package': 'libgbm1', 'version': '26.2.6-1', 'source': 'mesa',
                     'source_version': '26.2.6-1', 'sha256': 'signed-package-sha'}

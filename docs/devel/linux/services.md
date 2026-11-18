@@ -86,11 +86,19 @@ Debian 基础镜像从签名 APT 源安装 `piano-device-config`，SteamOS 和 N
 `./build.sh pipewire --rootfs <发行版 root> --output <build 下的包目录>`；
 这些命令需要 root，输入均为本地构建目录，不访问平板。
 
-PipeWire 重建完整 GStreamer 插件和独立的 V4L2 采集插件，链接目标 root 中
-同版本的库，并用包依赖锁定对应发行版版本；不替换服务端、音频组件或库 ABI。
-补丁处理格式枚举与首选格式、运行中 caps、缓冲池锁顺序、借用 MemPtr 的复制，
-以及录像持有的 V4L2 复制帧；模块选择与缓冲管理见[相机接口](../hardware/camera-controls.md#帧时间戳与错误)。来源和补丁摘要由
-`patches/pipewire/<版本>/series.json` 指定，源码完整准备后才进入缓存，构建器
+Debian 从签名 sid 源码重建 PipeWire 的同版包组，保留 Debian 原有拆包和依赖。
+相机没有可列出的控件时，WirePlumber 仍能连接视频节点；修正后的 V4L2 采集则由
+`libspa-0.2-modules` 提供。旧 Debian 系统使用普通 APT 升级，
+`pipewire-v4l2-source` 会变成可删除的空包；原插件和加载配置会一起移除。
+新镜像不装这个过渡包，也不默认安装测试或开发包。
+从原先只替换插件的版本升级前，可用 APT 下载现装的整组软件包保留回退副本；
+Debian sid 更新后，官方源可能不再提供对应的旧版服务端和库。
+
+Nyarch 和 SteamOS 仍独立重建 GStreamer 插件和 `pipewire-v4l2-source`，
+使用目标系统同版本的服务端和库，不替换音频组件。补丁处理格式枚举与首选格式、
+运行中 caps、缓冲池锁顺序、借用 MemPtr 的复制，以及录像持有的 V4L2 复制帧；
+模块选择与缓冲管理见[相机接口](../hardware/camera-controls.md#帧时间戳与错误)。
+`patches/pipewire/<版本>/series.json` 记录来源和补丁摘要，源码完整准备后才进入缓存，构建器
 变化使旧包缓存失效。19 项格式测试串行运行，使用隔离的 GStreamer registry，
 不扫描系统插件；它们不替代平板上的相机、录屏和屏幕共享验证。
 

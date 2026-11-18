@@ -20,9 +20,10 @@ from desktop import package_build
 
 ROOT = Path(__file__).resolve().parents[2]
 KEYRING = '/usr/share/keyrings/debian-archive-keyring.gpg'
+PIPEWIRE_ABI_PACKAGE = 'libpipewire-0.3-0t64'
 ABI_PACKAGES = ('libc6', 'libglib2.0-0t64', 'libsystemd0', 'libgtk-4-1',
                 'libgtk-3-0t64', 'libwayland-client0', 'libgbm1',
-                'libpipewire-0.3-0t64', 'libupower-glib3', 'gnome-shell')
+                PIPEWIRE_ABI_PACKAGE, 'libupower-glib3', 'gnome-shell')
 # Bump when source preparation or compilation changes, not APT verification.
 BUILD_RECIPE_VERSION = 1
 BUILD_COMMAND = ['dpkg-buildpackage', '-b', '-us', '-uc']
@@ -262,7 +263,7 @@ def source_identity(row):
     return match[1], match[2] or row['Version']
 
 
-def local_package_spec(name, installed, official):
+def local_package_spec(name, installed, official, *, package_output=None):
     source, version = source_identity(official)
     if name == 'libgbm1':
         folder = ROOT / 'build/mesa'
@@ -283,6 +284,15 @@ def local_package_spec(name, installed, official):
         if source != 'mesa':
             raise ValueError('The signed libgbm1 source is not Mesa')
         patches = []
+    elif name == PIPEWIRE_ABI_PACKAGE:
+        from desktop import build_pipewire_packages as builder
+
+        if source != 'pipewire':
+            raise ValueError('The signed PipeWire library source is not PipeWire')
+        local_version = version + '+sunuefi' + str(builder.DEBIAN_REVISION)
+        _, _, paths = builder.debian_series(version)
+        patches = [(path, sha(path)) for path in paths]
+        folder = package_output or ROOT / 'build/pipewire'
     elif name in ('gnome-settings-daemon', 'gdm3', 'mutter', 'libwacom9'):
         # Only these package builders declare the revision and patches we accept.
         from importlib import import_module
@@ -338,8 +348,8 @@ def verify_installed_binaries(rootfs, archive):
     return expected
 
 
-def verify_local_package(rootfs, name, installed, official, sources):
-    folder, patches = local_package_spec(name, installed, official)
+def verify_local_package(rootfs, name, installed, official, sources, *, package_output=None):
+    folder, patches = local_package_spec(name, installed, official, package_output=package_output)
     record = json.loads((folder / 'SOURCE.json').read_text())
     source, version = source_identity(official)
     expected = checksum_rows(sources)
@@ -448,7 +458,7 @@ def same_target(before, after):
     return True
 
 
-def target_identity(rootfs, package):
+def target_identity(rootfs, package, *, package_output=None):
     rootfs = Path(rootfs).resolve()
     release = dict(line.split('=', 1) for line in (rootfs / 'etc/os-release').read_text().splitlines() if '=' in line)
     if release.get('ID', '').strip('"') != 'debian':
@@ -506,7 +516,9 @@ def target_identity(rootfs, package):
     for name, selected in local.items():
         official = next(row for row in rows if row['Package'] == name and row['Version'] == selected['version'])
         source = source_record(selected['source'], selected['source_version'])
-        installed_local[name] = verify_local_package(rootfs, name, installed[name], official, source)
+        installed_local[name] = verify_local_package(
+            rootfs, name, installed[name], official, source,
+            package_output=package_output if name == package else None)
         if name == 'libgbm1':
             proof = installed_local[name]
             verified = verify_gbm_abi(rootfs, official, proof)
@@ -608,7 +620,7 @@ def reusable(output, target, patches, runtime, inputs, revision):
 
 def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
           validate=None, validate_runtime=None, builder_root=None, install_dependencies=True,
-          binary_package=None):
+          binary_package=None, test_build=None):
     output = Path(output).resolve()
     sysroot = Path(sysroot or builder_root).resolve()
     if (not output.is_relative_to(ROOT / 'build') or not sysroot.is_relative_to(ROOT / 'build') or
@@ -617,7 +629,7 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
     if os.geteuid():
         raise ValueError('Use root for an isolated ARM64 Debian package build')
     binary_package = binary_package or package
-    target = target_identity(sysroot, binary_package)
+    target = target_identity(sysroot, binary_package, package_output=output)
     patch_proof = [{'path': path.relative_to(ROOT).as_posix(), 'sha256': sha(path)} for path in patches]
     inputs = input_records([Path(__file__), Path(package_build.__file__), *inputs])
     if cached := reusable(output, target, patch_proof, runtime, inputs, revision):
@@ -697,12 +709,15 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
                 raise ValueError('Prepared patch differs: ' + patch.name)
         if (source / 'debian/changelog').read_text().split('(', 1)[1].split(')', 1)[0] != package_version:
             raise ValueError('Prepared Debian package version differs')
+        directory = inside(rootfs, source)
+        if (source / '.pc/.dpkg-source-unapply').exists():
+            # An interrupted build can leave quilt patches applied to packaging files.
+            guest(['sh', '-ec', 'cd "$1"; dpkg-source --after-build .', 'unapply', directory])
         archive = next(row for row in origin['archives'] if '.debian.tar.' in row['file'])
         with tarfile.open(cache / archive['file']) as packaging:
             for name in ('debian/rules', 'debian/control'):
                 if (source / name).read_bytes() != packaging.extractfile(name).read():
                     raise ValueError('Original Debian packaging changed: ' + name)
-        directory = inside(rootfs, source)
         guest(['sh', '-ec', 'cd "$1"; dpkg-source --before-build .; dpkg-checkbuilddeps -Pnocheck',
                'prepare', directory])
         if validate:
@@ -711,6 +726,8 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
             guest(['env', *package_build.arguments(settings), f'DEB_BUILD_OPTIONS=nocheck parallel={jobs}',
                    'DEB_BUILD_PROFILES=nocheck', 'sh', '-ec', 'cd "$1"; dpkg-buildpackage -b -us -uc',
                    'build', directory])
+            if test_build:
+                test_build(guest, directory)
         changes = work / f'{package}_{package_version.split(":")[-1]}_arm64.changes'
         buildinfo = changes.with_suffix('.buildinfo')
         change = next(row for row in controls(changes.read_text()) if row.get('Source') == package)
