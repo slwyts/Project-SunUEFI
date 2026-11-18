@@ -13,6 +13,24 @@ from desktop import debian_package
 
 
 class DebianPackageTests(unittest.TestCase):
+    def test_build_dependency_retry_requires_only_https_connection_resets(self):
+        reset = ('E: Failed to fetch https://deb.debian.org/debian/pool/dh-python.deb  OpenSSL system '
+                 'call error: error:80000068:system library::Connection reset by peer  - openssl '
+                 '(104: Connection reset by peer) [IP: 192.0.2.1 443]')
+        summary = '\nE: Some files failed to download\nE: Failed to process build dependencies\n'
+        self.assertEqual(debian_package.dependency_download_resets(reset + summary),
+                         {'https://deb.debian.org/debian/pool/dh-python.deb'})
+        for error in (
+            summary,
+            reset.replace('https://', 'http://') + summary,
+            reset.replace('(104: Connection reset by peer)', '(5: Input/output error)') + summary,
+            reset + '\nE: Failed to fetch https://deb.debian.org/another.deb  Hash Sum mismatch' + summary,
+            reset + "\nE: The repository 'https://example.invalid sid Release' is not signed." + summary,
+            reset + "\nE: Can not find version '2' of package 'mutter'" + summary,
+        ):
+            with self.subTest(error=error):
+                self.assertFalse(debian_package.dependency_download_resets(error))
+
     def test_mesa_local_revision_is_bound_to_config_and_built_output(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

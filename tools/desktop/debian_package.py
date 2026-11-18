@@ -12,6 +12,7 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+from urllib.parse import unquote
 import urllib.request
 
 from build import overlay_release
@@ -198,6 +199,55 @@ def prepare_build_indexes(rootfs, execute, *, refresh=True):
         execute(['apt-get', '-o', 'APT::Update::Error-Mode=any',
                  '-oAcquire::AllowInsecureRepositories=false',
                  '-oAPT::Get::AllowUnauthenticated=false', 'update'])
+
+
+def dependency_download_resets(output):
+    """Return failed archive names only if every error is an HTTPS reset."""
+    summaries = {'E: Some files failed to download', 'E: Failed to process build dependencies'}
+    errors = [line for line in output.splitlines() if line.startswith('E:') and line not in summaries]
+    archives = set()
+    for line in errors:
+        match = re.fullmatch(r'E: Failed to fetch (https://\S+/[A-Za-z0-9.+_~%-]+\.deb)'
+                             r' +OpenSSL system call error: .+ - openssl '
+                             r'\(104: Connection reset by peer\)(?: \[IP: [^\]]+\])?', line)
+        if not match:
+            return set()
+        archives.add(unquote(match[1]))
+    return archives
+
+
+def install_build_dependencies(rootfs, package, version, log):
+    # APT can reuse cached files based on size. Keep the cache private to
+    # this verified acquisition and its single offline installation.
+    cache = rootfs / 'var/cache/apt'
+    with tempfile.TemporaryDirectory(prefix='sunuefi-build-deps-', dir=cache) as directory:
+        archives = Path(directory)
+        archives.chmod(0o755)
+        args = ['apt-get', '-o', 'Dir::Cache::archives=' + inside(rootfs, archives),
+                'build-dep', '-y', '--no-install-recommends', '--no-fix-missing',
+                '--build-profiles=' + BUILD_PROFILES, package + '=' + version]
+        download = [*args, '--download-only']
+        # APT can report a reset after the final TLS record as a permanent error.
+        with tempfile.TemporaryFile(mode='w+t', encoding='utf-8', errors='replace') as transcript:
+            result = chroot(rootfs, download, stdout=transcript, stderr=subprocess.STDOUT, check=False)
+            transcript.seek(0)
+            shutil.copyfileobj(transcript, log)
+            transcript.seek(0)
+            failed = dependency_download_resets(transcript.read()) if result.returncode == 100 else set()
+        log.flush()
+        if result.returncode:
+            if not failed:
+                result.check_returncode()
+            # APT reports the exact cache name, including the epoch.
+            plan = chroot(rootfs, [*args, '--print-uris'], capture_output=True, text=True)
+            for uri, name in re.findall(r"^'(https://[^']+)' ([A-Za-z0-9.+_~:%-]+\.deb) ",
+                                        plan.stdout, flags=re.M):
+                if unquote(uri) in failed:
+                    (archives / 'partial' / name).unlink(missing_ok=True)
+            log.write('Retrying the build dependency download once after an HTTPS connection reset.\n')
+            log.flush()
+            chroot(rootfs, download, stdout=log, stderr=subprocess.STDOUT)
+        chroot(rootfs, [*args, '--no-download'], stdout=log, stderr=subprocess.STDOUT)
 
 
 def source_identity(row):
@@ -610,8 +660,7 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
             if not same_target(builder_target, target) or builder_target.get('installed_local'):
                 raise ValueError('The builder and target sid indexes differ; refresh the target APT indexes')
             guest(['apt-get', 'install', '-y', '--no-install-recommends', 'dpkg-dev', 'build-essential', 'ccache'])
-            guest(['apt-get', 'build-dep', '-y', '--no-install-recommends', '--build-profiles=nocheck',
-                   package + '=' + version])
+            install_build_dependencies(rootfs, package, version, log)
         else:
             builder_target = target_identity(rootfs, binary_package)
             if not same_target(builder_target, target) or builder_target.get('installed_local'):
