@@ -392,6 +392,16 @@ def matching_power_files(rootfs):
         package_bsp.POWER_PROFILES_PACKAGE, adopt_identical=True)['adopted']
 
 
+def remove_steamos_power_profiles_daemon(rootfs, guest):
+    """Move a generated SteamOS image from the old PowerProfiles provider."""
+    installed = subprocess.run(['chroot', rootfs, 'pacman', '-Qq', 'power-profiles-daemon'],
+                               capture_output=True, text=True)
+    if installed.stdout.splitlines() == ['power-profiles-daemon']:
+        # Pacman only uses Replaces during a system upgrade, not a local -U.
+        guest(['systemctl', 'disable', 'power-profiles-daemon.service'])
+        guest(['pacman', '-R', '--noconfirm', 'power-profiles-daemon'])
+
+
 def verify_pacman_versions(packages, listing):
     """Check the final package set after all image staging transactions."""
     installed = dict(line.split(maxsplit=1) for line in listing.splitlines())
@@ -468,6 +478,7 @@ def install_arch_overlays(rootfs, kernel, target, published):
             install_pacman(rootfs, work, repository, packages, guest,
                            overwrite=matching_power_files(rootfs))
         else:
+            remove_steamos_power_profiles_daemon(rootfs, guest)
             install_pacman(rootfs, work, 'sunuefi', common, guest)
             install_pacman(rootfs, work, repository, packages, guest)
             install_pacman(rootfs, work, 'sunuefi', {power_archive.name: power}, guest,

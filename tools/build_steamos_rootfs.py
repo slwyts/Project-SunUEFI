@@ -360,6 +360,8 @@ def build_overlays(root, output, source, steamos_config):
     else:
         build_arch_package.install_cached(root, ibus)
     outputs['ibus'] = overlay_packages.pacman_outputs(ibus)
+    with guest_environment(root) as guest:
+        overlay_packages.remove_steamos_power_profiles_daemon(root, guest)
     for name in overlay_packages.STEAMOS_TUNED_RECIPES:
         recipe = ROOT / 'linux/bsp/steamos' / name
         packages = output / 'packages' / name
