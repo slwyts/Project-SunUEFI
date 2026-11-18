@@ -6,19 +6,10 @@ on:
       image_id:
         required: true
         type: string
-      cache_key:
-        required: true
-        type: string
       matrix:
         required: true
         type: string
       shared_target:
-        required: true
-        type: string
-      bsp_key:
-        required: true
-        type: string
-      camera_key:
         required: true
         type: string
       overlay_manifests:
@@ -45,36 +36,27 @@ jobs:
         with:
           submodules: false
           persist-credentials: false
-      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - uses: ./.github/actions/build-input
         with:
-          path: build/ci-builder
-          key: ${{ inputs.cache_key }}
-          fail-on-cache-miss: true
-      - id: keys
+          operation: download
+          name: builder
+      - name: Load the verified builder and fixed sources
         run: |
           python3 tools/build/ci_container.py load
           ./build.sh sources
-          python3 tools/build/shared_products.py keys --github-output "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/restore-shared-product
+      - uses: ./.github/actions/build-input
         with:
-          kind: firmware
-          key: ${{ steps.keys.outputs.firmware_key }}
-      - uses: ./.github/actions/restore-shared-product
+          operation: download
+          name: firmware
+      - uses: ./.github/actions/build-input
         with:
-          kind: kernel
-          key: ${{ steps.keys.outputs.kernel_key }}
-      - name: Restore the shared device configuration and audio topology packages
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+          operation: download
+          name: kernel
+      - name: Download this run's shared device packages
+        uses: ./.github/actions/build-input
         with:
-          path: artifacts/packages/bsp
-          key: ${{ inputs.bsp_key }}
-          fail-on-cache-miss: true
-      - name: Restore the shared camera packages for image verification
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: artifacts/packages/camera
-          key: ${{ inputs.camera_key }}
-          fail-on-cache-miss: true
+          operation: download
+          name: devices
       - name: Use the overlay manifest from the completed publication
         env:
           PUBLISHED_MANIFEST: ${{ toJSON(fromJSON(inputs.overlay_manifests)[env.SUNUEFI_OVERLAY_TARGET]) }}
@@ -88,7 +70,6 @@ jobs:
         with:
           path: build/toolchains/*.tar.zst
           key: llvm-arm64-${{ hashFiles('config/kernel-llvm.json', 'tools/desktop/prepare_kernel_llvm.py') }}
-          fail-on-cache-miss: true
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/ccache

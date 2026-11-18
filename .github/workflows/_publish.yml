@@ -3,16 +3,7 @@ name: Publish signed native packages
 on:
   workflow_call:
     inputs:
-      cache_key:
-        required: true
-        type: string
       image_id:
-        required: true
-        type: string
-      bsp_key:
-        required: true
-        type: string
-      camera_key:
         required: true
         type: string
       overlay_matrix:
@@ -46,54 +37,41 @@ jobs:
         with:
           submodules: false
           persist-credentials: false
-      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - uses: ./.github/actions/build-input
         with:
-          path: build/ci-builder
-          key: ${{ inputs.cache_key }}
-          fail-on-cache-miss: true
-      - id: keys
-        run: |
-          python3 tools/build/ci_container.py load
-          python3 tools/build/shared_products.py keys --github-output "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/restore-shared-product
+          operation: download
+          name: builder
+      - name: Load the verified builder
+        run: python3 tools/build/ci_container.py load
+      - uses: ./.github/actions/build-input
         with:
-          kind: kernel
-          key: ${{ steps.keys.outputs.kernel_key }}
+          operation: download
+          name: kernel
       - name: Restore fixed LLVM for kernel verification
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/toolchains/*.tar.zst
           key: llvm-arm64-${{ hashFiles('config/kernel-llvm.json', 'tools/desktop/prepare_kernel_llvm.py') }}
-      - name: Restore the shared device configuration and audio topology packages
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - name: Download this run's shared device packages
+        uses: ./.github/actions/build-input
         with:
-          path: artifacts/packages/bsp
-          key: ${{ inputs.bsp_key }}
-          fail-on-cache-miss: true
-      - name: Restore the shared native camera packages
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: artifacts/packages/camera
-          key: ${{ inputs.camera_key }}
-          fail-on-cache-miss: true
+          operation: download
+          name: devices
       - if: contains(fromJSON(inputs.overlay_matrix).target, 'debian-gnome')
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: ./.github/actions/build-input
         with:
-          path: artifacts/packages/overlays/debian-gnome
-          key: repo-packages-v1-${{ github.run_id }}-debian-gnome
-          fail-on-cache-miss: true
+          operation: download
+          name: overlay-debian-gnome
       - if: contains(fromJSON(inputs.overlay_matrix).target, 'nyarch-gnome')
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: ./.github/actions/build-input
         with:
-          path: artifacts/packages/overlays/nyarch-gnome
-          key: repo-packages-v1-${{ github.run_id }}-nyarch-gnome
-          fail-on-cache-miss: true
+          operation: download
+          name: overlay-nyarch-gnome
       - if: contains(fromJSON(inputs.overlay_matrix).target, 'steamos')
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: ./.github/actions/build-input
         with:
-          path: artifacts/packages/overlays/steamos
-          key: repo-packages-v1-${{ github.run_id }}-steamos
-          fail-on-cache-miss: true
+          operation: download
+          name: overlay-steamos
       - name: Sign, upload and check all selected package indexes
         env:
           SUNUEFI_REPO_GPG_KEY: ${{ secrets.SUNUEFI_REPO_GPG_KEY }}

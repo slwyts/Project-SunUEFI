@@ -74,7 +74,6 @@ jobs:
     runs-on: ubuntu-26.04-arm
     outputs:
       image_id: ${{ steps.image.outputs.image_id }}
-      cache_key: ${{ steps.cache-key.outputs.key }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -104,6 +103,14 @@ jobs:
               --pattern test_debian_overlay_cache.py \
               --pattern test_build_nyarch_apps.py \
               --pattern test_stage_arch_piano.py
+      - name: Pass the verified builder image to this run
+        uses: ./.github/actions/build-input
+        with:
+          operation: upload
+          name: builder
+          paths: |
+            build/ci-builder/image.tar
+            build/ci-builder/manifest.json
 
   shared:
     needs: [select, environment]
@@ -111,7 +118,6 @@ jobs:
     uses: ./.github/workflows/_shared.yml
     with:
       image_id: ${{ needs.environment.outputs.image_id }}
-      cache_key: ${{ needs.environment.outputs.cache_key }}
       shared_matrix: ${{ needs.select.outputs.shared_matrix }}
 
   overlays:
@@ -120,7 +126,6 @@ jobs:
     uses: ./.github/workflows/_overlays.yml
     with:
       image_id: ${{ needs.environment.outputs.image_id }}
-      cache_key: ${{ needs.environment.outputs.cache_key }}
       matrix: ${{ needs.select.outputs.overlay_matrix }}
 
   repository:
@@ -136,10 +141,7 @@ jobs:
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     with:
       image_id: ${{ needs.environment.outputs.image_id }}
-      cache_key: ${{ needs.environment.outputs.cache_key }}
       overlay_matrix: ${{ needs.select.outputs.overlay_matrix }}
-      bsp_key: ${{ needs.shared.outputs.bsp_key }}
-      camera_key: ${{ needs.shared.outputs.camera_key }}
 
   build:
     needs: [select, environment, shared, repository]
@@ -147,17 +149,16 @@ jobs:
     uses: ./.github/workflows/_rootfs.yml
     with:
       image_id: ${{ needs.environment.outputs.image_id }}
-      cache_key: ${{ needs.environment.outputs.cache_key }}
       matrix: ${{ needs.select.outputs.rootfs_matrix }}
       shared_target: ${{ needs.select.outputs.shared_target }}
-      bsp_key: ${{ needs.shared.outputs.bsp_key }}
-      camera_key: ${{ needs.shared.outputs.camera_key }}
       overlay_manifests: ${{ needs.repository.outputs.overlay_manifests }}
 
   logs:
     needs: [select, environment, shared, repository, build, overlays]
     if: always() && needs.select.outputs.has_build == 'true'
     runs-on: ubuntu-26.04
+    permissions:
+      actions: write
     steps:
       - name: Publish one logs.zip and remove intermediate log artifacts
         uses: actions/upload-artifact/merge@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -168,3 +169,18 @@ jobs:
           delete-merged: true
           retention-days: 7
           compression-level: 6
+      - name: Remove this run's intermediate archives after success
+        if: >-
+          success() && !contains(needs.*.result, 'failure') &&
+          !contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ids=$(gh api --paginate "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name | startswith("build-input-")) | .id')
+          while IFS= read -r id; do
+            if [[ -n "$id" ]]; then
+              [[ "$id" =~ ^[0-9]+$ ]]
+              gh api --method DELETE "/repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
+            fi
+          done <<< "$ids"
