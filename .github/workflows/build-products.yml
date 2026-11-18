@@ -27,6 +27,7 @@ on:
       - 'tests/unit/test_overlay_cache.py'
       - 'tests/unit/test_debian_overlay_cache.py'
       - 'tests/unit/test_repo*.py'
+      - 'tests/unit/test_ci_container.py'
       - 'tests/unit/test_shared_products.py'
       - 'tests/unit/test_stage_arch_piano.py'
       - 'upstream/**'
@@ -69,7 +70,7 @@ jobs:
           SUNUEFI_PATCH_BASE: ${{ github.event.before }}
         run: ./build.sh check --pattern test_check_patch_series.py
       - name: Check shared build cache rules
-        run: ./build.sh check --group python-all --pattern test_shared_products.py
+        run: ./build.sh check --group python-all --pattern test_shared_products.py --pattern test_ci_container.py
       - id: targets
         env:
           PUSH_BEFORE: ${{ github.event.before }}
@@ -88,9 +89,7 @@ jobs:
           submodules: false
           persist-credentials: false
       - id: cache-key
-        env:
-          BUILDER_INPUTS: ${{ hashFiles('containers/Dockerfile', 'config/build-container.json', 'tools/build_container.py', 'tools/build/ci_container.py', 'tools/build/shared_products.py') }}
-        run: echo "key=builder-arm64-$BUILDER_INPUTS" >> "$GITHUB_OUTPUT"
+        run: python3 tools/build/ci_container.py key --github-output "$GITHUB_OUTPUT"
       - id: cached-image
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:

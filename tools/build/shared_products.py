@@ -11,12 +11,12 @@ import platform
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
+from build.cache import atomic_json, sha, source_identity
 
 FIRMWARE_INPUTS = ('build.sh', 'Makefile', '.gitmodules', 'sources.lock.json',
                    'requirements-build.txt', 'tools', 'uefi', 'patches/firmware',
@@ -36,40 +36,6 @@ KERNEL_BUILD_FILES = ('.config', 'Makefile', 'Module.symvers', 'include', 'scrip
                       'arch/arm64/include/generated')
 
 
-def sha(path):
-    with Path(path).open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
-
-
-def source_identity(root, names):
-    output = subprocess.check_output(
-        ['git', '-C', root, 'ls-files', '--cached', '--others', '--exclude-standard',
-         '-z', '--', *names])
-    rows = {}
-    for raw in output.split(b'\0'):
-        if not raw:
-            continue
-        name = os.fsdecode(raw)
-        path = root / name
-        if path.is_dir():
-            # Source pins are in sources.lock.json and checked by build.sh.
-            continue
-        if path.suffix.lower() in ('.md', '.rst') or '__pycache__' in path.parts:
-            continue
-        if path.is_symlink():
-            rows[name] = {'link': os.readlink(path)}
-        else:
-            rows[name] = {'sha256': sha(path), 'mode': path.stat().st_mode & 0o777}
-    # Include a new helper during its first local invocation, before git add.
-    for name in names:
-        path = root / name
-        if path.is_file() and name not in rows:
-            rows[name] = {'sha256': sha(path), 'mode': path.stat().st_mode & 0o777}
-    if not rows:
-        raise ValueError('No tracked build inputs found')
-    return rows
-
-
 def environment_identity():
     image = os.environ.get('SUNUEFI_BUILD_ENVIRONMENT_ID')
     if image:
@@ -87,7 +53,8 @@ def identity(kind, root=ROOT):
     root = Path(root).resolve()
     inputs = FIRMWARE_INPUTS if kind == 'firmware' else KERNEL_INPUTS
     rows = source_identity(root, (*inputs, 'tools/build/shared_products.py',
-                                   'tools/build_container.py', 'config/build-container.json',
+                                   'tools/build/cache.py', 'tools/build_container.py',
+                                   'config/build-container.json',
                                    'containers/Dockerfile'))
     if kind == 'kernel':
         from build_piano_full_kernel import kernel_policy_identity
@@ -129,21 +96,6 @@ def locked(kind, root=ROOT):
     with (directory / ('shared-products-' + kind + '.lock')).open('a') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
         yield
-
-
-def atomic_json(path, record):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode='w', prefix=path.name + '.',
-                                     dir=path.parent, delete=False) as stream:
-        temporary = Path(stream.name)
-        json.dump(record, stream, indent=2)
-        stream.write('\n')
-        stream.flush()
-        # Docker builds run as root; the runner must be able to read this file
-        # when saving the validated generation to Actions cache.
-        os.fchmod(stream.fileno(), 0o644)
-        os.fsync(stream.fileno())
-    temporary.replace(path)
 
 
 def verify_firmware(root=ROOT, source_build=False):

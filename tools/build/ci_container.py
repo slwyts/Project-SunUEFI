@@ -2,18 +2,26 @@
 """Reuse the exact local builder image between CI jobs without registry pushes."""
 import argparse
 import fcntl
+import hashlib
 import json
 from pathlib import Path
+import platform
 import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from shared_products import atomic_json, sha, source_identity
+sys.path.insert(0, str(ROOT / 'tools'))
+from build.cache import atomic_json, sha, source_identity
 
 INPUTS = ('containers/Dockerfile', 'config/build-container.json',
           'tools/build_container.py', 'tools/build/ci_container.py',
-          'tools/build/shared_products.py')
+          'tools/build/cache.py')
+
+
+def cache_key(root=ROOT):
+    identity = source_identity(root, INPUTS)
+    digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    return f'builder-{platform.machine()}-{digest}'
 
 
 def image_id():
@@ -51,14 +59,17 @@ def prepare(load_only=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('prepare', 'load'))
+    parser.add_argument('operation', choices=('key', 'prepare', 'load'))
     parser.add_argument('--github-output', type=Path)
     args = parser.parse_args()
-    result = prepare(args.operation == 'load')
+    if args.operation == 'key':
+        field, label, result = 'key', 'Builder image cache key', cache_key()
+    else:
+        field, label, result = 'image_id', 'Builder image verified', prepare(args.operation == 'load')
     if args.github_output:
         with args.github_output.open('a') as stream:
-            stream.write('image_id=' + result + '\n')
-    print('Builder image verified: ' + result)
+            stream.write(f'{field}={result}\n')
+    print(f'{label}: {result}')
 
 
 if __name__ == '__main__':
