@@ -16,7 +16,8 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
-from build_piano_full_kernel import toolchain
+from build_piano_full_kernel import (kernel_build_environment, kernel_release_matches,
+                                     release_kernel_policy, toolchain)
 from stage_piano_kernel_modules import inspect
 
 
@@ -37,20 +38,21 @@ def kernel_source(source, manifest):
         raise ValueError('Kernel packaging source has local changes')
 
 
-def package_versions(kernel_version, release, manifest, package_format, epoch):
+def package_versions(kernel_version, release, package_format, epoch):
     """Keep the binary ABI and independently updated boot configuration distinct."""
-    revision = re.search(r'-b(\d+)-g', release)
-    source = manifest['source_tree'][:12] + '.' + manifest['config_sha256'][:12]
+    revision = re.search(r'-b([1-9]\d*)-g([0-9a-f]{12})$', release)
+    if not revision:
+        raise ValueError('Rebuild the kernel with the configured ABI epoch before packaging')
+    abi_epoch, digest = revision.groups()
     # Order first by kernel ABI generation, then by packaging revision.
-    # Rebuilding an older kernel's metadata cannot make it newer than a
-    # kernel actually built from a more recent release commit.
-    abi_epoch = revision[1] if revision else None
+    if epoch < int(abi_epoch):
+        raise ValueError('Package epoch precedes the sealed ABI epoch')
     base = re.sub(r'^(\d+\.\d+\.\d+)-rc',
                   r'\1~rc' if package_format == 'debian' else r'\1rc', kernel_version)
     if package_format == 'pacman':
         base = base.replace('-', '_')
-    return (base + '+' + (abi_epoch + '.' if abi_epoch else '') + source,
-            base + '+' + '.'.join((abi_epoch or '0', str(epoch), source)))
+    return (base + '+' + abi_epoch + '.' + digest,
+            base + '+' + '.'.join((abi_epoch, str(epoch), digest)))
 
 
 def package_plan(kernel, build, output, package_format, jobs):
@@ -69,8 +71,8 @@ def package_plan(kernel, build, output, package_format, jobs):
         raise ValueError('Build Image differs from the sealed kernel')
     release = manifest['kernel_release']
     # Preserve the full release including the source/config ABI suffix.
-    if release != (build / 'include/config/kernel.release').read_text().strip():
-        raise ValueError('Build release differs from the sealed kernel')
+    if not kernel_release_matches(manifest, build):
+        raise ValueError('Build release differs from the sealed ABI inputs; rebuild the kernel')
     config = (build / '.config').read_text()
     configured = re.search(r'^CONFIG_LOCALVERSION="(.*)"$', config, re.M)
     configured = configured[1] if configured else ''
@@ -79,22 +81,15 @@ def package_plan(kernel, build, output, package_format, jobs):
     suffix = release.removeprefix(kernel_version + configured)
     if not release.startswith(kernel_version + configured):
         raise ValueError('Kernel release differs from source/configuration')
-    release_epoch = subprocess.check_output(
-        ['git', '-C', ROOT, 'show', '-s', '--format=%ct', 'HEAD'], text=True).strip()
+    release_epoch = release_kernel_policy()['package_epoch']
     abi_version, package_version = package_versions(
-        kernel_version, release, manifest, package_format, release_epoch)
+        kernel_version, release, package_format, release_epoch)
     command = ['make', '-C', str(source), 'O=' + str(build), 'ARCH=arm64',
                'LLVM=1', 'LLVM_IAS=1', 'KBUILD_IMAGE=arch/arm64/boot/Image',
                'LOCALVERSION=' + suffix, '-j' + str(jobs)]
-    timestamp, epoch = subprocess.check_output(
-        ['git', '-C', source, 'show', '-s', '--format=%cI%n%ct', 'HEAD'],
-        text=True).splitlines()
-    timestamp = manifest['toolchain'].get('kbuild_build_timestamp', timestamp)
-    environment = {'KBUILD_BUILD_USER': 'sunuefi', 'KBUILD_BUILD_HOST': 'builder',
-                   'KBUILD_BUILD_VERSION': '1',
-                   'KBUILD_BUILD_TIMESTAMP': timestamp, 'SOURCE_DATE_EPOCH': epoch,
-                   'DEBFULLNAME': 'Project SunUEFI', 'DEBEMAIL': 'slwyts@tuta.io',
-                   'PACKAGER': 'Project SunUEFI <slwyts@tuta.io>', 'LC_ALL': 'C', 'TZ': 'UTC'}
+    environment = kernel_build_environment(manifest['kernel_policy']['abi_epoch'])
+    environment.update(DEBFULLNAME='Project SunUEFI', DEBEMAIL='slwyts@tuta.io',
+                       PACKAGER='Project SunUEFI <slwyts@tuta.io>', LC_ALL='C', TZ='UTC')
     if platform.machine() not in ('aarch64', 'arm64'):
         command += ['CROSS_COMPILE=aarch64-linux-gnu-']
     if package_format == 'debian':

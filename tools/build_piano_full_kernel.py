@@ -5,6 +5,7 @@ Prepared snapshots stay immutable. Only the locked build-owned compiler checkout
 is switched; no rescue-pin, guest, device or partition operation.
 """
 import argparse
+from datetime import datetime, timezone
 import fcntl
 import hashlib
 import json
@@ -114,20 +115,55 @@ def text(argv,cwd=None,env=None):return subprocess.check_output([str(x)for x in 
 def run(argv,cwd=None,env=None):subprocess.run([str(x)for x in argv],cwd=cwd,env=env,check=True)
 
 
-def kernel_policy_identity(root=None):
+def release_kernel_policy(root=None):
     root=ROOT if root is None else Path(root)
     policy=json.loads((root/'config/release.json').read_text())['kernel']
     if not isinstance(policy,dict):
         raise ValueError('Release kernel policy must be an object')
+    abi=policy.get('abi_epoch')
+    package=policy.get('package_epoch')
+    if type(abi) is not int or type(package) is not int or not 0<abi<=package:
+        raise ValueError('Set kernel abi_epoch and package_epoch in config/release.json; '
+                         'package_epoch must not precede abi_epoch')
+    return policy
+
+
+def kernel_policy_identity(root=None, *, with_packages=False):
+    policy=release_kernel_policy(root)
+    if not with_packages:
+        del policy['package_epoch']
     encoded=json.dumps(policy,sort_keys=True,separators=(',',':')).encode()
     return {'policy':policy,'sha256':hashlib.sha256(encoded).hexdigest()}
 
 
 def kernel_policy_matches(record,identity):
-    # Legacy records only hash release.json and cannot prove its old kernel
-    # section. Rebuild once rather than rewriting their source provenance.
     return (record.get('kernel_policy')==identity['policy'] and
             record.get('kernel_policy_sha256')==identity['sha256'])
+
+
+def kernel_abi_suffix(epoch,tree,config_hash,inputs,tool_hashes):
+    record={'source_tree':tree,'config_sha256':config_hash,
+            'build_inputs':inputs,'build_tools':tool_hashes}
+    encoded=json.dumps(record,sort_keys=True,separators=(',',':')).encode()
+    return f'-b{epoch}-g{hashlib.sha256(encoded).hexdigest()[:12]}'
+
+
+def kernel_build_environment(epoch):
+    timestamp=datetime.fromtimestamp(epoch,timezone.utc).isoformat()
+    return {'KBUILD_BUILD_USER':'sunuefi','KBUILD_BUILD_HOST':'builder',
+            'KBUILD_BUILD_VERSION':'1','KBUILD_BUILD_TIMESTAMP':timestamp,
+            'SOURCE_DATE_EPOCH':str(epoch)}
+
+
+def kernel_release_matches(record,out):
+    try:
+        release=record['kernel_release']
+        suffix=kernel_abi_suffix(record['kernel_policy']['abi_epoch'],record['source_tree'],
+                                 record['config_sha256'],record['inputs'],record['toolchain']['sha256'])
+    except KeyError:
+        return False
+    path=out/'include/config/kernel.release'
+    return release.endswith(suffix) and path.is_file() and path.read_text().strip()==release
 
 
 def matching_build(previous,commit,hashes,policy,modules,root_policy,root_command,tools,out):
@@ -138,7 +174,8 @@ def matching_build(previous,commit,hashes,policy,modules,root_policy,root_comman
             previous.get('command_line')==root_command and previous.get('toolchain',{}).get('sha256')==tools['sha256'] and
             (out/'.config').is_file() and sha(out/'.config')==previous.get('config_sha256') and
             (out/'Module.symvers').is_file() and (out/'include/config/kernel.release').is_file() and
-            previous.get('module_symvers_sha256')==sha(out/'Module.symvers'))
+            previous.get('module_symvers_sha256')==sha(out/'Module.symvers') and
+            kernel_release_matches(previous,out))
 
 
 def config_values(raw):
@@ -344,9 +381,10 @@ def main():
              **module_overrides((ROOT/'linux/configs/piano-platform.config').read_text(),'platform')}
     if args.pm_debug:
         modules.update(PM_DEBUG_OVERRIDES)
+    policy=kernel_policy_identity()
+    abi_epoch=policy['policy']['abi_epoch']
     env,tools=toolchain()
-    env.update(KBUILD_BUILD_USER='sunuefi',KBUILD_BUILD_HOST='builder',KBUILD_BUILD_VERSION='1')
-    env.setdefault('KBUILD_BUILD_TIMESTAMP',text(['git','show','-s','--format=%cI',commit],work))
+    env.update(kernel_build_environment(abi_epoch))
     out.mkdir(parents=True,exist_ok=True);artifacts.mkdir(parents=True,exist_ok=True)
     build_locks=[]
     lock_root=ROOT/'build/locks';lock_root.mkdir(parents=True,exist_ok=True)
@@ -359,7 +397,6 @@ def main():
     source_base=verify_source(work,commit)
     tree=text(['git','rev-parse','HEAD^{tree}'],work)
     compiler_checkout(work,compiler,commit,tree)
-    policy=kernel_policy_identity()
     hashes={str(path.relative_to(ROOT)):sha(path)for path in (bluetooth,filesystem,gamepad,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/desktop/prepare_kernel_llvm.py',ROOT/'tools/desktop/package_build.py',ROOT/'config/kernel-llvm.json')}
     if marker.exists():
         previous=json.loads(marker.read_text())
@@ -378,18 +415,12 @@ def main():
     command.append('CC='+shlex.join(tools['kernel_cc']))
     if 'aarch64-linux-gnu-gcc' in tools['paths']:
         command.append('CROSS_COMPILE=aarch64-linux-gnu-')
-    if tools['ccache_enabled']:
-        # Kbuild recommends a stable timestamp for useful ccache reuse.
-        env.setdefault('KBUILD_BUILD_TIMESTAMP',text(['git','show','-s','--format=%cI',commit],work))
-        tools['kbuild_build_timestamp']=env['KBUILD_BUILD_TIMESTAMP']
     run(command+['piano_defconfig'],env=env)
     run(['bash',compiler/'scripts/kconfig/merge_config.sh','-m','-O',out,out/'.config',public,effective],cwd=compiler,env=env)
     run(command+['olddefconfig'],env=env)
     requirements=validate_config((out/'.config').read_text(),public.read_text(),modules);config_hash=sha(out/'.config')
-    # Source and configuration changes must not replace another kernel ABI.
-    package_epoch=text(['git','-C',ROOT,'show','-s','--format=%ct','HEAD'])
-    abi_digest=hashlib.sha256((tree+config_hash+json.dumps(hashes,sort_keys=True)).encode()).hexdigest()[:12]
-    command[command.index('LOCALVERSION=')]='LOCALVERSION=-b'+package_epoch+'-g'+abi_digest
+    suffix=kernel_abi_suffix(abi_epoch,tree,config_hash,hashes,tools['sha256'])
+    command[command.index('LOCALVERSION=')]='LOCALVERSION='+suffix
     def fresh():
         verify_source(work,commit)
         verify_source(compiler,commit)
@@ -413,6 +444,7 @@ def main():
     image=out/'arch/arm64/boot/Image';state['image']=image_info(image)
     if not state['image']['efi_stub']:raise ValueError('Complete public candidate has no EFI stub')
     state['kernel_release']=(out/'include/config/kernel.release').read_text().strip()
+    if not kernel_release_matches(state,out):raise ValueError('Compiled kernel release differs from build inputs')
     state['module_symvers_sha256']=sha(out/'Module.symvers')
     install=artifacts/'modules'
     if install.exists():shutil.rmtree(install)

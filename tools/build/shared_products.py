@@ -90,7 +90,8 @@ def identity(kind, root=ROOT):
                                    'containers/Dockerfile'))
     if kind == 'kernel':
         from build_piano_full_kernel import kernel_policy_identity
-        rows['config/release.json'] = {'section': 'kernel', **kernel_policy_identity(root)}
+        rows['config/release.json'] = {'section': 'kernel',
+                                       **kernel_policy_identity(root, with_packages=True)}
     record = {'schema_version': 1, 'kind': kind,
               'workspace': os.environ.get('SUNUEFI_CACHE_WORKSPACE', str(root)),
               'environment': environment_identity(), 'inputs': rows}
@@ -255,7 +256,7 @@ def check_kernel_hot_inputs(root=ROOT):
                 'export KBUILD_OUTPUT = ' + str(out), 'include ' + str(compiler) + '/Makefile']
     if (out / 'Makefile').read_text().splitlines() != expected:
         raise ValueError('Shared kernel build Makefile belongs to another workspace')
-    if (out / 'include/config/kernel.release').read_text().strip() != record['kernel_release']:
+    if not kernel.kernel_release_matches(record, out):
         raise ValueError('Shared external-module kernel release differs')
     kernel.verify_source(Path(source['worktree']), record['source_commit'])
 

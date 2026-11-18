@@ -246,11 +246,15 @@ CI 在 ARM64 构建器打包。交叉构建需要 ARM64 GNU 工具链及 libc；
 内核和包构建共用同一套编译选项。加 `--plan` 可只检查命令。
 headers 包校验 `Module.symvers`、生成头文件和构建工具架构；只发布内核和
 外部模块 headers，不发布随 `bindeb-pkg` 生成的 `linux-libc-dev`。
-源码、配置摘要及构建提交时间写入内核 release，避免不同构建混用模块目录。
+内核 release 包含源码、配置和编译工具的摘要及 `config/release.json` 中
+固定的 `abi_epoch`，不使用项目最新提交的时间。同一组输入清空缓存重建时，
+模块目录不变。发布新的内核二进制或 headers 时，把 `abi_epoch` 更新为
+比上一版大的 Unix 时间，并将 `package_epoch` 推进到不早于它的值。
 `linux-piano-dtb-<release>` 随同发布完整板级 DTB；`piano-boot-config`
 连接 Debian 内核钩子或 pacman 事务钩子、发行版 initramfs 工具和 `kernel-install`。
-仅改设备树或引导配置时，软件包版本继续递增，不改变现有内核 ABI；
-升级已安装内核的设备树时，包管理器也会刷新启动文件。
+只更新板级 DTB、元包或引导配置时，只推进 `package_epoch`。软件包版本按
+`abi_epoch`、`package_epoch` 的顺序比较，不改变现有内核 ABI；升级已安装
+内核的设备树时，包管理器也会刷新启动文件。
 产品系统通过 `/etc/kernel/entry-token` 沿用初装启动镜像的 `linux` 标识；
 在独立安装的发行版中装包时，由 `kernel-install` 选择该系统的标识。
 

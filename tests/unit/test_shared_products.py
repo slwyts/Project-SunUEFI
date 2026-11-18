@@ -21,8 +21,10 @@ class SharedProductsTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
 
-    def git(self, *args):
+    def git(self, *args, epoch=None):
         env = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
+        if epoch is not None:
+            env.update(GIT_AUTHOR_DATE=f'@{epoch} +0000', GIT_COMMITTER_DATE=f'@{epoch} +0000')
         return subprocess.check_output(['git', '-C', self.root, *args], env=env, text=True).strip()
 
     def test_keys_bind_actual_inputs_environment_and_local_edits(self):
@@ -65,23 +67,33 @@ class SharedProductsTests(unittest.TestCase):
                 shared.run('firmware', verify_only=True, root=self.root)
             command.assert_not_called()
 
-    def test_kernel_key_binds_only_the_release_kernel_section(self):
+    def test_kernel_key_binds_versions_but_not_the_project_head(self):
         self.git('init','-q')
+        self.git('config','user.name','Fixture')
+        self.git('config','user.email','fixture@example.invalid')
         directory=self.root/'config';directory.mkdir()
         path=directory/'release.json'
         release=json.loads((ROOT/'config/release.json').read_text())
         path.write_text(json.dumps(release,indent=2)+'\n')
         self.git('add','.')
+        self.git('commit','-qm','kernel policy',epoch=1794983710)
         with patch.object(shared,'KERNEL_INPUTS',('config/release.json',)), \
                 patch.object(shared,'environment_identity',return_value={'container_image':'sha256:builder'}):
             record,key=shared.identity('kernel',self.root)
             release['login']['autologin']=not release['login']['autologin']
             release['mesa']={'version':'27.0.0'}
             path.write_text(json.dumps(release,sort_keys=True))
+            (self.root/'firmware.c').write_text('/* Firmware-only change. */\n')
+            self.git('add','.')
+            self.git('commit','-qm','new firmware and product configuration',epoch=1794984380)
             self.assertEqual(shared.identity('kernel',self.root),(record,key))
-            release['kernel']['localversion']+='-different'
+            release['kernel']['package_epoch']+=1
             path.write_text(json.dumps(release))
             self.assertNotEqual(shared.identity('kernel',self.root)[1],key)
+            _, package_key=shared.identity('kernel',self.root)
+            release['kernel']['abi_epoch']+=1
+            path.write_text(json.dumps(release))
+            self.assertNotEqual(shared.identity('kernel',self.root)[1],package_key)
 
     def test_kernel_restore_rejects_unknown_or_changed_policy_before_building(self):
         import build_piano_full_kernel as kernel

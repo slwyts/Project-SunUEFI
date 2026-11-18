@@ -20,7 +20,14 @@ CONFIGURED='needs the release kernel build (./build.sh linux)'
 
 
 class KernelPolicyCacheTests(unittest.TestCase):
-    def test_non_kernel_config_changes_keep_the_reuse_decision_and_outputs(self):
+    @staticmethod
+    def bind_release(record, output):
+        suffix=full.kernel_abi_suffix(record['kernel_policy']['abi_epoch'],record['source_tree'],
+                                      record['config_sha256'],record['inputs'],record['toolchain']['sha256'])
+        record['kernel_release']='7.3.3-piano'+suffix
+        (output/'include/config/kernel.release').write_text(record['kernel_release']+'\n')
+
+    def test_non_abi_config_changes_keep_the_reuse_decision_and_outputs(self):
         with tempfile.TemporaryDirectory(prefix='kernel-policy-') as directory:
             root=Path(directory);(root/'config').mkdir()
             config=root/'config/release.json'
@@ -30,15 +37,15 @@ class KernelPolicyCacheTests(unittest.TestCase):
             output=root/'kernel-build';(output/'include/config').mkdir(parents=True)
             (output/'.config').write_text('CONFIG_MODULES=y\n')
             (output/'Module.symvers').write_text('0x12345678\tmodule_symbol\tvmlinux\tEXPORT_SYMBOL\n')
-            (output/'include/config/kernel.release').write_text('7.3.3-piano\n')
             inputs={'tools/kernel.py':'producer-sha256'}
             tools={'sha256':{'clang':'compiler-sha256'}}
             record={'status':'HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED',
-                    'source_commit':'a'*40,'inputs':inputs,'kernel_policy':policy['policy'],
+                    'source_commit':'a'*40,'source_tree':'b'*40,'inputs':inputs,'kernel_policy':policy['policy'],
                     'kernel_policy_sha256':policy['sha256'],'local_module_overrides':{'CONFIG_UHID':'m'},
                     'root_policy':'LABEL=PIANOROOT','command_line':'rdinit=/pianoinit piano.root=LABEL=PIANOROOT',
                     'toolchain':tools,'config_sha256':full.sha(output/'.config'),
                     'module_symvers_sha256':full.sha(output/'Module.symvers')}
+            self.bind_release(record, output)
             marker=output/'manifest.json';marker.write_text(json.dumps(record,indent=2)+'\n')
             before={path: (path.read_bytes(),path.stat().st_mtime_ns)
                     for path in output.rglob('*') if path.is_file()}
@@ -51,11 +58,16 @@ class KernelPolicyCacheTests(unittest.TestCase):
             release['login']['autologin']=not release['login']['autologin']
             release['sensors']['required']=not release['sensors']['required']
             release['mesa']={'version':'27.0.0'}
+            release['kernel']['package_epoch']+=1
             config.write_text(json.dumps(release,sort_keys=True,separators=(',',':')))
             self.assertEqual(full.kernel_policy_identity(root),policy)
             self.assertTrue(reusable())
             self.assertEqual({path: (path.read_bytes(),path.stat().st_mtime_ns) for path in before},before)
 
+            release['kernel']['abi_epoch']+=1
+            config.write_text(json.dumps(release))
+            self.assertFalse(reusable())
+            release['kernel']['abi_epoch']-=1
             release['kernel']['command_line']+=' panic_on_warn=1'
             config.write_text(json.dumps(release))
             self.assertFalse(reusable())
@@ -66,28 +78,47 @@ class KernelPolicyCacheTests(unittest.TestCase):
             output=Path(directory);(output/'include/config').mkdir(parents=True)
             (output/'.config').write_text('CONFIG_MODULES=y\n')
             (output/'Module.symvers').write_text('kernel symbols\n')
-            (output/'include/config/kernel.release').write_text('7.3.3-piano\n')
             policy=full.kernel_policy_identity(ROOT)
             hashes={'recipe.py':'source-digest'};modules={'CONFIG_UHID':'m'}
             tools={'sha256':{'clang':'compiler-digest'}}
             record={'status':'HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED',
-                    'source_commit':'a'*40,'inputs':hashes,'kernel_policy':policy['policy'],
+                    'source_commit':'a'*40,'source_tree':'b'*40,'inputs':hashes,'kernel_policy':policy['policy'],
                     'kernel_policy_sha256':policy['sha256'],'local_module_overrides':modules,
                     'root_policy':'LABEL=PIANOROOT','command_line':'piano.root=LABEL=PIANOROOT',
                     'toolchain':tools,'config_sha256':full.sha(output/'.config'),
                     'module_symvers_sha256':full.sha(output/'Module.symvers')}
+            self.bind_release(record, output)
 
             def reusable(candidate):
                 return full.matching_build(candidate,'a'*40,hashes,policy,modules,
                                            'LABEL=PIANOROOT',record['command_line'],tools,output)
 
             self.assertTrue(reusable(record))
-            for key,value in (('source_commit','b'*40),('inputs',{}),('local_module_overrides',{}),
+            for key,value in (('source_commit','c'*40),('source_tree','c'*40),
+                              ('inputs',{}),('local_module_overrides',{}),('kernel_release','7.3.3-piano'),
                               ('root_policy','ram'),('command_line','changed'),
                               ('toolchain',{'sha256':{'clang':'other-compiler'}}),
                               ('config_sha256','0'*64),('module_symvers_sha256','0'*64)):
                 with self.subTest(field=key):
                     self.assertFalse(reusable({**record,key:value}))
+            (output/'include/config/kernel.release').write_text('7.3.3-piano\n')
+            self.assertFalse(reusable(record))
+
+    def test_abi_identity_changes_with_real_build_inputs(self):
+        policy=full.release_kernel_policy()
+        epoch=policy['abi_epoch']
+        values=(epoch,'a'*40,'b'*64,{'config':'c'*64},{'clang':'d'*64,'ld.lld':'e'*64})
+        suffix=full.kernel_abi_suffix(*values)
+        self.assertEqual(suffix,full.kernel_abi_suffix(
+            *values[:-1],dict(reversed(list(values[-1].items())))))
+        for index, changed in enumerate((epoch+1,'f'*40,'f'*64,
+                                          {'config':'f'*64},{**values[-1],'clang':'f'*64})):
+            with self.subTest(input=index):
+                self.assertNotEqual(suffix,full.kernel_abi_suffix(
+                    *values[:index],changed,*values[index+1:]))
+        environment=full.kernel_build_environment(epoch)
+        self.assertEqual(environment['SOURCE_DATE_EPOCH'],str(epoch))
+        self.assertTrue(environment['KBUILD_BUILD_TIMESTAMP'].endswith('+00:00'))
 
     def test_legacy_whole_file_hash_does_not_prove_the_kernel_section(self):
         policy=full.kernel_policy_identity(ROOT)

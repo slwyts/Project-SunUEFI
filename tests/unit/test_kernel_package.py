@@ -18,24 +18,50 @@ class KernelPackageTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('dpkg') and shutil.which('vercmp'),
                          'APT and pacman version comparators required')
     def test_packaging_updates_do_not_change_the_kernel_abi_version(self):
-        manifest = {'source_tree': 'c' * 40, 'config_sha256': 'a' * 64}
         release = '7.4.0-rc1-piano-b1794850508-g13eff9d06e11'
         for package_format in ('debian', 'pacman'):
-            previous = kernel.package_versions('7.4.0-rc1', release, manifest, package_format, '1794850508')
-            current = kernel.package_versions('7.4.0-rc1', release, manifest, package_format, '1794850509')
-            next_release = release.replace('b1794850508', 'b1794850509')
+            previous = kernel.package_versions('7.4.0-rc1', release, package_format, 1794850508)
+            current = kernel.package_versions('7.4.0-rc1', release, package_format, 1794850510)
+            next_release = '7.4.0-rc1-piano-b1794850509-g33eff9d06e11'
             next_kernel = kernel.package_versions(
-                '7.4.0-rc1', next_release, {**manifest, 'source_tree': '4' * 40},
-                package_format, '1794850509')
+                '7.4.0-rc1', next_release, package_format, 1794850509)
+            stable_kernel = kernel.package_versions(
+                '7.4.0', '7.4.0-piano-b1794850511-g43eff9d06e11', package_format, 1794850511)
             self.assertEqual(previous[0], current[0])
+            self.assertNotEqual(previous[0], next_kernel[0])
             if package_format == 'debian':
                 subprocess.run(['dpkg', '--compare-versions', current[1], 'gt', previous[1]], check=True)
                 subprocess.run(['dpkg', '--compare-versions', next_kernel[1], 'gt', current[1]], check=True)
+                subprocess.run(['dpkg', '--compare-versions', stable_kernel[1], 'gt', next_kernel[1]], check=True)
             else:
                 self.assertEqual(subprocess.check_output(
                     ['vercmp', current[1], previous[1]], text=True).strip(), '1')
                 self.assertEqual(subprocess.check_output(
                     ['vercmp', next_kernel[1], current[1]], text=True).strip(), '1')
+                self.assertEqual(subprocess.check_output(
+                    ['vercmp', stable_kernel[1], next_kernel[1]], text=True).strip(), '1')
+
+    @unittest.skipUnless(shutil.which('dpkg') and shutil.which('vercmp'),
+                         'APT and pacman version comparators required')
+    def test_pinned_versions_upgrade_from_head_dated_archives(self):
+        # The previous product scheme used the project's HEAD date. Compare
+        # against both its original and later ABI-first metadata versions.
+        previous = ('7.3.3+1794950937.4ddc50e6f1a7.fb0b45dd97e9-1',
+                    '7.3.3+1794995467.1794995467.4ddc50e6f1a7.fb0b45dd97e9-1')
+        policy = kernel.release_kernel_policy()
+        release = f"7.3.3-piano-b{policy['abi_epoch']}-g13eff9d06e11"
+        for package_format in ('debian', 'pacman'):
+            _, version = kernel.package_versions('7.3.3', release, package_format, policy['package_epoch'])
+            for old in previous:
+                if package_format == 'debian':
+                    subprocess.run(['dpkg', '--compare-versions', version + '-1', 'gt', old], check=True)
+                else:
+                    self.assertEqual(subprocess.check_output(
+                        ['vercmp', version + '-1', old], text=True).strip(), '1')
+
+    def test_packages_cannot_predate_abi_epoch(self):
+        with self.assertRaisesRegex(ValueError, 'precedes the sealed ABI epoch'):
+            kernel.package_versions('7.3.3', '7.3.3-piano-b2-g13eff9d06e11', 'pacman', 1)
 
     @unittest.skipUnless(os.geteuid() != 0 and all(shutil.which(name) for name in (
         'makepkg', 'pacman', 'unshare', 'gpg', 'bsdtar')),
