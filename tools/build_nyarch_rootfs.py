@@ -16,9 +16,9 @@ import build_arch_ffmpeg
 import build_nyarch_apps
 import build_release_rootfs as release
 from build_piano_runtime_helpers import source_patches
-from build import arch_mesa, overlay_cache, overlay_packages, overlay_release
+from build import arch_mesa, overlay_cache, overlay_packages, overlay_release, sensors
 import stage_arch_piano
-from build_steamos_rootfs import kde_package_is_current, sensor_sources, sensor_recipes
+from build_steamos_rootfs import kde_package_is_current, sensor_recipes
 from prepare_steamos_rootfs import download
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,9 +59,6 @@ def build(args):
     elif not (output / 'manifest.json').exists():
         raise ValueError('The base desktop assembly did not complete')
 
-    sensors = inputs / 'sensors'
-    if not sensors.exists():
-        sensor_sources(sensors, policy['sensors'])
     kernel = ROOT / 'artifacts/kernels/release'
     source = Path(json.loads((ROOT / 'build/release/source-manifest.json').read_text())['worktree'])
     kernel_build = ROOT / 'build/kernels/release'
@@ -86,7 +83,8 @@ def build(args):
             guest(['pacman', '-Syu', '--needed', '--noconfirm', *build_nyarch_apps.PACKAGES])
         records = overlay_packages.install_arch_overlays(root, kernel, target, published)
     else:
-        records, packages = build_overlays(root, output, inputs, sensors, applications,
+        sensor_source, _ = sensors.source_workspace(inputs / 'sensors', policy['sensors'])
+        records, packages = build_overlays(root, output, inputs, sensor_source, applications,
                                            refresh=not package_output)
         if package_output:
             commit = json.loads((kernel / 'manifest.json').read_text())['source_commit']
@@ -132,7 +130,7 @@ def build(args):
             '--output', runtime, '--sysroot', args.bootstrap_sysroot.resolve(),
             '--firmware-root', root)
     stage_arch_piano.stage(argparse.Namespace(
-        rootfs=root, kernel=kernel, runtime=runtime, sensor_source=sensors,
+        rootfs=root, kernel=kernel, runtime=runtime,
         bootstrap_sysroot=args.bootstrap_sysroot, desktop='nyarch',
         desktop_source=desktop, extensions=extensions,
         published_packages=published[1] if published else None,
@@ -146,7 +144,7 @@ def build(args):
     manifest.write_text(json.dumps(record, indent=2) + '\n')
 
 
-def build_overlays(root, output, inputs, sensors, apps, *, refresh):
+def build_overlays(root, output, inputs, sensor_source, apps, *, refresh):
     if not apps.exists():
         build_nyarch_apps.prepare_sources(apps)
     nyarch = output / 'packages/nyarch'
@@ -159,8 +157,7 @@ def build_overlays(root, output, inputs, sensors, apps, *, refresh):
     packages = {'nyarch': (nyarch, {row['package']: {'sha256': row['sha256']}
                                    for row in app_records})}
     recipes = inputs / 'recipes'
-    if not recipes.exists():
-        sensor_recipes(recipes, sensors)
+    sensor_recipes(recipes, sensor_source)
     mesa = recipes / 'mesa'
     arch_mesa.recipe(mesa)
     gsd = recipes / 'gnome-settings-daemon'

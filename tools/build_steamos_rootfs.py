@@ -22,7 +22,7 @@ import build_steamos_gamescope
 import build_steamos_manager
 import build_piano_runtime_helpers as runtime_helpers
 import build_release_helpers
-from build import overlay_cache, overlay_packages
+from build import overlay_cache, overlay_packages, sensors
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -43,25 +43,10 @@ def run(*args, **kwargs):
     return subprocess.run([str(a) for a in args], check=True, **kwargs)
 
 
-def sensor_sources(output, cfg):
-    source = ROOT / cfg['source']
-    commit = subprocess.check_output(['git', '-C', source, 'rev-parse', 'HEAD'], text=True).strip()
-    if commit != cfg['commit'] or subprocess.check_output(
-            ['git', '-C', source, 'status', '--porcelain'], text=True):
-        raise ValueError('Run ./build.sh sources to obtain the fixed sensor source')
-    shutil.copytree(source, output, ignore=shutil.ignore_patterns('.git'))
-    rows = []
-    for name in cfg['patches']:
-        run('patch', '--batch', '--forward', '-p1', '-i', ROOT / name, cwd=output)
-        rows.append({'path': name, 'sha256': digest(ROOT / name)})
-    (output / 'SOURCE').write_text(json.dumps(
-        {'source_url': cfg['source_url'], 'source_commit': commit, 'patches': rows}, indent=2) + '\n')
-
-
 def sensor_recipes(output, source):
     for name in ('fastrpc', 'libssc', 'iio-sensor-proxy'):
         recipe = output / name
-        shutil.copytree(ROOT / 'linux/bsp/arch' / name, recipe)
+        shutil.copytree(ROOT / 'linux/bsp/arch' / name, recipe, dirs_exist_ok=True)
         if name == 'fastrpc':
             continue
         if name == 'libssc':
@@ -311,9 +296,6 @@ done
         locale.write_text('en_US.UTF-8 UTF-8\nzh_CN.UTF-8 UTF-8\n')
         guest(['locale-gen'])
 
-    source = output / 'sensor-source'
-    if not source.exists():
-        sensor_sources(source, cfg['sensors'])
     kernel = ROOT / 'artifacts/kernels/release'
     kernel_source = Path(json.loads((ROOT / 'build/release/source-manifest.json').read_text())['worktree'])
     cache_inputs = None
@@ -325,6 +307,7 @@ done
     if published:
         records = overlay_packages.install_arch_overlays(root, kernel, target, published)
     else:
+        source, _ = sensors.source_workspace(output / 'sensor-source', cfg['sensors'])
         records, packages = build_overlays(root, output, source, steamos_config)
         if package_output:
             commit = json.loads((kernel / 'manifest.json').read_text())['source_commit']
@@ -336,7 +319,7 @@ done
                                            build_inputs=cache_inputs)
         records['device_configuration'], records['audio_topology_package'] = (
             overlay_packages.install_local_arch_bsp(root))
-    finish_product(args, root, output, source, kernel, kernel_source, base_record, records, published)
+    finish_product(args, root, output, kernel, kernel_source, base_record, records, published)
 
 
 def build_overlays(root, output, source, steamos_config):
@@ -379,12 +362,13 @@ def build_overlays(root, output, source, steamos_config):
             root, ROOT / 'linux/bsp/steamos/power-profiles-daemon', power_profiles)
     outputs['power-profiles-daemon'] = overlay_packages.pacman_outputs(power_profiles)
     recipes = output / 'sensor-recipes'
-    if not recipes.exists():
-        sensor_recipes(recipes, source)
+    sensor_recipes(recipes, source)
     for name in ('fastrpc', 'libssc', 'iio-sensor-proxy'):
         packages = output / 'packages' / name
-        if not build_arch_package.matches_release(packages):
+        if not kde_package_is_current(packages, recipes / name):
             build_arch_package.build(root, recipes / name, packages)
+        else:
+            build_arch_package.install_cached(root, packages)
         outputs[name] = overlay_packages.pacman_outputs(packages)
     mesa = ROOT / 'build/mesa-pacman/steamos'
     recipe = mesa_recipe(output / 'mesa-recipe', steamos_config['mesa'])
@@ -432,7 +416,7 @@ def build_overlays(root, output, source, steamos_config):
     return records, outputs
 
 
-def finish_product(args, root, output, source, kernel, kernel_source, base_record, records, published):
+def finish_product(args, root, output, kernel, kernel_source, base_record, records, published):
     client = output / 'steam-client'
     if (not (client / 'SOURCE.json').is_file() or
             json.loads((client / 'SOURCE.json').read_text()) != prepare_steam_client.source_record()):
@@ -466,7 +450,7 @@ def finish_product(args, root, output, source, kernel, kernel_source, base_recor
     # Shared stager installs the camera package, firmware, other hardware
     # helpers, suspend policy and the LABEL-based initramfs.
     stage_arch_piano.stage(argparse.Namespace(
-        rootfs=root, kernel=kernel, runtime=runtime, sensor_source=source,
+        rootfs=root, kernel=kernel, runtime=runtime,
         bootstrap_sysroot=args.bootstrap_sysroot, desktop='steamos',
         published_packages=published[1] if published else None,
         device_configuration=records['device_configuration'],

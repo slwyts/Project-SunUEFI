@@ -22,7 +22,7 @@ import stage_piano_full_userspace as userspace
 import stage_piano_kernel_modules as modules
 import stage_piano_ram_hardware as hardware
 import stage_nyarch_desktop as nyarch
-from build import overlay_packages
+from build import overlay_packages, sensors
 from package import camera
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -104,6 +104,25 @@ def install_camera(root, guest, *, published):
     return archive, metadata
 
 
+def install_sensors(root, guest, *, published):
+    """Install the device package after the target's SSC provider."""
+    guest(['pacman', '-T', sensors.SSC_DEPENDENCY])
+    tmp = release.target(root, 'var/tmp')
+    tmp.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='sunuefi-sensors-', dir=tmp) as folder:
+        work = Path(folder)
+        work.chmod(0o755)
+        if published:
+            archive, metadata = sensors.pacman_package(ROOT / 'artifacts/packages/bsp/sensors')
+            overlay_packages.install_pacman(root, work, 'sunuefi', {archive.name: metadata}, guest)
+        else:
+            output = work / 'package'
+            sensors.build_pacman(output)
+            archive, metadata = sensors.pacman_package(output)
+            guest(['pacman', '-U', '--noconfirm', '/' + archive.relative_to(root).as_posix()])
+    return metadata
+
+
 def stage(args):
     root, output = args.rootfs.resolve(), args.rootfs.resolve().parent
     if os.geteuid() or not root.is_relative_to(ROOT / 'build/distros'):
@@ -142,26 +161,6 @@ def stage(args):
     fw = ROOT / cfg['firmware']['components']
     from stage_piano_firmware import stage as stage_firmware, verify_display
     firmware = stage_firmware(fw, root, 'pacman', shared=published_packages is not None)
-    # Use the reviewed, patched sensor importer source; Debian packaging itself
-    # is not installed in Arch.
-    sensor = args.sensor_source.resolve() / 'piano-sensors'
-    sensor_record = json.loads((args.sensor_source / 'SOURCE').read_text())
-    expected = [{'path': p, 'sha256': release.digest(ROOT / p)} for p in cfg['sensors']['patches']]
-    if sensor_record.get('patches') != expected:
-        raise ValueError('Sensor importer does not match the configured patch series')
-    for name in ('piano-sensors-import', 'piano-sensors-lp-table', 'piano-sensors-wait'):
-        put(root, 'usr/libexec/piano-sensors/' + name, (sensor / name).read_text(), 0o755)
-    for name in ('piano-sensors-import', 'adsprpcd-sensorspd'):
-        text = (sensor / ('debian/piano-sensors.' + name + '.service')).read_text()
-        if name == 'adsprpcd-sensorspd':
-            text = text.replace(' piano-adsp.service', '')
-        put(root, 'usr/lib/systemd/system/' + name + '.service', text)
-    put(root, 'usr/lib/systemd/system/iio-sensor-proxy.service.d/piano.conf',
-        (sensor / 'iio-sensor-proxy-piano.conf').read_text())
-    put(root, 'etc/udev/rules.d/59-fastrpc-remoteproc.rules',
-        (sensor / '59-fastrpc-remoteproc.rules').read_text())
-    put(root, 'etc/udev/rules.d/81-piano-sensors.rules',
-        (sensor / 'debian/piano-sensors.udev').read_text())
     # Upstream base selects GDM via Debian paths; use Arch's installed names.
     (root / 'etc/gdm3/daemon.conf').unlink(missing_ok=True)
     put(root, 'usr/lib/systemd/system/piano-hostkeys.service.d/10-sshd.conf',
@@ -178,6 +177,7 @@ def stage(args):
     put(root, 'etc/chromium-flags.conf',
         (ROOT / 'linux/bsp/arch/chromium-flags.conf').read_text())
     with release.build_resolver(root), guest_environment(root) as guest:
+        sensor_record = install_sensors(root, guest, published=published_packages is not None)
         camera_archive, camera_record = install_camera(
             root, guest, published=published_packages is not None)
         required = ('erofs-utils', 'device-mapper', 'rsync')
@@ -196,8 +196,7 @@ def stage(args):
         guest(['chpasswd'], input='piano:' + cfg['login']['password'] + '\n', text=True)
         guest(['systemctl', 'unmask', 'sleep.target', 'suspend.target'])
         guest(['systemctl', 'mask', 'hibernate.target',
-               'hybrid-sleep.target', 'suspend-then-hibernate.target',
-               'adsprpcd.service', 'adsprpcd_audiopd.service'])
+               'hybrid-sleep.target', 'suspend-then-hibernate.target'])
         guest(['systemctl', 'enable', 'sddm' if steamos else 'gdm', 'NetworkManager', 'sshd', 'bluetooth',
                'piano-camerad', 'piano-hostkeys', 'adsprpcd-sensorspd'])
         guest(['systemctl', 'set-default', 'graphical.target'])
@@ -239,10 +238,12 @@ def stage(args):
     packages = subprocess.check_output(['chroot', root, 'pacman', '-Q'], text=True)
     overlay_packages.verify_pacman_versions(
         {**(published_packages or {}), 'device_configuration': device_configuration,
-         'audio_topology_package': topology, 'camera_package': camera_record}, packages)
+         'audio_topology_package': topology, 'camera_package': camera_record,
+         'sensor_package': sensor_record}, packages)
     overlay_packages.verify_bsp_files(root, 'pacman')
     overlay_packages.verify_topology(root, 'pacman', topology)
     verify_display(root, 'pacman', firmware['display_package'])
+    sensors.verify_arch_files(root)
     camera.verify_installed(root, 'pacman', camera_archive)
     from package.v4l2loopback import verify_installed
     verify_installed(root, 'pacman', kernel['kernel_release'])
@@ -258,13 +259,14 @@ def stage(args):
               'display_firmware_package': firmware['display_package'],
               'packages_sha256': release.digest(output / 'packages.tsv'),
               'camera_package': camera_record, 'audio_topology_package': topology,
+              'sensor_package': sensor_record,
               'runtime_manifest_sha256': release.digest(args.runtime / 'manifest.json')}
     (output / 'manifest.json').write_text(json.dumps(record, indent=2) + '\n')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ('rootfs', 'kernel', 'runtime', 'sensor-source', 'bootstrap-sysroot'):
+    for name in ('rootfs', 'kernel', 'runtime', 'bootstrap-sysroot'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--desktop', choices=('nyarch', 'steamos'), default='nyarch')
     parser.add_argument('--desktop-source', type=Path)

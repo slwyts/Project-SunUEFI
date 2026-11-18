@@ -1,0 +1,48 @@
+pkgname=piano-sensors
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Xiaomi Pad 8 Pro sensor data import and SensorProxy integration'
+arch=(any)
+url='https://github.com/blu-sharky/piano-sensors'
+license=(MIT)
+depends=(coreutils device-mapper erofs-utils 'fastrpc>=1.0.7' gawk
+         '@SSC_DEPENDENCY@' kmod libssc python 'systemd>=249' util-linux)
+options=(!debug !strip)
+source=('piano-sensors.tar')
+sha256sums=('@SOURCE_SHA256@')
+
+package() {
+  local upstream="$srcdir/piano-sensors"
+  local helpers="$pkgdir/usr/lib/piano-sensors"
+  local units="$pkgdir/usr/lib/systemd/system"
+  local name
+
+  for name in piano-sensors-import piano-sensors-lp-table piano-sensors-wait; do
+    install -Dm755 "$upstream/$name" "$helpers/$name"
+  done
+  sed -i 's|/usr/libexec/piano-sensors/|/usr/lib/piano-sensors/|g' \
+    "$helpers/piano-sensors-import"
+
+  for name in piano-sensors-import adsprpcd-sensorspd; do
+    install -Dm644 "$upstream/debian/piano-sensors.$name.service" "$units/$name.service"
+    sed -i -e 's|/usr/libexec/piano-sensors/|/usr/lib/piano-sensors/|g' \
+      -e 's|/usr/sbin/|/usr/bin/|g' \
+      -e '/^After=/s/ piano-adsp\.service$//' \
+      -e '/^\[Unit\]$/a ConditionFirmware=device-tree-compatible(xiaomi,piano)' \
+      "$units/$name.service"
+  done
+
+  # FastRPC udev starts the generic services; Piano uses only the sensors PD.
+  for name in adsprpcd adsprpcd_audiopd; do
+    install -d "$units/$name.service.d"
+    printf '%s\n' '[Unit]' 'ConditionFirmware=!device-tree-compatible(xiaomi,piano)' \
+      > "$units/$name.service.d/60-piano.conf"
+  done
+
+  install -Dm644 "$upstream/iio-sensor-proxy-piano.conf" \
+    "$units/iio-sensor-proxy.service.d/piano.conf"
+  install -Dm644 "$upstream/debian/piano-sensors.udev" \
+    "$pkgdir/usr/lib/udev/rules.d/81-piano-sensors.rules"
+  install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/SOURCE" "$pkgdir/usr/share/doc/$pkgname/source.json"
+}

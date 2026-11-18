@@ -133,6 +133,35 @@ class RepoPublishTests(unittest.TestCase):
         self.assertEqual(self.store.writes, writes)
 
     @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
+    def test_shared_sensors_wait_for_the_signed_steamos_index(self):
+        base, overlay = 'sunuefi', 'sunuefi-steamos'
+        base_prefix = f'pacman/{base}/os/aarch64/'
+        provider = self.pacman('3.9', 'iio-sensor-proxy')
+        sensors = self.pacman('5', 'piano-sensors')
+        previous = self.pacman('4', 'piano-sensors')
+        repo.publish(self.args(base, [previous], 'previous'), self.store)
+        before = {key: value for key, value in self.store.objects.items()
+                  if key.startswith(base_prefix)}
+        batches = {overlay: {provider: repo.sha(provider)}, base: {sensors: repo.sha(sensors)}}
+
+        def verify_overlay(_, repository, directory):
+            self.assertEqual(repository, overlay)
+            index = directory / f'{overlay}.db'
+            repo.verify(index, directory / f'{overlay}.db.sig',
+                        self.root / 'config/keys/sunuefi-archive-keyring.gpg')
+            self.assertEqual(self.store.objects[f'pacman/{overlay}/os/aarch64/{overlay}.db'],
+                             index.read_bytes())
+            raise ValueError('The client-facing index still serves the previous generation')
+
+        with patch.object(products, 'verify_public', side_effect=verify_overlay) as verify_public:
+            with self.assertRaisesRegex(ValueError, 'still serves the previous generation'):
+                products.publish_products(batches, self.key, self.root / 'deferred', self.store)
+            verify_public.assert_called_once()
+        after = {key: value for key, value in self.store.objects.items()
+                 if key.startswith(base_prefix)}
+        self.assertEqual(after, before)
+
+    @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
     def test_product_accepts_republishing_the_same_pacman_generation(self):
         package = self.pacman('2')
         digest = repo.sha(package)

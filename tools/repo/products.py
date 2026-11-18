@@ -13,7 +13,8 @@ from publish import REPOSITORIES, ROOT, Store, prepare_publication, sha, upload_
 from verify_public import verify_public
 
 sys.path.insert(0, str(ROOT / 'tools'))
-from build.overlay_packages import bsp_package, topology_package
+from build import sensors
+from build.overlay_packages import ARCH_REPOSITORIES, bsp_package, topology_package
 from package import camera
 from package.boot import PUBLIC_REPOSITORY_URL
 
@@ -66,6 +67,9 @@ def publication_batches(root, *, kernel, overlays):
     """Merge shared and distribution packages before updating each signed index."""
     groups = {name: {} for name in REPOSITORIES}
     shared = set()
+    arch_targets = set(overlays) & ARCH_REPOSITORIES.keys()
+    if kernel and arch_targets and arch_targets != ARCH_REPOSITORIES.keys():
+        raise ValueError('Publish both Arch overlay sets with the shared sensor package')
     if kernel:
         for package_format, repository in KERNEL_REPOSITORIES.items():
             groups[repository].update(packages(root / 'kernel' / package_format, format=package_format))
@@ -76,17 +80,31 @@ def publication_batches(root, *, kernel, overlays):
                     raise ValueError('Common package duplicated in ' + repository + ': ' + path.name)
                 groups[repository][path.name] = (path, metadata['sha256'])
                 shared.add(path.name)
+        if arch_targets:
+            path, metadata = sensors.pacman_package(root / 'bsp/sensors')
+            groups['sunuefi'][path.name] = (path, metadata['sha256'])
+            shared.add(path.name)
     for target in overlays:
         repository = OVERLAY_REPOSITORIES[target]
-        for name, (path, digest) in overlay_set(root / 'overlays' / target, target).items():
-            if name in shared:
+        archives = overlay_set(root / 'overlays' / target, target)
+        if target in arch_targets:
+            provider = [path for name, (path, _) in archives.items()
+                        if name.startswith('iio-sensor-proxy-')]
+            if len(provider) != 1:
+                raise ValueError(f'{target} must supply one native SensorProxy package')
+            sensors.check_ssc_provider(provider[0])
+        for name, (path, digest) in archives.items():
+            if name in shared or (target in ARCH_REPOSITORIES and
+                                  name.startswith(sensors.ARCH_PACKAGE + '-')):
                 raise ValueError('Common package duplicated in ' + target + ': ' + name)
             old = groups[repository].get(name)
             if old is not None and old[1] != digest:
                 raise ValueError('Different builds share a package filename: ' + name)
             groups[repository][name] = (path, digest)
-    return {repository: dict(group[name] for name in sorted(group))
-            for repository, group in groups.items() if group}
+    # Expose the SteamOS provider before the common package that requires it.
+    order = ('apt', 'sunuefi-steamos', 'sunuefi') if kernel and arch_targets else REPOSITORIES
+    return {repository: dict(groups[repository][name] for name in sorted(groups[repository]))
+            for repository in order if groups[repository]}
 
 
 def publish_products(batches, key, output, store):
@@ -121,6 +139,7 @@ def main():
                                             package_format, component='display-firmware')[1],
         }
                 for package_format in KERNEL_REPOSITORIES}
+        rows['pacman']['sensors'] = sensors.pacman_package(args.output / 'sensors')[1]
         print(json.dumps(rows, indent=2))
         return
     if args.verify_target:

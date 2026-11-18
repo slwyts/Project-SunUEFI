@@ -15,6 +15,14 @@ PRODUCTS = ['debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos']
 
 
 class CiBuildTargetsTests(unittest.TestCase):
+    def test_arch_images_share_two_abi_matched_provider_sets(self):
+        for target in ('nyarch-gnome', 'steamos'):
+            selected = targets.select([], target)
+            self.assertEqual(selected, [target])
+            self.assertEqual(targets.overlay_targets(selected), ['nyarch-gnome', 'steamos'])
+        self.assertEqual(targets.overlay_targets(['debian-kde']), ['debian-gnome'])
+        self.assertEqual(targets.overlay_targets(['linux']), [])
+
     def test_domains_and_shared_inputs(self):
         self.assertEqual(targets.select(['uefi/core/product/PianoProductCore.c']), PRODUCTS)
         self.assertEqual(targets.select(['linux/dts/piano-audio-dmic-clock.dtso']), PRODUCTS)

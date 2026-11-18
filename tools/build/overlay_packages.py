@@ -272,10 +272,22 @@ def download_debian(rootfs, download, packages, run):
     return paths
 
 
-def pacman_identity(archive):
+def pacman_info(archive):
     text = subprocess.check_output(['bsdtar', '-xOf', archive, '.PKGINFO'], text=True)
-    fields = dict(line.split(' = ', 1) for line in text.splitlines() if ' = ' in line)
-    return fields['pkgname'], fields['pkgver'], fields['arch']
+    fields = {}
+    for line in text.splitlines():
+        if ' = ' in line:
+            name, value = line.split(' = ', 1)
+            fields.setdefault(name, []).append(value)
+    return fields
+
+
+def pacman_identity(archive):
+    fields = pacman_info(archive)
+    names = ('pkgname', 'pkgver', 'arch')
+    if any(len(fields.get(name, ())) != 1 for name in names):
+        raise ValueError('Missing or repeated identity in ' + archive.name)
+    return tuple(fields[name][0] for name in names)
 
 
 def pacman_packages(rootfs, sources):

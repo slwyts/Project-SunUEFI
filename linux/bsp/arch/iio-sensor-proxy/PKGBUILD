@@ -1,11 +1,12 @@
 pkgname=iio-sensor-proxy
 pkgver=3.9
-pkgrel=1.1
+pkgrel=1.2
 pkgdesc='SensorProxy with Qualcomm SSC and Piano claim ordering support'
 arch=(aarch64)
 url='https://gitlab.freedesktop.org/hadess/iio-sensor-proxy'
 license=(GPL-3.0-or-later)
 depends=(glib2 systemd-libs polkit libgudev libssc)
+provides=("iio-sensor-proxy-ssc=$pkgver")
 makedepends=(base-devel meson systemd)
 options=(!debug !lto)
 source=('iio-sensor-proxy_3.9.orig.tar.bz2' 'ssc-claim-race.patch')

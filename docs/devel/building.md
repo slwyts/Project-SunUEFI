@@ -132,6 +132,10 @@ Build products 先准备一次 ARM64 构建容器，再并行构建 UEFI 和 And
 
 同一分支的产品运行按批排队，只保留最新的排队任务。pacman 同步索引只列出每个包的
 最新版本，所以已经开始的任务要等镜像组装结束，下一批才会替换公开索引。
+构建任一 Arch 镜像时，两套发行版的 SensorProxy 包一起检查和发布。共用的
+`piano-sensors` 需要这两套各自支持 SSC 的包；发布先更新 SteamOS 增量仓，再更新共用仓。
+如果从还会直接复制传感器服务的构建目录续建，安装器会拒绝覆盖无主文件；
+请指定新的构建输出目录。
 同批的各发行版仍并行构建。
 镜像组装读取发布任务验签成功后传来的包清单；重跑重新构建了包时，也不会读回旧清单。
 
@@ -227,7 +231,7 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 | Linux 设备固件 | 显示校准由 `piano-firmware-display` 安装；触控固件可单独[构建本地软件包](../../linux/bsp/README.md#本地固件包)，其他固件仍由组装脚本安装 | 发行版提供通用固件，设备包补齐板级固件 |
 | ALSA UCM、udev、笔校准及音频拓扑 | 四个产品安装 `piano-device-config` 和 `piano-audio-topology` | 开源拓扑随独立包更新，剩余硬件运行文件继续按组件打包 |
 | Mesa、FFmpeg | 已有 Debian 和 pacman 原生包 | 保留目标发行版完整配方、功能和 ABI，按软件源正常更新 |
-| 传感器 | Debian 提供 FastRPC、libssc、iio-sensor-proxy 和 Piano 配置的六个运行包；Arch 部分集成文件另行复制 | 原生包包含完整集成文件，运行时继续提供标准 SensorProxy 接口 |
+| 传感器 | Debian 提供六个原生包；Nyarch 与 SteamOS 共用 `piano-sensors`，FastRPC、libssc 和 SensorProxy 按各自的库接口打包 | 继续通过标准 SensorProxy 接口提供照度和姿态 |
 | PipeWire 相机插件 | 已有 GStreamer 插件包和 `pipewire-v4l2-source` 包 | 保留明确的 PipeWire ABI 依赖，修复进入上游后撤掉本地替代 |
 | 指纹 | libfprint／fprintd 使用目标发行版包；CLI 和服务配置另行安装 | 正常包拥有全部必要文件，标准认证结果仍取自 libfprint／fprintd |
 | 相机 | 两种包管理器安装 `piano-camera`；`v4l2loopback` 随匹配内核安装 | 标准 libcamera 路径接管后移除过渡服务 |

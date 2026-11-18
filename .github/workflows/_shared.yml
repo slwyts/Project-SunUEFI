@@ -30,8 +30,10 @@ jobs:
         with:
           operation: download
           name: builder
-      - name: Check out the fixed AudioReach sources
-        run: git submodule update --init --depth 1 -- upstream/debian-piano-current upstream/audioreach-topology
+      - name: Check out the fixed sound and sensor sources
+        run: |
+          git submodule update --init --depth 1 -- upstream/debian-piano-current \
+            upstream/audioreach-topology upstream/piano-sensors-current
       - id: camera-key
         name: Identify the camera source, recipe and toolchain
         run: |
@@ -55,6 +57,7 @@ jobs:
               git config --global --add safe.directory /workspace
               git config --global --add safe.directory /workspace/upstream/debian-piano-current
               git config --global --add safe.directory /workspace/upstream/audioreach-topology
+              git config --global --add safe.directory /workspace/upstream/piano-sensors-current
               ./build.sh bsp package --target debian --format deb --output artifacts/packages/bsp/debian
               ./build.sh bsp package --target arch --format pacman --output artifacts/packages/bsp/pacman
               ./build.sh bsp package --audio-topology --target debian --format deb --output artifacts/packages/bsp/audio-topology/debian
@@ -65,6 +68,7 @@ jobs:
               env -u SUNUEFI_OVERLAY_RELEASE ./build.sh bsp package \
                 --display-firmware vendor/firmware/piano-display --target arch --format pacman \
                 --output artifacts/packages/bsp/display-firmware/pacman
+              ./build.sh sensors --format pacman artifacts/packages/bsp/sensors
               ./build.sh repo products --verify-bsp --output artifacts/packages/bsp
               if [ "$CAMERA_CACHE_HIT" = true ]; then
                 ./build.sh camera-package --verify

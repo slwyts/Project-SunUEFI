@@ -55,6 +55,12 @@
 * Debian：运行 `sudo apt update && sudo apt upgrade`。
 * Nyarch 和 SteamOS：运行 `sudo pacman -Syu`。SteamOS 也可以在 [Steam 或 Discover 中更新](steamos.md#系统更新)。
 
+新版 Arch 镜像自带 `piano-sensors`，随系统更新。早期镜像中的传感器服务已经能
+运行，不必重装。如果手动安装 `piano-sensors` 时 pacman 报告文件已存在，用
+`pacman -Qo <报错路径>` 检查归属。只把无主的旧服务或配置移到备份目录，
+保留其他软件包拥有的文件、修改过的设置和 `/var/lib/piano-sensors` 中的数据，
+再运行 `sudo pacman -Syu piano-sensors`。重启后用 `monitor-sensor` 查看传感器。
+
 更新内核前，运行 `findmnt --mountpoint /boot/efi` 确认启动分区已挂载。重启后如果新版内核不能启动，在 systemd-boot 的三秒菜单里选择之前的内核。重新刷系统镜像用于重装或更换发行版，会覆盖已有 Linux 文件；操作前先备份。
 
 HyperOS 更新后，在引导助手的 **维护** 页点 **重新安装引导**，恢复合体 BOOT。

@@ -430,25 +430,27 @@ def pacman_builder_account():
         raise ValueError('Run makepkg as a regular user or in the project builder')
 
 
-def pacman_package(output, tree, report, configuration):
-    # Only the packed sources and recipe are exposed to the unprivileged
-    # builder, not the rootfs or repo signing files.
+def makepkg(work):
+    """Build a package of checked files without installing runtime dependencies."""
+    env = {**os.environ, 'SOURCE_DATE_EPOCH': '0', 'LC_ALL': 'C',
+           'BUILDDIR': str(work), 'SRCDEST': str(work), 'PKGDEST': str(work),
+           'LOGDEST': str(work), 'PKGEXT': '.pkg.tar.zst',
+           'PACKAGER': 'Project SunUEFI <slwyts@tuta.io>'}
+    command = ['makepkg', '--noconfirm', '--nodeps']
     account = pacman_builder_account()
-    with tempfile.TemporaryDirectory(prefix='sunuefi-bsp-', dir='/tmp' if account else output) as folder:
+    if account is not None:
+        for path in (work, *work.iterdir()):
+            os.chown(path, account.pw_uid, account.pw_gid, follow_symlinks=False)
+        command = ['runuser', '-u', account.pw_name, '--', *command]
+    subprocess.run(command, cwd=work, env=env, stdout=sys.stderr, check=True)
+
+
+def pacman_package(output, tree, report, configuration):
+    # Only the packed sources and recipe are exposed to the unprivileged builder.
+    with tempfile.TemporaryDirectory(prefix='sunuefi-bsp-', dir='/tmp') as folder:
         work = Path(folder)
         pacman_sources(work, tree, report, configuration)
-        # This package only copies checked data. Its runtime dependencies are
-        # resolved on installation, not installed into the build machine.
-        env = {**os.environ, 'SOURCE_DATE_EPOCH': '0', 'LC_ALL': 'C',
-               'BUILDDIR': str(work), 'SRCDEST': str(work), 'PKGDEST': str(work),
-               'LOGDEST': str(work), 'PKGEXT': '.pkg.tar.zst',
-               'PACKAGER': 'Project SunUEFI <slwyts@tuta.io>'}
-        command = ['makepkg', '--noconfirm', '--nodeps']
-        if account is not None:
-            for path in (work, *work.iterdir()):
-                os.chown(path, account.pw_uid, account.pw_gid, follow_symlinks=False)
-            command = ['runuser', '-u', account.pw_name, '--', *command]
-        subprocess.run(command, cwd=work, env=env, stdout=sys.stderr, check=True)
+        makepkg(work)
         version = report['version'] + '-' + overlay_release.pacman_release('1')
         artifact = work / f"{report['package']}-{version}-any.pkg.tar.zst"
         require(artifact.is_file() and not artifact.is_symlink(),

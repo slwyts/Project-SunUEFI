@@ -45,8 +45,12 @@ def shared_kinds(targets):
 
 def overlay_targets(targets):
     """KDE and GNOME consume the same Debian overlay package generation."""
-    result = ['debian-gnome'] if set(targets) & {'debian-gnome', 'debian-kde'} else []
-    return [*result, *(target for target in ('nyarch-gnome', 'steamos') if target in targets)]
+    selected = set(targets)
+    result = ['debian-gnome'] if selected & {'debian-gnome', 'debian-kde'} else []
+    # The shared Arch sensor package must have an ABI-matched SSC provider in both repositories.
+    if selected & {'nyarch-gnome', 'steamos'}:
+        result.extend(('nyarch-gnome', 'steamos'))
+    return result
 
 
 def select(files, manual=None):

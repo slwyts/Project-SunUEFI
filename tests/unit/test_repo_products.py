@@ -20,6 +20,7 @@ class RepoProductsTests(unittest.TestCase):
         self.camera_pacman = self.packages / 'camera/pacman/piano-camera-1.0-1-aarch64.pkg.tar.zst'
         self.topology_deb = self.packages / 'bsp/audio-topology/debian/piano-audio-topology_1_all.deb'
         self.topology_pacman = self.packages / 'bsp/audio-topology/pacman/piano-audio-topology-1-1-any.pkg.tar.zst'
+        self.sensor = self.packages / 'bsp/sensors/piano-sensors-5-1-any.pkg.tar.zst'
 
     def shared_camera(self):
         return patch('products.camera.shared_package', side_effect=(
@@ -49,6 +50,7 @@ class RepoProductsTests(unittest.TestCase):
         kernel = 'linux-piano-1-1-aarch64.pkg.tar.zst'
         graphics = 'mesa-27-1-aarch64.pkg.tar.zst'
         firmware = 'piano-firmware-1-1-any.pkg.tar.zst'
+        proxy = 'iio-sensor-proxy-3.9-1-aarch64.pkg.tar.zst'
         deb_kernel = 'linux-piano_1_arm64.deb'
         deb_shared = 'mesa_27_arm64.deb'
         device_deb = self.packages / 'piano-device-config_1_all.deb'
@@ -62,14 +64,18 @@ class RepoProductsTests(unittest.TestCase):
             'piano-firmware-display-0.1.0-1-any.pkg.tar.zst': b'local calibration'})
         self.package_set('overlays/debian-gnome', {deb_shared: b'same build'}, repo='apt')
         self.package_set('overlays/debian-kde', {deb_shared: b'same build'}, repo='apt')
-        self.package_set('overlays/nyarch-gnome', {firmware: b'device', graphics: b'arch'},
+        self.package_set('overlays/nyarch-gnome', {firmware: b'device', graphics: b'arch', proxy: b'arch-proxy'},
                          repo='sunuefi')
-        self.package_set('overlays/steamos', {graphics: b'valve'}, repo='sunuefi-steamos')
+        self.package_set('overlays/steamos', {graphics: b'valve', proxy: b'valve-proxy'},
+                         repo='sunuefi-steamos')
 
         targets = ('debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos')
         with patch('products.bsp_package', side_effect=(
                 (device_deb, {'sha256': 'debian'}), (device_pacman, {'sha256': 'pacman'}))) as bsp, \
-                self.shared_camera() as camera, self.shared_topology() as topology:
+                self.shared_camera() as camera, self.shared_topology() as topology, \
+                patch('products.sensors.pacman_package',
+                      return_value=(self.sensor, {'sha256': 'sensors'})) as sensors, \
+                patch('products.sensors.check_ssc_provider') as provider:
             batches = publication_batches(self.packages, kernel=True, overlays=targets)
         self.assertEqual([call.args for call in bsp.call_args_list],
                          [(self.packages / 'bsp/debian', 'debian'),
@@ -79,12 +85,17 @@ class RepoProductsTests(unittest.TestCase):
                           ('pacman', self.camera_pacman.parent)])
         self.assertEqual([call.args for call in topology.call_args_list],
                          [(self.packages / 'bsp', 'debian'), (self.packages / 'bsp', 'pacman')])
+        sensors.assert_called_once_with(self.sensor.parent)
+        self.assertEqual([call.args[0] for call in provider.call_args_list],
+                         [self.packages / f'overlays/{target}/{proxy}' for target in targets[2:]])
+        self.assertEqual(list(batches), ['apt', 'sunuefi-steamos', 'sunuefi'])
         self.assertEqual({name: [path.name for path in paths] for name, paths in batches.items()},
                          {'apt': [deb_kernel, deb_shared, self.topology_deb.name,
                                   self.camera_deb.name, device_deb.name],
-                          'sunuefi': [kernel, graphics, self.topology_pacman.name,
-                                      self.camera_pacman.name, device_pacman.name, firmware],
-                          'sunuefi-steamos': [graphics]})
+                          'sunuefi': [proxy, kernel, graphics, self.topology_pacman.name,
+                                      self.camera_pacman.name, device_pacman.name, firmware,
+                                      self.sensor.name],
+                          'sunuefi-steamos': [proxy, graphics]})
         arch = self.packages / 'overlays/nyarch-gnome' / graphics
         valve = self.packages / 'overlays/steamos' / graphics
         self.assertEqual(batches['sunuefi'][arch], sha(arch))
@@ -95,12 +106,22 @@ class RepoProductsTests(unittest.TestCase):
         self.package_set('kernel/pacman', {'linux.pkg.tar.zst': b'kernel'}, format='pacman')
         device_deb = self.packages / 'piano-device-config_1_all.deb'
         device_pacman = self.packages / 'piano-device-config-1-1-any.pkg.tar.zst'
-        self.package_set('overlays/steamos', {device_pacman.name: b'valve'}, repo='sunuefi-steamos')
+        proxy = {'iio-sensor-proxy-3.9-1-aarch64.pkg.tar.zst': b'proxy'}
+        self.package_set('overlays/nyarch-gnome', proxy, repo='sunuefi')
+        self.package_set('overlays/steamos', {**proxy, device_pacman.name: b'valve'},
+                         repo='sunuefi-steamos')
         with patch('products.bsp_package', side_effect=(
                 (device_deb, {'sha256': 'debian'}), (device_pacman, {'sha256': 'pacman'}))), \
-                self.shared_camera(), self.shared_topology():
+                self.shared_camera(), self.shared_topology(), \
+                patch('products.sensors.pacman_package',
+                      return_value=(self.sensor, {'sha256': 'sensors'})), \
+                patch('products.sensors.check_ssc_provider'):
             with self.assertRaisesRegex(ValueError, 'Common package duplicated'):
-                publication_batches(self.packages, kernel=True, overlays=('steamos',))
+                publication_batches(self.packages, kernel=True, overlays=('nyarch-gnome', 'steamos'))
+
+    def test_partial_arch_publication_is_refused_before_any_archive_is_opened(self):
+        with self.assertRaisesRegex(ValueError, 'Publish both Arch overlay sets'):
+            publication_batches(self.packages, kernel=True, overlays=('nyarch-gnome',))
 
     def test_duplicate_names_within_one_repo_must_match(self):
         package = 'mesa_27_arm64.deb'
