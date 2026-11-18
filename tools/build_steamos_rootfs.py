@@ -225,6 +225,10 @@ def build(args):
                          if re.fullmatch(r'linux-[0-9]+-(?:v4l2loopback-)?deckard', p)]
         if frame_kernels:
             guest(['pacman', '-R', '--noconfirm', *frame_kernels])
+        # The native chromium package supplies the browser and its launcher.
+        # Frame's integration package opens Discover to install a Flatpak.
+        if 'deckard-chromium-integration' in installed:
+            guest(['pacman', '-R', '--noconfirm', 'deckard-chromium-integration'])
         # Refresh the complete Valve package cohort before building local
         # adapters against it. Partial package upgrades can mix library ABIs.
         # Frame split these files into clang-libs; the public repository now

@@ -265,10 +265,11 @@ def configure_platform(root):
         autostart.write_text('\n'.join(
             'Exec=/usr/bin/steam -silent -language schinese %U' if line.startswith('Exec=') else line
             for line in text.splitlines()) + '\n')
-    # The browser is preinstalled. Shadow Frame's Discover installation link,
-    # leaving Chromium's actual application entry unchanged across updates.
-    put(root, 'usr/local/share/applications/org.chromium.Chromium.desktop',
-        '[Desktop Entry]\nType=Application\nName=Chromium\nHidden=true\n')
+    # Resuming an older build can leave its generated installer override.
+    launcher = root / 'usr/local/share/applications/org.chromium.Chromium.desktop'
+    if (not launcher.is_symlink() and launcher.is_file() and
+            launcher.read_bytes() == b'[Desktop Entry]\nType=Application\nName=Chromium\nHidden=true\n'):
+        launcher.unlink()
     # CPU policy is already configured by Piano. Do not load Valve's LAVD
     # sched_ext scheduler over the selected BORE/EEVDF kernel scheduler.
     put(root, 'etc/default/steamos-scheduler', 'GOVERNOR=schedutil\nSCHEDULER=none\n')

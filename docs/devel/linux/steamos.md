@@ -31,7 +31,8 @@ Steam 的系统更新入口使用 pacman 软件包更新，与 KDE Discover 共�
 Wayland 输入法，游戏模式由随会话停止的 `gamescope-ibus.service` 提供
 GTK、Qt、XIM 和 SDL 输入。构建覆盖 Frame 账号的仅英语初始值，不保留
 重复的桌面自动启动项；退出游戏模式时清掉专用输入环境，避免影响 KDE。
-Chromium 已预装，Frame 的“安装 Chromium”应用入口不显示。
+镜像用 pacman 安装 Chromium，并移除 Frame 的 Flatpak 安装入口。KDE
+只显示 Chromium 自己的软件包提供的启动项。
 
 IBus 的 Xwayland 候选窗使用同一会话的 X display，不创建没有父窗口的
 Wayland popup，避免显示候选时让文本框失焦、清空预编辑文字。原生
