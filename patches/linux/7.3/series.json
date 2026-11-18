@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "7724c30874c4eedf2dab2da4917979a34cbd6ad1",
-  "original_target_commit": "36f10d3611534f361a181a88ca4118597ec032d5",
+  "target_tree": "5ebddeae82451020f35a4e539b88448345142fb6",
+  "original_target_commit": "781a0bb21d3eb1016ded57d4114fc1706e5a2ff2",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1732,6 +1732,19 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "The selected upstream S5KJN1 driver computes blanking and exposure for the selected mode and does not write stale mode registers between stream stop and programming the next mode."
+      }
+    },
+    {
+      "file": "0135-media-camss-validate-capture-dma-ranges.patch",
+      "sha256": "4657ac17101d1c655c23ff304864232f543b6945eec308a48ffc4be804ab82e2",
+      "original_commit": "781a0bb21d3eb1016ded57d4114fc1706e5a2ff2",
+      "original_parent": "36f10d3611534f361a181a88ca4118597ec032d5",
+      "committer_date": "2026-11-18T19:39:38+08:00",
+      "tree": "5ebddeae82451020f35a4e539b88448345142fb6",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected upstream CAMSS driver verifies that the mapped DMA address range used by each capture plane is contiguous before programming its base address."
       }
     }
   ],

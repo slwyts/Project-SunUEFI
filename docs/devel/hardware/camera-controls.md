@@ -8,6 +8,9 @@ SM8750 TFE980 的 PIX sink 接收四种排列的 RAW10 Bayer，source 和对应�
 
 产品相机驱动来自 [Linux 补丁链](../../../patches/linux/7.3/series.json)，不是未经修改的主线 CAMSS。图像、控件和帧事件使用 V4L2；颜色矩阵仍有本地私有控件。TFE 的 `vfe_isp_params` 是内核内部状态，不是用户空间可以排队的参数缓冲接口。
 
+CAMSS 每个图像平面只向硬件写一个 DMA 基址。[缓冲区校验](../../../patches/linux/7.3/0135-media-camss-validate-capture-dma-ranges.patch)在写入前确认映射后的连续地址覆盖协商的 `sizeimage`。连续范围可以由相邻的多个 DMA 段组成，不要求整个缓冲区都连续；范围不足时，Videobuf2 解除映射，缓冲区不会交给硬件。
+在平板上直连前后摄捕获节点，两路 1920×1440 NV12 均完成 MMAP 和 DMA-BUF 采集及停流重开；后摄 4080×3060 RAW10 也完成采集和重开。
+
 ### 现有服务与标准替代
 
 现有服务仍提供应用所需的相机功能；新的内核接口修正尚未组成 libcamera 替代路径。
