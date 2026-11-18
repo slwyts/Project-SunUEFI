@@ -12,12 +12,13 @@ static UINT64 handoff[64];UINTN PianoProductHostHandoffAddress;
 static UINT8 bank[16384];static UINT8 start_be[8],end_be[8];
 static EFI_MEMORY_REGION_DESCRIPTOR regions[4];static UINT8 region_count;
 static BOOLEAN bad_fdt,hash_failure;
+static UINTN hash_calls;
 UINTN EFIAPI AsciiStrLen(CONST CHAR8 *S){return strlen(S);}
 INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
 VOID *EFIAPI CopyMem(VOID *A,CONST VOID *B,UINTN N){return memcpy(A,B,N);}
 VOID *EFIAPI ZeroMem(VOID *A,UINTN N){return memset(A,0,N);}
 INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
-BOOLEAN EFIAPI Sha256HashAll(CONST VOID *P,UINTN N,UINT8 *D){return !hash_failure && SHA256(P,N,D)!=NULL;}
+BOOLEAN EFIAPI Sha256HashAll(CONST VOID *P,UINTN N,UINT8 *D){++hash_calls;return !hash_failure && SHA256(P,N,D)!=NULL;}
 VOID GetMemoryMap(EFI_MEMORY_REGION_DESCRIPTOR **Map,UINT8 *Count){*Map=regions;*Count=region_count;}
 INT32 EFIAPI FdtCheckHeader(CONST VOID *F){assert(F==bank);return bad_fdt?-1:0;}
 UINT32 EFIAPI SwapBytes32(UINT32 V){return __builtin_bswap32(V);}
@@ -34,53 +35,63 @@ static void init(const char *file){
   strcpy(regions[1].Name,"Kernel");regions[1].Address=(UINTN)bank;regions[1].Length=sizeof(bank);
   handoff[0]=0x534E554546494448ULL;handoff[1]=(UINTN)bank;PianoProductHostHandoffAddress=(UINTN)handoff;
   be(start_be,(UINTN)(bank+4096));be(end_be,(UINTN)(bank+4096+64+4096));bad_fdt=hash_failure=FALSE;
+  hash_calls=0;
+}
+static void expect_acquire_failure(EFI_STATUS status){
+  PIANO_PRODUCT_PAYLOAD_VIEW view={.Image=bank,.Bytes=1,.Lease=bank};
+  CONST VOID *fdt=bank;
+  assert(PianoProductAcquireSimpleInit(&view,&fdt)==status);
+  assert(!fdt && !view.Image && !view.Bytes && !view.Lease);
 }
 int main(int argc,char **argv){
   assert(argc==2);init(argv[1]);PIANO_PRODUCT_PAYLOAD_VIEW v={0},other={0};
-  assert(PianoProductAcquireSimpleInit(&v)==EFI_SUCCESS && v.Image==bank+4160 && v.Bytes==4096 && v.Lease);
-  assert(PianoProductValidateSimpleInit(&v)==EFI_SUCCESS);
-  CONST VOID *fdt=NULL;assert(PianoProductPayloadGetFdt(&v,&fdt)==EFI_SUCCESS && fdt==bank);
-  assert(PianoProductAcquireSimpleInit(&other)==EFI_ALREADY_STARTED && !other.Image && !other.Lease);
+  CONST VOID *fdt=bank;
+  assert(PianoProductAcquireSimpleInit(NULL,&fdt)==EFI_INVALID_PARAMETER && !fdt);
+  assert(PianoProductAcquireSimpleInit(&v,&fdt)==EFI_SUCCESS && v.Image==bank+4160 && v.Bytes==4096 && v.Lease);
+  assert(fdt==bank && hash_calls==1);
+  assert(PianoProductValidateSimpleInit(&v)==EFI_SUCCESS && hash_calls==2);
+  expect_acquire_failure(EFI_ALREADY_STARTED);
   other=v;other.Lease=(VOID *)99;assert(PianoProductValidateSimpleInit(&other)==EFI_ACCESS_DENIED);
   bank[4160+700]^=1;assert(PianoProductValidateSimpleInit(&v)==EFI_SECURITY_VIOLATION);bank[4160+700]^=1;
   assert(PianoProductReleaseSimpleInit(&v)==EFI_SUCCESS && !memcmp(bank+4160,"MZ",2));
   assert(PianoProductValidateSimpleInit(&v)==EFI_ACCESS_DENIED && PianoProductReleaseSimpleInit(&v)==EFI_ACCESS_DENIED);
-  init(argv[1]);assert(PianoProductAcquireSimpleInit(&other)==EFI_SUCCESS && other.Lease!=v.Lease);
+  init(argv[1]);assert(PianoProductAcquireSimpleInit(&other,NULL)==EFI_SUCCESS && other.Lease!=v.Lease);
   assert(PianoProductValidateSimpleInit(&v)==EFI_ACCESS_DENIED);assert(PianoProductReleaseSimpleInit(&other)==EFI_SUCCESS);
-  init(argv[1]);handoff[0]=0;assert(PianoProductAcquireSimpleInit(&v)==EFI_NOT_FOUND);
-  init(argv[1]);handoff[1]=1;assert(PianoProductAcquireSimpleInit(&v)==EFI_NOT_FOUND);
-  init(argv[1]);strcpy(regions[0].Name,"Other");assert(PianoProductAcquireSimpleInit(&v)==EFI_ACCESS_DENIED);
-  init(argv[1]);bad_fdt=TRUE;assert(PianoProductAcquireSimpleInit(&v)==EFI_COMPROMISED_DATA);
-  init(argv[1]);be(end_be,(UINTN)(bank+4096));assert(PianoProductAcquireSimpleInit(&v)==EFI_BAD_BUFFER_SIZE);
-  init(argv[1]);be(start_be,1);assert(PianoProductAcquireSimpleInit(&v)==EFI_BAD_BUFFER_SIZE);
-  init(argv[1]);((APP_HEADER *)(bank+4096))->HeaderBytes=65;assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
-  init(argv[1]);((APP_HEADER *)(bank+4096))->AppBytes=8192;assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
-  init(argv[1]);((APP_HEADER *)(bank+4096))->AppHash[0]^=1;assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
-  init(argv[1]);hash_failure=TRUE;assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
+  init(argv[1]);handoff[0]=0;expect_acquire_failure(EFI_NOT_FOUND);
+  init(argv[1]);handoff[1]=1;expect_acquire_failure(EFI_NOT_FOUND);
+  init(argv[1]);strcpy(regions[0].Name,"Other");expect_acquire_failure(EFI_ACCESS_DENIED);
+  init(argv[1]);bad_fdt=TRUE;expect_acquire_failure(EFI_COMPROMISED_DATA);
+  init(argv[1]);be(end_be,(UINTN)(bank+4096));expect_acquire_failure(EFI_BAD_BUFFER_SIZE);
+  init(argv[1]);be(start_be,1);expect_acquire_failure(EFI_BAD_BUFFER_SIZE);
+  init(argv[1]);((APP_HEADER *)(bank+4096))->HeaderBytes=65;expect_acquire_failure(EFI_SECURITY_VIOLATION);
+  init(argv[1]);((APP_HEADER *)(bank+4096))->AppBytes=8192;expect_acquire_failure(EFI_SECURITY_VIOLATION);
+  init(argv[1]);((APP_HEADER *)(bank+4096))->AppHash[0]^=1;expect_acquire_failure(EFI_SECURITY_VIOLATION);
+  init(argv[1]);hash_failure=TRUE;expect_acquire_failure(EFI_SECURITY_VIOLATION);
   // Real ABL v3/v4 semantics: vendor prefix before generic APP, bootconfig tail.
   init(argv[1]);memmove(bank+8192,bank+4096,4160);memset(bank+4096,0xa5,4096);
   memcpy(bank+12352,"bootconfig-data\n#BOOTCONFIG\n",27);be(end_be,(UINTN)(bank+12400));
-  assert(PianoProductAcquireSimpleInit(&v)==EFI_SUCCESS && v.Image==bank+8256);
+  assert(PianoProductAcquireSimpleInit(&v,&fdt)==EFI_SUCCESS && v.Image==bank+8256 && fdt==bank);
   assert(PianoProductValidateSimpleInit(&v)==EFI_SUCCESS);assert(PianoProductReleaseSimpleInit(&v)==EFI_SUCCESS);
   // Bogus matching text in vendor bytes cannot bypass version/digest/PE pins.
   init(argv[1]);memmove(bank+8192,bank+4096,4160);memset(bank+4096,0,4096);
   memcpy(bank+4096,mMagic,16);be(end_be,(UINTN)(bank+12352));
-  assert(PianoProductAcquireSimpleInit(&v)==EFI_SUCCESS && v.Image==bank+8256);
+  assert(PianoProductAcquireSimpleInit(&v,NULL)==EFI_SUCCESS && v.Image==bank+8256);
   assert(PianoProductReleaseSimpleInit(&v)==EFI_SUCCESS);
   // Two completely valid copies are ambiguous and rejected.
   init(argv[1]);memcpy(bank+8448,bank+4096,4160);be(end_be,(UINTN)(bank+12608));
-  assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
+  expect_acquire_failure(EFI_SECURITY_VIOLATION);
   // A valid APP elsewhere in mapped RAM, outside declared initrd, is ignored.
   init(argv[1]);be(start_be,(UINTN)(bank+8448));be(end_be,(UINTN)(bank+12608));
-  assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
+  expect_acquire_failure(EFI_SECURITY_VIOLATION);
   init(argv[1]);strcpy(regions[1].Name,"DXE_Heap_Upper");
-  assert(PianoProductAcquireSimpleInit(&v)==EFI_SUCCESS);assert(PianoProductPayloadGetFdt(&v,&fdt)==EFI_SUCCESS&&fdt==bank);assert(PianoProductReleaseSimpleInit(&v)==EFI_SUCCESS);
+  assert(PianoProductAcquireSimpleInit(&v,&fdt)==EFI_SUCCESS && fdt==bank);
+  assert(PianoProductReleaseSimpleInit(&v)==EFI_SUCCESS);
   init(argv[1]);strcpy(regions[1].Name,"DXE_Heap");regions[1].Length=8192;region_count=4;
   strcpy(regions[2].Name,"Piano_HWFence_Reserved");regions[2].Address=(UINTN)(bank+8192);regions[2].Length=4096;
   strcpy(regions[3].Name,"DXE_Heap_Upper");regions[3].Address=(UINTN)(bank+12288);regions[3].Length=4096;
-  assert(PianoProductAcquireSimpleInit(&v)==EFI_BAD_BUFFER_SIZE); // APP span crosses protected hole
+  expect_acquire_failure(EFI_BAD_BUFFER_SIZE); // APP span crosses protected hole
   init(argv[1]);strcpy(regions[1].Name,"DXE_Heap_Upper");regions[1].Length=32;
-  assert(PianoProductAcquireSimpleInit(&v)==EFI_NOT_FOUND); // DT header cannot cross row boundary
+  expect_acquire_failure(EFI_NOT_FOUND); // DT header cannot cross row boundary
   // Combined boot keeps the stock/recovery initrd intact. Only the pinned APP
   // in the selector's bounded container record is accepted as the UI payload.
   init(argv[1]);memmove(bank+8192,bank+4096,4160);memset(bank+4096,0xa5,4096);
@@ -88,8 +99,8 @@ int main(int argc,char **argv){
   memcpy(embedded->Magic,"SUNUEFI-EMBEDv1",16);embedded->Version=1;embedded->HeaderBytes=64;
   embedded->AppStart=(UINTN)(bank+8192);embedded->AppSpan=4160;
   embedded->ImageBase=(UINTN)bank;embedded->ImageBytes=sizeof(bank);
-  assert(PianoProductAcquireSimpleInit(&v)==EFI_SUCCESS && v.Image==bank+8256);
-  assert(PianoProductValidateSimpleInit(&v)==EFI_SUCCESS);
+  assert(PianoProductAcquireSimpleInit(&v,&fdt)==EFI_SUCCESS && v.Image==bank+8256 && fdt==bank && hash_calls==1);
+  assert(PianoProductValidateSimpleInit(&v)==EFI_SUCCESS && hash_calls==2);
   UINT64 original_span=embedded->AppSpan;embedded->AppSpan=MAX_UINT64;
   assert(PianoProductValidateSimpleInit(&v)==EFI_SECURITY_VIOLATION);embedded->AppSpan=original_span;
   embedded->BootTarget=1;assert(PianoProductValidateSimpleInit(&v)==EFI_SECURITY_VIOLATION);embedded->BootTarget=0;
@@ -99,15 +110,15 @@ int main(int argc,char **argv){
   assert(PianoProductReleaseSimpleInit(&v)==EFI_SUCCESS);
   for(UINT32 Target=1;Target<=3;++Target){
     embedded->Version=2;embedded->BootTarget=Target;
-    assert(PianoProductAcquireSimpleInit(&v)==EFI_SUCCESS && PianoProductPayloadBootTarget()==Target);
+    assert(PianoProductAcquireSimpleInit(&v,NULL)==EFI_SUCCESS && PianoProductPayloadBootTarget()==Target);
     assert(PianoProductValidateSimpleInit(&v)==EFI_SUCCESS);
     embedded->BootTarget=Target==1?2:1;
     assert(PianoProductValidateSimpleInit(&v)==EFI_MEDIA_CHANGED);
     embedded->BootTarget=Target;
     assert(PianoProductReleaseSimpleInit(&v)==EFI_SUCCESS && PianoProductPayloadBootTarget()==Target);
   }
-  embedded->BootTarget=4;assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
-  embedded->BootTarget=0;assert(PianoProductAcquireSimpleInit(&v)==EFI_SECURITY_VIOLATION);
-  init(argv[1]);mGeneration=MAX_UINTN;assert(PianoProductAcquireSimpleInit(&v)==EFI_OUT_OF_RESOURCES);
+  embedded->BootTarget=4;expect_acquire_failure(EFI_SECURITY_VIOLATION);
+  embedded->BootTarget=0;expect_acquire_failure(EFI_SECURITY_VIOLATION);
+  init(argv[1]);mGeneration=MAX_UINTN;expect_acquire_failure(EFI_OUT_OF_RESOURCES);
   puts("Product payload actual C: real bounded handoff/FDT/APPv1/digest/PE, stale loans and no-free release passed; no hardware.");return 0;
 }

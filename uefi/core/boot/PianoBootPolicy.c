@@ -507,7 +507,7 @@ EFI_STATUS PianoBootPolicyInitialize(EFI_HANDLE Parent) {
   mKeysDirty=TRUE;RefreshKeys();return mReport.Retained?EFI_COMPROMISED_DATA:EFI_SUCCESS;
 }
 STATIC EFI_STATUS RunSimpleInit(VOID) {
-  EFI_STATUS Status=Exact(PianoProductAcquireSimpleInit(&mPayload));RequireAlive();
+  EFI_STATUS Status=Exact(PianoProductAcquireSimpleInit(&mPayload,NULL));RequireAlive();
   mReport.PayloadStatus=Status;
   if(Status==EFI_SUCCESS) {
     mPayloadLoan=TRUE;

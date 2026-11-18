@@ -141,18 +141,21 @@ STATIC EFI_STATUS Resolve(PIANO_PRODUCT_PAYLOAD_VIEW *View,CONST VOID **Dtb,UINT
     return Status==EFI_SUCCESS?EFI_UNSUPPORTED:EFI_ERROR(Status)?Status:EFI_DEVICE_ERROR;
   *Dtb=Fdt;return EFI_SUCCESS;
 }
-EFI_STATUS PianoProductAcquireSimpleInit(PIANO_PRODUCT_PAYLOAD_VIEW *View) {
+EFI_STATUS PianoProductAcquireSimpleInit(PIANO_PRODUCT_PAYLOAD_VIEW *View,CONST VOID **Fdt OPTIONAL) {
+  if(Fdt!=NULL)*Fdt=NULL;
   if(View==NULL)return EFI_INVALID_PARAMETER;
   ZeroMem(View,sizeof(*View));
   if(mLoaned)return EFI_ALREADY_STARTED;
   mBootTarget=0;
-  PIANO_PRODUCT_PAYLOAD_VIEW Candidate={0};CONST VOID *Fdt=NULL;UINT64 Start=0,End=0;
+  PIANO_PRODUCT_PAYLOAD_VIEW Candidate={0};CONST VOID *Dtb=NULL;UINT64 Start=0,End=0;
   UINT32 Target=0;
-  EFI_STATUS Status=Resolve(&Candidate,&Fdt,&Start,&End,&Target);if(Status!=EFI_SUCCESS)return Status;
+  EFI_STATUS Status=Resolve(&Candidate,&Dtb,&Start,&End,&Target);if(Status!=EFI_SUCCESS)return Status;
   if(mGeneration==MAX_UINTN)return EFI_OUT_OF_RESOURCES;
-  Candidate.Lease=(VOID *)++mGeneration;mView=Candidate;mFdt=Fdt;mInitrdStart=Start;mInitrdEnd=End;mLoaned=TRUE;
+  Candidate.Lease=(VOID *)++mGeneration;mView=Candidate;mFdt=Dtb;mInitrdStart=Start;mInitrdEnd=End;mLoaned=TRUE;
   mBootTarget=Target;
-  *View=mView;return EFI_SUCCESS;
+  *View=mView;
+  if(Fdt!=NULL)*Fdt=Dtb;
+  return EFI_SUCCESS;
 }
 EFI_STATUS PianoProductValidateSimpleInit(CONST PIANO_PRODUCT_PAYLOAD_VIEW *View) {
   if(View==NULL || !mLoaned || View->Lease==NULL || View->Lease!=mView.Lease || View->Image!=mView.Image ||
@@ -169,12 +172,5 @@ EFI_STATUS PianoProductReleaseSimpleInit(CONST PIANO_PRODUCT_PAYLOAD_VIEW *View)
   // The BootShim Kernel reservation remains owned by the parent product image;
   // releasing a loan never frees/zeroes a source still used by another loader.
   mLoaned=FALSE;ZeroMem(&mView,sizeof(mView));mFdt=NULL;mInitrdStart=mInitrdEnd=0;return EFI_SUCCESS;
-}
-EFI_STATUS PianoProductPayloadGetFdt(CONST PIANO_PRODUCT_PAYLOAD_VIEW *View,CONST VOID **Fdt) {
-  if(Fdt==NULL)return EFI_INVALID_PARAMETER;
-  *Fdt=NULL;
-  EFI_STATUS Status=PianoProductValidateSimpleInit(View);
-  if(Status==EFI_SUCCESS)*Fdt=mFdt;
-  return Status;
 }
 UINT32 PianoProductPayloadBootTarget(VOID) {return mBootTarget;}

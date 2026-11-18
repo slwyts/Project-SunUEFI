@@ -572,10 +572,9 @@ STATIC EFI_STATUS StartInstalledLinux(EFI_HANDLE Image){
 EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *SystemTable) {
   if(Image==NULL || SystemTable==NULL)return EFI_INVALID_PARAMETER;
   BootLogStart();
-  // Obtain a genuinely validated handoff, not an application-supplied FDT.
+  // Use the device tree from the validated BootShim handoff.
   PIANO_PRODUCT_PAYLOAD_VIEW Source={0};CONST VOID *Fdt=NULL;
-  EFI_STATUS Status=PianoProductAcquireSimpleInit(&Source);
-  if(Status==EFI_SUCCESS)Status=PianoProductPayloadGetFdt(&Source,&Fdt);
+  EFI_STATUS Status=PianoProductAcquireSimpleInit(&Source,&Fdt);
   if(Status==EFI_SUCCESS)mStartupTarget=PianoProductPayloadBootTarget();
   if(Source.Lease!=NULL){EFI_STATUS Release=PianoProductReleaseSimpleInit(&Source);if(Release!=EFI_SUCCESS)FailStop(Release);}
   if(Status==EFI_SUCCESS && Fdt==NULL)Status=EFI_COMPROMISED_DATA;
