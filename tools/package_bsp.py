@@ -22,12 +22,17 @@ BSP = ROOT / 'linux/bsp'
 NAME = 'piano-device-config'
 TOUCH_PACKAGE = 'piano-firmware-touch'
 TOUCH_MANIFEST = ROOT / 'vendor/firmware/piano-touch/manifest.json'
+TOPOLOGY_PACKAGE = 'piano-audio-topology'
+TOPOLOGY_SOURCES = ('debian-piano-current', 'audioreach-topology')
+FIRMWARE_PACKAGES = (TOUCH_PACKAGE, TOPOLOGY_PACKAGE)
 FIRMWARE_ROOT = 'usr/lib/firmware/'
 
 
 def package_description(package):
     if package == TOUCH_PACKAGE:
         return 'Xiaomi Pad 8 Pro Novatek touchscreen firmware'
+    if package == TOPOLOGY_PACKAGE:
+        return 'Xiaomi Pad 8 Pro AudioReach topology'
     return 'Xiaomi Pad 8 Pro device configuration'
 
 
@@ -95,6 +100,41 @@ def touch_payload(source):
     return manifest, rows
 
 
+def topology_payload():
+    from build_piano_runtime_helpers import build_topology, repository
+
+    policy = read_json(ROOT / 'config/release.json')['audio_topology']
+    lock = read_json(ROOT / 'sources.lock.json')
+    sources = {name: lock[name] for name in TOPOLOGY_SOURCES}
+    checkouts = [ROOT / 'upstream' / name for name in TOPOLOGY_SOURCES]
+    for path in checkouts:
+        repository(path, sources[path.name]['commit'])
+    for tool in ('m4', 'alsatplg'):
+        require(shutil.which(tool), 'Missing audio topology build tool: ' + tool)
+    env = {**os.environ, 'LC_ALL': 'C'}
+    env.pop('M4PATH', None)
+    with tempfile.TemporaryDirectory(prefix='sunuefi-topology-') as directory:
+        work = Path(directory)
+        topology = build_topology(*checkouts, work, env=env)
+        data = topology.read_bytes()
+        name = FIRMWARE_ROOT + topology.relative_to(work).as_posix()
+    require(sha(data) == policy['sha256'], 'Audio topology checksum mismatch')
+    return {
+        'source': policy['source'],
+        'repositories': sources,
+    }, [({'path': name, 'type': 'file', 'mode': '0644', 'sha256': policy['sha256']}, data)]
+
+
+def topology_copyright(source):
+    macros = ROOT / 'upstream' / TOPOLOGY_SOURCES[1]
+    sources = '\n'.join(f" {record['url']} ({record['commit']})"
+                        for record in source['repositories'].values())
+    return ('AudioReach topology for Xiaomi Pad 8 Pro, licensed BSD-3-Clause.\n'
+            f'SunUEFI source: {source["source"]}\n'
+            f'Upstream layout and macros:\n{sources}\n\n'
+            + (macros / 'LICENSE.BSD-3-Clause').read_text())
+
+
 def owners(root):
     result = {}
     info = guest_resolve(root, '/var/lib/dpkg/info')
@@ -123,16 +163,19 @@ def conflict_check(root, rows, package=NAME):
     for row, _ in rows:
         name = row['path']
         names = [name]
-        if package == TOUCH_PACKAGE and name.startswith(FIRMWARE_ROOT):
+        if package in FIRMWARE_PACKAGES and name.startswith(FIRMWARE_ROOT):
             names = [base + suffix for base in (name, name.removeprefix('usr/'))
                      for suffix in ('', '.xz', '.zst')]
         resolved = {}
         for candidate in names:
             relative = PurePosixPath(candidate)
             path = guest_resolve(root, '/' + str(relative.parent)) / relative.name
+            if candidate == name:
+                destination = path
             resolved.setdefault(path, set()).update(ownership.get(candidate, ()))
         for path, assigned in resolved.items():
-            if assigned - {package} or ((path.exists() or path.is_symlink()) and assigned != {package}):
+            own_destination = path == destination and assigned == {package}
+            if assigned - {package} or ((path.exists() or path.is_symlink()) and not own_destination):
                 conflicts.append({'path': path.relative_to(root).as_posix(),
                                   'owners': sorted(assigned) or ['unowned-existing-file']})
     require(not conflicts, 'Existing target files must not be overwritten: ' + json.dumps(conflicts))
@@ -165,6 +208,27 @@ def inspect_touch_firmware(args, suite):
     return report, rows
 
 
+def inspect_audio_topology(args, suite):
+    source, rows = topology_payload()
+    report = {
+        'schema_version': 1,
+        'component': 'audio-topology',
+        'package': TOPOLOGY_PACKAGE,
+        'version': overlay_release.debian_version(args.version) if args.format == 'deb' else args.version,
+        'target': {'distro': args.target, 'suite': suite, 'arch': args.arch},
+        'package_architecture': 'any' if args.target == 'arch' else 'all',
+        'source': source,
+        'public_distribution': True,
+        'depends': [],
+        'package_ready': False,
+        'conflict_check': (conflict_check(args.against, rows, TOPOLOGY_PACKAGE) if args.against
+                           else {'performed': False, 'required_before_install': True}),
+        'payload_files': {row['path']: {**row, 'bytes': len(data)} for row, data in rows},
+        'files': {},
+    }
+    return report, rows
+
+
 def inspect(args):
     require(re.fullmatch('[0-9][A-Za-z0-9.+]*', args.version), 'Invalid package version')
     profile = read_json(BSP / 'profiles.json')['profiles'][args.target]
@@ -172,6 +236,8 @@ def inspect(args):
     require(suite and re.fullmatch('[A-Za-z0-9_.-]+', suite), 'Specify an explicit Deepin/target suite')
     if args.touch_firmware is not None:
         return inspect_touch_firmware(args, suite)
+    if args.audio_topology:
+        return inspect_audio_topology(args, suite)
     source, rows = payload([])
     ledger = read_json(BSP / 'layers.json')
     layers = ledger['required_layers']
@@ -208,14 +274,18 @@ def stage(args):
             path.chmod(int(row['mode'], 8))
     # Installed provenance records source data without local build paths.
     docs = tree / 'usr/share/doc' / report['package']
-    if report['package'] == TOUCH_PACKAGE:
+    if report['package'] in FIRMWARE_PACKAGES:
         docs.mkdir(parents=True)
-        (docs / 'copyright').write_text(
-            'Novatek / Xiaomi proprietary firmware from the stock device ROM.\n'
-            'The SunUEFI source license does not cover these binaries.\n'
-            'No permission for public redistribution is documented.\n')
+        if report['package'] == TOUCH_PACKAGE:
+            copyright = ('Novatek / Xiaomi proprietary firmware from the stock device ROM.\n'
+                         'The SunUEFI source license does not cover these binaries.\n'
+                         'No permission for public redistribution is documented.\n')
+        else:
+            copyright = topology_copyright(report['source'])
+        (docs / 'copyright').write_text(copyright)
     provenance = docs / 'bsp-manifest.json'
-    provenance.write_text(json.dumps({k: v for k, v in report.items() if k != 'files'}, indent=2) + '\n')
+    omitted = {'files', 'conflict_check'} if report['package'] == TOPOLOGY_PACKAGE else {'files'}
+    provenance.write_text(json.dumps({k: v for k, v in report.items() if k not in omitted}, indent=2) + '\n')
     for path in [tree, *tree.rglob('*')]:
         if path.is_dir() and not path.is_symlink():
             path.chmod(0o755)
@@ -224,12 +294,18 @@ def stage(args):
 
 def preinst(paths, package=NAME):
     guard = '#!/bin/sh\nset -eu\n'
-    if package == TOUCH_PACKAGE:
+    if package in FIRMWARE_PACKAGES:
         firmware = ' '.join(shlex.quote('/' + name) for name in paths if name.startswith(FIRMWARE_ROOT))
         guard += (f'for path in {firmware}; do\n'
-                  '  for suffix in .xz .zst; do\n'
-                  '    if [ -e "$path$suffix" ] || [ -L "$path$suffix" ]; then\n'
-                  '      printf "%s\\n" "BSP file conflict: $path$suffix" >&2; exit 1\n'
+                  '  alternate=${path#/usr}\n'
+                  '  if ! [ "${path%/*}" -ef "${alternate%/*}" ]; then\n'
+                  '    if [ -e "$alternate" ] || [ -L "$alternate" ]; then\n'
+                  '      printf "%s\\n" "BSP file conflict: $alternate" >&2; exit 1\n'
+                  '    fi\n'
+                  '  fi\n'
+                  '  for alias in "$path.xz" "$path.zst" "$alternate.xz" "$alternate.zst"; do\n'
+                  '    if [ -e "$alias" ] || [ -L "$alias" ]; then\n'
+                  '      printf "%s\\n" "BSP file conflict: $alias" >&2; exit 1\n'
                   '    fi\n'
                   '  done\n'
                   'done\n')
@@ -247,12 +323,13 @@ def preinst(paths, package=NAME):
 
 def debian_package(output, tree, report, configuration):
     package = report['package']
-    section = 'non-free-firmware/kernel' if package == TOUCH_PACKAGE else 'misc'
+    section, detail = {
+        TOUCH_PACKAGE: ('non-free-firmware/kernel', ' Built from locally supplied stock ROM files.\n'),
+        TOPOLOGY_PACKAGE: ('kernel', ' Provides the topology loaded by the Qualcomm ASoC driver.\n'),
+    }.get(package, ('misc', ' Native runtime, Mesa, firmware and modules are distributed separately.\n'))
     depends = 'Depends: ' + ', '.join(report['depends']) + '\n' if report['depends'] else ''
-    detail = (' Built from locally supplied stock ROM files.\n' if package == TOUCH_PACKAGE
-              else ' Native runtime, Mesa, firmware and modules are distributed separately.\n')
     installed_size = ''
-    if package == TOUCH_PACKAGE:
+    if package in FIRMWARE_PACKAGES:
         # The firmware payload contains only directories and regular files.
         # Match dpkg-gencontrol: 1 KiB per directory, round up each file.
         kib = 1 + sum(1 if path.is_dir() else (path.stat().st_size + 1023) // 1024
@@ -269,7 +346,7 @@ def debian_package(output, tree, report, configuration):
         (control / 'conffiles').write_text(''.join('/' + name + '\n' for name in configuration))
     docs = 'usr/share/doc/' + package + '/'
     paths = [*report['payload_files'], docs + 'bsp-manifest.json']
-    if package == TOUCH_PACKAGE:
+    if package in FIRMWARE_PACKAGES:
         paths.append(docs + 'copyright')
     (control / 'preinst').write_text(preinst(paths, package))
     (control / 'preinst').chmod(0o755)
@@ -289,12 +366,12 @@ def pacman_sources(directory, tree, report, configuration):
                     '-C', tree, '-cf', archive, '.'], check=True)
     depends = ' '.join(map(shlex.quote, report['depends']))
     backup = ' '.join(map(shlex.quote, configuration))
-    license_ids = 'LicenseRef-Proprietary' if package == TOUCH_PACKAGE else 'MIT BSD-2-Clause-Patent'
+    license_ids = {TOUCH_PACKAGE: 'LicenseRef-Proprietary', TOPOLOGY_PACKAGE: 'BSD-3-Clause'}
     (directory / 'PKGBUILD').write_text(
         f"pkgname={package}\npkgver={report['version']}\npkgrel={overlay_release.pacman_release('1')}\n"
         f'pkgdesc={shlex.quote(package_description(package))}\n'
         "url='https://github.com/slwyts/Project-SunUEFI'\n"
-        f'arch=(any)\nlicense=({license_ids})\noptions=(!strip !debug)\n'
+        f'arch=(any)\nlicense=({license_ids.get(package, "MIT BSD-2-Clause-Patent")})\noptions=(!strip !debug)\n'
         f'depends=({depends})\nbackup=({backup})\n'
         'source=(payload.tar)\nnoextract=(payload.tar)\n'
         f"sha256sums=('{sha(archive.read_bytes())}')\n"
@@ -387,8 +464,11 @@ def parser():
     ap.add_argument('--arch', choices=('aarch64',), default='aarch64')
     ap.add_argument('--format', choices=('deb', 'pacman'))
     ap.add_argument('--against', type=Path, help='Readonly target-root conflict/ownership check')
-    ap.add_argument('--touch-firmware', type=Path,
-                    help='Use the two local stock touch firmware files instead of packaging device configuration')
+    component = ap.add_mutually_exclusive_group()
+    component.add_argument('--touch-firmware', type=Path, metavar='DIRECTORY',
+                           help='Package the two local stock touch firmware files')
+    component.add_argument('--audio-topology', action='store_true',
+                           help='Build the AudioReach topology package from the fixed sources')
     ap.add_argument('--output', type=Path)
     ap.add_argument('--version', default='0.1.0')
     return ap

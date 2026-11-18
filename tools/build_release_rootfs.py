@@ -63,7 +63,7 @@ def repository(path, commit=None, tree=None):
 
 
 def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
-         public_source=None, firmware_source=None, macros=None, root=ROOT, resume=False,
+         public_source=None, firmware_source=None, root=ROOT, resume=False,
          sensors_dir=None, ffmpeg_dir=None, boot_task_snapshot=False, desktop='gnome', mutter_dir=None,
          packages_only=None, published_packages=None):
     root = Path(root).resolve(); config = json.loads((root / 'config/release.json').read_text())
@@ -119,7 +119,6 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
         raise ValueError('Use project release kernel source and artifacts')
     public = Path(public_source or root / config['debian']['source']).resolve()
     firmware = Path(firmware_source or root / config['firmware']['components']).resolve()
-    macros = Path(macros or root / 'upstream/audioreach-topology').resolve()
     missing = []
     inputs = [('kernel manifest', kernel / 'manifest.json'), ('kernel source', source / 'Makefile'),
               ('public rootfs builder', public / 'scripts/build-rootfs.sh')]
@@ -146,7 +145,7 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
         mutter_packages(mutter)
     if runtime_dir:
         if not (Path(runtime_dir) / 'manifest.json').is_file(): missing.append('matching runtime bundle manifest')
-    elif not packages_only and not (macros / 'audioreach').exists():
+    if not packages_only and not published_packages and not (root / 'upstream/audioreach-topology/audioreach').exists():
         missing.append('AudioReach topology macros')
     record = None
     if (kernel / 'manifest.json').is_file():
@@ -180,8 +179,8 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
             'published_packages': str(published_packages) if published_packages else None,
             'runtime_dir': str(Path(runtime_dir).resolve()) if runtime_dir else None,
             'kernel_build': str(Path(kernel_build or root / 'build/kernels/release').resolve()),
-            'public_source': str(public), 'firmware_source': str(firmware), 'config': config, 'missing_inputs': missing,
-            'macros': str(macros), 'steps': steps}
+            'public_source': str(public), 'firmware_source': str(firmware), 'config': config,
+            'missing_inputs': missing, 'steps': steps}
 
 
 def require_host():
@@ -883,8 +882,8 @@ def execute(record):
         if not inputs_current(bundle):
             raise ValueError('Runtime bundle sources differ; rebuild it for the current hardware implementation')
     elif not record.get('packages_only') and any(not shutil.which(name)
-                                                 for name in (helper_cc, 'alsatplg', 'm4', 'make', 'depmod')):
-        raise ValueError('Install the release helper compiler, alsatplg, m4, make and depmod first')
+                                                 for name in (helper_cc, 'make', 'depmod')):
+        raise ValueError('Install the release helper compiler, make and depmod first')
     if out.exists() and not record.get('resume'): raise ValueError('Output appeared after planning; preserve it')
     out.parent.mkdir(parents=True, exist_ok=True); log = out.with_name(out.name + '.build.log')
     if log.exists() and not record.get('resume'): raise ValueError('Build log exists; choose a new output name')
@@ -919,11 +918,14 @@ def execute(record):
 
         if published:
             bsp_archive, bsp = overlay_packages.shared_bsp('debian')
+            topology_archive, topology = overlay_packages.shared_topology('debian')
             camera_archive, camera_record = camera.shared_package('debian')
             components, packages = overlay_packages.read_debian(Path(published), desktop)
+            overlay_packages.check_topology_conflicts(rootfs, topology)
             install_kernel(rootfs, 'debian', kernel, published=True)
             install_overlays(rootfs, run, cfg, desktop, {
-                **packages, bsp_archive.name: bsp, camera_archive.name: camera_record,
+                **packages, bsp_archive.name: bsp, topology_archive.name: topology,
+                camera_archive.name: camera_record,
             }, published=True)
             archive = debian_archive(rootfs)
         else:
@@ -933,8 +935,12 @@ def execute(record):
             install_kernel(rootfs, 'debian', kernel)
             with tempfile.TemporaryDirectory(prefix='sunuefi-bsp-', dir=out) as temporary:
                 bsp_archive, bsp = overlay_packages.build_bsp(Path(temporary) / 'package', 'debian', run)
+                topology_archive, topology = overlay_packages.build_bsp(
+                    Path(temporary) / 'topology', 'debian', run, component='audio-topology')
+                overlay_packages.check_topology_conflicts(rootfs, topology)
                 install_overlays(rootfs, run, cfg, desktop, {
                     **packages, bsp_archive.name: (bsp_archive, bsp),
+                    topology_archive.name: (topology_archive, topology),
                     camera_archive.name: (camera_archive, camera_record),
                 })
             components = {name: {'packages': {}} for name in overlay_packages.DEBIAN_GNOME}
@@ -961,7 +967,7 @@ def execute(record):
             with runtime_build_sysroot(rootfs, out, run) as sysroot:
                 run([sys.executable, ROOT / 'tools/build_release_helpers.py', '--kernel', kernel, '--source', source,
                      '--kernel-build', record['kernel_build'], '--output', bundle, '--sysroot', sysroot,
-                     '--cc', helper_cc, '--macros', record['macros']])
+                     '--cc', helper_cc])
             runtime.stage(bundle, rootfs)
         from build_piano_fingerprint import desktop_service, install_desktop
         if published:
@@ -982,6 +988,9 @@ def execute(record):
         if installed.get(bsp['name']) != bsp['version']:
             raise ValueError('Installed Piano device configuration package version differs')
         overlay_packages.verify_bsp_files(rootfs, 'debian')
+        if installed.get(topology['name']) != topology['version']:
+            raise ValueError('Installed Piano audio topology package version differs')
+        overlay_packages.verify_topology(rootfs, 'debian', topology)
         if installed.get(camera_record['name']) != camera_record['version']:
             raise ValueError('Installed Piano camera package version differs')
         camera.verify_installed(rootfs, 'debian', camera_archive)
@@ -1007,6 +1016,7 @@ def execute(record):
                   'debian_archive': archive, 'debian_suite': cfg['debian']['suite'],
                   'debian_commit': cfg['debian']['commit'],
                   'device_configuration': bsp, 'camera_package': camera_record,
+                  'audio_topology_package': topology,
                   **components,
                   'boot_request': boot_request, 'firmware_components': cfg['firmware']['components'],
                   'clock_epoch': clock,
@@ -1029,7 +1039,7 @@ def execute(record):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('kernel', 'source', 'output'): parser.add_argument('--' + name, type=Path, required=True)
-    for name in ('sensors-dir', 'ffmpeg-dir', 'mutter-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source', 'macros'): parser.add_argument('--' + name, type=Path)
+    for name in ('sensors-dir', 'ffmpeg-dir', 'mutter-dir', 'runtime-dir', 'kernel-build', 'public-source', 'firmware-source'): parser.add_argument('--' + name, type=Path)
     mode = parser.add_mutually_exclusive_group(required=True); mode.add_argument('--plan', action='store_true'); mode.add_argument('--execute', action='store_true')
     packages = parser.add_mutually_exclusive_group()
     packages.add_argument('--packages-only', type=Path, metavar='DIRECTORY',

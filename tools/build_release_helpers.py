@@ -72,18 +72,16 @@ def export_uapi(source, kernel_build, commit, output):
     return expected
 
 
-def build(kernel, source, kernel_build, output, cc, sysroot, macros, firmware_root=None):
+def build(kernel, source, kernel_build, output, cc, sysroot, firmware_root=None):
     record = json.loads((kernel / 'manifest.json').read_text())
     release, commit = record['kernel_release'], record['source_commit']
     identity = runtime.kernel_identity(kernel_build, source, commit, release)
     runtime.repository(ROOT / 'upstream/debian-piano-current', runtime.PUBLIC_COMMIT)
-    runtime.repository(macros, runtime.MACROS_COMMIT)
     if output.exists() or not output.resolve().is_relative_to(ROOT / 'build'):
         raise ValueError('Use a fresh project build output')
     compiler = shutil.which(cc)
-    topology_compiler = shutil.which('alsatplg')
-    if not compiler or not topology_compiler or not shutil.which('m4'):
-        raise ValueError('Install the explicit compiler, alsatplg and m4 first')
+    if not compiler:
+        raise ValueError('Install and select the runtime helper compiler')
     output.mkdir(parents=True)
     public = ROOT / 'upstream/debian-piano-current'
     uapi = output / 'uapi'
@@ -131,14 +129,6 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, firmware_ro
     fingerprint_files['usr/local/sbin/piano-fingerprint-ctl'].update(
         runtime.verify_elf(fingerprint_binary), help_no_device_access=True)
     files.update(fingerprint_files)
-    runtime.build_topology(public, macros, output / 'firmware')
-    topology = output / 'firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'
-    if runtime.sha(topology) != runtime.TOPOLOGY_PIN:
-        raise ValueError('Topology bytes differ from the reviewed source build')
-    run([topology_compiler, '-d', topology, '-o', output / 'topology-decoded.conf'])
-    files['usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'] = {
-        'file': str(topology.relative_to(output)), 'bytes': topology.stat().st_size,
-        'sha256': runtime.sha(topology), 'mode': 0o644}
     if runtime.kernel_identity(kernel_build, source, commit, release) != identity:
         raise ValueError('Kernel source/ABI changed during runtime helper build')
     result = {'status': 'RUNTIME_COMPILED_NOT_DEVICE_TESTED', 'kernel': identity,
@@ -146,10 +136,9 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, firmware_ro
         'producer': {'file': 'tools/build_release_helpers.py', 'sha256': runtime.sha(Path(__file__))},
         'fingerprint': fingerprint,
         'uapi_sha256': uapi_digest, 'uapi_source_commit': commit,
-        'macros_commit': runtime.MACROS_COMMIT, 'hardware_verified': False,
+        'hardware_verified': False,
         'toolchain': {'compiler': compiler, 'compiler_sha256': runtime.sha(Path(compiler)),
-            'version': subprocess.check_output([compiler, '--version'], text=True).splitlines()[0],
-            'alsatplg_sha256': runtime.sha(Path(topology_compiler))}}
+            'version': subprocess.check_output([compiler, '--version'], text=True).splitlines()[0]}}
     (output / 'manifest.json').write_text(json.dumps(result, indent=2) + '\n')
     return result
 
@@ -162,11 +151,9 @@ def main():
     parser.add_argument('--sysroot', type=Path)
     parser.add_argument('--firmware-root', type=Path,
                         help='Target root containing pen firmware calibration; defaults to --sysroot')
-    parser.add_argument('--macros', type=Path, default=ROOT / 'upstream/audioreach-topology')
     args = parser.parse_args()
     result = build(args.kernel.resolve(), args.source.resolve(), args.kernel_build.resolve(),
                    args.output.resolve(), args.cc, args.sysroot.resolve() if args.sysroot else None,
-                   args.macros.resolve(),
                    firmware_root=args.firmware_root.resolve() if args.firmware_root else None)
     print(json.dumps({'status': result['status'], 'kernel_release': result['kernel']['release']}))
 

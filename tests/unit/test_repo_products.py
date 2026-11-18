@@ -18,11 +18,19 @@ class RepoProductsTests(unittest.TestCase):
         self.packages = Path(temporary.name)
         self.camera_deb = self.packages / 'camera/debian/piano-camera_1.0-1_arm64.deb'
         self.camera_pacman = self.packages / 'camera/pacman/piano-camera-1.0-1-aarch64.pkg.tar.zst'
+        self.topology_deb = self.packages / 'bsp/audio-topology/debian/piano-audio-topology_1_all.deb'
+        self.topology_pacman = self.packages / 'bsp/audio-topology/pacman/piano-audio-topology-1-1-any.pkg.tar.zst'
 
     def shared_camera(self):
         return patch('products.camera.shared_package', side_effect=(
             (self.camera_deb, {'sha256': 'debian-camera'}),
             (self.camera_pacman, {'sha256': 'pacman-camera'}),
+        ))
+
+    def shared_topology(self):
+        return patch('products.topology_package', side_effect=(
+            (self.topology_deb, {'sha256': 'debian-topology'}),
+            (self.topology_pacman, {'sha256': 'pacman-topology'}),
         ))
 
     def package_set(self, name, files, **identity):
@@ -56,7 +64,7 @@ class RepoProductsTests(unittest.TestCase):
         targets = ('debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos')
         with patch('products.bsp_package', side_effect=(
                 (device_deb, {'sha256': 'debian'}), (device_pacman, {'sha256': 'pacman'}))) as bsp, \
-                self.shared_camera() as camera:
+                self.shared_camera() as camera, self.shared_topology() as topology:
             batches = publication_batches(self.packages, kernel=True, overlays=targets)
         self.assertEqual([call.args for call in bsp.call_args_list],
                          [(self.packages / 'bsp/debian', 'debian'),
@@ -64,9 +72,13 @@ class RepoProductsTests(unittest.TestCase):
         self.assertEqual([call.args for call in camera.call_args_list],
                          [('debian', self.camera_deb.parent),
                           ('pacman', self.camera_pacman.parent)])
+        self.assertEqual([call.args for call in topology.call_args_list],
+                         [(self.packages / 'bsp', 'debian'), (self.packages / 'bsp', 'pacman')])
         self.assertEqual({name: [path.name for path in paths] for name, paths in batches.items()},
-                         {'apt': [deb_kernel, deb_shared, self.camera_deb.name, device_deb.name],
-                          'sunuefi': [kernel, graphics, self.camera_pacman.name, device_pacman.name, firmware],
+                         {'apt': [deb_kernel, deb_shared, self.topology_deb.name,
+                                  self.camera_deb.name, device_deb.name],
+                          'sunuefi': [kernel, graphics, self.topology_pacman.name,
+                                      self.camera_pacman.name, device_pacman.name, firmware],
                           'sunuefi-steamos': [graphics]})
         arch = self.packages / 'overlays/nyarch-gnome' / graphics
         valve = self.packages / 'overlays/steamos' / graphics
@@ -81,7 +93,7 @@ class RepoProductsTests(unittest.TestCase):
         self.package_set('overlays/steamos', {device_pacman.name: b'valve'}, repo='sunuefi-steamos')
         with patch('products.bsp_package', side_effect=(
                 (device_deb, {'sha256': 'debian'}), (device_pacman, {'sha256': 'pacman'}))), \
-                self.shared_camera():
+                self.shared_camera(), self.shared_topology():
             with self.assertRaisesRegex(ValueError, 'Common package duplicated'):
                 publication_batches(self.packages, kernel=True, overlays=('steamos',))
 

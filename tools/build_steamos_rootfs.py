@@ -334,7 +334,8 @@ done
             return overlay_packages.export(package_output, target, overlay_packages.ARCH_REPOSITORIES[target],
                                            overlay_packages.pacman_packages(root, packages), records,
                                            build_inputs=cache_inputs)
-        records['device_configuration'] = overlay_packages.install_local_arch_bsp(root)
+        records['device_configuration'], records['audio_topology_package'] = (
+            overlay_packages.install_local_arch_bsp(root))
     finish_product(args, root, output, source, kernel, kernel_source, base_record, records, published)
 
 
@@ -468,7 +469,8 @@ def finish_product(args, root, output, source, kernel, kernel_source, base_recor
         rootfs=root, kernel=kernel, runtime=runtime, sensor_source=source,
         bootstrap_sysroot=args.bootstrap_sysroot, desktop='steamos',
         published_packages=published[1] if published else None,
-        device_configuration=records['device_configuration']))
+        device_configuration=records['device_configuration'],
+        audio_topology_package=records['audio_topology_package']))
     manifest = output / 'manifest.json'
     record = json.loads(manifest.read_text())
     record.update(base_source=base_record, **records,

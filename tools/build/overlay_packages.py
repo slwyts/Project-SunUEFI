@@ -33,48 +33,87 @@ def debian_identity(path):
     return fields['Package'], fields['Version'], fields['Architecture']
 
 
-def bsp_package(directory, package_format):
+def bsp_package(directory, package_format, *, component='config'):
     """Read the exact common package sealed by the builder."""
     distro, archive_format, architecture = BSP_TARGETS[package_format]
+    expected = {'config': package_bsp.NAME, 'audio-topology': package_bsp.TOPOLOGY_PACKAGE}[component]
     manifest = directory / 'manifest.json'
     if directory.is_symlink() or manifest.is_symlink() or (directory / '.incomplete').exists():
-        raise ValueError('Device configuration package did not complete: ' + str(directory))
+        raise ValueError('Device package did not complete: ' + str(directory))
     record = json.loads(manifest.read_text())
-    if (record.get('schema_version') != 1 or record.get('component') != 'config' or
-            record.get('package') != package_bsp.NAME or record.get('features', []) != [] or
+    if (record.get('schema_version') != 1 or record.get('component') != component or
+            record.get('package') != expected or record.get('features', []) != [] or
             record.get('target', {}).get('distro') != distro or
             record.get('package_architecture') != architecture or
             record.get('package_ready') is not True or len(record.get('files', ())) != 1):
-        raise ValueError('Unexpected device configuration package manifest: ' + str(manifest))
+        raise ValueError('Unexpected device package manifest: ' + str(manifest))
     filename, info = next(iter(record['files'].items()))
     archive = directory / filename
     if (Path(filename).name != filename or info['format'] != archive_format or
             not filename.endswith('.deb' if package_format == 'debian' else '.pkg.tar.zst') or
             archive.is_symlink() or not archive.is_file() or archive.stat().st_size != info['bytes'] or
             sha(archive) != info['sha256']):
-        raise ValueError('Device configuration archive differs: ' + filename)
+        raise ValueError('Device package archive differs: ' + filename)
     read_identity = debian_identity if package_format == 'debian' else pacman_identity
     name, version, arch = read_identity(archive)
-    if (name, version, arch) != (package_bsp.NAME, info['version'], architecture):
-        raise ValueError('Unexpected device configuration archive metadata: ' + filename)
-    return archive, {'name': name, 'version': version, 'architecture': arch,
-                     'sha256': info['sha256']}
+    if (name, version, arch) != (expected, info['version'], architecture):
+        raise ValueError('Unexpected device archive metadata: ' + filename)
+    metadata = {'name': name, 'version': version, 'architecture': arch, 'sha256': info['sha256']}
+    if component == 'audio-topology':
+        from build_piano_runtime_helpers import TOPOLOGY_PATH, TOPOLOGY_PIN
+        path = (Path(package_bsp.FIRMWARE_ROOT) / TOPOLOGY_PATH).as_posix()
+        payload = record.get('payload_files', {})
+        if (set(payload) != {path} or payload[path]['path'] != path or
+                payload[path]['type'] != 'file' or payload[path]['mode'] != '0644' or
+                payload[path]['sha256'] != TOPOLOGY_PIN or record.get('public_distribution') is not True):
+            raise ValueError('Audio topology package differs from the release policy')
+        metadata['firmware'] = payload[path]
+    return archive, metadata
 
 
-def build_bsp(directory, package_format, run=None):
+def build_bsp(directory, package_format, run=None, *, component='config'):
     distro, archive_format, _ = BSP_TARGETS[package_format]
     command = [package_bsp.ROOT / 'build.sh', 'bsp', 'package', '--target', distro,
                '--format', archive_format, '--output', directory]
+    if component == 'audio-topology':
+        command.append('--audio-topology')
     if run is None:
         subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
     else:
         run(command)
-    return bsp_package(directory, package_format)
+    return bsp_package(directory, package_format, component=component)
 
 
 def shared_bsp(package_format):
     return bsp_package(package_bsp.ROOT / 'artifacts/packages/bsp' / package_format,
                        package_format)
+
+
+def topology_package(directory, package_format):
+    return bsp_package(directory / 'audio-topology' / package_format, package_format,
+                       component='audio-topology')
+
+
+def shared_topology(package_format):
+    return topology_package(package_bsp.ROOT / 'artifacts/packages/bsp', package_format)
+
+
+def check_topology_conflicts(rootfs, metadata):
+    package_bsp.conflict_check(rootfs, [(metadata['firmware'], None)], package_bsp.TOPOLOGY_PACKAGE)
+
+
+def verify_topology(rootfs, package_format, metadata):
+    check_topology_conflicts(rootfs, metadata)
+    row = metadata['firmware']
+    name = metadata['name']
+    package_listing = (['dpkg-query', '-L', name] if package_format == 'debian'
+                       else ['pacman', '-Qlq', name])
+    paths = subprocess.check_output(['chroot', rootfs, *package_listing], text=True).splitlines()
+    relative = Path(row['path'])
+    path = guest_resolve(rootfs, relative.parent.as_posix()) / relative.name
+    if ('/' + row['path'] not in paths or path.is_symlink() or not path.is_file() or
+            stat.S_IMODE(path.stat().st_mode) != 0o644 or sha(path) != row['sha256']):
+        raise ValueError('Audio topology differs from the installed package: ' + row['path'])
 
 
 def verify_bsp_files(rootfs, package_format):
@@ -363,6 +402,8 @@ def install_arch_overlays(rootfs, kernel, target, published):
 
     repository, packages, components = published
     archive, bsp = shared_bsp('pacman')
+    topology_archive, topology = shared_topology('pacman')
+    check_topology_conflicts(rootfs, topology)
     install(rootfs, 'pacman', kernel, published=True)
     install_repository(rootfs, target == 'steamos')
     tmp = guest_path(rootfs, 'var/tmp')
@@ -372,12 +413,13 @@ def install_arch_overlays(rootfs, kernel, target, published):
         work = Path(temporary)
         work.chmod(0o755)
         guest(['pacman', '-Sy', '--noconfirm'])
+        common = {archive.name: bsp, topology_archive.name: topology}
         if repository == 'sunuefi':
-            packages = {**packages, archive.name: bsp}
+            packages = {**packages, **common}
         else:
-            install_pacman(rootfs, work, 'sunuefi', {archive.name: bsp}, guest)
+            install_pacman(rootfs, work, 'sunuefi', common, guest)
         install_pacman(rootfs, work, repository, packages, guest)
-    return {**components, 'device_configuration': bsp}
+    return {**components, 'device_configuration': bsp, 'audio_topology_package': topology}
 
 
 def install_local_arch_bsp(rootfs):
@@ -389,6 +431,9 @@ def install_local_arch_bsp(rootfs):
     with tempfile.TemporaryDirectory(prefix='sunuefi-bsp-', dir=tmp) as temporary:
         work = Path(temporary)
         archive, bsp = build_bsp(work / 'package', 'pacman')
+        topology_archive, topology = build_bsp(work / 'topology', 'pacman', component='audio-topology')
+        check_topology_conflicts(rootfs, topology)
         with build_resolver(rootfs), guest_environment(rootfs) as guest:
-            guest(['pacman', '-U', '--noconfirm', '/' + archive.relative_to(rootfs).as_posix()])
-    return bsp
+            guest(['pacman', '-U', '--noconfirm', '/' + archive.relative_to(rootfs).as_posix(),
+                   '/' + topology_archive.relative_to(rootfs).as_posix()])
+    return bsp, topology

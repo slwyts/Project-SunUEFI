@@ -40,6 +40,17 @@ Debian 默认 sid，Ubuntu 默认 noble，Arch Linux ARM 默认 rolling；Deepin
 
 `layers.json` 记录 native runtime 的既有 producer、固件来源及 kernel 版本约束；不读取个人 build 输出。内核 GPL、源文件 BSD 等许可继续按各组件保留，固件另按原分发条款。Mesa 使用 `config/mesa.json` 固定的官方 27 开发源码，以各发行版原生配方构建，不复制 Debian 二进制到其他发行版。830v1 芯片 ID 和 DirectX-Headers 修正已在官方源码中，无需回移植；SteamOS renderonly 的显示缓冲高度修正尚未合入，单独保留。
 
+## 音频拓扑包
+
+`piano-audio-topology` 提供 Qualcomm ASoC 驱动加载的开源 AudioReach 拓扑。
+它不包含原厂 ADSP 固件或调校。四个镜像通过 APT 或共用 `sunuefi` 仓安装，
+驱动继续从标准固件目录加载同一个文件，不增加服务。
+
+本地构建使用上面的 `bsp package` 命令加 `--audio-topology`。向旧系统安装前，
+用 `bsp inspect --audio-topology --against /absolute/target-root` 检查同名文件
+和压缩版本的归属。未登记的旧文件按上面的迁移方法备份；发行版软件包已有
+同名文件时保留其归属。
+
 ## 本地触控固件包
 
 `piano-firmware-touch` 只包含 Xiaomi Pad 8 Pro 的 BOE、CSOT 两份触控固件。

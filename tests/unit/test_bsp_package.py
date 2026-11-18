@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 import package_bsp as bsp
 
+TOPOLOGY_TOOLS = all(shutil.which(tool) for tool in ('m4', 'alsatplg'))
+TOPOLOGY_SOURCES = all((ROOT / 'upstream' / name / '.git').exists() for name in bsp.TOPOLOGY_SOURCES)
+
 
 class BspPackageTests(unittest.TestCase):
     def setUp(self):
@@ -235,6 +238,73 @@ class BspPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Touch firmware checksum mismatch'):
             bsp.build(args)
         self.assertFalse(args.output.exists())
+
+    @unittest.skipUnless(TOPOLOGY_TOOLS and TOPOLOGY_SOURCES and shutil.which('dpkg-deb'),
+                         'pinned AudioReach sources and Debian build tools required')
+    def test_real_audio_topology_deb_contains_only_pinned_topology_and_license(self):
+        out = self.base / 'deb'
+        args = self.args('package', '--audio-topology', '--format', 'deb', '--output', str(out))
+        with patch.dict(os.environ, {bsp.overlay_release.ENVIRONMENT: '10.1'}):
+            report = bsp.build(args)
+        artifact = out / next(iter(report['files']))
+        self.assertEqual(report['component'], 'audio-topology')
+        self.assertTrue(report['public_distribution'])
+        self.assertFalse(report['conflict_check']['performed'])
+        self.assertEqual(artifact.name, 'piano-audio-topology_0.1.0+sunuefi.10.1_all.deb')
+        self.assertEqual(report['depends'], [])
+        name = 'usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'
+        self.assertEqual(set(report['payload_files']), {name})
+        docs = './usr/share/doc/piano-audio-topology/'
+        with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(
+                ['dpkg-deb', '--fsys-tarfile', artifact]))) as archive:
+            self.assertEqual({member.name for member in archive if member.isfile()},
+                             {'./' + name, docs + 'bsp-manifest.json', docs + 'copyright'})
+            topology = archive.getmember('./' + name)
+            self.assertEqual((topology.uid, topology.gid, topology.mode), (0, 0, 0o644))
+            data = archive.extractfile(topology).read()
+            policy = json.loads((ROOT / 'config/release.json').read_text())['audio_topology']
+            self.assertEqual(hashlib.sha256(data).hexdigest(), policy['sha256'])
+            license_text = archive.extractfile(docs + 'copyright').read()
+            self.assertIn(b'BSD-3-Clause', license_text)
+            self.assertIn(b'Copyright 2021-2024 Linaro Ltd.', license_text)
+        control = self.base / 'control'
+        subprocess.run(['dpkg-deb', '--control', artifact, control], check=True)
+        self.assertFalse((control / 'conffiles').exists())
+        self.assertNotIn('Replaces:', (control / 'control').read_text())
+
+    @unittest.skipUnless(TOPOLOGY_TOOLS and TOPOLOGY_SOURCES,
+                         'pinned AudioReach sources and build tools required')
+    def test_topology_preflight_distinguishes_merged_own_file_from_aliases(self):
+        guest = self.base / 'guest'
+        _, rows = bsp.topology_payload()
+        name = rows[0][0]['path']
+        original = guest / name
+        original.parent.mkdir(parents=True)
+        original.write_bytes(rows[0][1])
+        (guest / 'lib').symlink_to('/usr/lib')
+        info = guest / 'var/lib/dpkg/info'
+        info.mkdir(parents=True)
+        ownership = info / 'piano-audio-topology.list'
+        ownership.write_text('/' + name.removeprefix('usr/') + '\n')
+        self.assertTrue(bsp.conflict_check(guest, rows, bsp.TOPOLOGY_PACKAGE)['performed'])
+        ownership.unlink()
+        with self.assertRaisesRegex(ValueError, 'unowned-existing-file'):
+            bsp.conflict_check(guest, rows, bsp.TOPOLOGY_PACKAGE)
+        original.unlink()
+        (guest / 'lib').unlink()
+        for suffix in ('.xz', '.zst'):
+            with self.subTest(suffix=suffix):
+                alt = name.removeprefix('usr/') + suffix
+                compressed = guest / alt
+                compressed.parent.mkdir(parents=True, exist_ok=True)
+                compressed.write_bytes(b'an existing firmware file')
+                db = guest / 'usr/lib/holo/pacmandb/local/linux-firmware-qcom-1-1'
+                db.mkdir(parents=True, exist_ok=True)
+                (db / 'files').write_text(f'%FILES%\n{alt}\n')
+                with self.assertRaisesRegex(ValueError, 'linux-firmware-qcom'):
+                    bsp.conflict_check(guest, rows, bsp.TOPOLOGY_PACKAGE)
+                self.assertEqual(compressed.read_bytes(), b'an existing firmware file')
+                compressed.unlink()
 
 
 if __name__ == '__main__':

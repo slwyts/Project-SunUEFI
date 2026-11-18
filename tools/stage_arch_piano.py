@@ -117,8 +117,11 @@ def stage(args):
     steamos = getattr(args, 'desktop', 'nyarch') == 'steamos'
     published_packages = getattr(args, 'published_packages', None)
     device_configuration = getattr(args, 'device_configuration', None)
-    if device_configuration is None:
-        device_configuration = overlay_packages.install_local_arch_bsp(root)
+    topology = getattr(args, 'audio_topology_package', None)
+    if device_configuration is None and topology is None:
+        device_configuration, topology = overlay_packages.install_local_arch_bsp(root)
+    if device_configuration is None or topology is None:
+        raise ValueError('Both shared device packages must be installed')
     userspace.stage(root, ROOT / cfg['debian']['source'],
                     desktop='kde' if steamos else 'gnome')
     # These are generated files in the build root; refresh them on --resume.
@@ -236,8 +239,9 @@ def stage(args):
     packages = subprocess.check_output(['chroot', root, 'pacman', '-Q'], text=True)
     overlay_packages.verify_pacman_versions(
         {**(published_packages or {}), 'device_configuration': device_configuration,
-         'camera_package': camera_record}, packages)
+         'audio_topology_package': topology, 'camera_package': camera_record}, packages)
     overlay_packages.verify_bsp_files(root, 'pacman')
+    overlay_packages.verify_topology(root, 'pacman', topology)
     camera.verify_installed(root, 'pacman', camera_archive)
     from package.v4l2loopback import verify_installed
     verify_installed(root, 'pacman', kernel['kernel_release'])
@@ -251,7 +255,7 @@ def stage(args):
               'desktop_configuration': desktop, 'initramfs': boot, 'clock_epoch': clock,
               'firmware_components': cfg['firmware']['components'],
               'packages_sha256': release.digest(output / 'packages.tsv'),
-              'camera_package': camera_record,
+              'camera_package': camera_record, 'audio_topology_package': topology,
               'runtime_manifest_sha256': release.digest(args.runtime / 'manifest.json')}
     (output / 'manifest.json').write_text(json.dumps(record, indent=2) + '\n')
 

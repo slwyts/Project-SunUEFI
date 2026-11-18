@@ -54,6 +54,7 @@ TOOL_PINS={'clang':'939a882527432ec23b094c289e7f170bf2d6ec282e74dde75e31b08602fa
 QEMU_PIN='73cc2584f119f9e74c85c0a8549dbb6fd104ae3897a06a7500797f9e5b4d0943'
 ALSA_TOOLCHAIN_PIN='09676a0fc68ee9cd5ba6684646b7e82c96e2ed5ac7ba53d639c4fe53b0612346'
 TOPOLOGY_PIN=json.loads((ROOT/'config/release.json').read_text())['audio_topology']['sha256']
+TOPOLOGY_PATH=Path('qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin')
 DEFAULT_RELEASE='7.2.6-piano-gnome-00061-g352508459733'
 TOUCH_DIAGNOSTICS_PATCH=ROOT/'tools/patches/piano-touch-view-observability.patch'
 TOUCH_CAPTURE_PATCH=ROOT/'tools/patches/piano-touch-view-raw-capture.patch'
@@ -83,7 +84,7 @@ def build_topology(public, macros, destination, env=None):
     policy=json.loads((ROOT/'config/release.json').read_text())['audio_topology']
     source=ROOT/policy['source']
     config=destination/'piano.conf'
-    target=destination/'qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'
+    target=destination/TOPOLOGY_PATH
     target.parent.mkdir(parents=True,exist_ok=True)
     with config.open('w') as output:
         subprocess.run(['m4','-I',public/'topology','-I',macros,source],
@@ -442,12 +443,13 @@ def build_touch_binary(output, cc_flags, uapi, source, pen_record, env=None, lin
     return row
 
 
-def stage(output,destination,*,include_camera=False):
+def stage(output,destination,*,ram_boot=False):
     if not destination.resolve().is_relative_to(ROOT/'build/distros'):raise ValueError('Stage only into a derived workspace distro')
     manifest=json.loads((output/'manifest.json').read_text());files=manifest['runtime_files'];release=manifest['kernel']['release']
     if not re.fullmatch(r'[a-zA-Z0-9_.+-]{1,128}',release):raise ValueError('Unsafe runtime kernel release')
-    expected={row[2]for row in PUBLIC_SOURCES.values()}|PEN_RUNTIME_PATHS|{'usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'}
-    if include_camera:
+    expected={row[2]for row in PUBLIC_SOURCES.values()}|PEN_RUNTIME_PATHS
+    if ram_boot:
+        expected.add((Path('usr/lib/firmware')/TOPOLOGY_PATH).as_posix())
         expected |= CAMERA_RUNTIME_PATHS
         expected.add(v4l2loopback.module_path(release).as_posix())
     if manifest.get('fingerprint'):
@@ -467,7 +469,7 @@ def stage(output,destination,*,include_camera=False):
         if not p.is_file()or p.is_symlink()or p.stat().st_size!=row['bytes']or sha(p)!=row['sha256']:raise ValueError('Runtime bundle changed: '+name)
     for name,row in files.items():
         target=destination/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(output/row['file'],target);target.chmod(row['mode'])
-    if include_camera:
+    if ram_boot:
         subprocess.run(['depmod','-b',str(destination),'-m','/usr/lib/modules',release],check=True)
     record={'status':'REAL_RUNTIME_STAGED_NOT_DEVICE_TESTED','bundle_manifest_sha256':sha(output/'manifest.json'),'kernel':manifest['kernel'],'files':files,'pen_core':manifest['pen_core'],'device_tested':False}
     p=destination/'usr/share/piano-provenance/runtime-helpers.json';p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(record,indent=2)+'\n')
@@ -550,11 +552,10 @@ def build(args):
     wrapper=output/'host-bin';wrapper.mkdir();exe=wrapper/'alsatplg';launch=[alsa['loader'],'--library-path',str(alsa_root/'usr/lib/x86_64-linux-gnu'),str(alsa_root/'usr/bin/alsatplg')]
     import shlex
     exe.write_text('#!/bin/sh\nexec '+shlex.join(launch)+' "$@"\n');exe.chmod(0o755);top_env=env.copy();top_env['PATH']=str(wrapper)+os.pathsep+top_env['PATH']
-    build_topology(public,args.macros.resolve(),output/'firmware',top_env)
-    tplg=output/'firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'
+    tplg=build_topology(public,args.macros.resolve(),output/'firmware',top_env)
     if sha(tplg)!=TOPOLOGY_PIN:raise ValueError('Public topology differs from validated repeat build')
     run([*launch,'-d',tplg,'-o',output/'topology-decoded.conf'],env,log)
-    files['usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin']={'file':tplg.relative_to(output).as_posix(),'bytes':tplg.stat().st_size,'sha256':sha(tplg),'mode':0o644,'decode_exit_code':0,'device_tested':False}
+    files[(Path('usr/lib/firmware')/TOPOLOGY_PATH).as_posix()]={'file':tplg.relative_to(output).as_posix(),'bytes':tplg.stat().st_size,'sha256':sha(tplg),'mode':0o644,'decode_exit_code':0,'device_tested':False}
     module_env=prepare_kernel_llvm.environment(env)
     module_compiler=Path(shutil.which('clang',path=module_env['PATH']))
     inputs[str(module_compiler)]=sha(module_compiler)
@@ -570,7 +571,7 @@ def build(args):
     kernel_identity(args.kernel_build.resolve(),source,args.kernel_commit,args.kernel_release)
     manifest={'status':'RUNTIME_COMPILED_NOT_DEVICE_TESTED','public_commit':PUBLIC_COMMIT,'uapi_commit':UAPI_COMMIT,'uapi_sha256':UAPI_DIGEST,'macros_commit':MACROS_COMMIT,'v4l2_commit':loop_commit,'kernel':identity,'inputs':inputs,'runtime_files':files,'pen_core':pen_record,'camera':camera_record,'hardware_verified':False,'device_operation':False,'known_topology_limit':'ALSA decoded config does not recompile vendor data; original public config matches known binary SHA and decodes successfully'}
     (output/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
-    if args.stage_rootfs:stage(output,args.stage_rootfs.resolve(),include_camera=True)
+    if args.stage_rootfs:stage(output,args.stage_rootfs.resolve(),ram_boot=True)
     return manifest
 
 

@@ -13,7 +13,7 @@ from publish import REPOSITORIES, ROOT, Store, prepare_publication, sha, upload_
 from verify_public import verify_public
 
 sys.path.insert(0, str(ROOT / 'tools'))
-from build.overlay_packages import bsp_package
+from build.overlay_packages import bsp_package, topology_package
 from package import camera
 from package.boot import PUBLIC_REPOSITORY_URL
 
@@ -70,6 +70,7 @@ def publication_batches(root, *, kernel, overlays):
         for package_format, repository in KERNEL_REPOSITORIES.items():
             groups[repository].update(packages(root / 'kernel' / package_format, format=package_format))
             for path, metadata in (bsp_package(root / 'bsp' / package_format, package_format),
+                                   topology_package(root / 'bsp', package_format),
                                    camera.shared_package(package_format, root / 'camera' / package_format)):
                 if path.name in groups[repository]:
                     raise ValueError('Common package duplicated in ' + repository + ': ' + path.name)
@@ -113,7 +114,10 @@ def main():
     if args.verify_bsp:
         if args.kernel or args.overlay_matrix or args.verify_target:
             parser.error('Use --verify-bsp without other operations')
-        rows = {package_format: bsp_package(args.output / package_format, package_format)[1]
+        rows = {package_format: {
+            'device_configuration': bsp_package(args.output / package_format, package_format)[1],
+            'audio_topology': topology_package(args.output, package_format)[1],
+        }
                 for package_format in KERNEL_REPOSITORIES}
         print(json.dumps(rows, indent=2))
         return

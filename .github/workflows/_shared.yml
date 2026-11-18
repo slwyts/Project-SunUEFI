@@ -14,7 +14,7 @@ on:
         type: string
     outputs:
       bsp_key:
-        description: Exact cache key for both native device configuration archives
+        description: Exact cache key for shared device configuration and audio topology packages
         value: ${{ jobs.bsp.outputs.key }}
       camera_key:
         description: Exact cache key for both native camera archives
@@ -50,7 +50,10 @@ jobs:
           path: artifacts/packages/bsp
           # Reusing a previous run's package after a source revert would
           # leave the signed pacman database on the newer package version.
-          key: repo-bsp-v1-${{ github.run_id }}
+          key: repo-bsp-v2-${{ github.run_id }}
+      - name: Check out the fixed AudioReach sources
+        if: steps.restore.outputs.cache-hit != 'true'
+        run: git submodule update --init --depth 1 -- upstream/debian-piano-current upstream/audioreach-topology
       - id: camera-key
         name: Identify the camera source, recipe and toolchain
         run: |
@@ -74,8 +77,12 @@ jobs:
             -e SUNUEFI_OVERLAY_RELEASE -e BSP_CACHE_HIT -e CAMERA_CACHE_HIT sunuefi-builder bash -euc '
               git config --global --add safe.directory /workspace
               if [ "$BSP_CACHE_HIT" != true ]; then
+                git config --global --add safe.directory /workspace/upstream/debian-piano-current
+                git config --global --add safe.directory /workspace/upstream/audioreach-topology
                 ./build.sh bsp package --target debian --format deb --output artifacts/packages/bsp/debian
                 ./build.sh bsp package --target arch --format pacman --output artifacts/packages/bsp/pacman
+                ./build.sh bsp package --audio-topology --target debian --format deb --output artifacts/packages/bsp/audio-topology/debian
+                ./build.sh bsp package --audio-topology --target arch --format pacman --output artifacts/packages/bsp/audio-topology/pacman
               fi
               ./build.sh repo products --verify-bsp --output artifacts/packages/bsp
               if [ "$CAMERA_CACHE_HIT" = true ]; then
