@@ -47,6 +47,11 @@ jobs:
         with:
           kind: kernel
           key: ${{ steps.keys.outputs.kernel_key }}
+      - name: Restore fixed LLVM for kernel verification
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/toolchains/*.tar.zst
+          key: llvm-arm64-${{ hashFiles('config/kernel-llvm.json', 'tools/desktop/prepare_kernel_llvm.py') }}
       - if: contains(fromJSON(inputs.overlay_matrix).target, 'debian-gnome')
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
