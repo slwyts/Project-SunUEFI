@@ -94,12 +94,31 @@ class ReleaseRootTests(unittest.TestCase):
             self.assertEqual(result['packages_only'], str(packages))
             self.assertEqual(Path(result['output']), self.root / 'build/distros/overlays/debian-gnome')
             self.assertNotIn('firmware', result['missing_inputs'])
+            self.assertNotIn('public rootfs builder', result['missing_inputs'])
             self.assertNotIn('AudioReach topology macros', result['missing_inputs'])
             with self.assertRaisesRegex(ValueError, 'separate .* directory'):
                 builder.plan(self.kernel, self.source, self.output.parent / 'product-image',
                              root=self.root, packages_only=packages)
         self.assertFalse(packages.exists())
         self.assertFalse(Path(result['output']).exists())
+        self.assertIn('public rootfs builder', self.planned()['missing_inputs'])
+
+    def test_package_phase_resume_requires_a_package_build_root(self):
+        packages = self.root / 'artifacts/packages/overlays/debian-gnome'
+        output = self.root / 'build/distros/overlays/debian-gnome'
+        output.mkdir(parents=True)
+        (output / 'COMPLETE').touch()
+        manifest = output / 'build-manifest.txt'
+        manifest.write_text('suite=sid arch=arm64 desktop=gnome firmware=not-included\n')
+        with patch.object(builder.modules, 'inspect', return_value=(self.m, 'b' * 64)), \
+                patch.object(builder, 'repository', return_value=self.m['source_commit']):
+            with self.assertRaisesRegex(ValueError, 'completed sid package build root'):
+                builder.plan(self.kernel, self.source, self.output, root=self.root,
+                             packages_only=packages, resume=True)
+            manifest.write_text('suite=sid arch=arm64 desktop=gnome type=package-build\n')
+            result = builder.plan(self.kernel, self.source, self.output, root=self.root,
+                                  packages_only=packages, resume=True)
+            self.assertTrue(result['resume'])
 
     def test_local_overlays_use_existing_indexes_after_installing_boot_configuration(self):
         archive = self.root / 'piano-camera_1.0-1_arm64.deb'
@@ -118,7 +137,7 @@ class ReleaseRootTests(unittest.TestCase):
 
         with patch.object(builder, 'build_devices', return_value=nullcontext()), \
                 patch.object(builder, 'build_resolver', return_value=nullcontext()):
-            builder.install_overlays(self.rootfs, run, {'debian': {'extra_packages': []}}, {
+            builder.install_overlays(self.rootfs, run, {
                 archive.name: (archive, {'sha256': builder.digest(archive)}),
             })
         self.assertEqual(len(commands), 1)

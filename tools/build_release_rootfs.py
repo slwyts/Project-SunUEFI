@@ -29,6 +29,11 @@ from prepare_release_kernel import release_series
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / 'config/release.json'
+DEBIAN_MIRROR = 'https://deb.debian.org/debian'
+
+
+def package_build_manifest(desktop):
+    return f'suite=sid arch=arm64 desktop={desktop} type=package-build'
 
 
 def digest(path): return modules.sha(path)
@@ -100,7 +105,12 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
     if resume:
         if not (output / 'COMPLETE').is_file():
             raise ValueError('Resume needs a completed upstream base root')
-        if (output / 'manifest.json').is_file():
+        base_manifest = output / 'build-manifest.txt'
+        if packages_only:
+            if (not base_manifest.is_file() or
+                    base_manifest.read_text().splitlines()[:1] != [package_build_manifest(desktop)]):
+                raise ValueError('Resume needs a completed sid package build root for the selected desktop')
+        elif (output / 'manifest.json').is_file():
             previous = json.loads((output / 'manifest.json').read_text())
             if previous.get('status') not in ('HOST_BUILT_RELEASE_GNOME_ROOT_NOT_BOOT_VERIFIED', 'HOST_BUILT_RELEASE_KDE_ROOT_NOT_BOOT_VERIFIED') or previous.get('debian_commit') != config['debian']['commit']:
                 raise ValueError('Completed base root belongs to another source')
@@ -109,7 +119,6 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
             if previous.get('debian_suite') != config['debian']['suite']:
                 raise ValueError('Resume must keep the Debian suite; build a fresh sid base')
         else:
-            base_manifest = output / 'build-manifest.txt'
             expected = f'suite=sid arch=arm64 desktop={desktop} firmware=not-included'
             if not base_manifest.is_file() or base_manifest.read_text().splitlines()[:1] != [expected]:
                 raise ValueError('Resume needs a completed sid base for the selected desktop')
@@ -121,9 +130,9 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
     public = Path(public_source or root / config['debian']['source']).resolve()
     firmware = Path(firmware_source or root / config['firmware']['components']).resolve()
     missing = []
-    inputs = [('kernel manifest', kernel / 'manifest.json'), ('kernel source', source / 'Makefile'),
-              ('public rootfs builder', public / 'scripts/build-rootfs.sh')]
+    inputs = [('kernel manifest', kernel / 'manifest.json'), ('kernel source', source / 'Makefile')]
     if not packages_only:
+        inputs.append(('public rootfs builder', public / 'scripts/build-rootfs.sh'))
         inputs.append(('firmware', next(iter(sorted(firmware.glob('*/manifest.json'))), firmware / 'missing')))
     for name, path in inputs:
         if not path.is_file(): missing.append(name)
@@ -157,9 +166,9 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
         words = record['command_line'].split()
         if record.get('root_policy') != 'LABEL=PIANOROOT' or [w for w in words if w.startswith('piano.root=')] != ['piano.root=LABEL=PIANOROOT'] or any(w.startswith('root=') for w in words) or 'userdata' in record['command_line']:
             raise ValueError('Release kernel must select LABEL=PIANOROOT, never Android userdata')
-    if public.is_dir(): repository(public, config['debian']['commit'])
+    if not packages_only and public.is_dir(): repository(public, config['debian']['commit'])
     if packages_only:
-        steps = ['prepare a signed Debian sid build root',
+        steps = ['prepare a minimal signed Debian sid ARM64 package build root',
                  'build and verify the selected native desktop and hardware packages',
                  'export selected packages and SHA256 manifest without assembling a product image']
     else:
@@ -308,6 +317,31 @@ def build_devices(rootfs):
             subprocess.run(['umount', proc], check=True)
         for path in created:
             path.unlink(missing_ok=True)
+
+
+def prepare_package_build_root(output, desktop, run):
+    from desktop.debian_package import KEYRING, prepare_build_indexes
+
+    rootfs = output / 'rootfs'
+    output.mkdir()
+    run(['debootstrap', '--arch=arm64', '--variant=minbase', '--components=main',
+         '--include=ca-certificates', '--force-check-sig', '--keyring=' + KEYRING,
+         '--foreign', 'sid', rootfs, DEBIAN_MIRROR])
+    run(['chroot', rootfs, '/debootstrap/debootstrap', '--second-stage'])
+    put(rootfs, 'etc/apt/sources.list',
+        f'deb [signed-by={KEYRING}] {DEBIAN_MIRROR} sid main contrib\n'
+        f'deb-src [signed-by={KEYRING}] {DEBIAN_MIRROR} sid main contrib\n')
+    put(rootfs, 'usr/sbin/policy-rc.d', '#!/bin/sh\nexit 101\n')
+    target(rootfs, 'usr/sbin/policy-rc.d').chmod(0o755)
+    with build_devices(rootfs), build_resolver(rootfs):
+        def guest(args):
+            return run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', *args])
+
+        prepare_build_indexes(rootfs, guest)
+        # The GStreamer plugin builder reads the installed PipeWire ABI.
+        guest(['apt-get', 'install', '-y', '--no-install-recommends', 'pipewire'])
+    (output / 'build-manifest.txt').write_text(package_build_manifest(desktop) + '\n')
+    (output / 'COMPLETE').touch()
 
 
 @contextmanager
@@ -749,7 +783,7 @@ def build_overlays(record, rootfs, run, directory=None):
     return sources
 
 
-def install_overlays(rootfs, run, config, packages, *, published=False):
+def install_overlays(rootfs, run, packages, *, extra=(), published=False):
     from desktop.debian_package import prepare_build_indexes
 
     apt = ['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get']
@@ -774,7 +808,6 @@ def install_overlays(rootfs, run, config, packages, *, published=False):
                 if digest(stage) != row['sha256']:
                     raise ValueError('Overlay package changed during installation: ' + name)
                 paths.append('/' + stage.relative_to(rootfs).as_posix())
-        extra = config['debian']['extra_packages']
         if published:
             # In particular, do not keep Debian's bytes when both archives
             # provide the same version of an explicitly requested package.
@@ -833,7 +866,7 @@ def build_overlay_set(record, rootfs, kernel, run):
     output = Path(record['output'])
     with ExitStack() as contexts:
         directory = uapi = inputs = None
-        # CI starts from a fresh stock base and uses only the repository recipes.
+        # CI starts from a fresh package build root and uses only the repository recipes.
         # A resumed build or an explicitly supplied bundle has different inputs.
         if (os.environ.get('SUNUEFI_BUILD_ENVIRONMENT_ID')
                 and not any(record.get(key) for key in
@@ -850,7 +883,7 @@ def build_overlay_set(record, rootfs, kernel, run):
             contexts.enter_context(use_build_archive(inputs['archive']))
             directory = output / 'packages'
         sources = build_overlays(record, rootfs, run, directory)
-        install_overlays(rootfs, run, record['config'], overlay_packages.debian_packages(sources))
+        install_overlays(rootfs, run, overlay_packages.debian_packages(sources))
         return export_overlays(record, rootfs, sources, kernel, directory=directory,
                                uapi=uapi, inputs=inputs)
 
@@ -889,11 +922,15 @@ def execute(record):
             return subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, check=True)
     try:
         if not record.get('resume'):
-            from prepare_debian_desktop import prepare
-            recipe = prepare(public, out.with_name(out.name + '-recipe'), desktop)
-            run(['unshare', '--mount', '--propagation', 'private', 'bash', recipe / 'scripts/build-rootfs.sh',
-                 '--suite', cfg['debian']['suite'], '--output', out])
-        if not (out / 'COMPLETE').is_file() or rootfs.stat().st_uid: raise ValueError('Base desktop build did not complete with native guest ownership')
+            if record.get('packages_only'):
+                prepare_package_build_root(out, desktop, run)
+            else:
+                from prepare_debian_desktop import prepare
+                recipe = prepare(public, out.with_name(out.name + '-recipe'), desktop)
+                run(['unshare', '--mount', '--propagation', 'private', 'bash', recipe / 'scripts/build-rootfs.sh',
+                     '--suite', cfg['debian']['suite'], '--output', out])
+        if not (out / 'COMPLETE').is_file() or rootfs.stat().st_uid:
+            raise ValueError('Debian base build did not complete with native guest ownership')
         archive = debian_archive(rootfs)
         put(rootfs, 'usr/sbin/policy-rc.d', '#!/bin/sh\nexit 101\n'); (rootfs / 'usr/sbin/policy-rc.d').chmod(0o755)
         if record.get('resume') and not record.get('published_packages'):
@@ -916,10 +953,10 @@ def execute(record):
             components, packages = overlay_packages.read_debian(Path(published), desktop)
             overlay_packages.check_topology_conflicts(rootfs, topology)
             install_kernel(rootfs, 'debian', kernel, published=True)
-            install_overlays(rootfs, run, cfg, {
+            install_overlays(rootfs, run, {
                 **packages, bsp_archive.name: bsp, topology_archive.name: topology,
                 camera_archive.name: camera_record, power_archive.name: power,
-            }, published=True)
+            }, extra=cfg['debian']['extra_packages'], published=True)
             archive = debian_archive(rootfs)
         else:
             camera_archive, camera_record = camera.ensure('debian')
@@ -933,12 +970,12 @@ def execute(record):
                 power_archive, power = overlay_packages.build_bsp(
                     Path(temporary) / 'power', 'debian', run, component='power-profiles')
                 overlay_packages.check_topology_conflicts(rootfs, topology)
-                install_overlays(rootfs, run, cfg, {
+                install_overlays(rootfs, run, {
                     **packages, bsp_archive.name: (bsp_archive, bsp),
                     topology_archive.name: (topology_archive, topology),
                     camera_archive.name: (camera_archive, camera_record),
                     power_archive.name: (power_archive, power),
-                })
+                }, extra=cfg['debian']['extra_packages'])
             components = {name: {'packages': {}} for name in overlay_packages.DEBIAN_GNOME}
             components.update({name: value for name, (_, value) in sources.items()})
         sensor_unit = target(rootfs, 'usr/lib/systemd/system/adsprpcd-sensorspd.service')

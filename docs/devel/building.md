@@ -135,6 +135,8 @@ sudo ./build.sh ffmpeg --sysroot build/distros/debian-sid/rootfs
 
 Build products 先准备一次 ARM64 构建容器，再并行构建 UEFI 和 Android 模块、内核包、设备配置和相机包。覆盖包随后按 Debian、Nyarch、SteamOS 分别构建，Debian GNOME 和 KDE 共用一套。发布阶段签名并上传 R2，从公开域名验签和核对索引后，四个系统才从对应的软件源安装这一批包。中间产物不增加用户下载项，各阶段的日志仍合并进 `logs.zip`。
 
+Debian 覆盖包在由官方签名 sid 源引导的 ARM64 构建根中编译。各包按原生配方安装构建依赖和运行依赖。完整桌面、文字编辑器和 Chromium 由系统镜像阶段安装；这些应用的依赖不影响覆盖包构建。
+
 同一分支的产品运行按批排队，只保留最新的排队任务。pacman 同步索引只列出每个包的
 最新版本，所以已经开始的任务要等镜像组装结束，下一批才会替换公开索引。
 构建任一 Arch 镜像时，两套发行版的 SensorProxy 包一起检查和发布。共用的
