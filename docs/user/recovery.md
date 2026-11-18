@@ -1,13 +1,13 @@
 # 返回 Android 与故障恢复
 
-SunUEFI 不替换原厂引导程序，也不修改 Android 的系统分区，UEFI 阶段对原厂关键分区由代码强制只读。出问题时，按现象在下表里找对应办法。
+SunUEFI 不替换原厂引导程序。正常扫描和启动不会改写 Android 分区；手动执行 [UEFI Fastboot 刷写](fastboot.md#刷写分区)时，只写指定的目标。出问题时，按下表处理。
 
 | 现象 | 原因 | 怎么做 |
 | --- | --- | --- |
 | 在 Linux 里想回 Android | 保存的启动路线是 Linux | 运行 `piano-next-boot android --reboot`，或点桌面上的“返回 Android” |
 | 在 Android 里想改回 Linux 或 Android | 路线保存在 BOOT 分区的记录区 | 在助手的 **启动** 页重新选择；没有助手时见下文“用命令改启动路线” |
 | 屏幕停在原厂 Fastboot | 没有选到系统，或刷写后没有重启 | 电脑上运行 `fastboot reboot` |
-| 电脑能看到 `SunUEFI-piano` | 固件在运行，屏幕可能白屏 | 运行 `fastboot -s SunUEFI-piano reboot`，固件先释放 USB、存储、时钟和 SMMU（IOMMU，限制外设访问内存），再冷重启回 Android |
+| 电脑能看到 `SunUEFI-piano` | 固件还在运行 | 运行 `fastboot -s SunUEFI-piano reboot`，固件保存设置、同步存储后重启。看到开机选择页时，可用音量键选择 Android |
 | 完全没有反应 | 死机或卡在早期启动 | 长按电源键强制重启，直到出现开机画面。按多久因机器而异，用你已知的原厂强制重启方式 |
 | 想进小米原厂 Recovery | 需要原厂恢复功能 | 在 Android 里运行 `reboot recovery`，或用系统的重启菜单。不会触发 SunUEFI，也不改变保存的启动路线 |
 
