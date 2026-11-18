@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import package_release as pr
 from make_kernel_initramfs import make_newc
+from prepare_boot_files import LOAD_LIMIT
 
 
 class ReleasePackageTests(unittest.TestCase):
@@ -427,6 +428,12 @@ class ReleasePackageTests(unittest.TestCase):
                             '.cmdline': b'rdinit=/pianoinit piano.root=LABEL=PIANOROOT console=tty0',
                             '.uname': b'6.6-fixture', '.osrel': b'PRETTY_NAME="Linux"\n'}
                 self.assertEqual(pr.verify_uki(readback, sections), result['uki']['sections'])
+                if not overrides:
+                    # Increase the file size without changing its PE sections.
+                    os.truncate(readback, LOAD_LIMIT)
+                    with self.assertRaisesRegex(ValueError, 'outside SimpleInit load bounds'):
+                        pr.image_info(readback, kernel=False)
+                    self.assertEqual(pr.verify_uki(readback, sections), result['uki']['sections'])
                 readback.unlink()
                 self.assertFalse((self.args.output / '.incomplete').exists())
                 self.assertTrue((self.args.output / 'SHA256SUMS').is_file())

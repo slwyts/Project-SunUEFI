@@ -408,7 +408,8 @@ def scan_root(root, release):
 def verify_uki(path, sections):
     """Read the produced PE sections, not a build receipt."""
     import pefile
-    image_info(path, kernel=False)
+    # systemd-boot loads the UKI through UEFI, not through SimpleInit.
+    image_info(path, kernel=False, simpleinit_limit=False)
     pe = pefile.PE(str(path), fast_load=True)
     rows = {}
     try:
@@ -591,7 +592,7 @@ def package(args):
                 values.get('CONFIG_CMDLINE_FORCE', 'n') == 'n',
                 'Product kernel must accept boot arguments without embedded defaults')
     require(uefi.read_bytes()[:8] == b'ANDROID!', 'UEFI must be an Android boot container')
-    image_info(image)
+    image_info(image, simpleinit_limit=False)
     fdt_info(dtb)
     initramfs_info(initrd)
     with gzip.open(initrd, 'rb') as stream:
@@ -618,7 +619,7 @@ def package(args):
         efi_inputs.insert(0, ('stub', stub))
     for name, source in efi_inputs:
         require(source.is_file() and not source.is_symlink(), 'Expected regular EFI application: ' + str(source))
-        info = image_info(source, kernel=False)
+        info = image_info(source, kernel=False, simpleinit_limit=False)
         efi_sources[name] = {'source': str(source), 'bytes': info['bytes'], 'sha256': info['sha256']}
     esp_only = getattr(args, 'esp_only', False)
     build_root = bool(args.root_size_mib) and not esp_only

@@ -39,9 +39,12 @@ def canonical_commits(lock,name):
     except (OSError,subprocess.CalledProcessError) as error:
         raise ValueError(f'{name}: canonical commits unavailable in pinned local source repository') from error
 
-def image_info(path,kernel=True):
+def image_info(path,kernel=True,*,simpleinit_limit=True):
+    """Validate an ARM64 EFI image, optionally as a SimpleInit payload."""
     path=Path(path);size=path.stat().st_size
-    require(64<=size<LOAD_LIMIT,f'{path}: image outside SimpleInit load bounds')
+    require(size>=64,f'{path}: truncated EFI header')
+    if simpleinit_limit:
+        require(size<LOAD_LIMIT,f'{path}: image outside SimpleInit load bounds')
     with path.open('rb') as stream:
         head=stream.read(64)
         require(head[:2]==b'MZ',f'{path}: missing EFI PE/COFF header')
