@@ -50,8 +50,14 @@
 
 ## 后续更新
 
-* 更新 Linux：在 **存储** 页选择新版启动镜像和系统镜像，再安装一次。系统镜像会覆盖原有的 Linux 文件，更新前先备份自己的数据。
-* HyperOS 更新后恢复引导：在 **维护** 页点 **重新安装引导**。
+日常更新用系统自带的包管理器。带 SunUEFI 签名软件源的镜像会一同更新项目提供的内核、设备树和其他已打包的设备组件，不需要重新刷系统镜像。
+
+* Debian：运行 `sudo apt update && sudo apt upgrade`。
+* Nyarch 和 SteamOS：运行 `sudo pacman -Syu`。SteamOS 也可以在 [Steam 或 Discover 中更新](steamos.md#系统更新)。
+
+更新内核前，运行 `findmnt --mountpoint /boot/efi` 确认启动分区已挂载。重启后如果新版内核不能启动，在 systemd-boot 的三秒菜单里选择之前的内核。重新刷系统镜像用于重装或更换发行版，会覆盖已有 Linux 文件；操作前先备份。
+
+HyperOS 更新后，在引导助手的 **维护** 页点 **重新安装引导**，恢复合体 BOOT。
 
 ## 出问题怎么办
 

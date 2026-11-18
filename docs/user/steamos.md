@@ -27,7 +27,9 @@ SteamOS 镜像在平板上提供 Steam 游戏模式和 KDE 桌面模式，默认
 
 ## 系统更新
 
-系统更新走 pacman 软件包，和 KDE Discover 共用软件源，不使用 Valve 的 A/B 镜像更新。Mesa、Gamescope、FFmpeg、传感器、平台管理，以及带修正的 GTK、IBus 和 KWin 包跟着系统镜像更新，不随 pacman 升级。其他库升级以后，这些本地包有可能需要重新编译，所以现在还不能当作完整的滚动更新系统。内核和设备适配的更新，同样通过引导助手刷写新的镜像。Steam 客户端自己的更新不受影响。
+游戏模式的系统更新、KDE Discover 和 `sudo pacman -Syu` 使用同一套软件源，不走 Valve 的 A/B 镜像更新。`sunuefi-steamos` 优先提供按 Valve 依赖构建的覆盖包，`sunuefi` 提供共用内核和设备包；两套软件源都需要验签。Steam 客户端仍按自己的方式更新。
+
+用 `pacman-conf --repo-list` 可以查看这两个软件源。没有列出它们的早期镜像，只能从原有软件源获取更新，看不到项目的设备包。更新和选择旧内核的办法见[安装指南](install-from-artifact.md#后续更新)。
 
 ## 运行《原神》
 
