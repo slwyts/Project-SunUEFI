@@ -246,8 +246,13 @@ def default_system_record(rootfs, installed, config, desktop='gnome'):
         'usr/share/piano/pen/p81c-radio.json', 'usr/lib/piano/pen-control.py',
         'usr/bin/piano-pen-canvas',
     )
-    paths += (('etc/dconf/db/local.d/00-sunuefi', 'etc/dconf/db/local', 'etc/dconf/profile/user')
-              if desktop == 'gnome' else ('etc/sddm.conf.d/10-sunuefi.conf',))
+    paths += (
+        ('etc/dconf/db/local.d/00-sunuefi', 'etc/dconf/db/local', 'etc/dconf/profile/user')
+        if desktop == 'gnome' else (
+            'etc/sddm.conf.d/10-sunuefi.conf',
+            'usr/share/plasma/shells/org.kde.plasma.desktop/metadata.json',
+        )
+    )
     files = {}
     for name in paths:
         path = userspace.guest_resolve(rootfs, name)

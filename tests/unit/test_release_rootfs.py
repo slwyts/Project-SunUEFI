@@ -52,8 +52,7 @@ class ReleaseRootTests(unittest.TestCase):
         config = copy.deepcopy(CONFIG)
         (self.root / 'config/release.json').write_text(json.dumps(config))
         packages = self.planned('kde')['config']['debian']['extra_packages']
-        self.assertIn('powerdevil', packages)
-        self.assertIn('chromium', packages)
+        self.assertTrue({'plasma-desktop', 'powerdevil', 'upower', 'chromium'} <= set(packages))
         self.assertFalse(any(p.startswith('ibus') or p.startswith('gnome') for p in packages))
 
     def test_every_release_desktop_requires_native_power_profiles(self):
