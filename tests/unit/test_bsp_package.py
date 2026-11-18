@@ -205,9 +205,13 @@ class BspPackageTests(unittest.TestCase):
         artifact = out / next(iter(report['files']))
         self.assertEqual(artifact.name, 'piano-firmware-touch_0.1.0_all.deb')
         self.assertEqual(report['depends'], [])
+        kib = subprocess.check_output(['dpkg-deb', '--field', artifact, 'Installed-Size'], text=True)
         with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(
                 ['dpkg-deb', '--fsys-tarfile', artifact]))) as archive:
-            files = {member.name for member in archive if member.isfile()}
+            members = archive.getmembers()
+            files = {member.name for member in members if member.isfile()}
+            self.assertEqual(int(kib), sum(1 if member.isdir() else (member.size + 1023) // 1024
+                                           for member in members))
             self.assertEqual(files, {
                 './usr/lib/firmware/novatek/novatek_nt36532_piano_fw_boe.bin',
                 './usr/lib/firmware/novatek/novatek_nt36532_piano_fw_csot.bin',

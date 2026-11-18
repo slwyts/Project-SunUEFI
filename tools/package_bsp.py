@@ -249,17 +249,24 @@ def preinst(paths, package=NAME):
 
 def debian_package(output, tree, report, configuration):
     package = report['package']
-    control = tree / 'DEBIAN'
-    control.mkdir()
-    control.chmod(0o755)
     section = 'non-free-firmware/kernel' if package == TOUCH_PACKAGE else 'misc'
     depends = 'Depends: ' + ', '.join(report['depends']) + '\n' if report['depends'] else ''
     detail = (' Built from locally supplied stock ROM files.\n' if package == TOUCH_PACKAGE
               else ' Native runtime, Mesa, firmware and modules are distributed separately.\n')
+    installed_size = ''
+    if package == TOUCH_PACKAGE:
+        # The firmware payload contains only directories and regular files.
+        # Match dpkg-gencontrol: 1 KiB per directory, round up each file.
+        kib = 1 + sum(1 if path.is_dir() else (path.stat().st_size + 1023) // 1024
+                      for path in tree.rglob('*'))
+        installed_size = f'Installed-Size: {kib}\n'
+    control = tree / 'DEBIAN'
+    control.mkdir()
+    control.chmod(0o755)
     (control / 'control').write_text(
         f"Package: {package}\nVersion: {report['version']}\nArchitecture: all\n"
         f'Maintainer: Project SunUEFI <slwyts@tuta.io>\nSection: {section}\nPriority: optional\n'
-        f'{depends}Description: {package_description(package)}\n{detail}')
+        f'{depends}{installed_size}Description: {package_description(package)}\n{detail}')
     if configuration:
         (control / 'conffiles').write_text(''.join('/' + name + '\n' for name in configuration))
     docs = 'usr/share/doc/' + package + '/'

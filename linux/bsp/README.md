@@ -57,5 +57,6 @@ SteamOS 使用同一份 `any` 格式的 pacman 包。构建只读检查指定的
 包括压缩版固件和 Valve 的包数据库。旧镜像若有未登记的同名文件，先移到
 备份目录再构建；有其他包拥有时保留发行版文件。构建后若目标系统已更新，
 先用 `./build.sh bsp inspect --touch-firmware <提取目录> --against <目标根>`
-重新核对，再运行 `apt install ./<包名>.deb` 或 `pacman -U ./<包名>.pkg.tar.zst`。
+重新核对。把生成的包复制到目标系统，在那里运行 `apt install ./<包名>.deb`
+或 `pacman -U ./<包名>.pkg.tar.zst` 安装。
 没有找到这两份原厂固件的公开再分发许可，因此必须显式提供本地输入，包只供本地安装。
