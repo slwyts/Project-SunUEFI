@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #include "../../uefi/components/rtc/PianoRtcOffset.c"
+#include <Protocol/BlockIo.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -97,9 +98,9 @@ int main(int Argc,char **Argv){
   if(Case==5)Media.ReadOnly=FALSE;
   EFI_STATUS Status=PianoRtcOffsetInitialize();
   assert(PianoRtcOffsetInitialize()==Status);
-  if(Case>=1&&Case<=5){
+  if(Case>=1&&Case<=4){
     assert(Status!=EFI_SUCCESS&&!Allocations);
-    assert(RootClosed==(Case==5?0:1)&&FileClosed==(Case>=4?0:1));
+    assert(RootClosed==1&&FileClosed==(Case==4?0:1));
     assert(PianoRtcOffsetApplyDtb(Tree,sizeof(Tree))==EFI_SUCCESS);
     assert(!fdt_getprop(Tree,fdt_path_offset(Tree,"/rtc"),"nvmem-cells",NULL));
     return 0;

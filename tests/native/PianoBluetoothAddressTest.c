@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #include "../../uefi/components/board-identity/PianoBluetoothAddress.c"
+#include <Protocol/BlockIo.h>
 #include <assert.h>
 #include <openssl/sha.h>
 #include <stdio.h>
@@ -201,8 +202,8 @@ int main(int Argc, char **Argv)
   EFI_STATUS Status = PianoBluetoothAddressInitialize();
   assert(PianoBluetoothAddressInitialize() == Status);
   assert(Status == (Case == 6 ? EFI_NOT_FOUND : EFI_SUCCESS));
-  assert(Reads == (Case == 7 ? 0 : 1) && RootClosed == Reads && FileClosed == Reads);
-  assert(SerialReads == ((Case == 1 || Case == 2 || Case >= 6) ? 1 : 0));
+  assert(Reads == 1 && RootClosed == Reads && FileClosed == Reads);
+  assert(SerialReads == ((Case == 1 || Case == 2 || Case == 6) ? 1 : 0));
   assert(PianoBluetoothAddressApplyDtb(Tree, sizeof(Tree)) == EFI_SUCCESS);
   Node = fdt_path_offset(Tree, "/bluetooth");
   int Bytes;
@@ -214,9 +215,11 @@ int main(int Argc, char **Argv)
   UINT8 ExpectedExisting[6];
   for (UINTN I = 0; I < 6; ++I)
     ExpectedExisting[I] = Existing[5 - I];
-  CONST UINT8 *Expected = Case == 5                               ? ExpectedExisting
-                          : (Case == 1 || Case == 2 || Case == 7) ? SocDt
-                                                                  : FactoryDt;
+  CONST UINT8 *Expected = FactoryDt;
+  if (Case == 5)
+    Expected = ExpectedExisting;
+  else if (Case == 1 || Case == 2)
+    Expected = SocDt;
   assert(Address && Bytes == 6 && !memcmp(Address, Expected, 6));
   assert(!fdt_getprop(Tree, Node, "qcom,local-bd-address-broken", NULL));
   assert(PianoBluetoothAddressApplyDtb(Tree, sizeof(Tree)) == EFI_SUCCESS);

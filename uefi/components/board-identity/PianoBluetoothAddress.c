@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #include "PianoBluetoothAddress.h"
 #include <Guid/FileInfo.h>
-#include <Protocol/BlockIo.h>
 #include <Protocol/EFIChipInfo.h>
 #include <Protocol/PartitionInfo.h>
 #include <Protocol/SimpleFileSystem.h>
@@ -38,19 +37,15 @@ STATIC EFI_STATUS FactoryAddress(UINT8 Address[6]){
   UINTN Count=0,Matches=0;
   EFI_STATUS Status=gBS->LocateHandleBuffer(ByProtocol,&gEfiSimpleFileSystemProtocolGuid,NULL,&Count,&Handles);
   if(EFI_ERROR(Status))return Status;
-  if(!Handles||Count>256){if(Handles)FreePool(Handles);return EFI_COMPROMISED_DATA;}
   for(UINTN I=0;I<Count;++I){
     EFI_PARTITION_INFO_PROTOCOL *Partition=NULL;
-    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Candidate=NULL;
-    EFI_BLOCK_IO_PROTOCOL *Block=NULL;
     if(gBS->HandleProtocol(Handles[I],&gEfiPartitionInfoProtocolGuid,(VOID **)&Partition)!=EFI_SUCCESS||
-       !Partition||Partition->Revision<EFI_PARTITION_INFO_PROTOCOL_REVISION||Partition->Type!=PARTITION_TYPE_GPT||
+       !Partition||Partition->Type!=PARTITION_TYPE_GPT||
        StrnCmp(Partition->Info.Gpt.PartitionName,L"persist",36))continue;
-    if(gBS->HandleProtocol(Handles[I],&gEfiBlockIoProtocolGuid,(VOID **)&Block)!=EFI_SUCCESS||
-       !Block||!Block->Media||!Block->Media->MediaPresent||!Block->Media->LogicalPartition||!Block->Media->ReadOnly)continue;
-    if(gBS->HandleProtocol(Handles[I],&gEfiSimpleFileSystemProtocolGuid,(VOID **)&Candidate)!=EFI_SUCCESS||
-       !Candidate||!Candidate->OpenVolume)continue;
-    Filesystem=Candidate;++Matches;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Candidate=NULL;
+    if(gBS->HandleProtocol(Handles[I],&gEfiSimpleFileSystemProtocolGuid,(VOID **)&Candidate)==EFI_SUCCESS&&Candidate){
+      Filesystem=Candidate;++Matches;
+    }
   }
   FreePool(Handles);
   if(Matches!=1)return Matches?EFI_COMPROMISED_DATA:EFI_NOT_FOUND;
