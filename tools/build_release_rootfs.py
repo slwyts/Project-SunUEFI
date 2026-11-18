@@ -765,7 +765,11 @@ def install_overlays(rootfs, run, config, desktop, packages, *, published=False)
             build_devices(rootfs), build_resolver(rootfs):
         work = Path(folder)
         work.chmod(0o755)
-        prepare_build_indexes(rootfs, lambda args: run(['chroot', rootfs, *args]))
+        # Local builds already selected signed Debian indexes for their package
+        # build. The newly installed boot config can add the project repository,
+        # but the local archives do not depend on that repository being online.
+        prepare_build_indexes(rootfs, lambda args: run(['chroot', rootfs, *args]),
+                              refresh=published)
         if published:
             paths = overlay_packages.download_debian(rootfs, work, packages, run)
         else:

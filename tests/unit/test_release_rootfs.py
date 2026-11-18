@@ -1,5 +1,6 @@
 """Release policy and dry planning with disposable trees; no APT/device/root calls."""
 import copy
+from contextlib import nullcontext
 import importlib.util
 from importlib.machinery import SourceFileLoader
 import json
@@ -96,6 +97,30 @@ class ReleaseRootTests(unittest.TestCase):
                              root=self.root, packages_only=packages)
         self.assertFalse(packages.exists())
         self.assertFalse(Path(result['output']).exists())
+
+    def test_local_overlays_use_existing_indexes_after_installing_boot_configuration(self):
+        archive = self.root / 'piano-camera_1.0-1_arm64.deb'
+        archive.write_bytes(b'test camera package')
+        source = self.rootfs / 'etc/apt/sources.list.d/sunuefi.sources'
+        source.parent.mkdir(parents=True)
+        source.write_text('Types: deb\nURIs: https://unavailable.example.invalid/apt\n'
+                          'Suites: sid\nComponents: main\n')
+        commands = []
+
+        def run(command):
+            commands.append(command)
+            self.assertNotIn('update', command)
+            staged = self.rootfs / command[-1].lstrip('/')
+            self.assertEqual(staged.read_bytes(), archive.read_bytes())
+
+        with patch.object(builder, 'build_devices', return_value=nullcontext()), \
+                patch.object(builder, 'build_resolver', return_value=nullcontext()):
+            builder.install_overlays(self.rootfs, run, {'debian': {'extra_packages': []}}, 'gnome', {
+                archive.name: (archive, {'sha256': builder.digest(archive)}),
+            })
+        self.assertEqual(len(commands), 1)
+        self.assertIn('install', commands[0])
+        self.assertTrue(source.is_file())
 
     def test_plan_checks_the_kernel_tree_from_the_series(self):
         with patch.object(builder.modules, 'inspect', return_value=(self.m, 'b' * 64)), \
