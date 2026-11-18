@@ -55,6 +55,11 @@ class RepoProductsTests(unittest.TestCase):
         device_pacman = self.packages / 'piano-device-config-1-1-any.pkg.tar.zst'
         self.package_set('kernel/debian', {deb_kernel: b'kernel'}, format='debian')
         self.package_set('kernel/pacman', {kernel: b'kernel'}, format='pacman')
+        # Local display archives in the shared cache are not publication inputs.
+        self.package_set('bsp/display-firmware/debian', {
+            'piano-firmware-display_0.1.0_all.deb': b'local calibration'})
+        self.package_set('bsp/display-firmware/pacman', {
+            'piano-firmware-display-0.1.0-1-any.pkg.tar.zst': b'local calibration'})
         self.package_set('overlays/debian-gnome', {deb_shared: b'same build'}, repo='apt')
         self.package_set('overlays/debian-kde', {deb_shared: b'same build'}, repo='apt')
         self.package_set('overlays/nyarch-gnome', {firmware: b'device', graphics: b'arch'},

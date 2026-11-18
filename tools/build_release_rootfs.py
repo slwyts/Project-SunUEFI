@@ -974,8 +974,9 @@ def execute(record):
             desktop_service(rootfs)
         else:
             install_desktop(rootfs, bundle, ROOT / 'build/fingerprint-packages')
-        from stage_piano_firmware import stage as stage_firmware
-        stage_firmware(Path(record['firmware_source']), rootfs)
+        from stage_piano_firmware import stage as stage_firmware, verify_display
+        firmware = stage_firmware(Path(record['firmware_source']), rootfs, 'debian',
+                                  shared=bool(published), run=run)
         apply_policy(rootfs, out, cfg)
         boot_request = native_boot_request(rootfs, out)
         sanitize(rootfs, out)
@@ -991,6 +992,7 @@ def execute(record):
         if installed.get(topology['name']) != topology['version']:
             raise ValueError('Installed Piano audio topology package version differs')
         overlay_packages.verify_topology(rootfs, 'debian', topology)
+        verify_display(rootfs, 'debian', firmware['display_package'])
         if installed.get(camera_record['name']) != camera_record['version']:
             raise ValueError('Installed Piano camera package version differs')
         camera.verify_installed(rootfs, 'debian', camera_archive)
@@ -1017,6 +1019,7 @@ def execute(record):
                   'debian_commit': cfg['debian']['commit'],
                   'device_configuration': bsp, 'camera_package': camera_record,
                   'audio_topology_package': topology,
+                  'display_firmware_package': firmware['display_package'],
                   **components,
                   'boot_request': boot_request, 'firmware_components': cfg['firmware']['components'],
                   'clock_epoch': clock,

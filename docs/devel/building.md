@@ -199,7 +199,10 @@ sudo ./build.sh mesa build/mesa-steamos --format pacman --rootfs build/distros/s
 
 两种产品构建都会检查 Mesa 源码、完整驱动选项和 ARM64 包。CI 分别缓存原生包；复用前核对来源、配方与包摘要，安装后重新检查 ELF 和目标系统的依赖，避免把不匹配的滚动发行版缓存带入镜像。
 
-所有发行版都由 `tools/stage_piano_firmware.py` 安装同一套设备固件。`config/release.json` 的 `firmware.overlays` 选用完整的 HyperOS 4 ADSP 和 ADSP-DTB 更新，覆盖旧文件，来源、大小和 SHA256 记录在固件清单里。
+四套产品由 APT 或 pacman 安装 `piano-firmware-display`，根系统组装核对两份
+校准的归属、大小与 SHA256。CI 共用这两个包，只用于组装镜像，不上传到软件源。
+其他设备固件仍按 `vendor/firmware/` 下的组件清单校验后安装。
+恢复已生成的根系统时，只迁移内容吻合且未被其他包持有的旧校准文件。
 
 ### 单独构建的软件包
 
@@ -221,7 +224,7 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 | --- | --- | --- |
 | Linux 内核与模块 | Debian 的 `bindeb-pkg` 和 Arch 的 `pacman-pkg` 原生包 | 随包安装并维护匹配的模块，由元包选择最新版本 |
 | 设备树 | 组合板级 DTB、overlay 和绑定转换，按内核版本打包 | 生成启动文件时选取同版文件，逐步收敛到内核源码中的板级设备树 |
-| Linux 设备固件 | 产品构建校验后复制到 `/usr/lib/firmware`；两份触控固件可单独[构建本地软件包](../../linux/bsp/README.md#本地触控固件包) | 发行版提供通用固件，设备包只补缺少且有分发依据的文件 |
+| Linux 设备固件 | 显示校准由 `piano-firmware-display` 安装；触控固件可单独[构建本地软件包](../../linux/bsp/README.md#本地固件包)，其他固件仍由组装脚本安装 | 发行版提供通用固件，设备包补齐板级固件 |
 | ALSA UCM、udev、笔校准及音频拓扑 | 四个产品安装 `piano-device-config` 和 `piano-audio-topology` | 开源拓扑随独立包更新，剩余硬件运行文件继续按组件打包 |
 | Mesa、FFmpeg | 已有 Debian 和 pacman 原生包 | 保留目标发行版完整配方、功能和 ABI，按软件源正常更新 |
 | 传感器 | Debian 提供 FastRPC、libssc、iio-sensor-proxy 和 Piano 配置的六个运行包；Arch 部分集成文件另行复制 | 原生包包含完整集成文件，运行时继续提供标准 SensorProxy 接口 |

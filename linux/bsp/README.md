@@ -55,7 +55,7 @@ Debian 默认 sid，Ubuntu 默认 noble，Arch Linux ARM 默认 rolling；Deepin
 和压缩版本的归属。未登记的旧文件按上面的迁移方法备份；发行版软件包已有
 同名文件时保留其归属。
 
-## 本地触控固件包
+## 本地固件包
 
 `piano-firmware-touch` 只包含 Xiaomi Pad 8 Pro 的 BOE、CSOT 两份触控固件。
 从与[固件清单](../../vendor/firmware/piano-touch/manifest.json)所列版本一致的原厂
@@ -68,10 +68,27 @@ ROM 提取 `odm/firmware` 中的这两个文件，再指定该目录和要安装
   --against /absolute/target-root --target arch --format pacman --output build/touch-pacman
 ```
 
-SteamOS 使用同一份 `any` 格式的 pacman 包。构建只读检查指定的目标根目录，
-包括压缩版固件和 Valve 的包数据库。旧镜像若有未登记的同名文件，先移到
-备份目录再构建；有其他包拥有时保留发行版文件。构建后若目标系统已更新，
-先用 `./build.sh bsp inspect --touch-firmware <提取目录> --against <目标根>`
-重新核对。把生成的包复制到目标系统，在那里运行 `apt install ./<包名>.deb`
-或 `pacman -U ./<包名>.pkg.tar.zst` 安装。
-没有找到这两份原厂固件的公开再分发许可，因此必须显式提供本地输入，包只供本地安装。
+`piano-firmware-display` 包含 BOE、CSOT 两份显示校准；内核按面板型号加载
+`qcom/sm8750/piano-{boe,csot}-display.bin`，不需要额外服务。`--display-firmware`
+指定仓库中的 `vendor/firmware/piano-display`，或[校准生成工具](../../vendor/firmware/piano-display/README.md)
+的输出目录。四个产品镜像通过原生包装入校准；校准包没有加入公网软件源。
+构建会按[固件清单](../../vendor/firmware/piano-display/manifest.json)核对两份文件。
+
+```sh
+./build.sh bsp package --display-firmware vendor/firmware/piano-display \
+  --against /absolute/target-root --target debian --format deb --output build/display-deb
+./build.sh bsp package --display-firmware vendor/firmware/piano-display \
+  --against /absolute/target-root --target arch --format pacman --output build/display-pacman
+```
+
+SteamOS 与 Nyarch 使用同一份 `any` 格式的 pacman 包。触控和显示包都显式读取
+本地输入。单独构建显示包可不指定目标；安装前用 `--against` 检查目标系统的
+包归属和同名的 `.xz`、`.zst` 固件。
+旧镜像若有未登记的文件，先按上面的迁移方法备份再构建；其他包拥有的文件不覆盖。
+若构建后目标系统发生变化，先用 `./build.sh bsp inspect` 加原组件参数及
+`--against <目标根>` 重新核对。pacman 安装时只检查完全相同的路径，不检查压缩别名。
+
+把包复制到目标系统，用 `apt install ./<包名>.deb` 或 `pacman -U ./<包名>.pkg.tar.zst`
+安装。换用保留的旧包可以回退，显式卸载用 `apt remove <包名>` 或 `pacman -R <包名>`。
+显示校准在下次内核初始化内屏时加载；移除校准后，普通 SDR 仍可用。若系统把校准打进
+了 initramfs，重启前按发行版的方式重建。

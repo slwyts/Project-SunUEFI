@@ -59,6 +59,12 @@ jobs:
               ./build.sh bsp package --target arch --format pacman --output artifacts/packages/bsp/pacman
               ./build.sh bsp package --audio-topology --target debian --format deb --output artifacts/packages/bsp/audio-topology/debian
               ./build.sh bsp package --audio-topology --target arch --format pacman --output artifacts/packages/bsp/audio-topology/pacman
+              env -u SUNUEFI_OVERLAY_RELEASE ./build.sh bsp package \
+                --display-firmware vendor/firmware/piano-display --target debian --format deb \
+                --output artifacts/packages/bsp/display-firmware/debian
+              env -u SUNUEFI_OVERLAY_RELEASE ./build.sh bsp package \
+                --display-firmware vendor/firmware/piano-display --target arch --format pacman \
+                --output artifacts/packages/bsp/display-firmware/pacman
               ./build.sh repo products --verify-bsp --output artifacts/packages/bsp
               if [ "$CAMERA_CACHE_HIT" = true ]; then
                 ./build.sh camera-package --verify

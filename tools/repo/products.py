@@ -117,6 +117,8 @@ def main():
         rows = {package_format: {
             'device_configuration': bsp_package(args.output / package_format, package_format)[1],
             'audio_topology': topology_package(args.output, package_format)[1],
+            'display_firmware': bsp_package(args.output / 'display-firmware' / package_format,
+                                            package_format, component='display-firmware')[1],
         }
                 for package_format in KERNEL_REPOSITORIES}
         print(json.dumps(rows, indent=2))

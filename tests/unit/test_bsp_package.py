@@ -244,19 +244,85 @@ class BspPackageTests(unittest.TestCase):
                 './usr/share/doc/piano-firmware-touch/bsp-manifest.json').read().decode()
             self.assertNotIn(str(source), installed_report)
 
-    def test_local_touch_firmware_rejects_tampering_and_publication_generation(self):
-        source = self.base / 'source'
-        shutil.copytree(bsp.TOUCH_MANIFEST.parent, source)
-        args = self.args('stage', '--touch-firmware', str(source), '--output', str(self.base / 'stage'))
-        with patch.dict(os.environ, {bsp.overlay_release.ENVIRONMENT: '10.1'}):
-            with self.assertRaisesRegex(ValueError, 'cannot be built as a publication generation'):
-                bsp.build(args)
-        panel = source / 'novatek_nt36532_piano_fw_boe.bin'
-        raw = panel.read_bytes()
-        panel.write_bytes(bytes([raw[0] ^ 1]) + raw[1:])
-        with self.assertRaisesRegex(ValueError, 'Touch firmware checksum mismatch'):
-            bsp.build(args)
-        self.assertFalse(args.output.exists())
+    @unittest.skipUnless(shutil.which('dpkg-deb'), 'dpkg-deb unavailable; no fake deb test')
+    def test_real_display_deb_contains_both_panel_calibrations(self):
+        source = bsp.DISPLAY_MANIFEST.parent
+        out = self.base / 'deb'
+        args = self.args('package', '--format', 'deb', '--display-firmware', str(source),
+                         '--output', str(out))
+        report = bsp.build(args)
+        self.assertEqual(report['component'], 'display-firmware')
+        self.assertFalse(report['public_distribution'])
+        self.assertFalse(report['conflict_check']['performed'])
+        self.assertEqual(report['depends'], [])
+        artifact = out / next(iter(report['files']))
+        self.assertEqual(artifact.name, 'piano-firmware-display_0.1.0_all.deb')
+        manifest = json.loads(bsp.DISPLAY_MANIFEST.read_text())
+        firmware = 'usr/lib/firmware/qcom/sm8750/'
+        docs = './usr/share/doc/piano-firmware-display/'
+        with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(
+                ['dpkg-deb', '--fsys-tarfile', artifact]))) as archive:
+            self.assertEqual({member.name for member in archive if member.isfile()}, {
+                './' + firmware + 'piano-boe-display.bin', './' + firmware + 'piano-csot-display.bin',
+                docs + 'bsp-manifest.json', docs + 'copyright',
+            })
+            for name, record in manifest['files'].items():
+                entry = archive.getmember('./' + firmware + name)
+                self.assertEqual((entry.mode, entry.uid, entry.gid), (0o644, 0, 0))
+                data = archive.extractfile(entry).read()
+                self.assertEqual((len(data), hashlib.sha256(data).hexdigest()),
+                                 (record['bytes'], record['sha256']))
+                self.assertEqual(report['payload_files'][firmware + name]['source_sha256'],
+                                 record['source_sha256'])
+            provenance = archive.extractfile(docs + 'bsp-manifest.json').read().decode()
+            self.assertNotIn(str(source), provenance)
+            self.assertEqual(json.loads(provenance)['source']['rom'], manifest['rom'])
+            self.assertNotIn('conflict_check', json.loads(provenance))
+        control = self.base / 'control'
+        subprocess.run(['dpkg-deb', '--control', artifact, control], check=True)
+        self.assertFalse((control / 'conffiles').exists())
+        self.assertFalse((control / 'postinst').exists())
+        self.assertNotIn('Replaces:', (control / 'control').read_text())
+
+    def test_display_migration_accepts_only_exact_unowned_raw_files(self):
+        source = bsp.DISPLAY_MANIFEST.parent
+        _, rows = bsp.local_firmware_payload(source, bsp.DISPLAY_MANIFEST, 'display firmware')
+        name = rows[0][0]['path']
+        root = self.base / 'guest'
+        path = root / name
+        path.parent.mkdir(parents=True)
+        path.write_bytes(rows[0][1])
+        path.chmod(0o644)
+        with self.assertRaisesRegex(ValueError, 'unowned-existing-file'):
+            bsp.conflict_check(root, rows, bsp.DISPLAY_PACKAGE)
+        self.assertEqual(bsp.conflict_check(root, rows, bsp.DISPLAY_PACKAGE,
+                                            adopt_display=True)['adopted'], [name])
+        compressed = path.with_name(path.name + '.zst')
+        compressed.write_bytes(b'compressed alias')
+        with self.assertRaisesRegex(ValueError, r'\.zst'):
+            bsp.conflict_check(root, rows, bsp.DISPLAY_PACKAGE, adopt_display=True)
+        compressed.unlink()
+        path.write_bytes(b'not the fixed calibration')
+        with self.assertRaisesRegex(ValueError, 'unowned-existing-file'):
+            bsp.conflict_check(root, rows, bsp.DISPLAY_PACKAGE, adopt_display=True)
+
+    def test_local_firmware_rejects_tampering_and_publication_generation(self):
+        for component, manifest in (('touch', bsp.TOUCH_MANIFEST),
+                                    ('display', bsp.DISPLAY_MANIFEST)):
+            with self.subTest(component=component):
+                source = self.base / component
+                shutil.copytree(manifest.parent, source)
+                args = self.args('stage', f'--{component}-firmware', str(source),
+                                 '--output', str(self.base / 'stage'))
+                with patch.dict(os.environ, {bsp.overlay_release.ENVIRONMENT: '10.1'}):
+                    with self.assertRaisesRegex(ValueError, 'cannot be built as a publication generation'):
+                        bsp.build(args)
+                panel = source / next(iter(json.loads(manifest.read_text())['files']))
+                raw = panel.read_bytes()
+                panel.write_bytes(bytes([raw[0] ^ 1]) + raw[1:])
+                with self.assertRaisesRegex(ValueError, f'{component.capitalize()} firmware checksum mismatch'):
+                    bsp.build(args)
+                self.assertFalse(args.output.exists())
 
     @unittest.skipUnless(TOPOLOGY_TOOLS and TOPOLOGY_SOURCES and shutil.which('dpkg-deb'),
                          'pinned AudioReach sources and Debian build tools required')

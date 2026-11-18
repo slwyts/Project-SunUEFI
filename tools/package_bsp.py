@@ -22,15 +22,23 @@ BSP = ROOT / 'linux/bsp'
 NAME = 'piano-device-config'
 TOUCH_PACKAGE = 'piano-firmware-touch'
 TOUCH_MANIFEST = ROOT / 'vendor/firmware/piano-touch/manifest.json'
+DISPLAY_PACKAGE = 'piano-firmware-display'
+DISPLAY_MANIFEST = ROOT / 'vendor/firmware/piano-display/manifest.json'
+LOCAL_FIRMWARE = {
+    TOUCH_PACKAGE: ('touch-firmware', TOUCH_MANIFEST),
+    DISPLAY_PACKAGE: ('display-firmware', DISPLAY_MANIFEST),
+}
 TOPOLOGY_PACKAGE = 'piano-audio-topology'
 TOPOLOGY_SOURCES = ('debian-piano-current', 'audioreach-topology')
-FIRMWARE_PACKAGES = (TOUCH_PACKAGE, TOPOLOGY_PACKAGE)
+FIRMWARE_PACKAGES = (*LOCAL_FIRMWARE, TOPOLOGY_PACKAGE)
 FIRMWARE_ROOT = 'usr/lib/firmware/'
 
 
 def package_description(package):
     if package == TOUCH_PACKAGE:
         return 'Xiaomi Pad 8 Pro Novatek touchscreen firmware'
+    if package == DISPLAY_PACKAGE:
+        return 'Xiaomi Pad 8 Pro display calibration firmware'
     if package == TOPOLOGY_PACKAGE:
         return 'Xiaomi Pad 8 Pro AudioReach topology'
     return 'Xiaomi Pad 8 Pro device configuration'
@@ -75,27 +83,30 @@ def payload(features):
     return manifest, rows
 
 
-def touch_payload(source):
-    manifest = read_json(TOUCH_MANIFEST)
-    require(manifest['directory'] == 'novatek' and len(manifest['files']) == 2,
-            'Expected the two Novatek panel firmware files')
+def local_firmware_payload(source, manifest_path, description):
+    manifest = read_json(manifest_path)
+    directory = PurePosixPath(manifest['directory'])
+    require(directory.parts and not directory.is_absolute() and '..' not in directory.parts,
+            'Invalid firmware directory: ' + str(directory))
+    require(len(manifest['files']) == 2, 'Expected both panel files for ' + description)
     rows = []
     for filename, record in manifest['files'].items():
         require(Path(filename).name == filename and filename not in ('', '.', '..'),
-                'Invalid touch firmware filename: ' + filename)
+                'Invalid ' + description + ' filename: ' + filename)
         path = source / filename
         require(path.is_file() and not path.is_symlink(),
-                'Missing regular touch firmware file: ' + str(path))
+                'Missing regular ' + description + ' file: ' + str(path))
         require(path.stat().st_size == record['bytes'],
-                'Touch firmware size mismatch: ' + filename)
+                description.capitalize() + ' size mismatch: ' + filename)
         data = path.read_bytes()
         require(len(data) == record['bytes'] and sha(data) == record['sha256'],
-                'Touch firmware checksum mismatch: ' + filename)
+                description.capitalize() + ' checksum mismatch: ' + filename)
         rows.append(({
-            'path': FIRMWARE_ROOT + manifest['directory'] + '/' + filename,
+            'path': FIRMWARE_ROOT + (directory / filename).as_posix(),
             'type': 'file',
             'mode': '0644',
             'sha256': record['sha256'],
+            **{key: record[key] for key in ('source', 'source_sha256') if key in record},
         }, data))
     return manifest, rows
 
@@ -156,11 +167,11 @@ def owners(root):
     return result
 
 
-def conflict_check(root, rows, package=NAME):
+def conflict_check(root, rows, package=NAME, *, adopt_display=False):
     root = root.resolve()
     require(root.is_dir(), 'Conflict-check root does not exist')
-    ownership, conflicts = owners(root), []
-    for row, _ in rows:
+    ownership, conflicts, adopted = owners(root), [], []
+    for row, data in rows:
         name = row['path']
         names = [name]
         if package in FIRMWARE_PACKAGES and name.startswith(FIRMWARE_ROOT):
@@ -175,32 +186,46 @@ def conflict_check(root, rows, package=NAME):
             resolved.setdefault(path, set()).update(ownership.get(candidate, ()))
         for path, assigned in resolved.items():
             own_destination = path == destination and assigned == {package}
-            if assigned - {package} or ((path.exists() or path.is_symlink()) and not own_destination):
+            existing = path.exists() or path.is_symlink()
+            if (adopt_display and package == DISPLAY_PACKAGE and path == destination and not assigned
+                    and not path.is_symlink() and path.is_file() and path.stat().st_size == len(data)
+                    and (path.stat().st_mode & 0o7777) == int(row['mode'], 8)
+                    and path.read_bytes() == data):
+                adopted.append(path.relative_to(root).as_posix())
+            elif assigned - {package} or (existing and not own_destination):
                 conflicts.append({'path': path.relative_to(root).as_posix(),
                                   'owners': sorted(assigned) or ['unowned-existing-file']})
     require(not conflicts, 'Existing target files must not be overwritten: ' + json.dumps(conflicts))
-    return {'performed': True, 'root_was_modified': False, 'conflicts': []}
+    report = {'performed': True, 'root_was_modified': False, 'conflicts': []}
+    if adopt_display:
+        report['adopted'] = adopted
+    return report
 
 
-def inspect_touch_firmware(args, suite):
-    require(args.target in ('debian', 'arch'), 'Use --target debian or arch for touch firmware')
+def inspect_local_firmware(args, suite, package, source):
+    component, manifest_path = LOCAL_FIRMWARE[package]
+    description = component.replace('-', ' ')
+    require(args.target in ('debian', 'arch'), 'Use --target debian or arch for ' + description)
     require(overlay_release.ENVIRONMENT not in os.environ,
-            'Local touch firmware cannot be built as a publication generation')
-    require(args.command != 'package' or args.against,
-            'Specify --against with the target root to check touch firmware ownership')
-    manifest, rows = touch_payload(args.touch_firmware)
+            f'Local {description} cannot be built as a publication generation')
+    require(args.command != 'package' or args.against or package == DISPLAY_PACKAGE,
+            f'Specify --against with the target root to check {description} ownership')
+    manifest, rows = local_firmware_payload(source, manifest_path, description)
+    provenance = {'rom': manifest['rom']}
+    if 'source' in manifest:
+        provenance['origin'] = manifest['source']
     report = {
         'schema_version': 1,
-        'component': 'touch-firmware',
-        'package': TOUCH_PACKAGE,
+        'component': component,
+        'package': package,
         'version': args.version,
         'target': {'distro': args.target, 'suite': suite, 'arch': args.arch},
         'package_architecture': 'any' if args.target == 'arch' else 'all',
-        'source': {'rom': manifest['rom'], 'origin': manifest['source']},
+        'source': provenance,
         'public_distribution': False,
         'depends': [],
         'package_ready': False,
-        'conflict_check': (conflict_check(args.against, rows, TOUCH_PACKAGE) if args.against
+        'conflict_check': (conflict_check(args.against, rows, package) if args.against
                            else {'performed': False, 'required_before_install': True}),
         'payload_files': {row['path']: {**row, 'bytes': len(data)} for row, data in rows},
         'files': {},
@@ -235,7 +260,9 @@ def inspect(args):
     suite = args.suite or profile['default_suite']
     require(suite and re.fullmatch('[A-Za-z0-9_.-]+', suite), 'Specify an explicit Deepin/target suite')
     if args.touch_firmware is not None:
-        return inspect_touch_firmware(args, suite)
+        return inspect_local_firmware(args, suite, TOUCH_PACKAGE, args.touch_firmware)
+    if args.display_firmware is not None:
+        return inspect_local_firmware(args, suite, DISPLAY_PACKAGE, args.display_firmware)
     if args.audio_topology:
         return inspect_audio_topology(args, suite)
     source, rows = payload([])
@@ -280,11 +307,15 @@ def stage(args):
             copyright = ('Novatek / Xiaomi proprietary firmware from the stock device ROM.\n'
                          'The SunUEFI source license does not cover these binaries.\n'
                          'No permission for public redistribution is documented.\n')
+        elif report['package'] == DISPLAY_PACKAGE:
+            copyright = ('Panel calibration derived from Qualcomm / Xiaomi stock QDCM data.\n'
+                         'The SunUEFI source license does not cover the calibration data.\n')
         else:
             copyright = topology_copyright(report['source'])
         (docs / 'copyright').write_text(copyright)
     provenance = docs / 'bsp-manifest.json'
-    omitted = {'files', 'conflict_check'} if report['package'] == TOPOLOGY_PACKAGE else {'files'}
+    omitted = ({'files', 'conflict_check'} if report['package'] in (TOPOLOGY_PACKAGE, DISPLAY_PACKAGE)
+               else {'files'})
     provenance.write_text(json.dumps({k: v for k, v in report.items() if k not in omitted}, indent=2) + '\n')
     for path in [tree, *tree.rglob('*')]:
         if path.is_dir() and not path.is_symlink():
@@ -325,6 +356,7 @@ def debian_package(output, tree, report, configuration):
     package = report['package']
     section, detail = {
         TOUCH_PACKAGE: ('non-free-firmware/kernel', ' Built from locally supplied stock ROM files.\n'),
+        DISPLAY_PACKAGE: ('non-free-firmware/kernel', ' Installs locally supplied panel calibration data.\n'),
         TOPOLOGY_PACKAGE: ('kernel', ' Provides the topology loaded by the Qualcomm ASoC driver.\n'),
     }.get(package, ('misc', ' Native runtime, Mesa, firmware and modules are distributed separately.\n'))
     depends = 'Depends: ' + ', '.join(report['depends']) + '\n' if report['depends'] else ''
@@ -366,7 +398,8 @@ def pacman_sources(directory, tree, report, configuration):
                     '-C', tree, '-cf', archive, '.'], check=True)
     depends = ' '.join(map(shlex.quote, report['depends']))
     backup = ' '.join(map(shlex.quote, configuration))
-    license_ids = {TOUCH_PACKAGE: 'LicenseRef-Proprietary', TOPOLOGY_PACKAGE: 'BSD-3-Clause'}
+    license_ids = {name: 'LicenseRef-Proprietary' for name in LOCAL_FIRMWARE}
+    license_ids[TOPOLOGY_PACKAGE] = 'BSD-3-Clause'
     (directory / 'PKGBUILD').write_text(
         f"pkgname={package}\npkgver={report['version']}\npkgrel={overlay_release.pacman_release('1')}\n"
         f'pkgdesc={shlex.quote(package_description(package))}\n'
@@ -467,6 +500,8 @@ def parser():
     component = ap.add_mutually_exclusive_group()
     component.add_argument('--touch-firmware', type=Path, metavar='DIRECTORY',
                            help='Package the two local stock touch firmware files')
+    component.add_argument('--display-firmware', type=Path, metavar='DIRECTORY',
+                           help='Package the two local display calibration files')
     component.add_argument('--audio-topology', action='store_true',
                            help='Build the AudioReach topology package from the fixed sources')
     ap.add_argument('--output', type=Path)

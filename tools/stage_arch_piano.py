@@ -140,8 +140,8 @@ def stage(args):
         from build_piano_fingerprint import install_desktop
         install_desktop(root, args.runtime.resolve(), output / 'fingerprint-packages')
     fw = ROOT / cfg['firmware']['components']
-    from stage_piano_firmware import stage as stage_firmware
-    stage_firmware(fw, root)
+    from stage_piano_firmware import stage as stage_firmware, verify_display
+    firmware = stage_firmware(fw, root, 'pacman', shared=published_packages is not None)
     # Use the reviewed, patched sensor importer source; Debian packaging itself
     # is not installed in Arch.
     sensor = args.sensor_source.resolve() / 'piano-sensors'
@@ -242,6 +242,7 @@ def stage(args):
          'audio_topology_package': topology, 'camera_package': camera_record}, packages)
     overlay_packages.verify_bsp_files(root, 'pacman')
     overlay_packages.verify_topology(root, 'pacman', topology)
+    verify_display(root, 'pacman', firmware['display_package'])
     camera.verify_installed(root, 'pacman', camera_archive)
     from package.v4l2loopback import verify_installed
     verify_installed(root, 'pacman', kernel['kernel_release'])
@@ -254,6 +255,7 @@ def stage(args):
               'root_policy': 'LABEL=PIANOROOT', 'login': cfg['login'],
               'desktop_configuration': desktop, 'initramfs': boot, 'clock_epoch': clock,
               'firmware_components': cfg['firmware']['components'],
+              'display_firmware_package': firmware['display_package'],
               'packages_sha256': release.digest(output / 'packages.tsv'),
               'camera_package': camera_record, 'audio_topology_package': topology,
               'runtime_manifest_sha256': release.digest(args.runtime / 'manifest.json')}

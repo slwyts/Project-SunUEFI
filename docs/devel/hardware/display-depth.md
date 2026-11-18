@@ -115,7 +115,8 @@ DPU 全屏缩放处理，不改变 DSI／DSC 时序。KDE 的默认显示配置�
 入口和合成身份，保持 3200×2136@120、两倍缩放。
 
 匹配的 `qcom/sm8750/piano-{boe,csot}-display.bin` 提供转换数据。
-生成来源与方法见[显示校准固件](../../../vendor/firmware/piano-display/README.md)。
+生成来源与方法见[显示校准固件](../../../vendor/firmware/piano-display/README.md)，
+独立安装见[本地固件包](../../../linux/bsp/README.md#本地固件包)。
 固件缺失、格式错误或硬件块不匹配时不附加 HDR 属性、不生成 HDR EDID，
 普通 SDR 继续启动。能力属性在 DRM 设备注册前创建。
 
