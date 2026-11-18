@@ -6,6 +6,10 @@
 WirePlumber 配置由独立的 [`piano-camera`](../../docs/devel/hardware/camera-controls.md)
 安装。相机包依赖通用包中的前后摄模块参数，不需要定制 rootfs。
 
+笔的 BlueZ 初始化程序、systemd 服务和无线参数由 `piano-device-config`
+一起安装。包管理器会安装 BlueZ 和 Python GI；不需要从镜像复制脚本，
+也不绑定某个内核版本。坐标、压感和按键仍由匹配的内核驱动上报。
+
 键盘背光走内核 LED 与 UPower 标准接口。`upower.service.d/20-piano-keyboard.conf` 让 UPower 等待键盘初始化，避免初次扫描漏掉背光节点；这份文件也由 Debian release 适配工具安装。服务和程序的具体来源见 [Linux 服务源码地图](../../docs/devel/linux/services.md)。
 
 蓝牙 HID 使用标准 `etc/modules-load.d/piano-bluetooth.conf` 加载 `uhid`，这是 Project SunUEFI 的本地配置。内核对应 `linux/configs/piano-bluetooth.config`，Full / Next 构建只允许新增 `CONFIG_UHID=m`；模块必须匹配目标内核。该配置解决 BlueZ 创建 HID 输入设备的前提，不代表笔尖坐标、压力或倾斜已经支持。

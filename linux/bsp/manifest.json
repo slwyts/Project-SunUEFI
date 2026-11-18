@@ -42,11 +42,25 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "fd92190d4d6336e8ca45f0c2cf0218a793e63fdb1f7dea9acf3197185e8b428f",
+      "sha256": "e996b874dbac3a387db4addbe639833b859a6d3a04cef16a347cf37c7b672278",
       "source": "linux/bsp/common/usr/lib/systemd/system/piano-touch.service",
-      "source_sha256": "fd92190d4d6336e8ca45f0c2cf0218a793e63fdb1f7dea9acf3197185e8b428f",
+      "source_sha256": "e996b874dbac3a387db4addbe639833b859a6d3a04cef16a347cf37c7b672278",
       "source_git_mode": "100644",
       "license": "MIT",
+      "source_component": "Project SunUEFI"
+    },
+    {
+      "group": "common",
+      "path": "usr/lib/piano/pen-control.py",
+      "type": "file",
+      "mode": "0755",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "1cdb4d11578615adfca0f3f9b092c80bad809e969ef9d591dd03112ba43283c5",
+      "source": "linux/bsp/common/usr/lib/piano/pen-control.py",
+      "source_sha256": "1cdb4d11578615adfca0f3f9b092c80bad809e969ef9d591dd03112ba43283c5",
+      "source_git_mode": "100755",
+      "license": "BSD-2-Clause-Patent",
       "source_component": "Project SunUEFI"
     },
     {
@@ -142,12 +156,12 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "ae688c29d6210ffff09212daf9f2079e0a7d000cc3ffcd52870671d2d2108ee0",
+      "sha256": "f206c672be3a2df3349187800bd1ced5191fc7634734cdd3a0c22f2bb80200be",
       "source": "LICENSE",
       "source_sha256": "8b6c78d2205c89d079a36c1810b17b3db44f063f2602341ea25051528a054eca",
       "source_git_mode": "100644",
-      "license": "MIT",
-      "transformation": "Public source URL/pin notice plus unmodified LICENSE text"
+      "license": "MIT AND BSD-2-Clause-Patent",
+      "transformation": "Public source notice and LICENSE text, with separate terms for pen control"
     },
     {
       "group": "common",
@@ -296,9 +310,9 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "1bc25d5d55617899528d7b3c5a4f28c1fc453b049cab57d2b24f0723fe91bc27",
+      "sha256": "57d8469154f538d25f6c34edaa78b6a569cb3e5d08bcde6b2302b1e02eee6016",
       "source": "linux/bsp/common/etc/udev/rules.d/79-piano-touch.rules",
-      "source_sha256": "1bc25d5d55617899528d7b3c5a4f28c1fc453b049cab57d2b24f0723fe91bc27",
+      "source_sha256": "57d8469154f538d25f6c34edaa78b6a569cb3e5d08bcde6b2302b1e02eee6016",
       "source_component": "Project SunUEFI",
       "source_git_mode": "100644",
       "license": "MIT"

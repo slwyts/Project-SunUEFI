@@ -126,7 +126,8 @@ def unavailable():
 
 
 def load_bluetooth():
-    spec = importlib.util.spec_from_file_location('piano_pen_bluetooth', PEN / 'piano-pen-bluetooth.py')
+    script = ROOT / 'linux/bsp/common/usr/lib/piano/pen-control.py'
+    spec = importlib.util.spec_from_file_location('piano_pen_control', script)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

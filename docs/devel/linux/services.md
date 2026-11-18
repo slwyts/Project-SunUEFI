@@ -4,7 +4,7 @@
 
 | 要修改的内容 | 源码位置 | 安装位置或构建入口 |
 | --- | --- | --- |
-| 触屏和 USB 网络的 unit | [`linux/bsp/common/usr/lib/systemd/system/`](../../../linux/bsp/common/usr/lib/systemd/system/) | 配置包安装到 `/usr/lib/systemd/system/` |
+| 笔的 BlueZ 初始化和 USB 网络 unit | [`linux/bsp/common/usr/lib/systemd/system/`](../../../linux/bsp/common/usr/lib/systemd/system/) | 配置包安装到 `/usr/lib/systemd/system/` |
 | 共用硬件配置 | [`linux/bsp/manifest.json`](../../../linux/bsp/manifest.json) | `piano-device-config` 拥有 UCM、笔校准和通用设备规则 |
 | 硬件运行时安装 | [`tools/stage_piano_ram_hardware.py`](../../../tools/stage_piano_ram_hardware.py) | 安装相机配置与显式诊断工具，清理旧的按序加载服务 |
 | 按需充电记录 | [`linux/bsp/common/usr/lib/piano/charge-monitor`](../../../linux/bsp/common/usr/lib/piano/charge-monitor) | `piano-charge-monitor.service`，经共用 BSP 安装，preset 默认关闭 |
@@ -25,9 +25,10 @@
 
 坏校验或截断帧只丢弃，不更新触点或基线；短暂丢样不会中断拖动。固件重载、挂起和移除释放触点，固件重载与挂起后重新学习基线。SPI 传输失败释放当前触点，保留基线；面板恢复时，固件重载失败则保持中断关闭。原始帧 FIFO 只在显式启用捕获时分配，手指输入本身不占用这份 4 MiB 队列。
 
-产品构建要求匹配的内核笔驱动、导出符号和标准固件校准。`piano-touch.service`
-只通过 BlueZ 初始化厂商 GATT 特征，不读取 THP／hidraw、写 procfs 或创建 uinput。
-BLE 尚未连接时该进程继续等待；笔矩阵和蓝牙样本由内核融合，校准经配置包安装。
+`piano-device-config` 一起安装 `piano-touch.service` 和它调用的
+[`pen-control.py`](../../../linux/bsp/common/usr/lib/piano/pen-control.py)。
+服务只通过 BlueZ 初始化厂商 GATT 特征，不读取 THP／hidraw、写 procfs 或创建
+uinput。BLE 尚未连接时继续等待；坐标和压感由内核融合，校准也经配置包安装。
 
 `piano-touch-view` 保留原始帧采集和对照功能，不由系统启动服务运行。
 

@@ -234,8 +234,8 @@ def default_system_record(rootfs, installed, config, desktop='gnome'):
     paths = (
         'etc/modules-load.d/piano-bluetooth.conf',
         'etc/udev/rules.d/79-piano-touch.rules',
-        'usr/share/piano/pen/p81c-radio.json', 'usr/lib/piano/pen-bluetooth',
-        'usr/lib/piano/touch-input', 'usr/bin/piano-pen-canvas',
+        'usr/share/piano/pen/p81c-radio.json', 'usr/lib/piano/pen-control.py',
+        'usr/bin/piano-pen-canvas',
     )
     paths += (('etc/dconf/db/local.d/00-sunuefi', 'etc/dconf/db/local', 'etc/dconf/profile/user',
                'usr/lib/tuned/profiles/piano-power-saver/tuned.conf',

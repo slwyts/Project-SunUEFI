@@ -28,8 +28,7 @@ def inputs_current(output):
     pen_source = ROOT / 'linux/userspace/pen'
     pen_paths = [Path(runtime.__file__),
                  *[pen_source / name for name in runtime.PEN_SOURCE_FILES],
-                 pen_source / 'piano-pen-bluetooth.py', pen_source / 'piano-pen-canvas.py',
-                 pen_source / 'piano-pen-control',
+                 pen_source / 'piano-pen-canvas.py',
                  *[ROOT / name for name in runtime.PEN_CALIBRATION_PATHS.values()]]
     return (
         record.get('producer', {}).get('sha256') == runtime.sha(Path(__file__))

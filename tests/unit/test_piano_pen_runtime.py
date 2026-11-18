@@ -1,5 +1,4 @@
-"""Select the actual kernel launcher and execute it without input/device access."""
-import os
+"""Check the kernel inputs and the separate pen diagnostic build."""
 import json
 from pathlib import Path
 import shutil
@@ -14,7 +13,7 @@ import build_piano_runtime_helpers as runtime
 import package_bsp
 
 
-class PianoPenControlTests(unittest.TestCase):
+class PianoPenRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix='piano-pen-control-')
         self.addCleanup(self.directory.cleanup)
@@ -49,54 +48,41 @@ class PianoPenControlTests(unittest.TestCase):
                     target.write_bytes(content)
         self.kernel = {'source': str(self.source), 'build': str(self.build), 'release': '7.3.3-piano'}
 
-    def test_matched_kernel_launcher_execs_only_bluez_even_before_ble_input_exists(self):
+    def test_matched_kernel_records_calibration_before_any_input_device_exists(self):
         self.assertFalse((self.rootfs / 'sys/class/input').exists())
-        data, source, record, _ = runtime.pen_input_frontend(self.kernel, self.rootfs)
-        self.assertEqual(source.name, 'piano-pen-control')
+        record, inputs = runtime.pen_kernel_inputs(self.kernel, self.rootfs)
         self.assertEqual(record['mode'], 'kernel')
-        self.assertNotIn(b'/proc/', data)
-        self.assertNotIn(b'piano-touch-view', data)
-        self.assertNotIn(b'--pen-input', data)
-        helper = self.work / 'pen-bluetooth'
-        helper.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$TRACE"\nexit 23\n')
-        helper.chmod(0o755)
-        frontend = self.work / 'touch-input'
-        text = data.decode().replace('/usr/lib/piano/pen-bluetooth', str(helper))
-        text = text.replace('/usr/lib/firmware/', str(self.rootfs / 'usr/lib/firmware') + '/')
-        frontend.write_text(text)
-        trace = self.work / 'trace'
-        result = subprocess.run(['sh', str(frontend)], env=dict(os.environ, TRACE=str(trace)),
-                                text=True, capture_output=True)
-        self.assertEqual(result.returncode, 23)
-        self.assertIn('--follow', trace.read_text())
-        self.assertNotIn('--stationary-device', trace.read_text())
+        self.assertEqual(record['kernel_release'], self.kernel['release'])
+        self.assertEqual(set(record['calibration']), set(runtime.PEN_CALIBRATION_PATHS))
+        self.assertEqual(inputs[str(self.source / runtime.PEN_KERNEL_SOURCE_FILES[0])],
+                         runtime.sha(self.source / runtime.PEN_KERNEL_SOURCE_FILES[0]))
 
     def test_incomplete_kernel_or_missing_calibration_refuses_mixed_runtime(self):
         (self.source / runtime.PEN_KERNEL_SOURCE_FILES[0]).unlink()
         with self.assertRaisesRegex(ValueError, 'incomplete'):
-            runtime.pen_input_frontend(self.kernel, self.rootfs)
+            runtime.pen_kernel_inputs(self.kernel, self.rootfs)
 
     def test_missing_calibration_or_unreachable_hid_does_not_fall_back_to_uinput(self):
         calibration = self.rootfs / next(iter(runtime.PEN_CALIBRATION_PATHS))
         calibration.unlink()
         with self.assertRaisesRegex(ValueError, 'calibration'):
-            runtime.pen_input_frontend(self.kernel, self.rootfs)
+            runtime.pen_kernel_inputs(self.kernel, self.rootfs)
         (self.build / '.config').write_text(
             'CONFIG_TOUCHSCREEN_NT36532E_SPI=y\nCONFIG_HID_XIAOMI=m\nCONFIG_FW_LOADER=y\n')
         with self.assertRaisesRegex(ValueError, 'cannot reach'):
-            runtime.pen_input_frontend(self.kernel, self.rootfs)
+            runtime.pen_kernel_inputs(self.kernel, self.rootfs)
 
     def test_missing_notifier_build_cannot_select_kernel_input(self):
         (self.build / 'Module.symvers').write_text('')
         with self.assertRaisesRegex(ValueError, 'matched kernel pen/HID modules'):
-            runtime.pen_input_frontend(self.kernel, self.rootfs)
+            runtime.pen_kernel_inputs(self.kernel, self.rootfs)
 
-    def test_kernel_without_pen_source_cannot_build_a_product_launcher(self):
+    def test_kernel_without_pen_source_cannot_build_the_runtime_bundle(self):
         empty = self.work / 'old-kernel'
         empty.mkdir()
         self.kernel['source'] = str(empty)
         with self.assertRaisesRegex(ValueError, 'build the current Piano kernel'):
-            runtime.pen_input_frontend(self.kernel, self.rootfs)
+            runtime.pen_kernel_inputs(self.kernel, self.rootfs)
 
     def test_actual_runtime_entries_accept_distinct_firmware_root(self):
         result = subprocess.run([sys.executable, str(ROOT / 'tools/build_release_helpers.py'),
@@ -132,8 +118,8 @@ class PianoPenControlTests(unittest.TestCase):
         self.assertTrue(runtime.verify_elf(output / files['usr/bin/piano-pen-offline']['file']))
         self.assertEqual(json.loads((output / 'pen-manifest.json').read_text())['input']['calibration'],
                          record['input']['calibration'])
-        launcher = (output / files['usr/lib/piano/touch-input']['file']).read_bytes()
-        self.assertNotIn(b'--pen-input', launcher)
+        self.assertEqual(set(files), runtime.PEN_RUNTIME_PATHS)
+        self.assertNotIn('usr/lib/piano/pen-control.py', files)
 
 
 if __name__ == '__main__':

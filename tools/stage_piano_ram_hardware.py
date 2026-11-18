@@ -35,6 +35,8 @@ def removed_paths(rootfs):
              'etc/udev/rules.d/79-piano-pen-charger.rules',
              'usr/lib/piano/piano-disk-hardware-prepare',
              'usr/lib/piano/bluetooth-address.py',
+             'usr/lib/piano/pen-bluetooth',
+             'usr/lib/piano/touch-input',
              'usr/lib/piano/piano-adsp-start',
              'usr/lib/systemd/system/adsprpcd-sensorspd.service.d/10-piano-adsp.conf',
              'usr/lib/systemd/system/bluetooth.service.d/20-piano-address.conf',

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause-Patent
-"""Connect a Piano Focus Pen; initialize Pro through its original BLE protocol.
+"""Connect a Focus Pen and initialize the Pro model over BlueZ.
 
 The supplied board profile contains radio parameters, never pairing keys or
 device identities. This client does not read THP frames or generate input.

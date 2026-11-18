@@ -44,11 +44,10 @@
 没有覆盖倾角精度、弱悬停、完整四边或手掌干扰。
 
 发布构建器核对匹配内核的笔源码、配置、notifier 导出符号及目标根目录中
-两份校准，选择只执行 BlueZ 初始化的 `piano-pen-control`，安装为现有
-`/usr/lib/piano/touch-input`。该进程不写 procfs、不读 hidraw/THP、不创建
-uinput，笔尚未 BLE 连接时也会继续等待。缺少内核笔驱动或校准时构建报错；
-安装后校准文件缺失时，服务记录错误并继续处理 BlueZ 连接。udev 在 SPI
-驱动绑定后启动服务，不等待 THP 的私有节点。四个产品目标使用同一条输入路径。
+两份校准，缺少驱动或校准时构建报错。`piano-device-config` 安装
+`piano-touch.service`、BlueZ 初始化程序和依赖。udev 在 SPI 驱动绑定后启动
+服务，不等待 THP 的私有节点。该进程不写 procfs、不读 hidraw/THP、不创建
+uinput，笔尚未 BLE 连接时也会继续等待。四个产品目标使用同一条输入路径。
 编译环境由 `--sysroot` 指定，固件检查默认使用它，也可用 `--firmware-root`
 单独指定目标根目录。SteamOS、Nyarch 从 `piano-device-config` 安装校准和链接，
 并将各自的 rootfs 传给构建器，不要求 Debian 编译容器安装平板固件。
@@ -289,7 +288,7 @@ CPU前缀仍不能交给完整 `parse_data_package`：该函数还读取主触�
 
 流程是 `52 → 00/01/02/03 → 04/30/31/32 → 04/30/31/32 → 33 → 51 → 5F/5A/5C/61`。参数30含本机适配器地址和当次笔ID，第二轮的时序槽值由3变1；频率31使用原厂默认表，电压32为`2800`；时间戳33是Unix秒数，与输入采集的BOOTTIME时基不同。不能静态重放另一台机器的适配器地址或旧的笔ID。
 
-[`piano-pen-bluetooth.py`](../../../linux/userspace/pen/piano-pen-bluetooth.py) 已实现该序列，每步等待回应，并按真正的 `SW_PEN_INSERTED` 发送Hall状态。无线参数和解算校准是两类数据；本机无线参数放在BSP的 `p81c-radio.json`，BOE／CSOT位置校准仍来自原厂ini。程序通过统一runtime安装，参数通过BSP和硬件配置组装安装，不新增服务或第二个THP流读取者。
+[`pen-control.py`](../../../linux/bsp/common/usr/lib/piano/pen-control.py) 实现该序列，每步等待回应，并按真实的 `SW_PEN_INSERTED` 发送磁吸状态。无线参数 `p81c-radio.json` 和程序一起打入设备配置包，BOE／CSOT 位置校准仍来自原厂 ini。服务不读取 THP。
 
 原厂还有一条独立的地址获取通路。固定设备模块 `sc96231_tx.ko` 的 `sc96231_get_pen_mac` 从 `0x200001de` 读取两字节、从 `0x200001e0` 读取四字节；MCA 的 `mca_wireless_rev_pen_data_handle_work` 调用该函数后发送 uevent。原厂蓝牙扩展的 `oobhelper/f.java::onUEvent` 处理 `POWER_SUPPLY_PEN_MAC`，获取指定地址的 `BluetoothDevice`，按绑定状态进入连接或配对流程。这解释了原厂并非仅依赖用户打开扫描列表。该静态调用链不证明充电芯片主动唤醒 BLE 的电气时序，不能把上述地址读取直接当作唤醒命令。
 
@@ -386,7 +385,7 @@ Linux之前显示144Hz、hand180、pen240。两边笔扫描率相同；这一次
 
 双击是笔的第二个按钮。tablet-tool 节点上的按钮必须有笔的位置，笔离开感应范围时双击不产生输入。按 Linux 笔输入的惯例，不支持笔的应用通常把 `BTN_STYLUS` 当作中键、`BTN_STYLUS2` 当作右键；Krita、Xournal++ 等绘图应用可以把它绑定到橡皮擦或其他工具。一个新手势替换仍按住的轻捏时，按 HID 数组语义结束轻捏，但不把被打断的轻捏当作一次点击。
 
-`piano-pen-bluetooth.py` 按 `p81c-radio.json` 的 `double_tap` 与 `slide` 在初始化时发送 `5F 01 01` 和 `63 01 01`，避免笔沿用上一个主机关掉的开关；不回应 `63` 的固件保留自己的默认值，不影响其余初始化。Linux 不在手势时发送振动命令，双击和滑动没有原厂那样的笔端振动。
+`pen-control.py` 按 `p81c-radio.json` 的 `double_tap` 与 `slide` 在初始化时发送 `5F 01 01` 和 `63 01 01`，避免笔沿用上一个主机关掉的开关；不回应 `63` 的固件保留自己的默认值，不影响其余初始化。Linux 不在手势时发送振动命令，双击和滑动没有原厂那样的笔端振动。
 
 ### 平板上的检查
 

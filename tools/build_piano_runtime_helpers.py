@@ -46,7 +46,7 @@ PEN_KERNEL_SOURCE_FILES=(
  'drivers/input/touchscreen/nt36532e/nt36xxx-pen.c',
  'drivers/input/touchscreen/nt36532e/nt36xxx-pen-input.c',
  'include/linux/input/xiaomi-pen.h')
-PEN_RUNTIME_PATHS={'usr/bin/piano-pen-offline','usr/bin/piano-pen-canvas','usr/lib/piano/pen-bluetooth','usr/lib/piano/touch-input'}|{
+PEN_RUNTIME_PATHS={'usr/bin/piano-pen-offline','usr/bin/piano-pen-canvas'}|{
  'usr/share/doc/piano-pen-offline/'+name for name in PEN_DOCUMENTS}
 TOOL_PINS={'clang':'939a882527432ec23b094c289e7f170bf2d6ec282e74dde75e31b08602fa3eae',
  'ld.lld':'57b6c64db534793f05918a6e935c900e9938bd64d0ac95933285930b568387ea',
@@ -284,8 +284,8 @@ def verify_elf(path):
     return {'bytes':len(raw),'sha256':sha(path),'machine':183,'static_no_pt_interp':True}
 
 
-def pen_input_frontend(kernel, firmware_root):
-    """Prepare BlueZ control after checking the kernel input and calibration."""
+def pen_kernel_inputs(kernel, firmware_root):
+    """Verify the kernel input and firmware used by the runtime bundle."""
     from build_piano_ram_bootstrap import guest_resolve
 
     kernel_source, build = Path(kernel['source']), Path(kernel['build'])
@@ -317,26 +317,21 @@ def pen_input_frontend(kernel, firmware_root):
         inputs[str(expected)] = sha(expected)
     release = kernel['release']
     if not re.fullmatch(r'[a-zA-Z0-9_.+-]{1,128}', release):
-        raise ValueError('Invalid kernel release for pen input launcher')
-    frontend = ROOT / 'linux/userspace/pen/piano-pen-control'
-    text = frontend.read_text()
-    if text.count('@KERNEL_RELEASE@') != 1:
-        raise ValueError('Kernel pen launcher needs exactly one release substitution')
-    record = {'mode': 'kernel', 'kernel_release': release, 'calibration': calibrations,
-              'bluez_control': True}
-    return text.replace('@KERNEL_RELEASE@', release).encode(), frontend, record, inputs
+        raise ValueError('Invalid kernel release for pen runtime')
+    record = {'mode': 'kernel', 'kernel_release': release, 'calibration': calibrations}
+    return record, inputs
 
 
 def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None, *, kernel,
                    firmware_root=None):
-    """Build diagnostics and BlueZ control for the matched kernel."""
+    """Build the pen diagnostic tools for the matched kernel."""
     output=Path(output).resolve();env=os.environ.copy() if env is None else env
     source=ROOT/'linux/userspace/pen';copied=output/'pen-source';built=output/'pen-core'
-    frontend_data,frontend,pen_input,frontend_inputs=pen_input_frontend(
+    pen_input,kernel_inputs=pen_kernel_inputs(
         kernel,sysroot if firmware_root is None else firmware_root)
     copied.mkdir();built.mkdir()
     inputs={str(Path(__file__).resolve()):sha(Path(__file__).resolve())}
-    inputs.update(frontend_inputs)
+    inputs.update(kernel_inputs)
     for name in PEN_SOURCE_FILES:
         original=source/name;inputs[str(original)]=sha(original)
         shutil.copyfile(original,copied/name)
@@ -385,24 +380,12 @@ def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None, *, k
                               if Path(path).is_relative_to(source)},
                 compile_exit_code=0,help_exit_code=help_result.returncode,help_no_device_access=True)
     files={'usr/bin/piano-pen-offline':item}
-    script=source/'piano-pen-bluetooth.py';inputs[str(script)]=sha(script)
-    copied_script=copied/script.name;shutil.copyfile(script,copied_script)
-    files['usr/lib/piano/pen-bluetooth']={
-        'file':str(copied_script.relative_to(output)),'bytes':copied_script.stat().st_size,
-        'sha256':sha(copied_script),'mode':0o755,'source_kind':'project-pen-control',
-        'source_path':'linux/userspace/pen/piano-pen-bluetooth.py'}
     canvas=source/'piano-pen-canvas.py';inputs[str(canvas)]=sha(canvas)
     copied_canvas=copied/canvas.name;shutil.copyfile(canvas,copied_canvas)
     files['usr/bin/piano-pen-canvas']={
         'file':str(copied_canvas.relative_to(output)),'bytes':copied_canvas.stat().st_size,
         'sha256':sha(copied_canvas),'mode':0o755,'source_kind':'project-pen-drawing',
         'source_path':'linux/userspace/pen/piano-pen-canvas.py'}
-    inputs[str(frontend)]=sha(frontend)
-    copied_frontend=copied/frontend.name;copied_frontend.write_bytes(frontend_data)
-    files['usr/lib/piano/touch-input']={
-        'file':str(copied_frontend.relative_to(output)),'bytes':copied_frontend.stat().st_size,
-        'sha256':sha(copied_frontend),'mode':0o755,'source_kind':'project-touch-input',
-        'source_path':str(frontend.relative_to(ROOT)),'pen_input':pen_input}
     for name in PEN_DOCUMENTS:
         path=copied/name
         files['usr/share/doc/piano-pen-offline/'+name]={
@@ -457,9 +440,8 @@ def stage(output,destination,*,ram_boot=False):
         expected |= RUNTIME_PATHS
     if set(files)!=expected:raise ValueError('Runtime bundle source/install paths differ from the exact contract')
     if not(destination/'usr/lib/modules'/release/'kernel').is_dir():raise ValueError('Stage the matching full kernel module tree first')
-    frontend,_,pen_input,_=pen_input_frontend(manifest['kernel'],destination)
-    if (manifest['pen_core'].get('input')!=pen_input or
-            files['usr/lib/piano/touch-input']['sha256']!=hashlib.sha256(frontend).hexdigest()):
+    pen_input,_=pen_kernel_inputs(manifest['kernel'],destination)
+    if manifest['pen_core'].get('input')!=pen_input:
         raise ValueError('Rebuild the pen runtime for this kernel and calibration')
     # Prevalidate the entire generation before changing any destination file.
     for name,row in files.items():

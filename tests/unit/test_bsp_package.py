@@ -64,6 +64,19 @@ class BspPackageTests(unittest.TestCase):
             self.assertEqual(link.resolve(), original.resolve())
             self.assertEqual(link.read_bytes(), original.read_bytes())
 
+    def test_pen_service_executes_a_file_in_the_same_package_without_a_device(self):
+        out = self.base / 'stage'
+        bsp.build(self.args('stage', '--output', str(out)))
+        tree = out / 'payload'
+        unit = tree / 'usr/lib/systemd/system/piano-touch.service'
+        command = next(line.removeprefix('ExecStart=').split()
+                       for line in unit.read_text().splitlines() if line.startswith('ExecStart='))
+        self.assertEqual(command[1:], ['--follow'])
+        executable = tree / command[0].lstrip('/')
+        self.assertTrue(executable.is_file())
+        self.assertEqual(executable.stat().st_mode & 0o777, 0o755)
+        self.assertIn('--follow', subprocess.check_output([executable, '--help'], text=True))
+
     def test_payload_tamper_refused_before_stage(self):
         copied = self.base / 'bsp'
         shutil.copytree(bsp.BSP, copied, symlinks=True)
@@ -138,9 +151,10 @@ class BspPackageTests(unittest.TestCase):
         recipe = work / 'PKGBUILD'
         subprocess.run(['/bin/bash', '-n', recipe], check=True)
         metadata = subprocess.check_output(
-            ['/bin/bash', '-c', 'source "$1"; printf "%s\\n" "${arch[@]}" "${backup[@]}"',
+            ['/bin/bash', '-c', 'source "$1"; printf "%s\\n" "${arch[@]}" "${backup[@]}" "${depends[@]}"',
              'metadata', recipe], text=True).splitlines()
-        self.assertEqual(metadata, ['any', *configuration])
+        self.assertEqual(metadata, ['any', *configuration, *report['depends']])
+        self.assertTrue({'python', 'python-gobject', 'bluez'} <= set(metadata))
         with tarfile.open(work / 'payload.tar') as archive:
             for member in archive:
                 self.assertEqual((member.uid, member.gid, member.mtime), (0, 0, 0))
@@ -181,12 +195,17 @@ class BspPackageTests(unittest.TestCase):
             for member in archive:
                 self.assertEqual((member.uid, member.gid), (0, 0))
             self.assertIn('./etc/modprobe.d/piano.conf', archive.getnames())
+            self.assertIn('./usr/lib/piano/pen-control.py', archive.getnames())
         control = self.base / 'control'
         subprocess.run(['dpkg-deb', '--control', artifact, control], check=True)
         guard = (control / 'preinst').read_text()
         self.assertIn('dpkg-query', guard)
         self.assertNotIn('systemctl', guard)
-        self.assertNotIn('Replaces:', (control / 'control').read_text())
+        fields = (control / 'control').read_text()
+        depends = next(line.removeprefix('Depends: ').split(', ')
+                       for line in fields.splitlines() if line.startswith('Depends: '))
+        self.assertTrue({'python3', 'python3-gi', 'gir1.2-glib-2.0', 'bluez'} <= set(depends))
+        self.assertNotIn('Replaces:', fields)
 
     @unittest.skipUnless(shutil.which('dpkg-deb'), 'dpkg-deb unavailable; no fake deb test')
     def test_real_touch_deb_contains_verified_firmware_only(self):
