@@ -12,21 +12,23 @@ url='https://git.kernel.org/pub/scm/libs/python/python-linux-procfs/python-linux
 license=('GPL-2.0-only')
 depends=('python')
 makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
-source=("$url/snapshot/$pkgname-$pkgver.tar.gz")
-sha512sums=('644c6db3cd14b85d0e000548f2904dc92a200995756fbe0dff2d56649235e17213a0109166534cd324a83279b0df9af7dd7fd3e68575fb076d5d9d98689a7b09')
-b2sums=('9b5c146950892b0ae8ed2803b4ccc9f4e9ac1b4bfe756a2b5171b97435fcc45d38566c643306e36eb4fad99a40a99d29f7523c95baae21ab779bb78dd60b525f')
+# Use kernel.org's mirror for the release archive.
+_mirror_repo=libs_python_python-linux-procfs_python-linux-procfs
+source=("$pkgname-$pkgver-mirror.tar.gz::https://codeload.github.com/kernelorg-mirror/$_mirror_repo/tar.gz/refs/tags/v$pkgver")
+sha512sums=('1b411d8545ffc8c58ff00d684c5263d5e97e56c87fb6e753f2f77b086669075f3a2b84666498f5777d5386a0beda92f8b0be55ac1d37b54d2f462022048ceae3')
+b2sums=('9f524965df877782fa904cd0881d8b0ea12026864eab32ca605b5736ac44b5ef5b045eb0d411fcb2c7ffae8598c306b4ba5212eb533be4213c906a992acdef52')
 
 build() {
-  cd "$pkgname-$pkgver"
+  cd "$_mirror_repo-$pkgver"
   python -m build --wheel --no-isolation
 }
 
 check() {
-  cd "$pkgname-$pkgver"
+  cd "$_mirror_repo-$pkgver"
   python bitmasklist_test.py
 }
 
 package() {
-  cd "$pkgname-$pkgver"
+  cd "$_mirror_repo-$pkgver"
   python -m installer --destdir="$pkgdir" dist/*.whl
 }
