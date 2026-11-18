@@ -144,6 +144,11 @@ def configure(rootfs, run, input_method='fcitx'):
     path = rootfs / 'etc/sddm.conf.d/10-sunuefi.conf'
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('[Autologin]\nUser=piano\nSession=' + sessions[0].name + '\n')
+    desktop = Path(__file__).resolve().parents[1] / 'linux/desktops/kde'
+    dropin = Path('sddm.service.d/20-native-kms.conf')
+    destination = rootfs / 'etc/systemd/system' / dropin
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(desktop / dropin, destination)
     # The generic stock KDE base uses per-application Qt scaling. The release
     # uses compositor output scaling, so remove only that generated default.
     for home in ('etc/skel', 'home/piano'):
@@ -189,8 +194,7 @@ def configure(rootfs, run, input_method='fcitx'):
     if input_method == 'fcitx':
         autostart = rootfs / 'etc/xdg/autostart/piano-fcitx5.desktop'
         autostart.unlink(missing_ok=True)
-    overlay = Path(__file__).resolve().parents[1] / 'linux/desktops/kde/config'
-    for source in sorted(overlay.iterdir()):
+    for source in sorted((desktop / 'config').iterdir()):
         if source.name != 'kwinoutputconfig.json':
             shutil.copyfile(source, config / source.name)
             continue
