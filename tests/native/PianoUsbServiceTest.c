@@ -270,14 +270,30 @@ static VOID free_cold_model(VOID) {
   for(UINTN I=0;I<ARRAY_SIZE(all);++I){free(all[I]->Cpu);ZeroMem(all[I],sizeof(*all[I]));}
 }
 #if PIANO_USB_HOST
-static BOOLEAN host_active,host_partner_sink;
-static UINTN host_starts,host_stops;
+static BOOLEAN host_active,phy_lost;
+static UINT8 phy_orientation=1;
+static UINTN host_starts,host_stops,host_stop_calls,phy_switches;
+static EFI_STATUS host_stop_status,typec_status,phy_switch_status;
+static PIANO_USB_TYPEC_STATE typec;
+UINT8 PianoUsbPhyOrientation(VOID){return phy_orientation;}
+EFI_STATUS PianoUsbPhySetOrientation(UINT8 Orientation){
+  assert(current_tpl==TPL_APPLICATION && mRole.Parked && !mService.State.Started && !host_active);
+  assert((Dr(0xC70C)&BIT22) && !(Dr(0xC704)&BIT31));
+  assert(mUsbContext.Attached && !closes && !removes);
+  for(UINTN I=0;I<ARRAY_SIZE(all);++I)assert(!all[I]->Signature);
+  ++phy_switches;
+  if(phy_switch_status==EFI_SUCCESS)phy_orientation=Orientation;
+  else if(phy_lost)phy_orientation=0;
+  return phy_switch_status;
+}
 EFI_STATUS PianoUsbHostStart(PIANO_DMA_DEVICE *Device){
   assert(Device==&mUsbDevice && current_tpl==TPL_APPLICATION && !host_active && !mService.State.Started);
   ++host_starts;host_active=TRUE;return EFI_SUCCESS;
 }
 EFI_STATUS PianoUsbHostStop(VOID){
   assert(current_tpl==TPL_APPLICATION && host_active && !mService.State.Started);
+  ++host_stop_calls;
+  if(host_stop_status!=EFI_SUCCESS)return host_stop_status;
   ++host_stops;host_active=FALSE;return EFI_SUCCESS;
 }
 BOOLEAN PianoUsbHostActive(VOID){return host_active;}
@@ -285,8 +301,11 @@ BOOLEAN PianoUsbHostRetained(VOID){return FALSE;}
 EFI_STATUS PianoUsbHostFenceExit(VOID){assert(!host_active);return EFI_SUCCESS;}
 EFI_STATUS PianoUsbTypecRead(CONST VOID *Fdt,PIANO_USB_TYPEC_STATE *State){
   assert(Fdt==(VOID *)123 && current_tpl==TPL_APPLICATION);
-  *State=(PIANO_USB_TYPEC_STATE){.Attached=host_partner_sink,.PartnerSink=host_partner_sink};
-  return EFI_SUCCESS;
+  *State=typec;return typec_status;
+}
+static VOID typec_poll(VOID){
+  fake_now+=250000;
+  assert(PianoUsbControllerServicePumpApp(PIANO_PRODUCT_PUMP_GUI,5000)==EFI_SUCCESS);
 }
 #endif
 static PIANO_PRODUCT_RUNTIME_PROTOCOL navigation_runtime,navigation_replacement;
@@ -912,17 +931,11 @@ static VOID run_touch_coexistence(TOUCH_GPI_CASE Test){
   assert(status_has_frame("OKAY") && backend_reads==1);
   service_ack();
 #if PIANO_USB_HOST
-  host_partner_sink=TRUE;
-  for(UINTN I=0;I<2;++I){
-    fake_now+=250000;
-    assert(PianoUsbControllerServicePumpApp(PIANO_PRODUCT_PUMP_GUI,5000)==EFI_SUCCESS);
-  }
+  typec=(PIANO_USB_TYPEC_STATE){.Attached=TRUE,.PartnerSink=TRUE,.Orientation=1};
+  typec_poll();typec_poll();
   assert(host_active && host_starts==1 && mRole.Parked && !mService.State.Started && !closes);
-  host_partner_sink=FALSE;
-  for(UINTN I=0;I<2;++I){
-    fake_now+=250000;
-    assert(PianoUsbControllerServicePumpApp(PIANO_PRODUCT_PUMP_GUI,5000)==EFI_SUCCESS);
-  }
+  typec.Attached=FALSE;
+  typec_poll();typec_poll();
   assert(!host_active && host_stops==1 && !mRole.Parked && mService.State.Started && !closes);
   service_enumerate();
   service_out("getvar:storage-policy");assert(status_has_frame("OKAYexplicit-partition-writes"));service_ack();
@@ -934,6 +947,88 @@ static VOID run_touch_coexistence(TOUCH_GPI_CASE Test){
   assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&Retire)==EFI_SUCCESS && Retire.Clean);
   free_cold_model();
 }
+#if PIANO_USB_HOST
+typedef enum {
+  TypecDeviceFlash,TypecHostBusy,TypecPhyRestored,TypecPhyRetained,TypecDeviceRetained,TypecCaseCount
+} TYPEC_CASE;
+static VOID run_typec_orientation(TYPEC_CASE Test){
+  setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;
+  bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;
+  bs.SetTimer=set_timer;bs.CloseEvent=close_event;
+  clock.DisableClock=clock.DisableClockPowerDomain=persistent_disable;
+  flash_case=FlashUsbErase;flash_size=2*sizeof(flash_last_block);
+  PIANO_FB_STORAGE Storage={
+    .Context=(VOID *)456,.Ready=ready_backend,.Info=flash_info,.ReadBlocks=flash_read,
+    .PrepareWrite=flash_prepare,.WriteBlocks=flash_write,.Flush=flash_flush
+  };
+  PIANO_DWC3_SERVICE_CONFIG Config={.Context=(VOID *)0x55,.NowUs=now_us,.Storage=&Storage};
+  assert(PianoUsbControllerServiceStart((VOID *)123,&Config)==EFI_SUCCESS);
+  service_enumerate();
+  typec=(PIANO_USB_TYPEC_STATE){.Attached=TRUE,.PartnerSink=Test==TypecHostBusy,.Orientation=1};
+  typec_poll();typec_poll();
+  assert(!phy_switches);
+  if(Test==TypecHostBusy){
+    assert(host_active && host_starts==1 && !host_stop_calls);
+    typec_status=EFI_TIMEOUT;
+    typec_poll();typec_poll();
+    assert(host_active && !host_stop_calls);
+    typec_status=EFI_SUCCESS;typec.Orientation=2;
+    typec_poll();assert(!host_stop_calls);
+    host_stop_status=EFI_NOT_READY;
+    typec_poll();assert(host_active && !phy_switches && host_stop_calls==1);
+    host_stop_status=EFI_SUCCESS;
+    typec_poll();assert(host_active && host_starts==2 && host_stops==1 && phy_switches==1 && phy_orientation==2);
+    typec_poll();assert(host_starts==2 && phy_switches==1);
+    typec.PartnerSink=FALSE;typec.Orientation=1;
+    typec_poll();typec_poll();
+    assert(!host_active && host_stops==2 && phy_switches==2 && phy_orientation==1);
+  }else {
+    if(Test==TypecDeviceFlash)service_out("erase:sunuefi_esp");
+    typec.Orientation=2;typec_poll();
+    // A stale CC bit on a failed read must not complete the debounce.
+    typec_status=EFI_TIMEOUT;typec_poll();
+    typec_status=EFI_SUCCESS;typec_poll();
+    assert(!phy_switches);
+    if(Test==TypecDeviceFlash){
+      typec_poll();
+      assert(!phy_switches && mService.State.Started && PianoFastbootFlashPending(&mFastboot));
+      assert(mPending[3] && !flash_writes);
+      for(UINTN I=0;I<20 && (PianoFastbootFlashPending(&mFastboot) || mPending[3]);++I){
+        if(mPending[3])service_ack();
+        else assert(PianoUsbControllerServicePumpApp(1,5000)==EFI_SUCCESS);
+      }
+      assert(flash_writes==2 && flash_reads==2 && flash_flushes==1 && !phy_switches && !mPending[3]);
+    }else if(Test==TypecDeviceRetained)failed_halt=TRUE;
+    else{phy_switch_status=EFI_TIMEOUT;phy_lost=Test==TypecPhyRetained;}
+    typec_poll();
+    if(Test==TypecDeviceRetained || Test==TypecPhyRetained){
+      assert(mRole.Failed && mUsbCleanupBlocked && !closes && !removes && !host_active);
+      if(Test==TypecDeviceRetained)assert(!phy_switches && mService.State.Retained && mRing.Active);
+      else assert(phy_switches==1 && !phy_orientation && !mService.State.Started);
+      fake_now+=250000;
+      EFI_STATUS Pump=PianoUsbControllerServicePumpApp(PIANO_PRODUCT_PUMP_GUI,5000);
+      assert(Pump==(Test==TypecDeviceRetained?EFI_TIMEOUT:EFI_SUCCESS));
+      assert(phy_switches==(Test==TypecPhyRetained?1:0));
+      free_cold_model();return;
+    }
+    if(Test==TypecPhyRestored){
+      assert(phy_switches==1 && phy_orientation==1 && mService.State.Started && !mRole.Failed);
+      typec_poll();typec_poll();assert(phy_switches==1);
+      // Retry after a new attachment, not while the failed connection remains.
+      typec.Attached=FALSE;typec_poll();typec_poll();
+      typec.Attached=TRUE;phy_switch_status=EFI_SUCCESS;
+      typec_poll();typec_poll();assert(phy_switches==2);
+    }else assert(phy_switches==1);
+    assert(phy_orientation==2);
+  }
+  assert(!closes && !mRole.Parked && mService.State.Started && !mConfigured);
+  service_enumerate();
+  service_out("getvar:version");assert(status_has_frame("OKAY0.4"));service_ack();
+  PIANO_USB_SERVICE_RETIRE_REPORT Retire;
+  assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&Retire)==EFI_SUCCESS && Retire.Clean);
+  free_cold_model();
+}
+#endif
 static VOID run_stale_completion(VOID){
   setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;
   bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;bs.SetTimer=set_timer;bs.CloseEvent=close_event;
@@ -1234,6 +1329,12 @@ int USB_SERVICE_TEST_MAIN(void) {
     pid_t P=fork();assert(P>=0);if(!P){run_touch_coexistence(I);_exit(0);}
     int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"USB touch coexistence case %u failed\n",(unsigned)I);return 1;}
   }
+#if PIANO_USB_HOST
+  for(TYPEC_CASE I=0;I<TypecCaseCount;++I){
+    pid_t P=fork();assert(P>=0);if(!P){run_typec_orientation(I);_exit(0);}
+    int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"USB Type-C orientation case %u failed\n",(unsigned)I);return 1;}
+  }
+#endif
   for(UINTN I=0;I<22;++I){pid_t P=fork();assert(P>=0);if(P==0){run_service(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB persistent service case %llu failed\n",(unsigned long long)I);return 1;}}
   for(UINTN I=0;I<11;++I){pid_t P=fork();assert(P>=0);if(P==0){run_navigation(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB product navigation case %llu failed\n",(unsigned long long)I);return 1;}}
   for(UINTN I=0;I<8;++I){pid_t P=fork();assert(P>=0);if(P==0){run_ramlog(I);_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status) || WEXITSTATUS(Status)){fprintf(stderr,"USB before-ramlog case %llu failed\n",(unsigned long long)I);return 1;}}

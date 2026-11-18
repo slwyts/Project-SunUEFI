@@ -676,8 +676,8 @@ STATIC BOOLEAN ControllerAtApp(VOID) {
 }
 #if PIANO_USB_HOST
 STATIC struct {
-  BOOLEAN Parked,Blocked,Failed;
-  UINT8 WantHost,WantDevice;
+  BOOLEAN Parked,Blocked,Failed,Polled,SampleValid,SampleHost;
+  UINT8 SampleOrientation,FailedOrientation;
   UINT64 LastPoll;
   EFI_STATUS ParkStatus,FailStatus;
   UINT32 Sessions;
@@ -693,62 +693,99 @@ STATIC EFI_STATUS RoleRestartDevice(VOID) {
   // Without Fastboot the owner cannot prove a clean retire: block handoff
   (VOID)PianoDwc3ServiceStop(S);RoleFail("device-restart",S);return S;
 }
-STATIC VOID RoleEnterHost(VOID) {
+STATIC BOOLEAN RoleCheckSmmu(CONST CHAR8 *Stage) {
 #if PIANO_USB_UFS_FETCH
   if(mCombinedBusy){
-    EFI_STATUS Check=CoexistCheck(mUsbContext.Fdt,"service-host-start",TRUE);
-    if(Check!=EFI_SUCCESS){RoleFail("host-start",Check);return;}
+    EFI_STATUS S=CoexistCheck(mUsbContext.Fdt,Stage,TRUE);
+    if(S!=EFI_SUCCESS){RoleFail(Stage,S);return FALSE;}
   }
+#else
+  (VOID)Stage;
 #endif
+  return TRUE;
+}
+STATIC BOOLEAN RoleDeviceIdle(VOID) {
+  // An unplugged PC may leave Configured set. Pending work still belongs
+  // to the old device session and must finish or be cancelled by disconnect.
+  PIANO_DWC3_SERVICE_STATUS D;
+  return PianoDwc3ServiceGetStatus(&D)==EFI_SUCCESS && D.Started &&
+    D.Phase==PianoUsbServiceListening && !D.Busy && !D.BulkActive && !D.WorkPending &&
+    !D.Retained && !D.ServicesLost && D.Action==PianoUsbServiceActionNone;
+}
+STATIC BOOLEAN RoleStopDevice(VOID) {
+  if(!RoleDeviceIdle() || !RoleCheckSmmu("service-device-stop"))return FALSE;
   EFI_STATUS S=PianoDwc3ServiceStop(EFI_SUCCESS);PIANO_DWC3_SERVICE_STATUS D;ZeroMem(&D,sizeof(D));
   EFI_STATUS G=PianoDwc3ServiceGetStatus(&D);
-  DEBUG((DEBUG_WARN,"SUNUEFI_USB_ROLE switch=host device_stop=%r halted=%u freed=%u retained=%u\n",S,D.DeviceHalted,D.DmaBuffersFreed,D.Retained));
-  if(S!=EFI_SUCCESS || G!=EFI_SUCCESS || D.Retained || D.Started || !D.DeviceHalted || !D.DmaFreed || D.DmaBuffersFreed!=9) {
-    RoleFail("device-stop",S==EFI_SUCCESS?EFI_DEVICE_ERROR:S);return;
+  DEBUG((DEBUG_WARN,"SUNUEFI_USB_ROLE device_stop=%r halted=%u freed=%u retained=%u\n",S,D.DeviceHalted,D.DmaBuffersFreed,D.Retained));
+  if(S!=EFI_SUCCESS || G!=EFI_SUCCESS || D.Retained || D.Started || D.ServicesLost ||
+     !D.DeviceHalted || !D.DmaFreed || D.DmaBuffersFreed!=9) {
+    RoleFail("device-stop",S==EFI_SUCCESS?EFI_DEVICE_ERROR:S);return FALSE;
   }
   mRole.Parked=TRUE;mRole.ParkStatus=S;
-  S=PianoUsbHostStart(&mUsbDevice);
+  return TRUE;
+}
+STATIC VOID RoleStartHost(VOID) {
+  EFI_STATUS S=PianoUsbHostStart(&mUsbDevice);
   if(S==EFI_SUCCESS){++mRole.Sessions;return;}
   if(PianoUsbHostRetained()){RoleFail("host-start",S);return;}
   if(PianoUsbHostActive())return; // still bound; the detach path retries the stop
   mRole.Blocked=TRUE;              // no retry until the partner is unplugged
   (VOID)RoleRestartDevice();
 }
-STATIC EFI_STATUS RoleLeaveHost(BOOLEAN Retire) {
-#if PIANO_USB_UFS_FETCH
-  if(mCombinedBusy){
-    EFI_STATUS Check=CoexistCheck(mUsbContext.Fdt,"service-host-stop",TRUE);
-    if(Check!=EFI_SUCCESS){RoleFail("host-stop",Check);return Check;}
-  }
-#endif
+STATIC EFI_STATUS RoleStopHost(VOID) {
+  if(!RoleCheckSmmu("service-host-stop"))return mRole.FailStatus;
   EFI_STATUS S=PianoUsbHostStop();
-  DEBUG((DEBUG_WARN,"SUNUEFI_USB_ROLE switch=device host_stop=%r retire=%u\n",S,Retire));
+  DEBUG((DEBUG_WARN,"SUNUEFI_USB_ROLE host_stop=%r\n",S));
   if(S==EFI_NOT_READY)return S;
+  if(S==EFI_SUCCESS && (PianoUsbHostActive() || PianoUsbHostRetained()))S=EFI_DEVICE_ERROR;
   if(S!=EFI_SUCCESS){RoleFail("host-stop",S);return S;}
-  return Retire?EFI_SUCCESS:RoleRestartDevice();
+  return EFI_SUCCESS;
+}
+STATIC BOOLEAN RoleSelectOrientation(UINT8 Orientation) {
+  UINT8 Previous=PianoUsbPhyOrientation();
+  EFI_STATUS S=PianoUsbPhySetOrientation(Orientation);
+  if(S==EFI_SUCCESS)return TRUE;
+  if((S==EFI_TIMEOUT || S==EFI_DEVICE_ERROR) && Previous && PianoUsbPhyOrientation()==Previous) {
+    // Keep USB2 available on this connection rather than cycling both roles.
+    mRole.FailedOrientation=Orientation;
+    DEBUG((DEBUG_WARN,"SUNUEFI_USB_ROLE orientation=%u restored=%u status=%r\n",Orientation,Previous,S));
+    return TRUE;
+  }
+  RoleFail("orientation",S);return FALSE;
 }
 STATIC VOID RolePoll(VOID) {
   if(mRole.Failed || mUsbCleanupBlocked || mPersistent.ServicesLost || !mPersistent.Started)return;
   UINT64 Now=mPersistent.Config.NowUs(mPersistent.Config.Context);
-  if(mRole.LastPoll && Now>=mRole.LastPoll && Now-mRole.LastPoll<250000)return;
+  if(mRole.Polled && Now>=mRole.LastPoll && Now-mRole.LastPoll<250000)return;
+  if(Now<mRole.LastPoll)mRole.SampleValid=FALSE;
+  mRole.Polled=TRUE;
   mRole.LastPoll=Now;
   PIANO_USB_TYPEC_STATE Typec;
-  BOOLEAN Host=PianoUsbTypecRead(mUsbContext.Fdt,&Typec)==EFI_SUCCESS && Typec.PartnerSink;
-  if(!mRole.Parked) {
-    if(!Host){mRole.WantHost=0;mRole.Blocked=FALSE;return;}
-    // Blocked also after LeaveHost before an exit: re-plugging clears it
-    if(mRole.Blocked || ++mRole.WantHost<2)return;
-    mRole.WantHost=0;
-    // Configured is not checked: an unplugged PC can leave it set forever
-    PIANO_DWC3_SERVICE_STATUS D;ZeroMem(&D,sizeof(D));
-    if(PianoDwc3ServiceGetStatus(&D)!=EFI_SUCCESS || !D.Started || D.Phase!=PianoUsbServiceListening || D.Busy ||
-       D.BulkActive || D.Retained || D.Action!=PianoUsbServiceActionNone)return;
-    RoleEnterHost();
-  } else {
-    if(Host){mRole.WantDevice=0;return;}
-    if(++mRole.WantDevice<2)return;
-    mRole.WantDevice=0;(VOID)RoleLeaveHost(FALSE);
+  if(PianoUsbTypecRead(mUsbContext.Fdt,&Typec)!=EFI_SUCCESS ||
+     (Typec.Attached && Typec.Orientation!=1 && Typec.Orientation!=2)) {
+    mRole.SampleValid=FALSE;return;
   }
+  UINT8 Orientation=Typec.Attached?Typec.Orientation:0;
+  BOOLEAN Host=Typec.Attached && Typec.PartnerSink;
+  if(!mRole.SampleValid || mRole.SampleHost!=Host || mRole.SampleOrientation!=Orientation) {
+    mRole.SampleValid=TRUE;mRole.SampleHost=Host;mRole.SampleOrientation=Orientation;return;
+  }
+  if(!Host)mRole.Blocked=FALSE;
+  if(Orientation!=mRole.FailedOrientation)mRole.FailedOrientation=0;
+  BOOLEAN ChangeLane=Orientation && Orientation!=mRole.FailedOrientation && Orientation!=PianoUsbPhyOrientation();
+  BOOLEAN WantHost=Host && !mRole.Blocked;
+  if(mRole.Parked) {
+    if(Host && !ChangeLane)return;
+    if(RoleStopHost()!=EFI_SUCCESS)return;
+  } else {
+    if(!WantHost && !ChangeLane)return;
+    if(!RoleStopDevice())return;
+  }
+  if(mPersistent.ServicesLost)return;
+  if(ChangeLane && !RoleSelectOrientation(Orientation))return;
+  if(mPersistent.ServicesLost)return;
+  if(WantHost)RoleStartHost();
+  else (VOID)RoleRestartDevice();
 }
 #endif
 STATIC BOOLEAN ControllerDiagnosticsLive(VOID) {
@@ -781,8 +818,9 @@ EFI_STATUS PianoUsbControllerServiceLeaveHost(VOID) {
   if(!ControllerAtApp())return EFI_UNSUPPORTED;
   if(mRole.Failed)return mRole.FailStatus;
   if(!mRole.Parked)return EFI_SUCCESS;
-  mRole.Blocked=TRUE;mRole.WantHost=0;
-  EFI_STATUS S=RoleLeaveHost(FALSE);
+  mRole.Blocked=TRUE;
+  EFI_STATUS S=RoleStopHost();
+  if(S==EFI_SUCCESS)S=mPersistent.ServicesLost?EFI_ABORTED:RoleRestartDevice();
   if(S==EFI_NOT_READY)mRole.Blocked=FALSE;
   return S;
 #else
@@ -804,6 +842,9 @@ EFI_STATUS PianoUsbControllerServiceStart(CONST VOID *Fdt,CONST PIANO_DWC3_SERVI
   if(mPersistent.Opening || mPersistent.Started || mUsbCleanupBlocked || mUsbControllerRunning)return EFI_ALREADY_STARTED;
   ZeroMem(&mPersistent,sizeof(mPersistent));mPersistent.Opening=TRUE;mPersistent.Config=*Config;
   mPersistent.Services=gBS;mPersistent.SystemTable=gST;
+#if PIANO_USB_HOST
+  ZeroMem(&mRole,sizeof(mRole));
+#endif
 #if PIANO_USB_UFS_FETCH
   mCoexistReady=mCoexistFailed=mProxyBusy=FALSE;mCoexistQuietChecks=0;
   if(Config->Storage!=NULL) {
@@ -885,7 +926,7 @@ EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RET
   if(mRole.Failed){Report->HostWasActive=TRUE;Report->HostStopStatus=mRole.FailStatus;}
   else if(mRole.Parked && PianoUsbHostActive() && mPersistent.Started && !mPersistent.Unknown && !mUsbCleanupBlocked) {
     // Before Started/timer change: a busy host (EFI_NOT_READY) stays retryable
-    Report->HostWasActive=TRUE;Report->HostStopStatus=S=RoleLeaveHost(TRUE);
+    Report->HostWasActive=TRUE;Report->HostStopStatus=S=RoleStopHost();
     if(S!=EFI_SUCCESS){Report->Retained=mUsbCleanupBlocked;return Report->Status=S;}
   }
 #endif

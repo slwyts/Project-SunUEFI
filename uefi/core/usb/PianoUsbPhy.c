@@ -12,6 +12,7 @@
 #define HS 0x88E3000U
 #define SS 0x88E8000U
 STATIC BOOLEAN mPhyOwned;
+STATIC UINT8 mOrientation;
 // Native RPMh revision 1.1, verified against the fixed Piano RpmhDxe table.
 // Use its resource votes, not raw PMIC regulator writes or a second RSC driver.
 typedef struct {
@@ -96,6 +97,9 @@ STATIC EFI_STATUS PowerStop(VOID){
 }
 STATIC UINT32 Read(UINTN Base,UINT32 Offset){return MmioRead32(Base+Offset);}
 STATIC VOID Write(UINTN Base,UINT32 Offset,UINT32 Value){MmioWrite32(Base+Offset,Value);MemoryFence();}
+STATIC BOOLEAN ControllerHalted(VOID){
+  return !(MmioRead32(0xA60C704)&BIT31) && (MmioRead32(0xA60C70C)&BIT22);
+}
 STATIC EFI_STATUS Reset(EFI_CLOCK_PROTOCOL *Clock){
   STATIC CONST CHAR8 *Names[]={"gcc_qusb2phy_prim_bcr","gcc_usb3_dp_phy_prim_bcr",
     "gcc_usb3_phy_prim_bcr","gcc_usb3phy_phy_prim_bcr"};
@@ -117,10 +121,40 @@ STATIC EFI_STATUS Reset(EFI_CLOCK_PROTOCOL *Clock){
   }
   S=gBS->Stall(10);return S==EFI_SUCCESS?S:EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
 }
+STATIC EFI_STATUS QmpStart(UINT8 Orientation){
+  // Bit 0 selects the lane, bit 1 enables software port selection.
+  UINT32 Selection=2U|(Orientation==2);
+  Write(SS,0x10,(Read(SS,0x10)&~3U)|Selection);
+  if((Read(SS,0x10)&3)!=Selection)return EFI_DEVICE_ERROR;
+  for(UINTN I=0;I<ARRAY_SIZE(mPianoUsbSsPhy);++I)
+    Write(SS,mPianoUsbSsPhy[I].Offset,mPianoUsbSsPhy[I].Value);
+  gBS->Stall(100);
+  Write(SS,4,0);Write(SS,0x1E00,0);Write(SS,0x1E44,3);gBS->Stall(100);
+  for(UINTN I=0;I<102;++I){
+    UINT32 Pcs=Read(SS,0x1E14);
+    if(!(Pcs&BIT6)){
+      mOrientation=Orientation;
+      DEBUG((DEBUG_WARN,"SUNUEFI_USB_PHY_READY reverse=%u hs_common=%08x hs_ctrl=%08x pcs=%08x factory_xbl_table=1\n",
+        Orientation==2,Read(HS,0x54),Read(HS,0x64),Pcs));
+      return EFI_SUCCESS;
+    }
+    gBS->Stall(100);
+  }
+  DEBUG((DEBUG_WARN,"SUNUEFI_USB_PHY_TIMEOUT pcs=%08x\n",Read(SS,0x1E14)));
+  return EFI_TIMEOUT;
+}
+STATIC EFI_STATUS QmpStop(VOID){
+  mOrientation=0;
+  Write(SS,0x1E44,0);Write(SS,0x1E00,1);Write(SS,4,1);Write(SS,8,0);
+  // QMP returns byte-wide registers replicated across the 32-bit read.
+  if((Read(SS,0x1E44)&3)!=0 || (Read(SS,0x1E00)&1)!=1 || (Read(SS,4)&1)!=1 ||
+     (Read(SS,8)&1)!=0)return EFI_DEVICE_ERROR;
+  return EFI_SUCCESS;
+}
 EFI_STATUS PianoUsbPhyStart(EFI_CLOCK_PROTOCOL *Clock){
   if(mPhyOwned)return EFI_ALREADY_STARTED;
   if(!Clock || Clock->Version!=0x1000b || !Clock->GetClockID || !Clock->ResetClock)return EFI_UNSUPPORTED;
-  if((MmioRead32(0xA60C704)&BIT31) || !(MmioRead32(0xA60C70C)&BIT22))return EFI_NOT_READY;
+  if(!ControllerHalted())return EFI_NOT_READY;
   mPhyOwned=TRUE;
   EFI_STATUS S=PowerStart();if(S!=EFI_SUCCESS)return S;
   S=Reset(Clock);if(S!=EFI_SUCCESS)return S;
@@ -132,32 +166,31 @@ EFI_STATUS PianoUsbPhyStart(EFI_CLOCK_PROTOCOL *Clock){
   Write(HS,0x64,0xF);Write(HS,0x64,0xF);Write(HS,0x3C,1);
   Write(HS,0x54,0x6B);Write(HS,0x54,0x6B);Write(HS,0x50,0);
   Write(HS,0x64,7);Write(HS,0x94,0);gBS->Stall(20);
-  // GPIO61 is Piano's real cable polarity signal. Native QMP init uses bit0
-  // for the lane and bit1 to enable the software port selection.
-  UINT32 Reverse=MmioRead32(0xF100000U+61U*0x1000U+4)&1;
-  Write(SS,0x10,(Read(SS,0x10)&~3U)|2U|Reverse);
-  for(UINTN I=0;I<ARRAY_SIZE(mPianoUsbSsPhy);++I)
-    Write(SS,mPianoUsbSsPhy[I].Offset,mPianoUsbSsPhy[I].Value);
-  gBS->Stall(100);
-  Write(SS,4,0);Write(SS,0x1E00,0);Write(SS,0x1E44,3);gBS->Stall(100);
-  for(UINTN I=0;I<102;++I){if(!(Read(SS,0x1E14)&BIT6)){
-    DEBUG((DEBUG_WARN,"SUNUEFI_USB_PHY_READY reverse=%u hs_common=%08x hs_ctrl=%08x pcs=%08x factory_xbl_table=1\n",Reverse,Read(HS,0x54),Read(HS,0x64),Read(SS,0x1E14)));
-    return EFI_SUCCESS;
-  }gBS->Stall(100);}
-  DEBUG((DEBUG_WARN,"SUNUEFI_USB_PHY_TIMEOUT pcs=%08x\n",Read(SS,0x1E14)));
-  return EFI_TIMEOUT;
+  // GPIO61 supplies cable polarity before the Type-C poller starts.
+  return QmpStart((UINT8)(1+(MmioRead32(0xF100000U+61U*0x1000U+4)&1)));
+}
+UINT8 PianoUsbPhyOrientation(VOID){
+  return mOrientation;
+}
+EFI_STATUS PianoUsbPhySetOrientation(UINT8 Orientation){
+  if(Orientation!=1 && Orientation!=2)return EFI_INVALID_PARAMETER;
+  if(!mPhyOwned || !mOrientation || !ControllerHalted())return EFI_NOT_READY;
+  UINT8 Previous=mOrientation;
+  if(Orientation==Previous)return EFI_SUCCESS;
+  EFI_STATUS S=QmpStop();
+  if(S!=EFI_SUCCESS)return S;
+  S=QmpStart(Orientation);
+  if(S!=EFI_SUCCESS && QmpStop()==EFI_SUCCESS)(VOID)QmpStart(Previous);
+  return S;
 }
 EFI_STATUS PianoUsbPhyStop(VOID){
   if(!mPhyOwned)return EFI_SUCCESS;
-  if((MmioRead32(0xA60C704)&BIT31) || !(MmioRead32(0xA60C70C)&BIT22))return EFI_NOT_READY;
-  Write(SS,0x1E44,0);Write(SS,0x1E00,1);Write(SS,4,1);Write(SS,8,0);
+  if(!ControllerHalted())return EFI_NOT_READY;
+  EFI_STATUS S=QmpStop();
   Write(HS,0x50,2);Write(HS,0x54,Read(HS,0x54)|BIT1|BIT2);
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_PHY_STOP_READBACK start=%08x pcs_reset=%08x com_reset=%08x power=%08x hs_por=%08x hs_common=%08x\n",
     Read(SS,0x1E44),Read(SS,0x1E00),Read(SS,4),Read(SS,8),Read(HS,0x50),Read(HS,0x54)));
-  // M31/QMP expose byte-wide registers replicated across a 32-bit read.
-  // Compare implemented low bits; 0x01010101 is a successful write of 1.
-  if((Read(SS,0x1E44)&3)!=0 || (Read(SS,0x1E00)&1)!=1 || (Read(SS,4)&1)!=1 || (Read(SS,8)&1)!=0 ||
-     !(Read(HS,0x50)&BIT1) || (Read(HS,0x54)&6)!=6)return EFI_DEVICE_ERROR;
-  EFI_STATUS S=PowerStop();if(S!=EFI_SUCCESS)return S;
+  if(S!=EFI_SUCCESS || !(Read(HS,0x50)&BIT1) || (Read(HS,0x54)&6)!=6)return EFI_DEVICE_ERROR;
+  S=PowerStop();if(S!=EFI_SUCCESS)return S;
   mPhyOwned=FALSE;return EFI_SUCCESS;
 }

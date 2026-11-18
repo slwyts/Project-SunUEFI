@@ -76,6 +76,24 @@ class UsbServiceTests(unittest.TestCase):
                 self.assertEqual(result.returncode,0,result.stdout+result.stderr)
                 run=subprocess.run([str(binary)],capture_output=True,text=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1'})
                 self.assertEqual(run.returncode,0,run.stdout+run.stderr);print(run.stdout.strip())
+    def test_actual_qmp_orientation_and_rollback(self):
+        with tempfile.TemporaryDirectory(prefix='piano-usb-phy-') as directory:
+            folder=Path(directory)
+            # Only the QMP power entries matter to this reset sequence.
+            (folder/'PianoUsbPhyConfig.h').write_text(
+                'STATIC CONST struct {UINT32 Offset,Value;} mPianoUsbSsPhy[]={{8,1},{0x1e40,1}};\n')
+            flags=['-fshort-wchar','-Wall','-Wextra','-Werror','-Wno-unused-parameter',
+                   '-DMDEPKG_NDEBUG','-I',str(folder)]
+            for path in [INC,*OTHER]:
+                flags+=['-I',str(path)]
+            subprocess.run([str(TOOLCHAIN/'bin/clang'),'--target=aarch64-windows-msvc',
+                            '-ffreestanding','-fsyntax-only',*flags,'-I',str(INC/'AArch64'),
+                            str(core_source('PianoUsbPhy.c',ROOT))],check=True)
+            binary=folder/'phy'
+            subprocess.run(['cc','-std=gnu11','-g','-fsanitize=address,undefined','-fno-pie','-no-pie',
+                            *flags,'-I',str(INC/HOST_PROCESSOR_BIND),
+                            str(ROOT/'tests/native/PianoUsbPhyTest.c'),'-o',str(binary)],check=True)
+            subprocess.run([str(binary)],check=True)
     def test_aarch64_gate_zero_and_one_actual_sources(self):
         for enabled in (0,1):
             flags=['--target=aarch64-windows-msvc','-ffreestanding','-fshort-wchar','-fsyntax-only','-Wall','-Wextra','-Werror','-Wno-unused-parameter',f'-DPIANO_USB_SERVICE={enabled}','-DPIANO_USB_FASTBOOT=1','-DPIANO_USB_UFS_FETCH=1','-DPIANO_USB_EP0=1','-DPIANO_USB_RAM_BOOT=1']
