@@ -39,18 +39,20 @@ class ProductOsBootWiringTests(unittest.TestCase):
         for family in product.OBSERVATION_FAMILIES:shutil.copytree(product.observation_directory(ROOT,family),product.observation_directory(root,family))
         shared=root/'uefi/core';shared.mkdir(parents=True)
         for name in EARLY_CORE_FILES:shutil.copyfile(core_source(name, ROOT),shared/name)
-        for name,path in product.shared_boot_headers(ROOT).items():
-            target=shared/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
-        for name in product.SOURCE_NAMES:(shared/name).write_bytes((core_source(name, ROOT)).read_bytes())
+        for path in (*product.shared_boot_headers(ROOT).values(),
+                     *(core_source(name, ROOT) for name in product.SOURCE_NAMES)):
+            target=root/path.relative_to(ROOT)
+            target.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(path,target)
         for relative in OBJECT_DXE_FILES.values():
             target=root/relative;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/relative,target)
         shutil.copytree(ROOT/'uefi/handoff/bootshim',root/'uefi/handoff/bootshim')
         app=root/'uefi/platforms/pianoProductPkg/Applications/ProductCore';app.mkdir(parents=True)
         for component,names in product.PRODUCT_COMPONENTS.items():
-            for name in names:shutil.copyfile(ROOT/'uefi/components'/component/name,core_source(name, ROOT))
-        for name in product.SOURCE_NAMES:shutil.copyfile(shared/name,core_source(name, ROOT))
-        for name,path in product.shared_boot_headers(root).items():
-            target=core_source(name, ROOT);target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
+            for name in names:shutil.copyfile(root/'uefi/components'/component/name,app/name)
+        for name in product.SOURCE_NAMES:shutil.copyfile(core_source(name,root),app/name)
+        for path in product.shared_boot_headers(root).values():
+            shutil.copyfile(path,app/path.name)
         record=product.prepare_os_boot(root,app)
         shutil.copytree(ROOT/'uefi/components/product-handoff',root/'uefi/components/product-handoff')
         for relative in prepare_handoff(prepared,apply=False)['files']:
@@ -98,7 +100,8 @@ class ProductOsBootWiringTests(unittest.TestCase):
         staged=root/'upstream/Mu-Silicium/Platforms/Xiaomi/pianoProductPkg'
         shutil.rmtree(staged/'Sec');shutil.copytree(target/'Sec',staged/'Sec')
         for name in ('pianoProduct.dsc','pianoProduct.fdf'):shutil.copyfile(target/name,staged/name)
-        for name in (*OBJECT_DXE_FILES,'ProductCore.inf'):shutil.copyfile(core_source(name, ROOT),staged/'Applications/ProductCore'/name)
+        for name in (*OBJECT_DXE_FILES,'ProductCore.inf'):
+            shutil.copyfile(app/name,staged/'Applications/ProductCore'/name)
         path=root/'build/product/prepared-manifest.json';manifest=json.loads(path.read_text());manifest['early_memory']=record;path.write_text(json.dumps(manifest))
 
     def fingerprint(self,root):
@@ -136,7 +139,7 @@ class ProductOsBootWiringTests(unittest.TestCase):
                 elif mutation in ('staged_c','staged_h'):
                     path=staged/'Components/os-boot'/('PianoLinuxEfiSession.c'if mutation=='staged_c'else 'PianoLinuxEfiSession.h');path.write_text(path.read_text()+'\n// changed\n')
                 elif mutation in ('relative_header','module_header'):
-                    path=staged/('core/PianoFastbootLaunch.h'if mutation=='relative_header'else 'PianoFastbootLaunch.h');path.write_text(path.read_text()+'\n// changed\n')
+                    path=staged/('core/usb/PianoFastbootLaunch.h'if mutation=='relative_header'else 'PianoFastbootLaunch.h');path.write_text(path.read_text()+'\n// changed\n')
                 else:
                     path=staged/'ProductCore.inf';path.write_text(path.read_text().replace('  Components/os-boot/PianoCpuImageLoan.c\n'if mutation=='inf_source'else '  SynchronizationLib\n',''))
                 with self.assertRaises(ValueError):self.fingerprint(root)

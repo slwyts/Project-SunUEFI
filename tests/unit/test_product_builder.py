@@ -35,8 +35,8 @@ class ProductBuilderTests(unittest.TestCase):
         self.assertEqual(backends['ufs_blockio_read_write']['original_media'],'READ_ONLY')
         for feature in ('pogo_keyboard_touchpad','touchscreen','usb_host'):
             self.assertEqual(backends[feature]['status'],'IMPLEMENTED_UNTESTED')
-        for feature in ('pogo_keyboard_touchpad','touchscreen'):
-            self.assertIn('no DMA',backends[feature]['transport'])
+        self.assertIn('no DMA',backends['pogo_keyboard_touchpad']['transport'])
+        self.assertIn('GPI1 DMA',backends['touchscreen']['transport'])
         self.assertEqual(backends['usb_host']['mass_storage'],'READ_ONLY')
         self.assertFalse(backends['usb_host']['vbus_control'])
         self.assertEqual(backends['usb_device_fastboot']['current_download_limit_bytes'],64*1024*1024)
