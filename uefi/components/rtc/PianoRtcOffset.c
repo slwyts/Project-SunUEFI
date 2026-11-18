@@ -103,18 +103,17 @@ STATIC BOOLEAN TwoCells(CONST VOID *Tree,INT32 Node,CONST CHAR8 *Name) {
 }
 
 EFI_STATUS PianoRtcOffsetApplyDtb(VOID *Tree,UINTN Capacity) {
+  STATIC CONST CHAR8 RtcCompatible[]="qcom,pmk8350-rtc";
   if(!Tree||Capacity<40||Capacity>0x210000||FdtCheckHeader(Tree)||FdtTotalSize(Tree)>Capacity)return EFI_INVALID_PARAMETER;
   if(mStatus!=EFI_SUCCESS)return EFI_SUCCESS;
   if(FdtNodeOffsetByCompatible(Tree,-1,"xiaomi,piano")!=0)return EFI_SUCCESS;
 
-  INT32 Rtc=FdtNodeOffsetByCompatible(Tree,-1,"qcom,pmk8350-rtc");
+  INT32 Rtc=FdtNodeOffsetByCompatible(Tree,-1,RtcCompatible);
   if(Rtc<0)return Rtc==-FDT_ERR_NOTFOUND?EFI_SUCCESS:EFI_COMPROMISED_DATA;
-  if(FdtNodeOffsetByCompatible(Tree,Rtc,"qcom,pmk8350-rtc")!=-FDT_ERR_NOTFOUND)return EFI_COMPROMISED_DATA;
+  if(FdtNodeOffsetByCompatible(Tree,Rtc,RtcCompatible)!=-FDT_ERR_NOTFOUND)return EFI_COMPROMISED_DATA;
   // Explicit writable counters and existing storage keep their own policy.
   if(FdtGetProp(Tree,Rtc,"allow-set-time",NULL)||FdtGetProp(Tree,Rtc,"nvmem-cells",NULL)||
      FdtGetProp(Tree,Rtc,"qcom,uefi-rtc-info",NULL))return EFI_SUCCESS;
-  UINT32 RtcPhandle=FdtGetPhandle(Tree,Rtc);
-  if(!RtcPhandle)return EFI_COMPROMISED_DATA;
   INT32 Reserved=FdtPathOffset(Tree,"/reserved-memory");
   if(Reserved<0||!TwoCells(Tree,Reserved,"#address-cells")||!TwoCells(Tree,Reserved,"#size-cells"))return EFI_COMPROMISED_DATA;
   UINT32 Phandle=0;
@@ -140,8 +139,8 @@ EFI_STATUS PianoRtcOffsetApplyDtb(VOID *Tree,UINTN Capacity) {
   UINT32 CellReg[2]={0,SwapBytes32(sizeof(mOffset))};
   if(FdtSetProp(Tree,Cell,"reg",CellReg,sizeof(CellReg))||Put32(Tree,Cell,"phandle",Phandle))return EFI_BUFFER_TOO_SMALL;
 
-  // Adding nodes moves offsets. Resolve the original RTC by its phandle.
-  Rtc=FdtNodeOffsetByPhandle(Tree,RtcPhandle);
+  // Adding nodes moves offsets. The matching RTC was checked to be unique.
+  Rtc=FdtNodeOffsetByCompatible(Tree,-1,RtcCompatible);
   if(Rtc<0)return EFI_COMPROMISED_DATA;
   if(Put32(Tree,Rtc,"nvmem-cells",Phandle)||FdtSetProp(Tree,Rtc,"nvmem-cell-names","offset",7))return EFI_BUFFER_TOO_SMALL;
   DEBUG((DEBUG_WARN,"PIANO_RTC_DTB standard_nvmem=1 readonly=1 page=%lx offset_seconds=%u\n",mPage,mOffset));

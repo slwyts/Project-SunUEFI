@@ -25,8 +25,9 @@ PMK8550 的 RTC 是持续运行的秒计数器，Android 用独立的持久化�
 `uefi/components/rtc/` 仅以只读模式打开该文件，检查精确长度和数值范围，
 将秒偏移写入独立分配的 `EfiReservedMemoryType` 页。Linux 设备树副本为该页
 创建 `nvmem-rmem` 提供者、`fixed-layout` 及四字节 `offset` 单元，通过已有的
-`nvmem-cells`／`nvmem-cell-names` 连接到 PMIC RTC。普通 EFI 与 BOOTv2
-使用同一函数；输入设备树和 Android 文件保持不变。
+`nvmem-cells`／`nvmem-cell-names` 连接到唯一匹配的 PMIC RTC，不要求 RTC
+节点已有 `phandle`。普通 EFI 与 BOOTv2 使用同一函数；输入设备树和 Android
+文件保持不变。
 
 该页有 `no-map` 和 `read-only`，退出 UEFI 后仍保留，内核内存检查按保留页
 验证，不放宽对 DMA 或其他内存的检查。`rtc-pm8xxx` 使用现有 NVMEM 后端读取

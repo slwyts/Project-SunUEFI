@@ -86,7 +86,7 @@ class HostChecksTests(unittest.TestCase):
         self.assertEqual(len(files), len(set(files)))
         for name in ('tests/unit/test_boot_options.py', 'tests/unit/test_camera.py',
                      'tests/unit/test_nv_journal.py', 'tests/unit/test_nv_runtime_guard.py',
-                     'tests/unit/test_reset.py',
+                     'tests/unit/test_reset.py', 'tests/unit/test_rtc_offset.py',
                      'tests/native/test_fastboot_launch.sh'):
             self.assertIn(ROOT / name, files)
         self.assertNotIn(ROOT / 'tests/native/test_ufs_bounded_fs.sh', files)

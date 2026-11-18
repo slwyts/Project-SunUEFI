@@ -27,7 +27,7 @@ class RtcOffsetTests(unittest.TestCase):
                 'fdt.c', 'fdt_ro.c', 'fdt_rw.c', 'fdt_wip.c', 'fdt_sw.c',
                 'fdt_check.c', 'fdt_empty_tree.c')]
             subprocess.run(command + ['-o', str(exe)], check=True, timeout=60)
-            for case in range(8):
+            for case in range(10):
                 with self.subTest(case=case):
                     subprocess.run([str(exe), str(case)], check=True, timeout=10,
                                    env={**os.environ, 'UBSAN_OPTIONS': 'halt_on_error=1'})

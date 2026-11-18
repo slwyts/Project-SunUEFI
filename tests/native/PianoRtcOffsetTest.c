@@ -67,16 +67,19 @@ STATIC EFI_STATUS EFIAPI Pages(EFI_ALLOCATE_TYPE Type,EFI_MEMORY_TYPE Memory,UIN
   assert(Type==AllocateAnyPages&&Memory==EfiReservedMemoryType&&Count==1);
   ++Allocations;*Address=(UINTN)Page;return EFI_SUCCESS;
 }
-STATIC VOID MakeTree(VOID){
+STATIC VOID MakeTree(BOOLEAN RtcPhandle){
   assert(!fdt_create_empty_tree(Tree,sizeof(Tree)));
   assert(!fdt_setprop_string(Tree,0,"compatible","xiaomi,piano"));
-  int Node=fdt_add_subnode(Tree,0,"reserved-memory");assert(Node>=0);
+  int Node=fdt_add_subnode(Tree,0,"rtc");assert(Node>=0);
+  assert(!fdt_setprop_string(Tree,Node,"compatible","qcom,pmk8350-rtc"));
+  if(RtcPhandle)assert(!fdt_setprop_u32(Tree,Node,"phandle",43));
+  Node=fdt_add_subnode(Tree,0,"other");assert(Node>=0);
+  assert(!fdt_setprop_u32(Tree,Node,"phandle",42));
+  // Insert the reservation first so the provider moves the RTC offset.
+  Node=fdt_add_subnode(Tree,0,"reserved-memory");assert(Node>=0);
   assert(!fdt_setprop_u32(Tree,Node,"#address-cells",2));
   assert(!fdt_setprop_u32(Tree,Node,"#size-cells",2));
   assert(!fdt_setprop(Tree,Node,"ranges",NULL,0));
-  Node=fdt_add_subnode(Tree,0,"rtc");assert(Node>=0);
-  assert(!fdt_setprop_string(Tree,Node,"compatible","qcom,pmk8350-rtc"));
-  assert(!fdt_setprop_u32(Tree,Node,"phandle",42));
 }
 
 int main(int Argc,char **Argv){
@@ -86,7 +89,7 @@ int main(int Argc,char **Argv){
   Partition.Revision=EFI_PARTITION_INFO_PROTOCOL_REVISION;Partition.Type=PARTITION_TYPE_GPT;
   memcpy(Partition.Info.Gpt.PartitionName,L"persist",sizeof(L"persist"));
   Block.Media=&Media;Media.MediaPresent=Media.LogicalPartition=Media.ReadOnly=TRUE;
-  memset(Page,0xa5,sizeof(Page));MakeTree();
+  memset(Page,0xa5,sizeof(Page));MakeTree(Case!=8);
   if(Case==1)FileBytes=9;
   if(Case==2)Milliseconds=0;
   if(Case==3)Milliseconds=MAX_UINT64;
@@ -107,12 +110,21 @@ int main(int Argc,char **Argv){
   int Rtc=fdt_path_offset(Tree,"/rtc");
   if(Case==6)assert(!fdt_setprop(Tree,Rtc,"allow-set-time",NULL,0));
   if(Case==7)assert(!fdt_setprop_u32(Tree,Rtc,"nvmem-cells",42));
+  if(Case==9){
+    int Duplicate=fdt_add_subnode(Tree,0,"rtc2");assert(Duplicate>=0);
+    assert(!fdt_setprop_string(Tree,Duplicate,"compatible","qcom,pmk8350-rtc"));
+    assert(PianoRtcOffsetApplyDtb(Tree,sizeof(Tree))==EFI_COMPROMISED_DATA);
+    assert(fdt_first_subnode(Tree,fdt_path_offset(Tree,"/reserved-memory"))==-FDT_ERR_NOTFOUND);
+    return 0;
+  }
+  int OldOffset=Rtc;
   assert(PianoRtcOffsetApplyDtb(Tree,sizeof(Tree))==EFI_SUCCESS);
   Rtc=fdt_path_offset(Tree,"/rtc");int Bytes;
   const fdt32_t *Reference=fdt_getprop(Tree,Rtc,"nvmem-cells",&Bytes);
   if(Case==6){assert(!Reference);return 0;}
   if(Case==7){assert(Reference&&fdt32_to_cpu(*Reference)==42);return 0;}
-  assert(Reference&&Bytes==4&&fdt32_to_cpu(*Reference)>42);
+  assert(Rtc>OldOffset&&fdt_get_phandle(Tree,Rtc)==(Case==8?0U:43U));
+  assert(Reference&&Bytes==4&&fdt32_to_cpu(*Reference)==(Case==8?43U:44U));
   int Cell=fdt_node_offset_by_phandle(Tree,fdt32_to_cpu(*Reference));assert(Cell>=0);
   assert(!strcmp(fdt_get_name(Tree,Cell,NULL),"offset@0"));
   int Layout=fdt_parent_offset(Tree,Cell);assert(Layout>=0);

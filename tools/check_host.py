@@ -45,6 +45,7 @@ CI_UNIT = (
     'test_nv_journal.py',
     'test_nv_runtime_guard.py',
     'test_reset.py',
+    'test_rtc_offset.py',
     'test_usb_ram_boot_controller.py',
     'test_gt9764.py',
     'test_piano_camera.py',
