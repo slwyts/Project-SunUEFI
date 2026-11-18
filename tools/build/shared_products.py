@@ -269,7 +269,7 @@ def run(kind, verify_only=False, root=ROOT):
             result = verify_firmware(root)
         else:
             import prepare_sources
-            prepare_sources.check(root)
+            prepare_sources.check(root, 'firmware')
             subprocess.run([root / 'build.sh', 'uefi'], cwd=root, check=True)
             subprocess.run([root / 'build.sh', 'module'], cwd=root, check=True)
             result = verify_firmware(root, source_build=True)

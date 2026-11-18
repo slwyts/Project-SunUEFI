@@ -28,6 +28,7 @@ PORTABLE = (
     'tests/unit/test_host_checks.py',
     'tests/unit/test_ci_build_targets.py',
     'tests/unit/test_check_patch_series.py',
+    'tests/unit/test_prepare_sources.py',
     'tests/unit/test_vendor_inputs.py',
     'tests/unit/test_release_kernel.py',
     'tests/unit/test_release_rootfs.py',

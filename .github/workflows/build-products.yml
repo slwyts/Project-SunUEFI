@@ -60,6 +60,7 @@ jobs:
       - name: Check patch series and build rules
         run: |
           ./build.sh check --pattern test_check_patch_series.py \
+            --pattern test_prepare_sources.py \
             --pattern test_shared_products.py --pattern test_ci_container.py
       - id: targets
         env:

@@ -31,9 +31,7 @@ jobs:
           operation: download
           name: builder
       - name: Check out the fixed sound and sensor sources
-        run: |
-          git submodule update --init --depth 1 -- upstream/debian-piano-current \
-            upstream/audioreach-topology upstream/piano-sensors-current
+        run: ./build.sh sources --group devices
       - id: camera-key
         name: Identify the camera source, recipe and toolchain
         run: |
@@ -127,7 +125,9 @@ jobs:
       - name: Load the verified builder image
         run: python3 tools/build/ci_container.py load
       - name: Get only required fixed sources
-        run: ./build.sh sources
+        env:
+          SOURCE_GROUP: ${{ matrix.kind }}
+        run: ./build.sh sources --group "$SOURCE_GROUP"
       - id: keys
         run: python3 tools/build/shared_products.py keys --github-output "$GITHUB_OUTPUT"
       - id: completed
