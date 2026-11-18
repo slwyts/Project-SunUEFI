@@ -1,0 +1,618 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@tuta.io>
+Date: Thu, 19 Nov 2026 01:40:53 +0800
+Subject: [PATCH] manager: use desktop power profiles for game mode
+
+Recognize devices without DMI using their exact Device Tree compatible
+string. Let their game-mode performance controls use the system
+PowerProfiles service so desktop and game mode share one profile.
+
+Preserve platform-profile support where configured. Hide the independent
+CPU controls when the desktop service owns those settings.
+
+diff --git a/data/devices/xiaomi-pad-8-pro.toml b/data/devices/xiaomi-pad-8-pro.toml
+new file mode 100644
+index 0000000..2ddf161
+--- /dev/null
++++ b/data/devices/xiaomi-pad-8-pro.toml
+@@ -0,0 +1,8 @@
++[[device]]
++compatible = "xiaomi,piano"
++device = "xiaomi_pad"
++variant = "piano"
++friendly_name = "Xiaomi Pad 8 Pro"
++
++[performance_profile]
++suggested_default = "balanced"
+diff --git a/steamos-manager/src/hardware.rs b/steamos-manager/src/hardware.rs
+index efd99df..7ad5aa4 100644
+--- a/steamos-manager/src/hardware.rs
++++ b/steamos-manager/src/hardware.rs
+@@ -38,6 +38,7 @@ static DEVICE_CONFIG: OnceCell<Option<DeviceConfig>> = OnceCell::const_new();
+ const SYS_VENDOR_PATH: &str = "/sys/class/dmi/id/sys_vendor";
+ const BOARD_NAME_PATH: &str = "/sys/class/dmi/id/board_name";
+ const PRODUCT_NAME_PATH: &str = "/sys/class/dmi/id/product_name";
++const DEVICE_TREE_COMPATIBLE_PATH: &str = "/sys/firmware/devicetree/base/compatible";
+ #[cfg(not(test))]
+ const DEVICE_CONFIG_PATH: &str = "/usr/share/steamos-manager/devices";
+ #[cfg(test)]
+@@ -125,6 +126,7 @@ pub(crate) struct BatteryChargeLimitConfig {
+ #[derive(Clone, Deserialize, Debug)]
+ pub(crate) struct DeviceMatch {
+     pub dmi: Option<DmiMatch>,
++    pub compatible: Option<String>,
+     pub device: String,
+     pub variant: String,
+     pub friendly_name: Option<String>,
+@@ -170,7 +172,16 @@ pub(crate) struct InputPlumberConfig {
+ #[derive(Clone, Deserialize, Debug)]
+ pub(crate) struct PerformanceProfileConfig {
+     pub suggested_default: String,
+-    pub platform_profile_name: String,
++    /// Without a platform driver, use the system PowerProfiles service.
++    pub platform_profile_name: Option<String>,
++}
++
++impl PerformanceProfileConfig {
++    pub(crate) fn platform_profile_name(&self) -> Result<&str> {
++        self.platform_profile_name
++            .as_deref()
++            .ok_or_else(|| anyhow!("No platform-profile driver configured"))
++    }
+ }
+
+ #[derive(Clone, Deserialize, Debug)]
+@@ -214,6 +225,17 @@ async fn try_read_to_string<S: AsRef<Path>>(path: S) -> std::io::Result<Option<S
+
+ impl DeviceConfig {
+     pub(crate) async fn device_match(&self) -> Result<Option<&'_ DeviceMatch>> {
++        if self.device.iter().any(|device| device.compatible.is_some())
++            && let Some(compatible) = try_read_to_string(path(DEVICE_TREE_COMPATIBLE_PATH)).await?
++            && let Some(device) = self.device.iter().find(|device| {
++                device.compatible.as_deref().is_some_and(|name| {
++                    compatible.split_terminator('\0').any(|entry| entry == name)
++                })
++            })
++        {
++            return Ok(Some(device));
++        }
++
+         let Some(sys_vendor) = try_read_to_string(path(SYS_VENDOR_PATH)).await? else {
+             return Ok(None);
+         };
+@@ -468,6 +490,26 @@ pub mod test {
+         Ok(h)
+     }
+
++    #[tokio::test]
++    async fn board_lookup_matches_an_exact_device_tree_compatible() -> Result<()> {
++        let _h = testing::start();
++        let compatible = path(DEVICE_TREE_COMPATIBLE_PATH);
++        create_dir_all(compatible.parent().unwrap()).await?;
++        let config: DeviceConfig = toml::from_str(
++            r#"
++            [[device]]
++            compatible = "vendor,tablet"
++            device = "tablet"
++            variant = "profile"
++            "#,
++        )?;
++        write(&compatible, b"vendor,tablet-revision\0vendor,soc\0").await?;
++        assert!(config.device_match().await?.is_none());
++        write(&compatible, b"vendor,tablet\0vendor,soc\0").await?;
++        assert_eq!(config.device_match().await?.unwrap().device, "tablet");
++        Ok(())
++    }
++
+     #[tokio::test]
+     async fn board_lookup_missing() {
+         let _h = testing::start();
+diff --git a/steamos-manager/src/manager/root.rs b/steamos-manager/src/manager/root.rs
+index 4fe59ed..231c8fe 100644
+--- a/steamos-manager/src/manager/root.rs
++++ b/steamos-manager/src/manager/root.rs
+@@ -721,11 +721,14 @@ impl SteamOSManager {
+             .as_ref()
+             .and_then(|config| config.performance_profile.as_ref())
+             .ok_or(fdo::Error::Failed(String::from(
+-                "No performance platform-profile configured",
++                "No performance profile configured",
+             )))?;
+-        set_platform_profile(&config.platform_profile_name, profile)
+-            .await
+-            .map_err(to_zbus_fdo_error)
++        set_platform_profile(
++            config.platform_profile_name().map_err(to_zbus_fdo_error)?,
++            profile,
++        )
++        .await
++        .map_err(to_zbus_fdo_error)
+     }
+
+     async fn set_temporary_session(&self, session: &str) -> fdo::Result<()> {
+diff --git a/steamos-manager/src/manager/user.rs b/steamos-manager/src/manager/user.rs
+index 879e083..a283ea3 100644
+--- a/steamos-manager/src/manager/user.rs
++++ b/steamos-manager/src/manager/user.rs
+@@ -49,10 +49,9 @@ use crate::manager::{MANAGER_PATH, RemoteInterface, RemoteInterfaceConfig, Remot
+ use crate::path;
+ use crate::platform::platform_config;
+ use crate::power::{
+-    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, CpuSchedulerManager, TdpManagerCommand,
+-    get_available_cpu_scaling_governors, get_available_platform_profiles, get_cpu_boost_state,
+-    get_cpu_scaling_governor, get_max_charge_level, get_platform_profile, register_tdp_limit1,
+-    unregister_tdp_limit1,
++    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, CpuSchedulerManager, DesktopPowerProfilesProxy,
++    TdpManagerCommand, get_available_cpu_scaling_governors, get_cpu_boost_state,
++    get_cpu_scaling_governor, get_max_charge_level, register_tdp_limit1, unregister_tdp_limit1,
+ };
+ use crate::proxy::{
+     BatteryChargeLimit1Proxy, CpuBoost1Proxy, FactoryReset1Proxy, FanControl1Proxy,
+@@ -817,16 +816,17 @@ impl Manager2 {
+
+ #[remote(name = "com.steampowered.SteamOSManager1.PerformanceProfile1")]
+ impl PerformanceProfile1 {
+-    #[zbus(property(emits_changed_signal = "const"))]
++    #[zbus(property)]
+     async fn available_performance_profiles(&self) -> fdo::Result<Vec<String>> {
+         let config = device_config().await.map_err(to_zbus_fdo_error)?;
+         let config = config
+             .as_ref()
+             .and_then(|config| config.performance_profile.as_ref())
+             .ok_or(fdo::Error::Failed(String::from(
+-                "No performance platform-profile configured",
++                "No performance profile configured",
+             )))?;
+-        get_available_platform_profiles(&config.platform_profile_name)
++        config
++            .available_profiles(self.proxy.connection())
+             .await
+             .map_err(to_zbus_fdo_error)
+     }
+@@ -838,9 +838,10 @@ impl PerformanceProfile1 {
+             .as_ref()
+             .and_then(|config| config.performance_profile.as_ref())
+             .ok_or(fdo::Error::Failed(String::from(
+-                "No performance platform-profile configured",
++                "No performance profile configured",
+             )))?;
+-        get_platform_profile(&config.platform_profile_name)
++        config
++            .active_profile(self.proxy.connection())
+             .await
+             .map_err(to_zbus_fdo_error)
+     }
+@@ -852,8 +853,20 @@ impl PerformanceProfile1 {
+         #[zbus(connection)] connection: &Connection,
+         #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+     ) -> zbus::Result<()> {
+-        let _: () = self.proxy.call("SetPerformanceProfile", &(profile)).await?;
+-        self.performance_profile_changed(&ctx).await?;
++        if uses_desktop_power_profiles().await.map_err(to_zbus_error)? {
++            let profile = if profile == "low-power" {
++                "power-saver"
++            } else {
++                profile
++            };
++            DesktopPowerProfilesProxy::new(self.proxy.connection())
++                .await?
++                .set_active_profile(profile)
++                .await?;
++        } else {
++            let _: () = self.proxy.call("SetPerformanceProfile", &(profile)).await?;
++            self.performance_profile_changed(&ctx).await?;
++        }
+         let connection = connection.clone();
+         if let Some(manager) = self.tdp_limit_manager.as_ref() {
+             let manager = manager.clone();
+@@ -889,12 +902,87 @@ impl PerformanceProfile1 {
+             .as_ref()
+             .and_then(|config| config.performance_profile.as_ref())
+             .ok_or(fdo::Error::Failed(String::from(
+-                "No performance platform-profile configured",
++                "No performance profile configured",
+             )))?;
+         Ok(config.suggested_default.to_string())
+     }
+ }
+
++async fn uses_desktop_power_profiles() -> Result<bool> {
++    let device = device_config().await?;
++    Ok(device
++        .as_ref()
++        .and_then(|device| device.performance_profile.as_ref())
++        .is_some_and(|config| config.platform_profile_name.is_none()))
++}
++
++async fn watch_desktop_power_profiles(
++    system: &Connection,
++    object_server: &ObjectServer,
++) -> Result<()> {
++    let interface = object_server
++        .interface::<_, PerformanceProfile1>(MANAGER_PATH)
++        .await?;
++    let proxy = DesktopPowerProfilesProxy::builder(system)
++        .cache_properties(CacheProperties::No)
++        .build()
++        .await?;
++    let properties = fdo::PropertiesProxy::builder(system)
++        .destination(proxy.inner().destination().clone())?
++        .path(proxy.inner().path().clone())?
++        .build()
++        .await?;
++    let mut owners = proxy.inner().receive_owner_changed().await?;
++    let mut profiles = properties
++        .receive_properties_changed_with_args(&[(0, proxy.inner().interface().as_str())])
++        .await?;
++    spawn(async move {
++        loop {
++            let refresh_available = select! {
++                Some(owner) = owners.next() => {
++                    if owner.is_none() {
++                        let values = HashMap::from([(
++                            "AvailablePerformanceProfiles",
++                            zvariant::Value::from(Vec::<String>::new()),
++                        )]);
++                        let invalidated = ["PerformanceProfile"].as_slice().into();
++                        if let Err(error) = fdo::Properties::properties_changed(
++                            interface.signal_emitter(), PerformanceProfile1::name(), values, invalidated,
++                        ).await {
++                            debug!("Could not report the PowerProfiles service stopping: {error}");
++                        }
++                        continue;
++                    }
++                    true
++                },
++                Some(signal) = profiles.next() => {
++                    let Ok(data) = signal.args() else { continue; };
++                    let changed = |name: &str| data.changed_properties().contains_key(name)
++                        || data.invalidated_properties().contains(&name);
++                    if !changed("Profiles") && !changed("ActiveProfile") {
++                        continue;
++                    }
++                    changed("Profiles")
++                },
++                else => break,
++            };
++            let profile = interface.get().await;
++            let emitter = interface.signal_emitter();
++            if refresh_available
++                && let Err(error) = profile
++                    .available_performance_profiles_changed(emitter)
++                    .await
++            {
++                debug!("Could not update the available power profiles: {error}");
++            }
++            if let Err(error) = profile.performance_profile_changed(emitter).await {
++                debug!("Could not update the active power profile: {error}");
++            }
++        }
++    });
++    Ok(())
++}
++
+ impl RemoteInterface1 {
+     fn new(
+         session: Connection,
+@@ -1810,13 +1898,18 @@ async fn create_device_interfaces(
+         });
+     }
+
+-    if let Some(config) = config.performance_profile.as_ref()
+-        && !get_available_platform_profiles(&config.platform_profile_name)
++    if let Some(config) = config.performance_profile.as_ref() {
++        if config.platform_profile_name.is_none() {
++            object_server.at(MANAGER_PATH, performance_profile).await?;
++            watch_desktop_power_profiles(system, object_server).await?;
++        } else if !config
++            .available_profiles(system)
+             .await
+             .unwrap_or_default()
+             .is_empty()
+-    {
+-        object_server.at(MANAGER_PATH, performance_profile).await?;
++        {
++            object_server.at(MANAGER_PATH, performance_profile).await?;
++        }
+     }
+
+     if let Some(config) = config.firmware_debug.as_ref() {
+@@ -1942,11 +2035,13 @@ pub(crate) async fn create_interfaces(
+         object_server.at(MANAGER_PATH, battery_charge_limit).await?;
+     }
+
+-    if get_cpu_boost_state().await.is_ok() {
+-        object_server.at(MANAGER_PATH, cpu_boost).await?;
++    if !uses_desktop_power_profiles().await? {
++        if get_cpu_boost_state().await.is_ok() {
++            object_server.at(MANAGER_PATH, cpu_boost).await?;
++        }
++        object_server.at(MANAGER_PATH, cpu_scaling).await?;
+     }
+
+-    object_server.at(MANAGER_PATH, cpu_scaling).await?;
+     if CpuSchedulerManager::is_supported().await? {
+         object_server.at(MANAGER_PATH, cpu_scheduler).await?;
+     }
+@@ -2184,6 +2279,7 @@ mod test {
+                     board_name: Some(String::from("Galileo")),
+                     product_name: None,
+                 }),
++                compatible: None,
+                 device: String::from("steam_deck"),
+                 variant: String::from("Galileo"),
+                 friendly_name: Some(String::from("Steam Deck")),
+@@ -2216,7 +2312,7 @@ mod test {
+                 },
+             }),
+             performance_profile: Some(PerformanceProfileConfig {
+-                platform_profile_name: String::from("power-driver"),
++                platform_profile_name: Some(String::from("power-driver")),
+                 suggested_default: String::from("balanced"),
+             }),
+             inputplumber: None,
+@@ -2718,6 +2814,127 @@ mod test {
+         assert!(test_interface_missing::<PerformanceProfile1>(&test.connection).await);
+     }
+
++    struct DesktopProfilesFixture(String);
++
++    #[interface(name = "org.freedesktop.UPower.PowerProfiles")]
++    impl DesktopProfilesFixture {
++        #[zbus(property)]
++        fn profiles(&self) -> Vec<HashMap<String, zvariant::OwnedValue>> {
++            ["power-saver", "balanced", "performance"]
++                .into_iter()
++                .map(|name| {
++                    HashMap::from([(
++                        "Profile".into(),
++                        zvariant::OwnedValue::from(zvariant::Str::from(name)),
++                    )])
++                })
++                .collect()
++        }
++
++        #[zbus(property)]
++        fn active_profile(&self) -> &str {
++            &self.0
++        }
++
++        #[zbus(property)]
++        fn set_active_profile(&mut self, name: &str) -> fdo::Result<()> {
++            if !["power-saver", "balanced", "performance"].contains(&name) {
++                return Err(fdo::Error::InvalidArgs(name.into()));
++            }
++            self.0 = name.into();
++            Ok(())
++        }
++    }
++
++    async fn publish_desktop_profiles(connection: &Connection, active: &str) -> Result<()> {
++        connection
++            .object_server()
++            .at(
++                "/org/freedesktop/UPower/PowerProfiles",
++                DesktopProfilesFixture(active.into()),
++            )
++            .await?;
++        connection
++            .request_name("org.freedesktop.UPower.PowerProfiles")
++            .await?;
++        Ok(())
++    }
++
++    async fn expect_available_profiles(
++        changes: &mut PropertyStream<'_, Vec<String>>,
++        expected: &[&str],
++    ) -> Result<()> {
++        tokio::time::timeout(Duration::from_secs(2), async {
++            while let Some(change) = changes.next().await {
++                if change.get().await?.as_slice() == expected {
++                    return Ok(());
++                }
++            }
++            Err(anyhow!(
++                "SteamOS Manager did not update the available profiles"
++            ))
++        })
++        .await?
++    }
++
++    #[tokio::test]
++    async fn performance_profile_follows_the_desktop_power_profiles_service() -> Result<()> {
++        let mut config = TestConfig::none();
++        config.device = Some(DeviceConfig {
++            performance_profile: Some(PerformanceProfileConfig {
++                platform_profile_name: None,
++                suggested_default: "balanced".into(),
++            }),
++            ..DeviceConfig::default()
++        });
++        let test = start(config).await?;
++        let game = PerformanceProfile1Proxy::builder(&test.connection)
++            .destination(test.connection.unique_name().unwrap().clone())?
++            .build()
++            .await?;
++        assert!(game.available_performance_profiles().await?.is_empty());
++        assert_eq!(
++            game.suggested_default_performance_profile().await?,
++            "balanced"
++        );
++        assert!(test_interface_missing::<CpuBoost1>(&test.connection).await);
++        assert!(test_interface_missing::<CpuScaling1>(&test.connection).await);
++        let mut available = game.receive_available_performance_profiles_changed().await;
++        let profiles = ["low-power", "balanced", "performance"];
++        let provider = test.handle.new_connection().await?;
++        publish_desktop_profiles(&provider, "balanced").await?;
++        expect_available_profiles(&mut available, &profiles).await?;
++        let desktop = DesktopPowerProfilesProxy::new(&test.connection).await?;
++
++        game.set_performance_profile("low-power").await?;
++        assert_eq!(desktop.active_profile().await?, "power-saver");
++
++        provider
++            .release_name("org.freedesktop.UPower.PowerProfiles")
++            .await?;
++        drop(provider);
++        expect_available_profiles(&mut available, &[]).await?;
++        let provider = test.handle.new_connection().await?;
++        publish_desktop_profiles(&provider, "balanced").await?;
++        expect_available_profiles(&mut available, &profiles).await?;
++
++        let mut changes = game.receive_performance_profile_changed().await;
++        desktop.set_active_profile("performance").await?;
++        tokio::time::timeout(Duration::from_secs(2), async {
++            while let Some(change) = changes.next().await {
++                if change.get().await? == "performance" {
++                    return Ok(());
++                }
++            }
++            Err(anyhow!(
++                "The desktop change did not reach the game interface"
++            ))
++        })
++        .await??;
++        assert_eq!(game.performance_profile().await?, "performance");
++        Ok(())
++    }
++
+     #[tokio::test]
+     async fn interface_matches_remote_interface1() {
+         let test = start(TestConfig::all()).await.expect("start");
+diff --git a/steamos-manager/src/power.rs b/steamos-manager/src/power.rs
+index 5255428..105dcbb 100644
+--- a/steamos-manager/src/power.rs
++++ b/steamos-manager/src/power.rs
+@@ -26,12 +26,13 @@ use tokio::sync::oneshot;
+ use tokio::task::JoinSet;
+ use tracing::{debug, error, warn};
+ use zbus::names::OwnedBusName;
+-use zbus::zvariant::OwnedObjectPath;
+-use zbus::{Connection, ObjectServer, fdo};
++use zbus::proxy::CacheProperties;
++use zbus::zvariant::{OwnedObjectPath, OwnedValue};
++use zbus::{Connection, ObjectServer, fdo, proxy};
+
+ use crate::error::{to_zbus_error, to_zbus_fdo_error};
+ use crate::gpu::AMDGPU_HWMON_NAME;
+-use crate::hardware::{FanControlState, device_config};
++use crate::hardware::{FanControlState, PerformanceProfileConfig, device_config};
+ use crate::manager::MANAGER_PATH;
+ use crate::manager::root::RootManagerProxy;
+ use crate::manager::user::TdpLimit1;
+@@ -499,7 +500,10 @@ impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
+             .as_ref()
+             .and_then(|config| config.performance_profile.as_ref())
+         {
+-            Ok(get_platform_profile(&config.platform_profile_name).await? == *performance_profile)
++            Ok(
++                get_platform_profile(config.platform_profile_name()?).await?
++                    == *performance_profile,
++            )
+         } else {
+             Ok(true)
+         }
+@@ -602,7 +606,10 @@ impl TdpLimitManager for FirmwareAttributeLimitManager {
+             .as_ref()
+             .and_then(|config| config.performance_profile.as_ref())
+         {
+-            Ok(get_platform_profile(&config.platform_profile_name).await? == *performance_profile)
++            Ok(
++                get_platform_profile(config.platform_profile_name()?).await?
++                    == *performance_profile,
++            )
+         } else {
+             Ok(true)
+         }
+@@ -754,6 +761,82 @@ pub(crate) async fn set_platform_profile(name: &str, profile: &str) -> Result<()
+         .map_err(|message| anyhow!("Error writing to sysfs: {message}"))
+ }
+
++#[proxy(
++    interface = "org.freedesktop.UPower.PowerProfiles",
++    default_service = "org.freedesktop.UPower.PowerProfiles",
++    default_path = "/org/freedesktop/UPower/PowerProfiles"
++)]
++pub(crate) trait DesktopPowerProfiles {
++    #[zbus(property)]
++    fn profiles(&self) -> zbus::Result<Vec<HashMap<String, OwnedValue>>>;
++
++    #[zbus(property)]
++    fn active_profile(&self) -> zbus::Result<String>;
++
++    #[zbus(property)]
++    fn set_active_profile(&self, profile: &str) -> zbus::Result<()>;
++}
++
++fn steam_profile_name(profile: &str) -> String {
++    match profile {
++        "power-saver" => "low-power".into(),
++        other => other.into(),
++    }
++}
++
++impl PerformanceProfileConfig {
++    pub(crate) async fn available_profiles(&self, system: &Connection) -> Result<Vec<String>> {
++        if let Some(name) = &self.platform_profile_name {
++            return get_available_platform_profiles(name).await;
++        }
++        let proxy = DesktopPowerProfilesProxy::builder(system)
++            .cache_properties(CacheProperties::No)
++            .build()
++            .await?;
++        let profiles = match proxy.profiles().await {
++            Ok(profiles) => profiles,
++            Err(zbus::Error::FDO(error))
++                if matches!(
++                    error.as_ref(),
++                    fdo::Error::ServiceUnknown(_) | fdo::Error::NameHasNoOwner(_)
++                ) =>
++            {
++                return Ok(Vec::new());
++            }
++            Err(zbus::Error::MethodError(name, _, _))
++                if matches!(
++                    name.as_str(),
++                    "org.freedesktop.DBus.Error.ServiceUnknown"
++                        | "org.freedesktop.DBus.Error.NameHasNoOwner"
++                ) =>
++            {
++                return Ok(Vec::new());
++            }
++            Err(error) => return Err(error.into()),
++        };
++        profiles
++            .iter()
++            .map(|profile| {
++                let name = profile
++                    .get("Profile")
++                    .ok_or_else(|| anyhow!("Missing profile name"))?;
++                Ok(steam_profile_name(<&str>::try_from(name)?))
++            })
++            .collect()
++    }
++
++    pub(crate) async fn active_profile(&self, system: &Connection) -> Result<String> {
++        if let Some(name) = &self.platform_profile_name {
++            return get_platform_profile(name).await;
++        }
++        let profile = DesktopPowerProfilesProxy::new(system)
++            .await?
++            .active_profile()
++            .await?;
++        Ok(steam_profile_name(&profile))
++    }
++}
++
+ pub(crate) async fn register_tdp_limit1(
+     ctx: &mut Option<UnboundedSender<TdpManagerCommand>>,
+     proxy: TdpLimit1Proxy<'_>,
+@@ -1902,7 +1985,7 @@ pub(crate) mod test {
+         let connection = h.new_dbus().await.expect("new_dbus");
+         let config = DeviceConfig {
+             performance_profile: Some(PerformanceProfileConfig {
+-                platform_profile_name: String::from("platform-profile0"),
++                platform_profile_name: Some(String::from("platform-profile0")),
+                 suggested_default: String::from("custom"),
+             }),
+             tdp_limit: Some(TdpLimitConfig {

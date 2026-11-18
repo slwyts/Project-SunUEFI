@@ -1,40 +1,44 @@
 pkgname=steamos-manager
-pkgver=26.4.1
-pkgrel=2.1
-pkgdesc='SteamOS platform management with optional kernel trace collection'
+pkgver=@VERSION@
+pkgrel=2.2
+pkgdesc='SteamOS platform and desktop management'
 arch=(aarch64)
 url='https://gitlab.steamos.cloud/holo/steamos-manager'
 license=(MIT)
-depends=(dbus libspeechd systemd wireless_tools gsettings-desktop-schemas)
+depends=(dbus libspeechd systemd wireless_tools gsettings-desktop-schemas piano-power-profiles)
 makedepends=(base-devel pkgconf clang)
 options=(!lto !debug)
+_source_directory="steamos-manager-@SOURCE_COMMIT@"
+_patches=(@PATCHES@)
 source=(
   'manager.tar.gz'
-  '0001-optional-kernel-trace-collection.patch'
   'rustc.tar.xz'
   'rust-std.tar.xz'
   'cargo.tar.xz'
+  "${_patches[@]}"
 )
 sha256sums=(@SOURCE_HASHES@)
 
 prepare() {
-  cd "steamos-manager-a0d399defebd60db30ba38325d9cf47dbda49bee"
-  patch --batch --fuzz=0 -p1 <"$srcdir/0001-optional-kernel-trace-collection.patch"
+  cd "$_source_directory"
+  for patch in "${_patches[@]}"; do
+    patch --batch --fuzz=0 -p1 <"$srcdir/$patch"
+  done
   for component in rustc rust-std cargo; do
-    "$srcdir/$component-1.99.1-aarch64-unknown-linux-gnu/install.sh" \
+    "$srcdir/$component-@RUST_VERSION@-aarch64-unknown-linux-gnu/install.sh" \
       --prefix="$srcdir/toolchain" --disable-ldconfig >/dev/null
   done
 }
 
 build() {
-  cd "steamos-manager-a0d399defebd60db30ba38325d9cf47dbda49bee"
+  cd "$_source_directory"
   export PATH="$srcdir/toolchain/bin:$PATH"
   export CARGO_HOME="$srcdir/cargo-home"
   cargo build --release --locked --bins -j6
 }
 
 package() {
-  cd "steamos-manager-a0d399defebd60db30ba38325d9cf47dbda49bee"
+  cd "$_source_directory"
   make -o build DESTDIR="$pkgdir" install
   install -d "$pkgdir/usr/lib/systemd/user/gamescope-session.service.wants" \
     "$pkgdir/usr/lib/systemd/user/graphical-session-pre.target.wants"

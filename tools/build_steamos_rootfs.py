@@ -321,8 +321,9 @@ done
             return overlay_packages.export(package_output, target, overlay_packages.ARCH_REPOSITORIES[target],
                                            overlay_packages.pacman_packages(root, packages), records,
                                            build_inputs=cache_inputs)
-        records['device_configuration'], records['audio_topology_package'], \
-            records['power_profiles_package'] = overlay_packages.install_local_arch_bsp(root)
+        bsp, topology, _ = overlay_packages.install_local_arch_bsp(
+            root, power=records['power_profiles_package'])
+        records.update(device_configuration=bsp, audio_topology_package=topology)
     finish_product(args, root, output, kernel, kernel_source, base_record, records, published)
 
 
@@ -392,6 +393,7 @@ def build_overlays(root, output, source, steamos_config):
     outputs['mesa'] = overlay_packages.pacman_outputs(mesa)
     gamescope = output / 'packages/gamescope'
     manager = output / 'packages/steamos-manager'
+    power = overlay_packages.install_local_arch_power_profiles(root)
     if not build_steamos_manager.is_current(manager):
         if manager.exists():
             shutil.rmtree(manager)
@@ -422,6 +424,7 @@ def build_overlays(root, output, source, steamos_config):
     outputs['libwacom'] = overlay_packages.pacman_outputs(libwacom / 'runtime')
     records = {name: json.loads((directory / 'SOURCE.json').read_text())
                for name, directory in (('ffmpeg', ffmpeg), ('pipewire', pipewire), ('libwacom', libwacom))}
+    records['power_profiles_package'] = power
     return records, outputs
 
 

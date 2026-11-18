@@ -1,9 +1,9 @@
 # 电源模式（节能 / 平衡 / 性能）
 
-Debian GNOME、Debian KDE、Nyarch 和 SteamOS 的 KDE 桌面共用
-`piano-power-profiles`。GNOME 和 KDE 都通过标准 PowerProfiles D-Bus
-接口选档，由 `tuned-ppd` 映射到 TuneD 配置，再由 TuneD 的 `sysfs`
-插件设置 CPU、GPU 上限。
+Debian GNOME、Debian KDE、Nyarch 和 SteamOS 共用 `piano-power-profiles`。
+GNOME 和 KDE 通过标准 PowerProfiles D-Bus 接口选档；SteamOS 的游戏模式
+通过 Manager 接入同一个接口。`tuned-ppd` 将档位映射到 TuneD 配置，再由
+TuneD 的 `sysfs` 插件设置 CPU、GPU 上限。
 
 ## 为什么不用 power-profiles-daemon
 
@@ -109,6 +109,10 @@ balanced    -> tuned=piano-balanced    p0=3532800 p6=4089600 boost=0 gpu=1100000
 
 GPU 下限全程保持 160000000。开机默认由 `piano-ppd.conf` 的
 `default=balanced` 决定。
+
+在同一台平板的 Gamescope 会话安装新版 Manager 后，`steamosctl` 能读取
+三档；从游戏侧切节能和性能、从 PowerProfiles 接口切回平衡，读回的上限
+与上表一致。重启 `tuned-ppd` 后，原游戏会话不需要重启即可继续切档。
 
 档位检查只确认 CPU/GPU 上限生效，不能用来推算待机续航。熄屏但仍在运行、
 以及进入整机挂起的功耗要分别测量，见[桌面电源管理与睡眠](sleep.md)。

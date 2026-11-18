@@ -13,6 +13,15 @@
         "url": "https://gitlab.steamos.cloud/holo/steamos-manager/-/blob/a0d399defebd60db30ba38325d9cf47dbda49bee/steamos-manager/src/daemon/root.rs",
         "drop_when": "The selected SteamOS Manager starts its platform and desktop switching services when tracefs is unavailable, while still enabling Ftrace when the kernel supports it."
       }
+    },
+    {
+      "file": "0002-desktop-power-profiles.patch",
+      "sha256": "a0dc441ddfae24c7c88b03d34874bcc96b0a2b0260fe3543073f8bff4e2b778e",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://gitlab.steamos.cloud/holo/steamos-manager",
+        "drop_when": "SteamOS Manager recognizes the Piano Device Tree compatible and can use the system PowerProfiles service for game mode."
+      }
     }
   ]
 }

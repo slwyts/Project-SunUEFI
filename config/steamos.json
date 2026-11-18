@@ -40,6 +40,20 @@
     "source_config": "config/mesa.json",
     "patch_series": "patches/mesa/27.0/series.json"
   },
+  "manager": {
+    "version": "26.4.1",
+    "commit": "a0d399defebd60db30ba38325d9cf47dbda49bee",
+    "archive_sha256": "e6d909ed5c8074ef7d12a84d6db8be3c759cd4283ab737edfe95ed3ab713d749",
+    "rust": {
+      "version": "1.99.1",
+      "release_date": "2026-10-15",
+      "archives": {
+        "rustc": "acdcdfe09ae1f103aa9a2b7f88903a9588bc2e99288af10e6fbf5514e2e49f25",
+        "rust-std": "e25668477083d6a9ddb87b9beb9c00742225f38233ccb4bfba3afa7a07427f52",
+        "cargo": "5156832e0c1254e9b49a79edabdc6d4c35f32f8fc1cf3ca700f268ff96087ab0"
+      }
+    }
+  },
   "gtk3": {
     "version": "3.24.52",
     "pkgrel": "1.1",

@@ -276,8 +276,12 @@ KDE 会话明确选择 DRM 后端，避免合成器重启时继承旧显示变�
 贴边预览创建内部 Qt 窗口时触发 QRhi 上下文失败，导致合成器退出。
 
 KDE 的节能、平衡和性能三档使用[共用的 TuneD 电源策略](../hardware/power-profiles.md)，
-每档设置实际的 CPU、GPU 频率上限。Valve 的游戏界面通过 SteamOS Manager
-读取平台电源方案，和 KDE 的 PowerProfiles 接口不同。
+每档设置实际的 CPU、GPU 频率上限。SteamOS Manager 通过设备树识别平板，
+把游戏界面的三档也接到同一个 PowerProfiles 服务。游戏界面的
+`low-power` 对应 PowerProfiles 的 `power-saver`；桌面切档会同步到
+游戏侧。CPU 上限和 boost 由档位统一设置，游戏界面不再为这两项提供
+可能覆盖档位的独立入口。普通 pacman 更新安装新版 Manager 时也会安装
+`piano-power-profiles`；电源服务重启后，游戏会话会重新读取可用档位。
 
 2026-10-21 实机记录：清理原设备服务后，Linux 7.3 的内核和系统服务启动
 约 18 秒，不含 UEFI；Steam 登录界面已显示。完整游戏模式、模式切换、

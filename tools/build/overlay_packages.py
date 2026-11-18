@@ -472,22 +472,40 @@ def install_arch_overlays(rootfs, kernel, target, published):
         work = Path(temporary)
         work.chmod(0o755)
         guest(['pacman', '-Sy', '--noconfirm'])
-        common = {archive.name: bsp, topology_archive.name: topology}
+        common = {archive.name: bsp, topology_archive.name: topology, power_archive.name: power}
         if repository == 'sunuefi':
-            packages = {**packages, **common, power_archive.name: power}
-            install_pacman(rootfs, work, repository, packages, guest,
+            install_pacman(rootfs, work, repository, {**packages, **common}, guest,
                            overwrite=matching_power_files(rootfs))
         else:
             remove_steamos_power_profiles_daemon(rootfs, guest)
-            install_pacman(rootfs, work, 'sunuefi', common, guest)
-            install_pacman(rootfs, work, repository, packages, guest)
-            install_pacman(rootfs, work, 'sunuefi', {power_archive.name: power}, guest,
+            # The common profiles pull in the Valve TuneD packages. Verify
+            # those archives before the common package transaction uses them.
+            options = download_pacman(rootfs, work, repository, packages, guest)
+            install_pacman(rootfs, work, 'sunuefi', common, guest,
                            overwrite=matching_power_files(rootfs))
+            guest(['pacman', '-S', *options])
     return {**components, 'device_configuration': bsp, 'audio_topology_package': topology,
             'power_profiles_package': power}
 
 
-def install_local_arch_bsp(rootfs):
+def install_local_arch_power_profiles(rootfs):
+    from build_nyarch_apps import guest_environment
+    from build_release_rootfs import build_resolver, target as guest_path
+
+    tmp = guest_path(rootfs, 'var/tmp')
+    tmp.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='sunuefi-power-profiles-', dir=tmp) as temporary:
+        archive, power = build_bsp(Path(temporary) / 'package', 'pacman', component='power-profiles')
+        with build_resolver(rootfs), guest_environment(rootfs) as guest:
+            if subprocess.run(['chroot', rootfs, 'pacman', '-Qq', 'tuned-ppd'],
+                              capture_output=True).returncode:
+                guest(['pacman', '-S', '--needed', '--noconfirm', 'tuned-ppd'])
+            guest(['pacman', '-U', '--noconfirm', *overwrite_options(matching_power_files(rootfs)),
+                   '/' + archive.relative_to(rootfs).as_posix()])
+    return power
+
+
+def install_local_arch_bsp(rootfs, *, power=None):
     from build_nyarch_apps import guest_environment
     from build_release_rootfs import build_resolver, target as guest_path
 
@@ -497,13 +515,11 @@ def install_local_arch_bsp(rootfs):
         work = Path(temporary)
         archive, bsp = build_bsp(work / 'package', 'pacman')
         topology_archive, topology = build_bsp(work / 'topology', 'pacman', component='audio-topology')
-        power_archive, power = build_bsp(work / 'power', 'pacman', component='power-profiles')
         check_topology_conflicts(rootfs, topology)
         with build_resolver(rootfs), guest_environment(rootfs) as guest:
-            if subprocess.run(['chroot', rootfs, 'pacman', '-Qq', 'tuned-ppd'],
-                              capture_output=True).returncode:
-                guest(['pacman', '-S', '--needed', '--noconfirm', 'tuned-ppd'])
-            guest(['pacman', '-U', '--noconfirm', *overwrite_options(matching_power_files(rootfs)),
+            guest(['pacman', '-U', '--noconfirm',
                    *('/' + path.relative_to(rootfs).as_posix()
-                     for path in (archive, topology_archive, power_archive))])
+                     for path in (archive, topology_archive))])
+    if power is None:
+        power = install_local_arch_power_profiles(rootfs)
     return bsp, topology, power
