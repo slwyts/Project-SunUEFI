@@ -9,7 +9,9 @@
 | UEFI 镜像、Android 引导助手模块 | x86_64 或 ARM64 的 Linux，装有 Docker | 普通容器 |
 | 完整系统镜像（Debian GNOME / KDE、Nyarch GNOME、SteamOS） | ARM64 的 Linux，装有 Docker | `--privileged`，用于 chroot 和挂载 |
 
-GitHub Actions 的 `uefi` 和 `linux` 目标在 x86_64 runner 上构建，四个发行版目标在 ARM64 runner 上构建。
+GitHub Actions 使用 `ubuntu-26.04` 运行主机检查，用 `ubuntu-26.04-arm`
+构建固件、内核和四个发行版镜像。实际编译依赖来自下面的 Debian 构建容器，
+与 GitHub runner 的 Ubuntu 版本分开管理。
 
 ## 取得源码和主机检查
 
@@ -70,7 +72,10 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
 | `nyarch-gnome` | Arch Linux ARM + GNOME（Nyarch） | `build/distros/nyarch-gnome-piano` |
 | `steamos` | Valve ARM64 SteamOS | `build/distros/steamos-piano` |
 
-默认内核是 Linux `7.3`，版本后缀 `-piano-sunuefi-cachy`。硬件适配、Gunyah 和对应版本的 CachyOS BORE 调度补丁按主题维护，固定输入见 [`patches/linux/7.3/series.json`](../../patches/linux/7.3/series.json)，当前选择记录在 `build/release/source-manifest.json`。内核和模块输出到 `artifacts/kernels/release/`。只准备内核源码用 `python3 tools/prepare_release_kernel.py --refresh`。具体改动见[内核与调度配置](linux/kernel.md)。
+[发布配置](../../config/release.json)选择内核版本和[补丁系列](../../patches/linux/README.md)，
+其中包含硬件适配、Gunyah 和 CachyOS BORE 调度补丁。实际使用的提交记录在
+`build/release/source-manifest.json`，内核和模块输出到 `artifacts/kernels/release/`。
+具体改动见[内核与调度配置](linux/kernel.md)。
 
 重建内核时，旧的产物清单先作废，编译完成后才原子发布新的，避免旧 Image 配新模块。
 
@@ -109,7 +114,7 @@ x86 主机用 `./build.sh ffmpeg --sysroot 已完成的sid_ARM64根目录` 构�
 其他桌面包的 `--sysroot`／`--rootfs` 入口使用相同的原生编译工具。
 宿主需安装 Clang、LLVM、AArch64 binutils、patchelf 和 ccache；Ninja 项目安装宿主 Ninja。
 交叉编译使用 GNU 汇编器与链接器，保留 Debian 的符号版本表和调试信息处理。
-产品 CI 使用原生 ARM runner，缓存与源码、补丁匹配的 Debian 运行包，并取消被新提交替代的构建。
+产品 CI 使用原生 ARM64 构建机，缓存与源码、补丁匹配的 Debian 运行包。
 
 Debian 的 Mesa、FFmpeg、sensors 在 sid 根目录的隔离副本中构建，不安装宿主容器的库或混用 trixie-backports。`--sysroot` 不修改输入根目录；包版本、源码归档、补丁和二进制哈希记录在各输出目录。三个产品共用 `config/mesa.json` 固定的官方 Mesa 27 开发源码；Debian 保留 sid 原始完整配方，Nyarch 使用 Arch Linux ARM 的完整配方。官方源码已包含 830v1 和 DirectX-Headers 修正，旧26.2回移植已删除。SteamOS 的 renderonly 高度修正仍单独保留，因为该官方提交只对齐缓冲宽度，不保证非4行对齐模式的尾部空间。
 
@@ -125,8 +130,9 @@ sudo ./build.sh ffmpeg --sysroot build/distros/debian-sid/rootfs
 
 Build products 先准备一次 ARM64 构建容器，再并行构建 UEFI 和 Android 模块、内核包、设备配置和相机包。覆盖包随后按 Debian、Nyarch、SteamOS 分别构建，Debian GNOME 和 KDE 共用一套。发布阶段签名并上传 R2，从公开域名验签和核对索引后，四个系统才从对应的软件源安装这一批包。中间产物不增加用户下载项，各阶段的日志仍合并进 `logs.zip`。
 
-同一分支的产品运行按批排队。pacman 同步索引只列出每个包的最新版本，
-所以本批镜像组装结束前，下一批不会替换公开索引；同批的各发行版仍并行构建。
+同一分支的产品运行按批排队，只保留最新的排队任务。pacman 同步索引只列出每个包的
+最新版本，所以已经开始的任务要等镜像组装结束，下一批才会替换公开索引。
+同批的各发行版仍并行构建。
 镜像组装读取发布任务验签成功后传来的包清单；重跑重新构建了包时，也不会读回旧清单。
 
 完成缓存只在构建、源码和输出校验成功后发布。缓存键包含构建器、绑定源码、补丁、配置、架构、工作区路径及实际容器镜像 ID。内核恢复保留 Image、完整模块集及外部模块构建需要的配置、符号表和头文件；原生内核入口仍核对 SOURCE、编译器、配置、模块 hash 和 vermagic。root job 检查不匹配时停止，不自行重新编译或混用旧产物。UEFI 缓存保留原有构建标记、同核心模块身份与完整文件摘要，不把未完成的构建标为完成。
