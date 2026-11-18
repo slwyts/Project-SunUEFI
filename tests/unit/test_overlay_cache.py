@@ -19,6 +19,26 @@ from build import overlay_cache, overlay_packages
 
 
 class OverlayCacheTests(unittest.TestCase):
+    def test_recipe_keys_ignore_host_checks_and_keep_package_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(['git', '-C', root, 'init', '-q'], check=True)
+            not_inputs = ('tools/check_host.py', 'tools/prepare_nv_runtime_guard.py')
+            builder = 'tools/build/overlay_packages.py'
+            for name in (*not_inputs, builder):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('original\n')
+            subprocess.run(['git', '-C', root, 'add', '.'], check=True)
+            keys = (overlay_cache.recipe_identity, overlay_cache.debian_recipe_identity)
+            original = [key(root) for key in keys]
+            for name in not_inputs:
+                (root / name).write_text('edited\n')
+                self.assertEqual([key(root) for key in keys], original, name)
+            (root / builder).write_text('edited\n')
+            for key, previous in zip(keys, original):
+                self.assertNotEqual(key(root), previous)
+
     @unittest.skipUnless(shutil.which('pacman-conf'), 'pacman-conf required')
     def test_uses_valve_database_path_and_detects_index_changes(self):
         with tempfile.TemporaryDirectory() as directory:

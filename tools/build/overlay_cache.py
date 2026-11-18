@@ -10,7 +10,9 @@ from build import overlay_packages, shared_products
 from build_piano_ram_bootstrap import guest_resolve
 
 RECIPE_PATHS = ('build.sh', 'requirements-build.txt', 'sources.lock.json',
-                'tools', 'config', 'containers', 'patches', 'linux')
+                'tools', 'config', 'containers', 'patches', 'linux',
+                ':(exclude,literal)tools/check_host.py',
+                ':(exclude,literal)tools/prepare_nv_runtime_guard.py')
 
 
 def digest(value):

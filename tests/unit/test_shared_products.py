@@ -67,22 +67,23 @@ class SharedProductsTests(unittest.TestCase):
                 shared.run('firmware', verify_only=True, root=self.root)
             command.assert_not_called()
 
-    def test_firmware_key_ignores_rootfs_assembly_but_binds_firmware_tools(self):
+    def test_firmware_key_ignores_host_checks_and_rootfs_assembly_but_binds_firmware_tools(self):
         self.git('init', '-q')
-        for name in ('tools/package/camera.py', 'tools/build_release_rootfs.py',
-                     'tools/build_nyarch_rootfs.py', 'tools/build_steamos_rootfs.py',
-                     'tools/build_product.sh', 'tools/build_android_product_module.py'):
+        not_inputs = ('tools/check_host.py', 'tools/package/camera.py', 'tools/build_release_rootfs.py',
+                      'tools/build_nyarch_rootfs.py', 'tools/build_steamos_rootfs.py')
+        inputs = ('tools/build_product.sh', 'tools/build_android_product_module.py',
+                  'tools/prepare_nv_runtime_guard.py')
+        for name in (*not_inputs, *inputs):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('original\n')
         self.git('add', '.')
         with patch.object(shared, 'environment_identity', return_value={'container_image': 'sha256:a'}):
             _, original = shared.identity('firmware', self.root)
-            for name in ('tools/package/camera.py', 'tools/build_release_rootfs.py',
-                         'tools/build_nyarch_rootfs.py', 'tools/build_steamos_rootfs.py'):
+            for name in not_inputs:
                 (self.root / name).write_text('edited\n')
                 self.assertEqual(shared.identity('firmware', self.root)[1], original)
-            for name in ('tools/build_product.sh', 'tools/build_android_product_module.py'):
+            for name in inputs:
                 path = self.root / name
                 path.write_text('edited\n')
                 self.assertNotEqual(shared.identity('firmware', self.root)[1], original)
@@ -94,11 +95,15 @@ class SharedProductsTests(unittest.TestCase):
         (self.root / 'tools').mkdir()
         (self.root / 'config/release.json').write_bytes((ROOT / 'config/release.json').read_bytes())
         helpers = ('tools/compose_piano_dtb.py', 'tools/prepare_boot_files.py')
-        for name in helpers:
+        not_inputs = ('tools/check_host.py', 'tools/prepare_nv_runtime_guard.py')
+        for name in (*helpers, *not_inputs):
             (self.root / name).write_text('original\n')
         self.git('add', '.')
         with patch.object(shared, 'environment_identity', return_value={'container_image': 'sha256:a'}):
             _, original = shared.identity('kernel', self.root)
+            for name in not_inputs:
+                (self.root / name).write_text('edited\n')
+                self.assertEqual(shared.identity('kernel', self.root)[1], original)
             for name in helpers:
                 path = self.root / name
                 path.write_text('edited\n')
