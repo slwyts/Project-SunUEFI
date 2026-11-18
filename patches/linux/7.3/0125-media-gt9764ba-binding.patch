@@ -1,4 +1,4 @@
-From 2a243d7452c2f9c50c45c26ce0522bade20caf2a Mon Sep 17 00:00:00 2001
+From 7fc8a7899b776808bdeae309f7e5e92e081ccd1b Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 16 Nov 2026 11:16:46 +0800
 Subject: [PATCH] dt-bindings: media: add Giantec GT9764BA lens actuator

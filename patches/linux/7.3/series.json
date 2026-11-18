@@ -12,7 +12,7 @@
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
   "target_tree": "4ddc50e6f1a715f32fa4fff82ff3e052b4005683",
-  "original_target_commit": "2f3df94adb6f16836b93cdba7edb625be632d573",
+  "original_target_commit": "f43838411eec503caf4929140fdcae4d9a7729f8",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1606,35 +1606,22 @@
     },
     {
       "file": "0123-input-nt36532e-pen.patch",
-      "sha256": "7ba397e9907977c221253461e65abe1a190324f17869a28ec58d4bf504cf8b28",
-      "original_commit": "3f081c9b87314021d491cb4776e6f8ee03f41808",
+      "sha256": "9f0faca040aadbef99894ec95a2123664f900fadd468e62196c8ce83c15ca347",
+      "original_commit": "3e397fbb66bf0b7080ad4c8f630bcb309add7f13",
       "original_parent": "80669657c9ed8641b7ac0ef3d8f805f449e2538c",
       "committer_date": "2026-11-15T01:11:01+08:00",
-      "tree": "709707e76e59ceb062e4f8f060ae8df163e272c6",
-      "upstream": {
-        "status": "downstream",
-        "url": "https://github.com/slwyts/Project-SunUEFI",
-        "drop_when": "Replace with accepted NT36532E pen decoding and cross-HID fusion that loads the correct LCD-ID calibration as firmware, reports coordinates, pressure, tilt and buttons on the physical input device, and preserves sample freshness, coherent release and acknowledged stop retries. Verify real drawing, tilt loss/reacquisition, PM/firmware recovery, palm interaction and both 120/144 Hz; resolve simultaneous-radio identity before removing the safe two-radio refusal, and retain standard BlueZ vendor-GATT initialization until independently replaced."
-      }
-    },
-    {
-      "file": "0124-input-nt36532e-pen-centroid.patch",
-      "sha256": "35245c106950be7148314a1911db4c9ae3870cecfc6ce836fe027c04b6a2ecde",
-      "original_commit": "5997e1c29a4e456e5c94a6c26b732881bfacce81",
-      "original_parent": "3f081c9b87314021d491cb4776e6f8ee03f41808",
-      "committer_date": "2026-11-15T02:21:04+08:00",
       "tree": "22692e070a3825ad985e1c87891a442e408339f0",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
-        "drop_when": "The accepted NT36532E decoder must calculate each axis from one measured scan group, remove each group's own DC baseline, and retain weak distributed signals without splicing unrelated maxima. Verify real contact, weak hover, tilt and edge behavior with synchronized input and pen-tip evidence before replacing this centroid correction."
+        "drop_when": "Replace with accepted NT36532E pen decoding and cross-HID fusion that uses one scan group for each centroid, loads LCD-ID calibration, reports coordinates, pressure, tilt and buttons on the physical input device, and handles stale samples, release and scan stops. Verify writing, weak hover, edges, tilt, palm interaction, dock and resume at 120/144 Hz. Retain BlueZ vendor initialization until independently replaced."
       }
     },
     {
       "file": "0125-media-gt9764ba-binding.patch",
-      "sha256": "bd319546b74efbfcf10b554acfb3217dd70dde59b8f4a3b8476dfe3cc9385bd9",
-      "original_commit": "2a243d7452c2f9c50c45c26ce0522bade20caf2a",
-      "original_parent": "5997e1c29a4e456e5c94a6c26b732881bfacce81",
+      "sha256": "648513bf335d34747a8dea09b39837b2a67f2d41d0bc9e86e4ed4c37b4d0fddc",
+      "original_commit": "7fc8a7899b776808bdeae309f7e5e92e081ccd1b",
+      "original_parent": "3e397fbb66bf0b7080ad4c8f630bcb309add7f13",
       "committer_date": "2026-11-16T11:16:46+08:00",
       "tree": "88f45d76037da1b403f07afb661955da92e14886",
       "upstream": {
@@ -1645,9 +1632,9 @@
     },
     {
       "file": "0126-media-gt9764ba-lens.patch",
-      "sha256": "142f8fcebe3607792cdad9927327cbc4d891ef733c8a67a8ab23ed42bf6ebd13",
-      "original_commit": "6ea05f142758b185e931a162033517c3e2a61481",
-      "original_parent": "2a243d7452c2f9c50c45c26ce0522bade20caf2a",
+      "sha256": "d5c111579c829a75fe23158bf5929cd8dfd106195d402ec4986d06011d31256f",
+      "original_commit": "710c332e2c0170b1082dcc846019454e3f670060",
+      "original_parent": "7fc8a7899b776808bdeae309f7e5e92e081ccd1b",
       "committer_date": "2026-11-16T11:16:46+08:00",
       "tree": "472ad593f3d49275a96a06a943c6216b08a501cf",
       "upstream": {
@@ -1658,9 +1645,9 @@
     },
     {
       "file": "0127-power-charging-state-feedback.patch",
-      "sha256": "3cfc1c9335b6447fed8b42dd1320813d13d0e638341e710053394058eb71b2f3",
-      "original_commit": "2fd6297644b08b64ddb07c78d0bba6f48d6a4b11",
-      "original_parent": "6ea05f142758b185e931a162033517c3e2a61481",
+      "sha256": "4046a133f3e9d11b3abafa355f1d1af660cb98feb8c444fe1adfad3bc2fabe4b",
+      "original_commit": "43cc1820d9f8c357473f2281c0b0f7c3d2a97a9a",
+      "original_parent": "710c332e2c0170b1082dcc846019454e3f670060",
       "committer_date": "2026-11-18T02:42:00+08:00",
       "tree": "fc7295e26da709602fb2e6330998450ac5c6deff",
       "upstream": {
@@ -1671,9 +1658,9 @@
     },
     {
       "file": "0128-power-mca-response-identity.patch",
-      "sha256": "cec5c1bd10050c89a072fb9ca4321d26fb813af3373f655287ee43bec8ef14b4",
-      "original_commit": "0feba8887e8a65b48682208836cba9a7e260c289",
-      "original_parent": "2fd6297644b08b64ddb07c78d0bba6f48d6a4b11",
+      "sha256": "dfc508d2db0436bfcd85cafdabfb806e3b58e5cf871629c1de899361f8ef8989",
+      "original_commit": "3551ac592f1cea768e90255804f58df09552ec32",
+      "original_parent": "43cc1820d9f8c357473f2281c0b0f7c3d2a97a9a",
       "committer_date": "2026-11-18T03:10:00+08:00",
       "tree": "274f0483990b471390cebcd83fb85e6d271bd362",
       "upstream": {
@@ -1684,9 +1671,9 @@
     },
     {
       "file": "0130-power-mca-warm-pmic-compensation.patch",
-      "sha256": "8cfb22f18a1376a59a7c524f8304815c50e6a6a2c40239944e243b0440beef04",
-      "original_commit": "7ea552ec9fdfe4853e93bde090faf5271839f802",
-      "original_parent": "0feba8887e8a65b48682208836cba9a7e260c289",
+      "sha256": "1deff5ec99848f670826210990192b0895ef55b3adafc1fcdbec4b7c4cad253d",
+      "original_commit": "e60a9f85b570cd7f3477833b69d2d339a8852279",
+      "original_parent": "3551ac592f1cea768e90255804f58df09552ec32",
       "committer_date": "2026-11-18T04:18:12+08:00",
       "tree": "18d7436eba6876cad0ba388b7d98b6345dc00696",
       "upstream": {
@@ -1697,9 +1684,9 @@
     },
     {
       "file": "0131-power-bq27z561-average-power.patch",
-      "sha256": "541835b4a93c19bdb26b8118c960876b34ffe3ebac3b7ff9e317b42ab0a6fcbf",
-      "original_commit": "eb870c3c7e8d588785255e14b9afbe1d7a95caf1",
-      "original_parent": "7ea552ec9fdfe4853e93bde090faf5271839f802",
+      "sha256": "cd39bdcde236a012eb7145c4547affda67b0408da2c85e9094d01c9b107bd8b4",
+      "original_commit": "a50c21d2044aa0326d9f7d428a10e8f630ef853e",
+      "original_parent": "e60a9f85b570cd7f3477833b69d2d339a8852279",
       "committer_date": "2026-11-18T04:18:12+08:00",
       "tree": "c1caefefb4dec79efcac2fdf9e48550b8cda9876",
       "upstream": {
@@ -1710,9 +1697,9 @@
     },
     {
       "file": "0132-power-mca-connector-overtemperature.patch",
-      "sha256": "fbae8005547430c789a81bfcca15239e578657b6fe6824ec3ec8e4f507c44b72",
-      "original_commit": "2f3df94adb6f16836b93cdba7edb625be632d573",
-      "original_parent": "eb870c3c7e8d588785255e14b9afbe1d7a95caf1",
+      "sha256": "2fe63f05198d124d4be35a2e36432e981ce033a206371780b63f764a598806e9",
+      "original_commit": "f43838411eec503caf4929140fdcae4d9a7729f8",
+      "original_parent": "a50c21d2044aa0326d9f7d428a10e8f630ef853e",
       "committer_date": "2026-11-18T05:03:00+08:00",
       "tree": "4ddc50e6f1a715f32fa4fff82ff3e052b4005683",
       "upstream": {

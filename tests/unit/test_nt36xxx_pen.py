@@ -7,10 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-PATCHES = (
-    ROOT / 'patches/linux/7.3/0123-input-nt36532e-pen.patch',
-    ROOT / 'patches/linux/7.3/0124-input-nt36532e-pen-centroid.patch',
-)
+PATCH = ROOT / 'patches/linux/7.3/0123-input-nt36532e-pen.patch'
 SOURCE = Path('drivers/input/touchscreen/nt36532e')
 CALIBRATION = ROOT / 'linux/bsp/common/usr/share/piano/pen/calibration'
 
@@ -216,11 +213,10 @@ class Nt36xxxPenTests(unittest.TestCase):
                 path = work / 'include/linux' / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text)
-            for patch in PATCHES:
-                subprocess.run(['git', 'apply', '-p1',
-                                '--include=' + str(SOURCE / 'nt36xxx-pen.c'),
-                                '--include=' + str(SOURCE / 'nt36xxx-pen.h'),
-                                str(patch)], cwd=work, check=True, capture_output=True)
+            subprocess.run(['git', 'apply', '-p1',
+                            '--include=' + str(SOURCE / 'nt36xxx-pen.c'),
+                            '--include=' + str(SOURCE / 'nt36xxx-pen.h'),
+                            str(PATCH)], cwd=work, check=True, capture_output=True)
             harness = work / 'test.c'
             harness.write_text(HARNESS)
             executable = work / 'test'

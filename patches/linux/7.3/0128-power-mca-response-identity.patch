@@ -1,4 +1,4 @@
-From 0feba8887e8a65b48682208836cba9a7e260c289 Mon Sep 17 00:00:00 2001
+From 3551ac592f1cea768e90255804f58df09552ec32 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 03:10:00 +0800
 Subject: [PATCH] fix(power): reject mismatched MCA property replies
