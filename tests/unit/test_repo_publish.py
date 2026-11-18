@@ -70,13 +70,13 @@ class RepoPublishTests(unittest.TestCase):
         return SimpleNamespace(repo=name, packages=packages, key=self.key,
                                output=self.root / generation)
 
-    def debian(self, version):
+    def debian(self, version, name='fixture'):
         tree = self.root / ('package-' + version)
         control = tree / 'DEBIAN/control'
         control.parent.mkdir(parents=True)
-        control.write_text(f'Package: fixture\nVersion: {version}\nArchitecture: all\n'
+        control.write_text(f'Package: {name}\nVersion: {version}\nArchitecture: all\n'
                            'Maintainer: Fixture <test@example.invalid>\nDescription: Fixture\n')
-        package = self.root / ('fixture_' + version + '_all.deb')
+        package = self.root / (name + '_' + version + '_all.deb')
         subprocess.run(['dpkg-deb', '--build', '--root-owner-group', tree, package],
                        check=True, capture_output=True)
         return package
@@ -147,6 +147,35 @@ class RepoPublishTests(unittest.TestCase):
         self.assertIn('%NAME%\nfixture\n', entry)
         self.assertIn('%VERSION%\n2-1\n', entry)
         self.assertIn(f'%SHA256SUM%\n{digest}\n', entry)
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in
+                             ('dpkg-deb', 'dpkg-scanpackages', 'apt-ftparchive', 'repo-add', 'bsdtar')),
+                         'native repository tools required')
+    def test_product_rejects_different_kernel_abis_with_the_same_epoch(self):
+        formats = {
+            'apt': lambda version: self.debian(version + '-1', 'linux-image-piano'),
+            'sunuefi': lambda version: self.pacman(version, 'linux-piano'),
+        }
+        versions = {
+            'first': '7.3.3+1794995840.1794995840.aaaaaaaaaaaa',
+            'metadata': '7.3.3+1794995840.1794996428.aaaaaaaaaaaa',
+            'changed-abi': '7.3.3+1794995840.1794996428.bbbbbbbbbbbb',
+            'new-abi': '7.3.3+1794997000.1794997000.bbbbbbbbbbbb',
+        }
+        with patch.object(products, 'verify_public'):
+            for repository, package in formats.items():
+                with self.subTest(repository=repository):
+                    for stage, version in versions.items():
+                        archive = package(version)
+                        batches = {repository: {archive: repo.sha(archive)}}
+                        output = self.root / f'{repository}-{stage}'
+                        if stage == 'changed-abi':
+                            before = list(self.store.writes)
+                            with self.assertRaisesRegex(ValueError, 'uses ABI epoch 1794995840'):
+                                products.publish_products(batches, self.key, output, self.store)
+                            self.assertEqual(self.store.writes, before)
+                        else:
+                            products.publish_products(batches, self.key, output, self.store)
 
     @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
     def test_pacman_selection_requires_the_sealed_filename_and_digest(self):

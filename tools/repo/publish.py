@@ -15,6 +15,9 @@ from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORIES = ('apt', 'sunuefi', 'sunuefi-steamos')
+KERNEL_META_VERSION = re.compile(
+    r'([0-9]+\.[0-9]+\.[0-9]+(?:~?rc[0-9]+)?)'
+    r'\+([0-9]+)\.[0-9]+\.([0-9a-f]{12}(?:\.[0-9a-f]{12})?)-1')
 
 
 def sha(path):
@@ -46,6 +49,19 @@ def field(stanza, name):
     if not match:
         raise ValueError('Missing package metadata: ' + name)
     return match[1]
+
+
+def check_kernel_epoch(name, version, previous):
+    """Do not let an ABI digest set the upgrade order within one generation."""
+    built = KERNEL_META_VERSION.fullmatch(version)
+    if not built:
+        return
+    for indexed_version in previous:
+        indexed = KERNEL_META_VERSION.fullmatch(indexed_version)
+        if indexed and indexed.group(1, 2) == built.group(1, 2) and indexed[3] != built[3]:
+            raise ValueError(f'{name} uses ABI epoch {built[2]} for both {indexed_version} '
+                             f'and {version}. Advance the kernel abi_epoch and package_epoch '
+                             'in config/release.json before publishing a different ABI.')
 
 
 class Store:
@@ -142,8 +158,15 @@ def apt_index(work, packages, key, store=None, *, digests=None):
         copy_package(package, pool / package.name, digests)
     data = run('dpkg-scanpackages', '--multiversion', 'pool', '/dev/null', cwd=work,
                capture_output=True, text=True).stdout
+    new = stanzas(data)
+    if digests is not None:
+        name = 'linux-image-piano'
+        previous = [field(row, 'Version') for row in old if field(row, 'Package') == name]
+        for row in new:
+            if field(row, 'Package') == name:
+                check_kernel_epoch(name, field(row, 'Version'), previous)
     entries = {}
-    for row in old + stanzas(data):
+    for row in old + new:
         identity = tuple(field(row, name) for name in ('Package', 'Version', 'Architecture'))
         if identity in entries and field(entries[identity], 'SHA256') != field(row, 'SHA256'):
             raise ValueError('Package version was rebuilt with different bytes: ' + str(identity))
@@ -180,8 +203,7 @@ def apt_index(work, packages, key, store=None, *, digests=None):
     return prefix, immutable, mutable
 
 
-def check_pacman_selection(database, expected):
-    """Check the archives pacman will select from the generated database."""
+def pacman_entries(database):
     # The builder's Python tarfile cannot read this zstd archive directly.
     data = run('bsdtar', '-cf', '-', '@' + str(database), capture_output=True).stdout
     selected = {}
@@ -202,6 +224,12 @@ def check_pacman_selection(database, expected):
             if name in selected:
                 raise ValueError(f'{database.name}: multiple entries for {name}')
             selected[name] = (version, filename, digest)
+    return selected
+
+
+def check_pacman_selection(database, expected):
+    """Check the archives pacman will select from the generated database."""
+    selected = pacman_entries(database)
     for name, (version, filename, digest) in expected.items():
         if name not in selected:
             raise ValueError(f'{database.name}: {name} {version} is missing from the index')
@@ -256,6 +284,10 @@ def pacman_index(work, packages, name, key, store=None, *, digests=None):
             sign(target, key)
         verify(target, signature, keyring)
         immutable.extend((target, signature))
+    if digests is not None and db.is_file() and 'linux-piano' in expected:
+        indexed = pacman_entries(db).get('linux-piano')
+        if indexed:
+            check_kernel_epoch('linux-piano', expected['linux-piano'][0], [indexed[0]])
     run('repo-add', '--prevent-downgrade', '--include-sigs', '--sign', '--key', key, db,
         *[work / package.name for package in packages])
     if store:
