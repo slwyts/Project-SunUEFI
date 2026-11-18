@@ -313,6 +313,14 @@ Arch 由 pacman 事务调用 `kernel-install`，复用官方 `50-mkinitcpio.inst
 SteamOS 的 Frame 存储分组、恢复、ADB 和固件钩子不适用这台平板；
 Piano 的 mkinitcpio 配置只跳过这些钩子，保留系统及用户配置的其他钩子。
 
+安装 Piano 内核时，`piano-boot-config` 在 initramfs／UKI 已生成、systemd 写入前
+检查启动分区能否容纳新文件。空间不足会提示先保留可用的旧启动项再腾出空间，
+不会覆盖或自动删除旧文件。这个检查避免已知的空间不足导致覆盖中断；
+它不是断电或其他进程同时写入时的事务保护。
+Debian 上第一次升级到带此检查的版本，先单独执行
+`sudo apt install --only-upgrade piano-boot-config`，再升级内核。
+内核元包依赖它，但不会约束两个依赖包之间的安装顺序。
+
 默认 `/etc/kernel/install.conf` 为 `layout=bls`；需要 UKI 时改为 `layout=uki`。
 Arch 系运行 `sudo kernel-install add-all`；Debian 的内核文件在 `/boot`，
 运行 `sudo kernel-install add "$(uname -r)" "/boot/vmlinuz-$(uname -r)"`，

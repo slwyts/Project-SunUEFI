@@ -134,6 +134,10 @@ class KernelPackageTests(unittest.TestCase):
             self.assertEqual(config.read_text(), 'layout=uki\ninitrd_generator=mkinitcpio\n')
             self.assertTrue((root / 'etc/pacman.d/hooks/90-mkinitcpio-install.hook').is_symlink())
             self.assertIn('[sunuefi]\n', (root / 'etc/pacman.d/sunuefi.conf').read_text())
+            boot_space = root / 'usr/lib/kernel/install.d' / boot.BOOT_SPACE_HOOK.name
+            self.assertEqual(boot_space.read_bytes(), boot.BOOT_SPACE_HOOK.read_bytes())
+            self.assertEqual(boot_space.stat().st_mode & 0o777, 0o755)
+            subprocess.run(['sh', '-n', boot_space], check=True)
             initramfs_config = root / 'etc/mkinitcpio.conf.d/zz-piano.conf'
             hooks = subprocess.check_output(['bash', '-ec',
                 'HOOKS=(base systemd keyboard blockdev_ro partsets initrd_shell factory_reset '
@@ -168,6 +172,10 @@ class KernelPackageTests(unittest.TestCase):
             self.assertEqual('layout=bls\n', config.read_text())
             hook = next(output.glob('piano-boot-config_*/usr/share/initramfs-tools/hooks/piano'))
             self.assertIn('arm_smmu', hook.read_text())
+            boot_space = next(output.glob(
+                f'piano-boot-config_*/usr/lib/kernel/install.d/{boot.BOOT_SPACE_HOOK.name}'))
+            self.assertEqual(boot_space.read_bytes(), boot.BOOT_SPACE_HOOK.read_bytes())
+            self.assertEqual(boot_space.stat().st_mode & 0o777, 0o755)
             boot_package = next(path for path in packages if path.name.startswith('piano-boot-config_'))
             self.assertIn('systemd (>= 258)', subprocess.check_output(
                 ['dpkg-deb', '-f', boot_package, 'Depends'], text=True))

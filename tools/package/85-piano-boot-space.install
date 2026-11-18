@@ -1,0 +1,86 @@
+#!/bin/sh
+set -eu
+
+case "${1-}:${2-}:${KERNEL_INSTALL_LAYOUT:-}" in
+    add:*-piano-*:bls|add:*-piano-*:uki) ;;
+    *) exit 0 ;;
+esac
+
+version=$2
+kernel=$4
+boot=${KERNEL_INSTALL_BOOT_ROOT:?}
+staging=${KERNEL_INSTALL_STAGING_AREA:?}
+shift 4
+
+space=$(stat -f -c '%a %S' -- "$boot")
+free_blocks=${space% *}
+block_size=${space#* }
+# Reserve space for the entry file and directory records as well as the data.
+required_blocks=16
+
+account_file()
+{
+    [ -f "$1" ] || return 0
+    size=$(stat -L -c '%s' -- "$1")
+    required_blocks=$((required_blocks + size / block_size + (size % block_size != 0)))
+}
+
+account_devicetree()
+{
+    # Follow the same DTB search order as systemd's 90-loaderentry.install.
+    if [ -n "${KERNEL_INSTALL_CONF_ROOT:-}" ]; then
+        config="$KERNEL_INSTALL_CONF_ROOT/devicetree"
+    elif [ -f /etc/kernel/devicetree ]; then
+        config=/etc/kernel/devicetree
+    else
+        config=/usr/lib/kernel/devicetree
+    fi
+    [ -f "$config" ] || return 0
+    dtb=
+    read -r dtb < "$config" || :
+    [ -n "$dtb" ] || return 0
+    for directory in \
+        "${KERNEL_INSTALL_CONF_ROOT:-}" \
+        "/usr/lib/firmware/$version/device-tree" \
+        "/usr/lib/linux-image-$version" \
+        "/usr/lib/modules/$version/dtb"
+    do
+        [ -n "$directory" ] && [ -f "$directory/$dtb" ] || continue
+        account_file "$directory/$dtb"
+        break
+    done
+}
+
+case "$KERNEL_INSTALL_LAYOUT" in
+    bls)
+        account_file "$kernel"
+        account_devicetree
+        # Debian can stage a link to the already generated initramfs.
+        for initrd in "$staging"/microcode* "$@" "$staging"/initrd*; do
+            account_file "$initrd"
+        done
+        ;;
+    uki)
+        if [ -f "$staging/uki.efi" ]; then
+            account_file "$staging/uki.efi"
+        elif [ -n "$kernel" ]; then
+            account_file "$kernel"
+            for extra in "$kernel.extra.d"/*; do
+                account_file "$extra"
+            done
+        else
+            exit 0
+        fi
+        for extra in "$staging/uki.efi.extra.d"/*; do
+            account_file "$extra"
+        done
+        ;;
+esac
+
+# Do not rely on deleting the previous entry or its files to make room.
+if [ "$free_blocks" -lt "$required_blocks" ]; then
+    printf 'Not enough free space on the boot partition (%s) to install %s: need %s bytes, have %s.\n' \
+        "$boot" "$version" "$((required_blocks * block_size))" "$((free_blocks * block_size))" >&2
+    printf 'Free space while keeping a working boot entry, then retry the kernel update.\n' >&2
+    exit 1
+fi

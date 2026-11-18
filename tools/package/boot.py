@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
+BOOT_SPACE_HOOK = Path(__file__).with_name('85-piano-boot-space.install')
 PACMAN_REPOSITORIES = ('sunuefi', 'sunuefi-steamos')
 PUBLIC_REPOSITORY_URL = 'https://sunuefi-repo.okassets.uk'
 
@@ -66,6 +67,7 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
         'usr/lib/kernel/devicetree': 'piano/board.dtb\n',
         'usr/lib/kernel/cmdline': ' '.join(dict.fromkeys(
             ['root=LABEL=PIANOROOT', 'rw', *arguments])) + '\n',
+        f'usr/lib/kernel/install.d/{BOOT_SPACE_HOOK.name}': BOOT_SPACE_HOOK.read_text(),
         'usr/lib/kernel/install.d/89-piano-loaderentry-remove.install': (
             '#!/bin/sh\nset -eu\n'
             'case "$1:$2" in remove:*-piano-*) ;; *) exit 0 ;; esac\n'

@@ -1,4 +1,4 @@
-"""Exercise BLS entry updates with systemd and a disposable boot directory."""
+"""Exercise native boot entry updates with systemd and a disposable boot directory."""
 import os
 from pathlib import Path
 import shutil
@@ -8,6 +8,8 @@ import unittest
 
 
 BLS_PLUGIN = Path('/usr/lib/kernel/install.d/90-loaderentry.install')
+UKI_PLUGIN = BLS_PLUGIN.with_name('90-uki-copy.install')
+BOOT_SPACE_PLUGIN = Path(__file__).resolve().parents[2] / 'tools/package/85-piano-boot-space.install'
 
 
 class KernelInstallTests(unittest.TestCase):
@@ -52,6 +54,66 @@ class KernelInstallTests(unittest.TestCase):
             subprocess.run([*command, 'remove', '2.0'], env=env, check=True)
             self.assertTrue(first.is_file())
             self.assertFalse(second.exists())
+
+    @unittest.skipUnless(shutil.which('kernel-install') and BLS_PLUGIN.is_file() and UKI_PLUGIN.is_file(),
+                         'systemd kernel-install and BLS/UKI plugins required')
+    def test_piano_reinstall_preserves_boot_files_when_space_is_insufficient(self):
+        for layout, native in (('bls', BLS_PLUGIN), ('uki', UKI_PLUGIN)):
+            with self.subTest(layout=layout), tempfile.TemporaryDirectory(
+                    prefix='kernel-install-space-') as folder:
+                work = Path(folder)
+                esp = work / 'custom boot partition'
+                config = work / 'config'
+                old = work / 'previous'
+                new = work / 'replacement'
+                for path in (esp, config, old, new):
+                    path.mkdir()
+                (config / 'install.conf').write_text(f'layout={layout}\ninitrd_generator=none\n')
+                (config / 'tries').write_text('3\n')
+                (config / 'cmdline').write_text('root=LABEL=PIANOROOT rw\n')
+                (config / 'devicetree').write_text('board.dtb\n')
+                (config / 'board.dtb').write_bytes(b'previous DTB')
+                images = ('linux', 'initrd') if layout == 'bls' else ('kernel.efi',)
+                for name in images:
+                    (old / name).write_bytes(b'previous ' + name.encode())
+                    (new / name).write_bytes(b'replacement ' + name.encode())
+                env = dict(os.environ, KERNEL_INSTALL_CONF_ROOT=str(config),
+                           KERNEL_INSTALL_PLUGINS=f'{BOOT_SPACE_PLUGIN} {native}',
+                           BOOT_ROOT=str(esp), BOOT_MNT=str(esp), SYSTEMD_LOG_LEVEL='warning')
+                release = '7.4.0-rc1-piano-fixture'
+                token = 'tablet-test'
+                command = ['kernel-install', f'--entry-token=literal:{token}', 'add', release]
+                subprocess.run([*command, *(old / name for name in images)], env=env, check=True)
+                old_files = {path: path.read_bytes() for path in esp.rglob('*') if path.is_file()}
+                self.assertEqual(len(old_files), 4 if layout == 'bls' else 1)
+
+                space = os.statvfs(esp)
+                oversized = new / images[-1]
+                with oversized.open('wb') as stream:
+                    stream.truncate((space.f_blocks + 1) * space.f_frsize)
+                (config / 'board.dtb').write_bytes(b'replacement DTB')
+                # If the guard regresses, also limit what a test subprocess can
+                # write; a sparse input must never fill the CI host's disk.
+                limited = ['sh', '-ec', 'ulimit -f 2048; exec "$@"', 'limit-boot-copy']
+                result = subprocess.run([*limited, *command, *(new / name for name in images)],
+                                        env=env, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f'Not enough free space on the boot partition ({esp})', result.stderr)
+                self.assertIn('keeping a working boot entry', result.stderr)
+                self.assertEqual(old_files,
+                                 {path: path.read_bytes() for path in esp.rglob('*') if path.is_file()})
+
+                oversized.write_bytes(b'replacement ' + oversized.name.encode())
+                subprocess.run([*command, *(new / name for name in images)], env=env, check=True)
+                if layout == 'bls':
+                    self.assertTrue((esp / 'loader/entries' / f'{token}-{release}+3.conf').is_file())
+                    payload = esp / token / release
+                    for name in images:
+                        self.assertEqual((payload / name).read_bytes(), (new / name).read_bytes())
+                    self.assertEqual((payload / 'board.dtb').read_bytes(), b'replacement DTB')
+                else:
+                    self.assertEqual((esp / 'EFI/Linux' / f'{token}-{release}+3.efi').read_bytes(),
+                                     oversized.read_bytes())
 
 
 if __name__ == '__main__':
