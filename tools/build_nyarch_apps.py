@@ -56,7 +56,8 @@ def prepare_sources(output):
         folder = output / app
         folder.mkdir()
         url = 'https://github.com/NyarchLinux/' + app + '.git'
-        run(['git', 'clone', '--depth', '1', url, folder / 'source'])
+        # Upstream pkgver() uses tags and commit counts from this checkout.
+        run(['git', 'clone', url, folder / 'source'])
         commit = subprocess.check_output(['git', '-C', folder / 'source',
                                           'rev-parse', 'HEAD'], text=True).strip()
         address = ('https://raw.githubusercontent.com/NyarchLinux/nyarch-repo/' +
@@ -129,6 +130,20 @@ def guest_environment(root):
                 raise
 
 
+def make_application(guest, folder, recipe):
+    command = ['runuser', '-u', 'sunuefi-build', '--', 'env', 'CARCH=aarch64',
+               'bash', '-euc', 'cd "$1"; shift; exec makepkg --noconfirm --nocheck --nodeps "$@"',
+               'makepkg', folder]
+    if overlay_release.generation() is not None:
+        # makepkg resets pkgrel when pkgver() discovers a different version.
+        # Let it prepare the pinned commit before adding the publish revision.
+        guest([*command, '--nobuild'])
+        recipe.write_text(overlay_release.pacman_recipe(recipe.read_text()))
+        guest([*command, '--noextract'])
+    else:
+        guest(command)
+
+
 def build(root, sources, output, resume=False, *, refresh=True):
     root = root.resolve()
     if os.geteuid() or not root.is_relative_to(ROOT / 'build/distros'):
@@ -159,7 +174,7 @@ def build(root, sources, output, resume=False, *, refresh=True):
         pkg = (sources / row['name'] / 'PKGBUILD').read_text().replace(
             'git+${url}.git#commit=', row['name'] + '::git+file:///var/tmp/sunuefi-nyarch-build/' +
             row['name'] + '/source#commit=')
-        (folder / 'PKGBUILD').write_text(overlay_release.pacman_recipe(pkg))
+        (folder / 'PKGBUILD').write_text(pkg)
     with guest_environment(root) as guest:
         if refresh:
             guest(['pacman', '-Syu', '--needed', '--noconfirm', *PACKAGES])
@@ -173,8 +188,7 @@ def build(root, sources, output, resume=False, *, refresh=True):
             built = [p for p in (work / row['name']).glob('*.pkg.tar.*')
                      if p.suffix in ('.zst', '.xz', '.gz')]
             if not built:
-                guest(['runuser', '-u', 'sunuefi-build', '--', 'env', 'CARCH=aarch64',
-                       'bash', '-c', 'cd "$1"; makepkg --noconfirm --nocheck --nodeps', 'makepkg', folder])
+                make_application(guest, folder, work / row['name'] / 'PKGBUILD')
                 built = [p for p in (work / row['name']).glob('*.pkg.tar.*')
                          if p.suffix in ('.zst', '.xz', '.gz')]
             if len(built) != 1:
