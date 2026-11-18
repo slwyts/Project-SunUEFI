@@ -46,13 +46,12 @@
 发布构建器核对匹配内核的笔源码、配置、notifier 导出符号及目标根目录中
 两份校准，选择只执行 BlueZ 初始化的 `piano-pen-control`，安装为现有
 `/usr/lib/piano/touch-input`。该进程不写 procfs、不读 hidraw/THP、不创建
-uinput，笔尚未 BLE 连接时也不会退出而连带结束初始化。新内核缺少接线或
-校准时构建报错；运行时校准被删除则记录缺失并保留 BlueZ，不回退出第二个
-工具。udev 在 SPI 驱动绑定后启动原有服务，不等待 THP 的私有节点。
-旧内核构建仍选择原 launcher，供回退与对照；四个产品目标使用相同规则。
+uinput，笔尚未 BLE 连接时也会继续等待。缺少内核笔驱动或校准时构建报错；
+安装后校准文件缺失时，服务记录错误并继续处理 BlueZ 连接。udev 在 SPI
+驱动绑定后启动服务，不等待 THP 的私有节点。四个产品目标使用同一条输入路径。
 编译环境由 `--sysroot` 指定，固件检查默认使用它，也可用 `--firmware-root`
-单独指定目标根目录。SteamOS、Nyarch 在构建运行时前从同一 BSP 清单安装
-校准和链接，并传入自己的 rootfs，不要求 Debian 编译容器安装平板固件。
+单独指定目标根目录。SteamOS、Nyarch 从 `piano-device-config` 安装校准和链接，
+并将各自的 rootfs 传给构建器，不要求 Debian 编译容器安装平板固件。
 最终 staging 仍检查安装目的地，不能用编译环境中的文件代替目标固件。
 
 内核 `input_handler` 只连接 `hid-xiaomi` 的真实 BLE 压力设备，内部 notifier
@@ -70,8 +69,8 @@ uinput，笔尚未 BLE 连接时也不会退出而连带结束初始化。新内
 后恢复已请求型号；面板及系统休眠停止扫描，固件恢复后按当前状态重放。
 停止扫描失败时保留停止请求并每秒重试，确认停止前不配置新的笔型号。
 磁吸 handler 初始化失败时清理该 handler 并排空工作项，保留手指与旧用户态
-笔路径，不使整个触屏探测失败。发布的内核笔 launcher 不自动启用旧路径；
-procfs 和离线解码源码仅留给旧内核与对照，待实机替代验证后再删除。
+笔诊断接口，不使整个触屏探测失败。发布镜像只使用内核笔输入；原始数据接口
+和用户态解码保留用于显式诊断和对照。
 
 | 能力 | 旧用户态路径 | 当前内核路径 | 替代前还需确认 |
 | --- | --- | --- | --- |
@@ -378,10 +377,12 @@ Linux之前显示144Hz、hand180、pen240。两边笔扫描率相同；这一次
 | --- | --- | --- |
 | 上滑 | 笔键盘节点的 `KEY_PAGEUP` | 内核 `hid-xiaomi` |
 | 下滑 | 笔键盘节点的 `KEY_PAGEDOWN` | 内核 `hid-xiaomi` |
-| 双击 | tablet-tool 节点的 `BTN_STYLUS2` 按下、抬起，仅在笔处于感应范围时 | `piano-pen-owner.c` |
-| 轻捏 | 短按是笔尖位置的一次点击，按住 600 ms 以上是 `BTN_STYLUS`，仅在感应范围时 | `piano-pen-owner.c` |
+| 双击 | tablet-tool 节点的 `BTN_STYLUS2` 按下、抬起，仅在笔处于感应范围时 | 内核 `hid-xiaomi` 与 `nt36532e` |
+| 轻捏 | 短按是笔尖位置的一次点击，按住 600 ms 以上是 `BTN_STYLUS`，仅在感应范围时 | 内核 `hid-xiaomi` 与 `nt36532e` |
 
-内核补丁 [`0029-hid-xiaomi-p81c-body-gestures.patch`](../../../patches/linux/7.3/0029-hid-xiaomi-p81c-body-gestures.patch) 在 `xiaomi_input_mapping` 中按 Report ID、字段长度和逻辑范围识别 Report2，把 `0x61`、`0x5B` 映射为 `KEY_PAGEUP`、`KEY_PAGEDOWN`，忽略 `0x6E`、`0x58` 和笔从不发送的其余用法。滑动因此不依赖本项目的用户空间程序，换用其他发行版时仍是 Page Up／Page Down；双击不再变成回车，滑动也不随 Num Lock 输出数字。原始 Report2 仍经 hidraw 交给触控进程中的笔输入。
+内核按 Report ID、字段长度和逻辑范围识别 Report2。滑动直接成为翻页键，
+不会随 Num Lock 输出数字；轻捏和双击交给内核笔解码器，与当前位置融合，
+不会同时变成键盘按键。原始 Report2 仍可通过 hidraw 采集。
 
 双击是笔的第二个按钮。tablet-tool 节点上的按钮必须有笔的位置，笔离开感应范围时双击不产生输入。按 Linux 笔输入的惯例，不支持笔的应用通常把 `BTN_STYLUS` 当作中键、`BTN_STYLUS2` 当作右键；Krita、Xournal++ 等绘图应用可以把它绑定到橡皮擦或其他工具。一个新手势替换仍按住的轻捏时，按 HID 数组语义结束轻捏，但不把被打断的轻捏当作一次点击。
 

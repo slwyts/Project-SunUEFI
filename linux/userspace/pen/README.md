@@ -1,11 +1,10 @@
 # Piano 手写笔核心
 
-这里保存旧内核使用的笔解码核心、离线对照工具，以及新内核仍需要的 BlueZ 初始化。当前产品的笔和手指由内核直接上报；共用 THP 读取进程的说明仅适用于下文的旧路径。
+这里包含笔的 BlueZ 初始化、离线解码工具和手动诊断代码。产品的笔和手指由内核直接上报。
 
-匹配新内核的发布构建使用独立整数解码和 BLE 样本融合，校准经 BSP 安装到
-标准固件目录；现有服务只执行 `piano-pen-control` 的 BlueZ FE11/FE12 初始化，
-不再运行这里的 hidraw 解码与 uinput。旧路径留给旧内核构建和对照，不在新
-内核失败时自动回退。输入链、校准、两笔限制和许可依据见
+校准经设备配置包安装到标准固件目录。`piano-pen-control` 只执行 BlueZ
+FE11/FE12 初始化；发布构建必须有匹配的内核笔驱动和校准。输入链、校准、
+两笔限制和许可依据见
 [内核输入与许可边界](../../../docs/devel/hardware/pen-protocol.md#内核输入与许可边界)。
 
 Focus Pen Pro 已在新整数内核解码器上完成 120 Hz 压感绘画，物理 evdev 的压力范围为 0..16383，双轴倾角有变化。弱悬停、倾角精度、完整四边和掌压仍需实机对照。普通笔与刷新率的范围见[内核输入说明](../../../docs/devel/hardware/pen-protocol.md#内核输入与许可边界)。轻捏、双击笔身和笔身滑动见[笔身手势](#笔身手势)。
@@ -54,9 +53,11 @@ build/pen-core/piano-pen-offline --ini ACTUAL.ini --pressure-max-age-ns N --even
 
 事件文件每行使用同一 BOOTTIME 时基：`时间戳 report5|report2|raw29 捕获文件`，或者 `时间戳 reset -`。`report2` 是两字节的笔身手势报告，输出其中的值和手势名称。未知字段输出 `null`。工具已经读取 BOE／CSOT 配置、原厂651个压力报告，以及 Linux 的 type29／Report5 序列。后者得到1177帧有效坐标与倾角，其中896帧同时具有有效压力；没有制作 raw29 测试帧。膜／悬浮专用分支、完整掌压干扰与边缘体验仍需要实机对照。
 
-## 旧内核与对照的用户态笔输入
+## 对照用的用户态笔输入
 
-`piano-pen-owner.c/.h` 将只读蓝牙 HID 压力、已由触控进程读取的 type29、同源 BOOTTIME 时间戳与标准 tablet-tool 输入连接起来。只有显式提供校准和压力有效期时才启用笔路径。手指由内核接管时，程序只处理笔，不再创建虚拟触屏；没有笔或诊断请求时直接退出。旧内核仍沿用用户空间手指输入。正常 runtime 已编入该功能，不需要额外编译另一份触控程序。
+`piano-pen-owner.c/.h` 将只读蓝牙 HID 压力和 type29 帧与标准 tablet-tool
+输入连接起来，供开发者在隔离环境中对照解码结果。必须显式提供校准和压力有效期；
+日常书写使用内核路径，勿在实体笔输入运行时另外启动虚拟笔。
 
 ```sh
 piano-touch-view input --seconds 0 \
@@ -108,11 +109,9 @@ sudo /usr/lib/piano/pen-bluetooth --address YOUR_PEN_ADDRESS \
 
 P81C 的 137 字节 HID Report Map 将私有 Report5 数据放在键盘 Usage Page 的 `0x57`，Linux 通用 HID 会将它映射为 `KEY_KPPLUS`。压力包的四个 16 位字段和六个 8 位字段不是十个加号按键。默认内核的[输入补丁](../../../patches/linux/7.3/0003-input-wireless.patch)扩展现有 `hid-xiaomi`，按 Bluetooth VID/PID、Report ID 和字段布局跳过这条错误键盘映射，保留原始 hidraw 数据给笔输入程序。它不替换整份描述符，不全局屏蔽 `+`，也不影响键盘保护套。
 
-新内核的 `piano-pen-control` 在现有触控服务内直接执行 `pen-bluetooth --follow`；
-旧内核的 `piano-touch-input` 将它作为伴随进程启动。它只走 BlueZ，不读取
-THP、也不生成键鼠输入；连接和 `ServicesResolved` 后完成初始化，断连后等待
-下一次连接重新发送反馈参数。新 launcher 不转发不存在的静止 procfs 接口。
-磁吸状态只在标准开关存在时转发，缺少磁吸检测不阻塞 BLE 初始化。
+`piano-pen-control` 通过 BlueZ 初始化并跟随连接，不读取 THP 或生成键鼠输入。
+笔连接并且 `ServicesResolved` 就绪后发送配置，断连后等待重新连接。磁吸状态来自
+标准开关；缺少该开关时仍可完成 BLE 初始化。
 
 断连时，伴随进程从 BlueZ 枚举已开启的适配器，尝试连接已配对、受信任的 Focus Pen 或 Pro。SC96231 内核驱动从磁吸链路提供笔的准确地址后，程序优先使用该地址；BlueZ 报告认证失败时，只清除这支笔失效的配对并通过标准 Agent1／Device1 接口重新配对。配对代理不成为系统默认代理，不接受其他设备。原厂 Android 与 Linux 交替使用后，已完成自动删除旧配对、重新配对、恢复 GATT 控制服务和初始化。
 
@@ -135,10 +134,9 @@ THP、也不生成键鼠输入；连接和 `ServicesResolved` 后完成初始化
 
 滑动由内核 `hid-xiaomi` 的 [`0029` 补丁](../../../patches/linux/7.3/0029-hid-xiaomi-p81c-body-gestures.patch)直接映射为 Page Up／Page Down，发给当前窗口，与键盘上的翻页键相同；它不依赖这里的程序，其他发行版使用同一内核也能得到。通用 HID 原本会把双击和滑动变成小键盘回车、`9` 和 `3`，补丁去掉了这些映射，也不再发送轻捏的 F19。
 
-新内核在 HID／触控驱动内融合轻捏和双击，旧内核才由触控进程读取 hidraw。
-两者都只在笔处于感应范围内时上报工具按钮，抬出范围、断连或数据超时后释放。
-`PIANO_PEN_SQUEEZE_ACTION=stylus` 仅控制旧用户态路径，新内核保留短按点击、
-600 ms 长按 `BTN_STYLUS` 的行为。不支持笔的应用通常把 `BTN_STYLUS` 当作中键、
+内核在 HID／触控驱动内融合轻捏和双击，只在笔处于感应范围内时上报工具按钮，
+抬出范围、断连或数据超时后释放。轻捏短按点击，长按 600 ms 触发 `BTN_STYLUS`。
+不支持笔的应用通常把 `BTN_STYLUS` 当作中键、
 `BTN_STYLUS2` 当作右键；绘图应用可将其绑定到橡皮擦或取色工具。
 双击或滑动打断轻捏时，轻捏结束但不算一次点击。
 

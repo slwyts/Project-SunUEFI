@@ -285,20 +285,14 @@ def verify_elf(path):
     return {'bytes':len(raw),'sha256':sha(path),'machine':183,'static_no_pt_interp':True}
 
 
-def pen_input_frontend(kernel=None, firmware_root=None):
-    """Select one launcher from the matched kernel and installed calibration."""
+def pen_input_frontend(kernel, firmware_root):
+    """Prepare BlueZ control after checking the kernel input and calibration."""
     from build_piano_ram_bootstrap import guest_resolve
 
-    source = ROOT / 'linux/userspace/pen'
-    legacy = source / 'piano-touch-input'
-    if kernel is None:
-        return legacy.read_bytes(), legacy, {'mode': 'userspace'}, {}
     kernel_source, build = Path(kernel['source']), Path(kernel['build'])
     paths = [kernel_source / name for name in PEN_KERNEL_SOURCE_FILES]
-    if not any(path.exists() for path in paths):
-        return legacy.read_bytes(), legacy, {'mode': 'userspace'}, {}
     if not all(path.is_file() for path in paths):
-        raise ValueError('Kernel pen source is incomplete; refusing a mixed input runtime')
+        raise ValueError('Kernel pen source is incomplete; build the current Piano kernel')
     config = (build / '.config').read_text()
     options = dict(re.findall(r'^(CONFIG_[A-Z0-9_]+)=(.*)$', config, re.M))
     touch, hid = (options.get(name) for name in
@@ -325,18 +319,18 @@ def pen_input_frontend(kernel=None, firmware_root=None):
     release = kernel['release']
     if not re.fullmatch(r'[a-zA-Z0-9_.+-]{1,128}', release):
         raise ValueError('Invalid kernel release for pen input launcher')
-    frontend = source / 'piano-pen-control'
+    frontend = ROOT / 'linux/userspace/pen/piano-pen-control'
     text = frontend.read_text()
     if text.count('@KERNEL_RELEASE@') != 1:
         raise ValueError('Kernel pen launcher needs exactly one release substitution')
     record = {'mode': 'kernel', 'kernel_release': release, 'calibration': calibrations,
-              'legacy_input_enabled': False, 'bluez_control': True}
+              'bluez_control': True}
     return text.replace('@KERNEL_RELEASE@', release).encode(), frontend, record, inputs
 
 
-def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None, kernel=None,
+def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None, *, kernel,
                    firmware_root=None):
-    """Build diagnostics and select one input launcher for the matched kernel."""
+    """Build diagnostics and BlueZ control for the matched kernel."""
     output=Path(output).resolve();env=os.environ.copy() if env is None else env
     source=ROOT/'linux/userspace/pen';copied=output/'pen-source';built=output/'pen-core'
     frontend_data,frontend,pen_input,frontend_inputs=pen_input_frontend(
@@ -405,7 +399,7 @@ def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None, kern
         'sha256':sha(copied_canvas),'mode':0o755,'source_kind':'project-pen-drawing',
         'source_path':'linux/userspace/pen/piano-pen-canvas.py'}
     inputs[str(frontend)]=sha(frontend)
-    copied_frontend=copied/'piano-touch-input';copied_frontend.write_bytes(frontend_data)
+    copied_frontend=copied/frontend.name;copied_frontend.write_bytes(frontend_data)
     files['usr/lib/piano/touch-input']={
         'file':str(copied_frontend.relative_to(output)),'bytes':copied_frontend.stat().st_size,
         'sha256':sha(copied_frontend),'mode':0o755,'source_kind':'project-touch-input',
@@ -421,7 +415,7 @@ def build_pen_core(output, cc_flags, sysroot=None, env=None, emulator=None, kern
             'cxx_command':cxx,
             'archive':{'file':str(archive.relative_to(output)),'bytes':archive.stat().st_size,
                        'sha256':sha(archive),'installed':False},
-            'ini_required_at_build':pen_input['mode']=='kernel','device_operation':False,
+            'ini_required_at_build':True,'device_operation':False,
             'drawing_input_enabled':False,'input':pen_input}
     (output/'pen-manifest.json').write_text(json.dumps(record,indent=2)+'\n')
     return files,record
@@ -461,9 +455,9 @@ def stage(output,destination):
     if set(files)!=expected:raise ValueError('Runtime bundle source/install paths differ from the exact contract')
     if not(destination/'usr/lib/modules'/release/'kernel').is_dir():raise ValueError('Stage the matching full kernel module tree first')
     frontend,_,pen_input,_=pen_input_frontend(manifest['kernel'],destination)
-    if (manifest['pen_core'].get('input',{'mode':'userspace'})!=pen_input or
+    if (manifest['pen_core'].get('input')!=pen_input or
             files['usr/lib/piano/touch-input']['sha256']!=hashlib.sha256(frontend).hexdigest()):
-        raise ValueError('Rebuild the pen runtime for this kernel; refusing mixed input launchers')
+        raise ValueError('Rebuild the pen runtime for this kernel and calibration')
     # Prevalidate the entire generation before changing any destination file.
     for name,row in files.items():
         p=output/row['file']

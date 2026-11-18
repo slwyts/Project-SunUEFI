@@ -5,7 +5,7 @@ set -eu
 expected_kernel='@KERNEL_RELEASE@'
 running_kernel=$(uname -r)
 if [ "$running_kernel" != "$expected_kernel" ]; then
-  printf 'piano-touch: kernel pen input requires %s; running %s; userspace pen input is disabled\n' \
+  printf 'piano-touch: pen runtime was built for %s; running %s\n' \
     "$expected_kernel" "$running_kernel" >&2
 fi
 for panel in boe csot; do

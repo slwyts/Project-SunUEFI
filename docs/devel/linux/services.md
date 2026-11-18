@@ -11,7 +11,7 @@
 | DMA 状态诊断 | [`linux/userspace/piano-ram-hardware-prepare`](../../../linux/userspace/piano-ram-hardware-prepare) | 仅用于显式诊断，不阻止模块自动探测 |
 | 手指帧解码与多点输入 | [`0095-input-nt36532e-matrix.patch`](../../../patches/linux/7.3/0095-input-nt36532e-matrix.patch) | 编入 `nt36532e_ts`，在现有 SPI 中断线程中直接上报标准输入事件 |
 | 内核笔解码与 BLE 融合 | [`0123-input-nt36532e-pen.patch`](../../../patches/linux/7.3/0123-input-nt36532e-pen.patch) 与[扫描组修正](../../../patches/linux/7.3/0124-input-nt36532e-pen-centroid.patch) | 编入 `nt36532e_ts`；从标准固件目录加载数字校准，由物理 SPI tablet-tool 上报输入 |
-| 原始帧诊断与旧内核输入 | [`upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c`](../../../upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c) | 派生后编译为 `/usr/bin/piano-touch-view`；新内核的 `piano-touch.service` 只运行下述 BlueZ 初始化 |
+| 原始帧诊断 | [`upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c`](../../../upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c) | 派生后编译为 `/usr/bin/piano-touch-view`；由开发者手动运行 |
 | 触屏程序的本地观测补丁 | [`tools/patches/piano-touch-view-observability.patch`](../../../tools/patches/piano-touch-view-observability.patch) | `build_piano_runtime_helpers.py` 派生源码，`build_release_helpers.py` 编译 |
 | 相机服务、图像处理与控制接口 | [`linux/bsp/optional/camera/`](../../../linux/bsp/optional/camera/) 与 [`linux/userspace/camera/`](../../../linux/userspace/camera/) | 共用 Makefile 编译服务与客户端，两条运行库构建入口使用同一份源码 |
 | 音频 UCM、模块加载参数、udev 配置 | [`linux/bsp/common/`](../../../linux/bsp/common/) | 按目录布局安装；文件清单在 `linux/bsp/manifest.json` |
@@ -19,15 +19,17 @@
 | GNOME 电源键与保护套合盖 | [`linux/desktops/gnome/power-overlay/`](../../../linux/desktops/gnome/power-overlay/) | 复用 `piano-power-button.service`，完整 stager 和 GNOME 组装安装同一份源码；当前只控制背光，锁屏/睡眠限制见[说明](../hardware/power-button.md) |
 | 内核配置与板级设备树 | [`linux/configs/`](../../../linux/configs/) 与 [`linux/dts/`](../../../linux/dts/) | 内核源码由 `patches/linux/7.3/series.json` 从公开稳定版重建，补丁来源见内核角色说明 |
 
-手指输入由 `nt36532e` 直接处理，不需要用户空间读取者。矩阵核心与 SPI、固件和输入上报分开，使用整数完成帧校验、基线、行列去噪、局部峰值、接触面积和质心计算；输入层保留十个槽位和掌压锁存。掌压不按下 `BTN_TOUCH`，笔帧取消手指时先报告掌压类型再释放槽位。掌压判定的限制见[笔输入说明](../../../linux/userspace/pen/README.md#旧内核与对照的用户态笔输入)。
+手指输入由 `nt36532e` 直接处理，不需要用户空间读取者。矩阵核心与 SPI、固件和输入上报分开，使用整数完成帧校验、基线、行列去噪、局部峰值、接触面积和质心计算；输入层保留十个槽位和掌压锁存。掌压不按下 `BTN_TOUCH`，笔帧取消手指时先报告掌压类型再释放槽位。掌压判定的限制见[笔输入说明](../../../linux/userspace/pen/README.md#对照用的用户态笔输入)。
 
 核心先用 16 个有效帧确定矩阵类型，再对 32 帧逐格取上中位数建立基线。去噪先减每列中位数，再减每行中位数；三路选择超出工作量预算后使用内核排序收尾。原始差值的最大值与最小值相差不到 50 时，去噪后的最大值必然低于 100，可以跳过去噪并执行相同的基线漂移；其余帧在去噪后按触摸阈值 200 决定是否扫描峰值和区域。60×40 的解码状态约 175 KiB，在探测时一次分配，正常帧与恢复路径不再分配内存。
 
 坏校验或截断帧只丢弃，不更新触点或基线；短暂丢样不会中断拖动。固件重载、挂起和移除释放触点，固件重载与挂起后重新学习基线。SPI 传输失败释放当前触点，保留基线；面板恢复时，固件重载失败则保持中断关闭。原始帧 FIFO 只在显式启用捕获时分配，手指输入本身不占用这份 4 MiB 队列。
 
-匹配新笔驱动、导出符号与标准固件校准的构建使用 BlueZ-only `touch-input`，只初始化厂商 GATT 特征，不再读取 THP／hidraw、写 procfs 或创建 uinput。BLE 尚未连接时该进程继续等待；笔矩阵和蓝牙样本由内核融合。校准从 BSP 的相对固件链接读取，同一张表只保留一份。
+产品构建要求匹配的内核笔驱动、导出符号和标准固件校准。`piano-touch.service`
+只通过 BlueZ 初始化厂商 GATT 特征，不读取 THP／hidraw、写 procfs 或创建 uinput。
+BLE 尚未连接时该进程继续等待；笔矩阵和蓝牙样本由内核融合，校准经配置包安装。
 
-旧内核构建才使用 `piano-touch-view input`：内核已接管手指时跳过手指解码和虚拟触屏，只保留显式请求的笔或诊断功能。[用户空间去噪补丁](../../../tools/patches/piano-touch-view-line-noise.patch)保留用于旧内核和离线对照，不是新产品的输入路径。
+`piano-touch-view` 保留原始帧采集和对照功能，不由系统启动服务运行。
 
 硬件驱动通过 OF、platform、SPI、RPMsg 等标准 modalias 加载，依赖由设备树、内核 supplier 和延迟探测表达。显示、键盘、无线、音频和视频没有按加载顺序运行的用户空间服务。热更新定位后的修复必须写回内核、设备树或对应程序源码。
 

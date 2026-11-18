@@ -27,15 +27,14 @@ def inputs_current(output):
         return False
     record = json.loads(path.read_text())
     pen = record.get('pen_core', {})
+    if pen.get('input', {}).get('mode') != 'kernel':
+        return False
     pen_source = ROOT / 'linux/userspace/pen'
     pen_paths = [Path(runtime.__file__),
                  *[pen_source / name for name in runtime.PEN_SOURCE_FILES],
-                 pen_source / 'piano-pen-bluetooth.py', pen_source / 'piano-pen-canvas.py']
-    if pen.get('input', {}).get('mode') == 'kernel':
-        pen_paths += [pen_source / 'piano-pen-control',
-                      *[ROOT / name for name in runtime.PEN_CALIBRATION_PATHS.values()]]
-    else:
-        pen_paths.append(pen_source / 'piano-touch-input')
+                 pen_source / 'piano-pen-bluetooth.py', pen_source / 'piano-pen-canvas.py',
+                 pen_source / 'piano-pen-control',
+                 *[ROOT / name for name in runtime.PEN_CALIBRATION_PATHS.values()]]
     return (
         record.get('producer', {}).get('sha256') == runtime.sha(Path(__file__))
         and all(pen.get('inputs', {}).get(str(path)) == runtime.sha(path)

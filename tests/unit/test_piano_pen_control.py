@@ -57,7 +57,6 @@ class PianoPenControlTests(unittest.TestCase):
         data, source, record, _ = runtime.pen_input_frontend(self.kernel, self.rootfs)
         self.assertEqual(source.name, 'piano-pen-control')
         self.assertEqual(record['mode'], 'kernel')
-        self.assertFalse(record['legacy_input_enabled'])
         self.assertNotIn(b'/proc/', data)
         self.assertNotIn(b'piano-touch-view', data)
         self.assertNotIn(b'--pen-input', data)
@@ -95,14 +94,12 @@ class PianoPenControlTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'matched kernel pen/HID modules'):
             runtime.pen_input_frontend(self.kernel, self.rootfs)
 
-    def test_old_kernel_keeps_legacy_launcher(self):
+    def test_kernel_without_pen_source_cannot_build_a_product_launcher(self):
         empty = self.work / 'old-kernel'
         empty.mkdir()
         self.kernel['source'] = str(empty)
-        data, source, record, _ = runtime.pen_input_frontend(self.kernel, self.rootfs)
-        self.assertEqual(source.name, 'piano-touch-input')
-        self.assertEqual(record['mode'], 'userspace')
-        self.assertIn(b'--pen-input', data)
+        with self.assertRaisesRegex(ValueError, 'build the current Piano kernel'):
+            runtime.pen_input_frontend(self.kernel, self.rootfs)
 
     def test_actual_runtime_entries_accept_distinct_firmware_root(self):
         result = subprocess.run([sys.executable, str(ROOT / 'tools/build_release_helpers.py'),
