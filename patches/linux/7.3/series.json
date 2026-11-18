@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "7af2a7689d3276e681f035db6780866c94c2d689",
-  "original_target_commit": "b6e056e62bc9c00917391634e6c4df1d1fa3fcb7",
+  "target_tree": "8d4b9ece6bdb9ede3c1a9cff480b1760526b3255",
+  "original_target_commit": "d2d86c7be4b41239e4a780bc136d2cf9535297fa",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1745,6 +1745,19 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "The selected upstream CAMSS driver verifies that the mapped DMA address range used by each capture plane is contiguous before programming its base address."
+      }
+    },
+    {
+      "file": "0136-media-iris-encoder-frame-interval.patch",
+      "sha256": "e84ef9460a82b27b55c1b880dfd29ebb5b1c196df03f306215b72a3ef55306e6",
+      "original_commit": "d2d86c7be4b41239e4a780bc136d2cf9535297fa",
+      "original_parent": "b6e056e62bc9c00917391634e6c4df1d1fa3fcb7",
+      "committer_date": "2026-11-18T20:30:45+08:00",
+      "tree": "8d4b9ece6bdb9ede3c1a9cff480b1760526b3255",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The upstream Iris encoder keeps CAPTURE and OUTPUT frame intervals in sync when setting the OUTPUT interval and preserves configured rates after rejected changes."
       }
     }
   ],
