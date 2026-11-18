@@ -81,7 +81,7 @@ STATIC UINT32 mScreenWidth,mScreenHeight,mScreenBytes,mScreenCrc,mScreenGenerati
 STATIC VOID ClearScreenMetadata(VOID){mScreenWidth=mScreenHeight=mScreenBytes=mScreenCrc=mScreenGeneration=0;}
 #endif
 STATIC UINT64 mBulkOutBytes,mBulkInBytes;
-// Send copies CPU frames immediately. Hardware sees only the separate 4K DMA
+// Send copies CPU frames immediately. Hardware sees only the separate DMA
 // bounce buffers, so reset can clear staged pools without touching active DMA.
 typedef struct FB_FRAME {struct FB_FRAME *Next;UINTN Bytes,Offset;UINT8 Data[1];} FB_FRAME;
 STATIC FB_FRAME *mFrames,*mFramesTail;
@@ -487,7 +487,7 @@ STATIC EFI_STATUS BulkPump(VOID) {
     UINTN Remaining=mFastboot.Expected-mFastboot.Received;
     Bytes=MIN(mBulkRx.Bytes,ALIGN_VALUE(Remaining,BulkMps()));
   }
-  ZeroMem(mBulkRx.Cpu,mBulkRx.Bytes);
+  ZeroMem(mBulkRx.Cpu,Bytes);
   return Transfer(2,1,&mBulkRx,(UINT32)Bytes,"USB_FASTBOOT_OUT");
 }
 STATIC BOOLEAN BulkFlashReady(VOID){
@@ -1016,6 +1016,7 @@ STATIC EFI_STATUS ServiceRecoverReply(VOID){
   return mExperimentContractFailed?EFI_DEVICE_ERROR:EFI_SUCCESS;
 }
 STATIC PIANO_DMA_BUFFER *CONST mServiceBuffers[]={&mRing,&mTrbs[0],&mTrbs[1],&mSetup,&mTx,&mTrbs[2],&mTrbs[3],&mBulkRx,&mBulkTx};
+#define USB_FASTBOOT_BULK_BYTES (64U * 1024U)
 STATIC BOOLEAN ServiceBuffersEmpty(VOID) {
   for(UINTN I=0;I<ARRAY_SIZE(mServiceBuffers);++I){PIANO_DMA_BUFFER *B=mServiceBuffers[I];
     if(B->Signature || B->Cpu || B->Bytes || B->DeviceAddress || B->Active || B->Mapped || B->Quarantined || B->ExitRetained)return FALSE;}
@@ -1268,10 +1269,12 @@ EFI_STATUS PianoDwc3ServiceStart(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Dev
   CONST PIANO_DMA_DIRECTION Directions[]={PianoDmaFromDevice,PianoDmaBidirectional,PianoDmaBidirectional,PianoDmaFromDevice,PianoDmaToDevice,
     PianoDmaBidirectional,PianoDmaBidirectional,PianoDmaFromDevice,PianoDmaToDevice};
   for(UINTN I=0;I<ARRAY_SIZE(mServiceBuffers);++I) {
-    ZeroMem(mServiceBuffers[I],sizeof(*mServiceBuffers[I]));
-    S=PianoDmaAllocate(Device,4096,4096,32,Directions[I],mServiceBuffers[I]);if(S!=EFI_SUCCESS){mService.Uncertain=!EFI_ERROR(S);return ServiceError(S);}
+    PIANO_DMA_BUFFER *Buffer=mServiceBuffers[I];
+    UINTN Bytes=Buffer==&mBulkRx || Buffer==&mBulkTx?USB_FASTBOOT_BULK_BYTES:4096;
+    ZeroMem(Buffer,sizeof(*Buffer));
+    S=PianoDmaAllocate(Device,Bytes,4096,32,Directions[I],Buffer);if(S!=EFI_SUCCESS){mService.Uncertain=!EFI_ERROR(S);return ServiceError(S);}
     ++mService.DmaBuffersAllocated;
-    S=PianoDmaMap(mServiceBuffers[I]);if(S!=EFI_SUCCESS){mService.Uncertain=TRUE;return ServiceError(S);}
+    S=PianoDmaMap(Buffer);if(S!=EFI_SUCCESS){mService.Uncertain=TRUE;return ServiceError(S);}
   }
   S=PianoDwc3CheckStorageForExperiment("service-dwc-mapped",TRUE);if(S!=EFI_SUCCESS)return ServiceError(S);
   mService.RegistersProgrammed=TRUE;

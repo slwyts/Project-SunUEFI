@@ -581,7 +581,7 @@ static VOID run_idle_activity(VOID){
 }
 typedef enum {
   ReplyFetchCancelled,ReplyFetchCancellationReset,ReplyDmaEndMissing,ReplyCompletionDelayed,
-  ReplyNormalFetch,ReplyPartialDownload,ReplyRebootCancelled,ReplyCaseCount
+  ReplyNormalFetch,ReplyNormalDownload,ReplyPartialDownload,ReplyRebootCancelled,ReplyCaseCount
 } REPLY_CASE;
 static EFI_STATUS reply_fetch_info(VOID *Context,CONST CHAR8 *Name,PIANO_FB_PARTITION_INFO *Info){
   EFI_STATUS Status=info_backend(Context,Name,Info);
@@ -602,23 +602,34 @@ static VOID run_reply_recovery(REPLY_CASE Test){
   PIANO_DWC3_SERVICE_CONFIG Config={.Context=(VOID *)0x55,.NowUs=now_us,.Storage=&Storage};
   assert(PianoUsbControllerServiceStart((VOID *)123,&Config)==EFI_SUCCESS);
   service_enumerate();
+  assert(mBulkRx.Bytes==USB_FASTBOOT_BULK_BYTES && mBulkTx.Bytes==USB_FASTBOOT_BULK_BYTES);
+  assert(mPosted[2]==BulkMps()); // Commands still occupy one USB packet.
   service_out("getvar:max-fetch-size");
   assert(mPosted[3]==14 && !memcmp(mBulkTx.Cpu,"OKAY0x00040000",14));service_ack();
   fake_now+=10*FASTBOOT_REPLY_IDLE_US;
   assert(PianoUsbControllerServicePumpApp(1,5000)==EFI_SUCCESS && mPending[2] && !mEnding[2]);
   UINTN AddressWrites=address_writes,SessionWrites=session_writes;
   UINT32 Dcfg=regs[0xC700/4],EpEnable=regs[0xC720/4];
-  if(Test==ReplyPartialDownload){
-    service_out("download:00002000");
+  if(Test==ReplyPartialDownload || Test==ReplyNormalDownload){
+    service_out("download:00010011");
     fake_now+=2*FASTBOOT_REPLY_IDLE_US;
     assert(PianoUsbControllerServicePumpApp(1,5000)==EFI_SUCCESS && mFastboot.Receiving && !mEnding[3]);
-    service_ack();assert(mPending[2] && !mPending[3] && mPosted[2]==4096);
-    UINT8 Data[4096];memset(Data,'x',sizeof(Data));service_payload(Data,sizeof(Data));
+    service_ack();assert(mPending[2] && !mPending[3] && mPosted[2]==USB_FASTBOOT_BULK_BYTES);
+    static UINT8 Data[USB_FASTBOOT_BULK_BYTES];
+    for(UINTN I=0;I<sizeof(Data);++I)Data[I]=(UINT8)(I*73+I/251);
+    service_payload(Data,sizeof(Data));
     fake_now+=2*FASTBOOT_REPLY_IDLE_US;
     assert(PianoUsbControllerServicePumpApp(1,5000)==EFI_SUCCESS && !mEnding[2] && mPending[2]);
-    assert(mFastboot.Receiving && mFastboot.Received==sizeof(Data) && !mFrames);
-    service_event(0x101);assert(mEnding[2] && mBulkRx.Active && !mFastboot.Download && !mConfigured);
-    service_end(2);service_enumerate();
+    assert(mFastboot.Receiving && mFastboot.Received==sizeof(Data) && mPosted[2]==BulkMps() && !mFrames);
+    if(Test==ReplyNormalDownload){
+      service_payload(Data,17);
+      assert(mFastboot.Complete && mPending[3] && mPosted[3]==4 && !memcmp(mBulkTx.Cpu,"OKAY",4));
+      assert(!memcmp(mFastboot.Download,Data,sizeof(Data)) && !memcmp(mFastboot.Download+sizeof(Data),Data,17));
+      service_ack();
+    }else{
+      service_event(0x101);assert(mEnding[2] && mBulkRx.Active && !mFastboot.Download && !mConfigured);
+      service_end(2);service_enumerate();
+    }
   }else if(Test==ReplyCompletionDelayed){
     service_out("getvar:version");
     // The TRB is finished but the corresponding event has not arrived yet.
@@ -634,20 +645,20 @@ static VOID run_reply_recovery(REPLY_CASE Test){
       service_out("fetch:xbl_config_a:0x0:0x40000");
       assert(backend_reads==1 && mPosted[3]==12 && !memcmp(mBulkTx.Cpu,"DATA00040000",12));
       service_ack_one();
-      assert(mPending[3] && mPosted[3]==4096 && mFrameCount==2);
+      assert(mPending[3] && mPosted[3]==USB_FASTBOOT_BULK_BYTES && mFrameCount==2);
     }
     if(Test==ReplyNormalFetch){
       UINT64 Start=fake_now;
-      for(UINTN N=0;N<PIANO_FASTBOOT_MAX_FETCH_BYTES/4096;++N){
+      for(UINTN N=0;N<PIANO_FASTBOOT_MAX_FETCH_BYTES/USB_FASTBOOT_BULK_BYTES;++N){
         fake_now+=FASTBOOT_REPLY_IDLE_US/2;
         assert(PianoUsbControllerServicePumpApp(1,5000)==EFI_SUCCESS && !mEnding[3]);
-        assert(mPosted[3]==4096 && ((UINT8 *)mBulkTx.Cpu)[4095]==0xa5);
+        assert(mPosted[3]==USB_FASTBOOT_BULK_BYTES && ((UINT8 *)mBulkTx.Cpu)[USB_FASTBOOT_BULK_BYTES-1]==0xa5);
         service_ack_one();
       }
       assert(fake_now-Start>FASTBOOT_REPLY_IDLE_US && mPosted[3]==4 && !memcmp(mBulkTx.Cpu,"OKAY",4));
       service_ack_one();
     }else{
-      UINTN Posted=mPosted[3];UINT8 In[4096];CopyMem(In,mBulkTx.Cpu,Posted);
+      UINTN Posted=mPosted[3];UINT8 In[USB_FASTBOOT_BULK_BYTES];CopyMem(In,mBulkTx.Cpu,Posted);
       fake_now=mService.ReplyPostedUs+FASTBOOT_REPLY_IDLE_US-1000;
       assert(PianoUsbControllerServicePumpApp(1,5000)==EFI_SUCCESS && mPending[3] && !mEnding[3] && mFrames);
       fake_now=mService.ReplyPostedUs+FASTBOOT_REPLY_IDLE_US;
