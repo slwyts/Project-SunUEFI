@@ -16,7 +16,7 @@
 | 相机服务、图像处理与控制接口 | [`linux/bsp/optional/camera/`](../../../linux/bsp/optional/camera/) 与 [`linux/userspace/camera/`](../../../linux/userspace/camera/) | 共用 Makefile 编译服务与客户端，两条运行库构建入口使用同一份源码 |
 | 音频 UCM、模块加载参数、udev 配置 | [`linux/bsp/common/`](../../../linux/bsp/common/) | 按目录布局安装；文件清单在 `linux/bsp/manifest.json` |
 | Linux 调试入口与引导脚本 | [`linux/userspace/`](../../../linux/userspace/) | 包含 `piano-debug-bootstrap`、debug/serial unit、磁盘与 RAM 引导脚本 |
-| GNOME 电源键与保护套合盖 | [`linux/desktops/gnome/power-overlay/`](../../../linux/desktops/gnome/power-overlay/) | 复用 `piano-power-button.service`，完整 stager 和 GNOME 组装安装同一份源码；当前只控制背光，锁屏/睡眠限制见[说明](../hardware/power-button.md) |
+| GNOME 电源键与保护套合盖 | 内核输入事件、发行版 udev、logind 和 GNOME | 无项目专用服务；产品的默认设置与升级行为见[电源键和合盖](../hardware/power-button.md) |
 | 内核配置与板级设备树 | [`linux/configs/`](../../../linux/configs/) 与 [`linux/dts/`](../../../linux/dts/) | 内核源码由 `patches/linux/7.3/series.json` 从公开稳定版重建，补丁来源见内核角色说明 |
 
 手指输入由 `nt36532e` 直接处理，不需要用户空间读取者。矩阵核心与 SPI、固件和输入上报分开，使用整数完成帧校验、基线、行列去噪、局部峰值、接触面积和质心计算；输入层保留十个槽位和掌压锁存。掌压不按下 `BTN_TOUCH`，笔帧取消手指时先报告掌压类型再释放槽位。掌压判定的限制见[笔输入说明](../../../linux/userspace/pen/README.md#对照用的用户态笔输入)。

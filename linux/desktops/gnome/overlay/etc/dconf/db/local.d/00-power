@@ -1,9 +1,4 @@
-[org/gnome/settings-daemon/plugins/media-keys]
-# The same Piano power-button service handles this key.
-power-static=['']
-
 [org/gnome/settings-daemon/plugins/power]
-power-button-action='nothing'
 sleep-inactive-ac-type='suspend'
 sleep-inactive-ac-timeout=600
 sleep-inactive-battery-type='suspend'

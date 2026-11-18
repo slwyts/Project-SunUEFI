@@ -6,6 +6,7 @@ import json
 import shutil
 
 from package_bsp import payload, power_profiles_payload
+from desktop.power_migration import RETIRED_OVERLAY
 
 GNOME_PACKAGES = {
     'gdm3', 'gnome', 'task-gnome-desktop', 'gnome-control-center',
@@ -27,9 +28,6 @@ KDE_PACKAGES = [
 ]
 GNOME_PATHS = (
     'etc/gdm3', 'etc/dconf', 'usr/share/glib-2.0/schemas/90_piano.gschema.override',
-    'usr/lib/systemd/user/piano-power-button.service', 'usr/lib/piano/power-button',
-    'etc/systemd/user/graphical-session.target.wants/piano-power-button.service',
-    'etc/systemd/logind.conf.d/piano.conf', 'etc/udev/rules.d/70-piano-power-button.rules',
 )
 
 
@@ -84,6 +82,14 @@ def sid_recipe(text):
                    .replace(' piano-camera piano-camerad ', ' ')
                    if line.startswith(upstream_enable) else line
                    for line in text.splitlines(keepends=True))
+    # Allow memory suspend; keep the disk hibernation modes masked.
+    mask = 'chroot "$ROOTFS" systemctl mask '
+    hibernation = 'hibernate.target hybrid-sleep.target suspend-then-hibernate.target'
+    upstream_mask = ('# Preserve the bootloader display: neither suspend nor blanking is recoverable yet.\n'
+                     + mask + 'sleep.target suspend.target ' + hibernation)
+    if text.count(upstream_mask) != 1:
+        raise ValueError('Upstream Debian sleep policy changed')
+    text = text.replace(upstream_mask, mask + hibernation)
     if 'trixie' in text or 'MESA_DIR' in text:
         raise ValueError('Stable-only Debian source remains in the derived sid recipe')
     return text
@@ -96,13 +102,13 @@ def prepare(public, output, desktop):
     (destination / 'scripts').mkdir(parents=True)
     shutil.copy2(public / 'scripts/build-rootfs.sh', destination / 'scripts/build-rootfs.sh')
     source_rootfs = public / 'rootfs'
-    packaged_paths = {Path('overlay') / path for path in packaged_overlay_paths()}
+    excluded_paths = {Path('overlay') / path for path in packaged_overlay_paths() | RETIRED_OVERLAY}
 
-    def ignore_packaged(directory, names):
+    def ignore_overlay(directory, names):
         relative = Path(directory).relative_to(source_rootfs)
-        return {name for name in names if relative / name in packaged_paths}
+        return {name for name in names if relative / name in excluded_paths}
 
-    shutil.copytree(source_rootfs, destination / 'rootfs', symlinks=True, ignore=ignore_packaged)
+    shutil.copytree(source_rootfs, destination / 'rootfs', symlinks=True, ignore=ignore_overlay)
     if desktop == 'kde':
         for name in GNOME_PATHS:
             path = destination / 'rootfs/overlay' / name
@@ -155,7 +161,6 @@ def configure(rootfs, run, input_method='fcitx'):
         scale = rootfs / home / '.config/plasma-workspace/env/sunuefi-scale.sh'
         if scale.is_file() and scale.read_text() == 'export QT_SCALE_FACTOR="${QT_SCALE_FACTOR:-2}"\n':
             scale.unlink()
-    # Use desktop settings; do not ship GNOME's exclusive evdev power helper.
     config = rootfs / 'home/piano/.config'
     config.mkdir(parents=True, exist_ok=True)
     (config / 'kdeglobals').write_text('[KDE]\nAnimationDurationFactor=1\n'

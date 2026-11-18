@@ -393,7 +393,6 @@
     "accounts/passwords/machine-id/SSH/hostkeys",
     "fstab/swapfile/userdata/zram policy",
     "qbootctl Android A/B writes",
-    "GNOME power-button/logind coupling",
     "USB fixed IP/MAC/serial policy",
     "80-drivers.rules global systemd override"
   ],

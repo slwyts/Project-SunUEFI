@@ -11,6 +11,7 @@ ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'))
 import stage_piano_full_userspace as stage
 from package_bsp import payload
+from desktop.power_migration import POWER_DEFAULTS, RETIRED_OVERLAY
 
 
 class PianoFullUserspaceTests(unittest.TestCase):
@@ -32,6 +33,16 @@ class PianoFullUserspaceTests(unittest.TestCase):
             self.assertEqual(os.readlink(target/'etc/systemd/system/qbootctl.service'),'/dev/null')
             self.assertIn('UDISKS_IGNORE',(target/'etc/udev/rules.d/01-piano-protect-android.rules').read_text())
             self.assertFalse(result['piano_boot_verified'])
+            for relative in RETIRED_OVERLAY - {POWER_DEFAULTS}:
+                path = target / relative
+                self.assertFalse(path.exists() or path.is_symlink(), relative)
+            defaults = (target / POWER_DEFAULTS).read_text()
+            self.assertIn('idle-delay=uint32 120', defaults)
+            self.assertIn('sleep-inactive-battery-timeout=300', defaults)
+            self.assertNotIn('power-button-action', defaults)
+            self.assertNotIn('power-static', defaults)
+            self.assertIn('MemorySleepMode=deep',
+                          (target / 'etc/systemd/sleep.conf.d/piano.conf').read_text())
             _, packaged = payload(['camera'])
             for row, _ in packaged:
                 path = target / row['path']
@@ -47,7 +58,18 @@ class PianoFullUserspaceTests(unittest.TestCase):
                     # Use different bytes to detect even a same-file overwrite.
                     path.write_bytes(data + b'\n# installed configuration\n')
             for desktop in ('gnome', 'kde'):
+                units = target / 'etc/systemd/system'
+                suspend = ('sleep.target', 'suspend.target')
+                hibernation = ('hibernate.target', 'hybrid-sleep.target', 'suspend-then-hibernate.target')
+                for unit in (*suspend, *hibernation):
+                    (units / unit).unlink(missing_ok=True)
+                    (units / unit).symlink_to('/dev/null')
                 stage.stage(target, source, desktop=desktop)
+                for unit in suspend:
+                    path = units / unit
+                    self.assertFalse(path.exists() or path.is_symlink(), unit)
+                for unit in hibernation:
+                    self.assertEqual((units / unit).readlink(), Path('/dev/null'))
                 for row, data in packaged:
                     path = target / row['path']
                     if row['type'] == 'symlink':

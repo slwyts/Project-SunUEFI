@@ -9,7 +9,7 @@ from pathlib import Path
 
 from build_nyarch_apps import guest_environment
 from build_piano_runtime_helpers import source_patches
-from stage_piano_full_userspace import stage_gnome_power
+from stage_piano_full_userspace import stage_gnome_desktop
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,7 +36,7 @@ def stage(root, source, extensions=None):
     shutil.copy2(source / 'LICENSE', license_file)
     # Preserve tablet defaults; no x86-only Node addons or forced incompatible
     # extensions are imported from the upstream desktop skeleton.
-    stage_gnome_power(root)
+    stage_gnome_desktop(root)
     dconf = root / 'etc/dconf/db/local.d/10-nyarch'
     dconf.write_text(
         "[org/gnome/desktop/interface]\n"

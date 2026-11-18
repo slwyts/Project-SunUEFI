@@ -2,31 +2,17 @@
 
 ## 分工
 
-内核负责电源键和保护套开关上报、面板断电与恢复、系统挂起及唤醒。桌面策略使用 GNOME、logind 和 DRM 的标准接口；锁屏认证和长按关机菜单不放进内核。
+内核上报电源键 `KEY_POWER` 和保护套开关 `SW_LID`，并负责面板恢复和系统唤醒。发行版的 udev 给按键和开关标记 `power-switch`，logind 读取这些事件。GNOME 会话开启时，电源键动作由 GNOME 设置中的「电源」选项决定；没有桌面接管时使用 logind 的配置。合盖动作也遵循发行版的策略，包括外接显示器和应用阻止挂起的情况。
 
-GNOME 的[电源键助手](../../../linux/desktops/gnome/power-overlay/usr/lib/piano/power-button)只补充桌面尚未提供的按键策略：
-
-- 短按电源或合盖：锁屏并关闭显示。
-- 再次短按或开盖：显示锁屏页面，仍需正常解锁。
-- 长按电源：打开 GNOME 关机菜单。
-
-助手观察 `pmic_pwrkey` 的 `KEY_POWER` 和 `soc:piano-hall-ml` 的 `SW_LID`，不独占设备，不读取触摸或键盘内容。显示通过 `org.gnome.Mutter.DisplayConfig.PowerSaveMode` 控制，不以单独关闭背光代替面板断电。
-
-## 唤醒后再次灭屏的修正
-
-旧助手同步等待 `org.gnome.ScreenSaver.Lock`，超时后仍继续灭屏；同时只记住自己上次发出的显示命令，无法识别 GNOME 自动熄屏或先处理了唤醒按键。这两种情况都可能把一次唤醒误处理成灭屏。
-
-现在使用异步 D-Bus：同时查询屏保和图形会话的 `LockedHint`，确认已锁屏时不重复请求 `Lock`；锁屏期间仍能处理按键和开盖。每次唤醒会取消尚未完成的灭屏请求。显示状态来自 Mutter 的属性通知，并用输入事件的单调时钟区分刚唤醒屏幕的那次按键。
-
-设备上的显示电源状态已按 OFF → ON 切换，恢复后没有再次执行本助手的延迟灭屏；立即取消灭屏请求后也保持 ON，图形会话仍为锁定状态。按键、触摸及 GNOME 自身空闲计时的组合仍需观察；本修正不禁用桌面自动熄屏。
+GNOME 使用 `systemd-hostnamed` 报告的设备类型区分平板和虚拟机。产品保留标准 `CHASSIS=tablet` 设置，不用定制的长按关机菜单或单独的背光控制。
 
 ## 默认设置
 
-[标准 dconf 配置](../../../linux/desktops/gnome/power-overlay/etc/dconf/db/local.d/00-power)设置 2 分钟空闲熄屏、使用电池时 5 分钟自动挂起、外接电源时 10 分钟自动挂起。键盘背光默认 80%，后续沿用用户保存的亮度。用户可在系统设置里修改这些偏好。
+[标准 dconf 配置](../../../linux/desktops/gnome/overlay/etc/dconf/db/local.d/00-power)设置 2 分钟空闲熄屏、使用电池时 5 分钟自动挂起、外接电源时 10 分钟自动挂起。键盘背光默认 80%，后续沿用用户保存的亮度。用户可在系统设置里修改这些偏好。
 
 GSD 电源管理器启动时先读取 GNOME 已有的锁屏状态，再配置空闲计时和显示电源。会话已锁屏时保持灭屏；查询失败时保留原显示电源状态，避免重启服务把黑画面背后的背光重新点亮。正常输入仍沿用 GNOME 的唤醒与再次灭屏流程，不增加背光轮询服务。
 
-构建启用 `sleep.target` 和 `suspend.target`，使用 `mem/deep`。休眠、混合睡眠及先睡眠后休眠保持禁用。
+Debian GNOME 和 KDE 镜像都允许挂起到内存（`mem/deep`）。磁盘休眠、混合睡眠及先挂起后休眠保持禁用。
 
 ## 内核适配
 
@@ -36,8 +22,17 @@ GSD 电源管理器启动时先读取 GNOME 已有的锁屏状态，再配置空
 - `0032-asoc-q6apm-clear-global-on-remove.patch` 修正 ADSP 重启时的全局对象生命周期。
 - `0033-fastrpc-freeze-inflight-invoke.patch` 处理睡眠时等待中的 FastRPC 调用。
 
-设备已完成 RTC 和电源键唤醒；待机耗电仍需优化。调试睡眠时以同一启动 ID、恢复错误和触控／网络状态判断结果，不能仅凭 USB 断开就认定挂起或重启成功。
+设备已完成 RTC 和电源键唤醒。内核在当前充电保护无法跨挂起持续监测时会拒绝挂起。核对完整链路时先拔下充电线，分别测试电源键和合盖进入挂起、开盖或按键唤醒、恢复后锁屏。调试睡眠时以同一启动 ID、恢复错误和触控／网络状态判断结果。
 
-## 构建接入
+## 从旧镜像升级
 
-GNOME 组装流程覆盖同名 helper、user unit、udev、logind 和 dconf 文件，仍使用原有 `piano-power-button.service`。更换程序后重启该用户服务即可生效；更换内核或设备树后正常重启。其他桌面使用各自的标准电源管理，本目录不作为通用 BSP 的额外守护进程安装。
+安装或更新 `piano-device-config` 会清理旧镜像生成且未修改的助手和配置，保留用户编辑过或由其他包管理的文件。原有空闲时间和锁屏默认值不变。升级后重启，让系统重新读取 udev、logind 和 GNOME 配置。新装镜像不再包含旧助手。
+
+旧 Debian 镜像可能还屏蔽了普通挂起。用 `systemctl is-enabled sleep.target suspend.target` 查询；如果显示 `masked`，并确认是镜像的默认设置，不是自己禁用的，解除这两项：
+
+```sh
+sudo systemctl unmask sleep.target
+sudo systemctl unmask suspend.target
+```
+
+软件包更新不会解除这两项屏蔽，因为它无法区分旧镜像的默认设置和管理员主动禁用。

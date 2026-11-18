@@ -12,28 +12,37 @@ import shutil
 import subprocess
 
 from build_piano_ram_bootstrap import guest_resolve
+from desktop.power_migration import GNOME_OVERLAY, RETIRED_OVERLAY
 
 ROOT=Path(__file__).resolve().parents[1]
 EXPECTED='a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45'
 
 
-def stage_gnome_power(rootfs):
-    """Install the existing GNOME power service's local cover support."""
+def unmask_suspend_targets(rootfs):
+    """Remove the original masks when reusing an image-build root."""
+    units = guest_resolve(rootfs, 'etc/systemd/system')
+    for unit in ('sleep.target', 'suspend.target'):
+        mask = units / unit
+        if mask.is_symlink() and mask.readlink() == Path('/dev/null'):
+            mask.unlink()
+
+
+def stage_gnome_desktop(rootfs):
+    """Install product defaults using GNOME and systemd configuration."""
     rootfs = Path(rootfs).resolve()
     if not rootfs.is_relative_to(ROOT / 'build/distros') or not rootfs.is_dir():
-        raise ValueError('GNOME power files require a workspace rootfs')
-    overlay = ROOT / 'linux/desktops/gnome/power-overlay'
+        raise ValueError('GNOME defaults require a workspace rootfs')
     copied = {}
-    for source in sorted(overlay.rglob('*')):
+    for source in sorted(GNOME_OVERLAY.rglob('*')):
         if not source.is_file() or '__pycache__' in source.parts:
             continue
-        relative = source.relative_to(overlay)
+        relative = source.relative_to(GNOME_OVERLAY)
         # Debian links /etc/default/locale to /etc/locale.conf. Resolve guest
         # links inside this root rather than following host absolute paths.
         destination = guest_resolve(rootfs, relative.as_posix())
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
-        destination.chmod(0o755 if relative.as_posix() == 'usr/lib/piano/power-button' else 0o644)
+        destination.chmod(0o644)
         copied[destination.relative_to(rootfs).as_posix()] = hashlib.sha256(source.read_bytes()).hexdigest()
     # Use the same GNOME defaults as the multi-distro assembler. In particular,
     # the public schema override disables animation; local dconf takes priority.
@@ -47,21 +56,7 @@ def stage_gnome_power(rootfs):
     shutil.copyfile(defaults, destination)
     destination.chmod(0o644)
     copied[relative.as_posix()] = hashlib.sha256(defaults.read_bytes()).hexdigest()
-    wants = rootfs / 'etc/systemd/user/graphical-session.target.wants'
-    if any(parent.is_symlink() for parent in (wants, *wants.parents)
-           if parent != rootfs and parent.is_relative_to(rootfs)):
-        raise ValueError('Guest symlink in GNOME user service directory')
-    wants.mkdir(parents=True, exist_ok=True)
-    link = wants / 'piano-power-button.service'
-    if link.exists() or link.is_symlink():
-        link.unlink()
-    link.symlink_to('/usr/lib/systemd/user/piano-power-button.service')
-    # Remove the base image's old sleep masks. GNOME requests standard
-    # memory suspend; disk hibernation remains disabled by sleep.conf.
-    for unit in ('sleep.target', 'suspend.target'):
-        mask = rootfs / 'etc/systemd/system' / unit
-        if mask.is_symlink() and mask.readlink() == Path('/dev/null'):
-            mask.unlink()
+    unmask_suspend_targets(rootfs)
     return copied
 
 
@@ -77,12 +72,12 @@ def stage(rootfs, source, desktop='gnome'):
         raise ValueError('Expected fixed clean complete userspace source')
     overlay=source/'rootfs/overlay'
     if not overlay.is_dir():raise ValueError('Complete upstream overlay missing')
-    packaged = packaged_overlay_paths()
+    excluded = packaged_overlay_paths() | RETIRED_OVERLAY
     copied={}
     for path in sorted(overlay.rglob('*')):
         name=path.relative_to(overlay)
         relative = name.as_posix()
-        if relative in packaged or (desktop != 'gnome' and gnome_path(relative)):
+        if relative in excluded or (desktop != 'gnome' and gnome_path(relative)):
             continue
         target=rootfs/name
         # Never follow guest-root absolute links while writing on the host.
@@ -107,7 +102,9 @@ def stage(rootfs, source, desktop='gnome'):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(contents)
     if desktop == 'gnome':
-        copied.update(stage_gnome_power(rootfs))
+        copied.update(stage_gnome_desktop(rootfs))
+    else:
+        unmask_suspend_targets(rootfs)
     # Persistence policy is replaced here. The shared hardware runtime stage
     # subsequently replaces the public overlay's ordered driver services.
     (rootfs/'etc/fstab').write_text('# Piano RAM root. No Android mounts or growfs.\n')

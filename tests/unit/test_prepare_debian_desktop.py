@@ -9,6 +9,7 @@ from unittest.mock import Mock
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 import prepare_debian_desktop as desktop
+from desktop.power_migration import RETIRED_OVERLAY
 
 
 class PrepareDebianDesktopTests(unittest.TestCase):
@@ -67,6 +68,8 @@ fi
 # The checkout belongs to the building user; the rootfs must stay root-owned.
 chroot "$ROOTFS" systemctl enable NetworkManager ssh bluetooth piano-usb piano-touch piano-radio
 ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-manager.service"
+# Preserve the bootloader display: neither suspend nor blanking is recoverable yet.
+chroot "$ROOTFS" systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 ''')
         return public
 
@@ -149,6 +152,7 @@ ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-
         if not upstream.is_dir():
             self.skipTest('Pinned Debian source not fetched')
         packaged = desktop.packaged_overlay_paths()
+        excluded = packaged | RETIRED_OVERLAY
         upstream_paths = {name for name in packaged
                           if (upstream / name).is_file() or (upstream / name).is_symlink()}
         self.assertTrue(upstream_paths)
@@ -156,7 +160,7 @@ ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-
         with tempfile.TemporaryDirectory() as folder:
             for name in ('gnome', 'kde'):
                 recipe = desktop.prepare(public, Path(folder) / name, name)
-                for relative in packaged:
+                for relative in excluded:
                     path = recipe / 'rootfs/overlay' / relative
                     self.assertFalse(path.exists() or path.is_symlink(), relative)
                 script = recipe / 'scripts/build-rootfs.sh'
@@ -164,6 +168,10 @@ ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-
                             for line in script.read_text().splitlines() if 'systemctl enable ' in line]
                 self.assertTrue({'piano-usb', 'piano-touch', 'piano-camera', 'piano-camerad'}.isdisjoint(enabled))
                 self.assertTrue({'NetworkManager', 'bluetooth'}.issubset(enabled))
+                masked, = [line.split('systemctl mask ', 1)[1].split()
+                           for line in script.read_text().splitlines() if 'systemctl mask ' in line]
+                self.assertCountEqual(masked, ('hibernate.target', 'hybrid-sleep.target',
+                                              'suspend-then-hibernate.target'))
                 self.assertFalse((recipe / 'rootfs/overlay/usr/lib/systemd/system/piano-camerad.service').exists())
                 subprocess.run(['bash', '-n', script], check=True)
         self.assertTrue(all((upstream / path).is_file() or (upstream / path).is_symlink()

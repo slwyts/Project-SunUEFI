@@ -16,6 +16,7 @@ import tempfile
 
 from build_piano_ram_bootstrap import guest_resolve
 from build import overlay_release
+from desktop import power_migration
 
 ROOT = Path(__file__).resolve().parents[1]
 BSP = ROOT / 'linux/bsp'
@@ -446,6 +447,11 @@ def debian_package(output, tree, report, configuration):
     (control / 'preinst').write_text(preinst(paths, package, adopt=adopt))
     (control / 'preinst').chmod(0o755)
     subprocess.run(['/bin/sh', '-n', control / 'preinst'], check=True)
+    if package == NAME:
+        migration = control / 'postinst'
+        migration.write_text(power_migration.script('deb'))
+        migration.chmod(0o755)
+        subprocess.run(['/bin/sh', '-n', migration], check=True)
     artifact = output / f"{package}_{report['version']}_all.deb"
     subprocess.run(['dpkg-deb', '--root-owner-group', '--build', tree, artifact],
                    check=True, stdout=sys.stderr, env={**os.environ, 'SOURCE_DATE_EPOCH': '0'})
@@ -464,11 +470,18 @@ def pacman_sources(directory, tree, report, configuration):
     license_ids = {name: 'LicenseRef-Proprietary' for name in LOCAL_FIRMWARE}
     license_ids[TOPOLOGY_PACKAGE] = 'BSD-3-Clause'
     license_ids[POWER_PROFILES_PACKAGE] = 'MIT'
+    install = ''
+    if package == NAME:
+        migration = directory / (NAME + '.install')
+        migration.write_text(power_migration.script('pacman'))
+        subprocess.run(['/bin/sh', '-n', migration], check=True)
+        install = f'install={migration.name}\n'
     (directory / 'PKGBUILD').write_text(
         f"pkgname={package}\npkgver={report['version']}\npkgrel={overlay_release.pacman_release('1')}\n"
         f'pkgdesc={shlex.quote(package_description(package))}\n'
         "url='https://github.com/slwyts/Project-SunUEFI'\n"
         f'arch=(any)\nlicense=({license_ids.get(package, "MIT BSD-2-Clause-Patent")})\noptions=(!strip !debug)\n'
+        f'{install}'
         f'depends=({depends})\nbackup=({backup})\n'
         'source=(payload.tar)\nnoextract=(payload.tar)\n'
         f"sha256sums=('{sha(archive.read_bytes())}')\n"
