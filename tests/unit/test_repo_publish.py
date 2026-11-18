@@ -18,6 +18,16 @@ import products
 import publish as repo
 
 
+class KernelVersionTests(unittest.TestCase):
+    def test_debian_revision_preserves_abi_epoch_check(self):
+        previous = '7.3.3+1794995840.1794995840.aaaaaaaaaaaa-1'
+        revision = '7.3.3+1794995840.1794995840.aaaaaaaaaaaa-2'
+        another_abi = '7.3.3+1794995840.1794995840.bbbbbbbbbbbb-2'
+        repo.check_kernel_epoch('linux-image-piano', revision, [previous])
+        with self.assertRaisesRegex(ValueError, 'uses ABI epoch 1794995840'):
+            repo.check_kernel_epoch('linux-image-piano', another_abi, [previous, revision])
+
+
 class MemoryStore:
     def __init__(self):
         self.objects = {}

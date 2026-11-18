@@ -110,7 +110,7 @@ class KernelPackageTests(unittest.TestCase):
                     shutil.chown(output, user=build_user.pw_uid, group=build_user.pw_gid)
                 plan = {'format': 'pacman', 'build': str(output),
                         'kernel_release': '7.3-piano-b1', 'version': version,
-                        'abi_version': '7.3+1', 'package_epoch': 1,
+                        'abi_version': '7.3+1', 'revision': 1, 'package_epoch': 1,
                         'environment': {'PACMAN_PKGBASE': 'linux-piano-7.3-piano-b1'}}
                 with patch.object(boot, 'prepare_dtb', return_value=b'matched device tree'):
                     packages = boot.add_packages(plan, output,
@@ -156,7 +156,8 @@ class KernelPackageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='kernel-native-') as folder:
             output = Path(folder)
             plan = {'format': 'debian', 'build': str(output), 'kernel_release': '7.3-piano-b1',
-                    'version': '7.3+2', 'abi_version': '7.3+1', 'package_epoch': 1}
+                    'version': '7.3+2', 'abi_version': '7.3+1',
+                    'revision': kernel.DEBIAN_REVISION, 'package_epoch': 1}
             with patch.object(boot, 'prepare_dtb', return_value=b'device tree fixture'):
                 packages = boot.add_packages(
                     plan, output, {'command_line': 'rdinit=/pianoinit piano.root=LABEL=PIANOROOT ro rw'},
@@ -188,10 +189,54 @@ class KernelPackageTests(unittest.TestCase):
             self.assertEqual(dtb.read_bytes(), b'device tree fixture')
             image_meta = next(path for path in packages if path.name.startswith('linux-image-piano_'))
             depends = subprocess.check_output(['dpkg-deb', '-f', image_meta, 'Depends'], text=True)
-            self.assertIn('linux-image-7.3-piano-b1 (= 7.3+1-1)', depends)
-            self.assertIn('linux-piano-dtb-7.3-piano-b1 (= 7.3+2-1)', depends)
+            self.assertIn('linux-image-7.3-piano-b1 (= 7.3+1-2)', depends)
+            self.assertIn('linux-piano-dtb-7.3-piano-b1 (= 7.3+2-2)', depends)
             self.assertIn('linux-piano-v4l2loopback-7.3-piano-b1 (= 0.15.4-1)', depends)
             self.assertIn('piano-boot-config', depends)
+
+    @unittest.skipUnless(all(shutil.which(name) for name in ('make', 'dpkg-gencontrol')),
+                         'make and Debian package tools required')
+    def test_debian_image_declares_matched_boot_dependencies(self):
+        release = '7.3.3-piano-b42-g13eff9d06e11'
+        version = '7.3.3+42.13eff9d06e11-2'
+        image = 'linux-image-' + release
+        headers = 'linux-headers-' + release
+        dependencies = kernel.debian_image_dependencies('7.3.3', release, 42)
+        with tempfile.TemporaryDirectory(prefix='kernel-debian-metadata-') as folder:
+            work = Path(folder)
+            debian = work / 'debian'
+            debian.mkdir()
+            control = debian / 'control'
+            control.write_text(
+                'Source: linux-piano\nSection: kernel\nPriority: optional\n'
+                'Maintainer: Test <test@example.org>\n\n'
+                f'Package: {image}\nArchitecture: any\nDepends: kmod\nDescription: Image\n\n'
+                f'Package: {headers}\nArchitecture: any\nDescription: Headers\n')
+            (debian / 'changelog').write_text(
+                f'linux-piano ({version}) unstable; urgency=low\n\n'
+                '  * Fixture.\n\n'
+                ' -- Test <test@example.org>  Tue, 14 Nov 2023 00:00:00 +0000\n')
+            (debian / 'rules').write_text(
+                'revision = $(shell dpkg-parsechangelog -S Version | sed -n "s/.*-//p")\n'
+                'build-arch:\n\t@printf "%s\\n" "$(revision)"\n')
+            (debian / 'tmp/DEBIAN').mkdir(parents=True)
+            makefile = ROOT / 'tools/package/kernel-debian.mk'
+            command = ['make', '--no-print-directory', '-sf', makefile,
+                       f'KERNELRELEASE={release}', 'build-arch']
+            env = dict(os.environ, SOURCE_DATE_EPOCH='42', KBUILD_BUILD_VERSION='1',
+                       SUNUEFI_DEBIAN_IMAGE_DEPENDS=dependencies)
+            for _ in range(2):
+                self.assertEqual(subprocess.check_output(
+                    command, cwd=work, env=env, text=True).strip(), '1')
+            image_control = subprocess.check_output(
+                ['dpkg-gencontrol', '-p' + image, '-Pdebian/tmp', '-O'], cwd=work, text=True)
+            headers_control = subprocess.check_output(
+                ['dpkg-gencontrol', '-p' + headers, '-Pdebian/tmp', '-O'], cwd=work, text=True)
+            self.assertIn(f'Version: {version}\n', image_control)
+            self.assertIn('Depends: linux-piano-dtb-' + release
+                          + ', piano-boot-config (>= 7.3.3+42.42.13eff9d06e11-2), kmod\n',
+                          image_control)
+            self.assertNotIn('Depends:', headers_control)
 
     @unittest.skipUnless(shutil.which('dpkg-deb'), 'dpkg-deb required')
     def test_native_image_preserves_arm64_efi_binary(self):

@@ -192,6 +192,7 @@ def build_package(plan, kernel_archive, env):
         package_env = {**env, 'SOURCE_DATE_EPOCH': str(revision), 'LC_ALL': 'C', 'TZ': 'UTC'}
         image_identity = (kernel, kernel_version)
         if package_format == 'debian':
+            version += f".{plan['revision']}"
             archive = package_debian(work, output, module, payload, name, version, release,
                                      image_identity, package_env)
         else:

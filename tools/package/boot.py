@@ -23,6 +23,10 @@ def pacman_repository(name):
             f'Server = {PUBLIC_REPOSITORY_URL}/pacman/$repo/os/$arch\n')
 
 
+def dtb_package_name(release):
+    return 'linux-piano-dtb-' + release.lower().replace('_', '-')
+
+
 @contextmanager
 def boot_package_workspace(build):
     # makepkg includes the recipe and build paths in .BUILDINFO.
@@ -52,12 +56,13 @@ def prepare_dtb(manifest, build):
 
 
 def add_packages(plan, output, manifest, digest, *, image_modules=()):
-    """Keep device configuration separate from the unmodified kernel recipe."""
+    """Build the device tree, boot configuration and kernel metapackages."""
     release = plan['kernel_release']
-    name = 'linux-piano-dtb-' + release.lower().replace('_', '-')
+    name = dtb_package_name(release)
     dtb = prepare_dtb(manifest, Path(plan['build']))
     version = plan['version']
     abi_version = plan['abi_version']
+    revision = plan['revision']
     epoch = str(plan['package_epoch'])
     arguments = [value for value in manifest['command_line'].split()
                  if value not in ('ro', 'rw') and
@@ -217,11 +222,12 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
             for kind in ('image', 'headers'):
                 meta = work / ('meta-' + kind)
                 meta.mkdir()
-                depends = f'linux-{kind}-{release} (= {abi_version}-1)'
+                depends = f'linux-{kind}-{release} (= {abi_version}-{revision})'
                 if kind == 'image':
-                    depends += f', {name} (= {version}-1), piano-boot-config (>= {version}-1)'
-                    depends += ''.join(f', {package} (= {revision})'
-                                       for package, revision in image_modules)
+                    depends += (f', {name} (= {version}-{revision}), '
+                                f'piano-boot-config (>= {version}-{revision})')
+                    depends += ''.join(f', {package} (= {module_version})'
+                                       for package, module_version in image_modules)
                 trees.append(('linux-' + kind + '-piano', meta,
                               'Latest Piano Linux ' + kind, depends))
         else:
@@ -249,7 +255,7 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
                 control = payload / 'DEBIAN'
                 control.mkdir()
                 (control / 'control').write_text(
-                    f'Package: {package_name}\nVersion: {version}-1\nArchitecture: all\n'
+                    f'Package: {package_name}\nVersion: {version}-{revision}\nArchitecture: all\n'
                     f'Maintainer: Project SunUEFI <slwyts@tuta.io>\nDescription: {description}\n' +
                     ('Depends: ' + depends + '\n' if depends else ''))
                 conffiles = [path for path in payload.rglob('*')
@@ -268,7 +274,7 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
                         'command -v bootctl >/dev/null && bootctl is-installed --quiet || exit 0\n'
                         f'exec kernel-install add {release} "$kernel" "$initrd"\n')
                     postinst.chmod(0o755)
-                archive = output / f'{package_name}_{version}-1_all.deb'
+                archive = output / f'{package_name}_{version}-{revision}_all.deb'
                 subprocess.run(['dpkg-deb', '--root-owner-group', '--build', payload, archive],
                                env=env, check=True)
             else:

@@ -20,6 +20,8 @@ from build_piano_full_kernel import (kernel_build_environment, kernel_release_ma
                                      release_kernel_policy, toolchain)
 from stage_piano_kernel_modules import inspect
 
+DEBIAN_REVISION = 2
+
 
 def sha(path):
     with Path(path).open('rb') as stream:
@@ -55,6 +57,15 @@ def package_versions(kernel_version, release, package_format, epoch):
             base + '+' + '.'.join((abi_epoch, str(epoch), digest)))
 
 
+def debian_image_dependencies(kernel_version, release, abi_epoch):
+    from package.boot import dtb_package_name
+
+    # Do not change the image package when only package_epoch advances.
+    _, boot_version = package_versions(kernel_version, release, 'debian', abi_epoch)
+    return (f'{dtb_package_name(release)}, '
+            f'piano-boot-config (>= {boot_version}-{DEBIAN_REVISION})')
+
+
 def package_plan(kernel, build, output, package_format, jobs):
     manifest, identity = inspect(kernel)
     source = Path(manifest['compiler_worktree']).resolve()
@@ -87,14 +98,18 @@ def package_plan(kernel, build, output, package_format, jobs):
     command = ['make', '-C', str(source), 'O=' + str(build), 'ARCH=arm64',
                'LLVM=1', 'LLVM_IAS=1', 'KBUILD_IMAGE=arch/arm64/boot/Image',
                'LOCALVERSION=' + suffix, '-j' + str(jobs)]
-    environment = kernel_build_environment(manifest['kernel_policy']['abi_epoch'])
+    abi_epoch = manifest['kernel_policy']['abi_epoch']
+    environment = kernel_build_environment(abi_epoch)
     environment.update(DEBFULLNAME='Project SunUEFI', DEBEMAIL='slwyts@tuta.io',
                        PACKAGER='Project SunUEFI <slwyts@tuta.io>', LC_ALL='C', TZ='UTC')
     if platform.machine() not in ('aarch64', 'arm64'):
         command += ['CROSS_COMPILE=aarch64-linux-gnu-']
+    revision = DEBIAN_REVISION if package_format == 'debian' else 1
     if package_format == 'debian':
-        command += ['KDEB_PKGVERSION=' + abi_version + '-1', 'KDEB_SOURCENAME=linux-piano',
+        command += [f'KDEB_PKGVERSION={abi_version}-{revision}', 'KDEB_SOURCENAME=linux-piano',
                     'KDEB_CHANGELOG_DIST=unstable', 'KBUILD_BUILD_VERSION=1', 'bindeb-pkg']
+        environment['SUNUEFI_DEBIAN_IMAGE_DEPENDS'] = debian_image_dependencies(
+            kernel_version, release, abi_epoch)
         # Do not build a redundant multi-gigabyte debug image package.
         profiles = os.environ.get('DEB_BUILD_PROFILES', '').split()
         environment['DEB_BUILD_PROFILES'] = ' '.join(dict.fromkeys(
@@ -111,7 +126,7 @@ def package_plan(kernel, build, output, package_format, jobs):
             'source_commit': manifest['source_commit'], 'source_tree': manifest['source_tree'],
             'source': str(source), 'build': str(build), 'output': str(output),
             'command': command, 'environment': environment, 'version': package_version,
-            'abi_version': abi_version, 'package_epoch': release_epoch}
+            'abi_version': abi_version, 'revision': revision, 'package_epoch': release_epoch}
 
 
 def verify_headers(archive, package_format, *, release=None, symbols=None):
@@ -309,8 +324,7 @@ def build_packages(plan):
     # the kernel simply because packaging has a different CC command string.
     command = plan['command'].copy()
     if plan['format'] == 'debian':
-        # Upstream mkdebian uses date -R for the generated changelog, even
-        # with SOURCE_DATE_EPOCH. Normalize it before debhelper packages it.
+        # Add the device's package relationships to upstream's generated metadata.
         shutil.copyfile(Path(__file__).with_name('kernel-debian.mk'), build / 'sunuefi-debian.mk')
         flags = env.get('DPKG_FLAGS', '')
         command.insert(-1, 'DPKG_FLAGS=' + flags +
@@ -364,7 +378,7 @@ def build_packages(plan):
             name = name.removeprefix('Package: ')
             version = version.removeprefix('Version: ')
             # Do not publish linux-libc-dev or replace distro UAPI headers.
-            if name in expected and version == plan['abi_version'] + '-1':
+            if name in expected and version == f"{plan['abi_version']}-{plan['revision']}":
                 shutil.copy2(path, output / path.name)
                 selected.append(output / path.name)
         if len(selected) != 2:
@@ -374,6 +388,11 @@ def build_packages(plan):
         if len(selected) != 2:
             raise ValueError('pacman-pkg did not produce only the image and headers packages')
     image_archive, = (path for path in selected if 'headers' not in path.name)
+    if plan['format'] == 'debian':
+        depends = subprocess.check_output(['dpkg-deb', '-f', image_archive, 'Depends'], text=True).strip()
+        required = plan['environment']['SUNUEFI_DEBIAN_IMAGE_DEPENDS'].split(', ')
+        if not all(dependency in depends.split(', ') for dependency in required):
+            raise ValueError('Debian image is missing its device tree or boot configuration dependency')
     for path in selected:
         if 'headers' in path.name:
             verify_headers(path, plan['format'], release=plan['kernel_release'],

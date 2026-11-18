@@ -305,6 +305,7 @@ headers 包校验 `Module.symvers`、生成头文件和构建工具架构；只�
 只更新板级 DTB、元包或引导配置时，只推进 `package_epoch`。软件包版本按
 `abi_epoch`、`package_epoch` 的顺序比较，不改变现有内核 ABI；升级已安装
 内核的设备树时，包管理器也会刷新启动文件。
+只修改 Debian 内核打包规则时，递增 Debian 包修订号，保持内核 ABI 不变。
 产品系统通过 `/etc/kernel/entry-token` 沿用初装启动镜像的 `linux` 标识；
 在独立安装的发行版中装包时，由 `kernel-install` 选择该系统的标识。
 
@@ -325,7 +326,8 @@ APT／pacman 安装内核、模块、匹配 DTB 和必要固件
 ```
 
 Debian 复用 initramfs-tools 和 systemd-boot 提供的内核、initramfs 钩子；
-`55-initrd.install` 将生成的 initramfs 交给 systemd。
+`55-initrd.install` 将生成的 initramfs 交给 systemd。直接安装版本化内核包时，
+APT 也会先配置匹配的设备树与 `piano-boot-config`，再生成启动文件。
 Arch 由 pacman 事务调用 `kernel-install`，复用官方 `50-mkinitcpio.install`，
 并按 [ArchWiki 的 kernel-install 配置](https://wiki.archlinux.org/title/Kernel-install)
 屏蔽 preset 模式的两条 mkinitcpio 事务钩子，避免重复生成。
@@ -337,9 +339,6 @@ Piano 的 mkinitcpio 配置只跳过这些钩子，保留系统及用户配置�
 检查启动分区能否容纳新文件。空间不足会提示先保留可用的旧启动项再腾出空间，
 不会覆盖或自动删除旧文件。这个检查避免已知的空间不足导致覆盖中断；
 它不是断电或其他进程同时写入时的事务保护。
-Debian 上第一次升级到带此检查的版本，先单独执行
-`sudo apt install --only-upgrade piano-boot-config`，再升级内核。
-内核元包依赖它，但不会约束两个依赖包之间的安装顺序。
 
 默认 `/etc/kernel/install.conf` 为 `layout=bls`；需要 UKI 时改为 `layout=uki`。
 Arch 系运行 `sudo kernel-install add-all`；Debian 的内核文件在 `/boot`，
