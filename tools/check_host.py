@@ -41,6 +41,9 @@ CI_UNIT = (
     'test_build_input.py',
     'test_product_core.py',
     'test_late_handoff.py',
+    'test_nv_journal.py',
+    'test_nv_runtime_guard.py',
+    'test_reset.py',
     'test_usb_ram_boot_controller.py',
     'test_gt9764.py',
     'test_piano_camera.py',
@@ -114,12 +117,18 @@ def main(argv=None):
     parser.add_argument('--group', choices=('portable', 'ci', 'python-all'), default='portable')
     parser.add_argument('--list', action='store_true', help='List files without running tests')
     parser.add_argument('--pattern', action='append', help='Select test filenames within the group; may be repeated')
+    parser.add_argument('--no-skips', action='store_true',
+                        help='Fail if any selected check is skipped or a pattern matches no files')
     parser.add_argument('--timeout', type=int, default=120, help='Per-file timeout in seconds')
     args = parser.parse_args(argv)
     if args.timeout <= 0:
         parser.error('--timeout must be positive')
     paths = checks(ROOT, args.group)
     if args.pattern:
+        if args.no_skips:
+            for pattern in args.pattern:
+                if not any(path.match(pattern) for path in paths):
+                    parser.error(f'No check matches {pattern!r}')
         paths = [path for path in paths if any(path.match(pattern) for pattern in args.pattern)]
     if not paths:
         parser.error('No checks selected')
@@ -127,6 +136,7 @@ def main(argv=None):
         print('\n'.join(str(path.relative_to(ROOT)) for path in paths))
         return 0
     print(f'Group: {args.group}; {len(paths)} test files. Not hardware validation.', flush=True)
+    fail_on_skip = args.no_skips or args.group != 'python-all'
     failed = tests = skips = 0
     for path in paths:
         label = str(path.relative_to(ROOT))
@@ -137,12 +147,11 @@ def main(argv=None):
         status, total, skipped, output = run_check(path, args.timeout)
         tests += total
         skips += skipped
-        # A skip in the portable or CI groups means promised coverage is
-        # missing. python-all also reports optional local-input tests.
-        bad = status == 'FAILED' or (args.group != 'python-all' and skipped > 0)
-        failed += int(bad)
+        if fail_on_skip and skipped:
+            status = 'FAILED'
+        failed += int(status == 'FAILED')
         print(f'{status} {label}: {total} tests, {skipped} skipped', flush=True)
-        if bad or skipped:
+        if status == 'FAILED' or skipped:
             print(output, end='' if output.endswith('\n') else '\n', flush=True)
     print(f'Result: {tests} tests, {skips} skipped, {failed} failing files.', flush=True)
     return 1 if failed else 0

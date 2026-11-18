@@ -79,6 +79,8 @@ jobs:
         with:
           submodules: false
           persist-credentials: false
+      - name: Check systemd-boot entry updates and recovery
+        run: ./build.sh check --group python-all --no-skips --pattern test_kernel_install.py
       - id: cache-key
         run: python3 tools/build/ci_container.py key --github-output "$GITHUB_OUTPUT"
       - id: cached-image
@@ -95,14 +97,17 @@ jobs:
         with:
           path: build/ci-builder
           key: ${{ steps.cache-key.outputs.key }}
-      - name: Check signed APT and pacman publication with real tools
+      - name: Check signed publication and pacman configuration upgrades
         run: |
-          docker run --rm -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD:/workspace:ro" -w /workspace \
-            sunuefi-builder ./build.sh check --group python-all --pattern 'test_repo*.py' \
-              --pattern test_kernel_package.py --pattern 'test_overlay*.py' \
-              --pattern test_debian_overlay_cache.py \
-              --pattern test_build_nyarch_apps.py \
-              --pattern test_stage_arch_piano.py
+          docker run --rm --network none -e PYTHONDONTWRITEBYTECODE=1 \
+            -v "$PWD:/workspace:ro" -w /workspace sunuefi-builder bash -euc '
+              id -u sunuefi-build >/dev/null 2>&1 ||
+                useradd --system --create-home sunuefi-build
+              ./build.sh check --group python-all --no-skips \
+                --pattern "test_repo*.py" --pattern test_kernel_package.py \
+                --pattern "test_overlay*.py" --pattern test_debian_overlay_cache.py \
+                --pattern test_build_nyarch_apps.py --pattern test_stage_arch_piano.py
+            '
       - name: Pass the verified builder image to this run
         uses: ./.github/actions/build-input
         with:

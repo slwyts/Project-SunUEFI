@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import pwd
 import shutil
 import subprocess
 import sys
@@ -63,20 +64,37 @@ class KernelPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'precedes the sealed ABI epoch'):
             kernel.package_versions('7.3.3', '7.3.3-piano-b2-g13eff9d06e11', 'pacman', 1)
 
-    @unittest.skipUnless(os.geteuid() != 0 and all(shutil.which(name) for name in (
-        'makepkg', 'pacman', 'unshare', 'gpg', 'bsdtar')),
-        'unprivileged Arch package tools and user namespaces required')
+    @unittest.skipUnless(all(shutil.which(name) for name in (
+        'makepkg', 'pacman', 'gpg', 'bsdtar', 'fakeroot', 'zstd')),
+        'native pacman packaging tools required')
     def test_pacman_config_upgrade_preserves_admin_layout(self):
-        namespace = subprocess.run(['unshare', '--user', '--map-root-user', 'true'],
-                                   capture_output=True)
-        if namespace.returncode:
-            self.skipTest('unprivileged user namespaces are unavailable')
+        build_user = None
+        namespace = []
+        if os.geteuid() == 0:
+            if not Path('/.dockerenv').is_file():
+                self.skipTest('use a regular user or the project builder container')
+            try:
+                build_user = pwd.getpwnam('sunuefi-build')
+            except KeyError:
+                self.skipTest('the container needs the ordinary sunuefi-build account')
+        else:
+            namespace = ['unshare', '--user', '--map-root-user']
+            if not shutil.which('unshare') or subprocess.run(
+                    [*namespace, 'true'], capture_output=True).returncode:
+                self.skipTest('unprivileged user namespaces are unavailable')
+
         with tempfile.TemporaryDirectory(prefix='kernel-pacman-') as folder:
             work = Path(folder)
+            if build_user:
+                work.chmod(0o711)
             root = work / 'root'
             database = root / 'var/lib/pacman'
+            cache = work / 'cache'
+            gpgdir = work / 'gnupg'
             hooks = work / 'hooks'
             database.mkdir(parents=True)
+            cache.mkdir()
+            gpgdir.mkdir(mode=0o700)
             hooks.mkdir()
             pacman_config = work / 'pacman.conf'
             pacman_config.write_text('[options]\nSigLevel = Never\n')
@@ -88,6 +106,8 @@ class KernelPackageTests(unittest.TestCase):
             for version in ('7.3+1', '7.3+2'):
                 output = work / version
                 output.mkdir()
+                if build_user:
+                    shutil.chown(output, user=build_user.pw_uid, group=build_user.pw_gid)
                 plan = {'format': 'pacman', 'build': str(output),
                         'kernel_release': '7.3-piano-b1', 'version': version,
                         'abi_version': '7.3+1', 'package_epoch': 1,
@@ -102,8 +122,9 @@ class KernelPackageTests(unittest.TestCase):
                               subprocess.check_output(['bsdtar', '-xOf', meta, '.PKGINFO'], text=True))
                 archive = next(path for path in packages if path.name.startswith('piano-boot-config-'))
                 archives.append(archive)
-            command = ['unshare', '--user', '--map-root-user', 'pacman',
+            command = [*namespace, 'pacman',
                        '--root', str(root), '--dbpath', str(database),
+                       '--cachedir', str(cache), '--gpgdir', str(gpgdir),
                        '--logfile', str(work / 'pacman.log'), '--config', str(pacman_config),
                        '--hookdir', str(hooks), '--noconfirm', '--nodeps', '--nodeps', '--noscriptlet']
             subprocess.run([*command, '-U', archives[0]], check=True)
@@ -125,50 +146,6 @@ class KernelPackageTests(unittest.TestCase):
             self.assertFalse(config.exists())
             self.assertEqual(config.with_suffix('.conf.pacsave').read_text(),
                              'layout=uki\ninitrd_generator=mkinitcpio\n')
-
-    @unittest.skipUnless(shutil.which('kernel-install') and Path(
-        '/usr/lib/kernel/install.d/90-loaderentry.install').is_file(),
-        'systemd kernel-install and BLS plugin required')
-    def test_systemd_bls_add_upgrade_remove_and_failed_generation(self):
-        with tempfile.TemporaryDirectory(prefix='kernel-install-native-') as folder:
-            work = Path(folder)
-            esp = work / 'esp'
-            config = work / 'config'
-            esp.mkdir()
-            config.mkdir()
-            (config / 'install.conf').write_text('layout=bls\ninitrd_generator=none\n')
-            (config / 'entry-token').write_text('fixture\n')
-            (config / 'cmdline').write_text('root=LABEL=PIANOROOT rw\n')
-            (config / 'devicetree').write_text('piano/board.dtb\n')
-            (config / 'piano').mkdir()
-            (config / 'piano/board.dtb').write_bytes(b'matching-device-tree')
-            image = work / 'Image'
-            initrd = work / 'initrd'
-            image.write_bytes(b'kernel-install copies EFI kernel bytes without modification')
-            initrd.write_bytes(b'initramfs fixture')
-            env = dict(os.environ, KERNEL_INSTALL_CONF_ROOT=str(config),
-                       KERNEL_INSTALL_PLUGINS='/usr/lib/kernel/install.d/90-loaderentry.install',
-                       BOOT_ROOT=str(esp), BOOT_MNT=str(esp),
-                       SYSTEMD_LOG_LEVEL='warning')
-            command = ['kernel-install', '--entry-token=literal:fixture']
-            for version in ('1.0', '2.0'):
-                subprocess.run([*command, 'add', version, image, initrd], env=env, check=True)
-            first = esp / 'loader/entries/fixture-1.0.conf'
-            second = esp / 'loader/entries/fixture-2.0.conf'
-            self.assertTrue(first.is_file() and second.is_file())
-            self.assertEqual((esp / 'fixture/2.0/linux').read_bytes(), image.read_bytes())
-            self.assertEqual((esp / 'fixture/2.0/initrd').read_bytes(), initrd.read_bytes())
-            self.assertEqual((esp / 'fixture/2.0/board.dtb').read_bytes(), b'matching-device-tree')
-            before = first.read_bytes(), second.read_bytes()
-            (config / 'devicetree').write_text('missing-board.dtb\n')
-            result = subprocess.run([*command, 'add', '3.0', image, initrd], env=env,
-                                    capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(before, (first.read_bytes(), second.read_bytes()))
-            self.assertFalse((esp / 'loader/entries/fixture-3.0.conf').exists())
-            subprocess.run([*command, 'remove', '2.0'], env=env, check=True)
-            self.assertTrue(first.is_file())
-            self.assertFalse(second.exists())
 
     @unittest.skipUnless(shutil.which('dpkg-deb'), 'dpkg-deb required')
     def test_debian_packages_own_versioned_dtb_and_standard_hooks(self):
