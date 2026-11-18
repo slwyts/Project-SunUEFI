@@ -95,6 +95,8 @@ jobs:
             -e R2_ENDPOINT -e R2_BUCKET -e OVERLAYS \
             -e SUNUEFI_BUILD_ENVIRONMENT_ID -e SUNUEFI_CACHE_WORKSPACE sunuefi-builder bash -euc '
               git config --global --add safe.directory /workspace
+              git config --global --add safe.directory /workspace/build/kernel-sources/linux-piano.git
+              git config --global --add safe.directory "/workspace/build/kernel-worktrees/*"
               python3 tools/build/shared_products.py verify --kind kernel
               python3 -m venv /tmp/repo-venv
               /tmp/repo-venv/bin/pip install -r requirements-build.txt
