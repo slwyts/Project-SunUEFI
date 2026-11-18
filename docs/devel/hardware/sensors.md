@@ -25,7 +25,7 @@ sudo ./build.sh sensors build/sensors --sysroot build/distros/debian-sid/rootfs 
 | 包 | 当前固定源码对应的版本 |
 | --- | --- |
 | `piano-sensors` | sid 构建为 `5+sunuefi2`，架构 `all` |
-| `fastrpc-support`、`libfastrpc1` | sid 标准包 `1.0.8-1`，架构 `arm64` |
+| `fastrpc-support`、`libfastrpc1` | sid 标准包 `1.0.9-1`，架构 `arm64` |
 | `libssc2`、`libssc-bin` | `0.4.4-2+piano1+sunuefi3`，架构 `arm64` |
 | `iio-sensor-proxy` | `3.9-1+piano1+sunuefi1`，架构 `arm64` |
 

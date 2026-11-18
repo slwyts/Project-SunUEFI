@@ -2,7 +2,7 @@
   "source_versions": {
     "libssc": "0.4.4-2",
     "iio-sensor-proxy": "3.9-1",
-    "fastrpc": "1.0.8-1"
+    "fastrpc": "1.0.9-1"
   },
   "local_revisions": {
     "libssc": "piano1+sunuefi3",
