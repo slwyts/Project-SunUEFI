@@ -18,6 +18,9 @@ on:
       bsp_key:
         required: true
         type: string
+      camera_key:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -63,6 +66,12 @@ jobs:
           path: artifacts/packages/bsp
           key: ${{ inputs.bsp_key }}
           fail-on-cache-miss: true
+      - name: Restore the shared camera packages for image verification
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: artifacts/packages/camera
+          key: ${{ inputs.camera_key }}
+          fail-on-cache-miss: true
       - name: Restore the record of the published overlay packages
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
@@ -84,7 +93,7 @@ jobs:
           set -o pipefail
           mkdir -p build/logs build/ccache artifacts/downloads
           docker run --rm --privileged -v "$PWD:/workspace" -w /workspace \
-            -e SUNUEFI_BUILD_ENVIRONMENT_ID -e SUNUEFI_TOOLCHAIN_ROOT=/usr \
+            -e SUNUEFI_BUILD_ENVIRONMENT_ID -e SUNUEFI_CACHE_WORKSPACE -e SUNUEFI_TOOLCHAIN_ROOT=/usr \
             -e SUNUEFI_BUILD_TARGET -e SUNUEFI_OVERLAY_TARGET \
             -e CCACHE_DIR=/workspace/build/ccache -e CCACHE_MAXSIZE=3G \
             -e CCACHE_BASEDIR=/workspace -e CCACHE_COMPILERCHECK=content \

@@ -68,7 +68,7 @@ def stage_gnome_power(rootfs):
 def stage(rootfs, source, desktop='gnome'):
     if desktop not in ('gnome', 'kde'):
         raise ValueError('Unsupported desktop')
-    from prepare_debian_desktop import device_config_paths, gnome_path
+    from prepare_debian_desktop import gnome_path, packaged_overlay_paths
     rootfs,source=Path(rootfs).resolve(),Path(source).resolve()
     if not rootfs.is_relative_to(ROOT) or not rootfs.is_dir():
         raise ValueError('Rootfs must be an existing workspace directory')
@@ -77,7 +77,7 @@ def stage(rootfs, source, desktop='gnome'):
         raise ValueError('Expected fixed clean complete userspace source')
     overlay=source/'rootfs/overlay'
     if not overlay.is_dir():raise ValueError('Complete upstream overlay missing')
-    packaged = device_config_paths()
+    packaged = packaged_overlay_paths()
     copied={}
     for path in sorted(overlay.rglob('*')):
         name=path.relative_to(overlay)

@@ -35,16 +35,5 @@
       "kernel_release_must_match": true,
       "license": "retain kernel GPL and per-file BSD declarations"
     }
-  },
-  "optional_layers": {
-    "native-camera": {
-      "selected_by": "camera",
-      "requires": [
-        "piano-camerad",
-        "matching-kernel v4l2loopback"
-      ],
-      "dependency_resolution_tested": false,
-      "requires_layer": "runtime"
-    }
   }
 }

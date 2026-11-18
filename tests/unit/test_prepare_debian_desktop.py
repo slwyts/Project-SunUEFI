@@ -145,7 +145,7 @@ ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-
         upstream = public / 'rootfs/overlay'
         if not upstream.is_dir():
             self.skipTest('Pinned Debian source not fetched')
-        packaged = desktop.device_config_paths()
+        packaged = desktop.packaged_overlay_paths()
         upstream_paths = {name for name in packaged
                           if (upstream / name).is_file() or (upstream / name).is_symlink()}
         self.assertTrue(upstream_paths)
@@ -159,9 +159,9 @@ ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-
                 script = recipe / 'scripts/build-rootfs.sh'
                 enabled, = [line.split('systemctl enable ', 1)[1].split()
                             for line in script.read_text().splitlines() if 'systemctl enable ' in line]
-                self.assertTrue({'piano-usb', 'piano-touch'}.isdisjoint(enabled))
-                self.assertTrue({'NetworkManager', 'bluetooth', 'piano-camerad'}.issubset(enabled))
-                self.assertTrue((recipe / 'rootfs/overlay/usr/lib/systemd/system/piano-camerad.service').is_file())
+                self.assertTrue({'piano-usb', 'piano-touch', 'piano-camera', 'piano-camerad'}.isdisjoint(enabled))
+                self.assertTrue({'NetworkManager', 'bluetooth'}.issubset(enabled))
+                self.assertFalse((recipe / 'rootfs/overlay/usr/lib/systemd/system/piano-camerad.service').exists())
                 subprocess.run(['bash', '-n', script], check=True)
         self.assertTrue(all((upstream / path).is_file() or (upstream / path).is_symlink()
                             for path in upstream_paths))

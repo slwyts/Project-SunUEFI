@@ -61,7 +61,7 @@ def removed_paths(rootfs):
     return sorted(paths)
 
 
-def build(output, source, rootfs=None):
+def build(output, source, rootfs=None, *, include_camera=False):
     output, source = Path(output).resolve(), Path(source).resolve()
     if not output.is_relative_to(ROOT / 'build') or output.exists():
         raise ValueError('output must be a new workspace build directory')
@@ -69,8 +69,10 @@ def build(output, source, rootfs=None):
     commit = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
     if commit != pin or subprocess.check_output(['git', '-C', str(source), 'status', '--porcelain'], text=True):
         raise ValueError('public source must have the pinned clean commit')
-    _, rows = payload(['camera'])
-    rows = [(row, data) for row, data in rows if row['group'] == 'camera']
+    rows = []
+    if include_camera:
+        _, selected = payload(['camera'])
+        rows = [(row, data) for row, data in selected if row['group'] == 'camera']
     files = {row['path']: data for row, data in rows}
     modes = {row['path']: int(row['mode'], 8) for row, _ in rows}
     links = {row['path'] for row, _ in rows if row['type'] == 'symlink'}
@@ -116,12 +118,12 @@ def build(output, source, rootfs=None):
                 destination.unlink()
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(output / name, destination, follow_symlinks=False)
-        wants = rootfs / 'etc/systemd/system/multi-user.target.wants'
-        wants.mkdir(parents=True, exist_ok=True)
-        for unit in ('piano-camerad.service',):
-            link = wants / unit
+        if include_camera:
+            wants = rootfs / 'etc/systemd/system/multi-user.target.wants'
+            wants.mkdir(parents=True, exist_ok=True)
+            link = wants / 'piano-camerad.service'
             if not link.exists() and not link.is_symlink():
-                link.symlink_to('/usr/lib/systemd/system/' + unit)
+                link.symlink_to('/usr/lib/systemd/system/piano-camerad.service')
         manifest = rootfs / 'usr/share/piano-provenance/ram-hardware.json'
         manifest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(output / 'manifest.json', manifest)
@@ -134,7 +136,7 @@ def main():
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--rootfs', type=Path)
     args = parser.parse_args()
-    print(json.dumps(build(args.output_dir, args.source, args.rootfs), indent=2))
+    print(json.dumps(build(args.output_dir, args.source, args.rootfs, include_camera=True), indent=2))
 
 
 if __name__ == '__main__':

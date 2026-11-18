@@ -14,13 +14,9 @@
         "mount",
         "iproute2"
       ],
-      "camera_depends": [
-        "wireplumber (>= 0.5)"
-      ],
       "dependency_resolution_tested": false,
       "device_tested": false,
-      "native_layer_abi_verified": false,
-      "camera_profile_status": "Declared source schema; target compatibility and dependency resolution untested"
+      "native_layer_abi_verified": false
     },
     "ubuntu": {
       "default_suite": "noble",
@@ -35,13 +31,9 @@
         "mount",
         "iproute2"
       ],
-      "camera_depends": [
-        "wireplumber (>= 0.5)"
-      ],
       "dependency_resolution_tested": false,
       "device_tested": false,
-      "native_layer_abi_verified": false,
-      "camera_profile_status": "Declared source schema; target compatibility and dependency resolution untested"
+      "native_layer_abi_verified": false
     },
     "deepin": {
       "default_suite": null,
@@ -56,13 +48,9 @@
         "mount",
         "iproute2"
       ],
-      "camera_depends": [
-        "wireplumber (>= 0.5)"
-      ],
       "dependency_resolution_tested": false,
       "device_tested": false,
-      "native_layer_abi_verified": false,
-      "camera_profile_status": "Declared source schema; target compatibility and dependency resolution untested"
+      "native_layer_abi_verified": false
     },
     "arch": {
       "default_suite": "rolling",
@@ -77,13 +65,9 @@
         "iproute2",
         "grep"
       ],
-      "camera_depends": [
-        "wireplumber>=0.5"
-      ],
       "dependency_resolution_tested": false,
       "device_tested": false,
-      "native_layer_abi_verified": false,
-      "camera_profile_status": "Declared source schema; target compatibility and dependency resolution untested"
+      "native_layer_abi_verified": false
     }
   }
 }

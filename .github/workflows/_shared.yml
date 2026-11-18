@@ -16,16 +16,24 @@ on:
       bsp_key:
         description: Exact cache key for both native device configuration archives
         value: ${{ jobs.bsp.outputs.key }}
+      camera_key:
+        description: Exact cache key for both native camera archives
+        value: ${{ jobs.bsp.outputs.camera_key }}
 
 permissions:
   contents: read
 
 jobs:
   bsp:
+    name: Device packages
     if: contains(fromJSON(inputs.shared_matrix).kind, 'kernel')
     runs-on: ubuntu-26.04-arm
     outputs:
       key: ${{ steps.restore.outputs.cache-primary-key }}
+      camera_key: ${{ steps.camera.outputs.cache-primary-key }}
+    env:
+      SUNUEFI_BUILD_ENVIRONMENT_ID: ${{ inputs.image_id }}
+      SUNUEFI_CACHE_WORKSPACE: /workspace
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -43,26 +51,49 @@ jobs:
           # Reusing a previous run's package after a source revert would
           # leave the signed pacman database on the newer package version.
           key: repo-bsp-v1-${{ github.run_id }}
-      - name: Build or verify native device configuration packages
+      - id: camera-key
+        name: Identify the camera source, recipe and toolchain
+        run: |
+          key=$(./build.sh camera-package --cache-key)
+          printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
+      - id: camera
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: artifacts/packages/camera
+          key: ${{ steps.camera-key.outputs.key }}
+      - name: Build or verify the native device packages
         env:
           SUNUEFI_OVERLAY_RELEASE: ${{ github.run_id }}.${{ github.run_attempt }}
           BSP_CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
+          CAMERA_CACHE_HIT: ${{ steps.camera.outputs.cache-hit }}
         run: |
           python3 tools/build/ci_container.py load
           mkdir -p artifacts/packages/bsp
           docker run --rm -v "$PWD:/workspace" -w /workspace \
-            -e SUNUEFI_OVERLAY_RELEASE -e BSP_CACHE_HIT sunuefi-builder bash -euc '
+            -e SUNUEFI_BUILD_ENVIRONMENT_ID -e SUNUEFI_CACHE_WORKSPACE \
+            -e SUNUEFI_OVERLAY_RELEASE -e BSP_CACHE_HIT -e CAMERA_CACHE_HIT sunuefi-builder bash -euc '
+              git config --global --add safe.directory /workspace
               if [ "$BSP_CACHE_HIT" != true ]; then
                 ./build.sh bsp package --target debian --format deb --output artifacts/packages/bsp/debian
                 ./build.sh bsp package --target arch --format pacman --output artifacts/packages/bsp/pacman
               fi
               ./build.sh repo products --verify-bsp --output artifacts/packages/bsp
+              if [ "$CAMERA_CACHE_HIT" = true ]; then
+                ./build.sh camera-package --verify
+              else
+                ./build.sh camera-package
+              fi
             '
       - if: steps.restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: artifacts/packages/bsp
           key: ${{ steps.restore.outputs.cache-primary-key }}
+      - if: steps.camera.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: artifacts/packages/camera
+          key: ${{ steps.camera.outputs.cache-primary-key }}
 
   shared:
     runs-on: ubuntu-26.04-arm

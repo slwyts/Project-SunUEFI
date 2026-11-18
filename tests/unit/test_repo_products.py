@@ -16,6 +16,14 @@ class RepoProductsTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix='sunuefi-package-sets-')
         self.addCleanup(temporary.cleanup)
         self.packages = Path(temporary.name)
+        self.camera_deb = self.packages / 'camera/debian/piano-camera_1.0-1_arm64.deb'
+        self.camera_pacman = self.packages / 'camera/pacman/piano-camera-1.0-1-aarch64.pkg.tar.zst'
+
+    def shared_camera(self):
+        return patch('products.camera.shared_package', side_effect=(
+            (self.camera_deb, {'sha256': 'debian-camera'}),
+            (self.camera_pacman, {'sha256': 'pacman-camera'}),
+        ))
 
     def package_set(self, name, files, **identity):
         directory = self.packages / name
@@ -47,14 +55,18 @@ class RepoProductsTests(unittest.TestCase):
 
         targets = ('debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos')
         with patch('products.bsp_package', side_effect=(
-                (device_deb, {'sha256': 'debian'}), (device_pacman, {'sha256': 'pacman'}))) as bsp:
+                (device_deb, {'sha256': 'debian'}), (device_pacman, {'sha256': 'pacman'}))) as bsp, \
+                self.shared_camera() as camera:
             batches = publication_batches(self.packages, kernel=True, overlays=targets)
         self.assertEqual([call.args for call in bsp.call_args_list],
                          [(self.packages / 'bsp/debian', 'debian'),
                           (self.packages / 'bsp/pacman', 'pacman')])
+        self.assertEqual([call.args for call in camera.call_args_list],
+                         [('debian', self.camera_deb.parent),
+                          ('pacman', self.camera_pacman.parent)])
         self.assertEqual({name: [path.name for path in paths] for name, paths in batches.items()},
-                         {'apt': [deb_kernel, deb_shared, device_deb.name],
-                          'sunuefi': [kernel, graphics, device_pacman.name, firmware],
+                         {'apt': [deb_kernel, deb_shared, self.camera_deb.name, device_deb.name],
+                          'sunuefi': [kernel, graphics, self.camera_pacman.name, device_pacman.name, firmware],
                           'sunuefi-steamos': [graphics]})
         arch = self.packages / 'overlays/nyarch-gnome' / graphics
         valve = self.packages / 'overlays/steamos' / graphics
@@ -68,8 +80,9 @@ class RepoProductsTests(unittest.TestCase):
         device_pacman = self.packages / 'piano-device-config-1-1-any.pkg.tar.zst'
         self.package_set('overlays/steamos', {device_pacman.name: b'valve'}, repo='sunuefi-steamos')
         with patch('products.bsp_package', side_effect=(
-                (device_deb, {'sha256': 'debian'}), (device_pacman, {'sha256': 'pacman'}))):
-            with self.assertRaisesRegex(ValueError, 'Common device configuration duplicated'):
+                (device_deb, {'sha256': 'debian'}), (device_pacman, {'sha256': 'pacman'}))), \
+                self.shared_camera():
+            with self.assertRaisesRegex(ValueError, 'Common package duplicated'):
                 publication_batches(self.packages, kernel=True, overlays=('steamos',))
 
     def test_duplicate_names_within_one_repo_must_match(self):

@@ -146,7 +146,11 @@ SM8750 只公布同编号 CSID→VFE 链接，与 Gen4 的寄存器更新、帧�
 
 ## 手动控件
 
-正常 runtime 构建同时安装相机服务和 `piano-camera-ctl`。客户端复用服务已有的硬件连接；未开流时返回 `ENODEV`，不会暗中启动相机。
+`piano-camera` 安装相机服务和 `piano-camera-ctl`。客户端复用服务已有的硬件连接；未开流时返回 `ENODEV`，不会暗中启动相机。相机包依赖设备配置和带匹配 `v4l2loopback` 的内核元包，升级内核时不必替换相机程序。
+
+产品镜像已启用相机服务。自行安装时，Debian 由包启用服务；Arch 系使用
+`systemctl enable --now piano-camerad.service`。从直接复制文件的旧镜像迁移时，
+沿用[设备配置的文件归属检查](../../../linux/bsp/README.md)，不移动 `/etc/piano/camera.conf`。
 
 ```sh
 piano-camera-ctl caps rear

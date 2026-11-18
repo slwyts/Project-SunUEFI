@@ -35,7 +35,6 @@ def inputs_current(output):
         record.get('producer', {}).get('sha256') == runtime.sha(Path(__file__))
         and all(pen.get('inputs', {}).get(str(path)) == runtime.sha(path)
                 for path in pen_paths)
-        and record.get('camera', {}).get('inputs') == runtime.camera_inputs()
         and record.get('fingerprint', {}).get('inputs')
         == build_piano_fingerprint.source_inputs()
     )
@@ -106,9 +105,6 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, firmware_ro
         output, flags, sysroot, emulator=emulator, kernel=identity,
         firmware_root=firmware_root)
     files.update(pen_files)
-    camera_files, camera_record = runtime.build_camera(
-        output, flags, pen_record['cxx_command'], uapi, sysroot, emulator=emulator)
-    files.update(camera_files)
     for name, (relative, digest, destination) in runtime.PUBLIC_SOURCES.items():
         original = public / relative
         if runtime.sha(original) != digest:
@@ -146,7 +142,7 @@ def build(kernel, source, kernel_build, output, cc, sysroot, macros, firmware_ro
     if runtime.kernel_identity(kernel_build, source, commit, release) != identity:
         raise ValueError('Kernel source/ABI changed during runtime helper build')
     result = {'status': 'RUNTIME_COMPILED_NOT_DEVICE_TESTED', 'kernel': identity,
-        'public_commit': runtime.PUBLIC_COMMIT, 'runtime_files': files, 'pen_core': pen_record, 'camera': camera_record,
+        'public_commit': runtime.PUBLIC_COMMIT, 'runtime_files': files, 'pen_core': pen_record,
         'producer': {'file': 'tools/build_release_helpers.py', 'sha256': runtime.sha(Path(__file__))},
         'fingerprint': fingerprint,
         'uapi_sha256': uapi_digest, 'uapi_source_commit': commit,

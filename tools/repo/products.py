@@ -14,6 +14,7 @@ from verify_public import verify_public
 
 sys.path.insert(0, str(ROOT / 'tools'))
 from build.overlay_packages import bsp_package
+from package import camera
 from package.boot import PUBLIC_REPOSITORY_URL
 
 
@@ -68,18 +69,17 @@ def publication_batches(root, *, kernel, overlays):
     if kernel:
         for package_format, repository in KERNEL_REPOSITORIES.items():
             groups[repository].update(packages(root / 'kernel' / package_format, format=package_format))
-    if kernel:
-        for package_format, repository in KERNEL_REPOSITORIES.items():
-            path, metadata = bsp_package(root / 'bsp' / package_format, package_format)
-            if path.name in groups[repository]:
-                raise ValueError('Common device configuration duplicated in ' + repository)
-            groups[repository][path.name] = (path, metadata['sha256'])
-            shared.add(path.name)
+            for path, metadata in (bsp_package(root / 'bsp' / package_format, package_format),
+                                   camera.shared_package(package_format, root / 'camera' / package_format)):
+                if path.name in groups[repository]:
+                    raise ValueError('Common package duplicated in ' + repository + ': ' + path.name)
+                groups[repository][path.name] = (path, metadata['sha256'])
+                shared.add(path.name)
     for target in overlays:
         repository = OVERLAY_REPOSITORIES[target]
         for name, (path, digest) in overlay_set(root / 'overlays' / target, target).items():
             if name in shared:
-                raise ValueError('Common device configuration duplicated in ' + target)
+                raise ValueError('Common package duplicated in ' + target + ': ' + name)
             old = groups[repository].get(name)
             if old is not None and old[1] != digest:
                 raise ValueError('Different builds share a package filename: ' + name)

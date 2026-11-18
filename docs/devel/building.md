@@ -123,7 +123,7 @@ sudo ./build.sh ffmpeg --sysroot build/distros/debian-sid/rootfs
 
 ### 共用构建与缓存
 
-Build products 先准备一次 ARM64 构建容器，再并行构建 UEFI 和 Android 模块、内核和原生包。覆盖包随后按 Debian、Nyarch、SteamOS 分别构建，Debian GNOME 和 KDE 共用一套。发布阶段签名并上传 R2，从公开域名验签和核对索引后，四个系统才从对应的软件源安装这一批包。中间产物不增加用户下载项，各阶段的日志仍合并进 `logs.zip`。
+Build products 先准备一次 ARM64 构建容器，再并行构建 UEFI 和 Android 模块、内核包、设备配置和相机包。覆盖包随后按 Debian、Nyarch、SteamOS 分别构建，Debian GNOME 和 KDE 共用一套。发布阶段签名并上传 R2，从公开域名验签和核对索引后，四个系统才从对应的软件源安装这一批包。中间产物不增加用户下载项，各阶段的日志仍合并进 `logs.zip`。
 
 同一分支的产品运行按批排队。pacman 同步索引只列出每个包的最新版本，
 所以本批镜像组装结束前，下一批不会替换公开索引；同批的各发行版仍并行构建。
@@ -149,6 +149,12 @@ python3 tools/build/shared_products.py verify --kind kernel
 Debian 核对已签名的 sid `Packages` 与 `Sources`，子构建器共用已选定的索引；Arch 系用各自 pacman 配置下实际的数据库，安装包时仍按发行版签名策略校验。缓存命中后逐个核对包名、版本、架构和 SHA256。完整 root 镜像不存入构建缓存。首次编译、仓库刷新、根系统安装和镜像导出仍需要时间。
 
 CI 实际重编覆盖包时，使用该次运行和重试编号增加原生包修订号：Debian 在配方版本后加 `+sunuefi.<运行编号>.<重试编号>`，Arch 使用 `pkgrel` 的数字子修订。属于同一源包的多个二进制包保持同一版本。命中缓存或直接使用 Debian 官方签名的 FastRPC 包时，保留原版本和原文件；本地构建默认仍使用配方版本。
+
+`./build.sh camera-package` 在构建容器中生成 `piano-camera` 的两种 ARM64 原生包。
+相机包使用发行版的用户空间接口头文件和静态库，不依赖某一次内核编译。
+缓存按相机源码、依赖补丁、配方、版本和构建器区分；只更新内核时复用原包。
+发布版本和最低内核元包版本在 `config/release.json` 的 `camera_package` 中；
+修改已经发布的包内容时提升 `revision`，不要用同一版本覆盖不同文件。
 
 本地和 GitHub 的完整构建走同一个 `release-rootfs` 入口。默认系统包含中文界面、拼音输入法、Chromium、GNOME 动画、蓝牙地址自动初始化和触控笔组件。根系统生成后会检查这些软件包和必需文件，结果记录在 `manifest.json` 的 `default_system`，缺少任何一项构建就失败。
 
@@ -208,7 +214,8 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 | 传感器 | Debian 提供 FastRPC、libssc、iio-sensor-proxy 和 Piano 配置的六个运行包；Arch 部分集成文件另行复制 | 原生包包含完整集成文件，运行时继续提供标准 SensorProxy 接口 |
 | PipeWire 相机插件 | 已有 GStreamer 插件包和 `pipewire-v4l2-source` 包 | 保留明确的 PipeWire ABI 依赖，修复进入上游后撤掉本地替代 |
 | 指纹 | libfprint／fprintd 使用目标发行版包；CLI 和服务配置另行安装 | 正常包拥有全部必要文件，标准认证结果仍取自 libfprint／fprintd |
-| 笔及相机工具、外部模块 | `v4l2loopback` 随匹配内核使用独立原生包；用户空间工具仍由 runtime 安装 | 将运行组件和诊断工具打包，标准替代完整可用后删除旧路径 |
+| 相机 | 两种包管理器安装 `piano-camera`；`v4l2loopback` 随匹配内核安装 | 标准 libcamera 路径接管后移除过渡服务 |
+| 笔及诊断工具 | 仍由 runtime 安装 | 按运行组件和开发工具分别打包 |
 | GNOME／KDE／SteamOS 组件 | Mutter、GDM、GSD、libwacom、Gamescope 等已有原生包，默认设置和会话文件仍有 overlay | 通用修复维护一份补丁，设备配置与产品默认值分开，不覆盖用户设置 |
 
 Linux 设备固件包括 ADSP、CDSP、Goodix 签名程序及模型、ath12k、蓝牙、GPU、

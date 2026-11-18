@@ -462,8 +462,8 @@ def finish_product(args, root, output, source, kernel, kernel_source, base_recor
             '--output', runtime, '--sysroot', args.bootstrap_sysroot.resolve(),
             '--firmware-root', root,
             '--cc', helper_tools['paths']['clang'], env=helper_env)
-    # Shared stager installs firmware, matching modules, standard interfaces,
-    # input/audio/camera helpers, suspend policy and the LABEL-based initramfs.
+    # Shared stager installs the camera package, firmware, other hardware
+    # helpers, suspend policy and the LABEL-based initramfs.
     stage_arch_piano.stage(argparse.Namespace(
         rootfs=root, kernel=kernel, runtime=runtime, sensor_source=source,
         bootstrap_sysroot=args.bootstrap_sysroot, desktop='steamos',

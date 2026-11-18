@@ -23,6 +23,7 @@ import stage_piano_kernel_modules as modules
 import stage_piano_ram_hardware as hardware
 from build import overlay_packages, overlay_release
 from make_kernel_initramfs import make_newc, validate_static_arm64_elf
+from package import camera
 from prepare_release_kernel import release_series
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -163,10 +164,10 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
                  'export selected packages and SHA256 manifest without assembling a product image']
     else:
         steps = ['derive build-rootfs.sh for sid and install the selected desktop from signed APT',
-                 ('install exact overlay packages from the signed SunUEFI APT source' if published_packages
-                  else 'build and install the selected native overlay packages'),
-                 'install matching kernel packages and stage the native hardware runtime',
-                 'verify firmware, apply product defaults and build the initial initramfs']
+                 'install the matching native kernel packages',
+                 ('install exact desktop and camera packages from the signed SunUEFI APT source'
+                  if published_packages else 'install the locally built desktop and camera packages'),
+                 'stage the hardware runtime, apply product defaults and build the initial initramfs']
     return {'status': 'PLAN_ONLY', 'resume': resume, 'desktop': desktop,
             'previous_kernel_release': previous.get('kernel_release') if previous else None,
             'root_policy': 'LABEL=PIANOROOT', 'kernel': str(kernel), 'source': str(source),
@@ -906,24 +907,32 @@ def execute(record):
                 run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive',
                      'apt-get', 'upgrade', '-y', '--with-new-pkgs', '--no-remove'])
         published = record.get('published_packages')
-        if published:
-            bsp_archive, bsp = overlay_packages.shared_bsp('debian')
-            components, packages = overlay_packages.read_debian(Path(published), desktop)
-            from package.kernel import install as install_kernel
-            install_kernel(rootfs, 'debian', kernel, published=True)
-            install_overlays(rootfs, run, cfg, desktop, {**packages, bsp_archive.name: bsp}, published=True)
-            archive = debian_archive(rootfs)
-        elif record.get('packages_only'):
+        if record.get('packages_only'):
             result = build_overlay_set(record, rootfs, m, run)
             (out / 'FAILED.json').unlink(missing_ok=True)
             return result
+        from package.kernel import install as install_kernel
+
+        if published:
+            bsp_archive, bsp = overlay_packages.shared_bsp('debian')
+            camera_archive, camera_record = camera.shared_package('debian')
+            components, packages = overlay_packages.read_debian(Path(published), desktop)
+            install_kernel(rootfs, 'debian', kernel, published=True)
+            install_overlays(rootfs, run, cfg, desktop, {
+                **packages, bsp_archive.name: bsp, camera_archive.name: camera_record,
+            }, published=True)
+            archive = debian_archive(rootfs)
         else:
+            camera_archive, camera_record = camera.ensure('debian')
             sources = build_overlays(record, rootfs, run)
             packages = overlay_packages.debian_packages(sources)
+            install_kernel(rootfs, 'debian', kernel)
             with tempfile.TemporaryDirectory(prefix='sunuefi-bsp-', dir=out) as temporary:
                 bsp_archive, bsp = overlay_packages.build_bsp(Path(temporary) / 'package', 'debian', run)
-                install_overlays(rootfs, run, cfg, desktop,
-                                 {**packages, bsp_archive.name: (bsp_archive, bsp)})
+                install_overlays(rootfs, run, cfg, desktop, {
+                    **packages, bsp_archive.name: (bsp_archive, bsp),
+                    camera_archive.name: (camera_archive, camera_record),
+                })
             components = {name: {'packages': {}} for name in overlay_packages.DEBIAN_GNOME}
             components.update({name: value for name, (_, value) in sources.items()})
         sensor_unit = target(rootfs, 'usr/lib/systemd/system/adsprpcd-sensorspd.service')
@@ -937,9 +946,6 @@ def execute(record):
         # dconf update, so animation/power policy is actually present in root.
         if desktop == 'gnome':
             run(['chroot', rootfs, 'dconf', 'update'])
-        if not published:
-            from package.kernel import install as install_kernel
-            install_kernel(rootfs, 'debian', kernel)
         if record['runtime_dir']:
             bundle = Path(record['runtime_dir']); rm = json.loads((bundle / 'manifest.json').read_text())
             if rm['kernel'] != runtime.kernel_identity(Path(record['kernel_build']), source, m['source_commit'], m['kernel_release']): raise ValueError('Runtime bundle kernel ABI provenance differs')
@@ -972,6 +978,9 @@ def execute(record):
         if installed.get(bsp['name']) != bsp['version']:
             raise ValueError('Installed Piano device configuration package version differs')
         overlay_packages.verify_bsp_files(rootfs, 'debian')
+        if installed.get(camera_record['name']) != camera_record['version']:
+            raise ValueError('Installed Piano camera package version differs')
+        camera.verify_installed(rootfs, 'debian', camera_archive)
         defaults = default_system_record(rootfs, installed, cfg, desktop)
         for component, metadata in components.items():
             for package, row in metadata['packages'].items():
@@ -993,7 +1002,7 @@ def execute(record):
                   'apt_policy': cfg['debian']['apt_policy'], 'apt_metadata': metadata,
                   'debian_archive': archive, 'debian_suite': cfg['debian']['suite'],
                   'debian_commit': cfg['debian']['commit'],
-                  'device_configuration': bsp,
+                  'device_configuration': bsp, 'camera_package': camera_record,
                   **components,
                   'boot_request': boot_request, 'firmware_components': cfg['firmware']['components'],
                   'clock_epoch': clock,

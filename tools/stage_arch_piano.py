@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 import build_piano_runtime_helpers as runtime
 import build_release_rootfs as release
@@ -22,6 +23,7 @@ import stage_piano_kernel_modules as modules
 import stage_piano_ram_hardware as hardware
 import stage_nyarch_desktop as nyarch
 from build import overlay_packages
+from package import camera
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -79,6 +81,27 @@ def install_repository(root, steamos):
     with guest_environment(root) as guest:
         guest(['pacman-key', '--populate', 'sunuefi'])
     policy.write_text(configured)
+
+
+def install_camera(root, guest, *, published):
+    """Install the same camera archive in Nyarch and SteamOS."""
+    archive, metadata = (camera.shared_package('pacman') if published
+                         else camera.ensure('pacman'))
+    tmp = release.target(root, 'var/tmp')
+    tmp.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='sunuefi-camera-', dir=tmp) as directory:
+        work = Path(directory)
+        work.chmod(0o755)
+        if published:
+            overlay_packages.install_pacman(root, work, 'sunuefi',
+                                            {archive.name: metadata}, guest)
+        else:
+            staged = work / archive.name
+            shutil.copyfile(archive, staged)
+            if release.digest(staged) != metadata['sha256']:
+                raise ValueError('Camera package changed during installation: ' + archive.name)
+            guest(['pacman', '-U', '--noconfirm', '/' + staged.relative_to(root).as_posix()])
+    return archive, metadata
 
 
 def stage(args):
@@ -152,6 +175,8 @@ def stage(args):
     put(root, 'etc/chromium-flags.conf',
         (ROOT / 'linux/bsp/arch/chromium-flags.conf').read_text())
     with release.build_resolver(root), guest_environment(root) as guest:
+        camera_archive, camera_record = install_camera(
+            root, guest, published=published_packages is not None)
         required = ('erofs-utils', 'device-mapper', 'rsync')
         missing = [name for name in required if subprocess.run(
             ['chroot', root, 'pacman', '-Q', name], stdout=subprocess.DEVNULL,
@@ -210,8 +235,10 @@ def stage(args):
                 item.unlink()
     packages = subprocess.check_output(['chroot', root, 'pacman', '-Q'], text=True)
     overlay_packages.verify_pacman_versions(
-        {**(published_packages or {}), 'device_configuration': device_configuration}, packages)
+        {**(published_packages or {}), 'device_configuration': device_configuration,
+         'camera_package': camera_record}, packages)
     overlay_packages.verify_bsp_files(root, 'pacman')
+    camera.verify_installed(root, 'pacman', camera_archive)
     from package.v4l2loopback import verify_installed
     verify_installed(root, 'pacman', kernel['kernel_release'])
     (output / 'packages.tsv').write_text(packages)
@@ -224,6 +251,7 @@ def stage(args):
               'desktop_configuration': desktop, 'initramfs': boot, 'clock_epoch': clock,
               'firmware_components': cfg['firmware']['components'],
               'packages_sha256': release.digest(output / 'packages.tsv'),
+              'camera_package': camera_record,
               'runtime_manifest_sha256': release.digest(args.runtime / 'manifest.json')}
     (output / 'manifest.json').write_text(json.dumps(record, indent=2) + '\n')
 

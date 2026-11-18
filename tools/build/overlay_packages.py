@@ -41,7 +41,7 @@ def bsp_package(directory, package_format):
         raise ValueError('Device configuration package did not complete: ' + str(directory))
     record = json.loads(manifest.read_text())
     if (record.get('schema_version') != 1 or record.get('component') != 'config' or
-            record.get('package') != package_bsp.NAME or record.get('features') != [] or
+            record.get('package') != package_bsp.NAME or record.get('features', []) != [] or
             record.get('target', {}).get('distro') != distro or
             record.get('package_architecture') != architecture or
             record.get('package_ready') is not True or len(record.get('files', ())) != 1):

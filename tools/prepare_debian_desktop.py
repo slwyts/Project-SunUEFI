@@ -44,9 +44,9 @@ def gnome_path(name):
     return any(name == prefix or name.startswith(prefix + '/') for prefix in GNOME_PATHS)
 
 
-def device_config_paths():
-    """Paths installed by piano-device-config, not by the public overlay."""
-    _, rows = payload([])
+def packaged_overlay_paths():
+    """Paths owned by native packages rather than the public overlay."""
+    _, rows = payload(['camera'])
     return {row['path'] for row, _ in rows}
 
 
@@ -87,7 +87,10 @@ def sid_recipe(text):
     upstream_enable = enable + ' piano-usb piano-touch '
     if text.count(upstream_enable) != 1:
         raise ValueError('Upstream Debian service activation changed')
-    text = text.replace(upstream_enable, enable + ' ')
+    text = ''.join(line.replace(upstream_enable, enable + ' ')
+                   .replace(' piano-camera piano-camerad ', ' ')
+                   if line.startswith(upstream_enable) else line
+                   for line in text.splitlines(keepends=True))
     if 'trixie' in text or 'MESA_DIR' in text:
         raise ValueError('Stable-only Debian source remains in the derived sid recipe')
     return text
@@ -100,7 +103,7 @@ def prepare(public, output, desktop):
     (destination / 'scripts').mkdir(parents=True)
     shutil.copy2(public / 'scripts/build-rootfs.sh', destination / 'scripts/build-rootfs.sh')
     source_rootfs = public / 'rootfs'
-    packaged_paths = {Path('overlay') / path for path in device_config_paths()}
+    packaged_paths = {Path('overlay') / path for path in packaged_overlay_paths()}
 
     def ignore_packaged(directory, names):
         relative = Path(directory).relative_to(source_rootfs)

@@ -2,9 +2,9 @@
 
 这里保存与发行版、桌面选择分开的设备配置。来源是固定提交的公开 `debian-piano` overlay，保留许可和逐文件 SHA256。`piano-device-config` 在 Debian 上是 `Architecture: all` 的 `.deb`，在 Arch 上是 `makepkg` 构建的 `any` 包。
 
-默认包含 UCM、驱动加载参数与硬件服务单元。`--feature camera` 才加入的相机 udev / WirePlumber 配置及服务，仍需对应 runtime 和同内核 v4l2loopback。没有新增 libinput 补丁或空的“支持”目录。服务不自动启用。
-
-相机 unit 使用 `Type=notify`，需配套当前 `debian-piano 25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1` 编译的 `piano-camerad`。它先创建 loopback 相机并发送就绪通知，再允许用户会话启动；相机采集仍按应用请求启动。
+通用包包含 UCM、驱动加载参数和硬件服务单元。相机服务及它的 udev 和
+WirePlumber 配置由独立的 [`piano-camera`](../../docs/devel/hardware/camera-controls.md)
+安装。相机包依赖通用包中的前后摄模块参数，不需要定制 rootfs。
 
 键盘背光走内核 LED 与 UPower 标准接口。`upower.service.d/20-piano-keyboard.conf` 让 UPower 等待键盘初始化，避免初次扫描漏掉背光节点；这份文件也由 Debian release 适配工具安装。服务和程序的具体来源见 [Linux 服务源码地图](../../docs/devel/linux/services.md)。
 

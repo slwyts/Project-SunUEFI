@@ -44,7 +44,7 @@ class RamHardwareTests(unittest.TestCase):
             return read(path, *args, **kwargs)
         with mock.patch.object(Path, 'read_text', text), \
              mock.patch.object(Path, 'is_dir', return_value=True), \
-             mock.patch.object(hardware.os, 'stat', side_effect=lambda path: SimpleNamespace(st_mode=stat.S_IFBLK, st_rdev=42, st_dev=42)), \
+             mock.patch.object(hardware.os, 'stat', side_effect=lambda path, **kwargs: SimpleNamespace(st_mode=stat.S_IFBLK, st_rdev=42, st_dev=42)), \
              mock.patch.object(hardware.subprocess, 'check_output', return_value=uid+'\n') as query:
             hardware.require_ram(proc, self.run)
             query.assert_called_once_with(['/usr/sbin/blkid', '-s', 'PARTUUID', '-o', 'value', '/dev/sda36'], text=True)

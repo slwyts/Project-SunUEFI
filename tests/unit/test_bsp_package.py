@@ -42,9 +42,6 @@ class BspPackageTests(unittest.TestCase):
         self.assertEqual(row['source_component'],'Project SunUEFI')
         data=(bsp.BSP/'common/etc/modules-load.d/piano-bluetooth.conf').read_text()
         self.assertEqual([line for line in data.splitlines()if line and not line.startswith('#')],['uhid','hid_xiaomi'])
-        camera = bsp.build(self.args('inspect', '--feature', 'camera'))
-        self.assertIn('etc/wireplumber/wireplumber.conf.d/50-piano-camera.conf', camera['payload_files'])
-        self.assertIn('wireplumber (>= 0.5)', camera['depends'])
 
     def test_deepin_requires_explicit_suite(self):
         with self.assertRaisesRegex(ValueError, 'explicit'):

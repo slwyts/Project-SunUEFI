@@ -89,6 +89,12 @@
     },
     "localversion": "-piano-sunuefi-cachy-optimize"
   },
+  "camera_package": {
+    "version": "1.0",
+    "revision": "1",
+    "source_date_epoch": 1794996428,
+    "minimum_kernel_package_version": "7.3.3+1794994463.1794996428.ed8beaf66a2d-1"
+  },
   "debian": {
     "source": "upstream/debian-piano-current",
     "commit": "a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45",

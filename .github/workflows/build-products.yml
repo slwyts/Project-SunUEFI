@@ -28,6 +28,7 @@ on:
       - 'tests/unit/test_debian_overlay_cache.py'
       - 'tests/unit/test_repo*.py'
       - 'tests/unit/test_ci_container.py'
+      - 'tests/unit/test_camera.py'
       - 'tests/unit/test_shared_products.py'
       - 'tests/unit/test_stage_arch_piano.py'
       - 'upstream/**'
@@ -110,7 +111,7 @@ jobs:
             sunuefi-builder ./build.sh check --group python-all --pattern 'test_repo*.py' \
               --pattern test_kernel_package.py --pattern 'test_overlay*.py' \
               --pattern test_debian_overlay_cache.py \
-              --pattern test_build_nyarch_apps.py \
+              --pattern test_build_nyarch_apps.py --pattern test_camera.py \
               --pattern test_stage_arch_piano.py
 
   shared:
@@ -147,6 +148,7 @@ jobs:
       cache_key: ${{ needs.environment.outputs.cache_key }}
       overlay_matrix: ${{ needs.select.outputs.overlay_matrix }}
       bsp_key: ${{ needs.shared.outputs.bsp_key }}
+      camera_key: ${{ needs.shared.outputs.camera_key }}
 
   build:
     needs: [select, environment, shared, repository]
@@ -158,6 +160,7 @@ jobs:
       matrix: ${{ needs.select.outputs.rootfs_matrix }}
       shared_target: ${{ needs.select.outputs.shared_target }}
       bsp_key: ${{ needs.shared.outputs.bsp_key }}
+      camera_key: ${{ needs.shared.outputs.camera_key }}
 
   logs:
     needs: [select, environment, shared, repository, build, overlays]

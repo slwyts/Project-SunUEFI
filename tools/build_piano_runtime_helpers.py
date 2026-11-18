@@ -179,7 +179,7 @@ def prepare_camera_quad(source, work, env):
     return dependency
 
 
-def build_camera(output, cc_flags, cxx_flags, uapi, sysroot=None, env=None,
+def build_camera(output, cc_flags, cxx_flags, uapi=None, sysroot=None, env=None,
                  emulator=None, linker_flags=()):
     """Use the same camera Makefile as Nix; install no global files."""
     output = Path(output).resolve()
@@ -200,7 +200,7 @@ def build_camera(output, cc_flags, cxx_flags, uapi, sysroot=None, env=None,
     command = ['make', '-C', source, 'OUT=' + str(built),
                'CC=' + shlex.join(map(str, cc_flags)), 'CXX=' + shlex.join(map(str, cxx_flags)),
                'CFLAGS=' + shlex.join(flags),
-               'CPPFLAGS=' + shlex.join(['-isystem', str(Path(uapi) / 'include')]),
+               'CPPFLAGS=' + (shlex.join(['-isystem', str(Path(uapi) / 'include')]) if uapi else ''),
                'LDFLAGS=' + shlex.join(['-static', *linker_flags]),
                'PKG_CONFIG=pkg-config --static',
                # Debian's libyuv-dev supplies no .pc file. The compiler
@@ -442,12 +442,13 @@ def build_touch_binary(output, cc_flags, uapi, source, pen_record, env=None, lin
     return row
 
 
-def stage(output,destination,*,include_camera_module=False):
+def stage(output,destination,*,include_camera=False):
     if not destination.resolve().is_relative_to(ROOT/'build/distros'):raise ValueError('Stage only into a derived workspace distro')
     manifest=json.loads((output/'manifest.json').read_text());files=manifest['runtime_files'];release=manifest['kernel']['release']
     if not re.fullmatch(r'[a-zA-Z0-9_.+-]{1,128}',release):raise ValueError('Unsafe runtime kernel release')
-    expected={row[2]for row in PUBLIC_SOURCES.values()}|PEN_RUNTIME_PATHS|CAMERA_RUNTIME_PATHS|{'usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'}
-    if include_camera_module:
+    expected={row[2]for row in PUBLIC_SOURCES.values()}|PEN_RUNTIME_PATHS|{'usr/lib/firmware/qcom/sm8750/Xiaomi Pad 8 Pro-tplg.bin'}
+    if include_camera:
+        expected |= CAMERA_RUNTIME_PATHS
         expected.add(v4l2loopback.module_path(release).as_posix())
     if manifest.get('fingerprint'):
         from build_piano_fingerprint import RUNTIME_PATHS
@@ -466,7 +467,7 @@ def stage(output,destination,*,include_camera_module=False):
         if not p.is_file()or p.is_symlink()or p.stat().st_size!=row['bytes']or sha(p)!=row['sha256']:raise ValueError('Runtime bundle changed: '+name)
     for name,row in files.items():
         target=destination/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(output/row['file'],target);target.chmod(row['mode'])
-    if include_camera_module:
+    if include_camera:
         subprocess.run(['depmod','-b',str(destination),'-m','/usr/lib/modules',release],check=True)
     record={'status':'REAL_RUNTIME_STAGED_NOT_DEVICE_TESTED','bundle_manifest_sha256':sha(output/'manifest.json'),'kernel':manifest['kernel'],'files':files,'pen_core':manifest['pen_core'],'device_tested':False}
     p=destination/'usr/share/piano-provenance/runtime-helpers.json';p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(record,indent=2)+'\n')
@@ -569,7 +570,7 @@ def build(args):
     kernel_identity(args.kernel_build.resolve(),source,args.kernel_commit,args.kernel_release)
     manifest={'status':'RUNTIME_COMPILED_NOT_DEVICE_TESTED','public_commit':PUBLIC_COMMIT,'uapi_commit':UAPI_COMMIT,'uapi_sha256':UAPI_DIGEST,'macros_commit':MACROS_COMMIT,'v4l2_commit':loop_commit,'kernel':identity,'inputs':inputs,'runtime_files':files,'pen_core':pen_record,'camera':camera_record,'hardware_verified':False,'device_operation':False,'known_topology_limit':'ALSA decoded config does not recompile vendor data; original public config matches known binary SHA and decodes successfully'}
     (output/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
-    if args.stage_rootfs:stage(output,args.stage_rootfs.resolve(),include_camera_module=True)
+    if args.stage_rootfs:stage(output,args.stage_rootfs.resolve(),include_camera=True)
     return manifest
 
 

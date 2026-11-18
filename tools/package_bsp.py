@@ -141,7 +141,6 @@ def conflict_check(root, rows, package=NAME):
 
 def inspect_touch_firmware(args, suite):
     require(args.target in ('debian', 'arch'), 'Use --target debian or arch for touch firmware')
-    require(not args.feature, 'Configuration features cannot be added to the firmware package')
     require(overlay_release.ENVIRONMENT not in os.environ,
             'Local touch firmware cannot be built as a publication generation')
     require(args.command != 'package' or args.against,
@@ -173,7 +172,7 @@ def inspect(args):
     require(suite and re.fullmatch('[A-Za-z0-9_.-]+', suite), 'Specify an explicit Deepin/target suite')
     if args.touch_firmware is not None:
         return inspect_touch_firmware(args, suite)
-    source, rows = payload(args.feature)
+    source, rows = payload([])
     ledger = read_json(BSP / 'layers.json')
     layers = ledger['required_layers']
     version = args.version
@@ -182,9 +181,8 @@ def inspect(args):
     report = {'schema_version': 1, 'component': 'config', 'package': NAME, 'version': version,
               'status': 'HOST_CONFIG_NOT_DEVICE_TESTED', 'target': {'distro': args.target, 'suite': suite, 'arch': args.arch},
               'package_architecture': 'any' if args.target == 'arch' else 'all',
-              'features': args.feature, 'source': source['source'], 'required_layers': layers,
-              'selected_optional_layers': ledger['optional_layers'] if 'camera' in args.feature else {},
-              'depends': profile['depends'] + (profile['camera_depends'] if 'camera' in args.feature else []),
+              'source': source['source'], 'required_layers': layers,
+              'depends': profile['depends'],
               'dependency_resolution_tested': False, 'native_layer_abi_verified': False, 'device_tested': False,
               'auto_enable_services': False, 'package_ready': False,
               'conflict_check': conflict_check(args.against, rows) if args.against else {'performed': False, 'required_before_install': True},
@@ -387,7 +385,6 @@ def parser():
     ap.add_argument('--target', choices=('debian', 'ubuntu', 'deepin', 'arch'), default='debian')
     ap.add_argument('--suite')
     ap.add_argument('--arch', choices=('aarch64',), default='aarch64')
-    ap.add_argument('--feature', choices=('camera',), action='append', default=[])
     ap.add_argument('--format', choices=('deb', 'pacman'))
     ap.add_argument('--against', type=Path, help='Readonly target-root conflict/ownership check')
     ap.add_argument('--touch-firmware', type=Path,
