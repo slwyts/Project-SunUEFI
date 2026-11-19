@@ -10,6 +10,6 @@
   },
   "debian": {
     "recipe_source_version": "0.7.2-1",
-    "package_revision": "0+sunuefi4"
+    "package_revision": "0+sunuefi5"
   }
 }

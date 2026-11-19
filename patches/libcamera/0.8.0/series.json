@@ -56,6 +56,24 @@
         "url": "https://github.com/libcamera-org/libcamera/blob/df8e348d64b4932a0676256ed24f0da3ee9438bc/src/gstreamer/gstlibcamerasrc.cpp",
         "drop_when": "The packaged GStreamer source keeps valid capture timing when SensorTimestamp is absent and does not produce unsigned timestamp underflow."
       }
+    },
+    {
+      "file": "0007-camss-frame-interval.patch",
+      "sha256": "7b1ce2cf1afa07b9fbb35f7133dffeac77268ee2d0880980142edbb6a4cf70d3",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/libcamera-org/libcamera/tree/v0.8.0/src/libcamera/pipeline",
+        "drop_when": "The CAMSS PIX pipeline reports the configured sensor's frame duration limits and applies the requested interval before streaming."
+      }
+    },
+    {
+      "file": "0008-gstreamer-frame-interval.patch",
+      "sha256": "4139303940e2c3635160af087f6ffbe8a0bdf9809f079a568b73dfc3cb108639",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/libcamera-org/libcamera/blob/df8e348d64b4932a0676256ed24f0da3ee9438bc/src/gstreamer/gstlibcamerasrc.cpp",
+        "drop_when": "The GStreamer source negotiates a common frame interval from the configured camera's timing and every downstream stream."
+      }
     }
   ]
 }

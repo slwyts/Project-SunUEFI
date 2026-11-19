@@ -1,0 +1,473 @@
+diff --git a/include/libcamera/internal/v4l2_subdevice.h b/include/libcamera/internal/v4l2_subdevice.h
+index 36848915fbb1c34b937bdb65265104df47baa0ee..733786720487c8b39f481d7a671cde92a845237b 100644
+--- a/include/libcamera/internal/v4l2_subdevice.h
++++ b/include/libcamera/internal/v4l2_subdevice.h
+@@ -143,6 +143,8 @@ public:
+ 		return formats({ pad, 0 });
+ 	}
+ 
++	int getFrameInterval(const Stream &stream, v4l2_fract *interval);
++
+ 	int getFormat(const Stream &stream, V4L2SubdeviceFormat *format,
+ 		      Whence whence = ActiveFormat);
+ 	int getFormat(unsigned int pad, V4L2SubdeviceFormat *format,
+diff --git a/src/libcamera/pipeline/camss/camss.cpp b/src/libcamera/pipeline/camss/camss.cpp
+index 5c0fda138e1d4d638cfab885347ca75d557e6e94..da9f3d7fde76a11c25cc801ab76aac4ddb95b4a7 100644
+--- a/src/libcamera/pipeline/camss/camss.cpp
++++ b/src/libcamera/pipeline/camss/camss.cpp
+@@ -373,8 +373,13 @@ int PipelineHandlerCamss::configure(Camera *camera, CameraConfiguration *c)
+ 	CamssCameraData *data = cameraData(camera);
+ 	int ret;
+ 
+-	if (data->csi_->isPix())
+-		return data->csi_->configurePix(config->at(0));
++	if (data->csi_->isPix()) {
++		ret = data->csi_->configurePix(config->at(0));
++		if (ret)
++			return ret;
++		data->controlInfo_ = data->csi_->pixControls();
++		return 0;
++	}
+ 
+ 	ret = data->csi_->configure(config->csiConfig_, config->combinedTransform_);
+ 	if (ret)
+@@ -421,13 +426,13 @@ void PipelineHandlerCamss::freeBuffers(Camera *camera)
+ 	cameraData(camera)->isp_->freeBuffers();
+ }
+ 
+-int PipelineHandlerCamss::start(Camera *camera, [[maybe_unused]] const ControlList *controls)
++int PipelineHandlerCamss::start(Camera *camera, const ControlList *controls)
+ {
+ 	CamssCameraData *data = cameraData(camera);
+ 	int ret;
+ 
+ 	if (data->csi_->isPix()) {
+-		ret = data->csi_->startPix();
++		ret = data->csi_->startPix(controls);
+ 		if (!ret)
+ 			data->csi_->bufferReady().connect(data, &CamssCameraData::pixBufferReady);
+ 		return ret;
+@@ -546,7 +551,11 @@ int PipelineHandlerCamss::queueRequestDevice(Camera *camera, Request *request)
+ 		if (!buffer || data->pixBuffers_.contains(buffer))
+ 			return -EINVAL;
+ 
+-		int ret = data->csi_->queuePixBuffer(buffer);
++		int ret = data->csi_->validatePixFrameDuration(request->controls());
++		if (ret)
++			return ret;
++
++		ret = data->csi_->queuePixBuffer(buffer);
+ 		if (!ret)
+ 			data->pixBuffers_.insert(buffer);
+ 		return ret;
+@@ -643,7 +652,14 @@ void CamssCameraData::pixBufferReady(FrameBuffer *buffer)
+ 	if (!pixBuffers_.erase(buffer) || !request)
+ 		return;
+ 
+-	/* The driver gives CSI EOF, not the first row's exposure timestamp. */
++	/*
++	 * Report the configured interval, not an instantaneous FrameDuration:
++	 * the driver timestamps CSI EOF, not the start of exposure.
++	 */
++	int64_t duration = csi_->pixFrameDuration();
++	if (duration && buffer->metadata().status == FrameMetadata::FrameSuccess)
++		request->_d()->metadata().set(controls::FrameDurationLimits, { duration, duration });
++
+ 	if (pipe()->completeBuffer(request, buffer))
+ 		pipe()->completeRequest(request);
+ }
+diff --git a/src/libcamera/pipeline/camss/camss_csi.h b/src/libcamera/pipeline/camss/camss_csi.h
+index d890d4fd93aa74f094832200bbf08e2eb63c76e5..dc861a17719fafbf58b4fca9b5d70fc645f9ab27 100644
+--- a/src/libcamera/pipeline/camss/camss_csi.h
++++ b/src/libcamera/pipeline/camss/camss_csi.h
+@@ -13,6 +13,7 @@
+ #pragma once
+ 
+ #include <memory>
++#include <optional>
+ #include <queue>
+ #include <string>
+ #include <vector>
+@@ -56,11 +57,14 @@ public:
+ 	StreamConfiguration generatePixConfiguration() const;
+ 	int validatePix(StreamConfiguration *cfg) const;
+ 	int configurePix(const StreamConfiguration &cfg);
+-	int startPix();
++	int startPix(const ControlList *controls);
+ 	void stopPix();
+ 	int queuePixBuffer(FrameBuffer *buffer);
+ 	const std::string &pixId() const { return pixId_; }
+ 	const ControlList &pixProperties() const { return pixProperties_; }
++	ControlInfoMap pixControls() const;
++	int validatePixFrameDuration(const ControlList &controls) const;
++	int64_t pixFrameDuration() const { return pixFrameDuration_; }
+ 	Orientation pixOrientation() const { return pixOrientation_; }
+ 
+ 	PixelFormat mbusCodeToPixelFormat(unsigned int code) const;
+@@ -112,6 +116,12 @@ private:
+ 	void freeBuffers();
+ 	int initPix();
+ 	void closePix();
++	void readPixFrameTiming(unsigned int pad, const Size &sensorSize);
++	int selectPixFrameTiming(const ControlList *controls, int64_t *duration,
++				 int32_t *blanking) const;
++	int applyPixFrameTiming(const ControlList *controls);
++	int setPixFrameBlanking(int32_t blanking);
++	void restorePixFrameTiming();
+ 
+ 	std::unique_ptr<CameraSensor> sensor_;
+ 	std::unique_ptr<V4L2VideoDevice> output_;
+@@ -124,6 +134,22 @@ private:
+ 	ControlList pixProperties_;
+ 	Orientation pixOrientation_ = Orientation::Rotate0;
+ 
++	struct PixFrameTiming {
++		double lineMicroseconds;
++		unsigned int height;
++		int32_t minBlanking;
++		int32_t maxBlanking;
++		int32_t defaultBlanking;
++		int32_t step;
++
++		int64_t duration(int32_t blanking) const;
++		std::optional<int32_t> blanking(int64_t minimum, int64_t maximum) const;
++	};
++	std::optional<PixFrameTiming> pixFrameTiming_;
++	int64_t pixDefaultFrameDuration_ = 0;
++	int64_t pixFrameDuration_ = 0;
++	bool pixFrameTimingChanged_ = false;
++
+ 	std::vector<std::unique_ptr<FrameBuffer>> buffers_;
+ 	std::queue<FrameBuffer *> availableBuffers_;
+ 	unsigned int bufferCount_;
+diff --git a/src/libcamera/pipeline/camss/camss_csi_pix.cpp b/src/libcamera/pipeline/camss/camss_csi_pix.cpp
+index b31030e19623f533d9b3d57cfdf1793da8152c4d..296147648f403dde7b6090660afa3f5371ee944c 100644
+--- a/src/libcamera/pipeline/camss/camss_csi_pix.cpp
++++ b/src/libcamera/pipeline/camss/camss_csi_pix.cpp
+@@ -6,8 +6,11 @@
+ #include "camss_csi.h"
+ 
+ #include <algorithm>
++#include <array>
+ #include <cerrno>
+ #include <chrono>
++#include <cmath>
++#include <limits>
+ #include <map>
+ #include <numeric>
+ #include <optional>
+@@ -17,6 +20,7 @@
+ #include <libcamera/base/log.h>
+ #include <libcamera/base/utils.h>
+ 
++#include <libcamera/control_ids.h>
+ #include <libcamera/formats.h>
+ #include <libcamera/property_ids.h>
+ 
+@@ -310,6 +314,215 @@ int CamssCsiCamera::validatePix(StreamConfiguration *cfg) const
+ 	return 0;
+ }
+ 
++int64_t CamssCsiCamera::PixFrameTiming::duration(int32_t blanking) const
++{
++	return std::llround((static_cast<double>(height) + blanking) *
++			    lineMicroseconds);
++}
++
++std::optional<int32_t> CamssCsiCamera::PixFrameTiming::blanking(int64_t minimum,
++							     int64_t maximum) const
++{
++	const int64_t maxSteps = (maxBlanking - minBlanking) / step;
++	const double steps = std::clamp((minimum / lineMicroseconds - height -
++					 minBlanking) / step, 0.0,
++					static_cast<double>(maxSteps));
++	const auto fromSteps = [this](int64_t count) {
++		return static_cast<int32_t>(minBlanking + count * step);
++	};
++
++	if (minimum == maximum)
++		return fromSteps(std::llround(steps));
++
++	/* With no AE controlling the period, use the shortest legal duration. */
++	int64_t count = std::ceil(steps);
++	if (count > 0 && duration(fromSteps(count - 1)) >= minimum)
++		count--;
++	int32_t value = fromSteps(count);
++	if (duration(value) < minimum || duration(value) > maximum)
++		return std::nullopt;
++
++	return value;
++}
++
++void CamssCsiCamera::readPixFrameTiming(unsigned int pad, const Size &sensorSize)
++{
++	pixFrameTiming_.reset();
++	pixDefaultFrameDuration_ = 0;
++	pixFrameDuration_ = 0;
++	pixFrameTimingChanged_ = false;
++
++	/*
++	 * A sensor without programmable blanking may report a fixed interval.
++	 * Its link pixel rate does not describe the pixel array's timing.
++	 */
++	const auto *hblank = pixSensor_->controlInfo(V4L2_CID_HBLANK);
++	const auto *vblank = pixSensor_->controlInfo(V4L2_CID_VBLANK);
++	if (!hblank || !vblank || !pixSensor_->controlInfo(V4L2_CID_PIXEL_RATE)) {
++		struct v4l2_fract interval;
++		if (!pixSensor_->getFrameInterval({ pad, 0 }, &interval))
++			pixDefaultFrameDuration_ =
++				(1'000'000LL * interval.numerator + interval.denominator / 2) /
++				interval.denominator;
++		return;
++	}
++
++	pixSensor_->updateControlInfo();
++	if (hblank->minimum != hblank->maximum || hblank->minimum < 0 ||
++	    (vblank->flags & (V4L2_CTRL_FLAG_DISABLED | V4L2_CTRL_FLAG_READ_ONLY |
++			      V4L2_CTRL_FLAG_INACTIVE)) ||
++	    vblank->minimum < 0 || vblank->minimum > vblank->default_value ||
++	    vblank->default_value > vblank->maximum ||
++	    vblank->maximum > std::numeric_limits<int32_t>::max() ||
++	    !vblank->step || vblank->step > std::numeric_limits<int32_t>::max() ||
++	    (vblank->default_value - vblank->minimum) % vblank->step)
++		return;
++
++	constexpr std::array<uint32_t, 2> ids{ V4L2_CID_PIXEL_RATE, V4L2_CID_HBLANK };
++	const ControlList timing = pixSensor_->getControls(ids);
++	const ControlValue &rate = timing.get(V4L2_CID_PIXEL_RATE);
++	const ControlValue &horizontalBlanking = timing.get(V4L2_CID_HBLANK);
++	if (rate.type() != ControlTypeInteger64 ||
++	    horizontalBlanking.type() != ControlTypeInteger32 ||
++	    rate.get<int64_t>() <= 0 || horizontalBlanking.get<int32_t>() != hblank->minimum)
++		return;
++
++	const double lineMicroseconds = 1'000'000.0 *
++		(static_cast<double>(sensorSize.width) + horizontalBlanking.get<int32_t>()) /
++		rate.get<int64_t>();
++	const int64_t maxBlanking = vblank->minimum +
++		(vblank->maximum - vblank->minimum) / vblank->step * vblank->step;
++	if ((sensorSize.height + static_cast<double>(vblank->minimum)) *
++		    lineMicroseconds < 0.5 ||
++	    (sensorSize.height + static_cast<double>(maxBlanking)) *
++		    lineMicroseconds >= std::numeric_limits<int64_t>::max())
++		return;
++
++	pixFrameTiming_ = PixFrameTiming{
++		lineMicroseconds, sensorSize.height,
++		static_cast<int32_t>(vblank->minimum), static_cast<int32_t>(maxBlanking),
++		static_cast<int32_t>(vblank->default_value), static_cast<int32_t>(vblank->step),
++	};
++	pixDefaultFrameDuration_ = pixFrameTiming_->duration(pixFrameTiming_->defaultBlanking);
++}
++
++ControlInfoMap CamssCsiCamera::pixControls() const
++{
++	ControlInfoMap::Map info;
++	if (pixDefaultFrameDuration_) {
++		int64_t minimum = pixDefaultFrameDuration_;
++		int64_t maximum = pixDefaultFrameDuration_;
++		if (const auto &timing = pixFrameTiming_) {
++			minimum = timing->duration(timing->minBlanking);
++			maximum = timing->duration(timing->maxBlanking);
++		}
++		std::array<int64_t, 2> defaults{ pixDefaultFrameDuration_, pixDefaultFrameDuration_ };
++		info.emplace(&controls::FrameDurationLimits,
++			     ControlInfo(minimum, maximum, std::span<const int64_t, 2>(defaults)));
++	}
++
++	return ControlInfoMap(std::move(info), controls::controls);
++}
++
++int CamssCsiCamera::selectPixFrameTiming(const ControlList *controls, int64_t *duration,
++					int32_t *blanking) const
++{
++	const auto limits = controls ? controls->get(controls::FrameDurationLimits)
++				     : std::nullopt;
++	*duration = pixDefaultFrameDuration_;
++	if (pixFrameTiming_)
++		*blanking = pixFrameTiming_->defaultBlanking;
++	if (!limits || (!(*limits)[0] && !(*limits)[1]))
++		return 0;
++	if (!pixDefaultFrameDuration_)
++		return -EOPNOTSUPP;
++
++	int64_t minimum = (*limits)[0];
++	int64_t maximum = (*limits)[1];
++	if (minimum <= 0 || maximum < minimum)
++		return -EINVAL;
++	if (!pixFrameTiming_)
++		return minimum <= *duration && *duration <= maximum ? 0 : -ERANGE;
++
++	const PixFrameTiming &timing = *pixFrameTiming_;
++	int64_t fastest = timing.duration(timing.minBlanking);
++	int64_t slowest = timing.duration(timing.maxBlanking);
++	auto value = timing.blanking(std::clamp(minimum, fastest, slowest),
++				     std::clamp(maximum, fastest, slowest));
++	if (!value)
++		return -ERANGE;
++
++	*blanking = *value;
++	*duration = timing.duration(*blanking);
++	return 0;
++}
++
++int CamssCsiCamera::validatePixFrameDuration(const ControlList &controls) const
++{
++	const auto limits = controls.get(controls::FrameDurationLimits);
++	if (!limits)
++		return 0;
++
++	const int64_t minimum = (*limits)[0], maximum = (*limits)[1];
++	if (minimum > 0 && minimum < maximum &&
++	    minimum <= pixFrameDuration_ && pixFrameDuration_ <= maximum)
++		return 0;
++
++	int64_t duration;
++	int32_t blanking;
++	int ret = selectPixFrameTiming(&controls, &duration, &blanking);
++	if (ret)
++		return ret;
++
++	/* Programming a different duration needs per-frame sensor scheduling. */
++	return duration == pixFrameDuration_ ? 0 : -EOPNOTSUPP;
++}
++
++int CamssCsiCamera::setPixFrameBlanking(int32_t blanking)
++{
++	ControlList values(pixSensor_->controls());
++	values.set(V4L2_CID_VBLANK, blanking);
++	int ret = pixSensor_->setControls(&values);
++	if (ret)
++		return ret;
++
++	constexpr std::array<uint32_t, 1> ids{ V4L2_CID_VBLANK };
++	const ControlList applied = pixSensor_->getControls(ids);
++	const ControlValue &value = applied.get(V4L2_CID_VBLANK);
++	return value.type() == ControlTypeInteger32 && value.get<int32_t>() == blanking ? 0 : -EIO;
++}
++
++int CamssCsiCamera::applyPixFrameTiming(const ControlList *controls)
++{
++	int64_t duration;
++	int32_t blanking;
++	int ret = selectPixFrameTiming(controls, &duration, &blanking);
++	if (ret)
++		return ret;
++
++	if (pixFrameTiming_) {
++		pixFrameTimingChanged_ = blanking != pixFrameTiming_->defaultBlanking;
++		ret = setPixFrameBlanking(blanking);
++		if (ret)
++			return ret;
++	}
++
++	pixFrameDuration_ = duration;
++	if (duration)
++		LOG(Camss, Debug) << "PIX configured frame duration " << duration << " us";
++	return 0;
++}
++
++void CamssCsiCamera::restorePixFrameTiming()
++{
++	if (pixFrameTimingChanged_) {
++		if (setPixFrameBlanking(pixFrameTiming_->defaultBlanking))
++			LOG(Camss, Warning) << "Failed to restore default PIX frame duration";
++		pixFrameTimingChanged_ = false;
++	}
++	pixFrameDuration_ = 0;
++}
++
+ int CamssCsiCamera::configurePix(const StreamConfiguration &cfg)
+ {
+ 	auto &phy = links_[SensorPhyLink];
+@@ -405,12 +618,13 @@ int CamssCsiCamera::configurePix(const StreamConfiguration &cfg)
+ 	LOG(Camss, Debug) << "PIX " << geometry->sensor
+ 			  << " scaled to " << compose.size() << ", crop " << crop
+ 			  << ", stride " << cfg.stride << ", size " << cfg.frameSize;
++	readPixFrameTiming(sensorPad, raw.size);
+ 	bufferCount_ = cfg.bufferCount;
+ 	changes.commit();
+ 	return 0;
+ }
+ 
+-int CamssCsiCamera::startPix()
++int CamssCsiCamera::startPix(const ControlList *controls)
+ {
+ 	if (!output_->isOpen())
+ 		return -EPIPE;
+@@ -419,16 +633,22 @@ int CamssCsiCamera::startPix()
+ 	if (ret)
+ 		return ret;
+ 
+-	auto before = std::chrono::steady_clock::now();
+-	LOG(Camss, Debug) << "Starting PIX STREAMON on " << output_->deviceNode()
+-			  << " with " << bufferCount_ << " request buffers";
+-	ret = output_->streamOn();
+-	auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+-		std::chrono::steady_clock::now() - before);
+-	LOG(Camss, Debug) << "PIX STREAMON on " << output_->deviceNode() << ": "
+-			  << elapsed.count() << " us, status " << ret;
+-	if (ret && output_->releaseBuffers())
+-		closePix();
++	ret = applyPixFrameTiming(controls);
++	if (!ret) {
++		auto before = std::chrono::steady_clock::now();
++		LOG(Camss, Debug) << "Starting PIX STREAMON on " << output_->deviceNode()
++				  << " with " << bufferCount_ << " request buffers";
++		ret = output_->streamOn();
++		auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
++			std::chrono::steady_clock::now() - before);
++		LOG(Camss, Debug) << "PIX STREAMON on " << output_->deviceNode() << ": "
++				  << elapsed.count() << " us, status " << ret;
++	}
++	if (ret) {
++		if (output_->releaseBuffers())
++			closePix();
++		restorePixFrameTiming();
++	}
+ 
+ 	return ret;
+ }
+@@ -438,6 +658,7 @@ void CamssCsiCamera::stopPix()
+ 	/* On failure close the device before returning outstanding buffers. */
+ 	if (output_->streamOff() || output_->releaseBuffers())
+ 		closePix();
++	restorePixFrameTiming();
+ }
+ 
+ void CamssCsiCamera::closePix()
+diff --git a/src/libcamera/v4l2_subdevice.cpp b/src/libcamera/v4l2_subdevice.cpp
+index 8f9d4dbd90ef408cf300aa5478343e3e21e17f54..39986c427dbe9b9463c30214fee9800f28bbec06 100644
+--- a/src/libcamera/v4l2_subdevice.cpp
++++ b/src/libcamera/v4l2_subdevice.cpp
+@@ -1353,6 +1353,30 @@ std::optional<ColorSpace> V4L2Subdevice::toColorSpace(const v4l2_mbus_framefmt &
+ 	return V4L2Device::toColorSpace(format, colourEncoding);
+ }
+ 
++/**
++ * \brief Get the active frame interval of a subdevice stream
++ * \param[in] stream The pad and stream
++ * \param[out] interval The frame interval in seconds
++ *
++ * \return 0 on success or a negative error code otherwise
++ */
++int V4L2Subdevice::getFrameInterval(const Stream &stream, v4l2_fract *interval)
++{
++	struct v4l2_subdev_frame_interval fi = {};
++	fi.pad = stream.pad;
++	fi.stream = stream.stream;
++	fi.which = ActiveFormat;
++
++	int ret = ioctl(VIDIOC_SUBDEV_G_FRAME_INTERVAL, &fi);
++	if (ret)
++		return ret;
++	if (!fi.interval.numerator || !fi.interval.denominator)
++		return -EINVAL;
++
++	*interval = fi.interval;
++	return 0;
++}
++
+ /**
+  * \brief Retrieve the image format set on one of the V4L2 subdevice streams
+  * \param[in] stream The stream the format is to be retrieved from

@@ -1,0 +1,288 @@
+diff --git a/src/gstreamer/gstlibcamera-utils.cpp b/src/gstreamer/gstlibcamera-utils.cpp
+index d7c842f5aab017da66c3dc28d0ad65f642e1d9ce..7776a63fe66778a58d2df4522a2b5ed8d7842ecb 100644
+--- a/src/gstreamer/gstlibcamera-utils.cpp
++++ b/src/gstreamer/gstlibcamera-utils.cpp
+@@ -8,6 +8,8 @@
+ 
+ #include "gstlibcamera-utils.h"
+ 
++#include <algorithm>
++#include <cmath>
+ #include <string>
+ 
+ #include <libcamera/control_ids.h>
+@@ -534,66 +536,128 @@ void gst_libcamera_configure_stream_from_caps(StreamConfiguration &stream_cfg,
+ 	}
+ }
+ 
+-void gst_libcamera_get_framerate_from_caps(GstCaps *caps,
+-					   GstStructure *element_caps)
++bool gst_libcamera_merge_framerate(const GstCaps *stream_caps, GstStructure *element_caps)
+ {
+-	GstStructure *s = gst_caps_get_structure(caps, 0);
+-	/*
+-	 * Default to 30 fps. If the "framerate" fraction is invalid below,
+-	 * libcamerasrc will set 30fps as the framerate.
+-	 */
+-	gint fps_n = 30, fps_d = 1;
++	if (gst_caps_is_empty(stream_caps))
++		return false;
++	if (gst_caps_is_any(stream_caps))
++		return true;
++
++	/* Each structure is an alternative for the same configured stream. */
++	g_auto(GValue) accepted = G_VALUE_INIT;
++	for (guint i = 0; i < gst_caps_get_size(stream_caps); i++) {
++		const GstStructure *stream = gst_caps_get_structure(stream_caps, i);
++		const GValue *rate = gst_structure_get_value(stream, "framerate");
++		if (!rate)
++			return true;
++
++		if (!G_IS_VALUE(&accepted)) {
++			g_value_init(&accepted, G_VALUE_TYPE(rate));
++			g_value_copy(rate, &accepted);
++		} else {
++			GValue alternatives = G_VALUE_INIT;
++			gst_value_list_merge(&alternatives, &accepted, rate);
++			g_value_unset(&accepted);
++			accepted = alternatives;
++		}
++	}
+ 
+-	if (gst_structure_has_field_typed(s, "framerate", GST_TYPE_FRACTION)) {
+-		if (!gst_structure_get_fraction(s, "framerate", &fps_n, &fps_d))
+-			GST_WARNING("Invalid framerate in the caps");
++	const GValue *previous = gst_structure_get_value(element_caps, "framerate");
++	if (!previous) {
++		gst_structure_set_value(element_caps, "framerate", &accepted);
++		return true;
+ 	}
+ 
+-	gst_structure_set(element_caps, "framerate", GST_TYPE_FRACTION,
+-			  fps_n, fps_d, nullptr);
++	/* A sensor has one frame interval common to all its output streams. */
++	GValue common = G_VALUE_INIT;
++	if (!gst_value_intersect(&common, previous, &accepted))
++		return false;
++	gst_structure_take_value(element_caps, "framerate", &common);
++	return true;
+ }
+ 
+-void gst_libcamera_clamp_and_set_frameduration(ControlList &initCtrls,
+-					       const ControlInfoMap &cam_ctrls,
+-					       GstStructure *element_caps)
++static void
++framerate_from_duration(int64_t duration, int *numerator, int *denominator)
+ {
+-	gint fps_caps_n, fps_caps_d;
+-
+-	if (!gst_structure_has_field_typed(element_caps, "framerate", GST_TYPE_FRACTION))
++	auto period = static_cast<GstClockTime>(duration);
++	if (period <= (GST_CLOCK_TIME_NONE - 1) / GST_USECOND &&
++	    gst_video_guess_framerate(period * GST_USECOND, numerator, denominator))
+ 		return;
+ 
+-	auto iterFrameDuration = cam_ctrls.find(&controls::FrameDurationLimits);
+-	if (iterFrameDuration == cam_ctrls.end()) {
+-		GST_WARNING("FrameDurationLimits not found in camera controls.");
+-		return;
+-	}
++	gst_util_double_to_fraction(1'000'000.0 / duration, numerator, denominator);
++}
+ 
+-	const GValue *framerate = gst_structure_get_value(element_caps, "framerate");
++bool gst_libcamera_set_frameduration(ControlList &initCtrls,
++				     const ControlInfoMap &camCtrls,
++				     GstStructure *element_caps)
++{
++	const auto timing = camCtrls.find(&controls::FrameDurationLimits);
++	const bool haveTiming = timing != camCtrls.end();
++	int fpsNumerator = 30, fpsDenominator = 1;
++	int64_t shortest = 0, longest = 0;
++
++	if (haveTiming) {
++		const ControlInfo &info = timing->second;
++		shortest = info.min().get<int64_t>();
++		longest = info.max().get<int64_t>();
++		if (shortest <= 0 || longest < shortest)
++			return false;
++
++		int64_t preferred = std::clamp<int64_t>(33'333, shortest, longest);
++		const ControlValue &defaults = info.def();
++		if (defaults.type() == ControlTypeInteger64 && defaults.isArray() &&
++		    defaults.numElements() == 2 && defaults.get<std::span<const int64_t, 2>>()[0] > 0)
++			preferred = std::clamp(defaults.get<std::span<const int64_t, 2>>()[0],
++					       shortest, longest);
++
++		framerate_from_duration(preferred, &fpsNumerator, &fpsDenominator);
++	}
+ 
+-	fps_caps_n = gst_value_get_fraction_numerator(framerate);
+-	fps_caps_d = gst_value_get_fraction_denominator(framerate);
++	const GValue *requested = gst_structure_get_value(element_caps, "framerate");
++	if (!requested) {
++		gst_structure_set(element_caps, "framerate", GST_TYPE_FRACTION,
++				  fpsNumerator, fpsDenominator, nullptr);
++		return true;
++	}
+ 
+-	int64_t target_duration = (fps_caps_d * 1000000.0) / fps_caps_n;
+-	int64_t min_frame_duration = iterFrameDuration->second.min().get<int64_t>();
+-	int64_t max_frame_duration = iterFrameDuration->second.max().get<int64_t>();
++	if (haveTiming) {
++		GValue supported = G_VALUE_INIT;
++		if (shortest == longest) {
++			g_value_init(&supported, GST_TYPE_FRACTION);
++			gst_value_set_fraction(&supported, fpsNumerator, fpsDenominator);
++		} else {
++			int minNumerator, minDenominator, maxNumerator, maxDenominator;
++			/* Include rates that round to the same integer microseconds. */
++			gst_util_double_to_fraction(1'000'000.0 / (longest + 0.5),
++						    &minNumerator, &minDenominator);
++			gst_util_double_to_fraction(1'000'000.0 / (shortest - 0.5),
++						    &maxNumerator, &maxDenominator);
++			g_value_init(&supported, GST_TYPE_FRACTION_RANGE);
++			gst_value_set_fraction_range_full(&supported, minNumerator, minDenominator,
++							  maxNumerator, maxDenominator);
++		}
+ 
+-	int64_t frame_duration = std::clamp(target_duration,
+-					    min_frame_duration,
+-					    max_frame_duration);
++		GValue common = G_VALUE_INIT;
++		bool compatible = gst_value_intersect(&common, requested, &supported);
++		g_value_unset(&supported);
++		if (!compatible)
++			return false;
++		gst_structure_take_value(element_caps, "framerate", &common);
++	}
+ 
+-	if (frame_duration != target_duration) {
+-		gint framerate_clamped = 1000000 / frame_duration;
++	gst_structure_fixate_field_nearest_fraction(element_caps, "framerate",
++						    fpsNumerator, fpsDenominator);
++	if (!gst_structure_get_fraction(element_caps, "framerate", &fpsNumerator, &fpsDenominator) ||
++	    fpsNumerator <= 0)
++		return false;
+ 
+-		/*
+-		 * Update the clamped framerate which then will be exposed in
+-		 * downstream caps.
+-		 */
+-		gst_structure_set(element_caps, "framerate", GST_TYPE_FRACTION,
+-				  framerate_clamped, 1, nullptr);
++	if (haveTiming) {
++		int64_t duration = std::llround(1'000'000.0 * fpsDenominator / fpsNumerator);
++		duration = std::clamp(duration, shortest, longest);
++		initCtrls.set(controls::FrameDurationLimits, { duration, duration });
+ 	}
+ 
+-	initCtrls.set(controls::FrameDurationLimits,
+-		      { frame_duration, frame_duration });
++	return true;
+ }
+ 
+ void gst_libcamera_framerate_to_caps(GstCaps *caps, const GstStructure *element_caps)
+diff --git a/src/gstreamer/gstlibcamera-utils.h b/src/gstreamer/gstlibcamera-utils.h
+index 35df56fb993d0bf7de42671eca2678f214573080..d2130ee6f39a815c306699f14e69da16a907f518 100644
+--- a/src/gstreamer/gstlibcamera-utils.h
++++ b/src/gstreamer/gstlibcamera-utils.h
+@@ -20,10 +20,10 @@ GstCaps *gst_libcamera_stream_configuration_to_caps(const libcamera::StreamConfi
+ 						    GstVideoTransferFunction transfer);
+ void gst_libcamera_configure_stream_from_caps(libcamera::StreamConfiguration &stream_cfg,
+ 					      GstCaps *caps, GstVideoTransferFunction *transfer);
+-void gst_libcamera_get_framerate_from_caps(GstCaps *caps, GstStructure *element_caps);
+-void gst_libcamera_clamp_and_set_frameduration(libcamera::ControlList &controls,
+-					       const libcamera::ControlInfoMap &camera_controls,
+-					       GstStructure *element_caps);
++bool gst_libcamera_merge_framerate(const GstCaps *stream_caps, GstStructure *element_caps);
++bool gst_libcamera_set_frameduration(libcamera::ControlList &controls,
++				     const libcamera::ControlInfoMap &camera_controls,
++				     GstStructure *element_caps);
+ void gst_libcamera_framerate_to_caps(GstCaps *caps, const GstStructure *element_caps);
+ void gst_libcamera_gvalue_set_point(GValue *value, const libcamera::Point &point);
+ void gst_libcamera_gvalue_set_size(GValue *value, const libcamera::Size &size);
+diff --git a/src/gstreamer/gstlibcamerasrc.cpp b/src/gstreamer/gstlibcamerasrc.cpp
+index 367c11173aede94c5a6ccbaacb66d37479a7ac47..8e4204e02d04d2929e2b5aac8235789528c15204 100644
+--- a/src/gstreamer/gstlibcamerasrc.cpp
++++ b/src/gstreamer/gstlibcamerasrc.cpp
+@@ -628,7 +628,7 @@ gst_libcamera_src_negotiate(GstLibcameraSrc *self)
+ 	std::vector<GstVideoTransferFunction> transfer(state->srcpads_.size(),
+ 						       GST_VIDEO_TRANSFER_UNKNOWN);
+ 
+-	g_autoptr(GstStructure) element_caps = gst_structure_new_empty("caps");
++	state->initControls_.clear();
+ 
+ 	for (gsize i = 0; i < state->srcpads_.size(); i++) {
+ 		GstPad *srcpad = state->srcpads_[i];
+@@ -643,7 +643,6 @@ gst_libcamera_src_negotiate(GstLibcameraSrc *self)
+ 		/* Fixate caps and configure the stream. */
+ 		caps = gst_caps_make_writable(caps);
+ 		gst_libcamera_configure_stream_from_caps(stream_cfg, caps, &transfer[i]);
+-		gst_libcamera_get_framerate_from_caps(caps, element_caps);
+ 	}
+ 
+ 	/* Validate the configuration. */
+@@ -663,9 +662,22 @@ gst_libcamera_src_negotiate(GstLibcameraSrc *self)
+ 		return false;
+ 	}
+ 
+-	/* Check frame duration bounds within controls::FrameDurationLimits */
+-	gst_libcamera_clamp_and_set_frameduration(state->initControls_,
+-						  state->cam_->controls(), element_caps);
++	/* Select one capture interval that both the sensor and the peers support. */
++	g_autoptr(GstStructure) element_caps = gst_structure_new_empty("caps");
++	for (gsize i = 0; i < state->srcpads_.size(); i++) {
++		GstPad *srcpad = state->srcpads_[i];
++		const StreamConfiguration &stream_cfg = state->config_->at(i);
++		g_autoptr(GstCaps) filter =
++			gst_libcamera_stream_configuration_to_caps(stream_cfg, transfer[i]);
++		g_autoptr(GstCaps) caps = gst_pad_peer_query_caps(srcpad, filter);
++
++		if (!gst_libcamera_merge_framerate(caps, element_caps))
++			return false;
++	}
++
++	if (!gst_libcamera_set_frameduration(state->initControls_,
++					     state->cam_->controls(), element_caps))
++		return false;
+ 
+ 	/*
+ 	 * Regardless if it has been modified, create clean caps and push the
+@@ -678,8 +690,7 @@ gst_libcamera_src_negotiate(GstLibcameraSrc *self)
+ 		g_autoptr(GstCaps) caps = gst_libcamera_stream_configuration_to_caps(stream_cfg, transfer[i]);
+ 		gst_libcamera_framerate_to_caps(caps, element_caps);
+ 
+-		if (status == CameraConfiguration::Adjusted &&
+-		    !gst_pad_peer_query_accept_caps(srcpad, caps))
++		if (!gst_pad_peer_query_accept_caps(srcpad, caps))
+ 			return false;
+ 
+ 		if (!gst_pad_push_event(srcpad, gst_event_new_caps(caps)))
+@@ -704,6 +715,7 @@ gst_libcamera_src_negotiate(GstLibcameraSrc *self)
+ 		GstVideoInfo info;
+ 
+ 		g_autoptr(GstCaps) caps = gst_libcamera_stream_configuration_to_caps(stream_cfg, transfer[i]);
++		gst_libcamera_framerate_to_caps(caps, element_caps);
+ 
+ 		gst_video_info_from_caps(&info, caps);
+ 		gst_libcamera_pad_set_video_info(srcpad, &info);
+@@ -803,9 +815,17 @@ gst_libcamera_src_task_run(gpointer user_data)
+ 		if (!gst_libcamera_src_negotiate(self)) {
+ 			GST_ELEMENT_FLOW_ERROR(self, GST_FLOW_NOT_NEGOTIATED);
+ 			gst_task_stop(self->task);
++			return;
+ 		}
+ 
+-		state->cam_->start(&state->initControls_);
++		int ret = state->cam_->start(&state->initControls_);
++		if (ret) {
++			GST_ELEMENT_ERROR(self, RESOURCE, SETTINGS,
++					  ("Failed to restart the camera: %s", g_strerror(-ret)),
++					  ("Camera.start() failed with error code %i", ret));
++			gst_task_stop(self->task);
++			return;
++		}
+ 	}
+ 
+ 	/*

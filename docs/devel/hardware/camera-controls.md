@@ -50,8 +50,17 @@ sudo ./build.sh plasma-camera --sysroot "$SID_ARM64_ROOT" --libcamera-packages b
 libcamera 从 NV12 捕获节点读取尺寸范围，先保留传感器的原生模式，也公布
 应用常用的缩放尺寸。缩放和裁切都由 TFE 完成：传感器保持原生宽高比，
 缩小后再居中裁切，不拉伸画面。输出尺寸、行跨度和缓冲区大小以捕获节点
-读回为准。后摄用 60 fps 传感器模式做缩放时可交付约 60 fps，但 GStreamer
-仍可能协商成 30 fps；还需要把传感器的实际帧间隔接到 libcamera 的标准控件。
+读回为准。
+
+libcamera 在传感器模式确定后公布 `FrameDurationLimits`。后摄开流前设置并
+读回 V4L2 的垂直消隐；前摄采用驱动报告的固定帧间隔。GStreamer 从应用要求
+和相机能力的交集选择帧率，没有指定时用模式默认值。
+
+Debian 平板从签名 APT 升级后，系统 GStreamer 插件实测后摄 4K、720p 均可在
+30 和 60 fps 连续出帧。前摄 720p 只支持 30 fps：给出 60 和 30 两个备选档
+会选 30，只接受 60 时会拒绝，随后可重新开流。Plasma Camera 录制 4K30 时，
+后摄以 30 fps 采集，不再从 60 fps 抽帧。PipeWire 还不向 libcamera
+传递应用请求的帧率。
 
 因此不能先移除 `piano-camerad`、loopback 或控制 socket：否则应用会失去已处理的视频输出、3A 和现有拍照入口。WirePlumber 配置同时隐藏服务占用的 CAMSS 节点并禁用 libcamera monitor，避免两个路径争抢 sensor；标准替代完成并验证这些功能前，该配置仍需保留。
 
