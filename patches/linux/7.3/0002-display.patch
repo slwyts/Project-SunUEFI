@@ -54,9 +54,9 @@ Link: https://github.com/torvalds/linux/commit/9294914dd5507eca56566c470c56327f4
  drivers/gpu/drm/msm/msm_kms.h                 |   4 +
  drivers/gpu/drm/panel/Kconfig                 |  14 +
  drivers/gpu/drm/panel/Makefile                |   1 +
- drivers/gpu/drm/panel/panel-novatek-nt36532.c | 827 ++++++++++++++++++
+ drivers/gpu/drm/panel/panel-novatek-nt36532.c | 814 ++++++++++++++++++
  drivers/video/backlight/ktz8866.c             | 158 +++-
- 42 files changed, 2898 insertions(+), 107 deletions(-)
+ 42 files changed, 2885 insertions(+), 107 deletions(-)
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.c
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.h
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_igcv5.c
@@ -3164,7 +3164,7 @@ new file mode 100644
 index 00000000000..03ad59adfc8
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
-@@ -0,0 +1,827 @@
+@@ -0,0 +1,814 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Novatek NT36532 DriverIC panels driver
@@ -3365,20 +3365,7 @@ index 00000000000..03ad59adfc8
 +{
 +	struct nt36532 *ctx = to_nt36532(panel);
 +	const struct panel_info *panel_info = ctx->panel_info;
-+	unsigned int preferred = 0;
 +	unsigned int i;
-+
-+	/* Piano's validated pen scan uses a 120 Hz cold-start display mode.
-+	 * Keep every advertised mode and each panel vendor's own sequence.
-+	 */
-+	if (of_machine_is_compatible("xiaomi,piano")) {
-+		for (i = 0; i < panel_info->num_modes; i++) {
-+			if (drm_mode_vrefresh(&panel_info->modes[i]) == 120) {
-+				preferred = i;
-+				break;
-+			}
-+		}
-+	}
 +
 +	for (i = 0; i < panel_info->num_modes; i++) {
 +		struct drm_display_mode *mode;
@@ -3388,7 +3375,7 @@ index 00000000000..03ad59adfc8
 +			return -ENOMEM;
 +
 +		mode->type = DRM_MODE_TYPE_DRIVER;
-+		if (i == preferred)
++		if (i == 0)
 +			mode->type |= DRM_MODE_TYPE_PREFERRED;
 +
 +		drm_mode_set_name(mode);
@@ -3629,8 +3616,8 @@ index 00000000000..03ad59adfc8
 +		   PIANO_VTOTAL, (_vrefresh))
 +
 +static const struct drm_display_mode piano_display_modes[] = {
-+	PIANO_MODE(42, PIANO_VFP, 144),
 +	PIANO_MODE(234, PIANO_VFP, 120),
++	PIANO_MODE(42, PIANO_VFP, 144),
 +	PIANO_MODE(618, PIANO_VFP, 90),
 +	PIANO_VFP_MODE(60),
 +	PIANO_VFP_MODE(50),

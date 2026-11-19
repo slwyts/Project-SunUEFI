@@ -22,7 +22,7 @@ index cf1fb2dad15..5b2f327a3ee 100644
  
  static const struct regulator_bulk_data nt36532_supplies[] = {
 @@ -213,7 +215,8 @@ static void nt36532_update_edid(struct nt36532 *ctx, struct drm_connector *conne
- 	const struct drm_display_mode *mode = &ctx->panel_info->modes[1];
+ 	const struct drm_display_mode *mode = &ctx->panel_info->modes[0];
  	const struct drm_edid *edid;
  	u8 data[384] = { 0 };
 -	u8 *cta = data + 128, *displayid = data + 256, *timing = displayid + 8;
@@ -133,7 +133,7 @@ index cf1fb2dad15..5b2f327a3ee 100644
  	nt36532_edid_checksum(displayid);
  	edid = drm_edid_alloc(data, sizeof(data));
  	if (!edid)
-@@ -929,7 +971,7 @@ static const struct panel_info csot_panel_info = {
+@@ -916,7 +958,7 @@ static const struct panel_info csot_panel_info = {
  	.is_dual_dsi = true,
  };
  
@@ -142,7 +142,7 @@ index cf1fb2dad15..5b2f327a3ee 100644
  	.lanes = 4,								\
  	.format = MIPI_DSI_FMT_RGB101010,					\
  	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_CLOCK_NON_CONTINUOUS |	\
-@@ -944,14 +986,16 @@ static const struct panel_info csot_panel_info = {
+@@ -931,14 +973,16 @@ static const struct panel_info csot_panel_info = {
  	.supports_scaling = true,						\
  	.hdr_max_luminance = _peak,					\
  	.hdr_min_luminance = _black,					\

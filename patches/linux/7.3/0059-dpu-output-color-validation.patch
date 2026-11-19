@@ -49,7 +49,7 @@ diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36532.c b/drivers/gpu/drm/pan
 index 5b2f327a3ee6d6f2d65309fce825bf910c817ad4..e2f48a98522669439e6b1e341cf91df2801f5f73 100644
 --- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
 +++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
-@@ -381,7 +381,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
+@@ -368,7 +368,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
  	if (panel_info->supports_scaling && connector->scaling_mode_property) {
  		static const unsigned int sizes[][2] = {
  			{ 2560, 1708 }, { 2400, 1602 }, { 1920, 1280 },

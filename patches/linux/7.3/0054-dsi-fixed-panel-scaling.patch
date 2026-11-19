@@ -327,15 +327,15 @@ index 03ad59adfc8..77e4be3017c 100644
  };
  
  static const struct regulator_bulk_data nt36532_supplies[] = {
-@@ -200,6 +201,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
+@@ -199,6 +200,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ 	struct nt36532 *ctx = to_nt36532(panel);
  	const struct panel_info *panel_info = ctx->panel_info;
- 	unsigned int preferred = 0;
  	unsigned int i;
 +	int count = panel_info->num_modes;
  
- 	/* Piano's validated pen scan uses a 120 Hz cold-start display mode.
- 	 * Keep every advertised mode and each panel vendor's own sequence.
-@@ -227,6 +229,42 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ 	for (i = 0; i < panel_info->num_modes; i++) {
+ 		struct drm_display_mode *mode;
+@@ -214,6 +216,42 @@ static int nt36532_get_modes(struct drm_panel *panel,
  		drm_mode_set_name(mode);
  		drm_mode_probed_add(connector, mode);
  	}
@@ -378,7 +378,7 @@ index 03ad59adfc8..77e4be3017c 100644
  
  	connector->display_info.width_mm = panel_info->modes[0].width_mm;
  	connector->display_info.height_mm = panel_info->modes[0].height_mm;
-@@ -234,7 +272,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
+@@ -221,7 +259,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
  		connector->display_info.bpc = panel_info->dsc_cfg->bits_per_component;
  	ctx->connector = connector;
  
@@ -387,7 +387,7 @@ index 03ad59adfc8..77e4be3017c 100644
  }
  
  static const struct drm_panel_funcs nt36532_panel_funcs = {
-@@ -796,6 +834,7 @@ static const struct panel_info csot_panel_info = {
+@@ -783,6 +821,7 @@ static const struct panel_info csot_panel_info = {
  	.dsc_cfg = &piano_dsc_cfg,						\
  	.init_sequence = _init,							\
  	.piano_reset_sequence = true,						\

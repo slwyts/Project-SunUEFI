@@ -771,7 +771,7 @@ index 77e4be3017c130db4c1ae5eb1a8346b7b6d891bd..cf1fb2dad15e9c3d88f5b486fc664258
 +
 +static void nt36532_update_edid(struct nt36532 *ctx, struct drm_connector *connector)
 +{
-+	const struct drm_display_mode *mode = &ctx->panel_info->modes[1];
++	const struct drm_display_mode *mode = &ctx->panel_info->modes[0];
 +	const struct drm_edid *edid;
 +	u8 data[384] = { 0 };
 +	u8 *cta = data + 128, *displayid = data + 256, *timing = displayid + 8;
@@ -863,16 +863,16 @@ index 77e4be3017c130db4c1ae5eb1a8346b7b6d891bd..cf1fb2dad15e9c3d88f5b486fc664258
  static int nt36532_get_modes(struct drm_panel *panel,
  			     struct drm_connector *connector)
  {
-@@ -203,6 +308,8 @@ static int nt36532_get_modes(struct drm_panel *panel,
+@@ -202,6 +307,8 @@ static int nt36532_get_modes(struct drm_panel *panel,
  	unsigned int i;
  	int count = panel_info->num_modes;
  
 +	nt36532_update_edid(ctx, connector);
 +
- 	/* Piano's validated pen scan uses a 120 Hz cold-start display mode.
- 	 * Keep every advertised mode and each panel vendor's own sequence.
- 	 */
-@@ -822,7 +929,7 @@ static const struct panel_info csot_panel_info = {
+ 	for (i = 0; i < panel_info->num_modes; i++) {
+ 		struct drm_display_mode *mode;
+ 
+@@ -809,7 +916,7 @@ static const struct panel_info csot_panel_info = {
  	.is_dual_dsi = true,
  };
  
@@ -881,7 +881,7 @@ index 77e4be3017c130db4c1ae5eb1a8346b7b6d891bd..cf1fb2dad15e9c3d88f5b486fc664258
  	.lanes = 4,								\
  	.format = MIPI_DSI_FMT_RGB101010,					\
  	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_CLOCK_NON_CONTINUOUS |	\
-@@ -835,14 +942,16 @@ static const struct panel_info csot_panel_info = {
+@@ -822,14 +929,16 @@ static const struct panel_info csot_panel_info = {
  	.init_sequence = _init,							\
  	.piano_reset_sequence = true,						\
  	.supports_scaling = true,						\
