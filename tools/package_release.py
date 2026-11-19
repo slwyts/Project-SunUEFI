@@ -68,6 +68,16 @@ def normalize_mainline_bindings(board):
         if path == '/soc/remoteproc-adsp@03000000' and 'qcom,no-auto-boot' in props:
             del props['qcom,no-auto-boot']
             changes.append(path + ':qcom,no-auto-boot')
+        if (path == '/soc/ram@c3f0000' and
+                props.get('compatible') == b'qcom,rpmh-stats-v4\0' and
+                props.get('reg') == struct.pack('>II', 0x0c3f0000, 0x400)):
+            # Piano's AOP uses the same RPMh sleep and DDR record layout as
+            # mainline SM8750. The Linux driver selects SMEM subsystems itself.
+            props['compatible'] = b'qcom,rpmh-stats\0'
+            changes.append(path + ':compatible')
+            if 'ss-name' in props:
+                del props['ss-name']
+                changes.append(path + ':ss-name')
         if (path == '/soc/xiaomi_fingerprint' and
                 props.get('compatible') == b'xiaomi,piano-goodix-control\0'):
             # The new controller uses the real mainline supply and GPIOs.

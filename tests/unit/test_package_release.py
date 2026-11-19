@@ -194,6 +194,24 @@ class ReleasePackageTests(unittest.TestCase):
             pr.normalize_mainline_bindings(self.dtb)
             self.assertEqual(pr.read_fdt(self.dtb.read_bytes())['tree'][pci]['reg'], address)
 
+    def test_rpmh_stats_keeps_qmp_and_the_board_register_window(self):
+        node = '/soc/ram@c3f0000'
+        props = {'compatible': b'qcom,rpmh-stats-v4\0',
+                 'reg': struct.pack('>II', 0x0c3f0000, 0x400),
+                 'qcom,qmp': struct.pack('>I', 1),
+                 'ss-name': b'apss\0'}
+        tree = {'/': {}, '/soc': {}, node: props}
+        self.dtb.write_bytes(pr.write_fdt({'tree': tree, 'reservations': [], 'boot_cpu': 0}))
+        pr.normalize_mainline_bindings(self.dtb)
+        actual = pr.read_fdt(self.dtb.read_bytes())['tree'][node]
+        self.assertEqual(actual, {'compatible': b'qcom,rpmh-stats\0',
+                                  'reg': props['reg'], 'qcom,qmp': props['qcom,qmp']})
+
+        props['reg'] = struct.pack('>II', 0x0c3f0000, 0x200)
+        self.dtb.write_bytes(pr.write_fdt({'tree': tree, 'reservations': [], 'boot_cpu': 0}))
+        pr.normalize_mainline_bindings(self.dtb)
+        self.assertEqual(pr.read_fdt(self.dtb.read_bytes())['tree'][node], props)
+
     def test_component_hash_cannot_override_manifest(self):
         with self.assertRaisesRegex(ValueError, 'disagrees'):
             pr.component(self.uefi, pr.record(self.uefi.parent / 'manifest.json'), '0' * 64, 'uefi')
