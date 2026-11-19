@@ -231,13 +231,7 @@ def configure_platform(root):
     # local config shadows the headset-only reorder policy across upgrades.
     put(root, 'etc/modprobe.d/ath12k.conf',
         '# Use mainline ath12k firmware defaults; no Frame RX reorder override.\n')
-    # The native DRM/KMS path is Wayland. The Frame root also contains Xorg
-    # policy for its own displays; use KWin for SDDM as well as the session.
-    put(root, 'etc/sddm.conf.d/20-piano-wayland.conf',
-        '[General]\nDisplayServer=wayland\n'
-        'GreeterEnvironment=QT_WAYLAND_SHELL_INTEGRATION=layer-shell\n'
-        '[Wayland]\n'
-        'CompositorCommand=kwin_wayland --drm --no-lockscreen --no-global-shortcuts --locale1\n')
+    (root / 'etc/sddm.conf.d/20-piano-wayland.conf').unlink(missing_ok=True)
     # Use the native DRM session even when the user manager still holds the
     # previous compositor's DISPLAY/WAYLAND_DISPLAY. GLES keeps KWin's Qt
     # Quick windows on the same hardware API as its shared EGL context.

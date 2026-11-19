@@ -18,8 +18,9 @@ GNOME_PACKAGES = {
     'task-chinese-s-gnome-desktop',
 }
 KDE_PACKAGES = [
-    'task-kde-desktop', 'plasma-desktop', 'plasma-workspace', 'sddm', 'dolphin', 'konsole',
-    'systemsettings', 'powerdevil', 'upower', 'plasma-nm', 'plasma-pa', 'bluedevil', 'kscreen',
+    'kde-standard', 'sddm', 'sddm-theme-breeze',
+    'konsole', 'systemsettings', 'powerdevil', 'upower', 'plasma-nm', 'plasma-pa',
+    'bluedevil', 'kscreen', 'kinfocenter', 'kde-config-screenlocker', 'tuned-ppd',
     'task-chinese-s-kde-desktop',
     'fonts-noto', 'poppler-data', 'xdg-desktop-portal-kde', 'xdg-desktop-portal-gtk',
     'fcitx5', 'fcitx5-chinese-addons',
@@ -35,9 +36,12 @@ GNOME_PATHS = (
 
 def desktop_packages(packages, desktop):
     if desktop == 'gnome':
-        return list(packages)
+        # The GNOME metapackage installs the current terminal and monitor.
+        packages = [p for p in packages if p not in {'gnome-terminal', 'gnome-system-monitor'}]
+        return list(dict.fromkeys([*packages, 'gnome', 'tuned-ppd']))
     extras = {'kde': KDE_PACKAGES, 'denial': DENIAL_PACKAGES}[desktop]
-    return list(dict.fromkeys([p for p in packages if p not in GNOME_PACKAGES] + extras))
+    excluded = GNOME_PACKAGES | ({'gnome-snapshot'} if desktop == 'kde' else set())
+    return list(dict.fromkeys([p for p in packages if p not in excluded] + extras))
 
 
 def gnome_path(name):
@@ -140,6 +144,14 @@ def prepare(public, output, desktop):
     package_file.write_text('\n'.join(packages) + '\n')
     script = destination / 'scripts/build-rootfs.sh'
     text = sid_recipe(script.read_text())
+    if desktop in ('gnome', 'kde'):
+        # Install the distro's complete desktop, including recommended KCMs
+        # and apps. Compiler and exact overlay transactions remain separate.
+        install_desktop = 'apt-get install -y --no-install-recommends "${PKGS[@]}"'
+        if text.count(install_desktop) != 1:
+            raise ValueError('Upstream Debian desktop package installation changed')
+        text = text.replace(install_desktop,
+                            'apt-get install -y --install-recommends "${PKGS[@]}"')
     if desktop != 'gnome':
         old = 'ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-manager.service"'
         if text.count(old) != 1:
@@ -159,6 +171,8 @@ def configure(rootfs, run, input_method='fcitx'):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('[Autologin]\nUser=piano\nSession=' + sessions[0].name + '\n')
     desktop = Path(__file__).resolve().parents[1] / 'linux/desktops/kde'
+    shutil.copyfile(desktop / 'sddm.conf.d/20-native-wayland.conf',
+                    path.with_name('20-native-wayland.conf'))
     dropin = Path('sddm.service.d/20-native-kms.conf')
     destination = rootfs / 'etc/systemd/system' / dropin
     destination.parent.mkdir(parents=True, exist_ok=True)

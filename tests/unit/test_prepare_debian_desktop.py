@@ -31,6 +31,9 @@ class PrepareDebianDesktopTests(unittest.TestCase):
             self.assertTrue(all(not path.exists() for path in generated))
             self.assertEqual(custom.read_text(), 'export QT_SCALE_FACTOR=1.5\n')
             self.assertIn('Session=plasma.desktop', (root / 'etc/sddm.conf.d/10-sunuefi.conf').read_text())
+            greeter = (root / 'etc/sddm.conf.d/20-native-wayland.conf').read_text()
+            self.assertIn('DisplayServer=wayland', greeter)
+            self.assertIn('Current=breeze', greeter)
             self.assertTrue((root / 'home/piano/.config/kwinoutputconfig.json').is_file())
 
     def public_recipe(self, folder):
@@ -57,6 +60,7 @@ deb https://deb.debian.org/debian trixie-updates main
 deb https://security.debian.org/debian-security trixie-security main
 EOF
 printf 'deb http://deb.debian.org/debian trixie main\\n'
+chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${PKGS[@]}"
 # Newer userspace from trixie-backports, with its dependencies.
 echo trixie-backports
 if [ -n "$USERSPACE_DIR" ]; then
@@ -108,6 +112,8 @@ chroot "$ROOTFS" systemctl mask sleep.target suspend.target hibernate.target hyb
             selected = (recipe / 'rootfs/packages.txt').read_text().splitlines()
             self.assertNotIn('gnome-shell', selected)
             self.assertTrue({'tuned', 'tuned-ppd'}.issubset(selected))
+            self.assertTrue({'kde-standard', 'kinfocenter', 'sddm-theme-breeze'}.issubset(selected))
+            self.assertNotIn('gnome-snapshot', selected)
             self.assertIn('powerdevil', selected)
             self.assertIn('pipewire-audio', selected)
             self.assertIn('fcitx5-frontend-gtk4', selected)
@@ -118,14 +124,15 @@ chroot "$ROOTFS" systemctl mask sleep.target suspend.target hibernate.target hyb
             self.assertEqual((public / 'rootfs/packages.txt').read_text().splitlines(), packages)
             self.assertEqual(profile.read_text(), 'upstream configuration\n')
 
-    def test_both_desktops_derive_sid_without_a_stable_abi_or_mesa_pin(self):
+    def test_desktops_derive_sid_without_a_stable_abi_or_mesa_pin(self):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
             public = self.public_recipe(folder)
             original = (public / 'scripts/build-rootfs.sh').read_bytes()
             (public / 'rootfs/packages.txt').write_text(
-                'gnome-shell\npipewire-audio\nlibavcodec61\nfirefox-esr\nqbootctl\n')
-            for name in ('gnome', 'kde'):
+                'gnome-shell\ngnome-terminal\ngnome-system-monitor\n'
+                'pipewire-audio\nlibavcodec61\nfirefox-esr\nqbootctl\n')
+            for name in desktop.DESKTOPS:
                 recipe = desktop.prepare(public, folder / name, name)
                 script = recipe / 'scripts/build-rootfs.sh'
                 text = script.read_text()
@@ -134,13 +141,17 @@ chroot "$ROOTFS" systemctl mask sleep.target suspend.target hibernate.target hyb
                 self.assertNotIn('obsolete-mesa-pin', text)
                 self.assertIn('deb https://deb.debian.org/debian sid main contrib', text)
                 self.assertIn('deb-src https://deb.debian.org/debian sid main contrib', text)
+                policy = '--no-install-recommends' if name == 'denial' else '--install-recommends'
+                self.assertIn(f'apt-get install -y {policy} "${{PKGS[@]}}"', text)
                 subprocess.run(['bash', '-n', script], check=True)
                 self.assertNotEqual(subprocess.run(
                     ['bash', script, '--suite', 'trixie'],
                     capture_output=True).returncode, 0)
                 selected = (recipe / 'rootfs/packages.txt').read_text().splitlines()
-                self.assertTrue({'chromium', 'ffmpeg', 'mesa-vulkan-drivers',
-                                 'gnome-snapshot'}.issubset(selected))
+                self.assertTrue({'chromium', 'ffmpeg', 'mesa-vulkan-drivers'}.issubset(selected))
+                self.assertEqual('gnome-snapshot' in selected, name != 'kde')
+                self.assertEqual('gnome' in selected, name == 'gnome')
+                self.assertTrue({'gnome-terminal', 'gnome-system-monitor'}.isdisjoint(selected))
                 self.assertTrue({'libavcodec61', 'qbootctl', 'firefox-esr'}.isdisjoint(selected))
                 self.assertEqual(selected.count('pipewire-audio'), 1)
                 self.assertFalse((recipe / 'rootfs/packages-backports.txt').exists())

@@ -52,7 +52,7 @@ class ReleaseRootTests(unittest.TestCase):
         config = copy.deepcopy(CONFIG)
         (self.root / 'config/release.json').write_text(json.dumps(config))
         packages = self.planned('kde')['config']['debian']['extra_packages']
-        self.assertTrue({'plasma-desktop', 'powerdevil', 'upower', 'chromium'} <= set(packages))
+        self.assertTrue({'kde-standard', 'kinfocenter', 'powerdevil', 'upower', 'chromium'} <= set(packages))
         self.assertFalse(any(p.startswith('ibus') or p.startswith('gnome') for p in packages))
 
     def test_denial_selects_its_base_packages_without_gnome_or_plasma(self):
