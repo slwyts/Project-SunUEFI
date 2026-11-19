@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "https://github.com/denialwm/denial.git",
+    "tag": "v0.6.8",
+    "commit": "01b588ec50831bce9e57aed623901f49846ec791"
+  }
+}

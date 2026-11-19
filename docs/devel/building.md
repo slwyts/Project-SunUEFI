@@ -226,6 +226,13 @@ Piano 的原生硬件包，源码和扩展选择在 `config/nyarch.json`。
 
 两种 Denial 镜像从 [Denial 签名源](https://github.com/denialwm/denial/blob/main/docs/INSTALL.md#repository-trust-paths)安装合成器及其匹配的 Flutter Engine。Debian 只从该源取 Denial 自身的包，系统依赖仍用 sid；Arch Linux ARM 仍使用自己的滚动源。SDDM 加载 Denial 原版 Wayland 会话，默认使用触控布局。相机和其他硬件继续用 Piano 的标准驱动和发行版软件包，不安装 Phonewave 的板级服务或 Android 容器。Denial 的自动旋转目前没有接入标准 SensorProxy，可在显示设置手动选方向。
 
+开发时可用 `./build.sh denial --test` 测试
+[SensorProxy 补丁](../../patches/denial/0.6.8/series.json)。
+在 ARM64 构建环境运行 `./build.sh denial --release`，或在 x86-64 上用
+`./build.sh denial --arch-sysroot "$ARCH_ARM64_ROOT"` 交叉编译。
+这些命令从同一签名标签构建，不覆盖已安装的程序或 Flutter Engine。
+补丁优先使用标准加速度计接口，保留 Phonewave 后备；内屏熄灭后释放请求。
+
 已有隔离的 ARM64 pacman 构建根目录时，可单独构建并安装完整 Mesa 包；此操作会修改指定的构建根目录，不要直接使用已交付的产品根目录：
 
 ```sh

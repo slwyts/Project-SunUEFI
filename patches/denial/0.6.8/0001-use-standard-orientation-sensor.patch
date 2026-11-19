@@ -1,0 +1,751 @@
+diff --git a/compositor/src/bin/deniald/orientation_sensor.rs b/compositor/src/bin/deniald/orientation_sensor.rs
+index 120fb8d..c76e991 100644
+--- a/compositor/src/bin/deniald/orientation_sensor.rs
++++ b/compositor/src/bin/deniald/orientation_sensor.rs
+@@ -1,11 +1,11 @@
+-//! Low-frequency device-orientation input from steinerd.
++//! Low-frequency device orientation from SensorProxy or steinerd.
+ //!
+ //! D-Bus is deliberately isolated on a helper thread. The compositor receives
+ //! only already-classified cardinal changes through calloop, so sensor service
+ //! activation, reconnects and property reads can never delay a render tick.
+ //!
+-//! The claim is held only while a panel that follows the sensor is lit: with
+-//! the screen off, steinerd stops the accelerometer and the DSP stops sending.
++//! Hold a claim only while a panel that follows the sensor is lit. Prefer the
++//! standard system sensor service when it exposes an accelerometer.
+ 
+ use std::sync::Arc;
+ use std::sync::atomic::{AtomicBool, Ordering};
+@@ -13,17 +13,122 @@ use std::thread::{self, JoinHandle};
+ use std::time::Duration;
+ 
+ use denial_core::topology::OutputTransform;
+-use futures_lite::{StreamExt, future};
++use futures_lite::{StreamExt, future, stream};
+ use smithay::reexports::calloop::channel::{Channel, Sender, channel};
+ use tracing::{debug, info, warn};
+-use zbus::blocking::Proxy;
++use zbus::blocking::{Connection, Proxy, fdo::DBusProxy};
++use zbus::fdo::PropertiesProxy;
++use zbus::names::{BusName, InterfaceName, UniqueName};
+ 
+-const SENSOR_SERVICE: &str = "org.steinerd";
+-const SENSOR_PATH: &str = "/org/steinerd";
+-const SENSOR_INTERFACE: &str = "org.steinerd.Sensors1";
+-const SENSOR: &str = "orientation";
+ const RECONNECT_DELAY: Duration = Duration::from_secs(2);
+ 
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++enum Backend {
++    SensorProxy,
++    Steinerd,
++}
++
++impl Backend {
++    const fn endpoint(self) -> (&'static str, &'static str, &'static str) {
++        match self {
++            Self::SensorProxy => (
++                "net.hadess.SensorProxy",
++                "/net/hadess/SensorProxy",
++                "net.hadess.SensorProxy",
++            ),
++            Self::Steinerd => ("org.steinerd", "/org/steinerd", "org.steinerd.Sensors1"),
++        }
++    }
++
++    const fn capability(self) -> &'static str {
++        match self {
++            Self::SensorProxy => "HasAccelerometer",
++            Self::Steinerd => "HasOrientation",
++        }
++    }
++
++    const fn reading(self) -> &'static str {
++        match self {
++            Self::SensorProxy => "AccelerometerOrientation",
++            Self::Steinerd => "Orientation",
++        }
++    }
++
++    fn properties(self, connection: &Connection) -> zbus::Result<PropertiesProxy<'static>> {
++        let (service, path, _) = self.endpoint();
++        future::block_on(
++            PropertiesProxy::builder(connection.inner())
++                .destination(service)?
++                .path(path)?
++                .build(),
++        )
++    }
++
++    fn available(self, properties: &PropertiesProxy<'_>) -> bool {
++        let (_, _, interface) = self.endpoint();
++        let interface = InterfaceName::from_static_str_unchecked(interface);
++        // A provider may be absent on first use. Don't retain the result of
++        // zbus's one-time GetAll cache initialization across owner changes.
++        future::block_on(properties.get(interface, self.capability()))
++            .ok()
++            .and_then(|value| bool::try_from(value).ok())
++            .unwrap_or(false)
++    }
++
++    fn set_claimed(self, proxy: &Proxy<'_>, claim: bool) -> zbus::Result<()> {
++        match (self, claim) {
++            (Self::SensorProxy, true) => proxy.call("ClaimAccelerometer", &()),
++            (Self::SensorProxy, false) => proxy.call("ReleaseAccelerometer", &()),
++            (Self::Steinerd, true) => proxy.call("Claim", &("orientation",)),
++            (Self::Steinerd, false) => proxy.call("Release", &("orientation",)),
++        }
++    }
++}
++
++struct Services {
++    standard: PropertiesProxy<'static>,
++    steinerd: PropertiesProxy<'static>,
++}
++
++impl Services {
++    fn new(connection: &Connection) -> zbus::Result<Self> {
++        Ok(Self {
++            standard: Backend::SensorProxy.properties(connection)?,
++            steinerd: Backend::Steinerd.properties(connection)?,
++        })
++    }
++
++    fn available(&self, backend: Backend) -> bool {
++        let proxy = match backend {
++            Backend::SensorProxy => &self.standard,
++            Backend::Steinerd => &self.steinerd,
++        };
++        backend.available(proxy)
++    }
++}
++
++struct ActiveSensor {
++    backend: Backend,
++    owner: String,
++    proxy: Proxy<'static>,
++}
++
++impl ActiveSensor {
++    fn new(connection: &Connection, bus: &DBusProxy<'_>, backend: Backend) -> zbus::Result<Self> {
++        let (service, path, interface) = backend.endpoint();
++        let owner = bus.get_name_owner(BusName::try_from(service)?)?;
++        let owner = owner.as_str().to_owned();
++        // Release must go to the original provider even if the well-known
++        // name changes between receiving a signal and releasing the claim.
++        let proxy = Proxy::new_owned(connection.clone(), owner.clone(), path, interface)?;
++        Ok(Self {
++            backend,
++            owner,
++            proxy,
++        })
++    }
++}
++
+ #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+ pub(super) enum Orientation {
+     Undefined,
+@@ -38,7 +143,7 @@ impl Orientation {
+         match self {
+             Self::Undefined | Self::Normal => OutputTransform::Normal,
+             Self::BottomUp => OutputTransform::Rotate180,
+-            // steinerd names the physical edge which points upward.
++            // The provider names the physical edge which points upward.
+             // The desktop must turn in the opposite direction to remain
+             // upright in panel coordinates.
+             Self::LeftUp => OutputTransform::Rotate90,
+@@ -159,20 +264,25 @@ enum MonitorResult {
+ 
+ enum SensorResult {
+     Closed,
++    Disconnected,
+     Failed(String),
+-    OwnerChanged { present: bool },
+-    Unwanted,
++    Reselect,
++}
++
++enum Update {
++    Owner(Backend, Option<UniqueName<'static>>),
++    Capability(Backend),
++    Disconnected,
+ }
+ 
+-enum Wake<C, O> {
++enum Wake<C> {
+     Change(Option<C>),
+-    Owner(Option<O>),
++    Update(Option<Update>),
+     Demand,
+ }
+ 
+-/// Follows the sensor for as long as one system bus connection lives. A
+-/// missing or failed sensor service is never polled: the worker sleeps until
+-/// steinerd gains a new owner, which also covers a later start.
++/// Follow a provider on the shared system bus without polling for services or
++/// hardware. When an accelerometer appears, prefer SensorProxy.
+ fn monitor_bus(
+     events: &Sender<Orientation>,
+     published: &mut Option<Orientation>,
+@@ -182,106 +292,170 @@ fn monitor_bus(
+         Ok(connection) => connection,
+         Err(error) => return MonitorResult::Disconnected(error.to_string()),
+     };
+-    let proxy = match Proxy::new(&connection, SENSOR_SERVICE, SENSOR_PATH, SENSOR_INTERFACE) {
+-        Ok(proxy) => proxy,
+-        Err(error) => return MonitorResult::Disconnected(error.to_string()),
+-    };
+-    // Subscribe before the first claim, so an owner which appears while a
+-    // claim fails still wakes the worker.
+-    let mut owners = match future::block_on(proxy.inner().receive_owner_changed()) {
+-        Ok(owners) => owners,
+-        Err(error) => return MonitorResult::Disconnected(error.to_string()),
+-    };
+-    loop {
++    match monitor_connection(&connection, events, published, demand) {
++        Ok(result) => result,
++        Err(error) => MonitorResult::Disconnected(error.to_string()),
++    }
++}
++
++fn monitor_connection(
++    connection: &Connection,
++    events: &Sender<Orientation>,
++    published: &mut Option<Orientation>,
++    demand: &Demand,
++) -> zbus::Result<MonitorResult> {
++    let services = Services::new(connection)?;
++    let bus = DBusProxy::new(connection)?;
++    // Subscribe before probing either provider. A D-Bus activation or a
++    // sensor appearing during a claim still wakes the worker.
++    let standard_owners = future::block_on(services.standard.inner().receive_owner_changed())?;
++    let steinerd_owners = future::block_on(services.steinerd.inner().receive_owner_changed())?;
++    let standard_capability = capability_updates(&services.standard, Backend::SensorProxy)?;
++    let steinerd_capability = capability_updates(&services.steinerd, Backend::Steinerd)?;
++    let mut updates = standard_owners
++        .map(|owner| Update::Owner(Backend::SensorProxy, owner))
++        .chain(stream::once(Update::Disconnected))
++        .or(steinerd_owners
++            .map(|owner| Update::Owner(Backend::Steinerd, owner))
++            .chain(stream::once(Update::Disconnected)))
++        .or(standard_capability.chain(stream::pending()))
++        .or(steinerd_capability.chain(stream::pending()));
++
++    'select: loop {
+         demand.wait_until_wanted();
+-        let present = match follow_sensor(&proxy, &mut owners, events, published, demand) {
+-            SensorResult::Closed => return MonitorResult::Closed,
+-            SensorResult::Unwanted => continue,
+-            SensorResult::Failed(error) => {
+-                debug!(%error, "orientation sensor service is unavailable");
+-                false
++        for backend in [Backend::SensorProxy, Backend::Steinerd] {
++            if !demand.wanted() {
++                continue 'select;
++            }
++            if !services.available(backend) {
++                continue;
++            }
++            let sensor = match ActiveSensor::new(connection, &bus, backend) {
++                Ok(sensor) => sensor,
++                Err(error) => {
++                    debug!(?backend, %error, "could not resolve the orientation sensor");
++                    continue;
++                }
++            };
++            match follow_sensor(&sensor, &services, &mut updates, events, published, demand) {
++                SensorResult::Closed => return Ok(MonitorResult::Closed),
++                SensorResult::Disconnected => return Ok(bus_closed()),
++                SensorResult::Reselect => continue 'select,
++                SensorResult::Failed(error) => {
++                    debug!(?backend, %error, "orientation sensor service is unavailable");
++                }
+             }
+-            SensorResult::OwnerChanged { present } => present,
+-        };
+-        if publish(events, published, Orientation::Undefined).is_err() {
+-            return MonitorResult::Closed;
+         }
+-        if present {
+-            continue;
++        if publish(events, published, Orientation::Undefined).is_err() {
++            return Ok(MonitorResult::Closed);
+         }
+-        loop {
+-            match future::block_on(owners.next()) {
+-                None => return MonitorResult::Disconnected("system bus closed".to_owned()),
+-                Some(Some(_)) => break,
+-                Some(None) => {}
+-            }
++        if let Wake::Update(None | Some(Update::Disconnected)) = future::block_on(future::or(
++            async {
++                demand.changed.wait().await;
++                Wake::<()>::Demand
++            },
++            async { Wake::Update(updates.next().await) },
++        )) {
++            return Ok(bus_closed());
+         }
+     }
+ }
+ 
+-fn follow_sensor<O>(
+-    proxy: &Proxy<'_>,
+-    owners: &mut O,
++fn capability_updates(
++    properties: &PropertiesProxy<'_>,
++    backend: Backend,
++) -> zbus::Result<impl futures_lite::Stream<Item = Update> + Unpin + use<>> {
++    let (_, _, interface) = backend.endpoint();
++    let changes =
++        future::block_on(properties.receive_properties_changed_with_args(&[(0, interface)]))?;
++    Ok(changes.filter_map(move |change| {
++        let args = change.args().ok()?;
++        let capability = backend.capability();
++        (args.changed_properties().contains_key(capability)
++            || args.invalidated_properties().contains(&capability))
++        .then_some(Update::Capability(backend))
++    }))
++}
++
++fn bus_closed() -> MonitorResult {
++    MonitorResult::Disconnected("system bus closed".to_owned())
++}
++
++fn follow_sensor<U>(
++    sensor: &ActiveSensor,
++    services: &Services,
++    updates: &mut U,
+     events: &Sender<Orientation>,
+     published: &mut Option<Orientation>,
+     demand: &Demand,
+ ) -> SensorResult
+ where
+-    O: futures_lite::Stream<Item = Option<zbus::names::UniqueName<'static>>> + Unpin,
++    U: futures_lite::Stream<Item = Update> + Unpin,
+ {
++    if !demand.wanted() {
++        return SensorResult::Reselect;
++    }
++    let ActiveSensor {
++        backend,
++        owner,
++        proxy,
++    } = sensor;
+     let mut changes = future::block_on(
+         proxy
+             .inner()
+-            .receive_property_changed::<String>("Orientation"),
++            .receive_property_changed::<String>(backend.reading()),
+     );
+-    if let Err(error) = proxy.call::<_, _, ()>("Claim", &(SENSOR,)) {
++    if let Err(error) = backend.set_claimed(proxy, true) {
+         return SensorResult::Failed(error.to_string());
+     }
+ 
+-    let has_orientation = proxy
+-        .get_property::<bool>("HasOrientation")
+-        .unwrap_or(false);
+-    let initial = if has_orientation {
+-        proxy
+-            .get_property::<String>("Orientation")
+-            .map(|value| Orientation::parse(&value))
+-            .unwrap_or(Orientation::Undefined)
+-    } else {
+-        Orientation::Undefined
+-    };
++    let initial = proxy
++        .get_property::<String>(backend.reading())
++        .map(|value| Orientation::parse(&value))
++        .unwrap_or(Orientation::Undefined);
+     if publish(events, published, initial).is_err() {
+-        drop(changes);
+-        let _ = proxy.call::<_, _, ()>("Release", &(SENSOR,));
++        let _ = backend.set_claimed(proxy, false);
+         return SensorResult::Closed;
+     }
+     if initial != Orientation::Undefined {
+-        info!(orientation = ?initial, "claimed the system orientation sensor");
++        info!(?backend, orientation = ?initial, "claimed the system orientation sensor");
+     }
+ 
+     let result = loop {
+-        let sensor = future::race(async { Wake::Change(changes.next().await) }, async {
+-            Wake::Owner(owners.next().await)
++        let sensor_event = future::race(async { Wake::Change(changes.next().await) }, async {
++            Wake::Update(updates.next().await)
+         });
+         let demand_changed = async {
+             demand.changed.wait().await;
+             Wake::Demand
+         };
+-        let wake = future::block_on(future::or(demand_changed, sensor));
++        let wake = future::block_on(future::or(demand_changed, sensor_event));
+         let change = match wake {
+             Wake::Demand if demand.wanted() => continue,
+-            Wake::Demand => break SensorResult::Unwanted,
++            Wake::Demand => break SensorResult::Reselect,
+             Wake::Change(Some(change)) => change,
+             Wake::Change(None) => {
+                 break SensorResult::Failed("orientation sensor signal stream ended".to_owned());
+             }
+-            // A new owner has no claim to release; the bus closing is seen
+-            // again by the caller's owner stream.
+-            Wake::Owner(Some(owner)) => {
+-                return SensorResult::OwnerChanged {
+-                    present: owner.is_some(),
++            Wake::Update(Some(update)) => {
++                let reselect = match update {
++                    Update::Owner(source, next) if source == *backend => {
++                        next.as_ref().map(UniqueName::as_str) != Some(owner.as_str())
++                    }
++                    Update::Capability(source) if source == *backend => !services.available(source),
++                    Update::Owner(Backend::SensorProxy, Some(_))
++                    | Update::Capability(Backend::SensorProxy) => {
++                        services.available(Backend::SensorProxy)
++                    }
++                    Update::Disconnected => break SensorResult::Disconnected,
++                    _ => false,
+                 };
++                if reselect {
++                    break SensorResult::Reselect;
++                }
++                continue;
+             }
+-            Wake::Owner(None) => return SensorResult::Failed("system bus closed".to_owned()),
++            Wake::Update(None) => break SensorResult::Disconnected,
+         };
+         let orientation = match future::block_on(change.get()) {
+             Ok(value) => Orientation::parse(&value),
+@@ -295,7 +469,7 @@ where
+         }
+     };
+     drop(changes);
+-    let _ = proxy.call::<_, _, ()>("Release", &(SENSOR,));
++    let _ = backend.set_claimed(proxy, false);
+     result
+ }
+ 
+@@ -312,6 +486,10 @@ fn publish(
+     Ok(())
+ }
+ 
++#[cfg(test)]
++#[path = "orientation_sensor_dbus_tests.rs"]
++mod dbus_tests;
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/compositor/src/bin/deniald/orientation_sensor_dbus_tests.rs b/compositor/src/bin/deniald/orientation_sensor_dbus_tests.rs
+new file mode 100644
+index 0000000..3f6364e
+--- /dev/null
++++ b/compositor/src/bin/deniald/orientation_sensor_dbus_tests.rs
+@@ -0,0 +1,305 @@
++use super::*;
++use std::io::{BufRead, BufReader};
++use std::process::{Child, Command, Stdio};
++use std::sync::mpsc;
++use std::time::Instant;
++use zbus::blocking::connection::Builder;
++use zbus::fdo;
++
++const TIMEOUT: Duration = Duration::from_secs(4);
++type Call = (&'static str, bool);
++
++struct TestBus {
++    process: Child,
++    address: String,
++}
++
++impl TestBus {
++    fn start() -> Self {
++        let process = Command::new("dbus-daemon")
++            .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
++            .stdout(Stdio::piped())
++            .spawn()
++            .expect("start an isolated D-Bus");
++        let mut bus = Self {
++            process,
++            address: String::new(),
++        };
++        BufReader::new(bus.process.stdout.take().unwrap())
++            .read_line(&mut bus.address)
++            .unwrap();
++        assert!(!bus.address.is_empty(), "D-Bus did not report an address");
++        bus
++    }
++
++    fn connection(&self) -> Builder<'_> {
++        Builder::address(self.address.trim())
++            .unwrap()
++            .method_timeout(TIMEOUT)
++    }
++}
++
++impl Drop for TestBus {
++    fn drop(&mut self) {
++        let _ = self.process.kill();
++        let _ = self.process.wait();
++    }
++}
++
++struct Fixture {
++    name: &'static str,
++    present: bool,
++    reading: &'static str,
++    claimed: bool,
++    calls: mpsc::Sender<Call>,
++}
++
++impl Fixture {
++    fn new(
++        name: &'static str,
++        present: bool,
++        reading: &'static str,
++        calls: &mpsc::Sender<Call>,
++    ) -> Self {
++        Self {
++            name,
++            present,
++            reading,
++            claimed: false,
++            calls: calls.clone(),
++        }
++    }
++
++    fn claim(&mut self, claim: bool) -> fdo::Result<()> {
++        self.calls.send((self.name, claim)).unwrap();
++        if self.claimed == claim || (claim && !self.present) {
++            return Err(fdo::Error::Failed("invalid claim transition".to_owned()));
++        }
++        self.claimed = claim;
++        Ok(())
++    }
++}
++
++struct SensorProxyFixture(Fixture);
++
++#[zbus::interface(name = "net.hadess.SensorProxy")]
++impl SensorProxyFixture {
++    #[zbus(property)]
++    fn has_accelerometer(&self) -> bool {
++        self.0.present
++    }
++
++    #[zbus(property)]
++    fn accelerometer_orientation(&self) -> &str {
++        self.0.reading
++    }
++
++    fn claim_accelerometer(&mut self) -> fdo::Result<()> {
++        self.0.claim(true)
++    }
++
++    fn release_accelerometer(&mut self) -> fdo::Result<()> {
++        self.0.claim(false)
++    }
++}
++
++struct SteinerdFixture(Fixture);
++
++#[zbus::interface(name = "org.steinerd.Sensors1")]
++impl SteinerdFixture {
++    #[zbus(property)]
++    fn has_orientation(&self) -> bool {
++        self.0.present
++    }
++
++    #[zbus(property)]
++    fn orientation(&self) -> &str {
++        self.0.reading
++    }
++
++    fn claim(&mut self, kind: &str) -> fdo::Result<()> {
++        assert_eq!(kind, "orientation");
++        self.0.claim(true)
++    }
++
++    fn release(&mut self, kind: &str) -> fdo::Result<()> {
++        assert_eq!(kind, "orientation");
++        self.0.claim(false)
++    }
++}
++
++fn expect_call(calls: &mpsc::Receiver<Call>, name: &'static str, claim: bool) {
++    assert_eq!(calls.recv_timeout(TIMEOUT), Ok((name, claim)));
++}
++
++fn expect_orientation(source: &Channel<Orientation>, expected: Orientation) {
++    let deadline = Instant::now() + TIMEOUT;
++    while Instant::now() < deadline {
++        if let Ok(value) = source.try_recv() {
++            if value != Orientation::Undefined || expected == Orientation::Undefined {
++                assert_eq!(value, expected);
++                return;
++            }
++        }
++        thread::sleep(Duration::from_millis(5));
++    }
++    panic!("expected the provider to report {expected:?}");
++}
++
++struct Monitor {
++    client: Connection,
++    source: Channel<Orientation>,
++    demand: Arc<Demand>,
++    worker: JoinHandle<()>,
++    done: mpsc::Receiver<zbus::Result<MonitorResult>>,
++}
++
++impl Monitor {
++    fn start(bus: &TestBus) -> Self {
++        let client = bus.connection().build().unwrap();
++        let (events, source) = channel();
++        let demand = Arc::new(Demand {
++            wanted: AtomicBool::new(true),
++            changed: crate::wakeup::Wakeup::new().unwrap(),
++        });
++        let (finished, done) = mpsc::channel();
++        let worker_demand = Arc::clone(&demand);
++        let worker_client = client.clone();
++        let worker = thread::spawn(move || {
++            let result = monitor_connection(&worker_client, &events, &mut None, &worker_demand);
++            finished.send(result).unwrap();
++        });
++        Self {
++            client,
++            source,
++            demand,
++            worker,
++            done,
++        }
++    }
++
++    fn set_wanted(&self, wanted: bool) {
++        self.demand.wanted.store(wanted, Ordering::Release);
++        self.demand.changed.wake();
++    }
++
++    fn stop(self) {
++        self.client.close().unwrap();
++        assert!(matches!(
++            self.done.recv_timeout(TIMEOUT),
++            Ok(Ok(MonitorResult::Disconnected(_)))
++        ));
++        self.worker.join().unwrap();
++    }
++}
++
++#[test]
++fn follows_the_standard_sensor_and_releases_the_correct_provider() {
++    let bus = TestBus::start();
++    let (calls, observed_calls) = mpsc::channel();
++    let (standard_name, standard_path, _) = Backend::SensorProxy.endpoint();
++    let (steinerd_name, steinerd_path, _) = Backend::Steinerd.endpoint();
++    let original = bus
++        .connection()
++        .name(standard_name)
++        .unwrap()
++        .serve_at(
++            standard_path,
++            SensorProxyFixture(Fixture::new("standard", false, "left-up", &calls)),
++        )
++        .unwrap()
++        .build()
++        .unwrap();
++    let _steinerd = bus
++        .connection()
++        .name(steinerd_name)
++        .unwrap()
++        .serve_at(
++            steinerd_path,
++            SteinerdFixture(Fixture::new("steinerd", true, "bottom-up", &calls)),
++        )
++        .unwrap()
++        .build()
++        .unwrap();
++    let monitor = Monitor::start(&bus);
++
++    expect_call(&observed_calls, "steinerd", true);
++    expect_orientation(&monitor.source, Orientation::BottomUp);
++    let old_sensor = original
++        .object_server()
++        .interface::<_, SensorProxyFixture>(standard_path)
++        .unwrap();
++    {
++        let mut sensor = old_sensor.get_mut();
++        sensor.0.present = true;
++        async_io::block_on(sensor.has_accelerometer_changed(old_sensor.signal_emitter())).unwrap();
++    }
++    expect_call(&observed_calls, "steinerd", false);
++    expect_call(&observed_calls, "standard", true);
++    expect_orientation(&monitor.source, Orientation::LeftUp);
++
++    {
++        let mut sensor = old_sensor.get_mut();
++        sensor.0.reading = "right-up";
++        async_io::block_on(sensor.accelerometer_orientation_changed(old_sensor.signal_emitter()))
++            .unwrap();
++    }
++    expect_orientation(&monitor.source, Orientation::RightUp);
++
++    monitor.set_wanted(false);
++    expect_call(&observed_calls, "standard", false);
++    assert_eq!(
++        observed_calls.recv_timeout(Duration::from_millis(100)),
++        Err(mpsc::RecvTimeoutError::Timeout)
++    );
++    monitor.set_wanted(true);
++    expect_call(&observed_calls, "standard", true);
++
++    // Keep the old unique owner alive after it gives up its well-known name.
++    // Only that connection can release its original claim.
++    assert!(original.release_name(standard_name).unwrap());
++    expect_call(&observed_calls, "standard", false);
++    expect_call(&observed_calls, "steinerd", true);
++    expect_orientation(&monitor.source, Orientation::BottomUp);
++    let replacement = bus
++        .connection()
++        .name(standard_name)
++        .unwrap()
++        .serve_at(
++            standard_path,
++            SensorProxyFixture(Fixture::new("replacement", true, "normal", &calls)),
++        )
++        .unwrap()
++        .build()
++        .unwrap();
++    expect_call(&observed_calls, "steinerd", false);
++    expect_call(&observed_calls, "replacement", true);
++    expect_orientation(&monitor.source, Orientation::Normal);
++
++    monitor.stop();
++    drop(replacement);
++}
++
++#[test]
++fn claims_sensorproxy_when_service_starts_after_the_desktop() {
++    let bus = TestBus::start();
++    let monitor = Monitor::start(&bus);
++    expect_orientation(&monitor.source, Orientation::Undefined);
++
++    let (calls, observed_calls) = mpsc::channel();
++    let (name, path, _) = Backend::SensorProxy.endpoint();
++    let _service = bus
++        .connection()
++        .name(name)
++        .unwrap()
++        .serve_at(
++            path,
++            SensorProxyFixture(Fixture::new("standard", true, "normal", &calls)),
++        )
++        .unwrap()
++        .build()
++        .unwrap();
++    expect_call(&observed_calls, "standard", true);
++    expect_orientation(&monitor.source, Orientation::Normal);
++    monitor.stop();
++}

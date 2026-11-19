@@ -21,6 +21,7 @@ case "$command" in
   gdm) python3 tools/desktop/build_gdm_packages.py "$@" ;;
   bluez) python3 tools/desktop/build_bluez_package.py "$@" ;;
   libcamera) python3 tools/desktop/build_libcamera_packages.py "$@" ;;
+  denial) python3 tools/desktop/build_denial.py "$@" ;;
   pipewire) python3 tools/desktop/build_pipewire_packages.py "$@" ;;
   kwin) python3 tools/desktop/build_kwin_package.py "$@" ;;
   qt-multimedia) python3 tools/desktop/build_qt_multimedia_packages.py "$@" ;;
@@ -72,7 +73,7 @@ case "$command" in
   install) python3 tools/install_piano.py "$@" ;;
   installer) python3 tools/export_installer.py "$@" ;;
   help|-h|--help)
-    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|module-package|boot-request|boot-repack|linux|linux-package|camera-package|mesa|sensors|display-calibration|ffmpeg|gsd|gdm|bluez|libcamera|pipewire|kwin|qt-multimedia|plasma-camera|libwacom|mutter|bsp|repo|rootfs|release-rootfs|nyarch-gnome-rootfs|arch-denial-rootfs|steamos-rootfs|package|all|installer|install' \
+    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|module-package|boot-request|boot-repack|linux|linux-package|camera-package|mesa|sensors|display-calibration|ffmpeg|gsd|gdm|bluez|libcamera|denial|pipewire|kwin|qt-multimedia|plasma-camera|libwacom|mutter|bsp|repo|rootfs|release-rootfs|nyarch-gnome-rootfs|arch-denial-rootfs|steamos-rootfs|package|all|installer|install' \
       'Full builds need the documented builder environment; rootfs/Mesa/sensors run in a root ARM64 build container.' \
       'release-rootfs reads its kernel source worktree from build/release/source-manifest.json.' \
       'Building never partitions or flashes a tablet. install is a separate explicit command.' ;;
