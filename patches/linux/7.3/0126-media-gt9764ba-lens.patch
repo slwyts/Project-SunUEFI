@@ -1,4 +1,4 @@
-From d4c394d75154fdb00e85a2737a171bd1b55ad9a1 Mon Sep 17 00:00:00 2001
+From bfdc025e34cde92add03998eecdf2af5550b58ed Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 16 Nov 2026 11:16:46 +0800
 Subject: media: i2c: add Giantec GT9764BA bidirectional lens actuator

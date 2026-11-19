@@ -1,4 +1,4 @@
-From d97f80a3ea89c1697a5030f63bda383ef46e27d2 Mon Sep 17 00:00:00 2001
+From 0eaf2dab6c14b0f7895ec8d51a8ab3c44f48ba24 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 19:47:33 +0800
 Subject: fix(power): preserve Piano power-off charging requests
@@ -14,16 +14,16 @@ Flush and compare the complete block on readback before device shutdown.
 Exercise the real transaction with UML KUnit, including adjacent data,
 busy storage, unplugging, repeated requests and I/O failures.
 
-Require fresh sink attachment and VBUS checks within one charging session.
+Require a connected UCSI sink and confirm VBUS and OTG with fresh ADSP replies. The field at v2 wire ID 0x21020 is CID; it can be zero with an active USB source.
 ---
  arch/arm64/configs/piano_defconfig        |   1 +
  drivers/power/reset/Kconfig               |  17 ++
  drivers/power/reset/Makefile              |   1 +
  drivers/power/reset/piano-poweroff-test.c | 205 ++++++++++++++++++
  drivers/power/reset/piano-poweroff.c      | 241 ++++++++++++++++++++++
- drivers/power/supply/piano_mca.c          |  73 +++++++
+ drivers/power/supply/piano_mca.c          |  77 +++++++
  include/linux/power/piano-poweroff.h      |   7 +
- 7 files changed, 545 insertions(+)
+ 7 files changed, 549 insertions(+)
  create mode 100644 drivers/power/reset/piano-poweroff-test.c
  create mode 100644 drivers/power/reset/piano-poweroff.c
  create mode 100644 include/linux/power/piano-poweroff.h
@@ -537,7 +537,7 @@ index 0000000000000000000000000000000000000000..8a5ec625fe83c3a21f009cd9159eced5
 +#include "piano-poweroff-test.c"
 +#endif
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index 494ead696528d8cc860632c355643f2b808cae55..4a443f0a6f25283ae84a1a7b49b8c922afdd9908 100644
+index 494ead696528d8cc860632c355643f2b808cae55..77a974f4a766d61bfd704b0b95de8ae2f4a8c7c2 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -42,6 +42,8 @@
@@ -549,16 +549,15 @@ index 494ead696528d8cc860632c355643f2b808cae55..4a443f0a6f25283ae84a1a7b49b8c922
  #include <linux/random.h>
  #include <linux/regulator/driver.h>
  #include <linux/of.h>
-@@ -109,6 +111,8 @@ struct piano_mca_pdo {
+@@ -109,6 +111,7 @@ struct piano_mca_pdo {
  #define MCA_PROP_ADAPTER_SVID	0x2100f
  #define MCA_PROP_PD_VERIFIED	0x21010
  #define MCA_PROP_UVDM_STATE	0x21012
-+#define MCA_PROP_USB_ATTACHED	0x2101f	/* physical Type-C connection, u8 */
 +#define MCA_PROP_OTG_PLUGIN	0x21020	/* physical source attachment, u8 */
  #define MCA_VDM_LEN		16
  #define MCA_DATA_ROLE_UFP	1
  #define MCA_DATA_ROLE_DFP	2
-@@ -501,6 +505,7 @@ struct piano_mca {
+@@ -501,6 +504,7 @@ struct piano_mca {
  	bool inhibit_charge;	/* Requested policy, retained after a stop error. */
  	bool inhibit_stopped_cp;	/* This policy requested the CP stop. */
  	struct notifier_block connection_notifier;
@@ -566,7 +565,7 @@ index 494ead696528d8cc860632c355643f2b808cae55..4a443f0a6f25283ae84a1a7b49b8c922
  	atomic_t connection_generation;
  	unsigned int polled_connection_generation;
  	bool online;
-@@ -3693,6 +3698,65 @@ static int piano_mca_resume(struct device *dev)
+@@ -3693,6 +3697,70 @@ static int piano_mca_resume(struct device *dev)
  static DEFINE_SIMPLE_DEV_PM_OPS(piano_mca_pm_ops, piano_mca_suspend,
  				piano_mca_resume);
  
@@ -581,26 +580,31 @@ index 494ead696528d8cc860632c355643f2b808cae55..4a443f0a6f25283ae84a1a7b49b8c922
 +{
 +	struct piano_mca_poweroff_session *session = data;
 +	struct piano_mca *mca = session->mca;
-+	u8 attached, otg;
 +	__le32 vbus;
++	u8 otg;
 +	int ret;
-+
-+	ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_USB_ATTACHED, &attached,
-+			     sizeof(attached), session->generation, session->connection);
-+	ret = ret ?: piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_OTG_PLUGIN, &otg,
-+				   sizeof(otg), session->generation, session->connection);
-+	if (ret)
-+		return ret;
-+	if (attached > 1 || otg > 1)
-+		return -EPROTO;
-+	if (!attached || otg)
-+		return 0;
 +
 +	ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_BUS_VOLT, &vbus,
 +			     sizeof(vbus), session->generation, session->connection);
 +	if (ret)
 +		return ret;
-+	return le32_to_cpu(vbus) >= MCA_VBUS_ONLINE_UV;
++	if (le32_to_cpu(vbus) < MCA_VBUS_ONLINE_UV)
++		return 0;
++
++	ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_OTG_PLUGIN, &otg,
++			     sizeof(otg), session->generation, session->connection);
++	if (ret)
++		return ret;
++	if (otg > 1)
++		return -EPROTO;
++	if (otg)
++		return 0;
++
++	/* UCSI ONLINE requires a connected sink, including non-PD sources. */
++	if (power_supply_for_each_psy(mca, piano_mca_ucsi_status) < MCA_UCSI_CONNECTED)
++		return 0;
++	return piano_mca_session_valid(mca, session->generation, session->connection) ?
++		1 : -ECONNRESET;
 +}
 +
 +static int piano_mca_poweroff_notify(struct notifier_block *nb, unsigned long action,
@@ -632,7 +636,7 @@ index 494ead696528d8cc860632c355643f2b808cae55..4a443f0a6f25283ae84a1a7b49b8c922
  static void piano_mca_shutdown(struct auxiliary_device *adev)
  {
  	piano_mca_stop(auxiliary_get_drvdata(adev));
-@@ -3772,6 +3836,15 @@ static int piano_mca_probe(struct auxiliary_device *adev,
+@@ -3772,6 +3840,15 @@ static int piano_mca_probe(struct auxiliary_device *adev,
  	if (ret)
  		return ret;
  

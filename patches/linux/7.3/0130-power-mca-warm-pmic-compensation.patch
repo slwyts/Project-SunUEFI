@@ -1,4 +1,4 @@
-From 1135b1212a25aff013a3cd6e96e62dd3892ed087 Mon Sep 17 00:00:00 2001
+From b1f8745be71e7d065e272b5f7d7d84ee5c0abed4 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 04:18:12 +0800
 Subject: [PATCH] fix(power): apply factory warm-zone PMIC voltage compensation

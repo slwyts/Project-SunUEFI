@@ -1,4 +1,4 @@
-From b20737532f5862cb65058513b56e5ad354db0880 Mon Sep 17 00:00:00 2001
+From d105804ec2a2d095c81ba43b90e73e05fc5210b7 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 23:04:09 +0800
 Subject: [PATCH] dt-bindings: media: describe SM8750 TFE Bayer clocks
