@@ -11,7 +11,9 @@ typedef enum {
 typedef struct {
   PIANO_BOOT_SELECTION Selection;
   UINT16 Number;
-  EFI_STATUS (*PrepareSystem)(VOID);
+  EFI_STATUS (*PrepareSystem)(CONST EFI_DEVICE_PATH_PROTOCOL *Path);
+  VOID (*FinishSystem)(VOID);
+  EFI_WATCHDOG_TIMER_NOTIFY WatchdogExpired;
   BOOLEAN (*CanTryNextSystem)(EFI_STATUS Status);
   BOOLEAN SystemBlocked,StartedMenu,StartedSystem;
 } PIANO_BOOT_DISPATCH;

@@ -65,7 +65,15 @@ STATIC EFI_STATUS Begin(PIANO_FV_APPLICATION *C,EFI_HANDLE Parent,UINT64 Limit) 
   if(S==EFI_SUCCESS && C->ExitEvent==NULL){C->Retained=TRUE;return EFI_COMPROMISED_DATA;}
   return S;
 }
-STATIC EFI_STATUS StartData(PIANO_FV_APPLICATION *C,CONST VOID *Options,UINT32 OptionsBytes,UINT64 Limit,EFI_HANDLE Parent,EFI_HANDLE Device) {
+STATIC EFI_STATUS StopWatchdog(PIANO_FV_APPLICATION *C,EFI_WATCHDOG_TIMER_ARCH_PROTOCOL *Watchdog) {
+  EFI_STATUS S=Exact(gBS->SetWatchdogTimer(0,0,0,NULL));Alive(C);
+  // Keep the safe handler installed if the timer might still be armed.
+  if(S==EFI_SUCCESS){S=Exact(Watchdog->RegisterHandler(Watchdog,NULL));Alive(C);}
+  if(S!=EFI_SUCCESS)C->Retained=TRUE;
+  return S;
+}
+STATIC EFI_STATUS StartData(PIANO_FV_APPLICATION *C,CONST VOID *Options,UINT32 OptionsBytes,UINT64 Limit,
+  EFI_HANDLE Parent,EFI_HANDLE Device,EFI_WATCHDOG_TIMER_NOTIFY WatchdogExpired) {
   Alive(C);EFI_LOADED_IMAGE_PROTOCOL *L=NULL;
   EFI_STATUS S=Exact(gBS->HandleProtocol(C->Image,&gEfiLoadedImageProtocolGuid,(VOID **)&L));Alive(C);
   if(S!=EFI_SUCCESS)return S;
@@ -79,12 +87,31 @@ STATIC EFI_STATUS StartData(PIANO_FV_APPLICATION *C,CONST VOID *Options,UINT32 O
     if(!C->OptionsCopy){C->Retained=TRUE;return EFI_COMPROMISED_DATA;}
     CopyMem(C->OptionsCopy,Options,C->OptionsBytes);L->LoadOptions=C->OptionsCopy;L->LoadOptionsSize=C->OptionsBytes;C->OptionsInstalled=TRUE;
   }
-  C->StartCalled=TRUE;S=gBS->StartImage(C->Image,&C->ExitBytes,(CHAR16 **)&C->ExitData);C->Start=S;C->StartReturned=TRUE;Alive(C);return Exact(S);
+  EFI_WATCHDOG_TIMER_ARCH_PROTOCOL *Watchdog=NULL;
+  if(WatchdogExpired){
+    if(!gBS->SetWatchdogTimer || !gBS->LocateProtocol)return EFI_UNSUPPORTED;
+    S=Exact(gBS->LocateProtocol(&gEfiWatchdogTimerArchProtocolGuid,NULL,(VOID **)&Watchdog));Alive(C);
+    if(S!=EFI_SUCCESS)return S;
+    if(!Watchdog || !Watchdog->RegisterHandler)return EFI_COMPROMISED_DATA;
+    S=Exact(Watchdog->RegisterHandler(Watchdog,WatchdogExpired));Alive(C);
+    if(S!=EFI_SUCCESS)return S;
+    S=Exact(gBS->SetWatchdogTimer(5*60,0,0,NULL));Alive(C);
+    if(S!=EFI_SUCCESS){
+      EFI_STATUS Stop=StopWatchdog(C,Watchdog);
+      return Stop==EFI_SUCCESS?S:Stop;
+    }
+  }
+  C->StartCalled=TRUE;S=gBS->StartImage(C->Image,&C->ExitBytes,(CHAR16 **)&C->ExitData);C->Start=S;C->StartReturned=TRUE;Alive(C);
+  if(Watchdog){
+    EFI_STATUS Stop=StopWatchdog(C,Watchdog);
+    if(Stop!=EFI_SUCCESS)return Stop;
+  }
+  return Exact(S);
 }
 STATIC EFI_STATUS Start(PIANO_FV_APPLICATION *C,CONST CHAR16 *Options,UINT64 Limit,EFI_HANDLE Parent,EFI_HANDLE Device) {
   UINTN Chars=0;
   if(Options){while(Chars<2048 && Options[Chars])++Chars;if(Chars==2048)return EFI_BAD_BUFFER_SIZE;}
-  return StartData(C,Options,Options?(UINT32)((Chars+1)*sizeof(CHAR16)):0,Limit,Parent,Device);
+  return StartData(C,Options,Options?(UINT32)((Chars+1)*sizeof(CHAR16)):0,Limit,Parent,Device,NULL);
 }
 STATIC EFI_STATUS Finish(PIANO_FV_APPLICATION *C,EFI_STATUS S) {
   C->Result=S;
@@ -152,12 +179,12 @@ EFI_STATUS PianoFvApplicationRun(EFI_HANDLE Parent,CONST EFI_GUID *File,CONST CH
   return Finish(C,S);
 }
 EFI_STATUS PianoApplicationRunPath(EFI_HANDLE Parent,EFI_HANDLE Device,EFI_DEVICE_PATH_PROTOCOL *Path,
-  CONST VOID *Options,UINT32 OptionsBytes,UINT64 Limit,PIANO_FV_APPLICATION *C) {
+  CONST VOID *Options,UINT32 OptionsBytes,UINT64 Limit,EFI_WATCHDOG_TIMER_NOTIFY WatchdogExpired,PIANO_FV_APPLICATION *C) {
   if(!Device || !Path || (OptionsBytes && !Options) || (!OptionsBytes && Options))return EFI_INVALID_PARAMETER;
   if(C && C->Signature==SIGNATURE && (C->Busy || C->Retained))return EFI_ALREADY_STARTED;
   EFI_STATUS S=Begin(C,Parent,Limit);if(S!=EFI_SUCCESS)return C && C->Signature==SIGNATURE && C->Busy?Finish(C,S):S;
   S=Exact(gBS->LoadImage(TRUE,Parent,Path,NULL,0,&C->Image));C->Load=S;Alive(C);
   if(S==EFI_SUCCESS && !C->Image){C->Retained=TRUE;S=EFI_COMPROMISED_DATA;}
-  if(S==EFI_SUCCESS)S=StartData(C,Options,OptionsBytes,Limit,Parent,Device);
+  if(S==EFI_SUCCESS)S=StartData(C,Options,OptionsBytes,Limit,Parent,Device,WatchdogExpired);
   return Finish(C,S);
 }

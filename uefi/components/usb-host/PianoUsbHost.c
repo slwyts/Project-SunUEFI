@@ -15,6 +15,7 @@
 #include <Protocol/Usb2HostController.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/DxeServicesTableLib.h>
+#include <Library/DevicePathLib.h>
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/CacheMaintenanceLib.h>
@@ -419,6 +420,13 @@ EFI_STATUS PianoUsbHostStop(VOID) {
 }
 BOOLEAN PianoUsbHostActive(VOID){return mHost.Active || mHost.Programmed;}
 BOOLEAN PianoUsbHostRetained(VOID){return mHost.Retained;}
+BOOLEAN PianoUsbHostOwnsPath(CONST EFI_DEVICE_PATH_PROTOCOL *Path) {
+  if(!mHost.Published || !mHost.Active || !Path)return FALSE;
+  EFI_DEVICE_PATH_PROTOCOL *Remaining=(EFI_DEVICE_PATH_PROTOCOL *)Path;
+  EFI_HANDLE Controller=NULL;
+  return gBS->LocateDevicePath(&gEfiPciIoProtocolGuid,&Remaining,&Controller)==EFI_SUCCESS &&
+    Controller==mHost.Handle && Remaining && Remaining!=Path && !IsDevicePathEnd(Remaining);
+}
 EFI_STATUS PianoUsbHostFenceExit(VOID) {
   mHost.Lost=TRUE;
   if(!mHost.Programmed)return EFI_SUCCESS;

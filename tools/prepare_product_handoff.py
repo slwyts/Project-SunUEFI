@@ -54,6 +54,15 @@ EXIT_HOOK='''  // Product native APP transition before any BeforeNotify/Timer0/m
     return Status;
   }
 
+  // Stop the watchdog only after the product handoff has admitted the image.
+  // No timer may remain armed across the last boot-services notification.
+  if (!mExitBootServicesCalled && (gWatchdogTimer != NULL)) {
+    Status = CoreSetWatchdogTimer (0, 0, 0, NULL);
+    if (EFI_ERROR (Status)) {
+      return PianoProductExitBootServicesResult (Status, FALSE);
+    }
+  }
+
 '''
 EXIT_RESULT_ORIGINAL='  Status = CoreTerminateMemoryMap (MapKey);'
 EXIT_RESULT_HOOK='''  Status = CoreTerminateMemoryMap (MapKey);

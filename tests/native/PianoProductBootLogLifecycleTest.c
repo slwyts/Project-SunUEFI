@@ -38,7 +38,7 @@ BOOLEAN PianoDisplaySmmuRetained(VOID){return RetainedSmmu;}
 BOOLEAN PianoFrameBufferMappingRetained(VOID){return RetainedMapping;}
 BOOLEAN PianoDisplayClockRetained(VOID){return RetainedClock;}
 BOOLEAN PianoProductDisplayOwnerRetained(VOID){return FALSE;}
-BOOLEAN PianoUsbControllerHostBlocked(VOID){return FALSE;}
+BOOLEAN PianoUsbControllerHostFailed(VOID){return FALSE;}
 EFI_STATUS PianoUsbControllerRestrictToDiagnostics(BOOLEAN AllowReboot){(VOID)AllowReboot;assert(!"retained observers or lost services must not enter USB diagnostics");return EFI_ABORTED;}
 EFI_STATUS PianoUsbControllerPumpDiagnostics(UINTN BudgetUs){(VOID)BudgetUs;assert(!"retained observers or lost services must not pump USB");return EFI_ABORTED;}
 EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *Status){(VOID)Status;assert(!"retained display must not inspect USB actions");return EFI_ABORTED;}

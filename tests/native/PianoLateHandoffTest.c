@@ -35,6 +35,14 @@ typedef struct {UINTN Signature;LIST_ENTRY Link;EFI_MEMORY_TYPE Type;UINT64 Star
 static LIST_ENTRY gMemoryMap;
 static struct{BOOLEAN Runtime;}mMemoryTypeStatistics[EfiMaxMemoryType];
 static EFI_TIMER_ARCH_PROTOCOL Timer,*gTimer=&Timer;
+static VOID *gWatchdogTimer;
+static UINTN watchdog_calls;
+EFI_STATUS EFIAPI CoreSetWatchdogTimer(UINTN Timeout,UINT64 Code,UINTN Size,CHAR16 *Data){
+  assert(gWatchdogTimer&&!Timeout&&!Code&&!Size&&!Data&&Owners.Report.Clean&&Late.Phase==PianoExitClean);
+  assert(!watchdog_calls&&!before_events&&!timer_calls&&!mExitBootServicesCalled);
+  ++watchdog_calls;
+  return scenario==73?EFI_DEVICE_ERROR:EFI_SUCCESS;
+}
 static EFI_CPU_ARCH_PROTOCOL Cpu,*gCpu=&Cpu;
 static EFI_RUNTIME_ARCH_PROTOCOL Rt,*gRuntime=&Rt;
 static EFI_SYSTEM_TABLE *gDxeCoreST=&SystemTable;
@@ -82,7 +90,7 @@ static EFI_STATUS EFIAPI Handle(EFI_HANDLE H,EFI_GUID*G,VOID**Out){assert(H==Chi
 static EFI_STATUS EFIAPI TimerPeriod(EFI_TIMER_ARCH_PROTOCOL*This,UINT64 Period){assert(This==&Timer&&!Period&&Owners.Report.Clean&&Late.Phase==PianoExitClean);++timer_calls;return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI Disable(EFI_CPU_ARCH_PROTOCOL*This){assert(This==&Cpu&&gMemoryMapTerminated&&Owners.Report.Clean);++interrupt_calls;return EFI_SUCCESS;}
 VOID CoreNotifySignalList(CONST EFI_GUID*G){
-  if(G==&gEfiEventBeforeExitBootServicesGuid){assert(Owners.Report.Clean&&(Late.RetireCalls==1||((Late.RawMode||Late.ResetMode)&&!Late.RetireCalls)));++before_events;if(Late.RawMode||Late.ResetMode)++mMemoryMapKey;}
+  if(G==&gEfiEventBeforeExitBootServicesGuid){assert(!gWatchdogTimer||watchdog_calls==1);assert(Owners.Report.Clean&&(Late.RetireCalls==1||((Late.RawMode||Late.ResetMode)&&!Late.RetireCalls)));++before_events;if(Late.RawMode||Late.ResetMode)++mMemoryMapKey;}
  else if(G==&gEfiEventExitBootServicesGuid){assert(gMemoryMapTerminated&&Owners.Report.Clean);++exit_events;}
  else if(G==&gEventExitBootServicesFailedGuid){assert(!gMemoryMapTerminated&&before_events==1);++failed_events;}
  else assert(!"unknown Core notification");}
@@ -135,7 +143,7 @@ static VOID ReplayDiagnostic(void){
    efi_checks==Efi&&Calls==OwnerCalls&&livechecks==Live&&timer_calls==Timers&&!locks);
  diagnostic_logging=FALSE;gBS=Boot;live=WasLive;
 }
-int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);assert(scenario<30||scenario==40||scenario==41||(scenario>=50&&scenario<=72));Setup();
+int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);assert(scenario<30||scenario==40||scenario==41||(scenario>=50&&scenario<=73));Setup();
   BOOLEAN NestedRaw=scenario>=26&&scenario<=29;
   BOOLEAN RawCase=(scenario>=18&&scenario<=20)||(scenario>=24&&scenario<=29);
  PIANO_LATE_HANDOFF_ENV Env={.Context=&Late,.Services=&Bs,.SystemTable=&SystemTable,.ParentImage=Parent,.Owners=&Owners,
@@ -147,6 +155,13 @@ int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);
  assert(!Late.Diagnostic.EnterCalls&&!strcmp(Late.Diagnostic.Stage,"not-entered"));
  ReplayDiagnostic();
   locates=0;
+  if(scenario==51||scenario>=71)gWatchdogTimer=&Timer;
+  if(scenario==73){
+    int Fatal=setjmp(jump);
+    if(!Fatal)CoreExitBootServices(Child,mMemoryMapKey);
+    assert(Fatal&&watchdog_calls==1&&Owners.Report.Clean&&!before_events&&!gMemoryMapTerminated);
+    return 0;
+  }
   if(scenario==71||scenario==72){
     // Linux allows one memory-map refresh after its first EBS call. Device
     // retirement must not consume a third call when that first key is stale.
@@ -156,7 +171,7 @@ int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);
     UINTN SavedCalls=Calls,SavedMemory=memchecks,SavedChecks=efi_checks,SavedHandles=handles,SavedLocates=locates;
     assert(CoreExitBootServices(Child,mMemoryMapKey)==EFI_SUCCESS&&gMemoryMapTerminated);
     assert(Late.RetireCalls==1&&Owners.Report.Clean&&before_events==1&&exit_events==1);
-    assert(Calls==SavedCalls&&memchecks==SavedMemory&&efi_checks==SavedChecks&&handles==SavedHandles&&locates==SavedLocates);
+    assert(watchdog_calls==1&&Calls==SavedCalls&&memchecks==SavedMemory&&efi_checks==SavedChecks&&handles==SavedHandles&&locates==SavedLocates);
     puts(scenario==72?"Standard EFI without USB: stale first map completes EBS after Linux's single refresh":"Standard EFI with USB: stale first map completes EBS after Linux's single refresh");return 0;
   }
   if(scenario>=50){
@@ -164,7 +179,7 @@ int main(int argc,char**argv){assert(argc==2);scenario=strtoul(argv[1],NULL,10);
     if(scenario==54)ShutdownStatus=EFI_DEVICE_ERROR;
     int Fatal=setjmp(jump);EFI_STATUS Result=Fatal?EFI_ABORTED:CoreExitBootServices(Child,mMemoryMapKey);
     if(scenario==51||scenario==52||scenario==53){
-      assert(!Fatal&&Result==(scenario==51?EFI_ACCESS_DENIED:scenario==52?EFI_NOT_READY:EFI_ABORTED)&&!Calls&&!before_events&&!Late.RetireCalls);
+      assert(!Fatal&&Result==(scenario==51?EFI_ACCESS_DENIED:scenario==52?EFI_NOT_READY:EFI_ABORTED)&&!Calls&&!before_events&&!Late.RetireCalls&&!watchdog_calls);
       assert(Owners.Report.Origin==(scenario==53?PianoProductRequestUsb:PianoProductRequestNone));
       assert(Late.Diagnostic.EnterCalls==1&&Late.Diagnostic.Image==Child&&
         Late.Diagnostic.Phase==PianoExitUnarmed&&!Late.Diagnostic.ExitCalls&&!Late.Diagnostic.RetireCalls);

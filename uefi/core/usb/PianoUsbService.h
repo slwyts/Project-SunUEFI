@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #pragma once
 #include "PianoDwc3Service.h"
+#include <Protocol/DevicePath.h>
 typedef struct {
   UINT32 Revision;
   EFI_STATUS Status,DeviceStatus,OwnedCloseStatus,TimerCloseStatus;
@@ -21,7 +22,10 @@ EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RET
 // APP, before an exit is latched. EFI_NOT_READY: a USB device is still in use,
 // nothing changed and the exit can be retried after unplugging
 EFI_STATUS PianoUsbControllerServiceLeaveHost(VOID);
-// The host role is busy or failed; handoff is refused for USB
-BOOLEAN PianoUsbControllerHostBlocked(VOID);
+// Keep the active xHCI session stable while its loader may still read USB.
+EFI_STATUS PianoUsbControllerServicePrepareBoot(CONST EFI_DEVICE_PATH_PROTOCOL *Path);
+VOID PianoUsbControllerServiceFinishBoot(VOID);
+// Report a failed host session for recovery diagnostics.
+BOOLEAN PianoUsbControllerHostFailed(VOID);
 // The action in GetStatus is consumed by the product all-owner manager. These
 // service APIs never ResetSystem or load/start an EFI image themselves.

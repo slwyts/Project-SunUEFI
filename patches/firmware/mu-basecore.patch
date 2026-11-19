@@ -174,7 +174,7 @@ index 3c20568655dbe5047e5618f5abce9e6a7f717b20..ac69f0393888c56488640af46e590e3f
  
  //
  // DXE Core Global Variables for Protocols from PEI
-@@ -782,6 +785,18 @@ CoreExitBootServices (
+@@ -782,6 +785,27 @@ CoreExitBootServices (
  {
    EFI_STATUS  Status;
  
@@ -190,10 +190,19 @@ index 3c20568655dbe5047e5618f5abce9e6a7f717b20..ac69f0393888c56488640af46e590e3f
 +    return Status;
 +  }
 +
++  // Stop the watchdog only after the product handoff has admitted the image.
++  // No timer may remain armed across the last boot-services notification.
++  if (!mExitBootServicesCalled && (gWatchdogTimer != NULL)) {
++    Status = CoreSetWatchdogTimer (0, 0, 0, NULL);
++    if (EFI_ERROR (Status)) {
++      return PianoProductExitBootServicesResult (Status, FALSE);
++    }
++  }
++
    //
    // Notify other drivers of their last chance to use boot services
    // before the memory map is terminated.
-@@ -799,6 +814,7 @@ CoreExitBootServices (
+@@ -799,6 +823,7 @@ CoreExitBootServices (
    //
    // Terminate memory services if the MapKey matches
    //

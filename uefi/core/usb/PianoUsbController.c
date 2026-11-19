@@ -676,7 +676,7 @@ STATIC BOOLEAN ControllerAtApp(VOID) {
 }
 #if PIANO_USB_HOST
 STATIC struct {
-  BOOLEAN Parked,Blocked,Failed,Polled,SampleValid,SampleHost;
+  BOOLEAN Parked,Blocked,Failed,BootingFromHost,Polled,SampleValid,SampleHost;
   UINT8 SampleOrientation,FailedOrientation;
   UINT64 LastPoll;
   EFI_STATUS ParkStatus,FailStatus;
@@ -754,7 +754,7 @@ STATIC BOOLEAN RoleSelectOrientation(UINT8 Orientation) {
   RoleFail("orientation",S);return FALSE;
 }
 STATIC VOID RolePoll(VOID) {
-  if(mRole.Failed || mUsbCleanupBlocked || mPersistent.ServicesLost || !mPersistent.Started)return;
+  if(mRole.Failed || mRole.BootingFromHost || mUsbCleanupBlocked || mPersistent.ServicesLost || !mPersistent.Started)return;
   UINT64 Now=mPersistent.Config.NowUs(mPersistent.Config.Context);
   if(mRole.Polled && Now>=mRole.LastPoll && Now-mRole.LastPoll<250000)return;
   if(Now<mRole.LastPoll)mRole.SampleValid=FALSE;
@@ -813,23 +813,42 @@ EFI_STATUS PianoUsbControllerPumpDiagnostics(UINTN BudgetUs) {
   EFI_STATUS Status=ControllerDiagnosticsReady();if(Status!=EFI_SUCCESS)return Status;
   return PianoDwc3ServicePumpDiagnostics(BudgetUs);
 }
-EFI_STATUS PianoUsbControllerServiceLeaveHost(VOID) {
+EFI_STATUS PianoUsbControllerServicePrepareBoot(CONST EFI_DEVICE_PATH_PROTOCOL *Path) {
 #if PIANO_USB_HOST
   if(!ControllerAtApp())return EFI_UNSUPPORTED;
   if(mRole.Failed)return mRole.FailStatus;
+  if(mRole.BootingFromHost)return EFI_NOT_READY;
   if(!mRole.Parked)return EFI_SUCCESS;
+  if(Path && PianoUsbHostOwnsPath(Path)){
+    if(!mPersistent.Started || mPersistent.Unknown || mPersistent.ServicesLost || mUsbCleanupBlocked ||
+       PianoUsbHostRetained())return EFI_ACCESS_DENIED;
+    mRole.BootingFromHost=TRUE;
+    return EFI_SUCCESS;
+  }
   mRole.Blocked=TRUE;
   EFI_STATUS S=RoleStopHost();
   if(S==EFI_SUCCESS)S=mPersistent.ServicesLost?EFI_ABORTED:RoleRestartDevice();
   if(S==EFI_NOT_READY)mRole.Blocked=FALSE;
   return S;
 #else
+  (VOID)Path;
   return EFI_SUCCESS;
 #endif
 }
-BOOLEAN PianoUsbControllerHostBlocked(VOID) {
+EFI_STATUS PianoUsbControllerServiceLeaveHost(VOID) {
+  return PianoUsbControllerServicePrepareBoot(NULL);
+}
+VOID PianoUsbControllerServiceFinishBoot(VOID) {
 #if PIANO_USB_HOST
-  return mRole.Failed || (mRole.Parked && PianoUsbHostActive());
+  if(mRole.BootingFromHost){
+    mRole.BootingFromHost=FALSE;
+    mRole.SampleValid=FALSE;
+  }
+#endif
+}
+BOOLEAN PianoUsbControllerHostFailed(VOID) {
+#if PIANO_USB_HOST
+  return mRole.Failed || PianoUsbHostRetained();
 #else
   return FALSE;
 #endif
@@ -1009,7 +1028,9 @@ EFI_STATUS PianoUsbControllerPumpDiagnostics(UINTN BudgetUs){(VOID)BudgetUs;retu
 EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){if(S==NULL)return EFI_INVALID_PARAMETER;ControllerZero(S,sizeof(*S));S->Revision=1;return EFI_UNSUPPORTED;}
 EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RETIRE_REPORT *R){(VOID)Reason;if(R==NULL)return EFI_INVALID_PARAMETER;ControllerZero(R,sizeof(*R));R->Revision=1;return R->Status=EFI_UNSUPPORTED;}
 EFI_STATUS PianoUsbControllerServiceLeaveHost(VOID){return EFI_SUCCESS;}
-BOOLEAN PianoUsbControllerHostBlocked(VOID){return FALSE;}
+EFI_STATUS PianoUsbControllerServicePrepareBoot(CONST EFI_DEVICE_PATH_PROTOCOL *Path){(VOID)Path;return EFI_SUCCESS;}
+VOID PianoUsbControllerServiceFinishBoot(VOID){}
+BOOLEAN PianoUsbControllerHostFailed(VOID){return FALSE;}
 #endif
 EFI_STATUS PianoUsbControllerRunForRamBoot(CONST VOID *Fdt,CONST PIANO_FB_BOOT *Boot,
   PIANO_FB_BOOT_ACTION *Action,PIANO_USB_BOOT_RETIRE_REPORT *Report,BOOLEAN *RebootRequested) {

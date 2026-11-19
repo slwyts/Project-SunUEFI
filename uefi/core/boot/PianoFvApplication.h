@@ -3,6 +3,7 @@
 #include <Uefi.h>
 #include <Protocol/LoadedImage.h>
 #include <Protocol/DevicePath.h>
+#include <Protocol/WatchdogTimer.h>
 typedef struct {
   UINT32 Signature;
   BOOLEAN Busy,EbsObserved,Retained,StartCalled,StartReturned,AutoUnloaded;
@@ -32,4 +33,4 @@ EFI_STATUS PianoApplicationRunFile(EFI_HANDLE Parent,EFI_HANDLE Device,CONST CHA
 // Execute a resolved standard load option, preserving its binary OptionalData.
 EFI_STATUS PianoApplicationRunPath(EFI_HANDLE Parent,EFI_HANDLE Device,
   EFI_DEVICE_PATH_PROTOCOL *Path,CONST VOID *Options,UINT32 OptionsBytes,
-  UINT64 MaxLoadedBytes,PIANO_FV_APPLICATION *Context);
+  UINT64 MaxLoadedBytes,EFI_WATCHDOG_TIMER_NOTIFY WatchdogExpired,PIANO_FV_APPLICATION *Context);

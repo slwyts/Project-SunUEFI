@@ -8,6 +8,7 @@
 #include <PiDxe.h>
 #include <Guid/GlobalVariable.h>
 #include <Protocol/FirmwareVolume2.h>
+#include <Protocol/LoadFile.h>
 #include <Protocol/SimpleFileSystem.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
@@ -172,35 +173,41 @@ STATIC EFI_STATUS RunOption(EFI_HANDLE Parent,EFI_BOOT_MANAGER_LOAD_OPTION *Opti
     if(Path)FreePool(Path);
     Path=Next;
     if(!Path)break;
+    if(!IsDevicePathValid(Path,0)){Status=EFI_COMPROMISED_DATA;continue;}
     EFI_DEVICE_PATH_PROTOCOL *Remaining=Path;
-    EFI_HANDLE Volume=NULL;
+    EFI_HANDLE Source=NULL;
     Status=gBS->LocateDevicePath(Menu?&gEfiFirmwareVolume2ProtocolGuid:&gEfiSimpleFileSystemProtocolGuid,
-                                 &Remaining,&Volume);
+                                 &Remaining,&Source);
+    if(!Menu && Status==EFI_NOT_FOUND){
+      Remaining=Path;
+      Status=gBS->LocateDevicePath(&gEfiLoadFileProtocolGuid,&Remaining,&Source);
+    }
     if(Status!=EFI_SUCCESS)continue;
-    if(!Volume){Status=EFI_NOT_FOUND;continue;}
+    if(!Source){Status=EFI_NOT_FOUND;continue;}
     if(Menu && (!PianoBootOptionIsSimpleInit(Path) || !IsFvFile(Remaining,&mPianoSimpleInitBootFileGuid)))continue;
     if(!Menu && Dispatch->PrepareSystem) {
-      Status=Dispatch->PrepareSystem();
+      Status=Dispatch->PrepareSystem(Path);
       if(Status!=EFI_SUCCESS){
         Dispatch->SystemBlocked=TRUE;
         Attempts->TryNext=FALSE;
         break;
       }
     }
-    *Device=Menu?NULL:Volume;
+    *Device=Menu?NULL:Source;
     mOptionNumber=Option->OptionNumber;
     UINT16 Current=(UINT16)Option->OptionNumber;
     Status=gRT->SetVariable(L"BootCurrent",&gEfiGlobalVariableGuid,
       EFI_VARIABLE_BOOTSERVICE_ACCESS|EFI_VARIABLE_RUNTIME_ACCESS,sizeof(Current),&Current);
     if(Status!=EFI_SUCCESS){
+      if(!Menu && Dispatch->FinishSystem)Dispatch->FinishSystem();
       Attempts->TryNext=FALSE;
       break;
     }
     EfiSignalEventReadyToBoot();
     BOOLEAN Automatic=IsAutomatic(Option);
     Application->StartCalled=FALSE;
-    Status=PianoApplicationRunPath(Parent,Volume,Path,Automatic?NULL:Option->OptionalData,
-      Automatic?0:Option->OptionalDataSize,0x10000000,Application);
+    Status=PianoApplicationRunPath(Parent,Source,Path,Automatic?NULL:Option->OptionalData,
+      Automatic?0:Option->OptionalDataSize,0x10000000,Menu?NULL:Dispatch->WatchdogExpired,Application);
     if(Application->StartCalled){
       if(Menu)Dispatch->StartedMenu=TRUE;
       else Dispatch->StartedSystem=TRUE;
@@ -209,6 +216,7 @@ STATIC EFI_STATUS RunOption(EFI_HANDLE Parent,EFI_BOOT_MANAGER_LOAD_OPTION *Opti
       Attempts->TryNext=FALSE;
       return Status;
     }
+    if(!Menu && Dispatch->FinishSystem)Dispatch->FinishSystem();
     EFI_STATUS Clear=gRT->SetVariable(L"BootCurrent",&gEfiGlobalVariableGuid,0,0,NULL);
     if(Clear!=EFI_SUCCESS && Clear!=EFI_NOT_FOUND){
       Status=Clear;

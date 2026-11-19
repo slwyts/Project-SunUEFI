@@ -435,7 +435,9 @@ def core_inf():
   gEfiDevicePathProtocolGuid
   gEfiCpuArchProtocolGuid
   gEfiLoadedImageProtocolGuid
+  gEfiLoadFileProtocolGuid
   gEfiLoadFile2ProtocolGuid
+  gEfiWatchdogTimerArchProtocolGuid
   gEfiPartitionInfoProtocolGuid
   gEfiPciIoProtocolGuid
   gEfiSimpleFileSystemProtocolGuid

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #pragma once
 #include "PianoDma.h"
+#include <Protocol/DevicePath.h>
 // APP only. Caller holds GDSC, clocks, PHY and the USB0 SMMU domain and has
 // stopped the device service (DCTL.RUN_STOP clear)
 EFI_STATUS PianoUsbHostStart(PIANO_DMA_DEVICE *Device);
@@ -8,6 +9,7 @@ EFI_STATUS PianoUsbHostStart(PIANO_DMA_DEVICE *Device);
 // was released; any other error leaves the session retained
 EFI_STATUS PianoUsbHostStop(VOID);
 BOOLEAN PianoUsbHostActive(VOID);
+BOOLEAN PianoUsbHostOwnsPath(CONST EFI_DEVICE_PATH_PROTOCOL *Path);
 BOOLEAN PianoUsbHostRetained(VOID);
 // MMIO only, for ExitBootServices or reset: halt the xHC and keep every page
 EFI_STATUS PianoUsbHostFenceExit(VOID);

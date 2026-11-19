@@ -275,6 +275,7 @@ static UINT8 phy_orientation=1;
 static UINTN host_starts,host_stops,host_stop_calls,phy_switches;
 static EFI_STATUS host_stop_status,typec_status,phy_switch_status;
 static PIANO_USB_TYPEC_STATE typec;
+static EFI_DEVICE_PATH_PROTOCOL HostBootPath;
 UINT8 PianoUsbPhyOrientation(VOID){return phy_orientation;}
 EFI_STATUS PianoUsbPhySetOrientation(UINT8 Orientation){
   assert(current_tpl==TPL_APPLICATION && mRole.Parked && !mService.State.Started && !host_active);
@@ -298,6 +299,7 @@ EFI_STATUS PianoUsbHostStop(VOID){
 }
 BOOLEAN PianoUsbHostActive(VOID){return host_active;}
 BOOLEAN PianoUsbHostRetained(VOID){return FALSE;}
+BOOLEAN PianoUsbHostOwnsPath(CONST EFI_DEVICE_PATH_PROTOCOL *Path){return host_active && Path==&HostBootPath;}
 EFI_STATUS PianoUsbHostFenceExit(VOID){assert(!host_active);return EFI_SUCCESS;}
 EFI_STATUS PianoUsbTypecRead(CONST VOID *Fdt,PIANO_USB_TYPEC_STATE *State){
   assert(Fdt==(VOID *)123 && current_tpl==TPL_APPLICATION);
@@ -949,7 +951,8 @@ static VOID run_touch_coexistence(TOUCH_GPI_CASE Test){
 }
 #if PIANO_USB_HOST
 typedef enum {
-  TypecDeviceFlash,TypecHostBusy,TypecPhyRestored,TypecPhyRetained,TypecDeviceRetained,TypecCaseCount
+  TypecDeviceFlash,TypecHostBusy,TypecPhyRestored,TypecPhyRetained,TypecDeviceRetained,
+  TypecHostBootReturn,TypecHostBootExit,TypecCaseCount
 } TYPEC_CASE;
 static VOID run_typec_orientation(TYPEC_CASE Test){
   setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;
@@ -964,9 +967,31 @@ static VOID run_typec_orientation(TYPEC_CASE Test){
   PIANO_DWC3_SERVICE_CONFIG Config={.Context=(VOID *)0x55,.NowUs=now_us,.Storage=&Storage};
   assert(PianoUsbControllerServiceStart((VOID *)123,&Config)==EFI_SUCCESS);
   service_enumerate();
-  typec=(PIANO_USB_TYPEC_STATE){.Attached=TRUE,.PartnerSink=Test==TypecHostBusy,.Orientation=1};
+  BOOLEAN BootFromHost=Test==TypecHostBootReturn || Test==TypecHostBootExit;
+  typec=(PIANO_USB_TYPEC_STATE){.Attached=TRUE,.PartnerSink=Test==TypecHostBusy || BootFromHost,.Orientation=1};
   typec_poll();typec_poll();
   assert(!phy_switches);
+  if(BootFromHost){
+    assert(host_active&&host_starts==1&&!host_stop_calls);
+    assert(PianoUsbControllerServicePrepareBoot(&HostBootPath)==EFI_SUCCESS);
+    typec.Attached=FALSE;typec_poll();typec_poll();
+    assert(host_active&&!host_stop_calls&&!phy_switches);
+    assert(PianoUsbControllerServiceLeaveHost()==EFI_NOT_READY);
+    PIANO_USB_SERVICE_RETIRE_REPORT Retire;
+    if(Test==TypecHostBootExit){
+      host_stop_status=EFI_NOT_READY;
+      assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&Retire)==EFI_NOT_READY);
+      assert(host_active&&!closes&&!removes&&!Retire.Attempted&&!Retire.Clean);
+      host_stop_status=EFI_SUCCESS;
+    }else{
+      PianoUsbControllerServiceFinishBoot();
+      typec_poll();assert(host_active);
+      typec_poll();assert(!host_active&&host_stops==1&&mService.State.Started);
+    }
+    assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&Retire)==EFI_SUCCESS&&Retire.Clean);
+    assert(!host_active&&host_stops==1&&Retire.HostWasActive==(Test==TypecHostBootExit));
+    free_cold_model();return;
+  }
   if(Test==TypecHostBusy){
     assert(host_active && host_starts==1 && !host_stop_calls);
     typec_status=EFI_TIMEOUT;
