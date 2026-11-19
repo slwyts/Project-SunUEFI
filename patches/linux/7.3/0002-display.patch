@@ -3,6 +3,16 @@ From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(display): port Piano display support to Linux 7.3
 
+Quiesce the color DMA engine before unregister or shutdown. A fully
+disabled CRTC does not submit color programming, so the atomic disable
+must remain valid after the engine has stopped accepting requests.
+
+The DPU also turns off the panel during shutdown. Link it to the
+DSI panel's external backlight so the provider and its bus are still
+available for the atomic disable. Use the stateless ordering pattern
+from PS8640; the attached bridge owns the backlight reference.
+
+Link: https://github.com/torvalds/linux/commit/9294914dd5507eca56566c470c56327f46dfd4fa
 ---
  .../gpu/drm/display/drm_bridge_connector.c    |  10 +
  drivers/gpu/drm/msm/Makefile                  |   3 +
@@ -10,7 +20,7 @@ Subject: [PATCH] feat(display): port Piano display support to Linux 7.3
  drivers/gpu/drm/msm/adreno/a8xx_gpu.c         |   2 +-
  drivers/gpu/drm/msm/adreno/adreno_gpu.h       |   5 +
  .../msm/disp/dpu1/catalog/dpu_12_0_sm8750.h   |  11 +
- drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c      | 209 ++++-
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c      | 210 ++++-
  drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h      |   1 +
  drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c   | 102 ++-
  drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.h   |   5 +
@@ -35,7 +45,7 @@ Subject: [PATCH] feat(display): port Piano display support to Linux 7.3
  drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c        |   2 +-
  drivers/gpu/drm/msm/dsi/dsi.h                 |   5 +
  drivers/gpu/drm/msm/dsi/dsi_host.c            | 178 +++-
- drivers/gpu/drm/msm/dsi/dsi_manager.c         | 132 ++-
+ drivers/gpu/drm/msm/dsi/dsi_manager.c         | 197 ++++-
  drivers/gpu/drm/msm/dsi/phy/dsi_phy.c         |  47 +-
  drivers/gpu/drm/msm/dsi/phy/dsi_phy.h         |   9 +
  drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c     |  50 ++
@@ -46,7 +56,7 @@ Subject: [PATCH] feat(display): port Piano display support to Linux 7.3
  drivers/gpu/drm/panel/Makefile                |   1 +
  drivers/gpu/drm/panel/panel-novatek-nt36532.c | 827 ++++++++++++++++++
  drivers/video/backlight/ktz8866.c             | 158 +++-
- 42 files changed, 2835 insertions(+), 104 deletions(-)
+ 42 files changed, 2898 insertions(+), 107 deletions(-)
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.c
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.h
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_igcv5.c
@@ -513,7 +523,7 @@ index 3889eb8a542..f5d0f2581ef 100644
  	.ctl_count = ARRAY_SIZE(sm8750_ctl),
  	.ctl = sm8750_ctl,
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
-index 42d0a529b4d..77bfbd02d49 100644
+index 42d0a529b4d..a5228824779 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
 @@ -24,6 +24,8 @@
@@ -777,7 +787,7 @@ index 42d0a529b4d..77bfbd02d49 100644
  static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
  		struct drm_atomic_commit *state)
  {
-@@ -1533,6 +1685,15 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+@@ -1533,6 +1685,16 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
  	int rc = 0;
  
  	bool needs_dirtyfb = dpu_crtc_needs_dirtyfb(crtc_state);
@@ -786,14 +796,15 @@ index 42d0a529b4d..77bfbd02d49 100644
 +	/* A hardware failure latches the engine unusable. Do not accept a
 +	 * later gamma update as though its transport were still initialized.
 +	 */
-+	if ((crtc_state->color_mgmt_changed || drm_atomic_crtc_needs_modeset(crtc_state)) &&
++	if (crtc_state->enable &&
++	    (crtc_state->color_mgmt_changed || drm_atomic_crtc_needs_modeset(crtc_state)) &&
 +	    kms->lutdma && !dpu_lutdma_ready(kms->lutdma))
 +		return -EIO;
 +
  
  	/* don't reallocate resources if only ACTIVE has beeen changed */
  	if (crtc_state->mode_changed || crtc_state->connectors_changed ||
-@@ -1561,6 +1722,10 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+@@ -1561,6 +1723,10 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
  
  	DRM_DEBUG_ATOMIC("%s: check\n", dpu_crtc->name);
  
@@ -804,7 +815,7 @@ index 42d0a529b4d..77bfbd02d49 100644
  	if (cstate->num_mixers) {
  		rc = _dpu_crtc_check_and_setup_lm_bounds(crtc, crtc_state);
  		if (rc)
-@@ -1593,6 +1758,11 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+@@ -1593,6 +1759,11 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
  		return rc;
  	}
  
@@ -816,7 +827,7 @@ index 42d0a529b4d..77bfbd02d49 100644
  	return 0;
  }
  
-@@ -1609,8 +1779,15 @@ static enum drm_mode_status dpu_crtc_mode_valid(struct drm_crtc *crtc,
+@@ -1609,8 +1780,15 @@ static enum drm_mode_status dpu_crtc_mode_valid(struct drm_crtc *crtc,
  	    mode->hdisplay > dpu_kms->catalog->caps->max_mixer_width)
  		return MODE_BAD_HVALUE;
  
@@ -834,7 +845,7 @@ index 42d0a529b4d..77bfbd02d49 100644
  
  	if (dpu_kms->catalog->caps->has_3d_merge)
  		adjusted_mode_clk /= 2;
-@@ -1913,11 +2090,17 @@ struct drm_crtc *dpu_crtc_init(struct drm_device *dev, struct drm_plane *plane,
+@@ -1913,11 +2091,17 @@ struct drm_crtc *dpu_crtc_init(struct drm_device *dev, struct drm_plane *plane,
  	drm_crtc_helper_add(crtc, &dpu_crtc_helper_funcs);
  
  	if (dpu_kms->catalog->dspp_count) {
@@ -2484,14 +2495,19 @@ index b292dfd266d..a3d0e7795b8 100644
  				  const struct drm_display_mode *mode)
  {
 diff --git a/drivers/gpu/drm/msm/dsi/dsi_manager.c b/drivers/gpu/drm/msm/dsi/dsi_manager.c
-index 959daa88b1d..db26f5174b8 100644
+index 959daa88b1d..1ff78be19c9 100644
 --- a/drivers/gpu/drm/msm/dsi/dsi_manager.c
 +++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c
-@@ -4,9 +4,11 @@
+@@ -3,10 +3,15 @@
+  * Copyright (c) 2015, The Linux Foundation. All rights reserved.
   */
  
- #include "drm/drm_bridge_connector.h"
+-#include "drm/drm_bridge_connector.h"
++#include <linux/backlight.h>
++#include <linux/device.h>
++
 +#include <drm/display/drm_dsc.h>
++#include <drm/drm_bridge_connector.h>
  
  #include "msm_kms.h"
  #include "dsi.h"
@@ -2499,7 +2515,7 @@ index 959daa88b1d..db26f5174b8 100644
  
  #define DSI_CLOCK_MASTER	DSI_0
  #define DSI_CLOCK_SLAVE		DSI_1
-@@ -44,6 +46,21 @@ static inline struct msm_dsi *dsi_mgr_get_other_dsi(int id)
+@@ -44,6 +49,21 @@ static inline struct msm_dsi *dsi_mgr_get_other_dsi(int id)
  	return msm_dsim_glb.dsi[(id + 1) % DSI_MAX];
  }
  
@@ -2521,7 +2537,7 @@ index 959daa88b1d..db26f5174b8 100644
  static int dsi_mgr_parse_of(struct device_node *np, int id)
  {
  	struct msm_dsi_manager *msm_dsim = &msm_dsim_glb;
-@@ -198,6 +215,7 @@ static void dsi_mgr_phy_disable(int id)
+@@ -198,6 +218,7 @@ static void dsi_mgr_phy_disable(int id)
  struct dsi_bridge {
  	struct drm_bridge base;
  	int id;
@@ -2529,7 +2545,7 @@ index 959daa88b1d..db26f5174b8 100644
  };
  
  #define to_dsi_bridge(x) container_of(x, struct dsi_bridge, base)
-@@ -240,6 +258,26 @@ static int dsi_mgr_bridge_power_on(struct drm_bridge *bridge)
+@@ -240,6 +261,26 @@ static int dsi_mgr_bridge_power_on(struct drm_bridge *bridge)
  		}
  	}
  
@@ -2556,7 +2572,7 @@ index 959daa88b1d..db26f5174b8 100644
  	/*
  	 * Enable before preparing the panel, disable after unpreparing, so
  	 * that the panel can communicate over the DSI link.
-@@ -250,6 +288,8 @@ static int dsi_mgr_bridge_power_on(struct drm_bridge *bridge)
+@@ -250,6 +291,8 @@ static int dsi_mgr_bridge_power_on(struct drm_bridge *bridge)
  
  	return 0;
  
@@ -2565,7 +2581,7 @@ index 959daa88b1d..db26f5174b8 100644
  host1_on_fail:
  	msm_dsi_host_power_off(host);
  host_on_fail:
-@@ -291,6 +331,7 @@ static void dsi_mgr_bridge_pre_enable(struct drm_bridge *bridge,
+@@ -291,6 +334,7 @@ static void dsi_mgr_bridge_pre_enable(struct drm_bridge *bridge,
  	if (is_bonded_dsi && !IS_MASTER_DSI_LINK(id))
  		return;
  
@@ -2573,7 +2589,7 @@ index 959daa88b1d..db26f5174b8 100644
  	ret = dsi_mgr_bridge_power_on(bridge);
  	if (ret) {
  		dev_err(&msm_dsi->pdev->dev, "Power on failed: %d\n", ret);
-@@ -311,6 +352,7 @@ static void dsi_mgr_bridge_pre_enable(struct drm_bridge *bridge,
+@@ -311,6 +355,7 @@ static void dsi_mgr_bridge_pre_enable(struct drm_bridge *bridge,
  		}
  	}
  
@@ -2581,7 +2597,7 @@ index 959daa88b1d..db26f5174b8 100644
  	return;
  
  host1_en_fail:
-@@ -319,6 +361,52 @@ static void dsi_mgr_bridge_pre_enable(struct drm_bridge *bridge,
+@@ -319,6 +364,52 @@ static void dsi_mgr_bridge_pre_enable(struct drm_bridge *bridge,
  	dsi_mgr_bridge_power_off(bridge);
  }
  
@@ -2634,7 +2650,7 @@ index 959daa88b1d..db26f5174b8 100644
  void msm_dsi_manager_tpg_enable(void)
  {
  	struct msm_dsi *m_dsi = dsi_mgr_get_dsi(DSI_0);
-@@ -351,6 +439,9 @@ static void dsi_mgr_bridge_post_disable(struct drm_bridge *bridge,
+@@ -351,6 +442,9 @@ static void dsi_mgr_bridge_post_disable(struct drm_bridge *bridge,
  	 */
  	if (is_bonded_dsi && !IS_MASTER_DSI_LINK(id))
  		goto disable_phy;
@@ -2644,7 +2660,7 @@ index 959daa88b1d..db26f5174b8 100644
  
  	ret = msm_dsi_host_disable(host);
  	if (ret)
-@@ -368,11 +459,14 @@ static void dsi_mgr_bridge_post_disable(struct drm_bridge *bridge,
+@@ -368,11 +462,14 @@ static void dsi_mgr_bridge_post_disable(struct drm_bridge *bridge,
  
  	/* Save PHY status if it is a clock source */
  	msm_dsi_phy_pll_save_state(msm_dsi->phy);
@@ -2663,7 +2679,7 @@ index 959daa88b1d..db26f5174b8 100644
  	if (is_bonded_dsi && msm_dsi1) {
  		ret = msm_dsi_host_power_off(msm_dsi1->host);
  		if (ret)
-@@ -380,6 +474,10 @@ static void dsi_mgr_bridge_post_disable(struct drm_bridge *bridge,
+@@ -380,6 +477,10 @@ static void dsi_mgr_bridge_post_disable(struct drm_bridge *bridge,
  								__func__, ret);
  	}
  
@@ -2674,16 +2690,91 @@ index 959daa88b1d..db26f5174b8 100644
  disable_phy:
  	dsi_mgr_phy_disable(id);
  }
-@@ -452,6 +550,8 @@ static const struct drm_bridge_funcs dsi_mgr_bridge_funcs = {
+@@ -435,15 +536,70 @@ static enum drm_mode_status dsi_mgr_bridge_mode_valid(struct drm_bridge *bridge,
+ 	return msm_dsi_host_check_dsc(host, mode);
+ }
+ 
++static int dsi_mgr_link_panel_backlight(struct drm_bridge *bridge,
++				       const struct drm_bridge *next_bridge)
++{
++	struct device *dev = bridge->dev->dev;
++	struct backlight_device *backlight;
++	struct device_node *node;
++
++	if (!IS_REACHABLE(CONFIG_BACKLIGHT_CLASS_DEVICE) ||
++	    !next_bridge || !drm_bridge_is_panel(next_bridge))
++		return 0;
++
++	node = of_parse_phandle(next_bridge->of_node, "backlight", 0);
++	if (!node)
++		return 0;
++
++	backlight = of_find_backlight_by_node(node);
++	of_node_put(node);
++	if (!backlight)
++		return dev_err_probe(dev, -EPROBE_DEFER, "panel backlight not registered\n");
++
++	/*
++	 * KMS shuts down the panel through the bridge chain. Keep the
++	 * external backlight and its bus available until that completes.
++	 */
++	if (!device_link_add(dev, &backlight->dev, DL_FLAG_STATELESS)) {
++		put_device(&backlight->dev);
++		return dev_err_probe(dev, -EINVAL, "failed to link panel backlight\n");
++	}
++
++	bridge->driver_private = &backlight->dev;
++
++	return 0;
++}
++
++static void dsi_mgr_bridge_detach(struct drm_bridge *bridge)
++{
++	struct device *backlight = bridge->driver_private;
++
++	if (!backlight)
++		return;
++
++	/* The device core might already have purged the link. */
++	device_link_remove(bridge->dev->dev, backlight);
++	put_device(backlight);
++	bridge->driver_private = NULL;
++}
++
+ static int dsi_mgr_bridge_attach(struct drm_bridge *bridge,
+ 				 struct drm_encoder *encoder,
+ 				 enum drm_bridge_attach_flags flags)
+ {
+ 	int id = dsi_mgr_bridge_get_id(bridge);
+ 	struct msm_dsi *msm_dsi = dsi_mgr_get_dsi(id);
++	int ret;
++
++	ret = dsi_mgr_link_panel_backlight(bridge, msm_dsi->next_bridge);
++	if (ret)
++		return ret;
++
++	ret = drm_bridge_attach(encoder, msm_dsi->next_bridge, bridge, flags);
++	if (ret)
++		dsi_mgr_bridge_detach(bridge);
+ 
+-	return drm_bridge_attach(encoder, msm_dsi->next_bridge,
+-				 bridge, flags);
++	return ret;
+ }
+ 
+ static const struct drm_bridge_funcs dsi_mgr_bridge_funcs = {
+@@ -451,7 +607,10 @@ static const struct drm_bridge_funcs dsi_mgr_bridge_funcs = {
+ 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
  	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
  	.attach = dsi_mgr_bridge_attach,
++	.detach = dsi_mgr_bridge_detach,
  	.atomic_pre_enable = dsi_mgr_bridge_pre_enable,
 +	.atomic_enable = dsi_mgr_bridge_enable,
 +	.atomic_disable = dsi_mgr_bridge_disable,
  	.atomic_post_disable = dsi_mgr_bridge_post_disable,
  	.mode_set = dsi_mgr_bridge_mode_set,
  	.mode_valid = dsi_mgr_bridge_mode_valid,
-@@ -465,6 +565,7 @@ int msm_dsi_manager_connector_init(struct msm_dsi *msm_dsi,
+@@ -465,6 +624,7 @@ int msm_dsi_manager_connector_init(struct msm_dsi *msm_dsi,
  	struct drm_bridge *bridge;
  	struct dsi_bridge *dsi_bridge;
  	struct drm_connector *connector;
@@ -2691,7 +2782,7 @@ index 959daa88b1d..db26f5174b8 100644
  	int ret;
  
  	dsi_bridge = devm_drm_bridge_alloc(msm_dsi->dev->dev, struct dsi_bridge, base,
-@@ -490,6 +591,29 @@ int msm_dsi_manager_connector_init(struct msm_dsi *msm_dsi,
+@@ -490,6 +650,29 @@ int msm_dsi_manager_connector_init(struct msm_dsi *msm_dsi,
  		return PTR_ERR(connector);
  	}
  
