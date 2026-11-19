@@ -15,7 +15,7 @@
     },
     {
       "file": "0002-record-captured-frames.patch",
-      "sha256": "99fbbc22b9eebc6e1db6f723651559893be96dc17d2f5888212ba7de209a058d",
+      "sha256": "c7969253dc733b56c03e1c2d5cc706c3305a3d25fa986c6b8a391addadb76671",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/KDE/plasma-camera/blob/c4a0e0acb99cdfcc61c1ead2cb91b142914df9a6/src/plasmacameramanager.cpp",

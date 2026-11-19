@@ -94,7 +94,7 @@ index 2b29017..42c4977 100644
      pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.None
      pageStack.initialPage: CameraPage {
 diff --git a/src/plasmacamera.cpp b/src/plasmacamera.cpp
-index c67502c..0c03a4a 100644
+index f19d172..87ebd4f 100644
 --- a/src/plasmacamera.cpp
 +++ b/src/plasmacamera.cpp
 @@ -3,6 +3,7 @@
@@ -182,7 +182,7 @@ index 86af1af..b522801 100644
  
      // Focus
 diff --git a/src/plasmacamera/worker.cpp b/src/plasmacamera/worker.cpp
-index db11662..a0d681d 100644
+index db11662..683619d 100644
 --- a/src/plasmacamera/worker.cpp
 +++ b/src/plasmacamera/worker.cpp
 @@ -3,6 +3,13 @@
@@ -272,7 +272,7 @@ index db11662..a0d681d 100644
  }
  
  void Worker::setSettings(const Settings& settings)
-@@ -145,208 +150,283 @@ void Worker::unsetError()
+@@ -145,208 +150,292 @@ void Worker::unsetError()
      m_errorString.clear();
  }
  
@@ -282,18 +282,15 @@ index db11662..a0d681d 100644
 -    if (!m_camera) {
 -        return;
 -    }
--
++    --m_pendingFrames;
++}
+ 
 -    libcamera::Request *request;
 -    {
 -        // Grab free request from m_freeQueue, if there are any available
 -        const QMutexLocker lock(&m_freeMutex);
 -        if (m_freeQueue.isEmpty()) {
 -            return;
--        }
-+    --m_pendingFrames;
-+}
- 
--        request = m_freeQueue.dequeue();
 +bool Worker::keepVideoFrame(qint64 timestamp)
 +{
 +    if (timestamp <= m_lastCaptureTimestamp) {
@@ -302,6 +299,20 @@ index db11662..a0d681d 100644
 +    const qint64 previous = std::exchange(m_lastCaptureTimestamp, timestamp);
 +    if (previous < 0) {
 +        return false;
++    }
++
++    if (!m_videoFrameRate) {
++        const qint64 captureDuration = timestamp - previous;
++        // Treat periods within 5% as the same mode. Running a separate clock
++        // at the nominal rate would eventually drop a frame as the clocks drift.
++        const bool downsample = captureDuration < m_videoFrameDuration - m_videoFrameDuration / 20;
++        m_videoFrameRate = 1'000'000.0 / (downsample ? m_videoFrameDuration : captureDuration);
++        if (downsample) {
++            m_nextVideoTimestamp = timestamp;
+         }
+-
+-        request = m_freeQueue.dequeue();
++        qDebug() << "Camera recording frame rate:" << m_videoFrameRate;
      }
  
 -    // Clear request for usage
@@ -309,11 +320,8 @@ index db11662..a0d681d 100644
 -
 -    // Load our settings onto the camera request's controls
 -    m_settings.set(request->controls());
-+    if (!m_videoFrameRate) {
-+        // Not all pipelines support setting the sensor frame duration.
-+        m_videoFrameRate = 1'000'000.0 / std::max(m_videoFrameDuration, timestamp - previous);
-+        m_nextVideoTimestamp = timestamp;
-+        qDebug() << "Camera recording frame rate:" << m_videoFrameRate;
++    if (!m_nextVideoTimestamp) {
++        return true;
 +    }
  
 -    // Queue request in camera for frame
@@ -712,7 +720,7 @@ index db11662..a0d681d 100644
      m_camera.reset();
  }
  
-@@ -368,10 +448,11 @@ void Worker::setState(const State state)
+@@ -368,10 +457,11 @@ void Worker::setState(const State state)
          {
          case State::None:
          case State::Stopping:
@@ -725,7 +733,7 @@ index db11662..a0d681d 100644
              break;
          }
          break;
-@@ -401,111 +482,60 @@ void Worker::setState(const State state)
+@@ -401,111 +491,60 @@ void Worker::setState(const State state)
      }
  }
  
@@ -781,13 +789,8 @@ index db11662..a0d681d 100644
 -    const QList<libcamera::PixelFormat> wantFormats = getNativeFormats();
 -    for (const libcamera::PixelFormat &format : wantFormats) {
 -        qDebug() << "Desired format: " << format.toString();
-+    if (const int ret = m_camera->configure(&config); ret < 0) {
-+        return ret;
-     }
-+    const auto &stream = config.at(0);
-+    m_stream = stream.stream();
-+    qDebug() << "Camera stream configuration:" << stream.toString();
- 
+-    }
+-
 -    std::vector<libcamera::PixelFormat> haveFormats = streamConfig.formats().pixelformats();
 -    for (const libcamera::PixelFormat &format : haveFormats) {
 -        qDebug() << "Got format: " << format.toString();
@@ -798,12 +801,13 @@ index db11662..a0d681d 100644
 -            streamConfig.pixelFormat = format;
 -            break;
 -        }
-+    int ret = setFormat(QSize(stream.size.width, stream.size.height), stream.pixelFormat,
-+                        stream.colorSpace.value_or(libcamera::ColorSpace::Sycc), stream.stride);
-+    if (ret == 0) {
-+        ret = createRequests();
++    if (const int ret = m_camera->configure(&config); ret < 0) {
++        return ret;
      }
--
++    const auto &stream = config.at(0);
++    m_stream = stream.stream();
++    qDebug() << "Camera stream configuration:" << stream.toString();
+ 
 -    // TODO: allow user to override config
 -    //  - https://git.libcamera.org/libcamera/libcamera.git/tree/src/apps/qcam/main_window.cpp#n399
 -
@@ -813,7 +817,11 @@ index db11662..a0d681d 100644
 -    const libcamera::CameraConfiguration::Status validation = m_config->validate();
 -    if (validation == libcamera::CameraConfiguration::Adjusted) {
 -        qInfo() << "Adjusted viewfinder configuration is: " << streamConfig.toString();
--    }
++    int ret = setFormat(QSize(stream.size.width, stream.size.height), stream.pixelFormat,
++                        stream.colorSpace.value_or(libcamera::ColorSpace::Sycc), stream.stride);
++    if (ret == 0) {
++        ret = createRequests();
+     }
 -    if (validation == libcamera::CameraConfiguration::Invalid) {
 -        qWarning() << QString::fromStdString("Failed to validate camera configuration");
 -        return;
@@ -879,7 +887,7 @@ index db11662..a0d681d 100644
  }
  
  const QList<libcamera::PixelFormat>& Worker::getNativeFormats()
-@@ -516,18 +546,38 @@ const QList<libcamera::PixelFormat>& Worker::getNativeFormats()
+@@ -516,18 +555,38 @@ const QList<libcamera::PixelFormat>& Worker::getNativeFormats()
  
  int Worker::setFormat(const QSize &size, const libcamera::PixelFormat &format, const libcamera::ColorSpace &colorSpace, const unsigned int stride)
  {
@@ -922,7 +930,7 @@ index db11662..a0d681d 100644
  
      return 0;
  }
-@@ -542,7 +592,7 @@ int Worker::createRequests()
+@@ -542,7 +601,7 @@ int Worker::createRequests()
      qDebug() << "create req" << QThread::currentThread()->currentThreadId();
  
      // FrameBufferAllocator creates FrameBuffer instances that can be used by libcamera to store frames
@@ -931,7 +939,7 @@ index db11662..a0d681d 100644
  
      int ret = m_allocator->allocate(m_stream);
      if (ret < 0) {
-@@ -558,7 +608,9 @@ int Worker::createRequests()
+@@ -558,7 +617,9 @@ int Worker::createRequests()
          // Map memory buffers and cache the mappings
          std::unique_ptr<Image> image =
              Image::fromFrameBuffer(buffer.get(), Image::MapMode::ReadOnly);
@@ -942,7 +950,7 @@ index db11662..a0d681d 100644
  
          m_mappedBuffers[buffer.get()] = std::move(image);
  
-@@ -566,7 +618,7 @@ int Worker::createRequests()
+@@ -566,7 +627,7 @@ int Worker::createRequests()
          std::unique_ptr<libcamera::Request> request = m_camera->createRequest();
          if (!request) {
              qWarning() << "Can't create request";
@@ -1373,10 +1381,10 @@ index ceedb3a..5ae4ef4 100644
              newImageCaptureId,
              NotReadyError,
 diff --git a/src/plasmacameramanager.h b/src/plasmacameramanager.h
-index c890c17..994dc6d 100644
+index e9775f2..655c5ca 100644
 --- a/src/plasmacameramanager.h
 +++ b/src/plasmacameramanager.h
-@@ -211,9 +211,8 @@ private Q_SLOTS:
+@@ -212,9 +212,8 @@ private Q_SLOTS:
      void setSettings(const Settings &settings);
  
      // image processing
@@ -1387,7 +1395,7 @@ index c890c17..994dc6d 100644
      void updateFromOrientationSensor();
  
      void setIsSavingVideo(bool isSavingVideo);
-@@ -242,6 +241,9 @@ private:
+@@ -243,6 +242,9 @@ private:
       */
      float outputOrientationDegrees() const;
  
@@ -1397,7 +1405,7 @@ index c890c17..994dc6d 100644
      // error handling
      Error m_error = NoError;
      QString m_errorString;
-@@ -259,14 +261,12 @@ private:
+@@ -260,14 +262,12 @@ private:
      // preview and video recording
      PlasmaCamera *m_plasmaCamera = nullptr;
  
@@ -1415,7 +1423,7 @@ index c890c17..994dc6d 100644
      QMediaFormat m_format;
      QVideoFrameInput m_videoInput;
      QMediaRecorder *m_recorder = nullptr;
-@@ -287,5 +287,6 @@ private:
+@@ -288,5 +288,6 @@ private:
      QString m_imageCaptureFileName;
  
      bool m_isSavingVideo = false;
