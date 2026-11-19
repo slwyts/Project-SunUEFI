@@ -344,9 +344,11 @@ systemd-boot 本身由发行版提供。成品启用 systemd 的 `systemd-boot-u
 用软件包里的 EFI 文件更新启动分区上的副本，不需要写固件变量。`piano-boot-config`
 让该服务等已安排的启动分区挂载完成；未配置启动分区挂载时，不额外启动挂载任务。
 
-成品把 ESP 挂在 `/boot/efi`。其他发行版也可以挂在 `/efi` 或 `/boot`；
-用 `bootctl --print-esp-path` 查看 ESP，用 `bootctl --print-boot-path` 查看
-`kernel-install` 写启动文件的位置。没有独立的 XBOOTLDR 分区时，两者通常相同。
+Nyarch 和 SteamOS 把 ESP 直接挂在 `/boot`，内核、initramfs 和启动菜单在同一个分区。
+Debian 把 ESP 挂在 `/boot/efi`，APT 管理的内核文件仍留在根文件系统的 `/boot`。
+自己安装发行版时，也可以选择 `/efi` 等标准位置。用 `bootctl --print-esp-path`
+查看 ESP，用 `bootctl --print-boot-path` 查看 `kernel-install` 写启动文件的位置。
+没有独立的 XBOOTLDR 分区时，两者通常相同。
 
 安装 Piano 内核时，`piano-boot-config` 在 initramfs／UKI 已生成、systemd 写入前
 检查启动分区能否容纳新文件。空间不足会提示先保留可用的旧启动项再腾出空间，

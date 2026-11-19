@@ -21,6 +21,7 @@ import build_piano_runtime_helpers as runtime
 import stage_piano_full_userspace as userspace
 import stage_piano_kernel_modules as modules
 import stage_piano_ram_hardware as hardware
+from assemble_rootfs import product_fstab
 from build import overlay_packages, overlay_release
 from package_bsp import POWER_PROFILES_PACKAGE
 from make_kernel_initramfs import make_newc, validate_static_arm64_elf
@@ -387,14 +388,14 @@ def runtime_build_sysroot(rootfs, output, run):
         shutil.rmtree(staging)
 
 
-def apply_policy(rootfs, output, config):
+def apply_policy(rootfs, output, config, *, pacman=False):
     rootfs, _ = own_root(rootfs, output)
     storage = config['storage']
     if (storage['root_label'], storage['root_partname'], storage['esp_label'], storage['root_fstype'], storage['esp_partname']) != ('PIANOROOT', 'sunuefi_root', 'SUNUEFI_ESP', 'ext4', 'sunuefi_esp'):
         raise ValueError('Unknown release storage identities')
     if set(storage['masked_units']) != {'piano-swapfile.service', 'qbootctl.service'}:
         raise ValueError('Only the two storage-policy units may be masked')
-    put(rootfs, 'etc/fstab', 'LABEL=PIANOROOT / ext4 defaults,noatime,x-systemd.growfs 0 1\nLABEL=SUNUEFI_ESP /boot/efi vfat umask=0077,nofail 0 2\n')
+    put(rootfs, 'etc/fstab', product_fstab(pacman=pacman))
     # The shared ESP starts with the same entry token on all product images.
     put(rootfs, 'etc/kernel/entry-token', 'linux\n')
     # This runs only while assembling a new image, never on an installed root.

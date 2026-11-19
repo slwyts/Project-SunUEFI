@@ -37,7 +37,7 @@
 
 ## 软件源与更新
 
-已经配置 SunUEFI 软件源的镜像，可以直接用包管理器更新。Debian 运行 `sudo apt update && sudo apt upgrade`，Nyarch 和 SteamOS 运行 `sudo pacman -Syu`。更新内核前先确认 `/boot/efi` 已挂载；重启失败时可在 systemd-boot 菜单选旧内核。
+已经配置 SunUEFI 软件源的镜像，可以直接用包管理器更新。Debian 运行 `sudo apt update && sudo apt upgrade`，Nyarch 和 SteamOS 运行 `sudo pacman -Syu`。更新内核前可用 `sudo bootctl --print-esp-path` 确认启动分区已挂载；重启失败时可在 systemd-boot 菜单选旧内核。
 
 ### 手动添加 APT 软件源
 

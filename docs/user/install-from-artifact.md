@@ -61,7 +61,7 @@
 保留其他软件包拥有的文件、修改过的设置和 `/var/lib/piano-sensors` 中的数据，
 再运行 `sudo pacman -Syu piano-sensors`。重启后用 `monitor-sensor` 查看传感器。
 
-更新内核前，运行 `findmnt --mountpoint /boot/efi` 确认启动分区已挂载。重启后如果新版内核不能启动，在 systemd-boot 的三秒菜单里选择之前的内核。重新刷系统镜像用于重装或更换发行版，会覆盖已有 Linux 文件；操作前先备份。
+更新内核前，运行 `sudo bootctl --print-esp-path` 确认启动分区已挂载。Nyarch 和 SteamOS 的新镜像挂在 `/boot`，Debian 挂在 `/boot/efi`。重启后如果新版内核不能启动，在 systemd-boot 的三秒菜单里选择之前的内核。重新刷系统镜像用于重装或更换发行版，会覆盖已有 Linux 文件；操作前先备份。
 
 HyperOS 更新后，在引导助手的 **维护** 页点 **重新安装引导**，恢复合体 BOOT。
 

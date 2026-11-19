@@ -170,7 +170,7 @@ def stage(args):
         '[Unit]\nRequires=piano-hostkeys.service\nAfter=piano-hostkeys.service\n')
     (root / 'usr/lib/systemd/system/ssh.service.d/piano.conf').unlink(missing_ok=True)
     # Standard libinput hardware defaults; no desktop-specific name spoofing.
-    release.apply_policy(root, output, cfg)
+    release.apply_policy(root, output, cfg, pacman=True)
     if not steamos:
         put(root, 'usr/share/gnome-settings-daemon/ambient-profiles/piano.ini',
             (ROOT / 'linux/desktops/gnome/ambient-policy/piano.ini').read_text())

@@ -216,15 +216,15 @@ def build(args):
     # Keep the native pacman ABI and separate FEX guest runtime. Native Mesa
     # is checked below for both rendering and display-buffer support.
     with build_resolver(root), guest_environment(root) as guest:
-        # SunUEFI supplies the kernel, initramfs and matching loopback module.
-        # Remove the headset kernel through pacman so later package updates
-        # do not rebuild unused Frame initramfs images.
+        # SunUEFI supplies the kernel and boot files. Remove Frame packages
+        # that would otherwise put U-Boot and headset initramfs in the ESP.
         installed = subprocess.check_output(
             ['chroot', root, 'pacman', '-Qq'], text=True).splitlines()
-        frame_kernels = [p for p in installed
-                         if re.fullmatch(r'linux-[0-9]+-(?:v4l2loopback-)?deckard', p)]
-        if frame_kernels:
-            guest(['pacman', '-R', '--noconfirm', *frame_kernels])
+        frame_boot = [p for p in installed if p == 'deckard-boot-firmware' or
+                      re.fullmatch(r'linux-[0-9]+-(?:v4l2loopback-)?deckard', p)]
+        if frame_boot:
+            guest(['pacman', '-R', '--noconfirm', *frame_boot])
+        (root / 'boot/initrd.uImage').unlink(missing_ok=True)
         # The native chromium package supplies the browser and its launcher.
         # Frame's integration package opens Discover to install a Flatpak.
         if 'deckard-chromium-integration' in installed:

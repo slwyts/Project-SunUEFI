@@ -287,12 +287,12 @@ def configure_platform(root):
 
 
 def configure(root, *, published_packages=False):
-    # Frame mounts its own ESP at /efi and links /boot/efi there. SunUEFI's
-    # shared fstab mounts SUNUEFI_ESP directly at /boot/efi.
-    esp = root / 'boot/efi'
-    if esp.is_symlink():
-        esp.unlink()
-    esp.mkdir(parents=True, exist_ok=True)
+    # Frame links /boot/efi to /efi. Piano mounts its ESP at /boot.
+    frame_esp = root / 'boot/efi'
+    if frame_esp.is_symlink():
+        frame_esp.unlink()
+    elif frame_esp.is_dir():
+        frame_esp.rmdir()
     for name in ('steamdeck.conf', 'steamos.conf'):
         (root / 'etc/sddm.conf.d' / name).unlink(missing_ok=True)
     # Frame's microphone processing and fixed two-channel spatial pipeline

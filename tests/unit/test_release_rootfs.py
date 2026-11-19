@@ -245,8 +245,13 @@ class ReleaseRootTests(unittest.TestCase):
         before = {p.name: p.read_bytes() for p in (self.rootfs / 'etc/systemd/system').glob('piano-*.service')}
         with patch.object(builder, 'ROOT', self.root):
             builder.apply_policy(self.rootfs, self.output, CONFIG)
-            builder.apply_policy(self.rootfs, self.output, CONFIG)
-        self.assertEqual((self.rootfs / 'etc/fstab').read_text(), 'LABEL=PIANOROOT / ext4 defaults,noatime,x-systemd.growfs 0 1\nLABEL=SUNUEFI_ESP /boot/efi vfat umask=0077,nofail 0 2\n')
+            self.assertEqual((self.rootfs / 'etc/fstab').read_text(),
+                             'LABEL=PIANOROOT / ext4 defaults,noatime,x-systemd.growfs 0 1\n'
+                             'LABEL=SUNUEFI_ESP /boot/efi vfat umask=0077,nofail 0 2\n')
+            builder.apply_policy(self.rootfs, self.output, CONFIG, pacman=True)
+        self.assertEqual((self.rootfs / 'etc/fstab').read_text(),
+                         'LABEL=PIANOROOT / ext4 defaults,noatime,x-systemd.growfs 0 1\n'
+                         'LABEL=SUNUEFI_ESP /boot vfat umask=0077,nofail 0 2\n')
         self.assertEqual((self.rootfs / 'etc/kernel/entry-token').read_text(), 'linux\n')
         for name, data in before.items(): self.assertEqual((self.rootfs / 'etc/systemd/system' / name).read_bytes(), data)
         for name in CONFIG['storage']['masked_units']:

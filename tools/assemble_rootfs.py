@@ -131,7 +131,13 @@ def deepin_sources(text, suite):
     return rows
 
 
-def clean_identity(root, guest):
+def product_fstab(*, pacman):
+    esp = '/boot' if pacman else '/boot/efi'
+    return ('LABEL=PIANOROOT / ext4 defaults,noatime,x-systemd.growfs 0 1\n'
+            f'LABEL=SUNUEFI_ESP {esp} vfat umask=0077,nofail 0 2\n')
+
+
+def clean_identity(root, guest, *, pacman):
     if not guest(['getent', 'passwd', 'piano'], check=False).returncode == 0:
         # The ARM bootstrap's demo account otherwise consumes the desktop UID.
         if guest(['getent', 'passwd', 'alarm'], check=False).returncode == 0:
@@ -161,7 +167,7 @@ def clean_identity(root, guest):
     (root / 'etc/machine-id').write_text('')
     fstab = inside(root, root / 'etc/fstab')
     if fstab.is_symlink(): fstab.unlink()
-    fstab.write_text('LABEL=PIANOROOT / ext4 defaults,noatime,x-systemd.growfs 0 1\nLABEL=SUNUEFI_ESP /boot/efi vfat umask=0077,nofail 0 2\n')
+    fstab.write_text(product_fstab(pacman=pacman))
     growfs_mask = inside(root, root / 'etc/systemd/system/systemd-growfs-root.service')
     if growfs_mask.is_symlink() and growfs_mask.readlink() == Path('/dev/null'):
         growfs_mask.unlink()
@@ -310,7 +316,8 @@ def execute(result):
             for package in item['packages']: shutil.copy2(package, dest / Path(package).name)
             files = ['/tmp/bsp-packages/' + Path(p).name for p in item['packages']]
             guest((['apt-get', 'install', '-y'] if manager == 'apt' else ['pacman', '-U', '--noconfirm']) + files); shutil.rmtree(dest)
-        configure_desktop(root, result, guest, optional); clean_identity(root, guest)
+        configure_desktop(root, result, guest, optional)
+        clean_identity(root, guest, pacman=manager == 'arch')
         dm = result['desktop_profile']['display_manager'][manager]; guest(['systemctl', 'enable', dm, 'NetworkManager']); guest(['systemctl', 'set-default', 'graphical.target'])
         packages = guest(['dpkg-query', '-W', '-f=${binary:Package}\t${Version}\t${Architecture}\n'], text=True) if manager == 'apt' else guest(['pacman', '-Q'], text=True)
         (out / 'packages.tsv').write_text(packages); policy.unlink()
