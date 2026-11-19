@@ -248,6 +248,12 @@ WirePlumber 从该库枚举设备后将独立 factory 交给 PipeWire，两个�
 同一修复。Debian、Nyarch 和 SteamOS 共用源码与补丁。正式 Debian 包的前后摄
 带声音录像已检查开始、停止、重新打开和完整解码。
 
+Debian 的 Plasma Camera 直接使用 libcamera 读取实体相机。录像定时器每次
+提交带独立时间戳的帧，共用预览像素；编码线程排队的帧不会被后来提交的帧改写。
+停止旧服务并卸载虚拟摄像头后，平板使用内置麦克风录制了后摄 1080p、前摄
+3264×2448 的 MP4，两段均完整解码；关窗重开后仍能拍照。
+这条应用路径使用软件编码，不属于后摄 4K60 硬件录像。
+
 FFmpeg 8.1.1 和 9.0.2 共用[有效码流边界](../../../patches/ffmpeg/9.0.2/0008-v4l2m2m-bound-capture-payload.patch)
 和[编码缓冲保留](../../../patches/ffmpeg/9.0.2/0009-v4l2m2m-reserve-capture-buffers.patch)修复。
 当封装等待另一轨而持有编码包时，FFmpeg 复制压缩码流并立即归还稀缺的

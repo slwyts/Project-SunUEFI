@@ -18,7 +18,7 @@ from desktop.build_pipewire_packages import libcamera_inputs
 
 PACKAGE = 'plasma-camera'
 RUNTIME = {PACKAGE: 'arm64'}
-REVISION = 1
+REVISION = 2
 
 
 @contextmanager
@@ -36,7 +36,7 @@ def selection(sysroot, output):
     upstream = target['binary']['source_version'].split(':')[-1].rsplit('-', 1)[0]
     series = ROOT / 'patches/plasma-camera' / upstream / 'series.json'
     if not series.is_file():
-        raise ValueError('Check the libcamera backport against the selected Plasma Camera source: ' + upstream)
+        raise ValueError('Check the patches against the selected Plasma Camera source: ' + upstream)
     return target, series, source_patches(series)
 
 
