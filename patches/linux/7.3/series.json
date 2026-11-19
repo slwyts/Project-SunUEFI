@@ -11,7 +11,7 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "e6fb22e23433ae16532e098754f020031c5c6bdc",
+  "target_tree": "aeed7c5b8a2071ada781580415023f4030fe9d24",
   "original_target_commit": "2cfa6f44426a00c8a81a66c6dc25cc73f779fb62",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
@@ -748,10 +748,10 @@
     },
     {
       "file": "0057-dpu-fixed-panel-hdr-conversion.patch",
-      "sha256": "a0dedf758e657610cda6f9d51d56175dcec8229903f28b61466caa2b58bf297e",
+      "sha256": "6d97f671bee307ae80a6280f469d0e0d8f17389f6609a546e0c17d610124d320",
       "original_commit": "391f8e55753f5e7b5b33fb9e12f016cdbc0bbaff",
       "original_parent": "6d550e0b54731bc8ce7358d241b467a093e49fe4",
-      "tree": "6bade587109b4a2e258fe493567a7088eb7c76c6",
+      "tree": "91737454cdace505e06f139a2d389594b036031b",
       "committer_date": "2026-11-08T23:39:32+08:00",
       "upstream": {
         "status": "downstream",
@@ -764,7 +764,7 @@
       "sha256": "75660f513c8d402848c55f993c8ccc27a18509b02f9f7ffcd2314f0afbc0d574",
       "original_commit": "cd8bc6d03d7395ca49382b5a8b2eb39e674bcc93",
       "original_parent": "391f8e55753f5e7b5b33fb9e12f016cdbc0bbaff",
-      "tree": "8a2757ee6d373529c4c11abcf0fb1674556d770a",
+      "tree": "d0d11e57529ec185830c5cd737808d7860be634a",
       "committer_date": "2026-11-09T00:08:36+08:00",
       "upstream": {
         "status": "downstream",
@@ -774,10 +774,10 @@
     },
     {
       "file": "0059-dpu-output-color-validation.patch",
-      "sha256": "bdfad5d81adc6e3efdda8664c4e1e57fedffdfc8a506bb4652af877b630071dc",
+      "sha256": "d4949dc481d2805bd31e65083dabeddde6fa64aa111fd2ba8966adf628f8be05",
       "original_commit": "f355329aab1c78335b856fb199336180d7934e50",
       "original_parent": "cd8bc6d03d7395ca49382b5a8b2eb39e674bcc93",
-      "tree": "b780343af70b3d9fa71b369bb98423cad3b97226",
+      "tree": "95e2ce71a989136f9410dc5f0442dbce13866fe4",
       "committer_date": "2026-11-09T00:41:04+08:00",
       "upstream": {
         "status": "downstream",
@@ -790,7 +790,7 @@
       "sha256": "8e61721eb0ef0805ca19d0a2c67565caeeeca8311ff090480ac21d5f4333bfba",
       "original_commit": "bb2b1aa83148226dcea75f4fbbee2a6c3570b421",
       "original_parent": "f355329aab1c78335b856fb199336180d7934e50",
-      "tree": "db03e850110855bc88bcff0ed1423b5f7ab83bb8",
+      "tree": "85e3316b0466859350db6337b818d743b054e6bb",
       "committer_date": "2026-11-09T02:15:41+08:00",
       "upstream": {
         "status": "downstream",
@@ -803,7 +803,7 @@
       "sha256": "5705ea0f233a031f33c8198be4f737d4d716219dfcb57cfb7d4de76941ab2a37",
       "original_commit": "7d4b4010e18823d4c0bc014fcd6e8460dbc5e508",
       "original_parent": "bb2b1aa83148226dcea75f4fbbee2a6c3570b421",
-      "tree": "2c1be364f58f82d88cf619cc60059244d4f95c33",
+      "tree": "c8a6f3d25bb5659c927410d48848c281f4e6db75",
       "committer_date": "2026-11-09T02:23:11+08:00",
       "upstream": {
         "status": "downstream",
@@ -816,7 +816,7 @@
       "sha256": "fab656c576b91cf8f9d9427980917e3ac7a1f8cd2c50a701b7bab3f1689de6cb",
       "original_commit": "5dc2d273e2cb94d15da2aa9390c181018b09f3af",
       "original_parent": "7d4b4010e18823d4c0bc014fcd6e8460dbc5e508",
-      "tree": "bdff9602fd3d4d01866b45221518ca69f354e740",
+      "tree": "1e3a2109e0e6122b4030db6245d85e383823eb8c",
       "committer_date": "2026-11-09T03:55:38+08:00",
       "upstream": {
         "status": "downstream",
@@ -829,7 +829,7 @@
       "sha256": "f5a183eb10d76c01793c7430f8411ab9ca3cc1e9fe77b0db923969dcbfb00c83",
       "original_commit": "dfa209fa56389b7aad2feed66dff61f3550a109f",
       "original_parent": "5dc2d273e2cb94d15da2aa9390c181018b09f3af",
-      "tree": "c1b2468bd8f07588851c99c29da1bd8266bf653b",
+      "tree": "c4c273e1a1b84a798467b15ac460ecd3924c8be6",
       "committer_date": "2026-11-09T04:23:24+08:00",
       "upstream": {
         "status": "downstream",
@@ -842,7 +842,7 @@
       "sha256": "e8fcfa3470f7554c55e65e0681afc86de42a96a2808bd8f235aa037ae36cfb8a",
       "original_commit": "61bb9f183cda675aedb3fb312e2e8ac626b4e079",
       "original_parent": "dfa209fa56389b7aad2feed66dff61f3550a109f",
-      "tree": "f82bf0e4cd7e3d6842554b3e3685ecfa2a46119b",
+      "tree": "5fd9e8cf691260567b4e57b0a22082b4e47ce334",
       "committer_date": "2026-11-09T06:01:40+08:00",
       "upstream": {
         "status": "downstream",
@@ -855,7 +855,7 @@
       "sha256": "c28b965dc1a42c388a7f62345c8f26bea9d0922d7fe66f606731c212306f9e25",
       "original_commit": "450238cc0c309c960fcba61ad0dd4b701f5ea15a",
       "original_parent": "61bb9f183cda675aedb3fb312e2e8ac626b4e079",
-      "tree": "3de250721fc0289d3786eed6016113b78611574d",
+      "tree": "a0ebe8de5f299b126216d33b334f30bc01127704",
       "committer_date": "2026-11-09T06:26:04+08:00",
       "upstream": {
         "status": "downstream",
@@ -868,7 +868,7 @@
       "sha256": "fbca1450c9e51e501a28c5eb9c1d02870ce1f244d19b96abdb6a25fa5116b973",
       "original_commit": "b3ee10038b6eafee6eedd5ea512f1335c1d60b1c",
       "original_parent": "450238cc0c309c960fcba61ad0dd4b701f5ea15a",
-      "tree": "909b0573a26745d5a9271752fae2b8cb93130bb4",
+      "tree": "5b7d9aeec3086d5d1be54368c0e9b2b843d12810",
       "committer_date": "2026-11-09T16:46:50+08:00",
       "upstream": {
         "status": "downstream",
@@ -881,7 +881,7 @@
       "sha256": "1163f98badfb375b62724983c820ddd492071dcd0eb099eff975306dc2b61b81",
       "original_commit": "a2e0424f7ffd74cad357f5ea776fcfa37b8e3226",
       "original_parent": "b3ee10038b6eafee6eedd5ea512f1335c1d60b1c",
-      "tree": "c71029e73a6e60720190500a2e8400912a5c97cf",
+      "tree": "c59e51d55ec06482d52ed7cb4e3b72ae90774295",
       "committer_date": "2026-11-09T16:52:10+08:00",
       "upstream": {
         "status": "downstream",
@@ -895,7 +895,7 @@
       "original_commit": "c819fad68b90c7585734cce33698bf50a0a87a21",
       "original_parent": "a2e0424f7ffd74cad357f5ea776fcfa37b8e3226",
       "committer_date": "2026-11-08T02:10:20+08:00",
-      "tree": "449e2ad43f3a2fa63c2cdd76aa65c112e6cb5990",
+      "tree": "8341448113f9453e6d0eab20ce6d84b53ec76b87",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -908,7 +908,7 @@
       "original_commit": "de7d99462f8419eef97faec783b2c593520dfee7",
       "original_parent": "c819fad68b90c7585734cce33698bf50a0a87a21",
       "committer_date": "2026-11-08T02:49:10+08:00",
-      "tree": "cb7d63ff8d988162d8504becd97dda113dca94f6",
+      "tree": "11940f6aa1c7de34e728305b0264f4f96b0f99fb",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -921,7 +921,7 @@
       "original_commit": "0eaf09ff05f65ed9a4989b299ade94958f3dd356",
       "original_parent": "de7d99462f8419eef97faec783b2c593520dfee7",
       "committer_date": "2026-11-08T02:58:21+08:00",
-      "tree": "b84f519a9a77529d1fc1fc12ca1fd8576f427137",
+      "tree": "a5bcb29ce2005e7841e9c197d1a683cfd71d04ad",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -934,7 +934,7 @@
       "original_commit": "f263c32480894dd3b8f83f6eee99d32ffc9b2ddc",
       "original_parent": "0eaf09ff05f65ed9a4989b299ade94958f3dd356",
       "committer_date": "2026-11-08T07:40:31+08:00",
-      "tree": "835f6f51caf9a8228e4353a816d6cdb7dd3fa2a6",
+      "tree": "018f5e859383bf99b9dbf371a6e3521efe8697e4",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -947,7 +947,7 @@
       "original_commit": "61e567a49b59182bf1d208b4a04acfa20f3bb561",
       "original_parent": "f263c32480894dd3b8f83f6eee99d32ffc9b2ddc",
       "committer_date": "2026-11-08T07:41:01+08:00",
-      "tree": "26fa26e1948a3da2c7d74b51ffafc35a89f45cb5",
+      "tree": "2ece176dc513c45c6bdcb4bfccc742dcba9dac79",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -960,7 +960,7 @@
       "original_commit": "6a68c5fd76ae63b12e10492f19131bb796937026",
       "original_parent": "61e567a49b59182bf1d208b4a04acfa20f3bb561",
       "committer_date": "2026-11-08T09:13:00+08:00",
-      "tree": "b437f85ef932d5b4e81a7cb3f71742865572f325",
+      "tree": "1b0a5d20ba441f941d98abae9ad4fd3e05bef3b0",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -973,7 +973,7 @@
       "original_commit": "33175f34f88154de48f15c389178810b7d353fa2",
       "original_parent": "6a68c5fd76ae63b12e10492f19131bb796937026",
       "committer_date": "2026-11-08T09:13:32+08:00",
-      "tree": "ef3166d833446f0e0edfabdb34098ac938a940de",
+      "tree": "c242a9c5a15f66a867b70926d2c01a112a449811",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -986,7 +986,7 @@
       "original_commit": "ff3bc8d06a55082cacfa65c2dfab96174ee87061",
       "original_parent": "33175f34f88154de48f15c389178810b7d353fa2",
       "committer_date": "2026-11-08T17:07:12+08:00",
-      "tree": "2a9be9d7a84d8de3848587999b648d6966b648cd",
+      "tree": "fa723d0f32336a7188a28ff474c978467e89aeb0",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -999,7 +999,7 @@
       "original_commit": "1ecb666c6af28cf4bc355178f4872beb3682648b",
       "original_parent": "ff3bc8d06a55082cacfa65c2dfab96174ee87061",
       "committer_date": "2026-11-08T18:02:33+08:00",
-      "tree": "aaaec0266d966285a476a52103133f8e6fc14c10",
+      "tree": "a306add372419ccb4a31c5fd948592ab54320819",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1012,7 +1012,7 @@
       "original_commit": "52646119d1a3f0fee1fbf89b4a4b7ed0fe2439bf",
       "original_parent": "1ecb666c6af28cf4bc355178f4872beb3682648b",
       "committer_date": "2026-11-08T22:26:13+08:00",
-      "tree": "fe332f5513fe0883adf0e04ae12d96b5db18f850",
+      "tree": "ab4b3f59718a2706355038a0516f597f1d8a777a",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1025,7 +1025,7 @@
       "original_commit": "39f4c71a31255348f09c1d414d2785137b2a45c3",
       "original_parent": "52646119d1a3f0fee1fbf89b4a4b7ed0fe2439bf",
       "committer_date": "2026-11-08T22:28:29+08:00",
-      "tree": "e4cf3bfb584fa15bac68a5b94fee8047ac8c663f",
+      "tree": "e026549e42f0df93f597f1241e8c8a11d8a3b3de",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1038,7 +1038,7 @@
       "original_commit": "820c6c71d6ca814b91d1db1c17d173876e0a247b",
       "original_parent": "39f4c71a31255348f09c1d414d2785137b2a45c3",
       "committer_date": "2026-11-09T19:33:44+08:00",
-      "tree": "8b10082cc09af26fb21206089dafc1e7987748e8",
+      "tree": "3975a9fbb1fa58488de24e19236a6ff03640ce7d",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1051,7 +1051,7 @@
       "original_commit": "f8996048dcfd3af223d008997513e1b3c841af21",
       "original_parent": "820c6c71d6ca814b91d1db1c17d173876e0a247b",
       "committer_date": "2026-11-09T22:26:59+08:00",
-      "tree": "d69fa5a5c6de83a2239661c0383bbd187873765a",
+      "tree": "0a6f11ab40609d83011eb3da5f1640dedd23ec99",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1064,7 +1064,7 @@
       "original_commit": "56e64fa668cf79701168a7eff27ea2503e3edad1",
       "original_parent": "f8996048dcfd3af223d008997513e1b3c841af21",
       "committer_date": "2026-11-09T22:28:31+08:00",
-      "tree": "9b9a6a49499d636b9d24e4e1a5c3be5ad129b290",
+      "tree": "d71fa818c00d76492ecd2503e080dbeaf9efd715",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1077,7 +1077,7 @@
       "original_commit": "f0f70f708167824854e84a094baf1eefe63399a0",
       "original_parent": "56e64fa668cf79701168a7eff27ea2503e3edad1",
       "committer_date": "2026-11-09T23:39:17+08:00",
-      "tree": "a53edd0270b6df32310a37eea76656e8607e46f4",
+      "tree": "8e23514c603473c6445621429377e7997c71c238",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1090,7 +1090,7 @@
       "original_commit": "193e51893f9d447b12d06ea22999352575bc2c25",
       "original_parent": "f0f70f708167824854e84a094baf1eefe63399a0",
       "committer_date": "2026-11-10T00:31:39+08:00",
-      "tree": "ea365bfa5b31bc9cef05a429885bec46da3c81ac",
+      "tree": "3ad2edbb8bb3e8f0159f2c1d5ff27d2113f86bb0",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1103,7 +1103,7 @@
       "original_commit": "2e58c5622b1d330f5810159b103428bd6f925d8e",
       "original_parent": "193e51893f9d447b12d06ea22999352575bc2c25",
       "committer_date": "2026-11-10T02:11:16+08:00",
-      "tree": "83bc98441f1b4553da2001edf59885bc0ba469b5",
+      "tree": "53dcc4d5a1935b38561dadcb38ea251f559ffa29",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1116,7 +1116,7 @@
       "original_commit": "97d2c1a1b4d41d0319f4d6ea707ed3a7aa8ab06e",
       "original_parent": "2e58c5622b1d330f5810159b103428bd6f925d8e",
       "committer_date": "2026-11-10T02:13:47+08:00",
-      "tree": "1d6f770830817da406d96ef6a7bab5e72e83d037",
+      "tree": "9d7b5e86941f34aafed475b057a256e8fe2f3067",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1129,7 +1129,7 @@
       "original_commit": "ee11b4e5397f60d326b4250087c78785c27d681d",
       "original_parent": "97d2c1a1b4d41d0319f4d6ea707ed3a7aa8ab06e",
       "committer_date": "2026-11-10T02:21:27+08:00",
-      "tree": "da76f9a4d4d9c55f87939406693cac50864a1351",
+      "tree": "a5effe2d264a94884aba7d058940e3b4700b19a0",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1142,7 +1142,7 @@
       "original_commit": "f70d473c233a410ed4e00511068776bff0432beb",
       "original_parent": "ee11b4e5397f60d326b4250087c78785c27d681d",
       "committer_date": "2026-11-10T02:30:19+08:00",
-      "tree": "aac636193f337bb2a29e6dae2e229c62cb36c70f",
+      "tree": "459f964f7be6cc0e783cc42816d922e30aa17c21",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1155,7 +1155,7 @@
       "original_commit": "ceff35f24a58fd2bbb5d583a3c59dcdc70b9e84a",
       "original_parent": "f70d473c233a410ed4e00511068776bff0432beb",
       "committer_date": "2026-11-10T02:31:21+08:00",
-      "tree": "199065c17dc044b942585298d129eef403286544",
+      "tree": "00e8fc62fbb3b9e63675e59173be246cc5dbd060",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1168,7 +1168,7 @@
       "original_commit": "8e8fe6f5cb60f9fb7e7f64689df9bb9631d28b7d",
       "original_parent": "ceff35f24a58fd2bbb5d583a3c59dcdc70b9e84a",
       "committer_date": "2026-11-10T02:35:43+08:00",
-      "tree": "0c593f4973a52f61e47099056006ac8e7372404d",
+      "tree": "f3e4746eef90adc4fadde40bc074d8d39bf2e7b6",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1181,7 +1181,7 @@
       "original_commit": "cc79b6f047dc809c04929091b7ecd5dc4171234a",
       "original_parent": "8e8fe6f5cb60f9fb7e7f64689df9bb9631d28b7d",
       "committer_date": "2026-11-10T02:45:01+08:00",
-      "tree": "2a013bee9cb05d545562eceef2801c21a6339d2a",
+      "tree": "e6bb5a44be0e6a662f3212517a33e691fa3bb475",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1190,11 +1190,11 @@
     },
     {
       "file": "0091-dpu-hdr-identity-gamma.patch",
-      "sha256": "437b2ce500d369067dd2289ca9044e6603cf60ee90886f2ec964b93b45bb2ca3",
+      "sha256": "a2c1fbb4999fcb2d8dd82f325a9d03754095673e87157cb50778988ba3158d6c",
       "original_commit": "90f355e8c137e0d5c6bffcf2fef57adf7c40a11c",
       "original_parent": "cc79b6f047dc809c04929091b7ecd5dc4171234a",
       "committer_date": "2026-11-10T20:30:12+08:00",
-      "tree": "180e0904aef42498f54aa5f3734ea0bc82262db1",
+      "tree": "26fcaac0d89d72766faeb59df2a9eb8fce407986",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1207,7 +1207,7 @@
       "original_commit": "2422dd7809718fea8dc8a157f531dc8d986359c5",
       "original_parent": "90f355e8c137e0d5c6bffcf2fef57adf7c40a11c",
       "committer_date": "2026-11-10T20:30:13+08:00",
-      "tree": "9939b5a0ed329d0d03491aed62c5ca9b50a9bf0d",
+      "tree": "7afbb0f4a120f7037b3cb13454eca1a4305fdb78",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1220,7 +1220,7 @@
       "original_commit": "d74e71877b523e802b5e2904593ca02a78d57f6c",
       "original_parent": "2422dd7809718fea8dc8a157f531dc8d986359c5",
       "committer_date": "2026-11-10T17:57:45+08:00",
-      "tree": "c57c8fb59eb1ecc53b24e98cf8d4ab3c8bb59800",
+      "tree": "ee6dcf3d75791315a9f4fb6da91989b1bb1a56cf",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1233,7 +1233,7 @@
       "original_commit": "09d6b125ad165c1175377d11b5e1f317b3876627",
       "original_parent": "d74e71877b523e802b5e2904593ca02a78d57f6c",
       "committer_date": "2026-11-10T19:47:33+08:00",
-      "tree": "a3649cf63482382b32733f6e896b0dad13e9cebf",
+      "tree": "6561631b2d856f171fcbcc51f2295119427785a4",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1246,7 +1246,7 @@
       "original_commit": "43569b94204af09ae53ed0cd8d5f102de05d3eb4",
       "original_parent": "09d6b125ad165c1175377d11b5e1f317b3876627",
       "committer_date": "2026-11-10T23:45:14+08:00",
-      "tree": "5ca83ec05430db298d9ecac36c370c199de77c21",
+      "tree": "6abb32fdce8452a7187159e7a8437a4354dea76d",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1259,7 +1259,7 @@
       "original_commit": "2e9ea07c08d18ebc85d1b531277cdceace04a366",
       "original_parent": "43569b94204af09ae53ed0cd8d5f102de05d3eb4",
       "committer_date": "2026-11-10T23:49:41+08:00",
-      "tree": "48ffe49cb69a504d5edfda2ba7cc74bf428a2416",
+      "tree": "603359a41836d1ddd7b11ddfc28df4c506b573d1",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1272,7 +1272,7 @@
       "original_commit": "5946c4ba83f6f3f158d52603c82a51c1085c6a76",
       "original_parent": "2e9ea07c08d18ebc85d1b531277cdceace04a366",
       "committer_date": "2026-11-10T23:49:41+08:00",
-      "tree": "0b91a20a83e7d13174782c125bccac9e54d6855e",
+      "tree": "99e91bc0986a86066e71b8143112fb9ca2f1eff1",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1285,7 +1285,7 @@
       "original_commit": "0a33f56d8fb404d0b9dc6062fe12a6e59eb658b5",
       "original_parent": "5946c4ba83f6f3f158d52603c82a51c1085c6a76",
       "committer_date": "2026-11-11T00:18:30+08:00",
-      "tree": "8f2909857f6df4b261714d333b446e8f5d5cd1ce",
+      "tree": "0c43ef0baf550beb609befc381d9eebf1b007825",
       "upstream": {
         "status": "downstream",
         "url": "https://lore.kernel.org/all/20260731-pmic5_gen4_adc-v1-0-9c49b2eea6f9@oss.qualcomm.com/",
@@ -1298,7 +1298,7 @@
       "original_commit": "05f53b870bdc2192aa863db0088c155dfedbc48c",
       "original_parent": "0a33f56d8fb404d0b9dc6062fe12a6e59eb658b5",
       "committer_date": "2026-11-11T00:18:30+08:00",
-      "tree": "f30836937dc4dfb0433438d444c815c54bcad375",
+      "tree": "4ee4810fc8e42ac327b2c44c1f11bf6346d38663",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1311,7 +1311,7 @@
       "original_commit": "c51e9de85782b8f71fb710b9cc4b422812790d68",
       "original_parent": "05f53b870bdc2192aa863db0088c155dfedbc48c",
       "committer_date": "2026-11-11T00:25:30+08:00",
-      "tree": "22756639584e9ab9cf8ae371545b2c708a2e057a",
+      "tree": "5c7817fec8be63de3cadb825812ebaebe13ed83c",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1324,7 +1324,7 @@
       "original_commit": "1e9f812c6473f279fd78bb8a41879fcfbf41893b",
       "original_parent": "c51e9de85782b8f71fb710b9cc4b422812790d68",
       "committer_date": "2026-11-11T00:25:30+08:00",
-      "tree": "97559487d3c2831b9fecb1540d1a641f2efd512c",
+      "tree": "695e20eb6ef88350c16582c93e5a94c39e366ff8",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1337,7 +1337,7 @@
       "original_commit": "ddf99fc56ba0803f8e2c78f5081fb6fa250c9ce3",
       "original_parent": "1e9f812c6473f279fd78bb8a41879fcfbf41893b",
       "committer_date": "2026-11-11T03:17:19+08:00",
-      "tree": "28bf6525e4cebfa83c25e1cd8c453fd795061d1e",
+      "tree": "c8fc7541ed32f7ad45542cd8cf684793b2916833",
       "upstream": {
         "status": "downstream",
         "url": "https://gitlab.com/Linaro/arm64-laptops/linux/-/commit/8c309c7e852a49118ddc2ee54c3d8b7c74466f6a",
@@ -1350,7 +1350,7 @@
       "original_commit": "346546ea7fc050432eae4d39fc6f5dae2f8b1199",
       "original_parent": "ddf99fc56ba0803f8e2c78f5081fb6fa250c9ce3",
       "committer_date": "2026-11-12T00:06:47+08:00",
-      "tree": "62fb99a7cf7a9083b2120b545efb00dc2834b261",
+      "tree": "b32cd55e32d1b17030dbb1c3d68585fb51bc0718",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1363,7 +1363,7 @@
       "original_commit": "24b909fe2cc1740d26b815ee89cef4255d85bc79",
       "original_parent": "346546ea7fc050432eae4d39fc6f5dae2f8b1199",
       "committer_date": "2026-11-12T00:22:59+08:00",
-      "tree": "5b495becac9cda582c0467b2566a8e800bf56820",
+      "tree": "416bdc066091afc591af8bb39864075ad1cc6dfe",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1376,7 +1376,7 @@
       "original_commit": "a012add43b47fa9564c28a1da4f27198b0c93c1d",
       "original_parent": "24b909fe2cc1740d26b815ee89cef4255d85bc79",
       "committer_date": "2026-11-12T23:02:24+08:00",
-      "tree": "8ba5273de59789bde1603d6eb41277b9bcd02309",
+      "tree": "e37f4cb79530f1a994ae142a1a8ea664dc76d917",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1389,7 +1389,7 @@
       "original_commit": "dd6d9a8f5491b096b1827f59b428b6fef44202da",
       "original_parent": "a012add43b47fa9564c28a1da4f27198b0c93c1d",
       "committer_date": "2026-11-14T00:09:57+08:00",
-      "tree": "7aeaa462e6eca092d6434485a3c48cc3dc7d3e15",
+      "tree": "0deff11c15c6cdea2a8a6b6a50acad851e7b392d",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1402,7 +1402,7 @@
       "original_commit": "1b61900ac2885eb686596392a9586f361e7c9afb",
       "original_parent": "dd6d9a8f5491b096b1827f59b428b6fef44202da",
       "committer_date": "2026-11-14T03:28:55+08:00",
-      "tree": "b4dfd13c95b9a33989177fbe2f73234e4bb4d923",
+      "tree": "3aedc0de469b2008907724ae6e5b82b4ba50a6dc",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1415,7 +1415,7 @@
       "original_commit": "d13580b1fb053b1459a5d21ed5af858fe87c2e11",
       "original_parent": "1b61900ac2885eb686596392a9586f361e7c9afb",
       "committer_date": "2026-11-14T03:41:04+08:00",
-      "tree": "fb31ae19265ad14b6941af47b99e83eb66571977",
+      "tree": "2a238adb505eca8e7ae7e7fd73902c2f78e6e003",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1428,7 +1428,7 @@
       "original_commit": "bb673d4305abce8e7f9660f6bf415f6a67ee4bfe",
       "original_parent": "d13580b1fb053b1459a5d21ed5af858fe87c2e11",
       "committer_date": "2026-11-14T03:47:47+08:00",
-      "tree": "ca6f57a61cbf0d6eba30909d202e2aaf57fb4ffe",
+      "tree": "9fe47c69dc82ca7a97e21e7f448bae1a29aead87",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1441,7 +1441,7 @@
       "original_commit": "15863e5d2d41ba28512e0754772a090a708cf46e",
       "original_parent": "bb673d4305abce8e7f9660f6bf415f6a67ee4bfe",
       "committer_date": "2026-11-14T03:57:05+08:00",
-      "tree": "52b2dabecfe1c2d6750672c3410ca663dea8fd55",
+      "tree": "72ef07e441ae91f77f1f4c16ae2988a6a9e1b6a1",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1454,7 +1454,7 @@
       "original_commit": "c16b96c32944a410626a8152583ec6918c3ff56a",
       "original_parent": "15863e5d2d41ba28512e0754772a090a708cf46e",
       "committer_date": "2026-11-14T04:26:52+08:00",
-      "tree": "92d906c30f13f442d9863dd91e60b3a2a4c1e9fd",
+      "tree": "cba81d8e11915703c16b17b72ff78cd293b39779",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1467,7 +1467,7 @@
       "original_commit": "d99e1c3ba56c89465cd84a56588d18f9f000ee19",
       "original_parent": "c16b96c32944a410626a8152583ec6918c3ff56a",
       "committer_date": "2026-11-14T05:10:30+08:00",
-      "tree": "4b1a7bb75a299ad36a3763a01974e116aeb530fc",
+      "tree": "8f06717bde4999d1acab170adb15285ceb2795ea",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1480,7 +1480,7 @@
       "original_commit": "06b7791bfa09d3db33de288e4e0a08c4ee9832ee",
       "original_parent": "d99e1c3ba56c89465cd84a56588d18f9f000ee19",
       "committer_date": "2026-11-14T21:48:56+08:00",
-      "tree": "678b91c504f503966dbfdbd1c8fd1c3ac70e1e3c",
+      "tree": "1586d18ec00ae170cccfc0e4f8dec897fcfe0df6",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1493,7 +1493,7 @@
       "original_commit": "cd2caabd78b3a4144b6b8026a09edb24d433ab61",
       "original_parent": "06b7791bfa09d3db33de288e4e0a08c4ee9832ee",
       "committer_date": "2026-11-14T21:59:54+08:00",
-      "tree": "db99d9cda9ebe79a28032a5df9123784f504b555",
+      "tree": "4164d583ed17dfa8221b6ea1cbffd593ae66bb13",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1506,7 +1506,7 @@
       "original_commit": "3f906fbf3374171ad713bf1dd13e9eb76f5c43fb",
       "original_parent": "cd2caabd78b3a4144b6b8026a09edb24d433ab61",
       "committer_date": "2026-11-14T23:03:04+08:00",
-      "tree": "7f60fcfcae5d8a12e0dd83b33d5375a4e8a9c9f0",
+      "tree": "d9a79b9daadee86e59dcd219c4ae1415c7308b1d",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI/blob/main/patches/linux/7.3/0004-media.patch",
@@ -1519,7 +1519,7 @@
       "original_commit": "4660e79acbfc4d3cb8faa30d2cbe8075e43f8ce1",
       "original_parent": "3f906fbf3374171ad713bf1dd13e9eb76f5c43fb",
       "committer_date": "2026-11-14T23:04:09+08:00",
-      "tree": "733cb7328191e7045f0e524d257343cde0895a61",
+      "tree": "eb6176676ae140e257d5e932039d1e35314cd724",
       "upstream": {
         "status": "downstream",
         "url": "https://lore.kernel.org/linux-media/20260508-add-support-for-camss-on-sm8750-v3-0-fc6861a65c67@oss.qualcomm.com/",
@@ -1531,7 +1531,7 @@
       "sha256": "5c7a002971c977b0e854fa86d23554d88ab034dfb3190219604cce647ab5b877",
       "original_commit": "8af47389be56623ed45b7b4537a029552e655c1a",
       "original_parent": "4660e79acbfc4d3cb8faa30d2cbe8075e43f8ce1",
-      "tree": "cbb16dea66871a7adee864378daa5985114fc22a",
+      "tree": "9154e956fea2d493f43e3f8c680815fa78c1f7d8",
       "committer_date": "2026-11-15T00:40:18+08:00",
       "upstream": {
         "status": "downstream",
@@ -1544,7 +1544,7 @@
       "sha256": "26665e58c01f8a9a429f3bbb83be2e04d40eac6536619cb747b6cae1cc9ce369",
       "original_commit": "bb4cffb6f50365dee0c1b6bd561b1746272f5746",
       "original_parent": "8af47389be56623ed45b7b4537a029552e655c1a",
-      "tree": "56295a057bec2aee76bf8c1ff8ae8e61c30a8566",
+      "tree": "fff23b4ca56ec5452dd15bcf7c1a35f9a7c86211",
       "committer_date": "2026-11-15T00:53:33+08:00",
       "upstream": {
         "status": "downstream",
@@ -1557,7 +1557,7 @@
       "sha256": "f2224a631434d860a234eca2da8632b4a7c4c4702a74fc5c5cd3031c6f4c4bdb",
       "original_commit": "85a1418731c76c6e7c1bf9cea18b09198e11305c",
       "original_parent": "bb4cffb6f50365dee0c1b6bd561b1746272f5746",
-      "tree": "c5e7d8e876793f8f84efeb2de90920c9373a821b",
+      "tree": "231f7aeeb489aa679ce2c37646621c09818013d5",
       "committer_date": "2026-11-15T01:21:54+08:00",
       "upstream": {
         "status": "downstream",
@@ -1570,7 +1570,7 @@
       "sha256": "88584fc4ec971530e72b98d71a5bc676b8d82806f070da3365341255e283160c",
       "original_commit": "d37f12d1c93991bf5196809a5e825bf3a0f0fa57",
       "original_parent": "85a1418731c76c6e7c1bf9cea18b09198e11305c",
-      "tree": "bdd991fee1d55a4181d09da92d7c028927aefad3",
+      "tree": "7fa247ef23a3871348d686a3171e18b2999ce693",
       "committer_date": "2026-11-15T01:22:15+08:00",
       "upstream": {
         "status": "downstream",
@@ -1584,7 +1584,7 @@
       "original_commit": "57c3ef6ff3970aecabf2fc52b7ed40b6a3f03ace",
       "original_parent": "d37f12d1c93991bf5196809a5e825bf3a0f0fa57",
       "committer_date": "2026-11-14T22:04:44+08:00",
-      "tree": "d6d21d0f575d34721e49a49b9f46148b79db7c06",
+      "tree": "f61686d2db672a393111c7f0851d50bad5af91af",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1597,7 +1597,7 @@
       "original_commit": "c3d9f6c2d78abf204c2c21d2b8259dca0d754dbb",
       "original_parent": "57c3ef6ff3970aecabf2fc52b7ed40b6a3f03ace",
       "committer_date": "2026-11-14T22:40:22+08:00",
-      "tree": "caaecf18ae88e7b28c28669d52b1d801c41e98f4",
+      "tree": "3256ea7e8eff960701562dd33c1c008026bf1a75",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1610,7 +1610,7 @@
       "original_commit": "e05a9ad1946e67988716b590e61f5b689f2c37d7",
       "original_parent": "c3d9f6c2d78abf204c2c21d2b8259dca0d754dbb",
       "committer_date": "2026-11-15T01:11:01+08:00",
-      "tree": "b3bceaf222f87e6bad0e65e735c0b91e60247f03",
+      "tree": "6c6370225d93c91797f376d79c28c5a15c9ffb5f",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1623,7 +1623,7 @@
       "original_commit": "01d992fddc1db28222a85db180c4ddc77a26ca52",
       "original_parent": "e05a9ad1946e67988716b590e61f5b689f2c37d7",
       "committer_date": "2026-11-16T11:16:46+08:00",
-      "tree": "b613739d255812b22c79e88c8dba1d5cc0d330de",
+      "tree": "b781fff3386775450320de3de1eaa293c0f16ec0",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1636,7 +1636,7 @@
       "original_commit": "371fff51f65f253fe44f3853e9c85dbc5d4ea199",
       "original_parent": "01d992fddc1db28222a85db180c4ddc77a26ca52",
       "committer_date": "2026-11-16T11:16:46+08:00",
-      "tree": "e27ba8521a49f9d3f300c3ca54a4c6679cdc9089",
+      "tree": "bc2414fda9745009461f70a2f2b1fa21224cfb5e",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1649,7 +1649,7 @@
       "original_commit": "1a7e44f92675353aa3206de0fee691f5d8cb9a4c",
       "original_parent": "371fff51f65f253fe44f3853e9c85dbc5d4ea199",
       "committer_date": "2026-11-18T02:42:00+08:00",
-      "tree": "6eb2d2eec65f0c1c8be69b6f6952554b0dd8f305",
+      "tree": "7b61743f170ecbec8defdcac6bbbb0eb4c1423e1",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1662,7 +1662,7 @@
       "original_commit": "03521eca9cc8539f5ae9f51121cca02f8785e6ad",
       "original_parent": "1a7e44f92675353aa3206de0fee691f5d8cb9a4c",
       "committer_date": "2026-11-18T03:10:00+08:00",
-      "tree": "84a0458ec0fb4768e722c89633099abaa0346d36",
+      "tree": "6064760eb24b396b18b362301e4984c5f782316a",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1675,7 +1675,7 @@
       "original_commit": "4e086c1da9ae05def8e8e5e488eb7214463b4bab",
       "original_parent": "03521eca9cc8539f5ae9f51121cca02f8785e6ad",
       "committer_date": "2026-11-18T04:18:12+08:00",
-      "tree": "a6906c2bff6d7a1527d47b6d3200674bf99b126c",
+      "tree": "1a037074dc38dccf1399ef217a4dc9f28fddac24",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1688,7 +1688,7 @@
       "original_commit": "80f205bf5c625c9c48b614cf80284fe17827fb8b",
       "original_parent": "4e086c1da9ae05def8e8e5e488eb7214463b4bab",
       "committer_date": "2026-11-18T04:18:12+08:00",
-      "tree": "3c18f42ef7483b83d7f860434965722b31da183e",
+      "tree": "d4f13e89d7bd5266e4a84088bbdb5bcc41a27db4",
       "upstream": {
         "status": "downstream",
         "url": "https://www.ti.com/lit/ug/sluuc54c/sluuc54c.pdf",
@@ -1701,7 +1701,7 @@
       "original_commit": "6193756cfa68ec49906f1661088f4c4956313d81",
       "original_parent": "80f205bf5c625c9c48b614cf80284fe17827fb8b",
       "committer_date": "2026-11-18T05:03:00+08:00",
-      "tree": "257be42e286555f8a217e81ab94a722f2cd6eb39",
+      "tree": "6200ce9a384f2d37fceca200382df21182d9dc76",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1714,7 +1714,7 @@
       "original_commit": "601c76dc1cf47eebcb0589d69fe2f15a3f945849",
       "original_parent": "6193756cfa68ec49906f1661088f4c4956313d81",
       "committer_date": "2026-11-18T18:49:00+08:00",
-      "tree": "83949fcc9b4869832d3e278afcc1da2c25188ca0",
+      "tree": "d2da4d72ed9b991c1f70d9515022ca5ac74574ce",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1727,7 +1727,7 @@
       "original_commit": "8f756d66240c07246b70370f9cb0807f27c15c44",
       "original_parent": "601c76dc1cf47eebcb0589d69fe2f15a3f945849",
       "committer_date": "2026-11-18T18:49:00+08:00",
-      "tree": "7e7394067d6db0764b3b5c8514918ffc5a81f48a",
+      "tree": "c87e9127f062192c9f77d9595e91a97964ca2b1e",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1740,7 +1740,7 @@
       "original_commit": "86ceae81b456321d12c59d6178f08bac819bcb0b",
       "original_parent": "8f756d66240c07246b70370f9cb0807f27c15c44",
       "committer_date": "2026-11-18T19:39:38+08:00",
-      "tree": "ae45edbf9dcf0107f17624ef0ea6292ce4a95d95",
+      "tree": "8fb12a07b164cd074e23fbc8c4c8cd6794d93a7a",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1753,7 +1753,7 @@
       "original_commit": "0068e5f56cb9ed2a12e84b5cb10397d99bf5a749",
       "original_parent": "86ceae81b456321d12c59d6178f08bac819bcb0b",
       "committer_date": "2026-11-18T20:30:45+08:00",
-      "tree": "bd047554fc518814e901924f5864c43a8d0bb769",
+      "tree": "818f26e642ef4b306676c2a57bac2de4333286f4",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1766,7 +1766,7 @@
       "original_commit": "f89aca5ab22d797eaef02cc94017ea4e1a1dff6d",
       "original_parent": "0068e5f56cb9ed2a12e84b5cb10397d99bf5a749",
       "committer_date": "2026-11-19T09:13:34+08:00",
-      "tree": "4ba654979e43dbbb1b17796cfd0eec10119e5c59",
+      "tree": "75a67687bc1258746340e1dc64db3c91ca75d633",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1778,7 +1778,7 @@
       "original_commit": "1c676d09b4ec3b1dc5b4bea2313ecf903f5f7b85",
       "original_parent": "f89aca5ab22d797eaef02cc94017ea4e1a1dff6d",
       "committer_date": "2026-11-19T21:10:21+08:00",
-      "tree": "1d33fef2c16742570671b3e460c9ea9434c169e2",
+      "tree": "b83ad5ad6f9d0cfc455f1971d250ebedba861697",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1792,7 +1792,7 @@
       "original_commit": "c8e36789b138f503df0dc9dd9d6e8e672fda8c77",
       "original_parent": "1c676d09b4ec3b1dc5b4bea2313ecf903f5f7b85",
       "committer_date": "2026-11-19T22:01:44+08:00",
-      "tree": "239d4cc3a9f437b33f6c45579326f0c6cd768b54",
+      "tree": "b3d438d2a8d68e017a232419869dd5ecc3962ef3",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1805,7 +1805,7 @@
       "original_commit": "2cfa6f44426a00c8a81a66c6dc25cc73f779fb62",
       "original_parent": "c8e36789b138f503df0dc9dd9d6e8e672fda8c77",
       "committer_date": "2026-11-20T00:49:21+08:00",
-      "tree": "e6fb22e23433ae16532e098754f020031c5c6bdc",
+      "tree": "aeed7c5b8a2071ada781580415023f4030fe9d24",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",

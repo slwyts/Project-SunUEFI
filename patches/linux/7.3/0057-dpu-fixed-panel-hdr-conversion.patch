@@ -4,32 +4,40 @@ Date: Sun, 8 Nov 2026 23:39:32 +0800
 Subject: [PATCH] drm/msm: convert fixed-panel HDR signals through calibrated
  DSPP color blocks
 
+The fixed-panel DSPP conversion does not change DSI link timings.
+For an SDR colorspace change on an already active fixed panel, keep the
+assigned mixers and program their color tables in the same atomic commit.
+REGDMA completes before both DSPP flushes are staged. Preserve modesets
+for HDR transitions, routing changes and actual mode changes.
+
+Link: https://github.com/MiCode/vendor_opensource_display-drivers/blob/aa06fd1757c28dce96fbe4e04d4530ec21b52aac/msm/sde/sde_encoder.c#L5376
+
 ---
- drivers/gpu/drm/msm/Makefile                  |   2 +
- drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c      |  23 ++-
- drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h      |   1 +
- .../gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c    |   2 +
- .../gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h    |   2 +
- drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c    |   3 +
- .../gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c   |  59 +++++++
- .../gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h   |  18 ++
- drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c       |   2 +
- drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h       |   1 +
- drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c    |  30 +++-
- drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h    |   5 +
- .../gpu/drm/msm/disp/dpu1/dpu_output_color.c  | 160 ++++++++++++++++++
- .../gpu/drm/msm/disp/dpu1/dpu_output_color.h  |  25 +++
- drivers/gpu/drm/msm/dsi/dsi_manager.c         |  13 ++
- drivers/gpu/drm/msm/msm_kms.h                 |   3 +
- drivers/gpu/drm/panel/panel-novatek-nt36532.c | 115 ++++++++++++-
- 17 files changed, 456 insertions(+), 8 deletions(-)
+ drivers/gpu/drm/msm/Makefile                     |   2 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c         |  33 ++++-
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h         |   1 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c   |   2 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h   |   2 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c       |   3 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c  |  59 +++++++++
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h  |  18 +++
+ drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c          |   2 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h          |   1 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c       |  30 ++++-
+ drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h       |   5 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c | 161 +++++++++++++++++++++++
+ drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h |  25 ++++
+ drivers/gpu/drm/msm/dsi/dsi_manager.c            |  60 +++++++--
+ drivers/gpu/drm/msm/msm_kms.h                    |   3 +
+ drivers/gpu/drm/panel/panel-novatek-nt36532.c    | 115 +++++++++++++++-
+ 17 files changed, 498 insertions(+), 24 deletions(-)
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h
 
 diff --git a/drivers/gpu/drm/msm/Makefile b/drivers/gpu/drm/msm/Makefile
-index 89c61b0313e..fd62b93b274 100644
+index 89c61b0313ee3ebef147e462bbf31a7e9f863b9d..fd62b93b2740847943b8bf5e0941e3f40100ca11 100644
 --- a/drivers/gpu/drm/msm/Makefile
 +++ b/drivers/gpu/drm/msm/Makefile
 @@ -91,6 +91,8 @@ msm-display-$(CONFIG_DRM_MSM_DPU) += \
@@ -42,7 +50,7 @@ index 89c61b0313e..fd62b93b274 100644
  	disp/dpu1/dpu_hw_merge3d.o \
  	disp/dpu1/dpu_hw_top.o \
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
-index 3ed3af7010a..953725dd15e 100644
+index 4f4e318a358f80ecbb662ff6db7ab4f34802825d..4a0a753841ea8a7ce0580026a052c1236dc3b47b 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
 @@ -25,6 +25,7 @@
@@ -99,7 +107,16 @@ index 3ed3af7010a..953725dd15e 100644
  		}
  	}
  }
-@@ -1756,6 +1771,10 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+@@ -1745,6 +1760,8 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ {
+ 	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state,
+ 									  crtc);
++	struct drm_crtc_state *old_crtc_state = drm_atomic_get_old_crtc_state(state, crtc);
++	struct dpu_crtc_state *old_cstate = to_dpu_crtc_state(old_crtc_state);
+ 	struct dpu_crtc *dpu_crtc = to_dpu_crtc(crtc);
+ 	struct dpu_crtc_state *cstate = to_dpu_crtc_state(crtc_state);
+ 
+@@ -1756,6 +1773,10 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
  	bool needs_dirtyfb = dpu_crtc_needs_dirtyfb(crtc_state);
  	struct dpu_kms *kms = _dpu_crtc_get_kms(crtc);
  
@@ -110,8 +127,31 @@ index 3ed3af7010a..953725dd15e 100644
  	/* The core accepts smaller blobs up to the advertised maximum. GC
  	 * resamples them; the IGC backend requires its complete uniform grid.
  	 */
+@@ -1777,9 +1798,10 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ 	if (rc)
+ 		return rc;
+ 
+-	/* don't reallocate resources if only ACTIVE has beeen changed */
++	/* The fixed output conversion reuses the DSPPs from the active mode. */
+ 	if (crtc_state->mode_changed || crtc_state->connectors_changed ||
+-	    crtc_state->color_mgmt_changed) {
++	    (crtc_state->color_mgmt_changed &&
++	     cstate->output_color_mode == old_cstate->output_color_mode)) {
+ 		rc = dpu_crtc_assign_resources(crtc, crtc_state);
+ 		if (rc < 0)
+ 			return rc;
+@@ -1840,8 +1862,7 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ 		return rc;
+ 	}
+ 
+-	cstate->vfp_update = dpu_crtc_can_update_vfp(
+-		drm_atomic_get_old_crtc_state(state, crtc), crtc_state);
++	cstate->vfp_update = dpu_crtc_can_update_vfp(old_crtc_state, crtc_state);
+ 	if (cstate->vfp_update)
+ 		crtc_state->mode_changed = false;
+ 
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h
-index 084ea8ecfef..c0ee8a14ba3 100644
+index 084ea8ecfef4341b33a273717d2d5f09b9f3b872..c0ee8a14ba3863f7a2002c30f436d66a024eaaeb 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h
 @@ -211,6 +211,7 @@ struct dpu_crtc_state {
@@ -123,7 +163,7 @@ index 084ea8ecfef..c0ee8a14ba3 100644
  
  	uint64_t input_fence_timeout_ns;
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
-index 9fa40480bc0..375c7c9a40c 100644
+index 9fa40480bc092d7e9a22a22ce79bfe269c2a938c..375c7c9a40cc8eaff283fb22f0613685642020ce 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
 @@ -432,6 +432,8 @@ static const struct dpu_dspp_sub_blks sm8750_dspp_sblk = {
@@ -136,7 +176,7 @@ index 9fa40480bc0..375c7c9a40c 100644
  
  /*************************************************************
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
-index e41983a4941..d170add4acf 100644
+index e41983a49413c1815c5ff042f764592632514bac..d170add4acfccbfecda42da73f54dcc2f43fc761 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
 @@ -84,6 +84,7 @@ enum {
@@ -156,7 +196,7 @@ index e41983a4941..d170add4acf 100644
  
  struct dpu_pingpong_sub_blks {
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
-index 548f51e54d7..be13dd930db 100644
+index 548f51e54d7e4e23ec7332343093bc3d56bd1eed..be13dd930db9808da42858fa009806e6a6630f64 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
 @@ -406,6 +406,9 @@ static void dpu_hw_ctl_update_pending_flush_dspp_sub_blocks(
@@ -171,7 +211,7 @@ index 548f51e54d7..be13dd930db 100644
  	}
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c
 new file mode 100644
-index 00000000000..24d04bf8acd
+index 0000000000000000000000000000000000000000..24d04bf8acd12d1392406023728e366c2b2ab99b
 --- /dev/null
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c
 @@ -0,0 +1,59 @@
@@ -236,7 +276,7 @@ index 00000000000..24d04bf8acd
 +}
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h
 new file mode 100644
-index 00000000000..1476e387b34
+index 0000000000000000000000000000000000000000..1476e387b34f7e477bd25186acea625112aeba86
 --- /dev/null
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h
 @@ -0,0 +1,18 @@
@@ -259,7 +299,7 @@ index 00000000000..1476e387b34
 +
 +#endif
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
-index d8acad21c5e..f89c9b34aa9 100644
+index d8acad21c5eae987bd926ad5adfc7f8f34c9db1c..f89c9b34aa9ae0d8e408d40b35906903d2d90cfd 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
 @@ -35,6 +35,7 @@
@@ -279,7 +319,7 @@ index d8acad21c5e..f89c9b34aa9 100644
  	.irq_postinstall = dpu_irq_postinstall,
  	.irq_uninstall   = dpu_core_irq_uninstall,
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h
-index a5f7779c2d0..80e2cfc370d 100644
+index a5f7779c2d03845a4682142f891ad8e567f12886..80e2cfc370d666f279c51f48cafaf2938036af94 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h
 @@ -88,6 +88,7 @@ struct dpu_kms {
@@ -291,7 +331,7 @@ index a5f7779c2d0..80e2cfc370d 100644
  	struct platform_device *pdev;
  	bool rpm_enabled;
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
-index 29e6703354d..275c5ac5457 100644
+index 29e6703354de1cfc8148f406f6b24db026ba0419..275c5ac545762bfd2387c32000de72d62b2dce05 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
 @@ -15,6 +15,7 @@
@@ -361,7 +401,7 @@ index 29e6703354d..275c5ac5457 100644
  			u32 dspp_mask, const struct dpu_hw_gc_lut *lut)
  {
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h
-index 8eaa3209219..1bdefd0fc8d 100644
+index 8eaa3209219ee8bee490ba0507fc8c322ba54961..1bdefd0fc8de4c991fac24b2def8d72e65010597 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h
 @@ -9,6 +9,7 @@ struct dpu_lutdma;
@@ -385,10 +425,10 @@ index 8eaa3209219..1bdefd0fc8d 100644
  			u32 dspp_mask, const struct dpu_hw_gc_lut *lut);
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
 new file mode 100644
-index 00000000000..194c242489c
+index 0000000000000000000000000000000000000000..4ccd79aa58154a2a11121e0977851ce81d1f6054
 --- /dev/null
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,161 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +#include <linux/firmware.h>
 +#include <linux/hdmi.h>
@@ -459,8 +499,8 @@ index 00000000000..194c242489c
 +	return 0;
 +}
 +
-+void dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
-+			   const struct device_node *panel)
++bool dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
++			  const struct device_node *panel)
 +{
 +	struct dpu_kms *dpu_kms = to_dpu_kms(kms);
 +	struct dpu_output_color *color;
@@ -471,7 +511,7 @@ index 00000000000..194c242489c
 +
 +	if (!panel || dpu_kms->output_color || !dpu_lutdma_ready(dpu_kms->lutdma) ||
 +	    dpu_kms->catalog->mdss_ver->core_major_ver != 12)
-+		return;
++		return false;
 +	if (of_device_is_compatible(panel, "xiaomi,piano-boe-nt36532")) {
 +		name = "qcom/sm8750/piano-boe-display.bin";
 +		panel_id = 1;
@@ -479,28 +519,29 @@ index 00000000000..194c242489c
 +		name = "qcom/sm8750/piano-csot-display.bin";
 +		panel_id = 2;
 +	} else {
-+		return;
++		return false;
 +	}
 +	ret = firmware_request_nowarn(&fw, name, kms->dev->dev);
 +	if (ret) {
 +		drm_dbg_kms(kms->dev, "Output color calibration unavailable: %d\n", ret);
-+		return;
++		return false;
 +	}
 +	color = drmm_kzalloc(kms->dev, sizeof(*color), GFP_KERNEL);
 +	ret = color ? parse_color(color, fw, panel_id) : -ENOMEM;
 +	release_firmware(fw);
 +	if (ret) {
 +		drm_warn(kms->dev, "Invalid output color calibration: %d\n", ret);
-+		return;
++		return false;
 +	}
 +	ret = drm_mode_create_hdmi_colorspace_property(connector,
 +		BIT(DRM_MODE_COLORIMETRY_BT2020_RGB));
 +	if (ret)
-+		return;
++		return false;
 +	drm_connector_attach_colorspace_property(connector);
 +	drm_connector_attach_hdr_output_metadata_property(connector);
 +	color->connector = connector;
 +	dpu_kms->output_color = color;
++	return true;
 +}
 +
 +int dpu_output_color_check(struct drm_crtc_state *state)
@@ -551,7 +592,7 @@ index 00000000000..194c242489c
 +MODULE_FIRMWARE("qcom/sm8750/piano-csot-display.bin");
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h
 new file mode 100644
-index 00000000000..c230cef8f1c
+index 0000000000000000000000000000000000000000..169e31a7a78657b4ad8351856080482c975ce847
 --- /dev/null
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h
 @@ -0,0 +1,25 @@
@@ -575,29 +616,89 @@ index 00000000000..c230cef8f1c
 +	struct dpu_hw_gamut_lut gamut;
 +};
 +
-+void dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
-+			   const struct device_node *panel);
++bool dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
++			  const struct device_node *panel);
 +int dpu_output_color_check(struct drm_crtc_state *state);
 +
 +#endif
 diff --git a/drivers/gpu/drm/msm/dsi/dsi_manager.c b/drivers/gpu/drm/msm/dsi/dsi_manager.c
-index 56cd6f04bba..bdd6b04dbb9 100644
+index abbfbe7ade2a9262b47c59d8bc63111afdbbb48e..66bd08f37365d5c51f51793d714687dc67fa51b9 100644
 --- a/drivers/gpu/drm/msm/dsi/dsi_manager.c
 +++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c
-@@ -545,6 +545,12 @@ static int dsi_mgr_bridge_atomic_check(struct drm_bridge *bridge,
+@@ -220,6 +220,7 @@ struct dsi_bridge {
+ 	struct drm_connector *connector;
+ 	int id;
+ 	bool link_ready;
++	bool output_color;
+ };
+ 
+ #define to_dsi_bridge(x) container_of(x, struct dsi_bridge, base)
+@@ -542,24 +543,52 @@ dsi_mgr_panel_mode(struct drm_connector *connector,
+ 	return native;
+ }
+ 
++static bool dsi_mgr_can_update_sdr_color(struct drm_bridge *bridge,
++					 const struct drm_crtc_state *crtc_state,
++					 const struct drm_connector_state *old,
++					 const struct drm_connector_state *new)
++{
++	const struct drm_crtc_state *old_crtc;
++
++	if (!to_dsi_bridge(bridge)->output_color ||
++	    old->hdr_output_metadata || new->hdr_output_metadata ||
++	    old->crtc != new->crtc || !crtc_state->active ||
++	    crtc_state->self_refresh_active || drm_atomic_crtc_needs_modeset(crtc_state))
++		return false;
++
++	old_crtc = drm_atomic_get_old_crtc_state(crtc_state->state, crtc_state->crtc);
++	return old_crtc->active && !old_crtc->self_refresh_active &&
++	       hweight32(crtc_state->encoder_mask) == 1 &&
++	       drm_mode_equal(&old_crtc->adjusted_mode, &crtc_state->adjusted_mode);
++}
++
+ static int dsi_mgr_bridge_atomic_check(struct drm_bridge *bridge,
+ 				      struct drm_bridge_state *bridge_state,
+ 				      struct drm_crtc_state *crtc_state,
  				      struct drm_connector_state *conn_state)
  {
- 	const struct drm_display_mode *native;
+-	const struct drm_display_mode *native;
+-
+-	if (!conn_state->connector->scaling_mode_property)
+-		return 0;
+-	native = dsi_mgr_panel_mode(conn_state->connector, &crtc_state->mode);
+-	if (!native)
+-		return -EINVAL;
+-	if (conn_state->scaling_mode == DRM_MODE_SCALE_NONE &&
+-	    (native->hdisplay != crtc_state->mode.hdisplay ||
+-	     native->vdisplay != crtc_state->mode.vdisplay))
+-		return -EINVAL;
++	struct drm_connector *connector = conn_state->connector;
 +	struct drm_connector_state *old;
 +
-+	old = drm_atomic_get_old_connector_state(crtc_state->state, conn_state->connector);
-+	if (old && (old->colorspace != conn_state->colorspace ||
-+		    !drm_connector_atomic_hdr_metadata_equal(old, conn_state)))
-+		crtc_state->mode_changed = true;
++	if (connector->scaling_mode_property) {
++		const struct drm_display_mode *native;
++
++		native = dsi_mgr_panel_mode(connector, &crtc_state->mode);
++		if (!native)
++			return -EINVAL;
++		if (conn_state->scaling_mode == DRM_MODE_SCALE_NONE &&
++		    (native->hdisplay != crtc_state->mode.hdisplay ||
++		     native->vdisplay != crtc_state->mode.vdisplay))
++			return -EINVAL;
++		drm_mode_copy(&crtc_state->adjusted_mode, native);
++	}
  
- 	if (!conn_state->connector->scaling_mode_property)
- 		return 0;
-@@ -686,6 +692,13 @@ int msm_dsi_manager_connector_init(struct msm_dsi *msm_dsi,
+-	drm_mode_copy(&crtc_state->adjusted_mode, native);
++	/* SDR color conversion changes only the DSPP tables, not the link. */
++	old = drm_atomic_get_old_connector_state(crtc_state->state, connector);
++	if (old && (old->colorspace != conn_state->colorspace ||
++		    !drm_connector_atomic_hdr_metadata_equal(old, conn_state)) &&
++	    !dsi_mgr_can_update_sdr_color(bridge, crtc_state, old, conn_state))
++		crtc_state->mode_changed = true;
+ 	return 0;
+ }
+ 
+@@ -745,6 +774,13 @@ int msm_dsi_manager_connector_init(struct msm_dsi *msm_dsi,
  			return ret;
  		connector->max_bpc = dsc->bits_per_component;
  	}
@@ -605,28 +706,28 @@ index 56cd6f04bba..bdd6b04dbb9 100644
 +		struct msm_drm_private *priv = msm_dsi->dev->dev_private;
 +
 +		if (priv->kms->funcs->init_output_color)
-+			priv->kms->funcs->init_output_color(priv->kms, connector,
-+							  msm_dsi->next_bridge->of_node);
++			dsi_bridge->output_color = priv->kms->funcs->init_output_color(
++				priv->kms, connector, msm_dsi->next_bridge->of_node);
 +	}
  
  	return 0;
  }
 diff --git a/drivers/gpu/drm/msm/msm_kms.h b/drivers/gpu/drm/msm/msm_kms.h
-index 64106ebcd49..6acceac948c 100644
+index 64106ebcd49382a183f4b9e48e9fee087e44c7b8..5bcab97affe357b64406af4eae60946508402827 100644
 --- a/drivers/gpu/drm/msm/msm_kms.h
 +++ b/drivers/gpu/drm/msm/msm_kms.h
 @@ -25,6 +25,9 @@
  struct msm_kms_funcs {
  	/* hw initialization: */
  	int (*hw_init)(struct msm_kms *kms);
-+	/* Optional fixed-panel signal conversion, initialized before registration. */
-+	void (*init_output_color)(struct msm_kms *kms, struct drm_connector *connector,
-+				  const struct device_node *panel);
++	/* Returns true when KMS converts the fixed-panel signal internally. */
++	bool (*init_output_color)(struct msm_kms *kms, struct drm_connector *connector,
++				 const struct device_node *panel);
  	/* irq handling: */
  	void (*irq_preinstall)(struct msm_kms *kms);
  	int (*irq_postinstall)(struct msm_kms *kms);
 diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36532.c b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
-index 77e4be3017c..cf1fb2dad15 100644
+index 77e4be3017c130db4c1ae5eb1a8346b7b6d891bd..cf1fb2dad15e9c3d88f5b486fc6642584ea972ae 100644
 --- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
 +++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
 @@ -13,6 +13,7 @@
@@ -799,6 +900,3 @@ index 77e4be3017c..cf1fb2dad15 100644
  
  static const struct of_device_id nt36532_of_match[] = {
  	{ .compatible = "csot,ppc100hb1-1", .data = &csot_panel_info },
--- 
-2.56.0
-

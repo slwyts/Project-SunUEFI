@@ -14,11 +14,11 @@ ramps and other unsupported combinations rather than dropping them.
 Reuse the previously validated immutable ramp during page flips, checking
 new ramps and transitions from ordinary SDR before accepting them.
 ---
- .../gpu/drm/msm/disp/dpu1/dpu_output_color.c  | 43 +++++++++++++++++--
+ drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c | 43 ++++++++++++++++++++++--
  1 file changed, 40 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
-index 5e3b75e3520..800117e67be 100644
+index d2c9e82b882243d841b14395e8175b91bf14286c..518dd08ddeca8d7e5f94dbe4147160861f09c54f 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
 @@ -1,6 +1,7 @@
@@ -29,8 +29,8 @@ index 5e3b75e3520..800117e67be 100644
  #include <linux/of.h>
  #include <linux/unaligned.h>
  #include <drm/drm_atomic.h>
-@@ -121,6 +122,31 @@ void dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
- 	dpu_kms->output_color = color;
+@@ -122,6 +123,31 @@ bool dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
+ 	return true;
  }
  
 +static bool gamma_lut_is_identity(const struct drm_property_blob *blob)
@@ -61,7 +61,7 @@ index 5e3b75e3520..800117e67be 100644
  int dpu_output_color_check(struct drm_crtc_state *state)
  {
  	struct msm_drm_private *priv = state->crtc->dev->dev_private;
-@@ -154,9 +180,20 @@ int dpu_output_color_check(struct drm_crtc_state *state)
+@@ -155,9 +181,20 @@ int dpu_output_color_check(struct drm_crtc_state *state)
  			return -EINVAL;
  		if (conn_state->colorspace == DRM_MODE_COLORIMETRY_BT2020_RGB)
  			mode = metadata ? 1 : 2;
@@ -85,6 +85,3 @@ index 5e3b75e3520..800117e67be 100644
  	}
  	if (mode != cstate->output_color_mode)
  		state->color_mgmt_changed = true;
--- 
-2.56.0
-
