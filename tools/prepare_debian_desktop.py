@@ -18,7 +18,7 @@ GNOME_PACKAGES = {
 }
 KDE_PACKAGES = [
     'task-kde-desktop', 'plasma-desktop', 'plasma-workspace', 'sddm', 'dolphin', 'konsole',
-    'systemsettings', 'powerdevil', 'upower', 'plasma-nm', 'plasma-pa', 'kscreen',
+    'systemsettings', 'powerdevil', 'upower', 'plasma-nm', 'plasma-pa', 'bluedevil', 'kscreen',
     'task-chinese-s-kde-desktop',
     'fonts-noto', 'poppler-data', 'xdg-desktop-portal-kde', 'xdg-desktop-portal-gtk',
     'fcitx5', 'fcitx5-chinese-addons',

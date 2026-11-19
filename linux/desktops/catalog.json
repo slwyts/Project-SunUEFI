@@ -15,8 +15,8 @@
       "osk": "GNOME Shell built-in screen keyboard", "rotation": "iio-sensor-proxy installed; actual sensor transport and rotation unverified"
     },
     "kde": {
-      "apt_packages": ["plasma-desktop", "plasma-workspace", "sddm", "dolphin", "konsole", "pipewire", "wireplumber", "iio-sensor-proxy"],
-      "arch_packages": ["plasma-desktop", "plasma-workspace", "sddm", "dolphin", "konsole", "pipewire", "wireplumber", "iio-sensor-proxy"],
+      "apt_packages": ["plasma-desktop", "plasma-workspace", "sddm", "dolphin", "konsole", "bluedevil", "pipewire", "wireplumber", "iio-sensor-proxy"],
+      "arch_packages": ["plasma-desktop", "plasma-workspace", "sddm", "dolphin", "konsole", "bluedevil", "pipewire", "wireplumber", "iio-sensor-proxy"],
       "optional_packages": ["maliit-keyboard"], "display_manager": {"apt": "sddm", "arch": "sddm"},
       "scale_percent": 200, "scale_scope": "Qt default; per-output compositor scaling remains user configurable",
       "osk": "Maliit only when target package and desktop entry are present, Wayland session required",
