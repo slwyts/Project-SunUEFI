@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "6344fd182f921fc05f6a6292a7c25adc9b0a3b66",
-  "original_target_commit": "2cfa6f44426a00c8a81a66c6dc25cc73f779fb62",
+  "target_tree": "147bf628575972f26bf2502a8b88e7b4c79490e5",
+  "original_target_commit": "ae3c8c90756b12bd18c66e63066040a54081337e",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1810,6 +1810,19 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "The selected kernel stops BQ27xxx I2C and polling before the bus shuts down, including accesses triggered by queued power supply notifications."
+      }
+    },
+    {
+      "file": "0141-LOCAL-media-camss-serialize-buffer-completion.patch",
+      "sha256": "42f7c565516375f101e8d38a115ea0549032ade5a280085f3f9f18899441e3b9",
+      "original_commit": "ae3c8c90756b12bd18c66e63066040a54081337e",
+      "original_parent": "2cfa6f44426a00c8a81a66c6dc25cc73f779fb62",
+      "committer_date": "2026-11-20T04:10:27+08:00",
+      "tree": "147bf628575972f26bf2502a8b88e7b4c79490e5",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected CAMSS driver stops refilling capture slots when stream-off begins, synchronizes each applicable completion IRQ before returning buffers, and clears the returned slots."
       }
     }
   ],

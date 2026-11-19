@@ -1,0 +1,116 @@
+From ae3c8c90756b12bd18c66e63066040a54081337e Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Fri, 20 Nov 2026 04:10:27 +0800
+Subject: [PATCH] media: camss: Serialize buffer completion with stream-off
+
+Prevent the completion interrupt from programming new addresses after
+the write masters stop. Wait for in-flight VFE or forwarded CSID
+completions before returning the remaining buffers, and clear the
+returned slots before the next stream.
+
+This synchronizes the software queue. It does not add a hardware DMA
+drain. Verified normal cancellation and stream reopening on both SM8750
+camera paths.
+
+Assisted-by: LLM
+---
+ .../media/platform/qcom/camss/camss-vfe-17x.c |  7 +++--
+ drivers/media/platform/qcom/camss/camss-vfe.c | 28 +++++++++++++++----
+ 2 files changed, 28 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-17x.c b/drivers/media/platform/qcom/camss/camss-vfe-17x.c
+index e5ee7e717..812376382 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-17x.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-17x.c
+@@ -507,7 +507,7 @@ static void vfe_isr_reg_update(struct vfe_device *vfe, enum vfe_line_id line_id)
+  */
+ static void vfe_isr_wm_done(struct vfe_device *vfe, u8 wm)
+ {
+-	struct vfe_line *line = &vfe->line[vfe->wm_output_map[wm]];
++	struct vfe_line *line;
+ 	struct camss_buffer *ready_buf;
+ 	struct vfe_output *output;
+ 	unsigned long flags;
+@@ -521,7 +521,10 @@ static void vfe_isr_wm_done(struct vfe_device *vfe, u8 wm)
+ 				    "Received wm done for unmapped index\n");
+ 		goto out_unlock;
+ 	}
+-	output = &vfe->line[vfe->wm_output_map[wm]].output;
++	line = &vfe->line[vfe->wm_output_map[wm]];
++	output = &line->output;
++	if (output->state != VFE_OUTPUT_ON)
++		goto out_unlock;
+ 
+ 	ready_buf = output->buf[0];
+ 	if (!ready_buf) {
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index f546f2d35..85db2f61d 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -648,6 +648,8 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ 	}
+ 	line = &vfe->line[vfe->wm_output_map[wm]];
+ 	output = &line->output;
++	if (output->state != VFE_OUTPUT_ON)
++		goto out_unlock;
+ 
+ 	/* CSID forwards DMA completion independently of the VFE BUS error IRQ.
+ 	 * Serialize both paths so a delayed error IRQ cannot publish a bad frame.
+@@ -1030,17 +1032,28 @@ static int vfe_disable_output(struct vfe_line *line)
+ {
+ 	struct vfe_device *vfe = to_vfe(line);
+ 	struct vfe_output *output = &line->output;
++	struct camss *camss = vfe->camss;
++	const struct vfe_hw_ops *ops = vfe->res->hw_ops;
+ 	unsigned long flags;
+ 	unsigned int i;
+ 
+ 	spin_lock_irqsave(&vfe->output_lock, flags);
++	output->state = VFE_OUTPUT_STOPPING;
+ 	for (i = 0; i < output->wm_num; i++)
+-		vfe->res->hw_ops->vfe_wm_stop(vfe, output->wm_idx[i]);
++		ops->vfe_wm_stop(vfe, output->wm_idx[i]);
+ 	output->gen2.active_num = 0;
+ 	output->frame_timeline_error = true;
+ 	output->frame_timeline_initialized = false;
+ 	spin_unlock_irqrestore(&vfe->output_lock, flags);
+ 
++	/*
++	 * A completion may still be returning a buffer removed from the FIFO
++	 * before STOPPING. Wait for it before the capture queue is flushed.
++	 */
++	synchronize_irq(vfe->irq);
++	if (ops->vfe_buf_done && vfe->id < camss->res->csid_num)
++		synchronize_irq(camss->csid[vfe->id].irq);
++
+ 	return vfe_reset(vfe);
+ }
+ 
+@@ -1432,6 +1445,7 @@ int vfe_flush_buffers(struct camss_video *vid,
+ 	struct vfe_device *vfe = to_vfe(line);
+ 	struct vfe_output *output;
+ 	unsigned long flags;
++	unsigned int i;
+ 
+ 	output = &line->output;
+ 
+@@ -1439,11 +1453,15 @@ int vfe_flush_buffers(struct camss_video *vid,
+ 
+ 	vfe_buf_flush_pending(output, state);
+ 
+-	if (output->buf[0])
+-		vb2_buffer_done(&output->buf[0]->vb.vb2_buf, state);
++	for (i = 0; i < ARRAY_SIZE(output->buf); i++) {
++		struct camss_buffer *buffer = output->buf[i];
+ 
+-	if (output->buf[1])
+-		vb2_buffer_done(&output->buf[1]->vb.vb2_buf, state);
++		if (!buffer)
++			continue;
++
++		output->buf[i] = NULL;
++		vb2_buffer_done(&buffer->vb.vb2_buf, state);
++	}
+ 
+ 	if (output->last_buffer) {
+ 		vb2_buffer_done(&output->last_buffer->vb.vb2_buf, state);

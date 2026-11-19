@@ -312,6 +312,12 @@ libcamera `SensorTimestamp` 的语义是首行开始曝光、时钟为 `CLOCK_BO
 
 SOF/EOF 按既有双缓冲 FIFO 关联。标记缺失、不连续、接收端错误或无效换算会使该流持续返回 `V4L2_BUF_FLAG_ERROR`，直到重新开流。TFE 图像尺寸、CCIF 和约束错误另走 BUS 中断；处理错误与完成缓冲共用 `output_lock`，先检查错误再发布图像。只有活动的 write master 允许访问 BUS 寄存器，停止最后一条流时在关时钟前屏蔽、清除并读回中断配置。
 
+停流开始后，CAMSS 不再由完成中断提交缓冲。驱动等已经取走缓冲的
+VFE／CSID 中断处理完，再归还和清空队列，重开时不会用到上一次的槽位。
+平板前后摄均通过实际采集中退出和重新打开。这项修复只管软件队列，
+不将中断处理结束视为硬件 DMA 已排空。
+见[停流修复](../../../patches/linux/7.3/0141-LOCAL-media-camss-serialize-buffer-completion.patch)。
+
 实现见[物理帧时序补丁](../../../patches/linux/7.3/0048-camss-frame-timestamps.patch)和 [TFE BUS 修复](../../../patches/linux/7.3/0049-camss-tfe-bus-errors.patch)。`camss_frame`、`camss_frame_error` trace 提供原始计数器、交叉采样和缓冲编号。
 
 产品内核不提供 ISP 寄存器脚本或任意 MMIO 读写入口。TFE 默认设置、缩放和图像控件由驱动编程；诊断使用现有帧 trace 和错误日志。[删除补丁](../../../patches/linux/7.3/0113-camss-remove-register-debug.patch)移除 `camss_isp` debugfs 及其共用的 CSID/VFE 指针，避免两个摄像头互相覆盖调试目标，不改变开流、停流或 DMA 清理。
