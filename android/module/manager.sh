@@ -18,7 +18,7 @@ case "$operation" in
   } ;;
 esac
 
-# Check the installed boot manager and Linux entry on a read-only mount.
+# Look for an ARM64 EFI application on the read-only Linux ESP.
 piano_installed_linux() (
   [ -b /dev/block/by-name/sunuefi_esp ] &&
     [ -b /dev/block/by-name/sunuefi_root ] || exit 1
@@ -147,7 +147,12 @@ case "$operation" in
  switch)
   case "$target" in android|uefi|linux) ;; setup) echo "固件设置的一次性入口尚未启用。" >&2; exit 2 ;; *) exit 2 ;; esac
   [ "$target" != linux ] || piano_installed_linux || {
-   echo '未找到已安装的 Linux 启动文件，请先完成 Linux 安装。' >&2; exit 2;
+   if [ "$?" -eq 1 ]; then
+    echo '未找到已安装的 Linux 启动文件，请先完成 Linux 安装。' >&2
+   else
+    echo '暂时无法读取 Linux 启动分区，请检查存储状态后再试。' >&2
+   fi
+   exit 2
   }
   "$repack" request --target "$target" --boot-device "$bootdev" --active-slot "$slot" \
    --rom-fingerprint "$rom_fingerprint" --boot-fingerprint "$boot_fingerprint" \

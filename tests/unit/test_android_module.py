@@ -84,54 +84,67 @@ class AndroidModuleTests(unittest.TestCase):
         return subprocess.run(['sh', '-c', '. "$1"; ui_print() { printf "%s\\n" "$*" >&2; }; ' + body,
                                'fixture', str(common)], text=True, capture_output=True)
 
-    def test_product_esp_requires_nonempty_uki(self):
-        esp = self.base / 'esp'
-        entries = esp / 'loader/entries'
-        entries.mkdir(parents=True)
-        check = f'piano_esp_linux_present "{esp}"'
-        self.assertNotEqual(self.shell(check).returncode, 0)
-        boot = esp / 'EFI/Linux/sunuefi.efi'
-        boot.parent.mkdir(parents=True)
-        boot.touch()
-        self.assertNotEqual(self.shell(check).returncode, 0)
-        boot.write_bytes(b'EFI fixture')
-        self.assertEqual(self.shell(check).returncode, 0)
-        boot.unlink()
-        self.assertNotEqual(self.shell(check).returncode, 0)
+    @staticmethod
+    def efi_application(path, *, machine=0xaa64, subsystem=10):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = bytearray(256)
+        data[:2] = b'MZ'
+        struct.pack_into('<I', data, 60, 64)
+        data[64:68] = b'PE\0\0'
+        struct.pack_into('<H', data, 68, machine)
+        struct.pack_into('<H', data, 88, 0x20b)
+        struct.pack_into('<H', data, 156, subsystem)
+        path.write_bytes(data)
 
-    def test_uki_path_stays_inside_esp_and_entry_contents_are_not_executed(self):
+    def test_esp_accepts_arm64_fallback_distro_loader_or_versioned_uki(self):
+        for name in ('BOOT/BOOTAA64.EFI', 'systemd/systemd-bootaa64.efi',
+                     'debian/shimaa64.efi', 'Linux/linux-7.4-custom.efi'):
+            with self.subTest(path=name):
+                esp = self.base / name.split('/')[0]
+                self.efi_application(esp / 'EFI' / name)
+                self.assertEqual(self.shell(f'piano_esp_linux_present "{esp}"').returncode, 0)
+
+    def test_efi_application_stays_inside_esp_and_entries_are_not_executed(self):
         esp = self.base / 'esp'
         entries = esp / 'loader/entries'
         entries.mkdir(parents=True)
-        boot = esp / 'EFI/Linux/sunuefi.efi'
+        boot = esp / 'EFI/BOOT/BOOTAA64.EFI'
         boot.parent.mkdir(parents=True)
-        (esp / 'payload').write_bytes(b'payload fixture')
-        (self.base / 'outside').write_bytes(b'outside fixture')
-        entry = entries / 'linux.conf'
+        outside = self.base / 'outside.efi'
+        self.efi_application(outside)
         check = f'piano_esp_linux_present "{esp}"'
-        boot.symlink_to(self.base / 'outside')
-        self.assertNotEqual(self.shell(check).returncode, 0)
+        boot.symlink_to(outside)
+        self.assertEqual(self.shell(check).returncode, 1)
         boot.unlink()
-        boot.write_bytes(b'EFI fixture')
+        self.efi_application(boot)
         marker = self.base / 'must-not-run'
-        entry.write_bytes((f'# comment\r\nlinux /payload\r\ninitrd /payload\r\n'
-                           f'devicetree /payload\r\noptions $(touch "{marker}")').encode())
+        (entries / 'custom.conf').write_text(f'title Custom\noptions $(touch "{marker}")\n')
         self.assertEqual(self.shell(check).returncode, 0)
         self.assertFalse(marker.exists())
 
-    def test_legacy_esp_does_not_claim_uki_is_installed(self):
+    def test_esp_ignores_wrong_architecture_non_application_and_bad_headers(self):
         esp = self.base / 'esp'
         boot = esp / 'EFI/Piano/stable/boot.img'
         boot.parent.mkdir(parents=True)
-        check = f'piano_esp_linux_present "{esp}"'
-        boot.touch()
-        self.assertNotEqual(self.shell(check).returncode, 0)
         boot.write_bytes(b'legacy boot image fixture')
-        self.assertNotEqual(self.shell(check).returncode, 0)
-        manager = esp / 'EFI/BOOT/BOOTAA64.EFI'
-        manager.parent.mkdir(parents=True)
-        manager.write_bytes(b'EFI fixture')
-        self.assertNotEqual(self.shell(check).returncode, 0)
+        self.efi_application(esp / 'EFI/debian/bootx64.efi', machine=0x8664)
+        self.efi_application(esp / 'EFI/debian/driveraa64.efi', subsystem=11)
+        (esp / 'EFI/debian/empty.efi').touch()
+        (esp / 'EFI/debian/text.efi').write_bytes(b'not an EFI application' * 6)
+        malformed = esp / 'EFI/debian/bad-header.efi'
+        self.efi_application(malformed)
+        with malformed.open('r+b') as stream:
+            stream.seek(60)
+            stream.write(struct.pack('<I', 0xffffffff))
+        self.assertEqual(self.shell(f'piano_esp_linux_present "{esp}"').returncode, 1)
+
+    def test_esp_read_error_is_distinct_from_missing_candidate(self):
+        esp = self.base / 'esp'
+        esp.mkdir()
+        check = f'piano_esp_linux_present "{esp}"'
+        self.assertEqual(self.shell(check).returncode, 1)
+        self.efi_application(esp / 'EFI/BOOT/BOOTAA64.EFI')
+        self.assertEqual(self.shell('od() { return 1; }; ' + check).returncode, 2)
 
     def test_inspect_missing_native_is_readonly_and_no_zip(self):
         self.args.native_tool = self.args.native_manifest = None

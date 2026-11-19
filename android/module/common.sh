@@ -50,13 +50,53 @@ piano_android_grow_ready() (
   done
   return 1
 )
-# Only inspect the product UKI; never execute payloads or entry contents.
+piano_esp_arm64_application() (
+  # Identify PE32+ ARM64 EFI applications; firmware validates the full image.
+  file=$(readlink -f "$2") || exit 2
+  case "$file" in "$1"/*) ;; *) exit 1 ;; esac
+  size=$(stat -c %s "$file") || exit 2
+  [ "$size" -ge 64 ] || exit 1
+  bytes=$(od -An -v -tx1 -N64 "$file") || exit 2
+  set -- $bytes
+  [ "$#" -eq 64 ] && [ "$1$2" = 4d5a ] || exit 1
+  shift 60
+  pe=$((0x$1 | (0x$2 << 8) | (0x$3 << 16) | (0x$4 << 24)))
+  [ "$pe" -ge 64 ] && [ "$((pe + 94))" -le "$size" ] || exit 1
+  bytes=$(od -An -v -tx1 -j "$pe" -N94 "$file") || exit 2
+  set -- $bytes
+  [ "$#" -eq 94 ] && [ "$1$2$3$4$5$6" = 5045000064aa ] || exit 1
+  shift 24
+  [ "$1$2" = 0b02 ] || exit 1
+  shift 68
+  [ "$1$2" = 0a00 ]
+)
+
+# The ESP can use the architecture fallback or an installed EFI application.
+# Boot order and loader configuration belong to firmware and the boot manager.
+# Return 1 for no candidate and 2 if inspection could not be completed.
 piano_esp_linux_present() (
-  root=$(readlink -f "$1") || exit 1
-  [ -d "$root" ] || exit 1
-  resolved=$(readlink -f "$root/EFI/Linux/sunuefi.efi") || exit 1
-  case "$resolved" in "$root"/*) ;; *) exit 1 ;; esac
-  [ -f "$resolved" ] && [ -s "$resolved" ]
+  root=$(readlink -f "$1") || exit 2
+  [ -d "$root" ] && [ -r "$root" ] && [ -x "$root" ] || exit 2
+  efi=$root/EFI
+  [ -d "$efi" ] || exit 1
+  [ -r "$efi" ] && [ -x "$efi" ] || exit 2
+  result=1
+  for directory in "$efi"/*; do
+    [ -d "$directory" ] || continue
+    if [ ! -r "$directory" ] || [ ! -x "$directory" ]; then
+      result=2
+      continue
+    fi
+    for entry in "$directory"/*.[Ee][Ff][Ii]; do
+      [ -f "$entry" ] || continue
+      if piano_esp_arm64_application "$root" "$entry"; then
+        exit 0
+      elif [ "$?" -eq 2 ]; then
+        result=2
+      fi
+    done
+  done
+  exit "$result"
 )
 piano_check_bootloader() {
   [ "$(getprop ro.boot.flash.locked)" = 0 ] && return 0

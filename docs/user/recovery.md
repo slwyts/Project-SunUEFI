@@ -13,6 +13,9 @@ SunUEFI 不替换原厂引导程序。正常扫描和启动不会改写 Android 
 
 强制重启后仍然回不到 Android 时，先不要继续刷写，记下屏幕状态和电脑上 `fastboot devices` 的输出再求助。
 
+已安装 systemd-boot，但旧固件仍提示找不到启动文件时，先返回 Android。
+更新引导助手后，在 **维护** 页点 **重新安装引导**。无需重装 Linux。
+
 ## 更新报启动分区空间不足
 
 先用 `sudo bootctl --print-esp-path` 找到启动分区的挂载点，再用 `df -h` 检查该目录的空间。用 `uname -r` 和 `sudo bootctl list` 区分当前内核与旧版本。
