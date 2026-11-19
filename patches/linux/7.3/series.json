@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "4ef3a9087e89ab13b99af4364a667de961ecfbb8",
-  "original_target_commit": "4f011337e8078c7ae47e0099907b68c8f3467201",
+  "target_tree": "da0cb7a89ce0fcf83a83d8a40ba9c3c70c1daa3f",
+  "original_target_commit": "c503c89eef09165b6fccee168ecdd153fe15e634",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1758,6 +1758,19 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "The upstream Iris encoder keeps CAPTURE and OUTPUT frame intervals in sync when setting the OUTPUT interval and preserves configured rates after rejected changes."
+      }
+    },
+    {
+      "file": "0137-LOCAL-leds-qcom-flash-fix-safety-timer.patch",
+      "sha256": "a8a827944ca41b2cfeb40f9d23eaa244c916d73fc3bb8e23c4a9e87f1741c887",
+      "original_commit": "c503c89eef09165b6fccee168ecdd153fe15e634",
+      "original_parent": "4f011337e8078c7ae47e0099907b68c8f3467201",
+      "committer_date": "2026-11-19T09:13:34+08:00",
+      "tree": "da0cb7a89ce0fcf83a83d8a40ba9c3c70c1daa3f",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected kernel encodes a 10 ms MVFLASH safety timeout as the enabled zero duration code."
       }
     }
   ],

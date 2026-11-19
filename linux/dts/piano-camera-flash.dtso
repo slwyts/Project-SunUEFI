@@ -3,10 +3,8 @@
 /plugin/;
 
 /*
- * Standard flash controller for the verified SID 1 peripheral at 0xee00.
- * Read-only identity: type 0x18, subtype 0x07 (existing four-channel layout).
- * Only the two factory-wired outputs 1/2 are described. The default release
- * applies this with the flash config fragment and cleanup patch.
+ * PM8550 flash controller on SID 1. Each LED uses two current sinks.
+ * Keep the board's total LED current budget when assigning the two pairs.
  */
 / {
 	fragment@0 {
@@ -30,16 +28,14 @@
 			#size-cells = <0>;
 
 			led-controller@ee00 {
-				/* Specific IP name follows the factory flash compatible. */
-				compatible = "qcom,pm8350c-flash-led", "qcom,spmi-flash-led";
+				compatible = "qcom,pm8550-flash-led", "qcom,spmi-flash-led";
 				reg = <0xee00>;
 				status = "okay";
 
 				piano_camera_flash0: led-0 {
 					function = "flash";
 					function-enumerator = <0>;
-					/* Factory qcom,id 0 is standard channel 1. */
-					led-sources = <1>;
+					led-sources = <1 4>;
 					led-max-microamp = <100000>;
 					flash-max-microamp = <400000>;
 					flash-max-timeout-us = <300000>;
@@ -48,8 +44,7 @@
 				piano_camera_flash1: led-1 {
 					function = "flash";
 					function-enumerator = <1>;
-					/* Factory qcom,id 1 is standard channel 2. */
-					led-sources = <2>;
+					led-sources = <2 3>;
 					led-max-microamp = <100000>;
 					flash-max-microamp = <400000>;
 					flash-max-timeout-us = <300000>;
