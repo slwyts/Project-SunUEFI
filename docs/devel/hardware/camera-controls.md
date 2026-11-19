@@ -41,11 +41,17 @@ sudo ./build.sh plasma-camera --sysroot "$SID_ARM64_ROOT" --libcamera-packages b
 | 功能 | 现有服务（旧路径） | 标准硬件路径（替代状态） |
 | --- | --- | --- |
 | 前后摄预览、录像 | CAMSS PIX 输出 NV12，服务通过两个 loopback 摄像头交给应用 | Debian 普通会话已通过正式 libcamera 和 PipeWire 从两个实际摄像头取帧；仍需补硬件统计、逐帧控制及拍照录像验收 |
-| 分辨率、帧率协商 | 服务处理 loopback 的 `S_FMT`／`S_PARM`，配置 sensor、硬件缩放与裁切 | libcamera 原型已通过后摄 3840×2160／60 fps 与前摄 3264×2448／30 fps 的配置和重开；还需覆盖其他模式与切换 |
+| 分辨率、帧率协商 | 服务处理 loopback 的 `S_FMT`／`S_PARM`，配置 sensor、硬件缩放与裁切 | Debian 装包后，普通用户通过 GStreamer 从前后摄取得 640×480、1280×720、1920×1080 和 1024×600 NV12；后摄原生 3840×2160／60 fps 的帧序连续，停流后可切回 720p |
 | 自动曝光、白平衡、后摄对焦 | 服务从 NV12 采样计算 AE／AWB 和清晰度 | TFE980 统计配置、metadata DMA 队列、完成处理和只处理硬件统计的 IPA 未实现，资料缺项见[下节](#tfe980-公开资料与-metadata) |
 | 手动控件、逐帧参数 | 控制 socket 写标准 sensor／PIX 控件；CCM 使用私有控件 | 底层曝光、gain、白平衡等控件保留；标准逐帧 ISP 参数、生效帧关联和 libcamera 控件接入未实现 |
 | 镜头、闪光拍照 | 镜头及两路 flash ancillary links 已确认；服务提供强制闪光拍照流程 | 标准镜头／flash 控件和关联已具备；硬件 AF 统计、镜头标定、移动稳定时间及 libcamera 闪光流程未实现 |
 | 后摄全幅 | RDI 采集 Quad CFA，经已有软件转换输出 NV12 | 当前 TFE 没有实现全幅 remosaic；硬件路径先使用 binned 模式，不增加软件回退或放大冒充全幅 |
+
+libcamera 从 NV12 捕获节点读取尺寸范围，先保留传感器的原生模式，也公布
+应用常用的缩放尺寸。缩放和裁切都由 TFE 完成：传感器保持原生宽高比，
+缩小后再居中裁切，不拉伸画面。输出尺寸、行跨度和缓冲区大小以捕获节点
+读回为准。后摄用 60 fps 传感器模式做缩放时可交付约 60 fps，但 GStreamer
+仍可能协商成 30 fps；还需要把传感器的实际帧间隔接到 libcamera 的标准控件。
 
 因此不能先移除 `piano-camerad`、loopback 或控制 socket：否则应用会失去已处理的视频输出、3A 和现有拍照入口。WirePlumber 配置同时隐藏服务占用的 CAMSS 节点并禁用 libcamera monitor，避免两个路径争抢 sensor；标准替代完成并验证这些功能前，该配置仍需保留。
 

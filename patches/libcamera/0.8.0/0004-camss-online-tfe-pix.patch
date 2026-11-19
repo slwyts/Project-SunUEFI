@@ -358,7 +358,7 @@ index 9fc355b8f7746441b212d8e5e175d6f12fb51311..3b9ded8c6918bf854c5cb427f1324c10
  }
  
 diff --git a/src/libcamera/pipeline/camss/camss_csi.h b/src/libcamera/pipeline/camss/camss_csi.h
-index fd5cf29d2ab96d7eff8d724a32b2d0dde5cdf98f..9653f332a1d19623a54b1d016348405d172c1624 100644
+index fd5cf29d2ab96d7eff8d724a32b2d0dde5cdf98f..d890d4fd93aa74f094832200bbf08e2eb63c76e5 100644
 --- a/src/libcamera/pipeline/camss/camss_csi.h
 +++ b/src/libcamera/pipeline/camss/camss_csi.h
 @@ -14,10 +14,14 @@
@@ -402,7 +402,7 @@ index fd5cf29d2ab96d7eff8d724a32b2d0dde5cdf98f..9653f332a1d19623a54b1d016348405d
  
  private:
  	friend class CamssCsi;
-@@ -94,11 +110,19 @@ private:
+@@ -94,11 +110,20 @@ private:
  					    CamssIsp *isp = nullptr) const;
  	int tryFormat(const V4L2SubdeviceFormat &sensorFormat, StreamConfiguration &cfg) const;
  	void freeBuffers();
@@ -415,6 +415,7 @@ index fd5cf29d2ab96d7eff8d724a32b2d0dde5cdf98f..9653f332a1d19623a54b1d016348405d
  
 +	std::unique_ptr<V4L2Subdevice> pixSensor_;
 +	std::vector<Size> pixSizes_;
++	SizeRange pixOutputRange_;
 +	std::string pixId_;
 +	ControlList pixProperties_;
 +	Orientation pixOrientation_ = Orientation::Rotate0;
@@ -422,7 +423,7 @@ index fd5cf29d2ab96d7eff8d724a32b2d0dde5cdf98f..9653f332a1d19623a54b1d016348405d
  	std::vector<std::unique_ptr<FrameBuffer>> buffers_;
  	std::queue<FrameBuffer *> availableBuffers_;
  	unsigned int bufferCount_;
-@@ -113,7 +137,7 @@ public:
+@@ -113,7 +138,7 @@ public:
  	Cameras match(PipelineHandler *pipe, DeviceEnumerator *enumerator);
  private:
  	void getEntities(std::vector<MediaEntity *> &ents, const char *fmt, unsigned int max);
@@ -433,10 +434,10 @@ index fd5cf29d2ab96d7eff8d724a32b2d0dde5cdf98f..9653f332a1d19623a54b1d016348405d
  	static constexpr unsigned int kMinCsiDecoders = 2;
 diff --git a/src/libcamera/pipeline/camss/camss_csi_pix.cpp b/src/libcamera/pipeline/camss/camss_csi_pix.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..326a221a37439b7cd1e35753e9ab91f2920e86ac
+index 0000000000000000000000000000000000000000..b31030e19623f533d9b3d57cfdf1793da8152c4d
 --- /dev/null
 +++ b/src/libcamera/pipeline/camss/camss_csi_pix.cpp
-@@ -0,0 +1,375 @@
+@@ -0,0 +1,460 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/*
 + * Qualcomm TFE online PIX capture
@@ -447,12 +448,14 @@ index 0000000000000000000000000000000000000000..326a221a37439b7cd1e35753e9ab91f2
 +#include <algorithm>
 +#include <cerrno>
 +#include <chrono>
-+#include <cstdlib>
 +#include <map>
++#include <numeric>
++#include <optional>
 +
 +#include <linux/media-bus-format.h>
 +
 +#include <libcamera/base/log.h>
++#include <libcamera/base/utils.h>
 +
 +#include <libcamera/formats.h>
 +#include <libcamera/property_ids.h>
@@ -465,6 +468,55 @@ index 0000000000000000000000000000000000000000..326a221a37439b7cd1e35753e9ab91f2
 +LOG_DECLARE_CATEGORY(Camss)
 +
 +namespace {
++
++constexpr unsigned int kPixScaleLimit = 16;
++
++struct PixGeometry {
++	Size sensor;
++	Size compose;
++	Rectangle crop;
++};
++
++unsigned int divRoundUp(unsigned int value, unsigned int divisor)
++{
++	return (value + divisor - 1) / divisor;
++}
++
++std::optional<PixGeometry> pixGeometry(const std::vector<Size> &modes,
++				       const Size &output)
++{
++	std::optional<PixGeometry> best;
++
++	for (const Size &sensor : modes) {
++		if (sensor == output)
++			return PixGeometry{ sensor, sensor, Rectangle(output) };
++		if (output.width > sensor.width || output.height > sensor.height)
++			continue;
++
++		/*
++		 * Choose the smallest even rectangle of the same aspect ratio.
++		 * The luma downscaler takes at most 16 input pixels per output
++		 * pixel; the crop can be smaller than its minimum output.
++		 */
++		unsigned int units = std::gcd(sensor.width, sensor.height);
++		Size aspect(sensor.width / units, sensor.height / units);
++		unsigned int scale = utils::alignUp(std::max({
++			divRoundUp(output.width, aspect.width),
++			divRoundUp(output.height, aspect.height),
++			divRoundUp(units, kPixScaleLimit),
++		}), 2);
++		Size compose(aspect.width * scale, aspect.height * scale);
++		Rectangle crop(utils::alignDown((compose.width - output.width) / 2, 2),
++			       utils::alignDown((compose.height - output.height) / 2, 2),
++			       output.width, output.height);
++
++		/* Less cropping keeps more of the sensor's field of view. */
++		if (!best || compose < best->compose)
++			best = PixGeometry{ sensor, compose, crop };
++	}
++
++	return best;
++}
 +
 +bool isBayer10(unsigned int code)
 +{
@@ -572,7 +624,10 @@ index 0000000000000000000000000000000000000000..326a221a37439b7cd1e35753e9ab91f2
 +	 */
 +	if (model != "s5kjn1" && model != "ov32d40")
 +		return -ENODEV;
-+	if (!output_->formats().contains(V4L2PixelFormat(V4L2_PIX_FMT_NV12)))
++
++	const auto formats = output_->formats();
++	const auto nv12 = formats.find(V4L2PixelFormat(V4L2_PIX_FMT_NV12));
++	if (nv12 == formats.end() || nv12->second.size() != 1)
 +		return -ENODEV;
 +
 +	pixSensor_ = std::make_unique<V4L2Subdevice>(entity);
@@ -598,6 +653,11 @@ index 0000000000000000000000000000000000000000..326a221a37439b7cd1e35753e9ab91f2
 +	std::sort(pixSizes_.begin(), pixSizes_.end());
 +	pixSizes_.erase(std::unique(pixSizes_.begin(), pixSizes_.end()), pixSizes_.end());
 +	if (pixSizes_.empty())
++		return -ENODEV;
++
++	pixOutputRange_ = nv12->second.front();
++	pixOutputRange_.max = pixOutputRange_.max.boundedTo(pixSizes_.back());
++	if (!pixOutputRange_.contains(pixOutputRange_.max))
 +		return -ENODEV;
 +
 +	pixProperties_ = ControlList(properties::properties);
@@ -632,10 +692,23 @@ index 0000000000000000000000000000000000000000..326a221a37439b7cd1e35753e9ab91f2
 +
 +StreamConfiguration CamssCsiCamera::generatePixConfiguration() const
 +{
-+	std::vector<SizeRange> sizes(pixSizes_.begin(), pixSizes_.end());
-+	StreamConfiguration cfg(StreamFormats({ { formats::NV12, sizes } }));
++	/*
++	 * Keep the sensor's native sizes alongside the usual application
++	 * sizes. StreamFormats accepts either discrete sizes or one range.
++	 */
++	StreamFormats range({ { formats::NV12, { pixOutputRange_ } } });
++	std::vector<Size> sizes = range.sizes(formats::NV12);
++	for (const Size &size : pixSizes_) {
++		if (pixOutputRange_.contains(size))
++			sizes.push_back(size);
++	}
++	std::sort(sizes.begin(), sizes.end());
++	sizes.erase(std::unique(sizes.begin(), sizes.end()), sizes.end());
 +
-+	cfg.size = pixSizes_.back();
++	std::vector<SizeRange> discrete(sizes.begin(), sizes.end());
++	StreamConfiguration cfg(StreamFormats({ { formats::NV12, discrete } }));
++
++	cfg.size = pixOutputRange_.max;
 +	cfg.pixelFormat = formats::NV12;
 +
 +	return cfg;
@@ -646,26 +719,26 @@ index 0000000000000000000000000000000000000000..326a221a37439b7cd1e35753e9ab91f2
 +	if (!output_->isOpen())
 +		return -EPIPE;
 +
-+	auto error = [cfg](const Size &size) {
-+		return std::abs(static_cast<int64_t>(size.width) - cfg->size.width) +
-+		       std::abs(static_cast<int64_t>(size.height) - cfg->size.height);
-+	};
-+	const Size &size = *std::min_element(pixSizes_.begin(), pixSizes_.end(),
-+					    [&error](const Size &a, const Size &b) {
-+		return error(a) < error(b);
-+	});
++	/* The capture node's TRY_FMT does not require an active route. */
++	if (cfg->size.width > pixOutputRange_.max.width ||
++	    cfg->size.height > pixOutputRange_.max.height ||
++	    cfg->size.width < pixOutputRange_.min.width ||
++	    cfg->size.height < pixOutputRange_.min.height)
++		return -EINVAL;
++
 +	V4L2DeviceFormat fmt = {};
 +	fmt.fourcc = V4L2PixelFormat(V4L2_PIX_FMT_NV12);
 +	fmt.planesCount = 1;
-+	fmt.size = size;
++	fmt.size = cfg->size;
 +
 +	int ret = output_->tryFormat(&fmt);
 +	if (ret)
 +		return ret;
-+	if (!isPixFormat(fmt, size))
++	if (!pixOutputRange_.contains(fmt.size) || !isPixFormat(fmt, fmt.size) ||
++	    !pixGeometry(pixSizes_, fmt.size))
 +		return -EINVAL;
 +
-+	cfg->size = size;
++	cfg->size = fmt.size;
 +	cfg->pixelFormat = formats::NV12;
 +	cfg->stride = fmt.planes[0].bpl;
 +	cfg->frameSize = fmt.planes[0].size;
@@ -684,8 +757,13 @@ index 0000000000000000000000000000000000000000..326a221a37439b7cd1e35753e9ab91f2
 +	auto &vfe = links_[CsidVfeLink];
 +	unsigned int sensorPad = phy.link->source()->index();
 +	unsigned int pixPad = vfe.link->source()->index();
++	unsigned int vfeSink = vfe.link->sink()->index();
++	std::optional<PixGeometry> geometry = pixGeometry(pixSizes_, cfg.size);
 +	PixLinks changes;
 +	int ret;
++
++	if (!geometry)
++		return -EINVAL;
 +
 +	/*
 +	 * Do not modify formats before the selected links have been accepted
@@ -710,11 +788,11 @@ index 0000000000000000000000000000000000000000..326a221a37439b7cd1e35753e9ab91f2
 +	ret = pixSensor_->getFormat(sensorPad, &raw);
 +	if (ret)
 +		return ret;
-+	raw.size = cfg.size;
++	raw.size = geometry->sensor;
 +	ret = pixSensor_->setFormat(sensorPad, &raw);
 +	if (ret)
 +		return ret;
-+	if (!isBayer10(raw.code) || raw.size != cfg.size)
++	if (!isBayer10(raw.code) || raw.size != geometry->sensor)
 +		return -EINVAL;
 +
 +	ret = setFormat(phy.sinkSubdev.get(), phy.link->sink()->index(), raw);
@@ -726,23 +804,28 @@ index 0000000000000000000000000000000000000000..326a221a37439b7cd1e35753e9ab91f2
 +	ret = setFormat(csid.sinkSubdev.get(), pixPad, raw);
 +	if (ret)
 +		return ret;
-+	ret = setFormat(vfe.sinkSubdev.get(), vfe.link->sink()->index(), raw);
++	ret = setFormat(vfe.sinkSubdev.get(), vfeSink, raw);
 +	if (ret)
 +		return ret;
 +
-+	/* The first online path exposes 1:1 binned modes only. */
-+	Rectangle full(cfg.size), compose(full), crop(full);
-+	ret = vfe.sinkSubdev->setSelection(0, V4L2_SEL_TGT_COMPOSE, &compose);
++	/* The VFE sink format resets compose, and compose resets source crop. */
++	Rectangle compose(geometry->compose);
++	ret = vfe.sinkSubdev->setSelection(vfeSink, V4L2_SEL_TGT_COMPOSE, &compose);
 +	if (ret)
 +		return ret;
++	if (compose != Rectangle(geometry->compose))
++		return -EINVAL;
++
++	Rectangle crop(geometry->crop);
 +	ret = vfe.sinkSubdev->setSelection(1, V4L2_SEL_TGT_CROP, &crop);
 +	if (ret)
 +		return ret;
-+	if (compose != full || crop != full)
++	if (crop != geometry->crop)
 +		return -EINVAL;
 +
 +	V4L2SubdeviceFormat yuv = raw;
 +	yuv.code = MEDIA_BUS_FMT_YUYV8_1_5X8;
++	yuv.size = cfg.size;
 +	ret = setFormat(vfe.sinkSubdev.get(), 1, yuv);
 +	if (ret)
 +		return ret;
@@ -759,6 +842,9 @@ index 0000000000000000000000000000000000000000..326a221a37439b7cd1e35753e9ab91f2
 +	    fmt.planes[0].size != cfg.frameSize || fmt.colorSpace != cfg.colorSpace)
 +		return -EIO;
 +
++	LOG(Camss, Debug) << "PIX " << geometry->sensor
++			  << " scaled to " << compose.size() << ", crop " << crop
++			  << ", stride " << cfg.stride << ", size " << cfg.frameSize;
 +	bufferCount_ = cfg.bufferCount;
 +	changes.commit();
 +	return 0;

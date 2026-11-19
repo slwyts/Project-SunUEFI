@@ -32,11 +32,11 @@
     },
     {
       "file": "0004-camss-online-tfe-pix.patch",
-      "sha256": "40d2eb63385e4759753ddaf457ccfc83d84441650ec13be12393bb3b80427fd8",
+      "sha256": "d0fbb1852ec5fc15b35156ad79ef4225d33a7cb0a74f5a91d180b8aad441b752",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/libcamera-org/libcamera/tree/v0.8.0/src/libcamera/pipeline",
-        "drop_when": "The upstream CAMSS pipeline negotiates and streams SM8750 TFE PIX NV12 buffers from the two sensors, with independent stop and reopen."
+        "drop_when": "The upstream CAMSS pipeline negotiates native and hardware-scaled SM8750 TFE PIX NV12 from both sensors, with independent stop and reopen."
       }
     },
     {
