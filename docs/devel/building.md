@@ -233,6 +233,18 @@ Piano 的原生硬件包，源码和扩展选择在 `config/nyarch.json`。
 这些命令从同一签名标签构建，不覆盖已安装的程序或 Flutter Engine。
 补丁优先使用标准加速度计接口，保留 Phonewave 后备；内屏熄灭后释放请求。
 
+打包时使用同一版 Denial 的发布归档，目录中保留软件包、`SHA256SUMS`
+和签名：
+
+```sh
+./build.sh denial --package debian --release-archives "$DENIAL_RELEASE" \
+  --package-output artifacts/packages/denial/debian
+```
+
+Arch 使用 `--package pacman`，另提供签名源码检出目录 `--source`
+和含 `makepkg` 的独立 ARM64 构建根 `--arch-root`，在私有挂载命名空间中执行。
+两个包管理器都只重打 `denial` 和 `denial-plugin-manager`，保留上游 Flutter Engine。
+
 已有隔离的 ARM64 pacman 构建根目录时，可单独构建并安装完整 Mesa 包；此操作会修改指定的构建根目录，不要直接使用已交付的产品根目录：
 
 ```sh

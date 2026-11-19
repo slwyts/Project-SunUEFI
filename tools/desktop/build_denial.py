@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and test the Denial compositor from its signed upstream source."""
+"""Build, test and package Denial from its signed upstream release."""
 import argparse
 import fcntl
 import hashlib
@@ -31,7 +31,8 @@ def verify_source(source, policy, keyring):
         text=True).strip()
     if commit != policy['commit']:
         raise ValueError('The Denial release tag does not match the pinned commit')
-    run(['gpg', '--batch', '--homedir', keyring, '--import', KEY], capture_output=True)
+    run(['gpg', '--no-options', '--batch', '--homedir', keyring, '--dearmor',
+         '--output', keyring / 'pubring.gpg', KEY], capture_output=True)
     signature = subprocess.run(
         ['git', '-C', source, '-c', 'gpg.format=openpgp', '-c', 'gpg.program=gpg',
          'verify-tag', '--raw', f'refs/tags/{tag}'],
@@ -115,18 +116,50 @@ def build(args):
         print(binary)
 
 
+def package(args):
+    from desktop import denial_packages
+
+    output = args.output.resolve()
+    destination = args.package_output.resolve()
+    if (not output.is_relative_to(ROOT / 'build') or output == ROOT / 'build' or
+            not destination.is_relative_to(ROOT / 'artifacts/packages') or
+            destination == ROOT / 'artifacts/packages'):
+        raise ValueError('Use the existing Denial build and a new directory under artifacts/packages')
+    if not (output / 'SOURCE.json').is_file():
+        raise ValueError('Build the ARM64 compositor before packaging it')
+    with (output / 'build.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+        denial_packages.build(output / 'deniald', output / 'SOURCE.json',
+                              args.release_archives.resolve(), destination, args.package,
+                              source=args.source, arch_root=args.arch_root)
+    print(destination)
+
+
 def main():
     parser = argparse.ArgumentParser(prog='./build.sh denial', description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--release', action='store_true', help='Build on an ARM64 host or in an ARM64 container')
     mode.add_argument('--arch-sysroot', type=Path, help='ARM64 Arch sysroot for the release compositor')
     mode.add_argument('--test', action='store_true', help='Run the orientation tests on the build host')
+    mode.add_argument('--package', choices=('debian', 'pacman'), help='Package a completed ARM64 build')
     parser.add_argument('--source', type=Path, help='Use an existing checkout with the signed release tag')
-    parser.add_argument('--output', type=Path, default=ROOT / 'build/denial')
+    parser.add_argument('--output', type=Path, default=ROOT / 'build/denial', help='Compositor build directory')
+    parser.add_argument('--release-archives', type=Path, help='Denial release packages, checksums and signatures')
+    parser.add_argument('--package-output', type=Path, help='New directory for the native packages')
+    parser.add_argument('--arch-root', type=Path, help='Isolated ARM64 Arch build root with makepkg')
     parser.add_argument('--jobs', type=int, default=package_build.default_jobs(2048))
     args = parser.parse_args()
+    if args.package:
+        if not args.release_archives or not args.package_output:
+            parser.error('--package needs --release-archives and --package-output')
+        if args.package == 'pacman' and (not args.source or not args.arch_root):
+            parser.error('--package pacman needs --source and --arch-root')
+        if args.package == 'debian' and args.arch_root:
+            parser.error('--arch-root is only for --package pacman')
+    elif args.release_archives or args.package_output or args.arch_root:
+        parser.error('--release-archives, --package-output and --arch-root are for --package')
     try:
-        build(args)
+        (package if args.package else build)(args)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'{error}\n')
 
