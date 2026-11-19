@@ -355,9 +355,9 @@ Debian 把 ESP 挂在 `/boot/efi`，APT 管理的内核文件仍留在根文件�
 没有独立的 XBOOTLDR 分区时，两者通常相同。
 
 安装 Piano 内核时，`piano-boot-config` 在 initramfs／UKI 已生成、systemd 写入前
-检查启动分区能否容纳新文件。空间不足会提示先保留可用的旧启动项再腾出空间，
-不会覆盖或自动删除旧文件。这个检查避免已知的空间不足导致覆盖中断；
-它不是断电或其他进程同时写入时的事务保护。
+检查启动分区能否容纳新文件。在 FAT 上更新同一个入口时，只预留文件增长所需
+的空间；安装另一个版本仍要容纳完整的新入口。如果空间不足，安装会先停止并提示
+从包管理器卸载不用的旧内核，不会为了给新版本腾空间而删除已有入口。
 
 默认 `/etc/kernel/install.conf` 为 `layout=bls`；需要 UKI 时改为 `layout=uki`。
 Arch 系运行 `sudo kernel-install add-all`；Debian 的内核文件在 `/boot`，
