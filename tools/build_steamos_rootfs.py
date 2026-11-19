@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 from build_nyarch_apps import guest_environment
 from build_release_rootfs import build_resolver, digest
@@ -41,6 +42,22 @@ def configure_repositories(root):
 
 def run(*args, **kwargs):
     return subprocess.run([str(a) for a in args], check=True, **kwargs)
+
+
+def upgrade_valve_packages(guest):
+    args = ['--noconfirm', 'glibc-locales']
+    for attempt in range(3):
+        try:
+            guest(['pacman', '-Syu', '--downloadonly', *args])
+            break
+        except subprocess.CalledProcessError:
+            if attempt == 2:
+                raise
+            delay = 5 * (attempt + 1)
+            print(f'Valve package download failed; retrying in {delay}s.', flush=True)
+            time.sleep(delay)
+    # Install once against the same database, without refreshing it again.
+    guest(['pacman', '-Su', *args])
 
 
 def sensor_recipes(output, source):
@@ -246,7 +263,7 @@ def build(args):
         if subprocess.run(['chroot', root, 'pacman', '-Qq', 'holo-glibc-locales'],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
             guest(['pacman', '-R', '--noconfirm', 'holo-glibc-locales'])
-        guest(['pacman', '-Syu', '--noconfirm', 'glibc-locales'])
+        upgrade_valve_packages(guest)
         packages = ['base-devel',
                'sddm', 'openssh', 'bluez', 'bluez-utils', 'networkmanager', 'wpa_supplicant',
                'alsa-utils', 'pipewire', 'pipewire-pulse', 'wireplumber',
