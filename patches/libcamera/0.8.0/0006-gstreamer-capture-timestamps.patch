@@ -1,0 +1,119 @@
+Subject: [PATCH] gstreamer: fall back to the completed buffer timestamp
+
+SensorTimestamp is optional. Treating an absent value as zero underflows
+running time and gives encoders unusable PTS. Use the timestamp of a
+completed capture buffer when the request provides no sensor timestamp.
+Do not substitute a capture-completion timestamp for SensorTimestamp:
+the latter describes the start of exposure.
+
+--- a/src/gstreamer/gstlibcamerasrc.cpp
++++ b/src/gstreamer/gstlibcamerasrc.cpp
+@@ -21,6 +21,7 @@
+ 
+ #include "gstlibcamerasrc.h"
+ 
++#include <algorithm>
+ #include <atomic>
+ #include <queue>
+ #include <tuple>
+@@ -58,7 +59,8 @@
+ };
+ 
+ RequestWrap::RequestWrap(std::unique_ptr<Request> request)
+-	: request_(std::move(request)), latency_(0), pts_(GST_CLOCK_TIME_NONE)
++	: request_(std::move(request)), latency_(GST_CLOCK_TIME_NONE),
++	  pts_(GST_CLOCK_TIME_NONE)
+ {
+ }
+ 
+@@ -222,6 +224,36 @@
+ 	return 0;
+ }
+ 
++static GstClockTime
++gst_libcamera_capture_latency(const Request &request)
++{
++	const GstClockTime now = g_get_monotonic_time() * GST_USECOND;
++	const auto sensorTimestamp = request.metadata().get(controls::SensorTimestamp);
++
++	/*
++	 * Existing pipeline handlers often copy a V4L2 monotonic timestamp
++	 * into SensorTimestamp. Keep its current interpretation until the
++	 * producers are consistent about the clock domain.
++	 */
++	if (sensorTimestamp && *sensorTimestamp > 0 &&
++	    static_cast<GstClockTime>(*sensorTimestamp) <= now)
++		return now - *sensorTimestamp;
++
++	/* V4L2 buffer timestamps are monotonic; keep one time for this request. */
++	GstClockTime timestamp = GST_CLOCK_TIME_NONE;
++	for (const auto &[stream, buffer] : request.buffers()) {
++		const FrameMetadata &metadata = buffer->metadata();
++		if (metadata.status == FrameMetadata::FrameCancelled ||
++		    metadata.timestamp == 0 || metadata.timestamp > now)
++			continue;
++
++		timestamp = std::min<GstClockTime>(timestamp, metadata.timestamp);
++	}
++
++	return GST_CLOCK_TIME_IS_VALID(timestamp) ? now - timestamp
++						  : GST_CLOCK_TIME_NONE;
++}
++
+ void
+ GstLibcameraSrcState::requestCompleted(Request *request)
+ {
+@@ -245,18 +277,26 @@
+ 		return;
+ 	}
+ 
+-	if (GST_ELEMENT_CLOCK(src_)) {
+-		int64_t timestamp = request->metadata().get(controls::SensorTimestamp).value_or(0);
+-
+-		GstClockTime gst_base_time = GST_ELEMENT(src_)->base_time;
+-		GstClockTime gst_now = gst_clock_get_time(GST_ELEMENT_CLOCK(src_));
+-		/* \todo Need to expose which reference clock the timestamp relates to. */
+-		GstClockTime sys_now = g_get_monotonic_time() * 1000;
+-
+-		/* Deduced from: sys_now - sys_base_time == gst_now - gst_base_time */
+-		GstClockTime sys_base_time = sys_now - (gst_now - gst_base_time);
+-		wrap->pts_ = timestamp - sys_base_time;
+-		wrap->latency_ = sys_now - timestamp;
++	GstElement *element = GST_ELEMENT(src_);
++	g_autoptr(GstClock) clock = gst_element_get_clock(element);
++	if (clock) {
++		const GstClockTime baseTime = gst_element_get_base_time(element);
++		const GstClockTime now = gst_clock_get_time(clock);
++		if (GST_CLOCK_TIME_IS_VALID(now) && now >= baseTime) {
++			const GstClockTime runningTime = now - baseTime;
++			wrap->latency_ = gst_libcamera_capture_latency(*request);
++			if (GST_CLOCK_TIME_IS_VALID(wrap->latency_)) {
++				if (wrap->latency_ > runningTime) {
++					GST_DEBUG_OBJECT(src_, "Frame predates the pipeline base time");
++					return;
++				}
++				wrap->pts_ = runningTime - wrap->latency_;
++			} else {
++				/* No device timestamp; date the frame at request completion. */
++				wrap->pts_ = runningTime;
++				wrap->latency_ = 0;
++			}
++		}
+ 	}
+ 
+ 	{
+@@ -390,12 +430,9 @@
+ 			buffer = copy;
+ 		}
+ 
+-		if (GST_CLOCK_TIME_IS_VALID(wrap->pts_)) {
+-			GST_BUFFER_PTS(buffer) = wrap->pts_;
++		GST_BUFFER_PTS(buffer) = wrap->pts_;
++		if (GST_CLOCK_TIME_IS_VALID(wrap->latency_))
+ 			gst_libcamera_pad_set_latency(srcpad, wrap->latency_);
+-		} else {
+-			GST_BUFFER_PTS(buffer) = 0;
+-		}
+ 
+ 		GST_BUFFER_OFFSET(buffer) = fb->metadata().sequence;
+ 		GST_BUFFER_OFFSET_END(buffer) = fb->metadata().sequence;

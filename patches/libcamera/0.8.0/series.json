@@ -47,6 +47,15 @@
         "url": "https://github.com/libcamera-org/libcamera/blob/v0.8.0/src/meson.build",
         "drop_when": "Incompatible libcamera ABIs can install and find their own IPA modules, proxies and bundled camera data without replacing one another."
       }
+    },
+    {
+      "file": "0006-gstreamer-capture-timestamps.patch",
+      "sha256": "87483a9c424eb4741857562eb8c0e74deff1c10b37447965d3d084d39353c488",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/libcamera-org/libcamera/blob/df8e348d64b4932a0676256ed24f0da3ee9438bc/src/gstreamer/gstlibcamerasrc.cpp",
+        "drop_when": "The packaged GStreamer source keeps valid capture timing when SensorTimestamp is absent and does not produce unsigned timestamp underflow."
+      }
     }
   ]
 }

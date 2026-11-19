@@ -280,6 +280,12 @@ CSI SOF 是帧包开始，积分可能更早。内核不减去曝光时间，也
 
 libcamera `SensorTimestamp` 的语义是首行开始曝光、时钟为 `CLOCK_BOOTTIME`。这里的 CSI SOF 和 EOF 都不能直接填入该字段：还需要传感器积分相对 CSI 的时序和 MONOTONIC→BOOTTIME 换算，并在睡眠恢复后重新核对。现有 simple pipeline 直接使用捕获时间戳的行为不是 TFE 时间戳语义已经适配。
 
+`libcamerasrc` 在没有 `SensorTimestamp` 时使用已完成缓冲的时间，避免减去管线
+起点时产生无效时间戳。后摄 3840×2160 经 GStreamer 和 Iris 录有声 MP4，
+在编码器和封装器之间保留压缩包队列，避免封装器等待音轨时占住相机缓冲。
+平板连续取到 3600 帧，录入的 3600 帧均可解码，视频最大帧间隔 16.833 ms，
+内置麦克风轨约 60 秒。相机应用的 4K60 模式与同一声光事件的同步偏差另需验证。
+
 SOF/EOF 按既有双缓冲 FIFO 关联。标记缺失、不连续、接收端错误或无效换算会使该流持续返回 `V4L2_BUF_FLAG_ERROR`，直到重新开流。TFE 图像尺寸、CCIF 和约束错误另走 BUS 中断；处理错误与完成缓冲共用 `output_lock`，先检查错误再发布图像。只有活动的 write master 允许访问 BUS 寄存器，停止最后一条流时在关时钟前屏蔽、清除并读回中断配置。
 
 实现见[物理帧时序补丁](../../../patches/linux/7.3/0048-camss-frame-timestamps.patch)和 [TFE BUS 修复](../../../patches/linux/7.3/0049-camss-tfe-bus-errors.patch)。`camss_frame`、`camss_frame_error` trace 提供原始计数器、交叉采样和缓冲编号。
