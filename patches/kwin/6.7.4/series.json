@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "targets": [
+    "debian-kde"
+  ],
+  "patches": [
+    {
+      "file": "../6.6.5/0001-drm-restore-brightness-after-hdr.patch",
+      "sha256": "c9fb27ad758fe01421fee30a8778a7b49a5ef58eb0a244b9b005be092a883672"
+    },
+    {
+      "file": "0002-kcms-link-qtqml-explicitly.patch",
+      "sha256": "6847a458c8a1f49908a19a8fe08f4b318903ed6026ad227c2d4917e35976d89b",
+      "upstream": {
+        "status": "merged",
+        "url": "https://github.com/KDE/kwin/commit/eff53c21b29dbedc02597a3cd487af7b3e1b2d0d",
+        "commit": "eff53c21b29dbedc02597a3cd487af7b3e1b2d0d",
+        "drop_when": "The selected source explicitly links Qt::Qml for the virtual keyboard and Xwayland settings modules."
+      }
+    }
+  ]
+}

@@ -1,22 +1,27 @@
-From: slwyts <slwyts@foxmail.com>
-Subject: [PATCH] backends/drm: reapply hardware brightness when leaving HDR
+From f14e6d16f67b02b00b6fa01c6fef3e5c6c1736c7 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Wed, 18 Nov 2026 13:23:21 +0800
+Subject: [PATCH] backends/drm: restore hardware brightness after disabling HDR
 
-Internal displays use maximum hardware brightness in HDR while the output
-tracks the user's brightness in software. After disabling HDR, that cached
-value can still match the next frame's brightness, so updateBrightness()
-returns without restoring the backlight.
+In HDR mode, the hardware backlight is set to maximum while brightness is
+applied in software. After disabling HDR, the cached brightness can still
+match the requested value, leaving the backlight at maximum.
 
-Invalidate the cached value on the transition to SDR. The next presented
-frame then applies the requested brightness through the existing device.
+Invalidate the cached brightness when leaving HDR so the backlight is
+restored even if the requested brightness has not changed.
 
+BUG: 526345
+
+Co-authored-by: slwyts <slwyts@foxmail.com>
 ---
  src/backends/drm/drm_output.cpp | 8 +++++++-
  1 file changed, 7 insertions(+), 1 deletion(-)
 
 diff --git a/src/backends/drm/drm_output.cpp b/src/backends/drm/drm_output.cpp
+index fb476104f6..76492dde5b 100644
 --- a/src/backends/drm/drm_output.cpp
 +++ b/src/backends/drm/drm_output.cpp
-@@ -523,7 +523,13 @@ bool DrmOutput::queueChanges(const std::shared_ptr<OutputChangeSet> &props)
+@@ -575,7 +575,13 @@ bool DrmOutput::queueChanges(const std::shared_ptr<OutputChangeSet> &props)
      m_nextState->dimming = props->dimming.value_or(m_state.dimming);
      m_nextState->brightnessDevice = props->brightnessDevice.value_or(m_state.brightnessDevice);
      if (!m_nextState->highDynamicRange && m_nextState->brightnessDevice) {

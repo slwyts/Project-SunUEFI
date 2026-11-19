@@ -837,6 +837,17 @@ def build_overlays(record, rootfs, kernel, run, directory=None, *, uapi=None):
     if bluez_record is None:
         raise ValueError('BlueZ package does not match the signed Debian source and HoG patch')
     sources['bluez'] = bluez / 'runtime', bluez_record
+    if record['desktop'] == 'kde' or record.get('packages_only'):
+        from desktop import build_kwin_package as kwin_builder
+
+        kwin = directory / 'kwin'
+        target, series, patches = kwin_builder.selection(rootfs)
+        if series is not None:
+            run([ROOT / 'build.sh', 'kwin', '--sysroot', rootfs, '--output', kwin])
+            kwin_record = kwin_builder.reusable(kwin, target, series, patches)
+            if kwin_record is None:
+                raise ValueError('KWin packages do not match the signed Debian source and HDR fix')
+            sources['kwin'] = kwin / 'runtime', kwin_record
     if record['desktop'] == 'gnome':
         gsd = directory / 'gsd/runtime'
         run([ROOT / 'build.sh', 'gsd', '--output', gsd.parent, '--sysroot', rootfs])
@@ -866,7 +877,7 @@ def install_overlays(rootfs, run, packages, *, desktop, extra=(), published=Fals
     cohort = any(row.get('component') == 'pipewire' and
                  row.get('name') == 'libpipewire-0.3-modules' for row in records.values())
     installed = set()
-    if cohort:
+    if cohort or any(row.get('component') == 'kwin' for row in records.values()):
         text = capture(['chroot', rootfs, 'dpkg-query', '-W',
                         '-f=${Package}\t${db:Status-Status}\n'])
         installed = {row.split()[0] for row in text.splitlines() if row.endswith('\tinstalled')}

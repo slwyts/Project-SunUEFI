@@ -236,6 +236,7 @@ def verify_debian_camera_packages(components):
 def debian_package_selection(desktop, installed):
     """Select defaults and keep updating any optional packages already installed."""
     from desktop.build_libcamera_packages import abi_version, policy
+    from desktop.build_kwin_package import DEFAULT as KWIN_DEFAULT
     from desktop.build_pipewire_packages import DEBIAN_DEFAULT
     from desktop.build_plasma_camera_package import PACKAGE
     from desktop.build_qt_multimedia_packages import DEBIAN_DEFAULT as QT_MULTIMEDIA_DEFAULT
@@ -244,7 +245,8 @@ def debian_package_selection(desktop, installed):
     defaults = {'libcamera': {f'libcamera{abi}', f'libcamera-ipa-{abi}', 'gstreamer1.0-libcamera'},
                 'pipewire': DEBIAN_DEFAULT | {'libspa-0.2-libcamera'},
                 'qt_multimedia': QT_MULTIMEDIA_DEFAULT if desktop == 'kde' else set(),
-                'plasma_camera': {PACKAGE} if desktop == 'kde' else set()}
+                'plasma_camera': {PACKAGE} if desktop == 'kde' else set(),
+                'kwin': KWIN_DEFAULT if desktop == 'kde' else set()}
     return {name: values.union(installed) for name, values in defaults.items()}
 
 
@@ -299,7 +301,20 @@ def read_debian(path, desktop):
             manifest.get('target') not in ('debian-gnome', 'debian-' + desktop)):
         raise ValueError('Use a completed Debian overlay package manifest for this desktop')
     components = {name: {'packages': {}} for name in DEBIAN_GNOME}
-    needed = (*DEBIAN_SHARED, 'fingerprint', *(DEBIAN_GNOME if desktop == 'gnome' else ()))
+    needed = [*DEBIAN_SHARED, 'fingerprint']
+    if desktop == 'gnome':
+        needed.extend(DEBIAN_GNOME)
+    # Once sid includes the fix, the builder uses Debian's original packages.
+    if 'kwin' in manifest['components']:
+        from desktop.build_kwin_package import RUNTIME as KWIN_PACKAGES
+
+        kwin = manifest['components']['kwin']
+        version = kwin['package_version']
+        if (set(kwin['packages']) != set(KWIN_PACKAGES) or
+                any(row['version'] != version or row['architecture'] != KWIN_PACKAGES[name]
+                    for name, row in kwin['packages'].items())):
+            raise ValueError('Invalid native KWin package set')
+        needed.append('kwin')
     packages = {}
     names = set()
     for component in needed:

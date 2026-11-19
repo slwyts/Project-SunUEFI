@@ -2,6 +2,7 @@
 import copy
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,6 +14,13 @@ from desktop import debian_package
 
 
 class DebianPackageTests(unittest.TestCase):
+    def test_binary_revision_keeps_newer_debian_rebuilds_installable(self):
+        target = {'binary': {'source_version': '4:6.7.4-2', 'version': '4:6.7.4-2+b1'}}
+        version = debian_package.package_version_for(target, 1, keep_binary_revision=True)
+        subprocess.run(['dpkg', '--compare-versions', version, 'gt', '4:6.7.4-2+b1'], check=True)
+        subprocess.run(['dpkg', '--compare-versions', version, 'lt', '4:6.7.4-2+b2'], check=True)
+        subprocess.run(['dpkg', '--compare-versions', version, 'lt', '4:6.8.4-1'], check=True)
+
     def test_build_dependency_retry_requires_only_https_connection_resets(self):
         reset = ('E: Failed to fetch https://deb.debian.org/debian/pool/dh-python.deb  OpenSSL system '
                  'call error: error:80000068:system library::Connection reset by peer  - openssl '

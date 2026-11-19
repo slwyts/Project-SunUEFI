@@ -1,0 +1,31 @@
+From eff53c21b29dbedc02597a3cd487af7b3e1b2d0d Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Mon, 7 Sep 2026 14:10:48 +0200
+Subject: [PATCH] Add missing Qt::Qml link
+
+---
+ src/kcms/virtualkeyboard/CMakeLists.txt | 1 +
+ src/kcms/xwayland/CMakeLists.txt        | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/src/kcms/virtualkeyboard/CMakeLists.txt b/src/kcms/virtualkeyboard/CMakeLists.txt
+index ef12ec142bf..76dd97771b2 100644
+--- a/src/kcms/virtualkeyboard/CMakeLists.txt
++++ b/src/kcms/virtualkeyboard/CMakeLists.txt
+@@ -21,4 +21,5 @@ target_link_libraries(kcm_virtualkeyboard PRIVATE
+     KF6::Service
+     KF6::KCMUtilsQuick
+     Qt::DBus
++    Qt::Qml
+ )
+diff --git a/src/kcms/xwayland/CMakeLists.txt b/src/kcms/xwayland/CMakeLists.txt
+index 69aa3ae774f..8624c06d13a 100644
+--- a/src/kcms/xwayland/CMakeLists.txt
++++ b/src/kcms/xwayland/CMakeLists.txt
+@@ -19,5 +19,6 @@ target_link_libraries(kcm_kwinxwayland PRIVATE
+     KF6::KCMUtils
+     KF6::KCMUtilsQuick
+     Qt::DBus
++    Qt::Qml
+     Wayland::Client
+ )

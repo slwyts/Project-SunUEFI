@@ -1,17 +1,18 @@
 {
   "schema_version": 1,
   "targets": [
-    "steamos"
+    "steamos",
+    "debian-kde"
   ],
   "patches": [
     {
       "file": "0001-drm-restore-brightness-after-hdr.patch",
-      "sha256": "d0f2300f63f1d2e26c430fda00433019ba4cda5be5acd04da236ce19e16513a7",
+      "sha256": "c9fb27ad758fe01421fee30a8778a7b49a5ef58eb0a244b9b005be092a883672",
       "upstream": {
         "status": "merged",
         "url": "https://invent.kde.org/plasma/kwin/-/merge_requests/10404",
         "commit": "f14e6d16f67b02b00b6fa01c6fef3e5c6c1736c7",
-        "drop_when": "Valve ships KWin with the fix from Plasma 6.8.4 or an equivalent backport."
+        "drop_when": "The selected KWin source has the fix from Plasma 6.8.4 or an equivalent backport."
       }
     }
   ]
