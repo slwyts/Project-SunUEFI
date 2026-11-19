@@ -1,11 +1,14 @@
 """Keep build commands and their helpers inside temporary chroot environments."""
+import json
 import os
 from pathlib import Path
+import re
 import select
 import signal
 import stat
 import sys
 import time
+from urllib.parse import urlsplit
 
 
 def guest_command(root, args):
@@ -14,6 +17,37 @@ def guest_command(root, args):
     return ['unshare', '--pid', '--fork', '--kill-child',
             '--mount-proc=' + str(root / 'proc'), 'chroot', str(root),
             *map(str, args)]
+
+
+def arch_mirror_url(url):
+    address = urlsplit(url)
+    if (address.scheme != 'https' or not address.hostname or address.username is not None or
+            '?' in url or '#' in url or any(char.isspace() for char in url)):
+        raise ValueError('The Arch Linux ARM build mirror must be a public HTTPS URL')
+    return url.rstrip('/')
+
+
+def pacman_build_config(root, *, mirror=None):
+    """Select an Arch build mirror without editing the installed configuration."""
+    root = Path(root)
+    if mirror is None and root.name == 'rootfs':
+        manifest = root.parent / 'manifest.json'
+        if manifest.is_file():
+            record = json.loads(manifest.read_text())
+            if record.get('distro') == 'arch':
+                mirror = record.get('pacman_build_mirror')
+
+    text = (root / 'etc/pacman.conf').read_text()
+    # The host mount paths are not reachable from the build chroot.
+    text = re.sub(r'^\s*CheckSpace\s*$', '# CheckSpace (build chroot)', text, flags=re.M)
+    if mirror is None:
+        return text
+    server = arch_mirror_url(mirror) + '/$arch/$repo'
+    text, includes = re.subn(r'^([ \t]*)Include[ \t]*=[ \t]*/etc/pacman\.d/mirrorlist[ \t]*(?:#.*)?$',
+                            lambda match: match[1] + 'Server = ' + server, text, flags=re.M)
+    if not includes:
+        raise ValueError('Arch Linux ARM configuration does not include /etc/pacman.d/mirrorlist')
+    return text
 
 
 def remove_pacman_sockets(root):

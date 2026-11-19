@@ -215,7 +215,14 @@ Debian 镜像用 `update-alternatives` 选择 `wireless-regdb` 包自带的上�
 python3 tools/package_sparse_images.py --bundle artifacts/release --output artifacts/fastboot-sparse
 ```
 
-Arch Denial 使用 `./build.sh arch-denial-rootfs`，路径换成 `arch-denial-piano`；SteamOS 使用 `./build.sh steamos-rootfs`，路径换成 `steamos-piano`。Nyarch 从 Arch Linux ARM 基础系统开始，通过签名仓库安装软件包，再构建 Nyarch 应用和 Piano 的原生硬件包，源码和扩展选择在 `config/nyarch.json`。SteamOS 的构建细节见 [SteamOS ARM64](linux/steamos.md)。
+Arch Denial 使用 `./build.sh arch-denial-rootfs`，路径换成 `arch-denial-piano`；
+SteamOS 使用 `./build.sh steamos-rootfs`，路径换成 `steamos-piano`。Nyarch 从
+Arch Linux ARM 基础系统开始，通过签名仓库安装软件包，再构建 Nyarch 应用和
+Piano 的原生硬件包，源码和扩展选择在 `config/nyarch.json`。
+
+构建 Nyarch 和 Arch Denial 时，从 `config/nyarch.json` 指定的同一个 Arch Linux ARM
+镜像取索引和软件包，避免从一个镜像拿索引，再去另一个镜像找对应的包。
+安装后的官方镜像列表不变。SteamOS 的构建细节见 [SteamOS ARM64](linux/steamos.md)。
 
 两种 Denial 镜像从 [Denial 签名源](https://github.com/denialwm/denial/blob/main/docs/INSTALL.md#repository-trust-paths)安装合成器及其匹配的 Flutter Engine。Debian 只从该源取 Denial 自身的包，系统依赖仍用 sid；Arch Linux ARM 仍使用自己的滚动源。SDDM 加载 Denial 原版 Wayland 会话，默认使用触控布局。相机和其他硬件继续用 Piano 的标准驱动和发行版软件包，不安装 Phonewave 的板级服务或 Android 容器。Denial 的自动旋转目前没有接入标准 SensorProxy，可在显示设置手动选方向。
 

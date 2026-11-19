@@ -107,7 +107,8 @@ class OverlayCacheTests(unittest.TestCase):
 
             config = root / 'config'
             config.mkdir()
-            (config / 'nyarch.json').write_text(json.dumps({'base_url': base.as_uri()}))
+            mirror = 'https://arch.example/archlinuxarm'
+            (config / 'nyarch.json').write_text(json.dumps({'pacman_build_mirror': mirror}))
             (config / 'release.json').write_text('{"sensors": {}}')
             source = root / 'build/release/source-manifest.json'
             source.parent.mkdir()
@@ -119,14 +120,18 @@ class OverlayCacheTests(unittest.TestCase):
             args = SimpleNamespace(output=root / 'build/distros' / (target + '-piano'),
                                    packages_only=out, resume=False)
 
-            def assemble(_):
+            def assemble(plan, *, defer_denial):
+                self.assertEqual(plan['pacman_build_mirror'], mirror)
+                self.assertFalse(defer_denial)
                 directory = root / 'build/distros/overlays' / target / 'applications'
                 directory.mkdir(parents=True)
                 (directory / 'SOURCE.json').write_text('{}')
 
             with patch.object(nyarch, 'ROOT', root), \
                     patch.object(nyarch.os, 'geteuid', return_value=0), \
-                    patch.object(nyarch.assemble_rootfs, 'plan'), \
+                    patch.object(nyarch.urllib.request, 'urlopen',
+                                 return_value=io.BytesIO(base.read_bytes())) as download, \
+                    patch.object(nyarch.assemble_rootfs, 'plan', return_value={}), \
                     patch.object(nyarch.assemble_rootfs, 'execute', side_effect=assemble), \
                     patch.object(nyarch.release, 'build_resolver', return_value=nullcontext()), \
                     patch.object(nyarch.build_nyarch_apps, 'guest_environment',
@@ -134,6 +139,8 @@ class OverlayCacheTests(unittest.TestCase):
                     patch.object(overlay_cache, 'pacman_inputs', return_value=inputs) as identity:
                 self.assertEqual(nyarch.build(args), expected)
                 self.assertEqual(identity.call_args.args[3], inputs['base'])
+                download.assert_called_once_with(mirror + '/os/ArchLinuxARM-aarch64-latest.tar.gz',
+                                                 timeout=90)
             self.assertEqual(downloaded.read_bytes(), base.read_bytes())
             self.assertEqual(json.loads((out / 'manifest.json').read_text()), expected)
             for name, (_, row) in packages.items():

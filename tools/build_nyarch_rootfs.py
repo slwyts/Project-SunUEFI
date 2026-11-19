@@ -18,6 +18,7 @@ import build_nyarch_apps
 import build_release_rootfs as release
 from build_piano_runtime_helpers import source_patches
 from build import arch_mesa, overlay_cache, overlay_packages, overlay_release, sensors
+from build_chroot import arch_mirror_url
 import stage_arch_piano
 from build_steamos_rootfs import kde_package_is_current, sensor_recipes
 from prepare_steamos_rootfs import download
@@ -52,13 +53,15 @@ def build(args):
     if os.geteuid() or not output.is_relative_to(ROOT / 'build/distros'):
         raise ValueError('Use root and an output below build/distros')
     cfg = json.loads((ROOT / 'config/nyarch.json').read_text())
+    mirror = arch_mirror_url(cfg['pacman_build_mirror'])
+    base_url = mirror + '/os/ArchLinuxARM-aarch64-latest.tar.gz'
     policy = json.loads((ROOT / 'config/release.json').read_text())
     inputs = ROOT / 'build/nyarch-inputs'
     inputs.mkdir(parents=True, exist_ok=True)
     archive = inputs / 'ArchLinuxARM-aarch64.tar.gz'
     if not archive.exists():
         partial = archive.with_suffix('.partial')
-        with urllib.request.urlopen(cfg['base_url'], timeout=90) as source, \
+        with urllib.request.urlopen(base_url, timeout=90) as source, \
                 partial.open('wb') as output_stream:
             shutil.copyfileobj(source, output_stream)
         partial.replace(archive)
@@ -72,18 +75,20 @@ def build(args):
         options = assemble_rootfs.parser().parse_args([
             '--distro', 'arch', '--desktop', 'denial' if denial else 'gnome', '--execute',
             '--output', str(output), '--base-file', str(archive),
-            '--base-url', cfg['base_url'], '--base-sha256', base_hash])
+            '--base-url', base_url, '--base-sha256', base_hash])
         plan = assemble_rootfs.plan(options)
-        if denial:
-            assemble_rootfs.execute(plan, defer_denial=True)
-        else:
-            assemble_rootfs.execute(plan)
+        # The saved plan also selects the mirror for subsequent package builds.
+        plan['pacman_build_mirror'] = mirror
+        assemble_rootfs.execute(plan, defer_denial=denial)
     else:
         manifest = output / 'manifest.json'
         if not manifest.is_file():
             raise ValueError('The base desktop assembly did not complete')
-        if json.loads(manifest.read_text()).get('desktop') != ('denial' if denial else 'gnome'):
+        record = json.loads(manifest.read_text())
+        if record.get('desktop') != ('denial' if denial else 'gnome'):
             raise ValueError('Resume must use the same desktop as the existing build')
+        if record.get('pacman_build_mirror') != mirror:
+            raise ValueError('The Arch build mirror has changed; choose a new output directory')
 
     kernel = ROOT / 'artifacts/kernels/release'
     source = Path(json.loads((ROOT / 'build/release/source-manifest.json').read_text())['worktree'])

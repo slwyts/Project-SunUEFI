@@ -11,14 +11,13 @@ import json
 import os
 from pathlib import Path
 import platform
-import re
 import shutil
 import subprocess
 import sys
 import urllib.request
 
 from build import overlay_release
-from build_chroot import guest_command, remove_pacman_sockets, stop_helpers
+from build_chroot import guest_command, pacman_build_config, remove_pacman_sockets, stop_helpers
 
 ROOT = Path(__file__).resolve().parents[1]
 APPS = ('NyarchCustomize', 'NyarchTour', 'NyarchWizard', 'NyarchScript')
@@ -90,9 +89,7 @@ def guest_environment(root):
         (root / 'dev/fd').symlink_to('/proc/self/fd')
         for number, name in enumerate(('stdin', 'stdout', 'stderr')):
             (root / 'dev' / name).symlink_to('/proc/self/fd/' + str(number))
-        text = (root / 'etc/pacman.conf').read_text()
-        (root / 'run/pacman-build.conf').write_text(
-            re.sub(r'^\s*CheckSpace\s*$', '# CheckSpace (build chroot)', text, flags=re.M))
+        (root / 'run/pacman-build.conf').write_text(pacman_build_config(root))
         help_text = subprocess.check_output(
             ['chroot', root, 'pacman', '-S', '--help'], text=True)
         sandbox_args = ['--disable-sandbox'] if '--disable-sandbox' in help_text else []

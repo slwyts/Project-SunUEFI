@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tarfile
 from urllib.parse import urlsplit
-from build_chroot import guest_command, stop_helpers
+from build_chroot import guest_command, pacman_build_config, stop_helpers
 from build_piano_ram_bootstrap import guest_resolve
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -286,10 +286,8 @@ def execute(result, *, defer_denial=False):
             conf = root / 'etc/pacman.conf'; text = conf.read_text()
             if not re.search(r'^\s*SigLevel\s*=\s*Required\b', text, re.M) or re.search(r'^\s*SigLevel\s*=.*Never', text, re.M): raise ValueError('Pacman repository signatures must remain required')
             conf.write_text(re.sub(r'^\s*Architecture\s*=.*$', 'Architecture = aarch64', text, flags=re.M))
-            # libalpm cannot resolve the host mount table's paths from a
-            # chroot. Leave the installed CheckSpace policy unchanged.
             (root / 'run/pacman-build.conf').write_text(
-                re.sub(r'^\s*CheckSpace\s*$', '# CheckSpace (build chroot)', conf.read_text(), flags=re.M))
+                pacman_build_config(root, mirror=result.get('pacman_build_mirror')))
             guest(['pacman-key', '--init']); guest(['pacman-key', '--populate', 'archlinuxarm']); guest(['pacman', '-Syu', '--noconfirm'])
         packages = profile['base_packages'] + result['desktop_profile'][manager + '_packages']; optional = []
         for package in packages + result['desktop_profile'].get('optional_packages', []):

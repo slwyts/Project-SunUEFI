@@ -1,4 +1,5 @@
-"""Exercise build-command descendants with real PID and mount namespaces."""
+"""Exercise build configuration and command isolation."""
+import json
 import os
 from pathlib import Path
 import shutil
@@ -9,6 +10,51 @@ import textwrap
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools'))
+from build_chroot import pacman_build_config
+
+
+class PacmanBuildConfigTests(unittest.TestCase):
+    def test_arch_build_mirror_preserves_installed_files_and_signed_sources(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / 'rootfs'
+            (root / 'etc/pacman.d').mkdir(parents=True)
+            config = root / 'etc/pacman.conf'
+            mirrorlist = root / 'etc/pacman.d/mirrorlist'
+            original = ('[options]\nCheckSpace\nSigLevel = Required DatabaseOptional\n'
+                        '[core]\nInclude = /etc/pacman.d/mirrorlist\n'
+                        '[extra]\n\tInclude=/etc/pacman.d/mirrorlist  # Arch Linux ARM\n'
+                        'Include = /etc/pacman.d/sunuefi.conf\n'
+                        'Include = /etc/pacman.d/denial.conf\n')
+            mirrors = b'Server = http://mirror.archlinuxarm.org/$arch/$repo\n'
+            config.write_text(original)
+            mirrorlist.write_bytes(mirrors)
+            mirror = 'https://arch.example/archlinuxarm'
+
+            temporary = pacman_build_config(root, mirror=mirror)
+            self.assertIn('SigLevel = Required DatabaseOptional\n', temporary)
+            self.assertIn('Include = /etc/pacman.d/sunuefi.conf\n', temporary)
+            self.assertIn('Include = /etc/pacman.d/denial.conf\n', temporary)
+            self.assertEqual(temporary.count(f'Server = {mirror}/$arch/$repo\n'), 2)
+            self.assertNotIn('/etc/pacman.d/mirrorlist', temporary)
+
+            manifest = root.parent / 'manifest.json'
+            record = {'distro': 'arch', 'pacman_build_mirror': mirror}
+            manifest.write_text(json.dumps(record))
+            self.assertEqual(pacman_build_config(root), temporary)
+            manifest.write_text(json.dumps({**record, 'distro': 'steamos'}))
+            self.assertEqual(pacman_build_config(root), original.replace(
+                '\nCheckSpace\n', '\n# CheckSpace (build chroot)\n'))
+            self.assertEqual(config.read_bytes(), original.encode())
+            self.assertEqual(mirrorlist.read_bytes(), mirrors)
+
+    def test_arch_build_mirror_rejects_http(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'etc').mkdir()
+            (root / 'etc/pacman.conf').write_text('[core]\nInclude = /etc/pacman.d/mirrorlist\n')
+            with self.assertRaisesRegex(ValueError, 'public HTTPS'):
+                pacman_build_config(root, mirror='http://arch.example')
 
 
 @unittest.skipUnless(os.geteuid() == 0 and shutil.which('cc') and shutil.which('unshare'),

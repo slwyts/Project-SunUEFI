@@ -1,5 +1,5 @@
 {
-  "base_url": "https://mirrors.dotsrc.org/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz",
+  "pacman_build_mirror": "https://mirrors.dotsrc.org/archlinuxarm",
   "base_policy": "HTTPS bootstrap; SHA256 recorded per build; signed pacman repositories",
   "desktop_repository": "https://github.com/NyarchLinux/NyarchLinux.git",
   "desktop_commit": "5088f5cbd80131176cdb2a669e8cfb7ce580312a",
