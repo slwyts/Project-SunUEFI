@@ -2,6 +2,8 @@ Description: spa: libcamera: Apply the negotiated capture frame rate
  Use the configured camera's FrameDurationLimits to validate a fixed video
  frame rate and pass it to Camera::start(). Return the live format, including
  its frame rate, when a new client negotiates with a running source.
+ Use a separate configuration for negotiation. Export the buffers and
+ orientation from the configured stream, not from the enumeration template.
  Use the captured timestamps for the SPA clock when rate control is unavailable.
 Forwarded: no
 
@@ -15,15 +17,26 @@ Forwarded: no
  #include <optional>
  #include <span>
  #include <type_traits>
-@@ -70,6 +71,7 @@
+@@ -70,7 +71,9 @@
  	std::optional<spa_video_info> current_format;
  
  	struct spa_fraction rate = {};
 +	std::optional<int64_t> frame_duration;
  	StreamConfiguration streamConfig;
++	Orientation orientation = Orientation::Rotate0;
  
  	uint32_t buffers_blocks = 1;
-@@ -160,9 +162,10 @@
+ 
+@@ -148,7 +150,7 @@
+ 
+ 	std::shared_ptr<CameraManager> manager;
+ 	std::shared_ptr<Camera> camera;
+-	const std::unique_ptr<CameraConfiguration> config;
++	const std::unique_ptr<CameraConfiguration> enum_config;
+ 
+ 	FrameBufferAllocator allocator;
+ 	std::vector<std::unique_ptr<libcamera::Request>> requestPool;
+@@ -160,9 +163,10 @@
  	struct spa_source source = {};
  
  	ControlList ctrls;
@@ -35,7 +48,7 @@ Forwarded: no
  
  	impl(spa_log *log, spa_loop *data_loop, spa_system *system,
  	     std::shared_ptr<CameraManager> manager, std::shared_ptr<Camera> camera,
-@@ -244,9 +247,6 @@
+@@ -244,9 +248,6 @@
  
  	spa_assert(!impl->allocator.allocated());
  
@@ -45,7 +58,7 @@ Forwarded: no
  	impl->acquired = true;
  	return 0;
  }
-@@ -524,6 +524,18 @@
+@@ -524,6 +525,18 @@
  	return res;
  }
  
@@ -64,7 +77,15 @@ Forwarded: no
  int
  spa_libcamera_enum_format(struct impl *impl, struct port *port, int seq,
  		     uint32_t start, uint32_t num, const struct spa_pod *filter)
-@@ -541,6 +553,22 @@
+@@ -534,13 +547,29 @@
+ 	struct spa_result_node_params result;
+ 	uint32_t count = 0;
+ 
+-	const StreamConfiguration& streamConfig = impl->config->at(0);
++	const StreamConfiguration &streamConfig = impl->enum_config->at(0);
+ 	const StreamFormats &formats = streamConfig.formats();
+ 	const auto &pixel_formats = formats.pixelformats();
+ 
  	result.id = SPA_PARAM_EnumFormat;
  	result.next = start;
  
@@ -87,7 +108,7 @@ Forwarded: no
  	if (result.next == 0) {
  		port->fmt_index = 0;
  		port->size_index = 0;
-@@ -660,73 +688,154 @@
+@@ -660,73 +689,155 @@
  	return 0;
  }
  
@@ -265,6 +286,7 @@ Forwarded: no
  
 +	port->frame_duration = duration;
 +	port->rate = period;
++	port->orientation = config->orientation;
  	port->info.change_mask |= SPA_PORT_CHANGE_MASK_FLAGS | SPA_PORT_CHANGE_MASK_RATE;
  	port->info.flags = SPA_PORT_FLAG_CAN_ALLOC_BUFFERS |
  		SPA_PORT_FLAG_LIVE |
@@ -275,7 +297,7 @@ Forwarded: no
  
  	return 0;
  error:
-@@ -1032,6 +1141,53 @@
+@@ -1032,6 +1143,53 @@
  	);
  }
  
@@ -329,7 +351,7 @@ Forwarded: no
  void handle_completed_request(struct impl *impl, libcamera::Request *request)
  {
  	const auto request_id = request->cookie();
-@@ -1060,32 +1216,9 @@
+@@ -1060,32 +1218,9 @@
  
  	const FrameMetadata &fmd = buffer->metadata();
  
@@ -365,7 +387,25 @@ Forwarded: no
  
  	if (b->h) {
  		b->h->flags = 0;
-@@ -1338,8 +1471,16 @@
+@@ -1201,7 +1336,7 @@
+ 	if (port->n_buffers > 0)
+ 		return -EIO;
+ 
+-	Stream *stream = impl->config->at(0).stream();
++	Stream *stream = port->streamConfig.stream();
+ 	const std::vector<std::unique_ptr<FrameBuffer>> &bufs =
+ 			impl->allocator.buffers(stream);
+ 
+@@ -1235,7 +1370,7 @@
+ 			buffers[i], SPA_META_VideoTransform, sizeof(*b->videotransform));
+ 		if (b->videotransform) {
+ 			b->videotransform->transform =
+-				libcamera_orientation_to_spa_transform_value(impl->config->orientation);
++				libcamera_orientation_to_spa_transform_value(port->orientation);
+ 			spa_log_debug(impl->log, "Setting videotransform for buffer %u to %u",
+ 				i, b->videotransform->transform);
+ 
+@@ -1338,8 +1473,16 @@
  	if (impl->active)
  		return 0;
  
@@ -383,7 +423,7 @@ Forwarded: no
  		return res == -EACCES ? -EBUSY : res;
  
  	impl->camera->requestCompleted.connect(impl, &impl::requestComplete);
-@@ -1361,7 +1502,8 @@
+@@ -1361,7 +1504,8 @@
  			goto err_stop;
  	}
  
@@ -393,7 +433,7 @@ Forwarded: no
  	impl->active = true;
  
  	res = spa_loop_locked(
-@@ -1421,6 +1563,10 @@
+@@ -1421,6 +1565,10 @@
  			SPA_FORMAT_VIDEO_format,    SPA_POD_Id(port->current_format->info.raw.format),
  			SPA_FORMAT_VIDEO_size,      SPA_POD_Rectangle(&port->current_format->info.raw.size),
  			0);
@@ -404,7 +444,7 @@ Forwarded: no
  		break;
  	case SPA_MEDIA_SUBTYPE_mjpg:
  	case SPA_MEDIA_SUBTYPE_jpeg:
-@@ -1437,6 +1583,16 @@
+@@ -1437,6 +1585,16 @@
  		return -EIO;
  	}
  
@@ -421,7 +461,7 @@ Forwarded: no
  	*param = (struct spa_pod*)spa_pod_builder_pop(builder, &f);
  
  	return 1;
-@@ -1828,21 +1984,10 @@
+@@ -1828,21 +1986,10 @@
  		    uint32_t flags, const struct spa_pod *format)
  {
  	const bool try_only = SPA_FLAG_IS_SET(flags, SPA_NODE_PARAM_FLAG_TEST_ONLY);
@@ -446,7 +486,7 @@ Forwarded: no
  		spa_zero(info);
  
  		if ((res = spa_format_parse(format, &info.media_type, &info.media_subtype)) < 0)
-@@ -1875,17 +2020,43 @@
+@@ -1875,17 +2022,43 @@
  			return -EINVAL;
  		}
  
@@ -494,7 +534,7 @@ Forwarded: no
  	impl->info.change_mask |= SPA_NODE_CHANGE_MASK_PARAMS;
  	port->info.change_mask |= SPA_PORT_CHANGE_MASK_PARAMS;
  	if (port->current_format) {
-@@ -1900,7 +2071,7 @@
+@@ -1900,7 +2073,7 @@
  	emit_port_info(impl, port, false);
  	emit_node_info(impl, false);
  
@@ -503,3 +543,12 @@ Forwarded: no
  }
  
  int impl_node_port_set_param(void *object,
+@@ -2151,7 +2324,7 @@
+ 	  out_ports{{this}},
+ 	  manager(std::move(manager)),
+ 	  camera(std::move(camera)),
+-	  config(std::move(config)),
++	  enum_config(std::move(config)),
+ 	  allocator(this->camera)
+ {
+ 	libcamera_log_topic_init(log);

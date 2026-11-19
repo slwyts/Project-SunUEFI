@@ -119,7 +119,7 @@
     },
     {
       "file": "0012-libcamera-apply-negotiated-framerate.patch",
-      "sha256": "7ef5831f855771e3d5b6349ba575e06c8daa5a4fae95b173f0727c473c8468ac",
+      "sha256": "f038abdf22fa9663b9fefdab75d45b81ca6e4d1eddb0983031e7f5a3869f3a6f",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/PipeWire/pipewire/blob/0e30a575c2e279bd7a8975e403168f8ac906cc7e/spa/plugins/libcamera/libcamera-source.cpp",
@@ -133,6 +133,15 @@
         "status": "downstream",
         "url": "https://github.com/PipeWire/pipewire/blob/0e30a575c2e279bd7a8975e403168f8ac906cc7e/src/gst/gstpipewiresrc.c",
         "drop_when": "The selected PipeWire release reports a stream error when the received capture format has no compatible downstream caps, without leaving GStreamer waiting for negotiation."
+      }
+    },
+    {
+      "file": "0014-libcamera-report-validated-format.patch",
+      "sha256": "4aba3d6d2342ec8f9d9eed91e9d665e3429fd12445854e54821aa78b23b65f79",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/PipeWire/pipewire/blob/0e30a575c2e279bd7a8975e403168f8ac906cc7e/spa/plugins/libcamera/libcamera-source.cpp",
+        "drop_when": "The selected PipeWire release rejects unsupported exact camera sizes and pixel formats, and reports the camera's actual format for an allowed nearest match."
       }
     }
   ]
