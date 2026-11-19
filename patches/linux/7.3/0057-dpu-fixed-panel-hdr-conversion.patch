@@ -1,4 +1,4 @@
-From 391f8e55753f5e7b5b33fb9e12f016cdbc0bbaff Mon Sep 17 00:00:00 2001
+From 76853fc45b5d13839ef3d4a6e5de2aa6be6ee974 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 8 Nov 2026 23:39:32 +0800
 Subject: [PATCH] drm/msm: convert fixed-panel HDR signals through calibrated

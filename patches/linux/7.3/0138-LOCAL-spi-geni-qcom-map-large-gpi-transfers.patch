@@ -1,4 +1,4 @@
-From 1c676d09b4ec3b1dc5b4bea2313ecf903f5f7b85 Mon Sep 17 00:00:00 2001
+From c8ef9b661020584af29ccd13da64a78f174b6cc6 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 19 Nov 2026 21:10:21 +0800
 Subject: [PATCH] spi: geni-qcom: map large GPI transfers as one DMA segment

@@ -1,4 +1,4 @@
-From 1b28d6f2a3344ea2193780787bd0a6084a3d1aac Mon Sep 17 00:00:00 2001
+From 5059c982201403303c41854fb111763ad3042d91 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Fri, 6 Nov 2026 23:45:00 +0800
 Subject: [PATCH] media: ov32d40: keep fixed native mode timing

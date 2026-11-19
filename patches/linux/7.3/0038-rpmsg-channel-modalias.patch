@@ -1,4 +1,4 @@
-From 9b903a8748e34151bcbd94702ba4aad7494b0e45 Mon Sep 17 00:00:00 2001
+From ef86a1f16fc81f063f5846b41ebc1b6103535a30 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 01:57:31 +0800
 Subject: [PATCH] rpmsg: use channel aliases for nodes without compatible

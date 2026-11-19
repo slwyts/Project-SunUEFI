@@ -1,4 +1,4 @@
-From ae3c8c90756b12bd18c66e63066040a54081337e Mon Sep 17 00:00:00 2001
+From 8f9f8d4c9a2c4102fc82b3ec3577de3cd563c5ee Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Fri, 20 Nov 2026 04:10:27 +0800
 Subject: [PATCH] media: camss: Serialize buffer completion with stream-off

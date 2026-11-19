@@ -1,4 +1,4 @@
-From 193e51893f9d447b12d06ea22999352575bc2c25 Mon Sep 17 00:00:00 2001
+From 646cb23f9d813aeda62a4942ef67a5fad79efc82 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 00:31:39 +0800
 Subject: [PATCH] build: support O3 and Oryon tuning for Piano

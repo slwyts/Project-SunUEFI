@@ -6,12 +6,11 @@ Debian GNOME、Debian KDE、Nyarch GNOME 和 SteamOS 共用同一套设备内核
 
 ## 源码与硬件适配
 
-Linux 基线为上游 `v7.3`，提交
-`c03c1a14507dfaf8b856c2608f9ac216021fc222`。Piano 的公开硬件适配来自
+Linux 基线为上游稳定版 `v7.3.3`。Piano 的公开硬件适配来自
 `blu-sharky/linux-piano`，在新基线上继续保留本项目的显示、音频、输入、
 充电、睡眠和编解码修正。
 
-补丁按平台、显示、输入与无线、媒体、音频、Gunyah、BORE 分组，
+稳定版回移补丁先应用，板级补丁按平台、显示、输入与无线、媒体、音频、Gunyah、BORE 分组，
 后续接口修正单独追加。原始来源、补丁摘要、应用顺序与每一步的源码树
 记录在 [`series.json`](../../../patches/linux/7.3/series.json)；
 旧版本补丁保留作来源参照，不会再叠加到新版本上。
@@ -37,6 +36,13 @@ Linux 基线为上游 `v7.3`，提交
 `console=ttyGS0` 也需要 USB gadget 建立后才可用，不能作为最早期串口。
 屏幕停留在固件交接页不等于内核没有运行，定位需结合 pstore、initramfs
 日志、USB 状态与后续显示接管，而不是直接归因于固件死循环。
+
+### UFS 调频与磁盘停顿
+
+产品内核回移了 [Linux 7.3.4 的 UFS 锁顺序修复](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?id=c378d4fdb6c7244c3458af886e2bab61f8f56d13)。
+设备管理命令与普通读写共享请求队列。调整时钟前先等当前管理命令完成，
+再暂停队列，避免管理命令还没发出时双方互相等待。修复保留时钟调节、
+设备校时和多队列模式。
 
 ## 内屏低分辨率与硬件缩放
 

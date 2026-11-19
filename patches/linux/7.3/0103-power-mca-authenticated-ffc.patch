@@ -1,4 +1,4 @@
-From 346546ea7fc050432eae4d39fc6f5dae2f8b1199 Mon Sep 17 00:00:00 2001
+From c5d9658ef6890e72f58e647e1e493341f7c756be Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 12 Nov 2026 00:06:47 +0800
 Subject: [PATCH] power: supply: piano_mca: integrate authenticated FFC with

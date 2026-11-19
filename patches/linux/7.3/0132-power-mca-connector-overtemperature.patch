@@ -1,4 +1,4 @@
-From 6193756cfa68ec49906f1661088f4c4956313d81 Mon Sep 17 00:00:00 2001
+From d2dd204e558467fd9b64605860f1598f0ba7d152 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 05:03:00 +0800
 Subject: fix(power): isolate the Piano USB connector on overtemperature
