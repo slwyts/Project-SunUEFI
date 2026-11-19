@@ -1,4 +1,4 @@
-From ea594894376812c5bf8a6bd8a19acd7c5e652175 Mon Sep 17 00:00:00 2001
+From 16bfabd2e6379dcb619b859708639c66b704854b Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Fri, 6 Nov 2026 06:45:21 +0800
 Subject: [PATCH] media: ir-spi: support the Piano fixed-clock transmitter
@@ -13,35 +13,25 @@ The board has no described software-controlled IR supply. Request none for
 this explicit compatible; retain the existing ir-spi-led regulator path.
 Require SPI mode 0 and reject unsupported carrier or duty requests.
 
-Keep each diagnostic transmission within 32 KiB including padding. GPI
-requires one DMA segment and splitting transfers would add unmeasured
-waveform gaps. This is a diagnostic allocation bound, not a hardware limit;
-long frames fail with EMSGSIZE rather than being split or truncated.
+Use the range validated by LIRC rather than a separate byte limit.
+A 240640-byte buffer holds the maximum one-second waveform and
+its inactive padding. Keep the buffer contiguous and send one SPI
+transfer so the controller does not insert gaps between pulses.
 ---
- drivers/media/rc/ir-spi.c | 159 ++++++++++++++++++++++++++++++++++----
- 1 file changed, 146 insertions(+), 13 deletions(-)
+ drivers/media/rc/ir-spi.c | 151 ++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 138 insertions(+), 13 deletions(-)
 
 diff --git a/drivers/media/rc/ir-spi.c b/drivers/media/rc/ir-spi.c
-index 31eb58b06c7..075e628dd38 100644
+index 31eb58b06..72b70eb45 100644
 --- a/drivers/media/rc/ir-spi.c
 +++ b/drivers/media/rc/ir-spi.c
-@@ -11,6 +11,7 @@
- #include <linux/module.h>
- #include <linux/property.h>
- #include <linux/regulator/consumer.h>
-+#include <linux/sizes.h>
- #include <linux/spi/spi.h>
- #include <linux/string.h>
- #include <linux/types.h>
-@@ -22,9 +23,29 @@
+@@ -22,9 +22,27 @@
  #define IR_SPI_DEFAULT_FREQUENCY	38000
  #define IR_SPI_BITS_PER_PULSE		16
  
 +/* The factory Piano transmitter consumes MSB-first native u32 words. */
 +#define IR_SPI_PIANO_WORD_BITS		32
 +#define IR_SPI_PIANO_PADDING_BYTES	1024
-+#define IR_SPI_PIANO_MAX_DURATIONS	1024
-+#define IR_SPI_PIANO_MAX_TX_BYTES		SZ_32K
 +#define IR_SPI_PIANO_MIN_CARRIER		30000
 +#define IR_SPI_PIANO_MAX_CARRIER		56000
 +
@@ -63,7 +53,7 @@ index 31eb58b06c7..075e628dd38 100644
  
  	u16 pulse;
  	u16 space;
-@@ -92,6 +113,76 @@ static int ir_spi_tx(struct rc_dev *dev, unsigned int *buffer, unsigned int coun
+@@ -92,6 +110,71 @@ err_free_tx_buf:
  	return ret ? ret : count;
  }
  
@@ -78,15 +68,9 @@ index 31eb58b06c7..075e628dd38 100644
 +	unsigned int i;
 +	int ret;
 +
-+	/* Match normal LIRC pulse/space bounds; never reinterpret negative data. */
-+	if (!count || count > IR_SPI_PIANO_MAX_DURATIONS || !(count & 1))
-+		return -EINVAL;
-+
-+	for (i = 0; i < count; i++) {
-+		if (!buffer[i] || buffer[i] > IR_MAX_DURATION - total_us)
-+			return -EINVAL;
++	/* LIRC has already validated the count and the total duration. */
++	for (i = 0; i < count; i++)
 +		total_us += buffer[i];
-+	}
 +
 +	period = DIV_ROUND_CLOSEST(idata->variant->sample_hz, idata->freq);
 +	high = period * idata->duty_cycle / 100;
@@ -99,11 +83,7 @@ index 31eb58b06c7..075e628dd38 100644
 +	bytes = round_up(DIV_ROUND_UP(samples, IR_SPI_PIANO_WORD_BITS) *
 +			 sizeof(*tx_buf) + sizeof(*tx_buf),
 +			 IR_SPI_PIANO_PADDING_BYTES);
-+	/* GPI accepts one DMA segment. Keep diagnostic waves within 32 KiB;
-+	 * splitting transfers would insert an unmeasured gap in the waveform.
-+	 */
-+	if (bytes > IR_SPI_PIANO_MAX_TX_BYTES)
-+		return -EMSGSIZE;
++	/* Keep the entire waveform in a single DMA-mappable buffer. */
 +	tx_buf = kzalloc(bytes, GFP_KERNEL);
 +	if (!tx_buf)
 +		return -ENOMEM;
@@ -114,9 +94,14 @@ index 31eb58b06c7..075e628dd38 100644
 +		end_us += buffer[i];
 +		end = DIV_ROUND_CLOSEST_ULL((u64)end_us *
 +					  idata->variant->sample_hz, 1000000);
++		if (i & 1) {
++			sample = end;
++			continue;
++		}
++
 +		phase = 0;
 +		for (; sample < end; sample++) {
-+			if (!(i & 1) && phase < high)
++			if (phase < high)
 +				tx_buf[sample / IR_SPI_PIANO_WORD_BITS] |=
 +					BIT(31 - sample % IR_SPI_PIANO_WORD_BITS);
 +			if (++phase == period)
@@ -140,7 +125,7 @@ index 31eb58b06c7..075e628dd38 100644
  static int ir_spi_set_tx_carrier(struct rc_dev *dev, u32 carrier)
  {
  	struct ir_spi_data *idata = dev->priv;
-@@ -99,8 +190,18 @@ static int ir_spi_set_tx_carrier(struct rc_dev *dev, u32 carrier)
+@@ -99,8 +182,18 @@ static int ir_spi_set_tx_carrier(struct rc_dev *dev, u32 carrier)
  	if (!carrier)
  		return -EINVAL;
  
@@ -160,7 +145,7 @@ index 31eb58b06c7..075e628dd38 100644
  
  	idata->freq = carrier;
  
-@@ -112,6 +213,19 @@ static int ir_spi_set_duty_cycle(struct rc_dev *dev, u32 duty_cycle)
+@@ -112,6 +205,19 @@ static int ir_spi_set_duty_cycle(struct rc_dev *dev, u32 duty_cycle)
  	struct ir_spi_data *idata = dev->priv;
  	int bits = (duty_cycle * 15) / 100;
  
@@ -180,7 +165,7 @@ index 31eb58b06c7..075e628dd38 100644
  	idata->pulse = GENMASK(bits, 0);
  
  	if (idata->negated) {
-@@ -135,46 +249,65 @@ static int ir_spi_probe(struct spi_device *spi)
+@@ -135,46 +241,65 @@ static int ir_spi_probe(struct spi_device *spi)
  	if (!idata)
  		return -ENOMEM;
  
@@ -258,6 +243,3 @@ index 31eb58b06c7..075e628dd38 100644
  	{}
  };
  MODULE_DEVICE_TABLE(spi, ir_spi_ids);
--- 
-2.56.0
-

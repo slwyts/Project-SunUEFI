@@ -1,4 +1,4 @@
-From 1c4e925234d0e8fdfa3cbaf99a1fa475e6a137e2 Mon Sep 17 00:00:00 2001
+From e05a9ad1946e67988716b590e61f5b689f2c37d7 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 15 Nov 2026 01:11:01 +0800
 Subject: [PATCH] Input: nt36532e: decode pen frames and fuse Bluetooth samples

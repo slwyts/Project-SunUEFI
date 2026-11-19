@@ -1,4 +1,4 @@
-From b30303377a31681822c6ce383f4cab2e77f96159 Mon Sep 17 00:00:00 2001
+From 820c6c71d6ca814b91d1db1c17d173876e0a247b Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 19:33:44 +0800
 Subject: [PATCH] fix(power): keep buck charging requests in the sampled

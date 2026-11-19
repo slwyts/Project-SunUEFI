@@ -1,4 +1,4 @@
-From c33495359beea03623f466544b3f45d4aa9711e1 Mon Sep 17 00:00:00 2001
+From bb673d4305abce8e7f9660f6bf415f6a67ee4bfe Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 03:47:47 +0800
 Subject: [PATCH] feat(power): apply the stock five-field PPS voltage-step

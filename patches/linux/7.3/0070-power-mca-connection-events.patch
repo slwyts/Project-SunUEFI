@@ -1,4 +1,4 @@
-From 70a1e663add22829b5b5427de52c287d08d7ab0e Mon Sep 17 00:00:00 2001
+From 0eaf09ff05f65ed9a4989b299ade94958f3dd356 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 02:58:21 +0800
 Subject: [PATCH] fix(power-supply): invalidate MCA authentication on UCSI

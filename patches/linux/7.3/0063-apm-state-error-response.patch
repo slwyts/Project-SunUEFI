@@ -1,4 +1,4 @@
-From 25ff9120cf8cd196de71082bf20624fe8810c506 Mon Sep 17 00:00:00 2001
+From dfa209fa56389b7aad2feed66dff61f3550a109f Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 04:23:24 +0800
 Subject: [PATCH] ASoC: qcom: handle basic errors for the SPF readiness query

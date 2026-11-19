@@ -5,7 +5,7 @@
 | 功能 | 原厂接口 | 当前 Linux 缺口 |
 | --- | --- | --- |
 | RGB 通道 | PM8550 SID1 上的 `qcom,pm8350c-pwm`，SPMI LPG，通道 1/2/3 为 red/green/blue | 标准驱动和产品DT已有；补齐SDAM/LPG模块加载后已出现三个标准LED接口。发光、可见位置和用途尚待确认。 |
-| 红外发射 | SE15 / SPI `0x89c000` / CS0，`ir-spi`，Android 原始波形字符设备 | 标准 LIRC 发送、超长拒绝及拒绝后再次发送通过；载波、包络和距离没有测量。 |
+| 红外发射 | SE15 / SPI `0x89c000` / CS0，`ir-spi`，Android 原始波形字符设备 | 标准 LIRC 可一次发送 1 秒报文；载波、包络和距离没有测量。 |
 | 侧指纹 | Goodix，GPIO 控制与高通 QTEE 安全服务 | 已接入 fprintd、GNOME 锁屏与 PAM；依赖本地 UIO 驱动、libfprint 后端和静态客户端。 |
 
 ## RGB 通道
@@ -23,9 +23,9 @@ LPG 和 SDAM 通过设备树的硬件别名自动加载，不需要模块列表�
 Piano 的发送器通过标准 rc-core/LIRC 接口接收脉冲与间隔，设备为
 `/dev/lircN`。无需 Android HAL 或常驻服务，`ir-ctl` 由 v4l-utils 提供。
 发送时可用 `ir-ctl -d /dev/lirc0 --carrier=38000 --send=remote.txt`，文件使用
-ir-ctl 的 `pulse` / `space` 文本格式。产品内核上 `ir-ctl` 的 NEC 发送返回成功，
-超过 1024 段的请求返回 `EINVAL`，一秒长脉冲返回 `EMSGSIZE`，随后短报文仍能
-发送成功。载波、包络、距离和发送后的光学熄灭状态还需要测量。
+ir-ctl 的 `pulse` / `space` 文本格式。实机通过 `/dev/lircN` 发送了 292 ms
+和 1 秒报文，SPI 跟踪确认各自只有一次完整传输。超出标准 LIRC 范围的输入
+仍由内核拒绝，随后短报文可以正常发送。载波、光学包络和遥控距离需要接收端测量。
 
 原厂最终设备树将发送器放在
 `/soc/qcom,qupv3_2_geni_se@8c0000/spi@89c000/ir-spi@0`，即
@@ -42,10 +42,10 @@ SE15 / QUP2 SE7 / CS0。GPIO28/29/30/31 分别为 MISO/MOSI/CLK/CS，
 38 kHz 请求量化为 51 点周期、20 点高电平，名义载波约 37647 Hz。
 累计时间决定采样边界，不沿用原厂减 5 µs 的时间修正。
 
-每次请求须为正值、奇数段、最多 1024 段。缓冲区在完整零 word 后对齐到
-1024 字节，包含填充最多 32 KiB，约能容纳 136 ms 报文；超长返回 `EMSGSIZE`。
-当前 GPI 只接受单个 DMA 段，不能把长报文简单拆成多个 SPI transfer 后
-假定时钟连续。空调等长报文需要先补齐 GPI 的多 TRE 连续传输和完成事件处理。
+报文沿用上游 LIRC 的正值、奇数段和总时长校验，设备驱动不额外限制报文大小。
+编码在完整的 32 位零字后对齐到 1024 字节，1 秒波形填充后为 240640 字节。
+GENI 向 SPI 核心公布 QUP 映射设备支持的单段 DMA 大小，GPI 用一个数据描述符
+发送完整波形，不在脉冲之间拆分传输。
 
 共享 [`设备树`](../../../linux/dts/piano-ir-spi-controller.dtso)沿用原厂
 GCC ID123、GIC SPI462、GPI2 SE7 和 IOMMU 路由。运行与休眠的差异只在
@@ -55,9 +55,10 @@ GENI 驱动在消息开始时选择 default，在队列空闲且 SE 确认停止
 
 发送超时后，GENI 必须等两路 GPI 通道确认终止才返回 SPI 核心，避免核心
 提前解除仍被 DMA 使用的缓冲区映射。终止失败时保留消息、映射、时钟和引脚，
-继续恢复；不把超时当成硬件已停止。以上改动分别在 Linux 7.3
-[`series.json`](../../../patches/linux/7.3/series.json) 的 0025–0027 中维护，
-`RC_CORE`、`LIRC` 和 `IR_SPI` 配置由共享平台片段启用。
+继续恢复；不把超时当成硬件已停止。绑定、编码和空闲引脚由内核补丁系列的
+0041–0043 维护，单段 DMA 大小由
+[GENI SPI 补丁](../../../patches/linux/7.3/0138-LOCAL-spi-geni-qcom-map-large-gpi-transfers.patch)
+处理。`RC_CORE`、`LIRC` 和 `IR_SPI` 配置由共享平台片段启用。
 
 ## 侧指纹
 

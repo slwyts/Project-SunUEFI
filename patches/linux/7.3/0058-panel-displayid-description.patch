@@ -1,4 +1,4 @@
-From e127102011bcec8805806d5d52a36b363dc0675d Mon Sep 17 00:00:00 2001
+From cd8bc6d03d7395ca49382b5a8b2eb39e674bcc93 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 00:08:36 +0800
 Subject: [PATCH] drm/panel: describe native DisplayID timings and compatible

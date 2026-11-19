@@ -1,4 +1,4 @@
-From bae6c793de5c2f41e9001dcac1a9d42e520a97c3 Mon Sep 17 00:00:00 2001
+From 0068e5f56cb9ed2a12e84b5cb10397d99bf5a749 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 20:30:45 +0800
 Subject: [PATCH] media: iris: Keep encoder frame intervals in sync on OUTPUT

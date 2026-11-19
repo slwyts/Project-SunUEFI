@@ -1,4 +1,4 @@
-From 51a712e3701b708fd8b18d59f31b79a53eb32ebf Mon Sep 17 00:00:00 2001
+From 1ecb666c6af28cf4bc355178f4872beb3682648b Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 18:02:33 +0800
 Subject: [PATCH] fix(power): match Piano normal termination and JEITA
