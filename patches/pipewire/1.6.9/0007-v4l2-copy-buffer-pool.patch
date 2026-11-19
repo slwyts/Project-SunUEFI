@@ -5,6 +5,8 @@ MMAP-only producers can reuse capture indices while an asynchronous client
 is still holding a frame. Keep a separate free copied-buffer pool, honor
 SPA busy metadata, and requeue kernel buffers immediately after copying.
 Advance the driver clock even when every copied frame is retained.
+After STREAMOFF, requeue all capture indices in copy mode regardless of
+which SPA buffers downstream still holds.
 
 diff --git a/spa/plugins/v4l2/v4l2-source.c b/spa/plugins/v4l2/v4l2-source.c
 --- a/spa/plugins/v4l2/v4l2-source.c
@@ -224,11 +226,15 @@ diff --git a/spa/plugins/v4l2/v4l2-utils.c b/spa/plugins/v4l2/v4l2-utils.c
  		b->vt = spa_buffer_find_meta_data(buffers[i], SPA_META_VideoTransform, sizeof(*b->vt));
  
  		spa_zero(b->v4l2_buffer);
-@@ -2198,6 +2244,7 @@
+@@ -2198,7 +2244,10 @@
  		struct buffer *b;
  
  		b = &port->buffers[i];
 +		SPA_FLAG_CLEAR(b->flags, BUFFER_FLAG_QUEUED);
- 		if (!SPA_FLAG_IS_SET(b->flags, BUFFER_FLAG_OUTSTANDING)) {
+-		if (!SPA_FLAG_IS_SET(b->flags, BUFFER_FLAG_OUTSTANDING)) {
++		/* Copied SPA buffers do not own kernel capture slots. */
++		if (port->copy_buffers ||
++		    !SPA_FLAG_IS_SET(b->flags, BUFFER_FLAG_OUTSTANDING)) {
  			if (xioctl(dev->fd, VIDIOC_QBUF, &b->v4l2_buffer) < 0)
  				spa_log_warn(this->log, "VIDIOC_QBUF: %s", strerror(errno));
+ 		}
