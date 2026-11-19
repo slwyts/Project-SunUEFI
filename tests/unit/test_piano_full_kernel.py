@@ -161,15 +161,18 @@ class PianoFullKernelTests(unittest.TestCase):
     def test_filesystem_fragment_matches_overrides(self):
         fragment=(ROOT/'linux/configs/piano-filesystem.config').read_text()
         modules=full.module_overrides(fragment,'filesystem')
-        for symbol in ('CONFIG_EXFAT_FS','CONFIG_NTFS3_FS','CONFIG_NTFS3_LZX_XPRESS','CONFIG_NLS_UTF8'):
+        disk_options=('CONFIG_EXFAT_FS','CONFIG_NTFS3_FS','CONFIG_NTFS3_LZX_XPRESS','CONFIG_NLS_UTF8')
+        for symbol in disk_options:
             self.assertEqual(modules[symbol],'y')
+            self.assertEqual(full.REQUIRED[symbol.removeprefix('CONFIG_')],'y')
+        self.assertEqual(modules['CONFIG_EROFS_FS'],'m')
+        self.assertEqual(modules['CONFIG_EROFS_FS_ZIP'],'y')
         self.assertEqual(len(modules),len(full.FILESYSTEM_OVERRIDES))
         for bad in ('CONFIG_EXFAT_FS=m\n',
                     'CONFIG_EXFAT_FS=y\nCONFIG_NTFS3_FS=y\nCONFIG_NTFS3_LZX_XPRESS=y\nCONFIG_NLS_UTF8=m\n'):
             with self.subTest(fragment=bad),self.assertRaises(ValueError):full.module_overrides(bad,'filesystem')
         for key,value in modules.items():
             self.assertEqual(full.ALLOWED_OVERRIDES[key],value)
-            self.assertEqual(full.REQUIRED[key.removeprefix('CONFIG_')],value)
 
     def test_filesystem_and_bluetooth_in_allowed_overrides(self):
         for key,value in full.FILESYSTEM_OVERRIDES.items():
