@@ -17,7 +17,7 @@ from desktop.build_pipewire_packages import libcamera_inputs
 
 PACKAGE = 'plasma-camera'
 RUNTIME = {PACKAGE: 'arm64'}
-REVISION = 2
+REVISION = 3
 
 
 def selection(sysroot, output):

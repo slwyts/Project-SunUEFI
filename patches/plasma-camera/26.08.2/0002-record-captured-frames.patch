@@ -1,0 +1,1424 @@
+diff --git a/src/contents/ui/camera/CameraControls.qml b/src/contents/ui/camera/CameraControls.qml
+index 70bc658..39bba02 100644
+--- a/src/contents/ui/camera/CameraControls.qml
++++ b/src/contents/ui/camera/CameraControls.qml
+@@ -144,6 +144,7 @@ Rectangle {
+                     icon.name: "settings-configure"
+                     icon.color: "white"
+                     anchors.centerIn: parent
++                enabled: !root.captureSession.isRecordingVideo && !root.captureSession.isSavingVideo
+                     onClicked: applicationWindow().openSettings()
+                 }
+             }
+@@ -161,6 +162,7 @@ Rectangle {
+             Layout.margins: Kirigami.Units.largeSpacing * 3
+             Layout.maximumWidth: Kirigami.Units.gridUnit * 10
+             consistentWidth: true
++            enabled: !root.captureSession.isRecordingVideo && !root.captureSession.isSavingVideo
+ 
+             Kirigami.Theme.inherit: false
+             Kirigami.Theme.colorSet: Kirigami.Theme.Complementary
+@@ -179,4 +181,4 @@ Rectangle {
+             ]
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/src/contents/ui/camera/CameraPage.qml b/src/contents/ui/camera/CameraPage.qml
+index 311d6c0..d9f3815 100644
+--- a/src/contents/ui/camera/CameraPage.qml
++++ b/src/contents/ui/camera/CameraPage.qml
+@@ -70,7 +70,7 @@ Kirigami.Page {
+                 else if (root.captureMode === CameraPage.CaptureMode.Video)
+                     return "camera-photo-symbolic";
+             }
+-            enabled: true
++            enabled: !root.captureSession.isRecordingVideo && !root.captureSession.isSavingVideo
+             onTriggered: {
+                 if (root.captureMode === CameraPage.CaptureMode.Photo)
+                     root.captureMode = CameraPage.CaptureMode.Video;
+@@ -98,7 +98,10 @@ Kirigami.Page {
+             text: i18n("Switch Camera")
+             icon.color: "transparent"
+             icon.name: "camera-photo-symbolic"
+-            enabled: !root.camera.busy && root.camera.cameraDeviceIds.length > 1
++            enabled: !root.camera.busy
++                && !root.captureSession.isRecordingVideo
++                && !root.captureSession.isSavingVideo
++                && root.camera.cameraDeviceIds.length > 1
+ 
+             onTriggered: root.camera.switchToNextCamera();
+         }
+@@ -147,7 +150,9 @@ Kirigami.Page {
+                 root.captureController.captureTimerDuration = duration;
+             }
+             onSwitchCaptureModeRequested: (captureMode) => {
+-                root.captureMode = captureMode;
++                if (switchModeAction.enabled) {
++                    root.captureMode = captureMode;
++                }
+             }
+         }
+ 
+diff --git a/src/contents/ui/main.qml b/src/contents/ui/main.qml
+index 2b29017..42c4977 100644
+--- a/src/contents/ui/main.qml
++++ b/src/contents/ui/main.qml
+@@ -19,6 +19,27 @@ Kirigami.ApplicationWindow {
+     minimumWidth: 350
+     title: i18n("Camera")
+ 
++    property bool closeAfterSaving: false
++
++    onClosing: close => {
++        const session = cameraPage.captureSession;
++        if (session.isRecordingVideo || session.isSavingVideo) {
++            close.accepted = false;
++            root.closeAfterSaving = true;
++            mainCamera.stopCamera();
++        }
++    }
++
++    Connections {
++        target: cameraPage.captureSession
++
++        function onIsSavingVideoChanged() {
++            if (root.closeAfterSaving && !cameraPage.captureSession.isSavingVideo) {
++                Qt.callLater(() => root.close());
++            }
++        }
++    }
++
+     pageStack.columnView.columnResizeMode: Kirigami.ColumnView.SingleColumn
+     pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.None
+     pageStack.initialPage: CameraPage {
+diff --git a/src/plasmacamera.cpp b/src/plasmacamera.cpp
+index c67502c..0c03a4a 100644
+--- a/src/plasmacamera.cpp
++++ b/src/plasmacamera.cpp
+@@ -3,6 +3,7 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ #include <map>
++#include <KLocalizedString>
+ #include <unistd.h>
+ #include <sys/mman.h>
+ #include <plasmacameramanager.h>
+@@ -53,7 +54,10 @@ PlasmaCamera::PlasmaCamera(QObject *parent) : QObject(parent)
+     });
+ 
+     // resend frames that we received from the camera worker
+-    connect(m_cameraWorker, &Worker::viewFinderFrame, this, &PlasmaCamera::viewFinderFrame);
++    connect(m_cameraWorker, &Worker::frameReady, this, [this](QVideoFrame frame, qint64 timestamp, quint64 recordingId) {
++        Q_EMIT frameReady(std::move(frame), timestamp, recordingId);
++        m_cameraWorker->frameDelivered();
++    });
+     connect(m_cameraWorker, &Worker::stillCaptureFrames, this, &PlasmaCamera::stillCaptureFrames);
+     connect(m_cameraWorker, &Worker::stillCaptureFrames, this, [this]() {
+         // Finished taking image
+@@ -187,6 +191,23 @@ bool PlasmaCamera::captureImage()
+     return true;
+ }
+ 
++QString PlasmaCamera::startVideoCapture(const QSize &size, qreal fps, quint64 recordingId)
++{
++    if (m_state != State::Running || m_busy) {
++        return i18n("The camera is not ready to record.");
++    }
++    QString error;
++    QMetaObject::invokeMethod(m_cameraWorker, [&]() {
++        error = m_cameraWorker->startVideo(size, fps, recordingId);
++    }, Qt::BlockingQueuedConnection);
++    return error;
++}
++
++void PlasmaCamera::stopVideoCapture()
++{
++    QMetaObject::invokeMethod(m_cameraWorker, &Worker::stopVideo, Qt::BlockingQueuedConnection);
++}
++
+ QSize PlasmaCamera::afWindow() const
+ {
+     return m_settings.getAfWindow();
+@@ -274,7 +295,7 @@ void PlasmaCamera::setActive(const bool active)
+             return;
+         }
+ 
+-        startCamera();
++        startCameraInternal();
+ 
+     } else {
+         // If we are currently not in Running, then wait until we setState to Running to stop the camera.
+diff --git a/src/plasmacamera.h b/src/plasmacamera.h
+index 86af1af..b522801 100644
+--- a/src/plasmacamera.h
++++ b/src/plasmacamera.h
+@@ -18,7 +18,6 @@
+ /*
+  * TODO: image rotation
+  * TODO: Raw mode
+- * TODO: video mode
+  * TODO: stop and pause methods
+  *
+  * TODO: dealing with changing camera in settings
+@@ -142,6 +141,9 @@ public:
+      */
+     bool captureImage();
+ 
++    QString startVideoCapture(const QSize &size, qreal fps, quint64 recordingId);
++    void stopVideoCapture();
++
+     // Focus
+     QSize afWindow() const;
+ 
+@@ -180,7 +182,7 @@ Q_SIGNALS:
+      * While it would make the most sense to switch the libcamera config to StillCapture
+      * for higher quality capture it requires restarting the camera which is simply too slow
+      */
+-    void viewFinderFrame(const QImage &frame); // connect to this to get new frames
++    void frameReady(QVideoFrame frame, qint64 timestamp, quint64 recordingId);
+     void stillCaptureFrames(const QQueue<QImage> &frames); // connect to this to get captures
+ 
+     // Focus
+diff --git a/src/plasmacamera/worker.cpp b/src/plasmacamera/worker.cpp
+index db11662..a0d681d 100644
+--- a/src/plasmacamera/worker.cpp
++++ b/src/plasmacamera/worker.cpp
+@@ -3,6 +3,13 @@
+ 
+ #include "worker.h"
+ 
++#include <KLocalizedString>
++#include <libcamera/formats.h>
++
++#include <algorithm>
++#include <cstring>
++#include <utility>
++
+ static const QMap<libcamera::PixelFormat, QImage::Format> NATIVE_FORMATS{
+     {libcamera::formats::ABGR8888, QImage::Format_RGBX8888},
+     {libcamera::formats::XBGR8888, QImage::Format_RGBX8888},
+@@ -19,11 +26,6 @@ Worker::~Worker() = default;
+ 
+ void Worker::init()
+ {
+-    // start init after we have moved to the other thread
+-    m_framePollTimer = new QTimer(this);
+-    m_framePollTimer->setInterval(1000 / 60); // manually set 60 fps
+-    connect(m_framePollTimer, &QTimer::timeout, this, &Worker::requestNextFrame);
+-
+     setState(State::Ready);
+ }
+ 
+@@ -43,25 +45,26 @@ void Worker::setCamera(std::shared_ptr<libcamera::Camera> camera)
+     case State::Ready:
+         // if state is ready then go to running
+         m_camera = camera;
+-        startViewFinder();
+-
+-        setState(State::Running);
+-        setMode(CaptureMode::ViewFinder);
++        if (startViewFinder()) {
++            setState(State::Running);
++        } else {
++            releaseCamera();
++        }
+         break;
+ 
+     case State::Running:
+-        setMode(CaptureMode::None);
+-
+         // Hold this while we switch camera
+         setState(State::SwitchingCamera);
+ 
+         // if state is running then switch out the camera
+-        stopViewFinder();
++        releaseCamera();
+         m_camera = camera;
+-        startViewFinder();
+-
+-        setState(State::Running);
+-        setMode(CaptureMode::ViewFinder);
++        if (startViewFinder()) {
++            setState(State::Running);
++        } else {
++            releaseCamera();
++            setState(State::Ready);
++        }
+         break;
+ 
+     default:
+@@ -77,17 +80,19 @@ void Worker::unsetCamera()
+     if (m_state == State::Running) {
+         setState(State::Stopping);
+ 
+-        stopViewFinder();
++        releaseCamera();
+ 
+         setState(State::Ready);
+-        setMode(CaptureMode::None);
+     }
+ }
+ 
+ void Worker::capture()
+ {
++    if (m_mode != CaptureMode::ViewFinder) {
++        return;
++    }
+     m_stillCaptureFrames.clear();
+-    setMode(CaptureMode::StillImage);
++    m_mode = CaptureMode::StillImage;
+ }
+ 
+ void Worker::setSettings(const Settings& settings)
+@@ -145,208 +150,283 @@ void Worker::unsetError()
+     m_errorString.clear();
+ }
+ 
+-void Worker::requestNextFrame()
++void Worker::frameDelivered()
+ {
+-    if (!m_camera) {
+-        return;
+-    }
+-
+-    libcamera::Request *request;
+-    {
+-        // Grab free request from m_freeQueue, if there are any available
+-        const QMutexLocker lock(&m_freeMutex);
+-        if (m_freeQueue.isEmpty()) {
+-            return;
+-        }
++    --m_pendingFrames;
++}
+ 
+-        request = m_freeQueue.dequeue();
++bool Worker::keepVideoFrame(qint64 timestamp)
++{
++    if (timestamp <= m_lastCaptureTimestamp) {
++        return false;
++    }
++    const qint64 previous = std::exchange(m_lastCaptureTimestamp, timestamp);
++    if (previous < 0) {
++        return false;
+     }
+ 
+-    // Clear request for usage
+-    request->reuse(libcamera::Request::ReuseBuffers);
+-
+-    // Load our settings onto the camera request's controls
+-    m_settings.set(request->controls());
++    if (!m_videoFrameRate) {
++        // Not all pipelines support setting the sensor frame duration.
++        m_videoFrameRate = 1'000'000.0 / std::max(m_videoFrameDuration, timestamp - previous);
++        m_nextVideoTimestamp = timestamp;
++        qDebug() << "Camera recording frame rate:" << m_videoFrameRate;
++    }
+ 
+-    // Queue request in camera for frame
+-    m_camera->queueRequest(request);
++    // Select frames near the requested cadence without rewriting their timestamps.
++    const qint64 deadline = timestamp + m_videoFrameDuration / 2;
++    if (deadline < m_nextVideoTimestamp) {
++        return false;
++    }
++    m_nextVideoTimestamp += (1 + (deadline - m_nextVideoTimestamp) / m_videoFrameDuration) * m_videoFrameDuration;
++    return true;
+ }
+ 
+-void Worker::requestComplete(libcamera::Request *request)
++void Worker::processRequest(libcamera::Request *request)
+ {
+-    // This is a slot that is run in libcamera thread, when a request completes.
+-
+-    if (request->status() == libcamera::Request::RequestCancelled) {
+-        return;
++    auto *buffer = request->findBuffer(m_stream);
++    if (buffer && buffer->metadata().status == libcamera::FrameMetadata::FrameSuccess) {
++        const auto timestamp = static_cast<qint64>(buffer->metadata().timestamp / 1000);
++        const bool recording = m_mode == CaptureMode::Video;
++        // Do not queue unbounded frame copies if the GUI stops handling events.
++        if ((!recording || (timestamp > 0 && keepVideoFrame(timestamp))) && (m_pendingFrames < 4 || m_mode == CaptureMode::StillImage)) {
++            QVideoFrame frame = makeFrame(*buffer, *m_mappedBuffers.at(buffer));
++            if (frame.isValid()) {
++                if (m_mode == CaptureMode::StillImage) {
++                    const QImage photo = frame.toImage();
++                    if (!photo.isNull()) {
++                        m_stillCaptureFrames.enqueue(photo);
++                    }
++                    if (m_stillCaptureFrames.size() == 5) {
++                        m_mode = CaptureMode::ViewFinder;
++                        Q_EMIT stillCaptureFrames(m_stillCaptureFrames);
++                        m_stillCaptureFrames.clear();
++                    }
++                }
++                if (recording) {
++                    frame.setStreamFrameRate(m_videoFrameRate);
++                }
++                if (m_pendingFrames < 4) {
++                    ++m_pendingFrames;
++                    Q_EMIT frameReady(std::move(frame), timestamp, recording ? m_recordingId : 0);
++                }
++            }
++        }
+     }
+ 
+-    {
+-        // Add finished request to queue to be processed
+-        const QMutexLocker lock(&m_doneMutex);
+-        m_doneQueue.enqueue(request);
++    // Qt owns the copied frame; the camera buffer can be reused immediately.
++    request->reuse(libcamera::Request::ReuseBuffers);
++    m_settings.set(request->controls());
++    if (const int ret = m_camera->queueRequest(request); ret < 0) {
++        setError(ret);
+     }
+-
+-    // We are currently on the libcamera thread so we need to go back to the Worker thread.
+-    QMetaObject::invokeMethod(this, "processRequestDataAndEmit", Qt::QueuedConnection);
+ }
+ 
+-void Worker::processRequestDataAndEmit()
++QVideoFrame Worker::makeFrame(const libcamera::FrameBuffer &buffer, const Image &image)
+ {
+-    // Populates m_image
+-    processRequestData();
+-
+-    // Implement photo capture
+-    if (m_mode == CaptureMode::StillImage) {
+-        const QMutexLocker lock(&m_stillCaptureFramesMutex);
+-
+-        if (m_stillCaptureFrames.length() >= 5) {
+-            return;
++    const auto planes = buffer.metadata().planes();
++    if (planes.empty() || !image.numPlanes()) {
++        return {};
++    }
++
++    if (m_format != libcamera::formats::NV12) {
++        const auto pixels = image.data(0);
++        if (getNativeFormats().contains(m_format)) {
++            if (std::min<size_t>(pixels.size(), planes[0].bytesused) < size_t(m_stride) * m_size.height()) {
++                return {};
++            }
++            return QVideoFrame(QImage(pixels.data(), m_size.width(), m_size.height(), m_stride, NATIVE_FORMATS[m_format]).copy());
+         }
+-
+-        // Add image to frames used for shot
+-        m_stillCaptureFrames.enqueue(m_image.copy());
+-
+-        // Once we reach 5 frames, emit the photo
+-        if (m_stillCaptureFrames.length() == 5) {
+-            setMode(CaptureMode::ViewFinder);
+-            Q_EMIT stillCaptureFrames(m_stillCaptureFrames);
++        QImage converted(m_size, QImage::Format_RGB32);
++        m_converter.convert(&image, std::min<size_t>(pixels.size(), planes[0].bytesused), &converted);
++        return QVideoFrame(converted);
++    }
++
++    const int width = m_size.width();
++    const int height = m_size.height();
++    if (width % 2 || height % 2 || m_stride < static_cast<unsigned int>(width)) {
++        return {};
++    }
++    const size_t lumaSize = size_t(m_stride) * height;
++    const size_t chromaSize = lumaSize / 2;
++    const auto luma = image.data(0);
++    const auto lumaUsed = std::min<size_t>(luma.size(), planes[0].bytesused);
++
++    const uchar *chroma;
++    if (image.numPlanes() >= 2 && planes.size() >= 2) {
++        const auto uv = image.data(1);
++        if (lumaUsed < lumaSize || std::min<size_t>(uv.size(), planes[1].bytesused) < chromaSize) {
++            return {};
+         }
+-    }
+-
+-    // Emit view finder frame, m_image is moved for performance
+-    Q_EMIT viewFinderFrame(std::move(m_image));
++        chroma = uv.data();
++    } else {
++        if (lumaUsed < lumaSize + chromaSize) {
++            return {};
++        }
++        chroma = luma.data() + lumaSize;
++    }
++
++    QVideoFrame frame(m_nv12Format);
++    if (!frame.map(QVideoFrame::WriteOnly)) {
++        return {};
++    }
++    const auto copyPlane = [&](int index, const uchar *src, int rows) {
++        auto *dst = frame.bits(index);
++        const int dstStride = frame.bytesPerLine(index);
++        if (dstStride == static_cast<int>(m_stride)) {
++            std::memcpy(dst, src, size_t(dstStride) * rows);
++        } else {
++            for (int row = 0; row < rows; ++row) {
++                std::memcpy(dst + row * dstStride, src + row * m_stride, width);
++            }
++        }
++    };
++    copyPlane(0, luma.data(), height);
++    copyPlane(1, chroma, height / 2);
++    frame.unmap();
++    return frame;
+ }
+ 
+-void Worker::processRequestData()
++bool Worker::startViewFinder()
+ {
+-    libcamera::Request *request;
+-    {
+-        // Obtain a finished request from the queue
+-        const QMutexLocker lock(&m_doneMutex);
+-        if (m_doneQueue.isEmpty()) {
+-            return;
++    auto config = m_camera->generateConfiguration({libcamera::StreamRole::Viewfinder});
++    if (!config || config->empty()) {
++        setError(-EINVAL);
++        return false;
++    }
++
++    auto &stream = config->at(0);
++    if (stream.pixelFormat != libcamera::formats::NV12) {
++        for (const auto &format : stream.formats().pixelformats()) {
++            if (getNativeFormats().contains(format)) {
++                stream.pixelFormat = format;
++                break;
++            }
+         }
+-        request = m_doneQueue.dequeue();
+     }
++    if (config->validate() == libcamera::CameraConfiguration::Invalid) {
++        setError(-EINVAL);
++        return false;
++    }
++    if (const int ret = startStream(*config); ret < 0) {
++        setError(ret);
++        return false;
++    }
++    m_mode = CaptureMode::ViewFinder;
++    return true;
++}
+ 
+-    if (!request->buffers().count(m_stream)) {
+-        // Return request to the free queue for new requests
+-        const QMutexLocker lock(&m_freeMutex);
+-        m_freeQueue.enqueue(request);
+-        return;
++void Worker::restoreViewFinder()
++{
++    if (!startViewFinder()) {
++        setState(State::Stopping);
++        releaseCamera();
++        setState(State::Ready);
+     }
++}
+ 
+-    libcamera::FrameBuffer *buffer = request->buffers().at(m_stream);
+-    Image *image = m_mappedBuffers[buffer].get();
++QString Worker::startVideo(const QSize &size, qreal fps, quint64 recordingId)
++{
++    if (m_mode != CaptureMode::ViewFinder || !m_camera) {
++        return i18n("The camera is not ready to record.");
++    }
++
++    auto config = m_camera->generateConfiguration({libcamera::StreamRole::VideoRecording});
++    if (!config || config->empty()) {
++        return i18n("The camera does not support video recording.");
++    }
++    auto &stream = config->at(0);
++    const auto formats = stream.formats().pixelformats();
++    if (std::ranges::find(formats, libcamera::formats::NV12) != formats.end()) {
++        stream.pixelFormat = libcamera::formats::NV12;
++    }
++    if (size.isValid()) {
++        const libcamera::Size requested(size.width(), size.height());
++        const auto pixelFormat = stream.pixelFormat;
++        stream.size = requested;
++        const auto validation = config->validate();
++        if (validation == libcamera::CameraConfiguration::Invalid || stream.size != requested) {
++            // A lower output resolution can use a larger camera mode of the same
++            // aspect ratio. Never upscale or stretch an unsupported camera mode.
++            const auto canDownscale = [&requested](const libcamera::Size &mode) {
++                return mode.width >= requested.width && mode.height >= requested.height &&
++                    uint64_t(mode.width) * requested.height == uint64_t(mode.height) * requested.width;
++            };
++            libcamera::Size captureSize = validation != libcamera::CameraConfiguration::Invalid && canDownscale(stream.size)
++                ? stream.size
++                : libcamera::Size{};
++            for (const auto &mode : stream.formats().sizes(pixelFormat)) {
++                if (canDownscale(mode) && (captureSize.isNull() || mode.width < captureSize.width)) {
++                    captureSize = mode;
++                }
++            }
++            stream.size = captureSize;
++            stream.pixelFormat = pixelFormat;
++            if (captureSize.isNull() || config->validate() == libcamera::CameraConfiguration::Invalid || !canDownscale(stream.size)) {
++                return i18n("The camera cannot record at %1 × %2. Choose a different recording resolution.", size.width(), size.height());
++            }
++        }
++    } else if (config->validate() == libcamera::CameraConfiguration::Invalid) {
++        return i18n("The camera does not support video recording.");
++    }
+ 
+-    // Load frame into m_image
+-    size_t size = buffer->metadata().planes()[0].bytesused;
+-    if (getNativeFormats().contains(m_format)) {
+-        m_image =
+-            QImage(image->data(0).data(), m_size.width(), m_size.height(), static_cast<qsizetype>(size) / m_size.height(), NATIVE_FORMATS[m_format]).copy();
+-    } else {
+-        m_converter.convert(image, size, &m_image);
++    if (const int ret = stopStream(); ret < 0) {
++        setError(ret);
++        return i18n("Could not switch the camera to recording mode.");
+     }
+ 
+-    {
+-        // Return request to the free queue to be used for new requests
+-        const QMutexLocker lock(&m_freeMutex);
+-        m_freeQueue.enqueue(request);
++    m_videoFrameDuration = std::max<qint64>(1, qRound64(1'000'000.0 / fps));
++    m_videoFrameRate = 0;
++    m_lastCaptureTimestamp = -1;
++    m_nextVideoTimestamp = 0;
++    if (const int ret = startStream(*config, m_videoFrameDuration); ret < 0) {
++        restoreViewFinder();
++        return i18n("Could not start the camera for recording: %1", QString::fromLocal8Bit(std::strerror(-ret)));
+     }
++    m_mode = CaptureMode::Video;
++    m_recordingId = recordingId;
++    return {};
+ }
+ 
+-void Worker::startViewFinder()
++void Worker::stopVideo()
+ {
+-    if (!m_camera) {
++    if (m_mode != CaptureMode::Video) {
+         return;
+     }
+-
+-    qDebug() << "Starting view finder in worker";
+-
+-    /*
+-     * https://libcamera.org/api-html/namespacelibcamera.html#a295d1f5e7828d95c0b0aabc0a8baac03
+-     * The StillCapture and Viewfinder roles both generate a config that uses the same resolution
+-     * while the documentation states that the image will be captured in higher quality I prefer
+-     * the Viewfinder config because it appears that the higher resource usage of StillCapture
+-     * makes app more unstable (it could also be related to the demands of restarting the camera)
+-     */
+-    m_config = m_camera->generateConfiguration({libcamera::StreamRole::Viewfinder});
+-
+-    configure();
+-
+-    // Connect signal for when a frame request is complete
+-    m_camera->requestCompleted.connect(this, &Worker::requestComplete);
+-
+-    // Start camera
+-    if (int ret = m_camera->start(); ret < 0) {
++    if (const int ret = stopStream(); ret < 0) {
+         setError(ret);
+         return;
+     }
+-
+-    // Add all requests
+-    for (std::unique_ptr<libcamera::Request> &request : m_requests) {
+-        if (int ret = m_camera->queueRequest(request.get()); ret < 0) {
+-            setError(ret);
+-            return;
+-        }
+-    }
+-
+-    // Start polling for frames
+-    m_framePollTimer->start();
++    restoreViewFinder();
+ }
+ 
+-void Worker::stopViewFinder()
++int Worker::stopStream()
+ {
+-    qDebug() << "stop view finder";
+-    m_framePollTimer->stop();
+-
+-    if (m_camera) {
+-        // All pending requests are cancelled
+-        int ret = m_camera->stop();
+-        if (ret < 0) {
+-            setError(ret);
+-            return;
+-        }
+-
+-        // Cleanup signals
+-        m_camera->requestCompleted.disconnect(this);
++    if (const int ret = m_camera->stop(); ret < 0 && ret != -ENODEV) {
++        return ret;
+     }
+-
+-    // Must be cleared before following variables are cleared
++    m_camera->requestCompleted.disconnect(this);
++    // Completions posted by the previous stream must not use its freed requests.
++    ++m_streamGeneration;
+     m_requests.clear();
+-
+-    m_config.reset();
+-
+-    if (m_allocator) {
+-        m_allocator->free(m_stream);
+-        delete m_allocator;
+-    }
+-
+     m_mappedBuffers.clear();
++    m_allocator.reset();
++    m_stream = nullptr;
++    m_mode = CaptureMode::None;
++    return 0;
++}
+ 
+-    {
+-        const QMutexLocker lock(&m_freeMutex);
+-        m_freeQueue.clear();
++void Worker::releaseCamera()
++{
++    if (!m_camera) {
++        return;
+     }
+-
+-    /*
+-     * A CaptureEvent may have been posted before we stopped the camera,
+-     * but not processed yet. Clear the queue of done buffers to avoid
+-     * racing with the event handler.
+-     */
+-    {
+-        const QMutexLocker lock(&m_doneMutex);
+-        m_doneQueue.clear();
++    if (const int ret = stopStream(); ret < 0) {
++        setError(ret);
++        return;
+     }
+-
+-    if (m_camera) {
+-        int ret = m_camera->release();
+-        if (ret < 0) {
+-            setError(ret);
+-            return;
+-        }
++    if (const int ret = m_camera->release(); ret < 0 && ret != -ENODEV) {
++        setError(ret);
+     }
+-
+     m_camera.reset();
+ }
+ 
+@@ -368,10 +448,11 @@ void Worker::setState(const State state)
+         {
+         case State::None:
+         case State::Stopping:
++        case State::SwitchingCamera:
+             Q_EMIT ready();
+             break;
+         default:
+-            qWarning() << "Transitioned from state other than None or Stopping to Ready";
++            qWarning() << "Unexpected transition to Ready from" << static_cast<int>(previous_state);
+             break;
+         }
+         break;
+@@ -401,111 +482,60 @@ void Worker::setState(const State state)
+     }
+ }
+ 
+-void Worker::setMode(CaptureMode mode)
+-{
+-    // Handles sending the signals for state changes
+-    const CaptureMode previous_mode = m_mode;
+-
+-    switch (mode) {
+-    case CaptureMode::None:
+-        m_mode = CaptureMode::None;
+-        break;
+-
+-    case CaptureMode::ViewFinder:
+-        m_mode = CaptureMode::ViewFinder;
+-        switch (previous_mode)
+-        {
+-        case CaptureMode::None:
+-            break;
+-        case CaptureMode::StillImage:
+-            break;
+-        default:
+-            qWarning() << "Transition from state other than None or StillImage to ViewFinder";
+-            break;
+-        }
+-        break;
+-
+-    case CaptureMode::StillImage:
+-        m_mode = CaptureMode::StillImage;
+-        break;
+-
+-    case CaptureMode::RawImage:
+-        m_mode = CaptureMode::RawImage;
+-        break;
+-
+-    case CaptureMode::Video:
+-        m_mode = CaptureMode::Video;
+-        break;
+-    }
+-}
+-
+-void Worker::configure()
++int Worker::startStream(libcamera::CameraConfiguration &config, qint64 frameDuration)
+ {
+-    if (!m_config || !m_camera) {
+-        return;
+-    }
+-
+-    // Add stream configuration
+-    libcamera::StreamConfiguration &streamConfig = m_config->at(0);
+-    qDebug() << "Default camera configuration is: " << streamConfig.toString();
+-
+-    const QList<libcamera::PixelFormat> wantFormats = getNativeFormats();
+-    for (const libcamera::PixelFormat &format : wantFormats) {
+-        qDebug() << "Desired format: " << format.toString();
++    if (const int ret = m_camera->configure(&config); ret < 0) {
++        return ret;
+     }
++    const auto &stream = config.at(0);
++    m_stream = stream.stream();
++    qDebug() << "Camera stream configuration:" << stream.toString();
+ 
+-    std::vector<libcamera::PixelFormat> haveFormats = streamConfig.formats().pixelformats();
+-    for (const libcamera::PixelFormat &format : haveFormats) {
+-        qDebug() << "Got format: " << format.toString();
+-        auto match = std::find_if(wantFormats.begin(), wantFormats.end(), [&](const libcamera::PixelFormat &f) {
+-            return f == format;
+-        });
+-        if (match != wantFormats.end()) {
+-            streamConfig.pixelFormat = format;
+-            break;
+-        }
++    int ret = setFormat(QSize(stream.size.width, stream.size.height), stream.pixelFormat,
++                        stream.colorSpace.value_or(libcamera::ColorSpace::Sycc), stream.stride);
++    if (ret == 0) {
++        ret = createRequests();
+     }
+-
+-    // TODO: allow user to override config
+-    //  - https://git.libcamera.org/libcamera/libcamera.git/tree/src/apps/qcam/main_window.cpp#n399
+-
+-    qDebug() << "Viewfinder configuration is: " << streamConfig.toString();
+-
+-    // Validate config
+-    const libcamera::CameraConfiguration::Status validation = m_config->validate();
+-    if (validation == libcamera::CameraConfiguration::Adjusted) {
+-        qInfo() << "Adjusted viewfinder configuration is: " << streamConfig.toString();
+-    }
+-    if (validation == libcamera::CameraConfiguration::Invalid) {
+-        qWarning() << QString::fromStdString("Failed to validate camera configuration");
+-        return;
+-    }
+-
+-    // TODO: it might actually be possible to quick switch the config of the camera
+-    //  - m_camera->configure can be called when the camera is in the configured state so we don't have to stop all the way
+-    //  - https://libcamera.org/api-html/classlibcamera_1_1Camera.html#a4c190f4c369628e5cd96770790559a26
+-    int ret = m_camera->configure(m_config.get());
+     if (ret < 0) {
+-        setError(ret);
+-        return;
++        stopStream();
++        return ret;
+     }
+ 
+-    m_stream = m_config->at(0).stream();
++    libcamera::ControlList controls(m_camera->controls());
++    m_settings.set(controls);
++    const auto &supported = m_camera->controls();
++    const auto durationLimits = supported.find(&libcamera::controls::FrameDurationLimits);
++    if (frameDuration > 0 && durationLimits != supported.end()) {
++        const auto &range = durationLimits->second;
++        const auto duration = std::clamp<int64_t>(frameDuration, range.min().get<int64_t>(), range.max().get<int64_t>());
++        controls.set(libcamera::controls::FrameDurationLimits, {duration, duration});
++    }
++
++    const quint64 generation = ++m_streamGeneration;
++    m_camera->requestCompleted.connect(this, [this, generation](libcamera::Request *request) {
++        if (request->status() != libcamera::Request::RequestCancelled) {
++            QMetaObject::invokeMethod(this, [this, generation, request]() {
++                if (generation == m_streamGeneration) {
++                    processRequest(request);
++                }
++            }, Qt::QueuedConnection);
++        }
++    });
+ 
+-    ret = setFormat(QSize(static_cast<int>(streamConfig.size.width), static_cast<int>(streamConfig.size.height)),
+-                    streamConfig.pixelFormat,
+-                    streamConfig.colorSpace.value_or(libcamera::ColorSpace::Sycc),
+-                    streamConfig.stride);
++    ret = m_camera->start(&controls);
+     if (ret < 0) {
+-        setError(ret);
+-        return;
++        stopStream();
++        return ret;
+     }
+ 
+-    ret = createRequests();
+-    if (ret < 0) {
+-        setError(ret);
+-        return;
++    for (const auto &request : m_requests) {
++        m_settings.set(request->controls());
++        if (const int ret = m_camera->queueRequest(request.get()); ret < 0) {
++            stopStream();
++            return ret;
++        }
+     }
++    return 0;
+ }
+ 
+ const QList<libcamera::PixelFormat>& Worker::getNativeFormats()
+@@ -516,18 +546,38 @@ const QList<libcamera::PixelFormat>& Worker::getNativeFormats()
+ 
+ int Worker::setFormat(const QSize &size, const libcamera::PixelFormat &format, const libcamera::ColorSpace &colorSpace, const unsigned int stride)
+ {
+-    m_image = QImage();
+-    if (!getNativeFormats().contains(format)) {
++    if (format == libcamera::formats::NV12) {
++        m_nv12Format = QVideoFrameFormat(size, QVideoFrameFormat::Format_NV12);
++        switch (colorSpace.ycbcrEncoding) {
++        case libcamera::ColorSpace::YcbcrEncoding::Rec601:
++            m_nv12Format.setColorSpace(QVideoFrameFormat::ColorSpace_BT601);
++            break;
++        case libcamera::ColorSpace::YcbcrEncoding::Rec709:
++            m_nv12Format.setColorSpace(QVideoFrameFormat::ColorSpace_BT709);
++            break;
++        case libcamera::ColorSpace::YcbcrEncoding::Rec2020:
++            m_nv12Format.setColorSpace(QVideoFrameFormat::ColorSpace_BT2020);
++            break;
++        case libcamera::ColorSpace::YcbcrEncoding::None:
++            break;
++        }
++        m_nv12Format.setColorRange(colorSpace.range == libcamera::ColorSpace::Range::Full
++                                       ? QVideoFrameFormat::ColorRange_Full : QVideoFrameFormat::ColorRange_Video);
++        if (colorSpace.transferFunction == libcamera::ColorSpace::TransferFunction::Rec709) {
++            m_nv12Format.setColorTransfer(QVideoFrameFormat::ColorTransfer_BT709);
++        } else if (colorSpace.transferFunction == libcamera::ColorSpace::TransferFunction::Linear) {
++            m_nv12Format.setColorTransfer(QVideoFrameFormat::ColorTransfer_Linear);
++        }
++    } else if (!getNativeFormats().contains(format)) {
+         if (const int ret = m_converter.configure(format, size, stride, colorSpace); ret < 0) {
+             return ret;
+         }
+-
+-        m_image = QImage(size, QImage::Format_RGB32);
+         qDebug() << "Using software format conversion from" << format.toString();
+     }
+ 
+     m_format = format;
+     m_size = size;
++    m_stride = stride;
+ 
+     return 0;
+ }
+@@ -542,7 +592,7 @@ int Worker::createRequests()
+     qDebug() << "create req" << QThread::currentThread()->currentThreadId();
+ 
+     // FrameBufferAllocator creates FrameBuffer instances that can be used by libcamera to store frames
+-    m_allocator = new libcamera::FrameBufferAllocator(m_camera);
++    m_allocator = std::make_unique<libcamera::FrameBufferAllocator>(m_camera);
+ 
+     int ret = m_allocator->allocate(m_stream);
+     if (ret < 0) {
+@@ -558,7 +608,9 @@ int Worker::createRequests()
+         // Map memory buffers and cache the mappings
+         std::unique_ptr<Image> image =
+             Image::fromFrameBuffer(buffer.get(), Image::MapMode::ReadOnly);
+-        Q_ASSERT(image);
++        if (!image) {
++            return -EIO;
++        }
+ 
+         m_mappedBuffers[buffer.get()] = std::move(image);
+ 
+@@ -566,7 +618,7 @@ int Worker::createRequests()
+         std::unique_ptr<libcamera::Request> request = m_camera->createRequest();
+         if (!request) {
+             qWarning() << "Can't create request";
+-            return ret;
++            return -ENOMEM;
+         }
+         ret = request->addBuffer(m_stream, buffer.get());
+         if (ret < 0) {
+diff --git a/src/plasmacamera/worker.h b/src/plasmacamera/worker.h
+index f2e92c7..586bb8b 100644
+--- a/src/plasmacamera/worker.h
++++ b/src/plasmacamera/worker.h
+@@ -3,15 +3,15 @@
+ 
+ #pragma once
+ 
+-#include <QTimer>
+ #include <QDebug>
+ #include <QImage>
+ #include <QQueue>
+-#include <QMutex>
+ #include <QThread>
+ #include <QMetaType>
+ #include <QCameraFormat>
++#include <QVideoFrame>
+ 
++#include <atomic>
+ #include <memory>
+ #include <libcamera/libcamera.h>
+ #include <libcamera/framebuffer.h>
+@@ -32,6 +32,10 @@ public:
+ 	explicit Worker();
+ 	~Worker() override;
+ 
++    QString startVideo(const QSize &size, qreal fps, quint64 recordingId);
++    void stopVideo();
++    void frameDelivered();
++
+ Q_SIGNALS:
+ 	void ready();
+ 	void running();
+@@ -45,11 +49,7 @@ Q_SIGNALS:
+     void cameraFormatChanged();
+     void supportedFeaturesChanged();
+ 
+-    // Get frames
+-    // TODO: https://stackoverflow.com/questions/8455887/stack-object-qt-signal-and-parameter-as-reference
+-    //		- might not work properly for QQueue unless copy constructor is done recursively
+-    //		- it looks like slots with queued connection might work really nicely?
+-    void viewFinderFrame(const QImage &frame); // connect to this to get new frames
++    void frameReady(QVideoFrame frame, qint64 timestamp, quint64 recordingId);
+     void stillCaptureFrames(const QQueue<QImage> &frames); // connect to this to get captures
+ 
+ public Q_SLOTS:
+@@ -76,10 +76,6 @@ private Q_SLOTS:
+     void setError(const QString &errorString);
+     void unsetError();
+ 
+-    // Photo capture
+-    void requestNextFrame(); // triggered by timer, queues a frame request to libcamera
+-    void processRequestDataAndEmit(); // triggered when libcamera processes the current data into a QImage and emits
+-
+ private:
+ 	enum class State
+ 	{
+@@ -94,71 +90,55 @@ private:
+         None,
+         ViewFinder,
+         StillImage,
+-        RawImage,
+         Video,
+     };
+ 
+-    void startViewFinder();
+-    void stopViewFinder();
++    bool startViewFinder();
++    void restoreViewFinder();
++    int startStream(libcamera::CameraConfiguration &config, qint64 frameDuration = 0);
++    int stopStream();
++    void releaseCamera();
+ 
+     void setState(State state);
+-    void setMode(CaptureMode mode);
+-
+-    void configure();
+ 
+     static const QList<libcamera::PixelFormat> &getNativeFormats();
+     int setFormat(const QSize &size, const libcamera::PixelFormat &format, const libcamera::ColorSpace &colorSpace, unsigned int stride);
+-
+-    /*
+-     * How to get frames from libcamera
+-     * 1. Queue requests to libcamera
+-     * 2. Whenever libcamera finishes a request, it will call the appropriate requestComplete
+-     * 3. requestComplete will queue that request onto the doneQueue_ then issue newData signal
+-     * 4. newData will be processed by the appropriate processing method, then buffer will be placed on freeQueue_
+-     * 5. Once the timer expires, we move the free buffer to the libcamera request queue
+-     */
+     int createRequests();
+ 
+-    void requestComplete(libcamera::Request *request);
+-    void processRequestData(); // convert buffers to QImage stored at m_image
++    void processRequest(libcamera::Request *request);
++    QVideoFrame makeFrame(const libcamera::FrameBuffer &buffer, const Image &image);
++    bool keepVideoFrame(qint64 timestamp);
+ 
+     bool m_error = false;
+     QString m_errorString;
+ 
+-    // viewfinder
+-    QTimer *m_framePollTimer = nullptr;
+-
+     State m_state = State::None;
+     CaptureMode m_mode = CaptureMode::None;
+ 
+     // internals
+     std::shared_ptr<libcamera::Camera> m_camera;
+-    std::unique_ptr<libcamera::CameraConfiguration> m_config;
+ 
+     QSize m_size;
+-    QImage m_image;
++    unsigned int m_stride = 0;
++    QVideoFrameFormat m_nv12Format;
+     Converter m_converter;
+     libcamera::PixelFormat m_format;
+ 
+     // Queue of images for capturing a photo
+-    QMutex m_stillCaptureFramesMutex;
+     QQueue<QImage> m_stillCaptureFrames;
+ 
+     libcamera::Stream *m_stream{};
+-    libcamera::FrameBufferAllocator *m_allocator{};
++    std::unique_ptr<libcamera::FrameBufferAllocator> m_allocator;
+     std::map<libcamera::FrameBuffer *, std::unique_ptr<Image>> m_mappedBuffers;
+     std::vector<std::unique_ptr<libcamera::Request>> m_requests;
+ 
+-    // Queue of finished requests with data, waiting for processing
+-    QQueue<libcamera::Request *> m_doneQueue;
+-
+-    // Queue of finished requests that have been processed, and can be reused for new requests
+-    QQueue<libcamera::Request *> m_freeQueue;
+-
+-    // We require mutexes because the libcamera process lives on a different thread.
+-    // We also we don't want to clog up the libcamera thread with the processing.
+-    QMutex m_doneMutex;
+-    QMutex m_freeMutex;
++    quint64 m_streamGeneration = 0;
++    std::atomic_int m_pendingFrames = 0;
++    quint64 m_recordingId = 0;
++    qint64 m_videoFrameDuration = 0;
++    qint64 m_lastCaptureTimestamp = -1;
++    qint64 m_nextVideoTimestamp = 0;
++    qreal m_videoFrameRate = 0;
+ 
+     Settings m_settings;
+ };
+diff --git a/src/plasmacameramanager.cpp b/src/plasmacameramanager.cpp
+index ceedb3a..5ae4ef4 100644
+--- a/src/plasmacameramanager.cpp
++++ b/src/plasmacameramanager.cpp
+@@ -9,6 +9,7 @@
+ #include "plasmacameramanager.h"
+ 
+ #include <exiv2/exiv2.hpp>
++#include <cmath>
+ #include <memory>
+ 
+ PlasmaCameraManager::PlasmaCameraManager(QObject *parent)
+@@ -27,7 +28,6 @@ PlasmaCameraManager::PlasmaCameraManager(QObject *parent)
+ 
+     // m_session links m_videoInput and m_audioInput to m_recorder
+     m_session.setVideoFrameInput(&m_videoInput);
+-    connect(&m_videoFrameTimer, &QTimer::timeout, this, &PlasmaCameraManager::processVideoFrame);
+     connect(&m_orientationSensor, &QOrientationSensor::readingChanged, this, &PlasmaCameraManager::updateFromOrientationSensor);
+ 
+     m_orientationSensor.start();
+@@ -164,31 +164,52 @@ bool PlasmaCameraManager::isSavingVideo() const
+ 
+ void PlasmaCameraManager::startRecordingVideo()
+ {
+-    if (!m_recorder) {
++    if (!m_recorder || !m_plasmaCamera || m_recordingId || m_isSavingVideo) {
+         return;
+     }
+ 
+-    m_droppedFrames = false; // reset
+-    m_frameRecordingCount = 0; // reset frame count for correct timestamps
++    const quint64 recordingId = ++m_nextRecordingId;
++    const QString error = m_plasmaCamera->startVideoCapture(recordingSize(), m_videoRecordingFps, recordingId);
++    if (!error.isEmpty()) {
++        setError(0, Error::FormatError, error);
++        return;
++    }
++    m_recordingId = recordingId;
++    m_sentVideoFrame = false;
++    m_droppedFrames = false;
++    m_firstVideoTimestamp = -1;
+ 
+     // Set the correct rotation metadata prior to recording
+     QMediaMetaData metaData;
+     metaData.insert(QMediaMetaData::Orientation, outputOrientationDegrees());
+     metaData.insert(QMediaMetaData::Date, QDateTime::currentDateTime());
+     m_recorder->setMetaData(metaData);
++    m_recorder->setVideoResolution(recordingSize());
+ 
+     m_recorder->record();
++    if (m_recorder->recorderState() == QMediaRecorder::StoppedState) {
++        stopVideoCapture();
++    }
+ }
+ 
+ void PlasmaCameraManager::stopRecordingVideo()
+ {
+-    if (!m_recorder) {
++    if (!isRecordingVideo()) {
+         return;
+     }
+-    m_recorder->stop();
+     setIsSavingVideo(true);
++    m_recorder->stop();
++    stopVideoCapture();
++}
+ 
+-    m_videoFrameTimer.stop();
++void PlasmaCameraManager::stopVideoCapture()
++{
++    if (m_recordingId) {
++        m_recordingId = 0;
++        if (m_plasmaCamera && m_plasmaCamera->isAvailable()) {
++            m_plasmaCamera->stopVideoCapture();
++        }
++    }
+ }
+ 
+ int PlasmaCameraManager::captureImage()
+@@ -256,18 +277,20 @@ void PlasmaCameraManager::setPlasmaCamera(PlasmaCamera *plasmaCamera)
+ {
+     if (plasmaCamera != m_plasmaCamera) {
+         if (m_plasmaCamera) {
+-            disconnect(plasmaCamera, &PlasmaCamera::availableChanged, this, &PlasmaCameraManager::setReadyForCapture);
+-            disconnect(plasmaCamera, &PlasmaCamera::settingsChanged, this, &PlasmaCameraManager::setSettings);
+-            disconnect(plasmaCamera, &PlasmaCamera::viewFinderFrame, this, &PlasmaCameraManager::processViewfinderFrame);
+-            disconnect(plasmaCamera, &PlasmaCamera::stillCaptureFrames, this, &PlasmaCameraManager::processCaptureImage);
++            disconnect(m_plasmaCamera, nullptr, this, nullptr);
+         }
+ 
+         m_plasmaCamera = plasmaCamera;
+ 
+         if (m_plasmaCamera) {
+-            connect(plasmaCamera, &PlasmaCamera::availableChanged, this, &PlasmaCameraManager::setReadyForCapture);
++            connect(plasmaCamera, &PlasmaCamera::availableChanged, this, [this](bool available) {
++                if (!available && isRecordingVideo()) {
++                    stopRecordingVideo();
++                }
++                setReadyForCapture(available);
++            });
+             connect(plasmaCamera, &PlasmaCamera::settingsChanged, this, &PlasmaCameraManager::setSettings);
+-            connect(plasmaCamera, &PlasmaCamera::viewFinderFrame, this, &PlasmaCameraManager::processViewfinderFrame);
++            connect(plasmaCamera, &PlasmaCamera::frameReady, this, &PlasmaCameraManager::processFrame);
+             connect(plasmaCamera, &PlasmaCamera::stillCaptureFrames, this, &PlasmaCameraManager::processCaptureImage);
+         }
+ 
+@@ -292,17 +315,15 @@ void PlasmaCameraManager::setRecorder(QMediaRecorder *recorder)
+     m_recorder = recorder;
+     updateRecorderSettings();
+ 
+-    connect(recorder, &QMediaRecorder::errorOccurred, [this](QMediaRecorder::Error error, const QString &errorString) {
++    connect(recorder, &QMediaRecorder::errorOccurred, this, [this](QMediaRecorder::Error error, const QString &errorString) {
+         qDebug() << "Recording error:" << error << errorString;
+         setError(0, Error::ResourceError, errorString);
+     });
+ 
+     m_session.setRecorder(recorder);
+     connect(m_recorder, &QMediaRecorder::recorderStateChanged, this, [this]() {
+-        if (m_recorder->recorderState() == QMediaRecorder::RecordingState) {
+-            m_videoFrameTimer.start();
+-        } else {
+-            m_videoFrameTimer.stop();
++        if (m_recorder->recorderState() == QMediaRecorder::StoppedState) {
++            stopVideoCapture();
+         }
+ 
+         // Once the recorder changes to any state, it no longer is saving video
+@@ -364,34 +385,27 @@ void PlasmaCameraManager::updateRecorderSettings()
+         break;
+     }
+ 
+-    // Set the resolution
++    // Use the measured source rate rather than advertising the requested one.
++    m_recorder->setVideoFrameRate(0);
++}
++
++QSize PlasmaCameraManager::recordingSize() const
++{
+     switch (m_videoResolution) {
+-    case ResolutionAuto:
+-        m_recorder->setVideoResolution(QSize());
+-        break;
+     case Resolution540p:
+-        m_recorder->setVideoResolution(QSize(960, 540));
+-        break;
++        return {960, 540};
+     case Resolution720p:
+-        m_recorder->setVideoResolution(QSize(1280, 720));
+-        break;
++        return {1280, 720};
+     case Resolution1080p:
+-        m_recorder->setVideoResolution(QSize(1920, 1080));
+-        break;
++        return {1920, 1080};
+     case Resolution1440p:
+-        m_recorder->setVideoResolution(QSize(2560, 1440));
+-        break;
++        return {2560, 1440};
+     case Resolution2160p:
+-        m_recorder->setVideoResolution(QSize(3840, 2160));
+-        break;
++        return {3840, 2160};
++    case ResolutionAuto:
++        return {};
+     }
+-
+-    // Set the frame rate (let recorder decide)
+-    // m_recorder->setVideoFrameRate(m_videoRecordingFps);
+-    m_recorder->setVideoFrameRate(0);
+-
+-    // Set frame timer polling rate
+-    m_videoFrameTimer.setInterval(static_cast<int>(1000.0f / m_videoRecordingFps));
++    return {};
+ }
+ 
+ void PlasmaCameraManager::setAudioInput(QAudioInput *audioInput)
+@@ -424,7 +438,7 @@ bool PlasmaCameraManager::findAndSetDefaultRecordingDevice()
+ 
+ void PlasmaCameraManager::setVideoRecordingFps(const float fps)
+ {
+-    if (m_videoRecordingFps == fps) {
++    if (!std::isfinite(fps) || fps <= 0 || m_videoRecordingFps == fps) {
+         return;
+     }
+ 
+@@ -496,15 +510,12 @@ void PlasmaCameraManager::setIsSavingVideo(bool isSavingVideo)
+     Q_EMIT isRecordingVideoChanged();
+ }
+ 
+-void PlasmaCameraManager::processViewfinderFrame(const QImage &image)
++void PlasmaCameraManager::processFrame(QVideoFrame frame, qint64 timestamp, quint64 recordingId)
+ {
+-    if (image.isNull()) {
++    if (!m_plasmaCamera || recordingId != m_recordingId) {
+         return;
+     }
+ 
+-    m_currentFrame = image;
+-    QVideoFrame frame = QVideoFrame(image);
+-
+     // Do software rotation
+     // From testing, most drivers don't seem to implement hardware orientation correctly (CameraConfiguration::orientation),
+     // it either isn't supported or just crashes. So we will just use software rotation for best hardware compatibility.
+@@ -525,12 +536,26 @@ void PlasmaCameraManager::processViewfinderFrame(const QImage &image)
+     // Mirror output if requested
+     frame.setMirrored(m_plasmaCamera->mirrorOutput());
+ 
+-    // Add to sink
+-    m_videoSink->setVideoFrame(frame);
+-
+-    // Set as video frame for video recording
+-    m_videoFrame = std::move(frame);
+-    m_frameRecorded = false;
++    // Set the timing once, before sharing the frame with Qt's renderer and encoder.
++    if (recordingId && isRecordingVideo()) {
++        if (m_firstVideoTimestamp < 0) {
++            m_firstVideoTimestamp = timestamp;
++        }
++        const qint64 startTime = timestamp - m_firstVideoTimestamp;
++        frame.setStartTime(startTime);
++        frame.setEndTime(startTime + qRound64(1'000'000.0 / frame.streamFrameRate()));
++
++        if (m_videoInput.sendVideoFrame(frame)) {
++            m_sentVideoFrame = true;
++        } else if (m_sentVideoFrame && !m_droppedFrames) {
++            // Before the first accepted frame Qt may still be opening the encoder.
++            m_droppedFrames = true;
++            Q_EMIT framesDropped();
++        }
++    }
++    if (m_videoSink) {
++        m_videoSink->setVideoFrame(frame);
++    }
+ }
+ 
+ void PlasmaCameraManager::processCaptureImage(const QQueue<QImage> &frames)
+@@ -616,28 +641,6 @@ void PlasmaCameraManager::writeExifData(const QString &fileName)
+     }
+ }
+ 
+-void PlasmaCameraManager::processVideoFrame()
+-{
+-    // Set the time in the video that the frame should show up.
+-    // This allows for frames to be dropped without impacting video speed.
+-    // TODO: This causes severe frame corruption on devices that drop frames, how do we make it smoother?
+-    int frameLengthMicroseconds = qRound(1000.0 * 1000.0 / m_videoRecordingFps);
+-    m_videoFrame.setStartTime(m_frameRecordingCount * frameLengthMicroseconds);
+-    m_videoFrame.setEndTime((m_frameRecordingCount + 1) * frameLengthMicroseconds - 1);
+-
+-    // Attempt to send frame
+-    bool success = m_videoInput.sendVideoFrame(m_videoFrame);
+-    if (success) {
+-        m_frameRecorded = true;
+-    } else {
+-        if (!m_droppedFrames) {
+-            Q_EMIT framesDropped();
+-            m_droppedFrames = true;
+-        }
+-    }
+-    m_frameRecordingCount++;
+-}
+-
+ void PlasmaCameraManager::updateFromOrientationSensor()
+ {
+     QOrientationReading *reading = m_orientationSensor.reading();
+@@ -673,7 +676,7 @@ int PlasmaCameraManager::captureImageInternal()
+ {
+     const int newImageCaptureId = m_imageCaptureNum + 1;
+ 
+-    if (!isReadyForCapture()) {
++    if (!isReadyForCapture() || m_recordingId || m_isSavingVideo) {
+         setError(
+             newImageCaptureId,
+             NotReadyError,
+diff --git a/src/plasmacameramanager.h b/src/plasmacameramanager.h
+index c890c17..994dc6d 100644
+--- a/src/plasmacameramanager.h
++++ b/src/plasmacameramanager.h
+@@ -211,9 +211,8 @@ private Q_SLOTS:
+     void setSettings(const Settings &settings);
+ 
+     // image processing
+-    void processViewfinderFrame(const QImage &image);
++    void processFrame(QVideoFrame frame, qint64 timestamp, quint64 recordingId);
+     void processCaptureImage(const QQueue<QImage> &frames);
+-    void processVideoFrame();
+     void updateFromOrientationSensor();
+ 
+     void setIsSavingVideo(bool isSavingVideo);
+@@ -242,6 +241,9 @@ private:
+      */
+     float outputOrientationDegrees() const;
+ 
++    QSize recordingSize() const;
++    void stopVideoCapture();
++
+     // error handling
+     Error m_error = NoError;
+     QString m_errorString;
+@@ -259,14 +261,12 @@ private:
+     // preview and video recording
+     PlasmaCamera *m_plasmaCamera = nullptr;
+ 
+-    QImage m_currentFrame;
+-    QVideoFrame m_videoFrame;
+     QVideoSink *m_videoSink = nullptr;
+-    int m_frameRecordingCount = 0;
+-    bool m_frameRecorded = false;
++    quint64 m_nextRecordingId = 0;
++    quint64 m_recordingId = 0;
++    qint64 m_firstVideoTimestamp = -1;
+ 
+     QMediaCaptureSession m_session;
+-    QTimer m_videoFrameTimer;
+     QMediaFormat m_format;
+     QVideoFrameInput m_videoInput;
+     QMediaRecorder *m_recorder = nullptr;
+@@ -287,5 +287,6 @@ private:
+     QString m_imageCaptureFileName;
+ 
+     bool m_isSavingVideo = false;
++    bool m_sentVideoFrame = false;
+     bool m_droppedFrames = false;
+ };

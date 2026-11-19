@@ -14,12 +14,12 @@
       }
     },
     {
-      "file": "0002-recording-frame-timestamps.patch",
-      "sha256": "4beba37ea370adea9ad6ebe68500167832b68a542e75bdab79037179aa8d9d40",
+      "file": "0002-record-captured-frames.patch",
+      "sha256": "99fbbc22b9eebc6e1db6f723651559893be96dc17d2f5888212ba7de209a058d",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/KDE/plasma-camera/blob/c4a0e0acb99cdfcc61c1ead2cb91b142914df9a6/src/plasmacameramanager.cpp",
-        "drop_when": "The packaged Plasma Camera preserves the timestamps of frames already queued to the encoder, reports the selected rate, and writes playable recordings with audio."
+        "drop_when": "Plasma Camera selects a real libcamera recording configuration, submits each captured frame with its own timestamp, and restores preview after recording."
       }
     }
   ]
