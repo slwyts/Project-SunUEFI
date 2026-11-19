@@ -156,7 +156,6 @@ jobs:
       image_id: ${{ needs.environment.outputs.image_id }}
       matrix: ${{ needs.select.outputs.rootfs_matrix }}
       shared_target: ${{ needs.select.outputs.shared_target }}
-      overlay_manifests: ${{ needs.repository.outputs.overlay_manifests }}
 
   logs:
     needs: [select, environment, shared, repository, build, overlays]

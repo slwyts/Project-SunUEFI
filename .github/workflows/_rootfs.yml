@@ -12,9 +12,6 @@ on:
       shared_target:
         required: true
         type: string
-      overlay_manifests:
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -57,15 +54,16 @@ jobs:
         with:
           operation: download
           name: devices
-      - name: Use the overlay manifest from the completed publication
-        env:
-          PUBLISHED_MANIFEST: ${{ toJSON(fromJSON(inputs.overlay_manifests)[env.SUNUEFI_OVERLAY_TARGET]) }}
+      - name: Download the manifests from the completed publication
+        uses: ./.github/actions/build-input
+        with:
+          operation: download
+          name: published-overlay-manifests
+      - name: Check this image's published manifest
         run: |
-          directory="artifacts/packages/overlays/$SUNUEFI_OVERLAY_TARGET"
-          mkdir -p "$directory"
           jq -e --arg target "$SUNUEFI_OVERLAY_TARGET" \
             'select(.target == $target and .schema_version == 1 and (.packages | length > 0))' \
-            <<< "$PUBLISHED_MANIFEST" > "$directory/manifest.json"
+            "artifacts/packages/overlays/$SUNUEFI_OVERLAY_TARGET/manifest.json" >/dev/null
       - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/toolchains/*.tar.zst

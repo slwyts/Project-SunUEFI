@@ -9,10 +9,6 @@ on:
       overlay_matrix:
         required: true
         type: string
-    outputs:
-      overlay_manifests:
-        description: Manifests of the overlay packages checked and published by this job
-        value: ${{ jobs.publish.outputs.overlay_manifests }}
     secrets:
       SUNUEFI_REPO_GPG_KEY:
         required: true
@@ -27,8 +23,6 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-26.04-arm
-    outputs:
-      overlay_manifests: ${{ steps.published.outputs.overlay_manifests }}
     env:
       SUNUEFI_BUILD_ENVIRONMENT_ID: ${{ inputs.image_id }}
       SUNUEFI_CACHE_WORKSPACE: /workspace
@@ -96,21 +90,23 @@ jobs:
               . /tmp/repo-venv/bin/activate
               ./build.sh repo products --kernel --overlay-matrix "$OVERLAYS" --output build/repository
             ' 2>&1 | tee build/logs/repository.log
-      - name: Pass published overlay manifests to image assembly
+      - name: Collect the published package manifests
         id: published
+        if: fromJSON(inputs.overlay_matrix).target[0] != null
         env:
           OVERLAYS: ${{ inputs.overlay_matrix }}
         run: |
-          targets=$(jq -r '.target[]' <<< "$OVERLAYS")
-          manifests=()
-          while IFS= read -r target; do
-            if [[ -n "$target" ]]; then
-              manifests+=("artifacts/packages/overlays/$target/manifest.json")
-            fi
-          done <<< "$targets"
-          record=$(jq -nc 'reduce inputs as $manifest ({}; .[$manifest.target] = $manifest)' \
-            "${manifests[@]}" </dev/null)
-          printf 'overlay_manifests=%s\n' "$record" >> "$GITHUB_OUTPUT"
+          paths=$(jq -er '.target[] | "artifacts/packages/overlays/\(.)/manifest.json"' <<< "$OVERLAYS")
+          {
+            printf 'paths<<MANIFESTS\n%s\nMANIFESTS\n' "$paths"
+          } >> "$GITHUB_OUTPUT"
+      - name: Transfer published manifests to image assembly
+        if: steps.published.outputs.paths != ''
+        uses: ./.github/actions/build-input
+        with:
+          operation: upload
+          name: published-overlay-manifests
+          paths: ${{ steps.published.outputs.paths }}
       - name: Stage repository publication logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
