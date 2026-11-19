@@ -199,7 +199,8 @@ def stage(args):
         guest(['systemctl', 'mask', 'hibernate.target',
                'hybrid-sleep.target', 'suspend-then-hibernate.target'])
         guest(['systemctl', 'enable', 'sddm' if steamos else 'gdm', 'NetworkManager', 'sshd', 'bluetooth',
-               'piano-camerad', 'piano-hostkeys', 'adsprpcd-sensorspd', 'tuned-ppd.service'])
+               'piano-camerad', 'piano-hostkeys', 'adsprpcd-sensorspd', 'tuned-ppd.service',
+               'systemd-boot-update.service'])
         guest(['systemctl', 'set-default', 'graphical.target'])
     if steamos:
         from stage_steamos_desktop import configure

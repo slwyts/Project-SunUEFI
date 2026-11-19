@@ -340,6 +340,14 @@ Arch 由 pacman 事务调用 `kernel-install`，复用官方 `50-mkinitcpio.inst
 SteamOS 的 Frame 存储分组、恢复、ADB 和固件钩子不适用这台平板；
 Piano 的 mkinitcpio 配置只跳过这些钩子，保留系统及用户配置的其他钩子。
 
+systemd-boot 本身由发行版提供。成品启用 systemd 的 `systemd-boot-update.service`，
+用软件包里的 EFI 文件更新启动分区上的副本，不需要写固件变量。`piano-boot-config`
+让该服务等已安排的启动分区挂载完成；未配置启动分区挂载时，不额外启动挂载任务。
+
+成品把 ESP 挂在 `/boot/efi`。其他发行版也可以挂在 `/efi` 或 `/boot`；
+用 `bootctl --print-esp-path` 查看 ESP，用 `bootctl --print-boot-path` 查看
+`kernel-install` 写启动文件的位置。没有独立的 XBOOTLDR 分区时，两者通常相同。
+
 安装 Piano 内核时，`piano-boot-config` 在 initramfs／UKI 已生成、systemd 写入前
 检查启动分区能否容纳新文件。空间不足会提示先保留可用的旧启动项再腾出空间，
 不会覆盖或自动删除旧文件。这个检查避免已知的空间不足导致覆盖中断；

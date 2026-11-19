@@ -16,6 +16,11 @@ from package import boot, kernel
 
 
 class KernelPackageTests(unittest.TestCase):
+    def assertBootUpdateOrder(self, root):
+        drop_in = root / 'usr/lib/systemd/system/systemd-boot-update.service.d/20-piano-esp.conf'
+        self.assertEqual(drop_in.read_text(), '[Unit]\nAfter=efi.mount boot.mount boot-efi.mount\n')
+        self.assertEqual(drop_in.stat().st_mode & 0o777, 0o644)
+
     @unittest.skipUnless(shutil.which('dpkg') and shutil.which('vercmp'),
                          'APT and pacman version comparators required')
     def test_packaging_updates_do_not_change_the_kernel_abi_version(self):
@@ -132,6 +137,7 @@ class KernelPackageTests(unittest.TestCase):
             config.write_text('layout=uki\ninitrd_generator=mkinitcpio\n')
             subprocess.run([*command, '-U', archives[1]], check=True)
             self.assertEqual(config.read_text(), 'layout=uki\ninitrd_generator=mkinitcpio\n')
+            self.assertBootUpdateOrder(root)
             self.assertTrue((root / 'etc/pacman.d/hooks/90-mkinitcpio-install.hook').is_symlink())
             self.assertIn('[sunuefi]\n', (root / 'etc/pacman.d/sunuefi.conf').read_text())
             boot_space = root / 'usr/lib/kernel/install.d' / boot.BOOT_SPACE_HOOK.name
@@ -148,6 +154,8 @@ class KernelPackageTests(unittest.TestCase):
             subprocess.run(['bash', '-n', transaction], check=True)
             subprocess.run([*command, '-R', 'piano-boot-config'], check=True)
             self.assertFalse(config.exists())
+            self.assertFalse((root / 'usr/lib/systemd/system/systemd-boot-update.service.d'
+                              / '20-piano-esp.conf').exists())
             self.assertEqual(config.with_suffix('.conf.pacsave').read_text(),
                              'layout=uki\ninitrd_generator=mkinitcpio\n')
 
@@ -178,6 +186,7 @@ class KernelPackageTests(unittest.TestCase):
             self.assertEqual(boot_space.read_bytes(), boot.BOOT_SPACE_HOOK.read_bytes())
             self.assertEqual(boot_space.stat().st_mode & 0o777, 0o755)
             boot_package = next(path for path in packages if path.name.startswith('piano-boot-config_'))
+            self.assertBootUpdateOrder(output / boot_package.stem)
             self.assertIn('systemd (>= 258)', subprocess.check_output(
                 ['dpkg-deb', '-f', boot_package, 'Depends'], text=True))
             control_dir = output / 'boot-control'

@@ -72,6 +72,10 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
         'usr/lib/kernel/devicetree': 'piano/board.dtb\n',
         'usr/lib/kernel/cmdline': ' '.join(dict.fromkeys(
             ['root=LABEL=PIANOROOT', 'rw', *arguments])) + '\n',
+        # A nofail mount can finish after local-fs.target. Order the updater
+        # after any scheduled ESP mount without pulling in a missing mount.
+        'usr/lib/systemd/system/systemd-boot-update.service.d/20-piano-esp.conf': (
+            '[Unit]\nAfter=efi.mount boot.mount boot-efi.mount\n'),
         f'usr/lib/kernel/install.d/{BOOT_SPACE_HOOK.name}': BOOT_SPACE_HOOK.read_text(),
         'usr/lib/kernel/install.d/89-piano-loaderentry-remove.install': (
             '#!/bin/sh\nset -eu\n'
