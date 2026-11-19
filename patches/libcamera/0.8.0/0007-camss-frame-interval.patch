@@ -141,7 +141,7 @@ index d890d4fd93aa74f094832200bbf08e2eb63c76e5..dc861a17719fafbf58b4fca9b5d70fc6
  	std::queue<FrameBuffer *> availableBuffers_;
  	unsigned int bufferCount_;
 diff --git a/src/libcamera/pipeline/camss/camss_csi_pix.cpp b/src/libcamera/pipeline/camss/camss_csi_pix.cpp
-index b31030e19623f533d9b3d57cfdf1793da8152c4d..296147648f403dde7b6090660afa3f5371ee944c 100644
+index b31030e19623f533d9b3d57cfdf1793da8152c4d..0ab2bc89d6a750f097cc07bfbfadbe3454d117fb 100644
 --- a/src/libcamera/pipeline/camss/camss_csi_pix.cpp
 +++ b/src/libcamera/pipeline/camss/camss_csi_pix.cpp
 @@ -6,8 +6,11 @@
@@ -248,8 +248,8 @@ index b31030e19623f533d9b3d57cfdf1793da8152c4d..296147648f403dde7b6090660afa3f53
 +		(vblank->maximum - vblank->minimum) / vblank->step * vblank->step;
 +	if ((sensorSize.height + static_cast<double>(vblank->minimum)) *
 +		    lineMicroseconds < 0.5 ||
-+	    (sensorSize.height + static_cast<double>(maxBlanking)) *
-+		    lineMicroseconds >= std::numeric_limits<int64_t>::max())
++	    (sensorSize.height + static_cast<double>(maxBlanking)) * lineMicroseconds >=
++		    -static_cast<double>(std::numeric_limits<int64_t>::min()))
 +		return;
 +
 +	pixFrameTiming_ = PixFrameTiming{

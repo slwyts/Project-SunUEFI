@@ -23,6 +23,9 @@ a candidate for later being factored out into a generic helper class which
 could be shared between the IPU3, CAMSS and simple pipeline handlers.
 
 Signed-off-by: Hans de Goede <johannes.goede at oss.qualcomm.com>
+
+[SunUEFI: Drop the unused metadataRequired_ member and match the
+V4L2DeviceFormat class declaration for Clang builds.]
 ---
  include/libcamera/ipa/meson.build             |   1 +
  meson.build                                   |   1 +
@@ -32,14 +35,14 @@ Signed-off-by: Hans de Goede <johannes.goede at oss.qualcomm.com>
  src/libcamera/pipeline/camss/camss_csi.cpp    | 571 +++++++++++++++
  src/libcamera/pipeline/camss/camss_csi.h      | 129 ++++
  src/libcamera/pipeline/camss/camss_frames.cpp | 153 ++++
- src/libcamera/pipeline/camss/camss_frames.h   |  70 ++
+ src/libcamera/pipeline/camss/camss_frames.h   |  69 ++
  src/libcamera/pipeline/camss/camss_isp.cpp    |  26 +
  src/libcamera/pipeline/camss/camss_isp.h      |  64 ++
  .../pipeline/camss/camss_isp_soft.cpp         | 227 ++++++
  src/libcamera/pipeline/camss/camss_isp_soft.h |  57 ++
  src/libcamera/pipeline/camss/meson.build      |  10 +
  src/libcamera/pipeline/simple/simple.cpp      |   1 -
- 15 files changed, 1999 insertions(+), 1 deletion(-)
+ 15 files changed, 1998 insertions(+), 1 deletion(-)
  create mode 100644 src/libcamera/pipeline/camss/camss.cpp
  create mode 100644 src/libcamera/pipeline/camss/camss_csi.cpp
  create mode 100644 src/libcamera/pipeline/camss/camss_csi.h
@@ -1666,10 +1669,10 @@ index 0000000..75561d7
 +} /* namespace libcamera */
 diff --git a/src/libcamera/pipeline/camss/camss_frames.h b/src/libcamera/pipeline/camss/camss_frames.h
 new file mode 100644
-index 0000000..cd5e3df
+index 0000000..eb0ba16
 --- /dev/null
 +++ b/src/libcamera/pipeline/camss/camss_frames.h
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,69 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/*
 + * Camss Frames helper
@@ -1736,7 +1739,6 @@ index 0000000..cd5e3df
 +
 +	bool paramsRequired_;
 +	bool statsRequired_;
-+	bool metadataRequired_;
 +};
 +
 +} /* namespace libcamera */
@@ -1774,7 +1776,7 @@ index 0000000..c452568
 +} /* namespace libcamera */
 diff --git a/src/libcamera/pipeline/camss/camss_isp.h b/src/libcamera/pipeline/camss/camss_isp.h
 new file mode 100644
-index 0000000..55e967b
+index 0000000..d6a1722
 --- /dev/null
 +++ b/src/libcamera/pipeline/camss/camss_isp.h
 @@ -0,0 +1,64 @@
@@ -1801,7 +1803,7 @@ index 0000000..55e967b
 +class ControlList;
 +class FrameBuffer;
 +struct StreamConfiguration;
-+struct V4L2DeviceFormat;
++class V4L2DeviceFormat;
 +
 +class CamssIsp
 +{

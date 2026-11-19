@@ -23,7 +23,7 @@
     },
     {
       "file": "0003-camss-pipeline.patch",
-      "sha256": "83bed98797c0c452c9ba17febaa4580e90a2a643beb5214e6958bb6948da1c5e",
+      "sha256": "641f9e970f909d1a07b09856cfdf4c58b62c8e7299488dd05cd7a4106ef03dcc",
       "upstream": {
         "status": "submitted",
         "url": "https://lists.libcamera.org/pipermail/libcamera-devel/2026-November/063341.html",
@@ -59,7 +59,7 @@
     },
     {
       "file": "0007-camss-frame-interval.patch",
-      "sha256": "7b1ce2cf1afa07b9fbb35f7133dffeac77268ee2d0880980142edbb6a4cf70d3",
+      "sha256": "6f333e5c414ecc5c6769a3ad7936bd57bf4714bf110fe99c00953783df14ba7e",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/libcamera-org/libcamera/tree/v0.8.0/src/libcamera/pipeline",
