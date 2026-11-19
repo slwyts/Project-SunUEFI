@@ -18,6 +18,7 @@ import package_bsp as bsp
 
 TOPOLOGY_TOOLS = all(shutil.which(tool) for tool in ('m4', 'alsatplg'))
 TOPOLOGY_SOURCES = all((ROOT / 'upstream' / name / '.git').exists() for name in bsp.TOPOLOGY_SOURCES)
+DMA_HEAP_RULE = 'usr/lib/udev/rules.d/70-piano-camera.rules'
 
 
 class BspPackageTests(unittest.TestCase):
@@ -42,6 +43,8 @@ class BspPackageTests(unittest.TestCase):
             self.assertFalse(any(token in name for token in ('fstab', 'ssh', 'machine-id', 'gdm3', '80-drivers', 'libinput')))
         self.assertIn('etc/wireplumber/wireplumber.conf.d/50-piano-audio.conf', report['payload_files'])
         self.assertNotIn('etc/wireplumber/wireplumber.conf.d/50-piano-camera.conf', report['payload_files'])
+        self.assertIn(DMA_HEAP_RULE, report['payload_files'])
+        self.assertNotIn('etc/udev/rules.d/70-piano-camera.rules', report['payload_files'])
         row=report['payload_files']['etc/modules-load.d/piano-bluetooth.conf']
         self.assertEqual(row['source_component'],'Project SunUEFI')
         data=(bsp.BSP/'common/etc/modules-load.d/piano-bluetooth.conf').read_text()
@@ -157,9 +160,11 @@ class BspPackageTests(unittest.TestCase):
              'metadata', recipe], text=True).splitlines()
         self.assertEqual(metadata, ['any', *configuration, *report['depends']])
         self.assertTrue({'python', 'python-gobject', 'bluez'} <= set(metadata))
+        self.assertNotIn(DMA_HEAP_RULE, metadata)
         with tarfile.open(work / 'payload.tar') as archive:
             for member in archive:
                 self.assertEqual((member.uid, member.gid, member.mtime), (0, 0, 0))
+            self.assertEqual(archive.getmember('./' + DMA_HEAP_RULE).mode, 0o644)
             member = archive.getmember('./usr/share/alsa/ucm2/conf.d/sm8750/Xiaomi Pad 8 Pro.conf')
             self.assertTrue(member.issym())
             self.assertEqual(member.linkname, '../../Qualcomm/sm8750/Xiaomi-Pad-8-Pro/Xiaomi-Pad-8-Pro.conf')
@@ -198,12 +203,14 @@ class BspPackageTests(unittest.TestCase):
                 self.assertEqual((member.uid, member.gid), (0, 0))
             self.assertIn('./etc/modprobe.d/piano.conf', archive.getnames())
             self.assertIn('./usr/lib/piano/pen-control.py', archive.getnames())
+            self.assertEqual(archive.getmember('./' + DMA_HEAP_RULE).mode, 0o644)
         control = self.base / 'control'
         subprocess.run(['dpkg-deb', '--control', artifact, control], check=True)
         guard = (control / 'preinst').read_text()
         self.assertIn('dpkg-query', guard)
         self.assertNotIn('systemctl', guard)
         fields = (control / 'control').read_text()
+        self.assertNotIn('/' + DMA_HEAP_RULE, (control / 'conffiles').read_text().splitlines())
         depends = next(line.removeprefix('Depends: ').split(', ')
                        for line in fields.splitlines() if line.startswith('Depends: '))
         self.assertTrue({'python3', 'python3-gi', 'gir1.2-glib-2.0', 'bluez'} <= set(depends))

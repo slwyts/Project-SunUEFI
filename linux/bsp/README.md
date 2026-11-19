@@ -2,9 +2,10 @@
 
 这里保存与发行版、桌面选择分开的设备配置。来源是固定提交的公开 `debian-piano` overlay，保留许可和逐文件 SHA256。`piano-device-config` 在 Debian 上是 `Architecture: all` 的 `.deb`，在 Arch 上是 `makepkg` 构建的 `any` 包。
 
-通用包包含 UCM、驱动加载参数和硬件服务单元。相机服务及它的 udev 和
-WirePlumber 配置由独立的 [`piano-camera`](../../docs/devel/hardware/camera-controls.md)
-安装。相机包依赖通用包中的前后摄模块参数，不需要定制 rootfs。
+通用包包含 UCM、驱动加载参数和硬件服务单元，也为标准 DMA-BUF system heap
+设置会话访问权限，应用分配相机缓冲不依赖相机服务。相机服务和它的 WirePlumber
+配置由独立的 [`piano-camera`](../../docs/devel/hardware/camera-controls.md) 安装。
+相机包依赖通用包中的前后摄模块参数，不需要定制 rootfs。
 
 笔的 BlueZ 初始化程序、systemd 服务和无线参数由 `piano-device-config`
 一起安装。包管理器会安装 BlueZ 和 Python GI；不需要从镜像复制脚本，
@@ -16,7 +17,7 @@ WirePlumber 配置由独立的 [`piano-camera`](../../docs/devel/hardware/camera
 
 `usr/lib/piano/bluetooth-address.py` 由现有无线初始化脚本运行一次，只为缺少地址的板载控制器读取原厂 persist。原厂地址不可用时使用 SoC 型号与序列号派生稳定地址；已配置的控制器直接跳过。该程序使用标准 Bluetooth MGMT，不增加常驻服务，也不写原厂分区。Python 和挂载工具由发行版配方声明，手工刷写通用 ESP 不再需要预先填写地址。
 
-UCM 打开四路扬声器，PipeWire 的普通立体声流使用标准 `simple` 混音将左右各复制到同侧两只扬声器；日常界面只有一个输出。四路功放沿用原厂增益 235（−7.5 dB）。麦克风使用原生单声道 PCM，DMIC2/DEC0 提供信号，桌面输入为 MONO，默认数字增益为 +40 dB（`VA_DEC0 Volume=124`）。这份配置由 Debian、Nyarch 和 SteamOS 共用，没有额外虚拟音频设备。UCM 差异保存在 `patches/0001-ucm-piano-microphone-and-speakers.patch`，由 `piano-device-config` 安装。相机配置仍独立于共有包。
+UCM 打开四路扬声器，PipeWire 的普通立体声流使用标准 `simple` 混音将左右各复制到同侧两只扬声器；日常界面只有一个输出。四路功放沿用原厂增益 235（−7.5 dB）。麦克风使用原生单声道 PCM，DMIC2/DEC0 提供信号，桌面输入为 MONO，默认数字增益为 +40 dB（`VA_DEC0 Volume=124`）。这份配置由 Debian、Nyarch 和 SteamOS 共用，没有额外虚拟音频设备。UCM 差异保存在 `patches/0001-ucm-piano-microphone-and-speakers.patch`，由 `piano-device-config` 安装。
 
 不提取桌面/GDM/dconf、账号、machine-id、SSH、软件源、fstab/swapfile/userdata、qbootctl 写槽或固定 USB 地址策略。`80-drivers.rules` 会覆盖 systemd 同名规则并广泛禁止自动加载，因此未纳入；不能把这份配置包当作已经验证的完整 BSP。
 

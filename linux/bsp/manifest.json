@@ -110,6 +110,20 @@
       "license": "MIT"
     },
     {
+      "group": "common",
+      "path": "usr/lib/udev/rules.d/70-piano-camera.rules",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "8a106be1f56c8181b67e9adfe322c4b9de0c511848ad3cafdf627cd953b66d44",
+      "source": "rootfs/overlay/etc/udev/rules.d/70-piano-camera.rules",
+      "source_sha256": "10223b550ef2f5c9fc532cb6a9cd553cb7e776e1a2439f740b86801788be09af",
+      "source_git_mode": "100644",
+      "license": "MIT",
+      "transformation": "Install the system DMA heap rule with the device configuration"
+    },
+    {
       "group": "camera",
       "path": "etc/udev/rules.d/70-piano-camera.rules",
       "type": "file",
