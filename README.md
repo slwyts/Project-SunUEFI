@@ -148,8 +148,8 @@ SunUEFI 的内核、设备树、固件和配套软件包通过签名软件源更
 
 | 系统 | 软件源 | 更新命令 |
 | --- | --- | --- |
-| Debian GNOME、Debian KDE | APT：`https://sunuefi-repo.okassets.uk/apt` · `sid main` · `arm64` | `sudo apt update && sudo apt upgrade` |
-| Nyarch | pacman：`[sunuefi]` | `sudo pacman -Syu` |
+| Debian GNOME、Debian KDE、Debian Denial | APT：`https://sunuefi-repo.okassets.uk/apt` · `sid main` · `arm64` | `sudo apt update && sudo apt upgrade` |
+| Nyarch、Arch Denial | pacman：`[sunuefi]` | `sudo pacman -Syu` |
 | SteamOS | pacman：`[sunuefi-steamos]` 在 `[sunuefi]` 前面 | `sudo pacman -Syu` |
 
 两个 pacman 仓库共用地址 `https://sunuefi-repo.okassets.uk/pacman/$repo/os/$arch`。SteamOS 专用仓只提供适配 Valve 用户空间的覆盖包，其余从 `sunuefi` 获取。手动配置见[软件源与更新](docs/user/getting-started.md#软件源与更新)。

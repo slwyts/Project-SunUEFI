@@ -71,7 +71,7 @@ sudo pacman-key --lsign-key 1B89034B2C88892963C0C1CAD7D5F9A7080E6560
 sudoedit /etc/pacman.conf
 ```
 
-Nyarch 只添加 `[sunuefi]`；SteamOS 添加下面两个仓库，保持顺序。把它们放在发行版原有仓库之前，保留原有仓库和签名设置。
+Nyarch 和 Arch Denial 只添加 `[sunuefi]`；SteamOS 添加下面两个仓库，保持顺序。把它们放在发行版原有仓库之前，保留原有仓库和签名设置。
 
 ```ini
 [sunuefi-steamos]
@@ -83,7 +83,7 @@ SigLevel = Required TrustedOnly
 Server = https://sunuefi-repo.okassets.uk/pacman/$repo/os/$arch
 ```
 
-保存后运行 `sudo pacman -Syu`。`sunuefi-steamos` 只给 SteamOS 使用，不要把 Valve 的包混装进 Nyarch。
+保存后运行 `sudo pacman -Syu`。`sunuefi-steamos` 提供按 Valve 依赖构建的包，只用于 SteamOS。
 
 ## 充电记录
 
