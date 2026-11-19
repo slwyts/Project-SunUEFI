@@ -38,6 +38,19 @@ sudo ./build.sh plasma-camera --sysroot "$SID_ARM64_ROOT" --libcamera-packages b
 `libcamera-ipa-0.8` 安装到独立目录，不覆盖 Debian 0.7 的 `libcamera-ipa`。
 成品明确安装同版 IPA 和标准相机插件，KDE 也安装重新链接的 Plasma Camera。
 
+Arch Linux ARM 用同一版 libcamera 源码和 CAMSS 补丁，沿用官方 `PKGBUILD`
+的六个拆包。以下命令在隔离的 ARM64 构建根安装包，便于接着编译相机应用；
+归档在输出目录的 `runtime/`：
+
+```sh
+sudo ./build.sh libcamera --rootfs "$ARCH_ARM64_ROOT" --output build/libcamera-arch
+```
+
+库和 IPA 要来自同一次构建，工具、GStreamer 和 Python 包也要求匹配的库。
+Arch 的官方 PipeWire 相机插件、Plasma Camera 仍会加载 0.7，发布时必须
+与 0.8 的库一起升级，回退也应切回各自配套的版本。SteamOS 另用 Valve 的
+软件包和依赖验证这一事务。
+
 | 功能 | 现有服务（旧路径） | 标准硬件路径（替代状态） |
 | --- | --- | --- |
 | 前后摄预览、录像 | CAMSS PIX 输出 NV12，服务通过两个 loopback 摄像头交给应用 | Debian 普通会话已通过正式 libcamera 和 PipeWire 从两个实际摄像头取帧；仍需补硬件统计、逐帧控制及拍照录像验收 |

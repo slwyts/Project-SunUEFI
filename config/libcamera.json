@@ -11,5 +11,13 @@
   "debian": {
     "recipe_source_version": "0.7.2-1",
     "package_revision": "0+sunuefi5"
+  },
+  "arch": {
+    "package_release": "1",
+    "recipe_url": "https://raw.githubusercontent.com/archlinuxarm/PKGBUILDs/38f3e919fddb218bf7344cae7886bd85ee791422/extra/libcamera",
+    "files": {
+      "PKGBUILD": "db958d70377e6b17558c8f39fc1a3a6eceea2a309655353ec5938caf4f03081e",
+      "libcamera-fix-python3.14-macro-redefinition.patch": "2eb9407d11ea073e3c392bbb584b75803ce1b2a3d73afaefda5c1fa799c151ad"
+    }
   }
 }

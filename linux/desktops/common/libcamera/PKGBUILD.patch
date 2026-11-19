@@ -1,0 +1,182 @@
+--- a/PKGBUILD
++++ b/PKGBUILD
+@@ -14,16 +14,14 @@
+   gst-plugin-libcamera
+   python-libcamera
+ )
+-pkgver=0.7.2
+-pkgrel=4
++pkgver=@VERSION@
++pkgrel=@RELEASE@
+ pkgdesc="A complex camera support library for Linux, Android, and ChromeOS"
+-arch=(x86_64)
++arch=(aarch64)
+ url="https://libcamera.org/"
+-_url=https://git.libcamera.org/libcamera/libcamera.git
+ makedepends=(
+   cmake
+   doxygen
+-  git
+   glib2
+   graphviz
+   gst-plugins-base
+@@ -30,6 +28,7 @@
+   gtest
+   libdrm
++  libevent
+   libgcc
+   libjpeg-turbo
+   libstdc++
+   libpisp
+@@ -37,6 +36,7 @@
+   libyaml
+   libyuv
+   meson
++  openssl
+   pybind11
+   python-jinja
+   python-ply
+@@ -50,14 +50,8 @@
+   systemd
+-  texlive-core
++  texlive-latexextra
+ )
+-source=(
+-  "git+$_url#tag=v$pkgver"
+-  "$pkgbase-fix-python3.14-macro-redefinition.patch"
+-)
+-sha512sums=('a5656356617a01a7e8feb535380869d38b7c58139c7f99385af355629d3e1927bbd8847f7bec755c753c72f6b065df76de53c15f9af2e5901e83e7a144a2ddcd'
+-            '8b54cbdf6ed767ae8d52a14480a4653f4f3a1c2187c4ccf7ceb65eaa60c819cce514122591d6e0c2dfc39d7482739f8fdd4090dbaf63701445510eefc88fb19f')
+-b2sums=('1dbd3f78f8d9a2484331798b18b871d7585b5928988e91d586366049d85e3f126e7cfc58494400e69feeec99a77894252d582f0d8f183508e5d1b8220e70f3d5'
+-        '4a0e24feed22d32b83b0ec49c9a7616b77deb26cae82c17a38b54a81a0468e982852147bc2d5e3b611ba014ddbd7647acfe2e68591542420da73945ba1c0d6c2')
++source=(@SOURCES@)
++sha256sums=(@CHECKSUMS@)
+
+ _pick() {
+   local p="$1" f d; shift
+@@ -70,8 +64,11 @@
+ }
+
+ prepare() {
+-  cd $pkgbase
+-  patch -Np1 < ../$pkgbase-fix-python3.14-macro-redefinition.patch
++  local file
++  cd "$srcdir/@SOURCE_DIR@"
++  for file in @PATCHES@; do
++    patch --batch --fuzz=0 -Np1 -i "$srcdir/$file"
++  done
+
+   # add version, so that utils/gen-version.sh may rely on it
+   printf "%s\n" "$pkgver" > .tarball-version
+@@ -82,11 +79,17 @@
+     -D v4l2=enabled
+     -D tracing=disabled
+     -D test=true
++    -D documentation=enabled
++    -D gstreamer=enabled
++    -D pycamera=enabled
++    -D qcam=enabled
++    -D lc-compliance=enabled
++    -D cam=enabled
+     -D rpi-awb-nn=disabled
+   )
+
+-  arch-meson $pkgbase build "${meson_options[@]}"
+-  meson compile -C build
++  arch-meson "$srcdir/@SOURCE_DIR@" build "${meson_options[@]}"
++  meson compile -C build -j @JOBS@
+ }
+
+ check() {
+@@ -114,7 +117,7 @@
+   depends=(
+     glibc
+     gnutls
+-    libcamera-ipa
++    "libcamera-ipa=$pkgver-$pkgrel"
+     libelf
+     libgcc
+     libglvnd
+@@ -134,7 +137,7 @@
+   provides=(libcamera.so libcamera-base.so)
+
+   meson install -C build --destdir "$pkgdir"
+-  install -vDm 644 $pkgbase/LICENSES/{BSD-3-Clause,Linux-syscall-note,MIT}.txt -t "$pkgdir/usr/share/licenses/$pkgname/"
++  install -vDm 644 "$srcdir/@SOURCE_DIR@/LICENSES/"{BSD-3-Clause,Linux-syscall-note,MIT}.txt -t "$pkgdir/usr/share/licenses/$pkgname/"
+
+   (
+     cd "$pkgdir"
+@@ -153,6 +156,8 @@
+     CC-BY-SA-4.0
+     CC0-1.0
+   )
++  # This package contains only generated documentation.
++  options=(!strip)
+
+   mv -v $pkgname/* "$pkgdir"
+   mv -v "$pkgdir/usr/share/doc/$pkgbase-$pkgver/" "$pkgdir/usr/share/doc/$pkgbase/"
+@@ -171,19 +176,23 @@
+   )
+   depends=(
+     glibc
+-    libcamera libcamera.so libcamera-base.so
++    "libcamera=$pkgver-$pkgrel" libcamera.so libcamera-base.so
+     libgcc
+     libstdc++
+   )
+   # stripping requires re-signing of IPA libs, so we do it manually
+   options=(!strip)
+
+-  strip $pkgname/usr/lib/libcamera/*{.so,proxy}
+-  for _lib in $pkgname/usr/lib/libcamera/*.so; do
+-    $pkgbase/src/ipa/ipa-sign.sh "$(find build -type f -iname "*ipa-priv-key.pem")" "$_lib" "$_lib.sign"
++  local abi=${pkgver%.*} key module directory
++  directory="$pkgname/usr/lib/libcamera"
++  key="$srcdir/build/src/ipa-priv-key.pem"
++  strip --strip-unneeded "$directory/$abi/"*_ipa_proxy "$directory/$abi/ipa/"ipa_*.so \
++    "$directory/v4l2-compat.so"
++  for module in "$directory/$abi/ipa/"ipa_*.so; do
++    "$srcdir/@SOURCE_DIR@/src/ipa/ipa-sign.sh" "$key" "$module" "$module.sign"
+   done
+   mv -v $pkgname/* "$pkgdir"
+-  install -vDm 644 $pkgbase/LICENSES/BSD-2-Clause.txt -t "$pkgdir/usr/share/licenses/$pkgname/"
++  install -vDm 644 "$srcdir/@SOURCE_DIR@/LICENSES/BSD-2-Clause.txt" -t "$pkgdir/usr/share/licenses/$pkgname/"
+ }
+
+ package_libcamera-tools() {
+@@ -197,7 +206,7 @@
+   depends=(
+     glibc
+     gtest
+-    libcamera libcamera.so libcamera-base.so
++    "libcamera=$pkgver-$pkgrel" libcamera.so libcamera-base.so
+     libdrm
+     libevent libevent-2.1.so libevent_pthreads-2.1.so
+     libgcc
+@@ -212,7 +221,7 @@
+   replaces=("$pkgbase-tests<0.0.1-2")
+
+   mv -v $pkgname/* "$pkgdir"
+-  install -vDm 644 $pkgbase/LICENSES/BSD-2-Clause.txt -t "$pkgdir/usr/share/licenses/$pkgname/"
++  install -vDm 644 "$srcdir/@SOURCE_DIR@/LICENSES/BSD-2-Clause.txt" -t "$pkgdir/usr/share/licenses/$pkgname/"
+ }
+
+ package_gst-plugin-libcamera() {
+@@ -226,7 +235,7 @@
+     glibc
+     gst-plugins-base-libs
+     gstreamer
+-    libcamera libcamera.so libcamera-base.so
++    "libcamera=$pkgver-$pkgrel" libcamera.so libcamera-base.so
+     libgcc
+     libstdc++
+   )
+@@ -242,7 +251,7 @@
+   )
+   depends=(
+     glibc
+-    libcamera
++    "libcamera=$pkgver-$pkgrel" libcamera.so libcamera-base.so
+     libgcc
+     libstdc++
+     python
