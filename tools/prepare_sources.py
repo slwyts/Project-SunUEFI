@@ -2,8 +2,11 @@
 """Get or check the fixed build sources. Does not reset edits or touch a device."""
 import argparse
 import json
+import os
 from pathlib import Path
+import re
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_GROUPS = {
@@ -11,6 +14,13 @@ SOURCE_GROUPS = {
     'kernel': ('v4l2loopback',),
     'devices': ('debian-piano-current', 'piano-sensors-current', 'audioreach-topology'),
 }
+GIT_TRANSFER_INTERRUPTED = re.compile(
+    r'\bcurl (?:18|28|52|55|56|92)\b|^fatal: early EOF$'
+    r'|^fetch-pack: unexpected disconnect while reading sideband packet$', re.MULTILINE)
+GIT_SOURCE_UNAVAILABLE = re.compile(
+    r'not our ref|couldn.t find remote ref|returned error: (?:401|403|404)\b'
+    r'|permission denied|authentication failed|repository not found|could not read username',
+    re.IGNORECASE)
 
 
 def git(path, *args):
@@ -55,12 +65,29 @@ def submodule_batches(rows):
     return sorted(batches.items(), key=lambda batch: len(batch[0].parts))
 
 
+def update_submodules(path, children):
+    command = ['git', '-C', str(path)]
+    args = ['submodule', 'update', '--init', '--depth', '1', '--', *children]
+    env = {**os.environ, 'LC_ALL': 'C'}
+    for fallback in ([], ['-c', 'http.version=HTTP/1.1']):
+        result = subprocess.run([*command, *fallback, *args], env=env, text=True,
+                                errors='replace', stderr=subprocess.PIPE)
+        sys.stderr.write(result.stderr)
+        if result.returncode == 0:
+            return
+        if (fallback or result.returncode < 0 or result.returncode in (130, 143) or
+                not GIT_TRANSFER_INTERRUPTED.search(result.stderr) or
+                GIT_SOURCE_UNAVAILABLE.search(result.stderr)):
+            result.check_returncode()
+        print(f'Retrying the interrupted Git download in {path} over HTTP/1.1.',
+              file=sys.stderr, flush=True)
+
+
 def prepare(root, group='all'):
     # No --force or --remote: Git rejects changes that cannot be preserved and
     # checks out the gitlink, not a moving branch tip.
     for parent, children in submodule_batches(expected(root, group)):
-        subprocess.run(['git', '-C', str(root / parent), 'submodule', 'update',
-                        '--init', '--depth', '1', '--', *children], check=True)
+        update_submodules(root / parent, children)
     return check(root, group)
 
 
