@@ -71,7 +71,7 @@ def arch_policy(version):
 def pacman_release(version):
     release = version.rsplit('-', 1)[1]
     major, _, minor = release.partition('.')
-    return f'{major}.{int(minor or 0) + 2}'
+    return f'{major}.{int(minor or 0) + 3}'
 
 
 def package_version(version, data):
@@ -83,6 +83,7 @@ def package_version(version, data):
 def reusable_arch(output, version):
     try:
         record = json.loads((output / 'SOURCE.json').read_text())
+        manifest = json.loads((output / 'runtime/manifest.json').read_text())
         data, patches = arch_policy(version)
         if (record['upstream_package_version'] != version or record['patches'] != patches or
                 record['archive_sha256'] != data['source']['sha256'] or
@@ -96,6 +97,11 @@ def reusable_arch(output, version):
             if (Path(row['file']).name != row['file'] or row['version'] != expected_version
                     or debian.sha(output / 'runtime' / row['file']) != row['sha256']):
                 return None
+        archives = {row['file']: {'sha256': row['sha256']} for row in record['packages'].values()}
+        if (len(archives) != len(record['packages']) or manifest['packages'] != archives or
+                manifest['package_format'] != 'pacman' or manifest['architecture'] != 'aarch64' or
+                manifest.get('overlay_release') != overlay_release.generation()):
+            return None
         return record
     except (OSError, KeyError, ValueError):
         return None
@@ -311,9 +317,10 @@ def build_arch(root, output, jobs):
     cached = reusable_arch(output, version)
     if cached:
         build_arch_package.install_cached(root, output / 'runtime')
-        installed = debian.capture(['chroot', root, 'pacman', '-Q', 'gst-plugin-pipewire']).split()[1]
-        if installed != cached['packages']['gst-plugin-pipewire']['version']:
-            raise ValueError('Installed PipeWire plugin version differs')
+        for name, row in cached['packages'].items():
+            installed = debian.capture(['chroot', root, 'pacman', '-Q', name]).split()[1]
+            if installed != row['version']:
+                raise ValueError('Installed PipeWire plugin version differs: ' + name)
         return cached
     work, data, patches = prepare(output, version)
     recipe = work / 'recipe'
@@ -345,7 +352,7 @@ def build_arch(root, output, jobs):
     runtime = output / 'runtime'
     with (output / 'build.log').open('a') as log:
         subprocess.run([sys.executable, ROOT / 'tools/build_arch_package.py', '--rootfs', root,
-                        '--recipe', recipe, '--output', runtime],
+                        '--recipe', recipe, '--output', runtime, '--jobs', str(jobs)],
                        check=True, stdout=log, stderr=subprocess.STDOUT)
     manifest = json.loads((runtime / 'manifest.json').read_text())
     expected_version = package_version(version, data)

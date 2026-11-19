@@ -42,6 +42,10 @@
     {
       "file": "../1.6.9/0007-v4l2-copy-buffer-pool.patch",
       "sha256": "ff9d8bb56588c1b972be7c270aa27b8e88b9f30a200662da04f32747bee3a2b4"
+    },
+    {
+      "file": "../1.6.9/0013-gst-report-incompatible-capture-format.patch",
+      "sha256": "7e564fb33afefdf90df251526342d717f101737df838d260ce8273a332db4c09"
     }
   ]
 }

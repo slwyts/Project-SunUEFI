@@ -40,6 +40,10 @@
     {
       "file": "../1.6.9/0008-gst-contiguous-plane-stride.patch",
       "sha256": "05df22b963be91b1ac4c4063368d1ece78be8a26bcb3e439d7b2987a84495645"
+    },
+    {
+      "file": "../1.6.9/0013-gst-report-incompatible-capture-format.patch",
+      "sha256": "7e564fb33afefdf90df251526342d717f101737df838d260ce8273a332db4c09"
     }
   ]
 }
