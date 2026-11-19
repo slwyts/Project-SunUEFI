@@ -1,0 +1,505 @@
+Description: spa: libcamera: Apply the negotiated capture frame rate
+ Use the configured camera's FrameDurationLimits to validate a fixed video
+ frame rate and pass it to Camera::start(). Return the live format, including
+ its frame rate, when a new client negotiates with a running source.
+ Use the captured timestamps for the SPA clock when rate control is unavailable.
+Forwarded: no
+
+--- a/spa/plugins/libcamera/libcamera-source.cpp
++++ b/spa/plugins/libcamera/libcamera-source.cpp
+@@ -7,6 +7,7 @@
+ #include <array>
+ #include <cstddef>
+ #include <limits>
++#include <numeric>
+ #include <optional>
+ #include <span>
+ #include <type_traits>
+@@ -70,6 +71,7 @@
+ 	std::optional<spa_video_info> current_format;
+ 
+ 	struct spa_fraction rate = {};
++	std::optional<int64_t> frame_duration;
+ 	StreamConfiguration streamConfig;
+ 
+ 	uint32_t buffers_blocks = 1;
+@@ -160,9 +162,10 @@
+ 	struct spa_source source = {};
+ 
+ 	ControlList ctrls;
+-	ControlList initial_controls;
+ 	bool active = false;
+ 	bool acquired = false;
++	std::optional<uint64_t> clock_origin;
++	uint64_t clock_timestamp = 0;
+ 
+ 	impl(spa_log *log, spa_loop *data_loop, spa_system *system,
+ 	     std::shared_ptr<CameraManager> manager, std::shared_ptr<Camera> camera,
+@@ -244,9 +247,6 @@
+ 
+ 	spa_assert(!impl->allocator.allocated());
+ 
+-	const ControlInfoMap &controls = impl->camera->controls();
+-	setup_initial_controls(controls, impl->initial_controls);
+-
+ 	impl->acquired = true;
+ 	return 0;
+ }
+@@ -524,6 +524,18 @@
+ 	return res;
+ }
+ 
++void add_video_framerate(spa_pod_builder *builder, spa_fraction period)
++{
++	if (period.num && period.denom) {
++		const spa_fraction fps = SPA_FRACTION(period.denom, period.num);
++		spa_pod_builder_add(builder, SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&fps), 0);
++	}
++}
++
++int port_get_format(struct impl *impl, struct port *port, uint32_t index,
++		    const struct spa_pod *filter, struct spa_pod **param,
++		    struct spa_pod_builder *builder);
++
+ int
+ spa_libcamera_enum_format(struct impl *impl, struct port *port, int seq,
+ 		     uint32_t start, uint32_t num, const struct spa_pod *filter)
+@@ -541,6 +553,22 @@
+ 	result.id = SPA_PARAM_EnumFormat;
+ 	result.next = start;
+ 
++	if (impl->active && port->current_format) {
++		if (start > 0)
++			return 0;
++		spa_pod *format;
++		spa_pod_builder_init(&b, buffer, sizeof(buffer));
++		if (port_get_format(impl, port, 0, filter, &format, &b) != 1)
++			return -EIO;
++		SPA_POD_OBJECT_ID(format) = SPA_PARAM_EnumFormat;
++		if (spa_pod_filter(&b, &result.param, format, filter) < 0)
++			return 0;
++		result.index = 0;
++		result.next = 1;
++		spa_node_emit_result(&impl->hooks, seq, 0, SPA_RESULT_TYPE_NODE_PARAMS, &result);
++		return 0;
++	}
++
+ 	if (result.next == 0) {
+ 		port->fmt_index = 0;
+ 		port->size_index = 0;
+@@ -660,73 +688,154 @@
+ 	return 0;
+ }
+ 
+-int spa_libcamera_set_format(struct impl *impl, struct port *port,
+-		struct spa_video_info *format, bool try_only)
+-{
+-	const struct format_info *info = nullptr;
+-	uint32_t video_format;
+-	struct spa_rectangle *size = nullptr;
+-	CameraConfiguration::Status validation;
+-	int res;
++struct video_mode {
++	uint32_t format = SPA_VIDEO_FORMAT_ENCODED;
++	spa_rectangle size = {};
++	spa_fraction framerate = {};
++};
+ 
+-	switch (format->media_subtype) {
++video_mode get_video_mode(const spa_video_info &info)
++{
++	switch (info.media_subtype) {
+ 	case SPA_MEDIA_SUBTYPE_raw:
+-		video_format = format->info.raw.format;
+-		size = &format->info.raw.size;
+-		break;
++		return { info.info.raw.format, info.info.raw.size, info.info.raw.framerate };
+ 	case SPA_MEDIA_SUBTYPE_mjpg:
+ 	case SPA_MEDIA_SUBTYPE_jpeg:
+-		video_format = SPA_VIDEO_FORMAT_ENCODED;
+-		size = &format->info.mjpg.size;
+-		break;
++		return { SPA_VIDEO_FORMAT_ENCODED, info.info.mjpg.size, info.info.mjpg.framerate };
+ 	case SPA_MEDIA_SUBTYPE_h264:
+-		video_format = SPA_VIDEO_FORMAT_ENCODED;
+-		size = &format->info.h264.size;
+-		break;
++		return { SPA_VIDEO_FORMAT_ENCODED, info.info.h264.size, info.info.h264.framerate };
+ 	default:
+-		video_format = SPA_VIDEO_FORMAT_ENCODED;
+-		break;
++		return {};
++	}
++}
++
++bool same_video_mode(const spa_video_info &a, const spa_video_info &b)
++{
++	const video_mode lhs = get_video_mode(a), rhs = get_video_mode(b);
++	return a.media_subtype == b.media_subtype &&
++		lhs.format == rhs.format &&
++		lhs.size.width == rhs.size.width && lhs.size.height == rhs.size.height;
++}
++
++bool same_framerate(spa_fraction a, spa_fraction b)
++{
++	if (!a.num || !b.num)
++		return !a.num && !b.num;
++	return uint64_t(a.num) * b.denom == uint64_t(b.num) * a.denom;
++}
++
++int choose_frame_duration(const ControlInfoMap &controls, spa_fraction fps,
++		std::optional<int64_t> &duration, spa_fraction &period)
++{
++	const auto it = controls.find(&libcamera::controls::FrameDurationLimits);
++	duration.reset();
++	period = {};
++
++	/* An unconstrained or unknown interval is not a fixed capture rate. */
++	if (it == controls.end())
++		return 0;
++
++	const auto &info = it->second;
++	const int64_t minimum = info.min().get<int64_t>();
++	const int64_t maximum = info.max().get<int64_t>();
++	if (minimum <= 0 || maximum < minimum)
++		return 0;
++
++	if (!fps.num) {
++		if (minimum == maximum && maximum <= UINT32_MAX) {
++			period = SPA_FRACTION(uint32_t(maximum), 1'000'000u);
++			/* Retain a whole fps when it produced the same rounded period. */
++			const uint32_t whole_fps = (1'000'000ull + maximum / 2) / maximum;
++			if (whole_fps &&
++			    int64_t((1'000'000ull + whole_fps / 2) / whole_fps) == maximum)
++				period = SPA_FRACTION(1u, whole_fps);
++		}
++	} else {
++		if (!fps.denom)
++			return -EINVAL;
++		/* FrameDurationLimits uses integer microseconds. */
++		const int64_t requested = (1'000'000ull * fps.denom + fps.num / 2) / fps.num;
++		if (!requested || requested < minimum || requested > maximum)
++			return -ERANGE;
++		duration = requested;
++		period = SPA_FRACTION(fps.denom, fps.num);
++	}
++
++	if (period.num) {
++		const uint32_t divisor = std::gcd(period.num, period.denom);
++		period.num /= divisor;
++		period.denom /= divisor;
+ 	}
++	return 0;
++}
+ 
+-	info = find_format_info_by_media_type(format->media_type,
+-					      format->media_subtype, video_format);
+-	if (info == nullptr || size == nullptr) {
+-		spa_log_error(impl->log, "unknown media type %d %d %d", format->media_type,
+-			      format->media_subtype, video_format);
++int spa_libcamera_set_format(struct impl *impl, struct port *port,
++		const spa_video_info &format, bool try_only)
++{
++	const video_mode mode = get_video_mode(format);
++	const auto *info = find_format_info_by_media_type(format.media_type,
++							 format.media_subtype, mode.format);
++	if (info == nullptr || !mode.size.width || !mode.size.height) {
++		spa_log_error(impl->log, "unknown video mode %d %d %d", format.media_type,
++			      format.media_subtype, mode.format);
+ 		return -EINVAL;
+ 	}
+-	StreamConfiguration& streamConfig = impl->config->at(0);
++	if (mode.framerate.num && !mode.framerate.denom)
++		return -EINVAL;
++
++	auto config = impl->camera->generateConfiguration({ StreamRole::VideoRecording });
++	if (!config)
++		return -EINVAL;
++	auto &streamConfig = config->at(0);
+ 
+ 	streamConfig.pixelFormat = info->pix;
+-	streamConfig.size.width = size->width;
+-	streamConfig.size.height = size->height;
++	streamConfig.size.width = mode.size.width;
++	streamConfig.size.height = mode.size.height;
+ 	streamConfig.bufferCount = 8;
+ 
+-	validation = impl->config->validate();
++	const auto validation = config->validate();
+ 	if (validation == CameraConfiguration::Invalid)
+ 		return -EINVAL;
+ 
+-	if (try_only)
++	std::optional<int64_t> duration;
++	spa_fraction period;
++	if (try_only) {
++		if (port->current_format && same_video_mode(*port->current_format, format))
++			return choose_frame_duration(impl->camera->controls(), mode.framerate,
++						     duration, period);
++		/* Mode-specific controls may not be known until configure(). */
+ 		return 0;
++	}
+ 
++	int res;
+ 	if ((res = spa_libcamera_open(impl)) < 0)
+ 		return res;
+ 
+-	res = impl->camera->configure(impl->config.get());
++	res = impl->camera->configure(config.get());
+ 	if (res != 0)
+ 		goto error;
+ 
+-	port->streamConfig = impl->config->at(0);
++	res = choose_frame_duration(impl->camera->controls(), mode.framerate, duration, period);
++	if (res < 0) {
++		spa_log_warn(impl->log, "camera %s does not support %u/%u fps at %ux%u",
++			     impl->camera->id().c_str(), mode.framerate.num, mode.framerate.denom,
++			     mode.size.width, mode.size.height);
++		goto error;
++	}
++
++	port->streamConfig = config->at(0);
+ 
+ 	if ((res = allocBuffers(impl, port, port->streamConfig.bufferCount)) < 0)
+ 		goto error;
+ 
++	port->frame_duration = duration;
++	port->rate = period;
+ 	port->info.change_mask |= SPA_PORT_CHANGE_MASK_FLAGS | SPA_PORT_CHANGE_MASK_RATE;
+ 	port->info.flags = SPA_PORT_FLAG_CAN_ALLOC_BUFFERS |
+ 		SPA_PORT_FLAG_LIVE |
+ 		SPA_PORT_FLAG_PHYSICAL |
+ 		SPA_PORT_FLAG_TERMINAL;
+-	port->info.rate = SPA_FRACTION(port->rate.num, port->rate.denom);
++	port->info.rate = period;
+ 
+ 	return 0;
+ error:
+@@ -1032,6 +1141,53 @@
+ 	);
+ }
+ 
++void update_capture_clock(spa_io_clock &clock, spa_dll &dll, spa_fraction period,
++			  std::optional<uint64_t> &origin, uint64_t &last_timestamp,
++			  const FrameMetadata &frame)
++{
++	if (!frame.timestamp)
++		return;
++
++	clock.nsec = frame.timestamp;
++	clock.delay = 0;
++	if (period.num && period.denom) {
++		double seconds = double(period.num) / period.denom;
++		double corr = 1.0;
++
++		if (dll.bw == 0.0) {
++			spa_dll_set_bw(&dll, SPA_DLL_BW_MAX, period.num, period.denom);
++			clock.next_nsec = frame.timestamp;
++		} else {
++			double diff = (double(clock.next_nsec) - double(frame.timestamp))
++					/ SPA_NSEC_PER_SEC;
++			double error = period.denom * (diff - seconds);
++			corr = spa_dll_update(&dll, SPA_CLAMPD(error, -128., 128.));
++		}
++
++		/* The graph counts samples at the denominator's frequency. */
++		clock.target_rate = clock.rate = SPA_FRACTION(1u, period.denom);
++		clock.target_duration = clock.duration = period.num;
++		clock.position = uint64_t(frame.sequence) * period.num;
++		clock.rate_diff = corr;
++		clock.next_nsec += uint64_t(seconds * SPA_NSEC_PER_SEC * corr);
++	} else {
++		/* An unknown frame rate still has a monotonic timestamp clock. */
++		const uint64_t nsec = frame.timestamp;
++		uint64_t elapsed = 0;
++		if (!origin || nsec < last_timestamp)
++			origin = nsec;
++		else
++			elapsed = nsec - last_timestamp;
++		last_timestamp = nsec;
++
++		clock.target_rate = clock.rate = SPA_FRACTION(1u, SPA_NSEC_PER_SEC);
++		clock.target_duration = clock.duration = std::max<uint64_t>(elapsed, 1);
++		clock.position = nsec - *origin;
++		clock.rate_diff = 1.0;
++		clock.next_nsec = nsec + elapsed;
++	}
++}
++
+ void handle_completed_request(struct impl *impl, libcamera::Request *request)
+ {
+ 	const auto request_id = request->cookie();
+@@ -1060,32 +1216,9 @@
+ 
+ 	const FrameMetadata &fmd = buffer->metadata();
+ 
+-	if (impl->clock) {
+-		double target = (double)port->info.rate.num / port->info.rate.denom;
+-		double corr;
+-
+-		if (impl->dll.bw == 0.0) {
+-			spa_dll_set_bw(&impl->dll, SPA_DLL_BW_MAX, port->info.rate.denom, port->info.rate.denom);
+-			impl->clock->next_nsec = fmd.timestamp;
+-			corr = 1.0;
+-		} else {
+-			double diff = ((double)impl->clock->next_nsec - (double)fmd.timestamp) / SPA_NSEC_PER_SEC;
+-			double error = port->info.rate.denom * (diff - target);
+-			corr = spa_dll_update(&impl->dll, SPA_CLAMPD(error, -128., 128.));
+-		}
+-		/* FIXME, we should follow the driver clock and target_ values.
+-		 * for now we ignore and use our own. */
+-		impl->clock->target_rate = port->rate;
+-		impl->clock->target_duration = 1;
+-
+-		impl->clock->nsec = fmd.timestamp;
+-		impl->clock->rate = port->rate;
+-		impl->clock->position = fmd.sequence;
+-		impl->clock->duration = 1;
+-		impl->clock->delay = 0;
+-		impl->clock->rate_diff = corr;
+-		impl->clock->next_nsec += (uint64_t) (target * SPA_NSEC_PER_SEC * corr);
+-	}
++	if (impl->clock)
++		update_capture_clock(*impl->clock, impl->dll, port->rate,
++				     impl->clock_origin, impl->clock_timestamp, fmd);
+ 
+ 	if (b->h) {
+ 		b->h->flags = 0;
+@@ -1338,8 +1471,16 @@
+ 	if (impl->active)
+ 		return 0;
+ 
++	const auto &controls = impl->camera->controls();
++	ControlList initial_controls(controls);
++	setup_initial_controls(controls, initial_controls);
++	if (port->frame_duration) {
++		const int64_t duration = *port->frame_duration;
++		initial_controls.set(libcamera::controls::FrameDurationLimits, { duration, duration });
++	}
++
+ 	spa_log_info(impl->log, "starting camera %s", impl->camera->id().c_str());
+-	if ((res = impl->camera->start(&impl->initial_controls)) < 0)
++	if ((res = impl->camera->start(&initial_controls)) < 0)
+ 		return res == -EACCES ? -EBUSY : res;
+ 
+ 	impl->camera->requestCompleted.connect(impl, &impl::requestComplete);
+@@ -1361,7 +1502,8 @@
+ 			goto err_stop;
+ 	}
+ 
+-	impl->dll.bw = 0.0;
++	spa_dll_init(&impl->dll);
++	impl->clock_origin.reset();
+ 	impl->active = true;
+ 
+ 	res = spa_loop_locked(
+@@ -1421,6 +1563,10 @@
+ 			SPA_FORMAT_VIDEO_format,    SPA_POD_Id(port->current_format->info.raw.format),
+ 			SPA_FORMAT_VIDEO_size,      SPA_POD_Rectangle(&port->current_format->info.raw.size),
+ 			0);
++		if (port->streamConfig.pixelFormat.modifier()) {
++			spa_pod_builder_prop(builder, SPA_FORMAT_VIDEO_modifier, 0);
++			spa_pod_builder_long(builder, port->streamConfig.pixelFormat.modifier());
++		}
+ 		break;
+ 	case SPA_MEDIA_SUBTYPE_mjpg:
+ 	case SPA_MEDIA_SUBTYPE_jpeg:
+@@ -1437,6 +1583,16 @@
+ 		return -EIO;
+ 	}
+ 
++	add_video_framerate(builder, port->rate);
++	if (port->streamConfig.colorSpace) {
++		auto colorimetry = color_space_to_colorimetry(*port->streamConfig.colorSpace);
++		spa_pod_builder_add(builder,
++			SPA_FORMAT_VIDEO_colorRange, SPA_POD_Id(colorimetry.range),
++			SPA_FORMAT_VIDEO_colorMatrix, SPA_POD_Id(colorimetry.matrix),
++			SPA_FORMAT_VIDEO_transferFunction, SPA_POD_Id(colorimetry.transfer),
++			SPA_FORMAT_VIDEO_colorPrimaries, SPA_POD_Id(colorimetry.primaries), 0);
++	}
++
+ 	*param = (struct spa_pod*)spa_pod_builder_pop(builder, &f);
+ 
+ 	return 1;
+@@ -1828,21 +1984,10 @@
+ 		    uint32_t flags, const struct spa_pod *format)
+ {
+ 	const bool try_only = SPA_FLAG_IS_SET(flags, SPA_NODE_PARAM_FLAG_TEST_ONLY);
++	spa_video_info info;
++	int res;
+ 
+-	if (!try_only) {
+-		spa_libcamera_stream_off(impl);
+-		spa_libcamera_clear_buffers(port);
+-		freeBuffers(impl, port);
+-		port->current_format.reset();
+-	}
+-
+-	if (format == nullptr) {
+-		if (!try_only)
+-			spa_libcamera_close(impl);
+-	} else {
+-		spa_video_info info;
+-		int res;
+-
++	if (format != nullptr) {
+ 		spa_zero(info);
+ 
+ 		if ((res = spa_format_parse(format, &info.media_type, &info.media_subtype)) < 0)
+@@ -1875,17 +2020,43 @@
+ 			return -EINVAL;
+ 		}
+ 
+-		res = spa_libcamera_set_format(impl, port, &info, try_only);
++		const spa_fraction requested = get_video_mode(info).framerate;
++		if (requested.num && !requested.denom)
++			return -EINVAL;
++
++		if (impl->active) {
++			/* A live camera has one format for all its subscribers. */
++			if (!port->current_format || !same_video_mode(*port->current_format, info))
++				return -EBUSY;
++			const spa_fraction current = SPA_FRACTION(port->rate.denom, port->rate.num);
++			return !requested.num || same_framerate(requested, current) ? 0 : -EBUSY;
++		}
++
++		res = spa_libcamera_set_format(impl, port, info, true);
+ 		if (res < 0)
+ 			return res;
+-
+-		if (!try_only)
+-			port->current_format = info;
+ 	}
+ 
+ 	if (try_only)
+ 		return 0;
+ 
++	spa_libcamera_stream_off(impl);
++	spa_libcamera_clear_buffers(port);
++	freeBuffers(impl, port);
++	port->current_format.reset();
++	port->frame_duration.reset();
++	port->rate = {};
++	port->info.rate = {};
++	port->info.change_mask |= SPA_PORT_CHANGE_MASK_RATE;
++
++	if (format == nullptr) {
++		spa_libcamera_close(impl);
++	} else {
++		res = spa_libcamera_set_format(impl, port, info, false);
++		if (res >= 0)
++			port->current_format = info;
++	}
++
+ 	impl->info.change_mask |= SPA_NODE_CHANGE_MASK_PARAMS;
+ 	port->info.change_mask |= SPA_PORT_CHANGE_MASK_PARAMS;
+ 	if (port->current_format) {
+@@ -1900,7 +2071,7 @@
+ 	emit_port_info(impl, port, false);
+ 	emit_node_info(impl, false);
+ 
+-	return 0;
++	return format == nullptr ? 0 : res;
+ }
+ 
+ int impl_node_port_set_param(void *object,

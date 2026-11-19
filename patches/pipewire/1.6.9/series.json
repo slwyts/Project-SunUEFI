@@ -116,6 +116,24 @@
         "commit": "54f2f51f5233026e608f8235f5377b9b473918e3",
         "drop_when": "The selected PipeWire release uses the renamed libcamera 0.8 camera location enums or an equivalent upstream implementation."
       }
+    },
+    {
+      "file": "0012-libcamera-apply-negotiated-framerate.patch",
+      "sha256": "7ef5831f855771e3d5b6349ba575e06c8daa5a4fae95b173f0727c473c8468ac",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/PipeWire/pipewire/blob/0e30a575c2e279bd7a8975e403168f8ac906cc7e/spa/plugins/libcamera/libcamera-source.cpp",
+        "drop_when": "The selected PipeWire release sets the negotiated frame rate on the configured camera, reports the active format to new subscribers, and advances its clock from capture timestamps when no fixed period is available."
+      }
+    },
+    {
+      "file": "0013-gst-report-incompatible-capture-format.patch",
+      "sha256": "7e564fb33afefdf90df251526342d717f101737df838d260ce8273a332db4c09",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/PipeWire/pipewire/blob/0e30a575c2e279bd7a8975e403168f8ac906cc7e/src/gst/gstpipewiresrc.c",
+        "drop_when": "The selected PipeWire release reports a stream error when the received capture format has no compatible downstream caps, without leaving GStreamer waiting for negotiation."
+      }
     }
   ]
 }

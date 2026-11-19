@@ -1,0 +1,39 @@
+Subject: [PATCH] pipewiresrc: report incompatible capture formats as errors
+
+PipeWire may pass the active format to a new capture stream even when
+the stream's capabilities do not intersect it. Fixating the empty
+intersection still leaves empty caps. Returning through an assertion
+leaves wait_negotiated() waiting for a format or an error.
+
+Handle caps that could not be fixed through the existing stream error
+path so only the incompatible capture stream fails.
+
+diff --git a/src/gst/gstpipewiresrc.c b/src/gst/gstpipewiresrc.c
+--- a/src/gst/gstpipewiresrc.c
++++ b/src/gst/gstpipewiresrc.c
+@@ -1326,9 +1326,13 @@ handle_format_change (GstPipeWireSrc *pwsrc,
+     gst_caps_maybe_fixate_dma_format (pwsrc->caps);
+   }
+ 
+-  if (pwsrc->caps) {
+-    g_return_if_fail (gst_caps_is_fixed (pwsrc->caps));
++  if (pwsrc->caps && !gst_caps_is_fixed (pwsrc->caps)) {
++    GST_DEBUG_OBJECT (pwsrc, "no fixed capture caps: %" GST_PTR_FORMAT,
++        pwsrc->caps);
++    g_clear_pointer (&pwsrc->caps, gst_caps_unref);
++  }
+ 
++  if (pwsrc->caps) {
+     pwsrc->negotiated = TRUE;
+ 
+     structure = gst_caps_get_structure (pwsrc->caps, 0);
+@@ -1434,7 +1438,8 @@ handle_format_change (GstPipeWireSrc *pwsrc,
+     pw_stream_update_params (pwsrc->stream->pwstream, params, n_params);
+   } else {
+     GST_WARNING_OBJECT (pwsrc, "finish format with error");
+-    pw_stream_set_error (pwsrc->stream->pwstream, -EINVAL, "unhandled format");
++    pw_stream_set_error (pwsrc->stream->pwstream, -EINVAL,
++        "No compatible capture format");
+   }
+   pw_thread_loop_signal (pwsrc->stream->core->loop, FALSE);
+ }
