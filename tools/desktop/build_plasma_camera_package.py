@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Build Debian's native ARM64 Plasma Camera against the packaged libcamera."""
 import argparse
-from contextlib import contextmanager
 from functools import partial
 import json
 from pathlib import Path
@@ -19,16 +18,6 @@ from desktop.build_pipewire_packages import libcamera_inputs
 PACKAGE = 'plasma-camera'
 RUNTIME = {PACKAGE: 'arm64'}
 REVISION = 2
-
-
-@contextmanager
-def debian_gcc_environment(rootfs):
-    # Kirigami's CMake config needs OpenMP. Use Debian's GCC and libgomp.
-    with package_build.environment(rootfs) as settings:
-        settings['PATH'] = settings['PATH'].removeprefix(package_build.GUEST_TOOLS + '/bin:')
-        settings.pop('CCACHE_EXTRAFILES', None)
-        settings.pop('MAKE', None)
-        yield dict(settings, CC='gcc', CXX='g++', CCACHE_COMPILERTYPE='gcc')
 
 
 def selection(sysroot, output):
@@ -87,7 +76,9 @@ def build(output, sysroot, jobs=None, *, libcamera):
     with debian_package.use_build_archive(debian_package.archive_inputs(sysroot)):
         return debian_package.build(output, sysroot, jobs, PACKAGE, patches, RUNTIME,
                                     [Path(__file__), series], revision=REVISION,
-                                    build_dependencies=archives, build_environment=debian_gcc_environment,
+                                    build_dependencies=archives,
+                                    # Kirigami's CMake config needs Debian's libgomp.
+                                    build_environment=debian_package.gcc_environment,
                                     validate_packages=partial(verify_runtime, library=library))
 
 

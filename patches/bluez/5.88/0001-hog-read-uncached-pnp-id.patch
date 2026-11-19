@@ -1,0 +1,261 @@
+Description: Read an uncached PnP ID before creating the HoG HID device
+ The Device Information profile can finish after the HoG report map, so the
+ kernel can receive a HID device with vendor and product both zero. Read the
+ PnP ID on the HoG GATT client so its existing idle handling waits for the
+ identity. Continue without it when the characteristic is absent or unreadable.
+ .
+ Cover the UHID identity for the uncached, absent and failed read paths.
+Forwarded: no
+
+diff --git a/src/shared/hog.c b/src/shared/hog.c
+index ca56083..9d78203 100644
+--- a/src/shared/hog.c
++++ b/src/shared/hog.c
+@@ -60,6 +60,7 @@
+ #define HOG_INFO_FLAG_SCI_LOW_POWER	0x08
+ 
+ #define HID_INFO_SIZE			4
++#define PNP_ID_SIZE			7
+ 
+ struct bt_hog {
+ 	int			ref_count;
+@@ -1336,6 +1337,55 @@ static void discovery_idle(void *user_data)
+ 	create_uhid(hog);
+ }
+ 
++static void find_pnp_id(struct gatt_db_attribute *attr, void *user_data)
++{
++	uint16_t *handle = user_data;
++	bt_uuid_t uuid, device_info;
++
++	if (*handle || !gatt_db_attribute_get_service_data(attr, NULL, NULL,
++								NULL, &uuid))
++		return;
++
++	bt_string_to_uuid(&device_info, DEVICE_INFORMATION_UUID);
++
++	if (!bt_uuid_cmp(&uuid, &device_info))
++		*handle = gatt_db_attribute_get_handle(attr);
++}
++
++static void pnp_id_read_cb(bool success, uint8_t att_ecode,
++					const uint8_t *value, uint16_t length,
++					void *user_data)
++{
++	struct bt_hog *hog = user_data;
++
++	if (!success) {
++		DBG(hog, "PnP ID read failed: 0x%02x", att_ecode);
++		return;
++	}
++
++	if (length != PNP_ID_SIZE) {
++		DBG(hog, "Malformed PnP ID: length %u", length);
++		return;
++	}
++
++	hog->vendor = get_le16(&value[1]);
++	hog->product = get_le16(&value[3]);
++	hog->version = get_le16(&value[5]);
++}
++
++static void read_pnp_id(struct bt_hog *hog)
++{
++	uint16_t handle = 0;
++	bt_uuid_t uuid;
++
++	bt_string_to_uuid(&uuid, PNPID_UUID);
++	gatt_db_find_by_type(hog->db, 0x0001, 0xffff, &uuid, find_pnp_id,
++								&handle);
++
++	if (handle)
++		read_char(hog, handle, false, pnp_id_read_cb, hog);
++}
++
+ bool bt_hog_attach(struct bt_hog *hog, struct bt_gatt_client *client)
+ {
+ 	const struct queue_entry *entry;
+@@ -1365,6 +1415,13 @@ bool bt_hog_attach(struct bt_hog *hog, struct bt_gatt_client *client)
+ 	if (created)
+ 		uhid_register(hog);
+ 
++	/*
++	 * DeviceInfo may not have read the peer's identity yet. Read it on
++	 * this client so UHID creation waits for the result.
++	 */
++	if (!created && !hog->vendor && !hog->product)
++		read_pnp_id(hog);
++
+ 	DBG(hog, "HoG discovering characteristics");
+ 	gatt_db_service_foreach_char(hog->attr, foreach_hog_chrc, hog);
+ 
+diff --git a/unit/test-hog.c b/unit/test-hog.c
+index 969e02f..e3e4460 100644
+--- a/unit/test-hog.c
++++ b/unit/test-hog.c
+@@ -74,6 +74,7 @@
+ #define HOG_GATT_CLIENT_MTU	64
+ 
+ #define REPORT_MAP_LEN		73
++#define PNP_ID_HANDLE		0x21
+ 
+ enum action {
+ 	ACT_NONE,
+@@ -91,8 +92,16 @@ enum action {
+ 	ACT_SCI,
+ };
+ 
++enum pnp_identity {
++	PNP_ID_CACHED,
++	PNP_ID_READ,
++	PNP_ID_MISSING,
++	PNP_ID_UNREADABLE,
++};
++
+ struct test_config {
+ 	enum action action;
++	enum pnp_identity identity;
+ 	/* Number of uHID devices created, once the Report Map is read */
+ 	unsigned int creates;
+ 	/* HID SCI modes to enable, the second once the first is notified */
+@@ -154,7 +163,8 @@ static void print_debug(const char *str, void *user_data)
+ 
+ static void test_done(struct test_data *data)
+ {
+-	if (data->io_done && data->uhid_done && data->sci_done)
++	if (data->io_done && data->uhid_done && data->sci_done &&
++					data->created >= data->cfg->creates)
+ 		tester_test_passed();
+ }
+ 
+@@ -305,10 +315,31 @@ static bool uhid_read(struct io *io, void *user_data)
+ 	g_assert_cmpint(len, ==, sizeof(ev));
+ 
+ 	if (ev.type == UHID_CREATE2) {
++		uint16_t vendor, product, version;
++
++		switch (data->cfg->identity) {
++		case PNP_ID_CACHED:
++			vendor = 0x0002;
++			product = 0x0001;
++			version = 0x0001;
++			break;
++		case PNP_ID_READ:
++			vendor = 0x0022;
++			product = 0x5081;
++			version = 0x0001;
++			break;
++		case PNP_ID_MISSING:
++		case PNP_ID_UNREADABLE:
++			vendor = 0;
++			product = 0;
++			version = 0;
++			break;
++		}
++
+ 		g_assert_cmpstr((char *) ev.u.create2.name, ==, "bluez-hog");
+-		g_assert_cmpint(ev.u.create2.vendor, ==, 0x0002);
+-		g_assert_cmpint(ev.u.create2.product, ==, 0x0001);
+-		g_assert_cmpint(ev.u.create2.version, ==, 0x0001);
++		g_assert_cmpint(ev.u.create2.vendor, ==, vendor);
++		g_assert_cmpint(ev.u.create2.product, ==, product);
++		g_assert_cmpint(ev.u.create2.version, ==, version);
+ 		g_assert_cmpint(ev.u.create2.bus, ==, BUS_BLUETOOTH);
+ 		g_assert_cmpint(ev.u.create2.rd_size, ==, REPORT_MAP_LEN);
+ 
+@@ -320,6 +351,7 @@ static bool uhid_read(struct io *io, void *user_data)
+ 		if (++data->created == data->cfg->creates)
+ 			do_action(data);
+ 
++		test_done(data);
+ 		return true;
+ 	}
+ 
+@@ -353,9 +385,30 @@ static void sci_mode_cb(uint8_t mode, void *user_data)
+ 	test_done(data);
+ }
+ 
++static void add_pnp_id(struct bt_gatt_client *client)
++{
++	struct gatt_db *db = bt_gatt_client_get_db(client);
++	struct gatt_db_attribute *service, *attr;
++	bt_uuid_t uuid;
++
++	bt_string_to_uuid(&uuid, DEVICE_INFORMATION_UUID);
++	service = gatt_db_add_service(db, &uuid, true, 3);
++	g_assert(service);
++
++	bt_string_to_uuid(&uuid, PNPID_UUID);
++	attr = gatt_db_service_add_characteristic(service, &uuid,
++						BT_ATT_PERM_READ,
++						BT_GATT_CHRC_PROP_READ,
++						NULL, NULL, NULL);
++	g_assert(attr);
++	g_assert_cmpuint(gatt_db_attribute_get_handle(attr), ==, PNP_ID_HANDLE);
++	g_assert(gatt_db_service_set_active(service, true));
++}
++
+ static void test_hog(const void *user_data)
+ {
+ 	struct test_data *data = (void *) user_data;
++	bool cached = data->cfg->identity == PNP_ID_CACHED;
+ 	struct io *io;
+ 	int fds[2];
+ 
+@@ -378,8 +431,13 @@ static void test_hog(const void *user_data)
+ 	/* Not closed by bt_hog, see test_teardown */
+ 	data->uhid_fd = fds[0];
+ 
+-	data->hog = bt_hog_new(fds[0], "bluez-hog", 0x0002, 0x0001, 0x0001,
+-								0, NULL);
++	if (data->cfg->identity == PNP_ID_READ ||
++				data->cfg->identity == PNP_ID_UNREADABLE)
++		add_pnp_id(data->client);
++
++	data->hog = bt_hog_new(fds[0], "bluez-hog", cached ? 0x0002 : 0,
++					cached ? 0x0001 : 0,
++					cached ? 0x0001 : 0, 0, NULL);
+ 	g_assert(data->hog);
+ 
+ 	bt_hog_set_debug(data->hog, print_debug, "bt_hog: ", NULL);
+@@ -827,6 +885,21 @@ static const struct test_config cfg_attach = {
+ 	.creates = 1,
+ };
+ 
++static const struct test_config cfg_pnp_read = {
++	.creates = 1,
++	.identity = PNP_ID_READ,
++};
++
++static const struct test_config cfg_pnp_missing = {
++	.creates = 1,
++	.identity = PNP_ID_MISSING,
++};
++
++static const struct test_config cfg_pnp_unreadable = {
++	.creates = 1,
++	.identity = PNP_ID_UNREADABLE,
++};
++
+ static const struct test_config cfg_multi_attach = {
+ 	.action = ACT_NONE,
+ 	.creates = 2,
+@@ -934,6 +1007,18 @@ int main(int argc, char *argv[])
+ {
+ 	tester_init(&argc, &argv);
+ 
++	define_test("HOG/Read uncached PnP ID",
++			setup_basic, &cfg_pnp_read,
++			READ(PNP_ID_HANDLE, 0x01, 0x22, 0x00, 0x81, 0x50,
++					0x01, 0x00), ATTACH);
++	define_test("HOG/Absent PnP ID",
++			setup_basic, &cfg_pnp_missing, ATTACH);
++	define_test("HOG/Unreadable PnP ID",
++			setup_basic, &cfg_pnp_unreadable,
++			IOV_DATA(0x0a, PNP_ID_HANDLE, 0x00),
++			IOV_DATA(0x01, 0x0a, PNP_ID_HANDLE, 0x00, 0x02),
++			ATTACH);
++
+ 	/* Discovery */
+ 	define_test("HOGP/RH/HGDC/BV-03-C [Discover Report Characteristics]",
+ 			setup_multi, &cfg_multi_attach,

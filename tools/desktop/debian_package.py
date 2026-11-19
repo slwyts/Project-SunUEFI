@@ -651,6 +651,16 @@ def install_local_build_dependencies(rootfs, guest, archives, expected):
         raise ValueError('Debian build dependencies differ from the selected packages')
 
 
+@contextmanager
+def gcc_environment(rootfs):
+    """Use the target's GCC for Debian recipes requiring its runtime or LTO."""
+    with package_build.environment(rootfs) as settings:
+        settings['PATH'] = settings['PATH'].removeprefix(package_build.GUEST_TOOLS + '/bin:')
+        settings.pop('CCACHE_EXTRAFILES', None)
+        settings.pop('MAKE', None)
+        yield dict(settings, CC='gcc', CXX='g++', CCACHE_COMPILERTYPE='gcc')
+
+
 def reusable(output, target, patches, runtime, inputs, revision, *, build_dependencies=None,
              validate_packages=None):
     try:
@@ -808,7 +818,7 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
                    'DEB_BUILD_PROFILES=nocheck', 'sh', '-ec', 'cd "$1"; dpkg-buildpackage -b -us -uc',
                    'build', directory])
             if test_build:
-                test_build(guest, directory)
+                test_build(guest, directory, settings)
         changes = work / f'{package}_{package_version.split(":")[-1]}_arm64.changes'
         buildinfo = changes.with_suffix('.buildinfo')
         change = next(row for row in controls(changes.read_text()) if row.get('Source') == package)

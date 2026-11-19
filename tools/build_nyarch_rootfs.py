@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -24,7 +25,7 @@ from prepare_steamos_rootfs import download
 ROOT = Path(__file__).resolve().parents[1]
 OVERLAY_TARGET = 'nyarch-gnome'
 SHARED_OVERLAYS = frozenset(('mesa', 'fastrpc', 'libssc', 'iio-sensor-proxy', 'ffmpeg',
-                             'pipewire', 'libwacom', 'libfprint', 'fprintd'))
+                             'pipewire', 'libwacom', 'libfprint', 'fprintd', 'bluez'))
 
 
 def run(*args, **kwargs):
@@ -214,6 +215,26 @@ def build_nyarch_overlays(root, output, recipes, apps, *, refresh):
     return {'nyarch_applications': app_records}, packages
 
 
+def build_bluez(root, recipe, output):
+    """Build the daemon on Arch Linux ARM without overriding Valve's package."""
+    package = ROOT / 'linux/bsp/arch' / overlay_packages.ARCH_BLUEZ
+    version = re.search(r'(?m)^pkgver=(\S+)$', (package / 'PKGBUILD').read_text())[1]
+    metadata = subprocess.check_output(
+        ['chroot', root, 'env', 'LC_ALL=C', 'pacman', '-Si', 'extra/bluez'], text=True)
+    upstream = re.search(r'(?m)^Version\s*:\s*(\S+)$', metadata)[1].split(':')[-1].rsplit('-', 1)[0]
+    if version != upstream:
+        raise ValueError('Check the HoG fix against Arch Linux ARM BlueZ ' + upstream)
+    shutil.copytree(package, recipe, dirs_exist_ok=True)
+    for patch in source_patches(ROOT / 'patches/bluez' / version / 'series.json'):
+        shutil.copy2(patch, recipe / patch.name)
+    options = overlay_packages.ARCH_BLUEZ_INSTALL_OPTIONS
+    if kde_package_is_current(output, recipe):
+        build_arch_package.install_cached(root, output, install_options=options)
+    else:
+        build_arch_package.build(root, recipe, output, check=True, install_options=options)
+    return overlay_packages.pacman_outputs(output)
+
+
 def build_overlays(root, output, inputs, sensor_source, apps, *, refresh, nyarch_desktop=True):
     records, packages = {}, {}
     recipes = inputs / 'recipes'
@@ -263,6 +284,7 @@ def build_overlays(root, output, inputs, sensor_source, apps, *, refresh, nyarch
     run(ROOT / 'build.sh', 'libwacom', '--rootfs', root, '--output', libwacom)
     for name, directory in (('pipewire', pipewire), ('libwacom', libwacom)):
         packages[name] = overlay_packages.pacman_outputs(directory / 'runtime')
+    packages['bluez'] = build_bluez(root, recipes / 'bluez', output / 'packages/bluez')
     records.update({name: json.loads((directory / 'SOURCE.json').read_text())
                     for name, directory in (('ffmpeg', ffmpeg), ('pipewire', pipewire),
                                             ('libwacom', libwacom))})

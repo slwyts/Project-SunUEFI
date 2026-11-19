@@ -79,7 +79,8 @@ class OverlayCacheTests(unittest.TestCase):
                       'installed': 'test-package-state'}
             names = ('libfprint', 'fprintd', 'ffmpeg', 'libwacom', 'libssc',
                      'iio-sensor-proxy', 'fastrpc', 'pipewire-v4l2-source',
-                     'gst-plugin-pipewire', 'mesa', 'gdm', 'mutter', 'gnome-settings-daemon')
+                     'gst-plugin-pipewire', 'mesa', 'gdm', 'mutter', 'gnome-settings-daemon',
+                     'bluez-sunuefi')
             packages = {}
             for name in names:
                 archive = root / (name + '-1-1-aarch64.pkg.tar.gz')
@@ -91,7 +92,8 @@ class OverlayCacheTests(unittest.TestCase):
                 self.assertEqual(overlay_packages.pacman_identity(archive), (name, '1-1', 'aarch64'))
                 packages[archive.name] = (archive, {
                     'name': name, 'version': '1-1', 'architecture': 'aarch64',
-                    'sha256': overlay_packages.sha(archive), 'component': name,
+                    'sha256': overlay_packages.sha(archive),
+                    'component': 'bluez' if name == 'bluez-sunuefi' else name,
                 })
             prior = root / 'build/overlay-cache' / target
             expected = overlay_packages.export(prior, target, 'sunuefi', packages, {}, build_inputs=inputs)

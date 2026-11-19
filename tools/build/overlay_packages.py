@@ -14,10 +14,14 @@ from build_piano_ram_bootstrap import guest_resolve
 import package_bsp
 
 
-DEBIAN_SHARED = ('mesa', 'sensors', 'ffmpeg', 'libcamera', 'pipewire', 'plasma_camera', 'libwacom')
+DEBIAN_SHARED = ('mesa', 'sensors', 'ffmpeg', 'libcamera', 'pipewire', 'plasma_camera',
+                 'libwacom', 'bluez')
 DEBIAN_GNOME = ('gnome_power', 'mutter', 'gdm')
 ARCH_REPOSITORIES = {'nyarch-gnome': 'sunuefi', 'steamos': 'sunuefi-steamos'}
 STEAMOS_TUNED_RECIPES = ('ethtool', 'hdparm', 'python-linux-procfs', 'python-pyinotify', 'tuned')
+ARCH_BLUEZ = 'bluez-sunuefi'
+# Scope the pacman conflict approval to replacing the single BlueZ daemon.
+ARCH_BLUEZ_INSTALL_OPTIONS = ('--ask=4',)
 PACMAN_SUFFIX = r'\.pkg\.tar\.(?:zst|xz|gz)'
 BSP_TARGETS = {'debian': ('debian', 'deb', 'all'), 'pacman': ('arch', 'pacman', 'any')}
 
@@ -397,7 +401,8 @@ def read_pacman(path, target):
     expected = {'libfprint', 'fprintd', 'ffmpeg', 'libwacom', 'libssc',
                 'iio-sensor-proxy', 'fastrpc', 'pipewire-v4l2-source', 'gst-plugin-pipewire'}
     expected.update(('deckard-mesa-linux-aarch64', 'gamescope', 'steamos-manager', 'gtk3', 'ibus')
-                    if target == 'steamos' else ('mesa', 'gdm', 'mutter', 'gnome-settings-daemon'))
+                    if target == 'steamos' else (
+                        'mesa', 'gdm', 'mutter', 'gnome-settings-daemon', ARCH_BLUEZ))
     if target == 'steamos':
         expected.update((*STEAMOS_TUNED_RECIPES, 'tuned-ppd'))
     if not expected <= names:
@@ -405,11 +410,11 @@ def read_pacman(path, target):
     return repo, manifest['packages'], manifest.get('components', {})
 
 
-def download_pacman(rootfs, folder, repository, packages, guest):
+def download_pacman(rootfs, folder, repository, packages, guest, *, install_options=()):
     """Download from the named repository and verify every expected payload."""
     cache = '/' + folder.relative_to(rootfs).as_posix()
     targets = [repository + '/' + row['name'] + '=' + row['version'] for row in packages.values()]
-    options = ['--noconfirm', '--cachedir', cache, *targets]
+    options = ['--noconfirm', *install_options, '--cachedir', cache, *targets]
     guest(['pacman', '-Sw', *options])
     for name, row in packages.items():
         path = folder / name
@@ -418,9 +423,11 @@ def download_pacman(rootfs, folder, repository, packages, guest):
     return options
 
 
-def install_pacman(rootfs, folder, repository, packages, guest, *, overwrite=()):
+def install_pacman(rootfs, folder, repository, packages, guest, *, overwrite=(),
+                   install_options=()):
     """Only install from a verified cache downloaded through the named repo."""
-    options = download_pacman(rootfs, folder, repository, packages, guest)
+    options = download_pacman(rootfs, folder, repository, packages, guest,
+                              install_options=install_options)
     # No sync refresh here: resolve against the same authenticated index as -Sw.
     guest(['pacman', '-S', *overwrite_options(overwrite), *options])
 
@@ -518,7 +525,12 @@ def install_arch_overlays(rootfs, kernel, target, published):
         guest(['pacman', '-Sy', '--noconfirm'])
         common = {archive.name: bsp, topology_archive.name: topology, power_archive.name: power}
         if repository == 'sunuefi':
-            install_pacman(rootfs, work, repository, {**packages, **common}, guest,
+            bluez = {name: row for name, row in packages.items() if row['name'] == ARCH_BLUEZ}
+            if bluez:
+                install_pacman(rootfs, work, repository, bluez, guest,
+                               install_options=ARCH_BLUEZ_INSTALL_OPTIONS)
+            shared = {name: row for name, row in packages.items() if name not in bluez}
+            install_pacman(rootfs, work, repository, {**shared, **common}, guest,
                            overwrite=matching_power_files(rootfs))
         else:
             remove_steamos_power_profiles_daemon(rootfs, guest)

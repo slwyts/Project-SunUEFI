@@ -39,6 +39,8 @@ fastboot -s SunUEFI-piano getvar product
 
 Focus Pen Pro 在 120 Hz 下支持定位和压感书写。笔由内核直接上报，GNOME 的原生数位板页提供显示映射与校准，KDE 提供显示映射、两个笔身按钮和压力曲线设置，不需要另装配置程序。使用触控笔时请选择 120 Hz；144 Hz 下仍可能没有笔输入。
 
+如果落笔打出小键盘 `+`，请更新 BlueZ。Debian 运行 `sudo apt update` 后照常升级；Nyarch 和 Arch Denial 的旧系统需要运行一次 `sudo pacman -Syu sunuefi/bluez-sunuefi`，并确认替换 `bluez`。配对数据保留；如果改过 `/etc/bluetooth/` 下的配置，把 pacman 留下的 `.pacsave` 合并回去。新镜像预装修复包，之后照常更新。SteamOS 继续使用 Valve 的 BlueZ。
+
 短按轻捏、长按、双击和笔身滑动的事件映射已保留，但新内核下还没有逐项完成物理操作检查。完整掌压、弱悬停、四边和倾角精度也没有完成对照；绘画时仍可能受到手掌触碰或边缘定位的影响。普通 Focus Pen 的旧版镜像支持悬停、定位、压感和侧键，新内核还缺少普通笔的实机覆盖。KDE 设置已在 SteamOS 完整镜像上检查，按钮动作与压力曲线对书写的影响还没有逐项实测。
 
 ## 相机和其他硬件

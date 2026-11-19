@@ -280,7 +280,7 @@ def verify_debian_packages(record):
         raise ValueError('The Debian PipeWire set must contain all native packages at the same version')
 
 
-def test_debian_build(guest, source):
+def test_debian_build(guest, source, _settings):
     # Keep the focused GStreamer tests from the previous plugin build.
     guest(['sh', '-ec', 'cd "$1"; build="obj-$(dpkg-architecture -qDEB_HOST_GNU_TYPE)"; '
            'GST_PLUGIN_SYSTEM_PATH_1_0= GST_PLUGIN_PATH_1_0= GST_REGISTRY_FORK=no '

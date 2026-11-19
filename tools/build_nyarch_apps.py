@@ -25,7 +25,7 @@ APPS = ('NyarchCustomize', 'NyarchTour', 'NyarchWizard', 'NyarchScript')
 PACKAGES = (
     'base-devel', 'git', 'meson', 'python', 'python-gobject', 'gtk3', 'gtk4',
     'libadwaita', 'dconf', 'gdk-pixbuf2', 'pango', 'hicolor-icon-theme',
-    'chromium', 'noto-fonts-cjk', 'ibus', 'ibus-libpinyin', 'bluez', 'bluez-utils',
+    'chromium', 'noto-fonts-cjk', 'ibus', 'ibus-libpinyin', 'bluez-utils',
     'alsa-utils', 'alsa-ucm-conf', 'pipewire-audio', 'pipewire-pulse',
     'gst-plugin-pipewire', 'gst-plugins-good', 'gst-plugins-bad', 'ffmpeg',
     'v4l-utils', 'python-pillow', 'python-numpy', 'zram-generator',

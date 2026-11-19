@@ -36,7 +36,7 @@ def matches_release(output):
         return False
 
 
-def install_cached(root, output):
+def install_cached(root, output, *, install_options=()):
     """Restore cached packages after the base repository upgrade replaced them."""
     root, output = root.resolve(), output.resolve()
     if os.geteuid() or not root.is_relative_to(ROOT / 'build/distros'):
@@ -56,7 +56,7 @@ def install_cached(root, output):
         if not packages:
             raise ValueError('The cache contains no binary packages')
         with build_resolver(root), guest_environment(root) as guest:
-            guest(['pacman', '-U', '--noconfirm', *packages])
+            guest(['pacman', '-U', '--noconfirm', *install_options, *packages])
 
 
 def verify_sources(guest, folder):
@@ -74,7 +74,8 @@ def verify_sources(guest, folder):
             time.sleep(wait)
 
 
-def build(root, recipe, output, resume=False, jobs=None, validate=None):
+def build(root, recipe, output, resume=False, jobs=None, validate=None, *,
+          check=False, install_options=()):
     root, recipe, output = root.resolve(), recipe.resolve(), output.resolve()
     if os.geteuid() or not root.is_relative_to(ROOT / 'build/distros'):
         raise ValueError('Use root and a project-built ARM64 rootfs')
@@ -118,12 +119,14 @@ def build(root, recipe, output, resume=False, jobs=None, validate=None):
             verify_sources(guest, folder)
             source = work / 'src'
             prepared = source.is_dir() and any(source.iterdir())
-            flags = ' --noextract' if resume and prepared else ''
+            flags = ['--force', '--noconfirm', '--nodeps', '--check' if check else '--nocheck']
+            if resume and prepared:
+                flags.append('--noextract')
             with package_build.environment(root, user='sunuefi-package') as settings:
                 settings['MAKEFLAGS'] = '-j' + str(jobs)
                 guest(['runuser', '-u', 'sunuefi-package', '--', 'env',
                        *package_build.arguments(settings), 'bash', '-c',
-                       'cd "$1"; makepkg --force --noconfirm --nocheck --nodeps' + flags, 'makepkg', folder])
+                       'cd "$1"; shift; exec makepkg "$@"', 'makepkg', folder, *flags])
             (work / '.sunuefi-built').write_text('makepkg completed\n')
         packages = [p for p in work.glob('*.pkg.tar.*') if p.suffix in ('.xz', '.zst', '.gz')]
         if not packages:
@@ -133,7 +136,8 @@ def build(root, recipe, output, resume=False, jobs=None, validate=None):
         for path in packages:
             shutil.copy2(path, output / path.name)
             rows[path.name] = {'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-        guest(['pacman', '-U', '--noconfirm', *[folder + '/' + p.name for p in packages]])
+        guest(['pacman', '-U', '--noconfirm', *install_options,
+               *[folder + '/' + p.name for p in packages]])
         if validate is not None:
             validate(root, work, output)
         guest(['userdel', '-r', 'sunuefi-package'])

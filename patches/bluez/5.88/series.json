@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "version": "5.88",
+  "targets": ["debian-gnome", "debian-kde", "debian-denial", "nyarch-gnome", "arch-denial"],
+  "patches": [
+    {
+      "file": "0001-hog-read-uncached-pnp-id.patch",
+      "sha256": "e406f8f7125f0a58d77c3fdbac5eec0e840b9cfdc0159369ed21fd19a0466ed8",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/bluez/bluez/commit/96f1201f5ac298860889714fcbc81307c2827dc0",
+        "drop_when": "The selected BlueZ waits for an available PnP ID before creating the first HoG HID device and passes the uncached, absent and failed read tests."
+      }
+    }
+  ]
+}

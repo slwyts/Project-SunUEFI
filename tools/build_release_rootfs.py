@@ -823,6 +823,13 @@ def build_overlays(record, rootfs, kernel, run, directory=None, *, uapi=None):
     if libwacom_record is None:
         raise ValueError('libwacom packages do not match the shared SPI digitizer support')
     sources['libwacom'] = libwacom / 'runtime', libwacom_record
+    from desktop import build_bluez_package as bluez_builder
+    bluez = directory / 'bluez'
+    run([ROOT / 'build.sh', 'bluez', '--sysroot', rootfs, '--output', bluez])
+    bluez_record = bluez_builder.reusable(bluez, rootfs)
+    if bluez_record is None:
+        raise ValueError('BlueZ package does not match the signed Debian source and HoG patch')
+    sources['bluez'] = bluez / 'runtime', bluez_record
     if record['desktop'] == 'gnome':
         gsd = directory / 'gsd/runtime'
         run([ROOT / 'build.sh', 'gsd', '--output', gsd.parent, '--sysroot', rootfs])
