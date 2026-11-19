@@ -1,0 +1,32 @@
+From c8e36789b138f503df0dc9dd9d6e8e672fda8c77 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 19 Nov 2026 22:01:44 +0800
+Subject: [PATCH] dmaengine: qcom: gpi: Clear the peripheral configuration on
+ release
+
+The GPI channel survives dma_release_channel(), but its peripheral
+configuration does not. Leaving the freed pointer in the channel
+lets the next client pass it to krealloc() or free it a second time.
+On the Xiaomi Pad 8 Pro, rebinding the GENI SPI controller can then
+leave the Novatek touchscreen with a corrupted transfer and no input.
+
+Clear the configuration pointer when freeing it so the next client
+allocates its own configuration.
+
+Fixes: 5d0c3533a19f ("dmaengine: qcom: Add GPI dma driver")
+---
+ drivers/dma/qcom/gpi.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/dma/qcom/gpi.c b/drivers/dma/qcom/gpi.c
+index a5055a6273af..abf7a7e7bfee 100644
+--- a/drivers/dma/qcom/gpi.c
++++ b/drivers/dma/qcom/gpi.c
+@@ -2011,6 +2011,7 @@ static void gpi_free_chan_resources(struct dma_chan *chan)
+ 	gpi_free_ring(&gchan->ch_ring, gpii);
+ 	vchan_free_chan_resources(&gchan->vc);
+ 	kfree(gchan->config);
++	gchan->config = NULL;
+ 
+ 	write_lock_irq(&gpii->pm_lock);
+ 	gchan->pm_state = DISABLE_STATE;

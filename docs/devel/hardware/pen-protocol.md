@@ -6,6 +6,10 @@
 
 ## 内核输入与许可边界
 
+笔尖位置来自触屏的 SPI 控制器，蓝牙只提供压感和按键。触屏控制器重绑时，
+[GPI DMA 驱动](../../../patches/linux/7.3/0139-LOCAL-dmaengine-qcom-gpi-clear-config-on-release.patch)
+在释放通道时清除旧配置，避免下一次传输访问已释放的内存，导致触屏和笔尖失去响应。
+
 `hid-xiaomi` 将两个型号的 15 字节 Report5 首个小端 16 位字上报为标准
 `ABS_PRESSURE`，范围分别为 M80p 的 0..8191 和 P81c 的 0..16383；Report2 的
 两个笔按钮也有标准事件。其余压力字、Report6 姿态和原始矩阵中的 pressure

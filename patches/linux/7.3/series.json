@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "9285b79282ff41aded9680a00e8ec1277968a4d5",
-  "original_target_commit": "1c676d09b4ec3b1dc5b4bea2313ecf903f5f7b85",
+  "target_tree": "4230ab92787c86de1ba42f8024695754f685da79",
+  "original_target_commit": "c8e36789b138f503df0dc9dd9d6e8e672fda8c77",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1785,6 +1785,19 @@
         "drop_when": "The accepted GENI/GPI path must send an entire standard LIRC waveform in one SPI transfer without segment rejection or extra gaps; verify on the Piano transmitter."
       },
       "sha256": "08400a4536136e715623fb068d2079580ccaaa65bc6c84a46ab006e2300dac4e"
+    },
+    {
+      "file": "0139-LOCAL-dmaengine-qcom-gpi-clear-config-on-release.patch",
+      "sha256": "8515fd1796d1d3398dc48e3b515b506ea4f17b480a7eeb60e2231363b9d8193a",
+      "original_commit": "c8e36789b138f503df0dc9dd9d6e8e672fda8c77",
+      "original_parent": "1c676d09b4ec3b1dc5b4bea2313ecf903f5f7b85",
+      "committer_date": "2026-11-19T22:01:44+08:00",
+      "tree": "4230ab92787c86de1ba42f8024695754f685da79",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected kernel clears the GPI peripheral configuration when releasing a DMA channel."
+      }
     }
   ],
   "provenance": {
