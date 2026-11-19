@@ -142,6 +142,18 @@ UEFI 运行时，后台常驻一个 USB Fastboot 服务（设备名 `SunUEFI-pia
 
 系统镜像有 `debian-gnome`、`debian-kde`、`nyarch-gnome` 和 `steamos` 四种。首次启动会自动把根文件系统扩展到分区大小，耗时比后续启动长。用户名 `piano`、密码 `piano123456` 登录，系统默认自动登录，锁屏解锁和 `sudo` 用同一个密码。完整步骤见[安装指南](docs/user/getting-started.md)。
 
+### 软件源
+
+SunUEFI 的内核、设备树、固件和配套软件包通过签名软件源更新，不用重刷系统镜像。
+
+| 系统 | 软件源 | 更新命令 |
+| --- | --- | --- |
+| Debian GNOME、Debian KDE | APT：`https://sunuefi-repo.okassets.uk/apt` · `sid main` · `arm64` | `sudo apt update && sudo apt upgrade` |
+| Nyarch | pacman：`[sunuefi]` | `sudo pacman -Syu` |
+| SteamOS | pacman：`[sunuefi-steamos]` 在 `[sunuefi]` 前面 | `sudo pacman -Syu` |
+
+两个 pacman 仓库共用地址 `https://sunuefi-repo.okassets.uk/pacman/$repo/os/$arch`。SteamOS 专用仓只提供适配 Valve 用户空间的覆盖包，其余从 `sunuefi` 获取。手动配置见[软件源与更新](docs/user/getting-started.md#软件源与更新)。
+
 ### 自己构建
 
 需要 x86_64 或 ARM64 的 Linux 加 Docker，完整系统镜像需要 ARM64 构建机和特权容器。

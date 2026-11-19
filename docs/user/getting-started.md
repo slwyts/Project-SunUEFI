@@ -14,8 +14,8 @@
 
 | 系统镜像 | 系统 | root 分区至少 | 适合 |
 | --- | --- | --- | --- |
-| `debian-gnome` | Debian 13 + GNOME | 8 GiB | 日常使用的通用桌面 |
-| `debian-kde` | Debian 13 + KDE Plasma | 8 GiB | 习惯 KDE Plasma 的用户，限制见[已知问题](known-issues.md#其他) |
+| `debian-gnome` | Debian sid + GNOME | 8 GiB | 日常使用的通用桌面 |
+| `debian-kde` | Debian sid + KDE Plasma | 8 GiB | 习惯 KDE Plasma 的用户，限制见[已知问题](known-issues.md#其他) |
 | `nyarch-gnome` | Arch Linux ARM + GNOME（Nyarch） | 16 GiB | 想用滚动更新的软件包和 Nyarch 主题 |
 | `steamos` | Valve SteamOS ARM64 | 16 GiB | 玩游戏，详见 [SteamOS](steamos.md) |
 
@@ -34,6 +34,54 @@
 ## 首次启动
 
 首次启动会把根文件系统扩展到分区的全部容量，比以后的启动慢。看到桌面后用用户名 `piano`、密码 `piano123456` 登录，桌面默认自动登录。锁屏解锁和 `sudo` 用同一个密码，可以在系统设置里改，或者运行 `passwd`。
+
+## 软件源与更新
+
+已经配置 SunUEFI 软件源的镜像，可以直接用包管理器更新。Debian 运行 `sudo apt update && sudo apt upgrade`，Nyarch 和 SteamOS 运行 `sudo pacman -Syu`。更新内核前先确认 `/boot/efi` 已挂载；重启失败时可在 systemd-boot 菜单选旧内核。
+
+### 手动添加 APT 软件源
+
+该源面向 Debian **sid ARM64**，不要添加到 Debian stable。下载[归档签名公钥](https://sunuefi-repo.okassets.uk/keys/sunuefi-archive-keyring.gpg)，运行 `gpg --show-keys --fingerprint sunuefi-archive-keyring.gpg`，核对主密钥指纹为 `1B89 034B 2C88 8929 63C0 C1CA D7D5 F9A7 080E 6560`。
+
+```sh
+sudo install -m 0644 sunuefi-archive-keyring.gpg /usr/share/keyrings/sunuefi-archive-keyring.gpg
+sudoedit /etc/apt/sources.list.d/sunuefi.sources
+```
+
+在 `sunuefi.sources` 里填入：
+
+```text
+Types: deb
+URIs: https://sunuefi-repo.okassets.uk/apt
+Suites: sid
+Components: main
+Architectures: arm64
+Signed-By: /usr/share/keyrings/sunuefi-archive-keyring.gpg
+```
+
+### 手动添加 pacman 软件源
+
+下载并核对同一份签名公钥后，将它加入 pacman 的信任库：
+
+```sh
+sudo pacman-key --add sunuefi-archive-keyring.gpg
+sudo pacman-key --lsign-key 1B89034B2C88892963C0C1CAD7D5F9A7080E6560
+sudoedit /etc/pacman.conf
+```
+
+Nyarch 只添加 `[sunuefi]`；SteamOS 添加下面两个仓库，保持顺序。把它们放在发行版原有仓库之前，保留原有仓库和签名设置。
+
+```ini
+[sunuefi-steamos]
+SigLevel = Required TrustedOnly
+Server = https://sunuefi-repo.okassets.uk/pacman/$repo/os/$arch
+
+[sunuefi]
+SigLevel = Required TrustedOnly
+Server = https://sunuefi-repo.okassets.uk/pacman/$repo/os/$arch
+```
+
+保存后运行 `sudo pacman -Syu`。`sunuefi-steamos` 只给 SteamOS 使用，不要把 Valve 的包混装进 Nyarch。
 
 ## 充电记录
 
