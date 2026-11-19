@@ -43,7 +43,7 @@ UEFI 用标准引导程序和变量工具，系统更新用发行版的包管理
 | 工作 | 现在的实现 | 下一步 |
 | --- | --- | --- |
 | Linux 7.4 主线迁移 | 产品仍使用 7.3.3；主线处于 7.4-rc 阶段 | 跟进正式标签，逐项 rebase 平台补丁；以主线实现替换重复驱动和接口，删除被替代的补丁、配置与引用，完成内核、模块、DTB、原生包及实机回归后切换产品 |
-| 原生内核及 headers 包 | SteamOS 实机用 pacman 安装并启动；Debian KDE 实机从签名 APT 安装 `b1795022727-gbc53c083a141` 并冷启动，Wi-Fi SSH 确认运行版本，旧入口仍在 | 实测 Debian 回退、外部模块及 Nyarch 更新；普通 USB 功能与可选的 USB 调试网络分别检查 |
+| 原生内核及 headers 包 | SteamOS 实机用 pacman 安装并启动；Debian KDE 实机从签名 APT 安装 `b1795022727-gbc53c083a141` 并冷启动。升级引导配置后，ADSP、CDSP 与 USB 网络从原生 initramfs 自动恢复，旧入口文件不变 | 实测 Debian 回退、外部模块及 Nyarch 更新；普通 USB 功能与可选的 USB 调试网络分别检查 |
 | 匹配的设备树 | 完整板级 DTB 按内核 release 独立打包，`kernel-install` 选择同版文件 | 将完整板级描述收敛进内核 DTS，减少外部转换 |
 | initramfs／UKI 更新与回退 | 初装用共用 bootstrap；SteamOS 实机已从 mkinitcpio 生成的分离式启动项冷启动并回退到旧 UKI；Debian KDE 已通过 systemd-boot 和 APT 生成的分离式 initramfs 启动并挂载内部存储 | 实测 Debian 的可选 UKI、旧内核回退和包管理器更新失败后的恢复 |
 | 设备固件与硬件配置包 | 四产品从签名源安装 `piano-device-config`；显示校准由两种原生包安装；AudioReach 拓扑包已在 SteamOS 重启后通过四路播放和麦克风采集 | 实测显示包装卸后的 HDR／SDR，从公网安装音频拓扑包；继续归集其他固件 |

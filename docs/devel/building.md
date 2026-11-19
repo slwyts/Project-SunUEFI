@@ -328,6 +328,11 @@ APT／pacman 安装内核、模块、匹配 DTB 和必要固件
 Debian 复用 initramfs-tools 和 systemd-boot 提供的内核、initramfs 钩子；
 `55-initrd.install` 将生成的 initramfs 交给 systemd。直接安装版本化内核包时，
 APT 也会先配置匹配的设备树与 `piano-boot-config`，再生成启动文件。
+Debian 可能在挂载根之前加载数字信号处理器（DSP）驱动。`piano-boot-config` 的
+initramfs 钩子会带上已安装的 ADSP、CDSP 固件头和分段，升级引导配置也会触发
+initramfs 重建。平板已确认两颗 DSP 在冷启动时自动运行，Type-C 和 USB 网络随之上线，
+保留的旧启动项不受这次重建影响。
+
 Arch 由 pacman 事务调用 `kernel-install`，复用官方 `50-mkinitcpio.install`，
 并按 [ArchWiki 的 kernel-install 配置](https://wiki.archlinux.org/title/Kernel-install)
 屏蔽 preset 模式的两条 mkinitcpio 事务钩子，避免重复生成。

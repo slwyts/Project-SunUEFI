@@ -180,6 +180,10 @@ class KernelPackageTests(unittest.TestCase):
             boot_package = next(path for path in packages if path.name.startswith('piano-boot-config_'))
             self.assertIn('systemd (>= 258)', subprocess.check_output(
                 ['dpkg-deb', '-f', boot_package, 'Depends'], text=True))
+            control_dir = output / 'boot-control'
+            subprocess.run(['dpkg-deb', '-e', boot_package, control_dir], check=True)
+            self.assertEqual((control_dir / 'triggers').read_text(),
+                             'activate-noawait update-initramfs\n')
             self.assertFalse(list(output.glob('piano-boot-config_*/usr/share/kernel/postinst.d/*')))
             self.assertFalse(list(output.glob('piano-boot-config_*/usr/libexec/piano-kernel-install')))
             cmdline = next(output.glob('piano-boot-config_*/usr/lib/kernel/cmdline')).read_text()

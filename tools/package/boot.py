@@ -105,7 +105,18 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
             '. /usr/share/initramfs-tools/hook-functions\n'
             'for module in arm_smmu ufs_qcom phy_qcom_qmp_ufs '
             'pinctrl_sm8750; do\n'
-            ' manual_add_modules "$module"\ndone\n')
+            ' manual_add_modules "$module"\ndone\n'
+            '# PAS takes the firmware names from the board device tree.\n'
+            '# Module metadata does not describe these split images.\n'
+            'for stem in adsp adsp_dtb cdsp cdsp_dtb; do\n'
+            ' [ -f "/usr/lib/firmware/$stem.mdt" ] || continue\n'
+            ' for image in /usr/lib/firmware/"$stem".mdt /usr/lib/firmware/"$stem".b[0-9][0-9]; do\n'
+            '  [ -f "$image" ] || continue\n'
+            '  rc=0\n'
+            '  copy_file firmware "$image" || rc=$?\n'
+            '  [ "$rc" -le 1 ] || exit "$rc"\n'
+            ' done\n'
+            'done\n')
         install['etc/apt/sources.list.d/sunuefi.sources'] = (
             f'Types: deb\nURIs: {PUBLIC_REPOSITORY_URL}/apt\n'
             'Suites: sid\nComponents: main\nArchitectures: arm64\n'
@@ -263,6 +274,8 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
                 if conffiles:
                     (control / 'conffiles').write_text(''.join(
                         '/' + path.relative_to(payload).as_posix() + '\n' for path in conffiles))
+                if package_name == 'piano-boot-config':
+                    (control / 'triggers').write_text('activate-noawait update-initramfs\n')
                 if package_name == name:
                     postinst = control / 'postinst'
                     postinst.write_text(
