@@ -8,9 +8,10 @@
       "file": "0001-drm-restore-brightness-after-hdr.patch",
       "sha256": "d0f2300f63f1d2e26c430fda00433019ba4cda5be5acd04da236ce19e16513a7",
       "upstream": {
-        "status": "downstream",
-        "url": "https://invent.kde.org/plasma/kwin/-/blob/v6.6.5/src/backends/drm/drm_output.cpp",
-        "drop_when": "Unpatched KWin restores the requested hardware brightness when HDR is disabled, including when the cached SDR brightness is unchanged."
+        "status": "merged",
+        "url": "https://invent.kde.org/plasma/kwin/-/merge_requests/10404",
+        "commit": "f14e6d16f67b02b00b6fa01c6fef3e5c6c1736c7",
+        "drop_when": "Valve ships KWin with the fix from Plasma 6.8.4 or an equivalent backport."
       }
     }
   ]

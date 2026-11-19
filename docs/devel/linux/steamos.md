@@ -220,7 +220,10 @@ pacman 包；`kscreen` 另有构建顺序补丁。缓存同时核对配方、补
 
 KWin 6.6.5 另有通用背光修正：内屏在 HDR 时使用最大硬件背光和软件亮度，
 退出 HDR 后必须使亮度缓存失效，才能通过原有亮度接口恢复用户设置。
-`patches/kwin/6.6.5/` 不改变 HDR 能力判断或输出格式。带补丁的组件始终使用
+回移补丁已在 [KWin !10404](https://invent.kde.org/plasma/kwin/-/merge_requests/10404)
+合入主线，并通过 [!10407](https://invent.kde.org/plasma/kwin/-/merge_requests/10407)
+进入 6.8 分支。等 Valve 的包包含这项修复后删除本地回移；它不改变 HDR 能力判断或输出格式。
+带补丁的组件始终使用
 匹配配方的本地包；仅版本和 Qt 符号一致的仓库包不能替代这些修正。
 
 实机更新后，`kscreen-doctor` 正常识别内屏，标准亮度接口设置 50% 后背光
