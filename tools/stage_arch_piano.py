@@ -141,6 +141,7 @@ def stage(args):
     }[product]
     steamos = product == 'steamos'
     published_packages = getattr(args, 'published_packages', None)
+    denial_packages = getattr(args, 'denial_packages', None)
     device_configuration = getattr(args, 'device_configuration', None)
     topology = getattr(args, 'audio_topology_package', None)
     power = getattr(args, 'power_profiles_package', None)
@@ -214,7 +215,7 @@ def stage(args):
         desktop = configure(root, published_packages=published_packages is not None)
     elif product == 'denial':
         from build.denial import install_arch
-        desktop = install_arch(root)
+        desktop = install_arch(root, manifest=denial_packages)
         if published_packages is None:
             install_repository(root, steamos=False)
     else:
@@ -277,6 +278,8 @@ def stage(args):
               'power_profiles_package': power,
               'sensor_package': sensor_record,
               'runtime_manifest_sha256': release.digest(args.runtime / 'manifest.json')}
+    if denial_packages:
+        record['denial_manifest_sha256'] = release.digest(denial_packages)
     (output / 'manifest.json').write_text(json.dumps(record, indent=2) + '\n')
 
 

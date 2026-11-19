@@ -224,26 +224,33 @@ Piano 的原生硬件包，源码和扩展选择在 `config/nyarch.json`。
 镜像取索引和软件包，避免从一个镜像拿索引，再去另一个镜像找对应的包。
 安装后的官方镜像列表不变。SteamOS 的构建细节见 [SteamOS ARM64](linux/steamos.md)。
 
-两种 Denial 镜像从 [Denial 签名源](https://github.com/denialwm/denial/blob/main/docs/INSTALL.md#repository-trust-paths)安装合成器及其匹配的 Flutter Engine。Debian 只从该源取 Denial 自身的包，系统依赖仍用 sid；Arch Linux ARM 仍使用自己的滚动源。SDDM 加载 Denial 原版 Wayland 会话，默认使用触控布局。相机和其他硬件继续用 Piano 的标准驱动和发行版软件包，不安装 Phonewave 的板级服务或 Android 容器。Denial 的自动旋转目前没有接入标准 SensorProxy，可在显示设置手动选方向。
+两种 Denial 产品镜像从 SunUEFI 签名源安装接入 SensorProxy 的合成器。
+Debian 从 [Denial 签名源](https://github.com/denialwm/denial/blob/main/docs/INSTALL.md#repository-trust-paths)
+获取匹配的原版 Flutter Engine，系统依赖仍用 sid。Arch 的 `[sunuefi]`
+在同一份索引里提供合成器、可选插件管理器和字节不变的原版 Engine；
+更新这组包时按同一版核对，避免新版 Engine 先于合成器升级。
+SDDM 加载 Denial 原版 Wayland 会话，默认使用触控布局。相机和其他硬件
+继续用 Piano 的标准驱动和发行版软件包。独立的本地 rootfs 构建仍可使用上游包。
 
 开发时可用 `./build.sh denial --test` 测试
 [SensorProxy 补丁](../../patches/denial/0.6.8/series.json)。
 在 ARM64 构建环境运行 `./build.sh denial --release`，或在 x86-64 上用
 `./build.sh denial --arch-sysroot "$ARCH_ARM64_ROOT"` 交叉编译。
-这些命令从同一签名标签构建，不覆盖已安装的程序或 Flutter Engine。
-补丁优先使用标准加速度计接口，保留 Phonewave 后备；内屏熄灭后释放请求。
-
-打包时使用同一版 Denial 的发布归档，目录中保留软件包、`SHA256SUMS`
-和签名：
+这些命令从同一签名标签构建，补丁优先使用标准加速度计接口，内屏熄灭
+后释放请求。产品任务只编译一次 ARM64 合成器；缓存键绑定源码、补丁、
+Rust 和实际安装的原生依赖，复用前核对文件摘要和源码记录。
+`--overlay-target` 从同版签名发布取得原包和校验清单，为对应产品生成原生包：
 
 ```sh
-./build.sh denial --package debian --release-archives "$DENIAL_RELEASE" \
-  --package-output artifacts/packages/denial/debian
+./build.sh denial --overlay-target debian-denial \
+  --package-output artifacts/packages/overlays/debian-denial
+./build.sh denial --overlay-target arch-denial \
+  --package-output artifacts/packages/overlays/arch-denial
 ```
 
-Arch 使用 `--package pacman`，另提供签名源码检出目录 `--source`
-和含 `makepkg` 的独立 ARM64 构建根 `--arch-root`，在私有挂载命名空间中执行。
-两个包管理器都只重打 `denial` 和 `denial-plugin-manager`，保留上游 Flutter Engine。
+发布使用现有 APT 和 pacman 索引。只有 Denial 镜像读取对应包清单，
+先通过原生包管理器验签、比对归档摘要，再安装。产品任务重打
+`denial` 和 `denial-plugin-manager`，Arch 的 Engine 不重打。
 
 已有隔离的 ARM64 pacman 构建根目录时，可单独构建并安装完整 Mesa 包；此操作会修改指定的构建根目录，不要直接使用已交付的产品根目录：
 

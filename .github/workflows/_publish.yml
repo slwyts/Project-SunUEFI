@@ -66,6 +66,16 @@ jobs:
         with:
           operation: download
           name: overlay-steamos
+      - if: contains(fromJSON(inputs.overlay_matrix).target, 'debian-denial')
+        uses: ./.github/actions/build-input
+        with:
+          operation: download
+          name: overlay-debian-denial
+      - if: contains(fromJSON(inputs.overlay_matrix).target, 'arch-denial')
+        uses: ./.github/actions/build-input
+        with:
+          operation: download
+          name: overlay-arch-denial
       - name: Sign, upload and check all selected package indexes
         env:
           SUNUEFI_REPO_GPG_KEY: ${{ secrets.SUNUEFI_REPO_GPG_KEY }}

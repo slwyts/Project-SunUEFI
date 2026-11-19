@@ -23,6 +23,7 @@ import stage_piano_kernel_modules as modules
 import stage_piano_ram_hardware as hardware
 from assemble_rootfs import product_fstab
 from build import overlay_packages, overlay_release
+from build.denial import image_manifest
 from package_bsp import POWER_PROFILES_PACKAGE
 from make_kernel_initramfs import make_newc, validate_static_arm64_elf
 from package import camera
@@ -81,7 +82,7 @@ def image_status(desktop):
 def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
          public_source=None, firmware_source=None, root=ROOT, resume=False,
          sensors_dir=None, ffmpeg_dir=None, boot_task_snapshot=False, desktop='gnome', mutter_dir=None,
-         packages_only=None, published_packages=None):
+         packages_only=None, published_packages=None, denial_packages=None):
     root = Path(root).resolve(); config = json.loads((root / 'config/release.json').read_text())
     if desktop not in DESKTOPS:
         raise ValueError('Release desktop must be gnome, kde or denial')
@@ -104,6 +105,8 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
             raise ValueError('Use a separate build/distros/overlays directory for package builds')
     if published_packages and (sensors_dir or ffmpeg_dir or mutter_dir or packages_only):
         raise ValueError('Published packages cannot be combined with local package selection')
+    denial_packages = image_manifest(denial_packages, 'debian-denial', desktop=desktop,
+                                     published=published_packages is not None)
     if published_packages:
         published_packages = Path(published_packages).resolve()
         overlay_packages.read_debian(published_packages, desktop)
@@ -187,7 +190,9 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
                   if published_packages
                   else 'build overlays in a separate signed Debian sid root and install the native packages')]
         if desktop == 'denial':
-            steps.append('install Denial from its signed APT source and enable its mobile session')
+            steps.append('install exact Denial packages from the signed SunUEFI and Denial APT sources'
+                         if denial_packages else
+                         'install Denial from its signed APT source and enable its mobile session')
         steps.append('stage the hardware runtime, apply product defaults and build the initial initramfs')
     return {'status': 'PLAN_ONLY', 'resume': resume, 'desktop': desktop,
             'previous_kernel_release': previous.get('kernel_release') if previous else None,
@@ -199,6 +204,7 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
             'boot_task_snapshot': boot_task_snapshot,
             'packages_only': str(package_output) if packages_only else None,
             'published_packages': str(published_packages) if published_packages else None,
+            'denial_packages': str(denial_packages) if denial_packages else None,
             'runtime_dir': str(Path(runtime_dir).resolve()) if runtime_dir else None,
             'kernel_build': str(Path(kernel_build or root / 'build/kernels/release').resolve()),
             'public_source': str(public), 'firmware_source': str(firmware), 'config': config,
@@ -1133,7 +1139,9 @@ def execute(record):
         if desktop == 'denial':
             from build.denial import install_debian
 
-            install_debian(rootfs, run)
+            denial_packages = record.get('denial_packages')
+            denial_versions = install_debian(rootfs, run,
+                                             manifest=Path(denial_packages) if denial_packages else None)
             archive = debian_archive(rootfs, desktop)
         boot_request = native_boot_request(rootfs, out)
         sanitize(rootfs, out)
@@ -1191,6 +1199,10 @@ def execute(record):
                   'bit_reproducible': False, 'root_uid': rootfs.stat().st_uid, 'device_operation_performed': False}
         if published:
             result['overlay_manifest_sha256'] = digest(Path(published))
+        if desktop == 'denial':
+            result['denial'] = denial_versions
+            if denial_packages:
+                result['denial_manifest_sha256'] = digest(Path(denial_packages))
         (out / 'manifest.json').write_text(json.dumps(result, indent=2) + '\n')
         (out / 'FAILED.json').unlink(missing_ok=True)
         return result
@@ -1212,6 +1224,8 @@ def main():
                           help='Build and export overlay packages without assembling a product image')
     packages.add_argument('--published-packages', type=Path, metavar='MANIFEST',
                           help='Install exact overlay packages from the signed SunUEFI APT source')
+    parser.add_argument('--denial-packages', type=Path, metavar='MANIFEST',
+                        help='Install the published Denial package set for --desktop denial')
     parser.add_argument('--resume', action='store_true', help='Reuse the completed upstream base and refresh release assembly')
     parser.add_argument('--desktop', choices=DESKTOPS, default='gnome')
     parser.add_argument('--boot-task-snapshot', action='store_true',

@@ -13,7 +13,7 @@ from publish import REPOSITORIES, ROOT, Store, prepare_publication, sha, upload_
 from verify_public import verify_public
 
 sys.path.insert(0, str(ROOT / 'tools'))
-from build import sensors
+from build import denial_manifest, sensors
 from build.overlay_packages import ARCH_REPOSITORIES, bsp_package, read_debian, topology_package
 from package import camera
 from package.boot import PUBLIC_REPOSITORY_URL
@@ -25,6 +25,7 @@ OVERLAY_REPOSITORIES = {
     'debian-kde': 'apt',
     'nyarch-gnome': 'sunuefi',
     'steamos': 'sunuefi-steamos',
+    **{target: repo for target, (_, repo, _) in denial_manifest.TARGETS.items()},
 }
 
 
@@ -47,6 +48,8 @@ def packages(directory, **identity):
 
 
 def overlay_set(directory, target):
+    if target in denial_manifest.TARGETS:
+        return denial_manifest.verify_archives(directory, target)
     repo = OVERLAY_REPOSITORIES[target]
     archives = packages(directory, schema_version=1, target=target, repo=repo)
     if repo == 'apt':

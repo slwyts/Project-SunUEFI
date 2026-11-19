@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
+from build import denial_overlay
 from desktop import denial_packages
 
 PREFIX = '' if os.uname().machine == 'aarch64' else 'aarch64-linux-gnu-'
@@ -130,8 +131,8 @@ class DenialPackageTests(unittest.TestCase):
         self.checksums.write_text(''.join(f'{sha(file)}  {file.name}\n' for file in files))
         self.sign(self.checksums, RELEASE_EPOCH)
 
-    def build(self, output):
-        return denial_packages.build(self.binary, self.receipt, self.upstream, output, 'debian')
+    def build(self, output, **kwargs):
+        return denial_packages.build(self.binary, self.receipt, self.upstream, output, 'debian', **kwargs)
 
     def field(self, archive, field):
         return subprocess.check_output(['dpkg-deb', '-f', archive, field], text=True).strip()
@@ -141,7 +142,7 @@ class DenialPackageTests(unittest.TestCase):
         engine_digest = sha(engine)
         output = self.root / 'packages'
         with patch.dict(os.environ, SUNUEFI_OVERLAY_RELEASE='123.4'):
-            record = self.build(output)
+            record = self.build(output, target='debian-denial')
 
         version = self.upstream_version + '+sunuefi.123.4'
         archives = {name: output / f'{name}_{version}_arm64.deb' for name in (MAIN, PLUGIN)}
@@ -149,6 +150,7 @@ class DenialPackageTests(unittest.TestCase):
         self.assertEqual(set(output.iterdir()), {manifest, *archives.values()})
         self.assertEqual(json.loads(manifest.read_text()), record)
         self.assertEqual(record['overlay_release'], '123.4')
+        self.assertEqual((record['target'], record['repo']), ('debian-denial', 'apt'))
         self.assertEqual(record['upstream_release']['archives'][ENGINE]['sha256'], engine_digest)
         self.assertEqual(sha(engine), engine_digest)
         for name, archive in archives.items():
@@ -173,6 +175,30 @@ class DenialPackageTests(unittest.TestCase):
         self.assertEqual((unpacked / 'DEBIAN/conffiles').read_text(), '/' + CONFFILE + '\n')
         digest = hashlib.md5(self.binary.read_bytes(), usedforsecurity=False).hexdigest()
         self.assertEqual((unpacked / 'DEBIAN/md5sums').read_text(), f'{digest}  {PROGRAM}\n')
+
+    def test_fetches_only_the_selected_assets_and_verifies_cached_inputs(self):
+        location = self.upstream.as_uri() + '/'
+        with (patch.object(denial_overlay, 'ROOT', self.root),
+              patch.object(denial_overlay, 'release_url', return_value=location)):
+            cached = denial_overlay.fetch_archives(self.source, 'debian')
+            asset = self.archives[MAIN].name
+            self.assertEqual(sha(cached / asset), sha(self.upstream / asset))
+            self.assertEqual({path.name for path in cached.iterdir()}, {
+                'download.lock', 'SHA256SUMS', 'SHA256SUMS.sig',
+                *(path.name for path in self.archives.values()),
+                *(path.name + '.sig' for path in self.archives.values()),
+            })
+            (cached / asset).write_bytes(b'modified download')
+            with self.assertRaisesRegex(ValueError, 'Cached input checksum mismatch'):
+                denial_overlay.fetch_archives(self.source, 'debian')
+
+    def test_verify_build_rejects_a_changed_binary(self):
+        proof, version = denial_packages.build_source(self.binary, self.receipt)
+        self.assertEqual(proof['binary_sha256'], sha(self.binary))
+        self.assertEqual(version, self.source['tag'].removeprefix('v'))
+        self.binary.write_bytes(self.binary.read_bytes() + b'extra')
+        with self.assertRaisesRegex(ValueError, 'does not match the build record'):
+            denial_packages.build_source(self.binary, self.receipt)
 
     def test_rebuild_uses_the_signed_release_time_for_both_archives(self):
         builds = []

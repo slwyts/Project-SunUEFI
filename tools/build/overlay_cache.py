@@ -8,11 +8,15 @@ import subprocess
 
 from build import overlay_packages, shared_products
 from build_piano_ram_bootstrap import guest_resolve
+from ci_build_targets import DENIAL_FILES
 
+# Denial builds and caches its packages independently of the shared overlays.
 RECIPE_PATHS = ('build.sh', 'requirements-build.txt', 'sources.lock.json',
                 'tools', 'config', 'containers', 'patches', 'linux',
                 ':(exclude,literal)tools/check_host.py',
-                ':(exclude,literal)tools/prepare_nv_runtime_guard.py')
+                ':(exclude,literal)tools/prepare_nv_runtime_guard.py',
+                ':(exclude,literal)patches/denial',
+                *(':(exclude,literal)' + path for path in sorted(DENIAL_FILES)))
 
 
 def digest(value):

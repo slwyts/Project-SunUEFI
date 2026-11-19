@@ -213,6 +213,14 @@ class OverlayPackageTests(unittest.TestCase):
         packages[archive.name]['sha256'] = '0' * 64
         with self.assertRaisesRegex(ValueError, 'differs from the published generation'):
             overlays.download_debian(self.root, download, packages, run)
+        download = self.root / 'downloads-from-debian'
+        download.mkdir()
+        packages[archive.name]['sha256'] = overlays.sha(self.root / 'debian' / archive.name)
+        paths = overlays.download_debian(self.root, download, packages, run,
+                                         source='sources.list.d/debian.sources')
+        self.assertEqual(len(paths), 1)
+        self.assertEqual(overlays.sha(self.root / paths[0].lstrip('/')),
+                         packages[archive.name]['sha256'])
 
 
 @unittest.skipUnless(os.geteuid() == 0 and all(shutil.which(name) for name in

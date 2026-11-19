@@ -37,21 +37,38 @@ jobs:
       - name: Load the verified builder and fixed sources
         run: |
           python3 tools/build/ci_container.py load
-          ./build.sh sources
-      - uses: ./.github/actions/build-input
+          if [[ "$SUNUEFI_BUILD_TARGET" != *-denial ]]; then
+            ./build.sh sources
+          fi
+      - if: endsWith(matrix.target, '-denial')
+        uses: ./.github/actions/build-input
+        with:
+          operation: download
+          name: denial-compositor
+      - name: Cache the signed Denial release inputs
+        if: endsWith(matrix.target, '-denial')
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/source-cache/denial
+          key: denial-release-${{ matrix.target }}-${{ hashFiles('config/denial.json', 'config/keys/denial-repo-key.asc') }}
+      - if: ${{ !endsWith(matrix.target, '-denial') }}
+        uses: ./.github/actions/build-input
         with:
           operation: download
           name: kernel
-      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - if: ${{ !endsWith(matrix.target, '-denial') }}
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/toolchains/*.tar.zst
           key: llvm-arm64-${{ hashFiles('config/kernel-llvm.json', 'tools/desktop/prepare_kernel_llvm.py') }}
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - if: ${{ !endsWith(matrix.target, '-denial') }}
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/ccache
           key: ccache-${{ runner.arch }}-overlays-${{ matrix.target }}-${{ github.sha }}
           restore-keys: ccache-${{ runner.arch }}-overlays-${{ matrix.target }}-
       - name: Restore the last completed overlay package set
+        if: ${{ !endsWith(matrix.target, '-denial') }}
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/overlay-cache/${{ matrix.target }}
@@ -70,11 +87,14 @@ jobs:
             sunuefi-builder bash -euc '
               git config --global --add safe.directory /workspace
               git config --global --add safe.directory "/workspace/*"
+              output="artifacts/packages/overlays/$SUNUEFI_BUILD_TARGET"
+              if [[ "$SUNUEFI_BUILD_TARGET" == *-denial ]]; then
+                exec ./build.sh denial --overlay-target "$SUNUEFI_BUILD_TARGET" --package-output "$output"
+              fi
               python3 -m venv .venv
               .venv/bin/pip install -r requirements-build.txt
               . .venv/bin/activate
               python3 tools/build/shared_products.py verify --kind kernel
-              output="artifacts/packages/overlays/$SUNUEFI_BUILD_TARGET"
               case "$SUNUEFI_BUILD_TARGET" in
                 debian-gnome) ./build.sh release-rootfs --desktop gnome --packages-only "$output" ;;
                 nyarch-gnome|steamos) ./build.sh "$SUNUEFI_BUILD_TARGET-rootfs" --packages-only "$output" ;;
@@ -86,6 +106,7 @@ jobs:
             --output "artifacts/packages/overlays/$SUNUEFI_BUILD_TARGET"
       - id: completed
         name: Stage the verified overlay set for reuse across runs
+        if: ${{ !endsWith(matrix.target, '-denial') }}
         run: |
           packages="artifacts/packages/overlays/$SUNUEFI_BUILD_TARGET"
           cache="build/overlay-cache/$SUNUEFI_BUILD_TARGET"

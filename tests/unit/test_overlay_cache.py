@@ -19,11 +19,14 @@ from build import overlay_cache, overlay_packages
 
 
 class OverlayCacheTests(unittest.TestCase):
-    def test_recipe_keys_ignore_host_checks_and_keep_package_tools(self):
+    def test_recipe_keys_ignore_host_checks_and_denial_only_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             subprocess.run(['git', '-C', root, 'init', '-q'], check=True)
-            not_inputs = ('tools/check_host.py', 'tools/prepare_nv_runtime_guard.py')
+            not_inputs = ('tools/check_host.py', 'tools/prepare_nv_runtime_guard.py',
+                          'tools/build/denial_overlay.py', 'tools/desktop/denial_packages.py',
+                          'config/denial.json', 'containers/denial.Dockerfile',
+                          'patches/denial/0.6.8/series.json')
             builder = 'tools/build/overlay_packages.py'
             for name in (*not_inputs, builder):
                 path = root / name

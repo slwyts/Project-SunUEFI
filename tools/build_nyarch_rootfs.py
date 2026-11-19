@@ -18,6 +18,7 @@ import build_nyarch_apps
 import build_release_rootfs as release
 from build_piano_runtime_helpers import source_patches
 from build import arch_mesa, overlay_cache, overlay_packages, overlay_release, sensors
+from build.denial import image_manifest
 from build_chroot import arch_mirror_url
 import stage_arch_piano
 from build_steamos_rootfs import kde_package_is_current, sensor_recipes
@@ -41,12 +42,16 @@ def shared_overlays(published):
 
 
 def build(args):
-    denial = getattr(args, 'desktop', 'nyarch') == 'denial'
+    desktop_name = getattr(args, 'desktop', 'nyarch')
+    denial = desktop_name == 'denial'
     target = 'arch-denial' if denial else OVERLAY_TARGET
     if denial and getattr(args, 'packages_only', None):
         raise ValueError('Build the shared Arch packages with nyarch-gnome-rootfs --packages-only')
     if args.output is None:
         args.output = ROOT / 'build/distros' / (target + '-piano')
+    denial_packages = image_manifest(
+        getattr(args, 'denial_packages', None), 'arch-denial', desktop=desktop_name,
+        published=getattr(args, 'published_packages', None) is not None)
     output, package_output, published = overlay_packages.pacman_build_mode(args, OVERLAY_TARGET, ROOT)
     if denial and published:
         published = shared_overlays(published)
@@ -145,6 +150,7 @@ def build(args):
         bootstrap_sysroot=args.bootstrap_sysroot, desktop='denial' if denial else 'nyarch',
         desktop_source=desktop, extensions=extensions,
         published_packages=published[1] if published else None,
+        denial_packages=denial_packages,
         device_configuration=records['device_configuration'],
         audio_topology_package=records['audio_topology_package'],
         power_profiles_package=records['power_profiles_package']))
@@ -308,9 +314,14 @@ if __name__ == '__main__':
     parser.add_argument('--bootstrap-sysroot', type=Path, default=Path('/'))
     parser.add_argument('--resume', action='store_true')
     overlay_packages.pacman_arguments(parser)
+    parser.add_argument('--denial-packages', type=Path, metavar='MANIFEST',
+                        help='Install the published Denial package set for the Arch Denial image')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not args.worker:
-        raise SystemExit(run('unshare', '--mount', '--propagation', 'private',
-                             sys.executable, __file__, *sys.argv[1:], '--worker').returncode)
-    build(args)
+        raise SystemExit(subprocess.run(['unshare', '--mount', '--propagation', 'private',
+                                        sys.executable, __file__, *sys.argv[1:], '--worker']).returncode)
+    try:
+        build(args)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        parser.exit(2, str(error) + '\n')

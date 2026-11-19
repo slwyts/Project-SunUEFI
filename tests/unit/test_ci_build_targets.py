@@ -17,13 +17,21 @@ PRODUCTS = ['debian-gnome', 'debian-kde', 'debian-denial', 'nyarch-gnome',
 
 class CiBuildTargetsTests(unittest.TestCase):
     def test_arch_images_share_two_abi_matched_provider_sets(self):
-        for target in ('nyarch-gnome', 'arch-denial', 'steamos'):
+        for target in ('nyarch-gnome', 'steamos'):
             selected = targets.select([], target)
             self.assertEqual(selected, [target])
             self.assertEqual(targets.overlay_targets(selected), ['nyarch-gnome', 'steamos'])
         self.assertEqual(targets.overlay_targets(['debian-kde']), ['debian-gnome'])
-        self.assertEqual(targets.overlay_targets(['debian-denial']), ['debian-gnome'])
         self.assertEqual(targets.overlay_targets(['linux']), [])
+
+    def test_denial_overlays_do_not_select_unrelated_images(self):
+        self.assertEqual(targets.overlay_targets(['debian-denial']), ['debian-gnome', 'debian-denial'])
+        self.assertEqual(targets.overlay_targets(['arch-denial']), ['nyarch-gnome', 'steamos', 'arch-denial'])
+        self.assertEqual(targets.select(['patches/denial/0.6.8/series.json']),
+                         ['debian-denial', 'arch-denial'])
+        self.assertEqual(targets.select(['containers/denial.Dockerfile']),
+                         ['debian-denial', 'arch-denial'])
+        self.assertEqual(targets.select(['config/denial.json', 'linux/dts/piano-display.dtso']), PRODUCTS)
 
     def test_domains_and_shared_inputs(self):
         self.assertEqual(targets.select(['tools/build/check_patch_series.py']), [])

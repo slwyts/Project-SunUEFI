@@ -31,6 +31,11 @@ UEFI_PREFIXES = ('android/', 'uefi/', 'vendor/piano/', 'patches/firmware/',
                  'tools/prepare_product_')
 DISTROS = ['debian-gnome', 'debian-kde', 'debian-denial', 'nyarch-gnome',
            'arch-denial', 'steamos']
+DENIAL_TARGETS = ('debian-denial', 'arch-denial')
+DENIAL_FILES = {'config/denial.json', 'config/keys/denial-repo-key.asc',
+                'containers/denial.Dockerfile', 'tools/build/denial.py',
+                'tools/build/denial_manifest.py', 'tools/build/denial_overlay.py',
+                'tools/desktop/build_denial.py', 'tools/desktop/denial_packages.py'}
 TARGETS = ('uefi', 'linux', *DISTROS)
 CHECK_ONLY_FILES = {'.github/workflows/host-checks.yml', 'tools/check_host.py',
                     'tools/build/check_patch_series.py'}
@@ -52,6 +57,7 @@ def overlay_targets(targets):
     # The shared Arch sensor package must have an ABI-matched SSC provider in both repositories.
     if selected & {'nyarch-gnome', 'arch-denial', 'steamos'}:
         result.extend(('nyarch-gnome', 'steamos'))
+    result.extend(target for target in DENIAL_TARGETS if target in selected)
     return result
 
 
@@ -65,8 +71,12 @@ def select(files, manual=None):
     files = list(files)
     full = DISTROS.copy()
     uefi = False
+    denial = False
     for name in files:
         if name in CHECK_ONLY_FILES:
+            continue
+        if name in DENIAL_FILES or name.startswith('patches/denial/'):
+            denial = True
             continue
         if name in FULL_FILES:
             return full
@@ -77,7 +87,7 @@ def select(files, manual=None):
             return full
     # A normal product push always delivers the matching module, ESP and root.
     # Firmware/kernel-only builds remain explicit maintainer dispatch options.
-    return full if uefi else []
+    return full if uefi else list(DENIAL_TARGETS) if denial else []
 
 
 def changed_files(root, before):

@@ -339,18 +339,18 @@ def read_debian(path, desktop):
     return components, packages
 
 
-def download_debian(rootfs, download, packages, run):
+def download_debian(rootfs, download, packages, run, *, source='sources.list.d/sunuefi.sources'):
     """Use APT's archive authentication and compare to the producer's bytes."""
     account = run(['chroot', rootfs, 'getent', 'passwd', '_apt'],
                   capture_output=True, text=True).stdout.split(':')
     os.chown(download, int(account[2]), int(account[3]))
     guest = '/' + download.relative_to(rootfs).as_posix()
-    # Restrict this download to the project source, including when the same
-    # package version also exists in Debian. Dependencies use the normal list.
+    # Fetch from the selected signed source even if another has the same version.
+    # Installation still resolves dependencies against the normal source list.
     run(['chroot', rootfs, 'sh', '-ec',
-         'cd "$1"; shift; exec apt-get -o Dir::Etc::sourcelist=sources.list.d/sunuefi.sources '
+         'cd "$1"; package_source=$2; shift 2; exec apt-get -o "Dir::Etc::sourcelist=$package_source" '
          '-o Dir::Etc::sourceparts=- download "$@"',
-         'sunuefi-package-download', guest,
+         'sunuefi-package-download', guest, source,
          *[row['name'] + '=' + row['version'] for row in packages.values()]])
     expected = {(row['name'], row['version'], row['architecture']): row['sha256']
                 for row in packages.values()}

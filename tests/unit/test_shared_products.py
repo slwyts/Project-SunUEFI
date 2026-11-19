@@ -183,7 +183,7 @@ class SharedProductsTests(unittest.TestCase):
         self.assertEqual(ci_build_targets.shared_kinds(['linux']), ['kernel'])
         self.assertEqual(ci_build_targets.shared_kinds([]), [])
         self.assertEqual(ci_build_targets.overlay_targets(ci_build_targets.DISTROS),
-                         ['debian-gnome', 'nyarch-gnome', 'steamos'])
+                         ['debian-gnome', 'nyarch-gnome', 'steamos', 'debian-denial', 'arch-denial'])
         self.assertEqual(ci_build_targets.overlay_targets(['debian-kde']), ['debian-gnome'])
         self.assertEqual(ci_build_targets.overlay_targets(['linux', 'uefi']), [])
 

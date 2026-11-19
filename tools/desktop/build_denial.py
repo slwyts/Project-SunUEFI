@@ -14,8 +14,9 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from build.denial import FINGERPRINT, KEY
+from build.denial_manifest import TARGETS
 from build_piano_runtime_helpers import source_patches
-from desktop import package_build
+from desktop import denial_packages, package_build
 
 CONFIG = ROOT / 'config/denial.json'
 
@@ -43,6 +44,12 @@ def verify_source(source, policy, keyring):
         raise ValueError('The Denial tag was not signed by the pinned release key')
 
 
+def checkout_source(policy, output):
+    run(['git', 'clone', '--quiet', '--depth=1', '--branch', policy['tag'],
+         policy['repository'], output])
+    return output
+
+
 def build(args):
     policy = json.loads(CONFIG.read_text())['source']
     version = policy['tag'].removeprefix('v')
@@ -63,10 +70,7 @@ def build(args):
             tempfile.TemporaryDirectory(prefix='denial-source-', dir=output) as temporary:
         fcntl.flock(lock, fcntl.LOCK_EX)
         work = Path(temporary)
-        upstream = args.source or work / 'upstream'
-        if args.source is None:
-            run(['git', 'clone', '--quiet', '--depth=1', '--branch', policy['tag'],
-                 policy['repository'], upstream])
+        upstream = args.source or checkout_source(policy, work / 'upstream')
         keyring = work / 'gnupg'
         keyring.mkdir(mode=0o700)
         verify_source(upstream, policy, keyring)
@@ -116,22 +120,48 @@ def build(args):
         print(binary)
 
 
-def package(args):
-    from desktop import denial_packages
-
-    output = args.output.resolve()
-    destination = args.package_output.resolve()
-    if (not output.is_relative_to(ROOT / 'build') or output == ROOT / 'build' or
-            not destination.is_relative_to(ROOT / 'artifacts/packages') or
-            destination == ROOT / 'artifacts/packages'):
-        raise ValueError('Use the existing Denial build and a new directory under artifacts/packages')
-    if not (output / 'SOURCE.json').is_file():
+def built_paths(output):
+    output = output.resolve()
+    if not output.is_relative_to(ROOT / 'build') or output == ROOT / 'build':
+        raise ValueError('Use a Denial directory under build/')
+    binary, receipt = output / 'deniald', output / 'SOURCE.json'
+    if not receipt.is_file() or not binary.is_file():
         raise ValueError('Build the ARM64 compositor before packaging it')
-    with (output / 'build.lock').open('a') as lock:
+    return binary, receipt
+
+
+def verify_build(args):
+    binary, receipt = built_paths(args.output)
+    with (binary.parent / 'build.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_SH)
-        denial_packages.build(output / 'deniald', output / 'SOURCE.json',
-                              args.release_archives.resolve(), destination, args.package,
-                              source=args.source, arch_root=args.arch_root)
+        record, _ = denial_packages.build_source(binary, receipt)
+    print(f"Verified ARM64 Denial compositor SHA-256: {record['binary_sha256']}")
+
+
+def package(args):
+    binary, receipt = built_paths(args.output)
+    destination = args.package_output.resolve()
+    if not destination.is_relative_to(ROOT / 'artifacts/packages') or destination == ROOT / 'artifacts/packages':
+        raise ValueError('Choose a new directory under artifacts/packages')
+    target = args.overlay_target
+    package_format = TARGETS[target][0] if target else args.package
+    with (binary.parent / 'build.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+        if not target:
+            denial_packages.build(binary, receipt, args.release_archives, destination, package_format,
+                                  source=args.source, arch_root=args.arch_root)
+        else:
+            from build.denial_overlay import fetch_archives
+
+            record, _ = denial_packages.build_source(binary, receipt)
+            policy = record['source']
+            archives = args.release_archives or fetch_archives(policy, package_format)
+            with tempfile.TemporaryDirectory(prefix='denial-overlay-source-', dir=binary.parent) as work:
+                source = args.source
+                if package_format == 'pacman' and source is None:
+                    source = checkout_source(policy, Path(work) / 'upstream')
+                denial_packages.build(binary, receipt, archives, destination, package_format,
+                                      source=source, arch_root=args.arch_root, target=target)
     print(destination)
 
 
@@ -141,7 +171,10 @@ def main():
     mode.add_argument('--release', action='store_true', help='Build on an ARM64 host or in an ARM64 container')
     mode.add_argument('--arch-sysroot', type=Path, help='ARM64 Arch sysroot for the release compositor')
     mode.add_argument('--test', action='store_true', help='Run the orientation tests on the build host')
+    mode.add_argument('--verify-build', action='store_true', help='Verify a completed ARM64 build before reuse')
     mode.add_argument('--package', choices=('debian', 'pacman'), help='Package a completed ARM64 build')
+    mode.add_argument('--overlay-target', choices=TARGETS,
+                      help='Package the native software for the selected Denial image')
     parser.add_argument('--source', type=Path, help='Use an existing checkout with the signed release tag')
     parser.add_argument('--output', type=Path, default=ROOT / 'build/denial', help='Compositor build directory')
     parser.add_argument('--release-archives', type=Path, help='Denial release packages, checksums and signatures')
@@ -156,10 +189,19 @@ def main():
             parser.error('--package pacman needs --source and --arch-root')
         if args.package == 'debian' and args.arch_root:
             parser.error('--arch-root is only for --package pacman')
+    elif args.overlay_target:
+        if not args.package_output:
+            parser.error('--overlay-target needs --package-output')
+        if args.overlay_target == 'debian-denial' and args.arch_root:
+            parser.error('--arch-root is only for the Arch Denial overlay')
     elif args.release_archives or args.package_output or args.arch_root:
-        parser.error('--release-archives, --package-output and --arch-root are for --package')
+        parser.error('--release-archives, --package-output and --arch-root are for packaging')
     try:
-        (package if args.package else build)(args)
+        if args.package or args.overlay_target:
+            operation = package
+        else:
+            operation = verify_build if args.verify_build else build
+        operation(args)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'{error}\n')
 

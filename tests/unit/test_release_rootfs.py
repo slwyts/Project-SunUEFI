@@ -62,6 +62,19 @@ class ReleaseRootTests(unittest.TestCase):
         self.assertTrue({'gnome', 'gnome-shell', 'gdm3', 'plasma-workspace', 'denial'}.isdisjoint(packages))
         self.assertIn('install Denial from its signed APT source and enable its mobile session', result['steps'])
 
+    def test_published_denial_image_requires_a_separate_package_manifest(self):
+        common = self.root / 'common.json'
+        denial = self.root / 'denial.json'
+        with self.assertRaisesRegex(ValueError, 'requires --denial-packages'):
+            builder.plan(self.kernel, self.source, self.output, root=self.root,
+                         desktop='denial', published_packages=common)
+        with self.assertRaisesRegex(ValueError, 'only for a Denial image'):
+            builder.plan(self.kernel, self.source, self.output, root=self.root,
+                         desktop='kde', published_packages=common, denial_packages=denial)
+        with self.assertRaisesRegex(ValueError, 'with --published-packages'):
+            builder.plan(self.kernel, self.source, self.output, root=self.root,
+                         desktop='denial', denial_packages=denial)
+
     def test_every_release_desktop_requires_native_power_profiles(self):
         for desktop, packages in (('gnome', {'gnome-shell', 'gdm3'}),
                                   ('kde', {'plasma-workspace', 'sddm', 'powerdevil'}),

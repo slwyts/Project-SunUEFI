@@ -1,4 +1,4 @@
-name: Shared firmware and kernel
+name: Shared build inputs
 
 on:
   workflow_call:
@@ -9,11 +9,82 @@ on:
       shared_matrix:
         required: true
         type: string
+      build_denial:
+        required: true
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
+  denial:
+    name: Denial compositor
+    if: inputs.build_denial
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: false
+          persist-credentials: false
+      - id: compiler
+        name: Identify the actual Rust and native library versions
+        run: |
+          set -o pipefail
+          docker build --tag sunuefi-denial-builder --file containers/denial.Dockerfile containers
+          identity=$(docker run --rm sunuefi-denial-builder bash -euo pipefail -c '
+            { rustc --version --verbose; cargo --version; dpkg-query -W; } | sha256sum
+          ')
+          printf 'digest=%s\n' "${identity%% *}" >> "$GITHUB_OUTPUT"
+      - id: compositor
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            build/denial/deniald
+            build/denial/SOURCE.json
+          key: >-
+            denial-arm64-${{ steps.compiler.outputs.digest }}-${{ hashFiles(
+            'containers/denial.Dockerfile', 'build.sh', 'config/denial.json',
+            'config/keys/denial-repo-key.asc', 'patches/denial/**',
+            'tools/desktop/build_denial.py', 'tools/desktop/package_build.py',
+            'tools/build/denial.py', 'tools/build_piano_runtime_helpers.py') }}
+      - name: Build the compositor from the signed tag or verify its cache
+        env:
+          CACHE_HIT: ${{ steps.compositor.outputs.cache-hit }}
+        run: |
+          set -o pipefail
+          mkdir -p build/logs
+          docker run --rm -v "$PWD:/workspace" -e CACHE_HIT sunuefi-denial-builder bash -euc '
+            if [[ "$CACHE_HIT" != true ]]; then
+              ./build.sh denial --release
+            fi
+            ./build.sh denial --verify-build
+          ' 2>&1 | tee build/logs/denial-compositor.log
+      - name: Save the verified compositor
+        if: steps.compositor.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            build/denial/deniald
+            build/denial/SOURCE.json
+          key: ${{ steps.compositor.outputs.cache-primary-key }}
+      - uses: ./.github/actions/build-input
+        with:
+          operation: upload
+          name: denial-compositor
+          paths: |
+            build/denial/deniald
+            build/denial/SOURCE.json
+      - name: Stage compositor build logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: build-logs-shared-denial
+          path: build/logs/denial-compositor.log
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0
+
   bsp:
     name: Device packages
     if: contains(fromJSON(inputs.shared_matrix).kind, 'kernel')
