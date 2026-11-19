@@ -25,11 +25,15 @@ jobs:
           persist-credentials: false
       - name: Install native test dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            alsa-utils binutils-aarch64-linux-gnu build-essential cargo clang \
-            debhelper libarchive-tools libjpeg-dev libssl-dev libyuv-dev m4 \
-            makepkg pacman-package-manager zstd
+          download_options=(-o Acquire::Retries=3)
+          sudo apt-get "${download_options[@]}" -o APT::Update::Error-Mode=any update
+          install_dependencies() {
+            sudo apt-get "${download_options[@]}" install -y --no-install-recommends \
+              alsa-utils binutils-aarch64-linux-gnu build-essential cargo clang \
+              debhelper libarchive-tools libjpeg-dev libssl-dev libyuv-dev m4 \
+              makepkg pacman-package-manager zstd
+          }
+          install_dependencies || install_dependencies
       - name: Check out fixed test sources
         run: |
           git submodule update --init --depth 1 -- upstream/Mu-Silicium \
