@@ -1,0 +1,263 @@
+Description: Try Linux V4L2 H.264 encoders before software for MP4 and MOV
+ V4L2 mem2mem encoders do not expose an AVHWDeviceType and their available
+ formats depend on the device the FFmpeg wrapper opens. Try common 8-bit
+ 4:2:0 layouts when setting up a recorder, without advertising formats or
+ requiring a named device. Request an appropriate bitrate and H.264 level.
+ Keep the usual fallback when no V4L2 encoder can open.
+Forwarded: no
+
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegcodecstorage.cpp b/src/plugins/multimedia/ffmpeg/qffmpegcodecstorage.cpp
+index 2e1adca..10bd824 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegcodecstorage.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpegcodecstorage.cpp
+@@ -494,6 +494,27 @@ std::optional<Codec> findAVEncoder(AVCodecID codecId, const std::optional<PixelO
+     return findAVCodec(Encoders, codecId, format);
+ }
+ 
++std::optional<Codec> findV4L2H264Encoder()
++{
++#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
++    // An explicitly selected hardware backend list takes precedence over
++    // V4L2, which FFmpeg does not expose as an AVHWDeviceType.
++    if (qEnvironmentVariableIsSet("QT_FFMPEG_ENCODING_HW_DEVICE_TYPES"))
++        return std::nullopt;
++
++    // Try V4L2 only while setting up a recorder. Its registered wrappers do
++    // not imply an available device or a supported input format.
++    for (const Codec codec : CodecEnumerator()) {
++        if (codec.id() == AV_CODEC_ID_H264 && codec.isEncoder() && !codec.isExperimental()
++            && QLatin1StringView{ codec.get()->wrapper_name } == QLatin1StringView{ "v4l2m2m" }
++            && !CodecStoreSingleton::isExcludedEncoder(codec.name())) {
++            return codec;
++        }
++    }
++#endif
++    return std::nullopt;
++}
++
+ bool findAndOpenAVDecoder(AVCodecID codecId,
+                           const std::function<AVScore(const Codec &)> &scoresGetter,
+                           const std::function<bool(const Codec &)> &codecOpener)
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegcodecstorage_p.h b/src/plugins/multimedia/ffmpeg/qffmpegcodecstorage_p.h
+index 90134b1..6cd6d1f 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegcodecstorage_p.h
++++ b/src/plugins/multimedia/ffmpeg/qffmpegcodecstorage_p.h
+@@ -40,6 +40,8 @@ std::optional<Codec> findAVDecoder(AVCodecID codecId,
+ std::optional<Codec> findAVEncoder(AVCodecID codecId,
+                                    const std::optional<PixelOrSampleFormat> &format = {});
+ 
++std::optional<Codec> findV4L2H264Encoder();
++
+ } // namespace QFFmpeg
+ 
+ QT_END_NAMESPACE
+diff --git a/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegencoderoptions.cpp b/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegencoderoptions.cpp
+index cd50a8f..bb7c983 100644
+--- a/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegencoderoptions.cpp
++++ b/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegencoderoptions.cpp
+@@ -395,6 +395,68 @@ void applyVideoEncoderOptions(const QMediaEncoderSettings &settings, QLatin1Stri
+         entry->second(settings, codec, opts);
+ }
+ 
++bool configureV4L2H264Encoder(const QMediaEncoderSettings &settings, AVCodecContext *codec)
++{
++    // ITU-T H.264 Annex A, table A-1. Use the bitrate limit without the
++    // high-profile multiplier: the driver selects the actual profile.
++    static constexpr struct Level {
++        int idc;
++        int macroblocksPerSecond;
++        int macroblocksPerFrame;
++        int kilobitsPerSecond;
++    } levels[] = {
++        { 10,     1485,     99,     64 },
++        {  9,     1485,     99,    128 }, // Level 1b
++        { 11,     3000,    396,    192 },
++        { 12,     6000,    396,    384 },
++        { 13,    11880,    396,    768 },
++        { 20,    11880,    396,   2000 },
++        { 21,    19800,    792,   4000 },
++        { 22,    20250,   1620,   4000 },
++        { 30,    40500,   1620,  10000 },
++        { 31,   108000,   3600,  14000 },
++        { 32,   216000,   5120,  20000 },
++        { 40,   245760,   8192,  20000 },
++        { 41,   245760,   8192,  50000 },
++        { 42,   522240,   8704,  50000 },
++        { 50,   589824,  22080, 135000 },
++        { 51,   983040,  36864, 240000 },
++        { 52,  2073600,  36864, 240000 },
++        { 60,  4177920, 139264, 240000 },
++        { 61,  8355840, 139264, 480000 },
++        { 62, 16711680, 139264, 800000 },
++    };
++    if (codec->width < 1 || codec->height < 1 || codec->framerate.num < 1
++        || codec->framerate.den < 1) {
++        return false;
++    }
++
++    const qint64 width = (qint64(codec->width) + 15) / 16;
++    const qint64 height = (qint64(codec->height) + 15) / 16;
++    const qint64 frameSize = width * height;
++    if (frameSize > levels[std::size(levels) - 1].macroblocksPerFrame)
++        return false;
++
++    const auto rate = codec->framerate;
++    const auto bitrate = settings.videoBitRate() > 0 ? settings.videoBitRate()
++                                                    : bitrateForSettings(settings);
++    if (bitrate <= 0)
++        return false;
++
++    for (const auto &level : levels) {
++        const qint64 maxFrameSize = level.macroblocksPerFrame;
++        if (frameSize <= maxFrameSize && width * width <= 8 * maxFrameSize
++            && height * height <= 8 * maxFrameSize
++            && frameSize * rate.num <= qint64(level.macroblocksPerSecond) * rate.den
++            && bitrate <= level.kilobitsPerSecond * 1000) {
++            codec->bit_rate = bitrate;
++            codec->level = level.idc;
++            return true;
++        }
++    }
++    return false;
++}
++
+ void applyAudioEncoderOptions(const QMediaEncoderSettings &settings,
+                               QLatin1StringView /*codecName*/, AVCodecContext *codec,
+                               AVDictionary ** /*opts*/)
+diff --git a/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegencoderoptions_p.h b/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegencoderoptions_p.h
+index 53eb5d0..780e9bb 100644
+--- a/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegencoderoptions_p.h
++++ b/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegencoderoptions_p.h
+@@ -26,6 +26,7 @@ namespace QFFmpeg {
+ 
+ void applyVideoEncoderOptions(const QMediaEncoderSettings &settings, QLatin1StringView codecName,
+                               AVCodecContext *codec, AVDictionary **opts);
++bool configureV4L2H264Encoder(const QMediaEncoderSettings &settings, AVCodecContext *codec);
+ void applyAudioEncoderOptions(const QMediaEncoderSettings &settings, QLatin1StringView codecName,
+                               AVCodecContext *codec, AVDictionary **opts);
+ 
+diff --git a/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegvideoframeencoder.cpp b/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegvideoframeencoder.cpp
+index 92a26ae..799ed0d 100644
+--- a/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegvideoframeencoder.cpp
++++ b/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegvideoframeencoder.cpp
+@@ -33,6 +33,22 @@ AVCodecID avCodecID(const QMediaEncoderSettings &settings)
+     return QFFmpegMediaFormatInfo::codecIdForVideoCodec(qVideoCodec);
+ }
+ 
++bool canTryV4L2H264(const QMediaEncoderSettings &settings, AVPixelFormat sourceFormat)
++{
++    // These muxers can obtain H.264 sequence headers from the first packet.
++    const auto container = settings.fileFormat();
++    if (container != QMediaFormat::MPEG4 && container != QMediaFormat::QuickTime)
++        return false;
++
++    const auto mode = settings.encodingMode();
++    if (mode != QMediaRecorder::ConstantQualityEncoding && mode != QMediaRecorder::AverageBitRateEncoding)
++        return false;
++
++    // The layouts tried below are eight-bit. Leave higher depths to other encoders.
++    const auto *desc = av_pix_fmt_desc_get(sourceFormat);
++    return avCodecID(settings) == AV_CODEC_ID_H264 && desc && desc->comp[0].depth == 8;
++}
++
+ } // namespace
+ 
+ VideoFrameEncoderUPtr VideoFrameEncoder::create(const QMediaEncoderSettings &encoderSettings,
+@@ -121,6 +137,25 @@ VideoFrameEncoderUPtr VideoFrameEncoder::create(const QMediaEncoderSettings &enc
+                       prohibitedTargetFormats);
+     });
+ 
++    if (!encoder && canTryV4L2H264(encoderSettings, sourceParams.swFormat)) {
++        if (const auto codec = findV4L2H264Encoder()) {
++            // The V4L2 wrapper only knows formats after probing a device.
++            // Try the common 4:2:0 layouts without advertising them as capabilities.
++            for (AVPixelFormat format : { AV_PIX_FMT_NV12, AV_PIX_FMT_YUV420P }) {
++                auto result = create(stream, *codec, nullptr, sourceParams, encoderSettings, {},
++                                     format);
++                encoder = std::move(result.encoder);
++                if (encoder) {
++                    qCDebug(qLcVideoFrameEncoder)
++                            << "found V4L2 hardware encoder" << codec->name() << "at level"
++                            << encoder->m_codecContext->level << "with bitrate"
++                            << encoder->m_codecContext->bit_rate;
++                    return encoder;
++                }
++            }
++        }
++    }
++
+     // Otherwise try to find a software encoder.
+     if (!encoder) {
+         encoder = findAndOpenAVEncoder([&](const Codec &codec) {
+@@ -188,7 +223,8 @@ VideoFrameEncoder::CreationResult
+ VideoFrameEncoder::create(AVStream *stream, const Codec &codec, HWAccelUPtr hwAccel,
+                           const SourceParams &sourceParams,
+                           const QMediaEncoderSettings &encoderSettings,
+-                          const AVPixelFormatSet &prohibitedTargetFormats)
++                          const AVPixelFormatSet &prohibitedTargetFormats,
++                          std::optional<AVPixelFormat> v4l2Format)
+ {
+     VideoFrameEncoderUPtr frameEncoder(new VideoFrameEncoder(stream, codec, std::move(hwAccel),
+                                                              sourceParams, encoderSettings));
+@@ -196,8 +232,12 @@ VideoFrameEncoder::create(AVStream *stream, const Codec &codec, HWAccelUPtr hwAc
+ 
+     frameEncoder->initCodecFrameRate();
+ 
+-    if (!frameEncoder->initTargetFormats(prohibitedTargetFormats))
++    if (v4l2Format) {
++        frameEncoder->m_targetFormat = *v4l2Format;
++        frameEncoder->m_targetSWFormat = *v4l2Format;
++    } else if (!frameEncoder->initTargetFormats(prohibitedTargetFormats)) {
+         return {};
++    }
+ 
+     frameEncoder->initStream();
+ 
+@@ -206,7 +246,7 @@ VideoFrameEncoder::create(AVStream *stream, const Codec &codec, HWAccelUPtr hwAc
+     if (!frameEncoder->initCodecContext())
+         return { nullptr, targetFormat };
+ 
+-    if (!frameEncoder->open())
++    if (!frameEncoder->open(v4l2Format.has_value()))
+         return { nullptr, targetFormat };
+ 
+     frameEncoder->updateConversions();
+@@ -338,12 +378,14 @@ bool VideoFrameEncoder::initCodecContext()
+     return true;
+ }
+ 
+-bool VideoFrameEncoder::open()
++bool VideoFrameEncoder::open(bool v4l2)
+ {
+     Q_ASSERT(m_codecContext);
+ 
+     AVDictionaryHolder opts;
+     applyVideoEncoderOptions(m_settings, m_codec.name(), m_codecContext.get(), opts);
++    if (v4l2 && !configureV4L2H264Encoder(m_settings, m_codecContext.get()))
++        return false;
+     applyExperimentalCodecOptions(m_codec, opts);
+ 
+     qCDebug(qLcVideoFrameEncoder) << "Opening encoder" << m_codec.name() << "with" << opts;
+diff --git a/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegvideoframeencoder_p.h b/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegvideoframeencoder_p.h
+index 0bfc2bd..6b48aee 100644
+--- a/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegvideoframeencoder_p.h
++++ b/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegvideoframeencoder_p.h
+@@ -80,7 +80,8 @@ private:
+     static CreationResult create(AVStream *stream, const Codec &codec, HWAccelUPtr hwAccel,
+                                  const SourceParams &sourceParams,
+                                  const QMediaEncoderSettings &encoderSettings,
+-                                 const AVPixelFormatSet &prohibitedTargetFormats = {});
++                                 const AVPixelFormatSet &prohibitedTargetFormats = {},
++                                 std::optional<AVPixelFormat> v4l2Format = std::nullopt);
+ 
+     void initTargetSize();
+ 
+@@ -92,7 +93,7 @@ private:
+ 
+     bool initCodecContext();
+ 
+-    bool open();
++    bool open(bool v4l2);
+ 
+     qint64 estimateDuration(const AVPacket &packet, bool isFirstPacket);
+ 

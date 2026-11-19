@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "version": "6.11.2",
+  "targets": ["debian-gnome", "debian-kde", "debian-denial"],
+  "patches": [
+    {
+      "file": "0001-ffmpeg-v4l2-h264-recording.patch",
+      "sha256": "ea2391763ea4900c2c88601378ec50b08d41c2ef26609bd9e9fd7025723e8362",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/qt/qtmultimedia/blob/6f162ccac1425edbd7b4d1582fabab5973b43d6c/src/plugins/multimedia/ffmpeg/recordingengine/qffmpegvideoframeencoder.cpp",
+        "drop_when": "Qt opens a suitable V4L2 H.264 encoder at the requested resolution and frame rate without environment changes, and falls back when the device is unavailable."
+      }
+    }
+  ]
+}

@@ -27,6 +27,7 @@ ABI_PACKAGES = ('libc6', 'libglib2.0-0t64', 'libsystemd0', 'libgtk-4-1',
 # Bump when source preparation or compilation changes, not APT verification.
 BUILD_RECIPE_VERSION = 1
 BUILD_COMMAND = ['dpkg-buildpackage', '-b', '-us', '-uc']
+BUILD_ARCH_COMMAND = ['dpkg-buildpackage', '-B', '-us', '-uc']
 BUILD_PROFILES = 'nocheck'
 BUILD_RECIPE = 'original Debian rules and control; standard quilt/debhelper'
 BUILD_ARCHIVE = 'SUNUEFI_DEBIAN_BUILD_ARCHIVE'
@@ -217,7 +218,7 @@ def dependency_download_resets(output):
     return archives
 
 
-def install_build_dependencies(rootfs, package, version, log):
+def install_build_dependencies(rootfs, package, version, log, *, architecture_only=False):
     # APT can reuse cached files based on size. Keep the cache private to
     # this verified acquisition and its single offline installation.
     cache = rootfs / 'var/cache/apt'
@@ -226,6 +227,7 @@ def install_build_dependencies(rootfs, package, version, log):
         archives.chmod(0o755)
         args = ['apt-get', '-o', 'Dir::Cache::archives=' + inside(rootfs, archives),
                 'build-dep', '-y', '--no-install-recommends', '--no-fix-missing',
+                *(['--arch-only'] if architecture_only else []),
                 '--build-profiles=' + BUILD_PROFILES, package + '=' + version]
         download = [*args, '--download-only']
         # APT can report a reset after the final TLS record as a permanent error.
@@ -662,16 +664,17 @@ def gcc_environment(rootfs):
 
 
 def reusable(output, target, patches, runtime, inputs, revision, *, build_dependencies=None,
-             validate_packages=None):
+             validate_packages=None, architecture_only=False):
     try:
         record = json.loads((output / 'SOURCE.json').read_text())
         version = overlay_release.debian_version(target['binary']['source_version'] + '+sunuefi' + str(revision))
         # Schema 2 used this same recipe before recording its version explicitly.
         recipe_version = record.get('build_recipe_version', 1 if record.get('schema_version') == 2 else None)
+        command = BUILD_ARCH_COMMAND if architecture_only else BUILD_COMMAND
         if (record.get('packages_built') is not True or not same_target(record.get('target', {}), target) or
                 record.get('patches') != patches or recipe_inputs(record.get('inputs', {})) != recipe_inputs(inputs) or
                 recipe_version != BUILD_RECIPE_VERSION or record.get('recipe') != BUILD_RECIPE or
-                record.get('build_command') != BUILD_COMMAND or record.get('build_profiles') != BUILD_PROFILES or
+                record.get('build_command') != command or record.get('build_profiles') != BUILD_PROFILES or
                 record.get('build_dependencies', {}) != (build_dependencies or {}) or
                 record.get('package_version') != version or set(record.get('packages', {})) != set(runtime) or
                 record.get('source', {}).get('version') != target['binary']['source_version'] or
@@ -710,7 +713,7 @@ def complete_build(output, record, validate_packages=None):
 def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
           validate=None, validate_runtime=None, builder_root=None, install_dependencies=True,
           binary_package=None, test_build=None, build_dependencies=(), *, build_environment=None,
-          validate_packages=None):
+          validate_packages=None, architecture_only=False):
     output = Path(output).resolve()
     sysroot = Path(sysroot or builder_root).resolve()
     if (not output.is_relative_to(ROOT / 'build') or not sysroot.is_relative_to(ROOT / 'build') or
@@ -718,6 +721,8 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
         raise ValueError('Use separate project build directories and at least one build job')
     if os.geteuid():
         raise ValueError('Use root for an isolated ARM64 Debian package build')
+    if architecture_only and 'all' in runtime.values():
+        raise ValueError('An architecture-only build cannot produce Architecture: all packages')
     binary_package = binary_package or package
     build_dependencies = tuple(build_dependencies)
     target = target_identity(sysroot, binary_package, package_output=output)
@@ -725,7 +730,8 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
     inputs = input_records([Path(__file__), Path(package_build.__file__), *inputs])
     dependency_records = build_dependency_records(build_dependencies)
     if cached := reusable(output, target, patch_proof, runtime, inputs, revision,
-                          build_dependencies=dependency_records, validate_packages=validate_packages):
+                          build_dependencies=dependency_records, validate_packages=validate_packages,
+                          architecture_only=architecture_only):
         return cached
     if target.get('installed_local'):
         raise ValueError('Desktop cache does not match; rebuild from a clean signed sid target '
@@ -737,10 +743,11 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
     if source_package != package:
         raise ValueError('Unexpected Debian source package for ' + package)
     package_version = overlay_release.debian_version(version + '+sunuefi' + str(revision))
+    command = BUILD_ARCH_COMMAND if architecture_only else BUILD_COMMAND
     recipe = {'target': target, 'patches': patch_proof, 'inputs': recipe_inputs(inputs),
               'package_version': package_version,
               'build_recipe_version': BUILD_RECIPE_VERSION,
-              'build_command': BUILD_COMMAND, 'build_profiles': BUILD_PROFILES}
+              'build_command': command, 'build_profiles': BUILD_PROFILES}
     if dependency_records:
         recipe['build_dependencies'] = dependency_records
     identity = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()[:16]
@@ -766,7 +773,7 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
             if not same_target(builder_target, target) or builder_target.get('installed_local'):
                 raise ValueError('The builder and target sid indexes differ; refresh the target APT indexes')
             guest(['apt-get', 'install', '-y', '--no-install-recommends', 'dpkg-dev', 'build-essential', 'ccache'])
-            install_build_dependencies(rootfs, package, version, log)
+            install_build_dependencies(rootfs, package, version, log, architecture_only=architecture_only)
         else:
             builder_target = target_identity(rootfs, binary_package)
             if not same_target(builder_target, target) or builder_target.get('installed_local'):
@@ -809,14 +816,15 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
             for name in ('debian/rules', 'debian/control'):
                 if (source / name).read_bytes() != packaging.extractfile(name).read():
                     raise ValueError('Original Debian packaging changed: ' + name)
-        guest(['sh', '-ec', 'cd "$1"; dpkg-source --before-build .; dpkg-checkbuilddeps -Pnocheck',
-               'prepare', directory])
+        guest(['sh', '-ec', 'cd "$1"; dpkg-source --before-build .; shift; exec "$@"',
+               'prepare', directory, 'dpkg-checkbuilddeps', '-P' + BUILD_PROFILES,
+               *(['-B'] if architecture_only else [])])
         if validate:
             validate(source)
         with (build_environment or package_build.environment)(rootfs) as settings:
-            guest(['env', *package_build.arguments(settings), f'DEB_BUILD_OPTIONS=nocheck parallel={jobs}',
-                   'DEB_BUILD_PROFILES=nocheck', 'sh', '-ec', 'cd "$1"; dpkg-buildpackage -b -us -uc',
-                   'build', directory])
+            guest(['env', *package_build.arguments(settings), f'DEB_BUILD_OPTIONS={BUILD_PROFILES} parallel={jobs}',
+                   'DEB_BUILD_PROFILES=' + BUILD_PROFILES, 'sh', '-ec', 'cd "$1"; shift; exec "$@"',
+                   'build', directory, *command])
             if test_build:
                 test_build(guest, directory, settings)
         changes = work / f'{package}_{package_version.split(":")[-1]}_arm64.changes'
@@ -857,8 +865,8 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
         record = {'schema_version': 3, 'packages_built': True, 'target': target, 'source': origin,
                   'package_version': package_version, 'packages': packages, 'patches': patch_proof,
                   'inputs': inputs, 'recipe': BUILD_RECIPE, 'build_recipe_version': BUILD_RECIPE_VERSION,
-                  'build_command': BUILD_COMMAND,
-                  'build_options': f'nocheck parallel={jobs}', 'build_profiles': BUILD_PROFILES,
+                  'build_command': command,
+                  'build_options': f'{BUILD_PROFILES} parallel={jobs}', 'build_profiles': BUILD_PROFILES,
                   'changes_sha256': sha(changes), 'buildinfo_sha256': sha(buildinfo)}
         if dependency_records:
             record['build_dependencies'] = dependency_records

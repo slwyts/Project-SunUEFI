@@ -14,7 +14,7 @@ from build_piano_ram_bootstrap import guest_resolve
 import package_bsp
 
 
-DEBIAN_SHARED = ('mesa', 'sensors', 'ffmpeg', 'libcamera', 'pipewire', 'plasma_camera',
+DEBIAN_SHARED = ('mesa', 'sensors', 'ffmpeg', 'libcamera', 'pipewire', 'qt_multimedia', 'plasma_camera',
                  'libwacom', 'bluez')
 DEBIAN_GNOME = ('gnome_power', 'mutter', 'gdm')
 ARCH_REPOSITORIES = {'nyarch-gnome': 'sunuefi', 'steamos': 'sunuefi-steamos'}
@@ -190,14 +190,29 @@ def debian_packages(sources):
 
 
 def verify_debian_camera_packages(components):
-    """Require the two camera consumers to match the archives in this set."""
+    """Keep capture and recording packages together in one publication."""
+    import build_ffmpeg_packages as ffmpeg
     from desktop import build_libcamera_packages as libcamera
     from desktop import build_pipewire_packages as pipewire
     from desktop import build_plasma_camera_package as plasma_camera
+    from desktop import build_qt_multimedia_packages as qt_multimedia
 
-    for component in ('libcamera', 'pipewire', 'plasma_camera'):
+    for component in ('ffmpeg', 'libcamera', 'pipewire', 'qt_multimedia', 'plasma_camera'):
         if component not in components:
             raise ValueError('Missing Debian camera component: ' + component)
+    qt_multimedia.verify_debian_packages(components['qt_multimedia'])
+    # Qt uses the system FFmpeg ABI, but the stock encoder does not forward
+    # the requested H.264 level to V4L2. Publish the matching patched set.
+    encoder = components['ffmpeg']
+    packages = encoder['packages']
+    version = packages.get('libavcodec63', {}).get('version', '')
+    expected_version = overlay_release.base_debian_version(ffmpeg.package_version())
+    if (set(packages) != ffmpeg.RUNTIME or
+            overlay_release.base_debian_version(version) != expected_version or
+            encoder.get('patches') != ffmpeg.patch_records() or
+            any(row['version'] != version or row['architecture'] != 'arm64'
+                for row in packages.values())):
+        raise ValueError('Qt Multimedia recording needs the complete patched FFmpeg package set')
     policy = libcamera.policy()
     library = components['libcamera']
     libcamera.verify_debian_packages(library, data=policy)
@@ -223,10 +238,12 @@ def debian_package_selection(desktop, installed):
     from desktop.build_libcamera_packages import abi_version, policy
     from desktop.build_pipewire_packages import DEBIAN_DEFAULT
     from desktop.build_plasma_camera_package import PACKAGE
+    from desktop.build_qt_multimedia_packages import DEBIAN_DEFAULT as QT_MULTIMEDIA_DEFAULT
 
     abi = abi_version(policy())
     defaults = {'libcamera': {f'libcamera{abi}', f'libcamera-ipa-{abi}', 'gstreamer1.0-libcamera'},
                 'pipewire': DEBIAN_DEFAULT | {'libspa-0.2-libcamera'},
+                'qt_multimedia': QT_MULTIMEDIA_DEFAULT if desktop == 'kde' else set(),
                 'plasma_camera': {PACKAGE} if desktop == 'kde' else set()}
     return {name: values.union(installed) for name, values in defaults.items()}
 

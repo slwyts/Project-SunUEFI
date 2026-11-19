@@ -777,6 +777,7 @@ def build_camera_overlays(rootfs, run, directory):
     from desktop import build_libcamera_packages as libcamera_builder
     from desktop import build_pipewire_packages as pipewire_builder
     from desktop import build_plasma_camera_package as plasma_camera_builder
+    from desktop import build_qt_multimedia_packages as qt_multimedia_builder
 
     libcamera = directory / 'libcamera'
     run([ROOT / 'build.sh', 'libcamera', '--sysroot', rootfs, '--output', libcamera])
@@ -789,6 +790,11 @@ def build_camera_overlays(rootfs, run, directory):
     pipewire_record = pipewire_builder.reusable_debian(pipewire, rootfs, libcamera=libcamera)
     if pipewire_record is None:
         raise ValueError('PipeWire packages do not match the signed Debian source and libcamera packages')
+    qt_multimedia = directory / 'qt-multimedia'
+    run([ROOT / 'build.sh', 'qt-multimedia', '--sysroot', rootfs, '--output', qt_multimedia])
+    qt_multimedia_record = qt_multimedia_builder.reusable(qt_multimedia, rootfs)
+    if qt_multimedia_record is None:
+        raise ValueError('Qt Multimedia packages do not match the signed Debian source and recording patch')
     plasma_camera = directory / 'plasma-camera'
     run([ROOT / 'build.sh', 'plasma-camera', '--sysroot', rootfs, '--output', plasma_camera,
          '--libcamera-packages', libcamera])
@@ -797,6 +803,7 @@ def build_camera_overlays(rootfs, run, directory):
         raise ValueError('Plasma Camera does not match the signed Debian source and libcamera packages')
     return {'libcamera': (libcamera / 'runtime', libcamera_record),
             'pipewire': (pipewire / 'runtime', pipewire_record),
+            'qt_multimedia': (qt_multimedia / 'runtime', qt_multimedia_record),
             'plasma_camera': (plasma_camera / 'runtime', plasma_camera_record)}
 
 

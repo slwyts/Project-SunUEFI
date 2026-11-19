@@ -255,6 +255,12 @@ class DebianPackageTests(unittest.TestCase):
             record['build_command'] = ['dpkg-buildpackage', '-b', '-us', '-uc', '-d']
             (output / 'SOURCE.json').write_text(json.dumps(record))
             self.assertIsNone(reusable())
+            # Native-architecture output is not equivalent to a full build.
+            record['build_command'] = debian_package.BUILD_ARCH_COMMAND
+            (output / 'SOURCE.json').write_text(json.dumps(record))
+            self.assertIsNone(reusable())
+            self.assertIsNotNone(debian_package.reusable(
+                output, target, [], {'gdm3': 'arm64'}, inputs, 1, architecture_only=True))
             record['build_command'] = debian_package.BUILD_COMMAND
             (output / 'SOURCE.json').write_text(json.dumps(record))
             (output / '.incomplete').touch()

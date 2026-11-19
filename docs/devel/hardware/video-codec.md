@@ -39,6 +39,20 @@ SteamOS 和 Nyarch 的包缓存同时核对版本、补丁系列与二进制包�
 
 Debian 的 `SOURCE.json` 同时绑定签名 sid 源身份、目标已安装运行库 ABI、原始 `debian/rules`／`debian/control`、补丁和二进制哈希。源码或 ABI 改变不能命中旧包；同目录的 `--resume` 校验这些身份后复用完整 `.changes` 或继续未完成对象，不重下已验哈希的归档、不重新配置完整软件包。
 
+## Qt 录制
+
+在 Debian 上，Qt Multimedia 录制 8 位 H.264 的 MP4 或 MOV 时，先尝试 Qt 原有的硬件编码器，再尝试 V4L2。打不开编码设备时继续走原有的软件编码。Qt 按尺寸、帧率和码率选择 H.264 级别，例如 3840×2160、60 fps 请求 Level 5.2。项目的 FFmpeg 包会把这一级别交给 V4L2 驱动。
+
+Qt 的改动随 Debian 原生包提供，不需要给应用设置插件路径。APT 源保留 Qt Multimedia 的同版本 ARM64 运行包、开发包和示例；不依赖这些包版本的文档仍从 Debian 官方源安装。
+
+在平板上安装这组 Qt 包及签名源的 FFmpeg 后，用系统的 Plasma Camera
+直接录制真实后摄及内置麦克风，不运行旧相机服务，不加载虚拟摄像头。
+约一分钟的后摄 MP4 可解码出 3621 张 3840×2160 画面，码流为
+H.264 Level 5.2、约 21.8 Mbit/s；有一处约 33 ms 的画面间隔。
+前摄也用 Iris 完成 1920×1080／30 fps 有声录像，码流为 Level 4.0。
+音轨与画面结束时间可相差约 0.4 秒；还要对照同一声光事件检查同步，
+不能用两个轨道都能解码代替同步验收。
+
 ## 解码流程修正
 
 依据 [Linux stateful decoder 文档](https://www.kernel.org/doc/html/latest/userspace-api/media/v4l/dev-decoder.html)，

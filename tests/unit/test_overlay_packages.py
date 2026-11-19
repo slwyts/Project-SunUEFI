@@ -13,10 +13,12 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
+import build_ffmpeg_packages as ffmpeg
 from build import overlay_packages as overlays
 from desktop import build_libcamera_packages as libcamera
 from desktop.build_pipewire_packages import DEBIAN_PACKAGES
 from desktop.build_plasma_camera_package import RUNTIME as PLASMA_PACKAGES
+from desktop.build_qt_multimedia_packages import DEBIAN_PACKAGES as QT_PACKAGES
 
 
 @unittest.skipUnless(shutil.which('dpkg-deb'), 'Debian package tools required')
@@ -48,7 +50,7 @@ class OverlayPackageTests(unittest.TestCase):
         if payload:
             (package / 'usr/share').mkdir(parents=True)
             (package / 'usr/share/fixture').write_text(payload)
-        archive = (directory or self.root) / f'{name}_{version}_{architecture}.deb'
+        archive = (directory or self.root) / f'{name}_{version.split(":")[-1]}_{architecture}.deb'
         subprocess.run(['dpkg-deb', '--build', '--root-owner-group', package, archive],
                        check=True, capture_output=True)
         shutil.rmtree(package)
@@ -59,16 +61,19 @@ class OverlayPackageTests(unittest.TestCase):
         policy = libcamera.policy()
         abi = libcamera.abi_version(policy)
         for component in (*overlays.DEBIAN_SHARED, *overlays.DEBIAN_GNOME, 'fingerprint'):
-            names = {'libcamera': libcamera.runtime_packages(policy), 'pipewire': DEBIAN_PACKAGES,
-                     'plasma_camera': PLASMA_PACKAGES}.get(
+            names = {'ffmpeg': dict.fromkeys(sorted(ffmpeg.RUNTIME), 'arm64'),
+                     'libcamera': libcamera.runtime_packages(policy), 'pipewire': DEBIAN_PACKAGES,
+                     'qt_multimedia': QT_PACKAGES, 'plasma_camera': PLASMA_PACKAGES}.get(
                          component, {'test-' + component.replace('_', '-'): 'arm64'})
-            version = libcamera.base_package_version(policy) if component == 'libcamera' else '1'
+            version = {'ffmpeg': ffmpeg.package_version(),
+                       'libcamera': libcamera.base_package_version(policy)}.get(component, '1')
             records = {}
             for name, architecture in names.items():
                 archive = self.deb(name, version, architecture=architecture)
                 records[name] = {'file': archive.name, 'version': version,
                                  'architecture': architecture, 'sha256': overlays.sha(archive)}
             sources[component] = (self.root, {'packages': records, 'package_version': version})
+        sources['ffmpeg'][1]['patches'] = ffmpeg.patch_records()
         dependencies = {name: {key: value for key, value in row.items() if key != 'file'}
                         for name, row in sources['libcamera'][1]['packages'].items()
                         if name in (f'libcamera{abi}', 'libcamera-dev', f'libcamera-ipa-{abi}')}
@@ -116,9 +121,10 @@ class OverlayPackageTests(unittest.TestCase):
             overlays.export(out, 'debian-gnome', 'apt', expected)
         self.assertFalse(out.exists())
 
-    def test_native_camera_defaults_include_ipa_without_optional_tools(self):
+    def test_native_camera_defaults_include_ipa_and_only_install_qt_on_kde(self):
         abi = libcamera.abi_version(libcamera.policy())
         gnome = overlays.debian_package_selection('gnome', {'libcamera-tools'})
+        upgraded = overlays.debian_package_selection('gnome', {'qt6-multimedia-private-dev'})
         kde = overlays.debian_package_selection('kde', set())
         default = {f'libcamera{abi}', f'libcamera-ipa-{abi}', 'gstreamer1.0-libcamera'}
         self.assertEqual(kde['libcamera'], default)
@@ -126,6 +132,11 @@ class OverlayPackageTests(unittest.TestCase):
         self.assertIn('libspa-0.2-libcamera', gnome['pipewire'])
         self.assertEqual(gnome['plasma_camera'] & PLASMA_PACKAGES.keys(), set())
         self.assertTrue(PLASMA_PACKAGES.keys() <= kde['plasma_camera'])
+        self.assertEqual(kde['qt_multimedia'], {'libqt6multimedia6', 'qml6-module-qtmultimedia'})
+        self.assertEqual(gnome['qt_multimedia'] & QT_PACKAGES.keys(), set())
+        self.assertEqual(upgraded['qt_multimedia'], {'qt6-multimedia-private-dev'})
+        denial = overlays.debian_package_selection('denial', set())
+        self.assertEqual(denial['qt_multimedia'], set())
 
     @unittest.skipUnless(all(shutil.which(name) for name in
                             ('apt-get', 'apt-ftparchive', 'dpkg-scanpackages', 'gpg')),

@@ -7,11 +7,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import build_ffmpeg_packages as ffmpeg
 from build import overlay_cache, overlay_packages, overlay_release
 from desktop import debian_package
 from desktop import build_libcamera_packages as libcamera
 from desktop.build_pipewire_packages import DEBIAN_PACKAGES
 from desktop.build_plasma_camera_package import RUNTIME as PLASMA_PACKAGES
+from desktop.build_qt_multimedia_packages import DEBIAN_PACKAGES as QT_PACKAGES
 
 
 @unittest.skipUnless(os.geteuid() == 0 and all(shutil.which(tool) for tool in
@@ -127,22 +129,25 @@ class DebianOverlayCacheTests(unittest.TestCase):
         abi = libcamera.abi_version(policy)
         for component in (*overlay_packages.DEBIAN_SHARED, *overlay_packages.DEBIAN_GNOME,
                           'fingerprint'):
-            names = {'libcamera': libcamera.runtime_packages(policy), 'pipewire': DEBIAN_PACKAGES,
-                     'plasma_camera': PLASMA_PACKAGES}.get(
+            names = {'ffmpeg': dict.fromkeys(sorted(ffmpeg.RUNTIME), 'arm64'),
+                     'libcamera': libcamera.runtime_packages(policy), 'pipewire': DEBIAN_PACKAGES,
+                     'qt_multimedia': QT_PACKAGES, 'plasma_camera': PLASMA_PACKAGES}.get(
                          component, {'test-' + component.replace('_', '-'): 'arm64'})
-            version = libcamera.base_package_version(policy) if component == 'libcamera' else '1'
+            version = {'ffmpeg': ffmpeg.package_version(),
+                       'libcamera': libcamera.base_package_version(policy)}.get(component, '1')
             control = self.root / 'payload/DEBIAN/control'
             control.parent.mkdir(parents=True, exist_ok=True)
             records = {}
             for name, architecture in names.items():
                 control.write_text(f'Package: {name}\nVersion: {version}\nArchitecture: {architecture}\n'
                                    'Maintainer: Fixture <test@example.invalid>\nDescription: Overlay fixture\n')
-                path = archives / f'{name}_{version}_{architecture}.deb'
+                path = archives / f'{name}_{version.split(":")[-1]}_{architecture}.deb'
                 subprocess.run(['dpkg-deb', '--build', '--root-owner-group', control.parents[1], path],
                                check=True, capture_output=True)
                 records[name] = {'file': path.name, 'version': version, 'architecture': architecture,
                                  'sha256': overlay_packages.sha(path)}
             sources[component] = (archives, {'packages': records, 'package_version': version})
+        sources['ffmpeg'][1]['patches'] = ffmpeg.patch_records()
         dependencies = {name: {key: value for key, value in row.items() if key != 'file'}
                         for name, row in sources['libcamera'][1]['packages'].items()
                         if name in (f'libcamera{abi}', 'libcamera-dev', f'libcamera-ipa-{abi}')}
@@ -180,7 +185,7 @@ class DebianOverlayCacheTests(unittest.TestCase):
         self.assertNotEqual(self.inputs()['installed'], inputs['installed'])
         self.assertIsNone(overlay_cache.restore_debian(self.project, output, 'debian-gnome',
                                                        self.inputs()))
-        package = next(cached.glob('*.deb'))
+        package, = cached.glob('libqt6multimedia6_*.deb')
         package.write_bytes(package.read_bytes() + b'changed bytes')
         self.assertIsNone(overlay_cache.restore_debian(self.project, output, 'debian-gnome', inputs))
         self.assertFalse(output.exists())

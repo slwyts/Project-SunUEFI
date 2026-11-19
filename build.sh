@@ -22,6 +22,7 @@ case "$command" in
   bluez) python3 tools/desktop/build_bluez_package.py "$@" ;;
   libcamera) python3 tools/desktop/build_libcamera_packages.py "$@" ;;
   pipewire) python3 tools/desktop/build_pipewire_packages.py "$@" ;;
+  qt-multimedia) python3 tools/desktop/build_qt_multimedia_packages.py "$@" ;;
   plasma-camera) python3 tools/desktop/build_plasma_camera_package.py "$@" ;;
   libwacom) python3 tools/desktop/build_libwacom_packages.py "$@" ;;
   mutter)
@@ -70,7 +71,7 @@ case "$command" in
   install) python3 tools/install_piano.py "$@" ;;
   installer) python3 tools/export_installer.py "$@" ;;
   help|-h|--help)
-    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|module-package|boot-request|boot-repack|linux|linux-package|camera-package|mesa|sensors|display-calibration|ffmpeg|gsd|gdm|bluez|libcamera|pipewire|plasma-camera|libwacom|mutter|bsp|repo|rootfs|release-rootfs|nyarch-gnome-rootfs|arch-denial-rootfs|steamos-rootfs|package|all|installer|install' \
+    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|module-package|boot-request|boot-repack|linux|linux-package|camera-package|mesa|sensors|display-calibration|ffmpeg|gsd|gdm|bluez|libcamera|pipewire|qt-multimedia|plasma-camera|libwacom|mutter|bsp|repo|rootfs|release-rootfs|nyarch-gnome-rootfs|arch-denial-rootfs|steamos-rootfs|package|all|installer|install' \
       'Full builds need the documented builder environment; rootfs/Mesa/sensors run in a root ARM64 build container.' \
       'release-rootfs reads its kernel source worktree from build/release/source-manifest.json.' \
       'Building never partitions or flashes a tablet. install is a separate explicit command.' ;;

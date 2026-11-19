@@ -9,10 +9,12 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/repo'))
 from products import overlay_matrix, overlay_set, publication_batches, sha
+import build_ffmpeg_packages as ffmpeg
 from build.overlay_packages import DEBIAN_GNOME, DEBIAN_SHARED
 from desktop import build_libcamera_packages as libcamera
 from desktop.build_pipewire_packages import DEBIAN_PACKAGES
 from desktop.build_plasma_camera_package import RUNTIME as PLASMA_PACKAGES
+from desktop.build_qt_multimedia_packages import DEBIAN_PACKAGES as QT_PACKAGES
 
 
 class RepoProductsTests(unittest.TestCase):
@@ -61,23 +63,26 @@ class RepoProductsTests(unittest.TestCase):
         abi = libcamera.abi_version(policy)
         for component in (*DEBIAN_SHARED, 'fingerprint',
                           *(DEBIAN_GNOME if target == 'debian-gnome' else ())):
-            names = {'libcamera': libcamera.runtime_packages(policy), 'pipewire': DEBIAN_PACKAGES,
-                     'plasma_camera': PLASMA_PACKAGES}.get(
+            names = {'ffmpeg': dict.fromkeys(sorted(ffmpeg.RUNTIME), 'arm64'),
+                     'libcamera': libcamera.runtime_packages(policy), 'pipewire': DEBIAN_PACKAGES,
+                     'qt_multimedia': QT_PACKAGES, 'plasma_camera': PLASMA_PACKAGES}.get(
                          component, {'test-' + component.replace('_', '-'): 'arm64'})
-            version = {'mesa': '27', 'libcamera': libcamera.base_package_version(policy)}.get(component, '1')
+            version = {'mesa': '27', 'ffmpeg': ffmpeg.package_version(),
+                       'libcamera': libcamera.base_package_version(policy)}.get(component, '1')
             packages = {}
             for name, architecture in names.items():
                 if name == missing:
                     continue
                 if component == 'mesa':
                     name = 'mesa'
-                filename = f'{name}_{version}_{architecture}.deb'
+                filename = f'{name}_{version.split(":")[-1]}_{architecture}.deb'
                 path = directory / filename
                 path.write_bytes(mesa if component == 'mesa' else name.encode())
                 metadata = {'version': version, 'architecture': architecture, 'sha256': sha(path)}
                 packages[name] = {**metadata, 'file': filename}
                 record['packages'][filename] = {**metadata, 'name': name, 'component': component}
             record['components'][component] = {'packages': packages, 'package_version': version}
+        record['components']['ffmpeg']['patches'] = ffmpeg.patch_records()
         dependencies = {name: {key: value for key, value in row.items() if key != 'file'}
                         for name, row in record['components']['libcamera']['packages'].items()
                         if name in (f'libcamera{abi}', 'libcamera-dev', f'libcamera-ipa-{abi}')}
@@ -200,6 +205,22 @@ class RepoProductsTests(unittest.TestCase):
     def test_incomplete_debian_pipewire_set_cannot_be_published(self):
         directory = self.debian_set('debian-gnome', b'mesa', missing='pipewire-bin')
         with self.assertRaisesRegex(ValueError, 'all native packages at the same version'):
+            overlay_set(directory, 'debian-gnome')
+
+    def test_incomplete_debian_qt_set_cannot_be_published(self):
+        directory = self.debian_set('debian-gnome', b'mesa', missing='qml6-module-qtmultimedia')
+        with self.assertRaisesRegex(ValueError, 'Qt Multimedia packages must all have the same version'):
+            overlay_set(directory, 'debian-gnome')
+
+    def test_qt_recording_cannot_be_published_without_the_patched_encoder(self):
+        directory = self.debian_set('debian-gnome', b'mesa')
+        manifest = directory / 'manifest.json'
+        record = json.loads(manifest.read_text())
+        patches = record['components']['ffmpeg']['patches']
+        patches[:] = [row for row in patches if not row['path'].endswith('-h264-level.patch')]
+        self.assertLess(len(patches), len(ffmpeg.patch_records()))
+        manifest.write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, 'complete patched FFmpeg package set'):
             overlay_set(directory, 'debian-gnome')
 
     def test_unpaired_camera_packages_cannot_be_published(self):
