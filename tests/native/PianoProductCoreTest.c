@@ -121,15 +121,11 @@ EFI_STATUS PianoProductOwnersRetire(PIANO_PRODUCT_OWNERS *Owners){
   Owners->Report.Clean=TRUE;Owners->Report.AllowedAction=DiagnosticAction;
   return EFI_SUCCESS;
 }
-EFI_STATUS PianoProductOwnersPrepareReset(PIANO_PRODUCT_OWNERS *Owners){
-  assert(Owners==&mOwners&&!mFailureDiagnostics);++ResetArms;
-  Owners->Report.ResetAttempted=TRUE;
-  if(RetireStatus!=EFI_SUCCESS){Owners->Report.Retained=TRUE;return RetireStatus;}
-  Owners->Report.ResetPrepared=TRUE;Owners->Report.AllowedAction=DiagnosticAction;
-  return EFI_SUCCESS;
+EFI_STATUS PianoLateHandoffArmReset(PIANO_LATE_HANDOFF *Late,EFI_HANDLE Image){
+  assert(Late==&mLateHandoff&&Image==CORE&&Retires==1&&mOwners.Report.Clean);++ResetArms;return EFI_SUCCESS;
 }
-EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *Owners){
-  assert(Owners==&mOwners&&ResetArms==1&&Owners->Report.ResetPrepared&&!Retires);
+EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *Owners,EFI_HANDLE Image){
+  assert(Owners==&mOwners&&Image==CORE&&ResetArms==1&&Owners->Report.Clean);
   ResetReached=TRUE;longjmp(Escape,1);return EFI_ABORTED;
 }
 STATIC EFI_STATUS EFIAPI DiagnosticStall(UINTN Microseconds){
@@ -302,13 +298,13 @@ STATIC VOID ErrorDiagnostics(VOID){
   PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;HostStatus=EFI_SUCCESS;
   mLinuxActive=FALSE;mLinuxApplication.Busy=FALSE;mLateHandoff.Env.ParentImage=CORE;
   if(!setjmp(Escape)){FailStop(EFI_OUT_OF_RESOURCES);assert(!"acknowledged reset must leave failure diagnostics");}
-  assert(ResetReached&&!Retires&&ResetArms==1&&!RuntimePumps);
+  assert(ResetReached&&Retires==1&&ResetArms==1&&!RuntimePumps);
 
   PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;HostStatus=EFI_SUCCESS;
   DiagnosticAction=PianoUsbServiceActionContinue;
   mLinuxActive=FALSE;mLinuxApplication.Busy=FALSE;mLateHandoff.Env.ParentImage=CORE;
   if(!setjmp(Escape))FailStop(EFI_OUT_OF_RESOURCES);
-  assert(ResetReached&&!Retires&&ResetArms==1&&!RuntimePumps);
+  assert(ResetReached&&Retires==1&&ResetArms==1&&!RuntimePumps);
 
   PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;DiagnosticAction=PianoUsbServiceActionBoot;
   mLinuxActive=FALSE;mLinuxApplication.Busy=FALSE;mLateHandoff.Env.ParentImage=CORE;
@@ -318,7 +314,7 @@ STATIC VOID ErrorDiagnostics(VOID){
   PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;HostStatus=EFI_SUCCESS;RetireStatus=EFI_DEVICE_ERROR;
   mLinuxActive=FALSE;mLinuxApplication.Busy=FALSE;mLateHandoff.Env.ParentImage=CORE;
   if(!setjmp(Escape)){FailStop(EFI_OUT_OF_RESOURCES);assert(!"failed cleanup must halt without reset");}
-  assert(!ResetReached&&!Retires&&ResetArms==1&&mOwners.Report.Retained);
+  assert(!ResetReached&&Retires==1&&!ResetArms&&mOwners.Report.Retained);
 
   PrepareErrorDiagnostics();RestrictStatus=EFI_NOT_READY;
   if(!setjmp(Escape))FailStop(EFI_LOAD_ERROR);
@@ -353,18 +349,13 @@ STATIC VOID ErrorDiagnostics(VOID){
     CONST CHAR16 *Expected=I?L"键盘驱动未能安全退出":L"触屏驱动未能安全退出";
     UINTN Length=0;while(Expected[Length])++Length;
     assert(FailureDetail&&!memcmp(FailureDetail,Expected,(Length+1)*sizeof(CHAR16)));
-    assert(Restricts==1&&DiagnosticPumps==3&&!RuntimePumps);
+    assert(Restricts==1&&DiagnosticPumps==3&&DiagnosticResetBlocked&&!RuntimePumps);
   }
   PrepareErrorDiagnostics();mOwners.Report.PolicyStopped=TRUE;mOwners.Report.RetiredMask=PIANO_OWNER_POLICY;
   mOwners.Report.Retained=TRUE;mOwners.Report.Phase=PianoProductOwnersRetained;
   mLateHandoff.Busy=mLateHandoff.Retained=TRUE;mLateHandoff.Phase=PianoExitRetained;mLateHandoff.RetireCalls=1;
   if(!setjmp(Escape))FailStop(EFI_DEVICE_ERROR);
-  assert(Restricts==1&&DiagnosticPumps==3&&!Retires&&!ResetReached);
-  PrepareErrorDiagnostics();ResetDuringDiagnosticPump=TRUE;mOwners.Report.Retained=TRUE;
-  mOwners.Report.PolicyStopped=TRUE;mOwners.Report.Phase=PianoProductOwnersRetained;
-  mLinuxApplication.Retained=TRUE;mLateHandoff.Retained=TRUE;
-  if(!setjmp(Escape))FailStop(EFI_DEVICE_ERROR);
-  assert(ResetReached&&ResetArms==1&&!Retires&&!RuntimePumps);
+  assert(Restricts==1&&DiagnosticPumps==3&&DiagnosticResetBlocked&&!Retires&&!ResetReached);
 }
 int main(int Argc,char **Argv){
   assert(Argc==2);

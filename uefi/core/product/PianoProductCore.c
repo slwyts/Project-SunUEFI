@@ -73,7 +73,7 @@ STATIC CONST CHAR16 *mHandoffFailure;
 STATIC VOID BootLogReturned(VOID);
 STATIC VOID FailStop(EFI_STATUS Status);
 STATIC VOID RetireCoreAction(VOID);
-STATIC VOID ResetCore(VOID);
+STATIC VOID ResetCore(EFI_HANDLE Image);
 STATIC BOOLEAN EFIAPI BootLogAlive(VOID) {
   return !mBootLogExited && !mOwners.Report.ServicesLost && gST!=NULL && gST->BootServices==gBS;
 }
@@ -259,8 +259,11 @@ STATIC BOOLEAN FailureDiagnosticsSafe(VOID) {
 }
 STATIC BOOLEAN FailureRebootSafe(VOID) {
   CONST PIANO_PRODUCT_OWNERS_REPORT *O=&mOwners.Report;
-  return FailureDiagnosticsSafe() && O->Initialized && !O->Busy && !O->ServicesLost &&
-    !O->ResetAttempted && !O->UfsStopped && !O->OuterTplHeld;
+  return FailureDiagnosticsSafe() && O->Initialized && !O->Busy && !O->Retained && !O->Clean &&
+    !O->RetiredMask && !O->PolicyStopped && O->Phase<PianoProductOwnersRetiring &&
+    !mLateHandoff.Busy && !mLateHandoff.Retained && !mLateHandoff.RetireCalls &&
+    mLateHandoff.Phase==PianoExitUnarmed && mLateHandoff.Env.ParentImage && !mLinuxActive &&
+    !mLinuxApplication.Busy && !mLinuxApplication.Retained;
 }
 STATIC VOID RunFailureDiagnostics(VOID) {
   if(!FailureDiagnosticsSafe() || PianoUsbControllerRestrictToDiagnostics(FailureRebootSafe())!=EFI_SUCCESS)return;
@@ -279,11 +282,10 @@ STATIC VOID RunFailureDiagnostics(VOID) {
         continue;
       }
       // The USB service publishes this action only after its OKAY has left
-      // the IN endpoint. Keep retained peripheral allocations until reset.
+      // the IN endpoint. Reuse normal retirement; never reset around DMA.
       mFailureDiagnostics=FALSE;
-      EFI_STATUS Status=PianoProductOwnersPrepareReset(&mOwners);
-      if(Status!=EFI_SUCCESS)FailStop(Status);
-      ResetCore();
+      RetireCoreAction();
+      ResetCore(mLateHandoff.Env.ParentImage);
       break;
     }
     if(gBS->Stall(1000)!=EFI_SUCCESS)break;
@@ -378,30 +380,24 @@ STATIC EFI_STATUS StopInput(VOID *Context,PIANO_PRODUCT_INPUT_RETIRE_REPORT *Rep
 STATIC VOID RetireCoreAction(VOID) {
   EFI_STATUS Status=PianoProductOwnersResolveReturnedAction(&mOwners);
   if(Status!=EFI_SUCCESS)FailStop(Status);
-  if(mOwners.Report.RequestedAction==PianoUsbServiceActionReboot ||
-     mOwners.Report.RequestedAction==PianoUsbServiceActionContinue){
-    mHandoffStage="reset-prepare";mHandoffFailure=L"设置或存储写入未能完成";
-    Status=PianoProductOwnersPrepareReset(&mOwners);
-    if(Status!=EFI_SUCCESS)FailStop(Status);
-    return;
-  }
   (VOID)PianoProductBootLogMessage(L"正在交接系统",L"正在保存设置并关闭存储",EFI_SUCCESS,FALSE);
   mHandoffStage="owners-retire";mHandoffFailure=L"系统资源未能安全退出";
   Status=PianoProductOwnersRetire(&mOwners);
   if(Status!=EFI_SUCCESS || !mOwners.Report.Clean)FailStop(Status);
 }
-STATIC VOID ResetCore(VOID) {
+STATIC VOID ResetCore(EFI_HANDLE Image) {
   if(mOwners.Report.AllowedAction!=PianoUsbServiceActionReboot &&
      mOwners.Report.AllowedAction!=PianoUsbServiceActionContinue)FailStop(EFI_ACCESS_DENIED);
-  EFI_STATUS Status=PianoResetExecute(&mOwners);
+  EFI_STATUS Status=PianoLateHandoffArmReset(&mLateHandoff,Image);
+  if(Status==EFI_SUCCESS)Status=PianoResetExecute(&mOwners,Image);
   FailStop(Status);
 }
-// Reset prepares storage only; OS boot retains full device retirement.
+// The same installed-image and USB paths retain the existing retirement order.
 STATIC EFI_STATUS CompleteCoreAction(EFI_HANDLE Image) {
   RetireCoreAction();
   EFI_STATUS Status;
   if(mOwners.Report.AllowedAction==PianoUsbServiceActionReboot || mOwners.Report.AllowedAction==PianoUsbServiceActionContinue) {
-    ResetCore();
+    ResetCore(Image);
   }
   if(mOwners.Report.AllowedAction==PianoUsbServiceActionBoot){
     CONST PIANO_RAW_LINUX_REPORT *Raw=NULL;

@@ -18,13 +18,8 @@ static EFI_STATUS PolicyStatus,UsbStatus,ProofStatus,AcceptStatus,PrepareStatus,
 static BOOLEAN BridgeLive,ProofValid,ReportAbsent,FreshReplaced,CreateWarning,CreateNull,CreateEbs,InputEbs;
 static UINTN Requests,Calls;static CHAR8 Order[100];static PIANO_FB_BOOT_ACTION BootAction;
 static PIANO_SMMU_RETIRED_USB_PROOF StartupProof,ProducerStartupProof;
-static EFI_STATUS ResetNvStatus=EFI_NOT_STARTED,ResetFsStatus,ResetStorageStatus;
-static UINTN ResetStorageCalls;
-EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){(void)Freeze;return ResetNvStatus;}
-EFI_STATUS PianoStorageCloseFilesystems(VOID){return ResetFsStatus;}
-EFI_STATUS PianoUfsBlockIoQuiesceForReset(VOID){
-  assert(!BridgeLive && Tpl==TPL_APPLICATION);++ResetStorageCalls;return ResetStorageStatus;
-}
+EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){(void)Freeze;return EFI_NOT_STARTED;}
+EFI_STATUS PianoStorageCloseFilesystems(VOID){return EFI_SUCCESS;}
 static EFI_STATUS StartupValidateStatus;static UINTN StartupValidations,StartupFailAt,UsbStatusReads;
 static VOID record(CHAR8 Step){assert(Calls<sizeof(Order)-1);Order[Calls++]=Step;Order[Calls]=0;}
 VOID *EFIAPI ZeroMem(VOID *Buffer,UINTN Bytes){return memset(Buffer,0,Bytes);}
@@ -55,7 +50,7 @@ static EFI_STATUS ready(VOID *Context){assert(Context==(VOID *)0x456 && BridgeLi
 static EFI_STATUS info(VOID *Context,CONST CHAR8 *Name,PIANO_FB_PARTITION_INFO *Result){(void)Context;(void)Name;(void)Result;assert(!"manager must not read partition metadata");return EFI_UNSUPPORTED;}
 static EFI_STATUS read_blocks(VOID *Context,CONST PIANO_FB_PARTITION_INFO *Info,UINT64 Lba,UINTN Bytes,VOID *Buffer){(void)Context;(void)Info;(void)Lba;(void)Bytes;(void)Buffer;assert(!"manager must not issue UFS I/O");return EFI_UNSUPPORTED;}
 CONST PIANO_FB_STORAGE *PianoFastbootBlockReadStorage(VOID){return BridgeLive?&Storage:NULL;}
-VOID PianoFastbootBlockReadStop(VOID){if(Owners.Report.ResetAttempted){assert(Tpl==TPL_APPLICATION);BridgeLive=FALSE;return;}assert(Tpl==TPL_APPLICATION && Calls && (Order[Calls-1]=='R'||
+VOID PianoFastbootBlockReadStop(VOID){assert(Tpl==TPL_APPLICATION && Calls && (Order[Calls-1]=='R'||
   (Order[Calls-1]=='P'&&Owners.Report.UsbStartupFailedClean&&!Owners.Report.UsbStopped&&Owners.Report.ProofStatus==EFI_SUCCESS)));record('X');BridgeLive=FALSE;}
 EFI_STATUS PianoUfsAcceptRetiredUsb(CONST PIANO_SMMU_RETIRED_USB_PROOF *Proof){assert(Proof==&Owners.UsbProof && Proof->Valid && Tpl==TPL_APPLICATION && !BridgeLive);record('A');return AcceptStatus;}
 EFI_STATUS PianoUfsBlockIoPrepareForReset(VOID){assert(Tpl==TPL_CALLBACK && !BridgeLive && AcceptStatus==EFI_SUCCESS);record('p');raise(TPL_CALLBACK);return PrepareStatus;}
@@ -81,7 +76,6 @@ static EFI_STATUS stop_display(VOID *Context,PIANO_PRODUCT_DISPLAY_RETIRE_REPORT
   *Report=DisplayReport;if(DisplayEbs){PianoProductOwnersFenceExit(&Owners);gBS=(VOID *)1;}if(DisplayBadTpl)Tpl=TPL_CALLBACK;return DisplayStatus;
 }
 static VOID fresh(VOID) {
-  ResetNvStatus=EFI_NOT_STARTED;ResetFsStatus=ResetStorageStatus=EFI_SUCCESS;ResetStorageCalls=0;
   memset(&Owners,0,sizeof(Owners));memset(&Config,0,sizeof(Config));memset(&Policy,0,sizeof(Policy));memset(&UsbState,0,sizeof(UsbState));memset(&UsbReport,0,sizeof(UsbReport));memset(&UfsReport,0,sizeof(UfsReport));memset(&InputReport,0,sizeof(InputReport));memset(&BootAction,0,sizeof(BootAction));
   Tpl=TPL_APPLICATION;Requests=Calls=0;Order[0]=0;BridgeLive=ProofValid=TRUE;ReportAbsent=FreshReplaced=CreateWarning=CreateNull=CreateEbs=InputEbs=FALSE;
   memset(&DisplayReport,0,sizeof(DisplayReport));DisplayStatus=EFI_SUCCESS;DisplayEbs=DisplayReentry=DisplayRaiseEbs=DisplayPostRaiseEbs=DisplayBadTpl=InputBadTpl=FALSE;
@@ -94,9 +88,7 @@ static VOID fresh(VOID) {
   UfsReport=(PIANO_UFS_RESET_REPORT){.Started=TRUE,.Prepared=TRUE,.Returned=TRUE,.Clean=TRUE,.TplHeld=TRUE,.DmaFreed=3,.Disconnected=6,.ProtocolsRemoved=7};
   InputReport=(PIANO_PRODUCT_INPUT_RETIRE_REPORT){.Revision=1,.Started=TRUE,.Returned=TRUE,.Clean=TRUE};
   BootAction=(PIANO_FB_BOOT_ACTION){.Context=(VOID *)0x1122,.Token=(VOID *)0x3344,.Taken=TRUE,.Proof={.AckCompleted=TRUE,.QueueEmpty=TRUE,.DeviceHalted=TRUE,.DmaFreed=TRUE,.DispatchFrozen=TRUE,.AckBytes=4,.DmaBuffersFreed=9}};
-  Storage=(PIANO_FB_STORAGE){
-    .Context=(VOID *)0x456,.Ready=ready,.Info=info,.ReadBlocks=read_blocks
-  };
+  Storage=(PIANO_FB_STORAGE){.Context=(VOID *)0x456,.Ready=ready,.Info=info,.ReadBlocks=read_blocks};
   Runtime=(PIANO_PRODUCT_RUNTIME_PROTOCOL){.Revision=PIANO_PRODUCT_RUNTIME_REVISION,.RequestAction=request};
   Config=(PIANO_PRODUCT_OWNERS_CONFIG){.Revision=1,.Fdt=(VOID *)0x123,.ExpectedOwnerMask=PIANO_OWNER_ALL_MASK,.StartedOwnerMask=PIANO_OWNER_CORE_MASK,.AbsentOwnerMask=PIANO_OWNER_USB_HOST|PIANO_OWNER_GPI|PIANO_OWNER_POGO|PIANO_OWNER_TOUCH|PIANO_OWNER_DISPLAY,.Runtime=&Runtime,.InputContext=(VOID *)0x789,.StopInput=stop_input,.DisplayStartup={.Revision=1,.KnownNoSideEffects=TRUE,.Status=EFI_NOT_STARTED}};
   Bs.RaiseTPL=raise;Bs.RestoreTPL=restore;Bs.CreateEventEx=create;Bs.CloseEvent=close;Bs.LocateProtocol=locate;gBS=&Bs;
@@ -332,25 +324,6 @@ int main(void) {
     must_retain();assert(!Owners.Report.TouchStopped&&!(Owners.Report.RetiredMask&PIANO_OWNER_TOUCH));
     assert(!strcmp(Order,"PT")&&!Owners.Report.ManagerEventClosed&&!Owners.Report.UsbStopped&&!Owners.Report.UfsStopped);Cases++;}
   fresh();with_touch();initialize_action(PianoUsbServiceActionReboot);TouchEbs=TRUE;must_retain();assert(!Owners.Report.TouchStopped);Cases++;
-  for(UINTN I=0;I<6;++I){
-    fresh();with_touch();initialize_action(PianoUsbServiceActionReboot);
-    if(I==1){Owners.Report.Retained=TRUE;Owners.Report.Phase=PianoProductOwnersRetained;TouchStatus=EFI_DEVICE_ERROR;}
-    if(I==2)ResetNvStatus=EFI_DEVICE_ERROR;
-    if(I==3)ResetFsStatus=EFI_DEVICE_ERROR;
-    if(I==4)ResetStorageStatus=EFI_DEVICE_ERROR;
-    if(I==5){UsbState.Phase=PianoUsbServiceListening;UsbState.Action=PianoUsbServiceActionNone;Policy.RequestedCoreAction=PianoUsbServiceActionBoot;}
-    EFI_STATUS Status=PianoProductOwnersPrepareReset(&Owners);
-    if(I<2){
-      assert(Status==EFI_SUCCESS && Owners.Report.ResetPrepared && ResetStorageCalls==1);
-      assert(!Owners.Report.Clean && !Owners.Report.TouchStopped && !Owners.Report.UfsStopped && !Calls);
-      assert(Owners.Report.AllowedAction==PianoUsbServiceActionReboot);
-      assert(PianoProductOwnersPrepareReset(&Owners)==EFI_ALREADY_STARTED);
-    }else{
-      assert(Status!=EFI_SUCCESS && !Owners.Report.ResetPrepared && !Calls);
-      if(I<4 || I==5)assert(!ResetStorageCalls);
-    }
-    ++Cases;
-  }
-  printf("Actual product owners: %llu cases PASS; OS retirement and storage-only reset preparation remain separate.\n",(unsigned long long)Cases);
+  printf("Actual product owners: %llu cases PASS (100 original retained); full masks, typed Display startup/ordinary+alternate refs, Policy/USB/proof/bridge/UFS/Input/Display/Event order, APP/partial/duplicate/stale/warning/EBS retention; no native/reset/image calls in manager.\n",(unsigned long long)Cases);
   return 0;
 }

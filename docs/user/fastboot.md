@@ -13,10 +13,9 @@ UEFI Fastboot 是 SunUEFI 运行期间在后台提供的 USB Fastboot 服务，�
 下面所有命令都带 `-s SunUEFI-piano`，确保操作的是 UEFI 服务，而不是原厂 Bootloader。服务在 UEFI 菜单、固件设置和 Shell 里一直保持连接，切换页面不会退出。
 
 启动失败时，只要 USB 连接仍正常，错误提示页会保留状态、日志和截图命令。
-`reboot` 或 `continue` 请求重启，固件先保存设置、完成存储写入，再执行整机复位。
-`OKAY` 表示请求已收到，是否重启以设备重新启动为准。外设清理失败不阻止重启；
-设置保存或存储同步失败时仍保留错误页，此时长按电源重启。错误页不再启动其他
-镜像或切换页面；USB 已关闭或状态无法确认时不会重新启用连接。
+`reboot` 或 `continue` 请求重启，固件先保存设置、完成存储写入并安全关闭外设。
+`OKAY` 表示请求已收到。若平板停在错误页，长按电源重启，在早期选择页按音量上
+返回 Android。
 
 USB 口插着 OTG 转接头和键盘、U 盘等设备时，这个口给这些设备使用，UEFI Fastboot 不在线。拔下设备、接回电脑后恢复。
 
@@ -74,7 +73,7 @@ SunUEFI Fastboot 只允许刷写 `sunuefi_esp` 和 `sunuefi_root`。对这两个
 | --- | --- |
 | `oem boot-stable` | 按固件的启动顺序选择系统；默认进入 systemd-boot |
 | `oem setup`、`oem shell`、`oem simpleinit` | 切换到 UEFI 设置、Shell 或 SimpleInit 菜单 |
-| `reboot` | 保存设置、同步存储后重启，沿用已保存的启动路线 |
+| `reboot` | 保存设置、安全关闭外设后重启，沿用已保存的启动路线 |
 | `continue` | 同样重启，不改变启动选择，也不会直接启动 Linux |
 | `stage 文件` | 把文件下载到内存，最大 64 MiB |
 | `oem sha256`、`oem discard` | 对暂存的数据计算哈希，或丢弃它 |

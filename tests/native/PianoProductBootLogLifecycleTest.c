@@ -44,8 +44,8 @@ EFI_STATUS PianoUsbControllerPumpDiagnostics(UINTN BudgetUs){(VOID)BudgetUs;asse
 EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *Status){(VOID)Status;assert(!"retained display must not inspect USB actions");return EFI_ABORTED;}
 EFI_STATUS PianoProductOwnersResolveReturnedAction(PIANO_PRODUCT_OWNERS *Owners){(VOID)Owners;assert(!"retained display must not request a reset");return EFI_ABORTED;}
 EFI_STATUS PianoProductOwnersRetire(PIANO_PRODUCT_OWNERS *Owners){(VOID)Owners;assert(!"retained display must not retire resources");return EFI_ABORTED;}
-EFI_STATUS PianoProductOwnersPrepareReset(PIANO_PRODUCT_OWNERS *Owners){(VOID)Owners;assert(!"retained display must not prepare a reset");return EFI_ABORTED;}
-EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *Owners){(VOID)Owners;assert(!"retained display must not reset");return EFI_ABORTED;}
+EFI_STATUS PianoLateHandoffArmReset(PIANO_LATE_HANDOFF *Late,EFI_HANDLE Image){(VOID)Late;(VOID)Image;assert(!"retained display must not arm a reset");return EFI_ABORTED;}
+EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *Owners,EFI_HANDLE Image){(VOID)Owners;(VOID)Image;assert(!"retained display must not reset");return EFI_ABORTED;}
 VOID PianoProductDisplayFenceExit(VOID){}
 UINTN EFIAPI AsciiSPrint(CHAR8 *Buffer,UINTN Size,CONST CHAR8 *Format,...){
   (VOID)Format;assert(Size==32);strcpy(Buffer,"pre:ClockDxe");return strlen(Buffer);

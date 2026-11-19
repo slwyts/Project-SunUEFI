@@ -1,4 +1,4 @@
-"""Execute the actual reset path without hardware or Boot Services calls."""
+"""Execute the reset path with host implementations of EFI services."""
 from pathlib import Path
 import platform
 import subprocess
@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ResetTests(unittest.TestCase):
-    def test_reset_without_exit_boot_services(self):
+    def test_reset_requires_clean_owners_and_exit_boot_services(self):
         include = ROOT / 'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
         binding = 'AArch64' if platform.machine() in ('arm64', 'aarch64') else 'X64'
         with tempfile.TemporaryDirectory(prefix='piano-reset-') as directory:

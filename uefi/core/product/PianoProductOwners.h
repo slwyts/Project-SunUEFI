@@ -87,7 +87,7 @@ typedef struct {
   VOID *FileContext,*FileToken;
   EFI_HANDLE EfiImage;
   CONST EFI_LOADED_IMAGE_PROTOCOL *EfiIdentity;
-  BOOLEAN Initialized,Busy,ServicesLost,Retained,Clean,PolicyStopped,ResetPrepared,ResetAttempted;
+  BOOLEAN Initialized,Busy,ServicesLost,Retained,Clean,PolicyStopped;
   BOOLEAN UsbStopped,UsbStartupFailedClean,ProofAccepted,BridgeStopped,UfsStopped,InputStopped,DisplayStopped,PogoStopped,TouchStopped;
   BOOLEAN BootActionConsumed,OuterTplHeld,ManagerEventClosed;
   EFI_STATUS Status,PolicyStatus,UsbStatus,ProofStatus,AcceptStatus;
@@ -131,10 +131,6 @@ EFI_STATUS PianoProductOwnersRequestUiReboot(PIANO_PRODUCT_OWNERS *Owners);
 // After child cleanup, real acknowledged USB requests take precedence over
 // an older UI latch. Never chooses from a caller-supplied status/permission.
 EFI_STATUS PianoProductOwnersResolveReturnedAction(PIANO_PRODUCT_OWNERS *Owners);
-// For immediate platform reset, including recoverable peripheral cleanup
-// failures. Authenticate the reset request, save settings and quiesce storage.
-// Other devices and their DMA allocations remain owned until hardware reset.
-EFI_STATUS PianoProductOwnersPrepareReset(PIANO_PRODUCT_OWNERS *Owners);
 // Caller invokes after the UI returns. No ResetSystem, LoadImage or StartImage.
 // On success the typed report alone permits the selected deferred action.
 // Boot tokens, including partial/error tokens, stay owned by this ledger.

@@ -321,46 +321,6 @@ STATIC BOOLEAN DisplayClean(CONST PIANO_PRODUCT_OWNERS *O){
   return RefIncrement(R->AcquireBeforeTotal,R->AcquireAfterTotal)&&RefIncrement(R->AcquireBeforeClient,R->AcquireAfterClient)&&
     RefDecrement(R->ReleaseBeforeTotal,R->ReleaseAfterTotal)&&RefDecrement(R->ReleaseBeforeClient,R->ReleaseAfterClient);
 }
-EFI_STATUS PianoProductOwnersPrepareReset(PIANO_PRODUCT_OWNERS *Owners) {
-  if(!Owners || !Owners->Report.Initialized)return EFI_INVALID_PARAMETER;
-  if(Owners->Report.Busy || Owners->Report.ResetAttempted)return EFI_ALREADY_STARTED;
-  EFI_STATUS Status=AtApp(Owners);if(Status!=EFI_SUCCESS)return Status;
-  CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();
-  if(!Policy || Policy->ServicesLost || Policy->Dispatching || Policy->Pumping ||
-     Policy->ActiveAction!=PIANO_PRODUCT_ACTION_NONE)return EFI_NOT_READY;
-  PIANO_USB_SERVICE_ACTION Action=PianoUsbServiceActionNone;
-  UINT32 Target=PIANO_PRODUCT_RESET_NORMAL;
-  if(!UsbAbsent(Owners)){
-    PIANO_DWC3_SERVICE_STATUS Usb;ZeroMem(&Usb,sizeof(Usb));
-    Status=PianoUsbControllerServiceGetStatus(&Usb);
-    if(Status!=EFI_SUCCESS || Usb.Revision!=1 || Usb.ServicesLost || Usb.Busy)
-      return Status==EFI_SUCCESS?EFI_NOT_READY:Exact(Status);
-    if(Usb.Phase==PianoUsbServiceStopRequested &&
-       (Usb.Action==PianoUsbServiceActionReboot || Usb.Action==PianoUsbServiceActionContinue)){
-      Action=Usb.Action;Owners->Report.Origin=PianoProductRequestUsb;
-    }else if(!Usb.Started || Usb.Phase!=PianoUsbServiceListening || Usb.Action!=PianoUsbServiceActionNone)
-      return EFI_NOT_READY;
-  }
-  if(Action==PianoUsbServiceActionNone){
-    Action=Policy->RequestedCoreAction;Target=Policy->RequestedResetTarget;
-    if((Action!=PianoUsbServiceActionReboot && Action!=PianoUsbServiceActionContinue) ||
-       Target>PIANO_PRODUCT_RESET_EDL || (Action==PianoUsbServiceActionContinue && Target))
-      return EFI_NOT_READY;
-    Owners->Report.Origin=PianoProductRequestUi;
-  }
-  Owners->Report.Busy=TRUE;Owners->Report.ResetAttempted=TRUE;
-  Owners->Report.RequestedAction=Action;Owners->Report.ResetTarget=Target;
-  Owners->Report.NvStatus=Status=PianoNvFileSave(TRUE);
-  if(Status!=EFI_SUCCESS && Status!=EFI_NOT_STARTED)return Retain(Owners,Status);
-  Owners->Report.FilesystemsStatus=Status=PianoStorageCloseFilesystems();
-  if(Status!=EFI_SUCCESS || Owners->Report.ServicesLost)return Retain(Owners,Status);
-  PianoFastbootBlockReadStop();
-  Owners->Report.PrepareStatus=Status=PianoUfsBlockIoQuiesceForReset();
-  if(Status!=EFI_SUCCESS || Owners->Report.ServicesLost)return Retain(Owners,Status);
-  Owners->Report.ResetPrepared=TRUE;Owners->Report.Busy=FALSE;Owners->Report.AllowedAction=Action;
-  return Owners->Report.Status=EFI_SUCCESS;
-}
-
 EFI_STATUS PianoProductOwnersRetire(PIANO_PRODUCT_OWNERS *Owners) {
   if(!Owners || !Owners->Report.Initialized)return EFI_INVALID_PARAMETER;
   if(Owners->Report.Retained || Owners->Report.Clean)return EFI_ACCESS_DENIED;

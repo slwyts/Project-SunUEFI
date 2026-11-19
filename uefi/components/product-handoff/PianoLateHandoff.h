@@ -33,7 +33,7 @@ typedef struct {
  PIANO_PRODUCT_EXIT_PHASE Phase;EFI_STATUS Status;
  UINT32 ExitCalls,RetireCalls;UINTN CallerMapKey;
  BOOLEAN Busy,Installed,Retained;
- BOOLEAN RawMode;CONST PIANO_RAW_LINUX_REPORT *Raw;PIANO_RAW_LINUX_REPORT RawSnapshot;
+  BOOLEAN RawMode,ResetMode;CONST PIANO_RAW_LINUX_REPORT *Raw;PIANO_RAW_LINUX_REPORT RawSnapshot;
  PIANO_LATE_HANDOFF_DIAGNOSTIC Diagnostic;
 } PIANO_LATE_HANDOFF;
 // Replay saved CPU/RAM state only: no protocol lookup, memory-map capture or
@@ -46,6 +46,8 @@ EFI_STATUS PianoLateHandoffArm(PIANO_LATE_HANDOFF *,EFI_HANDLE ChildImage);
 // Core-owned fixed-window raw boot after actual manager retirement, bound to
 // the current ExitImage. This does not grant full-DDR EFI OS memory permission.
 EFI_STATUS PianoLateHandoffArmRaw(PIANO_LATE_HANDOFF *,EFI_HANDLE ExitImage,CONST PIANO_RAW_LINUX_REPORT *);
+// Root-only reset after actual service retirement. No OS memory permission.
+EFI_STATUS PianoLateHandoffArmReset(PIANO_LATE_HANDOFF *,EFI_HANDLE CoreImage);
 // Ordinary returned child only, before any retirement. Unknown/partial or
 // completed transition cannot be disarmed or used to resume GUI/controllers.
 EFI_STATUS PianoLateHandoffDisarm(PIANO_LATE_HANDOFF *);

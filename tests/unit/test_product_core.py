@@ -64,5 +64,5 @@ class ProductCoreTests(unittest.TestCase):
     def test_boot_fallback_requires_clean_handoff_and_yields_to_usb(self):
         self.run_case('boot-fallback')
 
-    def test_error_screen_keeps_usb_and_prepares_storage_before_reset(self):
+    def test_error_screen_keeps_usb_and_retires_owners_before_reset(self):
         self.run_case('error-diagnostics')

@@ -96,7 +96,7 @@
 
 * 原厂 UFS 关键分区通过标准 Block I/O 保持代码级只读。SunUEFI Fastboot 只刷写独立的 `sunuefi_esp` 和 `sunuefi_root`。UEFI 变量只写 `persist/sunuefi/nvram-a.bin`、`persist/sunuefi/nvram-b.bin` 及必要的文件系统元数据。脏卷由 Android 恢复，UEFI 以只读方式挂载。
   关机充电有一项例外：Linux 仅在 USB 在线的关机路径中，将原厂 `charger` 分区偏移 `0x1000` 的小端 32 位 `power_off_mode` 设为 `1`，保留所有其他字节。
-* 启动 Linux 前，必须干净地退出 ExitBootServices，释放已占用的时钟、SMMU 和 USB 控制器。无法确认安全时保留资源并拒绝交接，不强行释放可能仍被 DMA 使用的内存。整机重启与系统交接分开：保存设置、完成存储写入并停止存储队列后，直接调用 ResetSystem，不要求恢复外设寄存器或先退出 ExitBootServices；DMA 缓冲区保持有效直到硬件复位。
+* 启动 Linux、软件重启和关机前必须安全释放时钟、SMMU 和 USB 控制器，并完成 ExitBootServices。无法确认 DMA 已停止时保留资源并拒绝交接或复位，保留硬件电源键返回 Android 的路径。
 * 保留用户的 Android 数据、现有 Linux root 和已安装的游戏。除非明确要求，不重装、不重新分区、不重新复制。
 * 没有明确要求时不推送、不改写历史。
 * 工作中汇报任务进度和与当前用户沟通的时候，写清当前阶段、状态和下一步，并直接写清楚为什么要这么做；不要写空洞的"正在做 X"、"已完成 Y"，也不要写"理论上可用"、"待验证"、"由谁确认"。维护者是一边看平板一边读你的话的，他没有余力去猜你省略了什么。
