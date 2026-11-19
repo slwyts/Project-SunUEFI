@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "239d4cc3a9f437b33f6c45579326f0c6cd768b54",
-  "original_target_commit": "c8e36789b138f503df0dc9dd9d6e8e672fda8c77",
+  "target_tree": "e6fb22e23433ae16532e098754f020031c5c6bdc",
+  "original_target_commit": "2cfa6f44426a00c8a81a66c6dc25cc73f779fb62",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1797,6 +1797,19 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "The selected kernel clears the GPI peripheral configuration when releasing a DMA channel."
+      }
+    },
+    {
+      "file": "0140-LOCAL-power-bq27xxx-stop-gauge-io-on-shutdown.patch",
+      "sha256": "01a2a2a23a880429dc7b143ee069d9a4b4ab2fd5f82a3b29dd0cca5061215d27",
+      "original_commit": "2cfa6f44426a00c8a81a66c6dc25cc73f779fb62",
+      "original_parent": "c8e36789b138f503df0dc9dd9d6e8e672fda8c77",
+      "committer_date": "2026-11-20T00:49:21+08:00",
+      "tree": "e6fb22e23433ae16532e098754f020031c5c6bdc",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected kernel stops BQ27xxx I2C and polling before the bus shuts down, including accesses triggered by queued power supply notifications."
       }
     }
   ],
