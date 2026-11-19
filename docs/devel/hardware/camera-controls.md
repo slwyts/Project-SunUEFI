@@ -39,20 +39,22 @@ sudo ./build.sh plasma-camera --sysroot "$SID_ARM64_ROOT" --libcamera-packages b
 成品明确安装同版 IPA 和标准相机插件，KDE 也安装重新链接的 Plasma Camera。
 
 Arch Linux ARM 用同一版 libcamera 源码和 CAMSS 补丁，沿用官方 `PKGBUILD`
-的六个拆包。以下命令用隔离的 ARM64 构建根。先安装构建出的 libcamera，
-再编译 Plasma Camera；归档在各自输出目录的 `runtime/`：
+的六个拆包。在没有安装旧相机覆盖包的隔离 ARM64 构建根，先构建并安装
+libcamera，再构建 PipeWire 和 Plasma Camera。归档在各自输出目录的 `runtime/`：
 
 ```sh
 sudo ./build.sh libcamera --rootfs "$ARCH_ARM64_ROOT" --output build/libcamera-arch
+sudo ./build.sh pipewire --rootfs "$ARCH_ARM64_ROOT" \
+  --libcamera-packages build/libcamera-arch --output build/pipewire-arch
 sudo ./build.sh plasma-camera --rootfs "$ARCH_ARM64_ROOT" \
   --libcamera-packages build/libcamera-arch --output build/plasma-camera-arch
 ```
 
 库和 IPA 要来自同一次构建，工具、GStreamer 和 Python 包也要求匹配的库。
-Plasma Camera 用这个构建根里已有的 Qt，要求标准 FFmpeg 后端及两个
-libcamera 共享库。Arch 的官方 PipeWire 相机插件仍会加载 0.7，发布时
-必须与 0.8 的库和相机应用一起升级，回退也要切回配套版本。SteamOS 另用
-Valve 的软件包和依赖验证这一事务。
+PipeWire 保留 Arch 的拆包和音频依赖；Plasma Camera 使用构建根自带的 Qt
+和标准 FFmpeg 后端。从官方版本切换时，libcamera、PipeWire 和相机应用
+应由 pacman 一起升级或回退。这三个命令只用于构建，不改变成品预装或
+公网软件源。SteamOS 用 Valve 自己的 Qt、音频库和 PipeWire 软件包另行构建。
 
 | 功能 | 现有服务（旧路径） | 标准硬件路径（替代状态） |
 | --- | --- | --- |

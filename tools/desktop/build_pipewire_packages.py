@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Build the Debian PipeWire package set or plugins for the installed pacman ABI."""
+"""Build native PipeWire packages or plugins for the installed pacman ABI."""
 import argparse
+import fcntl
 from functools import partial
 import hashlib
 import json
@@ -122,14 +123,16 @@ def prepare(output, version):
     cache = ROOT / 'build/source-cache/pipewire-integration'
     cache.mkdir(parents=True, exist_ok=True)
     archive = cache / ('pipewire-' + data['version'] + '.tar.gz')
-    for attempt in range(3):
-        try:
-            download(data['source']['url'], archive, data['source']['sha256'])
-            break
-        except OSError:
-            if attempt == 2:
-                raise
-            time.sleep(5 * (attempt + 1))
+    with (cache / 'download.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for attempt in range(3):
+            try:
+                download(data['source']['url'], archive, data['source']['sha256'])
+                break
+            except OSError:
+                if attempt == 2:
+                    raise
+                time.sleep(5 * (attempt + 1))
     # Publish sources only after extraction, patches and the recipe are complete.
     with tempfile.TemporaryDirectory(prefix='pipewire-source-', dir=output) as temporary:
         staging = Path(temporary)
@@ -391,11 +394,15 @@ def build(root, output, jobs=None, *, libcamera=None):
             not output.is_relative_to(ROOT / 'build') or output.is_relative_to(root) or
             root.is_relative_to(output) or jobs < 1):
         raise ValueError('Use root, project build directories outside each other, and at least one job')
-    output.mkdir(parents=True, exist_ok=True)
     if (root / 'var/lib/dpkg/status').is_file():
+        output.mkdir(parents=True, exist_ok=True)
         return build_debian(root, output, jobs, libcamera=libcamera)
     if libcamera is not None:
-        raise ValueError('The libcamera package input requires Debian')
+        from desktop import pipewire_arch
+        policy = pipewire_arch.policy()
+        data, patches = arch_policy(policy['upstream_package_version'])
+        return pipewire_arch.build(root, output, jobs, libcamera, policy, data['source'], patches)
+    output.mkdir(parents=True, exist_ok=True)
     return build_arch(root, output, jobs)
 
 
@@ -404,7 +411,7 @@ if __name__ == '__main__':
     parser.add_argument('--rootfs', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--libcamera-packages', type=Path, metavar='DIR',
-                        help='Build against the packages from a completed Debian libcamera build')
+                        help='Build against a completed Debian or Arch Linux ARM libcamera build')
     parser.add_argument('--jobs', type=int, default=package_build.default_jobs())
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()

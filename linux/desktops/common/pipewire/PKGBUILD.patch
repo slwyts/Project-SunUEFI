@@ -1,0 +1,85 @@
+--- a/PKGBUILD
++++ b/PKGBUILD
+@@ -33,11 +33,11 @@
+   pulse-native-provider
+ )
+ pkgver=1.6.11
+-pkgrel=2
++pkgrel=@RELEASE@
+ epoch=1
+ pkgdesc="Low-latency audio/video router and processor"
+ url="https://pipewire.org"
+-arch=(x86_64)
++arch=(aarch64)
+ license=(MIT)
+ makedepends=(
+   alsa-lib
+@@ -47,7 +47,6 @@
+   dconf
+   doxygen
+   fftw
+-  git
+   glib2
+   glib2-devel
+   graphviz
+@@ -53,7 +52,7 @@
+   graphviz
+   gst-plugins-base
+   jack2
+-  libcamera
++  'libcamera=@LIBCAMERA_VERSION@'
+   libcanberra
+   libebur128
+   libfdk-aac
+@@ -79,7 +78,7 @@
+   rtkit
+   sbc
+   sdl2
+-  spandsp
++  'spandsp>=@SPANDSP@'
+   systemd
+   valgrind
+   webrtc-audio-processing-1
+@@ -88,15 +87,16 @@
+   desktop-file-utils
+   openal
+ )
+-source=(
+-  "git+https://gitlab.freedesktop.org/pipewire/pipewire.git#tag=$pkgver"
+-  pipewire-sysusers.conf
+-)
+-b2sums=('2359991befdbc6cf5a2e5ad31cde4a3f1904675fe455b9ab719754549e994ba0538b0f070b9954a4d64619067101eff9ed9e03ea3d5dd4674b3d21e9991da5b2'
+-        'ea19c2cd60b7b9773b48b2a044c764fbec260ec356d4a0f66a31737015dad5f1509145bf97094988fc2ea55282e98d52df4448a80e46b9e3c2fef57345b87846')
++source=(@SOURCES@)
++sha256sums=(@CHECKSUMS@)
+
+ prepare() {
++  local file
++  mv "pipewire-$pkgver" pipewire
+   cd pipewire
++  for file in @PATCHES@; do
++    patch --batch --fuzz=0 -Np1 -i "$srcdir/$file"
++  done
+ }
+
+ build() {
+@@ -104,6 +104,7 @@
+     -D bluez5-codec-lc3plus=disabled
+     -D bluez5-codec-ldac-dec=disabled
+     -D docs=enabled
++    -D libcamera=enabled
+     -D jack-devel=true
+     -D libjack-path=/usr/lib
+     -D man=enabled
+@@ -117,7 +118,10 @@
+   )
+
+   arch-meson pipewire build "${meson_options[@]}"
+-  meson compile -C build
++  meson compile -C build -j @JOBS@
++  GST_PLUGIN_SYSTEM_PATH_1_0= GST_PLUGIN_PATH_1_0= GST_REGISTRY_FORK=no \
++    GST_REGISTRY_1_0="$srcdir/build/test-registry.bin" \
++    meson test -C build --num-processes 1 --no-rebuild --print-errorlogs --suite gstreamer
+ }
+
+ check() {
