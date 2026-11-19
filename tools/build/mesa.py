@@ -5,13 +5,18 @@ import configparser
 import fcntl
 from email.utils import formatdate
 import hashlib
+import http.client
 import json
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
+import tempfile
+import time
+import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -70,18 +75,47 @@ def target_identity(root):
         'binaries': binaries, 'libraries': libraries}, root)
 
 
+def transient_download_error(error):
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in (408, 429, 500, 502, 503, 504)
+    if isinstance(error, urllib.error.URLError):
+        error = error.reason
+    return (isinstance(error, (TimeoutError, ConnectionError, http.client.IncompleteRead)) or
+            (isinstance(error, socket.gaierror) and error.errno == socket.EAI_AGAIN))
+
+
 def download(url, destination, digest, size=None):
-    if not destination.is_file():
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        partial = destination.with_suffix(destination.suffix + '.partial')
-        with urllib.request.urlopen(url, timeout=120) as stream, partial.open('wb') as target:
-            shutil.copyfileobj(stream, target)
-        if package_build.sha(partial) != digest or (size and partial.stat().st_size != size):
-            raise ValueError('Mesa source or recipe checksum mismatch: ' + destination.name)
-        partial.replace(destination)
-    if package_build.sha(destination) != digest or (size and destination.stat().st_size != size):
-        raise ValueError('Mesa source or recipe checksum mismatch: ' + destination.name)
-    return destination
+    def verify(path):
+        if (size is not None and path.stat().st_size != size) or package_build.sha(path) != digest:
+            raise ValueError(f'Mesa source or recipe checksum mismatch: {destination.name} ({url})')
+
+    if destination.is_file():
+        verify(destination)
+        return destination
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in range(3):
+        try:
+            with tempfile.TemporaryDirectory(prefix='download-', dir=destination.parent) as temporary:
+                partial = Path(temporary) / destination.name
+                with urllib.request.urlopen(url, timeout=120) as stream, partial.open('wb') as target:
+                    length = stream.headers.get('Content-Length', '')
+                    shutil.copyfileobj(stream, target, 1024 * 1024)
+                # With sized reads, urllib may not raise on a truncated body.
+                if length.isdecimal() and partial.stat().st_size < int(length):
+                    raise ConnectionError('Incomplete HTTP response body')
+                verify(partial)
+                partial.replace(destination)
+            return destination
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ConnectionError) as error:
+            if isinstance(error, urllib.error.HTTPError):
+                error.close()
+            if attempt == 2 or not transient_download_error(error):
+                raise OSError(f'Cannot download Mesa input from {url}: {error}') from error
+            wait = 15 * (attempt + 1)
+            print(f'Mesa download from {url} failed: {error}; retrying in {wait}s '
+                  f'({attempt + 2}/3).', flush=True)
+            time.sleep(wait)
 
 
 def copy_unchanged(source, destination):
@@ -93,6 +127,16 @@ def source_archive():
     data = policy()['source']
     return download(data['url'], ROOT / 'build/source-cache/mesa-27/mesa.tar.gz',
                     data['sha256'], data['size'])
+
+
+def subproject_archive(pin, output=None):
+    url = pin['url']
+    name = url.rsplit('/', 1)[-1]
+    cache = ROOT / 'build/source-cache/mesa-27' / name
+    destination = cache if output is None else output / name
+    if destination != cache and not destination.is_file():
+        copy_unchanged(download(url, cache, pin['sha256']), destination)
+    return download(url, destination, pin['sha256'])
 
 
 def extract_source(destination):
@@ -118,7 +162,7 @@ def subprojects(work):
         destination = work / 'subprojects' / wrap['wrap-git']['directory']
         if destination.is_dir():
             continue
-        archive = download(pin['url'], ROOT / 'build/source-cache/mesa-27' / pin['url'].rsplit('/', 1)[-1], pin['sha256'])
+        archive = subproject_archive(pin)
         destination.mkdir()
         with tarfile.open(archive) as stream:
             prefix = stream.getnames()[0] + '/'
@@ -377,7 +421,7 @@ def arch_recipe(output, steamos=False):
             wrap_text = source.extractfile('mesa-' + data['source']['commit'] + '/subprojects/' + name + '.wrap').read().decode()
         wrap_config = configparser.ConfigParser()
         wrap_config.read_string(wrap_text)
-        subarchive = download(pin['url'], output / pin['url'].rsplit('/', 1)[-1], pin['sha256'])
+        subarchive = subproject_archive(pin, output)
         with tarfile.open(subarchive) as stream:
             root_name = stream.getnames()[0]
         recipe += '\nsource+=("' + subarchive.name + '")\n'
