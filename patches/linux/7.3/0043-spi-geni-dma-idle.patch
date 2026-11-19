@@ -1,4 +1,4 @@
-From 25af82bd59f527677ec39f2e61a985dd6f440075 Mon Sep 17 00:00:00 2001
+From 35f316b72fb48c0ddd4e2232a82428dd4d3f07b9 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Fri, 6 Nov 2026 17:55:13 +0800
 Subject: [PATCH] spi: geni-qcom: retain failed DMA transfers and support idle

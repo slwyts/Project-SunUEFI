@@ -1,4 +1,4 @@
-From 10c0880c860dc239e694e64a186a6f99f48e381b Mon Sep 17 00:00:00 2001
+From f220290c2243a0c135cc8b72d0889741ca399da1 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sat, 7 Nov 2026 07:32:36 +0800
 Subject: [PATCH] fix(camera): update JN1 read-only horizontal blanking

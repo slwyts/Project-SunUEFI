@@ -1,4 +1,4 @@
-From fcd3c7e7ff2ee30c5313cba79c2ce04411a8c794 Mon Sep 17 00:00:00 2001
+From d0521eb178074126d96f5c76fd79c2e87905da72 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 8 Nov 2026 16:06:02 +0800
 Subject: [PATCH] drm/msm/dpu: program GC v2 extended dark-range samples

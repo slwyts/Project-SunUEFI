@@ -1,4 +1,4 @@
-From b3548aadc22d7f71e4922989811acfe994298103 Mon Sep 17 00:00:00 2001
+From 35fe8f91062a8fd6d4132018c37d0a39a152f0e1 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Wed, 28 Oct 2026 15:31:00 +0000
 Subject: [PATCH] power: supply: piano_mca: initialize the factory USB OTG

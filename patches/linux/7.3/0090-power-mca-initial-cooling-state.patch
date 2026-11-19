@@ -1,4 +1,4 @@
-From 5c5a02a5efa6d7640837b86b6bfdec4e50d8d3a4 Mon Sep 17 00:00:00 2001
+From ab67d025d02b964694656a8bfce4105d43a53302 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 02:45:01 +0800
 Subject: [PATCH] power: supply: piano_mca: retain cooling requests during

@@ -1,4 +1,4 @@
-From bba8e535c06c73aa7b23acb8d339436bb6737757 Mon Sep 17 00:00:00 2001
+From 32fcbec6a187ffac678a2af416bf59271d4a9086 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 8 Nov 2026 16:45:11 +0800
 Subject: [PATCH] drm/bridge: default fixed DSI panel scaling to full

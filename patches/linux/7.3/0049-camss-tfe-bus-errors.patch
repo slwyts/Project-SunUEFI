@@ -1,4 +1,4 @@
-From 754ca11aaf802ae5a16fd8b60dc22070bbab9283 Mon Sep 17 00:00:00 2001
+From 6a06ac5e6091776dcfc6c4a59ef02197cca8d75e Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sat, 7 Nov 2026 07:14:52 +0800
 Subject: [PATCH] fix(camera): reject frames affected by TFE bus faults

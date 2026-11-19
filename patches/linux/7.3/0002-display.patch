@@ -1,4 +1,4 @@
-From 21ab26e15b84f10b85e95fd8b27ff996d84bdfe3 Mon Sep 17 00:00:00 2001
+From 18b3e337593fff99f8ec806b629c230bbe185d5f Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(display): port Piano display support to Linux 7.3

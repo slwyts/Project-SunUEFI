@@ -1,4 +1,4 @@
-From c8cba5f03922c1aefa9686d2171f9c09cdc18a28 Mon Sep 17 00:00:00 2001
+From ea594894376812c5bf8a6bd8a19acd7c5e652175 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Fri, 6 Nov 2026 06:45:21 +0800
 Subject: [PATCH] media: ir-spi: support the Piano fixed-clock transmitter

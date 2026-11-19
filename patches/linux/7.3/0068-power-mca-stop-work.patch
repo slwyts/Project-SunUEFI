@@ -1,4 +1,4 @@
-From bcc1be8d9da90e9291ced9f0d6891ead06db30d6 Mon Sep 17 00:00:00 2001
+From 9e1d2cf6032dc5608e42b62c16b6cf8f064c3309 Mon Sep 17 00:00:00 2001
 From: Cryolitia <cryolitia@cryolitia.com>
 Date: Sun, 8 Nov 2026 02:10:20 +0800
 Subject: [PATCH] fix(power-supply): disable MCA polling before releasing

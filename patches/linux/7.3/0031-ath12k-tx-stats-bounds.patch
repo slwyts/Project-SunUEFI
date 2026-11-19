@@ -1,4 +1,4 @@
-From df9c7a481d0f5eed92d6c03b9657f401e976cdcd Mon Sep 17 00:00:00 2001
+From 8cf4a86b0eb12d81ddb4b5259adfa1b464973eb7 Mon Sep 17 00:00:00 2001
 From: Pardeep Kaur <pardeep.kaur@oss.qualcomm.com>
 Date: Sun, 8 Nov 2026 01:57:30 +0800
 Subject: [PATCH] wifi: ath12k: check hardware status before updating TX

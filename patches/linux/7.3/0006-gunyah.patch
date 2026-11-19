@@ -1,4 +1,4 @@
-From 28dd5cea0dab0570b8e0270af8a3f72fac647c36 Mon Sep 17 00:00:00 2001
+From 1c8f10d0b78a676cf97762ab72e9faa589817e39 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(gunyah): port Piano gunyah support to Linux 7.3

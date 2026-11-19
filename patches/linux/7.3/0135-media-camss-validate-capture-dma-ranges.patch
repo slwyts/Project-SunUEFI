@@ -1,4 +1,4 @@
-From 5b7ca082d537dc423834ccc762762981a923b591 Mon Sep 17 00:00:00 2001
+From 6466c064f6eed9d62727701d2e08bc47bfc98ae6 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 19:39:38 +0800
 Subject: [PATCH] media: camss: Validate contiguous DMA ranges for capture

@@ -1,7 +1,7 @@
-From caa6ad57c1751dd8e6d146a7deab01ab2c51e5bd Mon Sep 17 00:00:00 2001
+From d4c394d75154fdb00e85a2737a171bd1b55ad9a1 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 16 Nov 2026 11:16:46 +0800
-Subject: [PATCH] media: i2c: add Giantec GT9764BA bidirectional lens actuator
+Subject: media: i2c: add Giantec GT9764BA bidirectional lens actuator
 
 Expose V4L2 focus control and a lens media entity with runtime PM.
 Park toward the neutral DAC value 512 before disabling supplies, rather
@@ -19,16 +19,18 @@ not a claim about optical settling after a focus change. Keep the lens
 powered if parking fails.
 
 Signed-off-by: slwyts <slwyts@foxmail.com>
+
+Balance regulator references when unbinding after a park failure. Keep runtime PM available with CONFIG_PM alone.
 ---
  MAINTAINERS                |   1 +
  drivers/media/i2c/Kconfig  |  10 ++
  drivers/media/i2c/Makefile |   1 +
- drivers/media/i2c/gt9764.c | 313 +++++++++++++++++++++++++++++++++++++
- 4 files changed, 325 insertions(+)
+ drivers/media/i2c/gt9764.c | 327 +++++++++++++++++++++++++++++++++++++
+ 4 files changed, 339 insertions(+)
  create mode 100644 drivers/media/i2c/gt9764.c
 
 diff --git a/MAINTAINERS b/MAINTAINERS
-index 820537bb4..a48cd206c 100644
+index 820537bb4dc38c066136632f0963d68c325ee469..a48cd206c4a4268262a33c5c26e150f3dc9d0418 100644
 --- a/MAINTAINERS
 +++ b/MAINTAINERS
 @@ -11110,6 +11110,7 @@ M:	slwyts <slwyts@foxmail.com>
@@ -40,7 +42,7 @@ index 820537bb4..a48cd206c 100644
  GIGABYTE WATERFORCE SENSOR DRIVER
  M:	Aleksa Savic <savicaleksa83@gmail.com>
 diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
-index 39f98e89e..f2725c7d2 100644
+index 39f98e89eb3d01d3793a43c1f7895ccafe40762e..f2725c7d28414495a8c6e75ae899051e10c0917a 100644
 --- a/drivers/media/i2c/Kconfig
 +++ b/drivers/media/i2c/Kconfig
 @@ -959,6 +959,16 @@ config VIDEO_DW9807_VCM
@@ -61,7 +63,7 @@ index 39f98e89e..f2725c7d2 100644
  
  menu "Flash devices"
 diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
-index 8fc3a0151..a46935fa2 100644
+index 8fc3a015112a2fe4a8bf11aae2bf632d4562c150..a46935fa25e0906b924b57c7d556cb9aa5acd470 100644
 --- a/drivers/media/i2c/Makefile
 +++ b/drivers/media/i2c/Makefile
 @@ -42,6 +42,7 @@ obj-$(CONFIG_VIDEO_GC0310) += gc0310.o
@@ -74,10 +76,10 @@ index 8fc3a0151..a46935fa2 100644
  obj-$(CONFIG_VIDEO_HI847) += hi847.o
 diff --git a/drivers/media/i2c/gt9764.c b/drivers/media/i2c/gt9764.c
 new file mode 100644
-index 000000000..ccbaf6eb9
+index 0000000000000000000000000000000000000000..0f114c7a0c954827c130c5ade1d619a7835e773d
 --- /dev/null
 +++ b/drivers/media/i2c/gt9764.c
-@@ -0,0 +1,313 @@
+@@ -0,0 +1,327 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Giantec GT9764BA bidirectional voice-coil lens actuator.
@@ -362,8 +364,22 @@ index 000000000..ccbaf6eb9
 +
 +	v4l2_async_unregister_subdev(&lens->sd);
 +	pm_runtime_disable(dev);
-+	if (lens->powered && !gt9764_suspend(dev))
-+		pm_runtime_set_suspended(dev);
++	if (lens->powered) {
++		int ret;
++
++		ret = gt9764_suspend(dev);
++		if (ret) {
++			/*
++			 * Runtime suspend can be retried; unbind cannot keep the
++			 * regulators enabled after it releases their handles.
++			 */
++			ret = regulator_bulk_disable(ARRAY_SIZE(lens->supplies), lens->supplies);
++			if (ret)
++				dev_err(dev, "Failed to disable regulators on remove: %d\n", ret);
++		}
++		if (!ret)
++			pm_runtime_set_suspended(dev);
++	}
 +	pm_runtime_dont_use_autosuspend(dev);
 +	media_entity_cleanup(&lens->sd.entity);
 +	v4l2_ctrl_handler_free(&lens->ctrls);
@@ -381,7 +397,7 @@ index 000000000..ccbaf6eb9
 +static struct i2c_driver gt9764_driver = {
 +	.driver = {
 +		.name = "gt9764",
-+		.pm = pm_sleep_ptr(&gt9764_pm_ops),
++		.pm = pm_ptr(&gt9764_pm_ops),
 +		.of_match_table = gt9764_of_match,
 +	},
 +	.probe = gt9764_probe,
@@ -392,5 +408,5 @@ index 000000000..ccbaf6eb9
 +MODULE_DESCRIPTION("Giantec GT9764BA lens actuator driver");
 +MODULE_LICENSE("GPL");
 -- 
-2.56.1
+2.55.0
 

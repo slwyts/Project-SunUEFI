@@ -1,4 +1,4 @@
-From 469d6aa4b1dcfb3db56655ed032579c2ac2e95ac Mon Sep 17 00:00:00 2001
+From 490121dfde2c49a5f03b97732584b9cdb807c194 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Fri, 6 Nov 2026 20:00:00 +0800
 Subject: [PATCH] media: i2c: s5kjn1: report the current mode crop height

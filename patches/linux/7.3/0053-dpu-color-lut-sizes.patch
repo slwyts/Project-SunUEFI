@@ -1,4 +1,4 @@
-From 965f63e9f02cba2c3e7cce1434774368746cad9f Mon Sep 17 00:00:00 2001
+From fb95e6f74e61307112dce4a81ee9487645be0a4d Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 8 Nov 2026 16:29:18 +0800
 Subject: [PATCH] drm/msm/dpu: validate and resample variable-size color LUTs

@@ -1,4 +1,4 @@
-From 9d6199729a849e3f6ce41d0594255cfa3938351d Mon Sep 17 00:00:00 2001
+From 5b4b9238089b70ee236b0415914f6aa27da72f6b Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 02:23:11 +0800
 Subject: [PATCH] ASoC: qcom: use a header-only SPF readiness query

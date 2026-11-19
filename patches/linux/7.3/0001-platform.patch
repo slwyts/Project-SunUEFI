@@ -1,7 +1,7 @@
-From 241948f5490abc37d47bb5e8aaa8c84c4f1641ad Mon Sep 17 00:00:00 2001
+From a0db3cd47346931468200f86596dfa7ea750a49c Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
-Subject: [PATCH] feat(platform): port Piano platform support to Linux 7.3
+Subject: feat(platform): port Piano platform support to Linux 7.3
 
 The BQ27Z561 exposes measured and filtered current through separate
 read-only commands. Publish both as standard power supply properties
@@ -11,77 +11,79 @@ current input the charging policy previously received.
 Use the SC96231 receiver confirmation for the charging status rather
 than contact discovery. Bound the ping and transfer negotiation phases
 and retry a failed supply disable before starting a new cycle.
+
+Stop unfinished pen negotiations before system suspend; retry once resumed.
 ---
- .github/workflows/piano-dtb.yml                    |   58 +
- Documentation/ABI/testing/procfs-nvt-thp-control   |   63 +
- .../ABI/testing/sysfs-devices-piano-dma-route      |   46 +
- Documentation/devicetree/bindings/arm/qcom.yaml    |    1 +
- .../devicetree/bindings/display/msm/gmu.yaml       |    4 +-
- .../devicetree/bindings/display/msm/gpu.yaml       |    2 +
- .../bindings/display/msm/qcom,sm8650-dpu.yaml      |   17 +
- .../bindings/display/panel/novatek,nt36532.yaml    |  107 +
- .../devicetree/bindings/input/nanosic,wn8030.yaml  |   82 +
- .../input/touchscreen/novatek,nvt-ts-spi.yaml      |   94 +
- .../bindings/leds/backlight/kinetic,ktz8866.yaml   |   59 +-
- .../bindings/media/qcom,kaanapali-camss.yaml       |  433 ++++
- .../bindings/media/qcom,sm8750-camss.yaml          |  433 ++++
- .../bindings/media/video-interface-devices.yaml    |   12 +
- .../bindings/power/supply/southchip,sc8541.yaml    |   49 +
- .../bindings/power/supply/southchip,sc96231.yaml   |   67 +
- .../bindings/remoteproc/qcom,sm8550-pas.yaml       |    7 +
- .../bindings/soc/qcom/qcom,pmic-glink.yaml         |   24 +
- .../devicetree/bindings/sound/foursemi,fs19xx.yaml |   70 +
- .../devicetree/bindings/sound/qcom,sm8250.yaml     |    4 +
- .../devicetree/bindings/vendor-prefixes.yaml       |    4 +
- MAINTAINERS                                        |   15 +
- arch/arm64/boot/dts/qcom/Makefile                  |    1 +
- arch/arm64/boot/dts/qcom/sm8750-mtp.dts            |    8 +
- arch/arm64/boot/dts/qcom/sm8750-qrd.dts            |    8 +
- arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano.dts   | 1433 ++++++++++++
- arch/arm64/boot/dts/qcom/sm8750.dtsi               |  409 +++-
- arch/arm64/configs/piano_defconfig                 | 1972 ++++++++++++++++
- arch/arm64/configs/piano_rootfs.config             |   52 +
- arch/arm64/kernel/cpuinfo.c                        |   18 +-
- drivers/clk/qcom/gcc-sm8750.c                      |    2 +
- drivers/i2c/busses/i2c-qcom-cci.c                  |    9 +-
- drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h |  103 +
- drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c         |  190 +-
- drivers/iommu/arm/arm-smmu/arm-smmu.c              |  315 ++-
- drivers/iommu/arm/arm-smmu/arm-smmu.h              |    5 +
- drivers/iommu/iommu.c                              |   47 +-
- drivers/leds/flash/leds-qcom-flash.c               |   29 +-
- drivers/leds/rgb/leds-qcom-lpg.c                   |  209 +-
- drivers/misc/fastrpc.c                             |   11 +-
- drivers/pci/controller/dwc/pcie-designware-host.c  |   24 +-
- drivers/pci/controller/dwc/pcie-qcom.c             |  216 +-
- drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.c           |    5 +
- drivers/phy/qualcomm/phy-qcom-qmp-combo.c          |    9 +-
- drivers/phy/qualcomm/phy-qcom-qmp-pcie.c           |   51 +-
- drivers/power/sequencing/Kconfig                   |    1 +
- drivers/power/sequencing/pwrseq-qcom-wcn.c         |  705 +++++-
- drivers/power/supply/Kconfig                       |   28 +
- drivers/power/supply/Makefile                      |    3 +
- drivers/power/supply/bq27xxx_battery.c             |   21 +-
- drivers/power/supply/piano_mca.c                   | 2454 ++++++++++++++++++++
- drivers/power/supply/qcom_battmgr.c                |    2 +
- drivers/power/supply/sc8541_charger.c              |  575 +++++
- drivers/power/supply/sc96231_charger.c             |  567 +++++
- drivers/remoteproc/qcom_q6v5.c                     |   20 +-
- drivers/remoteproc/qcom_q6v5_pas.c                 |  134 +-
- drivers/soc/qcom/Kconfig                           |   12 +
- drivers/soc/qcom/Makefile                          |    1 +
- drivers/soc/qcom/pmic_glink.c                      |    2 +
- drivers/soc/qcom/qcom_pd_mapper.c                  |   10 +
- drivers/soc/qcom/smp2p_sleepstate.c                |  135 ++
- drivers/soc/qcom/ubwc_config.c                     |    2 +
- drivers/ufs/core/ufshcd.c                          |   82 +-
- drivers/usb/dwc3/core.c                            |   19 +-
- drivers/usb/dwc3/dwc3-qcom.c                       |   25 +-
- include/linux/iommu.h                              |    4 +-
- include/linux/pwrseq/qcom_wcn.h                    |   36 +
- include/uapi/linux/nanosic_hinge.h                 |   28 +
- .../selftests/iommu/qcom-handoff-snapshot.c        |  108 +
- 69 files changed, 11502 insertions(+), 249 deletions(-)
+ .github/workflows/piano-dtb.yml               |   58 +
+ .../ABI/testing/procfs-nvt-thp-control        |   63 +
+ .../ABI/testing/sysfs-devices-piano-dma-route |   46 +
+ .../devicetree/bindings/arm/qcom.yaml         |    1 +
+ .../devicetree/bindings/display/msm/gmu.yaml  |    4 +-
+ .../devicetree/bindings/display/msm/gpu.yaml  |    2 +
+ .../bindings/display/msm/qcom,sm8650-dpu.yaml |   17 +
+ .../display/panel/novatek,nt36532.yaml        |  107 +
+ .../bindings/input/nanosic,wn8030.yaml        |   82 +
+ .../input/touchscreen/novatek,nvt-ts-spi.yaml |   94 +
+ .../leds/backlight/kinetic,ktz8866.yaml       |   59 +-
+ .../bindings/media/qcom,kaanapali-camss.yaml  |  433 +++
+ .../bindings/media/qcom,sm8750-camss.yaml     |  433 +++
+ .../media/video-interface-devices.yaml        |   12 +
+ .../power/supply/southchip,sc8541.yaml        |   49 +
+ .../power/supply/southchip,sc96231.yaml       |   67 +
+ .../bindings/remoteproc/qcom,sm8550-pas.yaml  |    7 +
+ .../bindings/soc/qcom/qcom,pmic-glink.yaml    |   24 +
+ .../bindings/sound/foursemi,fs19xx.yaml       |   70 +
+ .../bindings/sound/qcom,sm8250.yaml           |    4 +
+ .../devicetree/bindings/vendor-prefixes.yaml  |    4 +
+ MAINTAINERS                                   |   15 +
+ arch/arm64/boot/dts/qcom/Makefile             |    1 +
+ arch/arm64/boot/dts/qcom/sm8750-mtp.dts       |    8 +
+ arch/arm64/boot/dts/qcom/sm8750-qrd.dts       |    8 +
+ .../boot/dts/qcom/sm8750-xiaomi-piano.dts     | 1433 ++++++++++
+ arch/arm64/boot/dts/qcom/sm8750.dtsi          |  409 ++-
+ arch/arm64/configs/piano_defconfig            | 1972 +++++++++++++
+ arch/arm64/configs/piano_rootfs.config        |   52 +
+ arch/arm64/kernel/cpuinfo.c                   |   18 +-
+ drivers/clk/qcom/gcc-sm8750.c                 |    2 +
+ drivers/i2c/busses/i2c-qcom-cci.c             |    9 +-
+ .../arm/arm-smmu/arm-smmu-qcom-handoff.h      |  103 +
+ drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c    |  190 +-
+ drivers/iommu/arm/arm-smmu/arm-smmu.c         |  315 ++-
+ drivers/iommu/arm/arm-smmu/arm-smmu.h         |    5 +
+ drivers/iommu/iommu.c                         |   47 +-
+ drivers/leds/flash/leds-qcom-flash.c          |   29 +-
+ drivers/leds/rgb/leds-qcom-lpg.c              |  209 +-
+ drivers/misc/fastrpc.c                        |   11 +-
+ .../pci/controller/dwc/pcie-designware-host.c |   24 +-
+ drivers/pci/controller/dwc/pcie-qcom.c        |  216 +-
+ drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.c      |    5 +
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c     |    9 +-
+ drivers/phy/qualcomm/phy-qcom-qmp-pcie.c      |   51 +-
+ drivers/power/sequencing/Kconfig              |    1 +
+ drivers/power/sequencing/pwrseq-qcom-wcn.c    |  705 ++++-
+ drivers/power/supply/Kconfig                  |   28 +
+ drivers/power/supply/Makefile                 |    3 +
+ drivers/power/supply/bq27xxx_battery.c        |   21 +-
+ drivers/power/supply/piano_mca.c              | 2454 +++++++++++++++++
+ drivers/power/supply/qcom_battmgr.c           |    2 +
+ drivers/power/supply/sc8541_charger.c         |  575 ++++
+ drivers/power/supply/sc96231_charger.c        |  578 ++++
+ drivers/remoteproc/qcom_q6v5.c                |   20 +-
+ drivers/remoteproc/qcom_q6v5_pas.c            |  134 +-
+ drivers/soc/qcom/Kconfig                      |   12 +
+ drivers/soc/qcom/Makefile                     |    1 +
+ drivers/soc/qcom/pmic_glink.c                 |    2 +
+ drivers/soc/qcom/qcom_pd_mapper.c             |   10 +
+ drivers/soc/qcom/smp2p_sleepstate.c           |  135 +
+ drivers/soc/qcom/ubwc_config.c                |    2 +
+ drivers/ufs/core/ufshcd.c                     |   82 +-
+ drivers/usb/dwc3/core.c                       |   19 +-
+ drivers/usb/dwc3/dwc3-qcom.c                  |   25 +-
+ include/linux/iommu.h                         |    4 +-
+ include/linux/pwrseq/qcom_wcn.h               |   36 +
+ include/uapi/linux/nanosic_hinge.h            |   28 +
+ .../selftests/iommu/qcom-handoff-snapshot.c   |  108 +
+ 69 files changed, 11513 insertions(+), 249 deletions(-)
  create mode 100644 .github/workflows/piano-dtb.yml
  create mode 100644 Documentation/ABI/testing/procfs-nvt-thp-control
  create mode 100644 Documentation/ABI/testing/sysfs-devices-piano-dma-route
@@ -2009,7 +2011,7 @@ diff --git a/arch/arm64/boot/dts/qcom/sm8750-mtp.dts b/arch/arm64/boot/dts/qcom/
 index 9b5fbc004df4ecbb5d34734917aefe643a71e32f..b665d7a3af42b19c9dc3fab880ddfd5c964a7cfc 100644
 --- a/arch/arm64/boot/dts/qcom/sm8750-mtp.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8750-mtp.dts
-@@ -935,6 +935,14 @@
+@@ -935,6 +935,14 @@ vreg_l7n_3p3: ldo7 {
  	};
  };
  
@@ -2028,7 +2030,7 @@ diff --git a/arch/arm64/boot/dts/qcom/sm8750-qrd.dts b/arch/arm64/boot/dts/qcom/
 index b56317cfa9fc7fa8d8f055da7d4de7a6d22fd95e..75927e1f7b9ab0316781c64dbcc82d3394c414f6 100644
 --- a/arch/arm64/boot/dts/qcom/sm8750-qrd.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8750-qrd.dts
-@@ -858,6 +858,14 @@
+@@ -858,6 +858,14 @@ vreg_l7n_3p3: ldo7 {
  	};
  };
  
@@ -3499,7 +3501,7 @@ index dd738d13df8e04b0302c4b4d7ab21e318a9560a0..90cb849046bc5d0309bccb9b2fef95d0
  #include <dt-bindings/clock/qcom,sm8750-tcsr.h>
  #include <dt-bindings/clock/qcom,sm8750-videocc.h>
  #include <dt-bindings/dma/qcom-gpi.h>
-@@ -2180,6 +2182,291 @@
+@@ -2180,6 +2182,291 @@ tcsr_mutex: hwlock@1f40000 {
  			#hwlock-cells = <1>;
  		};
  
@@ -3791,7 +3793,7 @@ index dd738d13df8e04b0302c4b4d7ab21e318a9560a0..90cb849046bc5d0309bccb9b2fef95d0
  		remoteproc_mpss: remoteproc@4080000 {
  			compatible = "qcom,sm8750-mpss-pas";
  			reg = <0x0 0x04080000 0x0 0x10000>;
-@@ -3096,9 +3383,11 @@
+@@ -3096,9 +3383,11 @@ &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>,
  			mdss_mdp: display-controller@ae01000 {
  				compatible = "qcom,sm8750-dpu";
  				reg = <0x0 0x0ae01000 0x0 0x93000>,
@@ -3805,7 +3807,7 @@ index dd738d13df8e04b0302c4b4d7ab21e318a9560a0..90cb849046bc5d0309bccb9b2fef95d0
  
  				interrupts-extended = <&mdss 0>;
  
-@@ -5951,6 +6240,18 @@
+@@ -5951,6 +6240,18 @@ cpu_scp_lpri1: scp-sram-section@200 {
  			};
  		};
  
@@ -3824,7 +3826,7 @@ index dd738d13df8e04b0302c4b4d7ab21e318a9560a0..90cb849046bc5d0309bccb9b2fef95d0
  		/* cluster0 */
  		pmu@240b3400 {
  			compatible = "qcom,sm8750-cpu-bwmon", "qcom,sdm845-bwmon";
-@@ -6647,10 +6948,10 @@
+@@ -6647,10 +6948,10 @@ gpuss0-thermal {
  			thermal-sensors = <&tsens2 1>;
  
  			trips {
@@ -3838,7 +3840,7 @@ index dd738d13df8e04b0302c4b4d7ab21e318a9560a0..90cb849046bc5d0309bccb9b2fef95d0
  				};
  
  				gpuss0-critical {
-@@ -6659,16 +6960,23 @@
+@@ -6659,16 +6960,23 @@ gpuss0-critical {
  					type = "critical";
  				};
  			};
@@ -3865,7 +3867,7 @@ index dd738d13df8e04b0302c4b4d7ab21e318a9560a0..90cb849046bc5d0309bccb9b2fef95d0
  				};
  
  				gpuss1-critical {
-@@ -6677,16 +6985,23 @@
+@@ -6677,16 +6985,23 @@ gpuss1-critical {
  					type = "critical";
  				};
  			};
@@ -3892,7 +3894,7 @@ index dd738d13df8e04b0302c4b4d7ab21e318a9560a0..90cb849046bc5d0309bccb9b2fef95d0
  				};
  
  				gpuss2-critical {
-@@ -6695,16 +7010,23 @@
+@@ -6695,16 +7010,23 @@ gpuss2-critical {
  					type = "critical";
  				};
  			};
@@ -3919,7 +3921,7 @@ index dd738d13df8e04b0302c4b4d7ab21e318a9560a0..90cb849046bc5d0309bccb9b2fef95d0
  				};
  
  				gpuss3-critical {
-@@ -6713,16 +7035,23 @@
+@@ -6713,16 +7035,23 @@ gpuss3-critical {
  					type = "critical";
  				};
  			};
@@ -3946,7 +3948,7 @@ index dd738d13df8e04b0302c4b4d7ab21e318a9560a0..90cb849046bc5d0309bccb9b2fef95d0
  				};
  
  				gpuss4-critical {
-@@ -6731,16 +7060,23 @@
+@@ -6731,16 +7060,23 @@ gpuss4-critical {
  					type = "critical";
  				};
  			};
@@ -3973,7 +3975,7 @@ index dd738d13df8e04b0302c4b4d7ab21e318a9560a0..90cb849046bc5d0309bccb9b2fef95d0
  				};
  
  				gpuss5-critical {
-@@ -6749,16 +7085,23 @@
+@@ -6749,16 +7085,23 @@ gpuss5-critical {
  					type = "critical";
  				};
  			};
@@ -4000,7 +4002,7 @@ index dd738d13df8e04b0302c4b4d7ab21e318a9560a0..90cb849046bc5d0309bccb9b2fef95d0
  				};
  
  				gpuss6-critical {
-@@ -6767,16 +7110,23 @@
+@@ -6767,16 +7110,23 @@ gpuss6-critical {
  					type = "critical";
  				};
  			};
@@ -4027,7 +4029,7 @@ index dd738d13df8e04b0302c4b4d7ab21e318a9560a0..90cb849046bc5d0309bccb9b2fef95d0
  				};
  
  				gpuss7-critical {
-@@ -6785,6 +7135,13 @@
+@@ -6785,6 +7135,13 @@ gpuss7-critical {
  					type = "critical";
  				};
  			};
@@ -8129,7 +8131,7 @@ index da83358c97ead1ebe91d5051303b49745e8727dc..f63668018b8cdbf9bfd4f66f3b8936f0
  
  	if (!skip_reset) {
  		ret = reset_control_deassert(qmp->nocsr_reset);
-@@ -5828,12 +5853,15 @@ skip_tbls_init:
+@@ -5828,12 +5853,15 @@ static int qmp_pcie_power_on(struct phy *phy)
  skip_serdes_start:
  	status = pcs + cfg->regs[QPHY_PCS_STATUS];
  	mask = cfg->phy_status;
@@ -12259,10 +12261,10 @@ index 0000000000000000000000000000000000000000..9c98624062f0c7d4063a49309fcf43b2
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/power/supply/sc96231_charger.c b/drivers/power/supply/sc96231_charger.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..f89c2af895bd4957c299994ed2d44f9880cbc13c
+index 0000000000000000000000000000000000000000..562286c95d650278f9c1113aeaccb7372bf8f5fe
 --- /dev/null
 +++ b/drivers/power/supply/sc96231_charger.c
-@@ -0,0 +1,567 @@
+@@ -0,0 +1,578 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Southchip SC96231 pen transmitter.
@@ -12370,7 +12372,7 @@ index 0000000000000000000000000000000000000000..f89c2af895bd4957c299994ed2d44f98
 +	return ret;
 +}
 +
-+static void sc96231_stop(struct sc96231 *sc)
++static int sc96231_stop(struct sc96231 *sc)
 +{
 +	int ret;
 +
@@ -12382,7 +12384,7 @@ index 0000000000000000000000000000000000000000..f89c2af895bd4957c299994ed2d44f98
 +		gpiod_set_value_cansleep(sc->tx_enable, 0);
 +		sc->tx_state = SC96231_TX_OFF;
 +	}
-+	sc96231_disable_vin(sc);
++	return sc96231_disable_vin(sc);
 +}
 +
 +static int sc96231_start(struct sc96231 *sc)
@@ -12777,8 +12779,19 @@ index 0000000000000000000000000000000000000000..f89c2af895bd4957c299994ed2d44f98
 +	int ret;
 +	unsigned int i;
 +
-+	if (!device_may_wakeup(dev))
-+		return 0;
++	/*
++	 * The freezable workqueue cannot expire a handshake during sleep.
++	 * Stop unfinished handshakes and retry after resuming the device.
++	 */
++	mutex_lock(&sc->lock);
++	if (sc->tx_state != SC96231_TX_TRANSFER)
++		ret = sc96231_stop(sc);
++	else
++		ret = 0;
++	mutex_unlock(&sc->lock);
++	if (ret || !device_may_wakeup(dev))
++		return ret;
++
 +	ret = enable_irq_wake(sc->irq);
 +	if (ret)
 +		return ret;
@@ -13356,7 +13369,7 @@ index ca8329052cbc5cc7cde850d9535a5b690d8c535c..e6e1796707518ab3222f392fe0ac88cb
  
  out:
  	ufshcd_put_dev_mgmt_cmd(cmd);
-@@ -3410,6 +3442,24 @@ out:
+@@ -3410,6 +3442,24 @@ static int ufshcd_exec_dev_cmd(struct ufs_hba *hba,
  	return err;
  }
  
@@ -13705,5 +13718,5 @@ index 0000000000000000000000000000000000000000..80ee8421bf5defc15cad82177362acbc
 +	return 0;
 +}
 -- 
-2.56.1
+2.55.0
 

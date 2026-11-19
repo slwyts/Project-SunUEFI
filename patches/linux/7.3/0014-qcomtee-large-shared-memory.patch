@@ -1,4 +1,4 @@
-From f468d19e17565c8d4a2067c9c08affac7d9c7abb Mon Sep 17 00:00:00 2001
+From e466cf7489db0acebfdb456ee0e0c994361c8df0 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 06:28:30 +0800
 Subject: [PATCH] tee: qcomtee: allocate large shared buffers from CMA

@@ -1,4 +1,4 @@
-From ff01035ffef6626cec01262946f802137015240f Mon Sep 17 00:00:00 2001
+From c83cdac3d3f2131f95137eae853be0a3d90e45a5 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 10:18:53 +0800
 Subject: [PATCH] tee: qcomtee: use the declared CMA pool for application

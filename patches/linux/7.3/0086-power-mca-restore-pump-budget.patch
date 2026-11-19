@@ -1,4 +1,4 @@
-From 595877967ee1d0ca461d70bee6e2b1c8d5b3c166 Mon Sep 17 00:00:00 2001
+From 300f39542d6f7990f93fd4ecabc6968a8e733b29 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 02:21:27 +0800
 Subject: [PATCH] power: supply: piano_mca: reopen pump after restoring its

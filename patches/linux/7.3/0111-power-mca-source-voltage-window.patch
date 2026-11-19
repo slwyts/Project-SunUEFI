@@ -1,4 +1,4 @@
-From 8ab12ea88a0ec8ddca1939c8ca340665236f448b Mon Sep 17 00:00:00 2001
+From 3c8edb0ab42a922703632786ca53c227934fd09a Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 04:26:52 +0800
 Subject: [PATCH] fix(power): match firmware charger types and selected PPS

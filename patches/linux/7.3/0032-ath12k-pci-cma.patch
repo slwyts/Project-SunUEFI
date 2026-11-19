@@ -1,4 +1,4 @@
-From 699e63e9447183db4762b863b1b7981a0f75b51b Mon Sep 17 00:00:00 2001
+From 92a5497848c0712f8f213c006b9f977e54aa4aa3 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 01:57:30 +0800
 Subject: [PATCH] wifi: ath12k: attach PCI DMA pools before DMA allocations

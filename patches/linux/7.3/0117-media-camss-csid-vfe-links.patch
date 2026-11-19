@@ -1,4 +1,4 @@
-From 0a1b49c184486e64ae0d5d4dd11e01b997210d3f Mon Sep 17 00:00:00 2001
+From 4a6bfd24fbd57094cb6ff675a3417669d980a9b5 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 15 Nov 2026 00:40:18 +0800
 Subject: [PATCH] media: camss: expose only implemented SM8750 CSID to VFE

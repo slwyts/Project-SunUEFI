@@ -1,4 +1,4 @@
-From c503c89eef09165b6fccee168ecdd153fe15e634 Mon Sep 17 00:00:00 2001
+From 8456abb2370f00e07eb3af622c03de1ce1bd2aaa Mon Sep 17 00:00:00 2001
 From: Project SunUEFI <slwyts@tuta.io>
 Date: Thu, 19 Nov 2026 09:13:34 +0800
 Subject: [PATCH] leds: flash: leds-qcom-flash: Fix safety timer encoding

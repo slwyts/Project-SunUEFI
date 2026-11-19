@@ -1,4 +1,4 @@
-From f50a766989d5ae9468e26bc8ed10b23b196aa296 Mon Sep 17 00:00:00 2001
+From cb86617c70cc5c06302ddd3d32f3d0bb2ffbb1b3 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 15:50:00 +0000
 Subject: [PATCH] fix(gunyah): respect disabled resource manager DT nodes
