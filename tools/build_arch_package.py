@@ -36,8 +36,8 @@ def matches_release(output):
         return False
 
 
-def install_cached(root, output, *, install_options=()):
-    """Restore cached packages after the base repository upgrade replaced them."""
+def install_cached(root, output, *, install_options=(), selected_archives=None):
+    """Install the selected cached archives, or the complete manifest by default."""
     root, output = root.resolve(), output.resolve()
     if os.geteuid() or not root.is_relative_to(ROOT / 'build/distros'):
         raise ValueError('Use root and a project-built ARM64 rootfs')
@@ -46,12 +46,15 @@ def install_cached(root, output, *, install_options=()):
                                      dir=root / 'var/tmp') as folder:
         work = Path(folder)
         packages = []
-        for name, row in record['packages'].items():
-            path = output / name
-            if (Path(name).name != name or
-                    hashlib.sha256(path.read_bytes()).hexdigest() != row['sha256']):
+        archives = record['packages']
+        selected = archives if selected_archives is None else selected_archives
+        for name, row in selected.items():
+            if Path(name).name != name or row != archives.get(name):
                 raise ValueError('Invalid cached package: ' + name)
-            shutil.copy2(path, work / name)
+            staged = work / name
+            shutil.copy2(output / name, staged)
+            if package_build.sha(staged) != row['sha256']:
+                raise ValueError('Invalid cached package: ' + name)
             packages.append('/' + str((work / name).relative_to(root)))
         if not packages:
             raise ValueError('The cache contains no binary packages')
@@ -75,7 +78,7 @@ def verify_sources(guest, folder):
 
 
 def build(root, recipe, output, resume=False, jobs=None, validate=None, *,
-          check=False, install_options=()):
+          check=False, install_options=(), install=True):
     root, recipe, output = root.resolve(), recipe.resolve(), output.resolve()
     if os.geteuid() or not root.is_relative_to(ROOT / 'build/distros'):
         raise ValueError('Use root and a project-built ARM64 rootfs')
@@ -136,8 +139,9 @@ def build(root, recipe, output, resume=False, jobs=None, validate=None, *,
         for path in packages:
             shutil.copy2(path, output / path.name)
             rows[path.name] = {'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-        guest(['pacman', '-U', '--noconfirm', *install_options,
-               *[folder + '/' + p.name for p in packages]])
+        if install:
+            guest(['pacman', '-U', '--noconfirm', *install_options,
+                   *[folder + '/' + p.name for p in packages]])
         if validate is not None:
             validate(root, work, output)
         guest(['userdel', '-r', 'sunuefi-package'])
@@ -155,9 +159,11 @@ if __name__ == '__main__':
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--jobs', type=int)
+    parser.add_argument('--build-only', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not args.worker:
         raise SystemExit(run(['unshare', '--mount', '--propagation', 'private',
                               sys.executable, __file__, *sys.argv[1:], '--worker']).returncode)
-    build(args.rootfs, args.recipe, args.output, args.resume, args.jobs)
+    build(args.rootfs, args.recipe, args.output, args.resume, args.jobs,
+          install=not args.build_only)

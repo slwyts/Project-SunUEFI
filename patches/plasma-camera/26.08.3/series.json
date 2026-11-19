@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "version": "26.08.3",
+  "targets": ["nyarch-gnome", "arch-denial"],
+  "patches": [
+    {
+      "file": "../26.08.2/0001-libcamera-0.8.patch",
+      "sha256": "3633f264a763ed1c5827aae615e8ce7efd68bd10ca38482dd4653bb13f725d56"
+    },
+    {
+      "file": "../26.08.2/0002-record-captured-frames.patch",
+      "sha256": "c7969253dc733b56c03e1c2d5cc706c3305a3d25fa986c6b8a391addadb76671"
+    }
+  ]
+}
