@@ -136,6 +136,7 @@ jobs:
           path: |
             build/logs/
             build/distros/release.build.log
+            build/distros/*-piano/build.log
             build/distros/*/manifest.json
             build/distros/*/FAILED.json
             build/distros/*/packages.tsv
