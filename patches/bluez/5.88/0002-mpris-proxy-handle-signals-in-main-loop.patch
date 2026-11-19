@@ -1,0 +1,78 @@
+Subject: [PATCH] mpris-proxy: Handle termination signals in the main loop
+
+g_main_loop_quit() takes the GMainContext lock. Calling it from a Unix
+signal handler deadlocks if the signal interrupted the thread holding
+that lock. A signal just before g_main_loop_run() can also be lost
+because starting the loop sets its running flag again.
+
+Use GLib's Unix signal sources for SIGTERM and SIGINT. They dispatch
+the quit callback from the main loop and preserve the existing D-Bus
+cleanup afterwards.
+
+diff --git a/tools/mpris-proxy.c b/tools/mpris-proxy.c
+--- a/tools/mpris-proxy.c
++++ b/tools/mpris-proxy.c
+@@ -24,6 +24,7 @@
+ 
+ #include <dbus/dbus.h>
+ #include <glib.h>
++#include <glib-unix.h>
+ 
+ #include "gdbus/gdbus.h"
+ 
+@@ -50,7 +51,6 @@
+ #define MPRIS_PLAYER_PATH "/org/mpris/MediaPlayer2"
+ #define ERROR_INTERFACE "org.mpris.MediaPlayer2.Error"
+ 
+-static GMainLoop *main_loop;
+ static GDBusProxy *adapter = NULL;
+ static DBusConnection *sys = NULL;
+ static DBusConnection *session = NULL;
+@@ -95,9 +95,10 @@
+ static void dict_append_entry(DBusMessageIter *dict, const char *key, int type,
+ 								void *val);
+ 
+-static void sig_term(int sig)
++static gboolean signal_quit(gpointer user_data)
+ {
+-	g_main_loop_quit(main_loop);
++	g_main_loop_quit(user_data);
++	return G_SOURCE_CONTINUE;
+ }
+ 
+ static DBusMessage *get_all(DBusConnection *conn, const char *name)
+@@ -2962,9 +2963,10 @@
+ int main(int argc, char *argv[])
+ {
+ 	GOptionContext *context;
++	GMainLoop *main_loop;
+ 	GError *error = NULL;
+ 	guint owner_watch, properties_watch, signal_watch;
+-	struct sigaction sa;
++	guint sigterm_watch, sigint_watch;
+ 
+ 	/*
+ 	 * stdout is a pipe to the journal when running as a service, so make
+@@ -3021,11 +3023,8 @@
+ 							NULL, player_signal,
+ 							NULL, NULL);
+ 
+-	memset(&sa, 0, sizeof(sa));
+-	sa.sa_flags   = SA_NOCLDSTOP;
+-	sa.sa_handler = sig_term;
+-	sigaction(SIGTERM, &sa, NULL);
+-	sigaction(SIGINT,  &sa, NULL);
++	sigterm_watch = g_unix_signal_add(SIGTERM, signal_quit, main_loop);
++	sigint_watch = g_unix_signal_add(SIGINT, signal_quit, main_loop);
+ 
+ 	client = g_dbus_client_new(sys, BLUEZ_BUS_NAME, BLUEZ_PATH);
+ 
+@@ -3059,6 +3058,8 @@
+ 	dbus_connection_unref(session);
+ 	dbus_connection_unref(sys);
+ 
++	g_source_remove(sigterm_watch);
++	g_source_remove(sigint_watch);
+ 	g_main_loop_unref(main_loop);
+ 
+ 	return 0;

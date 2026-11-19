@@ -11,6 +11,15 @@
         "url": "https://github.com/bluez/bluez/commit/96f1201f5ac298860889714fcbc81307c2827dc0",
         "drop_when": "The selected BlueZ waits for an available PnP ID before creating the first HoG HID device and passes the uncached, absent and failed read tests."
       }
+    },
+    {
+      "file": "0002-mpris-proxy-handle-signals-in-main-loop.patch",
+      "sha256": "5b15f000a0a97cc0228bc84279624c628defcddc3b7f03bca194dbe2ffd9c254",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/bluez/bluez/blob/1adfe662efeff12997df9ddd0960dbd0de9c8ea7/tools/mpris-proxy.c",
+        "drop_when": "The selected BlueZ handles mpris-proxy termination in its main loop without trying to take a GLib lock from a Unix signal handler."
+      }
     }
   ]
 }

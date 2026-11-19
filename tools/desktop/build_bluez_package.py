@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Debian's BlueZ package with the uncached HoG identity fix."""
+"""Build Debian's BlueZ package with HoG identity and media proxy fixes."""
 import argparse
 from functools import partial
 import json
@@ -15,7 +15,7 @@ from desktop import debian_package, package_build
 
 PACKAGE = 'bluez'
 RUNTIME = {PACKAGE: 'arm64'}
-REVISION = 1
+REVISION = 2
 
 
 def selection(sysroot, output):
@@ -23,7 +23,7 @@ def selection(sysroot, output):
     upstream = target['binary']['source_version'].split(':')[-1].rsplit('-', 1)[0]
     series = ROOT / 'patches/bluez' / upstream / 'series.json'
     if not series.is_file():
-        raise ValueError('Check the HoG fix against the selected BlueZ source: ' + upstream)
+        raise ValueError('Check the patches against the selected BlueZ source: ' + upstream)
     return target, series, source_patches(series)
 
 
@@ -47,11 +47,14 @@ def test_hog(guest, source, settings, *, jobs):
 
 
 def verify_runtime(folder):
-    binary = folder / 'usr/libexec/bluetooth/bluetoothd'
-    elf = debian_package.capture(['readelf', '--file-header', binary])
-    if (not re.search(r'(?m)^\s*Machine:\s*AArch64\s*$', elf) or
-            not (folder / 'usr/lib/systemd/system/bluetooth.service').is_file()):
-        raise ValueError('Expected the ARM64 BlueZ daemon and its original service')
+    for binary, service in (
+        ('usr/libexec/bluetooth/bluetoothd', 'usr/lib/systemd/system/bluetooth.service'),
+        ('usr/bin/mpris-proxy', 'usr/lib/systemd/user/mpris-proxy.service'),
+    ):
+        elf = debian_package.capture(['readelf', '--file-header', folder / binary])
+        if (not re.search(r'(?m)^\s*Machine:\s*AArch64\s*$', elf) or
+                not (folder / service).is_file()):
+            raise ValueError('Expected ARM64 ' + binary + ' and ' + service)
 
 
 def build(output, sysroot, jobs, *, builder_root=None):
