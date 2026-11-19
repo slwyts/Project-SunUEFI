@@ -4,6 +4,10 @@ Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(input-wireless): port Piano input-wireless support to
  Linux 7.3
 
+Declare the firmware requested by the Nanosic driver so distribution
+initramfs generators can include it when the driver is loaded before the
+root filesystem.
+
 ---
  drivers/bluetooth/btqca.c                     |   47 +-
  drivers/bluetooth/btqca.h                     |    6 +
@@ -11,7 +15,7 @@ Subject: [PATCH] feat(input-wireless): port Piano input-wireless support to
  drivers/hid/Kconfig                           |   10 +-
  drivers/hid/Makefile                          |    1 +
  drivers/hid/hid-ids.h                         |    3 +
- drivers/hid/hid-nanosic-wn8030.c              | 2113 +++++++++++++
+ drivers/hid/hid-nanosic-wn8030.c              | 2115 +++++++++++++
  drivers/hid/hid-xiaomi.c                      |   73 +-
  drivers/input/misc/Kconfig                    |   12 +
  drivers/input/misc/Makefile                   |    1 +
@@ -36,7 +40,7 @@ Subject: [PATCH] feat(input-wireless): port Piano input-wireless support to
  drivers/net/wireless/ath/ath12k/wifi7/hw.c    |   96 +
  drivers/net/wireless/ath/ath12k/wifi7/pci.c   |   34 +
  drivers/net/wireless/ath/ath12k/wmi.c         |   21 +
- 31 files changed, 8508 insertions(+), 32 deletions(-)
+ 31 files changed, 8510 insertions(+), 32 deletions(-)
  create mode 100644 drivers/hid/hid-nanosic-wn8030.c
  create mode 100644 drivers/input/misc/piano-pen-dock.c
  create mode 100644 drivers/input/touchscreen/nt36532e/Kconfig
@@ -741,10 +745,10 @@ index 3b19b742d4d..4fbd4cbbe8b 100644
  
 diff --git a/drivers/hid/hid-nanosic-wn8030.c b/drivers/hid/hid-nanosic-wn8030.c
 new file mode 100644
-index 00000000000..0b25473de75
+index 00000000000..827ad7b6b1b
 --- /dev/null
 +++ b/drivers/hid/hid-nanosic-wn8030.c
-@@ -0,0 +1,2113 @@
+@@ -0,0 +1,2115 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * HID driver for Nanosic WN8030 keyboard MCU
@@ -770,6 +774,7 @@ index 00000000000..0b25473de75
 +#include <linux/workqueue.h>
 +#include <uapi/linux/nanosic_hinge.h>
 +
++#define WN8030_FIRMWARE_NAME "nanosic/MCU_Upgrade.bin"
 +#define WN8030_HEADER_ADDR 0x7FC0
 +#define WN8030_CODE_ADDR 0x8000
 +
@@ -2130,7 +2135,7 @@ index 00000000000..0b25473de75
 +	const struct firmware *firmware;
 +	unsigned int ram_code_size;
 +
-+	ret = request_firmware(&firmware, "nanosic/MCU_Upgrade.bin", nanosic->dev);
++	ret = request_firmware(&firmware, WN8030_FIRMWARE_NAME, nanosic->dev);
 +	if (ret) {
 +		dev_err(nanosic->dev, "failed to load MCU firmware\n");
 +		return ret;
@@ -2858,6 +2863,7 @@ index 00000000000..0b25473de75
 +MODULE_AUTHOR("map220v <map220v300@gmail.com>");
 +MODULE_DESCRIPTION("HID driver for Nanosic WN8030 keyboard MCU");
 +MODULE_LICENSE("GPL v2");
++MODULE_FIRMWARE(WN8030_FIRMWARE_NAME);
 diff --git a/drivers/hid/hid-xiaomi.c b/drivers/hid/hid-xiaomi.c
 index ef6598550a4..219fcad0864 100644
 --- a/drivers/hid/hid-xiaomi.c

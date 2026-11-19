@@ -36,6 +36,11 @@ uinput。BLE 尚未连接时继续等待；坐标和压感由内核融合，校�
 
 键盘背光使用内核 LED 节点 `nanosic::kbd_backlight`，经 UPower 和桌面电源组件调节。蓝牙地址由 UEFI 通过标准设备树属性交给内核，触屏解码由设备绑定事件触发。ADSP 和 CDSP 由内核 `remoteproc` 驱动自动启动，设备树不再禁用 ADSP 自动启动，也不依赖用户空间等待显示接管。
 
+键盘套和触控板共用 Nanosic MCU。驱动通过 `MODULE_FIRMWARE` 声明启动时
+读取的 `nanosic/MCU_Upgrade.bin`，让发行版的 initramfs 生成工具在收录
+驱动时同时收录固件。固件由系统提供，驱动将代码加载到 MCU 的 RAM，不依赖
+桌面启动后重新初始化。
+
 Debian sid 使用发行版 UPower，不再重建旧版 daemon。签名源码中的
 `up-enumerator-udev.c` 已枚举 LED 插拔；`up-daemon.c` 更新组合键盘对象，
 保持原 `/org/freedesktop/UPower/KbdBacklight` 接口。Debian 和 Nyarch 的 GSD
