@@ -7,6 +7,7 @@
 #include <Protocol/SimpleFileSystem.h>
 #include <Protocol/PartitionInfo.h>
 #include <Guid/FileInfo.h>
+#include <Guid/FileSystemInfo.h>
 #include <Guid/EventGroup.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
@@ -18,7 +19,7 @@
 #define HEADER 40U
 #define NAME_BYTES 2048U
 STATIC EFI_GUID mGuid=PIANO_NV_FILE_PROTOCOL_GUID;
-STATIC EFI_HANDLE mHandle,mVolumeHandle;
+STATIC EFI_HANDLE mHandle;
 STATIC PIANO_NV_FILE_PROTOCOL mProtocol={1,0,FALSE};
 STATIC EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *mFs;
 STATIC UINT64 mSequence,mSavedChanges;
@@ -34,18 +35,17 @@ STATIC VOID W64(UINT8 *P,UINT64 V){CopyMem(P,&V,8);}
 STATIC EFI_STATUS Volume(VOID){
   EFI_HANDLE *H=NULL;UINTN N=0,Found=0;EFI_STATUS S=gBS->LocateHandleBuffer(ByProtocol,&gEfiSimpleFileSystemProtocolGuid,NULL,&N,&H);
   if(S!=EFI_SUCCESS)return S;
-  EFI_HANDLE Selected=NULL;
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Filesystem=NULL;
   for(UINTN I=0;I<N;++I){EFI_PARTITION_INFO_PROTOCOL *P=NULL;EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *F=NULL;
     if(gBS->HandleProtocol(H[I],&gEfiPartitionInfoProtocolGuid,(VOID **)&P)==EFI_SUCCESS&&P&&P->Type==PARTITION_TYPE_GPT&&
        !StrnCmp(P->Info.Gpt.PartitionName,L"persist",36)&&
        gBS->HandleProtocol(H[I],&gEfiSimpleFileSystemProtocolGuid,(VOID **)&F)==EFI_SUCCESS&&F){
-      Selected=H[I];Filesystem=F;++Found;
+      Filesystem=F;++Found;
     }
   }
   FreePool(H);
   if(Found!=1)return Found?EFI_COMPROMISED_DATA:EFI_NOT_FOUND;
-  mVolumeHandle=Selected;mFs=Filesystem;
+  mFs=Filesystem;
   return EFI_SUCCESS;
 }
 STATIC BOOLEAN Valid(UINT8 *Data,UINTN Bytes){
@@ -81,7 +81,7 @@ STATIC EFI_STATUS Restore(UINT8 *Data,UINTN Bytes){
 }
 STATIC VOID EFIAPI Exit(EFI_EVENT Event,VOID *Context){
   (VOID)Event;(VOID)Context;
-  mExited=TRUE;mProtocol.Frozen=TRUE;mFs=NULL;mVolumeHandle=NULL;
+  mExited=TRUE;mProtocol.Frozen=TRUE;mFs=NULL;
 }
 EFI_STATUS PianoNvFileStart(VOID){
   if(mExited)return EFI_UNSUPPORTED;if(mStarted)return EFI_ALREADY_STARTED;EFI_STATUS S=Volume();if(S!=EFI_SUCCESS)return S;
@@ -92,6 +92,17 @@ EFI_STATUS PianoNvFileStart(VOID){
   if(Best!=MAX_UINT32){mActive=Best;mSequence=U64(Data[Best]+24);S=Restore(Data[Best],Bytes[Best]);}
   else S=R[0]==EFI_NOT_FOUND&&R[1]==EFI_NOT_FOUND?EFI_SUCCESS:EFI_VOLUME_CORRUPTED;
   for(UINTN I=0;I<2;++I)if(Data[I])FreePool(Data[I]);if(S!=EFI_SUCCESS)return S;
+  EFI_FILE_PROTOCOL *Root=NULL;
+  S=mFs->OpenVolume(mFs,&Root);
+  if(S!=EFI_SUCCESS)return S;
+  UINT8 Buffer[SIZE_OF_EFI_FILE_SYSTEM_INFO+sizeof(L"persist")];
+  UINTN Size=sizeof(Buffer);
+  S=Root->GetInfo(Root,&gEfiFileSystemInfoGuid,&Size,Buffer);
+  EFI_STATUS CloseStatus=Root->Close(Root);
+  if(S!=EFI_SUCCESS)return S;
+  if(CloseStatus!=EFI_SUCCESS)return CloseStatus;
+  if(Size<SIZE_OF_EFI_FILE_SYSTEM_INFO)return EFI_VOLUME_CORRUPTED;
+  if(((EFI_FILE_SYSTEM_INFO *)(VOID *)Buffer)->ReadOnly)return EFI_WRITE_PROTECTED;
   S=gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,Exit,NULL,&gEfiEventExitBootServicesGuid,&mExit);if(S!=EFI_SUCCESS)return S;
   S=gBS->InstallProtocolInterface(&mHandle,&mGuid,EFI_NATIVE_INTERFACE,&mProtocol);
   if(S!=EFI_SUCCESS){gBS->CloseEvent(mExit);mExit=NULL;return S;}
@@ -131,14 +142,4 @@ EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){
   if(Data){ZeroMem(Data,LIMIT);FreePool(Data);}mBusy=FALSE;
   if(S!=EFI_SUCCESS)mUnavailable=TRUE;
   DEBUG((DEBUG_WARN,"PIANO_NV_FILE_SAVE status=%r sequence=%lu frozen=%u\n",S,mSequence,mProtocol.Frozen));return S;
-}
-EFI_STATUS PianoNvFilePreparePartitionWrite(EFI_HANDLE Partition){
-  if(!Partition)return EFI_INVALID_PARAMETER;
-  if(mExited)return EFI_ABORTED;
-  if(!mStarted || Partition!=mVolumeHandle || mProtocol.Frozen)return EFI_SUCCESS;
-  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Filesystem=NULL;
-  EFI_STATUS Status=gBS->HandleProtocol(Partition,&gEfiSimpleFileSystemProtocolGuid,(VOID **)&Filesystem);
-  if(mExited)return EFI_ABORTED;
-  if(Status!=EFI_SUCCESS || !Filesystem || Filesystem!=mFs)return EFI_MEDIA_CHANGED;
-  return PianoNvFileSave(TRUE);
 }

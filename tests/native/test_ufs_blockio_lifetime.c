@@ -15,7 +15,7 @@ static EFI_RUNTIME_SERVICES rt;
 static struct {UINT32 tr_bell,tm_bell,tr_run,tm_run,base,upper,irq,mcq;} regs;
 static unsigned disconnected,uninstalled,freed,closed,clocks_stopped,resets,shell_reports,owned_closed,retained,owned_retained,pauses;
 static UINT32 tr_clear,tm_clear;
-static BOOLEAN fail_disconnect,stuck_tr_run,stuck_tm_run,stuck_tr_clear,stuck_tm_clear,fail_base,fail_irq,reset_returns;
+static BOOLEAN fail_disconnect,stuck_tr_run,stuck_tm_run,stuck_tr_clear,stuck_tm_clear,fail_base,fail_irq;
 static jmp_buf reset_jump;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
@@ -23,7 +23,7 @@ VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
 VOID EFIAPI MemoryFence(VOID){ }
 VOID *EFIAPI ZeroMem(VOID *P,UINTN N){return memset(P,0,N);}
 VOID EFIAPI CpuPause(VOID){++pauses;}
-VOID EFIAPI CpuDeadLoop(VOID){assert(reset_returns && resets==1 && !freed);longjmp(reset_jump,2);}
+VOID EFIAPI CpuDeadLoop(VOID){assert(!resets && !freed && !owned_closed);longjmp(reset_jump,1);}
 UINT32 EFIAPI MmioRead32(UINTN Address){
   if(Address==HCI+0x58)return regs.tr_bell;
   if(Address==HCI+0x78)return regs.tm_bell;
@@ -74,11 +74,11 @@ static EFI_STATUS EFIAPI uninstall(EFI_HANDLE Handle,...){
 }
 static EFI_STATUS EFIAPI close_event(EFI_EVENT Event){assert(!mBlockLive && disconnected==1 && !uninstalled);++closed;return EFI_SUCCESS;}
 static VOID EFIAPI reset(EFI_RESET_TYPE Type,EFI_STATUS Status,UINTN Size,VOID *Data){
-  assert(Type==EfiResetCold && !freed && !owned_closed);++resets;if(!reset_returns)longjmp(reset_jump,1);
+  assert(Type==EfiResetCold && !freed && !owned_closed);++resets;
 }
 static VOID initialize(VOID){
   disconnected=uninstalled=freed=closed=clocks_stopped=resets=shell_reports=owned_closed=retained=owned_retained=pauses=0;
-  fail_disconnect=stuck_tr_run=stuck_tm_run=stuck_tr_clear=stuck_tm_clear=fail_base=fail_irq=reset_returns=FALSE;
+  fail_disconnect=stuck_tr_run=stuck_tm_run=stuck_tr_clear=stuck_tm_clear=fail_base=fail_irq=FALSE;
   tr_clear=tm_clear=MAX_UINT32;ZeroMem(&regs,sizeof(regs));regs.tr_run=regs.tm_run=1;regs.base=0x40000000;
   mSavedBase=0x12345000;mSavedUpper=0;mSavedInterrupt=0x20;mSavedRun=mSavedTaskRun=1;
   mLunCount=1;mBlockLive=TRUE;mInstalled=TRUE;mBlockBusy=FALSE;mExitRetained=FALSE;
@@ -98,27 +98,25 @@ int main(void){
   initialize();regs.mcq=1;assert(Quiesce()==EFI_UNSUPPORTED && !pauses && regs.tr_run==1 && regs.tm_run==1);
   initialize();PianoUfsBlockIoStop();assert(disconnected==1 && uninstalled==2 && freed==3 && owned_closed==1 && clocks_stopped==1 && !resets && shell_reports==1);
   initialize();fail_disconnect=TRUE;
-  if(setjmp(reset_jump)==0){PianoUfsBlockIoStop();assert(!"Failed disconnect must recover");}
-  assert(resets==1 && !freed && !uninstalled && !closed && !shell_reports);
+  if(setjmp(reset_jump)==0){PianoUfsBlockIoStop();assert(!"Failed disconnect must stop");}
+  assert(!resets && !freed && !uninstalled && !closed && !shell_reports);
   initialize();fail_base=TRUE;
   if(setjmp(reset_jump)==0){PianoUfsBlockIoStop();assert(!"Failed base restore must retain buffers");}
-  assert(resets==1 && !freed && !owned_closed);
+  assert(!resets && !freed && !owned_closed);
   initialize();fail_irq=TRUE;
   if(setjmp(reset_jump)==0){PianoUfsBlockIoStop();assert(!"Failed IRQ restore must retain buffers");}
-  assert(resets==1 && !freed && !owned_closed);
+  assert(!resets && !freed && !owned_closed);
   initialize();gBS=NULL;PianoUfsExitBoot(NULL,NULL);
   assert(mExitRetained && !mBlockLive && !mBlocks[0].Media.MediaPresent && !disconnected && !uninstalled && !freed && !closed && !clocks_stopped && shell_reports==1);
   assert(retained==3 && owned_retained==1 && QueuesStopped() && regs.irq==0);
   assert(Cleanup()==EFI_ACCESS_DENIED);
   if(setjmp(reset_jump)==0){PianoUfsBlockIoStop();assert(!"Stop after EBS must not call BS teardown");}
-  assert(resets==1 && !disconnected && !uninstalled && !freed);
+  assert(!resets && !disconnected && !uninstalled && !freed);
   initialize();gBS=NULL;mData.MemoryType=EfiBootServicesData;
-  if(setjmp(reset_jump)==0){PianoUfsExitBoot(NULL,NULL);assert(!"Wrong memory type must recover");}
-  assert(resets==1 && retained==2 && !owned_retained && !freed);
+  if(setjmp(reset_jump)==0){PianoUfsExitBoot(NULL,NULL);assert(!"Wrong memory type must stop");}
+  assert(!resets && retained==2 && !owned_retained && !freed);
   initialize();gBS=NULL;regs.tm_bell=BIT31;stuck_tm_clear=TRUE;
-  if(setjmp(reset_jump)==0){PianoUfsExitBoot(NULL,NULL);assert(!"Unhalted task queue must recover");}
-  assert(resets==1 && !retained && !freed);
-  initialize();fail_disconnect=reset_returns=TRUE;
-  int code=setjmp(reset_jump);if(code==0)PianoUfsBlockIoStop();assert(code==2 && resets==1 && !freed);
-  puts("UFS lifetime: all high-slot/TMR doorbells and run readbacks, bounded direct polls, restore-before-restart, no-BS EBS Reserved retention, failure reset and reset fallthrough fence passed.");
+  if(setjmp(reset_jump)==0){PianoUfsExitBoot(NULL,NULL);assert(!"Unhalted task queue must stop");}
+  assert(!resets && !retained && !freed);
+  puts("UFS lifetime: all high-slot/TMR doorbells and run readbacks, bounded direct polls, restore-before-restart, no-BS EBS Reserved retention, fault stop without a software reset passed.");
 }

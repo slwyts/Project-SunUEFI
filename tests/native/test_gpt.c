@@ -17,6 +17,12 @@ int main(void){
   store32(header+88,PianoGptCrc32(entries,sizeof(entries)));crc_header(header);
   assert(PianoGptParseHeader(header,4096,0xffff,4096,&h)==EFI_SUCCESS && h.ArrayBytes==16384);
   assert(PianoGptCheckEntries(entries,16384,&h,&active)==EFI_SUCCESS && active==1);
+  entries[128]=1;store64(entries+160,0x100);store64(entries+168,0x200);
+  h.ArrayCrc=PianoGptCrc32(entries,sizeof(entries));
+  assert(PianoGptCheckEntries(entries,16384,&h,&active)==EFI_COMPROMISED_DATA);
+  store64(entries+160,0x101);h.ArrayCrc=PianoGptCrc32(entries,sizeof(entries));
+  assert(PianoGptCheckEntries(entries,16384,&h,&active)==EFI_SUCCESS && active==2);
+  entries[128]=0;h.ArrayCrc=PianoGptCrc32(entries,sizeof(entries));
   entries[100]^=1;assert(PianoGptCheckEntries(entries,16384,&h,&active)==EFI_CRC_ERROR);entries[100]^=1;
   store64(entries+40,0xffff);h.ArrayCrc=PianoGptCrc32(entries,16384);
   assert(PianoGptCheckEntries(entries,16384,&h,&active)==EFI_COMPROMISED_DATA);

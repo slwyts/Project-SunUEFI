@@ -788,7 +788,7 @@ static VOID run_partition_write(FLASH_USB_CASE Test){
   service_enumerate();
   if(Test==FlashUsbErase){
     service_out("getvar:storage-policy");
-    assert(status_has_frame("OKAYexplicit-partition-writes"));
+    assert(status_has_frame("OKAYsunuefi-partition-writes"));
     service_ack();
     service_out("oem status");
     assert(status_has_frame("INFOstorage-policy:explicit-partition-writes"));
@@ -922,7 +922,7 @@ static VOID run_touch_coexistence(TOUCH_GPI_CASE Test){
     free_cold_model();return;
   }
   service_out("getvar:storage-policy");
-  assert(status_has_frame("OKAYexplicit-partition-writes"));
+  assert(status_has_frame("OKAYsunuefi-partition-writes"));
   service_ack();
   service_out("oem help");
   assert(status_has_frame("INFOflash PARTITION FILE - write raw or sparse image"));
@@ -938,7 +938,7 @@ static VOID run_touch_coexistence(TOUCH_GPI_CASE Test){
   typec_poll();typec_poll();
   assert(!host_active && host_stops==1 && !mRole.Parked && mService.State.Started && !closes);
   service_enumerate();
-  service_out("getvar:storage-policy");assert(status_has_frame("OKAYexplicit-partition-writes"));service_ack();
+  service_out("getvar:storage-policy");assert(status_has_frame("OKAYsunuefi-partition-writes"));service_ack();
 #endif
   assert(!memcmp(&Baseline,&mCoexistBasis,sizeof(Baseline)));
   // The regular OS handoff retires touch first, restoring both invalid rows.

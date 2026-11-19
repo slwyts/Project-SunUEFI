@@ -235,7 +235,6 @@ static VOID partition_batches(VOID){
   ReadDelay=700;WriteDelay=1300;SyncDelay=900;
   assert(PianoStorageSetIoTiming(&Timing)==NULL);
   assert(StorageTransfer(&Range,1,sizeof(Payload),Payload,TRUE)==EFI_INVALID_PARAMETER && !Doorbells);
-  assert(ServiceWrite(NULL,4,mLuns[4].Last-1,Batch,Payload)==EFI_INVALID_PARAMETER && !Doorbells);
   assert(ServiceRead(NULL,4,mLuns[4].Last-1,Batch,Readback)==EFI_INVALID_PARAMETER && !Doorbells);
   assert(StorageTransfer(&Range,0,sizeof(Payload),Payload,TRUE)==EFI_SUCCESS);
   assert(Doorbells==2 && NativeWrites==2 && LargestWrite==Batch && LastWriteBytes==4096);

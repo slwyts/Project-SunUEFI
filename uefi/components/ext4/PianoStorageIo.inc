@@ -8,13 +8,15 @@ STATIC EFI_STATUS PartitionFromHandle(EFI_HANDLE Handle,PIANO_STORAGE_PARTITION 
   EFI_PARTITION_INFO_PROTOCOL *Info=NULL;EFI_STATUS S=gBS->HandleProtocol(Handle,&gEfiPartitionInfoProtocolGuid,(VOID **)&Info);
   if(S!=EFI_SUCCESS||!Info||Info->Type!=PARTITION_TYPE_GPT)return EFI_ACCESS_DENIED;
   CHAR16 Name[37];CopyMem(Name,Info->Info.Gpt.PartitionName,72);Name[36]=0;
+  if(StrCmp(Name,L"persist"))return EFI_WRITE_PROTECTED;
   S=PianoStorageOpen(Name,P);if(S!=EFI_SUCCESS)return S;
   return CompareGuid(&P->PartitionGuid,&Info->Info.Gpt.UniquePartitionGUID)&&P->First==Info->Info.Gpt.StartingLBA&&
     P->Blocks==Info->Info.Gpt.EndingLBA-Info->Info.Gpt.StartingLBA+1?EFI_SUCCESS:EFI_MEDIA_CHANGED;
 }
+STATIC EFI_STATUS EFIAPI FileCanWrite(PIANO_PARTITION_IO_PROTOCOL *This,EFI_HANDLE Handle);
 STATIC EFI_STATUS EFIAPI FileWrite(PIANO_PARTITION_IO_PROTOCOL *This,EFI_HANDLE Handle,UINT64 At,UINTN Bytes,CONST VOID *Data);
 STATIC EFI_STATUS EFIAPI FileFlush(PIANO_PARTITION_IO_PROTOCOL *This,EFI_HANDLE Handle);
-STATIC PIANO_PARTITION_IO_PROTOCOL mPartitionIo={1,FileWrite,FileFlush};
+STATIC PIANO_PARTITION_IO_PROTOCOL mPartitionIo={2,FileCanWrite,FileWrite,FileFlush};
 STATIC EFI_STATUS FindFilesystem(EFI_HANDLE Partition,EFI_SIMPLE_FILE_SYSTEM_PROTOCOL **Filesystem){
   *Filesystem=NULL;
   if(mExitRetained)return EFI_ABORTED;
@@ -131,8 +133,13 @@ STATIC BOOLEAN FilePartition(CONST PIANO_STORAGE_PARTITION *P){
   }
   return FALSE;
 }
+STATIC BOOLEAN StorageWriteProtected(UINTN Index){
+  return mPermanentWpStatus!=EFI_SUCCESS||mPowerOnWpStatus!=EFI_SUCCESS||mPermanentWp||mPowerOnWp||
+    mCapabilities[Index].CacheStatus!=EFI_SUCCESS||mCapabilities[Index].UnitStatus!=EFI_SUCCESS||
+    mCapabilities[Index].WriteProtected||mCapabilities[Index].UnitWriteProtect||!mCapabilities[Index].Fua;
+}
 EFI_STATUS PianoStorageOpen(CONST CHAR16 *Name,PIANO_STORAGE_PARTITION *P){
-  if(!Name||!P||!mBlockLive||mBlockBusy||mResetReport.Prepared||mResetReport.Failed||mPartitionFailed)return EFI_NOT_READY;
+  if(!Name||!P||mExitRetained||!mBlockLive||mBlockBusy||mResetReport.Prepared||mResetReport.Failed||mPartitionFailed)return EFI_NOT_READY;
   STATIC CONST CHAR16 *Names[]={L"persist",L"sunuefi_esp",L"sunuefi_root"};UINTN Slot=0;
   while(Slot<ARRAY_SIZE(Names)&&StrCmp(Name,Names[Slot]))++Slot;
   if(Slot==ARRAY_SIZE(Names))return EFI_ACCESS_DENIED;
@@ -140,6 +147,7 @@ EFI_STATUS PianoStorageOpen(CONST CHAR16 *Name,PIANO_STORAGE_PARTITION *P){
   EFI_HANDLE *Handles=NULL;UINTN Count=0,Matches=0;EFI_STATUS S=gBS->LocateHandleBuffer(ByProtocol,&gEfiPartitionInfoProtocolGuid,NULL,&Count,&Handles);
   if(S!=EFI_SUCCESS)return S;
   PIANO_STORAGE_PARTITION Found={0};
+  UINTN FoundLun=0;
   for(UINTN I=0;I<Count;++I){
     EFI_PARTITION_INFO_PROTOCOL *Info=NULL;EFI_DEVICE_PATH_PROTOCOL *Path=NULL;EFI_BLOCK_IO_PROTOCOL *Block=NULL;
     if(gBS->HandleProtocol(Handles[I],&gEfiPartitionInfoProtocolGuid,(VOID **)&Info)!=EFI_SUCCESS||!Info||
@@ -149,15 +157,24 @@ EFI_STATUS PianoStorageOpen(CONST CHAR16 *Name,PIANO_STORAGE_PARTITION *P){
     EFI_GUID Vendor={0xA8675600,0x87D0,0x4A29,{0x9B,0x40,0x60,0,0,0,0,1}};
     if(!CompareGuid(&((VENDOR_DEVICE_PATH *)Path)->Guid,&Vendor))continue;
     UFS_DEVICE_PATH *U=(VOID *)((UINT8 *)Path+sizeof(VENDOR_DEVICE_PATH));
-    if(U->Header.Type!=MESSAGING_DEVICE_PATH||U->Header.SubType!=MSG_UFS_DP||U->Pun||U->Lun>7)continue;
+    if(U->Header.Type!=MESSAGING_DEVICE_PATH||U->Header.SubType!=MSG_UFS_DP||
+       DevicePathNodeLength(&U->Header)!=sizeof(*U)||U->Pun||U->Lun>7)continue;
     HARDDRIVE_DEVICE_PATH *Hd=(VOID *)((UINT8 *)U+sizeof(*U));
     if(Hd->Header.Type!=MEDIA_DEVICE_PATH||Hd->Header.SubType!=MEDIA_HARDDRIVE_DP||
+       DevicePathNodeLength(&Hd->Header)!=sizeof(*Hd)||Hd->MBRType!=MBR_TYPE_EFI_PARTITION_TABLE_HEADER||
+       Hd->SignatureType!=SIGNATURE_TYPE_GUID||Info->Info.Gpt.EndingLBA<Info->Info.Gpt.StartingLBA||
+       CompareMem(Hd->Signature,&Info->Info.Gpt.UniquePartitionGUID,sizeof(EFI_GUID))||
        Hd->PartitionStart!=Info->Info.Gpt.StartingLBA||Hd->PartitionSize!=Info->Info.Gpt.EndingLBA-Info->Info.Gpt.StartingLBA+1)continue;
     if(gBS->HandleProtocol(Handles[I],&gEfiBlockIoProtocolGuid,(VOID **)&Block)!=EFI_SUCCESS||!Block||!Block->Media||Block->Media->BlockSize!=4096)continue;
+    UINTN LunIndex=0;while(LunIndex<mLunCount&&mLuns[LunIndex].Id!=U->Lun)++LunIndex;
+    if(LunIndex==mLunCount||!mGpts[LunIndex].Entries||
+       Info->Info.Gpt.StartingLBA<mGpts[LunIndex].FirstUsable||Info->Info.Gpt.EndingLBA>mGpts[LunIndex].LastUsable)continue;
+    FoundLun=LunIndex;
     Found=(PIANO_STORAGE_PARTITION){U->Lun,4096,Block->Media->MediaId,Hd->PartitionStart,Hd->PartitionSize,Info->Info.Gpt.UniquePartitionGUID,&mFilePartitions[Slot]};++Matches;
   }
   gBS->FreePool(Handles);if(Matches!=1)return Matches?EFI_COMPROMISED_DATA:EFI_NOT_FOUND;
   if(!Found.Blocks||Found.First>MAX_UINT32||Found.Blocks-1>MAX_UINT32-Found.First)return EFI_UNSUPPORTED;
+  if(StorageWriteProtected(FoundLun))return EFI_WRITE_PROTECTED;
   mFilePartitions[Slot]=Found;*P=Found;return EFI_SUCCESS;
 }
 STATIC EFI_STATUS StorageTransfer(CONST PIANO_STORAGE_PARTITION *P,UINT64 Block,UINTN Bytes,VOID *Buffer,BOOLEAN Writing){
@@ -166,9 +183,7 @@ STATIC EFI_STATUS StorageTransfer(CONST PIANO_STORAGE_PARTITION *P,UINT64 Block,
   UINTN Index=0;while(Index<mLunCount&&mLuns[Index].Id!=P->Lun)++Index;if(Index==mLunCount)return EFI_NO_MEDIA;
   if(mLuns[Index].Block!=4096||P->First>mLuns[Index].Last||!P->Blocks||P->Blocks-1>mLuns[Index].Last-P->First||
      P->First>MAX_UINT32||Block>MAX_UINT32-P->First||Bytes/4096-1>MAX_UINT32-P->First-Block)return EFI_INVALID_PARAMETER;
-  if(Writing&&(mPermanentWpStatus!=EFI_SUCCESS||mPowerOnWpStatus!=EFI_SUCCESS||mPermanentWp||mPowerOnWp||
-     mCapabilities[Index].CacheStatus!=EFI_SUCCESS||mCapabilities[Index].UnitStatus!=EFI_SUCCESS||
-     mCapabilities[Index].WriteProtected||mCapabilities[Index].UnitWriteProtect||!mCapabilities[Index].Fua))return EFI_WRITE_PROTECTED;
+  if(Writing&&StorageWriteProtected(Index))return EFI_WRITE_PROTECTED;
   EFI_TPL Old=gBS->RaiseTPL(TPL_CALLBACK);mBlockBusy=mPartitionExecuting=mProductExecuting=TRUE;
   mPartitionLun=P->Lun;mPartitionFirst=P->First+Block;mPartitionBlocks=Bytes/4096;
   EFI_STATUS S=PartitionGate();if(S==EFI_SUCCESS)S=ProductSmmuGuard(TRUE);
@@ -199,9 +214,6 @@ STATIC EFI_STATUS StorageTransfer(CONST PIANO_STORAGE_PARTITION *P,UINT64 Block,
   if(!mExitRetained)gBS->RestoreTPL(Old);
   return S;
 }
-EFI_STATUS PianoStorageRead(CONST PIANO_STORAGE_PARTITION *P,UINT64 Block,UINTN Bytes,VOID *Buffer){
-  return FilePartition(P)?StorageTransfer(P,Block,Bytes,Buffer,FALSE):EFI_INVALID_PARAMETER;
-}
 EFI_STATUS PianoStorageWrite(CONST PIANO_STORAGE_PARTITION *P,UINT64 Block,UINTN Bytes,CONST VOID *Buffer){
   return FilePartition(P)?StorageTransfer(P,Block,Bytes,(VOID *)Buffer,TRUE):EFI_INVALID_PARAMETER;
 }
@@ -220,19 +232,9 @@ STATIC EFI_STATUS StorageFlush(CONST PIANO_STORAGE_PARTITION *P){
 EFI_STATUS PianoStorageFlush(CONST PIANO_STORAGE_PARTITION *P){
   return FilePartition(P)?StorageFlush(P):EFI_INVALID_PARAMETER;
 }
-STATIC EFI_STATUS ServiceWrite(VOID *Context,UINT8 Lun,EFI_LBA Lba,UINTN Bytes,VOID *Buffer){
-  (VOID)Context;
-  UINTN I=0;while(I<mLunCount&&mLuns[I].Id!=Lun)++I;
-  if(I==mLunCount)return EFI_NO_MEDIA;
-  PIANO_STORAGE_PARTITION P={.Lun=Lun,.BlockBytes=4096,.First=0,.Blocks=mLuns[I].Last+1};
-  return StorageTransfer(&P,Lba,Bytes,Buffer,TRUE);
-}
-STATIC EFI_STATUS ServiceFlush(VOID *Context,UINT8 Lun){
-  (VOID)Context;
-  UINTN I=0;while(I<mLunCount&&mLuns[I].Id!=Lun)++I;
-  if(I==mLunCount)return EFI_NO_MEDIA;
-  PIANO_STORAGE_PARTITION P={.Lun=Lun,.BlockBytes=4096,.First=0,.Blocks=mLuns[I].Last+1};
-  return StorageFlush(&P);
+STATIC EFI_STATUS EFIAPI FileCanWrite(PIANO_PARTITION_IO_PROTOCOL *This,EFI_HANDLE Handle){
+  PIANO_STORAGE_PARTITION Partition;
+  return This==&mPartitionIo?PartitionFromHandle(Handle,&Partition):EFI_INVALID_PARAMETER;
 }
 STATIC EFI_STATUS EFIAPI FileWrite(PIANO_PARTITION_IO_PROTOCOL *This,EFI_HANDLE Handle,UINT64 At,UINTN Bytes,CONST VOID *Data){
   if(This!=&mPartitionIo)return EFI_INVALID_PARAMETER;PIANO_STORAGE_PARTITION P;EFI_STATUS S=PartitionFromHandle(Handle,&P);

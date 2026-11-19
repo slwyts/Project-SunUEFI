@@ -261,10 +261,10 @@ CRC32 和两个交替副本；刷新后独立读回比较，再使用新的序�
 Services 后不再访问 UFS，NV 写入返回不支持；带认证属性的 Secure Boot
 变量不通过这个普通文件后端持久化。
 
-ext4 驱动使用固定 lwext4 源码提供标准 SimpleFileSystem，只允许
-`persist/sunuefi/` 中的自动文件写入，其他路径只读。标准 Block I/O
-和用户明确发出的 Fastboot 刷写不按原厂分区名称限制；自动保存使用的私有
-接口仍核对项目分区和 GPT 范围，不会因为开放刷写而获得其他分区的写入权限。
+ext4 驱动用固定的 lwext4 源码读取变量文件、`persist/bluetooth/.bt_nv.bin`
+和 `persist/time/ats_2`。只允许创建项目目录并写入两个变量文件，写入还会更新
+必要的 ext4 元数据。发现卷需要恢复时只读挂载，变量修改留在内存中，日志由
+Android 恢复。标准 Block I/O 和 Fastboot 不提供原厂 `persist` 的原始写入。
 文件系统先停止日志、卸载并同步，再停止 USB、UFS、SMMU 和时钟。
 存在未关闭文件或无法确认 DMA 已停止时拒绝系统启动交接，不强行释放。
 

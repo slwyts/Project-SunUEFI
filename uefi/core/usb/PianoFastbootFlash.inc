@@ -200,7 +200,7 @@ STATIC EFI_STATUS Flash(PIANO_FASTBOOT *S,CONST CHAR8 *Name,BOOLEAN Erase){
     return Reply(S,"FAILstorage write backend not ready");
   PIANO_FB_PARTITION_INFO Info;EFI_STATUS Status=PartitionInfo(S,Name,&Info);
   if(Status!=EFI_SUCCESS)return Reply(S,Status==EFI_NOT_FOUND?"FAILunknown partition":"FAILinvalid partition information");
-  if(Info.ReadOnly)return Reply(S,"FAILdevice reports hardware write protection");
+  if(Info.ReadOnly)return Reply(S,"FAILpartition is read-only");
   if(!Erase && (!S->Complete || !S->Download || !S->Received))return Reply(S,"FAILno complete RAM payload");
   BOOLEAN Sparse=!Erase && SparseImage(S->Download,S->Received);
   if(Sparse){

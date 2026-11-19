@@ -44,6 +44,12 @@ EFI_STATUS PianoGptCheckEntries(CONST VOID *Data,UINTN Bytes,CONST PIANO_GPT_HEA
     if(!Used)continue;
     UINT64 First=Le64(E+32),Last=Le64(E+40);
     if(First>Last || First<H->FirstUsable || Last>H->LastUsable)return EFI_COMPROMISED_DATA;
+    for(UINTN J=0;J<I;++J){
+      CONST UINT8 *Other=P+J*H->EntryBytes;
+      BOOLEAN OtherUsed=FALSE;
+      for(UINTN K=0;K<16;++K)if(Other[K])OtherUsed=TRUE;
+      if(OtherUsed&&First<=Le64(Other+40)&&Le64(Other+32)<=Last)return EFI_COMPROMISED_DATA;
+    }
     ++*Active;
   }
   return EFI_SUCCESS;

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// lwext4-backed SimpleFileSystem. Factory files are read-only; only /sunuefi
-// in persist is writable, through the sole UFS owner's partition-scoped IO.
+// lwext4-backed persist. Only the boot-service variable store is writable.
 #include "PianoExt4.h"
 #include <Protocol/PartitionInfo.h>
 #include <Protocol/DevicePath.h>
@@ -99,9 +98,16 @@ STATIC EFI_STATUS FlushVolume(VOLUME *V){
   int R=ext4_cache_flush(V->Mount);if(R)return Status(R);
   return Barrier(V);
 }
+STATIC BOOLEAN NvPath(CONST CHAR8 *Path){
+  return !AsciiStrCmp(Path,"sunuefi")||!AsciiStrCmp(Path,"sunuefi/nvram-a.bin")||
+    !AsciiStrCmp(Path,"sunuefi/nvram-b.bin");
+}
 STATIC BOOLEAN WritablePath(VOLUME *V,CONST CHAR8 *Path){
-  CONST CHAR8 *P=Path+AsciiStrLen(V->Mount);
-  return V->Writable&&!AsciiStrnCmp(P,"sunuefi",7)&&(P[7]=='/'||!P[7]);
+  return V->Writable&&NvPath(Path+AsciiStrLen(V->Mount));
+}
+STATIC BOOLEAN ReadablePath(VOLUME *V,CONST CHAR8 *Path){
+  CONST CHAR8 *Name=Path+AsciiStrLen(V->Mount);
+  return !*Name||NvPath(Name)||!AsciiStrCmp(Name,"bluetooth/.bt_nv.bin")||!AsciiStrCmp(Name,"time/ats_2");
 }
 STATIC EFI_STATUS Path(FILE_HANDLE *H,CONST CHAR16 *Name,CHAR8 Out[1024]){
   UINTN N=0;
@@ -134,9 +140,22 @@ STATIC EFI_STATUS EFIAPI Open(EFI_FILE_PROTOCOL *This,EFI_FILE_PROTOCOL **Out,CH
   FILE_HANDLE *H=File(This);if(!H||!Out||!Name||!(Mode&EFI_FILE_MODE_READ)||!H->Directory)return EFI_INVALID_PARAMETER;
   VOLUME *V=H->Volume;EFI_STATUS S=Enter(V);if(S!=EFI_SUCCESS)return S;CHAR8 P[1024];
   S=Path(H,Name,P);if(S!=EFI_SUCCESS){V->Busy=FALSE;return S;}
-  struct ext4_inode Inode;int R=ext4_raw_inode_fill(P,NULL,&Inode);BOOLEAN Directory=(Attr&EFI_FILE_DIRECTORY)!=0;
-  if(!R){UINT16 Type=Inode.mode&0xF000;Directory=Type==0x4000;if(Type!=0x4000&&Type!=0x8000){V->Busy=FALSE;return EFI_ACCESS_DENIED;}}
-  else if(R!=ENOENT){V->Busy=FALSE;return Status(R);}
+  if(!ReadablePath(V,P)){V->Busy=FALSE;return EFI_ACCESS_DENIED;}
+  CONST CHAR8 *Relative=P+AsciiStrLen(V->Mount);
+  BOOLEAN Directory=!*Relative||!AsciiStrCmp(Relative,"sunuefi");
+  if((Mode&EFI_FILE_MODE_CREATE)&&Directory!=((Attr&EFI_FILE_DIRECTORY)!=0)){
+    V->Busy=FALSE;
+    return EFI_INVALID_PARAMETER;
+  }
+  struct ext4_inode Inode;
+  int R=ext4_raw_inode_fill(P,NULL,&Inode);
+  if(!R){
+    UINT16 Type=to_le16(Inode.mode)&0xF000;
+    if(Type!=(Directory?0x4000:0x8000)||((Mode&EFI_FILE_MODE_WRITE)&&!Directory&&to_le16(Inode.links_count)!=1)){
+      V->Busy=FALSE;
+      return EFI_ACCESS_DENIED;
+    }
+  }else if(R!=ENOENT){V->Busy=FALSE;return Status(R);}
   S=NewFile(V,P,Mode,Directory,Out);V->Busy=FALSE;return S;
 }
 STATIC EFI_STATUS EFIAPI Close(EFI_FILE_PROTOCOL *This){
@@ -223,6 +242,13 @@ STATIC EFI_STATUS EFIAPI Supported(EFI_DRIVER_BINDING_PROTOCOL *B,EFI_HANDLE Han
   if(S==EFI_SUCCESS)gBS->CloseProtocol(Handle,&gEfiDiskIoProtocolGuid,B->DriverBindingHandle,Handle);
   return S;
 }
+STATIC BOOLEAN CleanPersist(VOLUME *V){
+  struct ext4_sblock Super;
+  if(ReadDevice(&V->Dev,V->BlockBuffer,0,1))return FALSE;
+  CopyMem(&Super,V->BlockBuffer+EXT4_SUPERBLOCK_OFFSET,sizeof(Super));
+  return ext4_sb_check(&Super)&&to_le16(Super.state)==EXT4_SUPERBLOCK_STATE_VALID_FS&&
+    !ext4_sb_feature_incom(&Super,EXT4_FINCOM_RECOVER);
+}
 STATIC EFI_STATUS EFIAPI Start(EFI_DRIVER_BINDING_PROTOCOL *B,EFI_HANDLE Handle,EFI_DEVICE_PATH_PROTOCOL *Path){
   (VOID)Path;UINTN Slot=0;while(Slot<ARRAY_SIZE(mVolumes)&&mVolumes[Slot])++Slot;if(Slot==ARRAY_SIZE(mVolumes))return EFI_OUT_OF_RESOURCES;
   VOLUME *V=AllocateZeroPool(sizeof(*V));if(!V)return EFI_OUT_OF_RESOURCES;
@@ -231,15 +257,17 @@ STATIC EFI_STATUS EFIAPI Start(EFI_DRIVER_BINDING_PROTOCOL *B,EFI_HANDLE Handle,
     if(S!=EFI_SUCCESS)gBS->CloseProtocol(Handle,&gEfiDiskIoProtocolGuid,B->DriverBindingHandle,Handle);}
   if(S!=EFI_SUCCESS){FreePool(V);return S;}V->Handle=Handle;V->MediaId=V->Block->Media->MediaId;
   V->Signature=VOL_SIG;V->Sfs=(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL){EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_REVISION,OpenVolume};
-  S=gBS->LocateProtocol(&mIoGuid,NULL,(VOID **)&V->Io);V->Writable=S==EFI_SUCCESS&&V->Io&&V->Io->Revision==1;
+  S=gBS->LocateProtocol(&mIoGuid,NULL,(VOID **)&V->Io);V->Writable=S==EFI_SUCCESS&&V->Io&&V->Io->Revision==2&&
+    V->Io->CanWrite(V->Io,Handle)==EFI_SUCCESS;
   UINT32 Id=mVolumeId++;AsciiSPrint(V->Mount,sizeof(V->Mount),"/ext4-%u/",Id);AsciiSPrint(V->Device,sizeof(V->Device),"ext4-%u",Id);
   V->Iface=(struct ext4_blockdev_iface){.open=OpenDevice,.close=CloseDevice,.bread=ReadDevice,.bwrite=WriteDevice,
     .ph_bsize=4096,.ph_bcnt=V->Block->Media->LastBlock+1,.ph_bbuf=V->BlockBuffer,.p_user=V};
   V->Dev=(struct ext4_blockdev){.bdif=&V->Iface,.part_size=V->Iface.ph_bcnt*4096};
-  int R=ext4_device_register(&V->Dev,V->Device);V->Registered=R==0;
+  // Android owns recovery of a dirty persist filesystem.
+  V->Writable=V->Writable&&CleanPersist(V);
+  int R=V->Failed?EIO:ext4_device_register(&V->Dev,V->Device);V->Registered=R==0;
   if(!R){R=ext4_mount(V->Device,V->Mount,!V->Writable);V->Mounted=R==0;}
   if(!R&&V->Dev.fs->read_only)V->Writable=FALSE;
-  if(!R&&V->Writable)R=ext4_recover(V->Mount);
   if(!R&&V->Writable){R=ext4_journal_start(V->Mount);V->Journal=R==0;}
   if(R||V->Failed){
     DEBUG((DEBUG_WARN,"PIANO_EXT4_MOUNT errno=%d io_failed=%u mounted=%u\n",R,V->Failed,V->Mounted));

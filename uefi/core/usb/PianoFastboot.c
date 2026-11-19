@@ -237,7 +237,7 @@ STATIC EFI_STATUS GetVar(PIANO_FASTBOOT *S, CONST CHAR8 *Name) {
   if(Equal(Name,"serialno"))return Reply(S,"OKAYSunUEFI-piano");
   if(Equal(Name,"version-bootloader"))return Reply(S,"OKAYSunUEFI-debug-v1");
   if(Equal(Name,"is-userspace"))return Reply(S,"OKAYno");
-  if(Equal(Name,"storage-policy"))return Reply(S,PianoFastbootStorageWritable(S)?"OKAYexplicit-partition-writes":"OKAYread-only");
+  if(Equal(Name,"storage-policy"))return Reply(S,PianoFastbootStorageWritable(S)?"OKAYsunuefi-partition-writes":"OKAYread-only");
   if(Equal(Name,"max-download-size"))return Reply(S,S->DiagnosticsOnly?"OKAY0x00000000":"OKAY0x04000000");
   if(Equal(Name,"SunUEFI:ram-boot")) {
     if(S->DiagnosticsOnly)return Reply(S,"OKAYdisabled");
@@ -254,7 +254,7 @@ STATIC EFI_STATUS GetVar(PIANO_FASTBOOT *S, CONST CHAR8 *Name) {
   }
   if(Equal(Name,"all")) {
     CONST CHAR8 *Rows[]={"INFOproduct:piano-sunuefi","INFOversion:0.4",
-      PianoFastbootStorageWritable(S)?"INFOstorage-policy:explicit-partition-writes":"INFOstorage-policy:read-only",
+      PianoFastbootStorageWritable(S)?"INFOstorage-policy:sunuefi-partition-writes":"INFOstorage-policy:read-only",
       S->DiagnosticsOnly?"INFOmax-download-size:0x00000000":"INFOmax-download-size:0x04000000"};
     for(UINTN I=0;I<ARRAY_SIZE(Rows);++I) {
       EFI_STATUS Status=Reply(S,Rows[I]);if(EFI_ERROR(Status))return Status;

@@ -115,7 +115,7 @@ int main(void){
   assert(write_bytes[2]==BLOCK_BYTES && write_lba[2]==BATCH_BYTES/BLOCK_BYTES+1);
   assert(read_bytes[2]==BLOCK_BYTES && read_lba[2]==write_lba[2] && read_bytes[3]==BLOCK_BYTES && read_lba[3]==write_lba[2]);
   for(UINTN I=RawBytes;I<sizeof(disk);++I)assert(disk[I]==0xa5);
-  protected=TRUE;stage(&S,Data,4096);command(&S,"flash:xbl_a","FAILdevice reports hardware write protection");
+  protected=TRUE;stage(&S,Data,4096);command(&S,"flash:xbl_a","FAILpartition is read-only");
   assert(!prepared && !written);protected=FALSE;
   command(&S,"flash:xbl_b","FAILunknown partition");assert(!prepared && !written);
   command(&S,"flash:../xbl_a","FAILinvalid partition information");assert(!prepared && !written);
