@@ -29,7 +29,8 @@ UEFI_FILES = {'requirements-build.txt', 'tools/build_android_product_module.py',
               'tools/product_payload_digest.py', 'tools/piano_vendor_inputs.py'}
 UEFI_PREFIXES = ('android/', 'uefi/', 'vendor/piano/', 'patches/firmware/',
                  'tools/prepare_product_')
-DISTROS = ['debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos']
+DISTROS = ['debian-gnome', 'debian-kde', 'debian-denial', 'nyarch-gnome',
+           'arch-denial', 'steamos']
 TARGETS = ('uefi', 'linux', *DISTROS)
 CHECK_ONLY_FILES = {'.github/workflows/host-checks.yml', 'tools/check_host.py',
                     'tools/build/check_patch_series.py'}
@@ -45,11 +46,11 @@ def shared_kinds(targets):
 
 
 def overlay_targets(targets):
-    """KDE and GNOME consume the same Debian overlay package generation."""
+    """Build one set of Debian overlays and the matched pacman package sets."""
     selected = set(targets)
-    result = ['debian-gnome'] if selected & {'debian-gnome', 'debian-kde'} else []
+    result = ['debian-gnome'] if any(name.startswith('debian-') for name in selected) else []
     # The shared Arch sensor package must have an ABI-matched SSC provider in both repositories.
-    if selected & {'nyarch-gnome', 'steamos'}:
+    if selected & {'nyarch-gnome', 'arch-denial', 'steamos'}:
         result.extend(('nyarch-gnome', 'steamos'))
     return result
 

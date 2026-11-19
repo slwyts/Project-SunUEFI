@@ -14,7 +14,7 @@
 | `SunUEFI-ESP` | `esp.sparse.img` | 启动镜像（ESP） |
 | `SunUEFI-Root-发行版` | `root-发行版.sparse.img` | 系统镜像（root） |
 
-发行版可选 `debian-gnome`、`debian-kde`、`nyarch-gnome` 或 `steamos`。ESP 和模块各只有一份，四个系统共用。手动选择 `uefi` 或 `linux` 的开发构建不含完整系统。`SunUEFI-UEFI-Fastboot` 只用于[临时启动](temporary-boot.md)，`logs` 用于排查构建问题，安装时都不需要。
+系统镜像可从[发行版列表](getting-started.md#选一个系统)中选择。ESP 和模块各只有一份，供所有系统使用。手动选择 `uefi` 或 `linux` 的开发构建不含完整系统。`SunUEFI-UEFI-Fastboot` 只用于[临时启动](temporary-boot.md)，`logs` 用于排查构建问题，安装时都不需要。
 
 把模块 ZIP 和两个镜像文件保存在平板上。模块 ZIP 不要解压，镜像文件放在任意位置，之后在助手里用文件选择器选取。刷写稀疏镜像需要 0.5.2 或更新的助手。
 
@@ -61,7 +61,7 @@
 保留其他软件包拥有的文件、修改过的设置和 `/var/lib/piano-sensors` 中的数据，
 再运行 `sudo pacman -Syu piano-sensors`。重启后用 `monitor-sensor` 查看传感器。
 
-更新内核前，运行 `sudo bootctl --print-esp-path` 确认启动分区已挂载。Nyarch 和 SteamOS 的新镜像挂在 `/boot`，Debian 挂在 `/boot/efi`。重启后如果新版内核不能启动，在 systemd-boot 的三秒菜单里选择之前的内核。重新刷系统镜像用于重装或更换发行版，会覆盖已有 Linux 文件；操作前先备份。
+更新内核前，运行 `sudo bootctl --print-esp-path` 确认启动分区已挂载。使用 pacman 的新镜像挂在 `/boot`，Debian 挂在 `/boot/efi`。重启后如果新版内核不能启动，在 systemd-boot 的三秒菜单里选择之前的内核。重新刷系统镜像用于重装或更换发行版，会覆盖已有 Linux 文件；操作前先备份。
 
 HyperOS 更新后，在引导助手的 **维护** 页点 **重新安装引导**，恢复合体 BOOT。
 

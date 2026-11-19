@@ -8,6 +8,7 @@ import shutil
 from package_bsp import payload, power_profiles_payload
 from desktop.power_migration import RETIRED_OVERLAY
 
+DESKTOPS = ('gnome', 'kde', 'denial')
 GNOME_PACKAGES = {
     'gdm3', 'gnome', 'task-gnome-desktop', 'gnome-control-center',
     'gnome-session', 'gnome-settings-daemon',
@@ -26,9 +27,17 @@ KDE_PACKAGES = [
     'fcitx5-frontend-qt6', 'kde-config-fcitx5', 'maliit-keyboard',
     'libpam-kwallet5', 'systemd-coredump',
 ]
+DENIAL_PACKAGES = ['sddm', 'zenity', 'fonts-noto-cjk']
 GNOME_PATHS = (
     'etc/gdm3', 'etc/dconf', 'usr/share/glib-2.0/schemas/90_piano.gschema.override',
 )
+
+
+def desktop_packages(packages, desktop):
+    if desktop == 'gnome':
+        return list(packages)
+    extras = {'kde': KDE_PACKAGES, 'denial': DENIAL_PACKAGES}[desktop]
+    return list(dict.fromkeys([p for p in packages if p not in GNOME_PACKAGES] + extras))
 
 
 def gnome_path(name):
@@ -96,7 +105,7 @@ def sid_recipe(text):
 
 
 def prepare(public, output, desktop):
-    if desktop not in ('gnome', 'kde'):
+    if desktop not in DESKTOPS:
         raise ValueError('Unsupported Debian desktop')
     destination = output / 'base-recipe'
     (destination / 'scripts').mkdir(parents=True)
@@ -109,7 +118,7 @@ def prepare(public, output, desktop):
         return {name for name in names if relative / name in excluded_paths}
 
     shutil.copytree(source_rootfs, destination / 'rootfs', symlinks=True, ignore=ignore_overlay)
-    if desktop == 'kde':
+    if desktop != 'gnome':
         for name in GNOME_PATHS:
             path = destination / 'rootfs/overlay' / name
             if path.is_symlink() or path.is_file():
@@ -125,20 +134,19 @@ def prepare(public, output, desktop):
     backports.unlink()
     # Codec SONAME dependencies come from FFmpeg, not the old stable ABI list.
     obsolete = {'firefox-esr', 'libavcodec61', 'qbootctl'}
-    if desktop == 'kde':
-        obsolete |= GNOME_PACKAGES
-        packages.extend(KDE_PACKAGES)
+    packages = desktop_packages(packages, desktop)
     packages = list(dict.fromkeys([p for p in packages if p not in obsolete] +
                                   ['chromium', 'ffmpeg', 'mesa-vulkan-drivers']))
     package_file.write_text('\n'.join(packages) + '\n')
     script = destination / 'scripts/build-rootfs.sh'
     text = sid_recipe(script.read_text())
-    if desktop == 'kde':
+    if desktop != 'gnome':
         old = 'ln -sf /usr/lib/systemd/system/gdm3.service "$ROOTFS/etc/systemd/system/display-manager.service"'
         if text.count(old) != 1:
             raise ValueError('Upstream display-manager selection changed')
         text = text.replace(old, 'ln -sf /usr/lib/systemd/system/sddm.service "$ROOTFS/etc/systemd/system/display-manager.service"')
-        text = text.replace('desktop=gnome', 'desktop=kde').replace('GNOME autologin', 'Plasma autologin')
+        name = {'kde': 'Plasma', 'denial': 'Denial'}[desktop]
+        text = text.replace('desktop=gnome', f'desktop={desktop}').replace('GNOME autologin', f'{name} autologin')
     script.write_text(text)
     return destination
 

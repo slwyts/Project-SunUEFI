@@ -10,7 +10,7 @@
 | 完整系统镜像（Debian GNOME / KDE、Nyarch GNOME、SteamOS） | ARM64 的 Linux，装有 Docker | `--privileged`，用于 chroot 和挂载 |
 
 GitHub Actions 使用 `ubuntu-26.04` 运行主机检查，用 `ubuntu-26.04-arm`
-构建固件、内核和四个发行版镜像。实际编译依赖来自下面的 Debian 构建容器，
+构建固件、内核和发行版镜像。实际编译依赖来自下面的 Debian 构建容器，
 与 GitHub runner 的 Ubuntu 版本分开管理。
 
 ## 取得源码和主机检查
@@ -68,13 +68,15 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
 
 ## 完整系统
 
-四个目标共用同一份内核和 UEFI，各自构建根系统：
+各目标共用同一份内核和 UEFI，各自构建根系统：
 
 | 目标 | 根系统 | 构建目录 |
 | --- | --- | --- |
 | `debian-gnome` | Debian sid + GNOME | `build/distros/release` |
 | `debian-kde` | Debian sid + KDE Plasma | `build/distros/release` |
+| `debian-denial` | Debian sid + Denial | `build/distros/release` |
 | `nyarch-gnome` | Arch Linux ARM + GNOME（Nyarch） | `build/distros/nyarch-gnome-piano` |
+| `arch-denial` | Arch Linux ARM + Denial | `build/distros/arch-denial-piano` |
 | `steamos` | Valve ARM64 SteamOS | `build/distros/steamos-piano` |
 
 [发布配置](../../config/release.json)选择内核版本和[补丁系列](../../patches/linux/README.md)，
@@ -84,11 +86,11 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
 
 重建内核时，旧的产物清单先作废，编译完成后才原子发布新的，避免旧 Image 配新模块。
 
-### Debian GNOME 和 Debian KDE
+### Debian
 
 ```sh
 ./build.sh linux
-./build.sh release-rootfs                    # KDE 加 --desktop kde
+./build.sh release-rootfs                    # 也可选 --desktop kde 或 --desktop denial
 ./build.sh package --root-size-mib 8192
 python3 tools/package_sparse_images.py --bundle artifacts/release --output artifacts/fastboot-sparse
 ```
@@ -107,11 +109,11 @@ Debian ARM64 `systemd-boot-efi` 包；默认 BLS 构建不需要 ukify 或 stub�
 
 initramfs 的 BusyBox、分区识别工具和依赖库也由 `config/release.json` 固定并校验，
 在临时目录解包，不从各发行版根系统取库。内核模块和键盘固件使用共享产品的同一份输入，
-因此同次构建的四个系统可以使用同一个启动镜像。
+因此同次构建的系统可以使用同一个启动镜像。
 
 基础系统已经构建过时，用 `./build.sh release-rootfs --resume` 更新内核、硬件包和配置，不重建桌面根。
 需要重编的覆盖包沿用 CI 的独立 sid 构建根。续建保留桌面根的 SunUEFI 软件源，覆盖包编译只使用 Debian 官方源。
-`./build.sh rootfs --distro ID --desktop ID --plan` 会列出其他发行版和桌面组合的计划，目前只有上表的四个目标能完整构建。
+`./build.sh rootfs --distro ID --desktop ID --plan` 会列出发行版和桌面组合的计划，上表是成品构建目标。
 
 内核和桌面包的并行度默认按 CPU 配额与可用内存选择，可用 `--jobs` 覆盖。
 桌面包共用 `build/ccache`（或 `CCACHE_DIR`），FFmpeg、Mutter、GSD 和 GDM
@@ -135,7 +137,7 @@ sudo ./build.sh ffmpeg --sysroot build/distros/debian-sid/rootfs
 
 ### 共用构建与缓存
 
-Build products 先准备一次 ARM64 构建容器，再并行构建 UEFI 和 Android 模块、内核包、设备配置和相机包。覆盖包随后按 Debian、Nyarch、SteamOS 分别构建，Debian GNOME 和 KDE 共用一套。发布阶段签名并上传 R2，从公开域名验签和核对索引后，四个系统才从对应的软件源安装这一批包。中间产物不增加用户下载项，各阶段的日志仍合并进 `logs.zip`。
+Build products 先准备一次 ARM64 构建容器，再并行构建 UEFI 和 Android 模块、内核包、设备配置和相机包。覆盖包随后按 Debian、Arch Linux ARM、SteamOS 分别构建；同一发行版的不同桌面共用硬件覆盖包。发布阶段签名并上传 R2，从公开域名验签和核对索引后，各系统才从对应的软件源安装这一批包。中间产物不增加用户下载项，各阶段的日志仍合并进 `logs.zip`。
 
 Debian 覆盖包在由官方签名 sid 源引导的 ARM64 构建根中编译。各包按原生配方安装构建依赖和运行依赖。完整桌面、文字编辑器和 Chromium 由系统镜像阶段安装；这些应用的依赖不影响覆盖包构建。
 
@@ -200,7 +202,7 @@ Debian 镜像用 `update-alternatives` 选择 `wireless-regdb` 包自带的上�
 `sudo update-alternatives --set regulatory.db /lib/firmware/regulatory.db-upstream`，
 重启后内核会重新读取数据库。
 
-### Nyarch GNOME 和 SteamOS
+### Arch Linux ARM 和 SteamOS
 
 ```sh
 ./build.sh uefi && ./build.sh module && ./build.sh linux
@@ -213,7 +215,9 @@ Debian 镜像用 `update-alternatives` 选择 `wireless-regdb` 包自带的上�
 python3 tools/package_sparse_images.py --bundle artifacts/release --output artifacts/fastboot-sparse
 ```
 
-SteamOS 把命令里的 `nyarch-gnome-piano` 换成 `steamos-piano`。Nyarch 从 Arch Linux ARM 基础系统开始，通过签名仓库安装软件包，再构建 Nyarch 应用和 Piano 的原生硬件包，源码和扩展选择在 `config/nyarch.json`。SteamOS 的构建细节见 [SteamOS ARM64](linux/steamos.md)。
+Arch Denial 使用 `./build.sh arch-denial-rootfs`，路径换成 `arch-denial-piano`；SteamOS 使用 `./build.sh steamos-rootfs`，路径换成 `steamos-piano`。Nyarch 从 Arch Linux ARM 基础系统开始，通过签名仓库安装软件包，再构建 Nyarch 应用和 Piano 的原生硬件包，源码和扩展选择在 `config/nyarch.json`。SteamOS 的构建细节见 [SteamOS ARM64](linux/steamos.md)。
+
+两种 Denial 镜像从 [Denial 签名源](https://github.com/denialwm/denial/blob/main/docs/INSTALL.md#repository-trust-paths)安装合成器及其匹配的 Flutter Engine。Debian 只从该源取 Denial 自身的包，系统依赖仍用 sid；Arch Linux ARM 仍使用自己的滚动源。SDDM 加载 Denial 原版 Wayland 会话，默认使用触控布局。相机和其他硬件继续用 Piano 的标准驱动和发行版软件包，不安装 Phonewave 的板级服务或 Android 容器。Denial 的自动旋转目前没有接入标准 SensorProxy，可在显示设置手动选方向。
 
 已有隔离的 ARM64 pacman 构建根目录时，可单独构建并安装完整 Mesa 包；此操作会修改指定的构建根目录，不要直接使用已交付的产品根目录：
 
@@ -226,7 +230,7 @@ sudo ./build.sh mesa build/mesa-steamos --format pacman --rootfs build/distros/s
 
 两种产品构建都会检查 Mesa 源码、完整驱动选项和 ARM64 包。CI 分别缓存原生包；复用前核对来源、配方与包摘要，安装后重新检查 ELF 和目标系统的依赖，避免把不匹配的滚动发行版缓存带入镜像。
 
-四套产品由 APT 或 pacman 安装 `piano-firmware-display`，根系统组装核对两份
+各产品由 APT 或 pacman 安装 `piano-firmware-display`，根系统组装核对两份
 校准的归属、大小与 SHA256。CI 共用这两个包，只用于组装镜像，不上传到软件源。
 其他设备固件仍按 `vendor/firmware/` 下的组件清单校验后安装。
 恢复已生成的根系统时，只迁移内容吻合且未被其他包持有的旧校准文件。
@@ -243,7 +247,7 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 ## 软件包与更新标准化
 
 硬件支持应能安装到干净的受支持发行版中，再通过发行版包管理器升级、卸载和
-回退。四个产品镜像是这些软件包和首次安装默认设置的组合，不应成为硬件适配
+回退。产品镜像是这些软件包和首次安装默认设置的组合，不应成为硬件适配
 唯一能生效的环境。下面区分已经使用的原生包和仍由构建脚本复制的文件；
 未完成的实施工作见[发布要求中的开发清单](release.md#未完成的开发工作)。
 
@@ -252,7 +256,7 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 | Linux 内核与模块 | Debian 的 `bindeb-pkg` 和 Arch 的 `pacman-pkg` 原生包 | 随包安装并维护匹配的模块，由元包选择最新版本 |
 | 设备树 | 组合板级 DTB、overlay 和绑定转换，按内核版本打包 | 生成启动文件时选取同版文件，逐步收敛到内核源码中的板级设备树 |
 | Linux 设备固件 | 显示校准由 `piano-firmware-display` 安装；触控固件可单独[构建本地软件包](../../linux/bsp/README.md#本地固件包)，其他固件仍由组装脚本安装 | 发行版提供通用固件，设备包补齐板级固件 |
-| ALSA UCM、udev、笔校准及音频拓扑 | 四个产品安装 `piano-device-config` 和 `piano-audio-topology` | 开源拓扑随独立包更新，剩余硬件运行文件继续按组件打包 |
+| ALSA UCM、udev、笔校准及音频拓扑 | 成品安装 `piano-device-config` 和 `piano-audio-topology` | 开源拓扑随独立包更新，剩余硬件运行文件继续按组件打包 |
 | Mesa、FFmpeg | 已有 Debian 和 pacman 原生包 | 保留目标发行版完整配方、功能和 ABI，按软件源正常更新 |
 | 传感器 | Debian 提供六个原生包；Nyarch 与 SteamOS 共用 `piano-sensors`，FastRPC、libssc 和 SensorProxy 按各自的库接口打包 | 继续通过标准 SensorProxy 接口提供照度和姿态 |
 | PipeWire | Debian 重建原生同版包组；Nyarch 和 SteamOS 重建采集插件 | 保留发行版的依赖关系，升级到包含修复的上游版本后删除回移 |
@@ -344,7 +348,7 @@ systemd-boot 本身由发行版提供。成品启用 systemd 的 `systemd-boot-u
 用软件包里的 EFI 文件更新启动分区上的副本，不需要写固件变量。`piano-boot-config`
 让该服务等已安排的启动分区挂载完成；未配置启动分区挂载时，不额外启动挂载任务。
 
-Nyarch 和 SteamOS 把 ESP 直接挂在 `/boot`，内核、initramfs 和启动菜单在同一个分区。
+Nyarch、Arch Denial 和 SteamOS 把 ESP 直接挂在 `/boot`，内核、initramfs 和启动菜单在同一个分区。
 Debian 把 ESP 挂在 `/boot/efi`，APT 管理的内核文件仍留在根文件系统的 `/boot`。
 自己安装发行版时，也可以选择 `/efi` 等标准位置。用 `bootctl --print-esp-path`
 查看 ESP，用 `bootctl --print-boot-path` 查看 `kernel-install` 写启动文件的位置。
@@ -368,7 +372,7 @@ Arch 系运行 `sudo kernel-install add-all`；Debian 的内核文件在 `/boot`
 
 启动文件按安装标识及内核版本命名，菜单名称取自目标系统的 `os-release`；
 仍可通过标准 UEFI 启动项改用其他引导程序。
-四产品共用的初装启动项不设排序键，升级后由发行版生成的入口优先；
+共用的初装启动项不设排序键，升级后由发行版生成的入口优先；
 仍可从菜单选择旧入口，也可改用自己的启动参数、名称和更新方式。
 
 回退必须同时保留旧启动文件、模块和 DTB。Debian 和 Arch 的设备内核都按
@@ -442,7 +446,7 @@ GitHub Actions 的 **Build products** 在 `main` 上有相关改动时自动运�
 | `SunUEFI-Module` | Android 引导助手模块 ZIP |
 | `SunUEFI-UEFI-Fastboot` | 用于 `fastboot boot` 的独立 UEFI 镜像 |
 | `SunUEFI-ESP` | 各发行版共用的稀疏 ESP 镜像 |
-| `SunUEFI-Root-发行版` | 对应发行版的稀疏 root 镜像，发行版为 `debian-gnome`、`debian-kde`、`nyarch-gnome`、`steamos` |
+| `SunUEFI-Root-发行版` | 对应[构建目标](#完整系统)的稀疏 root 镜像 |
 | `logs` | 合并的构建日志、来源清单和校验记录 |
 
 模块、UEFI 镜像和 ESP 每次只上传一份，root 镜像按发行版分别上传。安装时把所选发行版的 root 镜像和同一次构建的 ESP 配套使用，步骤见[安装指南](../user/install-from-artifact.md)。

@@ -11,16 +11,18 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 import ci_build_targets as targets
 
-PRODUCTS = ['debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos']
+PRODUCTS = ['debian-gnome', 'debian-kde', 'debian-denial', 'nyarch-gnome',
+            'arch-denial', 'steamos']
 
 
 class CiBuildTargetsTests(unittest.TestCase):
     def test_arch_images_share_two_abi_matched_provider_sets(self):
-        for target in ('nyarch-gnome', 'steamos'):
+        for target in ('nyarch-gnome', 'arch-denial', 'steamos'):
             selected = targets.select([], target)
             self.assertEqual(selected, [target])
             self.assertEqual(targets.overlay_targets(selected), ['nyarch-gnome', 'steamos'])
         self.assertEqual(targets.overlay_targets(['debian-kde']), ['debian-gnome'])
+        self.assertEqual(targets.overlay_targets(['debian-denial']), ['debian-gnome'])
         self.assertEqual(targets.overlay_targets(['linux']), [])
 
     def test_domains_and_shared_inputs(self):

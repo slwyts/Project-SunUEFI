@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Install the shared Piano hardware sources into a completed Arch desktop.
 
-The native Mesa, sensor and Nyarch application packages must already be
-installed through pacman. This assembles firmware, kernel modules and the same
-static runtime used by Debian; it never reads the host's live device state.
+The native Mesa and sensor packages must already be installed through pacman.
+This assembles firmware, kernel modules and the same static runtime used by
+Debian; it never reads the host's live device state.
 """
 import argparse
 import json
@@ -133,7 +133,13 @@ def stage(args):
     if (helper_kernel['commit'], helper_kernel['release']) != (
             kernel['source_commit'], kernel['kernel_release']):
         raise ValueError('Rebuild the runtime helpers for the selected kernel')
-    steamos = getattr(args, 'desktop', 'nyarch') == 'steamos'
+    product = getattr(args, 'desktop', 'nyarch')
+    distro, desktop_name = {
+        'nyarch': ('nyarch', 'gnome'),
+        'steamos': ('steamos', 'kde'),
+        'denial': ('arch', 'denial'),
+    }[product]
+    steamos = product == 'steamos'
     published_packages = getattr(args, 'published_packages', None)
     device_configuration = getattr(args, 'device_configuration', None)
     topology = getattr(args, 'audio_topology_package', None)
@@ -142,8 +148,7 @@ def stage(args):
         device_configuration, topology, power = overlay_packages.install_local_arch_bsp(root)
     if device_configuration is None or topology is None or power is None:
         raise ValueError('Shared device packages must be installed together')
-    userspace.stage(root, ROOT / cfg['debian']['source'],
-                    desktop='kde' if steamos else 'gnome')
+    userspace.stage(root, ROOT / cfg['debian']['source'], desktop=desktop_name)
     # These are generated files in the build root; refresh them on --resume.
     adapters = output / 'piano-adapters'
     if adapters.exists():
@@ -171,7 +176,7 @@ def stage(args):
     (root / 'usr/lib/systemd/system/ssh.service.d/piano.conf').unlink(missing_ok=True)
     # Standard libinput hardware defaults; no desktop-specific name spoofing.
     release.apply_policy(root, output, cfg, pacman=True)
-    if not steamos:
+    if product == 'nyarch':
         put(root, 'usr/share/gnome-settings-daemon/ambient-profiles/piano.ini',
             (ROOT / 'linux/desktops/gnome/ambient-policy/piano.ini').read_text())
     put(root, 'etc/piano/linux-debug.conf', 'usb=acm-ncm\nshell=1\nrecovery_seconds=0\n')
@@ -198,13 +203,20 @@ def stage(args):
         guest(['systemctl', 'unmask', 'sleep.target', 'suspend.target'])
         guest(['systemctl', 'mask', 'hibernate.target',
                'hybrid-sleep.target', 'suspend-then-hibernate.target'])
-        guest(['systemctl', 'enable', 'sddm' if steamos else 'gdm', 'NetworkManager', 'sshd', 'bluetooth',
+        guest(['systemctl', 'enable', 'NetworkManager', 'sshd', 'bluetooth',
                'piano-camerad', 'piano-hostkeys', 'adsprpcd-sensorspd', 'tuned-ppd.service',
                'systemd-boot-update.service'])
+        if product != 'denial':
+            guest(['systemctl', 'enable', 'sddm' if steamos else 'gdm'])
         guest(['systemctl', 'set-default', 'graphical.target'])
     if steamos:
         from stage_steamos_desktop import configure
         desktop = configure(root, published_packages=published_packages is not None)
+    elif product == 'denial':
+        from build.denial import install_arch
+        desktop = install_arch(root)
+        if published_packages is None:
+            install_repository(root, steamos=False)
     else:
         from prepare_nyarch_material import prepare, UUID
         extension_bundle = output / 'nyarch-shell-extensions'
@@ -252,9 +264,9 @@ def stage(args):
     verify_installed(root, 'pacman', kernel['kernel_release'])
     (output / 'packages.tsv').write_text(packages)
     record = {'status': 'HOST_BUILT_ROOT_NOT_BOOT_VERIFIED',
-              'distro': 'steamos' if steamos else 'nyarch',
+              'distro': distro,
               'base': 'Valve SteamOS ARM64' if steamos else 'Arch Linux ARM rolling',
-              'desktop': 'kde' if steamos else 'gnome', 'kernel_release': kernel['kernel_release'],
+              'desktop': desktop_name, 'kernel_release': kernel['kernel_release'],
               'kernel_commit': kernel['source_commit'], 'kernel_manifest_sha256': kernel_hash,
               'root_policy': 'LABEL=PIANOROOT', 'login': cfg['login'],
               'desktop_configuration': desktop, 'initramfs': boot, 'clock_epoch': clock,
@@ -272,7 +284,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('rootfs', 'kernel', 'runtime', 'bootstrap-sysroot'):
         parser.add_argument('--' + name, type=Path, required=True)
-    parser.add_argument('--desktop', choices=('nyarch', 'steamos'), default='nyarch')
+    parser.add_argument('--desktop', choices=('nyarch', 'steamos', 'denial'), default='nyarch')
     parser.add_argument('--desktop-source', type=Path)
     parser.add_argument('--extensions', type=Path, default=ROOT / 'build/nyarch-extensions')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)

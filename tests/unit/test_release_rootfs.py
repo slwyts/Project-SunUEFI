@@ -55,9 +55,17 @@ class ReleaseRootTests(unittest.TestCase):
         self.assertTrue({'plasma-desktop', 'powerdevil', 'upower', 'chromium'} <= set(packages))
         self.assertFalse(any(p.startswith('ibus') or p.startswith('gnome') for p in packages))
 
+    def test_denial_selects_its_base_packages_without_gnome_or_plasma(self):
+        result = self.planned('denial')
+        packages = set(result['config']['debian']['extra_packages'])
+        self.assertTrue({'chromium', 'sddm', 'fonts-noto-cjk'} <= packages)
+        self.assertTrue({'gnome', 'gnome-shell', 'gdm3', 'plasma-workspace', 'denial'}.isdisjoint(packages))
+        self.assertIn('install Denial from its signed APT source and enable its mobile session', result['steps'])
+
     def test_every_release_desktop_requires_native_power_profiles(self):
         for desktop, packages in (('gnome', {'gnome-shell', 'gdm3'}),
-                                  ('kde', {'plasma-workspace', 'sddm', 'powerdevil'})):
+                                  ('kde', {'plasma-workspace', 'sddm', 'powerdevil'}),
+                                  ('denial', {'denial', 'denial-flutter-engine', 'sddm'})):
             with self.subTest(desktop=desktop):
                 config = self.planned(desktop)['config']
                 installed = dict.fromkeys(
@@ -311,7 +319,7 @@ class ReleaseRootTests(unittest.TestCase):
         manifest = self.output / 'build-manifest.txt'
         with patch.object(builder.modules, 'inspect', return_value=(self.m, 'b' * 64)), \
                 patch.object(builder, 'repository', return_value='a' * 40):
-            for desktop in ('gnome', 'kde'):
+            for desktop in ('gnome', 'kde', 'denial'):
                 manifest.write_text(f'suite=sid arch=arm64 desktop={desktop} firmware=not-included\n')
                 result = builder.plan(self.kernel, self.source, self.output, root=self.root,
                                       desktop=desktop, resume=True)
@@ -338,6 +346,14 @@ class ReleaseRootTests(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(ValueError, 'sid only'):
                         builder.debian_archive(self.rootfs)
+        denial = 'trixie trixie Denial Packages\n'
+        with patch.object(builder, 'capture', return_value='sid unstable Debian Packages\n' + denial):
+            self.assertEqual(builder.debian_archive(self.rootfs, 'denial')['suite'], 'sid')
+            with self.assertRaisesRegex(ValueError, 'sid only'):
+                builder.debian_archive(self.rootfs)
+        with patch.object(builder, 'capture', return_value=denial):
+            with self.assertRaisesRegex(ValueError, 'sid only'):
+                builder.debian_archive(self.rootfs, 'denial')
 
     def test_real_shell_selector_rejects_android_uuid_and_duplicates(self):
         guard = BOOT[BOOT.index('selected=0'):BOOT.index('dma_routes() {')]

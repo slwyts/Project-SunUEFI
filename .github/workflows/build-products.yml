@@ -31,7 +31,7 @@ on:
       target:
         description: Product to build
         type: choice
-        options: [all, uefi, linux, debian-gnome, debian-kde, nyarch-gnome, steamos]
+        options: [all, uefi, linux, debian-gnome, debian-kde, debian-denial, nyarch-gnome, arch-denial, steamos]
         default: all
 
 permissions:

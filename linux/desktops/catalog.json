@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "matrix": {
-    "debian": {"gnome": "candidate", "kde": "candidate", "dde": "unavailable"},
-    "ubuntu": {"gnome": "candidate", "kde": "candidate", "dde": "unavailable"},
-    "arch": {"gnome": "candidate", "kde": "candidate", "dde": "unavailable"},
-    "deepin": {"gnome": "unavailable", "kde": "unavailable", "dde": "explicit-base-and-package-check"}
+    "debian": {"gnome": "candidate", "kde": "candidate", "dde": "unavailable", "denial": "candidate"},
+    "ubuntu": {"gnome": "candidate", "kde": "candidate", "dde": "unavailable", "denial": "unavailable"},
+    "arch": {"gnome": "candidate", "kde": "candidate", "dde": "unavailable", "denial": "candidate"},
+    "deepin": {"gnome": "unavailable", "kde": "unavailable", "dde": "explicit-base-and-package-check", "denial": "unavailable"}
   },
   "desktops": {
     "gnome": {
@@ -21,6 +21,15 @@
       "scale_percent": 200, "scale_scope": "Qt default; per-output compositor scaling remains user configurable",
       "osk": "Maliit only when target package and desktop entry are present, Wayland session required",
       "rotation": "sensor-dependent, not hardware verified"
+    },
+    "denial": {
+      "apt_packages": ["chromium", "fonts-noto-cjk", "mesa-vulkan-drivers", "sddm", "pipewire", "wireplumber"],
+      "arch_packages": ["chromium", "bluez", "bluez-utils", "alsa-utils", "alsa-ucm-conf", "sddm", "pipewire-audio",
+                        "pipewire-pulse", "upower", "wireplumber", "vulkan-freedreno"],
+      "display_manager": {"apt": "sddm", "arch": "sddm"},
+      "scale_scope": "Denial selects output scaling; it can be changed in Display settings",
+      "osk": "Denial Mobile built-in screen keyboard",
+      "rotation": "Manual rotation in Display settings"
     },
     "dde": {
       "apt_packages": ["dde", "dde-daemon", "dde-control-center", "dde-file-manager", "lightdm"],

@@ -24,6 +24,7 @@ FIRMWARE_INPUTS = ('build.sh', 'Makefile', '.gitmodules', 'sources.lock.json',
                    'config/uefi-ext4.json', 'config/simpleinit.static.uefi.cfg', 'android',
                    ':(exclude,literal)tools/check_host.py',
                    ':(exclude,literal)tools/build/check_patch_series.py',
+                   ':(exclude,literal)tools/build/denial.py',
                    ':(exclude,literal)tools/package/85-piano-boot-space.install',
                    ':(exclude,literal)tools/package/boot.py',
                    ':(exclude,literal)tools/package/camera.py',
@@ -41,7 +42,8 @@ KERNEL_INPUTS = ('build.sh', 'sources.lock.json', 'config/release.json',
                 'tools/package/boot.py', 'tools/package/v4l2loopback.py', 'tools/package_release.py',
                 'tools/compose_piano_dtb.py', 'tools/prepare_boot_files.py',
                 'tools/build_piano_runtime_helpers.py', 'tools/build/overlay_packages.py',
-                'vendor/piano-linux/board.dtb', 'linux/dts', 'config/keys')
+                'vendor/piano-linux/board.dtb', 'linux/dts',
+                'config/keys/sunuefi-archive-keyring.gpg')
 KERNEL_BUILD_FILES = ('.config', 'Makefile', 'Module.symvers', 'include', 'scripts',
                       'arch/arm64/include/generated')
 

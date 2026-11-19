@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Nyarch GNOME from current ARM64 packages and the shared Piano BSP."""
+"""Build Arch Linux ARM images with Nyarch GNOME or Denial and the Piano BSP."""
 import argparse
 import json
 import os
@@ -22,15 +22,32 @@ from build_steamos_rootfs import kde_package_is_current, sensor_recipes
 from prepare_steamos_rootfs import download
 
 ROOT = Path(__file__).resolve().parents[1]
+OVERLAY_TARGET = 'nyarch-gnome'
+SHARED_OVERLAYS = frozenset(('mesa', 'fastrpc', 'libssc', 'iio-sensor-proxy', 'ffmpeg',
+                             'pipewire', 'libwacom', 'libfprint', 'fprintd'))
 
 
 def run(*args, **kwargs):
     return subprocess.run([str(x) for x in args], check=True, **kwargs)
 
 
+def shared_overlays(published):
+    repository, packages, components = published
+    return (repository,
+            {name: row for name, row in packages.items() if row['component'] in SHARED_OVERLAYS},
+            {name: row for name, row in components.items() if name in SHARED_OVERLAYS})
+
+
 def build(args):
-    target = 'nyarch-gnome'
-    output, package_output, published = overlay_packages.pacman_build_mode(args, target, ROOT)
+    denial = getattr(args, 'desktop', 'nyarch') == 'denial'
+    target = 'arch-denial' if denial else OVERLAY_TARGET
+    if denial and getattr(args, 'packages_only', None):
+        raise ValueError('Build the shared Arch packages with nyarch-gnome-rootfs --packages-only')
+    if args.output is None:
+        args.output = ROOT / 'build/distros' / (target + '-piano')
+    output, package_output, published = overlay_packages.pacman_build_mode(args, OVERLAY_TARGET, ROOT)
+    if denial and published:
+        published = shared_overlays(published)
     if os.geteuid() or not output.is_relative_to(ROOT / 'build/distros'):
         raise ValueError('Use root and an output below build/distros')
     cfg = json.loads((ROOT / 'config/nyarch.json').read_text())
@@ -52,12 +69,20 @@ def build(args):
         raise ValueError('Output already exists; use --resume for this build')
     if not output.exists():
         options = assemble_rootfs.parser().parse_args([
-            '--distro', 'arch', '--desktop', 'gnome', '--execute',
+            '--distro', 'arch', '--desktop', 'denial' if denial else 'gnome', '--execute',
             '--output', str(output), '--base-file', str(archive),
             '--base-url', cfg['base_url'], '--base-sha256', base_hash])
-        assemble_rootfs.execute(assemble_rootfs.plan(options))
-    elif not (output / 'manifest.json').exists():
-        raise ValueError('The base desktop assembly did not complete')
+        plan = assemble_rootfs.plan(options)
+        if denial:
+            assemble_rootfs.execute(plan, defer_denial=True)
+        else:
+            assemble_rootfs.execute(plan)
+    else:
+        manifest = output / 'manifest.json'
+        if not manifest.is_file():
+            raise ValueError('The base desktop assembly did not complete')
+        if json.loads(manifest.read_text()).get('desktop') != ('denial' if denial else 'gnome'):
+            raise ValueError('Resume must use the same desktop as the existing build')
 
     kernel = ROOT / 'artifacts/kernels/release'
     source = Path(json.loads((ROOT / 'build/release/source-manifest.json').read_text())['worktree'])
@@ -79,13 +104,14 @@ def build(args):
     if published:
         # These are also product runtime dependencies, including user-facing
         # packages normally installed while building the four Nyarch apps.
-        with release.build_resolver(root), build_nyarch_apps.guest_environment(root) as guest:
-            guest(['pacman', '-Syu', '--needed', '--noconfirm', *build_nyarch_apps.PACKAGES])
+        if not denial:
+            with release.build_resolver(root), build_nyarch_apps.guest_environment(root) as guest:
+                guest(['pacman', '-Syu', '--needed', '--noconfirm', *build_nyarch_apps.PACKAGES])
         records = overlay_packages.install_arch_overlays(root, kernel, target, published)
     else:
         sensor_source, _ = sensors.source_workspace(inputs / 'sensors', policy['sensors'])
         records, packages = build_overlays(root, output, inputs, sensor_source, applications,
-                                           refresh=not package_output)
+                                           refresh=not package_output, nyarch_desktop=not denial)
         if package_output:
             commit = json.loads((kernel / 'manifest.json').read_text())['source_commit']
             packages.update(overlay_packages.fingerprint_pacman_packages(
@@ -97,6 +123,36 @@ def build(args):
         records['device_configuration'], records['audio_topology_package'], \
             records['power_profiles_package'] = overlay_packages.install_local_arch_bsp(root)
 
+    desktop, extensions = nyarch_material(cfg, inputs) if not denial else (None, None)
+    runtime = output / 'runtime'
+    from build_release_helpers import inputs_current
+    if (runtime / 'manifest.json').is_file() and not inputs_current(runtime):
+        shutil.rmtree(runtime)
+    if not (runtime / 'manifest.json').exists():
+        run(sys.executable, ROOT / 'tools/build_release_helpers.py',
+            '--kernel', kernel, '--source', source,
+            '--kernel-build', kernel_build,
+            '--output', runtime, '--sysroot', args.bootstrap_sysroot.resolve(),
+            '--firmware-root', root)
+    stage_arch_piano.stage(argparse.Namespace(
+        rootfs=root, kernel=kernel, runtime=runtime,
+        bootstrap_sysroot=args.bootstrap_sysroot, desktop='denial' if denial else 'nyarch',
+        desktop_source=desktop, extensions=extensions,
+        published_packages=published[1] if published else None,
+        device_configuration=records['device_configuration'],
+        audio_topology_package=records['audio_topology_package'],
+        power_profiles_package=records['power_profiles_package']))
+    manifest = output / 'manifest.json'
+    record = json.loads(manifest.read_text())
+    record.update(base_archive_sha256=base_hash, **records)
+    if not denial:
+        record['nyarch_inputs'] = cfg
+    if published:
+        record['overlay_manifest_sha256'] = release.digest(args.published_packages)
+    manifest.write_text(json.dumps(record, indent=2) + '\n')
+
+
+def nyarch_material(cfg, inputs):
     desktop = inputs / 'desktop'
     if not desktop.exists():
         run('git', 'clone', '--filter=blob:none', '--no-checkout',
@@ -118,34 +174,10 @@ def build(args):
                     if name.is_absolute() or '..' in name.parts:
                         raise ValueError('Invalid extension archive path')
                 archive_file.extractall(destination)
-
-    runtime = output / 'runtime'
-    from build_release_helpers import inputs_current
-    if (runtime / 'manifest.json').is_file() and not inputs_current(runtime):
-        shutil.rmtree(runtime)
-    if not (runtime / 'manifest.json').exists():
-        run(sys.executable, ROOT / 'tools/build_release_helpers.py',
-            '--kernel', kernel, '--source', source,
-            '--kernel-build', kernel_build,
-            '--output', runtime, '--sysroot', args.bootstrap_sysroot.resolve(),
-            '--firmware-root', root)
-    stage_arch_piano.stage(argparse.Namespace(
-        rootfs=root, kernel=kernel, runtime=runtime,
-        bootstrap_sysroot=args.bootstrap_sysroot, desktop='nyarch',
-        desktop_source=desktop, extensions=extensions,
-        published_packages=published[1] if published else None,
-        device_configuration=records['device_configuration'],
-        audio_topology_package=records['audio_topology_package'],
-        power_profiles_package=records['power_profiles_package']))
-    manifest = output / 'manifest.json'
-    record = json.loads(manifest.read_text())
-    record.update(base_archive_sha256=base_hash, nyarch_inputs=cfg, **records)
-    if published:
-        record['overlay_manifest_sha256'] = release.digest(args.published_packages)
-    manifest.write_text(json.dumps(record, indent=2) + '\n')
+    return desktop, extensions
 
 
-def build_overlays(root, output, inputs, sensor_source, apps, *, refresh):
+def build_nyarch_overlays(root, output, recipes, apps, *, refresh):
     if not apps.exists():
         build_nyarch_apps.prepare_sources(apps)
     nyarch = output / 'packages/nyarch'
@@ -157,10 +189,6 @@ def build_overlays(root, output, inputs, sensor_source, apps, *, refresh):
             app_records = build_nyarch_apps.build(root, apps, nyarch, refresh=refresh)
     packages = {'nyarch': (nyarch, {row['package']: {'sha256': row['sha256']}
                                    for row in app_records})}
-    recipes = inputs / 'recipes'
-    sensor_recipes(recipes, sensor_source)
-    mesa = recipes / 'mesa'
-    arch_mesa.recipe(mesa)
     gsd = recipes / 'gnome-settings-daemon'
     if gsd.exists():
         shutil.rmtree(gsd)
@@ -176,16 +204,34 @@ def build_overlays(root, output, inputs, sensor_source, apps, *, refresh):
                     control_center, dirs_exist_ok=True)
     shutil.copy2(ROOT / 'linux/desktops/gnome/patches/control-center/0001-about-gunyah-primary-domain.patch',
                  control_center)
-    # SteamOS's protobuf compatibility rebuild is intentionally not selected
-    # for Arch: its rolling packages already share the current library ABI.
-    for name in ('mutter', 'control-center', 'fastrpc', 'libssc', 'iio-sensor-proxy'):
+    for name in ('mutter', 'control-center'):
         directory = output / 'packages' / name
         if not kde_package_is_current(directory, recipes / name):
             build_arch_package.build(root, recipes / name, directory)
         else:
             build_arch_package.install_cached(root, directory)
         packages[name] = overlay_packages.pacman_outputs(directory)
-    mesa_packages = ROOT / 'build/mesa-pacman/nyarch-gnome'
+    return {'nyarch_applications': app_records}, packages
+
+
+def build_overlays(root, output, inputs, sensor_source, apps, *, refresh, nyarch_desktop=True):
+    records, packages = {}, {}
+    recipes = inputs / 'recipes'
+    if nyarch_desktop:
+        records, packages = build_nyarch_overlays(root, output, recipes, apps, refresh=refresh)
+    sensor_recipes(recipes, sensor_source)
+    # SteamOS needs a separate protobuf compatibility rebuild. Arch uses
+    # its rolling repository's existing library ABI.
+    for name in ('fastrpc', 'libssc', 'iio-sensor-proxy'):
+        directory = output / 'packages' / name
+        if not kde_package_is_current(directory, recipes / name):
+            build_arch_package.build(root, recipes / name, directory)
+        else:
+            build_arch_package.install_cached(root, directory)
+        packages[name] = overlay_packages.pacman_outputs(directory)
+    mesa = recipes / 'mesa'
+    arch_mesa.recipe(mesa)
+    mesa_packages = ROOT / 'build/mesa-pacman' / OVERLAY_TARGET
     if not arch_mesa.is_current(mesa_packages, mesa):
         if mesa_packages.exists():
             shutil.rmtree(mesa_packages)
@@ -194,14 +240,15 @@ def build_overlays(root, output, inputs, sensor_source, apps, *, refresh):
     else:
         arch_mesa.install_cached(root, mesa_packages)
     packages['mesa'] = overlay_packages.pacman_outputs(mesa_packages)
-    gsd_packages = output / 'packages/gnome-settings-daemon'
-    gsd_manifest = gsd_packages / 'manifest.json'
-    if not kde_package_is_current(gsd_packages, gsd):
-        build_arch_package.build(root, gsd, gsd_packages)
-    else:
-        build_arch_package.install_cached(root, gsd_packages)
-    packages['gnome_power'] = overlay_packages.pacman_outputs(gsd_packages)
-
+    if nyarch_desktop:
+        gsd = recipes / 'gnome-settings-daemon'
+        gsd_packages = output / 'packages/gnome-settings-daemon'
+        if not kde_package_is_current(gsd_packages, gsd):
+            build_arch_package.build(root, gsd, gsd_packages)
+        else:
+            build_arch_package.install_cached(root, gsd_packages)
+        packages['gnome_power'] = overlay_packages.pacman_outputs(gsd_packages)
+        records['gnome_power'] = json.loads((gsd_packages / 'manifest.json').read_text())
     ffmpeg = output / 'packages/ffmpeg'
     if not build_arch_ffmpeg.is_current(ffmpeg):
         if ffmpeg.exists():
@@ -214,22 +261,23 @@ def build_overlays(root, output, inputs, sensor_source, apps, *, refresh):
     run(ROOT / 'build.sh', 'pipewire', '--rootfs', root, '--output', pipewire)
     libwacom = output / 'packages/libwacom'
     run(ROOT / 'build.sh', 'libwacom', '--rootfs', root, '--output', libwacom)
-    gdm = output / 'packages/gdm'
-    run(ROOT / 'build.sh', 'gdm', '--rootfs', root, '--output', gdm)
-
-    for name, directory in (('pipewire', pipewire), ('libwacom', libwacom), ('gdm', gdm)):
+    for name, directory in (('pipewire', pipewire), ('libwacom', libwacom)):
         packages[name] = overlay_packages.pacman_outputs(directory / 'runtime')
-    records = {name: json.loads((directory / 'SOURCE.json').read_text())
-               for name, directory in (('ffmpeg', ffmpeg), ('pipewire', pipewire),
-                                       ('libwacom', libwacom), ('gdm', gdm))}
-    records['gnome_power'] = json.loads(gsd_manifest.read_text())
-    records['nyarch_applications'] = app_records
+    records.update({name: json.loads((directory / 'SOURCE.json').read_text())
+                    for name, directory in (('ffmpeg', ffmpeg), ('pipewire', pipewire),
+                                            ('libwacom', libwacom))})
+    if nyarch_desktop:
+        gdm = output / 'packages/gdm'
+        run(ROOT / 'build.sh', 'gdm', '--rootfs', root, '--output', gdm)
+        packages['gdm'] = overlay_packages.pacman_outputs(gdm / 'runtime')
+        records['gdm'] = json.loads((gdm / 'SOURCE.json').read_text())
     return records, packages
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', type=Path, default=ROOT / 'build/distros/nyarch-gnome-piano')
+    parser.add_argument('--desktop', choices=('nyarch', 'denial'), default='nyarch')
+    parser.add_argument('--output', type=Path)
     parser.add_argument('--bootstrap-sysroot', type=Path, default=Path('/'))
     parser.add_argument('--resume', action='store_true')
     overlay_packages.pacman_arguments(parser)

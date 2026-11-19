@@ -178,6 +178,9 @@ def clean_identity(root, guest, *, pacman):
 
 def configure_desktop(root, result, guest, optional):
     desktop, scale = result['desktop'], result['scale_percent']
+    if desktop == 'denial':
+        # Denial's signed package provides its own session and machine config.
+        return
     skeleton = inside(root, root / 'etc/skel')
     if skeleton.is_symlink(): raise ValueError('Guest skeleton redirects a host write')
     skeleton.mkdir(parents=True, exist_ok=True)
@@ -204,7 +207,7 @@ def configure_desktop(root, result, guest, optional):
     inside(root, path).parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
 
 
-def execute(result):
+def execute(result, *, defer_denial=False):
     if result['status'] != 'HOST_RECIPE_CANDIDATE': raise ValueError(result.get('reason', 'Required explicit inputs/layers are missing'))
     if os.geteuid(): raise ValueError('--execute requires a root build runner with private mount/chroot capability')
     out = Path(result['output']); root = out / 'rootfs'; profile = result['profile']; arch = profile['package_arch']
@@ -319,16 +322,6 @@ def execute(result):
         configure_desktop(root, result, guest, optional)
         clean_identity(root, guest, pacman=manager == 'arch')
         dm = result['desktop_profile']['display_manager'][manager]; guest(['systemctl', 'enable', dm, 'NetworkManager']); guest(['systemctl', 'set-default', 'graphical.target'])
-        packages = guest(['dpkg-query', '-W', '-f=${binary:Package}\t${Version}\t${Architecture}\n'], text=True) if manager == 'apt' else guest(['pacman', '-Q'], text=True)
-        (out / 'packages.tsv').write_text(packages); policy.unlink()
-        if cross: (root / 'usr/bin/qemu-aarch64-static').unlink()
-        result.update(status='HOST_ROOTFS_DESKTOP_BSP_BUILT_NOT_BOOT_VERIFIED' if result['bsp'] else 'HOST_ROOTFS_DESKTOP_BUILT_BSP_PENDING',
-                      rootfs=str(root), packages_sha256=sha(out / 'packages.tsv'), optional_packages_installed=optional,
-                      generic_kernels_removed=generic,
-                      login=json.loads((ROOT / 'config/release.json').read_text())['login'],
-                      bit_reproducible=False)
-        metadata = [*(root / 'var/lib/apt/lists').glob('*InRelease'), *(root / 'etc/apt').rglob('*.list'), *(root / 'etc/apt').rglob('*.sources')] if manager == 'apt' else list((root / 'var/lib/pacman/sync').glob('*'))
-        result['repository_metadata'] = {str(p.relative_to(root)): sha(p) for p in metadata if p.is_file()}
     except Exception as exc:
         (out / 'FAILED.json').write_text(json.dumps({'status': 'BUILD_FAILED', 'error': str(exc)}) + '\n'); raise
     finally:
@@ -336,6 +329,35 @@ def execute(result):
             guest(['gpgconf', '--homedir', '/etc/pacman.d/gnupg', '--kill', 'all'], check=False)
         stop_helpers(root)
         for path in reversed(mounted): run(['umount', '--recursive', path])
+    try:
+        if result['desktop'] == 'denial' and not defer_denial:
+            from build import denial
+            result['desktop_configuration'] = (denial.install_arch(root) if manager == 'arch'
+                                               else denial.install_debian(root, run))
+        arguments = (['dpkg-query', '-W', '-f=${binary:Package}\t${Version}\t${Architecture}\n']
+                     if manager == 'apt' else ['pacman', '-Q'])
+        packages = subprocess.check_output(['chroot', root, *arguments], text=True)
+        (out / 'packages.tsv').write_text(packages)
+        if manager == 'apt':
+            metadata = [*(root / 'var/lib/apt/lists').glob('*InRelease'),
+                        *(root / 'etc/apt').rglob('*.list'), *(root / 'etc/apt').rglob('*.sources')]
+        else:
+            metadata = list((root / 'var/lib/pacman/sync').glob('*'))
+        result['repository_metadata'] = {str(p.relative_to(root)): sha(p) for p in metadata if p.is_file()}
+    except Exception as exc:
+        (out / 'FAILED.json').write_text(json.dumps({'status': 'BUILD_FAILED', 'error': str(exc)}) + '\n')
+        raise
+    finally:
+        policy.unlink(missing_ok=True)
+        if cross:
+            (root / 'usr/bin/qemu-aarch64-static').unlink(missing_ok=True)
+    status = ('HOST_ROOTFS_BASE_BUILT' if defer_denial else
+              'HOST_ROOTFS_DESKTOP_BSP_BUILT_NOT_BOOT_VERIFIED' if result['bsp'] else
+              'HOST_ROOTFS_DESKTOP_BUILT_BSP_PENDING')
+    result.update(status=status, rootfs=str(root), packages_sha256=sha(out / 'packages.tsv'),
+                  optional_packages_installed=optional, generic_kernels_removed=generic,
+                  login=json.loads((ROOT / 'config/release.json').read_text())['login'],
+                  bit_reproducible=False)
     for name in ('dev', 'proc', 'sys', 'run'):
         for path in (root / name).iterdir():
             if path.is_dir() and not path.is_symlink(): shutil.rmtree(path)
@@ -346,7 +368,7 @@ def execute(result):
 def parser():
     value = argparse.ArgumentParser(description=__doc__)
     value.add_argument('--distro', choices=['debian', 'ubuntu', 'arch', 'deepin'], required=True)
-    value.add_argument('--desktop', choices=['gnome', 'kde', 'dde'], required=True)
+    value.add_argument('--desktop', choices=['gnome', 'kde', 'dde', 'denial'], required=True)
     for name in ('output', 'base-file', 'base-keyring', 'keyring', 'sources-list', 'bsp'): value.add_argument('--' + name, type=Path)
     for name in ('suite', 'base-url', 'base-sha256', 'base-signature-url', 'base-keyring-sha256'): value.add_argument('--' + name)
     value.add_argument('--layer', action='append', type=Path, default=[]); value.add_argument('--scale-percent', type=int, default=200)

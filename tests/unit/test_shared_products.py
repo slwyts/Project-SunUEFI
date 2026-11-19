@@ -176,7 +176,8 @@ class SharedProductsTests(unittest.TestCase):
 
     def test_matrix_builds_common_products_once_without_changing_root_targets(self):
         self.assertEqual(ci_build_targets.DISTROS,
-                         ['debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos'])
+                         ['debian-gnome', 'debian-kde', 'debian-denial',
+                          'nyarch-gnome', 'arch-denial', 'steamos'])
         self.assertEqual(ci_build_targets.shared_kinds(ci_build_targets.DISTROS), ['firmware', 'kernel'])
         self.assertEqual(ci_build_targets.shared_kinds(['uefi']), ['firmware'])
         self.assertEqual(ci_build_targets.shared_kinds(['linux']), ['kernel'])

@@ -10,13 +10,15 @@
 
 ## 选一个系统
 
-四个系统共用同一个启动镜像（ESP，即 EFI 系统分区），只有系统镜像（root，即根文件系统）不同。
+各系统共用同一个启动镜像（ESP，即 EFI 系统分区），只有系统镜像（root，即根文件系统）不同。
 
 | 系统镜像 | 系统 | root 分区至少 | 适合 |
 | --- | --- | --- | --- |
 | `debian-gnome` | Debian sid + GNOME | 8 GiB | 日常使用的通用桌面 |
 | `debian-kde` | Debian sid + KDE Plasma | 8 GiB | 习惯 KDE Plasma 的用户，限制见[已知问题](known-issues.md#其他) |
+| `debian-denial` | Debian sid + Denial | 8 GiB | 想用 APT 和 Denial 触控桌面 |
 | `nyarch-gnome` | Arch Linux ARM + GNOME（Nyarch） | 16 GiB | 想用滚动更新的软件包和 Nyarch 主题 |
+| `arch-denial` | Arch Linux ARM + Denial | 16 GiB | 想用 pacman 和 Denial 触控桌面 |
 | `steamos` | Valve SteamOS ARM64 | 16 GiB | 玩游戏，详见 [SteamOS](steamos.md) |
 
 ## 安装
@@ -37,7 +39,7 @@
 
 ## 软件源与更新
 
-已经配置 SunUEFI 软件源的镜像，可以直接用包管理器更新。Debian 运行 `sudo apt update && sudo apt upgrade`，Nyarch 和 SteamOS 运行 `sudo pacman -Syu`。更新内核前可用 `sudo bootctl --print-esp-path` 确认启动分区已挂载；重启失败时可在 systemd-boot 菜单选旧内核。
+已经配置 SunUEFI 软件源的镜像，可以直接用包管理器更新。Debian 运行 `sudo apt update && sudo apt upgrade`，Arch 系（Nyarch、Arch Denial 和 SteamOS）运行 `sudo pacman -Syu`。更新内核前可用 `sudo bootctl --print-esp-path` 确认启动分区已挂载；重启失败时可在 systemd-boot 菜单选旧内核。
 
 ### 手动添加 APT 软件源
 

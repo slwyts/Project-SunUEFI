@@ -140,7 +140,7 @@ UEFI 运行时，后台常驻一个 USB Fastboot 服务（设备名 `SunUEFI-pia
 > [!WARNING]
 > 新平板的首次分区还没有在设备上验证过，见[已知问题](docs/user/known-issues.md#首次分区)。
 
-系统镜像有 `debian-gnome`、`debian-kde`、`nyarch-gnome` 和 `steamos` 四种。首次启动会自动把根文件系统扩展到分区大小，耗时比后续启动长。用户名 `piano`、密码 `piano123456` 登录，系统默认自动登录，锁屏解锁和 `sudo` 用同一个密码。完整步骤见[安装指南](docs/user/getting-started.md)。
+系统镜像可选 Debian GNOME、Debian KDE、Nyarch GNOME、SteamOS，以及使用 Denial 触控桌面的 Debian 和 Arch Linux ARM。首次启动会自动把根文件系统扩展到分区大小，耗时比后续启动长。用户名 `piano`、密码 `piano123456` 登录，系统默认自动登录，锁屏解锁和 `sudo` 用同一个密码。完整步骤见[安装指南](docs/user/getting-started.md)。
 
 ### 软件源
 

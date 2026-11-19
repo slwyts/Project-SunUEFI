@@ -26,6 +26,7 @@ from build import overlay_packages, overlay_release
 from package_bsp import POWER_PROFILES_PACKAGE
 from make_kernel_initramfs import make_newc, validate_static_arm64_elf
 from package import camera
+from prepare_debian_desktop import DESKTOPS, desktop_packages
 from prepare_release_kernel import release_series
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,7 +46,7 @@ def capture(args, cwd=None):
     return subprocess.check_output(list(map(str, args)), cwd=cwd, text=True).strip()
 
 
-def debian_archive(rootfs):
+def debian_archive(rootfs, desktop='gnome'):
     """Check the actual APT indexes, including a resumed generated root."""
     release = userspace.guest_resolve(rootfs, '/etc/os-release').read_text()
     if 'ID=debian' not in release.splitlines():
@@ -53,10 +54,13 @@ def debian_archive(rootfs):
     text = capture(['chroot', rootfs, 'apt-get', 'indextargets', '--format',
                     '$(CODENAME) $(SUITE) $(ORIGIN) $(IDENTIFIER)'])
     rows = [line.split() for line in text.splitlines() if line.strip()]
-    origins = (['sid', 'unstable', 'Debian'], ['sid', 'sid', 'SunUEFI'])
-    if not rows or any(len(row) != 4 or row[:3] not in origins
-                       for row in rows) or not any(row[:3] == origins[0] and row[3] == 'Packages'
-                                                  for row in rows):
+    sid = ('sid', 'unstable', 'Debian')
+    origins = {sid, ('sid', 'sid', 'SunUEFI')}
+    if desktop == 'denial':
+        from build.denial import APTORIGIN
+        origins.add(APTORIGIN)
+    if (any(len(row) != 4 or tuple(row[:3]) not in origins for row in rows) or
+            [*sid, 'Packages'] not in rows):
         raise ValueError('Debian product APT indexes must contain sid only; rebuild the base root')
     return {'suite': 'sid', 'indexes': rows}
 
@@ -70,24 +74,26 @@ def repository(path, commit=None, tree=None):
     return head
 
 
+def image_status(desktop):
+    return f'HOST_BUILT_RELEASE_{desktop.upper()}_ROOT_NOT_BOOT_VERIFIED'
+
+
 def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
          public_source=None, firmware_source=None, root=ROOT, resume=False,
          sensors_dir=None, ffmpeg_dir=None, boot_task_snapshot=False, desktop='gnome', mutter_dir=None,
          packages_only=None, published_packages=None):
     root = Path(root).resolve(); config = json.loads((root / 'config/release.json').read_text())
-    if desktop not in ('gnome', 'kde'):
-        raise ValueError('Release desktop must be gnome or kde')
-    if desktop == 'kde':
-        from prepare_debian_desktop import GNOME_PACKAGES, KDE_PACKAGES
-        config['debian']['extra_packages'] = [
-            p for p in config['debian']['extra_packages'] if p not in GNOME_PACKAGES
-        ] + KDE_PACKAGES
+    if desktop not in DESKTOPS:
+        raise ValueError('Release desktop must be gnome, kde or denial')
+    config['debian']['extra_packages'] = desktop_packages(config['debian']['extra_packages'], desktop)
     if config['debian']['apt_policy'] != 'mutable-recorded' or config['debian']['snapshot'] is not None:
         raise ValueError('Only signed mutable APT with recorded metadata is implemented; snapshot mode is not configured')
     if config['debian']['suite'] != 'sid':
         raise ValueError('The Debian product builds only sid')
     kernel, source, output = [Path(p).resolve() for p in (kernel, source, output)]
     if packages_only:
+        if desktop == 'denial':
+            raise ValueError('Use --desktop gnome --packages-only to build the shared Debian overlays')
         package_output = Path(packages_only).resolve()
         if (package_output.exists() or not package_output.is_relative_to(root / 'artifacts/packages') or
                 package_output == root / 'artifacts/packages'):
@@ -114,7 +120,8 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
                 raise ValueError('Resume needs a completed sid package build root for the selected desktop')
         elif (output / 'manifest.json').is_file():
             previous = json.loads((output / 'manifest.json').read_text())
-            if previous.get('status') not in ('HOST_BUILT_RELEASE_GNOME_ROOT_NOT_BOOT_VERIFIED', 'HOST_BUILT_RELEASE_KDE_ROOT_NOT_BOOT_VERIFIED') or previous.get('debian_commit') != config['debian']['commit']:
+            if (previous.get('status') not in {image_status(name) for name in DESKTOPS} or
+                    previous.get('debian_commit') != config['debian']['commit']):
                 raise ValueError('Completed base root belongs to another source')
             if previous.get('desktop', 'gnome') != desktop:
                 raise ValueError('Resume must keep the desktop used to build this root')
@@ -174,12 +181,14 @@ def plan(kernel, source, output, runtime_dir=None, kernel_build=None,
                  'build and verify the selected native desktop and hardware packages',
                  'export selected packages and SHA256 manifest without assembling a product image']
     else:
-        steps = ['derive build-rootfs.sh for sid and install the selected desktop from signed APT',
+        steps = ['derive build-rootfs.sh and install the base desktop packages from signed sid APT',
                  'install the matching native kernel packages',
                  ('install exact desktop and camera packages from the signed SunUEFI APT source'
                   if published_packages
-                  else 'build overlays in a separate signed Debian sid root and install the native packages'),
-                 'stage the hardware runtime, apply product defaults and build the initial initramfs']
+                  else 'build overlays in a separate signed Debian sid root and install the native packages')]
+        if desktop == 'denial':
+            steps.append('install Denial from its signed APT source and enable its mobile session')
+        steps.append('stage the hardware runtime, apply product defaults and build the initial initramfs')
     return {'status': 'PLAN_ONLY', 'resume': resume, 'desktop': desktop,
             'previous_kernel_release': previous.get('kernel_release') if previous else None,
             'root_policy': 'LABEL=PIANOROOT', 'kernel': str(kernel), 'source': str(source),
@@ -254,7 +263,11 @@ def default_system_record(rootfs, installed, config, desktop='gnome'):
     """Require the shipped desktop and BSP, including runtime-bundle resumes."""
     required = {'systemd-sysv', 'pipewire', 'network-manager', 'wireless-regdb', POWER_PROFILES_PACKAGE,
                 'tuned', 'tuned-ppd'}
-    required.update({'gnome-shell', 'gdm3'} if desktop == 'gnome' else {'plasma-workspace', 'sddm', 'powerdevil'})
+    required.update({
+        'gnome': ('gnome-shell', 'gdm3'),
+        'kde': ('plasma-workspace', 'sddm', 'powerdevil'),
+        'denial': ('denial', 'denial-flutter-engine', 'sddm'),
+    }[desktop])
     required.update(config['debian']['extra_packages'])
     missing = sorted(required - installed.keys())
     if missing:
@@ -266,13 +279,13 @@ def default_system_record(rootfs, installed, config, desktop='gnome'):
         'usr/share/piano/pen/p81c-radio.json', 'usr/lib/piano/pen-control.py',
         'usr/bin/piano-pen-canvas',
     )
-    paths += (
-        ('etc/dconf/db/local.d/00-sunuefi', 'etc/dconf/db/local', 'etc/dconf/profile/user')
-        if desktop == 'gnome' else (
-            'etc/sddm.conf.d/10-sunuefi.conf',
-            'usr/share/plasma/shells/org.kde.plasma.desktop/metadata.json',
-        )
-    )
+    paths += {
+        'gnome': ('etc/dconf/db/local.d/00-sunuefi', 'etc/dconf/db/local', 'etc/dconf/profile/user'),
+        'kde': ('etc/sddm.conf.d/10-sunuefi.conf',
+                'usr/share/plasma/shells/org.kde.plasma.desktop/metadata.json'),
+        'denial': ('etc/sddm.conf.d/10-sunuefi.conf', 'etc/denial/session.conf',
+                   'usr/share/wayland-sessions/denial.desktop', 'usr/bin/denial-session'),
+    }[desktop]
     files = wireless_regdb_record(rootfs)
     for name in paths:
         path = userspace.guest_resolve(rootfs, name)
@@ -1010,12 +1023,12 @@ def execute(record):
                      '--suite', cfg['debian']['suite'], '--output', out])
         if not (out / 'COMPLETE').is_file() or rootfs.stat().st_uid:
             raise ValueError('Debian base build did not complete with native guest ownership')
-        archive = debian_archive(rootfs)
+        archive = debian_archive(rootfs, desktop)
         put(rootfs, 'usr/sbin/policy-rc.d', '#!/bin/sh\nexit 101\n'); (rootfs / 'usr/sbin/policy-rc.d').chmod(0o755)
         if record.get('resume') and not record.get('published_packages'):
             with build_devices(rootfs), build_resolver(rootfs):
                 run(['chroot', rootfs, 'apt-get', '-o', 'APT::Update::Error-Mode=any', 'update'])
-                archive = debian_archive(rootfs)
+                archive = debian_archive(rootfs, desktop)
                 run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive',
                      'apt-get', 'upgrade', '-y', '--with-new-pkgs', '--no-remove'])
         published = record.get('published_packages')
@@ -1038,7 +1051,7 @@ def execute(record):
                 **packages, bsp_archive.name: bsp, topology_archive.name: topology,
                 camera_archive.name: camera_record, power_archive.name: power,
             }, desktop=desktop, extra=cfg['debian']['extra_packages'], published=True)
-            archive = debian_archive(rootfs)
+            archive = debian_archive(rootfs, desktop)
         else:
             camera_archive, camera_record = camera.ensure('debian')
             sources = build_local_overlays(record, m, run)
@@ -1092,6 +1105,11 @@ def execute(record):
                                   shared=bool(published), run=run)
         apply_policy(rootfs, out, cfg)
         run(['chroot', rootfs, 'systemctl', 'enable', 'tuned-ppd.service'])
+        if desktop == 'denial':
+            from build.denial import install_debian
+
+            install_debian(rootfs, run)
+            archive = debian_archive(rootfs, desktop)
         boot_request = native_boot_request(rootfs, out)
         sanitize(rootfs, out)
         from package.v4l2loopback import verify_installed
@@ -1130,7 +1148,7 @@ def execute(record):
         boot = bootstrap(kernel, out, m['kernel_release'], record.get('boot_task_snapshot', False))
         clock = clock_epoch(rootfs)
         if modules.inspect(kernel)[1] != kernel_hash: raise ValueError('Kernel changed during rootfs build')
-        result = {'status': 'HOST_BUILT_RELEASE_' + desktop.upper() + '_ROOT_NOT_BOOT_VERIFIED', 'rootfs': str(rootfs),
+        result = {'status': image_status(desktop), 'rootfs': str(rootfs),
                   'root_policy': 'LABEL=PIANOROOT', 'kernel_release': m['kernel_release'], 'kernel_commit': m['source_commit'],
                   'kernel_manifest_sha256': kernel_hash, 'release_config_sha256': digest(POLICY), 'packages_sha256': digest(out / 'packages.tsv'),
                   'adapters_manifest_sha256': digest(out / 'adapters/manifest.json'), 'runtime_manifest_sha256': digest(bundle / 'manifest.json'),
@@ -1170,7 +1188,7 @@ def main():
     packages.add_argument('--published-packages', type=Path, metavar='MANIFEST',
                           help='Install exact overlay packages from the signed SunUEFI APT source')
     parser.add_argument('--resume', action='store_true', help='Reuse the completed upstream base and refresh release assembly')
-    parser.add_argument('--desktop', choices=('gnome', 'kde'), default='gnome')
+    parser.add_argument('--desktop', choices=DESKTOPS, default='gnome')
     parser.add_argument('--boot-task-snapshot', action='store_true',
                         help='Enable one delayed PID1/blocked-task snapshot in the diagnostic initramfs')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)

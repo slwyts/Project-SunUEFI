@@ -25,7 +25,7 @@ jobs:
       matrix: ${{ fromJSON(inputs.matrix) }}
     env:
       SUNUEFI_BUILD_TARGET: ${{ matrix.target }}
-      SUNUEFI_OVERLAY_TARGET: ${{ startsWith(matrix.target, 'debian-') && 'debian-gnome' || matrix.target }}
+      SUNUEFI_OVERLAY_TARGET: ${{ startsWith(matrix.target, 'debian-') && 'debian-gnome' || matrix.target == 'arch-denial' && 'nyarch-gnome' || matrix.target }}
       SUNUEFI_BUILD_ENVIRONMENT_ID: ${{ inputs.image_id }}
       SUNUEFI_CACHE_WORKSPACE: /workspace
     steps:
@@ -92,13 +92,13 @@ jobs:
               python3 tools/build/shared_products.py verify --kind kernel
               packages="artifacts/packages/overlays/$SUNUEFI_OVERLAY_TARGET/manifest.json"
               case "$SUNUEFI_BUILD_TARGET" in
-                steamos|nyarch-gnome)
+                steamos|nyarch-gnome|arch-denial)
                   ./build.sh "$SUNUEFI_BUILD_TARGET-rootfs" --published-packages "$packages"
                   root="build/distros/$SUNUEFI_BUILD_TARGET-piano"
                   ./build.sh package --rootfs "$root/rootfs" --rootfs-manifest "$root/manifest.json" \
                     --initramfs "$root/initramfs/initramfs.cpio.gz" --root-size-mib 16384
                   ;;
-                debian-gnome|debian-kde)
+                debian-gnome|debian-kde|debian-denial)
                   ./build.sh release-rootfs --desktop "${SUNUEFI_BUILD_TARGET#debian-}" \
                     --published-packages "$packages"
                   ./build.sh package --root-size-mib 8192

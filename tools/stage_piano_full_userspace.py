@@ -61,9 +61,9 @@ def stage_gnome_desktop(rootfs):
 
 
 def stage(rootfs, source, desktop='gnome'):
-    if desktop not in ('gnome', 'kde'):
+    from prepare_debian_desktop import DESKTOPS, gnome_path, packaged_overlay_paths
+    if desktop not in DESKTOPS:
         raise ValueError('Unsupported desktop')
-    from prepare_debian_desktop import gnome_path, packaged_overlay_paths
     rootfs,source=Path(rootfs).resolve(),Path(source).resolve()
     if not rootfs.is_relative_to(ROOT) or not rootfs.is_dir():
         raise ValueError('Rootfs must be an existing workspace directory')
