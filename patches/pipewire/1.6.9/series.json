@@ -106,6 +106,16 @@
         "url": "https://wiki.debian.org/PackageTransition",
         "drop_when": "Supported Debian installations no longer have the standalone SunUEFI pipewire-v4l2-source with exact stock PipeWire dependencies."
       }
+    },
+    {
+      "file": "0011-libcamera-0.8-camera-location.patch",
+      "sha256": "710c09ac8fe9e08fd6f9651d5bbc94dae49d31227ca085a4830be2701cb07b77",
+      "upstream": {
+        "status": "merged",
+        "url": "https://github.com/PipeWire/pipewire/commit/54f2f51f5233026e608f8235f5377b9b473918e3",
+        "commit": "54f2f51f5233026e608f8235f5377b9b473918e3",
+        "drop_when": "The selected PipeWire release uses the renamed libcamera 0.8 camera location enums or an equivalent upstream implementation."
+      }
     }
   ]
 }

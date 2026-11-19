@@ -10,7 +10,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/repo'))
 from products import overlay_matrix, overlay_set, publication_batches, sha
 from build.overlay_packages import DEBIAN_GNOME, DEBIAN_SHARED
+from desktop import build_libcamera_packages as libcamera
 from desktop.build_pipewire_packages import DEBIAN_PACKAGES
+from desktop.build_plasma_camera_package import RUNTIME as PLASMA_PACKAGES
 
 
 class RepoProductsTests(unittest.TestCase):
@@ -55,11 +57,14 @@ class RepoProductsTests(unittest.TestCase):
         directory.mkdir(parents=True)
         record = {'schema_version': 1, 'target': target, 'repo': 'apt',
                   'packages': {}, 'components': {}}
+        policy = libcamera.policy()
+        abi = libcamera.abi_version(policy)
         for component in (*DEBIAN_SHARED, 'fingerprint',
                           *(DEBIAN_GNOME if target == 'debian-gnome' else ())):
-            names = DEBIAN_PACKAGES if component == 'pipewire' else {
-                'test-' + component.replace('_', '-'): 'arm64'}
-            version = '1' if component != 'mesa' else '27'
+            names = {'libcamera': libcamera.runtime_packages(policy), 'pipewire': DEBIAN_PACKAGES,
+                     'plasma_camera': PLASMA_PACKAGES}.get(
+                         component, {'test-' + component.replace('_', '-'): 'arm64'})
+            version = {'mesa': '27', 'libcamera': libcamera.base_package_version(policy)}.get(component, '1')
             packages = {}
             for name, architecture in names.items():
                 if name == missing:
@@ -73,6 +78,11 @@ class RepoProductsTests(unittest.TestCase):
                 packages[name] = {**metadata, 'file': filename}
                 record['packages'][filename] = {**metadata, 'name': name, 'component': component}
             record['components'][component] = {'packages': packages, 'package_version': version}
+        dependencies = {name: {key: value for key, value in row.items() if key != 'file'}
+                        for name, row in record['components']['libcamera']['packages'].items()
+                        if name in (f'libcamera{abi}', 'libcamera-dev', f'libcamera-ipa-{abi}')}
+        for component in ('pipewire', 'plasma_camera'):
+            record['components'][component]['build_dependencies'] = dependencies
         (directory / 'manifest.json').write_text(json.dumps(record))
         return directory
 
@@ -190,6 +200,15 @@ class RepoProductsTests(unittest.TestCase):
     def test_incomplete_debian_pipewire_set_cannot_be_published(self):
         directory = self.debian_set('debian-gnome', b'mesa', missing='pipewire-bin')
         with self.assertRaisesRegex(ValueError, 'all native packages at the same version'):
+            overlay_set(directory, 'debian-gnome')
+
+    def test_unpaired_camera_packages_cannot_be_published(self):
+        directory = self.debian_set('debian-gnome', b'mesa')
+        manifest = directory / 'manifest.json'
+        record = json.loads(manifest.read_text())
+        record['components']['pipewire'].pop('build_dependencies')
+        manifest.write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, 'pipewire was not built with this libcamera package set'):
             overlay_set(directory, 'debian-gnome')
 
 

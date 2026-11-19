@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "version": "0.8.0",
+  "targets": ["debian-gnome", "debian-kde"],
+  "patches": [
+    {
+      "file": "0001-v4l2-subdevice-selection-whence.patch",
+      "sha256": "d60963244d25ea928454e5b4437b7617d32188787d67876bc40306a3ebf36752",
+      "upstream": {
+        "status": "submitted",
+        "url": "https://lists.libcamera.org/pipermail/libcamera-devel/2026-November/063338.html",
+        "drop_when": "V4L2Subdevice selection can use both the TRY and ACTIVE states in the packaged release."
+      }
+    },
+    {
+      "file": "0002-camss-helpers.patch",
+      "sha256": "72477c85ec9c846bffb8d106a8c8dd4a5eb5f0ff4ccecacaf188f2a90de17df7",
+      "upstream": {
+        "status": "submitted",
+        "url": "https://lists.libcamera.org/pipermail/libcamera-devel/2026-November/063339.html",
+        "drop_when": "The upstream CAMSS pipeline includes the format and buffer helpers used by the online PIX path."
+      }
+    },
+    {
+      "file": "0003-camss-pipeline.patch",
+      "sha256": "83bed98797c0c452c9ba17febaa4580e90a2a643beb5214e6958bb6948da1c5e",
+      "upstream": {
+        "status": "submitted",
+        "url": "https://lists.libcamera.org/pipermail/libcamera-devel/2026-November/063341.html",
+        "drop_when": "The packaged libcamera discovers both CAMSS sensors and assigns their CSID/VFE routes through the upstream CAMSS pipeline."
+      }
+    },
+    {
+      "file": "0004-camss-online-tfe-pix.patch",
+      "sha256": "40d2eb63385e4759753ddaf457ccfc83d84441650ec13be12393bb3b80427fd8",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/libcamera-org/libcamera/tree/v0.8.0/src/libcamera/pipeline",
+        "drop_when": "The upstream CAMSS pipeline negotiates and streams SM8750 TFE PIX NV12 buffers from the two sensors, with independent stop and reopen."
+      }
+    },
+    {
+      "file": "0005-ipa-versioned-private-paths.patch",
+      "sha256": "c2d2cabb03b4fc82933b4fb20b505f101326283d8332073c08796bd520b28c0d",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/libcamera-org/libcamera/blob/v0.8.0/src/meson.build",
+        "drop_when": "Incompatible libcamera ABIs can install and find their own IPA modules, proxies and bundled camera data without replacing one another."
+      }
+    }
+  ]
+}

@@ -1,0 +1,826 @@
+diff --git a/src/libcamera/pipeline/camss/camss.cpp b/src/libcamera/pipeline/camss/camss.cpp
+index bcb372601afbbd84aedb183d1ade95e32e359175..5c0fda138e1d4d638cfab885347ca75d557e6e94 100644
+--- a/src/libcamera/pipeline/camss/camss.cpp
++++ b/src/libcamera/pipeline/camss/camss.cpp
+@@ -13,6 +13,7 @@
+ #include <algorithm>
+ #include <memory>
+ #include <queue>
++#include <set>
+ #include <vector>
+ 
+ #include <libcamera/base/log.h>
+@@ -50,6 +51,7 @@ public:
+ 	CamssCameraData(PipelineHandler *pipe);
+ 
+ 	void csiBufferReady(FrameBuffer *buffer);
++	void pixBufferReady(FrameBuffer *buffer);
+ 	void ispOutputBufferReady(FrameBuffer *buffer);
+ 	void ispParameterBufferReady(FrameBuffer *buffer);
+ 	void frameStart(uint32_t sequence);
+@@ -67,6 +69,7 @@ public:
+ 
+ 	/* Requests for which no buffer has been queued to the CSI receiver yet. */
+ 	std::queue<Request *> pendingRequests_;
++	std::set<FrameBuffer *> pixBuffers_;
+ };
+ 
+ class CamssCameraConfiguration : public CameraConfiguration
+@@ -136,6 +139,25 @@ CameraConfiguration::Status CamssCameraConfiguration::validate()
+ 	if (config_.empty())
+ 		return Invalid;
+ 
++	if (data_->csi_->isPix()) {
++		if (config_.size() != 1 || sensorConfig)
++			return Invalid;
++
++		StreamConfiguration &cfg = config_[0];
++		StreamConfiguration original = cfg;
++		Orientation requested = orientation;
++		if (data_->csi_->validatePix(&cfg))
++			return Invalid;
++
++		orientation = data_->csi_->pixOrientation();
++		cfg.setStream(&data_->csi_->pixStream_);
++		return cfg.size == original.size &&
++		       cfg.pixelFormat == original.pixelFormat &&
++		       (!original.bufferCount || cfg.bufferCount == original.bufferCount) &&
++		       (!original.colorSpace || cfg.colorSpace == original.colorSpace) &&
++		       orientation == requested ? Valid : Adjusted;
++	}
++
+ 	/*
+ 	 * Validate the requested transform against the sensor capabilities and
+ 	 * rotation and store the final combined transform that configure() will
+@@ -302,6 +324,15 @@ PipelineHandlerCamss::generateConfiguration(Camera *camera, std::span<const Stre
+ 	if (roles.empty())
+ 		return config;
+ 
++	if (data->csi_->isPix()) {
++		if (roles.size() != 1 || roles[0] == StreamRole::Raw)
++			return nullptr;
++		config->addConfiguration(data->csi_->generatePixConfiguration());
++		if (config->validate() == CameraConfiguration::Invalid)
++			return nullptr;
++		return config;
++	}
++
+ 	csiConfig = data->csi_->generateConfiguration();
+ 	if (!csiConfig.pixelFormat.isValid())
+ 		return nullptr;
+@@ -342,6 +373,9 @@ int PipelineHandlerCamss::configure(Camera *camera, CameraConfiguration *c)
+ 	CamssCameraData *data = cameraData(camera);
+ 	int ret;
+ 
++	if (data->csi_->isPix())
++		return data->csi_->configurePix(config->at(0));
++
+ 	ret = data->csi_->configure(config->csiConfig_, config->combinedTransform_);
+ 	if (ret)
+ 		return ret;
+@@ -356,6 +390,11 @@ int PipelineHandlerCamss::exportFrameBuffers(Camera *camera, Stream *stream,
+ 	CamssCameraData *data = cameraData(camera);
+ 	unsigned int count = stream->configuration().bufferCount;
+ 
++	if (data->csi_->isPix()) {
++		if (stream != &data->csi_->pixStream_)
++			return -EINVAL;
++		return data->csi_->exportBuffers(count, buffers);
++	}
+ 	if (stream == &data->csi_->rawStream_)
+ 		return data->csi_->exportBuffers(count, buffers);
+ 	else if (stream == &data->isp_->outStream_)
+@@ -387,6 +426,13 @@ int PipelineHandlerCamss::start(Camera *camera, [[maybe_unused]] const ControlLi
+ 	CamssCameraData *data = cameraData(camera);
+ 	int ret;
+ 
++	if (data->csi_->isPix()) {
++		ret = data->csi_->startPix();
++		if (!ret)
++			data->csi_->bufferReady().connect(data, &CamssCameraData::pixBufferReady);
++		return ret;
++	}
++
+ 	/* Allocate buffers for internal pipeline usage. */
+ 	ret = allocateBuffers(camera);
+ 	if (ret)
+@@ -417,6 +463,19 @@ void PipelineHandlerCamss::stopDevice(Camera *camera)
+ {
+ 	CamssCameraData *data = cameraData(camera);
+ 
++	if (data->csi_->isPix()) {
++		data->csi_->stopPix();
++		data->csi_->bufferReady().disconnect(data, &CamssCameraData::pixBufferReady);
++
++		/* STREAMOFF completes the buffers unless the device had to be closed. */
++		while (!data->pixBuffers_.empty()) {
++			FrameBuffer *buffer = *data->pixBuffers_.begin();
++			buffer->_d()->cancel();
++			data->pixBufferReady(buffer);
++		}
++		return;
++	}
++
+ 	data->cancelPendingRequests();
+ 
+ 	data->isp_->stop();
+@@ -482,6 +541,17 @@ int PipelineHandlerCamss::queueRequestDevice(Camera *camera, Request *request)
+ {
+ 	CamssCameraData *data = cameraData(camera);
+ 
++	if (data->csi_->isPix()) {
++		FrameBuffer *buffer = request->findBuffer(&data->csi_->pixStream_);
++		if (!buffer || data->pixBuffers_.contains(buffer))
++			return -EINVAL;
++
++		int ret = data->csi_->queuePixBuffer(buffer);
++		if (!ret)
++			data->pixBuffers_.insert(buffer);
++		return ret;
++	}
++
+ 	data->pendingRequests_.push(request);
+ 	data->queuePendingRequests();
+ 
+@@ -502,6 +572,16 @@ bool PipelineHandlerCamss::match(DeviceEnumerator *enumerator)
+ 			std::make_unique<CamssCameraData>(this);
+ 		data->csi_ = std::move(csiCams[i]);
+ 
++		if (data->csi_->isPix()) {
++			data->properties_ = data->csi_->pixProperties();
++			const std::string id = data->csi_->pixId();
++			std::set<Stream *> streams = { &data->csi_->pixStream_ };
++
++			registerCamera(Camera::create(std::move(data), id, streams));
++			numCameras++;
++			continue;
++		}
++
+ 		data->csi_->frameStart().connect(data.get(),
+ 						 &CamssCameraData::frameStart);
+ 		data->csi_->bufferReady().connect(data.get(),
+@@ -556,6 +636,18 @@ bool PipelineHandlerCamss::match(DeviceEnumerator *enumerator)
+ 	return numCameras != 0;
+ }
+ 
++void CamssCameraData::pixBufferReady(FrameBuffer *buffer)
++{
++	Request *request = buffer->request();
++
++	if (!pixBuffers_.erase(buffer) || !request)
++		return;
++
++	/* The driver gives CSI EOF, not the first row's exposure timestamp. */
++	if (pipe()->completeBuffer(request, buffer))
++		pipe()->completeRequest(request);
++}
++
+ void CamssCameraData::setSensorControls(const ControlList &sensorControls)
+ {
+ 	delayedCtrls_->push(sensorControls);
+diff --git a/src/libcamera/pipeline/camss/camss_csi.cpp b/src/libcamera/pipeline/camss/camss_csi.cpp
+index 9fc355b8f7746441b212d8e5e175d6f12fb51311..3b9ded8c6918bf854c5cb427f1324c109571bbee 100644
+--- a/src/libcamera/pipeline/camss/camss_csi.cpp
++++ b/src/libcamera/pipeline/camss/camss_csi.cpp
+@@ -12,6 +12,7 @@
+ 
+ #include "camss_csi.h"
+ 
++#include <algorithm>
+ #include <cmath>
+ #include <limits>
+ 
+@@ -336,6 +337,9 @@ int CamssCsiCamera::configure(const StreamConfiguration &cfg, const Transform &t
+ int CamssCsiCamera::exportBuffers(unsigned int count,
+ 				  std::vector<std::unique_ptr<FrameBuffer>> *buffers)
+ {
++	if (!output_->isOpen())
++		return -EPIPE;
++
+ 	return output_->exportBuffers(count, buffers);
+ }
+ 
+@@ -457,30 +461,46 @@ CamssCsi::Cameras CamssCsi::match(PipelineHandler *pipe, DeviceEnumerator *enume
+ 	if (!camssMediaDev_)
+ 		return {};
+ 
++	getEntities(phys_, "msm_csiphy%d", kMaxCsiPhys);
++	getEntities(csids_, "msm_csid%d", kMaxCsiDecoders);
++	getEntities(vfes_, "msm_vfe%d_pix", kMaxVfes);
++
++	/*
++	 * On SM8750 the non-lite TFE lines have an IPP link from CSID pad 4.
++	 * RDI lines and lite "video3" nodes do not have that online ISP path.
++	 */
++	bool pix = std::any_of(csids_.begin(), csids_.end(), [this](MediaEntity *csid) {
++		return std::any_of(vfes_.begin(), vfes_.end(), [this, csid](MediaEntity *vfe) {
++			return camssMediaDev_->link(csid, 4, vfe, 0) != nullptr;
++		});
++	});
++
++	if (!pix) {
++		vfes_.clear();
++		/* The offline/Software ISP path starts from RDI0. */
++		getEntities(vfes_, "msm_vfe%d_rdi0", kMaxVfes);
++	}
++
+ 	/*
+ 	 * Disable all links that are enabled to start with a clean state,
+-	 * CamssCsiCamera::configure() enables links as necessary.
++	 * CamssCsiCamera::configure() enables links as necessary. Online PIX
++	 * instead alters only its own links during configure, after acquisition.
+ 	 * \todo instead only disable links on used entities, to allow
+ 	 * 2 separate libcamera instances to drive 2 different sensors.
+ 	 * This will also require changes to PipelineHandler::acquire() to
+ 	 * allow a more fine grained version of that locking a list of
+ 	 * subdevs associated with a Camera instead of the mediactl node.
+ 	 */
+-	if (camssMediaDev_->disableLinks())
++	if (!pix && camssMediaDev_->disableLinks())
+ 		return {};
+ 
+-	getEntities(phys_, "msm_csiphy%d", kMaxCsiPhys);
+-	getEntities(csids_, "msm_csid%d", kMaxCsiDecoders);
+-	/* Only RDI0 is used for now */
+-	getEntities(vfes_, "msm_vfe%d_rdi0", kMaxVfes);
+-
+ 	LOG(Camss, Info) << "Found "
+ 			 << phys_.size() << " CSI phy(s) "
+ 			 << csids_.size() << " CSI decoders "
+ 			 << vfes_.size() << " VFEs";
+ 
+ 	for (auto &phy : phys_) {
+-		std::unique_ptr<CamssCsiCamera> camera = enumCamera(phy);
++		std::unique_ptr<CamssCsiCamera> camera = enumCamera(phy, pix);
+ 		if (camera)
+ 			cameras.push_back(std::move(camera));
+ 	}
+@@ -488,20 +508,25 @@ CamssCsi::Cameras CamssCsi::match(PipelineHandler *pipe, DeviceEnumerator *enume
+ 	return cameras;
+ }
+ 
+-std::unique_ptr<CamssCsiCamera> CamssCsi::enumCamera(MediaEntity *phy)
++std::unique_ptr<CamssCsiCamera> CamssCsi::enumCamera(MediaEntity *phy, bool pix)
+ {
+ 	std::unique_ptr<CamssCsiCamera> cam = std::make_unique<CamssCsiCamera>();
++	const unsigned int csidSource = pix ? 4 : 1;
+ 	int ret;
+ 
+ 	/* CSI phy has a sink pad for the sensor at index 0. */
+ 	if (phy->pads().empty() || phy->pads()[0]->links().empty())
+ 		return nullptr;
+ 
+-	MediaEntity *sensor =
+-		phy->pads()[0]->links()[0]->source()->entity();
+-	cam->sensor_ = CameraSensorFactoryBase::create(sensor);
+-	if (!cam->sensor_)
++	MediaLink *sensorLink = phy->pads()[0]->links()[0];
++	MediaEntity *sensor = sensorLink->source()->entity();
++	if (sensor->function() != MEDIA_ENT_F_CAM_SENSOR)
+ 		return nullptr;
++	if (!pix) {
++		cam->sensor_ = CameraSensorFactoryBase::create(sensor);
++		if (!cam->sensor_)
++			return nullptr;
++	}
+ 
+ 	if (csids_.empty()) {
+ 		LOG(Camss, Warning)
+@@ -515,15 +540,37 @@ std::unique_ptr<CamssCsiCamera> CamssCsi::enumCamera(MediaEntity *phy)
+ 		return nullptr;
+ 	}
+ 
+-	MediaEntity *csid = csids_.front();
+-	MediaEntity *vfe = vfes_.front();
++	auto csidIt = csids_.begin();
++	auto vfeIt = vfes_.begin();
++	/*
++	 * PIX is not a crossbar: an SM8750 CSID's IPP output can only feed
++	 * its associated full VFE. Find an actual pair before reserving it.
++	 */
++	if (pix) {
++		for (; csidIt != csids_.end(); ++csidIt) {
++			MediaEntity *csid = *csidIt;
++
++			if (!camssMediaDev_->link(phy, 1, csid, 0))
++				continue;
++			vfeIt = std::find_if(vfes_.begin(), vfes_.end(),
++					    [this, csid, csidSource](MediaEntity *vfe) {
++				return camssMediaDev_->link(csid, csidSource, vfe, 0) != nullptr;
++			});
++			if (vfeIt != vfes_.end())
++				break;
++		}
++		if (csidIt == csids_.end())
++			return nullptr;
++	}
+ 
++	MediaEntity *csid = *csidIt;
++	MediaEntity *vfe = *vfeIt;
+ 	for (unsigned int i = 0; i < CamssCsiCamera::LinkCount; i++) {
+ 		auto &link = cam->links_[i];
+ 
+ 		switch (i) {
+ 		case CamssCsiCamera::SensorPhyLink:
+-			link.link = camssMediaDev_->link(sensor, 0, phy, 0);
++			link.link = sensorLink;
+ 			link.sinkSubdev = std::make_unique<V4L2Subdevice>(phy);
+ 			break;
+ 		case CamssCsiCamera::PhyCsidLink:
+@@ -531,7 +578,7 @@ std::unique_ptr<CamssCsiCamera> CamssCsi::enumCamera(MediaEntity *phy)
+ 			link.sinkSubdev = std::make_unique<V4L2Subdevice>(csid);
+ 			break;
+ 		case CamssCsiCamera::CsidVfeLink:
+-			link.link = camssMediaDev_->link(csid, 1, vfe, 0);
++			link.link = camssMediaDev_->link(csid, csidSource, vfe, 0);
+ 			link.sinkSubdev = std::make_unique<V4L2Subdevice>(vfe);
+ 			break;
+ 		}
+@@ -556,15 +603,17 @@ std::unique_ptr<CamssCsiCamera> CamssCsi::enumCamera(MediaEntity *phy)
+ 	ret = cam->output_->open();
+ 	if (ret)
+ 		return nullptr;
++	if (pix && cam->initPix())
++		return nullptr;
+ 
+ 	LOG(Camss, Info)
+-		<< "Sensor " << cam->sensor_->entity()->name()
++		<< "Sensor " << sensor->name()
+ 		<< " phy " << phy->name()
+ 		<< " decoder " << csid->name()
+ 		<< " VFE " << vfe->name();
+ 
+-	csids_.erase(csids_.begin());
+-	vfes_.erase(vfes_.begin());
++	csids_.erase(csidIt);
++	vfes_.erase(vfeIt);
+ 	return cam;
+ }
+ 
+diff --git a/src/libcamera/pipeline/camss/camss_csi.h b/src/libcamera/pipeline/camss/camss_csi.h
+index fd5cf29d2ab96d7eff8d724a32b2d0dde5cdf98f..9653f332a1d19623a54b1d016348405d172c1624 100644
+--- a/src/libcamera/pipeline/camss/camss_csi.h
++++ b/src/libcamera/pipeline/camss/camss_csi.h
+@@ -14,10 +14,14 @@
+ 
+ #include <memory>
+ #include <queue>
++#include <string>
+ #include <vector>
+ 
+ #include <libcamera/base/signal.h>
+ 
++#include <libcamera/controls.h>
++#include <libcamera/orientation.h>
++
+ #include "libcamera/internal/device_enumerator.h"
+ #include "libcamera/internal/pipeline_handler.h"
+ #include "libcamera/internal/v4l2_subdevice.h"
+@@ -48,6 +52,17 @@ public:
+ 	int exportBuffers(unsigned int count,
+ 			  std::vector<std::unique_ptr<FrameBuffer>> *buffers);
+ 
++	bool isPix() const { return pixSensor_ != nullptr; }
++	StreamConfiguration generatePixConfiguration() const;
++	int validatePix(StreamConfiguration *cfg) const;
++	int configurePix(const StreamConfiguration &cfg);
++	int startPix();
++	void stopPix();
++	int queuePixBuffer(FrameBuffer *buffer);
++	const std::string &pixId() const { return pixId_; }
++	const ControlList &pixProperties() const { return pixProperties_; }
++	Orientation pixOrientation() const { return pixOrientation_; }
++
+ 	PixelFormat mbusCodeToPixelFormat(unsigned int code) const;
+ 	unsigned int PixelFormatToMbusCode(const PixelFormat &format) const;
+ 
+@@ -69,6 +84,7 @@ public:
+ 
+ 	Signal<> bufferAvailable;
+ 	Stream rawStream_;
++	Stream pixStream_;
+ 
+ private:
+ 	friend class CamssCsi;
+@@ -94,11 +110,19 @@ private:
+ 					    CamssIsp *isp = nullptr) const;
+ 	int tryFormat(const V4L2SubdeviceFormat &sensorFormat, StreamConfiguration &cfg) const;
+ 	void freeBuffers();
++	int initPix();
++	void closePix();
+ 
+ 	std::unique_ptr<CameraSensor> sensor_;
+ 	std::unique_ptr<V4L2VideoDevice> output_;
+ 	std::array<linkInfo, LinkCount> links_;
+ 
++	std::unique_ptr<V4L2Subdevice> pixSensor_;
++	std::vector<Size> pixSizes_;
++	std::string pixId_;
++	ControlList pixProperties_;
++	Orientation pixOrientation_ = Orientation::Rotate0;
++
+ 	std::vector<std::unique_ptr<FrameBuffer>> buffers_;
+ 	std::queue<FrameBuffer *> availableBuffers_;
+ 	unsigned int bufferCount_;
+@@ -113,7 +137,7 @@ public:
+ 	Cameras match(PipelineHandler *pipe, DeviceEnumerator *enumerator);
+ private:
+ 	void getEntities(std::vector<MediaEntity *> &ents, const char *fmt, unsigned int max);
+-	std::unique_ptr<CamssCsiCamera> enumCamera(MediaEntity *phy);
++	std::unique_ptr<CamssCsiCamera> enumCamera(MediaEntity *phy, bool pix);
+ 
+ 	static constexpr unsigned int kMaxCsiPhys = 5;
+ 	static constexpr unsigned int kMinCsiDecoders = 2;
+diff --git a/src/libcamera/pipeline/camss/camss_csi_pix.cpp b/src/libcamera/pipeline/camss/camss_csi_pix.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..326a221a37439b7cd1e35753e9ab91f2920e86ac
+--- /dev/null
++++ b/src/libcamera/pipeline/camss/camss_csi_pix.cpp
+@@ -0,0 +1,375 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Qualcomm TFE online PIX capture
++ */
++
++#include "camss_csi.h"
++
++#include <algorithm>
++#include <cerrno>
++#include <chrono>
++#include <cstdlib>
++#include <map>
++
++#include <linux/media-bus-format.h>
++
++#include <libcamera/base/log.h>
++
++#include <libcamera/formats.h>
++#include <libcamera/property_ids.h>
++
++#include "libcamera/internal/media_device.h"
++#include "libcamera/internal/sysfs.h"
++
++namespace libcamera {
++
++LOG_DECLARE_CATEGORY(Camss)
++
++namespace {
++
++bool isBayer10(unsigned int code)
++{
++	switch (code) {
++	case MEDIA_BUS_FMT_SBGGR10_1X10:
++	case MEDIA_BUS_FMT_SGBRG10_1X10:
++	case MEDIA_BUS_FMT_SGRBG10_1X10:
++	case MEDIA_BUS_FMT_SRGGB10_1X10:
++		return true;
++	default:
++		return false;
++	}
++}
++
++bool isPixFormat(const V4L2DeviceFormat &format, const Size &size)
++{
++	uint64_t stride = format.planes[0].bpl;
++
++	return format.fourcc == V4L2PixelFormat(V4L2_PIX_FMT_NV12) &&
++	       format.size == size && format.planesCount == 1 &&
++	       stride >= size.width && format.planes[0].size >= stride * size.height * 3 / 2;
++}
++
++int setFormat(V4L2Subdevice *dev, unsigned int pad, V4L2SubdeviceFormat format)
++{
++	/* Each sink must preserve the sensor's code and geometry. */
++	V4L2SubdeviceFormat requested = format;
++	int ret = dev->setFormat(pad, &format);
++	if (ret)
++		return ret;
++
++	return format.size == requested.size && format.code == requested.code ? 0 : -EINVAL;
++}
++
++/* Configure only links incident to the selected route. Other cameras use
++ * different PHY, CSID and VFE entities. Restore the old link state on failure.
++ */
++class PixLinks
++{
++public:
++	~PixLinks()
++	{
++		for (auto it = changes_.rbegin(); it != changes_.rend(); ++it) {
++			if (it->first->setEnabled(!it->second))
++				LOG(Camss, Error) << "Failed to restore " << *it->first;
++		}
++	}
++
++	int select(MediaLink *link)
++	{
++		for (const MediaPad *pad : link->source()->entity()->pads()) {
++			if (!(pad->flags() & MEDIA_PAD_FL_SOURCE))
++				continue;
++
++			for (MediaLink *other : pad->links()) {
++				if (other != link && !(other->flags() & MEDIA_LNK_FL_IMMUTABLE)) {
++					int ret = change(other, false);
++					if (ret)
++						return ret;
++				}
++			}
++		}
++
++		for (MediaLink *other : link->sink()->links()) {
++			if (other != link) {
++				int ret = change(other, false);
++				if (ret)
++					return ret;
++			}
++		}
++
++		return change(link, true);
++	}
++
++	void commit() { changes_.clear(); }
++
++private:
++	int change(MediaLink *link, bool enabled)
++	{
++		if (!!(link->flags() & MEDIA_LNK_FL_ENABLED) == enabled)
++			return 0;
++
++		int ret = link->setEnabled(enabled);
++		if (ret)
++			return ret;
++
++		changes_.emplace_back(link, enabled);
++		return 0;
++	}
++
++	std::vector<std::pair<MediaLink *, bool>> changes_;
++};
++
++} /* namespace */
++
++int CamssCsiCamera::initPix()
++{
++	const MediaPad *source = links_[SensorPhyLink].link->source();
++	const MediaEntity *entity = source->entity();
++	const std::string model = entity->name().substr(0, entity->name().find(' '));
++
++	/*
++	 * Restrict the initial implementation to the known binned modes.
++	 * The full-size modes have a Quad CFA that the PIX path cannot remosaic.
++	 */
++	if (model != "s5kjn1" && model != "ov32d40")
++		return -ENODEV;
++	if (!output_->formats().contains(V4L2PixelFormat(V4L2_PIX_FMT_NV12)))
++		return -ENODEV;
++
++	pixSensor_ = std::make_unique<V4L2Subdevice>(entity);
++	int ret = pixSensor_->open();
++	if (ret)
++		return ret;
++
++	pixId_ = sysfs::firmwareNodePath(pixSensor_->devicePath());
++	if (pixId_.empty())
++		return -ENODEV;
++
++	for (const auto &[code, ranges] : pixSensor_->formats(source->index())) {
++		if (!isBayer10(code))
++			continue;
++		for (const SizeRange &range : ranges) {
++			const Size &size = range.min;
++
++			if (size == range.max && !size.isNull() && size.width <= 4096 &&
++			    !(size.width % 16) && !(size.height % 2))
++				pixSizes_.push_back(size);
++		}
++	}
++	std::sort(pixSizes_.begin(), pixSizes_.end());
++	pixSizes_.erase(std::unique(pixSizes_.begin(), pixSizes_.end()), pixSizes_.end());
++	if (pixSizes_.empty())
++		return -ENODEV;
++
++	pixProperties_ = ControlList(properties::properties);
++	pixProperties_.set(properties::Model, model);
++	const auto &controls = pixSensor_->controls();
++	auto location = controls.find(V4L2_CID_CAMERA_ORIENTATION);
++	if (location != controls.end()) {
++		switch (location->second.def().get<int32_t>()) {
++		case V4L2_CAMERA_ORIENTATION_FRONT:
++			pixProperties_.set(properties::Location, properties::LocationFront);
++			break;
++		case V4L2_CAMERA_ORIENTATION_BACK:
++			pixProperties_.set(properties::Location, properties::LocationBack);
++			break;
++		case V4L2_CAMERA_ORIENTATION_EXTERNAL:
++			pixProperties_.set(properties::Location, properties::LocationExternal);
++			break;
++		}
++	}
++	auto rotation = controls.find(V4L2_CID_CAMERA_SENSOR_ROTATION);
++	if (rotation != controls.end()) {
++		int32_t angle = rotation->second.def().get<int32_t>();
++		auto orientation = orientationFromRotation(angle);
++		if (orientation) {
++			pixOrientation_ = *orientation;
++			pixProperties_.set(properties::Rotation, angle);
++		}
++	}
++
++	return 0;
++}
++
++StreamConfiguration CamssCsiCamera::generatePixConfiguration() const
++{
++	std::vector<SizeRange> sizes(pixSizes_.begin(), pixSizes_.end());
++	StreamConfiguration cfg(StreamFormats({ { formats::NV12, sizes } }));
++
++	cfg.size = pixSizes_.back();
++	cfg.pixelFormat = formats::NV12;
++
++	return cfg;
++}
++
++int CamssCsiCamera::validatePix(StreamConfiguration *cfg) const
++{
++	if (!output_->isOpen())
++		return -EPIPE;
++
++	auto error = [cfg](const Size &size) {
++		return std::abs(static_cast<int64_t>(size.width) - cfg->size.width) +
++		       std::abs(static_cast<int64_t>(size.height) - cfg->size.height);
++	};
++	const Size &size = *std::min_element(pixSizes_.begin(), pixSizes_.end(),
++					    [&error](const Size &a, const Size &b) {
++		return error(a) < error(b);
++	});
++	V4L2DeviceFormat fmt = {};
++	fmt.fourcc = V4L2PixelFormat(V4L2_PIX_FMT_NV12);
++	fmt.planesCount = 1;
++	fmt.size = size;
++
++	int ret = output_->tryFormat(&fmt);
++	if (ret)
++		return ret;
++	if (!isPixFormat(fmt, size))
++		return -EINVAL;
++
++	cfg->size = size;
++	cfg->pixelFormat = formats::NV12;
++	cfg->stride = fmt.planes[0].bpl;
++	cfg->frameSize = fmt.planes[0].size;
++	cfg->colorSpace = fmt.colorSpace;
++	/* Applications can choose enough real buffers to cover scheduling delays. */
++	cfg->bufferCount = std::clamp(cfg->bufferCount, kBufferCount,
++				      static_cast<unsigned int>(VIDEO_MAX_FRAME));
++
++	return 0;
++}
++
++int CamssCsiCamera::configurePix(const StreamConfiguration &cfg)
++{
++	auto &phy = links_[SensorPhyLink];
++	auto &csid = links_[PhyCsidLink];
++	auto &vfe = links_[CsidVfeLink];
++	unsigned int sensorPad = phy.link->source()->index();
++	unsigned int pixPad = vfe.link->source()->index();
++	PixLinks changes;
++	int ret;
++
++	/*
++	 * Do not modify formats before the selected links have been accepted
++	 * by the media controller. Link changes to a streaming entity fail.
++	 */
++	for (const auto &link : links_) {
++		ret = changes.select(link.link);
++		if (ret)
++			return ret;
++	}
++
++	ControlList flips(pixSensor_->controls());
++	for (unsigned int id : { V4L2_CID_HFLIP, V4L2_CID_VFLIP }) {
++		const auto *info = pixSensor_->controlInfo(id);
++		if (info && !(info->flags & V4L2_CTRL_FLAG_READ_ONLY))
++			flips.set(id, 0);
++	}
++	if (!flips.empty() && pixSensor_->setControls(&flips))
++		return -EINVAL;
++
++	V4L2SubdeviceFormat raw;
++	ret = pixSensor_->getFormat(sensorPad, &raw);
++	if (ret)
++		return ret;
++	raw.size = cfg.size;
++	ret = pixSensor_->setFormat(sensorPad, &raw);
++	if (ret)
++		return ret;
++	if (!isBayer10(raw.code) || raw.size != cfg.size)
++		return -EINVAL;
++
++	ret = setFormat(phy.sinkSubdev.get(), phy.link->sink()->index(), raw);
++	if (ret)
++		return ret;
++	ret = setFormat(csid.sinkSubdev.get(), csid.link->sink()->index(), raw);
++	if (ret)
++		return ret;
++	ret = setFormat(csid.sinkSubdev.get(), pixPad, raw);
++	if (ret)
++		return ret;
++	ret = setFormat(vfe.sinkSubdev.get(), vfe.link->sink()->index(), raw);
++	if (ret)
++		return ret;
++
++	/* The first online path exposes 1:1 binned modes only. */
++	Rectangle full(cfg.size), compose(full), crop(full);
++	ret = vfe.sinkSubdev->setSelection(0, V4L2_SEL_TGT_COMPOSE, &compose);
++	if (ret)
++		return ret;
++	ret = vfe.sinkSubdev->setSelection(1, V4L2_SEL_TGT_CROP, &crop);
++	if (ret)
++		return ret;
++	if (compose != full || crop != full)
++		return -EINVAL;
++
++	V4L2SubdeviceFormat yuv = raw;
++	yuv.code = MEDIA_BUS_FMT_YUYV8_1_5X8;
++	ret = setFormat(vfe.sinkSubdev.get(), 1, yuv);
++	if (ret)
++		return ret;
++
++	V4L2DeviceFormat fmt = {};
++	fmt.fourcc = V4L2PixelFormat(V4L2_PIX_FMT_NV12);
++	fmt.planesCount = 1;
++	fmt.size = cfg.size;
++	fmt.colorSpace = cfg.colorSpace;
++	ret = output_->setFormat(&fmt);
++	if (ret)
++		return ret;
++	if (!isPixFormat(fmt, cfg.size) || fmt.planes[0].bpl != cfg.stride ||
++	    fmt.planes[0].size != cfg.frameSize || fmt.colorSpace != cfg.colorSpace)
++		return -EIO;
++
++	bufferCount_ = cfg.bufferCount;
++	changes.commit();
++	return 0;
++}
++
++int CamssCsiCamera::startPix()
++{
++	if (!output_->isOpen())
++		return -EPIPE;
++
++	int ret = output_->importBuffers(bufferCount_);
++	if (ret)
++		return ret;
++
++	auto before = std::chrono::steady_clock::now();
++	LOG(Camss, Debug) << "Starting PIX STREAMON on " << output_->deviceNode()
++			  << " with " << bufferCount_ << " request buffers";
++	ret = output_->streamOn();
++	auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
++		std::chrono::steady_clock::now() - before);
++	LOG(Camss, Debug) << "PIX STREAMON on " << output_->deviceNode() << ": "
++			  << elapsed.count() << " us, status " << ret;
++	if (ret && output_->releaseBuffers())
++		closePix();
++
++	return ret;
++}
++
++void CamssCsiCamera::stopPix()
++{
++	/* On failure close the device before returning outstanding buffers. */
++	if (output_->streamOff() || output_->releaseBuffers())
++		closePix();
++}
++
++void CamssCsiCamera::closePix()
++{
++	std::string node = output_->deviceNode();
++	output_.reset();
++	output_ = std::make_unique<V4L2VideoDevice>(node);
++	int ret = output_->open();
++	if (ret) {
++		output_->close();
++		LOG(Camss, Error) << "Failed to re-open " << node;
++	}
++}
++
++int CamssCsiCamera::queuePixBuffer(FrameBuffer *buffer)
++{
++	return output_->queueBuffer(buffer);
++}
++
++} /* namespace libcamera */
+diff --git a/src/libcamera/pipeline/camss/meson.build b/src/libcamera/pipeline/camss/meson.build
+index 2f3931dd1f8f350ed98b528870a668589daf2890..bd03fb5957b899e8876c00aa4fc77a43f6f8c049 100644
+--- a/src/libcamera/pipeline/camss/meson.build
++++ b/src/libcamera/pipeline/camss/meson.build
+@@ -3,6 +3,7 @@
+ libcamera_internal_sources += files([
+     'camss.cpp',
+     'camss_csi.cpp',
++    'camss_csi_pix.cpp',
+     'camss_frames.cpp',
+     'camss_isp.cpp',
+     'camss_isp_soft.cpp',

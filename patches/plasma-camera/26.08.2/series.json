@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "version": "26.08.2",
+  "targets": ["debian-kde"],
+  "patches": [
+    {
+      "file": "0001-libcamera-0.8.patch",
+      "sha256": "3633f264a763ed1c5827aae615e8ce7efd68bd10ca38482dd4653bb13f725d56",
+      "upstream": {
+        "status": "merged",
+        "url": "https://invent.kde.org/plasma-mobile/plasma-camera/-/commit/7faa4d51fb38b6734111297adaf25232f471bdd8",
+        "commit": "7faa4d51fb38b6734111297adaf25232f471bdd8",
+        "drop_when": "The Debian Plasma Camera source already supports the libcamera 0.8 location enum names."
+      }
+    }
+  ]
+}

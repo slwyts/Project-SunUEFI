@@ -174,7 +174,7 @@ class ReleaseRootTests(unittest.TestCase):
                 patch.object(builder, 'build_resolver', return_value=nullcontext()):
             builder.install_overlays(self.rootfs, run, {
                 archive.name: (archive, {'sha256': builder.digest(archive)}),
-            })
+            }, desktop='gnome')
         self.assertEqual(len(commands), 1)
         self.assertIn('install', commands[0])
         self.assertIn('--allow-downgrades', commands[0])
@@ -196,7 +196,7 @@ class ReleaseRootTests(unittest.TestCase):
         with patch.object(builder, 'build_devices', return_value=nullcontext()), \
                 patch.object(builder, 'build_resolver', return_value=nullcontext()), \
                 patch.object(builder, 'capture', return_value=installed):
-            builder.install_overlays(self.rootfs, commands.append, archives)
+            builder.install_overlays(self.rootfs, commands.append, archives, desktop='gnome')
         self.assertEqual(len(commands), 1)
         arguments = commands[0]
         self.assertIn('pipewire-v4l2-source-', arguments)

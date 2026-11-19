@@ -1,0 +1,86 @@
+From 6c503736a6a05760bdf163323d259e7dad4ff760 Mon Sep 17 00:00:00 2001
+From: Hans de Goede <johannes.goede@oss.qualcomm.com>
+Date: Fri, 6 Nov 2026 16:13:36 +0100
+Subject: [PATCH 2/3] camss: Add camss utility functions
+
+Add camss_util.[h|cpp] files with some small helper functions shared
+between Camss* classes.
+
+Signed-off-by: Hans de Goede <johannes.goede at oss.qualcomm.com>
+---
+ src/libcamera/pipeline/camss/camss_util.cpp | 39 +++++++++++++++++++++
+ src/libcamera/pipeline/camss/camss_util.h   | 19 ++++++++++
+ 2 files changed, 58 insertions(+)
+ create mode 100644 src/libcamera/pipeline/camss/camss_util.cpp
+ create mode 100644 src/libcamera/pipeline/camss/camss_util.h
+
+diff --git a/src/libcamera/pipeline/camss/camss_util.cpp b/src/libcamera/pipeline/camss/camss_util.cpp
+new file mode 100644
+index 0000000..96b1bbc
+--- /dev/null
++++ b/src/libcamera/pipeline/camss/camss_util.cpp
+@@ -0,0 +1,39 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Qualcomm CAMSS utility functions
++ *
++ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
++ */
++
++#include "camss_util.h"
++
++#include <libcamera/base/log.h>
++
++#include <libcamera/stream.h>
++
++#include "libcamera/internal/v4l2_videodevice.h"
++
++namespace libcamera {
++
++LOG_DECLARE_CATEGORY(Camss)
++
++bool camssV4L2DeviceFormatMatchesStreamConfig(const V4L2DeviceFormat &fmt,
++					      const StreamConfiguration &cfg,
++					      const char *msgPrefix)
++{
++	if (cfg.pixelFormat != fmt.fourcc.toPixelFormat(false) || cfg.size != fmt.size ||
++	    cfg.stride != fmt.planes[0].bpl) {
++		LOG(Camss, Error)
++			<< msgPrefix
++			<< " StreamConfiguration vs V4L2DeviceFormat mismatch"
++			<< " pixelFormat " << cfg.pixelFormat << ", " << fmt.fourcc.toPixelFormat(false)
++			<< " size " << cfg.size << ", " << fmt.size
++			<< " stride " << cfg.stride << ", " << fmt.planes[0].bpl
++			<< " frameSize " << cfg.frameSize << ", " << fmt.planes[0].size;
++		return false;
++	}
++
++	return true;
++}
++
++} /* namespace libcamera */
+diff --git a/src/libcamera/pipeline/camss/camss_util.h b/src/libcamera/pipeline/camss/camss_util.h
+new file mode 100644
+index 0000000..111c305
+--- /dev/null
++++ b/src/libcamera/pipeline/camss/camss_util.h
+@@ -0,0 +1,19 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Qualcomm CAMSS utility functions
++ *
++ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
++ */
++
++#pragma once
++
++namespace libcamera {
++
++struct StreamConfiguration;
++class V4L2DeviceFormat;
++
++bool camssV4L2DeviceFormatMatchesStreamConfig(const V4L2DeviceFormat &fmt,
++					      const StreamConfiguration &cfg,
++					      const char *msgPrefix);
++
++} /* namespace libcamera */

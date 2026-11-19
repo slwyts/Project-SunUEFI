@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Build the Debian PipeWire package set or plugins for the installed pacman ABI."""
 import argparse
+from functools import partial
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -26,6 +28,7 @@ MODULES = ('glib-2.0', 'gobject-2.0', 'gmodule-2.0', 'gio-2.0', 'gio-unix-2.0',
            'gstreamer-1.0', 'gstreamer-base-1.0',
            'gstreamer-audio-1.0', 'gstreamer-allocators-1.0')
 DEBIAN_REVISION = 3
+DEBIAN_LIBCAMERA_REVISION = 4
 DEBIAN_V4L2_TRANSITION = 'pipewire-v4l2-source'
 DEBIAN_DEFAULT = frozenset((
     'gstreamer1.0-pipewire', 'libpipewire-0.3-0t64', 'libpipewire-0.3-common',
@@ -206,12 +209,66 @@ def debian_inputs(root, output):
     return target, series, patches
 
 
-def reusable_debian(output, root):
+def libcamera_inputs(directory):
+    if directory is None:
+        return (), None
+    directory = Path(directory).resolve()
+    record = json.loads((directory / 'SOURCE.json').read_text())
+    packages = record.get('packages', {})
+    libraries = [name for name in packages if re.fullmatch(r'libcamera[0-9]+\.[0-9]+', name)]
+    version = record.get('package_version', '')
+    if (record.get('packages_built') is not True or (directory / '.incomplete').exists() or
+            record.get('source', {}).get('package') != 'libcamera' or len(libraries) != 1 or
+            not re.fullmatch(r'[0-9][a-zA-Z0-9:.+~-]*', version)):
+        raise ValueError('Use a completed Debian libcamera build')
+    library, = libraries
+    ipa = 'libcamera-ipa-' + library.removeprefix('libcamera')
+    archives = []
+    checksums = {}
+    for name in (library, 'libcamera-dev', ipa):
+        row = packages.get(name, {})
+        filename = f'{name}_{version.split(":")[-1]}_arm64.deb'
+        if (row.get('file'), row.get('version'), row.get('architecture')) != (filename, version, 'arm64'):
+            raise ValueError('Missing matching Debian libcamera package: ' + name)
+        archive = directory / 'runtime' / filename
+        if archive.is_symlink() or not archive.is_file():
+            raise ValueError('Missing Debian libcamera archive: ' + filename)
+        archives.append(archive)
+        checksums[name] = {'version': version, 'architecture': 'arm64', 'sha256': row['sha256']}
+    if debian.build_dependency_records(archives) != checksums:
+        raise ValueError('Debian libcamera archive differs from its build record')
+    return archives, library
+
+
+def verify_libcamera_plugin(output, record, library):
+    plugin = 'libspa-0.2-libcamera'
+    archive = output / 'runtime' / record['packages'][plugin]['file']
+    depends = debian.capture(['dpkg-deb', '-f', archive, 'Depends'])
+    if not any(re.fullmatch(rf'{re.escape(library)}(?: \([^)]+\))?', relation.strip())
+               for relation in depends.split(',')):
+        raise ValueError('The PipeWire camera plugin depends on a different libcamera package')
+    with tempfile.TemporaryDirectory(prefix='pipewire-libcamera-') as directory:
+        debian.run(['dpkg-deb', '-x', archive, directory])
+        binary = Path(directory) / 'usr/lib/aarch64-linux-gnu/spa-0.2/libcamera/libspa-libcamera.so'
+        dynamic = debian.capture(['readelf', '-d', binary])
+    linked = set(re.findall(r'\(NEEDED\).*?\[(libcamera[^]]+)\]', dynamic))
+    abi = library.removeprefix('libcamera')
+    if (f'libcamera.so.{abi}' not in linked or
+            linked - {f'libcamera.so.{abi}', f'libcamera-base.so.{abi}'}):
+        raise ValueError('The PipeWire camera plugin links a different libcamera ABI')
+
+
+def reusable_debian(output, root, *, libcamera=None):
     target, series, patches = debian_inputs(root, output)
     proof = [{'path': path.relative_to(ROOT).as_posix(), 'sha256': debian.sha(path)} for path in patches]
     inputs = debian.input_records([Path(__file__), series, Path(debian.__file__),
                                    Path(package_build.__file__)])
-    return debian.reusable(output, target, proof, DEBIAN_PACKAGES, inputs, DEBIAN_REVISION)
+    archives, library = libcamera_inputs(libcamera)
+    revision = DEBIAN_LIBCAMERA_REVISION if library else DEBIAN_REVISION
+    verify = partial(verify_libcamera_plugin, library=library) if library else None
+    return debian.reusable(output, target, proof, DEBIAN_PACKAGES, inputs, revision,
+                           build_dependencies=debian.build_dependency_records(archives),
+                           validate_packages=verify)
 
 
 def verify_debian_packages(record):
@@ -232,12 +289,16 @@ def test_debian_build(guest, source):
            '--suite gstreamer', 'test', source])
 
 
-def build_debian(root, output, jobs):
+def build_debian(root, output, jobs, *, libcamera=None):
     _, series, patches = debian_inputs(root, output)
+    archives, library = libcamera_inputs(libcamera)
+    revision = DEBIAN_LIBCAMERA_REVISION if library else DEBIAN_REVISION
+    verify = partial(verify_libcamera_plugin, library=library) if library else None
     return debian.build(output, root, jobs, 'pipewire', patches, DEBIAN_PACKAGES,
-                        [Path(__file__), series], revision=DEBIAN_REVISION,
+                        [Path(__file__), series], revision=revision,
                         binary_package=debian.PIPEWIRE_ABI_PACKAGE,
-                        test_build=test_debian_build)
+                        test_build=test_debian_build, build_dependencies=archives,
+                        validate_packages=verify)
 
 
 def build_arch(root, output, jobs):
@@ -316,7 +377,7 @@ def seal(output, version, data, patches, packages):
     return record
 
 
-def build(root, output, jobs=None):
+def build(root, output, jobs=None, *, libcamera=None):
     jobs = package_build.default_jobs() if jobs is None else jobs
     root, output = root.resolve(), output.resolve()
     if (os.geteuid() or not root.is_relative_to(ROOT / 'build') or not root.is_dir() or
@@ -325,7 +386,9 @@ def build(root, output, jobs=None):
         raise ValueError('Use root, project build directories outside each other, and at least one job')
     output.mkdir(parents=True, exist_ok=True)
     if (root / 'var/lib/dpkg/status').is_file():
-        return build_debian(root, output, jobs)
+        return build_debian(root, output, jobs, libcamera=libcamera)
+    if libcamera is not None:
+        raise ValueError('The libcamera package input requires Debian')
     return build_arch(root, output, jobs)
 
 
@@ -333,10 +396,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--rootfs', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--libcamera-packages', type=Path, metavar='DIR',
+                        help='Build against the packages from a completed Debian libcamera build')
     parser.add_argument('--jobs', type=int, default=package_build.default_jobs())
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not args.worker:
         raise SystemExit(subprocess.run(['unshare', '--mount', '--propagation', 'private',
                                         sys.executable, __file__, *sys.argv[1:], '--worker']).returncode)
-    print(json.dumps(build(args.rootfs, args.output, args.jobs), indent=2))
+    print(json.dumps(build(args.rootfs, args.output, args.jobs,
+                           libcamera=args.libcamera_packages), indent=2))

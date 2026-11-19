@@ -1,5 +1,6 @@
 """Validate sealed overlay package sets with the native package tools."""
 import io
+import json
 import os
 from pathlib import Path
 import pwd
@@ -13,7 +14,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from build import overlay_packages as overlays
+from desktop import build_libcamera_packages as libcamera
 from desktop.build_pipewire_packages import DEBIAN_PACKAGES
+from desktop.build_plasma_camera_package import RUNTIME as PLASMA_PACKAGES
 
 
 @unittest.skipUnless(shutil.which('dpkg-deb'), 'Debian package tools required')
@@ -53,15 +56,24 @@ class OverlayPackageTests(unittest.TestCase):
 
     def test_exports_only_validated_files_and_selects_only_kde_components(self):
         sources = {}
+        policy = libcamera.policy()
+        abi = libcamera.abi_version(policy)
         for component in (*overlays.DEBIAN_SHARED, *overlays.DEBIAN_GNOME, 'fingerprint'):
-            names = DEBIAN_PACKAGES if component == 'pipewire' else {
-                'test-' + component.replace('_', '-'): 'arm64'}
+            names = {'libcamera': libcamera.runtime_packages(policy), 'pipewire': DEBIAN_PACKAGES,
+                     'plasma_camera': PLASMA_PACKAGES}.get(
+                         component, {'test-' + component.replace('_', '-'): 'arm64'})
+            version = libcamera.base_package_version(policy) if component == 'libcamera' else '1'
             records = {}
             for name, architecture in names.items():
-                archive = self.deb(name, architecture=architecture)
-                records[name] = {'file': archive.name, 'version': '1',
+                archive = self.deb(name, version, architecture=architecture)
+                records[name] = {'file': archive.name, 'version': version,
                                  'architecture': architecture, 'sha256': overlays.sha(archive)}
-            sources[component] = (self.root, {'packages': records, 'package_version': '1'})
+            sources[component] = (self.root, {'packages': records, 'package_version': version})
+        dependencies = {name: {key: value for key, value in row.items() if key != 'file'}
+                        for name, row in sources['libcamera'][1]['packages'].items()
+                        if name in (f'libcamera{abi}', 'libcamera-dev', f'libcamera-ipa-{abi}')}
+        for component in ('pipewire', 'plasma_camera'):
+            sources[component][1]['build_dependencies'] = dependencies
         unlisted = self.deb('test-obsolete')
         output = self.root / 'set'
         expected = overlays.debian_packages(sources)
@@ -74,6 +86,18 @@ class OverlayPackageTests(unittest.TestCase):
         self.assertNotIn(unlisted.name, gnome)
         self.assertEqual({row['component'] for row in kde.values()},
                          {*overlays.DEBIAN_SHARED, 'fingerprint'})
+        self.assertIn(dependencies[f'libcamera-ipa-{abi}']['sha256'],
+                      {row['sha256'] for row in kde.values()})
+
+        # Matching versions are insufficient: an older dev archive can have
+        # the same version string and different compiler inputs.
+        record = json.loads(manifest.read_text())
+        record['components']['plasma_camera']['build_dependencies']['libcamera-dev']['sha256'] = 'a' * 64
+        manifest.write_text(json.dumps(record))
+        for desktop in ('gnome', 'kde'):
+            with self.subTest(desktop=desktop), self.assertRaisesRegex(
+                    ValueError, 'plasma_camera was not built with this libcamera package set'):
+                overlays.read_debian(manifest, desktop)
 
         name = 'libpipewire-0.3-modules'
         _, pipewire = sources['pipewire']
@@ -91,6 +115,17 @@ class OverlayPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Package changed'):
             overlays.export(out, 'debian-gnome', 'apt', expected)
         self.assertFalse(out.exists())
+
+    def test_native_camera_defaults_include_ipa_without_optional_tools(self):
+        abi = libcamera.abi_version(libcamera.policy())
+        gnome = overlays.debian_package_selection('gnome', {'libcamera-tools'})
+        kde = overlays.debian_package_selection('kde', set())
+        default = {f'libcamera{abi}', f'libcamera-ipa-{abi}', 'gstreamer1.0-libcamera'}
+        self.assertEqual(kde['libcamera'], default)
+        self.assertEqual(gnome['libcamera'], default | {'libcamera-tools'})
+        self.assertIn('libspa-0.2-libcamera', gnome['pipewire'])
+        self.assertEqual(gnome['plasma_camera'] & PLASMA_PACKAGES.keys(), set())
+        self.assertTrue(PLASMA_PACKAGES.keys() <= kde['plasma_camera'])
 
     @unittest.skipUnless(all(shutil.which(name) for name in
                             ('apt-get', 'apt-ftparchive', 'dpkg-scanpackages', 'gpg')),

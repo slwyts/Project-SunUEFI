@@ -17,9 +17,30 @@ CAMSS 每个图像平面只向硬件写一个 DMA 基址。[缓冲区校验](../
 
 现有服务仍提供应用所需的相机功能。libcamera 原型已能直连硬件取得图像，还不能替代服务提供的控件和拍照流程。
 
+Debian 的 GNOME 和 KDE 使用同一组相机包。先构建 libcamera，再让 PipeWire
+和 Plasma Camera 链接这一版库；发布清单核对它们使用的归档版本及 SHA-256。
+用只启用 Debian 官方签名源的 ARM64 sid 构建根可单独重建：
+
+```sh
+sudo ./build.sh libcamera --sysroot "$SID_ARM64_ROOT" --output build/libcamera
+sudo ./build.sh pipewire --rootfs "$SID_ARM64_ROOT" --libcamera-packages build/libcamera \
+  --output build/pipewire-libcamera
+sudo ./build.sh plasma-camera --sysroot "$SID_ARM64_ROOT" --libcamera-packages build/libcamera
+```
+
+构建按 [固定的 libcamera 版本](../../../config/libcamera.json)和
+[CAMSS 补丁顺序](../../../patches/libcamera/0.8.0/series.json)重放源代码，
+沿用 Debian 拆包和 IPA 签名。七个 ARM64 `.deb` 在输出的 `runtime/`，
+源码包和 Debian 构建记录在 `source/`。PipeWire 使用该组开发包编译
+`libspa-0.2-libcamera`，并核对插件实际链接的库。
+
+打包本身不替换现有相机服务。0.8 的 IPA 模块、签名和代理由
+`libcamera-ipa-0.8` 安装到独立目录，不覆盖 Debian 0.7 的 `libcamera-ipa`。
+成品明确安装同版 IPA 和标准相机插件，KDE 也安装重新链接的 Plasma Camera。
+
 | 功能 | 现有服务（旧路径） | 标准硬件路径（替代状态） |
 | --- | --- | --- |
-| 前后摄预览、录像 | CAMSS PIX 输出 NV12，服务通过两个 loopback 摄像头交给应用 | libcamera 原型已直连两个 PIX 图像队列；硬件统计和普通应用接入未完成 |
+| 前后摄预览、录像 | CAMSS PIX 输出 NV12，服务通过两个 loopback 摄像头交给应用 | Debian 普通会话已通过正式 libcamera 和 PipeWire 从两个实际摄像头取帧；仍需补硬件统计、逐帧控制及拍照录像验收 |
 | 分辨率、帧率协商 | 服务处理 loopback 的 `S_FMT`／`S_PARM`，配置 sensor、硬件缩放与裁切 | libcamera 原型已通过后摄 3840×2160／60 fps 与前摄 3264×2448／30 fps 的配置和重开；还需覆盖其他模式与切换 |
 | 自动曝光、白平衡、后摄对焦 | 服务从 NV12 采样计算 AE／AWB 和清晰度 | TFE980 统计配置、metadata DMA 队列、完成处理和只处理硬件统计的 IPA 未实现，资料缺项见[下节](#tfe980-公开资料与-metadata) |
 | 手动控件、逐帧参数 | 控制 socket 写标准 sensor／PIX 控件；CCM 使用私有控件 | 底层曝光、gain、白平衡等控件保留；标准逐帧 ISP 参数、生效帧关联和 libcamera 控件接入未实现 |

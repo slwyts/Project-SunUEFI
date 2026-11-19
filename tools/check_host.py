@@ -48,6 +48,7 @@ CI_UNIT = (
     'test_rtc_offset.py',
     'test_usb_ram_boot_controller.py',
     'test_gt9764.py',
+    'test_build_libcamera_packages.py',
     'test_piano_camera.py',
     'test_camera.py',
     'test_bsp_package.py',

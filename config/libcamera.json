@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "https://github.com/libcamera-org/libcamera",
+    "tag": "v0.8.0",
+    "commit": "df8e348d64b4932a0676256ed24f0da3ee9438bc",
+    "release_signer": "902DD7983FBD28FDE372D47AA11E467210A461FD",
+    "url": "https://codeload.github.com/libcamera-org/libcamera/tar.gz/df8e348d64b4932a0676256ed24f0da3ee9438bc",
+    "sha256": "a12cb93dfa08d9f9d598f06b9efc408cc86a909ff00db634b670254438f2e654"
+  },
+  "debian": {
+    "recipe_source_version": "0.7.2-1",
+    "package_revision": "0+sunuefi2"
+  }
+}

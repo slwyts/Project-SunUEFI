@@ -758,6 +758,34 @@ def pack_bootstrap(rootfs, packages, archives, kernel, output, release, boot_tas
     return record
 
 
+def build_camera_overlays(rootfs, run, directory):
+    """Build the shared Debian camera packages in dependency order."""
+    from desktop import build_libcamera_packages as libcamera_builder
+    from desktop import build_pipewire_packages as pipewire_builder
+    from desktop import build_plasma_camera_package as plasma_camera_builder
+
+    libcamera = directory / 'libcamera'
+    run([ROOT / 'build.sh', 'libcamera', '--sysroot', rootfs, '--output', libcamera])
+    libcamera_record = libcamera_builder.reusable(libcamera, rootfs)
+    if libcamera_record is None:
+        raise ValueError('libcamera packages do not match the signed Debian source and CAMSS patches')
+    pipewire = directory / 'pipewire'
+    run([ROOT / 'build.sh', 'pipewire', '--rootfs', rootfs, '--output', pipewire,
+         '--libcamera-packages', libcamera])
+    pipewire_record = pipewire_builder.reusable_debian(pipewire, rootfs, libcamera=libcamera)
+    if pipewire_record is None:
+        raise ValueError('PipeWire packages do not match the signed Debian source and libcamera packages')
+    plasma_camera = directory / 'plasma-camera'
+    run([ROOT / 'build.sh', 'plasma-camera', '--sysroot', rootfs, '--output', plasma_camera,
+         '--libcamera-packages', libcamera])
+    plasma_camera_record = plasma_camera_builder.reusable(plasma_camera, rootfs, libcamera=libcamera)
+    if plasma_camera_record is None:
+        raise ValueError('Plasma Camera does not match the signed Debian source and libcamera packages')
+    return {'libcamera': (libcamera / 'runtime', libcamera_record),
+            'pipewire': (pipewire / 'runtime', pipewire_record),
+            'plasma_camera': (plasma_camera / 'runtime', plasma_camera_record)}
+
+
 def build_overlays(record, rootfs, kernel, run, directory=None, *, uapi=None):
     """Produce the same native packages for publishing and local builds."""
     sources = {}
@@ -773,13 +801,7 @@ def build_overlays(record, rootfs, kernel, run, directory=None, *, uapi=None):
     if record.get('ffmpeg_dir') is None:
         run([ROOT / 'build.sh', 'ffmpeg', '--output', ffmpeg.parent, '--sysroot', rootfs])
     sources['ffmpeg'] = ffmpeg, ffmpeg_packages(ffmpeg, rootfs)
-    from desktop import build_pipewire_packages as pipewire_builder
-    pipewire = directory / 'pipewire'
-    run([ROOT / 'build.sh', 'pipewire', '--rootfs', rootfs, '--output', pipewire])
-    pipewire_record = pipewire_builder.reusable_debian(pipewire, rootfs)
-    if pipewire_record is None:
-        raise ValueError('PipeWire packages do not match the signed Debian source')
-    sources['pipewire'] = pipewire / 'runtime', pipewire_record
+    sources.update(build_camera_overlays(rootfs, run, directory))
     from desktop import build_libwacom_packages as libwacom_builder
     libwacom = directory / 'libwacom'
     run([ROOT / 'build.sh', 'libwacom', '--sysroot', rootfs, '--output', libwacom])
@@ -802,34 +824,32 @@ def build_overlays(record, rootfs, kernel, run, directory=None, *, uapi=None):
         if gdm_record is None:
             raise ValueError('GDM packages do not match the shared source patches')
         sources['gdm'] = gdm / 'runtime', gdm_record
-    install_overlays(rootfs, run, overlay_packages.debian_packages(sources))
+    install_overlays(rootfs, run, overlay_packages.debian_packages(sources), desktop=record['desktop'])
     sources['fingerprint'] = build_fingerprint_overlay(
         record, rootfs, kernel, directory / 'fingerprint-packages', uapi)
     return sources
 
 
-def install_overlays(rootfs, run, packages, *, extra=(), published=False):
+def install_overlays(rootfs, run, packages, *, desktop, extra=(), published=False):
+    from desktop.build_pipewire_packages import DEBIAN_V4L2_TRANSITION
     from desktop.debian_package import prepare_build_indexes
 
-    details = packages.values() if published else (row for _, row in packages.values())
+    records = packages if published else {name: row for name, (_, row) in packages.items()}
     cohort = any(row.get('component') == 'pipewire' and
-                 row.get('name') == 'libpipewire-0.3-modules' for row in details)
-    remove = []
+                 row.get('name') == 'libpipewire-0.3-modules' for row in records.values())
+    installed = set()
     if cohort:
-        from desktop.build_pipewire_packages import DEBIAN_DEFAULT, DEBIAN_V4L2_TRANSITION
-
         text = capture(['chroot', rootfs, 'dpkg-query', '-W',
                         '-f=${Package}\t${db:Status-Status}\n'])
         installed = {row.split()[0] for row in text.splitlines() if row.endswith('\tinstalled')}
-        wanted = (DEBIAN_DEFAULT | installed) - {DEBIAN_V4L2_TRANSITION}
-
-        def keep(row):
-            return row.get('component') != 'pipewire' or row['name'] in wanted
-
-        packages = {name: value for name, value in packages.items()
-                    if keep(value if published else value[1])}
+    selection = overlay_packages.debian_package_selection(desktop, installed)
+    remove = []
+    if cohort:
+        selection['pipewire'] -= {DEBIAN_V4L2_TRANSITION}
         if DEBIAN_V4L2_TRANSITION in installed:
             remove = [DEBIAN_V4L2_TRANSITION + '-']
+    packages = {name: packages[name] for name, row in records.items()
+                if row.get('component') not in selection or row['name'] in selection[row['component']]}
 
     apt = ['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get']
     # Rebuilding a generated image can replace higher CI revisions with the
@@ -1016,7 +1036,7 @@ def execute(record):
             install_overlays(rootfs, run, {
                 **packages, bsp_archive.name: bsp, topology_archive.name: topology,
                 camera_archive.name: camera_record, power_archive.name: power,
-            }, extra=cfg['debian']['extra_packages'], published=True)
+            }, desktop=desktop, extra=cfg['debian']['extra_packages'], published=True)
             archive = debian_archive(rootfs)
         else:
             camera_archive, camera_record = camera.ensure('debian')
@@ -1035,7 +1055,7 @@ def execute(record):
                     topology_archive.name: (topology_archive, topology),
                     camera_archive.name: (camera_archive, camera_record),
                     power_archive.name: (power_archive, power),
-                }, extra=(*cfg['debian']['extra_packages'], 'fprintd', 'libpam-fprintd'))
+                }, desktop=desktop, extra=(*cfg['debian']['extra_packages'], 'fprintd', 'libpam-fprintd'))
             components = {name: {'packages': {}} for name in overlay_packages.DEBIAN_GNOME}
             components.update({name: value for name, (_, value) in sources.items()})
         sensor_unit = target(rootfs, 'usr/lib/systemd/system/adsprpcd-sensorspd.service')
@@ -1093,11 +1113,10 @@ def execute(record):
             raise ValueError('Installed Piano camera package version differs')
         camera.verify_installed(rootfs, 'debian', camera_archive)
         defaults = default_system_record(rootfs, installed, cfg, desktop)
-        from desktop.build_pipewire_packages import DEBIAN_DEFAULT
+        selection = overlay_packages.debian_package_selection(desktop, installed)
         for component, metadata in components.items():
             for package, row in metadata['packages'].items():
-                if (component == 'pipewire' and package not in DEBIAN_DEFAULT and
-                        package not in installed):
+                if component in selection and package not in selection[component]:
                     continue
                 if installed.get(package) != row['version']:
                     raise ValueError(f'Installed {component} package version differs: {package}')

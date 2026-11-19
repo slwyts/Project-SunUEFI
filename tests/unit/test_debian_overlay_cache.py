@@ -9,7 +9,9 @@ from unittest.mock import patch
 
 from build import overlay_cache, overlay_packages, overlay_release
 from desktop import debian_package
+from desktop import build_libcamera_packages as libcamera
 from desktop.build_pipewire_packages import DEBIAN_PACKAGES
+from desktop.build_plasma_camera_package import RUNTIME as PLASMA_PACKAGES
 
 
 @unittest.skipUnless(os.geteuid() == 0 and all(shutil.which(tool) for tool in
@@ -121,22 +123,31 @@ class DebianOverlayCacheTests(unittest.TestCase):
         archives = self.root / 'archives'
         archives.mkdir()
         sources = {}
+        policy = libcamera.policy()
+        abi = libcamera.abi_version(policy)
         for component in (*overlay_packages.DEBIAN_SHARED, *overlay_packages.DEBIAN_GNOME,
                           'fingerprint'):
-            names = DEBIAN_PACKAGES if component == 'pipewire' else {
-                'test-' + component.replace('_', '-'): 'arm64'}
+            names = {'libcamera': libcamera.runtime_packages(policy), 'pipewire': DEBIAN_PACKAGES,
+                     'plasma_camera': PLASMA_PACKAGES}.get(
+                         component, {'test-' + component.replace('_', '-'): 'arm64'})
+            version = libcamera.base_package_version(policy) if component == 'libcamera' else '1'
             control = self.root / 'payload/DEBIAN/control'
             control.parent.mkdir(parents=True, exist_ok=True)
             records = {}
             for name, architecture in names.items():
-                control.write_text(f'Package: {name}\nVersion: 1\nArchitecture: {architecture}\n'
+                control.write_text(f'Package: {name}\nVersion: {version}\nArchitecture: {architecture}\n'
                                    'Maintainer: Fixture <test@example.invalid>\nDescription: Overlay fixture\n')
-                path = archives / f'{name}_1_{architecture}.deb'
+                path = archives / f'{name}_{version}_{architecture}.deb'
                 subprocess.run(['dpkg-deb', '--build', '--root-owner-group', control.parents[1], path],
                                check=True, capture_output=True)
-                records[name] = {'file': path.name, 'version': '1', 'architecture': architecture,
+                records[name] = {'file': path.name, 'version': version, 'architecture': architecture,
                                  'sha256': overlay_packages.sha(path)}
-            sources[component] = (archives, {'packages': records, 'package_version': '1'})
+            sources[component] = (archives, {'packages': records, 'package_version': version})
+        dependencies = {name: {key: value for key, value in row.items() if key != 'file'}
+                        for name, row in sources['libcamera'][1]['packages'].items()
+                        if name in (f'libcamera{abi}', 'libcamera-dev', f'libcamera-ipa-{abi}')}
+        for component in ('pipewire', 'plasma_camera'):
+            sources[component][1]['build_dependencies'] = dependencies
         output = self.project / 'build/overlay-cache/debian-gnome'
         overlay_packages.export(output, 'debian-gnome', 'apt',
                                 overlay_packages.debian_packages(sources),

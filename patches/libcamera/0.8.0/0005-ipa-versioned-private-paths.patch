@@ -1,0 +1,32 @@
+Description: Let incompatible libcamera ABIs keep separate IPA files
+ IPC workers, modules and bundled tuning data belong to the libcamera
+ version they run with. Install them alongside the matching library ABI
+ so that an upgrade does not replace files used by existing applications.
+ Keep administrator configuration and the V4L2 wrapper in their usual paths.
+Forwarded: no
+
+diff --git a/src/meson.build b/src/meson.build
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -1,8 +1,8 @@
+ # SPDX-License-Identifier: CC0-1.0
+ 
+ # Cache system paths
+-libcamera_datadir = get_option('datadir') / 'libcamera'
+-libcamera_libdir = get_option('libdir') / 'libcamera'
++libcamera_datadir = get_option('datadir') / 'libcamera' / libcamera_soversion
++libcamera_libdir = get_option('libdir') / 'libcamera' / libcamera_soversion
+ libcamera_libexecdir = get_option('libexecdir') / 'libcamera'
+ libcamera_sysconfdir = get_option('sysconfdir') / 'libcamera'
+ 
+diff --git a/src/libcamera/proxy/worker/meson.build b/src/libcamera/proxy/worker/meson.build
+--- a/src/libcamera/proxy/worker/meson.build
++++ b/src/libcamera/proxy/worker/meson.build
+@@ -1,6 +1,6 @@
+ # SPDX-License-Identifier: CC0-1.0
+ 
+-proxy_install_dir = libcamera_libexecdir
++proxy_install_dir = libcamera_libexecdir / libcamera_soversion
+ 
+ # generate {pipeline}_ipa_proxy_worker.cpp
+ foreach mojom : ipa_mojoms

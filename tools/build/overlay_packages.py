@@ -14,7 +14,7 @@ from build_piano_ram_bootstrap import guest_resolve
 import package_bsp
 
 
-DEBIAN_SHARED = ('mesa', 'sensors', 'ffmpeg', 'pipewire', 'libwacom')
+DEBIAN_SHARED = ('mesa', 'sensors', 'ffmpeg', 'libcamera', 'pipewire', 'plasma_camera', 'libwacom')
 DEBIAN_GNOME = ('gnome_power', 'mutter', 'gdm')
 ARCH_REPOSITORIES = {'nyarch-gnome': 'sunuefi', 'steamos': 'sunuefi-steamos'}
 STEAMOS_TUNED_RECIPES = ('ethtool', 'hdparm', 'python-linux-procfs', 'python-pyinotify', 'tuned')
@@ -165,6 +165,7 @@ def verify_bsp_files(rootfs, package_format, *, component='config'):
 
 def debian_packages(sources):
     """Index the exact files accepted by the individual package builders."""
+    verify_debian_camera_packages({name: record for name, (_, record) in sources.items()})
     packages = {}
     for component, (folder, record) in sources.items():
         for name, info in record['packages'].items():
@@ -182,6 +183,48 @@ def debian_packages(sources):
                 raise ValueError('Multiple components contain ' + filename)
             packages[filename] = (path, row)
     return packages
+
+
+def verify_debian_camera_packages(components):
+    """Require the two camera consumers to match the archives in this set."""
+    from desktop import build_libcamera_packages as libcamera
+    from desktop import build_pipewire_packages as pipewire
+    from desktop import build_plasma_camera_package as plasma_camera
+
+    for component in ('libcamera', 'pipewire', 'plasma_camera'):
+        if component not in components:
+            raise ValueError('Missing Debian camera component: ' + component)
+    policy = libcamera.policy()
+    library = components['libcamera']
+    libcamera.verify_debian_packages(library, data=policy)
+    pipewire.verify_debian_packages(components['pipewire'])
+    plasma = components['plasma_camera']
+    version, packages = plasma.get('package_version'), plasma['packages']
+    if (not version or set(packages) != set(plasma_camera.RUNTIME) or
+            any(row['version'] != version or row['architecture'] != plasma_camera.RUNTIME[name]
+                for name, row in packages.items())):
+        raise ValueError('Invalid native Plasma Camera package set')
+
+    abi = libcamera.abi_version(policy)
+    dependencies = {name: {key: library['packages'][name][key]
+                           for key in ('version', 'architecture', 'sha256')}
+                    for name in (f'libcamera{abi}', 'libcamera-dev', f'libcamera-ipa-{abi}')}
+    for component in ('pipewire', 'plasma_camera'):
+        if components[component].get('build_dependencies') != dependencies:
+            raise ValueError('Debian ' + component + ' was not built with this libcamera package set')
+
+
+def debian_package_selection(desktop, installed):
+    """Select defaults and keep updating any optional packages already installed."""
+    from desktop.build_libcamera_packages import abi_version, policy
+    from desktop.build_pipewire_packages import DEBIAN_DEFAULT
+    from desktop.build_plasma_camera_package import PACKAGE
+
+    abi = abi_version(policy())
+    defaults = {'libcamera': {f'libcamera{abi}', f'libcamera-ipa-{abi}', 'gstreamer1.0-libcamera'},
+                'pipewire': DEBIAN_DEFAULT | {'libspa-0.2-libcamera'},
+                'plasma_camera': {PACKAGE} if desktop == 'kde' else set()}
+    return {name: values.union(installed) for name, values in defaults.items()}
 
 
 def verify_debian_generation(packages):
@@ -242,10 +285,6 @@ def read_debian(path, desktop):
         metadata = manifest['components'].get(component)
         if not metadata or not metadata.get('packages'):
             raise ValueError('Missing Debian overlay component: ' + component)
-        if component == 'pipewire':
-            from desktop.build_pipewire_packages import verify_debian_packages
-
-            verify_debian_packages(metadata)
         components[component] = metadata
         for name, info in metadata['packages'].items():
             filename = info['file']
@@ -260,6 +299,7 @@ def read_debian(path, desktop):
                 raise ValueError('Invalid Debian overlay package record: ' + filename)
             packages[filename] = row
             names.add(name)
+    verify_debian_camera_packages(components)
     return components, packages
 
 
