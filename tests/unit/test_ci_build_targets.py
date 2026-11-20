@@ -128,6 +128,12 @@ class CiBuildTargetsTests(unittest.TestCase):
         self.assertEqual(targets.select([*check_files, '.github/workflows/_rootfs.yml']), PRODUCTS)
         self.assertEqual(targets.select([*check_files, 'tools/package/camera.py']), PRODUCTS)
 
+    def test_windows_media_does_not_publish_linux_images(self):
+        files = ['tools/build/windows.py', 'windows/deployment/probe.cmd',
+                 '.github/workflows/windows.yml']
+        self.assertEqual(targets.select(files), [])
+        self.assertEqual(targets.select([*files, 'uefi/components/acpi/Dsdt.asl']), PRODUCTS)
+
 
 if __name__ == '__main__':
     unittest.main()

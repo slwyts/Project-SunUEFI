@@ -4,7 +4,12 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, woa]
+    paths-ignore:
+      - 'windows/**'
+      - 'tools/build/windows.py'
+      - 'tests/unit/test_windows.py'
+      - '.github/workflows/windows.yml'
 
 permissions:
   contents: read

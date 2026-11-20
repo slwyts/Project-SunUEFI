@@ -37,8 +37,9 @@ DENIAL_FILES = {'config/denial.json', 'config/keys/denial-repo-key.asc',
                 'tools/build/denial_manifest.py', 'tools/build/denial_overlay.py',
                 'tools/desktop/build_denial.py', 'tools/desktop/denial_packages.py'}
 TARGETS = ('uefi', 'linux', *DISTROS)
-CHECK_ONLY_FILES = {'.github/workflows/host-checks.yml', 'tools/check_host.py',
-                    'tools/build/check_patch_series.py'}
+NON_PRODUCT_FILES = {'.github/workflows/host-checks.yml', '.github/workflows/windows.yml',
+                     'tools/check_host.py', 'tools/build/check_patch_series.py',
+                     'tools/build/windows.py'}
 
 
 def shared_kinds(targets):
@@ -73,7 +74,7 @@ def select(files, manual=None):
     uefi = False
     denial = False
     for name in files:
-        if name in CHECK_ONLY_FILES:
+        if name in NON_PRODUCT_FILES:
             continue
         if name in DENIAL_FILES or name.startswith('patches/denial/'):
             denial = True

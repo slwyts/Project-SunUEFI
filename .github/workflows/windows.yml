@@ -1,0 +1,32 @@
+name: Windows deployment checks
+
+on:
+  push:
+    branches: [woa]
+    paths: &windows_paths
+      - 'windows/**'
+      - 'tools/build/windows.py'
+      - 'tests/unit/test_windows.py'
+      - 'build.sh'
+      - '.github/workflows/windows.yml'
+  pull_request:
+    branches: [woa, main]
+    paths: *windows_paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-deployment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  media:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: ./build.sh windows media --help
+      - run: ./build.sh check --group python-all --no-skips --pattern test_windows.py
