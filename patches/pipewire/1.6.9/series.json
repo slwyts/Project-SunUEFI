@@ -143,6 +143,15 @@
         "url": "https://github.com/PipeWire/pipewire/blob/0e30a575c2e279bd7a8975e403168f8ac906cc7e/spa/plugins/libcamera/libcamera-source.cpp",
         "drop_when": "The selected PipeWire release rejects unsupported exact camera sizes, pixel formats and DMA-BUF layouts and reports the accepted format, including explicit linear. Verify the source fixates supported modifier choices and clients without a modifier can still join a running linear stream."
       }
+    },
+    {
+      "file": "0015-libcamera-enumerate-formats-by-index.patch",
+      "sha256": "e2c5851b1d0ab0921a24b55f9029735bdfe6f0e97246cad72ba2b21e96370952",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/PipeWire/pipewire/blob/6c3d3be2c2981874ac905c0967b706c73c177d7d/spa/plugins/libcamera/libcamera-source.cpp",
+        "drop_when": "The selected PipeWire release enumerates libcamera formats by the requested index without duplicates or dependence on earlier queries. Verify pagination and interleaved filters against the same camera."
+      }
     }
   ]
 }

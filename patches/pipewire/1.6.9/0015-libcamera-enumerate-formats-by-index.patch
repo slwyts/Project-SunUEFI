@@ -1,0 +1,247 @@
+Subject: [PATCH] spa: libcamera: Enumerate capture formats by index
+
+EnumFormat reports the requested start index but uses cursors left by the
+previous call to select the actual format. Paged or interleaved queries can
+therefore receive different sizes for the same index. The preferred size is
+also listed twice.
+
+Derive each result from the current format list and the requested start.
+Keep the preferred size first without listing it twice, and advance the
+original index for every candidate, including those excluded by a filter.
+
+diff --git a/spa/plugins/libcamera/libcamera-source.cpp b/spa/plugins/libcamera/libcamera-source.cpp
+--- a/spa/plugins/libcamera/libcamera-source.cpp
++++ b/spa/plugins/libcamera/libcamera-source.cpp
+@@ -4,9 +4,9 @@
+ /* SPDX-FileCopyrightText: Copyright © 2021 Wim Taymans <wim.taymans@gmail.com> */
+ /* SPDX-License-Identifier: MIT */
+ 
++#include <algorithm>
+ #include <array>
+ #include <cstddef>
+-#include <limits>
+ #include <numeric>
+ #include <optional>
+ #include <span>
+@@ -97,9 +97,6 @@
+ #define N_PORT_PARAMS	7
+ 	struct spa_param_info params[N_PORT_PARAMS];
+ 
+-	std::size_t fmt_index = 0;
+-	std::size_t size_index = 0;
+-
+ 	port(struct impl *impl)
+ 		: impl(impl)
+ 	{
+@@ -593,125 +590,92 @@
+ 	const auto *modifier = filter ?
+ 		spa_pod_find_prop(filter, nullptr, SPA_FORMAT_VIDEO_modifier) : nullptr;
+ 
+-	if (result.next == 0) {
+-		port->fmt_index = 0;
+-		port->size_index = 0;
+-	}
+-next:
+-	result.index = result.next++;
+-
+-next_fmt:
+-	if (port->fmt_index >= pixel_formats.size())
+-		return 0;
+-
+-	auto format = pixel_formats[port->fmt_index];
+-	spa_log_debug(impl->log, "format: %s", format.toString().c_str());
+-
+-	const auto *info = video_format_to_info(format);
+-	if (info == nullptr) {
+-		spa_log_debug(impl->log, "unknown format");
+-		port->fmt_index++;
+-		goto next_fmt;
+-	}
+-
+-	const auto& sizes = formats.sizes(format);
+-	SizeRange sizeRange;
+-	Size frameSize;
+-
+-	if (!sizes.empty() && port->size_index <= sizes.size()) {
+-		if (port->size_index == 0) {
+-			Size wanted = Size(640, 480);
+-			int best = std::numeric_limits<int>::max();
+-
+-			for (const auto& test : sizes) {
+-				int score = score_size(wanted, test);
+-				if (score < best) {
+-					best = score;
+-					frameSize = test;
+-				}
+-			}
+-		}
+-		else {
+-			frameSize = sizes[port->size_index - 1];
+-		}
+-	} else if (port->size_index < 1) {
+-		sizeRange = formats.range(format);
+-		if (sizeRange.hStep == 0 || sizeRange.vStep == 0) {
+-			port->size_index = 0;
+-			port->fmt_index++;
+-			goto next_fmt;
+-		}
+-	} else {
+-		port->size_index = 0;
+-		port->fmt_index++;
+-		goto next_fmt;
+-	}
+-	port->size_index++;
+-
+-	if (modifier && (info->media_subtype != SPA_MEDIA_SUBTYPE_raw ||
+-			 match_video_modifier(modifier, format) < 0))
+-		goto next;
+-
+-	spa_pod_builder_init(&b, buffer, sizeof(buffer));
+-	spa_pod_builder_push_object(&b, &f[0], SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat);
+-	spa_pod_builder_add(&b,
+-			SPA_FORMAT_mediaType,    SPA_POD_Id(info->media_type),
+-			SPA_FORMAT_mediaSubtype, SPA_POD_Id(info->media_subtype),
+-			0);
+-
+-	if (info->media_subtype == SPA_MEDIA_SUBTYPE_raw) {
+-		spa_pod_builder_prop(&b, SPA_FORMAT_VIDEO_format, 0);
+-		spa_pod_builder_id(&b, info->format);
+-	}
+-	if (info->pix.modifier()) {
+-		spa_pod_builder_prop(&b, SPA_FORMAT_VIDEO_modifier, 0);
+-		spa_pod_builder_long(&b, info->pix.modifier());
+-	}
+-	spa_pod_builder_prop(&b, SPA_FORMAT_VIDEO_size, 0);
+-
+-	if (sizeRange.hStep != 0 && sizeRange.vStep != 0) {
+-		spa_pod_builder_push_choice(&b, &f[1], SPA_CHOICE_Step, 0);
+-		spa_pod_builder_frame(&b, &f[1]);
+-		spa_pod_builder_rectangle(&b,
+-				sizeRange.min.width,
+-				sizeRange.min.height);
+-		spa_pod_builder_rectangle(&b,
+-				sizeRange.min.width,
+-				sizeRange.min.height);
+-		spa_pod_builder_rectangle(&b,
+-				sizeRange.max.width,
+-				sizeRange.max.height);
+-		spa_pod_builder_rectangle(&b,
+-				sizeRange.hStep,
+-				sizeRange.vStep);
+-		spa_pod_builder_pop(&b, &f[1]);
+-
+-	} else {
+-		spa_pod_builder_rectangle(&b, frameSize.width, frameSize.height);
+-	}
+-
+-	if (streamConfig.colorSpace) {
+-		auto colorimetry = color_space_to_colorimetry(*streamConfig.colorSpace);
+-
+-		spa_pod_builder_add(&b,
+-				SPA_FORMAT_VIDEO_colorRange,
+-				SPA_POD_Id(colorimetry.range),
+-				SPA_FORMAT_VIDEO_colorMatrix,
+-				SPA_POD_Id(colorimetry.matrix),
+-				SPA_FORMAT_VIDEO_transferFunction,
+-				SPA_POD_Id(colorimetry.transfer),
+-				SPA_FORMAT_VIDEO_colorPrimaries,
+-				SPA_POD_Id(colorimetry.primaries), 0);
+-	}
+-
+-	const auto *fmt = reinterpret_cast<spa_pod *>(spa_pod_builder_pop(&b, &f[0]));
+-	if (spa_pod_filter(&b, &result.param, fmt, filter) < 0)
+-		goto next;
+-
+-	spa_node_emit_result(&impl->hooks, seq, 0, SPA_RESULT_TYPE_NODE_PARAMS, &result);
+-
+-	if (++count != num)
+-		goto next;
++	uint32_t index = 0;
++	for (const PixelFormat &format : pixel_formats) {
++		const auto *info = video_format_to_info(format);
++		if (info == nullptr)
++			continue;
++
++		auto sizes = formats.sizes(format);
++		SizeRange sizeRange;
++		if (sizes.empty()) {
++			sizeRange = formats.range(format);
++			if (!sizeRange.hStep || !sizeRange.vStep)
++				continue;
++			sizes.push_back(sizeRange.min);
++		} else {
++			sizes.erase(std::unique(sizes.begin(), sizes.end()), sizes.end());
++			const Size wanted(640, 480);
++			const auto preferred = std::min_element(sizes.begin(), sizes.end(),
++				[&wanted](const Size &lhs, const Size &rhs) {
++					return score_size(wanted, lhs) < score_size(wanted, rhs);
++				});
++			std::rotate(sizes.begin(), preferred, preferred + 1);
++		}
++
++		const bool layout_matches = !modifier ||
++			(info->media_subtype == SPA_MEDIA_SUBTYPE_raw &&
++			 match_video_modifier(modifier, format) >= 0);
++
++		for (const Size &size : sizes) {
++			/* Filtered candidates still occupy their original indices. */
++			result.index = index++;
++			result.next = index;
++			if (result.index < start || !layout_matches)
++				continue;
++
++			spa_pod_builder_init(&b, buffer, sizeof(buffer));
++			spa_pod_builder_push_object(&b, &f[0], SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat);
++			spa_pod_builder_add(&b,
++					SPA_FORMAT_mediaType,    SPA_POD_Id(info->media_type),
++					SPA_FORMAT_mediaSubtype, SPA_POD_Id(info->media_subtype),
++					0);
++
++			if (info->media_subtype == SPA_MEDIA_SUBTYPE_raw) {
++				spa_pod_builder_prop(&b, SPA_FORMAT_VIDEO_format, 0);
++				spa_pod_builder_id(&b, info->format);
++			}
++			if (info->pix.modifier()) {
++				spa_pod_builder_prop(&b, SPA_FORMAT_VIDEO_modifier, 0);
++				spa_pod_builder_long(&b, info->pix.modifier());
++			}
++			spa_pod_builder_prop(&b, SPA_FORMAT_VIDEO_size, 0);
++
++			if (sizeRange.hStep && sizeRange.vStep) {
++				spa_pod_builder_push_choice(&b, &f[1], SPA_CHOICE_Step, 0);
++				spa_pod_builder_frame(&b, &f[1]);
++				spa_pod_builder_rectangle(&b, size.width, size.height);
++				spa_pod_builder_rectangle(&b, sizeRange.min.width, sizeRange.min.height);
++				spa_pod_builder_rectangle(&b, sizeRange.max.width, sizeRange.max.height);
++				spa_pod_builder_rectangle(&b, sizeRange.hStep, sizeRange.vStep);
++				spa_pod_builder_pop(&b, &f[1]);
++			} else {
++				spa_pod_builder_rectangle(&b, size.width, size.height);
++			}
++
++			if (streamConfig.colorSpace) {
++				auto colorimetry = color_space_to_colorimetry(*streamConfig.colorSpace);
++
++				spa_pod_builder_add(&b,
++						SPA_FORMAT_VIDEO_colorRange,
++						SPA_POD_Id(colorimetry.range),
++						SPA_FORMAT_VIDEO_colorMatrix,
++						SPA_POD_Id(colorimetry.matrix),
++						SPA_FORMAT_VIDEO_transferFunction,
++						SPA_POD_Id(colorimetry.transfer),
++						SPA_FORMAT_VIDEO_colorPrimaries,
++						SPA_POD_Id(colorimetry.primaries), 0);
++			}
++
++			const auto *fmt = reinterpret_cast<spa_pod *>(spa_pod_builder_pop(&b, &f[0]));
++			if (spa_pod_filter(&b, &result.param, fmt, filter) < 0)
++				continue;
++
++			spa_node_emit_result(&impl->hooks, seq, 0, SPA_RESULT_TYPE_NODE_PARAMS, &result);
++			if (++count == num)
++				return 0;
++		}
++	}
+ 
+ 	return 0;
+ }

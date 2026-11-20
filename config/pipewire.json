@@ -2,7 +2,7 @@
   "schema_version": 1,
   "arch": {
     "upstream_package_version": "1:1.6.11-2",
-    "package_release": "2.2",
+    "package_release": "2.3",
     "recipe_url": "https://raw.githubusercontent.com/archlinuxarm/PKGBUILDs/6fa5f72fa1cc7cf3b37a61a2bd44d92a9e230db8/extra/pipewire",
     "files": {
       "PKGBUILD": "9b6439553a1f0243cfc29858a1c07ce41955a49601de0c401a96c3d19dee8abc",
@@ -20,7 +20,8 @@
         "0009-client-node-empty-params.patch",
         "0011-libcamera-0.8-camera-location.patch",
         "0012-libcamera-apply-negotiated-framerate.patch",
-        "0014-libcamera-report-validated-format.patch"
+        "0014-libcamera-report-validated-format.patch",
+        "0015-libcamera-enumerate-formats-by-index.patch"
       ]
     }
   }

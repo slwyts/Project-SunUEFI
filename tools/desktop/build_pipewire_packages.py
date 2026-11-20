@@ -29,7 +29,7 @@ MODULES = ('glib-2.0', 'gobject-2.0', 'gmodule-2.0', 'gio-2.0', 'gio-unix-2.0',
            'gstreamer-1.0', 'gstreamer-base-1.0',
            'gstreamer-audio-1.0', 'gstreamer-allocators-1.0')
 DEBIAN_REVISION = 7
-DEBIAN_LIBCAMERA_REVISION = 9
+DEBIAN_LIBCAMERA_REVISION = 10
 DEBIAN_V4L2_TRANSITION = 'pipewire-v4l2-source'
 DEBIAN_DEFAULT = frozenset((
     'gstreamer1.0-pipewire', 'libpipewire-0.3-0t64', 'libpipewire-0.3-common',
