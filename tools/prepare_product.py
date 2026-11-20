@@ -72,9 +72,52 @@ DISK_MODULES=('MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf',
 HOST_MODULES=('MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf','MdeModulePkg/Bus/Usb/UsbBusDxe/UsbBusDxe.inf',
     'MdeModulePkg/Bus/Usb/UsbKbDxe/UsbKbDxe.inf','MdeModulePkg/Bus/Usb/UsbMouseDxe/UsbMouseDxe.inf',
     'MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassStorageDxe.inf')
+ACPI_MODULES=('MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf',
+              'MdeModulePkg/Universal/Acpi/AcpiPlatformDxe/AcpiPlatformDxe.inf')
+ACPI_TABLES='pianoProductPkg/AcpiTables/AcpiTables.inf'
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def acpi_smmu_resources(board, xbl):
+    """Describe only DMA requesters present in the Piano ACPI namespace."""
+    def node(symbol):
+        return board[board['/__symbols__'][symbol].rstrip(b'\0').decode('ascii')]
+
+    def cells(record, name):
+        return [item[0] for item in struct.iter_unpack('>I', record[name])]
+
+    smmu = node('apps_smmu')
+    base, span = cells(smmu, 'reg')  # The OS window includes all context banks.
+    irq = []
+    for kind, number, trigger in struct.iter_unpack('>III', smmu['interrupts']):
+        if kind != 0 or (trigger & 15) not in (1, 4):
+            raise ValueError('Cannot describe the apps SMMU interrupt as a GIC SPI')
+        irq.append((number + 32, int((trigger & 15) == 1)))
+    if cells(smmu, '#global-interrupts') != [1] or len(irq) <= 1:
+        raise ValueError('Expected the SMMU global fault IRQ followed by its context IRQs')
+    props = xbl['/soc/iort/APPS_MMU500_SMMU_APP']
+    result = {
+        'SMMU_BASE': base, 'SMMU_SPAN': span, 'SMMU_FLAGS': cells(props, 'Flags')[0],
+        'SMMU_GLOBAL_IRQ': irq[0][0], 'SMMU_GLOBAL_IRQ_FLAGS': irq[0][1],
+        'SMMU_CONTEXT_COUNT': len(irq) - 1,
+    }
+    for name, symbol, xbl_name in (('UFS', 'ufshc_mem', 'NAMEDNODE_UFS_95MEM'),
+                                    ('USB', 'dwc3_0', 'NAMEDNODE_USB0')):
+        device = node(symbol)
+        phandle, sid, mask = cells(device, 'iommus')
+        if [phandle] != cells(smmu, 'phandle') or mask != 0:
+            raise ValueError(f'{name} is not a single stream on the apps SMMU')
+        result[name+'_SID'] = sid
+        result[name+'_COHERENT'] = int('dma-coherent' in device)
+        result[name+'_DMA_BITS'] = cells(xbl['/soc/iort/'+xbl_name], 'DeviceMemAddressSize')[0]
+    its, result['UFS_MSI_ID'] = cells(node('ufshc_mem'), 'msi-parent')
+    if [its] != cells(node('gic_its'), 'phandle'):
+        raise ValueError('UFS MSI parent does not match the GIC ITS in the MADT')
+    return ('// Derived from the Piano board DT and XBL IORT description.\n'
+            + ''.join(f'#define PIANO_{name} 0x{value:x}\n' for name, value in result.items())
+            + '#define PIANO_SMMU_CONTEXT_IRQS {'
+            + ', '.join(f'{{{gsi}, {flags}}}' for gsi, flags in irq[1:]) + '}\n')
 
 def simpleinit_boot_guid_header(root=ROOT):
     inf=root/'uefi/components/product-support'/SIMPLEINIT_BOOT_MODULE
@@ -482,10 +525,13 @@ def prepare(root=ROOT):
     shutil.rmtree(target/'Library/Stage0BootManagerLib')
     shutil.rmtree(target/'Library/RamLogSerialPortLib')
     shutil.copytree(root/'uefi/components/product-support',target,dirs_exist_ok=True)
+    shutil.copytree(root/'uefi/components/acpi',target/'AcpiTables')
     app=target/'Applications/ProductCore';app.mkdir(parents=True)
     for name in SOURCE_NAMES:shutil.copyfile(core_source(name, root),app/name)
     from compose_piano_dtb import read_fdt
     nodes=read_fdt((root/vendor_inputs.XBL_DTB).read_bytes())['tree']
+    (target/'AcpiTables/SmmuResources.h').write_text(
+        acpi_smmu_resources(read_fdt(inputs['board_dtb'])['tree'], nodes))
     tables=[props['table'] for path,props in nodes.items()
             if path.endswith('/usb0/ss_phy_cfg') and 'table' in props]
     if len(tables)!=1 or len(tables[0])%8:raise ValueError('Expected one Piano XBL USB3 PHY table')
@@ -596,6 +642,7 @@ def prepare(root=ROOT):
   }
 '''
     text+='  pianoProductPkg/'+SIMPLEINIT_BOOT_MODULE+'\n'
+    text+='  '+ACPI_TABLES+'\n'
     text+=SETUP_DSC_ADDITIONS
     # All service flags bind actual product implementations; diagnostics are
     # not dispatched. FETCH enables the shared live SMMU storage guard.
@@ -606,10 +653,11 @@ def prepare(root=ROOT):
     dsc.write_text(text)
     fdf=target/'pianoProduct.fdf';text=fdf.read_text().replace('# Host-only stage-0 diagnostic; NOT hardware validated.','# Single PianoUEFI product integration candidate; INCOMPLETE_NOT_RELEASE.')
     text=text.replace('SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf','pianoProductPkg/Drivers/PianoGopDxe/PianoGopDxe.inf')
-    modules=DISK_MODULES+HOST_MODULES+SETUP_FV_MODULES+(
+    modules=DISK_MODULES+HOST_MODULES+ACPI_MODULES+SETUP_FV_MODULES+(
         BOOT_PICKER_MODULE,'pianoProductPkg/'+SIMPLEINIT_BOOT_MODULE,'MdeModulePkg/Logo/LogoDxe.inf',
         'ShellPkg/Application/Shell/Shell.inf','pianoProductPkg/Applications/ProductCore/ProductCore.inf')
-    text=text.replace('!include SiliciumPkg/Common.fdf.inc',''.join('  INF '+module+'\n' for module in modules)+native_fdf+'\n!include SiliciumPkg/Common.fdf.inc')
+    text=text.replace('!include SiliciumPkg/Common.fdf.inc',''.join('  INF '+module+'\n' for module in modules)+
+        '  INF RuleOverride = ACPITABLE '+ACPI_TABLES+'\n'+native_fdf+'\n!include SiliciumPkg/Common.fdf.inc')
     fdf.write_text(text)
     early_memory=prepare_early_memory(root,target)
     verify_early_memory(root,target,early_memory)

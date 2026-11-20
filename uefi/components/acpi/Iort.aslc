@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+#include "PianoAcpi.h"
+#include <IndustryStandard/IoRemappingTable.h>
+#include "SmmuResources.h"
+
+#pragma pack(1)
+typedef struct {
+  EFI_ACPI_6_0_IO_REMAPPING_ITS_NODE Node;
+  UINT32                             ItsId;
+} PIANO_ITS;
+
+typedef struct {
+  EFI_ACPI_6_0_IO_REMAPPING_SMMU_NODE Node;
+  EFI_ACPI_6_0_IO_REMAPPING_SMMU_INT  Context[PIANO_SMMU_CONTEXT_COUNT];
+  EFI_ACPI_6_0_IO_REMAPPING_ID_TABLE  Msi;
+} PIANO_SMMU;
+
+typedef struct {
+  EFI_ACPI_6_0_IO_REMAPPING_NAMED_COMP_NODE Node;
+  CHAR8                                     Path[sizeof ("\\_SB_.XXXX")];
+  // Keep each named node 64 bytes, including the optional name padding.
+  UINT8                                     Padding[4];
+  EFI_ACPI_6_0_IO_REMAPPING_ID_TABLE        Dma;
+} PIANO_NAMED_DEVICE;
+
+typedef struct {
+  EFI_ACPI_6_0_IO_REMAPPING_TABLE Header;
+  PIANO_ITS                       Its;
+  PIANO_SMMU                      Smmu;
+  PIANO_NAMED_DEVICE              Ufs;
+  PIANO_NAMED_DEVICE              Usb;
+} PIANO_IORT;
+#pragma pack()
+
+// Each named component is a DMA requester with one physical StreamID.
+#define DMA_DEVICE(Name, Sid, Width, Coherent) {                       \
+  .Node = { .Node = { .Type = EFI_ACPI_IORT_TYPE_NAMED_COMP,           \
+    .Length = sizeof (PIANO_NAMED_DEVICE), .Revision = 2,              \
+    .NumIdMappings = 1, .IdReference = OFFSET_OF (PIANO_NAMED_DEVICE, Dma) }, \
+    .CacheCoherent = Coherent, .AddressSizeLimit = Width,              \
+    .MemoryAccessFlags = Coherent ? EFI_ACPI_IORT_MEM_ACCESS_FLAGS_CPM | \
+                                    EFI_ACPI_IORT_MEM_ACCESS_FLAGS_DACS : 0 }, \
+  .Path = Name, .Dma = { .OutputBase = Sid,                            \
+    .OutputReference = OFFSET_OF (PIANO_IORT, Smmu),                   \
+    .Flags = EFI_ACPI_IORT_ID_MAPPING_FLAGS_SINGLE } }
+
+STATIC PIANO_IORT mIort = {
+  .Header = {
+    .Header = PIANO_HEADER (EFI_ACPI_6_3_IO_REMAPPING_TABLE_SIGNATURE, PIANO_IORT,
+                            EFI_ACPI_IO_REMAPPING_TABLE_REVISION_00),
+    .NumNodes = 4, .NodeOffset = OFFSET_OF (PIANO_IORT, Its)
+  },
+  .Its = {
+    .Node = { .Node = { .Type = EFI_ACPI_IORT_TYPE_ITS_GROUP, .Length = sizeof (PIANO_ITS) },
+              .NumItsIdentifiers = 1 },
+    .ItsId = 0  // Matches the ITS identifier in the MADT.
+  },
+  .Smmu = {
+    .Node = {
+      .Node = { .Type = EFI_ACPI_IORT_TYPE_SMMUv1v2, .Length = sizeof (PIANO_SMMU),
+                .Revision = 1, .NumIdMappings = 1, .IdReference = OFFSET_OF (PIANO_SMMU, Msi) },
+      .Base = PIANO_SMMU_BASE, .Span = PIANO_SMMU_SPAN,
+      .Model = EFI_ACPI_IORT_SMMUv1v2_MODEL_MMU500,
+      .Flags = PIANO_SMMU_FLAGS,
+      .GlobalInterruptArrayRef = OFFSET_OF (EFI_ACPI_6_0_IO_REMAPPING_SMMU_NODE, SMMU_NSgIrpt),
+      .SMMU_NSgIrpt = PIANO_SMMU_GLOBAL_IRQ, .SMMU_NSgIrptFlags = PIANO_SMMU_GLOBAL_IRQ_FLAGS,
+      .NumContextInterrupts = PIANO_SMMU_CONTEXT_COUNT,
+      .ContextInterruptArrayRef = OFFSET_OF (PIANO_SMMU, Context)
+    },
+    .Context = PIANO_SMMU_CONTEXT_IRQS,
+    // Only UFS has an MSI parent; USB uses its wired GIC interrupt.
+    .Msi = { .InputBase = PIANO_UFS_SID, .OutputBase = PIANO_UFS_MSI_ID,
+             .OutputReference = OFFSET_OF (PIANO_IORT, Its) }
+  },
+  .Ufs = DMA_DEVICE ("\\_SB_.UFS0", PIANO_UFS_SID, PIANO_UFS_DMA_BITS, PIANO_UFS_COHERENT),
+  .Usb = DMA_DEVICE ("\\_SB_.URS0", PIANO_USB_SID, PIANO_USB_DMA_BITS, PIANO_USB_COHERENT)
+};
+
+VOID * EFIAPI ReferenceAcpiTable (VOID) { return &mIort; }

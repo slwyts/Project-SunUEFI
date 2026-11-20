@@ -1,0 +1,25 @@
+## @file
+#  ACPI hardware description for the Xiaomi Pad 8 Pro.
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION    = 0x00010005
+  BASE_NAME      = PianoAcpiTables
+  # The standard AcpiPlatformDxe locates this file with PcdAcpiTableStorageFile.
+  FILE_GUID      = 7E374E25-8E01-4FEE-87F2-390C23C606CD
+  MODULE_TYPE    = USER_DEFINED
+  VERSION_STRING = 1.0
+
+[Sources]
+  Dsdt.asl
+  Fadt.aslc
+  Madt.aslc
+  Gtdt.aslc
+  Pptt.aslc
+  Iort.aslc
+  SmmuResources.h
+  PianoAcpi.h
+
+[Packages]
+  MdePkg/MdePkg.dec

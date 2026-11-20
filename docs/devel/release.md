@@ -141,6 +141,12 @@ Android。过程日志与采集留在本地构建目录，已确认的实现结�
 systemd-boot、Linux 睡眠唤醒和返回 Android；安装 Windows 只使用明确
 选定的独立系统空间，不让安装程序重新分配整块 UFS。
 
+平板已用这份带 ACPI 的固件经 systemd-boot 启动 Debian。EFI 系统表
+给出 ACPI 2.0 指针，从设备读回的 XSDT、FADT、DSDT、MADT、GTDT 和 PPTT
+校验和均正确；Linux 的 PSCI 仍从设备树初始化。IORT 使用原厂 XBL 的
+SMMU 中断和设备映射：UFS 的 StreamID 为 `0x60`，USB 为 `0x40`。
+表中有这些资源不代表 Windows 已接管控制器。
+
 | 功能 | 发布前在 Piano 上检查 |
 | --- | --- |
 | 启动与存储 | WinPE 能接受键盘输入，从 Windows 的存储驱动读取 UFS，并在目标卷写入、读回文件。完整 Windows 从内置存储连续冷启动，更新后仍能启动，也能返回 Android。 |
