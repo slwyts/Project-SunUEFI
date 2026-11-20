@@ -179,6 +179,6 @@
   "reproducibility": "source identities and actual package/metadata hashes recorded; complete bit reproducibility is not claimed",
   "audio_topology": {
     "source": "linux/bsp/topology/piano-displayport.m4",
-    "sha256": "6bedef2e832a24fccf978340ceb1724a32e045c92243dd0e1d152b289e59c6f6"
+    "sha256": "7025a8e5a726f01ab6d1ed9c21bc0ad161770899af3486eaa0fcc1cc75579dfe"
   }
 }
