@@ -37,10 +37,11 @@ on:
 permissions:
   contents: read
 
-# Keep the signed pacman index on this generation until its images are assembled.
+# Keep each signed index in place until its images are assembled. Pushes can
+# select different products, so do not let a new run replace a waiting one.
 concurrency:
   group: build-products-${{ github.ref }}
-  cancel-in-progress: false
+  queue: max
 
 jobs:
   select:
