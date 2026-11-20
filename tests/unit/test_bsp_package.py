@@ -362,6 +362,51 @@ class BspPackageTests(unittest.TestCase):
         self.assertEqual(packaged_components([(PurePosixPath('nanosic'), manifest, source)]),
                          {'piano-keyboard': 'keyboard-firmware'})
 
+    @unittest.skipUnless(shutil.which('dpkg-query'), 'dpkg-query unavailable')
+    def test_keyboard_preinst_checks_merged_usr_ownership(self):
+        manifest = bsp.KEYBOARD_MANIFEST
+        _, rows = bsp.local_firmware_payload(manifest.parent, manifest, 'keyboard firmware')
+        (row, data), = rows
+        relative = row['path']
+        root = self.base / 'guest'
+        firmware = root / relative
+        firmware.parent.mkdir(parents=True)
+        firmware.write_bytes(data)
+        firmware.chmod(0o644)
+        (root / 'lib').symlink_to('usr/lib')
+        database = root / 'var/lib/dpkg'
+        info = database / 'info'
+        info.mkdir(parents=True)
+        status = database / 'status'
+        status.touch()
+        script = bsp.preinst([relative], bsp.KEYBOARD_PACKAGE, adopt={relative: row})
+        environment = {**os.environ, 'DPKG_ROOT': str(root), 'DPKG_ADMINDIR': str(database)}
+
+        def preinst():
+            return subprocess.run(['/bin/sh', '-c', script], env=environment,
+                                  capture_output=True, text=True)
+
+        def record_alias_owner(package):
+            status.write_text(
+                f'Package: {package}\nStatus: install ok installed\n'
+                'Priority: optional\nSection: kernel\nArchitecture: all\nVersion: 1\n'
+                'Maintainer: Test <test@example.invalid>\nDescription: Alias owner\n')
+            ownership = info / (package + '.list')
+            ownership.write_text('/' + relative.removeprefix('usr/') + '\n')
+            return ownership
+
+        result = preinst()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        foreign = record_alias_owner('other-keyboard-firmware')
+        result = preinst()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('other-keyboard-firmware', result.stderr)
+        foreign.unlink()
+        record_alias_owner(bsp.KEYBOARD_PACKAGE)
+        firmware.write_bytes(b'updated bytes from the installed package')
+        result = preinst()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     @unittest.skipUnless(all(shutil.which(tool) for tool in ('makepkg', 'bsdtar')),
                          'pacman packaging tools required')
     def test_keyboard_pacman_uses_native_backup_metadata_for_legacy_files(self):

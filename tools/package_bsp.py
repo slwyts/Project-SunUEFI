@@ -406,22 +406,39 @@ def stage(args, inspected=None):
 
 
 def preinst(paths, package=NAME, *, architecture='all', adopt=None):
-    guard = '#!/bin/sh\nset -eu\n'
+    guard = '#!/bin/sh\nset -eu\nroot=${DPKG_ROOT:-}\n'
+    check_alias_owner = ''
     if package in FIRMWARE_PACKAGES:
         firmware = ' '.join(shlex.quote('/' + name) for name in paths if name.startswith(FIRMWARE_ROOT))
         guard += (f'for path in {firmware}; do\n'
                   '  alternate=${path#/usr}\n'
-                  '  if ! [ "${path%/*}" -ef "${alternate%/*}" ]; then\n'
-                  '    if [ -e "$alternate" ] || [ -L "$alternate" ]; then\n'
+                  '  if ! [ "$root${path%/*}" -ef "$root${alternate%/*}" ]; then\n'
+                  '    if [ -e "$root$alternate" ] || [ -L "$root$alternate" ]; then\n'
                   '      printf "%s\\n" "BSP file conflict: $alternate" >&2; exit 1\n'
                   '    fi\n'
                   '  fi\n'
                   '  for alias in "$path.xz" "$path.zst" "$alternate.xz" "$alternate.zst"; do\n'
-                  '    if [ -e "$alias" ] || [ -L "$alias" ]; then\n'
+                  '    if [ -e "$root$alias" ] || [ -L "$root$alias" ]; then\n'
                   '      printf "%s\\n" "BSP file conflict: $alias" >&2; exit 1\n'
                   '    fi\n'
                   '  done\n'
                   'done\n')
+        # dpkg-query matches the path recorded in the package database.
+        # A merged /lib may refer to the same file with a different owner entry.
+        check_alias_owner = (
+            '    case "$path" in\n'
+            f'      /{FIRMWARE_ROOT}*)\n'
+            '        alternate=${path#/usr}\n'
+            '        if [ "$root${path%/*}" -ef "$root${alternate%/*}" ]; then\n'
+            '          alias_owner=$(dpkg-query --search "$alternate" 2>/dev/null || true)\n'
+            '          case "$alias_owner" in\n'
+            '            "") ;;\n'
+            f'            "{package}: $alternate"|"{package}:{architecture}: $alternate")\n'
+            f'              [ -n "$owned" ] || owned="{package}: $path" ;;\n'
+            '            *) printf "%s\\n" "BSP file conflict: $alternate ($alias_owner)" >&2; exit 1 ;;\n'
+            '          esac\n'
+            '        fi ;;\n'
+            '    esac\n')
     quoted = ' '.join(shlex.quote('/' + name) for name in paths)
     adoption = ''
     if adopt:
@@ -433,22 +450,24 @@ def preinst(paths, package=NAME, *, architecture='all', adopt=None):
             '        checksum=\n'
             '        case "$path" in\n' + cases +
             '        esac\n'
-            '        if [ -n "$checksum" ] && [ ! -L "$path" ] && [ -f "$path" ] &&\n'
-            '           [ "$(stat -c %a -- "$path")" = 644 ] &&\n'
-            '           printf "%s  %s\\n" "$checksum" "$path" | sha256sum --quiet -c -; then\n'
+            '        if [ -n "$checksum" ] && [ ! -L "$root$path" ] && [ -f "$root$path" ] &&\n'
+            '           [ "$(stat -c %a -- "$root$path")" = 644 ] &&\n'
+            '           printf "%s  %s\\n" "$checksum" "$root$path" | sha256sum --quiet -c -; then\n'
             '          continue\n'
             '        fi\n'
             '        printf "%s\\n" "BSP file conflict: $path" >&2; exit 1 ;;\n')
     return (guard +
             '# Refuse other packages and modified files from a generated image.\n'
             f'for path in {quoted}; do\n'
-            '  if [ -e "$path" ] || [ -L "$path" ]; then\n'
-            '    owned=$(dpkg-query --search "$path" 2>/dev/null || true)\n'
+            '  if [ -e "$root$path" ] || [ -L "$root$path" ]; then\n'
+            '    owned=$(dpkg-query --search "$path" 2>/dev/null || true)\n' +
+            check_alias_owner +
             f'    case "$owned" in "{package}: $path"|"{package}:{architecture}: $path") ;;\n' +
             adoption +
             '      *) printf "%s\\n" "BSP file conflict: $path ($owned)" >&2; exit 1 ;;\n'
             '    esac\n'
-            '  fi\ndone\n')
+            '  fi\n'
+            'done\n')
 
 
 def reload_systemd():
