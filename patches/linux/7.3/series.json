@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "a8f3a94c3b872d6e3f1ba0cb87240ca9f28406dd",
-  "original_target_commit": "57a85007f2e64ec371de195576982bda0be64ef1",
+  "target_tree": "aa3e249b8058bddbec12a64a0edacd47f491ca7a",
+  "original_target_commit": "de277e9bdfda5a9ba910fa26d78ab58bce01f06c",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1863,6 +1863,19 @@
         "status": "downstream",
         "url": "https://github.com/torvalds/linux/commit/c5af8db84c01585e077019d5fd384c57a9fcad2f",
         "drop_when": "CSID power-up releases its parent VFE reference on every failure after acquisition."
+      }
+    },
+    {
+      "file": "0144-LOCAL-media-v4l2-flash-preserve-torch-intensity.patch",
+      "sha256": "8d2c648cd0dd54e89fca3136f0d41f682d24488d26178a42b770c540325c527f",
+      "original_commit": "de277e9bdfda5a9ba910fa26d78ab58bce01f06c",
+      "original_parent": "57a85007f2e64ec371de195576982bda0be64ef1",
+      "committer_date": "2026-11-20T14:30:34+08:00",
+      "tree": "aa3e249b8058bddbec12a64a0edacd47f491ca7a",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/torvalds/linux/commit/42bd6f59ae90244484746696aabcafc0003f59c7",
+        "drop_when": "The selected V4L2 flash driver preserves the committed torch setting across readback, TRY, reopening and failed LED writes."
       }
     }
   ],

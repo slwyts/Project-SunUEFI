@@ -31,6 +31,8 @@ S5KJN1 的 `flash-leds` 引用两个配对节点，由
 驱动提供 torch brightness、flash brightness、timeout、strobe 和 fault。
 V4L2 wrapper 提供对应的标准控件；节点编号随探测顺序变化，应通过 media graph
 和设备名定位，不固定 `/dev/v4l-subdevN`。
+V4L2 关灯时读回已设置的档位，下次点亮仍使用该档。开灯时读回由 LED 驱动提供；
+PM8550 没有实际电流的读回回调，不能把亮度控件的数值当作电流量测。
 
 [平台补丁](../../../patches/linux/7.3/0001-platform.patch)修正释放循环的索引，
 并让合法 5 mA 电流档位经过 LED 亮度转换后保持一致：转换到 0..255 编码时
