@@ -1072,6 +1072,7 @@ def execute(record):
             bsp_archive, bsp = overlay_packages.shared_bsp('debian')
             topology_archive, topology = overlay_packages.shared_topology('debian')
             power_archive, power = overlay_packages.shared_bsp('debian', component='power-profiles')
+            keyboard_archive, keyboard = overlay_packages.shared_bsp('debian', component='keyboard-firmware')
             camera_archive, camera_record = camera.shared_package('debian')
             components, packages = overlay_packages.read_debian(Path(published), desktop)
             overlay_packages.check_topology_conflicts(rootfs, topology)
@@ -1079,6 +1080,7 @@ def execute(record):
             install_overlays(rootfs, run, {
                 **packages, bsp_archive.name: bsp, topology_archive.name: topology,
                 camera_archive.name: camera_record, power_archive.name: power,
+                keyboard_archive.name: keyboard,
             }, desktop=desktop, extra=cfg['debian']['extra_packages'], published=True)
             archive = debian_archive(rootfs, desktop)
         else:

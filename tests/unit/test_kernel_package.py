@@ -126,6 +126,7 @@ class KernelPackageTests(unittest.TestCase):
                 self.assertIn('depend = linux-piano-dtb-7.3-piano-b1=' + version + '-1',
                               subprocess.check_output(['bsdtar', '-xOf', meta, '.PKGINFO'], text=True))
                 archive = next(path for path in packages if path.name.startswith('piano-boot-config-'))
+                self.assertEqual(archive.name, f'piano-boot-config-{version}-2-any.pkg.tar.zst')
                 archives.append(archive)
             command = [*namespace, 'pacman',
                        '--root', str(root), '--dbpath', str(database),
@@ -145,11 +146,15 @@ class KernelPackageTests(unittest.TestCase):
             self.assertEqual(boot_space.stat().st_mode & 0o777, 0o755)
             subprocess.run(['sh', '-n', boot_space], check=True)
             initramfs_config = root / 'etc/mkinitcpio.conf.d/zz-piano.conf'
-            hooks = subprocess.check_output(['bash', '-ec',
+            initramfs = subprocess.check_output(['bash', '-ec',
                 'HOOKS=(base systemd keyboard blockdev_ro partsets initrd_shell factory_reset '
-                'etc_overlay deckard_fw custom_hook); . "$1"; printf "%s\\n" "${HOOKS[@]}"',
+                'etc_overlay deckard_fw custom_hook); MODULES=(local_module); . "$1"; '
+                'printf "%s\\n" "${HOOKS[@]}" "${MODULES[@]}"',
                 'check-mkinitcpio-config', initramfs_config], text=True)
-            self.assertEqual(hooks.splitlines(), ['base', 'systemd', 'keyboard', 'custom_hook'])
+            self.assertEqual(initramfs.splitlines(), [
+                'base', 'systemd', 'keyboard', 'custom_hook', 'local_module',
+                'arm_smmu', 'ufs_qcom', 'phy_qcom_qmp_ufs', 'pinctrl_sm8750', 'hid_nanosic_wn8030',
+            ])
             transaction = root / 'usr/libexec/piano-kernel-transaction'
             subprocess.run(['bash', '-n', transaction], check=True)
             subprocess.run([*command, '-R', 'piano-boot-config'], check=True)

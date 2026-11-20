@@ -45,8 +45,8 @@ def sha(path):
 def bsp_package(directory, package_format, *, component='config'):
     """Read the exact common package sealed by the builder."""
     distro, archive_format, architecture = BSP_TARGETS[package_format]
-    local_firmware = package_bsp.IMAGE_FIRMWARE.get(component)
-    expected = (local_firmware[0] if local_firmware else
+    stock_firmware = package_bsp.IMAGE_FIRMWARE.get(component)
+    expected = (stock_firmware[0] if stock_firmware else
                 {'config': package_bsp.NAME, 'audio-topology': package_bsp.TOPOLOGY_PACKAGE,
                  'power-profiles': package_bsp.POWER_PROFILES_PACKAGE}[component])
     manifest = directory / 'manifest.json'
@@ -80,13 +80,14 @@ def bsp_package(directory, package_format, *, component='config'):
                 payload[path]['sha256'] != TOPOLOGY_PIN or record.get('public_distribution') is not True):
             raise ValueError('Audio topology package differs from the release policy')
         metadata['firmware'] = payload[path]
-    if local_firmware is not None:
-        _, manifest = local_firmware
+    if stock_firmware is not None:
+        _, manifest = stock_firmware
         description = component.replace('-', ' ')
         _, rows = package_bsp.local_firmware_payload(manifest.parent, manifest, description)
         payload = {row['path']: {**row, 'bytes': len(data)} for row, data in rows}
-        if record.get('payload_files') != payload or record.get('public_distribution') is not False:
-            raise ValueError(description.capitalize() + ' package differs from the fixed source or is not local')
+        published = expected in package_bsp.PUBLISHED_STOCK_FIRMWARE
+        if record.get('payload_files') != payload or record.get('public_distribution') is not published:
+            raise ValueError(description.capitalize() + ' package differs from the fixed source or publication policy')
         metadata['firmware'] = payload
     if component == 'power-profiles':
         payload = {row['path']: {**row, 'bytes': len(data)}
@@ -103,9 +104,10 @@ def build_bsp(directory, package_format, run=None, *, component='config', firmwa
     if component in ('audio-topology', 'power-profiles'):
         command.append('--' + component)
     if component in package_bsp.IMAGE_FIRMWARE:
-        _, manifest = package_bsp.IMAGE_FIRMWARE[component]
+        package, manifest = package_bsp.IMAGE_FIRMWARE[component]
         command.extend(('--' + component, firmware_source or manifest.parent))
-        command = ['env', '-u', overlay_release.ENVIRONMENT, *command]
+        if package not in package_bsp.PUBLISHED_STOCK_FIRMWARE:
+            command = ['env', '-u', overlay_release.ENVIRONMENT, *command]
     if run is None:
         subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
     else:
@@ -568,6 +570,7 @@ def install_arch_overlays(rootfs, kernel, target, published):
     archive, bsp = shared_bsp('pacman')
     topology_archive, topology = shared_topology('pacman')
     power_archive, power = shared_bsp('pacman', component='power-profiles')
+    keyboard_archive, keyboard = shared_bsp('pacman', component='keyboard-firmware')
     check_topology_conflicts(rootfs, topology)
     install(rootfs, 'pacman', kernel, published=True)
     install_repository(rootfs, target == 'steamos')
@@ -580,7 +583,8 @@ def install_arch_overlays(rootfs, kernel, target, published):
         guest(['pacman', '-Sy', '--noconfirm'])
         installed = set(guest(['pacman', '-Qq'], text=True, capture_output=True).stdout.splitlines())
         selected = pacman_image_packages(target, packages, installed)
-        common = {archive.name: bsp, topology_archive.name: topology, power_archive.name: power}
+        common = {archive.name: bsp, topology_archive.name: topology,
+                  power_archive.name: power, keyboard_archive.name: keyboard}
         if repository == 'sunuefi':
             bluez = {name: row for name, row in selected.items() if row['name'] == ARCH_BLUEZ}
             if bluez:

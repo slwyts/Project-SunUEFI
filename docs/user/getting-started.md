@@ -41,6 +41,8 @@
 
 已经配置 SunUEFI 软件源的镜像，可以直接用包管理器更新。Debian 运行 `sudo apt update && sudo apt upgrade`，Arch 系（Nyarch、Arch Denial 和 SteamOS）运行 `sudo pacman -Syu`。更新内核前可用 `sudo bootctl --print-esp-path` 确认启动分区已挂载；重启失败时可在 systemd-boot 菜单选旧内核。
 
+较早的镜像可以安装 `piano-firmware-keyboard`，让包管理器接管键盘套固件，之后随系统更新。Debian 用 `sudo apt install piano-firmware-keyboard`，Arch 系用 `sudo pacman -Syu piano-firmware-keyboard`。
+
 ### 手动添加 APT 软件源
 
 该源面向 Debian **sid ARM64**，不要添加到 Debian stable。下载[归档签名公钥](https://sunuefi-repo.okassets.uk/keys/sunuefi-archive-keyring.gpg)，运行 `gpg --show-keys --fingerprint sunuefi-archive-keyring.gpg`，核对主密钥指纹为 `1B89 034B 2C88 8929 63C0 C1CA D7D5 F9A7 080E 6560`。

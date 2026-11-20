@@ -38,8 +38,10 @@ uinput。BLE 尚未连接时继续等待；坐标和压感由内核融合，校�
 
 键盘套和触控板共用 Nanosic MCU。驱动通过 `MODULE_FIRMWARE` 声明启动时
 读取的 `nanosic/MCU_Upgrade.bin`，让发行版的 initramfs 生成工具在收录
-驱动时同时收录固件。固件由系统提供，驱动将代码加载到 MCU 的 RAM，不依赖
-桌面启动后重新初始化。
+驱动时同时收录固件。成品及已配置 SunUEFI 软件源的系统可用
+`piano-firmware-keyboard` 安装固件。共用初装 initramfs 从同一固件清单取文件。
+Arch 系成品的 mkinitcpio 配置明确收录键盘模块，以便在没有连平板的构建机上生成 initramfs。
+驱动将代码加载到 MCU 的 RAM，不依赖桌面启动后重新初始化。
 
 Debian sid 使用发行版 UPower，不再重建旧版 daemon。签名源码中的
 `up-enumerator-udev.c` 已枚举 LED 插拔；`up-daemon.c` 更新组合键盘对象，

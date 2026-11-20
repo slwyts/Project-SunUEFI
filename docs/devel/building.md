@@ -279,11 +279,11 @@ sudo ./build.sh mesa build/mesa-steamos --format pacman --rootfs build/distros/s
 
 两种产品构建都会检查 Mesa 源码、完整驱动选项和 ARM64 包。CI 分别缓存原生包；复用前核对来源、配方与包摘要，安装后重新检查 ELF 和目标系统的依赖，避免把不匹配的滚动发行版缓存带入镜像。
 
-各产品由 APT 或 pacman 安装 `piano-firmware-display` 和
-`piano-firmware-fingerprint`，组装时核对包归属、文件大小和 SHA256。显示包来自
-CI 的共用设备产物；指纹包在组装时从固定固件清单直接构建，二者都不上传到软件源。
-续建镜像时，只迁移内容吻合且未被其他包持有的旧文件。其余设备固件仍按
-`vendor/firmware/` 下的组件清单校验后安装。
+各产品由 APT 或 pacman 安装键盘套、显示校准和指纹固件包，组装时核对包归属、
+文件大小和 SHA256。`piano-firmware-keyboard` 随共用设备包发布到 APT 和
+`sunuefi`，SteamOS 也从共用仓安装。显示包随 CI 共用设备产物提供，指纹包在组装时
+从固定固件清单构建；这两个包不上传软件源。其余设备固件仍按 `vendor/firmware/`
+下的组件清单校验后安装。
 
 ### 单独构建的软件包
 

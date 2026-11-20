@@ -26,22 +26,26 @@ TOUCH_PACKAGE = 'piano-firmware-touch'
 TOUCH_MANIFEST = ROOT / 'vendor/firmware/piano-touch/manifest.json'
 DISPLAY_PACKAGE = 'piano-firmware-display'
 DISPLAY_MANIFEST = ROOT / 'vendor/firmware/piano-display/manifest.json'
+KEYBOARD_PACKAGE = 'piano-firmware-keyboard'
+KEYBOARD_MANIFEST = ROOT / 'vendor/firmware/piano-keyboard/manifest.json'
 FINGERPRINT_PACKAGE = 'piano-firmware-fingerprint'
 FINGERPRINT_MANIFEST = ROOT / 'vendor/firmware/hyperos4-fingerprint/manifest.json'
 FINGERPRINT_TOOLS = 'piano-fingerprint-tools'
-LOCAL_FIRMWARE = {
+STOCK_FIRMWARE = {
     TOUCH_PACKAGE: ('touch-firmware', TOUCH_MANIFEST),
     DISPLAY_PACKAGE: ('display-firmware', DISPLAY_MANIFEST),
+    KEYBOARD_PACKAGE: ('keyboard-firmware', KEYBOARD_MANIFEST),
     FINGERPRINT_PACKAGE: ('fingerprint-firmware', FINGERPRINT_MANIFEST),
 }
 IMAGE_FIRMWARE = {component: (package, manifest)
-                  for package, (component, manifest) in LOCAL_FIRMWARE.items()
-                  if package in (DISPLAY_PACKAGE, FINGERPRINT_PACKAGE)}
+                  for package, (component, manifest) in STOCK_FIRMWARE.items()
+                  if package in (DISPLAY_PACKAGE, KEYBOARD_PACKAGE, FINGERPRINT_PACKAGE)}
+PUBLISHED_STOCK_FIRMWARE = {KEYBOARD_PACKAGE}
 TOPOLOGY_PACKAGE = 'piano-audio-topology'
 POWER_PROFILES_PACKAGE = 'piano-power-profiles'
 POWER_PROFILES = BSP / 'power-profiles'
 TOPOLOGY_SOURCES = ('debian-piano-current', 'audioreach-topology')
-FIRMWARE_PACKAGES = (*LOCAL_FIRMWARE, TOPOLOGY_PACKAGE)
+FIRMWARE_PACKAGES = (*STOCK_FIRMWARE, TOPOLOGY_PACKAGE)
 FIRMWARE_ROOT = 'usr/lib/firmware/'
 OLD_FPRINTD_DROP_IN = 'usr/lib/systemd/system/fprintd.service.d/20-piano.conf'
 OLD_FPRINTD_SHA256 = 'be5b439b5040f08ac2ed132dcf7179e2a2423b2357a11f8ffa3d04ad1190404b'
@@ -52,6 +56,8 @@ def package_description(package):
         return 'Xiaomi Pad 8 Pro Novatek touchscreen firmware'
     if package == DISPLAY_PACKAGE:
         return 'Xiaomi Pad 8 Pro display calibration firmware'
+    if package == KEYBOARD_PACKAGE:
+        return 'Xiaomi Pad 8 Pro Nanosic keyboard cover firmware'
     if package == FINGERPRINT_PACKAGE:
         return 'Xiaomi Pad 8 Pro Goodix fingerprint firmware'
     if package == FINGERPRINT_TOOLS:
@@ -221,11 +227,12 @@ def conflict_check(root, rows, package=NAME, *, adopt_identical=False):
     return report
 
 
-def inspect_local_firmware(args, suite, package, source):
-    component, manifest_path = LOCAL_FIRMWARE[package]
+def inspect_stock_firmware(args, suite, package, source):
+    component, manifest_path = STOCK_FIRMWARE[package]
     description = component.replace('-', ' ')
+    published = package in PUBLISHED_STOCK_FIRMWARE
     require(args.target in ('debian', 'arch'), 'Use --target debian or arch for ' + description)
-    require(overlay_release.ENVIRONMENT not in os.environ,
+    require(published or overlay_release.ENVIRONMENT not in os.environ,
             f'Local {description} cannot be built as a publication generation')
     require(args.command != 'package' or args.against or component in IMAGE_FIRMWARE,
             f'Specify --against with the target root to check {description} ownership')
@@ -233,19 +240,21 @@ def inspect_local_firmware(args, suite, package, source):
     provenance = {'rom': manifest['rom']}
     if 'source' in manifest:
         provenance['origin'] = manifest['source']
+    version = overlay_release.debian_version(args.version) if published and args.format == 'deb' else args.version
+    conflicts = (conflict_check(args.against, rows, package, adopt_identical=package == KEYBOARD_PACKAGE)
+                 if args.against else {'performed': False, 'required_before_install': True})
     report = {
         'schema_version': 1,
         'component': component,
         'package': package,
-        'version': args.version,
+        'version': version,
         'target': {'distro': args.target, 'suite': suite, 'arch': args.arch},
         'package_architecture': 'any' if args.target == 'arch' else 'all',
         'source': provenance,
-        'public_distribution': False,
+        'public_distribution': published,
         'depends': [],
         'package_ready': False,
-        'conflict_check': (conflict_check(args.against, rows, package) if args.against
-                           else {'performed': False, 'required_before_install': True}),
+        'conflict_check': conflicts,
         'payload_files': {row['path']: {**row, 'bytes': len(data)} for row, data in rows},
         'files': {},
     }
@@ -274,21 +283,22 @@ def inspect_audio_topology(args, suite):
 
 
 def inspect(args):
-    local = next(((package, source)
-                  for package, (component, _) in LOCAL_FIRMWARE.items()
+    firmware = next(((package, source)
+                  for package, (component, _) in STOCK_FIRMWARE.items()
                   if (source := getattr(args, component.replace('-', '_'))) is not None), None)
     if args.version is None:
-        if local and local[0] == FINGERPRINT_PACKAGE:
-            args.version = read_json(FINGERPRINT_MANIFEST)['rom'].removeprefix('OS')
+        if firmware and firmware[0] in (KEYBOARD_PACKAGE, FINGERPRINT_PACKAGE):
+            _, manifest = STOCK_FIRMWARE[firmware[0]]
+            args.version = read_json(manifest)['rom'].removeprefix('OS')
         else:
-            separate = local is not None or args.audio_topology or args.power_profiles
+            separate = firmware is not None or args.audio_topology or args.power_profiles
             args.version = '0.1.0' if separate else read_json(BSP / 'manifest.json')['version']
     require(re.fullmatch('[0-9][A-Za-z0-9.+]*', args.version), 'Invalid package version')
     profile = read_json(BSP / 'profiles.json')['profiles'][args.target]
     suite = args.suite or profile['default_suite']
     require(suite and re.fullmatch('[A-Za-z0-9_.-]+', suite), 'Specify an explicit Deepin/target suite')
-    if local is not None:
-        return inspect_local_firmware(args, suite, *local)
+    if firmware is not None:
+        return inspect_stock_firmware(args, suite, *firmware)
     if args.audio_topology:
         return inspect_audio_topology(args, suite)
     if args.power_profiles:
@@ -373,6 +383,9 @@ def stage(args, inspected=None):
         elif report['package'] == DISPLAY_PACKAGE:
             copyright = ('Panel calibration derived from Qualcomm / Xiaomi stock QDCM data.\n'
                          'The SunUEFI source license does not cover the calibration data.\n')
+        elif report['package'] == KEYBOARD_PACKAGE:
+            copyright = ('Nanosic / Xiaomi keyboard cover firmware from the stock device ROM.\n'
+                         'The SunUEFI source license does not cover this binary.\n')
         elif report['package'] == FINGERPRINT_PACKAGE:
             copyright = (FINGERPRINT_MANIFEST.parent / 'README.md').read_text()
         else:
@@ -472,6 +485,8 @@ def debian_package(output, tree, report, configuration):
     section, detail = {
         TOUCH_PACKAGE: ('non-free-firmware/kernel', ' Built from locally supplied stock ROM files.\n'),
         DISPLAY_PACKAGE: ('non-free-firmware/kernel', ' Installs locally supplied panel calibration data.\n'),
+        KEYBOARD_PACKAGE: ('non-free-firmware/kernel',
+                           ' Installs the stock Nanosic keyboard and touchpad controller firmware.\n'),
         FINGERPRINT_PACKAGE: ('non-free-firmware/kernel',
                               ' Installs the stock signed Goodix application and models.\n'),
         FINGERPRINT_TOOLS: ('utils', ' Provides piano-fingerprint-ctl for explicit command-line diagnostics.\n'),
@@ -494,11 +509,13 @@ def debian_package(output, tree, report, configuration):
         f'{depends}{installed_size}Description: {package_description(package)}\n{detail}')
     if configuration:
         (control / 'conffiles').write_text(''.join('/' + name + '\n' for name in configuration))
+    if package == KEYBOARD_PACKAGE:
+        (control / 'triggers').write_text('activate-noawait update-initramfs\n')
     docs = 'usr/share/doc/' + package + '/'
     paths = [*report['payload_files'], docs + 'bsp-manifest.json']
     if package in FIRMWARE_PACKAGES or package == POWER_PROFILES_PACKAGE:
         paths.append(docs + 'copyright')
-    adopt = report['payload_files'] if package == POWER_PROFILES_PACKAGE else None
+    adopt = report['payload_files'] if package in (POWER_PROFILES_PACKAGE, KEYBOARD_PACKAGE) else None
     (control / 'preinst').write_text(preinst(paths, package, architecture=architecture, adopt=adopt))
     (control / 'preinst').chmod(0o755)
     subprocess.run(['/bin/sh', '-n', control / 'preinst'], check=True)
@@ -527,7 +544,7 @@ def pacman_sources(directory, tree, report, configuration):
                     '-C', tree, '-cf', archive, '.'], check=True)
     depends = ' '.join(map(shlex.quote, report['depends']))
     backup = ' '.join(map(shlex.quote, configuration))
-    license_ids = {name: 'LicenseRef-Proprietary' for name in LOCAL_FIRMWARE}
+    license_ids = {name: 'LicenseRef-Proprietary' for name in STOCK_FIRMWARE}
     license_ids[TOPOLOGY_PACKAGE] = 'BSD-3-Clause'
     license_ids[POWER_PROFILES_PACKAGE] = 'MIT'
     license_ids[FINGERPRINT_TOOLS] = "BSD-3-Clause BSD-3-Clause-Clear 'GPL-2.0-only WITH Linux-syscall-note'"
@@ -627,6 +644,9 @@ def build(args):
     if args.command == 'package':
         configuration = [row['path'] for row, _ in rows if row['path'].startswith('etc/')]
         if args.format == 'pacman':
+            if report['package'] == KEYBOARD_PACKAGE:
+                # Let ALPM adopt the previously unpackaged file and keep local replacements.
+                configuration.extend(row['path'] for row, _ in rows)
             artifact, version = pacman_package(output, tree, report, configuration)
         else:
             artifact = debian_package(output, tree, report, configuration)
@@ -656,6 +676,8 @@ def parser():
                            help='Package the two local stock touch firmware files')
     component.add_argument('--display-firmware', type=Path, metavar='DIRECTORY',
                            help='Package the two local display calibration files')
+    component.add_argument('--keyboard-firmware', type=Path, metavar='DIRECTORY',
+                           help='Package the Nanosic keyboard cover firmware')
     component.add_argument('--fingerprint-firmware', type=Path, metavar='DIRECTORY',
                            help='Package the local Goodix fingerprint application and models')
     component.add_argument('--fingerprint-tools', type=Path, metavar='UAPI',

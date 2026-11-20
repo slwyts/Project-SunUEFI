@@ -14,6 +14,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from build.check_patch_series import patch_id
+from build import overlay_packages
+from package.archive import pacman_info
 import package_bsp as bsp
 from stage_piano_firmware import packaged_components
 
@@ -327,6 +329,49 @@ class BspPackageTests(unittest.TestCase):
         path.write_bytes(b'not the fixed calibration')
         with self.assertRaisesRegex(ValueError, 'unowned-existing-file'):
             bsp.conflict_check(root, rows, bsp.DISPLAY_PACKAGE, adopt_identical=True)
+
+    @unittest.skipUnless(shutil.which('dpkg-deb'), 'dpkg-deb unavailable; no fake deb test')
+    def test_keyboard_deb_contains_pinned_firmware_and_uses_native_initramfs_trigger(self):
+        manifest = bsp.KEYBOARD_MANIFEST
+        source = json.loads(manifest.read_text())
+        out = self.base / 'deb'
+        with patch.dict(os.environ, {bsp.overlay_release.ENVIRONMENT: '10.1'}):
+            report = bsp.build(self.args('package', '--format', 'deb', '--keyboard-firmware',
+                                         str(manifest.parent), '--output', str(out)))
+        relative = 'usr/lib/firmware/nanosic/MCU_Upgrade.bin'
+        artifact, metadata = overlay_packages.bsp_package(out, 'debian', component='keyboard-firmware')
+        self.assertEqual(artifact.name, f"{bsp.KEYBOARD_PACKAGE}_{source['rom'][2:]}+sunuefi.10.1_all.deb")
+        self.assertTrue(report['public_distribution'])
+        self.assertEqual(report['depends'], [])
+        self.assertEqual(set(metadata['firmware']), {relative})
+        with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(
+                ['dpkg-deb', '--fsys-tarfile', artifact]))) as archive:
+            files = [member for member in archive if member.isfile()
+                     and member.name.startswith('./usr/lib/firmware/')]
+            self.assertEqual([member.name for member in files], ['./' + relative])
+            entry = files[0]
+            self.assertEqual((entry.mode, entry.uid, entry.gid), (0o644, 0, 0))
+            expected = source['files']['MCU_Upgrade.bin']
+            data = archive.extractfile(entry).read()
+            self.assertEqual((len(data), hashlib.sha256(data).hexdigest()),
+                             (expected['bytes'], expected['sha256']))
+        control = self.base / 'control'
+        subprocess.run(['dpkg-deb', '--control', artifact, control], check=True)
+        self.assertEqual((control / 'triggers').read_text(), 'activate-noawait update-initramfs\n')
+        self.assertFalse((control / 'conffiles').exists())
+        self.assertEqual(packaged_components([(PurePosixPath('nanosic'), manifest, source)]),
+                         {'piano-keyboard': 'keyboard-firmware'})
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ('makepkg', 'bsdtar')),
+                         'pacman packaging tools required')
+    def test_keyboard_pacman_uses_native_backup_metadata_for_legacy_files(self):
+        out = self.base / 'pacman'
+        bsp.build(self.args('package', '--target', 'arch', '--format', 'pacman', '--keyboard-firmware',
+                            str(bsp.KEYBOARD_MANIFEST.parent), '--output', str(out)))
+        archive, metadata = overlay_packages.bsp_package(out, 'pacman', component='keyboard-firmware')
+        relative = 'usr/lib/firmware/nanosic/MCU_Upgrade.bin'
+        self.assertEqual(pacman_info(archive).get('backup'), [relative])
+        self.assertEqual(set(metadata['firmware']), {relative})
 
     @unittest.skipUnless(shutil.which('dpkg-deb'), 'dpkg-deb unavailable; no fake deb test')
     def test_fingerprint_deb_preserves_all_raw_firmware_at_the_loader_paths(self):

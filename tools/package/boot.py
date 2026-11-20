@@ -12,6 +12,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 BOOT_SPACE_HOOK = Path(__file__).with_name('85-piano-boot-space.install')
+PACMAN_BOOT_CONFIG_PKGREL = '2'
 PACMAN_REPOSITORIES = ('sunuefi', 'sunuefi-steamos')
 PUBLIC_REPOSITORY_URL = 'https://sunuefi-repo.okassets.uk'
 
@@ -129,7 +130,7 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
         dependencies = "'systemd>=258' systemd-ukify mkinitcpio"
         install['etc/kernel/install.conf'] += 'initrd_generator=mkinitcpio\n'
         install['etc/mkinitcpio.conf.d/zz-piano.conf'] = (
-            'MODULES+=(arm_smmu ufs_qcom phy_qcom_qmp_ufs pinctrl_sm8750)\n'
+            'MODULES+=(arm_smmu ufs_qcom phy_qcom_qmp_ufs pinctrl_sm8750 hid_nanosic_wn8030)\n'
             '# Valve recovery hooks expect Frame storage, firmware, and ADB.\n'
             'piano_hooks=()\n'
             'for piano_hook in "${HOOKS[@]}"; do\n'
@@ -311,8 +312,9 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
                 recipe = work / ('recipe-' + package_name)
                 recipe.mkdir()
                 shutil.copy2(archive_source, recipe / 'payload.tar')
+                pkgrel = PACMAN_BOOT_CONFIG_PKGREL if package_name == 'piano-boot-config' else '1'
                 (recipe / 'PKGBUILD').write_text(
-                    f'pkgname={package_name}\npkgver={version}\npkgrel=1\narch=(any)\n'
+                    f'pkgname={package_name}\npkgver={version}\npkgrel={pkgrel}\narch=(any)\n'
                     f'pkgdesc="{description}"\nlicense=(GPL-2.0-only)\n'
                     f'depends=({depends})\nsource=(payload.tar)\n'
                     + ('backup=(' + ' '.join(path.relative_to(payload).as_posix()
@@ -328,7 +330,7 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
                     subprocess.run(['chown', '-R', 'sunuefi-build:sunuefi-build', work], check=True)
                     command = ['runuser', '-u', 'sunuefi-build', '--', *command]
                 subprocess.run(command, cwd=recipe, env=env, check=True)
-                archive = output / f'{package_name}-{version}-1-any.pkg.tar.zst'
+                archive = output / f'{package_name}-{version}-{pkgrel}-any.pkg.tar.zst'
                 if not archive.is_file():
                     raise ValueError('makepkg did not produce the expected package: ' + archive.name)
             result.append(archive)

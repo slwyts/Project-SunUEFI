@@ -60,7 +60,17 @@ Debian 默认 sid，Ubuntu 默认 noble，Arch Linux ARM 默认 rolling；Deepin
 和压缩版本的归属。未登记的旧文件按上面的迁移方法备份；发行版软件包已有
 同名文件时保留其归属。
 
-## 本地固件包
+## 设备固件包
+
+`piano-firmware-keyboard` 提供键盘套和触控板共用的固件
+`/usr/lib/firmware/nanosic/MCU_Upgrade.bin`。成品从签名 APT 和 `sunuefi`
+安装它；手动构建用 `--keyboard-firmware vendor/firmware/piano-keyboard`。
+旧镜像里的原装文件可以直接接管。如果曾替换过原文件，Debian 不会覆盖它。
+将替换版移到 `/usr/lib/firmware/updates/nanosic/` 后重新安装即可。pacman
+保留原文件，并将包内版本另存为 `.pacnew`。长期使用自定义固件时，也应放在
+`updates/nanosic/`，不要修改包管理的文件。
+
+### 本地安装的固件包
 
 `piano-firmware-touch` 只包含 Xiaomi Pad 8 Pro 的 BOE、CSOT 两份触控固件。
 从与[固件清单](../../vendor/firmware/piano-touch/manifest.json)所列版本一致的原厂

@@ -135,6 +135,8 @@ def publication_batches(root, *, kernel, overlays):
                                    topology_package(root / 'bsp', package_format),
                                    bsp_package(root / 'bsp/power-profiles' / package_format,
                                                package_format, component='power-profiles'),
+                                   bsp_package(root / 'bsp/keyboard-firmware' / package_format,
+                                               package_format, component='keyboard-firmware'),
                                    camera.shared_package(package_format, root / 'camera' / package_format)):
                 if path.name in groups[repository]:
                     raise ValueError('Common package duplicated in ' + repository + ': ' + path.name)
@@ -236,6 +238,8 @@ def main():
                                          package_format, component='power-profiles')[1],
             'display_firmware': bsp_package(args.output / 'display-firmware' / package_format,
                                             package_format, component='display-firmware')[1],
+            'keyboard_firmware': bsp_package(args.output / 'keyboard-firmware' / package_format,
+                                             package_format, component='keyboard-firmware')[1],
         }
                 for package_format in KERNEL_REPOSITORIES}
         rows['pacman']['sensors'] = sensors.pacman_package(args.output / 'sensors')[1]

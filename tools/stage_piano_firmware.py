@@ -3,7 +3,7 @@
 
 Every file comes from vendor/firmware: each component directory carries its
 files, a manifest of their sizes and SHA256, and a source note. Native
-packages own the display calibration and fingerprint firmware.
+packages own the display calibration, keyboard cover and fingerprint firmware.
 """
 import hashlib
 import json
@@ -67,13 +67,17 @@ def install_firmware_package(source, rootfs, package_format, component, *, share
     name, manifest = package_bsp.IMAGE_FIRMWARE[component]
     _, rows = package_bsp.local_firmware_payload(
         source, manifest, component.replace('-', ' '))
+    if shared and name in package_bsp.PUBLISHED_STOCK_FIRMWARE:
+        _, metadata = overlay_packages.shared_bsp(package_format, component=component)
+        verify_firmware_package(rootfs, package_format, metadata)
+        return metadata
     migration = package_bsp.conflict_check(rootfs, rows, name, adopt_identical=True)
     tmp = guest_resolve(rootfs, '/var/tmp')
     tmp.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f'sunuefi-{component}-', dir=tmp) as temporary:
         work = Path(temporary)
         work.chmod(0o755)
-        if shared:
+        if shared and component == 'display-firmware':
             archive, metadata = overlay_packages.shared_bsp(package_format, component=component)
         else:
             archive, metadata = overlay_packages.build_bsp(
@@ -95,7 +99,7 @@ def install_firmware_package(source, rootfs, package_format, component, *, share
                 with build_devices(rootfs):
                     run(['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive',
                          'apt-get', 'install', '-y', '--no-install-recommends',
-                         '--reinstall', guest_archive])
+                         '--reinstall', '--allow-downgrades', guest_archive])
             else:
                 from build_nyarch_apps import guest_environment
                 with guest_environment(rootfs) as guest:
@@ -149,10 +153,9 @@ def stage(source, rootfs, package_format, *, shared=False, run=None):
     for directory, manifest, data in selected:
         component = packaged.get(data['component'])
         if component:
-            # Only display calibration is supplied by the shared device artifacts.
             metadata = install_firmware_package(
                 manifest.parent, rootfs, package_format, component,
-                shared=shared and component == 'display-firmware', run=run)
+                shared=shared, run=run)
             record['packages'][metadata['name']] = metadata
             hashes.update({(directory / filename).as_posix(): row['sha256']
                            for filename, row in data['files'].items()})
