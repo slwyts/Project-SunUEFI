@@ -194,6 +194,23 @@ class ReleasePackageTests(unittest.TestCase):
             pr.normalize_mainline_bindings(self.dtb)
             self.assertEqual(pr.read_fdt(self.dtb.read_bytes())['tree'][pci]['reg'], address)
 
+    def test_folded_board_uses_linux_chosen_framebuffer_without_moving_memory(self):
+        shutil.copyfile(pr.ROOT / 'vendor/piano-linux/board.dtb', self.dtb)
+        before = pr.read_fdt(self.dtb.read_bytes())
+        node, = (path for path, props in before['tree'].items()
+                 if props.get('compatible') == b'simple-framebuffer\0')
+        pr.normalize_mainline_bindings(self.dtb)
+        after = pr.read_fdt(self.dtb.read_bytes())
+        self.assertNotIn(node, after['tree'])
+        self.assertEqual(after['tree']['/chosen' + node], before['tree'][node])
+        for prop in ('#address-cells', '#size-cells'):
+            self.assertEqual(after['tree']['/chosen'][prop], before['tree']['/'][prop])
+        self.assertEqual(after['tree']['/chosen']['ranges'], b'')
+        self.assertEqual(after['tree']['/reserved-memory/splash_region'],
+                         before['tree']['/reserved-memory/splash_region'])
+        self.assertEqual(after['reservations'], before['reservations'])
+        self.assertEqual(pr.normalize_mainline_bindings(self.dtb)['changes'], [])
+
     def test_rpmh_stats_keeps_qmp_and_the_board_register_window(self):
         node = '/soc/ram@c3f0000'
         props = {'compatible': b'qcom,rpmh-stats-v4\0',

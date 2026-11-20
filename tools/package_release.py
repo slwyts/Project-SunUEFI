@@ -25,10 +25,62 @@ MIB = 1024 * 1024
 CLOCK_EPOCH = 'usr/lib/clock-epoch'
 
 
+def normalize_boot_framebuffer(tree):
+    """Put the folded boot framebuffer where Linux expects the handoff."""
+    root_framebuffers = []
+    for path, props in tree.items():
+        if b'simple-framebuffer' not in props.get('compatible', b'').split(b'\0'):
+            continue
+        if path.startswith('/chosen/') and path.count('/') == 2:
+            return []
+        if (path.startswith('/framebuffer@') and path.count('/') == 1 and
+                props.get('status', b'okay\0') in (b'ok\0', b'okay\0')):
+            root_framebuffers.append(path)
+    if len(root_framebuffers) != 1:
+        return []
+
+    path = root_framebuffers[0]
+    target = '/chosen' + path
+    if target in tree or any(node.startswith(path + '/') for node in tree):
+        return []
+    address_cells = tree['/'].get('#address-cells', struct.pack('>I', 2))
+    size_cells = tree['/'].get('#size-cells', struct.pack('>I', 1))
+    if len(address_cells) != 4 or len(size_cells) != 4:
+        return []
+    address_count, size_count = (int.from_bytes(cells, 'big')
+                                 for cells in (address_cells, size_cells))
+    reg = tree[path].get('reg', b'')
+    if address_count not in (1, 2) or size_count not in (1, 2):
+        return []
+    if len(reg) != 4 * (address_count + size_count) or not any(reg[4 * address_count:]):
+        return []
+    chosen = tree.get('/chosen', {})
+    bus_props = {'#address-cells': address_cells, '#size-cells': size_cells, 'ranges': b''}
+    if any(chosen.get(name, value) != value for name, value in bus_props.items()):
+        return []
+
+    # The /chosen simplefb registration also suppresses the matching EFI
+    # sysfb instance. Keep the original framebuffer memory and properties.
+    tree['/chosen'] = chosen
+    chosen.update(bus_props)
+    tree[target] = tree.pop(path)
+    old, new = path.encode(), target.encode()
+    for table in ('/__symbols__', '/aliases'):
+        for name, value in tree.get(table, {}).items():
+            if value == old + b'\0':
+                tree[table][name] = new + b'\0'
+    for name in ('stdout-path', 'linux,stdout-path'):
+        value = chosen.get(name, b'')
+        if value == old + b'\0' or value.startswith(old + b':'):
+            chosen[name] = new + value[len(old):]
+    return [path + ' -> ' + target]
+
+
 def normalize_mainline_bindings(board):
-    """Remove downstream-only bindings retained by the folded Android DT."""
+    """Adapt the folded Android DT to the active Linux bindings."""
     parsed = read_fdt(board.read_bytes())
-    tree, changes = parsed['tree'], []
+    tree = parsed['tree']
+    changes = normalize_boot_framebuffer(tree)
     # A folded Android tree contains debug blocks and suppliers whose binding
     # is not implemented by mainline. Disable those devices in the DT rather
     # than suppressing autoload for every platform/OF device in userspace.
