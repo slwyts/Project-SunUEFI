@@ -5,11 +5,11 @@
   "patches": [
     {
       "file": "0001-use-standard-orientation-sensor.patch",
-      "sha256": "97933a49a800f5872294f4f8832373522107a0883d62da59aa6e8a58931322ca",
+      "sha256": "19cb26deb10aba0401cb87f6110ac2ed0eda6c3142681b78d71c67462cc9f6ef",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/denialwm/denial/blob/01b588ec50831bce9e57aed623901f49846ec791/compositor/src/bin/deniald/orientation_sensor.rs",
-        "drop_when": "Denial uses SensorProxy and releases its claim when no lit panel follows the sensor."
+        "drop_when": "Denial uses SensorProxy and ends its sampling request when no lit panel follows the sensor, even if the service does not reply."
       }
     }
   ]
