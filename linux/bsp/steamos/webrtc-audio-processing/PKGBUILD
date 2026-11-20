@@ -8,8 +8,9 @@ pkgdesc="AudioProcessing library based on Google's implementation of WebRTC"
 url="https://freedesktop.org/software/pulseaudio/webrtc-audio-processing/"
 arch=(aarch64)
 license=(BSD-3-Clause)
-# Valve's Abseil package does not provide the SONAME in its metadata.
-depends=('abseil-cpp>=20260107' 'abseil-cpp<20260108' gcc-libs glibc)
+# Built with abseil-cpp @ABSEIL_VERSION@. Valve does not provide the SONAME
+# in the package metadata; match pkgver and allow packaging-only updates.
+depends=(@ABSEIL_DEPENDENCY@ gcc-libs glibc)
 makedepends=(meson)
 provides=(libwebrtc-audio-processing-2.so)
 options=(!debug !lto)
@@ -31,10 +32,12 @@ build() {
 
 check() {
   local library=build/webrtc/modules/audio_processing/libwebrtc-audio-processing-2.so.1
-  local abseil
+  local abseil expected libdir
+  libdir=$(pkg-config --variable=libdir absl_strings)
+  expected=$(readelf -d "$libdir/libabsl_strings.so" | awk '/\(SONAME\)/ {gsub(/[][]/, "", $NF); print $NF}')
   abseil=$(readelf -d "$library" | awk '/\(NEEDED\).*libabsl_strings\.so/ {gsub(/[][]/, "", $NF); print $NF}')
-  if [[ $abseil != libabsl_strings.so.2601.0.0 ]]; then
-    printf 'Unexpected Abseil ABI in %s: %s\n' "$library" "$abseil" >&2
+  if [[ -z $expected || $abseil != "$expected" ]]; then
+    printf 'Unexpected Abseil ABI in %s: %s (expected %s)\n' "$library" "$abseil" "$expected" >&2
     return 1
   fi
   meson test -C build --print-errorlogs

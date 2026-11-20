@@ -238,6 +238,12 @@ KWin 6.6.5 另有通用背光修正：内屏在 HDR 时使用最大硬件背光�
 软件源，以及随依赖升级重编、签名发布的 Piano 适配仓库。直接让 Arch Linux
 ARM 与 Valve 两套基础库互相覆盖，不会自动迁移不同包名、版本和私有接口。
 
+PipeWire 的回声消除依赖 WebRTC。SteamOS 只重编 WebRTC，Abseil 仍来自
+Valve。原生配方使用当轮构建安装的 Abseil 版本，检查产物链接到这版库的
+SONAME。包依赖匹配 Abseil 的源码版本，允许同版的打包修订正常升级。
+Valve 更新 Abseil 后，签名覆盖仓需要同时交付与新 ABI 匹配的 WebRTC，
+不能继续发布依赖旧库的归档。
+
 `stage_steamos_desktop.py` 禁用头显专用服务、原设备 MAC 地址设置、
 `by-partsets/shared/home` 和 offload 挂载，桌面入口改为原生 Plasma Wayland。
 只禁用 offload target 不够：用户登录和临时文件依赖仍可能启动它下面的

@@ -78,14 +78,18 @@ class SteamOSWebRTCTests(unittest.TestCase):
             packages = output / 'packages' / name
             release = '123456789.1'
             pkgrel = '8.2000000000001234567890000000001'
+            abseil_version = '20260526.0-2'
 
             def makepkg(guest, recipe_dir, destination, *, check):
                 self.assertEqual((guest, recipe_dir, destination), (root, recipe, packages))
                 self.assertTrue(check)
                 source = builder.build_arch_package.prepared_recipe(recipe / 'PKGBUILD')
                 self.assertIn(f'pkgrel={pkgrel}\n'.encode(), source)
+                self.assertIn(f'# Built with abseil-cpp {abseil_version}.'.encode(), source)
+                version = abseil_version.rsplit('-', 1)[0]
+                self.assertIn(f'depends=(abseil-cpp={version} gcc-libs glibc)'.encode(), source)
                 manifest = {'packages': {}}
-                destination.mkdir(parents=True)
+                destination.mkdir(parents=True, exist_ok=True)
                 archive = destination / f'{name}-2.1-{pkgrel}-aarch64.pkg.tar.zst'
                 archive.write_bytes(b'package fixture')
                 manifest['packages'][archive.name] = {'sha256': builder.digest(archive)}
@@ -93,11 +97,18 @@ class SteamOSWebRTCTests(unittest.TestCase):
                 (destination / 'manifest.json').write_text(json.dumps(manifest))
 
             with patch.dict(os.environ, {'SUNUEFI_OVERLAY_RELEASE': release}), \
+                    patch.object(builder.subprocess, 'check_output',
+                                 return_value=f'abseil-cpp {abseil_version}\n') as abseil, \
                     patch.object(builder.build_arch_package, 'build', side_effect=makepkg) as build, \
                     patch.object(builder.build_arch_package, 'install_cached') as cached:
                 first = builder.build_webrtc(root, output, config)
                 second = builder.build_webrtc(root, output, config)
-            build.assert_called_once_with(root, recipe, packages, check=True)
+                abseil_version = '20260928.0-1'
+                abseil.return_value = f'abseil-cpp {abseil_version}\n'
+                builder.build_webrtc(root, output, config)
+            abseil.assert_called_with(['chroot', root, 'pacman', '-Q', 'abseil-cpp'], text=True)
+            self.assertEqual(build.call_count, 2)
+            build.assert_called_with(root, recipe, packages, check=True)
             cached.assert_called_once_with(root, packages)
             self.assertEqual(first, second)
             self.assertEqual(first[0], packages)

@@ -155,6 +155,8 @@ def kde_package_is_current(package_dir, recipe):
 
 def build_webrtc(root, output, config):
     name = overlay_packages.STEAMOS_WEBRTC_PACKAGE
+    abseil = subprocess.check_output(['chroot', root, 'pacman', '-Q', 'abseil-cpp'],
+                                    text=True).split()[1]
     series = ROOT / config['patch_series']
     policy = json.loads(series.read_text())
     patches = runtime_helpers.source_patches(series)
@@ -165,6 +167,8 @@ def build_webrtc(root, output, config):
     template = (ROOT / 'linux/bsp/steamos' / name / 'PKGBUILD').read_text()
     for key, value in {
         'VERSION': shlex.quote(policy['version']),
+        'ABSEIL_VERSION': abseil,
+        'ABSEIL_DEPENDENCY': shlex.quote('abseil-cpp=' + abseil.rsplit('-', 1)[0]),
         'SOURCE_URL': shlex.quote(policy['source']['url']),
         'SOURCE_SHA256': policy['source']['sha256'],
         'PATCHES': shlex.join(patch.name for patch in patches),
