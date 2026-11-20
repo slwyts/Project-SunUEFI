@@ -6,6 +6,7 @@ SunUEFI 不是从零重写所有东西。上游源码固定在 `upstream/` 的�
 | --- | --- | --- |
 | [TianoCore EDK2](https://github.com/tianocore/edk2) / [Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium) | UEFI 基础代码和高通平台集成 | Piano 平台、启动交接、存储、输入、显示继承、UEFI Fastboot，以及对原厂分区的只读保护和安全退出 |
 | [mu_wide_platforms](https://github.com/sunflower2333/mu_wide_platforms) | 基于 Project Mu 的高通设备 UEFI，包含小米平板 8 Pro 的 Piano 平台与 ACPI | 作为同机 UEFI 初始化、ACPI 和 Windows 引导适配的参考 |
+| [OnePlus Ace 5 Pro Windows 驱动](https://github.com/AnyLaySys/woa_oneplus_ace5_pro/tree/ed648ec56a7cc8532bbbfef90061932684c6d870) | 同为 SM8750 的 WDDM 图形内核驱动、Turnip 用户态后端与无线驱动 | Piano 原厂 Android 报告 `Adreno830v2`，设备树芯片 ID 是 `0x44050001`。可对照其 GPU 提交和同步；内屏、供电、温控和无线校准取自 Piano，不能照搬手机配置。 |
 | [Xiaomi Pad 6S Pro Linux](https://github.com/code002-2/Xiaomi-pad-6s-pro-Linux) / [debian-sheng](https://github.com/ianchb/debian-sheng) | 小米平板的多发行版适配，以及充电、手写笔和指纹方案 | 参考 MiPPS 认证、磁吸笔连接和 TEE 指纹接入，按 Piano 的实际硬件移植 |
 | [simple-init](https://github.com/BigfootACA/simple-init) | UEFI 里的图形启动菜单 | 平板布局、中文、实体按键，以及和固件后台服务的联动 |
 | [linux-piano](https://github.com/blu-sharky/linux-piano) | SM8750 内核、设备树和板级驱动基线 | 合入稳定版内核，修正内存 / DMA、显示、音频等。只取用其内容，不作为随仓库检出的源码 |
