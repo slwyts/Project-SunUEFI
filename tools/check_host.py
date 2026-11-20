@@ -41,6 +41,7 @@ CI_UNIT = (
     'test_acpi_tables.py',
     'test_smbios_memory.py',
     'test_boot_options.py',
+    'test_bulk_idle_pipeline.py',
     'test_build_input.py',
     'test_droidloom.py',
     'test_product_core.py',

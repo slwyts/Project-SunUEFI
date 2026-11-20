@@ -21,7 +21,7 @@ class BulkIdlePipelineTests(unittest.TestCase):
   # The product build installs these wait hooks into its workspace copy of Event.c
   for relative,old,new in pump.HOOKS:
    if relative==pump.BASE+'MdeModulePkg/Core/Dxe/Event/Event.c':event=pump.transform(event,old,new,relative)
-  actual='\n\n'.join([*(function(policy,name) for name in ('UsbBulkInProgress','UiAction','ReadIdle','Pump')),
+  actual='\n\n'.join([*(function(policy,name) for name in ('UsbBulkInProgress','UiAction','ReadIdle','EndPump','Pump')),
                      function(event,'CoreWaitForEvent')])
   inc=BASE/'MdePkg/Include';other=[BASE/'CryptoPkg/Include',ROOT/'upstream/Mu-Silicium/Silicon/Qualcomm/QcomPkg/Include',PUMP/'Include',*core_include_dirs(ROOT)]
   with tempfile.TemporaryDirectory(prefix='bulk-idle-pipeline-')as directory:

@@ -11,6 +11,8 @@ static PIANO_BOOT_POLICY_REPORT mReport;
 static PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime;
 static PIANO_PRODUCT_IDLE_PROTOCOL mIdle;
 static BOOLEAN mAlive=TRUE,wait_ready;
+static BOOLEAN watchdog_expired;
+BOOLEAN PianoApplicationTimedOut(VOID){return watchdog_expired;}
 static UINTN wait_checks,idles;
 #define gEfiCurrentTpl current_tpl
 EFI_EVENT gIdleLoopEvent=(VOID*)9;
@@ -54,6 +56,8 @@ int main(VOID){
   };
   mIdle=(PIANO_PRODUCT_IDLE_PROTOCOL){1,&mRuntime,ReadIdle};
  EFI_EVENT Event=(VOID*)1;UINTN Index=99;assert(CoreWaitForEvent(1,&Event,&Index)==EFI_SUCCESS&&Index==0&&wait_checks==3&&idles==1&&mReport.PumpCalls==3);
+ watchdog_expired=TRUE;Index=99;
+ assert(CoreWaitForEvent(1,&Event,&Index)==EFI_ABORTED && Index==99 && mReport.PumpCalls==4 && !mReport.Pumping);
  assert(PianoProductPumpLibDestructor(NULL,NULL)==EFI_SUCCESS);PIANO_USB_SERVICE_RETIRE_REPORT R;assert(PianoUsbControllerServiceStop(EFI_SUCCESS,&R)==EFI_SUCCESS&&R.Clean);free_cold_model();
  puts("Actual wait/policy/idle-client/device pipeline: inflight empty queue stays awake, completion restores idle, timer submits no commands, full stop clean");return 0;
 }
