@@ -280,7 +280,9 @@ int main(int argc, char **argv)
         char luid[18];
         std::snprintf(luid, sizeof(luid), "%08lx:%08lx",
                       static_cast<unsigned long>(d.AdapterLuid.HighPart), d.AdapterLuid.LowPart);
-        bool hardware = !(d.Flags & (DXGI_ADAPTER_FLAG_SOFTWARE | DXGI_ADAPTER_FLAG_REMOTE));
+        // The primary Microsoft Basic Render Driver may omit the SOFTWARE flag.
+        bool basic_render = d.VendorId == 0x1414 && d.DeviceId == 0x008c;
+        bool hardware = !basic_render && !(d.Flags & (DXGI_ADAPTER_FLAG_SOFTWARE | DXGI_ADAPTER_FLAG_REMOTE));
         std::printf("%s %04x:%04x %s %ls\n", luid, d.VendorId, d.DeviceId,
                     hardware ? "hardware" : "software/remote", d.Description);
         if (hardware && (!requested || !_stricmp(requested, luid))) {
